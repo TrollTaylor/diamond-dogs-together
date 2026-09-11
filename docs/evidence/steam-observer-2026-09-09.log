@@ -1,0 +1,19 @@
+
+MGS Co-op original Steam import observer 0.2.0; fingerprint=accepted
+status=0 replacement_installed=1 protection_restored=1 slot_rva=0x208e0e8
+scope=callback_cadence_only; game_function_calls=none; lua_owner_thread=unverified; multiplayer=not_connected
+callback_count=1 thread=84716 first_thread=84716 multiple_threads=0 tick_ms=520064875 caller_in_game=1 caller_rva=0x7ded63
+callback_count=11 thread=52332 first_thread=84716 multiple_threads=1 tick_ms=520065671 caller_in_game=1 caller_rva=0x7ded63
+callback_count=60 thread=84716 first_thread=84716 multiple_threads=1 tick_ms=520066531 caller_in_game=1 caller_rva=0x7ded63
+callback_count=600 thread=84716 first_thread=84716 multiple_threads=1 tick_ms=520075546 caller_in_game=1 caller_rva=0x7ded63
+callback_count=3600 thread=84716 first_thread=84716 multiple_threads=1 tick_ms=520125593 caller_in_game=1 caller_rva=0x7ded63
+
+MGS Co-op original Steam import observer 0.3.0; fingerprint=accepted
+init_observation=unobserved_at_install; installation_after_DirectInput_may_miss_init=true; shutdown_coverage=none; context_queries=disabled
+symbol=SteamAPI_Init status=0 replacement_installed=1 protection_restored=1 slot_rva=0x208e130
+symbol=SteamAPI_RunCallbacks status=0 replacement_installed=1 protection_restored=1 slot_rva=0x208e0e8
+scope=natural_init_and_callback_observation_only; sdk_context_queries=none; shutdown_coverage=none; game_function_calls=none; lua_owner_thread=unverified; multiplayer=not_connected
+callback_count=1 thread=77056 first_thread=77056 multiple_threads=0 tick_ms=521228781 caller_in_game=1 caller_rva=0x7ded63 init_observation=unobserved init_entries=0 init_true_returns=0 context_queries=disabled
+callback_count=2 thread=107276 first_thread=77056 multiple_threads=1 tick_ms=521229312 caller_in_game=1 caller_rva=0x7ded63 init_observation=unobserved init_entries=0 init_true_returns=0 context_queries=disabled
+callback_count=60 thread=77056 first_thread=77056 multiple_threads=1 tick_ms=521230531 caller_in_game=1 caller_rva=0x7ded63 init_observation=unobserved init_entries=0 init_true_returns=0 context_queries=disabled
+callback_count=600 thread=77056 first_thread=77056 multiple_threads=1 tick_ms=521239546 caller_in_game=1 caller_rva=0x7ded63 init_observation=unobserved init_entries=0 init_true_returns=0 context_queries=disabled

@@ -1,0 +1,17 @@
+# Host and guest session feedback
+
+Workspace 0.10.25 adds in-game messages after original mission startup. Host feedback distinguishes accepting connections, not accepting, and a second member present. Guest feedback distinguishes an ongoing connection attempt from an established native session with two present members. The game session error flag and unavailable observations have separate messages. A single reminder appears after 30 pending polls; that reminder is not a timeout, failure declaration or retry.
+
+The Lua helper polls after every 60 successful original update callbacks while a host has been created or a guest request was submitted. This interval is measured in frames, not guaranteed seconds. Messages appear only on status changes. Helper/announcement failures are protected; original mission functions retain their arguments, yields, errors and return values. Polling stops during termination or recorded session loss. Diagnostic client-check mode does not perform status observations against an invented session.
+
+The native reader requires this adapter's owned session, its original creation thread, no authorized close, matching network-root/main-session pointers and the known primary session table. It reads state +0x90 and flags +0xE1 through +0xE4 before and after a roster observation. Disagreement or unreadable context returns unavailable, never a fabricated disconnect. Host-ready requires state 3, the started flag and acceptance flag. Established guest requires state 7, started, and two present members. The existing targeting roster reader verifies the two member indices, local/host roles, known member interfaces and two equal roster observations. No new game function or Steam call is issued; no peer identifiers cross into Lua or UI.
+
+These reads are not an atomic lifetime guarantee. A present member and native established state do not demonstrate a visible independently controlled actor, shared combat or world synchronization. Feedback is observational only and never enables retries, closes sessions or changes authority. The feature is compiled, not exercised in-game. [Build record](evidence/session-feedback-prepared-2026-09-10.json).
+
+## Connection-readiness audit
+
+The upstream `IsConnectReadyHook` forces true. This project still uses the game's gate, matching its current-build tpp-mod connection path. Read-only disassembly established that thunk 0x7E4190 jumps to a complete 69-byte function at 0x681CB90. With the file constant 0x28918949 at 0x7510E38, its arithmetic reduces to unsigned target-state-minus-one; states 1 and 2 are refused. Otherwise it clears target+0x10, refuses a nonzero flag returned by 0x547340, then returns the signed comparison of the value from 0x547220 against target+0x14. Those helpers only read globals 0x2BD7BC0 and 0x2BD7BB4 respectively.
+
+The existing adapter prerequisites already require target+0x10 to be zero, avoiding the first refusal case. The remaining gate was not bypassed: its runtime values have not been observed during an actual guest request. This is a concrete source difference to revisit if a real request is refused, not proof it currently blocks co-op. [Read-only mapping](evidence/connection-readiness-2026-09-10.json).
+
+No tests, Lua execution, source-transform execution, game/VM launch or installation changes occurred. Installed 0.10.5 remains unchanged.

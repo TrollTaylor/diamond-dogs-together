@@ -1,0 +1,23 @@
+{
+  "utc": "2026-09-09T21:26:23.7712370Z",
+  "target_pid": 32080,
+  "target_started_utc": "2026-09-09T21:10:42.5075443Z",
+  "executable_sha256": "085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45",
+  "armed": true,
+  "entry_count": 1,
+  "entries": [
+    "MGS_BLOCK_CAPTURE mode=comparison tid=0xc758 image=0000000140000000 site=000000014006ed89 block=00000001a3293f58 state=11 total=13419280 baseline=12641280 baseline_offset=14c c60=0 c18=69216496 c40=0 c10=82635776\r"
+  ],
+  "aborted": false,
+  "deadline_detached": false,
+  "debugger_exit": 0,
+  "debug_log": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\block-observation-2b1e96df3a6846baa1aa63ca54dcfe99\\debugger.log",
+  "target_still_running": true,
+  "capture_valid": true,
+  "mode": "comparison",
+  "armed_observed_utc": "2026-09-09T21:26:23.7013374Z",
+  "game_calls": false,
+  "data_writes": false,
+  "hardware_breakpoints": true,
+  "limitation": "A bounded natural block observation; block identity and allocation owner are not established. Entry capture alone does not prove a memory wait."
+}

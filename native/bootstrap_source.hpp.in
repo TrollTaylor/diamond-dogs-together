@@ -1,0 +1,6 @@
+#pragma once
+namespace mgscoop {
+inline constexpr char bootstrap_source[] = R"MGSBOOT(
+@MGS_BOOTSTRAP_SOURCE@
+)MGSBOOT";
+}

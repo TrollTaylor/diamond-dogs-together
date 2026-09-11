@@ -1,0 +1,3 @@
+LIBRARY steam_init_fixture_api
+EXPORTS
+    FixtureSteamInit

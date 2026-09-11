@@ -1,0 +1,56 @@
+CMake Deprecation Warning at third_party/minhook/CMakeLists.txt:27 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value.  Or, use the <min>...<max> syntax
+  to tell CMake that the project requires at least <min> but has been updated
+  to work with policies introduced by <max> or earlier.
+
+
+-- Configuring done (0.1s)
+-- Generating done (0.1s)
+-- Build files have been written to: C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native
+[1/7] Building CXX object CMakeFiles\mgs_coop_probe.dir\native\game_heap_trial.cpp.obj
+[2/7] Building CXX object CMakeFiles\mgs_coop_probe.dir\native\host_session_trial.cpp.obj
+[3/7] Building CXX object CMakeFiles\mgs_coop_probe.dir\native\game_script_observer.cpp.obj
+[4/7] Building CXX object CMakeFiles\mgs_coop_probe.dir\native\probe.cpp.obj
+[5/7] Building CXX object CMakeFiles\heap_trial_tests.dir\tests\heap_trial_tests.cpp.obj
+[6/7] Linking CXX shared library dinput8.dll
+[7/7] Linking CXX executable heap_trial_tests.exe
+Test project C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native
+      Start  1: heap_trial_tests
+ 1/16 Test  #1: heap_trial_tests .................   Passed    0.07 sec
+      Start  2: session_tests
+ 2/16 Test  #2: session_tests ....................   Passed    0.03 sec
+      Start  3: import_table_tests
+ 3/16 Test  #3: import_table_tests ...............   Passed    0.03 sec
+      Start  4: steam_runtime_tests
+ 4/16 Test  #4: steam_runtime_tests ..............   Passed    0.03 sec
+      Start  5: steam_lifecycle_tests
+ 5/16 Test  #5: steam_lifecycle_tests ............   Passed    0.02 sec
+      Start  6: steam_getter_tests
+ 6/16 Test  #6: steam_getter_tests ...............   Passed    0.03 sec
+      Start  7: typed_payload_tests
+ 7/16 Test  #7: typed_payload_tests ..............   Passed    0.02 sec
+      Start  8: input_receiver_tests
+ 8/16 Test  #8: input_receiver_tests .............   Passed    0.02 sec
+      Start  9: steam_packet_tests
+ 9/16 Test  #9: steam_packet_tests ...............   Passed    0.02 sec
+      Start 10: four_player_lab
+10/16 Test #10: four_player_lab ..................   Passed    0.02 sec
+      Start 11: peer_router_tests
+11/16 Test #11: peer_router_tests ................   Passed    0.02 sec
+      Start 12: allocation_bridge_tests
+12/16 Test #12: allocation_bridge_tests ..........   Passed    0.17 sec
+      Start 13: script_load_bridge_tests
+13/16 Test #13: script_load_bridge_tests .........   Passed    0.32 sec
+      Start 14: win_import_patch_tests
+14/16 Test #14: win_import_patch_tests ...........   Passed    0.03 sec
+      Start 15: probe_forwarding
+15/16 Test #15: probe_forwarding .................   Passed    0.08 sec
+      Start 16: probe_install_recovery
+16/16 Test #16: probe_install_recovery ...........   Passed    0.73 sec
+
+100% tests passed, 0 tests failed out of 16
+
+Total Test time (real) =   1.70 sec

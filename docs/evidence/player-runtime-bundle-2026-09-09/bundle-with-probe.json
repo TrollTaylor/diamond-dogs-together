@@ -1,0 +1,180 @@
+{
+  "experiment": "four_player_runtime_assets",
+  "players": 4,
+  "installed": false,
+  "runtime_verified": false,
+  "mission_pack": "/Assets/tpp/pack/player/game_object/mgs_coop_four_player_controller.fpk",
+  "outputs": [
+    {
+      "path": "/Assets/tpp/pack/player/game_object/mgs_coop_four_players_game_obj.fpk",
+      "sha256": "60b461fdf13b32b6e35fe67191d3b55e22d6c589468178b7446340a197816293",
+      "qar_roundtrip_equal": true
+    },
+    {
+      "path": "/Assets/tpp/pack/player/game_object/mgs_coop_four_players_game_obj.fpkd",
+      "sha256": "bd6bd3c39cbc8d244d2e14e816e97715f5b518b39ed291323a056caff7887dd1",
+      "qar_roundtrip_equal": true
+    },
+    {
+      "path": "/Assets/tpp/pack/player/game_object/mgs_coop_four_player_controller.fpk",
+      "sha256": "f2092c931361235826346509dd82b1a188c7d18787fb432e7a064a60dc96d279",
+      "qar_roundtrip_equal": true
+    },
+    {
+      "path": "/Assets/tpp/pack/player/game_object/mgs_coop_four_player_controller.fpkd",
+      "sha256": "ec3f0f8ebc0651f01376c2c004ca3ae101d1bdaaa48c6171b784e43f9a830063",
+      "qar_roundtrip_equal": true
+    },
+    {
+      "path": "/Assets/tpp/script/lib/MgsCoopArchiveProbe.lua",
+      "sha256": "4b3e9234b07238da0b3c45e65234e259701d174a4dc343ef15567ceb9e0b70bd",
+      "qar_roundtrip_equal": true
+    }
+  ],
+  "definitions": [
+    {
+      "internal_path": "/Assets/tpp/level_asset/chara/player/game_object/mgs_coop_four_player_controller.fox2",
+      "sha256": "a200dc9fc0588110ef060edeb5c6a84fd8fb49803d581d2edbefff4bb729ee1d",
+      "xml_nodes": 58,
+      "xml_roundtrip_equal": true,
+      "fpkd_embedded_bytes_equal": true
+    },
+    {
+      "internal_path": "/Assets/tpp/level_asset/chara/player/game_object/mgs_coop_player2_additional_parts_x3.fox2",
+      "sha256": "884a4a5b2828a90574ae57674d33ff58679d80eacbf9df62ab1830ff42c0f1ed",
+      "xml_nodes": 36,
+      "xml_roundtrip_equal": true,
+      "fpkd_embedded_bytes_equal": true
+    },
+    {
+      "internal_path": "/Assets/tpp/level_asset/chara/player/game_object/player2_online_motion.fox2",
+      "sha256": "9a2aebf29d355ee4bfc8c0c7112071c1595abd65736b29557105005e7c15abff",
+      "xml_nodes": 32,
+      "xml_roundtrip_equal": true,
+      "fpkd_embedded_bytes_equal": true
+    },
+    {
+      "internal_path": "/Assets/tpp/level_asset/chara/player/game_object/player2_mtbs_motion_loader.fox2",
+      "sha256": "413c1083eeb128838f9b75f7b9428cfe324d10be20e35ce48b47e36afb14a42c",
+      "xml_nodes": 46,
+      "xml_roundtrip_equal": true,
+      "fpkd_embedded_bytes_equal": true
+    }
+  ],
+  "archive": {
+    "file": "mgs-coop-player-runtime.dat",
+    "sha256": "711def02f258f6ca42a63ca2374fdf342a306adb1ba29fe31f7e6df94b1830e5",
+    "bytes": 2420736,
+    "version": 1,
+    "flags": 3150304,
+    "entries_verified": 5,
+    "live_mount_verified": false
+  },
+  "changes": [
+    {
+      "entity": "TppPlayer2AdditionalPartsBlockData",
+      "property": "count",
+      "before": "1",
+      "after": "3"
+    }
+  ],
+  "converter_sha256": "a1ec95c8adab11339b7a16ec2ebe7bd92a521bab428f9238feaa20da3bc64c1e",
+  "dynamite_commit": "c90f252f8200765f66c005d6bf4357fda0c0d98e",
+  "supplemental_sources": {
+    "player2_additional_parts_x1.fox2.xml": "b81f5e22f0e3317f4986ac5f011de044ec528a2d159d1a691632d4866157315c",
+    "player2_online_motion.fox2.xml": "c6b5fa73eeda2e63a440ab01e853672fb00beecb0387d6d4b437219b421180ca",
+    "player2_mtbs_motion_loader.fox2.xml": "01aaf463b0e93f32a0efd62403130c3d8864906589038adb4b63457be62fe0f4"
+  },
+  "motion_entries_verified": {
+    "/Assets/tpp/motion/mtar/player2/player2_online.mtar": "e99b76d35b549f64e2b4678b9771e394b80b78d14a5cea187306bece66b58750",
+    "/Assets/tpp/motion/mtar/player2/player2_pipe.mtar": "70e18a4da821491d25e93f56fe09465201c5f01248eb2be669b449c1f84efe5a"
+  },
+  "installed_dependency_packages": {
+    "/Assets/tpp/pack/player/motion/player2_location_motion.fpk": "1cda98ef5e86ecc47075715836278b8ad5b27d1b04382781576aca233749b011",
+    "/Assets/tpp/pack/player/motion/player2_location_vram_motion.fpk": "98ede6815a3a6ae126ad5c34d39a8fbfca481b6e0616f0c13d98134f2be86a2c"
+  },
+  "source_allocation_manifest": {
+    "experiment": "four_actor_allocation_candidate",
+    "players": 4,
+    "files": [
+      {
+        "xml": "four_players_game_obj.fox2.xml",
+        "internal_path": "/Assets/tpp/level_asset/chara/player/game_object/mgs_coop_four_players_game_obj.fox2",
+        "sha256": "500d38cdfca849bbac60e3014b4951a6262722328098a139230f9f2034068836"
+      },
+      {
+        "xml": "four_player_controller.fox2.xml",
+        "internal_path": "/Assets/tpp/level_asset/chara/player/game_object/mgs_coop_four_player_controller.fox2",
+        "sha256": "de2cbd5d2959bc5b53c2fc69b2354d7f71d915b18bf7083033547583bade92e1"
+      }
+    ],
+    "changes": [
+      {
+        "entity": "GameObject",
+        "property": "totalCount",
+        "before": "2",
+        "after": "4"
+      },
+      {
+        "entity": "GameObject",
+        "property": "realizedCount",
+        "before": "2",
+        "after": "4"
+      },
+      {
+        "entity": "TppPlayer2BlockControllerData",
+        "property": "configuration_partsBlockCount",
+        "before": "2",
+        "after": "4"
+      },
+      {
+        "entity": "TppPlayer2BlockControllerData",
+        "property": "instanceSettings_instanceBlockSize",
+        "before": "1126400",
+        "after": "2252800"
+      },
+      {
+        "entity": "TppPlayer2BlockControllerData",
+        "property": "instanceSettings_instancePackagePath",
+        "before": "/Assets/tpp/pack/player/game_object/two_players_game_obj.fpk",
+        "after": "/Assets/tpp/pack/player/game_object/mgs_coop_four_players_game_obj.fpk"
+      },
+      {
+        "entity": "TppPlayer2BlockControllerData",
+        "property": "instanceSettings_partsTypeNames",
+        "before": 2,
+        "after": 4
+      },
+      {
+        "entity": "TppPlayer2BlockControllerData",
+        "property": "instanceSettings_partsTypeInitial",
+        "before": 2,
+        "after": 4
+      }
+    ],
+    "source_package_sha256": "8c8e557bf2d8ccaec0450b27e6bfd81d53fd02c8e7f62d5d507b8f4b040b1efa",
+    "dynamite": {
+      "repository": "https://github.com/unknown321/dynamite",
+      "commit": "c90f252f8200765f66c005d6bf4357fda0c0d98e",
+      "controller_sha256": "384eda680b09408705debeb6c76f97d4ed929b44618107b92c4238a4ffb73ad8",
+      "license": "GPLv3 with Commons Clause v1.0; see LICENSE",
+      "modified_files": "Generated local controller XML: four parts entries/blocks, new package path and experimental doubled instance budget"
+    },
+    "installed": false,
+    "runtime_verified": false,
+    "limitations": [
+      "Instance memory budget scaling is an unverified hypothesis.",
+      "Additional parts, motion loading, engine session slots and mission integration remain unverified.",
+      "Binary round-trip validation does not establish live actor allocation.",
+      "Generated game-derived assets are local experimental data, not a release."
+    ]
+  },
+  "limitations": [
+    "Additional parts count 3 is a three-guest allocation hypothesis, not a measured engine requirement.",
+    "Instance memory budget remains the earlier unverified doubled value.",
+    "Shared motion budgets are preserved; sufficiency for four actors is unverified.",
+    "Archive mounting, precedence, mission selection, session slots and actor control remain unverified.",
+    "Only the controller FPK should be added to the mission list; it owns selection of the game-object package.",
+    "Local game-derived experiment only; not a distributable release."
+  ]
+}

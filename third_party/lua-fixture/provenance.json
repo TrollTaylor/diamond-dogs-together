@@ -1,0 +1,8 @@
+{
+  "product": "Lua 5.1.5",
+  "source": "https://www.lua.org/ftp/lua-5.1.5.tar.gz",
+  "archive_sha256": "2640FC56A795F29D28EF15E13C34A47E223960B0240E8CB0A82D9B0738695333",
+  "usage": "Local standalone test interpreter only; not linked or installed in MGSV",
+  "license": "MIT",
+  "license_file": "LICENSE.txt"
+}

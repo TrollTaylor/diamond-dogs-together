@@ -1,0 +1,51 @@
+{
+  "utc": "2026-09-09T20:58:34.5723133Z",
+  "exit": "Alt+F4 normal window-close request; process absent",
+  "backup": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\backups\\title-transition-20260909T205834Z",
+  "files": [
+    {
+      "name": "PERSONAL_DATA0",
+      "sha256": "FA2C41DD08DB1429FF082E20D9CF1F11D5B600FD8038510938873C659E980C8B",
+      "matchesBeforeSelection": true,
+      "backupMatches": true
+    },
+    {
+      "name": "PERSONAL_DATA1",
+      "sha256": "9E4B9877BE31BAAB6E77678EED28A95E1AD38FFD1F25DF322C20F326D99EB147",
+      "matchesBeforeSelection": true,
+      "backupMatches": true
+    },
+    {
+      "name": "TPP_CONFIG_DATA0",
+      "sha256": "5866A6F6F17B303CE7E5D2E2F1A25E6172F80B5DC50DE24121F1EF890AD98583",
+      "matchesBeforeSelection": true,
+      "backupMatches": true
+    },
+    {
+      "name": "TPP_CONFIG_DATA1",
+      "sha256": "5866A6F6F17B303CE7E5D2E2F1A25E6172F80B5DC50DE24121F1EF890AD98583",
+      "matchesBeforeSelection": true,
+      "backupMatches": true
+    },
+    {
+      "name": "TPP_GAME_DATA0",
+      "sha256": "959E130963D2C718CE181246E533F42D1A072AA9ED6A300AE9CE85847C23FE6B",
+      "matchesBeforeSelection": true,
+      "backupMatches": true
+    },
+    {
+      "name": "TPP_GAME_DATA1",
+      "sha256": "47F0C017091833624B45ED662F87A8D399C0D6A31D39AADDF18CBD51DA813C32",
+      "matchesBeforeSelection": true,
+      "backupMatches": true
+    },
+    {
+      "name": "TPP_GRAPHICS_CONFIG",
+      "sha256": "3C9A58DF12E5C2BE6AAFB600B086A11E0BC8FE2D50667F739DB24983705007C4",
+      "matchesBeforeSelection": true,
+      "backupMatches": true
+    }
+  ],
+  "loaderSha256": "94F32E3D47B1FEA90FFE299B9533C006C8D24BC8DB04DF5F1ACFCB67AEABAECE",
+  "nextMode": "archive-v1; player package disabled; same installed 0.8.0 loader"
+}

@@ -1,0 +1,2 @@
+#pragma once
+constexpr char session_feedback_source[] = R"MGSLUA(@MGS_SESSION_FEEDBACK_SOURCE@)MGSLUA";

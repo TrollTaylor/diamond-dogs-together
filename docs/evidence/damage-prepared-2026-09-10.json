@@ -1,0 +1,18 @@
+{
+  "utc": "2026-09-10T10:19:35.711809+00:00",
+  "source_version": "0.10.6",
+  "compiled_dll_sha256": "45CCA869EF30A94CBFE5725F63F439BDAEC33B20EFCD0BD1755E126CE64E8234",
+  "installed_version": "0.10.5",
+  "installed_dll_sha256": "5EE6B0DEA1B396E851F14D5F2332C7767A4DFA50749A7DAF7898139601221BA5",
+  "game_modified_this_turn": false,
+  "tests_run": false,
+  "game_launched": false,
+  "build_command": "tools/build.ps1 -Configuration Release -BuildOnly",
+  "build_log": "damage-build-only-2026-09-10.log",
+  "static_mapping": "damage-contract-2026-09-10.json",
+  "damage_source_sha256": "E88ED1E39FBB689BCDDB75AF115351245571ECF2A778675AB157D6C4023D0FA3",
+  "limitations": [
+    "No native damage execution or two-peer gameplay verified.",
+    "New build is not installed; prior 0.10.5 player-rule live test was interrupted."
+  ]
+}

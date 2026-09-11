@@ -1,0 +1,14 @@
+{
+  "utc": "2026-09-09T20:33:07.0679914Z",
+  "pid": 41584,
+  "loader": "0.8.0",
+  "marker": "players-v1",
+  "mission": 30050,
+  "selectionReceiptEntry": 142,
+  "ui": "Snake and D-Dog on foot at Mother Base Command Platform; Escape opened the pause menu; left paused",
+  "liveActorCountVerified": false,
+  "independentlyControlledPlayersVerified": false,
+  "saves": "Seven hashes match pretrial baseline; PERSONAL_DATA1 timestamp changed but hash identical",
+  "debuggerAttached": false,
+  "limitation": "Package selection plus scene continuation; FPK processing, allocation and multiplayer unverified"
+}

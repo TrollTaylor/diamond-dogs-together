@@ -1,0 +1,38 @@
+{
+  "utc": "2026-09-09T23:13:19.7451087Z",
+  "saves": [
+    {
+      "name": "PERSONAL_DATA0",
+      "matches": true
+    },
+    {
+      "name": "PERSONAL_DATA1",
+      "matches": true
+    },
+    {
+      "name": "TPP_CONFIG_DATA0",
+      "matches": true
+    },
+    {
+      "name": "TPP_CONFIG_DATA1",
+      "matches": true
+    },
+    {
+      "name": "TPP_GAME_DATA0",
+      "matches": true
+    },
+    {
+      "name": "TPP_GAME_DATA1",
+      "matches": true
+    },
+    {
+      "name": "TPP_GRAPHICS_CONFIG",
+      "matches": true
+    }
+  ],
+  "pid": 14496,
+  "installed_loader_sha256": "E7EDC9A04B544607510F547759D9F5008A2E494344DCCA6438AD44279A66507B",
+  "prepared_loader_sha256": "B5595BC2AF720E17F1089540109BF53CA44C3FC035BB9386173187AABDFDCCA6",
+  "game_changed": false,
+  "game_calls": false
+}

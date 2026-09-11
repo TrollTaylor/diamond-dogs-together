@@ -1,0 +1,109 @@
+# Four-player campaign design
+
+Status: proposed design, 2026-09-09. **No mission is implemented or verified for co-op.** The support register in `data/campaign-support.json` is a work and acceptance register, not a compatibility claim. Nothing in this document establishes that the engine can run four independent, fully interactive player actors in the campaign.
+
+This is an original mod design. Existing mods are not its implementation base or dependencies. Public game-script and identifier references below inform investigation of the installed game; their code is not copied into the proposed implementation.
+
+## The experience we are building
+
+One to four people should be able to start a new shared campaign together at the first playable hospital sequence, complete both chapters and all released endings, and keep playing the released missions, side ops, and Mother Base activities. Each connected player has their own input, camera, body, inventory, interaction requests, damage state, and useful role throughout playable sections. The squad shares one world, one set of enemies, and one campaign outcome.
+
+Snake remains the story protagonist. Outside scenes that require different appearances, guests play Diamond Dogs personnel. The hospital requires deliberately authored additional survivors and altered staging: that is a change to the presentation of the original story, and must be described as such. It cannot be achieved honestly by calling three watching clients “four-player co-op.” Players may watch the original noninteractive cinematics together; converting originally interactive gameplay into spectator footage fails acceptance.
+
+Scope includes the prologue, episodes 1–50, story-triggering side ops, base visits, travel, optional character arcs, chapter transitions, and the playable sections associated with endings. Mission numbers are labels, not a strictly linear unlock order. The mapping register uses the modding community's identifier research, whose documented origin is the game's episode registration table. Missing or unreleased content is a separate possible project, not required to finish the released campaign. [Mission code reference](https://mgsvmoddingwiki.github.io/MissionCodes/)
+
+## Shared campaign and progression
+
+Create a named co-op campaign owned by the host. Its initial state comes from a new campaign or an explicitly selected copy of an existing local campaign, once save isolation is proven. Do not modify any player's normal save during experimentation. A “separate slot” is a design requirement, not an assumption that the game exposes arbitrary slots. Until reliable redirection and restore have been demonstrated, require a backed-up test profile and disable progression writes.
+
+The host owns story flags, mission unlocks, base layout, staff, GMP, extracted resources, development, buddy recruitment/bonds, and campaign consequences. Guests receive a separate participation record and session loadout; their normal single-player story and economy are not merged. All players therefore advance the same shared campaign, but are not promised four independently updated single-player saves. A guest who returns later sees that campaign's current progress, with a visible recap and optional replay access.
+
+Use the campaign owner's unlocked equipment as the session ceiling. Let players choose roles without fixed classes: reconnaissance, infiltration, rescue, and heavy support are suggestions, and everyone can perform core actions. Allow saved team loadout presets. Only the campaign owner approves permanent staff dismissal, expensive development, nuclear/online decisions, and other base consequences; guests can inspect and propose. Extracted items are credited once to the shared campaign, never once per client.
+
+Every completion is a transaction with campaign ID, checkpoint epoch, mission code, attempt ID, and event ID. The host stages rewards and story changes, persists one complete record, then publishes the committed result. Replayed packets, a retry, or reconnect cannot grant rewards twice. Keep a recoverable previous checkpoint. A guest record is informational, not authority to rewrite the host's save. Do not claim crash-safe atomicity until interruption tests prove the actual game save and the mod's journal remain consistent.
+
+The original flow includes ACC deployment choices and mission rewards. The mod should preserve that rhythm, with a shared briefing and a ready check before deployment. [Konami: flow of the game](https://eu-support.konami.com/hc/en-gb/articles/9668194237719-The-Phantom-Pain-Flow-of-the-Game)
+
+## World, stealth, interaction, and difficulty
+
+The host simulates authoritative enemies, perception, suspicion, alarms, weather, clock, objective state, boss phases, damage, physics consequences, and extraction outcomes. Clients predict their own movement and presentation, then reconcile. Camera controls never change another player's camera or mission state.
+
+Detection must test every squad member. Seeing one person can alert a local guard or command post; it does not reveal every player's exact position. Radio escalation, searches, reinforcements, and persistent enemy adaptation are shared. Marking is shared with a visible source and age; a stale mark does not give live tracking unless a player can still observe the target. Give the squad ping, route drawing, ready signals, and proximity indicators, with subtitles that identify the speaker.
+
+Disable Reflex slow motion in the default co-op rules because independent time scales would break the shared world. A separately tested optional team Reflex rule could slow the whole encounter consistently. Opening iDroid or inventory does not pause the world; a unanimous pause is available when the encounter adapter supports it. Total Stealth variants fail on qualifying detection of any player. Subsistence restrictions apply to every member, including reconnecting players and requested supply drops.
+
+Exclusive actions use a short host-owned reservation: one person can carry a prisoner, occupy a seat, attach Fulton, interrogate a guard, disarm a mine, or claim a pickup at a time. Cancel or transfer reservations on interruption or disconnect. Two players who act in the same frame must get one outcome and clear feedback. A carried critical NPC remains in the world if its carrier disappears. Ordinary enemies and prisoners retain their original lethal/nonlethal consequences.
+
+Default friendly fire is off for direct teammate damage and teammate knockdown; explosive world effects still need consistent rules and testing. An optional full friendly-fire preset can be added later. Avoid multiplying every enemy's health by squad size. Start with original enemy health, then tune reinforcement budgets, supplies, detection coverage, and boss attack opportunities. Lock difficulty and balance settings for a mission attempt; report separate co-op ratings instead of publishing altered scores to official rankings.
+
+## Incapacitation and recovery
+
+Proposed starting values for playtesting: a downed player can crawl slowly for 45 seconds; a teammate revives them with a six-second uninterrupted action; a revive restores 35% health and grants two seconds of protection. These are tuning defaults, not implemented behavior. Damage from falls, deep water, scripts, or mandatory story failure may bypass the downed state and requires explicit adapter handling.
+
+A fully lost player returns at the next validated checkpoint or safe reinforcement window. Do not teleport a player out of a boss failure or materialize them behind an enemy during an active stealth encounter. If the whole squad is lost, restore the same committed checkpoint for everyone. A single downed player must not trigger the original single-player death sequence. Critical-NPC death still fails the mission when the original objective requires survival. Quarantine victims and scripted story deaths are not revivable teammates.
+
+## Buddies, vehicles, and extraction
+
+An empty human slot need not automatically become an AI buddy. Default four-human sessions omit the optional tactical buddy to control actor load and visual crowding. Smaller squads may select one compatible AI buddy once tested. Horses and vehicles are traversal assets with separately validated seat and spawn budgets. Story-required Quiet and other named characters remain present regardless of human count, and humans do not silently replace their recruitment, bond, or story triggers. The existing game selects and calls buddies through its mission flow; these adaptations need to preserve the relevant conditions. [Konami: tactical buddies](https://eu-support.konami.com/hc/en-gb/articles/9668972984727-The-Phantom-Pain-Tactical-Buddies)
+
+Seats have stable IDs, one occupant each, and a host-validated enter/exit transition. A vehicle cannot contain four people just because four clients render it. If a vehicle has insufficient usable seats, author additional validated vehicles or an alternate playable route. Helicopter arrival, landing, boarding, carried NPC loading, departure, and gun positions are separate states. A squadmate can board with a downed teammate only if carry and seat transitions work together.
+
+Extraction requires all living players and required NPCs aboard or in a validated extraction volume. An optional explicit “leave me behind” action can waive one player's requirement. A countdown alone must not silently abandon someone. Boarding begins a ready barrier; irreversible mission transitions occur once. A passenger cutscene cannot stand in for required independent gunner/escape gameplay.
+
+## Mission adapters and special sequences
+
+Every adapter needs an audited sequence graph: entry conditions, loaded blocks, controllable segments, cutscenes, role restrictions, objective triggers, failure conditions, checkpoints, and exits. Every original single-player predicate must be classified as ANY player, ALL active players, the designated story role, or a shared world condition. Changing every reference to `Player` into a generic “anyone” check is unsafe: it can skip scenes and progress objectives before everyone is ready.
+
+These are proposed adaptations, with exact trigger boundaries still requiring script inspection and in-game verification:
+
+| Segment | Playable adaptation | Acceptance blocker |
+| --- | --- | --- |
+| Prologue hospital and episode 46 | Snake plus three authored survivors, independent crawl/hide/move actions, reachable cover for everyone, coordinated door and floor transitions, shared pursuer state. Match temporary appearance and movement restrictions to each sequence. | Four people must act from the first controllable moment. Duplicated local solo simulations, blocked doorways, camera streaming, or waiting until Afghanistan do not pass. |
+| Hospital escape and any rail chase | Build enough real playable passenger/gunner/escape positions or a parallel authored escape route sharing hazards and progress. Roles must have meaningful input and may be reassigned only at safe boundaries. | No evidence yet that these positions/routes can be constructed. This is a major feasibility gate, not a promised easy patch. |
+| Episode 1 rescue and early tutorial | Give all players movement and traversal immediately; show contextual lessons individually; allow one player to carry the objective while others scout and cover. | Tutorials cannot wait for the wrong local player, credit four rescues, or strand three people on a single traversal asset. |
+| Episode 2 and base training | Shared base instance with individual tutorial acknowledgments. Keep the canonical NPC interaction exclusive while others perform equivalent exercises. | Completing one person's exercise must not soft-lock everyone else or multiply rewards. |
+| Quiet encounters, episodes 11/40 | One authoritative opponent with target selection across the squad and shared lethal/stamina state. The host commits the canonical post-battle choice after a clearly signaled squad discussion. | Independent boss simulations, repeated recruitment, and inconsistent spare/kill outcomes fail. |
+| Episode 12 escape and episodes 28/29/42/48 escorts or boss transitions | Keep one critical NPC, shared carry state, common boss phase, and enough playable extraction positions. Validate transitions while different players carry, fight, and board. | The host's local position alone cannot invalidate a guest's legitimate rescue or complete an escape early. |
+| Episode 20 supernatural encounter | Host controls phase changes, environmental interactions, and escape condition; every player can participate in the arena and retreat. | Encounter-specific immunity, visibility, and scripted failure require direct audit. |
+| Episode 22 platform retake | Treat this as a campaign encounter in the owner's shared base context. Maintain one defender/attacker/objective state and safe exits between platforms. | The existence of FOB multiplayer does not prove this campaign mission supports four friendly actors. |
+| Episodes 18/23/25 and other child or protected-NPC objectives | Shared escort ownership; nonlethal restrictions and critical-target protection must apply to every participant. One player performs an exclusive duel interaction while others remain involved through authored encounter roles. | An unexamined duel cannot be marked complete with three permanent spectators. Original objective and story consequences must be retained. |
+| Episode 30 scripted staging and vehicle ride | Infiltration remains four-player. For genuinely noninteractive dialogue, synchronize the scene for all; for controllable ride sections, supply meaningful validated passenger or escort roles. | Enumerate which portions actually accept input before choosing a cutscene rule. Do not assume the entire ride is noninteractive. |
+| Episodes 31/50 boss and aftermath | One boss, common weak-point state and attack phases, targets selected fairly across players, coordinated replenishment, and a single aftermath transition. | Client hits cannot deal damage twice; every required player action in the aftermath must have an explicit team policy. |
+| Episode 43 quarantine | Four controllable inspection-team members with shared infected-staff identities, room state, and irreversible decisions. Restricted equipment and inspection tools must work for each player. The protagonist's story framing remains synchronized. | This is a bespoke adapter. Treat staff losses as one campaign transaction; do not convert the mission into combat farming or revive story victims. |
+| Episode 45 and its prerequisite | Preserve the named story ally, shared assault waves, critical health, supply access, and the closing escape. Additional players take real field roles, not replacement copies of Quiet. | Buddy availability, forced equipment changes, travel, and closing interactive segments all require tests. |
+| Total Stealth / Subsistence / Extreme replays | Inherit the base adapter but separately audit variant restrictions, failure conditions, boss tuning, extraction, and rewards. | A base mission pass never automatically marks its replay variant verified. |
+
+The code reference distinguishes special start/extraction conditions and different locations for several of these missions, so a single free-roam spawn rule is insufficient. The hospital/Truth share the Cyprus location, while the quarantine and Quiet missions have distinct handling. This is evidence for adapter boundaries, not proof of four-player feasibility. [TppDefine source](https://github.com/TinManTex/mgsv-deminified-lua/blob/master/data1/Assets/tpp/script/lib/TppDefine.lua)
+
+## Cutscenes and story continuity
+
+Before a cinematic, the host announces the sequence ID and target epoch, settles critical interactions, and gathers ready acknowledgments. All clients load the same scene. The story lead occupies the canonical actor role; extra player actors are hidden or placed out of shot only for the duration of an originally noninteractive scene. Restore each player's equipment, damage, movement mode, and safe transform afterward.
+
+Skipping is unanimous on a first viewing for any participant; replay sessions may select a different lobby rule. A client finishes only on the host's scene-complete event. Late loaders and reconnecting players get a bounded recovery path, not an indefinite black screen. Cutscene-only scenes are acceptable because nobody originally controlled gameplay there. An interactive segment mislabeled a cutscene remains a release blocker.
+
+Base life is part of the campaign: include recruitment visits, buddy events, quarantines, development milestones, tapes, Paz-related visits, character departures, and post-ending states in the coverage inventory. Quest and story event prerequisites need their own dependency graph. The inspected story code explicitly advances through mission elapsed counters, side-op completion, checkpoint events, buddy conditions, and base demos. Do not unlock everything numerically or skip these events to make the mission menu look complete. [TppStory source](https://github.com/TinManTex/mgsv-deminified-lua/blob/master/data1/Assets/tpp/script/lib/TppStory.lua)
+
+FOB and official online economies stay outside the campaign session. Entering an official online activity ends or suspends co-op at a safe boundary. There is no automatic conversion of official invading/defending slots into campaign teammates. Konami documents FOB as its own online feature; that does not establish reusable campaign netcode. [Konami: Mother Base and FOBs](https://eu-support.konami.com/hc/en-gb/articles/9668830732823-The-Phantom-Pain-Mother-Base-FOBs)
+
+## Joining, leaving, Steam, and host loss
+
+Use Steam identity, invitations, lobbies, and an authenticated transport where the integration is actually available. A lobby is capped at four including the host. Compare executable fingerprint, mod/protocol version, content manifest, campaign ID, settings, and supported adapter before admitting a player. Reject mismatches with readable reasons. A successful invitation or packet exchange is not evidence of synchronized gameplay.
+
+A new player joins in the ACC, at a validated safe point, or at the next checkpoint. First transfer a host snapshot, install a stable entity-ID mapping, acknowledge critical state, then spawn once. Do not let a joining client's local mission initializer create duplicate enemies or reset objectives. Unsafe cinematic and rail phases show “joining at next safe point”; existing members must already have playable roles there. A reconnect resumes its reserved identity and inventory, rather than obtaining fresh supplies.
+
+If a guest leaves, release reservations, safely drop carried entities, and remove or park their actor using the adapter's policy. The remaining squad can continue when the encounter permits it. Reduce required-player barriers only through an explicit membership update so that a dropped connection cannot spoof mission completion.
+
+Initial host-loss behavior is stop and recover: freeze mod progression, preserve the last complete campaign checkpoint, return guests to the lobby, and permit the campaign owner to resume. No seamless host migration is promised. Transferring a Steam lobby owner alone cannot transfer mission authority or the original campaign save. Future host handoff requires an explicit campaign ownership/copy policy and proof against simultaneous hosts.
+
+## Evidence and release gates
+
+The data register lists all 51 released main entries individually. It also lists currently incomplete inventories for side ops, base events, travel, and endings. **Those incomplete inventories are release blockers.** Add child entries for every reachable event and original controllable sequence before making a start-to-finish claim. Unknown or missing entries must default to unsupported.
+
+1. Prove one host and one real remote player can independently move, see one another, interact with the same enemy, take authoritative damage, carry/extract one shared NPC, and restore one shared checkpoint in the campaign executable.
+2. Prove four actors, combat, streaming, vehicles, extraction, and reconnect on separate game instances and distinct Steam accounts. A four-socket local test does not pass this gate.
+3. Prove the first hospital sequence and one rail transition early. If this fails, full-campaign feasibility is unresolved even when open-world missions work.
+4. Implement and test all bespoke adapters, then ordinary missions and all replay variants. Include prerequisite side ops and base story transitions.
+5. Run a fresh four-person campaign through all released story conclusions. Repeat representative sequences with two and three players; run the whole campaign with checkpoint reloads and save/resume. Record any changed presentation.
+6. Validate latency, loss, reordering, simultaneous interactions, a late join, each guest disconnecting, host failure during a save, a full wipe, and a reconnect at every adapter boundary. Initial test targets are 0/50/150/250 ms round-trip latency and 0/1/3/5% loss; these are proposed test conditions, not measured support guarantees.
+
+A verified row requires exact build and content hashes, adapter revision, player count, machines/accounts used, trace/video references, checkpoint and save evidence, and remaining defects. Evidence must prove independent control and shared effects. Unit tests, a transport demo, a mission-name table, an opaque game-object ghost, or spectator mode cannot mark a mission supported. The community deminification repository itself cautions that it contains manual reconstruction and modifications; verify candidate hooks against the installed build before relying on them. [Source provenance](https://github.com/TinManTex/mgsv-deminified-lua)

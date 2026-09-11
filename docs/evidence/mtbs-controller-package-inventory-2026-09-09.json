@@ -1,0 +1,434 @@
+{
+  "archive_precedence_resolved": false,
+  "game_writes": false,
+  "missing": [],
+  "packages": [
+    {
+      "archive": "chunk3.dat",
+      "path": "/Assets/tpp/pack/mission2/free/f30050/f30050.fpkd",
+      "sha256": "3b38bdb7cc8d1de21d76fea8064ed097d9164038af548a5d9dc090225fccdb49",
+      "saved_as": "package-00.fpkd",
+      "entries": [
+        {
+          "path": "/Assets/tpp/ui/Subtitles/boot/f30050_subtitles_boot.fox2",
+          "sha256": "5f62343d24778da0f09b6758ad1fa4b017e1eba5e96fcc0975a7adf0d9f87bda",
+          "xml": "package-00-entry-000.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/ui/GraphAsset/entry_datas/music_telop.fox2",
+          "sha256": "396cf1f88dce010433f225a51d31c2d5905ef19f3144fc6b424cc2fb5f2606f5",
+          "xml": "package-00-entry-001.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level_asset/chara/player/game_object/single_player2_instance.fox2",
+          "sha256": "dc38ce424736be69765660d077c05cd7329e00bab50bdb58e1817298f5ab4f1d",
+          "xml": "package-00-entry-002.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level_asset/chara/player/game_object/player2_vram_motion_loader.fox2",
+          "sha256": "1078d55bcd1d95da3500f0ace31504a85971f98fcd4aaa90b5a0737ec83daf6f",
+          "xml": "package-00-entry-003.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level_asset/chara/player/game_object/player2_pipe_motion.fox2",
+          "sha256": "fc9dfb86d95c1c3ca867a6181fc1bfba640b0b7f861055e4658083b9fd86c505",
+          "xml": "package-00-entry-004.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level_asset/chara/heli/support_heli_mtbs.fox2",
+          "sha256": "ee76ece90bd7630c16e3174ef98438306e37325442117f0a2f4929be3903bedc",
+          "xml": "package-00-entry-005.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level/mission2/free/f30050/f30050_trap.fox2",
+          "sha256": "e20dd0aa64714ce4ea1b897c343f81e8394dd76b52c7b25127b4e89e5578dd79",
+          "xml": "package-00-entry-006.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level/mission2/free/f30050/f30050_sound_se.fox2",
+          "sha256": "0712ac7cb5a821c846f8256669a18b0798d8cf0113c407b67e9a1b7c7945dc45",
+          "xml": "package-00-entry-007.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level/mission2/free/f30050/f30050_sound_music.fox2",
+          "sha256": "4f36f375d97ea914bf8ece8e25fc79f971fb13e22d9b4702249b822ba3220a45",
+          "xml": "package-00-entry-008.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level/mission2/free/f30050/f30050_sequence.fox2",
+          "sha256": "66f818e2f9e257696692c89cb58a202b290158d4123a08ef08fae76a2a7fe871",
+          "xml": "package-00-entry-009.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level/mission2/free/f30050/f30050_radio.fox2",
+          "sha256": "5d3db588817b6fef287c3167381d380debecdaa7cac962904bc4a83123238dd9",
+          "xml": "package-00-entry-010.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level/mission2/free/f30050/f30050_npc.fox2",
+          "sha256": "a422179d39a1f5aa3ff540440c7511fe30a00a3dc98d1ace9632403376a32688",
+          "xml": "package-00-entry-011.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level/mission2/free/f30050/f30050_marker.fox2",
+          "sha256": "f1a6f7ea6bc7f7904ee6bcd1f8fb595a333e9ab391411dc078c96b1a89c2b1b5",
+          "xml": "package-00-entry-012.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level/mission2/free/f30050/f30050_item.fox2",
+          "sha256": "7fdf0ee39a2068ccb24ad518b2fa3483bd43655658cc0738277fa78496f7a2ac",
+          "xml": "package-00-entry-013.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level/mission2/free/f30050/f30050_heli.fox2",
+          "sha256": "385eb9131acf55c86bde89496cb3297558a737c5f2d2ba43a4bdb366ae7dbb56",
+          "xml": "package-00-entry-014.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level/mission2/free/f30050/f30050_collectible.fox2",
+          "sha256": "ebeeadc5ddcf056238f994627b3a5893bbc62705546705869f99fdb977c86e14",
+          "xml": "package-00-entry-015.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/parts/mecha/plv/plv0_main0_def.parts",
+          "sha256": "58fb05d71c201d6eab30d1bd577a16253d95968664deaa1891ba5800acd1aea6"
+        },
+        {
+          "path": "/Assets/tpp/effect/vfx_data/weapon/fx_tpp_wepltb04_s0.vfx",
+          "sha256": "5a7fc0d20d060a78494cc85f55ab89a7a70312b6ce7f4d141da65e6a6a1bc9ee"
+        },
+        {
+          "path": "/Assets/tpp/effect/vfx_data/smoke/fx_tpp_smkflr01_m1.vfx",
+          "sha256": "c93dccd58c43a2282627c3ba72c97f992bd09c5587773c6dc8167a2347811e23"
+        },
+        {
+          "path": "/Assets/tpp/effect/vfx_data/muzzle/fx_tpp_mzfrpg01_s0MG.vfx",
+          "sha256": "78572ad56d10962894859037dc18ab0a9eeac477a2ed2b54b0c252fdf58a7fa7"
+        },
+        {
+          "path": "/Assets/tpp/effect/vfx_data/muzzle/fx_tpp_mzfgg01_s0FG.vfx",
+          "sha256": "16e6e9ed6a4b1f07d9cc14bfb5092f482805cc8f3c7c5bf5853c34d6db50b88c"
+        },
+        {
+          "path": "/Assets/tpp/effect/vfx_data/muzzle/fx_tpp_mzfbkfrpg01_s0MG.vfx",
+          "sha256": "83799177b22ab0e98570f6a5f2a9a1f59f0e1a99b5d675f86756b6232c2af37b"
+        },
+        {
+          "path": "/Assets/tpp/effect/vfx_data/mecha/fx_tpp_mchuthdnwblr01d_s5MG.vfx",
+          "sha256": "7142d3a0b0289a939c4bde2d533713c40eee14187ed2f413c16a7aadf8084057"
+        },
+        {
+          "path": "/Assets/tpp/effect/vfx_data/mecha/fx_tpp_mchuthdnwblr01_s5MG.vfx",
+          "sha256": "0486f64ac37938505043064756b1c884228c0c16b4cea10cf99493c47d5b66d1"
+        },
+        {
+          "path": "/Assets/tpp/effect/vfx_data/mecha/fx_tpp_mchuthblh00_s3.vfx",
+          "sha256": "b2b256bb72213dbc499f7a43fe87156313d9d899b7704ab7bb2a95f7de7c8e37"
+        },
+        {
+          "path": "/Assets/tpp/effect/vfx_data/mecha/fx_tpp_mchnadblhsmk00_s1.vfx",
+          "sha256": "3b78ed9340aa248a62d336991a111ac7dce07c00efe6bd24ebea5850aa204f66"
+        },
+        {
+          "path": "/Assets/tpp/effect/vfx_data/mecha/fx_tpp_mchlpbplv00_s5MD.vfx",
+          "sha256": "d8162fa405307ccf813bf6bf6dbe201a5a996657e4f0a1be7662710a971235d4"
+        },
+        {
+          "path": "/Assets/tpp/effect/vfx_data/flare/fx_tpp_flrmchsrclgt01flr_m5.vfx",
+          "sha256": "23ef7d5d3f8c4076e77381eb0df9a094aeb6e7ee8c953d156326c0f374bbfa0e"
+        },
+        {
+          "path": "/Assets/tpp/effect/vfx_data/flare/fx_tpp_flrmchsrclgt01_m5MG.vfx",
+          "sha256": "e17ae98897fd068056c601d1acf132fc7912f0ad601915231b525eb641739f0f"
+        },
+        {
+          "path": "/Assets/tpp/effect/vfx_data/explosion/fx_tpp_expmch03_m2.vfx",
+          "sha256": "086febce1d45140ab1dc7a1bb98b64373a0c5e4011e383cb7934cd7441fd2280"
+        },
+        {
+          "path": "/Assets/tpp/effect/vfx_data/flare/fx_tpp_flrlnslgt15_s2VG.vfxlf",
+          "sha256": "44474097983106bd61a0d48ba3dad395dc028c46d047d392581b0a95b3895a28"
+        },
+        {
+          "path": "/Assets/tpp/parts/mecha/plv/plv.veh",
+          "sha256": "7a6678f5efba5919fa9b4b6e34d426bf0ff70c98ce451264ca9af65c6d1273b1"
+        },
+        {
+          "path": "/Assets/tpp/parts/mecha/plv/plv_defense_target.tgt",
+          "sha256": "a794e481ed76982386cc8f30b5775484cf7087a5baa691735f0cbc76c3cd8ae2"
+        },
+        {
+          "path": "/Assets/tpp/parts/mecha/plv/plv.phsd",
+          "sha256": "0bc0c6479db8335841b77776e877669e0fd9c43d913c6240728abf96c00853d1"
+        },
+        {
+          "path": "/Assets/tpp/parts/mecha/plv/plv.ph",
+          "sha256": "b2028a4698970b66f7d298c40c71f4eb4fde0c5df0d4a02ab933b9f0d2529933"
+        },
+        {
+          "path": "/Assets/tpp/sound/package/vox_f30050.sdf",
+          "sha256": "62876128c5d10a145673bfb766bc6d2d55db076d6cdb119b8fdfae19e3be80d2"
+        },
+        {
+          "path": "/Assets/tpp/sound/package/vehicle_plv_media.sdf",
+          "sha256": "d35cb1ef5f40f5f726a30a199d9fd2fe9cf487e5b6bdd837c7a171f39ef1b6ef"
+        },
+        {
+          "path": "/Assets/tpp/sound/package/bgm_mtbs_phase.sdf",
+          "sha256": "40101241d8633db4e776a0c2d1637b97045d78924c4c66fa1150c9c8a3747d79"
+        },
+        {
+          "path": "/Assets/tpp/script/mission/mission_main.lua",
+          "sha256": "87b111f760691e52e2b6a0b39658d2bc1947d53d8c0cd1b292b0736321b97d60"
+        },
+        {
+          "path": "/Assets/tpp/level/mission2/story/s10070/npc_block.lua",
+          "sha256": "f669c6cbbef39e46d6dd7bd1edfe9735727eb1186c50c7ebfea757eab50e5120"
+        },
+        {
+          "path": "/Assets/tpp/level/mission2/free/f30050/f30050_sound.lua",
+          "sha256": "d02c2be21dd63f19f12a28c0ff0f901813f7cb4e290802c71b7784a9a55b7966"
+        },
+        {
+          "path": "/Assets/tpp/level/mission2/free/f30050/f30050_sequence.lua",
+          "sha256": "08ce06a35b8f8561b7de9dd7e7dabba8292c118af1d2ae1ded1db2085201bc28"
+        },
+        {
+          "path": "/Assets/tpp/level/mission2/free/f30050/f30050_radio.lua",
+          "sha256": "3e0397c2cfeb35c0ea55c5edc5467a5c386b45bae22a862bbe6d429f91b8b4ab"
+        },
+        {
+          "path": "/Assets/tpp/level/mission2/free/f30050/f30050_enemy.lua",
+          "sha256": "9dfdcbbf7bc89d132955ef8599c4508ede72e317cc662be53b9aa1c79f17e220"
+        },
+        {
+          "path": "/Assets/tpp/level/mission2/free/f30050/f30050_demo.lua",
+          "sha256": "27417478583d848cb6eb8eac2d31154210c86d17808d9fee6380ba1a34928eb9"
+        }
+      ],
+      "references": null
+    },
+    {
+      "archive": "chunk3.dat",
+      "path": "/Assets/tpp/pack/mission2/free/f30050/f30051.fpkd",
+      "sha256": "d209e49e21ae16efc31a07872ec2f6c0a0c26628742aad650701413eec004afd",
+      "saved_as": "package-01.fpkd",
+      "entries": [
+        {
+          "path": "/Assets/tpp/ui/Subtitles/boot/f30050_subtitles_boot.fox2",
+          "sha256": "de127c1b303023d4ec8ffea6c02a697f462acee14171e17827c49ef0a42e8237",
+          "xml": "package-01-entry-000.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/ui/GraphAsset/entry_datas/nuke_countdown.fox2",
+          "sha256": "60eece7f6e90f64dedffe383753a272cc00cd5f9ea0eb3998228b9eef4ae34bc",
+          "xml": "package-01-entry-001.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level_asset/chara/player/game_object/single_player2_instance.fox2",
+          "sha256": "f457c0899eb0af03425d11319a40e0ea578294af30dec556ee82d3c34d4183e2",
+          "xml": "package-01-entry-002.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level_asset/chara/player/game_object/player2_vram_motion_loader.fox2",
+          "sha256": "11c21f9afb95c57ac2ecca4a6e30a7b05fde70310c2b326a4e7d7acdf8a8b161",
+          "xml": "package-01-entry-003.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level_asset/chara/player/game_object/player2_pipe_motion.fox2",
+          "sha256": "7ddfd9780027f9d9729242efae65c535b81979f4a0a9ff41b5849b4c74d7726b",
+          "xml": "package-01-entry-004.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level_asset/chara/heli/support_heli_mtbs.fox2",
+          "sha256": "e85182fab8178b7d93300e7097c427eead9da2d4b8fe9a92a39231b025cf610c",
+          "xml": "package-01-entry-005.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level/mission2/free/f30050/f30051_sequence.fox2",
+          "sha256": "8ea0cd73be9e8f5da02686a769377434c96a86484f3fd1517aff34432974365d",
+          "xml": "package-01-entry-006.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level/mission2/free/f30050/f30050_sound_se.fox2",
+          "sha256": "0d51be13a64596b88591e90582ddc120cbcf0354efb5bac3ea2e5404f9e49c0c",
+          "xml": "package-01-entry-007.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level/mission2/free/f30050/f30050_sound_music.fox2",
+          "sha256": "ef02000d825f2badaae83b3f4681a86186fcf3bfb294a2a411053533d2fece37",
+          "xml": "package-01-entry-008.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level/mission2/free/f30050/f30050_marker.fox2",
+          "sha256": "abf0d77738f93383c5b31f2b9f7af46fea66a3be82abede89945f385c728d211",
+          "xml": "package-01-entry-009.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level/mission2/free/f30050/f30050_item.fox2",
+          "sha256": "f8253c8880b6992dcc70ab61422fb7a14144b85a3a8719563f903c98efa0ae88",
+          "xml": "package-01-entry-010.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level/mission2/free/f30050/f30050_heli.fox2",
+          "sha256": "eec1654cd4ae0bad9e324e4d0800f34cdb444617348b31564ace9132516d0329",
+          "xml": "package-01-entry-011.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/parts/mecha/plv/plv0_main0_def.parts",
+          "sha256": "4e6290b2d44f30e224f57f27f4b99ee956f33d7e1e391beb46e8513acb0edfde"
+        },
+        {
+          "path": "/Assets/tpp/effect/vfx_data/weapon/fx_tpp_wepltb04_s0.vfx",
+          "sha256": "5a7fc0d20d060a78494cc85f55ab89a7a70312b6ce7f4d141da65e6a6a1bc9ee"
+        },
+        {
+          "path": "/Assets/tpp/effect/vfx_data/smoke/fx_tpp_smkflr01_m1.vfx",
+          "sha256": "c93dccd58c43a2282627c3ba72c97f992bd09c5587773c6dc8167a2347811e23"
+        },
+        {
+          "path": "/Assets/tpp/effect/vfx_data/muzzle/fx_tpp_mzfrpg01_s0MG.vfx",
+          "sha256": "78572ad56d10962894859037dc18ab0a9eeac477a2ed2b54b0c252fdf58a7fa7"
+        },
+        {
+          "path": "/Assets/tpp/effect/vfx_data/muzzle/fx_tpp_mzfgg01_s0FG.vfx",
+          "sha256": "16e6e9ed6a4b1f07d9cc14bfb5092f482805cc8f3c7c5bf5853c34d6db50b88c"
+        },
+        {
+          "path": "/Assets/tpp/effect/vfx_data/muzzle/fx_tpp_mzfbkfrpg01_s0MG.vfx",
+          "sha256": "83799177b22ab0e98570f6a5f2a9a1f59f0e1a99b5d675f86756b6232c2af37b"
+        },
+        {
+          "path": "/Assets/tpp/effect/vfx_data/mecha/fx_tpp_mchuthdnwblr01d_s5MG.vfx",
+          "sha256": "7142d3a0b0289a939c4bde2d533713c40eee14187ed2f413c16a7aadf8084057"
+        },
+        {
+          "path": "/Assets/tpp/effect/vfx_data/mecha/fx_tpp_mchuthdnwblr01_s5MG.vfx",
+          "sha256": "0486f64ac37938505043064756b1c884228c0c16b4cea10cf99493c47d5b66d1"
+        },
+        {
+          "path": "/Assets/tpp/effect/vfx_data/mecha/fx_tpp_mchuthblh00_s3.vfx",
+          "sha256": "b2b256bb72213dbc499f7a43fe87156313d9d899b7704ab7bb2a95f7de7c8e37"
+        },
+        {
+          "path": "/Assets/tpp/effect/vfx_data/mecha/fx_tpp_mchnadblhsmk00_s1.vfx",
+          "sha256": "3b78ed9340aa248a62d336991a111ac7dce07c00efe6bd24ebea5850aa204f66"
+        },
+        {
+          "path": "/Assets/tpp/effect/vfx_data/mecha/fx_tpp_mchlpbplv00_s5MD.vfx",
+          "sha256": "d8162fa405307ccf813bf6bf6dbe201a5a996657e4f0a1be7662710a971235d4"
+        },
+        {
+          "path": "/Assets/tpp/effect/vfx_data/flare/fx_tpp_flrmchsrclgt01flr_m5.vfx",
+          "sha256": "23ef7d5d3f8c4076e77381eb0df9a094aeb6e7ee8c953d156326c0f374bbfa0e"
+        },
+        {
+          "path": "/Assets/tpp/effect/vfx_data/flare/fx_tpp_flrmchsrclgt01_m5MG.vfx",
+          "sha256": "e17ae98897fd068056c601d1acf132fc7912f0ad601915231b525eb641739f0f"
+        },
+        {
+          "path": "/Assets/tpp/effect/vfx_data/explosion/fx_tpp_expmch03_m2.vfx",
+          "sha256": "086febce1d45140ab1dc7a1bb98b64373a0c5e4011e383cb7934cd7441fd2280"
+        },
+        {
+          "path": "/Assets/tpp/effect/vfx_data/flare/fx_tpp_flrlnslgt15_s2VG.vfxlf",
+          "sha256": "94a8dbf097b169f6bcdc127d33475aa776f65b3b61ce411f812e59b579ca740c"
+        },
+        {
+          "path": "/Assets/tpp/parts/mecha/plv/plv.veh",
+          "sha256": "22c13b52df84472d0a9b2e6acc5806df00711a5dbe2f209bf71b6d6bfb8e854a"
+        },
+        {
+          "path": "/Assets/tpp/parts/mecha/plv/plv_defense_target.tgt",
+          "sha256": "c9809be14cdcff962da81a10d409b93c811370c7d7bbd2feb15f93090d948fb0"
+        },
+        {
+          "path": "/Assets/tpp/parts/mecha/plv/plv.phsd",
+          "sha256": "2689507dd220d5ed57be218ad06d89a4a4b627cd4789cb6d603729a9be912a77"
+        },
+        {
+          "path": "/Assets/tpp/parts/mecha/plv/plv.ph",
+          "sha256": "c83ff2d1d3de038ba8b0d00c3e73841c8d23a56269b9a313d9fa7f9fff8f2c62"
+        },
+        {
+          "path": "/Assets/tpp/sound/package/vox_f30050.sdf",
+          "sha256": "3272cc6d938147f77c0321ea3acbd46fc10c5230989e4f8d2e4337b9048b700a"
+        },
+        {
+          "path": "/Assets/tpp/sound/package/vehicle_plv_media.sdf",
+          "sha256": "541cb0134dd995489fae99fb74739d1311cace7ee565c5e746958587f77d9a23"
+        },
+        {
+          "path": "/Assets/tpp/sound/package/bgm_mtbs_phase.sdf",
+          "sha256": "c6d15a16090be72291b5ba2cb24607183d15759bcdea2fbe5b1004e4ce655ce7"
+        },
+        {
+          "path": "/Assets/tpp/script/mission/mission_main.lua",
+          "sha256": "87b111f760691e52e2b6a0b39658d2bc1947d53d8c0cd1b292b0736321b97d60"
+        },
+        {
+          "path": "/Assets/tpp/level/mission2/free/f30050/f30050_sound.lua",
+          "sha256": "d02c2be21dd63f19f12a28c0ff0f901813f7cb4e290802c71b7784a9a55b7966"
+        },
+        {
+          "path": "/Assets/tpp/level/mission2/free/f30050/f30050_sequence.lua",
+          "sha256": "08ce06a35b8f8561b7de9dd7e7dabba8292c118af1d2ae1ded1db2085201bc28"
+        },
+        {
+          "path": "/Assets/tpp/level/mission2/free/f30050/f30050_radio.lua",
+          "sha256": "3e0397c2cfeb35c0ea55c5edc5467a5c386b45bae22a862bbe6d429f91b8b4ab"
+        },
+        {
+          "path": "/Assets/tpp/level/mission2/free/f30050/f30050_enemy.lua",
+          "sha256": "9dfdcbbf7bc89d132955ef8599c4508ede72e317cc662be53b9aa1c79f17e220"
+        },
+        {
+          "path": "/Assets/tpp/level/mission2/free/f30050/f30050_demo.lua",
+          "sha256": "27417478583d848cb6eb8eac2d31154210c86d17808d9fee6380ba1a34928eb9"
+        }
+      ],
+      "references": null
+    },
+    {
+      "archive": "chunk3.dat",
+      "path": "/Assets/tpp/pack/location/mtbs/mtbs.fpkd",
+      "sha256": "ae9ba99d61d87346b8900c54651693ab77c9fd96b1e2ae378513f5b174d687ed",
+      "saved_as": "package-02.fpkd",
+      "entries": [
+        {
+          "path": "/Assets/tpp/ui/Subtitles/boot/result_option_subtitles_boot.fox2",
+          "sha256": "ab6ec700ee0ea07534383f41784867991fefab2ea4457503124fdcd28c66b3ba",
+          "xml": "package-02-entry-000.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level_asset/common/tpp_col_blockcontroller.fox2",
+          "sha256": "2fe5dfad3d7f38b78e4353d5f300206c232b2c8974d2ba0644c41df1c4a90749",
+          "xml": "package-02-entry-001.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level_asset/common/additional_searchable_light.fox2",
+          "sha256": "3f4fe4d04d84e6531f9cb85a2dccd3abeebb32e1614a7b7a6ab27d3b23bf4989",
+          "xml": "package-02-entry-002.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level_asset/chara/player/game_object/player2_additional_parts_x1.fox2",
+          "sha256": "0e1da2ef90f1c60c16737fb8be4642190b94a7f5b7f48b2426e6a0f292edfcef",
+          "xml": "package-02-entry-003.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level/location/mtbs/mtbs_mission.fox2",
+          "sha256": "b7fec17f73b45c884c0feca89420413ed35250f1a97d89846a9c8c011643ef6b",
+          "xml": "package-02-entry-004.fox2.xml"
+        },
+        {
+          "path": "/Assets/tpp/level/location/mtbs/mtbs_location.fox2",
+          "sha256": "f34e19b1b8f1b7f71c6a9a034a21efd6aab935a1611f143446bbd512032867b2",
+          "xml": "package-02-entry-005.fox2.xml"
+        }
+      ],
+      "references": null
+    }
+  ],
+  "runtime_allocation_verified": false,
+  "tool_dependency_commit": "298affd0aaa3e9342e67c0c179f286719e034a28"
+}

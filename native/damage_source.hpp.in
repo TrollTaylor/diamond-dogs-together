@@ -1,0 +1,3 @@
+#pragma once
+inline constexpr char damage_parameters_source[]=R"MGS_DAMAGE(@MGS_DAMAGE_PARAMETERS_SOURCE@)MGS_DAMAGE";
+inline constexpr char damage_lifecycle_source[]=R"MGS_DAMAGE(@MGS_DAMAGE_LIFECYCLE_SOURCE@)MGS_DAMAGE";

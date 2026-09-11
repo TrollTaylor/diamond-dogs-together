@@ -1,0 +1,2 @@
+#pragma once
+constexpr char equipment_loading_source[] = R"MGSCOOP(@MGS_EQUIPMENT_LOADING_SOURCE@)MGSCOOP";

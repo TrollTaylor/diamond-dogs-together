@@ -1,0 +1,82 @@
+[
+  {
+    "name": "setter-fixture-local",
+    "run": "37d752b3506c4f1b952919d5c4de6a3c"
+  },
+  {
+    "name": "setter-fixture-indexed",
+    "run": "8a37cbf538224dc693de97245a1a31c3"
+  },
+  {
+    "name": "setter-fixture-wrong-bytes",
+    "run": "2d081927447142c18811a0ea8b6c744a"
+  },
+  {
+    "name": "setter-fixture-no-hit",
+    "run": "205c009570554ee2b72c1690e9e2bca5"
+  },
+  {
+    "name": "write-fixture-local",
+    "run": "695c4254b8864fcc8629be33b61fa4fe"
+  },
+  {
+    "name": "write-fixture-wrong-bytes",
+    "run": "f7e9f5e274ab432fb7832619e5491484"
+  },
+  {
+    "name": "write-fixture-no-hit",
+    "run": "43354e6e264d4cbb863f3fb635e477d4"
+  },
+  {
+    "name": "filtered-fixture-local",
+    "run": "3741a46f92054ac49cb589496da7bcb4"
+  },
+  {
+    "name": "filtered-fixture-indexed",
+    "run": "4b7748a324af47faad1e74fc1fe0984b"
+  },
+  {
+    "name": "filtered-fixture-wrong-bytes",
+    "run": "11d3e76bda504a32a2afa0090bf24515"
+  },
+  {
+    "name": "filtered-fixture-no-hit",
+    "run": "1f3b0e07d5204d0fbd6db3cc4b56cfbe"
+  },
+  {
+    "name": "filtered-fixture-copy-limit",
+    "run": "66884f2999e4425da10b74ab0ed6853a"
+  },
+  {
+    "name": "game-setters-paused",
+    "run": "434bf06e528e4e2582c6e8c3c9c4846b"
+  },
+  {
+    "name": "game-setters-stationary",
+    "run": "173a3082fbd44bd9b9dda2e433d2dc81"
+  },
+  {
+    "name": "game-setters-missed-motion",
+    "run": "3e25a45bab064b5d9c9b272032d76ab4"
+  },
+  {
+    "name": "game-write-command-length-failure",
+    "run": "0d677d765e104e98ba4862abce3426a1"
+  },
+  {
+    "name": "game-bank-copy",
+    "run": "0a6a4f81fbdb44e5a1ec5e6979994b4e"
+  },
+  {
+    "name": "game-filtered-paused-limit",
+    "run": "349440d33dc04187a131a6740726c7d5"
+  },
+  {
+    "name": "game-record-writer-first",
+    "run": "cbebb4c279de4b5ca9f711a6422bd960"
+  },
+  {
+    "name": "game-record-writer-owner-registers",
+    "run": "836b6b780b044c68997cb93edc81f0aa"
+  }
+]

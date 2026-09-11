@@ -1,0 +1,19 @@
+{
+  "utc": "2026-09-09T21:24:21.0105321Z",
+  "target_pid": 32080,
+  "target_started_utc": "2026-09-09T21:10:42.5075443Z",
+  "executable_sha256": "085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45",
+  "armed": true,
+  "entry_count": 0,
+  "entries": [],
+  "aborted": false,
+  "deadline_detached": true,
+  "debugger_exit": 0,
+  "debug_log": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\block-observation-59ffed0398464a37a09736426e5d7ef3\\debugger.log",
+  "target_still_running": true,
+  "capture_valid": false,
+  "game_calls": false,
+  "data_writes": false,
+  "hardware_breakpoints": true,
+  "limitation": "One natural counter comparison; block identity and allocation owner are not established."
+}

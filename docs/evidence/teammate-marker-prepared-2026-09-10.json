@@ -1,0 +1,36 @@
+{
+  "utc": "2026-09-10T13:56:51.452890+00:00",
+  "source_version": "0.10.26",
+  "compiled_dll_sha256": "D60F5B90695273A62BD5C910B8E5373A701A098E5522EB6A7062980B846395C9",
+  "installed_version": "0.10.5",
+  "installed_dll_sha256": "5EE6B0DEA1B396E851F14D5F2332C7767A4DFA50749A7DAF7898139601221BA5",
+  "executable_sha256": "085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45",
+  "game_modified_this_turn": false,
+  "tests_run": false,
+  "lua_executed": false,
+  "source_transform_executed": false,
+  "game_launched": false,
+  "vm_launched": false,
+  "build_command": "tools/build.ps1 -Configuration Release -BuildOnly",
+  "build_log": "teammate-marker-build-only-2026-09-10.log",
+  "static_mapping": "teammate-marker-contract-2026-09-10.json",
+  "changed_code_sha256": {
+    "native/teammate_marker_patch.cpp": "2F22CDFE187CADEE847699A785F8D7C7B4C17518C10B9503CE84173F2CC516C7",
+    "native/include/mgscoop/teammate_marker_patch.hpp": "413F4BF6290DC3E9FDB7B244576F76B5B467B55A1B1095F508406703615BC3BA",
+    "native/teammate_marker_contract.hpp": "DE1496423E096E5B35278279EF494A82B12A935C7647C149A6396D2B1AE6DAF0",
+    "tools/generate_teammate_marker_contract.py": "377AB1F77F40804874673360642E285BC81783A0FF0C049917D757BB40FF71E0",
+    "native/host_session_trial.cpp": "34F5257173EE84867C3D0C661B3122FAFC4CA4B2BBEDE8B7267063CD39F04935",
+    "CMakeLists.txt": "8D24CD3EFE4D8DDCC26B46075A58E9CD4D45F7C144F2A6E85826D976C61CE85E",
+    "native/probe.cpp": "4AE7B5E11BB438874264D253A4E26684DC8374E1D06677F2F0B3C45C12D494F2",
+    "native/game_script_observer.cpp": "EE9C67A47C9D9386A5024F00255A2ADFC60DE90C6D30EB91085755E0FED7E071",
+    "tools/probe.ps1": "9F6E9CE8047EB69E35A424D6F7ADE737FADB2D59D0BEAA4B0B727578D4E3B74E",
+    "tools/set-session-mode.ps1": "898EAE880B076EEB04A4F088ECD688C6A0A890BD83E9D58549B0814BC4717D90"
+  },
+  "limitations": [
+    "Compilation and static disassembly only; no rendered teammate icon or in-game behavior verified.",
+    "Existing native marker required; no marker creation, lifetime extension or supplementary synchronization.",
+    "Original converter record updates are preserved; exact type equality leaves modified marker results unchanged.",
+    "Climbing-state and path-result fallback mappings remain unresolved.",
+    "No connected guest, independent control or shared combat verified."
+  ]
+}

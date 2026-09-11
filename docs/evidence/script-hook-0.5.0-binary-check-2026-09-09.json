@@ -1,0 +1,14 @@
+[
+  {
+    "Path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgsvtpp.exe",
+    "Hash": "085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45"
+  },
+  {
+    "Path": "D:\\Games\\steamapps\\common\\MGS_TPP\\steam_api64.dll",
+    "Hash": "08BD0152356E5619EE56A6714AC951B6800DBB21821693A4EFAF85278442C60A"
+  },
+  {
+    "Path": "D:\\Games\\steamapps\\common\\MGS_TPP\\dinput8.dll",
+    "Hash": "B2E65778F134693C46E5C78011FCE8D39ADFA403782A9532498390322F7BF3B2"
+  }
+]

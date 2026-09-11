@@ -1,0 +1,28 @@
+{
+  "utc": "2026-09-10T12:18:55.997395+00:00",
+  "source_version": "0.10.17",
+  "compiled_dll_sha256": "EAC478A2EF8880526C026C021D36E681ED4425A5CA69278CB64B7B7F53BB4A56",
+  "installed_version": "0.10.5",
+  "installed_dll_sha256": "5EE6B0DEA1B396E851F14D5F2332C7767A4DFA50749A7DAF7898139601221BA5",
+  "game_modified_this_turn": false,
+  "tests_run": false,
+  "lua_executed": false,
+  "game_launched": false,
+  "build_command": "tools/build.ps1 -Configuration Release -BuildOnly",
+  "build_log": "cleanup-retry-build-only-2026-09-10.log",
+  "changed_code_sha256": {
+    "native/player_team_patch.cpp": "A34B3B9E2D093F62608A2DB1666A05F4DED2751FA13BE63516A98689C652A485",
+    "native/include/mgscoop/player_team_patch.hpp": "BF8146A473DC8AE5C53C944A75495F6ED0C3357DE0B9048024EA1C41B57BCB6F",
+    "native/game_script_observer.cpp": "D1BDD06F5BD8A029F564F6B4D771EADCC10F8896279498AB756E700D272BBBDC",
+    "native/damage_patch.cpp": "E6A9672FB03FB234F63338F3DA429142A7181BBAFE8843BD838E261EAA2D68B7",
+    "native/respawn_patch.cpp": "234F533DD58303504DB8418A8F79C63F7DD6E2BAC6BEB1A8EE83723D4A595472",
+    "lua/coop/session_lifecycle.lua": "A4594B9F544151E08D84817FECF04842A5D995A2B2F50FEFF4CA06C8633DBD3B"
+  },
+  "limitations": [
+    "Compilation only; cleanup retries and partial-failure recovery have not been executed.",
+    "Complete native close-service route remains unmapped and unmodified.",
+    "Exhausted Lua restoration is retained as a failure, not claimed as recovered by next-mission native cleanup.",
+    "No connected guest, independent guest control or shared combat verified.",
+    "New build remains in workspace; installed loader unchanged."
+  ]
+}

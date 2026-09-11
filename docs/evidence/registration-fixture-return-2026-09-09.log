@@ -1,0 +1,139 @@
+Opened log file 'C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\registration-fixture-debug.log'
+
+************* Preparing the environment for Debugger Extensions Gallery repositories **************
+   ExtensionRepository : Implicit
+   UseExperimentalFeatureForNugetShare : true
+   AllowNugetExeUpdate : true
+   NonInteractiveNuget : true
+   AllowNugetMSCredentialProviderInstall : true
+   AllowParallelInitializationOfLocalRepositories : true
+   EnableRedirectToChakraJsProvider : false
+
+   -- Configuring repositories
+      ----> Repository : LocalInstalled, Enabled: true
+      ----> Repository : UserExtensions, Enabled: true
+
+>>>>>>>>>>>>> Preparing the environment for Debugger Extensions Gallery repositories completed, duration 0.000 seconds
+
+************* Waiting for Debugger Extensions Gallery to Initialize **************
+
+>>>>>>>>>>>>> Waiting for Debugger Extensions Gallery to Initialize completed, duration 0.015 seconds
+   ----> Repository : UserExtensions, Enabled: true, Packages count: 0
+   ----> Repository : LocalInstalled, Enabled: true, Packages count: 30
+
+Microsoft (R) Windows Debugger Version 10.0.28000.2270 AMD64
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+CommandLine: C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\native\registration_fixture.exe C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\registration-fixture-a76c6013c0204ca0a371e240957b6260.json
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\atlmfc.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\concurrency.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\cpp_rest.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\ObjectiveC.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\stl.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Data.Json.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Devices.Geolocation.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Devices.Sensors.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Media.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\windows.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\winrt.natvis'
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+OK                                             C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\native
+Symbol search path is: C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\native
+Executable search path is: 
+
++------------------------------------------------------------------------+
+| This target supports Hardware-enforced Stack Protection. A HW based    |
+| "Shadow Stack" may be available to assist in debugging and analysis.   |
+| See aka.ms/userhsp for more info.                                      |
+|                                                                        |
+| dps @ssp                                                               |
+|                                                                        |
++------------------------------------------------------------------------+
+
+ModLoad: 00007ff6`367e0000 00007ff6`3680a000   registration_fixture.exe
+ModLoad: 00007ff9`564c0000 00007ff9`56726000   ntdll.dll
+ModLoad: 00007ff9`551f0000 00007ff9`552b9000   C:\WINDOWS\System32\KERNEL32.DLL
+ModLoad: 00007ff9`53de0000 00007ff9`541df000   C:\WINDOWS\System32\KERNELBASE.dll
+ModLoad: 00007ff9`52000000 00007ff9`5209f000   C:\WINDOWS\SYSTEM32\apphelp.dll
+(1a9f0.90c): Break instruction exception - code 80000003 (first chance)
+ntdll!RtlGetReturnAddressHijackTarget+0x6ed:
+00007ff9`565dd78d cc              int     3
+0:000> .printf "MGS original observation uses one temporary software bootstrap then hardware entry observation\n"
+MGS original observation uses one temporary software bootstrap then hardware entry observation
+0:000> .expr /s masm
+Current expression evaluator: MASM - Microsoft Assembler expressions
+0:000> r @$t0 = 0
+0:000> r @$t4 = 0
+0:000> r @$t5 = 0
+0:000> r @$t12 = 0
+0:000> .catch { .if (not(@$ptrsize == 8)) { .printf "MGS_ABORT wrong_pointer_size\n"; .leave }; r @$t6 = 0; .catch { r @$t6 = @$bp0 }; r @$t7 = 0; .catch { r @$t7 = @$bp1 }; .if (not((@$t6 == 0) and (@$t7 == 0))) { .printf "MGS_ABORT owned_breakpoint_ids_occupied\n"; .leave }; r @$t14 = 0; .catch { r @$t14 = @$bp2 }; .if (not(@$t14 == 0)) { .printf "MGS_ABORT return_breakpoint_id_occupied\n"; .leave }; r @$t1 = registration_fixture; .if (not($vvalid(@$t1,0x168))) { .printf "MGS_ABORT image_header_unreadable\n"; .leave }; .if (not(wo(@$t1) == 0x5a4d)) { .printf "MGS_ABORT dos_signature_mismatch\n"; .leave }; .if (not(dwo(@$t1+0x3c) == 0x110)) { .printf "MGS_ABORT pe_header_offset_mismatch\n"; .leave }; .if (not(dwo(@$t1+0x110) == 0x4550)) { .printf "MGS_ABORT pe_signature_mismatch\n"; .leave }; .if (not(wo(@$t1+0x114) == 0x8664)) { .printf "MGS_ABORT machine_mismatch\n"; .leave }; .if (not(wo(@$t1+0x128) == 0x20b)) { .printf "MGS_ABORT optional_header_mismatch\n"; .leave }; .if (not(dwo(@$t1+0x160) == 0x2a000)) { .printf "MGS_ABORT image_size_mismatch\n"; .leave }; .if (not(dwo(@$t1+0x138) == 0x1840)) { .printf "MGS_ABORT entry_rva_mismatch\n"; .leave }; r @$t2 = @$t1+0x1840; r @$t3 = @$t1+0x10b0; .if (not(@$exentry == @$t2)) { .printf "MGS_ABORT wrong_process_entry\n"; .leave }; .if (not($vvalid(@$t2,0x11))) { .printf "MGS_ABORT entry_unreadable\n"; .leave }; .if (not((by(@$t2+0x0) == 0x48) and (by(@$t2+0x1) == 0x83) and (by(@$t2+0x2) == 0xec) and (by(@$t2+0x3) == 0x28) and (by(@$t2+0x4) == 0xe8) and (by(@$t2+0x5) == 0x53) and (by(@$t2+0x6) == 0x02) and (by(@$t2+0x7) == 0x00) and (by(@$t2+0x8) == 0x00) and (by(@$t2+0x9) == 0x48) and (by(@$t2+0xa) == 0x83) and (by(@$t2+0xb) == 0xc4) and (by(@$t2+0xc) == 0x28) and (by(@$t2+0xd) == 0xe9) and (by(@$t2+0xe) == 0x72) and (by(@$t2+0xf) == 0xfe) and (by(@$t2+0x10) == 0xff))) { .printf "MGS_ABORT entry_bytes_mismatch\n"; .leave }; .if (not($vvalid(@$t3,0x11))) { .printf "MGS_ABORT registrar_unreadable\n"; .leave }; .if (not((by(@$t3+0x0) == 0xf0) and (by(@$t3+0x1) == 0xff) and (by(@$t3+0x2) == 0x05) and (by(@$t3+0x3) == 0x51) and (by(@$t3+0x4) == 0x2a) and (by(@$t3+0x5) == 0x02) and (by(@$t3+0x6) == 0x00) and (by(@$t3+0x7) == 0x33) and (by(@$t3+0x8) == 0xc0) and (by(@$t3+0x9) == 0x48) and (by(@$t3+0xa) == 0x81) and (by(@$t3+0xb) == 0xf9) and (by(@$t3+0xc) == 0x78) and (by(@$t3+0xd) == 0x56) and (by(@$t3+0xe) == 0x34) and (by(@$t3+0xf) == 0x12) and (by(@$t3+0x10) == 0x0f))) { .printf "MGS_ABORT registrar_bytes_mismatch\n"; .leave }; r @$t4 = 1; bp0 /1 @$exentry "$$< C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\registration-fixture.bootstrap.cmd"; .if (not(@$bp0 == @$t2)) { .printf "MGS_ABORT bootstrap_breakpoint_not_installed\n"; .leave }; .printf "MGS_BOOTSTRAP_SOFTWARE_BREAKPOINT_ARMED\n"; r @$t0 = 1 }
+Bad register error at '@$bp0 '
+Bad register error at '@$bp1 '
+Bad register error at '@$bp2 '
+MGS_BOOTSTRAP_SOFTWARE_BREAKPOINT_ARMED
+0:000> .if (@$t0 == 0) { .catch { .if (@$t4 != 0) { bc 0 } }; .catch { .if (@$t5 != 0) { bc 1 } }; qd } .else { g }
+ModLoad: 00007ff9`2f3a0000 00007ff9`2f492000   C:\Program Files\Windhawk\Engine\1.7.3\64\windhawk.dll
+ModLoad: 00007ff9`54d50000 00007ff9`54e0c000   C:\WINDOWS\System32\ADVAPI32.dll
+ModLoad: 00007ff9`55450000 00007ff9`554f9000   C:\WINDOWS\System32\msvcrt.dll
+ModLoad: 00007ff9`54400000 00007ff9`544aa000   C:\WINDOWS\System32\sechost.dll
+ModLoad: 00007ff9`542e0000 00007ff9`543f8000   C:\WINDOWS\System32\RPCRT4.dll
+ModLoad: 00007ff9`2c8b0000 00007ff9`2c8db000   C:\ProgramData\Windhawk\Engine\Mods\64\explorer-details-better-file-sizes_1.5.1_913666.dll
+ModLoad: 00007ff9`55760000 00007ff9`558f9000   C:\WINDOWS\System32\ole32.dll
+ModLoad: 00007ff9`53830000 00007ff9`538d3000   C:\WINDOWS\System32\msvcp_win.dll
+ModLoad: 00007ff9`536d0000 00007ff9`5381c000   C:\WINDOWS\System32\ucrtbase.dll
+ModLoad: 00007ff9`55c90000 00007ff9`55cbb000   C:\WINDOWS\System32\GDI32.dll
+ModLoad: 00007ff9`53db0000 00007ff9`53dd7000   C:\WINDOWS\System32\win32u.dll
+ModLoad: 00007ff9`53c80000 00007ff9`53da9000   C:\WINDOWS\System32\gdi32full.dll
+ModLoad: 00007ff9`54980000 00007ff9`54b46000   C:\WINDOWS\System32\USER32.dll
+ModLoad: 00007ff9`55900000 00007ff9`55c85000   C:\WINDOWS\System32\combase.dll
+ModLoad: 00007ff9`54200000 00007ff9`542d9000   C:\WINDOWS\System32\OLEAUT32.dll
+ModLoad: 00007ff9`55cf0000 00007ff9`56478000   C:\WINDOWS\System32\SHELL32.dll
+ModLoad: 00007ff9`2c700000 00007ff9`2c8a9000   C:\ProgramData\Windhawk\Engine\Mods\64\libc++.whl
+ModLoad: 00007ff9`2c6c0000 00007ff9`2c6fa000   C:\ProgramData\Windhawk\Engine\Mods\64\libunwind.whl
+ModLoad: 00007ff9`4cdd0000 00007ff9`4cec4000   C:\WINDOWS\SYSTEM32\PROPSYS.dll
+ModLoad: 00007ff9`544b0000 00007ff9`544e2000   C:\WINDOWS\System32\IMM32.DLL
+ModLoad: 00007ff9`50170000 00007ff9`50a0b000   C:\WINDOWS\SYSTEM32\windows.storage.dll
+ModLoad: 00007ff9`2ca30000 00007ff9`2ca48000   C:\ProgramData\Windhawk\Engine\Mods\64\no-flash-window_1.0_946587.dll
+ModLoad: 00007ff9`2bc70000 00007ff9`2bc99000   C:\ProgramData\Windhawk\Engine\Mods\64\slick-window-arrangement_1.0.2_293982.dll
+ModLoad: 00007ff9`36010000 00007ff9`360c5000   C:\WINDOWS\WinSxS\amd64_microsoft.windows.common-controls_6595b64144ccf1df_5.82.26100.8328_none_87eede957a2ccddd\COMCTL32.dll
+ModLoad: 00007ff9`4f8b0000 00007ff9`4f8df000   C:\WINDOWS\SYSTEM32\dwmapi.dll
+ModLoad: 00007ff9`54c50000 00007ff9`54d49000   C:\WINDOWS\System32\shcore.dll
+0:000> r @$t0 = 0
+*** WARNING: Unable to verify checksum for registration_fixture.exe
+0:000> .catch { .if (not(@rip == @$t2)) { .printf "MGS_ABORT unexpected_bootstrap_address\n"; .leave }; r @$t6 = 0; .catch { r @$t6 = @$bp0 }; .if (@$t6 != 0) { bc 0 }; r @$t4 = 0; .if (not($vvalid(@$t2,0x11))) { .printf "MGS_ABORT restored_entry_unreadable\n"; .leave }; .if (not((by(@$t2+0x0) == 0x48) and (by(@$t2+0x1) == 0x83) and (by(@$t2+0x2) == 0xec) and (by(@$t2+0x3) == 0x28) and (by(@$t2+0x4) == 0xe8) and (by(@$t2+0x5) == 0x53) and (by(@$t2+0x6) == 0x02) and (by(@$t2+0x7) == 0x00) and (by(@$t2+0x8) == 0x00) and (by(@$t2+0x9) == 0x48) and (by(@$t2+0xa) == 0x83) and (by(@$t2+0xb) == 0xc4) and (by(@$t2+0xc) == 0x28) and (by(@$t2+0xd) == 0xe9) and (by(@$t2+0xe) == 0x72) and (by(@$t2+0xf) == 0xfe) and (by(@$t2+0x10) == 0xff))) { .printf "MGS_ABORT restored_entry_bytes_mismatch\n"; .leave }; r @$t7 = 0; .catch { r @$t7 = @$bp1 }; .if (not(@$t7 == 0)) { .printf "MGS_ABORT hardware_breakpoint_id_occupied\n"; .leave }; .if (not($vvalid(@$t3,0x11))) { .printf "MGS_ABORT registrar_unreadable\n"; .leave }; .if (not((by(@$t3+0x0) == 0xf0) and (by(@$t3+0x1) == 0xff) and (by(@$t3+0x2) == 0x05) and (by(@$t3+0x3) == 0x51) and (by(@$t3+0x4) == 0x2a) and (by(@$t3+0x5) == 0x02) and (by(@$t3+0x6) == 0x00) and (by(@$t3+0x7) == 0x33) and (by(@$t3+0x8) == 0xc0) and (by(@$t3+0x9) == 0x48) and (by(@$t3+0xa) == 0x81) and (by(@$t3+0xb) == 0xf9) and (by(@$t3+0xc) == 0x78) and (by(@$t3+0xd) == 0x56) and (by(@$t3+0xe) == 0x34) and (by(@$t3+0xf) == 0x12) and (by(@$t3+0x10) == 0x0f))) { .printf "MGS_ABORT registrar_bytes_mismatch\n"; .leave }; .if (not((@dr7 & 0xff) == 0)) { .printf "MGS_ABORT occupied_debug_registers\n"; .leave }; r @$t5 = 1; ba1 e1 /1 @$t3 "$$< C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\registration-fixture.hit.cmd"; .if (not(@$bp1 == @$t3)) { .printf "MGS_ABORT hardware_breakpoint_not_installed\n"; .leave }; .printf "MGS_EXPECTED_BYTES_ACCEPTED\n"; .printf "MGS_HARDWARE_REGISTRAR_ARMED\n"; r @$t0 = 1 }
+Bad register error at '@$bp1 '
+MGS_EXPECTED_BYTES_ACCEPTED
+MGS_HARDWARE_REGISTRAR_ARMED
+0:000> .if (@$t0 == 0) { .catch { .if (@$t4 != 0) { bc 0 } }; .catch { .if (@$t5 != 0) { bc 1 } }; qd } .else { g }
+0:005> r @$t0 = 0
+0:005> r @$t5 = 0
+0:005> .catch { .if (not(@rip == @$t3)) { .printf "MGS_ABORT unexpected_registration_address\n"; .leave }; .if (not($vvalid(@$t3,0x11))) { .printf "MGS_ABORT registrar_hit_unreadable\n"; .leave }; .if (not((by(@$t3+0x0) == 0xf0) and (by(@$t3+0x1) == 0xff) and (by(@$t3+0x2) == 0x05) and (by(@$t3+0x3) == 0x51) and (by(@$t3+0x4) == 0x2a) and (by(@$t3+0x5) == 0x02) and (by(@$t3+0x6) == 0x00) and (by(@$t3+0x7) == 0x33) and (by(@$t3+0x8) == 0xc0) and (by(@$t3+0x9) == 0x48) and (by(@$t3+0xa) == 0x81) and (by(@$t3+0xb) == 0xf9) and (by(@$t3+0xc) == 0x78) and (by(@$t3+0xd) == 0x56) and (by(@$t3+0xe) == 0x34) and (by(@$t3+0xf) == 0x12) and (by(@$t3+0x10) == 0x0f))) { .printf "MGS_ABORT registrar_hit_bytes_mismatch\n"; .leave }; .if (not($vvalid(@rsp,8))) { .printf "MGS_ABORT return_address_unreadable\n"; .leave }; .printf "MGS_REGISTRATION_ENTRY tid=0x%x state_opaque=%p caller=%p entry=%p\n", @$tid, @rcx, poi(@rsp), @rip; r @$t8 = @rsp; r @$t9 = @rcx; r @$t10 = @$tid; r @$t11 = poi(@rsp); .if (not((@$t8 > 0) and (@$t8 <= 0x7ffffffffffffff7))) { .printf "MGS_ABORT entry_stack_overflow\n"; .leave }; .if (not((@$t11 >= @$t1) and (@$t11 < (@$t1+0x2a000)))) { .printf "MGS_ABORT return_outside_image\n"; .leave }; r @$t14 = 0; .catch { r @$t14 = @$bp2 }; .if (not(@$t14 == 0)) { .printf "MGS_ABORT return_breakpoint_id_occupied\n"; .leave }; .if (not($vvalid(@$t11,2))) { .printf "MGS_ABORT fixture_return_unreadable\n"; .leave }; r @$t12 = 1; ba2 e1 @$t11 ".if ((@$tid == @$t10) and (@rsp == (@$t8+8))) { $$< C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\registration-fixture.return.cmd; } .else { gc }"; .if (not(@$bp2 == @$t11)) { .printf "MGS_ABORT return_breakpoint_not_installed\n"; .leave }; .printf "MGS_HARDWARE_REGISTRAR_RETURN_ARMED\n"; r @$t0 = 1 }
+MGS_REGISTRATION_ENTRY tid=0xb500 state_opaque=0000000012345678 caller=00007ff6367e107e entry=00007ff6367e10b0
+Bad register error at '@$bp2 '
+MGS_HARDWARE_REGISTRAR_RETURN_ARMED
+0:005> .if (@$t0 == 0) { .printf "MGS_ABORT return_capture_setup_failed\n" }
+0:005> .if (@$t0 == 0) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\registration-fixture.return.cmd; } .else { g }
+0:005> r @$t0 = 0
+0:005> .catch { .if (not(@rip == @$t11)) { .printf "MGS_ABORT unexpected_return_address\n"; .leave }; .if (not((@$tid == @$t10) and (@rsp == (@$t8+8)))) { .printf "MGS_ABORT unexpected_return_frame\n"; .leave }; .printf "MGS_REGISTRATION_RETURN tid=0x%x state_opaque=%p entry_rsp=%p return_rsp=%p return=%p eax=%u\n", @$tid, @$t9, @$t8, @rsp, @rip, @eax; r @$t0 = 1 }
+MGS_REGISTRATION_RETURN tid=0xb500 state_opaque=0000000012345678 entry_rsp=000000f7bd7ffa88 return_rsp=000000f7bd7ffa90 return=00007ff6367e107e eax=37
+0:005> .catch { .if (@$t12 != 0) { bc 2; r @$t12 = 0 } }
+0:005> .if (@$t0 == 0) { .printf "MGS_ABORT return_capture_failed\n" }
+0:005> .detach /h
+Detached
+NoTarget> q
+WARNING: The debugger does not have a current process or thread
+WARNING: Many commands will not work
+quit:
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\atlmfc.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\concurrency.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\cpp_rest.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\ObjectiveC.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\stl.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Data.Json.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Devices.Geolocation.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Devices.Sensors.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Media.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\windows.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\winrt.natvis'

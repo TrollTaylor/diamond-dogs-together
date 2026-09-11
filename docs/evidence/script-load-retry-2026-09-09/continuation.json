@@ -1,0 +1,19 @@
+{
+  "utc": "2026-09-09T18:52:09.1834274Z",
+  "game_pid": 91880,
+  "window_id": 526844,
+  "method": "Computer Use target-window screenshots and two Return key actions",
+  "startup_notice_visible": true,
+  "notice_return_advanced_to_logos": true,
+  "title_prompt_visible": true,
+  "title_return_opened_main_menu": true,
+  "menu_completion_percent": 69,
+  "left_at": "main menu with Continue selected",
+  "game_continuation_verified": true,
+  "gameplay_loaded": false,
+  "controller_verified": false,
+  "bridge_installed": false,
+  "multiplayer_verified": false,
+  "trace": "result.json",
+  "preservation": "preservation.json"
+}

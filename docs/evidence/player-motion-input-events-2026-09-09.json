@@ -1,0 +1,31 @@
+{
+  "pid": 106392,
+  "events": [
+    {
+      "action": "w",
+      "beforeUtc": "2026-09-09T17:13:52.513Z",
+      "afterUtc": "2026-09-09T17:13:52.605Z"
+    },
+    {
+      "action": "c",
+      "beforeUtc": "2026-09-09T17:14:30.225Z",
+      "afterUtc": "2026-09-09T17:14:30.318Z"
+    },
+    {
+      "action": "space",
+      "beforeUtc": "2026-09-09T17:16:57.478Z",
+      "afterUtc": "2026-09-09T17:16:57.561Z"
+    },
+    {
+      "action": "C",
+      "beforeUtc": "2026-09-09T17:17:29.832Z",
+      "afterUtc": "2026-09-09T17:17:29.928Z"
+    },
+    {
+      "action": "W",
+      "beforeUtc": "2026-09-09T17:18:08.217Z",
+      "afterUtc": "2026-09-09T17:18:08.309Z"
+    }
+  ],
+  "clock": "UTC tool-call intervals; not physical key-hold duration"
+}

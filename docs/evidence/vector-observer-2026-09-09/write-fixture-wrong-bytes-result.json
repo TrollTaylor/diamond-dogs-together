@@ -1,0 +1,28 @@
+{
+  "utc": "2026-09-09T17:37:36.3273256Z",
+  "target_pid": 54720,
+  "target_started_utc": "2026-09-09T17:37:36.0038751Z",
+  "executable_sha256": "F33445D9A5121D9814533E2B9EF18A50009B4CF6B0F8D9A55DB5EB55BEDA4DB6",
+  "fixture": true,
+  "scenario": "WrongBytes",
+  "armed": false,
+  "entry_count": 0,
+  "aborted": true,
+  "deadline_detached": false,
+  "debugger_exit": 0,
+  "debug_log": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\vector-observation-f7e9f5e274ab432fb7832619e5491484\\debugger.log",
+  "source_dereferenced": false,
+  "game_calls": false,
+  "actor_identity": "unverified",
+  "observation_mode": "published_write",
+  "fixture_result": {
+    "passed": true,
+    "calls": 1,
+    "arguments_preserved": true,
+    "data_preserved": true,
+    "debugger_detached": true,
+    "breakpoints_disabled": true,
+    "bytes_preserved": true
+  },
+  "passed": true
+}

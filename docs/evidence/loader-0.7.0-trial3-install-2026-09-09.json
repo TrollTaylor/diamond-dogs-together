@@ -1,0 +1,11 @@
+{
+  "utc": "2026-09-09T19:55:55.2978945Z",
+  "version": "0.7.0",
+  "trial": 3,
+  "previous_loader_backup": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\backups\\probe-0.7.0-trial2-20260909T195554Z",
+  "loader_sha256": "99F82B5558EFCEF0F3251A42501351DE13756CEE32A976C0C3133D10C9BCE126",
+  "archive_sha256": "711DEF02F258F6CA42A63CA2374FDF342A306ADB1BA29FE31F7E6DF94B1830E5",
+  "mode": "archive-v1",
+  "actor_packages_selected": false,
+  "change": "Use registration flag 1; retain archive and script probes"
+}

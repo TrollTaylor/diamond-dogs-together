@@ -1,0 +1,15 @@
+{
+  "utc": "2026-09-09T14:46:11.4509248Z",
+  "captured": true,
+  "deadline_detached": false,
+  "aborted": false,
+  "debugger_exit_code": 0,
+  "live_game_pids": [
+    31640
+  ],
+  "game_continuation_verified": false,
+  "log": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\game-observation-622ed83dceb44901bf37244f8487c4b1\\debugger.log",
+  "evidence_source": "debugger_log",
+  "stdout_complete": false,
+  "stderr_complete": false
+}

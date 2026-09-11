@@ -1,0 +1,2 @@
+14 exact-source checks; 400 concurrent selections; no game calls
+79 Lua checks passed, including clearing selection on other missions, callback failure and missing archive; no engine allocation

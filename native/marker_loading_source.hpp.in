@@ -1,0 +1,2 @@
+#pragma once
+constexpr char marker_loading_source[] = R"MGSLUA(@MGS_MARKER_LOADING_SOURCE@)MGSLUA";

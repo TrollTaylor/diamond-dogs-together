@@ -1,0 +1,22 @@
+{
+  "utc": "2026-09-10T12:00:03.090589+00:00",
+  "source_version": "0.10.16",
+  "compiled_dll_sha256": "4EED710D0D03DA91F38C13696321C0D2B35128E6E6EB1E831255ADD34CB7F045",
+  "installed_version": "0.10.5",
+  "installed_dll_sha256": "5EE6B0DEA1B396E851F14D5F2332C7767A4DFA50749A7DAF7898139601221BA5",
+  "game_modified_this_turn": false,
+  "tests_run": false,
+  "lua_executed": false,
+  "game_launched": false,
+  "build_command": "tools/build.ps1 -Configuration Release -BuildOnly",
+  "build_log": "result-rules-build-only-2026-09-10.log",
+  "static_mapping": "result-contract-2026-09-10.json",
+  "limitations": [
+    "The result hook and mission-boundary receipt have not been executed in MGSV.",
+    "Only two exact callers are suppressed; absence of all online submissions is not established.",
+    "Delayed callbacks, scope reset and result-screen completion remain unverified.",
+    "Full native CloseSession remains a missing adaptation.",
+    "No connected guest, independent guest control or shared combat verified.",
+    "New build remains in workspace; installed loader unchanged."
+  ]
+}

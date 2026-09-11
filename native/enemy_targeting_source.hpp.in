@@ -1,0 +1,4 @@
+#pragma once
+constexpr char enemy_targeting_source[] = R"MGS_TARGET(
+@MGS_ENEMY_TARGETING_SOURCE@
+)MGS_TARGET";

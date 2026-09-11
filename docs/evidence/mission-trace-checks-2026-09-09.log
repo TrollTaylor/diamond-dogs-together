@@ -1,0 +1,2 @@
+15 exact-source checks; 400 concurrent selections
+213 trace Lua checks: args, nils, yields, errors, bound and actual TppMain termination

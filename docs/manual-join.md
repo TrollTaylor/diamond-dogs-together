@@ -1,0 +1,15 @@
+# Manual guest joining
+
+Workspace 0.10.21 changes the experimental Mother Base guest from automatic joining at mission start to **Ctrl+F8 after the host is ready**. This follows DYNAMITE's deliberate client connection timing. It does not detect host readiness remotely or establish a successful connection.
+
+After both machines have the matching prepared loader/archive and their host/join configuration, load Mother Base on each. The guest receives a waiting message after original mission startup and remote equipment preparation have returned. Once the host confirms readiness, hold Ctrl and press F8 while MGSV is focused. A sent request and a refused attempt have different messages. One attempt is allowed per process, including a refused setup; restart normally before another attempt. There is no reconnect or controller shortcut yet.
+
+The original start/update functions execute outside the protected helper calls, retaining their arguments, errors, yields and return values. Input is polled after successful original updates on the captured script owner thread. Native receipt matching requires the exact source and name. Native input requires active player rules, no pending restoration and no mission termination. Focus loss clears the release latch; F8 must be observed released before a subsequent press. The code reads current key state, not Windows' shared historical pressed bit. No worker thread calls game functions.
+
+The request is consumed before entering the existing gated native client setup. The same executable/body, game-owned connection storage and allocation gates remain in that path. No new game addresses were added. Cleanup and mission boundaries disarm input. The prior join receipt is now diagnostic-only, preventing the old automatic real-client path from bypassing manual input. `client-check-v1` still performs its once-after-start read-only check without a native join or allocator hook.
+
+Idle polls keep the literal receipt unchanged, avoiding per-frame replacement log writes. Lua must compile that receipt each poll to reach the observer; it cannot cache the resulting function. The overhead and focus/key behavior have not been measured in-game. Notification calls are optional and protected; they use the existing `TppUiCommand.AnnounceLogView(text)` Lua interface seen in upstream mission scripts, without custom language-pack keys. A returned join request never sets a connected-player status.
+
+Source timing reference: DYNAMITE `c90f252f8200765f66c005d6bf4357fda0c0d98e`, `moddata/standalone/TppMain.lua` and `hook/src/DynamiteLua.cpp`; GPLv3 with Commons Clause 1.0, retained in `third_party/dynamite/LICENSE`. Input handling is project-authored. The native connection adaptation retains the pinned tpp-mod attribution documented in [client joining](client-join.md).
+
+Compilation only: `tools/build.ps1 -Configuration Release -BuildOnly`. No tests, Lua execution, installation or game launch. [Build record](evidence/manual-join-prepared-2026-09-10.json). Installed 0.10.5 remains unchanged. Real guest control and shared combat remain unverified.

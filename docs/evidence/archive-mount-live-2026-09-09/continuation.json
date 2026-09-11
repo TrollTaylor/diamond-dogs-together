@@ -1,0 +1,11 @@
+{
+  "utc": "2026-09-09T19:39:47.1491338Z",
+  "pid": 22440,
+  "start_time_utc": "2026-09-09T19:31:20.9066848Z",
+  "natural_mount_captured": true,
+  "custom_mount_verified": false,
+  "debugger_running": false,
+  "game_continuation_verified": true,
+  "ui": "Main menu at 69 percent; Continue selected; refreshed after user retry",
+  "all_seven_saves_match": true
+}

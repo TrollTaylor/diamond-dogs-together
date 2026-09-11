@@ -1,0 +1,13 @@
+{
+  "repository": "https://github.com/unknown321/dynamite",
+  "commit": "c90f252f8200765f66c005d6bf4357fda0c0d98e",
+  "files": {
+    "player2_additional_parts_x1.fox2.xml": "b81f5e22f0e3317f4986ac5f011de044ec528a2d159d1a691632d4866157315c",
+    "player2_online_motion.fox2.xml": "c6b5fa73eeda2e63a440ab01e853672fb00beecb0387d6d4b437219b421180ca",
+    "player2_mtbs_motion_loader.fox2.xml": "01aaf463b0e93f32a0efd62403130c3d8864906589038adb4b63457be62fe0f4"
+  },
+  "license": "GPLv3 with Commons Clause v1.0; see LICENSE",
+  "adaptations": "Local additional-parts XML count 1 to 3; online and location-motion definitions preserve semantic content. Controller source and adaptations recorded separately in player-asset-source.json.",
+  "packaging_reference": "installer/installer.go createEssentials and moddata/coop_essentials/generate.go",
+  "distribution": "Game assets and converted derivatives remain local build artifacts"
+}

@@ -1,0 +1,92 @@
+{
+  "utc": "2026-09-10T00:18:36.0063653Z",
+  "version": "0.10.1",
+  "pid": 36772,
+  "continue_requested_utc": "2026-09-10T00:14:44.580Z",
+  "return_title_requested_utc": "2026-09-10T00:16:49.698Z",
+  "title_observed_utc": "2026-09-10T00:17:04.922Z",
+  "title_keyboard_navigation_verified": true,
+  "quit_requested_utc": null,
+  "quit_dialog_observed": true,
+  "final_quit_confirmation_observed": false,
+  "exit_observation_note": "Input changed while the quit dialog was open; subsequent window and process checks found the game absent. Final confirmation actor/action was not observed.",
+  "window_absent_observed_utc": "2026-09-10T00:18:01.679Z",
+  "process_absent": true,
+  "forced_termination": false,
+  "debugger_used": false,
+  "host_create_returned_true": true,
+  "host_calls": 1,
+  "host_thread": 79288,
+  "host_tick_ms": 558912890,
+  "live_session_observed": true,
+  "session_state_at_first_create_observation": 2,
+  "session_state_at_admission": 3,
+  "admission_open_tick_ms": 558965734,
+  "admission_close_tick_ms": 559034218,
+  "native_accept_flag_after_lua_calls": [
+    1,
+    0
+  ],
+  "admission_closed_before_original_termination": true,
+  "manager_and_job_heap_headers_verified": true,
+  "title_session_and_manager_null": true,
+  "mother_base_loaded_on_foot": true,
+  "reserved_player_limit": 2,
+  "player_online_initialization_bit_set": true,
+  "independent_actors_verified": false,
+  "player_observation": "host-admission-player-storage-2026-09-09.json",
+  "trace": "host-admission-live-trace-2026-09-09.log",
+  "native_suites_passed": 16,
+  "save_files": [
+    {
+      "name": "PERSONAL_DATA0",
+      "sha256": "FA2C41DD08DB1429FF082E20D9CF1F11D5B600FD8038510938873C659E980C8B",
+      "matches_baseline": true
+    },
+    {
+      "name": "PERSONAL_DATA1",
+      "sha256": "9E4B9877BE31BAAB6E77678EED28A95E1AD38FFD1F25DF322C20F326D99EB147",
+      "matches_baseline": true
+    },
+    {
+      "name": "TPP_CONFIG_DATA0",
+      "sha256": "5866A6F6F17B303CE7E5D2E2F1A25E6172F80B5DC50DE24121F1EF890AD98583",
+      "matches_baseline": true
+    },
+    {
+      "name": "TPP_CONFIG_DATA1",
+      "sha256": "5866A6F6F17B303CE7E5D2E2F1A25E6172F80B5DC50DE24121F1EF890AD98583",
+      "matches_baseline": true
+    },
+    {
+      "name": "TPP_GAME_DATA0",
+      "sha256": "959E130963D2C718CE181246E533F42D1A072AA9ED6A300AE9CE85847C23FE6B",
+      "matches_baseline": true
+    },
+    {
+      "name": "TPP_GAME_DATA1",
+      "sha256": "47F0C017091833624B45ED662F87A8D399C0D6A31D39AADDF18CBD51DA813C32",
+      "matches_baseline": true
+    },
+    {
+      "name": "TPP_GRAPHICS_CONFIG",
+      "sha256": "3C9A58DF12E5C2BE6AAFB600B086A11E0BC8FE2D50667F739DB24983705007C4",
+      "matches_baseline": true
+    }
+  ],
+  "hashes": {
+    "mgsvtpp.exe": "085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45",
+    "steam_api64.dll": "08BD0152356E5619EE56A6714AC951B6800DBB21821693A4EFAF85278442C60A",
+    "dinput8.dll": "9B6B21F94508672C1270C048E8A2A5C77A371836FAC2033194FEA3165F9B2A94",
+    "mgs-coop/mgs-coop-player-runtime.dat": "26CE7C2168D655C35BE39E4F17A295206AA0522DE8782CD57A36C4FEEA382F54"
+  },
+  "executable_unchanged": true,
+  "steam_dll_unchanged": true,
+  "owned_probe_matches": true,
+  "archive_matches": true,
+  "limitations": [
+    "One host creation, admission open/close and normal return to title; no joined peer, reconnect or repeat creation verified.",
+    "Null owner fields do not prove complete asynchronous reclamation or absence of leaks.",
+    "No joined peer, independent remote actor, world synchronization, save isolation or campaign co-op verified."
+  ]
+}

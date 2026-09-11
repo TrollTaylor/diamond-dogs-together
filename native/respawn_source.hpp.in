@@ -1,0 +1,7 @@
+#pragma once
+constexpr char respawn_source[] = R"MGS_RESPAWN(
+@MGS_RESPAWN_SOURCE@
+)MGS_RESPAWN";
+constexpr char death_policy_source[] = R"MGS_DEATH(
+@MGS_DEATH_POLICY_SOURCE@
+)MGS_DEATH";

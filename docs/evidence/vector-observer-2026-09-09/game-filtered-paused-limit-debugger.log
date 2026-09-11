@@ -1,0 +1,858 @@
+Opened log file 'C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\debugger.log'
+
+************* Preparing the environment for Debugger Extensions Gallery repositories **************
+   ExtensionRepository : Implicit
+   UseExperimentalFeatureForNugetShare : true
+   AllowNugetExeUpdate : true
+   NonInteractiveNuget : true
+   AllowNugetMSCredentialProviderInstall : true
+   AllowParallelInitializationOfLocalRepositories : true
+   EnableRedirectToChakraJsProvider : false
+
+   -- Configuring repositories
+      ----> Repository : LocalInstalled, Enabled: true
+      ----> Repository : UserExtensions, Enabled: true
+
+>>>>>>>>>>>>> Preparing the environment for Debugger Extensions Gallery repositories completed, duration 0.000 seconds
+
+************* Waiting for Debugger Extensions Gallery to Initialize **************
+
+>>>>>>>>>>>>> Waiting for Debugger Extensions Gallery to Initialize completed, duration 0.015 seconds
+   ----> Repository : UserExtensions, Enabled: true, Packages count: 0
+   ----> Repository : LocalInstalled, Enabled: true, Packages count: 30
+
+Microsoft (R) Windows Debugger Version 10.0.28000.2270 AMD64
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+*** wait with pending attach
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\atlmfc.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\concurrency.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\cpp_rest.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\ObjectiveC.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\stl.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Data.Json.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Devices.Geolocation.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Devices.Sensors.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Media.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\windows.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\winrt.natvis'
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+OK                                             C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop/build/native
+Symbol search path is: C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop/build/native
+Executable search path is: 
+
++------------------------------------------------------------------------+
+| This target supports Hardware-enforced Stack Protection. A HW based    |
+| "Shadow Stack" may be available to assist in debugging and analysis.   |
+| See aka.ms/userhsp for more info.                                      |
+|                                                                        |
+| dps @ssp                                                               |
+|                                                                        |
++------------------------------------------------------------------------+
+
+ModLoad: 00000001`40000000 00000001`4a01d000   D:\Games\steamapps\common\MGS_TPP\mgsvtpp.exe
+ModLoad: 00007ff9`564c0000 00007ff9`56726000   C:\WINDOWS\SYSTEM32\ntdll.dll
+ModLoad: 00007ff9`551f0000 00007ff9`552b9000   C:\WINDOWS\System32\KERNEL32.DLL
+ModLoad: 00007ff9`53de0000 00007ff9`541df000   C:\WINDOWS\System32\KERNELBASE.dll
+ModLoad: 00007ff9`544b0000 00007ff9`544e2000   C:\WINDOWS\System32\IMM32.dll
+ModLoad: 00007ff9`53db0000 00007ff9`53dd7000   C:\WINDOWS\System32\win32u.dll
+ModLoad: 00007ff9`54980000 00007ff9`54b46000   C:\WINDOWS\System32\USER32.dll
+ModLoad: 00007ff9`55c90000 00007ff9`55cbb000   C:\WINDOWS\System32\GDI32.dll
+ModLoad: 00007ff9`53c80000 00007ff9`53da9000   C:\WINDOWS\System32\gdi32full.dll
+ModLoad: 00007ff9`53830000 00007ff9`538d3000   C:\WINDOWS\System32\msvcp_win.dll
+ModLoad: 00007ff9`536d0000 00007ff9`5381c000   C:\WINDOWS\System32\ucrtbase.dll
+ModLoad: 00000000`6efc0000 00000000`6eff8000   D:\Games\steamapps\common\MGS_TPP\steam_api64.dll
+ModLoad: 00007ff9`54d50000 00007ff9`54e0c000   C:\WINDOWS\System32\ADVAPI32.dll
+ModLoad: 00007ff9`55cf0000 00007ff9`56478000   C:\WINDOWS\System32\SHELL32.dll
+ModLoad: 00007ff9`55450000 00007ff9`554f9000   C:\WINDOWS\System32\msvcrt.dll
+ModLoad: 00007ff9`54400000 00007ff9`544aa000   C:\WINDOWS\System32\sechost.dll
+ModLoad: 00007ff9`542e0000 00007ff9`543f8000   C:\WINDOWS\System32\RPCRT4.dll
+ModLoad: 00007ff9`541f0000 00007ff9`541f8000   C:\WINDOWS\System32\PSAPI.DLL
+ModLoad: 00007ff9`544f0000 00007ff9`54977000   C:\WINDOWS\System32\SETUPAPI.dll
+ModLoad: 00007ff9`55760000 00007ff9`558f9000   C:\WINDOWS\System32\ole32.dll
+ModLoad: 00007ff9`55900000 00007ff9`55c85000   C:\WINDOWS\System32\combase.dll
+ModLoad: 00007ff9`54200000 00007ff9`542d9000   C:\WINDOWS\System32\OLEAUT32.dll
+ModLoad: 00007ff9`50a10000 00007ff9`50a1f000   C:\WINDOWS\SYSTEM32\HID.DLL
+ModLoad: 00007ff9`556d0000 00007ff9`55752000   C:\WINDOWS\System32\WS2_32.dll
+ModLoad: 00007ff9`3a040000 00007ff9`3a070000   C:\WINDOWS\SYSTEM32\XINPUT1_3.dll
+ModLoad: 00007ff9`39f30000 00007ff9`39f63000   D:\Games\steamapps\common\MGS_TPP\DINPUT8.dll
+ModLoad: 00007ff9`555f0000 00007ff9`55656000   C:\WINDOWS\System32\shlwapi.dll
+ModLoad: 00007ff8`a8530000 00007ff8`a8551000   C:\WINDOWS\SYSTEM32\MSACM32.dll
+ModLoad: 00007ff9`26fb0000 00007ff9`27057000   C:\WINDOWS\SYSTEM32\MSVCP110.dll
+ModLoad: 00007ff9`20ce0000 00007ff9`20db4000   C:\WINDOWS\SYSTEM32\MSVCR110.dll
+ModLoad: 00007ff9`43370000 00007ff9`433a6000   C:\WINDOWS\SYSTEM32\WINMM.dll
+ModLoad: 00007ff9`4f5d0000 00007ff9`4f70a000   C:\WINDOWS\SYSTEM32\dxgi.dll
+ModLoad: 00007ff9`4aa00000 00007ff9`4ac24000   C:\WINDOWS\SYSTEM32\MFPlat.DLL
+ModLoad: 00007ff9`4f240000 00007ff9`4f4a0000   C:\WINDOWS\SYSTEM32\d3d11.dll
+ModLoad: 00007ff8`9ad10000 00007ff8`9ade3000   C:\WINDOWS\SYSTEM32\MFReadWrite.dll
+ModLoad: 00007ff9`54c50000 00007ff9`54d49000   C:\WINDOWS\System32\shcore.dll
+ModLoad: 00007ff9`50d40000 00007ff9`50d73000   C:\WINDOWS\SYSTEM32\IPHLPAPI.DLL
+ModLoad: 00007ff9`304b0000 00007ff9`30745000   C:\WINDOWS\SYSTEM32\wininet.dll
+ModLoad: 00007ff9`4a2c0000 00007ff9`4a3e8000   C:\WINDOWS\SYSTEM32\WINHTTP.dll
+ModLoad: 00007ff9`53370000 00007ff9`533ce000   C:\WINDOWS\SYSTEM32\powrprof.dll
+ModLoad: 00007ff9`51c90000 00007ff9`51c9b000   C:\WINDOWS\SYSTEM32\VERSION.dll
+ModLoad: 00007ff9`532e0000 00007ff9`53332000   C:\WINDOWS\SYSTEM32\cfgmgr32.dll
+ModLoad: 00007ff9`535c0000 00007ff9`535ea000   C:\WINDOWS\SYSTEM32\bcrypt.dll
+ModLoad: 00007ff9`532c0000 00007ff9`532d5000   C:\WINDOWS\SYSTEM32\UMPDC.dll
+ModLoad: 00007ff9`53bc0000 00007ff9`53c6c000   C:\WINDOWS\System32\bcryptPrimitives.dll
+ModLoad: 00007ff9`4b170000 00007ff9`4b1ab000   C:\WINDOWS\SYSTEM32\RTWorkQ.DLL
+ModLoad: 00007ff9`20b20000 00007ff9`20cd7000   C:\Program Files (x86)\Steam\gameoverlayrenderer64.dll
+ModLoad: 00007ff9`51ca0000 00007ff9`51ce9000   C:\WINDOWS\SYSTEM32\SspiCli.dll
+ModLoad: 00007ff9`53260000 00007ff9`5327b000   C:\WINDOWS\SYSTEM32\CRYPTSP.dll
+ModLoad: 00007ff9`51920000 00007ff9`51959000   C:\WINDOWS\system32\rsaenh.dll
+ModLoad: 00007ff9`518e0000 00007ff9`51912000   C:\WINDOWS\SYSTEM32\USERENV.dll
+ModLoad: 00007ff9`535f0000 00007ff9`53619000   C:\WINDOWS\SYSTEM32\profapi.dll
+ModLoad: 00007ff9`51ad0000 00007ff9`51adc000   C:\WINDOWS\SYSTEM32\CRYPTBASE.dll
+ModLoad: 00007ff9`539a0000 00007ff9`53a23000   C:\WINDOWS\System32\wintrust.dll
+ModLoad: 00000000`03c90000 00000000`03e0e000   C:\WINDOWS\System32\CRYPT32.dll
+ModLoad: 00007ff9`51d50000 00007ff9`51d63000   C:\WINDOWS\SYSTEM32\MSASN1.dll
+ModLoad: 00007ff9`555c0000 00007ff9`555e0000   C:\WINDOWS\System32\imagehlp.dll
+ModLoad: 00007ff9`518b0000 00007ff9`518d5000   C:\WINDOWS\SYSTEM32\gpapi.dll
+ModLoad: 00007ff9`4a250000 00007ff9`4a28b000   C:\Windows\System32\cryptnet.dll
+ModLoad: 00007ff8`9c3f0000 00007ff8`9dd6d000   C:\Program Files (x86)\Steam\steamclient64.dll
+ModLoad: 00007ff8`a3cf0000 00007ff8`a3ffe000   C:\Program Files (x86)\Steam\tier0_s64.dll
+ModLoad: 00007ff8`a8930000 00007ff8`a89f3000   C:\Program Files (x86)\Steam\vstdlib_s64.dll
+ModLoad: 00007ff9`51cf0000 00007ff9`51cfd000   C:\WINDOWS\SYSTEM32\Secur32.dll
+ModLoad: 00007ff9`51830000 00007ff9`5189c000   C:\WINDOWS\SYSTEM32\MSWSOCK.dll
+ModLoad: 00000000`05c00000 00000000`0649b000   C:\WINDOWS\SYSTEM32\windows.storage.dll
+ModLoad: 00007ff9`4f8f0000 00007ff9`4f935000   C:\WINDOWS\SYSTEM32\dxcore.dll
+ModLoad: 00007ff9`4bf80000 00007ff9`4bfdf000   C:\WINDOWS\SYSTEM32\directxdatabasehelper.dll
+ModLoad: 00007ff9`526f0000 00007ff9`5270b000   C:\WINDOWS\SYSTEM32\kernel.appcore.dll
+ModLoad: 00007ff9`525a0000 00007ff9`52648000   C:\WINDOWS\system32\uxtheme.dll
+ModLoad: 00007ff9`33a70000 00007ff9`33e8f000   C:\Windows\System32\UIAutomationCore.DLL
+ModLoad: 00007ff9`54c40000 00007ff9`54c4a000   C:\WINDOWS\System32\NSI.dll
+ModLoad: 00007ff9`4a290000 00007ff9`4a2ad000   C:\WINDOWS\SYSTEM32\dhcpcsvc6.DLL
+ModLoad: 00007ff9`4a220000 00007ff9`4a245000   C:\WINDOWS\SYSTEM32\dhcpcsvc.DLL
+ModLoad: 00007ff9`50e30000 00007ff9`50f88000   C:\WINDOWS\SYSTEM32\DNSAPI.dll
+ModLoad: 00007ff9`51630000 00007ff9`5163d000   C:\WINDOWS\SYSTEM32\DSPARSE.dll
+ModLoad: 00007ff9`55500000 00007ff9`555ae000   C:\WINDOWS\System32\clbcatq.dll
+ModLoad: 00007ff9`33ea0000 00007ff9`33f15000   C:\Windows\System32\OLEACC.dll
+ModLoad: 00007ff9`26f20000 00007ff9`26fab000   C:\WINDOWS\system32\XAudio2_7.dll
+ModLoad: 00007ff9`4a550000 00007ff9`4a5f6000   C:\WINDOWS\System32\MMDevApi.dll
+ModLoad: 00007ff9`53280000 00007ff9`532af000   C:\WINDOWS\System32\DEVOBJ.dll
+ModLoad: 00007ff9`4fd30000 00007ff9`4fd44000   C:\WINDOWS\SYSTEM32\resourcepolicyclient.dll
+ModLoad: 00007ff9`38d00000 00007ff9`38eb7000   C:\WINDOWS\SYSTEM32\AUDIOSES.DLL
+ModLoad: 00007ff9`2c410000 00007ff9`2c569000   C:\Windows\System32\Windows.UI.dll
+ModLoad: 00007ff9`4f4b0000 00007ff9`4f4bb000   C:\WINDOWS\SYSTEM32\avrt.dll
+ModLoad: 00007ff9`4b910000 00007ff9`4b95b000   C:\WINDOWS\system32\dinput8.dll
+ModLoad: 00007ff9`39860000 00007ff9`39a43000   C:\WINDOWS\SYSTEM32\inputhost.dll
+ModLoad: 00007ff9`4ead0000 00007ff9`4ebfb000   C:\WINDOWS\SYSTEM32\CoreMessaging.dll
+ModLoad: 00007ff9`55000000 00007ff9`5515d000   C:\WINDOWS\System32\MSCTF.dll
+ModLoad: 00007ff9`4a3f0000 00007ff9`4a4b4000   C:\WINDOWS\System32\DriverStore\FileRepository\nv_dispsi.inf_amd64_fe1c50c690e00e9a\nvldumdx.dll
+ModLoad: 00007ff9`51b90000 00007ff9`51bfa000   C:\WINDOWS\SYSTEM32\wldp.dll
+ModLoad: 00007ff9`4a0a0000 00007ff9`4a21a000   C:\WINDOWS\SYSTEM32\drvstore.dll
+ModLoad: 00007ff9`44b10000 00007ff9`49a67000   C:\WINDOWS\System32\DriverStore\FileRepository\nv_dispsi.inf_amd64_fe1c50c690e00e9a\nvgpucomp64.dll
+ModLoad: 00007ff9`391b0000 00007ff9`39513000   C:\WINDOWS\System32\DriverStore\FileRepository\nv_dispsi.inf_amd64_fe1c50c690e00e9a\Display.NvContainer\NvMessageBus.dll
+ModLoad: 00007ff9`433b0000 00007ff9`434eb000   C:\WINDOWS\System32\DriverStore\FileRepository\nv_dispsi.inf_amd64_fe1c50c690e00e9a\NvMemMapStoragex.dll
+ModLoad: 00007ff9`3ca30000 00007ff9`41dd5000   C:\WINDOWS\System32\DriverStore\FileRepository\nv_dispsi.inf_amd64_fe1c50c690e00e9a\nvwgf2umx.dll
+ModLoad: 00007ff9`102a0000 00007ff9`1040d000   C:\WINDOWS\system32\nvspcap64.dll
+ModLoad: 00007ff9`52e90000 00007ff9`52ec6000   C:\WINDOWS\SYSTEM32\ntmarta.dll
+ModLoad: 00007ff9`0b020000 00007ff9`0b745000   C:\WINDOWS\System32\DriverStore\FileRepository\nv_dispsi.inf_amd64_fe1c50c690e00e9a\nvppex.dll
+ModLoad: 00007ff9`4e460000 00007ff9`4e685000   C:\WINDOWS\SYSTEM32\dcomp.dll
+ModLoad: 00007ff9`51e40000 00007ff9`51e59000   C:\WINDOWS\SYSTEM32\Microsoft.Internal.WarpPal.dll
+ModLoad: 00007ff9`4f8b0000 00007ff9`4f8df000   C:\WINDOWS\SYSTEM32\dwmapi.dll
+ModLoad: 00007ff9`140d0000 00007ff9`140e6000   C:\Windows\System32\threadpoolwinrt.dll
+ModLoad: 00007ff9`23e10000 00007ff9`23ee6000   C:\WINDOWS\SYSTEM32\webio.dll
+ModLoad: 00007ff9`521c0000 00007ff9`521ce000   C:\WINDOWS\SYSTEM32\WINNSI.DLL
+ModLoad: 00007ff9`4b5c0000 00007ff9`4b5cb000   C:\Windows\System32\rasadhlp.dll
+ModLoad: 00007ff9`44830000 00007ff9`448b6000   C:\WINDOWS\System32\fwpuclnt.dll
+ModLoad: 00007ff9`511c0000 00007ff9`51285000   C:\WINDOWS\system32\schannel.DLL
+ModLoad: 00007ff9`526a0000 00007ff9`526d0000   C:\WINDOWS\SYSTEM32\ncrypt.dll
+ModLoad: 00007ff9`52650000 00007ff9`5268f000   C:\WINDOWS\SYSTEM32\NTASN1.dll
+ModLoad: 00007ff9`24370000 00007ff9`243b8000   C:\WINDOWS\system32\ncryptsslp.dll
+ModLoad: 00007ff9`53360000 00007ff9`5336a000   C:\WINDOWS\SYSTEM32\DPAPI.DLL
+(19f98.4d08): Break instruction exception - code 80000003 (first chance)
+ntdll!DbgBreakPoint:
+00007ff9`565dece0 cc              int     3
+0:173> .expr /s masm
+Current expression evaluator: MASM - Microsoft Assembler expressions
+0:173> r @$t0=1
+0:173> r @$t4=0
+0:173> r @$t5=0
+0:173> r @$t8=0
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not(@$ptrsize == 8)) { .printf "MGS_ABORT wrong_pointer_size\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { r @$t6 = 0; .catch { r @$t6 = @$bp0 }; r @$t0=1 } }
+Bad register error at '@$bp0 '
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { r @$t7 = 0; .catch { r @$t7 = @$bp1 }; r @$t0=1 } }
+Bad register error at '@$bp1 '
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not((@$t6 == 0) and (@$t7 == 0))) { .printf "MGS_ABORT breakpoint_ids_occupied\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { r @$t1 = mgsvtpp; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not($vvalid(@$t1,0xd8))) { .printf "MGS_ABORT image_header_unreadable\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not(wo(@$t1) == 0x5a4d)) { .printf "MGS_ABORT dos_signature\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not(dwo(@$t1+0x3c) == 0x80)) { .printf "MGS_ABORT pe_offset\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not(dwo(@$t1+0x80) == 0x4550)) { .printf "MGS_ABORT pe_signature\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not(wo(@$t1+0x84) == 0x8664)) { .printf "MGS_ABORT machine\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not(dwo(@$t1+0xd0) == 0xa01d000)) { .printf "MGS_ABORT image_size\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not($vvalid((@$t1+0x1e03410),0x1d))) { .printf "MGS_ABORT setter_0_unreadable\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not((by((@$t1+0x1e03410)+0x0) == 0x40) and (by((@$t1+0x1e03410)+0x1) == 0x53) and (by((@$t1+0x1e03410)+0x2) == 0x48) and (by((@$t1+0x1e03410)+0x3) == 0x83) and (by((@$t1+0x1e03410)+0x4) == 0xec) and (by((@$t1+0x1e03410)+0x5) == 0x20) and (by((@$t1+0x1e03410)+0x6) == 0x8b) and (by((@$t1+0x1e03410)+0x7) == 0xca) and (by((@$t1+0x1e03410)+0x8) == 0x49) and (by((@$t1+0x1e03410)+0x9) == 0x8b) and (by((@$t1+0x1e03410)+0xa) == 0xd8) and (by((@$t1+0x1e03410)+0xb) == 0xe8) and (by((@$t1+0x1e03410)+0xc) == 0xf0) and (by((@$t1+0x1e03410)+0xd) == 0x95) and (by((@$t1+0x1e03410)+0xe) == 0x73) and (by((@$t1+0x1e03410)+0xf) == 0xfe) and (by((@$t1+0x1e03410)+0x10) == 0x0f) and (by((@$t1+0x1e03410)+0x11) == 0x28) and (by((@$t1+0x1e03410)+0x12) == 0x03) and (by((@$t1+0x1e03410)+0x13) == 0x0f) and (by((@$t1+0x1e03410)+0x14) == 0x29) and (by((@$t1+0x1e03410)+0x15) == 0x40) and (by((@$t1+0x1e03410)+0x16) == 0x10) and (by((@$t1+0x1e03410)+0x17) == 0x48) and (by((@$t1+0x1e03410)+0x18) == 0x83) and (by((@$t1+0x1e03410)+0x19) == 0xc4) and (by((@$t1+0x1e03410)+0x1a) == 0x20) and (by((@$t1+0x1e03410)+0x1b) == 0x5b) and (by((@$t1+0x1e03410)+0x1c) == 0xc3))) { .printf "MGS_ABORT setter_0_bytes_mismatch\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not($vvalid((@$t1+0x1e03450),0x1b))) { .printf "MGS_ABORT setter_1_unreadable\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not((by((@$t1+0x1e03450)+0x0) == 0x40) and (by((@$t1+0x1e03450)+0x1) == 0x53) and (by((@$t1+0x1e03450)+0x2) == 0x48) and (by((@$t1+0x1e03450)+0x3) == 0x83) and (by((@$t1+0x1e03450)+0x4) == 0xec) and (by((@$t1+0x1e03450)+0x5) == 0x20) and (by((@$t1+0x1e03450)+0x6) == 0x48) and (by((@$t1+0x1e03450)+0x7) == 0x8b) and (by((@$t1+0x1e03450)+0x8) == 0xda) and (by((@$t1+0x1e03450)+0x9) == 0xe8) and (by((@$t1+0x1e03450)+0xa) == 0x42) and (by((@$t1+0x1e03450)+0xb) == 0x95) and (by((@$t1+0x1e03450)+0xc) == 0x73) and (by((@$t1+0x1e03450)+0xd) == 0xfe) and (by((@$t1+0x1e03450)+0xe) == 0x0f) and (by((@$t1+0x1e03450)+0xf) == 0x28) and (by((@$t1+0x1e03450)+0x10) == 0x03) and (by((@$t1+0x1e03450)+0x11) == 0x0f) and (by((@$t1+0x1e03450)+0x12) == 0x29) and (by((@$t1+0x1e03450)+0x13) == 0x40) and (by((@$t1+0x1e03450)+0x14) == 0x10) and (by((@$t1+0x1e03450)+0x15) == 0x48) and (by((@$t1+0x1e03450)+0x16) == 0x83) and (by((@$t1+0x1e03450)+0x17) == 0xc4) and (by((@$t1+0x1e03450)+0x18) == 0x20) and (by((@$t1+0x1e03450)+0x19) == 0x5b) and (by((@$t1+0x1e03450)+0x1a) == 0xc3))) { .printf "MGS_ABORT setter_1_bytes_mismatch\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not($vvalid((@$t1+0x1e02e00),0x1f))) { .printf "MGS_ABORT setter_2_unreadable\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not((by((@$t1+0x1e02e00)+0x0) == 0x40) and (by((@$t1+0x1e02e00)+0x1) == 0x53) and (by((@$t1+0x1e02e00)+0x2) == 0x48) and (by((@$t1+0x1e02e00)+0x3) == 0x83) and (by((@$t1+0x1e02e00)+0x4) == 0xec) and (by((@$t1+0x1e02e00)+0x5) == 0x20) and (by((@$t1+0x1e02e00)+0x6) == 0x48) and (by((@$t1+0x1e02e00)+0x7) == 0x8b) and (by((@$t1+0x1e02e00)+0x8) == 0xda) and (by((@$t1+0x1e02e00)+0x9) == 0xe8) and (by((@$t1+0x1e02e00)+0xa) == 0xc2) and (by((@$t1+0x1e02e00)+0xb) == 0x9b) and (by((@$t1+0x1e02e00)+0xc) == 0x73) and (by((@$t1+0x1e02e00)+0xd) == 0xfe) and (by((@$t1+0x1e02e00)+0xe) == 0x0f) and (by((@$t1+0x1e02e00)+0xf) == 0x28) and (by((@$t1+0x1e02e00)+0x10) == 0x40) and (by((@$t1+0x1e02e00)+0x11) == 0x10) and (by((@$t1+0x1e02e00)+0x12) == 0x48) and (by((@$t1+0x1e02e00)+0x13) == 0x8b) and (by((@$t1+0x1e02e00)+0x14) == 0xc3) and (by((@$t1+0x1e02e00)+0x15) == 0x66) and (by((@$t1+0x1e02e00)+0x16) == 0x0f) and (by((@$t1+0x1e02e00)+0x17) == 0x7f) and (by((@$t1+0x1e02e00)+0x18) == 0x03) and (by((@$t1+0x1e02e00)+0x19) == 0x48) and (by((@$t1+0x1e02e00)+0x1a) == 0x83) and (by((@$t1+0x1e02e00)+0x1b) == 0xc4) and (by((@$t1+0x1e02e00)+0x1c) == 0x20) and (by((@$t1+0x1e02e00)+0x1d) == 0x5b) and (by((@$t1+0x1e02e00)+0x1e) == 0xc3))) { .printf "MGS_ABORT setter_2_bytes_mismatch\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not($vvalid((@$t1+0x53cb10),0x10))) { .printf "MGS_ABORT copy_0_unreadable\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not((by((@$t1+0x53cb10)+0x0) == 0xb8) and (by((@$t1+0x53cb10)+0x1) == 0x01) and (by((@$t1+0x53cb10)+0x2) == 0x00) and (by((@$t1+0x53cb10)+0x3) == 0x00) and (by((@$t1+0x53cb10)+0x4) == 0x00) and (by((@$t1+0x53cb10)+0x5) == 0x4c) and (by((@$t1+0x53cb10)+0x6) == 0x8d) and (by((@$t1+0x53cb10)+0x7) == 0x05) and (by((@$t1+0x53cb10)+0x8) == 0xd4) and (by((@$t1+0x53cb10)+0x9) == 0x74) and (by((@$t1+0x53cb10)+0xa) == 0x69) and (by((@$t1+0x53cb10)+0xb) == 0x02) and (by((@$t1+0x53cb10)+0xc) == 0x48) and (by((@$t1+0x53cb10)+0xd) == 0x8d) and (by((@$t1+0x53cb10)+0xe) == 0x0d) and (by((@$t1+0x53cb10)+0xf) == 0xcd))) { .printf "MGS_ABORT copy_0_bytes_mismatch\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not($vvalid((@$t1+0x53cb20),0x10))) { .printf "MGS_ABORT copy_10_unreadable\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not((by((@$t1+0x53cb20)+0x0) == 0x82) and (by((@$t1+0x53cb20)+0x1) == 0x69) and (by((@$t1+0x53cb20)+0x2) == 0x02) and (by((@$t1+0x53cb20)+0x3) == 0x2b) and (by((@$t1+0x53cb20)+0x4) == 0x05) and (by((@$t1+0x53cb20)+0x5) == 0xa7) and (by((@$t1+0x53cb20)+0x6) == 0x74) and (by((@$t1+0x53cb20)+0x7) == 0x69) and (by((@$t1+0x53cb20)+0x8) == 0x02) and (by((@$t1+0x53cb20)+0x9) == 0x48) and (by((@$t1+0x53cb20)+0xa) == 0x63) and (by((@$t1+0x53cb20)+0xb) == 0xd0) and (by((@$t1+0x53cb20)+0xc) == 0x89) and (by((@$t1+0x53cb20)+0xd) == 0x05) and (by((@$t1+0x53cb20)+0xe) == 0x9e) and (by((@$t1+0x53cb20)+0xf) == 0x74))) { .printf "MGS_ABORT copy_10_bytes_mismatch\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not($vvalid((@$t1+0x53cb30),0x10))) { .printf "MGS_ABORT copy_20_unreadable\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not((by((@$t1+0x53cb30)+0x0) == 0x69) and (by((@$t1+0x53cb30)+0x1) == 0x02) and (by((@$t1+0x53cb30)+0x2) == 0x48) and (by((@$t1+0x53cb30)+0x3) == 0x8b) and (by((@$t1+0x53cb30)+0x4) == 0xc2) and (by((@$t1+0x53cb30)+0x5) == 0x48) and (by((@$t1+0x53cb30)+0x6) == 0x69) and (by((@$t1+0x53cb30)+0x7) == 0xd2) and (by((@$t1+0x53cb30)+0x8) == 0x00) and (by((@$t1+0x53cb30)+0x9) == 0x0e) and (by((@$t1+0x53cb30)+0xa) == 0x00) and (by((@$t1+0x53cb30)+0xb) == 0x00) and (by((@$t1+0x53cb30)+0xc) == 0x48) and (by((@$t1+0x53cb30)+0xd) == 0x69) and (by((@$t1+0x53cb30)+0xe) == 0xc0) and (by((@$t1+0x53cb30)+0xf) == 0x00))) { .printf "MGS_ABORT copy_20_bytes_mismatch\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not($vvalid((@$t1+0x53cb40),0x10))) { .printf "MGS_ABORT copy_30_unreadable\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not((by((@$t1+0x53cb40)+0x0) == 0x0e) and (by((@$t1+0x53cb40)+0x1) == 0x00) and (by((@$t1+0x53cb40)+0x2) == 0x00) and (by((@$t1+0x53cb40)+0x3) == 0x48) and (by((@$t1+0x53cb40)+0x4) == 0x2b) and (by((@$t1+0x53cb40)+0x5) == 0xca) and (by((@$t1+0x53cb40)+0x6) == 0x4a) and (by((@$t1+0x53cb40)+0x7) == 0x8d) and (by((@$t1+0x53cb40)+0x8) == 0x14) and (by((@$t1+0x53cb40)+0x9) == 0x00) and (by((@$t1+0x53cb40)+0xa) == 0x48) and (by((@$t1+0x53cb40)+0xb) == 0x8b) and (by((@$t1+0x53cb40)+0xc) == 0xc2) and (by((@$t1+0x53cb40)+0xd) == 0x48) and (by((@$t1+0x53cb40)+0xe) == 0x0b) and (by((@$t1+0x53cb40)+0xf) == 0xc1))) { .printf "MGS_ABORT copy_30_bytes_mismatch\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not($vvalid((@$t1+0x53cb50),0x10))) { .printf "MGS_ABORT copy_40_unreadable\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not((by((@$t1+0x53cb50)+0x0) == 0x83) and (by((@$t1+0x53cb50)+0x1) == 0xe0) and (by((@$t1+0x53cb50)+0x2) == 0x0f) and (by((@$t1+0x53cb50)+0x3) == 0x75) and (by((@$t1+0x53cb50)+0x4) == 0x5f) and (by((@$t1+0x53cb50)+0x5) == 0xb8) and (by((@$t1+0x53cb50)+0x6) == 0x1c) and (by((@$t1+0x53cb50)+0x7) == 0x00) and (by((@$t1+0x53cb50)+0x8) == 0x00) and (by((@$t1+0x53cb50)+0x9) == 0x00) and (by((@$t1+0x53cb50)+0xa) == 0x66) and (by((@$t1+0x53cb50)+0xb) == 0x0f) and (by((@$t1+0x53cb50)+0xc) == 0x1f) and (by((@$t1+0x53cb50)+0xd) == 0x44) and (by((@$t1+0x53cb50)+0xe) == 0x00) and (by((@$t1+0x53cb50)+0xf) == 0x00))) { .printf "MGS_ABORT copy_40_bytes_mismatch\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not($vvalid((@$t1+0x53cb60),0x10))) { .printf "MGS_ABORT copy_50_unreadable\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not((by((@$t1+0x53cb60)+0x0) == 0x0f) and (by((@$t1+0x53cb60)+0x1) == 0x28) and (by((@$t1+0x53cb60)+0x2) == 0x02) and (by((@$t1+0x53cb60)+0x3) == 0x48) and (by((@$t1+0x53cb60)+0x4) == 0x8d) and (by((@$t1+0x53cb60)+0x5) == 0x89) and (by((@$t1+0x53cb60)+0x6) == 0x80) and (by((@$t1+0x53cb60)+0x7) == 0x00) and (by((@$t1+0x53cb60)+0x8) == 0x00) and (by((@$t1+0x53cb60)+0x9) == 0x00) and (by((@$t1+0x53cb60)+0xa) == 0x48) and (by((@$t1+0x53cb60)+0xb) == 0x8d) and (by((@$t1+0x53cb60)+0xc) == 0x92) and (by((@$t1+0x53cb60)+0xd) == 0x80) and (by((@$t1+0x53cb60)+0xe) == 0x00) and (by((@$t1+0x53cb60)+0xf) == 0x00))) { .printf "MGS_ABORT copy_50_bytes_mismatch\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not($vvalid((@$t1+0x53cb70),0x10))) { .printf "MGS_ABORT copy_60_unreadable\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not((by((@$t1+0x53cb70)+0x0) == 0x00) and (by((@$t1+0x53cb70)+0x1) == 0x0f) and (by((@$t1+0x53cb70)+0x2) == 0x29) and (by((@$t1+0x53cb70)+0x3) == 0x41) and (by((@$t1+0x53cb70)+0x4) == 0x80) and (by((@$t1+0x53cb70)+0x5) == 0x0f) and (by((@$t1+0x53cb70)+0x6) == 0x28) and (by((@$t1+0x53cb70)+0x7) == 0x4a) and (by((@$t1+0x53cb70)+0x8) == 0x90) and (by((@$t1+0x53cb70)+0x9) == 0x0f) and (by((@$t1+0x53cb70)+0xa) == 0x29) and (by((@$t1+0x53cb70)+0xb) == 0x49) and (by((@$t1+0x53cb70)+0xc) == 0x90) and (by((@$t1+0x53cb70)+0xd) == 0x0f) and (by((@$t1+0x53cb70)+0xe) == 0x28) and (by((@$t1+0x53cb70)+0xf) == 0x42))) { .printf "MGS_ABORT copy_60_bytes_mismatch\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not($vvalid((@$t1+0x53cb80),0x10))) { .printf "MGS_ABORT copy_70_unreadable\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not((by((@$t1+0x53cb80)+0x0) == 0xa0) and (by((@$t1+0x53cb80)+0x1) == 0x0f) and (by((@$t1+0x53cb80)+0x2) == 0x29) and (by((@$t1+0x53cb80)+0x3) == 0x41) and (by((@$t1+0x53cb80)+0x4) == 0xa0) and (by((@$t1+0x53cb80)+0x5) == 0x0f) and (by((@$t1+0x53cb80)+0x6) == 0x28) and (by((@$t1+0x53cb80)+0x7) == 0x4a) and (by((@$t1+0x53cb80)+0x8) == 0xb0) and (by((@$t1+0x53cb80)+0x9) == 0x0f) and (by((@$t1+0x53cb80)+0xa) == 0x29) and (by((@$t1+0x53cb80)+0xb) == 0x49) and (by((@$t1+0x53cb80)+0xc) == 0xb0) and (by((@$t1+0x53cb80)+0xd) == 0x0f) and (by((@$t1+0x53cb80)+0xe) == 0x28) and (by((@$t1+0x53cb80)+0xf) == 0x42))) { .printf "MGS_ABORT copy_70_bytes_mismatch\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not($vvalid((@$t1+0x53cb90),0x10))) { .printf "MGS_ABORT copy_80_unreadable\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not((by((@$t1+0x53cb90)+0x0) == 0xc0) and (by((@$t1+0x53cb90)+0x1) == 0x0f) and (by((@$t1+0x53cb90)+0x2) == 0x29) and (by((@$t1+0x53cb90)+0x3) == 0x41) and (by((@$t1+0x53cb90)+0x4) == 0xc0) and (by((@$t1+0x53cb90)+0x5) == 0x0f) and (by((@$t1+0x53cb90)+0x6) == 0x28) and (by((@$t1+0x53cb90)+0x7) == 0x4a) and (by((@$t1+0x53cb90)+0x8) == 0xd0) and (by((@$t1+0x53cb90)+0x9) == 0x0f) and (by((@$t1+0x53cb90)+0xa) == 0x29) and (by((@$t1+0x53cb90)+0xb) == 0x49) and (by((@$t1+0x53cb90)+0xc) == 0xd0) and (by((@$t1+0x53cb90)+0xd) == 0x0f) and (by((@$t1+0x53cb90)+0xe) == 0x28) and (by((@$t1+0x53cb90)+0xf) == 0x42))) { .printf "MGS_ABORT copy_80_bytes_mismatch\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not($vvalid((@$t1+0x53cba0),0x10))) { .printf "MGS_ABORT copy_90_unreadable\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not((by((@$t1+0x53cba0)+0x0) == 0xe0) and (by((@$t1+0x53cba0)+0x1) == 0x0f) and (by((@$t1+0x53cba0)+0x2) == 0x29) and (by((@$t1+0x53cba0)+0x3) == 0x41) and (by((@$t1+0x53cba0)+0x4) == 0xe0) and (by((@$t1+0x53cba0)+0x5) == 0x0f) and (by((@$t1+0x53cba0)+0x6) == 0x28) and (by((@$t1+0x53cba0)+0x7) == 0x4a) and (by((@$t1+0x53cba0)+0x8) == 0xf0) and (by((@$t1+0x53cba0)+0x9) == 0x0f) and (by((@$t1+0x53cba0)+0xa) == 0x29) and (by((@$t1+0x53cba0)+0xb) == 0x49) and (by((@$t1+0x53cba0)+0xc) == 0xf0) and (by((@$t1+0x53cba0)+0xd) == 0x48) and (by((@$t1+0x53cba0)+0xe) == 0xff) and (by((@$t1+0x53cba0)+0xf) == 0xc8))) { .printf "MGS_ABORT copy_90_bytes_mismatch\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not($vvalid((@$t1+0x53cbb0),0xf))) { .printf "MGS_ABORT copy_a0_unreadable\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not((by((@$t1+0x53cbb0)+0x0) == 0x75) and (by((@$t1+0x53cbb0)+0x1) == 0xae) and (by((@$t1+0x53cbb0)+0x2) == 0xf3) and (by((@$t1+0x53cbb0)+0x3) == 0xc3) and (by((@$t1+0x53cbb0)+0x4) == 0x41) and (by((@$t1+0x53cbb0)+0x5) == 0xb8) and (by((@$t1+0x53cbb0)+0x6) == 0x00) and (by((@$t1+0x53cbb0)+0x7) == 0x0e) and (by((@$t1+0x53cbb0)+0x8) == 0x00) and (by((@$t1+0x53cbb0)+0x9) == 0x00) and (by((@$t1+0x53cbb0)+0xa) == 0xe9) and (by((@$t1+0x53cbb0)+0xb) == 0xa1) and (by((@$t1+0x53cbb0)+0xc) == 0x8f) and (by((@$t1+0x53cbb0)+0xd) == 0x4c) and (by((@$t1+0x53cbb0)+0xe) == 0x01))) { .printf "MGS_ABORT copy_a0_bytes_mismatch\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not($vvalid(@$t1+0x2bd4000,4))) { .printf "MGS_ABORT bank_0_unreadable\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not($vvalid(@$t1+0x2bd4e00,4))) { .printf "MGS_ABORT bank_1_unreadable\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not($vvalid(@$t1+0x2bd3fd0,8))) { .printf "MGS_ABORT selectors_unreadable\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not(dwo(@$t1+0x2bd3fd4) == 0)) { .printf "MGS_ABORT local_index_not_zero\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not(dwo(@$t1+0x2bd3fd0) < 2)) { .printf "MGS_ABORT invalid_bank\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { r @$t4 = 1; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { ba0 w4 (@$t1+0x2bd4000) "$$< C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\vector-observation-349440d33dc04187a131a6740726c7d5\\vector.hit0.cmd"; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not(@$bp0 == (@$t1+0x2bd4000))) { .printf "MGS_ABORT breakpoint_0_not_installed\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { r @$t5 = 1; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { ba1 w4 (@$t1+0x2bd4e00) "$$< C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\vector-observation-349440d33dc04187a131a6740726c7d5\\vector.hit1.cmd"; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not(@$bp1 == (@$t1+0x2bd4e00))) { .printf "MGS_ABORT breakpoint_1_not_installed\n"; .leave }; r @$t0=1 } }
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { .printf "MGS_VECTOR_ARMED\n"; r @$t0=1 } }
+MGS_VECTOR_ARMED
+0:173> .if (@$t0 != 0) { r @$t0=0; .catch { r @$t0 = 1; r @$t0=1 } }
+0:173> .if (@$t0 == 0) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+*** WARNING: Unable to verify checksum for D:\Games\steamapps\common\MGS_TPP\mgsvtpp.exe
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4e00))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture1.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .if (((@rip == (@$t1+0x53cb7d))) and ((@rcx-0x70) == (@$t1+0x2bd4000))) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.copy.cmd; } .else { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.capture0.cmd; }
+0:000> r @$t8 = @$t8 + 1
+0:000> .printf "MGS_VECTOR_COPY_SKIPPED\n"
+MGS_VECTOR_COPY_SKIPPED
+0:000> .if (@$t8 > 0n120) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-349440d33dc04187a131a6740726c7d5\vector.failed.cmd; } .else { g }
+0:000> .printf "MGS_ABORT vector_setup_failed\n"
+MGS_ABORT vector_setup_failed
+0:000> .catch { .if (@$t4 != 0) { bc 0 } }; .catch { .if (@$t5 != 0) { bc 1 } }
+0:000> .printf "MGS_VECTOR_DETACH\n"
+MGS_VECTOR_DETACH
+0:000> .detach /h
+Detached
+NoTarget> q
+WARNING: The debugger does not have a current process or thread
+WARNING: Many commands will not work
+quit:
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\atlmfc.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\concurrency.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\cpp_rest.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\ObjectiveC.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\stl.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Data.Json.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Devices.Geolocation.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Devices.Sensors.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Media.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\windows.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\winrt.natvis'

@@ -1,0 +1,20 @@
+{
+  "utc": "2026-09-09T15:50:10.4892805Z",
+  "checks": [
+    {
+      "observation": "NetworkRegistration",
+      "running_game_refused": true
+    },
+    {
+      "observation": "SteamInit",
+      "running_game_refused": true
+    },
+    {
+      "observation": "SteamInit",
+      "conflicting_switches_refused": true
+    }
+  ],
+  "live_game_pids": [
+    42824
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "utc": "2026-09-09T18:58:15.5762050Z",
+  "backup": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\backups\\probe-0.4.0-20260909T185815Z",
+  "installed": {
+    "product": "mgs-coop-original-loader-probe",
+    "version": "0.5.0",
+    "game_directory": "D:\\Games\\steamapps\\common\\MGS_TPP",
+    "dll_sha256": "B2E65778F134693C46E5C78011FCE8D39ADFA403782A9532498390322F7BF3B2",
+    "executable_sha256": "085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45",
+    "installed_utc": "2026-09-09T18:58:15.5200009Z",
+    "scope": "Diagnostics, gated Steam imports and opt-in pass-through script-loader hook; no script replacement or multiplayer traffic"
+  },
+  "mode": "pass_through",
+  "marker_sha256": "17F81232313E11AE1E36DD05ED5A358A59024438C44D15F2C6EFB5927F7DF973"
+}

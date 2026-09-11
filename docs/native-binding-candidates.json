@@ -1,0 +1,203 @@
+{
+  "schema_version": 1,
+  "inspected_at_utc": "2026-09-09T13:09:19.263188+00:00",
+  "source_executable": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgsvtpp.exe",
+  "provenance": "original offline scanner using only this executable and generic Lua API documentation",
+  "generic_shape_reference": "https://www.lua.org/manual/5.1/manual.html#luaL_Reg",
+  "shape_assumption": "AMD64 adjacent {const char *name; function pointer} pairs, 16-byte stride",
+  "verified_native_functions": [],
+  "limitations": [
+    "The shape is a heuristic; this does not establish the game's exact Lua version or internal ABI.",
+    "Tables are found only through literal 64-bit preferred-image-VA references.",
+    "RIP-relative LEA is scanned as a bounded seven-byte shape, without a complete x64 instruction decoder.",
+    "Instruction candidates may be overlapping bytes or encoded data; exception ranges do not prove instruction boundaries.",
+    "Runtime-built, encoded, relocated-at-runtime or nonstandard registration tables can be missed.",
+    "Executable-section membership does not prove a function boundary or calling convention.",
+    "Candidate tables are not callable targets and no hooks may be enabled based only on this report.",
+    "No game process was started, read, called or modified, and no save files were accessed."
+  ],
+  "bounds": {
+    "anchors": [
+      "TppNetworkUtil",
+      "IsSessionConnect",
+      "GetSessionMemberCount"
+    ],
+    "minimum_adjacent_pairs": 3,
+    "maximum_table_pairs": 256,
+    "maximum_stored_references_per_string": 256,
+    "maximum_stored_lea_references": 256,
+    "maximum_exception_ranges": 300000
+  },
+  "bytes": 166517760,
+  "sha1": "4F643576C6F6ECF6C67A9AEF4D4F02285ADA43E3",
+  "sha256": "085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45",
+  "image_base": "0x140000000",
+  "anchors": {
+    "TppNetworkUtil": {
+      "string_status": "present",
+      "occurrences": [
+        {
+          "string_data": {
+            "file_offset": "0x22a7f70",
+            "rva": "0x22a8b70",
+            "preferred_image_va": "0x1422a8b70",
+            "section": ".edata",
+            "interpretation": "data occurrence only; not a verified callable address"
+          },
+          "literal_va_reference_count": 0,
+          "references": [],
+          "references_truncated": false
+        }
+      ]
+    },
+    "IsSessionConnect": {
+      "string_status": "present",
+      "occurrences": [
+        {
+          "string_data": {
+            "file_offset": "0x22a7d70",
+            "rva": "0x22a8970",
+            "preferred_image_va": "0x1422a8970",
+            "section": ".edata",
+            "interpretation": "data occurrence only; not a verified callable address"
+          },
+          "literal_va_reference_count": 0,
+          "references": [],
+          "references_truncated": false
+        }
+      ]
+    },
+    "GetSessionMemberCount": {
+      "string_status": "present",
+      "occurrences": [
+        {
+          "string_data": {
+            "file_offset": "0x22a7da8",
+            "rva": "0x22a89a8",
+            "preferred_image_va": "0x1422a89a8",
+            "section": ".edata",
+            "interpretation": "data occurrence only; not a verified callable address"
+          },
+          "literal_va_reference_count": 0,
+          "references": [],
+          "references_truncated": false
+        }
+      ]
+    }
+  },
+  "candidate_count": 0,
+  "candidates": [],
+  "rip_relative_lea_scan": {
+    "method": "executable-section REX.W LEA byte patterns with ModRM mod=00,r/m=101 and exact calculated target",
+    "exception_range_source_status": "read_from_pe_exception_directory",
+    "reference_count": 3,
+    "references_truncated": false,
+    "references": [
+      {
+        "candidate_status": "unverified_instruction_byte_pattern",
+        "anchor": "IsSessionConnect",
+        "instruction": {
+          "file_offset": "0xa1a762",
+          "rva": "0xa1b362",
+          "preferred_image_va": "0x140a1b362",
+          "section": ".xtext",
+          "interpretation": "unverified x64 LEA byte-pattern candidate; not a callable target"
+        },
+        "bytes_hex": "48 8d 05 07 d6 88 01",
+        "destination_register_if_decoded_at_this_boundary": "rax",
+        "signed_disp32": 25744903,
+        "calculated_target_rva": "0x22a8970",
+        "target_formula": "instruction_rva + 7 + signed_disp32",
+        "target": {
+          "file_offset": "0x22a7d70",
+          "rva": "0x22a8970",
+          "preferred_image_va": "0x1422a8970",
+          "section": ".edata",
+          "interpretation": "data occurrence only; not a verified callable address"
+        },
+        "instruction_boundary_verified": false,
+        "covering_pe_exception_range": {
+          "begin_rva": "0xa1b2e0",
+          "end_rva_exclusive": "0xa1b54c",
+          "unwind_info_rva": "0x2783bd8",
+          "interpretation": "declared runtime-function range; semantic role and safe entry unverified"
+        }
+      },
+      {
+        "candidate_status": "unverified_instruction_byte_pattern",
+        "anchor": "GetSessionMemberCount",
+        "instruction": {
+          "file_offset": "0xa1a7a8",
+          "rva": "0xa1b3a8",
+          "preferred_image_va": "0x140a1b3a8",
+          "section": ".xtext",
+          "interpretation": "unverified x64 LEA byte-pattern candidate; not a callable target"
+        },
+        "bytes_hex": "48 8d 05 f9 d5 88 01",
+        "destination_register_if_decoded_at_this_boundary": "rax",
+        "signed_disp32": 25744889,
+        "calculated_target_rva": "0x22a89a8",
+        "target_formula": "instruction_rva + 7 + signed_disp32",
+        "target": {
+          "file_offset": "0x22a7da8",
+          "rva": "0x22a89a8",
+          "preferred_image_va": "0x1422a89a8",
+          "section": ".edata",
+          "interpretation": "data occurrence only; not a verified callable address"
+        },
+        "instruction_boundary_verified": false,
+        "covering_pe_exception_range": {
+          "begin_rva": "0xa1b2e0",
+          "end_rva_exclusive": "0xa1b54c",
+          "unwind_info_rva": "0x2783bd8",
+          "interpretation": "declared runtime-function range; semantic role and safe entry unverified"
+        }
+      },
+      {
+        "candidate_status": "unverified_instruction_byte_pattern",
+        "anchor": "TppNetworkUtil",
+        "instruction": {
+          "file_offset": "0xa1a8e8",
+          "rva": "0xa1b4e8",
+          "preferred_image_va": "0x140a1b4e8",
+          "section": ".xtext",
+          "interpretation": "unverified x64 LEA byte-pattern candidate; not a callable target"
+        },
+        "bytes_hex": "48 8d 15 81 d6 88 01",
+        "destination_register_if_decoded_at_this_boundary": "rdx",
+        "signed_disp32": 25745025,
+        "calculated_target_rva": "0x22a8b70",
+        "target_formula": "instruction_rva + 7 + signed_disp32",
+        "target": {
+          "file_offset": "0x22a7f70",
+          "rva": "0x22a8b70",
+          "preferred_image_va": "0x1422a8b70",
+          "section": ".edata",
+          "interpretation": "data occurrence only; not a verified callable address"
+        },
+        "instruction_boundary_verified": false,
+        "covering_pe_exception_range": {
+          "begin_rva": "0xa1b2e0",
+          "end_rva_exclusive": "0xa1b54c",
+          "unwind_info_rva": "0x2783bd8",
+          "interpretation": "declared runtime-function range; semantic role and safe entry unverified"
+        }
+      }
+    ],
+    "shared_code_region_candidates": [
+      {
+        "candidate_status": "unverified_code_region_with_anchor_references",
+        "begin_rva": "0xa1b2e0",
+        "end_rva_exclusive": "0xa1b54c",
+        "unwind_info_rva": "0x2783bd8",
+        "anchors": [
+          "IsSessionConnect",
+          "GetSessionMemberCount",
+          "TppNetworkUtil"
+        ],
+        "interpretation": "shared range may contain registration logic; no callable binding has been verified"
+      }
+    ]
+  },
+  "result": "no_qualifying_tables_found; unverified_instruction_candidates_only"
+}

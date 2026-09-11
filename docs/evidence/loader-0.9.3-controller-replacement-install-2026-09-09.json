@@ -1,0 +1,10 @@
+{
+  "players": 2,
+  "mode": "players-v1",
+  "archive_bytes": 3720192,
+  "version": "0.9.3",
+  "test_result": "not_launched",
+  "archive_sha256": "26CE7C2168D655C35BE39E4F17A295206AA0522DE8782CD57A36C4FEEA382F54",
+  "dll_sha256": "99A77997A269BDC6155E9BC0F7048C0EC4EFCEC0D20EE98CC474B58C4BB0C9C5",
+  "utc": "2026-09-09T21:55:47.0495307Z"
+}

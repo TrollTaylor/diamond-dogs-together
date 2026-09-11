@@ -1,0 +1,59 @@
+{
+  "excess_bytes": 778000,
+  "save_files": [
+    {
+      "sha256": "FA2C41DD08DB1429FF082E20D9CF1F11D5B600FD8038510938873C659E980C8B",
+      "matches_before": true,
+      "name": "PERSONAL_DATA0"
+    },
+    {
+      "sha256": "9E4B9877BE31BAAB6E77678EED28A95E1AD38FFD1F25DF322C20F326D99EB147",
+      "matches_before": true,
+      "name": "PERSONAL_DATA1"
+    },
+    {
+      "sha256": "5866A6F6F17B303CE7E5D2E2F1A25E6172F80B5DC50DE24121F1EF890AD98583",
+      "matches_before": true,
+      "name": "TPP_CONFIG_DATA0"
+    },
+    {
+      "sha256": "5866A6F6F17B303CE7E5D2E2F1A25E6172F80B5DC50DE24121F1EF890AD98583",
+      "matches_before": true,
+      "name": "TPP_CONFIG_DATA1"
+    },
+    {
+      "sha256": "959E130963D2C718CE181246E533F42D1A072AA9ED6A300AE9CE85847C23FE6B",
+      "matches_before": true,
+      "name": "TPP_GAME_DATA0"
+    },
+    {
+      "sha256": "47F0C017091833624B45ED662F87A8D399C0D6A31D39AADDF18CBD51DA813C32",
+      "matches_before": true,
+      "name": "TPP_GAME_DATA1"
+    },
+    {
+      "sha256": "3C9A58DF12E5C2BE6AAFB600B086A11E0BC8FE2D50667F739DB24983705007C4",
+      "matches_before": true,
+      "name": "TPP_GRAPHICS_CONFIG"
+    }
+  ],
+  "utc": "2026-09-09T21:50:32.0721129Z",
+  "fix_verified": false,
+  "pid": 52404,
+  "subsequent_on_allocate": false,
+  "executable_sha256": "085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45",
+  "return_requested_utc": "2026-09-09T21:47:37.068Z",
+  "version": "0.9.2",
+  "dll_sha256": "188346ECE1FE84906FE03BC91F3E3CE635BBCA271F5B9A6518E61DAC4AF50468",
+  "steam_dll_sha256": "08BD0152356E5619EE56A6714AC951B6800DBB21821693A4EFAF85278442C60A",
+  "slots_observed": 2,
+  "black_loading_observed_utc": "2026-09-09T21:49:02.007Z",
+  "state": 11,
+  "normal_close_requested_utc": "2026-09-09T21:49:13.318Z",
+  "same_as_four_slots": true,
+  "additional_parts_count": 1,
+  "process_absence_verified": true,
+  "on_terminate_returned": true,
+  "total": 13419280,
+  "baseline": 12641280
+}

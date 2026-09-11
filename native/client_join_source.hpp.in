@@ -1,0 +1,2 @@
+#pragma once
+constexpr char client_join_source[] = R"MGSLUA(@MGS_CLIENT_JOIN_SOURCE@)MGSLUA";

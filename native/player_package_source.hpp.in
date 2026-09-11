@@ -1,0 +1,6 @@
+#pragma once
+namespace mgscoop {
+inline constexpr char player_package_source[] = R"MGSPACK(
+@MGS_PLAYER_PACKAGE_SOURCE@
+)MGSPACK";
+}

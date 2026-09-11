@@ -1,0 +1,13 @@
+# Single-PC gameplay testing feasibility
+
+Read-only inventory on 2026-09-10 found approximately 64 GB installed RAM (66,094,223,360 bytes reported usable), an NVIDIA GeForce RTX 5080, AMD integrated graphics, and VirtualBox 7.2.4r170995. The existing unrelated `sprunki` Windows 11 VM is powered off and configured with 8 GB RAM, 8 CPUs, VBoxSVGA, 128 MB video memory and 3D acceleration enabled. It was not started or modified. Sandboxie was not found in the two standard installation paths checked; this is not an exhaustive installation search.
+
+A second Windows environment is a plausible way to isolate a second Steam client and game process. Oracle documents Direct3D 11.0/11.1 support for Windows 8 and newer guests, depending on host capabilities and Guest Additions. MGSV requires DirectX 11. These requirements overlap, but they do not prove that MGSV runs correctly with VirtualBox's virtual GPU. The guest's installed graphics driver, actual feature level, Steam setup, game installation and performance have not been inspected. Do not infer full RTX hardware access or sufficient virtual video memory from the host GPU.
+
+For the real Steam path, a second separately licensed Steam identity remains needed. The user's account availability question is pending. A second account alone does not establish that the VM can render the game. No accounts were changed or contacted, and no software was installed.
+
+References: [Oracle 7.2 Guest Additions graphics support](https://docs.oracle.com/en/virtualization/virtualbox/7.2/user/guestadditions.html), [MGSV official Steam requirements](https://store.steampowered.com/app/287700/METAL_GEAR_SOLID_V_The_Phantom_Pain/), [Steam account use](https://help.steampowered.com/en/faqs/view/71EA-CDCE-FB5C-82B3).
+
+If isolated instances prove impractical, a scripted second-player actor could exercise local actor allocation, equipment, movement and damage. That requires discovering the real second-player initialization/control path; placing an ordinary NPC or merely reserving player slots is insufficient. Such a harness would not establish Steam identity, joining, remote authority or replication. No fake player or local multi-instance mode has been implemented yet.
+
+This investigation does not authorize or perform a game/VM launch. The user's earlier no-tests constraint remains in effect until changed. No second-machine purchase is assumed necessary for all useful gameplay investigation.

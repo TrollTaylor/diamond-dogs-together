@@ -1,0 +1,4 @@
+#pragma once
+constexpr char mission_trace_source[] = R"MGS_TRACE(
+@MGS_MISSION_TRACE_SOURCE@
+)MGS_TRACE";

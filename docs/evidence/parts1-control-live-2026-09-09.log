@@ -1,0 +1,136 @@
+MGS Co-op script adapter 0.9.1; executable_fingerprint=accepted; install_after_DirectInput=true; earlier_loads_may_be_missed=true
+mode=bootstrap_v1; gameplay=disabled
+mode=archive_v1; actor_packages_selected=0
+archive_mount=calling; thread=100980 name=mgs_coop_player_runtime_v1 tag=0 flags=33 lifetime=process
+archive_mount=returned; thread=100980 handle=000000000DAF0160 kind=1 stream=000000000DA60510 success=1; actor_packages_selected=0
+mode=players_v1; mission_selection_trial=30050; live_actor_count=unverified
+install_result=0 installed=1 pid=33280 thread=100980 tick_ms=549125687 target_rva=0x1a178e0 lifetime=process
+entry_count=1 thread=100980 tick_ms=549126015 size=29 name_prefix=Fox.SetJobExecutorCount( 30 ) replacement=0 execution_receipt=0
+return_count=1 thread=100980 tick_ms=549126015 parser_result=0 replaced=0 entry_pairing=none
+entry_count=2 thread=100980 tick_ms=549126015 size=12660 name_prefix=@init.lua replacement=0 execution_receipt=0
+return_count=2 thread=100980 tick_ms=549126015 parser_result=0 replaced=0 entry_pairing=none
+entry_count=3 thread=100980 tick_ms=549126453 size=21783 name_prefix=@Fox/Scripts/Gr/gr_init_dx11.lua replacement=0 execution_receipt=0
+return_count=3 thread=100980 tick_ms=549126453 parser_result=0 replaced=0 entry_pairing=none
+entry_count=4 thread=100980 tick_ms=549126468 size=15926 name_prefix=@shaders/dx11/GrSystemShadersNoLnm_dx11.lua replacement=0 execution_receipt=0
+return_count=4 thread=100980 tick_ms=549126468 parser_result=0 replaced=0 entry_pairing=none
+entry_count=5 thread=100980 tick_ms=549126468 size=81272 name_prefix=@shaders/dx11/GrModelShadersNoLnm_dx11.lua replacement=0 execution_receipt=0
+return_count=5 thread=100980 tick_ms=549126468 parser_result=0 replaced=0 entry_pairing=none
+entry_count=6 thread=100980 tick_ms=549126468 size=96 name_prefix=@shaders/dx11/FxShadersNoLnm_dx11.lua replacement=0 execution_receipt=0
+return_count=6 thread=100980 tick_ms=549126468 parser_result=0 replaced=0 entry_pairing=none
+entry_count=7 thread=100980 tick_ms=549126468 size=37016 name_prefix=@Tpp/start.lua replacement=0 execution_receipt=0
+return_count=7 thread=100980 tick_ms=549126468 parser_result=0 replaced=0 entry_pairing=none
+entry_count=8 thread=100980 tick_ms=549126640 size=27166 name_prefix=@shaders/dx11/TppShadersNoLnm_dx11.lua replacement=0 execution_receipt=0
+return_count=8 thread=100980 tick_ms=549126640 parser_result=0 replaced=0 entry_pairing=none
+entry_count=9 thread=100980 tick_ms=549126656 size=2997 name_prefix=@/Assets/tpp/sound/scripts/chara/SoundTppPlayer.lua replacement=0 execution_receipt=0
+return_count=9 thread=100980 tick_ms=549126656 parser_result=0 replaced=0 entry_pairing=none
+entry_count=10 thread=100980 tick_ms=549126656 size=3334 name_prefix=@/Assets/tpp/sound/scripts/chara/SoundTppSoldier.lua replacement=0 execution_receipt=0
+return_count=10 thread=100980 tick_ms=549126656 parser_result=0 replaced=0 entry_pairing=none
+entry_count=11 thread=100980 tick_ms=549126656 size=1939 name_prefix=@/Assets/tpp/sound/scripts/chara/SoundTppAnimal.lua replacement=0 execution_receipt=0
+return_count=11 thread=100980 tick_ms=549126656 parser_result=0 replaced=0 entry_pairing=none
+entry_count=12 thread=100980 tick_ms=549126656 size=25437 name_prefix=@Tpp/Scripts/Ui/TppUiBootInit.lua replacement=0 execution_receipt=0
+return_count=12 thread=100980 tick_ms=549126656 parser_result=0 replaced=0 entry_pairing=none
+entry_count=13 thread=2604 tick_ms=549126656 size=158 name_prefix=@Tpp/Scripts/Ui/TppUiPrefetchTexture.lua replacement=0 execution_receipt=0
+return_count=13 thread=2604 tick_ms=549126656 parser_result=0 replaced=0 entry_pairing=none
+entry_count=14 thread=41604 tick_ms=549127187 size=53760 name_prefix=@/Assets/tpp/sound/scripts/tape/PreinstallTape.lua replacement=0 execution_receipt=0
+return_count=14 thread=41604 tick_ms=549127187 parser_result=0 replaced=0 entry_pairing=none
+entry_count=15 thread=100980 tick_ms=549127312 size=95785 name_prefix=@Tpp/Scripts/Equip/EquipIdTable.lua replacement=0 execution_receipt=0
+return_count=15 thread=100980 tick_ms=549127312 parser_result=0 replaced=0 entry_pairing=none
+entry_count=16 thread=100980 tick_ms=549127328 size=181666 name_prefix=@/Assets/tpp/level_asset/weapon/ParameterTables/parts/EquipParameters.lua replacement=0 execution_receipt=0
+return_count=16 thread=100980 tick_ms=549127343 parser_result=0 replaced=0 entry_pairing=none
+entry_count=17 thread=100980 tick_ms=549127359 size=14621 name_prefix=@/Assets/tpp/level_asset/weapon/ParameterTables/parts/EquipMotionDataForChimera.lua replacement=0 execution_receipt=0
+return_count=17 thread=100980 tick_ms=549127359 parser_result=0 replaced=0 entry_pairing=none
+entry_count=18 thread=100980 tick_ms=549127359 size=363 name_prefix=@/Assets/tpp/level_asset/chara/enemy/TppEnemyFaceId.lua replacement=0 execution_receipt=0
+return_count=18 thread=100980 tick_ms=549127359 parser_result=0 replaced=0 entry_pairing=none
+entry_count=19 thread=100980 tick_ms=549127375 size=5066 name_prefix=@/Assets/tpp/level_asset/chara/enemy/TppEnemyBodyId.lua replacement=0 execution_receipt=0
+return_count=19 thread=100980 tick_ms=549127375 parser_result=0 replaced=0 entry_pairing=none
+entry_count=20 thread=100980 tick_ms=549127390 size=130967 name_prefix=@Tpp/Scripts/Equip/ChimeraPartsPackageTable.lua replacement=0 execution_receipt=0
+return_count=20 thread=100980 tick_ms=549127390 parser_result=0 replaced=0 entry_pairing=none
+entry_count=21 thread=100980 tick_ms=549127406 size=5281 name_prefix=@/Assets/tpp/level_asset/weapon/ParameterTables/EquipParameterTables.lua replacement=0 execution_receipt=0
+return_count=21 thread=100980 tick_ms=549127406 parser_result=0 replaced=0 entry_pairing=none
+entry_count=22 thread=100980 tick_ms=549127437 size=82834 name_prefix=@/Assets/tpp/level_asset/damage/ParameterTables/DamageParameterTables.lua replacement=0 execution_receipt=0
+return_count=22 thread=100980 tick_ms=549127437 parser_result=0 replaced=0 entry_pairing=none
+entry_count=23 thread=100980 tick_ms=549127453 size=4042 name_prefix=@/Assets/tpp/level_asset/chara/enemy/Soldier2ParameterTables.lua replacement=0 execution_receipt=0
+return_count=23 thread=100980 tick_ms=549127453 parser_result=0 replaced=0 entry_pairing=none
+entry_count=24 thread=100980 tick_ms=549127468 size=12107 name_prefix=@Tpp/Scripts/Equip/EquipMotionData.lua replacement=0 execution_receipt=0
+return_count=24 thread=100980 tick_ms=549127468 parser_result=0 replaced=0 entry_pairing=none
+entry_count=25 thread=100980 tick_ms=549127468 size=1401 name_prefix=@/Assets/tpp/level_asset/chara/enemy/TppEnemyFaceGroupId.lua replacement=0 execution_receipt=0
+return_count=25 thread=100980 tick_ms=549127468 parser_result=0 replaced=0 entry_pairing=none
+entry_count=26 thread=100980 tick_ms=549127468 size=4402 name_prefix=@/Assets/tpp/level_asset/chara/enemy/TppEnemyFaceGroup.lua replacement=0 execution_receipt=0
+return_count=26 thread=100980 tick_ms=549127468 parser_result=0 replaced=0 entry_pairing=none
+entry_count=27 thread=100980 tick_ms=549127500 size=86952 name_prefix=@/Assets/tpp/level_asset/chara/enemy/Soldier2FaceAndBodyData.lua replacement=0 execution_receipt=0
+return_count=27 thread=100980 tick_ms=549127500 parser_result=0 replaced=0 entry_pairing=none
+entry_count=28 thread=100980 tick_ms=549127515 size=5692 name_prefix=@/Assets/tpp/level_asset/weapon/ParameterTables/RecoilMaterial/RecoilMaterialTable.lua replacement=0 execution_receipt=0
+return_count=28 thread=100980 tick_ms=549127515 parser_result=0 replaced=0 entry_pairing=none
+entry_count=29 thread=100980 tick_ms=549127546 size=15742 name_prefix=@/Assets/tpp/script/lib/Tpp.lua replacement=1 execution_receipt=0
+return_count=29 thread=100980 tick_ms=549127546 parser_result=0 replaced=1 entry_pairing=none
+entry_count=30 thread=100980 tick_ms=549127546 size=39 name_prefix=return 'MGS_COOP_BOOTSTRAP_EXECUTED_V1' replacement=0 execution_receipt=1
+return_count=30 thread=100980 tick_ms=549127546 parser_result=0 replaced=0 entry_pairing=none
+entry_count=31 thread=100980 tick_ms=549127546 size=215 name_prefix=@/Assets/tpp/script/lib/MgsCoopArchiveProbe.lua replacement=0 execution_receipt=0
+return_count=31 thread=100980 tick_ms=549127546 parser_result=0 replaced=0 entry_pairing=none
+entry_count=32 thread=100980 tick_ms=549127546 size=37 name_prefix=return 'MGS_COOP_ARCHIVE_EXECUTED_V1' replacement=0 execution_receipt=0
+return_count=32 thread=100980 tick_ms=549127546 parser_result=0 replaced=0 entry_pairing=none
+entry_count=33 thread=100980 tick_ms=549127546 size=42 name_prefix=return 'MGS_COOP_ARCHIVE_LOAD_RETURNED_V1' replacement=0 execution_receipt=0
+entry_count=34 thread=100980 tick_ms=549127546 size=215 name_prefix=@/Assets/tpp/script/lib/MgsCoopArchiveProbe.lua replacement=0 execution_receipt=0
+entry_count=35 thread=100980 tick_ms=549127546 size=37 name_prefix=return 'MGS_COOP_ARCHIVE_EXECUTED_V1' replacement=0 execution_receipt=0
+entry_count=36 thread=100980 tick_ms=549127546 size=42 name_prefix=return 'MGS_COOP_ARCHIVE_FILE_RETURNED_V1' replacement=0 execution_receipt=0
+entry_count=66 thread=100980 tick_ms=549128828 size=21634 name_prefix=@/Assets/tpp/script/lib/TppMain.lua replacement=1 execution_receipt=0
+return_count=66 thread=100980 tick_ms=549128828 parser_result=0 replaced=1 entry_pairing=none
+entry_count=70 thread=100980 tick_ms=549129031 size=4500 name_prefix=@/Assets/tpp/script/lib/TppPackList.lua replacement=1 execution_receipt=0
+return_count=70 thread=100980 tick_ms=549129031 parser_result=0 replaced=1 entry_pairing=none
+entry_count=116 thread=100980 tick_ms=549130515 size=56 name_prefix=return 'MGS_COOP_PHASE_V1' -- EnableBlackLoading:enter:1 replacement=0 execution_receipt=0
+entry_count=117 thread=100980 tick_ms=549130515 size=57 name_prefix=return 'MGS_COOP_PHASE_V1' -- EnableBlackLoading:return:1 replacement=0 execution_receipt=0
+entry_count=120 thread=100980 tick_ms=549130796 size=48 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnAllocate:enter:1 replacement=0 execution_receipt=0
+entry_count=121 thread=100980 tick_ms=549130812 size=49 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnAllocate:return:1 replacement=0 execution_receipt=0
+entry_count=123 thread=100980 tick_ms=549130875 size=50 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnInitialize:enter:1 replacement=0 execution_receipt=0
+entry_count=124 thread=100980 tick_ms=549130875 size=51 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnInitialize:return:1 replacement=0 execution_receipt=0
+entry_count=125 thread=100980 tick_ms=549130890 size=59 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnEnterMissionPrepare:enter:1 replacement=0 execution_receipt=0
+entry_count=126 thread=100980 tick_ms=549130890 size=60 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnEnterMissionPrepare:return:1 replacement=0 execution_receipt=0
+entry_count=127 thread=100980 tick_ms=549130890 size=63 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnTextureLoadingWaitStart:enter:1 replacement=0 execution_receipt=0
+entry_count=128 thread=100980 tick_ms=549130890 size=64 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnTextureLoadingWaitStart:return:1 replacement=0 execution_receipt=0
+entry_count=129 thread=100980 tick_ms=549130890 size=55 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnMissionCanStart:enter:1 replacement=0 execution_receipt=0
+entry_count=130 thread=100980 tick_ms=549130890 size=56 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnMissionCanStart:return:1 replacement=0 execution_receipt=0
+entry_count=131 thread=100980 tick_ms=549131875 size=57 name_prefix=return 'MGS_COOP_PHASE_V1' -- DisableBlackLoading:enter:1 replacement=0 execution_receipt=0
+entry_count=132 thread=100980 tick_ms=549131875 size=58 name_prefix=return 'MGS_COOP_PHASE_V1' -- DisableBlackLoading:return:1 replacement=0 execution_receipt=0
+entry_count=133 thread=100980 tick_ms=549131875 size=56 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnMissionGameStart:enter:1 replacement=0 execution_receipt=0
+entry_count=134 thread=100980 tick_ms=549131875 size=57 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnMissionGameStart:return:1 replacement=0 execution_receipt=0
+entry_count=143 thread=100980 tick_ms=549190937 size=60 name_prefix=return 'MGS_COOP_PHASE_V1' -- EnableBlackLoading:enter:40050 replacement=0 execution_receipt=0
+entry_count=144 thread=100980 tick_ms=549190937 size=61 name_prefix=return 'MGS_COOP_PHASE_V1' -- EnableBlackLoading:return:40050 replacement=0 execution_receipt=0
+entry_count=145 thread=100980 tick_ms=549190968 size=53 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnTerminate:enter:40050 replacement=0 execution_receipt=0
+entry_count=146 thread=100980 tick_ms=549190968 size=54 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnTerminate:return:40050 replacement=0 execution_receipt=0
+entry_count=162 thread=100980 tick_ms=549193687 size=52 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnAllocate:enter:40050 replacement=0 execution_receipt=0
+entry_count=163 thread=100980 tick_ms=549193687 size=53 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnAllocate:return:40050 replacement=0 execution_receipt=0
+entry_count=164 thread=100980 tick_ms=549193781 size=54 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnInitialize:enter:40050 replacement=0 execution_receipt=0
+entry_count=165 thread=100980 tick_ms=549193781 size=55 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnInitialize:return:40050 replacement=0 execution_receipt=0
+entry_count=166 thread=100980 tick_ms=549193781 size=63 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnEnterMissionPrepare:enter:40050 replacement=0 execution_receipt=0
+entry_count=167 thread=100980 tick_ms=549193781 size=64 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnEnterMissionPrepare:return:40050 replacement=0 execution_receipt=0
+entry_count=168 thread=100980 tick_ms=549204296 size=67 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnTextureLoadingWaitStart:enter:40050 replacement=0 execution_receipt=0
+entry_count=169 thread=100980 tick_ms=549204296 size=68 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnTextureLoadingWaitStart:return:40050 replacement=0 execution_receipt=0
+entry_count=170 thread=100980 tick_ms=549204296 size=59 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnMissionCanStart:enter:40050 replacement=0 execution_receipt=0
+entry_count=171 thread=100980 tick_ms=549204296 size=60 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnMissionCanStart:return:40050 replacement=0 execution_receipt=0
+entry_count=172 thread=100980 tick_ms=549205296 size=61 name_prefix=return 'MGS_COOP_PHASE_V1' -- DisableBlackLoading:enter:40050 replacement=0 execution_receipt=0
+entry_count=173 thread=100980 tick_ms=549205296 size=62 name_prefix=return 'MGS_COOP_PHASE_V1' -- DisableBlackLoading:return:40050 replacement=0 execution_receipt=0
+entry_count=174 thread=100980 tick_ms=549205296 size=60 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnMissionGameStart:enter:40050 replacement=0 execution_receipt=0
+entry_count=175 thread=100980 tick_ms=549205296 size=61 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnMissionGameStart:return:40050 replacement=0 execution_receipt=0
+entry_count=176 thread=100980 tick_ms=549276500 size=60 name_prefix=return 'MGS_COOP_PHASE_V1' -- EnableBlackLoading:enter:30050 replacement=0 execution_receipt=0
+entry_count=177 thread=100980 tick_ms=549276500 size=61 name_prefix=return 'MGS_COOP_PHASE_V1' -- EnableBlackLoading:return:30050 replacement=0 execution_receipt=0
+entry_count=178 thread=100980 tick_ms=549276546 size=53 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnTerminate:enter:30050 replacement=0 execution_receipt=0
+entry_count=179 thread=100980 tick_ms=549276546 size=54 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnTerminate:return:30050 replacement=0 execution_receipt=0
+entry_count=180 thread=100980 tick_ms=549277703 size=51 name_prefix=return 'MGS_COOP_PACK_SELECTED_V1' -- mission=30050 replacement=0 execution_receipt=0
+entry_count=198 thread=100980 tick_ms=549280468 size=52 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnAllocate:enter:30050 replacement=0 execution_receipt=0
+entry_count=199 thread=100980 tick_ms=549280468 size=53 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnAllocate:return:30050 replacement=0 execution_receipt=0
+entry_count=200 thread=100980 tick_ms=549280546 size=54 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnInitialize:enter:30050 replacement=0 execution_receipt=0
+entry_count=201 thread=100980 tick_ms=549280546 size=55 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnInitialize:return:30050 replacement=0 execution_receipt=0
+entry_count=202 thread=100980 tick_ms=549280546 size=63 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnEnterMissionPrepare:enter:30050 replacement=0 execution_receipt=0
+entry_count=203 thread=100980 tick_ms=549280546 size=64 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnEnterMissionPrepare:return:30050 replacement=0 execution_receipt=0
+entry_count=205 thread=100980 tick_ms=549284406 size=67 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnTextureLoadingWaitStart:enter:30050 replacement=0 execution_receipt=0
+entry_count=206 thread=100980 tick_ms=549284406 size=68 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnTextureLoadingWaitStart:return:30050 replacement=0 execution_receipt=0
+entry_count=207 thread=100980 tick_ms=549284750 size=59 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnMissionCanStart:enter:30050 replacement=0 execution_receipt=0
+entry_count=208 thread=100980 tick_ms=549284750 size=60 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnMissionCanStart:return:30050 replacement=0 execution_receipt=0
+entry_count=209 thread=100980 tick_ms=549306609 size=61 name_prefix=return 'MGS_COOP_PHASE_V1' -- DisableBlackLoading:enter:30050 replacement=0 execution_receipt=0
+entry_count=210 thread=100980 tick_ms=549306609 size=62 name_prefix=return 'MGS_COOP_PHASE_V1' -- DisableBlackLoading:return:30050 replacement=0 execution_receipt=0
+entry_count=211 thread=100980 tick_ms=549306609 size=60 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnMissionGameStart:enter:30050 replacement=0 execution_receipt=0
+entry_count=212 thread=100980 tick_ms=549306609 size=61 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnMissionGameStart:return:30050 replacement=0 execution_receipt=0
+entry_count=213 thread=100980 tick_ms=549541296 size=60 name_prefix=return 'MGS_COOP_PHASE_V1' -- EnableBlackLoading:enter:40050 replacement=0 execution_receipt=0
+entry_count=214 thread=100980 tick_ms=549541296 size=61 name_prefix=return 'MGS_COOP_PHASE_V1' -- EnableBlackLoading:return:40050 replacement=0 execution_receipt=0
+entry_count=215 thread=100980 tick_ms=549541437 size=53 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnTerminate:enter:40050 replacement=0 execution_receipt=0
+entry_count=216 thread=100980 tick_ms=549541437 size=54 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnTerminate:return:40050 replacement=0 execution_receipt=0

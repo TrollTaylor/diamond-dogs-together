@@ -1,0 +1,1046 @@
+[
+  {
+    "file": "docs/evidence/player-motion-base-arrival-2026-09-09.jsonl",
+    "counts": [
+      {
+        "Name": "observed_raw_fields",
+        "Count": 60
+      },
+      {
+        "Name": "observed_unverified_gameplay",
+        "Count": 60
+      },
+      {
+        "Name": "verified_target",
+        "Count": 1
+      }
+    ],
+    "first": {
+      "sample": 0,
+      "tick_ms": 533376796,
+      "status": "observed_unverified_gameplay",
+      "mission_code_raw": 30050,
+      "mission_initialization_sentinel": false,
+      "position_fields": [
+        8.76573658,
+        2.37172151,
+        -41.5845108
+      ],
+      "local_player_index_raw": 0,
+      "player_bank_raw": 1,
+      "player_status_selectors_valid": true,
+      "player_status_words_raw": [
+        1048614,
+        32,
+        0,
+        0,
+        131072
+      ],
+      "named_status_bits": {
+        "STAND": false,
+        "SQUAT": true,
+        "CRAWL": false,
+        "NORMAL_ACTION": false,
+        "IDLE": false,
+        "WALK": false,
+        "RUN": false,
+        "DASH": false,
+        "DEAD": false,
+        "PARTS_ACTIVE": true
+      },
+      "player_reference_position_candidate": [
+        8.76573658,
+        2.37172151,
+        -41.5845108
+      ]
+    },
+    "last": {
+      "sample": 59,
+      "tick_ms": 533392312,
+      "status": "observed_unverified_gameplay",
+      "mission_code_raw": 30050,
+      "mission_initialization_sentinel": false,
+      "position_fields": [
+        8.6428051,
+        2.65048599,
+        -41.8502464
+      ],
+      "local_player_index_raw": 0,
+      "player_bank_raw": 0,
+      "player_status_selectors_valid": true,
+      "player_status_words_raw": [
+        1048614,
+        32,
+        0,
+        0,
+        131072
+      ],
+      "named_status_bits": {
+        "STAND": false,
+        "SQUAT": true,
+        "CRAWL": false,
+        "NORMAL_ACTION": false,
+        "IDLE": false,
+        "WALK": false,
+        "RUN": false,
+        "DASH": false,
+        "DEAD": false,
+        "PARTS_ACTIVE": true
+      },
+      "player_reference_position_candidate": [
+        8.63669777,
+        2.65075397,
+        -41.8516541
+      ]
+    },
+    "uniquePositions": [
+      {
+        "Count": 1,
+        "Name": "8.25015068,2.79552937,-41.6222076"
+      },
+      {
+        "Count": 1,
+        "Name": "8.26020813,2.8023479,-41.6048279"
+      },
+      {
+        "Count": 1,
+        "Name": "8.29474926,2.76478004,-41.6658516"
+      },
+      {
+        "Count": 1,
+        "Name": "8.30868053,2.80224085,-41.5898628"
+      },
+      {
+        "Count": 1,
+        "Name": "8.32950115,2.66174483,-41.8165359"
+      },
+      {
+        "Count": 1,
+        "Name": "8.33729649,2.35750961,-41.6091194"
+      },
+      {
+        "Count": 1,
+        "Name": "8.34239483,2.65831804,-41.7716942"
+      },
+      {
+        "Count": 1,
+        "Name": "8.34799671,2.66239953,-41.8492393"
+      },
+      {
+        "Count": 1,
+        "Name": "8.3510685,2.35227823,-41.6938133"
+      },
+      {
+        "Count": 1,
+        "Name": "8.3552742,2.37390041,-41.5173836"
+      },
+      {
+        "Count": 1,
+        "Name": "8.38465309,2.6518085,-41.7204971"
+      },
+      {
+        "Count": 1,
+        "Name": "8.39411926,2.66103697,-41.8686829"
+      },
+      {
+        "Count": 1,
+        "Name": "8.3945694,2.35523415,-41.7768211"
+      },
+      {
+        "Count": 1,
+        "Name": "8.3952589,2.79353786,-41.5781593"
+      },
+      {
+        "Count": 1,
+        "Name": "8.40715504,2.40220928,-41.4349327"
+      },
+      {
+        "Count": 1,
+        "Name": "8.4085331,2.70208454,-41.7562408"
+      },
+      {
+        "Count": 1,
+        "Name": "8.46240044,2.36493444,-41.8474312"
+      },
+      {
+        "Count": 1,
+        "Name": "8.46272755,2.6582849,-41.8747253"
+      },
+      {
+        "Count": 1,
+        "Name": "8.46731091,2.63955188,-41.6550179"
+      },
+      {
+        "Count": 1,
+        "Name": "8.47135162,2.4159174,-41.4085045"
+      },
+      {
+        "Count": 1,
+        "Name": "8.51730824,2.77383661,-41.5710754"
+      },
+      {
+        "Count": 1,
+        "Name": "8.54210472,2.65488362,-41.8688507"
+      },
+      {
+        "Count": 1,
+        "Name": "8.54373837,2.40233326,-41.4493332"
+      },
+      {
+        "Count": 1,
+        "Name": "8.54813194,2.37956858,-41.9020615"
+      },
+      {
+        "Count": 1,
+        "Name": "8.5552702,2.64110065,-41.8543892"
+      },
+      {
+        "Count": 1,
+        "Name": "8.5778656,2.62199783,-41.5908356"
+      },
+      {
+        "Count": 1,
+        "Name": "8.63669777,2.65075397,-41.8516541"
+      },
+      {
+        "Count": 1,
+        "Name": "8.63864613,2.39639854,-41.9368248"
+      },
+      {
+        "Count": 1,
+        "Name": "8.63960648,2.38562155,-41.5110054"
+      },
+      {
+        "Count": 1,
+        "Name": "8.6590538,2.74297667,-41.569725"
+      },
+      {
+        "Count": 1,
+        "Name": "8.71004105,2.59368491,-41.9372406"
+      },
+      {
+        "Count": 1,
+        "Name": "8.71335125,2.59721589,-41.5299568"
+      },
+      {
+        "Count": 1,
+        "Name": "8.73950195,2.41644311,-41.9556084"
+      },
+      {
+        "Count": 1,
+        "Name": "8.76573658,2.37172151,-41.5845108"
+      },
+      {
+        "Count": 1,
+        "Name": "8.82979298,2.57517266,-41.5000114"
+      },
+      {
+        "Count": 1,
+        "Name": "8.83125019,2.69398928,-41.5749283"
+      },
+      {
+        "Count": 1,
+        "Name": "8.83849049,2.43759727,-41.9559441"
+      },
+      {
+        "Count": 1,
+        "Name": "8.86195278,2.55823803,-41.9999352"
+      },
+      {
+        "Count": 1,
+        "Name": "8.91823101,2.56270552,-41.5135155"
+      },
+      {
+        "Count": 1,
+        "Name": "8.92992401,2.45898652,-41.9394112"
+      },
+      {
+        "Count": 1,
+        "Name": "8.99353218,2.5343523,-42.0380287"
+      },
+      {
+        "Count": 1,
+        "Name": "8.99675465,2.55487108,-41.5516281"
+      },
+      {
+        "Count": 1,
+        "Name": "9.00461578,2.4786272,-41.9107971"
+      },
+      {
+        "Count": 1,
+        "Name": "9.00728512,2.62777853,-41.588665"
+      },
+      {
+        "Count": 1,
+        "Name": "9.06921291,2.49862289,-41.8692017"
+      },
+      {
+        "Count": 1,
+        "Name": "9.07745361,2.54637504,-41.6013756"
+      },
+      {
+        "Count": 1,
+        "Name": "9.11327553,2.5806489,-41.6163902"
+      },
+      {
+        "Count": 1,
+        "Name": "9.11518002,2.51727676,-42.0557861"
+      },
+      {
+        "Count": 1,
+        "Name": "9.11606503,2.51724005,-41.8196373"
+      },
+      {
+        "Count": 1,
+        "Name": "9.1442194,2.53419471,-41.7657394"
+      },
+      {
+        "Count": 1,
+        "Name": "9.14748192,2.56173944,-41.6620064"
+      },
+      {
+        "Count": 1,
+        "Name": "9.15393734,2.54931188,-41.7110596"
+      },
+      {
+        "Count": 1,
+        "Name": "9.15524292,2.53747916,-41.6608772"
+      },
+      {
+        "Count": 1,
+        "Name": "9.21205616,2.50736332,-42.0506554"
+      },
+      {
+        "Count": 1,
+        "Name": "9.22067356,2.52908921,-41.7231522"
+      },
+      {
+        "Count": 1,
+        "Name": "9.27724648,2.52051878,-41.7932243"
+      },
+      {
+        "Count": 1,
+        "Name": "9.28066444,2.5031991,-42.0247688"
+      },
+      {
+        "Count": 1,
+        "Name": "9.31506157,2.51289821,-41.8630981"
+      },
+      {
+        "Count": 1,
+        "Name": "9.31902885,2.50354457,-41.9812279"
+      },
+      {
+        "Count": 1,
+        "Name": "9.32959175,2.50692391,-41.9283295"
+      }
+    ],
+    "wordGroups": [
+      {
+        "Count": 60,
+        "Name": "1048614,32,0,0,131072"
+      }
+    ],
+    "disagreements": 37
+  },
+  {
+    "file": "docs/evidence/player-motion-disembark-2026-09-09.jsonl",
+    "counts": [
+      {
+        "Name": "observed_raw_fields",
+        "Count": 10
+      },
+      {
+        "Name": "observed_unverified_gameplay",
+        "Count": 10
+      },
+      {
+        "Name": "verified_target",
+        "Count": 1
+      }
+    ],
+    "first": {
+      "sample": 0,
+      "tick_ms": 533617468,
+      "status": "observed_unverified_gameplay",
+      "mission_code_raw": 30050,
+      "mission_initialization_sentinel": false,
+      "position_fields": [
+        9.04313564,
+        0.800121009,
+        -40.7664185
+      ],
+      "local_player_index_raw": 0,
+      "player_bank_raw": 0,
+      "player_status_selectors_valid": true,
+      "player_status_words_raw": [
+        1048750,
+        0,
+        0,
+        0,
+        131072
+      ],
+      "named_status_bits": {
+        "STAND": false,
+        "SQUAT": true,
+        "CRAWL": false,
+        "NORMAL_ACTION": true,
+        "IDLE": false,
+        "WALK": false,
+        "RUN": false,
+        "DASH": false,
+        "DEAD": false,
+        "PARTS_ACTIVE": true
+      },
+      "player_reference_position_candidate": [
+        9.04313564,
+        0.800121009,
+        -40.7664185
+      ]
+    },
+    "last": {
+      "sample": 9,
+      "tick_ms": 533618437,
+      "status": "observed_unverified_gameplay",
+      "mission_code_raw": 30050,
+      "mission_initialization_sentinel": false,
+      "position_fields": [
+        9.04313564,
+        0.800121009,
+        -40.7664185
+      ],
+      "local_player_index_raw": 0,
+      "player_bank_raw": 1,
+      "player_status_selectors_valid": true,
+      "player_status_words_raw": [
+        1048750,
+        0,
+        0,
+        0,
+        131072
+      ],
+      "named_status_bits": {
+        "STAND": false,
+        "SQUAT": true,
+        "CRAWL": false,
+        "NORMAL_ACTION": true,
+        "IDLE": false,
+        "WALK": false,
+        "RUN": false,
+        "DASH": false,
+        "DEAD": false,
+        "PARTS_ACTIVE": true
+      },
+      "player_reference_position_candidate": [
+        9.04313564,
+        0.800121009,
+        -40.7664185
+      ]
+    },
+    "uniquePositions": [
+      {
+        "Count": 10,
+        "Name": "9.04313564,0.800121009,-40.7664185"
+      }
+    ],
+    "wordGroups": [
+      {
+        "Count": 10,
+        "Name": "1048750,0,0,0,131072"
+      }
+    ],
+    "disagreements": 0
+  },
+  {
+    "file": "docs/evidence/player-motion-forward-2026-09-09.jsonl",
+    "counts": [
+      {
+        "Name": "observed_raw_fields",
+        "Count": 300
+      },
+      {
+        "Name": "observed_unverified_gameplay",
+        "Count": 300
+      },
+      {
+        "Name": "verified_target",
+        "Count": 1
+      }
+    ],
+    "first": {
+      "sample": 0,
+      "tick_ms": 533637953,
+      "status": "observed_unverified_gameplay",
+      "mission_code_raw": 30050,
+      "mission_initialization_sentinel": false,
+      "position_fields": [
+        9.04313564,
+        0.800121009,
+        -40.7664185
+      ],
+      "local_player_index_raw": 0,
+      "player_bank_raw": 0,
+      "player_status_selectors_valid": true,
+      "player_status_words_raw": [
+        1048750,
+        0,
+        0,
+        0,
+        131072
+      ],
+      "named_status_bits": {
+        "STAND": false,
+        "SQUAT": true,
+        "CRAWL": false,
+        "NORMAL_ACTION": true,
+        "IDLE": false,
+        "WALK": false,
+        "RUN": false,
+        "DASH": false,
+        "DEAD": false,
+        "PARTS_ACTIVE": true
+      },
+      "player_reference_position_candidate": [
+        9.04313564,
+        0.800121009,
+        -40.7664185
+      ]
+    },
+    "last": {
+      "sample": 299,
+      "tick_ms": 533670359,
+      "status": "observed_unverified_gameplay",
+      "mission_code_raw": 30050,
+      "mission_initialization_sentinel": false,
+      "position_fields": [
+        9.04313564,
+        0.800121009,
+        -40.7664185
+      ],
+      "local_player_index_raw": 0,
+      "player_bank_raw": 0,
+      "player_status_selectors_valid": true,
+      "player_status_words_raw": [
+        1048750,
+        0,
+        0,
+        0,
+        131072
+      ],
+      "named_status_bits": {
+        "STAND": false,
+        "SQUAT": true,
+        "CRAWL": false,
+        "NORMAL_ACTION": true,
+        "IDLE": false,
+        "WALK": false,
+        "RUN": false,
+        "DASH": false,
+        "DEAD": false,
+        "PARTS_ACTIVE": true
+      },
+      "player_reference_position_candidate": [
+        9.04313564,
+        0.800121009,
+        -40.7664185
+      ]
+    },
+    "uniquePositions": [
+      {
+        "Count": 300,
+        "Name": "9.04313564,0.800121009,-40.7664185"
+      }
+    ],
+    "wordGroups": [
+      {
+        "Count": 300,
+        "Name": "1048750,0,0,0,131072"
+      }
+    ],
+    "disagreements": 0
+  },
+  {
+    "file": "docs/evidence/player-motion-posture-2026-09-09.jsonl",
+    "counts": [
+      {
+        "Name": "observed_raw_fields",
+        "Count": 10
+      },
+      {
+        "Name": "observed_unverified_gameplay",
+        "Count": 10
+      },
+      {
+        "Name": "verified_target",
+        "Count": 1
+      }
+    ],
+    "first": {
+      "sample": 0,
+      "tick_ms": 533694093,
+      "status": "observed_unverified_gameplay",
+      "mission_code_raw": 30050,
+      "mission_initialization_sentinel": false,
+      "position_fields": [
+        9.04313564,
+        0.800121009,
+        -40.7664185
+      ],
+      "local_player_index_raw": 0,
+      "player_bank_raw": 1,
+      "player_status_selectors_valid": true,
+      "player_status_words_raw": [
+        1048750,
+        0,
+        0,
+        0,
+        131072
+      ],
+      "named_status_bits": {
+        "STAND": false,
+        "SQUAT": true,
+        "CRAWL": false,
+        "NORMAL_ACTION": true,
+        "IDLE": false,
+        "WALK": false,
+        "RUN": false,
+        "DASH": false,
+        "DEAD": false,
+        "PARTS_ACTIVE": true
+      },
+      "player_reference_position_candidate": [
+        9.04313564,
+        0.800121009,
+        -40.7664185
+      ]
+    },
+    "last": {
+      "sample": 9,
+      "tick_ms": 533695062,
+      "status": "observed_unverified_gameplay",
+      "mission_code_raw": 30050,
+      "mission_initialization_sentinel": false,
+      "position_fields": [
+        9.04313564,
+        0.800121009,
+        -40.7664185
+      ],
+      "local_player_index_raw": 0,
+      "player_bank_raw": 1,
+      "player_status_selectors_valid": true,
+      "player_status_words_raw": [
+        1048750,
+        0,
+        0,
+        0,
+        131072
+      ],
+      "named_status_bits": {
+        "STAND": false,
+        "SQUAT": true,
+        "CRAWL": false,
+        "NORMAL_ACTION": true,
+        "IDLE": false,
+        "WALK": false,
+        "RUN": false,
+        "DASH": false,
+        "DEAD": false,
+        "PARTS_ACTIVE": true
+      },
+      "player_reference_position_candidate": [
+        9.04313564,
+        0.800121009,
+        -40.7664185
+      ]
+    },
+    "uniquePositions": [
+      {
+        "Count": 10,
+        "Name": "9.04313564,0.800121009,-40.7664185"
+      }
+    ],
+    "wordGroups": [
+      {
+        "Count": 10,
+        "Name": "1048750,0,0,0,131072"
+      }
+    ],
+    "disagreements": 0
+  },
+  {
+    "file": "docs/evidence/player-motion-dive-2026-09-09.jsonl",
+    "counts": [
+      {
+        "Name": "observed_raw_fields",
+        "Count": 300
+      },
+      {
+        "Name": "observed_unverified_gameplay",
+        "Count": 300
+      },
+      {
+        "Name": "verified_target",
+        "Count": 1
+      }
+    ],
+    "first": {
+      "sample": 0,
+      "tick_ms": 533819218,
+      "status": "observed_unverified_gameplay",
+      "mission_code_raw": 30050,
+      "mission_initialization_sentinel": false,
+      "position_fields": [
+        9.04313564,
+        0.800121009,
+        -40.7664185
+      ],
+      "local_player_index_raw": 0,
+      "player_bank_raw": 1,
+      "player_status_selectors_valid": true,
+      "player_status_words_raw": [
+        1048750,
+        0,
+        0,
+        0,
+        131072
+      ],
+      "named_status_bits": {
+        "STAND": false,
+        "SQUAT": true,
+        "CRAWL": false,
+        "NORMAL_ACTION": true,
+        "IDLE": false,
+        "WALK": false,
+        "RUN": false,
+        "DASH": false,
+        "DEAD": false,
+        "PARTS_ACTIVE": true
+      },
+      "player_reference_position_candidate": [
+        9.04313564,
+        0.800121009,
+        -40.7664185
+      ]
+    },
+    "last": {
+      "sample": 299,
+      "tick_ms": 533851578,
+      "status": "observed_unverified_gameplay",
+      "mission_code_raw": 30050,
+      "mission_initialization_sentinel": false,
+      "position_fields": [
+        9.13846684,
+        0.350120991,
+        -35.987709
+      ],
+      "local_player_index_raw": 0,
+      "player_bank_raw": 1,
+      "player_status_selectors_valid": true,
+      "player_status_words_raw": [
+        1048782,
+        0,
+        0,
+        0,
+        131072
+      ],
+      "named_status_bits": {
+        "STAND": false,
+        "SQUAT": false,
+        "CRAWL": true,
+        "NORMAL_ACTION": true,
+        "IDLE": false,
+        "WALK": false,
+        "RUN": false,
+        "DASH": false,
+        "DEAD": false,
+        "PARTS_ACTIVE": true
+      },
+      "player_reference_position_candidate": [
+        9.13846684,
+        0.350120991,
+        -35.987709
+      ]
+    },
+    "uniquePositions": [
+      {
+        "Count": 1,
+        "Name": "9.03134918,0.350120991,-40.5736847"
+      },
+      {
+        "Count": 1,
+        "Name": "9.03665924,0.350120991,-39.6765251"
+      },
+      {
+        "Count": 189,
+        "Name": "9.04313564,0.800121009,-40.7664185"
+      },
+      {
+        "Count": 1,
+        "Name": "9.04913139,0.350120991,-39.1223831"
+      },
+      {
+        "Count": 1,
+        "Name": "9.06446075,0.350120991,-38.5556908"
+      },
+      {
+        "Count": 1,
+        "Name": "9.0787468,0.350120991,-36.7136688"
+      },
+      {
+        "Count": 1,
+        "Name": "9.07962418,0.350120991,-37.8722076"
+      },
+      {
+        "Count": 1,
+        "Name": "9.08370495,0.350120991,-37.283268"
+      },
+      {
+        "Count": 1,
+        "Name": "9.10061359,0.350120991,-36.328701"
+      },
+      {
+        "Count": 1,
+        "Name": "9.13764572,0.350120991,-36.0151558"
+      },
+      {
+        "Count": 102,
+        "Name": "9.13846684,0.350120991,-35.987709"
+      }
+    ],
+    "wordGroups": [
+      {
+        "Count": 8,
+        "Name": "1048654,0,0,8,131072"
+      },
+      {
+        "Count": 189,
+        "Name": "1048750,0,0,0,131072"
+      },
+      {
+        "Count": 102,
+        "Name": "1048782,0,0,0,131072"
+      },
+      {
+        "Count": 1,
+        "Name": "2097230,0,0,8,131072"
+      }
+    ],
+    "disagreements": 5
+  },
+  {
+    "file": "docs/evidence/player-motion-recover-2026-09-09.jsonl",
+    "counts": [
+      {
+        "Name": "observed_raw_fields",
+        "Count": 10
+      },
+      {
+        "Name": "observed_unverified_gameplay",
+        "Count": 10
+      },
+      {
+        "Name": "verified_target",
+        "Count": 1
+      }
+    ],
+    "first": {
+      "sample": 0,
+      "tick_ms": 533874281,
+      "status": "observed_unverified_gameplay",
+      "mission_code_raw": 30050,
+      "mission_initialization_sentinel": false,
+      "position_fields": [
+        9.13846684,
+        0.800121009,
+        -35.987709
+      ],
+      "local_player_index_raw": 0,
+      "player_bank_raw": 0,
+      "player_status_selectors_valid": true,
+      "player_status_words_raw": [
+        1048750,
+        0,
+        0,
+        0,
+        131072
+      ],
+      "named_status_bits": {
+        "STAND": false,
+        "SQUAT": true,
+        "CRAWL": false,
+        "NORMAL_ACTION": true,
+        "IDLE": false,
+        "WALK": false,
+        "RUN": false,
+        "DASH": false,
+        "DEAD": false,
+        "PARTS_ACTIVE": true
+      },
+      "player_reference_position_candidate": [
+        9.13846684,
+        0.800121009,
+        -35.987709
+      ]
+    },
+    "last": {
+      "sample": 9,
+      "tick_ms": 533875265,
+      "status": "observed_unverified_gameplay",
+      "mission_code_raw": 30050,
+      "mission_initialization_sentinel": false,
+      "position_fields": [
+        9.13846684,
+        0.800121009,
+        -35.987709
+      ],
+      "local_player_index_raw": 0,
+      "player_bank_raw": 1,
+      "player_status_selectors_valid": true,
+      "player_status_words_raw": [
+        1048750,
+        0,
+        0,
+        0,
+        131072
+      ],
+      "named_status_bits": {
+        "STAND": false,
+        "SQUAT": true,
+        "CRAWL": false,
+        "NORMAL_ACTION": true,
+        "IDLE": false,
+        "WALK": false,
+        "RUN": false,
+        "DASH": false,
+        "DEAD": false,
+        "PARTS_ACTIVE": true
+      },
+      "player_reference_position_candidate": [
+        9.13846684,
+        0.800121009,
+        -35.987709
+      ]
+    },
+    "uniquePositions": [
+      {
+        "Count": 10,
+        "Name": "9.13846684,0.800121009,-35.987709"
+      }
+    ],
+    "wordGroups": [
+      {
+        "Count": 10,
+        "Name": "1048750,0,0,0,131072"
+      }
+    ],
+    "disagreements": 0
+  },
+  {
+    "file": "docs/evidence/player-motion-forward-uppercase-2026-09-09.jsonl",
+    "counts": [
+      {
+        "Name": "observed_raw_fields",
+        "Count": 300
+      },
+      {
+        "Name": "observed_unverified_gameplay",
+        "Count": 300
+      },
+      {
+        "Name": "verified_target",
+        "Count": 1
+      }
+    ],
+    "first": {
+      "sample": 0,
+      "tick_ms": 533885734,
+      "status": "observed_unverified_gameplay",
+      "mission_code_raw": 30050,
+      "mission_initialization_sentinel": false,
+      "position_fields": [
+        9.13846684,
+        0.800121009,
+        -35.987709
+      ],
+      "local_player_index_raw": 0,
+      "player_bank_raw": 0,
+      "player_status_selectors_valid": true,
+      "player_status_words_raw": [
+        1048750,
+        0,
+        0,
+        0,
+        131072
+      ],
+      "named_status_bits": {
+        "STAND": false,
+        "SQUAT": true,
+        "CRAWL": false,
+        "NORMAL_ACTION": true,
+        "IDLE": false,
+        "WALK": false,
+        "RUN": false,
+        "DASH": false,
+        "DEAD": false,
+        "PARTS_ACTIVE": true
+      },
+      "player_reference_position_candidate": [
+        9.13846684,
+        0.800121009,
+        -35.987709
+      ]
+    },
+    "last": {
+      "sample": 299,
+      "tick_ms": 533918125,
+      "status": "observed_unverified_gameplay",
+      "mission_code_raw": 30050,
+      "mission_initialization_sentinel": false,
+      "position_fields": [
+        9.13846684,
+        0.800121009,
+        -35.987709
+      ],
+      "local_player_index_raw": 0,
+      "player_bank_raw": 0,
+      "player_status_selectors_valid": true,
+      "player_status_words_raw": [
+        1048750,
+        0,
+        0,
+        0,
+        131072
+      ],
+      "named_status_bits": {
+        "STAND": false,
+        "SQUAT": true,
+        "CRAWL": false,
+        "NORMAL_ACTION": true,
+        "IDLE": false,
+        "WALK": false,
+        "RUN": false,
+        "DASH": false,
+        "DEAD": false,
+        "PARTS_ACTIVE": true
+      },
+      "player_reference_position_candidate": [
+        9.13846684,
+        0.800121009,
+        -35.987709
+      ]
+    },
+    "uniquePositions": [
+      {
+        "Count": 300,
+        "Name": "9.13846684,0.800121009,-35.987709"
+      }
+    ],
+    "wordGroups": [
+      {
+        "Count": 300,
+        "Name": "1048750,0,0,0,131072"
+      }
+    ],
+    "disagreements": 0
+  }
+]

@@ -1,0 +1,22 @@
+{
+  "utc": "2026-09-10T11:32:40.003228+00:00",
+  "source_version": "0.10.13",
+  "compiled_dll_sha256": "DA2DE51FCAAFAADE9A67C9D4A1B2248BEBDCBF74DAD6930480DF359196E2ED2E",
+  "installed_version": "0.10.5",
+  "installed_dll_sha256": "5EE6B0DEA1B396E851F14D5F2332C7767A4DFA50749A7DAF7898139601221BA5",
+  "game_modified_this_turn": false,
+  "tests_run": false,
+  "lua_executed": false,
+  "game_launched": false,
+  "build_command": "tools/build.ps1 -Configuration Release -BuildOnly",
+  "build_log": "hostage-rule-build-only-2026-09-10.log",
+  "static_mapping": "combat-role-hostage-contract-2026-09-10.json",
+  "limitations": [
+    "Hostage flag role override has not been executed in MGSV.",
+    "Native flag writes and dirty-bit marking do not establish transport delivery or synchronized hostage behavior.",
+    "Session pointer identity and lifecycle flags do not exclude pointer reuse or in-flight teardown calls.",
+    "Soldier action-task, CP status, trap and other native adaptations remain missing.",
+    "No connected guest, independent guest control or shared combat verified.",
+    "New build remains in workspace; installed loader unchanged."
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "utc": "2026-09-09T21:43:36.6409081Z",
+  "dll_sha256": "188346ECE1FE84906FE03BC91F3E3CE635BBCA271F5B9A6518E61DAC4AF50468",
+  "mode": "players-v1",
+  "additional_parts_count": 1,
+  "version": "0.9.2",
+  "players": 2,
+  "test_result": "not_launched",
+  "archive_sha256": "C6603A58D5A6037CACB4E98BD6ECE8DD9E50FC0A325E4AEC400F28BDCC26BE8F"
+}

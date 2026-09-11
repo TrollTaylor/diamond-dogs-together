@@ -1,0 +1,43 @@
+# Disconnect handling and mission teardown
+
+Workspace **0.10.27** removes teardown's dependency on the 128-event diagnostic trace. A dedicated owner-thread signal runs from the outermost lifecycle wrapper before all other termination wrappers, and diagnostic emission is protected. Entry acknowledgement does not imply cleanup success. [Current fix and limits](termination-boundary.md). Historical references below to the observed termination phase now mean this separate operational signal.
+
+Workspace **0.10.9** introduced co-op session-loss handling and an owned-session close path. It is compiled only, not installed, tested or executed in MGSV. Playable two-player co-op remains unverified.
+
+## Full-close update — workspace 0.10.19
+
+The previously deferred mission-condition bypass is now implemented at the verified `CloseSession` wrapper. It preserves the original native service dispatch, null fallback, arguments and return paths. It is armed only after the preparing-member call returns and the owned session passes a fresh check, and restored by the immediate returned/failed receipt. The concrete FOB parameter service remains unmapped; this adapts its existing caller rather than adding a direct call or reimplementing its lifetime. [Full-close scope, evidence and limitations](full-close.md).
+
+## Preparing-member update — workspace 0.10.18
+
+The teardown sequence now includes the original `SessionDisconnectPreparingMembers` Lua wrapper before `CloseSession`, following pinned DYNAMITE. A fresh owned-session check between the two calls prevents a disappeared or changed session from causing the close wrapper's lazy getter to create another session. A failed preparing call or failed recheck ends the one-shot sequence. Neither call is retried by gameplay-rule cleanup. [Mapping, ownership checks and limits](preparing-disconnect.md).
+
+The full-close service was narrowed through existing Lua registrations: its interface at selected context `+0x98 -> +0x190` serves `RequestGetFobServerParameter` (slot 0), `IsRequestFobServerParameterBusy` (slot 8), `GetFobServerParameterByName` (slot 0x10), close (slot 0x18), and `GetClientFobGrade` (slot 0x20). These are wrapper/interface identities, not a verified concrete implementation. Its constructor, publication and close implementation still need mapping.
+
+## Cleanup retry update — workspace 0.10.17
+
+The earlier disconnect receipt acknowledged client ownership but judged cleanup from the damage result alone. It ignored failed soldier and respawn restoration, and Lua cleared the pending disconnect before retaining unfinished work. Version 0.10.17 aggregates all three native restoration results without short-circuiting. Team/combat hooks switch to forwarding before fallible soldier restoration. Failed native work survives mission boundaries and must clear before new co-op preparation.
+
+Lua clears client activation flags as soon as owned loss is acknowledged, independently attempts native and Lua damage restoration, and retains `sessionCleanupPending` until both succeed. It retries at most eight times, separated by 60 successful original update calls; this is an update count, not a wall-clock deadline. Exhaustion remains visible as `sessionCleanupRetriesExhausted`. Another protected attempt runs before original termination, while scene systems still exist. An ordinary termination exception still propagates. Retries never call `CloseSession`, free game objects or enable reconnect.
+
+Damage and respawn patches now track actual exchanged bytes even if instruction-cache flushing or rollback fails. Matching restored bytes alone cannot clear a pending cache flush. Later cleanup retries both cache flushing and original page protection. These error paths are code-reviewed and compiled only, not failure-injected or live-verified. Lua restoration failure after its last pre-termination attempt remains unresolved; the next-mission native retry does not claim to restore an old Lua damage table.
+
+Read-only close-route investigation also established that the service dispatch at `0xA1A763` returns directly: it is an alternative to session-interface close at `0xA1A776`, not an additional call to perform before it. The context accessor `0xBFF050` reads the selected pointer at registry `+8`; its lazy registry root is at `0x2C3A8A0`. The concrete service at selected context `+0x98 -> +0x190` and its method `+0x18` remain unmapped. The mission bypass was not enabled and these pointers are not new callable contracts. Inspection used the exact executable SHA-256 `085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45`.
+
+[0.10.17 compilation record](evidence/cleanup-retry-prepared-2026-09-10.json). Installed 0.10.5 remains unchanged. No test suite, Lua execution or game launch occurred. Connected guest control and shared combat remain unverified.
+
+The new TppMain wrapper observes the existing `Nt.SessionDisconnectFromHost` and `Nt.SessionDeleteMember` messages used by Dynamite. It records pending events and forwards the original message handler with all arguments. Cleanup runs after the next normal mission update, outside the network message callback. A departing guest clears the host's selected enemy target and records the event; the host remains open. A guest losing its host can deactivate its team/targeting rules and restore native and Lua damage rules only when native metadata records this adapter's created client on the current mission thread. The diagnostic guest-loading mode has no such ownership.
+
+Mission termination restores gameplay rules, clears script activation triggers and resets `S_IS_ONLINE` only if this insertion originally set it. Damage-table restoration is protected so an error does not prevent original termination from running. Repeated `SetActive` requests recheck native state instead of reporting success solely from the Lua table state. The original termination's own exceptions and return values remain intact.
+
+After original termination returns, the wrapper requests native authorization for the existing `TppNetworkUtil.CloseSession` call. Authorization requires the observed termination phase, the creation thread, this adapter's tracked host/client, matching existing main-session and network-owner pointers, exact native types and close method, an eligible session state, and mission 30050. Complete close-function byte contracts must match. A missing session cannot cause the wrapper to invoke the game's lazy session getter. Admission ownership and teardown ownership are separate, so closing admission does not erase the identity needed for teardown.
+
+The native close wrapper at RVA `0xA1A710` spans three unwind ranges. In mission 30050 it dispatches through the existing session's secondary interface at offset `0x60`, to `0x312B80`. Mission 50050 has another branch and is excluded. The mapped implementation releases/rebuilds member references; a returned Lua call is recorded as **returned**, not proof that all asynchronous jobs and allocations have finished. [Static mapping and exact inspected executable](evidence/session-close-contract-2026-09-10.json).
+
+The close authorization is one-shot. A failed call is recorded and does not trigger another potentially destructive call. No game object is freed by the mod, no handshake/member identity is written, and the process-wide host/join attempt guard remains in place. Preparing-member disconnect was absent in 0.10.9; 0.10.18 adds the gated step described above. Automatic reconnect remains disabled. An original termination error, missing Lua interface, ownership/body mismatch or unexpected mission state can prevent the close call; those cases are not claimed as successful cleanup.
+
+Sources: Dynamite `c90f252f8200765f66c005d6bf4357fda0c0d98e`, TppMain termination and mission Nt messages; tpp-mod `301bf797b7f8032941b21ed56a3570338de6ead4`, current-build CloseSession reference. [Complete licenses and changes](../THIRD_PARTY_NOTICES.md).
+
+Compilation used `tools/build.ps1 -Configuration Release -BuildOnly`. No tests or game launches were run, and installed 0.10.5 was unchanged. [Build record](evidence/session-lifecycle-prepared-2026-09-10.json).
+
+Remaining work includes real connected guest control, shared combat/world behavior, death and respawn, complete asynchronous teardown and reconnect. Event delivery and callback threading, loss cleanup, close behavior and sustained gameplay all require eventual live verification. Repeated pointer comparisons do not establish an atomic lifetime lease or exclude address reuse. Full campaign adaptations and four players remain deferred.

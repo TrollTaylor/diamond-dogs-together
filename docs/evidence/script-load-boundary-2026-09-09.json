@@ -1,0 +1,79 @@
+{
+  "executable_sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+  "source_commit": "301bf797b7f8032941b21ed56a3570338de6ead4",
+  "source_file": "src/client/game/symbols.hpp",
+  "source_rva": "0x1a178e0",
+  "analysis": {
+    "entry_rva": "0x1a178e0",
+    "boundary": {
+      "kind": "PE_exception_range",
+      "begin_rva": "0x1a178e0",
+      "end_rva_exclusive": "0x1a17904",
+      "unwind_info_rva": "0x2818880"
+    },
+    "decoded_bytes": 36,
+    "complete_declared_range_decoded": true,
+    "decoded_bytes_sha256": "42ED9CB065875AC68498B1D0F457580C9E1780A1B51620A1C12BE9273CA0673E",
+    "entry_bytes_first_17_hex": "48 83 ec 38 48 89 54 24 20 4c 89 44 24 28 4c 8d 44",
+    "direct_calls": [
+      {
+        "call_rva": "0x1a178fa",
+        "target_rva": "0x1a11500"
+      }
+    ],
+    "instructions": [
+      {
+        "rva": "0x1a178e0",
+        "bytes_hex": "48 83 ec 38",
+        "mnemonic": "sub",
+        "operands": "rsp, 0x38"
+      },
+      {
+        "rva": "0x1a178e4",
+        "bytes_hex": "48 89 54 24 20",
+        "mnemonic": "mov",
+        "operands": "qword ptr [rsp + 0x20], rdx"
+      },
+      {
+        "rva": "0x1a178e9",
+        "bytes_hex": "4c 89 44 24 28",
+        "mnemonic": "mov",
+        "operands": "qword ptr [rsp + 0x28], r8"
+      },
+      {
+        "rva": "0x1a178ee",
+        "bytes_hex": "4c 8d 44 24 20",
+        "mnemonic": "lea",
+        "operands": "r8, [rsp + 0x20]"
+      },
+      {
+        "rva": "0x1a178f3",
+        "bytes_hex": "48 8d 15 a6 f2 ff ff",
+        "mnemonic": "lea",
+        "operands": "rdx, [rip - 0xd5a]"
+      },
+      {
+        "rva": "0x1a178fa",
+        "bytes_hex": "e8 01 9c ff ff",
+        "mnemonic": "call",
+        "operands": "0x141a11500",
+        "direct_target_rva": "0x1a11500"
+      },
+      {
+        "rva": "0x1a178ff",
+        "bytes_hex": "48 83 c4 38",
+        "mnemonic": "add",
+        "operands": "rsp, 0x38"
+      },
+      {
+        "rva": "0x1a17903",
+        "bytes_hex": "c3",
+        "mnemonic": "ret",
+        "operands": ""
+      }
+    ],
+    "runtime_verified": false
+  },
+  "runtime_verified": false,
+  "installed": false
+}

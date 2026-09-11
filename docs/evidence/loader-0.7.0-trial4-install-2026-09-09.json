@@ -1,0 +1,11 @@
+{
+  "utc": "2026-09-09T20:00:20.4062025Z",
+  "version": "0.7.0",
+  "trial": 4,
+  "previous_loader_backup": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\backups\\probe-0.7.0-trial3-20260909T200020Z",
+  "loader_sha256": "30EF5E5003D5F94D877B43BB9A7EBF381A3A5B4DC3C90EC3B831AD96ECC6F3AD",
+  "archive_sha256": "711DEF02F258F6CA42A63CA2374FDF342A306ADB1BA29FE31F7E6DF94B1830E5",
+  "mode": "archive-v1",
+  "actor_packages_selected": false,
+  "change": "Close fingerprint reader before engine open; require kind 1 and a nonnull stream"
+}

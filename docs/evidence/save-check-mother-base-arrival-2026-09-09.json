@@ -1,0 +1,20 @@
+{
+  "utc": "2026-09-09T15:48:57.5339857Z",
+  "stage": "during_mother_base_arrival_cutscene",
+  "checks": [
+    {
+      "file": "TPP_GAME_DATA0",
+      "length": 199916,
+      "last_write_utc": "2025-11-09T04:02:10.2913168Z",
+      "sha256": "959E130963D2C718CE181246E533F42D1A072AA9ED6A300AE9CE85847C23FE6B",
+      "matches_pre_control_backup": true
+    },
+    {
+      "file": "TPP_GAME_DATA1",
+      "length": 199916,
+      "last_write_utc": "2026-09-09T15:43:06.7937149Z",
+      "sha256": "DD22827FAABEE83F3962A996FC6A178DB98BBAE7674A6EE2B115B67122ECA833",
+      "matches_pre_control_backup": false
+    }
+  ]
+}

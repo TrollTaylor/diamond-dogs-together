@@ -1,0 +1,19 @@
+{
+  "utc": "2026-09-09T18:34:33.8950989Z",
+  "observation": "ScriptLoad",
+  "captured": true,
+  "return_requested": true,
+  "return_captured": true,
+  "steam_init_result_al": null,
+  "deadline_detached": false,
+  "aborted": false,
+  "debugger_exit_code": 0,
+  "live_game_pids": [
+    104372
+  ],
+  "game_continuation_verified": false,
+  "log": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\game-observation-f027f7c749484279914122c836389edb\\debugger.log",
+  "evidence_source": "debugger_log",
+  "stdout_complete": false,
+  "stderr_complete": false
+}

@@ -1,0 +1,25 @@
+CMake Deprecation Warning at third_party/minhook/CMakeLists.txt:27 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value.  Or, use the <min>...<max> syntax
+  to tell CMake that the project requires at least <min> but has been updated
+  to work with policies introduced by <max> or earlier.
+
+
+-- Configuring done (0.1s)
+-- Generating done (0.1s)
+-- Build files have been written to: C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native
+[1/10] Building CXX object CMakeFiles\mgs_bootstrap_patch.dir\native\bootstrap_patch.cpp.obj
+[2/10] Building CXX object CMakeFiles\mgs_player_ghost_patch.dir\native\player_team_patch.cpp.obj
+[3/10] Building CXX object CMakeFiles\mgs_coop_probe.dir\native\host_session_trial.cpp.obj
+[4/10] Linking CXX static library mgs_bootstrap_patch.lib
+[5/10] Building CXX object CMakeFiles\mgs_coop_probe.dir\native\probe.cpp.obj
+[6/10] Building CXX object CMakeFiles\mgs_player_ghost_patch.dir\native\enemy_targeting.cpp.obj
+FAILED: CMakeFiles/mgs_player_ghost_patch.dir/native/enemy_targeting.cpp.obj 
+C:\PROGRA~2\MICROS~2\18\BUILDT~1\VC\Tools\MSVC\1450~1.357\bin\Hostx64\x64\cl.exe  /nologo /TP  -IC:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\native\include -IC:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\third_party\minhook\include /DWIN32 /D_WINDOWS /EHsc /O2 /Ob2 /DNDEBUG -std:c++17 -MT /W4 /WX /showIncludes /FoCMakeFiles\mgs_player_ghost_patch.dir\native\enemy_targeting.cpp.obj /FdCMakeFiles\mgs_player_ghost_patch.dir\mgs_player_ghost_patch.pdb /FS -c C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\native\enemy_targeting.cpp
+C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\native\enemy_targeting.cpp(124): error C2220: the following warning is treated as an error
+C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\native\enemy_targeting.cpp(124): warning C4996: '_snprintf_l': This function or variable may be unsafe. Consider using _snprintf_s_l instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
+[7/10] Building CXX object CMakeFiles\mgs_coop_probe.dir\native\dynamite_session_port.cpp.obj
+[8/10] Building CXX object CMakeFiles\mgs_coop_probe.dir\native\game_script_observer.cpp.obj
+ninja: build stopped: subcommand failed.

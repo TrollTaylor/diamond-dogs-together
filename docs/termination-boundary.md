@@ -1,0 +1,15 @@
+# Mandatory mission teardown signal
+
+Workspace 0.10.27 fixes a source-level dependency between gameplay cleanup and the bounded diagnostic trace. Previously `mission_trace.lua` stopped emitting after 128 entry/return events, while the native observer used its `OnTerminate:enter` message to set `mission_terminating` and restore gameplay rules. If the diagnostic quota was already exhausted, that signal never arrived. Later session-close authorization required `mission_terminating`, so this path could refuse close and leave native rules active. This was found by reading the source; it was not reproduced in MGSV.
+
+The session lifecycle wrapper now emits `MGS_COOP_MISSION_TERMINATING_V1` independently of diagnostic counts, before other mission wrappers. The native observer accepts only the exact source/name/size on the captured TppMain owner thread in a configured host/client development mode. It records termination, disables joining and gameplay overrides through the existing restoration routine, and retains failed restoration work. The acknowledgement records entry, not completed cleanup or a closed connection.
+
+The source composer appends `session_lifecycle.lua` last, outside `mission_trace.lua`, marker loading, session feedback and the other gameplay wrappers. A compile-time size assertion accounts for the reordered final fragment. Original callbacks remain outside protected calls, preserving their own errors, yields and multiple/nil return values. Only the mod's receipt/helpers and diagnostic emission are protected. Trace emission still stops at 128 events; tracing no longer authorizes teardown or changes gameplay rules.
+
+The existing lifecycle wrapper retries pending restoration before the original termination callback and requests the one-shot preparing-member/close sequence only after that callback returns. The native ownership, body, state and mission gates still apply. The next `Mission.Start` boundary clears the previous termination flag. Moving the lifecycle wrapper outside the trace means diagnostic `OnTerminate:return` now precedes the close attempt; it must not be interpreted as evidence that a session closed. Loss handling after normal updates now also runs after the feedback wrapper.
+
+No new engine addresses or native game calls were introduced. Original termination exceptions, missing interfaces, failed ownership checks or unexpected state may still prevent a close request. Other gameplay helper failures are not all eliminated by this change. A returned close call remains distinct from completed asynchronous cleanup.
+
+Compilation succeeded using `tools/build.ps1 -Configuration Release -BuildOnly`. No tests, Lua/source-transform execution, game or VM launches occurred; installed 0.10.5 remains unchanged. Source inspection and compilation do not verify in-game event delivery, late teardown, disconnect or shutdown.
+
+[Prepared build and source hashes](evidence/termination-boundary-prepared-2026-09-10.json), [session cleanup implementation](session-lifecycle.md).

@@ -1,0 +1,31 @@
+{
+  "utc": "2026-09-09T16:13:52.621947+00:00",
+  "file": "D:\\Games\\steamapps\\common\\MGS_TPP\\steam_api64.dll",
+  "scope": "static_file_only",
+  "dll_loaded": false,
+  "exports_called": false,
+  "runtime_access_authorized": false,
+  "status": "static_wrappers_matched",
+  "sha256": "08bd0152356e5619ee56a6714ac951b6800dbb21821693a4efaf85278442c60a",
+  "wrappers": [
+    {
+      "export": "SteamAPI_ISteamNetworking_SendP2PPacket",
+      "rva": "0x1d10",
+      "bytes": "4883ec388b4424684c8b11894424288b4424608944242041ff124883c438c3",
+      "windows_x64_machine_boundary": "bool(intptr_t instance, uint64 SteamID bits, const void*, uint32 size, int32 mode, int32 channel)"
+    },
+    {
+      "export": "SteamAPI_ISteamNetworking_IsP2PPacketAvailable",
+      "rva": "0x1950",
+      "bytes": "488b0148ff6008",
+      "windows_x64_machine_boundary": "bool(intptr_t instance, uint32* size, int32 channel)"
+    },
+    {
+      "export": "SteamAPI_ISteamNetworking_ReadP2PPacket",
+      "rva": "0x21a0",
+      "bytes": "4c8b1149ff6210",
+      "windows_x64_machine_boundary": "bool(intptr_t instance, void*, uint32 capacity, uint32* size, uint64* SteamID bits, int32 channel)"
+    }
+  ],
+  "limitation": "No live instance, lifecycle, channel ownership, authentication or delivery verified"
+}

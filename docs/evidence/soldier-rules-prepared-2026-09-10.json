@@ -1,0 +1,23 @@
+{
+  "utc": "2026-09-10T11:51:45.560856+00:00",
+  "source_version": "0.10.15",
+  "compiled_dll_sha256": "CC9D1F444B212C63B9A6A7C8878DCC427D12E02A33ACD392E5B5E4E9C583CCC1",
+  "installed_version": "0.10.5",
+  "installed_dll_sha256": "5EE6B0DEA1B396E851F14D5F2332C7767A4DFA50749A7DAF7898139601221BA5",
+  "game_modified_this_turn": false,
+  "tests_run": false,
+  "lua_executed": false,
+  "game_launched": false,
+  "build_command": "tools/build.ps1 -Configuration Release -BuildOnly",
+  "build_log": "soldier-rules-build-only-2026-09-10.log",
+  "static_mapping": "soldier-contract-2026-09-10.json",
+  "limitations": [
+    "Enemy update branches have not been executed in MGSV.",
+    "Function correspondence is inferred from branch/dataflow and upstream constructor flag arithmetic.",
+    "Scene-lifetime byte changes do not prove quiescence of concurrent engine work.",
+    "Shared enemy actions, patrol decisions, damage and replication remain unverified.",
+    "Full native CloseSession and online-result suppression remain missing adaptations.",
+    "No connected guest or independent guest control verified.",
+    "New build remains in workspace; installed loader unchanged."
+  ]
+}

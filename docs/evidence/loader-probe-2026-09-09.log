@@ -1,0 +1,88 @@
+
+MGS Co-op loader probe 0.1.0
+architecture=x64
+process=mgsvtpp.exe
+time_utc=2026-09-09T13:01:52Z
+DirectInput8Create_hresult=0x00000000
+game_file_version=1.0.15.4 (metadata only; no hook compatibility claim)
+system_dinput=loaded_from_System32
+steam_api64=already_loaded
+export.SteamAPI_Init=present
+export.SteamAPI_RunCallbacks=present
+export.SteamAPI_RegisterCallback=present
+export.SteamAPI_GetHSteamUser=present
+export.SteamAPI_GetHSteamPipe=present
+export.SteamClient=present
+export.SteamUser=present
+export.SteamFriends=present
+export.SteamMatchmaking=present
+export.SteamNetworking=present
+export.SteamAPI_SteamNetworkingSockets_v012=absent
+export.SteamAPI_SteamNetworkingMessages_SteamAPI_v002=absent
+scope=loader_only; game_hooks=disabled; networking=disabled; save_access=none
+
+MGS Co-op loader probe 0.1.0
+architecture=x64
+process=mgsvtpp.exe
+time_utc=2026-09-09T13:10:44Z
+DirectInput8Create_hresult=0x00000000
+game_file_version=1.0.15.4 (metadata only; no hook compatibility claim)
+system_dinput=loaded_from_System32
+steam_api64=already_loaded
+export.SteamAPI_Init=present
+export.SteamAPI_RunCallbacks=present
+export.SteamAPI_RegisterCallback=present
+export.SteamAPI_GetHSteamUser=present
+export.SteamAPI_GetHSteamPipe=present
+export.SteamClient=present
+export.SteamUser=present
+export.SteamFriends=present
+export.SteamMatchmaking=present
+export.SteamNetworking=present
+export.SteamAPI_SteamNetworkingSockets_v012=absent
+export.SteamAPI_SteamNetworkingMessages_SteamAPI_v002=absent
+scope=loader_only; game_hooks=disabled; networking=disabled; save_access=none
+
+MGS Co-op loader probe 0.2.0
+architecture=x64
+process=mgsvtpp.exe
+time_utc=2026-09-09T13:27:21Z
+DirectInput8Create_hresult=0x00000000
+game_file_version=1.0.15.4 (metadata only; no hook compatibility claim)
+system_dinput=loaded_from_System32
+steam_api64=already_loaded
+export.SteamAPI_Init=present
+export.SteamAPI_RunCallbacks=present
+export.SteamAPI_RegisterCallback=present
+export.SteamAPI_GetHSteamUser=present
+export.SteamAPI_GetHSteamPipe=present
+export.SteamClient=present
+export.SteamUser=present
+export.SteamFriends=present
+export.SteamMatchmaking=present
+export.SteamNetworking=present
+export.SteamAPI_SteamNetworkingSockets_v012=absent
+export.SteamAPI_SteamNetworkingMessages_SteamAPI_v002=absent
+scope=loader_plus_gated_steam_import_observation; gameplay_hooks=disabled; networking=disabled; save_access=none
+
+MGS Co-op loader probe 0.3.0
+architecture=x64
+process=mgsvtpp.exe
+time_utc=2026-09-09T13:46:45Z
+DirectInput8Create_hresult=0x00000000
+game_file_version=1.0.15.4 (metadata only; no hook compatibility claim)
+system_dinput=loaded_from_System32
+steam_api64=already_loaded
+export.SteamAPI_Init=present
+export.SteamAPI_RunCallbacks=present
+export.SteamAPI_RegisterCallback=present
+export.SteamAPI_GetHSteamUser=present
+export.SteamAPI_GetHSteamPipe=present
+export.SteamClient=present
+export.SteamUser=present
+export.SteamFriends=present
+export.SteamMatchmaking=present
+export.SteamNetworking=present
+export.SteamAPI_SteamNetworkingSockets_v012=absent
+export.SteamAPI_SteamNetworkingMessages_SteamAPI_v002=absent
+scope=loader_plus_gated_steam_import_observation; gameplay_hooks=disabled; networking=disabled; save_access=none

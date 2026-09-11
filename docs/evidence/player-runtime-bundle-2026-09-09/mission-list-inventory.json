@@ -1,0 +1,17 @@
+{
+  "archive_precedence_resolved": false,
+  "game_writes": false,
+  "missing": [],
+  "packages": [
+    {
+      "archive": "0/00.dat",
+      "path": "/Assets/tpp/script/list/TppMissionList.lua",
+      "sha256": "3c250e19fc5ba0ccc14b192daef2860555e6cadf0f44039876fc3e8687f60e1d",
+      "saved_as": "package-00.lua",
+      "entries": null,
+      "references": null
+    }
+  ],
+  "runtime_allocation_verified": false,
+  "tool_dependency_commit": "298affd0aaa3e9342e67c0c179f286719e034a28"
+}

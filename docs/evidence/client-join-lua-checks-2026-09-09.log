@@ -1,0 +1,5 @@
+16 exact-source checks; 400 concurrent selections; no game calls
+77 actual-module checks: original pre-start order, exact mission/gates, true-only online transition, failed/unhandled request; no game calls
+58 client lifecycle checks: post-start order, single request, host exclusion, failed/unhandled requests, nil returns, errors and yields; no game calls
+42 admission checks: lifecycle ordering, one open, close/release, unavailable API, refused ownership, nil returns, errors and yields; no game calls
+44 client identity, borrowed-argument, refusal rollback and field preservation checks; no network calls

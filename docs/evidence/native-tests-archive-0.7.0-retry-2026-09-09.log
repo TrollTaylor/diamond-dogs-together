@@ -1,0 +1,237 @@
+Start testing: Sep 09 14:49 Central Daylight Time
+----------------------------------------------------------
+1/14 Testing: session_tests
+1/14 Test: session_tests
+Command: "C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native/session_tests.exe"
+Directory: C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native
+"session_tests" start time: Sep 09 14:49 Central Daylight Time
+Output:
+----------------------------------------------------------
+2891 session/protocol checks passed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"session_tests" end time: Sep 09 14:49 Central Daylight Time
+"session_tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/14 Testing: import_table_tests
+2/14 Test: import_table_tests
+Command: "C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native/import_table_tests.exe"
+Directory: C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native
+"import_table_tests" start time: Sep 09 14:49 Central Daylight Time
+Output:
+----------------------------------------------------------
+4122 mapped import parser checks passed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"import_table_tests" end time: Sep 09 14:49 Central Daylight Time
+"import_table_tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+3/14 Testing: steam_runtime_tests
+3/14 Test: steam_runtime_tests
+Command: "C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native/steam_runtime_tests.exe"
+Directory: C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native
+"steam_runtime_tests" start time: Sep 09 14:49 Central Daylight Time
+Output:
+----------------------------------------------------------
+steam_runtime_tests: all read-only lifecycle and capability checks passed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"steam_runtime_tests" end time: Sep 09 14:49 Central Daylight Time
+"steam_runtime_tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+4/14 Testing: steam_lifecycle_tests
+4/14 Test: steam_lifecycle_tests
+Command: "C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native/steam_lifecycle_tests.exe"
+Directory: C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native
+"steam_lifecycle_tests" start time: Sep 09 14:49 Central Daylight Time
+Output:
+----------------------------------------------------------
+steam_lifecycle_tests: transparent init forwarding and passive lifecycle evidence passed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"steam_lifecycle_tests" end time: Sep 09 14:49 Central Daylight Time
+"steam_lifecycle_tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+5/14 Testing: steam_getter_tests
+5/14 Test: steam_getter_tests
+Command: "C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native/steam_getter_tests.exe"
+Directory: C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native
+"steam_getter_tests" start time: Sep 09 14:49 Central Daylight Time
+Output:
+----------------------------------------------------------
+15238 Steam getter forwarding checks passed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"steam_getter_tests" end time: Sep 09 14:49 Central Daylight Time
+"steam_getter_tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+6/14 Testing: typed_payload_tests
+6/14 Test: typed_payload_tests
+Command: "C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native/typed_payload_tests.exe"
+Directory: C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native
+"typed_payload_tests" start time: Sep 09 14:49 Central Daylight Time
+Output:
+----------------------------------------------------------
+typed_payload_tests: 362 codec and trusted-boundary checks passed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"typed_payload_tests" end time: Sep 09 14:49 Central Daylight Time
+"typed_payload_tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+7/14 Testing: input_receiver_tests
+7/14 Test: input_receiver_tests
+Command: "C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native/input_receiver_tests.exe"
+Directory: C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native
+"input_receiver_tests" start time: Sep 09 14:49 Central Daylight Time
+Output:
+----------------------------------------------------------
+input_receiver_tests: 783 host admission and rollback checks passed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"input_receiver_tests" end time: Sep 09 14:49 Central Daylight Time
+"input_receiver_tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+8/14 Testing: steam_packet_tests
+8/14 Test: steam_packet_tests
+Command: "C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native/steam_packet_tests.exe"
+Directory: C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native
+"steam_packet_tests" start time: Sep 09 14:49 Central Daylight Time
+Output:
+----------------------------------------------------------
+steam_packet_tests: 124 gated packet I/O and coordinator checks passed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"steam_packet_tests" end time: Sep 09 14:49 Central Daylight Time
+"steam_packet_tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+9/14 Testing: four_player_lab
+9/14 Test: four_player_lab
+Command: "C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native/coop_lab.exe"
+Directory: C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native
+"four_player_lab" start time: Sep 09 14:49 Central Daylight Time
+Output:
+----------------------------------------------------------
+MGS CO-OP development lab: in-process coordinator only; no game or Steam connection.
+PASS: four members admitted; fifth member rejected.
+PASS: mission release waits for all four load acknowledgements.
+PASS: independent input streams tolerate dropped updates and reject duplicates; only host commits objectives.
+PASS: host loss freezes campaign coordination. No host migration is claimed.
+IN-GAME FOUR-PLAYER SUPPORT: UNVERIFIED; engine adapter is still required.
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"four_player_lab" end time: Sep 09 14:49 Central Daylight Time
+"four_player_lab" time elapsed: 00:00:00
+----------------------------------------------------------
+
+10/14 Testing: peer_router_tests
+10/14 Test: peer_router_tests
+Command: "C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native/peer_router_tests.exe"
+Directory: C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native
+"peer_router_tests" start time: Sep 09 14:49 Central Daylight Time
+Output:
+----------------------------------------------------------
+peer_router_tests: all routing and admission checks passed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"peer_router_tests" end time: Sep 09 14:49 Central Daylight Time
+"peer_router_tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+11/14 Testing: script_load_bridge_tests
+11/14 Test: script_load_bridge_tests
+Command: "C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native/script_load_bridge_tests.exe"
+Directory: C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native
+"script_load_bridge_tests" start time: Sep 09 14:49 Central Daylight Time
+Output:
+----------------------------------------------------------
+script bridge failures=0 fixture_calls=2010; no game functions called
+<end of output>
+Test time =   0.34 sec
+----------------------------------------------------------
+Test Passed.
+"script_load_bridge_tests" end time: Sep 09 14:49 Central Daylight Time
+"script_load_bridge_tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+12/14 Testing: win_import_patch_tests
+12/14 Test: win_import_patch_tests
+Command: "C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native/win_import_patch_tests.exe"
+Directory: C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native
+"win_import_patch_tests" start time: Sep 09 14:49 Central Daylight Time
+Output:
+----------------------------------------------------------
+Real import forwarding/restoration, original error states, 4001 calls across threads, and page protections passed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"win_import_patch_tests" end time: Sep 09 14:49 Central Daylight Time
+"win_import_patch_tests" time elapsed: 00:00:00
+----------------------------------------------------------
+
+13/14 Testing: probe_forwarding
+13/14 Test: probe_forwarding
+Command: "C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native/probe_smoke.exe" "C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native/dinput8.dll"
+Directory: C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native
+"probe_forwarding" start time: Sep 09 14:49 Central Daylight Time
+Output:
+----------------------------------------------------------
+PASS: six named exports exist in the distinct system and proxy modules.
+PASS: GetdfDIJoystick forwards the exact system pointer.
+DirectInput8Create version=0x800 system=0x0 proxy=0x0
+DirectInput8Create version=0x0 system=0x80070015 proxy=0x80070015
+PASS: valid and invalid DirectInput8Create calls match; interfaces released.
+SCOPE: standalone proxy forwarding only; in-game loading and gameplay remain unverified.
+<end of output>
+Test time =   0.09 sec
+----------------------------------------------------------
+Test Passed.
+"probe_forwarding" end time: Sep 09 14:49 Central Daylight Time
+"probe_forwarding" time elapsed: 00:00:00
+----------------------------------------------------------
+
+14/14 Testing: probe_install_recovery
+14/14 Test: probe_install_recovery
+Command: "C:/Users/taylo/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/powershell/pwsh.exe" "-NoProfile" "-ExecutionPolicy" "Bypass" "-File" "C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/tests/probe_install_tests.ps1"
+Directory: C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native
+"probe_install_recovery" start time: Sep 09 14:49 Central Daylight Time
+Output:
+----------------------------------------------------------
+probe_install_tests: all 5 isolated installation and recovery scenarios passed
+<end of output>
+Test time =   0.84 sec
+----------------------------------------------------------
+Test Passed.
+"probe_install_recovery" end time: Sep 09 14:49 Central Daylight Time
+"probe_install_recovery" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Sep 09 14:49 Central Daylight Time

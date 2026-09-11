@@ -1,0 +1,44 @@
+-- Configuring done (0.1s)
+-- Generating done (0.1s)
+-- Build files have been written to: C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native
+[1/14] Building CXX object CMakeFiles\mgs_coop_core.dir\native\input_receiver.cpp.obj
+[2/14] Building CXX object CMakeFiles\world_probe.dir\native\world_probe.cpp.obj
+[3/14] Building CXX object CMakeFiles\input_receiver_tests.dir\tests\input_receiver_tests.cpp.obj
+[4/14] Linking CXX static library mgs_coop_core.lib
+[5/14] Linking CXX executable world_probe.exe
+[6/14] Linking CXX executable session_tests.exe
+[7/14] Linking CXX executable import_table_tests.exe
+[8/14] Linking CXX executable steam_runtime_tests.exe
+[9/14] Linking CXX executable steam_lifecycle_tests.exe
+[10/14] Linking CXX shared library dinput8.dll
+[11/14] Linking CXX executable typed_payload_tests.exe
+[12/14] Linking CXX executable coop_lab.exe
+[13/14] Linking CXX executable input_receiver_tests.exe
+[14/14] Linking CXX executable win_import_patch_tests.exe
+Test project C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native
+      Start  1: session_tests
+ 1/11 Test  #1: session_tests ....................   Passed    0.06 sec
+      Start  2: import_table_tests
+ 2/11 Test  #2: import_table_tests ...............   Passed    0.06 sec
+      Start  3: steam_runtime_tests
+ 3/11 Test  #3: steam_runtime_tests ..............   Passed    0.07 sec
+      Start  4: steam_lifecycle_tests
+ 4/11 Test  #4: steam_lifecycle_tests ............   Passed    0.05 sec
+      Start  5: typed_payload_tests
+ 5/11 Test  #5: typed_payload_tests ..............   Passed    0.06 sec
+      Start  6: input_receiver_tests
+ 6/11 Test  #6: input_receiver_tests .............   Passed    0.08 sec
+      Start  7: four_player_lab
+ 7/11 Test  #7: four_player_lab ..................   Passed    0.05 sec
+      Start  8: peer_router_tests
+ 8/11 Test  #8: peer_router_tests ................   Passed    0.03 sec
+      Start  9: win_import_patch_tests
+ 9/11 Test  #9: win_import_patch_tests ...........   Passed    0.05 sec
+      Start 10: probe_forwarding
+10/11 Test #10: probe_forwarding .................   Passed    0.07 sec
+      Start 11: probe_install_recovery
+11/11 Test #11: probe_install_recovery ...........   Passed    0.71 sec
+
+100% tests passed, 0 tests failed out of 11
+
+Total Test time (real) =   1.55 sec

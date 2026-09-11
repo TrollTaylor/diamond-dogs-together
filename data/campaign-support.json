@@ -1,0 +1,2093 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-09-09",
+  "title": "MGSV TPP four-player campaign acceptance register",
+  "status": "design_only",
+  "implementation_origin": "original_project",
+  "existing_mod_dependencies": [],
+  "reference_policy": "Game-script and identifier sources inform investigation only; existing-mod code is not copied or used as an implementation base.",
+  "full_campaign_supported": false,
+  "verified_main_mission_count": 0,
+  "declared_main_mission_count": 51,
+  "game": "Metal Gear Solid V: The Phantom Pain",
+  "target_max_players_including_host": 4,
+  "installed_build_fingerprint": {
+    "executable": "mgsvtpp.exe",
+    "file_version": "1.0.15.4",
+    "sha256": "085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45",
+    "evidence": "docs/installed-build.json",
+    "meaning": "Inspected target only; not verified gameplay support"
+  },
+  "default_unknown_content_policy": "unsupported",
+  "status_policy": {
+    "supported_requires": "Implemented adapter, complete sequence inventory and recorded independent multi-machine gameplay evidence for claimed player counts.",
+    "unimplemented_means": "No playable co-op adapter exists for this entry.",
+    "unverified_means": "No co-op gameplay verification exists; source-level identifier checks do not count.",
+    "spectator_fallback_fulfills_full_playable_coop": false,
+    "transport_or_unit_tests_prove_gameplay": false,
+    "all_reachable_content_inventory_required": true,
+    "main_mission_passes_alone_prove_campaign": false
+  },
+  "sources": [
+    {
+      "id": "mission_codes",
+      "url": "https://mgsvmoddingwiki.github.io/MissionCodes/",
+      "type": "modding_community_identifier_research",
+      "accessed": "2026-09-09",
+      "scope": "Episode/mission-code mapping and candidate story quest IDs; verify installed scripts before implementation."
+    },
+    {
+      "id": "tpp_define",
+      "url": "https://github.com/TinManTex/mgsv-deminified-lua/blob/master/data1/Assets/tpp/script/lib/TppDefine.lua",
+      "type": "community_deminified_game_source",
+      "accessed": "2026-09-09",
+      "scope": "Locations and special mission start/route lists; not four-player capability evidence."
+    },
+    {
+      "id": "tpp_story",
+      "url": "https://github.com/TinManTex/mgsv-deminified-lua/blob/master/data1/Assets/tpp/script/lib/TppStory.lua",
+      "type": "community_deminified_game_source",
+      "accessed": "2026-09-09",
+      "scope": "Story dependencies, elapsed events, quests, buddy conditions and base scenes."
+    }
+  ],
+  "required_session_checks": [
+    "four_independent_inputs_and_cameras",
+    "four_interactive_player_actors",
+    "one_authoritative_world",
+    "all_player_ai_detection",
+    "shared_damage_and_physics",
+    "exclusive_interaction_races",
+    "critical_npc_disconnect_recovery",
+    "checkpoint_restore",
+    "isolated_campaign_save",
+    "reward_idempotency",
+    "steam_identity_and_invite",
+    "late_join_snapshot",
+    "guest_disconnect",
+    "host_loss_during_save",
+    "latency_loss_reordering",
+    "cutscene_barriers",
+    "streaming_and_memory_budget"
+  ],
+  "main_missions": [
+    {
+      "episode": 0,
+      "mission_code": 10010,
+      "title": "Awakening",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "hospital",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "independent_control_from_first_playable_frame",
+        "four_reachable_crawl_hide_paths",
+        "four_real_escape_roles",
+        "sequence_barriers",
+        "temporary_player_parts"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 1,
+      "mission_code": 10020,
+      "title": "Phantom Limbs",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "rescue_tutorial",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "tutorial_acknowledgments_per_player",
+        "shared_critical_npc",
+        "traversal_capacity",
+        "initial_story_transition"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 2,
+      "mission_code": 10030,
+      "title": "Diamond Dogs",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "base_tutorial",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "individual_tutorial_completion",
+        "exclusive_canonical_npc_interaction",
+        "shared_base_rewards"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 3,
+      "mission_code": 10036,
+      "title": "A Hero's Way",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "field",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "shared_enemy_perception",
+        "exclusive_interactions",
+        "objective_idempotency",
+        "squad_extraction"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 4,
+      "mission_code": 10043,
+      "title": "C2W",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "field",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "shared_enemy_perception",
+        "exclusive_interactions",
+        "objective_idempotency",
+        "squad_extraction"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 5,
+      "mission_code": 10033,
+      "title": "Over the Fence",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "rescue",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "single_carry_owner",
+        "npc_health_and_status",
+        "extraction_once",
+        "disconnect_while_carrying"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 6,
+      "mission_code": 10040,
+      "title": "Where Do the Bees Sleep?",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "field_boss",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "shared_boss_phase",
+        "all_player_targeting",
+        "critical_weapon_and_pickup",
+        "arena_transition"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 7,
+      "mission_code": 10041,
+      "title": "Red Brass",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "field",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "shared_enemy_perception",
+        "exclusive_interactions",
+        "objective_idempotency",
+        "squad_extraction"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 8,
+      "mission_code": 10044,
+      "title": "Occupation Forces",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "vehicle",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "seat_reservations",
+        "shared_vehicle_damage",
+        "vehicle_fulton_once",
+        "moving_objectives"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 9,
+      "mission_code": 10054,
+      "title": "Backup, Back Down",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "timed_vehicle",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "one_authoritative_timer",
+        "vehicle_spawns_and_routes",
+        "optional_rescues",
+        "timer_survives_reconnect"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 10,
+      "mission_code": 10052,
+      "title": "Angel with Broken Wings",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "rescue_vehicle",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "npc_vehicle_carry_transfers",
+        "npc_escape_routes",
+        "shared_extraction",
+        "carrier_disconnect"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 11,
+      "mission_code": 10050,
+      "title": "Cloaked in Silence",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "quiet_duel",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "single_quiet_actor",
+        "shared_lethal_stamina_state",
+        "all_player_target_selection",
+        "single_story_choice_and_recruitment"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 12,
+      "mission_code": 10070,
+      "title": "Hellbound",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "scripted_escape",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "critical_npc_carry",
+        "shared_pursuer_phase",
+        "four_real_escape_roles",
+        "boarding_barrier"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 13,
+      "mission_code": 10080,
+      "title": "Pitch Dark",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "sabotage",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "shared_gimmick_state",
+        "single_explosion_objective",
+        "global_environment_change",
+        "escape_barrier"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 14,
+      "mission_code": 10086,
+      "title": "Lingua Franca",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "surveillance_rescue",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "shared_conversation_triggers",
+        "no_duplicate_interrogation_events",
+        "timed_npc_fate",
+        "npc_rescue"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 15,
+      "mission_code": 10082,
+      "title": "Footprints of Phantoms",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "vehicle",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "seat_reservations",
+        "shared_vehicle_damage",
+        "vehicle_fulton_once",
+        "moving_objectives"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 16,
+      "mission_code": 10090,
+      "title": "Traitors' Caravan",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "convoy_boss",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "shared_convoy_route",
+        "single_target_cargo",
+        "shared_boss_phase",
+        "vehicle_extraction"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 17,
+      "mission_code": 10091,
+      "title": "Rescue the Intel Agents",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "rescue",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "single_carry_owner",
+        "npc_health_and_status",
+        "extraction_once",
+        "disconnect_while_carrying"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 18,
+      "mission_code": 10100,
+      "title": "Blood Runs Deep",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "protected_escort",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "protected_npc_rules_for_all_players",
+        "shared_escort_routes",
+        "single_carrier",
+        "no_accidental_early_exit"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 19,
+      "mission_code": 10195,
+      "title": "On the Trail",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "surveillance",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "shared_target_identity",
+        "conversation_range_policy",
+        "route_continuity",
+        "optional_objective_order"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 20,
+      "mission_code": 10110,
+      "title": "Voices",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "supernatural",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "shared_phase_and_immunity",
+        "environment_interactions",
+        "per_player_visibility",
+        "shared_escape"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 21,
+      "mission_code": 10121,
+      "title": "The War Economy",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "surveillance",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "shared_target_identity",
+        "conversation_range_policy",
+        "route_continuity",
+        "optional_objective_order"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 22,
+      "mission_code": 10115,
+      "title": "Retake the Platform",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "base_assault",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "campaign_base_layout",
+        "platform_streaming",
+        "shared_enemy_ownership",
+        "commander_objective",
+        "no_official_fob_session"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 23,
+      "mission_code": 10120,
+      "title": "The White Mamba",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "protected_duel",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "nonlethal_rules_for_every_player",
+        "exclusive_duel_role",
+        "meaningful_roles_for_other_three",
+        "protected_npc_aftermath"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 24,
+      "mission_code": 10085,
+      "title": "Close Contact",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "rescue",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "single_carry_owner",
+        "npc_health_and_status",
+        "extraction_once",
+        "disconnect_while_carrying"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 25,
+      "mission_code": 10200,
+      "title": "Aim True, Ye Vengeful",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "protected_escort",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "protected_npc_rules_for_all_players",
+        "shared_escort_routes",
+        "single_carrier",
+        "no_accidental_early_exit"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 26,
+      "mission_code": 10211,
+      "title": "Hunting Down",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "moving_target",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "shared_target_route",
+        "distance_and_escape_triggers",
+        "target_identity",
+        "one_objective_commit"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 27,
+      "mission_code": 10081,
+      "title": "Root Cause",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "rescue_vehicle",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "npc_vehicle_carry_transfers",
+        "npc_escape_routes",
+        "shared_extraction",
+        "carrier_disconnect"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 28,
+      "mission_code": 10130,
+      "title": "Code Talker",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "boss_escort",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "one_boss_set",
+        "shared_critical_npc",
+        "carry_under_attack",
+        "phase_transition_and_extraction"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 29,
+      "mission_code": 10140,
+      "title": "Metallic Archaea",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "boss_escort",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "one_boss_set",
+        "shared_critical_npc",
+        "carry_under_attack",
+        "phase_transition_and_extraction"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 30,
+      "mission_code": 10150,
+      "title": "Skull Face",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "scripted_ride",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "audit_interactive_versus_cinematic_segments",
+        "four_real_roles_during_interactive_rides",
+        "one_story_actor",
+        "ride_to_boss_transition"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 31,
+      "mission_code": 10151,
+      "title": "Sahelanthropus",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "giant_boss",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "shared_weak_points_and_health",
+        "all_player_attack_targets",
+        "no_duplicate_damage",
+        "shared_resupply",
+        "interactive_aftermath"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 32,
+      "mission_code": 10045,
+      "title": "To Know Too Much",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "rescue",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "single_carry_owner",
+        "npc_health_and_status",
+        "extraction_once",
+        "disconnect_while_carrying"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 33,
+      "mission_code": 11043,
+      "title": "C2W",
+      "variant": "subsistence",
+      "replay_of_episode": 4,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "field",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "shared_enemy_perception",
+        "exclusive_interactions",
+        "objective_idempotency",
+        "squad_extraction"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 34,
+      "mission_code": 11054,
+      "title": "Backup, Back Down",
+      "variant": "extreme",
+      "replay_of_episode": 9,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "timed_vehicle",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "one_authoritative_timer",
+        "vehicle_spawns_and_routes",
+        "optional_rescues",
+        "timer_survives_reconnect"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 35,
+      "mission_code": 10093,
+      "title": "Cursed Legacy",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "timed_extraction",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "single_container_claim",
+        "shared_countdown",
+        "authoritative_extraction_result",
+        "no_duplicate_resources"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 36,
+      "mission_code": 11082,
+      "title": "Footprints of Phantoms",
+      "variant": "total_stealth",
+      "replay_of_episode": 15,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "vehicle",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "seat_reservations",
+        "shared_vehicle_damage",
+        "vehicle_fulton_once",
+        "moving_objectives"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 37,
+      "mission_code": 11090,
+      "title": "Traitors' Caravan",
+      "variant": "extreme",
+      "replay_of_episode": 16,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "convoy_boss",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "shared_convoy_route",
+        "single_target_cargo",
+        "shared_boss_phase",
+        "vehicle_extraction"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 38,
+      "mission_code": 10156,
+      "title": "Extraordinary",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "search",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "shared_search_target",
+        "item_claim_once",
+        "intel_and_marker_scope",
+        "squad_extraction"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 39,
+      "mission_code": 11033,
+      "title": "Over the Fence",
+      "variant": "total_stealth",
+      "replay_of_episode": 5,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "rescue",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "single_carry_owner",
+        "npc_health_and_status",
+        "extraction_once",
+        "disconnect_while_carrying"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 40,
+      "mission_code": 11050,
+      "title": "Cloaked in Silence",
+      "variant": "extreme",
+      "replay_of_episode": 11,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "quiet_duel",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "single_quiet_actor",
+        "shared_lethal_stamina_state",
+        "all_player_target_selection",
+        "single_story_choice_and_recruitment"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 41,
+      "mission_code": 10171,
+      "title": "Proxy War Without End",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "vehicle",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "seat_reservations",
+        "shared_vehicle_damage",
+        "vehicle_fulton_once",
+        "moving_objectives"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 42,
+      "mission_code": 11140,
+      "title": "Metallic Archaea",
+      "variant": "extreme",
+      "replay_of_episode": 29,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "boss_escort",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "one_boss_set",
+        "shared_critical_npc",
+        "carry_under_attack",
+        "phase_transition_and_extraction"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 43,
+      "mission_code": 10240,
+      "title": "Shining Lights, Even in Death",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "quarantine",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "four_controllable_inspectors",
+        "per_player_inspection_tools",
+        "shared_staff_identity",
+        "irreversible_staff_transaction",
+        "no_revive_of_story_victims"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 44,
+      "mission_code": 11080,
+      "title": "Pitch Dark",
+      "variant": "total_stealth",
+      "replay_of_episode": 13,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "sabotage",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "shared_gimmick_state",
+        "single_explosion_objective",
+        "global_environment_change",
+        "escape_barrier"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 45,
+      "mission_code": 10260,
+      "title": "A Quiet Exit",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "quiet_finale",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "preserve_required_named_ally",
+        "shared_assault_waves",
+        "critical_ally_health",
+        "shared_supply_budget",
+        "four_real_roles_in_closing_escape"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 46,
+      "mission_code": 10280,
+      "title": "Truth: The Man Who Sold the World",
+      "variant": "none",
+      "replay_of_episode": null,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "hospital_truth",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "independent_control_from_first_playable_frame",
+        "four_real_escape_roles",
+        "truth_specific_sequence_graph",
+        "identity_and_appearance_restore",
+        "final_story_commit"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 47,
+      "mission_code": 11121,
+      "title": "The War Economy",
+      "variant": "total_stealth",
+      "replay_of_episode": 21,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "surveillance",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "shared_target_identity",
+        "conversation_range_policy",
+        "route_continuity",
+        "optional_objective_order"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 48,
+      "mission_code": 11130,
+      "title": "Code Talker",
+      "variant": "extreme",
+      "replay_of_episode": 28,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "boss_escort",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "one_boss_set",
+        "shared_critical_npc",
+        "carry_under_attack",
+        "phase_transition_and_extraction"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 49,
+      "mission_code": 11044,
+      "title": "Occupation Forces",
+      "variant": "subsistence",
+      "replay_of_episode": 8,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "vehicle",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "seat_reservations",
+        "shared_vehicle_damage",
+        "vehicle_fulton_once",
+        "moving_objectives"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    },
+    {
+      "episode": 50,
+      "mission_code": 11151,
+      "title": "Sahelanthropus",
+      "variant": "extreme",
+      "replay_of_episode": 31,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "intended_max_players": 4,
+      "verified_player_counts": [],
+      "adapter_profile": "giant_boss",
+      "adapter_path": null,
+      "sequence_inventory_complete": false,
+      "required_checks": [
+        "shared_weak_points_and_health",
+        "all_player_attack_targets",
+        "no_duplicate_damage",
+        "shared_resupply",
+        "interactive_aftermath"
+      ],
+      "mission_mechanics_audited_on_installed_build": false,
+      "spectator_fallback_counts_as_supported": false,
+      "source_refs": [
+        "mission_codes",
+        "tpp_define"
+      ],
+      "evidence": [],
+      "blockers": [
+        "native_four_player_campaign_actor_control_unproven",
+        "adapter_unimplemented",
+        "sequence_graph_unaudited",
+        "no_multimachine_gameplay_evidence"
+      ]
+    }
+  ],
+  "story_quest_candidates": [
+    {
+      "quest_id": 99010,
+      "design_label": "Quiet encounter prerequisite",
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "sequence_inventory_complete": false,
+      "prerequisites_audited": false,
+      "evidence": [],
+      "source_refs": [
+        "mission_codes",
+        "tpp_story"
+      ],
+      "note": "Quest id is not the side-op number shown in the game UI. Reachability and exact installed script name must be audited."
+    },
+    {
+      "quest_id": 99011,
+      "design_label": "Quiet visit",
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "sequence_inventory_complete": false,
+      "prerequisites_audited": false,
+      "evidence": [],
+      "source_refs": [
+        "mission_codes",
+        "tpp_story"
+      ],
+      "note": "Quest id is not the side-op number shown in the game UI. Reachability and exact installed script name must be audited."
+    },
+    {
+      "quest_id": 99012,
+      "design_label": "Quiet recovery prerequisite",
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "sequence_inventory_complete": false,
+      "prerequisites_audited": false,
+      "evidence": [],
+      "source_refs": [
+        "mission_codes",
+        "tpp_story"
+      ],
+      "note": "Quest id is not the side-op number shown in the game UI. Reachability and exact installed script name must be audited."
+    },
+    {
+      "quest_id": 99020,
+      "design_label": "Emmerich contact",
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "sequence_inventory_complete": false,
+      "prerequisites_audited": false,
+      "evidence": [],
+      "source_refs": [
+        "mission_codes",
+        "tpp_story"
+      ],
+      "note": "Quest id is not the side-op number shown in the game UI. Reachability and exact installed script name must be audited."
+    },
+    {
+      "quest_id": 99030,
+      "design_label": "AI pod retrieval",
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "sequence_inventory_complete": false,
+      "prerequisites_audited": false,
+      "evidence": [],
+      "source_refs": [
+        "mission_codes",
+        "tpp_story"
+      ],
+      "note": "Quest id is not the side-op number shown in the game UI. Reachability and exact installed script name must be audited."
+    },
+    {
+      "quest_id": 99040,
+      "design_label": "Man on Fire remains",
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "sequence_inventory_complete": false,
+      "prerequisites_audited": false,
+      "evidence": [],
+      "source_refs": [
+        "mission_codes",
+        "tpp_story"
+      ],
+      "note": "Quest id is not the side-op number shown in the game UI. Reachability and exact installed script name must be audited."
+    },
+    {
+      "quest_id": 99050,
+      "design_label": "Eli challenge",
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "sequence_inventory_complete": false,
+      "prerequisites_audited": false,
+      "evidence": [],
+      "source_refs": [
+        "mission_codes",
+        "tpp_story"
+      ],
+      "note": "Quest id is not the side-op number shown in the game UI. Reachability and exact installed script name must be audited."
+    },
+    {
+      "quest_id": 99060,
+      "design_label": "Paz arc",
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "sequence_inventory_complete": false,
+      "prerequisites_audited": false,
+      "evidence": [],
+      "source_refs": [
+        "mission_codes",
+        "tpp_story"
+      ],
+      "note": "Quest id is not the side-op number shown in the game UI. Reachability and exact installed script name must be audited."
+    },
+    {
+      "quest_id": 99080,
+      "design_label": "Intel agent extraction",
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "sequence_inventory_complete": false,
+      "prerequisites_audited": false,
+      "evidence": [],
+      "source_refs": [
+        "mission_codes",
+        "tpp_story"
+      ],
+      "note": "Quest id is not the side-op number shown in the game UI. Reachability and exact installed script name must be audited."
+    },
+    {
+      "quest_id": 99071,
+      "design_label": "Gunsmith first extraction",
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "sequence_inventory_complete": false,
+      "prerequisites_audited": false,
+      "evidence": [],
+      "source_refs": [
+        "mission_codes",
+        "tpp_story"
+      ],
+      "note": "Quest id is not the side-op number shown in the game UI. Reachability and exact installed script name must be audited."
+    },
+    {
+      "quest_id": 99070,
+      "design_label": "Gunsmith second extraction",
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "sequence_inventory_complete": false,
+      "prerequisites_audited": false,
+      "evidence": [],
+      "source_refs": [
+        "mission_codes",
+        "tpp_story"
+      ],
+      "note": "Quest id is not the side-op number shown in the game UI. Reachability and exact installed script name must be audited."
+    },
+    {
+      "quest_id": 99072,
+      "design_label": "Gunsmith third extraction",
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "sequence_inventory_complete": false,
+      "prerequisites_audited": false,
+      "evidence": [],
+      "source_refs": [
+        "mission_codes",
+        "tpp_story"
+      ],
+      "note": "Quest id is not the side-op number shown in the game UI. Reachability and exact installed script name must be audited."
+    }
+  ],
+  "additional_coverage_inventories": [
+    {
+      "id": "side_ops",
+      "scope": "Every released side op, repeat state, unlock dependency and shared reward",
+      "inventory_complete": false,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "release_blocking": true,
+      "child_entries": [],
+      "evidence": [],
+      "next_action": "Extract an installed-build inventory and add one auditable entry per reachable event or segment."
+    },
+    {
+      "id": "base_events",
+      "scope": "Mother Base visits, recruitment, buddy events, staff state, quarantine, Paz and character departures",
+      "inventory_complete": false,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "release_blocking": true,
+      "child_entries": [],
+      "evidence": [],
+      "next_action": "Extract an installed-build inventory and add one auditable entry per reachable event or segment."
+    },
+    {
+      "id": "acc_and_travel",
+      "scope": "ACC briefing, deployment, helicopters, vehicles, fast travel, map changes and return to base",
+      "inventory_complete": false,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "release_blocking": true,
+      "child_entries": [],
+      "evidence": [],
+      "next_action": "Extract an installed-build inventory and add one auditable entry per reachable event or segment."
+    },
+    {
+      "id": "free_roam",
+      "scope": "Afghanistan, Central Africa, Mother Base, animal platform and quarantine interior where reachable",
+      "inventory_complete": false,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "release_blocking": true,
+      "child_entries": [],
+      "evidence": [],
+      "next_action": "Extract an installed-build inventory and add one auditable entry per reachable event or segment."
+    },
+    {
+      "id": "endings_and_interludes",
+      "scope": "Chapter transitions, all released story conclusions, credits transitions and post-ending states",
+      "inventory_complete": false,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "release_blocking": true,
+      "child_entries": [],
+      "evidence": [],
+      "next_action": "Extract an installed-build inventory and add one auditable entry per reachable event or segment."
+    },
+    {
+      "id": "original_interactive_segments",
+      "scope": "Every controllable segment, including scripted rides, duels, final actions and escape sequences",
+      "inventory_complete": false,
+      "implementation_status": "unimplemented",
+      "verification_status": "unverified",
+      "supported": false,
+      "release_blocking": true,
+      "child_entries": [],
+      "evidence": [],
+      "next_action": "Extract an installed-build inventory and add one auditable entry per reachable event or segment."
+    }
+  ],
+  "exclusions": [
+    {
+      "id": "unreleased_content",
+      "reason": "Restoring content absent from the released campaign is a separate project."
+    },
+    {
+      "id": "official_fob_and_mgo_modes",
+      "reason": "Official online modes are separate from the cooperative campaign; do not enter them while campaign authority is active."
+    }
+  ],
+  "evidence_required_per_supported_entry": [
+    "executable_and_content_hashes",
+    "adapter_revision",
+    "tested_player_counts",
+    "distinct_game_instances_and_accounts",
+    "independent_control_recording",
+    "authoritative_shared_effects_trace",
+    "checkpoint_and_save_restore_record",
+    "disconnect_and_join_results",
+    "remaining_defects"
+  ],
+  "launch_gate": "Blocked: no playable mission adapters are implemented or verified, and non-main-mission coverage inventories are incomplete."
+}

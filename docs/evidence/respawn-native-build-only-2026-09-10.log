@@ -1,0 +1,19 @@
+CMake Deprecation Warning at third_party/minhook/CMakeLists.txt:27 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value.  Or, use the <min>...<max> syntax
+  to tell CMake that the project requires at least <min> but has been updated
+  to work with policies introduced by <max> or earlier.
+
+
+-- Configuring done (0.2s)
+-- Generating done (0.1s)
+-- Build files have been written to: C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/build/native
+[1/7] Building CXX object CMakeFiles\mgs_bootstrap_patch.dir\native\bootstrap_patch.cpp.obj
+[2/7] Building CXX object CMakeFiles\mgs_player_ghost_patch.dir\native\respawn_patch.cpp.obj
+[3/7] Building CXX object CMakeFiles\mgs_coop_probe.dir\native\probe.cpp.obj
+[4/7] Linking CXX static library mgs_bootstrap_patch.lib
+[5/7] Linking CXX static library mgs_player_ghost_patch.lib
+[6/7] Building CXX object CMakeFiles\mgs_coop_probe.dir\native\game_script_observer.cpp.obj
+[7/7] Linking CXX shared library dinput8.dll

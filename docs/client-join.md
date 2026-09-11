@@ -1,0 +1,28 @@
+# Native guest connection implementation
+
+The guest request and native Start are included in installed **0.10.5**; they remain unverified with a real host. Guest setup and read-only connection prerequisites passed in 0.10.4. Workspace **0.10.27** adds manual joining, session feedback, equipment/loading and combat/lifecycle adaptations, plus existing teammate-marker presentation and the independent mission teardown signal. These changes are compiled only and not installed. Playable two-player co-op remains unfinished. See [current status](STATUS.md) and [teammate markers](teammate-markers.md).
+
+The new client-v1 mode reads `mgs-coop/client-host.txt` as a decimal SteamID64. The value must name a public individual desktop account with a nonzero account ID. Missing, malformed, oversized or other account-type values stop client setup before hooks or game calls. No identity is supplied by default, no Lua number carries a Steam ID, and no arbitrary remote account has been contacted.
+
+For the Mother Base experiment, the exact-source TppMain insertion sets online initialization before Mission.Start when a client is configured. After the original OnMissionGameStart returns and equipment preparation succeeds, the client wrapper waits for Ctrl+F8 while MGSV is focused. The guest should press it only when the host confirms readiness. See [manual joining](manual-join.md). It preserves original arguments, nil results, yields and errors. It never marks itself as a created host or enables host admission. Like the current host trial, this version requires a normal restart for another attempt; reconnects and repeat sessions remain unfinished.
+
+The native request directly adapts pinned tpp-mod's `session_connect` command using the game-owned FobTarget and its existing SessionConnectInfo. The current executable reads the host identity at connect-info offset B8. The adapter requires an idle target, writable existing connection storage and no active main session, then borrows those objects without allocating or freeing replacements. It leaves the native readiness predicate intact. A synchronous false result restores the supplied identity; true means request started, not a joined peer. The same verified allocation bridge used by the host routes the two native bandwidth allocations to the game heap. After a successful request, the adapter verifies the newly created client session and invokes its native Start method. This sets the start flag cleared by connection preparation. The native state-6 update waits for that flag before publishing the local member readiness data and advancing to state 7. No handshake state or member identity is written directly.
+
+Current-build source: tpp-mod `301bf797b7f8032941b21ed56a3570338de6ead4`, GPLv3. Client timing and native flow also follow Dynamite `c90f252f8200765f66c005d6bf4357fda0c0d98e`, GPLv3 with Commons Clause 1.0. Adaptations are marked in the source and [notices](../THIRD_PARTY_NOTICES.md).
+
+## Historical checks and current limits
+
+The checks below predate the manual-join changes and do not validate 0.10.21; this build was compiled only.
+
+- All 17 Release native test suites pass; client fixtures check exact borrowed arguments, identity validation, unchanged reserved fields and restoration on synchronous refusal (44 checks).
+- The executable-specific analyzer verifies 33 instructions, three interface slots, six code hashes and the embedded state-dispatch table. The update exception range contains instructions followed by table data; both parts are checked separately. The existing 38-body allocation gate also covers the native client entry. [Static evidence](evidence/client-join-contract-2026-09-09.json).
+- The actual original TppMain module passes 77 startup checks including guest preparation without host creation; exact-source selection passes 16 checks and 400 concurrent selections.
+- The guest wrapper passes 58 lifecycle checks. Existing host admission passes 42 checks.
+
+These local tests do not demonstrate a Steam connection, independent guest control, world synchronization or safe guest teardown. No live native client request was made. Mother Base supplied the borrowed connection storage in the 0.10.4 loading check. The request and resulting session/actor ownership still need a real host. Only one PC is available, so a real two-peer test remains pending. Shared combat, progression, save isolation and campaign coverage still require implementation and validation.
+
+[Build and native suites](evidence/client-start-build-2026-09-09.log), [Lua and argument checks](evidence/client-join-lua-checks-2026-09-09.log), [prepared and installed hashes](evidence/client-start-prepared-2026-09-09.json).
+
+## Configuring a later two-peer development test
+
+Both machines need the same current development loader and matching two-player archive. The helper refuses older or changed loaders. Close the game normally first. On the host run `tools/set-session-mode.ps1 -Role Host`, then load Mother Base. On the guest run `tools/set-session-mode.ps1 -Role Join -HostSteamId <host's SteamID64>`, then start the game and load Mother Base. Wait for the host to confirm readiness, then hold Ctrl and press F8 in MGSV. These instructions describe an unverified development path, not a playable release. No second installation or host identity is currently configured.

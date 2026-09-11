@@ -1,0 +1,15 @@
+{
+  "excess_bytes": 778000,
+  "normal_close": true,
+  "state": 11,
+  "on_terminate_returned": true,
+  "subsequent_on_allocate": false,
+  "total": 13419280,
+  "same_as_count_three": true,
+  "save_files_match": 7,
+  "baseline": 12641280,
+  "return_to_title_requested_utc": "2026-09-09T21:38:37.016Z",
+  "pid": 33280,
+  "black_loading_observed_utc": "2026-09-09T21:40:01.990Z",
+  "fix_verified": false
+}

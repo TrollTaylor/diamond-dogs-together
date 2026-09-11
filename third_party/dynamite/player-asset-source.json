@@ -1,0 +1,7 @@
+{
+  "repository": "https://github.com/unknown321/dynamite",
+  "commit": "c90f252f8200765f66c005d6bf4357fda0c0d98e",
+  "controller_sha256": "384eda680b09408705debeb6c76f97d4ed929b44618107b92c4238a4ffb73ad8",
+  "license": "GPLv3 with Commons Clause v1.0; see LICENSE",
+  "modified_files": "Generated local controller XML: four parts entries/blocks, new package path and experimental doubled instance budget"
+}

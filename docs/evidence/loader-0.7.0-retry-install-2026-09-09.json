@@ -1,0 +1,11 @@
+{
+  "utc": "2026-09-09T19:51:41.2196167Z",
+  "version": "0.7.0",
+  "trial": 2,
+  "previous_loader_backup": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\backups\\probe-0.7.0-trial1-20260909T195140Z",
+  "loader_sha256": "6467022ADAA868A71FEC5352E8B185FCE54544CFE91F0DFB71A6262A9273F802",
+  "archive_sha256": "711DEF02F258F6CA42A63CA2374FDF342A306ADB1BA29FE31F7E6DF94B1830E5",
+  "mode": "archive-v1",
+  "actor_packages_selected": false,
+  "change": "Add protected dofile read and bounded error receipt"
+}

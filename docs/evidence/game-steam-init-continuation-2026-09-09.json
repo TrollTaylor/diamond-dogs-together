@@ -1,0 +1,52 @@
+{
+  "utc": "2026-09-09T16:31:39.7030667Z",
+  "game_pid": 76012,
+  "method": "Computer Use screenshot observation after discrete keyboard actions",
+  "autosave_notice_dismissed_with_enter": true,
+  "title_prompt_observed": true,
+  "title_enter_reached_main_menu": true,
+  "overall_completion_percent": 69,
+  "controller_tested": false,
+  "on_foot_controls_tested": false,
+  "coop_tested": false,
+  "debugger_process_count": 0,
+  "game_process_present": true,
+  "save_comparison": [
+    {
+      "name": "PERSONAL_DATA0",
+      "current_sha256": "FA2C41DD08DB1429FF082E20D9CF1F11D5B600FD8038510938873C659E980C8B",
+      "matches_prelaunch": true
+    },
+    {
+      "name": "PERSONAL_DATA1",
+      "current_sha256": "9E4B9877BE31BAAB6E77678EED28A95E1AD38FFD1F25DF322C20F326D99EB147",
+      "matches_prelaunch": true
+    },
+    {
+      "name": "TPP_CONFIG_DATA0",
+      "current_sha256": "5866A6F6F17B303CE7E5D2E2F1A25E6172F80B5DC50DE24121F1EF890AD98583",
+      "matches_prelaunch": true
+    },
+    {
+      "name": "TPP_CONFIG_DATA1",
+      "current_sha256": "5866A6F6F17B303CE7E5D2E2F1A25E6172F80B5DC50DE24121F1EF890AD98583",
+      "matches_prelaunch": true
+    },
+    {
+      "name": "TPP_GAME_DATA0",
+      "current_sha256": "959E130963D2C718CE181246E533F42D1A072AA9ED6A300AE9CE85847C23FE6B",
+      "matches_prelaunch": true
+    },
+    {
+      "name": "TPP_GAME_DATA1",
+      "current_sha256": "CC4E1FA85CED331216B985303B3E5A5E3B7D5538240E0C25A0006BB50CF90BFC",
+      "matches_prelaunch": true
+    },
+    {
+      "name": "TPP_GRAPHICS_CONFIG",
+      "current_sha256": "3C9A58DF12E5C2BE6AAFB600B086A11E0BC8FE2D50667F739DB24983705007C4",
+      "matches_prelaunch": true
+    }
+  ],
+  "source_saves_written_by_tools": false
+}

@@ -1,0 +1,23 @@
+{
+  "return_confirm_utc": [
+    "2026-09-09T22:03:09.408Z",
+    "2026-09-09T22:05:43.032Z"
+  ],
+  "version": "0.9.3",
+  "players_reserved": 2,
+  "title_observed_within_seconds": [
+    26,
+    16
+  ],
+  "debugger_used": false,
+  "both_cycles_passed": true,
+  "native_host_enabled": false,
+  "continue_utc": [
+    "2026-09-09T22:01:38.590Z",
+    "2026-09-09T22:03:44.836Z"
+  ],
+  "all_seven_save_hashes_match": true,
+  "pid": 59748,
+  "limitation": "Two scene load/unload cycles only; no peers, independently controlled actors, or general lifecycle proof.",
+  "normal_quit_utc": "2026-09-09T22:06:34.309Z"
+}

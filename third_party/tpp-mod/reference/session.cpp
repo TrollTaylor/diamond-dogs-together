@@ -1,0 +1,539 @@
+#include <std_include.hpp>
+#include "loader/component_loader.hpp"
+
+#include "game/game.hpp"
+
+#include "command.hpp"
+#include "scheduler.hpp"
+#include "console.hpp"
+#include "session.hpp"
+#include "network.hpp"
+#include "matchmaking.hpp"
+#include "text_chat/defs.hpp"
+
+#include <utils/hook.hpp>
+#include <utils/string.hpp>
+
+namespace session
+{
+	session_info_t session_info{};
+
+	namespace
+	{
+		const char* get_session_state_name(const int state)
+		{
+			switch (state)
+			{
+			case 0:
+				return "none";
+			case 2:
+			case 3:
+				return "host";
+			case 4:
+				return "client connect";
+			case 5:
+				return "client init";
+			case 6:
+			case 7:
+				return "client established";
+			}
+
+			return "unknown";
+		}
+
+		void print_status()
+		{
+			const auto main_session = *game::s_pSession;
+			if (!main_session)
+			{
+				return;
+			}
+
+			const auto steam_friends = (*game::SteamFriends)();
+			const auto is_host = main_session->sessionInterface.__vftable->IsHost(&main_session->sessionInterface);
+			const auto state = main_session->__vftable->tpp.GetState(main_session);
+			const auto all_members = &main_session->allMembers;
+			const auto ruleset = get_active_ruleset();
+
+			printf("is host: %i\n", is_host);
+			printf("state: %s (%i)\n", get_session_state_name(state), state);
+			printf("ping: %ims\n", get_rtt(main_session));
+			printf("ruleset state: %i %p\n", ruleset != nullptr ? ruleset->state : 0, ruleset);
+			if (game::environment::is_tpp())
+			{
+				printf("num flags ping  steam_id                         name                            \n");
+				printf("--- ----- ----- -------------------------------- --------------------------------\n");
+			}
+			else
+			{
+				printf("num flags ping  steam_id                         name                             team\n");
+				printf("--- ----- ----- -------------------------------- -------------------------------- ----\n");
+			}
+
+			for (auto i = 0u; i < all_members->size; i++)
+			{
+				const auto member = all_members->members[i];
+				if (member == nullptr || member->flags == 0)
+				{
+					continue;
+				}
+
+				game::steam_id steam_id{};
+				steam_id.bits = member->sessionUserId->userId;
+
+				auto name = get_player_name(static_cast<unsigned char>(i));
+				if (name == nullptr || name[0] == 0)
+				{
+					name = steam_friends->__vftable->GetFriendPersonaName(steam_friends, steam_id);
+				};
+
+				if (game::environment::is_tpp())
+				{
+					const auto ping = member->sppSocket != nullptr
+						? member->sppSocket->tpp.rtt_time
+						: -1;
+					printf("%3i %5i %5i %32lli %32s", i, member->flags, ping, steam_id.bits, name);
+				}
+				else
+				{
+					const auto team = ruleset != nullptr
+						? ruleset->playerTeams[i] : -1;
+					const auto ping = member->sppSocket != nullptr
+						? member->sppSocket->mgo.rtt_time
+						: -1;
+					printf("%3i %5i %5i %32lli %32s %4i", i, member->flags, ping, steam_id.bits, name, team);
+				}
+			}
+		}
+
+		void run_frame()
+		{
+			static auto prev_state = 0u;
+
+			const auto main_session = *game::s_pSession;
+			if (main_session == nullptr)
+			{
+				session_info = {};
+				return;
+			}
+
+			const auto state = get_state(main_session);
+			if (state != prev_state)
+			{
+				text_chat::clear();
+				console::debug("[session] state updated: %i\n", state);
+			}
+
+			session_info.active = true;
+			session_info.state = state;
+			session_info.is_host = main_session->sessionInterface.__vftable->IsHost(&main_session->sessionInterface);
+			const auto host = main_session->sessionInterface.__vftable->GetMemberInterfaceAtIndex(&main_session->sessionInterface, 0);
+
+			switch (state)
+			{
+			case 2:
+			case 3:
+			case 6:
+			case 7:
+				session_info.is_connected = host != nullptr;
+				break;
+			default:
+				session_info.is_connected = false;
+				break;
+			}
+
+			prev_state = state;
+		}
+	}
+
+	int get_rtt(game::fox::nt::impl::SessionImpl2* session)
+	{
+		if (session == nullptr || session->sppSocket == nullptr)
+		{
+			return 0;
+		}
+
+		if (game::environment::is_tpp())
+		{
+			return session->sppSocket->tpp.rtt_time;
+		}
+		else
+		{
+			return session->sppSocket->mgo.rtt_time;
+		}
+	}
+
+	bool is_host(game::fox::nt::impl::SessionImpl2* session)
+	{
+		if (session == nullptr)
+		{
+			return false;
+		}
+
+		return session->sessionInterface.__vftable->IsHost(&session->sessionInterface);
+	}
+
+	unsigned int get_state(game::fox::nt::impl::SessionImpl2* session)
+	{
+		if (session == nullptr)
+		{
+			return 0;
+		}
+
+		if (game::environment::is_tpp())
+		{
+			return session->__vftable->tpp.GetState(session);
+		}
+		else
+		{
+			return session->__vftable->mgo.GetState(session);
+		}
+	}
+
+	bool is_host()
+	{
+		const auto main_session = *game::s_pSession;
+		if (main_session == nullptr)
+		{
+			return false;
+		}
+
+		return main_session->sessionInterface.__vftable->IsHost(&main_session->sessionInterface);
+	}
+
+	game::fox::nt::Member* get_client_by_index(const unsigned int index, bool* is_self)
+	{
+		const auto main_session = *game::s_pSession;
+		if (main_session == nullptr || index >= main_session->allMembers.size)
+		{
+			return nullptr;
+		}
+
+		const auto local_member = main_session->__vftable->mgo.GetLocalMember(main_session);
+		const auto target_member = main_session->allMembers.members[index];
+
+		if (target_member == nullptr || target_member->flags == 0)
+		{
+			return nullptr;
+		}
+
+		if (is_self != nullptr)
+		{
+			*is_self = (local_member->sessionUserId->userId == target_member->sessionUserId->userId);
+		}
+
+		return target_member;
+	}
+
+	game::fox::nt::Member* get_client_by_steam_id(const std::uint64_t steam_id, bool* is_self, int* index)
+	{
+		const auto main_session = *game::s_pSession;
+		if (main_session == nullptr)
+		{
+			return nullptr;
+		}
+
+		const auto local_member = main_session->__vftable->mgo.GetLocalMember(main_session);
+
+		for (auto i = 0u; i < main_session->allMembers.size; i++)
+		{
+			const auto member = main_session->allMembers.members[i];
+			if (member == nullptr || member->flags == 0)
+			{
+				continue;
+			}
+
+			if (member->sessionUserId->userId == steam_id)
+			{
+				if (index != nullptr)
+				{
+					*index = i;
+				}
+
+				if (is_self != nullptr)
+				{
+					*is_self = local_member->sessionUserId->userId == member->sessionUserId->userId;
+				}
+
+				return member;
+			}
+		}
+
+		return nullptr;
+	}
+
+	game::fox::nt::Member* get_client_by_name(const std::string& name, bool* is_self, std::string* out_name)
+	{
+		const auto main_session = *game::s_pSession;
+		if (main_session == nullptr)
+		{
+			return nullptr;
+		}
+
+		const auto lower = utils::string::to_lower(name);
+
+		const auto local_member = main_session->__vftable->mgo.GetLocalMember(main_session);
+		const auto steam_friends = (*game::SteamFriends)();
+
+		for (auto i = 0u; i < main_session->allMembers.size; i++)
+		{
+			const auto member = main_session->allMembers.members[i];
+			if (member == nullptr || member->flags == 0)
+			{
+				continue;
+			}
+
+			game::steam_id steam_id{};
+			steam_id.bits = member->sessionUserId->userId;
+
+			auto member_name = get_player_name(static_cast<unsigned char>(i));
+			if (member_name == nullptr || member_name[0] == 0)
+			{
+				member_name = steam_friends->__vftable->GetFriendPersonaName(steam_friends, steam_id);
+			}
+
+			const auto member_name_lower = utils::string::to_lower(member_name);
+			if (member_name_lower.starts_with(lower))
+			{
+				*is_self = local_member->sessionUserId->userId == member->sessionUserId->userId;
+
+				if (out_name != nullptr)
+				{
+					*out_name = member_name;
+				}
+
+				return member;
+			}
+		}
+
+		return nullptr;
+	}
+
+	game::fox::nt::Member* find_client(const std::string& identifier, bool* is_self)
+	{
+		const auto is_number = utils::string::is_numeric(identifier);
+
+		if (is_number)
+		{
+			const auto integer = std::strtoull(identifier.data(), nullptr, 0);
+			if (integer < 128)
+			{
+				return get_client_by_index(static_cast<unsigned int>(integer), is_self);
+			}
+			else
+			{
+				return get_client_by_steam_id(integer, is_self);
+			}
+		}
+		else
+		{
+			return get_client_by_name(identifier, is_self);
+		}
+	}
+
+	game::tpp::mp::Ruleset* get_active_ruleset()
+	{
+		if (game::environment::is_tpp())
+		{
+			return nullptr;
+		}
+
+		const auto ruleset_manager = *game::tpp::mp::RulesetManager_::s_instance;
+		if (ruleset_manager == nullptr || ruleset_manager->unk1 == nullptr || ruleset_manager->unk1->activeRuleset == nullptr)
+		{
+			return nullptr;
+		}
+
+		return ruleset_manager->unk1->activeRuleset;
+	}
+
+	char get_player_team(const std::uint64_t steam_id)
+	{
+		const auto ruleset = get_active_ruleset();
+		if (ruleset == nullptr)
+		{
+			return -1;
+		}
+
+		auto is_self = false;
+		auto index = 0;
+		const auto client = get_client_by_steam_id(steam_id, &is_self, &index);
+		if (client == nullptr)
+		{
+			return -1;
+		}
+
+		return ruleset->playerTeams[index];
+	}
+
+	char get_self_team()
+	{
+		const auto ruleset = get_active_ruleset();
+		if (ruleset == nullptr)
+		{
+			return -1;
+		}
+
+		return ruleset->playerTeams[ruleset->localPlayerSessionIndex];
+	}
+
+	const char* get_player_name(const unsigned char index)
+	{
+		const auto ruleset = get_active_ruleset();
+		if (ruleset == nullptr || index >= ruleset->numPlayers)
+		{
+			return nullptr;
+		}
+
+		return ruleset->unk1.__vftable->GetGamerTagBySessionIndex(&ruleset->unk1, index);
+	}
+
+	class component final : public component_interface
+	{
+	public:
+		void pre_load() override
+		{
+			if (game::environment::is_mgo())
+			{
+				command::add("ban", [](const command::params& params)
+				{
+					if (params.size() < 2)
+					{
+						console::info("usage: ban <steam id>\n");
+						return;
+					}
+
+					const auto id = params.get_uint64(1);
+					game::steam_id steam_id{};
+					steam_id.bits = id;
+
+					matchmaking::ban_player_from_lobby(steam_id);
+					network::ban_player(steam_id);
+				});
+
+				command::add("unban", [](const command::params& params)
+				{
+					if (params.size() < 2)
+					{
+						console::info("usage: unban <steam id>\n");
+						return;
+					}
+
+					const auto id = params.get_uint64(1);
+					game::steam_id steam_id{};
+					steam_id.bits = id;
+
+					matchmaking::unban_player_from_lobby(steam_id);
+					network::unban_player(steam_id);
+				});
+			}
+		}
+
+		void start() override
+		{
+			scheduler::loop(run_frame, scheduler::session);
+
+			command::add("status", []
+			{
+				scheduler::once(print_status, scheduler::session);
+			});
+
+			if (game::environment::is_tpp())
+			{
+				command::add("session_create", []
+				{
+					const auto fob_target = game::tpp::net::ServerManager_::GetFobTarget(*game::tpp::net::ServerManager_::s_instance);
+					game::tpp::net::FobTarget_::CreateHostSession(fob_target);
+				});
+
+				command::add("session_start", []()
+				{
+					const auto session = *game::s_pSession;
+					if (session == nullptr)
+					{
+						return;
+					}
+
+					session->started = 1;
+				});
+
+				command::add("session_accept", []()
+				{
+					const auto session = *game::s_pSession;
+					if (session == nullptr)
+					{
+						return;
+					}
+
+					session->acceptEnabled = 1;
+				});
+
+				command::add("session_close", game::tpp::gm::tool::CloseSession);
+
+				command::add("session_connect", [](const command::params& params)
+				{
+					if (params.size() < 2)
+					{
+						return;
+					}
+
+					const auto steam_id = params.get_uint64(1);
+
+					const auto fob_target = game::tpp::net::ServerManager_::GetFobTarget(*game::tpp::net::ServerManager_::s_instance);
+					fob_target->sessionConnectInfo->hostParam = steam_id;
+					fob_target->sessionConnectInfo->a1 = 0;
+					game::tpp::net::FobTarget_::CreateClientSession(fob_target, fob_target->sessionConnectInfo);
+				});
+			}
+			else
+			{
+				command::add("kick", [](const command::params& params)
+				{
+					if (params.size() < 2)
+					{
+						console::info("Usage: kick <name|index|steam_id>", false);
+						return;
+					}
+
+					const auto identifier = params.join(1);
+					scheduler::once([identifier]
+					{
+						if (!is_host())
+						{
+							console::info("Cannot kick as non-host", false);
+							return;
+						}
+
+						bool is_self{};
+						const auto client = find_client(identifier, &is_self);
+						if (client == nullptr)
+						{
+							console::info("Client not found", false);
+							return;
+						}
+
+						if (is_self)
+						{
+							console::info("Cannot kick yourself", false);
+							return;
+						}
+
+						const auto steam_friends = (*game::SteamFriends)();
+						game::steam_id steam_id{};
+						steam_id.bits = client->sessionUserId->userId;
+						const auto name = steam_friends->__vftable->GetFriendPersonaName(steam_friends, steam_id);
+
+						console::info(utils::string::va("%s has been kicked", name), false);
+
+						matchmaking::kick_player_from_lobby(steam_id);
+						matchmaking::ban_player_from_lobby(steam_id);
+						network::ban_player(steam_id);
+						game::fox::nt::Member_::Reset(client);
+					}, scheduler::session);
+				});
+			}
+		}
+	};
+}
+
+REGISTER_COMPONENT(session::component)

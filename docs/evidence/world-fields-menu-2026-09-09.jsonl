@@ -1,0 +1,2 @@
+{"status":"verified_target","pid":31640,"sha256":"085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45","utc":"2026-09-09T14:58:24Z","scope":"external_field_reads_only","calls_or_writes":false,"snapshot_atomic":false,"freshness":"unverified","actor_presence":"unverified"}
+{"sample":0,"tick_ms":525526093,"status":"observed_unverified_gameplay","mission_code_raw":40050,"mission_initialization_sentinel":false,"position_fields":[0.04177,1198.09912,-1.04203987],"local_player_index_raw":0}

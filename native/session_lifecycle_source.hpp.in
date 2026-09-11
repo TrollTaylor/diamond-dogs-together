@@ -1,0 +1,4 @@
+#pragma once
+constexpr char session_lifecycle_source[] = R"MGS_SESSION(
+@MGS_SESSION_LIFECYCLE_SOURCE@
+)MGS_SESSION";

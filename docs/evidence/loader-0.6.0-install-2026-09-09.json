@@ -1,0 +1,15 @@
+{
+  "utc": "2026-09-09T19:15:08.1568600Z",
+  "previous_backup": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\backups\\probe-0.5.0-20260909T191507Z",
+  "installation": {
+    "product": "mgs-coop-original-loader-probe",
+    "version": "0.6.0",
+    "game_directory": "D:\\Games\\steamapps\\common\\MGS_TPP",
+    "dll_sha256": "587FD443DFA8E7756CBA2FAAC0171BDF0DEF52CF98D928BE7F2CF006DEE50716",
+    "executable_sha256": "085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45",
+    "installed_utc": "2026-09-09T19:15:08.1061811Z",
+    "scope": "Diagnostics, gated Steam imports and opt-in exact-source Lua bootstrap; no co-op gameplay or multiplayer traffic"
+  },
+  "mode": "bootstrap-v1",
+  "marker_bytes": 13
+}

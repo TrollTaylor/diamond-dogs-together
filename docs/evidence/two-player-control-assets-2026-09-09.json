@@ -1,0 +1,78 @@
+{
+  "experiment": "two_player_allocation_control",
+  "players": 2,
+  "additional_parts_count": 1,
+  "source_archive_sha256": "28308ddb53dacb4e76a3980fdc73023f95ad646c15e0ed3dabf4229cf9cd6742",
+  "converter_sha256": "a1ec95c8adab11339b7a16ec2ebe7bd92a521bab428f9238feaa20da3bc64c1e",
+  "changes": [
+    {
+      "entity": "GameObject",
+      "property": "totalCount",
+      "before": "4",
+      "after": "2"
+    },
+    {
+      "entity": "GameObject",
+      "property": "realizedCount",
+      "before": "4",
+      "after": "2"
+    },
+    {
+      "entity": "TppPlayer2BlockControllerData",
+      "property": "configuration_partsBlockCount",
+      "before": "4",
+      "after": "2"
+    },
+    {
+      "entity": "TppPlayer2BlockControllerData",
+      "property": "instanceSettings_instanceBlockSize",
+      "before": "2252800",
+      "after": "1126400"
+    },
+    {
+      "entity": "TppPlayer2BlockControllerData",
+      "property": "instanceSettings_partsTypeNames",
+      "before": 4,
+      "after": 2
+    },
+    {
+      "entity": "TppPlayer2BlockControllerData",
+      "property": "instanceSettings_partsTypeInitial",
+      "before": 4,
+      "after": 2
+    }
+  ],
+  "checks": [
+    {
+      "target": "/Assets/tpp/level_asset/chara/player/game_object/mgs_coop_four_players_game_obj.fox2",
+      "semantic_roundtrip": true,
+      "intended_changes_only": true,
+      "embedded_bytes_equal": true,
+      "unchanged_supplemental": 0
+    },
+    {
+      "target": "/Assets/tpp/level_asset/chara/player/game_object/mgs_coop_four_player_controller.fox2",
+      "semantic_roundtrip": true,
+      "intended_changes_only": true,
+      "embedded_bytes_equal": true,
+      "unchanged_supplemental": 3
+    }
+  ],
+  "unchanged_archive_entries": [
+    "/Assets/tpp/pack/player/game_object/mgs_coop_four_players_game_obj.fpk",
+    "/Assets/tpp/pack/player/game_object/mgs_coop_four_player_controller.fpk",
+    "/Assets/tpp/script/lib/MgsCoopArchiveProbe.lua"
+  ],
+  "archive": {
+    "sha256": "c6603a58d5a6037cacb4e98bd6ece8dd9e50fc0a325e4aec400f28bdcc26be8f",
+    "bytes": 2420736,
+    "entries_verified": 5
+  },
+  "installed": false,
+  "runtime_verified": false,
+  "limitations": [
+    "Diagnostic two-slot control only; the project target remains four players.",
+    "All internal paths retain four/x3 names to isolate allocation scaling.",
+    "Round trips do not validate actor initialization, cleanup or multiplayer."
+  ]
+}

@@ -1,0 +1,250 @@
+MGS Co-op script adapter 0.10.1; executable_fingerprint=accepted; install_after_DirectInput=true; earlier_loads_may_be_missed=true
+mode=bootstrap_v1; gameplay=disabled
+mode=archive_v1; actor_packages_selected=0
+archive_mount=calling; thread=79288 name=mgs_coop_player_runtime_v1 tag=0 flags=33 lifetime=process
+archive_mount=returned; thread=79288 handle=000000000D6F0130 kind=1 stream=000000000D660510 success=1; actor_packages_selected=0
+mode=players_v1; mission_selection_trial=30050; live_actor_count=unverified
+mode=host_v1; one_attempt=1; peer_acceptance_requested=0
+mode=host_v2; dynamite_host_creation=enabled max_players=2 peer_acceptance_requested=0
+mode=host_v3; peer_acceptance=after_mission_start; max_players=2
+install_result=0 installed=1 pid=36772 thread=79288 tick_ms=558780953 target_rva=0x1a178e0 lifetime=process
+entry_count=1 thread=79288 tick_ms=558781265 size=29 name_prefix=Fox.SetJobExecutorCount( 30 ) replacement=0 execution_receipt=0
+return_count=1 thread=79288 tick_ms=558781265 parser_result=0 replaced=0 entry_pairing=none
+entry_count=2 thread=79288 tick_ms=558781265 size=12660 name_prefix=@init.lua replacement=0 execution_receipt=0
+return_count=2 thread=79288 tick_ms=558781265 parser_result=0 replaced=0 entry_pairing=none
+entry_count=3 thread=79288 tick_ms=558781703 size=21783 name_prefix=@Fox/Scripts/Gr/gr_init_dx11.lua replacement=0 execution_receipt=0
+return_count=3 thread=79288 tick_ms=558781703 parser_result=0 replaced=0 entry_pairing=none
+entry_count=4 thread=79288 tick_ms=558781718 size=15926 name_prefix=@shaders/dx11/GrSystemShadersNoLnm_dx11.lua replacement=0 execution_receipt=0
+return_count=4 thread=79288 tick_ms=558781718 parser_result=0 replaced=0 entry_pairing=none
+entry_count=5 thread=79288 tick_ms=558781718 size=81272 name_prefix=@shaders/dx11/GrModelShadersNoLnm_dx11.lua replacement=0 execution_receipt=0
+return_count=5 thread=79288 tick_ms=558781718 parser_result=0 replaced=0 entry_pairing=none
+entry_count=6 thread=79288 tick_ms=558781718 size=96 name_prefix=@shaders/dx11/FxShadersNoLnm_dx11.lua replacement=0 execution_receipt=0
+return_count=6 thread=79288 tick_ms=558781718 parser_result=0 replaced=0 entry_pairing=none
+entry_count=7 thread=79288 tick_ms=558781718 size=37016 name_prefix=@Tpp/start.lua replacement=0 execution_receipt=0
+return_count=7 thread=79288 tick_ms=558781718 parser_result=0 replaced=0 entry_pairing=none
+entry_count=8 thread=79288 tick_ms=558781890 size=27166 name_prefix=@shaders/dx11/TppShadersNoLnm_dx11.lua replacement=0 execution_receipt=0
+return_count=8 thread=79288 tick_ms=558781890 parser_result=0 replaced=0 entry_pairing=none
+entry_count=9 thread=79288 tick_ms=558781906 size=2997 name_prefix=@/Assets/tpp/sound/scripts/chara/SoundTppPlayer.lua replacement=0 execution_receipt=0
+return_count=9 thread=79288 tick_ms=558781906 parser_result=0 replaced=0 entry_pairing=none
+entry_count=10 thread=79288 tick_ms=558781906 size=3334 name_prefix=@/Assets/tpp/sound/scripts/chara/SoundTppSoldier.lua replacement=0 execution_receipt=0
+return_count=10 thread=79288 tick_ms=558781906 parser_result=0 replaced=0 entry_pairing=none
+entry_count=11 thread=79288 tick_ms=558781906 size=1939 name_prefix=@/Assets/tpp/sound/scripts/chara/SoundTppAnimal.lua replacement=0 execution_receipt=0
+return_count=11 thread=79288 tick_ms=558781906 parser_result=0 replaced=0 entry_pairing=none
+entry_count=12 thread=79288 tick_ms=558781906 size=25437 name_prefix=@Tpp/Scripts/Ui/TppUiBootInit.lua replacement=0 execution_receipt=0
+return_count=12 thread=79288 tick_ms=558781906 parser_result=0 replaced=0 entry_pairing=none
+entry_count=13 thread=38016 tick_ms=558781906 size=158 name_prefix=@Tpp/Scripts/Ui/TppUiPrefetchTexture.lua replacement=0 execution_receipt=0
+return_count=13 thread=38016 tick_ms=558781906 parser_result=0 replaced=0 entry_pairing=none
+entry_count=14 thread=68692 tick_ms=558782453 size=53760 name_prefix=@/Assets/tpp/sound/scripts/tape/PreinstallTape.lua replacement=0 execution_receipt=0
+return_count=14 thread=68692 tick_ms=558782468 parser_result=0 replaced=0 entry_pairing=none
+entry_count=15 thread=79288 tick_ms=558782578 size=95785 name_prefix=@Tpp/Scripts/Equip/EquipIdTable.lua replacement=0 execution_receipt=0
+return_count=15 thread=79288 tick_ms=558782578 parser_result=0 replaced=0 entry_pairing=none
+entry_count=16 thread=79288 tick_ms=558782593 size=181666 name_prefix=@/Assets/tpp/level_asset/weapon/ParameterTables/parts/EquipParameters.lua replacement=0 execution_receipt=0
+return_count=16 thread=79288 tick_ms=558782593 parser_result=0 replaced=0 entry_pairing=none
+entry_count=17 thread=79288 tick_ms=558782625 size=14621 name_prefix=@/Assets/tpp/level_asset/weapon/ParameterTables/parts/EquipMotionDataForChimera.lua replacement=0 execution_receipt=0
+return_count=17 thread=79288 tick_ms=558782625 parser_result=0 replaced=0 entry_pairing=none
+entry_count=18 thread=79288 tick_ms=558782625 size=363 name_prefix=@/Assets/tpp/level_asset/chara/enemy/TppEnemyFaceId.lua replacement=0 execution_receipt=0
+return_count=18 thread=79288 tick_ms=558782625 parser_result=0 replaced=0 entry_pairing=none
+entry_count=19 thread=79288 tick_ms=558782625 size=5066 name_prefix=@/Assets/tpp/level_asset/chara/enemy/TppEnemyBodyId.lua replacement=0 execution_receipt=0
+return_count=19 thread=79288 tick_ms=558782625 parser_result=0 replaced=0 entry_pairing=none
+entry_count=20 thread=79288 tick_ms=558782656 size=130967 name_prefix=@Tpp/Scripts/Equip/ChimeraPartsPackageTable.lua replacement=0 execution_receipt=0
+return_count=20 thread=79288 tick_ms=558782656 parser_result=0 replaced=0 entry_pairing=none
+entry_count=21 thread=79288 tick_ms=558782671 size=5281 name_prefix=@/Assets/tpp/level_asset/weapon/ParameterTables/EquipParameterTables.lua replacement=0 execution_receipt=0
+return_count=21 thread=79288 tick_ms=558782671 parser_result=0 replaced=0 entry_pairing=none
+entry_count=22 thread=79288 tick_ms=558782687 size=82834 name_prefix=@/Assets/tpp/level_asset/damage/ParameterTables/DamageParameterTables.lua replacement=0 execution_receipt=0
+return_count=22 thread=79288 tick_ms=558782703 parser_result=0 replaced=0 entry_pairing=none
+entry_count=23 thread=79288 tick_ms=558782718 size=4042 name_prefix=@/Assets/tpp/level_asset/chara/enemy/Soldier2ParameterTables.lua replacement=0 execution_receipt=0
+return_count=23 thread=79288 tick_ms=558782718 parser_result=0 replaced=0 entry_pairing=none
+entry_count=24 thread=79288 tick_ms=558782718 size=12107 name_prefix=@Tpp/Scripts/Equip/EquipMotionData.lua replacement=0 execution_receipt=0
+return_count=24 thread=79288 tick_ms=558782718 parser_result=0 replaced=0 entry_pairing=none
+entry_count=25 thread=79288 tick_ms=558782734 size=1401 name_prefix=@/Assets/tpp/level_asset/chara/enemy/TppEnemyFaceGroupId.lua replacement=0 execution_receipt=0
+return_count=25 thread=79288 tick_ms=558782734 parser_result=0 replaced=0 entry_pairing=none
+entry_count=26 thread=79288 tick_ms=558782734 size=4402 name_prefix=@/Assets/tpp/level_asset/chara/enemy/TppEnemyFaceGroup.lua replacement=0 execution_receipt=0
+return_count=26 thread=79288 tick_ms=558782734 parser_result=0 replaced=0 entry_pairing=none
+entry_count=27 thread=79288 tick_ms=558782750 size=86952 name_prefix=@/Assets/tpp/level_asset/chara/enemy/Soldier2FaceAndBodyData.lua replacement=0 execution_receipt=0
+return_count=27 thread=79288 tick_ms=558782765 parser_result=0 replaced=0 entry_pairing=none
+entry_count=28 thread=79288 tick_ms=558782781 size=5692 name_prefix=@/Assets/tpp/level_asset/weapon/ParameterTables/RecoilMaterial/RecoilMaterialTable.lua replacement=0 execution_receipt=0
+return_count=28 thread=79288 tick_ms=558782781 parser_result=0 replaced=0 entry_pairing=none
+entry_count=29 thread=79288 tick_ms=558782812 size=15742 name_prefix=@/Assets/tpp/script/lib/Tpp.lua replacement=1 execution_receipt=0
+return_count=29 thread=79288 tick_ms=558782812 parser_result=0 replaced=1 entry_pairing=none
+entry_count=30 thread=79288 tick_ms=558782812 size=39 name_prefix=return 'MGS_COOP_BOOTSTRAP_EXECUTED_V1' replacement=0 execution_receipt=1
+return_count=30 thread=79288 tick_ms=558782812 parser_result=0 replaced=0 entry_pairing=none
+entry_count=31 thread=79288 tick_ms=558782828 size=215 name_prefix=@/Assets/tpp/script/lib/MgsCoopArchiveProbe.lua replacement=0 execution_receipt=0
+return_count=31 thread=79288 tick_ms=558782828 parser_result=0 replaced=0 entry_pairing=none
+entry_count=32 thread=79288 tick_ms=558782828 size=37 name_prefix=return 'MGS_COOP_ARCHIVE_EXECUTED_V1' replacement=0 execution_receipt=0
+return_count=32 thread=79288 tick_ms=558782828 parser_result=0 replaced=0 entry_pairing=none
+entry_count=33 thread=79288 tick_ms=558782828 size=42 name_prefix=return 'MGS_COOP_ARCHIVE_LOAD_RETURNED_V1' replacement=0 execution_receipt=0
+entry_count=34 thread=79288 tick_ms=558782828 size=215 name_prefix=@/Assets/tpp/script/lib/MgsCoopArchiveProbe.lua replacement=0 execution_receipt=0
+entry_count=35 thread=79288 tick_ms=558782828 size=37 name_prefix=return 'MGS_COOP_ARCHIVE_EXECUTED_V1' replacement=0 execution_receipt=0
+entry_count=36 thread=79288 tick_ms=558782828 size=42 name_prefix=return 'MGS_COOP_ARCHIVE_FILE_RETURNED_V1' replacement=0 execution_receipt=0
+entry_count=66 thread=79288 tick_ms=558784109 size=21634 name_prefix=@/Assets/tpp/script/lib/TppMain.lua replacement=1 execution_receipt=0
+return_count=66 thread=79288 tick_ms=558784109 parser_result=0 replaced=1 entry_pairing=none
+entry_count=70 thread=79288 tick_ms=558784312 size=4500 name_prefix=@/Assets/tpp/script/lib/TppPackList.lua replacement=1 execution_receipt=0
+return_count=70 thread=79288 tick_ms=558784312 parser_result=0 replaced=1 entry_pairing=none
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=116 thread=79288 tick_ms=558785796 size=56 name_prefix=return 'MGS_COOP_PHASE_V1' -- EnableBlackLoading:enter:1 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=117 thread=79288 tick_ms=558785796 size=57 name_prefix=return 'MGS_COOP_PHASE_V1' -- EnableBlackLoading:return:1 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=120 thread=79288 tick_ms=558786078 size=48 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnAllocate:enter:1 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=121 thread=79288 tick_ms=558786078 size=49 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnAllocate:return:1 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=123 thread=79288 tick_ms=558786140 size=50 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnInitialize:enter:1 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=124 thread=79288 tick_ms=558786140 size=51 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnInitialize:return:1 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=125 thread=79288 tick_ms=558786140 size=59 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnEnterMissionPrepare:enter:1 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=126 thread=79288 tick_ms=558786140 size=60 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnEnterMissionPrepare:return:1 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=127 thread=79288 tick_ms=558786140 size=63 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnTextureLoadingWaitStart:enter:1 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=128 thread=79288 tick_ms=558786140 size=64 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnTextureLoadingWaitStart:return:1 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=129 thread=79288 tick_ms=558786140 size=55 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnMissionCanStart:enter:1 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=130 thread=79288 tick_ms=558786140 size=56 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnMissionCanStart:return:1 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=131 thread=79288 tick_ms=558787140 size=57 name_prefix=return 'MGS_COOP_PHASE_V1' -- DisableBlackLoading:enter:1 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=132 thread=79288 tick_ms=558787140 size=58 name_prefix=return 'MGS_COOP_PHASE_V1' -- DisableBlackLoading:return:1 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=133 thread=79288 tick_ms=558787140 size=56 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnMissionGameStart:enter:1 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=134 thread=79288 tick_ms=558787140 size=57 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnMissionGameStart:return:1 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=143 thread=79288 tick_ms=558841109 size=60 name_prefix=return 'MGS_COOP_PHASE_V1' -- EnableBlackLoading:enter:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=144 thread=79288 tick_ms=558841109 size=61 name_prefix=return 'MGS_COOP_PHASE_V1' -- EnableBlackLoading:return:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=145 thread=79288 tick_ms=558841140 size=53 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnTerminate:enter:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=147 thread=79288 tick_ms=558841140 size=54 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnTerminate:return:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=163 thread=79288 tick_ms=558843953 size=52 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnAllocate:enter:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=164 thread=79288 tick_ms=558843968 size=53 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnAllocate:return:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=165 thread=79288 tick_ms=558844062 size=54 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnInitialize:enter:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=166 thread=79288 tick_ms=558844062 size=55 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnInitialize:return:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=167 thread=79288 tick_ms=558844062 size=63 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnEnterMissionPrepare:enter:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=168 thread=79288 tick_ms=558844062 size=64 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnEnterMissionPrepare:return:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=169 thread=79288 tick_ms=558854390 size=67 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnTextureLoadingWaitStart:enter:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=170 thread=79288 tick_ms=558854390 size=68 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnTextureLoadingWaitStart:return:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=171 thread=79288 tick_ms=558854390 size=59 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnMissionCanStart:enter:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=172 thread=79288 tick_ms=558854390 size=60 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnMissionCanStart:return:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=173 thread=79288 tick_ms=558855390 size=61 name_prefix=return 'MGS_COOP_PHASE_V1' -- DisableBlackLoading:enter:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=174 thread=79288 tick_ms=558855390 size=62 name_prefix=return 'MGS_COOP_PHASE_V1' -- DisableBlackLoading:return:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=175 thread=79288 tick_ms=558855390 size=60 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnMissionGameStart:enter:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=176 thread=79288 tick_ms=558855390 size=61 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnMissionGameStart:return:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=177 thread=79288 tick_ms=558908812 size=60 name_prefix=return 'MGS_COOP_PHASE_V1' -- EnableBlackLoading:enter:30050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=178 thread=79288 tick_ms=558908812 size=61 name_prefix=return 'MGS_COOP_PHASE_V1' -- EnableBlackLoading:return:30050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=179 thread=25488 tick_ms=558908843 size=53 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnTerminate:enter:30050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=181 thread=25488 tick_ms=558908843 size=54 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnTerminate:return:30050 replacement=0 execution_receipt=0
+entry_count=182 thread=79288 tick_ms=558909890 size=75 name_prefix=return 'MGS_COOP_PACK_SELECTED_V1' -- mission=30050; single_controller=true replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=200 thread=79288 tick_ms=558912828 size=52 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnAllocate:enter:30050 replacement=0 execution_receipt=0
+host_allocation_context=observed; thread=79288 tick_ms=558912828 tls_index=0 tls=00000000005049E0 current_block=00000001A1693F58 consistent=1 calls=0 writes=0
+host_prerequisites=passed; mission=30050
+player_readiness=not_ready; stage=player_present thread=79288 tick_ms=558912828 player=0000000000000000 player_table=0000000000000000 player_limit=0
+dynamite_host=begin; native_calls=1 exact_heap_sites=2 peer_acceptance_requested=0
+dynamite_host=returned; result=1 thread=79288 tick_ms=558912890 peer_acceptance_requested=0
+dynamite_session=observed; owner=0000000006E72810 session=00000001B2A8EC00 manager=00000001B2A76680 job=00000001B83A8130 session_read=1 state=2 accept=0 manager_heap=1 job_heap=1 consistent=1 calls=0 writes=0 atomic=0
+entry_count=201 thread=79288 tick_ms=558912890 size=32 name_prefix=return 'MGS_COOP_HOST_CREATE_V1' replacement=1 execution_receipt=0
+return_count=201 thread=79288 tick_ms=558912890 parser_result=0 replaced=1 entry_pairing=none
+dynamite_session=observed; owner=0000000006E72810 session=00000001B2A8EC00 manager=00000001B2A76680 job=00000001B83A8130 session_read=1 state=2 accept=0 manager_heap=1 job_heap=1 consistent=1 calls=0 writes=0 atomic=0
+entry_count=202 thread=79288 tick_ms=558912906 size=53 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnAllocate:return:30050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=00000001B2A8EC00 manager=00000001B2A76680 job=00000001B83A8130 session_read=1 state=3 accept=0 manager_heap=1 job_heap=1 consistent=1 calls=0 writes=0 atomic=0
+host_allocation_context=observed; thread=79288 tick_ms=558912984 tls_index=0 tls=00000000005049E0 current_block=0000000000000000 consistent=1 calls=0 writes=0
+host_prerequisites=refused; stage=state_value thread=79288 tick_ms=558912984 mission=30050 state=3 flag=0 target=0000000005A7E500 target_table=0000000142223508
+entry_count=203 thread=79288 tick_ms=558912984 size=54 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnInitialize:enter:30050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=00000001B2A8EC00 manager=00000001B2A76680 job=00000001B83A8130 session_read=1 state=3 accept=0 manager_heap=1 job_heap=1 consistent=1 calls=0 writes=0 atomic=0
+entry_count=204 thread=79288 tick_ms=558912984 size=55 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnInitialize:return:30050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=00000001B2A8EC00 manager=00000001B2A76680 job=00000001B83A8130 session_read=1 state=3 accept=0 manager_heap=1 job_heap=1 consistent=1 calls=0 writes=0 atomic=0
+entry_count=205 thread=79288 tick_ms=558912984 size=63 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnEnterMissionPrepare:enter:30050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=00000001B2A8EC00 manager=00000001B2A76680 job=00000001B83A8130 session_read=1 state=3 accept=0 manager_heap=1 job_heap=1 consistent=1 calls=0 writes=0 atomic=0
+entry_count=206 thread=79288 tick_ms=558912984 size=64 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnEnterMissionPrepare:return:30050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=00000001B2A8EC00 manager=00000001B2A76680 job=00000001B83A8130 session_read=1 state=3 accept=0 manager_heap=1 job_heap=1 consistent=1 calls=0 writes=0 atomic=0
+entry_count=208 thread=79288 tick_ms=558917218 size=67 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnTextureLoadingWaitStart:enter:30050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=00000001B2A8EC00 manager=00000001B2A76680 job=00000001B83A8130 session_read=1 state=3 accept=0 manager_heap=1 job_heap=1 consistent=1 calls=0 writes=0 atomic=0
+entry_count=209 thread=79288 tick_ms=558917218 size=68 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnTextureLoadingWaitStart:return:30050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=00000001B2A8EC00 manager=00000001B2A76680 job=00000001B83A8130 session_read=1 state=3 accept=0 manager_heap=1 job_heap=1 consistent=1 calls=0 writes=0 atomic=0
+entry_count=210 thread=79288 tick_ms=558917750 size=59 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnMissionCanStart:enter:30050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=00000001B2A8EC00 manager=00000001B2A76680 job=00000001B83A8130 session_read=1 state=3 accept=0 manager_heap=1 job_heap=1 consistent=1 calls=0 writes=0 atomic=0
+entry_count=211 thread=79288 tick_ms=558917750 size=60 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnMissionCanStart:return:30050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=00000001B2A8EC00 manager=00000001B2A76680 job=00000001B83A8130 session_read=1 state=3 accept=0 manager_heap=1 job_heap=1 consistent=1 calls=0 writes=0 atomic=0
+entry_count=212 thread=79288 tick_ms=558965734 size=61 name_prefix=return 'MGS_COOP_PHASE_V1' -- DisableBlackLoading:enter:30050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=00000001B2A8EC00 manager=00000001B2A76680 job=00000001B83A8130 session_read=1 state=3 accept=0 manager_heap=1 job_heap=1 consistent=1 calls=0 writes=0 atomic=0
+entry_count=213 thread=79288 tick_ms=558965734 size=62 name_prefix=return 'MGS_COOP_PHASE_V1' -- DisableBlackLoading:return:30050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=00000001B2A8EC00 manager=00000001B2A76680 job=00000001B83A8130 session_read=1 state=3 accept=0 manager_heap=1 job_heap=1 consistent=1 calls=0 writes=0 atomic=0
+host_allocation_context=observed; thread=79288 tick_ms=558965734 tls_index=0 tls=00000000005049E0 current_block=0000000000000000 consistent=1 calls=0 writes=0
+host_prerequisites=refused; stage=state_value thread=79288 tick_ms=558965734 mission=30050 state=3 flag=0 target=0000000005A7E500 target_table=0000000142223508
+entry_count=214 thread=79288 tick_ms=558965734 size=60 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnMissionGameStart:enter:30050 replacement=0 execution_receipt=0
+host_admission=authorized; owned_host=1 same_thread=1 lua_interface=SessionEnableAccept
+entry_count=215 thread=79288 tick_ms=558965734 size=35 name_prefix=return 'MGS_COOP_HOST_ADMISSION_V1' replacement=1 execution_receipt=0
+return_count=215 thread=79288 tick_ms=558965734 parser_result=0 replaced=1 entry_pairing=none
+host_admission=lua_call_returned; inspecting_native_flag=1
+dynamite_session=observed; owner=0000000006E72810 session=00000001B2A8EC00 manager=00000001B2A76680 job=00000001B83A8130 session_read=1 state=3 accept=1 manager_heap=1 job_heap=1 consistent=1 calls=0 writes=0 atomic=0
+dynamite_session=observed; owner=0000000006E72810 session=00000001B2A8EC00 manager=00000001B2A76680 job=00000001B83A8130 session_read=1 state=3 accept=1 manager_heap=1 job_heap=1 consistent=1 calls=0 writes=0 atomic=0
+entry_count=217 thread=79288 tick_ms=558965734 size=61 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnMissionGameStart:return:30050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=00000001B2A8EC00 manager=00000001B2A76680 job=00000001B83A8130 session_read=1 state=3 accept=1 manager_heap=1 job_heap=1 consistent=1 calls=0 writes=0 atomic=0
+entry_count=218 thread=79288 tick_ms=559034078 size=60 name_prefix=return 'MGS_COOP_PHASE_V1' -- EnableBlackLoading:enter:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=00000001B2A8EC00 manager=00000001B2A76680 job=00000001B83A8130 session_read=1 state=3 accept=1 manager_heap=1 job_heap=1 consistent=1 calls=0 writes=0 atomic=0
+entry_count=219 thread=79288 tick_ms=559034078 size=61 name_prefix=return 'MGS_COOP_PHASE_V1' -- EnableBlackLoading:return:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=00000001B2A8EC00 manager=00000001B2A76680 job=00000001B83A8130 session_read=1 state=3 accept=1 manager_heap=1 job_heap=1 consistent=1 calls=0 writes=0 atomic=0
+entry_count=220 thread=79288 tick_ms=559034218 size=53 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnTerminate:enter:40050 replacement=0 execution_receipt=0
+host_admission=authorized; owned_host=1 same_thread=1 lua_interface=SessionEnableAccept
+entry_count=221 thread=79288 tick_ms=559034218 size=35 name_prefix=return 'MGS_COOP_HOST_ADMISSION_V1' replacement=1 execution_receipt=0
+return_count=221 thread=79288 tick_ms=559034218 parser_result=0 replaced=1 entry_pairing=none
+host_admission=lua_call_returned; inspecting_native_flag=1
+dynamite_session=observed; owner=0000000006E72810 session=00000001B2A8EC00 manager=00000001B2A76680 job=00000001B83A8130 session_read=1 state=3 accept=0 manager_heap=1 job_heap=1 consistent=1 calls=0 writes=0 atomic=0
+dynamite_session=observed; owner=0000000006E72810 session=00000001B2A8EC00 manager=00000001B2A76680 job=00000001B83A8130 session_read=1 state=3 accept=0 manager_heap=1 job_heap=1 consistent=1 calls=0 writes=0 atomic=0
+entry_count=224 thread=79288 tick_ms=559034218 size=54 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnTerminate:return:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=00000001B2A8EC00 manager=00000001B2A76680 job=00000001B83A8130 session_read=1 state=3 accept=0 manager_heap=1 job_heap=1 consistent=1 calls=0 writes=0 atomic=0
+entry_count=237 thread=79288 tick_ms=559035640 size=52 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnAllocate:enter:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=238 thread=79288 tick_ms=559035656 size=53 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnAllocate:return:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=239 thread=79288 tick_ms=559035718 size=54 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnInitialize:enter:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=240 thread=79288 tick_ms=559035718 size=55 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnInitialize:return:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=241 thread=79288 tick_ms=559035718 size=63 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnEnterMissionPrepare:enter:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=242 thread=79288 tick_ms=559035718 size=64 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnEnterMissionPrepare:return:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=243 thread=79288 tick_ms=559039000 size=67 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnTextureLoadingWaitStart:enter:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=244 thread=79288 tick_ms=559039000 size=68 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnTextureLoadingWaitStart:return:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=245 thread=79288 tick_ms=559039000 size=59 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnMissionCanStart:enter:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=246 thread=79288 tick_ms=559039000 size=60 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnMissionCanStart:return:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=247 thread=79288 tick_ms=559040000 size=61 name_prefix=return 'MGS_COOP_PHASE_V1' -- DisableBlackLoading:enter:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=248 thread=79288 tick_ms=559040000 size=62 name_prefix=return 'MGS_COOP_PHASE_V1' -- DisableBlackLoading:return:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=249 thread=79288 tick_ms=559040000 size=60 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnMissionGameStart:enter:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=250 thread=79288 tick_ms=559040000 size=61 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnMissionGameStart:return:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=251 thread=79288 tick_ms=559090062 size=53 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnTerminate:enter:40050 replacement=0 execution_receipt=0
+dynamite_session=observed; owner=0000000006E72810 session=0000000000000000 manager=0000000000000000 job=0000000000000000 session_read=0 state=4294967295 accept=255 manager_heap=0 job_heap=0 consistent=1 calls=0 writes=0 atomic=0
+entry_count=253 thread=79288 tick_ms=559090062 size=54 name_prefix=return 'MGS_COOP_PHASE_V1' -- OnTerminate:return:40050 replacement=0 execution_receipt=0
+

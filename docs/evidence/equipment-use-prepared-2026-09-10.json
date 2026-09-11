@@ -1,0 +1,30 @@
+{
+  "utc": "2026-09-10T13:17:27.579916+00:00",
+  "source_version": "0.10.22",
+  "compiled_dll_sha256": "2A3608222B1AB3FE0E02CA40DE031237B5D66BDDD10C6B81A87AC633D642595D",
+  "installed_version": "0.10.5",
+  "installed_dll_sha256": "5EE6B0DEA1B396E851F14D5F2332C7767A4DFA50749A7DAF7898139601221BA5",
+  "game_modified_this_turn": false,
+  "tests_run": false,
+  "lua_executed": false,
+  "game_launched": false,
+  "vm_launched": false,
+  "build_command": "tools/build.ps1 -Configuration Release -BuildOnly",
+  "build_log": "equipment-use-build-only-2026-09-10.log",
+  "static_contract": "equipment-use-contract-2026-09-10.json",
+  "changed_code_sha256": {
+    "native/equipment_use_patch.cpp": "38A29325C5075F174E24A5482FD46EC05D693D1519C17BAB447C8A9D14E8DA28",
+    "native/equipment_use_contract.hpp": "E618926C41DD18E6850E01664486BB17A90DB7B539E4CD4A0B90B9BFBA0D4D6F",
+    "native/include/mgscoop/equipment_use_patch.hpp": "BB125E64DCDE5EDF28FEE79055BF70E62A8F2FB5D6A3B50AB27832A91164D513",
+    "native/host_session_trial.cpp": "DF1605999409664AB7899E1451640F94B22092AC2A25E8CA2892AFBFB08293F4",
+    "tools/generate_equipment_use_contract.py": "C4CF3A849854A231E8F3DD45CFC123397F4DD05D462AF0D3CBA0F1DEE6CA28A9",
+    "CMakeLists.txt": "2E50F74D7C89F9D41217EC93126E742C2F3F92C91D8C3AE37D130DD5C4466909"
+  },
+  "limitations": [
+    "Setter adaptation only; separate item-selection predicate remains unported.",
+    "Compilation and static inspection do not verify game behavior.",
+    "Sentinel list effects and scene cleanup require live observation.",
+    "No connected guest, independent control or shared combat verified.",
+    "Installed game unchanged."
+  ]
+}

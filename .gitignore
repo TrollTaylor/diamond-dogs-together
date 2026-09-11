@@ -1,0 +1,10 @@
+/build/
+/upstream/
+/work/
+/build-*/
+__pycache__/
+*.pyc
+
+/backups/
+/dist/
+

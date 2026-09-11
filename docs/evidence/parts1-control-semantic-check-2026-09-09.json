@@ -1,0 +1,8 @@
+{
+  "only_changed_property": "TppPlayer2AdditionalPartsBlockData.count",
+  "before": 3,
+  "after": 1,
+  "other_xml_equal": true,
+  "player_instance_count": 4,
+  "internal_paths_preserved": true
+}

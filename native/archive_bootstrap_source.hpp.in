@@ -1,0 +1,4 @@
+#pragma once
+namespace mgscoop {
+inline constexpr char archive_bootstrap_source[] = R"MGSC_ARCHIVE(@MGS_ARCHIVE_BOOTSTRAP_SOURCE@)MGSC_ARCHIVE";
+}

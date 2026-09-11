@@ -1,0 +1,2207 @@
+{
+  "utc": "2026-09-09T18:09:11.030353+00:00",
+  "upstream_commit": "c90f252f8200765f66c005d6bf4357fda0c0d98e",
+  "upstream_license": "GPLv3 with Commons Clause v1.0; see third_party/dynamite/LICENSE",
+  "executable_sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+  "image_size": "0xa01d000",
+  "patch_counts": {
+    "expected_bytes_mismatch": 24,
+    "outside_image": 1
+  },
+  "symbol_counts": {
+    "outside_image": 54,
+    "file_backed": 148
+  },
+  "patches": [
+    {
+      "rva": "0xffa9ff",
+      "status": "expected_bytes_mismatch",
+      "actual_hex": "e2ff",
+      "section": ".xtext",
+      "executable_section": true,
+      "upstream_va": "0x140ffa9ff",
+      "expected_hex": "7407",
+      "replacement_hex": "eb07",
+      "equal_patch_length": true,
+      "description": "Apply damage to player no matter what, tpp::gm::player::impl::`anonymous_namespace'::DefenseCallback::TargetCallbackExec",
+      "runtime_approved": false
+    },
+    {
+      "rva": "0x1378209",
+      "status": "expected_bytes_mismatch",
+      "actual_hex": "c814",
+      "section": ".xtext",
+      "executable_section": true,
+      "upstream_va": "0x141378209",
+      "expected_hex": "745c",
+      "replacement_hex": "4890",
+      "equal_patch_length": true,
+      "description": "Attempt to fix damage (not needed?), tpp::gm::soldier::impl::ActionCoreImpl::ExecGrazeCallback",
+      "runtime_approved": false
+    },
+    {
+      "rva": "0x9f57ac7",
+      "status": "expected_bytes_mismatch",
+      "actual_hex": "0214",
+      "section": ".ecode",
+      "executable_section": false,
+      "upstream_va": "0x149f57ac7",
+      "expected_hex": "741a",
+      "replacement_hex": "eb1a",
+      "equal_patch_length": true,
+      "description": "Always update action task, tpp::gm::soldier::impl::ActionControllerImpl::UpdateActionTask",
+      "runtime_approved": false
+    },
+    {
+      "rva": "0x17a200e",
+      "status": "expected_bytes_mismatch",
+      "actual_hex": "4889",
+      "section": ".xtext",
+      "executable_section": true,
+      "upstream_va": "0x1417a200e",
+      "expected_hex": "7419",
+      "replacement_hex": "4890",
+      "equal_patch_length": true,
+      "description": "Always respawn player no matter what, tpp::gm::player::impl::RespawnActionPluginImpl::UpdatePlaySubState",
+      "runtime_approved": false
+    },
+    {
+      "rva": "0x133d9cb",
+      "status": "expected_bytes_mismatch",
+      "actual_hex": "000000010000",
+      "section": ".xtext",
+      "executable_section": true,
+      "upstream_va": "0x14133d9cb",
+      "expected_hex": "0f84dc030000",
+      "replacement_hex": "664890664890",
+      "equal_patch_length": true,
+      "description": "Skip sight controller host check, always run host code, ignore IsHost call, tpp::gm::impl::`anonymous_namespace`::SightControllerImpl::Update. Without it soldiers will lose track of client after raising an alert.",
+      "runtime_approved": false
+    },
+    {
+      "rva": "0xebcfc4",
+      "status": "expected_bytes_mismatch",
+      "actual_hex": "34ac",
+      "section": ".xtext",
+      "executable_section": true,
+      "upstream_va": "0x140ebcfc4",
+      "expected_hex": "742e",
+      "replacement_hex": "4890",
+      "equal_patch_length": true,
+      "description": "Client always uses host code for SetHostage2Flag lua command, tpp::gm::hostage::impl::Hostage2FlagInfoImpl::RequestSetAndSyncImpl",
+      "runtime_approved": false
+    },
+    {
+      "rva": "0x887905",
+      "status": "expected_bytes_mismatch",
+      "actual_hex": "488b",
+      "section": ".xtext",
+      "executable_section": true,
+      "upstream_va": "0x140887905",
+      "expected_hex": "741c",
+      "replacement_hex": "eb1c",
+      "equal_patch_length": true,
+      "description": "Do not send sneak result (online request) on game over, tpp::ui::menu::GameOverEvCall::UpdateGameOver",
+      "runtime_approved": false
+    },
+    {
+      "rva": "0x16026ce",
+      "status": "expected_bytes_mismatch",
+      "actual_hex": "804f6102eb04",
+      "section": ".xtext",
+      "executable_section": true,
+      "upstream_va": "0x1416026ce",
+      "expected_hex": "ff9068030000",
+      "replacement_hex": "f24890f24890",
+      "equal_patch_length": true,
+      "description": "Do not send sneak result on mission end (fob results screen)tpp::ui::hud::impl::TppUIFobResultImpl::UpdateFobResult",
+      "runtime_approved": false
+    },
+    {
+      "rva": "0x4e42a62",
+      "status": "expected_bytes_mismatch",
+      "actual_hex": "29f041",
+      "section": ".xdata",
+      "executable_section": true,
+      "upstream_va": "0x144e42a62",
+      "expected_hex": "0f94d0",
+      "replacement_hex": "40b001",
+      "equal_patch_length": true,
+      "description": "Trap check is player and local is always true #2, fix crash on entertpp::TrapCheckIsPlayerAndLocalCallback::ExecCallback",
+      "runtime_approved": false
+    },
+    {
+      "rva": "0x4e42a8e",
+      "status": "expected_bytes_mismatch",
+      "actual_hex": "2448",
+      "section": ".xdata",
+      "executable_section": true,
+      "upstream_va": "0x144e42a8e",
+      "expected_hex": "30c0",
+      "replacement_hex": "b001",
+      "equal_patch_length": true,
+      "description": "Trap check is player and local is always true, fix crash on entertpp::TrapCheckIsPlayerAndHostCallback::ExecCallback",
+      "runtime_approved": false
+    },
+    {
+      "rva": "0x4e46f45",
+      "status": "expected_bytes_mismatch",
+      "actual_hex": "3424",
+      "section": ".xdata",
+      "executable_section": true,
+      "upstream_va": "0x144e46f45",
+      "expected_hex": "30c0",
+      "replacement_hex": "b001",
+      "equal_patch_length": true,
+      "description": "Trap check is player and host is always true, fix crash on entertpp::TrapCheckIsPlayerAndHostCallback",
+      "runtime_approved": false
+    },
+    {
+      "rva": "0x625fd1a",
+      "status": "expected_bytes_mismatch",
+      "actual_hex": "8981",
+      "section": ".xdata",
+      "executable_section": true,
+      "upstream_va": "0x14625fd1a",
+      "expected_hex": "750d",
+      "replacement_hex": "4890",
+      "equal_patch_length": true,
+      "description": "DoesFobGhostPlayer remove mission ID checktpp::gm::player::impl::Player2GameObjectImpl::DoesFobGhostPlayerwithout it mission won't load (infinite loading)",
+      "runtime_approved": false
+    },
+    {
+      "rva": "0x59b60b5",
+      "status": "expected_bytes_mismatch",
+      "actual_hex": "2e48f7d55748f7d74c8d",
+      "section": ".xdata",
+      "executable_section": true,
+      "upstream_va": "0x1459b60b5",
+      "expected_hex": "48837958004889cb7509",
+      "replacement_hex": "f2489048904889cb4890",
+      "equal_patch_length": true,
+      "description": "Always start fob p2p resolver, ignore exists check (not needed?)tpp::net::Daemon::StarFobP2pNameResolver",
+      "runtime_approved": false
+    },
+    {
+      "rva": "0xda58e5",
+      "status": "expected_bytes_mismatch",
+      "actual_hex": "2c000048ffc1",
+      "section": ".xtext",
+      "executable_section": true,
+      "upstream_va": "0x140da58e5",
+      "expected_hex": "0f8441050000",
+      "replacement_hex": "664890664890",
+      "equal_patch_length": true,
+      "description": "Always run host damage controller implementationFixes crash on shooting animals (like goats in PITCH BLACK after the village at {-711.90826416016, 5.1010074615479, 661.36602783203})tpp::gm::impl::`anonymous_namespace'::DamageControllerImpl::Update",
+      "runtime_approved": false
+    },
+    {
+      "rva": "0x6457b68",
+      "status": "expected_bytes_mismatch",
+      "actual_hex": "8d2d",
+      "section": ".xdata",
+      "executable_section": true,
+      "upstream_va": "0x146457b68",
+      "expected_hex": "7513",
+      "replacement_hex": "4890",
+      "equal_patch_length": true,
+      "description": "always run full CloseSession code, ignore mission code checktpp::gm::tool::`anonymous_namespace'::CloseSession",
+      "runtime_approved": false
+    },
+    {
+      "rva": "0x163fcda",
+      "status": "expected_bytes_mismatch",
+      "actual_hex": "00448997b000",
+      "section": ".xtext",
+      "executable_section": true,
+      "upstream_va": "0x14163fcda",
+      "expected_hex": "0f84a2010000",
+      "replacement_hex": "664890664890",
+      "equal_patch_length": true,
+      "description": "add Quiet and Ocelot to staff list in sortie by ignoring tpp::ui::menu::impl::MissionPreparationSystemImpl::IsFobMissionMode check resulttpp::ui::menu::impl::CharacterSelectorCallbackImpl::SetupStaffList",
+      "runtime_approved": false
+    },
+    {
+      "rva": "0x9cc6c0",
+      "status": "expected_bytes_mismatch",
+      "actual_hex": "0f827affffff",
+      "section": ".xtext",
+      "executable_section": true,
+      "upstream_va": "0x1409cc6c0",
+      "expected_hex": "0f859c070000",
+      "replacement_hex": "48e99c070000",
+      "equal_patch_length": true,
+      "description": "skip some check that resets player to Snake from Quiet/Ocelottpp::gm::player::impl::Player2GameObjectImpl::UpdatePartsStatus",
+      "runtime_approved": false
+    },
+    {
+      "rva": "0x9cfba54",
+      "status": "expected_bytes_mismatch",
+      "actual_hex": "0000",
+      "section": ".xdata",
+      "executable_section": true,
+      "upstream_va": "0x149cfba54",
+      "expected_hex": "7410",
+      "replacement_hex": "4890",
+      "equal_patch_length": true,
+      "description": "skip check and call FUN_1411b4350 that sets up dual revolvers for Ocelottpp::gm::player::impl::UnrealUpdaterImpl::PreUpdate",
+      "runtime_approved": false
+    },
+    {
+      "rva": "0x9f4f17b",
+      "status": "expected_bytes_mismatch",
+      "actual_hex": "0250",
+      "section": ".ecode",
+      "executable_section": false,
+      "upstream_va": "0x149f4f17b",
+      "expected_hex": "7407",
+      "replacement_hex": "eb07",
+      "equal_patch_length": true,
+      "description": "always use non-fob function to update cp member statustpp::gm::soldier::impl::Soldier2Impl::UpdateCpMemberStatus",
+      "runtime_approved": false
+    },
+    {
+      "rva": "0x9c9a13",
+      "status": "expected_bytes_mismatch",
+      "actual_hex": "ca0225ff0100",
+      "section": ".xtext",
+      "executable_section": true,
+      "upstream_va": "0x1409c9a13",
+      "expected_hex": "84c04c0f45c1",
+      "replacement_hex": "4989c8664890",
+      "equal_patch_length": true,
+      "description": "always apply opponent (or partner) emblemtpp::gm::player::impl::Player2Impl::SetEmblemTexture",
+      "runtime_approved": false
+    },
+    {
+      "rva": "0x9c1758d",
+      "status": "expected_bytes_mismatch",
+      "actual_hex": "0000",
+      "section": ".xdata",
+      "executable_section": true,
+      "upstream_va": "0x149c1758d",
+      "expected_hex": "72f7",
+      "replacement_hex": "4890",
+      "equal_patch_length": true,
+      "description": "exit motion fixing loop immediatelytpp::gm::player::impl::RideWalkerGearActionImpl::SyncMotionWithWalkerGearMotion",
+      "runtime_approved": false
+    },
+    {
+      "rva": "0xa62cf4e",
+      "status": "outside_image",
+      "upstream_va": "0x14a62cf4e",
+      "expected_hex": "747b",
+      "replacement_hex": "eb7b",
+      "equal_patch_length": true,
+      "description": "skip walker gear equip sync handlingtpp::gm::walkergear::impl::ActionCoreImpl::ReceiveEquipInfo",
+      "runtime_approved": false
+    },
+    {
+      "rva": "0x17cce2a",
+      "status": "expected_bytes_mismatch",
+      "actual_hex": "c70424feffff",
+      "section": ".xtext",
+      "executable_section": true,
+      "upstream_va": "0x1417cce2a",
+      "expected_hex": "0f85e0000000",
+      "replacement_hex": "48e9e0000000",
+      "equal_patch_length": true,
+      "description": "Boss Quiet always jumps instead of runningtpp::gm::bossquiet::impl::CombatAiImpl::StepMove",
+      "runtime_approved": false
+    },
+    {
+      "rva": "0x17ccd72",
+      "status": "expected_bytes_mismatch",
+      "actual_hex": "d2458bc24c89",
+      "section": ".xtext",
+      "executable_section": true,
+      "upstream_va": "0x1417ccd72",
+      "expected_hex": "0f85ab010000",
+      "replacement_hex": "0f8574010000",
+      "equal_patch_length": true,
+      "description": "Boss Quiet always jumps instead of running, patch 2tpp::gm::bossquiet::impl::CombatAiImpl::StepMove",
+      "runtime_approved": false
+    },
+    {
+      "rva": "0x17d54f7",
+      "status": "expected_bytes_mismatch",
+      "actual_hex": "cccccccccccc",
+      "section": ".xtext",
+      "executable_section": true,
+      "upstream_va": "0x1417d54f7",
+      "expected_hex": "0f84f9020000",
+      "replacement_hex": "664890664890",
+      "equal_patch_length": true,
+      "description": "ignore host check to always process Boss Quiet damage locallytpp::gm::bossquiet::impl::`anonymous_namespace'::DamageHandlerImpl::ProcessDamages",
+      "runtime_approved": false
+    }
+  ],
+  "symbols": [
+    {
+      "name": "IsDefenseTeamByOnlineFobLocal",
+      "upstream_va": "0x14d9ba3b0",
+      "runtime_approved": false,
+      "rva": "0xd9ba3b0",
+      "status": "outside_image"
+    },
+    {
+      "name": "IsOffenseTeamByOnlineFobLocal",
+      "upstream_va": "0x141e02e40",
+      "runtime_approved": false,
+      "rva": "0x1e02e40",
+      "status": "file_backed",
+      "actual_hex": "40534883ec20418bc8488bdae8ef9b73",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "CreateHostSession",
+      "upstream_va": "0x1459f3e20",
+      "runtime_approved": false,
+      "rva": "0x59f3e20",
+      "status": "file_backed",
+      "actual_hex": "4c8b0c24488da424080000009c4d29c9",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "NetworkSystemCreateHostSession",
+      "upstream_va": "0x14da33790",
+      "runtime_approved": false,
+      "rva": "0xda33790",
+      "status": "outside_image"
+    },
+    {
+      "name": "CreateClientSession",
+      "upstream_va": "0x1459f3910",
+      "runtime_approved": false,
+      "rva": "0x59f3910",
+      "status": "file_backed",
+      "actual_hex": "fd41514989c14981f1eb3592fe480deb",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "SetSteamId",
+      "upstream_va": "0x14c404640",
+      "runtime_approved": false,
+      "rva": "0xc404640",
+      "status": "outside_image"
+    },
+    {
+      "name": "FobTargetCtor",
+      "upstream_va": "0x1459ed160",
+      "runtime_approved": false,
+      "rva": "0x59ed160",
+      "status": "file_backed",
+      "actual_hex": "24488da42408000000488b3424488da4",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "SessionConnectInfoCtor",
+      "upstream_va": "0x1459edf00",
+      "runtime_approved": false,
+      "rva": "0x59edf00",
+      "status": "file_backed",
+      "actual_hex": "0141bf9f331061b895dd88154431f8c1",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "NetInfoCreateSession",
+      "upstream_va": "0x14da5c070",
+      "runtime_approved": false,
+      "rva": "0xda5c070",
+      "status": "outside_image"
+    },
+    {
+      "name": "IsConnectReady",
+      "upstream_va": "0x1459d0cc0",
+      "runtime_approved": false,
+      "rva": "0x59d0cc0",
+      "status": "file_backed",
+      "actual_hex": "89c8488d804ed27c7a488b985e1ee1c1",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "UpdateClientEstablished",
+      "upstream_va": "0x140316610",
+      "runtime_approved": false,
+      "rva": "0x316610",
+      "status": "file_backed",
+      "actual_hex": "33d2488bcfe876facfff4883c7084889",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "SessionImpl2IsHost",
+      "upstream_va": "0x143e64400",
+      "runtime_approved": false,
+      "rva": "0x3e64400",
+      "status": "file_backed",
+      "actual_hex": "21c64c893424b96fac8f86be6cd1cce9",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "GetFobOffensePlayerInstanceIndex",
+      "upstream_va": "0x14d9b00e0",
+      "runtime_approved": false,
+      "rva": "0xd9b00e0",
+      "status": "outside_image"
+    },
+    {
+      "name": "GetFobDefensePlayerInstanceIndex",
+      "upstream_va": "0x14d9afbc0",
+      "runtime_approved": false,
+      "rva": "0xd9afbc0",
+      "status": "outside_image"
+    },
+    {
+      "name": "CommandPost2ImplGetAvailableMemberCount",
+      "upstream_va": "0x1472a0500",
+      "runtime_approved": false,
+      "rva": "0x72a0500",
+      "status": "file_backed",
+      "actual_hex": "4d29ed49f7d5488da424080000004833",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "CommandPost2ImplGetMaxCpCount",
+      "upstream_va": "0x140c93de0",
+      "runtime_approved": false,
+      "rva": "0xc93de0",
+      "status": "file_backed",
+      "actual_hex": "00c744242c04000000c1e10d413388d8",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "GetUiMarkerTypeFromSystemType2",
+      "upstream_va": "0x140934580",
+      "runtime_approved": false,
+      "rva": "0x934580",
+      "status": "file_backed",
+      "actual_hex": "000000498b4040488b4818488b01ff50",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "SightManagerImplSetMarker",
+      "upstream_va": "0x149c687d0",
+      "runtime_approved": false,
+      "rva": "0x9c687d0",
+      "status": "file_backed",
+      "actual_hex": "00003ff9a1b9d8180000040000000000",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "SteamUdpSocketImplOnP2PSessionRequest",
+      "upstream_va": "0x14c4040c0",
+      "runtime_approved": false,
+      "rva": "0xc4040c0",
+      "status": "outside_image"
+    },
+    {
+      "name": "MessageBufferAddMessage",
+      "upstream_va": "0x1435ce000",
+      "runtime_approved": false,
+      "rva": "0x35ce000",
+      "status": "file_backed",
+      "actual_hex": "83ec084c89342449f7d6b8a87267b94c",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "AddLocalDamage",
+      "upstream_va": "0x141192af0",
+      "runtime_approved": false,
+      "rva": "0x1192af0",
+      "status": "file_backed",
+      "actual_hex": "0f29ade00000000f56c20f294500f6c2",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "DamageControllerImplInitialize",
+      "upstream_va": "0x14991a290",
+      "runtime_approved": false,
+      "rva": "0x991a290",
+      "status": "file_backed",
+      "actual_hex": "5e48d124244d31c94c2b0c2448893c24",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "SynchronizerImplGetDamage",
+      "upstream_va": "0x149cb4c70",
+      "runtime_approved": false,
+      "rva": "0x9cb4c70",
+      "status": "file_backed",
+      "actual_hex": "000034c10cb401000000ac5fe36a0000",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "Marker2SystemImpl",
+      "upstream_va": "0x144fdb110",
+      "runtime_approved": false,
+      "rva": "0x4fdb110",
+      "status": "file_backed",
+      "actual_hex": "bfb28f42488d9c2408000000488d9bf5",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "Marker2SystemImplPlacedUserMarkerFixed",
+      "upstream_va": "0x144fe5400",
+      "runtime_approved": false,
+      "rva": "0x4fe5400",
+      "status": "file_backed",
+      "actual_hex": "c5164981ef1a780fa24981ef4d515876",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "GetLocalPlayerID",
+      "upstream_va": "0x144c972c0",
+      "runtime_approved": false,
+      "rva": "0x4c972c0",
+      "status": "file_backed",
+      "actual_hex": "4801f0488da424080000004889871800",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "RemoveUserMarker",
+      "upstream_va": "0x1460706a0",
+      "runtime_approved": false,
+      "rva": "0x60706a0",
+      "status": "file_backed",
+      "actual_hex": "4c8da424bad3a0844c210c2449c7c100",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "EquipHudSystemImplInitData",
+      "upstream_va": "0x14606c570",
+      "runtime_approved": false,
+      "rva": "0x606c570",
+      "status": "file_backed",
+      "actual_hex": "488b0424488da424080000009c415549",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "Marker2SystemImplRemovedUserMarker",
+      "upstream_va": "0x144fe6a80",
+      "runtime_approved": false,
+      "rva": "0x4fe6a80",
+      "status": "file_backed",
+      "actual_hex": "9c4c8d2d39aad106488b2dae41fdfd48",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "Marker2SystemImplPlacedUserMarkerFollow",
+      "upstream_va": "0x144fe5920",
+      "runtime_approved": false,
+      "rva": "0x4fe5920",
+      "status": "file_backed",
+      "actual_hex": "d444212424415c4889f54403a7300000",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "Marker2SystemImplRemovedAllUserMarker",
+      "upstream_va": "0x1405c52f0",
+      "runtime_approved": false,
+      "rva": "0x5c52f0",
+      "status": "file_backed",
+      "actual_hex": "488d542420488b01ff5038833800740e",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "SightManagerImplInitialize",
+      "upstream_va": "0x149c63e20",
+      "runtime_approved": false,
+      "rva": "0x9c63e20",
+      "status": "file_backed",
+      "actual_hex": "0000000000000800000000000000d518",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "UiControllerImplSetNoUseEquipId",
+      "upstream_va": "0x1496b3b50",
+      "runtime_approved": false,
+      "rva": "0x96b3b50",
+      "status": "file_backed",
+      "actual_hex": "244c2b3424488da424080000004c89f6",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "EquipCrossEvCallIsItemNoUse",
+      "upstream_va": "0x145d0b630",
+      "runtime_approved": false,
+      "rva": "0x5d0b630",
+      "status": "file_backed",
+      "actual_hex": "d24401c2678dbfb7a0f05d31fa5f5641",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "TppUiEmblemImplEmblemEditorSystemImplCreateEmblemParameters",
+      "upstream_va": "0x14094c300",
+      "runtime_approved": false,
+      "rva": "0x94c300",
+      "status": "file_backed",
+      "actual_hex": "008b80140100004883c428c3cccccccc",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "TppUiEmblemImplEmblemEditorSystemImplCreateEmblem",
+      "upstream_va": "0x146073350",
+      "runtime_approved": false,
+      "rva": "0x6073350",
+      "status": "file_backed",
+      "actual_hex": "0f8c0bb8b1024181e2e9bbad27488d0d",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "TppUiEmblemImplEmblemEditorSystemImplLoadEmblemTextureInfo",
+      "upstream_va": "0x14607be80",
+      "runtime_approved": false,
+      "rva": "0x607be80",
+      "status": "file_backed",
+      "actual_hex": "4831c6488da424080000004901f4498b",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNtImplSessionImpl2DeleteMember",
+      "upstream_va": "0x143e5c940",
+      "runtime_approved": false,
+      "rva": "0x3e5c940",
+      "status": "file_backed",
+      "actual_hex": "a24181f21c03fcdf41bb9b4161fd4501",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxImplMessage2MessageBox2ImplSendMessageToSubscribers",
+      "upstream_va": "0x1435d1f00",
+      "runtime_approved": false,
+      "rva": "0x35d1f00",
+      "status": "file_backed",
+      "actual_hex": "89ea488b2c24488da42408000000ffb1",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "TppUiEmblemImplEmblemEditorSystemImplDeleteTexture",
+      "upstream_va": "0x1460741f0",
+      "runtime_approved": false,
+      "rva": "0x60741f0",
+      "status": "file_backed",
+      "actual_hex": "0000004d338dc0000000f84d8b855000",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "TppUiEmblemImplEmblemEditorSystemImplUnloadEmblemTextureInfo",
+      "upstream_va": "0x14607e250",
+      "runtime_approved": false,
+      "rva": "0x607e250",
+      "status": "file_backed",
+      "actual_hex": "f7d54889ea4829fa48d1da48b8ffffff",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "TppGkTppGameKitModuleEnd",
+      "upstream_va": "0x144d18950",
+      "runtime_approved": false,
+      "rva": "0x4d18950",
+      "status": "file_backed",
+      "actual_hex": "a42408000000488d14244c31e749f7d4",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "TppUiEmblemImplEmblemEditorSystemImplDeleteBlender",
+      "upstream_va": "0x146074060",
+      "runtime_approved": false,
+      "rva": "0x6074060",
+      "status": "file_backed",
+      "actual_hex": "4c29e54901ed498ba9780000004901ed",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "TppGkEmblemManagerCreateBlender",
+      "upstream_va": "0x144d1e170",
+      "runtime_approved": false,
+      "rva": "0x4d1e170",
+      "status": "file_backed",
+      "actual_hex": "a4240800000048f7d15956488d353412",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "TppUiEmblemImplEmblemEditorSystemImplIsReady",
+      "upstream_va": "0x14607bd70",
+      "runtime_approved": false,
+      "rva": "0x607bd70",
+      "status": "file_backed",
+      "actual_hex": "4c892c2441514c8d2d93de7fff4d8d8d",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "TppGmPlayerImplClimbActionPluginImplCheckActionState",
+      "upstream_va": "0x149876920",
+      "runtime_approved": false,
+      "rva": "0x9876920",
+      "status": "file_backed",
+      "actual_hex": "d04d01d64d01fa4d0b91780000004d31",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxGeoPathResultGetNumPoint",
+      "upstream_va": "0x14ce84090",
+      "runtime_approved": false,
+      "rva": "0xce84090",
+      "status": "outside_image"
+    },
+    {
+      "name": "HashMapFindKey",
+      "upstream_va": "0x142ed7be0",
+      "runtime_approved": false,
+      "rva": "0x2ed7be0",
+      "status": "file_backed",
+      "actual_hex": "58a460a468a470a478a480a488a490a4",
+      "section": ".trace",
+      "executable_section": false
+    },
+    {
+      "name": "GetQuarkSystemTable",
+      "upstream_va": "0x140bff3f0",
+      "runtime_approved": false,
+      "rva": "0xbff3f0",
+      "status": "file_backed",
+      "actual_hex": "e87b6b0c00e8468c0c00e871980c00e8",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "FoxStrHash32",
+      "upstream_va": "0x14c1bd730",
+      "runtime_approved": false,
+      "rva": "0xc1bd730",
+      "status": "outside_image"
+    },
+    {
+      "name": "FoxFindEntity",
+      "upstream_va": "0x14312acb0",
+      "runtime_approved": false,
+      "rva": "0x312acb0",
+      "status": "file_backed",
+      "actual_hex": "4181c18d11a8df41c1d9180f83f8d908",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxGetEntityHandle",
+      "upstream_va": "0x14321e540",
+      "runtime_approved": false,
+      "rva": "0x321e540",
+      "status": "file_backed",
+      "actual_hex": "244883c408594831f64883ec28488da4",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxGetEntityProperty",
+      "upstream_va": "0x1400c4e80",
+      "runtime_approved": false,
+      "rva": "0xc4e80",
+      "status": "file_backed",
+      "actual_hex": "488bc3eb07488d0574f8a9024883c430",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "FoxCreatePropertyInfo",
+      "upstream_va": "0x1400926a0",
+      "runtime_approved": false,
+      "rva": "0x926a0",
+      "status": "file_backed",
+      "actual_hex": "410f28000f2902410f2848100f294a10",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "ValueGetAsUInt32",
+      "upstream_va": "0x140065480",
+      "runtime_approved": false,
+      "rva": "0x65480",
+      "status": "file_backed",
+      "actual_hex": "83c4305bc3cccccccccccccccccccccc",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "FoxString",
+      "upstream_va": "0x142eaf970",
+      "runtime_approved": false,
+      "rva": "0x2eaf970",
+      "status": "file_backed",
+      "actual_hex": "a8a5b0a5b8a5c0a5c8a5d0a5d8a5e0a5",
+      "section": ".trace",
+      "executable_section": false
+    },
+    {
+      "name": "FindGameObjectWithID",
+      "upstream_va": "0x146c95580",
+      "runtime_approved": false,
+      "rva": "0x6c95580",
+      "status": "file_backed",
+      "actual_hex": "664131d366448959304c8b1c2448baff",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "Soldier2ImplGetInterface",
+      "upstream_va": "0x149f2f3d0",
+      "runtime_approved": false,
+      "rva": "0x9f2f3d0",
+      "status": "file_backed",
+      "actual_hex": "e04cdb004c4ddb001c647f02a04ddb00",
+      "section": ".ecode",
+      "executable_section": false
+    },
+    {
+      "name": "PlayerInfoServiceGetPositionAtIndex",
+      "upstream_va": "0x14d9b7770",
+      "runtime_approved": false,
+      "rva": "0xd9b7770",
+      "status": "outside_image"
+    },
+    {
+      "name": "FoxNtSessionGetMainSession",
+      "upstream_va": "0x143e60970",
+      "runtime_approved": false,
+      "rva": "0x3e60970",
+      "status": "file_backed",
+      "actual_hex": "0c244831c0488b0c244883c40848038f",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "GetSessionMemberCount",
+      "upstream_va": "0x143e60ef0",
+      "runtime_approved": false,
+      "rva": "0x3e60ef0",
+      "status": "file_backed",
+      "actual_hex": "9c2410000000415b9d41534c8d9e2e0f",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "CloseSession",
+      "upstream_va": "0x146457b20",
+      "runtime_approved": false,
+      "rva": "0x6457b20",
+      "status": "file_backed",
+      "actual_hex": "9a230e62b8c74d9a13442b2d32389c03",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "Player2GameObjectImplWarp",
+      "upstream_va": "0x14627c6f0",
+      "runtime_approved": false,
+      "rva": "0x627c6f0",
+      "status": "file_backed",
+      "actual_hex": "cba0dcfc5048f7d848ffc84821042448",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "ScriptDeclVarsImplSetVarValue",
+      "upstream_va": "0x140ae2090",
+      "runtime_approved": false,
+      "rva": "0xae2090",
+      "status": "file_backed",
+      "actual_hex": "488902410fb7410e6689420a410fb741",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "SoldierRouteAiImplPreUpdate",
+      "upstream_va": "0x141572270",
+      "runtime_approved": false,
+      "rva": "0x1572270",
+      "status": "file_backed",
+      "actual_hex": "804f0c0266890f66895702eb4b488b4e",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "RouteGroupImplGetEventId",
+      "upstream_va": "0x144b8d070",
+      "runtime_approved": false,
+      "rva": "0x4b8d070",
+      "status": "file_backed",
+      "actual_hex": "4419eb81d3b5b00d8e4c8704247f02c3",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "AiControllerImplAddNode",
+      "upstream_va": "0x140c0f230",
+      "runtime_approved": false,
+      "rva": "0xc0f230",
+      "status": "file_backed",
+      "actual_hex": "8b577c488d4f2841b808000000e8ee51",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "AiControllerImplSleepNode",
+      "upstream_va": "0x146d1bf60",
+      "runtime_approved": false,
+      "rva": "0x6d1bf60",
+      "status": "file_backed",
+      "actual_hex": "f05d4d8da4242e7297f44981c48bf147",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "AiControllerImplWakeNode",
+      "upstream_va": "0x146d1c6c0",
+      "runtime_approved": false,
+      "rva": "0x6d1c6c0",
+      "status": "file_backed",
+      "actual_hex": "d8498ba9280000004831e84152415249",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "CoreAiImplGetVehicleId",
+      "upstream_va": "0x149170560",
+      "runtime_approved": false,
+      "rva": "0x9170560",
+      "status": "file_backed",
+      "actual_hex": "0000004d19ef482b350742cf004989f4",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "CoreAiImplGetVehicleRideState",
+      "upstream_va": "0x14a0a2ab0",
+      "runtime_approved": false,
+      "rva": "0xa0a2ab0",
+      "status": "outside_image"
+    },
+    {
+      "name": "CoreAiImplIsVehicleRetain",
+      "upstream_va": "0x14a0a3f30",
+      "runtime_approved": false,
+      "rva": "0xa0a3f30",
+      "status": "outside_image"
+    },
+    {
+      "name": "SoldierImplRouteAiImplCheckVehicleAndWalkerGearGetInAndOutStep",
+      "upstream_va": "0x14156d590",
+      "runtime_approved": false,
+      "rva": "0x156d590",
+      "status": "file_backed",
+      "actual_hex": "ff0000f30f104608f30f105604f30f10",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "StatusControllerImplIsSet",
+      "upstream_va": "0x144cba8d0",
+      "runtime_approved": false,
+      "rva": "0x4cba8d0",
+      "status": "file_backed",
+      "actual_hex": "244c8b3424488da42408000000ba0000",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "ScriptDeclVarsImplGetVarHandleWithVarIndex",
+      "upstream_va": "0x140ae17c0",
+      "runtime_approved": false,
+      "rva": "0xae17c0",
+      "status": "file_backed",
+      "actual_hex": "4424388d4801894f2848894424584c8d",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "GmGetScriptVarInfo",
+      "upstream_va": "0x1461f02b0",
+      "runtime_approved": false,
+      "rva": "0x61f02b0",
+      "status": "file_backed",
+      "actual_hex": "f7d849f7d84d01c64d29f44158415e41",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "BandWidthManagerImplCalcAverageRttOfBetterHalfConnection",
+      "upstream_va": "0x1407e0580",
+      "runtime_approved": false,
+      "rva": "0x7e0580",
+      "status": "file_backed",
+      "actual_hex": "83ec2048895c2430488d5904488bea48",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "BandWidthManagerImplCalcAverageLostRateOfBetterHalfConnection",
+      "upstream_va": "0x1407e0370",
+      "runtime_approved": false,
+      "rva": "0x7e0370",
+      "status": "file_backed",
+      "actual_hex": "4883ec28488b056dfa40024885c0750c",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "BandWidthManagerImplStartLimitState",
+      "upstream_va": "0x1459bf210",
+      "runtime_approved": false,
+      "rva": "0x59bf210",
+      "status": "file_backed",
+      "actual_hex": "4929eb48898f400000004833b7400000",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNioMpMessageContainerGetFreeSize",
+      "upstream_va": "0x14c408840",
+      "runtime_approved": false,
+      "rva": "0xc408840",
+      "status": "outside_image"
+    },
+    {
+      "name": "FoxNioImplMpMuxImplSend",
+      "upstream_va": "0x141a59f30",
+      "runtime_approved": false,
+      "rva": "0x1a59f30",
+      "status": "file_backed",
+      "actual_hex": "83c3187404488d7be8458bc60fb7550c",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNioImplMpMuxImplRecv1",
+      "upstream_va": "0x141a59690",
+      "runtime_approved": false,
+      "rva": "0x1a59690",
+      "status": "file_backed",
+      "actual_hex": "d3e8cac4faff488bd3488bcfe87f7000",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNioImplMpMuxImplRecv2",
+      "upstream_va": "0x141a59870",
+      "runtime_approved": false,
+      "rva": "0x1a59870",
+      "status": "file_backed",
+      "actual_hex": "0f2ac84885c07908f20f580d58da6400",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNtPeerControllerSend",
+      "upstream_va": "0x143e73b60",
+      "runtime_approved": false,
+      "rva": "0x3e73b60",
+      "status": "file_backed",
+      "actual_hex": "4d8daf150329f34981ed3d61bdd14981",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNtImplGameSocketImplPeerIsSendPacketEmpty",
+      "upstream_va": "0x143eab090",
+      "runtime_approved": false,
+      "rva": "0x3eab090",
+      "status": "file_backed",
+      "actual_hex": "bc000000488b05824916ff4156482d22",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNtTotalControllerSend",
+      "upstream_va": "0x143e72910",
+      "runtime_approved": false,
+      "rva": "0x3e72910",
+      "status": "file_backed",
+      "actual_hex": "24fa720fa249219c24068df05d488b1c",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNtImplTransceiverManagerImplPeerSend",
+      "upstream_va": "0x14031aec0",
+      "runtime_approved": false,
+      "rva": "0x31aec0",
+      "status": "file_backed",
+      "actual_hex": "410fb7c103c84c63c149c1e8034c03c2",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNioImplMpSocketImplSend",
+      "upstream_va": "0x141a5b150",
+      "runtime_approved": false,
+      "rva": "0x1a5b150",
+      "status": "file_backed",
+      "actual_hex": "18ffffffff488bcdff15d22e6300c784",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNioImplMpMuxImplGetTotalPayloadSize",
+      "upstream_va": "0x1467a3500",
+      "runtime_approved": false,
+      "rva": "0x67a3500",
+      "status": "file_backed",
+      "actual_hex": "800000004981eed50fa2c3490b9ed50f",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNioMpMessageSerializerSerialize",
+      "upstream_va": "0x141a60a90",
+      "runtime_approved": false,
+      "rva": "0x1a60a90",
+      "status": "file_backed",
+      "actual_hex": "e88b22ffff488b47080fb650044803d0",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNioMpMessageContainerCreate",
+      "upstream_va": "0x14c407c00",
+      "runtime_approved": false,
+      "rva": "0xc407c00",
+      "status": "outside_image"
+    },
+    {
+      "name": "FoxNioMpMessageContainerAddMessage",
+      "upstream_va": "0x14c406e40",
+      "runtime_approved": false,
+      "rva": "0xc406e40",
+      "status": "outside_image"
+    },
+    {
+      "name": "FoxNioImplSppSocketImplGetState",
+      "upstream_va": "0x14c2db550",
+      "runtime_approved": false,
+      "rva": "0xc2db550",
+      "status": "outside_image"
+    },
+    {
+      "name": "FoxNtImplSyncMemoryCollectorSyncMemoryCollector",
+      "upstream_va": "0x143ebb4b0",
+      "runtime_approved": false,
+      "rva": "0x3ebb4b0",
+      "status": "file_backed",
+      "actual_hex": "0100005248f71c244c0304244c893424",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNtImplGameSocketBufferImplAlloc",
+      "upstream_va": "0x143ea6510",
+      "runtime_approved": false,
+      "rva": "0x3ea6510",
+      "status": "file_backed",
+      "actual_hex": "89e34d899a173d9a194531d241bb3ca8",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "TppGmImplScriptDeclVarsImplOnSessionNotify",
+      "upstream_va": "0x140ae1bc0",
+      "runtime_approved": false,
+      "rva": "0xae1bc0",
+      "status": "file_backed",
+      "actual_hex": "5e415d415c5f5e5dc30f1f007b11ae00",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "FoxBitStreamWriterPrimitiveWrite",
+      "upstream_va": "0x143ea3d10",
+      "runtime_approved": false,
+      "rva": "0x3ea3d10",
+      "status": "file_backed",
+      "actual_hex": "3c24c3685f415549f7d54c212c244c8b",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "TppGmImplScriptDeclVarsImplGetVarHandleWithVarIndex",
+      "upstream_va": "0x140ae17c0",
+      "runtime_approved": false,
+      "rva": "0xae17c0",
+      "status": "file_backed",
+      "actual_hex": "4424388d4801894f2848894424584c8d",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNtImplTransceiverManagerImplPeerSendImpl1",
+      "upstream_va": "0x143e7c130",
+      "runtime_approved": false,
+      "rva": "0x3e7c130",
+      "status": "file_backed",
+      "actual_hex": "245148c7c1ffffffff48f7d14c31e349",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNtImplTransceiverManagerImplPeerSendImpl2",
+      "upstream_va": "0x143e7c270",
+      "runtime_approved": false,
+      "rva": "0x3e7c270",
+      "status": "file_backed",
+      "actual_hex": "e74c8d054306a90341524c8d250d0000",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNtImplTransceiverImplTransceiverImpl",
+      "upstream_va": "0x140323ad0",
+      "runtime_approved": false,
+      "rva": "0x323ad0",
+      "status": "file_backed",
+      "actual_hex": "00488d4d08448bc6e8c3090000448b45",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNtImplGameSocketImplPeerRequestToSend",
+      "upstream_va": "0x1403257f0",
+      "runtime_approved": false,
+      "rva": "0x3257f0",
+      "status": "file_backed",
+      "actual_hex": "0fb6d7488bc8e8a554ffff488b5c2430",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNtImplGameSocketBufferImplGameSocketBufferImpl",
+      "upstream_va": "0x143ea61a0",
+      "runtime_approved": false,
+      "rva": "0x3ea61a0",
+      "status": "file_backed",
+      "actual_hex": "fd5d3c4531c24889ca488d92a84e9c81",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNioMpMessageCreate",
+      "upstream_va": "0x14c407850",
+      "runtime_approved": false,
+      "rva": "0xc407850",
+      "status": "outside_image"
+    },
+    {
+      "name": "FoxNtImplNetworkSystemImplGetMainSession",
+      "upstream_va": "0x143eae4b0",
+      "runtime_approved": false,
+      "rva": "0x3eae4b0",
+      "status": "file_backed",
+      "actual_hex": "a798000000488b97980000004101cc49",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxImplScopeAllocatorImplAlloc",
+      "upstream_va": "0x142f32e00",
+      "runtime_approved": false,
+      "rva": "0x2f32e00",
+      "status": "file_backed",
+      "actual_hex": "a85c41f883ffffffff6992deffffffbf",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxScopeMemoryScopeMemory1",
+      "upstream_va": "0x140034710",
+      "runtime_approved": false,
+      "rva": "0x34710",
+      "status": "file_backed",
+      "actual_hex": "fe0f87bc3800000f830ac60100bb0f6e",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "FoxScopeMemoryScopeMemoryDtor",
+      "upstream_va": "0x1400347f0",
+      "runtime_approved": false,
+      "rva": "0x347f0",
+      "status": "file_backed",
+      "actual_hex": "8b0da262b202488b01498bd84c8d4424",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "TppGmImplScriptDeclVarsImplUpdate",
+      "upstream_va": "0x140ae2180",
+      "runtime_approved": false,
+      "rva": "0xae2180",
+      "status": "file_backed",
+      "actual_hex": "ca74f10fb7c1c3cccccccccccccccccc",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNtImplGameSocketImplGetPacketCount",
+      "upstream_va": "0x143ea9a10",
+      "runtime_approved": false,
+      "rva": "0x3ea9a10",
+      "status": "file_backed",
+      "actual_hex": "4883ec084c892c2449f7d54c212c2441",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNtImplGameSocketImplGetPacket",
+      "upstream_va": "0x143ea9670",
+      "runtime_approved": false,
+      "rva": "0x3ea9670",
+      "status": "file_backed",
+      "actual_hex": "73f05d3c4883ec084c891c244d31ed9c",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNtImplNetworkSystemImplCreateGameSocket",
+      "upstream_va": "0x143ead9d0",
+      "runtime_approved": false,
+      "rva": "0x3ead9d0",
+      "status": "file_backed",
+      "actual_hex": "ff4d0bbd8000000049ffce415748f714",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNtNtModuleInit",
+      "upstream_va": "0x14d365da0",
+      "runtime_approved": false,
+      "rva": "0xd365da0",
+      "status": "outside_image"
+    },
+    {
+      "name": "FoxNtImplGameSocketImplRequestToSendToMember",
+      "upstream_va": "0x143eab200",
+      "runtime_approved": false,
+      "rva": "0x3eab200",
+      "status": "file_backed",
+      "actual_hex": "c7c0000000000f97d041534c8d1d80b0",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNtImplGameSocketImplSetInterval",
+      "upstream_va": "0x143eabc30",
+      "runtime_approved": false,
+      "rva": "0x3eabc30",
+      "status": "file_backed",
+      "actual_hex": "c7000000004889ac24080000004883ec",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNtImplPeerCommonInitializeLastSendTime",
+      "upstream_va": "0x143e9da20",
+      "runtime_approved": false,
+      "rva": "0x3e9da20",
+      "status": "file_backed",
+      "actual_hex": "c694460fa24881c677bac0214931f15e",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNtImplGameSocketImplGetPacketSize",
+      "upstream_va": "0x143ea9db0",
+      "runtime_approved": false,
+      "rva": "0x3ea9db0",
+      "status": "file_backed",
+      "actual_hex": "e9a53e02c331662e0f1f840000000000",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNtImplGameSocketImplGameSocketImplDtor",
+      "upstream_va": "0x143ea8150",
+      "runtime_approved": false,
+      "rva": "0x3ea8150",
+      "status": "file_backed",
+      "actual_hex": "400f91d7498b3cfc415c48873c24c3c6",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "TppGmImplScriptDeclVarsImplGetVarHandle",
+      "upstream_va": "0x140ae1630",
+      "runtime_approved": false,
+      "rva": "0xae1630",
+      "status": "file_backed",
+      "actual_hex": "24704533c033d2488bcee841f8f20048",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "TppGmImplScriptDeclVarsImplScriptDeclVarsImpl",
+      "upstream_va": "0x146845ab0",
+      "runtime_approved": false,
+      "rva": "0x6845ab0",
+      "status": "file_backed",
+      "actual_hex": "4c031c244c89342449f7d64c2134244c",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "TppGmImplScriptSystemImplGetScriptDeclVarHandle",
+      "upstream_va": "0x1461f4ce0",
+      "runtime_approved": false,
+      "rva": "0x61f4ce0",
+      "status": "file_backed",
+      "actual_hex": "080000004c09e54c31c54c8b0c244c21",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "TppGmImplScriptDeclVarsImplGetVarIndexWithName",
+      "upstream_va": "0x146849370",
+      "runtime_approved": false,
+      "rva": "0x6849370",
+      "status": "file_backed",
+      "actual_hex": "4c31c84d09c84929f04829c648c7c056",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "TppGmGetGVars",
+      "upstream_va": "0x146848a40",
+      "runtime_approved": false,
+      "rva": "0x6848a40",
+      "status": "file_backed",
+      "actual_hex": "d566448969224c8b2c24488da4240800",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "TppGmGetSVars",
+      "upstream_va": "0x1468490b0",
+      "runtime_approved": false,
+      "rva": "0x68490b0",
+      "status": "file_backed",
+      "actual_hex": "080000004d8dadce544604415f4c872c",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNtImplSessionImpl2GetMemberInterfaceAtIndex",
+      "upstream_va": "0x143e61370",
+      "runtime_approved": false,
+      "rva": "0x3e61370",
+      "status": "file_backed",
+      "actual_hex": "88010000498d80f24cc9c648052b703c",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNtImplGameSocketImplHandleMessage",
+      "upstream_va": "0x143eaa120",
+      "runtime_approved": false,
+      "rva": "0x3eaa120",
+      "status": "file_backed",
+      "actual_hex": "78010000524c09c24c31042448d1e248",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNtImplPeerCommonPeerCommon",
+      "upstream_va": "0x143e9cf60",
+      "runtime_approved": false,
+      "rva": "0x3e9cf60",
+      "status": "file_backed",
+      "actual_hex": "3edd534121f70f8f03f3f603415f5e81",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "TppGmPlayerImplSynchronizerImplInitialize",
+      "upstream_va": "0x1412a6c50",
+      "runtime_approved": false,
+      "rva": "0x12a6c50",
+      "status": "file_backed",
+      "actual_hex": "45030a000000c7450702000000c7450f",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "TppGmImplScriptDeclVarsImplScriptDeclVarsImplDtor",
+      "upstream_va": "0x146845fc0",
+      "runtime_approved": false,
+      "rva": "0x6845fc0",
+      "status": "file_backed",
+      "actual_hex": "c3488da61bf05d3c5548f7d548212c24",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "TppGmPlayerImplAnonymous_namespaceCamouflageControllerImplInitialize",
+      "upstream_va": "0x140fdd420",
+      "runtime_approved": false,
+      "rva": "0xfdd420",
+      "status": "file_backed",
+      "actual_hex": "488d0539fe3c01488901f6c2017405e8",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNtImplTransceiverManagerImplPeerAddToSendQueue",
+      "upstream_va": "0x143e78970",
+      "runtime_approved": false,
+      "rva": "0x3e78970",
+      "status": "file_backed",
+      "actual_hex": "e20fa2c34981c526f55d3c4c29e88b10",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNioImplMpMuxImplSendUpdate",
+      "upstream_va": "0x141a5a6c0",
+      "runtime_approved": false,
+      "rva": "0x1a5a6c0",
+      "status": "file_backed",
+      "actual_hex": "e8cbb95bfe488bc6488b5c24604883c4",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNioImplSppSocketImplSendImpl",
+      "upstream_va": "0x141a57b00",
+      "runtime_approved": false,
+      "rva": "0x1a57b00",
+      "status": "file_backed",
+      "actual_hex": "ff89869c0200000fb744245866898698",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "FoxNioImplSteamUdpSocketImplSend",
+      "upstream_va": "0x14c4044f0",
+      "runtime_approved": false,
+      "rva": "0xc4044f0",
+      "status": "outside_image"
+    },
+    {
+      "name": "FoxNioImplSteamUdpSocketImplRecv",
+      "upstream_va": "0x14c4042c0",
+      "runtime_approved": false,
+      "rva": "0xc4042c0",
+      "status": "outside_image"
+    },
+    {
+      "name": "TppUiMenuUiCommonDataManagerLoadLanguageBlock",
+      "upstream_va": "0x145bddb50",
+      "runtime_approved": false,
+      "rva": "0x5bddb50",
+      "status": "file_backed",
+      "actual_hex": "488b042441544c8ba424080000004d89",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "TppUiUtilityChangeLanguage",
+      "upstream_va": "0x14090f130",
+      "runtime_approved": false,
+      "rva": "0x90f130",
+      "status": "file_backed",
+      "actual_hex": "e85b65100133d2488bcbe82166100190",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "TppGmPlayerImplEquipControllerImplInitialize",
+      "upstream_va": "0x149a02ca0",
+      "runtime_approved": false,
+      "rva": "0x9a02ca0",
+      "status": "file_backed",
+      "actual_hex": "08000000554881eaba0fa2c34889d548",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "TppGmPlayerImplEquipControllerImplGetEquipIdSlot",
+      "upstream_va": "0x1411add10",
+      "runtime_approved": false,
+      "rva": "0x11add10",
+      "status": "file_backed",
+      "actual_hex": "87d0fdffff3d3601000076188d8700fb",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "TppGmBossquietImplActionControllerImplSetCommand",
+      "upstream_va": "0x1417a9e40",
+      "runtime_approved": false,
+      "rva": "0x17a9e40",
+      "status": "file_backed",
+      "actual_hex": "240f57c00f29004c8940104c8940184c",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "TppGmBossquietImplActionControllerImplSetExtraActionCommand",
+      "upstream_va": "0x14a922d70",
+      "runtime_approved": false,
+      "rva": "0xa922d70",
+      "status": "outside_image"
+    },
+    {
+      "name": "TppGmLiquidImplActionControllerImplSetActionTaskCompleted",
+      "upstream_va": "0x14bf31450",
+      "runtime_approved": false,
+      "rva": "0xbf31450",
+      "status": "outside_image"
+    },
+    {
+      "name": "TppGmBossquietImplActionControllerImplSetActionTask",
+      "upstream_va": "0x14a922960",
+      "runtime_approved": false,
+      "rva": "0xa922960",
+      "status": "outside_image"
+    },
+    {
+      "name": "TppGmBossquietImplActionControllerImplSetNextActionTask",
+      "upstream_va": "0x1417aa020",
+      "runtime_approved": false,
+      "rva": "0x17aa020",
+      "status": "file_backed",
+      "actual_hex": "49184883c1074883e1f8488d41284889",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "TppGmBossquietImplActionControllerImplInitialize",
+      "upstream_va": "0x14a921790",
+      "runtime_approved": false,
+      "rva": "0xa921790",
+      "status": "outside_image"
+    },
+    {
+      "name": "TppGmSahelanImplActionControllerImplSetTaskParamFromActionCommand",
+      "upstream_va": "0x14bbbd160",
+      "runtime_approved": false,
+      "rva": "0xbbbd160",
+      "status": "outside_image"
+    },
+    {
+      "name": "TppGmImplNavigationController2ImplGetNavigator",
+      "upstream_va": "0x149586ed0",
+      "runtime_approved": false,
+      "rva": "0x9586ed0",
+      "status": "file_backed",
+      "actual_hex": "0000ffff4c2104244158664403817601",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "TppGmImplNavigationController2ImplIsCurrentRequestPrepared",
+      "upstream_va": "0x149588720",
+      "runtime_approved": false,
+      "rva": "0x9588720",
+      "status": "file_backed",
+      "actual_hex": "48810424cbab6205c38d415149f7d14c",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "TppGmBossquietImplActionControllerImplCheckUseOutOfNavJump",
+      "upstream_va": "0x14a91ff50",
+      "runtime_approved": false,
+      "rva": "0xa91ff50",
+      "status": "outside_image"
+    },
+    {
+      "name": "TppGmImplNavigationController2ImplGetPath",
+      "upstream_va": "0x1495879e0",
+      "runtime_approved": false,
+      "rva": "0x95879e0",
+      "status": "file_backed",
+      "actual_hex": "c04531d2440b91540100004433815801",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "TppGmImplNavigationController2ImplGetResultState",
+      "upstream_va": "0x149587cd0",
+      "runtime_approved": false,
+      "rva": "0x9587cd0",
+      "status": "file_backed",
+      "actual_hex": "0fbf1d1c6fc3fa81f33e5a2435bf34b5",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "TppGmBossquietImplSnipeManagerImplGetOptimalLandingPosition",
+      "upstream_va": "0x1417fa3d0",
+      "runtime_approved": false,
+      "rva": "0x17fa3d0",
+      "status": "file_backed",
+      "actual_hex": "8b0233f6488bd9488941504885c07406",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "TppGmSahelanActionTaskoperatorAssign",
+      "upstream_va": "0x14a91f960",
+      "runtime_approved": false,
+      "rva": "0xa91f960",
+      "status": "outside_image"
+    },
+    {
+      "name": "TppGmBossquietImplActionControllerImplUpdate",
+      "upstream_va": "0x14a923930",
+      "runtime_approved": false,
+      "rva": "0xa923930",
+      "status": "outside_image"
+    },
+    {
+      "name": "TppGmBossquietImplBasicAction2ImplPolling",
+      "upstream_va": "0x14b6bebe0",
+      "runtime_approved": false,
+      "rva": "0xb6bebe0",
+      "status": "outside_image"
+    },
+    {
+      "name": "TppGmBossquietImplActionControllerImplUpdateActionTask",
+      "upstream_va": "0x14a923c70",
+      "runtime_approved": false,
+      "rva": "0xa923c70",
+      "status": "outside_image"
+    },
+    {
+      "name": "TppGmBossquietImplActionControllerImplUpdateCommandForSingle",
+      "upstream_va": "0x14a923f60",
+      "runtime_approved": false,
+      "rva": "0xa923f60",
+      "status": "outside_image"
+    },
+    {
+      "name": "TppGmBossquietImplBasicAction2ImplGetNextPositionInMoving",
+      "upstream_va": "0x14b6bd7c0",
+      "runtime_approved": false,
+      "rva": "0xb6bd7c0",
+      "status": "outside_image"
+    },
+    {
+      "name": "TppGmBossquietImplCloseCombatAiImplStepMove",
+      "upstream_va": "0x1417c9380",
+      "runtime_approved": false,
+      "rva": "0x17c9380",
+      "status": "file_backed",
+      "actual_hex": "79404889794848c74150010000004883",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "TppGmBossquietImplRecoveryAiImplStepMove",
+      "upstream_va": "0x1417f56b0",
+      "runtime_approved": false,
+      "rva": "0x17f56b0",
+      "status": "file_backed",
+      "actual_hex": "43ff14d3488b4350488b6c2448488b74",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "TppGmBossquietImplSearchAiImplStepMove",
+      "upstream_va": "0x1417f8200",
+      "runtime_approved": false,
+      "rva": "0x17f8200",
+      "status": "file_backed",
+      "actual_hex": "a424cc000000fec68424ca0000000389",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "TppGmBossquietImplCombatAiImplRequestMoveAction",
+      "upstream_va": "0x14b6d5970",
+      "runtime_approved": false,
+      "rva": "0xb6d5970",
+      "status": "outside_image"
+    },
+    {
+      "name": "TppGmBossquietImplSearchAiImplRequestMoveAction",
+      "upstream_va": "0x14b772070",
+      "runtime_approved": false,
+      "rva": "0xb772070",
+      "status": "outside_image"
+    },
+    {
+      "name": "TppGmBossquietImplRecoveryAiImplRequestMoveAction",
+      "upstream_va": "0x14b76a2f0",
+      "runtime_approved": false,
+      "rva": "0xb76a2f0",
+      "status": "outside_image"
+    },
+    {
+      "name": "TppGmBossquietImplCloseCombatAiImplRequestMoveAction",
+      "upstream_va": "0x14b6cd920",
+      "runtime_approved": false,
+      "rva": "0xb6cd920",
+      "status": "outside_image"
+    },
+    {
+      "name": "TppGmBossquietImplAvoidAiImplSetJumpPoint",
+      "upstream_va": "0x14b6b87d0",
+      "runtime_approved": false,
+      "rva": "0xb6b87d0",
+      "status": "outside_image"
+    },
+    {
+      "name": "TppGmImplAiControllerImplGetCoreKnowledge",
+      "upstream_va": "0x146d18c90",
+      "runtime_approved": false,
+      "rva": "0x6d18c90",
+      "status": "file_backed",
+      "actual_hex": "0424505248b8000000000000008048f7",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "TppGmBossquietImplanonymous_namespaceLifeControllerImplUpdateLife",
+      "upstream_va": "0x14b73b3d0",
+      "runtime_approved": false,
+      "rva": "0xb73b3d0",
+      "status": "outside_image"
+    },
+    {
+      "name": "BlockHeapAlloc",
+      "upstream_va": "0x143264660",
+      "runtime_approved": false,
+      "rva": "0x3264660",
+      "status": "file_backed",
+      "actual_hex": "3c4c8b05def9bd064c0f4905def9bd06",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "BlockHeapFree",
+      "upstream_va": "0x1432651b0",
+      "runtime_approved": false,
+      "rva": "0x32651b0",
+      "status": "file_backed",
+      "actual_hex": "77040fa24d8ba377040fa2415b9d4c87",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxBlockProcess",
+      "upstream_va": "0x14006df80",
+      "runtime_approved": false,
+      "rva": "0x6df80",
+      "status": "file_backed",
+      "actual_hex": "ff488bc54883c460415e5f5e5d5bc3cc",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "FoxBlockUnload",
+      "upstream_va": "0x143154a00",
+      "runtime_approved": false,
+      "rva": "0x3154a00",
+      "status": "file_backed",
+      "actual_hex": "bd002bac72f7dd29db81ebeadcf0bdf7",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxBlockReload",
+      "upstream_va": "0x1431533b0",
+      "runtime_approved": false,
+      "rva": "0x31533b0",
+      "status": "file_backed",
+      "actual_hex": "c71b41504c8b054b5cc6064c0f4a054b",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxBlockActivate",
+      "upstream_va": "0x14006cb20",
+      "runtime_approved": false,
+      "rva": "0x6cb20",
+      "status": "file_backed",
+      "actual_hex": "488b83e0000000488b0c074881c15801",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "FoxBlockDeactivate",
+      "upstream_va": "0x14314a000",
+      "runtime_approved": false,
+      "rva": "0x314a000",
+      "status": "file_backed",
+      "actual_hex": "8b99280000004921db4c31db4901db4c",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxGenerateUniqueName",
+      "upstream_va": "0x1400e0210",
+      "runtime_approved": false,
+      "rva": "0xe0210",
+      "status": "file_backed",
+      "actual_hex": "40574883ec3048c7442420feffffff48",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "FoxBlock",
+      "upstream_va": "0x143145960",
+      "runtime_approved": false,
+      "rva": "0x3145960",
+      "status": "file_backed",
+      "actual_hex": "95d34c8d3d000bdfff498b1cdf415f48",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxBlockLoad",
+      "upstream_va": "0x143151e80",
+      "runtime_approved": false,
+      "rva": "0x3151e80",
+      "status": "file_backed",
+      "actual_hex": "89d000000048f7d749f7d94c31cf48f7",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "BlockMemoryAllocTail",
+      "upstream_va": "0x1400dbb30",
+      "runtime_approved": false,
+      "rva": "0xdbb30",
+      "status": "file_backed",
+      "actual_hex": "564883ec20488bd9488b4950458bf149",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "BlockMemoryAllocHeap",
+      "upstream_va": "0x143261bf0",
+      "runtime_approved": false,
+      "rva": "0x3261bf0",
+      "status": "file_backed",
+      "actual_hex": "c948f7d1ffb0f1a4f05d48f714244823",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "GetCurrentBlockMemory",
+      "upstream_va": "0x14328e410",
+      "runtime_approved": false,
+      "rva": "0x328e410",
+      "status": "file_backed",
+      "actual_hex": "482d3d2a7d079dff34d0c3c64c3319f8",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxCreateQuark",
+      "upstream_va": "0x146c6a650",
+      "runtime_approved": false,
+      "rva": "0x6c6a650",
+      "status": "file_backed",
+      "actual_hex": "4c8bad37f05d3c4883c408488b042448",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxLuaPushVector3",
+      "upstream_va": "0x143257590",
+      "runtime_approved": false,
+      "rva": "0x3257590",
+      "status": "file_backed",
+      "actual_hex": "488da4240800000048310c2448333c24",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "FoxLuaPushQuat",
+      "upstream_va": "0x143256e30",
+      "runtime_approved": false,
+      "rva": "0x3256e30",
+      "status": "file_backed",
+      "actual_hex": "f7da48f7d6ff357ef7d5ff48f7142448",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "l_AnnounceLogView",
+      "upstream_va": "0x145d5ded0",
+      "runtime_approved": false,
+      "rva": "0x5d5ded0",
+      "status": "file_backed",
+      "actual_hex": "040452488d10488d92bce20fa28b8244",
+      "section": ".xdata",
+      "executable_section": true
+    },
+    {
+      "name": "TppUiUiCommandAnnounceLogViewLangId",
+      "upstream_va": "0x1408cc280",
+      "runtime_approved": false,
+      "rva": "0x8cc280",
+      "status": "file_backed",
+      "actual_hex": "66443bc77416488b8340070000410fb7",
+      "section": ".xtext",
+      "executable_section": true
+    },
+    {
+      "name": "lua_pushinteger",
+      "upstream_va": "0x14c1e6ef0",
+      "runtime_approved": false,
+      "rva": "0xc1e6ef0",
+      "status": "outside_image"
+    },
+    {
+      "name": "lua_pushstring",
+      "upstream_va": "0x14c1e7ee0",
+      "runtime_approved": false,
+      "rva": "0xc1e7ee0",
+      "status": "outside_image"
+    },
+    {
+      "name": "lua_pushboolean",
+      "upstream_va": "0x14c1db230",
+      "runtime_approved": false,
+      "rva": "0xc1db230",
+      "status": "outside_image"
+    },
+    {
+      "name": "lua_getfield",
+      "upstream_va": "0x14c1d7320",
+      "runtime_approved": false,
+      "rva": "0xc1d7320",
+      "status": "outside_image"
+    },
+    {
+      "name": "lua_setfield",
+      "upstream_va": "0x14c1eabb0",
+      "runtime_approved": false,
+      "rva": "0xc1eabb0",
+      "status": "outside_image"
+    },
+    {
+      "name": "lua_pcall",
+      "upstream_va": "0x14c1daff0",
+      "runtime_approved": false,
+      "rva": "0xc1daff0",
+      "status": "outside_image"
+    },
+    {
+      "name": "luaI_openlib",
+      "upstream_va": "0x14c201610",
+      "runtime_approved": false,
+      "rva": "0xc201610",
+      "status": "outside_image"
+    },
+    {
+      "name": "luaL_checkinteger",
+      "upstream_va": "0x14c1ff430",
+      "runtime_approved": false,
+      "rva": "0xc1ff430",
+      "status": "outside_image"
+    },
+    {
+      "name": "luaL_openlibs",
+      "upstream_va": "0x14c1fd0c0",
+      "runtime_approved": false,
+      "rva": "0xc1fd0c0",
+      "status": "outside_image"
+    },
+    {
+      "name": "luaL_checknumber",
+      "upstream_va": "0x14c1ffb30",
+      "runtime_approved": false,
+      "rva": "0xc1ffb30",
+      "status": "outside_image"
+    },
+    {
+      "name": "lua_toboolean",
+      "upstream_va": "0x14c1ebe40",
+      "runtime_approved": false,
+      "rva": "0xc1ebe40",
+      "status": "outside_image"
+    },
+    {
+      "name": "lua_createtable",
+      "upstream_va": "0x14c1d6320",
+      "runtime_approved": false,
+      "rva": "0xc1d6320",
+      "status": "outside_image"
+    },
+    {
+      "name": "lua_pushvalue",
+      "upstream_va": "0x14c1e87e0",
+      "runtime_approved": false,
+      "rva": "0xc1e87e0",
+      "status": "outside_image"
+    },
+    {
+      "name": "lua_remove",
+      "upstream_va": "0x14c1ea0c0",
+      "runtime_approved": false,
+      "rva": "0xc1ea0c0",
+      "status": "outside_image"
+    },
+    {
+      "name": "luaL_checklstring",
+      "upstream_va": "0x14c1ff790",
+      "runtime_approved": false,
+      "rva": "0xc1ff790",
+      "status": "outside_image"
+    },
+    {
+      "name": "lua_pushnumber",
+      "upstream_va": "0x14c1e7dd0",
+      "runtime_approved": false,
+      "rva": "0xc1e7dd0",
+      "status": "outside_image"
+    }
+  ],
+  "runtime_calls": false,
+  "process_writes": false,
+  "limitations": [
+    "Upstream symbol names are source claims, not independently verified identities.",
+    "File-backed addresses and short byte matches do not prove callable ABI or lifecycle.",
+    "No relocation guesses, live patches, connection, actor allocation or campaign support.",
+    "Master-server URL patch is outside GetPatches and is not included."
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "utc": "2026-09-10T11:39:19.782602+00:00",
+  "source_version": "0.10.14",
+  "compiled_dll_sha256": "CB0DA5F178012026D2288319BA833C54AAEBC694A31C6C1790FEEFACE922B431",
+  "installed_version": "0.10.5",
+  "installed_dll_sha256": "5EE6B0DEA1B396E851F14D5F2332C7767A4DFA50749A7DAF7898139601221BA5",
+  "game_modified_this_turn": false,
+  "tests_run": false,
+  "lua_executed": false,
+  "game_launched": false,
+  "build_command": "tools/build.ps1 -Configuration Release -BuildOnly",
+  "build_log": "trap-rule-build-only-2026-09-10.log",
+  "static_mapping": "trap-contract-2026-09-10.json",
+  "limitations": [
+    "Trap callbacks and overrides have not been executed in MGSV.",
+    "The upstream true-return policy broadens trigger eligibility to original false/null and non-player paths.",
+    "Trigger ordering, duplicate mission effects and crash prevention remain unverified.",
+    "Session flags do not prove exclusion of in-flight teardown calls.",
+    "Soldier action-task, CP status and other native adaptations remain missing.",
+    "No connected guest, independent guest control or shared combat verified.",
+    "New build remains in workspace; installed loader unchanged."
+  ]
+}

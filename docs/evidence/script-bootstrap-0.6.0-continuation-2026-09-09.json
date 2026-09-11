@@ -1,0 +1,15 @@
+{
+  "utc": "2026-09-09T19:19:10.2615991Z",
+  "pid": 105412,
+  "launch_utc": "2026-09-09T19:15:41.7293018Z",
+  "loader": "0.6.0",
+  "mode": "bootstrap-v1",
+  "debugger": false,
+  "ui_verification": "Computer Use observed startup notice, title prompt, and Return opening the main menu at 69%; left at Continue selection",
+  "replacement_entry": 29,
+  "replacement_parser_result": 0,
+  "execution_receipt_entry": 30,
+  "execution_thread": 10876,
+  "all_seven_saves_match_prelaunch": true,
+  "limits": "No package mounting, four-player allocation, mission load, network traffic, remote actors or save isolation verified in this trial"
+}

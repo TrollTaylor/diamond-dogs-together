@@ -1,0 +1,36 @@
+{
+  "utc": "2026-09-10T14:05:12.918974+00:00",
+  "source_version": "0.10.27",
+  "compiled_dll_sha256": "84D5AA1DC8CF9CF5A2AB2A6F048A4FCFE59174EDF215C77E778421210E6C08C0",
+  "installed_version": "0.10.5",
+  "installed_dll_sha256": "5EE6B0DEA1B396E851F14D5F2332C7767A4DFA50749A7DAF7898139601221BA5",
+  "executable": "D:/Games/steamapps/common/MGS_TPP/mgsvtpp.exe",
+  "executable_sha256": "085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45",
+  "game_modified_this_turn": false,
+  "tests_run": false,
+  "lua_executed": false,
+  "source_transform_executed": false,
+  "game_launched": false,
+  "vm_launched": false,
+  "build_command": "tools/build.ps1 -Configuration Release -BuildOnly",
+  "build_log": "termination-boundary-build-only-2026-09-10.log",
+  "changed_code_sha256": {
+    "native/game_script_observer.cpp": "9DDBF6F1D893C7805127BFD8D0608A01C1437B1EF817BA7437EE9F44AE079DEC",
+    "native/bootstrap_patch.cpp": "ADD796A06931A64E24D0AF0E3D30864858852FB85D24250D33F41800E91A1F66",
+    "lua/coop/session_lifecycle.lua": "7A30B6EFDFC0FBCD17E9613C771DBFA0A5AB9A844F083726FF91C5FF058FA909",
+    "lua/coop/mission_trace.lua": "46520735EE4648CE3D68D4415C0602E3C8E22257D866DD7CF0C695DD9D538DCA",
+    "CMakeLists.txt": "32570A988D24FE866A506B7C06EEDA5B246D088EE2CD2271F566CF9CBAF45E29",
+    "native/probe.cpp": "920B44C418ECF4D1E34FBBFE4404CB84A6DAB4A9AFD1A2611EF96D566CD4616B",
+    "tools/probe.ps1": "9FD38E004C5303869AC75DBF50784139FC8EA24A4C7A7B853EDFA335D0DF4D52",
+    "tools/set-session-mode.ps1": "51F9D74253C677E18A5B008F8EA618F1001C2252D1D49CBFF2043C7EAD1C033F"
+  },
+  "source_finding": "The previous native OnTerminate transition depended on a phase receipt emitted by a Lua trace capped at 128 events. Once capped, the mission-terminating flag and native restore call could be skipped; close authorization required that flag.",
+  "change": "Dedicated exact owner-thread operational receipt, lifecycle wrapper appended outermost, diagnostic emission protected, phase receipts read-only, new-mission termination flag reset.",
+  "limitations": [
+    "Source inspection and compilation only; the original failure was not reproduced in MGSV.",
+    "Lua and source composition were not executed; compile-time final-fragment size assertion passed.",
+    "Trace OnTerminate return now occurs before close attempt and is not evidence of session closure.",
+    "Original termination errors and native context/body/state refusals can still prevent close.",
+    "No asynchronous cleanup, connected guest, independent control or shared combat verified."
+  ]
+}

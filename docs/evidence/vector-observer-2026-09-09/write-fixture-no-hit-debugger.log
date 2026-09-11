@@ -1,0 +1,142 @@
+Opened log file 'C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-43354e6e264d4cbb863f3fb635e477d4\debugger.log'
+
+************* Preparing the environment for Debugger Extensions Gallery repositories **************
+   ExtensionRepository : Implicit
+   UseExperimentalFeatureForNugetShare : true
+   AllowNugetExeUpdate : true
+   NonInteractiveNuget : true
+   AllowNugetMSCredentialProviderInstall : true
+   AllowParallelInitializationOfLocalRepositories : true
+   EnableRedirectToChakraJsProvider : false
+
+   -- Configuring repositories
+      ----> Repository : LocalInstalled, Enabled: true
+      ----> Repository : UserExtensions, Enabled: true
+
+>>>>>>>>>>>>> Preparing the environment for Debugger Extensions Gallery repositories completed, duration 0.000 seconds
+
+************* Waiting for Debugger Extensions Gallery to Initialize **************
+
+>>>>>>>>>>>>> Waiting for Debugger Extensions Gallery to Initialize completed, duration 0.000 seconds
+   ----> Repository : UserExtensions, Enabled: true, Packages count: 0
+   ----> Repository : LocalInstalled, Enabled: true, Packages count: 30
+
+Microsoft (R) Windows Debugger Version 10.0.28000.2270 AMD64
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+*** wait with pending attach
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\atlmfc.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\concurrency.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\cpp_rest.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\ObjectiveC.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\stl.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Data.Json.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Devices.Geolocation.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Devices.Sensors.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Media.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\windows.natvis'
+NatVis script successfully loaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\winrt.natvis'
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+OK                                             C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop/build/native
+Symbol search path is: C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop/build/native
+Executable search path is: 
+
++------------------------------------------------------------------------+
+| This target supports Hardware-enforced Stack Protection. A HW based    |
+| "Shadow Stack" may be available to assist in debugging and analysis.   |
+| See aka.ms/userhsp for more info.                                      |
+|                                                                        |
+| dps @ssp                                                               |
+|                                                                        |
++------------------------------------------------------------------------+
+
+ModLoad: 00007ff7`a8710000 00007ff7`a873a000   C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\native\player_vector_fixture.exe
+ModLoad: 00007ff9`564c0000 00007ff9`56726000   C:\WINDOWS\SYSTEM32\ntdll.dll
+ModLoad: 00007ff9`551f0000 00007ff9`552b9000   C:\WINDOWS\System32\KERNEL32.DLL
+ModLoad: 00007ff9`53de0000 00007ff9`541df000   C:\WINDOWS\System32\KERNELBASE.dll
+ModLoad: 00007ff9`52000000 00007ff9`5209f000   C:\WINDOWS\SYSTEM32\apphelp.dll
+ModLoad: 00007ff9`2f3a0000 00007ff9`2f492000   C:\Program Files\Windhawk\Engine\1.7.3\64\windhawk.dll
+ModLoad: 00007ff9`54d50000 00007ff9`54e0c000   C:\WINDOWS\System32\ADVAPI32.dll
+ModLoad: 00007ff9`55450000 00007ff9`554f9000   C:\WINDOWS\System32\msvcrt.dll
+ModLoad: 00007ff9`54400000 00007ff9`544aa000   C:\WINDOWS\System32\sechost.dll
+ModLoad: 00007ff9`542e0000 00007ff9`543f8000   C:\WINDOWS\System32\RPCRT4.dll
+ModLoad: 00007ff9`2c8b0000 00007ff9`2c8db000   C:\ProgramData\Windhawk\Engine\Mods\64\explorer-details-better-file-sizes_1.5.1_913666.dll
+ModLoad: 00007ff9`55760000 00007ff9`558f9000   C:\WINDOWS\System32\ole32.dll
+ModLoad: 00007ff9`53830000 00007ff9`538d3000   C:\WINDOWS\System32\msvcp_win.dll
+ModLoad: 00007ff9`536d0000 00007ff9`5381c000   C:\WINDOWS\System32\ucrtbase.dll
+ModLoad: 00007ff9`55c90000 00007ff9`55cbb000   C:\WINDOWS\System32\GDI32.dll
+ModLoad: 00007ff9`53db0000 00007ff9`53dd7000   C:\WINDOWS\System32\win32u.dll
+ModLoad: 00007ff9`53c80000 00007ff9`53da9000   C:\WINDOWS\System32\gdi32full.dll
+ModLoad: 00007ff9`54980000 00007ff9`54b46000   C:\WINDOWS\System32\USER32.dll
+ModLoad: 00007ff9`55900000 00007ff9`55c85000   C:\WINDOWS\System32\combase.dll
+ModLoad: 00007ff9`54200000 00007ff9`542d9000   C:\WINDOWS\System32\OLEAUT32.dll
+ModLoad: 00007ff9`55cf0000 00007ff9`56478000   C:\WINDOWS\System32\SHELL32.dll
+ModLoad: 00007ff9`2c6c0000 00007ff9`2c6fa000   C:\ProgramData\Windhawk\Engine\Mods\64\libunwind.whl
+ModLoad: 00007ff9`2c700000 00007ff9`2c8a9000   C:\ProgramData\Windhawk\Engine\Mods\64\libc++.whl
+ModLoad: 00007ff9`4cdd0000 00007ff9`4cec4000   C:\WINDOWS\SYSTEM32\PROPSYS.dll
+ModLoad: 00007ff9`544b0000 00007ff9`544e2000   C:\WINDOWS\System32\IMM32.DLL
+ModLoad: 00007ff9`50170000 00007ff9`50a0b000   C:\WINDOWS\SYSTEM32\windows.storage.dll
+ModLoad: 00007ff9`2ca30000 00007ff9`2ca48000   C:\ProgramData\Windhawk\Engine\Mods\64\no-flash-window_1.0_946587.dll
+ModLoad: 00007ff9`2bc70000 00007ff9`2bc99000   C:\ProgramData\Windhawk\Engine\Mods\64\slick-window-arrangement_1.0.2_293982.dll
+ModLoad: 00007ff9`4f8b0000 00007ff9`4f8df000   C:\WINDOWS\SYSTEM32\dwmapi.dll
+ModLoad: 00007ff9`36010000 00007ff9`360c5000   C:\WINDOWS\WinSxS\amd64_microsoft.windows.common-controls_6595b64144ccf1df_5.82.26100.8328_none_87eede957a2ccddd\COMCTL32.dll
+ModLoad: 00007ff9`54c50000 00007ff9`54d49000   C:\WINDOWS\System32\shcore.dll
+(8894.d6e0): Break instruction exception - code 80000003 (first chance)
+ntdll!DbgBreakPoint:
+00007ff9`565dece0 cc              int     3
+0:006> .expr /s masm
+Current expression evaluator: MASM - Microsoft Assembler expressions
+0:006> r @$t0=1
+0:006> r @$t4=0
+0:006> r @$t5=0
+0:006> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not(@$ptrsize == 8)) { .printf "MGS_ABORT wrong_pointer_size\n"; .leave }; r @$t0=1 } }
+0:006> .if (@$t0 != 0) { r @$t0=0; .catch { r @$t6 = 0; .catch { r @$t6 = @$bp0 }; r @$t0=1 } }
+Bad register error at '@$bp0 '
+0:006> .if (@$t0 != 0) { r @$t0=0; .catch { r @$t7 = 0; .catch { r @$t7 = @$bp1 }; r @$t0=1 } }
+Bad register error at '@$bp1 '
+0:006> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not((@$t6 == 0) and (@$t7 == 0))) { .printf "MGS_ABORT breakpoint_ids_occupied\n"; .leave }; r @$t0=1 } }
+0:006> .if (@$t0 != 0) { r @$t0=0; .catch { r @$t1 = player_vector_fixture; r @$t0=1 } }
+0:006> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not($vvalid(@$t1,0x160))) { .printf "MGS_ABORT image_header_unreadable\n"; .leave }; r @$t0=1 } }
+0:006> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not(wo(@$t1) == 0x5a4d)) { .printf "MGS_ABORT dos_signature\n"; .leave }; r @$t0=1 } }
+0:006> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not(dwo(@$t1+0x3c) == 0x108)) { .printf "MGS_ABORT pe_offset\n"; .leave }; r @$t0=1 } }
+0:006> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not(dwo(@$t1+0x108) == 0x4550)) { .printf "MGS_ABORT pe_signature\n"; .leave }; r @$t0=1 } }
+0:006> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not(wo(@$t1+0x10c) == 0x8664)) { .printf "MGS_ABORT machine\n"; .leave }; r @$t0=1 } }
+0:006> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not(dwo(@$t1+0x158) == 0x2a000)) { .printf "MGS_ABORT image_size\n"; .leave }; r @$t0=1 } }
+0:006> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not($vvalid((@$t1+0x10f0),0x10))) { .printf "MGS_ABORT setter_0_unreadable\n"; .leave }; r @$t0=1 } }
+0:006> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not((by((@$t1+0x10f0)+0x0) == 0xf0) and (by((@$t1+0x10f0)+0x1) == 0xff) and (by((@$t1+0x10f0)+0x2) == 0x05) and (by((@$t1+0x10f0)+0x3) == 0x81) and (by((@$t1+0x10f0)+0x4) == 0x2a) and (by((@$t1+0x10f0)+0x5) == 0x02) and (by((@$t1+0x10f0)+0x6) == 0x00) and (by((@$t1+0x10f0)+0x7) == 0x48) and (by((@$t1+0x10f0)+0x8) == 0x81) and (by((@$t1+0x10f0)+0x9) == 0xf9) and (by((@$t1+0x10f0)+0xa) == 0x78) and (by((@$t1+0x10f0)+0xb) == 0x56) and (by((@$t1+0x10f0)+0xc) == 0x34) and (by((@$t1+0x10f0)+0xd) == 0x12) and (by((@$t1+0x10f0)+0xe) == 0x75) and (by((@$t1+0x10f0)+0xf) == 0x18))) { .printf "MGS_ABORT setter_0_bytes_mismatch\n"; .leave }; r @$t0=1 } }
+0:006> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not($vvalid((@$t1+0x1140),0x10))) { .printf "MGS_ABORT setter_1_unreadable\n"; .leave }; r @$t0=1 } }
+0:006> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not((by((@$t1+0x1140)+0x0) == 0xf0) and (by((@$t1+0x1140)+0x1) == 0xff) and (by((@$t1+0x1140)+0x2) == 0x05) and (by((@$t1+0x1140)+0x3) == 0x31) and (by((@$t1+0x1140)+0x4) == 0x2a) and (by((@$t1+0x1140)+0x5) == 0x02) and (by((@$t1+0x1140)+0x6) == 0x00) and (by((@$t1+0x1140)+0x7) == 0x48) and (by((@$t1+0x1140)+0x8) == 0x81) and (by((@$t1+0x1140)+0x9) == 0xf9) and (by((@$t1+0x1140)+0xa) == 0x78) and (by((@$t1+0x1140)+0xb) == 0x56) and (by((@$t1+0x1140)+0xc) == 0x34) and (by((@$t1+0x1140)+0xd) == 0x12) and (by((@$t1+0x1140)+0xe) == 0x75) and (by((@$t1+0x1140)+0xf) == 0x13))) { .printf "MGS_ABORT setter_1_bytes_mismatch\n"; .leave }; r @$t0=1 } }
+0:006> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not($vvalid(@$t1+0x23b40,4))) { .printf "MGS_ABORT bank_0_unreadable\n"; .leave }; r @$t0=1 } }
+0:006> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not($vvalid(@$t1+0x23b44,4))) { .printf "MGS_ABORT bank_1_unreadable\n"; .leave }; r @$t0=1 } }
+0:006> .if (@$t0 != 0) { r @$t0=0; .catch { r @$t4 = 1; r @$t0=1 } }
+0:006> .if (@$t0 != 0) { r @$t0=0; .catch { ba0 w4 (@$t1+0x23b40) "$$< C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\vector-observation-43354e6e264d4cbb863f3fb635e477d4\\vector.hit0.cmd"; r @$t0=1 } }
+0:006> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not(@$bp0 == (@$t1+0x23b40))) { .printf "MGS_ABORT breakpoint_0_not_installed\n"; .leave }; r @$t0=1 } }
+0:006> .if (@$t0 != 0) { r @$t0=0; .catch { r @$t5 = 1; r @$t0=1 } }
+0:006> .if (@$t0 != 0) { r @$t0=0; .catch { ba1 w4 (@$t1+0x23b44) "$$< C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\vector-observation-43354e6e264d4cbb863f3fb635e477d4\\vector.hit1.cmd"; r @$t0=1 } }
+0:006> .if (@$t0 != 0) { r @$t0=0; .catch { .if (not(@$bp1 == (@$t1+0x23b44))) { .printf "MGS_ABORT breakpoint_1_not_installed\n"; .leave }; r @$t0=1 } }
+0:006> .if (@$t0 != 0) { r @$t0=0; .catch { .printf "MGS_VECTOR_ARMED\n"; r @$t0=1 } }
+MGS_VECTOR_ARMED
+0:006> .if (@$t0 != 0) { r @$t0=0; .catch { r @$t0 = 1; r @$t0=1 } }
+0:006> .if (@$t0 == 0) { $$< C:\Users\taylo\OneDrive\Documents\ChatGPT\mgs-coop\build\vector-observation-43354e6e264d4cbb863f3fb635e477d4\vector.failed.cmd; } .else { g }
+(8894.137cc): Break instruction exception - code 80000003 (first chance)
+ntdll!DbgBreakPoint:
+00007ff9`565dece0 cc              int     3
+.detach /h
+Detached
+NoTarget> q
+WARNING: The debugger does not have a current process or thread
+WARNING: Many commands will not work
+quit:
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\atlmfc.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\concurrency.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\cpp_rest.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\ObjectiveC.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\stl.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Data.Json.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Devices.Geolocation.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Devices.Sensors.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Media.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\windows.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\winrt.natvis'
