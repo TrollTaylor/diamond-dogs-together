@@ -11,6 +11,8 @@
 #include "mgscoop/player_ghost_patch.hpp"
 #include "mgscoop/player_team_patch.hpp"
 #include "player_ghost_contract.hpp"
+#include "player_index_contract.hpp"
+#include "targeting_contract.hpp"
 
 namespace {
 unsigned checks=0;
@@ -18,7 +20,7 @@ void Check(bool ok,const char* message) {
     ++checks;
     if(!ok) { std::fprintf(stderr,"FAIL: %s\n",message); std::exit(1); }
 }
-void Log(const char*) noexcept {}
+void Log(const char* s) noexcept { std::fputs(s, stderr); }
 std::array<std::uintptr_t,16> quark{};
 std::array<std::uintptr_t,9> service_table{};
 std::array<std::uintptr_t,6> session_table{};
@@ -40,6 +42,10 @@ int main() {
     std::memcpy(body,expected_body,sizeof(expected_body));
     std::memcpy(image+defense_rva,defense_body,sizeof(defense_body));
     std::memcpy(image+offense_rva,offense_body,sizeof(offense_body));
+    std::memcpy(image+mgscoop::player_index::defense_rva,mgscoop::player_index::defense_body,sizeof(mgscoop::player_index::defense_body));
+    for(const auto& b:mgscoop::targeting_contract::bodies) {
+        std::memcpy(image+b.rva,b.bytes,b.size);
+    }
     // Current gate calls the Quark accessor at B+BFF050 twice.
     // Its stand-in tail-jumps to our typed service provider.
     unsigned char jump[]={0x48,0xb8,0,0,0,0,0,0,0,0,0xff,0xe0};
@@ -119,3 +125,4 @@ int main() {
     // Production hooks and their fixture code remain mapped until process exit.
     std::printf("%u checks passed; 324 actual native ghost cases plus paired team hook lifecycle; no remote player simulated\n",checks);
 }
+
