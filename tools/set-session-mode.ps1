@@ -1,5 +1,5 @@
 param(
-    [Parameter(Mandatory)][ValidateSet('Host','Join')][string]$Role,
+    [Parameter(Mandatory)][ValidateSet('Host','Join','Diagnostic')][string]$Role,
     [string]$HostSteamId,
     [string]$GameDirectory='D:/Games/steamapps/common/MGS_TPP'
 )
@@ -24,6 +24,9 @@ if($Role -eq 'Join') {
     [IO.File]::WriteAllText((Join-Path $modRoot 'client-host.txt'),$HostSteamId+"`n",[Text.Encoding]::ASCII)
     [IO.File]::WriteAllText($marker,"client-v1`n",[Text.Encoding]::ASCII)
     Write-Output 'Join mode selected. Load Mother Base, wait for the host to confirm readiness, then press Ctrl+F8 in MGSV. One attempt per restart; connection is unverified.'
+} elseif($Role -eq 'Diagnostic') {
+    [IO.File]::WriteAllText($marker,"client-check-v1`n",[Text.Encoding]::ASCII)
+    Write-Output 'Diagnostic mode selected. Fox Engine local dual-actor memory and packages enabled without network calls.'
 } else {
     [IO.File]::WriteAllText($marker,"host-v3`n",[Text.Encoding]::ASCII)
     Write-Output 'Host mode selected. Load Mother Base before the guest presses Ctrl+F8 to join.'
