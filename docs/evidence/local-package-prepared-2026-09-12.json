@@ -1,0 +1,89 @@
+{
+  "recorded_utc": "2026-09-12T16:03:13.974000+00:00",
+  "scope": "Local package assembly and read-only ZIP/source inventory; no installer, restore, role configuration, game or tests executed.",
+  "package": {
+    "path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\dist\\mgs-coop-0.10.28-20260912T160152Z-9bfdcfb1.zip",
+    "version": "0.10.28",
+    "bytes": 4287733,
+    "sha256": "1B4DFEF2DE7E783F00846799CC414BB8689AD04B076ADC8B8472D7A5BED90C67",
+    "payload": [
+      {
+        "target": "mgs-coop/mgs-coop-player-runtime.dat",
+        "bytes": 3720192,
+        "sha256": "26CE7C2168D655C35BE39E4F17A295206AA0522DE8782CD57A36C4FEEA382F54",
+        "matches_manifest": true
+      },
+      {
+        "target": "mgs-coop/DYNAMITE-LICENSE",
+        "bytes": 35907,
+        "sha256": "8B3355B4C0C73FDAF6ACFB641946DC8FFC9FC5972D0D34AF03E8D19C2431F5CC",
+        "matches_manifest": true
+      },
+      {
+        "target": "mgs-coop/MinHook-LICENSE.txt",
+        "bytes": 4446,
+        "sha256": "4F21F857550D7BE854DA6EA5F2DA4E6775CA4E3FBB535E4F3D961C47D0BF3335",
+        "matches_manifest": true
+      },
+      {
+        "target": "mgs-coop/tpp-mod-LICENSE",
+        "bytes": 35823,
+        "sha256": "230184F60BAE2FEAF244F10A8BAC053C8FF33A183BCC365B4D8B876D2B7F4809",
+        "matches_manifest": true
+      },
+      {
+        "target": "mgs-coop/THIRD_PARTY_NOTICES.md",
+        "bytes": 18409,
+        "sha256": "EAE224E71525FE3CB3D2CB6C836457CE0AEFE9AFBDA3FC660D9FCAE2370E9207",
+        "matches_manifest": true
+      },
+      {
+        "target": "dinput8.dll",
+        "bytes": 362496,
+        "sha256": "052506C70536E2DDB42E97E25C339FBA4CCEB1948E7FA7471C6C516E7A22EBEE",
+        "matches_manifest": true
+      }
+    ],
+    "source_file_count": 324,
+    "source_hash_mismatches": [],
+    "required_files_present": {
+      "source/third_party/minhook/src/hook.c": true,
+      "source/native/game_script_observer.cpp": true,
+      "source/lua/coop/session_lifecycle.lua": true,
+      "payload/DYNAMITE-LICENSE": true,
+      "payload/tpp-mod-LICENSE": true,
+      "payload/MinHook-LICENSE.txt": true,
+      "install.ps1": true,
+      "configure-role.ps1": true,
+      "set-session-mode.ps1": true
+    }
+  },
+  "validation": {
+    "powershell_source": "Parser.ParseFile reported no syntax errors for the installer, configurator, package producer and shared role script. Scripts were not installed or functionally tested.",
+    "build": "tools/build.ps1 -Configuration Release -BuildOnly completed; native inputs were unchanged and Ninja reported no work.",
+    "limitations": [
+      "Packaging does not demonstrate installer rollback behavior or independent remote gameplay.",
+      "The newly prepared native thread handoff still needs a Mother Base host check.",
+      "Climbing and path-result mappings remain unresolved; no new candidate hook was added."
+    ]
+  },
+  "inspected_executable": {
+    "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgsvtpp.exe",
+    "version": "1.0.15.4",
+    "architecture": "AMD64",
+    "sha256": "085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45"
+  },
+  "installed_files_after_packaging": {
+    "dinput8.dll": "6B48415471028AF6CE9B3D20BE8F75A1FC7AA2494DD1BB9AB0E37173157FEDDC",
+    "steam_api64.dll": "08BD0152356E5619EE56A6714AC951B6800DBB21821693A4EFAF85278442C60A",
+    "mgs-coop/mgs-coop-player-runtime.dat": "26CE7C2168D655C35BE39E4F17A295206AA0522DE8782CD57A36C4FEEA382F54",
+    "mgs-coop/probe-install.json": "60F9EB879D59484C7BE8EEFB59B263050C960EA472A2DE65BDCE7D139C864E0F",
+    "mgs-coop/script-observe.enabled": "AE1469B9694BE11D8B6D252C081B50EEE3D72D28F40850B3F950F7F0C0996BA1"
+  },
+  "game_installation_modified": false,
+  "upstream_review": {
+    "revision": "c90f252f8200765f66c005d6bf4357fda0c0d98e",
+    "license_sha256": "8B3355B4C0C73FDAF6ACFB641946DC8FFC9FC5972D0D34AF03E8D19C2431F5CC",
+    "findings": "The custom schema has marker, variable, emblem and Boss Quiet messages but no generic player-transform/input message. The player SynchronizerImpl initialization hook forwards the game initializer. Existing Steam request/send paths forward native calls; extra transport hooks carry custom payloads. Retain native player networking pending real peer evidence."
+  }
+}

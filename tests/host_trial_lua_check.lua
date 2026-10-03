@@ -8,7 +8,7 @@ local function run(path,code,result,ready,loadFails)
     local function record(name) return function() events[#events+1]=name end end
     local env={
         Tpp={MgsCoop={playerPackageSelected=ready,archiveDirectReadSucceeded=ready},SetGameStatus=record("disable")},
-        TppScriptVars={},ScriptBlock={},
+        TppScriptVars={},ScriptBlock={},Fox={StrCode32=function(s) return s end},
         Mission={Start=function() events[#events+1]="start"; error(stop) end},
         TppWeather={OnEndMissionPrepareFunction=record("weather")},
         TppClock={Stop=record("clock")},
@@ -17,9 +17,13 @@ local function run(path,code,result,ready,loadFails)
         TppPause={RegisterPause=record("pause")},
         TppMission={DisableInGameFlag=record("disable-flag"),IsFOBMission=function() return code==50050 end,
                     SetFOBMissionFlag=record("fob")},
-        TppGameStatus={Set=record("online"),Reset=record("offline")},vars={missionCode=code},
+        TppGameStatus={Set=record("online"),Reset=record("offline"),IsSet=function() return false end},vars={missionCode=code},
     }
     env.loadstring=function(source)
+        local operational={ALLOCATION_ENTER=true,ALLOCATION_RETURNED=true,RESULTS_NEW_MISSION=true,
+            MARKER_LOADING_BEGIN=true,MARKER_LOADING_END=true}
+        local receipt=source:match("^return 'MGS_COOP_(.+)_V1'$")
+        if operational[receipt] then return function() return true end end
         if source:find("return 'MGS_COOP_PHASE_V1' -- ",1,true)==1 then
             check(source=="return 'MGS_COOP_PHASE_V1' -- OnAllocate:enter:"..tostring(code))
             phases=phases+1

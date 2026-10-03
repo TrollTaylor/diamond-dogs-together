@@ -6,8 +6,8 @@ do
     local messages = {
         host_ready = "Co-op: host is accepting connections. The guest can press Ctrl+F8.",
         host_not_accepting = "Co-op: host session exists, but is not accepting connections.",
-        host_peer_present = "Co-op: a guest is present in the session. Realizing player 2...",
-        client_established = "Co-op: host connection established. Realizing player 2...",
+        host_peer_present = "Co-op: a guest is present in the session.",
+        client_established = "Co-op: host connection established.",
         session_error = "Co-op: the game reported a session error. Restart before another attempt.",
         unavailable = "Co-op: session status is currently unavailable.",
     }
@@ -16,16 +16,10 @@ do
             pcall(TppUiCommand.AnnounceLogView, text)
         end
     end
-    local function realizePlayer2()
-        if type(GameObject) == "table" and type(GameObject.SendCommand) == "function" then
-            local p2 = { type = "TppPlayer2", index = 1 }
-            pcall(GameObject.SendCommand, p2, { id = "Realize" })
-            if type(vars) == "table" and vars.playerPos then
-                local spawnPos = { vars.playerPos[1] + 2.0, vars.playerPos[2], vars.playerPos[3] }
-                pcall(GameObject.SendCommand, p2, { id = "Warp", pos = spawnPos, rotY = vars.playerRotY or 0 })
-            end
-        end
-    end
+    -- The loading/session adaptations own player creation. A roster change
+    -- cannot establish that a player object is ready for commands. In particular,
+    -- index 1 is the guest's local player, so an unconditional Warp here moves
+    -- that player's own actor. Realize has not been verified for TppPlayer2.
     local function poll()
         if not active or vars.missionCode ~= 30050 or type(Tpp.MgsCoop) ~= "table" then return end
         local state = Tpp.MgsCoop
@@ -41,9 +35,6 @@ do
         if previous ~= status then
             previous = status
             if messages[status] then announce(messages[status]) end
-            if status == "host_peer_present" or status == "client_established" then
-                pcall(realizePlayer2)
-            end
         end
         if status == "client_connecting" then
             pendingPolls = pendingPolls + 1

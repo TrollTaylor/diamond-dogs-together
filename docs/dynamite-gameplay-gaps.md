@@ -1,6 +1,6 @@
 # Remaining native gameplay adaptations
 
-Source audit, 2026-09-10, against pinned Dynamite `c90f252f8200765f66c005d6bf4357fda0c0d98e`. Workspace 0.10.27 is compiled only. This list concerns the immediate two-player scene/combat target; campaign progression and four players remain deferred.
+Source audit, updated 2026-09-12, against pinned Dynamite `c90f252f8200765f66c005d6bf4357fda0c0d98e`. Workspace/installed 0.10.30 has passed native fixtures; September 12 live testing verified host creation/admission and local input, but no guest control or shared combat. See [test results](testing-2026-09-12.md). This list concerns the immediate two-player scene/combat target; campaign progression and four players remain deferred.
 
 The review of `hook/src/dynamitePatches.cpp` identified that the 0.10.10 Lua respawn request lacked a companion native branch bypass. Version 0.10.11 now includes that mapped adaptation. The command merely sets request bit 8; a returned Lua call alone was insufficient evidence of respawn. [Respawn implementation](respawn.md).
 
@@ -33,3 +33,7 @@ Version 0.10.25 adds owned-session feedback instead of DYNAMITE's hook-driven on
 Version 0.10.26 adds the existing-marker FOB enemy icon to buddy icon conversion, scoped to the owned session. Marker creation, duration extension and supplementary synchronization are not implemented. The later upstream hook audit also found climbing-state and path-result fallbacks whose current-build mappings remain unresolved; they were not added from candidate addresses. [Teammate marker implementation](teammate-markers.md).
 
 Version 0.10.27 fixes teardown being triggered only by the diagnostic trace: an independent lifecycle receipt now runs before other termination wrappers, and tracing errors no longer prevent original callbacks. Native cleanup and close still require gameplay verification. [Termination boundary](termination-boundary.md).
+
+Version 0.10.28 addresses the worker-thread host-preparation refusal seen in the user's September 11 log. Its [explicit handoff](mission-thread-handoff.md) still needs runtime verification. A further source review confirmed that DYNAMITE's custom message schema carries no general player transform/input messages and its player synchronizer initialization hook forwards the game initializer. The standalone transform codec should not be treated as a replacement for this native path. The climbing-state and path-result hooks remain unmapped; no candidate-only calls or patches were added during this review. The corrected [local package](local-package.md) prepares a concrete next installation, but no installer or game was executed.
+
+Version 0.10.29 extends that handoff to all native rule controllers and retains the outgoing mission for cleanup when the live mission ID already names the destination. This prevents the prepared code from rejecting damage/soldier restoration solely because allocation used a worker, or skipping owned close solely because the destination is outside Mother Base. Neither runtime restoration nor session close completion is verified. [Outgoing-scene fix](outgoing-scene-cleanup.md).

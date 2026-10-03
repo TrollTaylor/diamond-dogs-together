@@ -39,6 +39,15 @@ bool Read(void* base,std::size_t span,std::uintptr_t rva,unsigned char* out,std:
     return ReadProcessMemory(GetCurrentProcess(),static_cast<unsigned char*>(base)+rva,out,size,&read) && read==size;
 }
 }
+bool AdoptMissionThread(std::uint32_t previous_thread) noexcept {
+    const DWORD incoming=GetLastError();AcquireSRWLockExclusive(&lock);
+    struct Finally {DWORD error;~Finally(){ReleaseSRWLockExclusive(&lock);SetLastError(error);}} finally{incoming};
+    if(!owner) return true;
+    const auto current=GetCurrentThreadId();
+    if(!previous_thread || (owner_thread!=previous_thread && owner_thread!=current)) return false;
+    owner_thread=current;
+    return true;
+}
 bool SetActive(void* base,std::size_t span,bool enabled,void (*log)(const char*) noexcept) noexcept {
     if(!base || !log) return false;
     const DWORD incoming=GetLastError();

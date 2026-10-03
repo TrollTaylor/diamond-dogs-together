@@ -19,6 +19,9 @@
 #include "mgscoop/result_patch.hpp"
 #include "mgscoop/full_close_patch.hpp"
 #include "mgscoop/marker_loading_patch.hpp"
+#include "mgscoop/soldier_patch.hpp"
+#include "mgscoop/mission_termination.hpp"
+#include "mgscoop/mission_initialization.hpp"
 
 namespace {
 HANDLE script_log = INVALID_HANDLE_VALUE;
@@ -32,13 +35,24 @@ bool host_create_enabled = false;
 bool host_admission_enabled = false;
 bool client_enabled = false;
 bool client_check_enabled = false;
-bool client_join_armed = false; // source-owner thread only
+bool client_join_armed = false; // serialized mission receipts only
 bool client_key_released = false;
 bool client_join_consumed = false; // process lifetime: no automatic retries
-bool mission_terminating = false; // source-owner thread only
+bool mission_terminating = false;
 bool gameplay_restore_pending = false; // retained across mission boundaries
 std::uint64_t client_host = 0;
-std::atomic<DWORD> host_source_thread{0};
+// A source compilation thread is not an execution owner. OnAllocate can run
+// on a worker, then OnInitialize/updates run on the main thread. Serialize only
+// native selectors: never hold this lock across original Lua calls or yields.
+SRWLOCK receipt_lock = SRWLOCK_INIT;
+bool host_source_selected = false;
+enum class MissionPhase { idle, allocating, allocated, running };
+MissionPhase mission_phase = MissionPhase::idle;
+DWORD allocation_thread = 0, mission_thread = 0;
+DWORD cleanup_thread = 0;
+mgscoop::MissionTermination termination_scope;
+mgscoop::MissionInitialization initialization_scope;
+unsigned short allocation_mission = 0;
 void* game_base = nullptr;
 std::size_t game_span = 0;
 constexpr std::size_t load_rva = 0x1a178e0;
@@ -72,6 +86,102 @@ bool RestoreGameplayRules() noexcept {
     return !gameplay_restore_pending;
 }
 
+bool OnAllocationThread() noexcept {
+    return mission_phase==MissionPhase::allocating && allocation_thread==GetCurrentThreadId();
+}
+bool OnRuntimeThread() noexcept {
+    return mission_phase==MissionPhase::running && !termination_scope.Active() && mission_thread==GetCurrentThreadId();
+}
+bool OnTerminationThread() noexcept { return termination_scope.OnThread(GetCurrentThreadId()); }
+bool OnMissionThread() noexcept { return OnAllocationThread() || OnRuntimeThread() || OnTerminationThread(); }
+bool TransferRuleThread(DWORD previous_thread) noexcept {
+    // Both directions are needed: allocation -> runtime for gameplay/cleanup,
+    // then runtime -> a later allocation worker for retained cleanup. These
+    // calls change only adapter metadata after the prior callback returned.
+    const bool targeting=mgscoop::enemy_targeting::AdoptMissionThread(previous_thread);
+    const bool damage=mgscoop::damage::AdoptMissionThread(previous_thread);
+    const bool soldier=mgscoop::soldier_patch::AdoptMissionThread(previous_thread);
+    const bool respawn=mgscoop::respawn_patch::AdoptMissionThread(previous_thread);
+    const bool close=mgscoop::full_close_patch::AdoptMissionThread(previous_thread);
+    char line[256]{};
+    StringCchPrintfA(line,sizeof(line),"rule_thread_handoff=attempted; from=%lu to=%lu targeting=%u damage=%u soldier=%u respawn=%u close=%u\r\n",
+        previous_thread,GetCurrentThreadId(),unsigned(targeting),unsigned(damage),unsigned(soldier),unsigned(respawn),unsigned(close));
+    Log(line);
+    return targeting && damage && soldier && respawn && close;
+}
+bool ReadMission(unsigned short& mission) noexcept {
+    constexpr std::size_t rva=0x2c01372;
+    SIZE_T read=0;
+    return game_base && rva<=game_span && sizeof(mission)<=game_span-rva &&
+        ReadProcessMemory(GetCurrentProcess(),static_cast<unsigned char*>(game_base)+rva,
+            &mission,sizeof(mission),&read) && read==sizeof(mission);
+}
+bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
+                           mgscoop::script_bridge::Replacement& replacement) noexcept {
+    if(!host_source_selected || !buffer || !name || size>=96 ||
+       std::strlen(name)!=size || std::memcmp(name,buffer,size)!=0) return false;
+    constexpr char begin[]="return 'MGS_COOP_ALLOCATION_ENTER_V1'";
+    constexpr char end[]="return 'MGS_COOP_ALLOCATION_RETURNED_V1'";
+    constexpr char initialize[]="return 'MGS_COOP_INITIALIZATION_ENTER_V1'";
+    constexpr char initialized[]="return 'MGS_COOP_INITIALIZATION_RETURNED_V1'";
+    constexpr char start[]="return 'MGS_COOP_RUNTIME_ENTER_V1'";
+    constexpr char terminate[]="return 'MGS_COOP_TERMINATION_RETURNED_V1'";
+    const auto equals=[&](const auto& value) {return size==sizeof(value)-1 && std::memcmp(buffer,value,size)==0;};
+    bool accepted=false;
+    const char* boundary=nullptr;
+    if(equals(begin)) {
+        boundary="allocation_enter";
+        unsigned short mission=0;
+        if(mission_phase==MissionPhase::idle && !termination_scope.Active() && !HasDynamiteSessionOwnership() && ReadMission(mission) &&
+           TransferRuleThread(cleanup_thread ? cleanup_thread : mission_thread)) {
+            allocation_thread=GetCurrentThreadId(); allocation_mission=mission;
+            cleanup_thread=0;
+            initialization_scope.Reset();
+            mission_phase=MissionPhase::allocating; accepted=true;
+        }
+    } else if(equals(end)) {
+        boundary="allocation_returned";
+        if(OnAllocationThread()) { mission_phase=MissionPhase::allocated; accepted=true; }
+    } else if(equals(initialize)) {
+        boundary="initialization_enter";
+        unsigned short mission=0;
+        accepted=mission_phase==MissionPhase::allocated && ReadMission(mission) && mission==allocation_mission &&
+            initialization_scope.Enter(GetCurrentThreadId());
+    } else if(equals(initialized)) {
+        boundary="initialization_returned";
+        accepted=mission_phase==MissionPhase::allocated && initialization_scope.Returned(GetCurrentThreadId());
+    } else if(equals(start)) {
+        boundary="runtime_enter";
+        unsigned short mission=0;
+        // OnInitialize is a loading job, not proof of the gameplay thread.
+        // Both loading callbacks must return before this natural game-start
+        // entry transfers rule/session metadata from the allocation worker.
+        if(mission_phase==MissionPhase::allocated && initialization_scope.Complete() &&
+           ReadMission(mission) && mission==allocation_mission) {
+            accepted=TransferRuleThread(allocation_thread) &&
+                AdoptDynamiteSessionThread(game_base,allocation_thread,Log);
+            if(accepted) { mission_thread=GetCurrentThreadId(); mission_phase=MissionPhase::running; }
+            else RestoreGameplayRules();
+        }
+    } else if(equals(terminate)) {
+        boundary="termination_returned";
+        if(OnTerminationThread()) {
+            ReconcileDynamiteSessionRelease(game_base,game_span,Log);
+            cleanup_thread=GetCurrentThreadId();
+            accepted=termination_scope.Returned(cleanup_thread);
+            mission_phase=MissionPhase::idle; allocation_thread=0;
+        }
+    } else return false;
+    static constexpr char yes[]="return true",no[]="return false";
+    replacement=accepted ? mgscoop::script_bridge::Replacement{yes,sizeof(yes)-1}
+        : mgscoop::script_bridge::Replacement{no,sizeof(no)-1};
+    char line[288]{};
+    StringCchPrintfA(line,sizeof(line),"mission_boundary=%s; accepted=%u thread=%lu allocation_thread=%lu runtime_thread=%lu mission=%u phase=%u\r\n",
+        boundary,unsigned(accepted),GetCurrentThreadId(),allocation_thread,mission_thread,unsigned(allocation_mission),unsigned(mission_phase));
+    Log(line);
+    return true;
+}
+
 // Bounded diagnostic copy only. A bad name cannot prevent original forwarding.
 void CopyName(const char* source, char (&output)[241]) noexcept {
     if (!source) { lstrcpyA(output, "<null>"); return; }
@@ -85,6 +195,8 @@ void CopyName(const char* source, char (&output)[241]) noexcept {
 }
 bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
                   mgscoop::script_bridge::Replacement& replacement) noexcept {
+    AcquireSRWLockExclusive(&receipt_lock);
+    struct Unlock { ~Unlock(){ ReleaseSRWLockExclusive(&receipt_lock); } } unlock;
     const auto count = InterlockedIncrement64(&entries);
     bool selected = bootstrap_enabled && mgscoop::SelectBootstrapPatch(buffer, size, name, replacement, archive_mounted);
     if(!selected)
@@ -97,10 +209,11 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
         selected = mgscoop::SelectMissionTracePatch(buffer,size,name,replacement,true);
     if (!selected && host_enabled && archive_mounted) {
         selected = mgscoop::SelectHostTrialPatch(buffer,size,name,replacement,true);
-        if(selected) host_source_thread.store(GetCurrentThreadId(),std::memory_order_release);
+        if(selected) host_source_selected=true;
     }
+    if(!selected && host_enabled) selected=SelectMissionBoundary(buffer,size,name,replacement);
     if(host_enabled && buffer && name && size<96 &&
-       host_source_thread.load(std::memory_order_acquire)==GetCurrentThreadId() &&
+       OnMissionThread() &&
        std::strlen(name)==size && std::memcmp(name,buffer,size)==0) {
         constexpr char snapshot[]="return 'MGS_COOP_TARGET_SNAPSHOT_V1'";
         constexpr char commit0[]="return 'MGS_COOP_TARGET_COMMIT_0_V1'";
@@ -151,7 +264,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
         }
     }
     constexpr char host_receipt[]="return 'MGS_COOP_HOST_CREATE_V1'";
-    if(host_enabled && host_source_thread.load(std::memory_order_acquire)==GetCurrentThreadId() && buffer && name && size==sizeof(host_receipt)-1 &&
+    if(host_enabled && OnAllocationThread() && buffer && name && size==sizeof(host_receipt)-1 &&
        std::memcmp(buffer,host_receipt,sizeof(host_receipt)-1)==0 && std::strcmp(name,host_receipt)==0) {
         mission_terminating=false;
         const bool needs_player_patch=host_create_enabled || client_enabled;
@@ -167,11 +280,10 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
                             : mgscoop::script_bridge::Replacement{failure,sizeof(failure)-1};
         selected=true;
     }
-    constexpr char client_receipt[]="return 'MGS_COOP_CLIENT_JOIN_V1'";
     constexpr char session_status[]="return 'MGS_COOP_SESSION_STATUS_V1'";
     if((host_create_enabled || (client_enabled && !client_check_enabled)) && !mission_terminating &&
        mgscoop::player_team::IsActive() && buffer && name && size==sizeof(session_status)-1 &&
-       host_source_thread.load(std::memory_order_acquire)==GetCurrentThreadId() &&
+       OnRuntimeThread() &&
        std::memcmp(buffer,session_status,size)==0 && std::strcmp(name,session_status)==0) {
         const char* status=ReadDynamiteSessionStatus(game_base);
         replacement={status,std::strlen(status)};selected=true;
@@ -179,7 +291,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     constexpr char marker_begin[]="return 'MGS_COOP_MARKER_LOADING_BEGIN_V1'";
     constexpr char marker_end[]="return 'MGS_COOP_MARKER_LOADING_END_V1'";
     if((host_create_enabled || client_enabled) && buffer && name && size<96 &&
-       host_source_thread.load(std::memory_order_acquire)==GetCurrentThreadId() &&
+       OnMissionThread() &&
        std::strlen(name)==size && std::memcmp(buffer,name,size)==0) {
         bool recognized=false, allowed=false;
         if(size==sizeof(marker_begin)-1 && std::memcmp(buffer,marker_begin,size)==0) {
@@ -188,7 +300,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
             const bool mission_ready=ReadProcessMemory(GetCurrentProcess(),static_cast<unsigned char*>(game_base)+0x2c01372,
                 &mission,sizeof(mission),&read) && read==sizeof(mission) && mission==30050;
             const bool cleanup_ready=!gameplay_restore_pending || RestoreGameplayRules();
-            allowed=archive_mounted && allocation_enabled && mission_ready && cleanup_ready &&
+            allowed=OnAllocationThread() && archive_mounted && allocation_enabled && mission_ready && cleanup_ready &&
                 mgscoop::marker_loading::Begin(game_base,game_span,Log);
             Log(allowed ? "marker_loading=active; lifecycle=before_OnAllocate\r\n"
                         : "marker_loading=refused; coop_preparation_disabled=1\r\n");
@@ -204,20 +316,29 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     }
     constexpr char terminate_boundary[]="return 'MGS_COOP_MISSION_TERMINATING_V1'";
     if(host_enabled && buffer && name && size==sizeof(terminate_boundary)-1 &&
-       host_source_thread.load(std::memory_order_acquire)==GetCurrentThreadId() &&
        std::memcmp(buffer,terminate_boundary,size)==0 && std::strcmp(name,terminate_boundary)==0) {
         // Operational lifecycle signal: independent of the bounded diagnostic
         // trace, Lua co-op flags and whether a peer has joined yet.
-        mission_terminating=true;
-        const bool restored=RestoreGameplayRules();
-        static constexpr char acknowledged[]="return true";
-        replacement={acknowledged,sizeof(acknowledged)-1};selected=true;
-        Log(restored ? "mission_termination=entered; native_rules_restored=1 diagnostic_trace_required=0\r\n"
-                     : "mission_termination=entered; native_rules_restored=0 cleanup_retry_pending=1 diagnostic_trace_required=0\r\n");
+        const bool accepted=termination_scope.Enter(mission_phase==MissionPhase::running,mission_thread,
+            GetCurrentThreadId(),HasDynamiteSessionOwnership(),TransferRuleThread);
+        bool restored=false;
+        if(accepted) {
+            mission_terminating=true;
+            restored=RestoreGameplayRules();
+        }
+        static constexpr char acknowledged[]="return true", refused[]="return false";
+        replacement=accepted ? mgscoop::script_bridge::Replacement{acknowledged,sizeof(acknowledged)-1}
+            : mgscoop::script_bridge::Replacement{refused,sizeof(refused)-1};selected=true;
+        unsigned short current_mission=0;
+        const bool current_read=ReadMission(current_mission);
+        char line[320]{};
+        StringCchPrintfA(line,sizeof(line),"mission_termination=entered; accepted=%u thread=%lu runtime_thread=%lu outgoing_mission=%u current_mission=%u current_read=%u native_rules_restored=%u cleanup_retry_pending=%u diagnostic_trace_required=0\r\n",
+            unsigned(accepted),GetCurrentThreadId(),mission_thread,unsigned(allocation_mission),unsigned(current_mission),unsigned(current_read),unsigned(restored),unsigned(gameplay_restore_pending));
+        Log(line);
     }
     constexpr char result_boundary[]="return 'MGS_COOP_RESULTS_NEW_MISSION_V1'";
     if((host_create_enabled || client_enabled) && buffer && name && size==sizeof(result_boundary)-1 &&
-       host_source_thread.load(std::memory_order_acquire)==GetCurrentThreadId() &&
+       OnAllocationThread() &&
        std::memcmp(buffer,result_boundary,size)==0 && std::strcmp(name,result_boundary)==0) {
         mgscoop::result_patch::BeginNextMission();
         mission_terminating=false;
@@ -229,7 +350,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
         Log("result_submission=scope_reset; lifecycle=before_next_Mission_Start\r\n");
     }
     if((host_create_enabled || client_enabled) && buffer && name && size<96 &&
-       host_source_thread.load(std::memory_order_acquire)==GetCurrentThreadId() &&
+       OnMissionThread() &&
        std::strlen(name)==size && std::memcmp(buffer,name,size)==0) {
         constexpr char lost[]="return 'MGS_COOP_SESSION_LOST_V1'";
         constexpr char restore[]="return 'MGS_COOP_RULES_RESTORE_V1'";
@@ -255,15 +376,15 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
             replacement=restored ? mgscoop::script_bridge::Replacement{yes,sizeof(yes)-1}
                                  : mgscoop::script_bridge::Replacement{no,sizeof(no)-1}; selected=true;
         } else if(equals(close,sizeof(close)-1)) {
-            const bool allowed=mission_terminating && CanCloseDynamiteSession(game_base,game_span,Log);
+            const bool allowed=mission_terminating && CanCloseDynamiteSession(game_base,game_span,allocation_mission,Log);
             replacement=allowed ? mgscoop::script_bridge::Replacement{yes,sizeof(yes)-1}
                                 : mgscoop::script_bridge::Replacement{no,sizeof(no)-1}; selected=true;
         } else if(equals(prepared,sizeof(prepared)-1)) {
-            const bool allowed=mission_terminating && CanFinishDynamiteSessionClose(game_base,game_span,Log);
+            const bool allowed=mission_terminating && CanFinishDynamiteSessionClose(game_base,game_span,allocation_mission,Log);
             replacement=allowed ? mgscoop::script_bridge::Replacement{yes,sizeof(yes)-1}
                                 : mgscoop::script_bridge::Replacement{no,sizeof(no)-1}; selected=true;
         } else if(mission_terminating && (equals(returned,sizeof(returned)-1) || equals(failed,sizeof(failed)-1))) {
-            const bool restored=ObserveDynamiteSessionClose(game_base,Log,equals(returned,sizeof(returned)-1));
+            const bool restored=ObserveDynamiteSessionClose(game_base,game_span,Log,equals(returned,sizeof(returned)-1));
             if(!restored) gameplay_restore_pending=true;
             mission_terminating=false;
             replacement=restored ? mgscoop::script_bridge::Replacement{yes,sizeof(yes)-1}
@@ -272,14 +393,14 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     }
     constexpr char damage_on[]="return 'MGS_COOP_DAMAGE_ON_V1'";
     constexpr char damage_off[]="return 'MGS_COOP_DAMAGE_OFF_V1'";
-    if((host_create_enabled || client_enabled) && host_source_thread.load(std::memory_order_acquire)==GetCurrentThreadId() &&
+    if((host_create_enabled || client_enabled) && OnMissionThread() &&
        buffer && name && size==sizeof(damage_on)-1 && std::memcmp(buffer,damage_on,size)==0 && std::strcmp(name,damage_on)==0) {
         const bool enabled=mgscoop::player_team::IsActive() && mgscoop::damage::SetActive(game_base,game_span,true,Log);
         static constexpr char yes[]="return true",no[]="return false";
         replacement=enabled ? mgscoop::script_bridge::Replacement{yes,sizeof(yes)-1} : mgscoop::script_bridge::Replacement{no,sizeof(no)-1};
         selected=true;
     }
-    if((host_create_enabled || client_enabled) && host_source_thread.load(std::memory_order_acquire)==GetCurrentThreadId() &&
+    if((host_create_enabled || client_enabled) && OnMissionThread() &&
        buffer && name && size==sizeof(damage_off)-1 && std::memcmp(buffer,damage_off,size)==0 && std::strcmp(name,damage_off)==0) {
         const bool disabled=mgscoop::damage::SetActive(game_base,game_span,false,Log);
         static constexpr char yes[]="return true",no[]="return false";
@@ -288,19 +409,19 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     }
     constexpr char client_ready[]="return 'MGS_COOP_CLIENT_READY_V1'";
     constexpr char client_poll[]="return 'MGS_COOP_CLIENT_POLL_V1'";
-    if(client_enabled && host_source_thread.load(std::memory_order_acquire)==GetCurrentThreadId() && buffer && name &&
+    if(client_enabled && OnRuntimeThread() && buffer && name &&
        size<96 && std::strlen(name)==size && std::memcmp(name,buffer,size)==0) {
         const bool context=!mission_terminating && !gameplay_restore_pending && mgscoop::player_team::IsActive();
         if(size==sizeof(client_ready)-1 && std::memcmp(buffer,client_ready,size)==0) {
-            client_join_armed=context && !client_join_consumed && !client_check_enabled;
+            client_join_armed=context && !client_join_consumed;
             client_key_released=false; // require release after scene entry/focus return
-            static constexpr char manual[]="return 'manual'", diagnostic[]="return 'diagnostic'", blocked[]="return 'blocked'";
-            replacement=context && client_check_enabled ? mgscoop::script_bridge::Replacement{diagnostic,sizeof(diagnostic)-1}
+            static constexpr char manual[]="return 'manual'", diagnostic[]="return 'diagnostic_manual'", blocked[]="return 'blocked'";
+            replacement=client_join_armed && client_check_enabled ? mgscoop::script_bridge::Replacement{diagnostic,sizeof(diagnostic)-1}
                 : client_join_armed ? mgscoop::script_bridge::Replacement{manual,sizeof(manual)-1}
                 : mgscoop::script_bridge::Replacement{blocked,sizeof(blocked)-1};
             selected=true;
         } else if(size==sizeof(client_poll)-1 && std::memcmp(buffer,client_poll,size)==0) {
-            if(!context || !client_join_armed || client_join_consumed || client_check_enabled) {
+            if(!context || !client_join_armed || client_join_consumed) {
                 static constexpr char blocked[]="return 'blocked'";
                 replacement={blocked,sizeof(blocked)-1}; selected=true;
                 client_join_armed=false;
@@ -316,11 +437,17 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
                     if(pressed) {
                         // Consume before entering any native setup, even on refusal.
                         client_join_consumed=true; client_join_armed=false;
-                        Log("client_join=input_received; key=ctrl_f8; retry=restart_required\r\n");
-                        const bool requested=TryCreateClientSession(game_base,game_span,client_host,Log,false);
+                        Log(client_check_enabled ? "client_join=input_received; key=ctrl_f8; mode=diagnostic; native_join_calls=0\r\n"
+                                                 : "client_join=input_received; key=ctrl_f8; retry=restart_required\r\n");
+                        const bool accepted=TryCreateClientSession(game_base,game_span,client_host,Log,client_check_enabled);
                         static constexpr char submitted[]="return 'submitted'", failed[]="return 'failed'";
-                        replacement=requested ? mgscoop::script_bridge::Replacement{submitted,sizeof(submitted)-1}
-                            : mgscoop::script_bridge::Replacement{failed,sizeof(failed)-1};
+                        static constexpr char checked[]="return 'diagnostic_passed'", check_failed[]="return 'diagnostic_failed'";
+                        if(client_check_enabled)
+                            replacement=accepted ? mgscoop::script_bridge::Replacement{checked,sizeof(checked)-1}
+                                : mgscoop::script_bridge::Replacement{check_failed,sizeof(check_failed)-1};
+                        else
+                            replacement=accepted ? mgscoop::script_bridge::Replacement{submitted,sizeof(submitted)-1}
+                                : mgscoop::script_bridge::Replacement{failed,sizeof(failed)-1};
                         selected=true;
                     }
                 }
@@ -329,25 +456,16 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
             }
         }
     }
-    if(client_check_enabled && !mission_terminating && !gameplay_restore_pending && mgscoop::player_team::IsActive() &&
-       host_source_thread.load(std::memory_order_acquire)==GetCurrentThreadId() && buffer && name &&
-       size==sizeof(client_receipt)-1 && std::memcmp(buffer,client_receipt,size)==0 && std::strcmp(name,client_receipt)==0) {
-        const bool requested=TryCreateClientSession(game_base,game_span,client_host,Log,client_check_enabled);
-        static constexpr char yes[]="return true", no[]="return false";
-        replacement=requested ? mgscoop::script_bridge::Replacement{yes,sizeof(yes)-1}
-                              : mgscoop::script_bridge::Replacement{no,sizeof(no)-1};
-        selected=true;
-    }
     constexpr char receipt[] = "return 'MGS_COOP_BOOTSTRAP_EXECUTED_V1'";
     constexpr char admission[]="return 'MGS_COOP_HOST_ADMISSION_V1'";
     constexpr char admission_observed[]="return 'MGS_COOP_HOST_ADMISSION_OBSERVED_V1'";
     constexpr char released[]="return 'MGS_COOP_HOST_RELEASE_V1'";
-    if(host_admission_enabled && buffer && name && size==sizeof(released)-1 &&
+    if(host_admission_enabled && (OnRuntimeThread() || OnTerminationThread()) && buffer && name && size==sizeof(released)-1 &&
        std::memcmp(buffer,released,size)==0 && std::strcmp(name,released)==0)
         ForgetDynamiteHostAdmission();
     if(host_enabled && buffer && name && size==sizeof(admission)-1 &&
        std::memcmp(buffer,admission,size)==0 && std::strcmp(name,admission)==0) {
-        const bool authorized=host_admission_enabled && CanChangeDynamiteHostAdmission(game_base,game_span,Log);
+        const bool authorized=(OnRuntimeThread() || OnTerminationThread()) && host_admission_enabled && CanChangeDynamiteHostAdmission(game_base,game_span,Log);
         static constexpr char yes[]="return true", no[]="return false";
         replacement=authorized ? mgscoop::script_bridge::Replacement{yes,sizeof(yes)-1}
                                : mgscoop::script_bridge::Replacement{no,sizeof(no)-1};
@@ -434,7 +552,7 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
         if (script_log != INVALID_HANDLE_VALUE) {
             game_base=base;
             game_span=span;
-            Log("\r\nMGS Co-op script adapter 0.10.27; executable_fingerprint=accepted; install_after_DirectInput=true; earlier_loads_may_be_missed=true\r\n");
+            Log("\r\nMGS Co-op script adapter 0.10.33; executable_fingerprint=accepted; install_after_DirectInput=true; earlier_loads_may_be_missed=true\r\n");
             if(client_check_enabled) Log("mode=client_check_v1; online_player_setup=1 native_join_calls=0 host_identity=none\r\n");
             if(client_enabled && !client_check_enabled) {
                 wchar_t host_path[32768]{};

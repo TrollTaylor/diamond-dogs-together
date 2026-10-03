@@ -1,0 +1,56 @@
+MGS Co-op script adapter 0.10.30; executable_fingerprint=accepted; install_after_DirectInput=true; earlier_loads_may_be_missed=true
+mode=client_check_v1; online_player_setup=1 native_join_calls=0 host_identity=none
+mode=bootstrap_v1; gameplay=disabled
+mode=archive_v1; actor_packages_selected=0
+mode=players_v1; mission_selection_trial=30050; live_actor_count=unverified
+mode=host_v1; one_attempt=1; peer_acceptance_requested=0
+install_result=0 installed=1 pid=59896 thread=75972 tick_ms=172848734 target_rva=0x1a178e0 lifetime=process
+rule_thread_handoff=attempted; from=0 to=75972 targeting=1 damage=1 soldier=1 respawn=1 close=1
+mission_boundary=allocation_enter; accepted=1 thread=75972 allocation_thread=75972 runtime_thread=0 mission=1 phase=1
+marker_loading=inactive; native_marker_forwarding=1
+mission_boundary=allocation_returned; accepted=1 thread=75972 allocation_thread=75972 runtime_thread=0 mission=1 phase=2
+rule_thread_handoff=attempted; from=75972 to=75972 targeting=1 damage=1 soldier=1 respawn=1 close=1
+mission_boundary=runtime_enter; accepted=1 thread=75972 allocation_thread=75972 runtime_thread=75972 mission=1 phase=3
+marker_loading=inactive; native_marker_forwarding=1
+gameplay_cleanup=attempted; team_restored=1 respawn_restored=1 damage_restored=1 close_branch_restored=1 retry_pending=0
+mission_termination=entered; outgoing_mission=1 current_mission=40050 current_read=1 native_rules_restored=1 cleanup_retry_pending=0 diagnostic_trace_required=0
+marker_loading=inactive; native_marker_forwarding=1
+mission_boundary=termination_returned; accepted=1 thread=75972 allocation_thread=0 runtime_thread=75972 mission=1 phase=0
+rule_thread_handoff=attempted; from=75972 to=76608 targeting=1 damage=1 soldier=1 respawn=1 close=1
+mission_boundary=allocation_enter; accepted=1 thread=76608 allocation_thread=76608 runtime_thread=75972 mission=40050 phase=1
+marker_loading=inactive; native_marker_forwarding=1
+mission_boundary=allocation_returned; accepted=1 thread=76608 allocation_thread=76608 runtime_thread=75972 mission=40050 phase=2
+rule_thread_handoff=attempted; from=76608 to=75972 targeting=1 damage=1 soldier=1 respawn=1 close=1
+mission_boundary=runtime_enter; accepted=1 thread=75972 allocation_thread=76608 runtime_thread=75972 mission=40050 phase=3
+marker_loading=inactive; native_marker_forwarding=1
+gameplay_cleanup=attempted; team_restored=1 respawn_restored=1 damage_restored=1 close_branch_restored=1 retry_pending=0
+mission_termination=entered; outgoing_mission=40050 current_mission=30050 current_read=1 native_rules_restored=1 cleanup_retry_pending=0 diagnostic_trace_required=0
+marker_loading=inactive; native_marker_forwarding=1
+mission_boundary=termination_returned; accepted=1 thread=75972 allocation_thread=0 runtime_thread=75972 mission=40050 phase=0
+rule_thread_handoff=attempted; from=75972 to=75972 targeting=1 damage=1 soldier=1 respawn=1 close=1
+mission_boundary=allocation_enter; accepted=1 thread=75972 allocation_thread=75972 runtime_thread=75972 mission=30050 phase=1
+marker_loading=inactive; native_marker_forwarding=1
+marker_loading=installed; hooks=3 guard=active shared_marker_sync=0
+marker_loading=active; lifecycle=before_OnAllocate
+equipment_groups=lua_calls_returned; ghost_count=1 remote_gear_loaded=unverified
+mission_boundary=allocation_returned; accepted=1 thread=75972 allocation_thread=75972 runtime_thread=75972 mission=30050 phase=2
+rule_thread_handoff=attempted; from=75972 to=75972 targeting=1 damage=1 soldier=1 respawn=1 close=1
+mission_boundary=runtime_enter; accepted=1 thread=75972 allocation_thread=75972 runtime_thread=75972 mission=30050 phase=3
+marker_loading=inactive; native_marker_forwarding=1
+dynamite_client=prerequisites_passed; borrowed_info=1 no_existing_session=1 calls=0 writes=0
+client_loading_check=passed; native_join_calls=0 allocator_hook=0
+gameplay_cleanup=attempted; team_restored=1 respawn_restored=1 damage_restored=1 close_branch_restored=1 retry_pending=0
+mission_termination=entered; outgoing_mission=30050 current_mission=40050 current_read=1 native_rules_restored=1 cleanup_retry_pending=0 diagnostic_trace_required=0
+marker_loading=inactive; native_marker_forwarding=1
+mission_boundary=termination_returned; accepted=1 thread=75972 allocation_thread=0 runtime_thread=75972 mission=30050 phase=0
+rule_thread_handoff=attempted; from=75972 to=75972 targeting=1 damage=1 soldier=1 respawn=1 close=1
+mission_boundary=allocation_enter; accepted=1 thread=75972 allocation_thread=75972 runtime_thread=75972 mission=40050 phase=1
+marker_loading=inactive; native_marker_forwarding=1
+mission_boundary=allocation_returned; accepted=1 thread=75972 allocation_thread=75972 runtime_thread=75972 mission=40050 phase=2
+rule_thread_handoff=attempted; from=75972 to=75972 targeting=1 damage=1 soldier=1 respawn=1 close=1
+mission_boundary=runtime_enter; accepted=1 thread=75972 allocation_thread=75972 runtime_thread=75972 mission=40050 phase=3
+marker_loading=inactive; native_marker_forwarding=1
+gameplay_cleanup=attempted; team_restored=1 respawn_restored=1 damage_restored=1 close_branch_restored=1 retry_pending=0
+mission_termination=entered; outgoing_mission=40050 current_mission=40050 current_read=1 native_rules_restored=1 cleanup_retry_pending=0 diagnostic_trace_required=0
+marker_loading=inactive; native_marker_forwarding=1
+mission_boundary=termination_returned; accepted=1 thread=75972 allocation_thread=0 runtime_thread=75972 mission=40050 phase=0

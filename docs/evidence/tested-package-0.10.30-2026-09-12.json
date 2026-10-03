@@ -1,0 +1,43 @@
+{
+  "utc": "2026-09-12T17:34:53.9549800Z",
+  "version": "0.10.30",
+  "package_directory": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\dist\\mgs-coop-0.10.30-20260912T173423Z-400ec4df",
+  "zip_sha256": "CE6D7576EF058C91A2A127683C848FB0D79B847B5E1C3651EB7EEE1A1BD2A195",
+  "payload": [
+    {
+      "file": "payload/mgs-coop-player-runtime.dat",
+      "sha256": "26CE7C2168D655C35BE39E4F17A295206AA0522DE8782CD57A36C4FEEA382F54",
+      "matches_manifest": true
+    },
+    {
+      "file": "payload/DYNAMITE-LICENSE",
+      "sha256": "8B3355B4C0C73FDAF6ACFB641946DC8FFC9FC5972D0D34AF03E8D19C2431F5CC",
+      "matches_manifest": true
+    },
+    {
+      "file": "payload/MinHook-LICENSE.txt",
+      "sha256": "4F21F857550D7BE854DA6EA5F2DA4E6775CA4E3FBB535E4F3D961C47D0BF3335",
+      "matches_manifest": true
+    },
+    {
+      "file": "payload/tpp-mod-LICENSE",
+      "sha256": "230184F60BAE2FEAF244F10A8BAC053C8FF33A183BCC365B4D8B876D2B7F4809",
+      "matches_manifest": true
+    },
+    {
+      "file": "payload/THIRD_PARTY_NOTICES.md",
+      "sha256": "EAE224E71525FE3CB3D2CB6C836457CE0AEFE9AFBDA3FC660D9FCAE2370E9207",
+      "matches_manifest": true
+    },
+    {
+      "file": "payload/dinput8.dll",
+      "sha256": "48B26A96656FE4E5139156CA0DB1AE6439ADA9392CE344D93F5CC4754C537538",
+      "matches_manifest": true
+    }
+  ],
+  "installed_dll_matches_package": true,
+  "game_closed": true,
+  "role": "Host",
+  "test_report": "docs/testing-2026-09-12.md",
+  "limitations": "No joined guest, independent remote actor control, shared combat or full-campaign support verified."
+}

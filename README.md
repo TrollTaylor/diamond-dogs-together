@@ -4,9 +4,11 @@ An in-development campaign co-op mod for **Metal Gear Solid V: The Phantom Pain*
 
 **Current state: development prototype; playable two-player co-op is not verified.** The immediate target is two independently controlled players in a scene with shared gameplay/combat. Full campaign scripting, progression synchronization and four-player expansion are deferred.
 
-**Installed build: 0.10.5.** It contains native host/client setup, Dynamite's second-player loading bypass and two teammate-role hooks. Earlier host creation/admission and guest setup loaded Mother Base successfully; a connected guest and independent control have not been demonstrated. The 0.10.5 live launch was interrupted by the user, so its new player rules remain unverified in-game. [Recorded guest setup](docs/evidence/client-loading-result-2026-09-09.json).
+**Installed build: 0.10.33, Host mode.** September 12 testing found and fixed an installer upgrade failure, stale session ownership after native destruction, and two assumptions about loading/termination workers. All 21 native suites pass; the composed Lua source and lifecycle fixtures also passed. Live 0.10.29/30 runs created accepting Mother Base hosts and verified ownership release on return to title. No guest joined. [Test results](docs/testing-2026-09-12.md).
 
-**New workspace build: 0.10.27, compiled only.** Fixes mission teardown depending on the 128-event diagnostic limit. A separate lifecycle signal now triggers native cleanup before the other mission wrappers; diagnostic errors cannot prevent original callbacks. Retains manual joining, session feedback and the equipment/combat/loading adaptations. Not installed or tested; independent guest control and shared gameplay remain unverified. [Teardown fix](docs/termination-boundary.md), [single-PC testing feasibility](docs/single-pc-testing.md), [remaining gameplay work](docs/dynamite-gameplay-gaps.md).
+The final live 0.10.33 Host run created an accepting Mother Base host on a loading worker, transferred it to the gameplay thread, responded to local dive input, returned to title and quit normally. Diagnostic mode also handled cleanup on a different worker. All seven save/config files, the executable and Steam DLL retained their original hashes. The game is closed in Host mode. Diagnostic mode now waits for Ctrl+F8; automated taps did not register, so the physical shortcut remains unverified. The earlier automatic prerequisite check passed on 0.10.30.
+
+The user's transform codec remains in source with explicit byte encoding and validation; it is not connected to gameplay replication. Diagnostic mode prepares loading without spawning a fake player. The local package includes current source, attribution, an owned installer/restore workflow and exact Host/Join role markers. [Startup handoff](docs/mission-thread-handoff.md), [local package](docs/local-package.md), [remaining gameplay work](docs/dynamite-gameplay-gaps.md).
 
 ## What exists
 
@@ -33,6 +35,8 @@ Requires CMake, Visual Studio C++ build tools with an x64 Windows SDK, and Power
 ```
 
 The script discovers the Visual Studio toolchain, builds with Ninja, and runs CTest. The static C++ runtime avoids requiring debug redistributables on game machines.
+
+For a local package, `tools/package.ps1 -RuntimeArchive <path>` compiles with `-BuildOnly` and bundles the exact expected runtime archive, current source and licenses. The new installer/configurator replaces the earlier package scripts: owned upgrades receive hash-checked backups and a restore command, and Host/Join selection writes to the installed mod. Fresh install, owned upgrade, refusal and restore fixtures passed; live owned installation also succeeded. [Package workflow](docs/local-package.md).
 
 ## Loader probe
 

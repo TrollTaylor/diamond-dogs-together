@@ -30,6 +30,16 @@ bool Digest(unsigned char* bytes) noexcept {
     return ok && std::memcmp(digest,body_sha256,sizeof(digest))==0;
 }
 }
+bool AdoptMissionThread(std::uint32_t previous_thread) noexcept {
+    const DWORD incoming=GetLastError();
+    AcquireSRWLockExclusive(&lock);
+    struct Finally {DWORD error;~Finally(){ReleaseSRWLockExclusive(&lock);SetLastError(error);}} finally{incoming};
+    if(!owner) return true;
+    const auto current=GetCurrentThreadId();
+    if(!previous_thread || (owner_thread!=previous_thread && owner_thread!=current)) return false;
+    owner_thread=current; // Control metadata only; pending restoration is retained.
+    return true;
+}
 bool SetActive(void* base,std::size_t span,bool enabled,void (*log)(const char*) noexcept) noexcept {
     if(!base || !log || body_rva>span || body_size>span-body_rva) return false;
     const DWORD incoming=GetLastError();

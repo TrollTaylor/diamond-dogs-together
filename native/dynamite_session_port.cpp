@@ -22,12 +22,14 @@
 #include "mgscoop/combat_role_patch.hpp"
 #include "mgscoop/full_close_patch.hpp"
 #include "mgscoop/enemy_targeting.hpp"
+#include "mgscoop/session_release.hpp"
 
 namespace {
 std::atomic<std::uintptr_t> created_host{0};
 std::atomic<DWORD> created_host_thread{0};
 std::atomic<std::uintptr_t> owned_session{0};
 std::atomic<DWORD> owned_session_thread{0};
+std::uintptr_t owned_session_root=0;
 bool owned_session_is_client=false;
 bool close_authorized=false;
 bool close_dispatch_authorized=false;
@@ -59,6 +61,57 @@ bool Match(std::uintptr_t base,std::size_t span,const SessionBodyContract& body)
 }
 }
 
+bool HasDynamiteSessionOwnership() noexcept {
+    return owned_session.load(std::memory_order_acquire)!=0;
+}
+bool ReconcileDynamiteSessionRelease(void* verified_base,std::size_t span,
+                                    void (*log)(const char*) noexcept) noexcept {
+    if(!HasDynamiteSessionOwnership()) return true;
+    if(!verified_base || !log || GetCurrentThreadId()!=owned_session_thread.load(std::memory_order_acquire)) return false;
+    if(!mgscoop::SessionSlotsReleased(reinterpret_cast<std::uintptr_t>(verified_base),span,owned_session_root,
+        [](std::uintptr_t address,std::uintptr_t& value) noexcept { return Read(address,value); })) return false;
+    // This clears adapter metadata only. A natural game close is sufficient;
+    // do not invoke a Lua getter that could allocate a replacement session.
+    owned_session.store(0,std::memory_order_release);
+    created_host.store(0,std::memory_order_release);
+    owned_session_root=0;
+    mgscoop::combat_role::BindSession(0);
+    log("session_release=observed; singleton_slots_empty=1 ownership_cleared=1 native_calls=0 reconnect_enabled=0\r\n");
+    return true;
+}
+bool AdoptDynamiteSessionThread(void* verified_base,std::uint32_t allocation_thread,
+                               void (*log)(const char*) noexcept) noexcept {
+    if(!verified_base || !allocation_thread || !log) return false;
+    const auto expected=owned_session.load(std::memory_order_acquire);
+    if(!expected) return true; // Diagnostic/client preparation has no session yet.
+    // No migration of a joining/closing client, and no borrowed session adopted
+    // merely because it happens to be in the game's singleton slots.
+    if(owned_session_is_client || close_authorized ||
+       owned_session_thread.load(std::memory_order_acquire)!=allocation_thread ||
+       created_host_thread.load(std::memory_order_acquire)!=allocation_thread ||
+       created_host.load(std::memory_order_acquire)!=expected) return false;
+    const auto base=reinterpret_cast<std::uintptr_t>(verified_base);
+    struct Context { std::uintptr_t root=0,session=0,main=0,primary=0,secondary=0; std::uint32_t state=0; };
+    const auto read=[&](Context& c) noexcept {
+        return Read(base+0x2bef840,c.root) && c.root && Read(c.root+0xcc8,c.session) && c.session==expected &&
+            Read(base+0x2b9dfb0,c.main) && c.main==expected &&
+            Read(expected,c.primary) && c.primary==base+0x2126f70 &&
+            Read(expected+0x20,c.secondary) && c.secondary==base+0x2127040 &&
+            Read(expected+0x90,c.state) && c.state==3;
+    };
+    Context before{},after{};
+    if(!read(before) || !read(after) || before.root!=after.root) {
+        log("session_thread_handoff=refused; reason=owned_host_context\r\n"); return false;
+    }
+    const auto current=GetCurrentThreadId();
+    created_host_thread.store(current,std::memory_order_release);
+    owned_session_thread.store(current,std::memory_order_release);
+    char line[192]{};
+    StringCchPrintfA(line,sizeof(line),"session_thread_handoff=accepted; allocation_thread=%lu mission_thread=%lu game_calls=0\r\n",
+        static_cast<DWORD>(allocation_thread),current);
+    log(line);
+    return true;
+}
 void ForgetDynamiteHostAdmission() noexcept {
     if(GetCurrentThreadId()==created_host_thread.load(std::memory_order_acquire))
         created_host.store(0,std::memory_order_release);
@@ -75,8 +128,10 @@ std::uintptr_t OwnedDynamiteSessionForRespawn() noexcept {
     if(GetCurrentThreadId()!=owned_session_thread.load(std::memory_order_acquire) || close_authorized) return 0;
     return owned_session.load(std::memory_order_acquire);
 }
-static bool InspectOwnedCloseContext(void* verified_base,std::size_t span,void (*log)(const char*) noexcept) noexcept {
-    if(!verified_base || !log || GetCurrentThreadId()!=owned_session_thread.load(std::memory_order_acquire)) return false;
+static bool InspectOwnedCloseContext(void* verified_base,std::size_t span,std::uint16_t outgoing_mission,
+                                     void (*log)(const char*) noexcept) noexcept {
+    if(!verified_base || !log || outgoing_mission!=30050 ||
+       GetCurrentThreadId()!=owned_session_thread.load(std::memory_order_acquire)) return false;
     const auto expected=owned_session.load(std::memory_order_acquire);
     const auto base=reinterpret_cast<std::uintptr_t>(verified_base);
     std::uintptr_t root=0,session=0,main=0,primary=0,secondary=0,slot=0,vars=0;
@@ -88,7 +143,7 @@ static bool InspectOwnedCloseContext(void* verified_base,std::size_t span,void (
        !Read(secondary+0x60,slot) || slot!=base+0x312b80 ||
        !Read(session+0x90,state) || state<2 || state>9 ||
        !Read(base+0x2c16920,vars) || vars!=base+0x2c01360 ||
-       !Read(vars+0x12,mission) || mission!=30050) {
+       !Read(vars+0x12,mission)) {
         log("session_close=refused; reason=owned_session_context\r\n"); return false;
     }
     for(const auto& body:session_close_bodies) if(!Match(base,span,body)) {
@@ -96,11 +151,13 @@ static bool InspectOwnedCloseContext(void* verified_base,std::size_t span,void (
     }
     return true;
 }
-bool CanCloseDynamiteSession(void* verified_base,std::size_t span,void (*log)(const char*) noexcept) noexcept {
+bool CanCloseDynamiteSession(void* verified_base,std::size_t span,std::uint16_t outgoing_mission,
+                            void (*log)(const char*) noexcept) noexcept {
+    if(ReconcileDynamiteSessionRelease(verified_base,span,log)) return false;
     // Authorize the sequence once, before either Lua call can invoke a lazy
     // getter. The actual CloseSession call needs a second ownership check.
     if(!verified_base || !log || GetCurrentThreadId()!=owned_session_thread.load(std::memory_order_acquire) ||
-       close_authorized || !InspectOwnedCloseContext(verified_base,span,log)) return false;
+       close_authorized || !InspectOwnedCloseContext(verified_base,span,outgoing_mission,log)) return false;
     const auto base=reinterpret_cast<std::uintptr_t>(verified_base);
     std::uintptr_t slot=0,owner=0,table=0,child=0,child_table=0,self=0;
     if(!Read(base+0x2126f70+0x78,slot) || slot!=base+0x313490 ||
@@ -118,21 +175,22 @@ bool CanCloseDynamiteSession(void* verified_base,std::size_t span,void (*log)(co
     std::uintptr_t current_owner=0,current_child=0;
     if(!Read(base+0x2befdd0,current_owner) || current_owner!=owner ||
        !Read(owner+0x58,current_child) || current_child!=child ||
-       !InspectOwnedCloseContext(verified_base,span,log)) return false;
+       !InspectOwnedCloseContext(verified_base,span,outgoing_mission,log)) return false;
     close_authorized=true;
     log("session_close=sequence_authorized; preparing_disconnect_first=1 close_requires_recheck=1\r\n");
     return true;
 }
-bool CanFinishDynamiteSessionClose(void* base,std::size_t span,void (*log)(const char*) noexcept) noexcept {
+bool CanFinishDynamiteSessionClose(void* base,std::size_t span,std::uint16_t outgoing_mission,
+                                  void (*log)(const char*) noexcept) noexcept {
     if(!base || !log || GetCurrentThreadId()!=owned_session_thread.load(std::memory_order_acquire) ||
        !close_authorized || close_dispatch_authorized || close_sequence_finished) return false;
-    if(!InspectOwnedCloseContext(base,span,log)) return false;
-    if(!mgscoop::full_close_patch::Activate(base,span,log)) return false;
+    if(!InspectOwnedCloseContext(base,span,outgoing_mission,log)) return false;
+    if(!mgscoop::full_close_patch::Activate(base,span,outgoing_mission,log)) return false;
     close_dispatch_authorized=true;
     log("preparing_disconnect=lua_returned; completion=unverified owned_close_reauthorized=1\r\n");
     return true;
 }
-bool ObserveDynamiteSessionClose(void* base,void (*log)(const char*) noexcept,bool returned) noexcept {
+bool ObserveDynamiteSessionClose(void* base,std::size_t span,void (*log)(const char*) noexcept,bool returned) noexcept {
     if(!base || !log || GetCurrentThreadId()!=owned_session_thread.load(std::memory_order_acquire) ||
        !close_authorized || close_sequence_finished || (returned && !close_dispatch_authorized)) return false;
     const bool restored=mgscoop::full_close_patch::Deactivate();
@@ -140,10 +198,9 @@ bool ObserveDynamiteSessionClose(void* base,void (*log)(const char*) noexcept,bo
     log(returned ? "session_close=lua_returned; asynchronous_cleanup=unverified reconnect_enabled=0\r\n"
                  : "session_close=sequence_failed; close_may_not_have_run=1 retry_disabled=1\r\n");
     ObserveDynamiteSession(base,log);
-    if(returned) {
-        owned_session.store(0,std::memory_order_release);
-        mgscoop::combat_role::BindSession(0);
-    }
+    // A returned request is not completed asynchronous cleanup. Retain the
+    // ownership record until the actual singleton slots have been cleared.
+    if(returned) ReconcileDynamiteSessionRelease(base,span,log);
     return restored;
 }
 
@@ -297,6 +354,7 @@ bool CreateDynamiteHostSession(void* verified_base,std::size_t span,std::uintptr
             created_host.store(session,std::memory_order_release);
             owned_session_thread.store(GetCurrentThreadId(),std::memory_order_release);
             owned_session_is_client=false;
+            owned_session_root=owner;
             owned_session.store(session,std::memory_order_release);
             mgscoop::combat_role::BindSession(session);
         }
@@ -376,6 +434,7 @@ bool CreateDynamiteClientSession(void* verified_base,std::size_t span,std::uintp
            Read(created+0x90,state) && state>=4 && state<=7) {
             owned_session_thread.store(GetCurrentThreadId(),std::memory_order_release);
             owned_session_is_client=true;
+            owned_session_root=owner;
             owned_session.store(created,std::memory_order_release);
             mgscoop::combat_role::BindSession(created);
             using StartSession=void (*)(void*);

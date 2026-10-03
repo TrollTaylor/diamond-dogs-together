@@ -188,7 +188,7 @@ bool TryCreateClientSession(void* verified_base,std::size_t span,std::uint64_t h
         const bool ready=InspectDynamiteClientSession(verified_base,span,target,log);
         log(ready ? "client_loading_check=passed; native_join_calls=0 allocator_hook=0\r\n"
                   : "client_loading_check=failed; native_join_calls=0 allocator_hook=0\r\n");
-        return false; // A loading check never reports that a join was requested.
+        return ready; // Caller reports diagnostic success separately from submission.
     }
     return CreateDynamiteClientSession(verified_base,span,target,host,log);
 }

@@ -6,7 +6,11 @@ namespace mgscoop::enemy_targeting {
 // Read-only, repeated roster observation; does not establish playable actors.
 bool HasTwoPresentMembers(std::uintptr_t owned_session) noexcept;
 bool Initialize(void* base,std::size_t span) noexcept;
-// All snapshot/commit calls must come from the installation (mission) thread.
+// Serialized adapter handoff after the previous lifecycle callback returned,
+// into allocation or runtime. Clears cached selections; detours only consume
+// the atomic SelectedIndex value.
+bool AdoptMissionThread(std::uint32_t allocation_thread) noexcept;
+// All snapshot/commit calls must come from the adopted mission thread.
 // nullptr means throttled. Other returns are Lua source, valid until next call.
 const char* Snapshot(std::uintptr_t owned_host) noexcept;
 // Same mapped roster/record reader; accepts an established owned host or client.

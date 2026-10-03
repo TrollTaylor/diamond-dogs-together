@@ -4,6 +4,9 @@
 -- message dispatch and bounded rule-restoration retries; no reconnect or
 -- repeated native session-close request.
 -- Installed last, outside the diagnostic trace and all other mission wrappers.
+-- vars.missionCode can already name the destination when OnTerminate runs.
+-- Retain the scene accepted at allocation until its termination has returned.
+local mgsCoopSceneMission = nil
 do
     local message, update, terminate = e.OnMessage, e.OnUpdate, e.OnTerminate
     local hostLost, memberLeft = false, false
@@ -16,7 +19,7 @@ do
         return call and call() == true
     end
     local function coop()
-        return vars.missionCode == 30050 and Tpp and type(Tpp.MgsCoop) == "table"
+        return mgsCoopSceneMission == 30050 and Tpp and type(Tpp.MgsCoop) == "table"
     end
     local function restoreRules()
         -- Keep native and Lua restoration independent: either may fail while
@@ -126,6 +129,73 @@ do
                 local ok, failure = pcall(restoreRules)
                 if not ok then Tpp.MgsCoop.sessionCleanupError = tostring(failure) end
             end
+            return terminated(terminate(...))
+        end
+    end
+end
+
+-- Project-authored execution handoff. Compilation does not identify the Lua
+-- execution thread: loading can run on a worker before gameplay resumes on the
+-- main thread. Keep the original callbacks outside pcall so yields, exceptions
+-- and all return values retain the game's behavior.
+do
+    local allocate, initialize, start, terminate = e.OnAllocate, e.OnInitialize, e.OnMissionGameStart, e.OnTerminate
+    local allocationAccepted = false
+    local initializationAccepted = false
+    local function receipt(source)
+        local call = loadstring(source)
+        return call and call() == true
+    end
+    local function signal(source, field)
+        local ok, accepted = pcall(receipt, source)
+        -- Optional feedback must not prevent the original callback or change
+        -- whether the native allocation return signal is sent.
+        pcall(function()
+            local state = Tpp and Tpp.MgsCoop
+            if type(state) == "table" then state[field] = ok and accepted == true end
+        end)
+        return ok and accepted == true
+    end
+    local function allocated(...)
+        if allocationAccepted then
+            signal("return 'MGS_COOP_ALLOCATION_RETURNED_V1'", "allocationReturned")
+            allocationAccepted = false
+        end
+        return ...
+    end
+    local function terminated(...)
+        if signal("return 'MGS_COOP_TERMINATION_RETURNED_V1'", "terminationReturned") then
+            mgsCoopSceneMission = nil
+        end
+        return ...
+    end
+    local function initialized(...)
+        if initializationAccepted then
+            signal("return 'MGS_COOP_INITIALIZATION_RETURNED_V1'", "initializationReturned")
+            initializationAccepted = false
+        end
+        return ...
+    end
+    if type(allocate) == "function" and type(initialize) == "function" and type(start) == "function" and type(terminate) == "function" then
+        e.OnAllocate = function(...)
+            allocationAccepted = signal("return 'MGS_COOP_ALLOCATION_ENTER_V1'", "allocationEntered")
+            if allocationAccepted then
+                local ok, mission = pcall(function() return vars and vars.missionCode end)
+                mgsCoopSceneMission = ok and type(mission) == "number" and mission or nil
+            end
+            return allocated(allocate(...))
+        end
+        e.OnInitialize = function(...)
+            initializationAccepted = signal("return 'MGS_COOP_INITIALIZATION_ENTER_V1'", "initializationEntered")
+            return initialized(initialize(...))
+        end
+        e.OnMissionGameStart = function(...)
+            signal("return 'MGS_COOP_RUNTIME_ENTER_V1'", "nativeRuntimeReady")
+            return start(...)
+        end
+        e.OnTerminate = function(...)
+            -- The existing inner wrapper restores rules and requests owned
+            -- close before this return signal releases the mission lifecycle.
             return terminated(terminate(...))
         end
     end

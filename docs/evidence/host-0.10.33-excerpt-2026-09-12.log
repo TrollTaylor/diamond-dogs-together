@@ -1,0 +1,50 @@
+MGS Co-op script adapter 0.10.33; executable_fingerprint=accepted; install_after_DirectInput=true; earlier_loads_may_be_missed=true
+rule_thread_handoff=attempted; from=0 to=54152 targeting=1 damage=1 soldier=1 respawn=1 close=1
+mission_boundary=allocation_enter; accepted=1 thread=54152 allocation_thread=54152 runtime_thread=0 mission=1 phase=1
+mission_boundary=allocation_returned; accepted=1 thread=54152 allocation_thread=54152 runtime_thread=0 mission=1 phase=2
+mission_boundary=initialization_enter; accepted=1 thread=54152 allocation_thread=54152 runtime_thread=0 mission=1 phase=2
+mission_boundary=initialization_returned; accepted=1 thread=54152 allocation_thread=54152 runtime_thread=0 mission=1 phase=2
+rule_thread_handoff=attempted; from=54152 to=54152 targeting=1 damage=1 soldier=1 respawn=1 close=1
+mission_boundary=runtime_enter; accepted=1 thread=54152 allocation_thread=54152 runtime_thread=54152 mission=1 phase=3
+gameplay_cleanup=attempted; team_restored=1 respawn_restored=1 damage_restored=1 close_branch_restored=1 retry_pending=0
+mission_termination=entered; accepted=1 thread=54152 runtime_thread=54152 outgoing_mission=1 current_mission=40050 current_read=1 native_rules_restored=1 cleanup_retry_pending=0 diagnostic_trace_required=0
+mission_boundary=termination_returned; accepted=1 thread=54152 allocation_thread=0 runtime_thread=54152 mission=1 phase=0
+rule_thread_handoff=attempted; from=54152 to=54152 targeting=1 damage=1 soldier=1 respawn=1 close=1
+mission_boundary=allocation_enter; accepted=1 thread=54152 allocation_thread=54152 runtime_thread=54152 mission=40050 phase=1
+mission_boundary=allocation_returned; accepted=1 thread=54152 allocation_thread=54152 runtime_thread=54152 mission=40050 phase=2
+mission_boundary=initialization_enter; accepted=1 thread=54152 allocation_thread=54152 runtime_thread=54152 mission=40050 phase=2
+mission_boundary=initialization_returned; accepted=1 thread=54152 allocation_thread=54152 runtime_thread=54152 mission=40050 phase=2
+rule_thread_handoff=attempted; from=54152 to=54152 targeting=1 damage=1 soldier=1 respawn=1 close=1
+mission_boundary=runtime_enter; accepted=1 thread=54152 allocation_thread=54152 runtime_thread=54152 mission=40050 phase=3
+gameplay_cleanup=attempted; team_restored=1 respawn_restored=1 damage_restored=1 close_branch_restored=1 retry_pending=0
+mission_termination=entered; accepted=1 thread=54152 runtime_thread=54152 outgoing_mission=40050 current_mission=30050 current_read=1 native_rules_restored=1 cleanup_retry_pending=0 diagnostic_trace_required=0
+mission_boundary=termination_returned; accepted=1 thread=54152 allocation_thread=0 runtime_thread=54152 mission=40050 phase=0
+rule_thread_handoff=attempted; from=54152 to=83844 targeting=1 damage=1 soldier=1 respawn=1 close=1
+mission_boundary=allocation_enter; accepted=1 thread=83844 allocation_thread=83844 runtime_thread=54152 mission=30050 phase=1
+dynamite_host=begin; native_calls=1 exact_heap_sites=2 peer_acceptance_requested=0
+dynamite_host=returned; result=1 thread=83844 tick_ms=176052250 peer_acceptance_requested=0
+mission_boundary=allocation_returned; accepted=1 thread=83844 allocation_thread=83844 runtime_thread=54152 mission=30050 phase=2
+mission_boundary=initialization_enter; accepted=1 thread=54152 allocation_thread=83844 runtime_thread=54152 mission=30050 phase=2
+mission_boundary=initialization_returned; accepted=1 thread=54152 allocation_thread=83844 runtime_thread=54152 mission=30050 phase=2
+rule_thread_handoff=attempted; from=83844 to=54152 targeting=1 damage=1 soldier=1 respawn=1 close=1
+session_thread_handoff=accepted; allocation_thread=83844 mission_thread=54152 game_calls=0
+mission_boundary=runtime_enter; accepted=1 thread=54152 allocation_thread=83844 runtime_thread=54152 mission=30050 phase=3
+host_admission=authorized; owned_host=1 same_thread=1 lua_interface=SessionEnableAccept
+host_admission=lua_call_returned; inspecting_native_flag=1
+dynamite_session=observed; owner=0000000006E72810 session=000000019C639F00 manager=0000000072250330 job=00000000722D0ED0 session_read=1 state=3 accept=1 manager_heap=1 job_heap=1 consistent=1 calls=0 writes=0 atomic=0
+dynamite_session=observed; owner=0000000006E72810 session=000000019C639F00 manager=0000000072250330 job=00000000722D0ED0 session_read=1 state=3 accept=1 manager_heap=1 job_heap=1 consistent=1 calls=0 writes=0 atomic=0
+dynamite_session=observed; owner=0000000006E72810 session=000000019C639F00 manager=0000000072250330 job=00000000722D0ED0 session_read=1 state=3 accept=1 manager_heap=1 job_heap=1 consistent=1 calls=0 writes=0 atomic=0
+dynamite_session=observed; owner=0000000006E72810 session=000000019C639F00 manager=0000000072250330 job=00000000722D0ED0 session_read=1 state=3 accept=1 manager_heap=1 job_heap=1 consistent=1 calls=0 writes=0 atomic=0
+gameplay_cleanup=attempted; team_restored=1 respawn_restored=1 damage_restored=1 close_branch_restored=1 retry_pending=0
+mission_termination=entered; accepted=1 thread=54152 runtime_thread=54152 outgoing_mission=30050 current_mission=40050 current_read=1 native_rules_restored=1 cleanup_retry_pending=0 diagnostic_trace_required=0
+dynamite_session=observed; owner=0000000006E72810 session=000000019C639F00 manager=0000000072250330 job=00000000722D0ED0 session_read=1 state=3 accept=1 manager_heap=1 job_heap=1 consistent=1 calls=0 writes=0 atomic=0
+host_admission=refused; reason=owned_host_state
+session_release=observed; singleton_slots_empty=1 ownership_cleared=1 native_calls=0 reconnect_enabled=0
+mission_boundary=termination_returned; accepted=1 thread=54152 allocation_thread=0 runtime_thread=54152 mission=30050 phase=0
+rule_thread_handoff=attempted; from=54152 to=83844 targeting=1 damage=1 soldier=1 respawn=1 close=1
+mission_boundary=allocation_enter; accepted=1 thread=83844 allocation_thread=83844 runtime_thread=54152 mission=40050 phase=1
+mission_boundary=allocation_returned; accepted=1 thread=83844 allocation_thread=83844 runtime_thread=54152 mission=40050 phase=2
+mission_boundary=initialization_enter; accepted=1 thread=54152 allocation_thread=83844 runtime_thread=54152 mission=40050 phase=2
+mission_boundary=initialization_returned; accepted=1 thread=54152 allocation_thread=83844 runtime_thread=54152 mission=40050 phase=2
+rule_thread_handoff=attempted; from=83844 to=54152 targeting=1 damage=1 soldier=1 respawn=1 close=1
+mission_boundary=runtime_enter; accepted=1 thread=54152 allocation_thread=83844 runtime_thread=54152 mission=40050 phase=3

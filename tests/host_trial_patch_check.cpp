@@ -30,7 +30,19 @@ int main(int argc, char** argv) {
         const auto insertion=source.find("Mission.Start()");
         check(output.substr(0,insertion)==source.substr(0,insertion));
         const auto resumed=output.find("Mission.Start()",insertion);
-        check(resumed!=std::string::npos && output.substr(resumed,source.size()-insertion-8)==source.substr(insertion,source.size()-insertion-8));
+        // Equipment preparation and marker guarding now add two further
+        // insertion sites. Every interval of original code must survive intact.
+        const auto equipment=source.find("TppEquip.StartLoadingToEquipMissionBlock()");
+        const auto marker=source.find("TppMarker.RestoreMarkerLocator()");
+        check(resumed!=std::string::npos && equipment>insertion && marker>equipment);
+        check(output.substr(resumed,equipment-insertion)==source.substr(insertion,equipment-insertion));
+        const auto equipment_out=output.find(source.substr(equipment,marker-equipment),resumed);
+        check(equipment_out!=std::string::npos);
+        const std::string marker_call="TppMarker.RestoreMarkerLocator()";
+        const auto marker_out=output.find(marker_call,equipment_out);
+        check(marker_out!=std::string::npos && output.substr(marker_out+marker_call.size(),5)=="\nend\n");
+        const auto tail=marker+marker_call.size();
+        check(output.substr(marker_out+marker_call.size()+5,source.size()-tail-8)==source.substr(tail,source.size()-tail-8));
         check(output.find("local receipts = 0",resumed)!=std::string::npos);
         check(output.substr(output.size()-8) == "return e");
         check(!mgscoop::SelectHostTrialPatch(changed.data(), changed.size(), name, patch, true));

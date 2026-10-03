@@ -1,0 +1,91 @@
+{
+  "recorded_utc": "2026-09-12T16:19:03.114323+00:00",
+  "scope": "Source review, native compilation and local package assembly only. No tests, Lua/source-transform execution, game installation, role change or launch.",
+  "version": "0.10.29",
+  "inspected_executable": {
+    "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgsvtpp.exe",
+    "version": "1.0.15.4",
+    "architecture": "AMD64",
+    "sha256": "085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45"
+  },
+  "installed": {
+    "dll_sha256": "6B48415471028AF6CE9B3D20BE8F75A1FC7AA2494DD1BB9AB0E37173157FEDDC",
+    "steam_dll_sha256": "08BD0152356E5619EE56A6714AC951B6800DBB21821693A4EFAF85278442C60A",
+    "runtime_archive_sha256": "26CE7C2168D655C35BE39E4F17A295206AA0522DE8782CD57A36C4FEEA382F54",
+    "manifest": {
+      "product": "mgs-coop-original-loader-probe",
+      "version": "0.10.27",
+      "game_directory": "D:\\Games\\steamapps\\common\\MGS_TPP",
+      "dll_sha256": "6B48415471028AF6CE9B3D20BE8F75A1FC7AA2494DD1BB9AB0E37173157FEDDC",
+      "executable_sha256": "085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45",
+      "installed_utc": "2026-09-11T15:39:29.4899265Z",
+      "scope": "Diagnostics and exact-source Lua experiments; host-v2 creates an experimental native host; host-v3 additionally opens admission after mission startup and closes it before termination; client-v1 requests native joining after mission startup using client-host.txt; no verified playable co-op"
+    },
+    "modified_by_this_pass": false
+  },
+  "prepared": {
+    "dll_path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\native\\dinput8.dll",
+    "dll_sha256": "D8ED06C47657C85A201799C3650DFE758EB6B1E3ACB59B6D5092CA7D63FEE53D",
+    "build_command": "tools/build.ps1 -Configuration Release -BuildOnly",
+    "build_result": "14 compilation/link steps completed; no tests executed. Subsequent package assembly rebuilt with no native input changes.",
+    "package_path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\dist\\mgs-coop-0.10.29-20260912T161740Z-96716cae.zip",
+    "package_bytes": 4292408,
+    "package_sha256": "EBA1F0261C9403669B8D344117DA4276611F550A5FC6728F78BCECE4CE20D3B1",
+    "payload": [
+      {
+        "target": "mgs-coop/mgs-coop-player-runtime.dat",
+        "sha256": "26CE7C2168D655C35BE39E4F17A295206AA0522DE8782CD57A36C4FEEA382F54",
+        "matches_manifest": true
+      },
+      {
+        "target": "mgs-coop/DYNAMITE-LICENSE",
+        "sha256": "8B3355B4C0C73FDAF6ACFB641946DC8FFC9FC5972D0D34AF03E8D19C2431F5CC",
+        "matches_manifest": true
+      },
+      {
+        "target": "mgs-coop/MinHook-LICENSE.txt",
+        "sha256": "4F21F857550D7BE854DA6EA5F2DA4E6775CA4E3FBB535E4F3D961C47D0BF3335",
+        "matches_manifest": true
+      },
+      {
+        "target": "mgs-coop/tpp-mod-LICENSE",
+        "sha256": "230184F60BAE2FEAF244F10A8BAC053C8FF33A183BCC365B4D8B876D2B7F4809",
+        "matches_manifest": true
+      },
+      {
+        "target": "mgs-coop/THIRD_PARTY_NOTICES.md",
+        "sha256": "EAE224E71525FE3CB3D2CB6C836457CE0AEFE9AFBDA3FC660D9FCAE2370E9207",
+        "matches_manifest": true
+      },
+      {
+        "target": "dinput8.dll",
+        "sha256": "D8ED06C47657C85A201799C3650DFE758EB6B1E3ACB59B6D5092CA7D63FEE53D",
+        "matches_manifest": true
+      }
+    ],
+    "source_file_count": 325,
+    "source_hash_mismatches": []
+  },
+  "evidence": {
+    "observed_log": "docs/evidence/user-launch-thread-excerpt-2026-09-12.log",
+    "observed_transitions": [
+      "Title allocation 1 followed by OnTerminate with current mission 40050, before allocation 40050.",
+      "Allocation 40050 followed by OnTerminate with current mission 30050, before allocation 30050."
+    ],
+    "source_defects": [
+      "Lua coop cleanup and native close gates used the destination-sensitive live mission ID.",
+      "Damage and soldier restoration required the allocation worker despite 0.10.28 adopting the runtime thread only for session and targeting."
+    ]
+  },
+  "changes": [
+    "Transfer damage, soldier, respawn and full-close control ownership at the serialized allocation/runtime boundaries, retaining pending restoration state.",
+    "Use the outgoing scene captured by accepted allocation for Lua cleanup and both native close authorization stages.",
+    "Retain native ownership, thread, body, singleton and dispatch checks; no new engine address or game mission-variable write."
+  ],
+  "limitations": [
+    "No active-host Mother Base-to-title exit was recorded in the supplied September 11 excerpt; the identified exit risk follows from source plus other observed transitions.",
+    "Control handoff, branch restoration, asynchronous close and installer rollback remain unverified in execution.",
+    "A joined guest, independent movement and shared combat remain unverified.",
+    "Testing permission remains pending under the prior no-tests instruction."
+  ]
+}

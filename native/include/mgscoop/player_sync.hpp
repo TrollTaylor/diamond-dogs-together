@@ -10,10 +10,13 @@
 
 namespace mgscoop::sync {
 
+// Development format only: not connected to the native game transport. This
+// version is a source constant, not an on-wire discriminator. A future transport
+// must select this schema explicitly; it cannot replace the typed pose roster.
 constexpr std::uint8_t sync_payload_version = 1;
 constexpr std::size_t transform_packet_size = 28;
 
-// Defensive coordinate limit: 1,000,000 meters.
+// Defensive coordinate limit in uncalibrated game units.
 constexpr float max_coord_component = 1000000.0f;
 
 enum class Stance : std::uint8_t {
@@ -51,7 +54,8 @@ std::optional<wire::Packet> encode_transform(std::uint64_t session,
                                             std::uint32_t epoch,
                                             const PlayerTransformPacket& transform);
 
-// Decode wire packet into validated PlayerTransformPacket.
+// Decode a structurally valid transform. Transport identity, mission ownership,
+// sequence freshness and actor mapping still require a trusted receiver.
 std::optional<PlayerTransformPacket> decode_transform(const wire::Packet& packet);
 
 } // namespace mgscoop::sync

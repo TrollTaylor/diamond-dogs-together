@@ -46,15 +46,17 @@ bool ImageAddress(std::uintptr_t address,std::size_t size,bool executable) noexc
     return !executable || protection==PAGE_EXECUTE || protection==PAGE_EXECUTE_READ ||
         protection==PAGE_EXECUTE_READWRITE || protection==PAGE_EXECUTE_WRITECOPY;
 }
-bool ContextReady(bool& service_present) noexcept {
+bool ContextReady(std::uint16_t outgoing_mission,bool& service_present) noexcept {
     const auto base=reinterpret_cast<std::uintptr_t>(owner);
     std::uintptr_t registry=0,registry_table=0,context=0,gm=0,vars=0,service=0,table=0,method=0;
-    std::uint16_t mission=0;
     // BFF050's existing registry must be present: do not invoke its allocator
     // or manufacture a context just to make the altered branch available.
-    if(!Read(base+0x2c3a8a0,registry) || !registry || !Read(registry,registry_table) || registry_table!=base+0x2308648 ||
+    // vars.missionCode may already identify the destination during OnTerminate.
+    // The caller supplies the native adapter's captured outgoing scene, after
+    // revalidating the still-owned session. Do not rewrite the game's variables.
+    if(outgoing_mission!=30050 || !Read(base+0x2c3a8a0,registry) || !registry || !Read(registry,registry_table) || registry_table!=base+0x2308648 ||
        !Read(registry+8,context) || !context || !Read(context+0x98,gm) || !gm ||
-       !Read(gm+0x10,vars) || vars!=base+0x2c01360 || !Read(vars+0x12,mission) || mission!=30050 ||
+       !Read(gm+0x10,vars) || vars!=base+0x2c01360 ||
        !Read(gm+0x190,service)) return false;
     if(service && (!Read(service,table) || !ImageAddress(table,0x20,false) ||
                    !Read(table+0x18,method) || !ImageAddress(method,1,true))) return false;
@@ -103,7 +105,16 @@ bool Restore() noexcept {
     return ok;
 }
 }
-bool Activate(void* base,std::size_t span,void (*log)(const char*) noexcept) noexcept {
+bool AdoptMissionThread(std::uint32_t previous_thread) noexcept {
+    const DWORD incoming=GetLastError();AcquireSRWLockExclusive(&lock);
+    struct Finally {DWORD error;~Finally(){ReleaseSRWLockExclusive(&lock);SetLastError(error);}} finally{incoming};
+    if(!owner) return true;
+    const auto current=GetCurrentThreadId();
+    if(!previous_thread || (owner_thread!=previous_thread && owner_thread!=current)) return false;
+    owner_thread=current;
+    return true;
+}
+bool Activate(void* base,std::size_t span,std::uint16_t outgoing_mission,void (*log)(const char*) noexcept) noexcept {
     if(!base || !log) return false;
     const DWORD incoming=GetLastError();AcquireSRWLockExclusive(&lock);
     struct Finally {DWORD error;~Finally(){ReleaseSRWLockExclusive(&lock);SetLastError(error);}} finally{incoming};
@@ -114,7 +125,7 @@ bool Activate(void* base,std::size_t span,void (*log)(const char*) noexcept) noe
     }
     if(!owner) {owner=base;image_span=span;owner_thread=GetCurrentThreadId();logger=log;}
     bool service_present=false;
-    if(!ContextReady(service_present)) {
+    if(!ContextReady(outgoing_mission,service_present)) {
         log("full_close=refused; reason=existing_native_context\r\n");return false;
     }
     if(!Apply(true)) {

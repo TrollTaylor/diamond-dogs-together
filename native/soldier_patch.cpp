@@ -68,6 +68,15 @@ bool Restore() noexcept {
     return ok;
 }
 }
+bool AdoptMissionThread(std::uint32_t previous_thread) noexcept {
+    const DWORD incoming=GetLastError();AcquireSRWLockExclusive(&lock);
+    struct Finally {DWORD error;~Finally(){ReleaseSRWLockExclusive(&lock);SetLastError(error);}} finally{incoming};
+    if(!owner) return true;
+    const auto current=GetCurrentThreadId();
+    if(!previous_thread || (owner_thread!=previous_thread && owner_thread!=current)) return false;
+    owner_thread=current; // Never clear active/pending byte ownership here.
+    return true;
+}
 bool Activate(void* base,std::size_t span,void (*log)(const char*) noexcept) noexcept {
     if(!base || !log) return false;
     const DWORD incoming=GetLastError();AcquireSRWLockExclusive(&lock);

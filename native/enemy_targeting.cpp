@@ -121,6 +121,15 @@ bool Initialize(void* base,std::size_t span) noexcept {
     // Kept for the process lifetime, like the pinned detours.
     image=reinterpret_cast<std::uintptr_t>(base); owner_thread=GetCurrentThreadId(); return true;
 }
+bool AdoptMissionThread(std::uint32_t allocation_thread) noexcept {
+    if(!image) return true; // Ordinary mission; targeting was never installed.
+    const auto current=GetCurrentThreadId();
+    if(!allocation_thread || (owner_thread!=allocation_thread && owner_thread!=current)) return false;
+    selected.store(0,std::memory_order_release);
+    pending_mask=0; pending={}; pending_time=0; next_snapshot=0;
+    owner_thread=current;
+    return true;
+}
 void Clear() noexcept {
     selected.store(0,std::memory_order_release);
     if(GetCurrentThreadId()==owner_thread) { pending_mask=0; pending={}; }
