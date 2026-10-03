@@ -1,0 +1,311 @@
+// Original MGS Co-op configuration parsers and once-only loaders.
+#include "mgscoop/lab_config.hpp"
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
+namespace mgscoop {
+namespace {
+constexpr std::size_t kMaxText = 64 * 1024;
+
+struct Slice {
+    const char* data;
+    std::size_t size;
+};
+
+bool IsBlank(char c) noexcept { return c == ' ' || c == '\t' || c == '\r'; }
+
+Slice Trim(Slice s) noexcept {
+    while (s.size && IsBlank(s.data[0])) { ++s.data; --s.size; }
+    while (s.size && IsBlank(s.data[s.size - 1])) --s.size;
+    return s;
+}
+
+bool Equals(Slice s, const char* literal) noexcept {
+    std::size_t i = 0;
+    for (; literal[i]; ++i) if (i >= s.size || s.data[i] != literal[i]) return false;
+    return i == s.size;
+}
+
+bool ParseU64(Slice s, std::uint64_t& out) noexcept {
+    if (!s.size || s.size > 20) return false;
+    std::uint64_t value = 0;
+    for (std::size_t i = 0; i < s.size; ++i) {
+        const char c = s.data[i];
+        if (c < '0' || c > '9') return false;
+        const std::uint64_t digit = static_cast<std::uint64_t>(c - '0');
+        if (value > (UINT64_MAX - digit) / 10) return false;
+        value = value * 10 + digit;
+    }
+    out = value;
+    return true;
+}
+
+bool ParseU32(Slice s, std::uint32_t max, std::uint32_t& out) noexcept {
+    std::uint64_t value = 0;
+    if (!ParseU64(s, value) || value > max) return false;
+    out = static_cast<std::uint32_t>(value);
+    return true;
+}
+
+bool ParseBool(Slice s, bool& out) noexcept {
+    if (Equals(s, "1") || Equals(s, "true") || Equals(s, "yes") || Equals(s, "on")) { out = true; return true; }
+    if (Equals(s, "0") || Equals(s, "false") || Equals(s, "no") || Equals(s, "off")) { out = false; return true; }
+    return false;
+}
+
+bool ParsePort(Slice s, std::uint16_t& out) noexcept {
+    std::uint32_t value = 0;
+    if (!ParseU32(s, 65535, value) || value < 1024) return false;
+    out = static_cast<std::uint16_t>(value);
+    return true;
+}
+
+// Individual-account SteamID64 in the public universe: 0x0110000100000000 | account.
+bool IsIndividualSteamId(std::uint64_t id) noexcept {
+    return (id >> 32) == 0x01100001u && (id & 0xffffffffu) != 0;
+}
+
+template <std::size_t N>
+bool CopyText(Slice s, char (&out)[N], bool (*allowed)(char)) noexcept {
+    if (s.size >= N) return false;
+    for (std::size_t i = 0; i < s.size; ++i) if (!allowed(s.data[i])) return false;
+    for (std::size_t i = 0; i < s.size; ++i) out[i] = s.data[i];
+    out[s.size] = 0;
+    return true;
+}
+
+bool PrintableNoControl(char c) noexcept { return static_cast<unsigned char>(c) >= 0x20 && c != 0x7f; }
+bool SuffixChar(char c) noexcept {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_';
+}
+bool UrlChar(char c) noexcept {
+    return static_cast<unsigned char>(c) > 0x20 && static_cast<unsigned char>(c) < 0x7f && c != '"' && c != '\\';
+}
+
+bool StartsWith(Slice s, const char* literal) noexcept {
+    std::size_t i = 0;
+    for (; literal[i]; ++i) if (i >= s.size || s.data[i] != literal[i]) return false;
+    return true;
+}
+bool EndsWith(Slice s, const char* literal) noexcept {
+    std::size_t n = 0;
+    while (literal[n]) ++n;
+    if (n > s.size) return false;
+    for (std::size_t i = 0; i < n; ++i) if (s.data[s.size - n + i] != literal[i]) return false;
+    return true;
+}
+
+bool ParseCharacter(Slice s, PlayerCharacter& out) noexcept {
+    struct Entry { const char* name; PlayerCharacter value; };
+    static constexpr Entry entries[] = {
+        {"default", PlayerCharacter::game_default}, {"snake", PlayerCharacter::snake},
+        {"dd_male", PlayerCharacter::dd_male}, {"dd_female", PlayerCharacter::dd_female},
+        {"avatar", PlayerCharacter::avatar}, {"ocelot", PlayerCharacter::ocelot},
+        {"quiet", PlayerCharacter::quiet}};
+    for (const auto& entry : entries) if (Equals(s, entry.name)) { out = entry.value; return true; }
+    return false;
+}
+
+// Calls visit(key, value) for each key=value line; returns false if unusable.
+template <typename Visit>
+bool ForEachPair(const char* text, std::size_t length, Visit visit) noexcept {
+    if ((!text && length) || length > kMaxText) return false;
+    std::size_t start = 0;
+    // Skip a UTF-8 byte-order mark written by some editors.
+    if (length >= 3 && static_cast<unsigned char>(text[0]) == 0xef &&
+        static_cast<unsigned char>(text[1]) == 0xbb && static_cast<unsigned char>(text[2]) == 0xbf) start = 3;
+    while (start < length) {
+        std::size_t end = start;
+        while (end < length && text[end] != '\n') ++end;
+        Slice line = Trim({text + start, end - start});
+        start = end + 1;
+        if (!line.size || line.data[0] == '#' || line.data[0] == ';') continue;
+        std::size_t equals = 0;
+        while (equals < line.size && line.data[equals] != '=') ++equals;
+        if (equals == line.size) { visit(Slice{line.data, line.size}, Slice{nullptr, 0}, false); continue; }
+        visit(Trim({line.data, equals}), Trim({line.data + equals + 1, line.size - equals - 1}), true);
+    }
+    return true;
+}
+} // namespace
+
+bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexcept {
+    LabConfig result{};
+    bool enabled = false;
+    const bool usable = ForEachPair(text, length, [&](Slice key, Slice value, bool has_value) {
+        if (!has_value) { ++result.invalid_values; return; }
+        bool ok = true;
+        if (Equals(key, "enabled")) ok = ParseBool(value, enabled);
+        else if (Equals(key, "role")) {
+            if (Equals(value, "host")) result.role = LabRole::host;
+            else if (Equals(value, "guest")) result.role = LabRole::guest;
+            else ok = false;
+        } else if (Equals(key, "loopback")) ok = ParseBool(value, result.loopback);
+        else if (Equals(key, "self_steamid")) {
+            std::uint64_t id = 0;
+            if (Equals(value, "real")) result.self_steamid = 0;
+            else if (ParseU64(value, id) && IsIndividualSteamId(id)) result.self_steamid = id;
+            else ok = false;
+        } else if (Equals(key, "self_name")) ok = CopyText(value, result.self_name, PrintableNoControl);
+        else if (Equals(key, "peer_steamid")) {
+            std::uint64_t id = 0;
+            if (Equals(value, "learn")) result.peer_steamid = 0;
+            else if (ParseU64(value, id) && IsIndividualSteamId(id)) result.peer_steamid = id;
+            else ok = false;
+        } else if (Equals(key, "listen_port")) ok = ParsePort(value, result.listen_port);
+        else if (Equals(key, "peer_port")) ok = ParsePort(value, result.peer_port);
+        else if (Equals(key, "mutex_suffix")) ok = CopyText(value, result.mutex_suffix, SuffixChar);
+        else if (Equals(key, "save_dir")) ok = CopyText(value, result.save_dir, PrintableNoControl);
+        else if (Equals(key, "xinput")) {
+            std::uint32_t pad = 0;
+            if (Equals(value, "passthrough")) result.xinput = kXInputPassthrough;
+            else if (Equals(value, "none")) result.xinput = kXInputNone;
+            else if (ParseU32(value, 3, pad)) result.xinput = static_cast<int>(pad);
+            else ok = false;
+        } else if (Equals(key, "join_trigger")) ok = ParseBool(value, result.join_trigger);
+        else if (Equals(key, "auto_join_delay_s")) ok = ParseU32(value, 3600, result.auto_join_delay_s);
+        else if (Equals(key, "net_latency_ms")) ok = ParseU32(value, 2000, result.net_latency_ms);
+        else if (Equals(key, "net_loss_permille")) ok = ParseU32(value, 1000, result.net_loss_permille);
+        else if (Equals(key, "trace_packets")) ok = ParseBool(value, result.trace_packets);
+        else { ++result.unknown_keys; return; }
+        if (!ok) ++result.invalid_values;
+    });
+    if (!usable) return false;
+    // A loopback instance needs both ports and a distinct identity source.
+    if (result.loopback && (!result.listen_port || !result.peer_port || result.listen_port == result.peer_port)) {
+        result.loopback = false;
+        ++result.invalid_values;
+    }
+    // save_dir must be absolute (drive letter or UNC) to avoid working-directory surprises.
+    if (result.save_dir[0]) {
+        const char* p = result.save_dir;
+        const bool drive = ((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z')) && p[1] == ':' && (p[2] == '\\' || p[2] == '/');
+        const bool unc = p[0] == '\\' && p[1] == '\\';
+        if (!drive && !unc) { result.save_dir[0] = 0; ++result.invalid_values; }
+    }
+    result.present = enabled && result.role != LabRole::none;
+    out = result;
+    return true;
+}
+
+bool ParseCoopConfig(const char* text, std::size_t length, CoopConfig& out) noexcept {
+    CoopConfig result{};
+    const bool usable = ForEachPair(text, length, [&](Slice key, Slice value, bool has_value) {
+        if (!has_value) { ++result.invalid_values; return; }
+        bool ok = true;
+        if (Equals(key, "master_url")) {
+            if (!value.size) result.master_url[0] = 0;
+            else ok = (StartsWith(value, "http://") || StartsWith(value, "https://")) &&
+                      EndsWith(value, "/tppstm/gate") && CopyText(value, result.master_url, UrlChar);
+        } else if (Equals(key, "character")) ok = ParseCharacter(value, result.character);
+        else if (Equals(key, "character_fallback")) {
+            PlayerCharacter fallback{};
+            ok = ParseCharacter(value, fallback) &&
+                 (fallback == PlayerCharacter::dd_male || fallback == PlayerCharacter::dd_female ||
+                  fallback == PlayerCharacter::snake || fallback == PlayerCharacter::avatar);
+            if (ok) result.character_fallback = fallback;
+        } else { ++result.unknown_keys; return; }
+        if (!ok) ++result.invalid_values;
+    });
+    if (!usable) return false;
+    result.present = true;
+    out = result;
+    return true;
+}
+
+const char* PlayerCharacterName(PlayerCharacter value) noexcept {
+    switch (value) {
+    case PlayerCharacter::snake: return "snake";
+    case PlayerCharacter::dd_male: return "dd_male";
+    case PlayerCharacter::dd_female: return "dd_female";
+    case PlayerCharacter::avatar: return "avatar";
+    case PlayerCharacter::ocelot: return "ocelot";
+    case PlayerCharacter::quiet: return "quiet";
+    default: return "";
+    }
+}
+
+int PlayerCharacterType(PlayerCharacter value) noexcept {
+    switch (value) {
+    case PlayerCharacter::snake: return 0;
+    case PlayerCharacter::dd_male: return 1;
+    case PlayerCharacter::dd_female: return 2;
+    case PlayerCharacter::avatar: return 3;
+    case PlayerCharacter::ocelot: return 5;
+    case PlayerCharacter::quiet: return 6;
+    default: return -1;
+    }
+}
+
+#ifdef _WIN32
+namespace {
+INIT_ONCE lab_once = INIT_ONCE_STATIC_INIT;
+INIT_ONCE coop_once = INIT_ONCE_STATIC_INIT;
+LabConfig lab_config{};
+CoopConfig coop_config{};
+char file_buffer[kMaxText + 1];  // guarded by the INIT_ONCE callbacks (serialized by InitOnce)
+SRWLOCK buffer_lock = SRWLOCK_INIT;
+
+// Reads <exeDir>\mgs-coop\<name> into file_buffer; returns byte count or -1.
+long ReadConfigFile(const wchar_t* name) noexcept {
+    wchar_t path[MAX_PATH * 2]{};
+    const DWORD size = GetModuleFileNameW(nullptr, path, ARRAYSIZE(path));
+    if (!size || size >= ARRAYSIZE(path)) return -1;
+    DWORD separator = 0;
+    for (DWORD i = 0; i < size; ++i) if (path[i] == L'\\') separator = i;
+    if (!separator) return -1;
+    const wchar_t* folder = L"\\mgs-coop\\";
+    DWORD at = separator;
+    for (const wchar_t* p = folder; *p; ++p) { if (at + 1 >= ARRAYSIZE(path)) return -1; path[at++] = *p; }
+    for (const wchar_t* p = name; *p; ++p) { if (at + 1 >= ARRAYSIZE(path)) return -1; path[at++] = *p; }
+    path[at] = 0;
+    HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return -1;
+    LARGE_INTEGER file_size{};
+    long result = -1;
+    if (GetFileSizeEx(file, &file_size) && file_size.QuadPart >= 0 && file_size.QuadPart <= static_cast<LONGLONG>(kMaxText)) {
+        DWORD read = 0;
+        if (ReadFile(file, file_buffer, static_cast<DWORD>(file_size.QuadPart), &read, nullptr) &&
+            read == static_cast<DWORD>(file_size.QuadPart)) result = static_cast<long>(read);
+    }
+    CloseHandle(file);
+    return result;
+}
+
+BOOL CALLBACK LoadLab(PINIT_ONCE, PVOID, PVOID*) noexcept {
+    AcquireSRWLockExclusive(&buffer_lock);
+    const long size = ReadConfigFile(L"lab.ini");
+    if (size >= 0) ParseLabConfig(file_buffer, static_cast<std::size_t>(size), lab_config);
+    ReleaseSRWLockExclusive(&buffer_lock);
+    return TRUE;
+}
+
+BOOL CALLBACK LoadCoop(PINIT_ONCE, PVOID, PVOID*) noexcept {
+    AcquireSRWLockExclusive(&buffer_lock);
+    const long size = ReadConfigFile(L"coop.ini");
+    if (size >= 0) ParseCoopConfig(file_buffer, static_cast<std::size_t>(size), coop_config);
+    ReleaseSRWLockExclusive(&buffer_lock);
+    return TRUE;
+}
+} // namespace
+
+const LabConfig& GetLabConfig() noexcept {
+    const DWORD error = GetLastError();
+    InitOnceExecuteOnce(&lab_once, LoadLab, nullptr, nullptr);
+    SetLastError(error);
+    return lab_config;
+}
+
+const CoopConfig& GetCoopConfig() noexcept {
+    const DWORD error = GetLastError();
+    InitOnceExecuteOnce(&coop_once, LoadCoop, nullptr, nullptr);
+    SetLastError(error);
+    return coop_config;
+}
+#endif
+
+} // namespace mgscoop
