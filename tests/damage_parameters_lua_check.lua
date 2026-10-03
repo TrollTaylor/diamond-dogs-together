@@ -32,9 +32,12 @@ local function experiment(source)
 end
 -- Shared fixture: TppDamage constants resolve to their names; native receipts
 -- answer from options; every Reload call and receipt is recorded in order.
+-- Receipts are V1 literals, except the table activation receipt, which is V2
+-- and names the loaded table mode; its full text is kept in `active`.
+local ACTIVE_PREFIX="return 'MGS_COOP_DAMAGE_TABLE_ACTIVE_V2' -- "
 local function run(source,options)
     options=options or {}
-    local events,reloads={},{}
+    local events,reloads,active={},{},{}
     local damage={ReloadDamageParameter=function(t)
         reloads[#reloads+1]=t; events[#events+1]='reload'
         if options.reloadError and #reloads==options.reloadError then error(options.token) end
@@ -42,7 +45,13 @@ local function run(source,options)
     setmetatable(damage,{__index=function(_,key) return 'TppDamage.'..key end})
     local env={TppDamage=damage,mgsDamage=options.table,vars=options.vars,Tpp=options.Tpp}
     env.loadstring=function(text)
-        local name=assert(text:match("^return 'MGS_COOP_(.+)_V1'$"),text)
+        local name
+        if text:sub(1,#ACTIVE_PREFIX)==ACTIVE_PREFIX then
+            name='DAMAGE_TABLE_ACTIVE'
+            active[#active+1]=text
+        else
+            name=assert(text:match("^return 'MGS_COOP_([%u%d_]+)_V1'$"),text)
+        end
         events[#events+1]=name
         return function()
             if name=='DAMAGE_ON' then return options.nativeOn~=false end
@@ -54,9 +63,17 @@ local function run(source,options)
     local chunk=assert(loadstring(source,'=damage'))
     setfenv(chunk,env)
     local result=chunk()
-    return env,events,reloads,result
+    return env,events,reloads,result,active
 end
 local function joined(events,from) return table.concat(events,',',from or 1) end
+-- The activation receipt must name the loaded table mode, compile as the same
+-- literal chunk the native observer sees, and fit its 240-byte printable copy.
+local function checkActive(active,expected,why)
+    check(#active==1 and active[1]==ACTIVE_PREFIX..expected,why..': '..tostring(active[1]))
+    local compiled=loadstring(active[1])
+    check(compiled~=nil and compiled()=='MGS_COOP_DAMAGE_TABLE_ACTIVE_V2',why..': receipt is a literal chunk')
+    check(#active[1]<=240 and not active[1]:find('[^\32-\126]'),why..': receipt fits the native log copy')
+end
 
 -- 1. Module semantics on a synthetic table.
 local function sample()
@@ -68,7 +85,7 @@ local function sample()
         {'ATK_E'}}}
 end
 local module=read(arg[1])
-local env,events,reloads=run(module,{table=sample()})
+local env,events,reloads,_,active=run(module,{table=sample()})
 local original=env.mgsDamage
 check(#reloads==1 and rawequal(reloads[1],original),'module load reloads the original table')
 check(env.MgsCoopDamage.changedRows==0,'parity default changes no rows')
@@ -76,6 +93,7 @@ check(env.MgsCoopDamage.clearsIgnoreDefender==false,'parity default reported')
 check(env.Tpp==nil and joined(events)=='reload','no activation outside a prepared co-op scene')
 check(env.MgsCoopDamage.SetActive(true)==true,'activation')
 check(joined(events,2)=='DAMAGE_ON,reload,DAMAGE_TABLE_ACTIVE','native first, then table, then receipt')
+checkActive(active,'mode=parity;changed_rows=0','parity activation')
 local coop=reloads[2]
 check(not rawequal(coop,original) and not rawequal(coop.DamageParameter,original.DamageParameter),'separate co-op table')
 check(deepEqual(coop,original),'co-op table equals the original under Dynamite parity')
@@ -87,7 +105,7 @@ end
 check(deepEqual(original,sample()),'original table never mutated')
 local before=#events
 check(env.MgsCoopDamage.SetActive(true)==true,'repeat activation rechecks native')
-check(joined(events,before+1)=='DAMAGE_ON' and #reloads==2,'no repeated reload')
+check(joined(events,before+1)=='DAMAGE_ON' and #reloads==2 and #active==1,'no repeated reload or receipt')
 before=#events
 check(env.MgsCoopDamage.SetActive(false)==true,'restore')
 check(joined(events,before+1)=='DAMAGE_OFF,reload,DAMAGE_TABLE_RESTORED','native off, original table, receipt')
@@ -96,8 +114,9 @@ before=#events
 check(env.MgsCoopDamage.SetActive(nil)==true and joined(events,before+1)=='DAMAGE_OFF','repeat restore rechecks native')
 check(env.MgsCoopDamage.SetActive(1)==true and #reloads==3,'non-boolean is treated as off')
 -- Native refusal leaves the original table loaded.
-env,events,reloads=run(module,{table=sample(),nativeOn=false})
+env,events,reloads,_,active=run(module,{table=sample(),nativeOn=false})
 check(env.MgsCoopDamage.SetActive(true)==false and joined(events)=='reload,DAMAGE_ON','refused native rule')
+check(#active==0,'no activation receipt after a native refusal')
 -- A reload failure restores the native rule and propagates the same error.
 local token={}
 env,events,reloads=run(module,{table=sample(),reloadError=2,token=token})
@@ -120,16 +139,17 @@ for _,case in ipairs({{30050,{hostSessionCreated=true},true},{30050,{clientPrepa
 end
 -- 2. The opt-in experiment path clears only nested field-13 values of 1.
 local flipped=experiment(module)
-env,events,reloads=run(flipped,{table=sample()})
+env,events,reloads,_,active=run(flipped,{table=sample()})
 check(env.MgsCoopDamage.changedRows==2 and env.MgsCoopDamage.clearsIgnoreDefender==true,'experiment row count')
 check(env.MgsCoopDamage.SetActive(true)==true,'experiment activation')
+checkActive(active,'mode=clear_field13;changed_rows=2','experiment activation')
 coop=reloads[2]
 local expected=sample()
 expected.DamageParameter[2][13]=0
 expected.DamageParameter[4][13]=0
 check(deepEqual(coop,expected),'experiment clears exactly the field-13 == 1 rows')
 check(deepEqual(env.mgsDamage,sample()),'experiment keeps the original table intact')
-print(checks..' damage module checks: Dynamite parity default, opt-in experiment, activation order, refusals, errors and late activation; no game calls')
+print(checks..' damage module checks: Dynamite parity default, opt-in experiment, mode receipts, activation order, refusals, errors and late activation; no game calls')
 
 -- 3. Optional: the actual composed source against the extracted original.
 if arg[2] and arg[3] then
@@ -148,22 +168,24 @@ if arg[2] and arg[3] then
         end
     end
     check(rows==475 and flagged==146,'vanilla rows='..rows..' field13==1 rows='..flagged)
-    local composedEnv,composedEvents,composed,composedResult=run(composedSource,{})
+    local composedEnv,composedEvents,composed,composedResult,composedActive=run(composedSource,{})
     check(type(composedResult)=='table','composed source returns its module')
     check(#composed==1 and deepEqual(composed[1],vanilla),'composed load reloads the unchanged vanilla table')
     check(composedEnv.MgsCoopDamage.changedRows==0,'composed default changes no rows')
     check(composedEnv.MgsCoopDamage.clearsIgnoreDefender==false,'composed default is Dynamite parity')
     check(composedEnv.MgsCoopDamage.SetActive(true)==true,'composed activation')
     check(joined(composedEvents,2)=='DAMAGE_ON,reload,DAMAGE_TABLE_ACTIVE','composed activation order')
+    checkActive(composedActive,'mode=parity;changed_rows=0','composed parity activation')
     check(deepEqual(composed[2],vanilla),'composed co-op table equals vanilla, including all 146 field-13 flags')
     check(composedEnv.MgsCoopDamage.SetActive(false)==true and rawequal(composed[3],composed[1]),'composed restore')
     local state={hostSessionCreated=true}
     local _,_,late=run(composedSource,{vars={missionCode=30050},Tpp={MgsCoop=state}})
     check(state.damageRulesActive==true and #late==2,'composed late activation')
     -- The experiment path in the actual composition clears all 146 flags.
-    local experimentEnv,_,experimentReloads=run(experiment(composedSource),{})
+    local experimentEnv,_,experimentReloads,_,experimentActive=run(experiment(composedSource),{})
     check(experimentEnv.MgsCoopDamage.changedRows==146,'experiment clears 146 rows')
     check(experimentEnv.MgsCoopDamage.SetActive(true)==true,'experiment activation')
+    checkActive(experimentActive,'mode=clear_field13;changed_rows=146','composed experiment activation')
     local cleared=experimentReloads[2]
     local expectedTable=copy(vanilla)
     for _,row in pairs(expectedTable.DamageParameter) do

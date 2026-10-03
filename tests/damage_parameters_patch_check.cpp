@@ -46,7 +46,12 @@ int main(int argc, char** argv) {
                                            output.size() - replaced_prefix.size() - table_size - tail.size());
         check(adapter.find("MGS_COOP_DAMAGE_ON_V1") != std::string::npos);
         check(adapter.find("MGS_COOP_DAMAGE_OFF_V1") != std::string::npos);
-        check(adapter.find("CLEAR_IGNORE_DEFENDER_FLAG") != std::string::npos);
+        // Shipped builds keep Dynamite parity and name the table mode in the
+        // activation receipt, so live logs show which table was loaded.
+        check(adapter.find("local CLEAR_IGNORE_DEFENDER_FLAG = false") != std::string::npos);
+        check(adapter.find("local CLEAR_IGNORE_DEFENDER_FLAG = true") == std::string::npos);
+        check(adapter.find("MGS_COOP_DAMAGE_TABLE_ACTIVE_V2' -- mode=") != std::string::npos);
+        check(adapter.find("MGS_COOP_DAMAGE_TABLE_ACTIVE_V1") == std::string::npos);
         check(adapter.find("_G.MgsCoopDamage = control") != std::string::npos);
         // A populated cache must not admit a changed original on later loads.
         check(!mgscoop::SelectDamageParameterPatch(changed.data(), changed.size(), name, patch, true));

@@ -75,6 +75,10 @@ if(MGS_LUA_EFFECTIVE_DIR)
   add_executable(lua51 ${_mgs_lua_paths})
   target_include_directories(lua51 PRIVATE "${MGS_LUA_EFFECTIVE_DIR}/src")
   target_compile_definitions(lua51 PRIVATE _CRT_SECURE_NO_WARNINGS)
+  if(UNIX)
+    # lmathlib, lvm and lobject call floor, pow and fmod from libm.
+    target_link_libraries(lua51 PRIVATE m)
+  endif()
   set_target_properties(lua51 PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/lua-fixture")
   message(STATUS "Lua checks: building lua51 from ${MGS_LUA_EFFECTIVE_DIR}")
 else()
@@ -99,8 +103,9 @@ mgs_add_lua_check(damage_parameters_lua_check "${_mgs_coop}/damage_parameters.lu
 mgs_add_lua_check(damage_lifecycle_lua_check "${_mgs_coop}/damage_lifecycle.lua")
 
 # --- Extracted game inputs ----------------------------------------------------
-# Finds <relative> under the configured, environment and main-checkout game
-# folders; accepts only the exact source the native gate pins.
+# Finds <relative> (or an alternative relative path given after <sha256>)
+# under the configured, environment and main-checkout game folders; accepts
+# only the exact source the native gate pins.
 set(_mgs_game_candidates "${MGS_GAME_LUA_DIR}")
 if(DEFINED ENV{MGS_GAME_LUA_DIR} AND NOT "$ENV{MGS_GAME_LUA_DIR}" STREQUAL "")
   list(APPEND _mgs_game_candidates "$ENV{MGS_GAME_LUA_DIR}")
@@ -110,18 +115,22 @@ if(MGS_MAIN_CHECKOUT_FALLBACK)
 endif()
 function(mgs_find_game_input out relative sha256)
   set(found "")
-  foreach(dir IN LISTS _mgs_game_candidates)
-    if(NOT found AND EXISTS "${dir}/${relative}")
-      file(SHA256 "${dir}/${relative}" actual)
-      if(actual STREQUAL sha256)
-        set(found "${dir}/${relative}")
-      else()
-        message(STATUS "Lua checks: ${dir}/${relative} has SHA-256 ${actual}, expected ${sha256}; ignored")
+  foreach(path IN ITEMS ${relative} ${ARGN})
+    foreach(dir IN LISTS _mgs_game_candidates)
+      if(NOT found AND EXISTS "${dir}/${path}")
+        file(SHA256 "${dir}/${path}" actual)
+        if(actual STREQUAL sha256)
+          set(found "${dir}/${path}")
+        else()
+          message(STATUS "Lua checks: ${dir}/${path} has SHA-256 ${actual}, expected ${sha256}; ignored")
+        endif()
       endif()
-    endif()
+    endforeach()
   endforeach()
   if(NOT found)
-    message(STATUS "Lua checks: game input ${relative} not found in: ${_mgs_game_candidates}")
+    set(paths ${relative} ${ARGN})
+    list(JOIN paths " or " paths)
+    message(STATUS "Lua checks: game input ${paths} not found in: ${_mgs_game_candidates}")
   endif()
   set(${out} "${found}" PARENT_SCOPE)
 endfunction()
@@ -133,11 +142,19 @@ mgs_find_game_input(_mgs_pack_list "player-load-inspection-20260909/package-00.l
   85120c16a6cb27d8a732763b023f45125edd70201bef182695856756ee4cb00e)
 mgs_find_game_input(_mgs_damage_tables "damage-parameters-current-20260910/package-00.lua"
   e88ed1e39fbb689bcddb75af115351245571ecf2a778675ab157d6c4023d0fa3)
+# TppMission.lua (104,102 bytes, docs/respawn.md); the startup inspection
+# extracted the same file as package-02.lua.
+mgs_find_game_input(_mgs_tpp_mission "respawn-scripts-20260910/package-00.lua"
+  e99e6addd4c5135fb2d77ab58632d5e349a626eb7f10ea38301372d127f7404a
+  "startup-script-inspection-20260909/package-02.lua")
 
 if(TARGET mgs_bootstrap_patch)
   add_executable(damage_parameters_patch_check tests/damage_parameters_patch_check.cpp)
   target_link_libraries(damage_parameters_patch_check PRIVATE mgs_bootstrap_patch)
   target_compile_options(damage_parameters_patch_check PRIVATE /W4 /WX)
+  add_executable(death_policy_patch_check tests/death_policy_patch_check.cpp)
+  target_link_libraries(death_policy_patch_check PRIVATE mgs_bootstrap_patch)
+  target_compile_options(death_policy_patch_check PRIVATE /W4 /WX)
 endif()
 
 # Each patch check composes the actual extracted source into the build tree
@@ -183,8 +200,21 @@ mgs_add_patch_check(host_trial_patch_check "${_mgs_tpp_main}" "${_mgs_out}/TppMa
 mgs_add_game_lua_check(host_trial_lua_check host_trial_lua_check "${_mgs_tpp_main}" host_trial_patch_check
   "${_mgs_tpp_main}" "${_mgs_out}/TppMain-host-trial.lua")
 mgs_add_patch_check(mission_trace_patch_check "${_mgs_tpp_main}" "${_mgs_out}/TppMain-trace.lua")
-mgs_add_game_lua_check(mission_trace_lua_check mission_trace_lua_check "${_mgs_tpp_main}" ""
-  "${_mgs_coop}/mission_trace.lua" "${_mgs_tpp_main}")
+# The documented two-argument form runs the fragment; the optional third
+# argument also executes the composed TppMain-trace.lua when it is built.
+if(TEST mission_trace_patch_check)
+  mgs_add_game_lua_check(mission_trace_lua_check mission_trace_lua_check "${_mgs_tpp_main}" mission_trace_patch_check
+    "${_mgs_coop}/mission_trace.lua" "${_mgs_tpp_main}" "${_mgs_out}/TppMain-trace.lua")
+else()
+  mgs_add_game_lua_check(mission_trace_lua_check mission_trace_lua_check "${_mgs_tpp_main}" ""
+    "${_mgs_coop}/mission_trace.lua" "${_mgs_tpp_main}")
+endif()
+# TppMission.OnPlayerDead death-policy wrapper: fragment semantics need only
+# the interpreter; the composition needs the pinned TppMission.lua.
+mgs_add_lua_check(death_policy_lua_check "${_mgs_coop}/death_policy.lua")
+mgs_add_patch_check(death_policy_patch_check "${_mgs_tpp_mission}" "${_mgs_out}/TppMission-death-policy.lua")
+mgs_add_game_lua_check(death_policy_composed_lua_check death_policy_lua_check "${_mgs_tpp_mission}" death_policy_patch_check
+  "${_mgs_coop}/death_policy.lua" "${_mgs_tpp_mission}" "${_mgs_out}/TppMission-death-policy.lua")
 mgs_add_patch_check(player_package_patch_check "${_mgs_pack_list}" "${_mgs_out}/TppPackList.lua")
 mgs_add_game_lua_check(player_package_lua_check player_package_lua_check "${_mgs_pack_list}" player_package_patch_check
   "${_mgs_pack_list}" "${_mgs_out}/TppPackList.lua")

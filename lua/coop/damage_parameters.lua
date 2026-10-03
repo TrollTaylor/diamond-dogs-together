@@ -38,6 +38,10 @@ do
         return request and request() == true
     end
     local control = { changedRows = changed, clearsIgnoreDefender = CLEAR_IGNORE_DEFENDER_FLAG }
+    -- The activation receipt names the loaded table, so live logs can tell a
+    -- parity build from a recorded field-13 experiment.
+    local mode = CLEAR_IGNORE_DEFENDER_FLAG and "clear_field13" or "parity"
+    local activeReceipt = "return 'MGS_COOP_DAMAGE_TABLE_ACTIVE_V2' -- mode=" .. mode .. ";changed_rows=" .. changed
     function control.SetActive(enabled)
         enabled = enabled == true
         -- A previous native restoration may have failed even when the Lua
@@ -51,7 +55,7 @@ do
                 error(failure)
             end
             active = true
-            loadstring("return 'MGS_COOP_DAMAGE_TABLE_ACTIVE_V1'")
+            loadstring(activeReceipt)
             return true
         end
         local restored = native(false)
