@@ -7,7 +7,9 @@
 -- extracted TppPlayer.lua (its functions replace the mirror) and TppMain.lua
 -- (anchor, composed-source compile, OnAllocate and readback lifecycle runs).
 -- No MGSV, Steam or native code is involved.
--- Usage: lua51 character_lua_check.lua character.lua character_readback.lua [TppPlayer.lua [TppMain.lua]]
+-- Usage: lua51 character_lua_check.lua character.lua character_readback.lua [TppPlayer.lua [TppMain.lua
+--        [composed.lua]]] where composed.lua is the complete DLL TppMain composition
+--        written by host_trial_patch_check (after the bootstrap_patch integration).
 local checks = 0
 local function check(value, why)
     checks = checks + 1
@@ -19,7 +21,7 @@ local function readfile(path)
     file:close()
     return text
 end
-local CHARACTER, READBACK, REAL_PLAYER, REAL_MAIN = arg[1], arg[2], arg[3], arg[4]
+local CHARACTER, READBACK, REAL_PLAYER, REAL_MAIN, FULL_COMPOSITION = arg[1], arg[2], arg[3], arg[4], arg[5]
 assert(CHARACTER and READBACK, 'usage: character_lua_check.lua character.lua character_readback.lua [TppPlayer.lua [TppMain.lua]]')
 local characterSource = readfile(CHARACTER)
 local readbackSource = readfile(READBACK)
@@ -827,25 +829,34 @@ if REAL_MAIN then
         -- Real composed TppMain lifecycle (splice + appended readback) with lab
         -- readback: the real OnUpdate/OnMissionGameStart/OnTerminate drive the
         -- wrapper; the simulated binding crashes while the player is absent.
-        local composedRun = spliced:sub(1, -9) .. '\n' .. readbackSource .. '\n' .. 'return e'
-        for _, character in ipairs({'quiet', ''}) do
-            env = runAllocate(composedRun, {mission = 10036, character = character, readback = true})
+        local function lifecycle(source, character, label)
+            env = runAllocate(source, {mission = 10036, character = character, readback = true})
             env.mvars.seq_demoSequneceList = {}
             for _ = 1, 300 do assert(pcall(env.main.OnUpdate, env.mission)) end
-            check(env.crashes == 0 and env.getPlayerTypeCalls == 0, 'real TppMain: loading OnUpdate never reads the player')
+            check(env.crashes == 0 and env.getPlayerTypeCalls == 0, label .. ': loading OnUpdate never reads the player')
             env.players.present, env.players.types = true, {[0] = 6, [1] = 0}
             local ok, failure = pcall(env.main.OnMissionGameStart, env.mission)
-            check(ok, 'real OnMissionGameStart ran: ' .. tostring(failure))
+            check(ok, label .. ': OnMissionGameStart ran: ' .. tostring(failure))
             for _ = 1, 120 do assert(pcall(env.main.OnUpdate, env.mission)) end
-            check(pcall(env.main.OnTerminate, env.mission), 'real OnTerminate ran')
+            check(pcall(env.main.OnTerminate, env.mission), label .. ': OnTerminate ran')
             env.players.present = false
             for _ = 1, 300 do assert(pcall(env.main.OnUpdate, env.mission)) end
-            check(env.crashes == 0, 'real TppMain: no read while the player is absent (' .. character .. ')')
+            check(env.crashes == 0, label .. ': no read while the player is absent (' .. character .. ')')
             if character == 'quiet' then
-                check(env.getPlayerTypeCalls == 6 and has(env.receipts, PLAYERS), 'real TppMain: reads only while started')
+                check(env.vars.playerType == PT.QUIET and env.getPlayerTypeCalls == 6 and has(env.receipts, PLAYERS),
+                    label .. ': Quiet applied; reads only while started')
             else
-                check(env.getPlayerTypeCalls == 0 and not has(env.receipts, PLAYERS), 'real TppMain: default character never reads')
+                check(env.getPlayerTypeCalls == 0 and not has(env.receipts, PLAYERS), label .. ': default character never reads')
             end
+        end
+        local composedRun = spliced:sub(1, -9) .. '\n' .. readbackSource .. '\n' .. 'return e'
+        for _, character in ipairs({'quiet', ''}) do lifecycle(composedRun, character, 'real TppMain') end
+        -- Optional: the complete DLL composition (host_trial_patch_check output).
+        if FULL_COMPOSITION then
+            local full = readfile(FULL_COMPOSITION)
+            check(full:find('\n-- MGS co-op character selection (original).', 1, true) and
+                full:find('\n-- MGS co-op character readback (original).', 1, true), 'DLL composition carries both chunks')
+            for _, character in ipairs({'quiet', ''}) do lifecycle(full, character, 'DLL composition') end
         end
     end
 end

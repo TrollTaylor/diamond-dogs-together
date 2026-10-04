@@ -1,16 +1,5 @@
---- a/CMakeLists.txt
-+++ b/CMakeLists.txt
-@@ -147,6 +147,10 @@
-   file(READ "${CMAKE_CURRENT_SOURCE_DIR}/lua/coop/respawn.lua" MGS_RESPAWN_SOURCE)
-   file(READ "${CMAKE_CURRENT_SOURCE_DIR}/lua/coop/death_policy.lua" MGS_DEATH_POLICY_SOURCE)
-   configure_file(native/respawn_source.hpp.in generated/respawn_source.hpp @ONLY)
-+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS lua/coop/character.lua lua/coop/character_readback.lua)
-+  file(READ "${CMAKE_CURRENT_SOURCE_DIR}/lua/coop/character.lua" MGS_CHARACTER_SOURCE)
-+  file(READ "${CMAKE_CURRENT_SOURCE_DIR}/lua/coop/character_readback.lua" MGS_CHARACTER_READBACK_SOURCE)
-+  configure_file(native/character_source.hpp.in generated/character_source.hpp @ONLY)
-   add_library(mgs_bootstrap_patch STATIC native/bootstrap_patch.cpp)
-   add_executable(mission_trace_patch_check tests/mission_trace_patch_check.cpp)
-   target_link_libraries(mission_trace_patch_check PRIVATE mgs_bootstrap_patch)
+diff --git a/native/bootstrap_patch.cpp b/native/bootstrap_patch.cpp
+index 63c50ca..c43c4ee 100644
 --- a/native/bootstrap_patch.cpp
 +++ b/native/bootstrap_patch.cpp
 @@ -18,6 +18,7 @@
@@ -21,7 +10,7 @@
  
  namespace mgscoop {
  namespace {
-@@ -137,7 +138,13 @@
+@@ -137,7 +138,13 @@ bool SelectHostTrialPatch(const char* source, std::size_t size, const char* name
      constexpr char marker_guard[]="\nif not (Tpp and type(Tpp.MgsCoop)==\"table\" and Tpp.MgsCoop.markerLoadingGuardActive==true) then\n";
      constexpr char marker_guard_end[]="\nend\n";
      constexpr auto marker_extra=sizeof(marker_guard)-1+sizeof(marker_guard_end)-1;
@@ -36,7 +25,7 @@
      static_assert(result_size<=script_bridge::max_replacement_bytes);
      static char result[result_size]{};
      static bool initialized=false;
-@@ -148,31 +155,37 @@
+@@ -148,31 +155,37 @@ bool SelectHostTrialPatch(const char* source, std::size_t size, const char* name
      // Insertions are pinned by the complete original source hash. Require
      // unique, ordered anchors; the original calls remain in the output once.
      std::size_t insertion=0,found=0,equipment_insertion=0,equipment_found=0;
@@ -81,7 +70,7 @@
          std::memcpy(result+appended,host_admission_source,sizeof(host_admission_source)-1);
          std::memcpy(result+appended+sizeof(host_admission_source)-1,client_join_source,sizeof(client_join_source)-1);
          constexpr auto lifecycle=appended+sizeof(host_admission_source)-1+sizeof(client_join_source)-1;
-@@ -185,10 +198,12 @@
+@@ -185,10 +198,12 @@ bool SelectHostTrialPatch(const char* source, std::size_t size, const char* name
          std::memcpy(result+feedback,session_feedback_source,sizeof(session_feedback_source)-1);
          constexpr auto marker_lifecycle=feedback+sizeof(session_feedback_source)-1;
          std::memcpy(result+marker_lifecycle,marker_loading_source,sizeof(marker_loading_source)-1);
@@ -96,19 +85,20 @@
          std::memcpy(result+session_lifecycle,session_lifecycle_source,sizeof(session_lifecycle_source)-1);
          static_assert(session_lifecycle+sizeof(session_lifecycle_source)-1==result_size-8);
          std::memcpy(result+result_size-8,"return e",8);
+diff --git a/native/game_script_observer.cpp b/native/game_script_observer.cpp
+index 5db0f89..2fcfe17 100644
 --- a/native/game_script_observer.cpp
 +++ b/native/game_script_observer.cpp
-@@ -22,6 +22,9 @@
+@@ -19,6 +19,8 @@
+ #include "mgscoop/result_patch.hpp"
+ #include "mgscoop/full_close_patch.hpp"
+ #include "mgscoop/marker_loading_patch.hpp"
++#include "mgscoop/character_receipt.hpp"
++#include "mgscoop/player_type_patch.hpp"
  #include "mgscoop/soldier_patch.hpp"
  #include "mgscoop/mission_termination.hpp"
  #include "mgscoop/mission_initialization.hpp"
-+#include "mgscoop/character_receipt.hpp"
-+#include "mgscoop/lab_config.hpp"
-+#include "mgscoop/player_type_patch.hpp"
- 
- namespace {
- HANDLE script_log = INVALID_HANDLE_VALUE;
-@@ -94,6 +97,43 @@
+@@ -232,6 +234,55 @@ bool OnRuntimeThread() noexcept {
  }
  bool OnTerminationThread() noexcept { return termination_scope.OnThread(GetCurrentThreadId()); }
  bool OnMissionThread() noexcept { return OnAllocationThread() || OnRuntimeThread() || OnTerminationThread(); }
@@ -118,9 +108,12 @@
 +// process). The Ocelot/Quiet reset bypass is enabled only for a configured
 +// Ocelot/Quiet during an accepted allocation (an already active bypass is
 +// confirmed, e.g. for a checkpoint reload); disabling is always allowed.
-+// Report/readback receipts are log-only and are never replaced.
++// The players guard (lab only) samples the player object read-only so the
++// readback calls Player.GetPlayerType, which has no null check, only while
++// that object exists. Report/readback receipts are log-only, never replaced.
 +char character_query[mgscoop::character::max_line]{};
 +std::size_t character_query_size = 0;
++thread_local char character_players[64]{};
 +bool SelectCharacterReceipt(mgscoop::character::Receipt kind, const char* buffer, std::size_t size,
 +                            mgscoop::script_bridge::Replacement& replacement) noexcept {
 +    using mgscoop::character::Receipt;
@@ -145,6 +138,15 @@
 +                             : mgscoop::script_bridge::Replacement{no,sizeof(no)-1};
 +        return true;
 +    }
++    if(kind==Receipt::players) {
++        mgscoop::player_type::TypeSample sample{"lab_disabled",0,0,{0,0}};
++        const bool ready=mgscoop::GetLabConfig().present && mgscoop::player_type::SampleTypes(game_base,game_span,sample);
++        const auto length=mgscoop::character::FormatPlayersReply(ready,sample.stage,sample.limit,sample.type,sample.count,
++                                                                  character_players,sizeof(character_players));
++        if(!length) return false;
++        replacement={character_players,length};
++        return true;
++    }
 +    char line[mgscoop::character::max_line]{};
 +    if(mgscoop::character::FormatLogLine(kind,buffer,size,line,sizeof(line))) Log(line);
 +    return false;
@@ -152,19 +154,19 @@
  bool TransferRuleThread(DWORD previous_thread) noexcept {
      // Both directions are needed: allocation -> runtime for gameplay/cleanup,
      // then runtime -> a later allocation worker for retained cleanup. These
-@@ -456,6 +496,11 @@
-             }
-         }
-     }
+@@ -714,6 +765,11 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
+     constexpr char admission[]="return 'MGS_COOP_HOST_ADMISSION_V1'";
+     constexpr char admission_observed[]="return 'MGS_COOP_HOST_ADMISSION_OBSERVED_V1'";
+     constexpr char released[]="return 'MGS_COOP_HOST_RELEASE_V1'";
 +    if(!selected && (host_create_enabled || client_enabled)) {
 +        const auto character_kind=mgscoop::character::Classify(buffer,size,name);
 +        if(character_kind!=mgscoop::character::Receipt::none)
 +            selected=SelectCharacterReceipt(character_kind,buffer,size,replacement);
 +    }
-     constexpr char receipt[] = "return 'MGS_COOP_BOOTSTRAP_EXECUTED_V1'";
-     constexpr char admission[]="return 'MGS_COOP_HOST_ADMISSION_V1'";
-     constexpr char admission_observed[]="return 'MGS_COOP_HOST_ADMISSION_OBSERVED_V1'";
-@@ -581,6 +626,16 @@
+     if(host_admission_enabled && (OnRuntimeThread() || OnTerminationThread()) && buffer && name && size==sizeof(released)-1 &&
+        std::memcmp(buffer,released,size)==0 && std::strcmp(name,released)==0)
+         ForgetDynamiteHostAdmission();
+@@ -850,6 +906,16 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                  if (host_create_enabled) Log("mode=host_v2; dynamite_host_creation=enabled max_players=2 peer_acceptance_requested=0\r\n");
                  if (host_admission_enabled) Log("mode=host_v3; peer_acceptance=after_mission_start; max_players=2\r\n");
              }
@@ -181,9 +183,11 @@
              const auto target = reinterpret_cast<mgscoop::script_bridge::LoadBuffer>(static_cast<unsigned char*>(base)+load_rva);
              const auto status = mgscoop::script_bridge::Install(target, expected_body, sizeof(expected_body),
                                                                 {nullptr, ObserveEntry, ObserveReturn});
+diff --git a/tests/host_trial_patch_check.cpp b/tests/host_trial_patch_check.cpp
+index a6e32c1..6b58e7b 100644
 --- a/tests/host_trial_patch_check.cpp
 +++ b/tests/host_trial_patch_check.cpp
-@@ -34,9 +34,21 @@
+@@ -34,9 +34,21 @@ int main(int argc, char** argv) {
          // insertion sites. Every interval of original code must survive intact.
          const auto equipment=source.find("TppEquip.StartLoadingToEquipMissionBlock()");
          const auto marker=source.find("TppMarker.RestoreMarkerLocator()");
@@ -208,7 +212,7 @@
          check(equipment_out!=std::string::npos);
          const std::string marker_call="TppMarker.RestoreMarkerLocator()";
          const auto marker_out=output.find(marker_call,equipment_out);
-@@ -44,6 +56,7 @@
+@@ -44,6 +56,7 @@ int main(int argc, char** argv) {
          const auto tail=marker+marker_call.size();
          check(output.substr(marker_out+marker_call.size()+5,source.size()-tail-8)==source.substr(tail,source.size()-tail-8));
          check(output.find("local receipts = 0",resumed)!=std::string::npos);
