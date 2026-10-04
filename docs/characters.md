@@ -68,8 +68,9 @@ character_fallback=dd_male
   It asks the mod for `character=`/`character_fallback=`, decides, and calls
   `TppPlayer.RegisterTemporaryPlayerType{...}`.
 - Outside FOB, the game turns Ocelot and Quiet back into Snake in two places.
-  The script skips the Lua revert once, at the end of that same allocation.
-  The native revert (inside `UpdatePartsStatus`) is bypassed by a two-byte
+  The script skips the Lua revert (`TppPlayer.ForceChangePlayerFromOcelot`)
+  once, at the end of that same allocation. The revert still runs when you
+  abort mission preparation. The native revert (inside `UpdatePartsStatus`) is bypassed by a two-byte
   patch that is switched on only for missions where Ocelot/Quiet is applied,
   switched off for every other mission, and refused unless the game code
   matches byte for byte.
@@ -112,7 +113,7 @@ character_fallback=dd_male
 | `character=face; mission=...; face=...` | A Diamond Dogs face was set. |
 | `player_type_patch=active; ...` / `player_type_patch=inactive; ...` | The native bypass changed state. |
 | `player_type_patch=refused; reason=...` | The bypass was not enabled. The fallback is used. |
-| `character_readback=<tag>; local=0; vars=6; i0=0; i1=1; ...` | Lab readback of both players' types (only with `lab.ini` or a configured character). |
+| `character_readback=<tag>; local=0; vars=6; i0=0; i1=1; ...` | Lab readback of both players' types (only when `lab.ini` is active). |
 
 ## What has been verified
 
