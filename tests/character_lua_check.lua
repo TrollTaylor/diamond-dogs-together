@@ -23,7 +23,8 @@ local function readfile(path)
     local file = assert(io.open(path, 'rb'))
     local text = file:read('*a')
     file:close()
-    return text
+    -- git core.autocrlf checks sources out with CRLF; the DLL composition is LF.
+    return (text:gsub('\r\n', '\n'))
 end
 local positional, VARINIT = {}, nil
 for i = 1, #arg do
