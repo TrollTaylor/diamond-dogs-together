@@ -1,9 +1,14 @@
 
 -- Adapted from Dynamite standalone/DamageParameterTables.lua, commit
 -- c90f252f8200765f66c005d6bf4357fda0c0d98e. GPLv3 + Commons Clause 1.0.
--- Changes: walk actual DamageParameter rows (the upstream loop walks the outer
--- wrapper), keep the original table, and pair activation with the native rule.
+-- Changes: keep the original table and pair activation with the native rule.
+-- The upstream field-13 loop walks the outer wrapper, so the tested Dynamite
+-- build never changed a row: the 146 vanilla rows whose field 13
+-- (ignore-defender) is 1 kept it. Clearing it in the nested DamageParameter
+-- rows is therefore an explicit experiment, off by default for Dynamite
+-- parity. Set this to true only for a recorded experiment build.
 do
+    local CLEAR_IGNORE_DEFENDER_FLAG = false
     local original = mgsDamage
     local coop = {}
     for key, value in pairs(original) do coop[key] = value end
@@ -13,7 +18,7 @@ do
         if type(value) == "table" then
             local row = {}
             for field, item in pairs(value) do row[field] = item end
-            if row[13] == 1 then
+            if CLEAR_IGNORE_DEFENDER_FLAG and row[13] == 1 then
                 row[13] = 0
                 changed = changed + 1
             end
@@ -32,7 +37,11 @@ do
         end
         return request and request() == true
     end
-    local control = { changedRows = changed }
+    local control = { changedRows = changed, clearsIgnoreDefender = CLEAR_IGNORE_DEFENDER_FLAG }
+    -- The activation receipt names the loaded table, so live logs can tell a
+    -- parity build from a recorded field-13 experiment.
+    local mode = CLEAR_IGNORE_DEFENDER_FLAG and "clear_field13" or "parity"
+    local activeReceipt = "return 'MGS_COOP_DAMAGE_TABLE_ACTIVE_V2' -- mode=" .. mode .. ";changed_rows=" .. changed
     function control.SetActive(enabled)
         enabled = enabled == true
         -- A previous native restoration may have failed even when the Lua
@@ -46,7 +55,7 @@ do
                 error(failure)
             end
             active = true
-            loadstring("return 'MGS_COOP_DAMAGE_TABLE_ACTIVE_V1'")
+            loadstring(activeReceipt)
             return true
         end
         local restored = native(false)

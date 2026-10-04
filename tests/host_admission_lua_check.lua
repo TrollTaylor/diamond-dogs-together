@@ -5,8 +5,12 @@ local function pack(...) return {n=select('#',...),...} end
 local function fixture(options)
     options=options or {}
     local events={}
-    local env={vars={missionCode=options.mission or 30050},
-        Tpp={MgsCoop={hostSessionCreated=options.created~=false}},e={}}
+    -- The admission gate also requires the TppMain equipment preparation
+    -- receipt (host_admission.lua: equipmentPreparationReturned == true).
+    local state={hostSessionCreated=options.created~=false,equipmentPreparationReturned=true}
+    if options.equipment~=nil then state.equipmentPreparationReturned=options.equipment end
+    if options.noEquipment then state.equipmentPreparationReturned=nil end
+    local env={vars={missionCode=options.mission or 30050},Tpp={MgsCoop=state},e={}}
     setmetatable(env,{__index=_G})
     local function event(value) events[#events+1]=value end
     env.loadstring=function(source)
@@ -59,6 +63,25 @@ for _,options in ipairs({{authorized=false},{authorized=1},{authorized='unhandle
     env.e.OnMissionGameStart(nil,7,nil)
     for _,event in ipairs(events) do check(event~='open' and event~='close') end
 end
+-- Without a returned equipment preparation the host must refuse admission:
+-- no native authorization request, no SessionEnableAccept call in either
+-- direction, original returns preserved and the release receipt still sent.
+for _,options in ipairs({{authorized=true,noEquipment=true},{authorized=true,equipment=false},
+    {authorized=true,equipment=1},{authorized=true,equipment='returned'}}) do
+    env,events=fixture(options)
+    values=pack(env.e.OnMissionGameStart(nil,7,nil))
+    check(values.n==3 and values[1]==nil and values[2]=='started' and values[3]==nil)
+    check(table.concat(events,',')=='start')
+    values=pack(env.e.OnTerminate(nil,9,nil))
+    check(values.n==3 and values[2]==9)
+    check(table.concat(events,',')=='start,release,terminate')
+end
+-- The gate is evaluated at each start, not latched by an earlier refusal.
+env,events=fixture({authorized=true,equipment=false})
+env.e.OnMissionGameStart(nil,7,nil)
+env.Tpp.MgsCoop.equipmentPreparationReturned=true
+env.e.OnMissionGameStart(nil,7,nil)
+check(table.concat(events,',')=='start,start,authorize,open,observe')
 local token={}
 env,events=fixture({authorized=true,raise=token})
 local ok,err=pcall(env.e.OnMissionGameStart,nil,7,nil)
@@ -75,4 +98,4 @@ env.e.OnMissionGameStart(nil,7,nil)
 ok,err=pcall(env.e.OnTerminate)
 check(not ok and err==token)
 check(table.concat(events,',')=='start,authorize,open,observe,authorize,close,observe,release,terminate')
-print(checks..' admission checks: lifecycle ordering, one open, close/release, unavailable API, refused ownership, nil returns, errors and yields; no game calls')
+print(checks..' admission checks: lifecycle ordering, one open, close/release, unavailable API, refused ownership, refused without equipment preparation, nil returns, errors and yields; no game calls')

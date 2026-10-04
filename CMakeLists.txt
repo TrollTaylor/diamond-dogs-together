@@ -219,3 +219,4 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
   endif()
 endif()
 
+include(cmake/lua_checks.cmake)
