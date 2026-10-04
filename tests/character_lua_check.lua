@@ -22,7 +22,7 @@ local characterSource = readfile(CHARACTER)
 local readbackSource = readfile(READBACK)
 -- MSVC limits one raw string literal to 16380 bytes (C2026).
 check(#characterSource < 16000 and #readbackSource < 16000, 'sources fit one MSVC string literal')
-check(not characterSource:find(')MGS_CHARACTER"', 1, true) and not readbackSource:find(')MGS_CHARACTER_READBACK"', 1, true),
+check(not characterSource:find(')MGS_CHARACTER"', 1, true) and not readbackSource:find(')MGS_CHAR_READ"', 1, true),
     'raw-string delimiters absent')
 
 local QUERY = "return 'MGS_COOP_CHARACTER_V1'"
@@ -514,9 +514,86 @@ if REAL_MAIN then
     local composed = main:sub(1, insertion - 1) .. '\n' .. characterSource .. '\n' .. main:sub(insertion, -9) ..
         '\n' .. readbackSource .. '\n' .. 'return e'
     check(loadstring(composed, '=TppMain-character') ~= nil, 'composed TppMain compiles')
+
+    -- Execute the real OnAllocate (spliced or vanilla) with the real
+    -- TppPlayer; every other engine call is a permissive stub returning nil.
+    if realPlayerChunk then
+        local permissive
+        permissive = setmetatable({}, {__call = function() return nil end,
+            __index = function(_, key) if type(key) == 'number' then return nil end return permissive end})
+        local function lenient(t)
+            return setmetatable(t, {__index = function(_, key) if type(key) == 'number' then return nil end return permissive end})
+        end
+        local function runAllocate(source, o)
+            local env = setmetatable({}, {__index = function(_, key)
+                local value = rawget(_G, key)
+                if value ~= nil then return value end
+                return permissive
+            end})
+            env.vars = {missionCode = o.mission, playerType = o.playerType or PT.SNAKE, playerPartsType = PARTS.SNEAKING_SUIT,
+                playerCamoType = CAMO.SPLITTER, handEquip = HAND_ROCKET, playerFaceId = 77, playerFaceEquipId = 4,
+                buddyType = BUDDY.NONE, sortiePrepPlayerType = PT.SNAKE, sortiePrepPlayerFaceId = 77,
+                sortiePrepPlayerSnakePartsType = PARTS.SNEAKING_SUIT, sortiePrepPlayerSnakeCamoType = CAMO.SPLITTER,
+                sortiePrepPlayerSnakeFaceEquipId = 4, sortiePrepPlayerDDPartsType = PARTS.NORMAL,
+                sortiePrepPlayerDDCamoType = CAMO.TIGERSTRIPE, sortiePrepPlayerDDFaceEquipId = 0, mbLayoutCode = 0}
+            env.mvars, env.gvars, env.svars = {}, {ply_isUsingTempPlayerType = false}, {}
+            env.PlayerType, env.PlayerPartsType, env.PlayerCamoType = lenient(PT), lenient(PARTS), lenient(CAMO)
+            env.PlayerHandType = lenient({NONE = 0, NORMAL = 1})
+            env.TppEquip = lenient({EQP_HAND_NORMAL = HAND_NORMAL, EQP_SUIT = 99})
+            env.BuddyType = lenient({QUIET = BUDDY.QUIET, DOG = BUDDY.DOG})
+            env.TppDefine = lenient({STORY_SEQUENCE = lenient({CLEARD_ESCAPE_THE_HOSPITAL = 5}),
+                DEFAULT_EQUIP_MISSION_BLOCK_GROUP_SIZE = 1777721, PICKABLE_MAX = 10, PLACED_MAX = 10})
+            env.TppStory = lenient({GetCurrentStorySequence = function() return 20 end})
+            env.TppMission = lenient({IsFOBMission = function(code) return math.floor(code / 10000) == 5 end,
+                IsSubsistenceMission = function() return env.vars.missionCode == 11043 or env.vars.missionCode == 11044 end,
+                IsMissionStart = function() return true end, IsDefiniteMissionClear = function() return false end})
+            env.Tpp = lenient({MgsCoop = {}, IsTypeTable = function(v) return type(v) == 'table' end,
+                IsTypeFunc = function(v) return type(v) == 'function' end, IsTypeString = function(v) return type(v) == 'string' end,
+                IsTypeNumber = function(v) return type(v) == 'number' end, _requireList = {},
+                ApendArray = function(a, b) for _, v in ipairs(b or {}) do a[#a + 1] = v end end})
+            env.TppScriptVars = lenient({IsSavingOrLoading = function() return false end})
+            env.receipts = {}
+            env.loadstring = function(text)
+                env.receipts[#env.receipts + 1] = text
+                if text == QUERY then return function() return o.character, 'dd_male', false end end
+                if text == ON or text == OFF then return function() return true end end
+                return function() return text end
+            end
+            setfenv(realPlayerChunk, env)
+            env.TppPlayer = realPlayerChunk()
+            local mainChunk = assert(loadstring(source, '=TppMain-run'))
+            setfenv(mainChunk, env)
+            local mission = {sequence = {MissionPrepare = function()
+                if o.storyTemp then env.TppPlayer.RegisterTemporaryPlayerType(o.storyTemp) end
+            end}}
+            local ok, failure = pcall(mainChunk().OnAllocate, mission)
+            check(ok, 'real OnAllocate ran: ' .. tostring(failure))
+            check(env.Tpp.MgsCoop.characterError == nil, 'no character error in real OnAllocate')
+            return env
+        end
+        local spliced = main:sub(1, insertion - 1) .. '\n' .. characterSource .. '\n' .. main:sub(insertion)
+        local env = runAllocate(spliced, {mission = 10036, character = 'quiet'})
+        check(env.vars.playerType == PT.QUIET and env.vars.playerPartsType == PARTS.QUIET and env.vars.playerCamoType == CAMO.QUIET and
+            env.gvars.ply_lastPlayerTypeUsingTemp == PT.SNAKE, 'real OnAllocate ends as Quiet; own type saved')
+        check(has(env.receipts, ON) and env.receipts[#env.receipts]:find('ocelot_reset_skipped;mission=10036', 1, true),
+            'the real end-of-OnAllocate Ocelot revert was the skipped call')
+        env = runAllocate(main, {mission = 10036, character = 'quiet', playerType = PT.QUIET})
+        check(env.vars.playerType == PT.SNAKE and env.vars.playerPartsType == PARTS.SNEAKING_SUIT,
+            'vanilla OnAllocate reverts Quiet (the skip is what keeps it)')
+        env = runAllocate(spliced, {mission = 10050, character = 'quiet'})
+        check(env.vars.playerType == PT.DD_MALE and env.vars.playerFaceId == 0 and has(env.receipts, OFF),
+            'real OnAllocate applies the DD fallback and face in a Quiet mission')
+        env = runAllocate(spliced, {mission = 10240, character = 'ocelot', storyTemp = {partsType = PARTS.NORMAL,
+            camoType = CAMO.OLIVEDRAB, playerType = PT.SNAKE, handEquip = HAND_NORMAL, faceEquipId = 0}})
+        check(env.vars.playerType == PT.SNAKE and env.vars.playerPartsType == PARTS.NORMAL, 'real OnAllocate keeps story Snake')
+        env = runAllocate(spliced, {mission = 10036, character = ''})
+        check(env.vars.playerType == PT.SNAKE and env.vars.playerPartsType == PARTS.SNEAKING_SUIT and #env.receipts == 1,
+            'real OnAllocate with the default character is vanilla')
+    end
 end
 
 print(checks .. ' character Lua checks passed: default/unwired skips, Quiet/Ocelot override with bypass and one-shot revert skip, ' ..
     'Quiet conflicts and fallbacks, story-forced missions, mission classes, sortie-kept Snake/Avatar/DD, DD faces, continue, ' ..
     'failures, readback/poll, appended wrapper' .. (realPlayerChunk and ', real TppPlayer functions' or '') ..
-    (REAL_MAIN and ', real TppMain anchor/composition' or '') .. '; no game or native calls')
+    (REAL_MAIN and (', real TppMain anchor/composition' .. (realPlayerChunk and '/OnAllocate execution' or '')) or '') ..
+    '; no game or native calls')

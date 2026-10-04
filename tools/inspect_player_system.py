@@ -2,6 +2,9 @@
 
 Candidate root comes from pinned tpp-mod symbols.hpp; object fields are raw,
 not validated actor counts. Run only against the fingerprinted installed game.
+Also reports the per-instance appearance arrays (type/parts/camo/hand/faceId),
+the vars appearance bytes and whether the Ocelot/Quiet reset branch at RVA
+0x9cd370 is original or bypassed (docs/characters.md, single-PC readback).
 """
 import argparse
 import ctypes as c
@@ -20,7 +23,57 @@ CODE_CHECKS = {
     0x9C39B0: "33c041b801000000664489024889420489420c44848124020000741a8b81280200004489420c8942048b8130020000894208488bc2c348894204488bc2c3",
     0x9C3BB0: "488b81300400008bd2488b04d0c3",
     0xBF5250: "4c8b41284d85c07506b801000000c38bc20fb6ca48c1e80383e107420fb60400d3e883e001c3",
+    # Appearance readback (docs/characters.md), statically decoded on 1.0.15.4:
+    # Player.GetPlayerType reads byte (*(P+0x60))+0x40 [idx] ...
+    0x9D3127: "498b46608bce488b40400fb61408",
+    # ... and Player.SetPartsInfoAtInstanceIndex writes type/parts/camo/hand
+    # bytes at Q+0x40/+0x48/+0x50/+0x58, u16 faceId at Q+0x60, dirty Q+0x180.
+    0x9DF6CA: "4c8b45f04d8b4060498b404044883406498b404844883c06498b405044882406498b405844882c06498b406066890c708bceb801000000d3e04109808001",
+    # UpdatePartsStatus reaches vars as *(*(*(*(0x2c3a8a0)+8)+0x98)+0x10) and
+    # reads vars.playerType at +0xfb, vars.playerCamoType at +0xf9.
+    0xBFF050: "4883ec28e847ffffff488b40084883c428c3",
+    0xBFEFAD: "488b05ecb803024885c0757fb918",
+    0x9CD072: "e8d91f2300488b98980000004c8b6b10",
+    0x9CD303: "410fb685fb000000410fb69df9000000",
 }
+# The Ocelot/Quiet reset branch (native/player_type_contract.hpp) is reported,
+# never required: either state is valid while the character bypass is scoped.
+PLAYER_TYPE_BRANCH = (0x9CD370, bytes.fromhex("0f859c070000"), bytes.fromhex("48e99c070000"))
+VARS_SINGLETON_RVA = 0x2C3A8A0
+
+
+def observe_appearance(read, base, impl, report):
+    """Raw per-instance appearance arrays, vars appearance and branch state."""
+    site, original, replacement = PLAYER_TYPE_BRANCH
+    branch = read(base + site, len(original))
+    report["player_type_branch"] = ("original" if branch == original else
+                                    "bypassed" if branch == replacement else "unknown:" + branch.hex())
+    count = struct.unpack("<I", read(impl + 0x208, 4))[0]
+    report["instance_count_208_raw"] = count
+    parts_info = struct.unpack("<Q", read(impl + 0x60, 8))[0]
+    report["parts_info_pointer_raw"] = hex(parts_info)
+    if parts_info and 0 < count <= 4:
+        arrays = struct.unpack("<5Q", read(parts_info + 0x40, 40))
+        if all(arrays):
+            types, parts, camos, hands = (read(pointer, count) for pointer in arrays[:4])
+            faces = struct.unpack(f"<{count}H", read(arrays[4], 2 * count))
+            report["appearance_raw"] = [
+                {"instance": i, "type": types[i], "parts": parts[i], "camo": camos[i], "hand": hands[i], "face_id": faces[i]}
+                for i in range(count)]
+        report["appearance_dirty_mask_180_raw"] = struct.unpack("<I", read(parts_info + 0x180, 4))[0]
+    singleton = struct.unpack("<Q", read(base + VARS_SINGLETON_RVA, 8))[0]
+    if singleton:
+        holder = struct.unpack("<Q", read(singleton + 8, 8))[0]
+        owner = struct.unpack("<Q", read(holder + 0x98, 8))[0] if holder else 0
+        variables = struct.unpack("<Q", read(owner + 0x10, 8))[0] if owner else 0
+        if variables:
+            block = read(variables + 0xF8, 8)
+            # +0xf8 parts, +0xf9 camo, +0xfb type and the u16 at +0xfc are read or
+            # written by UpdatePartsStatus; +0xfa is reported raw (hand per reader, unverified).
+            report["vars_appearance_raw"] = {"parts_f8": block[0], "camo_f9": block[1], "byte_fa": block[2],
+                                             "type_fb": block[3], "u16_fc": struct.unpack_from("<H", block, 4)[0]}
+    report["appearance_note"] = ("GetPlayerType returns type 0..4 and reads OCELOT(5)/QUIET(6) as 0; these raw bytes do not. "
+                                 "Arrays are unsynchronized snapshots of live game memory.")
 
 
 def observe(pid):
@@ -96,6 +149,7 @@ def observe(pid):
             report["enclosing_header_qwords_raw"] = [hex(v) for v in struct.unpack("<4Q", enclosing)]
             if base <= enclosing_table < base + 0xA01D000 - 128:
                 report["enclosing_vtable_entries_raw"] = [hex(v) for v in struct.unpack("<16Q", read(enclosing_table, 128))]
+            observe_appearance(read, base, impl, report)
             # Descriptor method 0x9c39b0 gates output with enclosing+0x224 bit 0,
             # copies +0x228 to descriptor+4 and +0x230 to descriptor+8.
             # Resolver 0xbf4270 compares descriptor+4 against the unsigned index.
