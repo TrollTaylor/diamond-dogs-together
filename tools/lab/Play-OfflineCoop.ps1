@@ -212,10 +212,19 @@ try {
 
     # ---------------------------------------------------------------- ready
     Write-Step 'Waiting for Mother Base and the partner system in both copies'
+    $spaceAt = (Get-Date).AddSeconds(20)
     while ((Get-Date) -lt $deadline) {
         Update-State
         if (@($dirs.Keys | Where-Object { $state[$_].Exited }).Count) { throw 'A game window closed before it was ready.' }
         if (@($dirs.Keys | Where-Object { !$state[$_].Ready }).Count -eq 0) { break }
+        # After loading, Mother Base can wait on a "Space: Resume Game" tips screen;
+        # the partner system only starts once the mission really begins.
+        if (!$NoAutoTitle -and (Get-Date) -ge $spaceAt) {
+            foreach ($role in @($dirs.Keys | Where-Object { $state[$_].Mission -and !$state[$_].Ready })) {
+                try { & (Join-Path $lab 'Send-LabInput.ps1') -Role $role -Keys space -GapMs 200 *> $null } catch { Write-Verbose "[$role] Space not delivered: $_" }
+            }
+            $spaceAt = (Get-Date).AddSeconds(6)
+        }
         Start-Sleep -Seconds 2
     }
     Update-State

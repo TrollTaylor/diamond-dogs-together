@@ -55,6 +55,7 @@ struct Addresses {
     std::uintptr_t image_begin, image_end;  // vtables must lie in [begin, end)
     std::uintptr_t block_vtable;
     std::uintptr_t ps_vtable;
+    std::uintptr_t ps_vtable_alt;  // live player subclass; slot 0 and +0xC8 identical to the base
     std::uintptr_t set_stance;          // PS.vt+0 (SetStance)
     std::uintptr_t ps_component;        // PS.vt+0xC8 (stance request component getter)
     std::uintptr_t cs_vtable;

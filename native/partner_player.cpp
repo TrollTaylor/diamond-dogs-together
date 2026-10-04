@@ -154,6 +154,7 @@ Addresses AddressesFor(const void* base) noexcept {
     a.image_end = b + c::image_span;
     a.block_vtable = b + c::block_vtable_rva;
     a.ps_vtable = b + c::ps_vtable_rva;
+    a.ps_vtable_alt = b + c::ps_vtable_alt_rva;
     a.set_stance = b + c::set_stance_rva;
     a.ps_component = b + c::ps_component_rva;
     a.cs_vtable = b + c::cs_vtable_rva;
@@ -417,7 +418,7 @@ const char* ResolveCore(const Addresses& a, const State& s, std::uint32_t k, Blo
         b.id < b.base_id || b.id - b.base_id >= b.id_count) return "blk_index";
     std::uintptr_t slot0 = 0, back = 0;
     std::uint32_t ps_base = 0;
-    if (!ReadValue(b.blk + c::blk_ps, b.ps) || !b.ps || !ReadValue(b.ps, b.ps_vt) || b.ps_vt != a.ps_vtable ||
+    if (!ReadValue(b.blk + c::blk_ps, b.ps) || !b.ps || !ReadValue(b.ps, b.ps_vt) || (b.ps_vt != a.ps_vtable && b.ps_vt != a.ps_vtable_alt) ||
         !ReadValue(b.ps_vt, slot0) || slot0 != a.set_stance) return "ps_vtable";
     if (!ReadValue(b.ps + c::ps_blk, back) || back != b.blk || !ReadValue(b.ps + c::ps_base_id, ps_base) || ps_base != b.base_id)
         return "ps_back";

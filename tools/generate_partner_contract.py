@@ -129,6 +129,7 @@ SITES = [
     (0x9BEA93, '488b467049891c06', 'block setup: *(P+0x50)[k] = &blocks[k]'),
     (0x9BEAC0, '488b4670498b0c0648894e78', 'block setup: the block holding the local id is stored at P+0x58'),
     (0xFEDF58, '488d05912a3c01488903', 'PS ctor stores vtable 0x23B09F0'),
+    (0xFF20FA, '488d056feb3b01488903', 'player PS subclass ctor (after base ctor 0xFEDEF0) stores vtable 0x23B0C70'),
     (0xFF5B10, '40534883ec20488b8198020000448bca4c8bd9442b4908', 'PS.vt+0 SetStance prologue: stance word *(PS+0x298)[id - PS+8]'),
     (0xFF5B51, '488b8108040000488b8838010000488b4160', 'SetStance: PS+0x408 -> blk, blk+0x138 -> P, P+0x60 -> Q'),
     (0xFF5B65, '488b403044880401', 'SetStance: u8 Q+0x30[id] = stance'),
@@ -162,6 +163,8 @@ SLOTS = [
     (0x2295490, 0x28, 0x9CCB40, 'P vtable +0x28 = mirror off'),
     (0x23B09F0, 0x00, 0xFF5B10, 'PS vtable +0x00 = SetStance'),
     (0x23B09F0, 0xC8, 0xFF3220, 'PS vtable +0xC8 = stance request component getter'),
+    (0x23B0C70, 0x00, 0xFF5B10, 'PS subclass vtable +0x00 = SetStance (same as base)'),
+    (0x23B0C70, 0xC8, 0xFF3220, 'PS subclass vtable +0xC8 = stance request component getter (same as base)'),
     (0x22E6070, 0x388, 0xAF1130, 'CS vtable +0x388 = GetTransform'),
     (0x23AD970, 0x18, 0xFE0080, 'Q vtable +0x18 = aim SetTarget (NOT a movement driver; never called)'),
 ]
@@ -258,6 +261,7 @@ w('inline constexpr std::size_t q_look_face=0x60, q_look_face_equip=0x68;  // u1
 w('// --- Blocks, PS and CS components (Warp 0x9ceae0 walks blk -> PS -> CS -> T) -----')
 w('inline constexpr std::uintptr_t block_vtable_rva=0x2295210;')
 w('inline constexpr std::uintptr_t ps_vtable_rva=0x23b09f0;')
+w('inline constexpr std::uintptr_t ps_vtable_alt_rva=0x23b0c70;  // live player PS subclass (ctor 0xff20fa); slots 0..51 equal the base')
 w('inline constexpr std::uintptr_t set_stance_rva=0xff5b10;     // PS.vt+0x00')
 w('inline constexpr std::uintptr_t ps_component_rva=0xff3220;   // PS.vt+0xc8')
 w('inline constexpr std::uintptr_t cs_vtable_rva=0x22e6070;')
