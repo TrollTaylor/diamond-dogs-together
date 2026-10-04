@@ -81,6 +81,7 @@ SITES = [
     (0x121B933, '41385d10', 'policy: relax byte this+0x10 (area callback)'),
     (0x121B5B5, '884830', 'policy factory zeroes the relax byte (object+0x30)'),
     (0x121B5C2, '488d0defeb1a0148894820', 'policy factory stores final interface vtable 0x23CA1B8 at object+0x20'),
+    (0x121B4B0, '488d05a1ec1a0148894120', 'policy destructor writes the base vtable 0x23CA158 back (base = mid-destruction: refused)'),
     (0xBF7149, '488b4950488b01488bd3ff5010', 'realizer: policy = this+0x50, calls policy vtable +0x10'),
     (0x9C263F, '488b8fc0000000488b01ff5010', 'player update: realizer P+0xA0 vtable +0x10'),
     (0x9C5260, '488b0d915e2502e9f4eafeff', 'P vtable +0x1A0 guard wrapper uses global 0x2C1B0F8'),
@@ -99,6 +100,14 @@ SITES = [
     (0x9985E2, '4c8b0537e327024981c0f4000000', 'vars playerPosZ = *(0x2C16920)+0xF4'),
     (0x53CA10, 'b8010000008bc92b05b37569024898', 'record writer bank (1 - [0x2BD3FD0])'),
     (0x53CA26, '488d0dc37569024869c0e0000000', 'record base 0x2BD3FF0, stride 0xE0'),
+    (0x9DCD5C, '81a704020000ffdfffff', 'SetAllInstanceActiveMode(false) clears P+0x204 bit 0x2000; P is not null-checked'),
+    (0x9DF320, '40534883ec2083caffe8922d030185c00f95c3e898d51000', 'Player.SetOtherInstanceIsForMirrorMode prologue'),
+    (0x9DF338, '488b480884db741281890402000000400000', 'mirror: P = [root+8] (no null check); true ORs P+0x204 bit 0x4000'),
+    (0x9DF352, '488b01ff5028', 'mirror(false): calls P vtable +0x28'),
+    (0x9CCB40, '81a104020000ffbfffff488b0d2f242602e98abc0f00', 'P vtable +0x28: clears bit 0x4000, resets the engine mirror object *(0x2C2EF80)'),
+    (0xAC87E0, '48895c24084889742410574883ec20488bf1488d99d0000000', 'mirror object reset dereferences the object without a null check'),
+    (0xAC81B2, '48c705c36d160200000000', 'engine finalize clears the mirror object pointer 0x2C2EF80'),
+    (0xAC821A, '4889055f6d1602', 'engine init stores the mirror object pointer 0x2C2EF80'),
 ]
 
 # (vtable rva, slot offset, expected target rva).
@@ -111,6 +120,7 @@ SLOTS = [
     (0x23CA1B8, 0x10, 0x121B5E0, 'policy (final) vtable +0x10 = realize policy'),
     (0x23CA158, 0x10, 0x121B5E0, 'policy (base) vtable +0x10 = realize policy'),
     (0x2306730, 0x10, 0xBF7140, 'realizer vtable +0x10 = realizer update'),
+    (0x2295490, 0x28, 0x9CCB40, 'P vtable +0x28 = mirror off'),
 ]
 
 failures = []
@@ -154,10 +164,11 @@ w('inline constexpr std::uintptr_t player_slot_rva=0x2a82c30;   // P = *(base+sl
 w('inline constexpr std::uintptr_t p_vtable_rva=0x2295490;')
 w('inline constexpr std::uintptr_t q_vtable_rva=0x23ad970;')
 w('// The only constructor (factory 0x121b550) leaves the final interface vtable')
-w('// 0x23ca1b8 at the policy pointer; 0x23ca158 is its base class (destructor')
-w('// path only). Both hold the policy 0x121b5e0 at +0x10; either is accepted.')
+w('// 0x23ca1b8 at the policy pointer. 0x23ca158 is its base class, present only')
+w('// while the object is being constructed or destroyed (destructors 0x121b490 /')
+w('// 0x121b4f0 write it back): it is refused, only the final vtable is accepted.')
 w('inline constexpr std::uintptr_t policy_vtable_rva=0x23ca1b8;')
-w('inline constexpr std::uintptr_t policy_base_vtable_rva=0x23ca158;')
+w('inline constexpr std::uintptr_t policy_base_vtable_rva=0x23ca158;  // refused (construction/destruction)')
 w('inline constexpr std::uintptr_t policy_function_rva=0x121b5e0;  // both policy vtables, slot +0x10')
 w('inline constexpr std::uintptr_t realizer_vtable_rva=0x2306730;')
 w('inline constexpr std::uintptr_t bitset_vtable_rva=0x23067c0;')
@@ -166,6 +177,10 @@ w('inline constexpr std::uintptr_t glob_parts_rva=0x2c1b0f8;     // pointer g')
 w('inline constexpr std::uintptr_t vars_slot_rva=0x2c16920;      // pointer to vars')
 w('inline constexpr std::uintptr_t record_bank_rva=0x2bd3fd0;    // int32 published bank (0/1)')
 w('inline constexpr std::uintptr_t record_base_rva=0x2bd3ff0;')
+w('// Engine mirror object (created/destroyed by the engine init/finalize chains')
+w('// 0x991bf0/0x991970). Mirror off (P vtable +0x28 = 0x9ccb40) dereferences it')
+w('// without a null check, so MIRROR_OFF is only sent while it is non-null.')
+w('inline constexpr std::uintptr_t mirror_object_rva=0x2c2ef80;')
 w('// --- P (player game object, secondary view) offsets -------------------------')
 w('inline constexpr std::size_t p_q=0x60, p_ids=0x70, p_pool=0x78, p_parts=0x90, p_realizer=0xa0, p_sync=0xa8;')
 w('inline constexpr std::size_t p_flags=0x204, p_count=0x208, p_realized_count=0x20c, p_local=0x214, p_bitset=0x380;')

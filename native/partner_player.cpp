@@ -108,6 +108,7 @@ void ReadDiagnostics(const Addresses& a, State& s) noexcept {
     std::uintptr_t vars = 0;
     s.vars_ok = ReadValue(a.vars_slot, vars) && ReadValue(vars + c::vars_pos_x, s.vars_pos[0]) &&
                 ReadValue(vars + c::vars_pos_y, s.vars_pos[1]) && ReadValue(vars + c::vars_pos_z, s.vars_pos[2]);
+    if (!ReadValue(a.mirror_object, s.mirror_object)) s.mirror_object = 0;
 }
 
 void LogMm(char* out, std::size_t capacity, const float* xyz) noexcept {
@@ -135,7 +136,6 @@ Addresses AddressesFor(const void* base) noexcept {
     a.p_vtable = b + c::p_vtable_rva;
     a.q_vtable = b + c::q_vtable_rva;
     a.policy_vtable = b + c::policy_vtable_rva;
-    a.policy_base_vtable = b + c::policy_base_vtable_rva;
     a.policy_function = b + c::policy_function_rva;
     a.realizer_vtable = b + c::realizer_vtable_rva;
     a.glob_suppress = b + c::glob_suppress_rva;
@@ -143,6 +143,7 @@ Addresses AddressesFor(const void* base) noexcept {
     a.vars_slot = b + c::vars_slot_rva;
     a.record_bank = b + c::record_bank_rva;
     a.record_base = b + c::record_base_rva;
+    a.mirror_object = b + c::mirror_object_rva;
     return a;
 }
 
@@ -309,7 +310,7 @@ const char* SetPolicyRelax(const Addresses& a, bool relax, std::uint8_t restore_
     std::uintptr_t realizer_vtable = 0, policy = 0, policy_vtable = 0, function = 0, owner = 0;
     if (!s.realizer || !ReadValue(s.realizer, realizer_vtable) || realizer_vtable != a.realizer_vtable) return "realizer_vtable";
     if (!ReadValue(s.realizer + c::realizer_policy, policy) || !policy || !ReadValue(policy, policy_vtable) ||
-        (policy_vtable != a.policy_vtable && policy_vtable != a.policy_base_vtable) ||
+        policy_vtable != a.policy_vtable ||
         !ReadValue(policy_vtable + 0x10, function) || function != a.policy_function) return "policy_vtable";
     if (!ReadValue(policy + c::policy_owner, owner) || owner != s.P) return "policy_owner";
     if (!ReadValue(policy + c::policy_relax, previous)) return "fault";

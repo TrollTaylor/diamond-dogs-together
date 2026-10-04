@@ -213,11 +213,15 @@ bool ParseTrigger(const char* text, std::size_t size, Trigger& out) noexcept {
 std::uint32_t OpsFor(const OpInput& input) noexcept {
     std::uint32_t ops = 0;
     if (input.stage >= 1 && input.apply != PartnerApply::slot && input.pose_valid) ops |= op::warp;
-    if (input.stage >= 2) ops |= op::set_all_active;
-    else if (input.luaflags & luaflag::all_active) ops |= op::clear_all_active;
+    if (input.stage >= 2) {
+        if (!(input.luaflags & luaflag::all_active) || input.reassert_all_active) ops |= op::set_all_active;
+    } else if (input.luaflags & luaflag::all_active) {
+        ops |= op::clear_all_active;
+    }
     if (input.stage >= 3) ops |= op::copy_parts;
     if (input.stage >= 1 && input.parts_explicit) ops |= op::set_parts_explicit;
     if (input.stage >= 1 && input.mirror_on) ops |= op::mirror_on;
+    if (input.mirror_off) ops |= op::mirror_off;
     return ops;
 }
 

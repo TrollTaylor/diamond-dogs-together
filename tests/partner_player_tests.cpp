@@ -45,7 +45,7 @@ struct World {
     unsigned char *a18, *a28, *a30, *a38, *ad8, *r1d8, *r1e0, *r1f8;
     std::uintptr_t p_vt[64]{}, q_vt[16]{}, policy_vt[4]{}, policy_base_vt[4]{}, realizer_vt[4]{}, bitset_vt[2]{};
     unsigned char policy_function_code[16]{};
-    std::uintptr_t slot = 0, gptr = 0, varsptr = 0;
+    std::uintptr_t slot = 0, gptr = 0, varsptr = 0, mirrorptr = 0;
     std::uint32_t glob = 0;
     std::int32_t bank = 0;
     pp::Addresses addresses{};
@@ -143,9 +143,10 @@ struct World {
         std::memcpy(records + (0 * 16 + 1) * c::record_stride + c::record_pos, rec, sizeof(rec));
         Put<std::uint32_t>(records, (0 * 16 + 1) * c::record_stride + c::record_status, 0xA5A5A5A5u);
         slot = Addr(P);
-        addresses = pp::Addresses{Addr(&slot), Addr(p_vt), Addr(q_vt), Addr(policy_vt), Addr(policy_base_vt),
-                                  Addr(policy_function_code), Addr(realizer_vt), Addr(&glob), Addr(&gptr), Addr(&varsptr),
-                                  Addr(&bank), Addr(records)};
+        mirrorptr = Addr(region + 0xF000);
+        addresses = pp::Addresses{Addr(&slot), Addr(p_vt), Addr(q_vt), Addr(policy_vt), Addr(policy_function_code),
+                                  Addr(realizer_vt), Addr(&glob), Addr(&gptr), Addr(&varsptr), Addr(&bank), Addr(records),
+                                  Addr(&mirrorptr)};
     }
     std::uint32_t Flags() const { return Get<std::uint32_t>(P, c::p_flags); }
 };
@@ -336,6 +337,12 @@ int main() {
     w.bank = 2;
     Check(Read(w, s) == pp::Refusal::none && !s.rec_ok, "invalid bank is not read");
     Check(s.vars_ok && s.vars_pos[0] == 10.0f && s.vars_pos[2] == -30.0f, "vars position");
+    Check(s.mirror_object == Addr(w.region + 0xF000), "engine mirror object read");
+    w.mirrorptr = 0;
+    Check(Read(w, s) == pp::Refusal::none && s.mirror_object == 0, "null engine mirror object is optional");
+    w.addresses.mirror_object = 0x10;
+    Check(Read(w, s) == pp::Refusal::none && s.mirror_object == 0, "unreadable engine mirror object reads 0");
+    w.Reset();
     w.gptr = 0;
     Check(Read(w, s) == pp::Refusal::none && !s.pb_ok, "missing parts globals are optional");
     w.Reset();
@@ -434,8 +441,14 @@ int main() {
     Check(std::strcmp(pp::SetPolicyRelax(w.addresses, true, 0, true, previous), "terminating") == 0, "no relax while terminating");
     Check(pp::SetPolicyRelax(w.addresses, false, 0, true, previous) == nullptr && previous == 1 && w.policy[c::policy_relax] == 0,
           "policy restored while terminating");
+    // The base-class vtable is only present while the policy object is being
+    // constructed or destroyed (0x121b4b0): refused for relax and restore.
     Put<std::uintptr_t>(w.policy, 0, Addr(w.policy_base_vt));
-    Check(pp::SetPolicyRelax(w.addresses, true, 0, false, previous) == nullptr, "base policy vtable accepted");
+    w.policy[c::policy_relax] = 1;
+    Check(std::strcmp(pp::SetPolicyRelax(w.addresses, true, 0, false, previous), "policy_vtable") == 0, "base policy vtable refused");
+    Check(std::strcmp(pp::SetPolicyRelax(w.addresses, false, 0, true, previous), "policy_vtable") == 0 &&
+          w.policy[c::policy_relax] == 1, "no restore into a policy object under destruction");
+    w.policy[c::policy_relax] = 0;
     Put<std::uintptr_t>(w.policy, 0, Addr(w.q_vt));
     Check(std::strcmp(pp::SetPolicyRelax(w.addresses, true, 0, false, previous), "policy_vtable") == 0, "foreign policy vtable");
     Put<std::uintptr_t>(w.policy, 0, Addr(w.policy_vt));
@@ -535,7 +548,7 @@ int main() {
         Check(!pp::CodeGate(image, span, mismatch) && mismatch == 0x2295490, "contract gate checks the Warp slot");
         const pp::Addresses real = pp::AddressesFor(image);
         Check(real.player_slot == Addr(image) + 0x2a82c30 && real.policy_vtable == Addr(image) + 0x23ca1b8 &&
-              real.policy_base_vtable == Addr(image) + 0x23ca158 && real.policy_function == Addr(image) + 0x121b5e0 &&
+              real.mirror_object == Addr(image) + 0x2c2ef80 && real.policy_function == Addr(image) + 0x121b5e0 &&
               real.glob_suppress == Addr(image) + 0x2c1b0f0 && real.record_base == Addr(image) + 0x2bd3ff0 &&
               real.vars_slot == Addr(image) + 0x2c16920, "contract addresses");
         // The empty slot in an image without a player is a refusal, not a fault.

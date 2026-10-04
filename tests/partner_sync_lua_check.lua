@@ -1,6 +1,6 @@
 -- Exercises lua/coop/partner_sync.lua with simulated native receipts and
 -- recording game-binding mocks. No MGSV, Steam, network or real session.
--- Usage: lua51 partner_sync_lua_check.lua lua/coop/partner_sync.lua
+-- Usage: lua51 partner_sync_lua_check.lua lua/coop/partner_sync.lua [composed TppMain-host-trial.lua]
 local checks = 0
 local function check(value, why)
     checks = checks + 1
@@ -208,7 +208,8 @@ check(warp.id == 'Warp' and warp.pos[1] == 2 and warp.pos[2] == 0 and warp.pos[3
 check(#c.calls == 0, 'WARP alone calls nothing else')
 c.reply = {2, 1, 0, 0, 0, 0, 1, 0}
 update(env, 3)
-check(count(c.calls, 'allactive:true') == 1 and hasLog(c, 'event=allactive_set') and #c.warps == 1, 'SET_ALLACTIVE once, no warp')
+check(count(c.calls, 'allactive:true') == 3 and count(c.logs, 'event=allactive_set') == 1 and #c.warps == 1,
+    'SET_ALLACTIVE is idempotent: called for every op 2 (native re-asserts a lost bit), noted once, no warp')
 check(fields(lastTick(c))[9] == '1', 'luaflags bit 0 reports all-active')
 c.reply = {4, 1, 0, 0, 0, 0, 1, 0}
 update(env, 2)
@@ -230,6 +231,13 @@ check(count(c.calls, 'parts:1:0:1:2:3:4') == 2 and hasLog(c, 'event=parts_set_ex
 c.reply = {32, 1, 0, 0, 0, 0, 1, 0}
 update(env)
 check(c.calls[#c.calls] == 'mirror:true' and hasLog(c, 'event=mirror_on'), 'MIRROR_ON')
+c.reply = {64, 1, 0, 0, 0, 0, 1, 0}
+update(env)
+check(c.calls[#c.calls] == 'mirror:false' and hasLog(c, 'event=mirror_off'), 'MIRROR_OFF (op 64)')
+c.reply = {96, 1, 0, 0, 0, 0, 1, 0}
+mark = #c.calls
+update(env)
+check(c.calls[mark + 1] == 'mirror:true' and c.calls[mark + 2] == 'mirror:false', 'MIRROR_ON is handled before MIRROR_OFF')
 for _, reply in ipairs({{0, 1, 1, 1, 1, 1, 0, 0}, {-1, 1, 1, 1, 1, 1, 0, 0}, {'1', 1, 1, 1, 1, 1, 0, 0}, {nil, 1}}) do
     mark = #c.calls
     local warps = #c.warps
@@ -298,6 +306,24 @@ update(env, 3)
 check(#c.ticks == ticks, 'no ticks after terminate')
 call(env, 'OnTerminate')
 check(c.stops == 1, 'STOP only once')
+-- The exit clear runs only while the instance is still valid (the binding
+-- dereferences P without a null check; pcall cannot catch a native fault).
+for _, mode in ipairs({'invalid', 'throw'}) do
+    env, c = fixture(); call(env, 'OnMissionGameStart')
+    c.reply = {2, 1, 0, 0, 0, 0, 0, 0}
+    update(env)
+    if mode == 'invalid' then c.valid = false else c.validThrow = true end
+    call(env, 'OnTerminate')
+    order = table.concat(c.order, ',')
+    check(count(c.calls, 'allactive:false') == 0 and hasLog(c, 'event=allactive_kept;reason=invalid_instance'),
+        'no clear on an invalid instance: ' .. mode)
+    check(order:find('allactive:true,STOP,OnTerminate', 1, true) ~= nil and c.stops == 1,
+        'STOP and the original OnTerminate still run: ' .. order)
+end
+env, c = fixture(); call(env, 'OnMissionGameStart')
+c.reply = {2, 1, 0, 0, 0, 0, 0, 0}
+update(env)
+call(env, 'OnTerminate')
 -- A new mission starts fresh.
 c.reply = nil
 call(env, 'OnMissionGameStart')
@@ -372,5 +398,141 @@ do
     check(bare.e.OnMissionGameStart == nil and bare.e.OnUpdate == nil and bare.e.OnTerminate == nil, 'no callbacks, no wrappers')
 end
 
-print(checks .. ' partner sync Lua checks passed: inactive unless CFG is true, strict tick format, op bits 1/2/4/8/16/32, ' ..
-    'bad index refusal, pcall error path, STOP on terminate, missing/raising bindings, original returns/errors/yields; no game calls')
+-- 9. Optional second argument: the complete DLL TppMain composition written by
+-- host_trial_patch_check. The spliced chunk must be byte-identical to the
+-- source file, and the composed module (every other co-op chunk included,
+-- unknown game globals stubbed, other receipts left literal) must run the
+-- 30050 path: inert while CFG stays literal; ticks, ops and STOP (after the
+-- session lifecycle's terminating receipt, before the original OnTerminate)
+-- once CFG answers true. This also proves that no enclosing local of the
+-- composition shadows a global the chunk uses.
+local composedRuns = 0
+if arg[2] then
+    local function slurp(path)
+        local file = assert(io.open(path, 'rb'))
+        local text = file:read('*a')
+        file:close()
+        return text
+    end
+    local composed, standalone = slurp(arg[2]), slurp(arg[1])
+    local spliced = '\n' .. standalone .. '\n'
+    local at = composed:find(spliced, 1, true)
+    check(at ~= nil and composed:find(spliced, at + 1, true) == nil, 'partner chunk spliced once, byte-identical')
+    check(composed:find('-- Project-authored session feedback.', 1, true) < at and
+        composed:find('-- Adapted from Dynamite TppMain marker-loading lifecycle', at, true) == at + #spliced,
+        'partner chunk directly precedes the marker lifecycle chunk')
+
+    local function run(options)
+        local r = {receipts = {}, calls = {}, ticks = {}, notes = {}}
+        local function record(text) r.calls[#r.calls + 1] = text end
+        local function stub(name)
+            local t = {}
+            return setmetatable(t, {
+                __index = function(_, k)
+                    if type(k) ~= 'string' then return nil end
+                    local child = stub(name .. '.' .. k)
+                    rawset(t, k, child)
+                    return child
+                end,
+                __call = function() record(name) end,
+            })
+        end
+        local env = {
+            vars = {missionCode = options.mission or 30050, playerPosX = 1.5, playerPosY = 0.25, playerPosZ = -3.0,
+                    playerRotY = 45.5, playerCameraRotation = {[1] = 90}, playerType = 0, playerPartsType = 1,
+                    playerCamoType = 2, playerHandType = 3, playerFaceId = 4},
+            Tpp = setmetatable({IsTypeFunc = function(v) return type(v) == 'function' end,
+                                IsTypeTable = function(v) return type(v) == 'table' end, MgsCoop = {}},
+                               {__index = function(t, k) local v = stub('Tpp.' .. k); rawset(t, k, v); return v end}),
+            Player = {
+                IsInstanceValid = function() return options.valid ~= false end,
+                SetAllInstanceActiveMode = function(on) record('allactive:' .. tostring(on)) end,
+                CopyPartsInfoFromLocalPlayer = function(t) record('copy:' .. tostring(t.instanceIndex)) end,
+                SetPartsInfoAtInstanceIndex = function(t) record('parts:' .. tostring(t.instanceIndex)) end,
+                SetOtherInstanceIsForMirrorMode = function(on) record('mirror:' .. tostring(on)) end,
+            },
+            PlayerInfo = {GetLocalPlayerIndex = function() return 0 end, OrCheckStatus = function() return false end},
+            PlayerStatus = {STAND = 4, SQUAT = 5, CRAWL = 6, WALK = 13, RUN = 14, DASH = 15},
+            GameObject = {SendCommand = function(id, command)
+                record(string.format('warp:%s:%s:%s', tostring(id.type), tostring(id.index), tostring(command.id)))
+            end},
+        }
+        env.loadstring = function(source)
+            r.receipts[#r.receipts + 1] = source
+            if source == CFG and options.cfg ~= nil then return function() return options.cfg end end
+            if starts(source, TICK) then
+                r.ticks[#r.ticks + 1] = source:sub(#TICK + 1)
+                if options.reply then return function() return unpack(options.reply, 1, 8) end end
+            end
+            if starts(source, LOG) then r.notes[#r.notes + 1] = source:sub(#LOG + 1) end
+            -- Everything else (and an unanswered receipt) compiles for real: a
+            -- receipt then yields its literal string, as when native does not reply.
+            return loadstring(source)
+        end
+        setmetatable(env, {__index = function(t, k)
+            local v = _G[k]
+            if v ~= nil then return v end
+            v = stub(k); rawset(t, k, v); return v
+        end})
+        local chunk = assert(loadfile(arg[2])); setfenv(chunk, env)
+        local mod = chunk()
+        check(type(mod) == 'table' and type(mod.OnMissionGameStart) == 'function' and type(mod.OnUpdate) == 'function' and
+            type(mod.OnTerminate) == 'function', 'composed module exports the callbacks')
+        local mission = {sequence = {OnTerminate = function() record('sequence.OnTerminate') end}}
+        local ok, err = pcall(mod.OnMissionGameStart, mission)
+        check(ok, 'composed OnMissionGameStart: ' .. tostring(err))
+        for _ = 1, options.updates or 3 do
+            ok, err = pcall(mod.OnUpdate, mission)
+            check(ok, 'composed OnUpdate: ' .. tostring(err))
+        end
+        ok, err = pcall(mod.OnTerminate, mission)
+        check(ok, 'composed OnTerminate: ' .. tostring(err))
+        composedRuns = composedRuns + 1
+        return r
+    end
+    local function index(list, value)
+        for i, v in ipairs(list) do if v == value then return i end end
+        return nil
+    end
+    local function partnerReceipts(r)
+        local n = 0
+        for _, v in ipairs(r.receipts) do if v:find('MGS_COOP_PARTNER', 1, true) then n = n + 1 end end
+        return n
+    end
+    local function playerCalls(r)
+        local n = 0
+        for _, v in ipairs(r.calls) do
+            if starts(v, 'allactive:') or starts(v, 'copy:') or starts(v, 'parts:') or starts(v, 'mirror:') or starts(v, 'warp:') then
+                n = n + 1
+            end
+        end
+        return n
+    end
+    -- CFG left literal (every mode other than offline-v1 with partner=1).
+    local r = run({reply = {3, 1, 0, 0, 0, 0, 0, 0}})
+    check(count(r.receipts, CFG) == 1 and partnerReceipts(r) == 1, 'literal CFG: one CFG receipt, nothing else')
+    check(#r.ticks == 0 and playerCalls(r) == 0 and index(r.receipts, STOP) == nil, 'literal CFG: no tick, no call, no STOP')
+    check(index(r.calls, 'TppClock.Start') ~= nil and index(r.calls, 'sequence.OnTerminate') ~= nil,
+        'literal CFG: original start and terminate ran')
+    -- CFG false (offline-v1 refused).
+    r = run({cfg = false, reply = {3, 1, 0, 0, 0, 0, 0, 0}})
+    check(partnerReceipts(r) == 1 and playerCalls(r) == 0 and index(r.calls, 'sequence.OnTerminate') ~= nil, 'CFG false: inert')
+    -- Another mission: not even the CFG receipt.
+    r = run({mission = 10036, cfg = true, reply = {3, 1, 0, 0, 0, 0, 0, 0}})
+    check(partnerReceipts(r) == 0 and playerCalls(r) == 0, 'other mission: no partner receipt')
+    -- Active.
+    r = run({cfg = true, reply = {3, 1, 2000, 0, -1000, 1571, 1, 0}, updates = 3})
+    check(#r.ticks == 3 and r.ticks[1] == '1 1500 250 -3000 4550 9000 0 0 0' and r.ticks[2] == '2 1500 250 -3000 4550 9000 0 0 1',
+        'composed ticks: ' .. tostring(r.ticks[1]) .. ' / ' .. tostring(r.ticks[2]))
+    check(r.notes[1] == 'event=started' and index(r.notes, 'event=allactive_set') ~= nil, 'composed notes')
+    check(count(r.calls, 'allactive:true') == 3 and count(r.calls, 'warp:TppPlayer2:1:Warp') == 3, 'composed ops: set + warp per tick')
+    local clear, terminated = index(r.calls, 'allactive:false'), index(r.calls, 'sequence.OnTerminate')
+    check(clear ~= nil and terminated ~= nil and clear < terminated, 'all-active cleared before the original OnTerminate')
+    local stop, terminating = index(r.receipts, STOP), index(r.receipts, "return 'MGS_COOP_MISSION_TERMINATING_V1'")
+    check(stop ~= nil and count(r.receipts, STOP) == 1 and terminating ~= nil and terminating < stop,
+        'one STOP, after the session lifecycle terminating receipt')
+end
+
+print(checks .. ' partner sync Lua checks passed: inactive unless CFG is true, strict tick format, op bits 1/2/4/8/16/32/64, ' ..
+    'bad index refusal, pcall error path, STOP on terminate, missing/raising bindings, original returns/errors/yields' ..
+    (composedRuns > 0 and ('; composed TppMain at 30050 (' .. composedRuns .. ' runs)') or '') .. '; no game calls')

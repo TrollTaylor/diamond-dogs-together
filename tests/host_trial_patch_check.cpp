@@ -7,6 +7,10 @@
 #include <vector>
 #include <atomic>
 #include "mgscoop/bootstrap_patch.hpp"
+// Generated from lua/coop/*.lua (build tree): the exact chunks spliced.
+#include "session_feedback_source.hpp"
+#include "partner_sync_source.hpp"
+#include "marker_loading_source.hpp"
 int main(int argc, char** argv) {
     if (argc != 3) return 2;
     std::ifstream input(argv[1], std::ios::binary);
@@ -69,9 +73,16 @@ int main(int argc, char** argv) {
         check(feedback_at<partner_at && partner_at<marker_at);
         check(output.find(partner_header,partner_at+1)==std::string::npos);
         check(output.find(feedback_header,feedback_at+1)==std::string::npos);
-        // Nothing but the partner chunk sits between the feedback chunk's end and the marker chunk.
-        const auto feedback_end=output.rfind("\nend",partner_at);
-        check(feedback_end!=std::string::npos && feedback_end>feedback_at);
+        // Exactly feedback chunk, partner chunk, marker chunk, byte for byte and
+        // adjacent: nothing else is spliced between them.
+        const std::size_t feedback_size=sizeof(session_feedback_source)-1;
+        const std::size_t partner_size=sizeof(partner_sync_source)-1;
+        const std::size_t marker_size=sizeof(marker_loading_source)-1;
+        check(partner_at>=feedback_size && output.compare(partner_at-feedback_size,feedback_size,session_feedback_source)==0);
+        check(output.compare(partner_at,partner_size,partner_sync_source)==0);
+        check(output.compare(partner_at+partner_size,marker_size,marker_loading_source)==0);
+        check(marker_at>=partner_at+partner_size && marker_at<partner_at+partner_size+64);
+        check(output.find(partner_sync_source)==partner_at && output.find(partner_sync_source,partner_at+1)==std::string::npos);
         check(output.find("MGS_COOP_SESSION_STATUS_V1",partner_at)>marker_at);
         check(output.find("MGS_COOP_PARTNER_CFG_V1",partner_at)<marker_at && output.find("MGS_COOP_PARTNER_CFG_V1")>feedback_at);
         check(output.find("MGS_COOP_PARTNER_STOP_V1",partner_at)<marker_at);

@@ -42,6 +42,10 @@ inline constexpr std::uint32_t copy_parts = 4;
 inline constexpr std::uint32_t clear_all_active = 8;
 inline constexpr std::uint32_t set_parts_explicit = 16;  // variant F3b
 inline constexpr std::uint32_t mirror_on = 32;           // diagnostic F3c
+// Extension (not in the spec's op list): ends the F3c mirror diagnostic. Sent
+// natively at most 10 s after MIRROR_ON (or on stop / stage 0), only while
+// P+0x204 bit 0x4000 is set and the engine mirror object is non-null.
+inline constexpr std::uint32_t mirror_off = 64;
 }
 // luaflags reported by Lua in every tick.
 namespace luaflag {
@@ -113,15 +117,21 @@ bool ParseTrigger(const char* text, std::size_t size, Trigger& out) noexcept;
 // Native stage policy (2.2). Stage 0 probe only; 1 WARP; 2 + SET_ALLACTIVE;
 // 3 + COPY_PARTS. apply=slot removes WARP (native writes the slot instead);
 // WARP and the slot write need a valid pose (source=net: a received packet).
-// CLEAR_ALLACTIVE is sent instead of SET_ALLACTIVE when the stage is below 2
-// while Lua still reports all-active mode. One-shots are added as given.
+// SET_ALLACTIVE (idempotent in Lua) is sent at stage >= 2 while Lua has not
+// latched all-active mode, or when the caller re-asserts it because P+0x204
+// bit 0x2000 was lost although Lua latched it (rate-limited by the caller).
+// CLEAR_ALLACTIVE is sent instead when the stage is below 2 while Lua still
+// reports all-active mode. Set-type one-shots need stage >= 1; MIRROR_OFF is a
+// restoration and is sent at any stage.
 struct OpInput {
     std::uint32_t stage;
     PartnerApply apply;
     bool pose_valid;
     std::uint32_t luaflags;
+    bool reassert_all_active;
     bool parts_explicit;
     bool mirror_on;
+    bool mirror_off;
 };
 std::uint32_t OpsFor(const OpInput& input) noexcept;
 bool WritesSlot(std::uint32_t stage, PartnerApply apply, bool pose_valid) noexcept;

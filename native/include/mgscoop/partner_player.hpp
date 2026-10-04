@@ -26,8 +26,7 @@ struct Addresses {
     std::uintptr_t player_slot;
     std::uintptr_t p_vtable;
     std::uintptr_t q_vtable;
-    std::uintptr_t policy_vtable;       // final interface vtable
-    std::uintptr_t policy_base_vtable;  // base class vtable
+    std::uintptr_t policy_vtable;       // final interface vtable (the only one accepted)
     std::uintptr_t policy_function;     // expected value of policy vtable +0x10
     std::uintptr_t realizer_vtable;
     std::uintptr_t glob_suppress;
@@ -35,6 +34,7 @@ struct Addresses {
     std::uintptr_t vars_slot;
     std::uintptr_t record_bank;
     std::uintptr_t record_base;
+    std::uintptr_t mirror_object;       // engine mirror object pointer (mirror off needs it non-null)
 };
 Addresses AddressesFor(const void* base) noexcept;
 
@@ -71,6 +71,7 @@ struct State {
     bool rec_ok;
     float vars_pos[3];
     bool vars_ok;
+    std::uintptr_t mirror_object;  // *(mirror_object); 0 when unreadable
 };
 // Reads only. Returns the first failed guard in the order listed above (the
 // fields read so far stay filled for logging).
@@ -93,8 +94,10 @@ const char* ClearRealizeBits(const Addresses& addresses, std::uint32_t index, bo
                              std::uint32_t& q194, std::uint32_t& q198) noexcept;
 const char* WriteSlot(const Addresses& addresses, std::uint32_t index, bool terminating, const float (&xyzw)[4]) noexcept;
 const char* ForceExists(const Addresses& addresses, std::uint32_t index, bool terminating) noexcept;
-// policy = *(*(P+0xA0)+0x50); requires the realizer vtable, a policy vtable
-// whose +0x10 is the policy function, and policy+8 == P. relax=true stores 1
+// policy = *(*(P+0xA0)+0x50); requires the realizer vtable, the FINAL policy
+// vtable (the base-class vtable means the object is being constructed or
+// destroyed: refused) whose +0x10 is the policy function, and policy+8 == P.
+// relax=true stores 1
 // (set kind); relax=false stores restore_value (restore kind). previous gets
 // the byte found before the store.
 const char* SetPolicyRelax(const Addresses& addresses, bool relax, std::uint8_t restore_value, bool terminating,

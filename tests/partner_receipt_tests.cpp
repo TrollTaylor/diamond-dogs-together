@@ -183,8 +183,8 @@ int main() {
 
     // --- Stage policy.
     const auto ops = [](std::uint32_t stage, PartnerApply apply, bool pose, std::uint32_t flags = 0, bool parts = false,
-                        bool mirror = false) {
-        return OpsFor(OpInput{stage, apply, pose, flags, parts, mirror});
+                        bool mirror = false, bool reassert = false, bool mirror_off = false) {
+        return OpsFor(OpInput{stage, apply, pose, flags, reassert, parts, mirror, mirror_off});
     };
     Check(ops(0, PartnerApply::warp, true) == 0, "stage 0 probe only");
     Check(ops(1, PartnerApply::warp, true) == op::warp, "stage 1 warp");
@@ -197,10 +197,20 @@ int main() {
     Check(ops(0, PartnerApply::warp, true, luaflag::all_active) == op::clear_all_active, "stop clears all-active");
     Check(ops(1, PartnerApply::warp, true, luaflag::all_active | luaflag::parts_copied) == (op::warp | op::clear_all_active),
           "stage 1 clears all-active");
-    Check(ops(2, PartnerApply::warp, true, luaflag::all_active) == (op::warp | op::set_all_active), "no clear at stage 2");
+    Check(ops(2, PartnerApply::warp, true, luaflag::all_active) == op::warp, "latched all-active: no SET, no CLEAR at stage 2");
+    Check(ops(3, PartnerApply::warp, true, luaflag::all_active) == (op::warp | op::copy_parts), "latched all-active at stage 3");
+    Check(ops(2, PartnerApply::warp, true, luaflag::all_active, false, false, true) == (op::warp | op::set_all_active),
+          "lost bit 0x2000 re-asserts SET");
+    Check(ops(1, PartnerApply::warp, true, luaflag::all_active, false, false, true) == (op::warp | op::clear_all_active),
+          "no re-assert below stage 2");
     Check(ops(3, PartnerApply::warp, true, 0, true, true) ==
           (op::warp | op::set_all_active | op::copy_parts | op::set_parts_explicit | op::mirror_on), "one-shots");
     Check(ops(0, PartnerApply::warp, true, 0, true, true) == 0, "no one-shots at stage 0");
+    Check(ops(0, PartnerApply::warp, true, 0, false, false, false, true) == op::mirror_off, "MIRROR_OFF at stage 0 (restore)");
+    Check(ops(3, PartnerApply::warp, true, luaflag::all_active, false, false, false, true) ==
+          (op::warp | op::copy_parts | op::mirror_off), "MIRROR_OFF alongside stage 3");
+    Check(op::mirror_off == 64 && (op::mirror_off & (op::warp | op::set_all_active | op::copy_parts | op::clear_all_active |
+          op::set_parts_explicit | op::mirror_on)) == 0, "op 64 is a new bit");
     Check(!WritesSlot(0, PartnerApply::slot, true) && !WritesSlot(3, PartnerApply::warp, true) &&
           WritesSlot(1, PartnerApply::slot, true) && WritesSlot(3, PartnerApply::both, true) &&
           !WritesSlot(3, PartnerApply::both, false), "slot write policy");

@@ -102,8 +102,11 @@ do
         if op % 16 >= 8 and allActive and call(api.setAllActive, "Player.SetAllInstanceActiveMode", false) then
             allActive = false; note("event=allactive_cleared")
         end
-        if op % 4 >= 2 and not allActive and call(api.setAllActive, "Player.SetAllInstanceActiveMode", true) then
-            allActive = true; note("event=allactive_set")
+        -- SET is idempotent: native sends it until Lua latches it, and again
+        -- (rate-limited) when P+0x204 bit 0x2000 was lost.
+        if op % 4 >= 2 and call(api.setAllActive, "Player.SetAllInstanceActiveMode", true) then
+            if not allActive then note("event=allactive_set") end
+            allActive = true
         end
         if op % 8 >= 4 and not partsCopied and
             call(api.copyParts, "Player.CopyPartsInfoFromLocalPlayer", {instanceIndex = R}) then
@@ -115,6 +118,8 @@ do
             note("event=parts_set_explicit")
         end
         if op % 64 >= 32 and call(api.mirror, "Player.SetOtherInstanceIsForMirrorMode", true) then note("event=mirror_on") end
+        -- MIRROR_OFF (extension): native ends the F3c diagnostic after at most 10 s.
+        if op % 128 >= 64 and call(api.mirror, "Player.SetOtherInstanceIsForMirrorMode", false) then note("event=mirror_off") end
         if op % 2 == 1 and finite(px) and finite(py) and finite(pz) and finite(pry) then
             call(api.sendCommand, "GameObject.SendCommand", {type = "TppPlayer2", index = R},
                 {id = "Warp", pos = {px / 1000, py / 1000, pz / 1000}, rotY = pry / 1000})
@@ -141,10 +146,22 @@ do
         end
         return ...
     end
+    -- SetAllInstanceActiveMode (0x9DCD20) clears P+0x204 bit 0x2000 without a
+    -- null check on P = [root+8]; IsInstanceValid (0x9D6360) tests the same
+    -- pointer and its valid bit 0. pcall cannot catch a native fault, so the
+    -- clear at mission exit runs only while the instance is still valid.
     local function stopping()
         if not active then return end
         active = false
-        if allActive and api.setAllActive ~= nil then pcall(api.setAllActive, false); allActive = false end
+        if allActive and api.setAllActive ~= nil then
+            local ok, valid = pcall(api.isValid)
+            if ok and valid == true then
+                pcall(api.setAllActive, false)
+            else
+                pcall(note, "event=allactive_kept;reason=invalid_instance")
+            end
+            allActive = false
+        end
         receipt("return 'MGS_COOP_PARTNER_STOP_V1'")
     end
     if type(start) == "function" then e.OnMissionGameStart = function(...) return started(start(...)) end end

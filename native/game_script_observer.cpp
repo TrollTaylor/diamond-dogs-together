@@ -30,6 +30,7 @@
 #include "mgscoop/partner_receipt.hpp"
 #include "mgscoop/partner_player.hpp"
 #include "mgscoop/partner_net.hpp"
+#include "mgscoop/partner_driver.hpp"
 #include "mgscoop/crash_probe.hpp"
 #include <cstdarg>
 
@@ -361,57 +362,19 @@ bool ReadMission(unsigned short& mission) noexcept {
 // has partner=1 (partner_on). It never creates a session, never sets
 // S_IS_ONLINE and never touches the synchronizer; the only game writes are the
 // guarded ones in partner_player. Receipts arrive inside ObserveEntry under
-// receipt_lock; the tick receipt is quiet (no entry/return log lines).
+// receipt_lock; the tick receipt is quiet (no entry/return log lines). The
+// decisions live in partner_driver (unit tested); this file supplies threading,
+// the receipt plumbing and the real effects below.
 namespace partner = mgscoop::partner;
 namespace pp = mgscoop::partner_player;
+namespace pd = mgscoop::partner_driver;
 bool partner_on = false;
 bool partner_gate_ok = false;
 pp::Addresses partner_addresses{};
 wchar_t partner_trigger_path[lab::kMaxAtomicPath]{};
-thread_local bool quiet_replacement = false;
+thread_local pd::Quiet partner_quiet{};
 thread_local char partner_reply[partner::reply_capacity]{};
-// Process-level settings: lab.ini at install, then partner.trigger.
-std::uint32_t partner_stage = 0;
-mgscoop::PartnerSource partner_source = mgscoop::PartnerSource::fixed;
-mgscoop::PartnerApply partner_apply = mgscoop::PartnerApply::warp;
-bool partner_parts_explicit_pending = false;
-bool partner_mirror_pending = false;
-constexpr unsigned kProbeKeys = 20;
-constexpr unsigned kProbeLineCap = 400;
-constexpr unsigned kLuaLogCap = 64;
-constexpr unsigned kCappedLogs = 8;
-// Per-mission state, reset at runtime_enter.
-struct PartnerMission {
-    bool cfg_ready, stopped;
-    std::uint64_t start_ms, ticks;
-    bool pose_applied, have_cmd;
-    partner::Pose cmd;
-    bool bits_set;
-    std::uint64_t bits_ms;
-    unsigned bits_lost_logs, write_refusal_logs;
-    bool realized, parts_loaded, parts_timeout_logged;
-    std::uint64_t realized_ms;
-    unsigned s0_missing_ticks, s0_forced_logs;
-    bool policy_relaxed, policy_refused_logged;
-    std::uint8_t policy_previous;
-    unsigned lua_logs;
-    bool lua_logs_capped;
-    const char* refusal;
-    unsigned tick_rejects;
-    unsigned probe_lines;
-    bool probe_logged;
-    std::uint64_t probe_ms;
-    std::uint32_t probe_key[kProbeKeys];
-    std::uint64_t warp_check_ms;
-    std::uint64_t rate_ms, rate_ticks;
-    bool units_logged;
-    std::uint64_t units_ms;
-    std::int32_t yaw_abs_max;
-    bool anim_logged;
-    std::uint64_t anim_ms;
-    pp::Anim anim;
-};
-PartnerMission partner_mission{};
+pd::Driver partner_driver{};
 
 std::uint64_t QpcMicros() noexcept {
     LARGE_INTEGER frequency{}, counter{};
@@ -422,112 +385,80 @@ std::uint64_t QpcMicros() noexcept {
 }
 std::uint32_t Clamp32(std::uint64_t value) noexcept { return value > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<std::uint32_t>(value); }
 
-void PartnerMissionStart(std::uint32_t mission) noexcept {
-    if (!partner_on) return;
-    partner_mission = PartnerMission{};
-    mgscoop::partner_net::ResetRemote();
-    mgscoop::partner_net::SetEpoch(mission);
-    mgscoop::crash_probe::SetContext(partner_stage, 0);
+// Real effects for partner_driver (the context is unused: process-level state).
+void PartnerLog(void*, const char* line) noexcept { Log(line); }
+pp::Refusal PartnerReadState(void*, pp::State& out) noexcept { return pp::ReadState(partner_addresses, out); }
+const char* PartnerOrBits(void*, bool terminating, std::uint32_t& q194, std::uint32_t& q198) noexcept {
+    return pp::OrRealizeBits(partner_addresses, partner::partner_index, terminating, q194, q198);
 }
-void PartnerMissionEnd() noexcept {
-    if (!partner_on) return;
-    partner_mission.cfg_ready = false;
-    mgscoop::partner_net::ResetRemote();
-    mgscoop::partner_net::SetEpoch(0);
-    mgscoop::crash_probe::SetContext(partner_stage, 0);
+const char* PartnerClearBits(void*, bool terminating, std::uint32_t& q194, std::uint32_t& q198) noexcept {
+    return pp::ClearRealizeBits(partner_addresses, partner::partner_index, terminating, q194, q198);
 }
-void LogWriteRefusal(const char* what, const char* reason) noexcept {
-    auto& m = partner_mission;
-    if (m.write_refusal_logs >= kCappedLogs) return;
-    ++m.write_refusal_logs;
-    LogFormat("partner_write=refused; op=%s; reason=%s\r\n", what, reason ? reason : "unknown");
+const char* PartnerWriteSlot(void*, bool terminating, const float (&xyzw)[4]) noexcept {
+    return pp::WriteSlot(partner_addresses, partner::partner_index, terminating, xyzw);
 }
-bool ClearPartnerBits(const char* reason) noexcept {
-    auto& m = partner_mission;
-    if (!m.bits_set) return false;
-    std::uint32_t q194 = 0, q198 = 0;
-    if (const char* refused = pp::ClearRealizeBits(partner_addresses, partner::partner_index, mission_terminating, q194, q198)) {
-        LogWriteRefusal("clear_bits", refused);
-        return false;
-    }
-    m.bits_set = false;
-    LogFormat("partner_bits=cleared; reason=%s\r\n", reason);
-    return true;
+const char* PartnerForceExists(void*, bool terminating) noexcept {
+    return pp::ForceExists(partner_addresses, partner::partner_index, terminating);
 }
-void RestorePartnerPolicy() noexcept {
-    auto& m = partner_mission;
-    if (!m.policy_relaxed) return;
-    std::uint8_t previous = 0;
-    if (const char* refused = pp::SetPolicyRelax(partner_addresses, false, m.policy_previous, mission_terminating, previous)) {
-        LogWriteRefusal("policy_restore", refused);
-        return;
-    }
-    m.policy_relaxed = false;
-    Log("partner_policy=restored\r\n");
+const char* PartnerSetPolicy(void*, bool relax, std::uint8_t restore_value, bool terminating, std::uint8_t& previous) noexcept {
+    return pp::SetPolicyRelax(partner_addresses, relax, restore_value, terminating, previous);
 }
-void ApplyPartnerTrigger(const partner::Trigger& trigger) noexcept {
-    auto& m = partner_mission;
-    const std::uint32_t stage = trigger.stop ? 0 : trigger.has_stage ? trigger.stage : partner_stage;
-    if (trigger.has_source && trigger.source != partner_source) m.have_cmd = false;
-    if (trigger.has_source) partner_source = trigger.source;
-    if (trigger.has_apply) partner_apply = trigger.apply;
-    if (trigger.parts_explicit) partner_parts_explicit_pending = true;
-    if (trigger.mirror_on) partner_mirror_pending = true;
-    partner_stage = stage;
-    LogFormat("partner_stage=changed; stage=%u; source=%s; apply=%s; via=trigger\r\n", partner_stage,
-              mgscoop::PartnerSourceName(partner_source), mgscoop::PartnerApplyName(partner_apply));
-    if (stage < 3) {
-        ClearPartnerBits("trigger");
-        RestorePartnerPolicy();
-    }
+bool PartnerReadAnim(void*, const pp::State& state, pp::Anim& out) noexcept { return pp::ReadAnim(state, out); }
+mgscoop::pose::Sample PartnerSampleRemote(void*, std::uint32_t delay_ms) noexcept {
+    return mgscoop::partner_net::SampleRemote(delay_ms);
 }
-// partner.trigger (lab only): at most 63 bytes, consumed and deleted.
-void PollPartnerTrigger() noexcept {
-    if (!lab_active || !partner_trigger_path[0]) return;
+void PartnerSubmitLocal(void*, const partner::Tick& tick) noexcept { mgscoop::partner_net::SubmitLocal(tick); }
+// partner.trigger (lab only): reads at most `capacity` bytes, then deletes it.
+pd::TriggerRead PartnerTakeTrigger(void*, char* text, std::size_t capacity, std::size_t& length) noexcept {
+    length = 0;
+    if (!lab_active || !partner_trigger_path[0] || !text) return pd::TriggerRead::none;
     const DWORD error = GetLastError();
     HANDLE file = CreateFileW(partner_trigger_path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                               nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (file == INVALID_HANDLE_VALUE) { SetLastError(error); return; }
-    char text[partner::max_trigger + 1]{};
-    DWORD length = 0;
+    if (file == INVALID_HANDLE_VALUE) { SetLastError(error); return pd::TriggerRead::none; }
+    DWORD read_bytes = 0;
     LARGE_INTEGER size{};
-    const bool read = ReadFile(file, text, static_cast<DWORD>(partner::max_trigger), &length, nullptr) &&
-                      GetFileSizeEx(file, &size) && size.QuadPart <= static_cast<LONGLONG>(partner::max_trigger);
+    const bool read = ReadFile(file, text, static_cast<DWORD>(capacity), &read_bytes, nullptr) &&
+                      GetFileSizeEx(file, &size) && size.QuadPart <= static_cast<LONGLONG>(capacity);
     CloseHandle(file);
     DeleteFileW(partner_trigger_path);
     SetLastError(error);
-    partner::Trigger trigger{};
-    if (!read || !partner::ParseTrigger(text, length, trigger)) {
-        Log("partner_trigger=rejected; reason=parse\r\n");
-        return;
-    }
-    ApplyPartnerTrigger(trigger);
+    length = read_bytes;
+    return read ? pd::TriggerRead::read : pd::TriggerRead::unreadable;
+}
+bool PartnerFocused(void*) noexcept {
+    DWORD foreground = 0;
+    const HWND window = GetForegroundWindow();
+    if (window) GetWindowThreadProcessId(window, &foreground);
+    return foreground == GetCurrentProcessId();
+}
+constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, PartnerOrBits, PartnerClearBits, PartnerWriteSlot,
+    PartnerForceExists, PartnerSetPolicy, PartnerReadAnim, PartnerSampleRemote, PartnerSubmitLocal, PartnerTakeTrigger,
+    PartnerFocused};
+
+void PartnerMissionStart(std::uint32_t mission) noexcept {
+    if (!partner_on) return;
+    pd::MissionStart(partner_driver, partner_hooks);
+    mgscoop::partner_net::ResetRemote();
+    mgscoop::partner_net::SetEpoch(mission);
+    mgscoop::crash_probe::SetContext(partner_driver.settings.stage, 0);
+}
+void PartnerMissionEnd() noexcept {
+    if (!partner_on) return;
+    pd::MissionEnd(partner_driver);
+    mgscoop::partner_net::ResetRemote();
+    mgscoop::partner_net::SetEpoch(0);
+    mgscoop::crash_probe::SetContext(partner_driver.settings.stage, 0);
 }
 
 const char* HandlePartnerCfg() noexcept {
     static constexpr char yes[]="return true", no[]="return false";
-    auto& m = partner_mission;
     unsigned short mission = 0;
-    const char* reason = nullptr;
-    pp::State state{};
-    if (!OnRuntimeThread() || mission_terminating) reason = "not_runtime_thread";
-    else if (!ReadMission(mission) || mission != 30050) reason = "mission";
-    else if (!partner_gate_ok) reason = "code_gate";
-    else {
-        const pp::Refusal refusal = pp::ReadState(partner_addresses, state);
-        if (refusal != pp::Refusal::none) reason = pp::RefusalName(refusal);
-    }
-    if (reason) {
-        m.cfg_ready = false;
-        LogFormat("partner_cfg=refused; reason=%s\r\n", reason);
-        return no;
-    }
-    char line[256]{};
-    if (pp::FormatReady(state, line, sizeof(line))) Log(line);
-    m.cfg_ready = true;
-    m.stopped = false;
-    m.refusal = nullptr;
-    m.start_ms = mgscoop::partner_net::NowMs();
+    const char* precheck = nullptr;
+    if (!OnRuntimeThread() || mission_terminating) precheck = "not_runtime_thread";
+    else if (!ReadMission(mission) || mission != 30050) precheck = "mission";
+    else if (!partner_gate_ok) precheck = "code_gate";
+    if (!pd::Cfg(partner_driver, partner_hooks, precheck, mgscoop::partner_net::NowMs())) return no;
     mgscoop::partner_net::SetEpoch(mission);
     return yes;
 }
@@ -535,14 +466,7 @@ const char* HandlePartnerCfg() noexcept {
 const char* HandlePartnerLog(const char* buffer, std::size_t size) noexcept {
     static constexpr char yes[]="return true";
     if (!OnRuntimeThread() && !OnTerminationThread()) return nullptr;
-    auto& m = partner_mission;
-    if (m.lua_logs >= kLuaLogCap) {
-        if (!m.lua_logs_capped) { m.lua_logs_capped = true; Log("partner_lua=capped; limit=64\r\n"); }
-        return yes;
-    }
-    ++m.lua_logs;
-    char line[partner::log_line_capacity]{};
-    if (partner::FormatLogLine(buffer, size, line, sizeof(line))) Log(line);
+    pd::LuaLog(partner_driver, partner_hooks, buffer, size);
     return yes;
 }
 
@@ -550,208 +474,23 @@ const char* HandlePartnerStop() noexcept {
     static constexpr char yes[]="return true";
     // Sent from OnTerminate after MISSION_TERMINATING: allowed while terminating.
     if (!OnRuntimeThread() && !OnTerminationThread()) return nullptr;
-    auto& m = partner_mission;
-    const auto teardown = mgscoop::GetLabConfig().partner_teardown;
-    unsigned cleared = 0;
-    if (teardown == mgscoop::PartnerTeardown::clear && ClearPartnerBits("stop")) cleared = 1;
-    RestorePartnerPolicy();
+    pd::Stop(partner_driver, partner_hooks, mgscoop::GetLabConfig().partner_teardown, mission_terminating);
     mgscoop::partner_net::ResetRemote();
-    m.stopped = true;
-    m.cfg_ready = false;
-    LogFormat("partner_stop; cleared=%u; teardown=%s\r\n", cleared, mgscoop::PartnerTeardownName(teardown));
-    mgscoop::crash_probe::SetContext(0, m.realized ? 1u : 0u);
+    mgscoop::crash_probe::SetContext(0, partner_driver.mission.realized ? 1u : 0u);
     return yes;
 }
 
-void PartnerProbe(const pp::State& st, std::uint64_t now) noexcept {
-    auto& m = partner_mission;
-    const std::uint32_t key[kProbeKeys] = {st.ids[0], st.ids[1], st.pool[0], st.pool[1], st.parts[0], st.parts[1], st.rbits,
-        st.s0, st.s8, st.q170, st.q180, st.q194, st.q198, st.glob, st.pb_guard, st.pb_flag[0], st.pb_flag[1],
-        st.pb_state[0], st.pb_state[1], partner_stage};
-    const bool changed = !m.probe_logged || std::memcmp(key, m.probe_key, sizeof(key)) != 0;
-    const bool due = (changed && now - m.probe_ms >= 1000) || now - m.probe_ms >= 10000;
-    if (!due || m.probe_lines >= kProbeLineCap) return;
-    char line[pp::probe_capacity]{};
-    if (!pp::FormatProbe(st, GetTickCount64(), partner_stage, line, sizeof(line))) return;
-    Log(line);
-    ++m.probe_lines;
-    m.probe_logged = true;
-    m.probe_ms = now;
-    std::memcpy(m.probe_key, key, sizeof(key));
-}
-
-void PartnerAnimProbe(const pp::State& st, std::uint64_t now) noexcept {
-    auto& m = partner_mission;
-    if (m.anim_logged && now - m.anim_ms < 100) return;
-    pp::Anim anim{};
-    if (!pp::ReadAnim(st, anim)) return;
-    const pp::Anim& last = m.anim;
-    if (m.anim_logged && anim.q18 == last.q18 && anim.q28 == last.q28 && anim.qd8 == last.qd8 && anim.q30 == last.q30 &&
-        anim.q38 == last.q38 && anim.m1d8 == last.m1d8 && anim.m1e0 == last.m1e0 && anim.m1f8 == last.m1f8) return;
-    m.anim = anim;
-    m.anim_logged = true;
-    m.anim_ms = now;
-    LogFormat("partner_anim; q18=%04x; q28=%02x; qd8=%04x; q30=%u; q38=%u; m1d8=%08x; m1e0=%08x; m1f8=%08x\r\n",
-              unsigned(anim.q18), unsigned(anim.q28), unsigned(anim.qd8), anim.q30, anim.q38, anim.m1d8, anim.m1e0, anim.m1f8);
-}
-
-// The per-frame tick (2.3 item 9 outline). Returns the quiet reply, or nullptr
-// to leave the literal (Lua then does nothing).
+// The per-frame tick. Returns the quiet reply, or nullptr to leave the literal
+// (Lua then does nothing).
 const char* HandlePartnerTick(const char* buffer, std::size_t size) noexcept {
-    auto& m = partner_mission;
-    if (!m.cfg_ready || m.stopped || mission_terminating || !OnRuntimeThread()) return nullptr;
+    if (!OnRuntimeThread()) return nullptr;
     const std::uint64_t started_us = QpcMicros();
-    partner::Tick tick{};
-    if (!partner::ParseTick(buffer, size, tick)) {
-        if (m.tick_rejects < kCappedLogs) { ++m.tick_rejects; Log("partner_tick=rejected; reason=parse\r\n"); }
+    partner::Reply reply{};
+    const pd::Clock clock{mgscoop::partner_net::NowMs(), GetTickCount64()};
+    if (!pd::Tick(partner_driver, partner_hooks, mgscoop::GetLabConfig(), buffer, size, clock, mission_terminating, reply))
         return nullptr;
-    }
-    ++m.ticks;
-    const auto& labc = mgscoop::GetLabConfig();
-    const std::uint64_t now = mgscoop::partner_net::NowMs();
-    if (m.ticks % 30 == 0) PollPartnerTrigger();
-    pp::State st{};
-    const pp::Refusal refusal = pp::ReadState(partner_addresses, st);
-    if (refusal != pp::Refusal::none) {
-        const char* name = pp::RefusalName(refusal);
-        if (m.refusal != name) { m.refusal = name; LogFormat("partner_cfg=refused; reason=%s\r\n", name); }
-        return nullptr;
-    }
-    if (m.refusal) {
-        m.refusal = nullptr;
-        char line[256]{};
-        if (pp::FormatReady(st, line, sizeof(line))) Log(line);
-    }
-    // Cadence and units diagnostics.
-    if (!m.rate_ms) { m.rate_ms = now; m.rate_ticks = 0; }
-    ++m.rate_ticks;
-    if (now - m.rate_ms >= 10000) {
-        DWORD foreground = 0;
-        const HWND window = GetForegroundWindow();
-        if (window) GetWindowThreadProcessId(window, &foreground);
-        LogFormat("partner_tick=rate; hz=%u; focused=%u\r\n", Clamp32(m.rate_ticks * 1000 / (now - m.rate_ms)),
-                  foreground == GetCurrentProcessId() ? 1u : 0u);
-        m.rate_ms = now;
-        m.rate_ticks = 0;
-    }
-    const std::int32_t yaw_abs = tick.yaw_cdeg < 0 ? -tick.yaw_cdeg : tick.yaw_cdeg;
-    if (yaw_abs > m.yaw_abs_max) m.yaw_abs_max = yaw_abs;
-    if (!m.units_logged || now - m.units_ms >= 30000) {
-        m.units_logged = true;
-        m.units_ms = now;
-        LogFormat("partner_units; lua_pos_mm=%d,%d,%d; mem_pos_mm=%d,%d,%d; yaw_cdeg=%d; yaw_abs_max_cdeg=%d; cam_cdeg=%d\r\n",
-                  tick.x_mm, tick.y_mm, tick.z_mm, st.vars_ok ? pp::ToMm(st.vars_pos[0]) : INT32_MIN,
-                  st.vars_ok ? pp::ToMm(st.vars_pos[1]) : INT32_MIN, st.vars_ok ? pp::ToMm(st.vars_pos[2]) : INT32_MIN,
-                  tick.yaw_cdeg, m.yaw_abs_max, tick.cam_cdeg);
-    }
-    // Pose source.
-    partner::Pose pose{};
-    bool pose_valid = false;
-    partner::Status status = partner::Status::synthetic;
-    std::uint32_t age_ms = 0;
-    if (partner_source == mgscoop::PartnerSource::net) {
-        const auto sample = mgscoop::partner_net::SampleRemote(labc.partner_interp_ms);
-        status = sample.status == mgscoop::pose::Status::live ? partner::Status::live
-               : sample.status == mgscoop::pose::Status::stale ? partner::Status::stale : partner::Status::lost;
-        if (sample.valid) {
-            pose = partner::PoseFromMetres(sample.x, sample.y, sample.z, sample.yaw);
-            pose_valid = true;
-            age_ms = sample.age_ms;
-        }
-    } else if (partner_source == mgscoop::PartnerSource::orbit) {
-        pose = partner::OrbitPose(tick, labc.partner_offset_cm, now - m.start_ms);
-        pose_valid = true;
-    } else {
-        pose = partner::FixedPose(tick, labc.partner_offset_cm);
-        pose_valid = true;
-    }
-    // Realize bits (stage 3): from the tick after the first applied pose.
-    if (partner_stage >= 3 && m.pose_applied) {
-        const bool lost = m.bits_set && (st.q194 & 2u) == 0;
-        if (lost && m.bits_lost_logs < kCappedLogs) {
-            ++m.bits_lost_logs;
-            LogFormat("partner_bits=lost; R=1; q194=0x%x; q198=0x%x\r\n", st.q194, st.q198);
-        }
-        if (!m.bits_set || lost) {
-            std::uint32_t q194 = 0, q198 = 0;
-            if (const char* refused = pp::OrRealizeBits(partner_addresses, partner::partner_index, mission_terminating, q194, q198))
-                LogWriteRefusal("or_bits", refused);
-            else if (!m.bits_set) {
-                m.bits_set = true;
-                m.bits_ms = now;
-                LogFormat("partner_bits=set; R=1; q194=0x%x; q198=0x%x\r\n", q194, q198);
-            }
-        }
-    }
-    if (labc.partner_force_exists && partner_stage >= 2) {
-        if (st.s0 & 2u) m.s0_missing_ticks = 0;
-        else if (++m.s0_missing_ticks > 10) {
-            m.s0_missing_ticks = 0;
-            if (const char* refused = pp::ForceExists(partner_addresses, partner::partner_index, mission_terminating))
-                LogWriteRefusal("force_exists", refused);
-            else if (m.s0_forced_logs < kCappedLogs) { ++m.s0_forced_logs; Log("partner_s0=forced; R=1\r\n"); }
-        }
-    }
-    if (labc.partner_policy_relax && partner_stage >= 3 && !m.policy_relaxed && !m.policy_refused_logged) {
-        std::uint8_t previous = 0;
-        if (const char* refused = pp::SetPolicyRelax(partner_addresses, true, 0, mission_terminating, previous)) {
-            m.policy_refused_logged = true;
-            LogFormat("partner_policy=refused; reason=%s\r\n", refused);
-        } else {
-            m.policy_relaxed = true;
-            m.policy_previous = previous;
-            Log("partner_policy=relaxed\r\n");
-        }
-    }
-    const bool slot = partner::WritesSlot(partner_stage, partner_apply, pose_valid);
-    if (slot) {
-        const float xyzw[4] = {static_cast<float>(pose.x_mm / 1000.0), static_cast<float>(pose.y_mm / 1000.0),
-                               static_cast<float>(pose.z_mm / 1000.0), static_cast<float>(pose.yaw_mrad / 1000.0)};
-        if (const char* refused = pp::WriteSlot(partner_addresses, partner::partner_index, mission_terminating, xyzw))
-            LogWriteRefusal("slot", refused);
-    }
-    const std::uint32_t ops = partner::OpsFor(partner::OpInput{partner_stage, partner_apply, pose_valid, tick.luaflags,
-                                                               partner_parts_explicit_pending, partner_mirror_pending});
-    if (ops & partner::op::set_parts_explicit) partner_parts_explicit_pending = false;
-    if (ops & partner::op::mirror_on) partner_mirror_pending = false;
-    // Transitions are logged immediately.
-    const bool realized = pp::Realized(st, partner::partner_index);
-    if (realized && !m.realized) {
-        m.realized = true;
-        m.realized_ms = now;
-        m.parts_loaded = false;
-        m.parts_timeout_logged = false;
-        LogFormat("partner_realized=1; R=1; id=%04x; pool=%02x; ms_after_bits=%u\r\n", unsigned(st.ids[1]), unsigned(st.pool[1]),
-                  m.bits_set ? Clamp32(now - m.bits_ms) : 0u);
-    } else if (!realized && m.realized) {
-        m.realized = false;
-        LogFormat("partner_realized=0; R=1; ms_after_realize=%u\r\n", Clamp32(now - m.realized_ms));
-    }
-    if (m.realized && !m.parts_loaded) {
-        if (st.parts[1] == 3) {
-            m.parts_loaded = true;
-            LogFormat("partner_parts=loaded; R=1; ms_after_realize=%u\r\n", Clamp32(now - m.realized_ms));
-        } else if (!m.parts_timeout_logged && now - m.realized_ms > 15000) {
-            m.parts_timeout_logged = true;
-            LogFormat("partner_parts=timeout; R=1; state=%u; pb_state=%u\r\n", unsigned(st.parts[1]), st.pb_state[1]);
-        }
-    }
-    // 1 Hz: the pose commanded on the previous tick against the slot now.
-    const bool applying = (ops & partner::op::warp) != 0 || slot;
-    if (applying && m.have_cmd && now - m.warp_check_ms >= 1000) {
-        m.warp_check_ms = now;
-        const std::int32_t sx = pp::ToMm(st.slot[1][0]), sy = pp::ToMm(st.slot[1][1]), sz = pp::ToMm(st.slot[1][2]);
-        LogFormat("partner_warp_check; R=1; apply=%s; cmd_mm=%d,%d,%d; slot_mm=%d,%d,%d; err_mm=%u\r\n",
-                  mgscoop::PartnerApplyName(partner_apply), m.cmd.x_mm, m.cmd.y_mm, m.cmd.z_mm, sx, sy, sz,
-                  partner::DistanceMm(m.cmd.x_mm, m.cmd.y_mm, m.cmd.z_mm, sx, sy, sz));
-    }
-    mgscoop::partner_net::SubmitLocal(tick);
-    PartnerProbe(st, now);
-    if (labc.partner_anim_probe) PartnerAnimProbe(st, now);
-    if (applying) { m.cmd = pose; m.have_cmd = true; m.pose_applied = true; }
-    const partner::Reply reply{ops, partner::partner_index, pose.x_mm, pose.y_mm, pose.z_mm, pose.yaw_mrad, status, age_ms};
     if (!partner::FormatReply(reply, partner_reply, sizeof(partner_reply))) return nullptr;
-    mgscoop::crash_probe::SetContext(partner_stage, m.realized ? 1u : 0u);
+    mgscoop::crash_probe::SetContext(partner_driver.settings.stage, partner_driver.mission.realized ? 1u : 0u);
     const std::uint64_t ended_us = QpcMicros();
     mgscoop::partner_net::RecordNativeMicros(Clamp32(ended_us >= started_us ? ended_us - started_us : 0));
     return partner_reply;
@@ -996,10 +735,8 @@ bool SelectPartnerReceipt(partner::Receipt kind, const char* buffer, std::size_t
     default: break;
     }
     if (reply) replacement = {reply, std::strlen(reply)};
-    if (kind == partner::Receipt::tick) {
-        quiet_replacement = reply != nullptr;
-        return reply != nullptr;
-    }
+    pd::Arm(partner_quiet, kind, reply != nullptr);
+    if (!pd::LogsEntry(kind)) return reply != nullptr;
     char copied[241]{}, line[512]{};
     CopyName(name, copied);
     if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
@@ -1387,7 +1124,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     return selected;
 }
 void ObserveReturn(void*, int result, bool replaced) noexcept {
-    if (quiet_replacement) { quiet_replacement = false; InterlockedIncrement64(&returns); return; }
+    if (pd::ConsumeReturn(partner_quiet)) { InterlockedIncrement64(&returns); return; }
     const auto count = InterlockedIncrement64(&returns);
     if (Sample(count) || replaced) {
         char line[256]{};
@@ -1491,16 +1228,15 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                 if (SUCCEEDED(StringCchPrintfA(offline_line, ARRAYSIZE(offline_line),
                     "mode=offline_v1; sessions=0; s_is_online=never; partner=%u\r\n", partner_on ? 1u : 0u))) Log(offline_line);
                 if (partner_on) {
-                    partner_stage = labc.partner_stage;
-                    partner_source = labc.partner_source;
-                    partner_apply = labc.partner_apply;
+                    pd::Configure(partner_driver, labc);
                     partner_addresses = pp::AddressesFor(base);
                     std::uintptr_t mismatch = 0;
                     partner_gate_ok = pp::CodeGate(base, span, mismatch);
                     if (partner_gate_ok) Log("partner_code_gate=ok; scope=contract_sites_and_vtable_slots\r\n");
                     else LogFormat("partner_code_gate=mismatch; rva=0x%llx\r\n", static_cast<unsigned long long>(mismatch));
                     LogFormat("partner=configured; mode=offline_v1; stage=%u; source=%s; apply=%s; rate_hz=%u; interp_ms=%u; offset_cm=%u; teardown=%s\r\n",
-                        partner_stage, mgscoop::PartnerSourceName(partner_source), mgscoop::PartnerApplyName(partner_apply),
+                        partner_driver.settings.stage, mgscoop::PartnerSourceName(partner_driver.settings.source),
+                        mgscoop::PartnerApplyName(partner_driver.settings.apply),
                         labc.partner_rate_hz, labc.partner_interp_ms, labc.partner_offset_cm,
                         mgscoop::PartnerTeardownName(labc.partner_teardown));
                     if (labc.crash_probe) mgscoop::crash_probe::Install(base, span, Log);
