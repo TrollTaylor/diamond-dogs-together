@@ -12,6 +12,10 @@
 #include "mgscoop/steam_lifecycle.hpp"
 #include "mgscoop/steam_getter_observation.hpp"
 #include "mgscoop/game_script_observer.hpp"
+#include "mgscoop/master_server_patch.hpp"
+#include "mgscoop/lab_config.hpp"
+#include "mgscoop/steam_loopback.hpp"
+#include "mgscoop/steam_callbacks.hpp"
 
 namespace {
 constexpr DWORD path_capacity = 32768;
@@ -43,6 +47,14 @@ volatile LONG first_thread = 0;
 volatile LONG multiple_threads = 0;
 void* game_base = nullptr;
 std::size_t game_span = 0;
+
+// Co-op lab loopback integration. Off unless lab.ini enables loopback and the
+// getter/callback slots verify; when off, the observer behaves exactly as before.
+bool loopback_active = false;
+using SteamRegisterCallbackFn = void(MGSCOOP_STEAM_CALL*)(void*, int);
+using SteamUnregisterCallbackFn = void(MGSCOOP_STEAM_CALL*)(void*);
+SteamRegisterCallbackFn original_register_callback = nullptr;
+SteamUnregisterCallbackFn original_unregister_callback = nullptr;
 
 bool fingerprint_matches(const wchar_t* path, const unsigned char (&expected)[32]) noexcept {
     HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
@@ -136,9 +148,137 @@ void log_networking_result(void* context, mgscoop::SteamGetterResult result) noe
 }
 __declspec(noinline) ISteamNetworking* __cdecl observed_networking() {
     const DWORD incoming_error = GetLastError();
+    // Co-op lab loopback: hand the game our emulator; never touch real Steam
+    // networking. Starts the UDP transport lazily on the first call (outside
+    // DllMain), which is the game's session-creation path.
+    if (loopback_active) {
+        if (void* object = mgscoop::lab::loopback_interface_object()) {
+            SetLastError(incoming_error);
+            return reinterpret_cast<ISteamNetworking*>(object);
+        }
+    }
     InitCaller caller{_ReturnAddress()};
     return mgscoop::forward_observed_networking_getter(original_networking,
         {incoming_error, read_error, write_error, log_networking_result, &caller});
+}
+__declspec(noinline) void MGSCOOP_STEAM_CALL observed_register_callback(void* cb, int id) noexcept {
+    const DWORD incoming_error = GetLastError();
+    SetLastError(incoming_error);
+    original_register_callback(cb, id);
+    const DWORD outgoing = GetLastError();
+    mgscoop::lab::callbacks::on_register(cb, id);
+    SetLastError(outgoing);
+}
+__declspec(noinline) void MGSCOOP_STEAM_CALL observed_unregister_callback(void* cb) noexcept {
+    const DWORD incoming_error = GetLastError();
+    // Untrack before forwarding so a concurrent drain cannot invoke an object
+    // the game is about to tear down.
+    mgscoop::lab::callbacks::on_unregister(cb);
+    SetLastError(incoming_error);
+    original_unregister_callback(cb);
+}
+HANDLE loopback_log_handle = INVALID_HANDLE_VALUE;
+void loopback_log_line(const char* text) noexcept {
+    if (loopback_log_handle == INVALID_HANDLE_VALUE) return;
+    DWORD written = 0;
+    WriteFile(loopback_log_handle, text, static_cast<DWORD>(lstrlenA(text)), &written, nullptr);
+}
+// Resolve the real account SteamID through the shipped ISteamUser (SteamUser018
+// GetSteamID[2], hidden-return ABI). SteamAPI_Init has completed by the observer
+// install point, so this mirrors the game's own 0x143E call.
+std::uint64_t resolve_real_steamid(HMODULE steam) noexcept {
+    auto getter = reinterpret_cast<void*(MGSCOOP_STEAM_CALL*)()>(GetProcAddress(steam, "SteamUser"));
+    if (!getter) return 0;
+    void* user = getter();
+    if (!user) return 0;
+    auto* const* vtable = *static_cast<void* const* const*>(user);
+    using GetIdFn = std::uint64_t*(MGSCOOP_STEAM_CALL*)(void*, std::uint64_t*);
+    std::uint64_t id = 0;
+    reinterpret_cast<GetIdFn>(vtable[mgscoop::steam::user_slot::GetSteamID])(user, &id);
+    return id;
+}
+// Wrap the Register/Unregister IATs, configure the callback registry and the
+// loopback emulator, and arm the networking getter. Lab-gated; a no-op when
+// lab.ini is absent or loopback is off.
+void InstallLoopbackIfEnabled(HMODULE steam, bool networking_wrapped) noexcept {
+    const mgscoop::LabConfig& lab = mgscoop::GetLabConfig();
+    if (!lab.present || !lab.loopback) return;
+    if (!networking_wrapped) { log_line("loopback=disabled; reason=networking_slot_unwrapped\r\n"); return; }
+    if (!steam) { log_line("loopback=disabled; reason=steam_api64_not_mapped\r\n"); return; }
+
+    std::uint64_t self_id = lab.self_steamid;
+    if (self_id == 0) {  // host keeps its real identity
+        self_id = resolve_real_steamid(steam);
+        if (!mgscoop::steam::is_individual_steamid(self_id)) {
+            log_line("loopback=disabled; reason=real_steamid_unavailable\r\n");
+            return;
+        }
+    }
+
+    const mgscoop::MappedImageSpan mapped{game_base, game_span};
+    auto reg = mgscoop::find_import_slot(static_cast<const std::uint8_t*>(game_base), game_span,
+                                         "steam_api64.dll", "SteamAPI_RegisterCallback", mgscoop::readable_image_range, &mapped);
+    auto unreg = mgscoop::find_import_slot(static_cast<const std::uint8_t*>(game_base), game_span,
+                                           "steam_api64.dll", "SteamAPI_UnregisterCallback", mgscoop::readable_image_range, &mapped);
+    void* reg_fn = reinterpret_cast<void*>(GetProcAddress(steam, "SteamAPI_RegisterCallback"));
+    void* unreg_fn = reinterpret_cast<void*>(GetProcAddress(steam, "SteamAPI_UnregisterCallback"));
+    bool reg_ok = reg.status == mgscoop::ImportStatus::found && reg.offset == 0x208e0f8 && reg_fn;
+    bool unreg_ok = unreg.status == mgscoop::ImportStatus::found && unreg.offset == 0x208e0f0 && unreg_fn;
+    if (reg_ok) {
+        const auto r = mgscoop::exchange_import(game_base, game_span, reg.offset, reg_fn, reinterpret_cast<void*>(&observed_register_callback));
+        reg_ok = r.status == mgscoop::PatchStatus::installed && r.replacement_installed;
+        if (reg_ok) original_register_callback = reinterpret_cast<SteamRegisterCallbackFn>(reg_fn);
+    }
+    if (unreg_ok) {
+        const auto r = mgscoop::exchange_import(game_base, game_span, unreg.offset, unreg_fn, reinterpret_cast<void*>(&observed_unregister_callback));
+        unreg_ok = r.status == mgscoop::PatchStatus::installed && r.replacement_installed;
+        if (unreg_ok) original_unregister_callback = reinterpret_cast<SteamUnregisterCallbackFn>(unreg_fn);
+    }
+    if (!reg_ok || !unreg_ok) {
+        // Roll back any half-install: without both wrappers the synthetic queue
+        // could never be dispatched or could invoke a torn-down object.
+        if (reg_ok && original_register_callback)
+            mgscoop::exchange_import(game_base, game_span, reg.offset, reinterpret_cast<void*>(&observed_register_callback), reg_fn);
+        if (unreg_ok && original_unregister_callback)
+            mgscoop::exchange_import(game_base, game_span, unreg.offset, reinterpret_cast<void*>(&observed_unregister_callback), unreg_fn);
+        original_register_callback = nullptr;
+        original_unregister_callback = nullptr;
+        log_line("loopback=disabled; reason=callback_iat_mismatch\r\n");
+        return;
+    }
+
+    const auto base = reinterpret_cast<std::uintptr_t>(game_base);
+    mgscoop::lab::callbacks::configure(reinterpret_cast<const void*>(base + 0x24bf400),
+                                       reinterpret_cast<const void*>(base + 0x24bf418));
+
+    wchar_t exe_dir[path_capacity]{};
+    if (GetModuleFileNameW(nullptr, exe_dir, path_capacity)) {
+        wchar_t* sep = nullptr;
+        for (wchar_t* p = exe_dir; *p; ++p) if (*p == L'\\') sep = p;
+        if (sep) {
+            *sep = 0;
+            wchar_t log_path[path_capacity]{};
+            if (SUCCEEDED(StringCchPrintfW(log_path, path_capacity, L"%s\\mgs-coop\\loopback.log", exe_dir)))
+                loopback_log_handle = CreateFileW(log_path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                                  nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        }
+    }
+
+    mgscoop::lab::EmulatorConfig cfg{};
+    cfg.self_id = self_id;
+    cfg.peer_id = lab.peer_steamid;
+    cfg.peer_port = lab.peer_port;
+    cfg.timeout_ms = 10000;
+    for (int i = 0; i < 63 && lab.self_name[i]; ++i) cfg.self_name[i] = lab.self_name[i];
+    cfg.log = &loopback_log_line;
+    mgscoop::lab::loopback_configure(cfg, lab.listen_port);
+    loopback_active = true;
+    char line[160]{};
+    if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
+            "loopback=armed; self=%llu; peer=%llu; listen_port=%u; peer_port=%u\r\n",
+            static_cast<unsigned long long>(self_id), static_cast<unsigned long long>(lab.peer_steamid),
+            lab.listen_port, lab.peer_port)))
+        log_line(line);
 }
 __declspec(noinline) void __cdecl observed_callbacks() {
     const DWORD incoming_error = GetLastError();
@@ -147,6 +287,9 @@ __declspec(noinline) void __cdecl observed_callbacks() {
     // error state, then preserve the original API's error state on return.
     SetLastError(incoming_error);
     original_callbacks();
+    // Co-op lab: drain synthetic 1202/1203 on this same thread, right after the
+    // real callbacks ran, so the packet manager observes them as native events.
+    if (loopback_active) mgscoop::lab::callbacks::drain();
     const DWORD outgoing_error = GetLastError();
     const auto count = InterlockedIncrement64(&calls);
     const auto thread = static_cast<LONG>(GetCurrentThreadId());
@@ -257,16 +400,25 @@ BOOL CALLBACK install(PINIT_ONCE, PVOID, PVOID*) noexcept {
     } else {
         log_line("symbol=SteamAPI_RunCallbacks status=disabled reason=unique_import_or_export_unavailable\r\n");
     }
+    bool networking_wrapped = false;
     if (networking_export_verified && networking_slot.status == mgscoop::ImportStatus::found && networking_slot.offset == 0x208e138) {
         original_networking = reinterpret_cast<mgscoop::SteamNetworkingGetter>(networking_function);
         const auto result = mgscoop::exchange_import(game_base, game_span, networking_slot.offset,
             reinterpret_cast<void*>(networking_function), reinterpret_cast<void*>(&observed_networking));
+        networking_wrapped = result.status == mgscoop::PatchStatus::installed && result.replacement_installed;
         char line[280]{};
         if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
             "symbol=SteamNetworking status=%d replacement_installed=%d protection_restored=%d slot_rva=0x%llx\r\n",
             static_cast<int>(result.status), result.replacement_installed ? 1 : 0, result.protection_restored ? 1 : 0,
             static_cast<unsigned long long>(networking_slot.offset)))) log_line(line);
     } else log_line("symbol=SteamNetworking status=disabled reason=unverified_export_or_import\r\n");
+
+    // Co-op master-server redirect (no-op when coop.ini sets no master_url). The
+    // implementation is owned by another work package; its stub refuses safely.
+    mgscoop::master_server::Install(game_base, game_span, mgscoop::GetCoopConfig().master_url, log_line);
+
+    InstallLoopbackIfEnabled(steam, networking_wrapped);
+
     log_line("scope=natural_init_callback_and_networking_getter_observation_only; sdk_context_queries=none; shutdown_coverage=none; game_function_calls=none; lua_owner_thread=unverified; multiplayer=not_connected\r\n");
     InstallGameScriptObserver(game_base, game_span, exe);
     return TRUE;

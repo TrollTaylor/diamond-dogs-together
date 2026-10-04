@@ -6,6 +6,7 @@
 #include <winver.h>
 #include <strsafe.h>
 #include "mgscoop/steam_observer.hpp"
+#include "mgscoop/early_patches.hpp"
 
 #if !defined(_M_X64) && !defined(__x86_64__)
 #error The MGS Co-op probe supports only Windows x64.
@@ -235,6 +236,11 @@ extern "C" const void* WINAPI GetdfDIJoystick() {
 }
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
-    if (reason == DLL_PROCESS_ATTACH) DisableThreadLibraryCalls(instance);
+    if (reason == DLL_PROCESS_ATTACH) {
+        DisableThreadLibraryCalls(instance);
+        // dinput8.dll is a static import of mgsvtpp.exe, so this runs before the
+        // exe entry point. A no-op unless <exeDir>/mgs-coop/lab.ini enables it.
+        mgscoop::lab::InstallEarlyLabPatches();
+    }
     return TRUE;
 }
