@@ -199,6 +199,26 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
         } else if (Equals(key, "partner_force_exists")) ok = ParseBool(value, result.partner_force_exists);
         else if (Equals(key, "partner_policy_relax")) ok = ParseBool(value, result.partner_policy_relax);
         else if (Equals(key, "partner_anim_probe")) ok = ParseBool(value, result.partner_anim_probe);
+        else if (Equals(key, "partner_input")) ok = ParsePartnerInput(value.data, value.size, result.partner_input);
+        else if (Equals(key, "partner_input_cam")) ok = ParsePartnerInputCam(value.data, value.size, result.partner_input_cam);
+        else if (Equals(key, "partner_input_hold")) ok = ParsePartnerInputHold(value.data, value.size, result.partner_input_hold);
+        else if (Equals(key, "partner_input_yaw")) ok = ParsePartnerInputYaw(value.data, value.size, result.partner_input_yaw);
+        else if (Equals(key, "partner_input_words")) ok = ParsePartnerWords(value.data, value.size, result.partner_input_words);
+        else if (Equals(key, "partner_input_mask")) ok = ParsePartnerMask(value.data, value.size, result.partner_input_mask);
+        else if (Equals(key, "partner_input_rstick")) ok = ParseBool(value, result.partner_input_rstick);
+        else if (Equals(key, "partner_input_triggers")) ok = ParseBool(value, result.partner_input_triggers);
+        else if (Equals(key, "partner_input_stick"))
+            ok = ParsePartnerStick(value.data, value.size, result.partner_input_stick_deg, result.partner_input_stick_pct);
+        else if (Equals(key, "partner_input_correct_mm")) ok = ParseRange(value, 0, 10000, result.partner_input_correct_mm);
+        else if (Equals(key, "partner_input_stale_ms")) ok = ParseRange(value, 50, 2000, result.partner_input_stale_ms);
+        else if (Equals(key, "partner_input_send")) ok = ParseBool(value, result.partner_input_send);
+        else if (Equals(key, "partner_input_hook")) ok = ParseBool(value, result.partner_input_hook);
+        else if (Equals(key, "partner_input_p218_allow")) ok = ParseBool(value, result.partner_input_p218_allow);
+        else if (Equals(key, "partner_input_holdlog")) ok = ParseBool(value, result.partner_input_holdlog);
+        else if (Equals(key, "partner_pad_probe")) ok = ParseBool(value, result.partner_pad_probe);
+        else if (Equals(key, "partner_look_gate")) ok = ParseBool(value, result.partner_look_gate);
+        else if (Equals(key, "partner_look_recover")) ok = ParseBool(value, result.partner_look_recover);
+        else if (Equals(key, "partner_dm")) ok = ParsePartnerDm(value.data, value.size, result.partner_dm);
         else if (Equals(key, "crash_probe")) ok = ParseBool(value, result.crash_probe);
         else { ++result.unknown_keys; return; }
         if (!ok) ++result.invalid_values;
@@ -276,6 +296,7 @@ const char* PartnerApplyName(PartnerApply value) noexcept {
     case PartnerApply::both: return "both";
     case PartnerApply::xform: return "xform";
     case PartnerApply::hybrid: return "hybrid";
+    case PartnerApply::input: return "input";
     default: return "warp";
     }
 }
@@ -337,6 +358,7 @@ bool ParsePartnerApply(const char* text, std::size_t size, PartnerApply& out) no
     else if (Equals(s, "both")) out = PartnerApply::both;
     else if (Equals(s, "xform")) out = PartnerApply::xform;
     else if (Equals(s, "hybrid")) out = PartnerApply::hybrid;
+    else if (Equals(s, "input")) out = PartnerApply::input;
     else return false;
     return true;
 }
@@ -381,6 +403,152 @@ bool ParsePartnerLook(const char* text, std::size_t size, PartnerLook& out) noex
     else if (Equals(s, "quiet")) out = PartnerLook::quiet;
     else if (Equals(s, "snake")) out = PartnerLook::snake;
     else return false;
+    return true;
+}
+
+const char* PartnerInputName(PartnerInput value) noexcept {
+    switch (value) {
+    case PartnerInput::pass: return "pass";
+    case PartnerInput::neutral: return "neutral";
+    case PartnerInput::stick: return "stick";
+    case PartnerInput::net: return "net";
+    default: return "off";
+    }
+}
+
+const char* PartnerInputCamName(PartnerInputCam value) noexcept {
+    switch (value) {
+    case PartnerInputCam::off: return "off";
+    case PartnerInputCam::detect: return "detect";
+    default: return "sandbox";
+    }
+}
+
+const char* PartnerInputHoldName(PartnerInputHold value) noexcept {
+    return value == PartnerInputHold::pass ? "pass" : "none";
+}
+
+const char* PartnerInputYawName(PartnerInputYaw value) noexcept {
+    switch (value) {
+    case PartnerInputYaw::rotneg: return "rotneg";
+    case PartnerInputYaw::none: return "none";
+    default: return "rot";
+    }
+}
+
+const char* PartnerDmName(PartnerDm value) noexcept {
+    switch (value) {
+    case PartnerDm::probe: return "probe";
+    case PartnerDm::on: return "on";
+    default: return "off";
+    }
+}
+
+bool ParsePartnerInput(const char* text, std::size_t size, PartnerInput& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "off")) out = PartnerInput::off;
+    else if (Equals(s, "pass")) out = PartnerInput::pass;
+    else if (Equals(s, "neutral")) out = PartnerInput::neutral;
+    else if (Equals(s, "stick")) out = PartnerInput::stick;
+    else if (Equals(s, "net")) out = PartnerInput::net;
+    else return false;
+    return true;
+}
+
+bool ParsePartnerInputCam(const char* text, std::size_t size, PartnerInputCam& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "off")) out = PartnerInputCam::off;
+    else if (Equals(s, "detect")) out = PartnerInputCam::detect;
+    else if (Equals(s, "sandbox")) out = PartnerInputCam::sandbox;
+    else return false;
+    return true;
+}
+
+bool ParsePartnerInputHold(const char* text, std::size_t size, PartnerInputHold& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "none")) out = PartnerInputHold::none;
+    else if (Equals(s, "pass")) out = PartnerInputHold::pass;
+    else return false;
+    return true;
+}
+
+bool ParsePartnerInputYaw(const char* text, std::size_t size, PartnerInputYaw& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "rot")) out = PartnerInputYaw::rot;
+    else if (Equals(s, "rotneg")) out = PartnerInputYaw::rotneg;
+    else if (Equals(s, "none")) out = PartnerInputYaw::none;
+    else return false;
+    return true;
+}
+
+bool ParsePartnerDm(const char* text, std::size_t size, PartnerDm& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "off")) out = PartnerDm::off;
+    else if (Equals(s, "probe")) out = PartnerDm::probe;
+    else if (Equals(s, "on")) out = PartnerDm::on;
+    else return false;
+    return true;
+}
+
+bool ParsePartnerWords(const char* text, std::size_t size, std::uint8_t (&out)[3]) noexcept {
+    if (!text || size != 3) return false;
+    std::uint8_t words[3]{};
+    for (std::size_t i = 0; i < 3; ++i) {
+        switch (text[i]) {
+        case '0': words[i] = kPartnerWordZero; break;
+        case 'p': words[i] = kPartnerWordPress; break;
+        case 'r': words[i] = kPartnerWordRelease; break;
+        case 'h': words[i] = kPartnerWordHeld; break;
+        case 'n': words[i] = kPartnerWordNet; break;
+        default: return false;
+        }
+    }
+    for (std::size_t i = 0; i < 3; ++i) out[i] = words[i];
+    return true;
+}
+
+void FormatPartnerWords(const std::uint8_t (&words)[3], char (&out)[4]) noexcept {
+    static constexpr char names[] = "0prhn";
+    for (std::size_t i = 0; i < 3; ++i) out[i] = words[i] <= kPartnerWordNet ? names[words[i]] : '?';
+    out[3] = 0;
+}
+
+bool ParsePartnerMask(const char* text, std::size_t size, std::uint32_t& out) noexcept {
+    if (!text || !size) return false;
+    if (size > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) {
+        if (size - 2 > 8) return false;
+        std::uint32_t value = 0;
+        for (std::size_t i = 2; i < size; ++i) {
+            const char c = text[i];
+            std::uint32_t digit = 0;
+            if (c >= '0' && c <= '9') digit = static_cast<std::uint32_t>(c - '0');
+            else if (c >= 'a' && c <= 'f') digit = static_cast<std::uint32_t>(c - 'a' + 10);
+            else if (c >= 'A' && c <= 'F') digit = static_cast<std::uint32_t>(c - 'A' + 10);
+            else return false;
+            value = (value << 4) | digit;
+        }
+        out = value;
+        return true;
+    }
+    return ParseU32(Slice{text, size}, 0xFFFFFFFFu, out);
+}
+
+bool ParsePartnerStick(const char* text, std::size_t size, std::uint32_t& deg, std::uint32_t& pct) noexcept {
+    if (!text || !size) return false;
+    std::size_t colon = 0;
+    while (colon < size && text[colon] != ':') ++colon;
+    if (colon == 0 || colon + 1 >= size) return false;
+    const Slice a{text, colon}, b{text + colon + 1, size - colon - 1};
+    const auto canonical = [](Slice s) noexcept { return s.size == 1 || s.data[0] != '0'; };
+    std::uint32_t d = 0, p = 0;
+    if (!canonical(a) || !canonical(b) || !ParseU32(a, 359, d) || !ParseU32(b, 100, p)) return false;
+    deg = d;
+    pct = p;
     return true;
 }
 

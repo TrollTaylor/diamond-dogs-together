@@ -4,6 +4,7 @@
 // the lea; this file uses its own static contract (master_server_contract.hpp)
 // and copies no code from either.
 #include "mgscoop/master_server_patch.hpp"
+#include "mgscoop/near_code.hpp"
 #include "master_server_contract.hpp"
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -20,7 +21,6 @@ constexpr std::size_t kSuffixLength = sizeof(kSuffix) - 1;
 constexpr std::size_t kMaxContext = 64;
 constexpr std::size_t kMaxOriginal = 127;
 constexpr std::size_t kMaxPadding = 16;
-constexpr std::uint64_t kRel32Margin = 0x7fff0000ull;  // 2 GiB minus 64 KiB
 
 bool UrlChar(char c) noexcept {
     const auto u = static_cast<unsigned char>(c);
@@ -182,32 +182,13 @@ bool BuildInPlaceBytes(const Site& site, const char* url, std::size_t url_length
 }
 
 bool Rel32(std::uint64_t next_ip, std::uint64_t target, std::int32_t& out) noexcept {
-    const auto delta = static_cast<std::int64_t>(target - next_ip);  // two's complement wrap is intended
-    if (delta < INT32_MIN || delta > INT32_MAX) return false;
-    out = static_cast<std::int32_t>(delta);
-    return true;
+    return near_code::Rel32(next_ip, target, out);
 }
 
 bool NearWindow(std::uint64_t next_ip, std::uint64_t size, std::uint64_t granularity,
                 std::uint64_t min_address, std::uint64_t max_address,
                 std::uint64_t& low, std::uint64_t& high) noexcept {
-    low = high = 0;
-    if (!size || !granularity || (granularity & (granularity - 1)) || min_address > max_address) return false;
-    if (size > kRel32Margin) return false;
-    std::uint64_t lo = next_ip > kRel32Margin ? next_ip - kRel32Margin : 0;
-    if (lo < min_address) lo = min_address;
-    if (lo > UINT64_MAX - (granularity - 1)) return false;
-    lo = (lo + granularity - 1) & ~(granularity - 1);
-    // The whole block must stay addressable: start + size - 1 <= next_ip + margin.
-    std::uint64_t hi = next_ip > UINT64_MAX - kRel32Margin ? UINT64_MAX : next_ip + kRel32Margin;
-    hi = hi - size + 1;
-    if (max_address < size - 1) return false;
-    if (hi > max_address - (size - 1)) hi = max_address - (size - 1);
-    hi &= ~(granularity - 1);
-    if (lo > hi) return false;
-    low = lo;
-    high = hi;
-    return true;
+    return near_code::NearWindow(next_ip, size, granularity, min_address, max_address, low, high);
 }
 
 const char* MethodName(Method value) noexcept {
@@ -277,12 +258,7 @@ void Emit(void (*log)(const char*) noexcept, const char* format, const char* a, 
     if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), format, a, b))) log(line);
 }
 
-// Protection that keeps the current execute right while adding write access.
-DWORD WritableFor(DWORD protection) noexcept {
-    const DWORD base = protection & 0xffu;
-    return (base == PAGE_EXECUTE || base == PAGE_EXECUTE_READ || base == PAGE_EXECUTE_READWRITE ||
-            base == PAGE_EXECUTE_WRITECOPY) ? PAGE_EXECUTE_READWRITE : PAGE_READWRITE;
-}
+DWORD WritableFor(DWORD protection) noexcept { return near_code::WritableFor(protection); }
 
 // The string the lea currently addresses equals url (with terminator).
 bool VerifyEffective(unsigned char* image, const Plan& plan, const char* url, std::size_t length) noexcept {
@@ -312,56 +288,7 @@ bool WriteInPlace(unsigned char* image, const Site& site, const char* url, std::
     return restored;
 }
 
-void* AllocateNear(std::uintptr_t next_ip, std::size_t size) noexcept {
-    SYSTEM_INFO system{};
-    GetSystemInfo(&system);
-    const std::uint64_t granularity = system.dwAllocationGranularity ? system.dwAllocationGranularity : 0x10000u;
-    std::uint64_t low = 0, high = 0;
-    if (!NearWindow(next_ip, size, granularity, reinterpret_cast<std::uintptr_t>(system.lpMinimumApplicationAddress),
-                    reinterpret_cast<std::uintptr_t>(system.lpMaximumApplicationAddress), low, high)) return nullptr;
-    auto try_at = [&](std::uint64_t address) noexcept -> void* {
-        void* block = VirtualAlloc(reinterpret_cast<void*>(address), size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-        if (block && reinterpret_cast<std::uintptr_t>(block) != address) { VirtualFree(block, 0, MEM_RELEASE); return nullptr; }
-        return block;
-    };
-    // Downward from the instruction (below the image is normally free), then upward.
-    std::uint64_t cursor = next_ip;
-    for (int regions = 0; regions < 4096 && cursor >= low; ++regions) {
-        MEMORY_BASIC_INFORMATION info{};
-        if (!VirtualQuery(reinterpret_cast<void*>(cursor), &info, sizeof(info))) break;
-        const std::uint64_t region = reinterpret_cast<std::uintptr_t>(info.BaseAddress);
-        const std::uint64_t end = region + info.RegionSize;
-        if (info.State == MEM_FREE && end - region >= size) {
-            std::uint64_t candidate = (cursor < end - size ? cursor : end - size) & ~(granularity - 1);
-            if (candidate > high) candidate = high;
-            for (int tries = 0; tries < 64 && candidate >= region && candidate >= low; ++tries) {
-                if (void* block = try_at(candidate)) return block;
-                if (candidate < granularity) break;
-                candidate -= granularity;
-            }
-        }
-        if (region <= low || region == 0) break;
-        cursor = region - 1;
-    }
-    cursor = next_ip;
-    for (int regions = 0; regions < 4096 && cursor <= high; ++regions) {
-        MEMORY_BASIC_INFORMATION info{};
-        if (!VirtualQuery(reinterpret_cast<void*>(cursor), &info, sizeof(info))) break;
-        const std::uint64_t region = reinterpret_cast<std::uintptr_t>(info.BaseAddress);
-        const std::uint64_t end = region + info.RegionSize;
-        if (info.State == MEM_FREE) {
-            std::uint64_t candidate = ((cursor > region ? cursor : region) + granularity - 1) & ~(granularity - 1);
-            if (candidate < low) candidate = low;
-            for (int tries = 0; tries < 64 && candidate <= high && candidate + size <= end; ++tries) {
-                if (void* block = try_at(candidate)) return block;
-                candidate += granularity;
-            }
-        }
-        if (end <= cursor) break;
-        cursor = end;
-    }
-    return nullptr;
-}
+void* AllocateNear(std::uintptr_t next_ip, std::size_t size) noexcept { return near_code::AllocateNear(next_ip, size); }
 
 // Returns nullptr on success, else a failure reason.
 const char* Retarget(unsigned char* image, const Plan& plan, const char* url, std::size_t length) noexcept {

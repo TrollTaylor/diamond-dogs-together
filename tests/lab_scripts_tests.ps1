@@ -311,6 +311,25 @@ try {
     $playText = [IO.File]::ReadAllText($playPath)
     Assert-True ($playText.Contains("Move = `$(if (`$Experimental) { 'hybrid' } else { 'warp' })") -and
         $playText.Contains("Anim = `$(if (`$Experimental) { 'net' } else { 'off' })")) 'Play-OfflineCoop starts on the proven path unless -Experimental'
+    # The fixed [I] (input drive) and [W] (back to proven) lines are valid triggers.
+    Assert-True (Test-PartnerTriggerText 'stage=3 source=net apply=input input=net isend=1 cam=sandbox hold=none look=net') 'Play-OfflineCoop [I] input-drive line is a valid trigger'
+    Assert-True (Test-PartnerTriggerText 'stage=3 source=net apply=warp anim=off input=off isend=0 look=net') 'Play-OfflineCoop [W] input-off line is a valid trigger'
+    Assert-True ($playText.Contains('apply=input input=net isend=1 cam=sandbox hold=none look=net') -and $playText.Contains("'I' {")) 'Play-OfflineCoop defines the [I] input-drive key'
+    # Round 3 lab.ini value kinds.
+    Assert-Equal (ConvertTo-LabPartnerValue -Key partner_input -Value net) 'net' 'partner_input enum'
+    Assert-Equal (ConvertTo-LabPartnerValue -Key partner_input_words -Value rp0) 'rp0' 'partner_input_words'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_input_words -Value xyz } '3 of 0prhn' 'bad words refused'
+    Assert-Equal (ConvertTo-LabPartnerValue -Key partner_input_mask -Value '0x1F') '0x1f' 'mask hex lowercased'
+    Assert-Equal (ConvertTo-LabPartnerValue -Key partner_input_mask -Value 6) '6' 'mask decimal'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_input_mask -Value '0xZ' } 'decimal or 0x hex' 'bad mask refused'
+    Assert-Equal (ConvertTo-LabPartnerValue -Key partner_input_stick -Value '90:30') '90:30' 'stick deg:pct'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_input_stick -Value '360:0' } '<0..359>:<0..100>' 'bad stick refused'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_input_correct_mm -Value 10001 } '0..10000' 'correct over max refused'
+    Assert-Equal (ConvertTo-LabPartnerValue -Key partner_dm -Value probe) 'probe' 'partner_dm enum'
+    $ovInput = ConvertFrom-LabPartnerSettingArgs -Items @('partner_input=net', 'partner_input_holdlog=1', 'partner_dm=on') -Role host
+    Assert-Equal (@($ovInput.Keys | ForEach-Object { "$_=$($ovInput[$_])" }) -join ' ') 'partner_input=net partner_input_holdlog=1 partner_dm=on' '-PartnerSetting: round 3 overrides'
+    $pjInput = ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ input = 'net'; dm = 'probe'; look_gate = 0 })
+    Assert-Equal "$($pjInput['partner_input'])/$($pjInput['partner_dm'])/$($pjInput['partner_look_gate'])" 'net/probe/0' 'lab.json round 3 short names'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_reset -Value none } 'n|a|c|ac' 'reset values'
     $pjAnim = ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ anim = 'net'; partner_look = 'net'; aset = 'qs' })
     Assert-Equal "$(@($pjAnim.Keys) -join ',')/$($pjAnim['partner_anim'])/$($pjAnim['partner_look'])" 'partner_anim,partner_look,partner_aset/net/net' 'lab.json short names for the anim/look keys'
@@ -687,14 +706,22 @@ try {
             @('mirror=on apply=both parts=explicit source=orbit stage=3', 'stage=3 source=orbit apply=both parts=explicit mirror=on'),
             @('move=hybrid', 'apply=hybrid'), @('look=quiet census=1 anim=mirror stage=3', 'stage=3 anim=mirror look=quiet census=1'),
             @('probe=ps reset=ac aset=r apply=xform', 'apply=xform aset=r reset=ac probe=ps'), @('look=net', 'look=net'), @('probe=off', 'probe=off'),
-            @('stage=3 source=net move=hybrid anim=net aset=qs look=net', 'stage=3 source=net apply=hybrid anim=net aset=qs look=net'))) {
+            @('stage=3 source=net move=hybrid anim=net aset=qs look=net', 'stage=3 source=net apply=hybrid anim=net aset=qs look=net'),
+            @('apply=input input=net stick=180:100 cam=sandbox hold=none yaw=rot words=rp0 bits=0x6 correct=1500 isend=1 dm=probe lookgate=1 lookrecover=1',
+              'apply=input input=net stick=180:100 cam=sandbox hold=none yaw=rot words=rp0 bits=0x6 correct=1500 isend=1 dm=probe lookgate=1 lookrecover=1'),
+            @('dmplay=3 dm=on tap=0x2', 'dm=on tap=0x2 dmplay=3'), @('press=0x2:1200', 'press=0x2:1200'),
+            @('p218=1 padprobe=1 holdlog=0 dmstop=1', 'p218=1 padprobe=1 holdlog=0 dmstop=1'))) {
         Assert-Equal (ConvertTo-PartnerTriggerText -Text $case[0]) $case[1] "trigger grammar accepts '$($case[0])'"
     }
-    Assert-True ((ConvertTo-PartnerTriggerText -Text 'stage=3 source=orbit apply=hybrid anim=mirror aset=qs reset=ac look=quiet probe=off census=1 parts=explicit mirror=on').Length + 1 -le 127) 'the longest canonical trigger fits the native 127 bytes'
+    Assert-True ((ConvertTo-PartnerTriggerText -Text 'stage=3 source=orbit apply=hybrid anim=mirror aset=qs reset=ac look=quiet probe=off census=1 parts=explicit mirror=on').Length + 1 -le 255) 'the longest classic canonical trigger fits the native 255 bytes'
+    Assert-True ((ConvertTo-PartnerTriggerText -Text 'stage=3 source=net apply=input anim=off aset=qs reset=ac look=net input=net stick=359:100 cam=sandbox hold=none yaw=rotneg words=rhn bits=0xffffffff correct=10000 isend=1 padprobe=1 dm=probe lookgate=1 lookrecover=1').Length + 1 -le 255) 'a long round 3 trigger fits 255 bytes'
     foreach ($bad in @('', '   ', 'STOP', 'Stage=1', 'stop stage=1', 'stage=4', 'stage=-1', 'stage=01', 'stage=1 stage=2', 'source=walk', 'apply=Warp',
             'speed=3', 'stage=1;source=net', "stage=1`nstop", 'stage=', 'stage=3 source=orbit apply=warp extra=1', "stage=1`u{e9}",
             'parts=implicit', 'parts=', 'mirror=off', 'Mirror=on', 'parts=explicit parts=explicit', 'mirror=on mirror=on', 'stop parts=explicit', 'mirror=on stop', 'stop stop',
-            'move=warp apply=slot', 'apply=teleport', 'anim=on', 'aset=x', 'reset=b', 'look=ocelot', 'census=2', 'census', 'probe=on', 'stop census=1', 'look=net look=copy')) {
+            'move=warp apply=slot', 'apply=teleport', 'anim=on', 'aset=x', 'reset=b', 'look=ocelot', 'census=2', 'census', 'probe=on', 'stop census=1', 'look=net look=copy',
+            'input=walk', 'cam=on', 'hold=own', 'yaw=left', 'words=xyz', 'words=rp', 'bits=0xZ', 'bits=0x123456789', 'correct=10001',
+            'stick=360:0', 'stick=180:101', 'stick=180', 'tap=2', 'press=0x2:49', 'press=0x2:5001', 'dmplay=10', 'dmstop=0', 'isend=2',
+            'dm=maybe', 'input=net input=off', 'tap=0x1 tap=0x2', 'stop input=net')) {
         $shown = $bad -replace "`n", '\n'
         Assert-Throws { ConvertTo-PartnerTriggerText -Text $bad } '' "trigger grammar refuses '$shown'"
         Assert-True (-not (Test-PartnerTriggerText $bad)) "Test-PartnerTriggerText is false for '$shown'"

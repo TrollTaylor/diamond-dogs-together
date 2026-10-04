@@ -148,6 +148,61 @@ SITES = [
      'Warp resets: *(blk+0xC0).vt+0x90(id), then *(blk+0xA0).vt+0x80(id)'),
     (0xFFACEA, 'ff90880300000f5c7820', 'plugin: T+0x20 is the body position'),
     (0x10BEF4E, 'ff9088030000488d4860e8a31313ff', 'plugin: T+0x60 is the body rotation quaternion (0x1F0300 yaw)'),
+    # --- Round 3 (docs/partner-anim-appearance.md "Round 3"): the block-1 context window.
+    (0x9C2810, '8b8f34020000488b87900000000fb70c48898f38020000', 'player update: P+0x218 = ids[P+0x214]'),
+    (0x9C2A8E, '488b8fd0000000488b01ff10488b8fd8000000488b01ff9060020000', 'pad update then camera update, before the block loop'),
+    (0x9C2B01, '8b9724020000c1ea124022d6', 'block loop: alternate dispatch bit P+0x204 0x40000 (sil = 1 at 0x9C2A42)'),
+    (0x9C2A42, 'be01000000', 'player update: esi = 1 (the alternate dispatch selector mask)'),
+    (0x9C2B30, '488b8798030000498d0c00', 'block loop: blocks = *(P+0x378)'),
+    (0x9C2B40, '84d27517ba08000000498b8c0090010000e87a362300e9cc000000', 'default dispatch: call 0xBF61D0(*(blk+0x190), 8) at 0x9C2B51'),
+    (0x9C2C27, '4c8b4424404981c0a8060000', 'block loop stride 0x6A8 (after the call only stack slots and rdi are used)'),
+    (0xBF61D0, 'e9cbfeffff', 'jmp 0xBF60A0'),
+    (0xBF60D0, '8b5f248b6f204c8b773803eb3bdd7314498b06448bc38bd6498bceff5020', 'node per-id loop: node+0x38->vt+0x20(phase, id)'),
+    (0x10BED82, '2b7824488b41d88bcd488b50784869ff900300004903bfa0010000', 'activation: rec stride 0x390, plugin+0x1A0, node+0x24'),
+    (0x10BEDB0, '488b46d8488b8838010000418bc43ba918020000498bcf0f94c03387ac02000083e0013187ac020000', 'activation: rec+0x2AC bit0 = (id == P+0x218)'),
+    (0x10BED66, '488b41084c8d79d0', 'activation: this = plugin+0x30, node = *(plugin+0x38)'),
+    (0x109DE4A, '488d05e7713101488903488d050572310148894310488d052a72310148894330488d055f72310148894348', 'base plugin vtables'),
+    (0x109F61E, '48b8ba767a1e15dd0000483bd0741d', 'plugin QI hash 0xDD151E7A76BA'),
+    (0x109F64A, '488d41f04885c0742c488d4138', 'plugin QI -> this+0x38'),
+    (0x109F675, '4885c074054883c008c3', 'plugin QI: +8 (returns plugin+0x50)'),
+    (0xFF3251, '4883c0f8', 'PS.vt+0xC8: X = QI - 8'),
+    (0x9BDA6D, '4883c0f0', 'PP = QI - 0x10'), (0x9BDA76, '488986d0000000', 'P+0xB0 = PP'),
+    (0x9CBD6B, '4883c0b0', 'CAM = QI - 0x50'), (0x9CBD74, '488986d8000000', 'P+0xB8 = CAM'),
+    (0x1114024, '488d0525422a0148894320', 'CAM factory: vtable 0x23B8250 at object+0x20 (object 0x11A0 bytes)'),
+    (0x120612C, '488981a0020000', 'PP+0x280 = P'), (0x120617F, '41b878000000', 'src acquire'), (0x1206194, '48894728', 'PP+8 = src'),
+    (0x1205F00, '488b41088b504885d275068b91600400008b4128f7d023c2c3', 'PP vt+0x20'),
+    (0x1205DB0, '488b41088b504c85d275068b91640400008b4128f7d023c2c3', 'PP vt+0x30'),
+    (0x1205E80, '488b41088b505085d275068b91680400008b4128f7d023c2c3', 'PP vt+0x40'),
+    (0x1205EE0, '488b41088b505485d275068b916c0400008b4128f7d023c2c3', 'PP vt+0x58'),
+    (0x1205F40, '8b412c0fa3d073040f57c0c385d2751cf68188040000017409f30f108170040000c3488b4108f30f104058c3f68188040000027409f30f108174040000c3488b4108f30f104060c3', 'PP vt+0x68 X'),
+    (0x1205FD0, '8b412c0fa3d073040f57c0c385d2751cf68188040000017409f30f108178040000c3488b4108f30f10405cc3f68188040000027409f30f10817c040000c3488b4108f30f104064c3', 'PP vt+0x70 Y'),
+    (0x1206060, '85d2751ef6818804000004740af30f108180040000eb27488b4108f30f104068eb1cf6818804000008740af30f108184040000eb09488b4108f30f10406c8b41300f', 'PP vt+0x78 trigger'),
+    (0x1205C30, '4883ec288b41280fa3d0730733c04883c428c3', 'PP vt+0x90 classifier mask exit'),
+    (0x1205CC2, '488b4908488b014883c42848ff6010', 'PP vt+0x90 tail src->vt+0x10'),
+    (0x1206BC3, '4c8b7e08498bcf498b07ff5038', 'PP update src->vt+0x38'),
+    (0x1206BD7, '4c89a6600400004c89a668040000', 'PP update clears PP+0x460..0x46F'),
+    (0x12070C4, '410f28c9410f28c2e839ef7f00', 'PP update: atan2f(xmm0 = LX, xmm1 = LY) through the IAT stub 0x1A0600A'),
+    (0x12070F3, 'f3440f115e10f30f114614f3440f116e18', 'PP+0x10/+0x14/+0x18'),
+    (0x1207220, 'f30f117e1cf30f114620f3440f114624', 'PP+0x1C/+0x20/+0x24'),
+    (0x1206562, '488db9c0020000', 'button mask table PP+0x2C0'), (0x12065A1, '83f808', '8 entries'), (0x12065BA, '895e28', 'PP+0x28 = OR'),
+    (0x12065DC, '488db900030000', 'stick mask table PP+0x300'), (0x1206662, '488db940030000', 'trigger mask table PP+0x340'),
+    (0x1206BD0, '488b8e80030000', 'PP+0x380 is a pointer (vt+0x910 called): never touched'),
+    # Direct motion (round 3 part D).
+    (0x1198DD0, '4883c1d0e907000000', 'DM slot0 thunk'),
+    (0x1198DEA, '488b41388bda440fb6c22b5824488b4108bf000000004869db5002000048035968488b8838010000', 'DM rec / P'),
+    (0x1198E12, '8b8104020000488b4948488d5328c1e808a801440f44c7e8d2fcffff', 'DM comparator (patch 0x1198E25)'),
+    (0x1198B06, 'f68188030000044c8bca488bd90f84c500000044384128', 'DM request compare'),
+    (0x1198D56, 'c7820002000001000000', 'DM entry playback writes CAM+0x200'),
+    (0x1198DB5, '488982f0010000', 'DM entry playback writes CAM+0x1F0 (qword)'),
+    (0x1197D0E, '488d0593812201488901', 'DM primary vtable'), (0x1197D23, '488d05d6812201488941', 'DM iface vtable'),
+    (0x9BCC3C, '498984c9b8030000', 'blk+0x3B8[idx] interfaces'), (0x9D2650, '488d05c9982402c3', 'g = 0x2C1BF20'),
+    (0x9BA9BA, 'e8917c010048894668', 'P+0x48 = g'), (0x9DAC99, '800d0816240204', 'Play: g+0x388 |= 4'),
+    # Snake-load fix (round 3 part L).
+    (0x9B4368, '488dbbf0000000', 'rdi = desc+0xF0'), (0x9B442D, '4b89bce500110000', 'M+0x1100[slot] = desc+0xF0'),
+    (0x9B42C1, '3883f0000000', 'descriptor look compare starts at desc+0xF0 (type)'),
+    (0x9B47D0, '833d1969260200751f8b41183bd0750b488b491033d2e9c5f9ffff7302ffc2488b4910e9b8f9ffff', 'slot mapping'),
+    (0xFDFD11, '488b4660c60402ff488b4668c60402ff488b4670c60402ff488b4678c60402ff', 'Q reset: look = 0xFF'),
+    (0x9CD6CE, '4180f9ff0f84e2fbffff', 'state 0 waits while Q parts == 0xFF'),
 ]
 
 # (vtable rva, slot offset, expected target rva).
@@ -167,6 +222,30 @@ SLOTS = [
     (0x23B0C70, 0xC8, 0xFF3220, 'PS subclass vtable +0xC8 = stance request component getter (same as base)'),
     (0x22E6070, 0x388, 0xAF1130, 'CS vtable +0x388 = GetTransform'),
     (0x23AD970, 0x18, 0xFE0080, 'Q vtable +0x18 = aim SetTarget (NOT a movement driver; never called)'),
+    # Round 3: PlayerPad (42 slots, slot -1 = 0), base action plugin, camera, direct motion.
+    (0x23C8D40, 0x00, 0x1206A00, 'PP vt+0x00 = update'),
+    (0x23C8D40, 0x20, 0x1205F00, 'PP vt+0x20 = held'),
+    (0x23C8D40, 0x30, 0x1205DB0, 'PP vt+0x30 = word src+0x4C'),
+    (0x23C8D40, 0x40, 0x1205E80, 'PP vt+0x40 = word src+0x50'),
+    (0x23C8D40, 0x58, 0x1205EE0, 'PP vt+0x58 = word src+0x54'),
+    (0x23C8D40, 0x68, 0x1205F40, 'PP vt+0x68 = stick X'),
+    (0x23C8D40, 0x70, 0x1205FD0, 'PP vt+0x70 = stick Y'),
+    (0x23C8D40, 0x78, 0x1206060, 'PP vt+0x78 = trigger'),
+    (0x23C8D40, 0x90, 0x1205C30, 'PP vt+0x90 = hold classifier'),
+    (0x23C8D40, 0xB0, 0x1206550, 'PP vt+0xB0 = SetButtonMask'),
+    (0x23C8D40, 0xB8, 0x1206410, 'PP vt+0xB8 = ResetButtonMask'),
+    (0x23C8D40, 0xC0, 0x12065D0, 'PP vt+0xC0 = SetStickMask'),
+    (0x23C8D40, 0xC8, 0x1206470, 'PP vt+0xC8 = ResetStickMask'),
+    (0x23C8D40, 0xD0, 0x1206650, 'PP vt+0xD0 = SetTriggerMask'),
+    (0x23C8D40, 0xD8, 0x12064E0, 'PP vt+0xD8 = ResetTriggerMask'),
+    (0x23B5060, 0x18, 0x109F600, 'base plugin +0x10 vtable slot +0x18 = QI'),
+    (0x23B5090, 0x08, 0x10BED50, 'base plugin +0x30 vtable slot +0x08 = activation'),
+    (0x23B5090, 0x20, 0x645940, 'base plugin +0x30 vtable slot +0x20'),
+    (0x23B8250, 0x00, 0x11142B0, 'CAM vt+0x00 = camera vector getter'),
+    (0x23B8250, 0x260, 0x1119A30, 'CAM vt+0x260 = update (called at 0x9C2AA4)'),
+    (0x23BFF00, 0x00, 0x1198DD0, 'DM iface slot 0 = consume thunk'),
+    (0x23BFF00, 0x08, 0x119A350, 'DM iface slot 1 = Start'),
+    (0x23BFF00, 0x20, 0x1198680, 'DM iface slot 4 = phase-8 per-id update'),
 ]
 
 failures = []
@@ -281,12 +360,48 @@ w('inline constexpr std::size_t ps_rec280_stride=0x20, ps_rec738_stride=0x28, co
 w('inline constexpr std::size_t cs_base_id=0xc, cs_entries=0x10, cs_entry_stride=0xc0, cs_entry_transform=0x60, transform_view=0x10;')
 w('inline constexpr std::size_t t_pos=0x20, t_quat=0x60;')
 w('inline constexpr std::size_t t_vt_set_pose=0x68, t_vt_set_rot=0x70, a0_vt_reset=0x80, c0_vt_reset=0x90, x_vt_request=0x10;')
+w('// --- Round 3 (docs/partner-anim-appearance.md "Round 3") -------------------')
+w('// P and block: g (script object 0x2c1bf20) = *(P+0x48); PP = *(P+0xb0); CAM = *(P+0xb8);')
+w('// P+0x218 = ids[P+0x214] (0x9c2810); blocks P+0x210; the root of block k is *(blk_k+0x190).')
+w('inline constexpr std::size_t p_g=0x48, p_pad=0xb0, p_cam=0xb8, p_local_id=0x218, p_block_count=0x210;')
+w('inline constexpr std::uint32_t flag_alt_dispatch=0x40000;')
+w('inline constexpr std::size_t blk_root=0x190, blk_iface=0x3b8, dm_iface_index=5;')
+w('// PlayerPad PP (vtable 0x23c8d40, 42 slots, slot -1 = 0) and its raw pad src = *(PP+8).')
+w('inline constexpr std::uintptr_t pp_vtable_rva=0x23c8d40;')
+w('inline constexpr std::size_t pp_vtable_slots=42, pp_vt_hold=0x90;')
+w('inline constexpr std::uintptr_t pp_hold_rva=0x1205c30;  // PP vt+0x90 (u32 fn(PP, btn, frames))')
+w('inline constexpr std::size_t pp_owner=0x280, pp_src=0x8, pp_derived=0x10, pp_derived_size=0x18;')
+w('inline constexpr std::size_t pp_masks=0x28, pp_masks_size=0xc, pp_mask_tables=0x2c0, pp_mask_tables_size=0xc0;')
+w('inline constexpr std::size_t pp_kb=0x460, pp_kb_size=0x28, pp_kb_flags=0x488;')
+w('inline constexpr std::uint8_t kb_flags_clear=0x5f;')
+w('inline constexpr std::size_t src_words=0x48, src_floats=0x58, src_size=0x28;')
+w('// Base action plugin (factory 0x109de10): obj = *(*(*(PS+0x658)+0x30)+0x10) == plugin+0x10.')
+w('inline constexpr std::uintptr_t plugin_vt0_rva=0x23b5038, plugin_vt1_rva=0x23b5060, plugin_vt2_rva=0x23b5090, plugin_vt3_rva=0x23b50d0;')
+w('inline constexpr std::size_t plugin_obj_off=0x10, plugin_blk=0x8, plugin_node=0x38, node_base=0x24, node_count=0x20;')
+w('inline constexpr std::size_t plugin_recs=0x1a0, plugin_rec_stride=0x390, rec_local=0x2ac;')
+w('// Camera CAM (vtable 0x23b8250); CAM+0x20c mode (0 = vt+0 returns CAM+0x120).')
+w('inline constexpr std::uintptr_t cam_vtable_rva=0x23b8250;')
+w('inline constexpr std::size_t cam_mode=0x20c;')
+w('// The hooked call 0x9c2b51 (e8 rel32 -> 0xbf61d0).')
+w('inline constexpr std::uintptr_t hook_block_rva=0x9c2b40, hook_site=0x9c2b51, hook_rel32=0x9c2b52, hook_next_ip=0x9c2b56;')
+w('inline constexpr std::uint32_t hook_rel32_orig=0x0023367a;')
+w('inline constexpr std::uintptr_t dispatch_rva=0xbf61d0;')
+w('// Direct motion: prim vtable 0x23bfea8, iface (prim+0x30) vtable 0x23bff00 at blk+0x3b8+8*5.')
+w('inline constexpr std::uintptr_t dm_prim_vt_rva=0x23bfea8, dm_iface_vt_rva=0x23bff00, g_rva=0x2c1bf20;')
+w('inline constexpr std::size_t dm_iface_prim=0x30, dm_prim_blk=0x8, dm_prim_recs=0x68, dm_prim_node=0x38, dm_rec_stride=0x250;')
+w('inline constexpr std::size_t g_flags=0x388, g_req=0x28, g_name=0x30;')
+w('inline constexpr std::size_t q_act=0x18;  // u16 *(Q+0x18)[i]; 0x8b = direct motion')
+w('inline constexpr std::uint16_t q18_dm_act=0x8b;')
+w('inline constexpr std::uintptr_t dm_patch_rva=0x1198e25, dm_patch_block_rva=0x1198e12;')
+w('inline constexpr std::uint32_t dm_patch_old=0xc7440f44, dm_patch_new=0x00401f0f;  // little-endian dwords of 44 0f 44 c7 / 0f 1f 40 00')
+w('// Parts: the requested (descriptor) look of slot s is *(u64*)(M+0x1100+8*s) (0x9b442d).')
+w('inline constexpr std::size_t x_req_look=0x1100;')
 w('// --- Code gate: exact bytes in .xtext ---------------------------------------')
-w('struct Site { std::uintptr_t rva; std::size_t size; unsigned char bytes[48]; };')
+w('struct Site { std::uintptr_t rva; std::size_t size; unsigned char bytes[80]; };')
 w('inline constexpr Site code_sites[]={')
 for rva, expected, what in SITES:
     n = len(expected) // 2
-    if n > 48:
+    if n > 80:
         raise SystemExit('site too long')
     w(f'    {{0x{rva:x},{n},{{{cbytes(expected)}}}}}, // {what}')
 w('};')

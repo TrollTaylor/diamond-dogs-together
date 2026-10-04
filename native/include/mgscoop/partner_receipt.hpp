@@ -9,7 +9,8 @@
 //   return 'MGS_COOP_PARTNER_CFG_V1'                      -> return true|false
 //   return 'MGS_COOP_PARTNER_V1' -- <frame> <x_mm> <y_mm> <z_mm> <yaw_cdeg> <cam_cdeg> <stance> <move> <luaflags>
 //        -> return <op>,<R>,<x_mm>,<y_mm>,<z_mm>,<yaw_mrad>,<status>,<age_ms>   (quiet; per frame)
-//           followed by ,<type>,<parts>,<camo>,<hand>,<face> when op has SET_PARTS (16)
+//           followed by ,<type>,<parts>,<camo>,<hand>,<face> when op has SET_PARTS (16) or DM_PLAY (128)
+//           (zeros unless SET_PARTS), and then ,<gani> (0..9) when op has DM_PLAY (128)
 //   return 'MGS_COOP_PARTNER_LOG_V1' -- <payload>          -> logs partner_lua=<payload>; return true
 //   return 'MGS_COOP_PARTNER_STOP_V1'                     -> return true
 // Integers only, so neither Lua's nor the C runtime's locale is involved.
@@ -29,7 +30,7 @@ inline constexpr char log_prefix[] = "return 'MGS_COOP_PARTNER_LOG_V1' -- ";
 inline constexpr std::size_t max_receipt = 200;
 inline constexpr std::size_t max_log_payload = 160;
 // Always fits FormatReply output (8 signed 32-bit integers, the 5 bounded look
-// values, commas, "return "): at most 111 characters.
+// values, the gani index, commas, "return "): at most 113 characters.
 inline constexpr std::size_t reply_capacity = 128;
 // Fits FormatLogLine output: "partner_lua=" + payload with ';' -> "; " + CRLF.
 inline constexpr std::size_t log_line_capacity = 12 + 2 * max_log_payload + 3;
@@ -50,7 +51,15 @@ inline constexpr std::uint32_t mirror_on = 32;           // diagnostic F3c
 // natively at most 10 s after MIRROR_ON (or on stop / stage 0), only while
 // P+0x204 bit 0x4000 is set and the engine mirror object is non-null.
 inline constexpr std::uint32_t mirror_off = 64;
+// Round 3 direct-motion lever (needs the comparator patch at 0x1198E25):
+// Player.RequestToPlayDirectMotion{{"coopLoco",1},{GANI[gani],true,"","","",true}}
+// with the gani index that follows the 5 look values, and
+// Player.RequestToStopDirectMotion().
+inline constexpr std::uint32_t dm_play = 128;
+inline constexpr std::uint32_t dm_stop = 256;
 }
+// Highest gani index of the Lua table (partner_sync.lua GANI).
+inline constexpr std::uint8_t max_gani = 9;
 // luaflags reported by Lua in every tick.
 namespace luaflag {
 inline constexpr std::uint32_t all_active = 1;
@@ -126,10 +135,12 @@ struct Reply {
     std::int32_t yaw_mrad;
     Status status;
     std::uint32_t age_ms;
-    Look look;  // appended (5 values, no face_equip) only when op has set_parts_explicit
+    Look look;  // appended (5 values, no face_equip) when op has set_parts_explicit (zeros with dm_play only)
+    std::uint8_t gani;  // appended after the look values when op has dm_play
 };
 // "return <op>,<R>,<x_mm>,<y_mm>,<z_mm>,<yaw_mrad>,<status>,<age_ms>"
-// [",<type>,<parts>,<camo>,<hand>,<face>" when op & set_parts_explicit].
+// [",<type>,<parts>,<camo>,<hand>,<face>" when op & (set_parts_explicit | dm_play)]
+// [",<gani>" when op & dm_play].
 // Returns the length without terminator, or 0 (empty output) if it does not fit.
 std::size_t FormatReply(const Reply& reply, char* out, std::size_t capacity) noexcept;
 
@@ -144,13 +155,22 @@ std::size_t FormatLogLine(const char* source, std::size_t size, char* out, std::
 
 // partner.trigger: one line of whitespace-separated tokens, each key at most once:
 //   stop | stage=0..3 | source=fixed|orbit|net
-//   | apply=warp|slot|both|xform|hybrid (move= is the same key; one of the two)
+//   | apply=warp|slot|both|xform|hybrid|input (move= is the same key; one of the two)
 //   | anim=off|mirror|net | aset=q|s|qs|r | reset=n|a|c|ac
 //   | look=copy|net|quiet|snake | probe=ps|off
 //   | census=1 (one-shot component census) | parts=explicit (one-shot op 16)
 //   | mirror=on (one-shot op 32)
-// "stop" must be alone. Anything else (unknown token, repeat, empty) is refused.
-inline constexpr std::size_t max_trigger = 127;
+// Round 3 (docs/partner-anim-appearance.md "Round 3"):
+//   | input=off|pass|neutral|stick|net | stick=<0..359>:<0..100>
+//   | tap=0x<hex> | press=0x<hex>:<50..5000>   (one-shots, 1..8 hex digits)
+//   | cam=off|detect|sandbox | hold=none|pass | yaw=rot|rotneg|none
+//   | words=<3 of 0prhn> | bits=0x<hex> | correct=<0..10000>
+//   | isend=0|1 | p218=0|1 | padprobe=0|1 | holdlog=0|1
+//   | dm=off|probe|on | dmplay=<0..9> | dmstop=1   (dmplay/dmstop one-shots)
+//   | lookgate=0|1 | lookrecover=0|1
+// Decimal values have no leading zeros. "stop" must be alone. Anything else
+// (unknown token, repeat, empty) is refused.
+inline constexpr std::size_t max_trigger = 255;
 struct Trigger {
     bool stop;
     bool has_stage;
@@ -172,14 +192,47 @@ struct Trigger {
     bool census;
     bool parts_explicit;
     bool mirror_on;
+    // Round 3.
+    bool has_input;
+    PartnerInput input;
+    bool has_stick;
+    std::uint32_t stick_deg, stick_pct;
+    bool tap;
+    std::uint32_t tap_bits;
+    bool press;
+    std::uint32_t press_bits, press_ms;
+    bool has_cam;
+    PartnerInputCam cam;
+    bool has_hold;
+    PartnerInputHold hold;
+    bool has_yaw;
+    PartnerInputYaw yaw;
+    bool has_words;
+    std::uint8_t words[3];
+    bool has_bits;
+    std::uint32_t bits;
+    bool has_correct;
+    std::uint32_t correct_mm;
+    bool has_isend, isend;
+    bool has_p218, p218;
+    bool has_padprobe, padprobe;
+    bool has_holdlog, holdlog;
+    bool has_dm;
+    PartnerDm dm;
+    bool dmplay;
+    std::uint8_t dmplay_gani;
+    bool dmstop;
+    bool has_lookgate, lookgate;
+    bool has_lookrecover, lookrecover;
 };
 bool ParseTrigger(const char* text, std::size_t size, Trigger& out) noexcept;
 
 // Native stage policy (2.2). Stage 0 probe only; 1 WARP; 2 + SET_ALLACTIVE;
 // 3 + COPY_PARTS. apply=slot removes WARP (native writes the slot instead);
-// apply=xform/hybrid send WARP only when the caller says a full Warp is due
-// (transform_warp: hybrid placement/correction, or an xform the native side
-// refused, so the partner never stops moving). WARP and the slot write need a
+// apply=xform/hybrid/input send WARP only when the caller says a full Warp is
+// due (transform_warp: hybrid placement/correction, input placement/relink,
+// or an xform the native side refused, so the partner never stops moving).
+// DM_PLAY (stage >= 1) and DM_STOP (any stage) are the direct-motion one-shots. WARP and the slot write need a
 // valid pose (source=net: a received packet).
 // SET_ALLACTIVE (idempotent in Lua) is sent at stage >= 2 while Lua has not
 // latched all-active mode, or when the caller re-asserts it because P+0x204
@@ -200,9 +253,11 @@ struct OpInput {
     bool mirror_off;
     bool no_copy;
     bool transform_warp;
+    bool dm_play;
+    bool dm_stop;
 };
 std::uint32_t OpsFor(const OpInput& input) noexcept;
-// Native S+0x20 slot write: apply slot, both, xform or hybrid (stage >= 1, valid pose).
+// Native S+0x20 slot write: apply slot, both, xform, hybrid or input (stage >= 1, valid pose).
 bool WritesSlot(std::uint32_t stage, PartnerApply apply, bool pose_valid) noexcept;
 
 // Facing as Warp builds it from a yaw (the 0x9C5F80 command handler): the

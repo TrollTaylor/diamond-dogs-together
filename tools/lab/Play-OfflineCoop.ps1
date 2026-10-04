@@ -95,6 +95,7 @@ foreach ($role in $dirs.Keys) {
         Mission = $false; Ready = $false; Refused = ''; Shown = $false; Loaded = $false
         Link = 'none'; Rx = 0; Age = 0; Crash = 0; Exited = $false
         Look = ''; Move = ''; Stance = ''; Character = ''; Fault = $false; Mode = ''
+        Input = 'off'; InputArmed = $false; InputPerS = 0; InputStale = $false; InputFault = ''
     }
 }
 function Update-State {
@@ -134,6 +135,13 @@ function Update-State {
                 if ($Matches[1] -notin @('xform', 'hybrid')) { $s.Move = '' }
                 if ($Matches[2] -eq 'off') { $s.Stance = '' }
             }
+            elseif ($line -match '^partner_input=armed; mode=([a-z]+)') { $s.Input = $Matches[1]; $s.InputArmed = $true }
+            elseif ($line -match '^partner_input=disarmed') { $s.InputArmed = $false }
+            elseif ($line -match '^partner_input; mode=([a-z]+); windows=\d+; per_s=(\d+)') { $s.Input = $Matches[1]; $s.InputPerS = [int]$Matches[2] }
+            elseif ($line -match '^partner_input=stale') { $s.InputStale = $true }
+            elseif ($line -match '^partner_input=live') { $s.InputStale = $false }
+            elseif ($line -match '^partner_input=fault; phase=([a-z]+)') { $s.InputFault = $Matches[1] }
+            elseif ($line -match '^partner_stage=changed; .*; input=([a-z]+);') { $s.Input = $Matches[1]; if ($Matches[1] -eq 'off') { $s.InputArmed = $false } }
             elseif ($line -match '^partner_call=fault') { $s.Fault = $true }
             elseif ($line -match '^character=allocated; .*vars=(\d+)') { $s.Character = Get-LookName $Matches[1] }
             elseif ($line -match 'mission_termination=entered') { $s.Mission = $false; $s.Ready = $false; $s.Shown = $false; $s.Loaded = $false }
@@ -159,6 +167,13 @@ function Format-Role([string]$role) {
     if ($s.Mode) { $extra += "settings $($s.Mode)" }
     if ($s.Move) { $extra += "movement $($s.Move)" }
     if ($s.Stance) { $extra += "partner $($s.Stance)" }
+    if ($s.Input -ne 'off') {
+        $armed = if ($s.InputArmed) { 'armed' } else { 'off' }
+        $perS = if ($s.InputPerS) { " $($s.InputPerS)/s" } else { '' }
+        $stale = if ($s.InputStale) { ' STALE' } else { '' }
+        $extra += "input $($s.Input)/$armed$perS$stale"
+    }
+    if ($s.InputFault) { $extra += "INPUT FAULT ($($s.InputFault))" }
     if ($s.Fault) { $extra += 'NATIVE CALL FAULT (Warp only)' }
     $details = if ($extra.Count) { ' [' + ($extra -join ', ') + ']' } else { '' }
     return "${role}: $partner, $link$details$crash$exit"
@@ -241,9 +256,10 @@ try {
     Write-Host "  Partner movement: $($experiment.Move); stance sync: $($experiment.Anim) (experimental paths: docs/partner-anim-appearance.md)."
     Write-Host '    Turn ONE experiment on at a time and play a minute: if a game crashes or hangs, the last [M] / [A] is the cause.'
     Write-Host '    [M] smooth movement (does the partner walk instead of sliding?)   [A] stance sync (crouch / prone on the partner)'
+    Write-Host '    [I] EXPERIMENTAL input drive (round 3): both copies drive the partner from the remote INPUT (apply=input input=net).'
     Write-Host '  Console keys (click this window first):  [S] screenshots   [M] smooth movement on/off   [A] stance sync on/off'
-    Write-Host '                                           [W] proven Warp, no animation calls   [R] re-send settings   [C] component census'
-    Write-Host '                                           [O] partner off   [Q] quit + clean up'
+    Write-Host '                                           [I] input drive (experimental)   [W] proven Warp, no animation calls'
+    Write-Host '                                           [R] re-send settings   [C] component census   [O] partner off   [Q] quit + clean up'
     Write-Host ''
 
     $readyAt = Get-Date
@@ -262,7 +278,18 @@ try {
             'R' { Send-SyncTrigger 're-sync' }
             'M' { $experiment.Move = if ($experiment.Move -eq 'hybrid') { 'warp' } else { 'hybrid' }; Send-SyncTrigger "movement $($experiment.Move)" }
             'A' { $experiment.Anim = if ($experiment.Anim -eq 'net') { 'off' } else { 'net' }; Send-SyncTrigger "stance sync $($experiment.Anim)" }
-            'W' { $experiment.Move = 'warp'; $experiment.Anim = 'off'; Send-SyncTrigger 'proven Warp movement, no animation calls' }
+            'W' {
+                $experiment.Move = 'warp'; $experiment.Anim = 'off'
+                # Back to the proven path AND turn the input window off.
+                & (Join-Path $lab 'Set-PartnerTrigger.ps1') -Role both -Text 'stage=3 source=net apply=warp anim=off input=off isend=0 look=net' -Force |
+                    ForEach-Object { Write-Note $_ }
+            }
+            'I' {
+                # Experimental round 3 input drive on both copies (docs/partner-anim-appearance.md "Round 3").
+                Write-Note 'input drive (experimental) -> both copies'
+                & (Join-Path $lab 'Set-PartnerTrigger.ps1') -Role both -Text 'stage=3 source=net apply=input input=net isend=1 cam=sandbox hold=none look=net' -Force |
+                    ForEach-Object { Write-Note $_ }
+            }
             'C' { & (Join-Path $lab 'Set-PartnerTrigger.ps1') -Role both -Text 'census=1' -Force | ForEach-Object { Write-Note $_ } }
             'O' { & (Join-Path $lab 'Set-PartnerTrigger.ps1') -Role both -Text 'stop' -Force | ForEach-Object { Write-Note $_ } }
         }

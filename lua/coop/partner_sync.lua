@@ -10,6 +10,13 @@ do
     local active, failed, frame, allActive, partsCopied = false, false, 0, false, false
     local api, skipped = {}, {}
     local fmt, floor, gsub, sub = string.format, math.floor, string.gsub, string.sub
+    -- Round 3 direct motion (docs/partner-anim-appearance.md "Round 3", part D).
+    -- GANI[index] selects the gani for the op's 14th reply value; these ganis
+    -- are resident in player2_resident.mtar (path hashes verified in research).
+    local DMP = "/Assets/tpp/motion/SI_game/fani/bodies/snap/snapnon/"
+    local GANI = {[0] = DMP .. "snapnon_s_idl_l.gani", DMP .. "snapnon_q_idl_l.gani", DMP .. "snapnon_c_idl_l.gani",
+        DMP .. "snapnon_q_wk_lp_l.gani", DMP .. "snapnon_q_rn_lp_l.gani", DMP .. "snapnon_s_dh_lp.gani",
+        DMP .. "snapnon_c_fst_lp_r.gani", DMP .. "snapnon_p_idl.gani", "stateSquatIdleLeft", "stateStandIdleLeft"}
     local function receipt(source)
         local chunk = loadstring(source)
         if type(chunk) ~= "function" then return nil end
@@ -52,6 +59,8 @@ do
             copyParts = fn(Player, "Player", "CopyPartsInfoFromLocalPlayer"),
             setParts = fn(Player, "Player", "SetPartsInfoAtInstanceIndex"),
             mirror = fn(Player, "Player", "SetOtherInstanceIsForMirrorMode"),
+            dmPlay = fn(Player, "Player", "RequestToPlayDirectMotion"),
+            dmStop = fn(Player, "Player", "RequestToStopDirectMotion"),
             localIndex = fn(PlayerInfo, "PlayerInfo", "GetLocalPlayerIndex"),
             orCheck = fn(PlayerInfo, "PlayerInfo", "OrCheckStatus"),
             sendCommand = fn(GameObject, "GameObject", "SendCommand"),
@@ -95,7 +104,7 @@ do
         local cam = camera()
         -- The reply carries 5 look values after the 8 pose values when op has
         -- SET_PARTS (16): type, partsType, camoType, handType, faceId.
-        local op, R, px, py, pz, pry, _, _, lt, lp, lc, lh, lf = receipt(fmt("return 'MGS_COOP_PARTNER_V1' -- %d %d %d %d %d %d %d %d %d",
+        local op, R, px, py, pz, pry, _, _, lt, lp, lc, lh, lf, dg = receipt(fmt("return 'MGS_COOP_PARTNER_V1' -- %d %d %d %d %d %d %d %d %d",
             frame % 1000000, floor(x * 1000 + 0.5), floor(y * 1000 + 0.5), floor(z * 1000 + 0.5),
             floor(ry * 100 + 0.5), floor(cam * 100 + 0.5), stance, move, (allActive and 1 or 0) + (partsCopied and 2 or 0)))
         if type(op) ~= "number" or op <= 0 then return end
@@ -135,6 +144,18 @@ do
         if op % 64 >= 32 and call(api.mirror, "Player.SetOtherInstanceIsForMirrorMode", true) then note("event=mirror_on") end
         -- MIRROR_OFF (extension): native ends the F3c diagnostic after at most 10 s.
         if op % 128 >= 64 and call(api.mirror, "Player.SetOtherInstanceIsForMirrorMode", false) then note("event=mirror_off") end
+        -- DM_PLAY (128) / DM_STOP (256): the gani is the 14th reply value (0..9);
+        -- after SET_PARTS, before WARP. Needs the native comparator patch.
+        if op % 256 >= 128 then
+            if integer(dg, 0, 9) and GANI[dg] ~= nil then
+                if call(api.dmPlay, "Player.RequestToPlayDirectMotion", {{"coopLoco", R}, {GANI[dg], true, "", "", "", true}}) then
+                    note("event=dm_play;gani=" .. dg)
+                end
+            else
+                note("event=dm_refused;reason=bad_gani")
+            end
+        end
+        if op % 512 >= 256 and call(api.dmStop, "Player.RequestToStopDirectMotion") then note("event=dm_stop") end
         if op % 2 == 1 and finite(px) and finite(py) and finite(pz) and finite(pry) then
             call(api.sendCommand, "GameObject.SendCommand", {type = "TppPlayer2", index = R},
                 {id = "Warp", pos = {px / 1000, py / 1000, pz / 1000}, rotY = pry / 1000})

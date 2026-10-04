@@ -99,6 +99,19 @@ void ReadDiagnostics(const Addresses& a, State& s) noexcept {
               ReadValue(x + c::x_guard_mode, guard_mode) && ReadBlock(x + c::x_flag, s.pb_flag, sizeof(s.pb_flag)) &&
               ReadBlock(x + c::x_state, s.pb_state, sizeof(s.pb_state));
     s.pb_guard = s.pb_ok ? static_cast<std::uint32_t>(guard_ptr == 0 || guard_mode == 2) : 0;
+    // The requested (descriptor) look of instance 1's parts slot (0x9B47D0
+    // slot mapping, 0x9B442D store); null before the first request.
+    s.req_ok = false;
+    std::uint32_t local = 0;
+    std::uintptr_t req = 0;
+    unsigned char look[7]{};
+    if (x && ReadValue(g + c::g_local, local)) {
+        const std::uintptr_t slot = local == 1 ? 0 : (local > 1 ? 2 : 1);
+        if (ReadValue(x + c::x_req_look + 8 * slot, req) && req && ReadBlock(req, look, sizeof(look))) {
+            s.req_ok = true;
+            s.req_look = partner::Look{look[0], look[1], look[2], look[3], Field<std::uint16_t>(look, 4), look[6]};
+        }
+    }
     std::int32_t bank = -1;
     s.rec_ok = ReadValue(a.record_bank, bank) && (bank == 0 || bank == 1);
     if (s.rec_ok) {
@@ -162,6 +175,15 @@ Addresses AddressesFor(const void* base) noexcept {
     a.t_vtable = Pinned(b, c::t_vtable_rva);
     a.a0_vtable = Pinned(b, c::a0_vtable_rva);
     a.c0_vtable = Pinned(b, c::c0_vtable_rva);
+    a.pp_vtable = b + c::pp_vtable_rva;
+    a.cam_vtable = b + c::cam_vtable_rva;
+    a.plugin_vt[0] = b + c::plugin_vt0_rva;
+    a.plugin_vt[1] = b + c::plugin_vt1_rva;
+    a.plugin_vt[2] = b + c::plugin_vt2_rva;
+    a.plugin_vt[3] = b + c::plugin_vt3_rva;
+    a.dm_prim_vtable = b + c::dm_prim_vt_rva;
+    a.dm_iface_vtable = b + c::dm_iface_vt_rva;
+    a.script_object = b + c::g_rva;
     return a;
 }
 
@@ -174,7 +196,7 @@ bool CodeGateWith(const void* base, std::size_t span, const GateSite* sites, std
     const auto b = reinterpret_cast<std::uintptr_t>(base);
     for (std::size_t i = 0; i < site_count; ++i) {
         const GateSite& site = sites[i];
-        unsigned char copy[64]{};
+        unsigned char copy[96]{};
         if (site.size == 0 || site.size > sizeof(copy) || site.rva > span || site.size > span - site.rva ||
             !ReadBlock(b + site.rva, copy, site.size) || std::memcmp(copy, site.bytes, site.size) != 0) {
             mismatch_rva = site.rva;
@@ -722,22 +744,251 @@ std::size_t FormatReady(const State& s, char* out, std::size_t capacity) noexcep
 std::size_t FormatProbe(const State& s, std::uint64_t t_ms, std::uint32_t stage, char* out, std::size_t capacity) noexcept {
     if (!out || !capacity) return 0;
     const Preserve preserve;
-    char pos0[48]{}, pos1[48]{}, rec1[48]{};
+    char pos0[48]{}, pos1[48]{}, rec1[48]{}, req[48]{};
     LogMm(pos0, sizeof(pos0), s.slot[0]);
     LogMm(pos1, sizeof(pos1), s.slot[1]);
     LogMm(rec1, sizeof(rec1), s.rec1);
+    if (s.req_ok)
+        StringCchPrintfA(req, sizeof(req), "%u,%u,%u,%u,%u,%u", unsigned(s.req_look.type), unsigned(s.req_look.parts),
+                         unsigned(s.req_look.camo), unsigned(s.req_look.hand), unsigned(s.req_look.face),
+                         unsigned(s.req_look.face_equip));
+    else
+        StringCchCopyA(req, sizeof(req), "none");
     if (FAILED(StringCchPrintfA(out, capacity,
             "partner_probe=state; t_ms=%llu; stage=%u; ids=%04x,%04x; pool=%02x,%02x; parts=%u,%u; rbits=0x%x; s0=0x%02x; "
             "s8=0x%02x; q170=0x%x; q180=0x%x; q194=0x%x; q198=0x%x; glob=%u; pb_guard=%u; pb_flag=%u,%u; pb_state=%u,%u; "
-            "pos0_mm=%s; yaw0_mrad=%d; pos1_mm=%s; yaw1_mrad=%d; rec1_mm=%s; rec1_status=0x%08x\r\n",
+            "pos0_mm=%s; yaw0_mrad=%d; pos1_mm=%s; yaw1_mrad=%d; rec1_mm=%s; rec1_status=0x%08x; req1=%s\r\n",
             static_cast<unsigned long long>(t_ms), stage, unsigned(s.ids[0]), unsigned(s.ids[1]), unsigned(s.pool[0]),
             unsigned(s.pool[1]), unsigned(s.parts[0]), unsigned(s.parts[1]), s.rbits, unsigned(s.s0), unsigned(s.s8), s.q170,
             s.q180, s.q194, s.q198, s.glob, s.pb_guard, s.pb_flag[0], s.pb_flag[1], s.pb_state[0], s.pb_state[1], pos0,
-            ToMrad(s.slot[0][3]), pos1, ToMrad(s.slot[1][3]), rec1, s.rec1_status))) {
+            ToMrad(s.slot[0][3]), pos1, ToMrad(s.slot[1][3]), rec1, s.rec1_status, req))) {
         out[0] = 0;
         return 0;
     }
     return std::strlen(out);
+}
+
+// --- Round 3: input lever targets, the local pad, direct motion -------------
+namespace {
+// The base action plugin of block `b` (after ResolveCore) and the record of
+// `id`: obj = *(*(*(PS+0x658)+0x30)+0x10) (PS.vt+0xC8 0xFF3220 reads this
+// chain), plugin = obj - 0x10, rec = *(plugin+0x1A0) + (id - base)*0x390.
+const char* ResolvePlugin(const Addresses& a, const Block& b, std::uint32_t id, std::uintptr_t& obj, std::uintptr_t& obj_vt,
+                          std::uintptr_t& plugin, std::uintptr_t (&vts)[4], std::uintptr_t& rec, std::uint32_t& idx,
+                          std::uint32_t& count, std::uint32_t& rec_2ac) noexcept {
+    std::uintptr_t comp = 0, inner = 0, node = 0, recs = 0, owner = 0;
+    obj = obj_vt = plugin = rec = 0;
+    idx = count = rec_2ac = 0;
+    if (!ReadValue(b.ps + c::ps_comp, comp) || !comp || !ReadValue(comp + c::comp_inner, inner) || !inner ||
+        !ReadValue(inner + c::comp_object, obj) || !obj || !ReadValue(obj, obj_vt) || obj_vt != a.plugin_vt[1]) return "obj_vt";
+    plugin = obj - c::plugin_obj_off;
+    static constexpr std::size_t offsets[4] = {0x0, 0x10, 0x30, 0x48};
+    for (unsigned i = 0; i < 4; ++i)
+        if (!ReadValue(plugin + offsets[i], vts[i]) || vts[i] != a.plugin_vt[i]) return "plugin_vt";
+    if (!ReadValue(plugin + c::plugin_blk, owner) || owner != b.blk) return "plugin_blk";
+    std::uint32_t base = 0;
+    if (!ReadValue(plugin + c::plugin_node, node) || !node || !ReadValue(node + c::node_base, base) ||
+        !ReadValue(node + c::node_count, count) || id < base || id - base >= count) return "rec_idx";
+    idx = id - base;
+    if (!ReadValue(plugin + c::plugin_recs, recs) || !recs) return "rec";
+    rec = recs + static_cast<std::uintptr_t>(idx) * c::plugin_rec_stride;
+    if (!ReadValue(rec + c::rec_local, rec_2ac)) return "rec";
+    return nullptr;
+}
+bool PpVtableOk(const Addresses& a, std::uintptr_t vt) noexcept {
+    return vt && (vt == a.pp_vtable || vt == a.pp_vtable_alt[0] || vt == a.pp_vtable_alt[1]);
+}
+// The PP / pp_owner / src checks shared by ResolveInputTargets and ReadPad.
+const char* ResolvePad(const Addresses& a, const State& s, std::uintptr_t& pp, std::uintptr_t& pp_vt, std::uintptr_t& src,
+                       bool& owner_ok) noexcept {
+    std::uintptr_t owner = 0;
+    pp = pp_vt = src = 0;
+    owner_ok = false;
+    if (!ReadValue(s.P + c::p_pad, pp) || !pp || !ReadValue(pp, pp_vt) || !PpVtableOk(a, pp_vt)) return "pp_vt";
+    owner_ok = ReadValue(pp + c::pp_owner, owner) && owner == s.P;
+    if (!owner_ok) return "pp_owner";
+    if (!ReadValue(pp + c::pp_src, src) || !src) return "src";
+    return nullptr;
+}
+} // namespace
+
+const char* ResolveInputTargets(const Addresses& a, const State& s, InputTargets& out) noexcept {
+    const Preserve preserve;
+    out = InputTargets{};
+    out.P = s.P;
+    out.flags = s.flags;
+    out.alt_dispatch = (s.flags & c::flag_alt_dispatch) != 0;
+    if (const char* reason = CheckWrite(Refusal::none, s, 1, false, WriteKind::set)) return out.refusal = reason;
+    ReadValue(s.P, out.p_vt);
+    // Block 0 (logged only).
+    Block b0{};
+    if (Realized(s, 0) && !ResolveCore(a, s, 0, b0)) {
+        out.blk0 = b0.blk;
+        ReadValue(b0.blk + c::blk_root, out.root0);
+        std::uintptr_t obj = 0, obj_vt = 0, plugin = 0, vts[4]{};
+        std::uint32_t idx = 0, count = 0;
+        out.rec0_ok = !ResolvePlugin(a, b0, b0.id, obj, obj_vt, plugin, vts, out.rec0, idx, count, out.rec0_2ac);
+    }
+    if (!Realized(s, 1)) return out.refusal = "unrealized";
+    if (s.ids[1] != 1) return out.refusal = "id";
+    if (s.parts[1] != c::parts_loaded_state) return out.refusal = "parts";
+    out.pool1 = s.pool[1];
+    if (out.alt_dispatch) return out.refusal = "alt_dispatch";
+    if (const char* reason = ResolvePad(a, s, out.pp, out.pp_vt, out.src, out.pp_owner_ok)) return out.refusal = reason;
+    ReadValue(out.src, out.src_vt);
+    if (!ReadValue(s.P + c::p_cam, out.cam) || !out.cam || !ReadValue(out.cam, out.cam_vt) || out.cam_vt != a.cam_vtable)
+        return out.refusal = "cam_vt";
+    ReadValue(out.cam + c::cam_mode, out.cam_mode);
+    Block b1{};
+    if (const char* reason = ResolveCore(a, s, 1, b1)) return out.refusal = reason;
+    out.blk1 = b1.blk;
+    out.ps1 = b1.ps;
+    out.ps1_vt = b1.ps_vt;
+    if (!ReadValue(b1.blk + c::blk_root, out.root1) || !out.root1) return out.refusal = "root";
+    if (const char* reason = ResolvePlugin(a, b1, b1.id, out.obj, out.obj_vt, out.plugin1, out.plugin_vt, out.rec1, out.rec_idx,
+                                           out.rec_count, out.rec1_2ac)) return out.refusal = reason;
+    return out.refusal = nullptr;
+}
+
+std::size_t FormatInputCensus(const Addresses& a, const InputTargets& t, char* out, std::size_t capacity) noexcept {
+    if (!out || !capacity) return 0;
+    const Preserve preserve;
+    const auto r = [&](std::uintptr_t v) { return static_cast<unsigned long long>(Rva(a, v)); };
+    if (FAILED(StringCchPrintfA(out, capacity,
+            "partner_input_census; P=0x%llx; flags=0x%08x; alt=%u; pp=0x%llx; pp_vt=0x%llx; pp_owner=%u; src=0x%llx; src_vt=0x%llx; "
+            "cam=0x%llx; cam_vt=0x%llx; cam_mode=%u; root0=0x%llx; root1=0x%llx; ps1_vt=0x%llx; obj_vt=0x%llx; "
+            "plugin_vt=0x%llx,0x%llx,0x%llx,0x%llx; rec_idx=%u/%u; rec0_2ac=0x%x; rec1_2ac=0x%x; verdict=%s\r\n",
+            static_cast<unsigned long long>(t.P), t.flags, t.alt_dispatch ? 1u : 0u, static_cast<unsigned long long>(t.pp), r(t.pp_vt),
+            t.pp_owner_ok ? 1u : 0u, static_cast<unsigned long long>(t.src), r(t.src_vt), static_cast<unsigned long long>(t.cam),
+            r(t.cam_vt), t.cam_mode, static_cast<unsigned long long>(t.root0), static_cast<unsigned long long>(t.root1), r(t.ps1_vt),
+            r(t.obj_vt), r(t.plugin_vt[0]), r(t.plugin_vt[1]), r(t.plugin_vt[2]), r(t.plugin_vt[3]), t.rec_idx, t.rec_count,
+            t.rec0_2ac, t.rec1_2ac, t.refusal ? t.refusal : "ok"))) {
+        out[0] = 0;
+        return 0;
+    }
+    return std::strlen(out);
+}
+
+bool ReadPad(const Addresses& a, const State& s, partner_input::PadRaw& out) noexcept {
+    const Preserve preserve;
+    out = partner_input::PadRaw{};
+    if (CheckWrite(Refusal::none, s, 1, false, WriteKind::restore)) return false;
+    std::uintptr_t pp = 0, pp_vt = 0, src = 0;
+    bool owner = false;
+    if (ResolvePad(a, s, pp, pp_vt, src, owner)) return false;
+    unsigned char srcb[c::src_size]{}, derived[c::pp_derived_size + c::pp_masks_size]{}, kb[c::pp_kb_size + 1]{};
+    static_assert(c::pp_derived + c::pp_derived_size == c::pp_masks, "PP+0x10..+0x33 is one block");
+    static_assert(c::pp_kb + c::pp_kb_size == c::pp_kb_flags, "PP+0x460..+0x488 is one block");
+    if (!ReadBlock(src + c::src_words, srcb, sizeof(srcb)) || !ReadBlock(pp + c::pp_derived, derived, sizeof(derived)) ||
+        !ReadBlock(pp + c::pp_kb, kb, sizeof(kb))) return false;
+    std::memcpy(out.src_w, srcb, sizeof(out.src_w));
+    std::memcpy(out.src_f, srcb + 0x10, sizeof(out.src_f));
+    std::memcpy(out.pp_derived, derived, sizeof(out.pp_derived));
+    std::memcpy(out.pp_mask, derived + c::pp_derived_size, sizeof(out.pp_mask));
+    std::memcpy(out.kb_w, kb, sizeof(out.kb_w));
+    std::memcpy(out.kb_f, kb + 0x10, sizeof(out.kb_f));
+    out.kb_flags = kb[c::pp_kb_size];
+    return true;
+}
+
+const char* ResolveDm(const Addresses& a, const State& s, DmTargets& out) noexcept {
+    const Preserve preserve;
+    out = DmTargets{};
+    if (const char* reason = CheckWrite(Refusal::none, s, 1, false, WriteKind::restore)) return out.refusal = reason;
+    out.g_ok = ReadValue(s.P + c::p_g, out.g_value) && out.g_value && out.g_value == a.script_object;
+    out.g = out.g_ok ? out.g_value : 0;
+    if (!out.g_ok) return out.refusal = "g";
+    Block b{};
+    if (!Realized(s, 1)) return out.refusal = "unrealized";
+    if (s.ids[1] != 1) return out.refusal = "id";
+    if (const char* reason = ResolveCore(a, s, 1, b)) return out.refusal = reason;
+    out.blk1 = b.blk;
+    if (!ReadValue(b.blk + c::blk_iface + 8 * c::dm_iface_index, out.iface) || !out.iface || !ReadValue(out.iface, out.iface_vt) ||
+        out.iface_vt != a.dm_iface_vtable) return out.refusal = "iface_vt";
+    out.prim = out.iface - c::dm_iface_prim;
+    std::uintptr_t owner = 0, node = 0, recs = 0;
+    if (!ReadValue(out.prim, out.prim_vt) || out.prim_vt != a.dm_prim_vtable) return out.refusal = "prim_vt";
+    out.prim_blk_ok = ReadValue(out.prim + c::dm_prim_blk, owner) && owner == b.blk;
+    if (!out.prim_blk_ok) return out.refusal = "prim_blk";
+    std::uint32_t base = 0;
+    if (!ReadValue(out.prim + c::dm_prim_node, node) || !node || !ReadValue(node + c::node_base, base) ||
+        !ReadValue(node + c::node_count, out.rec_count) || b.id < base || b.id - base >= out.rec_count) return out.refusal = "rec_idx";
+    out.rec_idx = b.id - base;
+    if (!ReadValue(out.prim + c::dm_prim_recs, recs) || !recs) return out.refusal = "rec";
+    out.rec = recs + static_cast<std::uintptr_t>(out.rec_idx) * c::dm_rec_stride;
+    return out.refusal = nullptr;
+}
+
+bool ReadDm(const Addresses& a, const State& s, const DmTargets& t, DmState& out) noexcept {
+    const Preserve preserve;
+    out = DmState{};
+    out.ps2d8[0] = out.ps2d8[1] = -1;
+    if (!t.g) return false;
+    std::uintptr_t q18 = 0;
+    out.ok = ReadValue(t.g + c::g_flags, out.g388) && ReadValue(t.g + c::g_req, out.req0) && ReadValue(t.g + c::g_name, out.name) &&
+             ReadValue(s.Q + c::q_act, q18) && ReadBlock(q18, out.q18, sizeof(out.q18));
+    for (std::uint32_t k = 0; k < 2; ++k) {
+        Block b{};
+        std::uintptr_t p2d8 = 0;
+        std::uint8_t value = 0;
+        if (!ResolveCore(a, s, k, b) && ReadValue(b.ps + c::ps_byte2d8, p2d8) && ReadValue(p2d8 + (b.id - b.base_id), value))
+            out.ps2d8[k] = value;
+    }
+    if (t.rec) {
+        out.rec_ok = ReadValue(t.rec + 0x10, out.rec10) && ReadValue(t.rec + 0x11, out.rec11) && ReadValue(t.rec + 0x18, out.rec18) &&
+                     ReadValue(t.rec + 0x1A0, out.rec1a0) && ReadValue(t.rec + 0x248, out.rec248);
+    }
+    return out.ok;
+}
+
+std::size_t FormatDmCensus(const Addresses& a, const DmTargets& t, char* out, std::size_t capacity) noexcept {
+    if (!out || !capacity) return 0;
+    const Preserve preserve;
+    if (FAILED(StringCchPrintfA(out, capacity,
+            "partner_dm_census; g=0x%llx; g_ok=%u; iface_vt=0x%llx; prim_vt=0x%llx; prim_blk=%u; rec_idx=%u/%u; verdict=%s\r\n",
+            static_cast<unsigned long long>(Rva(a, t.g_value)), t.g_ok ? 1u : 0u, static_cast<unsigned long long>(Rva(a, t.iface_vt)),
+            static_cast<unsigned long long>(Rva(a, t.prim_vt)), t.prim_blk_ok ? 1u : 0u, t.rec_idx, t.rec_count,
+            t.refusal ? t.refusal : "ok"))) {
+        out[0] = 0;
+        return 0;
+    }
+    return std::strlen(out);
+}
+
+std::size_t FormatDmProbe(const DmState& d, bool patched, char* out, std::size_t capacity) noexcept {
+    if (!out || !capacity) return 0;
+    const Preserve preserve;
+    if (FAILED(StringCchPrintfA(out, capacity,
+            "partner_dm; patched=%u; g388=0x%02x; req0=%u; q18=0x%x,0x%x; ps2d8=%d,%d; rec10=%u; rec11=%u; rec18=0x%llx; "
+            "rec1a0=%u; rec248=0x%02x\r\n",
+            patched ? 1u : 0u, unsigned(d.g388), unsigned(d.req0), unsigned(d.q18[0]), unsigned(d.q18[1]), d.ps2d8[0], d.ps2d8[1],
+            unsigned(d.rec10), unsigned(d.rec11), static_cast<unsigned long long>(d.rec18), unsigned(d.rec1a0), unsigned(d.rec248)))) {
+        out[0] = 0;
+        return 0;
+    }
+    return std::strlen(out);
+}
+
+namespace {
+bool AndByte(std::uintptr_t address, char mask) noexcept {
+    __try { _InterlockedAnd8(reinterpret_cast<volatile char*>(address), mask); return true; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+} // namespace
+
+const char* ClearDmPending(const Addresses& a, bool terminating, bool& cleared) noexcept {
+    const Preserve preserve;
+    cleared = false;
+    State s{};
+    if (const char* reason = Prepare(a, 1, terminating, WriteKind::restore, s)) return reason;
+    std::uintptr_t g = 0;
+    std::uint8_t flags = 0, req0 = 0;
+    if (!ReadValue(s.P + c::p_g, g) || !g || g != a.script_object) return "g";
+    if (!ReadValue(g + c::g_flags, flags) || !ReadValue(g + c::g_req, req0)) return "fault";
+    if (!(flags & 4) || req0 != 1) return nullptr;  // nothing of ours pending
+    if (!AndByte(g + c::g_flags, static_cast<char>(~4))) return "fault";
+    cleared = true;
+    return nullptr;
 }
 
 } // namespace mgscoop::partner_player

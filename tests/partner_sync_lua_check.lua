@@ -57,7 +57,7 @@ local function fixture(options)
         if starts(source, TICK) then
             c.ticks[#c.ticks + 1] = source:sub(#TICK + 1)
             return function()
-                if c.reply then return unpack(c.reply, 1, 13) end
+                if c.reply then return unpack(c.reply, 1, 14) end
                 return 'MGS_COOP_PARTNER_V1'
             end
         end
@@ -77,6 +77,12 @@ local function fixture(options)
                 tostring(t.camoType), tostring(t.handType), tostring(t.faceId)))
         end,
         SetOtherInstanceIsForMirrorMode = function(on) record('mirror:' .. tostring(on)) end,
+        RequestToPlayDirectMotion = function(t)
+            check(type(t) == 'table' and type(t[1]) == 'table' and t[1][1] == 'coopLoco' and type(t[2]) == 'table' and
+                t[2][2] == true and t[2][3] == '' and t[2][6] == true, 'dmPlay arg shape')
+            record('dmplay:' .. tostring(t[1][2]) .. ':' .. tostring(t[2][1]))
+        end,
+        RequestToStopDirectMotion = function() record('dmstop') end,
     }
     env.PlayerInfo = {
         GetLocalPlayerIndex = function() return c.localIndex end,
@@ -254,6 +260,39 @@ c.reply = {96, 1, 0, 0, 0, 0, 1, 0}
 mark = #c.calls
 update(env)
 check(c.calls[mark + 1] == 'mirror:true' and c.calls[mark + 2] == 'mirror:false', 'MIRROR_ON is handled before MIRROR_OFF')
+-- DM_PLAY (128): the 14th reply value is the gani index; {{"coopLoco",R},{GANI[dg],...}}.
+c.reply = {128, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 3}
+mark = #c.calls
+update(env)
+check(c.calls[mark + 1] == 'dmplay:1:/Assets/tpp/motion/SI_game/fani/bodies/snap/snapnon/snapnon_q_wk_lp_l.gani' and
+    hasLog(c, 'event=dm_play;gani=3'), 'DM_PLAY with GANI[3] and coopLoco index R')
+-- gani 8/9 are graph state names, not gani paths.
+c.reply = {128, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 9}
+update(env)
+check(c.calls[#c.calls] == 'dmplay:1:stateStandIdleLeft' and count(c.logs, 'event=dm_play;gani=9') == 1, 'DM_PLAY gani 9 state name')
+-- bad gani index refused.
+for _, bad in ipairs({10, -1, 1.5, '3'}) do
+    local notes = count(c.logs, 'event=dm_refused;reason=bad_gani')
+    mark = #c.calls
+    c.reply = {128, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, bad}
+    update(env)
+    check(#c.calls == mark and count(c.logs, 'event=dm_refused;reason=bad_gani') == notes + 1, 'DM_PLAY bad gani refused: ' .. tostring(bad))
+end
+-- DM_STOP (256).
+c.reply = {256, 1, 0, 0, 0, 0, 1, 0}
+update(env)
+check(c.calls[#c.calls] == 'dmstop' and hasLog(c, 'event=dm_stop'), 'DM_STOP')
+-- DM_PLAY | SET_PARTS: parts first, then dmplay with the trailing gani.
+c.reply = {144, 1, 0, 0, 0, 0, 1, 0, 6, 27, 116, 0, 0, 1}
+mark = #c.calls
+update(env)
+check(c.calls[mark + 1] == 'parts:1:6:27:116:0:0' and
+    c.calls[mark + 2] == 'dmplay:1:/Assets/tpp/motion/SI_game/fani/bodies/snap/snapnon/snapnon_q_idl_l.gani', 'SET_PARTS before DM_PLAY')
+-- A bad index refusal still comes first (nothing runs, not even DM).
+c.reply = {129, 2, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1}
+mark = #c.calls
+update(env)
+check(#c.calls == mark and hasLog(c, 'event=refused;reason=bad_index;R=2'), 'R ~= 1 refusal precedes DM ops')
 for _, reply in ipairs({{0, 1, 1, 1, 1, 1, 0, 0}, {-1, 1, 1, 1, 1, 1, 0, 0}, {'1', 1, 1, 1, 1, 1, 0, 0}, {nil, 1}}) do
     mark = #c.calls
     local warps = #c.warps

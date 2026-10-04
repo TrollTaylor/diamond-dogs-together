@@ -996,8 +996,8 @@ int main() {
     Check(std::strncmp(line, "partner_probe=state; t_ms=123456; stage=3; ids=0000,ffff; pool=00,ff; parts=3,0; rbits=0x1; s0=0x01; s8=0x01; "
                              "q170=0x3; q180=0x0; q194=0x1; q198=0x1; glob=0; pb_guard=1; pb_flag=0,5; pb_state=3,1; "
                              "pos0_mm=1000,2000,3000; yaw0_mrad=500; pos1_mm=1500,-250,3000; yaw1_mrad=-1571; rec1_mm=7000,8000,9000; "
-                             "rec1_status=0xa5a5a5a5\r\n", 400) == 0, "probe text");
-    Check(Contains(line, "rec1_status=0xa5a5a5a5\r\n") && std::strlen(line) < pp::probe_capacity, "probe tail");
+                             "rec1_status=0xa5a5a5a5; req1=none\r\n", 400) == 0, "probe text");
+    Check(Contains(line, "rec1_status=0xa5a5a5a5; req1=none\r\n") && std::strlen(line) < pp::probe_capacity, "probe tail");
     char small[16]{};
     Check(pp::FormatProbe(s, 1, 0, small, sizeof(small)) == 0 && small[0] == 0, "probe too small");
     Check(pp::ToMm(1.5f) == 1500 && pp::ToMm(-0.0005f) == -1 && pp::ToMm(NAN) == INT32_MIN && pp::ToMm(1e12f) == INT32_MAX &&
@@ -1057,27 +1057,27 @@ int main() {
         volatile long seen[cp::kMaxDistinct]{};
         char out[224]{};
         const std::uintptr_t base = 0x140000000;
-        Check(cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base + 0x12cc6d6, 0, 0x1c8, base, 0x9e7f000, 77, 3, 1, seen, out,
+        Check(cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base + 0x12cc6d6, 0, 0x1c8, base, 0x9e7f000, 77, 3, 1, 3, seen, out,
                                    sizeof(out)) > 0, "AV in image reported");
-        Check(std::strcmp(out, "crash_probe=av; rva=0x12cc6d6; access=read; target=0x1c8; thread=77; stage=3; realized=1\r\n") == 0,
+        Check(std::strcmp(out, "crash_probe=av; rva=0x12cc6d6; access=read; target=0x1c8; thread=77; stage=3; realized=1; ctx=0x3\r\n") == 0,
               "AV line");
-        Check(cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base + 0x12cc6d6, 1, 0, base, 0x9e7f000, 1, 0, 0, seen, out, sizeof(out)) == 0,
+        Check(cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base + 0x12cc6d6, 1, 0, base, 0x9e7f000, 1, 0, 0, 0, seen, out, sizeof(out)) == 0,
               "repeated RVA silent");
-        Check(cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base + 0x100, 1, 0x10, base, 0x9e7f000, 1, 0, 0, seen, out, sizeof(out)) > 0 &&
+        Check(cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base + 0x100, 1, 0x10, base, 0x9e7f000, 1, 0, 0, 0, seen, out, sizeof(out)) > 0 &&
               Contains(out, "access=write"), "write access");
-        Check(cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base + 0x200, 8, 0x10, base, 0x9e7f000, 1, 0, 0, seen, out, sizeof(out)) > 0 &&
+        Check(cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base + 0x200, 8, 0x10, base, 0x9e7f000, 1, 0, 0, 0, seen, out, sizeof(out)) > 0 &&
               Contains(out, "access=execute"), "execute access");
-        Check(cp::detail::Describe(EXCEPTION_BREAKPOINT, base + 0x300, 0, 0, base, 0x9e7f000, 1, 0, 0, seen, out, sizeof(out)) == 0,
+        Check(cp::detail::Describe(EXCEPTION_BREAKPOINT, base + 0x300, 0, 0, base, 0x9e7f000, 1, 0, 0, 0, seen, out, sizeof(out)) == 0,
               "non-AV ignored");
-        Check(cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base - 1, 0, 0, base, 0x9e7f000, 1, 0, 0, seen, out, sizeof(out)) == 0 &&
-              cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base + 0x9e7f000, 0, 0, base, 0x9e7f000, 1, 0, 0, seen, out, sizeof(out)) == 0,
+        Check(cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base - 1, 0, 0, base, 0x9e7f000, 1, 0, 0, 0, seen, out, sizeof(out)) == 0 &&
+              cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base + 0x9e7f000, 0, 0, base, 0x9e7f000, 1, 0, 0, 0, seen, out, sizeof(out)) == 0,
               "outside the image ignored");
         unsigned reported = 3;
         for (unsigned i = 0; i < 40; ++i)
-            if (cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base + 0x1000 + i * 16, 0, 0, base, 0x9e7f000, 1, 0, 0, seen, out,
+            if (cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base + 0x1000 + i * 16, 0, 0, base, 0x9e7f000, 1, 0, 0, 0, seen, out,
                                      sizeof(out))) ++reported;
         Check(reported == cp::kMaxDistinct, "first 16 distinct RVAs only");
-        Check(cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base + 0x5000, 0, 0, 0, 0, 1, 0, 0, seen, out, sizeof(out)) == 0,
+        Check(cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base + 0x5000, 0, 0, 0, 0, 1, 0, 0, 0, seen, out, sizeof(out)) == 0,
               "no base, no report");
         Check(!cp::Install(nullptr, 0, nullptr), "install needs a base and a log");
     }

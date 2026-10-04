@@ -14,7 +14,7 @@ PVOID g_handle = nullptr;
 std::uintptr_t g_base = 0;
 std::size_t g_span = 0;
 LogFn g_log = nullptr;
-volatile LONG g_stage = 0, g_realized = 0;
+volatile LONG g_stage = 0, g_realized = 0, g_flags = 0;
 volatile long g_seen[kMaxDistinct]{};
 
 LONG CALLBACK Handler(PEXCEPTION_POINTERS info) noexcept {
@@ -27,7 +27,7 @@ LONG CALLBACK Handler(PEXCEPTION_POINTERS info) noexcept {
     char line[224]{};
     if (detail::Describe(record.ExceptionCode, reinterpret_cast<std::uintptr_t>(record.ExceptionAddress), access, target,
                          g_base, g_span, GetCurrentThreadId(), static_cast<std::uint32_t>(g_stage),
-                         static_cast<std::uint32_t>(g_realized), g_seen, line, sizeof(line)))
+                         static_cast<std::uint32_t>(g_realized), static_cast<std::uint32_t>(g_flags), g_seen, line, sizeof(line)))
         g_log(line);
     SetLastError(error);
     return EXCEPTION_CONTINUE_SEARCH;
@@ -37,7 +37,7 @@ LONG CALLBACK Handler(PEXCEPTION_POINTERS info) noexcept {
 namespace detail {
 std::size_t Describe(std::uint32_t code, std::uintptr_t address, std::uintptr_t access, std::uintptr_t target,
                      std::uintptr_t base, std::size_t span, std::uint32_t thread, std::uint32_t stage,
-                     std::uint32_t realized, volatile long* seen, char* out, std::size_t capacity) noexcept {
+                     std::uint32_t realized, std::uint32_t flags, volatile long* seen, char* out, std::size_t capacity) noexcept {
     if (!out || !capacity || !seen) return 0;
     out[0] = 0;
     if (code != EXCEPTION_ACCESS_VIOLATION || !base || address < base || address - base >= span) return 0;
@@ -57,9 +57,9 @@ std::size_t Describe(std::uint32_t code, std::uintptr_t address, std::uintptr_t 
     if (!claimed) return 0;
     const char* kind = access == 1 ? "write" : access == 8 ? "execute" : "read";
     if (FAILED(StringCchPrintfA(out, capacity,
-            "crash_probe=av; rva=0x%llx; access=%s; target=0x%llx; thread=%lu; stage=%u; realized=%u\r\n",
+            "crash_probe=av; rva=0x%llx; access=%s; target=0x%llx; thread=%lu; stage=%u; realized=%u; ctx=0x%x\r\n",
             static_cast<unsigned long long>(rva), kind, static_cast<unsigned long long>(target),
-            static_cast<unsigned long>(thread), stage, realized))) {
+            static_cast<unsigned long>(thread), stage, realized, flags))) {
         out[0] = 0;
         return 0;
     }
@@ -81,9 +81,10 @@ bool Install(const void* image_base, std::size_t image_span, LogFn log) noexcept
     return g_handle != nullptr;
 }
 
-void SetContext(std::uint32_t stage, std::uint32_t realized) noexcept {
+void SetContext(std::uint32_t stage, std::uint32_t realized, std::uint32_t flags) noexcept {
     InterlockedExchange(&g_stage, static_cast<LONG>(stage));
     InterlockedExchange(&g_realized, static_cast<LONG>(realized));
+    InterlockedExchange(&g_flags, static_cast<LONG>(flags));
 }
 
 } // namespace mgscoop::crash_probe

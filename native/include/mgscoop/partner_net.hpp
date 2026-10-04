@@ -15,6 +15,7 @@
 // constant-initialized POD (no destructor runs at unload).
 #include <cstddef>
 #include <cstdint>
+#include "mgscoop/partner_input.hpp"
 #include "mgscoop/partner_receipt.hpp"
 #include "mgscoop/pose_interp.hpp"
 
@@ -70,6 +71,16 @@ struct RemoteLook {
     std::uint64_t rx_ms;  // QPC milliseconds of the newest look frame
 };
 RemoteLook SampleLook() noexcept;
+
+// Input frames (round 3, 68 bytes, kind event): SubmitInput sends at once
+// (min gap 8 ms) with a running sequence >= 1. The receive path decodes the
+// frame in OnDatagram (between look and transform), stores it for the current
+// epoch, and logs partner_net=input_rx; first=1 once per epoch.
+inline constexpr std::uint32_t kInputMinGapMs = 8;
+bool SubmitInput(const partner_input::InputPacket& packet) noexcept;
+// The newest received input (non-blocking): false when the lock is busy (the
+// caller keeps its previous sample). age_ms = NowMs() - rx_ms.
+bool LatestInput(partner_input::Sample& out) noexcept;
 // Clears the ring, the sequence state and the received look, and makes the
 // next SubmitLook send at once (mission boundaries).
 void ResetRemote() noexcept;
