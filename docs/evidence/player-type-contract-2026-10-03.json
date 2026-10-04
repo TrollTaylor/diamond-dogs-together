@@ -194,7 +194,19 @@
   "get_player_type": {
     "rva": "0x9d30b0",
     "argument": "instanceIndex",
-    "mapping": "Q+0x40[idx] 0..4 returned as-is; 5 (OCELOT), 6 (QUIET) and idx >= P+0x208 return 0"
+    "mapping": "Q+0x40[idx] 0..4 returned as-is; 5 (OCELOT), 6 (QUIET) and idx >= P+0x208 return 0",
+    "body_bytes": 219,
+    "body_sha256": "c016b1091e80b52b8e1b959edefacda9e2f2aa3520493d1c89830ed05a01f2c3",
+    "null_checks": "none: P=[root+8], [P+0x208], [P+0x60], [Q+0x40] are dereferenced unconditionally",
+    "readback_guard": {
+      "root_getter": "0xaec8d0",
+      "root": "0x2a82c28",
+      "player_slot": "0x2a82c30",
+      "player_table": "0x2295490",
+      "limit_offset": "0x208",
+      "parts_info_offset": "0x60",
+      "type_array_offset": "0x40"
+    }
   },
   "provenance": "Dynamite c90f252f8200765f66c005d6bf4357fda0c0d98e dynamitePatches.cpp: 0x1409cc6c0 0f 85 9c 07 00 00 -> 48 e9 9c 07 00 00 (old exe 1.0.15.3); GPLv3 + Commons Clause 1.0",
   "mapping": "For the local instance outside parts-loading states 1/2, when vars.playerType is OCELOT (5) or QUIET (6) and neither enclosing+0x224 bit 18 (FOB missions) nor enclosing+0x284 bit 2 is set, the function writes vars.playerType = SNAKE and calls player vtable +0x2a8. The keep path forces matching parts/camo.",

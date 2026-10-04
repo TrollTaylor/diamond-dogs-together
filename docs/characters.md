@@ -53,8 +53,9 @@ character_fallback=dd_male
 | Situation | What happens |
 |---|---|
 | Story missions (10xxx/11xxx) and free roam (30xxx) | Your character is applied when the mission loads. |
-| ACC / helicopter (40xxx), FOB (50xxx), MGO, title | Not changed. The ACC shows your normal character. |
+| ACC / helicopter (40xxx), FOB (50xxx), MGO, title screen | Not changed. The ACC shows your normal character. The title screen (title mode) is skipped explicitly. |
 | Missions whose script forces the player: 10010 (prologue), 10280 (Truth), 10030 (Diamond Dogs), 10240 (Shining Lights), 10151 (Sahelanthropus), 11043 / 11044 (Subsistence) | The story's own choice wins. Any other mission that sets a temporary type in its preparation also wins. |
+| Right after the prologue (story sequence `CLEARD_ESCAPE_THE_HOSPITAL`, e.g. 10020 Phantom Limbs) | The game forces Snake (scarf, tiger stripe) at mission start; this wins (`reason=story_sequence_snake`). |
 | Quiet chosen in 10050 / 11050 (Cloaked in Silence) or 10260 (A Quiet Exit) | The fallback is used. |
 | Quiet chosen while buddy Quiet is deployed | The fallback is used. |
 | The Ocelot/Quiet bypass cannot be enabled (unexpected game version, mode) | The fallback is used. |
@@ -74,6 +75,12 @@ character_fallback=dd_male
   patch that is switched on only for missions where Ocelot/Quiet is applied,
   switched off for every other mission, and refused unless the game code
   matches byte for byte.
+- The lab readback (diagnostics only) starts after the mission's
+  `OnMissionGameStart` returns and stops at `OnTerminate`. Before each
+  `Player.GetPlayerType` call it asks the mod to sample the player object
+  natively (read-only, never dereferencing a null pointer), because that game
+  function has no null check and the player object does not exist while a
+  mission loads or unloads.
 - In each mission the mod logs one line describing what it did, for example
   `character=apply; mission=10036; requested=quiet; applied=quiet; type=6; reason=override; bypass=1; real=0`.
 
@@ -99,7 +106,8 @@ character_fallback=dd_male
   mission load. This uses the same check as the game's own scripts, but its
   timing has not been tested.
 - The in-game readback (`Player.GetPlayerType`) reports Ocelot and Quiet as
-  Snake (0). The mod logs your own type separately (`vars=6`).
+  Snake (0). The lab readback therefore also logs the raw per-instance bytes
+  (`raw0`/`raw1`, 5 = Ocelot, 6 = Quiet) and your own `vars` type.
 
 ## Logs
 
@@ -113,7 +121,7 @@ character_fallback=dd_male
 | `character=face; mission=...; face=...` | A Diamond Dogs face was set. |
 | `player_type_patch=active; ...` / `player_type_patch=inactive; ...` | The native bypass changed state. |
 | `player_type_patch=refused; reason=...` | The bypass was not enabled. The fallback is used. |
-| `character_readback=<tag>; local=0; vars=6; i0=0; i1=1; ...` | Lab readback of both players' types (only when `lab.ini` is active). |
+| `character_readback=<tag>; local=0; vars=6; players=ready; limit=2; i0=0; i1=1; raw0=6; raw1=1; quiet_ocelot_read_as=0` | Lab readback of both players' types (only with `lab.ini` active and a `character=` other than default, in story/free-roam missions). `tag` is `start`, `change` or `manual`. `players` is `ready`, `stopped` (outside the mission's lifetime), `native_unavailable`, or the native reason the player object is not readable (for example `player_absent`); `i0`/`i1`/`raw*` are `na` unless `ready`. |
 
 ## What has been verified
 
@@ -122,6 +130,8 @@ character_fallback=dd_male
 | Native reset branch: bytes, complete function hash, jump target, uniqueness, FOB flag source | Static analysis of the installed 1.0.15.4 exe (`tools/generate_player_type_contract.py`, `docs/evidence/player-type-contract-2026-10-03.json`) |
 | Bypass enable/disable/refusal logic, including on an in-memory copy of the real function | Unit tests (`player_type_patch_tests`) |
 | Receipts, coop.ini query, log lines | Unit tests (`character_receipt_tests`) |
-| Decision table, fallbacks, story-forced missions, faces, readback | Lua fixture tests (`character_lua_check`) |
+| Decision table, fallbacks, story-forced missions and story sequence, title mode, faces | Lua fixture tests (`character_lua_check`) |
+| Readback lifecycle: no `Player.GetPlayerType` call during loading, after `OnTerminate`, in title mode, without the native guard, or above the instance limit | Lua fixture tests (simulated binding that faults while the player is absent), including runs of the real composed `TppMain` |
+| Readback guard: exact `GetPlayerType`/root-getter bytes, every pointer stage, null and unreadable pointers | Unit tests (`player_type_patch_tests`, `character_receipt_tests`) and static analysis |
 | The real game `TppPlayer.lua` functions with this script; the real `TppMain.OnAllocate` with the splice, run against stubs | Lua fixture tests (`character_game_lua_check`, needs the extracted scripts) |
 | Character visible and playable in a mission, local or remote | **Not verified (needs a live game)** |

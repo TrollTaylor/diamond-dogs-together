@@ -5,7 +5,8 @@
 -- player's own type and the next mission without an override restores it.
 -- Receipts: MGS_COOP_CHARACTER_V1 (coop.ini character, fallback, readback),
 -- _BYPASS_ON/_OFF_V1 (native Ocelot/Quiet reset bypass), _REPORT/_READBACK_V1
--- (log only). Every step is protected; failures leave the vanilla type.
+-- (log only), _PLAYERS_V1 (native guard before Player.GetPlayerType). Every
+-- step is protected; failures leave the vanilla type.
 do
     local coop = Tpp and type(Tpp.MgsCoop) == "table" and Tpp.MgsCoop
     if coop then
@@ -38,20 +39,24 @@ do
             loadstring("return 'MGS_COOP_CHARACTER_" .. kind .. "_V1' -- " .. string.sub(text, 1, 192))
         end
 
-        -- Pure decision. x = {character, fallback, mission, existingTemp,
-        -- subsistence, buddyQuiet}. result: skip | keep | apply.
+        -- Pure decision. x = {character, fallback, mission, titleMode, storySnake,
+        -- existingTemp, subsistence, buddyQuiet}. result: skip | keep | apply.
         function C.Decide(x)
             local name = x.character
             if name == nil or name == "" or name == "default" then return {result = "skip", reason = "default"} end
             if name == "MGS_COOP_CHARACTER_V1" then return {result = "skip", reason = "native_unavailable"} end
             local d = {requested = tostring(name)}
             if not NAMES[name] then d.result, d.reason = "skip", "unknown_character"; return d end
+            if x.titleMode then d.result, d.reason = "skip", "title_mode"; return d end
             local class = math.floor((tonumber(x.mission) or 0) / 10000)
             if class ~= 1 and class ~= 3 then d.result, d.reason = "skip", "mission_class"; return d end
+            -- storySnake: MissionStartPlayerTypeSetting forces SNAKE while the story
+            -- sequence is CLEARD_ESCAPE_THE_HOSPITAL; a temporary type would win.
             local forced = C.STORY_FORCED[x.mission]
-            if forced or x.subsistence or x.existingTemp then
+            if forced or x.storySnake or x.subsistence or x.existingTemp then
                 d.result = "keep"
-                d.reason = "story_" .. (forced or (x.subsistence and "subsistence") or "temp_type")
+                d.reason = "story_" .. (forced or (x.storySnake and "sequence_snake") or
+                    (x.subsistence and "subsistence") or "temp_type")
                 return d
             end
             d.result, d.reason, d.applied = "apply", "override", name
@@ -89,9 +94,15 @@ do
         function C.Gather(character, fallback)
             local x = {character = character, fallback = fallback}
             x.mission = read(function() return vars.missionCode end)
+            x.titleMode = read(function() return gvars.ini_isTitleMode end) == true
+            x.storySnake = read(function()
+                local hospital = TppDefine.STORY_SEQUENCE.CLEARD_ESCAPE_THE_HOSPITAL
+                return hospital ~= nil and TppStory.GetCurrentStorySequence() == hospital
+            end) == true
             x.existingTemp = read(function() return mvars.ply_isExistTempPlayerType end) == true
             x.subsistence = read(function() return TppMission.IsSubsistenceMission() end) == true
-            x.buddyQuiet = read(function() return vars.buddyType == BuddyType.QUIET end) == true
+            x.buddyQuiet = read(function()
+                return type(BuddyType.QUIET) == "number" and vars.buddyType == BuddyType.QUIET end) == true
             x.realType = read(function()
                 if gvars.ply_isUsingTempPlayerType == true then return gvars.ply_lastPlayerTypeUsingTemp end
                 return vars.playerType
@@ -140,13 +151,16 @@ do
         function C.Apply()
             local post = {armed = false}
             coop.characterPost = post
-            coop.characterPoll = {frames = 0, reports = 0}
+            -- Readback: lab only, for a story/free-roam decision (apply/keep), and
+            -- only between OnMissionGameStart and OnTerminate (C.Started/C.Stopped).
+            local poll = {frames = 0, reports = 0, enabled = false, started = false}
+            coop.characterPoll = poll
             local character, fallback, readback = receipt("return 'MGS_COOP_CHARACTER_V1'")
-            coop.characterReadbackEnabled = readback == true
             local x = C.Gather(character, fallback)
             local d = C.Decide(x)
             coop.characterStatus = d
             if d.reason == "default" or d.reason == "native_unavailable" then return d end
+            poll.enabled = readback == true and (d.result == "apply" or d.result == "keep")
             if d.bypass and receipt("return 'MGS_COOP_CHARACTER_BYPASS_ON_V1'") ~= true then
                 d.applied, d.reason, d.bypass = d.fallback, "bypass_unavailable", false
             end
@@ -172,18 +186,36 @@ do
             return d
         end
 
-        -- Readback: Player.GetPlayerType{instanceIndex} for 0..1 returns 0..4;
-        -- OCELOT/QUIET and out-of-range indices read as 0, so vars.playerType
-        -- is logged for the local player.
+        -- Readback. Player.GetPlayerType (0x9d30b0) has no null checks and the
+        -- player object is null before Mission.Start and in transitions, so it
+        -- runs only while started (OnMissionGameStart returned, not title mode)
+        -- and for indices below the count of a ready native sample taken just
+        -- before (PLAYERS receipt; its raw values keep OCELOT/QUIET, which
+        -- GetPlayerType reads as 0). Otherwise i0/i1 are "na".
+        local function live()
+            local poll = coop.characterPoll
+            return type(poll) == "table" and poll.started == true and
+                read(function() return gvars.ini_isTitleMode end) ~= true
+        end
         function C.Snapshot()
-            local values = {}
-            for i = 0, 1 do
-                local ok, value = pcall(function() return Player.GetPlayerType{instanceIndex = i} end)
-                values[i + 1] = ok and tostring(value) or "err"
+            local state, limit, raw, values = "stopped", "na", {"na", "na"}, {"na", "na"}
+            if live() then
+                local ready, total, raw0, raw1 = receipt("return 'MGS_COOP_CHARACTER_PLAYERS_V1'")
+                state = ready == false and tostring(total) or "native_unavailable"
+                if ready == true and type(total) == "number" then
+                    local sample = {raw0, raw1}
+                    state, limit = "ready", tostring(total)
+                    for i = 0, math.min(math.floor(total), 2) - 1 do
+                        raw[i + 1] = tostring(sample[i + 1])
+                        local ok, value = pcall(function() return Player.GetPlayerType{instanceIndex = i} end)
+                        values[i + 1] = ok and tostring(value) or "err"
+                    end
+                end
             end
             return "local=" .. tostring(read(function() return PlayerInfo.GetLocalPlayerIndex() end)) ..
-                ";vars=" .. tostring(read(function() return vars.playerType end)) ..
-                ";i0=" .. values[1] .. ";i1=" .. values[2] .. ";quiet_ocelot_read_as=0"
+                ";vars=" .. tostring(read(function() return vars.playerType end)) .. ";players=" .. state ..
+                ";limit=" .. limit .. ";i0=" .. values[1] .. ";i1=" .. values[2] .. ";raw0=" .. raw[1] ..
+                ";raw1=" .. raw[2] .. ";quiet_ocelot_read_as=0"
         end
         function C.Readback(tag)
             local body = C.Snapshot()
@@ -192,10 +224,10 @@ do
             return body
         end
         -- Rate-limited (every 60 calls), change-only, at most 64 lines per
-        -- mission; active only when the native query enabled readback.
+        -- mission; only while enabled by Apply and started.
         function C.Poll(tag)
             local poll = coop.characterPoll
-            if coop.characterReadbackEnabled ~= true or type(poll) ~= "table" then return false end
+            if type(poll) ~= "table" or poll.enabled ~= true or not live() then return false end
             if tag == nil then
                 poll.frames = poll.frames + 1
                 if poll.frames < 60 then return false end
@@ -208,6 +240,18 @@ do
             coop.characterReadback = body
             C.Log("READBACK", (tag or "change") .. ";" .. body)
             return true
+        end
+        -- From the appended wrappers (character_readback.lua): after the
+        -- original OnMissionGameStart returned, and at OnTerminate entry.
+        function C.Started()
+            local poll = coop.characterPoll
+            if type(poll) ~= "table" or poll.enabled ~= true then return false end
+            poll.started, poll.frames = true, 0
+            return C.Poll("start")
+        end
+        function C.Stopped()
+            local poll = coop.characterPoll
+            if type(poll) == "table" then poll.started = false end
         end
 
         local ok, failure = pcall(C.Apply)

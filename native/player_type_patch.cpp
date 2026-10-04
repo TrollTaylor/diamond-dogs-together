@@ -158,4 +158,82 @@ bool IsActive() noexcept {
     SetLastError(incoming);
     return active;
 }
+
+// Lab readback guard (original). Every load goes through ReadProcessMemory on
+// the current process, so a null, freed or unmapped pointer is reported as a
+// stage instead of faulting; the game is never called.
+namespace {
+static_assert(sizeof(c::get_player_type_bytes) <= 256 && sizeof(c::root_getter_bytes) <= 256);
+
+template <class T>
+bool ReadValue(std::uintptr_t address, T& value) noexcept {
+    SIZE_T read = 0;
+    return address && ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(address), &value,
+                                        sizeof(value), &read) && read == sizeof(value);
+}
+
+template <std::size_t N>
+bool CodeMatches(std::uintptr_t address, const unsigned char (&expected)[N]) noexcept {
+    unsigned char copy[N]{};
+    SIZE_T read = 0;
+    return ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(address), copy, N, &read) &&
+           read == N && std::memcmp(copy, expected, N) == 0;
+}
+} // namespace
+
+namespace detail {
+bool SampleTypesAt(std::uintptr_t player_slot, std::uintptr_t expected_table, TypeSample& out) noexcept {
+    const DWORD incoming = GetLastError();
+    out = TypeSample{"player_read", 0, 0, {0, 0}};
+    const auto fail = [&](const char* stage) noexcept {
+        out.stage = stage;
+        out.count = 0;
+        out.type[0] = out.type[1] = 0;
+        SetLastError(incoming);
+        return false;
+    };
+    std::uintptr_t player = 0, table = 0, parts = 0, types = 0;
+    std::uint32_t limit = 0;
+    if (!ReadValue(player_slot, player)) return fail("player_read");
+    if (!player) return fail("player_absent");
+    if (!ReadValue(player, table)) return fail("player_table_read");
+    if (table != expected_table) return fail("player_type");
+    if (!ReadValue(player + c::limit_offset, limit)) return fail("player_limit_read");
+    out.limit = limit;
+    if (limit == 0 || limit > 4) return fail("player_limit");
+    if (!ReadValue(player + c::parts_info_offset, parts)) return fail("parts_info_read");
+    if (!parts) return fail("parts_info_absent");
+    if (!ReadValue(parts + c::type_array_offset, types)) return fail("type_array_read");
+    if (!types) return fail("type_array_absent");
+    const std::uint32_t count = limit < 2 ? limit : 2;
+    unsigned char raw[2]{};
+    SIZE_T read = 0;
+    if (!ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(types), raw, count, &read) ||
+        read != count) return fail("type_array_unreadable");
+    out.type[0] = raw[0];
+    out.type[1] = count > 1 ? raw[1] : 0;
+    out.count = count;
+    out.stage = "ready";
+    SetLastError(incoming);
+    return true;
+}
+} // namespace detail
+
+bool SampleTypes(void* base, std::size_t span, TypeSample& out) noexcept {
+    out = TypeSample{"span", 0, 0, {0, 0}};
+    if (!base) return false;
+    const auto in_span = [span](std::uintptr_t rva, std::size_t size) noexcept {
+        return rva <= span && size <= span - rva;
+    };
+    if (!in_span(c::get_player_type_rva, sizeof(c::get_player_type_bytes)) ||
+        !in_span(c::root_getter_rva, sizeof(c::root_getter_bytes)) ||
+        !in_span(c::player_slot_rva, sizeof(std::uintptr_t))) return false;
+    const DWORD incoming = GetLastError();
+    const auto image = reinterpret_cast<std::uintptr_t>(base);
+    const bool code = CodeMatches(image + c::get_player_type_rva, c::get_player_type_bytes) &&
+                      CodeMatches(image + c::root_getter_rva, c::root_getter_bytes);
+    SetLastError(incoming);
+    if (!code) { out.stage = "code_gate"; return false; }
+    return detail::SampleTypesAt(image + c::player_slot_rva, image + c::player_table_rva, out);
+}
 } // namespace mgscoop::player_type

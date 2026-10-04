@@ -1,9 +1,12 @@
 // Exercises the Quiet/Ocelot reset bypass gate on plain data buffers: byte
 // contents, hash gate, ownership, page protection restoration, last-error
-// preservation and refusal reasons. Optionally repeats the production path on
-// an in-memory copy of the real body when the fingerprinted executable is
-// installed (read-only file access). Nothing is executed from the buffers and
-// no MGSV process, Lua state or Steam account is involved.
+// preservation and refusal reasons. Also the lab readback guard
+// (SampleTypes): its exact-byte gate and every stage of the pointer chain on
+// synthetic memory, including null and unreadable pointers. Optionally
+// repeats the production paths on in-memory copies of the real code when the
+// fingerprinted executable is installed (read-only file access). Nothing is
+// executed from the buffers and no MGSV process, Lua state or Steam account is
+// involved.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -194,6 +197,168 @@ void ProductionContractShape() {
     VirtualFree(image, 0, MEM_RELEASE);
 }
 
+using mgscoop::player_type::TypeSample;
+using mgscoop::player_type::SampleTypes;
+using mgscoop::player_type::detail::SampleTypesAt;
+
+template <class T>
+void Put(unsigned char* at, T value) { std::memcpy(at, &value, sizeof(value)); }
+
+bool Stage(const TypeSample& sample, const char* stage) {
+    return sample.stage && std::strcmp(sample.stage, stage) == 0;
+}
+
+// Builds the chain GetPlayerType reads: slot -> P (table, +0x208 limit,
+// +0x60 parts info) -> Q (+0x40 type array) -> bytes.
+struct Chain {
+    unsigned char* region;
+    unsigned char* slot;
+    unsigned char* player;
+    unsigned char* parts;
+    unsigned char* types;
+};
+Chain MakeChain(std::uintptr_t table, std::uint32_t limit) {
+    namespace c = mgscoop::player_type_contract;
+    auto* region = static_cast<unsigned char*>(VirtualAlloc(nullptr, 0x3000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Check(region != nullptr, "chain allocation");
+    Chain chain{region, region, region + 0x100, region + 0x800, region + 0xa00};
+    Put(chain.slot, reinterpret_cast<std::uintptr_t>(chain.player));
+    Put(chain.player, table);
+    Put(chain.player + c::limit_offset, limit);
+    Put(chain.player + c::parts_info_offset, reinterpret_cast<std::uintptr_t>(chain.parts));
+    Put(chain.parts + c::type_array_offset, reinterpret_cast<std::uintptr_t>(chain.types));
+    const unsigned char types[4] = {6, 1, 9, 9};
+    std::memcpy(chain.types, types, sizeof(types));
+    return chain;
+}
+
+void SamplerChain() {
+    namespace c = mgscoop::player_type_contract;
+    Check(c::limit_offset == 0x208 && c::parts_info_offset == 0x60 && c::type_array_offset == 0x40,
+          "GetPlayerType chain offsets");
+    Check(c::player_slot_rva == 0x2a82c30 && c::player_table_rva == 0x2295490, "player root and type");
+    constexpr std::uintptr_t table = 0x142295490;
+    Chain chain = MakeChain(table, 2);
+    const auto slot = reinterpret_cast<std::uintptr_t>(chain.slot);
+    TypeSample sample{};
+    SetLastError(1234);
+    Check(SampleTypesAt(slot, table, sample) && Stage(sample, "ready") && sample.limit == 2 && sample.count == 2 &&
+          sample.type[0] == 6 && sample.type[1] == 1, "ready sample keeps raw Quiet");
+    Check(GetLastError() == 1234, "ready sample preserves last error");
+
+    Put(chain.player + c::limit_offset, std::uint32_t{4});
+    Check(SampleTypesAt(slot, table, sample) && sample.limit == 4 && sample.count == 2, "four slots, two sampled");
+    Put(chain.player + c::limit_offset, std::uint32_t{1});
+    Check(SampleTypesAt(slot, table, sample) && sample.count == 1 && sample.type[0] == 6 && sample.type[1] == 0,
+          "one instance samples index 0 only");
+    for (std::uint32_t bad : {0u, 5u, 0xffffffffu}) {
+        Put(chain.player + c::limit_offset, bad);
+        SetLastError(77);
+        Check(!SampleTypesAt(slot, table, sample) && Stage(sample, "player_limit") && sample.count == 0 &&
+              sample.limit == bad, "limit outside 1..4 refused");
+        Check(GetLastError() == 77, "refusal preserves last error");
+    }
+    Put(chain.player + c::limit_offset, std::uint32_t{2});
+
+    Check(!SampleTypesAt(slot, table + 8, sample) && Stage(sample, "player_type"), "foreign object type refused");
+    Put(chain.parts + c::type_array_offset, std::uintptr_t{0});
+    Check(!SampleTypesAt(slot, table, sample) && Stage(sample, "type_array_absent"), "null type array refused");
+    Put(chain.player + c::parts_info_offset, std::uintptr_t{0});
+    Check(!SampleTypesAt(slot, table, sample) && Stage(sample, "parts_info_absent"), "null parts info refused");
+    Put(chain.slot, std::uintptr_t{0});
+    Check(!SampleTypesAt(slot, table, sample) && Stage(sample, "player_absent") && sample.count == 0,
+          "null player (before Mission.Start) refused");
+    Check(!SampleTypesAt(0, table, sample) && Stage(sample, "player_read"), "null slot refused");
+
+    // Unreadable targets: a reserved, uncommitted page is never dereferenced.
+    auto* hole = static_cast<unsigned char*>(VirtualAlloc(nullptr, 0x2000, MEM_RESERVE, PAGE_NOACCESS));
+    Check(hole && VirtualAlloc(hole, 0x1000, MEM_COMMIT, PAGE_READWRITE) == hole, "partial commit");
+    unsigned char* unmapped = hole + 0x1000;
+    Check(!SampleTypesAt(reinterpret_cast<std::uintptr_t>(unmapped), table, sample) && Stage(sample, "player_read"),
+          "unreadable slot refused");
+    Put(chain.slot, reinterpret_cast<std::uintptr_t>(unmapped));
+    Check(!SampleTypesAt(slot, table, sample) && Stage(sample, "player_table_read"), "dangling player refused");
+    // Object readable at its start, limit on the unmapped page.
+    unsigned char* edge = hole + 0x1000 - 0x10;
+    Put(edge, table);
+    Put(chain.slot, reinterpret_cast<std::uintptr_t>(edge));
+    Check(!SampleTypesAt(slot, table, sample) && Stage(sample, "player_limit_read"), "truncated object refused");
+    Put(chain.slot, reinterpret_cast<std::uintptr_t>(chain.player));
+    Put(chain.player + c::parts_info_offset, reinterpret_cast<std::uintptr_t>(unmapped));
+    Check(!SampleTypesAt(slot, table, sample) && Stage(sample, "type_array_read"), "dangling parts info refused");
+    Put(chain.player + c::parts_info_offset, reinterpret_cast<std::uintptr_t>(chain.parts));
+    Put(chain.parts + c::type_array_offset, reinterpret_cast<std::uintptr_t>(unmapped));
+    Check(!SampleTypesAt(slot, table, sample) && Stage(sample, "type_array_unreadable") && sample.count == 0 &&
+          sample.type[0] == 0, "dangling type array refused");
+    // Second entry on the unmapped page: the whole sample is refused.
+    *(hole + 0x0fff) = 6;
+    Put(chain.parts + c::type_array_offset, reinterpret_cast<std::uintptr_t>(hole + 0x0fff));
+    Check(!SampleTypesAt(slot, table, sample) && Stage(sample, "type_array_unreadable"), "partially readable array refused");
+    Put(chain.player + c::limit_offset, std::uint32_t{1});
+    Check(SampleTypesAt(slot, table, sample) && sample.count == 1 && sample.type[0] == 6, "readable first entry alone");
+    VirtualFree(hole, 0, MEM_RELEASE);
+    VirtualFree(chain.region, 0, MEM_RELEASE);
+}
+
+// Production SampleTypes on a synthetic image: only the pages holding the
+// gated code and the player slot are committed.
+void SamplerGate(const unsigned char* real_get_player_type, const unsigned char* real_getter) {
+    namespace c = mgscoop::player_type_contract;
+    constexpr std::size_t span = c::player_slot_rva + 0x1000;
+    auto* image = static_cast<unsigned char*>(VirtualAlloc(nullptr, span, MEM_RESERVE, PAGE_NOACCESS));
+    Check(image != nullptr, "image reservation");
+    for (std::uintptr_t rva : {c::get_player_type_rva, c::root_getter_rva, c::player_slot_rva}) {
+        const std::uintptr_t page = rva & ~std::uintptr_t{0xfff};
+        Check(VirtualAlloc(image + page, 0x1000, MEM_COMMIT, PAGE_READWRITE) == image + page, "image page commit");
+    }
+    std::memcpy(image + c::get_player_type_rva, real_get_player_type ? real_get_player_type : c::get_player_type_bytes,
+                sizeof(c::get_player_type_bytes));
+    std::memcpy(image + c::root_getter_rva, real_getter ? real_getter : c::root_getter_bytes, sizeof(c::root_getter_bytes));
+    const auto table = reinterpret_cast<std::uintptr_t>(image) + c::player_table_rva;
+    Chain chain = MakeChain(table, 2);
+    Put(image + c::player_slot_rva, reinterpret_cast<std::uintptr_t>(chain.player));
+    DWORD old = 0;
+    Check(VirtualProtect(image + (c::get_player_type_rva & ~std::uintptr_t{0xfff}), 0x1000, PAGE_EXECUTE_READ, &old) != 0,
+          "code page protection");
+
+    TypeSample sample{};
+    SetLastError(4321);
+    Check(SampleTypes(image, span, sample) && Stage(sample, "ready") && sample.count == 2 && sample.type[0] == 6,
+          "production guard accepts the exact binding and a live chain");
+    Check(GetLastError() == 4321, "production guard preserves last error");
+    Check(!SampleTypes(image, c::player_slot_rva + 7, sample) && Stage(sample, "span"), "slot outside span refused");
+    Check(SampleTypes(image, c::player_slot_rva + 8, sample), "slot at the end of the span accepted");
+    Check(!SampleTypes(image, c::get_player_type_rva + 16, sample) && Stage(sample, "span"), "short span refused");
+    Check(!SampleTypes(nullptr, span, sample), "null base refused");
+
+    // Any byte difference in the binding or its root getter closes the guard.
+    for (std::size_t offset : {std::size_t{0x69}, std::size_t{0x7a}, std::size_t{0x80},
+                               sizeof(c::get_player_type_bytes) - 1}) {
+        unsigned char* at = image + c::get_player_type_rva + offset;
+        const unsigned char saved = *at;
+        const unsigned char flipped = static_cast<unsigned char>(saved ^ 0x01);
+        Poke(at, &flipped, 1);
+        Check(!SampleTypes(image, span, sample) && Stage(sample, "code_gate") && sample.count == 0,
+              "changed binding byte refused");
+        Poke(at, &saved, 1);
+    }
+    image[c::root_getter_rva + 3] ^= 0x10;
+    Check(!SampleTypes(image, span, sample) && Stage(sample, "code_gate"), "changed root getter refused");
+    image[c::root_getter_rva + 3] ^= 0x10;
+    Check(SampleTypes(image, span, sample), "restored code accepted again");
+
+    Put(image + c::player_slot_rva, std::uintptr_t{0});
+    Check(!SampleTypes(image, span, sample) && Stage(sample, "player_absent"), "null player slot refused");
+    Put(image + c::player_slot_rva, reinterpret_cast<std::uintptr_t>(chain.player));
+    Put(chain.player, table + 0x10);
+    Check(!SampleTypes(image, span, sample) && Stage(sample, "player_type"), "player type checked against the image");
+    Put(chain.player, table);
+    Check(VirtualFree(image + (c::root_getter_rva & ~std::uintptr_t{0xfff}), 0x1000, MEM_DECOMMIT) != 0, "getter decommit");
+    Check(!SampleTypes(image, span, sample) && Stage(sample, "code_gate"), "unreadable getter refused");
+    VirtualFree(chain.region, 0, MEM_RELEASE);
+    VirtualFree(image, 0, MEM_RELEASE);
+}
+
 // Optional: verify the generated contract against the installed executable.
 // Opens the file read-only, maps the body RVA through the section table and
 // runs the production gate on an in-memory copy.
@@ -246,6 +411,23 @@ bool InstalledExecutableGate() {
             Check(std::memcmp(image + c::body_rva, view + offset, c::body_size) == 0, "installed copy byte-identical again");
             Check(Protection(site) == PAGE_READONLY, "installed copy protection restored");
             VirtualFree(image, 0, MEM_RELEASE);
+            // Readback guard: the contract's exact binding and getter bytes are
+            // the installed ones, and the guard accepts them in a synthetic image.
+            const auto file_offset = [&](std::uintptr_t rva, std::size_t bytes) -> std::size_t {
+                const auto* entry = IMAGE_FIRST_SECTION(nt);
+                for (unsigned i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++entry)
+                    if (rva >= entry->VirtualAddress && rva + bytes <= entry->VirtualAddress + entry->SizeOfRawData)
+                        return entry->PointerToRawData + (rva - entry->VirtualAddress);
+                return 0;
+            };
+            const auto binding = file_offset(c::get_player_type_rva, sizeof(c::get_player_type_bytes));
+            const auto getter = file_offset(c::root_getter_rva, sizeof(c::root_getter_bytes));
+            Check(binding && getter, "readback code mapped from file");
+            Check(std::memcmp(view + binding, c::get_player_type_bytes, sizeof(c::get_player_type_bytes)) == 0,
+                  "installed GetPlayerType matches the contract");
+            Check(std::memcmp(view + getter, c::root_getter_bytes, sizeof(c::root_getter_bytes)) == 0,
+                  "installed root getter matches the contract");
+            SamplerGate(view + binding, view + getter);
             ran = true;
         }
         UnmapViewOfFile(view);
@@ -259,8 +441,10 @@ bool InstalledExecutableGate() {
 int main() {
     SyntheticGate();
     ProductionContractShape();
+    SamplerChain();
+    SamplerGate(nullptr, nullptr);
     const bool installed = InstalledExecutableGate();
-    std::printf("%u checks passed; synthetic gate, production contract shape; installed executable body %s\n",
-                checks, installed ? "verified in memory copy" : "skipped (not present or different fingerprint)");
+    std::printf("%u checks passed; synthetic gate, production contract shape, readback guard; installed executable %s\n",
+                checks, installed ? "body and readback code verified in memory copies" : "skipped (not present or different fingerprint)");
     return 0;
 }
