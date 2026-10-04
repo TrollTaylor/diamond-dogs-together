@@ -60,6 +60,7 @@
     "readyTimeoutSec": 900,
     "pollMs": 2000,
     "windowTimeoutSec": 180,
+    "safetyTimeoutSec": 120,
     "autoTitleScanCodes": [28, 28, 28],
     "autoTitleGapMs": 4000
   }

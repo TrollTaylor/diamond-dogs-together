@@ -139,10 +139,21 @@ function Get-SteamInstallPath {
     return [IO.Path]::GetFullPath($key.SteamPath).TrimEnd('\', '/')
 }
 
+function ConvertFrom-RegistryDword {
+    # Pure: Get-ItemProperty returns REG_DWORD as Int32, negative from 2^31 up
+    # ([UInt32] of a negative Int32 throws). Returns the unsigned 32-bit value.
+    param([Parameter(Mandatory)][AllowNull()]$Value)
+    if ($null -eq $Value) { return [UInt32]0 }
+    if ($Value -is [int]) { return [BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$Value), 0) }
+    $wide = [Int64]$Value
+    if ($wide -lt 0 -or $wide -gt [Int64][UInt32]::MaxValue) { throw "Not a 32-bit registry value: $Value" }
+    return [UInt32]$wide
+}
+
 function Get-SteamActiveUser {
     $key = Get-ItemProperty -LiteralPath 'HKCU:\Software\Valve\Steam\ActiveProcess' -ErrorAction SilentlyContinue
     if (!$key -or !($key.PSObject.Properties.Name -contains 'ActiveUser')) { return [UInt32]0 }
-    return [UInt32]$key.ActiveUser
+    return ConvertFrom-RegistryDword $key.ActiveUser
 }
 
 function Get-SteamSaveCandidates {
@@ -229,7 +240,9 @@ function New-LabIniText {
     if ($AutoJoinDelaySec -lt 0 -or $AutoJoinDelaySec -gt 3600) { throw 'auto_join_delay_s must be 0..3600.' }
     $lines = [Collections.Generic.List[string]]::new()
     $lines.Add($script:LabIniHeader + ' - single-PC lab harness only (docs/lab-protocol.md).')
-    $lines.Add('# Delete this file (or run Prepare-LabInstance.ps1 -Disable) to return the loader to its normal behaviour.')
+    $lines.Add('# Lab mode stays on while this file exists. The lab coop.ini next to it ALSO points the')
+    $lines.Add('# master server at the local fuse, even without this file. Switch both off (and restore')
+    $lines.Add('# your previous files) with: pwsh -File tools/lab/Prepare-LabInstance.ps1 -Disable')
     $lines.Add('enabled=1')
     $lines.Add("role=$Role")
     $lines.Add('loopback=' + ([int]$Loopback))
@@ -257,6 +270,9 @@ function New-CoopIniText {
     if ($CharacterFallback -cnotin @('dd_male', 'dd_female', 'snake', 'avatar')) { throw "Invalid character_fallback: $CharacterFallback" }
     return (@(
             ($script:LabIniHeader + '. Player options (docs/lab-protocol.md).'),
+            '# master_url sends this game to the lab''s local fuse and applies even without lab.ini.',
+            '# Before normal online play run: pwsh -File tools/lab/Prepare-LabInstance.ps1 -Disable',
+            '# (it renames this file and restores your previous coop.ini, if there was one).',
             "master_url=$MasterUrl",
             "character=$Character",
             "character_fallback=$CharacterFallback"
@@ -267,6 +283,22 @@ function Test-LabGeneratedText {
     # True when an ini file was written by these scripts (safe to disable/replace).
     param([AllowEmptyString()][string]$Text)
     return [bool]$Text -and $Text.StartsWith($script:LabIniHeader, [StringComparison]::Ordinal)
+}
+
+function Select-NewestUserBackup {
+    # Pure: the newest "<FileName>.user-<yyyyMMdd-HHmmss>" name among $Candidates
+    # (Prepare-LabInstance keeps a user's own lab.ini/coop.ini under that name), or $null.
+    param([Parameter(Mandatory)][string]$FileName, [string[]]$Candidates = @())
+    $pattern = '^' + [regex]::Escape($FileName) + '\.user-([0-9]{8}-[0-9]{6})$'
+    $best = $null
+    $bestStamp = ''
+    foreach ($candidate in @($Candidates)) {
+        if ($candidate -cmatch $pattern -and [string]::CompareOrdinal($Matches[1], $bestStamp) -gt 0) {
+            $best = $candidate
+            $bestStamp = $Matches[1]
+        }
+    }
+    return $best
 }
 
 function ConvertFrom-IniText {
@@ -756,17 +788,218 @@ function Get-CurrentSessionStatus {
     return 'none'
 }
 
+function ConvertTo-LabComparablePath {
+    # Pure: trimmed, backslashes, no \\?\ prefix or trailing separator, case-folded.
+    param([AllowNull()][AllowEmptyString()][string]$Path)
+    if (!$Path) { return '' }
+    $p = $Path.Trim().Replace('/', '\')
+    if ($p.StartsWith('\\?\')) { $p = $p.Substring(4) }
+    return $p.TrimEnd('\').ToUpperInvariant()
+}
+
+function Get-LabSafetyVerdict {
+    # Pure: are the docs/lab-protocol.md safety rules demonstrably in force for one
+    # instance? Inputs are this run's early.log (written in DllMain) and
+    # steam-observer.log text. State:
+    #   ok      every required line is present with the expected value;
+    #   pending a required line has not been written yet (Missing names it);
+    #   unsafe  a line shows that a rule is NOT in force (Reason): stop the instance.
+    # Required for both roles: saves=redirected; dir=<ExpectedSaveDir> and
+    # master_server=redirected; ...; url=<ExpectedUrl>. Guest only:
+    # mutex=renamed; suffix=<ExpectedMutexSuffix> and identity=fake; steamid=<ExpectedSteamId>.
+    param(
+        [Parameter(Mandatory)][ValidateSet('host', 'guest')][string]$Role,
+        [AllowNull()][AllowEmptyString()][string]$EarlyLog = '',
+        [AllowNull()][AllowEmptyString()][string]$SteamLog = '',
+        [Parameter(Mandatory)][string]$ExpectedSaveDir,
+        [Parameter(Mandatory)][string]$ExpectedUrl,
+        [string]$ExpectedSteamId = '',
+        [string]$ExpectedMutexSuffix = ''
+    )
+    if ($Role -eq 'guest' -and (!$ExpectedSteamId -or !$ExpectedMutexSuffix)) { throw 'Guest safety checks need ExpectedSteamId and ExpectedMutexSuffix.' }
+    if (!$EarlyLog) { $EarlyLog = '' }
+    if (!$SteamLog) { $SteamLog = '' }
+    $missing = [Collections.Generic.List[string]]::new()
+    $unsafe = { param($reason) [pscustomobject]@{ State = 'unsafe'; Reason = $reason; Missing = @() } }
+    foreach ($m in [regex]::Matches($EarlyLog, '(?m)^early=start(?=[ ;\r\n]|$)[^\r\n]*')) {
+        if ($m.Value -match '[ ;]lab=0(?=[ ;]|$)') { return & $unsafe 'lab_disabled' }
+        if ($m.Value -match '[ ;]role=([A-Za-z_]+)' -and $Matches[1] -cne $Role) { return & $unsafe 'role_mismatch' }
+    }
+    if (Test-LogLine $EarlyLog 'saves=unchanged') { return & $unsafe 'saves_unchanged' }
+    $saveLines = [regex]::Matches($EarlyLog, '(?m)^saves=redirected(?=[ ;\r\n]|$)[^\r\n]*')
+    if ($saveLines.Count -eq 0) { $missing.Add('saves') }
+    $wantDir = ConvertTo-LabComparablePath $ExpectedSaveDir
+    foreach ($line in $saveLines) {
+        $dir = [regex]::Match($line.Value, '; dir=(.*)$')
+        if (!$dir.Success -or !$wantDir -or (ConvertTo-LabComparablePath $dir.Groups[1].Value) -cne $wantDir) { return & $unsafe 'saves_wrong_dir' }
+    }
+    if ($Role -eq 'guest') {
+        if (Test-LogLine $EarlyLog 'mutex=unchanged') { return & $unsafe 'mutex_unchanged' }
+        $mutexLines = [regex]::Matches($EarlyLog, '(?m)^mutex=renamed(?=[ ;\r\n]|$)[^\r\n]*')
+        if ($mutexLines.Count -eq 0) { $missing.Add('mutex') }
+        foreach ($line in $mutexLines) {
+            $suffix = [regex]::Match($line.Value, '; suffix=([^ ;]*)')
+            if (!$suffix.Success -or $suffix.Groups[1].Value -cne $ExpectedMutexSuffix) { return & $unsafe 'mutex_wrong_suffix' }
+        }
+        if (Test-LogLine $EarlyLog 'identity=real') { return & $unsafe 'identity_real' }
+        $identityLines = [regex]::Matches($EarlyLog, '(?m)^identity=fake(?=[ ;\r\n]|$)[^\r\n]*')
+        if ($identityLines.Count -eq 0) { $missing.Add('identity') }
+        foreach ($line in $identityLines) {
+            $id = [regex]::Match($line.Value, '; steamid=([0-9]+)(?=[ ;]|$)')
+            if (!$id.Success -or $id.Groups[1].Value -cne $ExpectedSteamId) { return & $unsafe 'identity_wrong_id' }
+        }
+    }
+    foreach ($line in [regex]::Matches($SteamLog, '(?m)^master_server=(refused|failed)(?=[ ;\r\n]|$)[^\r\n]*')) {
+        # Refusing a second, different URL after a verified redirect leaves that redirect in place.
+        if ($line.Value -cmatch '; reason=already_redirected(?=[ ;]|$)') { continue }
+        return & $unsafe ('master_server_' + $line.Groups[1].Value)
+    }
+    $masterLines = [regex]::Matches($SteamLog, '(?m)^master_server=redirected(?=[ ;\r\n]|$)[^\r\n]*')
+    if ($masterLines.Count -eq 0) { $missing.Add('master_server') }
+    foreach ($line in $masterLines) {
+        $url = [regex]::Match($line.Value, '[ ;]url=(\S+)')
+        if (!$url.Success -or $url.Groups[1].Value -cne $ExpectedUrl) { return & $unsafe 'master_server_wrong_url' }
+    }
+    $state = if ($missing.Count) { 'pending' } else { 'ok' }
+    return [pscustomobject]@{ State = $state; Reason = ''; Missing = $missing.ToArray() }
+}
+
+function Get-HostIdCheck {
+    # Pure: the host's own host-steamid.txt (written by native code during this
+    # run; '' when absent or older than the host process) against the guest's
+    # client-host.txt and lab.ini peer_steamid. Returns ok, mismatch or not_written.
+    param(
+        [AllowNull()][AllowEmptyString()][string]$HostIdText,
+        [AllowNull()][AllowEmptyString()][string]$ClientHostText,
+        [AllowNull()][AllowEmptyString()][string]$PeerSteamId
+    )
+    $hostId = if ($HostIdText) { $HostIdText.Trim() } else { '' }
+    if (!$hostId) { return 'not_written' }
+    $client = if ($ClientHostText) { $ClientHostText.Trim() } else { '' }
+    if (!(Test-IndividualSteamId64 $hostId) -or $hostId -cne $client) { return 'mismatch' }
+    if ($PeerSteamId -and $PeerSteamId.Trim() -cne 'learn' -and $hostId -cne $PeerSteamId.Trim()) { return 'mismatch' }
+    return 'ok'
+}
+
+function ConvertTo-LabUtc {
+    # Pure: a DateTime or ISO 8601 text as UTC; $null when empty or unparsable.
+    param([AllowNull()]$Value)
+    if ($null -eq $Value -or ($Value -is [string] -and !$Value)) { return $null }
+    if ($Value -is [datetime]) { return $Value.ToUniversalTime() }
+    $parsed = [datetime]::MinValue
+    if ([datetime]::TryParse([string]$Value, [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::RoundtripKind, [ref]$parsed)) { return $parsed.ToUniversalTime() }
+    return $null
+}
+
+function Read-SharedText {
+    # Whole-file text opened with FileShare.ReadWrite|Delete; '' when absent or unreadable.
+    param([Parameter(Mandatory)][string]$Path)
+    if (!(Test-Path -LiteralPath $Path -PathType Leaf)) { return '' }
+    try {
+        $stream = [IO.FileStream]::new($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read,
+            [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
+        try { return [IO.StreamReader]::new($stream).ReadToEnd() } finally { $stream.Dispose() }
+    } catch { return '' }
+}
+
+function Read-FreshText {
+    # File text when the file was last written at or after $NotBeforeUtc (2 s
+    # tolerance), else '' (a file left over from an earlier run does not count).
+    param([Parameter(Mandatory)][string]$Path, [AllowNull()]$NotBeforeUtc)
+    if (!(Test-Path -LiteralPath $Path -PathType Leaf)) { return '' }
+    $limit = ConvertTo-LabUtc $NotBeforeUtc
+    if ($limit -and (Get-Item -LiteralPath $Path -Force).LastWriteTimeUtc -lt $limit.AddSeconds(-2)) { return '' }
+    return Read-SharedText -Path $Path
+}
+
+function Hide-SteamIds {
+    # Pure: replaces individual SteamID64s (except $Keep, e.g. the lab's fake guest
+    # id), Steam userdata account folder numbers and fuse player names, so run
+    # folders can be shared without the host's identity.
+    param([AllowNull()][AllowEmptyString()][string]$Text, [string[]]$Keep = @())
+    if (!$Text) { return $Text }
+    $keepIds = @($Keep | Where-Object { $_ })
+    $out = [regex]::Replace($Text, '(?<![0-9])[0-9]{17}(?![0-9])', {
+            param($m)
+            if ((Test-IndividualSteamId64 $m.Value) -and $keepIds -notcontains $m.Value) { '<steamid>' } else { $m.Value }
+        })
+    $out = [regex]::Replace($out, '(?i)(userdata[\\/]+)[0-9]+', '${1}<account>')
+    $out = [regex]::Replace($out, 'player_name=("(?:[^"\\]|\\.)*"|\S+)', 'player_name=<redacted>')
+    return $out
+}
+
+function Get-FuseConsoleSummary {
+    # Pure: fuse's console output (slog text) -> handled request counts per message
+    # id, how many distinct SteamIDs fuse accepted in CMD_AUTH_STEAMTICKET and
+    # whether the lab's fake guest id was one of them. No ids are returned.
+    param([AllowNull()][AllowEmptyString()][string]$Text, [string]$LabSteamId = '')
+    $counts = [ordered]@{}
+    $ids = [Collections.Generic.HashSet[string]]::new()
+    if ($Text) {
+        foreach ($m in [regex]::Matches($Text, 'msg="client request handled" type=(CMD_[A-Z0-9_]+)')) {
+            $key = $m.Groups[1].Value
+            if ($counts.Contains($key)) { $counts[$key]++ } else { $counts[$key] = 1 }
+        }
+        foreach ($m in [regex]::Matches($Text, 'msg=CMD_AUTH_STEAMTICKET steamID=([0-9]+)')) { $null = $ids.Add($m.Groups[1].Value) }
+    }
+    [pscustomobject]@{
+        Counts          = [pscustomobject]$counts
+        DistinctAuthIds = $ids.Count
+        LabIdSeen       = [bool]($LabSteamId -and $ids.Contains($LabSteamId))
+        OtherAuthIds    = @($ids | Where-Object { $_ -cne $LabSteamId }).Count
+    }
+}
+
+function Merge-FuseCounts {
+    # Pure: per message id, the larger of two count sets (-writeLog files, console lines).
+    param($First, $Second)
+    $result = [ordered]@{}
+    foreach ($source in @($First, $Second)) {
+        if ($null -eq $source) { continue }
+        $names = if ($source -is [Collections.IDictionary]) { @($source.Keys) } else { @($source.PSObject.Properties.Name) }
+        foreach ($name in $names) {
+            $value = [int]$(if ($source -is [Collections.IDictionary]) { $source[$name] } else { $source.$name })
+            if (!$result.Contains([string]$name) -or $result[[string]$name] -lt $value) { $result[[string]$name] = $value }
+        }
+    }
+    return $result
+}
+
+function Get-CountValue {
+    param($Counts, [Parameter(Mandatory)][string]$Name)
+    if ($null -eq $Counts) { return 0 }
+    if ($Counts -is [Collections.IDictionary]) { if ($Counts.Contains($Name)) { return [int]$Counts[$Name] } else { return 0 } }
+    $property = $Counts.PSObject.Properties[$Name]
+    if ($property) { return [int]$property.Value }
+    return 0
+}
+
 function Get-LabSmokeVerdict {
     # Pure pass/fail evaluation (synthesis section 3.5) for one poll.
-    #  - Before the trigger: wait for host readiness (dynamite_host=returned;
-    #    result=1, host_admission=authorized, session_status=host_ready) and the
-    #    guest's client_join=armed, bounded by ReadyTimeoutSec.
-    #  - After the trigger: PASS when guest client_established and host
-    #    host_peer_present hold for 2 consecutive polls, bounded by TimeoutSec
-    #    counted from the trigger.
+    # Readiness, before the trigger and bounded by ReadyTimeoutSec:
+    #  - safety: Get-LabSafetyVerdict is ok for every instance (saves redirected,
+    #    master server redirected to the lab fuse; guest mutex and fake identity);
+    #  - host: DirectInput8Create_hresult=0x00000000 (probe.log), install_result=0
+    #    installed=1, mode=host_v3, dynamite_host=returned; result=1,
+    #    host_admission=authorized, dynamite_session=observed ... state=3 accept=1
+    #    ... consistent=1 and session_status=host_ready;
+    #  - fuse: at least one CMD_GET_URLLIST and one CMD_AUTH_STEAMTICKET per
+    #    instance since fuse started (the run went through the local fuse);
+    #  - guest: mode=client_v1; configured_host=1 and client_join=armed.
+    # After the trigger: PASS when guest client_established and host
+    # host_peer_present hold for 2 consecutive polls within TimeoutSec of it.
+    # Immediate FAIL: a process exit, an unsafe instance, a host-id mismatch and
+    # the section 3.5 failure lines. A timeout with fuse evidence missing is
+    # reported as not_under_fuse; Missing lists what was still absent.
     param(
-        [AllowEmptyString()][string]$HostLog = '',
-        [AllowEmptyString()][string]$GuestLog = '',
+        [AllowNull()][AllowEmptyString()][string]$HostLog = '',
+        [AllowNull()][AllowEmptyString()][string]$GuestLog = '',
+        [AllowNull()][AllowEmptyString()][string]$HostProbeLog = '',
+        $HostSafety = $null,
+        $GuestSafety = $null,
+        $FuseCounts = $null,
+        [string]$HostIdCheck = 'not_written',
         $HostStatus = $null,
         $GuestStatus = $null,
         [bool]$HostAlive = $true,
@@ -779,18 +1012,49 @@ function Get-LabSmokeVerdict {
         [double]$TimeoutSec = 180,
         [switch]$HostOnly
     )
+    if (!$HostLog) { $HostLog = '' }
+    if (!$GuestLog) { $GuestLog = '' }
+    if (!$HostProbeLog) { $HostProbeLog = '' }
+    $instanceCount = if ($HostOnly) { 1 } else { 2 }
     $hostSession = Get-CurrentSessionStatus -Status $HostStatus -LogText $HostLog
     $guestSession = Get-CurrentSessionStatus -Status $GuestStatus -LogText $GuestLog
     $hostReadySeen = (Test-LogLine $HostLog 'session_status=host_ready') -or $hostSession -in @('host_ready', 'host_peer_present')
-    $hostReady = (Test-LogLine $HostLog 'dynamite_host=returned; result=1') -and
-        (Test-LogLine $HostLog 'host_admission=authorized') -and $hostReadySeen
-    $guestArmed = (Test-LogLine $GuestLog 'client_join=armed') -or
+    $hostChecks = [ordered]@{
+        'DirectInput8Create_hresult=0x00000000'                   = (Test-LogLine $HostProbeLog 'DirectInput8Create_hresult=0x00000000')
+        'install_result=0 installed=1'                            = (Test-LogLine $HostLog 'install_result=0 installed=1')
+        'mode=host_v3'                                            = (Test-LogLine $HostLog 'mode=host_v3')
+        'dynamite_host=returned; result=1'                        = (Test-LogLine $HostLog 'dynamite_host=returned; result=1')
+        'host_admission=authorized'                               = (Test-LogLine $HostLog 'host_admission=authorized')
+        'dynamite_session=observed; state=3 accept=1 consistent=1' = [regex]::IsMatch($HostLog, '(?m)^dynamite_session=observed;[^\r\n]*\bstate=3 accept=1\b[^\r\n]*\bconsistent=1\b')
+        'session_status=host_ready'                               = $hostReadySeen
+    }
+    $hostMissing = @($hostChecks.Keys | Where-Object { !$hostChecks[$_] } | ForEach-Object { "host:$_" })
+    $guestArmedSeen = (Test-LogLine $GuestLog 'client_join=armed') -or
         ($GuestStatus -and ($GuestStatus.PSObject.Properties.Name -contains 'join') -and [string]$GuestStatus.join -eq 'armed')
+    $guestChecks = [ordered]@{
+        'mode=client_v1; configured_host=1' = (Test-LogLine $GuestLog 'mode=client_v1; configured_host=1')
+        'client_join=armed'                 = $guestArmedSeen
+    }
+    $guestMissing = @($guestChecks.Keys | Where-Object { !$guestChecks[$_] } | ForEach-Object { "guest:$_" })
+    $urlList = Get-CountValue $FuseCounts 'CMD_GET_URLLIST'
+    $auth = Get-CountValue $FuseCounts 'CMD_AUTH_STEAMTICKET'
+    $safetyMissing = [Collections.Generic.List[string]]::new()
+    $safetyRows = @(, @('host', $HostSafety))
+    if (!$HostOnly) { $safetyRows += , @('guest', $GuestSafety) }
+    foreach ($row in $safetyRows) {
+        if ($null -eq $row[1]) { $safetyMissing.Add("$($row[0]):safety_evidence"); continue }
+        foreach ($item in @($row[1].Missing)) { if ($item) { $safetyMissing.Add("$($row[0]):$item") } }
+    }
+    $hostSafe = $HostSafety -and $HostSafety.State -eq 'ok'
+    $guestSafe = $HostOnly -or ($GuestSafety -and $GuestSafety.State -eq 'ok')
     $requestStarted = Test-LogLine $GuestLog 'dynamite_client=returned; request_started=1'
     $verdict = [ordered]@{
-        Verdict = 'pending'; Reason = ''; Phase = ''; HostReady = $hostReady; GuestArmed = $guestArmed
+        Verdict = 'pending'; Reason = ''; Phase = ''; Missing = @()
+        HostReady = ($hostSafe -and $hostMissing.Count -eq 0 -and $urlList -ge 1 -and $auth -ge 1)
+        GuestArmed = ($guestSafe -and $guestMissing.Count -eq 0)
         RequestStarted = $requestStarted; ShouldTrigger = $false; PassPolls = 0
         HostSession = $hostSession; GuestSession = $guestSession
+        FuseUrlList = $urlList; FuseAuth = $auth
     }
     $fail = {
         param($reason)
@@ -799,6 +1063,9 @@ function Get-LabSmokeVerdict {
     }
     if (!$HostAlive) { return & $fail 'process_exit_host' }
     if (!$HostOnly -and !$GuestAlive) { return & $fail 'process_exit_guest' }
+    if ($HostSafety -and $HostSafety.State -eq 'unsafe') { return & $fail ('unsafe_host_' + $HostSafety.Reason) }
+    if (!$HostOnly -and $GuestSafety -and $GuestSafety.State -eq 'unsafe') { return & $fail ('unsafe_guest_' + $GuestSafety.Reason) }
+    if (!$HostOnly -and $HostIdCheck -eq 'mismatch') { return & $fail 'host_id_mismatch' }
     if ($hostSession -eq 'session_error' -or (Test-LogLine $HostLog 'session_status=session_error')) { return & $fail 'host_session_error' }
     if (Test-LogLine $HostLog 'dynamite_host=returned; result=0') { return & $fail 'host_creation_failed' }
     if (!$HostOnly) {
@@ -808,18 +1075,25 @@ function Get-LabSmokeVerdict {
         if (Test-LogLine $GuestLog 'client_join=refused') { return & $fail 'client_join_refused' }
         if ($guestSession -eq 'session_error' -or (Test-LogLine $GuestLog 'session_status=session_error')) { return & $fail 'guest_session_error' }
     }
+    $ready = $false
+    if ($safetyMissing.Count) { $verdict.Phase = 'waiting_safety_evidence'; $verdict.Missing = $safetyMissing.ToArray() }
+    elseif ($hostMissing.Count) { $verdict.Phase = 'waiting_host_ready'; $verdict.Missing = $hostMissing }
+    elseif ($urlList -lt 1 -or $auth -lt 1) { $verdict.Phase = 'waiting_host_fuse'; $verdict.Missing = @("fuse:CMD_GET_URLLIST=$urlList", "fuse:CMD_AUTH_STEAMTICKET=$auth") }
+    elseif ($HostOnly) { $verdict.Phase = 'host_ready'; $ready = $true }
+    elseif ($guestMissing.Count) { $verdict.Phase = 'waiting_guest_armed'; $verdict.Missing = $guestMissing }
+    elseif ($urlList -lt $instanceCount -or $auth -lt $instanceCount) { $verdict.Phase = 'waiting_guest_fuse'; $verdict.Missing = @("fuse:CMD_GET_URLLIST=$urlList", "fuse:CMD_AUTH_STEAMTICKET=$auth") }
+    else { $ready = $true }
     if ($HostOnly) {
-        $verdict.Phase = if ($hostReady) { 'host_ready' } else { 'waiting_host_ready' }
-        $verdict.PassPolls = if ($hostReady) { $PreviousPassPolls + 1 } else { 0 }
+        $verdict.PassPolls = if ($ready) { $PreviousPassPolls + 1 } else { 0 }
     } else {
-        $verdict.Phase = if (!$hostReady) { 'waiting_host_ready' }
-        elseif (!$guestArmed) { 'waiting_guest_armed' }
-        elseif (!$TriggerCreated) { 'ready_to_trigger' }
-        elseif (!$requestStarted) { 'waiting_request_started' }
-        elseif ($guestSession -ne 'client_established' -or $hostSession -ne 'host_peer_present') { 'waiting_established' }
-        else { 'established' }
-        $verdict.ShouldTrigger = $hostReady -and $guestArmed -and !$TriggerCreated
-        $established = $guestSession -eq 'client_established' -and $hostSession -eq 'host_peer_present'
+        $established = $ready -and $guestSession -eq 'client_established' -and $hostSession -eq 'host_peer_present'
+        if ($ready) {
+            $verdict.Phase = if (!$TriggerCreated) { 'ready_to_trigger' }
+            elseif (!$requestStarted) { 'waiting_request_started' }
+            elseif (!$established) { 'waiting_established' }
+            else { 'established' }
+        }
+        $verdict.ShouldTrigger = $ready -and !$TriggerCreated
         $verdict.PassPolls = if ($established) { $PreviousPassPolls + 1 } else { 0 }
     }
     if ($verdict.PassPolls -ge 2) {
@@ -827,15 +1101,20 @@ function Get-LabSmokeVerdict {
         $verdict.Reason = if ($HostOnly) { 'host_ready_stable' } else { 'established_stable' }
         return [pscustomobject]$verdict
     }
-    if (!$HostOnly -and $TriggerCreated) {
-        if ($TriggerElapsedSec -ge $TimeoutSec) { return & $fail ('timeout_' + $verdict.Phase) }
-    } elseif ($ReadyElapsedSec -ge $ReadyTimeoutSec) { return & $fail ('timeout_' + $verdict.Phase) }
+    $timedOut = if (!$HostOnly -and $TriggerCreated) { $TriggerElapsedSec -ge $TimeoutSec } else { $ReadyElapsedSec -ge $ReadyTimeoutSec }
+    if ($timedOut) {
+        $onlyMaster = $verdict.Phase -eq 'waiting_safety_evidence' -and
+            @($verdict.Missing | Where-Object { $_ -notmatch ':master_server$' }).Count -eq 0
+        $reason = if ($verdict.Phase -in @('waiting_host_fuse', 'waiting_guest_fuse') -or $onlyMaster) { 'not_under_fuse' } else { 'timeout_' + $verdict.Phase }
+        return & $fail $reason
+    }
     return [pscustomobject]$verdict
 }
 
 function Get-LabEvidence {
-    # First matching line per interesting prefix (no SteamIDs are logged by native code).
-    param([AllowEmptyString()][string]$Text, [string[]]$Prefixes)
+    # First matching line per interesting prefix. Callers pass text through
+    # Hide-SteamIds first (loopback.log lines carry SteamIDs).
+    param([AllowNull()][AllowEmptyString()][string]$Text, [string[]]$Prefixes)
     $rows = [ordered]@{}
     foreach ($prefix in $Prefixes) { $rows[$prefix] = Get-FirstLogLine -Text $Text -Prefix $prefix }
     return [pscustomobject]$rows
@@ -879,6 +1158,53 @@ function Get-GameProcessInDirectory {
         [pscustomobject]@{ Id = $p.Id; Path = (Get-ProcessPathSafe $p) }
     }
     return Select-ProcessInDirectory -Processes @($rows) -Directory $Directory
+}
+
+function Get-ProcessStartUtc {
+    # Process creation time in UTC, or $null when it cannot be read.
+    param([Parameter(Mandatory)]$Process)
+    try { return $Process.StartTime.ToUniversalTime() } catch { return $null }
+}
+
+function Test-RunProcessIdentity {
+    # Pure: is a live process that started at $ActualStartUtc the one this run
+    # started? With a recorded start time it must match within 1 s; otherwise
+    # (older run.json) it must have started inside the run's launch window.
+    param([AllowNull()]$ActualStartUtc, [AllowNull()]$RecordedStartUtc, [AllowNull()]$NotBeforeUtc, [AllowNull()]$NotAfterUtc)
+    $actual = ConvertTo-LabUtc $ActualStartUtc
+    if (!$actual) { return $false }
+    $recorded = ConvertTo-LabUtc $RecordedStartUtc
+    if ($recorded) { return [Math]::Abs(($actual - $recorded).TotalSeconds) -lt 1 }
+    $from = ConvertTo-LabUtc $NotBeforeUtc
+    $to = ConvertTo-LabUtc $NotAfterUtc
+    if (!$from -or !$to) { return $false }
+    return $actual -ge $from.AddSeconds(-2) -and $actual -le $to.AddSeconds(2)
+}
+
+function Select-LabStopTargets {
+    # Pure: what Stop-Lab may do with each process.
+    #  Recorded rows (this run's instances): Role, Id, Alive, PathMatches, IdentityVerified.
+    #  Found rows (mgsvtpp/mgsvmgo running from a lab folder): Role, Id.
+    # Actions: close_then_terminate - this run's own process (pid, executable path
+    # and start time verified): WM_CLOSE, terminated after the timeout;
+    # close_only - any other process, only with -IncludeUnrecorded: WM_CLOSE, never
+    # terminated; leave - any other process (for example a normal session that
+    # was started from Steam later).
+    param([object[]]$Recorded = @(), [object[]]$Found = @(), [switch]$IncludeUnrecorded)
+    $rows = [Collections.Generic.List[object]]::new()
+    $handled = @{}
+    foreach ($r in @($Recorded)) {
+        if (!$r -or !$r.Alive -or !$r.PathMatches -or !$r.IdentityVerified) { continue }
+        $rows.Add([pscustomobject]@{ Role = [string]$r.Role; Id = [int]$r.Id; Action = 'close_then_terminate'; Reason = 'this_run' })
+        $handled[[int]$r.Id] = $true
+    }
+    foreach ($f in @($Found)) {
+        if (!$f -or $handled.ContainsKey([int]$f.Id)) { continue }
+        $handled[[int]$f.Id] = $true
+        $action = if ($IncludeUnrecorded) { 'close_only' } else { 'leave' }
+        $rows.Add([pscustomobject]@{ Role = [string]$f.Role; Id = [int]$f.Id; Action = $action; Reason = 'not_this_run' })
+    }
+    return $rows.ToArray()  # callers wrap in @()
 }
 
 function Test-LocalPortFree {
@@ -969,6 +1295,52 @@ function Get-CurrentRun {
     if (!(Test-Path -LiteralPath $runJson -PathType Leaf)) { throw "run.json not found in $RunDir" }
     $run = Get-Content -LiteralPath $runJson -Raw | ConvertFrom-Json
     return [pscustomobject]@{ Dir = (Resolve-Path -LiteralPath $RunDir).Path; Run = $run }
+}
+
+function Get-InstanceExpectation {
+    # Values the safety evidence must show for one run instance: run.json
+    # instances.<role>.expected (recorded by Start-Lab.ps1) or, for runs recorded
+    # before that existed, the instance's lab folder, coop.ini and lab.ini.
+    param([Parameter(Mandatory)][ValidateSet('host', 'guest')][string]$Role, [Parameter(Mandatory)]$Instance)
+    $recorded = Get-ConfigValue $Instance 'expected' $null
+    if ($recorded) {
+        return [pscustomobject]@{
+            SaveDir = [string]$recorded.save_dir; Url = [string]$recorded.master_url
+            SteamId = [string](Get-ConfigValue $recorded 'steamid' ''); MutexSuffix = [string](Get-ConfigValue $recorded 'mutex_suffix' '')
+        }
+    }
+    $paths = Get-InstancePaths -GameDirectory ([string]$Instance.dir)
+    $lab = ConvertFrom-IniText (Read-SharedText -Path $paths.LabIni)
+    $coop = ConvertFrom-IniText (Read-SharedText -Path $paths.CoopIni)
+    [pscustomobject]@{
+        SaveDir = $paths.SaveDir; Url = [string](Get-ConfigValue $coop 'master_url' '')
+        SteamId = $(if ($Role -eq 'guest') { [string](Get-ConfigValue $lab 'self_steamid' '') } else { '' })
+        MutexSuffix = $(if ($Role -eq 'guest') { [string](Get-ConfigValue $lab 'mutex_suffix' '') } else { '' })
+    }
+}
+
+function Get-InstanceSafety {
+    # Get-LabSafetyVerdict for one instance with its expectation (see above).
+    param(
+        [Parameter(Mandatory)][ValidateSet('host', 'guest')][string]$Role,
+        [Parameter(Mandatory)]$Expectation,
+        [AllowNull()][AllowEmptyString()][string]$EarlyLog,
+        [AllowNull()][AllowEmptyString()][string]$SteamLog
+    )
+    if (!$Expectation.SaveDir -or !$Expectation.Url -or ($Role -eq 'guest' -and (!$Expectation.SteamId -or !$Expectation.MutexSuffix))) {
+        return [pscustomobject]@{ State = 'unsafe'; Reason = 'no_expectation'; Missing = @() }
+    }
+    return Get-LabSafetyVerdict -Role $Role -EarlyLog $EarlyLog -SteamLog $SteamLog -ExpectedSaveDir $Expectation.SaveDir `
+        -ExpectedUrl $Expectation.Url -ExpectedSteamId $Expectation.SteamId -ExpectedMutexSuffix $Expectation.MutexSuffix
+}
+
+function Write-RedactedText {
+    # Writes $Text through Hide-SteamIds (UTF-8, no BOM). Used for everything
+    # copied into a run folder, which is meant to be shareable.
+    param([Parameter(Mandatory)][string]$Path, [AllowNull()][AllowEmptyString()][string]$Text, [string[]]$Keep = @())
+    $parent = Split-Path -Parent $Path
+    if (!(Test-Path -LiteralPath $parent)) { $null = New-Item -ItemType Directory -Path $parent -Force }
+    [IO.File]::WriteAllText($Path, [string](Hide-SteamIds -Text $Text -Keep $Keep), $script:Utf8NoBom)
 }
 
 function Write-JsonFile {

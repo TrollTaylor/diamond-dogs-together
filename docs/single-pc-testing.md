@@ -13,9 +13,10 @@ between the scripts and the loader: [lab-protocol.md](lab-protocol.md).
 - **It cannot show** anything about Steam networking. Traffic between the two
   instances goes over 127.0.0.1 through the loader's loopback emulation of
   ISteamNetworking, and the guest uses a fake SteamID
-  (`76561202255233008`, account `0xFFFFFFF0`) that never reaches Steam. Steam
-  NAT traversal, relays, latency, loss and real-account behaviour are not
-  exercised.
+  (`76561202255233008`, account `0xFFFFFFF0`) that must never reach Steam or
+  Konami (enforced by the safety gate below and the fail-closed rule for
+  identity forging). Steam NAT traversal, relays, latency, loss and
+  real-account behaviour are not exercised.
 - **Real-network sign-off.** A run on two PCs or two Steam accounts is still
   required before anything is called working.
 
@@ -26,13 +27,32 @@ between the scripts and the loader: [lab-protocol.md](lab-protocol.md).
 | The second instance exits on the single-instance mutex | The guest appends `mutex_suffix=-guest` to the mutex name |
 | Both instances have the same SteamID | The guest reports a fake identity; P2P is emulated over UDP 47810/47811 (`loopback=1`) |
 | Both instances share saves | Each instance's saves are redirected to a copy under `<game>\mgs-coop\lab\saves` |
-| Konami login with a fake identity, and ban risk | Both use a local fuse master server: `coop.ini master_url=http://127.0.0.1:6667/tppstm/gate` |
+| Konami login with a fake identity, and ban risk | Both use a local fuse master server: `coop.ini master_url=http://127.0.0.1:6667/tppstm/gate`. Start-Lab refuses to keep an instance running unless its log shows the redirect, and identity forging must check `master_server::RedirectedToLoopback()` (fail closed). fuse still hands out Konami heatmap/device URLs; see "Residual Konami endpoints" in tools/lab/README.md |
 | Fullscreen and borderless windows pause when unfocused | The lab save copies are set to Windowed 1280x720 |
 | One gamepad drives both instances | `xinput=none` on the host and `xinput=0` on the guest. The host uses keyboard and mouse |
 | The Ctrl+F8 join needs focus and fires once | The harness creates `mgs-coop/join.trigger` (`join_trigger=1`) |
 
 With no `lab.ini` the loader behaves exactly as before. Without a `coop.ini`
-`master_url`, the game keeps Konami's URL.
+`master_url`, the game keeps Konami's URL. A `coop.ini` `master_url` is honoured
+**with or without** `lab.ini`, so the lab `coop.ini` in the host's real folder
+keeps redirecting normal play until `Prepare-LabInstance.ps1 -Disable` (which also
+restores your own `coop.ini`).
+
+### Safety gate
+
+The safety rules in [lab-protocol.md](lab-protocol.md) are enforced at run time,
+not assumed from the configuration files. Start-Lab starts one instance at a
+time and, before starting the next, requires this run's `early.log` and
+`steam-observer.log` to show `saves=redirected` with the folder's lab save
+directory and `master_server=redirected` with the lab fuse URL; the guest must
+also show `mutex=renamed` (`-guest`) and `identity=fake` with the lab SteamID. A
+line showing a rule is not in force (`saves=unchanged`,
+`master_server=refused`/`failed`, `identity=real`, a different dir, URL or id)
+terminates that instance immediately; missing evidence after
+`smoke.safetyTimeoutSec` (120 s) stops it as well. On any failure Start-Lab
+stops every process it started, including fuse. The smoke test applies the same
+rules on every poll and fails at once on an unsafe line. Details: the "Safety
+gate" section of [tools/lab/README.md](../tools/lab/README.md).
 
 ### The master-server redirect
 
@@ -63,13 +83,23 @@ The redirect is unit tested on synthetic images only. Whether it reaches the
 game before the first gate request is verified live by fuse logging
 `CMD_GET_URLLIST`.
 
+**What other code may rely on.** `master_server::RedirectedToLoopback()` is
+true only after a verified redirect whose host is exactly 127.0.0.1, localhost
+or [::1]. Any lab identity substitution that could reach a master server (a
+forged auth ticket SteamID, for example) must refuse unless it is true.
+
+**Not wired yet.** Nothing in this branch calls `master_server::Install`; the
+proposed call site is in the work-package report. Until it is merged, the
+safety gate stops every lab start at the host (no `master_server=` line).
+
 ## Steps
 
 The game must be closed for steps 1–2. Steam must be running and logged in.
 
 1. **Build and test.** `pwsh -File tools/build.ps1 -Configuration Release`. All
    CTest suites must pass. The lab features need a loader that contains the lab
-   modules: the observer, loopback, identity, mutex and save redirect.
+   modules: the observer, loopback, identity, mutex, save redirect and the
+   master-server redirect call. Without them the safety gate stops the start.
 2. **fuse.** `pwsh -File tools/lab/Build-Fuse.ps1`. This builds
    `work/fuse/fuse.exe` offline if it is missing.
 3. **Prepare both folders.** First review with
@@ -79,8 +109,9 @@ The game must be closed for steps 1–2. Steam must be running and logged in.
    - installs the loader as an owned install with rollback. The guest's ownership
      record then names `MGS_TPP_guest`;
    - sets the roles: `host-v3`, and `client-v1` with `client-host.txt` set to the
-     host's real SteamID64 (from Steam's ActiveUser);
-   - writes `lab.ini` and `coop.ini`;
+     host's real SteamID64 (from Steam's ActiveUser; the host's own
+     `host-steamid.txt` is cross-checked at run time);
+   - writes `lab.ini` and `coop.ini` (your own copies are kept as `*.user-<ts>`);
    - backs up the real saves with a hash manifest into `build/lab/save-backups/`;
    - seeds both lab save copies;
    - sets the lab graphics copies to Windowed.
@@ -88,30 +119,39 @@ The game must be closed for steps 1–2. Steam must be running and logged in.
    If it reports that a lab graphics file does not exist yet, set Windowed
    1280x720 once in that instance's options. That changes only the lab copy.
 4. **Start.** `pwsh -File tools/lab/Start-Lab.ps1`. This runs a preflight
-   (processes by path, ports, hashes, configuration), then starts fuse
-   `-standalone` with its database in `build/lab/fuse`, then the host. Once the
-   host has a window it starts the guest, then places both windows side by side.
+   (processes by path, ports, hashes, configuration including each `save_dir`
+   and the guest identity), then starts fuse `-standalone` with its database in
+   `build/lab/fuse`, then the host. Once the host has a window **and** has passed
+   the safety gate (and its `host-steamid.txt`, if written, matches the guest's
+   target), it starts the guest behind the same gate, then places both windows
+   side by side. Any gate failure stops everything Start-Lab started.
 5. **Smoke.** `pwsh -File tools/lab/Invoke-LabSmoke.ps1 -Assist`.
    - In each window: press a key at the title screen, choose CONTINUE, and wait
      for Mother Base.
    - Do not press Ctrl+F8. The harness creates the guest's `join.trigger` when
-     the host logs `session_status=host_ready` and the guest logs
-     `client_join=armed`.
-   - Result: PASS or FAIL. Details are in `build/lab/runs/<ts>/result.json`.
+     the host's prerequisites (synthesis §3.5, including
+     `dynamite_session=observed … state=3 accept=1 … consistent=1`), both
+     instances' fuse traffic and the guest's `mode=client_v1; configured_host=1`
+     and `client_join=armed` are all present.
+   - Result: PASS or FAIL. Details are in `build/lab/runs/<ts>/result.json`,
+     including what was still missing at a timeout. `not_under_fuse` means fuse
+     never saw the logins or the redirect line was missing.
 6. **Optional.** `pwsh -File tools/lab/Get-LabScreens.ps1 -Label after` saves
    screenshots. A remote actor visible on both sides is milestone M4.
-7. **Stop.** `pwsh -File tools/lab/Stop-Lab.ps1`. This closes both games and
-   fuse, then compares the real save hashes with the run-start manifest
-   (exit code 2 if any real save changed).
+7. **Stop.** `pwsh -File tools/lab/Stop-Lab.ps1`. This closes this run's games
+   and fuse (never another MGSV session; see `-IncludeUnrecordedProcesses`),
+   then compares the real save hashes with the run-start manifest (exit code 2
+   if any real save changed).
 8. **Before normal online play:** `pwsh -File tools/lab/Prepare-LabInstance.ps1 -Disable`.
-   Without it, `coop.ini` keeps redirecting the host to a local fuse that is not
-   running.
+   Without it, the lab `coop.ini` keeps sending the host's normal game starts to
+   the local fuse (or offline when fuse is stopped), even if `lab.ini` was
+   deleted. `-Disable` renames both generated files and restores your own.
 
 ## Milestones
 
 | Milestone | How to check | Evidence |
 |---|---|---|
-| M0 | `Start-Lab.ps1 -HostOnly`, then `Invoke-LabSmoke.ps1 -Assist` | Host creation still reaches `host_ready` under fuse. fuse logs `CMD_GET_URLLIST` and `CMD_AUTH_STEAMTICKET` (`fuse_messages` in `result.json`). `steam-observer.log` shows `master_server=redirected` |
+| M0 | `Start-Lab.ps1 -HostOnly`, then `Invoke-LabSmoke.ps1 -Assist` | Smoke PASS `host_ready_stable`, which requires the §3.5 host prerequisites (`state=3 accept=1 … consistent=1`), `master_server=redirected` to the lab URL and fuse traffic (`CMD_GET_URLLIST` and `CMD_AUTH_STEAMTICKET`, `fuse_counts` in `result.json`). Without fuse evidence it fails `not_under_fuse` |
 | M1 | Full start | The guest reaches Mother Base next to the host. `early.log` shows `mutex=renamed`, `identity=fake` and `saves=redirected` |
 | M2 | The smoke creates the trigger | Guest `dynamite_client=returned; request_started=1`. `loopback.log` shows guest send, host `session_request_posted`, then `accepted` |
 | M3 | Smoke PASS | Guest `client_established` and host `host_peer_present` for two polls |
@@ -122,6 +162,13 @@ The game must be closed for steps 1–2. Steam must be running and logged in.
 - **Preflight failed.** Each problem is listed. Usually the cause is that
   `Prepare-LabInstance.ps1` was not run, the game is still running from that
   folder, or a port is in use.
+- **Safety gate failed.** The message names the reason. `unsafe_<reason>`
+  means a log line showed a rule not in force (the instance was terminated at
+  once); `safety_evidence_missing_after_…(…)` lists the lines that never
+  appeared, usually because the loader lacks the sibling modules or the
+  `master_server::Install` call. `host_id_mismatch` means Steam is logged into a
+  different account than the one Prepare resolved: log into the host's account
+  and re-run Prepare.
 - **The guest exits immediately.** Check `MGS_TPP_guest\mgs-coop\early.log`. If
   it shows `mutex=unchanged`, the guest is not running the lab loader or
   `lab.ini` is not enabled.
@@ -129,8 +176,8 @@ The game must be closed for steps 1–2. Steam must be running and logged in.
   Windowed once in that instance's options.
 - **The smoke times out at `waiting_host_ready`.** Check `host-script-observer.log`
   in the run folder for `dynamite_host=` and `host_admission=`.
-- **fuse logged nothing.** The redirect did not run before the first gate
-  request. Check `master_server=` in `steam-observer.log`.
+- **fuse logged nothing (`not_under_fuse`).** The redirect did not run before
+  the first gate request. Check `master_server=` in `steam-observer.log`.
 - **A real save changed (Stop-Lab exit 2).** Restore it from
   `build/lab/save-backups/<ts>/files/`. Then check `early.log` for
   `saves=redirected`.

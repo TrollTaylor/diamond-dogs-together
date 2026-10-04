@@ -1,16 +1,32 @@
 #Requires -Version 7
 <#
 .SYNOPSIS
-Starts fuse (always -standalone), the host instance and then the guest instance.
+Starts fuse (always -standalone), the host instance and then the guest instance,
+each behind a safety gate.
 
 .DESCRIPTION
 Preflight: no mgsvtpp.exe running from either lab folder, fuse/loopback ports
 free, executable/Steam DLL/loader/archive hashes, lab.ini/coop.ini/markers
-present and consistent. Then records log offsets (logs are append-only; the
-smoke test reads only what this run appends) and a hash manifest of the real
-saves, starts fuse with its working directory (database fuse.dat and log/)
-in build/lab/fuse, starts the host, waits for its main window, starts the guest
-and places the windows side by side. Run metadata: build/lab/runs/<ts>/run.json.
+present and consistent (save_dir is the folder's own lab copy, loopback=1, the
+guest uses the fake SteamID and the -guest mutex suffix). Then records log
+offsets (logs are append-only; the smoke test reads only what this run appends)
+and a hash manifest of the real saves, and starts fuse with its working
+directory (database fuse.dat and log/) in build/lab/fuse.
+
+Safety gate (docs/lab-protocol.md safety rules), per instance, before the next
+one starts: within smoke.safetyTimeoutSec of the start, this run's early.log and
+steam-observer.log must show saves=redirected with the folder's lab save_dir and
+master_server=redirected with the lab fuse URL; the guest must also show
+mutex=renamed (suffix -guest) and identity=fake with the lab SteamID. A line
+showing a rule is NOT in force (saves=unchanged, master_server=refused/failed,
+identity=real, a different dir/url/id, lab=0) terminates that instance at once.
+Missing evidence at the deadline, a missing window or an early exit stops it
+too. Before the guest starts, a host-steamid.txt written by this run's host must
+match the guest's client-host.txt (host_id_mismatch otherwise). On any failure
+after fuse started, Start-Lab stops every process it started (games and fuse)
+and records the reason in run.json. The windows are then placed side by side.
+Run metadata: build/lab/runs/<ts>/run.json. fuse's console output (it prints
+SteamIDs) stays in build/lab/fuse/console/, outside the shareable run folder.
 
 .EXAMPLE
 pwsh -File tools/lab/Start-Lab.ps1 -WhatIf
@@ -38,7 +54,8 @@ function Set-LabLayout($Instances) {
     $width = if ($resize) { [int](Get-ConfigValue $config.Window 'width' 0) } else { 0 }
     $height = if ($resize) { [int](Get-ConfigValue $config.Window 'height' 0) } else { 0 }
     foreach ($name in $Instances.Keys) {
-        $pid_ = [int]$Instances[$name].pid
+        $pid_ = [int](Get-ConfigValue $Instances[$name] 'pid' 0)
+        if (!$pid_) { continue }
         $handle = Get-ProcessMainWindow -Id $pid_
         if ($handle -eq [IntPtr]::Zero) { Write-Warning "[$name] no main window to place."; continue }
         $pos = Get-ConfigValue $config.Window $name $null
@@ -58,6 +75,8 @@ if ($LayoutOnly) {
 
 $roles = if ($HostOnly) { @('host') } else { @('host', 'guest') }
 $expectedUrl = 'http://127.0.0.1:' + [int]$config.Ports.fuse + '/tppstm/gate'
+$guestId = [string](Get-ConfigValue $config.Identity 'guestSteamId' '76561202255233008')
+$guestSuffix = '-guest'
 $problems = [Collections.Generic.List[string]]::new()
 
 # ---------------------------------------------------------------- preflight
@@ -86,6 +105,17 @@ foreach ($name in $roles) {
     }
     $lab = if (Test-Path -LiteralPath $p.LabIni -PathType Leaf) { ConvertFrom-IniText ([IO.File]::ReadAllText($p.LabIni)) } else { $null }
     if (!$lab -or (Get-ConfigValue $lab 'enabled' '') -ne '1' -or (Get-ConfigValue $lab 'role' '') -ne $name) { $problems.Add("[$name] lab.ini missing or not enabled for role $name.") }
+    if ($lab) {
+        # The save redirect must target this folder's own lab copy (never Steam\userdata).
+        if ((ConvertTo-LabComparablePath ([string](Get-ConfigValue $lab 'save_dir' ''))) -cne (ConvertTo-LabComparablePath $p.SaveDir)) {
+            $problems.Add("[$name] lab.ini save_dir is not this folder's lab save copy ($($p.SaveDir)).")
+        }
+        if ((Get-ConfigValue $lab 'loopback' '') -ne '1') { $problems.Add("[$name] lab.ini loopback is not 1.") }
+        if ($name -eq 'guest') {
+            if ([string](Get-ConfigValue $lab 'self_steamid' '') -cne $guestId) { $problems.Add('[guest] lab.ini self_steamid is not the lab fake SteamID from lab.json.') }
+            if ([string](Get-ConfigValue $lab 'mutex_suffix' '') -cne $guestSuffix) { $problems.Add("[guest] lab.ini mutex_suffix is not $guestSuffix.") }
+        }
+    }
     $coop = if (Test-Path -LiteralPath $p.CoopIni -PathType Leaf) { ConvertFrom-IniText ([IO.File]::ReadAllText($p.CoopIni)) } else { $null }
     if (!$coop -or (Get-ConfigValue $coop 'master_url' '') -ne $expectedUrl) { $problems.Add("[$name] coop.ini master_url is not $expectedUrl.") }
     $marker = if (Test-Path -LiteralPath $p.Marker -PathType Leaf) { [IO.File]::ReadAllText($p.Marker) } else { '' }
@@ -96,6 +126,12 @@ foreach ($name in $roles) {
         if (!(Test-IndividualSteamId64 $clientHost) -or ($lab -and (Get-ConfigValue $lab 'peer_steamid' '') -ne $clientHost)) {
             $problems.Add('[guest] client-host.txt is not a valid SteamID64 or differs from lab.ini peer_steamid.')
         }
+    }
+    # What the safety gate and the smoke test require this instance's logs to show.
+    $info.expected = [ordered]@{
+        save_dir = $p.SaveDir; master_url = $expectedUrl
+        steamid = $(if ($name -eq 'guest') { $guestId } else { '' })
+        mutex_suffix = $(if ($name -eq 'guest') { $guestSuffix } else { '' })
     }
     $instances[$name] = [pscustomobject]@{ Paths = $p; Info = $info }
 }
@@ -117,12 +153,13 @@ $stamp = New-RunStamp
 $runPath = Join-Path $labRoot ('runs/' + $stamp)
 $null = New-Item -ItemType Directory -Path $runPath -Force
 $run = [ordered]@{
-    product = 'mgs-coop-lab-run'; schema = 1; stamp = $stamp; run_dir = $runPath
+    product = 'mgs-coop-lab-run'; schema = 2; stamp = $stamp; run_dir = $runPath
     started_utc = [DateTime]::UtcNow.ToString('o'); host_only = [bool]$HostOnly
     config_path = $config.Path; repo = $config.Paths.repo; version = (Get-ProjectVersion -RepoRoot $config.Paths.repo)
     ports = [ordered]@{ fuse = [int]$config.Ports.fuse; host = [int]$config.Ports.host; guest = [int]$config.Ports.guest }
-    fuse = $null; instances = [ordered]@{}; real_saves_before = $null; latest_save_backup = $null
-    notes = 'SteamIDs are intentionally not recorded here.'
+    fuse = $null; instances = [ordered]@{}; real_saves_before = $null; private_state = $null; latest_save_backup = $null
+    host_id_check_at_guest_start = $null; aborted = $null
+    notes = 'Shareable: no SteamIDs or Steam account folders are recorded in this folder (see private_state).'
 }
 foreach ($name in $roles) {
     $p = $instances[$name].Paths
@@ -139,58 +176,145 @@ foreach ($name in $roles) {
 }
 try {
     $identity = Get-HostIdentity -OverrideSteamId ([string](Get-ConfigValue $config.Identity 'hostSteamId' 'auto')) -SteamPath $config.Paths.steamRoot
-    Write-JsonFile -Path (Join-Path $runPath 'real-saves-before.json') -Value ([ordered]@{ source_root = $identity.UserData; files = (Get-RealSaveManifest -UserData $identity.UserData) })
+    # The Steam account folder identifies the user: it stays in build/lab/private/.
+    $privateState = Join-Path $labRoot ("private/run-$stamp.json")
+    Write-JsonFile -Path $privateState -Value ([ordered]@{ source_root = $identity.UserData; note = 'Local only; never copy into run folders.' })
+    Write-JsonFile -Path (Join-Path $runPath 'real-saves-before.json') -Value ([ordered]@{ source_root = 'Steam/userdata/<account>'; files = (Get-RealSaveManifest -UserData $identity.UserData) })
     $run.real_saves_before = 'real-saves-before.json'
+    $run.private_state = $privateState
 } catch { Write-Warning "Could not hash the real saves before the run: $($_.Exception.Message)" }
 $pointer = Join-Path $labRoot 'latest-save-backup.json'
 if (Test-Path -LiteralPath $pointer -PathType Leaf) { $run.latest_save_backup = (Get-Content -LiteralPath $pointer -Raw | ConvertFrom-Json).backup_dir }
 Write-JsonFile -Path (Join-Path $runPath 'run.json') -Value $run
 Write-JsonFile -Path (Join-Path $labRoot 'current-run.json') -Value ([ordered]@{ run_dir = $runPath; stamp = $stamp })
 
-# ---------------------------------------------------------------- fuse
-$fuseDir = Join-Path $labRoot 'fuse'
-$null = New-Item -ItemType Directory -Path $fuseDir -Force
-$fuseArgs = New-FuseArguments -Port ([int]$config.Ports.fuse) -WriteLog ([bool](Get-ConfigValue $config.Fuse 'writeLog' $true))
-Assert-FuseArgumentsSafe -Arguments $fuseArgs
-$sinceUnix = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - 1
-$fuse = Invoke-WithoutStdHandleInheritance {
-    Start-Process -FilePath $config.Paths.fuseExe -ArgumentList $fuseArgs -WorkingDirectory $fuseDir -WindowStyle Hidden -PassThru `
-        -RedirectStandardOutput (Join-Path $runPath 'fuse-stdout.log') -RedirectStandardError (Join-Path $runPath 'fuse-stderr.log')
-}
-$run.fuse = [ordered]@{
-    exe = $config.Paths.fuseExe; sha256 = (Get-Sha256 $config.Paths.fuseExe); pid = $fuse.Id; cwd = $fuseDir; args = $fuseArgs
-    database = (Join-Path $fuseDir 'fuse.dat'); log_root = (Join-Path $fuseDir 'log'); since_unix = $sinceUnix
-    stdout = 'fuse-stdout.log'; stderr = 'fuse-stderr.log'; url = $expectedUrl
-}
-Write-JsonFile -Path (Join-Path $runPath 'run.json') -Value $run
-$deadline = [DateTime]::UtcNow.AddSeconds([int](Get-ConfigValue $config.Fuse 'startupTimeoutSec' 20))
-while (!(Test-TcpListening -Port ([int]$config.Ports.fuse))) {
-    if ($fuse.HasExited) { throw "fuse exited during startup (code $($fuse.ExitCode)); see $runPath\fuse-stdout.log" }
-    if ([DateTime]::UtcNow -gt $deadline) { Stop-Process -Id $fuse.Id -Force -ErrorAction SilentlyContinue; throw 'fuse did not start listening in time; stopped it.' }
-    Start-Sleep -Milliseconds 250
-}
-Write-Output "fuse listening on 127.0.0.1:$($config.Ports.fuse) (pid $($fuse.Id), -standalone, cwd $fuseDir)."
-
-# ---------------------------------------------------------------- games
 $windowTimeout = [int](Get-ConfigValue $config.Smoke 'windowTimeoutSec' 180)
-foreach ($name in $roles) {
-    $p = $instances[$name].Paths
-    $process = Invoke-WithoutStdHandleInheritance { Start-Process -FilePath $p.Exe -WorkingDirectory $p.Game -PassThru }
-    $run.instances[$name].pid = $process.Id
-    $run.instances[$name].started_utc = [DateTime]::UtcNow.ToString('o')
-    Write-JsonFile -Path (Join-Path $runPath 'run.json') -Value $run
-    Write-Output "[$name] started pid $($process.Id); waiting for its main window..."
-    $deadline = [DateTime]::UtcNow.AddSeconds($windowTimeout)
+$safetyTimeout = [int](Get-ConfigValue $config.Smoke 'safetyTimeoutSec' 120)
+
+function Wait-InstanceGate {
+    # Polls the instance's early.log and steam-observer.log (from this run's
+    # offsets) and its main window until the safety evidence is complete and the
+    # window exists, or something is wrong.
+    param([string]$Name, $Process, $Paths, $Info, [datetime]$StartUtc)
+    $expectation = Get-InstanceExpectation -Role $Name -Instance $Info
+    $files = @{ early = (Join-Path $Paths.Mod 'early.log'); steam = (Join-Path $Paths.Mod 'steam-observer.log') }
+    $offsets = @{ early = [Int64]$Info.log_offsets['early.log']; steam = [Int64]$Info.log_offsets['steam-observer.log'] }
+    $texts = @{ early = [Text.StringBuilder]::new(); steam = [Text.StringBuilder]::new() }
+    $windowDeadline = $StartUtc.AddSeconds($windowTimeout)
+    $safetyDeadline = $StartUtc.AddSeconds($safetyTimeout)
     $handle = [IntPtr]::Zero
-    while ($handle -eq [IntPtr]::Zero) {
-        if ($process.HasExited) { throw "[$name] exited before showing a window (code $($process.ExitCode)). Check $($p.Mod)\early.log and probe.log; the run folder is $runPath." }
-        if ([DateTime]::UtcNow -gt $deadline) { throw "[$name] no main window after $windowTimeout s; the process is left running (Stop-Lab.ps1 closes it)." }
+    while ($true) {
+        foreach ($key in 'early', 'steam') {
+            $chunk = Read-LogFromOffset -Path $files[$key] -Offset $offsets[$key]
+            if ($chunk.Text) { $null = $texts[$key].Append($chunk.Text) }
+            $offsets[$key] = $chunk.NewOffset
+        }
+        $safety = Get-InstanceSafety -Role $Name -Expectation $expectation -EarlyLog $texts.early.ToString() -SteamLog $texts.steam.ToString()
+        $result = [ordered]@{ Ok = $false; Unsafe = $false; Reason = ''; Safety = $safety }
+        if ($safety.State -eq 'unsafe') { $result.Unsafe = $true; $result.Reason = 'unsafe_' + $safety.Reason; return [pscustomobject]$result }
+        if ($handle -eq [IntPtr]::Zero) { $handle = Get-ProcessMainWindow -Id $Process.Id }
+        if ($safety.State -eq 'ok' -and $handle -ne [IntPtr]::Zero) { $result.Ok = $true; return [pscustomobject]$result }
+        if ($Process.HasExited) { $result.Reason = "exited_early (code $($Process.ExitCode))"; return [pscustomobject]$result }
+        $now = [DateTime]::UtcNow
+        if ($handle -eq [IntPtr]::Zero -and $now -gt $windowDeadline) { $result.Reason = "no_main_window_after_$($windowTimeout)s"; return [pscustomobject]$result }
+        if ($safety.State -ne 'ok' -and $now -gt $safetyDeadline) {
+            $result.Reason = "safety_evidence_missing_after_$($safetyTimeout)s (" + (@($safety.Missing) -join ',') + ')'
+            return [pscustomobject]$result
+        }
         Start-Sleep -Milliseconds 500
-        $handle = Get-ProcessMainWindow -Id $process.Id
     }
-    $run.instances[$name].window_seen_utc = [DateTime]::UtcNow.ToString('o')
+}
+
+$started = [Collections.Generic.List[object]]::new()
+$fuse = $null
+try {
+    # ------------------------------------------------------------ fuse
+    $fuseDir = Join-Path $labRoot 'fuse'
+    $consoleDir = Join-Path $fuseDir 'console'
+    $null = New-Item -ItemType Directory -Path $consoleDir -Force
+    $fuseArgs = New-FuseArguments -Port ([int]$config.Ports.fuse) -WriteLog ([bool](Get-ConfigValue $config.Fuse 'writeLog' $true))
+    Assert-FuseArgumentsSafe -Arguments $fuseArgs
+    $sinceUnix = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - 1
+    $fuseStdout = Join-Path $consoleDir "$stamp-stdout.log"
+    $fuseStderr = Join-Path $consoleDir "$stamp-stderr.log"
+    $fuse = Invoke-WithoutStdHandleInheritance {
+        Start-Process -FilePath $config.Paths.fuseExe -ArgumentList $fuseArgs -WorkingDirectory $fuseDir -WindowStyle Hidden -PassThru `
+            -RedirectStandardOutput $fuseStdout -RedirectStandardError $fuseStderr
+    }
+    $run.fuse = [ordered]@{
+        exe = $config.Paths.fuseExe; sha256 = (Get-Sha256 $config.Paths.fuseExe); pid = $fuse.Id
+        process_start_utc = $(if ($t = Get-ProcessStartUtc $fuse) { $t.ToString('o') } else { $null })
+        cwd = $fuseDir; args = $fuseArgs; database = (Join-Path $fuseDir 'fuse.dat'); log_root = (Join-Path $fuseDir 'log')
+        since_unix = $sinceUnix; stdout = $fuseStdout; stderr = $fuseStderr; url = $expectedUrl
+    }
     Write-JsonFile -Path (Join-Path $runPath 'run.json') -Value $run
-    Write-Output "[$name] main window is up."
+    $deadline = [DateTime]::UtcNow.AddSeconds([int](Get-ConfigValue $config.Fuse 'startupTimeoutSec' 20))
+    while (!(Test-TcpListening -Port ([int]$config.Ports.fuse))) {
+        if ($fuse.HasExited) { throw "fuse exited during startup (code $($fuse.ExitCode)); see $fuseStdout" }
+        if ([DateTime]::UtcNow -gt $deadline) { throw 'fuse did not start listening in time.' }
+        Start-Sleep -Milliseconds 250
+    }
+    Write-Output "fuse listening on 127.0.0.1:$($config.Ports.fuse) (pid $($fuse.Id), -standalone, cwd $fuseDir)."
+
+    # ------------------------------------------------------------ games, one at a time behind the gate
+    foreach ($name in $roles) {
+        $p = $instances[$name].Paths
+        if ($name -eq 'guest') {
+            $hostIdText = Read-FreshText -Path $instances.host.Paths.HostId -NotBeforeUtc $run.instances.host.process_start_utc
+            $guestLab = ConvertFrom-IniText (Read-SharedText -Path $p.LabIni)
+            $check = Get-HostIdCheck -HostIdText $hostIdText -ClientHostText (Read-SharedText -Path $p.ClientHost) -PeerSteamId ([string](Get-ConfigValue $guestLab 'peer_steamid' ''))
+            $run.host_id_check_at_guest_start = $check
+            if ($check -eq 'mismatch') {
+                throw "[guest] not started: host_id_mismatch. The host's host-steamid.txt (this run) differs from the guest's client-host.txt or lab.ini peer_steamid. Re-run Prepare-LabInstance.ps1 while Steam is logged into the account the host uses."
+            }
+        }
+        $process = Invoke-WithoutStdHandleInheritance { Start-Process -FilePath $p.Exe -WorkingDirectory $p.Game -PassThru }
+        $startUtc = [DateTime]::UtcNow
+        $started.Add([pscustomobject]@{ Name = $name; Process = $process; Unsafe = $false })
+        $run.instances[$name].pid = $process.Id
+        $run.instances[$name].process_start_utc = $(if ($t = Get-ProcessStartUtc $process) { $t.ToString('o') } else { $null })
+        $run.instances[$name].started_utc = $startUtc.ToString('o')
+        Write-JsonFile -Path (Join-Path $runPath 'run.json') -Value $run
+        Write-Output "[$name] started pid $($process.Id); waiting for its safety evidence and main window..."
+        $gate = Wait-InstanceGate -Name $name -Process $process -Paths $p -Info $run.instances[$name] -StartUtc $startUtc
+        $run.instances[$name].safety = [ordered]@{
+            state = $gate.Safety.State; reason = $gate.Reason; missing = @($gate.Safety.Missing); checked_utc = [DateTime]::UtcNow.ToString('o')
+        }
+        Write-JsonFile -Path (Join-Path $runPath 'run.json') -Value $run
+        if (!$gate.Ok) {
+            if ($gate.Unsafe) { $started[$started.Count - 1].Unsafe = $true }
+            throw "[$name] safety gate failed: $($gate.Reason). See $($p.Mod)\early.log and steam-observer.log."
+        }
+        $run.instances[$name].window_seen_utc = [DateTime]::UtcNow.ToString('o')
+        Write-JsonFile -Path (Join-Path $runPath 'run.json') -Value $run
+        Write-Output "[$name] safety evidence complete (saves redirected, master server -> lab fuse$(if ($name -eq 'guest') { ', mutex renamed, fake identity' })); main window is up."
+    }
+} catch {
+    $failure = $_
+    # Stop everything this run started. An unsafe instance is terminated at once;
+    # the others get WM_CLOSE first (their saves were shown to be redirected).
+    $stopped = [Collections.Generic.List[string]]::new()
+    for ($i = $started.Count - 1; $i -ge 0; $i--) {
+        $entry = $started[$i]
+        $proc = $entry.Process
+        if ($proc.HasExited) { $stopped.Add("$($entry.Name):already_exited"); continue }
+        if (!$entry.Unsafe) {
+            $handle = Get-ProcessMainWindow -Id $proc.Id
+            if ($handle -ne [IntPtr]::Zero -and (Close-GameWindow -Handle $handle)) { $null = $proc.WaitForExit(10000) }
+        }
+        if (!$proc.HasExited) {
+            try { $proc.Kill() } catch { Write-Warning "[$($entry.Name)] could not terminate pid $($proc.Id): $($_.Exception.Message)" }
+            $null = $proc.WaitForExit(5000)
+            $stopped.Add("$($entry.Name):" + $(if ($entry.Unsafe) { 'terminated_immediately' } else { 'terminated' }))
+        } else { $stopped.Add("$($entry.Name):closed") }
+    }
+    if ($fuse -and !$fuse.HasExited) {
+        try { $fuse.Kill(); $null = $fuse.WaitForExit(5000); $stopped.Add('fuse:stopped') } catch { Write-Warning "Could not stop fuse pid $($fuse.Id)." }
+    }
+    $run.aborted = [ordered]@{ utc = [DateTime]::UtcNow.ToString('o'); reason = $failure.Exception.Message; stopped = $stopped.ToArray() }
+    Write-JsonFile -Path (Join-Path $runPath 'run.json') -Value $run
+    Write-Warning ("Start-Lab stopped what it had started: " + ($stopped -join ', ') + ". Run Stop-Lab.ps1 to verify the real saves.")
+    throw $failure
 }
 Set-LabLayout $run.instances
 Write-JsonFile -Path (Join-Path $runPath 'run.json') -Value $run

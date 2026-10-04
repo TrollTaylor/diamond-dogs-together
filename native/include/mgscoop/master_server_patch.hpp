@@ -18,9 +18,22 @@ namespace mgscoop::master_server {
 // Calling again with the same URL after success returns true without changes.
 bool Install(void* base, std::size_t span, const char* url, void (*log)(const char*) noexcept) noexcept;
 
+// True only after Install() succeeded (and verified the effective string) with
+// a URL whose host is exactly 127.0.0.1, localhost or [::1] (IsLoopbackUrl).
+// False before any Install, after a refusal or failure, and for a non-loopback
+// redirect. Any lab identity substitution that could reach the master server
+// (for example a forged GetAuthSessionTicket SteamID) must fail closed unless
+// this returns true. Lock-free read; safe from any thread.
+bool RedirectedToLoopback() noexcept;
+
 // ---- Pure decision logic (portable, no Win32; unit tested on synthetic images) ----
 
 inline constexpr std::size_t kMaxUrlLength = 69;  // CoopConfig::master_url[70]
+
+// A valid gate URL (ValidateUrl) whose authority is exactly 127.0.0.1,
+// localhost (any case) or [::1], optionally followed by :<port 1..65535>.
+// Userinfo ('@'), other loopback spellings and every other host are refused.
+bool IsLoopbackUrl(const char* url) noexcept;
 
 enum class UrlStatus : std::uint8_t { ok, empty, too_long, bad_scheme, bad_suffix, bad_character, missing_host };
 // http(s)://<host...>/tppstm/gate, printable ASCII without space, '"' or '\\',

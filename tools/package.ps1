@@ -83,7 +83,8 @@ MGS Co-op $version - runtime archive
 This package does not contain game files or game-derived data. The loader
 needs the two-player runtime archive mgs-coop-player-runtime.dat
 (SHA-256 $archiveSha256), which is generated or copied on your own PC from
-your own game installation. Pass it to the installer:
+your own game installation. Double-clicking install.bat asks for the game
+folder and then for the path of this file. From a command line:
 
   powershell -NoProfile -File .\install.ps1 -GameDirectory "<MGSV folder>" -RuntimeArchive "<path>\mgs-coop-player-runtime.dat"
 

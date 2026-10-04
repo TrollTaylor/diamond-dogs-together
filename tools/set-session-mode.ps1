@@ -6,6 +6,16 @@ param(
     [string]$GameDirectory='D:/Games/steamapps/common/MGS_TPP'
 )
 $ErrorActionPreference='Stop'
+# Validate the identity before touching the filesystem. PowerShell reads the
+# literal 0xffffffff as Int32 -1, so the account part is taken with an unsigned
+# modulus (account 0 is not an individual account).
+if($Role -eq 'Join') {
+    [UInt64]$identity=0
+    if($HostSteamId -cnotmatch '^[0-9]{17}$' -or ![UInt64]::TryParse($HostSteamId,[ref]$identity) -or
+       ($identity -shr 32) -ne 0x01100001 -or ($identity % [UInt64]4294967296) -eq 0) {
+        throw 'Supply the host player''s 17-digit SteamID64 (a public individual desktop account).'
+    }
+} elseif($HostSteamId) { throw 'HostSteamId is used only with -Role Join.' }
 if((Get-Item -LiteralPath $GameDirectory).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Use the direct MGSV folder, not a filesystem link.' }
 $gameRoot=(Resolve-Path -LiteralPath $GameDirectory).Path.TrimEnd('\','/')
 # Only an MGSV process started from THIS folder blocks the change (matched by
@@ -30,13 +40,6 @@ if($manifest.product -ne 'mgs-coop-original-loader-probe' -or $manifest.game_dir
 if($manifest.version -notin @('0.10.27','0.10.28','0.10.29','0.10.30','0.10.31','0.10.32','0.10.33')) { throw 'This command requires a supported 0.10.27 through 0.10.33 loader. The installed loader has not been changed.' }
 if((Get-FileHash -LiteralPath (Join-Path $gameRoot 'dinput8.dll')).Hash -ne $manifest.dll_sha256) { throw 'Installed loader differs from its ownership record.' }
 if((Get-FileHash -LiteralPath (Join-Path $modRoot 'mgs-coop-player-runtime.dat')).Hash -ne '26CE7C2168D655C35BE39E4F17A295206AA0522DE8782CD57A36C4FEEA382F54') { throw 'Expected two-player archive is missing or changed.' }
-if($Role -eq 'Join') {
-    [UInt64]$identity=0
-    if($HostSteamId -cnotmatch '^[0-9]{17}$' -or ![UInt64]::TryParse($HostSteamId,[ref]$identity) -or
-       ($identity -shr 32) -ne 0x01100001 -or ($identity -band 0xffffffff) -eq 0) {
-        throw 'Supply the host player''s 17-digit SteamID64 (a public individual desktop account).'
-    }
-} elseif($HostSteamId) { throw 'HostSteamId is used only with -Role Join.' }
 # Write the identity before enabling join mode; no account IDs are put in logs.
 $marker=Join-Path $modRoot 'script-observe.enabled'
 if($Role -eq 'Join') {

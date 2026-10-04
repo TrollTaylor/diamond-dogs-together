@@ -86,6 +86,48 @@ UrlStatus ValidateUrl(const char* url, std::size_t& length) noexcept {
     return UrlStatus::ok;
 }
 
+bool IsLoopbackUrl(const char* url) noexcept {
+    std::size_t length = 0;
+    if (ValidateUrl(url, length) != UrlStatus::ok) return false;
+    const std::size_t scheme = url[4] == 's' ? 8 : 7;
+    // The authority ends at the first '/' after the scheme (the suffix guarantees one).
+    std::size_t end = scheme;
+    while (end < length && url[end] != '/') ++end;
+    const char* authority = url + scheme;
+    const std::size_t authority_length = end - scheme;
+    for (std::size_t i = 0; i < authority_length; ++i)
+        if (authority[i] == '@') return false;  // userinfo can disguise the real host
+    std::size_t host_length = 0;
+    if (authority[0] == '[') {
+        while (host_length < authority_length && authority[host_length] != ']') ++host_length;
+        if (host_length == authority_length) return false;
+        ++host_length;  // include ']'
+    } else {
+        while (host_length < authority_length && authority[host_length] != ':') ++host_length;
+    }
+    if (host_length < authority_length) {
+        // Optional port: ':' then 1..5 digits with a value of 1..65535.
+        const std::size_t digits = authority_length - host_length - 1;
+        if (authority[host_length] != ':' || digits == 0 || digits > 5) return false;
+        unsigned long port = 0;
+        for (std::size_t i = host_length + 1; i < authority_length; ++i) {
+            if (authority[i] < '0' || authority[i] > '9') return false;
+            port = port * 10 + static_cast<unsigned long>(authority[i] - '0');
+        }
+        if (port == 0 || port > 65535) return false;
+    }
+    auto equals = [&](const char* expected, bool fold_case) noexcept {
+        std::size_t i = 0;
+        for (; i < host_length && expected[i]; ++i) {
+            char c = authority[i];
+            if (fold_case && c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+            if (c != expected[i]) return false;
+        }
+        return i == host_length && !expected[i];
+    };
+    return equals("127.0.0.1", false) || equals("localhost", true) || equals("[::1]", false);
+}
+
 const Site& RetailSite() noexcept { return kRetail; }
 
 Plan PlanRedirect(const Site& site, std::size_t span, ReadImage read, void* context, const char* url) noexcept {
@@ -208,6 +250,8 @@ namespace {
 SRWLOCK lock = SRWLOCK_INIT;
 void* installed_base = nullptr;
 char installed_url[kMaxUrlLength + 1] = {};
+// 1 once a verified redirect to a loopback URL is in place (set under lock).
+volatile LONG loopback_redirect = 0;
 
 bool ReadLive(void* context, std::uintptr_t rva, void* out, std::size_t size) noexcept {
     SIZE_T read = 0;
@@ -399,8 +443,13 @@ bool Install(void* base, std::size_t span, const char* url, void (*log)(const ch
     }
     installed_base = base;
     for (std::size_t i = 0; i <= plan.url_length; ++i) installed_url[i] = url[i];
+    if (IsLoopbackUrl(installed_url)) InterlockedExchange(&loopback_redirect, 1);
     Emit(log, "master_server=redirected; method=%s; url=%s\r\n", MethodName(plan.method), installed_url);
     return true;
+}
+
+bool RedirectedToLoopback() noexcept {
+    return InterlockedCompareExchange(&loopback_redirect, 0, 0) != 0;
 }
 #endif
 }

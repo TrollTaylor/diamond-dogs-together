@@ -11,7 +11,10 @@ param(
     [string]$AcceptRecordCopiedFrom,
     # Folder containing package.json and payload/ (default: this script's folder,
     # as in an extracted package). The lab scripts stage packages elsewhere.
-    [string]$PackageDirectory
+    [string]$PackageDirectory,
+    # Never ask for the runtime archive path (scripts and tests). Without it, an
+    # interactive console session (install.bat) is asked when the archive is needed.
+    [switch]$NoPrompt
 )
 $ErrorActionPreference='Stop'
 $packageRoot=if($PackageDirectory) { [IO.Path]::GetFullPath((Get-Item -LiteralPath $PackageDirectory).FullName).TrimEnd('\','/') } else { $PSScriptRoot }
@@ -134,12 +137,21 @@ try {
         RequireHash (SafePath $packageRoot $file.source) $file.sha256
         $null=SafePath $gameRoot $file.target
     }
-    # Runtime archive source: an explicit local file, or the already installed copy.
+    # Runtime archive source: an explicit local file, the already installed copy,
+    # or (interactive console, e.g. a double-clicked install.bat) a path typed in.
     $archiveSource=$null
     if(!$bundlesArchive) {
         $archivePath=SafePath $gameRoot $archiveTarget
-        if($RuntimeArchive) {
-            $archiveItem=Get-Item -LiteralPath $RuntimeArchive
+        $interactive=!$NoPrompt -and [Environment]::UserInteractive -and ![Console]::IsInputRedirected -and
+            !@([Environment]::GetCommandLineArgs() | Where-Object { $_ -match '^-NonI' }).Count
+        $archiveInput=$RuntimeArchive
+        if(!$archiveInput -and !((Test-Path -LiteralPath $archivePath -PathType Leaf) -and (Hash $archivePath) -eq $archiveHash) -and $interactive) {
+            Write-Host "This package contains no game-derived files. The two-player runtime archive (mgs-coop-player-runtime.dat, SHA-256 $archiveHash) is generated or copied on your own PC; see RUNTIME-ARCHIVE.txt."
+            $archiveInput=([string](Read-Host 'Full path of mgs-coop-player-runtime.dat')).Trim().Trim('"')
+            if(!$archiveInput) { throw 'No runtime archive path was entered; nothing was installed.' }
+        }
+        if($archiveInput) {
+            $archiveItem=Get-Item -LiteralPath $archiveInput
             if($archiveItem.PSIsContainer) { throw 'RuntimeArchive must be a file.' }
             $archiveSource=[IO.Path]::GetFullPath($archiveItem.FullName)
             RequireHash $archiveSource $archiveHash
@@ -147,7 +159,7 @@ try {
         } elseif((Test-Path -LiteralPath $archivePath -PathType Leaf) -and (Hash $archivePath) -eq $archiveHash) {
             $archiveSource='existing'
         } else {
-            throw "This package does not contain game-derived files. Pass -RuntimeArchive with your locally generated two-player runtime archive (SHA-256 $archiveHash)."
+            throw "This package does not contain game-derived files. Pass -RuntimeArchive with your locally generated two-player runtime archive (SHA-256 $archiveHash); install.bat asks for it when run from a console."
         }
     }
     $dllPath=SafePath $gameRoot 'dinput8.dll'

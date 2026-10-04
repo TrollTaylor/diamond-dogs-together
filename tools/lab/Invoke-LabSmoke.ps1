@@ -5,19 +5,34 @@ Log-only pass/fail smoke test of a running lab (synthesis section 3.5).
 
 .DESCRIPTION
 Reads the instances' logs from the offsets recorded by Start-Lab.ps1 (with
-FileShare.ReadWrite, the game keeps writing) and lab-status.json, then:
-  1. waits for the host (dynamite_host=returned; result=1, host_admission=authorized,
-     session_status=host_ready) and the guest (client_join=armed), bounded by
-     -ReadyTimeoutSec (people need time to click through the title screens);
+FileShare.ReadWrite, the game keeps writing), lab-status.json and fuse's request
+log, then:
+  1. waits, bounded by -ReadyTimeoutSec (people click through the title screens), for
+     - safety evidence for every instance: early.log saves=redirected (the lab
+       save_dir) and steam-observer.log master_server=redirected (the lab fuse
+       URL); guest also mutex=renamed and identity=fake (the lab SteamID);
+     - host: DirectInput8Create_hresult=0x00000000, install_result=0 installed=1,
+       mode=host_v3, dynamite_host=returned; result=1, host_admission=authorized,
+       dynamite_session=observed ... state=3 accept=1 ... consistent=1 and
+       session_status=host_ready;
+     - fuse traffic: CMD_GET_URLLIST and CMD_AUTH_STEAMTICKET at least once per
+       instance since fuse started (proves the run used the local fuse);
+     - guest: mode=client_v1; configured_host=1 and client_join=armed;
   2. creates the guest's mgs-coop/join.trigger (lab.ini join_trigger=1);
   3. PASS when guest session_status=client_established AND host
      session_status=host_peer_present hold for 2 consecutive polls within
-     -TimeoutSec of the trigger. FAIL on dynamite_client=refused,
-     request_started=0, client_join=refused, session_error, a process exit or a timeout.
-Writes result.json, log excerpts (script-observer, steam-observer, probe,
-early, loopback), lab-status.json copies and a fuse message summary into the
-run folder; captures screenshots unless -NoScreens. Exit code 0 = PASS.
-With -HostOnly runs (Start-Lab.ps1 -HostOnly) it checks host readiness only (M0).
+     -TimeoutSec of the trigger.
+FAIL at once on an unsafe line (saves=unchanged, master_server=refused/failed,
+identity=real, wrong dir/url/id, mutex=unchanged), host_id_mismatch (a
+host-steamid.txt written by this run's host differs from the guest's
+client-host.txt / peer_steamid), dynamite_client=refused, request_started=0,
+client_join=refused, session_error or a process exit. A timeout with fuse
+evidence missing is reported as not_under_fuse.
+Writes result.json, redacted log excerpts (script-observer, steam-observer,
+probe, early, loopback, fuse console), lab-status.json copies and a fuse message
+summary into the run folder; captures screenshots unless -NoScreens. Exit code
+0 = PASS. With -HostOnly runs (Start-Lab.ps1 -HostOnly) it checks the host and
+fuse only (M0). Nothing written to the run folder contains a real SteamID.
 
 -AutoTitle is BEST EFFORT: it focuses each window and sends scan-code key
 presses (~150 ms holds). Games often ignore synthetic input; use -Assist.
@@ -49,20 +64,37 @@ if (!$PollMs) { $PollMs = [int](Get-ConfigValue $config.Smoke 'pollMs' 2000) }
 $hostOnly = [bool](Get-ConfigValue $run 'host_only' $false)
 $roles = @($run.instances.PSObject.Properties.Name)
 if (!$hostOnly -and ($roles -notcontains 'guest')) { throw 'run.json has no guest instance.' }
+$labGuestId = [string](Get-ConfigValue $config.Identity 'guestSteamId' '76561202255233008')
+$polledLogs = @('script-observer.log', 'early.log', 'steam-observer.log', 'probe.log')
 
 $state = @{}
 foreach ($name in $roles) {
     $instance = $run.instances.$name
     $paths = Get-InstancePaths -GameDirectory ([string]$instance.dir)
-    $offset = [Int64](Get-ConfigValue $instance.log_offsets 'script-observer.log' 0)
+    $logs = @{}
+    foreach ($log in $polledLogs) {
+        $logs[$log] = [pscustomobject]@{ Offset = [Int64](Get-ConfigValue $instance.log_offsets $log 0); Text = [Text.StringBuilder]::new() }
+    }
     $state[$name] = [pscustomobject]@{
         Paths = $paths; Pid = [int](Get-ConfigValue $instance 'pid' 0); Exe = [string]$instance.exe
-        Offset = $offset; Text = [Text.StringBuilder]::new(); Status = $null; Alive = $true
+        StartUtc = (Get-ConfigValue $instance 'process_start_utc' (Get-ConfigValue $instance 'started_utc' $null))
+        Logs = $logs; Status = $null; Alive = $true; Safety = $null
+        Expectation = (Get-InstanceExpectation -Role $name -Instance $instance)
     }
     if (!$state[$name].Pid) { throw "[$name] run.json has no pid; was the instance started?" }
 }
+$fuseRun = Get-ConfigValue $run 'fuse' $null
+$fuseConsolePath = $null
+if ($fuseRun -and (Get-ConfigValue $fuseRun 'stdout' $null)) {
+    $fuseConsolePath = [string]$fuseRun.stdout
+    if (![IO.Path]::IsPathRooted($fuseConsolePath)) { $fuseConsolePath = Join-Path $runPath $fuseConsolePath }
+}
+$fuseConsole = [pscustomobject]@{ Offset = [Int64]0; Text = [Text.StringBuilder]::new() }
+$clientHostText = if (!$hostOnly) { Read-SharedText -Path $state.guest.Paths.ClientHost } else { '' }
+$guestPeer = if (!$hostOnly) { [string](Get-ConfigValue (ConvertFrom-IniText (Read-SharedText -Path $state.guest.Paths.LabIni)) 'peer_steamid' '') } else { '' }
 
 function Write-Phase([string]$Message) { Write-Output ('[{0:HH:mm:ss}] {1}' -f (Get-Date), $Message) }
+function Get-LogText([string]$Role, [string]$Log) { return $state[$Role].Logs[$Log].Text.ToString() }
 
 if ($Assist) {
     Write-Output ''
@@ -99,25 +131,48 @@ $triggerAt = $null
 $passPolls = 0
 $lastPhase = ''
 $verdict = $null
+$fuseCounts = @{}
+$fuseIdentity = $null
+$hostIdCheck = 'not_written'
 $aborted = $true
 try {
     while ($true) {
         foreach ($name in $roles) {
             $s = $state[$name]
-            $chunk = Read-LogFromOffset -Path (Join-Path $s.Paths.Mod 'script-observer.log') -Offset $s.Offset
-            if ($chunk.Truncated) { Write-Warning "[$name] script-observer.log shrank; reading from the start." }
-            if ($chunk.Text) { $null = $s.Text.Append($chunk.Text) }
-            $s.Offset = $chunk.NewOffset
+            foreach ($log in $polledLogs) {
+                $entry = $s.Logs[$log]
+                $chunk = Read-LogFromOffset -Path (Join-Path $s.Paths.Mod $log) -Offset $entry.Offset
+                if ($chunk.Truncated) { Write-Warning "[$name] $log shrank; reading from the start." }
+                if ($chunk.Text) { $null = $entry.Text.Append($chunk.Text) }
+                $entry.Offset = $chunk.NewOffset
+            }
             $s.Status = Read-LabStatus -Path $s.Paths.Status -ExpectedPid $s.Pid
             $s.Alive = $null -ne (Get-LiveProcess -Id $s.Pid -ExpectedPath $s.Exe)
+            $s.Safety = Get-InstanceSafety -Role $name -Expectation $s.Expectation -EarlyLog (Get-LogText $name 'early.log') -SteamLog (Get-LogText $name 'steam-observer.log')
+        }
+        if ($fuseRun) {
+            $files = Get-FuseMessageSummary -FuseDirectory ([string]$fuseRun.cwd) -SinceUnix ([Int64]$fuseRun.since_unix)
+            if ($fuseConsolePath) {
+                $chunk = Read-LogFromOffset -Path $fuseConsolePath -Offset $fuseConsole.Offset
+                if ($chunk.Text) { $null = $fuseConsole.Text.Append($chunk.Text) }
+                $fuseConsole.Offset = $chunk.NewOffset
+            }
+            $fuseIdentity = Get-FuseConsoleSummary -Text $fuseConsole.Text.ToString() -LabSteamId $labGuestId
+            $fuseCounts = Merge-FuseCounts $files $fuseIdentity.Counts
+        }
+        if (!$hostOnly) {
+            $hostIdText = Read-FreshText -Path $state.host.Paths.HostId -NotBeforeUtc $state.host.StartUtc
+            $hostIdCheck = Get-HostIdCheck -HostIdText $hostIdText -ClientHostText $clientHostText -PeerSteamId $guestPeer
         }
         $now = [DateTime]::UtcNow
-        $hostText = $state.host.Text.ToString()
-        $guestText = if ($hostOnly) { '' } else { $state.guest.Text.ToString() }
+        $hostText = Get-LogText 'host' 'script-observer.log'
+        $guestText = if ($hostOnly) { '' } else { Get-LogText 'guest' 'script-observer.log' }
         if ($NoTrigger -and !$hostOnly -and !$triggerCreated -and (Test-LogLine $guestText 'client_join=input_received')) {
             $triggerCreated = $true; $triggerAt = $now
         }
-        $verdict = Get-LabSmokeVerdict -HostLog $hostText -GuestLog $guestText `
+        $verdict = Get-LabSmokeVerdict -HostLog $hostText -GuestLog $guestText -HostProbeLog (Get-LogText 'host' 'probe.log') `
+            -HostSafety $state.host.Safety -GuestSafety $(if ($hostOnly) { $null } else { $state.guest.Safety }) `
+            -FuseCounts $fuseCounts -HostIdCheck $hostIdCheck `
             -HostStatus $state.host.Status -GuestStatus $(if ($hostOnly) { $null } else { $state.guest.Status }) `
             -HostAlive $state.host.Alive -GuestAlive $(if ($hostOnly) { $true } else { $state.guest.Alive }) `
             -TriggerCreated $triggerCreated -PreviousPassPolls $passPolls `
@@ -131,7 +186,8 @@ try {
             if ($mark[1] -and !$timings.Contains($mark[0] + '_sec')) { $timings[$mark[0] + '_sec'] = $elapsed }
         }
         if ($verdict.Phase -ne $lastPhase) {
-            Write-Phase ("phase={0} host_session={1} guest_session={2}" -f $verdict.Phase, $verdict.HostSession, $verdict.GuestSession)
+            $missingNote = if (@($verdict.Missing).Count) { ' missing=' + (@($verdict.Missing) -join ',') } else { '' }
+            Write-Phase ("phase={0} host_session={1} guest_session={2}{3}" -f $verdict.Phase, $verdict.HostSession, $verdict.GuestSession, $missingNote)
             $lastPhase = $verdict.Phase
         }
         if ($verdict.Verdict -ne 'pending') { break }
@@ -149,7 +205,8 @@ try {
     $verdictName = if ($aborted -or !$verdict) { 'aborted' } else { $verdict.Verdict }
     $reason = if ($aborted -or !$verdict) { 'interrupted' } else { $verdict.Reason }
 
-    # ------------------------------------------------------------ copy log excerpts
+    # ------------------------------------------------------------ redacted log excerpts
+    $keep = @($labGuestId)
     $files = [Collections.Generic.List[string]]::new()
     $evidence = [ordered]@{}
     foreach ($name in $roles) {
@@ -159,15 +216,15 @@ try {
         foreach ($log in Get-LabLogNames) {
             $start = [Int64](Get-ConfigValue $instance.log_offsets $log 0)
             $chunk = Read-LogFromOffset -Path (Join-Path $s.Paths.Mod $log) -Offset $start -MaxBytes 64MB
-            $texts[$log] = $chunk.Text
+            $texts[$log] = [string](Hide-SteamIds -Text $chunk.Text -Keep $keep)
             if ($chunk.Exists -and $chunk.Text) {
                 $target = "$name-$log"
-                [IO.File]::WriteAllText((Join-Path $runPath $target), $chunk.Text, [Text.UTF8Encoding]::new($false))
+                Write-RedactedText -Path (Join-Path $runPath $target) -Text $chunk.Text -Keep $keep
                 $files.Add($target)
             }
         }
         if (Test-Path -LiteralPath $s.Paths.Status -PathType Leaf) {
-            Copy-Item -LiteralPath $s.Paths.Status -Destination (Join-Path $runPath "$name-lab-status.json") -Force
+            Write-RedactedText -Path (Join-Path $runPath "$name-lab-status.json") -Text (Read-SharedText -Path $s.Paths.Status) -Keep $keep
             $files.Add("$name-lab-status.json")
         }
         $observer = $texts['script-observer.log']
@@ -188,15 +245,23 @@ try {
             master_server = (Get-LabEvidence -Text $texts['steam-observer.log'] -Prefixes @('master_server=redirected', 'master_server=refused', 'master_server=failed'))
             early = (Get-LabEvidence -Text $texts['early.log'] -Prefixes @('early=start', 'mutex=renamed', 'mutex=unchanged', 'identity=fake', 'identity=real', 'saves=redirected', 'saves=unchanged', 'xinput='))
             loopback = (Get-LabEvidence -Text $texts['loopback.log'] -Prefixes @('loopback=listening', 'loopback=hello', 'loopback=session_request_posted', 'loopback=accepted', 'loopback=connect_fail'))
+            safety = $(if ($s.Safety) { [ordered]@{ state = $s.Safety.State; reason = $s.Safety.Reason; missing = @($s.Safety.Missing) } } else { $null })
             final_status = $s.Status
             alive = $s.Alive
         }
     }
     $fuseMessages = $null
-    $fuseRun = Get-ConfigValue $run 'fuse' $null
     if ($fuseRun) {
         $fuseMessages = Get-FuseMessageSummary -FuseDirectory ([string]$fuseRun.cwd) -SinceUnix ([Int64]$fuseRun.since_unix)
-        foreach ($f in 'fuse-stdout.log', 'fuse-stderr.log') { if (Test-Path -LiteralPath (Join-Path $runPath $f)) { $files.Add($f) } }
+        foreach ($pair in @(@('stdout', 'fuse-stdout.redacted.log'), @('stderr', 'fuse-stderr.redacted.log'))) {
+            $source = [string](Get-ConfigValue $fuseRun $pair[0] '')
+            if (!$source) { continue }
+            if (![IO.Path]::IsPathRooted($source)) { $source = Join-Path $runPath $source }
+            if (Test-Path -LiteralPath $source -PathType Leaf) {
+                Write-RedactedText -Path (Join-Path $runPath $pair[1]) -Text (Read-SharedText -Path $source) -Keep $keep
+                $files.Add($pair[1])
+            }
+        }
     }
     $hashes = [ordered]@{}
     foreach ($name in $roles) {
@@ -213,8 +278,9 @@ try {
         } catch { Write-Warning "Screenshots failed: $($_.Exception.Message)" }
     }
     $result = [ordered]@{
-        product = 'mgs-coop-lab-smoke-result'; schema = 1
+        product = 'mgs-coop-lab-smoke-result'; schema = 2
         verdict = $verdictName; reason = $reason; phase = $(if ($verdict) { $verdict.Phase } else { '' })
+        missing = $(if ($verdict) { @($verdict.Missing) } else { @() })
         host_only = $hostOnly; trigger_mode = $(if ($NoTrigger) { 'manual_ctrl_f8' } else { 'join_trigger_file' })
         started_utc = $started.ToString('o'); finished_utc = $finished.ToString('o')
         duration_sec = [Math]::Round(($finished - $started).TotalSeconds, 1)
@@ -222,12 +288,20 @@ try {
         timings = $timings
         trigger = [ordered]@{ created = $triggerCreated; utc = $(if ($triggerAt) { $triggerAt.ToString('o') } else { $null }) }
         sessions = [ordered]@{ host = $(if ($verdict) { $verdict.HostSession } else { $null }); guest = $(if ($verdict -and !$hostOnly) { $verdict.GuestSession } else { $null }) }
-        pids = [ordered]@{}; hashes = $hashes; evidence = $evidence; fuse_messages = $fuseMessages
+        host_id_check = $(if ($hostOnly) { 'not_applicable' } else { $hostIdCheck })
+        pids = [ordered]@{}; hashes = $hashes; evidence = $evidence
+        fuse_messages = $fuseMessages; fuse_counts = $fuseCounts
+        fuse_identities = $(if ($fuseIdentity) {
+                [ordered]@{ distinct_auth_ids = $fuseIdentity.DistinctAuthIds; lab_guest_id_seen = $fuseIdentity.LabIdSeen; other_ids = $fuseIdentity.OtherAuthIds }
+            } else { $null })
         auto_title = $autoTitleLog; files = $files; screenshots = $screens
         limits = 'Single-PC loopback run: proves session and mod logic only, not Steam NAT, relay, latency or real-account behaviour.'
     }
     foreach ($name in $roles) { $result.pids[$name] = $state[$name].Pid }
     Write-JsonFile -Path (Join-Path $runPath 'result.json') -Value $result
+    if ($fuseIdentity -and !$hostOnly -and !$fuseIdentity.LabIdSeen -and (Get-CountValue $fuseCounts 'CMD_AUTH_STEAMTICKET') -gt 0) {
+        Write-Warning 'fuse never saw the lab guest SteamID in CMD_AUTH_STEAMTICKET: both instances may share one fuse identity (see tools/lab/README.md, fuse authentication).'
+    }
     Write-Output ''
     Write-Output ("RESULT: {0} ({1}); details: {2}" -f $verdictName.ToUpperInvariant(), $reason, (Join-Path $runPath 'result.json'))
 }

@@ -1,15 +1,21 @@
 #Requires -Version 7
 <#
 .SYNOPSIS
-Closes both lab games and fuse, then verifies the real save files' hashes.
+Closes this run's lab games and fuse, then verifies the real save files' hashes.
 
 .DESCRIPTION
-Posts WM_CLOSE to each game's main window, waits up to -TimeoutSec, then
-terminates what is still running (only processes whose executable is in the
-lab folders, or the run's fuse.exe). Afterwards it hashes the real
-Steam\userdata\<id>\287700\local and 311340\remote files and compares them with
-the manifest taken by Start-Lab.ps1 at run start and with the latest backup
-taken by Prepare-LabInstance.ps1. Writes stop.json into the run folder.
+Only processes this run started are closed and, if needed, terminated: the pid
+recorded in run.json, still running from the recorded executable path, with the
+recorded process start time (older run.json: started inside the run's launch
+window). Each gets WM_CLOSE; whatever is still running after -TimeoutSec is
+terminated. Any other mgsvtpp/mgsvmgo running from a lab folder (for example a
+normal session started from Steam after the run) is listed and left alone;
+-IncludeUnrecordedProcesses sends those WM_CLOSE only (never a forced
+termination) and also stops other fuse processes started from the lab fuse.exe.
+Afterwards it hashes the real Steam\userdata\<id>\287700\local and 311340\remote
+files and compares them with the manifest taken by Start-Lab.ps1 at run start
+and with the latest backup taken by Prepare-LabInstance.ps1. Writes stop.json
+(and a redacted copy of fuse's console log) into the run folder.
 Exit code 0 = real saves unchanged, 2 = a real save file changed (restore it
 from build/lab/save-backups/<ts>/files/), 1 = error.
 #>
@@ -18,7 +24,8 @@ param(
     [string]$ConfigPath = (Join-Path $PSScriptRoot 'lab.json'),
     [string]$RunDir,
     [int]$TimeoutSec = 60,
-    [switch]$KeepFuse
+    [switch]$KeepFuse,
+    [switch]$IncludeUnrecordedProcesses
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -26,69 +33,125 @@ Import-Module (Join-Path $PSScriptRoot 'LabCommon.psm1') -Force
 
 $config = Get-LabConfig -ConfigPath $ConfigPath
 $current = $null
-try { $current = Get-CurrentRun -Config $config -RunDir $RunDir } catch { Write-Warning "$($_.Exception.Message) Falling back to processes found in the lab folders." }
+try { $current = Get-CurrentRun -Config $config -RunDir $RunDir } catch { Write-Warning "$($_.Exception.Message) Only processes found in the lab folders are listed; none is closed without -IncludeUnrecordedProcesses." }
+
+function Test-SamePath([string]$A, [string]$B) {
+    return $A -and $B -and [IO.Path]::GetFullPath($A).Equals([IO.Path]::GetFullPath($B), [StringComparison]::OrdinalIgnoreCase)
+}
 
 # ---------------------------------------------------------------- targets
-$targets = [Collections.Generic.List[object]]::new()
+$recorded = @()
 if ($current) {
+    $runStart = Get-ConfigValue $current.Run 'started_utc' $null
     foreach ($name in $current.Run.instances.PSObject.Properties.Name) {
         $i = $current.Run.instances.$name
-        $p = Get-LiveProcess -Id ([int](Get-ConfigValue $i 'pid' 0)) -ExpectedPath ([string]$i.exe)
-        if ($p) { $targets.Add([pscustomobject]@{ Role = $name; Process = $p }) }
+        $id = [int](Get-ConfigValue $i 'pid' 0)
+        if (!$id) { continue }
+        $p = Get-Process -Id $id -ErrorAction SilentlyContinue
+        $path = if ($p) { Get-ProcessPathSafe $p } else { $null }
+        $recorded += [pscustomobject]@{
+            Role = $name; Id = $id; Alive = [bool]$p
+            PathMatches = [bool](Test-SamePath $path ([string]$i.exe))
+            IdentityVerified = [bool]($p -and (Test-RunProcessIdentity -ActualStartUtc (Get-ProcessStartUtc $p) `
+                        -RecordedStartUtc (Get-ConfigValue $i 'process_start_utc' $null) -NotBeforeUtc $runStart -NotAfterUtc (Get-ConfigValue $i 'started_utc' $null)))
+        }
+        if ($p -and !$recorded[-1].IdentityVerified) { Write-Warning "[$name] pid $id is running but is not the process this run started (path or start time differs)." }
     }
 }
+$found = @()
 foreach ($pair in @(@('host', $config.Paths.hostDir), @('guest', $config.Paths.guestDir))) {
     foreach ($row in @(Get-GameProcessInDirectory -Directory $pair[1])) {
-        if ($row.Unknown) { continue }
-        if (@($targets | Where-Object { $_.Process.Id -eq $row.Id }).Count) { continue }
-        $p = Get-Process -Id $row.Id -ErrorAction SilentlyContinue
-        if ($p) { $targets.Add([pscustomobject]@{ Role = $pair[0]; Process = $p }) }
+        if (!$row.Unknown) { $found += [pscustomobject]@{ Role = $pair[0]; Id = [int]$row.Id } }
     }
 }
+$targets = @(Select-LabStopTargets -Recorded $recorded -Found $found -IncludeUnrecorded:$IncludeUnrecordedProcesses)
 
 # ---------------------------------------------------------------- close games
 $outcome = [ordered]@{}
+$closing = [Collections.Generic.List[object]]::new()
 foreach ($t in $targets) {
-    $handle = Get-ProcessMainWindow -Id $t.Process.Id
+    $key = if ($t.Action -eq 'close_then_terminate') { $t.Role } else { "unrecorded-$($t.Role)-$($t.Id)" }
+    if ($t.Action -eq 'leave') {
+        $outcome[$key] = [ordered]@{ pid = $t.Id; action = 'left_running'; exit = 'running' }
+        Write-Warning "[$($t.Role)] pid $($t.Id) runs from the $($t.Role) lab folder but was not started by this run: left running. -IncludeUnrecordedProcesses sends it WM_CLOSE (never a forced termination)."
+        continue
+    }
+    $proc = Get-Process -Id $t.Id -ErrorAction SilentlyContinue
+    if (!$proc) { continue }
     $posted = $false
-    if ($PSCmdlet.ShouldProcess("$($t.Role) pid $($t.Process.Id)", 'Send WM_CLOSE')) { $posted = Close-GameWindow -Handle $handle }
-    $outcome[$t.Role] = [ordered]@{ pid = $t.Process.Id; wm_close_posted = [bool]$posted; exit = 'running' }
-    Write-Output "[$($t.Role)] WM_CLOSE posted: $posted"
+    if ($PSCmdlet.ShouldProcess("$($t.Role) pid $($t.Id)", 'Send WM_CLOSE')) { $posted = Close-GameWindow -Handle (Get-ProcessMainWindow -Id $t.Id) }
+    $outcome[$key] = [ordered]@{ pid = $t.Id; action = $t.Action; wm_close_posted = [bool]$posted; exit = 'running' }
+    $closing.Add([pscustomobject]@{ Key = $key; Target = $t; Process = $proc })
+    Write-Output "[$($t.Role)] pid $($t.Id) ($($t.Reason)): WM_CLOSE posted: $posted"
 }
 $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSec)
-while ($targets.Count -and [DateTime]::UtcNow -lt $deadline -and @($targets | Where-Object { !$_.Process.HasExited }).Count) { Start-Sleep -Milliseconds 500 }
-foreach ($t in $targets) {
-    if ($t.Process.HasExited) { $outcome[$t.Role].exit = 'closed'; continue }
-    if ($PSCmdlet.ShouldProcess("$($t.Role) pid $($t.Process.Id)", "Terminate after $TimeoutSec s")) {
-        Stop-Process -Id $t.Process.Id -Force -ErrorAction SilentlyContinue
-        $outcome[$t.Role].exit = 'terminated'
-        Write-Warning "[$($t.Role)] did not close within $TimeoutSec s; terminated. Its lab save copy may be incomplete (the real saves are separate)."
+while ($closing.Count -and [DateTime]::UtcNow -lt $deadline -and @($closing | Where-Object { !$_.Process.HasExited }).Count) { Start-Sleep -Milliseconds 500 }
+foreach ($c in $closing) {
+    if ($c.Process.HasExited) { $outcome[$c.Key].exit = 'closed'; continue }
+    if ($c.Target.Action -ne 'close_then_terminate') {
+        Write-Warning "[$($c.Target.Role)] pid $($c.Target.Id) (not started by this run) is still running after WM_CLOSE; it is not terminated."
+        continue
+    }
+    if ($PSCmdlet.ShouldProcess("$($c.Target.Role) pid $($c.Target.Id)", "Terminate after $TimeoutSec s")) {
+        try { $c.Process.Kill() } catch { Write-Warning "[$($c.Target.Role)] could not terminate pid $($c.Target.Id): $($_.Exception.Message)" }
+        $null = $c.Process.WaitForExit(5000)
+        $outcome[$c.Key].exit = 'terminated'
+        Write-Warning "[$($c.Target.Role)] did not close within $TimeoutSec s; terminated. Its lab save copy may be incomplete (the real saves are separate)."
     }
 }
 
 # ---------------------------------------------------------------- fuse
 $fuseState = 'not_running'
+$fuseRun = if ($current) { Get-ConfigValue $current.Run 'fuse' $null } else { $null }
 if (!$KeepFuse) {
-    $fuseIds = @()
-    $fuseRun = if ($current) { Get-ConfigValue $current.Run 'fuse' $null } else { $null }
-    if ($fuseRun) { $fuseIds += [int](Get-ConfigValue $fuseRun 'pid' 0) }
-    foreach ($p in @(Get-Process -Name fuse -ErrorAction SilentlyContinue)) { $fuseIds += $p.Id }
-    foreach ($id in ($fuseIds | Select-Object -Unique)) {
-        $p = Get-LiveProcess -Id $id -ExpectedPath $config.Paths.fuseExe
-        if (!$p) { continue }
-        if ($PSCmdlet.ShouldProcess("fuse pid $id", 'Stop')) { Stop-Process -Id $id -Force; $fuseState = 'stopped'; Write-Output "fuse (pid $id) stopped." }
+    $recordedFuse = 0
+    if ($fuseRun) {
+        $id = [int](Get-ConfigValue $fuseRun 'pid' 0)
+        $p = if ($id) { Get-Process -Id $id -ErrorAction SilentlyContinue } else { $null }
+        $hostStart = if ($current.Run.instances.PSObject.Properties.Name -contains 'host') { Get-ConfigValue $current.Run.instances.host 'started_utc' $null } else { $null }
+        $notAfter = if ($hostStart) { $hostStart } else { (ConvertTo-LabUtc $current.Run.started_utc).AddSeconds(60) }
+        if ($p -and (Test-SamePath (Get-ProcessPathSafe $p) $config.Paths.fuseExe) -and
+            (Test-RunProcessIdentity -ActualStartUtc (Get-ProcessStartUtc $p) -RecordedStartUtc (Get-ConfigValue $fuseRun 'process_start_utc' $null) `
+                -NotBeforeUtc $current.Run.started_utc -NotAfterUtc $notAfter)) {
+            $recordedFuse = $id
+            if ($PSCmdlet.ShouldProcess("fuse pid $id", 'Stop')) { $p.Kill(); $null = $p.WaitForExit(5000); $fuseState = 'stopped'; Write-Output "fuse (pid $id) stopped." }
+        }
     }
-} else { $fuseState = 'kept' }
+    foreach ($p in @(Get-Process -Name fuse -ErrorAction SilentlyContinue)) {
+        if ($p.Id -eq $recordedFuse -or !(Test-SamePath (Get-ProcessPathSafe $p) $config.Paths.fuseExe)) { continue }
+        if ($IncludeUnrecordedProcesses) {
+            if ($PSCmdlet.ShouldProcess("fuse pid $($p.Id) (not this run's)", 'Stop')) { $p.Kill(); $null = $p.WaitForExit(5000); Write-Output "fuse (pid $($p.Id), not this run's) stopped." }
+        } else { Write-Warning "fuse pid $($p.Id) (lab fuse.exe, not this run's) left running; -IncludeUnrecordedProcesses stops it." }
+    }
+} else {
+    $fuseState = 'kept'
+    Write-Warning 'fuse kept running (-KeepFuse). While it runs, the lab coop.ini sends a normal game start from the host folder to it.'
+}
+if ($current -and $fuseRun) {
+    foreach ($pair in @(@('stdout', 'fuse-stdout.redacted.log'), @('stderr', 'fuse-stderr.redacted.log'))) {
+        $source = [string](Get-ConfigValue $fuseRun $pair[0] '')
+        if ($source -and ![IO.Path]::IsPathRooted($source)) { $source = Join-Path $current.Dir $source }
+        if ($source -and (Test-Path -LiteralPath $source -PathType Leaf)) {
+            Write-RedactedText -Path (Join-Path $current.Dir $pair[1]) -Text (Read-SharedText -Path $source) -Keep @([string](Get-ConfigValue $config.Identity 'guestSteamId' ''))
+        }
+    }
+}
 
 # ---------------------------------------------------------------- real saves
 $saves = [ordered]@{ checked = $false; unchanged_since_run_start = $null; unchanged_since_backup = $null; details = @() }
 $beforeFile = if ($current) { [string](Get-ConfigValue $current.Run 'real_saves_before' '') } else { '' }
 if ($beforeFile) {
     $before = Get-Content -LiteralPath (Join-Path $current.Dir $beforeFile) -Raw | ConvertFrom-Json
-    $comparison = Compare-HashManifest -Expected @($before.files) -Actual (Get-RealSaveManifest -UserData ([string]$before.source_root))
-    $saves.checked = $true
-    $saves.unchanged_since_run_start = $comparison.Same
-    $saves.details += [ordered]@{ against = 'run_start'; changed = $comparison.Changed; missing = $comparison.Missing; added = $comparison.Added }
+    # The account folder lives in build/lab/private/ (older runs kept it in the manifest).
+    $privateState = [string](Get-ConfigValue $current.Run 'private_state' '')
+    $sourceRoot = if ($privateState -and (Test-Path -LiteralPath $privateState -PathType Leaf)) { [string](Get-Content -LiteralPath $privateState -Raw | ConvertFrom-Json).source_root }
+    elseif ([IO.Path]::IsPathRooted([string]$before.source_root)) { [string]$before.source_root } else { $null }
+    if ($sourceRoot) {
+        $comparison = Compare-HashManifest -Expected @($before.files) -Actual (Get-RealSaveManifest -UserData $sourceRoot)
+        $saves.checked = $true
+        $saves.unchanged_since_run_start = $comparison.Same
+        $saves.details += [ordered]@{ against = 'run_start'; changed = $comparison.Changed; missing = $comparison.Missing; added = $comparison.Added }
+    } else { Write-Warning 'The run-start save manifest has no local source root (build/lab/private missing); comparing with the backup only.' }
 }
 $backupDir = if ($current -and (Get-ConfigValue $current.Run 'latest_save_backup' $null)) { [string]$current.Run.latest_save_backup } else {
     $pointer = Join-Path $config.Paths.runDir 'latest-save-backup.json'
@@ -98,7 +161,7 @@ if ($backupDir -and (Test-Path -LiteralPath (Join-Path $backupDir 'manifest.json
     $check = Test-RealSavesAgainstBackup -BackupDirectory $backupDir
     $saves.checked = $true
     $saves.unchanged_since_backup = $check.Comparison.Same
-    $saves.details += [ordered]@{ against = $backupDir; changed = $check.Comparison.Changed; missing = $check.Comparison.Missing; added = $check.Comparison.Added }
+    $saves.details += [ordered]@{ against = 'latest_backup'; backup = (Split-Path -Leaf $backupDir); changed = $check.Comparison.Changed; missing = $check.Comparison.Missing; added = $check.Comparison.Added }
 }
 foreach ($d in $saves.details) {
     $same = (@($d.changed).Count + @($d.missing).Count + @($d.added).Count) -eq 0
@@ -107,9 +170,16 @@ foreach ($d in $saves.details) {
 }
 if (!$saves.checked) { Write-Warning 'No save manifest to compare against (run Prepare-LabInstance.ps1 / Start-Lab.ps1 first).' }
 
+# ---------------------------------------------------------------- lingering lab redirect
+$hostCoop = (Get-InstancePaths -GameDirectory $config.Paths.hostDir).CoopIni
+$labCoop = (Test-Path -LiteralPath $hostCoop -PathType Leaf) -and (Test-LabGeneratedText (Read-SharedText -Path $hostCoop))
+if ($labCoop) {
+    Write-Warning "The host folder still has the lab coop.ini: a normal game start from $($config.Paths.hostDir) is sent to the local fuse (or runs offline when fuse is stopped). Run tools/lab/Prepare-LabInstance.ps1 -Disable before normal online play."
+}
+
 $stop = [ordered]@{
     product = 'mgs-coop-lab-stop'; finished_utc = [DateTime]::UtcNow.ToString('o')
-    games = $outcome; fuse = $fuseState; real_saves = $saves
+    games = $outcome; fuse = $fuseState; real_saves = $saves; host_lab_coop_ini_present = [bool]$labCoop
 }
 if ($current) { Write-JsonFile -Path (Join-Path $current.Dir 'stop.json') -Value $stop }
 # The run-start manifest is authoritative (normal play between Prepare and Start

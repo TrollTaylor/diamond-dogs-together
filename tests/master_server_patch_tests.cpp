@@ -1,7 +1,8 @@
 // Master-server redirect: pure decision logic against synthetic images, plus the
 // Win32 Install path against a synthetic in-process image (never the game).
 // Run without arguments for validation/planning/in-place; with "retarget" for
-// the lea retarget path (Install keeps once-per-process state).
+// the lea retarget path and "retarget_loopback" for a long loopback URL
+// (Install keeps once-per-process state, so each mode is its own process).
 #include "mgscoop/master_server_patch.hpp"
 #include "master_server_contract.hpp"
 #define WIN32_LEAN_AND_MEAN
@@ -76,6 +77,36 @@ void TestValidation() {
     Check(ValidateUrl("https://tppstm/gate", length) == UrlStatus::missing_host, "https suffix overlaps scheme");
     Check(ValidateUrl("http://h/tppstm/gate", length) == UrlStatus::ok && length == 20, "one-char host");
     Check(std::strcmp(UrlStatusName(UrlStatus::missing_host), "missing_host") == 0, "status name");
+}
+
+void TestLoopback() {
+    Check(IsLoopbackUrl(kLabUrl), "127.0.0.1 with port");
+    Check(IsLoopbackUrl("http://127.0.0.1/tppstm/gate"), "127.0.0.1 without port");
+    Check(IsLoopbackUrl("https://127.0.0.1:443/tppstm/gate"), "https loopback");
+    Check(IsLoopbackUrl("http://localhost:6667/tppstm/gate"), "localhost");
+    Check(IsLoopbackUrl("http://LocalHost:6667/tppstm/gate"), "localhost any case");
+    Check(IsLoopbackUrl("http://[::1]:6667/tppstm/gate"), "[::1] with port");
+    Check(IsLoopbackUrl("http://[::1]/tppstm/gate"), "[::1] without port");
+    Check(IsLoopbackUrl("http://127.0.0.1:65535/tppstm/gate"), "max port");
+    Check(IsLoopbackUrl("http://127.0.0.1:6667/sub/tppstm/gate"), "extra path segment");
+    Check(!IsLoopbackUrl("https://mgstpp-game.konamionline.com/tppstm/gate"), "konami refused");
+    Check(!IsLoopbackUrl("http://127.0.0.1@mgstpp-game.konamionline.com/tppstm/gate"), "userinfo before real host");
+    Check(!IsLoopbackUrl("http://evil@127.0.0.1:6667/tppstm/gate"), "any userinfo refused");
+    Check(!IsLoopbackUrl("http://127.0.0.1.example.com/tppstm/gate"), "loopback prefix of another host");
+    Check(!IsLoopbackUrl("http://localhost.example.com/tppstm/gate"), "localhost prefix of another host");
+    Check(!IsLoopbackUrl("http://127.0.0.2:6667/tppstm/gate"), "other 127/8 address refused (strict)");
+    Check(!IsLoopbackUrl("http://0.0.0.0:6667/tppstm/gate"), "any-address refused");
+    Check(!IsLoopbackUrl("http://[::2]:6667/tppstm/gate"), "other ipv6 refused");
+    Check(!IsLoopbackUrl("http://[::1:6667/tppstm/gate"), "unterminated bracket");
+    Check(!IsLoopbackUrl("http://[::1]x/tppstm/gate"), "garbage after bracket");
+    Check(!IsLoopbackUrl("http://127.0.0.1:0/tppstm/gate"), "port 0");
+    Check(!IsLoopbackUrl("http://127.0.0.1:65536/tppstm/gate"), "port 65536");
+    Check(!IsLoopbackUrl("http://127.0.0.1:123456/tppstm/gate"), "six-digit port");
+    Check(!IsLoopbackUrl("http://127.0.0.1:/tppstm/gate"), "empty port");
+    Check(!IsLoopbackUrl("http://127.0.0.1:66a7/tppstm/gate"), "non-digit port");
+    Check(!IsLoopbackUrl("http://127.0.0.1:6667:1/tppstm/gate"), "two ports");
+    Check(!IsLoopbackUrl("http://127.0.0.1:6667/tppstm/main"), "invalid gate url refused");
+    Check(!IsLoopbackUrl(nullptr) && !IsLoopbackUrl(""), "null and empty");
 }
 
 void TestRetailContract() {
@@ -264,6 +295,7 @@ void TestInstallInPlace() {
     SyntheticImage image = MakeImage();
     std::vector<unsigned char> before(image.base + site.context_rva, image.base + site.string_rva + 0x40);
 
+    Check(!RedirectedToLoopback(), "not redirected before Install");
     ClearLog();
     Check(Install(image.base, image.span, nullptr, &CaptureLog) && log_lines == 0, "null url no-op");
     Check(Install(image.base, image.span, "", &CaptureLog) && log_lines == 0, "empty url no-op");
@@ -285,6 +317,7 @@ void TestInstallInPlace() {
     image.base[site.lea_rva + 1] = 0x8d;
     Check(VirtualProtect(image.base + 0x7D3000, 0x1000, PAGE_EXECUTE_READ, &old) != 0, "reprotect code");
     Check(std::memcmp(before.data(), image.base + site.context_rva, before.size()) == 0, "refusals wrote nothing");
+    Check(!RedirectedToLoopback(), "refusals leave the loopback flag clear");
 
     ClearLog();
     Check(Install(image.base, image.span, kLabUrl, &CaptureLog), "in-place install");
@@ -298,10 +331,12 @@ void TestInstallInPlace() {
     Check(std::memcmp(before.data(), image.base + site.context_rva, site.context_size) == 0, "code untouched in place");
     Check(Protection(image.base + site.string_rva) == PAGE_READONLY, "string protection restored");
     Check(Protection(image.base + site.lea_rva) == PAGE_EXECUTE_READ, "code protection untouched");
+    Check(RedirectedToLoopback(), "verified loopback redirect reported");
     ClearLog();
     Check(Install(image.base, image.span, kLabUrl, &CaptureLog) && log_lines == 0, "repeat same url is a quiet no-op");
     Check(!Install(image.base, image.span, "http://127.0.0.2:6667/tppstm/gate", &CaptureLog), "different url refused");
     Check(std::strcmp(log_text, "master_server=refused; reason=already_redirected\r\n") == 0, "already log");
+    Check(RedirectedToLoopback(), "a later refusal keeps the verified redirect state");
 }
 
 void TestInstallRetarget() {
@@ -309,7 +344,9 @@ void TestInstallRetarget() {
     SyntheticImage image = MakeImage();
     const std::string url = UrlOfLength(64, "https://");
     ClearLog();
+    Check(!RedirectedToLoopback(), "retarget: not redirected before Install");
     Check(Install(image.base, image.span, url.c_str(), &CaptureLog), "retarget install");
+    Check(!RedirectedToLoopback(), "a non-loopback redirect is not reported as loopback");
     const std::string expected = "master_server=redirected; method=lea_retarget; url=" + url + "\r\n";
     Check(expected == log_text, "retarget log");
     Check(std::memcmp(image.base + site.string_rva, site.original, site.original_length + 1) == 0, "original string kept");
@@ -327,6 +364,29 @@ void TestInstallRetarget() {
     ClearLog();
     Check(Install(image.base, image.span, url.c_str(), &CaptureLog) && log_lines == 0, "retarget repeat no-op");
 }
+
+// A loopback URL longer than the original string takes the retarget path and
+// sets the loopback flag only after the effective string is verified.
+bool ReadImageDirect(void* context, std::uintptr_t rva, void* out, std::size_t size) noexcept {
+    const auto* image = static_cast<const SyntheticImage*>(context);
+    if (rva > image->span || size > image->span - rva) return false;
+    std::memcpy(out, image->base + rva, size);
+    return true;
+}
+void TestInstallRetargetLoopback() {
+    SyntheticImage image = MakeImage();
+    std::string url = "http://localhost:6667/";
+    url += std::string(60 - url.size() - 12, 'p');
+    url += "/tppstm/gate";
+    Check(url.size() == 60 && IsLoopbackUrl(url.c_str()), "60-char loopback url");
+    Check(PlanRedirect(RetailSite(), image.span, &ReadImageDirect, &image, url.c_str()).method == Method::lea_retarget,
+          "loopback url beyond 48 chars retargets");
+    Check(!RedirectedToLoopback(), "loopback retarget: clear before Install");
+    ClearLog();
+    Check(Install(image.base, image.span, url.c_str(), &CaptureLog), "loopback retarget install");
+    Check(("master_server=redirected; method=lea_retarget; url=" + url + "\r\n") == log_text, "loopback retarget log");
+    Check(RedirectedToLoopback(), "loopback retarget reported");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -335,7 +395,13 @@ int main(int argc, char** argv) {
         std::printf("%u master-server retarget checks passed; synthetic in-process image only\n", checks);
         return 0;
     }
+    if (argc > 1 && std::strcmp(argv[1], "retarget_loopback") == 0) {
+        TestInstallRetargetLoopback();
+        std::printf("%u master-server loopback retarget checks passed; synthetic in-process image only\n", checks);
+        return 0;
+    }
     TestValidation();
+    TestLoopback();
     TestRetailContract();
     TestPlanning();
     TestSyntheticSite();
