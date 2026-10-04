@@ -50,3 +50,14 @@ How to read the fields:
 `SetAllInstanceActiveMode(true)` realizes instance 1. `CopyPartsInfoFromLocalPlayer`
 loads its parts (about 0.5 s). Warp moves it. Our UDP link carries poses both ways
 at about 30 Hz, live.
+
+## Follow-up (static, same day)
+
+- `q30` read as a u32 is really four u8 array elements packed back to back:
+  [stance0, stance1, speed0, speed1] (Q allocator 0xFDF010; Q+0x18 is u16[n],
+  Q+0x28/0x30/0x38 are u8[n], n = *(u32*)(S+0x40) = 2). Byte 1 = 1 is
+  instance 1's own stance (stand) and byte 2 = `q38` is speed0. `ReadAnim` now
+  reads each slot separately.
+- The implementation that acts on these findings (anim sync, the native body
+  transform, appearance sync, the character in offline-v1) and its live
+  experiments: [partner-anim-appearance.md](partner-anim-appearance.md).

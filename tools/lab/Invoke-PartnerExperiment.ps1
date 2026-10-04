@@ -35,7 +35,7 @@ pwsh -File tools/lab/Invoke-PartnerExperiment.ps1 -Experiment E0 -NoInput
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E8')][string]$Experiment,
+    [Parameter(Mandatory)][ValidateSet('E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E8', 'A0', 'A1', 'A3', 'M1', 'N1', 'B1', 'B4', 'C1')][string]$Experiment,
     [string]$ConfigPath = (Join-Path $PSScriptRoot 'lab.json'),
     [string]$RunDir,
     [ValidateRange(0, 7200)][int]$TimeoutSec = 0,
@@ -61,6 +61,16 @@ function Write-Step([string]$Message) { Write-Output ('[{0:HH:mm:ss}] {1}' -f (G
 function Get-StepRoles([string]$Role) { if ($Role -eq 'both') { return @(@('host', 'guest') | Where-Object { $available -contains $_ }) } return @($Role) }
 
 Write-Step "$Experiment on $($current.Dir) (timeout $TimeoutSec s)"
+if ($Experiment.StartsWith('E')) {
+    # The proven E-series ran with the default characters; lab.json
+    # offline.characters now makes the guest play Quiet (animation/appearance test).
+    foreach ($role in @('host', 'guest') | Where-Object { $available -contains $_ }) {
+        $character = [string](ConvertFrom-IniText (Read-SharedText -Path (Get-InstancePaths -GameDirectory $dirs[$role]).CoopIni))['character']
+        if ($character -and $character -cne 'default') {
+            Write-Step "note: the $role plays '$character' (coop.ini); for a regression rerun of the proven E-series prepare with Prepare-LabInstance.ps1 -Offline -Character default"
+        }
+    }
+}
 foreach ($step in $plan.Steps) {
     switch ($step.Kind) {
         'trigger' {

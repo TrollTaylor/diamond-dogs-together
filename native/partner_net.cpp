@@ -27,7 +27,15 @@ bool g_have_last = false;
 std::uint32_t g_last_seq = 0;
 std::uint64_t g_last_rx_ms = 0;
 bool g_first_logged = false;
+// Received look (guarded by g_lock).
+RemoteLook g_look{};
 volatile LONG g_drop_epoch = 0, g_drop_seq = 0, g_drop_bad = 0;
+// Look send side (game thread only).
+partner::Look g_look_sent{};
+bool g_look_sent_valid = false;
+std::uint16_t g_look_rev = 0;
+std::uint64_t g_look_send_ms = 0;
+volatile LONG g_look_resend = 1;
 // Send side: sequence and rate are game-thread only; the last send time is
 // shared with the keepalive timer.
 std::uint32_t g_seq = 0;
@@ -79,7 +87,33 @@ void SendKeepalive() noexcept {
     g_transport.transmit(&chunk, 1, true);
 }
 
-// Receive thread: decode and enqueue only.
+// Receive thread: a look frame (already decoded). Stores it for the current
+// epoch; logs only when the values or the revision change.
+void OnLook(const sync::LookPacket& packet, std::uint32_t epoch) noexcept {
+    const LONG current = g_epoch;
+    if (!current || epoch != static_cast<std::uint32_t>(current)) {
+        InterlockedIncrement(&g_drop_epoch);
+        return;
+    }
+    const partner::Look look{packet.type, packet.parts, packet.camo, packet.hand, packet.face, packet.face_equip};
+    bool changed = false;
+    AcquireSRWLockExclusive(&g_lock);
+    changed = !g_look.valid || g_look.revision != packet.revision || !partner::SameLook(g_look.look, look);
+    g_look.valid = true;
+    g_look.look = look;
+    g_look.revision = packet.revision;
+    g_look.rx_ms = NowMs();
+    ReleaseSRWLockExclusive(&g_lock);
+    if (!changed) return;
+    char line[160]{};
+    if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
+            "partner_net=look_rx; type=%u; parts=%u; camo=%u; hand=%u; face=%u; fe=%u; rev=%u; loaded=%u\r\n",
+            unsigned(look.type), unsigned(look.parts), unsigned(look.camo), unsigned(look.hand), unsigned(look.face),
+            unsigned(look.face_equip), unsigned(packet.revision), (packet.flags & sync::LookFlag::PartsLoaded) ? 1u : 0u)))
+        Log(line);
+}
+
+// Receive thread: decode and enqueue only. Order: keepalive, look, transform.
 void OnDatagram(void*, const std::uint8_t* data, std::size_t size) noexcept {
     const DWORD error = GetLastError();
     std::uint64_t session = 0;
@@ -88,9 +122,18 @@ void OnDatagram(void*, const std::uint8_t* data, std::size_t size) noexcept {
         SetLastError(error);
         return;
     }
-    sync::PlayerTransformPacket packet{};
     std::uint32_t epoch = 0;
-    if (!sync::decode_transform_frame(data, size, session, epoch, packet) || session != kSession) {
+    sync::LookPacket look{};
+    if (sync::decode_look_frame(data, size, session, epoch, look)) {
+        if (session != kSession) InterlockedIncrement(&g_drop_bad);
+        else OnLook(look, epoch);
+        SetLastError(error);
+        return;
+    }
+    sync::PlayerTransformPacket packet{};
+    sync::AnimState anim{};
+    bool has_anim = false;
+    if (!sync::decode_partner_transform_frame(data, size, session, epoch, packet, anim, has_anim) || session != kSession) {
         InterlockedIncrement(&g_drop_bad);
         SetLastError(error);
         return;
@@ -102,7 +145,9 @@ void OnDatagram(void*, const std::uint8_t* data, std::size_t size) noexcept {
         return;
     }
     const std::uint64_t now = NowMs();
-    const pose::Snapshot snapshot{packet.tick_ms, packet.x, packet.y, packet.z, packet.rot_y, packet.stance, packet.action_flags};
+    const bool anim_valid = has_anim && (anim.flags & sync::AnimFlag::Valid) != 0;
+    const pose::Snapshot snapshot{packet.tick_ms, packet.x, packet.y, packet.z, packet.rot_y, packet.stance, packet.action_flags,
+                                  anim_valid, anim.act, anim.stance, anim.speed};
     bool accepted = true, first = false;
     AcquireSRWLockExclusive(&g_lock);
     const bool restart_gap = g_have_last && now - g_last_rx_ms > kRestartGapMs;
@@ -214,7 +259,7 @@ bool Running() noexcept { return g_running != 0; }
 
 void SetEpoch(std::uint32_t epoch) noexcept { InterlockedExchange(&g_epoch, static_cast<LONG>(epoch)); }
 
-bool SubmitLocal(const partner::Tick& tick) noexcept {
+bool SubmitLocal(const partner::Tick& tick, const sync::AnimState& anim) noexcept {
     if (!g_running) return false;
     const LONG epoch = g_epoch;
     if (!epoch) return false;
@@ -224,16 +269,58 @@ bool SubmitLocal(const partner::Tick& tick) noexcept {
     // 2 ms tolerance keeps a 60 Hz caller on an exact 30/60 Hz cadence.
     if (g_last_frame_us && now_us - g_last_frame_us + 2000 < interval_us) { SetLastError(error); return false; }
     const auto packet = partner::MakeTransform(tick, ++g_seq, static_cast<std::uint32_t>(now_us / 1000));
-    std::uint8_t frame[sync::transform_frame_size];
     bool sent = false;
-    if (sync::encode_transform_frame(kSession, static_cast<std::uint32_t>(epoch), packet, frame)) {
-        const lab::WireChunk chunk{frame, sizeof(frame)};
-        sent = g_transport.transmit(&chunk, 1, true);
+    if ((anim.flags & sync::AnimFlag::Valid) && sync::valid_anim(anim)) {
+        std::uint8_t frame[sync::transform_anim_frame_size];
+        if (sync::encode_transform_anim_frame(kSession, static_cast<std::uint32_t>(epoch), packet, anim, frame)) {
+            const lab::WireChunk chunk{frame, sizeof(frame)};
+            sent = g_transport.transmit(&chunk, 1, true);
+        }
+    } else {
+        std::uint8_t frame[sync::transform_frame_size];
+        if (sync::encode_transform_frame(kSession, static_cast<std::uint32_t>(epoch), packet, frame)) {
+            const lab::WireChunk chunk{frame, sizeof(frame)};
+            sent = g_transport.transmit(&chunk, 1, true);
+        }
     }
     g_last_frame_us = now_us;
     InterlockedExchange64(&g_last_send_ms, static_cast<LONG64>(now_us / 1000));
     SetLastError(error);
     return sent;
+}
+
+bool SubmitLook(const partner::Look& look) noexcept {
+    if (!g_running) return false;
+    const LONG epoch = g_epoch;
+    if (!epoch) return false;
+    const DWORD error = GetLastError();
+    const std::uint64_t now = NowMs();
+    const bool changed = !g_look_sent_valid || !partner::SameLook(g_look_sent, look);
+    const bool resend = InterlockedExchange(&g_look_resend, 0) != 0;
+    if (!changed && !resend && now - g_look_send_ms < kLookHeartbeatMs) { SetLastError(error); return false; }
+    if (changed) {
+        g_look_rev = static_cast<std::uint16_t>(g_look_rev == 0xFFFF ? 1 : g_look_rev + 1);
+        g_look_sent = look;
+        g_look_sent_valid = true;
+    }
+    sync::LookPacket packet{look.type, look.parts, look.camo, look.hand, look.face, look.face_equip, sync::LookFlag::PartsLoaded,
+                            g_look_rev};
+    std::uint8_t frame[sync::look_frame_size];
+    bool sent = false;
+    if (sync::encode_look_frame(kSession, static_cast<std::uint32_t>(epoch), packet, frame)) {
+        const lab::WireChunk chunk{frame, sizeof(frame)};
+        sent = g_transport.transmit(&chunk, 1, true);
+    }
+    g_look_send_ms = now;
+    SetLastError(error);
+    return sent;
+}
+
+RemoteLook SampleLook() noexcept {
+    AcquireSRWLockShared(&g_lock);
+    const RemoteLook look = g_look;
+    ReleaseSRWLockShared(&g_lock);
+    return look;
 }
 
 pose::Sample SampleRemote(std::uint32_t delay_ms) noexcept {
@@ -251,7 +338,9 @@ void ResetRemote() noexcept {
     g_last_seq = 0;
     g_last_rx_ms = 0;
     g_first_logged = false;
+    g_look = RemoteLook{};
     ReleaseSRWLockExclusive(&g_lock);
+    InterlockedExchange(&g_look_resend, 1);
 }
 
 void RecordNativeMicros(std::uint32_t micros) noexcept {

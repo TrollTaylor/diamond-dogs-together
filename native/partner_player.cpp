@@ -120,6 +120,9 @@ struct Preserve {
     ~Preserve() { SetLastError(error); }
 };
 
+// 0 (unpinned) stays 0.
+std::uintptr_t Pinned(std::uintptr_t base, std::uintptr_t rva) noexcept { return rva ? base + rva : 0; }
+
 // Shared prologue of every write: fresh read, then the mandatory guards.
 const char* Prepare(const Addresses& a, std::uint32_t index, bool terminating, WriteKind kind, State& state) noexcept {
     state = State{};
@@ -144,6 +147,20 @@ Addresses AddressesFor(const void* base) noexcept {
     a.record_bank = b + c::record_bank_rva;
     a.record_base = b + c::record_base_rva;
     a.mirror_object = b + c::mirror_object_rva;
+    a.image_base = b;
+    a.code_begin = b + c::code_begin_rva;
+    a.code_end = b + c::code_end_rva;
+    a.image_begin = b;
+    a.image_end = b + c::image_span;
+    a.block_vtable = b + c::block_vtable_rva;
+    a.ps_vtable = b + c::ps_vtable_rva;
+    a.set_stance = b + c::set_stance_rva;
+    a.ps_component = b + c::ps_component_rva;
+    a.cs_vtable = b + c::cs_vtable_rva;
+    a.get_transform = b + c::get_transform_rva;
+    a.t_vtable = Pinned(b, c::t_vtable_rva);
+    a.a0_vtable = Pinned(b, c::a0_vtable_rva);
+    a.c0_vtable = Pinned(b, c::c0_vtable_rva);
     return a;
 }
 
@@ -327,14 +344,356 @@ bool ReadAnim(const State& s, Anim& out) noexcept {
                     ReadValue(s.Q + c::q_anim_30, p30) && ReadValue(s.Q + c::q_anim_38, p38) &&
                     ReadValue(s.Q + c::q_anim_d8, pd8) && ReadValue(s.Q + c::q_rec_1d8, r1d8) &&
                     ReadValue(s.Q + c::q_rec_1e0, r1e0) && ReadValue(s.Q + c::q_rec_1f8, r1f8) &&
-                    ReadValue(p18, out.q18) && ReadValue(p28, out.q28) && ReadValue(p30, out.q30) &&
-                    ReadValue(p38, out.q38) && ReadValue(pd8, out.qd8) && ReadBlock(r1d8, r1, sizeof(r1)) &&
+                    ReadBlock(p18, out.act, sizeof(out.act)) && ReadBlock(p28, out.q28, sizeof(out.q28)) &&
+                    ReadBlock(p30, out.stance, sizeof(out.stance)) && ReadBlock(p38, out.speed, sizeof(out.speed)) &&
+                    ReadBlock(pd8, out.qd8, sizeof(out.qd8)) && ReadBlock(r1d8, r1, sizeof(r1)) &&
                     ReadBlock(r1e0, r2, sizeof(r2)) && ReadBlock(r1f8, r3, sizeof(r3));
     if (!ok) { out = Anim{}; return false; }
     out.m1d8 = Fnv1a(r1, sizeof(r1));
     out.m1e0 = Fnv1a(r2, sizeof(r2));
     out.m1f8 = Fnv1a(r3, sizeof(r3));
     return true;
+}
+
+sync::AnimState AnimSlot(const Anim& anim, std::uint32_t index) noexcept {
+    sync::AnimState state{};
+    if (index >= 2) return state;
+    state.act = anim.act[index];
+    if (anim.stance[index] >= 1 && anim.stance[index] <= 3 && anim.speed[index] <= 3) {
+        state.stance = anim.stance[index];
+        state.speed = anim.speed[index];
+        state.flags = sync::AnimFlag::Valid;
+    }
+    return state;
+}
+
+bool ReadLooks(const State& s, Looks& out) noexcept {
+    const Preserve preserve;
+    out = Looks{};
+    if (!s.Q) return false;
+    std::uintptr_t pt = 0, pp_ = 0, pc = 0, ph = 0, pf = 0, pe = 0;
+    std::uint8_t type[2]{}, parts[2]{}, camo[2]{}, hand[2]{}, face_equip[2]{};
+    std::uint16_t face[2]{};
+    const bool ok = ReadValue(s.Q + c::q_look_type, pt) && ReadValue(s.Q + c::q_look_parts, pp_) &&
+                    ReadValue(s.Q + c::q_look_camo, pc) && ReadValue(s.Q + c::q_look_hand, ph) &&
+                    ReadValue(s.Q + c::q_look_face, pf) && ReadValue(s.Q + c::q_look_face_equip, pe) &&
+                    ReadBlock(pt, type, sizeof(type)) && ReadBlock(pp_, parts, sizeof(parts)) && ReadBlock(pc, camo, sizeof(camo)) &&
+                    ReadBlock(ph, hand, sizeof(hand)) && ReadBlock(pf, face, sizeof(face)) &&
+                    ReadBlock(pe, face_equip, sizeof(face_equip));
+    if (!ok) return false;
+    for (unsigned i = 0; i < 2; ++i) out.look[i] = partner::Look{type[i], parts[i], camo[i], hand[i], face[i], face_equip[i]};
+    return true;
+}
+
+namespace {
+bool InRange(std::uintptr_t value, std::uintptr_t begin, std::uintptr_t end) noexcept {
+    return begin < end && value >= begin && value < end;
+}
+std::uintptr_t Rva(const Addresses& a, std::uintptr_t value) noexcept {
+    return a.image_base && value >= a.image_base ? value - a.image_base : value;
+}
+// A component callable through `slot` (and optionally `slot2`): non-null, its
+// vtable inside the image (equal to `pinned` when pinned), targets in code.
+bool Callable(const Addresses& a, std::uintptr_t object, std::size_t slot, std::size_t slot2, std::uintptr_t pinned,
+              std::uintptr_t& vt, std::uintptr_t& target, std::uintptr_t& target2) noexcept {
+    vt = target = target2 = 0;
+    if (!object || !ReadValue(object, vt) || !InRange(vt, a.image_begin, a.image_end)) return false;
+    if (pinned && vt != pinned) return false;
+    if (!ReadValue(vt + slot, target) || !InRange(target, a.code_begin, a.code_end)) return false;
+    if (slot2 && (!ReadValue(vt + slot2, target2) || !InRange(target2, a.code_begin, a.code_end))) return false;
+    return true;
+}
+// The core chain (block, PS) of instance k; nullptr when it holds.
+const char* ResolveCore(const Addresses& a, const State& s, std::uint32_t k, Block& b) noexcept {
+    if (k >= 2 || !Realized(s, k)) return "unrealized";
+    b.id = s.ids[k];
+    std::uintptr_t blocks = 0, table = 0, listed = 0, owner = 0;
+    if (!ReadValue(s.P + c::p_blocks, blocks) || !blocks) return "blk_vtable";
+    b.blk = blocks + static_cast<std::uintptr_t>(s.pool[k]) * c::block_stride;
+    if (!ReadValue(b.blk, b.blk_vt) || b.blk_vt != a.block_vtable) return "blk_vtable";
+    if (!ReadValue(s.P + c::p_block_table, table) || !ReadValue(table + 8 * static_cast<std::uintptr_t>(s.pool[k]), listed) ||
+        listed != b.blk || !ReadValue(b.blk + c::blk_owner, owner) || owner != s.P) return "blk_owner";
+    if (!ReadValue(b.blk + c::blk_id_count, b.id_count) || !ReadValue(b.blk + c::blk_base_id, b.base_id) ||
+        b.id < b.base_id || b.id - b.base_id >= b.id_count) return "blk_index";
+    std::uintptr_t slot0 = 0, back = 0;
+    std::uint32_t ps_base = 0;
+    if (!ReadValue(b.blk + c::blk_ps, b.ps) || !b.ps || !ReadValue(b.ps, b.ps_vt) || b.ps_vt != a.ps_vtable ||
+        !ReadValue(b.ps_vt, slot0) || slot0 != a.set_stance) return "ps_vtable";
+    if (!ReadValue(b.ps + c::ps_blk, back) || back != b.blk || !ReadValue(b.ps + c::ps_base_id, ps_base) || ps_base != b.base_id)
+        return "ps_back";
+    // Optional components (reset targets, logged in the census).
+    std::uintptr_t unused = 0;
+    if (ReadValue(b.blk + c::blk_a0, b.a0) && b.a0) Callable(a, b.a0, c::a0_vt_reset, 0, a.a0_vtable, b.a0_vt, b.a080, unused);
+    if (ReadValue(b.blk + c::blk_c0, b.c0) && b.c0) Callable(a, b.c0, c::c0_vt_reset, 0, a.c0_vtable, b.c0_vt, b.c090, unused);
+    if (ReadValue(b.blk + c::blk_b70, b.b70) && b.b70) ReadValue(b.b70, b.b70_vt);
+    return nullptr;
+}
+// The SetStance prerequisites of instance k after ResolveCore: the stance
+// words (with this id's word read into b.psw) and the PS+0x260 component.
+const char* ResolveStanceParts(Block& b) noexcept {
+    std::uintptr_t words = 0, sub = 0;
+    std::uint8_t psw = 0;
+    if (!ReadValue(b.ps + c::ps_stance, words) || !words ||
+        !ReadValue(words + 8 * static_cast<std::uintptr_t>(b.id - b.base_id), psw)) return "ps_words";
+    if (!ReadValue(b.ps + c::ps_sub260, sub) || !sub) return "ps_sub";
+    b.psw = psw;
+    return nullptr;
+}
+// The transform chain (CS, entry, T) of instance k after ResolveCore.
+const char* ResolveTransform(const Addresses& a, Block& b) noexcept {
+    std::uintptr_t slot = 0, entries = 0, object = 0;
+    std::uint32_t cs_count = 0, cs_base = 0;
+    if (!ReadValue(b.ps + c::ps_cs, b.cs) || !b.cs || !ReadValue(b.cs, b.cs_vt) || b.cs_vt != a.cs_vtable ||
+        !ReadValue(b.cs_vt + 0x388, slot) || slot != a.get_transform) return "cs_vtable";
+    if (!ReadValue(b.cs + 8, cs_count) || !ReadValue(b.cs + c::cs_base_id, cs_base) || b.id < cs_base ||
+        b.id - cs_base >= cs_count || !ReadValue(b.cs + c::cs_entries, entries) || !entries) return "entry";
+    b.entry = entries + static_cast<std::uintptr_t>(b.id - cs_base) * c::cs_entry_stride;
+    if (!ReadValue(b.entry + c::cs_entry_transform, object)) return "entry";
+    if (!object) return "t_null";
+    b.t = object + c::transform_view;
+    if (!Callable(a, b.t, c::t_vt_set_pose, c::t_vt_set_rot, a.t_vtable, b.t_vt, b.t68, b.t70)) return "t_class";
+    return nullptr;
+}
+
+using SetRotFn = void (*)(void*, const float*);
+using SetPoseFn = void (*)(void*, const float*, const float*);
+using ResetFn = void (*)(void*, std::uint32_t);
+using StanceFn = void (*)(void*, std::uint32_t, std::uint32_t);
+using ComponentFn = void* (*)(void*);
+
+// SEH wrappers: POD arguments only (no unwinding objects in a __try frame).
+bool CallTransform(std::uintptr_t t, std::uintptr_t set_rot, std::uintptr_t set_pose, const float* pos, const float* quat,
+                   std::uintptr_t c0, std::uintptr_t c0_reset, std::uintptr_t a0, std::uintptr_t a0_reset,
+                   std::uint32_t id) noexcept {
+    __try {
+        reinterpret_cast<SetRotFn>(set_rot)(reinterpret_cast<void*>(t), quat);
+        reinterpret_cast<SetPoseFn>(set_pose)(reinterpret_cast<void*>(t), pos, quat);
+        if (c0_reset) reinterpret_cast<ResetFn>(c0_reset)(reinterpret_cast<void*>(c0), id);
+        if (a0_reset) reinterpret_cast<ResetFn>(a0_reset)(reinterpret_cast<void*>(a0), id);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+bool CallStance(std::uintptr_t function, std::uintptr_t object, std::uint32_t id, std::uint32_t stance) noexcept {
+    __try { reinterpret_cast<StanceFn>(function)(reinterpret_cast<void*>(object), id, stance); return true; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+bool CallComponent(std::uintptr_t function, std::uintptr_t ps, std::uintptr_t& out) noexcept {
+    __try { out = reinterpret_cast<std::uintptr_t>(reinterpret_cast<ComponentFn>(function)(reinterpret_cast<void*>(ps))); return true; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { out = 0; return false; }
+}
+bool StoreU16(std::uintptr_t address, std::uint16_t value) noexcept {
+    __try { *reinterpret_cast<volatile std::uint16_t*>(address) = value; return true; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+bool StoreU8(std::uintptr_t address, std::uint8_t value) noexcept {
+    __try { *reinterpret_cast<volatile std::uint8_t*>(address) = value; return true; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+// Shared prologue of the instance-1 game calls: write guards, realized with
+// parts loaded, ids[index] == index.
+const char* PrepareCall(const Addresses& a, std::uint32_t index, bool terminating, State& s) noexcept {
+    if (const char* reason = Prepare(a, index, terminating, WriteKind::set, s)) return reason;
+    if (!Realized(s, index)) return "unrealized";
+    if (s.ids[index] != index) return "id_mismatch";
+    if (s.parts[index] != c::parts_loaded_state) return "parts";
+    return nullptr;
+}
+// The component chain of *(S... *(PS+0x658)+0x30)+0x10 that 0xFF3220 reads
+// before its lookup call, read non-null (0xFF3220 itself only null-checks +0x30).
+bool ComponentChain(const Addresses& a, std::uintptr_t ps) noexcept {
+    std::uintptr_t comp = 0, inner = 0, object = 0, vt = 0, lookup = 0;
+    return ReadValue(ps + c::ps_comp, comp) && comp && ReadValue(comp + c::comp_inner, inner) && inner &&
+           ReadValue(inner + c::comp_object, object) && object && ReadValue(object, vt) && InRange(vt, a.image_begin, a.image_end) &&
+           ReadValue(vt + 0x18, lookup) && InRange(lookup, a.code_begin, a.code_end);
+}
+// Arrays of the Q allocator with n == 2 (S+0x40).
+const char* ArrayCount(const State& s) noexcept {
+    std::uint32_t n = 0;
+    if (!ReadValue(s.S + c::s_count, n) || n != 2) return "count";
+    return nullptr;
+}
+} // namespace
+
+const char* ResolveBlock(const Addresses& a, const State& s, std::uint32_t k, Block& out) noexcept {
+    const Preserve preserve;
+    out = Block{};
+    out.refusal = ResolveCore(a, s, k, out);
+    out.stance_refusal = out.refusal;
+    if (!out.refusal) {
+        out.stance_refusal = ResolveStanceParts(out);
+        out.refusal = ResolveTransform(a, out);
+    }
+    return out.refusal;
+}
+
+const char* ResolveCensus(const Addresses& a, const State& s, Census& out) noexcept {
+    const Preserve preserve;
+    out = Census{};
+    std::uintptr_t equip = 0;
+    if (ReadValue(s.P + c::p_equip, equip) && equip) ReadValue(equip, out.equip_vt);
+    ResolveBlock(a, s, 0, out.k[0]);
+    ResolveBlock(a, s, 1, out.k[1]);
+    if (out.k[1].refusal) return out.refusal = out.k[1].refusal;
+    if (out.k[1].id != 1) return out.refusal = "id_mismatch";
+    if (out.k[0].refusal) return out.refusal = out.k[0].refusal;
+    if (out.k[0].t_vt != out.k[1].t_vt || out.k[0].t68 != out.k[1].t68 || out.k[0].t70 != out.k[1].t70)
+        return out.refusal = "t_class";
+    return out.refusal = nullptr;
+}
+
+std::size_t FormatCensus(const Addresses& a, const Census& census, std::uint32_t k, char* out, std::size_t capacity) noexcept {
+    if (!out || !capacity || k >= 2) return 0;
+    const Preserve preserve;
+    const Block& b = census.k[k];
+    const Block& o = census.k[k ^ 1u];
+    if (FAILED(StringCchPrintfA(out, capacity,
+            "partner_census; k=%u; id=%u; base=%u; count=%u; blk=%s; blk_vt=0x%llx; ps_vt=0x%llx; cs_vt=0x%llx; "
+            "t=%s; t_vt=0x%llx; t68=0x%llx; t70=0x%llx; a0_vt=0x%llx; a080=0x%llx; c0_vt=0x%llx; c090=0x%llx; b70_vt=0x%llx; "
+            "stance=%s; psw=0x%02x; equip_vt=0x%llx; same_t=%u; same_a0=%u; same_c0=%u; verdict=%s\r\n",
+            k, b.id, b.base_id, b.id_count, b.refusal ? b.refusal : "ok", static_cast<unsigned long long>(Rva(a, b.blk_vt)),
+            static_cast<unsigned long long>(Rva(a, b.ps_vt)), static_cast<unsigned long long>(Rva(a, b.cs_vt)),
+            b.t ? "set" : "null", static_cast<unsigned long long>(Rva(a, b.t_vt)), static_cast<unsigned long long>(Rva(a, b.t68)),
+            static_cast<unsigned long long>(Rva(a, b.t70)), static_cast<unsigned long long>(Rva(a, b.a0_vt)),
+            static_cast<unsigned long long>(Rva(a, b.a080)), static_cast<unsigned long long>(Rva(a, b.c0_vt)),
+            static_cast<unsigned long long>(Rva(a, b.c090)), static_cast<unsigned long long>(Rva(a, b.b70_vt)),
+            b.stance_refusal ? b.stance_refusal : "ok", unsigned(b.psw),
+            static_cast<unsigned long long>(Rva(a, census.equip_vt)), (b.t_vt && b.t_vt == o.t_vt) ? 1u : 0u,
+            (b.a0_vt && b.a0_vt == o.a0_vt) ? 1u : 0u, (b.c0_vt && b.c0_vt == o.c0_vt) ? 1u : 0u,
+            census.refusal ? census.refusal : "ok"))) {
+        out[0] = 0;
+        return 0;
+    }
+    return std::strlen(out);
+}
+
+const char* WriteAnim(const Addresses& a, std::uint32_t index, bool terminating, std::uint16_t act, std::uint8_t stance,
+                      std::uint8_t speed) noexcept {
+    const Preserve preserve;
+    State s{};
+    if (const char* reason = Prepare(a, index, terminating, WriteKind::set, s)) return reason;
+    if (const char* reason = ArrayCount(s)) return reason;
+    std::uintptr_t p18 = 0, p30 = 0, p38 = 0;
+    if (!ReadValue(s.Q + c::q_anim_18, p18) || !ReadValue(s.Q + c::q_anim_30, p30) || !ReadValue(s.Q + c::q_anim_38, p38) ||
+        !p18 || !p30 || !p38) return "s_null";
+    if (p18 % 2) return "alignment";
+    if (!StoreU16(p18 + 2 * static_cast<std::uintptr_t>(index), act) || !StoreU8(p30 + index, stance) || !StoreU8(p38 + index, speed))
+        return "fault";
+    return nullptr;
+}
+
+const char* WriteFaceEquip(const Addresses& a, std::uint32_t index, bool terminating, std::uint8_t value) noexcept {
+    const Preserve preserve;
+    State s{};
+    if (const char* reason = Prepare(a, index, terminating, WriteKind::set, s)) return reason;
+    if (const char* reason = ArrayCount(s)) return reason;
+    std::uintptr_t p68 = 0;
+    if (!ReadValue(s.Q + c::q_look_face_equip, p68) || !p68) return "s_null";
+    return StoreU8(p68 + index, value) ? nullptr : "fault";
+}
+
+const char* SetStance(const Addresses& a, std::uint32_t index, bool terminating, std::uint8_t stance, std::uint8_t& psw_after,
+                      std::uint8_t& q30_after) noexcept {
+    const Preserve preserve;
+    psw_after = q30_after = 0;
+    State s{};
+    if (const char* reason = PrepareCall(a, index, terminating, s)) return reason;
+    if (stance < 1 || stance > 3) return "stance";
+    Block b{};
+    if (const char* reason = ResolveCore(a, s, index, b)) return reason;
+    if (const char* reason = ResolveStanceParts(b)) return reason;
+    // SetStance calls *(PS+0x260)->vt[0] and stores at the result + 0x64.
+    std::uintptr_t sub = 0, sub_vt = 0, sub_fn = 0, unused = 0;
+    if (!ReadValue(b.ps + c::ps_sub260, sub) || !Callable(a, sub, 0, 0, 0, sub_vt, sub_fn, unused)) return "ps_sub";
+    if (!a.set_stance || !InRange(a.set_stance, a.code_begin, a.code_end)) return "ps_vtable";
+    if (!CallStance(a.set_stance, b.ps, b.id, stance)) return "fault";
+    std::uintptr_t words = 0, p30 = 0;
+    if (ReadValue(b.ps + c::ps_stance, words)) ReadValue(words + 8 * static_cast<std::uintptr_t>(b.id - b.base_id), psw_after);
+    if (ReadValue(s.Q + c::q_anim_30, p30)) ReadValue(p30 + index, q30_after);
+    return nullptr;
+}
+
+const char* RequestStance(const Addresses& a, std::uint32_t index, bool terminating, std::uint8_t stance) noexcept {
+    const Preserve preserve;
+    State s{};
+    if (const char* reason = PrepareCall(a, index, terminating, s)) return reason;
+    if (stance < 1 || stance > 3) return "stance";
+    Block b0{}, b1{};
+    if (const char* reason = ResolveCore(a, s, index, b1)) return reason;
+    if (const char* reason = ResolveStanceParts(b1)) return reason;
+    if (const char* reason = ResolveCore(a, s, s.local, b0)) return reason;
+    if (!a.ps_component || !InRange(a.ps_component, a.code_begin, a.code_end)) return "ps_vtable";
+    std::uintptr_t ps_slot = 0;
+    if (!ReadValue(a.ps_vtable + 0xC8, ps_slot) || ps_slot != a.ps_component) return "ps_vtable";
+    if (!ComponentChain(a, b1.ps) || !ComponentChain(a, b0.ps)) return "x_null";
+    std::uintptr_t x0 = 0, x1 = 0;
+    if (!CallComponent(a.ps_component, b0.ps, x0) || !CallComponent(a.ps_component, b1.ps, x1)) return "fault";
+    if (!x0 || !x1) return "x_null";
+    std::uintptr_t x0_vt = 0, x1_vt = 0, request = 0, unused = 0;
+    if (!Callable(a, x1, c::x_vt_request, 0, 0, x1_vt, request, unused) || !ReadValue(x0, x0_vt) || x0_vt != x1_vt) return "x_class";
+    return CallStance(request, x1, index, stance) ? nullptr : "fault";
+}
+
+const char* ApplyTransform(const Addresses& a, std::uint32_t index, bool terminating, const float (&pos)[4], const float (&quat)[4],
+                           PartnerReset reset) noexcept {
+    const Preserve preserve;
+    State s{};
+    if (const char* reason = PrepareCall(a, index, terminating, s)) return reason;
+    for (float v : pos) if (!std::isfinite(v)) return "non_finite";
+    for (float v : quat) if (!std::isfinite(v)) return "non_finite";
+    Census census{};
+    if (const char* reason = ResolveCensus(a, s, census)) return reason;
+    const Block& b = census.k[index];
+    const Block& local = census.k[s.local];
+    const bool want_c0 = reset == PartnerReset::c || reset == PartnerReset::ac;
+    const bool want_a0 = reset == PartnerReset::a || reset == PartnerReset::ac;
+    if (want_c0 && (!b.c090 || b.c0_vt != local.c0_vt || b.c090 != local.c090)) return "c0_class";
+    if (want_a0 && (!b.a080 || b.a0_vt != local.a0_vt || b.a080 != local.a080)) return "a0_class";
+    alignas(16) float p[4] = {pos[0], pos[1], pos[2], pos[3]};
+    alignas(16) float q[4] = {quat[0], quat[1], quat[2], quat[3]};
+    return CallTransform(b.t, b.t70, b.t68, p, q, b.c0, want_c0 ? b.c090 : 0, b.a0, want_a0 ? b.a080 : 0, b.id) ? nullptr : "fault";
+}
+
+bool ReadBody(const Addresses& a, const State& s, std::uint32_t index, float (&pos)[4], float (&quat)[4]) noexcept {
+    const Preserve preserve;
+    Block b{};
+    if (ResolveBlock(a, s, index, b)) return false;
+    return ReadBlock(b.t + c::t_pos, pos, sizeof(pos)) && ReadBlock(b.t + c::t_quat, quat, sizeof(quat));
+}
+
+std::size_t FormatPsProbe(const Addresses& a, const State& s, std::uint32_t k, char* out, std::size_t capacity) noexcept {
+    if (!out || !capacity) return 0;
+    const Preserve preserve;
+    out[0] = 0;
+    Block b{};
+    if (const char* reason = ResolveCore(a, s, k, b)) {
+        if (FAILED(StringCchPrintfA(out, capacity, "partner_ps; k=%u; refused=%s\r\n", k, reason))) { out[0] = 0; return 0; }
+        return std::strlen(out);
+    }
+    ResolveStanceParts(b);  // psw stays 0 when the stance words are missing
+    const std::uintptr_t rel = b.id - b.base_id;
+    std::uint32_t mask = 0;
+    float r738[10]{};
+    std::uint32_t r280[8]{};
+    std::uint8_t b2d0 = 0, b2d8 = 0;
+    std::uintptr_t p738 = 0, p280 = 0, p2d0 = 0, p2d8 = 0;
+    const bool m_ok = ReadValue(b.ps + c::ps_mask740, mask);
+    const bool r738_ok = ReadValue(b.ps + c::ps_rec738, p738) && ReadBlock(p738 + rel * c::ps_rec738_stride, r738, sizeof(r738));
+    const bool r280_ok = ReadValue(b.ps + c::ps_rec280, p280) && ReadBlock(p280 + rel * c::ps_rec280_stride, r280, sizeof(r280));
+    const bool d0_ok = ReadValue(b.ps + c::ps_byte2d0, p2d0) && ReadValue(p2d0 + rel, b2d0);
+    const bool d8_ok = ReadValue(b.ps + c::ps_byte2d8, p2d8) && ReadValue(p2d8 + rel, b2d8);
+    int f[10]{};
+    for (unsigned i = 0; i < 10; ++i) f[i] = r738_ok ? ToMm(r738[i]) : INT32_MIN;
+    if (!r280_ok) std::memset(r280, 0xFF, sizeof(r280));
+    if (FAILED(StringCchPrintfA(out, capacity,
+            "partner_ps; k=%u; id=%u; mask740=0x%x; r738_milli=%d,%d,%d,%d,%d,%d,%d,%d,%d,%d; "
+            "r280=%08x,%08x,%08x,%08x,%08x,%08x,%08x,%08x; b2d0=%d; b2d8=%d; psw=0x%02x\r\n",
+            k, b.id, m_ok ? mask : 0u, f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7], f[8], f[9], r280[0], r280[1], r280[2], r280[3],
+            r280[4], r280[5], r280[6], r280[7], d0_ok ? int(b2d0) : -1, d8_ok ? int(b2d8) : -1, unsigned(b.psw)))) {
+        out[0] = 0;
+        return 0;
+    }
+    return std::strlen(out);
 }
 
 std::int32_t ToMm(float metres) noexcept {

@@ -154,6 +154,37 @@ int main() {
     const auto bounds = Lab("enabled=1\nrole=host\npartner_rate_hz=1\npartner_offset_cm=50\npartner_interp_ms=500\n");
     Check(bounds.partner_rate_hz == 1 && bounds.partner_offset_cm == 50 && bounds.partner_interp_ms == 500 &&
           bounds.invalid_values == 0, "inclusive bounds");
+    // Animation / movement / appearance keys (inert defaults keep the proven behaviour).
+    Check(spikeDefaults.partner_anim == PartnerAnim::off && spikeDefaults.partner_aset == PartnerAset::qs &&
+          spikeDefaults.partner_reset == PartnerReset::none && spikeDefaults.partner_look == PartnerLook::copy,
+          "anim off, aset qs, reset n, look copy by default");
+    const auto animKeys = Lab("enabled=1\nrole=guest\npartner_apply=hybrid\npartner_anim=net\npartner_aset=s\npartner_reset=ac\n"
+                              "partner_look=net\n");
+    Check(animKeys.partner_apply == PartnerApply::hybrid && animKeys.partner_anim == PartnerAnim::net &&
+          animKeys.partner_aset == PartnerAset::s && animKeys.partner_reset == PartnerReset::ac &&
+          animKeys.partner_look == PartnerLook::net && animKeys.unknown_keys == 0 && animKeys.invalid_values == 0, "new keys parsed");
+    const auto moveAlias = Lab("enabled=1\nrole=host\npartner_move=xform\npartner_anim=mirror\npartner_aset=r\npartner_look=quiet\n");
+    Check(moveAlias.partner_apply == PartnerApply::xform && moveAlias.partner_anim == PartnerAnim::mirror &&
+          moveAlias.partner_aset == PartnerAset::r && moveAlias.partner_look == PartnerLook::quiet && moveAlias.unknown_keys == 0,
+          "partner_move is an alias of partner_apply");
+    Check(Lab("enabled=1\nrole=host\npartner_apply=slot\npartner_move=hybrid\n").partner_apply == PartnerApply::hybrid, "the later key wins");
+    const auto badAnim = Lab("enabled=1\nrole=host\npartner_anim=on\npartner_aset=x\npartner_reset=b\npartner_look=ocelot\npartner_move=fly\n");
+    Check(badAnim.invalid_values == 5 && badAnim.partner_anim == PartnerAnim::off && badAnim.partner_aset == PartnerAset::qs &&
+          badAnim.partner_reset == PartnerReset::none && badAnim.partner_look == PartnerLook::copy &&
+          badAnim.partner_apply == PartnerApply::warp, "bad new values counted, defaults kept");
+    Check(std::strcmp(PartnerApplyName(PartnerApply::xform), "xform") == 0 && std::strcmp(PartnerApplyName(PartnerApply::hybrid), "hybrid") == 0 &&
+          std::strcmp(PartnerAnimName(PartnerAnim::net), "net") == 0 && std::strcmp(PartnerAsetName(PartnerAset::qs), "qs") == 0 &&
+          std::strcmp(PartnerResetName(PartnerReset::none), "n") == 0 && std::strcmp(PartnerResetName(PartnerReset::ac), "ac") == 0 &&
+          std::strcmp(PartnerLookName(PartnerLook::snake), "snake") == 0 && std::strcmp(PartnerLookName(PartnerLook::copy), "copy") == 0,
+          "new spellings");
+    {
+        PartnerAnim anim{}; PartnerAset aset{}; PartnerReset reset{}; PartnerLook look{};
+        Check(ParsePartnerAnim("mirror", 6, anim) && anim == PartnerAnim::mirror && !ParsePartnerAnim("mirro", 5, anim) &&
+              !ParsePartnerAnim(nullptr, 1, anim), "anim parse");
+        Check(ParsePartnerAset("r", 1, aset) && aset == PartnerAset::r && !ParsePartnerAset("qq", 2, aset), "aset parse");
+        Check(ParsePartnerReset("c", 1, reset) && reset == PartnerReset::c && !ParsePartnerReset("none", 4, reset), "reset parse");
+        Check(ParsePartnerLook("quiet", 5, look) && look == PartnerLook::quiet && !ParsePartnerLook("Quiet", 5, look), "look parse");
+    }
     // Shared spellings.
     PartnerSource source{};
     PartnerApply apply{};

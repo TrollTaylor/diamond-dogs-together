@@ -168,6 +168,122 @@ int main() {
         Check(encode_keepalive_frame(0, 1, keepalive) == 0 && encode_keepalive_frame(session, 0, keepalive) == 0, "keepalive refusals");
     }
 
-    std::printf("%u checks passed; player_sync transform codec and fixed-buffer frames verified\n", checks);
+    // 9. Partner wire v2: the 8-byte animation extension (64-byte frames).
+    {
+        const std::uint64_t session = 0x4D4753434F4F5001ULL;
+        AnimState anim{};
+        anim.act = 0x0006; anim.stance = 3; anim.speed = 2; anim.flags = AnimFlag::Valid;
+        Check(valid_anim(anim) && valid_anim(AnimState{}), "valid anim states");
+        std::uint8_t frame[transform_anim_frame_size];
+        Check(transform_anim_frame_size == 64 && anim_extension_size == 8, "v2 frame is 64 bytes");
+        Check(encode_transform_anim_frame(session, 30050, p1, anim, frame) == transform_anim_frame_size, "v2 encode");
+        // The first 56 bytes are a transform frame except the payload length (36).
+        std::uint8_t v1[transform_frame_size];
+        Check(encode_transform_frame(session, 30050, p1, v1) == transform_frame_size, "v1 reference");
+        Check(std::memcmp(frame, v1, 24) == 0 && frame[24] == 36 && frame[25] == 0 &&
+              std::memcmp(frame + 28, v1 + 28, 28) == 0, "v2 = v1 header (length 36) + same transform");
+        Check(frame[56] == 0x41 && frame[57] == 1 && frame[58] == 6 && frame[59] == 0 && frame[60] == 3 && frame[61] == 2 &&
+              frame[62] == 1 && frame[63] == 0, "extension bytes");
+        // wire::decode sees a structurally valid snapshot with a 36-byte payload.
+        const auto via_wire = wire::decode(frame, sizeof(frame));
+        Check(via_wire.has_value() && via_wire->payload.size() == 36 && !decode_transform(*via_wire).has_value(),
+              "wire::decode accepts v2; the v1 payload decoder refuses it (old receivers drop it)");
+        std::uint64_t s = 0; std::uint32_t e = 0; PlayerTransformPacket got{}; AnimState got_anim{}; bool has = false;
+        Check(!decode_transform_frame(frame, sizeof(frame), s, e, got), "v1 decoder refuses a v2 frame");
+        Check(decode_partner_transform_frame(frame, sizeof(frame), s, e, got, got_anim, has) && has && s == session && e == 30050 &&
+              std::memcmp(&got, &p1, sizeof(got)) == 0 && got_anim.act == 6 && got_anim.stance == 3 && got_anim.speed == 2 &&
+              got_anim.flags == AnimFlag::Valid, "v2 decode round trip");
+        // v1 frames still decode (no anim).
+        got_anim.act = 77; has = true;
+        Check(decode_partner_transform_frame(v1, sizeof(v1), s, e, got, got_anim, has) && !has && got_anim.act == 0 && got.sequence == p1.sequence,
+              "v1 frame through the v2 decoder: has_anim false, anim zeroed");
+        // Refusals.
+        AnimState bad = anim; bad.stance = 4;
+        Check(!valid_anim(bad) && encode_transform_anim_frame(session, 1, p1, bad, frame) == 0 && frame[0] == 0, "stance 4 refused, zeroed");
+        bad = anim; bad.speed = 9;
+        Check(encode_transform_anim_frame(session, 1, p1, bad, frame) == 0, "speed 9 refused");
+        bad = anim; bad.flags = 0x80;
+        Check(encode_transform_anim_frame(session, 1, p1, bad, frame) == 0, "unknown flag refused");
+        bad = anim; bad.stance = 0;
+        Check(!valid_anim(bad) && encode_transform_anim_frame(session, 1, p1, bad, frame) == 0, "valid flag with stance 0 refused");
+        bad = anim; bad.flags = 0;
+        Check(!valid_anim(bad), "stance/speed without the valid flag refused");
+        bad = AnimState{}; bad.speed = 2;
+        Check(!valid_anim(bad), "speed without the valid flag refused");
+        bad = AnimState{}; bad.act = 0x0079;
+        Check(valid_anim(bad), "act alone is structural only (LocomotionAct gates the writes)");
+        {
+            // A received Valid extension with stance 0 is refused on decode.
+            Check(encode_transform_anim_frame(session, 30050, p1, anim, frame) == transform_anim_frame_size, "re-encode for stance 0");
+            std::uint8_t copy[transform_anim_frame_size];
+            std::memcpy(copy, frame, sizeof(copy));
+            copy[60] = 0;
+            PlayerTransformPacket untouched{}; AnimState untouched_anim{}; bool untouched_has = false;
+            std::uint64_t us = 0; std::uint32_t ue = 0;
+            Check(!decode_partner_transform_frame(copy, sizeof(copy), us, ue, untouched, untouched_anim, untouched_has) && !untouched_has,
+                  "decode refuses valid flag with stance 0");
+            copy[60] = 3; copy[62] = 0;
+            Check(!decode_partner_transform_frame(copy, sizeof(copy), us, ue, untouched, untouched_anim, untouched_has) && !untouched_has,
+                  "decode refuses a stance without the valid flag");
+        }
+        Check(encode_transform_anim_frame(0, 1, p1, anim, frame) == 0 && encode_transform_anim_frame(session, 0, p1, anim, frame) == 0 &&
+              encode_transform_anim_frame(session, 1, nan_p, anim, frame) == 0, "v2 transform/session/epoch refusals");
+        Check(encode_transform_anim_frame(session, 30050, p1, anim, frame) == transform_anim_frame_size, "re-encode");
+        const unsigned corrupt_at[] = {24, 56, 57, 60, 61, 62, 63, 28 + 22};
+        for (unsigned at : corrupt_at) {
+            std::uint8_t copy[transform_anim_frame_size];
+            std::memcpy(copy, frame, sizeof(copy));
+            copy[at] = static_cast<std::uint8_t>(copy[at] ^ 0x0C);
+            PlayerTransformPacket untouched{}; AnimState untouched_anim{}; bool untouched_has = false;
+            std::uint64_t us = 0; std::uint32_t ue = 0;
+            Check(!decode_partner_transform_frame(copy, sizeof(copy), us, ue, untouched, untouched_anim, untouched_has) &&
+                  us == 0 && untouched.sequence == 0 && !untouched_has, "corrupt v2 field refused, outputs untouched");
+        }
+        Check(!decode_partner_transform_frame(frame, sizeof(frame) - 1, s, e, got, got_anim, has) &&
+              !decode_partner_transform_frame(nullptr, sizeof(frame), s, e, got, got_anim, has), "v2 size and null refused");
+    }
+
+    // 10. Look frames (40 bytes, kind event, sequence = revision).
+    {
+        const std::uint64_t session = 0x4D4753434F4F5001ULL;
+        LookPacket look{6, 27, 116, 0, 0x1234, 7, LookFlag::PartsLoaded, 513};
+        std::uint8_t frame[look_frame_size];
+        Check(look_frame_size == 40 && encode_look_frame(session, 30050, look, frame) == look_frame_size, "look encode");
+        wire::Packet expected{};
+        expected.kind = wire::Kind::event; expected.session = session; expected.epoch = 30050; expected.sequence = 513;
+        expected.payload = {0x4C, 1, 6, 27, 116, 0, 0x34, 0x12, 7, 1, 0x01, 0x02};
+        const auto bytes = wire::encode(expected);
+        Check(bytes.size() == look_frame_size && std::memcmp(bytes.data(), frame, look_frame_size) == 0, "look frame equals wire::encode");
+        std::uint64_t s = 0; std::uint32_t e = 0; LookPacket got{};
+        Check(decode_look_frame(frame, sizeof(frame), s, e, got) && s == session && e == 30050 && got.type == 6 && got.parts == 27 &&
+              got.camo == 116 && got.hand == 0 && got.face == 0x1234 && got.face_equip == 7 && got.flags == LookFlag::PartsLoaded &&
+              got.revision == 513, "look decode round trip");
+        // Not confused with keepalives or transforms.
+        std::uint64_t ka = 0; PlayerTransformPacket t{}; AnimState a{}; bool has = false;
+        Check(!decode_keepalive_frame(frame, sizeof(frame), ka) && !decode_partner_transform_frame(frame, sizeof(frame), s, e, t, a, has),
+              "a look is neither a keepalive nor a transform");
+        std::uint8_t keepalive[keepalive_frame_size];
+        encode_keepalive_frame(session, 30050, keepalive);
+        Check(!decode_look_frame(keepalive, sizeof(keepalive), s, e, got), "a keepalive is not a look");
+        // Refusals.
+        LookPacket zero_rev = look; zero_rev.revision = 0;
+        Check(encode_look_frame(session, 1, zero_rev, frame) == 0 && frame[0] == 0, "revision 0 refused, zeroed");
+        LookPacket bad_flags = look; bad_flags.flags = 2;
+        Check(encode_look_frame(session, 1, bad_flags, frame) == 0 && encode_look_frame(0, 1, look, frame) == 0 &&
+              encode_look_frame(session, 0, look, frame) == 0, "flag/session/epoch refusals");
+        Check(encode_look_frame(session, 30050, look, frame) == look_frame_size, "re-encode");
+        const unsigned corrupt_at[] = {0, 6, 20, 24, 28, 29, 37, 38};  // magic, kind, header seq, length, look magic/version, flags, revision
+        for (unsigned at : corrupt_at) {
+            std::uint8_t copy[look_frame_size];
+            std::memcpy(copy, frame, sizeof(copy));
+            copy[at] = static_cast<std::uint8_t>(copy[at] ^ 0x06);
+            LookPacket untouched{};
+            Check(!decode_look_frame(copy, sizeof(copy), s, e, untouched) && untouched.revision == 0, "corrupt look field refused");
+        }
+        Check(!decode_look_frame(frame, sizeof(frame) - 1, s, e, got) && !decode_look_frame(nullptr, sizeof(frame), s, e, got),
+              "look size and null refused");
+    }
+
+    std::printf("%u checks passed; player_sync transform codec, fixed-buffer frames, v2 anim extension and look frames verified\n", checks);
     return 0;
 }

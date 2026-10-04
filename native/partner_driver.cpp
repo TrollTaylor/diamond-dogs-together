@@ -1,5 +1,6 @@
 // Original MGS Co-op offline partner spike: receipt state machine.
-// docs/offline-partner-spike-plan.md 2.2, 2.3 item 9, 2.6, 2.7.
+// docs/offline-partner-spike-plan.md 2.2, 2.3 item 9, 2.6, 2.7, and the
+// animation / movement / appearance experiments (docs/partner-anim-appearance.md).
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -24,6 +25,36 @@ void EmitFormat(const Hooks& h, const char* format, ...) noexcept {
     const HRESULT result = StringCchVPrintfA(line, ARRAYSIZE(line), format, arguments);
     va_end(arguments);
     if (SUCCEEDED(result)) Emit(h, line);
+}
+// One line of a capped family: the first kTransitionLogCap lines are logged,
+// then "<head>=capped; limit=64" (with "; kind=<kind>" when given) once.
+void EmitCappedV(LogCap& cap, const Hooks& h, const char* head, const char* kind, const char* format, va_list arguments) noexcept {
+    if (cap.lines >= kTransitionLogCap) {
+        if (!cap.capped) {
+            cap.capped = true;
+            if (kind) EmitFormat(h, "%s=capped; limit=64; kind=%s\r\n", head, kind);
+            else EmitFormat(h, "%s=capped; limit=64\r\n", head);
+        }
+        return;
+    }
+    char line[512]{};
+    if (SUCCEEDED(StringCchVPrintfA(line, ARRAYSIZE(line), format, arguments))) {
+        ++cap.lines;
+        Emit(h, line);
+    }
+}
+void EmitCapped(LogCap& cap, const Hooks& h, const char* head, const char* format, ...) noexcept {
+    va_list arguments;
+    va_start(arguments, format);
+    EmitCappedV(cap, h, head, nullptr, format, arguments);
+    va_end(arguments);
+}
+// The partner_stance families (set, refused, reverted) share one head.
+void EmitStance(LogCap& cap, const Hooks& h, const char* kind, const char* format, ...) noexcept {
+    va_list arguments;
+    va_start(arguments, format);
+    EmitCappedV(cap, h, "partner_stance", kind, format, arguments);
+    va_end(arguments);
 }
 std::uint32_t Clamp32(std::uint64_t value) noexcept {
     return value > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<std::uint32_t>(value);
@@ -54,6 +85,13 @@ void LogCfgFlip(Mission& m, const Hooks& h, const char* line) noexcept {
         Emit(h, "partner_cfg=capped; limit=64\r\n");
     }
 }
+// A native call raised inside SEH: no more native calls this mission.
+void NoteFault(Mission& m, const Hooks& h, const char* function) noexcept {
+    if (m.native_disabled) return;
+    m.native_disabled = true;
+    EmitFormat(h, "partner_call=fault; fn=%s; native_calls=disabled\r\n", function);
+}
+bool IsFault(const char* reason) noexcept { return reason && std::strcmp(reason, "fault") == 0; }
 
 bool ClearBits(Driver& d, const Hooks& h, const char* reason, bool terminating) noexcept {
     Mission& m = d.mission;
@@ -97,18 +135,28 @@ void Probe(Driver& d, const Hooks& h, const pp::State& st, const Clock& clock) n
     std::memcpy(m.probe_key, key, sizeof(key));
 }
 
-void AnimProbe(Mission& m, const Hooks& h, const pp::State& st, std::uint64_t now) noexcept {
-    if (m.anim_logged && now - m.anim_ms < 100) return;
-    pp::Anim anim{};
-    if (!h.read_anim || !h.read_anim(h.context, st, anim)) return;
+// partner_anim_probe=1: per-slot animation fields, change-only, at most 10 Hz.
+void AnimProbe(Mission& m, const Hooks& h, const pp::State& st, bool anim_ok, const pp::Anim& anim, std::uint64_t now) noexcept {
+    if (!anim_ok || (m.anim_logged && now - m.anim_ms < 100)) return;
+    std::uint8_t psw[2] = {0, 0};
+    if (h.census) {
+        pp::Census census{};
+        h.census(h.context, st, census);
+        psw[0] = census.k[0].psw;
+        psw[1] = census.k[1].psw;
+    }
     const pp::Anim& last = m.anim;
-    if (m.anim_logged && anim.q18 == last.q18 && anim.q28 == last.q28 && anim.qd8 == last.qd8 && anim.q30 == last.q30 &&
-        anim.q38 == last.q38 && anim.m1d8 == last.m1d8 && anim.m1e0 == last.m1e0 && anim.m1f8 == last.m1f8) return;
+    if (m.anim_logged && std::memcmp(anim.act, last.act, sizeof(anim.act)) == 0 && std::memcmp(anim.q28, last.q28, sizeof(anim.q28)) == 0 &&
+        std::memcmp(anim.stance, last.stance, sizeof(anim.stance)) == 0 && std::memcmp(anim.speed, last.speed, sizeof(anim.speed)) == 0 &&
+        std::memcmp(anim.qd8, last.qd8, sizeof(anim.qd8)) == 0 && std::memcmp(psw, m.anim_psw, sizeof(psw)) == 0) return;
     m.anim = anim;
+    std::memcpy(m.anim_psw, psw, sizeof(psw));
     m.anim_logged = true;
     m.anim_ms = now;
-    EmitFormat(h, "partner_anim; q18=%04x; q28=%02x; qd8=%04x; q30=%u; q38=%u; m1d8=%08x; m1e0=%08x; m1f8=%08x\r\n",
-               unsigned(anim.q18), unsigned(anim.q28), unsigned(anim.qd8), anim.q30, anim.q38, anim.m1d8, anim.m1e0, anim.m1f8);
+    EmitFormat(h, "partner_anim; act=%04x,%04x; s=%u,%u; v=%u,%u; q28=%u,%u; qd8=%04x,%04x; psw=%02x,%02x; rec1=0x%08x\r\n",
+               unsigned(anim.act[0]), unsigned(anim.act[1]), unsigned(anim.stance[0]), unsigned(anim.stance[1]),
+               unsigned(anim.speed[0]), unsigned(anim.speed[1]), unsigned(anim.q28[0]), unsigned(anim.q28[1]), unsigned(anim.qd8[0]),
+               unsigned(anim.qd8[1]), unsigned(psw[0]), unsigned(psw[1]), st.rec_ok ? st.rec1_status : 0u);
 }
 
 // Resends at most once per kResendMs, at most kCappedLogs times per mission.
@@ -151,6 +199,79 @@ bool MirrorOffDue(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t 
     m.mirror_off_ms = now;
     return true;
 }
+
+void LogCensus(const Hooks& h, const pp::State& st) noexcept {
+    if (!h.census || !h.format_census) {
+        Emit(h, "partner_census=refused; reason=unavailable\r\n");
+        return;
+    }
+    pp::Census census{};
+    h.census(h.context, st, census);
+    for (std::uint32_t k = 0; k < 2; ++k) {
+        char line[pp::census_capacity]{};
+        if (h.format_census(h.context, census, k, line, sizeof(line))) Emit(h, line);
+    }
+}
+
+std::int32_t MetresToMm(float value) noexcept { return pp::ToMm(value); }
+
+// The desired look of instance 1 this tick (none for look=copy without a
+// pending parts=explicit). `remote_rev` and `forced_rev` form its key.
+struct Desired {
+    bool valid;
+    partner::Look look;
+    std::uint16_t remote_rev;
+    std::uint32_t forced_rev;
+    bool avatar_as_snake;
+    const char* source;
+};
+Desired DesiredLook(Driver& d, const Hooks& h, bool looks_ok, const pp::Looks& looks, const pp::State& st) noexcept {
+    Mission& m = d.mission;
+    Desired out{};
+    const Settings& set = d.settings;
+    partner::Look raw{};
+    const char* source = nullptr;
+    std::uint16_t remote_rev = 0;
+    if (set.look == PartnerLook::quiet) { raw = partner::quiet_look; source = "quiet"; }
+    else if (set.look == PartnerLook::snake) { raw = partner::snake_look; source = "snake"; }
+    else if (set.look == PartnerLook::net) {
+        const RemoteLook remote = h.sample_look ? h.sample_look(h.context) : RemoteLook{};
+        if (!remote.valid) return out;
+        raw = remote.look;
+        remote_rev = remote.revision;
+        source = "net";
+    } else {
+        if (!d.parts_explicit_pending || !looks_ok) return out;
+        raw = looks.look[st.local];
+        source = "copy";
+    }
+    bool avatar = false;
+    partner::Look look{};
+    if (const char* refused = partner::NormalizeLook(raw, look, avatar)) {
+        if (m.look_refusal != refused) {
+            m.look_refusal = refused;
+            EmitCapped(m.look_cap, h, "partner_look", "partner_look=refused; reason=%s; source=%s; type=%u; parts=%u; camo=%u; hand=%u; rev=%u\r\n",
+                       refused, source, unsigned(raw.type), unsigned(raw.parts), unsigned(raw.camo), unsigned(raw.hand), unsigned(remote_rev));
+        }
+        return out;
+    }
+    m.look_refusal = nullptr;
+    out.valid = true;
+    out.look = look;
+    out.remote_rev = remote_rev;
+    out.forced_rev = d.look_forced_rev;
+    out.avatar_as_snake = avatar;
+    out.source = source;
+    return out;
+}
+bool SameKey(const Mission& m, const Desired& desired) noexcept {
+    return m.look_applied_any && m.look_applied_remote_rev == desired.remote_rev && m.look_applied_forced_rev == desired.forced_rev &&
+           partner::SameLook(m.look_applied, desired.look);
+}
+bool LookMatches(const partner::Look& actual, const partner::Look& wanted) noexcept {
+    return actual.type == wanted.type && actual.parts == wanted.parts && actual.camo == wanted.camo && actual.hand == wanted.hand &&
+           actual.face == wanted.face;
+}
 } // namespace
 
 void Configure(Driver& d, const LabConfig& lab) noexcept {
@@ -158,12 +279,21 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.stage = lab.partner_stage;
     d.settings.source = lab.partner_source;
     d.settings.apply = lab.partner_apply;
+    d.settings.anim = lab.partner_anim;
+    d.settings.aset = lab.partner_aset;
+    d.settings.reset = lab.partner_reset;
+    d.settings.look = lab.partner_look;
+    d.settings.probe_ps = false;
+    d.look_forced_rev = 1;
 }
 
 void MissionStart(Driver& d, const Hooks& h) noexcept {
     d.mission = Mission{};
+    d.mission.anim_source = -1;
+    d.mission.last_status = pose::Status::none;
     d.parts_explicit_pending = false;
     d.mirror_pending = false;
+    d.census_pending = false;
     if (!h.take_trigger) return;
     char text[partner::max_trigger + 1]{};
     std::size_t length = 0;
@@ -175,6 +305,7 @@ void MissionEnd(Driver& d) noexcept {
     d.mission.cfg_ready = false;
     d.parts_explicit_pending = false;
     d.mirror_pending = false;
+    d.census_pending = false;
 }
 
 bool Cfg(Driver& d, const Hooks& h, const char* precheck, std::uint64_t now_ms) noexcept {
@@ -223,6 +354,7 @@ void Stop(Driver& d, const Hooks& h, PartnerTeardown teardown, bool terminating)
     m.cfg_ready = false;
     d.parts_explicit_pending = false;
     d.mirror_pending = false;
+    d.census_pending = false;
     EmitFormat(h, "partner_stop; cleared=%u; teardown=%s\r\n", cleared, PartnerTeardownName(teardown));
 }
 
@@ -231,13 +363,44 @@ void ApplyTrigger(Driver& d, const Hooks& h, const partner::Trigger& trigger, bo
     const std::uint32_t stage = trigger.stop ? 0 : trigger.has_stage ? trigger.stage : d.settings.stage;
     if (trigger.has_source && trigger.source != d.settings.source) m.have_cmd = false;
     if (trigger.has_source) d.settings.source = trigger.source;
-    if (trigger.has_apply) d.settings.apply = trigger.apply;
+    if (trigger.has_apply) {
+        if (trigger.apply != d.settings.apply) { m.hybrid_placed = false; m.xform_logged = false; }
+        d.settings.apply = trigger.apply;
+    }
+    if (trigger.has_anim) d.settings.anim = trigger.anim;
+    if (trigger.has_aset) d.settings.aset = trigger.aset;
+    if (trigger.has_reset) d.settings.reset = trigger.reset;
+    if (trigger.has_probe) d.settings.probe_ps = trigger.probe_ps;
+    if (trigger.has_look) {
+        d.settings.look = trigger.look;
+        ++d.look_forced_rev;
+    }
+    if (trigger.has_anim || trigger.has_aset) {
+        // A new animation setting starts its stance and array logging afresh.
+        m.stance = partner::StanceDebounce{};
+        m.stance_watch = false;
+        m.stance_refused_state = nullptr;
+        m.anim_write_logged = false;
+        m.anim_source = -1;
+    }
     d.settings.stage = stage;
-    EmitFormat(h, "partner_stage=changed; stage=%u; source=%s; apply=%s; via=trigger\r\n", stage,
-               PartnerSourceName(d.settings.source), PartnerApplyName(d.settings.apply));
+    EmitFormat(h, "partner_stage=changed; stage=%u; source=%s; apply=%s; anim=%s; aset=%s; reset=%s; look=%s; probe=%s; via=trigger\r\n",
+               stage, PartnerSourceName(d.settings.source), PartnerApplyName(d.settings.apply), PartnerAnimName(d.settings.anim),
+               PartnerAsetName(d.settings.aset), PartnerResetName(d.settings.reset), PartnerLookName(d.settings.look),
+               d.settings.probe_ps ? "ps" : "off");
+    if (trigger.census) d.census_pending = true;
     if (stage >= 1) {
-        if (trigger.parts_explicit) d.parts_explicit_pending = true;
-        if (trigger.mirror_on) d.mirror_pending = true;
+        if (trigger.parts_explicit) {
+            // look=copy: one SET_PARTS with the local look (F3b); otherwise the
+            // desired look is re-applied once.
+            if (d.settings.look == PartnerLook::copy) d.parts_explicit_pending = true;
+            else ++d.look_forced_rev;
+        }
+        if (trigger.mirror_on) {
+            // Mirror mode copies the local look over instance 1 (0x9CE786).
+            if (d.settings.look == PartnerLook::copy) d.mirror_pending = true;
+            else Emit(h, "partner_trigger=ignored; token=mirror=on; reason=look\r\n");
+        }
     } else {
         // Stage 0 (or stop): one-shots never wait for a later stage or mission.
         d.parts_explicit_pending = false;
@@ -331,19 +494,29 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                    tick.yaw_cdeg, m.yaw_abs_max, tick.cam_cdeg);
     }
     const Settings& set = d.settings;
+    // Local animation fields and looks (sender side; anim=mirror source).
+    pp::Anim anim{};
+    const bool anim_ok = h.read_anim && h.read_anim(h.context, st, anim);
+    const sync::AnimState local_anim = anim_ok ? pp::AnimSlot(anim, st.local) : sync::AnimState{};
+    pp::Looks looks{};
+    const bool looks_ok = h.read_looks && h.read_looks(h.context, st, looks);
     // Pose source.
     partner::Pose pose{};
     bool pose_valid = false;
     partner::Status status = partner::Status::synthetic;
     std::uint32_t age_ms = 0;
+    sync::AnimState remote_anim{};
+    pose::Status sample_status = pose::Status::none;
     if (set.source == PartnerSource::net) {
         const pose::Sample sample = h.sample_remote ? h.sample_remote(h.context, lab.partner_interp_ms) : pose::Sample{};
+        sample_status = sample.status;
         status = sample.status == pose::Status::live ? partner::Status::live
                : sample.status == pose::Status::stale ? partner::Status::stale : partner::Status::lost;
         if (sample.valid) {
             pose = partner::PoseFromMetres(sample.x, sample.y, sample.z, sample.yaw);
             pose_valid = true;
             age_ms = sample.age_ms;
+            if (sample.anim_valid) remote_anim = sync::AnimState{sample.act, sample.anim_stance, sample.anim_speed, sync::AnimFlag::Valid};
         }
     } else if (set.source == PartnerSource::orbit) {
         pose = partner::OrbitPose(tick, lab.partner_offset_cm, now - m.start_ms);
@@ -395,13 +568,185 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             Emit(h, "partner_policy=relaxed\r\n");
         }
     }
+    const bool realized = pp::Realized(st, partner::partner_index);
+    const bool parts_loaded = realized && st.parts[1] == c::parts_loaded_state;
     const bool slot = partner::WritesSlot(set.stage, set.apply, pose_valid);
     if (slot) {
         const float xyzw[4] = {static_cast<float>(pose.x_mm / 1000.0), static_cast<float>(pose.y_mm / 1000.0),
                                static_cast<float>(pose.z_mm / 1000.0), static_cast<float>(pose.yaw_mrad / 1000.0)};
         if (const char* refused = h.write_slot(h.context, terminating, xyzw)) LogWriteRefusal(m, h, "slot", refused);
     }
-    // All-active: Lua latched it, but P+0x204 bit 0x2000 is clear again.
+    // Movement drivers xform / hybrid (the slot write above keeps S+0x20 as
+    // Warp would). The body readback compares the previous command.
+    bool transform_warp = false;
+    const bool transform = PartnerApplyIsTransform(set.apply);
+    if (transform && parts_loaded && h.read_body) {
+        m.body_ok = h.read_body(h.context, st, m.body_pos, m.body_quat);
+    } else {
+        m.body_ok = false;
+    }
+    if (transform && m.body_ok && m.have_cmd && now - m.xform_check_ms >= 1000) {
+        m.xform_check_ms = now;
+        const std::int32_t bx = MetresToMm(m.body_pos[0]), by = MetresToMm(m.body_pos[1]), bz = MetresToMm(m.body_pos[2]);
+        const float body_yaw = partner::QuatToYaw(m.body_quat);
+        const std::int32_t yaw_err = partner::NormalizeMrad(static_cast<std::int64_t>(pp::ToMrad(body_yaw)) - m.cmd.yaw_mrad);
+        EmitFormat(h, "partner_xform; R=1; apply=%s; cmd_mm=%d,%d,%d; body_mm=%d,%d,%d; err_mm=%u; yaw_err_mrad=%d; reset=%s\r\n",
+                   PartnerApplyName(set.apply), m.cmd.x_mm, m.cmd.y_mm, m.cmd.z_mm, bx, by, bz,
+                   partner::DistanceMm(m.cmd.x_mm, m.cmd.y_mm, m.cmd.z_mm, bx, by, bz), yaw_err < 0 ? -yaw_err : yaw_err,
+                   PartnerResetName(set.reset));
+    }
+    if (transform && set.stage >= 1 && pose_valid) {
+        const char* hybrid_reason = nullptr;
+        if (set.apply == PartnerApply::hybrid && parts_loaded) {
+            if (!m.hybrid_placed) hybrid_reason = "first";
+            else if (set.source == PartnerSource::net && m.last_status == pose::Status::lost && sample_status == pose::Status::live)
+                hybrid_reason = "relink";
+            else if (m.body_ok && m.have_cmd &&
+                     partner::DistanceMm(m.cmd.x_mm, m.cmd.y_mm, m.cmd.z_mm, MetresToMm(m.body_pos[0]), MetresToMm(m.body_pos[1]),
+                                         MetresToMm(m.body_pos[2])) > kHybridErrorMm)
+                hybrid_reason = "err";
+        }
+        if (hybrid_reason) {
+            transform_warp = true;
+            m.hybrid_placed = true;
+            EmitCapped(m.hybrid_cap, h, "partner_hybrid", "partner_hybrid=warp; reason=%s\r\n", hybrid_reason);
+        } else {
+            alignas(16) float p[4] = {static_cast<float>(pose.x_mm / 1000.0), static_cast<float>(pose.y_mm / 1000.0),
+                                      static_cast<float>(pose.z_mm / 1000.0), 0.0f};
+            alignas(16) float q[4]{};
+            partner::YawToQuat(static_cast<float>(pose.yaw_mrad / 1000.0), q);
+            const char* refused = m.native_disabled ? "native_disabled"
+                                : !h.apply_transform ? "unavailable"
+                                : h.apply_transform(h.context, terminating, p, q, set.reset);
+            if (IsFault(refused)) NoteFault(m, h, "xform");
+            if (refused) {
+                // The partner keeps moving through the proven Lua Warp.
+                transform_warp = true;
+                if (!m.xform_logged || m.xform_state != refused) {
+                    m.xform_logged = true;
+                    m.xform_state = refused;
+                    EmitCapped(m.xform_cap, h, "partner_xform", "partner_xform=refused; reason=%s; fallback=warp\r\n", refused);
+                }
+            } else if (!m.xform_logged || m.xform_state) {
+                m.xform_logged = true;
+                m.xform_state = nullptr;
+                EmitCapped(m.xform_cap, h, "partner_xform", "partner_xform=applied; R=1; apply=%s; reset=%s\r\n",
+                           PartnerApplyName(set.apply), PartnerResetName(set.reset));
+            }
+        }
+    }
+    m.last_status = sample_status;
+    // Animation application (instance 1 only, stage 3 with parts loaded).
+    const bool anim_needed = set.anim != PartnerAnim::off && set.stage >= 3;
+    if (anim_needed) {
+        const sync::AnimState src = set.anim == PartnerAnim::mirror ? local_anim : remote_anim;
+        const bool src_valid = (src.flags & sync::AnimFlag::Valid) != 0;
+        if (m.anim_source != (src_valid ? 1 : 0)) {
+            m.anim_source = src_valid ? 1 : 0;
+            EmitCapped(m.anim_cap, h, "partner_anim", "partner_anim=source; anim=%s; valid=%u; act=%u; s=%u; v=%u\r\n",
+                       PartnerAnimName(set.anim), src_valid ? 1u : 0u, unsigned(src.act), unsigned(src.stance), unsigned(src.speed));
+        }
+        if (!parts_loaded) {
+            // Unrealized or reloading (a look apply runs the 3->4->0->1->3
+            // parts cycle): the body may come back standing, so the stance is
+            // applied again once the parts are loaded.
+            m.stance = partner::StanceDebounce{};
+            m.stance_watch = false;
+        }
+        if (src_valid && parts_loaded) {
+            if (set.aset == PartnerAset::q || set.aset == PartnerAset::qs) {
+                // Only the live-observed locomotion ids are copied (other action
+                // ids feed action checks and the PlayerInfo special cases).
+                const char* refused = !partner::LocomotionAct(src.act) ? "act_domain"
+                                    : h.write_anim ? h.write_anim(h.context, terminating, src.act, src.stance, src.speed) : "unavailable";
+                if (!m.anim_write_logged || m.anim_write_state != refused) {
+                    m.anim_write_logged = true;
+                    m.anim_write_state = refused;
+                    if (refused) EmitCapped(m.anim_cap, h, "partner_anim", "partner_aset=q; state=refused; reason=%s; act=%u\r\n", refused,
+                                            unsigned(src.act));
+                    else EmitCapped(m.anim_cap, h, "partner_anim", "partner_aset=q; state=applied; act=%u; s=%u; v=%u\r\n",
+                                    unsigned(src.act), unsigned(src.stance), unsigned(src.speed));
+                }
+            }
+            if (set.aset != PartnerAset::q) {
+                const std::uint8_t from = m.stance.applied;
+                const std::uint8_t to = partner::DebounceStance(m.stance, src.stance, now, kStanceHoldMs);
+                if (to) {
+                    const bool request = set.aset == PartnerAset::r;
+                    std::uint8_t psw = 0, q30 = 0;
+                    const char* refused = m.native_disabled ? "native_disabled"
+                                        : request ? (!h.request_stance ? "unavailable" : h.request_stance(h.context, terminating, to))
+                                                  : (!h.set_stance ? "unavailable" : h.set_stance(h.context, terminating, to, psw, q30));
+                    if (IsFault(refused)) NoteFault(m, h, request ? "stance_request" : "set_stance");
+                    m.stance_summary_dirty = true;
+                    if (refused) {
+                        // Not committed: the same target is retried after
+                        // kStanceRetryMs (a transient refusal must not stick).
+                        partner::RetryStance(m.stance, now, kStanceRetryMs);
+                        ++m.stance_refusals;
+                        if (m.stance_refused_state != refused) {
+                            m.stance_refused_state = refused;
+                            if (request)
+                                EmitStance(m.stance_refused_cap, h, "refused", "partner_stance=req; R=1; from=%u; to=%u; result=%s\r\n",
+                                           unsigned(from), unsigned(to), refused);
+                            else
+                                EmitStance(m.stance_refused_cap, h, "refused", "partner_stance=refused; R=1; to=%u; reason=%s\r\n",
+                                           unsigned(to), refused);
+                        }
+                    } else {
+                        partner::CommitStance(m.stance, to);
+                        m.stance_refused_state = nullptr;
+                        m.stance_last = to;
+                        if (request) {
+                            ++m.stance_reqs;
+                            EmitStance(m.stance_cap, h, "set", "partner_stance=req; R=1; from=%u; to=%u; result=ok\r\n",
+                                       unsigned(from), unsigned(to));
+                        } else {
+                            ++m.stance_sets;
+                            EmitStance(m.stance_cap, h, "set",
+                                       "partner_stance=set; R=1; id=1; from=%u; to=%u; psw=0x%02x; q30=%u\r\n", unsigned(from),
+                                       unsigned(to), unsigned(psw), unsigned(q30));
+                            m.stance_watch = true;
+                            m.stance_set_ms = now;
+                            m.stance_expected_psw = static_cast<std::uint8_t>(to | (to << 4));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (m.stance_watch) {
+        if (now - m.stance_set_ms > kStanceWatchMs || !h.census) {
+            m.stance_watch = false;
+        } else {
+            pp::Census census{};
+            h.census(h.context, st, census);
+            if (!census.k[1].stance_refusal && census.k[1].psw != m.stance_expected_psw) {
+                m.stance_watch = false;
+                ++m.stance_reverts;
+                m.stance_summary_dirty = true;
+                EmitStance(m.stance_revert_cap, h, "reverted",
+                           "partner_stance=reverted; R=1; psw=0x%02x; expected=0x%02x; ms_after_set=%u\r\n", unsigned(census.k[1].psw),
+                           unsigned(m.stance_expected_psw), Clamp32(now - m.stance_set_ms));
+            }
+        }
+    }
+    // Stance counters keep counting after the line caps (Play-OfflineCoop's
+    // status line and long sessions read this).
+    if (m.stance_summary_dirty && (!m.stance_summary_ms || now - m.stance_summary_ms >= kStanceSummaryMs)) {
+        m.stance_summary_dirty = false;
+        m.stance_summary_ms = now;
+        EmitFormat(h, "partner_stance=summary; last=%u; sets=%u; reqs=%u; refused=%u; reverts=%u\r\n", unsigned(m.stance_last),
+                   m.stance_sets, m.stance_reqs, m.stance_refusals, m.stance_reverts);
+    }
+    // Census: census=1, or once per realize when a native feature needs it.
+    const bool native_feature = transform || (set.anim != PartnerAnim::off && set.aset != PartnerAset::q);
+    if (d.census_pending || (native_feature && parts_loaded && !m.census_logged)) {
+        d.census_pending = false;
+        if (parts_loaded) m.census_logged = true;
+        LogCensus(h, st);
+    }
+    // All-active mode, as Lua reports it, and the 0x2000 re-assert.
     bool reassert = false;
     if (set.stage >= 2 && (tick.luaflags & partner::luaflag::all_active) && !(st.flags & c::flag_all_active) &&
         ResendDue(m.allactive_resends, m.allactive_resend_ms, now)) {
@@ -410,11 +755,79 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         m.allactive_resend_ms = now;
         EmitFormat(h, "partner_allactive=lost; flags=0x%08x; reassert=%u\r\n", st.flags, m.allactive_resends);
     }
+    if (tick.luaflags & partner::luaflag::all_active) {
+        if (!m.all_active_ms) m.all_active_ms = now;
+    } else {
+        m.all_active_ms = 0;
+    }
+    // Appearance: verification of the last apply, then this tick's desired look.
+    if (m.look_verify) {
+        if (!realized || st.parts[1] != c::parts_loaded_state) {
+            m.look_cycle_seen = true;
+            m.look_match_ms = 0;
+        } else if (looks_ok && LookMatches(looks.look[1], m.look_applied) && !(st.q180 & 2u)) {
+            if (!m.look_match_ms) m.look_match_ms = now;
+            if (m.look_cycle_seen || now - m.look_match_ms >= kLookSettleMs) {
+                m.look_verify = false;
+                const partner::Look& l = looks.look[1];
+                EmitCapped(m.look_cap, h, "partner_look",
+                           "partner_look=loaded; R=1; q40=%u; q48=%u; q50=%u; q58=%u; q60=%u; q68=%u; ms_after_apply=%u; cycle=%u\r\n",
+                           unsigned(l.type), unsigned(l.parts), unsigned(l.camo), unsigned(l.hand), unsigned(l.face),
+                           unsigned(l.face_equip), Clamp32(now - m.look_applied_ms), m.look_cycle_seen ? 1u : 0u);
+            }
+        } else {
+            m.look_match_ms = 0;
+        }
+        if (m.look_verify && now - m.look_applied_ms > kPartsTimeoutMs) {
+            m.look_verify = false;
+            EmitCapped(m.look_cap, h, "partner_look", "partner_look=timeout; R=1; state=%u; q40=%u; q180=0x%x; realized=%u\r\n",
+                       unsigned(st.parts[1]), looks_ok ? unsigned(looks.look[1].type) : 0xFFu, st.q180, realized ? 1u : 0u);
+        }
+    }
+    const Desired desired = DesiredLook(d, h, looks_ok, looks, st);
+    if (set.look == PartnerLook::net && !desired.valid && m.all_active_ms && !m.look_waiting_logged && now - m.all_active_ms >= kLookWaitMs) {
+        m.look_waiting_logged = true;
+        EmitCapped(m.look_cap, h, "partner_look", "partner_look=waiting; R=1; ms_after_allactive=%u; fallback=copy\r\n",
+                   Clamp32(now - m.all_active_ms));
+    }
+    bool set_parts = false;
+    if (desired.valid) {
+        if (set.look == PartnerLook::copy) {
+            // parts=explicit with look=copy: the F3b one-shot (stage >= 1).
+            set_parts = set.stage >= 1;
+        } else {
+            set_parts = set.stage >= 3 && (tick.luaflags & partner::luaflag::all_active) &&
+                        (!SameKey(m, desired) || !(tick.luaflags & partner::luaflag::parts_copied)) &&
+                        (!m.look_applied_any || now - m.look_applied_ms >= kLookMinGapMs);
+        }
+    }
+    // A known explicit look replaces the copy (the copy stays the fallback
+    // while look=net has not received one).
+    const bool no_copy = set.look != PartnerLook::copy && desired.valid;
     // A fresh mirror=on request restarts the window instead of ending it.
     const bool mirror_off = !d.mirror_pending && MirrorOffDue(d, h, st, now);
-    const std::uint32_t ops = partner::OpsFor(partner::OpInput{set.stage, set.apply, pose_valid, tick.luaflags, reassert,
-                                                               d.parts_explicit_pending, d.mirror_pending, mirror_off});
-    if (ops & partner::op::set_parts_explicit) d.parts_explicit_pending = false;
+    const std::uint32_t ops = partner::OpsFor(partner::OpInput{set.stage, set.apply, pose_valid, tick.luaflags, reassert, set_parts,
+                                                               d.mirror_pending, mirror_off, no_copy, transform_warp});
+    if (ops & partner::op::set_parts_explicit) {
+        if (set.look == PartnerLook::copy) d.parts_explicit_pending = false;
+        if (h.write_face_equip) {
+            if (const char* refused = h.write_face_equip(h.context, terminating, desired.look.face_equip))
+                LogWriteRefusal(m, h, "face_equip", refused);
+        }
+        m.look_applied_any = true;
+        m.look_applied_remote_rev = desired.remote_rev;
+        m.look_applied_forced_rev = desired.forced_rev;
+        m.look_applied = desired.look;
+        m.look_applied_ms = now;
+        m.look_verify = true;
+        m.look_cycle_seen = false;
+        m.look_match_ms = 0;
+        const partner::Look& l = desired.look;
+        EmitCapped(m.look_cap, h, "partner_look",
+                   "partner_look=apply; R=1; source=%s; type=%u; parts=%u; camo=%u; hand=%u; face=%u; fe=%u; rev=%u; avatar_as_snake=%u\r\n",
+                   desired.source, unsigned(l.type), unsigned(l.parts), unsigned(l.camo), unsigned(l.hand), unsigned(l.face),
+                   unsigned(l.face_equip), unsigned(desired.remote_rev), desired.avatar_as_snake ? 1u : 0u);
+    }
     if (ops & partner::op::mirror_on) {
         d.mirror_pending = false;
         m.mirror_requested = true;
@@ -424,9 +837,10 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         m.mirror_off_sends = 0;
     }
     // Transitions are logged immediately (shared cap against realize thrash).
-    const bool realized = pp::Realized(st, partner::partner_index);
     char line[160]{};
     if (realized && !m.realized) {
+        // hybrid placement, census and stance debounce were reset at mission
+        // start or unrealize; this tick may already have used them.
         m.realized = true;
         m.realized_ms = now;
         m.parts_loaded = false;
@@ -435,6 +849,9 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                 unsigned(st.ids[1]), unsigned(st.pool[1]), m.bits_set ? Clamp32(now - m.bits_ms) : 0u))) LogTransition(m, h, line);
     } else if (!realized && m.realized) {
         m.realized = false;
+        m.hybrid_placed = false;
+        m.census_logged = false;
+        m.stance = partner::StanceDebounce{};
         if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "partner_realized=0; R=1; ms_after_realize=%u\r\n",
                 Clamp32(now - m.realized_ms)))) LogTransition(m, h, line);
     }
@@ -458,15 +875,45 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                    PartnerApplyName(set.apply), m.cmd.x_mm, m.cmd.y_mm, m.cmd.z_mm, sx, sy, sz,
                    partner::DistanceMm(m.cmd.x_mm, m.cmd.y_mm, m.cmd.z_mm, sx, sy, sz));
     }
-    if (h.submit_local) h.submit_local(h.context, tick);
+    // Sender: the local pose with its anim extension, and the local look once loaded.
+    if (h.submit_local) h.submit_local(h.context, tick, local_anim);
+    if (h.submit_look && looks_ok && st.local < 2 && st.parts[st.local] == c::parts_loaded_state)
+        h.submit_look(h.context, looks.look[st.local]);
     Probe(d, h, st, clock);
-    if (lab.partner_anim_probe) AnimProbe(m, h, st, now);
-    if (applying) {
+    if (lab.partner_anim_probe) AnimProbe(m, h, st, anim_ok, anim, now);
+    // Both looks, change-only at most 1 Hz, while an explicit look is used.
+    const bool looks_changed = !partner::SameLook(looks.look[0], m.looks.look[0]) || !partner::SameLook(looks.look[1], m.looks.look[1]);
+    if (looks_ok && (set.look != PartnerLook::copy || lab.partner_anim_probe) &&
+        (!m.looks_logged || (looks_changed && now - m.looks_ms >= 1000)) && m.probe_lines < kProbeLineCap) {
+        m.looks_logged = true;
+        m.looks_ms = now;
+        m.looks = looks;
+        ++m.probe_lines;
+        const partner::Look& a = looks.look[0];
+        const partner::Look& b = looks.look[1];
+        EmitFormat(h, "partner_looks; look0=%u,%u,%u,%u,%u,%u; look1=%u,%u,%u,%u,%u,%u; parts=%u,%u\r\n", unsigned(a.type),
+                   unsigned(a.parts), unsigned(a.camo), unsigned(a.hand), unsigned(a.face), unsigned(a.face_equip), unsigned(b.type),
+                   unsigned(b.parts), unsigned(b.camo), unsigned(b.hand), unsigned(b.face), unsigned(b.face_equip), unsigned(st.parts[0]),
+                   unsigned(st.parts[1]));
+    }
+    // probe=ps: the per-id PS fields of both instances at 4 Hz (read-only).
+    if (set.probe_ps && h.format_ps_probe && now - m.ps_probe_ms >= kPsProbeMs && m.ps_probe_lines < kProbeLineCap) {
+        m.ps_probe_ms = now;
+        for (std::uint32_t k = 0; k < 2; ++k) {
+            char ps_line[512]{};
+            if (h.format_ps_probe(h.context, st, k, ps_line, sizeof(ps_line))) {
+                Emit(h, ps_line);
+                ++m.ps_probe_lines;
+            }
+        }
+    }
+    if (applying || (transform && pose_valid && set.stage >= 1)) {
         m.cmd = pose;
         m.have_cmd = true;
         m.pose_applied = true;
     }
-    reply = partner::Reply{ops, partner::partner_index, pose.x_mm, pose.y_mm, pose.z_mm, pose.yaw_mrad, status, age_ms};
+    reply = partner::Reply{ops, partner::partner_index, pose.x_mm, pose.y_mm, pose.z_mm, pose.yaw_mrad, status, age_ms,
+                           (ops & partner::op::set_parts_explicit) ? desired.look : partner::Look{}};
     return true;
 }
 

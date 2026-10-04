@@ -46,12 +46,32 @@ bool Start(const Config& config) noexcept;
 bool Running() noexcept;
 // Current mission (frame epoch). 0 drops every received transform.
 void SetEpoch(std::uint32_t epoch) noexcept;
-// Sends the local pose when the rate interval has elapsed (non-blocking).
-// Returns true when a frame was handed to the transport.
-bool SubmitLocal(const partner::Tick& tick) noexcept;
+// Sends the local pose when the rate interval has elapsed (non-blocking):
+// a 64-byte v2 frame with the anim extension when anim.flags has
+// sync::AnimFlag::Valid, else a 56-byte v1 frame. Returns true when a frame
+// was handed to the transport.
+bool SubmitLocal(const partner::Tick& tick, const sync::AnimState& anim) noexcept;
 // Interpolated remote pose at now (QPC milliseconds) with the given delay.
 pose::Sample SampleRemote(std::uint32_t delay_ms) noexcept;
-// Clears the ring and the sequence state (mission boundaries).
+
+// Appearance frames (40 bytes, kind event). The local look is sent at once
+// when it differs from the last one sent (the revision bumps; never 0), then
+// repeated every kLookHeartbeatMs (UDP loss, late peers). Only call it with a
+// look read while the local parts state is loaded (3).
+inline constexpr std::uint32_t kLookHeartbeatMs = 2000;
+bool SubmitLook(const partner::Look& look) noexcept;
+// The newest look received in the current epoch (raw values; the driver
+// normalizes them). Logged on change only from the receive thread:
+// "partner_net=look_rx; type=..; parts=..; camo=..; hand=..; face=..; fe=..; rev=..".
+struct RemoteLook {
+    bool valid;
+    partner::Look look;
+    std::uint16_t revision;
+    std::uint64_t rx_ms;  // QPC milliseconds of the newest look frame
+};
+RemoteLook SampleLook() noexcept;
+// Clears the ring, the sequence state and the received look, and makes the
+// next SubmitLook send at once (mission boundaries).
 void ResetRemote() noexcept;
 // Per-tick native cost of the observer's tick handler, for the stats line.
 void RecordNativeMicros(std::uint32_t micros) noexcept;

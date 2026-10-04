@@ -6,14 +6,19 @@ writing <game>/mgs-coop/partner.trigger (docs/offline-partner-spike-plan.md 2.1)
 
 .DESCRIPTION
 The text is validated against the trigger grammar first: 'stop' alone, or any
-of stage=0..3 source=fixed|orbit|net apply=warp|slot|both and the one-shots
-parts=explicit (op 16, SetPartsInfoAtInstanceIndex: variant F3b) and mirror=on
-(op 32, mirror diagnostic: F3c; at most 10 s), each at most once, separated by
-blanks. The one-shots act only at stage >= 1. It is written in canonical form
-(stage, source, apply, parts, mirror; one ASCII line, at most 63 bytes with the
-newline) to a temporary file in the instance's mgs-coop folder, which is then
-renamed over partner.trigger, so the native side never reads a partial line.
-No window focus is needed.
+of stage=0..3 source=fixed|orbit|net apply=warp|slot|both|xform|hybrid (move=
+is the same key) anim=off|mirror|net aset=q|s|qs|r reset=n|a|c|ac
+look=copy|net|quiet|snake probe=ps|off and the one-shots census=1 (component
+census lines), parts=explicit (op 16: re-apply the look; with look=copy the
+local look, variant F3b) and mirror=on (op 32, mirror diagnostic: F3c; at most
+10 s; refused natively unless look=copy), each at most once, separated by
+blanks. parts/mirror act only at stage >= 1. It is written in canonical form
+(stage, source, apply, anim, aset, reset, look, probe, census, parts, mirror;
+one ASCII line, at most 127 bytes with the newline) to a temporary file in the
+instance's mgs-coop folder, which is then renamed over partner.trigger, so the
+native side never reads a partial line. No window focus is needed.
+docs/partner-anim-appearance.md describes the animation, movement and look
+experiments and their log lines.
 
 The native side honours the file only with the offline-v1 marker and lab.ini
 partner=1, polls it every 30 Lua ticks during a 30050 mission, deletes it and
@@ -40,6 +45,9 @@ pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role host -Text 'stage=1 source=fix
 pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role host -Text 'stage=3 source=orbit' -WaitSec 10
 pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role both -Text 'stage=3 source=net'
 pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role host -Text parts=explicit -WaitSec 10
+pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role host -Text 'stage=3 source=orbit move=xform reset=n census=1'
+pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role host -Text 'stage=3 source=fixed anim=mirror aset=qs look=quiet'
+pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role both -Text 'stage=3 source=net apply=hybrid anim=net aset=qs look=net'
 pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role host -Text stop
 #>
 [CmdletBinding(SupportsShouldProcess)]

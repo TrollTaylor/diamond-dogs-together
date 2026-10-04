@@ -47,6 +47,15 @@ std::size_t FormatQuery(const CoopConfig& coop, bool readback, char* out, std::s
 // types the native UpdatePartsStatus reset reverts to SNAKE outside FOB.
 bool NeedsResetBypass(const CoopConfig& coop) noexcept;
 
+// Observer modes that answer these receipts: every mode whose composed TppMain
+// splices character.lua and that wants the co-op character: host-v2/v3
+// (host_create), client-v1 and offline-v1. The receipts are session-free (the
+// bypass at 0x9CD370 affects only the local instance, see 0x9CD2D5), so
+// offline-v1 answers them while every session receipt stays off there.
+constexpr bool ReceiptsActive(bool host_create, bool client, bool offline) noexcept {
+    return host_create || client || offline;
+}
+
 // For report/readback receipts: validates the payload ([A-Za-z0-9_=:,.;-],
 // 1..max_payload bytes) and writes "character=<payload>\r\n" or
 // "character_readback=<payload>\r\n" with every ';' expanded to "; ".

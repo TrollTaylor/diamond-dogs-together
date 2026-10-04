@@ -257,7 +257,13 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner'; Json = 'partner'; Kind = 'bool' },
     @{ Key = 'partner_stage'; Json = 'stage'; Kind = 'int'; Min = 0; Max = 3 },
     @{ Key = 'partner_source'; Json = 'source'; Kind = 'enum'; Values = @('fixed', 'orbit', 'net') },
-    @{ Key = 'partner_apply'; Json = 'apply'; Kind = 'enum'; Values = @('warp', 'slot', 'both') },
+    @{ Key = 'partner_apply'; Json = 'apply'; Kind = 'enum'; Values = @('warp', 'slot', 'both', 'xform', 'hybrid') },
+    # Animation / movement / appearance (docs/partner-anim-appearance.md). The
+    # native parser also accepts partner_move as an alias of partner_apply.
+    @{ Key = 'partner_anim'; Json = 'anim'; Kind = 'enum'; Values = @('off', 'mirror', 'net') },
+    @{ Key = 'partner_aset'; Json = 'aset'; Kind = 'enum'; Values = @('q', 's', 'qs', 'r') },
+    @{ Key = 'partner_reset'; Json = 'reset'; Kind = 'enum'; Values = @('n', 'a', 'c', 'ac') },
+    @{ Key = 'partner_look'; Json = 'look'; Kind = 'enum'; Values = @('copy', 'net', 'quiet', 'snake') },
     @{ Key = 'partner_rate_hz'; Json = 'rate_hz'; Kind = 'int'; Min = 1; Max = 60 },
     @{ Key = 'partner_interp_ms'; Json = 'interp_ms'; Kind = 'int'; Min = 0; Max = 500 },
     @{ Key = 'partner_offset_cm'; Json = 'offset_cm'; Kind = 'int'; Min = 50; Max = 1000 },
@@ -272,6 +278,7 @@ $script:LabPartnerKeys = @(
 # Lab defaults for the spike (lab.json "partner" overrides them).
 $script:LabPartnerDefaults = [ordered]@{
     net = '1'; partner = '1'; partner_stage = '0'; partner_source = 'fixed'; partner_apply = 'warp'
+    partner_anim = 'off'; partner_aset = 'qs'; partner_reset = 'n'; partner_look = 'copy'
     partner_rate_hz = '30'; partner_interp_ms = '100'; partner_offset_cm = '300'; partner_teardown = 'clear'
     partner_force_exists = '0'; partner_policy_relax = '0'; partner_anim_probe = '0'; crash_probe = '1'
 }
@@ -346,6 +353,25 @@ function ConvertFrom-LabPartnerJson {
         if ($spec.Kind -eq 'port') { throw "lab.json partner.${name}: set ports.netHost / ports.netGuest instead." }
         $value = if ($Partner -is [Collections.IDictionary]) { $Partner[$name] } else { $Partner.PSObject.Properties[$name].Value }
         $out[$spec.Key] = $value
+    }
+    return $out
+}
+
+function ConvertFrom-LabCharacterArgs {
+    # Pure: Prepare-LabInstance -Character items for one role (offline lab only).
+    # 'name' applies to both roles, 'host:name' / 'guest:name' to one; name is one
+    # of the lab characters. Later items win. $null when no item applies, so
+    # lab.json offline.characters stays in force (for example -Character default
+    # for a regression rerun of the proven E-series without the Quiet guest).
+    param([string[]]$Items = @(), [Parameter(Mandatory)][ValidateSet('host', 'guest')][string]$Role)
+    $out = $null
+    foreach ($item in @($Items | Where-Object { $_ } | ForEach-Object { $_ -split ',' } | Where-Object { $_.Trim() })) {
+        $text = $item.Trim()
+        if ($text -cnotmatch '^(?:(host|guest):)?([a-z_]+)$') { throw "Invalid -Character '$text' (name, host:name or guest:name)." }
+        $target = $Matches[1]
+        $name = $Matches[2]
+        if ($name -cnotin $script:LabCharacters) { throw "Invalid -Character '$text': one of $($script:LabCharacters -join ', ')." }
+        if (!$target -or $target -ceq $Role) { $out = $name }
     }
     return $out
 }
@@ -538,10 +564,14 @@ function Get-LabInstanceSettings {
         [Parameter(Mandatory)][string]$GameDirectory,
         [Parameter(Mandatory)][string]$HostSteamId64,
         [switch]$Offline,
-        [Collections.IDictionary]$PartnerOverrides = $null
+        [Collections.IDictionary]$PartnerOverrides = $null,
+        # Offline only: replaces lab.json offline.characters.<role> for this preparation.
+        [string]$CharacterOverride = $null
     )
     if (!(Test-IndividualSteamId64 $HostSteamId64)) { throw 'Host SteamID64 is not a valid individual SteamID64.' }
     if (!$Offline -and $PartnerOverrides -and $PartnerOverrides.Count) { throw 'Partner settings apply only to the offline lab mode (-Offline).' }
+    if (!$Offline -and $CharacterOverride) { throw 'A character override applies only to the offline lab mode (-Offline).' }
+    if ($CharacterOverride -and $CharacterOverride -cnotin $script:LabCharacters) { throw "Invalid character override: $CharacterOverride" }
     $saveDir = (Get-InstancePaths -GameDirectory $GameDirectory).SaveDir
     $guestId = [string](Get-ConfigValue $Config.Identity 'guestSteamId' '76561202255233008')
     if (!(Test-IndividualSteamId64 $guestId)) { throw 'lab.json identity.guestSteamId is not a valid individual SteamID64.' }
@@ -577,7 +607,7 @@ function Get-LabInstanceSettings {
         $settings.Partner = ConvertTo-LabPartnerIni -Values $merged -ListenPort $settings.ListenPort -PeerPort $settings.PeerPort
         $settings.Marker = $expect.Marker
         $settings.MasterUrl = $expect.MasterUrl
-        $settings.Character = $expect.Character
+        $settings.Character = if ($CharacterOverride) { $CharacterOverride } else { $expect.Character }
         $settings.Offline = $true
     }
     return $settings

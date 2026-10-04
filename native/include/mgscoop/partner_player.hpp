@@ -13,11 +13,25 @@
 // This module never writes P+0x204 (no flag bit at all, in particular never
 // 0x100) and never creates or touches the synchronizer. The only stores are:
 // interlocked dword OR/AND of bit R in Q+0x194/Q+0x198, one aligned 16-byte
-// store of (*(S+0x20))[R], an interlocked byte OR of bit R in **S, and the
-// policy relax byte (vtable-checked; last resort). Each store runs inside SEH.
+// store of (*(S+0x20))[R], an interlocked byte OR of bit R in **S, the
+// policy relax byte (vtable-checked; last resort), the slot-R elements of the
+// Q animation arrays (u16 Q+0x18, u8 Q+0x30/0x38) and the slot-R face_equip
+// byte Q+0x68. Each store runs inside SEH.
+// Native game calls (animation/movement experiments, all for instance R = 1
+// only, never for the local instance): PS.vt+0 SetStance (0xFF5B10), the
+// stance request component (PS.vt+0xC8 = 0xFF3220, then X.vt+0x10), and the
+// body transform T.vt+0x70/+0x68 plus Warp's resets *(blk+0xC0).vt+0x90 /
+// *(blk+0xA0).vt+0x80 exactly as Warp 0x9CEAE0 calls them (0x9CEBD4..0x9CEC32).
+// Each call re-reads the whole chain, passes the write guards above, needs
+// instance R realized with ids[R] == R, and every component identity of the
+// census (block, PS, CS vtables and back pointers; T/A0/C0 vtables equal to
+// the local instance's and their slot targets inside the code section, or
+// equal to the pinned RVAs once pinned). Each call runs inside SEH.
 // Callers serialize (the script observer's receipt lock); last-error is kept.
 #include <cstddef>
 #include <cstdint>
+#include "mgscoop/lab_config.hpp"
+#include "mgscoop/partner_receipt.hpp"
 
 namespace mgscoop::partner_player {
 
@@ -35,6 +49,17 @@ struct Addresses {
     std::uintptr_t record_bank;
     std::uintptr_t record_base;
     std::uintptr_t mirror_object;       // engine mirror object pointer (mirror off needs it non-null)
+    // Component census and native calls (contract RVAs; synthetic in tests).
+    std::uintptr_t image_base;          // for RVA log fields (0 logs absolute values)
+    std::uintptr_t code_begin, code_end;    // call targets must lie in [begin, end)
+    std::uintptr_t image_begin, image_end;  // vtables must lie in [begin, end)
+    std::uintptr_t block_vtable;
+    std::uintptr_t ps_vtable;
+    std::uintptr_t set_stance;          // PS.vt+0 (SetStance)
+    std::uintptr_t ps_component;        // PS.vt+0xC8 (stance request component getter)
+    std::uintptr_t cs_vtable;
+    std::uintptr_t get_transform;       // CS.vt+0x388
+    std::uintptr_t t_vtable, a0_vtable, c0_vtable;  // pinned after a reviewed census; 0 = unpinned
 };
 Addresses AddressesFor(const void* base) noexcept;
 
@@ -103,14 +128,102 @@ const char* ForceExists(const Addresses& addresses, std::uint32_t index, bool te
 const char* SetPolicyRelax(const Addresses& addresses, bool relax, std::uint8_t restore_value, bool terminating,
                            std::uint8_t& previous) noexcept;
 
-// Read-only animation-slot survey for instance 0 (E10). Element types [S].
+// Per-slot animation fields. Element types and n = *(u32*)(S+0x40) = 2 from
+// the Q allocator 0xFDF010 (arrays packed back to back with natural
+// alignment): u16 *(Q+0x18)[i] action/locomotion id, u8 *(Q+0x28)[i],
+// u8 *(Q+0x30)[i] stance (1 stand, 2 squat, 3 crawl), u8 *(Q+0x38)[i] speed
+// class (0 idle, 2 walk, 3 run), u16 *(Q+0xD8)[i] (diagnostic).
 struct Anim {
-    std::uint16_t q18, qd8;
-    std::uint8_t q28;
-    std::uint32_t q30, q38;
+    std::uint16_t act[2];
+    std::uint8_t q28[2];
+    std::uint8_t stance[2];
+    std::uint8_t speed[2];
+    std::uint16_t qd8[2];
     std::uint32_t m1d8, m1e0, m1f8;  // FNV-1a of the instance-0 motion records
 };
 bool ReadAnim(const State& state, Anim& out) noexcept;
+// The sync form of slot `index` (stance/speed clamped to 0..3; flags valid).
+sync::AnimState AnimSlot(const Anim& anim, std::uint32_t index) noexcept;
+
+// Both instances' appearance arrays: u8 Q+0x40 type, Q+0x48 parts, Q+0x50
+// camo, Q+0x58 hand, u16 Q+0x60 face, u8 Q+0x68 face_equip (same allocator).
+struct Looks {
+    partner::Look look[2];
+};
+bool ReadLooks(const State& state, Looks& out) noexcept;
+
+// Component census of one realized instance k (pure reads; no game call):
+//   blk = *(P+0x378) + pool[k]*0x6A8 == *(*(P+0x50) + 8*pool[k]), vtable
+//   0x2295210, blk+0x138 == P, blk+0xC <= ids[k] < blk+0xC + blk+8;
+//   PS = *(blk+0x78), vtable 0x23B09F0 (slot 0 SetStance), PS+0x408 == blk,
+//   PS+8 == blk+0xC;
+//   CS = *(PS+0x238), vtable 0x22E6070 (slot +0x388 GetTransform 0xAF1130),
+//   entry = *(CS+0x10) + (ids[k] - *(CS+0xC))*0xC0, T = *(entry+0x60) + 0x10
+//   (0xAF1130 replicated without calling it); A0 = *(blk+0xA0), C0 = *(blk+0xC0).
+// Two independent verdicts: `refusal` covers the block/PS identities plus the
+// transform chain (what xform/hybrid and ReadBody need); `stance_refusal`
+// covers the block/PS identities plus the SetStance prerequisites the
+// transform path never touches: the stance words *(PS+0x298) non-null with the
+// word for this id readable (0xFF5B10 writes it) and the component
+// *(PS+0x260) non-null (0xFF5B10 calls its vt[0]; set lazily by a hash lookup
+// at 0xFFF346, so it may still be null while the transform chain is fine).
+struct Block {
+    const char* refusal;         // nullptr when the identities and the transform chain hold
+    const char* stance_refusal;  // nullptr when the identities and the stance prerequisites hold
+    std::uint32_t id, base_id, id_count;
+    std::uintptr_t blk, ps, cs, entry, t, a0, c0, b70;
+    std::uintptr_t blk_vt, ps_vt, cs_vt;  // as read (0 when unreadable)
+    std::uintptr_t t_vt, t68, t70, a0_vt, a080, c0_vt, c090, b70_vt;
+    std::uint8_t psw;     // low byte of the stance word *(PS+0x298)[id - base] (0 unless stance_refusal is null)
+};
+struct Census {
+    const char* refusal;  // nullptr when both blocks pass and T/A0/C0 are callable
+    Block k[2];
+    std::uintptr_t equip_vt;  // *(P+0xC8) vtable (logged only)
+};
+// Refusal reasons: unrealized|blk_vtable|blk_owner|blk_index|ps_vtable|ps_back|
+// cs_vtable|entry|t_null|t_class|a0_class|c0_class|id_mismatch; stance
+// refusals: the identity reasons or ps_words|ps_sub.
+const char* ResolveBlock(const Addresses& addresses, const State& state, std::uint32_t k, Block& out) noexcept;
+const char* ResolveCensus(const Addresses& addresses, const State& state, Census& out) noexcept;
+// "partner_census; k=..; ..." with RVAs relative to addresses.image_base.
+std::size_t FormatCensus(const Addresses& addresses, const Census& census, std::uint32_t k, char* out, std::size_t capacity) noexcept;
+inline constexpr std::size_t census_capacity = 640;
+
+// Writes (same guards as WriteSlot, slot `index` only, which must be 1).
+// aset=q: u16 *(Q+0x18)[1] = act, u8 *(Q+0x30)[1] = stance, u8 *(Q+0x38)[1] = speed;
+// refused unless n == *(u32*)(S+0x40) == 2 and the three array pointers are non-null.
+const char* WriteAnim(const Addresses& addresses, std::uint32_t index, bool terminating, std::uint16_t act, std::uint8_t stance,
+                      std::uint8_t speed) noexcept;
+// u8 *(Q+0x68)[1] = face_equip (the one look field no Lua binding writes).
+const char* WriteFaceEquip(const Addresses& addresses, std::uint32_t index, bool terminating, std::uint8_t value) noexcept;
+
+// Native calls. nullptr on success, otherwise a static reason (CheckWrite or
+// census reasons, "stance", "alignment", "x_null", "x_class" or "fault").
+// "fault" means the call raised inside SEH: the caller disables native calls.
+// SetStance(PS1, ids[1], stance 1..3) through the pinned 0xFF5B10, then reads
+// back the stance word low byte and Q+0x30[1].
+const char* SetStance(const Addresses& addresses, std::uint32_t index, bool terminating, std::uint8_t stance,
+                      std::uint8_t& psw_after, std::uint8_t& q30_after) noexcept;
+// X = PS1.vt+0xC8() (pinned 0xFF3220, after its own pointer chain was read
+// non-null), X0 the same for PS0; X != 0, *X == *X0, X.vt+0x10 in code;
+// then X.vt+0x10(X, index, stance), as Lua RequestToSetTargetStance (0x9DB170) does.
+const char* RequestStance(const Addresses& addresses, std::uint32_t index, bool terminating, std::uint8_t stance) noexcept;
+// T.vt+0x70(T, quat) then T.vt+0x68(T, pos, quat) on instance `index`'s
+// transform (Warp 0x9CEBF8/0x9CEC0A), then the resets in Warp's order
+// (C0.vt+0x90(id) before A0.vt+0x80(id)) as `reset` selects. pos/quat are
+// copied to 16-byte aligned buffers (Warp passes aligned vectors).
+const char* ApplyTransform(const Addresses& addresses, std::uint32_t index, bool terminating, const float (&pos)[4],
+                           const float (&quat)[4], PartnerReset reset) noexcept;
+// Read-only: T+0x20 (position) and T+0x60 (rotation quaternion) of `index`.
+bool ReadBody(const Addresses& addresses, const State& state, std::uint32_t index, float (&pos)[4], float (&quat)[4]) noexcept;
+
+// probe=ps (read-only, layouts [S] except +0x738/+0x740 from the setters
+// 0xFF5220/0xFF5710/0xFF56E0): per instance the PS+0x740 dirty mask, the
+// 10-float record *(PS+0x738)+(id-base)*0x28, the 32-byte record
+// *(PS+0x280)+(id-base)*0x20, the bytes *(PS+0x2D0)[id-base] and
+// *(PS+0x2D8)[id-base] and the stance word low byte.
+std::size_t FormatPsProbe(const Addresses& addresses, const State& state, std::uint32_t k, char* out, std::size_t capacity) noexcept;
 
 // Integer conversions for log lines (no %f; non-finite -> INT32_MIN).
 std::int32_t ToMm(float metres) noexcept;

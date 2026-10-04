@@ -25,7 +25,27 @@ constexpr int kXInputNone = -1;
 // Offline partner spike (docs/offline-partner-spike-plan.md 2.1). Every key
 // below is inert unless the offline-v1 marker is active and partner=1.
 enum class PartnerSource : std::uint8_t { fixed, orbit, net };
-enum class PartnerApply : std::uint8_t { warp, slot, both };
+// Movement driver (lab.ini partner_apply or its alias partner_move; trigger
+// apply= or move=). warp: Lua TppPlayer2 Warp every tick (proven, resets the
+// body each call). slot: native S+0x20 write only. both: slot + Warp. xform:
+// native per-tick body transform through Warp's own T.vt+0x70/+0x68 calls
+// without Warp's resets (0x9CEBD4..0x9CEC32), Lua Warp only as a fallback.
+// hybrid: xform, plus a full Lua Warp on first apply, large error or relink.
+enum class PartnerApply : std::uint8_t { warp, slot, both, xform, hybrid };
+// Animation source for instance 1: off, mirror (the local slot 0, read
+// natively; no network) or net (the anim extension of received frames).
+enum class PartnerAnim : std::uint8_t { off, mirror, net };
+// How the animation fields are applied: q = Q arrays slot 1 every tick,
+// s = PS.vt+0 SetStance (0xFF5B10) on change, qs = both, r = the stance
+// request component (PS.vt+0xC8, X.vt+0x10) on change.
+enum class PartnerAset : std::uint8_t { q, s, qs, r };
+// Warp's resets replayed after an xform: none, A0 (*(blk+0xA0).vt+0x80),
+// C0 (*(blk+0xC0).vt+0x90) or both (C0 first, as Warp does).
+enum class PartnerReset : std::uint8_t { none, a, c, ac };
+// Instance 1 appearance: copy (CopyPartsInfoFromLocalPlayer, the proven
+// default), net (the partner's own look from its look frames; copy until the
+// first one arrives), quiet / snake (fixed local test looks).
+enum class PartnerLook : std::uint8_t { copy, net, quiet, snake };
 enum class PartnerTeardown : std::uint8_t { clear, keep };
 // Default partner_net ports when net=1 names neither port: host 47820/47821,
 // guest 47821/47820 (never the loopback emulator's 47810/47811).
@@ -58,7 +78,11 @@ struct LabConfig {
     bool partner = false;
     std::uint32_t partner_stage = 0;        // 0..3
     PartnerSource partner_source = PartnerSource::fixed;
-    PartnerApply partner_apply = PartnerApply::warp;
+    PartnerApply partner_apply = PartnerApply::warp;  // partner_apply or partner_move
+    PartnerAnim partner_anim = PartnerAnim::off;
+    PartnerAset partner_aset = PartnerAset::qs;
+    PartnerReset partner_reset = PartnerReset::none;  // n|a|c|ac
+    PartnerLook partner_look = PartnerLook::copy;
     std::uint32_t partner_rate_hz = 30;     // 1..60
     std::uint32_t partner_interp_ms = 100;  // 0..500 (0 = latest snapshot only)
     std::uint32_t partner_offset_cm = 300;  // 50..1000
@@ -75,8 +99,20 @@ struct LabConfig {
 const char* PartnerSourceName(PartnerSource value) noexcept;
 const char* PartnerApplyName(PartnerApply value) noexcept;
 const char* PartnerTeardownName(PartnerTeardown value) noexcept;
+const char* PartnerAnimName(PartnerAnim value) noexcept;
+const char* PartnerAsetName(PartnerAset value) noexcept;
+const char* PartnerResetName(PartnerReset value) noexcept;  // n|a|c|ac
+const char* PartnerLookName(PartnerLook value) noexcept;
 bool ParsePartnerSource(const char* text, std::size_t size, PartnerSource& out) noexcept;
 bool ParsePartnerApply(const char* text, std::size_t size, PartnerApply& out) noexcept;
+bool ParsePartnerAnim(const char* text, std::size_t size, PartnerAnim& out) noexcept;
+bool ParsePartnerAset(const char* text, std::size_t size, PartnerAset& out) noexcept;
+bool ParsePartnerReset(const char* text, std::size_t size, PartnerReset& out) noexcept;
+bool ParsePartnerLook(const char* text, std::size_t size, PartnerLook& out) noexcept;
+// True for xform and hybrid (the native body-transform drivers).
+inline bool PartnerApplyIsTransform(PartnerApply value) noexcept {
+    return value == PartnerApply::xform || value == PartnerApply::hybrid;
+}
 
 enum class PlayerCharacter : std::uint8_t {
     game_default,  // leave the sortie/save selection untouched

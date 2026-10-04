@@ -33,6 +33,12 @@ struct Snapshot {
     float yaw;                // radians
     std::uint8_t stance;
     std::uint8_t flags;
+    // Animation extension (partner wire v2); anim_valid false for a v1 frame.
+    // Discrete: a sample carries the fields of the snapshot it holds or
+    // interpolates towards (never blended).
+    bool anim_valid;
+    std::uint16_t act;
+    std::uint8_t anim_stance, anim_speed;
 };
 
 enum class Status : std::uint8_t { none, live, stale, lost };
@@ -45,6 +51,9 @@ struct Sample {
     bool valid;          // false only when the ring is empty
     float x, y, z, yaw;
     std::uint8_t stance, flags;
+    bool anim_valid;
+    std::uint16_t act;
+    std::uint8_t anim_stance, anim_speed;
     Status status;
     std::uint32_t age_ms;  // now - newest receive (saturating)
     bool interpolated;     // between two snapshots
