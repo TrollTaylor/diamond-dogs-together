@@ -100,6 +100,70 @@ int main() {
     Check(Lab("enabled=1\nrole=guest\nself_name=" + std::string(64, 'x') + "\n").self_name[0] == 0, "name too long");
     Check(std::strlen(Lab("enabled=1\nrole=guest\nself_name=" + std::string(63, 'x') + "\n").self_name) == 63, "name max");
 
+    // Offline partner spike keys: defaults, values and validation.
+    const auto spikeDefaults = Lab("enabled=1\nrole=host\n");
+    Check(!spikeDefaults.net && !spikeDefaults.partner && spikeDefaults.net_listen_port == 0, "spike off by default");
+    Check(spikeDefaults.partner_stage == 0 && spikeDefaults.partner_source == PartnerSource::fixed &&
+          spikeDefaults.partner_apply == PartnerApply::warp && spikeDefaults.partner_rate_hz == 30 &&
+          spikeDefaults.partner_interp_ms == 100 && spikeDefaults.partner_offset_cm == 300 &&
+          spikeDefaults.partner_teardown == PartnerTeardown::clear && !spikeDefaults.partner_force_exists &&
+          !spikeDefaults.partner_policy_relax && !spikeDefaults.partner_anim_probe && spikeDefaults.crash_probe,
+          "spike defaults");
+    const auto spike = Lab(
+        "enabled=1\nrole=guest\nloopback=1\nlisten_port=47811\npeer_port=47810\n"
+        "net=1\nnet_listen_port=47821\nnet_peer_port=47820\npartner=1\npartner_stage=3\npartner_source=orbit\n"
+        "partner_apply=both\npartner_rate_hz=60\npartner_interp_ms=0\npartner_offset_cm=1000\npartner_teardown=keep\n"
+        "partner_force_exists=1\npartner_policy_relax=yes\npartner_anim_probe=on\ncrash_probe=0\n");
+    Check(spike.net && spike.net_listen_port == 47821 && spike.net_peer_port == 47820, "net ports");
+    Check(spike.partner && spike.partner_stage == 3 && spike.partner_source == PartnerSource::orbit &&
+          spike.partner_apply == PartnerApply::both && spike.partner_rate_hz == 60 && spike.partner_interp_ms == 0 &&
+          spike.partner_offset_cm == 1000 && spike.partner_teardown == PartnerTeardown::keep, "partner values");
+    Check(spike.partner_force_exists && spike.partner_policy_relax && spike.partner_anim_probe && !spike.crash_probe, "partner flags");
+    Check(spike.unknown_keys == 0 && spike.invalid_values == 0, "spike keys are known and valid");
+    // Role defaults for the net ports.
+    const auto netHost = Lab("enabled=1\nrole=host\nnet=1\n");
+    Check(netHost.net && netHost.net_listen_port == kNetHostPort && netHost.net_peer_port == kNetGuestPort, "host net defaults");
+    const auto netGuest = Lab("net=1\nrole=guest\nenabled=1\n");
+    Check(netGuest.net && netGuest.net_listen_port == 47821 && netGuest.net_peer_port == 47820, "guest net defaults (order independent)");
+    Check(netGuest.invalid_values == 0, "defaults are not invalid");
+    // Port collisions and incomplete pairs force net=0 and count one invalid value.
+    const auto sameNet = Lab("enabled=1\nrole=host\nnet=1\nnet_listen_port=47820\nnet_peer_port=47820\n");
+    Check(!sameNet.net && sameNet.invalid_values == 1, "net ports must differ");
+    const auto onlyOne = Lab("enabled=1\nrole=host\nnet=1\nnet_listen_port=47820\n");
+    Check(!onlyOne.net && onlyOne.invalid_values == 1, "net needs both ports");
+    const auto clashListen = Lab("enabled=1\nrole=host\nlisten_port=47820\npeer_port=47811\nnet=1\n");
+    Check(!clashListen.net && clashListen.invalid_values == 1, "net default collides with listen_port");
+    const auto clashPeer = Lab("enabled=1\nrole=host\nlisten_port=47810\npeer_port=47811\nnet=1\nnet_listen_port=47830\nnet_peer_port=47811\n");
+    Check(!clashPeer.net && clashPeer.invalid_values == 1, "net peer collides with peer_port");
+    const auto clashCross = Lab("enabled=1\nrole=host\nlisten_port=47810\npeer_port=47811\nnet=1\nnet_listen_port=47811\nnet_peer_port=47830\n");
+    Check(!clashCross.net && clashCross.invalid_values == 1, "net listen collides with peer_port");
+    const auto noRole = Lab("enabled=1\nnet=1\n");
+    Check(!noRole.present && !noRole.net, "net without role has no default ports");
+    const auto netOffPorts = Lab("enabled=1\nrole=host\nnet=0\nnet_listen_port=47810\nnet_peer_port=47810\nlisten_port=47810\n");
+    Check(!netOffPorts.net && netOffPorts.invalid_values == 0, "ports are not cross-checked while net=0");
+    // Out-of-range and misspelled values are rejected individually.
+    const auto badSpike = Lab(
+        "enabled=1\nrole=host\npartner=2\npartner_stage=4\npartner_source=remote\npartner_apply=teleport\n"
+        "partner_rate_hz=0\npartner_rate_hz=61\npartner_interp_ms=501\npartner_offset_cm=49\npartner_offset_cm=1001\n"
+        "partner_teardown=drop\npartner_force_exists=maybe\ncrash_probe=-1\nnet_listen_port=80\n");
+    Check(badSpike.invalid_values == 13, "bad spike values counted");
+    Check(!badSpike.partner && badSpike.partner_stage == 0 && badSpike.partner_source == PartnerSource::fixed &&
+          badSpike.partner_apply == PartnerApply::warp && badSpike.partner_rate_hz == 30 && badSpike.partner_interp_ms == 100 &&
+          badSpike.partner_offset_cm == 300 && badSpike.partner_teardown == PartnerTeardown::clear && badSpike.crash_probe &&
+          badSpike.net_listen_port == 0, "bad spike values keep defaults");
+    const auto bounds = Lab("enabled=1\nrole=host\npartner_rate_hz=1\npartner_offset_cm=50\npartner_interp_ms=500\n");
+    Check(bounds.partner_rate_hz == 1 && bounds.partner_offset_cm == 50 && bounds.partner_interp_ms == 500 &&
+          bounds.invalid_values == 0, "inclusive bounds");
+    // Shared spellings.
+    PartnerSource source{};
+    PartnerApply apply{};
+    Check(ParsePartnerSource("net", 3, source) && source == PartnerSource::net && !ParsePartnerSource("ne", 2, source) &&
+          !ParsePartnerSource("nets", 4, source) && !ParsePartnerSource(nullptr, 1, source), "source parse");
+    Check(ParsePartnerApply("slot", 4, apply) && apply == PartnerApply::slot && !ParsePartnerApply("", 0, apply), "apply parse");
+    Check(std::strcmp(PartnerSourceName(PartnerSource::orbit), "orbit") == 0 &&
+          std::strcmp(PartnerApplyName(PartnerApply::both), "both") == 0 &&
+          std::strcmp(PartnerTeardownName(PartnerTeardown::keep), "keep") == 0, "names");
+
     // Unusable inputs.
     LabConfig sink{};
     Check(!ParseLabConfig(nullptr, 5, sink), "null with length");

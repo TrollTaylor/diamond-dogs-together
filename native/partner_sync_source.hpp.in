@@ -1,0 +1,4 @@
+#pragma once
+constexpr char partner_sync_source[] = R"MGS_PARTNER(
+@MGS_PARTNER_SYNC_SOURCE@
+)MGS_PARTNER";

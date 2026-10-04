@@ -58,4 +58,26 @@ std::optional<wire::Packet> encode_transform(std::uint64_t session,
 // sequence freshness and actor mapping still require a trusted receiver.
 std::optional<PlayerTransformPacket> decode_transform(const wire::Packet& packet);
 
+// Fixed-buffer, non-allocating, non-throwing equivalents for the game thread
+// and the UDP receive thread (offline partner spike, partner_net). A frame is
+// the 28-byte MGSC header (kind snapshot, payload length 28) followed by the
+// transform: byte-identical to wire::encode(*encode_transform(...)).
+constexpr std::size_t transform_frame_size = wire::header_size + transform_packet_size;  // 56
+// Header-only MGSC frame (kind event, payload length 0) used as a keepalive.
+constexpr std::size_t keepalive_frame_size = wire::header_size;  // 28
+
+// Returns transform_frame_size, or 0 (out zeroed) when encode_transform would
+// refuse the same input (invalid transform, zero session or epoch).
+std::size_t encode_transform_frame(std::uint64_t session, std::uint32_t epoch, const PlayerTransformPacket& transform,
+                                   std::uint8_t (&out)[transform_frame_size]) noexcept;
+// Strict: exact size, magic, version, kind snapshot, non-zero session and
+// epoch, payload length 28, a valid transform and payload sequence equal to
+// the header sequence. Outputs are written only on success.
+bool decode_transform_frame(const std::uint8_t* data, std::size_t size, std::uint64_t& session, std::uint32_t& epoch,
+                            PlayerTransformPacket& out) noexcept;
+// Keepalive: kind event, sequence 0, no payload. Returns keepalive_frame_size or 0.
+std::size_t encode_keepalive_frame(std::uint64_t session, std::uint32_t epoch,
+                                   std::uint8_t (&out)[keepalive_frame_size]) noexcept;
+bool decode_keepalive_frame(const std::uint8_t* data, std::size_t size, std::uint64_t& session) noexcept;
+
 } // namespace mgscoop::sync

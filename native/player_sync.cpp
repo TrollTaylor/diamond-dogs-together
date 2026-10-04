@@ -87,4 +87,81 @@ std::optional<PlayerTransformPacket> decode_transform(const wire::Packet& packet
     return transform;
 }
 
+namespace {
+void put64(std::uint8_t* out, std::uint64_t value) noexcept {
+    for (unsigned i = 0; i < 8; ++i) out[i] = static_cast<std::uint8_t>(value >> (i * 8));
+}
+std::uint64_t get64(const std::uint8_t* in) noexcept {
+    std::uint64_t value = 0;
+    for (unsigned i = 0; i < 8; ++i) value |= static_cast<std::uint64_t>(in[i]) << (i * 8);
+    return value;
+}
+// The wire::encode header layout (protocol.cpp), written into a fixed buffer.
+void put_header(std::uint8_t* out, wire::Kind kind, std::uint64_t session, std::uint32_t epoch,
+                std::uint32_t sequence, std::uint32_t length) noexcept {
+    out[0] = 'M'; out[1] = 'G'; out[2] = 'S'; out[3] = 'C';
+    put(out + 4, wire::version, 2);
+    put(out + 6, static_cast<std::uint16_t>(kind), 2);
+    put64(out + 8, session);
+    put(out + 16, epoch);
+    put(out + 20, sequence);
+    put(out + 24, length);
+}
+bool header_matches(const std::uint8_t* data, wire::Kind kind, std::uint32_t length) noexcept {
+    return data[0] == 'M' && data[1] == 'G' && data[2] == 'S' && data[3] == 'C' &&
+           get(data + 4, 2) == wire::version && get(data + 6, 2) == static_cast<std::uint16_t>(kind) &&
+           get(data + 24) == length;
+}
+} // namespace
+
+std::size_t encode_transform_frame(std::uint64_t session, std::uint32_t epoch, const PlayerTransformPacket& transform,
+                                   std::uint8_t (&out)[transform_frame_size]) noexcept {
+    std::memset(out, 0, sizeof(out));
+    if (!valid_transform(transform) || session == 0 || epoch == 0) return 0;
+    put_header(out, wire::Kind::snapshot, session, epoch, transform.sequence, transform_packet_size);
+    auto* bytes = out + wire::header_size;
+    put(bytes, transform.sequence);
+    put_float(bytes + 4, transform.x); put_float(bytes + 8, transform.y); put_float(bytes + 12, transform.z);
+    put_float(bytes + 16, transform.rot_y); put(bytes + 20, transform.equip_id, 2);
+    bytes[22] = transform.stance; bytes[23] = transform.action_flags; put(bytes + 24, transform.tick_ms);
+    return transform_frame_size;
+}
+
+bool decode_transform_frame(const std::uint8_t* data, std::size_t size, std::uint64_t& session, std::uint32_t& epoch,
+                            PlayerTransformPacket& out) noexcept {
+    if (!data || size != transform_frame_size || !header_matches(data, wire::Kind::snapshot, transform_packet_size))
+        return false;
+    const std::uint64_t frame_session = get64(data + 8);
+    const std::uint32_t frame_epoch = get(data + 16);
+    const std::uint32_t frame_sequence = get(data + 20);
+    if (frame_session == 0 || frame_epoch == 0) return false;
+    const auto* bytes = data + wire::header_size;
+    PlayerTransformPacket transform{};
+    transform.sequence = get(bytes);
+    transform.x = get_float(bytes + 4); transform.y = get_float(bytes + 8); transform.z = get_float(bytes + 12);
+    transform.rot_y = get_float(bytes + 16); transform.equip_id = static_cast<std::uint16_t>(get(bytes + 20, 2));
+    transform.stance = bytes[22]; transform.action_flags = bytes[23]; transform.tick_ms = get(bytes + 24);
+    if (!valid_transform(transform) || transform.sequence != frame_sequence) return false;
+    session = frame_session;
+    epoch = frame_epoch;
+    out = transform;
+    return true;
+}
+
+std::size_t encode_keepalive_frame(std::uint64_t session, std::uint32_t epoch,
+                                   std::uint8_t (&out)[keepalive_frame_size]) noexcept {
+    std::memset(out, 0, sizeof(out));
+    if (session == 0 || epoch == 0) return 0;
+    put_header(out, wire::Kind::event, session, epoch, 0, 0);
+    return keepalive_frame_size;
+}
+
+bool decode_keepalive_frame(const std::uint8_t* data, std::size_t size, std::uint64_t& session) noexcept {
+    if (!data || size != keepalive_frame_size || !header_matches(data, wire::Kind::event, 0)) return false;
+    const std::uint64_t frame_session = get64(data + 8);
+    if (frame_session == 0 || get(data + 16) == 0 || get(data + 20) != 0) return false;
+    session = frame_session;
+    return true;
+}
+
 } // namespace mgscoop::sync

@@ -27,6 +27,12 @@
 #include "mgscoop/lab_config.hpp"
 #include "mgscoop/lab_status.hpp"
 #include "mgscoop/client_reset.hpp"
+#include "mgscoop/partner_receipt.hpp"
+#include "mgscoop/partner_player.hpp"
+#include "mgscoop/partner_net.hpp"
+#include "mgscoop/partner_driver.hpp"
+#include "mgscoop/crash_probe.hpp"
+#include <cstdarg>
 
 namespace {
 namespace lab = mgscoop::lab;
@@ -41,6 +47,9 @@ bool host_create_enabled = false;
 bool host_admission_enabled = false;
 bool client_enabled = false;
 bool client_check_enabled = false;
+// offline-v1: host-v1 preparation (allocation, archive, TppMain splice,
+// mission boundary, runtime pinning, two-slot package) with no session at all.
+bool offline_enabled = false;
 bool client_join_armed = false; // serialized mission receipts only
 bool client_key_released = false;
 bool client_join_consumed = false; // process lifetime: no automatic retries
@@ -96,6 +105,14 @@ void Log(const char* line) noexcept {
         WriteFile(script_log, line, static_cast<DWORD>(lstrlenA(line)), &written, nullptr);
 }
 bool Sample(LONG64 count) noexcept { return count <= 32 || count == 256 || count == 1024 || count == 4096; }
+void LogFormat(const char* format, ...) noexcept {
+    char line[512]{};
+    va_list arguments;
+    va_start(arguments, format);
+    const HRESULT result = StringCchVPrintfA(line, ARRAYSIZE(line), format, arguments);
+    va_end(arguments);
+    if (SUCCEEDED(result)) Log(line);
+}
 
 // --- Lab observability helpers (all no-ops unless lab_active) -----------------
 
@@ -339,6 +356,146 @@ bool ReadMission(unsigned short& mission) noexcept {
         ReadProcessMemory(GetCurrentProcess(),static_cast<unsigned char*>(game_base)+rva,
             &mission,sizeof(mission),&read) && read==sizeof(mission);
 }
+
+// --- Offline partner spike (docs/offline-partner-spike-plan.md) ---------------
+// Everything below is inert unless the offline-v1 marker is active and lab.ini
+// has partner=1 (partner_on). It never creates a session, never sets
+// S_IS_ONLINE and never touches the synchronizer; the only game writes are the
+// guarded ones in partner_player. Receipts arrive inside ObserveEntry under
+// receipt_lock; the tick receipt is quiet (no entry/return log lines). The
+// decisions live in partner_driver (unit tested); this file supplies threading,
+// the receipt plumbing and the real effects below.
+namespace partner = mgscoop::partner;
+namespace pp = mgscoop::partner_player;
+namespace pd = mgscoop::partner_driver;
+bool partner_on = false;
+bool partner_gate_ok = false;
+pp::Addresses partner_addresses{};
+wchar_t partner_trigger_path[lab::kMaxAtomicPath]{};
+thread_local pd::Quiet partner_quiet{};
+thread_local char partner_reply[partner::reply_capacity]{};
+pd::Driver partner_driver{};
+
+std::uint64_t QpcMicros() noexcept {
+    LARGE_INTEGER frequency{}, counter{};
+    if (!QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0 || !QueryPerformanceCounter(&counter)) return 0;
+    const auto f = static_cast<std::uint64_t>(frequency.QuadPart);
+    const auto c = static_cast<std::uint64_t>(counter.QuadPart);
+    return (c / f) * 1000000 + ((c % f) * 1000000) / f;
+}
+std::uint32_t Clamp32(std::uint64_t value) noexcept { return value > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<std::uint32_t>(value); }
+
+// Real effects for partner_driver (the context is unused: process-level state).
+void PartnerLog(void*, const char* line) noexcept { Log(line); }
+pp::Refusal PartnerReadState(void*, pp::State& out) noexcept { return pp::ReadState(partner_addresses, out); }
+const char* PartnerOrBits(void*, bool terminating, std::uint32_t& q194, std::uint32_t& q198) noexcept {
+    return pp::OrRealizeBits(partner_addresses, partner::partner_index, terminating, q194, q198);
+}
+const char* PartnerClearBits(void*, bool terminating, std::uint32_t& q194, std::uint32_t& q198) noexcept {
+    return pp::ClearRealizeBits(partner_addresses, partner::partner_index, terminating, q194, q198);
+}
+const char* PartnerWriteSlot(void*, bool terminating, const float (&xyzw)[4]) noexcept {
+    return pp::WriteSlot(partner_addresses, partner::partner_index, terminating, xyzw);
+}
+const char* PartnerForceExists(void*, bool terminating) noexcept {
+    return pp::ForceExists(partner_addresses, partner::partner_index, terminating);
+}
+const char* PartnerSetPolicy(void*, bool relax, std::uint8_t restore_value, bool terminating, std::uint8_t& previous) noexcept {
+    return pp::SetPolicyRelax(partner_addresses, relax, restore_value, terminating, previous);
+}
+bool PartnerReadAnim(void*, const pp::State& state, pp::Anim& out) noexcept { return pp::ReadAnim(state, out); }
+mgscoop::pose::Sample PartnerSampleRemote(void*, std::uint32_t delay_ms) noexcept {
+    return mgscoop::partner_net::SampleRemote(delay_ms);
+}
+void PartnerSubmitLocal(void*, const partner::Tick& tick) noexcept { mgscoop::partner_net::SubmitLocal(tick); }
+// partner.trigger (lab only): reads at most `capacity` bytes, then deletes it.
+pd::TriggerRead PartnerTakeTrigger(void*, char* text, std::size_t capacity, std::size_t& length) noexcept {
+    length = 0;
+    if (!lab_active || !partner_trigger_path[0] || !text) return pd::TriggerRead::none;
+    const DWORD error = GetLastError();
+    HANDLE file = CreateFileW(partner_trigger_path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                              nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) { SetLastError(error); return pd::TriggerRead::none; }
+    DWORD read_bytes = 0;
+    LARGE_INTEGER size{};
+    const bool read = ReadFile(file, text, static_cast<DWORD>(capacity), &read_bytes, nullptr) &&
+                      GetFileSizeEx(file, &size) && size.QuadPart <= static_cast<LONGLONG>(capacity);
+    CloseHandle(file);
+    DeleteFileW(partner_trigger_path);
+    SetLastError(error);
+    length = read_bytes;
+    return read ? pd::TriggerRead::read : pd::TriggerRead::unreadable;
+}
+bool PartnerFocused(void*) noexcept {
+    DWORD foreground = 0;
+    const HWND window = GetForegroundWindow();
+    if (window) GetWindowThreadProcessId(window, &foreground);
+    return foreground == GetCurrentProcessId();
+}
+constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, PartnerOrBits, PartnerClearBits, PartnerWriteSlot,
+    PartnerForceExists, PartnerSetPolicy, PartnerReadAnim, PartnerSampleRemote, PartnerSubmitLocal, PartnerTakeTrigger,
+    PartnerFocused};
+
+void PartnerMissionStart(std::uint32_t mission) noexcept {
+    if (!partner_on) return;
+    pd::MissionStart(partner_driver, partner_hooks);
+    mgscoop::partner_net::ResetRemote();
+    mgscoop::partner_net::SetEpoch(mission);
+    mgscoop::crash_probe::SetContext(partner_driver.settings.stage, 0);
+}
+void PartnerMissionEnd() noexcept {
+    if (!partner_on) return;
+    pd::MissionEnd(partner_driver);
+    mgscoop::partner_net::ResetRemote();
+    mgscoop::partner_net::SetEpoch(0);
+    mgscoop::crash_probe::SetContext(partner_driver.settings.stage, 0);
+}
+
+const char* HandlePartnerCfg() noexcept {
+    static constexpr char yes[]="return true", no[]="return false";
+    unsigned short mission = 0;
+    const char* precheck = nullptr;
+    if (!OnRuntimeThread() || mission_terminating) precheck = "not_runtime_thread";
+    else if (!ReadMission(mission) || mission != 30050) precheck = "mission";
+    else if (!partner_gate_ok) precheck = "code_gate";
+    if (!pd::Cfg(partner_driver, partner_hooks, precheck, mgscoop::partner_net::NowMs())) return no;
+    mgscoop::partner_net::SetEpoch(mission);
+    return yes;
+}
+
+const char* HandlePartnerLog(const char* buffer, std::size_t size) noexcept {
+    static constexpr char yes[]="return true";
+    if (!OnRuntimeThread() && !OnTerminationThread()) return nullptr;
+    pd::LuaLog(partner_driver, partner_hooks, buffer, size);
+    return yes;
+}
+
+const char* HandlePartnerStop() noexcept {
+    static constexpr char yes[]="return true";
+    // Sent from OnTerminate after MISSION_TERMINATING: allowed while terminating.
+    if (!OnRuntimeThread() && !OnTerminationThread()) return nullptr;
+    pd::Stop(partner_driver, partner_hooks, mgscoop::GetLabConfig().partner_teardown, mission_terminating);
+    mgscoop::partner_net::ResetRemote();
+    mgscoop::crash_probe::SetContext(0, partner_driver.mission.realized ? 1u : 0u);
+    return yes;
+}
+
+// The per-frame tick. Returns the quiet reply, or nullptr to leave the literal
+// (Lua then does nothing).
+const char* HandlePartnerTick(const char* buffer, std::size_t size) noexcept {
+    if (!OnRuntimeThread()) return nullptr;
+    const std::uint64_t started_us = QpcMicros();
+    partner::Reply reply{};
+    const pd::Clock clock{mgscoop::partner_net::NowMs(), GetTickCount64()};
+    if (!pd::Tick(partner_driver, partner_hooks, mgscoop::GetLabConfig(), buffer, size, clock, mission_terminating, reply))
+        return nullptr;
+    if (!partner::FormatReply(reply, partner_reply, sizeof(partner_reply))) return nullptr;
+    mgscoop::crash_probe::SetContext(partner_driver.settings.stage, partner_driver.mission.realized ? 1u : 0u);
+    const std::uint64_t ended_us = QpcMicros();
+    mgscoop::partner_net::RecordNativeMicros(Clamp32(ended_us >= started_us ? ended_us - started_us : 0));
+    return partner_reply;
+}
+
 bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
                            mgscoop::script_bridge::Replacement& replacement) noexcept {
     if(!host_source_selected || !buffer || !name || size>=96 ||
@@ -383,7 +540,7 @@ bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
            ReadMission(mission) && mission==allocation_mission) {
             accepted=TransferRuleThread(allocation_thread) &&
                 AdoptDynamiteSessionThread(game_base,allocation_thread,Log);
-            if(accepted) { mission_thread=GetCurrentThreadId(); mission_phase=MissionPhase::running; }
+            if(accepted) { mission_thread=GetCurrentThreadId(); mission_phase=MissionPhase::running; PartnerMissionStart(allocation_mission); }
             else RestoreGameplayRules();
         }
     } else if(equals(terminate)) {
@@ -395,6 +552,7 @@ bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
             cleanup_thread=GetCurrentThreadId();
             accepted=termination_scope.Returned(cleanup_thread);
             mission_phase=MissionPhase::idle; allocation_thread=0;
+            PartnerMissionEnd();
         }
     } else return false;
     static constexpr char yes[]="return true",no[]="return false";
@@ -563,11 +721,39 @@ void CopyName(const char* source, char (&output)[241]) noexcept {
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) { lstrcpyA(output, "<unreadable>"); }
 }
+// Partner receipts (partner_on only; called under receipt_lock). The tick is
+// quiet: no entry line, and ObserveReturn skips its return line. CFG, LOG and
+// STOP keep the ordinary entry/return lines.
+bool SelectPartnerReceipt(partner::Receipt kind, const char* buffer, std::size_t size, const char* name, LONG64 count,
+                          mgscoop::script_bridge::Replacement& replacement) noexcept {
+    const char* reply = nullptr;
+    switch (kind) {
+    case partner::Receipt::tick: reply = HandlePartnerTick(buffer, size); break;
+    case partner::Receipt::cfg: reply = HandlePartnerCfg(); break;
+    case partner::Receipt::log: reply = HandlePartnerLog(buffer, size); break;
+    case partner::Receipt::stop: reply = HandlePartnerStop(); break;
+    default: break;
+    }
+    if (reply) replacement = {reply, std::strlen(reply)};
+    pd::Arm(partner_quiet, kind, reply != nullptr);
+    if (!pd::LogsEntry(kind)) return reply != nullptr;
+    char copied[241]{}, line[512]{};
+    CopyName(name, copied);
+    if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
+        "entry_count=%lld thread=%lu tick_ms=%llu size=%llu name_prefix=%s replacement=%d execution_receipt=%d\r\n",
+        count, GetCurrentThreadId(), GetTickCount64(), static_cast<unsigned long long>(size), copied,
+        reply ? 1 : 0, 0))) Log(line);
+    return reply != nullptr;
+}
 bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
                   mgscoop::script_bridge::Replacement& replacement) noexcept {
     AcquireSRWLockExclusive(&receipt_lock);
     struct Unlock { ~Unlock(){ ReleaseSRWLockExclusive(&receipt_lock); } } unlock;
     const auto count = InterlockedIncrement64(&entries);
+    if(partner_on) {
+        const auto partner_kind=partner::Classify(buffer,size,name);
+        if(partner_kind!=partner::Receipt::none) return SelectPartnerReceipt(partner_kind,buffer,size,name,count,replacement);
+    }
     bool selected = bootstrap_enabled && mgscoop::SelectBootstrapPatch(buffer, size, name, replacement, archive_mounted);
     if(!selected)
         selected=mgscoop::SelectDamageParameterPatch(buffer,size,name,replacement,host_create_enabled || client_enabled);
@@ -641,7 +827,9 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
         const bool cleanup_ready=!gameplay_restore_pending || RestoreGameplayRules();
         const bool player_ready=cleanup_ready && (!needs_player_patch ||
             (mgscoop::marker_loading::IsActive() && PrepareDynamitePlayerLoading(game_base,game_span,Log)));
-        const bool created=player_ready && !client_enabled && TryCreateHostSession(game_base,game_span,Log,heap_test_enabled,host_create_enabled);
+        // offline-v1 never asks for a session: Lua then never sets S_IS_ONLINE.
+        if(offline_enabled) Log("host_create=skipped; mode=offline_v1\r\n");
+        const bool created=player_ready && !client_enabled && !offline_enabled && TryCreateHostSession(game_base,game_span,Log,heap_test_enabled,host_create_enabled);
         if(needs_player_patch && (!player_ready || (!client_enabled && !created))) RestoreGameplayRules();
         // Publish the host's own SteamID64 for the lab scripts (lab mode only;
         // the id value itself is never logged). Retried from status polls.
@@ -936,6 +1124,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     return selected;
 }
 void ObserveReturn(void*, int result, bool replaced) noexcept {
+    if (pd::ConsumeReturn(partner_quiet)) { InterlockedIncrement64(&returns); return; }
     const auto count = InterlockedIncrement64(&returns);
     if (Sample(count) || replaced) {
         char line[256]{};
@@ -968,7 +1157,9 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
             client_enabled = client_check_enabled || (read == 10 && std::memcmp(mode, "client-v1\n", 10) == 0);
             host_admission_enabled = read == 8 && std::memcmp(mode, "host-v3\n", 8) == 0;
             host_create_enabled = host_admission_enabled || (read == 8 && std::memcmp(mode, "host-v2\n", 8) == 0);
-            host_enabled = client_enabled || host_create_enabled || heap_test_enabled || (read == 8 && std::memcmp(mode, "host-v1\n", 8) == 0);
+            offline_enabled = read == 11 && std::memcmp(mode, "offline-v1\n", 11) == 0;
+            host_enabled = client_enabled || host_create_enabled || heap_test_enabled || offline_enabled ||
+                (read == 8 && std::memcmp(mode, "host-v1\n", 8) == 0);
             allocation_enabled = host_enabled || (read == 11 && std::memcmp(mode, "players-v1\n", 11) == 0);
             archive_enabled = allocation_enabled || (read == 11 && std::memcmp(mode, "archive-v1\n", 11) == 0);
             bootstrap_enabled = archive_enabled || (read == 13 && std::memcmp(mode, "bootstrap-v1\n", 13) == 0);
@@ -1028,6 +1219,35 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                 if (heap_test_enabled) Log("mode=heap_v1; paired_heap_trial=1 host_calls=0 allocator_hook=0\r\n");
                 if (host_create_enabled) Log("mode=host_v2; dynamite_host_creation=enabled max_players=2 peer_acceptance_requested=0\r\n");
                 if (host_admission_enabled) Log("mode=host_v3; peer_acceptance=after_mission_start; max_players=2\r\n");
+            }
+            if (offline_enabled) {
+                // Offline partner spike: needs the lab paths and lab.ini partner=1.
+                const auto& labc = mgscoop::GetLabConfig();
+                partner_on = lab_active && labc.partner && BuildCoopPath(directory, L"partner.trigger", partner_trigger_path);
+                char offline_line[128]{};
+                if (SUCCEEDED(StringCchPrintfA(offline_line, ARRAYSIZE(offline_line),
+                    "mode=offline_v1; sessions=0; s_is_online=never; partner=%u\r\n", partner_on ? 1u : 0u))) Log(offline_line);
+                if (partner_on) {
+                    pd::Configure(partner_driver, labc);
+                    partner_addresses = pp::AddressesFor(base);
+                    std::uintptr_t mismatch = 0;
+                    partner_gate_ok = pp::CodeGate(base, span, mismatch);
+                    if (partner_gate_ok) Log("partner_code_gate=ok; scope=contract_sites_and_vtable_slots\r\n");
+                    else LogFormat("partner_code_gate=mismatch; rva=0x%llx\r\n", static_cast<unsigned long long>(mismatch));
+                    LogFormat("partner=configured; mode=offline_v1; stage=%u; source=%s; apply=%s; rate_hz=%u; interp_ms=%u; offset_cm=%u; teardown=%s\r\n",
+                        partner_driver.settings.stage, mgscoop::PartnerSourceName(partner_driver.settings.source),
+                        mgscoop::PartnerApplyName(partner_driver.settings.apply),
+                        labc.partner_rate_hz, labc.partner_interp_ms, labc.partner_offset_cm,
+                        mgscoop::PartnerTeardownName(labc.partner_teardown));
+                    if (labc.crash_probe) mgscoop::crash_probe::Install(base, span, Log);
+                    if (labc.net) {
+                        const mgscoop::partner_net::Config net{labc.net_listen_port, labc.net_peer_port, labc.partner_rate_hz,
+                                                               labc.net_latency_ms, labc.net_loss_permille, Log};
+                        mgscoop::partner_net::Start(net);
+                    } else {
+                        Log("partner_net=disabled; reason=transport_bad_config\r\n");
+                    }
+                }
             }
             if (host_create_enabled || client_enabled) {
                 // coop.ini is read once here (kernel32 file I/O), outside the Lua compile path.
