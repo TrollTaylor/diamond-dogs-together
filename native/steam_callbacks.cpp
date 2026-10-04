@@ -27,10 +27,13 @@ struct Event {
     int id;
     std::uint64_t remote;
     std::uint8_t error;
+    std::uint64_t queued_ms;
 };
 
-// One lock guards tracking and the queue; drain holds it while invoking, and a
-// cross-thread unregister blocks until an in-progress dispatch finishes.
+// One recursive lock guards tracking and the queue. drain() holds it while
+// invoking, so a cross-thread unregister blocks until the dispatch finishes,
+// and a same-thread (reentrant) unregister from inside Run is seen by the
+// re-check before the next invocation.
 CRITICAL_SECTION g_lock;
 INIT_ONCE g_lock_once = INIT_ONCE_STATIC_INIT;
 BOOL CALLBACK init_lock(PINIT_ONCE, PVOID, PVOID*) noexcept {
@@ -48,13 +51,27 @@ const void* g_vptr_1203 = nullptr;
 Tracked g_tracked[kMaxTracked]{};
 unsigned g_tracked_count = 0;
 Event g_queue[kMaxQueued]{};
-unsigned g_queue_head = 0;
-unsigned g_queue_count = 0;
+unsigned g_queue_count = 0;  // g_queue[0..count) in FIFO order
+std::uint64_t (*g_clock)() noexcept = nullptr;
+bool g_draining = false;
+
+std::uint64_t now_ms() noexcept { return g_clock ? g_clock() : GetTickCount64(); }
 
 const void* expected_vptr(int id) noexcept {
     if (id == kCallbackP2PSessionRequest) return g_vptr_1202;
     if (id == kCallbackP2PSessionConnectFail) return g_vptr_1203;
     return nullptr;
+}
+
+bool is_tracked(void* cb, int id) noexcept {
+    for (unsigned i = 0; i < g_tracked_count; ++i)
+        if (g_tracked[i].cb == cb && g_tracked[i].id == id) return true;
+    return false;
+}
+bool any_tracked(int id) noexcept {
+    for (unsigned i = 0; i < g_tracked_count; ++i)
+        if (g_tracked[i].id == id) return true;
+    return false;
 }
 
 // Validate a tracked object against the game's exact CCallback shape, then call
@@ -76,12 +93,23 @@ bool invoke(void* cb, int id, const void* payload) noexcept {
     return true;
 }
 
-bool enqueue(const Event& ev) noexcept {
+void remove_at(unsigned index) noexcept {
+    for (unsigned j = index; j + 1 < g_queue_count; ++j) g_queue[j] = g_queue[j + 1];
+    g_queue[--g_queue_count] = Event{};
+}
+
+bool enqueue(int id, std::uint64_t remote, std::uint8_t error) noexcept {
     lock();
-    bool ok = g_queue_count < kMaxQueued;
-    if (ok) {
-        g_queue[(g_queue_head + g_queue_count) % kMaxQueued] = ev;
-        ++g_queue_count;
+    // Coalesce with the newest pending event for the same remote.
+    bool ok = true, coalesced = false;
+    for (unsigned i = g_queue_count; i-- > 0;) {
+        if (g_queue[i].remote != remote) continue;
+        coalesced = g_queue[i].id == id && g_queue[i].error == error;
+        break;
+    }
+    if (!coalesced) {
+        ok = g_queue_count < kMaxQueued;
+        if (ok) g_queue[g_queue_count++] = {id, remote, error, now_ms()};
     }
     unlock();
     return ok;
@@ -119,19 +147,44 @@ void on_unregister(void* cb) noexcept {
 }
 
 bool post_session_request(std::uint64_t remote) noexcept {
-    return enqueue({kCallbackP2PSessionRequest, remote, 0});
+    return enqueue(kCallbackP2PSessionRequest, remote, 0);
 }
 bool post_connect_fail(std::uint64_t remote, std::uint8_t error) noexcept {
-    return enqueue({kCallbackP2PSessionConnectFail, remote, error});
+    return enqueue(kCallbackP2PSessionConnectFail, remote, error);
 }
 
-unsigned drain() noexcept {
+unsigned drain() noexcept { return drain_at(now_ms()); }
+
+unsigned drain_at(std::uint64_t now) noexcept {
     unsigned dispatched = 0;
     lock();
-    while (g_queue_count) {
-        const Event ev = g_queue[g_queue_head];
-        g_queue_head = (g_queue_head + 1) % kMaxQueued;
-        --g_queue_count;
+    if (g_draining) {  // no nested drain from inside a Run handler
+        unlock();
+        return 0;
+    }
+    g_draining = true;
+    // Only events present at entry are considered; events posted during
+    // dispatch (reentrantly) are appended after `limit` and wait for the next
+    // drain. Each event is removed before its handlers run.
+    unsigned limit = g_queue_count;
+    for (unsigned i = 0; i < limit;) {
+        const Event ev = g_queue[i];
+        if (now > ev.queued_ms && now - ev.queued_ms > kMaxEventAgeMs) {  // stale
+            remove_at(i);
+            --limit;
+            continue;
+        }
+        if (!any_tracked(ev.id)) {
+            if (ev.id == kCallbackP2PSessionRequest) {
+                ++i;  // keep: wait for a listener
+            } else {
+                remove_at(i);  // 1203 with no listener: nobody knows that session
+                --limit;
+            }
+            continue;
+        }
+        remove_at(i);
+        --limit;
         steam::P2PSessionRequest_t request{};
         steam::P2PSessionConnectFail_t fail{};
         const void* payload = nullptr;
@@ -143,10 +196,16 @@ unsigned drain() noexcept {
             fail.p2p_session_error = ev.error;
             payload = &fail;
         }
-        for (unsigned i = 0; i < g_tracked_count; ++i) {
-            if (g_tracked[i].id == ev.id && invoke(g_tracked[i].cb, ev.id, payload)) ++dispatched;
-        }
+        // Snapshot the matching objects, then re-check each one immediately
+        // before invoking: a Run handler may unregister (itself or another).
+        void* targets[kMaxTracked];
+        unsigned target_count = 0;
+        for (unsigned t = 0; t < g_tracked_count; ++t)
+            if (g_tracked[t].id == ev.id) targets[target_count++] = g_tracked[t].cb;
+        for (unsigned t = 0; t < target_count; ++t)
+            if (is_tracked(targets[t], ev.id) && invoke(targets[t], ev.id, payload)) ++dispatched;
     }
+    g_draining = false;
     unlock();
     return dispatched;
 }
@@ -171,8 +230,16 @@ void reset_for_test() noexcept {
     lock();
     for (auto& t : g_tracked) t = {nullptr, 0};
     g_tracked_count = 0;
-    g_queue_head = g_queue_count = 0;
+    g_queue_count = 0;
     g_vptr_1202 = g_vptr_1203 = nullptr;
+    g_clock = nullptr;
+    g_draining = false;
+    unlock();
+}
+
+void set_clock_for_test(std::uint64_t (*clock)() noexcept) noexcept {
+    lock();
+    g_clock = clock;
     unlock();
 }
 

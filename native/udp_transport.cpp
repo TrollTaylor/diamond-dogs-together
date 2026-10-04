@@ -132,6 +132,22 @@ BOOL CALLBACK start_winsock(PINIT_ONCE, PVOID, PVOID*) noexcept {
 }
 }  // namespace
 
+namespace {
+PSRWLOCK delay_lock_of(void** storage) noexcept { return reinterpret_cast<PSRWLOCK>(storage); }
+static_assert(sizeof(SRWLOCK) == sizeof(void*), "SRWLOCK storage is one pointer");
+// Millisecond clock for the delay line. QueryPerformanceCounter (not the
+// 15.6 ms GetTickCount64 tick) so a datagram is never released early.
+std::uint64_t precise_ms() noexcept {
+    LARGE_INTEGER frequency{}, counter{};
+    QueryPerformanceFrequency(&frequency);
+    QueryPerformanceCounter(&counter);
+    if (frequency.QuadPart <= 0) return GetTickCount64();
+    const auto f = static_cast<std::uint64_t>(frequency.QuadPart);
+    const auto c = static_cast<std::uint64_t>(counter.QuadPart);
+    return (c / f) * 1000 + ((c % f) * 1000) / f;
+}
+}  // namespace
+
 bool UdpTransport::start(const TransportConfig& config, const DatagramSink& sink) noexcept {
     if (running_) return true;
     config_ = config;
@@ -143,7 +159,13 @@ bool UdpTransport::start(const TransportConfig& config, const DatagramSink& sink
     }
     InitOnceExecuteOnce(&winsock_once, start_winsock, nullptr, nullptr);
     if (!winsock_ready) { error_ = TransportError::winsock; return false; }
-    const SOCKET s = WSASocketW(AF_INET, SOCK_DGRAM, IPPROTO_UDP, nullptr, 0, WSA_FLAG_NO_HANDLE_INHERIT);
+    // WSA_FLAG_OVERLAPPED is required even though no overlapped I/O is issued:
+    // without it the socket is a synchronous file object, the I/O manager
+    // serializes every request on it, and a game-thread send waits for the
+    // receive thread's select() poll to time out (measured: 20 sends took
+    // 200 ms instead of 0.2 ms; see the steam_loopback_tests regression check).
+    const SOCKET s = WSASocketW(AF_INET, SOCK_DGRAM, IPPROTO_UDP, nullptr, 0,
+                                WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
     if (s == INVALID_SOCKET) { error_ = TransportError::socket; return false; }
     // An ICMP port-unreachable (peer not started yet) must not surface as a
     // receive error on this datagram socket.
@@ -153,9 +175,9 @@ bool UdpTransport::start(const TransportConfig& config, const DatagramSink& sink
     int buffer = 1 << 20;
     setsockopt(s, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<const char*>(&buffer), sizeof(buffer));
     setsockopt(s, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<const char*>(&buffer), sizeof(buffer));
-    // Non-blocking: a thread parked inside a blocking recvfrom on this socket
-    // would stall a concurrent send from the game's poll thread on the same
-    // socket. The receive thread waits for readability with select() instead.
+    // Non-blocking: the receive thread waits for readability with a bounded
+    // select() (so it also wakes for the idle timer and the delay line) and
+    // then drains with recvfrom until WSAEWOULDBLOCK.
     u_long nonblocking = 1;
     ioctlsocket(s, FIONBIO, &nonblocking);
     BOOL exclusive = TRUE;
@@ -182,19 +204,15 @@ bool UdpTransport::start(const TransportConfig& config, const DatagramSink& sink
     return true;
 }
 
-bool UdpTransport::transmit(const WireChunk* chunks, unsigned count) noexcept {
-    if (!running_ || !chunks || !count || count > 4) return false;
+bool UdpTransport::send_now_chunks(const WireChunk* chunks, unsigned count, std::size_t total) noexcept {
     WSABUF buffers[4]{};
-    std::size_t total = 0;
     unsigned used = 0;
-    for (unsigned i = 0; i < count; ++i) {
+    for (unsigned i = 0; i < count && used < 4; ++i) {
         if (!chunks[i].size) continue;
         buffers[used].buf = const_cast<CHAR*>(static_cast<const CHAR*>(chunks[i].data));
         buffers[used].len = static_cast<ULONG>(chunks[i].size);
-        total += chunks[i].size;
         ++used;
     }
-    if (!used || total > kMaxDatagram) return false;
     sockaddr_in peer{};
     peer.sin_family = AF_INET;
     peer.sin_port = htons(config_.peer_port);
@@ -202,7 +220,105 @@ bool UdpTransport::transmit(const WireChunk* chunks, unsigned count) noexcept {
     DWORD sent = 0;
     const int result = WSASendTo(static_cast<SOCKET>(socket_), buffers, used, &sent, 0,
                                  reinterpret_cast<const sockaddr*>(&peer), sizeof(peer), nullptr, nullptr);
-    return result == 0 && sent == total;
+    const bool ok = result == 0 && sent == total;
+    InterlockedIncrement64(ok ? &tx_ : &dropped_);
+    return ok;
+}
+
+bool UdpTransport::send_now(const void* data, std::size_t size) noexcept {
+    const WireChunk chunk{data, size};
+    return send_now_chunks(&chunk, 1, size);
+}
+
+bool UdpTransport::transmit(const WireChunk* chunks, unsigned count, bool droppable) noexcept {
+    if (!running_ || !chunks || !count || count > 4) return false;
+    std::size_t total = 0;
+    for (unsigned i = 0; i < count; ++i) {
+        if (chunks[i].size && !chunks[i].data) return false;
+        total += chunks[i].size;
+    }
+    if (!total || total > kMaxDatagram) return false;
+    if (droppable && config_.loss_permille) {
+        const auto n = static_cast<std::uint64_t>(InterlockedIncrement64(&loss_counter_) - 1);
+        if (should_drop(config_.loss_permille, n)) {
+            InterlockedIncrement64(&dropped_);
+            return true;  // "sent" and lost on the wire
+        }
+    }
+    if (!config_.latency_ms) return send_now_chunks(chunks, count, total);
+    // Delay line: copy the datagram; the receive thread sends it when due.
+    auto* bytes = static_cast<std::uint8_t*>(HeapAlloc(GetProcessHeap(), 0, total));
+    if (!bytes) {
+        InterlockedIncrement64(&dropped_);
+        return false;
+    }
+    std::size_t at = 0;
+    for (unsigned i = 0; i < count; ++i) {
+        if (!chunks[i].size) continue;
+        std::memcpy(bytes + at, chunks[i].data, chunks[i].size);
+        at += chunks[i].size;
+    }
+    bool queued = false;
+    AcquireSRWLockExclusive(delay_lock_of(&delay_lock_));
+    if (delayed_count_ < kMaxDelayed) {
+        delayed_[(delayed_head_ + delayed_count_) % kMaxDelayed] = {precise_ms() + config_.latency_ms, bytes,
+                                                                    static_cast<std::uint32_t>(total)};
+        ++delayed_count_;
+        queued = true;
+    }
+    ReleaseSRWLockExclusive(delay_lock_of(&delay_lock_));
+    if (!queued) {
+        HeapFree(GetProcessHeap(), 0, bytes);
+        InterlockedIncrement64(&dropped_);
+    }
+    return queued;
+}
+
+std::uint32_t UdpTransport::flush_delayed(std::uint32_t fallback) noexcept {
+    for (;;) {
+        Delayed item{};
+        std::uint32_t wait = fallback;
+        AcquireSRWLockExclusive(delay_lock_of(&delay_lock_));
+        if (delayed_count_) {
+            const Delayed& front = delayed_[delayed_head_];
+            const std::uint64_t now = precise_ms();
+            if (front.due_ms <= now) {
+                item = front;
+                delayed_[delayed_head_] = Delayed{};
+                delayed_head_ = (delayed_head_ + 1) % kMaxDelayed;
+                --delayed_count_;
+            } else {
+                const std::uint64_t remaining = front.due_ms - now;
+                wait = remaining < fallback ? static_cast<std::uint32_t>(remaining) : fallback;
+            }
+        }
+        ReleaseSRWLockExclusive(delay_lock_of(&delay_lock_));
+        if (!item.bytes) return wait ? wait : 1;
+        send_now(item.bytes, item.size);
+        HeapFree(GetProcessHeap(), 0, item.bytes);
+    }
+}
+
+void UdpTransport::clear_delayed() noexcept {
+    AcquireSRWLockExclusive(delay_lock_of(&delay_lock_));
+    while (delayed_count_) {
+        Delayed& item = delayed_[delayed_head_];
+        if (item.bytes) HeapFree(GetProcessHeap(), 0, item.bytes);
+        item = Delayed{};
+        delayed_head_ = (delayed_head_ + 1) % kMaxDelayed;
+        --delayed_count_;
+    }
+    delayed_head_ = 0;
+    ReleaseSRWLockExclusive(delay_lock_of(&delay_lock_));
+}
+
+TransportStats UdpTransport::stats() const noexcept {
+    TransportStats out{};
+    out.tx = static_cast<std::uint64_t>(tx_);
+    out.rx = static_cast<std::uint64_t>(rx_);
+    out.dropped = static_cast<std::uint64_t>(dropped_);
+    out.rejected = static_cast<std::uint64_t>(rejected_endpoint_);
+    return out;
 }
 
 bool UdpTransport::transmit_raw_to(std::uint16_t port, const void* data, std::size_t size) noexcept {
@@ -224,14 +340,16 @@ void UdpTransport::receive_loop() noexcept {
     constexpr std::size_t capacity = kMaxDatagram + 1;
     auto* buffer = static_cast<std::uint8_t*>(HeapAlloc(GetProcessHeap(), 0, capacity));
     if (!buffer) return;
-    const long interval_us = static_cast<long>((config_.idle_interval_ms ? config_.idle_interval_ms : 250) * 1000);
+    const std::uint32_t interval_ms = config_.idle_interval_ms ? config_.idle_interval_ms : 250;
     ULONGLONG last_idle = GetTickCount64();
     const SOCKET s = static_cast<SOCKET>(socket_);
     while (running_) {
+        // Send due delayed datagrams first; wake up no later than the next one.
+        const std::uint32_t wait_ms = config_.latency_ms ? flush_delayed(interval_ms) : interval_ms;
         fd_set readable;
         FD_ZERO(&readable);
         FD_SET(s, &readable);
-        timeval tv{0, interval_us};
+        timeval tv{static_cast<long>(wait_ms / 1000), static_cast<long>((wait_ms % 1000) * 1000)};
         const int ready = select(0, &readable, nullptr, nullptr, &tv);
         if (!running_) break;
         if (ready > 0) {
@@ -250,14 +368,15 @@ void UdpTransport::receive_loop() noexcept {
                 }
                 if (!is_expected_peer(ntohl(from.sin_addr.s_addr), ntohs(from.sin_port), config_.peer_port)) {
                     InterlockedIncrement64(&rejected_endpoint_);
-                } else if (sink_.on_datagram) {
-                    sink_.on_datagram(sink_.ctx, buffer, static_cast<std::size_t>(received));
+                } else {
+                    InterlockedIncrement64(&rx_);
+                    if (sink_.on_datagram) sink_.on_datagram(sink_.ctx, buffer, static_cast<std::size_t>(received));
                 }
                 if (!running_) break;
             }
         }
         const ULONGLONG now = GetTickCount64();
-        if (now - last_idle >= static_cast<ULONGLONG>(interval_us / 1000)) {
+        if (now - last_idle >= interval_ms) {
             last_idle = now;
             if (sink_.on_idle) sink_.on_idle(sink_.ctx);
         }
@@ -267,14 +386,17 @@ void UdpTransport::receive_loop() noexcept {
 
 void UdpTransport::stop() noexcept {
     if (InterlockedExchange(&running_, 0) == 0) return;
-    const SOCKET s = static_cast<SOCKET>(socket_);
-    socket_ = static_cast<std::uintptr_t>(INVALID_SOCKET);
-    if (s != INVALID_SOCKET) closesocket(s);
+    // The receive thread polls with a bounded select() timeout and exits on the
+    // cleared flag; close the socket only after it is gone.
     if (thread_) {
         WaitForSingleObject(thread_, 5000);
         CloseHandle(thread_);
         thread_ = nullptr;
     }
+    const SOCKET s = static_cast<SOCKET>(socket_);
+    socket_ = static_cast<std::uintptr_t>(INVALID_SOCKET);
+    if (s != INVALID_SOCKET) closesocket(s);
+    clear_delayed();
 }
 
 }  // namespace mgscoop::lab

@@ -34,6 +34,12 @@ bool is_safe_remote_name(const char* name) noexcept {
     return true;
 }
 
+bool save_dir_fits(const char* save_dir) noexcept {
+    if (!save_dir || !*save_dir) return false;
+    const std::size_t base = base_len(save_dir);
+    return base != 0 && base <= kMaxSaveDirChars;
+}
+
 bool format_user_data_folder(const char* save_dir, char* buf, int cub) noexcept {
     if (!save_dir || !*save_dir || !buf || cub <= 0) return false;
     const std::size_t base = base_len(save_dir);
@@ -74,6 +80,8 @@ namespace {
 char g_save_dir[260]{};
 bool g_configured = false;
 SRWLOCK g_lock = SRWLOCK_INIT;
+void* g_storage_real = nullptr;
+void* g_storage_proxy = nullptr;
 // GetFileNameAndSize returns a pointer valid until the next call; the game runs
 // the save path on one thread, and the lock serializes the enumerator anyway.
 char g_enum_name[260]{};
@@ -223,6 +231,12 @@ bool configured() noexcept { return g_configured; }
 
 void* wrap_remote_storage(void* real) noexcept {
     if (!real || !g_configured) return real;
+    AcquireSRWLockExclusive(&g_lock);
+    if (real == g_storage_real && g_storage_proxy) {
+        void* cached = g_storage_proxy;
+        ReleaseSRWLockExclusive(&g_lock);
+        return cached;
+    }
     ProxyOverride overrides[] = {
         {steam::storage_slot::FileWrite, reinterpret_cast<const void*>(&RS_FileWrite)},
         {steam::storage_slot::FileRead, reinterpret_cast<const void*>(&RS_FileRead)},
@@ -235,6 +249,11 @@ void* wrap_remote_storage(void* real) noexcept {
     };
     void* proxy = build_forwarding_proxy(real, steam::storage_slot::kCount, overrides,
                                          static_cast<unsigned>(ARRAYSIZE(overrides)), nullptr);
+    if (proxy) {
+        g_storage_real = real;
+        g_storage_proxy = proxy;
+    }
+    ReleaseSRWLockExclusive(&g_lock);
     return proxy ? proxy : real;
 }
 
@@ -242,6 +261,7 @@ void reset_for_test() noexcept {
     AcquireSRWLockExclusive(&g_lock);
     g_save_dir[0] = 0;
     g_configured = false;
+    g_storage_real = g_storage_proxy = nullptr;
     ReleaseSRWLockExclusive(&g_lock);
 }
 

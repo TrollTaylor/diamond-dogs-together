@@ -20,15 +20,26 @@ bool format_remote_path(const char* save_dir, const char* name, char* out, std::
 // True for a file name the redirect accepts (no traversal, no directory parts).
 bool is_safe_remote_name(const char* name) noexcept;
 
+// Longest save_dir (after trimming trailing separators) the lab accepts. The
+// game's GetUserDataFolder call site at 0x54CBDE passes a 0x105-byte buffer and
+// later appends file names such as TPP_GRAPHICS_CONFIG, so the redirected
+// folder ("<save_dir>" + 14 characters) plus a 32-character file name must stay
+// below MAX_PATH (260).
+constexpr std::size_t kMaxSaveDirChars = 213;
+// True when save_dir is non-empty and short enough for every mapped path.
+bool save_dir_fits(const char* save_dir) noexcept;
+
 #ifdef _WIN32
 // Record the save directory and create <save_dir>\287700\local and
-// <save_dir>\remote. Safe to call once outside DllMain.
+// <save_dir>\remote. Kernel32 file APIs only, so it is DllMain-safe (called
+// once from early_patches).
 void configure(const char* save_dir) noexcept;
 bool configured() noexcept;
 
 // Build a RemoteStorage proxy over `real` that redirects the file slots to
-// <save_dir>\remote and forwards everything else. Returns `real` unchanged when
-// no save_dir is configured or on allocation failure.
+// <save_dir>\remote and forwards everything else, cached per real pointer (the
+// exe calls the getter at every save step). Returns `real` unchanged when no
+// save_dir is configured or on allocation failure.
 void* wrap_remote_storage(void* real) noexcept;
 
 void reset_for_test() noexcept;

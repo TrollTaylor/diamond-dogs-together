@@ -78,29 +78,57 @@ struct TransportConfig {
     std::uint16_t listen_port = 0;
     std::uint16_t peer_port = 0;
     std::uint32_t idle_interval_ms = 250;
+    // lab.ini fault injection, applied on the send path. latency_ms delays every
+    // outbound datagram (order preserved); loss_permille drops only datagrams
+    // the caller marks droppable, on the deterministic should_drop() schedule.
+    std::uint32_t latency_ms = 0;
+    std::uint32_t loss_permille = 0;
 };
 
 enum class TransportError : std::uint8_t { none, bad_config, winsock, socket, bind, thread };
+
+struct TransportStats {
+    std::uint64_t tx = 0;        // datagrams handed to the socket
+    std::uint64_t rx = 0;        // datagrams accepted from the peer endpoint
+    std::uint64_t dropped = 0;   // loss-injected, delay-queue overflow or send failure
+    std::uint64_t rejected = 0;  // datagrams from any other endpoint
+};
 
 // One UDP socket bound to 127.0.0.1:listen_port sending to 127.0.0.1:peer_port.
 // Constant-initializable and trivially destructible (no unload destructor).
 class UdpTransport {
 public:
+    static constexpr unsigned kMaxDelayed = 256;
+
     // Starts Winsock lazily (never call from DllMain), binds, disables
     // SIO_UDP_CONNRESET, sets 1 MiB buffers and starts the receive thread.
     bool start(const TransportConfig& config, const DatagramSink& sink) noexcept;
-    // Scatter-send one datagram to the peer endpoint. Thread-safe.
-    bool transmit(const WireChunk* chunks, unsigned count) noexcept;
+    // Scatter-send one datagram (at most 4 chunks) to the peer endpoint.
+    // Thread-safe. A loss-injected datagram counts as dropped and returns true
+    // (it was "sent" and lost on the wire); a delayed one returns true once queued.
+    bool transmit(const WireChunk* chunks, unsigned count, bool droppable = true) noexcept;
     // Test helper: send raw bytes from this socket to an arbitrary loopback port.
     bool transmit_raw_to(std::uint16_t port, const void* data, std::size_t size) noexcept;
     void stop() noexcept;
     bool running() const noexcept { return running_ != 0; }
     TransportError error() const noexcept { return error_; }
     std::uint64_t rejected_endpoint() const noexcept { return static_cast<std::uint64_t>(rejected_endpoint_); }
+    TransportStats stats() const noexcept;
 
 private:
+    struct Delayed {
+        std::uint64_t due_ms;
+        std::uint8_t* bytes;
+        std::uint32_t size;
+    };
     static unsigned long __stdcall thread_entry(void* self) noexcept;
     void receive_loop() noexcept;
+    bool send_now(const void* data, std::size_t size) noexcept;
+    bool send_now_chunks(const WireChunk* chunks, unsigned count, std::size_t total) noexcept;
+    // Sends every delayed datagram that is due; returns ms until the next one
+    // (or `fallback` when none is queued).
+    std::uint32_t flush_delayed(std::uint32_t fallback) noexcept;
+    void clear_delayed() noexcept;
 
     TransportConfig config_{};
     DatagramSink sink_{};
@@ -108,7 +136,16 @@ private:
     void* thread_ = nullptr;
     volatile long running_ = 0;
     volatile long long rejected_endpoint_ = 0;
+    volatile long long tx_ = 0;
+    volatile long long rx_ = 0;
+    volatile long long dropped_ = 0;
+    volatile long long loss_counter_ = 0;
     TransportError error_ = TransportError::none;
+    // Delay line (FIFO; constant latency keeps due times monotonic).
+    void* delay_lock_ = nullptr;  // SRWLOCK storage (pointer-sized, zero = SRWLOCK_INIT)
+    Delayed delayed_[kMaxDelayed]{};
+    unsigned delayed_head_ = 0;
+    unsigned delayed_count_ = 0;
 };
 #endif
 

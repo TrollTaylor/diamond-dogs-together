@@ -175,6 +175,62 @@ void TestLossSchedule() {
     Check(should_drop(250, 7) == should_drop(250, 7), "loss deterministic");
 }
 
+void TestMasterUrl() {
+    using mgscoop::lab::is_local_master_url;
+    Check(is_local_master_url("http://127.0.0.1:6667/tppstm/gate"), "fuse default is local");
+    Check(is_local_master_url("http://localhost/tppstm/gate"), "localhost without port");
+    Check(is_local_master_url("HTTPS://LOCALHOST:443/x"), "case-insensitive scheme/host");
+    Check(is_local_master_url("http://127.0.0.1"), "bare host");
+    Check(!is_local_master_url("http://127.0.0.1.evil.com/gate"), "host suffix rejected");
+    Check(!is_local_master_url("http://localhost.example/gate"), "localhost prefix rejected");
+    Check(!is_local_master_url("http://mgstpp-game.konamionline.com/tppstm/gate"), "remote host rejected");
+    Check(!is_local_master_url("http://127.0.0.1:0/gate"), "port 0 rejected");
+    Check(!is_local_master_url("http://127.0.0.1:65536/gate"), "port out of range rejected");
+    Check(!is_local_master_url("http://127.0.0.1:/gate"), "empty port rejected");
+    Check(!is_local_master_url("ftp://127.0.0.1/gate"), "other scheme rejected");
+    Check(!is_local_master_url(""), "empty rejected");
+    Check(!is_local_master_url(nullptr), "null rejected");
+}
+
+void TestMutexBlocker() {
+    using namespace mgscoop::lab;
+    IsolationState s{};
+    Check(mutex_rename_blocker(s) != nullptr, "first instance never renames");
+    s.second_instance = true;
+    Check(std::strcmp(mutex_rename_blocker(s), "save_dir_required") == 0, "guest without save_dir blocked");
+    s.saves_configured = true;
+    Check(std::strcmp(mutex_rename_blocker(s), "save_isolation_failed") == 0, "failed save patch blocks");
+    s.saves_ok = true;
+    Check(mutex_rename_blocker(s) == nullptr, "isolated saves, real id, no gate needed -> rename");
+    s.want_identity = true;
+    Check(std::strcmp(mutex_rename_blocker(s), "identity_isolation_failed") == 0, "failed identity blocks");
+    s.identity_ok = true;
+    s.want_gate = true;
+    Check(std::strcmp(mutex_rename_blocker(s), "networking_gate_failed") == 0, "missing gate blocks");
+    s.gate_ok = true;
+    Check(mutex_rename_blocker(s) == nullptr, "fully isolated guest -> rename");
+}
+
+void TestSaveDirFits() {
+    using namespace mgscoop::lab::save;
+    Check(save_dir_fits("D:\\lab\\saves"), "short dir fits");
+    Check(!save_dir_fits(""), "empty does not fit");
+    Check(!save_dir_fits(nullptr), "null does not fit");
+    char dir[260];
+    std::memset(dir, 'a', sizeof(dir));
+    dir[kMaxSaveDirChars] = 0;
+    Check(save_dir_fits(dir), "exactly the limit fits");
+    // The limit leaves room for the game's longest file name in a 260-char path.
+    char folder[300];
+    Check(format_user_data_folder(dir, folder, sizeof(folder)), "limit formats");
+    Check(std::strlen(folder) + 1 + 32 < 260, "limit + separator + 32-char name < MAX_PATH");
+    dir[kMaxSaveDirChars] = 'a';
+    dir[kMaxSaveDirChars + 1] = 0;
+    Check(!save_dir_fits(dir), "one over the limit rejected");
+    dir[kMaxSaveDirChars] = '\\';  // trailing separators are trimmed first
+    Check(save_dir_fits(dir), "trailing separator not counted");
+}
+
 void TestEndpointFilter() {
     using namespace mgscoop::lab;
     Check(is_expected_peer(0x7F000001u, 47810, 47810), "loopback peer accepted");
@@ -191,6 +247,9 @@ int main() {
     TestWireDecode();
     TestLossSchedule();
     TestEndpointFilter();
+    TestMasterUrl();
+    TestMutexBlocker();
+    TestSaveDirFits();
     std::printf("steam_shim_patches_tests: %u checks passed\n", g_checks);
     return 0;
 }

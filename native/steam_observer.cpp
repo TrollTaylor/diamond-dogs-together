@@ -16,6 +16,8 @@
 #include "mgscoop/lab_config.hpp"
 #include "mgscoop/steam_loopback.hpp"
 #include "mgscoop/steam_callbacks.hpp"
+#include "mgscoop/steam_identity.hpp"
+#include "mgscoop/early_patches.hpp"
 
 namespace {
 constexpr DWORD path_capacity = 32768;
@@ -51,6 +53,9 @@ std::size_t game_span = 0;
 // Co-op lab loopback integration. Off unless lab.ini enables loopback and the
 // getter/callback slots verify; when off, the observer behaves exactly as before.
 bool loopback_active = false;
+// Lab loopback or fake identity: the SteamNetworking getter must never reach
+// real Steam (fail closed to the emulator or the dead object).
+bool lab_networking_gated = false;
 using SteamRegisterCallbackFn = void(MGSCOOP_STEAM_CALL*)(void*, int);
 using SteamUnregisterCallbackFn = void(MGSCOOP_STEAM_CALL*)(void*);
 SteamRegisterCallbackFn original_register_callback = nullptr;
@@ -148,14 +153,14 @@ void log_networking_result(void* context, mgscoop::SteamGetterResult result) noe
 }
 __declspec(noinline) ISteamNetworking* __cdecl observed_networking() {
     const DWORD incoming_error = GetLastError();
-    // Co-op lab loopback: hand the game our emulator; never touch real Steam
-    // networking. Starts the UDP transport lazily on the first call (outside
-    // DllMain), which is the game's session-creation path.
-    if (loopback_active) {
-        if (void* object = mgscoop::lab::loopback_interface_object()) {
-            SetLastError(incoming_error);
-            return reinterpret_cast<ISteamNetworking*>(object);
-        }
+    // Co-op lab loopback / fake identity: hand the game our emulator (started
+    // lazily on the first call, outside DllMain) or, when it is not running,
+    // the dead object. Never real Steam networking and never null (Send at
+    // 0x1A5FB60 and Read at 0x1A5FAC0 do not null-check the getter result).
+    if (lab_networking_gated) {
+        void* object = mgscoop::lab::loopback_networking_object();
+        SetLastError(incoming_error);
+        return reinterpret_cast<ISteamNetworking*>(object);
     }
     InitCaller caller{_ReturnAddress()};
     return mgscoop::forward_observed_networking_getter(original_networking,
@@ -197,20 +202,39 @@ std::uint64_t resolve_real_steamid(HMODULE steam) noexcept {
     reinterpret_cast<GetIdFn>(vtable[mgscoop::steam::user_slot::GetSteamID])(user, &id);
     return id;
 }
+// The persona this instance announces in its loopback HELLO when lab.ini sets
+// no self_name: the real SteamFriends015 GetPersonaName[0] (a local query).
+void resolve_real_persona(HMODULE steam, char* out, std::size_t capacity) noexcept {
+    if (!out || !capacity) return;
+    out[0] = 0;
+    auto getter = reinterpret_cast<void*(MGSCOOP_STEAM_CALL*)()>(GetProcAddress(steam, "SteamFriends"));
+    if (!getter) return;
+    void* friends = getter();
+    if (!friends) return;
+    auto* const* vtable = *static_cast<void* const* const*>(friends);
+    using NameFn = const char*(MGSCOOP_STEAM_CALL*)(void*);
+    const char* name = reinterpret_cast<NameFn>(vtable[mgscoop::steam::friends_slot::GetPersonaName])(friends);
+    if (!name) return;
+    std::size_t i = 0;
+    for (; name[i] && i + 1 < capacity; ++i) out[i] = (name[i] >= 0x20 && name[i] <= 0x7e) ? name[i] : '?';
+    out[i] = 0;
+}
 // Wrap the Register/Unregister IATs, configure the callback registry and the
 // loopback emulator, and arm the networking getter. Lab-gated; a no-op when
 // lab.ini is absent or loopback is off.
-void InstallLoopbackIfEnabled(HMODULE steam, bool networking_wrapped) noexcept {
+void InstallLoopbackIfEnabled(HMODULE steam, bool networking_routed) noexcept {
     const mgscoop::LabConfig& lab = mgscoop::GetLabConfig();
     if (!lab.present || !lab.loopback) return;
-    if (!networking_wrapped) { log_line("loopback=disabled; reason=networking_slot_unwrapped\r\n"); return; }
-    if (!steam) { log_line("loopback=disabled; reason=steam_api64_not_mapped\r\n"); return; }
+    // Every refusal below leaves the gate handing out the dead object: the game
+    // gets no networking rather than real Steam networking.
+    if (!networking_routed) { log_line("loopback=disabled; reason=networking_slot_unwrapped; networking=dead_object\r\n"); return; }
+    if (!steam) { log_line("loopback=disabled; reason=steam_api64_not_mapped; networking=dead_object\r\n"); return; }
 
     std::uint64_t self_id = lab.self_steamid;
     if (self_id == 0) {  // host keeps its real identity
         self_id = resolve_real_steamid(steam);
         if (!mgscoop::steam::is_individual_steamid(self_id)) {
-            log_line("loopback=disabled; reason=real_steamid_unavailable\r\n");
+            log_line("loopback=disabled; reason=real_steamid_unavailable; networking=dead_object\r\n");
             return;
         }
     }
@@ -243,7 +267,7 @@ void InstallLoopbackIfEnabled(HMODULE steam, bool networking_wrapped) noexcept {
             mgscoop::exchange_import(game_base, game_span, unreg.offset, reinterpret_cast<void*>(&observed_unregister_callback), unreg_fn);
         original_register_callback = nullptr;
         original_unregister_callback = nullptr;
-        log_line("loopback=disabled; reason=callback_iat_mismatch\r\n");
+        log_line("loopback=disabled; reason=callback_iat_mismatch; networking=dead_object\r\n");
         return;
     }
 
@@ -270,8 +294,15 @@ void InstallLoopbackIfEnabled(HMODULE steam, bool networking_wrapped) noexcept {
     cfg.peer_port = lab.peer_port;
     cfg.timeout_ms = 10000;
     for (int i = 0; i < 63 && lab.self_name[i]; ++i) cfg.self_name[i] = lab.self_name[i];
+    if (!cfg.self_name[0]) resolve_real_persona(steam, cfg.self_name, sizeof(cfg.self_name));
     cfg.log = &loopback_log_line;
-    mgscoop::lab::loopback_configure(cfg, lab.listen_port);
+    cfg.on_peer = &mgscoop::lab::identity::note_peer;
+    mgscoop::lab::LoopbackOptions options{};
+    options.listen_port = lab.listen_port;
+    options.latency_ms = lab.net_latency_ms;
+    options.loss_permille = lab.net_loss_permille;
+    options.trace_packets = lab.trace_packets;
+    mgscoop::lab::loopback_configure(cfg, options);
     loopback_active = true;
     char line[160]{};
     if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
@@ -400,8 +431,16 @@ BOOL CALLBACK install(PINIT_ONCE, PVOID, PVOID*) noexcept {
     } else {
         log_line("symbol=SteamAPI_RunCallbacks status=disabled reason=unique_import_or_export_unavailable\r\n");
     }
+    const mgscoop::LabConfig& lab = mgscoop::GetLabConfig();
+    lab_networking_gated = lab.present && (lab.loopback || lab.self_steamid != 0);
+    if (lab.present) mgscoop::lab::VerifyEarlyLabPatches(log_line);
     bool networking_wrapped = false;
-    if (networking_export_verified && networking_slot.status == mgscoop::ImportStatus::found && networking_slot.offset == 0x208e138) {
+    if (lab.present && mgscoop::lab::networking_gate_installed()) {
+        // DllMain already routed 0x208E138 to the lab gate (emulator or dead
+        // object); leave it in place.
+        networking_wrapped = true;
+        log_line("symbol=SteamNetworking status=lab_gate slot_rva=0x208e138\r\n");
+    } else if (networking_export_verified && networking_slot.status == mgscoop::ImportStatus::found && networking_slot.offset == 0x208e138) {
         original_networking = reinterpret_cast<mgscoop::SteamNetworkingGetter>(networking_function);
         const auto result = mgscoop::exchange_import(game_base, game_span, networking_slot.offset,
             reinterpret_cast<void*>(networking_function), reinterpret_cast<void*>(&observed_networking));
@@ -415,7 +454,18 @@ BOOL CALLBACK install(PINIT_ONCE, PVOID, PVOID*) noexcept {
 
     // Co-op master-server redirect (no-op when coop.ini sets no master_url). The
     // implementation is owned by another work package; its stub refuses safely.
-    mgscoop::master_server::Install(game_base, game_span, mgscoop::GetCoopConfig().master_url, log_line);
+    const char* master_url = mgscoop::GetCoopConfig().master_url;
+    const bool master_ok = mgscoop::master_server::Install(game_base, game_span, master_url, log_line);
+    if (lab.present && lab.self_steamid != 0) {
+        // The guest's auth ticket is rewritten for fuse only while the game's
+        // master server really is a local fuse instance.
+        if (master_ok && master_url[0] && mgscoop::lab::is_local_master_url(master_url)) {
+            mgscoop::lab::identity::arm_ticket_rewrite(true);
+            log_line("identity=ticket_rewrite_armed; master=local\r\n");
+        } else {
+            log_line("identity=ticket_unrewritten; reason=master_redirect_inactive\r\n");
+        }
+    }
 
     InstallLoopbackIfEnabled(steam, networking_wrapped);
 
