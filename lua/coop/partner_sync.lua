@@ -1,0 +1,153 @@
+-- MGS co-op offline partner spike (original). Inert unless native answers
+-- MGS_COOP_PARTNER_CFG_V1 with true (offline-v1 marker + lab.ini partner=1);
+-- in every other mode the receipt stays a literal string and nothing runs.
+-- docs/offline-partner-spike-plan.md 2.4. Every game binding is resolved once
+-- with type checks; a missing one is reported through the LOG receipt and its
+-- feature is skipped instead of raising. Lua errors stop the spike for the
+-- rest of the mission (noted once); the original callbacks are never affected.
+do
+    local start, update, terminate = e.OnMissionGameStart, e.OnUpdate, e.OnTerminate
+    local active, failed, frame, allActive, partsCopied = false, false, 0, false, false
+    local api, skipped = {}, {}
+    local fmt, floor, gsub, sub = string.format, math.floor, string.gsub, string.sub
+    local function receipt(source)
+        local chunk = loadstring(source)
+        if type(chunk) ~= "function" then return nil end
+        return chunk()
+    end
+    local function note(text)
+        receipt("return 'MGS_COOP_PARTNER_LOG_V1' -- " .. sub(gsub(tostring(text), "[^%w_=:,.;%-]", "_"), 1, 160))
+    end
+    local function index(t, k) return t[k] end
+    local function get(t, k)
+        if t == nil then return nil end
+        local ok, value = pcall(index, t, k)
+        if ok then return value end
+        return nil
+    end
+    local function finite(v) return type(v) == "number" and v == v and v > -1e15 and v < 1e15 end
+    -- Values sent through %d (a 32-bit long in Lua 5.1 on Windows) stay within
+    -- the native bounds: +-1e6 m positions, +-36000 degree angles.
+    local function within(v, limit) return finite(v) and v > -limit and v < limit end
+    -- Resolves the bindings; returns the missing names and whether the
+    -- required ones (vars, Player.IsInstanceValid) exist.
+    local function resolve()
+        local missing = {}
+        local function fn(t, name, key)
+            local value = get(t, key)
+            if type(value) == "function" then return value end
+            missing[#missing + 1] = name .. "." .. key
+            return nil
+        end
+        local function num(t, name, key)
+            local value = get(t, key)
+            if type(value) == "number" then return value end
+            missing[#missing + 1] = name .. "." .. key
+            return nil
+        end
+        api = {
+            isValid = fn(Player, "Player", "IsInstanceValid"),
+            setAllActive = fn(Player, "Player", "SetAllInstanceActiveMode"),
+            copyParts = fn(Player, "Player", "CopyPartsInfoFromLocalPlayer"),
+            setParts = fn(Player, "Player", "SetPartsInfoAtInstanceIndex"),
+            mirror = fn(Player, "Player", "SetOtherInstanceIsForMirrorMode"),
+            localIndex = fn(PlayerInfo, "PlayerInfo", "GetLocalPlayerIndex"),
+            orCheck = fn(PlayerInfo, "PlayerInfo", "OrCheckStatus"),
+            sendCommand = fn(GameObject, "GameObject", "SendCommand"),
+            CRAWL = num(PlayerStatus, "PlayerStatus", "CRAWL"),
+            SQUAT = num(PlayerStatus, "PlayerStatus", "SQUAT"),
+            DASH = num(PlayerStatus, "PlayerStatus", "DASH"),
+            RUN = num(PlayerStatus, "PlayerStatus", "RUN"),
+            WALK = num(PlayerStatus, "PlayerStatus", "WALK"),
+        }
+        local required = vars ~= nil and api.isValid ~= nil
+        if vars == nil then missing[#missing + 1] = "vars" end
+        return table.concat(missing, ","), required
+    end
+    local function has(status)
+        if status == nil or api.orCheck == nil then return false end
+        return api.orCheck({status}) == true
+    end
+    -- Calls an optional binding; a missing one is noted once and skipped.
+    local function call(f, name, ...)
+        if f == nil then
+            if not skipped[name] then skipped[name] = true; note("event=op_skipped;missing=" .. name) end
+            return false
+        end
+        f(...)
+        return true
+    end
+    local function camera()
+        local rotation = vars.playerCameraRotation
+        if rotation == nil then return 0 end
+        local ok, value = pcall(index, rotation, 1)
+        if ok and within(value, 36000) then return value end
+        return 0
+    end
+    local function tick()
+        if not active or failed or vars.missionCode ~= 30050 or not api.isValid() then return end
+        local x, y, z, ry = vars.playerPosX, vars.playerPosY, vars.playerPosZ, vars.playerRotY
+        if not (within(x, 1e6) and within(y, 1e6) and within(z, 1e6) and within(ry, 36000)) then return end
+        frame = frame + 1
+        local stance = (has(api.CRAWL) and 2) or (has(api.SQUAT) and 1) or 0
+        local move = (has(api.DASH) and 3) or (has(api.RUN) and 2) or (has(api.WALK) and 1) or 0
+        local cam = camera()
+        local op, R, px, py, pz, pry = receipt(fmt("return 'MGS_COOP_PARTNER_V1' -- %d %d %d %d %d %d %d %d %d",
+            frame % 1000000, floor(x * 1000 + 0.5), floor(y * 1000 + 0.5), floor(z * 1000 + 0.5),
+            floor(ry * 100 + 0.5), floor(cam * 100 + 0.5), stance, move, (allActive and 1 or 0) + (partsCopied and 2 or 0)))
+        if type(op) ~= "number" or op <= 0 then return end
+        if R ~= 1 or (api.localIndex ~= nil and R == api.localIndex()) then
+            failed = true; note("event=refused;reason=bad_index;R=" .. tostring(R)); return
+        end
+        if op % 16 >= 8 and allActive and call(api.setAllActive, "Player.SetAllInstanceActiveMode", false) then
+            allActive = false; note("event=allactive_cleared")
+        end
+        if op % 4 >= 2 and not allActive and call(api.setAllActive, "Player.SetAllInstanceActiveMode", true) then
+            allActive = true; note("event=allactive_set")
+        end
+        if op % 8 >= 4 and not partsCopied and
+            call(api.copyParts, "Player.CopyPartsInfoFromLocalPlayer", {instanceIndex = R}) then
+            partsCopied = true; note("event=parts_copied;R=1")
+        end
+        if op % 32 >= 16 and call(api.setParts, "Player.SetPartsInfoAtInstanceIndex", {instanceIndex = R,
+            type = vars.playerType, partsType = vars.playerPartsType, camoType = vars.playerCamoType,
+            handType = vars.playerHandType, faceId = vars.playerFaceId}) then
+            note("event=parts_set_explicit")
+        end
+        if op % 64 >= 32 and call(api.mirror, "Player.SetOtherInstanceIsForMirrorMode", true) then note("event=mirror_on") end
+        if op % 2 == 1 and finite(px) and finite(py) and finite(pz) and finite(pry) then
+            call(api.sendCommand, "GameObject.SendCommand", {type = "TppPlayer2", index = R},
+                {id = "Warp", pos = {px / 1000, py / 1000, pz / 1000}, rotY = pry / 1000})
+        end
+    end
+    local function begin()
+        if vars.missionCode ~= 30050 or receipt("return 'MGS_COOP_PARTNER_CFG_V1'") ~= true then return end
+        local missing, required = resolve()
+        if not required then note("event=inactive;reason=missing_required;names=" .. missing); return end
+        active = true
+        note("event=started")
+        if missing ~= "" then note("event=missing;names=" .. missing) end
+    end
+    local function started(...)
+        frame, failed, allActive, partsCopied, active, skipped = 0, false, false, false, false, {}
+        local ok, failure = pcall(begin)
+        if not ok then active = false; pcall(note, "event=error;msg=" .. tostring(failure)) end
+        return ...
+    end
+    local function updated(...)
+        if active and not failed then
+            local ok, failure = pcall(tick)
+            if not ok then failed = true; pcall(note, "event=error;msg=" .. tostring(failure)) end
+        end
+        return ...
+    end
+    local function stopping()
+        if not active then return end
+        active = false
+        if allActive and api.setAllActive ~= nil then pcall(api.setAllActive, false); allActive = false end
+        receipt("return 'MGS_COOP_PARTNER_STOP_V1'")
+    end
+    if type(start) == "function" then e.OnMissionGameStart = function(...) return started(start(...)) end end
+    if type(update) == "function" then e.OnUpdate = function(...) return updated(update(...)) end end
+    if type(terminate) == "function" then e.OnTerminate = function(...) pcall(stopping); return terminate(...) end end
+end

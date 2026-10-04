@@ -17,6 +17,7 @@
 #include "enemy_targeting_source.hpp"
 #include "session_lifecycle_source.hpp"
 #include "session_feedback_source.hpp"
+#include "partner_sync_source.hpp"
 #include "respawn_source.hpp"
 #include "character_source.hpp"
 
@@ -144,7 +145,7 @@ bool SelectHostTrialPatch(const char* source, std::size_t size, const char* name
         "if t(n.sequence.OnEndMissionPrepareSequence)then\n"
         "TppSequence.SetOnEndMissionPrepareFunction(n.sequence.OnEndMissionPrepareSequence)end\nend\n";
     constexpr auto character_extra=sizeof(character_source)-1;
-    constexpr std::size_t result_size=original_size+sizeof(host_trial_source)-1+sizeof(equipment_loading_source)-1+marker_extra+character_extra+sizeof(host_admission_source)-1+sizeof(client_join_source)-1+sizeof(damage_lifecycle_source)-1+sizeof(enemy_targeting_source)-1+sizeof(respawn_source)-1+sizeof(session_lifecycle_source)-1+sizeof(session_feedback_source)-1+sizeof(marker_loading_source)-1+sizeof(character_readback_source)-1+sizeof(mission_trace_source)-1;
+    constexpr std::size_t result_size=original_size+sizeof(host_trial_source)-1+sizeof(equipment_loading_source)-1+marker_extra+character_extra+sizeof(host_admission_source)-1+sizeof(client_join_source)-1+sizeof(damage_lifecycle_source)-1+sizeof(enemy_targeting_source)-1+sizeof(respawn_source)-1+sizeof(session_lifecycle_source)-1+sizeof(session_feedback_source)-1+sizeof(partner_sync_source)-1+sizeof(marker_loading_source)-1+sizeof(character_readback_source)-1+sizeof(mission_trace_source)-1;
     static_assert(result_size<=script_bridge::max_replacement_bytes);
     static char result[result_size]{};
     static bool initialized=false;
@@ -196,7 +197,11 @@ bool SelectHostTrialPatch(const char* source, std::size_t size, const char* name
         std::memcpy(result+session,respawn_source,sizeof(respawn_source)-1);
         constexpr auto feedback=session+sizeof(respawn_source)-1;
         std::memcpy(result+feedback,session_feedback_source,sizeof(session_feedback_source)-1);
-        constexpr auto marker_lifecycle=feedback+sizeof(session_feedback_source)-1;
+        // Offline partner spike (lua/coop/partner_sync.lua): right after the
+        // session feedback; inert unless MGS_COOP_PARTNER_CFG_V1 answers true.
+        constexpr auto partner=feedback+sizeof(session_feedback_source)-1;
+        std::memcpy(result+partner,partner_sync_source,sizeof(partner_sync_source)-1);
+        constexpr auto marker_lifecycle=partner+sizeof(partner_sync_source)-1;
         std::memcpy(result+marker_lifecycle,marker_loading_source,sizeof(marker_loading_source)-1);
         constexpr auto readback=marker_lifecycle+sizeof(marker_loading_source)-1;
         std::memcpy(result+readback,character_readback_source,sizeof(character_readback_source)-1);

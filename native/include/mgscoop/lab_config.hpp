@@ -22,6 +22,16 @@ enum class LabRole : std::uint8_t { none, host, guest };
 constexpr int kXInputPassthrough = -2;
 constexpr int kXInputNone = -1;
 
+// Offline partner spike (docs/offline-partner-spike-plan.md 2.1). Every key
+// below is inert unless the offline-v1 marker is active and partner=1.
+enum class PartnerSource : std::uint8_t { fixed, orbit, net };
+enum class PartnerApply : std::uint8_t { warp, slot, both };
+enum class PartnerTeardown : std::uint8_t { clear, keep };
+// Default partner_net ports when net=1 names neither port: host 47820/47821,
+// guest 47821/47820 (never the loopback emulator's 47810/47811).
+constexpr std::uint16_t kNetHostPort = 47820;
+constexpr std::uint16_t kNetGuestPort = 47821;
+
 struct LabConfig {
     bool present = false;            // file read and enabled=1
     LabRole role = LabRole::none;
@@ -39,9 +49,34 @@ struct LabConfig {
     std::uint32_t net_latency_ms = 0;     // loopback fault injection
     std::uint32_t net_loss_permille = 0;  // 0..1000
     bool trace_packets = false;
+    // Offline partner spike. net: our own second UDP transport (partner_net).
+    // Its two ports must differ from each other and from listen_port/peer_port;
+    // otherwise net is forced to false and invalid_values is incremented.
+    bool net = false;
+    std::uint16_t net_listen_port = 0;
+    std::uint16_t net_peer_port = 0;
+    bool partner = false;
+    std::uint32_t partner_stage = 0;        // 0..3
+    PartnerSource partner_source = PartnerSource::fixed;
+    PartnerApply partner_apply = PartnerApply::warp;
+    std::uint32_t partner_rate_hz = 30;     // 1..60
+    std::uint32_t partner_interp_ms = 100;  // 0..500 (0 = latest snapshot only)
+    std::uint32_t partner_offset_cm = 300;  // 50..1000
+    PartnerTeardown partner_teardown = PartnerTeardown::clear;
+    bool partner_force_exists = false;
+    bool partner_policy_relax = false;      // last resort
+    bool partner_anim_probe = false;
+    bool crash_probe = true;
     unsigned unknown_keys = 0;
     unsigned invalid_values = 0;
 };
+
+// Spellings shared by lab.ini, partner.trigger and the log lines.
+const char* PartnerSourceName(PartnerSource value) noexcept;
+const char* PartnerApplyName(PartnerApply value) noexcept;
+const char* PartnerTeardownName(PartnerTeardown value) noexcept;
+bool ParsePartnerSource(const char* text, std::size_t size, PartnerSource& out) noexcept;
+bool ParsePartnerApply(const char* text, std::size_t size, PartnerApply& out) noexcept;
 
 enum class PlayerCharacter : std::uint8_t {
     game_default,  // leave the sortie/save selection untouched

@@ -102,6 +102,7 @@ mgs_add_lua_check(client_join_lua_check "${_mgs_coop}/client_join.lua")
 mgs_add_lua_check(session_feedback_lua_check "${_mgs_coop}/session_feedback.lua")
 mgs_add_lua_check(damage_parameters_lua_check "${_mgs_coop}/damage_parameters.lua")
 mgs_add_lua_check(damage_lifecycle_lua_check "${_mgs_coop}/damage_lifecycle.lua")
+mgs_add_lua_check(partner_sync_lua_check "${_mgs_coop}/partner_sync.lua")
 
 # --- Extracted game inputs ----------------------------------------------------
 # Finds <relative> (or an alternative relative path given after <sha256>)

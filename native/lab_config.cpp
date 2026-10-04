@@ -56,6 +56,13 @@ bool ParseBool(Slice s, bool& out) noexcept {
     return false;
 }
 
+bool ParseRange(Slice s, std::uint32_t min, std::uint32_t max, std::uint32_t& out) noexcept {
+    std::uint32_t value = 0;
+    if (!ParseU32(s, max, value) || value < min) return false;
+    out = value;
+    return true;
+}
+
 bool ParsePort(Slice s, std::uint16_t& out) noexcept {
     std::uint32_t value = 0;
     if (!ParseU32(s, 65535, value) || value < 1024) return false;
@@ -170,6 +177,24 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
         else if (Equals(key, "net_latency_ms")) ok = ParseU32(value, 2000, result.net_latency_ms);
         else if (Equals(key, "net_loss_permille")) ok = ParseU32(value, 1000, result.net_loss_permille);
         else if (Equals(key, "trace_packets")) ok = ParseBool(value, result.trace_packets);
+        else if (Equals(key, "net")) ok = ParseBool(value, result.net);
+        else if (Equals(key, "net_listen_port")) ok = ParsePort(value, result.net_listen_port);
+        else if (Equals(key, "net_peer_port")) ok = ParsePort(value, result.net_peer_port);
+        else if (Equals(key, "partner")) ok = ParseBool(value, result.partner);
+        else if (Equals(key, "partner_stage")) ok = ParseRange(value, 0, 3, result.partner_stage);
+        else if (Equals(key, "partner_source")) ok = ParsePartnerSource(value.data, value.size, result.partner_source);
+        else if (Equals(key, "partner_apply")) ok = ParsePartnerApply(value.data, value.size, result.partner_apply);
+        else if (Equals(key, "partner_rate_hz")) ok = ParseRange(value, 1, 60, result.partner_rate_hz);
+        else if (Equals(key, "partner_interp_ms")) ok = ParseRange(value, 0, 500, result.partner_interp_ms);
+        else if (Equals(key, "partner_offset_cm")) ok = ParseRange(value, 50, 1000, result.partner_offset_cm);
+        else if (Equals(key, "partner_teardown")) {
+            if (Equals(value, "clear")) result.partner_teardown = PartnerTeardown::clear;
+            else if (Equals(value, "keep")) result.partner_teardown = PartnerTeardown::keep;
+            else ok = false;
+        } else if (Equals(key, "partner_force_exists")) ok = ParseBool(value, result.partner_force_exists);
+        else if (Equals(key, "partner_policy_relax")) ok = ParseBool(value, result.partner_policy_relax);
+        else if (Equals(key, "partner_anim_probe")) ok = ParseBool(value, result.partner_anim_probe);
+        else if (Equals(key, "crash_probe")) ok = ParseBool(value, result.crash_probe);
         else { ++result.unknown_keys; return; }
         if (!ok) ++result.invalid_values;
     });
@@ -178,6 +203,22 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
     if (result.loopback && (!result.listen_port || !result.peer_port || result.listen_port == result.peer_port)) {
         result.loopback = false;
         ++result.invalid_values;
+    }
+    // partner_net: both ports default by role when neither is named; the pair
+    // must be distinct and must not reuse the loopback emulator's ports.
+    if (result.net) {
+        if (!result.net_listen_port && !result.net_peer_port) {
+            if (result.role == LabRole::host) { result.net_listen_port = kNetHostPort; result.net_peer_port = kNetGuestPort; }
+            else if (result.role == LabRole::guest) { result.net_listen_port = kNetGuestPort; result.net_peer_port = kNetHostPort; }
+        }
+        const std::uint16_t a = result.net_listen_port, b = result.net_peer_port;
+        const auto collides = [&](std::uint16_t port) noexcept {
+            return port && (port == result.listen_port || port == result.peer_port);
+        };
+        if (!a || !b || a == b || collides(a) || collides(b)) {
+            result.net = false;
+            ++result.invalid_values;
+        }
     }
     // save_dir must be absolute (drive letter or UNC) to avoid working-directory surprises.
     if (result.save_dir[0]) {
@@ -213,6 +254,46 @@ bool ParseCoopConfig(const char* text, std::size_t length, CoopConfig& out) noex
     if (!usable) return false;
     result.present = true;
     out = result;
+    return true;
+}
+
+const char* PartnerSourceName(PartnerSource value) noexcept {
+    switch (value) {
+    case PartnerSource::orbit: return "orbit";
+    case PartnerSource::net: return "net";
+    default: return "fixed";
+    }
+}
+
+const char* PartnerApplyName(PartnerApply value) noexcept {
+    switch (value) {
+    case PartnerApply::slot: return "slot";
+    case PartnerApply::both: return "both";
+    default: return "warp";
+    }
+}
+
+const char* PartnerTeardownName(PartnerTeardown value) noexcept {
+    return value == PartnerTeardown::keep ? "keep" : "clear";
+}
+
+bool ParsePartnerSource(const char* text, std::size_t size, PartnerSource& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "fixed")) out = PartnerSource::fixed;
+    else if (Equals(s, "orbit")) out = PartnerSource::orbit;
+    else if (Equals(s, "net")) out = PartnerSource::net;
+    else return false;
+    return true;
+}
+
+bool ParsePartnerApply(const char* text, std::size_t size, PartnerApply& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "warp")) out = PartnerApply::warp;
+    else if (Equals(s, "slot")) out = PartnerApply::slot;
+    else if (Equals(s, "both")) out = PartnerApply::both;
+    else return false;
     return true;
 }
 

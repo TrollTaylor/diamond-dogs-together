@@ -27,6 +27,11 @@
 #include "mgscoop/lab_config.hpp"
 #include "mgscoop/lab_status.hpp"
 #include "mgscoop/client_reset.hpp"
+#include "mgscoop/partner_receipt.hpp"
+#include "mgscoop/partner_player.hpp"
+#include "mgscoop/partner_net.hpp"
+#include "mgscoop/crash_probe.hpp"
+#include <cstdarg>
 
 namespace {
 namespace lab = mgscoop::lab;
@@ -41,6 +46,9 @@ bool host_create_enabled = false;
 bool host_admission_enabled = false;
 bool client_enabled = false;
 bool client_check_enabled = false;
+// offline-v1: host-v1 preparation (allocation, archive, TppMain splice,
+// mission boundary, runtime pinning, two-slot package) with no session at all.
+bool offline_enabled = false;
 bool client_join_armed = false; // serialized mission receipts only
 bool client_key_released = false;
 bool client_join_consumed = false; // process lifetime: no automatic retries
@@ -96,6 +104,14 @@ void Log(const char* line) noexcept {
         WriteFile(script_log, line, static_cast<DWORD>(lstrlenA(line)), &written, nullptr);
 }
 bool Sample(LONG64 count) noexcept { return count <= 32 || count == 256 || count == 1024 || count == 4096; }
+void LogFormat(const char* format, ...) noexcept {
+    char line[512]{};
+    va_list arguments;
+    va_start(arguments, format);
+    const HRESULT result = StringCchVPrintfA(line, ARRAYSIZE(line), format, arguments);
+    va_end(arguments);
+    if (SUCCEEDED(result)) Log(line);
+}
 
 // --- Lab observability helpers (all no-ops unless lab_active) -----------------
 
@@ -339,6 +355,408 @@ bool ReadMission(unsigned short& mission) noexcept {
         ReadProcessMemory(GetCurrentProcess(),static_cast<unsigned char*>(game_base)+rva,
             &mission,sizeof(mission),&read) && read==sizeof(mission);
 }
+
+// --- Offline partner spike (docs/offline-partner-spike-plan.md) ---------------
+// Everything below is inert unless the offline-v1 marker is active and lab.ini
+// has partner=1 (partner_on). It never creates a session, never sets
+// S_IS_ONLINE and never touches the synchronizer; the only game writes are the
+// guarded ones in partner_player. Receipts arrive inside ObserveEntry under
+// receipt_lock; the tick receipt is quiet (no entry/return log lines).
+namespace partner = mgscoop::partner;
+namespace pp = mgscoop::partner_player;
+bool partner_on = false;
+bool partner_gate_ok = false;
+pp::Addresses partner_addresses{};
+wchar_t partner_trigger_path[lab::kMaxAtomicPath]{};
+thread_local bool quiet_replacement = false;
+thread_local char partner_reply[partner::reply_capacity]{};
+// Process-level settings: lab.ini at install, then partner.trigger.
+std::uint32_t partner_stage = 0;
+mgscoop::PartnerSource partner_source = mgscoop::PartnerSource::fixed;
+mgscoop::PartnerApply partner_apply = mgscoop::PartnerApply::warp;
+bool partner_parts_explicit_pending = false;
+bool partner_mirror_pending = false;
+constexpr unsigned kProbeKeys = 20;
+constexpr unsigned kProbeLineCap = 400;
+constexpr unsigned kLuaLogCap = 64;
+constexpr unsigned kCappedLogs = 8;
+// Per-mission state, reset at runtime_enter.
+struct PartnerMission {
+    bool cfg_ready, stopped;
+    std::uint64_t start_ms, ticks;
+    bool pose_applied, have_cmd;
+    partner::Pose cmd;
+    bool bits_set;
+    std::uint64_t bits_ms;
+    unsigned bits_lost_logs, write_refusal_logs;
+    bool realized, parts_loaded, parts_timeout_logged;
+    std::uint64_t realized_ms;
+    unsigned s0_missing_ticks, s0_forced_logs;
+    bool policy_relaxed, policy_refused_logged;
+    std::uint8_t policy_previous;
+    unsigned lua_logs;
+    bool lua_logs_capped;
+    const char* refusal;
+    unsigned tick_rejects;
+    unsigned probe_lines;
+    bool probe_logged;
+    std::uint64_t probe_ms;
+    std::uint32_t probe_key[kProbeKeys];
+    std::uint64_t warp_check_ms;
+    std::uint64_t rate_ms, rate_ticks;
+    bool units_logged;
+    std::uint64_t units_ms;
+    std::int32_t yaw_abs_max;
+    bool anim_logged;
+    std::uint64_t anim_ms;
+    pp::Anim anim;
+};
+PartnerMission partner_mission{};
+
+std::uint64_t QpcMicros() noexcept {
+    LARGE_INTEGER frequency{}, counter{};
+    if (!QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0 || !QueryPerformanceCounter(&counter)) return 0;
+    const auto f = static_cast<std::uint64_t>(frequency.QuadPart);
+    const auto c = static_cast<std::uint64_t>(counter.QuadPart);
+    return (c / f) * 1000000 + ((c % f) * 1000000) / f;
+}
+std::uint32_t Clamp32(std::uint64_t value) noexcept { return value > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<std::uint32_t>(value); }
+
+void PartnerMissionStart(std::uint32_t mission) noexcept {
+    if (!partner_on) return;
+    partner_mission = PartnerMission{};
+    mgscoop::partner_net::ResetRemote();
+    mgscoop::partner_net::SetEpoch(mission);
+    mgscoop::crash_probe::SetContext(partner_stage, 0);
+}
+void PartnerMissionEnd() noexcept {
+    if (!partner_on) return;
+    partner_mission.cfg_ready = false;
+    mgscoop::partner_net::ResetRemote();
+    mgscoop::partner_net::SetEpoch(0);
+    mgscoop::crash_probe::SetContext(partner_stage, 0);
+}
+void LogWriteRefusal(const char* what, const char* reason) noexcept {
+    auto& m = partner_mission;
+    if (m.write_refusal_logs >= kCappedLogs) return;
+    ++m.write_refusal_logs;
+    LogFormat("partner_write=refused; op=%s; reason=%s\r\n", what, reason ? reason : "unknown");
+}
+bool ClearPartnerBits(const char* reason) noexcept {
+    auto& m = partner_mission;
+    if (!m.bits_set) return false;
+    std::uint32_t q194 = 0, q198 = 0;
+    if (const char* refused = pp::ClearRealizeBits(partner_addresses, partner::partner_index, mission_terminating, q194, q198)) {
+        LogWriteRefusal("clear_bits", refused);
+        return false;
+    }
+    m.bits_set = false;
+    LogFormat("partner_bits=cleared; reason=%s\r\n", reason);
+    return true;
+}
+void RestorePartnerPolicy() noexcept {
+    auto& m = partner_mission;
+    if (!m.policy_relaxed) return;
+    std::uint8_t previous = 0;
+    if (const char* refused = pp::SetPolicyRelax(partner_addresses, false, m.policy_previous, mission_terminating, previous)) {
+        LogWriteRefusal("policy_restore", refused);
+        return;
+    }
+    m.policy_relaxed = false;
+    Log("partner_policy=restored\r\n");
+}
+void ApplyPartnerTrigger(const partner::Trigger& trigger) noexcept {
+    auto& m = partner_mission;
+    const std::uint32_t stage = trigger.stop ? 0 : trigger.has_stage ? trigger.stage : partner_stage;
+    if (trigger.has_source && trigger.source != partner_source) m.have_cmd = false;
+    if (trigger.has_source) partner_source = trigger.source;
+    if (trigger.has_apply) partner_apply = trigger.apply;
+    if (trigger.parts_explicit) partner_parts_explicit_pending = true;
+    if (trigger.mirror_on) partner_mirror_pending = true;
+    partner_stage = stage;
+    LogFormat("partner_stage=changed; stage=%u; source=%s; apply=%s; via=trigger\r\n", partner_stage,
+              mgscoop::PartnerSourceName(partner_source), mgscoop::PartnerApplyName(partner_apply));
+    if (stage < 3) {
+        ClearPartnerBits("trigger");
+        RestorePartnerPolicy();
+    }
+}
+// partner.trigger (lab only): at most 63 bytes, consumed and deleted.
+void PollPartnerTrigger() noexcept {
+    if (!lab_active || !partner_trigger_path[0]) return;
+    const DWORD error = GetLastError();
+    HANDLE file = CreateFileW(partner_trigger_path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                              nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) { SetLastError(error); return; }
+    char text[partner::max_trigger + 1]{};
+    DWORD length = 0;
+    LARGE_INTEGER size{};
+    const bool read = ReadFile(file, text, static_cast<DWORD>(partner::max_trigger), &length, nullptr) &&
+                      GetFileSizeEx(file, &size) && size.QuadPart <= static_cast<LONGLONG>(partner::max_trigger);
+    CloseHandle(file);
+    DeleteFileW(partner_trigger_path);
+    SetLastError(error);
+    partner::Trigger trigger{};
+    if (!read || !partner::ParseTrigger(text, length, trigger)) {
+        Log("partner_trigger=rejected; reason=parse\r\n");
+        return;
+    }
+    ApplyPartnerTrigger(trigger);
+}
+
+const char* HandlePartnerCfg() noexcept {
+    static constexpr char yes[]="return true", no[]="return false";
+    auto& m = partner_mission;
+    unsigned short mission = 0;
+    const char* reason = nullptr;
+    pp::State state{};
+    if (!OnRuntimeThread() || mission_terminating) reason = "not_runtime_thread";
+    else if (!ReadMission(mission) || mission != 30050) reason = "mission";
+    else if (!partner_gate_ok) reason = "code_gate";
+    else {
+        const pp::Refusal refusal = pp::ReadState(partner_addresses, state);
+        if (refusal != pp::Refusal::none) reason = pp::RefusalName(refusal);
+    }
+    if (reason) {
+        m.cfg_ready = false;
+        LogFormat("partner_cfg=refused; reason=%s\r\n", reason);
+        return no;
+    }
+    char line[256]{};
+    if (pp::FormatReady(state, line, sizeof(line))) Log(line);
+    m.cfg_ready = true;
+    m.stopped = false;
+    m.refusal = nullptr;
+    m.start_ms = mgscoop::partner_net::NowMs();
+    mgscoop::partner_net::SetEpoch(mission);
+    return yes;
+}
+
+const char* HandlePartnerLog(const char* buffer, std::size_t size) noexcept {
+    static constexpr char yes[]="return true";
+    if (!OnRuntimeThread() && !OnTerminationThread()) return nullptr;
+    auto& m = partner_mission;
+    if (m.lua_logs >= kLuaLogCap) {
+        if (!m.lua_logs_capped) { m.lua_logs_capped = true; Log("partner_lua=capped; limit=64\r\n"); }
+        return yes;
+    }
+    ++m.lua_logs;
+    char line[partner::log_line_capacity]{};
+    if (partner::FormatLogLine(buffer, size, line, sizeof(line))) Log(line);
+    return yes;
+}
+
+const char* HandlePartnerStop() noexcept {
+    static constexpr char yes[]="return true";
+    // Sent from OnTerminate after MISSION_TERMINATING: allowed while terminating.
+    if (!OnRuntimeThread() && !OnTerminationThread()) return nullptr;
+    auto& m = partner_mission;
+    const auto teardown = mgscoop::GetLabConfig().partner_teardown;
+    unsigned cleared = 0;
+    if (teardown == mgscoop::PartnerTeardown::clear && ClearPartnerBits("stop")) cleared = 1;
+    RestorePartnerPolicy();
+    mgscoop::partner_net::ResetRemote();
+    m.stopped = true;
+    m.cfg_ready = false;
+    LogFormat("partner_stop; cleared=%u; teardown=%s\r\n", cleared, mgscoop::PartnerTeardownName(teardown));
+    mgscoop::crash_probe::SetContext(0, m.realized ? 1u : 0u);
+    return yes;
+}
+
+void PartnerProbe(const pp::State& st, std::uint64_t now) noexcept {
+    auto& m = partner_mission;
+    const std::uint32_t key[kProbeKeys] = {st.ids[0], st.ids[1], st.pool[0], st.pool[1], st.parts[0], st.parts[1], st.rbits,
+        st.s0, st.s8, st.q170, st.q180, st.q194, st.q198, st.glob, st.pb_guard, st.pb_flag[0], st.pb_flag[1],
+        st.pb_state[0], st.pb_state[1], partner_stage};
+    const bool changed = !m.probe_logged || std::memcmp(key, m.probe_key, sizeof(key)) != 0;
+    const bool due = (changed && now - m.probe_ms >= 1000) || now - m.probe_ms >= 10000;
+    if (!due || m.probe_lines >= kProbeLineCap) return;
+    char line[pp::probe_capacity]{};
+    if (!pp::FormatProbe(st, GetTickCount64(), partner_stage, line, sizeof(line))) return;
+    Log(line);
+    ++m.probe_lines;
+    m.probe_logged = true;
+    m.probe_ms = now;
+    std::memcpy(m.probe_key, key, sizeof(key));
+}
+
+void PartnerAnimProbe(const pp::State& st, std::uint64_t now) noexcept {
+    auto& m = partner_mission;
+    if (m.anim_logged && now - m.anim_ms < 100) return;
+    pp::Anim anim{};
+    if (!pp::ReadAnim(st, anim)) return;
+    const pp::Anim& last = m.anim;
+    if (m.anim_logged && anim.q18 == last.q18 && anim.q28 == last.q28 && anim.qd8 == last.qd8 && anim.q30 == last.q30 &&
+        anim.q38 == last.q38 && anim.m1d8 == last.m1d8 && anim.m1e0 == last.m1e0 && anim.m1f8 == last.m1f8) return;
+    m.anim = anim;
+    m.anim_logged = true;
+    m.anim_ms = now;
+    LogFormat("partner_anim; q18=%04x; q28=%02x; qd8=%04x; q30=%u; q38=%u; m1d8=%08x; m1e0=%08x; m1f8=%08x\r\n",
+              unsigned(anim.q18), unsigned(anim.q28), unsigned(anim.qd8), anim.q30, anim.q38, anim.m1d8, anim.m1e0, anim.m1f8);
+}
+
+// The per-frame tick (2.3 item 9 outline). Returns the quiet reply, or nullptr
+// to leave the literal (Lua then does nothing).
+const char* HandlePartnerTick(const char* buffer, std::size_t size) noexcept {
+    auto& m = partner_mission;
+    if (!m.cfg_ready || m.stopped || mission_terminating || !OnRuntimeThread()) return nullptr;
+    const std::uint64_t started_us = QpcMicros();
+    partner::Tick tick{};
+    if (!partner::ParseTick(buffer, size, tick)) {
+        if (m.tick_rejects < kCappedLogs) { ++m.tick_rejects; Log("partner_tick=rejected; reason=parse\r\n"); }
+        return nullptr;
+    }
+    ++m.ticks;
+    const auto& labc = mgscoop::GetLabConfig();
+    const std::uint64_t now = mgscoop::partner_net::NowMs();
+    if (m.ticks % 30 == 0) PollPartnerTrigger();
+    pp::State st{};
+    const pp::Refusal refusal = pp::ReadState(partner_addresses, st);
+    if (refusal != pp::Refusal::none) {
+        const char* name = pp::RefusalName(refusal);
+        if (m.refusal != name) { m.refusal = name; LogFormat("partner_cfg=refused; reason=%s\r\n", name); }
+        return nullptr;
+    }
+    if (m.refusal) {
+        m.refusal = nullptr;
+        char line[256]{};
+        if (pp::FormatReady(st, line, sizeof(line))) Log(line);
+    }
+    // Cadence and units diagnostics.
+    if (!m.rate_ms) { m.rate_ms = now; m.rate_ticks = 0; }
+    ++m.rate_ticks;
+    if (now - m.rate_ms >= 10000) {
+        DWORD foreground = 0;
+        const HWND window = GetForegroundWindow();
+        if (window) GetWindowThreadProcessId(window, &foreground);
+        LogFormat("partner_tick=rate; hz=%u; focused=%u\r\n", Clamp32(m.rate_ticks * 1000 / (now - m.rate_ms)),
+                  foreground == GetCurrentProcessId() ? 1u : 0u);
+        m.rate_ms = now;
+        m.rate_ticks = 0;
+    }
+    const std::int32_t yaw_abs = tick.yaw_cdeg < 0 ? -tick.yaw_cdeg : tick.yaw_cdeg;
+    if (yaw_abs > m.yaw_abs_max) m.yaw_abs_max = yaw_abs;
+    if (!m.units_logged || now - m.units_ms >= 30000) {
+        m.units_logged = true;
+        m.units_ms = now;
+        LogFormat("partner_units; lua_pos_mm=%d,%d,%d; mem_pos_mm=%d,%d,%d; yaw_cdeg=%d; yaw_abs_max_cdeg=%d; cam_cdeg=%d\r\n",
+                  tick.x_mm, tick.y_mm, tick.z_mm, st.vars_ok ? pp::ToMm(st.vars_pos[0]) : INT32_MIN,
+                  st.vars_ok ? pp::ToMm(st.vars_pos[1]) : INT32_MIN, st.vars_ok ? pp::ToMm(st.vars_pos[2]) : INT32_MIN,
+                  tick.yaw_cdeg, m.yaw_abs_max, tick.cam_cdeg);
+    }
+    // Pose source.
+    partner::Pose pose{};
+    bool pose_valid = false;
+    partner::Status status = partner::Status::synthetic;
+    std::uint32_t age_ms = 0;
+    if (partner_source == mgscoop::PartnerSource::net) {
+        const auto sample = mgscoop::partner_net::SampleRemote(labc.partner_interp_ms);
+        status = sample.status == mgscoop::pose::Status::live ? partner::Status::live
+               : sample.status == mgscoop::pose::Status::stale ? partner::Status::stale : partner::Status::lost;
+        if (sample.valid) {
+            pose = partner::PoseFromMetres(sample.x, sample.y, sample.z, sample.yaw);
+            pose_valid = true;
+            age_ms = sample.age_ms;
+        }
+    } else if (partner_source == mgscoop::PartnerSource::orbit) {
+        pose = partner::OrbitPose(tick, labc.partner_offset_cm, now - m.start_ms);
+        pose_valid = true;
+    } else {
+        pose = partner::FixedPose(tick, labc.partner_offset_cm);
+        pose_valid = true;
+    }
+    // Realize bits (stage 3): from the tick after the first applied pose.
+    if (partner_stage >= 3 && m.pose_applied) {
+        const bool lost = m.bits_set && (st.q194 & 2u) == 0;
+        if (lost && m.bits_lost_logs < kCappedLogs) {
+            ++m.bits_lost_logs;
+            LogFormat("partner_bits=lost; R=1; q194=0x%x; q198=0x%x\r\n", st.q194, st.q198);
+        }
+        if (!m.bits_set || lost) {
+            std::uint32_t q194 = 0, q198 = 0;
+            if (const char* refused = pp::OrRealizeBits(partner_addresses, partner::partner_index, mission_terminating, q194, q198))
+                LogWriteRefusal("or_bits", refused);
+            else if (!m.bits_set) {
+                m.bits_set = true;
+                m.bits_ms = now;
+                LogFormat("partner_bits=set; R=1; q194=0x%x; q198=0x%x\r\n", q194, q198);
+            }
+        }
+    }
+    if (labc.partner_force_exists && partner_stage >= 2) {
+        if (st.s0 & 2u) m.s0_missing_ticks = 0;
+        else if (++m.s0_missing_ticks > 10) {
+            m.s0_missing_ticks = 0;
+            if (const char* refused = pp::ForceExists(partner_addresses, partner::partner_index, mission_terminating))
+                LogWriteRefusal("force_exists", refused);
+            else if (m.s0_forced_logs < kCappedLogs) { ++m.s0_forced_logs; Log("partner_s0=forced; R=1\r\n"); }
+        }
+    }
+    if (labc.partner_policy_relax && partner_stage >= 3 && !m.policy_relaxed && !m.policy_refused_logged) {
+        std::uint8_t previous = 0;
+        if (const char* refused = pp::SetPolicyRelax(partner_addresses, true, 0, mission_terminating, previous)) {
+            m.policy_refused_logged = true;
+            LogFormat("partner_policy=refused; reason=%s\r\n", refused);
+        } else {
+            m.policy_relaxed = true;
+            m.policy_previous = previous;
+            Log("partner_policy=relaxed\r\n");
+        }
+    }
+    const bool slot = partner::WritesSlot(partner_stage, partner_apply, pose_valid);
+    if (slot) {
+        const float xyzw[4] = {static_cast<float>(pose.x_mm / 1000.0), static_cast<float>(pose.y_mm / 1000.0),
+                               static_cast<float>(pose.z_mm / 1000.0), static_cast<float>(pose.yaw_mrad / 1000.0)};
+        if (const char* refused = pp::WriteSlot(partner_addresses, partner::partner_index, mission_terminating, xyzw))
+            LogWriteRefusal("slot", refused);
+    }
+    const std::uint32_t ops = partner::OpsFor(partner::OpInput{partner_stage, partner_apply, pose_valid, tick.luaflags,
+                                                               partner_parts_explicit_pending, partner_mirror_pending});
+    if (ops & partner::op::set_parts_explicit) partner_parts_explicit_pending = false;
+    if (ops & partner::op::mirror_on) partner_mirror_pending = false;
+    // Transitions are logged immediately.
+    const bool realized = pp::Realized(st, partner::partner_index);
+    if (realized && !m.realized) {
+        m.realized = true;
+        m.realized_ms = now;
+        m.parts_loaded = false;
+        m.parts_timeout_logged = false;
+        LogFormat("partner_realized=1; R=1; id=%04x; pool=%02x; ms_after_bits=%u\r\n", unsigned(st.ids[1]), unsigned(st.pool[1]),
+                  m.bits_set ? Clamp32(now - m.bits_ms) : 0u);
+    } else if (!realized && m.realized) {
+        m.realized = false;
+        LogFormat("partner_realized=0; R=1; ms_after_realize=%u\r\n", Clamp32(now - m.realized_ms));
+    }
+    if (m.realized && !m.parts_loaded) {
+        if (st.parts[1] == 3) {
+            m.parts_loaded = true;
+            LogFormat("partner_parts=loaded; R=1; ms_after_realize=%u\r\n", Clamp32(now - m.realized_ms));
+        } else if (!m.parts_timeout_logged && now - m.realized_ms > 15000) {
+            m.parts_timeout_logged = true;
+            LogFormat("partner_parts=timeout; R=1; state=%u; pb_state=%u\r\n", unsigned(st.parts[1]), st.pb_state[1]);
+        }
+    }
+    // 1 Hz: the pose commanded on the previous tick against the slot now.
+    const bool applying = (ops & partner::op::warp) != 0 || slot;
+    if (applying && m.have_cmd && now - m.warp_check_ms >= 1000) {
+        m.warp_check_ms = now;
+        const std::int32_t sx = pp::ToMm(st.slot[1][0]), sy = pp::ToMm(st.slot[1][1]), sz = pp::ToMm(st.slot[1][2]);
+        LogFormat("partner_warp_check; R=1; apply=%s; cmd_mm=%d,%d,%d; slot_mm=%d,%d,%d; err_mm=%u\r\n",
+                  mgscoop::PartnerApplyName(partner_apply), m.cmd.x_mm, m.cmd.y_mm, m.cmd.z_mm, sx, sy, sz,
+                  partner::DistanceMm(m.cmd.x_mm, m.cmd.y_mm, m.cmd.z_mm, sx, sy, sz));
+    }
+    mgscoop::partner_net::SubmitLocal(tick);
+    PartnerProbe(st, now);
+    if (labc.partner_anim_probe) PartnerAnimProbe(st, now);
+    if (applying) { m.cmd = pose; m.have_cmd = true; m.pose_applied = true; }
+    const partner::Reply reply{ops, partner::partner_index, pose.x_mm, pose.y_mm, pose.z_mm, pose.yaw_mrad, status, age_ms};
+    if (!partner::FormatReply(reply, partner_reply, sizeof(partner_reply))) return nullptr;
+    mgscoop::crash_probe::SetContext(partner_stage, m.realized ? 1u : 0u);
+    const std::uint64_t ended_us = QpcMicros();
+    mgscoop::partner_net::RecordNativeMicros(Clamp32(ended_us >= started_us ? ended_us - started_us : 0));
+    return partner_reply;
+}
+
 bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
                            mgscoop::script_bridge::Replacement& replacement) noexcept {
     if(!host_source_selected || !buffer || !name || size>=96 ||
@@ -383,7 +801,7 @@ bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
            ReadMission(mission) && mission==allocation_mission) {
             accepted=TransferRuleThread(allocation_thread) &&
                 AdoptDynamiteSessionThread(game_base,allocation_thread,Log);
-            if(accepted) { mission_thread=GetCurrentThreadId(); mission_phase=MissionPhase::running; }
+            if(accepted) { mission_thread=GetCurrentThreadId(); mission_phase=MissionPhase::running; PartnerMissionStart(allocation_mission); }
             else RestoreGameplayRules();
         }
     } else if(equals(terminate)) {
@@ -395,6 +813,7 @@ bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
             cleanup_thread=GetCurrentThreadId();
             accepted=termination_scope.Returned(cleanup_thread);
             mission_phase=MissionPhase::idle; allocation_thread=0;
+            PartnerMissionEnd();
         }
     } else return false;
     static constexpr char yes[]="return true",no[]="return false";
@@ -563,11 +982,41 @@ void CopyName(const char* source, char (&output)[241]) noexcept {
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) { lstrcpyA(output, "<unreadable>"); }
 }
+// Partner receipts (partner_on only; called under receipt_lock). The tick is
+// quiet: no entry line, and ObserveReturn skips its return line. CFG, LOG and
+// STOP keep the ordinary entry/return lines.
+bool SelectPartnerReceipt(partner::Receipt kind, const char* buffer, std::size_t size, const char* name, LONG64 count,
+                          mgscoop::script_bridge::Replacement& replacement) noexcept {
+    const char* reply = nullptr;
+    switch (kind) {
+    case partner::Receipt::tick: reply = HandlePartnerTick(buffer, size); break;
+    case partner::Receipt::cfg: reply = HandlePartnerCfg(); break;
+    case partner::Receipt::log: reply = HandlePartnerLog(buffer, size); break;
+    case partner::Receipt::stop: reply = HandlePartnerStop(); break;
+    default: break;
+    }
+    if (reply) replacement = {reply, std::strlen(reply)};
+    if (kind == partner::Receipt::tick) {
+        quiet_replacement = reply != nullptr;
+        return reply != nullptr;
+    }
+    char copied[241]{}, line[512]{};
+    CopyName(name, copied);
+    if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
+        "entry_count=%lld thread=%lu tick_ms=%llu size=%llu name_prefix=%s replacement=%d execution_receipt=%d\r\n",
+        count, GetCurrentThreadId(), GetTickCount64(), static_cast<unsigned long long>(size), copied,
+        reply ? 1 : 0, 0))) Log(line);
+    return reply != nullptr;
+}
 bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
                   mgscoop::script_bridge::Replacement& replacement) noexcept {
     AcquireSRWLockExclusive(&receipt_lock);
     struct Unlock { ~Unlock(){ ReleaseSRWLockExclusive(&receipt_lock); } } unlock;
     const auto count = InterlockedIncrement64(&entries);
+    if(partner_on) {
+        const auto partner_kind=partner::Classify(buffer,size,name);
+        if(partner_kind!=partner::Receipt::none) return SelectPartnerReceipt(partner_kind,buffer,size,name,count,replacement);
+    }
     bool selected = bootstrap_enabled && mgscoop::SelectBootstrapPatch(buffer, size, name, replacement, archive_mounted);
     if(!selected)
         selected=mgscoop::SelectDamageParameterPatch(buffer,size,name,replacement,host_create_enabled || client_enabled);
@@ -641,7 +1090,9 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
         const bool cleanup_ready=!gameplay_restore_pending || RestoreGameplayRules();
         const bool player_ready=cleanup_ready && (!needs_player_patch ||
             (mgscoop::marker_loading::IsActive() && PrepareDynamitePlayerLoading(game_base,game_span,Log)));
-        const bool created=player_ready && !client_enabled && TryCreateHostSession(game_base,game_span,Log,heap_test_enabled,host_create_enabled);
+        // offline-v1 never asks for a session: Lua then never sets S_IS_ONLINE.
+        if(offline_enabled) Log("host_create=skipped; mode=offline_v1\r\n");
+        const bool created=player_ready && !client_enabled && !offline_enabled && TryCreateHostSession(game_base,game_span,Log,heap_test_enabled,host_create_enabled);
         if(needs_player_patch && (!player_ready || (!client_enabled && !created))) RestoreGameplayRules();
         // Publish the host's own SteamID64 for the lab scripts (lab mode only;
         // the id value itself is never logged). Retried from status polls.
@@ -936,6 +1387,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     return selected;
 }
 void ObserveReturn(void*, int result, bool replaced) noexcept {
+    if (quiet_replacement) { quiet_replacement = false; InterlockedIncrement64(&returns); return; }
     const auto count = InterlockedIncrement64(&returns);
     if (Sample(count) || replaced) {
         char line[256]{};
@@ -968,7 +1420,9 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
             client_enabled = client_check_enabled || (read == 10 && std::memcmp(mode, "client-v1\n", 10) == 0);
             host_admission_enabled = read == 8 && std::memcmp(mode, "host-v3\n", 8) == 0;
             host_create_enabled = host_admission_enabled || (read == 8 && std::memcmp(mode, "host-v2\n", 8) == 0);
-            host_enabled = client_enabled || host_create_enabled || heap_test_enabled || (read == 8 && std::memcmp(mode, "host-v1\n", 8) == 0);
+            offline_enabled = read == 11 && std::memcmp(mode, "offline-v1\n", 11) == 0;
+            host_enabled = client_enabled || host_create_enabled || heap_test_enabled || offline_enabled ||
+                (read == 8 && std::memcmp(mode, "host-v1\n", 8) == 0);
             allocation_enabled = host_enabled || (read == 11 && std::memcmp(mode, "players-v1\n", 11) == 0);
             archive_enabled = allocation_enabled || (read == 11 && std::memcmp(mode, "archive-v1\n", 11) == 0);
             bootstrap_enabled = archive_enabled || (read == 13 && std::memcmp(mode, "bootstrap-v1\n", 13) == 0);
@@ -1028,6 +1482,36 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                 if (heap_test_enabled) Log("mode=heap_v1; paired_heap_trial=1 host_calls=0 allocator_hook=0\r\n");
                 if (host_create_enabled) Log("mode=host_v2; dynamite_host_creation=enabled max_players=2 peer_acceptance_requested=0\r\n");
                 if (host_admission_enabled) Log("mode=host_v3; peer_acceptance=after_mission_start; max_players=2\r\n");
+            }
+            if (offline_enabled) {
+                // Offline partner spike: needs the lab paths and lab.ini partner=1.
+                const auto& labc = mgscoop::GetLabConfig();
+                partner_on = lab_active && labc.partner && BuildCoopPath(directory, L"partner.trigger", partner_trigger_path);
+                char offline_line[128]{};
+                if (SUCCEEDED(StringCchPrintfA(offline_line, ARRAYSIZE(offline_line),
+                    "mode=offline_v1; sessions=0; s_is_online=never; partner=%u\r\n", partner_on ? 1u : 0u))) Log(offline_line);
+                if (partner_on) {
+                    partner_stage = labc.partner_stage;
+                    partner_source = labc.partner_source;
+                    partner_apply = labc.partner_apply;
+                    partner_addresses = pp::AddressesFor(base);
+                    std::uintptr_t mismatch = 0;
+                    partner_gate_ok = pp::CodeGate(base, span, mismatch);
+                    if (partner_gate_ok) Log("partner_code_gate=ok; scope=contract_sites_and_vtable_slots\r\n");
+                    else LogFormat("partner_code_gate=mismatch; rva=0x%llx\r\n", static_cast<unsigned long long>(mismatch));
+                    LogFormat("partner=configured; mode=offline_v1; stage=%u; source=%s; apply=%s; rate_hz=%u; interp_ms=%u; offset_cm=%u; teardown=%s\r\n",
+                        partner_stage, mgscoop::PartnerSourceName(partner_source), mgscoop::PartnerApplyName(partner_apply),
+                        labc.partner_rate_hz, labc.partner_interp_ms, labc.partner_offset_cm,
+                        mgscoop::PartnerTeardownName(labc.partner_teardown));
+                    if (labc.crash_probe) mgscoop::crash_probe::Install(base, span, Log);
+                    if (labc.net) {
+                        const mgscoop::partner_net::Config net{labc.net_listen_port, labc.net_peer_port, labc.partner_rate_hz,
+                                                               labc.net_latency_ms, labc.net_loss_permille, Log};
+                        mgscoop::partner_net::Start(net);
+                    } else {
+                        Log("partner_net=disabled; reason=transport_bad_config\r\n");
+                    }
+                }
             }
             if (host_create_enabled || client_enabled) {
                 // coop.ini is read once here (kernel32 file I/O), outside the Lua compile path.
