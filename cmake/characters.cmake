@@ -115,6 +115,21 @@ function(mgs_characters_deferred)
         message(STATUS "Character checks: extracted TppVarInit.lua not found; the continue path uses the mirror")
       endif()
       add_test(NAME character_game_lua_check COMMAND ${_mgs_character_lua} ${_mgs_character_args} ${_mgs_character_game_args})
+      # The complete DLL TppMain composition (host trial, equipment, marker
+      # guard, readback, session lifecycle and this chunk) that
+      # host_trial_patch_check writes: proves `n` and the end-of-OnAllocate
+      # hook where the shipped chunk actually runs (cmake/lua_checks.cmake).
+      if(TEST host_trial_patch_check)
+        set(_mgs_character_composed "${CMAKE_CURRENT_BINARY_DIR}/lua-check/TppMain-host-trial.lua")
+        if(DEFINED _mgs_out)
+          set(_mgs_character_composed "${_mgs_out}/TppMain-host-trial.lua")
+        endif()
+        add_test(NAME character_composed_lua_check COMMAND ${_mgs_character_lua} ${_mgs_character_args}
+          ${_mgs_character_game_args} "${_mgs_character_composed}")
+        set_tests_properties(character_composed_lua_check PROPERTIES FIXTURES_REQUIRED host_trial_patch_check_output)
+      else()
+        message(STATUS "Character checks: host_trial_patch_check not registered; character_composed_lua_check skipped")
+      endif()
     else()
       message(STATUS "Character checks: extracted TppPlayer.lua/TppMain.lua not found; character_game_lua_check skipped")
     endif()

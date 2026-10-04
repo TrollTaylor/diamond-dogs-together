@@ -30,11 +30,26 @@ Lua and CMake only. It needs **no change** to `native/bootstrap_patch.cpp`,
   `character_game_lua_check` still runs and uses the mirror for the continue
   path. How to extract it: [characters.md](characters.md#re-extracting-the-game-scripts).
 
-Verified on this branch (coop-lab @73d9798 plus the branch commit):
-`tools/build.ps1 -Configuration Release`, 54/54 CTest suites. The complete
-DLL TppMain composition (`host_trial_patch_check <TppMain.lua> composed.lua`)
-passes `character_lua_check.lua ... composed.lua --varinit=...` (429 checks,
-including the continue lifecycle) and `host_trial_lua_check.lua` (77 checks).
+- Review follow-up: `cmake/characters.cmake` also registers
+  `character_composed_lua_check` when `host_trial_patch_check` is a test
+  (`FIXTURES_REQUIRED host_trial_patch_check_output`, as
+  `host_trial_lua_check`). It runs `character_lua_check.lua` with the real
+  scripts and the complete DLL TppMain composition
+  (`<build>/lua-check/TppMain-host-trial.lua`) as 5th argument, so a later
+  splice that shadows `n` before the character chunk, or loses the
+  end-of-`OnAllocate` call that restores the flag, fails CTest
+  (`always=1` and `late=0` are required; the test also proves both
+  mutations are detected). No change to `cmake/lua_checks.cmake`.
+- Review follow-up: the end-of-allocation hook is now armed for every apply
+  decision, so a kept sortie choice (`reason=*_sortie_kept`) also writes
+  `character=allocated`, as the log tables say. Such a decision never
+  carries the bypass, so the vanilla Ocelot/Quiet revert still runs.
+
+Verified on this branch (coop-lab @73d9798 plus the branch commits):
+`tools/build.ps1 -Configuration Release`, 55/55 CTest suites, including
+`character_composed_lua_check` (448 checks on the complete DLL TppMain
+composition with the real TppPlayer/TppMain/TppVarInit) and
+`host_trial_lua_check`.
 
 Requested outside this branch (documentation only):
 [`characters-integration-2.patch`](characters-integration-2.patch) adds the
@@ -450,9 +465,10 @@ section 9.
   header at the exact insertion point, and the appended readback.
 - `tests/host_trial_lua_check.lua` needs no change. It runs the composed
   TppMain up to `Mission.Start()`, which comes before the character chunk.
-- Optional end-to-end check of the complete DLL composition: give
-  `character_lua_check.lua` the output of `host_trial_patch_check` as a 5th
-  argument. It runs that composition through `OnAllocate`, about 300 loading
+- End-to-end check of the complete DLL composition (registered in CTest as
+  `character_composed_lua_check` since Update 2; the commands below run it by
+  hand): give `character_lua_check.lua` the output of `host_trial_patch_check`
+  as a 5th argument. It runs that composition through `OnAllocate`, about 300 loading
   `OnUpdate` ticks, `OnMissionGameStart`, play, `OnTerminate` and teardown,
   using the real `TppPlayer.lua` and a simulated `GetPlayerType` that faults
   while the player is absent:

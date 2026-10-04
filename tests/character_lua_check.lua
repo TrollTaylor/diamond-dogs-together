@@ -415,8 +415,11 @@ local function scenarios(real)
     status = allocate(env)
     check(status.applied == 'snake' and status.reason == 'quiet_conflict_sortie_kept' and #env.registered == 0 and
         status.expect == PT.SNAKE and not status.always, tag .. 'snake fallback keeps the sortie Snake')
-    check(env.TppPlayer.ForceChangePlayerFromOcelot == env.originalRevert and env.n.sequence[ALWAYS] == nil,
-        tag .. 'sortie kept without an earlier override: no hook, no flag')
+    check(env.TppPlayer.ForceChangePlayerFromOcelot ~= env.originalRevert and env.n.sequence[ALWAYS] == nil and
+        env.ocelotRevertCalls == 1 and not has(env.receipts, ON) and not hasText(env.reports, 'ocelot_reset_skipped'),
+        tag .. 'sortie kept without an earlier override: hook armed, no flag, vanilla revert still runs')
+    check(has(env.reports, 'allocated;mission=10050;vars=0;parts=2;camo=3;temp=0;start=new;late=0'),
+        tag .. 'sortie kept still writes its allocated line')
 
     -- Bypass refused natively: fall back, never leave a Quiet request.
     env = F({character = 'quiet', mission = 10036, bypassRefused = true})
@@ -482,6 +485,9 @@ local function scenarios(real)
     env = F({character = 'snake', playerType = PT.SNAKE})
     status = allocate(env)
     check(status.reason == 'override_sortie_kept' and #env.registered == 0, tag .. 'snake sortie kept')
+    check(has(env.reports, 'allocated;mission=10036;vars=0;parts=2;camo=3;temp=0;start=new;late=0') and
+        env.ocelotRevertCalls == 1 and env.n.sequence[ALWAYS] == nil and env.Tpp.MgsCoop.characterPost.armed == false,
+        tag .. 'snake sortie kept: allocated line, hook consumed, vanilla revert ran')
     env = F({character = 'snake', playerType = PT.DD_MALE, sortieType = PT.DD_MALE})
     status = allocate(env)
     check(env.registered[1].playerType == PT.SNAKE and env.registered[1].partsType == PARTS.SNEAKING_SUIT and
@@ -1142,9 +1148,26 @@ if REAL_MAIN then
         -- Real composed TppMain lifecycle (splice + appended readback) with lab
         -- readback: the real OnUpdate/OnMissionGameStart/OnTerminate drive the
         -- wrapper; the simulated binding crashes while the player is absent.
+        -- The flag reached the vanilla type setting on OnAllocate's own `n`
+        -- (always=1 and late=0: not the safety net) and the hooked end call
+        -- put it back.
+        local function allocationEvidence(env, start)
+            return reported(env, 'apply;mission=10036;requested=quiet;applied=quiet;type=6;reason=override;bypass=1;real=0;' ..
+                'start=' .. start .. ';always=1') and
+                reported(env, 'allocated;mission=10036;vars=6;parts=27;camo=116;temp=1;start=' .. start .. ';late=0') and
+                env.continueCalls == (start == 'continue' and 1 or 0) and env.mission.sequence[ALWAYS] == nil and
+                env.Tpp.MgsCoop.characterAlways == nil
+        end
         local function lifecycle(source, character, name, continue)
             env = runAllocate(source, {mission = 10036, character = character, readback = true, continue = continue,
                 checkpoint = continue and checkpoint or nil})
+            if character == 'quiet' then
+                check(allocationEvidence(env, continue and 'continue' or 'new'),
+                    name .. ': type set inside OnAllocate (always=1, late=0) and the end call restored the flag')
+            else
+                check(env.mission.sequence[ALWAYS] == nil and env.Tpp.MgsCoop.characterAlways == nil,
+                    name .. ': default character leaves the mission flag')
+            end
             env.mvars.seq_demoSequneceList = {}
             for _ = 1, 300 do assert(pcall(env.main.OnUpdate, env.mission)) end
             check(env.crashes == 0 and env.getPlayerTypeCalls == 0, name .. ': loading OnUpdate never reads the player')
@@ -1175,6 +1198,23 @@ if REAL_MAIN then
                 full:find('\n-- MGS co-op character readback (original).', 1, true), 'DLL composition carries both chunks')
             for _, character in ipairs({'quiet', ''}) do lifecycle(full, character, 'DLL composition') end
             lifecycle(full, 'quiet', 'DLL composition continue', true)
+            -- Sensitivity: the evidence above fails when another splice shadows
+            -- `n` where the chunk runs, or when the end-of-OnAllocate call no
+            -- longer reaches the hook.
+            local at = full:find(characterSource, 1, true)
+            check(at and not full:find(characterSource, at + 1, true), 'DLL composition holds the character chunk once')
+            local shadowed = full:sub(1, at - 1) .. 'do local n = nil\n' .. characterSource .. '\nend' ..
+                full:sub(at + #characterSource)
+            env = runAllocate(shadowed, {mission = 10036, character = 'quiet', continue = true, checkpoint = checkpoint})
+            check(not allocationEvidence(env, 'continue') and reported(env, 'allocated;mission=10036;vars=6;parts=27;camo=116;' ..
+                'temp=1;start=continue;late=1;before=0'), 'composed check detects a shadowed `n` (safety net only)')
+            local endCall = 'TppPlayer.ForceChangePlayerFromOcelot()end'
+            local endAt = full:find(endCall, 1, true)
+            check(endAt and not full:find(endCall, endAt + 1, true), 'DLL composition holds one end-of-OnAllocate call')
+            env = runAllocate(full:sub(1, endAt - 1) .. 'end' .. full:sub(endAt + #endCall),
+                {mission = 10036, character = 'quiet', continue = true, checkpoint = checkpoint})
+            check(not allocationEvidence(env, 'continue') and env.mission.sequence[ALWAYS] == true,
+                'composed check detects a missing end call (flag left set)')
         end
     end
 end

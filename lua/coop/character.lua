@@ -219,9 +219,12 @@ do
                     -- then runs the vanilla restore as well.
                     if x.usingTemp then d.always = C.SetAlways(sequence) end
                 end
+                -- Armed for every apply decision so each writes its allocated
+                -- line. A kept sortie never bypasses (Plan always returns a
+                -- Quiet/Ocelot temp), so Post returns false: vanilla revert.
                 post.skip, post.mission, post.start = d.bypass == true, x.mission, x.start
-                post.armed = temp ~= nil or d.always == true
-                if post.armed then C.InstallPostHook() end
+                post.armed = true
+                C.InstallPostHook()
             end
             C.Log("REPORT", d.result .. ";mission=" .. tostring(x.mission) .. ";requested=" .. tostring(d.requested) ..
                 ";applied=" .. tostring(d.applied) .. ";type=" .. tostring(d.type) .. ";reason=" .. d.reason ..

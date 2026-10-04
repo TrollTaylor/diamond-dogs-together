@@ -220,7 +220,7 @@ described above.
 |---|---|
 | `character_config=quiet; fallback=dd_male; coop_ini=1; reset_bypass_needed=1; applied_in=TppMain.OnAllocate` | Settings read at startup. |
 | `character=<result>; mission=...; requested=...; applied=...; type=...; reason=...; bypass=0/1; real=...; start=<new\|continue\|unknown>; always=<0\|1>` | Decision for this mission. `result` is `skip`, `keep` or `apply`. `start` is the `OnAllocate` path (`continue` = checkpoint/title Continue). `always=1`: the continue flag was set for this allocation. |
-| `character=allocated; mission=...; vars=6; parts=27; camo=116; temp=1; start=continue; late=0` | End of `OnAllocate` (every apply decision, lab or not): what `vars` hold before the player is created. `temp` is `gvars.ply_isUsingTempPlayerType`. `late=1; before=<type>` means the safety net applied the type (see above). |
+| `character=allocated; mission=...; vars=6; parts=27; camo=116; temp=1; start=continue; late=0` | End of `OnAllocate` (every apply decision, including a kept sortie choice such as `reason=override_sortie_kept`, lab or not; never for `skip`/`keep`): what `vars` hold before the player is created. `temp` is `gvars.ply_isUsingTempPlayerType`. `late=1; before=<type>` means the safety net applied the type (see above). |
 | `character=face; mission=...; face=...` | A Diamond Dogs face was set. |
 | `character=ocelot_reset_skipped; mission=...` | The Lua Ocelot/Quiet revert was skipped once. |
 | `player_type_patch=active; ...` / `player_type_patch=inactive; ...` | The native bypass changed state. |
@@ -256,7 +256,7 @@ character_readback=start; verdict=applied; expect=6; local=0; vars=6; parts=27; 
 | Item | Level |
 |---|---|
 | Root cause of the October 3 failure (continue path skips the type setting) | Static: the vanilla `TppMain`, `TppVarInit`, `TppSave`, `TppMission`, `title_sequence` and `f30050_sequence` scripts of this install; reproduced in the fixture with the real `TppMain`/`TppPlayer`/`TppVarInit` |
-| Continue fix: flag set only when absent, previous value restored at the end of `OnAllocate`, next allocation or on failure; Quiet applied over a Snake checkpoint inside the real `InitializeForContinue` (`late=0`) | Lua fixture tests (`character_lua_check`, `character_game_lua_check`), also on the complete DLL `TppMain` composition |
+| Continue fix: flag set only when absent, previous value restored at the end of `OnAllocate`, next allocation or on failure; Quiet applied over a Snake checkpoint inside the real `InitializeForContinue` (`late=0`) | Lua fixture tests (`character_lua_check`, `character_game_lua_check`, and `character_composed_lua_check` on the complete DLL `TppMain` composition written by `host_trial_patch_check`, which also proves the check fails when `n` is shadowed or the end-of-`OnAllocate` call is lost) |
 | Safety net (`late=1`), stale-override restore on continue, `start=`/`always=` reporting | Lua fixture tests |
 | Native reset branch: bytes, complete function hash, jump target, uniqueness, FOB flag source; enums PlayerType QUIET 6 / OCELOT 5, PlayerPartsType 27 / 26, PlayerCamoType 116 / 115 | Static analysis of the installed 1.0.15.4 exe (`tools/generate_player_type_contract.py` re-run on October 3: regenerated output identical) |
 | Bypass enable/disable/refusal logic, including on an in-memory copy of the real function | Unit tests (`player_type_patch_tests`) |
@@ -285,9 +285,10 @@ character_readback=start; verdict=applied; expect=6; local=0; vars=6; parts=27; 
 
 ## Re-extracting the game scripts
 
-`character_game_lua_check` uses the extracted vanilla scripts when they are
-present with these SHA-256 values (it looks in `build/`, `MGS_GAME_LUA_DIR`
-and the main checkout's `build/`):
+`character_game_lua_check` and `character_composed_lua_check` (the latter
+also needs the `host_trial_patch_check` test) use the extracted vanilla
+scripts when they are present with these SHA-256 values (they look in
+`build/`, `MGS_GAME_LUA_DIR` and the main checkout's `build/`):
 
 | Script | SHA-256 | Saved as |
 |---|---|---|
