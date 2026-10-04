@@ -1,5 +1,9 @@
 # Shared helpers for the single-PC co-op lab (tools/lab/*.ps1).
 # Pure helpers (no side effects) are unit tested by tests/lab_scripts_tests.ps1.
+# The friend-test package (tools/friend) also ships this module and runs it
+# under Windows PowerShell 5.1: keep the identity, save backup/seed, manifest,
+# ini and process helpers 5.1-compatible (tests/friend_package_tests.ps1 runs
+# them under powershell.exe) and keep this file ASCII-only.
 # Nothing in this module launches the game, Steam or fuse by itself, and no
 # helper writes below Steam\userdata (the real saves are only ever read).
 Set-StrictMode -Version Latest
@@ -38,7 +42,7 @@ function Get-LabConfig {
     # Loads lab.json and returns it with every path resolved to an absolute path.
     param([string]$ConfigPath = (Join-Path $PSScriptRoot 'lab.json'), [string]$RepoRoot)
     if (!$RepoRoot) { $RepoRoot = Get-LabRepoRoot }
-    $raw = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+    $raw = Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
     if ((Get-ConfigValue $raw 'schema' 0) -ne 1) { throw "Unsupported lab.json schema in $ConfigPath" }
     $paths = [ordered]@{ repo = $RepoRoot }
     foreach ($name in 'hostDir', 'guestDir', 'fuseSource', 'fuseExe', 'runDir', 'loader', 'runtimeArchive') {
@@ -528,6 +532,17 @@ function Write-TextFileIfChanged {
     return $true
 }
 
+function Get-RelativeChildPath {
+    # Pure: $Path relative to $Root with '/' separators. Windows PowerShell 5.1
+    # (the friend-test package) has no [IO.Path]::GetRelativePath, so this
+    # requires $Path to lie below $Root and strips the prefix.
+    param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string]$Path)
+    $r = [IO.Path]::GetFullPath($Root).TrimEnd('\', '/')
+    $p = [IO.Path]::GetFullPath($Path)
+    if (!$p.StartsWith($r + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw "Path is not below ${r}: $p" }
+    return $p.Substring($r.Length + 1).Replace('\', '/')
+}
+
 function New-HashManifest {
     # Hashes every file below each relative source folder of $Root (read-only).
     param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string[]]$Folders)
@@ -536,7 +551,7 @@ function New-HashManifest {
         $full = Join-Path $Root $folder
         if (!(Test-Path -LiteralPath $full -PathType Container)) { continue }
         foreach ($file in Get-ChildItem -LiteralPath $full -File -Recurse -Force | Sort-Object FullName) {
-            $relative = [IO.Path]::GetRelativePath($Root, $file.FullName).Replace('\', '/')
+            $relative = Get-RelativeChildPath -Root $Root -Path $file.FullName
             $rows.Add([pscustomobject]@{ path = $relative; size = $file.Length; sha256 = (Get-Sha256 $file.FullName) })
         }
     }
@@ -602,7 +617,7 @@ function Backup-RealSaves {
 
 function Test-RealSavesAgainstBackup {
     param([Parameter(Mandatory)][string]$BackupDirectory)
-    $manifest = Get-Content -LiteralPath (Join-Path $BackupDirectory 'manifest.json') -Raw | ConvertFrom-Json
+    $manifest = Get-Content -LiteralPath (Join-Path $BackupDirectory 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     $current = New-HashManifest -Root $manifest.source_root -Folders $script:VerifiedSaveFolders
     $comparison = Compare-HashManifest -Expected @($manifest.verified) -Actual $current
     [pscustomobject]@{ Backup = $BackupDirectory; SourceRoot = $manifest.source_root; Comparison = $comparison }
@@ -1289,11 +1304,11 @@ function Get-CurrentRun {
     if (!$RunDir) {
         $pointer = Join-Path $Config.Paths.runDir 'current-run.json'
         if (!(Test-Path -LiteralPath $pointer -PathType Leaf)) { throw "No current lab run ($pointer). Run Start-Lab.ps1 or pass -RunDir." }
-        $RunDir = (Get-Content -LiteralPath $pointer -Raw | ConvertFrom-Json).run_dir
+        $RunDir = (Get-Content -LiteralPath $pointer -Raw -Encoding UTF8 | ConvertFrom-Json).run_dir
     }
     $runJson = Join-Path $RunDir 'run.json'
     if (!(Test-Path -LiteralPath $runJson -PathType Leaf)) { throw "run.json not found in $RunDir" }
-    $run = Get-Content -LiteralPath $runJson -Raw | ConvertFrom-Json
+    $run = Get-Content -LiteralPath $runJson -Raw -Encoding UTF8 | ConvertFrom-Json
     return [pscustomobject]@{ Dir = (Resolve-Path -LiteralPath $RunDir).Path; Run = $run }
 }
 

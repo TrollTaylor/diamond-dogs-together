@@ -38,6 +38,8 @@ The script discovers the Visual Studio toolchain, builds with Ninja, and runs CT
 
 For a local package, `tools/package.ps1 -RuntimeArchive <path>` compiles with `-BuildOnly` and bundles the exact expected runtime archive, current source and licenses. The new installer/configurator replaces the earlier package scripts: owned upgrades receive hash-checked backups and a restore command, and Host/Join selection writes to the installed mod. Fresh install, owned upgrade, refusal and restore fixtures passed; live owned installation also succeeded. [Package workflow](docs/local-package.md).
 
+For a two-PC test with a friend, `tools/package.ps1 -Friend` stages `dist/mgs-coop-friend-<version>-<stamp>` (and a ZIP). Both players use their own Steam accounts and the normal online service; `coop.ini` has no `master_url`. The package contains double-click `Install-Coop.bat`, `Uninstall-Coop.bat` and `Collect-Logs.bat`, which run under Windows PowerShell 5.1, plus `FRIEND-GUIDE.txt`. The installer backs up the real saves with a SHA-256 manifest and installs through the owned installer. It writes the role and a diagnostic `lab.ini`: saves go to a copy, Steam networking passes through and status logging is on. The runtime archive is not bundled. The friend package is fixture tested only; no friend test has run. [Friend test](docs/friend-test.md).
+
 ## Loader probe
 
 ```powershell

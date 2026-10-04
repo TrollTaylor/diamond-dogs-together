@@ -285,11 +285,17 @@ if(WIN32)
   find_program(MGS_PWSH7 NAMES pwsh)
   if(MGS_PWSH7)
     add_test(NAME lab_scripts_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/lab_scripts_tests.ps1" -IniCheck $<TARGET_FILE:lab_ini_check> -FakeProcess $<TARGET_FILE:lab_fake_process>)
+    # Friend-test package (tools/friend, tools/package.ps1 -Friend). The test
+    # itself needs PowerShell 7; it runs the friend scripts under Windows
+    # PowerShell 5.1 (what the package's .bat files use) when available.
+    add_test(NAME friend_package_tests COMMAND "${MGS_PWSH7}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/friend_package_tests.ps1" -IniCheck $<TARGET_FILE:lab_ini_check> -FakeProcess $<TARGET_FILE:lab_fake_process>)
   else()
     # Keep the gap visible: CTest lists the suite as skipped instead of omitting it.
-    message(WARNING "PowerShell 7 (pwsh) not found: lab_scripts_tests (tools/lab scripts, guest install path) will be reported as SKIPPED, not run.")
+    message(WARNING "PowerShell 7 (pwsh) not found: lab_scripts_tests (tools/lab scripts, guest install path) and friend_package_tests will be reported as SKIPPED, not run.")
     add_test(NAME lab_scripts_tests COMMAND "${CMAKE_COMMAND}" -E false)
     set_tests_properties(lab_scripts_tests PROPERTIES SKIP_RETURN_CODE 1)
+    add_test(NAME friend_package_tests COMMAND "${CMAKE_COMMAND}" -E false)
+    set_tests_properties(friend_package_tests PROPERTIES SKIP_RETURN_CODE 1)
   endif()
 endif()
 include(cmake/lua_checks.cmake)
