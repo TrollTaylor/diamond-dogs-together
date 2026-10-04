@@ -412,7 +412,8 @@ if arg[2] then
         local file = assert(io.open(path, 'rb'))
         local text = file:read('*a')
         file:close()
-        return text
+        -- git core.autocrlf checks sources out with CRLF; the DLL composition is LF.
+        return (text:gsub('\r\n', '\n'))
     end
     local composed, standalone = slurp(arg[2]), slurp(arg[1])
     local spliced = '\n' .. standalone .. '\n'
