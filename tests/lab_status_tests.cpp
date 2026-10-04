@@ -1,10 +1,16 @@
-// Pure lab-status formatting checks: no filesystem, game or Steam access.
+// Lab-status checks: pure formatting/mapping with no game or Steam access, plus
+// (Windows) the real .tmp + MoveFileExW writer against a private temp folder.
 #include "mgscoop/lab_status.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 
 namespace {
 unsigned checks = 0;
@@ -81,6 +87,75 @@ mgscoop::lab::AtomicWriteOps FakeOps(FakeFs& fs) {
     ops.remove = &FsRemove;
     return ops;
 }
+
+#ifdef _WIN32
+std::string ReadAll(const std::wstring& path) {
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                              nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return "<absent>";
+    char buffer[256]{};
+    DWORD read = 0;
+    const BOOL ok = ReadFile(file, buffer, sizeof(buffer), &read, nullptr);
+    CloseHandle(file);
+    return ok ? std::string(buffer, read) : "<unreadable>";
+}
+bool Exists(const std::wstring& path) { return GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES; }
+
+// The real Win32 backend: create, replace, a replacement blocked by a reader
+// that holds the file without delete sharing, and recovery once it closes.
+void Win32AtomicWriteChecks() {
+    using namespace mgscoop::lab;
+    wchar_t temp[MAX_PATH]{};
+    Check(GetTempPathW(MAX_PATH, temp) > 0, "temp path");
+    wchar_t folder[MAX_PATH]{};
+    swprintf_s(folder, L"%smgscoop_lab_status_%lu_%llu", temp, GetCurrentProcessId(),
+               static_cast<unsigned long long>(GetTickCount64()));
+    Check(CreateDirectoryW(folder, nullptr) != 0, "create temp folder");
+    const std::wstring path = std::wstring(folder) + L"\\lab-status.json";
+    const std::wstring tmp = path + L".tmp";
+
+    SetLastError(1234);
+    Check(WriteFileAtomic(path.c_str(), "one", 3), "win32 create");
+    Check(GetLastError() == 1234, "win32 writer preserves last error");
+    Check(ReadAll(path) == "one" && !Exists(tmp), "win32 created content, no tmp");
+    Check(WriteFileAtomic(path.c_str(), "two", 3), "win32 replace existing");
+    Check(ReadAll(path) == "two" && !Exists(tmp), "win32 replaced content, no tmp");
+
+    // A reader without FILE_SHARE_DELETE blocks MoveFileExW(REPLACE_EXISTING).
+    HANDLE holder = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Check(holder != INVALID_HANDLE_VALUE, "hold the status file");
+    Check(!WriteFileAtomic(path.c_str(), "three", 5), "win32 replace blocked while held");
+    Check(!Exists(tmp), "blocked replace removes its tmp");
+    Check(ReadAll(path) == "two", "blocked replace keeps previous content");
+
+    // The publisher must not treat the failed write as written.
+    Status status{};
+    status.pid = 7;
+    status.join = JoinStatus::requested;
+    PublishTracker tracker{};
+    Check(tracker.NeedsWrite(status, 10000), "first publish needed");
+    char json[kStatusJsonCapacity]{};
+    std::size_t length = 0;
+    Check(FormatStatusJson(status, json, sizeof(json), length), "format for publish");
+    tracker.Record(status, WriteFileAtomic(path.c_str(), json, length), 10000);
+    Check(!tracker.written_valid, "failed publish not recorded as written");
+    Check(!tracker.NeedsWrite(status, 10500), "retry throttled");
+    Check(tracker.NeedsWrite(status, 11000), "retry due after interval");
+    CloseHandle(holder);
+    tracker.Record(status, WriteFileAtomic(path.c_str(), json, length), 11000);
+    Check(tracker.written_valid && !tracker.NeedsWrite(status, 11001), "retry succeeds once released");
+    Check(ReadAll(path) == std::string(json, length), "published document on disk");
+
+    // A temporary-path overflow is refused without touching the folder.
+    std::wstring long_path(kMaxAtomicPath, L'a');
+    Check(!WriteFileAtomic(long_path.c_str(), "x", 1), "overlong path refused");
+
+    DeleteFileW(path.c_str());
+    DeleteFileW(tmp.c_str());
+    Check(RemoveDirectoryW(folder) != 0, "temp folder cleaned up");
+}
+#endif
 } // namespace
 
 int main() {
@@ -227,7 +302,68 @@ int main() {
     // Null data with nonzero size is rejected.
     { FakeFs fs; Check(!WriteFileAtomic(FakeOps(fs), L"x.json", nullptr, 4), "null data rejected"); }
 
+    // Member counts implied by a status (informational, not a roster read).
+    Check(MembersFor(SessionStatus::host_peer_present) == 2 && MembersFor(SessionStatus::client_established) == 2, "members two");
+    Check(MembersFor(SessionStatus::host_ready) == 1 && MembersFor(SessionStatus::client_requested) == 1, "members one");
+    Check(MembersFor(SessionStatus::none) == 0 && MembersFor(SessionStatus::closed) == 0 &&
+          MembersFor(SessionStatus::session_error) == 0, "members zero");
+
+    // Refusal classification.
+    Check(JoinStatusForRefusal(kRequestNotStarted) == JoinStatus::failed, "native false is failed");
+    Check(JoinStatusForRefusal("placeholder_host_id") == JoinStatus::refused, "placeholder refused");
+    Check(JoinStatusForRefusal("host_prerequisites") == JoinStatus::refused, "gate refused");
+    Check(JoinStatusForRefusal(nullptr) == JoinStatus::refused, "null refused");
+
+    // Join progress from session status.
+    Check(JoinAfterSession(JoinStatus::requested, SessionStatus::client_established) == JoinStatus::established, "requested -> established");
+    Check(JoinAfterSession(JoinStatus::refused, SessionStatus::client_established) == JoinStatus::established, "late establish wins");
+    Check(JoinAfterSession(JoinStatus::requested, SessionStatus::client_requested) == JoinStatus::requested, "connecting keeps requested");
+    Check(JoinAfterSession(JoinStatus::requested, SessionStatus::session_error) == JoinStatus::failed, "error fails requested");
+    Check(JoinAfterSession(JoinStatus::established, SessionStatus::session_error) == JoinStatus::failed, "error fails established");
+    Check(JoinAfterSession(JoinStatus::idle, SessionStatus::session_error) == JoinStatus::idle, "host error leaves idle");
+    Check(JoinAfterSession(JoinStatus::established, SessionStatus::closed) == JoinStatus::established, "closed keeps join");
+    Check(JoinAfterSession(JoinStatus::idle, SessionStatus::host_ready) == JoinStatus::idle, "host status leaves join");
+
+    // Release mapping.
+    Check(SessionAfterRelease(SessionStatus::client_established) == SessionStatus::closed, "established released -> closed");
+    Check(SessionAfterRelease(SessionStatus::host_ready) == SessionStatus::closed, "host released -> closed");
+    Check(SessionAfterRelease(SessionStatus::session_error) == SessionStatus::closed, "error released -> closed");
+    Check(SessionAfterRelease(SessionStatus::closed) == SessionStatus::closed, "closed stays closed");
+    Check(SessionAfterRelease(SessionStatus::none) == SessionStatus::none, "none stays none");
+
+    // Retry throttle and publish tracking (pure).
+    {
+        RetryThrottle throttle{};
+        Check(throttle.Due(0) && throttle.Due(5), "fresh throttle due");
+        throttle.Failed(1000);
+        Check(!throttle.Due(1000) && !throttle.Due(1999) && throttle.Due(2000), "retry once per interval");
+        throttle.Succeeded();
+        Check(throttle.Due(2001), "success clears throttle");
+
+        Status pub{};
+        PublishTracker p{};
+        Check(p.NeedsWrite(pub, 0), "unwritten needs write");
+        p.Record(pub, false, 100);
+        Check(!p.written_valid && !p.NeedsWrite(pub, 500) && p.NeedsWrite(pub, 1100), "failure retried after interval");
+        p.Record(pub, true, 1100);
+        Check(p.written_valid && !p.NeedsWrite(pub, 1101), "success suppresses identical writes");
+        pub.updated_tick_ms = 99999;
+        Check(!p.NeedsWrite(pub, 1102), "timestamp alone never rewrites");
+        pub.join = JoinStatus::armed;
+        Check(p.NeedsWrite(pub, 1103), "content change needs write");
+        p.Record(pub, false, 1103);
+        Check(!p.NeedsWrite(pub, 1200), "changed content still throttled after failure");
+        Check(p.NeedsWrite(pub, 2103), "changed content retried");
+        Check(SameContent(p.written, Status{}), "last good write retained after failure");
+    }
+
+#ifdef _WIN32
+    Win32AtomicWriteChecks();
+#endif
+
     std::printf("%u lab-status checks: enum spellings, JSON escaping/document, SameContent, refusal truncation, "
-                "literal mapping, status/steamid lines, atomic write happy/failure paths; no filesystem or game calls\n", checks);
+                "literal mapping, status/steamid lines, atomic write happy/failure paths, member/join/release mapping, "
+                "retry throttle and publish tracking, Win32 .tmp+MoveFileExW create/replace/held-file failure and "
+                "recovery in a private temp folder; no game calls\n", checks);
     return 0;
 }

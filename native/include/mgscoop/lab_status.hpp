@@ -42,6 +42,50 @@ bool SameContent(const Status& a, const Status& b) noexcept;
 // Bounded copy; null clears. Truncates to kRefusalCapacity-1 bytes.
 void SetRefusal(Status& status, const char* reason) noexcept;
 
+// Informational member count implied by a session status (not a roster read).
+std::uint32_t MembersFor(SessionStatus status) noexcept;
+
+// Refusal reason recorded when a native client request ran but returned false.
+constexpr const char* kRequestNotStarted = "request_not_started";
+// A join that never reached the native request (a gate or pre-request refusal)
+// is "refused"; a native request that returned false is "failed".
+JoinStatus JoinStatusForRefusal(const char* reason) noexcept;
+// Join progress implied by a newly observed session status: an established
+// client session means the join is established; a session error fails a
+// requested or established join. Anything else leaves `join` unchanged.
+JoinStatus JoinAfterSession(JoinStatus join, SessionStatus session) noexcept;
+// Status once the game has released the owned session: "closed", unless
+// nothing live was ever reported ("none" stays "none").
+SessionStatus SessionAfterRelease(SessionStatus previous) noexcept;
+
+// Throttles retries after a failed file write so a persistently failing path
+// is retried at most once per interval instead of on every poll.
+struct RetryThrottle {
+    static constexpr std::uint64_t kIntervalMs = 1000;
+    bool failed = false;
+    std::uint64_t last_failure_ms = 0;
+    bool Due(std::uint64_t now_ms) const noexcept { return !failed || now_ms - last_failure_ms >= kIntervalMs; }
+    void Failed(std::uint64_t now_ms) noexcept { failed = true; last_failure_ms = now_ms; }
+    void Succeeded() noexcept { failed = false; last_failure_ms = 0; }
+};
+
+// Remembers the last status that was *successfully* written. A failed write
+// leaves it unchanged, so the next due poll writes again instead of treating a
+// stale file as current.
+struct PublishTracker {
+    Status written{};
+    bool written_valid = false;
+    RetryThrottle retry{};
+    bool NeedsWrite(const Status& current, std::uint64_t now_ms) const noexcept {
+        if (written_valid && SameContent(written, current)) return false;
+        return retry.Due(now_ms);
+    }
+    void Record(const Status& current, bool succeeded, std::uint64_t now_ms) noexcept {
+        if (succeeded) { written = current; written_valid = true; retry.Succeeded(); }
+        else retry.Failed(now_ms);
+    }
+};
+
 // Appends a quoted JSON string. Escapes '"', '\\' and every byte below 0x20;
 // bytes >= 0x80 are replaced by '?' so the file is always valid ASCII JSON.
 // On failure (capacity) returns false and leaves `length` unchanged.

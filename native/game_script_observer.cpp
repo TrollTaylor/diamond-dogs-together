@@ -62,20 +62,26 @@ std::size_t game_span = 0;
 // Lab observability (docs/lab-protocol.md). All of this is inert unless lab.ini
 // is present and enabled; with no lab.ini the loader behaves exactly as before.
 bool lab_present = false;
-bool lab_active = false;                    // lab_present and the observer log is open
-wchar_t coop_directory[32768]{};            // <exeDir>\mgs-coop
-bool coop_directory_ready = false;
+bool lab_active = false;                    // lab_present, the log is open and the paths fit
+// <exeDir>\mgs-coop\<name>, built once at install. Sized so "<path>.tmp" fits
+// the atomic writer's bound; static so no hot path needs a large stack frame.
+wchar_t lab_status_path[lab::kMaxAtomicPath]{};
+wchar_t join_trigger_path[lab::kMaxAtomicPath]{};
+wchar_t reset_trigger_path[lab::kMaxAtomicPath]{};
+wchar_t host_steamid_path[lab::kMaxAtomicPath]{};
 lab::Status lab_status{};
-lab::Status lab_status_written{};
-bool lab_status_written_valid = false;
+lab::PublishTracker lab_publish{};
 lab::SessionStatus logged_session = lab::SessionStatus::none;
 bool session_status_logged = false;
 mgscoop::ClientResetMachine reset_machine{};
+mgscoop::ClientAutoResetWatch auto_reset_watch{}; // lab only
 bool reset_key_released = false;            // Ctrl+F9 release latch (edge-triggered)
-bool reset_refused_logged = false;
+unsigned join_attempts = 0;                 // consumed join triggers, any mode
 std::uint64_t armed_tick_ms = 0;            // when the guest became armed (for auto join)
 bool auto_join_fired = false;
-bool host_steamid_written = false;
+bool host_steamid_pending = false;          // lab host created; file not yet written
+bool host_steamid_failure_logged = false;
+lab::RetryThrottle host_steamid_retry{};
 constexpr std::size_t load_rva = 0x1a178e0;
 constexpr unsigned char expected_body[] = {
     0x48,0x83,0xec,0x38,0x48,0x89,0x54,0x24,0x20,0x4c,0x89,0x44,0x24,0x28,
@@ -93,42 +99,31 @@ bool Sample(LONG64 count) noexcept { return count <= 32 || count == 256 || count
 
 bool ReadMission(unsigned short& mission) noexcept;  // defined below
 
-void BuildCoopPath(const wchar_t* name, wchar_t* out, std::size_t capacity) noexcept {
+// Builds <directory>\mgs-coop\<name> so that "<path>.tmp" still fits the atomic
+// writer's bound. Install time only.
+bool BuildCoopPath(const wchar_t* directory, const wchar_t* name, wchar_t (&out)[lab::kMaxAtomicPath]) noexcept {
     out[0] = 0;
-    if (coop_directory_ready)
-        StringCchPrintfW(out, capacity, L"%s\\%s", coop_directory, name);
+    return SUCCEEDED(StringCchPrintfW(out, lab::kMaxAtomicPath - 4, L"%s\\mgs-coop\\%s", directory, name));
 }
-// Rewrites lab-status.json only when a field other than the timestamp changed.
+// Rewrites lab-status.json when a field other than the timestamp differs from
+// the last successful write. A failed write is retried on a later poll (at
+// most once per second) instead of being treated as written.
 void SyncLabStatus() noexcept {
-    if (!lab_active || !coop_directory_ready) return;
-    if (lab_status_written_valid && lab::SameContent(lab_status_written, lab_status)) return;
+    if (!lab_active) return;
+    const std::uint64_t now = GetTickCount64();
+    if (!lab_publish.NeedsWrite(lab_status, now)) return;
     const DWORD error = GetLastError();
-    lab_status.updated_tick_ms = GetTickCount64();
+    lab_status.updated_tick_ms = now;
     char json[lab::kStatusJsonCapacity]{};
     std::size_t length = 0;
-    wchar_t path[32768]{};
-    BuildCoopPath(L"lab-status.json", path, ARRAYSIZE(path));
-    if (path[0] && lab::FormatStatusJson(lab_status, json, sizeof(json), length))
-        lab::WriteFileAtomic(path, json, length);
-    lab_status_written = lab_status;
-    lab_status_written_valid = true;
+    const bool written = lab::FormatStatusJson(lab_status, json, sizeof(json), length) &&
+                         lab::WriteFileAtomic(lab_status_path, json, length);
+    lab_publish.Record(lab_status, written, now);
     SetLastError(error);
 }
-unsigned MembersFor(lab::SessionStatus status) noexcept {
-    switch (status) {
-    case lab::SessionStatus::host_peer_present:
-    case lab::SessionStatus::client_established: return 2;
-    case lab::SessionStatus::host_ready:
-    case lab::SessionStatus::client_requested: return 1;
-    default: return 0;
-    }
-}
-// Maps a ReadDynamiteSessionStatus literal to the protocol vocabulary, logs the
-// session_status line on change, and refreshes lab-status.json.
-void UpdateSessionStatus(const char* literal) noexcept {
+// Logs the session_status line on change and refreshes lab-status.json.
+void ApplySessionStatus(lab::SessionStatus mapped) noexcept {
     if (!lab_active) return;
-    lab::SessionStatus mapped = logged_session;
-    if (!lab::SessionStatusFromLiteral(literal, mapped)) return;  // keep previous
     if (!session_status_logged || mapped != logged_session) {
         char line[64]{};
         if (lab::FormatSessionStatusLine(mapped, line, sizeof(line))) Log(line);
@@ -138,26 +133,50 @@ void UpdateSessionStatus(const char* literal) noexcept {
     unsigned short mission = 0;
     if (ReadMission(mission)) lab_status.mission = mission;
     lab_status.session = mapped;
-    lab_status.members = MembersFor(mapped);
+    lab_status.members = lab::MembersFor(mapped);
+    lab_status.join = lab::JoinAfterSession(lab_status.join, mapped);
     SyncLabStatus();
+}
+// After the game released the owned session (observed through the singleton
+// slots only), report it as closed.
+void ApplySessionReleased() noexcept {
+    if (lab_active && session_status_logged) ApplySessionStatus(lab::SessionAfterRelease(logged_session));
+}
+void WriteHostSteamIdFile() noexcept;  // defined below
+// Maps a ReadDynamiteSessionStatus literal to the protocol vocabulary.
+// 'unavailable' keeps the previous status, unless the game has released the
+// owned session, which is reported as closed.
+void UpdateSessionStatus(const char* literal) noexcept {
+    if (!lab_active) return;
+    lab::SessionStatus mapped = logged_session;
+    if (lab::SessionStatusFromLiteral(literal, mapped)) ApplySessionStatus(mapped);
+    else if (OwnedSessionReleasedByGame(game_base, game_span)) ApplySessionReleased();
+    else SyncLabStatus();  // retries a failed write
+    WriteHostSteamIdFile(); // retries until the host identity file is written
 }
 void SetLabJoin(lab::JoinStatus join) noexcept {
     if (!lab_active) return;
-    if (lab_status.join != join) { lab_status.join = join; SyncLabStatus(); }
-}
-void SetLabRefusal(const char* reason) noexcept {
-    if (!lab_active) return;
-    lab::SetRefusal(lab_status, reason);
-    lab_status.join = lab::JoinStatus::refused;
+    lab_status.join = join;
     SyncLabStatus();
 }
-bool ConsumeTriggerFile(const wchar_t* name) noexcept {
-    if (!coop_directory_ready) return false;
+// Records a refusal reason; `join` is the resulting join status.
+void SetLabRefusal(const char* reason, lab::JoinStatus join) noexcept {
+    if (!lab_active) return;
+    lab::SetRefusal(lab_status, reason);
+    lab_status.join = join;
+    SyncLabStatus();
+}
+// Records a refusal reason without changing the join status.
+void SetLabLastRefusal(const char* reason) noexcept {
+    if (!lab_active) return;
+    lab::SetRefusal(lab_status, reason);
+    SyncLabStatus();
+}
+bool ConsumeTriggerFile(const wchar_t* path) noexcept {
+    if (!lab_active || !path[0]) return false;
     const DWORD error = GetLastError();
-    wchar_t path[32768]{};
-    BuildCoopPath(name, path, ARRAYSIZE(path));
     bool consumed = false;
-    if (path[0] && GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES)
+    if (GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES)
         consumed = DeleteFileW(path) != 0;
     SetLastError(error);
     return consumed;
@@ -191,18 +210,30 @@ std::uint64_t ReadLocalSteamId() noexcept {
     SetLastError(error);
     return id;
 }
+// Writes host-steamid.txt once the lab host session exists. A failed read or
+// write is retried from later host status polls (at most once per second);
+// the first failure is logged once. The id itself is never logged.
 void WriteHostSteamIdFile() noexcept {
-    if (!lab_active || host_steamid_written || !coop_directory_ready) return;
+    if (!lab_active || !host_steamid_pending) return;
+    const std::uint64_t now = GetTickCount64();
+    if (!host_steamid_retry.Due(now)) return;
     const std::uint64_t id = ReadLocalSteamId();
-    if (!mgscoop::IsClientHostIdentity(id)) { Log("host_identity=unavailable; host_steamid_txt=0\r\n"); return; }
+    const bool valid = mgscoop::IsClientHostIdentity(id);
     char line[32]{};
     std::size_t length = 0;
-    if (!lab::FormatSteamIdLine(id, line, sizeof(line), length)) return;
-    wchar_t path[32768]{};
-    BuildCoopPath(L"host-steamid.txt", path, ARRAYSIZE(path));
-    if (path[0] && lab::WriteFileAtomic(path, line, length)) {
-        host_steamid_written = true;
-        Log("host_identity=written; host_steamid_txt=1\r\n");  // the id itself is never logged
+    const bool written = valid && lab::FormatSteamIdLine(id, line, sizeof(line), length) &&
+                         lab::WriteFileAtomic(host_steamid_path, line, length);
+    if (written) {
+        host_steamid_pending = false;
+        host_steamid_retry.Succeeded();
+        Log("host_identity=written; host_steamid_txt=1\r\n");
+        return;
+    }
+    host_steamid_retry.Failed(now);
+    if (!host_steamid_failure_logged) {
+        host_steamid_failure_logged = true;
+        Log(valid ? "host_identity=write_failed; host_steamid_txt=0; retry=1\r\n"
+                  : "host_identity=unavailable; host_steamid_txt=0; retry=1\r\n");
     }
 }
 
@@ -210,6 +241,9 @@ bool RestoreGameplayRules() noexcept {
     mgscoop::marker_loading::End();
     client_join_armed=false;
     client_key_released=false;
+    // Co-op rules are ending (loss, termination or failure): no automatic
+    // reset may carry a watched request into a later scene.
+    auto_reset_watch.Stop();
     // Attempt every restoration even when an earlier one fails. These calls
     // restore only this adapter's owned code; they never retry CloseSession.
     const bool team=mgscoop::player_team::SetActive(false);
@@ -304,7 +338,9 @@ bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
     } else if(equals(terminate)) {
         boundary="termination_returned";
         if(OnTerminationThread()) {
+            const bool owned_before=HasDynamiteSessionOwnership();
             ReconcileDynamiteSessionRelease(game_base,game_span,Log);
+            if(owned_before && !HasDynamiteSessionOwnership()) ApplySessionReleased();
             cleanup_thread=GetCurrentThreadId();
             accepted=termination_scope.Returned(cleanup_thread);
             mission_phase=MissionPhase::idle; allocation_thread=0;
@@ -318,6 +354,151 @@ bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
         boundary,unsigned(accepted),GetCurrentThreadId(),allocation_thread,mission_thread,unsigned(allocation_mission),unsigned(mission_phase));
     Log(line);
     return true;
+}
+
+// --- Client join arming, results and reset/re-arm (synthesis gap G11) ---------
+// All of these run inside ObserveEntry under receipt_lock on the runtime thread.
+
+// Protocol armed source: auto whenever an auto-join delay is configured, then
+// trigger_file when join.trigger is honoured, else the keyboard.
+const char* ArmedSource() noexcept {
+    const auto& labc=mgscoop::GetLabConfig();
+    return labc.auto_join_delay_s>0 ? "auto" : labc.join_trigger ? "trigger_file" : "keyboard";
+}
+// Lab only: the guest can now be triggered.
+void AnnounceArmed() noexcept {
+    if(!lab_active) return;
+    char line[96]{};
+    StringCchPrintfA(line,sizeof(line),"client_join=armed; source=%s\r\n",ArmedSource());
+    Log(line);
+    SetLabJoin(lab::JoinStatus::armed);
+}
+// Lab status after a join attempt. A refusal before the native request is
+// "refused" with its reason (logged once as a protocol line); a native request
+// that returned false is "failed" (its dynamite_client=returned line exists).
+void ReportJoinResult(bool accepted) noexcept {
+    if(accepted) {
+        if(lab_active && !client_check_enabled) auto_reset_watch.Submitted(GetTickCount64());
+        return;
+    }
+    if(!lab_active) return;
+    bool logged=false;
+    const char* reason=LastClientJoinRefusal(&logged);
+    if(!reason || !reason[0]) reason="unspecified";
+    const auto join=lab::JoinStatusForRefusal(reason);
+    if(join!=lab::JoinStatus::failed && !logged) {
+        char line[128]{};
+        StringCchPrintfA(line,sizeof(line),"client_join=refused; reason=%s\r\n",reason);
+        Log(line);
+    }
+    SetLabRefusal(reason,join);
+}
+// Reports a refused reset request and returns the machine to idle. With
+// `attempt_refused` the current attempt is marked refused in lab-status.json;
+// otherwise only last_refusal changes.
+void RefuseReset(const char* refusal,mgscoop::ClientResetReason trigger,bool attempt_refused) noexcept {
+    char line[160]{};
+    StringCchPrintfA(line,sizeof(line),"client_join=refused; reason=%s; trigger=%s\r\n",
+        refusal,mgscoop::ClientResetReasonName(trigger));
+    Log(line);
+    if(attempt_refused) SetLabRefusal(refusal,lab::JoinStatus::refused);
+    else SetLabLastRefusal(refusal);
+    reset_machine.Clear();
+}
+// Runs one reset request. Returns the Lua directive literal after a successful
+// re-arm, otherwise nullptr (every refusal is logged with its reason).
+const char* RunClientReset(mgscoop::ClientResetReason reason,bool automatic) noexcept {
+    if(reset_machine.active()) return nullptr;
+    const bool context=!mission_terminating && !gameplay_restore_pending && mgscoop::player_team::IsActive();
+    // A client session the game already released no longer backs the target.
+    // Clear the adapter's ownership record through the existing slot-only
+    // check (no game call, no lazy getter, no dereference of the session).
+    if(HasDynamiteSessionOwnership()) {
+        ReconcileDynamiteSessionRelease(game_base,game_span,Log);
+        if(!HasDynamiteSessionOwnership()) ApplySessionReleased();
+    }
+    // Any ownership record that could not be reconciled (including one held
+    // for another thread) still counts as a live session; client mode never
+    // holds a host session.
+    const bool recorded=HasRecordedClientRequest();
+    const bool owns=mgscoop::ClientResetOwnsSession(HasDynamiteSessionOwnership(),recorded,
+        recorded && RecordedClientRequestSlotsEmpty(game_base,game_span));
+    switch(reset_machine.Request(reason,client_join_consumed,owns,context)) {
+    case mgscoop::ClientResetAction::restore_rearm:
+        break;
+    case mgscoop::ClientResetAction::close_session:
+        // No guest has ever connected; closing a live client session
+        // mid-mission is not statically verified safe, so refuse.
+        RefuseReset("owned_session_active",reason,true);
+        return nullptr;
+    case mgscoop::ClientResetAction::refuse:
+        // nothing_to_reset or not_ready: the latches and attempt are unchanged.
+        RefuseReset(reset_machine.refusal(),reason,false);
+        return nullptr;
+    default:
+        reset_machine.Clear();
+        return nullptr;
+    }
+    if(!RestoreClientRequestFields(game_base,game_span,Log)) {
+        RefuseReset("restore_failed",reason,true);
+        return nullptr;
+    }
+    ResetClientAttemptLatch();
+    client_join_consumed=false;
+    client_join_armed=true;  // Request required a ready scene
+    client_key_released=false;
+    armed_tick_ms=GetTickCount64();
+    auto_join_fired=false;
+    auto_reset_watch.Stop();
+    if(automatic) auto_reset_watch.CountAutomaticReset();
+    reset_machine.CompleteRestore();
+    char line[160]{};
+    StringCchPrintfA(line,sizeof(line),"client_join=reset; reason=%s; join_attempts=%u\r\n",
+        mgscoop::ClientResetReasonName(reason),join_attempts);
+    Log(line);
+    if(lab_active) lab::SetRefusal(lab_status,nullptr);  // a fresh attempt starts
+    AnnounceArmed();
+    return mgscoop::ClientRearmLiteral(client_check_enabled);
+}
+// One reset-poll receipt: reset.trigger (lab, join_trigger=1), the Ctrl+F9
+// edge (any client mode), or a lab automatic trigger for the submitted request.
+const char* HandleResetPoll() noexcept {
+    using Reason=mgscoop::ClientResetReason;
+    Reason reason=Reason::none;
+    bool automatic=false;
+    // Trigger files are honoured only with join_trigger=1 (docs/lab-protocol.md).
+    if(lab_active && mgscoop::GetLabConfig().join_trigger && ConsumeTriggerFile(reset_trigger_path))
+        reason=Reason::trigger_file;
+    else {
+        // Ctrl+F9 edge, foreground-gated, available in any client mode.
+        DWORD fg=0; const HWND f=GetForegroundWindow(); if(f) GetWindowThreadProcessId(f,&fg);
+        if(fg!=GetCurrentProcessId()) reset_key_released=false;
+        else if((GetAsyncKeyState(VK_F9)&0x8000)==0) reset_key_released=true;
+        else if(reset_key_released && (GetAsyncKeyState(VK_CONTROL)&0x8000)!=0) {
+            reset_key_released=false; reason=Reason::manual_key;
+        } else reset_key_released=false;
+    }
+    // Automatic triggers (lab only): session error, a bad state, a released
+    // session, or no client_established within the pending timeout. Sampled at
+    // most once per second with read-only session reads.
+    if(reason==Reason::none && lab_active) {
+        const std::uint64_t now=GetTickCount64();
+        if(auto_reset_watch.SampleDue(now)) {
+            const auto health=ObserveOwnedClientSession(game_base,game_span);
+            const auto observed=auto_reset_watch.Observe(health,now);
+            if(observed!=Reason::none) {
+                char line[128]{};
+                StringCchPrintfA(line,sizeof(line),"client_join=reset_requested; trigger=%s; health=%s\r\n",
+                    mgscoop::ClientResetReasonName(observed),mgscoop::ClientSessionHealthName(health));
+                Log(line);
+                if(auto_reset_watch.AutomaticResetAllowed()) { reason=observed; automatic=true; }
+                else RefuseReset("auto_reset_limit",observed,true);
+            }
+        }
+    }
+    const char* directive=reason!=Reason::none ? RunClientReset(reason,automatic) : nullptr;
+    SyncLabStatus();  // retries a failed status write (throttled)
+    return directive;
 }
 
 // Bounded diagnostic copy only. A bad name cannot prevent original forwarding.
@@ -412,8 +593,8 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
         const bool created=player_ready && !client_enabled && TryCreateHostSession(game_base,game_span,Log,heap_test_enabled,host_create_enabled);
         if(needs_player_patch && (!player_ready || (!client_enabled && !created))) RestoreGameplayRules();
         // Publish the host's own SteamID64 for the lab scripts (lab mode only;
-        // the id value itself is never logged).
-        if(created && host_create_enabled) WriteHostSteamIdFile();
+        // the id value itself is never logged). Retried from status polls.
+        if(created && host_create_enabled && lab_active) { host_steamid_pending=true; WriteHostSteamIdFile(); }
         static constexpr char success[]="return true", failure[]="return false";
         static constexpr char client[]="return 'client'";
         replacement=player_ready && client_enabled && (client_host || client_check_enabled) ? mgscoop::script_bridge::Replacement{client,sizeof(client)-1}
@@ -508,6 +689,10 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
                 const bool restored=RestoreGameplayRules();
                 Log(restored ? "session_lost=client; native_rules_restored=1 reconnect_enabled=0\r\n"
                              : "session_lost=client; native_rules_restored=0 cleanup_retry_pending=1\r\n");
+                // The game reported the host disconnect: the lab status no
+                // longer describes a live session.
+                auto_reset_watch.Stop();
+                ApplySessionStatus(lab::SessionStatus::closed);
             }
             replacement=owned ? mgscoop::script_bridge::Replacement{yes,sizeof(yes)-1}
                               : mgscoop::script_bridge::Replacement{no,sizeof(no)-1}; selected=true;
@@ -561,15 +746,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
             if(client_join_armed && !was_armed) {
                 armed_tick_ms=GetTickCount64();
                 auto_join_fired=false;
-                if(lab_active) {
-                    const auto& labc=mgscoop::GetLabConfig();
-                    const char* source=(labc.join_trigger && labc.auto_join_delay_s>0) ? "auto"
-                                      : labc.join_trigger ? "trigger_file" : "keyboard";
-                    char line[96]{};
-                    StringCchPrintfA(line,sizeof(line),"client_join=armed; source=%s\r\n",source);
-                    Log(line);
-                    SetLabJoin(lab::JoinStatus::armed);
-                }
+                AnnounceArmed();
             }
             static constexpr char manual[]="return 'manual'", diagnostic[]="return 'diagnostic_manual'", blocked[]="return 'blocked'";
             replacement=client_join_armed && client_check_enabled ? mgscoop::script_bridge::Replacement{diagnostic,sizeof(diagnostic)-1}
@@ -587,7 +764,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
                 const char* trigger_key=nullptr;
                 if(lab_active) {
                     const auto& labc=mgscoop::GetLabConfig();
-                    if(labc.join_trigger && ConsumeTriggerFile(L"join.trigger")) trigger_key="trigger_file";
+                    if(labc.join_trigger && ConsumeTriggerFile(join_trigger_path)) trigger_key="trigger_file";
                     else if(labc.auto_join_delay_s>0 && !auto_join_fired &&
                             GetTickCount64()-armed_tick_ms>=static_cast<std::uint64_t>(labc.auto_join_delay_s)*1000) {
                         trigger_key="auto"; auto_join_fired=true;
@@ -610,6 +787,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
                 if(fired) {
                     // Consume before entering any native setup, even on refusal.
                     client_join_consumed=true; client_join_armed=false;
+                    ++join_attempts;
                     if(client_check_enabled) {
                         char line[128]{};
                         StringCchPrintfA(line,sizeof(line),"client_join=input_received; key=%s; mode=diagnostic; native_join_calls=0\r\n",key);
@@ -621,9 +799,10 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
                     } else {
                         Log("client_join=input_received; key=ctrl_f8; retry=restart_required\r\n");
                     }
+                    if(lab_active) lab_status.join_attempts=join_attempts;
                     SetLabJoin(lab::JoinStatus::requested);
                     const bool accepted=TryCreateClientSession(game_base,game_span,client_host,Log,client_check_enabled);
-                    if(!client_check_enabled) SetLabJoin(accepted ? lab::JoinStatus::requested : lab::JoinStatus::failed);
+                    ReportJoinResult(accepted);
                     static constexpr char submitted[]="return 'submitted'", failed[]="return 'failed'";
                     static constexpr char checked[]="return 'diagnostic_passed'", check_failed[]="return 'diagnostic_failed'";
                     if(client_check_enabled)
@@ -645,69 +824,10 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     constexpr char client_reset_poll[]="return 'MGS_COOP_CLIENT_RESET_POLL_V1'";
     if(client_enabled && OnRuntimeThread() && buffer && name && size==sizeof(client_reset_poll)-1 &&
        std::memcmp(buffer,client_reset_poll,size)==0 && std::strcmp(name,client_reset_poll)==0) {
-        const bool context=!mission_terminating && !gameplay_restore_pending && mgscoop::player_team::IsActive();
-        mgscoop::ClientResetReason reason=mgscoop::ClientResetReason::none;
-        if(lab_active && ConsumeTriggerFile(L"reset.trigger")) reason=mgscoop::ClientResetReason::trigger_file;
-        else {
-            // Ctrl+F9 edge, foreground-gated, available in any client mode.
-            DWORD fg=0; const HWND f=GetForegroundWindow(); if(f) GetWindowThreadProcessId(f,&fg);
-            if(fg!=GetCurrentProcessId()) reset_key_released=false;
-            else if((GetAsyncKeyState(VK_F9)&0x8000)==0) reset_key_released=true;
-            else if(reset_key_released && (GetAsyncKeyState(VK_CONTROL)&0x8000)!=0) {
-                reset_key_released=false; reason=mgscoop::ClientResetReason::manual_key;
-            } else reset_key_released=false;
-        }
-        const char* directive="noop";
-        if(reason!=mgscoop::ClientResetReason::none && !reset_machine.active()) {
-            const bool latched=client_join_consumed;
-            // "owns" means a live client session still backs the borrowed target
-            // (adapter ownership, or a recorded request whose session slots are
-            // not yet empty). A consumed-but-sessionless latch (e.g. a refused
-            // placeholder, or a synchronous refusal) is not owned and is safe to
-            // re-arm. Closing a live session mid-mission is unverified.
-            const bool owns=HasOwnedDynamiteClientSession() ||
-                (HasRecordedClientRequest() && !RecordedClientRequestSlotsEmpty(game_base,game_span));
-            const auto action=reset_machine.Request(reason,latched,owns);
-            if(action==mgscoop::ClientResetAction::close_session) {
-                // No guest has ever connected; closing a live client session
-                // mid-mission is not statically verified safe, so refuse.
-                reset_machine.Fail("owned_session_active");
-                if(!reset_refused_logged) { Log("client_join=refused; reason=owned_session_active\r\n"); reset_refused_logged=true; }
-                SetLabRefusal("owned_session_active");
-                reset_machine.Clear();
-            } else if(action==mgscoop::ClientResetAction::refuse) {
-                reset_machine.Clear();  // nothing_to_reset: ignore quietly
-            } else if(action==mgscoop::ClientResetAction::restore_rearm) {
-                const auto rr=reset_machine.reason();
-                if(RestoreClientRequestFields(game_base,game_span,Log)) {
-                    ResetClientAttemptLatch();
-                    client_join_consumed=false;
-                    client_join_armed=context;  // re-arm immediately if the scene still accepts input
-                    client_key_released=false;
-                    armed_tick_ms=GetTickCount64();
-                    auto_join_fired=false;
-                    reset_refused_logged=false;
-                    reset_machine.CompleteRestore();
-                    lab_status.join_attempts+=1;
-                    char line[160]{};
-                    StringCchPrintfA(line,sizeof(line),"client_join=reset; reason=%s; join_attempts=%u\r\n",
-                        mgscoop::ClientResetReasonName(rr),lab_status.join_attempts);
-                    Log(line);
-                    SetLabJoin(context ? lab::JoinStatus::armed : lab::JoinStatus::idle);
-                    directive="rearm";
-                } else {
-                    reset_machine.Fail("restore_failed");
-                    Log("client_join=refused; reason=restore_failed\r\n");
-                    SetLabRefusal("restore_failed");
-                    reset_machine.Clear();
-                }
-            }
-        }
         // Only replace (and therefore log) when a reset actually re-armed.
         // Otherwise leave the literal unchanged so idle polling writes nothing.
-        if(std::strcmp(directive,"rearm")==0) {
-            static constexpr char rearm[]="return 'rearm'";
-            replacement={rearm,sizeof(rearm)-1}; selected=true;
+        if(const char* directive=HandleResetPoll()) {
+            replacement={directive,std::strlen(directive)}; selected=true;
         }
     }
     constexpr char receipt[] = "return 'MGS_COOP_BOOTSTRAP_EXECUTED_V1'";
@@ -810,8 +930,11 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
             // unless lab.ini is present and enabled; with no lab.ini nothing
             // below runs and the loader behaves exactly as before.
             lab_present=mgscoop::GetLabConfig().present;
-            if(lab_present && SUCCEEDED(StringCchPrintfW(coop_directory,ARRAYSIZE(coop_directory),L"%s\\mgs-coop",directory))) {
-                coop_directory_ready=true;
+            if(lab_present &&
+               BuildCoopPath(directory,L"lab-status.json",lab_status_path) &&
+               BuildCoopPath(directory,L"join.trigger",join_trigger_path) &&
+               BuildCoopPath(directory,L"reset.trigger",reset_trigger_path) &&
+               BuildCoopPath(directory,L"host-steamid.txt",host_steamid_path)) {
                 lab_active=true;
                 lab_status.pid=GetCurrentProcessId();
                 lab_status.role=host_create_enabled ? lab::Role::host : client_enabled ? lab::Role::guest : lab::Role::none;
@@ -864,6 +987,8 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                 if(SUCCEEDED(StringCchPrintfA(lab_line,ARRAYSIZE(lab_line),
                     "lab=active; role=%s; join_trigger=%u; auto_join_delay_s=%u; status_json=1\r\n",
                     lab::RoleName(lab_status.role),labc.join_trigger?1u:0u,labc.auto_join_delay_s))) Log(lab_line);
+            } else if(lab_present) {
+                Log("lab=inactive; reason=path_too_long; status_json=0\r\n");
             }
             // Keep the log and policy alive with the pinned DLL. No live unload.
         }

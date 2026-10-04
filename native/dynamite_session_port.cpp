@@ -23,6 +23,8 @@
 #include "mgscoop/full_close_patch.hpp"
 #include "mgscoop/enemy_targeting.hpp"
 #include "mgscoop/session_release.hpp"
+#include "mgscoop/client_reset.hpp"
+#include "mgscoop/session_allocation_reuse.hpp"
 
 namespace {
 std::atomic<std::uintptr_t> created_host{0};
@@ -47,8 +49,22 @@ bool Write(std::uintptr_t address,const void* input,std::size_t size) noexcept {
 }
 template<class T> bool Write(std::uintptr_t address,const T& value) noexcept { return Write(address,&value,sizeof(value)); }
 
-// The exact fields the native 0x7EE380 request writes on the borrowed objects,
-// recorded with their pre-call values so a reset can revert them in place.
+// Image base for which this adapter installed the allocation bridge (0 = not
+// installed). The detour is process-lifetime; later requests reuse it.
+std::uintptr_t allocation_bridge_base=0;
+// Static reason for the most recent client request that did not start.
+const char* client_refusal="";
+// Fields the native 0x7EE380 request writes on the borrowed objects, recorded
+// with their pre-call values so a reset can revert them in place:
+//   target+0x10  IsConnectReady (0x681CB90) writes 0 when it is not 1/2 (the
+//                prerequisites already require 0); 0x7EE380 writes 1 then 2.
+//   target+0x48  0x7EE380 writes 1.
+//   info+0xB8    SubmitClientRequest writes the host id (restored by it on a
+//                synchronous refusal; by the reset otherwise).
+// Not restored: target+0x60, which 0x7EE380 passes to 0x1A5D810 (an obfuscated
+// routine) only on the success path, immediately before +0x10=2. Every later
+// successful request runs the same call again before the target is marked
+// requested, and the prerequisites gate a retry only on +0x10/+0x48.
 struct ClientRequestRecord {
     std::uintptr_t target=0,info=0,root=0;
     std::uint32_t pre_state=0;
@@ -269,6 +285,28 @@ void ObserveDynamiteSession(void* verified_base,void (*log)(const char*) noexcep
         consistent?1u:0u);
     log(line);
 }
+namespace {
+struct OwnedSnapshot {
+    std::uintptr_t root=0,session=0,main=0,table=0;
+    std::uint32_t state=0;
+    unsigned char flags[4]{}; // E1 started, E2 accepting, E3 preparing close, E4 error
+};
+// Two consistent read-only samples of the owned session around the roster read.
+bool SampleOwnedSession(std::uintptr_t base,std::uintptr_t expected,OwnedSnapshot& after,bool& two) noexcept {
+    const auto sample=[&](OwnedSnapshot& s) noexcept {
+        return Read(base+0x2bef840,s.root) && s.root && Read(s.root+0xcc8,s.session) && s.session==expected &&
+            Read(base+0x2b9dfb0,s.main) && s.main==expected && Read(expected,s.table) && s.table==base+0x2126f70 &&
+            Read(expected+0x90,s.state) && Read(expected+0xe1,s.flags);
+    };
+    OwnedSnapshot before{};
+    if(!sample(before)) return false;
+    two=mgscoop::enemy_targeting::HasTwoPresentMembers(expected);
+    return sample(after) && before.root==after.root && before.session==after.session && before.main==after.main &&
+        before.table==after.table && before.state==after.state && std::memcmp(before.flags,after.flags,4)==0;
+}
+bool ReadPointer(std::uintptr_t address,std::uintptr_t& value) noexcept { return Read(address,value); }
+}
+
 const char* ReadDynamiteSessionStatus(void* verified_base) noexcept {
     constexpr auto unavailable="return 'unavailable'";
     if(!verified_base || GetCurrentThreadId()!=owned_session_thread.load(std::memory_order_acquire) || close_authorized)
@@ -276,22 +314,9 @@ const char* ReadDynamiteSessionStatus(void* verified_base) noexcept {
     const auto expected=owned_session.load(std::memory_order_acquire);
     if(!expected)return unavailable;
     const auto base=reinterpret_cast<std::uintptr_t>(verified_base);
-    struct Snapshot {
-        std::uintptr_t root=0,session=0,main=0,table=0;
-        std::uint32_t state=0;
-        unsigned char flags[4]{}; // E1 started, E2 accepting, E3 preparing close, E4 error
-    };
-    const auto sample=[&](Snapshot& s) noexcept {
-        return Read(base+0x2bef840,s.root) && s.root && Read(s.root+0xcc8,s.session) && s.session==expected &&
-            Read(base+0x2b9dfb0,s.main) && s.main==expected && Read(expected,s.table) && s.table==base+0x2126f70 &&
-            Read(expected+0x90,s.state) && Read(expected+0xe1,s.flags);
-    };
-    Snapshot before{},after{};
-    if(!sample(before))return unavailable;
-    const bool two=mgscoop::enemy_targeting::HasTwoPresentMembers(expected);
-    if(!sample(after) || before.root!=after.root || before.session!=after.session || before.main!=after.main ||
-       before.table!=after.table || before.state!=after.state || std::memcmp(before.flags,after.flags,4)!=0)
-        return unavailable;
+    OwnedSnapshot after{};
+    bool two=false;
+    if(!SampleOwnedSession(base,expected,after,two)) return unavailable;
     if(after.flags[3])return "return 'session_error'";
     if(after.flags[2])return unavailable;
     if(owned_session_is_client) {
@@ -305,36 +330,88 @@ const char* ReadDynamiteSessionStatus(void* verified_base) noexcept {
     return unavailable;
 }
 
-namespace {
-// Host and guest are mutually exclusive and each attempts creation once per
-// process. Both use the same verified native allocation sites.
-bool PrepareSessionAllocation(void* verified_base,std::size_t span,
-                               void (*log)(const char*) noexcept) noexcept {
-    if(!verified_base || !log) return false;
+mgscoop::ClientSessionHealth ObserveOwnedClientSession(void* verified_base,std::size_t span) noexcept {
+    using Health=mgscoop::ClientSessionHealth;
+    if(!verified_base) return Health::unknown;
     const DWORD incoming=GetLastError();
+    struct RestoreError { DWORD value; ~RestoreError(){ SetLastError(value); } } restore{incoming};
     const auto base=reinterpret_cast<std::uintptr_t>(verified_base);
+    const auto expected=owned_session.load(std::memory_order_acquire);
+    if(!expected) {
+        // A started request whose session this adapter did not adopt: only its
+        // release by the game is observable (slot reads, no dereference).
+        return client_record.present && client_record.root &&
+            mgscoop::SessionSlotsReleased(base,span,client_record.root,ReadPointer) ? Health::released : Health::unknown;
+    }
+    if(!owned_session_is_client || close_authorized ||
+       GetCurrentThreadId()!=owned_session_thread.load(std::memory_order_acquire)) return Health::unknown;
+    if(mgscoop::SessionSlotsReleased(base,span,owned_session_root,ReadPointer)) return Health::released;
+    OwnedSnapshot after{};
+    bool two=false;
+    if(!SampleOwnedSession(base,expected,after,two)) return Health::unknown;
+    return mgscoop::ClassifyClientSession(after.state,after.flags[0]!=0,after.flags[2]!=0,after.flags[3]!=0,two);
+}
+
+bool OwnedSessionReleasedByGame(void* verified_base,std::size_t span) noexcept {
+    if(!verified_base || !HasDynamiteSessionOwnership() ||
+       GetCurrentThreadId()!=owned_session_thread.load(std::memory_order_acquire)) return false;
+    const DWORD incoming=GetLastError();
+    const bool released=mgscoop::SessionSlotsReleased(reinterpret_cast<std::uintptr_t>(verified_base),span,
+        owned_session_root,ReadPointer);
+    SetLastError(incoming);
+    return released;
+}
+
+const char* LastDynamiteClientRefusal() noexcept { return client_refusal; }
+
+namespace {
+// Host and guest are mutually exclusive. Both use the same verified native
+// allocation sites. The bridge detour installed by the first request stays for
+// the process; a client retry after a reset reuses it (verified, not re-installed).
+constexpr std::uintptr_t block_allocator_rva=0xdcb50;
+bool PrepareSessionAllocation(void* verified_base,std::size_t span,const char* role,
+                               void (*log)(const char*) noexcept) noexcept {
+    if(!verified_base || !log || !role) return false;
+    const DWORD incoming=GetLastError();
+    struct RestoreError { DWORD value; ~RestoreError(){ SetLastError(value); } } restore{incoming};
+    const auto base=reinterpret_cast<std::uintptr_t>(verified_base);
+    const auto refuse=[&](const char* reason) noexcept {
+        char line[160]{};
+        StringCchPrintfA(line,ARRAYSIZE(line),"%s=refused; reason=%s calls=0\r\n",role,reason);
+        log(line);
+        return false;
+    };
+    const auto decision=mgscoop::DecideAllocationPrepare(allocation_bridge_base,base);
+    if(decision==mgscoop::AllocationPrepare::refuse) return refuse("allocation_bridge_base_changed");
+    const bool reuse=decision==mgscoop::AllocationPrepare::reuse;
+    static_assert(sizeof(block_allocator_bytes)>mgscoop::kDetourPatchBytes && sizeof(block_allocator_bytes)<=256);
     for(const auto& body:session_bodies) {
-        if(!Match(base,span,body)) {
-            log("dynamite_host=refused; reason=allocation_body_mismatch calls=0\r\n");
-            SetLastError(incoming); return false;
-        }
+        // This adapter's own detour has replaced the allocator's first
+        // instruction; that entry is verified separately below.
+        if(reuse && body.rva==block_allocator_rva) continue;
+        if(!Match(base,span,body)) return refuse("allocation_body_mismatch");
+    }
+    if(reuse) {
+        unsigned char live[sizeof(block_allocator_bytes)]{};
+        if(block_allocator_rva>span || sizeof(live)>span-block_allocator_rva ||
+           !Read(base+block_allocator_rva,live,sizeof(live)) ||
+           !mgscoop::DetouredEntryMatches(live,block_allocator_bytes,sizeof(live)))
+            return refuse("allocation_detour_mismatch");
     }
     HMODULE pinned=nullptr;
     if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,
-        reinterpret_cast<LPCWSTR>(&CreateDynamiteHostSession),&pinned)) {
-        log("dynamite_host=refused; reason=module_pin calls=0\r\n");
-        SetLastError(incoming); return false;
-    }
+        reinterpret_cast<LPCWSTR>(&CreateDynamiteHostSession),&pinned)) return refuse("module_pin");
     namespace bridge=mgscoop::allocation_bridge;
     const bridge::Plan plan{reinterpret_cast<bridge::Allocate>(base+0xdbab0),
         {{base+0x7e131e,88,8,115},{base+0x7e1362,144,8,115}}};
-    const auto installed=bridge::Install(reinterpret_cast<bridge::Allocate>(base+0xdcb50),
+    // On reuse the bridge reports already_installed without touching memory;
+    // that confirms it still owns the detour this adapter installed.
+    const auto installed=bridge::Install(reinterpret_cast<bridge::Allocate>(base+block_allocator_rva),
         block_allocator_bytes,sizeof(block_allocator_bytes),plan);
-    if(installed!=bridge::InstallResult::installed) {
-        log("dynamite_host=refused; reason=allocation_bridge_install calls=0\r\n");
-        SetLastError(incoming); return false;
-    }
-    SetLastError(incoming);
+    if(installed!=(reuse ? bridge::InstallResult::already_installed : bridge::InstallResult::installed))
+        return refuse("allocation_bridge_install");
+    if(reuse) log("session_allocation=reused; bridge_owner=adapter detour_entry_verified=1 other_bodies_verified=1 calls=0\r\n");
+    else allocation_bridge_base=base;
     return true;
 }
 }
@@ -344,7 +421,7 @@ bool CreateDynamiteHostSession(void* verified_base,std::size_t span,std::uintptr
     if(!verified_base || !target || !log) return false;
     const DWORD incoming=GetLastError();
     const auto base=reinterpret_cast<std::uintptr_t>(verified_base);
-    if(!PrepareSessionAllocation(verified_base,span,log)) return false;
+    if(!PrepareSessionAllocation(verified_base,span,"dynamite_host",log)) return false;
     bool created=false;
     {
         mgscoop::allocation_bridge::Scope scope;
@@ -418,7 +495,10 @@ void LogClientConnectDiagnostics(void* verified_base,std::size_t span,std::uintp
     if(!verified_base || !target || !log) return;
     const DWORD incoming=GetLastError();
     const auto base=reinterpret_cast<std::uintptr_t>(verified_base);
-    std::uint32_t target_state=0,target_threshold=0,ready_int=0,info_state=0;
+    // The game compares the 0x2BD7BB4 value with target+0x14 signed
+    // (0x681CBC1: cmp eax,[rbx+14h]; setge), so both are read as int32.
+    std::uint32_t target_state=0,info_state=0;
+    std::int32_t target_threshold=0,ready_int=0;
     unsigned char ready_byte=0xff;
     std::uintptr_t info=0,info_70=0,info_b8=0,info_c8=0;
     const bool state_ok=Read(target+0x10,target_state);
@@ -434,7 +514,7 @@ void LogClientConnectDiagnostics(void* verified_base,std::size_t span,std::uintp
         target_state!=1 && target_state!=2 && ready_byte==0 && ready_int>=target_threshold;
     char line[512]{};
     StringCchPrintfA(line,ARRAYSIZE(line),
-        "client_connect_diagnostics=sampled; target_state=%u target_threshold=%u ready_byte=%u ready_int=%u "
+        "client_connect_diagnostics=sampled; target_state=%u target_threshold=%d ready_byte=%u ready_int=%d "
         "info_present=%u info_state=%u info_70_nonzero=%u info_host_nonzero=%u info_targetipc_nonnull=%u "
         "is_connect_ready_predicted=%u reads=%u%u%u%u%u\r\n",
         target_state,target_threshold,static_cast<unsigned>(ready_byte),ready_int,
@@ -477,19 +557,26 @@ bool RestoreClientRequestFields(void* verified_base,std::size_t span,void (*log)
     }
     // Accept either the post-request values (+0x10==2,+0x48==1) or values already
     // at their recorded pre-call state (an idempotent or synchronous-failure reset).
-    if(!((state==2 || state==client_record.pre_state) && (flag==1 || flag==client_record.pre_flag))) {
+    if(!mgscoop::ClientRequestFieldsRestorable(state,flag,client_record.pre_state,client_record.pre_flag)) {
         log("client_reset=restore_refused; reason=unexpected_fields\r\n"); return false;
     }
-    bool restored=Write(target+0x10,client_record.pre_state) && Write(target+0x48,client_record.pre_flag);
+    // Only fields that differ from their recorded value are written (a
+    // synchronous refusal leaves nothing to write).
+    const bool restored=(state==client_record.pre_state || Write(target+0x10,client_record.pre_state)) &&
+                        (flag==client_record.pre_flag || Write(target+0x48,client_record.pre_flag));
     bool host_restored=true;
     // The connect-info host is reverted only if the borrowed info still matches
     // and is committed read-write, exactly as ClientPrerequisites required.
     if(restored && info==client_record.info && info) {
-        MEMORY_BASIC_INFORMATION region{};
-        const bool writable=VirtualQuery(reinterpret_cast<void*>(info),&region,sizeof(region)) &&
-            region.State==MEM_COMMIT && (region.Protect==PAGE_READWRITE || region.Protect==PAGE_WRITECOPY) &&
-            info+0xb8+sizeof(std::uint64_t)<=reinterpret_cast<std::uintptr_t>(region.BaseAddress)+region.RegionSize;
-        host_restored=writable && Write(info+0xb8,client_record.pre_host);
+        std::uint64_t current_host=0;
+        if(!Read(info+0xb8,current_host)) host_restored=false;
+        else if(current_host!=client_record.pre_host) {
+            MEMORY_BASIC_INFORMATION region{};
+            const bool writable=VirtualQuery(reinterpret_cast<void*>(info),&region,sizeof(region)) &&
+                region.State==MEM_COMMIT && (region.Protect==PAGE_READWRITE || region.Protect==PAGE_WRITECOPY) &&
+                info+0xb8+sizeof(std::uint64_t)<=reinterpret_cast<std::uintptr_t>(region.BaseAddress)+region.RegionSize;
+            host_restored=writable && Write(info+0xb8,client_record.pre_host);
+        }
     }
     char line[224]{};
     StringCchPrintfA(line,ARRAYSIZE(line),
@@ -505,28 +592,35 @@ bool RestoreClientRequestFields(void* verified_base,std::size_t span,void (*log)
 // and connect information. Never allocate or immediately free temporary objects.
 bool CreateDynamiteClientSession(void* verified_base,std::size_t span,std::uintptr_t target,
                                  std::uint64_t host,void (*log)(const char*) noexcept) noexcept {
+    client_refusal="invalid_arguments";
     if(!verified_base || !target || !log || !mgscoop::IsClientHostIdentity(host)) return false;
     const DWORD incoming=GetLastError();
     struct RestoreError { DWORD value; ~RestoreError() { SetLastError(value); } } restore{incoming};
     const auto base=reinterpret_cast<std::uintptr_t>(verified_base);
     std::uintptr_t info=0,owner=0;
+    client_refusal="client_prerequisites";
     if(!ClientPrerequisites(base,span,target,log,info,owner)) return false;
-    // Record the exact pre-call values of every field the request writes, so a
-    // later reset can revert the borrowed objects in place. On a synchronous
-    // refusal these fields are untouched; on success +0x10 becomes 2 and
-    // +0x48 becomes 1, and the connect-info host stays our value.
+    // Record the pre-call values of the fields the request writes (see
+    // ClientRequestRecord), so a later reset can revert the borrowed objects in
+    // place. Without a complete record a reset could not make a retry
+    // possible, so no native request is made.
     {
         ClientRequestRecord record{};
         record.target=target; record.info=info; record.root=owner;
-        if(Read(target+0x10,record.pre_state) && Read(target+0x48,record.pre_flag) && Read(info+0xb8,record.pre_host)) {
-            record.present=true;
-            client_record=record;
+        if(!Read(target+0x10,record.pre_state) || !Read(target+0x48,record.pre_flag) || !Read(info+0xb8,record.pre_host)) {
+            client_refusal="request_record_unreadable";
+            log("dynamite_client=refused; reason=request_record_unreadable native_calls=0\r\n");
+            return false;
         }
+        record.present=true;
+        client_record=record;
     }
-    if(!PrepareSessionAllocation(verified_base,span,log)) return false;
+    client_refusal="allocation_prepare";
+    if(!PrepareSessionAllocation(verified_base,span,"dynamite_client",log)) return false;
     bool requested=false;
     {
         mgscoop::allocation_bridge::Scope scope;
+        client_refusal="allocation_scope";
         if(!scope.acquired()) { log("dynamite_client=refused; reason=allocation_scope\r\n"); return false; }
         // RCX=borrowed FobTarget, RDX=that target's existing connect-info;
         // AL is a request-start result. The native body reads host identity +B8.
@@ -569,5 +663,6 @@ bool CreateDynamiteClientSession(void* verified_base,std::size_t span,std::uintp
         requested?1u:0u,GetCurrentThreadId(),GetTickCount64());
     log(line);
     ObserveDynamiteSession(verified_base,log);
+    client_refusal=requested ? "" : "request_not_started";
     return requested;
 }

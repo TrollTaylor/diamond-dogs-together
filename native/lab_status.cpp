@@ -93,6 +93,31 @@ bool SameContent(const Status& a, const Status& b) noexcept {
            std::memcmp(a.last_refusal, b.last_refusal, kRefusalCapacity) == 0;
 }
 
+std::uint32_t MembersFor(SessionStatus status) noexcept {
+    switch (status) {
+    case SessionStatus::host_peer_present:
+    case SessionStatus::client_established: return 2;
+    case SessionStatus::host_ready:
+    case SessionStatus::client_requested: return 1;
+    default: return 0;
+    }
+}
+
+JoinStatus JoinStatusForRefusal(const char* reason) noexcept {
+    return reason && std::strcmp(reason, kRequestNotStarted) == 0 ? JoinStatus::failed : JoinStatus::refused;
+}
+
+JoinStatus JoinAfterSession(JoinStatus join, SessionStatus session) noexcept {
+    if (session == SessionStatus::client_established) return JoinStatus::established;
+    if (session == SessionStatus::session_error &&
+        (join == JoinStatus::requested || join == JoinStatus::established)) return JoinStatus::failed;
+    return join;
+}
+
+SessionStatus SessionAfterRelease(SessionStatus previous) noexcept {
+    return previous == SessionStatus::none ? SessionStatus::none : SessionStatus::closed;
+}
+
 void SetRefusal(Status& status, const char* reason) noexcept {
     std::memset(status.last_refusal, 0, kRefusalCapacity);
     if (!reason) return;

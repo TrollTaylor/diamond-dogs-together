@@ -9,6 +9,10 @@ bool TryCreateHostSession(void* verified_base, std::size_t verified_span,
                           bool create_enabled=false) noexcept;
 bool TryCreateClientSession(void* base, std::size_t span, std::uint64_t host,
                             void (*log)(const char*) noexcept, bool inspect_only=false) noexcept;
+// Static reason the most recent TryCreateClientSession returned false (empty
+// after success). `already_logged` reports whether that refusal wrote its own
+// client_join=refused line (the host-identity refusals do).
+const char* LastClientJoinRefusal(bool* already_logged = nullptr) noexcept;
 // Clears the process-lifetime one-shot join guard so a reset can re-arm the
 // guest for another attempt. Call only from the owned mission thread after the
 // previous attempt's session has been released and its fields restored.
