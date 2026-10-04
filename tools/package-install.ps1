@@ -1,9 +1,23 @@
 param(
     [ValidateSet('Install','Restore')][string]$Action='Install',
-    [string]$GameDirectory
+    [string]$GameDirectory,
+    # Packages no longer contain the runtime archive (it holds game-derived bytes).
+    # Pass the locally generated or copied archive; an installed archive with the
+    # expected hash is reused when this is omitted.
+    [string]$RuntimeArchive,
+    # Accept an ownership record that was copied together with the folder from this
+    # directory (for example a guest copy of the host installation). The installed
+    # loader must still match that record exactly.
+    [string]$AcceptRecordCopiedFrom,
+    # Folder containing package.json and payload/ (default: this script's folder,
+    # as in an extracted package). The lab scripts stage packages elsewhere.
+    [string]$PackageDirectory,
+    # Never ask for the runtime archive path (scripts and tests). Without it, an
+    # interactive console session (install.bat) is asked when the archive is needed.
+    [switch]$NoPrompt
 )
 $ErrorActionPreference='Stop'
-$packageRoot=$PSScriptRoot
+$packageRoot=if($PackageDirectory) { [IO.Path]::GetFullPath((Get-Item -LiteralPath $PackageDirectory).FullName).TrimEnd('\','/') } else { $PSScriptRoot }
 if(!$GameDirectory) { $GameDirectory=Read-Host 'MGSV folder containing mgsvtpp.exe' }
 $gameItem=Get-Item -LiteralPath $GameDirectory
 if(!$gameItem.PSIsContainer -or ($gameItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Use the direct MGSV folder.' }
@@ -11,11 +25,25 @@ $gameRoot=[IO.Path]::GetFullPath($gameItem.FullName).TrimEnd('\','/')
 if($gameRoot -match '^[A-Za-z]:$') { throw 'Select the MGSV installation folder, not a drive root.' }
 $modRoot=Join-Path $gameRoot 'mgs-coop'
 $manifestPath=Join-Path $modRoot 'probe-install.json'
-$allowed=@('mgs-coop/mgs-coop-player-runtime.dat','mgs-coop/DYNAMITE-LICENSE','mgs-coop/MinHook-LICENSE.txt',
+$archiveTarget='mgs-coop/mgs-coop-player-runtime.dat'
+$allowed=@($archiveTarget,'mgs-coop/DYNAMITE-LICENSE','mgs-coop/MinHook-LICENSE.txt',
     'mgs-coop/tpp-mod-LICENSE','mgs-coop/THIRD_PARTY_NOTICES.md','dinput8.dll','mgs-coop/probe-install.json')
 function Hash([string]$Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash }
+function RunningFromGame {
+    # Only mgsvtpp/mgsvmgo processes whose executable is in this folder block the
+    # installer, so a second lab instance can be updated while the other runs.
+    foreach($process in @(Get-Process -Name mgsvtpp,mgsvmgo -ErrorAction SilentlyContinue)) {
+        $path=$null
+        try { $path=$process.Path } catch { $path=$null }
+        if(!$path) { try { $path=(Get-CimInstance Win32_Process -Filter "ProcessId=$($process.Id)" -ErrorAction Stop).ExecutablePath } catch { $path=$null } }
+        if(!$path) { return $true }  # Unknown location: assume this folder.
+        $folder=(Split-Path -Parent ([IO.Path]::GetFullPath($path))).TrimEnd('\','/')
+        if($folder.Equals($gameRoot,[StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+    return $false
+}
 function RequireStopped {
-    if(Get-Process mgsvtpp,mgsvmgo -ErrorAction SilentlyContinue) { throw 'Close MGSV normally before changing the mod.' }
+    if(RunningFromGame) { throw 'Close MGSV running from this folder normally before changing the mod.' }
 }
 function SafePath([string]$Root,[string]$Relative) {
     if([IO.Path]::IsPathRooted($Relative)) { throw 'Unexpected absolute package path.' }
@@ -89,8 +117,19 @@ try {
         return
     }
     $package=Get-Content -LiteralPath (Join-Path $packageRoot 'package.json') -Raw | ConvertFrom-Json
+    # Older packages bundled the archive; current packages record only its hash.
+    $bundlesArchive=@($package.files | ForEach-Object { $_.target }) -contains $archiveTarget
+    $packageFileCount=if($bundlesArchive) { $allowed.Count-1 } else { $allowed.Count-2 }
     if($package.product -ne 'mgs-coop-local-package' -or $package.version -ne '0.10.33' -or
-        @($package.files).Count -ne ($allowed.Count-1) -or @($package.files.target | Select-Object -Unique).Count -ne ($allowed.Count-1)) { throw 'Unexpected package manifest.' }
+        @($package.files).Count -ne $packageFileCount -or @($package.files.target | Select-Object -Unique).Count -ne $packageFileCount) { throw 'Unexpected package manifest.' }
+    $archiveHash=$null
+    if($bundlesArchive) {
+        if($RuntimeArchive) { throw 'This package bundles the runtime archive; do not pass -RuntimeArchive.' }
+    } else {
+        if(!($package.PSObject.Properties.Name -contains 'runtime_archive') -or $package.runtime_archive.target -ne $archiveTarget -or
+            [string]$package.runtime_archive.sha256 -cnotmatch '^[A-Fa-f0-9]{64}$') { throw 'Unexpected package manifest.' }
+        $archiveHash=[string]$package.runtime_archive.sha256
+    }
     RequireHash (SafePath $gameRoot 'mgsvtpp.exe') $package.executable_sha256
     RequireHash (SafePath $gameRoot 'steam_api64.dll') $package.steam_dll_sha256
     foreach($file in $package.files) {
@@ -98,17 +137,52 @@ try {
         RequireHash (SafePath $packageRoot $file.source) $file.sha256
         $null=SafePath $gameRoot $file.target
     }
+    # Runtime archive source: an explicit local file, the already installed copy,
+    # or (interactive console, e.g. a double-clicked install.bat) a path typed in.
+    $archiveSource=$null
+    if(!$bundlesArchive) {
+        $archivePath=SafePath $gameRoot $archiveTarget
+        $interactive=!$NoPrompt -and [Environment]::UserInteractive -and ![Console]::IsInputRedirected -and
+            !@([Environment]::GetCommandLineArgs() | Where-Object { $_ -match '^-NonI' }).Count
+        $archiveInput=$RuntimeArchive
+        if(!$archiveInput -and !((Test-Path -LiteralPath $archivePath -PathType Leaf) -and (Hash $archivePath) -eq $archiveHash) -and $interactive) {
+            Write-Host "This package contains no game-derived files. The two-player runtime archive (mgs-coop-player-runtime.dat, SHA-256 $archiveHash) is generated or copied on your own PC; see RUNTIME-ARCHIVE.txt."
+            $archiveInput=([string](Read-Host 'Full path of mgs-coop-player-runtime.dat')).Trim().Trim('"')
+            if(!$archiveInput) { throw 'No runtime archive path was entered; nothing was installed.' }
+        }
+        if($archiveInput) {
+            $archiveItem=Get-Item -LiteralPath $archiveInput
+            if($archiveItem.PSIsContainer) { throw 'RuntimeArchive must be a file.' }
+            $archiveSource=[IO.Path]::GetFullPath($archiveItem.FullName)
+            RequireHash $archiveSource $archiveHash
+            if($archiveSource.Equals($archivePath,[StringComparison]::OrdinalIgnoreCase)) { $archiveSource='existing' }
+        } elseif((Test-Path -LiteralPath $archivePath -PathType Leaf) -and (Hash $archivePath) -eq $archiveHash) {
+            $archiveSource='existing'
+        } else {
+            throw "This package does not contain game-derived files. Pass -RuntimeArchive with your locally generated two-player runtime archive (SHA-256 $archiveHash); install.bat asks for it when run from a console."
+        }
+    }
     $dllPath=SafePath $gameRoot 'dinput8.dll'
     $previous=$null; $ownershipRecordHash=$null
     if((Test-Path -LiteralPath $dllPath) -or (Test-Path -LiteralPath $manifestPath)) {
         if(!(Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw 'An unrelated loader exists; nothing was replaced.' }
         $previous=Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-        if($previous.product -ne 'mgs-coop-original-loader-probe' -or $previous.game_directory -ne $gameRoot) { throw 'Loader ownership does not match this mod and folder.' }
+        if($previous.product -ne 'mgs-coop-original-loader-probe') { throw 'Loader ownership does not match this mod and folder.' }
+        if($previous.game_directory -ne $gameRoot) {
+            $copiedFrom=if($AcceptRecordCopiedFrom) { [IO.Path]::GetFullPath($AcceptRecordCopiedFrom).TrimEnd('\','/') } else { $null }
+            if(!$copiedFrom -or $copiedFrom -eq $gameRoot -or $previous.game_directory -ne $copiedFrom) {
+                throw 'Loader ownership does not match this mod and folder. If this folder is a copy of another installation, pass -AcceptRecordCopiedFrom with the folder named in its probe-install.json.'
+            }
+            Write-Output "Accepting an ownership record copied from $copiedFrom; the installed loader must still match it."
+        }
         RequireHash $dllPath $previous.dll_sha256
         $ownershipRecordHash=Hash $manifestPath
     } else {
         foreach($file in $package.files) {
             if(Test-Path -LiteralPath (SafePath $gameRoot $file.target)) { throw 'Managed mod files already exist without a loader ownership record.' }
+        }
+        if($archiveSource -and $archiveSource -ne 'existing' -and (Test-Path -LiteralPath (SafePath $gameRoot $archiveTarget))) {
+            throw 'Managed mod files already exist without a loader ownership record.'
         }
     }
     $id=[Guid]::NewGuid().ToString('N')
@@ -124,7 +198,10 @@ try {
     [IO.File]::WriteAllText($preparedManifest,($newManifest | ConvertTo-Json)+"`n",[Text.UTF8Encoding]::new($false))
     $writes=@($package.files | ForEach-Object {
         [pscustomobject]@{target=$_.target;source=(SafePath $packageRoot $_.source);sha256=$_.sha256}
-    })+@([pscustomobject]@{target='mgs-coop/probe-install.json';source=$preparedManifest;sha256=(Hash $preparedManifest)})
+    })
+    # 'existing' is resolved to the verified backup copy once it has been taken.
+    if($archiveSource) { $writes+=@([pscustomobject]@{target=$archiveTarget;source=$archiveSource;sha256=$archiveHash}) }
+    $writes+=@([pscustomobject]@{target='mgs-coop/probe-install.json';source=$preparedManifest;sha256=(Hash $preparedManifest)})
     $rows=@(); $index=0
     foreach($file in $writes) {
         $target=SafePath $gameRoot $file.target
@@ -138,6 +215,10 @@ try {
             }
             [IO.File]::Copy($target,(Join-Path $backupRoot $row.before_file),$false)
             RequireHash (Join-Path $backupRoot $row.before_file) $row.before_sha256
+        }
+        if($file.source -eq 'existing') {
+            if(!$exists -or $row.before_sha256 -ne $file.sha256) { throw 'Installed runtime archive changed while preparing the backup.' }
+            $file.source=Join-Path $backupRoot $row.before_file
         }
         $rows+=@($row); $index++
     }
