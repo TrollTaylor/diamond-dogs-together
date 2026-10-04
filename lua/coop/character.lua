@@ -1,14 +1,19 @@
 -- MGS co-op character selection (original). Spliced into the fingerprinted
--- TppMain.OnAllocate after the mission's MissionPrepare and before
--- TppPlayer.MissionStartPlayerTypeSetting. Uses only the vanilla temporary
--- player type (TppPlayer.RegisterTemporaryPlayerType): the save keeps the
--- player's own type and the next mission without an override restores it.
+-- TppMain.OnAllocate after the mission's MissionPrepare; the anchor proves `n`
+-- is OnAllocate's mission-script table here. Uses the vanilla temporary player
+-- type: MissionStartPlayerTypeSetting saves the own type in gvars and applies
+-- it, and the next mission without an override restores it. A checkpoint
+-- continue (title Continue, retry) runs TppVarInit.InitializeForContinue
+-- instead, which reloads vars and applies a temporary type only when
+-- sequence.ALWAYS_APPLY_TEMPORATY_PLAYER_PARTS_SETTING is set; this chunk sets
+-- that flag for one allocation and restores it at the end of OnAllocate.
 -- Receipts: MGS_COOP_CHARACTER_V1 (coop.ini character, fallback, readback),
 -- _BYPASS_ON/_OFF_V1 (native Ocelot/Quiet reset bypass), _REPORT/_READBACK_V1
 -- (log only), _PLAYERS_V1 (native guard before Player.GetPlayerType). Every
 -- step is protected; failures leave the vanilla type.
 do
     local coop = Tpp and type(Tpp.MgsCoop) == "table" and Tpp.MgsCoop
+    local scripts = n
     if coop then
         local C = {}
         coop.Character = C
@@ -24,6 +29,7 @@ do
         C.FALLBACKS = {snake = true, dd_male = true, dd_female = true, avatar = true}
         -- Infinite Heaven's default DD faces; a matching sortie face wins.
         C.DEFAULT_FACE = {dd_male = 0, dd_female = 350}
+        C.ALWAYS = "ALWAYS_APPLY_TEMPORATY_PLAYER_PARTS_SETTING"
 
         local function read(get)
             local ok, value = pcall(get)
@@ -69,9 +75,9 @@ do
             return d
         end
 
-        -- Pure temporary type for one character, or nil to keep the sortie
-        -- choice. x.realType is what MissionStartPlayerTypeSetting restores.
-        -- The second result is a DD face for after the type is applied.
+        -- Pure temporary type for one character, or nil to keep the own type
+        -- (x.realType, what MissionStartPlayerTypeSetting restores). The second
+        -- result is a DD face for after the type is applied.
         function C.Plan(name, x, E)
             local key, s = NAMES[name], x.sortie or {}
             local T = E.PlayerType[key]
@@ -103,10 +109,14 @@ do
             x.subsistence = read(function() return TppMission.IsSubsistenceMission() end) == true
             x.buddyQuiet = read(function()
                 return type(BuddyType.QUIET) == "number" and vars.buddyType == BuddyType.QUIET end) == true
+            x.usingTemp = read(function() return gvars.ply_isUsingTempPlayerType end) == true
             x.realType = read(function()
-                if gvars.ply_isUsingTempPlayerType == true then return gvars.ply_lastPlayerTypeUsingTemp end
+                if x.usingTemp then return gvars.ply_lastPlayerTypeUsingTemp end
                 return vars.playerType
             end)
+            -- Log only: OnAllocate takes the InitializeForContinue path when false.
+            local start = read(function() return TppMission.IsMissionStart() end)
+            x.start = (start == true and "new") or (start == false and "continue") or "unknown"
             x.sortie = read(function()
                 return {type = vars.sortiePrepPlayerType, face = vars.sortiePrepPlayerFaceId,
                     snakeParts = vars.sortiePrepPlayerSnakePartsType, snakeCamo = vars.sortiePrepPlayerSnakeCamoType,
@@ -116,16 +126,43 @@ do
             return x
         end
 
+        -- The continue flag is set only where the mission does not set it itself
+        -- and is put back (normally by C.Post, else by the next allocation).
+        function C.SetAlways(sequence)
+            if type(sequence) ~= "table" or sequence[C.ALWAYS] == true then return false end
+            coop.characterAlways = {sequence = sequence, previous = sequence[C.ALWAYS]}
+            sequence[C.ALWAYS] = true
+            return true
+        end
+        function C.RestoreAlways()
+            local mark = coop.characterAlways
+            coop.characterAlways = nil
+            if type(mark) == "table" and type(mark.sequence) == "table" then mark.sequence[C.ALWAYS] = mark.previous end
+        end
+
         -- Runs from the hooked ForceChangePlayerFromOcelot at the end of the
-        -- same OnAllocate: sets the DD face once the temporary type is applied
-        -- (the original face is already saved for restoration) and returns
-        -- true to skip the Ocelot/Quiet revert for this allocation only.
+        -- same OnAllocate. Restores the continue flag; if no type setting ran
+        -- (unexpected path), applies the registered type the vanilla way now;
+        -- sets the DD face; reports vars; returns true to skip the Ocelot/Quiet
+        -- revert for this allocation only.
         function C.Post(post)
+            C.RestoreAlways()
+            local late = "0"
+            if post.type ~= nil and mvars.ply_isExistTempPlayerType == true and mvars.ply_tempPlayerType == post.type and
+               vars.playerType ~= post.type then
+                late = "1;before=" .. tostring(vars.playerType)
+                TppPlayer.SaveCurrentPlayerType()
+                TppPlayer.ApplyTemporaryPlayerType()
+            end
             if post.face ~= nil and mvars.ply_isExistTempPlayerType == true and
                gvars.ply_isUsingTempPlayerType == true and vars.playerType == post.faceType then
                 vars.playerFaceId = post.face
                 C.Log("REPORT", "face;mission=" .. tostring(post.mission) .. ";face=" .. tostring(post.face))
             end
+            C.Log("REPORT", "allocated;mission=" .. tostring(post.mission) .. ";vars=" .. tostring(vars.playerType) ..
+                ";parts=" .. tostring(vars.playerPartsType) .. ";camo=" .. tostring(vars.playerCamoType) ..
+                ";temp=" .. (gvars.ply_isUsingTempPlayerType == true and "1" or "0") .. ";start=" ..
+                tostring(post.start) .. ";late=" .. late)
             if post.skip then C.Log("REPORT", "ocelot_reset_skipped;mission=" .. tostring(post.mission)) end
             return post.skip == true
         end
@@ -149,10 +186,11 @@ do
         end
 
         function C.Apply()
+            C.RestoreAlways()
             local post = {armed = false}
             coop.characterPost = post
-            -- Readback: lab only, for a story/free-roam decision (apply/keep), and
-            -- only between OnMissionGameStart and OnTerminate (C.Started/C.Stopped).
+            -- Readback (character_readback.lua): lab only, for a story/free-roam
+            -- decision (apply/keep), between OnMissionGameStart and OnTerminate.
             local poll = {frames = 0, reports = 0, enabled = false, started = false}
             coop.characterPoll = poll
             local character, fallback, readback = receipt("return 'MGS_COOP_CHARACTER_V1'")
@@ -169,94 +207,33 @@ do
                 local E = {PlayerType = PlayerType, PlayerPartsType = PlayerPartsType, PlayerCamoType = PlayerCamoType,
                     handNormal = TppEquip.EQP_HAND_NORMAL}
                 local temp, face = C.Plan(d.applied, x, E)
+                local sequence = type(scripts) == "table" and scripts.sequence
                 if temp then
                     TppPlayer.RegisterTemporaryPlayerType(temp)
-                    d.type = temp.playerType
-                    post.face, post.faceType = face, face ~= nil and temp.playerType or nil
+                    d.type, d.expect = temp.playerType, temp.playerType
+                    post.type, post.face, post.faceType = temp.playerType, face, face ~= nil and temp.playerType or nil
+                    d.always = C.SetAlways(sequence)
                 else
-                    d.reason = d.reason .. "_sortie_kept"
+                    d.reason, d.expect = d.reason .. "_sortie_kept", x.realType
+                    -- A checkpoint saved under an earlier override: a continue
+                    -- then runs the vanilla restore as well.
+                    if x.usingTemp then d.always = C.SetAlways(sequence) end
                 end
-                post.skip, post.mission = d.bypass == true, x.mission
-                post.armed = post.skip or post.face ~= nil
+                post.skip, post.mission, post.start = d.bypass == true, x.mission, x.start
+                post.armed = temp ~= nil or d.always == true
                 if post.armed then C.InstallPostHook() end
             end
             C.Log("REPORT", d.result .. ";mission=" .. tostring(x.mission) .. ";requested=" .. tostring(d.requested) ..
                 ";applied=" .. tostring(d.applied) .. ";type=" .. tostring(d.type) .. ";reason=" .. d.reason ..
-                ";bypass=" .. (d.bypass and "1" or "0") .. ";real=" .. tostring(x.realType))
+                ";bypass=" .. (d.bypass and "1" or "0") .. ";real=" .. tostring(x.realType) .. ";start=" .. x.start ..
+                ";always=" .. (d.always and "1" or "0"))
             return d
-        end
-
-        -- Readback. Player.GetPlayerType (0x9d30b0) has no null checks and the
-        -- player object is null before Mission.Start and in transitions, so it
-        -- runs only while started (OnMissionGameStart returned, not title mode)
-        -- and for indices below the count of a ready native sample taken just
-        -- before (PLAYERS receipt; its raw values keep OCELOT/QUIET, which
-        -- GetPlayerType reads as 0). Otherwise i0/i1 are "na".
-        local function live()
-            local poll = coop.characterPoll
-            return type(poll) == "table" and poll.started == true and
-                read(function() return gvars.ini_isTitleMode end) ~= true
-        end
-        function C.Snapshot()
-            local state, limit, raw, values = "stopped", "na", {"na", "na"}, {"na", "na"}
-            if live() then
-                local ready, total, raw0, raw1 = receipt("return 'MGS_COOP_CHARACTER_PLAYERS_V1'")
-                state = ready == false and tostring(total) or "native_unavailable"
-                if ready == true and type(total) == "number" then
-                    local sample = {raw0, raw1}
-                    state, limit = "ready", tostring(total)
-                    for i = 0, math.min(math.floor(total), 2) - 1 do
-                        raw[i + 1] = tostring(sample[i + 1])
-                        local ok, value = pcall(function() return Player.GetPlayerType{instanceIndex = i} end)
-                        values[i + 1] = ok and tostring(value) or "err"
-                    end
-                end
-            end
-            return "local=" .. tostring(read(function() return PlayerInfo.GetLocalPlayerIndex() end)) ..
-                ";vars=" .. tostring(read(function() return vars.playerType end)) .. ";players=" .. state ..
-                ";limit=" .. limit .. ";i0=" .. values[1] .. ";i1=" .. values[2] .. ";raw0=" .. raw[1] ..
-                ";raw1=" .. raw[2] .. ";quiet_ocelot_read_as=0"
-        end
-        function C.Readback(tag)
-            local body = C.Snapshot()
-            coop.characterReadback = body
-            C.Log("READBACK", tostring(tag or "manual") .. ";" .. body)
-            return body
-        end
-        -- Rate-limited (every 60 calls), change-only, at most 64 lines per
-        -- mission; only while enabled by Apply and started.
-        function C.Poll(tag)
-            local poll = coop.characterPoll
-            if type(poll) ~= "table" or poll.enabled ~= true or not live() then return false end
-            if tag == nil then
-                poll.frames = poll.frames + 1
-                if poll.frames < 60 then return false end
-            end
-            poll.frames = 0
-            if poll.reports >= 64 then return false end
-            local body = C.Snapshot()
-            if tag == nil and body == poll.last then return false end
-            poll.last, poll.reports = body, poll.reports + 1
-            coop.characterReadback = body
-            C.Log("READBACK", (tag or "change") .. ";" .. body)
-            return true
-        end
-        -- From the appended wrappers (character_readback.lua): after the
-        -- original OnMissionGameStart returned, and at OnTerminate entry.
-        function C.Started()
-            local poll = coop.characterPoll
-            if type(poll) ~= "table" or poll.enabled ~= true then return false end
-            poll.started, poll.frames = true, 0
-            return C.Poll("start")
-        end
-        function C.Stopped()
-            local poll = coop.characterPoll
-            if type(poll) == "table" then poll.started = false end
         end
 
         local ok, failure = pcall(C.Apply)
         if not ok then
             coop.characterError = tostring(failure)
+            pcall(C.RestoreAlways)
             pcall(C.Log, "REPORT", "error;reason=lua_error")
         end
     end

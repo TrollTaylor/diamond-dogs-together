@@ -1,5 +1,56 @@
 # Character selection: integration steps
 
+## Update 2 (branch `wp/character-fix`, October 3): no native change
+
+The fix for the October 3 live failure (the override was not applied on a
+title Continue; see [characters.md](characters.md#the-october-3-failure)) is
+Lua and CMake only. It needs **no change** to `native/bootstrap_patch.cpp`,
+`native/game_script_observer.cpp` or `tests/host_trial_patch_check.cpp`:
+
+- The TppMain splice anchor and its position are unchanged. The chunk now
+  also reads `n`, `OnAllocate`'s own mission-script table. The anchor text
+  (`n.sequence.MissionPrepare`) already guarantees that binding, and the
+  fixture checks it on the pinned source and by running the real
+  `OnAllocate`.
+- The receipt set is unchanged (`MGS_COOP_CHARACTER_V1`, `_BYPASS_ON/OFF_V1`,
+  `_PLAYERS_V1`, `_REPORT_V1`, `_READBACK_V1`). The REPORT and READBACK
+  payloads gained fields (`start=`, `always=`, `character=allocated`,
+  `verdict=`, `expect=`, `parts=`, `camo=`, `temp=`); every line stays
+  within the native 192-byte payload limit and character set (tested).
+- The readback functions moved from `character.lua` (run on every
+  allocation) into `character_readback.lua` (run once when TppMain loads).
+  Both are still embedded by `generated/character_source.hpp` and inserted at
+  the same two places, and both chunks keep their first-line headers that
+  `host_trial_patch_check` looks for. `character.lua` is now about 14 KB and
+  `character_readback.lua` about 6 KB, both below the 16,000-byte literal
+  check.
+- `cmake/characters.cmake` additionally looks for the extracted
+  `TppVarInit.lua` (SHA-256 `cebb1fc4...9eecf`, folder
+  `character-game-lua-20261003`) and passes it as `--varinit=`. Without it,
+  `character_game_lua_check` still runs and uses the mirror for the continue
+  path. How to extract it: [characters.md](characters.md#re-extracting-the-game-scripts).
+
+Verified on this branch (coop-lab @73d9798 plus the branch commit):
+`tools/build.ps1 -Configuration Release`, 54/54 CTest suites. The complete
+DLL TppMain composition (`host_trial_patch_check <TppMain.lua> composed.lua`)
+passes `character_lua_check.lua ... composed.lua --varinit=...` (429 checks,
+including the continue lifecycle) and `host_trial_lua_check.lua` (77 checks).
+
+Requested outside this branch (documentation only):
+[`characters-integration-2.patch`](characters-integration-2.patch) adds the
+character log lines to `docs/lab-protocol.md`. It was generated against
+coop-lab @73d9798 and checked with `git apply --check` (and applied) on
+scratch clones with `core.autocrlf` true and false:
+
+```
+git apply docs/characters-integration-2.patch
+```
+
+The rest of this document describes the first integration (branch
+`wp/characters`), which is already applied on coop-lab (commit b19658d).
+
+## Update 1 (branch `wp/characters`)
+
 For the orchestrator. Branch `wp/characters` adds the character feature as
 new, self-contained files. This document lists the exact changes to the three
 files the branch does not own. Apply them **after the lab-observer package
@@ -47,7 +98,7 @@ the tests (section 2).
 | `tools/generate_player_type_contract.py`, `docs/evidence/player-type-contract-2026-10-03.json` | Static re-verification and evidence (see section 8). |
 | `native/character_receipt.cpp`, `native/include/mgscoop/character_receipt.hpp` | Pure receipt helpers: `Classify`, `FormatQuery`, `NeedsResetBypass`, `FormatLogLine`, `FormatPlayersReply`. |
 | `lua/coop/character.lua` | Inline chunk spliced into `TppMain.OnAllocate` (step 3). |
-| `lua/coop/character_readback.lua` | Appended `TppMain` wrapper. It starts the lab readback after the original `OnMissionGameStart` returns, polls after `OnUpdate` and stops at `OnTerminate` (step 3). |
+| `lua/coop/character_readback.lua` | Appended `TppMain` wrapper. It starts the lab readback after the original `OnMissionGameStart` returns, polls after `OnUpdate` and stops at `OnTerminate` (step 3). Since update 2 it also holds the readback functions (`Tpp.MgsCoop.CharacterReadback`). |
 | `native/character_source.hpp.in` | `configure_file` template producing `character_source` and `character_readback_source`. |
 | `cmake/characters.cmake` + one `include()` line after `enable_testing()` in `CMakeLists.txt` | All CMake wiring (section 2). |
 | `tests/player_type_patch_tests.cpp`, `tests/character_receipt_tests.cpp`, `tests/character_lua_check.lua` | Registered in CTest by `cmake/characters.cmake`. |
@@ -490,6 +541,10 @@ modified.
   `story_sequence_snake` and `title_mode`.
 
 ## 7. Live verification plan (single PC, host + guest)
+
+Superseded for the log format by update 2: the current expected lines and the
+next live check are in [characters.md](characters.md#live-check-for-the-next-run).
+The steps below still describe the scope of a full check.
 
 1. Host `coop.ini`: none (or `character=snake`). Guest `coop.ini`:
    `character=quiet`. Both use `lab.ini`, which enables the readback.
