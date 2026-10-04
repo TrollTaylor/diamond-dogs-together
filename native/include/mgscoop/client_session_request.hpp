@@ -21,6 +21,19 @@ inline std::uint64_t ParseClientHostIdentity(std::string_view text) noexcept {
     return IsClientHostIdentity(id) ? id : 0;
 }
 
+// The stale guest folder ships this value in client-host.txt; it is a valid
+// individual-format ID that may belong to a real stranger, so a v1 join must
+// never target it. See docs/analysis-2026-10-03/synthesis.md (§7 item 3).
+constexpr std::uint64_t kPlaceholderClientHostId = 76561198000000001ULL;
+
+// Returns a static refusal reason when `id` must not be used for a client-v1
+// join, or nullptr when it is an acceptable individual host identity.
+constexpr const char* ClientHostRefusalReason(std::uint64_t id) noexcept {
+    if (!IsClientHostIdentity(id)) return "not_individual";
+    if (id == kPlaceholderClientHostId) return "placeholder_host_id";
+    return nullptr;
+}
+
 // Current-build tpp-mod SessionConnectInfo prefix; no claim about later fields.
 // Adapted from alicealys/tpp-mod 301bf797b7f8032941b21ed56a3570338de6ead4,
 // GPLv3. See third_party/tpp-mod/LICENSE and THIRD_PARTY_NOTICES.md.

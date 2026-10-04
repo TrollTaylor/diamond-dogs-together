@@ -9,6 +9,10 @@ bool TryCreateHostSession(void* verified_base, std::size_t verified_span,
                           bool create_enabled=false) noexcept;
 bool TryCreateClientSession(void* base, std::size_t span, std::uint64_t host,
                             void (*log)(const char*) noexcept, bool inspect_only=false) noexcept;
+// Clears the process-lifetime one-shot join guard so a reset can re-arm the
+// guest for another attempt. Call only from the owned mission thread after the
+// previous attempt's session has been released and its fields restored.
+void ResetClientAttemptLatch() noexcept;
 
 // Read-only sampling at bounded lifecycle receipts. Never attempts creation.
 void ObserveHostSessionPreflight(void* verified_base, std::size_t verified_span,

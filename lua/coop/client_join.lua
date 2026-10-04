@@ -30,6 +30,12 @@ do
         elseif mode == "manual" then
             waiting = true
             Tpp.MgsCoop.clientJoinStatus = "waiting"
+            -- Bound a pending connection, following Dynamite's TppMain
+            -- SetTimeOut(10). The binding is verified present in this exe
+            -- (TppNetworkUtil.SetTimeOut, argument in seconds).
+            if type(TppNetworkUtil) == "table" and type(TppNetworkUtil.SetTimeOut) == "function" then
+                pcall(TppNetworkUtil.SetTimeOut, 10)
+            end
             announce("Co-op: wait for the host to be ready, then press Ctrl+F8 to join.")
         else
             Tpp.MgsCoop.clientJoinStatus = "failed"
@@ -54,7 +60,23 @@ do
         Tpp.MgsCoop.clientJoinRequested = result == "submitted"
         Tpp.MgsCoop.clientJoinStatus = result == "submitted" and "submitted" or "failed"
         announce(result == "submitted" and "Co-op: join request sent. Waiting for connection."
-            or "Co-op: join could not start. Restart the game before trying again.")
+            or "Co-op: join could not start. Reset (Ctrl+F9 or reset.trigger) to try again.")
+    end
+    -- Reset / re-arm poll. The native observer handles Ctrl+F9 and reset.trigger
+    -- and leaves this literal receipt unchanged ('noop') every frame until it has
+    -- released the previous attempt and re-armed the join, when it returns 'rearm'.
+    -- It runs on every update, including after a join was consumed and the normal
+    -- join poll has stopped.
+    local function resetPoll()
+        if vars.missionCode ~= 30050 or type(Tpp.MgsCoop) ~= "table" then return end
+        local result = receipt("return 'MGS_COOP_CLIENT_RESET_POLL_V1'")
+        if result ~= "rearm" then return end
+        waiting, diagnostic = true, false
+        Tpp.MgsCoop.sessionLost = false
+        Tpp.MgsCoop.clientPrepared = true
+        Tpp.MgsCoop.clientJoinRequested = false
+        Tpp.MgsCoop.clientJoinStatus = "waiting"
+        announce("Co-op: join reset. Wait for the host, then press Ctrl+F8 (or drop join.trigger).")
     end
     local function protected(action)
         local ok, failure = pcall(action)
@@ -67,7 +89,13 @@ do
         end
     end
     local function started(...) protected(begin); return ... end
-    local function updated(...) protected(poll); return ... end
+    local function updated(...)
+        protected(poll)
+        -- A reset-poll failure must not mark the join failed or stop updates.
+        local ok, failure = pcall(resetPoll)
+        if not ok and type(Tpp.MgsCoop) == "table" then Tpp.MgsCoop.clientResetError = tostring(failure) end
+        return ...
+    end
     if type(start) == "function" then e.OnMissionGameStart = function(...) return started(start(...)) end end
     if type(update) == "function" then e.OnUpdate = function(...) return updated(update(...)) end end
     if type(terminate) == "function" then

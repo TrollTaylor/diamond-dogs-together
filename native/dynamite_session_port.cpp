@@ -40,6 +40,23 @@ bool Read(std::uintptr_t address,void* output,std::size_t size) noexcept {
     return ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<void*>(address),output,size,&read) && read==size;
 }
 template<class T> bool Read(std::uintptr_t address,T& out) noexcept { return Read(address,&out,sizeof(out)); }
+bool Write(std::uintptr_t address,const void* input,std::size_t size) noexcept {
+    if(address<0x10000 || size>256 || address>0x00007fffffffffff-size) return false;
+    SIZE_T written=0;
+    return WriteProcessMemory(GetCurrentProcess(),reinterpret_cast<void*>(address),input,size,&written) && written==size;
+}
+template<class T> bool Write(std::uintptr_t address,const T& value) noexcept { return Write(address,&value,sizeof(value)); }
+
+// The exact fields the native 0x7EE380 request writes on the borrowed objects,
+// recorded with their pre-call values so a reset can revert them in place.
+struct ClientRequestRecord {
+    std::uintptr_t target=0,info=0,root=0;
+    std::uint32_t pre_state=0;
+    unsigned char pre_flag=0;
+    std::uint64_t pre_host=0;
+    bool present=false;
+};
+ClientRequestRecord client_record{};
 bool Match(std::uintptr_t base,std::size_t span,const SessionBodyContract& body) noexcept {
     if(body.rva>span || body.size>span-body.rva) return false;
     BCRYPT_ALG_HANDLE algorithm=nullptr;
@@ -396,6 +413,93 @@ bool InspectDynamiteClientSession(void* verified_base,std::size_t span,std::uint
     return ClientPrerequisites(reinterpret_cast<std::uintptr_t>(verified_base),span,target,log,info,owner);
 }
 
+void LogClientConnectDiagnostics(void* verified_base,std::size_t span,std::uintptr_t target,
+                                 void (*log)(const char*) noexcept) noexcept {
+    if(!verified_base || !target || !log) return;
+    const DWORD incoming=GetLastError();
+    const auto base=reinterpret_cast<std::uintptr_t>(verified_base);
+    std::uint32_t target_state=0,target_threshold=0,ready_int=0,info_state=0;
+    unsigned char ready_byte=0xff;
+    std::uintptr_t info=0,info_70=0,info_b8=0,info_c8=0;
+    const bool state_ok=Read(target+0x10,target_state);
+    const bool threshold_ok=Read(target+0x14,target_threshold);
+    // IsConnectReady (0x7E4190 -> 0x681CB90) reads these two image globals.
+    const bool byte_ok=(0x2bd7bc0+1<=span) && Read(base+0x2bd7bc0,ready_byte);
+    const bool int_ok=(0x2bd7bb4+4<=span) && Read(base+0x2bd7bb4,ready_int);
+    const bool info_ok=Read(target+0x40,info) && info!=0 &&
+        Read(info,info_state) && Read(info+0x70,info_70) && Read(info+0xb8,info_b8) && Read(info+0xc8,info_c8);
+    // Predicted IsConnectReady: target state not in {1,2}, gate byte zero,
+    // login/relay int at or above the target threshold. Verified from the body.
+    const bool ready_predicted=state_ok && threshold_ok && byte_ok && int_ok &&
+        target_state!=1 && target_state!=2 && ready_byte==0 && ready_int>=target_threshold;
+    char line[512]{};
+    StringCchPrintfA(line,ARRAYSIZE(line),
+        "client_connect_diagnostics=sampled; target_state=%u target_threshold=%u ready_byte=%u ready_int=%u "
+        "info_present=%u info_state=%u info_70_nonzero=%u info_host_nonzero=%u info_targetipc_nonnull=%u "
+        "is_connect_ready_predicted=%u reads=%u%u%u%u%u\r\n",
+        target_state,target_threshold,static_cast<unsigned>(ready_byte),ready_int,
+        info_ok?1u:0u,info_state,info_70!=0?1u:0u,info_b8!=0?1u:0u,info_c8!=0?1u:0u,
+        ready_predicted?1u:0u,state_ok?1u:0u,threshold_ok?1u:0u,byte_ok?1u:0u,int_ok?1u:0u,info_ok?1u:0u);
+    log(line);
+    SetLastError(incoming);
+}
+
+bool HasRecordedClientRequest() noexcept { return client_record.present; }
+void ForgetClientRequestRecord() noexcept { client_record={}; }
+
+bool RecordedClientRequestSlotsEmpty(void* verified_base,std::size_t span) noexcept {
+    if(!verified_base || !client_record.present || !client_record.root) return false;
+    return mgscoop::SessionSlotsReleased(reinterpret_cast<std::uintptr_t>(verified_base),span,client_record.root,
+        [](std::uintptr_t address,std::uintptr_t& value) noexcept { return Read(address,value); });
+}
+
+bool RestoreClientRequestFields(void* verified_base,std::size_t span,void (*log)(const char*) noexcept) noexcept {
+    if(!verified_base || !log) return false;
+    const DWORD incoming=GetLastError();
+    struct RestoreError { DWORD value; ~RestoreError(){ SetLastError(value); } } restore{incoming};
+    if(!client_record.present) { log("client_reset=restore_skipped; reason=no_record\r\n"); return true; }
+    // Never touch the borrowed objects until the game's session singleton slots
+    // are empty: the FobTarget must no longer back a live session.
+    if(!RecordedClientRequestSlotsEmpty(verified_base,span)) {
+        log("client_reset=restore_refused; reason=slots_not_empty\r\n"); return false;
+    }
+    const auto base=reinterpret_cast<std::uintptr_t>(verified_base);
+    // Re-derive the live FobTarget and require it to equal the recorded borrow,
+    // with its expected type, before writing anything.
+    std::uintptr_t server=0,branch=0,target=0,table=0,info=0;
+    if(!Read(base+0x2befc00,server) || !Read(server+0x30,branch) || !Read(branch+0x28,target) ||
+       target!=client_record.target || !Read(target,table) || table!=base+0x2223508) {
+        log("client_reset=restore_refused; reason=target_changed\r\n"); return false;
+    }
+    std::uint32_t state=0; unsigned char flag=0;
+    if(!Read(target+0x10,state) || !Read(target+0x48,flag) || !Read(target+0x40,info)) {
+        log("client_reset=restore_refused; reason=unreadable\r\n"); return false;
+    }
+    // Accept either the post-request values (+0x10==2,+0x48==1) or values already
+    // at their recorded pre-call state (an idempotent or synchronous-failure reset).
+    if(!((state==2 || state==client_record.pre_state) && (flag==1 || flag==client_record.pre_flag))) {
+        log("client_reset=restore_refused; reason=unexpected_fields\r\n"); return false;
+    }
+    bool restored=Write(target+0x10,client_record.pre_state) && Write(target+0x48,client_record.pre_flag);
+    bool host_restored=true;
+    // The connect-info host is reverted only if the borrowed info still matches
+    // and is committed read-write, exactly as ClientPrerequisites required.
+    if(restored && info==client_record.info && info) {
+        MEMORY_BASIC_INFORMATION region{};
+        const bool writable=VirtualQuery(reinterpret_cast<void*>(info),&region,sizeof(region)) &&
+            region.State==MEM_COMMIT && (region.Protect==PAGE_READWRITE || region.Protect==PAGE_WRITECOPY) &&
+            info+0xb8+sizeof(std::uint64_t)<=reinterpret_cast<std::uintptr_t>(region.BaseAddress)+region.RegionSize;
+        host_restored=writable && Write(info+0xb8,client_record.pre_host);
+    }
+    char line[224]{};
+    StringCchPrintfA(line,ARRAYSIZE(line),
+        "client_reset=fields_restored; state_flag_restored=%u host_field_restored=%u prior_state=%u prior_flag=%u\r\n",
+        restored?1u:0u,host_restored?1u:0u,state,static_cast<unsigned>(flag));
+    log(line);
+    if(restored && host_restored) { client_record={}; return true; }
+    return false;
+}
+
 // Direct adaptation of the pinned current-build tpp-mod session_connect command
 // and Dynamite's native client startup. The game retains ownership of the target
 // and connect information. Never allocate or immediately free temporary objects.
@@ -407,6 +511,18 @@ bool CreateDynamiteClientSession(void* verified_base,std::size_t span,std::uintp
     const auto base=reinterpret_cast<std::uintptr_t>(verified_base);
     std::uintptr_t info=0,owner=0;
     if(!ClientPrerequisites(base,span,target,log,info,owner)) return false;
+    // Record the exact pre-call values of every field the request writes, so a
+    // later reset can revert the borrowed objects in place. On a synchronous
+    // refusal these fields are untouched; on success +0x10 becomes 2 and
+    // +0x48 becomes 1, and the connect-info host stays our value.
+    {
+        ClientRequestRecord record{};
+        record.target=target; record.info=info; record.root=owner;
+        if(Read(target+0x10,record.pre_state) && Read(target+0x48,record.pre_flag) && Read(info+0xb8,record.pre_host)) {
+            record.present=true;
+            client_record=record;
+        }
+    }
     if(!PrepareSessionAllocation(verified_base,span,log)) return false;
     bool requested=false;
     {

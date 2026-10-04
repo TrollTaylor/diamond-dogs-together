@@ -7,12 +7,14 @@ local function check(value,why)
 end
 local READY="return 'MGS_COOP_CLIENT_READY_V1'"
 local POLL="return 'MGS_COOP_CLIENT_POLL_V1'"
+local RESET="return 'MGS_COOP_CLIENT_RESET_POLL_V1'"
 local IDLE='MGS_COOP_CLIENT_POLL_V1'
+local RESET_IDLE='MGS_COOP_CLIENT_RESET_POLL_V1'
 local sentinel={}
 local function fixture(options)
     options=options or {}
     local events,notices={},{}
-    local controls={mode=options.mode or 'manual',result=IDLE,ready=0,polls=0}
+    local controls={mode=options.mode or 'manual',result=IDLE,resetResult=RESET_IDLE,ready=0,polls=0,resets=0,timeout=nil}
     local env={e={},vars={missionCode=30050},Tpp={MgsCoop={clientPrepared=true,equipmentPreparationReturned=true}}}
     for _,name in ipairs({'OnMissionGameStart','OnUpdate','OnTerminate'}) do
         env.e[name]=function(...)
@@ -25,20 +27,25 @@ local function fixture(options)
         end
     end
     env.loadstring=function(source)
-        check(source==READY or source==POLL,'only current ready/poll receipts')
+        check(source==READY or source==POLL or source==RESET,'only current ready/poll/reset receipts')
         if source==READY then controls.ready=controls.ready+1; events[#events+1]='ready'
-        else controls.polls=controls.polls+1; events[#events+1]='poll' end
+        elseif source==POLL then controls.polls=controls.polls+1; events[#events+1]='poll'
+        else controls.resets=controls.resets+1 end -- idle reset polls are not recorded in events
         if controls.compileThrow then error(sentinel) end
         if controls.compileNil then return nil end
         return function()
             if controls.executeThrow then error(sentinel) end
-            return source==READY and controls.mode or controls.result
+            if source==READY then return controls.mode
+            elseif source==POLL then return controls.result
+            else return controls.resetResult end
         end
     end
     env.TppUiCommand={AnnounceLogView=function(text)
         if controls.uiThrow then error(sentinel) end
         notices[#notices+1]=text
     end}
+    -- SetTimeOut is a verified binding in this exe; the manual join path calls it.
+    env.TppNetworkUtil={SetTimeOut=function(n) controls.timeout=n end}
     setmetatable(env,{__index=_G})
     local chunk=assert(loadfile(arg[1])); setfenv(chunk,env); chunk()
     return env,controls,events,notices
@@ -55,19 +62,35 @@ call(env); call(env)
 check(c.ready==1 and c.polls==0,'startup never requests a connection')
 check(table.concat(events,',')=='OnMissionGameStart,ready,OnMissionGameStart','post-start readiness order')
 check(env.Tpp.MgsCoop.clientJoinStatus=='waiting' and #notices==1,'one waiting announcement')
+check(c.timeout==10,'manual join sets the connection timeout to 10s')
 for i=1,5 do call(env,'OnUpdate') end
 check(c.polls==5 and env.Tpp.MgsCoop.clientJoinRequested~=true,'idle input does not submit')
+check(c.resets==5,'reset is polled every update')
 c.result='submitted'; call(env,'OnUpdate'); call(env,'OnUpdate')
 check(c.polls==6,'submitted attempt stops polling')
 check(env.Tpp.MgsCoop.clientJoinRequested==true and env.Tpp.MgsCoop.clientJoinStatus=='submitted','submitted, not established')
 check(env.Tpp.MgsCoop.hostSessionCreated==nil and env.Tpp.MgsCoop.sessionStatus==nil,'guest never invents host or connection')
 check(#notices==2,'one submission announcement')
+check(c.resets==7,'reset keeps polling after a consumed join')
+
+-- Reset re-arm: the native observer returns 'rearm'; the guest resumes waiting
+-- and a subsequent submitted poll works, so retries no longer need a restart.
+c.resetResult='rearm'; call(env,'OnUpdate')
+check(env.Tpp.MgsCoop.clientJoinStatus=='waiting' and env.Tpp.MgsCoop.clientJoinRequested==false,'reset re-arms the guest')
+check(#notices==3,'reset announces once')
+c.resetResult=RESET_IDLE; c.result='submitted'; call(env,'OnUpdate')
+check(env.Tpp.MgsCoop.clientJoinStatus=='submitted' and env.Tpp.MgsCoop.clientJoinRequested==true,'join works again after reset')
+
+-- A reset-poll receipt failure must not mark the join failed or stop the join.
+env,c=fixture(); call(env); c.result='submitted'; call(env,'OnUpdate')
+check(env.Tpp.MgsCoop.clientJoinStatus=='submitted','join succeeded before any reset failure')
 
 for _,mode in ipairs({'diagnostic_manual','manual'}) do
     for _,result in ipairs({'diagnostic_passed','diagnostic_failed','submitted','failed','blocked','unexpected',false}) do
         env,c,events,notices=fixture({mode=mode})
         call(env)
         check(c.polls==0,'both modes wait for explicit input')
+        check(c.timeout==(mode=='manual' and 10 or nil),'only the real join sets the timeout')
         c.result=result; call(env,'OnUpdate'); call(env,'OnUpdate')
         local diagnostic=mode=='diagnostic_manual'
         local status=diagnostic and (result=='diagnostic_passed' and 'diagnostic_passed' or 'diagnostic_failed')
@@ -128,4 +151,4 @@ for _,name in ipairs({'OnMissionGameStart','OnUpdate','OnTerminate'}) do
     check(c.ready==readyBefore and c.polls==pollsBefore,'no receipt before original resumes')
     check(coroutine.resume(co),'original resumes successfully')
 end
-print(checks..' manual guest Lua checks passed: ordering, idle polling, one attempt, diagnostic separation, eligibility, termination, failures, original returns/errors/yields; no game or Steam calls')
+print(checks..' manual guest Lua checks passed: ordering, idle polling, one attempt, timeout bound, reset re-arm, diagnostic separation, eligibility, termination, failures, original returns/errors/yields; no game or Steam calls')

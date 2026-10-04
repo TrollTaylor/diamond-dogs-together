@@ -20,6 +20,15 @@ int main() {
         " "+text,text+" ",text+"\n\n",text+"junk",std::to_string(0x0110000100000000ULL),std::to_string(0x017000010000002aULL)}})
         Check(ParseClientHostIdentity(bad)==0);
     for(std::size_t i=0;i<text.size();++i) { auto bad=text; bad[i]='x'; Check(ParseClientHostIdentity(bad)==0); }
+    // Host-id refusal gate: an individual id is usable, the placeholder and
+    // non-individual ids are refused with a stable reason.
+    Check(ClientHostRefusalReason(id)==nullptr);
+    Check(ClientHostRefusalReason(kPlaceholderClientHostId)!=nullptr &&
+          std::string(ClientHostRefusalReason(kPlaceholderClientHostId))=="placeholder_host_id");
+    Check(std::string(ClientHostRefusalReason(0))=="not_individual");
+    Check(std::string(ClientHostRefusalReason(0x0110000100000000ULL))=="not_individual"); // zero account id
+    Check(std::string(ClientHostRefusalReason(0x017000010000002aULL))=="not_individual"); // wrong type/universe
+    Check(IsClientHostIdentity(kPlaceholderClientHostId)); // placeholder is individual-format but still refused
     ClientConnectInfoPrefix info{};
     std::memset(info.reserved,0xa7,sizeof(info.reserved));
     info.host=1234;
