@@ -25,6 +25,13 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $scriptRoot = $PSScriptRoot
+# A failure ends with one plain line (and exit code 1) instead of a raw
+# Windows PowerShell error record.
+trap {
+    Write-Host ''
+    Write-Host ('ERROR: ' + $_.Exception.Message) -ForegroundColor Red
+    exit 1
+}
 
 function Resolve-Piece([string]$PackagedName, [string]$RepoRelative) {
     $packaged = Join-Path $scriptRoot $PackagedName
