@@ -35,7 +35,7 @@ pwsh -File tools/lab/Invoke-PartnerExperiment.ps1 -Experiment E0 -NoInput
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E8')][string]$Experiment,
+    [Parameter(Mandatory)][ValidateSet('E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E8', 'A0', 'A1', 'A3', 'M1', 'N1', 'B1', 'B4', 'C1')][string]$Experiment,
     [string]$ConfigPath = (Join-Path $PSScriptRoot 'lab.json'),
     [string]$RunDir,
     [ValidateRange(0, 7200)][int]$TimeoutSec = 0,

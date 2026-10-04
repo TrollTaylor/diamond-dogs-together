@@ -17,11 +17,18 @@ double WrapDouble(double radians) noexcept {
     if (wrapped < 0) wrapped += 2.0 * kPi;
     return wrapped - kPi;
 }
+void CopyAnim(const Snapshot& from, Sample& to) noexcept {
+    to.anim_valid = from.anim_valid;
+    to.act = from.act;
+    to.anim_stance = from.anim_stance;
+    to.anim_speed = from.anim_speed;
+}
 void Copy(const Snapshot& from, Sample& to) noexcept {
     to.x = from.x; to.y = from.y; to.z = from.z;
     to.yaw = static_cast<float>(WrapDouble(from.yaw));
     to.stance = from.stance;
     to.flags = from.flags;
+    CopyAnim(from, to);
 }
 } // namespace
 
@@ -131,6 +138,7 @@ Sample SnapshotRing::SampleAt(std::uint64_t now_ms, std::uint32_t delay_ms) cons
     out.yaw = static_cast<float>(WrapDouble(a.snapshot.yaw + WrapDouble(static_cast<double>(b.snapshot.yaw) - a.snapshot.yaw) * f));
     out.stance = b.snapshot.stance;
     out.flags = b.snapshot.flags;
+    CopyAnim(b.snapshot, out);
     out.interpolated = true;
     return out;
 }

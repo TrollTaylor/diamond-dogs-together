@@ -126,12 +126,29 @@ std::size_t FormatReply(const Reply& reply, char* out, std::size_t capacity) noe
     if (!out || capacity == 0) return 0;
     out[0] = 0;
     std::size_t at = 0;
-    const std::int64_t values[8] = {reply.op, reply.index, reply.x_mm, reply.y_mm, reply.z_mm, reply.yaw_mrad,
-                                    static_cast<std::int64_t>(reply.status), reply.age_ms};
+    const std::int64_t values[13] = {reply.op, reply.index, reply.x_mm, reply.y_mm, reply.z_mm, reply.yaw_mrad,
+                                     static_cast<std::int64_t>(reply.status), reply.age_ms, reply.look.type, reply.look.parts,
+                                     reply.look.camo, reply.look.hand, reply.look.face};
+    const unsigned count = (reply.op & op::set_parts_explicit) ? 13u : 8u;
     bool ok = Append(out, capacity, at, "return ", 7);
-    for (unsigned i = 0; ok && i < 8; ++i) ok = (i == 0 || Append(out, capacity, at, ",", 1)) && AppendInt(out, capacity, at, values[i]);
+    for (unsigned i = 0; ok && i < count; ++i) ok = (i == 0 || Append(out, capacity, at, ",", 1)) && AppendInt(out, capacity, at, values[i]);
     if (!ok) { out[0] = 0; return 0; }
     return at;
+}
+
+const char* NormalizeLook(const Look& in, Look& out, bool& avatar_as_snake) noexcept {
+    if (in.type > 6 || in.type == 4) return "type";
+    if (in.parts > 27) return "parts";
+    if (in.camo > 116) return "camo";
+    if (in.hand > 7) return "hand";
+    Look look = in;
+    bool avatar = false;
+    if (look.type == 6) look = quiet_look;
+    else if (look.type == 5) look = Look{5, 26, 115, 0, 0, 0};
+    else if (look.type == 3) { look.type = 0; avatar = true; }
+    out = look;
+    avatar_as_snake = avatar;
+    return nullptr;
 }
 
 std::size_t SanitizeLogPayload(const char* payload, std::size_t size, char* out, std::size_t capacity) noexcept {
@@ -192,9 +209,28 @@ bool ParseTrigger(const char* text, std::size_t size, Trigger& out) noexcept {
         } else if (StartsToken(token, length, "source=", value_at)) {
             if (result.has_source || !ParsePartnerSource(token + value_at, length - value_at, result.source)) return false;
             result.has_source = true;
-        } else if (StartsToken(token, length, "apply=", value_at)) {
+        } else if (StartsToken(token, length, "apply=", value_at) || StartsToken(token, length, "move=", value_at)) {
             if (result.has_apply || !ParsePartnerApply(token + value_at, length - value_at, result.apply)) return false;
             result.has_apply = true;
+        } else if (StartsToken(token, length, "anim=", value_at)) {
+            if (result.has_anim || !ParsePartnerAnim(token + value_at, length - value_at, result.anim)) return false;
+            result.has_anim = true;
+        } else if (StartsToken(token, length, "aset=", value_at)) {
+            if (result.has_aset || !ParsePartnerAset(token + value_at, length - value_at, result.aset)) return false;
+            result.has_aset = true;
+        } else if (StartsToken(token, length, "reset=", value_at)) {
+            if (result.has_reset || !ParsePartnerReset(token + value_at, length - value_at, result.reset)) return false;
+            result.has_reset = true;
+        } else if (StartsToken(token, length, "look=", value_at)) {
+            if (result.has_look || !ParsePartnerLook(token + value_at, length - value_at, result.look)) return false;
+            result.has_look = true;
+        } else if (EqualsToken(token, length, "probe=ps") || EqualsToken(token, length, "probe=off")) {
+            if (result.has_probe) return false;
+            result.has_probe = true;
+            result.probe_ps = length == 8;  // "probe=ps"
+        } else if (EqualsToken(token, length, "census=1")) {
+            if (result.census) return false;
+            result.census = true;
         } else if (EqualsToken(token, length, "parts=explicit")) {
             if (result.parts_explicit) return false;
             result.parts_explicit = true;
@@ -212,13 +248,15 @@ bool ParseTrigger(const char* text, std::size_t size, Trigger& out) noexcept {
 
 std::uint32_t OpsFor(const OpInput& input) noexcept {
     std::uint32_t ops = 0;
-    if (input.stage >= 1 && input.apply != PartnerApply::slot && input.pose_valid) ops |= op::warp;
+    const bool warp_driver = input.apply == PartnerApply::warp || input.apply == PartnerApply::both;
+    const bool transform_driver = PartnerApplyIsTransform(input.apply);
+    if (input.stage >= 1 && input.pose_valid && (warp_driver || (transform_driver && input.transform_warp))) ops |= op::warp;
     if (input.stage >= 2) {
         if (!(input.luaflags & luaflag::all_active) || input.reassert_all_active) ops |= op::set_all_active;
     } else if (input.luaflags & luaflag::all_active) {
         ops |= op::clear_all_active;
     }
-    if (input.stage >= 3) ops |= op::copy_parts;
+    if (input.stage >= 3 && !input.no_copy) ops |= op::copy_parts;
     if (input.stage >= 1 && input.parts_explicit) ops |= op::set_parts_explicit;
     if (input.stage >= 1 && input.mirror_on) ops |= op::mirror_on;
     if (input.mirror_off) ops |= op::mirror_off;
@@ -227,6 +265,42 @@ std::uint32_t OpsFor(const OpInput& input) noexcept {
 
 bool WritesSlot(std::uint32_t stage, PartnerApply apply, bool pose_valid) noexcept {
     return stage >= 1 && apply != PartnerApply::warp && pose_valid;
+}
+
+void YawToQuat(float yaw, float (&quat)[4]) noexcept {
+    const double half = std::isfinite(yaw) ? static_cast<double>(yaw) * 0.5 : 0.0;
+    quat[0] = 0.0f;
+    quat[1] = static_cast<float>(std::sin(half));
+    quat[2] = 0.0f;
+    quat[3] = static_cast<float>(std::cos(half));
+}
+
+float QuatToYaw(const float (&quat)[4]) noexcept {
+    // v' = v + 2w(u x v) + 2 u x (u x v), u = (x, y, z), v = (0, 0, 1).
+    const double x = quat[0], y = quat[1], z = quat[2], w = quat[3];
+    const double rx = 2.0 * (x * z + w * y);
+    const double rz = 1.0 - 2.0 * (x * x + y * y);
+    if (!std::isfinite(rx) || !std::isfinite(rz)) return 0.0f;
+    return static_cast<float>(std::atan2(rx, rz));
+}
+
+std::uint8_t DebounceStance(StanceDebounce& state, std::uint8_t stance, std::uint64_t now_ms, std::uint32_t hold_ms) noexcept {
+    if (stance < 1 || stance > 3) {
+        state.candidate = 0;
+        return 0;
+    }
+    if (stance == state.applied) {
+        state.candidate = 0;
+        return 0;
+    }
+    if (stance != state.candidate) {
+        state.candidate = stance;
+        state.since_ms = now_ms;
+    }
+    if (now_ms - state.since_ms < hold_ms) return 0;
+    state.applied = stance;
+    state.candidate = 0;
+    return stance;
 }
 
 namespace {

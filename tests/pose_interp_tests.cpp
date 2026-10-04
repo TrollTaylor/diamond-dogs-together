@@ -138,7 +138,27 @@ int main() {
     Check(s.interpolated && Near(s.x, 0.5f), "interpolation across wrap");
     Check(!ring.Push(At(0xFFFFFFF0u, 2.0f), 5200), "older across wrap refused");
 
+    // Animation extension fields are discrete: a sample carries those of the
+    // snapshot it holds or interpolates towards, never a blend.
+    ring.Reset();
+    Snapshot a = At(1000, 0.0f), b = At(1100, 1.0f);
+    a.anim_valid = true; a.act = 1; a.anim_stance = 1; a.anim_speed = 0;
+    b.anim_valid = true; b.act = 4; b.anim_stance = 2; b.anim_speed = 2;
+    Check(ring.Push(a, 2000) && ring.Push(b, 2100), "push anim snapshots");
+    s = ring.SampleAt(2150, 100);  // render 1050: between a and b
+    Check(s.interpolated && s.anim_valid && s.act == 4 && s.anim_stance == 2 && s.anim_speed == 2, "anim of the newer snapshot");
+    s = ring.SampleAt(2050, 100);  // render 950: before the oldest
+    Check(s.held && s.anim_valid && s.act == 1 && s.anim_stance == 1, "held oldest keeps its anim");
+    s = ring.SampleAt(2300, 0);
+    Check(s.anim_valid && s.act == 4 && s.anim_speed == 2, "latest-only keeps the newest anim");
+    s = ring.SampleAt(2300, 100);  // extrapolated past b
+    Check(s.extrapolated && s.act == 4, "extrapolation keeps the newest anim");
+    Snapshot v1 = At(1200, 1.1f);
+    Check(ring.Push(v1, 2200), "push a v1 snapshot");
+    s = ring.SampleAt(2400, 0);
+    Check(!s.anim_valid && s.act == 0, "a v1 snapshot has no anim");
+
     std::printf("%u pose interpolation checks passed: lerp, jitter offset, shortest-arc yaw, snap, extrapolation cap, "
-                "stale/lost, latest-only, capacity, clock wrap; deterministic, no game calls\n", checks);
+                "stale/lost, latest-only, capacity, clock wrap, discrete anim fields; deterministic, no game calls\n", checks);
     return 0;
 }

@@ -407,7 +407,43 @@ bool PartnerReadAnim(void*, const pp::State& state, pp::Anim& out) noexcept { re
 mgscoop::pose::Sample PartnerSampleRemote(void*, std::uint32_t delay_ms) noexcept {
     return mgscoop::partner_net::SampleRemote(delay_ms);
 }
-void PartnerSubmitLocal(void*, const partner::Tick& tick) noexcept { mgscoop::partner_net::SubmitLocal(tick); }
+void PartnerSubmitLocal(void*, const partner::Tick& tick, const mgscoop::sync::AnimState& anim) noexcept {
+    mgscoop::partner_net::SubmitLocal(tick, anim);
+}
+bool PartnerReadLooks(void*, const pp::State& state, pp::Looks& out) noexcept { return pp::ReadLooks(state, out); }
+bool PartnerSubmitLook(void*, const partner::Look& look) noexcept { return mgscoop::partner_net::SubmitLook(look); }
+pd::RemoteLook PartnerSampleLook(void*) noexcept {
+    const auto remote = mgscoop::partner_net::SampleLook();
+    return pd::RemoteLook{remote.valid, remote.look, remote.revision};
+}
+const char* PartnerWriteAnim(void*, bool terminating, std::uint16_t act, std::uint8_t stance, std::uint8_t speed) noexcept {
+    return pp::WriteAnim(partner_addresses, partner::partner_index, terminating, act, stance, speed);
+}
+const char* PartnerWriteFaceEquip(void*, bool terminating, std::uint8_t value) noexcept {
+    return pp::WriteFaceEquip(partner_addresses, partner::partner_index, terminating, value);
+}
+const char* PartnerSetStance(void*, bool terminating, std::uint8_t stance, std::uint8_t& psw, std::uint8_t& q30) noexcept {
+    return pp::SetStance(partner_addresses, partner::partner_index, terminating, stance, psw, q30);
+}
+const char* PartnerRequestStance(void*, bool terminating, std::uint8_t stance) noexcept {
+    return pp::RequestStance(partner_addresses, partner::partner_index, terminating, stance);
+}
+const char* PartnerApplyTransform(void*, bool terminating, const float (&pos)[4], const float (&quat)[4],
+                                  mgscoop::PartnerReset reset) noexcept {
+    return pp::ApplyTransform(partner_addresses, partner::partner_index, terminating, pos, quat, reset);
+}
+bool PartnerReadBody(void*, const pp::State& state, float (&pos)[4], float (&quat)[4]) noexcept {
+    return pp::ReadBody(partner_addresses, state, partner::partner_index, pos, quat);
+}
+const char* PartnerCensus(void*, const pp::State& state, pp::Census& out) noexcept {
+    return pp::ResolveCensus(partner_addresses, state, out);
+}
+std::size_t PartnerFormatCensus(void*, const pp::Census& census, std::uint32_t k, char* out, std::size_t capacity) noexcept {
+    return pp::FormatCensus(partner_addresses, census, k, out, capacity);
+}
+std::size_t PartnerFormatPsProbe(void*, const pp::State& state, std::uint32_t k, char* out, std::size_t capacity) noexcept {
+    return pp::FormatPsProbe(partner_addresses, state, k, out, capacity);
+}
 // partner.trigger (lab only): reads at most `capacity` bytes, then deletes it.
 pd::TriggerRead PartnerTakeTrigger(void*, char* text, std::size_t capacity, std::size_t& length) noexcept {
     length = 0;
@@ -434,7 +470,9 @@ bool PartnerFocused(void*) noexcept {
 }
 constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, PartnerOrBits, PartnerClearBits, PartnerWriteSlot,
     PartnerForceExists, PartnerSetPolicy, PartnerReadAnim, PartnerSampleRemote, PartnerSubmitLocal, PartnerTakeTrigger,
-    PartnerFocused};
+    PartnerFocused, PartnerReadLooks, PartnerSubmitLook, PartnerSampleLook, PartnerWriteAnim, PartnerWriteFaceEquip,
+    PartnerSetStance, PartnerRequestStance, PartnerApplyTransform, PartnerReadBody, PartnerCensus, PartnerFormatCensus,
+    PartnerFormatPsProbe};
 
 void PartnerMissionStart(std::uint32_t mission) noexcept {
     if (!partner_on) return;
@@ -1073,7 +1111,10 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     constexpr char admission[]="return 'MGS_COOP_HOST_ADMISSION_V1'";
     constexpr char admission_observed[]="return 'MGS_COOP_HOST_ADMISSION_OBSERVED_V1'";
     constexpr char released[]="return 'MGS_COOP_HOST_RELEASE_V1'";
-    if(!selected && (host_create_enabled || client_enabled)) {
+    // Character receipts (query, Ocelot/Quiet reset bypass, readback) are
+    // session-free; offline-v1 answers them too. Every session receipt above
+    // stays gated on host_create/client.
+    if(!selected && mgscoop::character::ReceiptsActive(host_create_enabled,client_enabled,offline_enabled)) {
         const auto character_kind=mgscoop::character::Classify(buffer,size,name);
         if(character_kind!=mgscoop::character::Receipt::none)
             selected=SelectCharacterReceipt(character_kind,buffer,size,replacement);
@@ -1234,11 +1275,14 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                     partner_gate_ok = pp::CodeGate(base, span, mismatch);
                     if (partner_gate_ok) Log("partner_code_gate=ok; scope=contract_sites_and_vtable_slots\r\n");
                     else LogFormat("partner_code_gate=mismatch; rva=0x%llx\r\n", static_cast<unsigned long long>(mismatch));
-                    LogFormat("partner=configured; mode=offline_v1; stage=%u; source=%s; apply=%s; rate_hz=%u; interp_ms=%u; offset_cm=%u; teardown=%s\r\n",
+                    LogFormat("partner=configured; mode=offline_v1; stage=%u; source=%s; apply=%s; rate_hz=%u; interp_ms=%u; offset_cm=%u; teardown=%s; "
+                        "anim=%s; aset=%s; reset=%s; look=%s; t_pinned=%u\r\n",
                         partner_driver.settings.stage, mgscoop::PartnerSourceName(partner_driver.settings.source),
                         mgscoop::PartnerApplyName(partner_driver.settings.apply),
                         labc.partner_rate_hz, labc.partner_interp_ms, labc.partner_offset_cm,
-                        mgscoop::PartnerTeardownName(labc.partner_teardown));
+                        mgscoop::PartnerTeardownName(labc.partner_teardown), mgscoop::PartnerAnimName(partner_driver.settings.anim),
+                        mgscoop::PartnerAsetName(partner_driver.settings.aset), mgscoop::PartnerResetName(partner_driver.settings.reset),
+                        mgscoop::PartnerLookName(partner_driver.settings.look), partner_addresses.t_vtable ? 1u : 0u);
                     if (labc.crash_probe) mgscoop::crash_probe::Install(base, span, Log);
                     if (labc.net) {
                         const mgscoop::partner_net::Config net{labc.net_listen_port, labc.net_peer_port, labc.partner_rate_hz,
@@ -1249,7 +1293,7 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                     }
                 }
             }
-            if (host_create_enabled || client_enabled) {
+            if (mgscoop::character::ReceiptsActive(host_create_enabled, client_enabled, offline_enabled)) {
                 // coop.ini is read once here (kernel32 file I/O), outside the Lua compile path.
                 const auto& coop = mgscoop::GetCoopConfig();
                 char character_line[192]{};

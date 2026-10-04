@@ -112,6 +112,13 @@ void Bypass() {
                              "character=dd_female\n", "character=avatar\n", "character=liquid\n"})
         Check(!NeedsResetBypass(Coop(text)), "other characters never need bypass");
     Check(!NeedsResetBypass(mgscoop::CoopConfig{}), "absent coop.ini never needs bypass");
+    // Observer gate: character receipts in host-v2/v3, client-v1 and offline-v1
+    // (session-free); never in the plain host-v1/heap/observe modes.
+    using mgscoop::character::ReceiptsActive;
+    static_assert(ReceiptsActive(false, false, true), "offline-v1 answers the character receipts");
+    Check(ReceiptsActive(true, false, false) && ReceiptsActive(false, true, false) && ReceiptsActive(false, false, true),
+          "host_create, client and offline modes answer");
+    Check(!ReceiptsActive(false, false, false), "other modes leave the receipts literal (character.lua then skips)");
 }
 
 void LogLines() {

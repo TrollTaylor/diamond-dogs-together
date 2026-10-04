@@ -9,6 +9,7 @@
 //   return 'MGS_COOP_PARTNER_CFG_V1'                      -> return true|false
 //   return 'MGS_COOP_PARTNER_V1' -- <frame> <x_mm> <y_mm> <z_mm> <yaw_cdeg> <cam_cdeg> <stance> <move> <luaflags>
 //        -> return <op>,<R>,<x_mm>,<y_mm>,<z_mm>,<yaw_mrad>,<status>,<age_ms>   (quiet; per frame)
+//           followed by ,<type>,<parts>,<camo>,<hand>,<face> when op has SET_PARTS (16)
 //   return 'MGS_COOP_PARTNER_LOG_V1' -- <payload>          -> logs partner_lua=<payload>; return true
 //   return 'MGS_COOP_PARTNER_STOP_V1'                     -> return true
 // Integers only, so neither Lua's nor the C runtime's locale is involved.
@@ -27,7 +28,8 @@ inline constexpr char tick_prefix[] = "return 'MGS_COOP_PARTNER_V1' -- ";
 inline constexpr char log_prefix[] = "return 'MGS_COOP_PARTNER_LOG_V1' -- ";
 inline constexpr std::size_t max_receipt = 200;
 inline constexpr std::size_t max_log_payload = 160;
-// Always fits FormatReply output (8 signed 32-bit integers, commas, "return ").
+// Always fits FormatReply output (8 signed 32-bit integers, the 5 bounded look
+// values, commas, "return "): at most 111 characters.
 inline constexpr std::size_t reply_capacity = 128;
 // Fits FormatLogLine output: "partner_lua=" + payload with ';' -> "; " + CRLF.
 inline constexpr std::size_t log_line_capacity = 12 + 2 * max_log_payload + 3;
@@ -40,7 +42,9 @@ inline constexpr std::uint32_t warp = 1;
 inline constexpr std::uint32_t set_all_active = 2;
 inline constexpr std::uint32_t copy_parts = 4;
 inline constexpr std::uint32_t clear_all_active = 8;
-inline constexpr std::uint32_t set_parts_explicit = 16;  // variant F3b
+// SET_PARTS: Player.SetPartsInfoAtInstanceIndex with the 5 look values that
+// follow in the reply (type, parts, camo, hand, face). Was F3b (local vars).
+inline constexpr std::uint32_t set_parts_explicit = 16;
 inline constexpr std::uint32_t mirror_on = 32;           // diagnostic F3c
 // Extension (not in the spec's op list): ends the F3c mirror diagnostic. Sent
 // natively at most 10 s after MIRROR_ON (or on stop / stage 0), only while
@@ -75,6 +79,32 @@ inline constexpr std::int32_t max_angle_cdeg = 3600000;  // +-36000 degrees, nor
 // value within its bound. `out` is written only on success.
 bool ParseTick(const char* source, std::size_t size, Tick& out) noexcept;
 
+// A player appearance as Player.SetPartsInfoAtInstanceIndex (0x9DF530) takes
+// it, plus face_equip (Q+0x68), which no Lua binding sets (written natively).
+struct Look {
+    std::uint8_t type;   // PlayerType: SNAKE 0, DD_MALE 1, DD_FEMALE 2, AVATAR 3, LIQUID 4, OCELOT 5, QUIET 6
+    std::uint8_t parts;  // PlayerPartsType (QUIET 27, OCELOT 26, NORMAL_SCARF 1)
+    std::uint8_t camo;   // PlayerCamoType (QUIET 116, OCELOT 115, OLIVEDRAB 0)
+    std::uint8_t hand;   // PlayerHandType (NONE 0, NORMAL 1 .. SILVER 7)
+    std::uint16_t face;
+    std::uint8_t face_equip;
+};
+inline bool SameLook(const Look& a, const Look& b) noexcept {
+    return a.type == b.type && a.parts == b.parts && a.camo == b.camo && a.hand == b.hand && a.face == b.face &&
+           a.face_equip == b.face_equip;
+}
+// Fixed test looks (lab look=quiet / look=snake).
+inline constexpr Look quiet_look{6, 27, 116, 0, 0, 0};
+inline constexpr Look snake_look{0, 1, 0, 1, 0, 0};
+// One validation for every look that reaches SetPartsInfo (received or fixed):
+// type > 6 or LIQUID (4) refused ("type"), parts > 27 ("parts"), camo > 116
+// ("camo"), hand > 7 ("hand"). QUIET (6) and OCELOT (5) are forced to their
+// own parts/camo with hand 0, face 0, face_equip 0 (the 0x9CDB12 keep path);
+// AVATAR (3) becomes SNAKE (0) with avatar_as_snake (its 0x4F-byte avatar
+// record is neither sent nor settable through SetPartsInfo). nullptr means
+// accepted and `out` written; otherwise the static reason, `out` untouched.
+const char* NormalizeLook(const Look& in, Look& out, bool& avatar_as_snake) noexcept;
+
 struct Reply {
     std::uint32_t op;
     std::uint32_t index;
@@ -82,8 +112,10 @@ struct Reply {
     std::int32_t yaw_mrad;
     Status status;
     std::uint32_t age_ms;
+    Look look;  // appended (5 values, no face_equip) only when op has set_parts_explicit
 };
-// "return <op>,<R>,<x_mm>,<y_mm>,<z_mm>,<yaw_mrad>,<status>,<age_ms>".
+// "return <op>,<R>,<x_mm>,<y_mm>,<z_mm>,<yaw_mrad>,<status>,<age_ms>"
+// [",<type>,<parts>,<camo>,<hand>,<face>" when op & set_parts_explicit].
 // Returns the length without terminator, or 0 (empty output) if it does not fit.
 std::size_t FormatReply(const Reply& reply, char* out, std::size_t capacity) noexcept;
 
@@ -96,11 +128,15 @@ std::size_t SanitizeLogPayload(const char* payload, std::size_t size, char* out,
 // length, or 0 for an empty, oversized or non-LOG source.
 std::size_t FormatLogLine(const char* source, std::size_t size, char* out, std::size_t capacity) noexcept;
 
-// partner.trigger: one line of whitespace-separated tokens, each at most once:
-//   stop | stage=0..3 | source=fixed|orbit|net | apply=warp|slot|both
-//   | parts=explicit (one-shot op 16) | mirror=on (one-shot op 32)
+// partner.trigger: one line of whitespace-separated tokens, each key at most once:
+//   stop | stage=0..3 | source=fixed|orbit|net
+//   | apply=warp|slot|both|xform|hybrid (move= is the same key; one of the two)
+//   | anim=off|mirror|net | aset=q|s|qs|r | reset=n|a|c|ac
+//   | look=copy|net|quiet|snake | probe=ps|off
+//   | census=1 (one-shot component census) | parts=explicit (one-shot op 16)
+//   | mirror=on (one-shot op 32)
 // "stop" must be alone. Anything else (unknown token, repeat, empty) is refused.
-inline constexpr std::size_t max_trigger = 63;
+inline constexpr std::size_t max_trigger = 127;
 struct Trigger {
     bool stop;
     bool has_stage;
@@ -109,6 +145,17 @@ struct Trigger {
     PartnerSource source;
     bool has_apply;
     PartnerApply apply;
+    bool has_anim;
+    PartnerAnim anim;
+    bool has_aset;
+    PartnerAset aset;
+    bool has_reset;
+    PartnerReset reset;
+    bool has_look;
+    PartnerLook look;
+    bool has_probe;
+    bool probe_ps;
+    bool census;
     bool parts_explicit;
     bool mirror_on;
 };
@@ -116,12 +163,17 @@ bool ParseTrigger(const char* text, std::size_t size, Trigger& out) noexcept;
 
 // Native stage policy (2.2). Stage 0 probe only; 1 WARP; 2 + SET_ALLACTIVE;
 // 3 + COPY_PARTS. apply=slot removes WARP (native writes the slot instead);
-// WARP and the slot write need a valid pose (source=net: a received packet).
+// apply=xform/hybrid send WARP only when the caller says a full Warp is due
+// (transform_warp: hybrid placement/correction, or an xform the native side
+// refused, so the partner never stops moving). WARP and the slot write need a
+// valid pose (source=net: a received packet).
 // SET_ALLACTIVE (idempotent in Lua) is sent at stage >= 2 while Lua has not
 // latched all-active mode, or when the caller re-asserts it because P+0x204
 // bit 0x2000 was lost although Lua latched it (rate-limited by the caller).
 // CLEAR_ALLACTIVE is sent instead when the stage is below 2 while Lua still
-// reports all-active mode. Set-type one-shots need stage >= 1; MIRROR_OFF is a
+// reports all-active mode. COPY_PARTS is sent at stage 3 unless no_copy (an
+// explicit look is known: SET_PARTS replaces the copy). Set-type one-shots
+// (parts = SET_PARTS due, mirror_on) need stage >= 1; MIRROR_OFF is a
 // restoration and is sent at any stage.
 struct OpInput {
     std::uint32_t stage;
@@ -132,9 +184,29 @@ struct OpInput {
     bool parts_explicit;
     bool mirror_on;
     bool mirror_off;
+    bool no_copy;
+    bool transform_warp;
 };
 std::uint32_t OpsFor(const OpInput& input) noexcept;
+// Native S+0x20 slot write: apply slot, both, xform or hybrid (stage >= 1, valid pose).
 bool WritesSlot(std::uint32_t stage, PartnerApply apply, bool pose_valid) noexcept;
+
+// Facing as Warp builds it from a yaw (the 0x9C5F80 command handler): the
+// quaternion (x, y, z, w) = (0, sin(yaw/2), 0, cos(yaw/2)); and back, as the
+// game's 0x1F0300 does: rotate (0, 0, 1) by q and take atan2(x, z).
+void YawToQuat(float yaw, float (&quat)[4]) noexcept;
+float QuatToYaw(const float (&quat)[4]) noexcept;
+
+// Stance of the anim fields as SetStance takes it (1 stand, 2 squat, 3 crawl;
+// 0 = unknown, never applied) and a debounce for applying it on change only:
+// a new value must hold for `hold_ms` before it is applied once.
+struct StanceDebounce {
+    std::uint8_t applied;    // last value handed to the game (0 = none yet)
+    std::uint8_t candidate;  // value currently being held
+    std::uint64_t since_ms;  // when candidate was first seen
+};
+// Returns the stance to apply now (1..3) or 0.
+std::uint8_t DebounceStance(StanceDebounce& state, std::uint8_t stance, std::uint64_t now_ms, std::uint32_t hold_ms) noexcept;
 
 // Pose in integer millimetres and milliradians (yaw normalized to [-pi, pi)).
 struct Pose {

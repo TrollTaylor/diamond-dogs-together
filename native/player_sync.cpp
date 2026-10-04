@@ -164,4 +164,100 @@ bool decode_keepalive_frame(const std::uint8_t* data, std::size_t size, std::uin
     return true;
 }
 
+bool valid_anim(const AnimState& anim) noexcept {
+    return anim.stance <= 3 && anim.speed <= 3 && (anim.flags & ~AnimFlag::Valid) == 0;
+}
+
+std::size_t encode_transform_anim_frame(std::uint64_t session, std::uint32_t epoch, const PlayerTransformPacket& transform,
+                                        const AnimState& anim, std::uint8_t (&out)[transform_anim_frame_size]) noexcept {
+    std::memset(out, 0, sizeof(out));
+    if (!valid_transform(transform) || !valid_anim(anim) || session == 0 || epoch == 0) return 0;
+    put_header(out, wire::Kind::snapshot, session, epoch, transform.sequence,
+               static_cast<std::uint32_t>(transform_packet_size + anim_extension_size));
+    auto* bytes = out + wire::header_size;
+    put(bytes, transform.sequence);
+    put_float(bytes + 4, transform.x); put_float(bytes + 8, transform.y); put_float(bytes + 12, transform.z);
+    put_float(bytes + 16, transform.rot_y); put(bytes + 20, transform.equip_id, 2);
+    bytes[22] = transform.stance; bytes[23] = transform.action_flags; put(bytes + 24, transform.tick_ms);
+    auto* ext = bytes + transform_packet_size;
+    ext[0] = anim_extension_magic; ext[1] = anim_extension_version; put(ext + 2, anim.act, 2);
+    ext[4] = anim.stance; ext[5] = anim.speed; ext[6] = anim.flags; ext[7] = 0;
+    return transform_anim_frame_size;
+}
+
+bool decode_partner_transform_frame(const std::uint8_t* data, std::size_t size, std::uint64_t& session, std::uint32_t& epoch,
+                                    PlayerTransformPacket& out, AnimState& anim, bool& has_anim) noexcept {
+    if (!data) return false;
+    if (size == transform_frame_size) {
+        PlayerTransformPacket transform{};
+        if (!decode_transform_frame(data, size, session, epoch, transform)) return false;
+        out = transform;
+        anim = AnimState{};
+        has_anim = false;
+        return true;
+    }
+    if (size != transform_anim_frame_size ||
+        !header_matches(data, wire::Kind::snapshot, static_cast<std::uint32_t>(transform_packet_size + anim_extension_size)))
+        return false;
+    const std::uint64_t frame_session = get64(data + 8);
+    const std::uint32_t frame_epoch = get(data + 16);
+    const std::uint32_t frame_sequence = get(data + 20);
+    if (frame_session == 0 || frame_epoch == 0) return false;
+    const auto* bytes = data + wire::header_size;
+    PlayerTransformPacket transform{};
+    transform.sequence = get(bytes);
+    transform.x = get_float(bytes + 4); transform.y = get_float(bytes + 8); transform.z = get_float(bytes + 12);
+    transform.rot_y = get_float(bytes + 16); transform.equip_id = static_cast<std::uint16_t>(get(bytes + 20, 2));
+    transform.stance = bytes[22]; transform.action_flags = bytes[23]; transform.tick_ms = get(bytes + 24);
+    if (!valid_transform(transform) || transform.sequence != frame_sequence) return false;
+    const auto* ext = bytes + transform_packet_size;
+    if (ext[0] != anim_extension_magic || ext[1] != anim_extension_version || ext[7] != 0) return false;
+    AnimState decoded{};
+    decoded.act = static_cast<std::uint16_t>(get(ext + 2, 2));
+    decoded.stance = ext[4]; decoded.speed = ext[5]; decoded.flags = ext[6];
+    if (!valid_anim(decoded)) return false;
+    session = frame_session;
+    epoch = frame_epoch;
+    out = transform;
+    anim = decoded;
+    has_anim = true;
+    return true;
+}
+
+std::size_t encode_look_frame(std::uint64_t session, std::uint32_t epoch, const LookPacket& look,
+                              std::uint8_t (&out)[look_frame_size]) noexcept {
+    std::memset(out, 0, sizeof(out));
+    if (session == 0 || epoch == 0 || look.revision == 0 || (look.flags & ~LookFlag::PartsLoaded) != 0) return 0;
+    put_header(out, wire::Kind::event, session, epoch, look.revision, static_cast<std::uint32_t>(look_packet_size));
+    auto* bytes = out + wire::header_size;
+    bytes[0] = look_magic; bytes[1] = look_version;
+    bytes[2] = look.type; bytes[3] = look.parts; bytes[4] = look.camo; bytes[5] = look.hand;
+    put(bytes + 6, look.face, 2);
+    bytes[8] = look.face_equip; bytes[9] = look.flags;
+    put(bytes + 10, look.revision, 2);
+    return look_frame_size;
+}
+
+bool decode_look_frame(const std::uint8_t* data, std::size_t size, std::uint64_t& session, std::uint32_t& epoch,
+                       LookPacket& out) noexcept {
+    if (!data || size != look_frame_size || !header_matches(data, wire::Kind::event, static_cast<std::uint32_t>(look_packet_size)))
+        return false;
+    const std::uint64_t frame_session = get64(data + 8);
+    const std::uint32_t frame_epoch = get(data + 16);
+    const std::uint32_t frame_sequence = get(data + 20);
+    if (frame_session == 0 || frame_epoch == 0) return false;
+    const auto* bytes = data + wire::header_size;
+    if (bytes[0] != look_magic || bytes[1] != look_version) return false;
+    LookPacket look{};
+    look.type = bytes[2]; look.parts = bytes[3]; look.camo = bytes[4]; look.hand = bytes[5];
+    look.face = static_cast<std::uint16_t>(get(bytes + 6, 2));
+    look.face_equip = bytes[8]; look.flags = bytes[9];
+    look.revision = static_cast<std::uint16_t>(get(bytes + 10, 2));
+    if (look.revision == 0 || frame_sequence != look.revision || (look.flags & ~LookFlag::PartsLoaded) != 0) return false;
+    session = frame_session;
+    epoch = frame_epoch;
+    out = look;
+    return true;
+}
+
 } // namespace mgscoop::sync

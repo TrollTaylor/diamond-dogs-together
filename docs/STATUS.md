@@ -1,5 +1,15 @@
 # Development status
 
+## October 4, 2026: partner animation and appearance (branch `wp/partner-anim`, not run live)
+
+The fully offline partner (offline-v1, our own UDP link; [test report](testing-2026-10-04.md)) gets three new pieces. All three are experimental and switchable, and none has run live yet. See [partner-anim-appearance.md](partner-anim-appearance.md).
+
+- **Animation.** Each copy sends its slot-0 animation fields (act, stance, speed) in a v2 transform frame. Each copy can apply them to instance 1 in one of these ways: the Q arrays, `SetStance` 0xFF5B10 on a change, or the stance request component.
+- **Movement.** A smooth native body transform (`xform`/`hybrid`, Warp's own T.vt+0x70/+0x68 calls without the resets) is available. It falls back to the proven Lua Warp whenever a call is refused.
+- **Appearance.** Each copy sends its look, and the receiver applies it with `SetPartsInfoAtInstanceIndex` (`look=net`; `look=quiet|snake` for local tests). offline-v1 now answers the character receipts, and the lab guest plays Quiet.
+
+The defaults keep the proven behaviour. `Play-OfflineCoop.ps1` opts in. CTest passes 63 of 63 suites.
+
 ## October 3-4, 2026: 0.11.0 (branch `coop-lab`)
 
 **Playable co-op is still unverified. A guest has never joined.** CTest passes 57 of 57 suites. See [October 3 test report](testing-2026-10-03.md).

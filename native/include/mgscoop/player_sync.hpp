@@ -80,4 +80,70 @@ std::size_t encode_keepalive_frame(std::uint64_t session, std::uint32_t epoch,
                                    std::uint8_t (&out)[keepalive_frame_size]) noexcept;
 bool decode_keepalive_frame(const std::uint8_t* data, std::size_t size, std::uint64_t& session) noexcept;
 
+// --- Offline partner frame extensions (partner wire format v2) ---------------
+// Animation extension: 8 bytes appended after the 28-byte transform inside the
+// same snapshot frame (header payload length 36, frame 64 bytes):
+//   [0] 0x41 ("A")  [1] version 1  [2..3] act (u16 LE)  [4] stance  [5] speed
+//   [6] flags (bit 0 valid; other bits zero)  [7] reserved, zero
+// A v1 receiver (exact 56-byte frames) drops a v2 frame as malformed; a v2
+// receiver accepts both sizes, so a v1 sender still drives the pose (no anim).
+constexpr std::size_t anim_extension_size = 8;
+constexpr std::size_t transform_anim_frame_size = transform_frame_size + anim_extension_size;  // 64
+constexpr std::uint8_t anim_extension_magic = 0x41;
+constexpr std::uint8_t anim_extension_version = 1;
+namespace AnimFlag {
+    constexpr std::uint8_t Valid = 1 << 0;
+}
+// The sender's slot-0 animation fields (native/partner_player ReadAnim):
+// act = *(u16*)(*(Q+0x18))[local], stance = *(u8*)(*(Q+0x30))[local] (1 stand,
+// 2 squat, 3 crawl), speed = *(u8*)(*(Q+0x38))[local] (0 idle, 2 walk, 3 run).
+struct AnimState {
+    std::uint16_t act = 0;
+    std::uint8_t stance = 0;  // 0..3 (0 = unknown)
+    std::uint8_t speed = 0;   // 0..3
+    std::uint8_t flags = 0;   // AnimFlag bits
+};
+// stance <= 3, speed <= 3, only known flag bits.
+bool valid_anim(const AnimState& anim) noexcept;
+// Returns transform_anim_frame_size, or 0 (out zeroed) when the transform or
+// the anim state is invalid, or session/epoch is zero.
+std::size_t encode_transform_anim_frame(std::uint64_t session, std::uint32_t epoch, const PlayerTransformPacket& transform,
+                                        const AnimState& anim, std::uint8_t (&out)[transform_anim_frame_size]) noexcept;
+// Accepts a v1 frame (56 bytes, has_anim = false, anim zeroed) or a v2 frame
+// (64 bytes, valid extension, has_anim = true). Same transform rules as
+// decode_transform_frame. Outputs are written only on success.
+bool decode_partner_transform_frame(const std::uint8_t* data, std::size_t size, std::uint64_t& session, std::uint32_t& epoch,
+                                    PlayerTransformPacket& out, AnimState& anim, bool& has_anim) noexcept;
+
+// Appearance ("look") frame: header kind event, sequence = revision (never 0),
+// payload length 12 (a keepalive is kind event with length 0):
+//   [0] 0x4C ("L")  [1] version 1  [2] type  [3] parts  [4] camo  [5] hand
+//   [6..7] face (u16 LE)  [8] face_equip  [9] flags  [10..11] revision (u16 LE)
+// Structural checks only; partner::NormalizeLook validates the values.
+constexpr std::size_t look_packet_size = 12;
+constexpr std::size_t look_frame_size = wire::header_size + look_packet_size;  // 40
+constexpr std::uint8_t look_magic = 0x4C;
+constexpr std::uint8_t look_version = 1;
+namespace LookFlag {
+    constexpr std::uint8_t PartsLoaded = 1 << 0;  // sender's own parts state was 3 at capture
+}
+struct LookPacket {
+    std::uint8_t type = 0;        // Q+0x40[local] PlayerType
+    std::uint8_t parts = 0;       // Q+0x48[local] PlayerPartsType
+    std::uint8_t camo = 0;        // Q+0x50[local] PlayerCamoType
+    std::uint8_t hand = 0;        // Q+0x58[local] PlayerHandType (computed by the game)
+    std::uint16_t face = 0;       // Q+0x60[local] (u16)
+    std::uint8_t face_equip = 0;  // Q+0x68[local]
+    std::uint8_t flags = 0;       // LookFlag bits
+    std::uint16_t revision = 0;   // sender bumps on change; 0 is never sent
+};
+// Returns look_frame_size, or 0 (out zeroed) for a zero session/epoch/revision
+// or unknown flag bits.
+std::size_t encode_look_frame(std::uint64_t session, std::uint32_t epoch, const LookPacket& look,
+                              std::uint8_t (&out)[look_frame_size]) noexcept;
+// Strict: exact size, magic/version, kind event, payload length 12, non-zero
+// session/epoch/revision, header sequence == revision, known flag bits.
+bool decode_look_frame(const std::uint8_t* data, std::size_t size, std::uint64_t& session, std::uint32_t& epoch,
+                       LookPacket& out) noexcept;
+
 } // namespace mgscoop::sync

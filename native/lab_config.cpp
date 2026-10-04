@@ -183,7 +183,12 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
         else if (Equals(key, "partner")) ok = ParseBool(value, result.partner);
         else if (Equals(key, "partner_stage")) ok = ParseRange(value, 0, 3, result.partner_stage);
         else if (Equals(key, "partner_source")) ok = ParsePartnerSource(value.data, value.size, result.partner_source);
-        else if (Equals(key, "partner_apply")) ok = ParsePartnerApply(value.data, value.size, result.partner_apply);
+        else if (Equals(key, "partner_apply") || Equals(key, "partner_move"))
+            ok = ParsePartnerApply(value.data, value.size, result.partner_apply);
+        else if (Equals(key, "partner_anim")) ok = ParsePartnerAnim(value.data, value.size, result.partner_anim);
+        else if (Equals(key, "partner_aset")) ok = ParsePartnerAset(value.data, value.size, result.partner_aset);
+        else if (Equals(key, "partner_reset")) ok = ParsePartnerReset(value.data, value.size, result.partner_reset);
+        else if (Equals(key, "partner_look")) ok = ParsePartnerLook(value.data, value.size, result.partner_look);
         else if (Equals(key, "partner_rate_hz")) ok = ParseRange(value, 1, 60, result.partner_rate_hz);
         else if (Equals(key, "partner_interp_ms")) ok = ParseRange(value, 0, 500, result.partner_interp_ms);
         else if (Equals(key, "partner_offset_cm")) ok = ParseRange(value, 50, 1000, result.partner_offset_cm);
@@ -269,7 +274,44 @@ const char* PartnerApplyName(PartnerApply value) noexcept {
     switch (value) {
     case PartnerApply::slot: return "slot";
     case PartnerApply::both: return "both";
+    case PartnerApply::xform: return "xform";
+    case PartnerApply::hybrid: return "hybrid";
     default: return "warp";
+    }
+}
+
+const char* PartnerAnimName(PartnerAnim value) noexcept {
+    switch (value) {
+    case PartnerAnim::mirror: return "mirror";
+    case PartnerAnim::net: return "net";
+    default: return "off";
+    }
+}
+
+const char* PartnerAsetName(PartnerAset value) noexcept {
+    switch (value) {
+    case PartnerAset::q: return "q";
+    case PartnerAset::s: return "s";
+    case PartnerAset::r: return "r";
+    default: return "qs";
+    }
+}
+
+const char* PartnerResetName(PartnerReset value) noexcept {
+    switch (value) {
+    case PartnerReset::a: return "a";
+    case PartnerReset::c: return "c";
+    case PartnerReset::ac: return "ac";
+    default: return "n";
+    }
+}
+
+const char* PartnerLookName(PartnerLook value) noexcept {
+    switch (value) {
+    case PartnerLook::net: return "net";
+    case PartnerLook::quiet: return "quiet";
+    case PartnerLook::snake: return "snake";
+    default: return "copy";
     }
 }
 
@@ -293,6 +335,51 @@ bool ParsePartnerApply(const char* text, std::size_t size, PartnerApply& out) no
     if (Equals(s, "warp")) out = PartnerApply::warp;
     else if (Equals(s, "slot")) out = PartnerApply::slot;
     else if (Equals(s, "both")) out = PartnerApply::both;
+    else if (Equals(s, "xform")) out = PartnerApply::xform;
+    else if (Equals(s, "hybrid")) out = PartnerApply::hybrid;
+    else return false;
+    return true;
+}
+
+bool ParsePartnerAnim(const char* text, std::size_t size, PartnerAnim& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "off")) out = PartnerAnim::off;
+    else if (Equals(s, "mirror")) out = PartnerAnim::mirror;
+    else if (Equals(s, "net")) out = PartnerAnim::net;
+    else return false;
+    return true;
+}
+
+bool ParsePartnerAset(const char* text, std::size_t size, PartnerAset& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "q")) out = PartnerAset::q;
+    else if (Equals(s, "s")) out = PartnerAset::s;
+    else if (Equals(s, "qs")) out = PartnerAset::qs;
+    else if (Equals(s, "r")) out = PartnerAset::r;
+    else return false;
+    return true;
+}
+
+bool ParsePartnerReset(const char* text, std::size_t size, PartnerReset& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "n")) out = PartnerReset::none;
+    else if (Equals(s, "a")) out = PartnerReset::a;
+    else if (Equals(s, "c")) out = PartnerReset::c;
+    else if (Equals(s, "ac")) out = PartnerReset::ac;
+    else return false;
+    return true;
+}
+
+bool ParsePartnerLook(const char* text, std::size_t size, PartnerLook& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "copy")) out = PartnerLook::copy;
+    else if (Equals(s, "net")) out = PartnerLook::net;
+    else if (Equals(s, "quiet")) out = PartnerLook::quiet;
+    else if (Equals(s, "snake")) out = PartnerLook::snake;
     else return false;
     return true;
 }

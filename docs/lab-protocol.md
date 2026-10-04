@@ -143,37 +143,50 @@ closed-port URL, `saves=redirected`, guest `mutex=renamed` and `identity=fake`).
 `partner` (the partner/net `lab.ini` values the instance booted with).
 `Invoke-LabSmoke.ps1` refuses such runs; `Test-PartnerSpike.ps1` judges them
 (E0 never passes on a host-only run: it needs both instances). The offline
-`coop.ini` takes `character=` from `lab.json` `offline.characters` (`default`
-on both); the fuse lab keeps the top-level `characters` (guest `quiet`).
+`coop.ini` takes `character=` from `lab.json` `offline.characters` (host
+`default`, guest `quiet`: the test condition of
+[partner-anim-appearance.md](partner-anim-appearance.md)); the fuse lab keeps
+the top-level `characters` (guest `quiet`). offline-v1 answers the character
+receipts (query, Ocelot/Quiet reset bypass, readback), so the guest's
+`character=quiet` takes effect; every session receipt stays off.
 `Prepare-LabInstance.ps1 -Disable` resets an `offline-v1` marker to the
 folder's online lab role (`host-v3` / `client-v1`), because `offline-v1` skips
 session creation and normal play could not host or join with it.
 
 ### `partner.trigger` (scripts create, native consumes and deletes)
 
-One ASCII line, at most 63 bytes with its newline, written by
+One ASCII line, at most 127 bytes with its newline, written by
 `Set-PartnerTrigger.ps1` as a temporary file renamed over
 `mgs-coop/partner.trigger`:
 
 ```text
 stop
-stage=<0..3> source=<fixed|orbit|net> apply=<warp|slot|both> parts=explicit mirror=on   (any non-empty subset, each key once)
+stage=<0..3> source=<fixed|orbit|net> apply=<warp|slot|both|xform|hybrid> anim=<off|mirror|net>
+  aset=<q|s|qs|r> reset=<n|a|c|ac> look=<copy|net|quiet|snake> probe=<ps|off>
+  census=1 parts=explicit mirror=on   (any non-empty subset, each key once; move= is apply=)
 ```
 
-`parts=explicit` (one-shot op 16, `SetPartsInfoAtInstanceIndex`: variant F3b)
-and `mirror=on` (one-shot op 32, the mirror diagnostic: F3c, at most 10 s) are
-the native parser's one-shot tokens (`native/partner_receipt.cpp`
-`ParseTrigger`). They take effect only at stage 1 or higher and are not part of
-the `partner_stage=changed` line; Lua logs `partner_lua=event=parts_set_explicit`
-and `event=mirror_on` when it runs them.
+`census=1` (log `partner_census` for both blocks once), `parts=explicit`
+(one-shot op 16: re-apply the desired look; with `look=copy` the local look,
+variant F3b) and `mirror=on` (one-shot op 32, the mirror diagnostic: F3c, at
+most 10 s; refused with `partner_trigger=ignored; token=mirror=on; reason=look`
+unless `look=copy`, because mirror mode copies the local look over instance 1)
+are the native parser's one-shot tokens (`native/partner_receipt.cpp`
+`ParseTrigger`). `parts`/`mirror` take effect only at stage 1 or higher. None of
+the one-shots is part of the `partner_stage=changed` line; Lua logs
+`partner_lua=event=parts_set; R=1; type=..; ...` and `event=mirror_on` when it
+runs them. The other keys are described in
+[partner-anim-appearance.md](partner-anim-appearance.md).
 
 The scripts validate the grammar (lower case, blanks between tokens, `stop` only
-alone) and write the canonical order `stage source apply parts mirror` (the
-longest line is 61 bytes with its newline). Native code polls the file every 30
-Lua ticks, only with `offline-v1` and `lab.ini` `partner=1`. It deletes the file
-whether it accepts it or not, then logs `partner_stage=changed; stage=..;
-source=..; apply=..; via=trigger` (the full configuration after the trigger;
-`stop` sets stage 0) or `partner_trigger=rejected; reason=parse`.
+alone, `move=` written back as `apply=`) and write the canonical order `stage
+source apply anim aset reset look probe census parts mirror` (the longest line
+is 118 bytes with its newline). Native code polls the file every 30 Lua ticks,
+only with `offline-v1` and `lab.ini` `partner=1`. It deletes the file whether it
+accepts it or not, then logs `partner_stage=changed; stage=..; source=..;
+apply=..; anim=..; aset=..; reset=..; look=..; probe=..; via=trigger` (the full
+configuration after the trigger; `stop` sets stage 0) or
+`partner_trigger=rejected; reason=parse`.
 `Set-PartnerTrigger.ps1 -WaitSec` therefore confirms the result in
 `script-observer.log` (lines after the length recorded before the write): exit
 0 applied, 2 not consumed, 3 rejected or a different command applied, 4 no
@@ -238,6 +251,22 @@ realization line is inside the stage 3 segment).
 | `partner_parts=loaded; R=1; ms_after_realize=..` / `partner_parts=timeout; ...` | E3 (`ms_after_realize<=15000`) |
 | `partner_stop; cleared=..; teardown=..` | E8; ends a segment |
 | `crash_probe=installed`, `crash_probe=av; rva=..; ...` | `av` fails any experiment |
+| `partner_census; k=0\|1; id=..; base=..; count=..; blk=ok\|<reason>; blk_vt=..; ps_vt=..; cs_vt=..; t=set\|null; t_vt=..; t68=..; t70=..; a0_vt=..; a080=..; c0_vt=..; c090=..; b70_vt=..; psw=0x..; equip_vt=..; same_t=..; same_a0=..; same_c0=..; verdict=ok\|<reason>` | A0 (RVAs to pin); logged on `census=1` and once per realize when a native feature needs it |
+| `partner_anim; act=a0,a1; s=s0,s1; v=v0,v1; q28=..; qd8=..; psw=..,..; rec1=0x..` | A1 (`lab.ini` `partner_anim_probe=1`; per slot: act u16 hex, stance and speed u8) |
+| `partner_anim=source; anim=mirror\|net; valid=0\|1; act=..; s=..; v=..` | A1/N1 (change-only) |
+| `partner_aset=q; state=applied\|refused; ...` | A1 (change-only) |
+| `partner_stance=set; R=1; id=1; from=..; to=..; psw=0x..; q30=..`, `partner_stance=refused; R=1; to=..; reason=..`, `partner_stance=reverted; R=1; psw=..; expected=..; ms_after_set=..`, `partner_stance=req; R=1; from=..; to=..; result=..` | A3, N1 (`refused` fails A3) |
+| `partner_xform=applied; R=1; apply=..; reset=..` / `partner_xform=refused; reason=..; fallback=warp` | M1 (identity refusals fail; `unrealized`/`parts` are normal before the load) |
+| `partner_xform; R=1; apply=..; cmd_mm=..; body_mm=..; err_mm=..; yaw_err_mrad=..; reset=..` | M1 (1 Hz readback of T+0x20/T+0x60; `err_mm>1500` fails) |
+| `partner_hybrid=warp; reason=first\|err\|relink` | M1 data |
+| `partner_call=fault; fn=xform\|set_stance\|stance_request; native_calls=disabled` | fails A3/M1/N1/B1/B4; native calls stay off for the mission |
+| `partner_net=look_rx; type=..; parts=..; camo=..; hand=..; face=..; fe=..; rev=..; loaded=..` | B4 (change-only, receive thread) |
+| `partner_look=apply; R=1; source=net\|quiet\|snake\|copy; type=..; parts=..; camo=..; hand=..; face=..; fe=..; rev=..; avatar_as_snake=..` | B1, B4 |
+| `partner_look=loaded; R=1; q40=..; q48=..; q50=..; q58=..; q60=..; q68=..; ms_after_apply=..; cycle=0\|1`, `partner_look=timeout; ...`, `partner_look=refused; reason=..; ...`, `partner_look=waiting; R=1; ms_after_allactive=..; fallback=copy` | B1, B4 (`timeout`/`refused` fail) |
+| `partner_looks; look0=t,p,c,h,f,fe; look1=...; parts=..,..` | diagnostics (change-only, explicit looks) |
+| `partner_lua=event=parts_set; R=1; type=..; ...`, `partner_lua=event=parts_set_refused; reason=bad_look` | B1, B4 (`parts_set_refused` fails); `parts_copied` after a network look fails B4 |
+| `partner_ps; k=..; id=..; mask740=..; r738_milli=..; r280=..; b2d0=..; b2d8=..; psw=..` | `probe=ps` (4 Hz, read-only, layouts partly unverified) |
+| `character_config=..`, `player_type_patch=active\|refused`, `character=apply; ...; applied=..`, `character=allocated; ...; vars=..` | C1 (guest: `quiet`, `applied=quiet`, `vars=6`) |
 
 ## Trigger inputs (scripts create, native consumes and deletes)
 

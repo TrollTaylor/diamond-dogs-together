@@ -48,9 +48,16 @@ character_fallback=dd_male
   `dd_male` (default), `dd_female`, `snake`, `avatar`. Ocelot and Quiet are not
   accepted as a fallback.
 - The file is read once when the game starts. Restart the game after editing.
-- The setting is only used in the co-op script modes (`host-v3` / `client-v1`
-  in `mgs-coop\script-observe.enabled`). In any other mode, or without
-  `coop.ini`, the game behaves exactly as before.
+- The setting is only used in the co-op script modes (`host-v2` / `host-v3` /
+  `client-v1`, and the offline lab mode `offline-v1`, in
+  `mgs-coop\script-observe.enabled`). In any other mode, or without
+  `coop.ini`, the game behaves exactly as before. offline-v1 answers only the
+  character receipts (no session receipt); the offline lab makes the guest play
+  Quiet (`tools/lab/lab.json` `offline.characters`). The partner instance that
+  shows a remote Quiet needs no bypass: the reset at 0x9CD353 runs only for the
+  local index (0x9CD2D5), and the partner's packages (parts, camo, facial
+  motion) are chosen per instance from its own type
+  ([partner-anim-appearance.md](partner-anim-appearance.md)).
 
 ## Where the choice applies
 

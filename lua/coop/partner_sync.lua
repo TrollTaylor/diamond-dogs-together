@@ -29,6 +29,7 @@ do
     -- Values sent through %d (a 32-bit long in Lua 5.1 on Windows) stay within
     -- the native bounds: +-1e6 m positions, +-36000 degree angles.
     local function within(v, limit) return finite(v) and v > -limit and v < limit end
+    local function integer(v, low, high) return type(v) == "number" and v == floor(v) and v >= low and v <= high end
     -- Resolves the bindings; returns the missing names and whether the
     -- required ones (vars, Player.IsInstanceValid) exist.
     local function resolve()
@@ -92,7 +93,9 @@ do
         local stance = (has(api.CRAWL) and 2) or (has(api.SQUAT) and 1) or 0
         local move = (has(api.DASH) and 3) or (has(api.RUN) and 2) or (has(api.WALK) and 1) or 0
         local cam = camera()
-        local op, R, px, py, pz, pry = receipt(fmt("return 'MGS_COOP_PARTNER_V1' -- %d %d %d %d %d %d %d %d %d",
+        -- The reply carries 5 look values after the 8 pose values when op has
+        -- SET_PARTS (16): type, partsType, camoType, handType, faceId.
+        local op, R, px, py, pz, pry, _, _, lt, lp, lc, lh, lf = receipt(fmt("return 'MGS_COOP_PARTNER_V1' -- %d %d %d %d %d %d %d %d %d",
             frame % 1000000, floor(x * 1000 + 0.5), floor(y * 1000 + 0.5), floor(z * 1000 + 0.5),
             floor(ry * 100 + 0.5), floor(cam * 100 + 0.5), stance, move, (allActive and 1 or 0) + (partsCopied and 2 or 0)))
         if type(op) ~= "number" or op <= 0 then return end
@@ -112,10 +115,22 @@ do
             call(api.copyParts, "Player.CopyPartsInfoFromLocalPlayer", {instanceIndex = R}) then
             partsCopied = true; note("event=parts_copied;R=1")
         end
-        if op % 32 >= 16 and call(api.setParts, "Player.SetPartsInfoAtInstanceIndex", {instanceIndex = R,
-            type = vars.playerType, partsType = vars.playerPartsType, camoType = vars.playerCamoType,
-            handType = vars.playerHandType, faceId = vars.playerFaceId}) then
-            note("event=parts_set_explicit")
+        -- SET_PARTS: the partner's own look (or a fixed test look) chosen and
+        -- validated natively. SetPartsInfoAtInstanceIndex (0x9DF530) defaults a
+        -- missing key (instanceIndex 0 = the LOCAL player, handType 1) and has
+        -- no bounds check, so all 6 keys are always passed, R is 1 (checked
+        -- above) and every value is a bounded integer, else nothing is called.
+        if op % 32 >= 16 then
+            if integer(lt, 0, 6) and lt ~= 4 and integer(lp, 0, 27) and integer(lc, 0, 116) and integer(lh, 0, 7) and
+                integer(lf, 0, 65535) then
+                if call(api.setParts, "Player.SetPartsInfoAtInstanceIndex", {instanceIndex = R, type = lt, partsType = lp,
+                    camoType = lc, handType = lh, faceId = lf}) then
+                    partsCopied = true
+                    note(fmt("event=parts_set;R=%d;type=%d;parts=%d;camo=%d;hand=%d;face=%d", R, lt, lp, lc, lh, lf))
+                end
+            else
+                note("event=parts_set_refused;reason=bad_look")
+            end
         end
         if op % 64 >= 32 and call(api.mirror, "Player.SetOtherInstanceIsForMirrorMode", true) then note("event=mirror_on") end
         -- MIRROR_OFF (extension): native ends the F3c diagnostic after at most 10 s.

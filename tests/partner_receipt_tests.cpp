@@ -126,7 +126,8 @@ int main() {
     {
         const std::string widest = ReplyText({0xFFFFFFFFu, 0xFFFFFFFFu, -2147483647 - 1, -2147483647 - 1, -2147483647 - 1,
                                           -2147483647 - 1, Status::lost, 0xFFFFFFFFu});
-        Check(widest == "return 4294967295,4294967295,-2147483648,-2147483648,-2147483648,-2147483648,3,4294967295" &&
+        // op 0xFFFFFFFF includes SET_PARTS (16): the 5 look values (here 0) follow.
+        Check(widest == "return 4294967295,4294967295,-2147483648,-2147483648,-2147483648,-2147483648,3,4294967295,0,0,0,0,0" &&
               widest.size() < reply_capacity, "widest reply fits reply_capacity");
         char small[16]{};
         Check(FormatReply({1, 1, 0, 0, 0, 0, Status::live, 0}, small, sizeof(small)) == 0 && small[0] == 0, "too small");
@@ -271,7 +272,121 @@ int main() {
     Check(sync::encode_transform_frame(1, 1, MakeTransform(far, 1, 1), frame) == sync::transform_frame_size,
           "extreme tick still encodes");
 
-    std::printf("%u partner receipt checks passed: classify, strict ticks, replies, log payloads, triggers, stage policy, poses; no game calls\n",
+    // --- Replies with SET_PARTS carry the 5 look values (never face_equip).
+    {
+        Reply with{op::set_parts_explicit | op::warp, 1, 10, 20, 30, 40, Status::live, 5, Look{6, 27, 116, 0, 0, 9}};
+        Check(ReplyText(with) == "return 17,1,10,20,30,40,1,5,6,27,116,0,0", "reply with look values");
+        Reply without = with;
+        without.op = op::warp;
+        Check(ReplyText(without) == "return 1,1,10,20,30,40,1,5", "no look values without op 16");
+        const std::string widest = ReplyText({0xFFFFFFFFu, 0xFFFFFFFFu, -2147483647 - 1, -2147483647 - 1, -2147483647 - 1,
+                                              -2147483647 - 1, Status::lost, 0xFFFFFFFFu, Look{255, 255, 255, 255, 65535, 255}});
+        Check(widest.size() == 111 && widest.size() < reply_capacity &&
+              widest.compare(widest.size() - 22, 22, ",255,255,255,255,65535") == 0, "widest 13-value reply fits reply_capacity");
+    }
+
+    // --- Look normalization (every look that reaches SetPartsInfo).
+    {
+        Look out{}; bool avatar = true;
+        Check(NormalizeLook(Look{0, 1, 0, 1, 12, 3}, out, avatar) == nullptr && SameLook(out, Look{0, 1, 0, 1, 12, 3}) && !avatar,
+              "snake look kept as is");
+        Check(NormalizeLook(Look{6, 1, 5, 3, 7, 2}, out, avatar) == nullptr && SameLook(out, quiet_look) && !avatar,
+              "quiet forced to parts 27 / camo 116 / hand 0 / face 0");
+        Check(NormalizeLook(Look{5, 0, 0, 1, 1, 1}, out, avatar) == nullptr && SameLook(out, Look{5, 26, 115, 0, 0, 0}),
+              "ocelot forced to parts 26 / camo 115 / hand 0");
+        Check(NormalizeLook(Look{3, 2, 4, 1, 100, 0}, out, avatar) == nullptr && out.type == 0 && out.parts == 2 && out.face == 100 && avatar,
+              "avatar mapped to snake (avatar record not synced)");
+        Check(NormalizeLook(Look{1, 5, 9, 1, 350, 0}, out, avatar) == nullptr && out.type == 1 && out.face == 350, "DD female/male kept");
+        const Look before = out;
+        Check(std::strcmp(NormalizeLook(Look{4, 0, 0, 0, 0, 0}, out, avatar), "type") == 0, "LIQUID refused");
+        Check(std::strcmp(NormalizeLook(Look{7, 0, 0, 0, 0, 0}, out, avatar), "type") == 0, "type 7 refused");
+        Check(std::strcmp(NormalizeLook(Look{0, 28, 0, 0, 0, 0}, out, avatar), "parts") == 0, "parts 28 refused");
+        Check(std::strcmp(NormalizeLook(Look{0, 0, 117, 0, 0, 0}, out, avatar), "camo") == 0, "camo 117 refused");
+        Check(std::strcmp(NormalizeLook(Look{0, 0, 0, 8, 0, 0}, out, avatar), "hand") == 0, "hand 8 refused");
+        Check(SameLook(out, before), "output untouched on refusal");
+        Check(quiet_look.type == 6 && quiet_look.parts == 27 && quiet_look.camo == 116 && quiet_look.hand == 0 &&
+              snake_look.type == 0 && snake_look.parts == 1 && snake_look.camo == 0 && snake_look.hand == 1, "fixed test looks");
+    }
+
+    // --- Extended trigger grammar (max 127 bytes).
+    {
+        Trigger tg{};
+        Check(max_trigger == 127, "trigger limit raised to 127");
+        Check(TriggerText("stage=3 source=net move=hybrid anim=net aset=qs reset=ac look=quiet probe=ps census=1", tg) &&
+              tg.has_apply && tg.apply == PartnerApply::hybrid && tg.has_anim && tg.anim == PartnerAnim::net && tg.has_aset &&
+              tg.aset == PartnerAset::qs && tg.has_reset && tg.reset == PartnerReset::ac && tg.has_look && tg.look == PartnerLook::quiet &&
+              tg.has_probe && tg.probe_ps && tg.census, "every new token");
+        Check(TriggerText("apply=xform", tg) && tg.apply == PartnerApply::xform && !tg.has_anim && !tg.census && !tg.has_probe,
+              "apply= takes the new drivers");
+        Check(TriggerText("move=warp", tg) && tg.has_apply && tg.apply == PartnerApply::warp, "move= is the apply key");
+        Check(!TriggerOk("move=warp apply=slot") && !TriggerOk("apply=warp move=warp"), "move and apply are one key");
+        Check(TriggerText("probe=off", tg) && tg.has_probe && !tg.probe_ps, "probe=off");
+        Check(TriggerText("anim=off aset=r reset=n look=copy", tg) && tg.anim == PartnerAnim::off && tg.aset == PartnerAset::r &&
+              tg.reset == PartnerReset::none && tg.look == PartnerLook::copy, "the other values");
+        Check(TriggerText("look=snake anim=mirror aset=s reset=a", tg) && tg.look == PartnerLook::snake && tg.anim == PartnerAnim::mirror &&
+              tg.aset == PartnerAset::s && tg.reset == PartnerReset::a, "snake, mirror, s, a");
+        Check(!TriggerOk("anim=on") && !TriggerOk("aset=x") && !TriggerOk("reset=b") && !TriggerOk("look=ocelot") &&
+              !TriggerOk("census=2") && !TriggerOk("census") && !TriggerOk("probe=on") && !TriggerOk("move=teleport"), "bad values");
+        Check(!TriggerOk("anim=net anim=off") && !TriggerOk("census=1 census=1") && !TriggerOk("probe=ps probe=off"), "repeats");
+        Check(!TriggerOk("stop census=1"), "stop stays alone");
+        const std::string longest =
+            "stage=3 source=orbit apply=hybrid anim=mirror aset=qs reset=ac look=quiet probe=off census=1 parts=explicit mirror=on";
+        Check(longest.size() + 1 <= max_trigger && TriggerOk(longest), "the longest canonical trigger fits");
+    }
+
+    // --- Driver op policy: xform/hybrid warp only on demand; no copy with an explicit look.
+    {
+        const auto ops2 = [](std::uint32_t stage, PartnerApply apply, bool no_copy, bool transform_warp, std::uint32_t flags = 0) {
+            return OpsFor(OpInput{stage, apply, true, flags, false, false, false, false, no_copy, transform_warp});
+        };
+        Check(ops2(3, PartnerApply::xform, false, false) == (op::set_all_active | op::copy_parts), "xform: no WARP");
+        Check(ops2(3, PartnerApply::xform, false, true) == (op::warp | op::set_all_active | op::copy_parts), "xform fallback: WARP");
+        Check(ops2(3, PartnerApply::hybrid, false, true, luaflag::all_active) == (op::warp | op::copy_parts), "hybrid placement WARP");
+        Check(ops2(3, PartnerApply::hybrid, true, false, luaflag::all_active) == 0, "explicit look known: no COPY");
+        Check(ops2(3, PartnerApply::warp, true, false, luaflag::all_active) == op::warp, "warp ignores transform_warp, keeps WARP");
+        Check(ops2(3, PartnerApply::slot, false, true) == (op::set_all_active | op::copy_parts), "slot never warps");
+        Check(ops2(0, PartnerApply::xform, false, true) == 0, "stage 0: nothing");
+        Check(OpsFor(OpInput{3, PartnerApply::xform, false, 0, false, false, false, false, false, true}) == (op::set_all_active | op::copy_parts),
+              "no pose: no WARP even when due");
+        Check(WritesSlot(1, PartnerApply::xform, true) && WritesSlot(3, PartnerApply::hybrid, true) && !WritesSlot(3, PartnerApply::hybrid, false),
+              "xform/hybrid write the slot like Warp");
+        Check(PartnerApplyIsTransform(PartnerApply::xform) && PartnerApplyIsTransform(PartnerApply::hybrid) &&
+              !PartnerApplyIsTransform(PartnerApply::both), "transform drivers");
+    }
+
+    // --- Facing quaternion (0x9C5F80 build, 0x1F0300 read back).
+    {
+        float q[4]{};
+        YawToQuat(0.0f, q);
+        Check(q[0] == 0.0f && q[1] == 0.0f && q[2] == 0.0f && q[3] == 1.0f, "yaw 0 is identity");
+        YawToQuat(1.5707963f, q);
+        Check(std::fabs(q[1] - 0.7071068f) < 1e-6f && std::fabs(q[3] - 0.7071068f) < 1e-6f && q[0] == 0.0f && q[2] == 0.0f,
+              "yaw 90 deg: (0, sin 45, 0, cos 45)");
+        for (float yaw : {0.0f, 0.5f, -1.0f, 2.5f, -3.0f, 3.14159f}) {
+            YawToQuat(yaw, q);
+            Check(std::fabs(QuatToYaw(q) - yaw) < 1e-5f, "yaw round trip");
+        }
+        YawToQuat(NAN, q);
+        Check(q[3] == 1.0f && QuatToYaw(q) == 0.0f, "non-finite yaw: identity");
+        const float bad_quat[4] = {NAN, 0, 0, 1};
+        Check(QuatToYaw(bad_quat) == 0.0f, "non-finite quaternion reads 0");
+    }
+
+    // --- Stance debounce (apply on change after a hold).
+    {
+        StanceDebounce d{};
+        Check(DebounceStance(d, 1, 1000, 150) == 0, "first value held");
+        Check(DebounceStance(d, 1, 1100, 150) == 0 && DebounceStance(d, 1, 1150, 150) == 1 && d.applied == 1, "applied after 150 ms");
+        Check(DebounceStance(d, 1, 1200, 150) == 0, "unchanged: nothing");
+        Check(DebounceStance(d, 2, 1300, 150) == 0 && DebounceStance(d, 1, 1350, 150) == 0 && DebounceStance(d, 2, 1400, 150) == 0,
+              "a flicker restarts the hold");
+        Check(DebounceStance(d, 2, 1549, 150) == 0 && DebounceStance(d, 2, 1550, 150) == 2, "applied once held");
+        Check(DebounceStance(d, 0, 1600, 150) == 0 && DebounceStance(d, 4, 1700, 150) == 0 && d.applied == 2, "0 and 4 never applied");
+        Check(DebounceStance(d, 3, 1800, 0) == 3, "hold 0 applies at once");
+    }
+
+    std::printf("%u partner receipt checks passed: classify, strict ticks, replies (with look values), log payloads, triggers "
+                "(extended grammar), stage/driver policy, look normalization, facing quaternion, stance debounce, poses; no game calls\n",
                 checks);
     return 0;
 }

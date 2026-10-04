@@ -28,17 +28,21 @@
     "masterPort": 47899,
     "marker": "offline-v1",
     "characters": {
-      "comment": "coop.ini characters for the offline partner spike only (spike plan 2.5 and 4: default on both); the fuse lab keeps the top-level characters.",
+      "comment": "coop.ini characters for the offline lab (test condition, docs/partner-anim-appearance.md): the guest plays Quiet, the host keeps its own character; the fuse lab keeps the top-level characters.",
       "host": "default",
-      "guest": "default"
+      "guest": "quiet"
     }
   },
   "partner": {
-    "comment": "Offline partner spike lab.ini defaults (docs/offline-partner-spike-plan.md 2.1); Prepare-LabInstance -PartnerSetting overrides them per run.",
+    "comment": "Offline partner lab.ini defaults (docs/offline-partner-spike-plan.md 2.1, docs/partner-anim-appearance.md); Prepare-LabInstance -PartnerSetting overrides them per run (Play-OfflineCoop.ps1 uses hybrid/net/qs/net).",
     "partner": 1,
     "stage": 0,
     "source": "fixed",
     "apply": "warp",
+    "anim": "off",
+    "aset": "qs",
+    "reset": "n",
+    "look": "copy",
     "rate_hz": 30,
     "interp_ms": 100,
     "offset_cm": 300,

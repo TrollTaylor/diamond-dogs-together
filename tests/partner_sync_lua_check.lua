@@ -57,7 +57,7 @@ local function fixture(options)
         if starts(source, TICK) then
             c.ticks[#c.ticks + 1] = source:sub(#TICK + 1)
             return function()
-                if c.reply then return unpack(c.reply, 1, 8) end
+                if c.reply then return unpack(c.reply, 1, 13) end
                 return 'MGS_COOP_PARTNER_V1'
             end
         end
@@ -225,9 +225,25 @@ check(c.calls[#c.calls] == 'allactive:false' and hasLog(c, 'event=allactive_clea
 update(env)
 check(c.calls[#c.calls] == 'allactive:false' and count(c.calls, 'allactive:false') == 2, 'CLEAR only while all-active')
 check(fields(lastTick(c))[9] == '2', 'luaflags after clear')
-c.reply = {16, 1, 0, 0, 0, 0, 1, 0}
-update(env, 2)
-check(count(c.calls, 'parts:1:0:1:2:3:4') == 2 and hasLog(c, 'event=parts_set_explicit'), 'SET_PARTS_EXPLICIT from vars each time')
+-- SET_PARTS (op 16): the 5 look values come from the native reply, never from vars.
+c.reply = {16, 1, 0, 0, 0, 0, 1, 0, 6, 27, 116, 0, 0}
+mark = #c.calls
+update(env)
+check(c.calls[mark + 1] == 'parts:1:6:27:116:0:0' and hasLog(c, 'event=parts_set;R=1;type=6;parts=27;camo=116;hand=0;face=0'),
+    'SET_PARTS with the reply values (all 6 keys)')
+check(fields(lastTick(c))[9] == '2', 'SET_PARTS reports parts copied (luaflags bit 1)')
+c.reply = {16, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 65535}
+update(env)
+check(c.calls[#c.calls] == 'parts:1:0:1:0:1:65535', 'Snake look with the largest face id')
+for _, bad in ipairs({{4, 0, 0, 0, 0}, {7, 0, 0, 0, 0}, {0, 28, 0, 0, 0}, {0, 1, 117, 0, 0}, {0, 1, 0, 8, 0}, {0, 1, 0, 1, 65536},
+                      {0, 1.5, 0, 1, 0}, {-1, 1, 0, 1, 0}, {0, 1, 0, 1}, {'6', 27, 116, 0, 0}}) do
+    mark = #c.calls
+    local notes = count(c.logs, 'event=parts_set_refused;reason=bad_look')
+    c.reply = {16, 1, 0, 0, 0, 0, 1, 0, bad[1], bad[2], bad[3], bad[4], bad[5]}
+    update(env)
+    check(#c.calls == mark and count(c.logs, 'event=parts_set_refused;reason=bad_look') == notes + 1,
+        'bad look refused, nothing called: ' .. table.concat({tostring(bad[1]), tostring(bad[2]), tostring(bad[3]), tostring(bad[4]), tostring(bad[5])}, ','))
+end
 c.reply = {32, 1, 0, 0, 0, 0, 1, 0}
 update(env)
 check(c.calls[#c.calls] == 'mirror:true' and hasLog(c, 'event=mirror_on'), 'MIRROR_ON')

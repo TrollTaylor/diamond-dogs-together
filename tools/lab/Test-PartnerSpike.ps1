@@ -40,7 +40,7 @@ pwsh -File tools/lab/Test-PartnerSpike.ps1 -Experiment E6 -RunDir build/lab/runs
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E8')][string]$Experiment,
+    [Parameter(Mandatory)][ValidateSet('E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E8', 'A0', 'A1', 'A3', 'M1', 'N1', 'B1', 'B4', 'C1')][string]$Experiment,
     [ValidateSet('host', 'guest', 'both')][string]$Role,
     [string]$RunDir,
     [string]$ConfigPath = (Join-Path $PSScriptRoot 'lab.json'),

@@ -14,7 +14,7 @@ download anything.
 
 | Script | What it does |
 |---|---|
-| `lab.json` | Paths, hashes, ports (fuse 6667, loopback 47810/47811, partner net `netHost`/`netGuest` 47820/47821), the offline mode (`offline.masterPort` 47899, `offline.marker` `offline-v1`), the partner spike `lab.ini` defaults (`partner`), the guest's fake SteamID, characters (fuse lab: host `default`, guest `quiet`; `offline.characters`: `default` for both during the spike), XInput routing, window layout and timeouts. Relative paths resolve against the repository root. |
+| `lab.json` | Paths, hashes, ports (fuse 6667, loopback 47810/47811, partner net `netHost`/`netGuest` 47820/47821), the offline mode (`offline.masterPort` 47899, `offline.marker` `offline-v1`), the partner spike `lab.ini` defaults (`partner`), the guest's fake SteamID, characters (fuse lab: host `default`, guest `quiet`; `offline.characters`: host `default`, guest `quiet`, the test condition of docs/partner-anim-appearance.md), XInput routing, window layout and timeouts. Relative paths resolve against the repository root. |
 | `Build-Fuse.ps1` | Builds `work/fuse/fuse.exe` offline (`GOPROXY=off`, `-mod=readonly`) if it is missing. Never clones; if the source is missing it tells you. |
 | `Prepare-LabInstance.ps1` | Idempotent setup of both folders: hashes, owned loader install (with rollback), role markers, `lab.ini`, `coop.ini`, real-save backup and lab save copies, and windowed graphics for the lab copies. `-WhatIf` shows every change. `-Disable` switches the lab off, restores your own files and resets `offline-v1` markers to `host-v3` / `client-v1`. `-Offline` prepares the offline lab mode instead (below); `-PartnerSetting` overrides partner `lab.ini` keys. |
 | `Start-Lab.ps1` | Preflight, then fuse (always `-standalone`), then the host and the guest, **each behind a safety gate** (below). Stops everything it started if a gate fails. Places the windows and writes `build/lab/runs/<ts>/run.json`. `-HostOnly` is milestone M0. `-LayoutOnly` re-applies window positions. `-Offline`: no fuse; requires a closed master port and free partner UDP ports (below). |
@@ -22,8 +22,8 @@ download anything.
 | `Get-LabScreens.ps1` | Saves a PNG of each game window into the run folder. |
 | `Send-LabInput.ps1` | Focuses one game window and sends scan-code keys: `enter`, `ctrl+f8`, held keys `w:4000`, chords `w+a:6000`; `shift`, `f10`, `f11` included. Pressed keys are always released (finally block), even on Ctrl+C. `-HoldMs 0` still taps. `-Shot` captures the window afterwards. Best effort (focus). |
 | `Stop-Lab.ps1` | Closes **this run's** games (WM_CLOSE, then terminate after a timeout) and fuse, leaves any other MGSV process alone, deletes unconsumed `partner.trigger` files, records the log end offsets in `stop.json`, then checks the real save hashes. |
-| `Set-PartnerTrigger.ps1` | Offline mode: validates a partner command (`stage=0..3 source=fixed\|orbit\|net apply=warp\|slot\|both` and the one-shots `parts=explicit` / `mirror=on`, or `stop`) and writes it atomically to an instance's `mgs-coop/partner.trigger`. `-Role both`, `-Force`; `-WaitSec` confirms the native result in `script-observer.log` (exit 0 applied, 2 not consumed, 3 rejected or different, 4 unconfirmed). |
-| `Test-PartnerSpike.ps1` | Offline mode: PASS / FAIL / INCOMPLETE JSON verdict for experiment E0..E8 of the spike plan from this run's logs. Exit code 0 / 1 / 2. |
+| `Set-PartnerTrigger.ps1` | Offline mode: validates a partner command (`stage=0..3 source=fixed\|orbit\|net apply\|move=warp\|slot\|both\|xform\|hybrid anim=off\|mirror\|net aset=q\|s\|qs\|r reset=n\|a\|c\|ac look=copy\|net\|quiet\|snake probe=ps\|off` and the one-shots `census=1` / `parts=explicit` / `mirror=on`, or `stop`; at most 127 bytes) and writes it atomically to an instance's `mgs-coop/partner.trigger`. `-Role both`, `-Force`; `-WaitSec` confirms the native result in `script-observer.log` (exit 0 applied, 2 not consumed, 3 rejected or different, 4 unconfirmed). |
+| `Test-PartnerSpike.ps1` | Offline mode: PASS / FAIL / INCOMPLETE JSON verdict for experiment E0..E8 of the spike plan, or A0/A1/A3/M1/N1/B1/B4/C1 of docs/partner-anim-appearance.md, from this run's logs. Exit code 0 / 1 / 2. |
 | `Invoke-PartnerExperiment.ps1` | Offline mode: runs one experiment's triggers, key input and screenshots, then polls `Test-PartnerSpike.ps1` until PASS or FAIL. |
 | `LabCommon.psm1` | Shared helpers. The pure ones are covered by `tests/lab_scripts_tests.ps1` (CTest `lab_scripts_tests`). |
 | `PartnerSpike.psm1` | Pure partner helpers: trigger grammar, log line parsing, the experiment rules. Covered by the same tests. |
@@ -254,7 +254,8 @@ with no fuse and no session.
   server) and a `lab.ini` with the base lab keys plus the partner keys:
   `net=1`, `net_listen_port`/`net_peer_port` (host 47820/47821, guest
   47821/47820), `partner=1`, `partner_stage`, `partner_source`,
-  `partner_apply`, `partner_rate_hz`, `partner_interp_ms`, `partner_offset_cm`,
+  `partner_apply`, `partner_anim`, `partner_aset`, `partner_reset`, `partner_look`,
+  `partner_rate_hz`, `partner_interp_ms`, `partner_offset_cm`,
   `partner_teardown`, `partner_force_exists`, `partner_policy_relax`,
   `partner_anim_probe`, `crash_probe` (values from `lab.json` `"partner"`).
   `-PartnerSetting key=value,host:key=value,guest:key=value` overrides keys

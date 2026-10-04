@@ -2,7 +2,10 @@
 # Pure functions only (no file, process or window access):
 #  - the runtime trigger grammar of <game>/mgs-coop/partner.trigger (2.1);
 #  - robust parsing of the native script-observer.log partner lines (2.7);
-#  - the experiment PASS/FAIL rules of section 3 (E0, E1, E2, E3, E4, E5, E6, E8).
+#  - the experiment PASS/FAIL rules of section 3 (E0, E1, E2, E3, E4, E5, E6, E8)
+#    and of the animation / appearance experiments (docs/partner-anim-appearance.md:
+#    A0 census, A1 anim arrays, A3 SetStance, M1 xform, N1 network anim, B1 local
+#    Quiet look, B4 network looks, C1 guest plays Quiet).
 # Used by Set-PartnerTrigger.ps1, Test-PartnerSpike.ps1 and
 # Invoke-PartnerExperiment.ps1; unit tested by tests/lab_scripts_tests.ps1.
 # A verdict is PASS (every log criterion met), FAIL (a criterion is shown NOT
@@ -12,29 +15,31 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$script:PartnerTriggerMaxBytes = 63   # native reads at most 63 bytes (2.1)
+$script:PartnerTriggerMaxBytes = 127  # native reads at most 127 bytes (partner_receipt.hpp max_trigger)
 $script:PartnerMaxEvidence = 60
-$script:PartnerExperiments = @('E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E8')
+$script:PartnerExperiments = @('E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E8', 'A0', 'A1', 'A3', 'M1', 'N1', 'B1', 'B4', 'C1')
 
 # ---------------------------------------------------------------------------
 # Trigger grammar (2.1)
 # ---------------------------------------------------------------------------
 
 $script:PartnerTriggerKeys = [ordered]@{
-    # key -> allowed values, in canonical order. parts=explicit (one-shot op 16,
-    # SetPartsInfoAtInstanceIndex: variant F3b) and mirror=on (one-shot op 32,
-    # mirror diagnostic: F3c) are the native parser's one-shots
-    # (native/partner_receipt.cpp ParseTrigger); they act only at stage >= 1.
-    stage = @('0', '1', '2', '3'); source = @('fixed', 'orbit', 'net'); apply = @('warp', 'slot', 'both')
-    parts = @('explicit'); mirror = @('on')
+    # key -> allowed values, in canonical order. move= is accepted as the same
+    # key as apply= (written back as apply=). census=1 (component census),
+    # parts=explicit (one-shot op 16: re-apply the look; with look=copy the local
+    # look, variant F3b) and mirror=on (one-shot op 32, mirror diagnostic: F3c;
+    # refused natively unless look=copy) are the native parser's one-shots
+    # (native/partner_receipt.cpp ParseTrigger); parts/mirror act only at stage >= 1.
+    stage = @('0', '1', '2', '3'); source = @('fixed', 'orbit', 'net'); apply = @('warp', 'slot', 'both', 'xform', 'hybrid')
+    anim = @('off', 'mirror', 'net'); aset = @('q', 's', 'qs', 'r'); reset = @('n', 'a', 'c', 'ac'); look = @('copy', 'net', 'quiet', 'snake')
+    probe = @('ps', 'off'); census = @('1'); parts = @('explicit'); mirror = @('on')
 }
-$script:PartnerTriggerUsage = 'stage=0..3 source=fixed|orbit|net apply=warp|slot|both parts=explicit mirror=on, or stop alone'
+$script:PartnerTriggerUsage = 'stage=0..3 source=fixed|orbit|net apply|move=warp|slot|both|xform|hybrid anim=off|mirror|net aset=q|s|qs|r reset=n|a|c|ac look=copy|net|quiet|snake probe=ps|off census=1 parts=explicit mirror=on, or stop alone'
 
 function ConvertTo-PartnerTriggerText {
-    # Canonical trigger line (without the newline): 'stop', or any of
-    # stage=0..3 source=fixed|orbit|net apply=warp|slot|both and the one-shots
-    # parts=explicit mirror=on, each at most once, in any order, separated by
-    # blanks (written back as stage, source, apply, parts, mirror). Lower case and
+    # Canonical trigger line (without the newline): 'stop', or any of the keys
+    # of $script:PartnerTriggerKeys (move= is apply=), each at most once, in any
+    # order, separated by blanks (written back in key order). Lower case and
     # case sensitive, like the native byte-wise parser. Throws with the reason
     # for anything else.
     param([AllowNull()][AllowEmptyString()][string]$Text)
@@ -45,19 +50,20 @@ function ConvertTo-PartnerTriggerText {
     $values = [ordered]@{}
     foreach ($token in ($trimmed -split '[ \t]+')) {
         if ($token -ceq 'stop') { throw "'stop' must be the only token of a partner trigger." }
-        if ($token -cnotmatch '^(stage|source|apply|parts|mirror)=(.*)$') {
+        if ($token -cnotmatch '^(stage|source|apply|move|anim|aset|reset|look|probe|census|parts|mirror)=(.*)$') {
             throw "Unknown partner trigger token '$token' ($script:PartnerTriggerUsage)."
         }
         $key = $Matches[1]
+        if ($key -ceq 'move') { $key = 'apply' }
         $value = $Matches[2]
-        if ($values.Contains($key)) { throw "Duplicate partner trigger key '$key'." }
+        if ($values.Contains($key)) { throw "Duplicate partner trigger key '$key' (move= and apply= are one key)." }
         if ($value -cnotin $script:PartnerTriggerKeys[$key]) {
             throw "Invalid partner trigger value '$token' (allowed: $key=$($script:PartnerTriggerKeys[$key] -join '|'))."
         }
         $values[$key] = $value
     }
     $canonical = (@($script:PartnerTriggerKeys.Keys) | Where-Object { $values.Contains($_) } | ForEach-Object { $_ + '=' + $values[$_] }) -join ' '
-    if ($canonical.Length + 1 -gt $script:PartnerTriggerMaxBytes) { throw 'Partner trigger text is longer than 63 bytes.' }
+    if ($canonical.Length + 1 -gt $script:PartnerTriggerMaxBytes) { throw "Partner trigger text is longer than $script:PartnerTriggerMaxBytes bytes." }
     return $canonical
 }
 
@@ -68,15 +74,16 @@ function Test-PartnerTriggerText {
 
 function Get-PartnerTriggerExpectation {
     # What the native 'partner_stage=changed; stage=..; source=..; apply=..;
-    # via=trigger' line must show after a canonical trigger: 'stop' -> stage 0;
-    # keys the trigger does not name keep their previous values (not checked).
-    # The one-shots parts/mirror are not part of that line.
+    # anim=..; aset=..; reset=..; look=..; probe=..; via=trigger' line must show
+    # after a canonical trigger: 'stop' -> stage 0; keys the trigger does not
+    # name keep their previous values (not checked). The one-shots
+    # census/parts/mirror are not part of that line.
     param([Parameter(Mandatory)][string]$Canonical)
     $expect = [ordered]@{}
     if ($Canonical -ceq 'stop') { $expect['stage'] = '0'; return $expect }
     foreach ($token in ($Canonical -split ' ')) {
         $pair = $token.Split('=', 2)
-        if ($pair[0] -cin @('stage', 'source', 'apply')) { $expect[$pair[0]] = $pair[1] }
+        if ($pair[0] -cin @('stage', 'source', 'apply', 'anim', 'aset', 'reset', 'look', 'probe')) { $expect[$pair[0]] = $pair[1] }
     }
     return $expect
 }
@@ -339,6 +346,8 @@ function Get-PartnerTimeline {
     #   partner_stop (mission STOP receipt) / partner_cfg=ready (re-entry)
     param([object[]]$Entries = @())
     $stage = $null; $source = $null; $apply = $null; $stopped = $false
+    # Animation / appearance settings (older logs without them: off/qs/n/copy).
+    $anim = 'off'; $aset = 'qs'; $reset = 'n'; $look = 'copy'
     $rows = [Collections.Generic.List[object]]::new()
     foreach ($e in $Entries) {
         $changed = $false
@@ -347,6 +356,10 @@ function Get-PartnerTimeline {
             if ($null -ne $s) { $stage = $s }
             $v = Get-PartnerField $e 'source'; if ($v) { $source = $v }
             $v = Get-PartnerField $e 'apply'; if ($v) { $apply = $v }
+            $v = Get-PartnerField $e 'anim'; if ($v) { $anim = $v }
+            $v = Get-PartnerField $e 'aset'; if ($v) { $aset = $v }
+            $v = Get-PartnerField $e 'reset'; if ($v) { $reset = $v }
+            $v = Get-PartnerField $e 'look'; if ($v) { $look = $v }
             $stopped = $false
             $changed = $true
         } elseif ($e.Kind -ceq 'partner_bits=cleared' -and (Get-PartnerField $e 'reason') -ceq 'trigger' -and $null -ne $stage -and $stage -ge 3) {
@@ -356,7 +369,10 @@ function Get-PartnerTimeline {
         } elseif ($e.Kind -ceq 'partner_cfg=ready' -and $stopped) {
             $stopped = $false; $changed = $true
         }
-        if ($changed) { $rows.Add([pscustomobject]@{ Index = $e.Index; Stage = $stage; Source = $source; Apply = $apply; Stopped = $stopped; Line = $e.Line }) }
+        if ($changed) {
+            $rows.Add([pscustomobject]@{ Index = $e.Index; Stage = $stage; Source = $source; Apply = $apply; Anim = $anim; Aset = $aset
+                    Reset = $reset; Look = $look; Stopped = $stopped; Line = $e.Line })
+        }
     }
     return , $rows.ToArray()
 }
@@ -1030,12 +1046,248 @@ function Invoke-PartnerE8 {
     Add-PartnerItem $Check.Notes 'manual: the model is gone from the screenshot after the stop; on a crash at stop rerun with partner_teardown=keep'
 }
 
+# ---------------------------------------------------------------------------
+# Animation / appearance experiments (docs/partner-anim-appearance.md)
+# ---------------------------------------------------------------------------
+
+function Add-PartnerFaultChecks {
+    # partner_call=fault: a native call raised inside SEH (calls are disabled for
+    # the rest of the mission).
+    param($Check, $Context, [int]$From = 0, [int]$To = [int]::MaxValue)
+    foreach ($e in (Select-PartnerEntry -Context $Context -Kind 'partner_call=fault' -From $From -To $To)) {
+        Add-PartnerMatch $Check $e.Line
+        Add-PartnerItem $Check.Failed ('partner_call=fault; fn=' + [string](Get-PartnerField $e 'fn') + ': a native call raised (native calls disabled for the mission; collect the crash_probe RVAs)')
+    }
+}
+
+function Get-PartnerAnimSegment {
+    # Shared prologue: the segment for $Predicate, partner_cfg=ready, common and fault checks.
+    param($Check, $Context, $Alive, [scriptblock]$Predicate, [string]$How)
+    $segment = Get-PartnerSegmentOrMissing $Check $Context $Predicate $How
+    Add-PartnerCfgReady $Check $Context $(if ($segment) { $segment.End } else { [int]::MaxValue })
+    if (!$segment) { Add-PartnerCommonChecks $Check $Context -Alive $Alive; return $null }
+    Add-PartnerCommonChecks $Check $Context -From $segment.Start -To $segment.End -Alive $Alive
+    Add-PartnerFaultChecks $Check $Context -From $segment.Start -To $segment.End
+    return $segment
+}
+
+function Invoke-PartnerA0 {
+    # A0: component census of both blocks (pure reads; no game call).
+    param($Check, $Context, $Alive)
+    Add-PartnerCfgReady $Check $Context ([int]::MaxValue)
+    Add-PartnerCommonChecks $Check $Context -Alive $Alive
+    $lines = @(Select-PartnerEntry -Context $Context -Prefix 'partner_census')
+    foreach ($e in @($lines | Where-Object { $_.Kind -ceq 'partner_census=refused' })) {
+        Add-PartnerMatch $Check $e.Line
+        Add-PartnerItem $Check.Failed ('partner_census=refused; reason=' + [string](Get-PartnerField $e 'reason'))
+    }
+    foreach ($k in 0, 1) {
+        $mine = @($lines | Where-Object { $_.Kind -ceq 'partner_census' -and (Get-PartnerField $_ 'k') -ceq [string]$k })
+        if (!$mine.Count) { Add-PartnerItem $Check.Missing "partner_census; k=$k (after partner_parts=loaded: Set-PartnerTrigger.ps1 -Role $($Check.Role) -Text 'stage=3 census=1')"; continue }
+        $last = $mine[-1]
+        Add-PartnerMatch $Check $last.Line
+        $verdict = [string](Get-PartnerField $last 'verdict')
+        if ($verdict -ceq 'unrealized' -or $verdict -ceq 'parts') { Add-PartnerItem $Check.Missing "partner_census with instance 1 realized and loaded (k=$k verdict=$verdict)" }
+        elseif ($verdict -cne 'ok') { Add-PartnerItem $Check.Failed "partner_census k=$k verdict=$verdict (an identity check failed: no native call will be made)" }
+        foreach ($f in 't_vt', 't68', 't70', 'a0_vt', 'a080', 'c0_vt', 'c090', 'psw') { $Check.Data["k${k}_$f"] = Get-PartnerField $last $f }
+        if ($k -eq 1 -and $verdict -ceq 'ok') {
+            foreach ($same in 'same_t', 'same_a0', 'same_c0') {
+                if ((Get-PartnerField $last $same) -cne '1') { Add-PartnerItem $Check.Notes "$same=0: instance 1 differs from the local instance (calls needing it are refused)" }
+            }
+        }
+    }
+    Add-PartnerItem $Check.Notes 'review: pin t_vt/t68/t70 (and a0/c0) in tools/generate_partner_contract.py after re-verifying those RVAs statically'
+}
+
+function Invoke-PartnerA1 {
+    # A1: anim=mirror aset=q writes the slot-1 arrays (expected: PlayerInfo flags only, no visible pose change).
+    param($Check, $Context, $Alive)
+    $segment = Get-PartnerAnimSegment $Check $Context $Alive { param($s) $s.Stage -eq 3 -and $s.Anim -ceq 'mirror' -and $s.Aset -cin @('q', 'qs') } `
+        "stage=3 anim=mirror aset=q (Set-PartnerTrigger.ps1 -Role $($Check.Role) -Text 'stage=3 source=fixed apply=warp anim=mirror aset=q')"
+    if (!$segment) { return }
+    $aset = @(Select-PartnerEntry -Context $Context -Kind 'partner_aset=q' -From $segment.Start -To $segment.End)
+    $refused = @($aset | Where-Object { (Get-PartnerField $_ 'state') -ceq 'refused' })
+    $applied = @($aset | Where-Object { (Get-PartnerField $_ 'state') -ceq 'applied' })
+    foreach ($e in $refused) { Add-PartnerMatch $Check $e.Line; Add-PartnerItem $Check.Failed ('partner_aset=q refused: reason=' + [string](Get-PartnerField $e 'reason')) }
+    if ($applied.Count) { Add-PartnerMatch $Check $applied[0].Line } elseif (!$refused.Count) { Add-PartnerItem $Check.Missing 'partner_aset=q; state=applied (needs partner_parts=loaded)' }
+    $anim = @(Select-PartnerEntry -Context $Context -Kind 'partner_anim' -From $segment.Start -To $segment.End)
+    if (!$anim.Count) { Add-PartnerItem $Check.Missing 'partner_anim lines (lab.ini partner_anim_probe=1)'; return }
+    $same = 0; $stances = @{}
+    foreach ($e in $anim) {
+        $act = Get-PartnerFieldList $e 'act' -Hex -Count 2
+        $s = Get-PartnerFieldList $e 's' -Count 2
+        $v = Get-PartnerFieldList $e 'v' -Count 2
+        if ($null -eq $act -or $null -eq $s -or $null -eq $v) { continue }
+        $stances[[string]$s[0]] = $true
+        if ($act[0] -eq $act[1] -and $s[0] -eq $s[1] -and $v[0] -eq $v[1]) { $same++ }
+    }
+    $Check.Data['anim_lines'] = $anim.Count
+    $Check.Data['slot1_equals_slot0'] = $same
+    $Check.Data['stances_seen'] = (@($stances.Keys) | Sort-Object) -join ','
+    if ($stances.Count -lt 2) { Add-PartnerItem $Check.Missing 'the host changes stance while A1 runs (stand, crouch, prone: partner_anim s= changes)' }
+    if (!$same) { Add-PartnerItem $Check.Missing 'a partner_anim line with slot 1 equal to slot 0 (act, s and v)' } else { Add-PartnerMatch $Check $anim[-1].Line }
+    Add-PartnerItem $Check.Notes 'manual: expected NO visible change of the partner pose (the arrays feed PlayerInfo); report any visible change'
+}
+
+function Invoke-PartnerA3 {
+    # A3: SetStance (PS.vt+0 = 0xFF5B10) on stance changes.
+    param($Check, $Context, $Alive)
+    $segment = Get-PartnerAnimSegment $Check $Context $Alive { param($s) $s.Stage -eq 3 -and $s.Anim -cne 'off' -and $s.Aset -cin @('s', 'qs') } `
+        "stage=3 anim=mirror aset=qs (Set-PartnerTrigger.ps1 -Role $($Check.Role) -Text 'stage=3 source=fixed apply=warp anim=mirror aset=qs')"
+    if (!$segment) { return }
+    $set = @(Select-PartnerEntry -Context $Context -Kind 'partner_stance=set' -From $segment.Start -To $segment.End)
+    foreach ($e in (Select-PartnerEntry -Context $Context -Kind 'partner_stance=refused' -From $segment.Start -To $segment.End | Select-Object -First 3)) {
+        Add-PartnerMatch $Check $e.Line
+        Add-PartnerItem $Check.Failed ('partner_stance=refused: reason=' + [string](Get-PartnerField $e 'reason'))
+    }
+    $targets = @($set | ForEach-Object { Get-PartnerField $_ 'to' } | Sort-Object -Unique)
+    $Check.Data['stance_sets'] = $set.Count
+    $Check.Data['stance_targets'] = $targets -join ','
+    $reverted = @(Select-PartnerEntry -Context $Context -Kind 'partner_stance=reverted' -From $segment.Start -To $segment.End)
+    $Check.Data['stance_reverted'] = $reverted.Count
+    if ($reverted.Count) { Add-PartnerMatch $Check $reverted[0].Line; Add-PartnerItem $Check.Notes "$($reverted.Count) partner_stance=reverted: the action plugin overrides the stance word (try aset=r)" }
+    if ($set.Count -ge 2 -and $targets.Count -ge 2) { foreach ($e in @($set | Select-Object -First 2)) { Add-PartnerMatch $Check $e.Line } }
+    else { Add-PartnerItem $Check.Missing "2 partner_stance=set lines with different targets (have $($set.Count); the host toggles stance every 3 s)" }
+    Add-PartnerItem $Check.Notes 'manual: the partner switches to the crouch / prone idle within 0.5 s of each set'
+}
+
+function Invoke-PartnerM1 {
+    # M1: native body transform (apply=xform or hybrid) without Warp's resets.
+    param($Check, $Context, $Alive)
+    $segment = Get-PartnerAnimSegment $Check $Context $Alive { param($s) $s.Stage -eq 3 -and $s.Apply -cin @('xform', 'hybrid') } `
+        "stage=3 apply=xform (Set-PartnerTrigger.ps1 -Role $($Check.Role) -Text 'stage=3 source=orbit apply=xform reset=n')"
+    if (!$segment) { return }
+    $states = @(Select-PartnerEntry -Context $Context -Prefix 'partner_xform' -From $segment.Start -To $segment.End | Where-Object { $_.Kind -cin @('partner_xform=applied', 'partner_xform=refused') })
+    $applied = @($states | Where-Object { $_.Kind -ceq 'partner_xform=applied' })
+    $bad = @($states | Where-Object { $_.Kind -ceq 'partner_xform=refused' -and (Get-PartnerField $_ 'reason') -cnotin @('unrealized', 'parts', 'fault', 'native_disabled') })
+    foreach ($e in @($bad | Select-Object -First 2)) { Add-PartnerMatch $Check $e.Line; Add-PartnerItem $Check.Failed ('partner_xform=refused; reason=' + [string](Get-PartnerField $e 'reason') + ' (census identity: run A0)') }
+    if ($applied.Count) { Add-PartnerMatch $Check $applied[0].Line } elseif (!$bad.Count) { Add-PartnerItem $Check.Missing 'partner_xform=applied (needs partner_parts=loaded)' }
+    $rows = @(Select-PartnerEntry -Context $Context -Kind 'partner_xform' -From $segment.Start -To $segment.End)
+    $errs = @($rows | ForEach-Object { Get-PartnerFieldNumber $_ 'err_mm' } | Where-Object { $null -ne $_ })
+    $yaws = @($rows | ForEach-Object { Get-PartnerFieldNumber $_ 'yaw_err_mrad' } | Where-Object { $null -ne $_ })
+    $Check.Data['xform_checks'] = $rows.Count
+    $Check.Data['err_mm_max'] = $(if ($errs.Count) { [Int64]($errs | Measure-Object -Maximum).Maximum } else { $null })
+    $Check.Data['yaw_err_mrad_max'] = $(if ($yaws.Count) { [Int64]($yaws | Measure-Object -Maximum).Maximum } else { $null })
+    if ($rows.Count -lt 4) { Add-PartnerItem $Check.Missing "4 partner_xform readback lines (have $($rows.Count))" }
+    else {
+        $far = @($rows | Where-Object { $e = Get-PartnerFieldNumber $_ 'err_mm'; $null -ne $e -and $e -gt $script:PartnerXformFarMm })
+        if ($far.Count) { Add-PartnerMatch $Check $far[0].Line; Add-PartnerItem $Check.Failed ("partner_xform err_mm>$script:PartnerXformFarMm (the body does not follow the transform): " + $far[0].Line) }
+        else { Add-PartnerMatch $Check $rows[-1].Line }
+        if ($null -ne $Check.Data['err_mm_max'] -and $Check.Data['err_mm_max'] -gt 50) { Add-PartnerItem $Check.Notes "err_mm up to $($Check.Data['err_mm_max']) (> 50 expected by the research: snap-back? try reset=c/a/ac)" }
+        if ($null -ne $Check.Data['yaw_err_mrad_max'] -and $Check.Data['yaw_err_mrad_max'] -gt 50) { Add-PartnerItem $Check.Notes "yaw_err_mrad up to $($Check.Data['yaw_err_mrad_max'])" }
+    }
+    $hybrid = @(Select-PartnerEntry -Context $Context -Kind 'partner_hybrid=warp' -From $segment.Start -To $segment.End)
+    $Check.Data['hybrid_warps'] = $hybrid.Count
+    Add-PartnerItem $Check.Notes 'manual (KEY): do the legs cycle while orbiting, or does the body glide in one pose? Take 3 screenshots 0.3 s apart'
+}
+
+function Invoke-PartnerN1 {
+    # N1: the partner's animation fields over the network (anim=net).
+    param($Check, $Context, $Alive)
+    $segment = Get-PartnerAnimSegment $Check $Context $Alive { param($s) $s.Stage -eq 3 -and $s.Source -ceq 'net' -and $s.Anim -ceq 'net' } `
+        "stage=3 source=net anim=net (Set-PartnerTrigger.ps1 -Role both -Text 'stage=3 source=net apply=hybrid anim=net aset=qs')"
+    if (!$segment) { return }
+    $sources = @(Select-PartnerEntry -Context $Context -Kind 'partner_anim=source' -From $segment.Start -To $segment.End)
+    $valid = @($sources | Where-Object { (Get-PartnerField $_ 'valid') -ceq '1' })
+    if ($valid.Count) { Add-PartnerMatch $Check $valid[0].Line }
+    elseif ($sources.Count) { Add-PartnerMatch $Check $sources[-1].Line; Add-PartnerItem $Check.Missing 'received frames with the anim extension (valid=1): is the peer on this build, with its parts loaded?' }
+    else { Add-PartnerItem $Check.Missing 'partner_anim=source; anim=net' }
+    $applied = @(Select-PartnerEntry -Context $Context -Kind 'partner_stance=set' -From $segment.Start -To $segment.End) +
+        @(Select-PartnerEntry -Context $Context -Kind 'partner_aset=q' -From $segment.Start -To $segment.End | Where-Object { (Get-PartnerField $_ 'state') -ceq 'applied' })
+    if ($applied.Count) { Add-PartnerMatch $Check $applied[0].Line } else { Add-PartnerItem $Check.Missing 'partner_stance=set or partner_aset=q; state=applied from the received anim' }
+    Add-PartnerItem $Check.Notes 'manual: the partner shows the other player''s stance and facing on both PCs; record whether locomotion animates'
+}
+
+function Get-PartnerLookChecks {
+    # Shared by B1/B4: apply, Lua SetPartsInfo, loaded; timeout/refusals fail.
+    param($Check, $Context, $Segment, [string]$Source, [string]$Type)
+    $applies = @(Select-PartnerEntry -Context $Context -Kind 'partner_look=apply' -From $Segment.Start -To $Segment.End | Where-Object { (Get-PartnerField $_ 'source') -ceq $Source })
+    if ($Type) { $applies = @($applies | Where-Object { (Get-PartnerField $_ 'type') -ceq $Type }) }
+    if ($applies.Count) { Add-PartnerMatch $Check $applies[0].Line } else { Add-PartnerItem $Check.Missing "partner_look=apply; source=$Source$(if ($Type) { "; type=$Type" })" }
+    $lua = @(Select-PartnerEntry -Context $Context -Kind 'partner_lua=event=parts_set' -From $Segment.Start -To $Segment.End)
+    if ($lua.Count) { Add-PartnerMatch $Check $lua[0].Line } else { Add-PartnerItem $Check.Missing 'partner_lua=event=parts_set (Player.SetPartsInfoAtInstanceIndex called)' }
+    foreach ($e in (Select-PartnerEntry -Context $Context -Kind 'partner_lua=event=parts_set_refused' -From $Segment.Start -To $Segment.End | Select-Object -First 1)) {
+        Add-PartnerMatch $Check $e.Line; Add-PartnerItem $Check.Failed 'partner_lua=event=parts_set_refused: the reply look values were refused by Lua'
+    }
+    foreach ($e in (Select-PartnerEntry -Context $Context -Kind 'partner_look=refused' -From $Segment.Start -To $Segment.End | Select-Object -First 1)) {
+        Add-PartnerMatch $Check $e.Line; Add-PartnerItem $Check.Failed ('partner_look=refused; reason=' + [string](Get-PartnerField $e 'reason'))
+    }
+    foreach ($e in (Select-PartnerEntry -Context $Context -Kind 'partner_look=timeout' -From $Segment.Start -To $Segment.End | Select-Object -First 1)) {
+        Add-PartnerMatch $Check $e.Line; Add-PartnerItem $Check.Failed ('partner_look=timeout (the parts never reloaded with the look): ' + $e.Line)
+    }
+    $loaded = @(Select-PartnerEntry -Context $Context -Kind 'partner_look=loaded' -From $Segment.Start -To $Segment.End)
+    if ($Type) { $loaded = @($loaded | Where-Object { (Get-PartnerField $_ 'q40') -ceq $Type }) }
+    if ($loaded.Count) {
+        Add-PartnerMatch $Check $loaded[0].Line
+        $Check.Data['look_ms_after_apply'] = Get-PartnerFieldNumber $loaded[0] 'ms_after_apply'
+    } else { Add-PartnerItem $Check.Missing "partner_look=loaded$(if ($Type) { "; q40=$Type" })" }
+    return $applies
+}
+
+function Invoke-PartnerB1 {
+    # B1: local test look=quiet (no network): instance 1 reloads as Quiet.
+    param($Check, $Context, $Alive)
+    $segment = Get-PartnerAnimSegment $Check $Context $Alive { param($s) $s.Stage -eq 3 -and $s.Look -ceq 'quiet' } `
+        "stage=3 look=quiet (Set-PartnerTrigger.ps1 -Role $($Check.Role) -Text 'stage=3 source=orbit look=quiet')"
+    if (!$segment) { return }
+    $null = Get-PartnerLookChecks $Check $Context $segment 'quiet' '6'
+    Add-PartnerItem $Check.Notes 'manual: the screenshot shows Quiet orbiting; with source=fixed, note whether a still Quiet fades (stealth)'
+}
+
+function Invoke-PartnerB4 {
+    # B4: look=net on both: each instance shows the other player's own look.
+    param($Check, $Context, $Alive)
+    $segment = Get-PartnerAnimSegment $Check $Context $Alive { param($s) $s.Stage -eq 3 -and $s.Look -ceq 'net' } `
+        "stage=3 look=net (Set-PartnerTrigger.ps1 -Role both -Text 'stage=3 source=net look=net')"
+    if (!$segment) { return }
+    $rx = @(Select-PartnerEntry -Context $Context -Kind 'partner_net=look_rx')
+    if ($rx.Count) {
+        Add-PartnerMatch $Check $rx[-1].Line
+        $Check.Data['remote_type'] = Get-PartnerField $rx[-1] 'type'
+    } else { Add-PartnerItem $Check.Missing 'partner_net=look_rx (the peer sends its look once its parts are loaded)' }
+    $applies = Get-PartnerLookChecks $Check $Context $segment 'net' ''
+    if ($applies.Count) {
+        $copied = @(Select-PartnerEntry -Context $Context -Kind 'partner_lua=event=parts_copied' -From $applies[0].Index -To $segment.End)
+        if ($copied.Count) { Add-PartnerMatch $Check $copied[0].Line; Add-PartnerItem $Check.Failed 'partner_lua=event=parts_copied after the network look was applied (the copy must stop)' }
+    }
+    Add-PartnerItem $Check.Notes 'manual: the host screenshot shows the guest''s character (Quiet), the guest screenshot shows the host''s (Snake)'
+}
+
+function Invoke-PartnerC1 {
+    # C1: the guest plays Quiet in offline-v1 (coop.ini character=quiet; lab.json offline.characters.guest).
+    param($Check, $Context, $Alive)
+    Add-PartnerCommonChecks $Check $Context -Alive $Alive
+    $config = @(Select-PartnerEntry -Context $Context -Prefix 'character_config')
+    if (!$config.Count) { Add-PartnerItem $Check.Missing 'character_config= (offline-v1 answers the character receipts in this build)' }
+    elseif ($config[-1].Value -cne 'quiet') { Add-PartnerMatch $Check $config[-1].Line; Add-PartnerItem $Check.Failed ('character_config=' + $config[-1].Value + ': coop.ini character=quiet not in place (Prepare-LabInstance.ps1 -Offline with lab.json offline.characters.guest=quiet)') }
+    else { Add-PartnerMatch $Check $config[-1].Line }
+    foreach ($e in (Select-PartnerEntry -Context $Context -Kind 'player_type_patch=refused' | Select-Object -First 1)) { Add-PartnerMatch $Check $e.Line; Add-PartnerItem $Check.Failed 'player_type_patch=refused: the Quiet reset bypass was not installed' }
+    $patch = @(Select-PartnerEntry -Context $Context -Kind 'player_type_patch=active')
+    if ($patch.Count) { Add-PartnerMatch $Check $patch[0].Line } else { Add-PartnerItem $Check.Missing 'player_type_patch=active' }
+    $apply = @(Select-PartnerEntry -Context $Context -Kind 'character=apply')
+    if (!$apply.Count) { Add-PartnerItem $Check.Missing 'character=apply' }
+    else {
+        $last = $apply[-1]
+        Add-PartnerMatch $Check $last.Line
+        if ((Get-PartnerField $last 'applied') -cne 'quiet') { Add-PartnerItem $Check.Failed ('character=apply applied=' + [string](Get-PartnerField $last 'applied') + '; reason=' + [string](Get-PartnerField $last 'reason')) }
+    }
+    $allocated = @(Select-PartnerEntry -Context $Context -Kind 'character=allocated')
+    if (!$allocated.Count) { Add-PartnerItem $Check.Missing 'character=allocated' }
+    elseif ((Get-PartnerField $allocated[-1] 'vars') -cne '6') { Add-PartnerMatch $Check $allocated[-1].Line; Add-PartnerItem $Check.Failed ('character=allocated vars=' + [string](Get-PartnerField $allocated[-1] 'vars') + ' (expected 6: Quiet)') }
+    else { Add-PartnerMatch $Check $allocated[-1].Line }
+    $readback = @(Select-PartnerEntry -Context $Context -Prefix 'character_readback')
+    if ($readback.Count) { Add-PartnerMatch $Check $readback[-1].Line }
+    Add-PartnerItem $Check.Notes 'manual: the guest plays Quiet for 2 minutes; the pause menu opens; the host sees a Quiet partner with look=net (B4)'
+}
+
+$script:PartnerXformFarMm = 1500
+
 function Get-PartnerSpikeVerdict {
     # One instance's verdict for one experiment. Inputs are this run's log texts
     # (from the run.json offsets); $Safety is Get-InstanceSafety's result (E0);
     # $Alive is $true/$false or $null when not checked.
     param(
-        [Parameter(Mandatory)][ValidateSet('E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E8')][string]$Experiment,
+        [Parameter(Mandatory)][ValidateSet('E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E8', 'A0', 'A1', 'A3', 'M1', 'N1', 'B1', 'B4', 'C1')][string]$Experiment,
         [Parameter(Mandatory)][ValidateSet('host', 'guest')][string]$Role,
         [AllowNull()][AllowEmptyString()][string]$ObserverLog = '',
         [AllowNull()][AllowEmptyString()][string]$EarlyLog = '',
@@ -1064,6 +1316,14 @@ function Get-PartnerSpikeVerdict {
             Invoke-PartnerE6 $check $context $peer $Alive $HostOnly
         }
         'E8' { Invoke-PartnerE8 $check $context $Alive }
+        'A0' { Invoke-PartnerA0 $check $context $Alive }
+        'A1' { Invoke-PartnerA1 $check $context $Alive }
+        'A3' { Invoke-PartnerA3 $check $context $Alive }
+        'M1' { Invoke-PartnerM1 $check $context $Alive }
+        'N1' { Invoke-PartnerN1 $check $context $Alive }
+        'B1' { Invoke-PartnerB1 $check $context $Alive }
+        'B4' { Invoke-PartnerB4 $check $context $Alive }
+        'C1' { Invoke-PartnerC1 $check $context $Alive }
     }
     if (!$context.Entries.Count) { Add-PartnerItem $check.Notes 'script-observer.log has no lines from this run yet' }
     return Complete-PartnerCheck -Check $check
@@ -1087,9 +1347,11 @@ function Merge-PartnerSpikeVerdict {
 }
 
 function Get-PartnerExperimentDefaultRole {
-    # E0 and E6 are judged on both instances, the rest on the host.
+    # E0, E6, N1 and B4 are judged on both instances, C1 on the guest (it plays
+    # Quiet), the rest on the host.
     param([Parameter(Mandatory)][string]$Experiment)
-    if ($Experiment -in @('E0', 'E6')) { return 'both' }
+    if ($Experiment -in @('E0', 'E6', 'N1', 'B4')) { return 'both' }
+    if ($Experiment -eq 'C1') { return 'guest' }
     return 'host'
 }
 
@@ -1097,7 +1359,7 @@ function Get-PartnerExperimentPlan {
     # Operator steps per experiment for Invoke-PartnerExperiment.ps1: triggers
     # per role, keyboard input (Send-LabInput key specs), screenshots and the
     # default verdict timeout. Section 3 of the spike plan.
-    param([Parameter(Mandatory)][ValidateSet('E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E8')][string]$Experiment)
+    param([Parameter(Mandatory)][ValidateSet('E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E8', 'A0', 'A1', 'A3', 'M1', 'N1', 'B1', 'B4', 'C1')][string]$Experiment)
     $step = { param($Kind, $Role, $Value, $WaitSec) [pscustomobject]@{ Kind = $Kind; Role = $Role; Value = $Value; WaitSec = $WaitSec } }
     $plan = switch ($Experiment) {
         'E0' { @{ Timeout = 420; Steps = @((& $step 'input' 'host' 'w+a:6000' 2), (& $step 'input' 'guest' 'w+a:6000' 2), (& $step 'screens' 'both' 'e0' 0)) } }
@@ -1108,6 +1370,14 @@ function Get-PartnerExperimentPlan {
         'E5' { @{ Timeout = 90; Steps = @((& $step 'trigger' 'host' 'stage=3 source=orbit apply=slot' 8), (& $step 'screens' 'host' 'e5-slot' 2), (& $step 'trigger' 'host' 'apply=both' 8), (& $step 'screens' 'host' 'e5-both' 0)) } }
         'E6' { @{ Timeout = 120; Steps = @((& $step 'trigger' 'both' 'stage=3 source=net' 5), (& $step 'input' 'guest' 'w:4000' 1), (& $step 'screens' 'host' 'e6' 16)) } }
         'E8' { @{ Timeout = 600; Steps = @((& $step 'trigger' 'host' 'stop' 3), (& $step 'screens' 'host' 'e8-stopped' 1), (& $step 'trigger' 'host' 'stage=3' 15), (& $step 'screens' 'host' 'e8-again' 0), (& $step 'manual' 'host' 'Leave the mission, then re-enter Mother Base (30050).' 0)) } }
+        'A0' { @{ Timeout = 90; Steps = @((& $step 'trigger' 'host' 'stage=3 source=fixed census=1' 25), (& $step 'trigger' 'host' 'census=1' 3)) } }
+        'A1' { @{ Timeout = 120; Steps = @((& $step 'trigger' 'host' 'stage=3 source=fixed apply=warp anim=mirror aset=q' 3), (& $step 'manual' 'host' 'On the host: stand, walk, run, crouch, crouch-walk, prone, crawl (a few seconds each); lab.ini partner_anim_probe=1 logs partner_anim.' 0), (& $step 'screens' 'host' 'a1' 0)) } }
+        'A3' { @{ Timeout = 120; Steps = @((& $step 'trigger' 'host' 'stage=3 source=fixed apply=warp anim=mirror aset=qs' 3), (& $step 'input' 'host' 'c' 3), (& $step 'screens' 'host' 'a3-crouch' 1), (& $step 'input' 'host' 'c' 3), (& $step 'screens' 'host' 'a3-stand' 0)) } }
+        'M1' { @{ Timeout = 90; Steps = @((& $step 'trigger' 'host' 'stage=3 source=orbit apply=xform reset=n' 4), (& $step 'screens' 'host' 'm1a' 0), (& $step 'screens' 'host' 'm1b' 0), (& $step 'screens' 'host' 'm1c' 6)) } }
+        'N1' { @{ Timeout = 150; Steps = @((& $step 'trigger' 'both' 'stage=3 source=net apply=hybrid anim=net aset=qs' 5), (& $step 'input' 'guest' 'w:3000' 1), (& $step 'input' 'guest' 'c' 3), (& $step 'screens' 'both' 'n1' 0)) } }
+        'B1' { @{ Timeout = 120; Steps = @((& $step 'trigger' 'host' 'stage=3 source=orbit look=quiet' 20), (& $step 'screens' 'host' 'b1' 0)) } }
+        'B4' { @{ Timeout = 150; Steps = @((& $step 'trigger' 'both' 'stage=3 source=net look=net' 25), (& $step 'screens' 'both' 'b4' 0)) } }
+        'C1' { @{ Timeout = 60; Steps = @((& $step 'manual' 'guest' 'Prepare with lab.json offline.characters.guest=quiet (Prepare-LabInstance.ps1 -Offline), Continue into Mother Base and play as Quiet for 2 minutes.' 0), (& $step 'screens' 'guest' 'c1' 0)) } }
     }
     [pscustomobject]@{ Experiment = $Experiment; Role = (Get-PartnerExperimentDefaultRole -Experiment $Experiment); TimeoutSec = $plan.Timeout; Steps = $plan.Steps }
 }

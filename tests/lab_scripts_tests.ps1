@@ -210,10 +210,11 @@ try {
     Assert-Equal "$($labJson.Ports.netHost)/$($labJson.Ports.netGuest)" '47820/47821' 'lab.json partner net ports'
     Assert-Equal "$($labJson.Offline.masterPort)/$($labJson.Offline.marker)" '47899/offline-v1' 'lab.json offline block'
     Assert-Equal "$($labJson.Characters.host)/$($labJson.Characters.guest)" 'default/quiet' 'lab.json characters of the fuse lab unchanged (guest Quiet)'
-    Assert-Equal "$($labJson.Offline.characters.host)/$($labJson.Offline.characters.guest)" 'default/default' 'lab.json offline.characters: default for both during the spike'
+    Assert-Equal "$($labJson.Offline.characters.host)/$($labJson.Offline.characters.guest)" 'default/quiet' 'lab.json offline.characters: the guest plays Quiet (test condition), the host keeps its character'
     Assert-Equal "$($hostSettings.Character)/$($guestSettings.Character)" 'default/quiet' 'online settings keep the top-level characters'
     $pj = $labJson.Partner
     Assert-Equal "$($pj.partner)/$($pj.stage)/$($pj.source)/$($pj.apply)/$($pj.rate_hz)/$($pj.interp_ms)/$($pj.offset_cm)/$($pj.teardown)/$($pj.force_exists)/$($pj.policy_relax)/$($pj.anim_probe)/$($pj.crash_probe)/$($pj.net)" '1/0/fixed/warp/30/100/300/clear/0/0/0/1/1' 'lab.json partner defaults'
+    Assert-Equal "$($pj.anim)/$($pj.aset)/$($pj.reset)/$($pj.look)" 'off/qs/n/copy' 'lab.json partner anim/look defaults keep the proven behaviour'
 
     $deadUrl = 'http://127.0.0.1:47899/tppstm/gate'
     $hostOff = Get-LabInstanceSettings -Role host -Config $config -GameDirectory $config.Paths.hostDir -HostSteamId64 $hostId -Offline
@@ -222,7 +223,7 @@ try {
     Assert-Equal "$($hostOff.MasterUrl)|$($guestOff.MasterUrl)" "$deadUrl|$deadUrl" 'offline master URL: closed local port (no fuse)'
     Assert-True ((Test-LabUrl $deadUrl) -and $deadUrl.Length -eq 34) 'offline URL passes Test-LabUrl (34 characters)'
     Assert-True ($hostOff.Offline -and $guestOff.Offline) 'offline settings flagged'
-    Assert-Equal "$($hostOff.Character)/$($guestOff.Character)" 'default/default' 'offline settings: offline.characters (default on both)'
+    Assert-Equal "$($hostOff.Character)/$($guestOff.Character)" 'default/quiet' 'offline settings: offline.characters (guest Quiet)'
     Assert-Equal "$(Get-LabDisabledMarker -Role host -Marker "offline-v1`n")/$(Get-LabDisabledMarker -Role guest -Marker 'offline-v1')" 'host-v3/client-v1' '-Disable resets offline-v1 to the online lab roles'
     Assert-True ($null -eq (Get-LabDisabledMarker -Role host -Marker "host-v3`n") -and $null -eq (Get-LabDisabledMarker -Role guest -Marker "client-v1`n") -and
         $null -eq (Get-LabDisabledMarker -Role host -Marker "host-v1`n") -and $null -eq (Get-LabDisabledMarker -Role host -Marker '') -and
@@ -231,9 +232,11 @@ try {
     $guestOffIni = New-LabIniFromSettings -Settings $guestOff
     $ho = ConvertFrom-IniText $hostOffIni
     $go = ConvertFrom-IniText $guestOffIni
-    $partnerOrder = @('net', 'net_listen_port', 'net_peer_port', 'partner', 'partner_stage', 'partner_source', 'partner_apply', 'partner_rate_hz',
-        'partner_interp_ms', 'partner_offset_cm', 'partner_teardown', 'partner_force_exists', 'partner_policy_relax', 'partner_anim_probe', 'crash_probe')
-    Assert-Equal ((@($ho.Keys) | Select-Object -Last 15) -join ',') ($partnerOrder -join ',') 'offline lab.ini: the spec 2.1 key names, in table order'
+    $partnerOrder = @('net', 'net_listen_port', 'net_peer_port', 'partner', 'partner_stage', 'partner_source', 'partner_apply', 'partner_anim',
+        'partner_aset', 'partner_reset', 'partner_look', 'partner_rate_hz', 'partner_interp_ms', 'partner_offset_cm', 'partner_teardown',
+        'partner_force_exists', 'partner_policy_relax', 'partner_anim_probe', 'crash_probe')
+    Assert-Equal ((@($ho.Keys) | Select-Object -Last 19) -join ',') ($partnerOrder -join ',') 'offline lab.ini: the spec 2.1 key names (plus anim/aset/reset/look), in table order'
+    Assert-Equal "$($ho['partner_anim'])/$($ho['partner_aset'])/$($ho['partner_reset'])/$($ho['partner_look'])" 'off/qs/n/copy' 'anim/look defaults written'
     Assert-Equal "$($ho['net'])/$($ho['net_listen_port'])/$($ho['net_peer_port'])/$($ho['partner'])" '1/47820/47821/1' 'host: net=1, 47820/47821, partner=1'
     Assert-Equal "$($go['net'])/$($go['net_listen_port'])/$($go['net_peer_port'])/$($go['partner'])" '1/47821/47820/1' 'guest: net ports swapped'
     Assert-Equal "$($ho['partner_stage'])/$($ho['partner_source'])/$($ho['partner_apply'])/$($ho['partner_rate_hz'])/$($ho['partner_interp_ms'])/$($ho['partner_offset_cm'])/$($ho['partner_teardown'])" '0/fixed/warp/30/100/300/clear' 'partner defaults written'
@@ -276,6 +279,15 @@ try {
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_stage -Value 4 } 'allowed: 0..3' 'stage 4 refused'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_source -Value ORBIT } 'fixed|orbit|net' 'source is case sensitive'
     Assert-Equal (ConvertTo-LabPartnerValue -Key partner_apply -Value both) 'both' 'apply both'
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_apply -Value xform)/$(ConvertTo-LabPartnerValue -Key partner_apply -Value hybrid)" 'xform/hybrid' 'apply xform/hybrid'
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_anim -Value net)/$(ConvertTo-LabPartnerValue -Key partner_aset -Value r)/$(ConvertTo-LabPartnerValue -Key partner_reset -Value ac)/$(ConvertTo-LabPartnerValue -Key partner_look -Value quiet)" 'net/r/ac/quiet' 'anim/aset/reset/look values'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_anim -Value on } 'off|mirror|net' 'anim values'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_look -Value ocelot } 'copy|net|quiet|snake' 'look values'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_reset -Value none } 'n|a|c|ac' 'reset values'
+    $pjAnim = ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ anim = 'net'; partner_look = 'net'; aset = 'qs' })
+    Assert-Equal "$(@($pjAnim.Keys) -join ',')/$($pjAnim['partner_anim'])/$($pjAnim['partner_look'])" 'partner_anim,partner_look,partner_aset/net/net' 'lab.json short names for the anim/look keys'
+    $ovAnim = ConvertFrom-LabPartnerSettingArgs -Items @('partner_apply=hybrid', 'partner_anim=net', 'partner_aset=qs', 'partner_look=net') -Role host
+    Assert-Equal (@($ovAnim.Keys | ForEach-Object { "$_=$($ovAnim[$_])" }) -join ' ') 'partner_apply=hybrid partner_anim=net partner_aset=qs partner_look=net' '-PartnerSetting: the Play-OfflineCoop experiment settings'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_rate_hz -Value 0 } '1..60' 'rate 0 refused'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_rate_hz -Value 61 } '1..60' 'rate 61 refused'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_interp_ms -Value 501 } '0..500' 'interp 501 refused'
@@ -351,7 +363,7 @@ try {
         Assert-Equal "$($n['present'])/$($n['role'])/$($n['loopback'])/$($n['listen_port'])/$($n['peer_port'])/$($n['xinput'])" '1/host/1/47810/47811/-1' 'native: offline host lab.ini keeps the base settings'
         Assert-Equal $n['save_dir'] $hostOff.SaveDir 'native: offline save_dir'
         Assert-Equal $n['invalid_values'] '0' 'native: no invalid values in the offline lab.ini'
-        Assert-True ($n['unknown_keys'] -in @('0', '15')) "native: partner keys known (0) or ignored as unknown (15) until the parser is extended (got $($n['unknown_keys']))"
+        Assert-Equal $n['unknown_keys'] '0' "native: every partner key (including partner_anim/aset/reset/look) is known to the parser"
         if ($n.ContainsKey('partner_stage')) {
             Assert-Equal "$($n['net'])/$($n['net_listen_port'])/$($n['net_peer_port'])/$($n['partner'])/$($n['partner_stage'])/$($n['partner_offset_cm'])/$($n['crash_probe'])" '1/47820/47821/1/0/300/1' 'native: partner keys parsed'
         }
@@ -644,13 +656,17 @@ try {
             @('stage=3 source=orbit apply=warp', 'stage=3 source=orbit apply=warp'), @(' apply=slot   stage=1 ', 'stage=1 apply=slot'),
             @('stop', 'stop'), @("  stop`t", 'stop'), @('source=net', 'source=net'), @("apply=both`tsource=fixed", 'source=fixed apply=both'), @('stage=0', 'stage=0'),
             @('parts=explicit', 'parts=explicit'), @('mirror=on', 'mirror=on'), @('mirror=on stage=3 parts=explicit', 'stage=3 parts=explicit mirror=on'),
-            @('mirror=on apply=both parts=explicit source=orbit stage=3', 'stage=3 source=orbit apply=both parts=explicit mirror=on'))) {
+            @('mirror=on apply=both parts=explicit source=orbit stage=3', 'stage=3 source=orbit apply=both parts=explicit mirror=on'),
+            @('move=hybrid', 'apply=hybrid'), @('look=quiet census=1 anim=mirror stage=3', 'stage=3 anim=mirror look=quiet census=1'),
+            @('probe=ps reset=ac aset=r apply=xform', 'apply=xform aset=r reset=ac probe=ps'), @('look=net', 'look=net'), @('probe=off', 'probe=off'),
+            @('stage=3 source=net move=hybrid anim=net aset=qs look=net', 'stage=3 source=net apply=hybrid anim=net aset=qs look=net'))) {
         Assert-Equal (ConvertTo-PartnerTriggerText -Text $case[0]) $case[1] "trigger grammar accepts '$($case[0])'"
     }
-    Assert-True ((ConvertTo-PartnerTriggerText -Text 'stage=3 source=orbit apply=both parts=explicit mirror=on').Length + 1 -le 63) 'the longest canonical trigger fits the native 63 bytes'
+    Assert-True ((ConvertTo-PartnerTriggerText -Text 'stage=3 source=orbit apply=hybrid anim=mirror aset=qs reset=ac look=quiet probe=off census=1 parts=explicit mirror=on').Length + 1 -le 127) 'the longest canonical trigger fits the native 127 bytes'
     foreach ($bad in @('', '   ', 'STOP', 'Stage=1', 'stop stage=1', 'stage=4', 'stage=-1', 'stage=01', 'stage=1 stage=2', 'source=walk', 'apply=Warp',
             'speed=3', 'stage=1;source=net', "stage=1`nstop", 'stage=', 'stage=3 source=orbit apply=warp extra=1', "stage=1`u{e9}",
-            'parts=implicit', 'parts=', 'mirror=off', 'Mirror=on', 'parts=explicit parts=explicit', 'mirror=on mirror=on', 'stop parts=explicit', 'mirror=on stop', 'stop stop')) {
+            'parts=implicit', 'parts=', 'mirror=off', 'Mirror=on', 'parts=explicit parts=explicit', 'mirror=on mirror=on', 'stop parts=explicit', 'mirror=on stop', 'stop stop',
+            'move=warp apply=slot', 'apply=teleport', 'anim=on', 'aset=x', 'reset=b', 'look=ocelot', 'census=2', 'census', 'probe=on', 'stop census=1', 'look=net look=copy')) {
         $shown = $bad -replace "`n", '\n'
         Assert-Throws { ConvertTo-PartnerTriggerText -Text $bad } '' "trigger grammar refuses '$shown'"
         Assert-True (-not (Test-PartnerTriggerText $bad)) "Test-PartnerTriggerText is false for '$shown'"
@@ -666,6 +682,10 @@ try {
     Assert-Equal "$($rejected.State)|$($rejected.Line)" 'rejected|partner_trigger=rejected; reason=parse' 'trigger result: the newest result line wins (rejected)'
     Assert-Equal (Find-PartnerTriggerResult -LogText "partner=configured; mode=offline_v1; stage=3; source=fixed; apply=warp`n" -Canonical 'stage=3').State 'none' 'trigger result: only via=trigger lines count'
     Assert-Equal (Find-PartnerTriggerResult -LogText '' -Canonical 'stage=3').State 'none' 'trigger result: empty log'
+    $newLine = 'partner_stage=changed; stage=3; source=net; apply=hybrid; anim=net; aset=qs; reset=n; look=net; probe=off; via=trigger'
+    Assert-Equal (Find-PartnerTriggerResult -LogText "$newLine`n" -Canonical 'stage=3 source=net apply=hybrid anim=net aset=qs look=net').State 'applied' 'trigger result: the new fields'
+    Assert-Equal (Find-PartnerTriggerResult -LogText "$newLine`n" -Canonical 'look=quiet').State 'different' 'trigger result: another look was applied'
+    Assert-Equal (Find-PartnerTriggerResult -LogText "$newLine`n" -Canonical 'census=1').State 'applied' 'trigger result: census is a one-shot (not in the line)'
 
     $line = ConvertFrom-PartnerLogLine 'partner_probe=state; t_ms=12; ids=0000,ffff; pool=00,ff; pos1_mm=-1,2,-3; s0=0x03; parts=3,x'
     Assert-Equal "$($line.Kind)|$($line.Prefix)|$($line.Value)|$($line.Fields.Count)" 'partner_probe=state|partner_probe|state|6' 'probe line: kind and fields'
@@ -908,7 +928,79 @@ try {
     Assert-Verdict (Get-PV E8 host (Remove-Lines $e8 'partner_bits=cleared')) 'INCOMPLETE' 'step 1' 'E8 needs the stop trigger'
     Assert-Verdict (Get-PV E8 host ($e8 + "`ncrash_probe=av; rva=0x9c85d0; access=read; target=0x10; thread=7; stage=3; realized=1")) 'FAIL' 'crash_probe=av' 'E8 crash fails'
 
-    foreach ($exp in 'E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E8') {
+    # Animation / appearance experiments (docs/partner-anim-appearance.md) on inline logs.
+    $animHead = @(
+        'partner=configured; mode=offline_v1; stage=0; source=fixed; apply=warp; rate_hz=30; interp_ms=100; offset_cm=300; teardown=clear; anim=off; aset=qs; reset=n; look=copy; t_pinned=0',
+        'partner_cfg=ready; flags=0x00000001; count=2; realized_count=2; local=0; R=1; online_bit=0; sync=null; code_gate=ok')
+    function New-AnimLog([string]$Changed, [string[]]$Lines) { (@($animHead) + @("partner_stage=changed; $Changed; via=trigger") + $Lines) -join "`r`n" }
+    $census0 = 'partner_census; k=0; id=0; base=0; count=1; blk=ok; blk_vt=0x2295210; ps_vt=0x23b09f0; cs_vt=0x22e6070; t=set; t_vt=0x2400000; t68=0x1000000; t70=0x1000100; a0_vt=0x2410000; a080=0x1100000; c0_vt=0x2420000; c090=0x1200000; b70_vt=0x0; psw=0x11; equip_vt=0x23c14b0; same_t=1; same_a0=1; same_c0=1; verdict=ok'
+    $census1 = $census0.Replace('k=0; id=0; base=0', 'k=1; id=1; base=1')
+    $a0 = New-AnimLog 'stage=3; source=fixed; apply=warp; anim=off; aset=qs; reset=n; look=copy; probe=off' @($census0, $census1)
+    $v = Get-PV A0 host $a0
+    Assert-Verdict $v 'PASS' '' 'A0 census PASS'
+    Assert-Equal "$($v.data['k1_t_vt'])/$($v.data['k1_t68'])" '0x2400000/0x1000000' 'A0 records the T RVAs to pin'
+    Assert-Verdict (Get-PV A0 host $a0.Replace('k=1; id=1; base=1', 'k=1; id=1; base=1; x=0').Replace('same_c0=1; verdict=ok', 'same_c0=1; verdict=t_class')) 'FAIL' 'verdict=t_class' 'A0 identity failure fails'
+    Assert-Verdict (Get-PV A0 host (New-AnimLog 'stage=3; source=fixed; apply=warp' @($census0.Replace('verdict=ok', 'verdict=unrealized')))) 'INCOMPLETE' 'realized and loaded' 'A0 before realization is incomplete'
+    Assert-Verdict (Get-PV A0 host (New-AnimLog 'stage=3; source=fixed; apply=warp' @())) 'INCOMPLETE' 'census=1' 'A0 without census lines'
+    $a1Lines = @('partner_aset=q; state=applied; act=1; s=1; v=0',
+        'partner_anim; act=0001,0001; s=1,1; v=0,0; q28=0,0; qd8=ffff,ffff; psw=11,11; rec1=0x00000010',
+        'partner_anim; act=0003,0003; s=2,2; v=0,0; q28=0,0; qd8=ffff,ffff; psw=11,11; rec1=0x00000020')
+    $a1 = New-AnimLog 'stage=3; source=fixed; apply=warp; anim=mirror; aset=q; reset=n; look=copy; probe=off' $a1Lines
+    $v = Get-PV A1 host $a1
+    Assert-Verdict $v 'PASS' '' 'A1 arrays mirrored PASS'
+    Assert-Equal "$($v.data['slot1_equals_slot0'])/$($v.data['stances_seen'])" '2/1,2' 'A1 data'
+    Assert-Verdict (Get-PV A1 host ($a1 + "`r`npartner_aset=q; state=refused; reason=count")) 'FAIL' 'reason=count' 'A1 refused write fails'
+    Assert-Verdict (Get-PV A1 host (New-AnimLog 'stage=3; source=fixed; apply=warp; anim=mirror; aset=q' @($a1Lines[0], $a1Lines[1]))) 'INCOMPLETE' 'changes stance' 'A1 needs stance changes'
+    Assert-Verdict (Get-PV A1 host (New-AnimLog 'stage=3; source=fixed; apply=warp; anim=off' $a1Lines)) 'INCOMPLETE' 'anim=mirror' 'A1 needs the anim=mirror segment'
+    $a3 = New-AnimLog 'stage=3; source=fixed; apply=warp; anim=mirror; aset=qs; reset=n; look=copy; probe=off' @(
+        'partner_stance=set; R=1; id=1; from=0; to=2; psw=0x22; q30=2', 'partner_stance=set; R=1; id=1; from=2; to=1; psw=0x11; q30=1')
+    Assert-Verdict (Get-PV A3 host $a3) 'PASS' '' 'A3 SetStance PASS'
+    $v = Get-PV A3 host ($a3 + "`r`npartner_stance=reverted; R=1; psw=0x11; expected=0x22; ms_after_set=120")
+    Assert-True ($v.verdict -eq 'PASS' -and (@($v.notes) -join ' ').Contains('try aset=r') -and $v.data['stance_reverted'] -eq 1) 'A3 revert is a note'
+    Assert-Verdict (Get-PV A3 host ($a3 + "`r`npartner_call=fault; fn=set_stance; native_calls=disabled")) 'FAIL' 'fn=set_stance' 'A3 fault fails'
+    Assert-Verdict (Get-PV A3 host (New-AnimLog 'stage=3; source=fixed; apply=warp; anim=mirror; aset=qs' @('partner_stance=set; R=1; id=1; from=0; to=2; psw=0x22; q30=2'))) 'INCOMPLETE' '2 partner_stance=set' 'A3 needs two targets'
+    $xrow = 'partner_xform; R=1; apply=xform; cmd_mm=1000,0,3000; body_mm=1000,0,3012; err_mm=12; yaw_err_mrad=3; reset=n'
+    $m1 = New-AnimLog 'stage=3; source=orbit; apply=xform; anim=off; aset=qs; reset=n; look=copy; probe=off' @('partner_xform=applied; R=1; apply=xform; reset=n', $xrow, $xrow, $xrow, $xrow)
+    $v = Get-PV M1 host $m1
+    Assert-Verdict $v 'PASS' '' 'M1 xform PASS'
+    Assert-Equal "$($v.data['err_mm_max'])/$($v.data['yaw_err_mrad_max'])/$($v.data['xform_checks'])" '12/3/4' 'M1 data'
+    Assert-Verdict (Get-PV M1 host ($m1 + "`r`n" + $xrow.Replace('err_mm=12', 'err_mm=2400'))) 'FAIL' 'err_mm>1500' 'M1 body not following fails'
+    Assert-Verdict (Get-PV M1 host (New-AnimLog 'stage=3; source=orbit; apply=xform' @('partner_xform=refused; reason=t_class; fallback=warp'))) 'FAIL' 'reason=t_class' 'M1 identity refusal fails'
+    Assert-Verdict (Get-PV M1 host (New-AnimLog 'stage=3; source=orbit; apply=hybrid' @('partner_xform=refused; reason=unrealized; fallback=warp'))) 'INCOMPLETE' 'partner_xform=applied' 'M1 before realization is incomplete'
+    $n1 = New-AnimLog 'stage=3; source=net; apply=hybrid; anim=net; aset=qs; reset=n; look=net; probe=off' @(
+        'partner_anim=source; anim=net; valid=1; act=3; s=2; v=0', 'partner_stance=set; R=1; id=1; from=0; to=2; psw=0x22; q30=2')
+    Assert-Verdict (Get-PV N1 host $n1) 'PASS' '' 'N1 network anim PASS'
+    Assert-Verdict (Get-PV N1 host (New-AnimLog 'stage=3; source=net; apply=hybrid; anim=net' @('partner_anim=source; anim=net; valid=0; act=0; s=0; v=0'))) 'INCOMPLETE' 'anim extension' 'N1 without anim frames'
+    $lookApply = 'partner_look=apply; R=1; source=quiet; type=6; parts=27; camo=116; hand=0; face=0; fe=0; rev=0; avatar_as_snake=0'
+    $lookLua = 'partner_lua=event=parts_set; R=1; type=6; parts=27; camo=116; hand=0; face=0'
+    $lookLoaded = 'partner_look=loaded; R=1; q40=6; q48=27; q50=116; q58=0; q60=0; q68=0; ms_after_apply=640; cycle=1'
+    $b1 = New-AnimLog 'stage=3; source=orbit; apply=warp; anim=off; aset=qs; reset=n; look=quiet; probe=off' @($lookApply, $lookLua, $lookLoaded)
+    $v = Get-PV B1 host $b1
+    Assert-Verdict $v 'PASS' '' 'B1 local Quiet PASS'
+    Assert-Equal $v.data['look_ms_after_apply'] ([Int64]640) 'B1 reload time recorded'
+    Assert-Verdict (Get-PV B1 host ($b1.Replace($lookLoaded, 'partner_look=timeout; R=1; state=1; q40=6; q180=0x2; realized=1'))) 'FAIL' 'partner_look=timeout' 'B1 timeout fails'
+    Assert-Verdict (Get-PV B1 host ($b1 + "`r`npartner_lua=event=parts_set_refused; reason=bad_look")) 'FAIL' 'parts_set_refused' 'B1 Lua refusal fails'
+    Assert-Verdict (Get-PV B1 host (Remove-Lines $b1 'partner_look=loaded')) 'INCOMPLETE' 'partner_look=loaded' 'B1 waits for the reload'
+    $b4 = New-AnimLog 'stage=3; source=net; apply=warp; anim=off; aset=qs; reset=n; look=net; probe=off' @(
+        'partner_lua=event=parts_copied; R=1', 'partner_net=look_rx; type=6; parts=27; camo=116; hand=0; face=0; fe=0; rev=1; loaded=1',
+        $lookApply.Replace('source=quiet', 'source=net').Replace('rev=0', 'rev=1'), $lookLua, $lookLoaded)
+    $v = Get-PV B4 host $b4
+    Assert-Verdict $v 'PASS' '' 'B4 network look PASS (the copy before the first look is allowed)'
+    Assert-Equal $v.data['remote_type'] '6' 'B4 remote type recorded'
+    Assert-Verdict (Get-PV B4 host ($b4 + "`r`npartner_lua=event=parts_copied; R=1")) 'FAIL' 'copy must stop' 'B4 copy after the network look fails'
+    Assert-Verdict (Get-PV B4 host (Remove-Lines $b4 'partner_net=look_rx')) 'INCOMPLETE' 'look_rx' 'B4 needs the peer look'
+    $c1 = @('character_config=quiet; fallback=dd_male; coop_ini=1; reset_bypass_needed=1; applied_in=TppMain.OnAllocate',
+        'player_type_patch=active; branch_rva=0x9cd370',
+        'character=apply; mission=30050; requested=quiet; applied=quiet; type=6; reason=override; bypass=1; real=0; start=continue; always=1',
+        'character=allocated; mission=30050; vars=6; parts=27; camo=116; temp=1; start=continue; late=0') -join "`r`n"
+    Assert-Verdict (Get-PV C1 guest $c1) 'PASS' '' 'C1 guest plays Quiet PASS'
+    Assert-Verdict (Get-PV C1 guest $c1.Replace('character_config=quiet', 'character_config=default')) 'FAIL' 'character=quiet not in place' 'C1 default character fails'
+    Assert-Verdict (Get-PV C1 guest $c1.Replace('applied=quiet', 'applied=dd_male').Replace('reason=override', 'reason=bypass_unavailable')) 'FAIL' 'reason=bypass_unavailable' 'C1 fallback fails'
+    Assert-Verdict (Get-PV C1 guest $c1.Replace('vars=6', 'vars=0')) 'FAIL' 'expected 6' 'C1 reset to Snake fails'
+    Assert-Verdict (Get-PV C1 guest ($c1 -split "`r`n" | Select-Object -First 1)) 'INCOMPLETE' 'character=apply' 'C1 waits for the allocation'
+    Assert-Equal "$(Get-PartnerExperimentDefaultRole N1)/$(Get-PartnerExperimentDefaultRole B4)/$(Get-PartnerExperimentDefaultRole C1)/$(Get-PartnerExperimentDefaultRole M1)" 'both/both/guest/host' 'new default roles'
+
+    foreach ($exp in 'E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E8', 'A0', 'A1', 'A3', 'M1', 'N1', 'B1', 'B4', 'C1') {
         $plan = Get-PartnerExperimentPlan -Experiment $exp
         Assert-True ($plan.TimeoutSec -gt 0 -and $plan.Steps.Count -gt 0 -and $plan.Role -eq (Get-PartnerExperimentDefaultRole $exp)) "$exp plan"
         foreach ($s in @($plan.Steps | Where-Object { $_.Kind -eq 'trigger' })) { Assert-True (Test-PartnerTriggerText $s.Value) "$exp plan trigger '$($s.Value)' is valid" }

@@ -257,7 +257,13 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner'; Json = 'partner'; Kind = 'bool' },
     @{ Key = 'partner_stage'; Json = 'stage'; Kind = 'int'; Min = 0; Max = 3 },
     @{ Key = 'partner_source'; Json = 'source'; Kind = 'enum'; Values = @('fixed', 'orbit', 'net') },
-    @{ Key = 'partner_apply'; Json = 'apply'; Kind = 'enum'; Values = @('warp', 'slot', 'both') },
+    @{ Key = 'partner_apply'; Json = 'apply'; Kind = 'enum'; Values = @('warp', 'slot', 'both', 'xform', 'hybrid') },
+    # Animation / movement / appearance (docs/partner-anim-appearance.md). The
+    # native parser also accepts partner_move as an alias of partner_apply.
+    @{ Key = 'partner_anim'; Json = 'anim'; Kind = 'enum'; Values = @('off', 'mirror', 'net') },
+    @{ Key = 'partner_aset'; Json = 'aset'; Kind = 'enum'; Values = @('q', 's', 'qs', 'r') },
+    @{ Key = 'partner_reset'; Json = 'reset'; Kind = 'enum'; Values = @('n', 'a', 'c', 'ac') },
+    @{ Key = 'partner_look'; Json = 'look'; Kind = 'enum'; Values = @('copy', 'net', 'quiet', 'snake') },
     @{ Key = 'partner_rate_hz'; Json = 'rate_hz'; Kind = 'int'; Min = 1; Max = 60 },
     @{ Key = 'partner_interp_ms'; Json = 'interp_ms'; Kind = 'int'; Min = 0; Max = 500 },
     @{ Key = 'partner_offset_cm'; Json = 'offset_cm'; Kind = 'int'; Min = 50; Max = 1000 },
@@ -272,6 +278,7 @@ $script:LabPartnerKeys = @(
 # Lab defaults for the spike (lab.json "partner" overrides them).
 $script:LabPartnerDefaults = [ordered]@{
     net = '1'; partner = '1'; partner_stage = '0'; partner_source = 'fixed'; partner_apply = 'warp'
+    partner_anim = 'off'; partner_aset = 'qs'; partner_reset = 'n'; partner_look = 'copy'
     partner_rate_hz = '30'; partner_interp_ms = '100'; partner_offset_cm = '300'; partner_teardown = 'clear'
     partner_force_exists = '0'; partner_policy_relax = '0'; partner_anim_probe = '0'; crash_probe = '1'
 }
