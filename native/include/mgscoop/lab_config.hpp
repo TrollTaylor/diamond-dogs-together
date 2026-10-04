@@ -31,7 +31,11 @@ enum class PartnerSource : std::uint8_t { fixed, orbit, net };
 // native per-tick body transform through Warp's own T.vt+0x70/+0x68 calls
 // without Warp's resets (0x9CEBD4..0x9CEC32), Lua Warp only as a fallback.
 // hybrid: xform, plus a full Lua Warp on first apply, large error or relink.
-enum class PartnerApply : std::uint8_t { warp, slot, both, xform, hybrid };
+// input: instance 1 is driven by its own virtual pad inside the block-1
+// context window (docs/partner-anim-appearance.md "Round 3"): one Lua Warp to
+// place it (and on relink), a rare xform snap when the body drifts further
+// than partner_input_correct_mm, otherwise the game's own locomotion moves it.
+enum class PartnerApply : std::uint8_t { warp, slot, both, xform, hybrid, input };
 // Animation source for instance 1: off, mirror (the local slot 0, read
 // natively; no network) or net (the anim extension of received frames).
 enum class PartnerAnim : std::uint8_t { off, mirror, net };
@@ -47,6 +51,28 @@ enum class PartnerReset : std::uint8_t { none, a, c, ac };
 // first one arrives), quiet / snake (fixed local test looks).
 enum class PartnerLook : std::uint8_t { copy, net, quiet, snake };
 enum class PartnerTeardown : std::uint8_t { clear, keep };
+// Round 3 input lever (block-1 context window at 0x9C2B51): what instance 1's
+// virtual pad carries. off: no window at all; pass: the hook runs and counts
+// windows but swaps nothing; neutral: an idle pad plus the isLocal bit;
+// stick: a constant stick (partner_input_stick); net: the partner's own pad
+// from its input frames.
+enum class PartnerInput : std::uint8_t { off, pass, neutral, stick, net };
+// Camera POD fields inside the window: untouched, compared (dirty bits
+// logged) or compared and restored.
+enum class PartnerInputCam : std::uint8_t { off, detect, sandbox };
+// Hold classifier PP vt+0x90 inside the window: none (a per-window vtable
+// copy returns 0) or pass (the host's classifier).
+enum class PartnerInputHold : std::uint8_t { none, pass };
+// Camera-relative stick rotation sign: +1, -1, or no rotation.
+enum class PartnerInputYaw : std::uint8_t { rot, rotneg, none };
+// Direct-motion lever: off, probe (census and the 2 Hz line), on (also the
+// 4-byte comparator patch at 0x1198E25).
+enum class PartnerDm : std::uint8_t { off, probe, on };
+// Sources of the three pad edge words src+0x4C/+0x50/+0x54 inside the window
+// (partner_input::Word): '0' zero, 'p' press, 'r' release, 'h' held, 'n' the
+// partner's own word (once per received frame).
+inline constexpr std::uint8_t kPartnerWordZero = 0, kPartnerWordPress = 1, kPartnerWordRelease = 2, kPartnerWordHeld = 3,
+                              kPartnerWordNet = 4;
 // Default partner_net ports when net=1 names neither port: host 47820/47821,
 // guest 47821/47820 (never the loopback emulator's 47810/47811).
 constexpr std::uint16_t kNetHostPort = 47820;
@@ -90,6 +116,29 @@ struct LabConfig {
     bool partner_force_exists = false;
     bool partner_policy_relax = false;      // last resort
     bool partner_anim_probe = false;
+    // Round 3 (docs/partner-anim-appearance.md "Round 3"; all inert unless
+    // offline-v1 and partner=1). Defaults keep the proven behaviour, except
+    // the look fix (look gate and stall recovery), which is on.
+    PartnerInput partner_input = PartnerInput::off;
+    PartnerInputCam partner_input_cam = PartnerInputCam::sandbox;
+    PartnerInputHold partner_input_hold = PartnerInputHold::none;
+    PartnerInputYaw partner_input_yaw = PartnerInputYaw::rot;
+    std::uint8_t partner_input_words[3] = {kPartnerWordZero, kPartnerWordPress, kPartnerWordZero};  // "0p0"
+    std::uint32_t partner_input_mask = 0x6;      // STANCE | DASH
+    bool partner_input_rstick = false;
+    bool partner_input_triggers = false;
+    std::uint32_t partner_input_stick_deg = 180;  // 0..359
+    std::uint32_t partner_input_stick_pct = 100;  // 0..100
+    std::uint32_t partner_input_correct_mm = 1500;  // 0..10000 (0 = never)
+    std::uint32_t partner_input_stale_ms = 250;     // 50..2000
+    bool partner_input_send = false;
+    bool partner_input_hook = true;               // 0 forbids installing the 0x9C2B51 hook
+    bool partner_input_p218_allow = false;        // the diagnostic P+0x218 window (I3x)
+    bool partner_input_holdlog = false;
+    bool partner_pad_probe = false;
+    bool partner_look_gate = true;
+    bool partner_look_recover = true;
+    PartnerDm partner_dm = PartnerDm::off;
     bool crash_probe = true;
     unsigned unknown_keys = 0;
     unsigned invalid_values = 0;
@@ -103,6 +152,24 @@ const char* PartnerAnimName(PartnerAnim value) noexcept;
 const char* PartnerAsetName(PartnerAset value) noexcept;
 const char* PartnerResetName(PartnerReset value) noexcept;  // n|a|c|ac
 const char* PartnerLookName(PartnerLook value) noexcept;
+const char* PartnerInputName(PartnerInput value) noexcept;
+const char* PartnerInputCamName(PartnerInputCam value) noexcept;
+const char* PartnerInputHoldName(PartnerInputHold value) noexcept;
+const char* PartnerInputYawName(PartnerInputYaw value) noexcept;
+const char* PartnerDmName(PartnerDm value) noexcept;
+bool ParsePartnerInput(const char* text, std::size_t size, PartnerInput& out) noexcept;
+bool ParsePartnerInputCam(const char* text, std::size_t size, PartnerInputCam& out) noexcept;
+bool ParsePartnerInputHold(const char* text, std::size_t size, PartnerInputHold& out) noexcept;
+bool ParsePartnerInputYaw(const char* text, std::size_t size, PartnerInputYaw& out) noexcept;
+bool ParsePartnerDm(const char* text, std::size_t size, PartnerDm& out) noexcept;
+// Exactly 3 characters of 0prhn (one per word src+0x4C/+0x50/+0x54).
+bool ParsePartnerWords(const char* text, std::size_t size, std::uint8_t (&out)[3]) noexcept;
+// "0p0" (NUL-terminated); '?' for an out-of-range code.
+void FormatPartnerWords(const std::uint8_t (&words)[3], char (&out)[4]) noexcept;
+// A u32 in decimal or 0x hex (1..8 hex digits, either case).
+bool ParsePartnerMask(const char* text, std::size_t size, std::uint32_t& out) noexcept;
+// "<deg>:<pct>" with deg 0..359 and pct 0..100 (no leading zeros except "0").
+bool ParsePartnerStick(const char* text, std::size_t size, std::uint32_t& deg, std::uint32_t& pct) noexcept;
 bool ParsePartnerSource(const char* text, std::size_t size, PartnerSource& out) noexcept;
 bool ParsePartnerApply(const char* text, std::size_t size, PartnerApply& out) noexcept;
 bool ParsePartnerAnim(const char* text, std::size_t size, PartnerAnim& out) noexcept;

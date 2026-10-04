@@ -271,6 +271,28 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_force_exists'; Json = 'force_exists'; Kind = 'bool' },
     @{ Key = 'partner_policy_relax'; Json = 'policy_relax'; Kind = 'bool' },
     @{ Key = 'partner_anim_probe'; Json = 'anim_probe'; Kind = 'bool' },
+    # Round 3 (docs/partner-anim-appearance.md "Round 3"). Defaults match the
+    # native defaults, so they are written only when set (lab.json/-PartnerSetting),
+    # keeping the default offline lab.ini unchanged.
+    @{ Key = 'partner_input'; Json = 'input'; Kind = 'enum'; Values = @('off', 'pass', 'neutral', 'stick', 'net') },
+    @{ Key = 'partner_input_cam'; Json = 'input_cam'; Kind = 'enum'; Values = @('off', 'detect', 'sandbox') },
+    @{ Key = 'partner_input_hold'; Json = 'input_hold'; Kind = 'enum'; Values = @('none', 'pass') },
+    @{ Key = 'partner_input_yaw'; Json = 'input_yaw'; Kind = 'enum'; Values = @('rot', 'rotneg', 'none') },
+    @{ Key = 'partner_input_words'; Json = 'input_words'; Kind = 'words' },
+    @{ Key = 'partner_input_mask'; Json = 'input_mask'; Kind = 'mask' },
+    @{ Key = 'partner_input_rstick'; Json = 'input_rstick'; Kind = 'bool' },
+    @{ Key = 'partner_input_triggers'; Json = 'input_triggers'; Kind = 'bool' },
+    @{ Key = 'partner_input_stick'; Json = 'input_stick'; Kind = 'stick' },
+    @{ Key = 'partner_input_correct_mm'; Json = 'input_correct_mm'; Kind = 'int'; Min = 0; Max = 10000 },
+    @{ Key = 'partner_input_stale_ms'; Json = 'input_stale_ms'; Kind = 'int'; Min = 50; Max = 2000 },
+    @{ Key = 'partner_input_send'; Json = 'input_send'; Kind = 'bool' },
+    @{ Key = 'partner_input_hook'; Json = 'input_hook'; Kind = 'bool' },
+    @{ Key = 'partner_input_p218_allow'; Json = 'input_p218_allow'; Kind = 'bool' },
+    @{ Key = 'partner_input_holdlog'; Json = 'input_holdlog'; Kind = 'bool' },
+    @{ Key = 'partner_pad_probe'; Json = 'pad_probe'; Kind = 'bool' },
+    @{ Key = 'partner_look_gate'; Json = 'look_gate'; Kind = 'bool' },
+    @{ Key = 'partner_look_recover'; Json = 'look_recover'; Kind = 'bool' },
+    @{ Key = 'partner_dm'; Json = 'dm'; Kind = 'enum'; Values = @('off', 'probe', 'on') },
     @{ Key = 'crash_probe'; Json = 'crash_probe'; Kind = 'bool' },
     @{ Key = 'net_latency_ms'; Json = 'net_latency_ms'; Kind = 'int'; Min = 0; Max = 2000 },
     @{ Key = 'net_loss_permille'; Json = 'net_loss_permille'; Kind = 'int'; Min = 0; Max = 1000 }
@@ -308,6 +330,19 @@ function ConvertTo-LabPartnerValue {
     } elseif ($spec.Kind -eq 'int') {
         if ($text -cmatch '^[0-9]{1,5}$' -and [int]$text -ge $spec.Min -and [int]$text -le $spec.Max) { return [string][int]$text }
         $allowed = [string]$spec.Min + '..' + [string]$spec.Max
+    } elseif ($spec.Kind -eq 'words') {
+        if ($text -cmatch '^[0prhn]{3}$') { return $text }
+        $allowed = '3 of 0prhn'
+    } elseif ($spec.Kind -eq 'mask') {
+        if ($text -cmatch '^0x[0-9a-fA-F]{1,8}$') { return $text.ToLower() }
+        if ($text -cmatch '^[0-9]{1,10}$' -and [uint64]$text -le 4294967295) { return [string][uint64]$text }
+        $allowed = 'decimal or 0x hex u32'
+    } elseif ($spec.Kind -eq 'stick') {
+        if ($text -cmatch '^(0|[1-9][0-9]{0,2}):(0|[1-9][0-9]?|100)$') {
+            $parts = $text.Split(':')
+            if ([int]$parts[0] -le 359 -and [int]$parts[1] -le 100) { return $text }
+        }
+        $allowed = '<0..359>:<0..100>'
     } else {
         if ($text -cin $spec.Values) { return $text }
         $allowed = $spec.Values -join '|'

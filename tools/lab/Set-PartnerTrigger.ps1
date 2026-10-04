@@ -6,17 +6,22 @@ writing <game>/mgs-coop/partner.trigger (docs/offline-partner-spike-plan.md 2.1)
 
 .DESCRIPTION
 The text is validated against the trigger grammar first: 'stop' alone, or any
-of stage=0..3 source=fixed|orbit|net apply=warp|slot|both|xform|hybrid (move=
-is the same key) anim=off|mirror|net aset=q|s|qs|r reset=n|a|c|ac
-look=copy|net|quiet|snake probe=ps|off and the one-shots census=1 (component
-census lines), parts=explicit (op 16: re-apply the look; with look=copy the
-local look, variant F3b) and mirror=on (op 32, mirror diagnostic: F3c; at most
-10 s; refused natively unless look=copy), each at most once, separated by
-blanks. parts/mirror act only at stage >= 1. It is written in canonical form
-(stage, source, apply, anim, aset, reset, look, probe, census, parts, mirror;
-one ASCII line, at most 127 bytes with the newline) to a temporary file in the
-instance's mgs-coop folder, which is then renamed over partner.trigger, so the
-native side never reads a partial line. No window focus is needed.
+of stage=0..3 source=fixed|orbit|net apply=warp|slot|both|xform|hybrid|input
+(move= is the same key) anim=off|mirror|net aset=q|s|qs|r reset=n|a|c|ac
+look=copy|net|quiet|snake probe=ps|off; the round 3 keys (docs/partner-anim-
+appearance.md "Round 3") input=off|pass|neutral|stick|net stick=<0..359>:<0..100>
+cam=off|detect|sandbox hold=none|pass yaw=rot|rotneg|none words=<3 of 0prhn>
+bits=0x<hex> correct=<0..10000> isend=0|1 p218=0|1 padprobe=0|1 holdlog=0|1
+dm=off|probe|on lookgate=0|1 lookrecover=0|1; and the one-shots census=1
+(component census), parts=explicit (op 16: re-apply the look; with look=copy
+the local look, F3b), mirror=on (op 32, mirror diagnostic), tap=0x<hex>,
+press=0x<hex>:<50..5000>, dmplay=<0..9> and dmstop=1, each at most once,
+separated by blanks. parts/mirror/dmplay act only at stage >= 1; tap/press
+only while the input window is armed and within the mask; p218 needs lab.ini
+partner_input_p218_allow=1. It is written in canonical form (one ASCII line,
+at most 255 bytes with the newline) to a temporary file in the instance's
+mgs-coop folder, which is then renamed over partner.trigger, so the native
+side never reads a partial line. No window focus is needed.
 docs/partner-anim-appearance.md describes the animation, movement and look
 experiments and their log lines.
 
@@ -48,6 +53,9 @@ pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role host -Text parts=explicit -Wai
 pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role host -Text 'stage=3 source=orbit move=xform reset=n census=1'
 pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role host -Text 'stage=3 source=fixed anim=mirror aset=qs look=quiet'
 pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role both -Text 'stage=3 source=net apply=hybrid anim=net aset=qs look=net'
+pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role host -Text 'stage=3 source=fixed apply=input input=stick stick=180:100 cam=sandbox'
+pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role both -Text 'stage=3 source=net apply=input input=net isend=1 cam=sandbox hold=none look=net'
+pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role host -Text 'dm=on dmplay=1'
 pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role host -Text stop
 #>
 [CmdletBinding(SupportsShouldProcess)]

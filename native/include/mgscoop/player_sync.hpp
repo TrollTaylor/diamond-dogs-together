@@ -1,5 +1,6 @@
 #pragma once
 
+#include "mgscoop/partner_input.hpp"
 #include "mgscoop/peer_router.hpp"
 #include "mgscoop/protocol.hpp"
 
@@ -147,5 +148,25 @@ std::size_t encode_look_frame(std::uint64_t session, std::uint32_t epoch, const 
 // session/epoch/revision, header sequence == revision, known flag bits.
 bool decode_look_frame(const std::uint8_t* data, std::size_t size, std::uint64_t& session, std::uint32_t& epoch,
                        LookPacket& out) noexcept;
+
+// Input frame (round 3, docs/partner-anim-appearance.md "Round 3"): header
+// kind event, sequence = running u32 >= 1, payload length 40, frame 68 bytes:
+//   [0] 0x49 ("I")  [1] version 1  [2] flags (partner_input::Flag, subset of 0x07)  [3] 0
+//   [4..19] held, w4c, w50, w54 (u32 LE)  [20..27] lx, ly, rx, ry (i16 LE, never -32768)
+//   [28] lt  [29] rt  [30..31] lmag  [32..33] lforce (u16 LE)  [34..35] ldir (i16, |x| <= 31416)
+//   [36..37] cam_cdeg (i16, -18000..17999)  [38..39] 0
+// A build without it drops the frame as malformed (both copies must run it).
+constexpr std::size_t input_packet_size = 40;
+constexpr std::size_t input_frame_size = wire::header_size + input_packet_size;  // 68
+constexpr std::uint8_t input_magic = 0x49;
+constexpr std::uint8_t input_version = 1;
+// Returns input_frame_size, or 0 (out zeroed) for a zero session/epoch/sequence
+// or a packet outside the wire ranges (partner_input::ValidPacket).
+std::size_t encode_input_frame(std::uint64_t session, std::uint32_t epoch, std::uint32_t sequence,
+                               const partner_input::InputPacket& packet, std::uint8_t (&out)[input_frame_size]) noexcept;
+// Strict: exact size, magic/version, kind event, payload length 40, non-zero
+// session/epoch/sequence, known flag bits, reserved bytes zero, the ranges above.
+bool decode_input_frame(const std::uint8_t* data, std::size_t size, std::uint64_t& session, std::uint32_t& epoch,
+                        std::uint32_t& sequence, partner_input::InputPacket& out) noexcept;
 
 } // namespace mgscoop::sync

@@ -31,6 +31,8 @@
 #include "mgscoop/partner_player.hpp"
 #include "mgscoop/partner_net.hpp"
 #include "mgscoop/partner_driver.hpp"
+#include "mgscoop/partner_input_hook.hpp"
+#include "mgscoop/partner_dm_patch.hpp"
 #include "mgscoop/crash_probe.hpp"
 #include <cstdarg>
 
@@ -444,6 +446,87 @@ std::size_t PartnerFormatCensus(void*, const pp::Census& census, std::uint32_t k
 std::size_t PartnerFormatPsProbe(void*, const pp::State& state, std::uint32_t k, char* out, std::size_t capacity) noexcept {
     return pp::FormatPsProbe(partner_addresses, state, k, out, capacity);
 }
+// --- Round 3 input lever wiring.
+// PP and src are swapped by the input window on whatever thread runs the
+// player update. The Lua-thread reads below only count when no window was
+// open across them (WindowSeq even and unchanged); they wait at most ~2 ms
+// for a window to close and give up after kWindowTries reads.
+constexpr int kWindowTries = 3;
+constexpr std::uint64_t kWindowWaitUs = 2000;
+bool WaitWindowClosed(std::uint32_t& seq) noexcept {
+    const std::uint64_t start = QpcMicros();
+    for (;;) {
+        seq = mgscoop::partner_input_hook::WindowSeq();
+        if (!(seq & 1u)) return true;
+        if (QpcMicros() - start > kWindowWaitUs) return false;
+        YieldProcessor();
+    }
+}
+const char* PartnerInputTargets(void*, const pp::State& state, pp::InputTargets& out) noexcept {
+    for (int attempt = 0; attempt < kWindowTries; ++attempt) {
+        std::uint32_t seq = 0;
+        if (!WaitWindowClosed(seq)) break;
+        const char* reason = pp::ResolveInputTargets(partner_addresses, state, out);
+        if (mgscoop::partner_input_hook::WindowSeq() == seq) return reason;
+    }
+    out = pp::InputTargets{};
+    out.refusal = "busy";
+    return out.refusal;
+}
+std::size_t PartnerFormatInputCensus(void*, const pp::InputTargets& targets, char* out, std::size_t capacity) noexcept {
+    return pp::FormatInputCensus(partner_addresses, targets, out, capacity);
+}
+bool PartnerReadPad(void*, const pp::State& state, mgscoop::partner_input::PadRaw& out) noexcept {
+    for (int attempt = 0; attempt < kWindowTries; ++attempt) {
+        std::uint32_t seq = 0;
+        if (!WaitWindowClosed(seq)) break;
+        const bool ok = pp::ReadPad(partner_addresses, state, out);
+        if (mgscoop::partner_input_hook::WindowSeq() == seq) return ok;
+    }
+    out = mgscoop::partner_input::PadRaw{};
+    return false;
+}
+bool PartnerSubmitInput(void*, const mgscoop::partner_input::InputPacket& packet) noexcept {
+    return mgscoop::partner_net::SubmitInput(packet);
+}
+bool PartnerNetRunning(void*) noexcept { return mgscoop::partner_net::Running(); }
+bool PartnerSampleInput(mgscoop::partner_input::Sample& out) noexcept { return mgscoop::partner_net::LatestInput(out); }
+const char* PartnerInstallInputHook(void*) noexcept {
+    return mgscoop::partner_input_hook::Install(game_base, Log, &PartnerSampleInput);
+}
+void PartnerResetInputFault(void*) noexcept { mgscoop::partner_input_hook::ResetFault(); }
+void PartnerPublishArm(void*, const mgscoop::partner_input::Arm& arm) noexcept { mgscoop::partner_input_hook::PublishArm(arm); }
+void PartnerDrainInputStats(void*, pd::InputStats& out) noexcept {
+    mgscoop::partner_input_hook::Stats s{};
+    mgscoop::partner_input_hook::DrainStats(s);
+    out.window = s.window;
+    for (unsigned i = 0; i < 8; ++i) out.holds[i] = s.holds[i];
+    out.hold_count = s.hold_count;
+}
+bool PartnerInputHookLive(void*) noexcept { return mgscoop::partner_input_hook::PatchLive(game_base); }
+// --- Round 3 direct motion wiring.
+const char* PartnerDmTargets(void*, const pp::State& state, pp::DmTargets& out) noexcept {
+    return pp::ResolveDm(partner_addresses, state, out);
+}
+bool PartnerReadDm(void*, const pp::State& state, const pp::DmTargets& targets, pp::DmState& out) noexcept {
+    return pp::ReadDm(partner_addresses, state, targets, out);
+}
+std::size_t PartnerFormatDmCensus(void*, const pp::DmTargets& targets, char* out, std::size_t capacity) noexcept {
+    return pp::FormatDmCensus(partner_addresses, targets, out, capacity);
+}
+std::size_t PartnerFormatDmProbe(void*, const pp::DmState& dm, bool patched, char* out, std::size_t capacity) noexcept {
+    return pp::FormatDmProbe(dm, patched, out, capacity);
+}
+bool PartnerDmPatch(void*, bool on, const char* reason) noexcept {
+    if (on) mgscoop::partner_dm_patch::Patch(game_base, Log);
+    else mgscoop::partner_dm_patch::Revert(game_base, Log, reason);
+    return mgscoop::partner_dm_patch::Patched();
+}
+bool PartnerDmClearPending(void*) noexcept {
+    bool cleared = false;
+    mgscoop::partner_player::ClearDmPending(partner_addresses, mission_terminating, cleared);
+    return cleared;
+}
 // partner.trigger (lab only): reads at most `capacity` bytes, then deletes it.
 pd::TriggerRead PartnerTakeTrigger(void*, char* text, std::size_t capacity, std::size_t& length) noexcept {
     length = 0;
@@ -472,21 +555,27 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerForceExists, PartnerSetPolicy, PartnerReadAnim, PartnerSampleRemote, PartnerSubmitLocal, PartnerTakeTrigger,
     PartnerFocused, PartnerReadLooks, PartnerSubmitLook, PartnerSampleLook, PartnerWriteAnim, PartnerWriteFaceEquip,
     PartnerSetStance, PartnerRequestStance, PartnerApplyTransform, PartnerReadBody, PartnerCensus, PartnerFormatCensus,
-    PartnerFormatPsProbe};
+    PartnerFormatPsProbe, PartnerInputTargets, PartnerFormatInputCensus, PartnerReadPad, PartnerSubmitInput, PartnerNetRunning,
+    PartnerInstallInputHook, PartnerPublishArm, PartnerDrainInputStats, PartnerInputHookLive, PartnerDmTargets, PartnerReadDm,
+    PartnerFormatDmCensus, PartnerFormatDmProbe, PartnerDmPatch, PartnerDmClearPending, PartnerResetInputFault};
+// Crash-probe context flags: bit0 input window armed, bit1 DM patch applied.
+std::uint32_t PartnerCtxFlags() noexcept {
+    return (partner_driver.mission.input_armed ? 1u : 0u) | (partner_driver.mission.dm_patched ? 2u : 0u);
+}
 
 void PartnerMissionStart(std::uint32_t mission) noexcept {
     if (!partner_on) return;
     pd::MissionStart(partner_driver, partner_hooks);
     mgscoop::partner_net::ResetRemote();
     mgscoop::partner_net::SetEpoch(mission);
-    mgscoop::crash_probe::SetContext(partner_driver.settings.stage, 0);
+    mgscoop::crash_probe::SetContext(partner_driver.settings.stage, 0, PartnerCtxFlags());
 }
 void PartnerMissionEnd() noexcept {
     if (!partner_on) return;
-    pd::MissionEnd(partner_driver);
+    pd::MissionEnd(partner_driver, partner_hooks);
     mgscoop::partner_net::ResetRemote();
     mgscoop::partner_net::SetEpoch(0);
-    mgscoop::crash_probe::SetContext(partner_driver.settings.stage, 0);
+    mgscoop::crash_probe::SetContext(partner_driver.settings.stage, 0, PartnerCtxFlags());
 }
 
 const char* HandlePartnerCfg() noexcept {
@@ -514,7 +603,7 @@ const char* HandlePartnerStop() noexcept {
     if (!OnRuntimeThread() && !OnTerminationThread()) return nullptr;
     pd::Stop(partner_driver, partner_hooks, mgscoop::GetLabConfig().partner_teardown, mission_terminating);
     mgscoop::partner_net::ResetRemote();
-    mgscoop::crash_probe::SetContext(0, partner_driver.mission.realized ? 1u : 0u);
+    mgscoop::crash_probe::SetContext(0, partner_driver.mission.realized ? 1u : 0u, PartnerCtxFlags());
     return yes;
 }
 
@@ -535,7 +624,7 @@ const char* HandlePartnerTick(const char* buffer, std::size_t size) noexcept {
     if (!pd::Tick(partner_driver, partner_hooks, mgscoop::GetLabConfig(), buffer, size, clock, mission_terminating, reply))
         return nullptr;
     if (!partner::FormatReply(reply, partner_reply, sizeof(partner_reply))) return nullptr;
-    mgscoop::crash_probe::SetContext(partner_driver.settings.stage, partner_driver.mission.realized ? 1u : 0u);
+    mgscoop::crash_probe::SetContext(partner_driver.settings.stage, partner_driver.mission.realized ? 1u : 0u, PartnerCtxFlags());
     const std::uint64_t ended_us = QpcMicros();
     mgscoop::partner_net::RecordNativeMicros(Clamp32(ended_us >= started_us ? ended_us - started_us : 0));
     return partner_reply;
@@ -932,6 +1021,10 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
         if(accepted) {
             mission_terminating=true;
             restored=RestoreGameplayRules();
+            // The partner tick stops while terminating, so the input window and
+            // DM patch must be torn down here (before the Lua STOP receipt),
+            // not left live on the game thread.
+            if(partner_on) pd::Stop(partner_driver, partner_hooks, mgscoop::GetLabConfig().partner_teardown, true);
         }
         static constexpr char acknowledged[]="return true", refused[]="return false";
         replacement=accepted ? mgscoop::script_bridge::Replacement{acknowledged,sizeof(acknowledged)-1}

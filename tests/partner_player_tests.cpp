@@ -996,8 +996,8 @@ int main() {
     Check(std::strncmp(line, "partner_probe=state; t_ms=123456; stage=3; ids=0000,ffff; pool=00,ff; parts=3,0; rbits=0x1; s0=0x01; s8=0x01; "
                              "q170=0x3; q180=0x0; q194=0x1; q198=0x1; glob=0; pb_guard=1; pb_flag=0,5; pb_state=3,1; "
                              "pos0_mm=1000,2000,3000; yaw0_mrad=500; pos1_mm=1500,-250,3000; yaw1_mrad=-1571; rec1_mm=7000,8000,9000; "
-                             "rec1_status=0xa5a5a5a5\r\n", 400) == 0, "probe text");
-    Check(Contains(line, "rec1_status=0xa5a5a5a5\r\n") && std::strlen(line) < pp::probe_capacity, "probe tail");
+                             "rec1_status=0xa5a5a5a5; req1=none\r\n", 400) == 0, "probe text");
+    Check(Contains(line, "rec1_status=0xa5a5a5a5; req1=none\r\n") && std::strlen(line) < pp::probe_capacity, "probe tail");
     char small[16]{};
     Check(pp::FormatProbe(s, 1, 0, small, sizeof(small)) == 0 && small[0] == 0, "probe too small");
     Check(pp::ToMm(1.5f) == 1500 && pp::ToMm(-0.0005f) == -1 && pp::ToMm(NAN) == INT32_MIN && pp::ToMm(1e12f) == INT32_MAX &&
@@ -1051,33 +1051,72 @@ int main() {
         Check(pp::AddressesFor(nullptr).player_slot == 0, "null base");
     }
 
+    // --- ReadPad (the isend sender): PP/src chain and the exact PP vtable.
+    {
+        w.Reset();
+        unsigned char* pad = w.region + 0x17000;   // PP (0x4E0 bytes)
+        unsigned char* src = w.region + 0x17800;   // raw pad device
+        static std::uintptr_t pad_vt[43]{};
+        static std::uintptr_t copy_vt[43]{};
+        w.addresses.pp_vtable = Addr(pad_vt);
+        Put<std::uintptr_t>(w.P, c::p_pad, Addr(pad));
+        Put<std::uintptr_t>(pad, 0, Addr(pad_vt));
+        Put<std::uintptr_t>(pad, c::pp_owner, Addr(w.P));
+        Put<std::uintptr_t>(pad, c::pp_src, Addr(src));
+        Put<std::uint32_t>(src, 0x48, 0x4);
+        Put<float>(src, 0x5C, -1.0f);
+        Put<float>(pad, 0x10, 1.0f);
+        Put<std::uint32_t>(pad, 0x28, 0x10);
+        Put<std::uint8_t>(pad, c::pp_kb_flags, 0x10);
+        Check(Read(w, s) == pp::Refusal::none, "pad: state ready");
+        mgscoop::partner_input::PadRaw raw{};
+        Check(pp::ReadPad(w.addresses, s, raw) && raw.src_w[0] == 0x4 && raw.src_f[1] == -1.0f && raw.pp_derived[0] == 1.0f &&
+              raw.pp_mask[0] == 0x10 && raw.kb_flags == 0x10, "pad: words, axes, derived, masks and flags read");
+        // A vtable other than the image's (the hook's per-window copy) means a
+        // window was open across the read: refused, never accepted.
+        Put<std::uintptr_t>(pad, 0, Addr(&copy_vt[1]));
+        Check(!pp::ReadPad(w.addresses, s, raw), "pad: the hook's vtable copy is refused");
+        Put<std::uintptr_t>(pad, 0, Addr(pad_vt));
+        Put<std::uintptr_t>(pad, c::pp_owner, 0);
+        Check(!pp::ReadPad(w.addresses, s, raw), "pad: owner mismatch refused");
+        // The DM probe line carries the camera connect fields.
+        pp::DmState dm{};
+        dm.cam_ok = true;
+        dm.cam1f0 = 0x8800000000001234ull;
+        dm.cam200 = 1;
+        char dm_line[400]{};
+        Check(pp::FormatDmProbe(dm, true, dm_line, sizeof(dm_line)) &&
+              std::strstr(dm_line, "; cam1f0=0x8800000000001234; cam200=1; cam_ok=1") != nullptr, "dm probe: camera connect fields");
+        w.Reset();
+    }
+
     // --- Crash probe filter and format (no handler is installed here).
     {
         namespace cp = mgscoop::crash_probe;
         volatile long seen[cp::kMaxDistinct]{};
         char out[224]{};
         const std::uintptr_t base = 0x140000000;
-        Check(cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base + 0x12cc6d6, 0, 0x1c8, base, 0x9e7f000, 77, 3, 1, seen, out,
+        Check(cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base + 0x12cc6d6, 0, 0x1c8, base, 0x9e7f000, 77, 3, 1, 3, seen, out,
                                    sizeof(out)) > 0, "AV in image reported");
-        Check(std::strcmp(out, "crash_probe=av; rva=0x12cc6d6; access=read; target=0x1c8; thread=77; stage=3; realized=1\r\n") == 0,
+        Check(std::strcmp(out, "crash_probe=av; rva=0x12cc6d6; access=read; target=0x1c8; thread=77; stage=3; realized=1; ctx=0x3\r\n") == 0,
               "AV line");
-        Check(cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base + 0x12cc6d6, 1, 0, base, 0x9e7f000, 1, 0, 0, seen, out, sizeof(out)) == 0,
+        Check(cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base + 0x12cc6d6, 1, 0, base, 0x9e7f000, 1, 0, 0, 0, seen, out, sizeof(out)) == 0,
               "repeated RVA silent");
-        Check(cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base + 0x100, 1, 0x10, base, 0x9e7f000, 1, 0, 0, seen, out, sizeof(out)) > 0 &&
+        Check(cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base + 0x100, 1, 0x10, base, 0x9e7f000, 1, 0, 0, 0, seen, out, sizeof(out)) > 0 &&
               Contains(out, "access=write"), "write access");
-        Check(cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base + 0x200, 8, 0x10, base, 0x9e7f000, 1, 0, 0, seen, out, sizeof(out)) > 0 &&
+        Check(cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base + 0x200, 8, 0x10, base, 0x9e7f000, 1, 0, 0, 0, seen, out, sizeof(out)) > 0 &&
               Contains(out, "access=execute"), "execute access");
-        Check(cp::detail::Describe(EXCEPTION_BREAKPOINT, base + 0x300, 0, 0, base, 0x9e7f000, 1, 0, 0, seen, out, sizeof(out)) == 0,
+        Check(cp::detail::Describe(EXCEPTION_BREAKPOINT, base + 0x300, 0, 0, base, 0x9e7f000, 1, 0, 0, 0, seen, out, sizeof(out)) == 0,
               "non-AV ignored");
-        Check(cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base - 1, 0, 0, base, 0x9e7f000, 1, 0, 0, seen, out, sizeof(out)) == 0 &&
-              cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base + 0x9e7f000, 0, 0, base, 0x9e7f000, 1, 0, 0, seen, out, sizeof(out)) == 0,
+        Check(cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base - 1, 0, 0, base, 0x9e7f000, 1, 0, 0, 0, seen, out, sizeof(out)) == 0 &&
+              cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base + 0x9e7f000, 0, 0, base, 0x9e7f000, 1, 0, 0, 0, seen, out, sizeof(out)) == 0,
               "outside the image ignored");
         unsigned reported = 3;
         for (unsigned i = 0; i < 40; ++i)
-            if (cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base + 0x1000 + i * 16, 0, 0, base, 0x9e7f000, 1, 0, 0, seen, out,
+            if (cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base + 0x1000 + i * 16, 0, 0, base, 0x9e7f000, 1, 0, 0, 0, seen, out,
                                      sizeof(out))) ++reported;
         Check(reported == cp::kMaxDistinct, "first 16 distinct RVAs only");
-        Check(cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base + 0x5000, 0, 0, 0, 0, 1, 0, 0, seen, out, sizeof(out)) == 0,
+        Check(cp::detail::Describe(EXCEPTION_ACCESS_VIOLATION, base + 0x5000, 0, 0, 0, 0, 1, 0, 0, 0, seen, out, sizeof(out)) == 0,
               "no base, no report");
         Check(!cp::Install(nullptr, 0, nullptr), "install needs a base and a log");
     }

@@ -30,6 +30,15 @@ bool g_first_logged = false;
 // Received look (guarded by g_lock).
 RemoteLook g_look{};
 volatile LONG g_drop_epoch = 0, g_drop_seq = 0, g_drop_bad = 0;
+// Received input (guarded by g_lock) and its send-side sequence.
+partner_input::InputPacket g_input{};
+bool g_input_valid = false;
+std::uint32_t g_input_seq = 0;
+std::uint64_t g_input_rx_ms = 0;
+bool g_input_first_logged = false;
+std::uint32_t g_input_tx_seq = 0;
+std::uint64_t g_input_tx_ms = 0;
+volatile LONG g_in_tx = 0, g_in_rx = 0, g_in_drop = 0;
 // Look send side (game thread only).
 partner::Look g_look_sent{};
 bool g_look_sent_valid = false;
@@ -130,6 +139,36 @@ void OnDatagram(void*, const std::uint8_t* data, std::size_t size) noexcept {
         SetLastError(error);
         return;
     }
+    std::uint32_t in_seq = 0;
+    partner_input::InputPacket in{};
+    if (sync::decode_input_frame(data, size, session, epoch, in_seq, in)) {
+        if (session != kSession) { InterlockedIncrement(&g_drop_bad); SetLastError(error); return; }
+        const LONG current = g_epoch;
+        if (!current || epoch != static_cast<std::uint32_t>(current)) {
+            InterlockedIncrement(&g_drop_epoch);
+            SetLastError(error);
+            return;
+        }
+        bool first = false, accepted = false;
+        const std::uint64_t now = NowMs();
+        AcquireSRWLockExclusive(&g_lock);
+        if (AcceptInputSequence(g_input_valid, g_input_seq, g_input_rx_ms, in_seq, now)) {
+            accepted = true;
+            g_input = in;
+            g_input_valid = true;
+            g_input_seq = in_seq;
+            g_input_rx_ms = now;
+            if (!g_input_first_logged) { g_input_first_logged = true; first = true; }
+        }
+        ReleaseSRWLockExclusive(&g_lock);
+        InterlockedIncrement(accepted ? &g_in_rx : &g_in_drop);
+        if (first) {
+            char line[96]{};
+            if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "partner_net=input_rx; first=1; seq=%u\r\n", in_seq))) Log(line);
+        }
+        SetLastError(error);
+        return;
+    }
     sync::PlayerTransformPacket packet{};
     sync::AnimState anim{};
     bool has_anim = false;
@@ -207,14 +246,15 @@ void OnIdle(void*) noexcept {
     if (changed) {
         g_logged = current;
         g_stats_logged = true;
-        char line[320]{};
+        char line[384]{};
         if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
                 "partner_net=stats; tx=%llu; rx=%llu; drop_epoch=%u; drop_seq=%u; drop_bad=%u; status=%s; last_age_ms=%u; "
-                "native_us_avg=%u; native_us_max=%u\r\n",
+                "native_us_avg=%u; native_us_max=%u; in_tx=%u; in_rx=%u; in_drop=%u\r\n",
                 static_cast<unsigned long long>(current.tx), static_cast<unsigned long long>(current.rx), current.drop_epoch,
                 current.drop_seq, current.drop_bad, pose::StatusName(status),
                 static_cast<unsigned>(age > 0xFFFFFFFFull ? 0xFFFFFFFFu : age),
-                count ? static_cast<unsigned>(sum / count) : 0u, max))) Log(line);
+                count ? static_cast<unsigned>(sum / count) : 0u, max, static_cast<unsigned>(g_in_tx),
+                static_cast<unsigned>(g_in_rx), static_cast<unsigned>(g_in_drop))) ) Log(line);
     }
     SetLastError(error);
 }
@@ -323,6 +363,39 @@ RemoteLook SampleLook() noexcept {
     return look;
 }
 
+bool SubmitInput(const partner_input::InputPacket& packet) noexcept {
+    if (!g_running) return false;
+    const LONG epoch = g_epoch;
+    if (!epoch) return false;
+    const DWORD error = GetLastError();
+    const std::uint64_t now = NowMs();
+    if (g_input_tx_ms && now - g_input_tx_ms < kInputMinGapMs) { SetLastError(error); return false; }
+    const std::uint32_t seq = g_input_tx_seq + 1;
+    std::uint8_t frame[sync::input_frame_size];
+    bool sent = false;
+    if (sync::encode_input_frame(kSession, static_cast<std::uint32_t>(epoch), seq, packet, frame)) {
+        const lab::WireChunk chunk{frame, sizeof(frame)};
+        sent = g_transport.transmit(&chunk, 1, true);
+    }
+    if (sent) { g_input_tx_seq = seq; g_input_tx_ms = now; InterlockedIncrement(&g_in_tx); }
+    SetLastError(error);
+    return sent;
+}
+
+bool LatestInput(partner_input::Sample& out) noexcept {
+    out = partner_input::Sample{};
+    if (!TryAcquireSRWLockShared(&g_lock)) return false;
+    if (g_input_valid) {
+        const std::uint64_t now = NowMs();
+        out.valid = true;
+        out.seq = g_input_seq;
+        out.age_ms = now >= g_input_rx_ms ? static_cast<std::uint32_t>(now - g_input_rx_ms) : 0u;
+        out.packet = g_input;
+    }
+    ReleaseSRWLockShared(&g_lock);
+    return true;
+}
+
 pose::Sample SampleRemote(std::uint32_t delay_ms) noexcept {
     const std::uint64_t now = NowMs();
     AcquireSRWLockShared(&g_lock);
@@ -339,7 +412,14 @@ void ResetRemote() noexcept {
     g_last_rx_ms = 0;
     g_first_logged = false;
     g_look = RemoteLook{};
+    g_input = partner_input::InputPacket{};
+    g_input_valid = false;
+    g_input_seq = 0;
+    g_input_rx_ms = 0;
+    g_input_first_logged = false;
     ReleaseSRWLockExclusive(&g_lock);
+    g_input_tx_seq = 0;
+    g_input_tx_ms = 0;
     InterlockedExchange(&g_look_resend, 1);
 }
 

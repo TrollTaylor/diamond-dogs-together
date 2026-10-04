@@ -126,8 +126,9 @@ int main() {
     {
         const std::string widest = ReplyText({0xFFFFFFFFu, 0xFFFFFFFFu, -2147483647 - 1, -2147483647 - 1, -2147483647 - 1,
                                           -2147483647 - 1, Status::lost, 0xFFFFFFFFu});
-        // op 0xFFFFFFFF includes SET_PARTS (16): the 5 look values (here 0) follow.
-        Check(widest == "return 4294967295,4294967295,-2147483648,-2147483648,-2147483648,-2147483648,3,4294967295,0,0,0,0,0" &&
+        // op 0xFFFFFFFF includes SET_PARTS (16) and DM_PLAY (128): the 5 look
+        // values (here 0) and the gani (0) follow.
+        Check(widest == "return 4294967295,4294967295,-2147483648,-2147483648,-2147483648,-2147483648,3,4294967295,0,0,0,0,0,0" &&
               widest.size() < reply_capacity, "widest reply fits reply_capacity");
         char small[16]{};
         Check(FormatReply({1, 1, 0, 0, 0, 0, Status::live, 0}, small, sizeof(small)) == 0 && small[0] == 0, "too small");
@@ -279,10 +280,17 @@ int main() {
         Reply without = with;
         without.op = op::warp;
         Check(ReplyText(without) == "return 1,1,10,20,30,40,1,5", "no look values without op 16");
-        const std::string widest = ReplyText({0xFFFFFFFFu, 0xFFFFFFFFu, -2147483647 - 1, -2147483647 - 1, -2147483647 - 1,
-                                              -2147483647 - 1, Status::lost, 0xFFFFFFFFu, Look{255, 255, 255, 255, 65535, 255}});
+        const std::string widest = ReplyText({0xFFFFFFFFu & ~op::dm_play, 0xFFFFFFFFu, -2147483647 - 1, -2147483647 - 1,
+                                              -2147483647 - 1, -2147483647 - 1, Status::lost, 0xFFFFFFFFu, Look{255, 255, 255, 255, 65535, 255}});
         Check(widest.size() == 111 && widest.size() < reply_capacity &&
               widest.compare(widest.size() - 22, 22, ",255,255,255,255,65535") == 0, "widest 13-value reply fits reply_capacity");
+        // DM_PLAY (128) appends the gani after the 5 look values (zeros without op 16).
+        Reply dmp{op::dm_play | op::warp, 1, 0, 0, 0, 0, Status::live, 0, Look{6, 27, 116, 0, 0, 9}, 3};
+        Check(ReplyText(dmp) == "return 129,1,0,0,0,0,1,0,0,0,0,0,0,3", "dm_play: zeros then gani");
+        Reply dmp16{op::dm_play | op::set_parts_explicit, 1, 0, 0, 0, 0, Status::live, 0, Look{6, 27, 116, 0, 0, 9}, 5};
+        Check(ReplyText(dmp16) == "return 144,1,0,0,0,0,1,0,6,27,116,0,0,5", "dm_play | set_parts: look then gani");
+        const std::string dmwidest = ReplyText({0xFFFFFFFFu, 1, 0, 0, 0, 0, Status::live, 0, Look{255, 255, 255, 255, 65535, 255}, 9});
+        Check(dmwidest.size() < reply_capacity, "widest 14-value reply fits reply_capacity");
     }
 
     // --- Look normalization (every look that reaches SetPartsInfo).
@@ -318,10 +326,10 @@ int main() {
               snake_look.type == 0 && snake_look.parts == 1 && snake_look.camo == 0 && snake_look.hand == 1, "fixed test looks");
     }
 
-    // --- Extended trigger grammar (max 127 bytes).
+    // --- Extended trigger grammar (max 255 bytes).
     {
         Trigger tg{};
-        Check(max_trigger == 127, "trigger limit raised to 127");
+        Check(max_trigger == 255, "trigger limit raised to 255");
         Check(TriggerText("stage=3 source=net move=hybrid anim=net aset=qs reset=ac look=quiet probe=ps census=1", tg) &&
               tg.has_apply && tg.apply == PartnerApply::hybrid && tg.has_anim && tg.anim == PartnerAnim::net && tg.has_aset &&
               tg.aset == PartnerAset::qs && tg.has_reset && tg.reset == PartnerReset::ac && tg.has_look && tg.look == PartnerLook::quiet &&
@@ -339,9 +347,32 @@ int main() {
               !TriggerOk("census=2") && !TriggerOk("census") && !TriggerOk("probe=on") && !TriggerOk("move=teleport"), "bad values");
         Check(!TriggerOk("anim=net anim=off") && !TriggerOk("census=1 census=1") && !TriggerOk("probe=ps probe=off"), "repeats");
         Check(!TriggerOk("stop census=1"), "stop stays alone");
+        // Round 3 tokens.
+        Check(TriggerText("apply=input input=net stick=180:100 cam=sandbox hold=none yaw=rot words=rp0 bits=0x6 correct=1500 "
+                          "isend=1 p218=0 padprobe=1 holdlog=0 dm=probe lookgate=1 lookrecover=1", tg) &&
+              tg.apply == PartnerApply::input && tg.has_input && tg.input == PartnerInput::net && tg.has_stick &&
+              tg.stick_deg == 180 && tg.stick_pct == 100 && tg.has_cam && tg.cam == PartnerInputCam::sandbox && tg.has_hold &&
+              tg.hold == PartnerInputHold::none && tg.has_yaw && tg.yaw == PartnerInputYaw::rot && tg.has_words &&
+              tg.words[0] == mgscoop::kPartnerWordRelease && tg.words[1] == mgscoop::kPartnerWordPress &&
+              tg.words[2] == mgscoop::kPartnerWordZero && tg.has_bits && tg.bits == 0x6 && tg.has_correct &&
+              tg.correct_mm == 1500 && tg.has_isend && tg.isend && tg.has_p218 && !tg.p218 && tg.has_padprobe && tg.padprobe &&
+              tg.has_holdlog && !tg.holdlog && tg.has_dm && tg.dm == PartnerDm::probe && tg.has_lookgate && tg.lookgate &&
+              tg.has_lookrecover && tg.lookrecover, "every round 3 token");
+        Check(TriggerText("tap=0x2", tg) && tg.tap && tg.tap_bits == 0x2 && !tg.press, "tap one-shot");
+        Check(TriggerText("press=0x2:1200", tg) && tg.press && tg.press_bits == 0x2 && tg.press_ms == 1200, "press one-shot");
+        Check(TriggerText("dm=on dmplay=3", tg) && tg.dm == PartnerDm::on && tg.dmplay && tg.dmplay_gani == 3, "dmplay");
+        Check(TriggerText("dmstop=1", tg) && tg.dmstop, "dmstop");
+        Check(!TriggerOk("input=walk") && !TriggerOk("cam=on") && !TriggerOk("hold=own") && !TriggerOk("yaw=left") &&
+              !TriggerOk("words=xyz") && !TriggerOk("words=rp") && !TriggerOk("bits=0xZ") && !TriggerOk("bits=0x123456789") &&
+              !TriggerOk("correct=10001") && !TriggerOk("stick=360:0") && !TriggerOk("stick=180:101") && !TriggerOk("stick=180") &&
+              !TriggerOk("tap=2") && !TriggerOk("press=0x2:49") && !TriggerOk("press=0x2:5001") && !TriggerOk("dmplay=10") &&
+              !TriggerOk("dmstop=0") && !TriggerOk("isend=2") && !TriggerOk("dm=maybe"), "bad round 3 values");
+        Check(!TriggerOk("input=net input=off") && !TriggerOk("tap=0x1 tap=0x2") && !TriggerOk("dmplay=1 dmplay=2"), "round 3 repeats");
+        // A long trigger within the 255-byte limit (not every token at once).
         const std::string longest =
-            "stage=3 source=orbit apply=hybrid anim=mirror aset=qs reset=ac look=quiet probe=off census=1 parts=explicit mirror=on";
-        Check(longest.size() + 1 <= max_trigger && TriggerOk(longest), "the longest canonical trigger fits");
+            "stage=3 source=net apply=input anim=off aset=qs reset=ac look=net input=net stick=359:100 cam=sandbox "
+            "hold=none yaw=rotneg words=rhn bits=0xffffffff correct=10000 isend=1 padprobe=1 dm=probe lookgate=1 lookrecover=1";
+        Check(longest.size() + 1 <= max_trigger && TriggerOk(longest), "a long trigger fits 255 bytes");
     }
 
     // --- Driver op policy: xform/hybrid warp only on demand; no copy with an explicit look.

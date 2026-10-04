@@ -284,6 +284,54 @@ int main() {
               "look size and null refused");
     }
 
-    std::printf("%u checks passed; player_sync transform codec, fixed-buffer frames, v2 anim extension and look frames verified\n", checks);
+    // 9. Input frame (round 3).
+    {
+        namespace pi = mgscoop::partner_input;
+        pi::InputPacket pkt{};
+        pkt.flags = pi::Flag::Valid;
+        pkt.held = 0x12345678u; pkt.w4c = 0xAAu; pkt.w50 = 0xBBu; pkt.w54 = 0xCCu;
+        pkt.lx = 1000; pkt.ly = -2000; pkt.rx = 3000; pkt.ry = -4000;
+        pkt.lt = 10; pkt.rt = 250; pkt.lmag = 50000; pkt.lforce = 40000; pkt.ldir = 12345; pkt.cam_cdeg = -9000;
+        std::uint8_t frame[input_frame_size]{};
+        Check(encode_input_frame(0x55, 7, 42, pkt, frame) == input_frame_size && input_frame_size == 68, "input frame 68 bytes");
+        std::uint64_t s = 0; std::uint32_t e = 0, seq = 0;
+        pi::InputPacket got{};
+        Check(decode_input_frame(frame, sizeof(frame), s, e, seq, got) && s == 0x55 && e == 7 && seq == 42, "input decode header");
+        Check(got.held == pkt.held && got.w4c == pkt.w4c && got.w50 == pkt.w50 && got.w54 == pkt.w54 && got.lx == pkt.lx &&
+              got.ly == pkt.ly && got.rx == pkt.rx && got.ry == pkt.ry && got.lt == pkt.lt && got.rt == pkt.rt &&
+              got.lmag == pkt.lmag && got.lforce == pkt.lforce && got.ldir == pkt.ldir && got.cam_cdeg == pkt.cam_cdeg,
+              "input fields round trip");
+        // Zero session/epoch/sequence refused.
+        Check(encode_input_frame(0, 7, 42, pkt, frame) == 0 && encode_input_frame(0x55, 0, 42, pkt, frame) == 0 &&
+              encode_input_frame(0x55, 7, 0, pkt, frame) == 0, "zero session/epoch/seq refused");
+        // Strict decode: size, magic, version, kind, length, flag bits, reserved, ranges.
+        Check(encode_input_frame(0x55, 7, 42, pkt, frame) == input_frame_size, "re-encode");
+        Check(!decode_input_frame(frame, sizeof(frame) - 1, s, e, seq, got), "input size");
+        std::uint8_t tweak[input_frame_size];
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size] = 0x48;
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "input magic");
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 1] = 2;
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "input version");
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[6] = static_cast<std::uint8_t>(wire::Kind::snapshot);
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "input kind");
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[24] = 39;
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "input length");
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[20] = 0; tweak[21] = 0; tweak[22] = 0; tweak[23] = 0;  // seq 0
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "input seq 0");
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 2] = 0x08;
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "input flag bits");
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 3] = 1;
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "input reserved byte");
+        // -32768 axis refused.
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 20] = 0x00; tweak[wire::header_size + 21] = 0x80;
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "axis -32768 refused");
+        // ldir out of range.
+        pi::InputPacket bad = pkt; bad.ldir = 31417;
+        Check(encode_input_frame(0x55, 7, 42, bad, frame) == 0, "ldir > 31416 refused by encode");
+        bad = pkt; bad.cam_cdeg = 18000;
+        Check(encode_input_frame(0x55, 7, 42, bad, frame) == 0, "cam out of range refused by encode");
+    }
+
+    std::printf("%u checks passed; player_sync transform codec, fixed-buffer frames, v2 anim extension, look and input frames verified\n", checks);
     return 0;
 }

@@ -185,6 +185,46 @@ int main() {
         Check(ParsePartnerReset("c", 1, reset) && reset == PartnerReset::c && !ParsePartnerReset("none", 4, reset), "reset parse");
         Check(ParsePartnerLook("quiet", 5, look) && look == PartnerLook::quiet && !ParsePartnerLook("Quiet", 5, look), "look parse");
     }
+    // Round 3 lab.ini keys.
+    {
+        const auto r3 = Lab("enabled=1\nrole=host\npartner_apply=input\npartner_input=net\npartner_input_cam=detect\n"
+                            "partner_input_hold=pass\npartner_input_yaw=rotneg\npartner_input_words=rp0\npartner_input_mask=0x1F\n"
+                            "partner_input_rstick=1\npartner_input_triggers=1\npartner_input_stick=90:30\npartner_input_correct_mm=800\n"
+                            "partner_input_stale_ms=120\npartner_input_send=1\npartner_input_hook=0\npartner_input_p218_allow=1\n"
+                            "partner_input_holdlog=1\npartner_pad_probe=1\npartner_look_gate=0\npartner_look_recover=0\npartner_dm=on\n");
+        Check(r3.partner_apply == PartnerApply::input && r3.partner_input == PartnerInput::net &&
+              r3.partner_input_cam == PartnerInputCam::detect && r3.partner_input_hold == PartnerInputHold::pass &&
+              r3.partner_input_yaw == PartnerInputYaw::rotneg, "round 3 enums");
+        Check(r3.partner_input_words[0] == kPartnerWordRelease && r3.partner_input_words[1] == kPartnerWordPress &&
+              r3.partner_input_words[2] == kPartnerWordZero && r3.partner_input_mask == 0x1F && r3.partner_input_rstick &&
+              r3.partner_input_triggers && r3.partner_input_stick_deg == 90 && r3.partner_input_stick_pct == 30, "round 3 words/mask/stick");
+        Check(r3.partner_input_correct_mm == 800 && r3.partner_input_stale_ms == 120 && r3.partner_input_send &&
+              !r3.partner_input_hook && r3.partner_input_p218_allow && r3.partner_input_holdlog && r3.partner_pad_probe &&
+              !r3.partner_look_gate && !r3.partner_look_recover && r3.partner_dm == PartnerDm::on && r3.invalid_values == 0 &&
+              r3.unknown_keys == 0, "round 3 scalars/bools");
+        const auto def = Lab("enabled=1\nrole=host\n");
+        Check(def.partner_input == PartnerInput::off && def.partner_input_cam == PartnerInputCam::sandbox &&
+              def.partner_input_hold == PartnerInputHold::none && def.partner_input_yaw == PartnerInputYaw::rot &&
+              def.partner_input_mask == 0x6 && def.partner_input_stick_deg == 180 && def.partner_input_stick_pct == 100 &&
+              def.partner_input_correct_mm == 1500 && def.partner_input_stale_ms == 250 && def.partner_input_hook &&
+              def.partner_look_gate && def.partner_look_recover && def.partner_dm == PartnerDm::off, "round 3 defaults");
+        const auto badr3 = Lab("enabled=1\nrole=host\npartner_input=walk\npartner_input_cam=on\npartner_input_mask=0xZ\n"
+                             "partner_input_words=xyz\npartner_input_stick=360:0\npartner_input_correct_mm=10001\npartner_dm=maybe\n");
+        Check(badr3.invalid_values == 7 && badr3.partner_input == PartnerInput::off && badr3.partner_input_mask == 0x6 &&
+              badr3.partner_dm == PartnerDm::off, "round 3 bad values counted, defaults kept");
+        std::uint32_t mask = 0; std::uint8_t words[3]{}; std::uint32_t deg = 0, pct = 0;
+        Check(ParsePartnerMask("6", 1, mask) && mask == 6 && ParsePartnerMask("0x6", 3, mask) && mask == 6 &&
+              ParsePartnerMask("0xFFFFFFFF", 10, mask) && mask == 0xFFFFFFFFu && !ParsePartnerMask("0x", 2, mask) &&
+              !ParsePartnerMask("0x1g", 4, mask), "mask parse");
+        Check(ParsePartnerWords("0p0", 3, words) && words[0] == kPartnerWordZero && words[1] == kPartnerWordPress &&
+              !ParsePartnerWords("0p", 2, words) && !ParsePartnerWords("0px", 3, words), "words parse");
+        char wt[4]{};
+        FormatPartnerWords(words, wt);
+        Check(std::strcmp(wt, "0p0") == 0, "words format");
+        Check(ParsePartnerStick("180:100", 7, deg, pct) && deg == 180 && pct == 100 && !ParsePartnerStick("180", 3, deg, pct) &&
+              !ParsePartnerStick("360:0", 5, deg, pct) && !ParsePartnerStick("18:101", 6, deg, pct) &&
+              !ParsePartnerStick("01:5", 4, deg, pct), "stick parse");
+    }
     // Shared spellings.
     PartnerSource source{};
     PartnerApply apply{};

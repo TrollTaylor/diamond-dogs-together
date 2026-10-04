@@ -69,6 +69,40 @@ std::int32_t ClampMm(double value) noexcept {
     return static_cast<std::int32_t>(std::llround(value));
 }
 
+// "0x" then 1..8 hex digits (either case).
+bool ParseHex32(const char* text, std::size_t size, std::uint32_t& out) noexcept {
+    if (size < 3 || size > 10 || text[0] != '0' || text[1] != 'x') return false;
+    std::uint32_t value = 0;
+    for (std::size_t i = 2; i < size; ++i) {
+        const char c = text[i];
+        std::uint32_t digit = 0;
+        if (c >= '0' && c <= '9') digit = static_cast<std::uint32_t>(c - '0');
+        else if (c >= 'a' && c <= 'f') digit = static_cast<std::uint32_t>(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F') digit = static_cast<std::uint32_t>(c - 'A' + 10);
+        else return false;
+        value = (value << 4) | digit;
+    }
+    out = value;
+    return true;
+}
+// Unsigned decimal without leading zeros (or "0"), within [min, max].
+bool ParseDec(const char* text, std::size_t size, std::uint32_t min, std::uint32_t max, std::uint32_t& out) noexcept {
+    if (size == 0 || size > 10 || (size > 1 && text[0] == '0')) return false;
+    std::uint64_t value = 0;
+    for (std::size_t i = 0; i < size; ++i) {
+        if (!Digit(text[i])) return false;
+        value = value * 10 + static_cast<std::uint64_t>(text[i] - '0');
+    }
+    if (value < min || value > max) return false;
+    out = static_cast<std::uint32_t>(value);
+    return true;
+}
+bool ParseFlag(const char* text, std::size_t size, bool& out) noexcept {
+    if (size != 1 || (text[0] != '0' && text[0] != '1')) return false;
+    out = text[0] == '1';
+    return true;
+}
+
 bool EqualsToken(const char* token, std::size_t size, const char* literal) noexcept {
     const std::size_t length = std::strlen(literal);
     return size == length && std::memcmp(token, literal, length) == 0;
@@ -126,10 +160,13 @@ std::size_t FormatReply(const Reply& reply, char* out, std::size_t capacity) noe
     if (!out || capacity == 0) return 0;
     out[0] = 0;
     std::size_t at = 0;
-    const std::int64_t values[13] = {reply.op, reply.index, reply.x_mm, reply.y_mm, reply.z_mm, reply.yaw_mrad,
-                                     static_cast<std::int64_t>(reply.status), reply.age_ms, reply.look.type, reply.look.parts,
-                                     reply.look.camo, reply.look.hand, reply.look.face};
-    const unsigned count = (reply.op & op::set_parts_explicit) ? 13u : 8u;
+    const bool look = (reply.op & op::set_parts_explicit) != 0;
+    const bool dm = (reply.op & op::dm_play) != 0;
+    const std::int64_t values[14] = {reply.op, reply.index, reply.x_mm, reply.y_mm, reply.z_mm, reply.yaw_mrad,
+                                     static_cast<std::int64_t>(reply.status), reply.age_ms, look ? reply.look.type : 0,
+                                     look ? reply.look.parts : 0, look ? reply.look.camo : 0, look ? reply.look.hand : 0,
+                                     look ? reply.look.face : 0, reply.gani};
+    const unsigned count = dm ? 14u : look ? 13u : 8u;
     bool ok = Append(out, capacity, at, "return ", 7);
     for (unsigned i = 0; ok && i < count; ++i) ok = (i == 0 || Append(out, capacity, at, ",", 1)) && AppendInt(out, capacity, at, values[i]);
     if (!ok) { out[0] = 0; return 0; }
@@ -238,6 +275,71 @@ bool ParseTrigger(const char* text, std::size_t size, Trigger& out) noexcept {
         } else if (EqualsToken(token, length, "mirror=on")) {
             if (result.mirror_on) return false;
             result.mirror_on = true;
+        } else if (StartsToken(token, length, "input=", value_at)) {
+            if (result.has_input || !ParsePartnerInput(token + value_at, length - value_at, result.input)) return false;
+            result.has_input = true;
+        } else if (StartsToken(token, length, "stick=", value_at)) {
+            if (result.has_stick || !ParsePartnerStick(token + value_at, length - value_at, result.stick_deg, result.stick_pct))
+                return false;
+            result.has_stick = true;
+        } else if (StartsToken(token, length, "tap=", value_at)) {
+            if (result.tap || !ParseHex32(token + value_at, length - value_at, result.tap_bits)) return false;
+            result.tap = true;
+        } else if (StartsToken(token, length, "press=", value_at)) {
+            const char* v = token + value_at;
+            const std::size_t n = length - value_at;
+            std::size_t colon = 0;
+            while (colon < n && v[colon] != ':') ++colon;
+            if (result.press || colon >= n || !ParseHex32(v, colon, result.press_bits) ||
+                !ParseDec(v + colon + 1, n - colon - 1, 50, 5000, result.press_ms)) return false;
+            result.press = true;
+        } else if (StartsToken(token, length, "cam=", value_at)) {
+            if (result.has_cam || !ParsePartnerInputCam(token + value_at, length - value_at, result.cam)) return false;
+            result.has_cam = true;
+        } else if (StartsToken(token, length, "hold=", value_at)) {
+            if (result.has_hold || !ParsePartnerInputHold(token + value_at, length - value_at, result.hold)) return false;
+            result.has_hold = true;
+        } else if (StartsToken(token, length, "yaw=", value_at)) {
+            if (result.has_yaw || !ParsePartnerInputYaw(token + value_at, length - value_at, result.yaw)) return false;
+            result.has_yaw = true;
+        } else if (StartsToken(token, length, "words=", value_at)) {
+            if (result.has_words || !ParsePartnerWords(token + value_at, length - value_at, result.words)) return false;
+            result.has_words = true;
+        } else if (StartsToken(token, length, "bits=", value_at)) {
+            if (result.has_bits || !ParseHex32(token + value_at, length - value_at, result.bits)) return false;
+            result.has_bits = true;
+        } else if (StartsToken(token, length, "correct=", value_at)) {
+            if (result.has_correct || !ParseDec(token + value_at, length - value_at, 0, 10000, result.correct_mm)) return false;
+            result.has_correct = true;
+        } else if (StartsToken(token, length, "isend=", value_at)) {
+            if (result.has_isend || !ParseFlag(token + value_at, length - value_at, result.isend)) return false;
+            result.has_isend = true;
+        } else if (StartsToken(token, length, "p218=", value_at)) {
+            if (result.has_p218 || !ParseFlag(token + value_at, length - value_at, result.p218)) return false;
+            result.has_p218 = true;
+        } else if (StartsToken(token, length, "padprobe=", value_at)) {
+            if (result.has_padprobe || !ParseFlag(token + value_at, length - value_at, result.padprobe)) return false;
+            result.has_padprobe = true;
+        } else if (StartsToken(token, length, "holdlog=", value_at)) {
+            if (result.has_holdlog || !ParseFlag(token + value_at, length - value_at, result.holdlog)) return false;
+            result.has_holdlog = true;
+        } else if (StartsToken(token, length, "dm=", value_at)) {
+            if (result.has_dm || !ParsePartnerDm(token + value_at, length - value_at, result.dm)) return false;
+            result.has_dm = true;
+        } else if (StartsToken(token, length, "dmplay=", value_at)) {
+            std::uint32_t gani = 0;
+            if (result.dmplay || !ParseDec(token + value_at, length - value_at, 0, max_gani, gani)) return false;
+            result.dmplay = true;
+            result.dmplay_gani = static_cast<std::uint8_t>(gani);
+        } else if (EqualsToken(token, length, "dmstop=1")) {
+            if (result.dmstop) return false;
+            result.dmstop = true;
+        } else if (StartsToken(token, length, "lookgate=", value_at)) {
+            if (result.has_lookgate || !ParseFlag(token + value_at, length - value_at, result.lookgate)) return false;
+            result.has_lookgate = true;
+        } else if (StartsToken(token, length, "lookrecover=", value_at)) {
+            if (result.has_lookrecover || !ParseFlag(token + value_at, length - value_at, result.lookrecover)) return false;
+            result.has_lookrecover = true;
         } else {
             return false;
         }
@@ -250,7 +352,7 @@ bool ParseTrigger(const char* text, std::size_t size, Trigger& out) noexcept {
 std::uint32_t OpsFor(const OpInput& input) noexcept {
     std::uint32_t ops = 0;
     const bool warp_driver = input.apply == PartnerApply::warp || input.apply == PartnerApply::both;
-    const bool transform_driver = PartnerApplyIsTransform(input.apply);
+    const bool transform_driver = PartnerApplyIsTransform(input.apply) || input.apply == PartnerApply::input;
     if (input.stage >= 1 && input.pose_valid && (warp_driver || (transform_driver && input.transform_warp))) ops |= op::warp;
     if (input.stage >= 2) {
         if (!(input.luaflags & luaflag::all_active) || input.reassert_all_active) ops |= op::set_all_active;
@@ -261,6 +363,8 @@ std::uint32_t OpsFor(const OpInput& input) noexcept {
     if (input.stage >= 1 && input.parts_explicit) ops |= op::set_parts_explicit;
     if (input.stage >= 1 && input.mirror_on) ops |= op::mirror_on;
     if (input.mirror_off) ops |= op::mirror_off;
+    if (input.stage >= 1 && input.dm_play) ops |= op::dm_play;
+    if (input.dm_stop) ops |= op::dm_stop;
     return ops;
 }
 

@@ -31,6 +31,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "mgscoop/lab_config.hpp"
+#include "mgscoop/partner_input.hpp"
 #include "mgscoop/partner_receipt.hpp"
 
 namespace mgscoop::partner_player {
@@ -61,6 +62,12 @@ struct Addresses {
     std::uintptr_t cs_vtable;
     std::uintptr_t get_transform;       // CS.vt+0x388
     std::uintptr_t t_vtable, a0_vtable, c0_vtable;  // pinned after a reviewed census; 0 = unpinned
+    // Round 3 (input lever, direct motion).
+    std::uintptr_t pp_vtable;           // PlayerPad 0x23C8D40
+    std::uintptr_t cam_vtable;          // 0x23B8250
+    std::uintptr_t plugin_vt[4];        // base action plugin +0/+0x10/+0x30/+0x48
+    std::uintptr_t dm_prim_vtable, dm_iface_vtable;
+    std::uintptr_t script_object;       // g = 0x2C1BF20 (P+0x48)
 };
 Addresses AddressesFor(const void* base) noexcept;
 
@@ -98,6 +105,11 @@ struct State {
     float vars_pos[3];
     bool vars_ok;
     std::uintptr_t mirror_object;  // *(mirror_object); 0 when unreadable
+    // The look the parts block of instance 1's slot was requested with: the
+    // descriptor look *(M+0x1100+8*slot) (0x9B442D; bytes type, parts, camo,
+    // hand, face u16, face_equip), slot = (1 == local) ? 0 : (1 < local ? 2 : 1).
+    bool req_ok;
+    partner::Look req_look;
 };
 // Reads only. Returns the first failed guard in the order listed above (the
 // fields read so far stay filled for logging).
@@ -218,6 +230,76 @@ const char* ApplyTransform(const Addresses& addresses, std::uint32_t index, bool
                            const float (&quat)[4], PartnerReset reset) noexcept;
 // Read-only: T+0x20 (position) and T+0x60 (rotation quaternion) of `index`.
 bool ReadBody(const Addresses& addresses, const State& state, std::uint32_t index, float (&pos)[4], float (&quat)[4]) noexcept;
+
+// --- Round 3: input lever targets (pure reads) -------------------------------
+// The objects the block-1 context window touches, resolved in this order
+// (refusal reasons in parentheses): the write guards of the state (their
+// RefusalName or "index"); instance 1 realized (unrealized), ids[1] == 1
+// (id), parts[1] == 3 (parts); P+0x204 & 0x40000 clear (alt_dispatch);
+// PP = *(P+0xB0) with vtable 0x23C8D40 exactly (pp_vt; the hook's per-window
+// copies are refused: they are only live inside a window),
+// *(PP+0x280) == P (pp_owner), src = *(PP+8) != 0 (src); CAM = *(P+0xB8)
+// with vtable 0x23B8250 (cam_vt); block 1 as ResolveBlock checks it (its
+// reasons), root1 = *(blk1+0x190) != 0 (root); obj = *(*(*(PS1+0x658)+0x30)+0x10)
+// with vtable 0x23B5060 (obj_vt), plugin1 = obj - 0x10 with the vtables
+// 0x23B5038/0x23B5060/0x23B5090/0x23B50D0 (plugin_vt) and *(plugin1+8) ==
+// blk1 (plugin_blk); idx = 1 - *(u32*)(*(plugin1+0x38)+0x24) below
+// *(u32*)(node+0x20) (rec_idx); rec1 = *(plugin1+0x1A0) + idx*0x390 readable
+// (rec). Block 0 is resolved the same way for root0/rec0 (logged only).
+struct InputTargets {
+    const char* refusal;
+    std::uintptr_t P, pp, src, cam, blk0, blk1, root0, root1, ps1, obj, plugin1, rec1, rec0;
+    std::uintptr_t p_vt, pp_vt, src_vt, cam_vt, ps1_vt, obj_vt, plugin_vt[4];
+    std::uint32_t flags, cam_mode, rec_idx, rec_count, rec0_2ac, rec1_2ac;
+    std::uint8_t pool1;
+    bool alt_dispatch, pp_owner_ok, rec0_ok;
+};
+const char* ResolveInputTargets(const Addresses& addresses, const State& state, InputTargets& out) noexcept;
+// "partner_input_census; P=..; ...; verdict=.." with vtables as RVAs.
+std::size_t FormatInputCensus(const Addresses& addresses, const InputTargets& targets, char* out, std::size_t capacity) noexcept;
+inline constexpr std::size_t input_census_capacity = 768;
+// The local pad (sender side): PP/pp_owner/src as above, then src+0x48..+0x6F,
+// PP+0x10..+0x33 and PP+0x460..+0x488. Needs only the state guards.
+bool ReadPad(const Addresses& addresses, const State& state, partner_input::PadRaw& out) noexcept;
+
+// --- Round 3: direct motion (pure reads plus one restoration write) ---------
+// g = *(P+0x48) == 0x2C1BF20 (g); block 1 as ResolveBlock checks it; iface =
+// *(blk1+0x3B8+8*5) with vtable 0x23BFF00 (iface_vt); prim = iface - 0x30
+// with vtable 0x23BFEA8 (prim_vt) and *(prim+8) == blk1 (prim_blk); idx =
+// 1 - *(u32*)(*(prim+0x38)+0x24) below *(u32*)(node+0x20) (rec_idx); rec =
+// *(prim+0x68) + idx*0x250 (rec).
+struct DmTargets {
+    const char* refusal;
+    std::uintptr_t g, blk1, iface, prim, rec;
+    std::uintptr_t g_value, iface_vt, prim_vt;
+    std::uint32_t rec_idx, rec_count;
+    bool g_ok, prim_blk_ok;
+};
+const char* ResolveDm(const Addresses& addresses, const State& state, DmTargets& out) noexcept;
+// cam1f0/cam200: the camera connect handle CAM+0x1F0 (qword) and its on flag
+// CAM+0x200 (dword) of CAM = *(P+0xB8) (vtable 0x23B8250, else cam_ok=false).
+// The DM entry playback without a locator (0x1198D9D) and DM End (0x11992E9)
+// write both to 0 for ANY id, so a partner play is refused unless both are 0.
+struct DmState {
+    std::uint8_t g388, req0;
+    std::uint64_t cam1f0;
+    std::uint32_t cam200;
+    bool cam_ok;
+    std::uint64_t name;
+    std::uint16_t q18[2];
+    std::int32_t ps2d8[2];  // -1 unreadable
+    std::uint8_t rec10, rec11, rec1a0, rec248;
+    std::uint64_t rec18;
+    bool ok, rec_ok;
+};
+bool ReadDm(const Addresses& addresses, const State& state, const DmTargets& targets, DmState& out) noexcept;
+std::size_t FormatDmCensus(const Addresses& addresses, const DmTargets& targets, char* out, std::size_t capacity) noexcept;
+// "partner_dm; patched=..; g388=0x..; ...\r\n"
+std::size_t FormatDmProbe(const DmState& dm, bool patched, char* out, std::size_t capacity) noexcept;
+// Our pending direct-motion request (g+0x388 bit 4 with request byte 0 == 1)
+// is cleared with one locked byte AND (restoration: allowed while
+// terminating). nullptr on success or when nothing of ours is pending.
+const char* ClearDmPending(const Addresses& addresses, bool terminating, bool& cleared) noexcept;
 
 // probe=ps (read-only, layouts [S] except +0x738/+0x740 from the setters
 // 0xFF5220/0xFF5710/0xFF56E0): per instance the PS+0x740 dirty mask, the

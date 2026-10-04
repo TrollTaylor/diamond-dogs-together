@@ -25,6 +25,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "mgscoop/lab_config.hpp"
+#include "mgscoop/partner_input.hpp"
 #include "mgscoop/partner_player.hpp"
 #include "mgscoop/partner_receipt.hpp"
 #include "mgscoop/player_sync.hpp"
@@ -64,6 +65,30 @@ inline constexpr std::uint64_t kLookSettleMs = 3000;
 inline constexpr std::uint64_t kLookWaitMs = 5000;
 // probe=ps cadence (4 Hz).
 inline constexpr std::uint64_t kPsProbeMs = 250;
+// Round 3. The look fix: stall held this long before recovery; COPY withheld
+// for look=net until a look arrives or this long after all-active (= kLookWaitMs).
+inline constexpr std::uint64_t kStallMs = 1000;
+// Input lever cadences and the diagnostic P+0x218 window's auto-expiry.
+inline constexpr std::uint64_t kInputStatsMs = 1000;
+inline constexpr std::uint64_t kBodyMs = 500;
+inline constexpr std::uint64_t kPadProbeMs = 50;
+inline constexpr std::uint64_t kCorrectHoldMs = 500;
+inline constexpr std::uint64_t kCorrectGapMs = 500;
+inline constexpr std::uint64_t kP218MaxMs = 20000;
+inline constexpr std::uint64_t kDmUnconsumedMs = 2000;
+inline constexpr std::uint64_t kDmProbeMs = 500;
+inline constexpr unsigned kInputStatsCap = 600;
+inline constexpr unsigned kBodyCap = 600;
+inline constexpr unsigned kPadProbeCap = 400;
+inline constexpr unsigned kHoldLogCap = 200;
+inline constexpr unsigned kRefusedCap = 64;
+inline constexpr unsigned kDmProbeCap = 400;
+// Drained input-hook statistics (mirror of partner_input_hook::Stats).
+struct InputStats {
+    partner_input::WindowStats window;
+    partner_input::HoldRecord holds[8];
+    unsigned hold_count;
+};
 
 enum class TriggerRead : std::uint8_t { none, read, unreadable };
 
@@ -110,6 +135,30 @@ struct Hooks {
                                  std::size_t capacity) noexcept;
     std::size_t (*format_ps_probe)(void* context, const partner_player::State& state, std::uint32_t k, char* out,
                                    std::size_t capacity) noexcept;
+    // --- Round 3 input lever (any may be null; the feature then refuses).
+    const char* (*input_targets)(void* context, const partner_player::State& state, partner_player::InputTargets& out) noexcept;
+    std::size_t (*format_input_census)(void* context, const partner_player::InputTargets& targets, char* out,
+                                       std::size_t capacity) noexcept;
+    bool (*read_pad)(void* context, const partner_player::State& state, partner_input::PadRaw& out) noexcept;
+    bool (*submit_input)(void* context, const partner_input::InputPacket& packet) noexcept;
+    bool (*net_running)(void* context) noexcept;
+    // Lazy hook install (nullptr ok, else a reason; "hook_disabled" when the
+    // lab key forbids it), publish, drain, and the 1 Hz patch-live check.
+    const char* (*install_input_hook)(void* context) noexcept;
+    void (*publish_arm)(void* context, const partner_input::Arm& arm) noexcept;
+    void (*drain_input_stats)(void* context, InputStats& out) noexcept;
+    bool (*input_hook_live)(void* context) noexcept;
+    // --- Round 3 direct motion.
+    const char* (*dm_targets)(void* context, const partner_player::State& state, partner_player::DmTargets& out) noexcept;
+    bool (*read_dm)(void* context, const partner_player::State& state, const partner_player::DmTargets& targets,
+                    partner_player::DmState& out) noexcept;
+    std::size_t (*format_dm_census)(void* context, const partner_player::DmTargets& targets, char* out, std::size_t capacity) noexcept;
+    std::size_t (*format_dm_probe)(void* context, const partner_player::DmState& dm, bool patched, char* out,
+                                   std::size_t capacity) noexcept;
+    bool (*dm_patch)(void* context, bool on, const char* reason) noexcept;  // apply/revert; returns the resulting patched state
+    bool (*dm_clear_pending)(void* context) noexcept;
+    // Clears the hook's recorded window fault (MissionStart; may be null).
+    void (*reset_input_fault)(void* context) noexcept;
 };
 
 // Times passed in by the caller: QPC milliseconds (cadence, poses, net) and
@@ -129,6 +178,24 @@ struct Settings {
     PartnerReset reset;
     PartnerLook look;
     bool probe_ps;
+    // Round 3.
+    PartnerInput input;
+    PartnerInputCam input_cam;
+    PartnerInputHold input_hold;
+    PartnerInputYaw input_yaw;
+    std::uint8_t input_words[3];
+    std::uint32_t input_mask;
+    bool input_rstick, input_triggers;
+    std::uint16_t stick_deg;
+    std::uint8_t stick_pct;
+    std::uint32_t correct_mm;
+    std::uint32_t stale_ms;
+    bool isend;
+    bool pad_probe;
+    bool look_gate, look_recover;
+    PartnerDm dm;
+    // holdlog=1 trigger (effective only with lab partner_input_holdlog=1).
+    bool holdlog;
 };
 
 // A capped change-only log family (one per experiment head).
@@ -212,6 +279,71 @@ struct Mission {
     bool census_logged;
     std::uint64_t ps_probe_ms;
     unsigned ps_probe_lines;
+    // --- Round 3: look fix.
+    std::uint64_t stall_since_ms;
+    std::uint32_t stall_key;       // desired (type|parts<<8) the stall was seen against
+    bool stall_logged;             // partner_look=stall emitted for stall_key
+    bool recovering;               // a recovery SET_PARTS is in flight
+    bool copy_withheld_logged;
+    std::uint32_t look_deferred_key;  // last logged (desired key<<16 | state<<8 | q48bit)
+    bool look_deferred_logged;
+    // --- Round 3: input lever.
+    bool input_armed;
+    std::uint32_t input_gen;
+    char input_refused_text[48];   // last refusal logged (change-only)
+    unsigned input_refused_logs;
+    bool input_refused_capped;
+    std::uint32_t sender_w4c, sender_w50, sender_w54;  // OR of the edge words since the last sent frame
+    bool input_placed;
+    bool input_faulted;
+    partner_input::Arm last_arm;   // last published (for the gen bump via SameArm)
+    bool have_arm;
+    std::uint32_t tap_bits;
+    std::uint32_t press_bits;
+    std::uint64_t press_until_ms;
+    std::uint64_t p218_ms;         // when the diagnostic P+0x218 window was armed
+    bool p218_active;
+    std::uint64_t input_stats_ms;
+    unsigned input_stats_lines;
+    bool input_stats_capped;
+    std::uint64_t body_ms;
+    unsigned body_lines;
+    bool body_capped;
+    std::int32_t body_prev_mm[3];
+    std::uint64_t body_prev_ms;
+    bool body_prev_ok;
+    std::uint64_t pad_probe_ms;
+    unsigned pad_probe_lines;
+    bool pad_probe_capped;
+    unsigned hold_logs;
+    bool hold_capped;
+    partner_input::HoldRecord hold_last[8];
+    unsigned hold_last_count;
+    bool input_stale;              // last logged stale/live state
+    bool input_stale_logged;
+    std::uint64_t correct_over_ms; // when the body first exceeded correct_mm
+    std::uint64_t correct_last_ms;
+    unsigned input_census_lines;            // partner_input_census lines this mission (cap kRefusedCap)
+    std::uint32_t us_max_acc;               // max window time since the last 1 Hz line
+    // Window statistics are hook totals: the line logs deltas against these.
+    partner_input::WindowStats arm_base;    // at the last arm transition
+    partner_input::WindowStats stats_base;  // at the last 1 Hz line
+    std::uint64_t stats_base_ms;
+    bool input_fallback;                    // apply=input fell back to Warp (logged on the transition)
+    // --- Round 3: direct motion.
+    bool dm_patched;
+    bool dm_census_logged;
+    bool dm_census_loaded;          // the census was logged with instance 1 loaded (once per realize)
+    const char* dm_refused_state;   // last change-only dm=on refusal (input_active)
+    bool dm_conflict_logged;
+    std::uint64_t dm_probe_ms;
+    unsigned dm_probe_lines;
+    bool dm_probe_capped;
+    partner_player::DmState dm_last;
+    bool dm_last_ok;
+    std::uint64_t dm_play_ms;      // when our last play request went out (unconsumed watch)
+    bool dm_play_pending;
+    std::uint8_t dm_pending_gani;
     // Appearance.
     bool look_applied_any;
     std::uint16_t look_applied_remote_rev;
@@ -234,6 +366,22 @@ struct Driver {
     bool parts_explicit_pending;
     bool mirror_pending;
     bool census_pending;
+    // Round 3 one-shots (applied on the next tick with the armed/time context).
+    bool tap_pending;
+    std::uint32_t tap_bits_pending;
+    bool press_pending;
+    std::uint32_t press_bits_pending, press_ms_pending;
+    bool dmplay_pending;
+    std::uint8_t dmplay_gani;
+    bool dmstop_pending;
+    bool p218_pending, p218_on;
+    bool holdlog_changed;
+    // census=1 also latches these, consumed by the input/DM census (TickInput
+    // logs the input census even with input=off; failing verdicts included).
+    bool input_census_pending, dm_census_pending;
+    // tap= sequence: process-lifetime (the hook keeps its last seen value
+    // across gens and missions, so a value is never reused).
+    std::uint32_t tap_seq;
     // Bumped by every look= trigger and by parts=explicit outside look=copy:
     // a new value re-applies the desired look once.
     std::uint32_t look_forced_rev;
@@ -246,8 +394,9 @@ void Configure(Driver& driver, const LabConfig& lab) noexcept;
 // partner.trigger left over from earlier is deleted unapplied
 // ("partner_trigger=discarded; reason=stale").
 void MissionStart(Driver& driver, const Hooks& hooks) noexcept;
-// termination_returned: no more ticks; pending one-shots dropped.
-void MissionEnd(Driver& driver) noexcept;
+// termination_returned: no more ticks; the input window is disarmed, the DM
+// patch reverted, and pending one-shots dropped.
+void MissionEnd(Driver& driver, const Hooks& hooks) noexcept;
 // CFG receipt. `precheck` is the observer's refusal reason (not_runtime_thread,
 // mission, code_gate) or nullptr; then ReadState decides. Logs
 // partner_cfg=ready|refused. True means the reply is "return true".

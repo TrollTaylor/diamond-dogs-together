@@ -15,6 +15,7 @@
 // constant-initialized POD (no destructor runs at unload).
 #include <cstddef>
 #include <cstdint>
+#include "mgscoop/partner_input.hpp"
 #include "mgscoop/partner_receipt.hpp"
 #include "mgscoop/pose_interp.hpp"
 
@@ -24,6 +25,17 @@ namespace mgscoop::partner_net {
 inline constexpr std::uint64_t kSession = 0x4D4753434F4F5001ULL;
 // A sequence that is not newer is accepted as a peer restart after this gap.
 inline constexpr std::uint32_t kRestartGapMs = 2000;
+// Input frames are stored only when newer (wrap-safe, as newer_sequence) than
+// the stored one, or after kRestartGapMs without a stored frame (the peer
+// restarted its counter): an out-of-order older frame never replaces a newer
+// one or re-delivers its edge words (counted as in_drop).
+inline bool AcceptInputSequence(bool have, std::uint32_t last_seq, std::uint64_t last_rx_ms, std::uint32_t seq,
+                                std::uint64_t now_ms) noexcept {
+    if (!have) return true;
+    const std::uint32_t delta = seq - last_seq;
+    if (delta != 0 && delta < 0x80000000u) return true;
+    return now_ms >= last_rx_ms && now_ms - last_rx_ms > kRestartGapMs;
+}
 inline constexpr std::uint32_t kKeepaliveAfterMs = 1000;
 inline constexpr std::uint32_t kStatsIntervalMs = 10000;
 
@@ -70,6 +82,16 @@ struct RemoteLook {
     std::uint64_t rx_ms;  // QPC milliseconds of the newest look frame
 };
 RemoteLook SampleLook() noexcept;
+
+// Input frames (round 3, 68 bytes, kind event): SubmitInput sends at once
+// (min gap 8 ms) with a running sequence >= 1. The receive path decodes the
+// frame in OnDatagram (between look and transform), stores it for the current
+// epoch, and logs partner_net=input_rx; first=1 once per epoch.
+inline constexpr std::uint32_t kInputMinGapMs = 8;
+bool SubmitInput(const partner_input::InputPacket& packet) noexcept;
+// The newest received input (non-blocking): false when the lock is busy (the
+// caller keeps its previous sample). age_ms = NowMs() - rx_ms.
+bool LatestInput(partner_input::Sample& out) noexcept;
 // Clears the ring, the sequence state and the received look, and makes the
 // next SubmitLook send at once (mission boundaries).
 void ResetRemote() noexcept;

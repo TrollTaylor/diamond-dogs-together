@@ -155,38 +155,57 @@ session creation and normal play could not host or join with it.
 
 ### `partner.trigger` (scripts create, native consumes and deletes)
 
-One ASCII line, at most 127 bytes with its newline, written by
+One ASCII line, at most 255 bytes with its newline, written by
 `Set-PartnerTrigger.ps1` as a temporary file renamed over
 `mgs-coop/partner.trigger`:
 
 ```text
 stop
-stage=<0..3> source=<fixed|orbit|net> apply=<warp|slot|both|xform|hybrid> anim=<off|mirror|net>
+stage=<0..3> source=<fixed|orbit|net> apply=<warp|slot|both|xform|hybrid|input> anim=<off|mirror|net>
   aset=<q|s|qs|r> reset=<n|a|c|ac> look=<copy|net|quiet|snake> probe=<ps|off>
   census=1 parts=explicit mirror=on   (any non-empty subset, each key once; move= is apply=)
+  # round 3 (docs/partner-anim-appearance.md "Round 3"):
+  input=<off|pass|neutral|stick|net> stick=<0..359>:<0..100> cam=<off|detect|sandbox>
+  hold=<none|pass> yaw=<rot|rotneg|none> words=<3 of 0prhn> bits=0x<hex> correct=<0..10000>
+  isend=<0|1> p218=<0|1> padprobe=<0|1> holdlog=<0|1> dm=<off|probe|on> lookgate=<0|1> lookrecover=<0|1>
+  tap=0x<hex> press=0x<hex>:<50..5000> dmplay=<0..9> dmstop=1   (one-shots)
 ```
 
-`census=1` (log `partner_census` for both blocks once; a trigger that changes
+`census=1` (log `partner_census` for both blocks once, plus `partner_input_census`
+even with `input=off` and `partner_dm_census` when `dm` is not off; a trigger that changes
 `anim=` or `aset=` also re-arms the change-only anim/stance lines), `parts=explicit`
 (one-shot op 16: re-apply the desired look; with `look=copy` the local look,
 variant F3b) and `mirror=on` (one-shot op 32, the mirror diagnostic: F3c, at
 most 10 s; refused with `partner_trigger=ignored; token=mirror=on; reason=look`
 unless `look=copy`, because mirror mode copies the local look over instance 1)
 are the native parser's one-shot tokens (`native/partner_receipt.cpp`
-`ParseTrigger`). `parts`/`mirror` take effect only at stage 1 or higher. None of
-the one-shots is part of the `partner_stage=changed` line; Lua logs
-`partner_lua=event=parts_set; R=1; type=..; ...` and `event=mirror_on` when it
-runs them. The other keys are described in
-[partner-anim-appearance.md](partner-anim-appearance.md).
+`ParseTrigger`). The round 3 one-shots are `tap`/`press` (held bits, only while
+the input window is armed and within `bits=`; refused with
+`partner_input=tap_refused; reason=mask|not_armed`), `dmplay`/`dmstop` (direct
+motion, `dmplay` only at stage 1+; refused with `partner_dm=refused;
+reason=not_patched|parts|busy|cam_connect`) and `p218=1` (the hazardous
+diagnostic P+0x218 window: needs `lab.ini partner_input_p218_allow=1` and
+`cam=sandbox`, auto-expires after 20 s; quit without saving afterwards).
+`holdlog=0|1` is a setting, not a one-shot: it needs `lab.ini
+partner_input_holdlog=1` (else `partner_input=holdlog_refused;
+reason=not_allowed`) and acts only while the input window is armed. `press=`
+milliseconds have no leading zeros (`press=0x2:0100` is refused by both the
+scripts and the native parser).
+`parts`/`mirror`/`dmplay` take effect only at stage 1 or higher. The one-shots
+are not part of the `partner_stage=changed` line; Lua logs
+`partner_lua=event=parts_set; R=1; type=..; ...`, `event=mirror_on`,
+`event=dm_play;gani=N` / `event=dm_stop` when it runs them. The other keys are
+described in [partner-anim-appearance.md](partner-anim-appearance.md).
 
 The scripts validate the grammar (lower case, blanks between tokens, `stop` only
-alone, `move=` written back as `apply=`) and write the canonical order `stage
-source apply anim aset reset look probe census parts mirror` (the longest line
-is 118 bytes with its newline). Native code polls the file every 30 Lua ticks,
-only with `offline-v1` and `lab.ini` `partner=1`. It deletes the file whether it
-accepts it or not, then logs `partner_stage=changed; stage=..; source=..;
-apply=..; anim=..; aset=..; reset=..; look=..; probe=..; via=trigger` (the full
-configuration after the trigger; `stop` sets stage 0) or
+alone, `move=` written back as `apply=`) and write the canonical order (the
+classic keys first, then the round 3 keys, with the one-shots last). Native code
+polls the file every 30 Lua ticks, only with `offline-v1` and `lab.ini`
+`partner=1`. It deletes the file whether it accepts it or not, then logs
+`partner_stage=changed; stage=..; source=..; apply=..; anim=..; aset=..;
+reset=..; look=..; probe=..; lookgate=..; lookrecover=..; input=..; cam=..;
+hold=..; yaw=..; words=..; mask=0x..; correct=..; isend=..; dm=..; via=trigger`
+(the full configuration after the trigger; `stop` sets stage 0) or
 `partner_trigger=rejected; reason=parse`.
 `Set-PartnerTrigger.ps1 -WaitSec` therefore confirms the result in
 `script-observer.log` (lines after the length recorded before the write): exit
