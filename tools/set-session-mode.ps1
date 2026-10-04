@@ -1,12 +1,24 @@
 param(
     [Parameter(Mandatory)][ValidateSet('Host','Join','Diagnostic')][string]$Role,
     [string]$HostSteamId,
+    # Any owned installation folder, for example the single-PC lab guest copy
+    # D:/Games/steamapps/common/MGS_TPP_guest. Its probe-install.json must name it.
     [string]$GameDirectory='D:/Games/steamapps/common/MGS_TPP'
 )
 $ErrorActionPreference='Stop'
 if((Get-Item -LiteralPath $GameDirectory).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Use the direct MGSV folder, not a filesystem link.' }
-$gameRoot=(Resolve-Path -LiteralPath $GameDirectory).Path
-if(Get-Process mgsvtpp,mgsvmgo -ErrorAction SilentlyContinue) { throw 'Close MGSV normally before changing the session mode.' }
+$gameRoot=(Resolve-Path -LiteralPath $GameDirectory).Path.TrimEnd('\','/')
+# Only an MGSV process started from THIS folder blocks the change (matched by
+# executable path), so one lab instance can be configured while the other runs.
+foreach($process in @(Get-Process -Name mgsvtpp,mgsvmgo -ErrorAction SilentlyContinue)) {
+    $path=$null
+    try { $path=$process.Path } catch { $path=$null }
+    if(!$path) { try { $path=(Get-CimInstance Win32_Process -Filter "ProcessId=$($process.Id)" -ErrorAction Stop).ExecutablePath } catch { $path=$null } }
+    # An unknown location is treated as this folder.
+    if(!$path -or (Split-Path -Parent ([IO.Path]::GetFullPath($path))).TrimEnd('\','/').Equals($gameRoot,[StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Close MGSV running from this folder normally before changing the session mode.'
+    }
+}
 $modRoot=Join-Path $gameRoot 'mgs-coop'
 foreach($path in @($modRoot,(Join-Path $modRoot 'script-observe.enabled'),(Join-Path $modRoot 'client-host.txt'))) {
     if((Test-Path -LiteralPath $path) -and ((Get-Item -LiteralPath $path).Attributes -band [IO.FileAttributes]::ReparsePoint)) {

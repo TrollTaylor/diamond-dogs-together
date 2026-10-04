@@ -1,6 +1,9 @@
 param(
     [ValidateSet('Host','Join','Diagnostic')][string]$Role,
     [string]$HostSteamId,
+    # Installed MGSV folder to configure (for example a single-PC lab guest copy).
+    # Default: the folder recorded by install.ps1 (installed-location.json), else
+    # a prompt. Packages are used on other PCs, so no fixed path is assumed here.
     [string]$GameDirectory
 )
 $ErrorActionPreference='Stop'
@@ -23,4 +26,5 @@ if(!$Role) {
 if($Role -eq 'Join' -and !$HostSteamId) { $HostSteamId=Read-Host "Host player's 17-digit SteamID64" }
 # All validation and exact ASCII/LF marker writes happen in the shared command.
 # This always targets the installed mod, not the extracted package directory.
+# The shared command only refuses while MGSV runs from THIS folder (by path).
 & (Join-Path $PSScriptRoot 'set-session-mode.ps1') -Role $Role -HostSteamId $HostSteamId -GameDirectory $GameDirectory

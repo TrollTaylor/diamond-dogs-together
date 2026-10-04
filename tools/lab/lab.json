@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "comment": "Single-PC co-op lab settings. Relative paths resolve against the repository root. See tools/lab/README.md.",
+  "paths": {
+    "hostDir": "D:/Games/steamapps/common/MGS_TPP",
+    "guestDir": "D:/Games/steamapps/common/MGS_TPP_guest",
+    "fuseSource": "C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/work/fuse",
+    "fuseExe": "C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop/work/fuse/fuse.exe",
+    "runDir": "build/lab",
+    "loader": "build/native/dinput8.dll",
+    "runtimeArchive": "D:/Games/steamapps/common/MGS_TPP/mgs-coop/mgs-coop-player-runtime.dat"
+  },
+  "hashes": {
+    "exe": "085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45",
+    "steamApi": "08BD0152356E5619EE56A6714AC951B6800DBB21821693A4EFAF85278442C60A",
+    "runtimeArchive": "26CE7C2168D655C35BE39E4F17A295206AA0522DE8782CD57A36C4FEEA382F54",
+    "fuseCommit": "f75b41d1aded4d2e0684af2f03fab064186b225b"
+  },
+  "ports": {
+    "fuse": 6667,
+    "host": 47810,
+    "guest": 47811
+  },
+  "identity": {
+    "hostSteamId": "auto",
+    "hostPeerSteamId": "guest",
+    "guestSteamId": "76561202255233008",
+    "guestName": "Guest"
+  },
+  "characters": {
+    "host": "default",
+    "guest": "quiet"
+  },
+  "xinput": {
+    "host": "none",
+    "guest": "0"
+  },
+  "saves": {
+    "localSubdir": "287700/local",
+    "remoteSubdir": "remote"
+  },
+  "graphics": {
+    "windowMode": "Windowed",
+    "width": 1280,
+    "height": 720
+  },
+  "window": {
+    "width": 1280,
+    "height": 720,
+    "host": { "x": 0, "y": 0 },
+    "guest": { "x": 1280, "y": 0 },
+    "resize": false
+  },
+  "fuse": {
+    "writeLog": true,
+    "startupTimeoutSec": 20
+  },
+  "smoke": {
+    "timeoutSec": 180,
+    "readyTimeoutSec": 900,
+    "pollMs": 2000,
+    "windowTimeoutSec": 180,
+    "autoTitleScanCodes": [28, 28, 28],
+    "autoTitleGapMs": 4000
+  }
+}
