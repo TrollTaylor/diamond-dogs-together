@@ -61,3 +61,19 @@ at about 30 Hz, live.
 - The implementation that acts on these findings (anim sync, the native body
   transform, appearance sync, the character in offline-v1) and its live
   experiments: [partner-anim-appearance.md](partner-anim-appearance.md).
+
+## Live round 2 (build a63bd5b): results
+
+| Item | Result |
+|---|---|
+| Guest plays Quiet (offline-v1 + Continue path) | **Works.** `character=allocated; vars=6; parts=27; camo=116`, `character_readback verdict=applied` |
+| Host sees the guest as Quiet (appearance over our link) | **Works.** `partner_net=look_rx type=6`, then `partner_look=loaded q40=6 q48=27 q50=116`. Quiet is visible with her stealth shimmer (`evidence/anim-appearance-2026-10-04/look2-pair.png`) |
+| Guest sees the host as Snake | **Fails.** `partner_look=timeout; state=1; q180=0x2`. A Quiet look on the guest's partner loads instantly, so with a local Quiet the Snake-type load for instance 1 never completes. Re-applying after realization does not help. To investigate: Snake-specific packs (arm/face/headband) that are only resident when the local player is Snake |
+| Census (after accepting the PS subclass vtable 0x23B0C70) | **ok** for k=0/1. T vt 0x24C8EF0 (+0x68 0x1AD56D0, +0x70 0x1AD4450), A0 vt 0x23B59D0 (+0x80 0x10C7690), C0 vt 0x23D0CA0 (+0x90 0x128B3E0) |
+| Smooth mover `apply=xform reset=n` | **Works.** `err_mm=0`, `yaw_err_mrad=0`, no faults, no Warp resets |
+| Stance, native SetStance (aset=qs) | Set to crouch (`psw=0x22`), then **reverted** by the game 17 ms later (`psw=0x11`) |
+| Stance, request path (aset=r) | `result=ok`, but **no visible change**; the slot-1 stance stays 0x11 |
+
+Conclusion: offline, instance 1's action system is idle. It is not locally controlled (isLocal=0, so it reads no input), and network-follow is S_IS_ONLINE-gated (out of scope). Stance and locomotion animation need a different lever:
+- (a) Drive instance 1 as a locally controlled body from the remote player's INPUT (a virtual pad per instance).
+- (b) Play motion clips directly on instance 1 (the scripted-motion interfaces used by missions and demos).
