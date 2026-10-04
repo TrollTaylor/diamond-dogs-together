@@ -111,14 +111,20 @@ try {
     $expectArchive = '26CE7C2168D655C35BE39E4F17A295206AA0522DE8782CD57A36C4FEEA382F54'
     if ($package) { $expectArchive = [string]$package.runtime_archive.sha256 }
     $saveCheck = 'not checked (no install record)'
-    $backup = [string](Get-FriendProperty $state 'latest_backup' '')
-    if ($backup -and (Test-Path -LiteralPath (Join-Path $backup 'manifest.json') -PathType Leaf)) {
+    # Against the first backup of each Steam account (the state before the
+    # friend test), like Uninstall-Coop.
+    $baseline = Get-FriendSaveBaselines @(Get-FriendProperty $state 'backups' @())
+    $results = @()
+    foreach ($b in @($baseline.Baselines)) {
         try {
-            $cmp = (Test-RealSavesAgainstBackup -BackupDirectory $backup).Comparison
-            if ($cmp.Same) { $saveCheck = 'UNCHANGED since the install backup' }
-            else { $saveCheck = "DIFFERENT (changed=$(@($cmp.Changed).Count) missing=$(@($cmp.Missing).Count) new=$(@($cmp.Added).Count))" }
-        } catch { $saveCheck = 'check failed: ' + $_.Exception.Message }
+            $cmp = (Test-RealSavesAgainstBackup -BackupDirectory $b.Backup).Comparison
+            if ($cmp.Same) { $results += 'UNCHANGED since the backup made before the friend test' }
+            else { $results += "DIFFERENT from the backup made before the friend test (changed=$(@($cmp.Changed).Count) missing=$(@($cmp.Missing).Count) new=$(@($cmp.Added).Count))" }
+        } catch { $results += ('check failed: ' + $_.Exception.Message) }
     }
+    if (@($baseline.Missing).Count) { $results += ('missing backups=' + @($baseline.Missing).Count) }
+    if ($results.Count) { $saveCheck = $results -join '; ' }
+    $installStatus = [string](Get-FriendProperty $state 'status' 'none')
     $running = @(Get-GameProcessInDirectory -Directory $gameRoot).Count -gt 0
     $os = [Environment]::OSVersion.VersionString
     $lines = @(
@@ -127,7 +133,7 @@ try {
         ('collected_utc=' + [DateTime]::UtcNow.ToString('o')),
         ('role=' + $role + '; marker=' + ([string]$marker).Trim()),
         ('package_version=' + [string](Get-FriendProperty $package 'version' 'unknown') + '; installed_loader_version=' + [string](Get-FriendProperty $record 'version' 'none')),
-        ('friend_install_role=' + [string](Get-FriendProperty $state 'role' 'none') + '; character=' + [string](Get-FriendProperty $state 'character' 'none')),
+        ('friend_install_role=' + [string](Get-FriendProperty $state 'role' 'none') + '; character=' + [string](Get-FriendProperty $state 'character' 'none') + '; status=' + $installStatus),
         ('game_directory=' + $gameRoot),
         ('game_running=' + $running),
         ('mgsvtpp.exe sha256=' + $exe + '; expected=' + ($exe -eq $expectExe.ToUpperInvariant())),

@@ -40,8 +40,12 @@ param(
     # else the only account with MGSV saves).
     [UInt32]$SteamAccountId = 0,
     # Replace an existing co-op save copy with a fresh copy of the real save
-    # (the previous copy is moved aside, never deleted).
+    # (the previous copy is moved aside, never deleted). A first install (no
+    # active friend install, also after Uninstall-Coop) always does this.
     [switch]$ReseedSaves,
+    # Reinstall although the real save files changed since the backup made
+    # before the friend test (interactive runs ask instead).
+    [switch]$AcceptChangedSaves,
     [switch]$NonInteractive,
     # Do not ask for the final confirmation.
     [switch]$Yes,
@@ -168,6 +172,58 @@ try {
 $ownSteamId = ConvertTo-FriendSteamId64 -AccountId $account
 $userData = Join-Path (Join-Path $steamRoot 'userdata') ([string]$account)
 if ($active -eq 0) { Write-Host 'Note: Steam does not report a logged-in user (is Steam running?). Using the only Steam account with MGSV saves on this PC.' -ForegroundColor Yellow }
+# Every path the installer creates must fit Windows' classic 260-character
+# limit (Windows PowerShell 5.1 cannot exceed it on a default Windows setup).
+$saveFiles = @()
+foreach ($app in @('287700', '311340')) {
+    $appDir = Join-Path $userData $app
+    if (Test-Path -LiteralPath $appDir -PathType Container) {
+        foreach ($f in @(Get-ChildItem -LiteralPath $appDir -File -Recurse -Force)) { $saveFiles += @(Get-RelativeChildPath -Root $userData -Path $f.FullName) }
+    }
+}
+$lengthProblem = Get-FriendPathLengthProblem -GameRoot $gameRoot -SaveFiles $saveFiles
+if ($lengthProblem) { throw "$lengthProblem Move the game to a shorter folder path (Steam > Settings > Storage) and try again. Nothing was changed." }
+
+# ---------------------------------------------------------------- earlier friend install
+$statePath = Join-Path $paths.Mod 'friend-install.json'
+$state = Read-FriendJson $statePath
+if ($state -and (Get-FriendProperty $state 'product') -ne 'mgs-coop-friend-install') { $state = $null }
+if ($state) {
+    # A reinstall (role or character change) takes a new backup, but the backup
+    # from BEFORE the friend test stays the reference: the real saves must not
+    # change while the mod is installed.
+    Write-Host 'An active friend-test install was found; checking your real save files against the backup made before the friend test...'
+    $baseline = Get-FriendSaveBaselines @(Get-FriendProperty $state 'backups' @())
+    $changes = @()
+    foreach ($b in @($baseline.Baselines)) {
+        $cmp = (Test-RealSavesAgainstBackup -BackupDirectory $b.Backup).Comparison
+        if (!$cmp.Same) { $changes += @([pscustomobject]@{ Backup = $b.Backup; Comparison = $cmp }) }
+    }
+    foreach ($m in @($baseline.Missing)) { Write-Host "Note: the save backup $m is missing; it cannot be used for the check." -ForegroundColor Yellow }
+    if ($changes.Count) {
+        Write-Host ''
+        Write-Host 'WARNING: your REAL save files changed while the mod was installed.' -ForegroundColor Yellow
+        foreach ($c in $changes) {
+            foreach ($p in @($c.Comparison.Changed)) { Write-Host "  changed: $p" }
+            foreach ($p in @($c.Comparison.Missing)) { Write-Host "  missing: $p" }
+            foreach ($p in @($c.Comparison.Added)) { Write-Host "  new:     $p" }
+            Write-Host "  The backup from before the friend test is kept in: $($c.Backup)"
+        }
+        Write-Host 'This should not happen while the mod is installed (the game plays from the save copy).'
+        Write-Host 'Steam Cloud may have brought saves from another PC, or the save redirection did not'
+        Write-Host 'work. Please run Collect-Logs.bat and send the logs. Uninstall-Coop.bat shows how to'
+        Write-Host 'put the backup back. A new install keeps comparing with the backup above.'
+        if ($AcceptChangedSaves) {
+            Write-Host 'Continuing (-AcceptChangedSaves).'
+        } elseif ($interactive) {
+            if ((Ask 'Continue the install anyway? [y/N]') -notmatch '^(y|yes)$') { Write-Host 'Cancelled. Nothing was changed.'; exit 1 }
+        } else {
+            throw 'Your real save files changed since the backup made before the friend test (see above). Nothing was changed. Pass -AcceptChangedSaves to install anyway.'
+        }
+    } elseif (@($baseline.Baselines).Count) {
+        Write-Host 'Real save files: unchanged since the backup made before the friend test.'
+    }
+}
 
 # ---------------------------------------------------------------- role
 Section 'Step 2: role'
@@ -184,7 +240,7 @@ Write-Host "Role: $Role"
 if ($Role -eq 'Host' -and $HostSteamId) { throw '-HostSteamId is only used with -Role Join.' }
 if ($Role -eq 'Join') {
     if (!$HostSteamId) {
-        Write-Host 'Enter the HOST player''s SteamID64: 17 digits, starting with 7656119.'
+        Write-Host 'Enter the HOST player''s SteamID64: 17 digits, usually starting with 7656119.'
         Write-Host ' - The host''s installer shows it at the end of its install.'
         Write-Host ' - Or the host opens Steam, clicks their profile name (top right) > Account details;'
         Write-Host '   the "Steam ID" line shows the number.'
@@ -278,19 +334,32 @@ catch { throw ('Could not back up your saves: ' + $_.Exception.Message + ' Play 
 Write-Host ("Backed up {0} save files ({1} checked by hash) to {2}" -f @($manifest.all_files).Count, @($manifest.verified).Count, $backupDir)
 $seedArchive = Join-Path (Join-Path $paths.Mod 'coop-saves-replaced') $stamp
 $reseed = [bool]$ReseedSaves
-$alreadySeeded = (Test-Path -LiteralPath (Join-Path $saveDir '287700\local')) -and @(Get-ChildItem -LiteralPath (Join-Path $saveDir '287700\local') -File -Force).Count -gt 0
-if ($alreadySeeded -and !$reseed -and $interactive) {
-    Write-Host 'A co-op save copy from an earlier install exists (it holds any progress made during co-op tests).'
-    $reseed = (Ask 'Replace it with a fresh copy of your current real save? The old copy is kept aside. [y/N]') -match '^(y|yes)$'
+$seedLocal = Join-Path $saveDir '287700\local'
+$alreadySeeded = (Test-Path -LiteralPath $seedLocal) -and @(Get-ChildItem -LiteralPath $seedLocal -File -Force).Count -gt 0
+if ($alreadySeeded -and !$reseed) {
+    $copyFiles = @(Get-ChildItem -LiteralPath $saveDir -File -Recurse -Force | Sort-Object LastWriteTime -Descending)
+    $copyAge = 'unknown'
+    if ($copyFiles.Count) { $copyAge = $copyFiles[0].LastWriteTime.ToString('yyyy-MM-dd HH:mm') }
+    if (!$state) {
+        # No active friend install (first install, or after Uninstall-Coop): the
+        # copy is left over from an earlier test and may be far older than the
+        # real save, while the game uses the normal online service.
+        Write-Host "A co-op save copy from an earlier test exists (last changed $copyAge). It is moved aside and"
+        Write-Host 'replaced with a fresh copy of your current real save.'
+        $reseed = $true
+    } elseif ($interactive) {
+        Write-Host "A co-op save copy from this friend test exists (last changed $copyAge); it holds the progress made during co-op tests."
+        $reseed = (Ask 'Replace it with a fresh copy of your current real save? The old copy is kept aside. [y/N]') -match '^(y|yes)$'
+    }
 }
 $seed = Copy-SaveSeed -BackupDirectory $backupDir -SaveDir $saveDir -Reseed:$reseed -ArchiveDirectory $seedArchive
-if ($seed.Seeded) { Write-Host "Co-op save copy created: $saveDir ($($seed.Files) files)" }
-else { Write-Host "Co-op save copy kept from the earlier install: $saveDir" }
+if ($seed.Seeded) {
+    Write-Host "Co-op save copy created: $saveDir ($($seed.Files) files)"
+    if ($alreadySeeded) { Write-Host "The previous copy was moved to $seedArchive" }
+} else { Write-Host "Co-op save copy kept from the earlier install: $saveDir" }
 
 # ---------------------------------------------------------------- 6: install
 Section 'Step 6: installing the mod'
-$statePath = Join-Path $paths.Mod 'friend-install.json'
-$state = Read-FriendJson $statePath
 $managed = @('lab.ini', 'coop.ini', 'script-observe.enabled', 'client-host.txt')
 # Previous configuration files: copied aside once, so Uninstall-Coop can report
 # (and, for a previous loader, put back) what was there before the first friend install.
@@ -309,14 +378,60 @@ foreach ($name in $managed) {
         $previousFiles += @([ordered]@{ name = $name; existed = ($null -ne $snapshots[$name]); copy = $copy })
     }
 }
-# The ownership record before this run: a failure later in this run restores
-# the loader only when this run replaced that record (a new rollback id).
+$stateSnapshot = $null
+if (Test-Path -LiteralPath $statePath -PathType Leaf) { $stateSnapshot = [IO.File]::ReadAllBytes($statePath) }
+# The loader state before this run. A failure later in this run restores the
+# loader only when this run replaced the ownership record (a new rollback id),
+# and puts the configuration back only when the loader is exactly as before.
 $recordBefore = [string](Get-FriendProperty (Read-FriendJson $paths.Record) 'rollback_id' '')
-$installAttempted = $false
+$loaderHashBefore = Get-FriendFileSha256 $paths.Loader
+$rollbackIds = @()
+$backups = @()
+$installs = @()
+$recordBeforeFriend = $recordBefore
+if ($state) {
+    $rollbackIds = @(Get-FriendProperty $state 'rollback_ids' @() | ForEach-Object { [string]$_ })
+    $backups = @(Get-FriendProperty $state 'backups' @())
+    $installs = @(Get-FriendProperty $state 'installs' @())
+    $previousFiles = @(Get-FriendProperty $state 'previous_files' @())
+    $recordBeforeFriend = [string](Get-FriendProperty $state 'record_before_friend' '')
+    if ([string](Get-FriendProperty $state 'status' '') -eq 'pending') {
+        # An earlier run stopped between the loader install and its final record
+        # (window closed, crash, failed restore). A loader it installed belongs
+        # to the friend test too, so Uninstall-Coop undoes it.
+        $pendingBefore = [string](Get-FriendProperty $state 'pending_record_before' '')
+        if ($recordBefore -cmatch '^[0-9a-f]{32}$' -and $recordBefore -cne $pendingBefore -and $rollbackIds -notcontains $recordBefore) {
+            $rollbackIds += @($recordBefore)
+            Write-Host 'Note: an earlier install run did not finish; its loader is included in the uninstall.'
+        }
+    }
+}
+$backups += @($backupDir)
+function New-StateText([string]$Status, [string[]]$Ids, [object[]]$Installs) {
+    $s = [ordered]@{
+        product = 'mgs-coop-friend-install'; version = $version; game_directory = $gameRoot
+        role = $Role; character = $Character; save_dir = $saveDir
+        status = $Status; pending_record_before = $(if ($Status -eq 'pending') { $recordBefore } else { '' })
+        record_before_friend = $recordBeforeFriend
+        first_backup = [string]$backups[0]; latest_backup = $backupDir; backups = $backups; rollback_ids = @($Ids)
+        previous_files = $previousFiles; installs = @($Installs)
+        note = 'Written by Install-Coop.ps1. Uninstall-Coop.ps1 restores the loader states listed in rollback_ids (status pending: also a newer ownership record than pending_record_before) and checks the real saves against the first backup of each Steam account.'
+    }
+    return (($s | ConvertTo-Json -Depth 6) + "`n")
+}
+$loaderChanged = $false
 try {
+    # Recorded BEFORE the loader is touched, so that Uninstall-Coop can undo an
+    # install that stops halfway (status pending).
+    Write-FriendTextFile -Path $statePath -Text (New-StateText -Status 'pending' -Ids $rollbackIds -Installs $installs)
+    # lab.ini first: without the loader nothing reads it, and with the loader
+    # the game never runs without the save redirection.
+    Write-FriendTextFile -Path $paths.LabIni -Text (New-FriendLabIniText -Role $Role -SaveDir $saveDir)
+    Write-FriendTextFile -Path $paths.CoopIni -Text (New-FriendCoopIniText -Character $Character)
+
     $arguments = @{ Action = 'Install'; GameDirectory = $gameRoot; PackageDirectory = $packageRoot; NoPrompt = $true }
     if ($archiveSource) { $arguments['RuntimeArchive'] = $archiveSource }
-    $installAttempted = $true
+    $loaderChanged = $true
     # The shared commands print developer-package hints (configure-role.bat,
     # one attempt per restart); the friend sees this script's own lines instead.
     $output = @(& $installer @arguments)
@@ -331,46 +446,47 @@ try {
     if ($Role -eq 'Join') { Write-Host 'Role set: Join (script-observe.enabled = client-v1; the host''s SteamID64 is in client-host.txt).' }
     else { Write-Host 'Role set: Host (script-observe.enabled = host-v3).' }
 
-    Write-FriendTextFile -Path $paths.LabIni -Text (New-FriendLabIniText -Role $Role -SaveDir $saveDir)
-    Write-FriendTextFile -Path $paths.CoopIni -Text (New-FriendCoopIniText -Character $Character)
-
-    $rollbackIds = @()
-    $backups = @()
-    $installs = @()
-    if ($state) {
-        $rollbackIds = @(Get-FriendProperty $state 'rollback_ids' @())
-        $backups = @(Get-FriendProperty $state 'backups' @())
-        $installs = @(Get-FriendProperty $state 'installs' @())
-        $previousFiles = @(Get-FriendProperty $state 'previous_files' @())
-    }
     $rollbackIds += @($rollbackId)
-    $backups += @($backupDir)
     $installs += @([ordered]@{ utc = [DateTime]::UtcNow.ToString('o'); role = $Role; character = $Character; rollback_id = $rollbackId; backup = $backupDir; package = $packageRoot })
-    $newState = [ordered]@{
-        product = 'mgs-coop-friend-install'; version = $version; game_directory = $gameRoot
-        role = $Role; character = $Character; save_dir = $saveDir
-        latest_backup = $backupDir; backups = $backups; rollback_ids = $rollbackIds
-        previous_files = $previousFiles; installs = $installs
-        note = 'Written by Install-Coop.ps1. Uninstall-Coop.ps1 restores the loader states listed in rollback_ids and checks the real saves against latest_backup.'
-    }
-    Write-FriendTextFile -Path $statePath -Text (($newState | ConvertTo-Json -Depth 6) + "`n")
+    Write-FriendTextFile -Path $statePath -Text (New-StateText -Status 'installed' -Ids $rollbackIds -Installs $installs)
 } catch {
     $failure = $_
-    if ($installAttempted) {
-        Write-Host 'Installation failed; undoing the changes...' -ForegroundColor Yellow
-        foreach ($name in $managed) {
-            $path = Join-Path $paths.Mod $name
-            try {
-                if ($null -ne $snapshots[$name]) { [IO.File]::WriteAllBytes($path, [byte[]]$snapshots[$name]) }
-                elseif ((Test-Path -LiteralPath $path -PathType Leaf) -and ($name -in @('lab.ini', 'coop.ini'))) { Remove-Item -LiteralPath $path }
-            } catch { Write-Host "Could not restore $name : $($_.Exception.Message)" -ForegroundColor Yellow }
-        }
+    Write-Host 'Installation failed; undoing the changes...' -ForegroundColor Yellow
+    if ($loaderChanged) {
         $recordedId = [string](Get-FriendProperty (Read-FriendJson $paths.Record) 'rollback_id' '')
         if ($recordedId -and $recordedId -cne $recordBefore) {
             # This run's install completed (new ownership record): return to the state before it.
             try { $null = & $installer -Action Restore -GameDirectory $gameRoot; Write-Host 'The previous loader state was restored.' }
-            catch { Write-Host "Automatic restore failed: $($_.Exception.Message). Run Uninstall-Coop.bat or ask for help." -ForegroundColor Yellow }
+            catch { Write-Host "Automatic restore of the loader failed: $($_.Exception.Message)" -ForegroundColor Yellow }
         }
+    }
+    $loaderAsBefore = ([string](Get-FriendProperty (Read-FriendJson $paths.Record) 'rollback_id' '') -ceq $recordBefore) -and
+        ((Get-FriendFileSha256 $paths.Loader) -ceq $loaderHashBefore)
+    if ($loaderAsBefore) {
+        # The loader is exactly as before this run: put the configuration and the
+        # install record back as well.
+        foreach ($name in $managed) {
+            $path = Join-Path $paths.Mod $name
+            try {
+                if ($null -ne $snapshots[$name]) { [IO.File]::WriteAllBytes($path, [byte[]]$snapshots[$name]) }
+                elseif (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path }
+            } catch { Write-Host "Could not restore $name : $($_.Exception.Message)" -ForegroundColor Yellow }
+        }
+        try {
+            if ($null -ne $stateSnapshot) { [IO.File]::WriteAllBytes($statePath, [byte[]]$stateSnapshot) }
+            elseif (Test-Path -LiteralPath $statePath -PathType Leaf) { Remove-Item -LiteralPath $statePath }
+        } catch { Write-Host "Could not restore friend-install.json : $($_.Exception.Message)" -ForegroundColor Yellow }
+        Write-Host 'The game folder is back to its state before this run (the new save backup is kept).'
+    } else {
+        # Keep lab.ini (the game keeps using the save copy) and the pending
+        # install record (Uninstall-Coop can undo this run).
+        Write-Host ''
+        Write-Host 'The mod loader could NOT be removed automatically.' -ForegroundColor Red
+        Write-Host 'lab.ini was kept, so the game still uses the save copy, not your real save files.' -ForegroundColor Red
+        Write-Host 'Close this window and run Uninstall-Coop.bat. If that fails too, do not play MGSV' -ForegroundColor Red
+        Write-Host 'from this folder and send the output to the person who gave you this package.' -ForegroundColor Red
+        Write-Host "(Moving dinput8.dll out of $gameRoot also turns the mod off; the files it replaced" -ForegroundColor Red
+        Write-Host " are backed up in $($paths.Mod)\install-backups.)" -ForegroundColor Red
     }
     throw $failure
 }

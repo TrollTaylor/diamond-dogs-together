@@ -35,7 +35,7 @@ foreach($path in @($modRoot,(Join-Path $modRoot 'script-observe.enabled'),(Join-
         throw 'Session configuration must not use filesystem links.'
     }
 }
-$manifest=Get-Content -LiteralPath (Join-Path $modRoot 'probe-install.json') -Raw | ConvertFrom-Json
+$manifest=Get-Content -LiteralPath (Join-Path $modRoot 'probe-install.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 if($manifest.product -ne 'mgs-coop-original-loader-probe' -or $manifest.game_directory -ne $gameRoot) { throw 'Installation record does not match this mod and directory.' }
 if($manifest.version -notin @('0.10.27','0.10.28','0.10.29','0.10.30','0.10.31','0.10.32','0.10.33','0.11.0')) { throw 'This command requires a supported 0.10.27 through 0.11.0 loader. The installed loader has not been changed.' }
 if((Get-FileHash -LiteralPath (Join-Path $gameRoot 'dinput8.dll')).Hash -ne $manifest.dll_sha256) { throw 'Installed loader differs from its ownership record.' }

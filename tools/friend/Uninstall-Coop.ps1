@@ -6,12 +6,15 @@ MGS Co-op friend-test uninstaller. Double-click Uninstall-Coop.bat, or:
   1. Restores the loader state from before each friend install, through the
      package's owned rollback (scripts\install.ps1 -Action Restore). Only the
      install states that Install-Coop recorded in friend-install.json are
-     undone; an MGS Co-op loader that was there before is left in place.
-  2. Renames lab.ini and coop.ini to *.disabled-<time> (and the role files
-     when no loader remains, or puts back their previous copies when an earlier
-     loader remains).
-  3. Checks the real save files against the backup manifest and reports. It
-     never overwrites real saves; it prints how to restore them if they differ.
+     undone (including one from a run that stopped halfway, status pending);
+     an MGS Co-op loader that was there before is left in place.
+  2. Renames lab.ini and coop.ini to *.disabled-<time>. When no loader remains,
+     the role files are renamed the same way. When a loader remains, the
+     copies of lab.ini, coop.ini and the role files from before the friend
+     test are put back, and it says plainly that this loader stays active.
+  3. Checks the real save files against the backup made before the friend test
+     (the first backup of each Steam account) and reports. It never overwrites
+     real saves; it prints how to restore them if they differ.
 Nothing is deleted: backups, the co-op save copy and logs stay in <game>\mgs-coop.
 #>
 [CmdletBinding()]
@@ -93,6 +96,16 @@ $exitCode = 0
 # ---------------------------------------------------------------- 1: loader
 Section 'Step 1: restoring the previous loader'
 $friendIds = @(Get-FriendProperty $state 'rollback_ids' @() | ForEach-Object { [string]$_ })
+if ([string](Get-FriendProperty $state 'status' '') -eq 'pending') {
+    # Install-Coop stopped between the loader install and its final record: a
+    # newer ownership record than the one before that run belongs to it.
+    $pendingBefore = [string](Get-FriendProperty $state 'pending_record_before' '')
+    $current = [string](Get-FriendProperty (Read-FriendJson $paths.Record) 'rollback_id' '')
+    if ($current -cmatch '^[0-9a-f]{32}$' -and $current -cne $pendingBefore -and $friendIds -notcontains $current) {
+        $friendIds += @($current)
+        Write-Host 'Note: the last install run did not finish; its loader is undone as well.'
+    }
+}
 $restored = 0
 $restoreFailed = $null
 for ($i = 0; $i -lt 32; $i++) {
@@ -108,17 +121,24 @@ $loaderLeft = Test-Path -LiteralPath $paths.Loader -PathType Leaf
 if ($restoreFailed) {
     Write-Host "The loader could not be restored: $restoreFailed" -ForegroundColor Red
     Write-Host 'lab.ini was left in place so that the game keeps using the save copy, not your real save.' -ForegroundColor Red
-    Write-Host "Backups of the replaced files are in $($paths.Mod)\install-backups. Send the output above to the person who gave you this package." -ForegroundColor Red
+    Write-Host 'Do not play MGSV from this folder until this is solved. Moving dinput8.dll out of the game' -ForegroundColor Red
+    Write-Host "folder turns the mod off; the files it replaced are backed up in $($paths.Mod)\install-backups." -ForegroundColor Red
+    Write-Host 'Send the output above to the person who gave you this package.' -ForegroundColor Red
     $exitCode = 2
 } elseif (!$loaderLeft) {
     Write-Host "Loader removed (restored $restored install state(s)). dinput8.dll is no longer in the game folder."
 } else {
     $record = Read-FriendJson $paths.Record
     $version = [string](Get-FriendProperty $record 'version' 'unknown')
-    if ($record -and (Get-FriendProperty $record 'product') -eq 'mgs-coop-original-loader-probe') {
-        Write-Host "An MGS Co-op loader ($version) that was installed BEFORE the friend test was put back (restored $restored state(s))."
+    $id = [string](Get-FriendProperty $record 'rollback_id' '')
+    $earlierId = [string](Get-FriendProperty $state 'record_before_friend' '')
+    if ($record -and (Get-FriendProperty $record 'product') -eq 'mgs-coop-original-loader-probe' -and $id -and $id -ceq $earlierId) {
+        Write-Host "The MGS Co-op loader ($version) from BEFORE the friend test is back in place (restored $restored friend install state(s))."
+    } elseif ($record -and (Get-FriendProperty $record 'product') -eq 'mgs-coop-original-loader-probe') {
+        Write-Host "An MGS Co-op loader ($version) that the friend test did NOT install is in the game folder, for" -ForegroundColor Yellow
+        Write-Host "example from the developer package or the single-PC lab. It was not changed (restored $restored friend install state(s))." -ForegroundColor Yellow
     } else {
-        Write-Host 'A dinput8.dll that was there before the friend test remains in the game folder.'
+        Write-Host "A dinput8.dll that the friend test did not install remains in the game folder. It was not changed (restored $restored friend install state(s))." -ForegroundColor Yellow
     }
 }
 
@@ -130,49 +150,76 @@ if (!$restoreFailed) {
         if ($renamed) { Write-Host "$name -> $(Split-Path -Leaf $renamed)" }
     }
     $previous = @(Get-FriendProperty $state 'previous_files' @())
-    foreach ($name in @('script-observe.enabled', 'client-host.txt')) {
+    foreach ($name in @('lab.ini', 'coop.ini', 'script-observe.enabled', 'client-host.txt')) {
         $path = Join-Path $paths.Mod $name
         $before = $previous | Where-Object { (Get-FriendProperty $_ 'name') -eq $name } | Select-Object -First 1
         $copy = [string](Get-FriendProperty $before 'copy' '')
-        if ($loaderLeft -and $before -and (Get-FriendProperty $before 'existed' $false) -and $copy -and (Test-Path -LiteralPath $copy -PathType Leaf)) {
+        $haveCopy = $before -and (Get-FriendProperty $before 'existed' $false) -and $copy -and (Test-Path -LiteralPath $copy -PathType Leaf)
+        if ($loaderLeft -and $haveCopy) {
+            # A loader remains: its configuration from before the friend test
+            # comes back with it (for the lab, lab.ini keeps it on its save copy).
             [IO.File]::Copy($copy, $path, $true)
             Write-Host "$name restored from the copy made before the friend test."
-        } else {
+        } elseif ($name -in @('script-observe.enabled', 'client-host.txt')) {
             $renamed = Rename-FriendFile -Path $path -Suffix 'disabled' -Stamp $stamp
             if ($renamed) { Write-Host "$name -> $(Split-Path -Leaf $renamed)" }
-        }
-    }
-    foreach ($row in $previous) {
-        $n = [string](Get-FriendProperty $row 'name' '')
-        $copy = [string](Get-FriendProperty $row 'copy' '')
-        if ($n -in @('lab.ini', 'coop.ini') -and $copy -and (Test-Path -LiteralPath $copy -PathType Leaf)) {
-            Write-Host "Your $n from before the friend test is kept as $(Split-Path -Leaf $copy) (not restored automatically)."
+        } elseif ($haveCopy) {
+            Write-Host "Your $name from before the friend test is kept as $(Split-Path -Leaf $copy) (no loader remains to use it)."
         }
     }
     $null = Rename-FriendFile -Path $statePath -Suffix 'uninstalled' -Stamp $stamp
+    if ($loaderLeft) {
+        $labText = Read-SharedText -Path $paths.LabIni
+        $lab = ConvertFrom-IniText $labText
+        $labSaveDir = ''
+        if ($lab.Contains('save_dir') -and $lab.Contains('enabled') -and [string]$lab['enabled'] -match '^(1|true|yes|on)$') { $labSaveDir = [string]$lab['save_dir'] }
+        Write-Host ''
+        Write-Host 'IMPORTANT: the remaining loader stays ACTIVE whenever MGSV starts from this folder.' -ForegroundColor Yellow
+        if ($labSaveDir) {
+            Write-Host "Its lab.ini from before the friend test redirects the saves to: $labSaveDir" -ForegroundColor Yellow
+        } else {
+            Write-Host 'Without a lab.ini save_dir it uses your REAL save files, and the game connects to the' -ForegroundColor Yellow
+            Write-Host 'normal online service with it loaded.' -ForegroundColor Yellow
+        }
+        Write-Host 'To remove it as well, use the installer that put it there (developer package:' -ForegroundColor Yellow
+        Write-Host 'install.ps1 -Action Restore), or close MGSV and move dinput8.dll out of the game folder.' -ForegroundColor Yellow
+    }
 }
 
 # ---------------------------------------------------------------- 3: saves
 Section 'Step 3: checking your real save files'
-$backup = [string](Get-FriendProperty $state 'latest_backup' '')
-if (!$backup -or !(Test-Path -LiteralPath (Join-Path $backup 'manifest.json') -PathType Leaf)) {
+# Compared with the FIRST backup of each Steam account: a reinstall takes a new
+# backup, but the reference is the state before the friend test.
+$baseline = Get-FriendSaveBaselines @(Get-FriendProperty $state 'backups' @())
+if (!@($baseline.Baselines).Count) {
+    $latest = [string](Get-FriendProperty $state 'latest_backup' '')
+    $baseline = Get-FriendSaveBaselines @($latest)
+}
+foreach ($m in @($baseline.Missing)) { Write-Host "Note: the save backup $m is missing." -ForegroundColor Yellow }
+if (!@($baseline.Baselines).Count) {
     Write-Host 'The save backup recorded by the installer was not found; the real saves could not be checked.' -ForegroundColor Yellow
     if ($exitCode -eq 0) { $exitCode = 3 }
 } else {
-    $check = Test-RealSavesAgainstBackup -BackupDirectory $backup
-    $cmp = $check.Comparison
-    if ($cmp.Same) {
-        Write-Host 'Real save files: UNCHANGED since the backup made at install time (SHA-256 checked).' -ForegroundColor Green
-    } else {
-        Write-Host 'Real save files: DIFFERENT from the backup made at install time.' -ForegroundColor Yellow
+    foreach ($b in @($baseline.Baselines)) {
+        $check = Test-RealSavesAgainstBackup -BackupDirectory $b.Backup
+        $cmp = $check.Comparison
+        if ($cmp.Same) {
+            Write-Host 'Real save files: UNCHANGED since the backup made before the friend test (SHA-256 checked).' -ForegroundColor Green
+            continue
+        }
+        Write-Host 'Real save files: DIFFERENT from the backup made before the friend test.' -ForegroundColor Yellow
         foreach ($p in @($cmp.Changed)) { Write-Host "  changed: $p" }
         foreach ($p in @($cmp.Missing)) { Write-Host "  missing: $p" }
         foreach ($p in @($cmp.Added)) { Write-Host "  new:     $p" }
         Write-Host 'Nothing was overwritten. This is expected if you played without the mod in between.'
-        Write-Host 'To go back to the backup: close MGSV and Steam, then copy'
-        Write-Host "  $backup\files\287700\*  ->  $($check.SourceRoot)\287700\"
-        Write-Host "  $backup\files\311340\*  ->  $($check.SourceRoot)\311340\"
-        Write-Host '(replace the files when asked). Keep the backup folder until you are sure.'
+        Write-Host "The backup from before the friend test: $($b.Backup)"
+        Write-Host 'To go back to it: close MGSV, quit Steam, then copy the CONTENTS of these two folders'
+        Write-Host '(replace the files when asked):'
+        Write-Host "  $($b.Backup)\files\287700\local  ->  $($check.SourceRoot)\287700\local"
+        Write-Host "  $($b.Backup)\files\311340\remote  ->  $($check.SourceRoot)\311340\remote"
+        Write-Host 'Copy nothing else: leave remotecache.vdf (Steam Cloud bookkeeping) as it is. Files listed'
+        Write-Host 'as "new" are not in the backup; move them out of the folder for an exact return. If Steam'
+        Write-Host 'then reports a Steam Cloud conflict, keep the local files. Keep the backup until you are sure.'
         if ($exitCode -eq 0) { $exitCode = 4 }
     }
 }

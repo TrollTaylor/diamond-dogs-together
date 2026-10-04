@@ -117,15 +117,20 @@ try {
     Assert-True ((Get-FriendSteamIdProblem 'https://steamcommunity.com/id/x').Contains('digits only')) 'profile link refused'
     Assert-True ((Get-FriendSteamIdProblem '').Contains('No SteamID64')) 'empty refused'
     Assert-True ((Get-FriendSteamIdProblem $null).Contains('No SteamID64')) 'null refused'
-    Assert-True ((Get-FriendSteamIdProblem '76561202255233008').Contains('7656119')) 'other prefix (lab fake account) refused'
+    Assert-True ((Get-FriendSteamIdProblem '76561202255233008').Contains('stand-in')) 'the single-PC lab stand-in id is refused'
+    Assert-True ($null -eq (Get-FriendSteamIdProblem '76561200000000005')) 'newest accounts (7656120...) accepted, like the native parser'
+    Assert-True ($null -eq (Get-FriendSteamIdProblem '76561202255233023')) 'highest individual account accepted'
+    Assert-True ($null -eq (Get-FriendSteamIdProblem '76561197960265729')) 'lowest individual account accepted'
+    Assert-True ((Get-FriendSteamIdProblem '76561202255233024').Contains('not an individual')) 'beyond the individual range refused'
     Assert-True ((Get-FriendSteamIdProblem '76561197960265728').Contains('not an individual')) 'account 0 refused'
     Assert-True ((Get-FriendSteamIdProblem '12345678901234567').Contains('7656119')) 'random 17 digits refused'
+    Assert-True ((Get-FriendSteamIdProblem '99999999999999999').Contains('7656119')) 'large random 17 digits refused'
     Assert-True ((Get-FriendSteamIdProblem $good -OwnSteamId $good).Contains('your own')) 'own SteamID refused'
     Assert-True ($null -eq (Get-FriendSteamIdProblem $good -OwnSteamId '76561197960265735')) 'other own id accepted'
     Assert-Equal (ConvertTo-FriendSteamId64 -AccountId 7) '76561197960265735' 'ActiveUser arithmetic'
     Assert-Equal (ConvertTo-FriendSteamId64 -AccountId 52079950) $good 'account -> SteamID64'
     Assert-Throws { ConvertTo-FriendSteamId64 -AccountId 0 } 'Invalid Steam account' 'account 0'
-    foreach ($id in '76561198012345678', '76561197960265729', '76561197960265728', '76561202255233008', '7656119801234567') {
+    foreach ($id in '76561198012345678', '76561197960265729', '76561197960265728', '76561202255233008', '7656119801234567', '76561200000000005', '76561202255233024') {
         Assert-Equal (Test-FriendIndividualSteamId64 $id) (Test-IndividualSteamId64 $id) "individual check matches LabCommon for $id"
     }
 
@@ -169,6 +174,13 @@ try {
     Assert-Throws { New-FriendLabIniText -Role Host -SaveDir ('C:\' + ('a' * 220)) } 'too long' 'save_dir over 213 bytes refused'
     Assert-True ($null -eq (Get-FriendSaveDirProblem ('C:\' + ('a' * 210)))) 'save_dir of 213 bytes accepted'
     Assert-True ($null -ne (Get-FriendSaveDirProblem ("C:\x`tz"))) 'control characters refused'
+    # Installer paths: the longest fixed one is the runtime archive temp file
+    # (<game> + 83 characters); a save file name can make the backup longer.
+    Assert-True ($null -eq (Get-FriendPathLengthProblem -GameRoot ('C:\' + ('a' * 173)))) 'game path of 176 characters: installer paths fit 259'
+    Assert-True ((Get-FriendPathLengthProblem -GameRoot ('C:\' + ('a' * 174))).Contains('too long')) 'game path of 177 characters refused'
+    Assert-True ($null -eq (Get-FriendPathLengthProblem -GameRoot ('C:\' + ('a' * 170)) -SaveFiles @('287700/local/TPP_GRAPHICS_CONFIG', '311340/remote/TPP_GAME_DATA'))) 'backup paths of a 173-character game path fit'
+    Assert-True ((Get-FriendPathLengthProblem -GameRoot ('C:\' + ('a' * 173)) -SaveFiles @('287700/local/TPP_GRAPHICS_CONFIG')).Contains('too long')) 'a long save file name makes the backup path too long'
+    Assert-True ($null -eq (Get-FriendPathLengthProblem -GameRoot 'D:\Games\steamapps\common\MGS_TPP' -SaveFiles @('287700/local/TPP_GAME_DATA0', '287700/remotecache.vdf'))) 'a normal game path'
     Assert-Equal (ConvertTo-FriendRoleName "host-v3`n") 'host' 'marker host'
     Assert-Equal (ConvertTo-FriendRoleName "client-v1`n") 'join' 'marker join'
     Assert-Equal (ConvertTo-FriendRoleName "client-check-v1`n") 'diagnostic' 'marker diagnostic'
@@ -176,10 +188,11 @@ try {
     Assert-Equal (ConvertTo-FriendRoleName 'heap-v1') 'other' 'other marker'
 
     # ------------------------------------------------------------ redaction and log excerpts
-    $sample = "client_host=76561198012345678`nid:76561197960265735;`nC:\Users\Alice Smith\Desktop\x.txt`nD:\Steam\userdata\52079950\287700\local`n12345678901234567 765611980123456789 98765"
+    $sample = "client_host=76561198012345678`nid:76561197960265735;`nC:\Users\Alice Smith\Desktop\x.txt`nD:\Steam\userdata\52079950\287700\local`n12345678901234567 765611980123456789 98765`nnew=76561200000004321"
     $hidden = Hide-FriendSensitiveText $sample
     Assert-True ($hidden.Contains('client_host=7656119XXXXXX5678') -and $hidden.Contains('id:7656119XXXXXX5735;')) 'SteamIDs keep only the last 4 digits'
-    Assert-True ($hidden -notmatch '(?<![0-9])7656119[0-9]{10}(?![0-9])') 'no complete SteamID left'
+    Assert-True ($hidden -notmatch '(?<![0-9])76561[12][0-9]{11}(?![0-9])' -and $hidden.Contains('new=7656120XXXXXX4321')) 'no complete SteamID left (7656119 and 7656120 ranges)'
+    Assert-True ($sample -match '(?<![0-9])76561[12][0-9]{11}(?![0-9])') 'the SteamID pattern matches the unredacted sample'
     Assert-True ($hidden.Contains('C:\Users\<user>\Desktop') -and !$hidden.Contains('Alice')) 'Windows user name removed'
     Assert-True ($hidden.Contains('userdata\<account>\287700') -and !$hidden.Contains('52079950')) 'Steam account folder removed'
     Assert-True ($hidden.Contains('12345678901234567') -and $hidden.Contains('765611980123456789')) 'other numbers unchanged'
@@ -364,6 +377,14 @@ try {
     Assert-Refused $r 'Another mod''s dinput8.dll' 'unrelated loader refused before any change'
     Assert-Equal @(Get-ChildItem -LiteralPath $foreign -Force).Count 3 'unrelated loader: no backup or mod folder created'
     Assert-Equal ([IO.File]::ReadAllText((Join-Path $foreign 'dinput8.dll'))) 'another mod' 'unrelated loader untouched'
+    # A game path whose installer/backup paths would pass 259 characters (Windows
+    # PowerShell 5.1 without long paths) is refused before anything is written.
+    $gamesRoot = [IO.Path]::GetFullPath((Join-Path $fixture 'games'))
+    $longGame = New-GameFixture ('long-' + ('x' * (180 - $gamesRoot.Length - 1 - 5)))
+    Assert-Equal $longGame.Length 180 'long game path fixture length'
+    $r = Invoke-Friend $install (@('-GameDirectory', $longGame, '-Role', 'Host', '-RuntimeArchive', $archiveFx) + $common)
+    Assert-Refused $r 'game folder path is too long' 'game path too long for the installer paths refused'
+    Assert-Equal @(Get-ChildItem -LiteralPath $longGame -Force).Count 2 'too long: folder untouched'
 
     # Host install (Windows PowerShell 5.1, packaged layout).
     $hostGame = New-GameFixture 'host'
@@ -438,15 +459,78 @@ try {
     Assert-Equal $r.Exit 0 "prompted uninstall succeeds: $($r.Raw)"
     Assert-True (-not (Test-Path -LiteralPath $ap.Loader) -and -not (Test-Path -LiteralPath $ap.ClientHost)) 'prompted uninstall removed the loader and the host id file'
 
-    # Failure after the loader was installed rolls back (lab.ini cannot be written).
+    # lab.ini cannot be written: it is written before the loader, so the loader
+    # is never touched and everything is put back.
     $failGame = New-GameFixture 'fail'
     $fp = Get-InstancePaths -GameDirectory $failGame
     $null = New-Item -ItemType Directory -Path $fp.LabIni -Force
     $r = Invoke-Friend $install (@('-GameDirectory', $failGame, '-Role', 'Host', '-RuntimeArchive', $archiveFx) + $common)
-    Assert-True ($r.Exit -ne 0 -and (Has $r 'undoing the changes') -and (Has $r 'previous loader state was restored')) "failed install rolls back: $($r.Text)"
-    Assert-True (-not (Test-Path -LiteralPath $fp.Loader) -and -not (Test-Path -LiteralPath $fp.Record)) 'rollback removed the loader and record'
-    Assert-True (-not (Test-Path -LiteralPath $fp.CoopIni)) 'rollback removed the new coop.ini'
-    Assert-True (-not (Test-Path -LiteralPath (Join-Path $fp.Mod 'friend-install.json'))) 'no install record after a rollback'
+    Assert-True ($r.Exit -ne 0 -and (Has $r 'undoing the changes') -and (Has $r 'back to its state before this run')) "failed lab.ini write is undone: $($r.Text)"
+    Assert-True (-not (Test-Path -LiteralPath $fp.Loader) -and -not (Test-Path -LiteralPath $fp.Record)) 'lab.ini failure: the loader was never installed'
+    Assert-True (-not (Test-Path -LiteralPath $fp.CoopIni) -and -not (Test-Path -LiteralPath $fp.Marker)) 'lab.ini failure: no coop.ini or marker left'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $fp.Mod 'friend-install.json'))) 'lab.ini failure: no install record left'
+
+    # Failures AFTER the loader install, through a staged copy whose role
+    # command is a stand-in (test only): it fails, damages the loader first
+    # (so the automatic restore fails too), or ends the process (window closed).
+    $stageFaulty = Join-Path $fixture 'stage-faulty'
+    Copy-Item -LiteralPath $stage -Destination $stageFaulty -Recurse
+    [IO.File]::WriteAllText((Join-Path $stageFaulty 'scripts/set-session-mode.ps1'), (@(
+                'param([string]$Role, [string]$HostSteamId, [string]$GameDirectory)',
+                '# Test stand-in for the role command (tests/friend_package_tests.ps1).',
+                'switch ($env:MGS_COOP_TEST_ROLE_FAULT) {',
+                '    ''throw'' { throw ''simulated role command failure'' }',
+                '    ''damage'' { [IO.File]::AppendAllText((Join-Path $GameDirectory ''dinput8.dll''), ''changed''); throw ''simulated failure after the loader changed'' }',
+                '    ''exit'' { [Environment]::Exit(9) }',
+                '}',
+                'throw ''MGS_COOP_TEST_ROLE_FAULT not set''') -join "`r`n") + "`r`n", [Text.Encoding]::ASCII)
+    $installFaulty = Join-Path $stageFaulty 'scripts/Install-Coop.ps1'
+    function Invoke-Faulty([string]$Mode, [string]$Game) {
+        $env:MGS_COOP_TEST_ROLE_FAULT = $Mode
+        try { return Invoke-Friend $installFaulty (@('-GameDirectory', $Game, '-Role', 'Host', '-RuntimeArchive', $archiveFx) + $common) }
+        finally { Remove-Item Env:MGS_COOP_TEST_ROLE_FAULT -ErrorAction SilentlyContinue }
+    }
+    # 1. The role command fails; the restore works: everything is put back.
+    $throwGame = New-GameFixture 'fault-throw'
+    $tp = Get-InstancePaths -GameDirectory $throwGame
+    $r = Invoke-Faulty 'throw' $throwGame
+    Assert-True ($r.Exit -ne 0 -and (Has $r 'previous loader state was restored') -and (Has $r 'back to its state before this run') -and (Has $r 'simulated role command failure')) "failure after the loader install is rolled back: $($r.Text)"
+    Assert-True (-not (Test-Path -LiteralPath $tp.Loader) -and -not (Test-Path -LiteralPath $tp.Record)) 'rollback removed the loader and record'
+    Assert-True (-not (Test-Path -LiteralPath $tp.LabIni) -and -not (Test-Path -LiteralPath $tp.CoopIni) -and -not (Test-Path -LiteralPath $tp.Marker)) 'rollback removed lab.ini, coop.ini and the initial marker'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $tp.Mod 'friend-install.json'))) 'no install record after a rollback'
+    # 2. The restore fails as well: the loader stays, but so do lab.ini (save
+    #    copy) and a pending install record that Uninstall-Coop can act on.
+    $damageGame = New-GameFixture 'fault-damage'
+    $dp = Get-InstancePaths -GameDirectory $damageGame
+    $r = Invoke-Faulty 'damage' $damageGame
+    Assert-True ($r.Exit -ne 0 -and (Has $r 'could NOT be removed automatically') -and (Has $r 'lab.ini was kept') -and (Has $r 'run Uninstall-Coop.bat')) "failed restore keeps the save redirection: $($r.Text)"
+    Assert-True (Test-Path -LiteralPath $dp.Loader -PathType Leaf) 'loader still present after the failed restore'
+    Assert-Equal ([IO.File]::ReadAllText($dp.LabIni)) (New-FriendLabIniText -Role Host -SaveDir (Join-Path $dp.Mod 'coop-saves')) 'lab.ini kept: the game stays on the save copy'
+    $pending = Get-Content -LiteralPath (Join-Path $dp.Mod 'friend-install.json') -Raw | ConvertFrom-Json
+    Assert-Equal "$($pending.status)|$($pending.pending_record_before)|$(@($pending.rollback_ids).Count)" 'pending||0' 'pending install record kept'
+    $r = Invoke-Friend $uninstall @('-GameDirectory', $damageGame, '-NonInteractive', '-Yes')
+    Assert-True ($r.Exit -eq 2 -and (Has $r 'did not finish') -and (Has $r 'could not be restored') -and (Has $r 'lab.ini was left in place')) "uninstall adopts the pending loader, keeps lab.ini while it cannot restore: $($r.Text)"
+    Assert-True ((Test-Path -LiteralPath $dp.LabIni -PathType Leaf) -and (Test-Path -LiteralPath (Join-Path $dp.Mod 'friend-install.json') -PathType Leaf)) 'failed uninstall keeps lab.ini and the record'
+    Copy-Item -LiteralPath $loader1 -Destination $dp.Loader -Force
+    $r = Invoke-Friend $uninstall @('-GameDirectory', $damageGame, '-NonInteractive', '-Yes')
+    Assert-True ($r.Exit -eq 0 -and (Has $r 'did not finish') -and (Has $r 'Loader removed (restored 1 install state(s))')) "uninstall succeeds once the cause is gone: $($r.Text)"
+    Assert-True (-not (Test-Path -LiteralPath $dp.Loader) -and -not (Test-Path -LiteralPath $dp.Record) -and -not (Test-Path -LiteralPath $dp.LabIni)) 'pending install fully undone'
+    # 3. The process ends halfway (window closed): pending record; the next
+    #    Install-Coop adopts that loader state and Uninstall-Coop undoes both.
+    $exitGame = New-GameFixture 'fault-exit'
+    $xp = Get-InstancePaths -GameDirectory $exitGame
+    $r = Invoke-Faulty 'exit' $exitGame
+    Assert-Equal $r.Exit 9 "process ended inside the role command: $($r.Text)"
+    Assert-True ((Test-Path -LiteralPath $xp.Loader -PathType Leaf) -and (Test-Path -LiteralPath $xp.LabIni -PathType Leaf)) 'interrupted run: loader present, but lab.ini was written first'
+    Assert-Equal (Get-Content -LiteralPath (Join-Path $xp.Mod 'friend-install.json') -Raw | ConvertFrom-Json).status 'pending' 'interrupted run left a pending record'
+    $r = Invoke-Friend $install (@('-GameDirectory', $exitGame, '-Role', 'Host') + $common)
+    Assert-True ($r.Exit -eq 0 -and (Has $r 'did not finish')) "install after an interrupted run: $($r.Text)"
+    $xs = Get-Content -LiteralPath (Join-Path $xp.Mod 'friend-install.json') -Raw | ConvertFrom-Json
+    Assert-Equal "$($xs.status)|$(@($xs.rollback_ids).Count)" 'installed|2' 'interrupted run adopted into the install record'
+    $r = Invoke-Friend $uninstall @('-GameDirectory', $exitGame, '-NonInteractive', '-Yes')
+    Assert-True ($r.Exit -eq 0 -and (Has $r 'Loader removed (restored 2 install state(s))')) "uninstall undoes the interrupted and the later run: $($r.Text)"
+    Assert-True (-not (Test-Path -LiteralPath $xp.Loader) -and -not (Test-Path -LiteralPath $xp.Record)) 'interrupted install fully undone'
+    Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'real saves untouched by the failure tests'
 
     # ------------------------------------------------------------ Collect-Logs
     [IO.File]::WriteAllText((Join-Path $hp.Mod 'script-observer.log'), "`r`nMGS Co-op script adapter 0.11.0; first run`r`nfirst_session_secret_line`r`n`r`nMGS Co-op script adapter 0.11.0; executable_fingerprint=accepted`r`nmode=host_v3; peer_acceptance=after_mission_start; max_players=2`r`nsession_status=host_ready`r`nlobby=76561198012345678 path=C:\Users\Alice\AppData\x`r`n")
@@ -518,8 +602,18 @@ try {
     Assert-True ((Test-Path -LiteralPath (Join-Path $hostSaveDir '287700/local/COOP_PROGRESS')) -and (Test-Path -LiteralPath $state.latest_backup)) 'save copy and backups kept'
     Assert-True (-not (Test-Path -LiteralPath $hp.Archive)) 'runtime archive removed with the managed files'
     Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'real saves untouched by the uninstall'
+    # A later install (no active friend install) starts from a fresh copy of the
+    # real save; the old copy is moved aside, not deleted.
+    $r = Invoke-Friend $install (@('-GameDirectory', $hostGame, '-Role', 'Host', '-RuntimeArchive', $archiveFx) + $common)
+    Assert-True ($r.Exit -eq 0 -and (Has $r 'co-op save copy from an earlier test exists')) "install after an uninstall: $($r.Text)"
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $hostSaveDir '287700/local/COOP_PROGRESS'))) 'install after an uninstall refreshes the save copy'
+    Assert-Equal @(Get-ChildItem -LiteralPath (Join-Path $hp.Mod 'coop-saves-replaced') -Recurse -File -Filter COOP_PROGRESS).Count 1 'old save copy moved aside'
+    $state = Get-Content -LiteralPath (Join-Path $hp.Mod 'friend-install.json') -Raw | ConvertFrom-Json
+    Assert-Equal "$($state.status)|$(@($state.rollback_ids).Count)|$(@($state.backups).Count)" 'installed|1|1' 'a new install record after the uninstall'
     $r = Invoke-Friend $uninstall @('-GameDirectory', $hostGame, '-NonInteractive', '-Yes')
-    Assert-Refused $r 'No friend-test install record' 'second uninstall changes nothing'
+    Assert-Equal $r.Exit 0 "second host uninstall: $($r.Raw)"
+    $r = Invoke-Friend $uninstall @('-GameDirectory', $hostGame, '-NonInteractive', '-Yes')
+    Assert-Refused $r 'No friend-test install record' 'uninstall without an install changes nothing'
 
     # Changed real saves are reported, never overwritten.
     $savePath = Join-Path $userdata '287700/local/TPP_GAME_DATA0'
@@ -527,11 +621,41 @@ try {
     $r = Invoke-Friend $uninstall @('-GameDirectory', $joinGame, '-NonInteractive', '-Yes')
     Assert-Equal $r.Exit 4 "join uninstall reports changed saves (exit 4): $($r.Raw)"
     Assert-True ((Has $r 'DIFFERENT') -and (Has $r 'changed: 287700/local/TPP_GAME_DATA0') -and (Has $r 'Nothing was overwritten')) 'difference listed'
-    Assert-True ((Has $r 'files\287700\*')) 'restore instructions printed'
+    Assert-True ((Has $r 'files\287700\local  ->') -and (Has $r 'files\311340\remote  ->') -and (Has $r 'leave remotecache.vdf')) 'restore instructions name the two verified folders, not remotecache.vdf'
+    Assert-True (-not (Has $r 'files\287700\*') -and -not (Has $r 'files\311340\*')) 'no whole-folder copy-back (would include remotecache.vdf)'
     Assert-Equal ([IO.File]::ReadAllText($savePath)) 'played normally in between' 'real save not overwritten'
     Assert-True (-not (Test-Path -LiteralPath $jp.Loader) -and -not (Test-Path -LiteralPath $jp.ClientHost)) 'join folder restored, client-host.txt disabled'
     [IO.File]::WriteAllText($savePath, 'fixture save 287700/local/TPP_GAME_DATA0')
     Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'fixture saves back to the start'
+
+    # Real saves that change while the mod is installed: a reinstall does not
+    # take a new reference silently; uninstall compares with the FIRST backup.
+    $chgGame = New-GameFixture 'changed'
+    $cp = Get-InstancePaths -GameDirectory $chgGame
+    $r = Invoke-Friend $install (@('-GameDirectory', $chgGame, '-Role', 'Host', '-RuntimeArchive', $archiveFx) + $common)
+    Assert-Equal $r.Exit 0 "install for the changed-save test: $($r.Raw)"
+    $chgStatePath = Join-Path $cp.Mod 'friend-install.json'
+    $firstBackup = [string](Get-Content -LiteralPath $chgStatePath -Raw | ConvertFrom-Json).backups[0]
+    [IO.File]::WriteAllText($savePath, 'changed while the mod was installed')
+    $stateBytes = Get-Sha256 $chgStatePath
+    $r = Invoke-Friend $install (@('-GameDirectory', $chgGame, '-Role', 'Host', '-Character', 'quiet') + $common)
+    Assert-Refused $r 'real save files changed since the backup made before the friend test' 'reinstall refused after the real saves changed'
+    Assert-True ((Has $r 'changed: 287700/local/TPP_GAME_DATA0') -and (Has $r $firstBackup)) 'reinstall lists the change and the first backup'
+    Assert-Equal (Get-Sha256 $chgStatePath) $stateBytes 'refused reinstall left the install record unchanged'
+    Assert-Equal @(Get-ChildItem -LiteralPath (Join-Path $cp.Mod 'real-save-backups') -Directory).Count 1 'refused reinstall took no new backup'
+    $r = Invoke-FriendAnswers $install @('-GameDirectory', $chgGame, '-SteamPath', $steam) @('')
+    # (Read-Host prompt text is not echoed to redirected output; Enter = No.)
+    Assert-True ($r.Exit -eq 1 -and (Has $r 'WARNING: your REAL save files changed') -and (Has $r 'Cancelled. Nothing was changed.')) "interactive reinstall asks and defaults to No: $($r.Text)"
+    Assert-Equal (Get-Sha256 $chgStatePath) $stateBytes 'cancelled reinstall left the install record unchanged'
+    $r = Invoke-Friend $install (@('-GameDirectory', $chgGame, '-Role', 'Host', '-Character', 'quiet', '-AcceptChangedSaves') + $common)
+    Assert-True ($r.Exit -eq 0 -and (Has $r 'WARNING: your REAL save files changed')) "reinstall with -AcceptChangedSaves warns and proceeds: $($r.Text)"
+    $cs = Get-Content -LiteralPath $chgStatePath -Raw | ConvertFrom-Json
+    Assert-Equal "$(@($cs.backups).Count)|$($cs.first_backup)" "2|$firstBackup" 'the first backup stays the reference'
+    $r = Invoke-Friend $uninstall @('-GameDirectory', $chgGame, '-NonInteractive', '-Yes')
+    Assert-True ($r.Exit -eq 4 -and (Has $r 'DIFFERENT from the backup made before the friend test') -and (Has $r ($firstBackup + '\files\287700\local'))) "uninstall compares with the first backup, not the latest: $($r.Text)"
+    Assert-Equal ([IO.File]::ReadAllText($savePath)) 'changed while the mod was installed' 'real save still not overwritten'
+    [IO.File]::WriteAllText($savePath, 'fixture save 287700/local/TPP_GAME_DATA0')
+    Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'fixture saves back to the start (changed-save test)'
 
     # An earlier MGS Co-op install (owned loader, own role and lab.ini) is put back.
     $prevGame = New-GameFixture 'previous'
@@ -540,21 +664,89 @@ try {
     $null = New-LabPackage -RepoRoot $projectRoot -Destination $stagePrev -LoaderPath $loaderPrev -Version '0.11.0' -ExecutableSha256 $exeHash -SteamDllSha256 $steamHash -ArchiveSha256 (Get-Sha256 $archiveFx)
     $null = & (Join-Path $projectRoot 'tools/package-install.ps1') -Action Install -GameDirectory $prevGame -PackageDirectory $stagePrev -RuntimeArchive $archiveFx -NoPrompt
     [IO.File]::WriteAllText($pp.Marker, "host-v3`n")
-    [IO.File]::WriteAllText($pp.LabIni, "# my own lab.ini`nenabled=1`nrole=host`n")
-    [IO.File]::WriteAllText($pp.CoopIni, "master_url=http://127.0.0.1:6667/tppstm/gate`ncharacter=snake`n")
+    $earlierLab = "# my own lab.ini`nenabled=1`nrole=host`nsave_dir=C:\lab\saves`n"
+    $earlierCoop = "master_url=http://127.0.0.1:6667/tppstm/gate`ncharacter=snake`n"
+    [IO.File]::WriteAllText($pp.LabIni, $earlierLab)
+    [IO.File]::WriteAllText($pp.CoopIni, $earlierCoop)
     $r = Invoke-Friend $install (@('-GameDirectory', $prevGame, '-Role', 'Join', '-HostSteamId', $good, '-Character', 'dd_female') + $common)
     Assert-Equal $r.Exit 0 "install over an earlier owned loader: $($r.Raw)"
-    Assert-True (-not (Test-IniHasKey ([IO.File]::ReadAllText($pp.CoopIni)) 'master_url')) 'an earlier master_url does not survive in coop.ini'
+    Assert-True (-not (Test-IniHasKey ([IO.File]::ReadAllText($pp.CoopIni)) 'master_url')) 'an earlier master_url does not survive in coop.ini during the test'
     Assert-Equal @(Get-ChildItem -LiteralPath $pp.Mod -Filter 'coop.ini.before-friend-*').Count 1 'earlier coop.ini copied aside'
     $r = Invoke-Friend $uninstall @('-GameDirectory', $prevGame, '-NonInteractive', '-Yes')
     Assert-Equal $r.Exit 0 "uninstall back to the earlier loader: $($r.Raw)"
-    Assert-True ((Has $r 'installed BEFORE the friend test was put back')) 'earlier loader reported'
+    Assert-True ((Has $r 'from BEFORE the friend test is back in place (restored 1 friend install state(s))')) 'earlier loader reported as such'
     Assert-Equal (Get-Sha256 $pp.Loader) (Get-Sha256 $loaderPrev) 'earlier loader restored'
     Assert-Equal ([IO.File]::ReadAllText($pp.Marker)) "host-v3`n" 'earlier role marker restored'
     Assert-True (-not (Test-Path -LiteralPath $pp.ClientHost)) 'friend client-host.txt disabled (none before)'
-    Assert-True (-not (Test-Path -LiteralPath $pp.LabIni) -and -not (Test-Path -LiteralPath $pp.CoopIni)) 'lab.ini/coop.ini disabled'
-    Assert-True ((Has $r 'coop.ini from before the friend test is kept')) 'earlier ini files reported, not restored'
+    Assert-Equal ([IO.File]::ReadAllText($pp.LabIni)) $earlierLab 'earlier lab.ini restored with the earlier loader'
+    Assert-Equal ([IO.File]::ReadAllText($pp.CoopIni)) $earlierCoop 'earlier coop.ini restored with the earlier loader'
+    Assert-Equal @(Get-ChildItem -LiteralPath $pp.Mod -Filter 'lab.ini.disabled-*').Count 1 'friend lab.ini renamed, not deleted'
+    Assert-True ((Has $r 'stays ACTIVE') -and (Has $r 'redirects the saves to: C:\lab\saves')) 'remaining loader named active, with its save redirection'
+
+    # A loader installed ON TOP of the friend install (developer package) is not
+    # called the earlier one; the output says it stays active on the real saves.
+    $topGame = New-GameFixture 'on-top'
+    $op = Get-InstancePaths -GameDirectory $topGame
+    $r = Invoke-Friend $install (@('-GameDirectory', $topGame, '-Role', 'Host', '-RuntimeArchive', $archiveFx) + $common)
+    Assert-Equal $r.Exit 0 "friend install before a developer install: $($r.Raw)"
+    $null = & (Join-Path $projectRoot 'tools/package-install.ps1') -Action Install -GameDirectory $topGame -PackageDirectory $stagePrev -NoPrompt
+    $r = Invoke-Friend $uninstall @('-GameDirectory', $topGame, '-NonInteractive', '-Yes')
+    Assert-Equal $r.Exit 0 "uninstall with a developer loader on top: $($r.Raw)"
+    Assert-True ((Has $r 'that the friend test did NOT install') -and (Has $r 'restored 0 friend install state(s)')) 'loader on top named as not installed by the friend test'
+    Assert-True (-not (Has $r 'BEFORE the friend test is back in place')) 'loader on top not called the earlier one'
+    Assert-True ((Has $r 'stays ACTIVE') -and (Has $r 'uses your REAL save files')) 'remaining loader without lab.ini: real saves stated'
+    Assert-Equal (Get-Sha256 $op.Loader) (Get-Sha256 $loaderPrev) 'developer loader left unchanged'
+    Assert-True (-not (Test-Path -LiteralPath $op.LabIni)) 'friend lab.ini disabled'
     Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'real saves untouched overall'
+
+    # Non-ASCII game, Steam and package folders under Windows PowerShell 5.1
+    # (all JSON records are read as UTF-8), uninstall through the .bat file.
+    $e = [string][char]0x00E9
+    $u = [string][char]0x00FC
+    $uniSteam = Join-Path $fixture ('steam-M' + $u + 'ller')
+    $null = New-Item -ItemType Directory -Path $uniSteam
+    Copy-Item -LiteralPath (Join-Path $steam 'userdata') -Destination (Join-Path $uniSteam 'userdata') -Recurse
+    $uniUserdata = Join-Path $uniSteam 'userdata/7'
+    $uniBefore = Get-TreeHashes $uniUserdata
+    $uniStage = Join-Path $fixture ('stage-Pak' + $e + 't')
+    Copy-Item -LiteralPath $stage -Destination $uniStage -Recurse
+    $uniInstall = Join-Path $uniStage 'scripts/Install-Coop.ps1'
+    $uniGame = New-GameFixture ('Jeux Vid' + $e + 'o/MGS_TPP')
+    $up = Get-InstancePaths -GameDirectory $uniGame
+    $uniCommon = @('-SteamPath', $uniSteam, '-NonInteractive', '-Yes')
+    $r = Invoke-Friend $uniInstall (@('-GameDirectory', $uniGame, '-Role', 'Host', '-RuntimeArchive', $archiveFx) + $uniCommon)
+    Assert-Equal $r.Exit 0 "host install in a non-ASCII folder (Windows PowerShell 5.1): $($r.Raw)"
+    Assert-Equal ([IO.File]::ReadAllText($up.Marker)) "host-v3`n" 'non-ASCII: role command accepted the ownership record'
+    Assert-Equal ([IO.File]::ReadAllText($up.Record, [Text.Encoding]::UTF8) | ConvertFrom-Json).game_directory $uniGame 'non-ASCII: ownership record names the folder'
+    Assert-Equal ([IO.File]::ReadAllText($up.LabIni, [Text.Encoding]::UTF8)) (New-FriendLabIniText -Role Host -SaveDir (Join-Path $up.Mod 'coop-saves')) 'non-ASCII: lab.ini save_dir in UTF-8'
+    $us = [IO.File]::ReadAllText((Join-Path $up.Mod 'friend-install.json'), [Text.Encoding]::UTF8) | ConvertFrom-Json
+    Assert-True ($us.game_directory -ceq $uniGame -and $us.status -eq 'installed') 'non-ASCII: install record'
+    if ($IniCheck) {
+        # The native helper opens its argument with the ANSI API: check a copy
+        # with an ASCII file name (the content keeps the UTF-8 save_dir).
+        $uniLabCopy = Join-Path $fixture 'uni-lab.ini'
+        Copy-Item -LiteralPath $up.LabIni -Destination $uniLabCopy
+        $n = Invoke-IniCheck lab $uniLabCopy
+        Assert-Equal "$($n['present'])|$($n['role'])|$($n['loopback'])|$($n['unknown_keys'])/$($n['invalid_values'])" '1|host|0|0/0' 'native: lab.ini with a UTF-8 save_dir accepted'
+        Assert-True ($n['save_dir'].Length -gt 0) 'native: UTF-8 save_dir kept'
+    }
+    $r = Invoke-Friend $uniInstall (@('-GameDirectory', $uniGame, '-Role', 'Join', '-HostSteamId', $good) + $uniCommon)
+    Assert-True ($r.Exit -eq 0 -and (Has $r 'unchanged since the backup made before the friend test')) "non-ASCII: reinstall as Join: $($r.Text)"
+    Assert-Equal ([IO.File]::ReadAllText($up.ClientHost)) "$good`n" 'non-ASCII: join host id written'
+    $uniOut = Join-Path $fixture ('desktop-' + $e)
+    $null = New-Item -ItemType Directory -Path $uniOut
+    $r = Invoke-Friend (Join-Path $uniStage 'scripts/Collect-Logs.ps1') @('-GameDirectory', $uniGame, '-OutputDirectory', $uniOut, '-NonInteractive')
+    Assert-Equal $r.Exit 0 "non-ASCII: collect logs: $($r.Raw)"
+    $uniZip = @(Get-ChildItem -LiteralPath $uniOut -Filter 'mgs-coop-logs-join-*.zip')
+    Assert-Equal $uniZip.Count 1 'non-ASCII: log zip written'
+    $uniExtract = Join-Path $fixture 'collected-uni'
+    Expand-Archive -LiteralPath $uniZip[0].FullName -DestinationPath $uniExtract
+    $uniSummary = [IO.File]::ReadAllText((Get-ChildItem -LiteralPath $uniExtract -Recurse -Filter summary.txt)[0].FullName)
+    Assert-True ($uniSummary.Contains('real_saves=UNCHANGED') -and $uniSummary.Contains('matches_install_record=True') -and $uniSummary.Contains('status=installed')) 'non-ASCII: summary save check and loader match'
+    $batOut = '' | & cmd.exe /c (Join-Path $uniStage 'Uninstall-Coop.bat') -GameDirectory $uniGame -NonInteractive -Yes 2>&1 | Out-String
+    Assert-True ($LASTEXITCODE -eq 0 -and -not (Test-Path -LiteralPath $up.Loader) -and -not (Test-Path -LiteralPath $up.LabIni)) "non-ASCII: Uninstall-Coop.bat removes the install: $batOut"
+    Assert-Equal @(Get-ChildItem -LiteralPath $up.Mod -Filter 'friend-install.json.uninstalled-*').Count 1 'non-ASCII: install record retired'
+    Assert-Equal (Get-TreeHashes $uniUserdata) $uniBefore 'non-ASCII: real saves untouched'
     Write-Output "friend package tests passed: $script:checks checks (scripts run under $winPs and $pwshPath; fixture only, no game, Steam or network)"
 } finally {
     if ($fakeGame -and !$fakeGame.HasExited) { Stop-Process -Id $fakeGame.Id -Force -ErrorAction SilentlyContinue; $fakeGame.WaitForExit(5000) | Out-Null }

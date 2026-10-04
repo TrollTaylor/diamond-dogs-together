@@ -45,8 +45,9 @@ One player is the HOST, the other one JOINS. Both use this same package.
         window and press Enter. (Tip: put the file next to Install-Coop.bat
         and the installer finds it by itself.)
       - Press Enter (or Y) to install.
-    At the end it shows YOUR SteamID64: 17 digits starting with 7656119.
-    Send that number to your friend (it is also copied to the clipboard).
+    At the end it shows YOUR SteamID64: 17 digits, usually starting with
+    7656119. Send that number to your friend (it is also copied to the
+    clipboard).
  4. JOINER: double-click Install-Coop.bat.
       - Choose 2 (Join) and enter the host's SteamID64.
         The host can also find it in Steam: click your profile name at the
@@ -59,7 +60,9 @@ game folder (whatever was there before is backed up), backs up your real save
 files, and makes the game use a COPY of your save while the mod is installed.
 Your real save files are not written while the mod is installed. Your own
 Steam account and the normal online service are used as usual. You can run
-Install-Coop.bat again at any time to change the role or the character.
+Install-Coop.bat again at any time to change the role or the character. It
+then first checks that your real save files are unchanged; if they changed,
+it stops and asks before going on (please send the logs in that case).
 
 
 3. THE TEST (about 10-15 minutes)
@@ -132,11 +135,14 @@ COPY and loads a development mod. Before normal (online) play:
     Enter (or Y).
 It puts back what was in the game folder before (it removes dinput8.dll if
 there was none), turns off the co-op settings, and checks that your real save
-files are unchanged ("Real save files: UNCHANGED"). It never overwrites your
-saves; if it reports a difference, it prints how to restore the backup.
+files are unchanged since the backup made before the friend test ("Real save
+files: UNCHANGED"). It never overwrites your saves; if it reports a
+difference, it prints which two folders to copy back from that backup.
 Progress made during co-op tests stays in the save copy and does not carry
-over to your real save. The backups and logs stay in <game folder>\mgs-coop;
-you can delete that folder yourself later.
+over to your real save. If you install again later for another test, the
+installer starts from a fresh copy of your real save (the old copy is moved
+aside). The backups and logs stay in <game folder>\mgs-coop; you can delete
+that folder yourself later.
 
 
 6. KNOWN LIMITS AND RISKS - PLEASE READ

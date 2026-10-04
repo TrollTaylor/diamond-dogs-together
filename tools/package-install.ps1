@@ -104,19 +104,19 @@ try {
     $locked=$mutex.WaitOne(0)
     if(!$locked) { throw 'Another MGS Co-op installer is already running.' }
     if($Action -eq 'Restore') {
-        $installed=Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+        $installed=Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
         if($installed.product -ne 'mgs-coop-original-loader-probe' -or $installed.game_directory -ne $gameRoot -or
             $installed.rollback_id -cnotmatch '^[0-9a-f]{32}$') { throw 'No matching package rollback record.' }
         RequireHash (SafePath $gameRoot 'dinput8.dll') $installed.dll_sha256
         $backupRoot=SafePath $gameRoot ('mgs-coop/install-backups/'+$installed.rollback_id)
-        $record=Get-Content -LiteralPath (Join-Path $backupRoot 'rollback.json') -Raw | ConvertFrom-Json
+        $record=Get-Content -LiteralPath (Join-Path $backupRoot 'rollback.json') -Raw -Encoding UTF8 | ConvertFrom-Json
         if($record.product -ne 'mgs-coop-package-rollback' -or $record.game_directory -ne $gameRoot -or
             @($record.files).Count -ne $allowed.Count -or @($record.files.target | Select-Object -Unique).Count -ne $allowed.Count) { throw 'Invalid rollback file inventory.' }
         RestoreFiles $record.files $backupRoot
         Write-Output 'Previous loader and managed mod files restored. Role configuration and logs are retained.'
         return
     }
-    $package=Get-Content -LiteralPath (Join-Path $packageRoot 'package.json') -Raw | ConvertFrom-Json
+    $package=Get-Content -LiteralPath (Join-Path $packageRoot 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     # Older packages bundled the archive; current packages record only its hash.
     $bundlesArchive=@($package.files | ForEach-Object { $_.target }) -contains $archiveTarget
     $packageFileCount=if($bundlesArchive) { $allowed.Count-1 } else { $allowed.Count-2 }
@@ -166,7 +166,7 @@ try {
     $previous=$null; $ownershipRecordHash=$null
     if((Test-Path -LiteralPath $dllPath) -or (Test-Path -LiteralPath $manifestPath)) {
         if(!(Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw 'An unrelated loader exists; nothing was replaced.' }
-        $previous=Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+        $previous=Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
         if($previous.product -ne 'mgs-coop-original-loader-probe') { throw 'Loader ownership does not match this mod and folder.' }
         if($previous.game_directory -ne $gameRoot) {
             $copiedFrom=if($AcceptRecordCopiedFrom) { [IO.Path]::GetFullPath($AcceptRecordCopiedFrom).TrimEnd('\','/') } else { $null }

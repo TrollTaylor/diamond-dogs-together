@@ -42,7 +42,7 @@ function Get-LabConfig {
     # Loads lab.json and returns it with every path resolved to an absolute path.
     param([string]$ConfigPath = (Join-Path $PSScriptRoot 'lab.json'), [string]$RepoRoot)
     if (!$RepoRoot) { $RepoRoot = Get-LabRepoRoot }
-    $raw = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+    $raw = Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
     if ((Get-ConfigValue $raw 'schema' 0) -ne 1) { throw "Unsupported lab.json schema in $ConfigPath" }
     $paths = [ordered]@{ repo = $RepoRoot }
     foreach ($name in 'hostDir', 'guestDir', 'fuseSource', 'fuseExe', 'runDir', 'loader', 'runtimeArchive') {
@@ -617,7 +617,7 @@ function Backup-RealSaves {
 
 function Test-RealSavesAgainstBackup {
     param([Parameter(Mandatory)][string]$BackupDirectory)
-    $manifest = Get-Content -LiteralPath (Join-Path $BackupDirectory 'manifest.json') -Raw | ConvertFrom-Json
+    $manifest = Get-Content -LiteralPath (Join-Path $BackupDirectory 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     $current = New-HashManifest -Root $manifest.source_root -Folders $script:VerifiedSaveFolders
     $comparison = Compare-HashManifest -Expected @($manifest.verified) -Actual $current
     [pscustomobject]@{ Backup = $BackupDirectory; SourceRoot = $manifest.source_root; Comparison = $comparison }
@@ -1304,11 +1304,11 @@ function Get-CurrentRun {
     if (!$RunDir) {
         $pointer = Join-Path $Config.Paths.runDir 'current-run.json'
         if (!(Test-Path -LiteralPath $pointer -PathType Leaf)) { throw "No current lab run ($pointer). Run Start-Lab.ps1 or pass -RunDir." }
-        $RunDir = (Get-Content -LiteralPath $pointer -Raw | ConvertFrom-Json).run_dir
+        $RunDir = (Get-Content -LiteralPath $pointer -Raw -Encoding UTF8 | ConvertFrom-Json).run_dir
     }
     $runJson = Join-Path $RunDir 'run.json'
     if (!(Test-Path -LiteralPath $runJson -PathType Leaf)) { throw "run.json not found in $RunDir" }
-    $run = Get-Content -LiteralPath $runJson -Raw | ConvertFrom-Json
+    $run = Get-Content -LiteralPath $runJson -Raw -Encoding UTF8 | ConvertFrom-Json
     return [pscustomobject]@{ Dir = (Resolve-Path -LiteralPath $RunDir).Path; Run = $run }
 }
 
