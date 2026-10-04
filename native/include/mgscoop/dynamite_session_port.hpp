@@ -1,6 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include "mgscoop/client_reset.hpp"
 
 // Caller supplies the verified game-owned FobTarget and exact mission-thread
 // receipt. Does not create a target, enable peer acceptance or bypass predicates.
@@ -11,10 +12,41 @@ bool CreateDynamiteClientSession(void* base, std::size_t span, std::uintptr_t ta
 // Read-only client prerequisites. Never installs an allocation hook or calls the game.
 bool InspectDynamiteClientSession(void* base, std::size_t span, std::uintptr_t target,
                                   void (*log)(const char*) noexcept) noexcept;
+// Logs the inputs the game weighs before a client request, with safe reads
+// only: IsConnectReady inputs (FobTarget +0x10 state, +0x14 threshold, byte at
+// base+0x2BD7BC0, int at base+0x2BD7BB4) and SessionConnectInfo fields
+// (+0x00 state, +0x70, +0xB8, +0xC8). The host identity value itself is never
+// logged. Call it on the owned mission thread immediately before the request.
+void LogClientConnectDiagnostics(void* base, std::size_t span, std::uintptr_t target,
+                                 void (*log)(const char*) noexcept) noexcept;
+// Client-join reset support (synthesis gap G11). The borrowed FobTarget and its
+// SessionConnectInfo fields that the native 0x7EE380 request writes (+0x10,
+// +0x48 and connect-info +0xB8) are recorded before every native request; a
+// request whose record cannot be read is refused without a native call.
+// target+0x60 (passed to the obfuscated 0x1A5D810 on success) is not restored;
+// see dynamite_session_port.cpp. Once the client session's singleton slots are
+// empty, RestoreClientRequestFields reverts exactly those fields to their
+// recorded pre-call values in place; the game keeps object ownership. Why the
+// Dynamite fresh-object model was not adopted: mgscoop/client_reset.hpp.
+bool HasRecordedClientRequest() noexcept;
+bool RecordedClientRequestSlotsEmpty(void* base, std::size_t span) noexcept;
+bool RestoreClientRequestFields(void* base, std::size_t span, void (*log)(const char*) noexcept) noexcept;
+void ForgetClientRequestRecord() noexcept;
 void ObserveDynamiteSession(void* base,void (*log)(const char*) noexcept) noexcept;
 // Lua literal describing this adapter's repeatedly observed owned session only.
 // Native session/roster state is not proof of guest actor control or shared combat.
 const char* ReadDynamiteSessionStatus(void* verified_base) noexcept;
+// Read-only health of this adapter's owned client session for the automatic
+// reset triggers (same two-sample reads as ReadDynamiteSessionStatus; released
+// is decided from the singleton slots without dereferencing the session).
+// Owned mission thread only; unknown elsewhere.
+mgscoop::ClientSessionHealth ObserveOwnedClientSession(void* verified_base, std::size_t span) noexcept;
+// True when this adapter still records an owned session whose singleton slots
+// the game has emptied. Read-only; ownership metadata is not changed.
+bool OwnedSessionReleasedByGame(void* verified_base, std::size_t span) noexcept;
+// Static reason the most recent CreateDynamiteClientSession did not start a
+// request ("request_not_started" when the native call returned false).
+const char* LastDynamiteClientRefusal() noexcept;
 // The serialized mission adapter calls this only after OnAllocate returned,
 // before OnInitialize enters. Revalidates the existing host before transferring
 // adapter ownership from the loading worker to the observed gameplay thread.

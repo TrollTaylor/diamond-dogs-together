@@ -19,9 +19,14 @@
 #include "mgscoop/teammate_marker_patch.hpp"
 #include "mgscoop/game_heap_trial.hpp"
 #include "mgscoop/dynamite_session_port.hpp"
+#include "mgscoop/client_session_request.hpp"
 
 namespace {
 volatile LONG attempted = 0;
+// Static reason for the most recent client attempt that did not start, and
+// whether that refusal already wrote its own client_join=refused line.
+const char* client_refusal = "";
+bool client_refusal_logged = false;
 constexpr std::uintptr_t create_rva = 0x7ee590;
 constexpr std::size_t create_size = 456;
 constexpr unsigned char create_hash[32] = {
@@ -179,16 +184,44 @@ bool TryCreateHostSession(void* verified_base,std::size_t span,void (*log)(const
 
 bool TryCreateClientSession(void* verified_base,std::size_t span,std::uint64_t host,
                             void (*log)(const char*) noexcept,bool inspect_only) noexcept {
-    if(!log || !verified_base || (!host && !inspect_only) || InterlockedCompareExchange(&attempted,1,0)!=0) return false;
+    client_refusal_logged=false;
+    const auto refuse=[](const char* reason) noexcept { client_refusal=reason; return false; };
+    if(!log || !verified_base) return refuse("invalid_arguments");
+    if(!host && !inspect_only) return refuse("missing_host");
+    if(InterlockedCompareExchange(&attempted,1,0)!=0) return refuse("already_attempted");
     const auto base=reinterpret_cast<std::uintptr_t>(verified_base);
-    if(!CodeMatches(base,span) || !ObserveAllocationContext(base,span,log)) return false;
+    if(!CodeMatches(base,span)) return refuse("code_gate");
+    if(!ObserveAllocationContext(base,span,log)) return refuse("allocation_context");
     std::uintptr_t target=0;
-    if(!HostPrerequisites(base,log,&target) || !PlayerReadiness(base,log)) return false;
+    if(!HostPrerequisites(base,log,&target)) return refuse("host_prerequisites");
+    if(!PlayerReadiness(base,log)) return refuse("player_readiness");
+    // Sample the game's connect-readiness inputs for both diagnostic and join
+    // paths, before any native request runs.
+    LogClientConnectDiagnostics(verified_base,span,target,log);
     if(inspect_only) {
         const bool ready=InspectDynamiteClientSession(verified_base,span,target,log);
         log(ready ? "client_loading_check=passed; native_join_calls=0 allocator_hook=0\r\n"
                   : "client_loading_check=failed; native_join_calls=0 allocator_hook=0\r\n");
+        client_refusal=ready ? "" : "client_prerequisites";
         return ready; // Caller reports diagnostic success separately from submission.
     }
-    return CreateDynamiteClientSession(verified_base,span,target,host,log);
+    // Refuse a v1 join when the configured host id is the known lab placeholder
+    // or is not an individual SteamID64. No native request is made.
+    if(const char* refusal=mgscoop::ClientHostRefusalReason(host)) {
+        char line[192]{};
+        StringCchPrintfA(line,ARRAYSIZE(line),"client_join=refused; reason=%s; native_join_calls=0\r\n",refusal);
+        log(line);
+        client_refusal_logged=true;
+        return refuse(refusal);
+    }
+    const bool requested=CreateDynamiteClientSession(verified_base,span,target,host,log);
+    client_refusal=requested ? "" : LastDynamiteClientRefusal();
+    return requested;
 }
+
+const char* LastClientJoinRefusal(bool* already_logged) noexcept {
+    if(already_logged) *already_logged=client_refusal_logged;
+    return client_refusal ? client_refusal : "";
+}
+
+void ResetClientAttemptLatch() noexcept { InterlockedExchange(&attempted,0); }
