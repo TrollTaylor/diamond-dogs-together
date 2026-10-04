@@ -77,3 +77,21 @@ at about 30 Hz, live.
 Conclusion: offline, instance 1's action system is idle. It is not locally controlled (isLocal=0, so it reads no input), and network-follow is S_IS_ONLINE-gated (out of scope). Stance and locomotion animation need a different lever:
 - (a) Drive instance 1 as a locally controlled body from the remote player's INPUT (a virtual pad per instance).
 - (b) Play motion clips directly on instance 1 (the scripted-motion interfaces used by missions and demos).
+
+## Live round 3 (merged wp/partner-anim2, coop-lab after f6056c2): results
+
+| Step | Result |
+|---|---|
+| L1, look race fix | **PASS, both ways.** The guest (local Quiet) now loads the host's Snake: `partner_look=loaded q40=0 q48=8 q50=15 q58=3 q60=1 q68=2` in 568 ms. The host loads the Quiet partner. See `evidence/input-lever-2026-10-04/L1-pair.png`. |
+| I0, census and pad decode | **PASS.** `partner_input_census ... verdict=ok`; rec0_2ac bit0=1, rec1_2ac bit0=0. Pad: A gives lx=-1000 (dir -1571), S gives ly=+1000, D gives lx=+1000, Shift+W gives held=0x200000 with ly=-1000 (dir 3142). A stance key press shows as **w54=0x2**: neither w4c nor w50 carries it, so the `words` default (0p0) is probably wrong for stance taps. |
+| I1, pass-through hook at 0x9C2B51 | **PASS.** 59-60 windows/s, root1_calls 60/s, skips 0. **hook_thread == lua_thread** (no cross-thread race). |
+| I2, neutral pad + isLocal | The partner's action system **comes alive**: slot 1 went to act=4 s=2 v=2 (crouch-walk) together with the host's crouch and walk. Host input or stance **leaks** into instance 1 even in neutral mode; the cause is still unknown (live pad path or the activation-time stance cache). cam_dirty=0x0, no faults. |
+| I3, constant forward stick | **The partner walks on its own with real locomotion animation**: Quiet crouch-walked about 10 m away from the camera in about 6 s (`evidence/input-lever-2026-10-04/i3b-grid.png`). cam_dirty=0x0, no faults. |
+| I6, network input (isend=1, input=net, both) | Input frames flow (`partner_net=input_rx`, `partner_input=live`, age_ms=0). The host partner's body runs at **3.1-3.2 m/s**, matching the guest's run. BUT `partner_input_place reason=err err_mm≈3100 via=xform` fires about every second, and the body sawtooths: it runs about 1.5 m, then is snapped back. Placement and correction fight the locomotion, so the partner never converges on the guest's position (pos1/rec1 = the guest position, about 50 m away). |
+
+Next work (round 4):
+1. Reconciliation for input mode: place the partner once at the remote's real position; then let locomotion move it and correct only drift, smoothly (blend), against the correct target, with no sawtooth.
+2. Stance taps: map to w54 (or find the correct edge word) and verify that crouch and stand hold.
+3. Prone (the hold classifier, `hold=own`).
+4. Find and stop the host-input leak into instance 1.
+5. Then promote the input lever to the default in Play-OfflineCoop.
