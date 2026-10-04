@@ -247,15 +247,15 @@ try {
         "host_admission=authorized; owned_host=1 same_thread=1 lua_interface=SessionEnableAccept`r`n" +
         "dynamite_session=observed; owner=0000000000000001 session=0000000000000002 manager=0000000000000003 job=0000000000000004 session_read=1 state=3 accept=1 manager_heap=1 job_heap=1 consistent=1 calls=0 writes=0 atomic=0`r`n" +
         "session_status=host_ready`r`n"
-    $probeOk = "MGS Co-op loader probe 0.10.33`r`narchitecture=x64`r`ntime_utc=2026-10-03T10:00:00Z`r`nDirectInput8Create_hresult=0x00000000`r`n"
+    $probeOk = "MGS Co-op loader probe 0.11.0`r`narchitecture=x64`r`ntime_utc=2026-10-03T10:00:00Z`r`nDirectInput8Create_hresult=0x00000000`r`n"
     $guestArmed = "mode=client_v1; configured_host=1; join=ctrl_f8_after_mission_start; max_players=2; connected=unverified`r`nclient_join=armed; source=trigger_file`r`n"
     $guestStarted = $guestArmed + "client_join=input_received; key=trigger_file`r`ndynamite_client=returned; request_started=1`r`nsession_status=client_requested`r`n"
     $labId = '76561202255233008'
     $fuseUrl = 'http://127.0.0.1:6667/tppstm/gate'
     $hostSave = 'D:\Lab\MGS_TPP\mgs-coop\lab\saves'
     $guestSave = 'D:\Lab\MGS_TPP_guest\mgs-coop\lab\saves'
-    $hostEarly = "early=start; version=0.10.33; lab=1; role=host`r`nmutex=unchanged`r`nidentity=real`r`nsaves=redirected; dir=$hostSave`r`nxinput=none`r`n"
-    $guestEarly = "early=start; version=0.10.33; lab=1; role=guest`r`nmutex=renamed; suffix=-guest`r`nidentity=fake; steamid=$labId`r`nsaves=redirected; dir=$guestSave`r`nxinput=pad 0`r`n"
+    $hostEarly = "early=start; version=0.11.0; lab=1; role=host`r`nmutex=unchanged`r`nidentity=real`r`nsaves=redirected; dir=$hostSave`r`nxinput=none`r`n"
+    $guestEarly = "early=start; version=0.11.0; lab=1; role=guest`r`nmutex=renamed; suffix=-guest`r`nidentity=fake; steamid=$labId`r`nsaves=redirected; dir=$guestSave`r`nxinput=pad 0`r`n"
     $steamOk = "`r`nMGS Co-op original Steam import observer 0.4.0; fingerprint=accepted`r`nmaster_server=redirected; method=in_place; url=$fuseUrl`r`n"
     function Get-HostSafetyFor([string]$Early = $hostEarly, [string]$Steam = $steamOk) {
         Get-LabSafetyVerdict -Role host -EarlyLog $Early -SteamLog $Steam -ExpectedSaveDir $hostSave -ExpectedUrl $fuseUrl
@@ -569,7 +569,7 @@ try {
     $archiveHash = Get-Sha256 $archiveSource
     $installer = Join-Path $projectRoot 'tools/package-install.ps1'
     $stage1 = Join-Path $fixture 'stage1'
-    $null = New-LabPackage -RepoRoot $projectRoot -Destination $stage1 -LoaderPath $loader1 -Version '0.10.33' -ExecutableSha256 $exeHash -SteamDllSha256 $steamHash -ArchiveSha256 $archiveHash
+    $null = New-LabPackage -RepoRoot $projectRoot -Destination $stage1 -LoaderPath $loader1 -Version '0.11.0' -ExecutableSha256 $exeHash -SteamDllSha256 $steamHash -ArchiveSha256 $archiveHash
     $package = Get-Content -LiteralPath (Join-Path $stage1 'package.json') -Raw | ConvertFrom-Json
     Assert-Equal @($package.files).Count 5 'package has no runtime archive payload'
     Assert-True (-not (@($package.files.target) -contains 'mgs-coop/mgs-coop-player-runtime.dat')) 'archive referenced by hash only'
@@ -590,7 +590,7 @@ try {
     Assert-Equal ([IO.File]::ReadAllText((Join-Path $hostGame 'mgs-coop/script-observe.enabled'))) "client-check-v1`n" 'first install defaults to diagnostics'
     # Upgrade reuses the installed archive.
     $stage2 = Join-Path $fixture 'stage2'
-    $null = New-LabPackage -RepoRoot $projectRoot -Destination $stage2 -LoaderPath $loader2 -Version '0.10.33' -ExecutableSha256 $exeHash -SteamDllSha256 $steamHash -ArchiveSha256 $archiveHash
+    $null = New-LabPackage -RepoRoot $projectRoot -Destination $stage2 -LoaderPath $loader2 -Version '0.11.0' -ExecutableSha256 $exeHash -SteamDllSha256 $steamHash -ArchiveSha256 $archiveHash
     $null = & $installer -Action Install -GameDirectory $hostGame -PackageDirectory $stage2 -NoPrompt
     Assert-Equal (Get-Sha256 (Join-Path $hostGame 'dinput8.dll')) (Get-Sha256 $loader2) 'upgrade without -RuntimeArchive reuses the installed archive'
     # The guest folder starts as a copy of the host folder (record names the host).

@@ -9,7 +9,7 @@ param(
 )
 $ErrorActionPreference='Stop'
 $projectRoot=Split-Path -Parent $PSScriptRoot
-$version='0.10.33'
+$version='0.11.0'
 $archiveSha256='26CE7C2168D655C35BE39E4F17A295206AA0522DE8782CD57A36C4FEEA382F54'
 $dll=Join-Path $projectRoot 'build/native/dinput8.dll'
 if($RuntimeArchive) {

@@ -115,7 +115,7 @@ bool is_local_master_url(const char* url) noexcept {
 #include "steam_shim_contract.hpp"
 
 #ifndef MGS_COOP_PROBE_VERSION
-#define MGS_COOP_PROBE_VERSION "0.10.33"
+#define MGS_COOP_PROBE_VERSION "0.11.0"
 #endif
 
 namespace mgscoop::lab {
