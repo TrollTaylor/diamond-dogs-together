@@ -9,11 +9,20 @@ menus during automated lab runs. Synthetic input only reaches the foreground
 window, so the script focuses the window first.
 
 Key names: enter, esc, space, up, down, left, right, tab, e, f, q, r, c, x, z,
-v, w, a, s, d, f8, f9, ctrl (combine: ctrl+f8). Or pass -ScanCode.
+v, w, a, s, d, f8, f9, f10, f11, ctrl, shift (LabCommon Get-LabScanCodeTable).
+A key spec is one name or several joined with '+' (pressed together in order,
+released in reverse: ctrl+f8, shift+w), optionally followed by ':<ms>' to hold
+it that long instead of -HoldMs (':<ms>' 1..60000; -HoldMs 0..60000, 0 = tap
+as before): w:4000 walks forward for 4 s, w+a:6000 walks a circle for 6 s
+(spike plan E0/E6/E10). Every key pressed is released in a finally block, so
+Ctrl+C or an error during a hold never leaves a key down.
 
 .EXAMPLE
 pwsh -File tools/lab/Send-LabInput.ps1 -Role host -Keys enter -Shot title
 pwsh -File tools/lab/Send-LabInput.ps1 -Role guest -Keys down,down,enter -GapMs 600
+pwsh -File tools/lab/Send-LabInput.ps1 -Role host -Keys w+a:6000
+pwsh -File tools/lab/Send-LabInput.ps1 -Role guest -Keys w:4000 -Shot walked
+pwsh -File tools/lab/Send-LabInput.ps1 -Role host -Keys shift+w:3000,c
 #>
 [CmdletBinding()]
 param(
@@ -29,14 +38,6 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'LabCommon.psm1') -Force
 
-$scan = @{
-    enter = @(0x1C, $false); esc = @(0x01, $false); space = @(0x39, $false); tab = @(0x0F, $false)
-    up = @(0x48, $true); down = @(0x50, $true); left = @(0x4B, $true); right = @(0x4D, $true)
-    e = @(0x12, $false); f = @(0x21, $false); q = @(0x10, $false); r = @(0x13, $false); c = @(0x2E, $false)
-    x = @(0x2D, $false); z = @(0x2C, $false); v = @(0x2F, $false); w = @(0x11, $false); a = @(0x1E, $false)
-    s = @(0x1F, $false); d = @(0x20, $false); f8 = @(0x42, $false); f9 = @(0x43, $false); ctrl = @(0x1D, $false)
-}
-
 $config = Get-LabConfig -ConfigPath $ConfigPath
 $current = Get-CurrentRun -Config $config -RunDir $RunDir
 $dir = if ($Role -eq 'host') { $config.Paths.hostDir } else { $config.Paths.guestDir }
@@ -46,11 +47,12 @@ $handle = Get-ProcessMainWindow -Id $process.Id
 if ($handle -eq [IntPtr]::Zero) { throw "[$Role] pid $($process.Id) has no main window." }
 Initialize-LabWin32
 
-# pwsh -File passes "a,b" as one string; accept both forms.
+# pwsh -File passes "a,b" as one string; accept both forms. Every spec is
+# validated before the first key is sent.
 $Keys = @($Keys | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
-foreach ($key in $Keys) {
-    $parts = $key.ToLowerInvariant().Split('+')
-    foreach ($p in $parts) { if (!$scan.ContainsKey($p)) { throw "Unknown key name: $p" } }
+$specs = @($Keys | ForEach-Object { ConvertFrom-LabKeySpec -Spec $_ -DefaultHoldMs $HoldMs })
+foreach ($spec in $specs) {
+    $key = $spec.Spec
     if ([MgsCoopLab.User32]::IsIconic($handle)) { $null = [MgsCoopLab.User32]::ShowWindow($handle, 9) }
     # Windows refuses SetForegroundWindow from a background process unless the
     # caller just produced input; an Alt tap (scan 0x38) satisfies that rule.
@@ -61,12 +63,25 @@ foreach ($key in $Keys) {
         Start-Sleep -Milliseconds 300
     }
     if ([MgsCoopLab.User32]::GetForegroundWindow() -ne $handle) { Write-Warning "[$Role] could not focus the window for '$key'."; continue }
-    # Press modifiers first, release in reverse order.
-    foreach ($p in $parts) { $null = [MgsCoopLab.User32]::Key([uint16]$scan[$p][0], [bool]$scan[$p][1], $false); Start-Sleep -Milliseconds 30 }
-    Start-Sleep -Milliseconds $HoldMs
-    [array]::Reverse($parts)
-    foreach ($p in $parts) { $null = [MgsCoopLab.User32]::Key([uint16]$scan[$p][0], [bool]$scan[$p][1], $true); Start-Sleep -Milliseconds 30 }
-    Write-Output "[$Role] sent $key"
+    # Press in order (modifiers first), hold, release in reverse order. The
+    # release runs in finally: Ctrl+C (pipeline stop) or an error during a long
+    # hold must not leave synthetic keys down for whatever window has focus.
+    $pressed = [Collections.Generic.List[object]]::new()
+    try {
+        foreach ($p in @($spec.Keys)) {
+            $pressed.Add($p)
+            $null = [MgsCoopLab.User32]::Key($p.Scan, $p.Extended, $false)
+            Start-Sleep -Milliseconds 30
+        }
+        Start-Sleep -Milliseconds $spec.HoldMs
+    } finally {
+        # .NET calls only: cmdlets may refuse to run while the pipeline is stopping.
+        for ($i = $pressed.Count - 1; $i -ge 0; $i--) {
+            $null = [MgsCoopLab.User32]::Key($pressed[$i].Scan, $pressed[$i].Extended, $true)
+            [Threading.Thread]::Sleep(30)
+        }
+    }
+    Write-Output "[$Role] sent $key (held $($spec.HoldMs) ms)"
     Start-Sleep -Milliseconds $GapMs
 }
 

@@ -1,0 +1,16 @@
+MGS Co-op game script observer (fixture; lines as specified in docs/offline-partner-spike-plan.md 2.7)
+install_result=0 installed=1 pid=4100 thread=5 tick_ms=6 target_rva=0x1a178e0 lifetime=process
+mode=offline_v1; sessions=0; s_is_online=never; partner=1
+partner=configured; mode=offline_v1; stage=0; source=fixed; apply=warp; rate_hz=30; interp_ms=100; offset_cm=300; teardown=clear
+partner_net=listening; port=47820; peer_port=47821
+crash_probe=installed
+mission_boundary=runtime_enter; accepted=1 thread=10 allocation_thread=10 runtime_thread=10 mission=30050 phase=1
+host_create=skipped; mode=offline_v1
+partner_cfg=ready; flags=0x00000001; count=2; realized_count=2; local=0; R=1; online_bit=0; sync=null; code_gate=ok
+partner_probe=state; t_ms=2000000; stage=0; ids=0000,ffff; pool=00,ff; parts=3,0; rbits=0x1; s0=0x01; s8=0x01; q170=0x1; q180=0x0; q194=0x0; q198=0x0; glob=0; pb_guard=1; pb_flag=0,0; pb_state=3,0; pos0_mm=-11000,500,2000; yaw0_mrad=0; pos1_mm=0,0,0; yaw1_mrad=0; rec1_mm=0,0,0; rec1_status=0x00000000
+partner_stage=changed; stage=1; source=fixed; apply=warp; via=trigger
+partner_probe=state; t_ms=2000450; stage=1; ids=0000,ffff; pool=00,ff; parts=3,0; rbits=0x1; s0=0x01; s8=0x01; q170=0x1; q180=0x0; q194=0x0; q198=0x0; glob=0; pb_guard=1; pb_flag=0,0; pb_state=3,0; pos0_mm=-11000,500,2000; yaw0_mrad=0; pos1_mm=-11000,500,5000; yaw1_mrad=0; rec1_mm=0,0,0; rec1_status=0x00000000
+partner_warp_check; R=1; apply=warp; cmd_mm=-11000,500,5000; slot_mm=-11000,500,5000; err_mm=0
+partner_warp_check; R=1; apply=warp; cmd_mm=-11000,500,5000; slot_mm=-11000,500,5002; err_mm=2
+partner_warp_check; R=1; apply=warp; cmd_mm=-11000,500,5000; slot_mm=-11000,500,5000; err_mm=0
+partner_probe=state; t_ms=2010450; stage=1; ids=0000,ffff; pool=00,ff; parts=3,0; rbits=0x1; s0=0x01; s8=0x01; q170=0x1; q180=0x0; q194=0x0; q198=0x0; glob=0; pb_guard=1; pb_flag=0,0; pb_state=3,0; pos0_mm=-11000,500,2000; yaw0_mrad=0; pos1_mm=-11000,500,5000; yaw1_mrad=0; rec1_mm=0,0,0; rec1_status=0x00000000

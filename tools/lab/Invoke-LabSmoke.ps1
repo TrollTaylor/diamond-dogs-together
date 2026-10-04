@@ -33,6 +33,7 @@ probe, early, loopback, fuse console), lab-status.json copies and a fuse message
 summary into the run folder; captures screenshots unless -NoScreens. Exit code
 0 = PASS. With -HostOnly runs (Start-Lab.ps1 -HostOnly) it checks the host and
 fuse only (M0). Nothing written to the run folder contains a real SteamID.
+Offline runs (Start-Lab.ps1 -Offline) are refused: use Test-PartnerSpike.ps1.
 
 -AutoTitle is BEST EFFORT: it focuses each window and sends scan-code key
 presses (~150 ms holds). Games often ignore synthetic input; use -Assist.
@@ -58,6 +59,9 @@ $config = Get-LabConfig -ConfigPath $ConfigPath
 $current = Get-CurrentRun -Config $config -RunDir $RunDir
 $run = $current.Run
 $runPath = $current.Dir
+if ([bool](Get-ConfigValue $run 'offline' $false)) {
+    throw 'This is an offline lab run (Start-Lab.ps1 -Offline): there is no fuse or session to smoke-test. Use tools/lab/Test-PartnerSpike.ps1 -Experiment E0 (offline partner spike).'
+}
 if (!$TimeoutSec) { $TimeoutSec = [int](Get-ConfigValue $config.Smoke 'timeoutSec' 180) }
 if (!$ReadyTimeoutSec) { $ReadyTimeoutSec = [int](Get-ConfigValue $config.Smoke 'readyTimeoutSec' 900) }
 if (!$PollMs) { $PollMs = [int](Get-ConfigValue $config.Smoke 'pollMs' 2000) }

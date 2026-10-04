@@ -19,7 +19,35 @@
   "ports": {
     "fuse": 6667,
     "host": 47810,
-    "guest": 47811
+    "guest": 47811,
+    "netHost": 47820,
+    "netGuest": 47821
+  },
+  "offline": {
+    "comment": "Offline lab mode (Prepare-LabInstance/Start-Lab -Offline): no fuse; master_url points at masterPort on 127.0.0.1, where nothing may listen.",
+    "masterPort": 47899,
+    "marker": "offline-v1",
+    "characters": {
+      "comment": "coop.ini characters for the offline partner spike only (spike plan 2.5 and 4: default on both); the fuse lab keeps the top-level characters.",
+      "host": "default",
+      "guest": "default"
+    }
+  },
+  "partner": {
+    "comment": "Offline partner spike lab.ini defaults (docs/offline-partner-spike-plan.md 2.1); Prepare-LabInstance -PartnerSetting overrides them per run.",
+    "partner": 1,
+    "stage": 0,
+    "source": "fixed",
+    "apply": "warp",
+    "rate_hz": 30,
+    "interp_ms": 100,
+    "offset_cm": 300,
+    "teardown": "clear",
+    "force_exists": 0,
+    "policy_relax": 0,
+    "anim_probe": 0,
+    "crash_probe": 1,
+    "net": 1
   },
   "identity": {
     "hostSteamId": "auto",
