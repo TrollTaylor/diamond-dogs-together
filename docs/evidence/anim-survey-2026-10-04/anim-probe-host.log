@@ -1,0 +1,19 @@
+partner_probe=state; t_ms=189226531; stage=0; ids=0000,ffff; pool=00,ff; parts=3,0; rbits=0x1; s0=0x01; s8=0x01; q170=0x0; q180=0x0; q194=0x0; q198=0x0; glob=0; pb_guard=1; pb_flag=3,1; pb_state=1,1; pos0_mm=9024,800,-41093; yaw0_mrad=17; pos1_mm=8586,0,-44350; yaw1_mrad=-2838; rec1_mm=8586,0,-44350; rec1_status=0x00100010
+partner_anim; q18=0003; q28=00; qd8=ffff; q30=258; q38=0; m1d8=66a3906b; m1e0=8b05beeb; m1f8=f57262df
+partner_anim; q18=0004; q28=00; qd8=ffff; q30=131330; q38=2; m1d8=66a3906b; m1e0=8b05beeb; m1f8=f57262df
+partner_anim; q18=0003; q28=00; qd8=ffff; q30=258; q38=0; m1d8=66a3906b; m1e0=8b05beeb; m1f8=f57262df
+partner_anim; q18=0001; q28=00; qd8=ffff; q30=257; q38=0; m1d8=66a3906b; m1e0=8b05beeb; m1f8=f57262df
+partner_anim; q18=0002; q28=00; qd8=ffff; q30=196865; q38=3; m1d8=66a3906b; m1e0=8b05beeb; m1f8=f57262df
+partner_probe=state; t_ms=189236531; stage=0; ids=0000,ffff; pool=00,ff; parts=3,0; rbits=0x1; s0=0x01; s8=0x01; q170=0x0; q180=0x0; q194=0x0; q198=0x0; glob=0; pb_guard=1; pb_flag=3,1; pb_state=1,1; pos0_mm=9305,800,-31891; yaw0_mrad=31; pos1_mm=8586,0,-44350; yaw1_mrad=-2838; rec1_mm=8586,0,-44350; rec1_status=0x00100010
+partner_anim; q18=0002; q28=00; qd8=ffff; q30=257; q38=0; m1d8=66a3906b; m1e0=8b05beeb; m1f8=f57262df
+partner_anim; q18=0001; q28=00; qd8=ffff; q30=257; q38=0; m1d8=66a3906b; m1e0=8b05beeb; m1f8=f57262df
+partner_anim; q18=0003; q28=00; qd8=ffff; q30=258; q38=0; m1d8=66a3906b; m1e0=8b05beeb; m1f8=f57262df
+partner_anim; q18=0004; q28=00; qd8=ffff; q30=131330; q38=2; m1d8=66a3906b; m1e0=8b05beeb; m1f8=f57262df
+partner_probe=state; t_ms=189246546; stage=0; ids=0000,ffff; pool=00,ff; parts=3,0; rbits=0x1; s0=0x01; s8=0x01; q170=0x0; q180=0x0; q194=0x0; q198=0x0; glob=0; pb_guard=1; pb_flag=3,1; pb_state=1,1; pos0_mm=11090,800,-5935; yaw0_mrad=30; pos1_mm=8586,0,-44350; yaw1_mrad=-2838; rec1_mm=8586,0,-44350; rec1_status=0x00100010
+partner_anim; q18=0003; q28=00; qd8=ffff; q30=258; q38=0; m1d8=66a3906b; m1e0=8b05beeb; m1f8=f57262df
+partner_anim; q18=0005; q28=00; qd8=ffff; q30=259; q38=0; m1d8=66a3906b; m1e0=8b05beeb; m1f8=f57262df
+partner_anim; q18=0006; q28=00; qd8=ffff; q30=131331; q38=2; m1d8=66a3906b; m1e0=8b05beeb; m1f8=f57262df
+partner_anim; q18=0005; q28=00; qd8=ffff; q30=259; q38=0; m1d8=66a3906b; m1e0=8b05beeb; m1f8=f57262df
+partner_probe=state; t_ms=189256562; stage=0; ids=0000,ffff; pool=00,ff; parts=3,0; rbits=0x1; s0=0x01; s8=0x01; q170=0x0; q180=0x0; q194=0x0; q198=0x0; glob=0; pb_guard=1; pb_flag=3,1; pb_state=1,1; pos0_mm=11303,350,301; yaw0_mrad=30; pos1_mm=8586,0,-44350; yaw1_mrad=-2838; rec1_mm=8586,0,-44350; rec1_status=0x00100010
+partner_anim; q18=0003; q28=00; qd8=ffff; q30=258; q38=0; m1d8=66a3906b; m1e0=8b05beeb; m1f8=f57262df
+partner_anim; q18=0001; q28=00; qd8=ffff; q30=257; q38=0; m1d8=66a3906b; m1e0=8b05beeb; m1f8=f57262df
