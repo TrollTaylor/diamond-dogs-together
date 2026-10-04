@@ -1,0 +1,24 @@
+MGS Co-op game script observer (fixture; lines as specified in docs/offline-partner-spike-plan.md 2.7)
+install_result=0 installed=1 pid=4200 thread=5 tick_ms=6 target_rva=0x1a178e0 lifetime=process
+mode=offline_v1; sessions=0; s_is_online=never; partner=1
+partner=configured; mode=offline_v1; stage=0; source=fixed; apply=warp; rate_hz=30; interp_ms=100; offset_cm=300; teardown=clear
+partner_net=listening; port=47821; peer_port=47820
+crash_probe=installed
+mission_boundary=runtime_enter; accepted=1 thread=10 allocation_thread=10 runtime_thread=10 mission=30050 phase=1
+host_create=skipped; mode=offline_v1
+partner_cfg=ready; flags=0x00000001; count=2; realized_count=2; local=0; R=1; online_bit=0; sync=null; code_gate=ok
+partner_net=first_rx; seq=1; epoch=30050
+partner_probe=state; t_ms=5000400; stage=0; ids=0000,ffff; pool=00,ff; parts=3,0; rbits=0x1; s0=0x01; s8=0x01; q170=0x1; q180=0x0; q194=0x0; q198=0x0; glob=0; pb_guard=1; pb_flag=0,0; pb_state=3,0; pos0_mm=-9000,500,2500; yaw0_mrad=0; pos1_mm=0,0,0; yaw1_mrad=0; rec1_mm=0,0,0; rec1_status=0x00000000
+partner_stage=changed; stage=3; source=net; apply=warp; via=trigger
+partner_probe=state; t_ms=5000700; stage=3; ids=0000,ffff; pool=00,ff; parts=3,0; rbits=0x1; s0=0x01; s8=0x01; q170=0x1; q180=0x0; q194=0x0; q198=0x0; glob=0; pb_guard=1; pb_flag=0,0; pb_state=3,0; pos0_mm=-9000,500,2500; yaw0_mrad=0; pos1_mm=0,0,0; yaw1_mrad=0; rec1_mm=0,0,0; rec1_status=0x00000000
+partner_lua=event=allactive_set
+partner_lua=event=parts_copied;R=1
+partner_bits=set; R=1; q194=0x2; q198=0x2
+partner_realized=1; R=1; id=0001; pool=01; ms_after_bits=150
+partner_parts=loaded; R=1; ms_after_realize=3900
+partner_probe=state; t_ms=5001400; stage=3; ids=0000,0001; pool=00,01; parts=3,3; rbits=0x3; s0=0x03; s8=0x01; q170=0x3; q180=0x0; q194=0x2; q198=0x2; glob=0; pb_guard=1; pb_flag=0,0; pb_state=3,0; pos0_mm=-9000,500,2500; yaw0_mrad=0; pos1_mm=-11000,500,2010; yaw1_mrad=0; rec1_mm=0,0,0; rec1_status=0x00000000
+partner_net=stats; tx=1500; rx=1400; drop_epoch=0; drop_seq=0; drop_bad=0; status=live; last_age_ms=30; native_us_avg=14; native_us_max=95
+partner_probe=state; t_ms=5011400; stage=3; ids=0000,0001; pool=00,01; parts=3,3; rbits=0x3; s0=0x03; s8=0x01; q170=0x3; q180=0x0; q194=0x2; q198=0x2; glob=0; pb_guard=1; pb_flag=0,0; pb_state=3,0; pos0_mm=-9000,500,6500; yaw0_mrad=0; pos1_mm=-11000,500,2010; yaw1_mrad=0; rec1_mm=0,0,0; rec1_status=0x00000000
+partner_net=stats; tx=1800; rx=1700; drop_epoch=0; drop_seq=0; drop_bad=0; status=live; last_age_ms=28; native_us_avg=14; native_us_max=95
+partner_probe=state; t_ms=5021400; stage=3; ids=0000,0001; pool=00,01; parts=3,3; rbits=0x3; s0=0x03; s8=0x01; q170=0x3; q180=0x0; q194=0x2; q198=0x2; glob=0; pb_guard=1; pb_flag=0,0; pb_state=3,0; pos0_mm=-9000,500,6500; yaw0_mrad=0; pos1_mm=-11000,500,2010; yaw1_mrad=0; rec1_mm=0,0,0; rec1_status=0x00000000
+partner_probe=state; t_ms=5031400; stage=3; ids=0000,0001; pool=00,01; parts=3,3; rbits=0x3; s0=0x03; s8=0x01; q170=0x3; q180=0x0; q194=0x2; q198=0x2; glob=0; pb_guard=1; pb_flag=0,0; pb_state=3,0; pos0_mm=-9000,500,6500; yaw0_mrad=0; pos1_mm=-11000,500,2010; yaw1_mrad=0; rec1_mm=0,0,0; rec1_status=0x00000000

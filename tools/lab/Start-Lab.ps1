@@ -28,10 +28,23 @@ and records the reason in run.json. The windows are then placed side by side.
 Run metadata: build/lab/runs/<ts>/run.json. fuse's console output (it prints
 SteamIDs) stays in build/lab/fuse/console/, outside the shareable run folder.
 
+-Offline (docs/offline-partner-spike-plan.md 2.5, section 4; prepare with
+Prepare-LabInstance.ps1 -Offline): fuse is neither required nor started. The
+preflight instead requires NO listener on the offline master port (TCP
+lab.json offline.masterPort, default 47899; the game's master URL points there,
+so it reaches no server), free UDP partner ports (ports.netHost/netGuest,
+default 47820/47821) besides the loopback ports, the offline-v1 marker on both
+folders, lab.ini net=1, partner=1 and the role's partner ports, and coop.ini
+master_url = http://127.0.0.1:<masterPort>/tppstm/gate. The safety gate is
+unchanged: master_server=redirected with that closed-port URL, saves=redirected,
+and for the guest mutex=renamed and identity=fake. run.json records
+offline=true; leftover partner.trigger files are removed before the start.
+
 .EXAMPLE
 pwsh -File tools/lab/Start-Lab.ps1 -WhatIf
 pwsh -File tools/lab/Start-Lab.ps1
 pwsh -File tools/lab/Start-Lab.ps1 -HostOnly      # milestone M0: host + fuse only
+pwsh -File tools/lab/Start-Lab.ps1 -Offline       # offline partner spike: no fuse, closed master port
 pwsh -File tools/lab/Start-Lab.ps1 -LayoutOnly    # re-apply window positions
 #>
 [CmdletBinding(SupportsShouldProcess)]
@@ -39,7 +52,9 @@ param(
     [string]$ConfigPath = (Join-Path $PSScriptRoot 'lab.json'),
     [switch]$HostOnly,
     [switch]$LayoutOnly,
-    [string]$RunDir
+    [string]$RunDir,
+    # Offline lab mode: no fuse; closed master port, offline-v1 markers, partner keys.
+    [switch]$Offline
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -74,7 +89,9 @@ if ($LayoutOnly) {
 }
 
 $roles = if ($HostOnly) { @('host') } else { @('host', 'guest') }
-$expectedUrl = 'http://127.0.0.1:' + [int]$config.Ports.fuse + '/tppstm/gate'
+$offlineExpect = @{}
+if ($Offline) { foreach ($name in 'host', 'guest') { $offlineExpect[$name] = Get-LabOfflineExpectation -Role $name -Config $config } }
+$expectedUrl = if ($Offline) { $offlineExpect.host.MasterUrl } else { 'http://127.0.0.1:' + [int]$config.Ports.fuse + '/tppstm/gate' }
 $guestId = [string](Get-ConfigValue $config.Identity 'guestSteamId' '76561202255233008')
 $guestSuffix = '-guest'
 $problems = [Collections.Generic.List[string]]::new()
@@ -85,11 +102,20 @@ foreach ($name in $dirs.Keys) {
         $problems.Add("[$name] mgsvtpp is already running from $($dirs[$name]) (pid $($row.Id)).")
     }
 }
-if (!(Test-LocalPortFree -Port ([int]$config.Ports.fuse) -Protocol Tcp)) { $problems.Add("TCP port $($config.Ports.fuse) (fuse) is in use.") }
+if ($Offline) {
+    # The game's master URL points at this port: nothing may listen there, or the
+    # "offline" game would reach whatever does.
+    $masterPort = [int]$offlineExpect.host.MasterPort
+    if (!(Test-LocalPortFree -Port $masterPort -Protocol Tcp)) { $problems.Add("TCP port $masterPort (offline master URL $expectedUrl) has a listener or cannot be bound; the offline lab needs it closed.") }
+} elseif (!(Test-LocalPortFree -Port ([int]$config.Ports.fuse) -Protocol Tcp)) { $problems.Add("TCP port $($config.Ports.fuse) (fuse) is in use.") }
 foreach ($port in [int]$config.Ports.host, [int]$config.Ports.guest) {
     if (!(Test-LocalPortFree -Port $port -Protocol Udp)) { $problems.Add("UDP port $port (loopback) is in use.") }
 }
-if (!(Test-Path -LiteralPath $config.Paths.fuseExe -PathType Leaf)) { $problems.Add("fuse.exe not found: $($config.Paths.fuseExe) (run tools/lab/Build-Fuse.ps1).") }
+if ($Offline) {
+    foreach ($port in [int]$offlineExpect.host.NetListenPort, [int]$offlineExpect.guest.NetListenPort) {
+        if (!(Test-LocalPortFree -Port $port -Protocol Udp)) { $problems.Add("UDP port $port (partner net) is in use.") }
+    }
+} elseif (!(Test-Path -LiteralPath $config.Paths.fuseExe -PathType Leaf)) { $problems.Add("fuse.exe not found: $($config.Paths.fuseExe) (run tools/lab/Build-Fuse.ps1).") }
 if (!@(Get-Process -Name steam -ErrorAction SilentlyContinue).Count) { Write-Warning 'Steam is not running. Start Steam and log in first: the game calls SteamAPI_Init and exits without it.' }
 
 $instances = [ordered]@{}
@@ -116,11 +142,16 @@ foreach ($name in $roles) {
             if ([string](Get-ConfigValue $lab 'mutex_suffix' '') -cne $guestSuffix) { $problems.Add("[guest] lab.ini mutex_suffix is not $guestSuffix.") }
         }
     }
+    if ($Offline) { foreach ($problem in (Get-LabOfflineIniProblems -Role $name -Lab $lab -Expectation $offlineExpect[$name])) { $problems.Add($problem) } }
     $coop = if (Test-Path -LiteralPath $p.CoopIni -PathType Leaf) { ConvertFrom-IniText ([IO.File]::ReadAllText($p.CoopIni)) } else { $null }
     if (!$coop -or (Get-ConfigValue $coop 'master_url' '') -ne $expectedUrl) { $problems.Add("[$name] coop.ini master_url is not $expectedUrl.") }
     $marker = if (Test-Path -LiteralPath $p.Marker -PathType Leaf) { [IO.File]::ReadAllText($p.Marker) } else { '' }
-    $wantMarker = if ($name -eq 'host') { "host-v3`n" } else { "client-v1`n" }
-    if ($marker -cne $wantMarker) { $problems.Add("[$name] script-observe.enabled is not $($wantMarker.Trim()).") }
+    $wantMarker = if ($Offline) { $offlineExpect[$name].Marker + "`n" } elseif ($name -eq 'host') { "host-v3`n" } else { "client-v1`n" }
+    if ($marker -cne $wantMarker) {
+        $hint = if (!$Offline -and $marker -ceq "offline-v1`n") { ' (prepared for the offline lab mode: use -Offline, or re-run Prepare-LabInstance.ps1 without -Offline)' }
+        elseif ($Offline) { ' (run Prepare-LabInstance.ps1 -Offline)' } else { '' }
+        $problems.Add("[$name] script-observe.enabled is not $($wantMarker.Trim()).$hint")
+    }
     if ($name -eq 'guest') {
         $clientHost = if (Test-Path -LiteralPath $p.ClientHost -PathType Leaf) { [IO.File]::ReadAllText($p.ClientHost).Trim() } else { '' }
         if (!(Test-IndividualSteamId64 $clientHost) -or ($lab -and (Get-ConfigValue $lab 'peer_steamid' '') -ne $clientHost)) {
@@ -133,6 +164,12 @@ foreach ($name in $roles) {
         steamid = $(if ($name -eq 'guest') { $guestId } else { '' })
         mutex_suffix = $(if ($name -eq 'guest') { $guestSuffix } else { '' })
     }
+    if ($Offline -and $lab) {
+        # The partner/net lab.ini values this instance boots with (Test-PartnerSpike context).
+        $partner = [ordered]@{}
+        foreach ($key in @($lab.Keys)) { if ([string]$key -cmatch '^(net|partner|crash_probe)') { $partner[[string]$key] = [string]$lab[$key] } }
+        $info.partner = $partner
+    }
     $instances[$name] = [pscustomobject]@{ Paths = $p; Info = $info }
 }
 if ($problems.Count) {
@@ -142,11 +179,14 @@ if ($problems.Count) {
 Write-Output 'Preflight passed.'
 foreach ($name in $roles) {
     $p = $instances[$name].Paths
-    foreach ($trigger in $p.JoinTrigger, $p.ResetTrigger) {
+    $triggers = @($p.JoinTrigger, $p.ResetTrigger)
+    if ($Offline) { $triggers += $p.PartnerTrigger }
+    foreach ($trigger in $triggers) {
         if ((Test-Path -LiteralPath $trigger) -and $PSCmdlet.ShouldProcess($trigger, 'Remove leftover trigger')) { Remove-Item -LiteralPath $trigger -Force }
     }
 }
-if (!$PSCmdlet.ShouldProcess(($roles -join ' + '), 'Start fuse -standalone and the game instance(s)')) { return }
+$startAction = if ($Offline) { 'Start the game instance(s) offline (no fuse; closed master port)' } else { 'Start fuse -standalone and the game instance(s)' }
+if (!$PSCmdlet.ShouldProcess(($roles -join ' + '), $startAction)) { return }
 
 # ---------------------------------------------------------------- run folder and baselines
 $stamp = New-RunStamp
@@ -160,6 +200,13 @@ $run = [ordered]@{
     fuse = $null; instances = [ordered]@{}; real_saves_before = $null; private_state = $null; latest_save_backup = $null
     host_id_check_at_guest_start = $null; aborted = $null
     notes = 'Shareable: no SteamIDs or Steam account folders are recorded in this folder (see private_state).'
+}
+if ($Offline) {
+    $run.offline = $true
+    $run.offline_master_url = $expectedUrl
+    $run.ports.offline_master = [int]$offlineExpect.host.MasterPort
+    $run.ports.net_host = [int]$offlineExpect.host.NetListenPort
+    $run.ports.net_guest = [int]$offlineExpect.guest.NetListenPort
 }
 foreach ($name in $roles) {
     $p = $instances[$name].Paths
@@ -229,32 +276,36 @@ $started = [Collections.Generic.List[object]]::new()
 $fuse = $null
 try {
     # ------------------------------------------------------------ fuse
-    $fuseDir = Join-Path $labRoot 'fuse'
-    $consoleDir = Join-Path $fuseDir 'console'
-    $null = New-Item -ItemType Directory -Path $consoleDir -Force
-    $fuseArgs = New-FuseArguments -Port ([int]$config.Ports.fuse) -WriteLog ([bool](Get-ConfigValue $config.Fuse 'writeLog' $true))
-    Assert-FuseArgumentsSafe -Arguments $fuseArgs
-    $sinceUnix = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - 1
-    $fuseStdout = Join-Path $consoleDir "$stamp-stdout.log"
-    $fuseStderr = Join-Path $consoleDir "$stamp-stderr.log"
-    $fuse = Invoke-WithoutStdHandleInheritance {
-        Start-Process -FilePath $config.Paths.fuseExe -ArgumentList $fuseArgs -WorkingDirectory $fuseDir -WindowStyle Hidden -PassThru `
-            -RedirectStandardOutput $fuseStdout -RedirectStandardError $fuseStderr
+    if ($Offline) {
+        Write-Output "Offline mode: fuse is not started; the master URL $expectedUrl points at a closed port."
+    } else {
+        $fuseDir = Join-Path $labRoot 'fuse'
+        $consoleDir = Join-Path $fuseDir 'console'
+        $null = New-Item -ItemType Directory -Path $consoleDir -Force
+        $fuseArgs = New-FuseArguments -Port ([int]$config.Ports.fuse) -WriteLog ([bool](Get-ConfigValue $config.Fuse 'writeLog' $true))
+        Assert-FuseArgumentsSafe -Arguments $fuseArgs
+        $sinceUnix = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - 1
+        $fuseStdout = Join-Path $consoleDir "$stamp-stdout.log"
+        $fuseStderr = Join-Path $consoleDir "$stamp-stderr.log"
+        $fuse = Invoke-WithoutStdHandleInheritance {
+            Start-Process -FilePath $config.Paths.fuseExe -ArgumentList $fuseArgs -WorkingDirectory $fuseDir -WindowStyle Hidden -PassThru `
+                -RedirectStandardOutput $fuseStdout -RedirectStandardError $fuseStderr
+        }
+        $run.fuse = [ordered]@{
+            exe = $config.Paths.fuseExe; sha256 = (Get-Sha256 $config.Paths.fuseExe); pid = $fuse.Id
+            process_start_utc = $(if ($t = Get-ProcessStartUtc $fuse) { $t.ToString('o') } else { $null })
+            cwd = $fuseDir; args = $fuseArgs; database = (Join-Path $fuseDir 'fuse.dat'); log_root = (Join-Path $fuseDir 'log')
+            since_unix = $sinceUnix; stdout = $fuseStdout; stderr = $fuseStderr; url = $expectedUrl
+        }
+        Write-JsonFile -Path (Join-Path $runPath 'run.json') -Value $run
+        $deadline = [DateTime]::UtcNow.AddSeconds([int](Get-ConfigValue $config.Fuse 'startupTimeoutSec' 20))
+        while (!(Test-TcpListening -Port ([int]$config.Ports.fuse))) {
+            if ($fuse.HasExited) { throw "fuse exited during startup (code $($fuse.ExitCode)); see $fuseStdout" }
+            if ([DateTime]::UtcNow -gt $deadline) { throw 'fuse did not start listening in time.' }
+            Start-Sleep -Milliseconds 250
+        }
+        Write-Output "fuse listening on 127.0.0.1:$($config.Ports.fuse) (pid $($fuse.Id), -standalone, cwd $fuseDir)."
     }
-    $run.fuse = [ordered]@{
-        exe = $config.Paths.fuseExe; sha256 = (Get-Sha256 $config.Paths.fuseExe); pid = $fuse.Id
-        process_start_utc = $(if ($t = Get-ProcessStartUtc $fuse) { $t.ToString('o') } else { $null })
-        cwd = $fuseDir; args = $fuseArgs; database = (Join-Path $fuseDir 'fuse.dat'); log_root = (Join-Path $fuseDir 'log')
-        since_unix = $sinceUnix; stdout = $fuseStdout; stderr = $fuseStderr; url = $expectedUrl
-    }
-    Write-JsonFile -Path (Join-Path $runPath 'run.json') -Value $run
-    $deadline = [DateTime]::UtcNow.AddSeconds([int](Get-ConfigValue $config.Fuse 'startupTimeoutSec' 20))
-    while (!(Test-TcpListening -Port ([int]$config.Ports.fuse))) {
-        if ($fuse.HasExited) { throw "fuse exited during startup (code $($fuse.ExitCode)); see $fuseStdout" }
-        if ([DateTime]::UtcNow -gt $deadline) { throw 'fuse did not start listening in time.' }
-        Start-Sleep -Milliseconds 250
-    }
-    Write-Output "fuse listening on 127.0.0.1:$($config.Ports.fuse) (pid $($fuse.Id), -standalone, cwd $fuseDir)."
 
     # ------------------------------------------------------------ games, one at a time behind the gate
     foreach ($name in $roles) {
@@ -287,7 +338,8 @@ try {
         }
         $run.instances[$name].window_seen_utc = [DateTime]::UtcNow.ToString('o')
         Write-JsonFile -Path (Join-Path $runPath 'run.json') -Value $run
-        Write-Output "[$name] safety evidence complete (saves redirected, master server -> lab fuse$(if ($name -eq 'guest') { ', mutex renamed, fake identity' })); main window is up."
+        $masterNote = if ($Offline) { 'closed local port' } else { 'lab fuse' }
+        Write-Output "[$name] safety evidence complete (saves redirected, master server -> $masterNote$(if ($name -eq 'guest') { ', mutex renamed, fake identity' })); main window is up."
     }
 } catch {
     $failure = $_
@@ -319,4 +371,9 @@ try {
 Set-LabLayout $run.instances
 Write-JsonFile -Path (Join-Path $runPath 'run.json') -Value $run
 Write-Output "Run folder: $runPath"
-Write-Output 'Next: pwsh -File tools/lab/Invoke-LabSmoke.ps1 -Assist   (Stop-Lab.ps1 closes everything)'
+if ($Offline) {
+    Write-Output 'Next: click through the title (a server-failure notice is expected offline), reach Mother Base, then'
+    Write-Output '      pwsh -File tools/lab/Test-PartnerSpike.ps1 -Experiment E0   (Stop-Lab.ps1 closes everything)'
+} else {
+    Write-Output 'Next: pwsh -File tools/lab/Invoke-LabSmoke.ps1 -Assist   (Stop-Lab.ps1 closes everything)'
+}

@@ -14,14 +14,19 @@ download anything.
 
 | Script | What it does |
 |---|---|
-| `lab.json` | Paths, hashes, ports (fuse 6667, loopback 47810/47811), the guest's fake SteamID, characters, XInput routing, window layout and timeouts. Relative paths resolve against the repository root. |
+| `lab.json` | Paths, hashes, ports (fuse 6667, loopback 47810/47811, partner net `netHost`/`netGuest` 47820/47821), the offline mode (`offline.masterPort` 47899, `offline.marker` `offline-v1`), the partner spike `lab.ini` defaults (`partner`), the guest's fake SteamID, characters (`default` for both during the spike), XInput routing, window layout and timeouts. Relative paths resolve against the repository root. |
 | `Build-Fuse.ps1` | Builds `work/fuse/fuse.exe` offline (`GOPROXY=off`, `-mod=readonly`) if it is missing. Never clones; if the source is missing it tells you. |
-| `Prepare-LabInstance.ps1` | Idempotent setup of both folders: hashes, owned loader install (with rollback), role markers, `lab.ini`, `coop.ini`, real-save backup and lab save copies, and windowed graphics for the lab copies. `-WhatIf` shows every change. `-Disable` switches the lab off and restores your own files. |
-| `Start-Lab.ps1` | Preflight, then fuse (always `-standalone`), then the host and the guest, **each behind a safety gate** (below). Stops everything it started if a gate fails. Places the windows and writes `build/lab/runs/<ts>/run.json`. `-HostOnly` is milestone M0. `-LayoutOnly` re-applies window positions. |
+| `Prepare-LabInstance.ps1` | Idempotent setup of both folders: hashes, owned loader install (with rollback), role markers, `lab.ini`, `coop.ini`, real-save backup and lab save copies, and windowed graphics for the lab copies. `-WhatIf` shows every change. `-Disable` switches the lab off and restores your own files. `-Offline` prepares the offline lab mode instead (below); `-PartnerSetting` overrides partner `lab.ini` keys. |
+| `Start-Lab.ps1` | Preflight, then fuse (always `-standalone`), then the host and the guest, **each behind a safety gate** (below). Stops everything it started if a gate fails. Places the windows and writes `build/lab/runs/<ts>/run.json`. `-HostOnly` is milestone M0. `-LayoutOnly` re-applies window positions. `-Offline`: no fuse; requires a closed master port and free partner UDP ports (below). |
 | `Invoke-LabSmoke.ps1` | Pass/fail from logs, `lab-status.json` and fuse's request log. Creates the guest's `join.trigger` when both sides are ready and writes `result.json` plus redacted log excerpts. `-Assist` prints the manual steps. `-AutoTitle` is best effort. |
 | `Get-LabScreens.ps1` | Saves a PNG of each game window into the run folder. |
-| `Stop-Lab.ps1` | Closes **this run's** games (WM_CLOSE, then terminate after a timeout) and fuse, leaves any other MGSV process alone, then checks the real save hashes. |
+| `Send-LabInput.ps1` | Focuses one game window and sends scan-code keys: `enter`, `ctrl+f8`, held keys `w:4000`, chords `w+a:6000`; `shift`, `f10`, `f11` included. `-Shot` captures the window afterwards. Best effort (focus). |
+| `Stop-Lab.ps1` | Closes **this run's** games (WM_CLOSE, then terminate after a timeout) and fuse, leaves any other MGSV process alone, deletes unconsumed `partner.trigger` files, then checks the real save hashes. |
+| `Set-PartnerTrigger.ps1` | Offline mode: validates a partner command (`stage=0..3 source=fixed\|orbit\|net apply=warp\|slot\|both`, or `stop`) and writes it atomically to an instance's `mgs-coop/partner.trigger`. `-Role both`, `-WaitSec`, `-Force`. |
+| `Test-PartnerSpike.ps1` | Offline mode: PASS / FAIL / INCOMPLETE JSON verdict for experiment E0..E8 of the spike plan from this run's logs. Exit code 0 / 1 / 2. |
+| `Invoke-PartnerExperiment.ps1` | Offline mode: runs one experiment's triggers, key input and screenshots, then polls `Test-PartnerSpike.ps1` until PASS or FAIL. |
 | `LabCommon.psm1` | Shared helpers. The pure ones are covered by `tests/lab_scripts_tests.ps1` (CTest `lab_scripts_tests`). |
+| `PartnerSpike.psm1` | Pure partner helpers: trigger grammar, log line parsing, the experiment rules. Covered by the same tests. |
 
 ## End to end
 
@@ -35,6 +40,18 @@ pwsh -File tools/lab/Invoke-LabSmoke.ps1 -Assist         # click through, wait f
 pwsh -File tools/lab/Get-LabScreens.ps1 -Label after     # optional extra screenshots
 pwsh -File tools/lab/Stop-Lab.ps1                        # close the run, verify real saves
 pwsh -File tools/lab/Prepare-LabInstance.ps1 -Disable    # before normal online play
+```
+
+Offline lab mode (the partner spike, no fuse; details below):
+
+```powershell
+pwsh -File tools/lab/Prepare-LabInstance.ps1 -Offline              # offline-v1 markers, closed master port, partner keys
+pwsh -File tools/lab/Start-Lab.ps1 -Offline                        # host + guest, gated; no fuse
+pwsh -File tools/lab/Test-PartnerSpike.ps1 -Experiment E0          # after both reached Mother Base
+pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role host -Text 'stage=1 source=fixed apply=warp'
+pwsh -File tools/lab/Test-PartnerSpike.ps1 -Experiment E1
+pwsh -File tools/lab/Invoke-PartnerExperiment.ps1 -Experiment E3   # trigger, screenshots, poll the verdict
+pwsh -File tools/lab/Stop-Lab.ps1
 ```
 
 For the host-only check (M0, "host creation still works without Konami"), run
@@ -117,7 +134,8 @@ executable path.
   Both instances also get `loopback=1`, `save_dir=<folder>\mgs-coop\lab\saves` and
   `join_trigger=1`.
 - **`mgs-coop/coop.ini`** contains `master_url=http://127.0.0.1:6667/tppstm/gate`
-  and `character=` from `lab.json` (host `default`, guest `quiet`).
+  and `character=` from `lab.json` (`default` for both while the offline partner
+  spike runs).
   **The native redirect honours `coop.ini` with or without `lab.ini`**, so in the
   host's real `MGS_TPP` folder this file keeps sending a normal game start to the
   local fuse (or offline when fuse is stopped) until you run `-Disable`. Deleting
@@ -219,6 +237,78 @@ The lab uses fuse commit `f75b41d`, source in `work/fuse`.
   loopback P2P emulation should keep working; that is untested here, and the
   rule matches only processes started from the guest folder's path.
 
+## Offline lab mode (partner spike)
+
+[docs/offline-partner-spike-plan.md](../../docs/offline-partner-spike-plan.md)
+sections 2.5 and 4; the how-to is in
+[docs/single-pc-testing.md](../../docs/single-pc-testing.md). Both instances run
+with no fuse and no session.
+
+- **Prepare-LabInstance.ps1 -Offline** writes, per folder, the `offline-v1`
+  marker (both roles; `lab.json` `offline.marker` also allows the `host-v1`
+  fallback), a `coop.ini` with `master_url=http://127.0.0.1:47899/tppstm/gate`
+  (`offline.masterPort`; a port where nothing listens, so the game reaches no
+  server) and a `lab.ini` with the base lab keys plus the partner keys:
+  `net=1`, `net_listen_port`/`net_peer_port` (host 47820/47821, guest
+  47821/47820), `partner=1`, `partner_stage`, `partner_source`,
+  `partner_apply`, `partner_rate_hz`, `partner_interp_ms`, `partner_offset_cm`,
+  `partner_teardown`, `partner_force_exists`, `partner_policy_relax`,
+  `partner_anim_probe`, `crash_probe` (values from `lab.json` `"partner"`).
+  `-PartnerSetting key=value,host:key=value,guest:key=value` overrides keys
+  for one preparation (validated: stage 0..3, rate 1..60 Hz, interp 0..500 ms,
+  offset 50..1000 cm, ...). The fuse is not involved. Running the script without
+  `-Offline` switches both folders back.
+- **Start-Lab.ps1 -Offline** skips the fuse checks and start. Its preflight
+  requires no listener on TCP 47899, free UDP 47810/47811 and 47820/47821, the
+  `offline-v1` markers, `lab.ini` `net=1`, `partner=1` and the role's partner
+  ports, and the closed-port `coop.ini` URL. The safety gate is unchanged:
+  `master_server=redirected` with that URL, `saves=redirected`, and for the
+  guest `mutex=renamed` and `identity=fake`. `run.json` records `offline: true`
+  plus the ports and each instance's partner values. A leftover
+  `partner.trigger` is removed before the start.
+- **Set-PartnerTrigger.ps1 -Role host|guest|both -Text '...'** sends a runtime
+  command: `stage=N source=... apply=...` (any subset) or `stop`. The text is
+  validated and written in canonical order to a temporary file that is renamed
+  over `mgs-coop/partner.trigger`; no window focus is needed. The native side
+  polls the file every 30 Lua ticks during a 30050 mission and deletes it.
+  `-WaitSec` waits for that (exit code 2 if it does not happen); an
+  unconsumed earlier file is only replaced with `-Force`. Commands are logged
+  to `<run>/partner-triggers.log`.
+- **Test-PartnerSpike.ps1 -Experiment E0|E1|E2|E3|E4|E5|E6|E8 [-Role host|guest|both]**
+  reads this run's `script-observer.log`, `early.log` and `steam-observer.log`
+  from the `run.json` offsets and applies the plan's section 3 rules with the
+  section 2.7 line spellings (the matched lines are listed in
+  [docs/lab-protocol.md](../../docs/lab-protocol.md)):
+
+  | Experiment | PASS (log part) |
+  |---|---|
+  | E0 | redirect to the closed port; `mode=offline_v1`; `host_create=skipped`; `partner_net=listening`; `partner_cfg=ready` with `count=2 local=0 R=1 online_bit=0 sync=null`; first stage-0 probe `ids=xxxx,ffff pool=xx,ff`; `first_rx` and stats with tx, rx > 0 (both instances); `partner_tick=rate` (unfocused `hz>=10`); `partner_units` with `yaw_abs_max_cdeg>628` and lua/mem positions within 50 mm while they change; 5 minutes of probes; no `crash_probe=av` |
+  | E1 | `stage=1 apply=warp`: `partner_warp_check err_mm<=5` within the first two checks; ids[1] stays ffff; no Lua error |
+  | E2 | `stage=2`: `allactive_set`; a probe with `s0` bit 1 and `q170=0x3`; outcome A (ffff for 10 s) or B (realized), in `data.outcome` |
+  | E3 | `stage=3`: `parts_copied`; `partner_bits=set`; `partner_realized=1` with `ms_after_bits<=1000`; `partner_parts=loaded` with `ms_after_realize<=15000`; 120 s of probes without `partner_realized=0` or `crash_probe=av` |
+  | E4 | `stage=3 source=orbit`: realized; at least 4 `partner_warp_check` lines, every `err_mm<=5`; `slot_mm` spread at least 500 mm |
+  | E5 | under orbit, `apply=slot` and then `apply=both` both pass the E4 log checks |
+  | E6 | `stage=3 source=net` on both: `first_rx`; rx increasing over two stats lines; `status=live` with `last_age_ms<200`; realized; while both stand still, the local `pos1_mm` within 200 mm of the peer's `pos0_mm` |
+  | E8 | `stop` (`partner_bits=cleared; reason=trigger`), `allactive_cleared`, `partner_realized=0`, realized again, `partner_stop`, `partner_cfg=ready` after re-entry |
+
+  FAIL when a line contradicts a rule or a deadline on the probe clock (`t_ms`)
+  passes; INCOMPLETE while evidence is missing. A Lua `event=error`/`refused`,
+  `partner_cfg=refused`, `crash_probe=av` or a dead process fails every
+  experiment. Each experiment is judged on the log segment in which its
+  configuration was active, so one boot can walk through E1..E5. Screenshot
+  criteria are listed in `notes` as manual. Output: one JSON object
+  (`experiment, role, verdict, matched, missing, failed, notes, per_role, run`);
+  `-OutFile` saves a redacted copy; exit code 0 PASS, 1 FAIL, 2 INCOMPLETE.
+- **Invoke-PartnerExperiment.ps1 -Experiment Ex** performs the experiment's
+  steps (triggers, `Send-LabInput` keys such as `w+a:6000` and `w:4000`,
+  screenshots) and polls the verdict until PASS, FAIL or its timeout; the final
+  JSON goes to `<run>/partner-<Ex>-<time>.json`. `-NoInput` prints the keys to
+  press instead of sending them.
+- **Invoke-LabSmoke.ps1** refuses offline runs (there is no session to test).
+- **Stop-Lab.ps1** is unchanged apart from deleting unconsumed `partner.trigger`
+  files; with the offline `coop.ini` still in the host folder it warns that a
+  normal start from there runs offline.
+
 ## Run folder
 
 `build/lab/runs/<ts>/` is meant to be shareable. Everything copied into it goes
@@ -233,7 +323,8 @@ Steam userdata account folder numbers and fuse player names are replaced.
 | `<role>-<log>` | Redacted excerpts covering only this run. |
 | `fuse-stdout.redacted.log` | Redacted copy of fuse's console log. |
 | `screens/*.png` | Window screenshots. |
-| `stop.json` | Shutdown result per process, the real-save comparison and whether the lab `coop.ini` is still present. |
+| `stop.json` | Shutdown result per process, the real-save comparison, whether the lab `coop.ini` is still present and which unconsumed partner triggers were deleted. |
+| `partner-triggers.log`, `partner-<Ex>-<time>.json` | Offline mode: the partner commands sent, and Invoke-PartnerExperiment verdicts. |
 
 `build/lab/current-run.json` points to the newest run.
 
@@ -302,6 +393,13 @@ covers:
   identity validation.
 - **Simulated smoke runs:** pass, failure, host-id mismatch and an unsafe line,
   plus a check that no run folder contains a SteamID, account folder or ticket.
+- **Offline mode and partner spike:** offline settings (closed-port URL, net
+  ports, partner keys in spec order, the online texts byte-identical to
+  before), lab.json and `-PartnerSetting` validation, the offline preflight,
+  Send-LabInput key specs, the trigger grammar, log line parsing, PASS and
+  FAIL fixture logs for E0, E1, E3 and E6 (`tests/fixtures/partner-lab`) plus
+  inline logs for E2, E4, E5 and E8, and `Test-PartnerSpike.ps1`,
+  `Set-PartnerTrigger.ps1` and `Invoke-PartnerExperiment.ps1` on fixture runs.
 - **Full dry run:** Prepare, Start, Smoke, Screens, Stop, a later unrecorded
   session that Stop-Lab must leave alone, Start-Lab refusals at the safety gate
   (host `saves=unchanged`, host `master_server=refused`, guest `identity=real`,
@@ -309,6 +407,12 @@ covers:
   stand-in `tests/lab_fake_process.cpp` is copied as the fixture's
   `mgsvtpp.exe` and `fuse.exe`. It only runs where `mgs-coop\lab.ini` exists and
   plays the native side (log lines, fuse logins, loopback UDP).
+
+The dry run then repeats the offline mode with the same stand-ins: Prepare
+-Offline, Start-Lab -Offline (no fuse, gate ok on both), an INCOMPLETE E0
+verdict (the stand-ins write no partner lines), triggers, Stop-Lab removing
+them, Start-Lab refusals (a listener on the master port; offline folders
+without `-Offline`) and the switch back to the fuse mode.
 
 For the dry run, `lab.json` takes an optional `paths.steamRoot`, which
 replaces the registry Steam path.

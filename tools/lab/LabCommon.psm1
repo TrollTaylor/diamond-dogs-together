@@ -57,6 +57,27 @@ function Get-LabConfig {
         $value = [int](Get-ConfigValue $raw.ports $port 0)
         if ($value -lt 1024 -or $value -gt 65535) { throw "lab.json ports.$port must be 1024..65535" }
     }
+    # Optional offline lab mode settings (docs/offline-partner-spike-plan.md 2.5, 4).
+    $udp = @([int]$raw.ports.host, [int]$raw.ports.guest)
+    foreach ($port in 'netHost', 'netGuest') {
+        $value = Get-ConfigValue $raw.ports $port $null
+        if ($null -eq $value) { continue }
+        if ([int]$value -lt 1024 -or [int]$value -gt 65535) { throw "lab.json ports.$port must be 1024..65535" }
+        if ($udp -contains [int]$value) { throw "lab.json ports.$port collides with another lab UDP port" }
+        $udp += [int]$value
+    }
+    $offline = Get-ConfigValue $raw 'offline' $null
+    if ($offline) {
+        $masterPort = [int](Get-ConfigValue $offline 'masterPort' 47899)
+        if ($masterPort -lt 1024 -or $masterPort -gt 65535) { throw 'lab.json offline.masterPort must be 1024..65535' }
+        if ($masterPort -eq [int]$raw.ports.fuse) { throw 'lab.json offline.masterPort must differ from ports.fuse (it must stay a closed port)' }
+        if ([string](Get-ConfigValue $offline 'marker' 'offline-v1') -cnotin @('offline-v1', 'host-v1')) { throw 'lab.json offline.marker must be offline-v1 (or the host-v1 fallback)' }
+    }
+    $partner = Get-ConfigValue $raw 'partner' $null
+    if ($partner) {
+        $values = ConvertFrom-LabPartnerJson -Partner $partner
+        foreach ($key in $values.Keys) { $null = ConvertTo-LabPartnerValue -Key $key -Value $values[$key] }
+    }
     [pscustomobject]@{
         Path       = (Resolve-Path -LiteralPath $ConfigPath).Path
         Paths      = [pscustomobject]$paths
@@ -70,6 +91,8 @@ function Get-LabConfig {
         Smoke      = Get-ConfigValue $raw 'smoke' ([pscustomobject]@{})
         Fuse       = Get-ConfigValue $raw 'fuse' ([pscustomobject]@{})
         Graphics   = Get-ConfigValue $raw 'graphics' ([pscustomobject]@{})
+        Offline    = $offline
+        Partner    = $partner
     }
 }
 
@@ -101,6 +124,7 @@ function Get-InstancePaths {
         HostId    = Join-Path $mod 'host-steamid.txt'
         JoinTrigger  = Join-Path $mod 'join.trigger'
         ResetTrigger = Join-Path $mod 'reset.trigger'
+        PartnerTrigger = Join-Path $mod 'partner.trigger'
         SaveDir   = Join-Path $mod 'lab\saves'
     }
 }
@@ -216,6 +240,131 @@ function Test-AbsoluteWindowsPath {
     return $Path -cmatch '^[A-Za-z]:[\\/]' -or $Path.StartsWith('\\')
 }
 
+# lab.ini keys of the offline partner spike (docs/offline-partner-spike-plan.md 2.1),
+# in the order New-LabIniText writes them. Json is the short name lab.json "partner"
+# may use instead of the key. net_latency_ms / net_loss_permille already exist
+# (docs/lab-protocol.md) and are written only when set.
+$script:LabPartnerKeys = @(
+    @{ Key = 'net'; Json = 'net'; Kind = 'bool' },
+    @{ Key = 'net_listen_port'; Json = ''; Kind = 'port' },
+    @{ Key = 'net_peer_port'; Json = ''; Kind = 'port' },
+    @{ Key = 'partner'; Json = 'partner'; Kind = 'bool' },
+    @{ Key = 'partner_stage'; Json = 'stage'; Kind = 'int'; Min = 0; Max = 3 },
+    @{ Key = 'partner_source'; Json = 'source'; Kind = 'enum'; Values = @('fixed', 'orbit', 'net') },
+    @{ Key = 'partner_apply'; Json = 'apply'; Kind = 'enum'; Values = @('warp', 'slot', 'both') },
+    @{ Key = 'partner_rate_hz'; Json = 'rate_hz'; Kind = 'int'; Min = 1; Max = 60 },
+    @{ Key = 'partner_interp_ms'; Json = 'interp_ms'; Kind = 'int'; Min = 0; Max = 500 },
+    @{ Key = 'partner_offset_cm'; Json = 'offset_cm'; Kind = 'int'; Min = 50; Max = 1000 },
+    @{ Key = 'partner_teardown'; Json = 'teardown'; Kind = 'enum'; Values = @('clear', 'keep') },
+    @{ Key = 'partner_force_exists'; Json = 'force_exists'; Kind = 'bool' },
+    @{ Key = 'partner_policy_relax'; Json = 'policy_relax'; Kind = 'bool' },
+    @{ Key = 'partner_anim_probe'; Json = 'anim_probe'; Kind = 'bool' },
+    @{ Key = 'crash_probe'; Json = 'crash_probe'; Kind = 'bool' },
+    @{ Key = 'net_latency_ms'; Json = 'net_latency_ms'; Kind = 'int'; Min = 0; Max = 2000 },
+    @{ Key = 'net_loss_permille'; Json = 'net_loss_permille'; Kind = 'int'; Min = 0; Max = 1000 }
+)
+# Lab defaults for the spike (lab.json "partner" overrides them).
+$script:LabPartnerDefaults = [ordered]@{
+    net = '1'; partner = '1'; partner_stage = '0'; partner_source = 'fixed'; partner_apply = 'warp'
+    partner_rate_hz = '30'; partner_interp_ms = '100'; partner_offset_cm = '300'; partner_teardown = 'clear'
+    partner_force_exists = '0'; partner_policy_relax = '0'; partner_anim_probe = '0'; crash_probe = '1'
+}
+
+function Get-LabPartnerKeySpec {
+    param([Parameter(Mandatory)][string]$Key)
+    foreach ($spec in $script:LabPartnerKeys) { if ($spec.Key -ceq $Key) { return $spec } }
+    return $null
+}
+
+function ConvertTo-LabPartnerValue {
+    # Pure: validates one partner/net lab.ini value (docs/offline-partner-spike-plan.md 2.1)
+    # and returns its canonical text (booleans as 0/1, integers without leading zeros).
+    param([Parameter(Mandatory)][string]$Key, [AllowNull()]$Value)
+    $spec = Get-LabPartnerKeySpec -Key $Key
+    if (!$spec) { throw "Unknown partner lab.ini key: $Key" }
+    if ($null -eq $Value) { throw "Missing value for lab.ini $Key" }
+    $text = if ($Value -is [bool]) { if ($Value) { '1' } else { '0' } } else { ([string]$Value).Trim() }
+    $allowed = ''
+    if ($spec.Kind -eq 'bool') {
+        if ($text -cin @('1', 'true', 'yes', 'on')) { return '1' }
+        if ($text -cin @('0', 'false', 'no', 'off')) { return '0' }
+        $allowed = '0 or 1'
+    } elseif ($spec.Kind -eq 'port') {
+        if ($text -cmatch '^[0-9]{1,5}$' -and [int]$text -ge 1024 -and [int]$text -le 65535) { return [string][int]$text }
+        $allowed = '1024..65535'
+    } elseif ($spec.Kind -eq 'int') {
+        if ($text -cmatch '^[0-9]{1,5}$' -and [int]$text -ge $spec.Min -and [int]$text -le $spec.Max) { return [string][int]$text }
+        $allowed = [string]$spec.Min + '..' + [string]$spec.Max
+    } else {
+        if ($text -cin $spec.Values) { return $text }
+        $allowed = $spec.Values -join '|'
+    }
+    throw "Invalid lab.ini $Key=$text (allowed: $allowed)."
+}
+
+function ConvertTo-LabPartnerIni {
+    # Pure: validated partner/net lab.ini settings as an ordered dictionary in the
+    # order they are written. Unknown keys and colliding ports are refused: the two
+    # net ports must differ from each other and from listen_port/peer_port (the
+    # native parser turns net off otherwise), and net=1 needs both of them.
+    param([AllowNull()][Collections.IDictionary]$Values, [int]$ListenPort = 0, [int]$PeerPort = 0)
+    $out = [ordered]@{}
+    if ($null -eq $Values -or $Values.Count -eq 0) { return $out }
+    foreach ($key in @($Values.Keys)) { if (!(Get-LabPartnerKeySpec -Key ([string]$key))) { throw "Unknown partner lab.ini key: $key" } }
+    foreach ($spec in $script:LabPartnerKeys) {
+        if ($Values.Contains($spec.Key)) { $out[$spec.Key] = ConvertTo-LabPartnerValue -Key $spec.Key -Value $Values[$spec.Key] }
+    }
+    $netListen = if ($out.Contains('net_listen_port')) { [int]$out['net_listen_port'] } else { 0 }
+    $netPeer = if ($out.Contains('net_peer_port')) { [int]$out['net_peer_port'] } else { 0 }
+    if ($out.Contains('net') -and $out['net'] -eq '1' -and (!$netListen -or !$netPeer)) { throw 'lab.ini net=1 needs net_listen_port and net_peer_port.' }
+    if ($netListen -and $netListen -eq $netPeer) { throw 'net_listen_port and net_peer_port must differ.' }
+    foreach ($port in @($netListen, $netPeer)) {
+        if ($port -and ($port -eq $ListenPort -or $port -eq $PeerPort)) { throw "Partner net port $port collides with listen_port/peer_port." }
+    }
+    return $out
+}
+
+function ConvertFrom-LabPartnerJson {
+    # Pure: lab.json "partner" (short names such as stage, or the lab.ini key names)
+    # -> lab.ini key dictionary. The ports come from lab.json ports, not from here;
+    # a "comment" member is documentation and ignored.
+    param([AllowNull()]$Partner)
+    $out = [ordered]@{}
+    if ($null -eq $Partner) { return $out }
+    $names = if ($Partner -is [Collections.IDictionary]) { @($Partner.Keys) } else { @($Partner.PSObject.Properties.Name) }
+    foreach ($name in $names) {
+        if ($name -ceq 'comment') { continue }
+        $spec = $null
+        foreach ($candidate in $script:LabPartnerKeys) { if ($candidate.Key -ceq $name -or ($candidate.Json -and $candidate.Json -ceq $name)) { $spec = $candidate; break } }
+        if (!$spec) { throw "Unknown lab.json partner setting: $name" }
+        if ($spec.Kind -eq 'port') { throw "lab.json partner.${name}: set ports.netHost / ports.netGuest instead." }
+        $value = if ($Partner -is [Collections.IDictionary]) { $Partner[$name] } else { $Partner.PSObject.Properties[$name].Value }
+        $out[$spec.Key] = $value
+    }
+    return $out
+}
+
+function ConvertFrom-LabPartnerSettingArgs {
+    # Pure: Prepare-LabInstance -PartnerSetting items for one role. 'key=value'
+    # applies to both roles, 'host:key=value' / 'guest:key=value' to one; key is a
+    # lab.ini partner/net key (the ports stay in lab.json). Later items win.
+    param([string[]]$Items = @(), [Parameter(Mandatory)][ValidateSet('host', 'guest')][string]$Role)
+    $out = [ordered]@{}
+    foreach ($item in @($Items | Where-Object { $_ } | ForEach-Object { $_ -split ',' } | Where-Object { $_.Trim() })) {
+        $text = $item.Trim()
+        if ($text -cnotmatch '^(?:(host|guest):)?([a-z_]+)=(.+)$') { throw "Invalid -PartnerSetting '$text' (key=value, host:key=value or guest:key=value)." }
+        $target = $Matches[1]
+        $key = $Matches[2]
+        $value = $Matches[3]
+        $spec = Get-LabPartnerKeySpec -Key $key
+        if (!$spec) { throw "Unknown partner lab.ini key in -PartnerSetting: $key" }
+        if ($spec.Kind -eq 'port') { throw "-PartnerSetting cannot change $key; set ports.netHost / ports.netGuest in lab.json." }
+        $canonical = ConvertTo-LabPartnerValue -Key $key -Value $value
+        if (!$target -or $target -ceq $Role) { $out[$key] = $canonical }
+    }
+    return $out
+}
+
 function New-LabIniText {
     param(
         [Parameter(Mandatory)][ValidateSet('host', 'guest')][string]$Role,
@@ -229,7 +378,11 @@ function New-LabIniText {
         [string]$XInput = 'passthrough',
         [bool]$Loopback = $true,
         [bool]$JoinTrigger = $true,
-        [int]$AutoJoinDelaySec = 0
+        [int]$AutoJoinDelaySec = 0,
+        # Offline lab mode (docs/offline-partner-spike-plan.md 4): header wording only.
+        [switch]$Offline,
+        # Partner/net keys (exact lab.ini names, see $script:LabPartnerKeys); none = no extra lines.
+        [Collections.IDictionary]$Partner = $null
     )
     if ($SelfSteamId -ne 'real' -and !(Test-IndividualSteamId64 $SelfSteamId)) { throw "Invalid self_steamid: $SelfSteamId" }
     if ($PeerSteamId -ne 'learn' -and !(Test-IndividualSteamId64 $PeerSteamId)) { throw "Invalid peer_steamid: $PeerSteamId" }
@@ -242,11 +395,18 @@ function New-LabIniText {
     }
     if ($XInput -cnotmatch '^(passthrough|none|[0-3])$') { throw "Invalid xinput: $XInput" }
     if ($AutoJoinDelaySec -lt 0 -or $AutoJoinDelaySec -gt 3600) { throw 'auto_join_delay_s must be 0..3600.' }
+    $partnerValues = ConvertTo-LabPartnerIni -Values $Partner -ListenPort $ListenPort -PeerPort $PeerPort
     $lines = [Collections.Generic.List[string]]::new()
     $lines.Add($script:LabIniHeader + ' - single-PC lab harness only (docs/lab-protocol.md).')
-    $lines.Add('# Lab mode stays on while this file exists. The lab coop.ini next to it ALSO points the')
-    $lines.Add('# master server at the local fuse, even without this file. Switch both off (and restore')
-    $lines.Add('# your previous files) with: pwsh -File tools/lab/Prepare-LabInstance.ps1 -Disable')
+    if ($Offline) {
+        $lines.Add('# Offline lab mode: lab mode stays on while this file exists. The lab coop.ini next to it')
+        $lines.Add('# ALSO points the master server at a closed local port (no server), even without this file.')
+        $lines.Add('# Switch both off (and restore your previous files) with: pwsh -File tools/lab/Prepare-LabInstance.ps1 -Disable')
+    } else {
+        $lines.Add('# Lab mode stays on while this file exists. The lab coop.ini next to it ALSO points the')
+        $lines.Add('# master server at the local fuse, even without this file. Switch both off (and restore')
+        $lines.Add('# your previous files) with: pwsh -File tools/lab/Prepare-LabInstance.ps1 -Disable')
+    }
     $lines.Add('enabled=1')
     $lines.Add("role=$Role")
     $lines.Add('loopback=' + ([int]$Loopback))
@@ -260,6 +420,10 @@ function New-LabIniText {
     $lines.Add("xinput=$XInput")
     $lines.Add('join_trigger=' + ([int]$JoinTrigger))
     if ($AutoJoinDelaySec) { $lines.Add("auto_join_delay_s=$AutoJoinDelaySec") }
+    if ($partnerValues.Count) {
+        $lines.Add('# Offline partner spike (docs/offline-partner-spike-plan.md 2.1); inert unless the marker is offline-v1.')
+        foreach ($key in $partnerValues.Keys) { $lines.Add($key + '=' + $partnerValues[$key]) }
+    }
     return ($lines -join "`n") + "`n"
 }
 
@@ -267,14 +431,19 @@ function New-CoopIniText {
     param(
         [Parameter(Mandatory)][string]$MasterUrl,
         [string]$Character = 'default',
-        [string]$CharacterFallback = 'dd_male'
+        [string]$CharacterFallback = 'dd_male',
+        # Offline lab mode: master_url must be a closed 127.0.0.1 port (comment wording differs).
+        [switch]$Offline
     )
     if (!(Test-LabUrl $MasterUrl)) { throw "Invalid master_url (http(s)://host/tppstm/gate, <= 69 chars): $MasterUrl" }
+    if ($Offline -and $MasterUrl -cnotmatch '^http://127\.0\.0\.1:[0-9]{4,5}/tppstm/gate$') { throw "Offline master_url must be http://127.0.0.1:<closed port>/tppstm/gate: $MasterUrl" }
     if ($Character -cnotin @('default', 'snake', 'dd_male', 'dd_female', 'avatar', 'ocelot', 'quiet')) { throw "Invalid character: $Character" }
     if ($CharacterFallback -cnotin @('dd_male', 'dd_female', 'snake', 'avatar')) { throw "Invalid character_fallback: $CharacterFallback" }
+    $purpose = if ($Offline) { '# master_url points this game at a closed local port (offline lab mode: no server is reached) and applies even without lab.ini.' }
+    else { '# master_url sends this game to the lab''s local fuse and applies even without lab.ini.' }
     return (@(
             ($script:LabIniHeader + '. Player options (docs/lab-protocol.md).'),
-            '# master_url sends this game to the lab''s local fuse and applies even without lab.ini.',
+            $purpose,
             '# Before normal online play run: pwsh -File tools/lab/Prepare-LabInstance.ps1 -Disable',
             '# (it renames this file and restores your previous coop.ini, if there was one).',
             "master_url=$MasterUrl",
@@ -320,15 +489,39 @@ function ConvertFrom-IniText {
     return $result
 }
 
+function Get-LabOfflineExpectation {
+    # Pure: offline lab mode (docs/offline-partner-spike-plan.md 2.5, 4) values for one
+    # role: the marker (both roles), the master URL on a closed 127.0.0.1 port
+    # (lab.json offline.masterPort, default 47899) and the partner UDP ports
+    # (ports.netHost/netGuest, default 47820/47821; the guest's are swapped).
+    param([Parameter(Mandatory)][ValidateSet('host', 'guest')][string]$Role, [Parameter(Mandatory)]$Config)
+    $offline = Get-ConfigValue $Config 'Offline' $null
+    $masterPort = [int](Get-ConfigValue $offline 'masterPort' 47899)
+    $netHost = [int](Get-ConfigValue $Config.Ports 'netHost' 47820)
+    $netGuest = [int](Get-ConfigValue $Config.Ports 'netGuest' 47821)
+    $listen = if ($Role -eq 'host') { $netHost } else { $netGuest }
+    $peer = if ($Role -eq 'host') { $netGuest } else { $netHost }
+    [pscustomobject]@{
+        Role = $Role; Marker = [string](Get-ConfigValue $offline 'marker' 'offline-v1'); MasterPort = $masterPort
+        MasterUrl = 'http://127.0.0.1:' + $masterPort + '/tppstm/gate'; NetListenPort = $listen; NetPeerPort = $peer
+    }
+}
+
 function Get-LabInstanceSettings {
     # Lab defaults (docs/lab-protocol.md) for one role. Pure given its inputs.
+    # -Offline: offline lab mode (docs/offline-partner-spike-plan.md 2.5, 4): marker
+    # offline-v1 on both roles, master URL on a closed local port, partner/net
+    # lab.ini keys from lab.json "partner" plus -PartnerOverrides (lab.ini key names).
     param(
         [Parameter(Mandatory)][ValidateSet('host', 'guest')][string]$Role,
         [Parameter(Mandatory)]$Config,
         [Parameter(Mandatory)][string]$GameDirectory,
-        [Parameter(Mandatory)][string]$HostSteamId64
+        [Parameter(Mandatory)][string]$HostSteamId64,
+        [switch]$Offline,
+        [Collections.IDictionary]$PartnerOverrides = $null
     )
     if (!(Test-IndividualSteamId64 $HostSteamId64)) { throw 'Host SteamID64 is not a valid individual SteamID64.' }
+    if (!$Offline -and $PartnerOverrides -and $PartnerOverrides.Count) { throw 'Partner settings apply only to the offline lab mode (-Offline).' }
     $saveDir = (Get-InstancePaths -GameDirectory $GameDirectory).SaveDir
     $guestId = [string](Get-ConfigValue $Config.Identity 'guestSteamId' '76561202255233008')
     if (!(Test-IndividualSteamId64 $guestId)) { throw 'lab.json identity.guestSteamId is not a valid individual SteamID64.' }
@@ -336,26 +529,71 @@ function Get-LabInstanceSettings {
     $fuseUrl = 'http://127.0.0.1:' + [int]$Config.Ports.fuse + '/tppstm/gate'
     if ($Role -eq 'host') {
         $peer = if ([string](Get-ConfigValue $Config.Identity 'hostPeerSteamId' 'guest') -eq 'learn') { 'learn' } else { $guestId }
-        return [pscustomobject]@{
+        $settings = [pscustomobject]@{
             Role = 'host'; SelfSteamId = 'real'; SelfName = ''; PeerSteamId = $peer
             ListenPort = [int]$Config.Ports.host; PeerPort = [int]$Config.Ports.guest; MutexSuffix = ''
             SaveDir = $saveDir; XInput = [string](Get-ConfigValue $Config.XInput 'host' 'passthrough'); Marker = 'host-v3'
             MasterUrl = $fuseUrl; Character = [string](Get-ConfigValue $Config.Characters 'host' 'default'); ClientHost = $null
+            Offline = $false; Partner = $null
+        }
+    } else {
+        $settings = [pscustomobject]@{
+            Role = 'guest'; SelfSteamId = $guestId; SelfName = [string](Get-ConfigValue $Config.Identity 'guestName' 'Guest'); PeerSteamId = $HostSteamId64
+            ListenPort = [int]$Config.Ports.guest; PeerPort = [int]$Config.Ports.host; MutexSuffix = '-guest'
+            SaveDir = $saveDir; XInput = [string](Get-ConfigValue $Config.XInput 'guest' 'passthrough'); Marker = 'client-v1'
+            MasterUrl = $fuseUrl; Character = [string](Get-ConfigValue $Config.Characters 'guest' 'default'); ClientHost = $HostSteamId64
+            Offline = $false; Partner = $null
         }
     }
-    return [pscustomobject]@{
-        Role = 'guest'; SelfSteamId = $guestId; SelfName = [string](Get-ConfigValue $Config.Identity 'guestName' 'Guest'); PeerSteamId = $HostSteamId64
-        ListenPort = [int]$Config.Ports.guest; PeerPort = [int]$Config.Ports.host; MutexSuffix = '-guest'
-        SaveDir = $saveDir; XInput = [string](Get-ConfigValue $Config.XInput 'guest' 'passthrough'); Marker = 'client-v1'
-        MasterUrl = $fuseUrl; Character = [string](Get-ConfigValue $Config.Characters 'guest' 'default'); ClientHost = $HostSteamId64
+    if ($Offline) {
+        $expect = Get-LabOfflineExpectation -Role $Role -Config $Config
+        $merged = [ordered]@{}
+        foreach ($key in $script:LabPartnerDefaults.Keys) { $merged[$key] = $script:LabPartnerDefaults[$key] }
+        $fromJson = ConvertFrom-LabPartnerJson -Partner (Get-ConfigValue $Config 'Partner' $null)
+        foreach ($key in $fromJson.Keys) { $merged[$key] = $fromJson[$key] }
+        if ($PartnerOverrides) { foreach ($key in $PartnerOverrides.Keys) { $merged[[string]$key] = $PartnerOverrides[$key] } }
+        $merged['net_listen_port'] = $expect.NetListenPort
+        $merged['net_peer_port'] = $expect.NetPeerPort
+        $settings.Partner = ConvertTo-LabPartnerIni -Values $merged -ListenPort $settings.ListenPort -PeerPort $settings.PeerPort
+        $settings.Marker = $expect.Marker
+        $settings.MasterUrl = $expect.MasterUrl
+        $settings.Offline = $true
     }
+    return $settings
 }
 
 function New-LabIniFromSettings {
     param([Parameter(Mandatory)]$Settings)
+    if ([bool](Get-ConfigValue $Settings 'Offline' $false)) {
+        return New-LabIniText -Role $Settings.Role -SelfSteamId $Settings.SelfSteamId -SelfName $Settings.SelfName `
+            -PeerSteamId $Settings.PeerSteamId -ListenPort $Settings.ListenPort -PeerPort $Settings.PeerPort `
+            -MutexSuffix $Settings.MutexSuffix -SaveDir $Settings.SaveDir -XInput $Settings.XInput `
+            -Offline -Partner $Settings.Partner
+    }
     New-LabIniText -Role $Settings.Role -SelfSteamId $Settings.SelfSteamId -SelfName $Settings.SelfName `
         -PeerSteamId $Settings.PeerSteamId -ListenPort $Settings.ListenPort -PeerPort $Settings.PeerPort `
         -MutexSuffix $Settings.MutexSuffix -SaveDir $Settings.SaveDir -XInput $Settings.XInput
+}
+
+function Get-LabOfflineIniProblems {
+    # Pure: what Start-Lab -Offline requires of one instance's lab.ini (parsed with
+    # ConvertFrom-IniText) beyond the shared checks: net=1, partner=1, the role's
+    # partner ports and valid values for every partner/net key that is present.
+    param([Parameter(Mandatory)][ValidateSet('host', 'guest')][string]$Role, [AllowNull()]$Lab, [Parameter(Mandatory)]$Expectation)
+    $problems = [Collections.Generic.List[string]]::new()
+    if ($null -eq $Lab) { return }  # a missing lab.ini is reported by the shared checks
+    if ([string](Get-ConfigValue $Lab 'net' '') -cne '1') { $problems.Add("[$Role] lab.ini net is not 1 (the offline partner transport).") }
+    if ([string](Get-ConfigValue $Lab 'partner' '') -cne '1') { $problems.Add("[$Role] lab.ini partner is not 1.") }
+    if ([string](Get-ConfigValue $Lab 'net_listen_port' '') -cne [string]$Expectation.NetListenPort -or
+        [string](Get-ConfigValue $Lab 'net_peer_port' '') -cne [string]$Expectation.NetPeerPort) {
+        $problems.Add("[$Role] lab.ini net_listen_port/net_peer_port are not $($Expectation.NetListenPort)/$($Expectation.NetPeerPort) (lab.json ports.netHost/netGuest).")
+    }
+    foreach ($spec in $script:LabPartnerKeys) {
+        $value = Get-ConfigValue $Lab $spec.Key $null
+        if ($null -eq $value) { continue }
+        try { $null = ConvertTo-LabPartnerValue -Key $spec.Key -Value $value } catch { $problems.Add("[$Role] $($_.Exception.Message)") }
+    }
+    return $problems.ToArray()  # callers wrap in @()
 }
 
 # ---------------------------------------------------------------------------
@@ -1386,11 +1624,55 @@ function Get-LiveProcess {
 }
 
 function New-TriggerFile {
-    # Creates a trigger (join.trigger / reset.trigger) atomically; native code deletes it.
-    param([Parameter(Mandatory)][string]$Path)
+    # Creates a trigger (join.trigger / reset.trigger / partner.trigger) atomically:
+    # a temporary file in the same folder renamed over the target. Native code
+    # deletes it. Content: -Text plus a newline (partner.trigger), else a timestamp.
+    param([Parameter(Mandatory)][string]$Path, [string]$Text = '')
     $temp = $Path + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
-    [IO.File]::WriteAllText($temp, ([DateTime]::UtcNow.ToString('o') + "`n"), [Text.Encoding]::ASCII)
-    Move-Item -LiteralPath $temp -Destination $Path -Force
+    $content = if ($Text) { $Text + "`n" } else { [DateTime]::UtcNow.ToString('o') + "`n" }
+    [IO.File]::WriteAllText($temp, $content, [Text.Encoding]::ASCII)
+    try { Move-Item -LiteralPath $temp -Destination $Path -Force }
+    finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
+}
+
+function Get-LabScanCodeTable {
+    # Key names Send-LabInput.ps1 understands -> @(scan code (set 1), extended).
+    [ordered]@{
+        enter = @(0x1C, $false); esc = @(0x01, $false); space = @(0x39, $false); tab = @(0x0F, $false)
+        up = @(0x48, $true); down = @(0x50, $true); left = @(0x4B, $true); right = @(0x4D, $true)
+        e = @(0x12, $false); f = @(0x21, $false); q = @(0x10, $false); r = @(0x13, $false); c = @(0x2E, $false)
+        x = @(0x2D, $false); z = @(0x2C, $false); v = @(0x2F, $false); w = @(0x11, $false); a = @(0x1E, $false)
+        s = @(0x1F, $false); d = @(0x20, $false); f8 = @(0x42, $false); f9 = @(0x43, $false); ctrl = @(0x1D, $false)
+        shift = @(0x2A, $false); f10 = @(0x44, $false); f11 = @(0x57, $false)
+    }
+}
+
+function ConvertFrom-LabKeySpec {
+    # Pure: one Send-LabInput key spec -> the keys pressed together (in order;
+    # released in reverse) and how long they are held:
+    #   enter | ctrl+f8 | w:4000 (hold W 4 s) | w+a:6000 (W and A together for 6 s)
+    # Hold time 1..60000 ms; without ':' it is -DefaultHoldMs.
+    param([Parameter(Mandatory)][string]$Spec, [int]$DefaultHoldMs = 150)
+    if ($DefaultHoldMs -lt 1 -or $DefaultHoldMs -gt 60000) { throw 'HoldMs must be 1..60000.' }
+    $text = $Spec.Trim().ToLowerInvariant()
+    $hold = $DefaultHoldMs
+    $colon = $text.IndexOf(':')
+    if ($colon -ge 0) {
+        $ms = $text.Substring($colon + 1)
+        $text = $text.Substring(0, $colon)
+        if ($ms -cnotmatch '^[0-9]{1,5}$' -or [int]$ms -lt 1 -or [int]$ms -gt 60000) { throw "Invalid hold time in key spec '$Spec' (1..60000 ms)." }
+        $hold = [int]$ms
+    }
+    if (!$text) { throw "Empty key spec '$Spec'." }
+    $table = Get-LabScanCodeTable
+    $names = @($text.Split('+'))
+    $keys = [Collections.Generic.List[object]]::new()
+    foreach ($name in $names) {
+        if (!$name -or !$table.Contains($name)) { throw "Unknown key name: $name" }
+        if (@($keys | Where-Object { $_.Name -ceq $name }).Count) { throw "Key $name repeated in '$Spec'." }
+        $keys.Add([pscustomobject]@{ Name = $name; Scan = [uint16]$table[$name][0]; Extended = [bool]$table[$name][1] })
+    }
+    [pscustomobject]@{ Spec = $Spec.Trim(); Keys = $keys.ToArray(); HoldMs = $hold }
 }
 
 # ---------------------------------------------------------------------------

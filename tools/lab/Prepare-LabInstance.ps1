@@ -23,10 +23,24 @@ lab.ini, so use -Disable to switch the lab off again: it renames the generated
 lab.ini and coop.ini and restores your own files that step 4 set aside as
 *.user-<ts>.
 
+-Offline prepares the offline lab mode (docs/offline-partner-spike-plan.md 2.5,
+section 4) instead: marker offline-v1 on BOTH folders, coop.ini master_url on a
+closed local port (lab.json offline.masterPort, default
+http://127.0.0.1:47899/tppstm/gate; no fuse, no server is reached) and lab.ini
+with the partner spike keys (net=1, net_listen_port/net_peer_port from
+lab.json ports.netHost/netGuest, partner=1 and the lab.json "partner"
+defaults). -PartnerSetting overrides single lab.ini partner keys for this
+preparation ('key=value' for both roles, 'host:key=value' / 'guest:key=value'
+for one), for example -PartnerSetting guest:net_latency_ms=100,guest:net_loss_permille=200
+for E7. Running the script again without -Offline switches both folders back to
+host-v3 / client-v1 and the fuse URL.
+
 .EXAMPLE
 pwsh -File tools/lab/Prepare-LabInstance.ps1 -WhatIf
 pwsh -File tools/lab/Prepare-LabInstance.ps1
 pwsh -File tools/lab/Prepare-LabInstance.ps1 -Role guest -Reseed
+pwsh -File tools/lab/Prepare-LabInstance.ps1 -Offline
+pwsh -File tools/lab/Prepare-LabInstance.ps1 -Offline -PartnerSetting host:partner_force_exists=1,partner_offset_cm=100
 pwsh -File tools/lab/Prepare-LabInstance.ps1 -Disable
 #>
 [CmdletBinding(SupportsShouldProcess)]
@@ -46,7 +60,11 @@ param(
     [switch]$CopyGuestExe,
     # Turn the lab off: rename generated lab.ini/coop.ini to *.disabled-<ts> and
     # restore the newest *.user-<ts> copy of the user's own files.
-    [switch]$Disable
+    [switch]$Disable,
+    # Offline lab mode: marker offline-v1, closed-port master URL, partner lab.ini keys.
+    [switch]$Offline,
+    # Offline only: lab.ini partner key overrides, 'key=value' or 'host:key=value' / 'guest:key=value'.
+    [string[]]$PartnerSetting = @()
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -61,6 +79,8 @@ $stamp = New-RunStamp
 $roles = if ($Role -eq 'both') { @('host', 'guest') } else { @($Role) }
 $dirs = @{ host = $config.Paths.hostDir; guest = $config.Paths.guestDir }
 if ($dirs.host.Equals($dirs.guest, [StringComparison]::OrdinalIgnoreCase)) { throw 'lab.json hostDir and guestDir must differ.' }
+if (@($PartnerSetting | Where-Object { $_ }).Count -and !$Offline) { throw '-PartnerSetting applies only with -Offline.' }
+if ($Offline -and $Disable) { throw '-Offline and -Disable cannot be combined (-Disable switches either mode off).' }
 
 # ---------------------------------------------------------------- -Disable
 if ($Disable) {
@@ -116,7 +136,8 @@ foreach ($r in $roles) {
     if (@(Get-GameProcessInDirectory -Directory $p.Game).Count) { throw "[$r] MGSV is running from $($p.Game); close it normally first." }
     if (!(Test-FileHash -Path $p.Exe -Expected $expected.exe)) { throw "[$r] mgsvtpp.exe is missing or not 1.0.15.4 ($($expected.exe)): $($p.Exe)" }
     if (!(Test-FileHash -Path $p.SteamApi -Expected $expected.steam)) { throw "[$r] steam_api64.dll is missing or not the shipped DLL ($($expected.steam))" }
-    $settings = Get-LabInstanceSettings -Role $r -Config $config -GameDirectory $p.Game -HostSteamId64 $identity.SteamId64
+    $overrides = if ($Offline) { ConvertFrom-LabPartnerSettingArgs -Items $PartnerSetting -Role $r } else { $null }
+    $settings = Get-LabInstanceSettings -Role $r -Config $config -GameDirectory $p.Game -HostSteamId64 $identity.SteamId64 -Offline:$Offline -PartnerOverrides $overrides
     if (Test-PathInside -Child $settings.SaveDir -Parent $identity.UserData) { throw 'Internal error: save_dir inside Steam userdata.' }
     $instances[$r] = [pscustomobject]@{ Role = $r; Paths = $p; Settings = $settings }
 }
@@ -207,7 +228,7 @@ foreach ($r in $roles) {
     $s = $instances[$r].Settings
     $texts = [ordered]@{}
     $texts[$p.LabIni] = New-LabIniFromSettings -Settings $s
-    $texts[$p.CoopIni] = New-CoopIniText -MasterUrl $s.MasterUrl -Character $s.Character
+    $texts[$p.CoopIni] = New-CoopIniText -MasterUrl $s.MasterUrl -Character $s.Character -Offline:$s.Offline
     foreach ($file in $texts.Keys) {
         $text = $texts[$file]
         $existing = if (Test-Path -LiteralPath $file -PathType Leaf) { [IO.File]::ReadAllText($file) } else { $null }
@@ -267,5 +288,11 @@ if (!$SkipGraphics) {
 
 Write-Output ''
 if ($WhatIfPreference) { Write-Output 'WhatIf: nothing was changed.'; return }
+if ($Offline) {
+    $url = $instances[$roles[0]].Settings.MasterUrl
+    Write-Output 'Prepared for the OFFLINE lab mode (offline-v1, no fuse). Next: pwsh -File tools/lab/Start-Lab.ps1 -Offline, then tools/lab/Test-PartnerSpike.ps1 -Experiment E0.'
+    Write-Output "The folders now point the master server at a closed local port ($url, coop.ini); run this script with -Disable before normal online play."
+    return
+}
 Write-Output 'Prepared. Next: pwsh -File tools/lab/Start-Lab.ps1, then tools/lab/Invoke-LabSmoke.ps1 -Assist.'
 Write-Output 'The host folder now redirects the master server to the local fuse (coop.ini); run this script with -Disable before normal online play.'

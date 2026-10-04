@@ -15,7 +15,10 @@ termination) and also stops other fuse processes started from the lab fuse.exe.
 Afterwards it hashes the real Steam\userdata\<id>\287700\local and 311340\remote
 files and compares them with the manifest taken by Start-Lab.ps1 at run start
 and with the latest backup taken by Prepare-LabInstance.ps1. Writes stop.json
-(and a redacted copy of fuse's console log) into the run folder.
+(and a redacted copy of fuse's console log) into the run folder. Leftover
+mgs-coop/partner.trigger files (offline partner spike, Set-PartnerTrigger.ps1)
+in both lab folders are deleted after the games are closed, so a stale command
+cannot fire in the next run.
 Exit code 0 = real saves unchanged, 2 = a real save file changed (restore it
 from build/lab/save-backups/<ts>/files/), 1 = error.
 #>
@@ -170,16 +173,34 @@ foreach ($d in $saves.details) {
 }
 if (!$saves.checked) { Write-Warning 'No save manifest to compare against (run Prepare-LabInstance.ps1 / Start-Lab.ps1 first).' }
 
+# ---------------------------------------------------------------- leftover partner triggers
+$triggersRemoved = @()
+foreach ($pair in @(@('host', $config.Paths.hostDir), @('guest', $config.Paths.guestDir))) {
+    $trigger = (Get-InstancePaths -GameDirectory $pair[1]).PartnerTrigger
+    if (!(Test-Path -LiteralPath $trigger -PathType Leaf)) { continue }
+    if ((Get-Item -LiteralPath $trigger -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { Write-Warning "[$($pair[0])] $trigger is a filesystem link; left alone."; continue }
+    if ($PSCmdlet.ShouldProcess($trigger, 'Delete leftover partner trigger')) {
+        Remove-Item -LiteralPath $trigger -Force
+        $triggersRemoved += $pair[0]
+        Write-Output "[$($pair[0])] deleted a leftover (unconsumed) partner.trigger."
+    }
+}
+
 # ---------------------------------------------------------------- lingering lab redirect
 $hostCoop = (Get-InstancePaths -GameDirectory $config.Paths.hostDir).CoopIni
-$labCoop = (Test-Path -LiteralPath $hostCoop -PathType Leaf) -and (Test-LabGeneratedText (Read-SharedText -Path $hostCoop))
+$hostCoopText = Read-SharedText -Path $hostCoop
+$labCoop = (Test-Path -LiteralPath $hostCoop -PathType Leaf) -and (Test-LabGeneratedText $hostCoopText)
 if ($labCoop) {
-    Write-Warning "The host folder still has the lab coop.ini: a normal game start from $($config.Paths.hostDir) is sent to the local fuse (or runs offline when fuse is stopped). Run tools/lab/Prepare-LabInstance.ps1 -Disable before normal online play."
+    $where = if ([string](Get-ConfigValue (ConvertFrom-IniText $hostCoopText) 'master_url' '') -ceq (Get-LabOfflineExpectation -Role host -Config $config).MasterUrl) {
+        'pointed at a closed local port (the game runs offline)'
+    } else { 'sent to the local fuse (or runs offline when fuse is stopped)' }
+    Write-Warning "The host folder still has the lab coop.ini: a normal game start from $($config.Paths.hostDir) is $where. Run tools/lab/Prepare-LabInstance.ps1 -Disable before normal online play."
 }
 
 $stop = [ordered]@{
     product = 'mgs-coop-lab-stop'; finished_utc = [DateTime]::UtcNow.ToString('o')
     games = $outcome; fuse = $fuseState; real_saves = $saves; host_lab_coop_ini_present = [bool]$labCoop
+    partner_triggers_removed = $triggersRemoved
 }
 if ($current) { Write-JsonFile -Path (Join-Path $current.Dir 'stop.json') -Value $stop }
 # The run-start manifest is authoritative (normal play between Prepare and Start

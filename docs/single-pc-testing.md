@@ -1,9 +1,11 @@
 # Single-PC testing: host and guest on one machine
 
 This is how to run a host instance and a guest instance of MGSV on one PC and
-try a co-op join with a log-only pass/fail result. Script reference:
-[tools/lab/README.md](../tools/lab/README.md). The file and log contract
-between the scripts and the loader: [lab-protocol.md](lab-protocol.md).
+try a co-op join with a log-only pass/fail result. The offline lab mode for
+the partner spike (no fuse, no session, own netcode) is described in
+[Offline lab mode](#offline-lab-mode-the-partner-spike-no-server-at-all).
+Script reference: [tools/lab/README.md](../tools/lab/README.md). The file and
+log contract between the scripts and the loader: [lab-protocol.md](lab-protocol.md).
 
 ## What a single-PC run can and cannot show
 
@@ -146,6 +148,103 @@ The game must be closed for steps 1–2. Steam must be running and logged in.
    Without it, the lab `coop.ini` keeps sending the host's normal game starts to
    the local fuse (or offline when fuse is stopped), even if `lab.ini` was
    deleted. `-Disable` renames both generated files and restores your own.
+
+## Offline lab mode: the partner spike (no server at all)
+
+The co-op direction is now fully offline with the mod's own netcode
+([offline-partner-spike-plan.md](offline-partner-spike-plan.md)). This mode
+runs both instances with no fuse and no session: each `coop.ini` points the
+master server at `http://127.0.0.1:47899/tppstm/gate`, a local port where
+nothing listens, so the game fails its login ("Failed to log in to server") and
+continues offline. The marker `offline-v1` on both folders never calls the
+session APIs and never sets S_IS_ONLINE. The two instances exchange poses over
+their own UDP ports 47820/47821 (`net=1`); the loopback P2P ports 47810/47811
+stay configured but are not what the spike uses.
+
+What stays the same: the safety gate (`master_server=redirected` with the
+closed-port URL, `saves=redirected`, guest `mutex=renamed` and `identity=fake`),
+the save backup and redirect, the guest's fake identity and mutex suffix, and
+Stop-Lab's real-save check. Without the redirect line the gate still stops the
+instance, because the game would otherwise contact Konami's default servers.
+
+### Steps
+
+1. **Build and test** as above. The loader must contain the offline partner
+   code (`offline-v1` marker, partner receipts, `partner_net`); without it the
+   experiments stay INCOMPLETE (no `mode=offline_v1` line).
+2. **Prepare.** `pwsh -File tools/lab/Prepare-LabInstance.ps1 -Offline` (review
+   with `-WhatIf` first). It writes `offline-v1` to both markers, the
+   closed-port `coop.ini` (character `default` on both) and a `lab.ini` with
+   the partner keys of [lab-protocol.md](lab-protocol.md) (`net=1`,
+   `partner=1`, `partner_stage=0`, ...). One-off settings for a later
+   experiment go through `-PartnerSetting`, for example
+   `-PartnerSetting host:partner_force_exists=1,partner_offset_cm=100` (F3a) or
+   `-PartnerSetting guest:net_latency_ms=100,guest:net_loss_permille=200` (E7).
+   `lab.ini` is read once at process start: prepare, then start.
+3. **Start.** `pwsh -File tools/lab/Start-Lab.ps1 -Offline`. The preflight
+   requires no listener on TCP 47899 and free UDP 47810/47811/47820/47821,
+   the `offline-v1` markers, `net=1`, `partner=1` and the role's partner ports.
+   fuse is not started. `run.json` records `offline: true`.
+4. **Title.** In each window press Enter through the title
+   (`pwsh -File tools/lab/Send-LabInput.ps1 -Role host -Keys enter`), dismiss
+   the server-failure notice, choose CONTINUE and wait for Mother Base (30050).
+   To verify live: the notice appears, there is no long hang or retry loop,
+   and Mother Base loads.
+5. **E0 baseline.** `pwsh -File tools/lab/Test-PartnerSpike.ps1 -Experiment E0`
+   (both instances). Walk a circle on each instance for the units check,
+   `Send-LabInput.ps1 -Role host -Keys w+a:6000` (W and A held together for
+   6 s), then wait for the next 30 s `partner_units` line. E0 needs 5 minutes
+   of probes; run it again until PASS or FAIL.
+6. **Experiments**, one boot, in the plan's order (E0, E1, E2, E3, E4, E5, E6, E8):
+
+   | Experiment | Command | Judged on |
+   |---|---|---|
+   | E1 Warp, unrealized | `Set-PartnerTrigger.ps1 -Role host -Text 'stage=1 source=fixed apply=warp'` | host: `partner_warp_check err_mm<=5` in the first 2 s, ids[1] stays ffff, no Lua error |
+   | E2 all-active alone | `Set-PartnerTrigger.ps1 -Role host -Text 'stage=2'` | host: `allactive_set`, `s0=0x03`/`q170=0x3`; outcome A (ffff for 10 s) or B (realized) |
+   | E3 realization | `Set-PartnerTrigger.ps1 -Role host -Text 'stage=3'` | host: `parts_copied`, `partner_bits=set`, `partner_realized=1` within 1 s, `partner_parts=loaded` within 15 s, 120 s without `crash_probe=av` or `partner_realized=0`; screenshot by hand |
+   | E4 orbit | `Set-PartnerTrigger.ps1 -Role host -Text 'stage=3 source=orbit'` | host: realized, every `err_mm<=5`, `slot_mm` moving; 4 screenshots 2 s apart |
+   | E5 apply modes | `-Text 'stage=3 source=orbit apply=slot'`, later `-Text 'apply=both'` | host: both modes ran realized with `err_mm<=5`; the visual comparison is by hand |
+   | E6 network | `Set-PartnerTrigger.ps1 -Role both -Text 'stage=3 source=net'`, then `Send-LabInput.ps1 -Role guest -Keys w:4000` | both: `first_rx`, rx increasing, `status=live`, `last_age_ms<200`, realized; while both stand still, the peer's `pos0_mm` within 200 mm of the local `pos1_mm` |
+   | E8 teardown | `-Text stop`, then `-Text 'stage=3'`, then leave and re-enter Mother Base | host: `partner_bits=cleared; reason=trigger`, `allactive_cleared`, `partner_realized=0`, realized again, `partner_stop`, `partner_cfg=ready` again |
+
+   After each one: `pwsh -File tools/lab/Test-PartnerSpike.ps1 -Experiment Ex`
+   (add `-Role guest` to judge the guest). `Invoke-PartnerExperiment.ps1
+   -Experiment Ex` does the trigger, input and screenshots of the table and polls
+   the verdict until PASS or FAIL. `Get-LabScreens.ps1 -Label <name>` saves
+   screenshots at any time.
+7. **Stop.** `pwsh -File tools/lab/Stop-Lab.ps1` closes the games, deletes any
+   unconsumed `partner.trigger` and checks the real saves. Afterwards either
+   `Prepare-LabInstance.ps1` (back to the fuse mode) or
+   `Prepare-LabInstance.ps1 -Disable` (before normal online play).
+
+### Verdicts
+
+`Test-PartnerSpike.ps1` prints one JSON object: `experiment`, `role`,
+`verdict`, `matched` (the evidence lines), `missing`, `failed`, `notes` and
+`per_role`. Exit code 0 is PASS, 1 FAIL, 2 INCOMPLETE.
+
+- **PASS**: every log criterion of the plan's section 3 holds. Criteria that
+  need a screenshot are listed in `notes` as manual.
+- **FAIL**: a line shows a criterion is not met (for example `online_bit=1`,
+  `count=1`, `crash_probe=av`, `err_mm>5`, `partner_realized=0`,
+  `partner_parts=timeout`), or a deadline passed on the probe clock (`t_ms`)
+  without the evidence. The message names the plan's next step (F3a, F3b, ...).
+- **INCOMPLETE**: evidence is still missing; `missing` says what. Run it again.
+
+Each experiment is judged on the part of the log in which its configuration was
+active, from the `partner=configured` or `partner_stage=changed` line that
+started it until the next change that ends it, so E1 to E5 can follow each other
+in one boot. Lines from before `Start-Lab.ps1` recorded the log offsets never
+count. Liveness of the instances is part of the verdict while the run is up and
+is not checked after Stop-Lab.
+
+### What this mode cannot show
+
+Everything above is log evidence from one PC. Whether the partner is visible,
+animated and in the right place is judged from screenshots by hand. The native
+partner code, the Lua splice and the offline title flow need live verification;
+the scripts' parsing and rules are unit tested against fixture logs written
+with the plan's section 2.7 spellings (`tests/fixtures/partner-lab`).
 
 ## Milestones
 

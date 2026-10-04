@@ -12,7 +12,7 @@ of the running `mgsvtpp.exe`: `MGS_TPP` for the host, `MGS_TPP_guest` for the gu
 |---|---|---|
 | `lab.ini` | lab scripts | Harness only. Parsed by `native/lab_config.cpp` (`mgscoop::GetLabConfig()`). Inert unless `enabled=1` and `role=` are both present. |
 | `coop.ini` | installer / user | Player options: `master_url=`, `character=`, `character_fallback=` (`mgscoop::GetCoopConfig()`). |
-| `script-observe.enabled` | existing | Mode marker: `host-v3`, `client-v1` or `client-check-v1`. |
+| `script-observe.enabled` | existing | Mode marker: `host-v3`, `client-v1` or `client-check-v1`; `offline-v1` on both folders in the offline lab mode (below). |
 | `client-host.txt` | existing | Guest only: the host's SteamID64 in decimal. |
 
 `lab.ini` keys: `enabled`, `role` (`host`/`guest`), `loopback`, `self_steamid`
@@ -21,6 +21,33 @@ of the running `mgsvtpp.exe`: `MGS_TPP` for the host, `MGS_TPP_guest` for the gu
 (`passthrough`/`none`/`0`-`3`), `join_trigger`, `auto_join_delay_s`,
 `net_latency_ms`, `net_loss_permille`, `trace_packets`. See
 `native/include/mgscoop/lab_config.hpp` for types and validation.
+
+Offline partner spike keys ([offline-partner-spike-plan.md](offline-partner-spike-plan.md)
+2.1). The scripts write them, with exactly these names and in this order, only in
+the offline lab mode (`Prepare-LabInstance.ps1 -Offline`); without `-Offline` the
+generated `lab.ini` is byte-for-byte what it was before.
+
+| Key | Values (lab default) | Validation in the scripts (`LabCommon.psm1` `ConvertTo-LabPartnerIni`) |
+|---|---|---|
+| `net` | `0`/`1` (`1`) | `net=1` needs both net ports |
+| `net_listen_port`, `net_peer_port` | host 47820/47821, guest 47821/47820 (`lab.json` `ports.netHost`/`netGuest`) | 1024..65535; differ from each other and from `listen_port`/`peer_port` |
+| `partner` | `0`/`1` (`1`) | |
+| `partner_stage` | `0`..`3` (`0`) | |
+| `partner_source` | `fixed`/`orbit`/`net` (`fixed`) | lower case |
+| `partner_apply` | `warp`/`slot`/`both` (`warp`) | lower case |
+| `partner_rate_hz` | `1`..`60` (`30`) | |
+| `partner_interp_ms` | `0`..`500` (`100`) | |
+| `partner_offset_cm` | `50`..`1000` (`300`) | |
+| `partner_teardown` | `clear`/`keep` (`clear`) | |
+| `partner_force_exists` | `0`/`1` (`0`) | |
+| `partner_policy_relax` | `0`/`1` (`0`) | last resort |
+| `partner_anim_probe` | `0`/`1` (`0`) | |
+| `crash_probe` | `0`/`1` (`1`) | |
+| `net_latency_ms`, `net_loss_permille` | existing keys, written only when set (`-PartnerSetting guest:net_latency_ms=100`) | 0..2000, 0..1000 |
+
+The lab defaults come from `lab.json` `"partner"` (short names such as `stage`, or
+the key names) and `Prepare-LabInstance.ps1 -Offline -PartnerSetting key=value`,
+`host:key=value` or `guest:key=value` (the ports stay in `lab.json`).
 
 Lab defaults used by the scripts:
 
@@ -32,6 +59,9 @@ Lab defaults used by the scripts:
 | `mutex_suffix` | (none) | `-guest` |
 | `save_dir` | `<exeDir>\mgs-coop\lab\saves` | same pattern |
 | fuse | `http://127.0.0.1:6667/tppstm/gate` | same |
+| Offline mode: marker | `offline-v1` | `offline-v1` |
+| Offline mode: `master_url` | `http://127.0.0.1:47899/tppstm/gate` (closed port, `lab.json` `offline.masterPort`) | same |
+| Offline mode: `net_listen_port` / `net_peer_port` | 47820 / 47821 | 47821 / 47820 |
 
 ## Status outputs
 
@@ -99,9 +129,73 @@ the guest's `lab.ini` `peer_steamid=`.
 | `loopback=connect_fail; peer=<id>; error=<n>` | Synthetic 1203. |
 | `loopback=stats; tx=<n>; rx=<n>; dropped=<n>` | Periodic, at most once every 10 s. |
 
+## Offline lab mode (offline partner spike)
+
+[offline-partner-spike-plan.md](offline-partner-spike-plan.md) sections 2.5 and 4.
+There is no fuse and no session: `coop.ini` `master_url` points at a closed
+127.0.0.1 port, so the game reaches no server, and the marker `offline-v1` never
+calls the session APIs or sets S_IS_ONLINE. `Start-Lab.ps1 -Offline` requires
+that nothing listens on that TCP port and that the partner UDP ports are free,
+and keeps the safety gate unchanged (`master_server=redirected` with the
+closed-port URL, `saves=redirected`, guest `mutex=renamed` and `identity=fake`).
+`run.json` then records `offline: true`, `offline_master_url`,
+`ports.offline_master`, `ports.net_host`, `ports.net_guest` and, per instance,
+`partner` (the partner/net `lab.ini` values the instance booted with).
+`Invoke-LabSmoke.ps1` refuses such runs; `Test-PartnerSpike.ps1` judges them.
+
+### `partner.trigger` (scripts create, native consumes and deletes)
+
+One ASCII line, at most 63 bytes with its newline, written by
+`Set-PartnerTrigger.ps1` as a temporary file renamed over
+`mgs-coop/partner.trigger`:
+
+```text
+stop
+stage=<0..3> source=<fixed|orbit|net> apply=<warp|slot|both>   (any non-empty subset, each key once)
+```
+
+The scripts validate the grammar (lower case, blanks between tokens, `stop` only
+alone) and write the canonical order `stage source apply`. Native code polls the
+file every 30 Lua ticks, only with `offline-v1` and `lab.ini` `partner=1`. It is
+not gated on `join_trigger`. `Start-Lab.ps1 -Offline` removes a leftover file
+before the start and `Stop-Lab.ps1` removes leftovers after closing the games
+(`stop.json` `partner_triggers_removed`). Each script-written trigger is
+appended to `<run>/partner-triggers.log` (UTC time, role, text).
+
+### `script-observer.log` lines the partner checks match
+
+`Test-PartnerSpike.ps1` (`tools/lab/PartnerSpike.psm1`) matches the section 2.7
+spellings at the start of a line. The text before the first `;` is the line's
+kind; every `key=value` token after it, separated by `;` or blanks, is a field.
+Lists are comma separated (`ids=0000,ffff` and `pool=00,ff` are hex, `pos0_mm=x,y,z`
+is signed decimal, `0x` values are hex). Lines before the `run.json` offsets
+are ignored.
+
+| Line | Used for |
+|---|---|
+| `mode=offline_v1; sessions=0; s_is_online=never; partner=<0\|1>` | E0 |
+| `host_create=skipped; mode=offline_v1` | E0 |
+| `partner=configured; mode=offline_v1; stage=..; source=..; apply=..; ...` | experiment segments (boot configuration) |
+| `partner_stage=changed; stage=..; source=..; apply=..; via=trigger`, `partner_trigger=rejected; reason=parse` | experiment segments; a line may carry only the changed keys |
+| `partner_cfg=ready; flags=..; count=2; realized_count=..; local=0; R=1; online_bit=0; sync=null; code_gate=ok` / `partner_cfg=refused; reason=..` | every experiment; E0 fails on `count`, `local`, `R`, `online_bit=1` or `sync=set` |
+| `partner_net=listening; port=..; peer_port=..` / `partner_net=disabled; reason=..` | E0 |
+| `partner_net=first_rx; seq=..; epoch=..` | E0, E6 |
+| `partner_net=stats; tx=..; rx=..; drop_epoch=..; drop_seq=..; drop_bad=..; status=live\|stale\|lost; last_age_ms=..; ...` | E0 (tx, rx > 0), E6 (rx increasing, `status=live`, `last_age_ms<200`) |
+| `partner_probe=state; t_ms=..; stage=..; ids=..; pool=..; ...; s0=..; q170=..; ...; pos0_mm=..; pos1_mm=..; rec1_mm=..; ...` | all; `t_ms` is the clock for every deadline; realized means `ids[1]!=ffff` and `pool[1]!=ff` |
+| `partner_tick=rate; hz=..; focused=0\|1` | E0 (`focused=0` needs `hz>=10`) |
+| `partner_units; lua_pos_mm=..; mem_pos_mm=..; yaw_cdeg=..; yaw_abs_max_cdeg=..; cam_cdeg=..` | E0 (`yaw_abs_max_cdeg>628`, lua/mem within 50 mm) |
+| `partner_warp_check; R=1; apply=..; cmd_mm=..; slot_mm=..; err_mm=..` | E1, E4, E5 (`err_mm<=5`, `slot_mm` moving) |
+| `partner_lua=event=<allactive_set\|allactive_cleared\|parts_copied\|error\|refused\|...>` | E2, E3, E8; `error` and `refused` fail any experiment |
+| `partner_bits=set\|lost\|cleared; ...; reason=stop\|trigger` | E3, E8 (`cleared; reason=trigger` while stage 3 is the `stop` trigger) |
+| `partner_realized=1; R=1; id=..; pool=..; ms_after_bits=..` / `partner_realized=0; ...` | E3 (`ms_after_bits<=1000`), E4/E6 (no `=0`), E8 |
+| `partner_parts=loaded; R=1; ms_after_realize=..` / `partner_parts=timeout; ...` | E3 (`ms_after_realize<=15000`) |
+| `partner_stop; cleared=..; teardown=..` | E8; ends a segment |
+| `crash_probe=installed`, `crash_probe=av; rva=..; ...` | `av` fails any experiment |
+
 ## Trigger inputs (scripts create, native consumes and deletes)
 
-These files are honoured only when `lab.ini` has `join_trigger=1`.
+These files are honoured only when `lab.ini` has `join_trigger=1`
+(`partner.trigger` is described above).
 
 | File | Effect |
 |---|---|
@@ -114,6 +208,10 @@ These files are honoured only when `lab.ini` has `join_trigger=1`.
   `lab.ini`, the loader behaves exactly as 0.10.33 did.
 - fuse must always run with `-standalone`. Without it, fuse patches the
   executable on disk.
+- Offline lab mode: no fuse is started, and nothing may listen on the
+  closed master port while the games run (Start-Lab checks it before the
+  start); the master-server redirect is still required by the safety gate,
+  because without it the game would contact Konami's default servers.
 - The guest's fake SteamID never reaches real Steam networking. In loopback mode
   all ISteamNetworking traffic stays on 127.0.0.1.
 - Saves are redirected to copies under `save_dir`. The real
