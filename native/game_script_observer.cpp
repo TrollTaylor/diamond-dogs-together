@@ -519,7 +519,14 @@ const char* HandlePartnerStop() noexcept {
 }
 
 // The per-frame tick. Returns the quiet reply, or nullptr to leave the literal
-// (Lua then does nothing).
+// (Lua then does nothing). The guarded native calls of the movement/stance
+// experiments (T.vt+0x70/+0x68, the C0/A0 resets, SetStance, X.vt+0x10) run
+// here, inside ObserveEntry with receipt_lock held. A callee that reached
+// luaL_loadbuffer on this thread cannot re-enter ObserveEntry: the bridge
+// (script_load_bridge.cpp Bridge) forwards any load issued while its selector
+// runs unchanged, without calling the selector (thread_local selecting;
+// tests/script_load_bridge_tests.cpp selector_reentry), so the
+// non-recursive lock is never requested twice on one thread.
 const char* HandlePartnerTick(const char* buffer, std::size_t size) noexcept {
     if (!OnRuntimeThread()) return nullptr;
     const std::uint64_t started_us = QpcMicros();

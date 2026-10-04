@@ -61,6 +61,16 @@ function Write-Step([string]$Message) { Write-Output ('[{0:HH:mm:ss}] {1}' -f (G
 function Get-StepRoles([string]$Role) { if ($Role -eq 'both') { return @(@('host', 'guest') | Where-Object { $available -contains $_ }) } return @($Role) }
 
 Write-Step "$Experiment on $($current.Dir) (timeout $TimeoutSec s)"
+if ($Experiment.StartsWith('E')) {
+    # The proven E-series ran with the default characters; lab.json
+    # offline.characters now makes the guest play Quiet (animation/appearance test).
+    foreach ($role in @('host', 'guest') | Where-Object { $available -contains $_ }) {
+        $character = [string](ConvertFrom-IniText (Read-SharedText -Path (Get-InstancePaths -GameDirectory $dirs[$role]).CoopIni))['character']
+        if ($character -and $character -cne 'default') {
+            Write-Step "note: the $role plays '$character' (coop.ini); for a regression rerun of the proven E-series prepare with Prepare-LabInstance.ps1 -Offline -Character default"
+        }
+    }
+}
 foreach ($step in $plan.Steps) {
     switch ($step.Kind) {
         'trigger' {

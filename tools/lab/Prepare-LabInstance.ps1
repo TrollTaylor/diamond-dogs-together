@@ -29,7 +29,11 @@ closed local port (lab.json offline.masterPort, default
 http://127.0.0.1:47899/tppstm/gate; no fuse, no server is reached) and lab.ini
 with the partner spike keys (net=1, net_listen_port/net_peer_port from
 lab.json ports.netHost/netGuest, partner=1 and the lab.json "partner"
-defaults). -PartnerSetting overrides single lab.ini partner keys for this
+defaults). -Character overrides the coop.ini character of the offline lab
+for this preparation ('name' for both roles, 'host:name' / 'guest:name' for
+one): lab.json offline.characters makes the GUEST play Quiet (the animation /
+appearance test condition), so a regression rerun of the proven E0-E8 uses
+-Character default. -PartnerSetting overrides single lab.ini partner keys for this
 preparation ('key=value' for both roles, 'host:key=value' / 'guest:key=value'
 for one), for example -PartnerSetting guest:net_latency_ms=100,guest:net_loss_permille=200
 for E7. The coop.ini characters come from lab.json offline.characters (default
@@ -44,6 +48,7 @@ pwsh -File tools/lab/Prepare-LabInstance.ps1
 pwsh -File tools/lab/Prepare-LabInstance.ps1 -Role guest -Reseed
 pwsh -File tools/lab/Prepare-LabInstance.ps1 -Offline
 pwsh -File tools/lab/Prepare-LabInstance.ps1 -Offline -PartnerSetting host:partner_force_exists=1,partner_offset_cm=100
+pwsh -File tools/lab/Prepare-LabInstance.ps1 -Offline -Character default
 pwsh -File tools/lab/Prepare-LabInstance.ps1 -Disable
 #>
 [CmdletBinding(SupportsShouldProcess)]
@@ -67,7 +72,9 @@ param(
     # Offline lab mode: marker offline-v1, closed-port master URL, partner lab.ini keys.
     [switch]$Offline,
     # Offline only: lab.ini partner key overrides, 'key=value' or 'host:key=value' / 'guest:key=value'.
-    [string[]]$PartnerSetting = @()
+    [string[]]$PartnerSetting = @(),
+    # Offline only: coop.ini character override, 'name' or 'host:name' / 'guest:name'.
+    [string[]]$Character = @()
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -83,6 +90,7 @@ $roles = if ($Role -eq 'both') { @('host', 'guest') } else { @($Role) }
 $dirs = @{ host = $config.Paths.hostDir; guest = $config.Paths.guestDir }
 if ($dirs.host.Equals($dirs.guest, [StringComparison]::OrdinalIgnoreCase)) { throw 'lab.json hostDir and guestDir must differ.' }
 if (@($PartnerSetting | Where-Object { $_ }).Count -and !$Offline) { throw '-PartnerSetting applies only with -Offline.' }
+if (@($Character | Where-Object { $_ }).Count -and !$Offline) { throw '-Character applies only with -Offline (the fuse lab uses lab.json characters).' }
 if ($Offline -and $Disable) { throw '-Offline and -Disable cannot be combined (-Disable switches either mode off).' }
 
 # ---------------------------------------------------------------- -Disable
@@ -154,7 +162,9 @@ foreach ($r in $roles) {
     if (!(Test-FileHash -Path $p.Exe -Expected $expected.exe)) { throw "[$r] mgsvtpp.exe is missing or not 1.0.15.4 ($($expected.exe)): $($p.Exe)" }
     if (!(Test-FileHash -Path $p.SteamApi -Expected $expected.steam)) { throw "[$r] steam_api64.dll is missing or not the shipped DLL ($($expected.steam))" }
     $overrides = if ($Offline) { ConvertFrom-LabPartnerSettingArgs -Items $PartnerSetting -Role $r } else { $null }
-    $settings = Get-LabInstanceSettings -Role $r -Config $config -GameDirectory $p.Game -HostSteamId64 $identity.SteamId64 -Offline:$Offline -PartnerOverrides $overrides
+    $characterOverride = if ($Offline) { ConvertFrom-LabCharacterArgs -Items $Character -Role $r } else { $null }
+    $settings = Get-LabInstanceSettings -Role $r -Config $config -GameDirectory $p.Game -HostSteamId64 $identity.SteamId64 -Offline:$Offline -PartnerOverrides $overrides -CharacterOverride $characterOverride
+    if ($Offline) { Write-Output "[$r] coop.ini character=$($settings.Character)" }
     if (Test-PathInside -Child $settings.SaveDir -Parent $identity.UserData) { throw 'Internal error: save_dir inside Steam userdata.' }
     $instances[$r] = [pscustomobject]@{ Role = $r; Paths = $p; Settings = $settings }
 }

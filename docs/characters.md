@@ -55,9 +55,13 @@ character_fallback=dd_male
   character receipts (no session receipt); the offline lab makes the guest play
   Quiet (`tools/lab/lab.json` `offline.characters`). The partner instance that
   shows a remote Quiet needs no bypass: the reset at 0x9CD353 runs only for the
-  local index (0x9CD2D5), and the partner's packages (parts, camo, facial
-  motion) are chosen per instance from its own type
-  ([partner-anim-appearance.md](partner-anim-appearance.md)).
+  local index (0x9CD2D5). Statically the partner's packages (parts, camo,
+  facial motion) are chosen per instance from its own type (0x9B41B0); that a
+  remote Quiet actually loads and renders that way is **unverified until a
+  live run** ([partner-anim-appearance.md](partner-anim-appearance.md),
+  experiments B1/B4). For a regression rerun of the proven offline E0-E8 with
+  the default characters, prepare with `Prepare-LabInstance.ps1 -Offline
+  -Character default`.
 
 ## Where the choice applies
 

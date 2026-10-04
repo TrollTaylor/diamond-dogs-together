@@ -260,8 +260,19 @@ with no fuse and no session.
   `partner_anim_probe`, `crash_probe` (values from `lab.json` `"partner"`).
   `-PartnerSetting key=value,host:key=value,guest:key=value` overrides keys
   for one preparation (validated: stage 0..3, rate 1..60 Hz, interp 0..500 ms,
-  offset 50..1000 cm, ...). The fuse is not involved. Running the script without
-  `-Offline` switches both folders back.
+  offset 50..1000 cm, ...). The `coop.ini` character comes from `lab.json`
+  `offline.characters` (host `default`, guest `quiet`: the animation /
+  appearance test condition); `-Character default` (or `host:name` /
+  `guest:name`) overrides it for one preparation, for example for a regression
+  rerun of the proven E0-E8, and `Invoke-PartnerExperiment.ps1` notes a
+  non-default character before an E-series experiment. The fuse is not
+  involved. Running the script without `-Offline` switches both folders back.
+- **Play-OfflineCoop.ps1** (`Play-Offline-Coop.bat`) is the one-click test: the
+  guest plays Quiet, `look=net` shows each player's own character on the
+  other copy, and the partner moves by the proven Warp. The unverified native
+  paths are turned on one at a time from its console ([M] smooth movement
+  `apply=hybrid reset=n`, [A] stance sync `anim=net aset=qs`, [W] back to the
+  proven Warp), or all at once with `-Experimental`.
 - **Start-Lab.ps1 -Offline** skips the fuse checks and start. Its preflight
   requires no listener on TCP 47899, free UDP 47810/47811 and 47820/47821, the
   `offline-v1` markers, `lab.ini` `net=1`, `partner=1` and the role's partner

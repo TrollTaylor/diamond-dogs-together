@@ -103,7 +103,9 @@ struct AnimState {
     std::uint8_t speed = 0;   // 0..3
     std::uint8_t flags = 0;   // AnimFlag bits
 };
-// stance <= 3, speed <= 3, only known flag bits.
+// Only known flag bits and speed <= 3; with AnimFlag::Valid the stance must be
+// 1..3, without it stance and speed must be 0. The act id is not checked here:
+// partner::LocomotionAct decides what may be written into the game arrays.
 bool valid_anim(const AnimState& anim) noexcept;
 // Returns transform_anim_frame_size, or 0 (out zeroed) when the transform or
 // the anim state is invalid, or session/epoch is zero.

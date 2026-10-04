@@ -8,7 +8,7 @@ The fully offline partner (offline-v1, our own UDP link; [test report](testing-2
 - **Movement.** A smooth native body transform (`xform`/`hybrid`, Warp's own T.vt+0x70/+0x68 calls without the resets) is available. It falls back to the proven Lua Warp whenever a call is refused.
 - **Appearance.** Each copy sends its look, and the receiver applies it with `SetPartsInfoAtInstanceIndex` (`look=net`; `look=quiet|snake` for local tests). offline-v1 now answers the character receipts, and the lab guest plays Quiet.
 
-The defaults keep the proven behaviour. `Play-OfflineCoop.ps1` opts in. CTest passes 63 of 63 suites.
+The defaults keep the proven behaviour. `Play-OfflineCoop.ps1` turns on the appearance sync and the Quiet guest; it keeps the proven Warp movement and turns the unverified native paths on one at a time from its console ([M] smooth movement, [A] stance sync), or all at once with `-Experimental`. Review fixes: received anim/look values are bounded (stance 1..3 with the valid flag, locomotion act ids 1..6 only, the Snake face table index), a refused stance call is retried instead of sticking, the census keeps the stance prerequisites out of the transform verdict, the stance lines have separate caps plus a summary, the A1/A3 plans use hybrid movement so Warp's resets cannot mask the result, and `Prepare-LabInstance.ps1 -Offline -Character default` reruns the proven E-series without the Quiet guest. CTest passes 63 of 63 suites.
 
 ## October 3-4, 2026: 0.11.0 (branch `coop-lab`)
 

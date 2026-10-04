@@ -141,11 +141,12 @@ const char* NormalizeLook(const Look& in, Look& out, bool& avatar_as_snake) noex
     if (in.parts > 27) return "parts";
     if (in.camo > 116) return "camo";
     if (in.hand > 7) return "hand";
+    if (in.type == 0 && SnakeFaceIndex(in.face, in.face_equip) >= snake_face_entries) return "face";
     Look look = in;
     bool avatar = false;
     if (look.type == 6) look = quiet_look;
     else if (look.type == 5) look = Look{5, 26, 115, 0, 0, 0};
-    else if (look.type == 3) { look.type = 0; avatar = true; }
+    else if (look.type == 3) { look.type = 0; look.face = 0; look.face_equip = 0; avatar = true; }
     out = look;
     avatar_as_snake = avatar;
     return nullptr;
@@ -294,13 +295,23 @@ std::uint8_t DebounceStance(StanceDebounce& state, std::uint8_t stance, std::uin
         return 0;
     }
     if (stance != state.candidate) {
+        // A new value gets a fresh attempt (the retry backoff is per candidate).
         state.candidate = stance;
         state.since_ms = now_ms;
+        state.retry_ms = 0;
     }
-    if (now_ms - state.since_ms < hold_ms) return 0;
+    if (now_ms - state.since_ms < hold_ms || now_ms < state.retry_ms) return 0;
+    return stance;
+}
+
+void CommitStance(StanceDebounce& state, std::uint8_t stance) noexcept {
     state.applied = stance;
     state.candidate = 0;
-    return stance;
+    state.retry_ms = 0;
+}
+
+void RetryStance(StanceDebounce& state, std::uint64_t now_ms, std::uint32_t retry_ms) noexcept {
+    state.retry_ms = now_ms + retry_ms;
 }
 
 namespace {

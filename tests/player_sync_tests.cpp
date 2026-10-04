@@ -204,6 +204,28 @@ int main() {
         Check(encode_transform_anim_frame(session, 1, p1, bad, frame) == 0, "speed 9 refused");
         bad = anim; bad.flags = 0x80;
         Check(encode_transform_anim_frame(session, 1, p1, bad, frame) == 0, "unknown flag refused");
+        bad = anim; bad.stance = 0;
+        Check(!valid_anim(bad) && encode_transform_anim_frame(session, 1, p1, bad, frame) == 0, "valid flag with stance 0 refused");
+        bad = anim; bad.flags = 0;
+        Check(!valid_anim(bad), "stance/speed without the valid flag refused");
+        bad = AnimState{}; bad.speed = 2;
+        Check(!valid_anim(bad), "speed without the valid flag refused");
+        bad = AnimState{}; bad.act = 0x0079;
+        Check(valid_anim(bad), "act alone is structural only (LocomotionAct gates the writes)");
+        {
+            // A received Valid extension with stance 0 is refused on decode.
+            Check(encode_transform_anim_frame(session, 30050, p1, anim, frame) == transform_anim_frame_size, "re-encode for stance 0");
+            std::uint8_t copy[transform_anim_frame_size];
+            std::memcpy(copy, frame, sizeof(copy));
+            copy[60] = 0;
+            PlayerTransformPacket untouched{}; AnimState untouched_anim{}; bool untouched_has = false;
+            std::uint64_t us = 0; std::uint32_t ue = 0;
+            Check(!decode_partner_transform_frame(copy, sizeof(copy), us, ue, untouched, untouched_anim, untouched_has) && !untouched_has,
+                  "decode refuses valid flag with stance 0");
+            copy[60] = 3; copy[62] = 0;
+            Check(!decode_partner_transform_frame(copy, sizeof(copy), us, ue, untouched, untouched_anim, untouched_has) && !untouched_has,
+                  "decode refuses a stance without the valid flag");
+        }
         Check(encode_transform_anim_frame(0, 1, p1, anim, frame) == 0 && encode_transform_anim_frame(session, 0, p1, anim, frame) == 0 &&
               encode_transform_anim_frame(session, 1, nan_p, anim, frame) == 0, "v2 transform/session/epoch refusals");
         Check(encode_transform_anim_frame(session, 30050, p1, anim, frame) == transform_anim_frame_size, "re-encode");

@@ -165,7 +165,11 @@ bool decode_keepalive_frame(const std::uint8_t* data, std::size_t size, std::uin
 }
 
 bool valid_anim(const AnimState& anim) noexcept {
-    return anim.stance <= 3 && anim.speed <= 3 && (anim.flags & ~AnimFlag::Valid) == 0;
+    if ((anim.flags & ~AnimFlag::Valid) != 0 || anim.speed > 3) return false;
+    // A valid extension carries a real stance (1 stand, 2 squat, 3 crawl); an
+    // invalid one carries no stance or speed at all.
+    if (anim.flags & AnimFlag::Valid) return anim.stance >= 1 && anim.stance <= 3;
+    return anim.stance == 0 && anim.speed == 0;
 }
 
 std::size_t encode_transform_anim_frame(std::uint64_t session, std::uint32_t epoch, const PlayerTransformPacket& transform,

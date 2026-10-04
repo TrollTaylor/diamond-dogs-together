@@ -357,6 +357,25 @@ function ConvertFrom-LabPartnerJson {
     return $out
 }
 
+function ConvertFrom-LabCharacterArgs {
+    # Pure: Prepare-LabInstance -Character items for one role (offline lab only).
+    # 'name' applies to both roles, 'host:name' / 'guest:name' to one; name is one
+    # of the lab characters. Later items win. $null when no item applies, so
+    # lab.json offline.characters stays in force (for example -Character default
+    # for a regression rerun of the proven E-series without the Quiet guest).
+    param([string[]]$Items = @(), [Parameter(Mandatory)][ValidateSet('host', 'guest')][string]$Role)
+    $out = $null
+    foreach ($item in @($Items | Where-Object { $_ } | ForEach-Object { $_ -split ',' } | Where-Object { $_.Trim() })) {
+        $text = $item.Trim()
+        if ($text -cnotmatch '^(?:(host|guest):)?([a-z_]+)$') { throw "Invalid -Character '$text' (name, host:name or guest:name)." }
+        $target = $Matches[1]
+        $name = $Matches[2]
+        if ($name -cnotin $script:LabCharacters) { throw "Invalid -Character '$text': one of $($script:LabCharacters -join ', ')." }
+        if (!$target -or $target -ceq $Role) { $out = $name }
+    }
+    return $out
+}
+
 function ConvertFrom-LabPartnerSettingArgs {
     # Pure: Prepare-LabInstance -PartnerSetting items for one role. 'key=value'
     # applies to both roles, 'host:key=value' / 'guest:key=value' to one; key is a
@@ -545,10 +564,14 @@ function Get-LabInstanceSettings {
         [Parameter(Mandatory)][string]$GameDirectory,
         [Parameter(Mandatory)][string]$HostSteamId64,
         [switch]$Offline,
-        [Collections.IDictionary]$PartnerOverrides = $null
+        [Collections.IDictionary]$PartnerOverrides = $null,
+        # Offline only: replaces lab.json offline.characters.<role> for this preparation.
+        [string]$CharacterOverride = $null
     )
     if (!(Test-IndividualSteamId64 $HostSteamId64)) { throw 'Host SteamID64 is not a valid individual SteamID64.' }
     if (!$Offline -and $PartnerOverrides -and $PartnerOverrides.Count) { throw 'Partner settings apply only to the offline lab mode (-Offline).' }
+    if (!$Offline -and $CharacterOverride) { throw 'A character override applies only to the offline lab mode (-Offline).' }
+    if ($CharacterOverride -and $CharacterOverride -cnotin $script:LabCharacters) { throw "Invalid character override: $CharacterOverride" }
     $saveDir = (Get-InstancePaths -GameDirectory $GameDirectory).SaveDir
     $guestId = [string](Get-ConfigValue $Config.Identity 'guestSteamId' '76561202255233008')
     if (!(Test-IndividualSteamId64 $guestId)) { throw 'lab.json identity.guestSteamId is not a valid individual SteamID64.' }
@@ -584,7 +607,7 @@ function Get-LabInstanceSettings {
         $settings.Partner = ConvertTo-LabPartnerIni -Values $merged -ListenPort $settings.ListenPort -PeerPort $settings.PeerPort
         $settings.Marker = $expect.Marker
         $settings.MasterUrl = $expect.MasterUrl
-        $settings.Character = $expect.Character
+        $settings.Character = if ($CharacterOverride) { $CharacterOverride } else { $expect.Character }
         $settings.Offline = $true
     }
     return $settings

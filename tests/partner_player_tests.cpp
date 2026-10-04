@@ -793,8 +793,8 @@ int main() {
         Check(census.k[0].t == Addr(w.tobj[0]) + c::transform_view && census.equip_vt == Addr(w.equip_vt), "block 0 and equipment");
         char line[pp::census_capacity]{};
         Check(pp::FormatCensus(w.addresses, census, 1, line, sizeof(line)) && Contains(line, "partner_census; k=1; id=1; base=1; count=1; blk=ok;") &&
-              Contains(line, "; t=set;") && Contains(line, "; psw=0x11;") && Contains(line, "same_t=1; same_a0=1; same_c0=1; verdict=ok\r\n"),
-              "census line");
+              Contains(line, "; t=set;") && Contains(line, "; stance=ok; psw=0x11;") &&
+              Contains(line, "same_t=1; same_a0=1; same_c0=1; verdict=ok\r\n") && census.k[1].stance_refusal == nullptr, "census line");
         pp::Addresses based = w.addresses;
         based.image_base = Addr(w.block_vt) - 0x100;
         Check(pp::FormatCensus(based, census, 0, line, sizeof(line)) && Contains(line, "blk_vt=0x100;"), "census RVAs relative to the image base");
@@ -815,8 +815,6 @@ int main() {
             {"PS slot 0", [](World& v) { v.ps_vt[0] = Fn(&FakeNever); }, "ps_vtable"},
             {"PS back pointer", [](World& v) { Put<std::uintptr_t>(v.ps[1], c::ps_blk, Addr(v.blocks)); }, "ps_back"},
             {"PS base id", [](World& v) { Put<std::uint32_t>(v.ps[1], c::ps_base_id, 0); }, "ps_back"},
-            {"stance words", [](World& v) { Put<std::uintptr_t>(v.ps[1], c::ps_stance, 0); }, "ps_back"},
-            {"sub-object", [](World& v) { Put<std::uintptr_t>(v.ps[1], c::ps_sub260, 0); }, "ps_back"},
             {"CS vtable", [](World& v) { Put<std::uintptr_t>(v.cs, 0, Addr(v.ps_vt)); }, "cs_vtable"},
             {"CS slot", [](World& v) { v.cs_vt[0x388 / 8] = Fn(&FakeSetPose); }, "cs_vtable"},
             {"CS range", [](World& v) { Put<std::uint32_t>(v.cs, 8, 1); }, "entry"},
@@ -833,6 +831,43 @@ int main() {
             Check(Read(w, s) == pp::Refusal::none, "census case state");
             Check(pp::ResolveCensus(w.addresses, s, census) && std::strcmp(census.refusal, test.reason) == 0, test.name);
         }
+        // The SetStance prerequisites are a separate verdict: the transform
+        // chain (xform/hybrid, ReadBody) does not need them.
+        struct StanceCase { const char* name; void (*mutate)(World&); const char* reason; };
+        const StanceCase stance_cases[] = {
+            {"stance words null", [](World& v) { Put<std::uintptr_t>(v.ps[1], c::ps_stance, 0); }, "ps_words"},
+            {"sub-object null", [](World& v) { Put<std::uintptr_t>(v.ps[1], c::ps_sub260, 0); }, "ps_sub"},
+        };
+        for (const StanceCase& test : stance_cases) {
+            w.Reset();
+            w.RealizePartner();
+            test.mutate(w);
+            Check(Read(w, s) == pp::Refusal::none, "stance case state");
+            Check(pp::ResolveCensus(w.addresses, s, census) == nullptr && census.k[1].refusal == nullptr &&
+                  census.k[1].stance_refusal && std::strcmp(census.k[1].stance_refusal, test.reason) == 0 && census.k[0].stance_refusal == nullptr,
+                  test.name);
+            Check(pp::FormatCensus(w.addresses, census, 1, line, sizeof(line)) && Contains(line, "; stance=") && Contains(line, test.reason) &&
+                  Contains(line, "verdict=ok\r\n"), "census logs the stance verdict separately");
+            const float pos[4] = {1.0f, 0.0f, 2.0f, 0.0f};
+            const float quat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+            g_calls = CallLog{};
+            Check(pp::ApplyTransform(w.addresses, 1, false, pos, quat, mgscoop::PartnerReset::none) == nullptr && g_calls.pose == 1,
+                  "xform still runs without the stance prerequisites");
+            float body[4]{}, rot[4]{};
+            Check(pp::ReadBody(w.addresses, s, 1, body, rot), "body readback without the stance prerequisites");
+            std::uint8_t psw = 0, q30 = 0;
+            Check(std::strcmp(pp::SetStance(w.addresses, 1, false, 2, psw, q30), test.reason) == 0 && g_calls.stance == 0,
+                  "SetStance refused without its prerequisites");
+            Check(std::strcmp(pp::RequestStance(w.addresses, 1, false, 2), test.reason) == 0 && g_calls.request == 0,
+                  "stance request refused without the prerequisites");
+        }
+        // A broken identity refuses both verdicts.
+        w.Reset();
+        w.RealizePartner();
+        Put<std::uintptr_t>(w.ps[1], c::ps_blk, Addr(w.blocks));
+        Check(Read(w, s) == pp::Refusal::none && pp::ResolveCensus(w.addresses, s, census) &&
+              std::strcmp(census.k[1].stance_refusal, "ps_back") == 0 && std::strcmp(census.k[1].refusal, "ps_back") == 0,
+              "identity refusal applies to both verdicts");
         // ids[1] == 1 (instance index == body id) is required.
         w.Reset();
         w.RealizePartner();
@@ -921,7 +956,7 @@ int main() {
         Check(std::strcmp(pp::SetStance(w.addresses, 0, false, 1, psw, q30), "index") == 0 &&
               std::strcmp(pp::SetStance(w.addresses, 1, true, 1, psw, q30), "terminating") == 0, "stance guards");
         Put<std::uintptr_t>(w.sub, 0, 0);
-        Check(std::strcmp(pp::SetStance(w.addresses, 1, false, 1, psw, q30), "ps_back") == 0, "sub-object vtable required");
+        Check(std::strcmp(pp::SetStance(w.addresses, 1, false, 1, psw, q30), "ps_sub") == 0, "sub-object vtable required");
         Put<std::uintptr_t>(w.sub, 0, Addr(w.sub_vt));
         pp::Addresses wrong = w.addresses;
         wrong.set_stance = Fn(&FakeNever);

@@ -4,23 +4,31 @@ One-click offline co-op test on this PC: two MGSV copies side by side, each
 showing the other player as a second character.
 
 .DESCRIPTION
-Runs the offline lab path (docs/testing-2026-10-04.md) with the animation and
-appearance experiments of docs/partner-anim-appearance.md:
+Runs the offline lab path (docs/testing-2026-10-04.md) with the appearance
+sync and, step by step, the animation experiments of
+docs/partner-anim-appearance.md:
   1. Prepare-LabInstance.ps1 -Offline with the partner synced over our own link
-     from the start: stage 3, source net, movement hybrid (native body
-     transform, full Warp for placement; falls back to Warp on any refusal),
-     animation net (the partner's stance from its frames: aset qs), look net
-     (each copy shows the other player's own character). Test condition: the
-     GUEST plays Quiet (lab.json offline.characters.guest), the host keeps its
-     character. Your real saves are backed up; both copies play on save
-     COPIES. No server, no login, no game session.
+     from the start: stage 3, source net, look net (each copy shows the other
+     player's own character) and the PROVEN movement (Lua Warp every tick, no
+     native animation calls). Test condition: the GUEST plays Quiet (lab.json
+     offline.characters.guest), the host keeps its character. Your real saves
+     are backed up; both copies play on save COPIES. No server, no login, no
+     game session.
+     The unverified native paths stay off until you turn them on, one at a
+     time, so a crash or hang can be attributed to the step that caused it
+     (the log shows each partner_stage=changed): [M] smooth movement (hybrid:
+     one Warp to place the partner, then the native body transform without
+     Warp's resets; falls back to Warp on any refusal), [A] stance sync (the
+     partner's stance/locomotion fields from the network frames: anim net,
+     aset qs). -Experimental starts with both on.
   2. Start-Lab.ps1 -Offline: host window left, guest window right.
   3. Presses Enter through the startup screens of both until Mother Base loads
      (skip with -NoAutoTitle and click through yourself).
   4. Waits until both copies report the partner system ready, then shows a live
-     status line. Console keys: [S] screenshots, [R] re-sync partner (the
-     experiment settings), [W] proven Warp movement without animation calls,
-     [C] component census, [O] partner off, [Q] quit and clean up.
+     status line. Console keys: [S] screenshots, [M] smooth movement on/off,
+     [A] stance sync on/off, [W] back to the proven Warp movement without
+     animation calls, [R] re-send the current settings, [C] component census,
+     [O] partner off, [Q] quit and clean up.
   5. On exit (Q, closing a game window, or Ctrl+C): closes both games, checks
      your real save files and switches the lab config off again so normal
      launches behave normally.
@@ -31,6 +39,7 @@ even while the host window has focus, so one person can test both at once.
 
 .EXAMPLE
 pwsh -File tools/lab/Play-OfflineCoop.ps1
+pwsh -File tools/lab/Play-OfflineCoop.ps1 -Experimental
 #>
 [CmdletBinding()]
 param(
@@ -41,7 +50,10 @@ param(
     # Leave lab.ini/coop.ini enabled after quitting (default: switch them off).
     [switch]$KeepLabEnabled,
     # Automation: quit automatically this many seconds after both are ready (0 = interactive).
-    [int]$ExitAfterReadySec = 0
+    [int]$ExitAfterReadySec = 0,
+    # Start with the unverified native paths on (smooth movement and stance
+    # sync) instead of turning them on one at a time with [M] / [A].
+    [switch]$Experimental
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -82,7 +94,7 @@ foreach ($role in $dirs.Keys) {
     $state[$role] = [pscustomobject]@{
         Mission = $false; Ready = $false; Refused = ''; Shown = $false; Loaded = $false
         Link = 'none'; Rx = 0; Age = 0; Crash = 0; Exited = $false
-        Look = ''; Move = ''; Stance = ''; Character = ''; Fault = $false
+        Look = ''; Move = ''; Stance = ''; Character = ''; Fault = $false; Mode = ''
     }
 }
 function Update-State {
@@ -116,6 +128,12 @@ function Update-State {
             elseif ($line -match '^partner_xform=applied') { $s.Move = 'smooth' }
             elseif ($line -match '^partner_xform=refused; reason=([^;\s]+)') { $s.Move = "warp ($($Matches[1]))" }
             elseif ($line -match '^partner_stance=set; .*to=(\d)') { $s.Stance = @('', 'stand', 'crouch', 'prone')[[int]$Matches[1]] }
+            elseif ($line -match '^partner_stance=summary; last=([0-3]);') { if ([int]$Matches[1]) { $s.Stance = @('', 'stand', 'crouch', 'prone')[[int]$Matches[1]] } }
+            elseif ($line -match '^partner_stage=changed; .*apply=([a-z]+); anim=([a-z]+);') {
+                $s.Mode = "$($Matches[1])/$($Matches[2])"
+                if ($Matches[1] -notin @('xform', 'hybrid')) { $s.Move = '' }
+                if ($Matches[2] -eq 'off') { $s.Stance = '' }
+            }
             elseif ($line -match '^partner_call=fault') { $s.Fault = $true }
             elseif ($line -match '^character=allocated; .*vars=(\d+)') { $s.Character = Get-LookName $Matches[1] }
             elseif ($line -match 'mission_termination=entered') { $s.Mission = $false; $s.Ready = $false; $s.Shown = $false; $s.Loaded = $false }
@@ -138,6 +156,7 @@ function Format-Role([string]$role) {
     $extra = @()
     if ($s.Character) { $extra += "plays $($s.Character)" }
     if ($s.Look) { $extra += "partner looks like $($s.Look)" }
+    if ($s.Mode) { $extra += "settings $($s.Mode)" }
     if ($s.Move) { $extra += "movement $($s.Move)" }
     if ($s.Stance) { $extra += "partner $($s.Stance)" }
     if ($s.Fault) { $extra += 'NATIVE CALL FAULT (Warp only)' }
@@ -145,14 +164,27 @@ function Format-Role([string]$role) {
     return "${role}: $partner, $link$details$crash$exit"
 }
 
-# The experiment settings ([R] re-applies them on both copies).
-$syncTrigger = 'stage=3 source=net apply=hybrid anim=net aset=qs look=net'
+# The partner settings: look net always; movement and stance sync start on the
+# proven path unless -Experimental ([M] / [A] toggle them, [R] re-sends).
+$experiment = [ordered]@{ Move = $(if ($Experimental) { 'hybrid' } else { 'warp' }); Anim = $(if ($Experimental) { 'net' } else { 'off' }) }
+function Get-SyncTrigger {
+    $move = if ($experiment.Move -eq 'hybrid') { 'apply=hybrid reset=n' } else { 'apply=warp' }
+    $anim = if ($experiment.Anim -eq 'net') { 'anim=net aset=qs' } else { 'anim=off' }
+    return "stage=3 source=net $move $anim look=net"
+}
+function Send-SyncTrigger([string]$Why) {
+    $text = Get-SyncTrigger
+    Write-Note "$Why -> both copies: $text"
+    & (Join-Path $lab 'Set-PartnerTrigger.ps1') -Role both -Text $text -Force | ForEach-Object { Write-Note $_ }
+}
 $started = $false
 try {
     # ------------------------------------------------------------- prepare
-    Write-Step 'Preparing both game copies (offline, partner sync on)'
-    & (Join-Path $lab 'Prepare-LabInstance.ps1') -Offline -PartnerSetting 'partner_stage=3', 'partner_source=net', 'partner_apply=hybrid',
-        'partner_anim=net', 'partner_aset=qs', 'partner_look=net' |
+    $mode = if ($Experimental) { 'smooth movement + stance sync ON (-Experimental)' } else { 'proven Warp movement; [M]/[A] turn the experiments on' }
+    Write-Step "Preparing both game copies (offline, partner sync on, look net; $mode)"
+    $partnerSettings = @('partner_stage=3', 'partner_source=net', 'partner_look=net', "partner_apply=$($experiment.Move)", "partner_anim=$($experiment.Anim)")
+    if ($Experimental) { $partnerSettings += @('partner_aset=qs', 'partner_reset=n') }
+    & (Join-Path $lab 'Prepare-LabInstance.ps1') -Offline -PartnerSetting $partnerSettings |
         ForEach-Object { Write-Note $_ }
 
     # --------------------------------------------------------------- start
@@ -196,10 +228,13 @@ try {
     Write-Host '  - A controller always drives the GUEST (right) window, even while the host has focus.'
     Write-Host '  - Walk around: each window shows the OTHER player as a second character.'
     Write-Host '    Test condition: the guest (right) plays QUIET, so the host window should show a Quiet partner'
-    Write-Host '    and the guest window the host''s own character. Crouch / prone to test the partner''s stance.'
-    Write-Host '    (Movement and animation are experimental: see docs/partner-anim-appearance.md.)'
-    Write-Host '  Console keys (click this window first):  [S] screenshots   [R] re-sync partner   [W] proven Warp movement'
-    Write-Host '                                           [C] component census   [O] partner off   [Q] quit + clean up'
+    Write-Host '    and the guest window the host''s own character.'
+    Write-Host "  Partner movement: $($experiment.Move); stance sync: $($experiment.Anim) (experimental paths: docs/partner-anim-appearance.md)."
+    Write-Host '    Turn ONE experiment on at a time and play a minute: if a game crashes or hangs, the last [M] / [A] is the cause.'
+    Write-Host '    [M] smooth movement (does the partner walk instead of sliding?)   [A] stance sync (crouch / prone on the partner)'
+    Write-Host '  Console keys (click this window first):  [S] screenshots   [M] smooth movement on/off   [A] stance sync on/off'
+    Write-Host '                                           [W] proven Warp, no animation calls   [R] re-send settings   [C] component census'
+    Write-Host '                                           [O] partner off   [Q] quit + clean up'
     Write-Host ''
 
     $readyAt = Get-Date
@@ -215,8 +250,10 @@ try {
         switch ($key) {
             'Q' { Write-Host 'Quitting...' -ForegroundColor Yellow; break }
             'S' { & (Join-Path $lab 'Get-LabScreens.ps1') -Label play | ForEach-Object { Write-Note $_ } }
-            'R' { & (Join-Path $lab 'Set-PartnerTrigger.ps1') -Role both -Text $syncTrigger -Force | ForEach-Object { Write-Note $_ } }
-            'W' { & (Join-Path $lab 'Set-PartnerTrigger.ps1') -Role both -Text 'stage=3 source=net apply=warp anim=off' -Force | ForEach-Object { Write-Note $_ } }
+            'R' { Send-SyncTrigger 're-sync' }
+            'M' { $experiment.Move = if ($experiment.Move -eq 'hybrid') { 'warp' } else { 'hybrid' }; Send-SyncTrigger "movement $($experiment.Move)" }
+            'A' { $experiment.Anim = if ($experiment.Anim -eq 'net') { 'off' } else { 'net' }; Send-SyncTrigger "stance sync $($experiment.Anim)" }
+            'W' { $experiment.Move = 'warp'; $experiment.Anim = 'off'; Send-SyncTrigger 'proven Warp movement, no animation calls' }
             'C' { & (Join-Path $lab 'Set-PartnerTrigger.ps1') -Role both -Text 'census=1' -Force | ForEach-Object { Write-Note $_ } }
             'O' { & (Join-Path $lab 'Set-PartnerTrigger.ps1') -Role both -Text 'stop' -Force | ForEach-Object { Write-Note $_ } }
         }

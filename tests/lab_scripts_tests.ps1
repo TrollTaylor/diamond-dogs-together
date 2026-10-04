@@ -270,6 +270,13 @@ try {
     Assert-Throws { Get-AltConfig { param($c) $c.offline.characters.guest = 'dog' } } 'offline.characters.guest' 'offline characters validated'
     $altChar = Get-AltConfig { param($c) $c.offline.characters.guest = 'quiet' }
     Assert-Equal (Get-LabInstanceSettings -Role guest -Config $altChar -GameDirectory $altChar.Paths.guestDir -HostSteamId64 $hostId -Offline).Character 'quiet' 'offline.characters honoured'
+    Assert-Equal (Get-LabInstanceSettings -Role guest -Config $altChar -GameDirectory $altChar.Paths.guestDir -HostSteamId64 $hostId -Offline -CharacterOverride default).Character 'default' '-Character override replaces offline.characters'
+    Assert-Throws { Get-LabInstanceSettings -Role guest -Config $altChar -GameDirectory $altChar.Paths.guestDir -HostSteamId64 $hostId -CharacterOverride default } 'offline lab mode' 'character override only offline'
+    Assert-Throws { Get-LabInstanceSettings -Role guest -Config $altChar -GameDirectory $altChar.Paths.guestDir -HostSteamId64 $hostId -Offline -CharacterOverride dog } 'Invalid character override' 'character override validated'
+    Assert-Equal "$(ConvertFrom-LabCharacterArgs -Items @('default') -Role guest)|$(ConvertFrom-LabCharacterArgs -Items @('guest:quiet') -Role host)|$(ConvertFrom-LabCharacterArgs -Items @('default', 'guest:quiet') -Role guest)" 'default||quiet' '-Character items per role, later wins'
+    Assert-True ($null -eq (ConvertFrom-LabCharacterArgs -Items @() -Role host)) '-Character absent: lab.json stays in force'
+    Assert-Throws { ConvertFrom-LabCharacterArgs -Items @('guest:dog') -Role guest } 'Invalid -Character' '-Character name validated'
+    Assert-Throws { ConvertFrom-LabCharacterArgs -Items @('both:quiet') -Role guest } 'Invalid -Character' '-Character role prefix validated'
     $noChar = Get-AltConfig { param($c) $c.offline.PSObject.Properties.Remove('characters') }
     Assert-Equal (Get-LabInstanceSettings -Role guest -Config $noChar -GameDirectory $noChar.Paths.guestDir -HostSteamId64 $hostId -Offline).Character 'default' 'offline characters default to default'
     Assert-Throws { Get-AltConfig { param($c) $c.partner.stage = 7 } } 'partner_stage' 'lab.json partner values validated'
@@ -283,6 +290,27 @@ try {
     Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_anim -Value net)/$(ConvertTo-LabPartnerValue -Key partner_aset -Value r)/$(ConvertTo-LabPartnerValue -Key partner_reset -Value ac)/$(ConvertTo-LabPartnerValue -Key partner_look -Value quiet)" 'net/r/ac/quiet' 'anim/aset/reset/look values'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_anim -Value on } 'off|mirror|net' 'anim values'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_look -Value ocelot } 'copy|net|quiet|snake' 'look values'
+    # Play-OfflineCoop: the proven movement by default, the native experiments
+    # only on request ([M]/[A] or -Experimental); every sent line is valid.
+    $playPath = Join-Path $projectRoot 'tools/lab/Play-OfflineCoop.ps1'
+    $playTokens = $null; $playErrors = $null
+    $playAst = [System.Management.Automation.Language.Parser]::ParseFile($playPath, [ref]$playTokens, [ref]$playErrors)
+    Assert-Equal @($playErrors).Count 0 'Play-OfflineCoop parses'
+    $syncAst = $playAst.Find({ param($a) $a -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $a.Name -eq 'Get-SyncTrigger' }, $true)
+    Assert-True ($null -ne $syncAst) 'Play-OfflineCoop defines Get-SyncTrigger'
+    $syncBody = $syncAst.Body.GetScriptBlock()
+    Import-Module (Join-Path $projectRoot 'tools/lab/PartnerSpike.psm1') -Force
+    $playLines = @{}
+    foreach ($case in @(@('warp', 'off'), @('hybrid', 'off'), @('warp', 'net'), @('hybrid', 'net'))) {
+        $experiment = [ordered]@{ Move = $case[0]; Anim = $case[1] }
+        $playLines["$($case[0])/$($case[1])"] = & $syncBody
+    }
+    Assert-Equal $playLines['warp/off'] 'stage=3 source=net apply=warp anim=off look=net' 'Play-OfflineCoop default line: proven Warp, no animation calls'
+    Assert-Equal $playLines['hybrid/net'] 'stage=3 source=net apply=hybrid reset=n anim=net aset=qs look=net' 'Play-OfflineCoop experimental line'
+    foreach ($line in $playLines.Values) { Assert-True (Test-PartnerTriggerText $line) "Play-OfflineCoop line '$line' is a valid trigger" }
+    $playText = [IO.File]::ReadAllText($playPath)
+    Assert-True ($playText.Contains("Move = `$(if (`$Experimental) { 'hybrid' } else { 'warp' })") -and
+        $playText.Contains("Anim = `$(if (`$Experimental) { 'net' } else { 'off' })")) 'Play-OfflineCoop starts on the proven path unless -Experimental'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_reset -Value none } 'n|a|c|ac' 'reset values'
     $pjAnim = ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ anim = 'net'; partner_look = 'net'; aset = 'qs' })
     Assert-Equal "$(@($pjAnim.Keys) -join ',')/$($pjAnim['partner_anim'])/$($pjAnim['partner_look'])" 'partner_anim,partner_look,partner_aset/net/net' 'lab.json short names for the anim/look keys'
@@ -933,31 +961,49 @@ try {
         'partner=configured; mode=offline_v1; stage=0; source=fixed; apply=warp; rate_hz=30; interp_ms=100; offset_cm=300; teardown=clear; anim=off; aset=qs; reset=n; look=copy; t_pinned=0',
         'partner_cfg=ready; flags=0x00000001; count=2; realized_count=2; local=0; R=1; online_bit=0; sync=null; code_gate=ok')
     function New-AnimLog([string]$Changed, [string[]]$Lines) { (@($animHead) + @("partner_stage=changed; $Changed; via=trigger") + $Lines) -join "`r`n" }
-    $census0 = 'partner_census; k=0; id=0; base=0; count=1; blk=ok; blk_vt=0x2295210; ps_vt=0x23b09f0; cs_vt=0x22e6070; t=set; t_vt=0x2400000; t68=0x1000000; t70=0x1000100; a0_vt=0x2410000; a080=0x1100000; c0_vt=0x2420000; c090=0x1200000; b70_vt=0x0; psw=0x11; equip_vt=0x23c14b0; same_t=1; same_a0=1; same_c0=1; verdict=ok'
+    $census0 = 'partner_census; k=0; id=0; base=0; count=1; blk=ok; blk_vt=0x2295210; ps_vt=0x23b09f0; cs_vt=0x22e6070; t=set; t_vt=0x2400000; t68=0x1000000; t70=0x1000100; a0_vt=0x2410000; a080=0x1100000; c0_vt=0x2420000; c090=0x1200000; b70_vt=0x0; stance=ok; psw=0x11; equip_vt=0x23c14b0; same_t=1; same_a0=1; same_c0=1; verdict=ok'
     $census1 = $census0.Replace('k=0; id=0; base=0', 'k=1; id=1; base=1')
     $a0 = New-AnimLog 'stage=3; source=fixed; apply=warp; anim=off; aset=qs; reset=n; look=copy; probe=off' @($census0, $census1)
     $v = Get-PV A0 host $a0
     Assert-Verdict $v 'PASS' '' 'A0 census PASS'
-    Assert-Equal "$($v.data['k1_t_vt'])/$($v.data['k1_t68'])" '0x2400000/0x1000000' 'A0 records the T RVAs to pin'
+    Assert-Equal "$($v.data['k1_t_vt'])/$($v.data['k1_t68'])/$($v.data['k1_stance'])" '0x2400000/0x1000000/ok' 'A0 records the T RVAs to pin and the stance verdict'
+    $v = Get-PV A0 host (New-AnimLog 'stage=3; source=fixed; apply=warp' @($census0, $census1.Replace('stance=ok; psw=0x11', 'stance=ps_sub; psw=0x00')))
+    Assert-True ($v.verdict -eq 'PASS' -and (@($v.notes) -join ' ').Contains('k=1 stance=ps_sub')) 'A0: a missing stance prerequisite is a note (xform unaffected)'
     Assert-Verdict (Get-PV A0 host $a0.Replace('k=1; id=1; base=1', 'k=1; id=1; base=1; x=0').Replace('same_c0=1; verdict=ok', 'same_c0=1; verdict=t_class')) 'FAIL' 'verdict=t_class' 'A0 identity failure fails'
     Assert-Verdict (Get-PV A0 host (New-AnimLog 'stage=3; source=fixed; apply=warp' @($census0.Replace('verdict=ok', 'verdict=unrealized')))) 'INCOMPLETE' 'realized and loaded' 'A0 before realization is incomplete'
     Assert-Verdict (Get-PV A0 host (New-AnimLog 'stage=3; source=fixed; apply=warp' @())) 'INCOMPLETE' 'census=1' 'A0 without census lines'
     $a1Lines = @('partner_aset=q; state=applied; act=1; s=1; v=0',
         'partner_anim; act=0001,0001; s=1,1; v=0,0; q28=0,0; qd8=ffff,ffff; psw=11,11; rec1=0x00000010',
         'partner_anim; act=0003,0003; s=2,2; v=0,0; q28=0,0; qd8=ffff,ffff; psw=11,11; rec1=0x00000020')
-    $a1 = New-AnimLog 'stage=3; source=fixed; apply=warp; anim=mirror; aset=q; reset=n; look=copy; probe=off' $a1Lines
+    $a1 = New-AnimLog 'stage=3; source=fixed; apply=hybrid; anim=mirror; aset=q; reset=n; look=copy; probe=off' $a1Lines
     $v = Get-PV A1 host $a1
     Assert-Verdict $v 'PASS' '' 'A1 arrays mirrored PASS'
+    Assert-True (!$v.data['per_tick_warp']) 'A1 with hybrid: no per-tick Warp'
+    $v = Get-PV A1 host ($a1 + "`r`npartner_aset=q; state=refused; reason=act_domain; act=20")
+    Assert-True ($v.verdict -eq 'PASS' -and (@($v.notes) -join ' ').Contains('act_domain skips')) 'A1: act_domain skips are notes, not failures'
+    $v = Get-PV A1 host (New-AnimLog 'stage=3; source=fixed; apply=warp; anim=mirror; aset=q; reset=n; look=copy; probe=off' $a1Lines)
+    Assert-True ($v.verdict -eq 'PASS' -and $v.data['per_tick_warp'] -and (@($v.notes) -join ' ').Contains('Warps every tick')) 'A1 with apply=warp: the per-tick Warp is noted'
     Assert-Equal "$($v.data['slot1_equals_slot0'])/$($v.data['stances_seen'])" '2/1,2' 'A1 data'
     Assert-Verdict (Get-PV A1 host ($a1 + "`r`npartner_aset=q; state=refused; reason=count")) 'FAIL' 'reason=count' 'A1 refused write fails'
     Assert-Verdict (Get-PV A1 host (New-AnimLog 'stage=3; source=fixed; apply=warp; anim=mirror; aset=q' @($a1Lines[0], $a1Lines[1]))) 'INCOMPLETE' 'changes stance' 'A1 needs stance changes'
     Assert-Verdict (Get-PV A1 host (New-AnimLog 'stage=3; source=fixed; apply=warp; anim=off' $a1Lines)) 'INCOMPLETE' 'anim=mirror' 'A1 needs the anim=mirror segment'
-    $a3 = New-AnimLog 'stage=3; source=fixed; apply=warp; anim=mirror; aset=qs; reset=n; look=copy; probe=off' @(
-        'partner_stance=set; R=1; id=1; from=0; to=2; psw=0x22; q30=2', 'partner_stance=set; R=1; id=1; from=2; to=1; psw=0x11; q30=1')
+    $a3Sets = @('partner_stance=set; R=1; id=1; from=0; to=2; psw=0x22; q30=2', 'partner_stance=set; R=1; id=1; from=2; to=1; psw=0x11; q30=1')
+    $a3 = New-AnimLog 'stage=3; source=fixed; apply=hybrid; anim=mirror; aset=qs; reset=n; look=copy; probe=off' $a3Sets
     Assert-Verdict (Get-PV A3 host $a3) 'PASS' '' 'A3 SetStance PASS'
-    $v = Get-PV A3 host ($a3 + "`r`npartner_stance=reverted; R=1; psw=0x11; expected=0x22; ms_after_set=120")
-    Assert-True ($v.verdict -eq 'PASS' -and (@($v.notes) -join ' ').Contains('try aset=r') -and $v.data['stance_reverted'] -eq 1) 'A3 revert is a note'
+    $revert = "`r`npartner_stance=reverted; R=1; psw=0x11; expected=0x22; ms_after_set=120"
+    $v = Get-PV A3 host ($a3 + $revert)
+    Assert-True ($v.verdict -eq 'PASS' -and (@($v.notes) -join ' ').Contains('try aset=r') -and $v.data['stance_reverted'] -eq 1) 'A3 revert without per-tick Warp: the action plugin'
+    $a3w = New-AnimLog 'stage=3; source=fixed; apply=warp; anim=mirror; aset=qs; reset=n; look=copy; probe=off' $a3Sets
+    $v = Get-PV A3 host ($a3w + $revert)
+    Assert-True ($v.verdict -eq 'PASS' -and (@($v.notes) -join ' ').Contains('not attributable') -and !(@($v.notes) -join ' ').Contains('try aset=r')) 'A3 revert with per-tick Warp is not attributed to the action plugin'
+    $v = Get-PV A3 host ($a3 + "`r`npartner_xform=refused; reason=t_class; fallback=warp" + $revert)
+    Assert-True ((@($v.notes) -join ' ').Contains('fell back to Warp') -and (@($v.notes) -join ' ').Contains('not attributable')) 'A3 revert after an xform fallback is not attributable'
     Assert-Verdict (Get-PV A3 host ($a3 + "`r`npartner_call=fault; fn=set_stance; native_calls=disabled")) 'FAIL' 'fn=set_stance' 'A3 fault fails'
+    $a3Retry = New-AnimLog 'stage=3; source=fixed; apply=hybrid; anim=mirror; aset=qs; reset=n; look=copy; probe=off' @(
+        'partner_stance=refused; R=1; to=2; reason=ps_sub', $a3Sets[0], $a3Sets[1])
+    $v = Get-PV A3 host $a3Retry
+    Assert-True ($v.verdict -eq 'PASS' -and (@($v.notes) -join ' ').Contains('transient partner_stance=refused')) 'A3: a refusal retried and applied is a note'
+    Assert-Verdict (Get-PV A3 host ($a3 + "`r`npartner_stance=refused; R=1; to=3; reason=ps_sub")) 'FAIL' 'reason=ps_sub' 'A3: a refusal never applied fails'
     Assert-Verdict (Get-PV A3 host (New-AnimLog 'stage=3; source=fixed; apply=warp; anim=mirror; aset=qs' @('partner_stance=set; R=1; id=1; from=0; to=2; psw=0x22; q30=2'))) 'INCOMPLETE' '2 partner_stance=set' 'A3 needs two targets'
     $xrow = 'partner_xform; R=1; apply=xform; cmd_mm=1000,0,3000; body_mm=1000,0,3012; err_mm=12; yaw_err_mrad=3; reset=n'
     $m1 = New-AnimLog 'stage=3; source=orbit; apply=xform; anim=off; aset=qs; reset=n; look=copy; probe=off' @('partner_xform=applied; R=1; apply=xform; reset=n', $xrow, $xrow, $xrow, $xrow)
@@ -1007,6 +1053,10 @@ try {
         foreach ($s in @($plan.Steps | Where-Object { $_.Kind -eq 'input' })) { Assert-True ($null -ne (ConvertFrom-LabKeySpec -Spec $s.Value)) "$exp plan input '$($s.Value)' is a valid key spec" }
     }
     Assert-Equal @((Get-PartnerExperimentPlan -Experiment E4).Steps | Where-Object { $_.Kind -eq 'screens' }).Count 4 'E4 plan takes 4 screenshots'
+    foreach ($exp in 'A1', 'A3') {
+        $trigger = @((Get-PartnerExperimentPlan -Experiment $exp).Steps | Where-Object { $_.Kind -eq 'trigger' })[0].Value
+        Assert-True ($trigger.Contains('apply=hybrid') -and $trigger.Contains('reset=n')) "$exp plan uses hybrid movement without Warp's per-tick resets"
+    }
     Assert-Equal (@((Get-PartnerExperimentPlan -Experiment E0).Steps | Where-Object { $_.Kind -eq 'input' } | ForEach-Object { "$($_.Role):$($_.Value)" }) -join ',') 'host:w+a:6000,guest:w+a:6000' 'E0 plan walks both instances (the units rule is judged on both)'
 
     # Scripts on a fixture run (no game): Test-PartnerSpike.ps1, Set-PartnerTrigger.ps1 and the smoke's offline refusal.
@@ -1676,6 +1726,8 @@ Start-Sleep -Milliseconds 500
             Assert-Equal "$($gl['net_listen_port'])/$($gl['net_peer_port'])/$($gl['net_latency_ms'])/$($gl['self_steamid'])/$($gl['mutex_suffix'])" "$($base + 4)/$($base + 3)/100/76561202255233008/-guest" 'guest lab.ini: swapped ports, override, fake identity and suffix kept'
             Assert-Equal "$((ConvertFrom-IniText ([IO.File]::ReadAllText($hp.CoopIni)))['master_url'])|$((ConvertFrom-IniText ([IO.File]::ReadAllText($gp.CoopIni)))['master_url'])" "$dryDead|$dryDead" 'coop.ini: closed-port master URL in both folders'
             Assert-Equal @(Get-ChildItem -LiteralPath $hp.Mod -File -Filter 'coop.ini.user-*').Count 1 'switching modes keeps the single user backup'
+            Assert-Equal "$((ConvertFrom-IniText ([IO.File]::ReadAllText($hp.CoopIni)))['character'])|$((ConvertFrom-IniText ([IO.File]::ReadAllText($gp.CoopIni)))['character'])" 'default|quiet' 'offline coop.ini: host default, guest Quiet (lab.json offline.characters)'
+            Assert-True (($out -join ' ').Contains('[guest] coop.ini character=quiet')) 'Prepare -Offline reports each coop.ini character'
             $out = (& $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Start-Lab.ps1') -ConfigPath $dryConfig 2>&1 | Out-String)
             Assert-True ($LASTEXITCODE -ne 0 -and $out.Contains('use -Offline') -and (Test-DryProcessesGone)) 'Start-Lab without -Offline refuses offline-prepared folders'
             $start = Invoke-DryStart @('-Offline')

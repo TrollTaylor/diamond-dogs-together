@@ -288,14 +288,16 @@ int main() {
     // --- Look normalization (every look that reaches SetPartsInfo).
     {
         Look out{}; bool avatar = true;
-        Check(NormalizeLook(Look{0, 1, 0, 1, 12, 3}, out, avatar) == nullptr && SameLook(out, Look{0, 1, 0, 1, 12, 3}) && !avatar,
+        Check(NormalizeLook(Look{0, 1, 0, 1, 2, 3}, out, avatar) == nullptr && SameLook(out, Look{0, 1, 0, 1, 2, 3}) && !avatar,
               "snake look kept as is");
+        Check(NormalizeLook(Look{0, 1, 0, 1, 0, 0xEE}, out, avatar) == nullptr && out.face_equip == 0xEE,
+              "face_equip passes through (compared only, never an index)");
         Check(NormalizeLook(Look{6, 1, 5, 3, 7, 2}, out, avatar) == nullptr && SameLook(out, quiet_look) && !avatar,
               "quiet forced to parts 27 / camo 116 / hand 0 / face 0");
         Check(NormalizeLook(Look{5, 0, 0, 1, 1, 1}, out, avatar) == nullptr && SameLook(out, Look{5, 26, 115, 0, 0, 0}),
               "ocelot forced to parts 26 / camo 115 / hand 0");
-        Check(NormalizeLook(Look{3, 2, 4, 1, 100, 0}, out, avatar) == nullptr && out.type == 0 && out.parts == 2 && out.face == 100 && avatar,
-              "avatar mapped to snake (avatar record not synced)");
+        Check(NormalizeLook(Look{3, 2, 4, 1, 100, 5}, out, avatar) == nullptr && out.type == 0 && out.parts == 2 && out.face == 0 &&
+              out.face_equip == 0 && avatar, "avatar mapped to snake with face 0 / face_equip 0 (avatar record not synced)");
         Check(NormalizeLook(Look{1, 5, 9, 1, 350, 0}, out, avatar) == nullptr && out.type == 1 && out.face == 350, "DD female/male kept");
         const Look before = out;
         Check(std::strcmp(NormalizeLook(Look{4, 0, 0, 0, 0, 0}, out, avatar), "type") == 0, "LIQUID refused");
@@ -303,7 +305,15 @@ int main() {
         Check(std::strcmp(NormalizeLook(Look{0, 28, 0, 0, 0, 0}, out, avatar), "parts") == 0, "parts 28 refused");
         Check(std::strcmp(NormalizeLook(Look{0, 0, 117, 0, 0, 0}, out, avatar), "camo") == 0, "camo 117 refused");
         Check(std::strcmp(NormalizeLook(Look{0, 0, 0, 8, 0, 0}, out, avatar), "hand") == 0, "hand 8 refused");
+        Check(std::strcmp(NormalizeLook(Look{0, 1, 0, 1, 3, 1}, out, avatar), "face") == 0 &&
+              std::strcmp(NormalizeLook(Look{0, 1, 0, 1, 6, 0}, out, avatar), "face") == 0 &&
+              std::strcmp(NormalizeLook(Look{0, 1, 0, 1, 0xFFFF, 0}, out, avatar), "face") == 0, "snake face index past the table refused");
         Check(SameLook(out, before), "output untouched on refusal");
+        Check(NormalizeLook(Look{0, 1, 0, 1, 5, 0}, out, avatar) == nullptr && NormalizeLook(Look{0, 1, 0, 1, 2, 2}, out, avatar) == nullptr &&
+              NormalizeLook(Look{0, 1, 0, 1, 5, 3}, out, avatar) == nullptr, "last table entry accepted");
+        Check(SnakeFaceIndex(2, 1) == 5 && SnakeFaceIndex(2, 2) == 5 && SnakeFaceIndex(2, 3) == 2 && SnakeFaceIndex(0, 0) == 0,
+              "snake face index (+3 with face_equip 1/2)");
+        Check(NormalizeLook(Look{1, 5, 9, 1, 0xFFFF, 1}, out, avatar) == nullptr && out.face == 0xFFFF, "DD faces are not Snake table indexes");
         Check(quiet_look.type == 6 && quiet_look.parts == 27 && quiet_look.camo == 116 && quiet_look.hand == 0 &&
               snake_look.type == 0 && snake_look.parts == 1 && snake_look.camo == 0 && snake_look.hand == 1, "fixed test looks");
     }
@@ -376,13 +386,36 @@ int main() {
     {
         StanceDebounce d{};
         Check(DebounceStance(d, 1, 1000, 150) == 0, "first value held");
-        Check(DebounceStance(d, 1, 1100, 150) == 0 && DebounceStance(d, 1, 1150, 150) == 1 && d.applied == 1, "applied after 150 ms");
-        Check(DebounceStance(d, 1, 1200, 150) == 0, "unchanged: nothing");
+        Check(DebounceStance(d, 1, 1100, 150) == 0 && DebounceStance(d, 1, 1150, 150) == 1, "due after 150 ms");
+        CommitStance(d, 1);
+        Check(d.applied == 1 && DebounceStance(d, 1, 1200, 150) == 0, "committed and unchanged: nothing");
         Check(DebounceStance(d, 2, 1300, 150) == 0 && DebounceStance(d, 1, 1350, 150) == 0 && DebounceStance(d, 2, 1400, 150) == 0,
               "a flicker restarts the hold");
-        Check(DebounceStance(d, 2, 1549, 150) == 0 && DebounceStance(d, 2, 1550, 150) == 2, "applied once held");
+        Check(DebounceStance(d, 2, 1549, 150) == 0 && DebounceStance(d, 2, 1550, 150) == 2, "due once held");
+        CommitStance(d, 2);
         Check(DebounceStance(d, 0, 1600, 150) == 0 && DebounceStance(d, 4, 1700, 150) == 0 && d.applied == 2, "0 and 4 never applied");
         Check(DebounceStance(d, 3, 1800, 0) == 3, "hold 0 applies at once");
+    }
+    {
+        // Handed out until committed; a refusal retries after the backoff.
+        StanceDebounce d{};
+        Check(DebounceStance(d, 2, 1000, 150) == 0 && DebounceStance(d, 2, 1150, 150) == 2 && d.applied == 0, "not committed by the debounce");
+        Check(DebounceStance(d, 2, 1160, 150) == 2, "still due while not committed");
+        RetryStance(d, 1160, 1000);
+        Check(DebounceStance(d, 2, 1200, 150) == 0 && DebounceStance(d, 2, 2159, 150) == 0, "refused: held for the retry backoff");
+        Check(DebounceStance(d, 2, 2160, 150) == 2, "due again after the backoff");
+        RetryStance(d, 2160, 1000);
+        Check(DebounceStance(d, 1, 2170, 150) == 0 && DebounceStance(d, 1, 2320, 150) == 1, "a new candidate is not held by the backoff");
+        Check(DebounceStance(d, 2, 2330, 150) == 0 && DebounceStance(d, 2, 2480, 150) == 2, "back to the first candidate: fresh hold");
+        CommitStance(d, 2);
+        Check(d.applied == 2 && d.candidate == 0 && d.retry_ms == 0 && DebounceStance(d, 2, 2200, 150) == 0, "committed: nothing more");
+        Check(DebounceStance(d, 3, 2300, 150) == 0 && DebounceStance(d, 3, 2450, 150) == 3, "a new stance after a commit");
+        d = StanceDebounce{};
+        Check(DebounceStance(d, 3, 3000, 150) == 0 && DebounceStance(d, 3, 3150, 150) == 3, "a reset debounce re-applies the stance");
+    }
+    {
+        Check(!LocomotionAct(0) && LocomotionAct(1) && LocomotionAct(6) && !LocomotionAct(7) && !LocomotionAct(0x79) &&
+              !LocomotionAct(0xFFFF), "locomotion act domain 1..6");
     }
 
     std::printf("%u partner receipt checks passed: classify, strict ticks, replies (with look values), log payloads, triggers "

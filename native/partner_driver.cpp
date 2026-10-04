@@ -27,24 +27,34 @@ void EmitFormat(const Hooks& h, const char* format, ...) noexcept {
     if (SUCCEEDED(result)) Emit(h, line);
 }
 // One line of a capped family: the first kTransitionLogCap lines are logged,
-// then "<head>=capped; limit=64" once.
-void EmitCapped(LogCap& cap, const Hooks& h, const char* head, const char* format, ...) noexcept {
+// then "<head>=capped; limit=64" (with "; kind=<kind>" when given) once.
+void EmitCappedV(LogCap& cap, const Hooks& h, const char* head, const char* kind, const char* format, va_list arguments) noexcept {
     if (cap.lines >= kTransitionLogCap) {
         if (!cap.capped) {
             cap.capped = true;
-            EmitFormat(h, "%s=capped; limit=64\r\n", head);
+            if (kind) EmitFormat(h, "%s=capped; limit=64; kind=%s\r\n", head, kind);
+            else EmitFormat(h, "%s=capped; limit=64\r\n", head);
         }
         return;
     }
     char line[512]{};
-    va_list arguments;
-    va_start(arguments, format);
-    const HRESULT result = StringCchVPrintfA(line, ARRAYSIZE(line), format, arguments);
-    va_end(arguments);
-    if (SUCCEEDED(result)) {
+    if (SUCCEEDED(StringCchVPrintfA(line, ARRAYSIZE(line), format, arguments))) {
         ++cap.lines;
         Emit(h, line);
     }
+}
+void EmitCapped(LogCap& cap, const Hooks& h, const char* head, const char* format, ...) noexcept {
+    va_list arguments;
+    va_start(arguments, format);
+    EmitCappedV(cap, h, head, nullptr, format, arguments);
+    va_end(arguments);
+}
+// The partner_stance families (set, refused, reverted) share one head.
+void EmitStance(LogCap& cap, const Hooks& h, const char* kind, const char* format, ...) noexcept {
+    va_list arguments;
+    va_start(arguments, format);
+    EmitCappedV(cap, h, "partner_stance", kind, format, arguments);
+    va_end(arguments);
 }
 std::uint32_t Clamp32(std::uint64_t value) noexcept {
     return value > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<std::uint32_t>(value);
@@ -365,7 +375,14 @@ void ApplyTrigger(Driver& d, const Hooks& h, const partner::Trigger& trigger, bo
         d.settings.look = trigger.look;
         ++d.look_forced_rev;
     }
-    if (trigger.has_anim || trigger.has_aset) m.stance = partner::StanceDebounce{};
+    if (trigger.has_anim || trigger.has_aset) {
+        // A new animation setting starts its stance and array logging afresh.
+        m.stance = partner::StanceDebounce{};
+        m.stance_watch = false;
+        m.stance_refused_state = nullptr;
+        m.anim_write_logged = false;
+        m.anim_source = -1;
+    }
     d.settings.stage = stage;
     EmitFormat(h, "partner_stage=changed; stage=%u; source=%s; apply=%s; anim=%s; aset=%s; reset=%s; look=%s; probe=%s; via=trigger\r\n",
                stage, PartnerSourceName(d.settings.source), PartnerApplyName(d.settings.apply), PartnerAnimName(d.settings.anim),
@@ -626,17 +643,28 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         const bool src_valid = (src.flags & sync::AnimFlag::Valid) != 0;
         if (m.anim_source != (src_valid ? 1 : 0)) {
             m.anim_source = src_valid ? 1 : 0;
-            EmitCapped(m.stance_cap, h, "partner_stance", "partner_anim=source; anim=%s; valid=%u; act=%u; s=%u; v=%u\r\n",
+            EmitCapped(m.anim_cap, h, "partner_anim", "partner_anim=source; anim=%s; valid=%u; act=%u; s=%u; v=%u\r\n",
                        PartnerAnimName(set.anim), src_valid ? 1u : 0u, unsigned(src.act), unsigned(src.stance), unsigned(src.speed));
+        }
+        if (!parts_loaded) {
+            // Unrealized or reloading (a look apply runs the 3->4->0->1->3
+            // parts cycle): the body may come back standing, so the stance is
+            // applied again once the parts are loaded.
+            m.stance = partner::StanceDebounce{};
+            m.stance_watch = false;
         }
         if (src_valid && parts_loaded) {
             if (set.aset == PartnerAset::q || set.aset == PartnerAset::qs) {
-                const char* refused = h.write_anim ? h.write_anim(h.context, terminating, src.act, src.stance, src.speed) : "unavailable";
+                // Only the live-observed locomotion ids are copied (other action
+                // ids feed action checks and the PlayerInfo special cases).
+                const char* refused = !partner::LocomotionAct(src.act) ? "act_domain"
+                                    : h.write_anim ? h.write_anim(h.context, terminating, src.act, src.stance, src.speed) : "unavailable";
                 if (!m.anim_write_logged || m.anim_write_state != refused) {
                     m.anim_write_logged = true;
                     m.anim_write_state = refused;
-                    if (refused) EmitCapped(m.stance_cap, h, "partner_stance", "partner_aset=q; state=refused; reason=%s\r\n", refused);
-                    else EmitCapped(m.stance_cap, h, "partner_stance", "partner_aset=q; state=applied; act=%u; s=%u; v=%u\r\n",
+                    if (refused) EmitCapped(m.anim_cap, h, "partner_anim", "partner_aset=q; state=refused; reason=%s; act=%u\r\n", refused,
+                                            unsigned(src.act));
+                    else EmitCapped(m.anim_cap, h, "partner_anim", "partner_aset=q; state=applied; act=%u; s=%u; v=%u\r\n",
                                     unsigned(src.act), unsigned(src.stance), unsigned(src.speed));
                 }
             }
@@ -644,24 +672,38 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                 const std::uint8_t from = m.stance.applied;
                 const std::uint8_t to = partner::DebounceStance(m.stance, src.stance, now, kStanceHoldMs);
                 if (to) {
-                    if (set.aset == PartnerAset::r) {
-                        const char* refused = m.native_disabled ? "native_disabled"
-                                            : !h.request_stance ? "unavailable"
-                                            : h.request_stance(h.context, terminating, to);
-                        if (IsFault(refused)) NoteFault(m, h, "stance_request");
-                        EmitCapped(m.stance_cap, h, "partner_stance", "partner_stance=req; R=1; from=%u; to=%u; result=%s\r\n",
-                                   unsigned(from), unsigned(to), refused ? refused : "ok");
+                    const bool request = set.aset == PartnerAset::r;
+                    std::uint8_t psw = 0, q30 = 0;
+                    const char* refused = m.native_disabled ? "native_disabled"
+                                        : request ? (!h.request_stance ? "unavailable" : h.request_stance(h.context, terminating, to))
+                                                  : (!h.set_stance ? "unavailable" : h.set_stance(h.context, terminating, to, psw, q30));
+                    if (IsFault(refused)) NoteFault(m, h, request ? "stance_request" : "set_stance");
+                    m.stance_summary_dirty = true;
+                    if (refused) {
+                        // Not committed: the same target is retried after
+                        // kStanceRetryMs (a transient refusal must not stick).
+                        partner::RetryStance(m.stance, now, kStanceRetryMs);
+                        ++m.stance_refusals;
+                        if (m.stance_refused_state != refused) {
+                            m.stance_refused_state = refused;
+                            if (request)
+                                EmitStance(m.stance_refused_cap, h, "refused", "partner_stance=req; R=1; from=%u; to=%u; result=%s\r\n",
+                                           unsigned(from), unsigned(to), refused);
+                            else
+                                EmitStance(m.stance_refused_cap, h, "refused", "partner_stance=refused; R=1; to=%u; reason=%s\r\n",
+                                           unsigned(to), refused);
+                        }
                     } else {
-                        std::uint8_t psw = 0, q30 = 0;
-                        const char* refused = m.native_disabled ? "native_disabled"
-                                            : !h.set_stance ? "unavailable"
-                                            : h.set_stance(h.context, terminating, to, psw, q30);
-                        if (IsFault(refused)) NoteFault(m, h, "set_stance");
-                        if (refused) {
-                            EmitCapped(m.stance_cap, h, "partner_stance", "partner_stance=refused; R=1; to=%u; reason=%s\r\n",
-                                       unsigned(to), refused);
+                        partner::CommitStance(m.stance, to);
+                        m.stance_refused_state = nullptr;
+                        m.stance_last = to;
+                        if (request) {
+                            ++m.stance_reqs;
+                            EmitStance(m.stance_cap, h, "set", "partner_stance=req; R=1; from=%u; to=%u; result=ok\r\n",
+                                       unsigned(from), unsigned(to));
                         } else {
-                            EmitCapped(m.stance_cap, h, "partner_stance",
+                            ++m.stance_sets;
+                            EmitStance(m.stance_cap, h, "set",
                                        "partner_stance=set; R=1; id=1; from=%u; to=%u; psw=0x%02x; q30=%u\r\n", unsigned(from),
                                        unsigned(to), unsigned(psw), unsigned(q30));
                             m.stance_watch = true;
@@ -679,12 +721,23 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         } else {
             pp::Census census{};
             h.census(h.context, st, census);
-            if (!census.k[1].refusal && census.k[1].psw != m.stance_expected_psw) {
+            if (!census.k[1].stance_refusal && census.k[1].psw != m.stance_expected_psw) {
                 m.stance_watch = false;
-                EmitCapped(m.stance_cap, h, "partner_stance", "partner_stance=reverted; R=1; psw=0x%02x; expected=0x%02x; ms_after_set=%u\r\n",
-                           unsigned(census.k[1].psw), unsigned(m.stance_expected_psw), Clamp32(now - m.stance_set_ms));
+                ++m.stance_reverts;
+                m.stance_summary_dirty = true;
+                EmitStance(m.stance_revert_cap, h, "reverted",
+                           "partner_stance=reverted; R=1; psw=0x%02x; expected=0x%02x; ms_after_set=%u\r\n", unsigned(census.k[1].psw),
+                           unsigned(m.stance_expected_psw), Clamp32(now - m.stance_set_ms));
             }
         }
+    }
+    // Stance counters keep counting after the line caps (Play-OfflineCoop's
+    // status line and long sessions read this).
+    if (m.stance_summary_dirty && (!m.stance_summary_ms || now - m.stance_summary_ms >= kStanceSummaryMs)) {
+        m.stance_summary_dirty = false;
+        m.stance_summary_ms = now;
+        EmitFormat(h, "partner_stance=summary; last=%u; sets=%u; reqs=%u; refused=%u; reverts=%u\r\n", unsigned(m.stance_last),
+                   m.stance_sets, m.stance_reqs, m.stance_refusals, m.stance_reverts);
     }
     // Census: census=1, or once per realize when a native feature needs it.
     const bool native_feature = transform || (set.anim != PartnerAnim::off && set.aset != PartnerAset::q);

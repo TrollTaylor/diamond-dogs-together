@@ -64,7 +64,7 @@ struct Fake {
 
     Fake() {
         Ready();
-        looks.look[0] = mgscoop::partner::Look{0, 1, 0, 1, 5, 2};
+        looks.look[0] = mgscoop::partner::Look{0, 1, 0, 1, 2, 2};
         looks.look[1] = mgscoop::partner::Look{0xFF, 0xFF, 0xFF, 0xFF, 0x7FFF, 0};
     }
     // Lines containing `part` anywhere.
@@ -729,7 +729,7 @@ void TestAnimationApply() {
     q.driver.settings.anim = mgscoop::PartnerAnim::mirror;
     q.driver.settings.aset = mgscoop::PartnerAset::q;
     q.fake.anim_ok = true;
-    q.fake.anim.stance[0] = 1;
+    q.fake.anim.stance[0] = 1; q.fake.anim.act[0] = 1;
     q.fake.anim_write_result = "count";
     Loaded(q);
     Check(q.Tick(1) && q.Tick(1) && q.fake.Count("partner_aset=q; state=refused; reason=count") == 1 && q.fake.Count("partner_census") == 0,
@@ -740,6 +740,102 @@ void TestAnimationApply() {
     low.fake.anim.stance[0] = 2;
     Loaded(low);
     Check(low.Tick(1) && low.Tick(1, 200) && low.fake.calls.empty() && low.fake.Count("partner_anim=source") == 0, "stage 2: no anim");
+}
+
+void TestAnimationGuards() {
+    // aset=q copies only the locomotion ids 1..6.
+    Session q(3);
+    q.driver.settings.anim = mgscoop::PartnerAnim::mirror;
+    q.driver.settings.aset = mgscoop::PartnerAset::q;
+    q.fake.anim_ok = true;
+    q.fake.anim.act[0] = 0x14; q.fake.anim.stance[0] = 1; q.fake.anim.speed[0] = 0;
+    Loaded(q);
+    Check(q.Tick(1) && q.Tick(1) && q.fake.Calls("anim:") == 0 &&
+          q.fake.Count("partner_aset=q; state=refused; reason=act_domain; act=20\r\n") == 1, "a non-locomotion act is not written (logged once)");
+    q.fake.anim.act[0] = 2; q.fake.anim.speed[0] = 3;
+    Check(q.Tick(1) && q.fake.Calls("anim:2,1,3") == 1 && q.fake.Has("partner_aset=q; state=applied; act=2; s=1; v=3\r\n"),
+          "back to a locomotion act: written");
+    q.fake.anim.act[0] = 0;
+    Check(q.Tick(1) && q.fake.Calls("anim:") == 1 && q.fake.Count("partner_aset=q; state=refused; reason=act_domain; act=0") == 1,
+          "act 0 is not written");
+    // anim=net with a received out-of-domain act: nothing written.
+    Session n(3, mgscoop::PartnerApply::warp, mgscoop::PartnerSource::net);
+    n.driver.settings.anim = mgscoop::PartnerAnim::net;
+    n.driver.settings.aset = mgscoop::PartnerAset::q;
+    Loaded(n);
+    n.fake.sample.valid = true;
+    n.fake.sample.status = mgscoop::pose::Status::live;
+    n.fake.sample.anim_valid = true; n.fake.sample.act = 0xFFFF; n.fake.sample.anim_stance = 2; n.fake.sample.anim_speed = 0;
+    Check(n.Tick(1) && n.fake.Calls("anim:") == 0 && n.fake.Count("partner_aset=q; state=refused; reason=act_domain; act=65535") == 1,
+          "received act 0xFFFF refused");
+
+    // A refused SetStance is not committed: retried after kStanceRetryMs.
+    Session r(3);
+    r.driver.settings.anim = mgscoop::PartnerAnim::mirror;
+    r.driver.settings.aset = mgscoop::PartnerAset::s;
+    r.fake.anim_ok = true;
+    r.fake.anim.act[0] = 5; r.fake.anim.stance[0] = 3;
+    r.fake.stance_result = "ps_sub";
+    Loaded(r);
+    Check(r.Tick(1) && r.Tick(1, 200) && r.fake.Has("partner_stance=refused; R=1; to=3; reason=ps_sub\r\n") && r.fake.Calls("stance:") == 0,
+          "first attempt refused");
+    Check(r.Tick(1, 500) && r.Tick(1, 400) && r.fake.Count("partner_stance=refused") == 1, "no retry inside the backoff, refusal logged once");
+    r.fake.stance_result = nullptr;
+    Check(r.Tick(1, 200) && r.fake.Calls("stance:3") == 1 && r.fake.Has("partner_stance=set; R=1; id=1; from=0; to=3; psw=0x33; q30=3\r\n"),
+          "retried after the backoff and applied");
+    Check(r.Tick(1, 2000) && r.fake.Calls("stance:") == 1, "committed: no further call");
+    Check(r.fake.Count("partner_stance=summary;") == 1 && r.fake.Has("partner_stance=summary; last=0; sets=0; reqs=0; refused=1; reverts=0\r\n"),
+          "the first stance event is summarized at once, later ones at most every 10 s");
+    // A parts reload (look apply) resets the debounce: the stance is re-applied.
+    r.fake.state.parts[1] = 4;
+    Check(r.Tick(1) && r.Tick(1, 200) && r.fake.Calls("stance:") == 1, "nothing while the parts reload");
+    r.fake.state.parts[1] = 3;
+    Check(r.Tick(1) && r.Tick(1, 200) && r.fake.Calls("stance:3") == 2 && r.fake.Has("partner_stance=set; R=1; id=1; from=0; to=3; psw=0x33; q30=3\r\n"),
+          "re-applied once the parts are loaded again");
+    // The revert watch uses the stance verdict, not the transform verdict.
+    r.fake.anim.stance[0] = 2; r.fake.anim.act[0] = 3;
+    Check(r.Tick(1) && r.Tick(1, 200) && r.fake.Calls("stance:2") == 1, "crouch applied");
+    r.fake.census.k[1].refusal = "t_null";
+    r.fake.census.k[1].psw = 0x11;
+    Check(r.Tick(1) && r.fake.Count("partner_stance=reverted") == 1, "revert detected while the transform chain is refused");
+    r.fake.census.k[1].refusal = nullptr;
+
+    // Separate caps: 64 set lines, then kind=set capped; refused, reverted and
+    // the summary keep going.
+    Session c(3);
+    c.driver.settings.anim = mgscoop::PartnerAnim::mirror;
+    c.driver.settings.aset = mgscoop::PartnerAset::s;
+    c.fake.anim_ok = true;
+    Loaded(c);
+    for (unsigned i = 0; i < 70; ++i) {
+        c.fake.anim.stance[0] = static_cast<std::uint8_t>(1 + (i % 2));
+        c.fake.anim.act[0] = static_cast<std::uint8_t>(1 + 2 * (i % 2));
+        Check(c.Tick(1) && c.Tick(1, 200), "cap timeline");
+    }
+    Check(c.fake.Calls("stance:") == 70 && c.fake.Count("partner_stance=set;") == 64 &&
+          c.fake.Count("partner_stance=capped; limit=64; kind=set\r\n") == 1, "set lines capped at 64 (kind=set)");
+    c.fake.anim.stance[0] = 1; c.fake.anim.act[0] = 1;
+    Check(c.Tick(1) && c.Tick(1, 200) && c.fake.Calls("stance:1") == 36, "set 71 (stand)");
+    c.fake.census.k[1].psw = 0x33;
+    Check(c.Tick(1) && c.fake.Count("partner_stance=reverted") == 1, "reverts still logged after the set cap");
+    c.fake.stance_result = "ps_words";
+    c.fake.anim.stance[0] = 3; c.fake.anim.act[0] = 5;
+    Check(c.Tick(1) && c.Tick(1, 200) && c.fake.Count("partner_stance=refused; R=1; to=3; reason=ps_words") == 1,
+          "refusals still logged after the set cap");
+    c.fake.stance_result = nullptr;
+    const auto last_summary = [&c]() {
+        for (auto it = c.fake.lines.rbegin(); it != c.fake.lines.rend(); ++it)
+            if (it->compare(0, 23, "partner_stance=summary;") == 0) return *it;
+        return std::string();
+    };
+    const std::size_t summaries = c.fake.Count("partner_stance=summary;");
+    Check(c.Tick(1, 11000) && c.fake.Count("partner_stance=summary;") == summaries + 1, "summary keeps counting after the caps");
+    Check(last_summary() == "partner_stance=summary; last=3; sets=72; reqs=0; refused=1; reverts=1\r\n",
+          "summary counters (the refused crawl was retried and applied)");
+    // A trigger that changes anim/aset re-arms the change-only lines.
+    c.Trigger("aset=s");
+    Check(c.fake.Has("partner_stage=changed; stage=3; source=fixed; apply=warp; anim=mirror; aset=s; reset=n; look=copy; probe=off; via=trigger\r\n"),
+          "trigger accepted");
 }
 
 void TestTransformDrivers() {
@@ -823,7 +919,7 @@ void TestLooks() {
           s.fake.Calls("fe:0") == 1, "apply logged; face_equip written natively");
     Check(s.Tick(1) && !(s.reply.op & op::set_parts_explicit), "Lua has not confirmed yet, but within 2 s: not resent");
     Check(s.Tick(3) && !(s.reply.op & op::set_parts_explicit), "confirmed (parts_copied): never resent");
-    Check(s.fake.Count("partner_looks; look0=0,1,0,1,5,2; look1=255,255,255,255,32767,0") == 1, "both looks logged");
+    Check(s.fake.Count("partner_looks; look0=0,1,0,1,2,2; look1=255,255,255,255,32767,0") == 1, "both looks logged");
     // Verification: the parts state cycles, then the slot-1 arrays match.
     Loaded(s);
     s.fake.state.parts[1] = 4;
@@ -861,14 +957,15 @@ void TestLooks() {
     n.fake.remote = pd::RemoteLook{true, partner::Look{3, 2, 4, 1, 100, 1}, 8};
     Check(n.Tick(3) && !(n.reply.op & op::set_parts_explicit), "new revision within 2 s: waits");
     Check(n.Tick(3, 2000) && (n.reply.op & op::set_parts_explicit) && n.reply.look.type == 0 &&
-          n.fake.Containing("rev=8; avatar_as_snake=1") == 1 && n.fake.Calls("fe:1") == 1, "avatar applied as Snake");
+          n.fake.Containing("face=0; fe=0; rev=8; avatar_as_snake=1") == 1 && !n.fake.calls.empty() && n.fake.calls.back() == "fe:0" && n.reply.look.face == 0,
+          "avatar applied as Snake with face 0 / face_equip 0");
     n.fake.remote = pd::RemoteLook{true, partner::Look{4, 0, 0, 0, 0, 0}, 9};
     Check(n.Tick(3, 2000) && !(n.reply.op & op::set_parts_explicit) && (n.reply.op & op::copy_parts) &&
           n.fake.Has("partner_look=refused; reason=type; source=net; type=4; parts=0; camo=0; hand=0; rev=9\r\n"),
           "LIQUID refused, logged; COPY op again (Lua keeps its latch)");
     Check(n.Tick(3) && n.fake.Count("partner_look=refused") == 1, "refusal change-only");
     // The sender always sends the local look once its parts are loaded.
-    Check(!n.fake.sent_looks.empty() && partner::SameLook(n.fake.sent_looks.back(), partner::Look{0, 1, 0, 1, 5, 2}), "local look sent");
+    Check(!n.fake.sent_looks.empty() && partner::SameLook(n.fake.sent_looks.back(), partner::Look{0, 1, 0, 1, 2, 2}), "local look sent");
     const std::size_t sent = n.fake.sent_looks.size();
     n.fake.state.parts[0] = 1;
     Check(n.Tick(3) && n.fake.sent_looks.size() == sent, "not while the local parts reload");
@@ -879,8 +976,8 @@ void TestLooks() {
     // look=copy: COPY as before; parts=explicit sends the local look once (F3b).
     Session c(1);
     c.Trigger("parts=explicit");
-    Check(c.Tick(0) && c.reply.op == (op::warp | op::set_parts_explicit) && partner::SameLook(c.reply.look, partner::Look{0, 1, 0, 1, 5, 2}) &&
-          c.fake.Calls("fe:2") == 1 && c.fake.Has("partner_look=apply; R=1; source=copy; type=0; parts=1; camo=0; hand=1; face=5; fe=2; rev=0; avatar_as_snake=0\r\n"),
+    Check(c.Tick(0) && c.reply.op == (op::warp | op::set_parts_explicit) && partner::SameLook(c.reply.look, partner::Look{0, 1, 0, 1, 2, 2}) &&
+          c.fake.Calls("fe:2") == 1 && c.fake.Has("partner_look=apply; R=1; source=copy; type=0; parts=1; camo=0; hand=1; face=2; fe=2; rev=0; avatar_as_snake=0\r\n"),
           "copy + parts=explicit: the local look at stage 1");
     Check(c.Tick(0) && !(c.reply.op & op::set_parts_explicit) && !c.driver.parts_explicit_pending, "one-shot");
     Check(c.fake.Count("partner_looks") == 0, "no looks line in copy mode");
@@ -938,6 +1035,7 @@ int main() {
     TestNetSourceAndCadence();
     TestLuaLogAndQuiet();
     TestAnimationApply();
+    TestAnimationGuards();
     TestTransformDrivers();
     TestLooks();
     TestCensusAndProbes();

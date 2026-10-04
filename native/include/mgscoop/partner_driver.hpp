@@ -16,8 +16,12 @@
 // partner_cfg refused/ready flips 64 (then "partner_cfg=capped; limit=64");
 // realized/parts transitions 64 (then "partner_realized=capped; limit=64");
 // partner_flags changes 64 (then "partner_flags=capped; limit=64"); xform,
-// hybrid, stance and look lines 64 each (then "<head>=capped; limit=64");
-// partner_ps probe lines 400.
+// hybrid and look lines 64 each (then "<head>=capped; limit=64"); the anim
+// family (partner_anim=source, partner_aset=q) 64 ("partner_anim=capped");
+// partner_stance set/req, refused and reverted 64 each
+// ("partner_stance=capped; limit=64; kind=set|refused|reverted"), plus the
+// uncapped partner_stance=summary at most every kStanceSummaryMs while its
+// counters change; partner_ps probe lines 400.
 #include <cstddef>
 #include <cstdint>
 #include "mgscoop/lab_config.hpp"
@@ -46,6 +50,10 @@ inline constexpr std::uint64_t kResendMs = 1000;
 // own within kStanceWatchMs of a set.
 inline constexpr std::uint32_t kStanceHoldMs = 150;
 inline constexpr std::uint64_t kStanceWatchMs = 500;
+// A refused stance call is retried for the same target after this long; the
+// stance counters are summarized at most this often.
+inline constexpr std::uint32_t kStanceRetryMs = 1000;
+inline constexpr std::uint64_t kStanceSummaryMs = 10000;
 // hybrid: a full Warp when the body is this far from the commanded pose.
 inline constexpr std::uint32_t kHybridErrorMm = 1500;
 // Looks: at most one SET_PARTS per kLookMinGapMs; "loaded" needs the parts
@@ -188,7 +196,15 @@ struct Mission {
     bool stance_watch;
     std::uint8_t stance_expected_psw;
     std::uint64_t stance_set_ms;
-    LogCap stance_cap;
+    LogCap anim_cap;                 // partner_anim=source, partner_aset=q
+    LogCap stance_cap;               // partner_stance=set, partner_stance=req (ok)
+    LogCap stance_refused_cap;       // partner_stance=refused, partner_stance=req (refused)
+    LogCap stance_revert_cap;        // partner_stance=reverted
+    const char* stance_refused_state;  // last refusal reason logged (change-only); nullptr after a success
+    std::uint8_t stance_last;        // last stance the game accepted (survives debounce resets)
+    std::uint32_t stance_sets, stance_reqs, stance_refusals, stance_reverts;
+    bool stance_summary_dirty;
+    std::uint64_t stance_summary_ms;
     const char* anim_write_state;
     bool anim_write_logged;
     std::int8_t anim_source;  // -1 not logged yet, else the last logged validity (0/1)

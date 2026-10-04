@@ -166,7 +166,8 @@ stage=<0..3> source=<fixed|orbit|net> apply=<warp|slot|both|xform|hybrid> anim=<
   census=1 parts=explicit mirror=on   (any non-empty subset, each key once; move= is apply=)
 ```
 
-`census=1` (log `partner_census` for both blocks once), `parts=explicit`
+`census=1` (log `partner_census` for both blocks once; a trigger that changes
+`anim=` or `aset=` also re-arms the change-only anim/stance lines), `parts=explicit`
 (one-shot op 16: re-apply the desired look; with `look=copy` the local look,
 variant F3b) and `mirror=on` (one-shot op 32, the mirror diagnostic: F3c, at
 most 10 s; refused with `partner_trigger=ignored; token=mirror=on; reason=look`
@@ -251,11 +252,12 @@ realization line is inside the stage 3 segment).
 | `partner_parts=loaded; R=1; ms_after_realize=..` / `partner_parts=timeout; ...` | E3 (`ms_after_realize<=15000`) |
 | `partner_stop; cleared=..; teardown=..` | E8; ends a segment |
 | `crash_probe=installed`, `crash_probe=av; rva=..; ...` | `av` fails any experiment |
-| `partner_census; k=0\|1; id=..; base=..; count=..; blk=ok\|<reason>; blk_vt=..; ps_vt=..; cs_vt=..; t=set\|null; t_vt=..; t68=..; t70=..; a0_vt=..; a080=..; c0_vt=..; c090=..; b70_vt=..; psw=0x..; equip_vt=..; same_t=..; same_a0=..; same_c0=..; verdict=ok\|<reason>` | A0 (RVAs to pin); logged on `census=1` and once per realize when a native feature needs it |
+| `partner_census; k=0\|1; id=..; base=..; count=..; blk=ok\|<reason>; blk_vt=..; ps_vt=..; cs_vt=..; t=set\|null; t_vt=..; t68=..; t70=..; a0_vt=..; a080=..; c0_vt=..; c090=..; b70_vt=..; stance=ok\|<reason>; psw=0x..; equip_vt=..; same_t=..; same_a0=..; same_c0=..; verdict=ok\|<reason>` | A0 (RVAs to pin); logged on `census=1` and once per realize when a native feature needs it. `verdict` = identities + transform chain (xform, hybrid, body readback); `stance` = identities + the SetStance prerequisites (`ps_words`: stance words, `ps_sub`: PS+0x260), a note in A0, never blocks xform |
 | `partner_anim; act=a0,a1; s=s0,s1; v=v0,v1; q28=..; qd8=..; psw=..,..; rec1=0x..` | A1 (`lab.ini` `partner_anim_probe=1`; per slot: act u16 hex, stance and speed u8) |
-| `partner_anim=source; anim=mirror\|net; valid=0\|1; act=..; s=..; v=..` | A1/N1 (change-only) |
-| `partner_aset=q; state=applied\|refused; ...` | A1 (change-only) |
-| `partner_stance=set; R=1; id=1; from=..; to=..; psw=0x..; q30=..`, `partner_stance=refused; R=1; to=..; reason=..`, `partner_stance=reverted; R=1; psw=..; expected=..; ms_after_set=..`, `partner_stance=req; R=1; from=..; to=..; result=..` | A3, N1 (`refused` fails A3) |
+| `partner_anim=source; anim=mirror\|net; valid=0\|1; act=..; s=..; v=..` | A1/N1 (change-only; with `partner_aset=q` capped at 64 lines, then `partner_anim=capped; limit=64`) |
+| `partner_aset=q; state=applied; act=..; s=..; v=..` / `partner_aset=q; state=refused; reason=..; act=..` | A1 (change-only; `reason=act_domain` = an act id outside the locomotion ids 1..6, deliberately not written: a note, not a failure) |
+| `partner_stance=set; R=1; id=1; from=..; to=..; psw=0x..; q30=..`, `partner_stance=refused; R=1; to=..; reason=..`, `partner_stance=reverted; R=1; psw=..; expected=..; ms_after_set=..`, `partner_stance=req; R=1; from=..; to=..; result=..` | A3, N1 (a `refused` target never set afterwards fails A3; one retried and set is a note). Set/req-ok, refused (change-only per reason; the target is retried after 1 s) and reverted are capped at 64 lines each: `partner_stance=capped; limit=64; kind=set\|refused\|reverted`. A `reverted` while the partner was Warped every tick is reported as not attributable |
+| `partner_stance=summary; last=0..3; sets=..; reqs=..; refused=..; reverts=..` | counters that keep going after the caps: at the first stance event, then at most every 10 s while they change (Play-OfflineCoop status line) |
 | `partner_xform=applied; R=1; apply=..; reset=..` / `partner_xform=refused; reason=..; fallback=warp` | M1 (identity refusals fail; `unrealized`/`parts` are normal before the load) |
 | `partner_xform; R=1; apply=..; cmd_mm=..; body_mm=..; err_mm=..; yaw_err_mrad=..; reset=..` | M1 (1 Hz readback of T+0x20/T+0x60; `err_mm>1500` fails) |
 | `partner_hybrid=warp; reason=first\|err\|relink` | M1 data |

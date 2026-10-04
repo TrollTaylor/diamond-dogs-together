@@ -156,17 +156,25 @@ bool ReadLooks(const State& state, Looks& out) noexcept;
 //   blk = *(P+0x378) + pool[k]*0x6A8 == *(*(P+0x50) + 8*pool[k]), vtable
 //   0x2295210, blk+0x138 == P, blk+0xC <= ids[k] < blk+0xC + blk+8;
 //   PS = *(blk+0x78), vtable 0x23B09F0 (slot 0 SetStance), PS+0x408 == blk,
-//   PS+8 == blk+0xC, *(PS+0x298) and *(PS+0x260) non-null;
+//   PS+8 == blk+0xC;
 //   CS = *(PS+0x238), vtable 0x22E6070 (slot +0x388 GetTransform 0xAF1130),
 //   entry = *(CS+0x10) + (ids[k] - *(CS+0xC))*0xC0, T = *(entry+0x60) + 0x10
 //   (0xAF1130 replicated without calling it); A0 = *(blk+0xA0), C0 = *(blk+0xC0).
+// Two independent verdicts: `refusal` covers the block/PS identities plus the
+// transform chain (what xform/hybrid and ReadBody need); `stance_refusal`
+// covers the block/PS identities plus the SetStance prerequisites the
+// transform path never touches: the stance words *(PS+0x298) non-null with the
+// word for this id readable (0xFF5B10 writes it) and the component
+// *(PS+0x260) non-null (0xFF5B10 calls its vt[0]; set lazily by a hash lookup
+// at 0xFFF346, so it may still be null while the transform chain is fine).
 struct Block {
-    const char* refusal;  // nullptr when every identity holds
+    const char* refusal;         // nullptr when the identities and the transform chain hold
+    const char* stance_refusal;  // nullptr when the identities and the stance prerequisites hold
     std::uint32_t id, base_id, id_count;
     std::uintptr_t blk, ps, cs, entry, t, a0, c0, b70;
     std::uintptr_t blk_vt, ps_vt, cs_vt;  // as read (0 when unreadable)
     std::uintptr_t t_vt, t68, t70, a0_vt, a080, c0_vt, c090, b70_vt;
-    std::uint8_t psw;     // low byte of the stance word *(PS+0x298)[id - base]
+    std::uint8_t psw;     // low byte of the stance word *(PS+0x298)[id - base] (0 unless stance_refusal is null)
 };
 struct Census {
     const char* refusal;  // nullptr when both blocks pass and T/A0/C0 are callable
@@ -174,7 +182,8 @@ struct Census {
     std::uintptr_t equip_vt;  // *(P+0xC8) vtable (logged only)
 };
 // Refusal reasons: unrealized|blk_vtable|blk_owner|blk_index|ps_vtable|ps_back|
-// cs_vtable|entry|t_null|t_class|a0_class|c0_class|id_mismatch.
+// cs_vtable|entry|t_null|t_class|a0_class|c0_class|id_mismatch; stance
+// refusals: the identity reasons or ps_words|ps_sub.
 const char* ResolveBlock(const Addresses& addresses, const State& state, std::uint32_t k, Block& out) noexcept;
 const char* ResolveCensus(const Addresses& addresses, const State& state, Census& out) noexcept;
 // "partner_census; k=..; ..." with RVAs relative to addresses.image_base.

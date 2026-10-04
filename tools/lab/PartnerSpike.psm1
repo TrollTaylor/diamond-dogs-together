@@ -17,6 +17,11 @@ $ErrorActionPreference = 'Stop'
 
 $script:PartnerTriggerMaxBytes = 127  # native reads at most 127 bytes (partner_receipt.hpp max_trigger)
 $script:PartnerMaxEvidence = 60
+# A1/A3 run with hybrid movement (one Warp to place the partner, then the
+# native transform without Warp's resets every tick), so Warp's per-tick resets
+# (0x9CEC0E..0x9CEC2C) cannot mask or undo the stance; run them after M1.
+$script:PartnerA1Trigger = 'stage=3 source=fixed apply=hybrid reset=n anim=mirror aset=q'
+$script:PartnerA3Trigger = 'stage=3 source=fixed apply=hybrid reset=n anim=mirror aset=qs'
 $script:PartnerExperiments = @('E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E8', 'A0', 'A1', 'A3', 'M1', 'N1', 'B1', 'B4', 'C1')
 
 # ---------------------------------------------------------------------------
@@ -1089,7 +1094,11 @@ function Invoke-PartnerA0 {
         $verdict = [string](Get-PartnerField $last 'verdict')
         if ($verdict -ceq 'unrealized' -or $verdict -ceq 'parts') { Add-PartnerItem $Check.Missing "partner_census with instance 1 realized and loaded (k=$k verdict=$verdict)" }
         elseif ($verdict -cne 'ok') { Add-PartnerItem $Check.Failed "partner_census k=$k verdict=$verdict (an identity check failed: no native call will be made)" }
-        foreach ($f in 't_vt', 't68', 't70', 'a0_vt', 'a080', 'c0_vt', 'c090', 'psw') { $Check.Data["k${k}_$f"] = Get-PartnerField $last $f }
+        foreach ($f in 't_vt', 't68', 't70', 'a0_vt', 'a080', 'c0_vt', 'c090', 'psw', 'stance') { $Check.Data["k${k}_$f"] = Get-PartnerField $last $f }
+        $stanceVerdict = [string](Get-PartnerField $last 'stance')
+        if ($verdict -ceq 'ok' -and $stanceVerdict -and $stanceVerdict -cne 'ok') {
+            Add-PartnerItem $Check.Notes "k=$k stance=$stanceVerdict`: SetStance / aset=r are refused for this instance (xform is not affected)"
+        }
         if ($k -eq 1 -and $verdict -ceq 'ok') {
             foreach ($same in 'same_t', 'same_a0', 'same_c0') {
                 if ((Get-PartnerField $last $same) -cne '1') { Add-PartnerItem $Check.Notes "$same=0: instance 1 differs from the local instance (calls needing it are refused)" }
@@ -1103,10 +1112,14 @@ function Invoke-PartnerA1 {
     # A1: anim=mirror aset=q writes the slot-1 arrays (expected: PlayerInfo flags only, no visible pose change).
     param($Check, $Context, $Alive)
     $segment = Get-PartnerAnimSegment $Check $Context $Alive { param($s) $s.Stage -eq 3 -and $s.Anim -ceq 'mirror' -and $s.Aset -cin @('q', 'qs') } `
-        "stage=3 anim=mirror aset=q (Set-PartnerTrigger.ps1 -Role $($Check.Role) -Text 'stage=3 source=fixed apply=warp anim=mirror aset=q')"
+        "stage=3 anim=mirror aset=q (Set-PartnerTrigger.ps1 -Role $($Check.Role) -Text '$script:PartnerA1Trigger')"
     if (!$segment) { return }
     $aset = @(Select-PartnerEntry -Context $Context -Kind 'partner_aset=q' -From $segment.Start -To $segment.End)
-    $refused = @($aset | Where-Object { (Get-PartnerField $_ 'state') -ceq 'refused' })
+    # act_domain: the host did something other than stand/crouch/prone x idle/moving
+    # (act outside 1..6); those ids are deliberately not copied.
+    $skipped = @($aset | Where-Object { (Get-PartnerField $_ 'state') -ceq 'refused' -and (Get-PartnerField $_ 'reason') -ceq 'act_domain' })
+    if ($skipped.Count) { Add-PartnerItem $Check.Notes "$($skipped.Count) partner_aset=q act_domain skips (non-locomotion act ids are not copied)" }
+    $refused = @($aset | Where-Object { (Get-PartnerField $_ 'state') -ceq 'refused' -and (Get-PartnerField $_ 'reason') -cne 'act_domain' })
     $applied = @($aset | Where-Object { (Get-PartnerField $_ 'state') -ceq 'applied' })
     foreach ($e in $refused) { Add-PartnerMatch $Check $e.Line; Add-PartnerItem $Check.Failed ('partner_aset=q refused: reason=' + [string](Get-PartnerField $e 'reason')) }
     if ($applied.Count) { Add-PartnerMatch $Check $applied[0].Line } elseif (!$refused.Count) { Add-PartnerItem $Check.Missing 'partner_aset=q; state=applied (needs partner_parts=loaded)' }
@@ -1127,25 +1140,55 @@ function Invoke-PartnerA1 {
     if ($stances.Count -lt 2) { Add-PartnerItem $Check.Missing 'the host changes stance while A1 runs (stand, crouch, prone: partner_anim s= changes)' }
     if (!$same) { Add-PartnerItem $Check.Missing 'a partner_anim line with slot 1 equal to slot 0 (act, s and v)' } else { Add-PartnerMatch $Check $anim[-1].Line }
     Add-PartnerItem $Check.Notes 'manual: expected NO visible change of the partner pose (the arrays feed PlayerInfo); report any visible change'
+    $null = Add-PartnerWarpNote $Check $Context $segment
+}
+
+function Add-PartnerWarpNote {
+    # Warp (0x9CEAE0) ends with the resets *(blk+0xC0).vt+0x90 and *(blk+0xA0).vt+0x80
+    # (0x9CEC0E..0x9CEC2C), suspected to reset the body's animation state. When
+    # the segment moved the partner by Warp every tick (apply=warp/slot/both, or
+    # xform refused and falling back to Warp), a missing visible change or a
+    # partner_stance=reverted cannot be told apart from that reset.
+    param($Check, $Context, $Segment)
+    $applies = @(@($Segment.State) + @($Context.Timeline | Where-Object { $_.Index -ge $Segment.Start -and $_.Index -lt $Segment.End }) |
+        ForEach-Object { [string]$_.Apply } | Where-Object { $_ } | Select-Object -Unique)
+    $warpApply = @($applies | Where-Object { $_ -cin @('warp', 'both') })
+    $perTickWarp = $warpApply.Count -gt 0
+    $fallback = @(Select-PartnerEntry -Context $Context -Kind 'partner_xform=refused' -From $Segment.Start -To $Segment.End |
+        Where-Object { (Get-PartnerField $_ 'fallback') -ceq 'warp' -and (Get-PartnerField $_ 'reason') -cnotin @('unrealized', 'parts') })
+    $Check.Data['per_tick_warp'] = $perTickWarp -or $fallback.Count -gt 0
+    if ($perTickWarp) { Add-PartnerItem $Check.Notes "apply=$($warpApply[0]) Warps every tick (with Warp's resets): rerun with apply=hybrid reset=n after M1 passes to attribute the result" }
+    elseif ($fallback.Count) { Add-PartnerItem $Check.Notes ('xform fell back to Warp (reason=' + [string](Get-PartnerField $fallback[0] 'reason') + '): the per-tick Warp resets may mask the result') }
+    return $Check.Data['per_tick_warp']
 }
 
 function Invoke-PartnerA3 {
     # A3: SetStance (PS.vt+0 = 0xFF5B10) on stance changes.
     param($Check, $Context, $Alive)
     $segment = Get-PartnerAnimSegment $Check $Context $Alive { param($s) $s.Stage -eq 3 -and $s.Anim -cne 'off' -and $s.Aset -cin @('s', 'qs') } `
-        "stage=3 anim=mirror aset=qs (Set-PartnerTrigger.ps1 -Role $($Check.Role) -Text 'stage=3 source=fixed apply=warp anim=mirror aset=qs')"
+        "stage=3 anim=mirror aset=qs (Set-PartnerTrigger.ps1 -Role $($Check.Role) -Text '$script:PartnerA3Trigger')"
     if (!$segment) { return }
+    $warped = Add-PartnerWarpNote $Check $Context $segment
     $set = @(Select-PartnerEntry -Context $Context -Kind 'partner_stance=set' -From $segment.Start -To $segment.End)
+    # A refused target is retried after 1 s: a refusal followed by a set of the
+    # same target was transient (a note); one never followed by it fails.
     foreach ($e in (Select-PartnerEntry -Context $Context -Kind 'partner_stance=refused' -From $segment.Start -To $segment.End | Select-Object -First 3)) {
         Add-PartnerMatch $Check $e.Line
-        Add-PartnerItem $Check.Failed ('partner_stance=refused: reason=' + [string](Get-PartnerField $e 'reason'))
+        $to = [string](Get-PartnerField $e 'to')
+        $later = @($set | Where-Object { $_.Index -gt $e.Index -and (Get-PartnerField $_ 'to') -ceq $to })
+        if ($later.Count) { Add-PartnerItem $Check.Notes ('transient partner_stance=refused (reason=' + [string](Get-PartnerField $e 'reason') + "; to=$to): retried and applied") }
+        else { Add-PartnerItem $Check.Failed ('partner_stance=refused: reason=' + [string](Get-PartnerField $e 'reason')) }
     }
     $targets = @($set | ForEach-Object { Get-PartnerField $_ 'to' } | Sort-Object -Unique)
     $Check.Data['stance_sets'] = $set.Count
     $Check.Data['stance_targets'] = $targets -join ','
     $reverted = @(Select-PartnerEntry -Context $Context -Kind 'partner_stance=reverted' -From $segment.Start -To $segment.End)
     $Check.Data['stance_reverted'] = $reverted.Count
-    if ($reverted.Count) { Add-PartnerMatch $Check $reverted[0].Line; Add-PartnerItem $Check.Notes "$($reverted.Count) partner_stance=reverted: the action plugin overrides the stance word (try aset=r)" }
+    if ($reverted.Count) {
+        Add-PartnerMatch $Check $reverted[0].Line
+        if ($warped) { Add-PartnerItem $Check.Notes "$($reverted.Count) partner_stance=reverted with a per-tick Warp: Warp's resets may have undone SetStance (not attributable; rerun with apply=hybrid reset=n)" }
+        else { Add-PartnerItem $Check.Notes "$($reverted.Count) partner_stance=reverted without a per-tick Warp: the action plugin overrides the stance word (try aset=r)" }
+    }
     if ($set.Count -ge 2 -and $targets.Count -ge 2) { foreach ($e in @($set | Select-Object -First 2)) { Add-PartnerMatch $Check $e.Line } }
     else { Add-PartnerItem $Check.Missing "2 partner_stance=set lines with different targets (have $($set.Count); the host toggles stance every 3 s)" }
     Add-PartnerItem $Check.Notes 'manual: the partner switches to the crouch / prone idle within 0.5 s of each set'
@@ -1371,8 +1414,8 @@ function Get-PartnerExperimentPlan {
         'E6' { @{ Timeout = 120; Steps = @((& $step 'trigger' 'both' 'stage=3 source=net' 5), (& $step 'input' 'guest' 'w:4000' 1), (& $step 'screens' 'host' 'e6' 16)) } }
         'E8' { @{ Timeout = 600; Steps = @((& $step 'trigger' 'host' 'stop' 3), (& $step 'screens' 'host' 'e8-stopped' 1), (& $step 'trigger' 'host' 'stage=3' 15), (& $step 'screens' 'host' 'e8-again' 0), (& $step 'manual' 'host' 'Leave the mission, then re-enter Mother Base (30050).' 0)) } }
         'A0' { @{ Timeout = 90; Steps = @((& $step 'trigger' 'host' 'stage=3 source=fixed census=1' 25), (& $step 'trigger' 'host' 'census=1' 3)) } }
-        'A1' { @{ Timeout = 120; Steps = @((& $step 'trigger' 'host' 'stage=3 source=fixed apply=warp anim=mirror aset=q' 3), (& $step 'manual' 'host' 'On the host: stand, walk, run, crouch, crouch-walk, prone, crawl (a few seconds each); lab.ini partner_anim_probe=1 logs partner_anim.' 0), (& $step 'screens' 'host' 'a1' 0)) } }
-        'A3' { @{ Timeout = 120; Steps = @((& $step 'trigger' 'host' 'stage=3 source=fixed apply=warp anim=mirror aset=qs' 3), (& $step 'input' 'host' 'c' 3), (& $step 'screens' 'host' 'a3-crouch' 1), (& $step 'input' 'host' 'c' 3), (& $step 'screens' 'host' 'a3-stand' 0)) } }
+        'A1' { @{ Timeout = 120; Steps = @((& $step 'trigger' 'host' $script:PartnerA1Trigger 3), (& $step 'manual' 'host' 'On the host: stand, walk, run, crouch, crouch-walk, prone, crawl (a few seconds each); lab.ini partner_anim_probe=1 logs partner_anim.' 0), (& $step 'screens' 'host' 'a1' 0)) } }
+        'A3' { @{ Timeout = 120; Steps = @((& $step 'trigger' 'host' $script:PartnerA3Trigger 3), (& $step 'input' 'host' 'c' 3), (& $step 'screens' 'host' 'a3-crouch' 1), (& $step 'input' 'host' 'c' 3), (& $step 'screens' 'host' 'a3-stand' 0)) } }
         'M1' { @{ Timeout = 90; Steps = @((& $step 'trigger' 'host' 'stage=3 source=orbit apply=xform reset=n' 4), (& $step 'screens' 'host' 'm1a' 0), (& $step 'screens' 'host' 'm1b' 0), (& $step 'screens' 'host' 'm1c' 6)) } }
         'N1' { @{ Timeout = 150; Steps = @((& $step 'trigger' 'both' 'stage=3 source=net apply=hybrid anim=net aset=qs' 5), (& $step 'input' 'guest' 'w:3000' 1), (& $step 'input' 'guest' 'c' 3), (& $step 'screens' 'both' 'n1' 0)) } }
         'B1' { @{ Timeout = 120; Steps = @((& $step 'trigger' 'host' 'stage=3 source=orbit look=quiet' 20), (& $step 'screens' 'host' 'b1' 0)) } }

@@ -415,18 +415,28 @@ const char* ResolveCore(const Addresses& a, const State& s, std::uint32_t k, Blo
         listed != b.blk || !ReadValue(b.blk + c::blk_owner, owner) || owner != s.P) return "blk_owner";
     if (!ReadValue(b.blk + c::blk_id_count, b.id_count) || !ReadValue(b.blk + c::blk_base_id, b.base_id) ||
         b.id < b.base_id || b.id - b.base_id >= b.id_count) return "blk_index";
-    std::uintptr_t slot0 = 0, back = 0, words = 0, sub = 0;
+    std::uintptr_t slot0 = 0, back = 0;
     std::uint32_t ps_base = 0;
     if (!ReadValue(b.blk + c::blk_ps, b.ps) || !b.ps || !ReadValue(b.ps, b.ps_vt) || b.ps_vt != a.ps_vtable ||
         !ReadValue(b.ps_vt, slot0) || slot0 != a.set_stance) return "ps_vtable";
-    if (!ReadValue(b.ps + c::ps_blk, back) || back != b.blk || !ReadValue(b.ps + c::ps_base_id, ps_base) || ps_base != b.base_id ||
-        !ReadValue(b.ps + c::ps_stance, words) || !words || !ReadValue(b.ps + c::ps_sub260, sub) || !sub) return "ps_back";
-    if (!ReadValue(words + 8 * static_cast<std::uintptr_t>(b.id - b.base_id), b.psw)) return "ps_back";
+    if (!ReadValue(b.ps + c::ps_blk, back) || back != b.blk || !ReadValue(b.ps + c::ps_base_id, ps_base) || ps_base != b.base_id)
+        return "ps_back";
     // Optional components (reset targets, logged in the census).
     std::uintptr_t unused = 0;
     if (ReadValue(b.blk + c::blk_a0, b.a0) && b.a0) Callable(a, b.a0, c::a0_vt_reset, 0, a.a0_vtable, b.a0_vt, b.a080, unused);
     if (ReadValue(b.blk + c::blk_c0, b.c0) && b.c0) Callable(a, b.c0, c::c0_vt_reset, 0, a.c0_vtable, b.c0_vt, b.c090, unused);
     if (ReadValue(b.blk + c::blk_b70, b.b70) && b.b70) ReadValue(b.b70, b.b70_vt);
+    return nullptr;
+}
+// The SetStance prerequisites of instance k after ResolveCore: the stance
+// words (with this id's word read into b.psw) and the PS+0x260 component.
+const char* ResolveStanceParts(Block& b) noexcept {
+    std::uintptr_t words = 0, sub = 0;
+    std::uint8_t psw = 0;
+    if (!ReadValue(b.ps + c::ps_stance, words) || !words ||
+        !ReadValue(words + 8 * static_cast<std::uintptr_t>(b.id - b.base_id), psw)) return "ps_words";
+    if (!ReadValue(b.ps + c::ps_sub260, sub) || !sub) return "ps_sub";
+    b.psw = psw;
     return nullptr;
 }
 // The transform chain (CS, entry, T) of instance k after ResolveCore.
@@ -509,7 +519,11 @@ const char* ResolveBlock(const Addresses& a, const State& s, std::uint32_t k, Bl
     const Preserve preserve;
     out = Block{};
     out.refusal = ResolveCore(a, s, k, out);
-    if (!out.refusal) out.refusal = ResolveTransform(a, out);
+    out.stance_refusal = out.refusal;
+    if (!out.refusal) {
+        out.stance_refusal = ResolveStanceParts(out);
+        out.refusal = ResolveTransform(a, out);
+    }
     return out.refusal;
 }
 
@@ -536,13 +550,14 @@ std::size_t FormatCensus(const Addresses& a, const Census& census, std::uint32_t
     if (FAILED(StringCchPrintfA(out, capacity,
             "partner_census; k=%u; id=%u; base=%u; count=%u; blk=%s; blk_vt=0x%llx; ps_vt=0x%llx; cs_vt=0x%llx; "
             "t=%s; t_vt=0x%llx; t68=0x%llx; t70=0x%llx; a0_vt=0x%llx; a080=0x%llx; c0_vt=0x%llx; c090=0x%llx; b70_vt=0x%llx; "
-            "psw=0x%02x; equip_vt=0x%llx; same_t=%u; same_a0=%u; same_c0=%u; verdict=%s\r\n",
+            "stance=%s; psw=0x%02x; equip_vt=0x%llx; same_t=%u; same_a0=%u; same_c0=%u; verdict=%s\r\n",
             k, b.id, b.base_id, b.id_count, b.refusal ? b.refusal : "ok", static_cast<unsigned long long>(Rva(a, b.blk_vt)),
             static_cast<unsigned long long>(Rva(a, b.ps_vt)), static_cast<unsigned long long>(Rva(a, b.cs_vt)),
             b.t ? "set" : "null", static_cast<unsigned long long>(Rva(a, b.t_vt)), static_cast<unsigned long long>(Rva(a, b.t68)),
             static_cast<unsigned long long>(Rva(a, b.t70)), static_cast<unsigned long long>(Rva(a, b.a0_vt)),
             static_cast<unsigned long long>(Rva(a, b.a080)), static_cast<unsigned long long>(Rva(a, b.c0_vt)),
-            static_cast<unsigned long long>(Rva(a, b.c090)), static_cast<unsigned long long>(Rva(a, b.b70_vt)), unsigned(b.psw),
+            static_cast<unsigned long long>(Rva(a, b.c090)), static_cast<unsigned long long>(Rva(a, b.b70_vt)),
+            b.stance_refusal ? b.stance_refusal : "ok", unsigned(b.psw),
             static_cast<unsigned long long>(Rva(a, census.equip_vt)), (b.t_vt && b.t_vt == o.t_vt) ? 1u : 0u,
             (b.a0_vt && b.a0_vt == o.a0_vt) ? 1u : 0u, (b.c0_vt && b.c0_vt == o.c0_vt) ? 1u : 0u,
             census.refusal ? census.refusal : "ok"))) {
@@ -586,9 +601,10 @@ const char* SetStance(const Addresses& a, std::uint32_t index, bool terminating,
     if (stance < 1 || stance > 3) return "stance";
     Block b{};
     if (const char* reason = ResolveCore(a, s, index, b)) return reason;
+    if (const char* reason = ResolveStanceParts(b)) return reason;
     // SetStance calls *(PS+0x260)->vt[0] and stores at the result + 0x64.
     std::uintptr_t sub = 0, sub_vt = 0, sub_fn = 0, unused = 0;
-    if (!ReadValue(b.ps + c::ps_sub260, sub) || !Callable(a, sub, 0, 0, 0, sub_vt, sub_fn, unused)) return "ps_back";
+    if (!ReadValue(b.ps + c::ps_sub260, sub) || !Callable(a, sub, 0, 0, 0, sub_vt, sub_fn, unused)) return "ps_sub";
     if (!a.set_stance || !InRange(a.set_stance, a.code_begin, a.code_end)) return "ps_vtable";
     if (!CallStance(a.set_stance, b.ps, b.id, stance)) return "fault";
     std::uintptr_t words = 0, p30 = 0;
@@ -604,6 +620,7 @@ const char* RequestStance(const Addresses& a, std::uint32_t index, bool terminat
     if (stance < 1 || stance > 3) return "stance";
     Block b0{}, b1{};
     if (const char* reason = ResolveCore(a, s, index, b1)) return reason;
+    if (const char* reason = ResolveStanceParts(b1)) return reason;
     if (const char* reason = ResolveCore(a, s, s.local, b0)) return reason;
     if (!a.ps_component || !InRange(a.ps_component, a.code_begin, a.code_end)) return "ps_vtable";
     std::uintptr_t ps_slot = 0;
@@ -653,6 +670,7 @@ std::size_t FormatPsProbe(const Addresses& a, const State& s, std::uint32_t k, c
         if (FAILED(StringCchPrintfA(out, capacity, "partner_ps; k=%u; refused=%s\r\n", k, reason))) { out[0] = 0; return 0; }
         return std::strlen(out);
     }
+    ResolveStanceParts(b);  // psw stays 0 when the stance words are missing
     const std::uintptr_t rel = b.id - b.base_id;
     std::uint32_t mask = 0;
     float r738[10]{};

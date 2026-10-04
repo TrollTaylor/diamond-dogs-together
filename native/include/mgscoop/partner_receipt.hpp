@@ -98,11 +98,25 @@ inline constexpr Look quiet_look{6, 27, 116, 0, 0, 0};
 inline constexpr Look snake_look{0, 1, 0, 1, 0, 0};
 // One validation for every look that reaches SetPartsInfo (received or fixed):
 // type > 6 or LIQUID (4) refused ("type"), parts > 27 ("parts"), camo > 116
-// ("camo"), hand > 7 ("hand"). QUIET (6) and OCELOT (5) are forced to their
-// own parts/camo with hand 0, face 0, face_equip 0 (the 0x9CDB12 keep path);
-// AVATAR (3) becomes SNAKE (0) with avatar_as_snake (its 0x4F-byte avatar
-// record is neither sent nor settable through SetPartsInfo). nullptr means
-// accepted and `out` written; otherwise the static reason, `out` untouched.
+// ("camo"), hand > 7 ("hand"), and a SNAKE (0) face whose package-table
+// index is out of range ("face", see SnakeFaceIndex). QUIET (6) and OCELOT (5) are forced to their own parts/camo with
+// hand 0, face 0, face_equip 0 (the 0x9CDB12 keep path); AVATAR (3) becomes
+// SNAKE (0) with face 0, face_equip 0 and avatar_as_snake (its 0x4F-byte
+// avatar record is neither sent nor settable through SetPartsInfo, and its
+// face id is an avatar face, not a Snake face). nullptr means accepted and
+// `out` written; otherwise the static reason, `out` untouched.
+// The Snake face package selector 0xAE95D0 (called from the parts package
+// builder at 0x9B4565 with type, parts, face, face_equip) indexes the 16-byte
+// table at 0x2A827D0 with face + 3 when face_equip is 1 or 2 (0xAE962D,
+// 0xAE967D..0xAE9687) and no bounds check; the table has snake_face_entries
+// path entries (index 6 onward are float constants). face_equip is otherwise
+// only compared (==3/4/5 at 0x9B1035, !=0 at 0xAE9360/0xAE9220) and is passed
+// through. A DD (1/2) face goes to the staff face database lookup (0x9B45B6)
+// and is passed through unchecked (that lookup was not traced).
+inline constexpr std::uint32_t snake_face_entries = 6;
+inline std::uint32_t SnakeFaceIndex(std::uint16_t face, std::uint8_t face_equip) noexcept {
+    return static_cast<std::uint32_t>(face) + ((face_equip == 1 || face_equip == 2) ? 3u : 0u);
+}
 const char* NormalizeLook(const Look& in, Look& out, bool& avatar_as_snake) noexcept;
 
 struct Reply {
@@ -199,14 +213,33 @@ float QuatToYaw(const float (&quat)[4]) noexcept;
 
 // Stance of the anim fields as SetStance takes it (1 stand, 2 squat, 3 crawl;
 // 0 = unknown, never applied) and a debounce for applying it on change only:
-// a new value must hold for `hold_ms` before it is applied once.
+// a new value must hold for `hold_ms` before it is handed out. The caller
+// commits it with CommitStance only when the game call succeeded; a refused
+// call keeps the candidate and RetryStance makes it due again after
+// `retry_ms`, so a transient refusal (component not ready, parts reloading)
+// never leaves the partner in a stale stance.
 struct StanceDebounce {
-    std::uint8_t applied;    // last value handed to the game (0 = none yet)
+    std::uint8_t applied;    // last value the game accepted (0 = none yet)
     std::uint8_t candidate;  // value currently being held
     std::uint64_t since_ms;  // when candidate was first seen
+    std::uint64_t retry_ms;  // no candidate is handed out before this (after a refusal)
 };
-// Returns the stance to apply now (1..3) or 0.
+// Returns the stance to apply now (1..3) or 0. Does not commit it.
 std::uint8_t DebounceStance(StanceDebounce& state, std::uint8_t stance, std::uint64_t now_ms, std::uint32_t hold_ms) noexcept;
+// The game accepted `stance`: it becomes `applied` and the candidate clears.
+void CommitStance(StanceDebounce& state, std::uint8_t stance) noexcept;
+// The call for the current candidate was refused: retry it at now + retry_ms
+// (a different candidate starts its own hold without the backoff).
+void RetryStance(StanceDebounce& state, std::uint64_t now_ms, std::uint32_t retry_ms) noexcept;
+
+// The locomotion ids written to *(Q+0x18)[1] (aset=q): 1..6, the whole domain
+// observed live for the local slot (stand/crouch/prone x idle/moving,
+// docs/anim-appearance-findings-2026-10-04.md). Other action ids (CQC, climb,
+// 0x79 special-cased by the PlayerInfo builder 0x12CE870, ...) are never
+// copied onto the partner.
+inline constexpr std::uint16_t locomotion_act_min = 1;
+inline constexpr std::uint16_t locomotion_act_max = 6;
+inline bool LocomotionAct(std::uint16_t act) noexcept { return act >= locomotion_act_min && act <= locomotion_act_max; }
 
 // Pose in integer millimetres and milliradians (yaw normalized to [-pi, pi)).
 struct Pose {

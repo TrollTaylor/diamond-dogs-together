@@ -32,7 +32,10 @@ The one exception is the transform frame on the wire. It now always carries
 the 8-byte animation extension, so it is a v2 frame (section 2). A receiver
 from before this change drops v2 frames, so both copies must run this build.
 
-`tools/lab/Play-OfflineCoop.ps1` opts in to the experiment settings (section 6).
+`tools/lab/Play-OfflineCoop.ps1` opts in to the appearance sync and the Quiet
+guest, keeps the proven Warp movement, and turns the native movement and
+stance experiments on one at a time from its console, or all at once with
+`-Experimental` (section 6).
 
 ## 2. Wire format
 
@@ -112,7 +115,12 @@ position (0xFFACEA) and **T+0x60** its rotation quaternion (0x10BEF4E).
 **[V]** PS = `*(blk+0x78)`, vtable 0x23B09F0 (ctor 0xFEDF58):
 
 - vt+0 = SetStance 0xFF5B10. It sets the stance word `*(PS+0x298)[id-base]`,
-  writes Q+0x30[id] = s, and calls `*(PS+0x260)`->vt[0].
+  writes Q+0x30[id] = s, and calls `*(PS+0x260)`->vt[0]. PS+0x260 is set
+  lazily by a hash lookup (0xFFF346), so the census keeps two verdicts:
+  `verdict=` for the block/PS identities plus the transform chain (xform,
+  hybrid, the body readback) and `stance=` for the identities plus the stance
+  words and PS+0x260 (SetStance, `aset=r`). A missing stance prerequisite
+  (`stance=ps_words|ps_sub`) never blocks xform.
 - vt+0xC8 = 0xFF3220, the stance request component (lookup by hash
   0xDD151E7A76BA). Lua RequestToSetTargetStance (0x9DB191) calls its
   vt+0x10(X, index, stance).
@@ -164,8 +172,8 @@ The source is either the local slot 0 (`mirror`) or the received extension
 
 | `aset` | What it does |
 |---|---|
-| `q` | Every tick writes u16 Q+0x18[1], u8 Q+0x30[1] and u8 Q+0x38[1]. Research expects this to change only the PlayerInfo record flags and the stance that plugin activation (0x10BED50) caches. |
-| `s` | When the stance changes and has held for 150 ms, calls SetStance(PS1, 1, s), reads back the stance word (expected s\|s<<4) and Q+0x30[1], and logs `partner_stance=reverted` if the word changes on its own within 500 ms. |
+| `q` | Every tick writes u16 Q+0x18[1], u8 Q+0x30[1] and u8 Q+0x38[1]. Research expects this to change only the PlayerInfo record flags and the stance that plugin activation (0x10BED50) caches. Only the live-observed locomotion ids 1..6 are written (`partner::LocomotionAct`); any other act id (CQC, climbing, 0x79 which the PlayerInfo builder special-cases, garbage) is skipped and logged change-only as `partner_aset=q; state=refused; reason=act_domain; act=..`. |
+| `s` | When the stance changes and has held for 150 ms, calls SetStance(PS1, 1, s), reads back the stance word (expected s\|s<<4) and Q+0x30[1], and logs `partner_stance=reverted` if the word changes on its own within 500 ms. The stance is committed only when the call succeeds: a refused call (`partner_stance=refused`, change-only per reason) is retried for the same target after 1 s. While instance 1 is unrealized or its parts reload (a look apply), the debounce resets, so the stance is applied again once the parts are loaded. |
 | `qs` | Both of the above. |
 | `r` | Uses the stance request component instead of SetStance (X1 must have the local X0's vtable). |
 
@@ -200,13 +208,47 @@ that it logs `partner_look=timeout`. `mirror=on` is refused while look is not
 
 - type > 6, or LIQUID (4): refused.
 - parts > 27, camo > 116 or hand > 7: refused.
-- Quiet is forced to parts 27, camo 116, hand 0; Ocelot to 26, 115, 0.
-- AVATAR becomes SNAKE (`avatar_as_snake=1`): its avatar record is neither sent
-  nor settable.
+- SNAKE (0): refused (`face`) when face + 3 (face_equip 1 or 2) is 6 or more.
+  **[V]** The Snake face package selector 0xAE95D0 (called at 0x9B4565 with
+  type, parts, face, face_equip) indexes the 16-byte table at 0x2A827D0 with
+  that value and no bounds check (0xAE967D..0xAE9687); the table has 6 path
+  entries and index 6 onward are float constants.
+- Quiet is forced to parts 27, camo 116, hand 0, face 0, face_equip 0; Ocelot
+  to 26, 115, 0, 0, 0.
+- AVATAR becomes SNAKE with face 0 and face_equip 0 (`avatar_as_snake=1`): its
+  avatar record is neither sent nor settable, and its face id is not a Snake
+  face.
+- face_equip is otherwise passed through: **[V]** the package builder only
+  compares it (==1/2 at 0xAE962D, ==3/4/5 at 0x9B1035, !=0 at
+  0xAE9360/0xAE9220). A DD (1/2) face goes to the staff face database lookup
+  (0x9B45B6) unchecked; that lookup was not traced [S].
+
+The receive codec also refuses an animation extension whose flags say valid
+but whose stance is not 1..3, and one that carries a stance or speed without
+the valid flag (`sync::valid_anim`).
 
 ### Census and probes
-- `census=1` logs `partner_census` for both blocks. It is also logged once per
-  realize when a native feature needs it.
+- `census=1` logs `partner_census` for both blocks (with `stance=` and
+  `verdict=`). It is also logged once per realize when a native feature needs
+  it.
+
+### Log caps
+`partner_anim=source` and `partner_aset=q` share one 64-line cap
+(`partner_anim=capped; limit=64`). `partner_stance` has three: set/req (ok),
+refused, and reverted, each 64 lines
+(`partner_stance=capped; limit=64; kind=set|refused|reverted`). The counters
+keep going after the caps in `partner_stance=summary; last=<stance>; sets=..;
+reqs=..; refused=..; reverts=..`, logged at the first stance event and then at
+most every 10 s while they change. A trigger that changes `anim=` or `aset=`
+re-arms the change-only lines.
+
+### Threading
+The native calls run inside the partner tick receipt, that is inside
+`ObserveEntry` with `receipt_lock` held, on the same thread and frame phase as
+the proven Lua Warp. A callee that reached luaL_loadbuffer on this thread
+cannot re-enter that lock: the bridge forwards loads issued while its selector
+runs without calling the selector (`script_load_bridge.cpp`, thread_local
+`selecting`, `tests/script_load_bridge_tests.cpp` selector_reentry).
 - `probe=ps` logs the per-id PS fields (+0x740 mask, +0x738 records, +0x280,
   +0x2D0/+0x2D8, stance word) at 4 Hz. It is read-only and its layouts are
   partly [S].
@@ -255,22 +297,29 @@ allows up to 127 bytes and accepts `move=`, `anim=`, `aset=`, `reset=`,
 
 - `partner_stage=3`
 - `partner_source=net`
-- `partner_apply=hybrid`
-- `partner_anim=net`
-- `partner_aset=qs`
 - `partner_look=net`
+- `partner_apply=warp`, `partner_anim=off` (the proven movement, no native
+  animation calls)
 
-The guest plays Quiet. Console keys:
+The guest plays Quiet. The unverified native paths stay off until they are
+turned on one at a time, so a crash or hang can be attributed to the last
+step (each one logs `partner_stage=changed`). `-Experimental` (also
+`Play-Offline-Coop.bat -Experimental`) starts with both on (`partner_apply=hybrid`,
+`partner_reset=n`, `partner_anim=net`, `partner_aset=qs`). Console keys:
 
 | Key | Action |
 |---|---|
-| [R] | Re-sends the experiment settings |
+| [M] | Smooth movement on/off (`apply=hybrid reset=n` / `apply=warp`) |
+| [A] | Stance sync on/off (`anim=net aset=qs` / `anim=off`) |
 | [W] | `apply=warp anim=off` (the proven movement, no animation calls) |
+| [R] | Re-sends the current settings |
 | [C] | `census=1` |
 
-The status line shows the character each copy plays, the partner's loaded look,
-movement smooth or Warp (and why), the partner's stance, and any native call
-fault.
+Every key sends the whole line, for example `stage=3 source=net apply=hybrid
+reset=n anim=net aset=qs look=net`. The status line shows the character each
+copy plays, the partner's loaded look, the current `apply/anim` settings,
+movement smooth or Warp (and why), the partner's stance (also from
+`partner_stance=summary`), and any native call fault.
 
 ## 7. Live experiments (in order) and what is unverified
 
@@ -282,18 +331,24 @@ experiments; `Invoke-PartnerExperiment.ps1` runs their plans.
    - Expect: two `partner_census` lines with `verdict=ok` and `same_t=1`.
    - Then: pin `t_vt`/`t68`/`t70` (and a0/c0) in the generator after
      re-verifying them statically.
-2. **A1, arrays only.** Trigger: `stage=3 source=fixed apply=warp anim=mirror
-   aset=q`, with `partner_anim_probe=1`. The host cycles through its stances.
+2. **A1, arrays only** (after M1 passes). Trigger: `stage=3 source=fixed
+   apply=hybrid reset=n anim=mirror aset=q`, with `partner_anim_probe=1`. The
+   host cycles through its stances. Hybrid places the partner with one Warp and
+   then moves it without Warp's resets, which could otherwise mask a pose
+   change; `Test-PartnerSpike` notes a per-tick Warp (apply=warp, or an xform
+   fallback) in the segment.
    - Expect: `partner_aset=q; state=applied`, and `partner_anim` lines with
      slot 1 equal to slot 0.
    - Visual prediction: no pose change. Report it if the pose does change.
 3. **A2, stance at activation.** With `aset=q` and the host crouched, send
    `stage=1`, wait for `partner_realized=0`, then send `stage=3`.
    - Does the partner re-appear crouched?
-4. **A3, SetStance.** Trigger: `... anim=mirror aset=qs`. The host toggles
-   stance.
+4. **A3, SetStance** (after M1 passes). Trigger: `stage=3 source=fixed
+   apply=hybrid reset=n anim=mirror aset=qs`. The host toggles stance.
    - Expect: `partner_stance=set; from=..; to=..; psw=0x22`, with no `reverted`.
-   - Watch the partner's idle stance. On revert or pop, try **A4** with `aset=r`.
+   - Watch the partner's idle stance. A `reverted` without a per-tick Warp
+     points at the action plugin: try **A4** with `aset=r`. With a per-tick
+     Warp it is not attributable (Warp's resets), and the verdict says so.
 5. **M1, xform.** Trigger: `stage=3 source=orbit apply=xform reset=n`.
    - Expect: `partner_xform=applied`, `partner_xform` lines with
      `err_mm < 50` and `yaw_err_mrad < 50`, and no `partner_call=fault`.
@@ -344,6 +399,10 @@ experiments; `Invoke-PartnerExperiment.ps1` runs their plans.
 - Whether a local Quiet on the guest is stable in offline-v1 (sounds, pause
   menu, buddy conflicts, equipment).
 - Whether calling game code inside the luaL_loadbuffer receipt is always safe.
-  It is the same thread and phase as the proven Lua Warp. No callee is expected
-  to compile Lua, which would deadlock the receipt lock.
+  It is the same thread and phase as the proven Lua Warp. A callee that loaded
+  Lua on this thread would not deadlock (the bridge forwards nested loads
+  without the selector, section 4 Threading), but a callee waiting on another
+  thread that is itself blocked on the receipt lock would; none is expected.
+- Whether a DD (1/2) face id outside the staff database is handled by the
+  face lookup at 0x9B45B6 (passed through unchecked).
 - The PS probe layouts other than +0x738/+0x740.
