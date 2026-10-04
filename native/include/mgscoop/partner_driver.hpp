@@ -157,6 +157,8 @@ struct Hooks {
                                    std::size_t capacity) noexcept;
     bool (*dm_patch)(void* context, bool on, const char* reason) noexcept;  // apply/revert; returns the resulting patched state
     bool (*dm_clear_pending)(void* context) noexcept;
+    // Clears the hook's recorded window fault (MissionStart; may be null).
+    void (*reset_input_fault)(void* context) noexcept;
 };
 
 // Times passed in by the caller: QPC milliseconds (cadence, poses, net) and
@@ -192,6 +194,8 @@ struct Settings {
     bool pad_probe;
     bool look_gate, look_recover;
     PartnerDm dm;
+    // holdlog=1 trigger (effective only with lab partner_input_holdlog=1).
+    bool holdlog;
 };
 
 // A capped change-only log family (one per experiment head).
@@ -294,7 +298,6 @@ struct Mission {
     bool input_faulted;
     partner_input::Arm last_arm;   // last published (for the gen bump via SameArm)
     bool have_arm;
-    std::uint32_t tap_seq;
     std::uint32_t tap_bits;
     std::uint32_t press_bits;
     std::uint64_t press_until_ms;
@@ -320,10 +323,19 @@ struct Mission {
     bool input_stale_logged;
     std::uint64_t correct_over_ms; // when the body first exceeded correct_mm
     std::uint64_t correct_last_ms;
-    bool input_census_logged;
+    unsigned input_census_lines;            // partner_input_census lines this mission (cap kRefusedCap)
+    std::uint32_t us_max_acc;               // max window time since the last 1 Hz line
+    // Window statistics are hook totals: the line logs deltas against these.
+    partner_input::WindowStats arm_base;    // at the last arm transition
+    partner_input::WindowStats stats_base;  // at the last 1 Hz line
+    std::uint64_t stats_base_ms;
+    bool input_fallback;                    // apply=input fell back to Warp (logged on the transition)
     // --- Round 3: direct motion.
     bool dm_patched;
     bool dm_census_logged;
+    bool dm_census_loaded;          // the census was logged with instance 1 loaded (once per realize)
+    const char* dm_refused_state;   // last change-only dm=on refusal (input_active)
+    bool dm_conflict_logged;
     std::uint64_t dm_probe_ms;
     unsigned dm_probe_lines;
     bool dm_probe_capped;
@@ -363,6 +375,13 @@ struct Driver {
     std::uint8_t dmplay_gani;
     bool dmstop_pending;
     bool p218_pending, p218_on;
+    bool holdlog_changed;
+    // census=1 also latches these, consumed by the input/DM census (TickInput
+    // logs the input census even with input=off; failing verdicts included).
+    bool input_census_pending, dm_census_pending;
+    // tap= sequence: process-lifetime (the hook keeps its last seen value
+    // across gens and missions, so a value is never reused).
+    std::uint32_t tap_seq;
     // Bumped by every look= trigger and by parts=explicit outside look=copy:
     // a new value re-applies the desired look once.
     std::uint32_t look_forced_rev;

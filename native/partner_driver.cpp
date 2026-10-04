@@ -332,7 +332,7 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
     a.config.stick_pct = set.stick_pct;
     a.config.stale_ms = set.stale_ms;
     a.host_cam_cdeg = tick.cam_cdeg;
-    a.tap_seq = m.tap_seq;
+    a.tap_seq = d.tap_seq;
     a.tap_bits = m.tap_bits;
     a.press_bits = m.press_bits;
     a.press_until_ms = m.press_until_ms;
@@ -341,7 +341,8 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
     return a;
 }
 
-// Disarms the input window: publishes a disarmed Arm and logs the transition.
+// Disarms the input window: publishes a disarmed Arm and logs the transition
+// (windows = block-1 windows since the arm).
 void DisarmInput(Driver& d, const Hooks& h, const char* reason) noexcept {
     Mission& m = d.mission;
     if (m.input_armed) {
@@ -354,10 +355,17 @@ void DisarmInput(Driver& d, const Hooks& h, const char* reason) noexcept {
         if (h.drain_input_stats) {
             InputStats s{};
             h.drain_input_stats(h.context, s);
-            windows = s.window.windows;
+            windows = s.window.windows - m.arm_base.windows;
         }
         EmitInput(m, h, "partner_input=disarmed; reason=%s; gen=%u; windows=%u\r\n", reason, m.input_gen, windows);
     }
+}
+// Always publishes a disarmed Arm (no log): used where the mission state may
+// not know about an Arm still published (MissionStart, refused ticks).
+void PublishDisarmed(Driver& d, const Hooks& h) noexcept {
+    pin::Arm a{};
+    a.gen = d.mission.input_gen;
+    if (h.publish_arm) h.publish_arm(h.context, a);
 }
 
 // Reverts the DM patch (if ours) and drops pending play state; logs the reason.
@@ -376,7 +384,7 @@ void TickDm(Driver& d, const Hooks& h, const pp::State& st, const Settings& set,
     const std::uint64_t now = clock.now_ms;
     if (set.dm == PartnerDm::off) {
         if (m.dm_patched) RevertDm(d, h, "trigger");
-        d.dmplay_pending = d.dmstop_pending = false;
+        d.dmplay_pending = d.dmstop_pending = d.dm_census_pending = false;
         return;
     }
     if (!h.dm_targets) { d.dmplay_pending = d.dmstop_pending = false; return; }
@@ -386,21 +394,41 @@ void TickDm(Driver& d, const Hooks& h, const pp::State& st, const Settings& set,
     const bool dm_ok = h.read_dm && h.read_dm(h.context, st, targets, dm);
     const bool realized = pp::Realized(st, partner::partner_index);
     const bool parts_loaded = realized && st.parts[1] == c::parts_loaded_state;
-    // Census: once per realize, or on census=1 (handled by the driver's census_pending).
-    if ((d.census_pending || !m.dm_census_logged) && h.format_dm_census) {
-        if (parts_loaded || d.census_pending) m.dm_census_logged = true;
+    // Census: the first eligible tick (whatever the verdict), once more when
+    // instance 1 is loaded (once per realize), and on census=1. Never per tick.
+    if ((d.dm_census_pending || !m.dm_census_logged || (parts_loaded && !m.dm_census_loaded)) && h.format_dm_census) {
+        d.dm_census_pending = false;
+        m.dm_census_logged = true;
+        if (parts_loaded) m.dm_census_loaded = true;
         char line[320]{};
         if (h.format_dm_census(h.context, targets, line, sizeof(line))) Emit(h, line);
     }
-    // dm=on: patch once stage 3, parts loaded and input off all hold (and the
-    // input window is not armed: the two levers are mutually exclusive).
+    // dm=on: patch once stage 3, parts loaded and input off all hold (the two
+    // levers are mutually exclusive: an armed window or input!=off refuses).
     if (set.dm == PartnerDm::on && !m.dm_patched) {
-        if (m.input_armed) {
-            if (!m.dm_census_logged) {}  // no-op; the refusal below is change-only via dm_play attempts
-            Emit(h, "partner_dm=refused; reason=input_active\r\n");
-        } else if (set.stage >= 3 && parts_loaded && set.input == PartnerInput::off && !terminating && h.dm_patch) {
-            m.dm_patched = h.dm_patch(h.context, true, "trigger");
+        const char* refused = (m.input_armed || set.input != PartnerInput::off) ? "input_active" : nullptr;
+        if (refused) {
+            if (m.dm_refused_state != refused) {
+                m.dm_refused_state = refused;
+                EmitFormat(h, "partner_dm=refused; reason=%s\r\n", refused);
+            }
+        } else {
+            m.dm_refused_state = nullptr;
+            if (set.stage >= 3 && parts_loaded && !terminating && h.dm_patch) m.dm_patched = h.dm_patch(h.context, true, "trigger");
         }
+    }
+    // The partner's DM entry/End write CAM+0x1F0/+0x200 = 0 for any id
+    // (0x1198D9D, 0x11992E9): log once when that would meet a host camera
+    // connect or the host's own DM while ours is active.
+    if (dm_ok && dm.q18[1] == c::q18_dm_act) {
+        const bool conflict = dm.q18[0] == c::q18_dm_act || (dm.cam_ok && (dm.cam1f0 || dm.cam200));
+        if (conflict && !m.dm_conflict_logged) {
+            m.dm_conflict_logged = true;
+            EmitFormat(h, "partner_dm=conflict; q18_0=0x%x; cam1f0=0x%llx; cam200=%u\r\n", unsigned(dm.q18[0]),
+                       static_cast<unsigned long long>(dm.cam1f0), dm.cam200);
+        }
+    } else {
+        m.dm_conflict_logged = false;
     }
     // 2 Hz probe (change-only).
     if (dm_ok && h.format_dm_probe && now - m.dm_probe_ms >= kDmProbeMs && m.dm_probe_lines < kDmProbeCap) {
@@ -428,9 +456,13 @@ void TickDm(Driver& d, const Hooks& h, const pp::State& st, const Settings& set,
         d.dmplay_pending = false;
         const bool busy = dm_ok && (dm.q18[0] == c::q18_dm_act || dm.q18[1] == c::q18_dm_act);
         const bool pending = dm_ok && (dm.g388 & 0x3C) != 0;
+        // Without a locator the entry writes CAM+0x1F0 = 0 and CAM+0x200 = 0
+        // (0x1198D9D): a no-op only while both already are 0.
+        const bool cam_idle = dm_ok && dm.cam_ok && dm.cam1f0 == 0 && dm.cam200 == 0;
         if (!m.dm_patched) Emit(h, "partner_dm=refused; reason=not_patched\r\n");
         else if (!parts_loaded) Emit(h, "partner_dm=refused; reason=parts\r\n");
         else if (!dm_ok || busy || pending) Emit(h, "partner_dm=refused; reason=busy\r\n");
+        else if (!cam_idle) Emit(h, "partner_dm=refused; reason=cam_connect\r\n");
         else {
             ops |= partner::op::dm_play;
             gani = d.dmplay_gani;
@@ -449,26 +481,64 @@ void TickDm(Driver& d, const Hooks& h, const pp::State& st, const Settings& set,
     }
 }
 
+// The input census line (census=1 and once per arm transition, capped).
+void LogInputCensus(Mission& m, const Hooks& h, const pp::InputTargets& targets) noexcept {
+    if (!h.format_input_census || m.input_census_lines >= kRefusedCap) return;
+    char line[pp::input_census_capacity]{};
+    if (h.format_input_census(h.context, targets, line, sizeof(line))) {
+        ++m.input_census_lines;
+        Emit(h, line);
+    }
+}
+
 void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State& st, const Settings& set, const partner::Tick& tick,
-               const Clock& clock, bool terminating, bool realized, bool parts_loaded, bool pose_valid, const partner::Pose& pose,
-               pose::Status sample_status, std::uint32_t& ops) noexcept {
+               const Clock& clock, bool terminating, bool parts_loaded, bool pose_valid, const partner::Pose& pose, bool relink,
+               std::uint32_t& ops) noexcept {
     Mission& m = d.mission;
     const std::uint64_t now = clock.now_ms;
-    (void)realized;  // census covers realization; kept for symmetry with Tick
-    // Diagnostic P+0x218 window: pending request, then auto-expiry.
+    // Diagnostic P+0x218 window: pending request, then auto-expiry. Hazardous
+    // (P+0x218 is paired with P+0x214 / the local block P+0x58, e.g. 0x11AD05D
+    // and 0xFE8F85): it needs the lab key and the camera sandbox.
     if (d.p218_pending) {
         d.p218_pending = false;
         if (d.p218_on) {
             if (!lab.partner_input_p218_allow) Emit(h, "partner_input=p218_refused; reason=not_allowed\r\n");
-            else { m.p218_active = true; m.p218_ms = now; Emit(h, "partner_input=p218; on=1\r\n"); }
+            else if (set.input_cam != PartnerInputCam::sandbox) Emit(h, "partner_input=p218_refused; reason=cam\r\n");
+            else {
+                m.p218_active = true;
+                m.p218_ms = now;
+                Emit(h, "partner_input=p218; on=1; hazard=index0_routing; restart_after=1\r\n");
+            }
         } else if (m.p218_active) {
             m.p218_active = false;
             Emit(h, "partner_input=p218; on=0\r\n");
         }
     }
+    if (m.p218_active && set.input_cam != PartnerInputCam::sandbox) {
+        m.p218_active = false;
+        Emit(h, "partner_input=p218; on=0; reason=cam\r\n");
+    }
     if (m.p218_active && now - m.p218_ms >= kP218MaxMs) {
         m.p218_active = false;
         Emit(h, "partner_input=p218_expired\r\n");
+    }
+    // holdlog=0|1 (I5): effective only with the lab key.
+    if (d.holdlog_changed) {
+        d.holdlog_changed = false;
+        if (set.holdlog && !lab.partner_input_holdlog) Emit(h, "partner_input=holdlog_refused; reason=not_allowed\r\n");
+        else EmitFormat(h, "partner_input=holdlog; on=%u\r\n", set.holdlog ? 1u : 0u);
+    }
+    // Hook statistics, drained once per tick. A recorded window fault disables
+    // native calls, the window and the DM patch for the rest of the mission.
+    InputStats s{};
+    if (h.drain_input_stats) h.drain_input_stats(h.context, s);
+    if (s.window.us_max > m.us_max_acc) m.us_max_acc = s.window.us_max;
+    if (s.window.fault_phase && !m.input_faulted) {
+        m.input_faulted = true;
+        m.native_disabled = true;
+        EmitFormat(h, "partner_call=fault; fn=input_window; native_calls=disabled\r\n");
+        DisarmInput(d, h, "fault");
+        if (m.dm_patched) RevertDm(d, h, "fault");
     }
     // Sender: the local pad, every tick, independent of arming (stage >= 1).
     if (set.isend && set.stage >= 1 && h.read_pad && h.submit_input) {
@@ -502,10 +572,23 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
                 raw.pp_mask[1], raw.pp_mask[2], unsigned(raw.kb_flags), tick.cam_cdeg);
         }
     }
+    // The block-1 targets (pure reads), resolved at most once per tick.
+    pp::InputTargets targets{};
+    const char* census = nullptr;
+    bool resolved = false;
+    const auto resolve = [&]() noexcept {
+        if (resolved) return;
+        resolved = true;
+        if (h.input_targets) census = h.input_targets(h.context, st, targets);
+        else census = targets.refusal = "unavailable";
+    };
+    // census=1: logged now, armed or not, failing verdicts included (I0).
+    if (d.input_census_pending) {
+        d.input_census_pending = false;
+        resolve();
+        LogInputCensus(m, h, targets);
+    }
     const bool input_apply = set.apply == PartnerApply::input;
-    // Relink while armed: disarm for one tick, warp, re-arm.
-    const bool relink = set.source == PartnerSource::net && m.last_status == pose::Status::lost &&
-                        sample_status == pose::Status::live;
     // input=off: no window; keep the proven behaviour.
     if (set.input == PartnerInput::off) {
         DisarmInput(d, h, "trigger");
@@ -521,9 +604,12 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
     if (set.anim != PartnerAnim::off) fail("anim");
     if (set.dm == PartnerDm::on) fail("dm");
     if (set.stage < 3) fail("stage");
-    pp::InputTargets targets{};
-    const char* census = h.input_targets ? h.input_targets(h.context, st, targets) : "unavailable";
-    if (!reason[0] && census) { StringCchPrintfA(reason, sizeof(reason), "census_%s", census); }
+    resolve();
+    // "busy": a window was open across every read attempt (hook thread !=
+    // Lua thread). An armed window keeps its published Arm for this tick.
+    const bool busy = census && std::strcmp(census, "busy") == 0;
+    const bool keep_arm = busy && m.input_armed;
+    if (!reason[0] && census && !keep_arm) { StringCchPrintfA(reason, sizeof(reason), "census_%s", census); }
     // Placement (apply=input): a Lua Warp places the body while disarmed, on
     // the first parts load and on a net relink (lost -> live). It runs only
     // when nothing else refuses arming, takes this whole tick (publishing a
@@ -560,7 +646,7 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
         if (!will_arm) Emit(h, "partner_input=tap_refused; reason=not_armed\r\n");
         else if (d.tap_bits_pending & ~set.input_mask) Emit(h, "partner_input=tap_refused; reason=mask\r\n");
         else {
-            ++m.tap_seq;
+            ++d.tap_seq;
             m.tap_bits = d.tap_bits_pending;
             EmitFormat(h, "partner_input=tap; bits=0x%x; frames=4\r\n", d.tap_bits_pending);
         }
@@ -591,28 +677,30 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
     }
     m.input_refused_text[0] = 0;
     // Build and publish the Arm (gen bumps only when a tracked field changes).
-    pin::Arm arm = BuildArm(d, set, targets, st, tick, now, true);
-    arm.holdlog = lab.partner_input_holdlog;
-    if (!m.have_arm || !pin::SameArm(arm, m.last_arm)) {
-        arm.gen = ++m.input_gen;
-    }
-    arm.gen = m.input_gen;
-    if (h.publish_arm) h.publish_arm(h.context, arm);
-    m.last_arm = arm;
-    m.have_arm = true;
-    // Census: census=1, or once per arm.
-    if ((d.census_pending || !m.input_census_logged) && h.format_input_census) {
-        m.input_census_logged = true;
-        char line[pp::input_census_capacity]{};
-        if (h.format_input_census(h.context, targets, line, sizeof(line))) Emit(h, line);
+    // A busy tick keeps the Arm already published (its targets are unread).
+    if (!keep_arm) {
+        pin::Arm arm = BuildArm(d, set, targets, st, tick, now, true);
+        arm.holdlog = lab.partner_input_holdlog && set.holdlog;
+        if (!m.have_arm || !pin::SameArm(arm, m.last_arm)) ++m.input_gen;
+        arm.gen = m.input_gen;
+        if (h.publish_arm) h.publish_arm(h.context, arm);
+        m.last_arm = arm;
+        m.have_arm = true;
     }
     if (!m.input_armed) {
         m.input_armed = true;
+        m.arm_base = s.window;
+        m.stats_base = s.window;
+        m.stats_base_ms = now;
+        m.input_stats_ms = now;
+        m.input_stale_logged = false;
+        m.us_max_acc = 0;
         char words[4]{};
         EmitInput(m, h, "partner_input=armed; mode=%s; gen=%u; apply=%s; cam=%s; hold=%s; yaw=%s; words=%s; mask=0x%x; correct_mm=%u; p218=%u\r\n",
                   PartnerInputName(set.input), m.input_gen, PartnerApplyName(set.apply), PartnerInputCamName(set.input_cam),
                   PartnerInputHoldName(set.input_hold), PartnerInputYawName(set.input_yaw), WordsText(set, words), set.input_mask,
                   set.correct_mm, m.p218_active ? 1u : 0u);
+        LogInputCensus(m, h, targets);  // once per arm
     }
     // Correction (apply=input, armed): a rare xform snap when the body drifts.
     if (input_apply && set.correct_mm > 0 && m.body_ok && m.have_cmd) {
@@ -644,26 +732,40 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
             m.correct_over_ms = 0;
         }
     }
-    // Drained stats: 1 Hz input line, 2 Hz body line, stale/live transitions.
-    InputStats s{};
-    if (h.drain_input_stats) h.drain_input_stats(h.context, s);
-    const bool stale = s.window.stale > 0 && s.window.last_age_ms > set.stale_ms;
-    if (!m.input_stale_logged || stale != m.input_stale) {
-        m.input_stale_logged = true;
-        m.input_stale = stale;
-        if (stale) EmitInput(m, h, "partner_input=stale; age_ms=%u\r\n", s.window.last_age_ms);
-        else EmitInput(m, h, "partner_input=live\r\n");
+    // Stale/live transitions (net only, once this arm has run a window): the
+    // state of the most recent window (a missing sample is stale too).
+    const std::uint32_t windows_armed = s.window.windows - m.arm_base.windows;
+    if (set.input == PartnerInput::net && windows_armed > 0) {
+        const bool stale = s.window.last_stale != 0;
+        if (!m.input_stale_logged || stale != m.input_stale) {
+            m.input_stale_logged = true;
+            m.input_stale = stale;
+            if (!stale) EmitInput(m, h, "partner_input=live\r\n");
+            else if (s.window.last_age_ms == pin::kNoSample) EmitInput(m, h, "partner_input=stale; age_ms=none\r\n");
+            else EmitInput(m, h, "partner_input=stale; age_ms=%u\r\n", s.window.last_age_ms);
+        }
     }
+    // 1 Hz line: windows since the arm; per_s, root1_calls, skips and stale
+    // are this interval's deltas (per_s normalized to one second).
     if (now - m.input_stats_ms >= kInputStatsMs) {
-        const std::uint32_t per_s = s.window.windows;
-        m.input_stats_ms = now;
+        const pin::WindowStats& b = m.stats_base;
+        const std::uint64_t dt = now > m.stats_base_ms ? now - m.stats_base_ms : 0;
+        const std::uint32_t dw = s.window.windows - b.windows;
+        const std::uint32_t per_s = dt ? Clamp32(static_cast<std::uint64_t>(dw) * 1000u / dt) : 0u;
+        char age[16]{};
+        if (s.window.last_age_ms == pin::kNoSample) StringCchCopyA(age, sizeof(age), "none");
+        else StringCchPrintfA(age, sizeof(age), "%u", s.window.last_age_ms);
         EmitInput(m, h,
-            "partner_input; mode=%s; windows=%u; per_s=%u; root1_calls=%u; skips=%u; skip=%s; stale=%u; age_ms=%u; held=0x%x; "
+            "partner_input; mode=%s; windows=%u; per_s=%u; root1_calls=%u; skips=%u; skip=%s; stale=%u; age_ms=%s; held=0x%x; "
             "lx=%d; ly=%d; dir_mrad=%d; mag=%d; cam_dirty=0x%x; cam_restored=%u; hold_calls=%u; us_max=%u; hook_thread=%u; lua_thread=%u\r\n",
-            PartnerInputName(set.input), s.window.windows, per_s, s.window.root1_calls, s.window.skips,
-            pin::SkipName(s.window.last_skip), s.window.stale, s.window.last_age_ms, s.window.last_held, s.window.last_lx,
-            s.window.last_ly, s.window.last_dir, s.window.last_mag, s.window.cam_dirty_or, s.window.cam_restored,
-            s.window.hold_calls, s.window.us_max, s.window.hook_thread, static_cast<unsigned>(GetCurrentThreadId()));
+            PartnerInputName(set.input), windows_armed, per_s, s.window.root1_calls - b.root1_calls, s.window.skips - b.skips,
+            pin::SkipName(s.window.last_skip), s.window.stale - b.stale, age, s.window.last_held, s.window.last_lx,
+            s.window.last_ly, s.window.last_dir, s.window.last_mag, s.window.cam_dirty_or, s.window.cam_restored - b.cam_restored,
+            s.window.hold_calls - b.hold_calls, m.us_max_acc, s.window.hook_thread, static_cast<unsigned>(GetCurrentThreadId()));
+        m.input_stats_ms = now;
+        m.stats_base = s.window;
+        m.stats_base_ms = now;
+        m.us_max_acc = 0;
     }
     // Hold log lines (I5), change-only per button.
     for (unsigned i = 0; i < s.hold_count && m.hold_logs < kHoldLogCap; ++i) {
@@ -675,13 +777,6 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
         if (m.hold_last_count < 8) m.hold_last[m.hold_last_count++] = r;
         ++m.hold_logs;
         EmitFormat(h, "partner_holdlog; btn=%u; frames=%u; result=%u\r\n", r.btn, r.frames, r.result);
-    }
-    if (s.window.fault_phase && !m.input_faulted) {
-        m.input_faulted = true;
-        m.native_disabled = true;
-        EmitFormat(h, "partner_call=fault; fn=input_window; native_calls=disabled\r\n");
-        DisarmInput(d, h, "fault");
-        if (m.dm_patched) RevertDm(d, h, "fault");
     }
     // Body line (2 Hz): position/heading/speed and the slot-1 anim fields.
     if (h.read_body && m.body_ok && now - m.body_ms >= kBodyMs && m.body_lines < kBodyCap) {
@@ -715,7 +810,7 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
         m.body_prev_ms = now;
         m.body_prev_ok = true;
     }
-    // The 1 Hz patch-live check.
+    // The patch-live check.
     if (h.input_hook_live && !h.input_hook_live(h.context)) {
         Emit(h, "partner_input_hook=lost\r\n");
         DisarmInput(d, h, "hook_lost");
@@ -752,10 +847,19 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.look_gate = lab.partner_look_gate;
     d.settings.look_recover = lab.partner_look_recover;
     d.settings.dm = lab.partner_dm;
+    d.settings.holdlog = lab.partner_input_holdlog;
     d.look_forced_rev = 1;
 }
 
 void MissionStart(Driver& d, const Hooks& h) noexcept {
+    // A missed MissionEnd/Stop must not leave the window armed or the DM
+    // patch applied into the next mission: tear down before the reset, and
+    // always publish a disarmed Arm. The hook's recorded fault is cleared
+    // (input_faulted is per mission).
+    DisarmInput(d, h, "mission_start");
+    if (d.mission.dm_patched) RevertDm(d, h, "mission_start");
+    PublishDisarmed(d, h);
+    if (h.reset_input_fault) h.reset_input_fault(h.context);
     d.mission = Mission{};
     d.mission.anim_source = -1;
     d.mission.last_status = pose::Status::none;
@@ -763,6 +867,7 @@ void MissionStart(Driver& d, const Hooks& h) noexcept {
     d.mirror_pending = false;
     d.census_pending = false;
     d.tap_pending = d.press_pending = d.dmplay_pending = d.dmstop_pending = d.p218_pending = false;
+    d.input_census_pending = d.dm_census_pending = false;
     if (!h.take_trigger) return;
     char text[partner::max_trigger + 1]{};
     std::size_t length = 0;
@@ -790,6 +895,8 @@ bool Cfg(Driver& d, const Hooks& h, const char* precheck, std::uint64_t now_ms) 
     }
     if (reason) {
         m.cfg_ready = false;
+        DisarmInput(d, h, "cfg_refused");
+        if (m.dm_patched) RevertDm(d, h, "cfg_refused");
         EmitFormat(h, "partner_cfg=refused; reason=%s\r\n", reason);
         return false;
     }
@@ -874,6 +981,7 @@ void ApplyTrigger(Driver& d, const Hooks& h, const partner::Trigger& trigger, bo
     if (trigger.has_dm) d.settings.dm = trigger.dm;
     if (trigger.has_lookgate) d.settings.look_gate = trigger.lookgate;
     if (trigger.has_lookrecover) d.settings.look_recover = trigger.lookrecover;
+    if (trigger.has_holdlog) { d.settings.holdlog = trigger.holdlog; d.holdlog_changed = true; }
     d.settings.stage = stage;
     char words_text[4]{};
     FormatPartnerWords(d.settings.input_words, words_text);
@@ -885,7 +993,7 @@ void ApplyTrigger(Driver& d, const Hooks& h, const partner::Trigger& trigger, bo
                PartnerInputName(d.settings.input), PartnerInputCamName(d.settings.input_cam),
                PartnerInputHoldName(d.settings.input_hold), PartnerInputYawName(d.settings.input_yaw), words_text,
                d.settings.input_mask, d.settings.correct_mm, d.settings.isend ? 1u : 0u, PartnerDmName(d.settings.dm));
-    if (trigger.census) d.census_pending = true;
+    if (trigger.census) d.census_pending = d.input_census_pending = d.dm_census_pending = true;
     // Round 3 one-shots.
     if (trigger.tap) { d.tap_pending = true; d.tap_bits_pending = trigger.tap_bits; }
     if (trigger.press) { d.press_pending = true; d.press_bits_pending = trigger.press_bits; d.press_ms_pending = trigger.press_ms; }
@@ -943,6 +1051,9 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             ++m.tick_rejects;
             Emit(h, "partner_tick=rejected; reason=parse\r\n");
         }
+        // Without a tick nothing re-validates the window or the DM patch.
+        DisarmInput(d, h, "tick_rejected");
+        if (m.dm_patched) RevertDm(d, h, "tick_rejected");
         return false;
     }
     ++m.ticks;
@@ -957,6 +1068,10 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             char line[96]{};
             if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "partner_cfg=refused; reason=%s\r\n", name))) LogCfgFlip(m, h, line);
         }
+        // The state guards failed (count, local, online bit, sync, ...): no
+        // window and no DM patch while they fail; both re-arm on their own.
+        DisarmInput(d, h, "cfg_refused");
+        if (m.dm_patched) RevertDm(d, h, "cfg_refused");
         return false;
     }
     if (m.refusal) {
@@ -1083,6 +1198,8 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     // Warp would). The body readback compares the previous command.
     bool transform_warp = false;
     const bool transform = PartnerApplyIsTransform(set.apply);
+    // lost -> live on the net source this tick (hybrid and apply=input relink).
+    const bool relink = set.source == PartnerSource::net && m.last_status == pose::Status::lost && sample_status == pose::Status::live;
     if ((transform || set.apply == PartnerApply::input) && parts_loaded && h.read_body) {
         m.body_ok = h.read_body(h.context, st, m.body_pos, m.body_quat);
     } else {
@@ -1102,7 +1219,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         const char* hybrid_reason = nullptr;
         if (set.apply == PartnerApply::hybrid && parts_loaded) {
             if (!m.hybrid_placed) hybrid_reason = "first";
-            else if (set.source == PartnerSource::net && m.last_status == pose::Status::lost && sample_status == pose::Status::live)
+            else if (relink)
                 hybrid_reason = "relink";
             else if (m.body_ok && m.have_cmd &&
                      partner::DistanceMm(m.cmd.x_mm, m.cmd.y_mm, m.cmd.z_mm, MetresToMm(m.body_pos[0]), MetresToMm(m.body_pos[1]),
@@ -1419,6 +1536,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         m.realized = false;
         m.hybrid_placed = false;
         m.census_logged = false;
+        m.dm_census_loaded = false;
         m.stance = partner::StanceDebounce{};
         if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "partner_realized=0; R=1; ms_after_realize=%u\r\n",
                 Clamp32(now - m.realized_ms)))) LogTransition(m, h, line);
@@ -1482,10 +1600,25 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     }
     // Round 3: input lever (arming, placement, correction, sender, logs) and
     // the direct-motion lever. Either may add op bits and the DM gani.
+    // TickInput runs first: a trigger that turns input off and dm on (with a
+    // dmplay) disarms here, so TickDm can patch and play in the same tick.
     std::uint32_t extra_ops = 0;
     std::uint8_t gani = 0;
+    TickInput(d, h, lab, st, set, tick, clock, terminating, parts_loaded, pose_valid, pose, relink, extra_ops);
     TickDm(d, h, st, set, clock, terminating, extra_ops, gani);
-    TickInput(d, h, lab, st, set, tick, clock, terminating, realized, parts_loaded, pose_valid, pose, sample_status, extra_ops);
+    // apply=input without an armed window falls back to the proven Lua Warp
+    // every tick (refused, faulted, install refused, input=off, stage < 3).
+    if (set.apply == PartnerApply::input && !m.input_armed && pose_valid && set.stage >= 1) {
+        if (!(extra_ops & partner::op::warp)) {
+            extra_ops |= partner::op::warp;
+            if (!m.input_fallback) {
+                m.input_fallback = true;
+                EmitInput(m, h, "partner_input_place; reason=fallback; err_mm=0; via=warp\r\n");
+            }
+        }
+    } else if (m.input_armed) {
+        m.input_fallback = false;
+    }
     reply = partner::Reply{ops | extra_ops, partner::partner_index, pose.x_mm, pose.y_mm, pose.z_mm, pose.yaw_mrad, status, age_ms,
                            (ops & partner::op::set_parts_explicit) ? apply_look : partner::Look{}, gani};
     return true;

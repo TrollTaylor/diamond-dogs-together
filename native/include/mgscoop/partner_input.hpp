@@ -137,8 +137,11 @@ std::int32_t Milli(float value) noexcept;
 double NormalizeRadians(double radians) noexcept;
 
 // --- Arm: what the driver publishes to the hook (seqlock in the hook) -------
-// POD only. A change of any field bumps `gen`, which makes the hook reset the
-// edge state, the tap state and instance 1's private pad masks.
+// POD only. A change of any field bumps `gen`, which makes the hook reset
+// instance 1's private pad masks. The edge state, the tap state and the last
+// sample survive a gen bump on purpose: resetting them replayed the last tap
+// (tap_seq is cumulative) and turned a held bit into a synthetic press. The
+// driver's tap_seq is process-lifetime, so a new mission never reuses a value.
 struct Arm {
     std::uint32_t gen;
     bool enabled;   // the block-1 window runs
@@ -158,8 +161,15 @@ struct Arm {
 bool SameArm(const Arm& a, const Arm& b) noexcept;  // every field except gen, host_cam_cdeg and the one-shots
 
 // Hook statistics drained by the driver (the hook keeps atomics).
-enum class Skip : std::uint8_t { none, player, p_vtable, flags, sync, pp, src, cam, ids, root, plugin, rec, count };
+// state: P+0x208 count != 2, P+0x214 local index != 0, or the Q vtable changed.
+enum class Skip : std::uint8_t { none, player, p_vtable, flags, sync, state, pp, src, cam, ids, root, plugin, rec, count };
 const char* SkipName(Skip skip) noexcept;
+// Counters are process-lifetime totals (the driver logs deltas); us_max is
+// cleared by each drain. last_* describe the most recent composed window:
+// last_age_ms is kNoSample when that window had no valid sample, and
+// last_stale is 1 when it injected a neutral pad because the net input was
+// missing or older than stale_ms (net mode only).
+inline constexpr std::uint32_t kNoSample = 0xFFFFFFFFu;
 struct WindowStats {
     std::uint32_t windows, root1_calls, skips, stale, faults, hold_calls, cam_restored;
     std::uint32_t cam_dirty_or;
@@ -170,6 +180,7 @@ struct WindowStats {
     std::uint32_t last_held;
     std::int32_t last_lx, last_ly, last_dir, last_mag;  // x1000
     std::uint32_t last_age_ms;
+    std::uint8_t last_stale;
     std::uint8_t fault_phase;   // 0 none, 1 pre, 2 call, 3 post
     std::uint32_t fault_code;
 };

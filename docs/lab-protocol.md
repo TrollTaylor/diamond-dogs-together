@@ -171,7 +171,8 @@ stage=<0..3> source=<fixed|orbit|net> apply=<warp|slot|both|xform|hybrid|input> 
   tap=0x<hex> press=0x<hex>:<50..5000> dmplay=<0..9> dmstop=1   (one-shots)
 ```
 
-`census=1` (log `partner_census` for both blocks once; a trigger that changes
+`census=1` (log `partner_census` for both blocks once, plus `partner_input_census`
+even with `input=off` and `partner_dm_census` when `dm` is not off; a trigger that changes
 `anim=` or `aset=` also re-arms the change-only anim/stance lines), `parts=explicit`
 (one-shot op 16: re-apply the desired look; with `look=copy` the local look,
 variant F3b) and `mirror=on` (one-shot op 32, the mirror diagnostic: F3c, at
@@ -181,8 +182,15 @@ are the native parser's one-shot tokens (`native/partner_receipt.cpp`
 `ParseTrigger`). The round 3 one-shots are `tap`/`press` (held bits, only while
 the input window is armed and within `bits=`; refused with
 `partner_input=tap_refused; reason=mask|not_armed`), `dmplay`/`dmstop` (direct
-motion, `dmplay` only at stage 1+) and `p218=1` (the diagnostic P+0x218 window,
-needs `lab.ini partner_input_p218_allow=1`, auto-expires after 20 s).
+motion, `dmplay` only at stage 1+; refused with `partner_dm=refused;
+reason=not_patched|parts|busy|cam_connect`) and `p218=1` (the hazardous
+diagnostic P+0x218 window: needs `lab.ini partner_input_p218_allow=1` and
+`cam=sandbox`, auto-expires after 20 s; quit without saving afterwards).
+`holdlog=0|1` is a setting, not a one-shot: it needs `lab.ini
+partner_input_holdlog=1` (else `partner_input=holdlog_refused;
+reason=not_allowed`) and acts only while the input window is armed. `press=`
+milliseconds have no leading zeros (`press=0x2:0100` is refused by both the
+scripts and the native parser).
 `parts`/`mirror`/`dmplay` take effect only at stage 1 or higher. The one-shots
 are not part of the `partner_stage=changed` line; Lua logs
 `partner_lua=event=parts_set; R=1; type=..; ...`, `event=mirror_on`,

@@ -720,7 +720,7 @@ try {
             'parts=implicit', 'parts=', 'mirror=off', 'Mirror=on', 'parts=explicit parts=explicit', 'mirror=on mirror=on', 'stop parts=explicit', 'mirror=on stop', 'stop stop',
             'move=warp apply=slot', 'apply=teleport', 'anim=on', 'aset=x', 'reset=b', 'look=ocelot', 'census=2', 'census', 'probe=on', 'stop census=1', 'look=net look=copy',
             'input=walk', 'cam=on', 'hold=own', 'yaw=left', 'words=xyz', 'words=rp', 'bits=0xZ', 'bits=0x123456789', 'correct=10001',
-            'stick=360:0', 'stick=180:101', 'stick=180', 'tap=2', 'press=0x2:49', 'press=0x2:5001', 'dmplay=10', 'dmstop=0', 'isend=2',
+            'stick=360:0', 'stick=180:101', 'stick=180', 'tap=2', 'press=0x2:49', 'press=0x2:5001', 'press=0x2:0100', 'press=0x2:01200', 'dmplay=10', 'dmstop=0', 'isend=2',
             'dm=maybe', 'input=net input=off', 'tap=0x1 tap=0x2', 'stop input=net')) {
         $shown = $bad -replace "`n", '\n'
         Assert-Throws { ConvertTo-PartnerTriggerText -Text $bad } '' "trigger grammar refuses '$shown'"

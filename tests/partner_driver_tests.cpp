@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 #include "mgscoop/partner_driver.hpp"
+#include "mgscoop/partner_net.hpp"
 #include "partner_player_contract.hpp"
 
 namespace {
@@ -83,6 +84,7 @@ struct Fake {
     const char* dm_patch_reason = nullptr;
     bool dm_cleared = false;
     unsigned dm_clear_calls = 0;
+    unsigned fault_resets = 0;
 
     Fake() {
         Ready();
@@ -249,6 +251,11 @@ bool HookDmPatch(void* context, bool on, const char* reason) noexcept {
     return f.dm_patched;
 }
 bool HookDmClearPending(void* context) noexcept { ++F(context).dm_clear_calls; return F(context).dm_cleared; }
+void HookResetFault(void* context) noexcept {
+    ++F(context).fault_resets;
+    F(context).stats.window.fault_phase = 0;
+    F(context).stats.window.fault_code = 0;
+}
 std::string Text(const char* format, unsigned a, unsigned b = 0, unsigned c2 = 0) {
     char text[64]{};
     std::snprintf(text, sizeof(text), format, a, b, c2);
@@ -329,7 +336,7 @@ pd::Hooks HooksFor(Fake& f) {
                      HookWriteFaceEquip, HookSetStance, HookRequestStance, HookApplyTransform, HookReadBody, HookCensus,
                      HookFormatCensus, HookFormatPs, HookInputTargets, HookFormatInputCensus, HookReadPad, HookSubmitInput,
                      HookNetRunning, HookInstallHook, HookPublishArm, HookDrainStats, HookHookLive, HookDmTargets, HookReadDm,
-                     HookFormatDmCensus, HookFormatDmProbe, HookDmPatch, HookDmClearPending};
+                     HookFormatDmCensus, HookFormatDmProbe, HookDmPatch, HookDmClearPending, HookResetFault};
 }
 
 std::string TickSource(int frame, int luaflags, int x = 1000, int y = 2000, int z = 3000, int yaw = 4500, int cam = 0) {
@@ -1267,7 +1274,7 @@ void TestInputArming() {
         Check(s.Tick(1) && s.fake.Has("partner_input=p218_refused; reason=not_allowed\r\n"), "p218 refused without the lab key");
         s.lab.partner_input_p218_allow = true;
         s.Trigger("p218=1");
-        Check(s.Tick(1) && s.fake.Has("partner_input=p218; on=1\r\n"), "p218 allowed");
+        Check(s.Tick(1) && s.fake.Count("partner_input=p218; on=1;") == 1, "p218 allowed (cam=sandbox, with the hazard note)");
         Check(s.Tick(1, 20000) && s.fake.Has("partner_input=p218_expired\r\n"), "p218 auto-expires after 20 s");
     }
 }
@@ -1288,8 +1295,8 @@ void TestDm() {
         s.driver.settings.dm = mgscoop::PartnerDm::on;
         Loaded(s);
         Check(s.Tick(1) && s.fake.dm_patch_calls == 1 && s.fake.dm_patched && s.driver.mission.dm_patched, "dm=on: patched");
-        // dmplay needs patched + not busy + not pending.
-        s.fake.dm.q18[0] = 1; s.fake.dm.q18[1] = 1; s.fake.dm.g388 = 0;
+        // dmplay needs patched + not busy + not pending + the camera connect idle.
+        s.fake.dm.q18[0] = 1; s.fake.dm.q18[1] = 1; s.fake.dm.g388 = 0; s.fake.dm.cam_ok = true;
         s.Trigger("dmplay=3");
         Check(s.Tick(1) && (s.reply.op & op::dm_play) && s.reply.gani == 3 && s.fake.Has("partner_dm=play; gani=3\r\n"),
               "dmplay: op 128 with the gani");
@@ -1318,7 +1325,238 @@ void TestDm() {
         s.driver.settings.dm = mgscoop::PartnerDm::on;
         Check(s.Tick(1) && !s.driver.mission.dm_patched && s.fake.Has("partner_dm=refused; reason=input_active\r\n"),
               "dm=on refused while armed");
+        Check(s.Tick(1) && s.fake.Count("partner_dm=refused; reason=input_active") == 1, "dm=on refusal is change-only");
     }
+}
+
+
+// Round 3 review fixes: relink, fallback, census, stats deltas, stale, the
+// TickInput/TickDm order, holdlog, teardown on MissionStart/refusals, the
+// per-mission fault, the process-lifetime tap sequence and the DM camera gate.
+void TestReviewFixes() {
+    namespace pin = mgscoop::partner_input;
+    // apply=input relink (lost -> live): disarm, Warp, re-arm.
+    {
+        Session s(3, mgscoop::PartnerApply::input, mgscoop::PartnerSource::net);
+        s.driver.settings.input = mgscoop::PartnerInput::net;
+        s.fake.sample.valid = true; s.fake.sample.x = 1.0f; s.fake.sample.y = 2.0f; s.fake.sample.z = 3.0f;
+        s.fake.sample.status = mgscoop::pose::Status::live;
+        Loaded(s);
+        Check(s.Tick(1) && s.fake.Count("partner_input_place; reason=first;") == 1, "relink: first placement");
+        Check(s.Tick(1) && s.driver.mission.input_armed, "relink: armed");
+        s.fake.sample.status = mgscoop::pose::Status::lost;
+        Check(s.Tick(1) && s.driver.mission.input_armed && !(s.reply.op & op::warp), "relink: lost keeps the window, no Warp");
+        s.fake.sample.status = mgscoop::pose::Status::live;
+        Check(s.Tick(1) && (s.reply.op & op::warp) && s.fake.Count("partner_input_place; reason=relink;") == 1 &&
+              s.fake.Count("partner_input=disarmed; reason=relink;") == 1 && !s.fake.arms.back().enabled,
+              "relink: lost -> live disarms and warps");
+        Check(s.Tick(1) && s.driver.mission.input_armed && !(s.reply.op & op::warp), "relink: re-armed without Warp");
+    }
+    // apply=input falls back to Warp every tick while the window is refused.
+    {
+        Session s(3, mgscoop::PartnerApply::input);
+        s.driver.settings.input = mgscoop::PartnerInput::neutral;
+        s.fake.install_result = "allocate_near";
+        Loaded(s);
+        Check(s.Tick(1) && (s.reply.op & op::warp) && s.fake.Count("partner_input_place; reason=first;") == 1, "fallback: placement");
+        Check(s.Tick(1) && (s.reply.op & op::warp) && s.fake.Has("partner_input=refused; reason=install_allocate_near\r\n") &&
+              s.fake.Count("partner_input_place; reason=fallback;") == 1, "fallback: install refused -> Warp");
+        Check(s.Tick(1) && (s.reply.op & op::warp) && s.fake.Count("partner_input_place; reason=fallback;") == 1,
+              "fallback: Warp every tick, logged once");
+        s.driver.settings.input = mgscoop::PartnerInput::off;
+        Check(s.Tick(1) && (s.reply.op & op::warp), "fallback: input=off with apply=input behaves like warp");
+        Session x(3, mgscoop::PartnerApply::xform);
+        x.driver.settings.input = mgscoop::PartnerInput::neutral;
+        x.fake.install_result = "allocate_near";
+        Loaded(x);
+        Check(x.Tick(1) && x.fake.Count("partner_input_place; reason=fallback;") == 0, "fallback: only for apply=input");
+    }
+    // census=1 logs the input census with input=off, failing verdicts included.
+    {
+        Session s(3);
+        s.fake.input_targets_refusal = "unrealized";
+        s.Trigger("census=1");
+        Check(s.Tick(1) && s.fake.Has("partner_input_census; verdict=unrealized\r\n") && s.fake.Count("partner_census;") == 2,
+              "census=1: input census at input=off (and the component census)");
+        Check(s.Tick(1) && s.fake.Count("partner_input_census;") == 1, "census=1: once");
+    }
+    // dm=probe: the DM census is logged once unloaded, once loaded, and on census=1.
+    {
+        Session s(3);
+        s.driver.settings.dm = mgscoop::PartnerDm::probe;
+        for (int i = 0; i < 10; ++i) s.Tick(1);
+        Check(s.fake.Count("partner_dm_census;") == 1, "dm census: once while instance 1 is not loaded (no per-tick flood)");
+        Loaded(s);
+        s.Tick(1);
+        s.Tick(1);
+        Check(s.fake.Count("partner_dm_census;") == 2, "dm census: once more when loaded");
+        s.Trigger("census=1");
+        s.Tick(1);
+        Check(s.fake.Count("partner_dm_census;") == 3, "dm census: census=1");
+    }
+    // Window statistics are deltas: per_s/root1_calls per interval, windows since the arm.
+    {
+        Session s(3, mgscoop::PartnerApply::xform);
+        s.driver.settings.input = mgscoop::PartnerInput::neutral;
+        Loaded(s);
+        s.fake.stats.window.windows = 5000;  // process totals from an earlier mission
+        s.fake.stats.window.root1_calls = 5000;
+        Check(s.Tick(1) && s.driver.mission.input_armed, "stats: armed");
+        for (int i = 0; i < 2; ++i) {
+            s.fake.stats.window.windows += 60;
+            s.fake.stats.window.root1_calls += 60;
+            s.Tick(1, 1000);
+        }
+        Check(s.fake.Containing("windows=60; per_s=60; root1_calls=60; skips=0;") == 1 &&
+              s.fake.Containing("windows=120; per_s=60; root1_calls=60; skips=0;") == 1, "stats: per second, not cumulative");
+        s.driver.settings.input = mgscoop::PartnerInput::off;
+        Check(s.Tick(1) && s.fake.Has("partner_input=disarmed; reason=trigger; gen=1; windows=120\r\n"), "stats: windows since the arm");
+    }
+    // input=net: a missing sample is stale (age_ms=none), then live.
+    {
+        Session s(3, mgscoop::PartnerApply::xform);
+        s.driver.settings.input = mgscoop::PartnerInput::net;
+        Loaded(s);
+        Check(s.Tick(1) && s.driver.mission.input_armed, "stale: armed");
+        Check(s.Tick(1) && s.fake.Count("partner_input=stale") == 0 && s.fake.Count("partner_input=live") == 0,
+              "stale: nothing before the first window");
+        s.fake.stats.window.windows += 5;
+        s.fake.stats.window.last_stale = 1;
+        s.fake.stats.window.last_age_ms = pin::kNoSample;
+        Check(s.Tick(1) && s.fake.Has("partner_input=stale; age_ms=none\r\n"), "stale: no sample is stale");
+        s.fake.stats.window.windows += 5;
+        s.fake.stats.window.last_stale = 0;
+        s.fake.stats.window.last_age_ms = 20;
+        Check(s.Tick(1) && s.fake.Has("partner_input=live\r\n"), "stale: then live");
+    }
+    // input=off dm=on dmplay=1 while armed: disarm, patch and play in one tick.
+    {
+        Session s(3, mgscoop::PartnerApply::xform);
+        s.driver.settings.input = mgscoop::PartnerInput::neutral;
+        Loaded(s);
+        s.fake.dm.q18[0] = 1; s.fake.dm.q18[1] = 1; s.fake.dm.g388 = 0; s.fake.dm.cam_ok = true;
+        Check(s.Tick(1) && s.driver.mission.input_armed, "order: armed");
+        s.Trigger("input=off dm=on dmplay=1");
+        Check(s.Tick(1) && !s.driver.mission.input_armed && s.driver.mission.dm_patched && (s.reply.op & op::dm_play) &&
+              s.reply.gani == 1 && s.fake.Count("partner_dm=refused;") == 0, "order: TickInput before TickDm keeps the dmplay");
+    }
+    // holdlog=1 needs the lab key; it reaches the Arm only then.
+    {
+        Session s(3, mgscoop::PartnerApply::xform);
+        s.driver.settings.input = mgscoop::PartnerInput::neutral;
+        Loaded(s);
+        Check(s.Tick(1) && !s.fake.arms.back().holdlog, "holdlog: off by default");
+        s.Trigger("holdlog=1");
+        Check(s.Tick(1) && s.fake.Has("partner_input=holdlog_refused; reason=not_allowed\r\n") && !s.fake.arms.back().holdlog,
+              "holdlog: refused without the lab key");
+        s.lab.partner_input_holdlog = true;
+        s.Trigger("holdlog=1");
+        Check(s.Tick(1) && s.fake.Has("partner_input=holdlog; on=1\r\n") && s.fake.arms.back().holdlog, "holdlog: on with the lab key");
+        s.Trigger("holdlog=0");
+        Check(s.Tick(1) && !s.fake.arms.back().holdlog, "holdlog: off again");
+    }
+    // MissionStart tears down a window or DM patch a missed MissionEnd left, and clears the hook fault.
+    {
+        Session s(3, mgscoop::PartnerApply::xform);
+        s.driver.settings.input = mgscoop::PartnerInput::neutral;
+        Loaded(s);
+        Check(s.Tick(1) && s.driver.mission.input_armed, "teardown: armed");
+        const unsigned resets = s.fake.fault_resets;
+        pd::MissionStart(s.driver, s.hooks);
+        Check(!s.fake.arms.back().enabled && s.fake.Count("partner_input=disarmed; reason=mission_start;") == 1 &&
+              s.fake.fault_resets == resets + 1 && !s.driver.mission.input_armed, "teardown: MissionStart disarms");
+        Session t(3);
+        t.driver.settings.dm = mgscoop::PartnerDm::on;
+        Loaded(t);
+        Check(t.Tick(1) && t.fake.dm_patched, "teardown: patched");
+        pd::MissionStart(t.driver, t.hooks);
+        Check(!t.fake.dm_patched && t.fake.dm_patch_reason && std::strcmp(t.fake.dm_patch_reason, "mission_start") == 0,
+              "teardown: MissionStart reverts the DM patch");
+    }
+    // A failing state guard (read_state refusal) disarms and reverts on that tick.
+    {
+        Session s(3, mgscoop::PartnerApply::xform);
+        s.driver.settings.input = mgscoop::PartnerInput::neutral;
+        Loaded(s);
+        Check(s.Tick(1) && s.driver.mission.input_armed, "refusal: armed");
+        s.fake.refusal = pp::Refusal::count;
+        Check(!s.Tick(1) && !s.fake.arms.back().enabled && s.fake.Count("partner_input=disarmed; reason=cfg_refused;") == 1,
+              "refusal: read_state refusal disarms");
+        Session t(3);
+        t.driver.settings.dm = mgscoop::PartnerDm::on;
+        Loaded(t);
+        Check(t.Tick(1) && t.fake.dm_patched, "refusal: patched");
+        t.fake.refusal = pp::Refusal::local_index;
+        Check(!t.Tick(1) && !t.fake.dm_patched && std::strcmp(t.fake.dm_patch_reason, "cfg_refused") == 0, "refusal: DM reverted");
+    }
+    // A window fault disables the mission; the next mission starts clean (no stale fault).
+    {
+        Session s(3, mgscoop::PartnerApply::xform);
+        s.driver.settings.input = mgscoop::PartnerInput::neutral;
+        Loaded(s);
+        Check(s.Tick(1) && s.driver.mission.input_armed, "fault: armed");
+        s.fake.stats.window.fault_phase = 1;
+        Check(s.Tick(1) && s.fake.Has("partner_call=fault; fn=input_window; native_calls=disabled\r\n") &&
+              !s.driver.mission.input_armed && s.fake.Has("partner_input=refused; reason=faulted\r\n"), "fault: disarmed and refused");
+        pd::MissionStart(s.driver, s.hooks);
+        Check(pd::Cfg(s.driver, s.hooks, nullptr, s.now), "fault: next mission cfg");
+        Loaded(s);
+        s.fake.lines.clear();
+        Check(s.Tick(1) && s.driver.mission.input_armed && s.fake.Count("partner_call=fault") == 0, "fault: next mission arms (fault cleared)");
+    }
+    // The tap sequence is process-lifetime: it survives MissionStart and gen bumps.
+    {
+        Session s(3, mgscoop::PartnerApply::xform);
+        s.driver.settings.input = mgscoop::PartnerInput::neutral;
+        s.driver.settings.input_mask = 0x2;
+        Loaded(s);
+        Check(s.Tick(1) && s.driver.mission.input_armed, "tap: armed");
+        s.Trigger("tap=0x2");
+        Check(s.Tick(1) && s.fake.arms.back().tap_seq == 1 && s.fake.arms.back().tap_bits == 0x2, "tap: seq 1");
+        const std::uint32_t gen = s.fake.arms.back().gen;
+        s.Trigger("stick=90:50");
+        Check(s.Tick(1) && s.fake.arms.back().gen == gen + 1 && s.fake.arms.back().tap_seq == 1, "tap: a gen bump keeps the seq");
+        pd::MissionStart(s.driver, s.hooks);
+        Check(pd::Cfg(s.driver, s.hooks, nullptr, s.now), "tap: next mission cfg");
+        Loaded(s);
+        Check(s.Tick(1) && s.driver.mission.input_armed && s.fake.arms.back().tap_seq == 1, "tap: seq survives MissionStart");
+        s.Trigger("tap=0x2");
+        Check(s.Tick(1) && s.fake.arms.back().tap_seq == 2, "tap: next tap is a new value");
+    }
+    // DM: a play is refused while the camera connect is set; conflicts are logged once.
+    {
+        Session s(3);
+        s.driver.settings.dm = mgscoop::PartnerDm::on;
+        Loaded(s);
+        s.fake.dm.q18[0] = 1; s.fake.dm.q18[1] = 1; s.fake.dm.g388 = 0;
+        s.fake.dm.cam_ok = true; s.fake.dm.cam1f0 = 0x8800000000001234ull; s.fake.dm.cam200 = 1;
+        Check(s.Tick(1) && s.driver.mission.dm_patched, "dm cam: patched");
+        s.Trigger("dmplay=1");
+        Check(s.Tick(1) && !(s.reply.op & op::dm_play) && s.fake.Has("partner_dm=refused; reason=cam_connect\r\n"), "dm cam: refused");
+        s.fake.dm.cam_ok = false; s.fake.dm.cam1f0 = 0; s.fake.dm.cam200 = 0;
+        s.Trigger("dmplay=1");
+        Check(s.Tick(1) && !(s.reply.op & op::dm_play) && s.fake.Count("partner_dm=refused; reason=cam_connect") == 2,
+              "dm cam: refused when the camera is unreadable");
+        s.fake.dm.q18[1] = c::q18_dm_act;
+        s.fake.dm.q18[0] = c::q18_dm_act;
+        s.Tick(1);
+        s.Tick(1);
+        Check(s.fake.Count("partner_dm=conflict;") == 1, "dm cam: host DM during ours logged once");
+    }
+}
+
+
+// Input frames: only a newer (wrap-safe) sequence replaces the stored one,
+// unless the peer restarted (kRestartGapMs without a stored frame).
+void TestInputSequence() {
+    namespace pn = mgscoop::partner_net;
+    Check(pn::AcceptInputSequence(false, 0, 0, 7, 100), "seq: first frame accepted");
+    Check(pn::AcceptInputSequence(true, 7, 100, 8, 110), "seq: newer accepted");
+    Check(!pn::AcceptInputSequence(true, 8, 110, 7, 120), "seq: older (reordered) dropped");
+    Check(!pn::AcceptInputSequence(true, 8, 110, 8, 120), "seq: duplicate dropped");
+    Check(pn::AcceptInputSequence(true, 0xFFFFFFFFu, 110, 1, 120), "seq: wrap accepted");
+    Check(!pn::AcceptInputSequence(true, 500, 1000, 1, 1000 + pn::kRestartGapMs), "seq: restart needs the full gap");
+    Check(pn::AcceptInputSequence(true, 500, 1000, 1, 1001 + pn::kRestartGapMs), "seq: restart after the gap accepted");
 }
 
 } // namespace
@@ -1343,6 +1581,8 @@ int main() {
     TestLookFix();
     TestInputArming();
     TestDm();
+    TestReviewFixes();
+    TestInputSequence();
     std::printf("%u partner driver checks passed: CFG/boundaries, stage-3 timeline, trigger stop/stage, STOP while terminating, "
                 "teardown keep, refusal caps, realize thrash cap, all-active re-assert, flags, mirror lifecycle, one-shots, "
                 "force_exists, policy, net source, cadence, Lua notes, quiet pairing, probes, anim mirror/net (q/s/r, debounce, "

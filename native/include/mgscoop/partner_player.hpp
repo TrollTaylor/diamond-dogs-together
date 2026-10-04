@@ -64,7 +64,6 @@ struct Addresses {
     std::uintptr_t t_vtable, a0_vtable, c0_vtable;  // pinned after a reviewed census; 0 = unpinned
     // Round 3 (input lever, direct motion).
     std::uintptr_t pp_vtable;           // PlayerPad 0x23C8D40
-    std::uintptr_t pp_vtable_alt[2];    // the input hook's per-window vtable copies (0 until installed)
     std::uintptr_t cam_vtable;          // 0x23B8250
     std::uintptr_t plugin_vt[4];        // base action plugin +0/+0x10/+0x30/+0x48
     std::uintptr_t dm_prim_vtable, dm_iface_vtable;
@@ -237,7 +236,8 @@ bool ReadBody(const Addresses& addresses, const State& state, std::uint32_t inde
 // (refusal reasons in parentheses): the write guards of the state (their
 // RefusalName or "index"); instance 1 realized (unrealized), ids[1] == 1
 // (id), parts[1] == 3 (parts); P+0x204 & 0x40000 clear (alt_dispatch);
-// PP = *(P+0xB0) with vtable 0x23C8D40 or one of the hook's copies (pp_vt),
+// PP = *(P+0xB0) with vtable 0x23C8D40 exactly (pp_vt; the hook's per-window
+// copies are refused: they are only live inside a window),
 // *(PP+0x280) == P (pp_owner), src = *(PP+8) != 0 (src); CAM = *(P+0xB8)
 // with vtable 0x23B8250 (cam_vt); block 1 as ResolveBlock checks it (its
 // reasons), root1 = *(blk1+0x190) != 0 (root); obj = *(*(*(PS1+0x658)+0x30)+0x10)
@@ -276,8 +276,15 @@ struct DmTargets {
     bool g_ok, prim_blk_ok;
 };
 const char* ResolveDm(const Addresses& addresses, const State& state, DmTargets& out) noexcept;
+// cam1f0/cam200: the camera connect handle CAM+0x1F0 (qword) and its on flag
+// CAM+0x200 (dword) of CAM = *(P+0xB8) (vtable 0x23B8250, else cam_ok=false).
+// The DM entry playback without a locator (0x1198D9D) and DM End (0x11992E9)
+// write both to 0 for ANY id, so a partner play is refused unless both are 0.
 struct DmState {
     std::uint8_t g388, req0;
+    std::uint64_t cam1f0;
+    std::uint32_t cam200;
+    bool cam_ok;
     std::uint64_t name;
     std::uint16_t q18[2];
     std::int32_t ps2d8[2];  // -1 unreadable

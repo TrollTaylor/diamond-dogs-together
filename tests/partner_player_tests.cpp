@@ -1051,6 +1051,45 @@ int main() {
         Check(pp::AddressesFor(nullptr).player_slot == 0, "null base");
     }
 
+    // --- ReadPad (the isend sender): PP/src chain and the exact PP vtable.
+    {
+        w.Reset();
+        unsigned char* pad = w.region + 0x17000;   // PP (0x4E0 bytes)
+        unsigned char* src = w.region + 0x17800;   // raw pad device
+        static std::uintptr_t pad_vt[43]{};
+        static std::uintptr_t copy_vt[43]{};
+        w.addresses.pp_vtable = Addr(pad_vt);
+        Put<std::uintptr_t>(w.P, c::p_pad, Addr(pad));
+        Put<std::uintptr_t>(pad, 0, Addr(pad_vt));
+        Put<std::uintptr_t>(pad, c::pp_owner, Addr(w.P));
+        Put<std::uintptr_t>(pad, c::pp_src, Addr(src));
+        Put<std::uint32_t>(src, 0x48, 0x4);
+        Put<float>(src, 0x5C, -1.0f);
+        Put<float>(pad, 0x10, 1.0f);
+        Put<std::uint32_t>(pad, 0x28, 0x10);
+        Put<std::uint8_t>(pad, c::pp_kb_flags, 0x10);
+        Check(Read(w, s) == pp::Refusal::none, "pad: state ready");
+        mgscoop::partner_input::PadRaw raw{};
+        Check(pp::ReadPad(w.addresses, s, raw) && raw.src_w[0] == 0x4 && raw.src_f[1] == -1.0f && raw.pp_derived[0] == 1.0f &&
+              raw.pp_mask[0] == 0x10 && raw.kb_flags == 0x10, "pad: words, axes, derived, masks and flags read");
+        // A vtable other than the image's (the hook's per-window copy) means a
+        // window was open across the read: refused, never accepted.
+        Put<std::uintptr_t>(pad, 0, Addr(&copy_vt[1]));
+        Check(!pp::ReadPad(w.addresses, s, raw), "pad: the hook's vtable copy is refused");
+        Put<std::uintptr_t>(pad, 0, Addr(pad_vt));
+        Put<std::uintptr_t>(pad, c::pp_owner, 0);
+        Check(!pp::ReadPad(w.addresses, s, raw), "pad: owner mismatch refused");
+        // The DM probe line carries the camera connect fields.
+        pp::DmState dm{};
+        dm.cam_ok = true;
+        dm.cam1f0 = 0x8800000000001234ull;
+        dm.cam200 = 1;
+        char dm_line[400]{};
+        Check(pp::FormatDmProbe(dm, true, dm_line, sizeof(dm_line)) &&
+              std::strstr(dm_line, "; cam1f0=0x8800000000001234; cam200=1; cam_ok=1") != nullptr, "dm probe: camera connect fields");
+        w.Reset();
+    }
+
     // --- Crash probe filter and format (no handler is installed here).
     {
         namespace cp = mgscoop::crash_probe;

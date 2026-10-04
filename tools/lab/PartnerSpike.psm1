@@ -48,7 +48,7 @@ $script:PartnerTriggerKeys = [ordered]@{
 $script:PartnerTriggerValueKeys = [ordered]@{
     stick = { param($v) if ($v -cnotmatch '^(0|[1-9][0-9]{0,2}):(0|[1-9][0-9]?|100)$') { return $false } $p = $v.Split(':'); [int]$p[0] -le 359 -and [int]$p[1] -le 100 }
     tap = { param($v) $v -cmatch '^0x[0-9a-fA-F]{1,8}$' }
-    press = { param($v) if ($v -cnotmatch '^0x[0-9a-fA-F]{1,8}:([0-9]{2,4})$') { return $false } $ms = [int]$v.Split(':')[1]; $ms -ge 50 -and $ms -le 5000 }
+    press = { param($v) if ($v -cnotmatch '^0x[0-9a-fA-F]{1,8}:([1-9][0-9]{1,3})$') { return $false } $ms = [int]$v.Split(':')[1]; $ms -ge 50 -and $ms -le 5000 }
     words = { param($v) $v -cmatch '^[0prhn]{3}$' }
     bits = { param($v) $v -cmatch '^0x[0-9a-fA-F]{1,8}$' }
     correct = { param($v) $v -cmatch '^(0|[1-9][0-9]{0,4})$' -and [int]$v -le 10000 }
@@ -1462,9 +1462,9 @@ function Get-PartnerExperimentPlan {
         'I1' { @{ Timeout = 150; Steps = @((& $step 'trigger' 'host' 'stage=3 source=fixed apply=xform reset=n input=pass' 120), (& $step 'screens' 'host' 'i1' 0)) } }
         'I2' { @{ Timeout = 330; Steps = @((& $step 'trigger' 'host' 'stage=3 source=fixed apply=xform reset=n input=neutral cam=detect hold=none' 5), (& $step 'manual' 'host' 'Walk, crouch and open the menu for 5 minutes.' 300), (& $step 'screens' 'host' 'i2' 0)) } }
         'I3' { @{ Timeout = 120; Steps = @((& $step 'trigger' 'host' 'stage=3 source=fixed apply=input correct=0 input=stick stick=180:100 cam=sandbox' 5), (& $step 'screens' 'host' 'i3-180-100' 0), (& $step 'trigger' 'host' 'stick=180:30' 5), (& $step 'trigger' 'host' 'stick=90:100' 5), (& $step 'trigger' 'host' 'stick=0:0' 5), (& $step 'trigger' 'host' 'stick=180:100 cam=detect' 5), (& $step 'screens' 'host' 'i3c' 0)) } }
-        'I3x' { @{ Timeout = 40; Steps = @((& $step 'trigger' 'host' 'p218=1 input=stick stick=180:100 cam=sandbox' 20), (& $step 'screens' 'host' 'i3x' 0)) } }
+        'I3x' { @{ Timeout = 40; Steps = @((& $step 'trigger' 'host' 'p218=1 input=stick stick=180:100 cam=sandbox' 20), (& $step 'screens' 'host' 'i3x' 0), (& $step 'manual' 'host' 'Hazardous diagnostic (restart_after=1): quit the game WITHOUT saving after I3x; no other experiment in the same process.' 0)) } }
         'I4' { @{ Timeout = 60; Steps = @((& $step 'trigger' 'host' 'input=stick stick=0:0' 2), (& $step 'trigger' 'host' 'tap=0x2' 2), (& $step 'trigger' 'host' 'tap=0x2' 2), (& $step 'trigger' 'host' 'tap=0x2' 1), (& $step 'trigger' 'host' 'stick=180:100' 3), (& $step 'screens' 'host' 'i4' 0)) } }
-        'I5' { @{ Timeout = 60; Steps = @((& $step 'trigger' 'host' 'holdlog=1' 2), (& $step 'manual' 'host' 'Hold the stance key ~1.5 s.' 2), (& $step 'trigger' 'host' 'press=0x2:1200 hold=none holdlog=0' 2), (& $step 'screens' 'host' 'i5' 0)) } }
+        'I5' { @{ Timeout = 60; Steps = @((& $step 'trigger' 'host' 'stage=3 source=fixed apply=xform reset=n input=neutral holdlog=1' 2), (& $step 'manual' 'host' 'Hold the stance key ~1.5 s.' 2), (& $step 'trigger' 'host' 'press=0x2:1200 hold=none holdlog=0' 2), (& $step 'screens' 'host' 'i5' 0)) } }
         'I6' { @{ Timeout = 150; Steps = @((& $step 'trigger' 'both' 'stage=3 source=net apply=input input=net isend=1 cam=sandbox yaw=rot correct=1500 look=net' 5), (& $step 'input' 'guest' 'w:3000' 1), (& $step 'input' 'guest' 'c' 3), (& $step 'input' 'host' 'w:3000' 1), (& $step 'screens' 'both' 'i6' 0)) } }
         'I7' { @{ Timeout = 60; Steps = @((& $step 'trigger' 'host' 'input=off isend=0' 3), (& $step 'screens' 'host' 'i7' 0), (& $step 'manual' 'host' 'Re-arm, then leave Mother Base while armed; then quit while armed.' 0)) } }
         'D0' { @{ Timeout = 60; Steps = @((& $step 'trigger' 'host' 'dm=probe' 10), (& $step 'screens' 'host' 'd0' 0)) } }
@@ -1515,7 +1515,7 @@ function Invoke-PartnerRound3 {
         }
         '^I3x$' {
             if (& $has 'partner_input=p218') { Add-PartnerMatch $Check 'partner_input=p218; on=1' } else { Add-PartnerItem $Check.Missing 'partner_input=p218 (needs partner_input_p218_allow=1)' }
-            Add-PartnerItem $Check.Notes 'manual: locomotion appears -> start is P+0x218-gated; nothing -> the pad does not reach the Move plugin (D series). Watch for HUD/camera glitches (expected; end on expiry)'
+            Add-PartnerItem $Check.Notes 'manual: locomotion appears -> start is P+0x218-gated; nothing -> the pad does not reach the Move plugin (D series). HUD/camera glitches are expected; P+0x218 is paired with P+0x214 / the local block (0x11AD05D, 0xFE8F85), so state may be silently wrong afterwards: quit without saving'
         }
         '^I6$' {
             if (& $has 'partner_net=input_rx') { Add-PartnerMatch $Check 'partner_net=input_rx' } else { Add-PartnerItem $Check.Missing 'partner_net=input_rx on the receiver' }
@@ -1531,8 +1531,10 @@ function Invoke-PartnerRound3 {
         }
         '^D[1-3]$' {
             if (& $has 'partner_dm=unconsumed') { Add-PartnerItem $Check.Failed 'partner_dm=unconsumed (id 1 never polls DM slot 0; the DM lever is dead)' }
+            if (& $has 'partner_dm=conflict') { Add-PartnerItem $Check.Failed 'partner_dm=conflict (host DM or camera connect while the partner DM was active)' }
+            if (& $has 'partner_dm=refused; reason=cam_connect') { Add-PartnerItem $Check.Notes 'partner_dm=refused; reason=cam_connect (host camera connect set: run D1 in free roam)' }
             if (& $has 'partner_dm=patched') { Add-PartnerMatch $Check 'partner_dm=patched' } else { Add-PartnerItem $Check.Missing 'partner_dm=patched (dm=on)' }
-            Add-PartnerItem $Check.Notes 'manual: the partner plays the requested gani (D1 crouch idle; D2 crouch-walk loop then prone); D3 reverts cleanly with 0 AV'
+            Add-PartnerItem $Check.Notes 'manual: the partner plays the requested gani (D1 crouch idle; D2 crouch-walk loop then prone); partner_dm keeps cam1f0=0x0 cam200=0 and the host camera does not jump; D3 reverts cleanly with 0 AV'
         }
     }
 }

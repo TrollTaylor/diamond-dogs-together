@@ -149,15 +149,19 @@ void OnDatagram(void*, const std::uint8_t* data, std::size_t size) noexcept {
             SetLastError(error);
             return;
         }
-        bool first = false;
+        bool first = false, accepted = false;
+        const std::uint64_t now = NowMs();
         AcquireSRWLockExclusive(&g_lock);
-        g_input = in;
-        g_input_valid = true;
-        g_input_seq = in_seq;
-        g_input_rx_ms = NowMs();
-        if (!g_input_first_logged) { g_input_first_logged = true; first = true; }
+        if (AcceptInputSequence(g_input_valid, g_input_seq, g_input_rx_ms, in_seq, now)) {
+            accepted = true;
+            g_input = in;
+            g_input_valid = true;
+            g_input_seq = in_seq;
+            g_input_rx_ms = now;
+            if (!g_input_first_logged) { g_input_first_logged = true; first = true; }
+        }
         ReleaseSRWLockExclusive(&g_lock);
-        InterlockedIncrement(&g_in_rx);
+        InterlockedIncrement(accepted ? &g_in_rx : &g_in_drop);
         if (first) {
             char line[96]{};
             if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "partner_net=input_rx; first=1; seq=%u\r\n", in_seq))) Log(line);

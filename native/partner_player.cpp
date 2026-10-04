@@ -795,9 +795,9 @@ const char* ResolvePlugin(const Addresses& a, const Block& b, std::uint32_t id, 
     if (!ReadValue(rec + c::rec_local, rec_2ac)) return "rec";
     return nullptr;
 }
-bool PpVtableOk(const Addresses& a, std::uintptr_t vt) noexcept {
-    return vt && (vt == a.pp_vtable || vt == a.pp_vtable_alt[0] || vt == a.pp_vtable_alt[1]);
-}
+// Exactly the image vtable: the hook's per-window copies are only live inside
+// a window, and a Lua-thread read that sees one raced a window.
+bool PpVtableOk(const Addresses& a, std::uintptr_t vt) noexcept { return vt && vt == a.pp_vtable; }
 // The PP / pp_owner / src checks shared by ResolveInputTargets and ReadPad.
 const char* ResolvePad(const Addresses& a, const State& s, std::uintptr_t& pp, std::uintptr_t& pp_vt, std::uintptr_t& src,
                        bool& owner_ok) noexcept {
@@ -934,6 +934,9 @@ bool ReadDm(const Addresses& a, const State& s, const DmTargets& t, DmState& out
         if (!ResolveCore(a, s, k, b) && ReadValue(b.ps + c::ps_byte2d8, p2d8) && ReadValue(p2d8 + (b.id - b.base_id), value))
             out.ps2d8[k] = value;
     }
+    std::uintptr_t cam = 0, cam_vt = 0;
+    out.cam_ok = ReadValue(s.P + c::p_cam, cam) && cam && ReadValue(cam, cam_vt) && cam_vt == a.cam_vtable &&
+                 ReadValue(cam + c::cam_connect, out.cam1f0) && ReadValue(cam + c::cam_connect_on, out.cam200);
     if (t.rec) {
         out.rec_ok = ReadValue(t.rec + 0x10, out.rec10) && ReadValue(t.rec + 0x11, out.rec11) && ReadValue(t.rec + 0x18, out.rec18) &&
                      ReadValue(t.rec + 0x1A0, out.rec1a0) && ReadValue(t.rec + 0x248, out.rec248);
@@ -960,9 +963,10 @@ std::size_t FormatDmProbe(const DmState& d, bool patched, char* out, std::size_t
     const Preserve preserve;
     if (FAILED(StringCchPrintfA(out, capacity,
             "partner_dm; patched=%u; g388=0x%02x; req0=%u; q18=0x%x,0x%x; ps2d8=%d,%d; rec10=%u; rec11=%u; rec18=0x%llx; "
-            "rec1a0=%u; rec248=0x%02x\r\n",
+            "rec1a0=%u; rec248=0x%02x; cam1f0=0x%llx; cam200=%u; cam_ok=%u\r\n",
             patched ? 1u : 0u, unsigned(d.g388), unsigned(d.req0), unsigned(d.q18[0]), unsigned(d.q18[1]), d.ps2d8[0], d.ps2d8[1],
-            unsigned(d.rec10), unsigned(d.rec11), static_cast<unsigned long long>(d.rec18), unsigned(d.rec1a0), unsigned(d.rec248)))) {
+            unsigned(d.rec10), unsigned(d.rec11), static_cast<unsigned long long>(d.rec18), unsigned(d.rec1a0), unsigned(d.rec248),
+            static_cast<unsigned long long>(d.cam1f0), d.cam200, d.cam_ok ? 1u : 0u))) {
         out[0] = 0;
         return 0;
     }

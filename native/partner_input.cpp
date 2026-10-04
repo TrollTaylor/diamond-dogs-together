@@ -219,6 +219,7 @@ const char* SkipName(Skip skip) noexcept {
     case Skip::p_vtable: return "p_vtable";
     case Skip::flags: return "flags";
     case Skip::sync: return "sync";
+    case Skip::state: return "state";
     case Skip::pp: return "pp";
     case Skip::src: return "src";
     case Skip::cam: return "cam";

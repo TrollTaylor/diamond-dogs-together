@@ -16,22 +16,33 @@ namespace mgscoop::partner_input_hook {
 using LogFn = void (*)(const char* line) noexcept;
 // partner_net::LatestInput: false when the lock is busy (reuse the previous).
 using SampleFn = bool (*)(partner_input::Sample& out) noexcept;
+// 0xBF61D0(root, phase) and the PP hold classifier 0x1205C30(PP, btn, frames).
+using DispatchFn = void (*)(void* root, std::uint32_t phase) noexcept;
+using HoldFn = std::uint32_t (*)(void* pp, std::uint32_t btn, std::uint32_t frames) noexcept;
 
 // Installs once per process (idempotent; the patch and stub are never removed,
 // the proxy DLL never unloads). `base` is the image base. Returns nullptr on
 // success, otherwise a static reason (also logged):
 //   bytes | allocate_near | range | protect | exchange | vt_copy | disabled.
-// After a success Addresses::pp_vtable_alt is filled through SetVtableCopies.
 const char* Install(const void* base, LogFn log, SampleFn sample) noexcept;
 bool Installed() noexcept;
 // The two per-window vtable copies (hold none / hold log); 0 before install.
+// They are only ever live inside a window: the Lua-thread reads refuse them.
 void VtableCopies(std::uintptr_t out[2]) noexcept;
+// Odd while a window (or the block-0 hold log) has fields swapped in; it
+// changes on every window. Lua-thread readers of PP/src retry or refuse
+// unless it is even and unchanged across their read.
+std::uint32_t WindowSeq() noexcept;
+// Clears a recorded fault so the window may run again (MissionStart only;
+// the driver keeps its own per-mission input_faulted).
+void ResetFault() noexcept;
 
 // The driver publishes this each tick (seqlock: odd, copy, even). Copied by
 // value; pointers are read inside the hook under SEH and re-validated.
 void PublishArm(const partner_input::Arm& arm) noexcept;
 
-// Drained by the driver (atomics cleared by the drain where noted).
+// Drained by the driver. Counters are process-lifetime totals (the driver
+// logs deltas); us_max is cleared by each drain.
 struct Stats {
     partner_input::WindowStats window;
     partner_input::HoldRecord holds[8];

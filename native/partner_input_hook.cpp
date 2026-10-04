@@ -2,8 +2,15 @@
 // It wraps the single per-block phase-8 dispatch call at 0x9C2B51 (into
 // 0xBF61D0). Around block 1's call only, with instance 1 realized and every
 // identity re-validated, it swaps in instance 1's own virtual pad and sets the
-// base plugin's per-id isLocal bit, then restores everything. Never blocks;
-// any fault inside the window disables the window for the rest of the mission.
+// base plugin's per-id isLocal bit, then restores everything. Never blocks.
+//
+// Exceptions. Our own reads and writes (validation, PRE, POST) handle an
+// access fault themselves: what PRE had saved is restored field by field and
+// the window is disabled until the next MissionStart (ResetFault). An
+// exception raised by the game's own update inside the window is recorded
+// (phase=call) and passed on unchanged (EXCEPTION_CONTINUE_SEARCH): the game
+// and crash_probe see it exactly as without the hook, and if an outer handler
+// unwinds through the window, a __finally restores the swapped fields first.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -18,9 +25,6 @@ namespace {
 namespace c = mgscoop::partner_player_contract;
 namespace pi = mgscoop::partner_input;
 
-using DispatchFn = void (*)(void*, std::uint32_t) noexcept;
-using HoldFn = std::uint32_t (*)(void*, std::uint32_t, std::uint32_t) noexcept;
-
 // Process-level state (the DLL is pinned; nothing here is ever torn down).
 volatile LONG g_installed = 0;
 bool g_ready = false;
@@ -30,17 +34,24 @@ SampleFn g_sample = nullptr;
 DispatchFn g_original = nullptr;
 HoldFn g_hold_orig = nullptr;
 void* g_stub = nullptr;
-// 43 slots (slot -1 included); the new vtable pointer is &table[1].
+// 43 slots (slot -1 included); the new vtable pointer is &table[1]. Slot -1
+// of the PP vtable (RVA 0x23C8D38) is 0 in the image (no RTTI locator), so
+// table[0] cannot tell whether a copy exists: g_vt_ready does.
 std::uintptr_t g_vt_none[43]{};
 std::uintptr_t g_vt_log[43]{};
+bool g_vt_ready = false;
 
 // Seqlock-published Arm.
 volatile LONG g_seq = 0;
 pi::Arm g_arm{};
 volatile LONG g_arm_enabled = 0;
 volatile LONG g_holdlog = 0;
+// Odd while the hook has anything swapped into PP/src/rec/CAM/P (the Lua
+// thread's pad reads retry or refuse while it is odd or changes).
+volatile LONG g_window_seq = 0;
 
-// Hook-thread-only edge/tap/overlay/sample state, reset on a new arm gen.
+// Hook-thread-only edge/tap/sample state (survives gen bumps; see the Arm
+// comment in partner_input.hpp) and instance 1's private masks (reset per gen).
 pi::EdgeState g_edge{};
 pi::TapState g_tap{};
 pi::Sample g_prev{};
@@ -52,10 +63,10 @@ unsigned char g_priv_masks[c::pp_masks_size + c::pp_mask_tables_size]{};
 volatile LONG g_faulted = 0;
 volatile LONG g_windows = 0, g_root1 = 0, g_skips = 0, g_stale = 0, g_faults = 0, g_hold_calls = 0, g_cam_restored = 0;
 volatile LONG g_cam_dirty = 0, g_us_max = 0, g_hook_thread = 0, g_gen_seen = 0;
-volatile LONG g_last_skip = 0, g_last_held = 0, g_last_lx = 0, g_last_ly = 0, g_last_dir = 0, g_last_mag = 0, g_last_age = 0;
+volatile LONG g_last_skip = 0, g_last_held = 0, g_last_lx = 0, g_last_ly = 0, g_last_dir = 0, g_last_mag = 0;
+volatile LONG g_last_age = static_cast<LONG>(pi::kNoSample), g_last_stale = 0;
 volatile LONG g_fault_phase = 0, g_fault_code = 0;
 // Hold log ring (block 0 only).
-SRWLOCK g_hold_lock = SRWLOCK_INIT;
 pi::HoldRecord g_hold_ring[64]{};
 volatile LONG g_hold_head = 0;
 
@@ -87,6 +98,7 @@ bool ReadArm(pi::Arm& out) noexcept {
     for (int tries = 0; tries < 2; ++tries) {
         const LONG s1 = g_seq;
         if (s1 & 1) continue;
+        MemoryBarrier();
         std::memcpy(&out, const_cast<const pi::Arm*>(&g_arm), sizeof(out));
         MemoryBarrier();
         if (g_seq == s1) return true;
@@ -94,21 +106,73 @@ bool ReadArm(pi::Arm& out) noexcept {
     return false;
 }
 
+void BeginWindow() noexcept { InterlockedIncrement(&g_window_seq); }  // odd
+void EndWindow() noexcept { InterlockedIncrement(&g_window_seq); }    // even
+
 template <class T>
 T Load(std::uintptr_t a) noexcept { T v{}; std::memcpy(&v, reinterpret_cast<const void*>(a), sizeof(v)); return v; }
 template <class T>
 void Store(std::uintptr_t a, T v) noexcept { std::memcpy(reinterpret_cast<void*>(a), &v, sizeof(v)); }
 
-// Direct-read validation (inside the caller's __try). Returns none or the
-// first failed identity.
-pi::Skip Validate(const pi::Arm& a, void* root) noexcept {
+void Fault(unsigned phase, std::uint32_t code) noexcept {
+    if (InterlockedExchange(&g_faulted, 1) == 0) {
+        InterlockedExchange(&g_fault_phase, static_cast<LONG>(phase));
+        InterlockedExchange(&g_fault_code, static_cast<LONG>(code));
+        InterlockedIncrement(&g_faults);
+        if (g_log) {
+            char line[128]{};
+            if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "partner_input=fault; phase=%s; code=0x%08x; native_input=disabled\r\n",
+                                           pi::FaultPhaseName(static_cast<std::uint8_t>(phase)), code)))
+                g_log(line);
+        }
+    }
+}
+
+bool IsAccessFault(DWORD code) noexcept { return code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_IN_PAGE_ERROR; }
+// The codes that mean "the game's update broke" (never a C++ or debugger exception).
+bool IsFatalCode(DWORD code) noexcept {
+    switch (code) {
+    case EXCEPTION_ACCESS_VIOLATION: case EXCEPTION_IN_PAGE_ERROR: case EXCEPTION_ILLEGAL_INSTRUCTION:
+    case EXCEPTION_PRIV_INSTRUCTION: case EXCEPTION_INT_DIVIDE_BY_ZERO: case EXCEPTION_INT_OVERFLOW:
+    case EXCEPTION_STACK_OVERFLOW: case EXCEPTION_ARRAY_BOUNDS_EXCEEDED: case EXCEPTION_DATATYPE_MISALIGNMENT:
+        return true;
+    default:
+        return false;
+    }
+}
+// Our own reads/writes: an access fault is ours to handle; anything else is
+// not (passed on).
+int OwnFilter(unsigned phase, DWORD code) noexcept {
+    if (!IsAccessFault(code)) return EXCEPTION_CONTINUE_SEARCH;
+    Fault(phase, code);
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+// The game's own update: record a fatal code, never swallow anything.
+int GameFilter(DWORD code) noexcept {
+    if (IsFatalCode(code)) Fault(2, code);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+// The identities every swap relies on (direct reads inside the caller's
+// __try): the player slot, P's vtable, flags (online and alternate dispatch
+// clear), no synchronizer, count 2 / local index 0 / Q vtable, PP and src.
+pi::Skip ValidatePad(const pi::Arm& a) noexcept {
     if (Load<std::uintptr_t>(g_base + c::player_slot_rva) != a.P) return pi::Skip::player;
     if (Load<std::uintptr_t>(a.P) != a.p_vtable) return pi::Skip::p_vtable;
     const std::uint32_t flags = Load<std::uint32_t>(a.P + c::p_flags);
     if (flags & (c::flag_online | c::flag_alt_dispatch)) return pi::Skip::flags;
     if (Load<std::uintptr_t>(a.P + c::p_sync) != 0) return pi::Skip::sync;
+    if (Load<std::uint32_t>(a.P + c::p_count) != 2 || Load<std::uint32_t>(a.P + c::p_local) != 0) return pi::Skip::state;
+    const std::uintptr_t q = Load<std::uintptr_t>(a.P + c::p_q);
+    if (!q || Load<std::uintptr_t>(q) != g_base + c::q_vtable_rva) return pi::Skip::state;
     if (Load<std::uintptr_t>(a.P + c::p_pad) != a.pp || Load<std::uintptr_t>(a.pp) != a.pp_vtable) return pi::Skip::pp;
     if (Load<std::uintptr_t>(a.pp + c::pp_src) != a.src) return pi::Skip::src;
+    return pi::Skip::none;
+}
+
+// Full block-1 validation (inside the caller's __try).
+pi::Skip Validate(const pi::Arm& a, void* root) noexcept {
+    if (const pi::Skip skip = ValidatePad(a); skip != pi::Skip::none) return skip;
     if (Load<std::uintptr_t>(a.P + c::p_cam) != a.cam_object || Load<std::uintptr_t>(a.cam_object) != a.cam_vtable)
         return pi::Skip::cam;
     const std::uintptr_t ids = Load<std::uintptr_t>(a.P + c::p_ids);
@@ -129,7 +193,9 @@ pi::Skip Validate(const pi::Arm& a, void* root) noexcept {
     return pi::Skip::none;
 }
 
-// Everything the window overwrites, saved for the exact-reverse restore.
+// Everything the window overwrites, each with its own saved flag: a restore
+// writes back exactly the fields PRE had saved (a PRE fault midway restores
+// the prefix, never zeros).
 struct Save {
     unsigned char src[c::src_size];
     unsigned char derived[c::pp_derived_size];
@@ -137,16 +203,15 @@ struct Save {
     unsigned char kb[c::pp_kb_size];
     std::uint8_t kb_flags;
     std::uintptr_t vt;
-    bool vt_saved;
     std::uint32_t rec_2ac;
     std::uint32_t p218;
-    bool p218_saved;
     unsigned char cam[pi::kCamSaveBytes];
-    bool cam_saved;
+    bool src_saved, derived_saved, masks_saved, kb_saved, kb_flags_saved, vt_saved, rec_saved, p218_saved, cam_saved;
 };
 
 void ApplyPre(const pi::Arm& a, const pi::Injection& j, Save& save) noexcept {
     std::memcpy(save.src, reinterpret_cast<void*>(a.src + c::src_words), c::src_size);
+    save.src_saved = true;
     Store<std::uint32_t>(a.src + 0x48, j.held);
     Store<std::uint32_t>(a.src + 0x4C, j.w[0]);
     Store<std::uint32_t>(a.src + 0x50, j.w[1]);
@@ -155,55 +220,67 @@ void ApplyPre(const pi::Arm& a, const pi::Injection& j, Save& save) noexcept {
     Store<float>(a.src + 0x60, j.rx); Store<float>(a.src + 0x64, j.ry);
     Store<float>(a.src + 0x68, j.lt); Store<float>(a.src + 0x6C, j.rt);
     std::memcpy(save.derived, reinterpret_cast<void*>(a.pp + c::pp_derived), c::pp_derived_size);
+    save.derived_saved = true;
     Store<float>(a.pp + 0x10, j.mag); Store<float>(a.pp + 0x14, j.force); Store<float>(a.pp + 0x18, j.dir);
     Store<float>(a.pp + 0x1C, j.rmag); Store<float>(a.pp + 0x20, j.rforce); Store<float>(a.pp + 0x24, j.rdir);
-    // Masks: save the host's, write instance 1's private copy (zero on gen 0).
+    // Masks: save the host's, write instance 1's private copy (zero on a new gen).
     std::memcpy(save.host_masks, reinterpret_cast<void*>(a.pp + c::pp_masks), c::pp_masks_size);
     std::memcpy(save.host_masks + c::pp_masks_size, reinterpret_cast<void*>(a.pp + c::pp_mask_tables), c::pp_mask_tables_size);
+    save.masks_saved = true;
     std::memcpy(reinterpret_cast<void*>(a.pp + c::pp_masks), g_priv_masks, c::pp_masks_size);
     std::memcpy(reinterpret_cast<void*>(a.pp + c::pp_mask_tables), g_priv_masks + c::pp_masks_size, c::pp_mask_tables_size);
     std::memcpy(save.kb, reinterpret_cast<void*>(a.pp + c::pp_kb), c::pp_kb_size);
+    save.kb_saved = true;
     std::memset(reinterpret_cast<void*>(a.pp + c::pp_kb), 0, c::pp_kb_size);
     save.kb_flags = Load<std::uint8_t>(a.pp + c::pp_kb_flags);
+    save.kb_flags_saved = true;
     Store<std::uint8_t>(a.pp + c::pp_kb_flags, static_cast<std::uint8_t>(save.kb_flags & ~c::kb_flags_clear));
-    save.vt_saved = a.hold == PartnerInputHold::none && g_vt_none[0];
-    if (save.vt_saved) {
+    if (a.hold == PartnerInputHold::none && g_vt_ready) {
         save.vt = Load<std::uintptr_t>(a.pp);
+        save.vt_saved = true;
         Store<std::uintptr_t>(a.pp, reinterpret_cast<std::uintptr_t>(&g_vt_none[1]));
     }
     save.rec_2ac = Load<std::uint32_t>(a.rec1 + c::rec_local);
+    save.rec_saved = true;
     Store<std::uint32_t>(a.rec1 + c::rec_local, save.rec_2ac | 1u);
-    save.cam_saved = a.cam != PartnerInputCam::off;
-    if (save.cam_saved) {
+    if (a.cam != PartnerInputCam::off) {
         std::size_t at = 0;
         for (const pi::CamRange& r : pi::kCamRanges) {
             const std::size_t n = static_cast<std::size_t>(r.end - r.begin);
             std::memcpy(save.cam + at, reinterpret_cast<void*>(a.cam_object + r.begin), n);
             at += n;
         }
+        save.cam_saved = true;
     }
-    save.p218_saved = a.p218;
-    if (save.p218_saved) {
+    if (a.p218) {
         save.p218 = Load<std::uint32_t>(a.P + c::p_local_id);
+        save.p218_saved = true;
         Store<std::uint32_t>(a.P + c::p_local_id, 1u);
     }
 }
 
-void ApplyPost(const pi::Arm& a, const Save& save) noexcept {
+// Exact reverse of ApplyPre for the saved fields. capture_private keeps the
+// masks instance 1's update left as its private copy (only after a real call).
+void ApplyPost(const pi::Arm& a, const Save& save, bool capture_private) noexcept {
     if (save.p218_saved) Store<std::uint32_t>(a.P + c::p_local_id, save.p218);
     if (save.vt_saved) Store<std::uintptr_t>(a.pp, save.vt);
-    const std::uint32_t now = Load<std::uint32_t>(a.rec1 + c::rec_local);
-    Store<std::uint32_t>(a.rec1 + c::rec_local, (now & ~1u) | (save.rec_2ac & 1u));
-    // Keep instance 1's private masks, then restore the host's.
-    std::memcpy(g_priv_masks, reinterpret_cast<void*>(a.pp + c::pp_masks), c::pp_masks_size);
-    std::memcpy(g_priv_masks + c::pp_masks_size, reinterpret_cast<void*>(a.pp + c::pp_mask_tables), c::pp_mask_tables_size);
-    g_priv_valid = true;
-    std::memcpy(reinterpret_cast<void*>(a.pp + c::pp_masks), save.host_masks, c::pp_masks_size);
-    std::memcpy(reinterpret_cast<void*>(a.pp + c::pp_mask_tables), save.host_masks + c::pp_masks_size, c::pp_mask_tables_size);
-    std::memcpy(reinterpret_cast<void*>(a.pp + c::pp_kb), save.kb, c::pp_kb_size);
-    Store<std::uint8_t>(a.pp + c::pp_kb_flags, save.kb_flags);
-    std::memcpy(reinterpret_cast<void*>(a.pp + c::pp_derived), save.derived, c::pp_derived_size);
-    std::memcpy(reinterpret_cast<void*>(a.src + c::src_words), save.src, c::src_size);
+    if (save.rec_saved) {
+        const std::uint32_t now = Load<std::uint32_t>(a.rec1 + c::rec_local);
+        Store<std::uint32_t>(a.rec1 + c::rec_local, (now & ~1u) | (save.rec_2ac & 1u));
+    }
+    if (save.masks_saved) {
+        if (capture_private) {
+            std::memcpy(g_priv_masks, reinterpret_cast<void*>(a.pp + c::pp_masks), c::pp_masks_size);
+            std::memcpy(g_priv_masks + c::pp_masks_size, reinterpret_cast<void*>(a.pp + c::pp_mask_tables), c::pp_mask_tables_size);
+            g_priv_valid = true;
+        }
+        std::memcpy(reinterpret_cast<void*>(a.pp + c::pp_masks), save.host_masks, c::pp_masks_size);
+        std::memcpy(reinterpret_cast<void*>(a.pp + c::pp_mask_tables), save.host_masks + c::pp_masks_size, c::pp_mask_tables_size);
+    }
+    if (save.kb_flags_saved) Store<std::uint8_t>(a.pp + c::pp_kb_flags, save.kb_flags);
+    if (save.kb_saved) std::memcpy(reinterpret_cast<void*>(a.pp + c::pp_kb), save.kb, c::pp_kb_size);
+    if (save.derived_saved) std::memcpy(reinterpret_cast<void*>(a.pp + c::pp_derived), save.derived, c::pp_derived_size);
+    if (save.src_saved) std::memcpy(reinterpret_cast<void*>(a.src + c::src_words), save.src, c::src_size);
     if (save.cam_saved) {
         std::size_t at = 0;
         std::uint32_t dirty = 0;
@@ -226,38 +303,73 @@ void ApplyPost(const pi::Arm& a, const Save& save) noexcept {
     }
 }
 
-void Fault(unsigned phase, std::uint32_t code) noexcept {
-    if (InterlockedExchange(&g_faulted, 1) == 0) {
-        InterlockedExchange(&g_fault_phase, static_cast<LONG>(phase));
-        InterlockedExchange(&g_fault_code, static_cast<LONG>(code));
-        InterlockedIncrement(&g_faults);
-        if (g_log) {
-            char line[128]{};
-            if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "partner_input=fault; phase=%s; code=0x%08x; native_input=disabled\r\n",
-                                           pi::FaultPhaseName(static_cast<std::uint8_t>(phase)), code)))
-                g_log(line);
-        }
-    }
+// POST under SEH (phase 3 on an access fault).
+void SafePost(const pi::Arm& a, const Save& save, bool capture_private) noexcept {
+    __try { ApplyPost(a, save, capture_private); }
+    __except (OwnFilter(3, GetExceptionCode())) {}
 }
 
-void RunHoldLog(const pi::Arm& a, void* root, std::uint32_t phase) noexcept {
-    if (!g_vt_log[0]) { g_original(root, phase); return; }
+// PRE under SEH; on an access fault the saved prefix is restored and false
+// returned (the window is then disabled by Fault).
+bool SafePre(const pi::Arm& a, const pi::Injection& j, Save& save) noexcept {
+    bool done = false;
+    __try { ApplyPre(a, j, save); done = true; }
+    __except (OwnFilter(1, GetExceptionCode())) {}
+    if (!done) SafePost(a, save, false);
+    return done;
+}
+
+// The original dispatch with the window's fields swapped in. A fatal game
+// exception is recorded and passed on; if an outer handler unwinds through
+// here, the swapped fields are restored and the window closed first.
+void GuardedCall(const pi::Arm& a, const Save& save, void* root, std::uint32_t phase) noexcept {
     __try {
-        const std::uintptr_t vt = Load<std::uintptr_t>(a.pp);
+        __try { g_original(root, phase); }
+        __finally {
+            if (AbnormalTermination()) {
+                SafePost(a, save, false);
+                EndWindow();
+            }
+        }
+    } __except (GameFilter(GetExceptionCode())) {}
+}
+
+// Block 0 only (I5): the hold classifier of the local player's update is
+// logged through the log vtable copy. Validated like the window (PP identity),
+// honours g_faulted, never calls the original twice.
+void RunHoldLog(const pi::Arm& a, void* root, std::uint32_t phase) noexcept {
+    if (g_faulted || !g_vt_ready) { g_original(root, phase); return; }
+    pi::Skip skip = pi::Skip::player;
+    __try { skip = ValidatePad(a); }
+    __except (OwnFilter(1, GetExceptionCode())) {}
+    if (skip != pi::Skip::none) { g_original(root, phase); return; }
+    Save save{};
+    BeginWindow();
+    bool swapped = false;
+    __try {
+        save.vt = Load<std::uintptr_t>(a.pp);
+        save.vt_saved = true;
         Store<std::uintptr_t>(a.pp, reinterpret_cast<std::uintptr_t>(&g_vt_log[1]));
+        swapped = true;
+    } __except (OwnFilter(1, GetExceptionCode())) {}
+    if (!swapped) {
+        SafePost(a, save, false);
+        EndWindow();
         g_original(root, phase);
-        Store<std::uintptr_t>(a.pp, vt);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        Fault(2, GetExceptionCode());
-        g_original(root, phase);
+        return;
     }
+    GuardedCall(a, save, root, phase);
+    SafePost(a, save, false);
+    EndWindow();
 }
 
 void RunWindow(const pi::Arm& a, void* root, std::uint32_t phase) noexcept {
     InterlockedIncrement(&g_root1);
-    pi::Skip skip = pi::Skip::none;
-    __try { skip = Validate(a, root); }
-    __except (EXCEPTION_EXECUTE_HANDLER) { Fault(1, GetExceptionCode()); g_original(root, phase); return; }
+    pi::Skip skip = pi::Skip::player;
+    bool validated = false;
+    __try { skip = Validate(a, root); validated = true; }
+    __except (OwnFilter(1, GetExceptionCode())) {}
+    if (!validated) { g_original(root, phase); return; }
     if (skip != pi::Skip::none) {
         InterlockedIncrement(&g_skips);
         InterlockedExchange(&g_last_skip, static_cast<LONG>(skip));
@@ -272,27 +384,25 @@ void RunWindow(const pi::Arm& a, void* root, std::uint32_t phase) noexcept {
     const std::uint32_t overlay_bits = pi::StepOverlay(g_tap, a.tap_seq, a.tap_bits, a.press_bits, a.press_until_ms, now_ms);
     const pi::Injection j = pi::Compose(a.config, s, a.host_cam_cdeg, pi::Overlay{overlay_bits}, g_edge);
     if (j.stale) InterlockedIncrement(&g_stale);
+    InterlockedExchange(&g_last_stale, j.stale ? 1 : 0);
     InterlockedExchange(&g_last_held, static_cast<LONG>(j.held));
     InterlockedExchange(&g_last_lx, pi::Milli(j.lx));
     InterlockedExchange(&g_last_ly, pi::Milli(j.ly));
     InterlockedExchange(&g_last_dir, pi::Milli(j.dir));
     InterlockedExchange(&g_last_mag, pi::Milli(j.mag));
-    InterlockedExchange(&g_last_age, static_cast<LONG>(s.valid ? s.age_ms : 0u));
+    InterlockedExchange(&g_last_age, static_cast<LONG>(s.valid ? s.age_ms : pi::kNoSample));
     const std::uint64_t t0 = NowUs();
     Save save{};
-    bool pre_ok = false;
-    __try { ApplyPre(a, j, save); pre_ok = true; }
-    __except (EXCEPTION_EXECUTE_HANDLER) { Fault(1, GetExceptionCode()); }
-    if (!pre_ok) {
-        // PRE faults mid-write: restore whatever was saved, in reverse.
-        __try { ApplyPost(a, save); } __except (EXCEPTION_EXECUTE_HANDLER) {}
+    BeginWindow();
+    if (!SafePre(a, j, save)) {
+        // The prefix was restored; block 1 still updates once this frame.
+        EndWindow();
         g_original(root, phase);
         return;
     }
-    __try { g_original(root, phase); }
-    __except (EXCEPTION_EXECUTE_HANDLER) { Fault(2, GetExceptionCode()); }
-    __try { ApplyPost(a, save); }
-    __except (EXCEPTION_EXECUTE_HANDLER) { Fault(3, GetExceptionCode()); }
+    GuardedCall(a, save, root, phase);
+    SafePost(a, save, true);
+    EndWindow();
     Max(g_us_max, static_cast<LONG>(NowUs() - t0));
 }
 
@@ -303,10 +413,8 @@ void __stdcall InputDispatchHook(void* root, std::uint32_t phase) noexcept {
     if (!ReadArm(a)) { g_original(root, phase); return; }
     InterlockedExchange(&g_gen_seen, static_cast<LONG>(a.gen));
     if (a.gen != g_gen) {
+        // Only instance 1's private masks start afresh with a new gen.
         g_gen = a.gen;
-        g_edge = pi::EdgeState{};
-        g_tap = pi::TapState{};
-        g_prev = pi::Sample{};
         std::memset(g_priv_masks, 0, sizeof(g_priv_masks));
         g_priv_valid = false;
     }
@@ -318,7 +426,7 @@ void __stdcall InputDispatchHook(void* root, std::uint32_t phase) noexcept {
 
 std::uint32_t __stdcall HoldNone(void*, std::uint32_t, std::uint32_t) noexcept { return 0; }
 std::uint32_t __stdcall HoldLog(void* pp, std::uint32_t btn, std::uint32_t frames) noexcept {
-    std::uint32_t result = g_hold_orig ? g_hold_orig(pp, btn, frames) : 0;
+    const std::uint32_t result = g_hold_orig ? g_hold_orig(pp, btn, frames) : 0;
     InterlockedIncrement(&g_hold_calls);
     const LONG at = InterlockedIncrement(&g_hold_head) - 1;
     g_hold_ring[at & 63] = pi::HoldRecord{btn, frames, result};
@@ -333,6 +441,14 @@ bool CopyVtable(std::uintptr_t table[43], std::uintptr_t new_slot90) noexcept {
     table[1 + c::pp_vt_hold / 8] = new_slot90;
     return true;
 }
+bool BuildCopies() noexcept {
+    g_vt_ready = false;
+    if (!CopyVtable(g_vt_none, reinterpret_cast<std::uintptr_t>(&HoldNone)) ||
+        !CopyVtable(g_vt_log, reinterpret_cast<std::uintptr_t>(&HoldLog))) return false;
+    g_vt_ready = true;
+    return true;
+}
+
 } // namespace
 
 namespace detail {
@@ -356,6 +472,7 @@ void BuildStub(unsigned char out[14], const void* target) noexcept {
     std::memcpy(out + 6, &t, 8);
 }
 std::size_t BlockSize() noexcept { return kBlockSize; }
+
 } // namespace detail
 
 const char* Install(const void* base, LogFn log, SampleFn sample) noexcept {
@@ -373,8 +490,7 @@ const char* Install(const void* base, LogFn log, SampleFn sample) noexcept {
     unsigned char block[detail::kBlockSize]{};
     std::memcpy(block, reinterpret_cast<const void*>(g_base + c::hook_block_rva), sizeof(block));
     if (!detail::BlockMatches(block)) { result = "bytes"; }
-    else if (!CopyVtable(g_vt_none, reinterpret_cast<std::uintptr_t>(&HoldNone)) ||
-             !CopyVtable(g_vt_log, reinterpret_cast<std::uintptr_t>(&HoldLog))) {
+    else if (!BuildCopies()) {
         result = "vt_copy";
     } else {
         void* stub = near_code::AllocateNear(next_ip, 0x20);
@@ -412,8 +528,16 @@ const char* Install(const void* base, LogFn log, SampleFn sample) noexcept {
 bool Installed() noexcept { return g_ready; }
 
 void VtableCopies(std::uintptr_t out[2]) noexcept {
-    out[0] = g_ready ? reinterpret_cast<std::uintptr_t>(&g_vt_none[1]) : 0;
-    out[1] = g_ready ? reinterpret_cast<std::uintptr_t>(&g_vt_log[1]) : 0;
+    out[0] = g_ready && g_vt_ready ? reinterpret_cast<std::uintptr_t>(&g_vt_none[1]) : 0;
+    out[1] = g_ready && g_vt_ready ? reinterpret_cast<std::uintptr_t>(&g_vt_log[1]) : 0;
+}
+
+std::uint32_t WindowSeq() noexcept { return static_cast<std::uint32_t>(g_window_seq); }
+
+void ResetFault() noexcept {
+    InterlockedExchange(&g_fault_phase, 0);
+    InterlockedExchange(&g_fault_code, 0);
+    InterlockedExchange(&g_faulted, 0);
 }
 
 void PublishArm(const pi::Arm& arm) noexcept {
@@ -444,14 +568,15 @@ void DrainStats(Stats& out) noexcept {
     w.last_held = static_cast<std::uint32_t>(g_last_held);
     w.last_lx = g_last_lx; w.last_ly = g_last_ly; w.last_dir = g_last_dir; w.last_mag = g_last_mag;
     w.last_age_ms = static_cast<std::uint32_t>(g_last_age);
+    w.last_stale = static_cast<std::uint8_t>(g_last_stale ? 1 : 0);
     w.fault_phase = static_cast<std::uint8_t>(g_fault_phase);
     w.fault_code = static_cast<std::uint32_t>(g_fault_code);
-    AcquireSRWLockExclusive(&g_hold_lock);
+    // The ring is written lock-free by the game thread; a record copied while
+    // it is being written may be torn (diagnostic only).
     const LONG head = g_hold_head;
     const unsigned count = head > 8 ? 8 : static_cast<unsigned>(head);
     for (unsigned i = 0; i < count; ++i) out.holds[i] = g_hold_ring[(head - count + i) & 63];
     out.hold_count = count;
-    ReleaseSRWLockExclusive(&g_hold_lock);
 }
 
 bool PatchLive(const void* base) noexcept {

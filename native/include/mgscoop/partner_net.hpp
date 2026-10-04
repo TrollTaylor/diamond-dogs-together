@@ -25,6 +25,17 @@ namespace mgscoop::partner_net {
 inline constexpr std::uint64_t kSession = 0x4D4753434F4F5001ULL;
 // A sequence that is not newer is accepted as a peer restart after this gap.
 inline constexpr std::uint32_t kRestartGapMs = 2000;
+// Input frames are stored only when newer (wrap-safe, as newer_sequence) than
+// the stored one, or after kRestartGapMs without a stored frame (the peer
+// restarted its counter): an out-of-order older frame never replaces a newer
+// one or re-delivers its edge words (counted as in_drop).
+inline bool AcceptInputSequence(bool have, std::uint32_t last_seq, std::uint64_t last_rx_ms, std::uint32_t seq,
+                                std::uint64_t now_ms) noexcept {
+    if (!have) return true;
+    const std::uint32_t delta = seq - last_seq;
+    if (delta != 0 && delta < 0x80000000u) return true;
+    return now_ms >= last_rx_ms && now_ms - last_rx_ms > kRestartGapMs;
+}
 inline constexpr std::uint32_t kKeepaliveAfterMs = 1000;
 inline constexpr std::uint32_t kStatsIntervalMs = 10000;
 

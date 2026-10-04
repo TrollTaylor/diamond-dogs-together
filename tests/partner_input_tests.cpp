@@ -183,6 +183,23 @@ void TestOverlay() {
     tap = pi::TapState{};
     Check(pi::StepOverlay(tap, 0, 0, 0x4, 1000, 500) == 0x4, "press active before ms");
     Check(pi::StepOverlay(tap, 0, 0, 0x4, 1000, 1000) == 0, "press expired at ms");
+    // The hook keeps the tap and edge state across an Arm gen bump: the same
+    // (cumulative) tap_seq is never delivered twice, a new one is.
+    tap = pi::TapState{};
+    for (unsigned i = 0; i < pi::kTapFrames; ++i) pi::StepOverlay(tap, 5, 0x2, 0, 0, 0);
+    for (unsigned i = 0; i < 8; ++i) Check(pi::StepOverlay(tap, 5, 0x2, 0, 0, 0) == 0, "kept tap state: no replay of seq 5");
+    Check(pi::StepOverlay(tap, 6, 0x2, 0, 0, 0) == 0x2, "kept tap state: seq 6 delivered");
+    // A held bit across a gen bump with a kept edge state: no synthetic press.
+    pi::Config cfg{};
+    cfg.mode = mgscoop::PartnerInput::neutral;
+    cfg.mask = 0x6;
+    cfg.words[0] = pi::Word::zero; cfg.words[1] = pi::Word::press; cfg.words[2] = pi::Word::zero;
+    pi::EdgeState edge{};
+    const pi::Sample none{};
+    pi::Injection j = pi::Compose(cfg, none, 0, pi::Overlay{0x4}, edge);
+    Check(j.held == 0x4 && j.w[1] == 0x4, "edge: first frame press");
+    j = pi::Compose(cfg, none, 0, pi::Overlay{0x4}, edge);
+    Check(j.held == 0x4 && j.w[1] == 0, "edge: held, no second press (state kept across a gen bump)");
 }
 
 } // namespace

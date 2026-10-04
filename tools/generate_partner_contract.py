@@ -194,6 +194,12 @@ SITES = [
     (0x1198B06, 'f68188030000044c8bca488bd90f84c500000044384128', 'DM request compare'),
     (0x1198D56, 'c7820002000001000000', 'DM entry playback writes CAM+0x200'),
     (0x1198DB5, '488982f0010000', 'DM entry playback writes CAM+0x1F0 (qword)'),
+    (0x1198D9D, '48c744244000000000488b442440c7820002000000000000', 'DM entry, no locator: CAM+0x1F0 = 0 and CAM+0x200 = 0'),
+    (0x11992E9, '488981f00100004489b100020000', 'DM End writes CAM+0x1F0 = 0 and CAM+0x200 = 0 (any id)'),
+    (0x11992FB, '80a088030000c3', 'DM End clears the pending g+0x388 bits 0x3C (global)'),
+    # p218 diagnostic hazards: P+0x218 is paired with P+0x214 / the local block P+0x58.
+    (0x11AD05D, '3b9018020000', 'cmp id, [P+0x218] ...'), (0x11AD072, '8bb014020000', '... then index [P+0x214] (host index 0)'),
+    (0xFE8F85, '488b48588b9018020000', 'local block *(P+0x58)->vt+0x20 called with id [P+0x218]'),
     (0x1197D0E, '488d0593812201488901', 'DM primary vtable'), (0x1197D23, '488d05d6812201488941', 'DM iface vtable'),
     (0x9BCC3C, '498984c9b8030000', 'blk+0x3B8[idx] interfaces'), (0x9D2650, '488d05c9982402c3', 'g = 0x2C1BF20'),
     (0x9BA9BA, 'e8917c010048894668', 'P+0x48 = g'), (0x9DAC99, '800d0816240204', 'Play: g+0x388 |= 4'),
@@ -382,6 +388,8 @@ w('inline constexpr std::size_t plugin_recs=0x1a0, plugin_rec_stride=0x390, rec_
 w('// Camera CAM (vtable 0x23b8250); CAM+0x20c mode (0 = vt+0 returns CAM+0x120).')
 w('inline constexpr std::uintptr_t cam_vtable_rva=0x23b8250;')
 w('inline constexpr std::size_t cam_mode=0x20c;')
+w('// DM entry/End write the camera connect handle (qword) and its on flag (dword); 0 when idle.')
+w('inline constexpr std::size_t cam_connect=0x1f0, cam_connect_on=0x200;')
 w('// The hooked call 0x9c2b51 (e8 rel32 -> 0xbf61d0).')
 w('inline constexpr std::uintptr_t hook_block_rva=0x9c2b40, hook_site=0x9c2b51, hook_rel32=0x9c2b52, hook_next_ip=0x9c2b56;')
 w('inline constexpr std::uint32_t hook_rel32_orig=0x0023367a;')

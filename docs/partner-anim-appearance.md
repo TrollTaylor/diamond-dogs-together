@@ -418,7 +418,7 @@ the smooth mover, but its action system is idle (native `SetStance` is reverted
 within 17 ms, `isLocal=0` so it reads no input), and a Snake look never finishes
 loading on a guest playing Quiet. Every address below is an RVA, verified
 statically against 1.0.15.4 (SHA-256 085c2f82...bb45) by
-`tools/generate_partner_contract.py` (now 154 code sites, 38 vtable slots); the
+`tools/generate_partner_contract.py` (now 160 code sites, 38 vtable slots); the
 native code gate re-checks all of them in the running image before any read,
 patch or call. Nothing here touches S_IS_ONLINE (P+0x204 bit 0x100), the
 synchronizer P+0xA8, P+0x214, sessions or the master-server path.
@@ -474,9 +474,10 @@ call only, with instance 1 realized and every identity re-validated by direct
 reads under SEH, the hook swaps in instance 1's own virtual pad (src words and
 floats, PP derived mag/force/dir, PP keyboard overrides, PP mask tables), sets
 the base action plugin's per-id `isLocal` bit `rec1+0x2AC bit0` (0x10BEDB0),
-optionally overrides the hold classifier through a per-window PP-vtable-pointer
-swap, sandboxes the camera POD fields, and restores everything in reverse after
-the call. Movement is camera-relative by rotating the stick yaw by
+overrides the hold classifier through a per-window PP-vtable-pointer swap
+(`hold=none`, the default: slot +0x90 returns 0, so host holds never reach
+instance 1), sandboxes the camera POD fields, and restores everything in reverse
+after the call. Movement is camera-relative by rotating the stick yaw by
 `cam_cdeg - host_cam_cdeg`. The pure pad logic (`partner_input.cpp`: `Effective`
 replicates the PP getters 0x1205F00..0x1206060, `Quantize`, `Compose`) is unit
 tested; the hook body is validated statically and by the live matrix.
@@ -489,13 +490,22 @@ through a seqlock, corrects rare drift (`correct_mm`) with an `xform` snap, and
 sends the local pad (`isend=1`) as a 68-byte input frame (`player_sync`
 `encode_input_frame`, `partner_net` `SubmitInput`/`LatestInput`). A fault in the
 window disables native input, the DM patch and the hook for the rest of the
-mission.
+mission. With `apply=input` and no armed window (refused, faulted, hook refused,
+`input=off`, stage < 3) the partner falls back to the proven Lua Warp every tick
+(`partner_input_place; reason=fallback`), so it never freezes.
 
 Camera POD fields are compared (`cam=detect`) or restored (`cam=sandbox`) over
 12 ranges; `CAM+0xB0` and `0x13A..0x150` (pointer-like) are never touched.
-`p218=1` is a diagnostic that also sets P+0x218 inside the window (two-key
-gated: `lab.ini partner_input_p218_allow=1`), auto-expiring after 20 s, to learn
-whether locomotion start is P+0x218-gated.
+`p218=1` is a hazardous diagnostic that also sets P+0x218 inside the window
+(gated by `lab.ini partner_input_p218_allow=1` and `cam=sandbox`; it ends at
+once if the camera mode changes), auto-expiring after 20 s, to learn whether
+locomotion start is P+0x218-gated. Game code pairs P+0x218 with P+0x214 and the
+local block P+0x58 (0x11AD05D compares the id with P+0x218, then indexes with
+P+0x214 at 0x11AD072; 0xFE8F85 calls the local block's vt+0x20 with id
+P+0x218), so inside the window instance 1 can be routed into the host's index-0
+data or block-0 per-id slots. Such writes are silent: SEH cannot catch them and
+they outlive the expiry. Run I3x last, then quit without saving
+(`partner_input=p218; on=1; hazard=index0_routing; restart_after=1`).
 
 ### D. The direct-motion lever (minimal, mutually exclusive with I)
 
@@ -508,8 +518,59 @@ reaches instance 1. `dm=probe` logs the census and a 2 Hz `partner_dm` line;
 `dmplay=N` plays `GANI[N]` (resident snap ganis in `player2_resident.mtar`),
 `dmstop=1` stops it. Open: whether instance 1 actually polls DM slot 0 (about
 55-65%; `partner_dm=unconsumed` means it does not). `dm=on` and the input window
-are mutually exclusive (`partner_dm=refused; reason=input_active`, and input
-arming refuses with `reason=dm`).
+are mutually exclusive (`partner_dm=refused; reason=input_active`, change-only,
+also while `input != off`; and input arming refuses with `reason=dm`).
+
+The DM entry playback without a locator (0x1198D9D) and DM End (0x11992E9)
+write the host camera's connect handle `CAM+0x1F0 = 0` and its flag
+`CAM+0x200 = 0` for ANY id, and End clears the pending `g+0x388` bits 0x3C
+globally (0x11992FB). Those writes are no-ops only while both camera fields are
+already 0, so `dmplay` is refused unless they are (`partner_dm=refused;
+reason=cam_connect`). `partner_dm` logs `cam1f0`/`cam200`, and
+`partner_dm=conflict` is logged once when the host enters its own DM, or a
+camera connect appears, while the partner's DM is active.
+
+### Review fixes (second pass, static)
+
+- `hold=none` and `holdlog` now really run. PP vtable slot -1 (0x23C8D38) is 0
+  in the image, so the copy's slot -1 cannot mark "copy ready"; a separate flag
+  does.
+- A tap is never replayed. The hook keeps its tap, edge and last-sample state
+  across Arm generation bumps, and `tap_seq` is process-lifetime in the driver.
+  Only instance 1's private mask copy restarts with a new gen.
+- `apply=input` relink now fires on lost -> live (the previous status was being
+  overwritten before `TickInput` read it).
+- `census=1` logs `partner_input_census` even with `input=off`, failing
+  verdicts included. The DM census is logged once while instance 1 is not
+  loaded, once when it is, and on `census=1`; it never repeats per tick.
+- The 1 Hz `partner_input` line logs deltas: `per_s` (normalized to one second),
+  `root1_calls`, `skips` and `stale` per interval, `windows` since the arm, and
+  `us_max` over the interval. A window with no valid net sample counts as stale
+  (`age_ms=none`).
+- `TickInput` runs before `TickDm`, so `input=off dm=on dmplay=1` disarms,
+  patches and plays in one tick.
+- `holdlog=0|1` is applied (it needs `lab.ini partner_input_holdlog=1`; I5
+  needs an armed input mode).
+- Teardown: `MissionStart` disarms and reverts first, always publishes a
+  disarmed Arm, and clears the hook's recorded fault (so a fault in mission 1
+  never disables mission 2). A state-guard refusal, a tick parse reject or a
+  refused CFG disarms and reverts the DM patch at once. The hook's `Validate`
+  also checks count 2, local index 0 and the Q vtable.
+- Exceptions. Our own validation/PRE/POST handle only access faults, and they
+  restore exactly the fields PRE had saved. The holdlog path validates, honours
+  the fault flag and never calls the original twice. An exception raised by the
+  game's own update inside the window is recorded (`phase=call`) and passed on
+  unchanged; if an outer handler unwinds through the window, a `__finally`
+  restores the swapped fields first.
+- The Lua-thread pad reads (`isend`, `ResolveInputTargets`) only count when no
+  window was open across them (the hook's window sequence is even and
+  unchanged; at most ~2 ms wait, then `busy`). They accept only the image PP
+  vtable, never the hook's per-window copies. A busy tick keeps an armed
+  window's published Arm.
+- Input frames are stored only when their sequence is newer (wrap-safe) or after
+  a 2 s restart gap; reordered older frames count as `in_drop`.
+- The lab `press=` validator rejects leading-zero milliseconds, as the native
+  parser does.
 
 ### Settings (lab.ini keys and trigger tokens)
 
@@ -523,7 +584,8 @@ arming refuses with `reason=dm`).
 `partner_input_correct_mm` (0..10000, default 1500; 0 = never),
 `partner_input_stale_ms` (50..2000, default 250), `partner_input_send`
 (default 0), `partner_input_hook` (default 1; 0 forbids the hook),
-`partner_input_p218_allow` (default 0), `partner_input_holdlog` (default 0),
+`partner_input_p218_allow` (default 0), `partner_input_holdlog` (default 0; it
+allows the `holdlog=1` trigger and turns it on when set),
 `partner_pad_probe` (default 0), `partner_look_gate` (default 1),
 `partner_look_recover` (default 1), `partner_dm` (off|probe|on, default off).
 The trigger grammar maximum is now 255 bytes; see
@@ -557,5 +619,10 @@ precise plan is the one returned alongside this change.
   the visual checks detect any effect.
 - The hold classifier `src->vt+0x10` codes are undecoded; `hold=none` returns 0,
   so the partner never sees host holds (prone needs a later `own` mode).
-- DM: id-1 polling (about 55-65%), the global Stop/End bits, and the unlocated
-  `CAM+0x1F0/+0x200` writes; only Mother Base 30050 is tested.
+- DM: id-1 polling (about 55-65%) and the global Stop/End bits. The
+  `CAM+0x1F0/+0x200` writes are located (0x1198D9D, 0x11992E9) and gated, but
+  only for the play request: a host DM started during the partner's DM is
+  logged, not prevented. Only Mother Base 30050 is tested.
+- The window itself (validate/PRE/call/POST, the vtable swap, the unwind
+  restore) has no synthetic-memory unit test yet; the live I1/I2 steps are its
+  first exercise.
