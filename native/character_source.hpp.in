@@ -1,0 +1,7 @@
+#pragma once
+constexpr char character_source[] = R"MGS_CHARACTER(
+@MGS_CHARACTER_SOURCE@
+)MGS_CHARACTER";
+constexpr char character_readback_source[] = R"MGS_CHARACTER_READBACK(
+@MGS_CHARACTER_READBACK_SOURCE@
+)MGS_CHARACTER_READBACK";
