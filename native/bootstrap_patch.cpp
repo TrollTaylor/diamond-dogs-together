@@ -18,6 +18,7 @@
 #include "session_lifecycle_source.hpp"
 #include "session_feedback_source.hpp"
 #include "respawn_source.hpp"
+#include "character_source.hpp"
 
 namespace mgscoop {
 namespace {
@@ -137,7 +138,13 @@ bool SelectHostTrialPatch(const char* source, std::size_t size, const char* name
     constexpr char marker_guard[]="\nif not (Tpp and type(Tpp.MgsCoop)==\"table\" and Tpp.MgsCoop.markerLoadingGuardActive==true) then\n";
     constexpr char marker_guard_end[]="\nend\n";
     constexpr auto marker_extra=sizeof(marker_guard)-1+sizeof(marker_guard_end)-1;
-    constexpr std::size_t result_size=original_size+sizeof(host_trial_source)-1+sizeof(equipment_loading_source)-1+marker_extra+sizeof(host_admission_source)-1+sizeof(client_join_source)-1+sizeof(damage_lifecycle_source)-1+sizeof(enemy_targeting_source)-1+sizeof(respawn_source)-1+sizeof(session_lifecycle_source)-1+sizeof(session_feedback_source)-1+sizeof(marker_loading_source)-1+sizeof(mission_trace_source)-1;
+    // Character selection runs after the mission's MissionPrepare and before
+    // the OnLoad/DeclareSVars/MissionStartPlayerTypeSetting part of OnAllocate.
+    constexpr char character_anchor[]="if t(n.sequence.MissionPrepare)then\nn.sequence.MissionPrepare()end\n"
+        "if t(n.sequence.OnEndMissionPrepareSequence)then\n"
+        "TppSequence.SetOnEndMissionPrepareFunction(n.sequence.OnEndMissionPrepareSequence)end\nend\n";
+    constexpr auto character_extra=sizeof(character_source)-1;
+    constexpr std::size_t result_size=original_size+sizeof(host_trial_source)-1+sizeof(equipment_loading_source)-1+marker_extra+character_extra+sizeof(host_admission_source)-1+sizeof(client_join_source)-1+sizeof(damage_lifecycle_source)-1+sizeof(enemy_targeting_source)-1+sizeof(respawn_source)-1+sizeof(session_lifecycle_source)-1+sizeof(session_feedback_source)-1+sizeof(marker_loading_source)-1+sizeof(character_readback_source)-1+sizeof(mission_trace_source)-1;
     static_assert(result_size<=script_bridge::max_replacement_bytes);
     static char result[result_size]{};
     static bool initialized=false;
@@ -148,31 +155,37 @@ bool SelectHostTrialPatch(const char* source, std::size_t size, const char* name
     // Insertions are pinned by the complete original source hash. Require
     // unique, ordered anchors; the original calls remain in the output once.
     std::size_t insertion=0,found=0,equipment_insertion=0,equipment_found=0;
-    std::size_t marker_insertion=0,marker_found=0;
+    std::size_t marker_insertion=0,marker_found=0,character_insertion=0,character_found=0;
     for(std::size_t i=0;i+sizeof(anchor)-1<=size;++i)
         if(std::memcmp(source+i,anchor,sizeof(anchor)-1)==0) { insertion=i; ++found; }
+    for(std::size_t i=0;i+sizeof(character_anchor)-1<=size;++i)
+        if(std::memcmp(source+i,character_anchor,sizeof(character_anchor)-1)==0) { character_insertion=i+sizeof(character_anchor)-1; ++character_found; }
     for(std::size_t i=0;i+sizeof(equipment_anchor)-1<=size;++i)
         if(std::memcmp(source+i,equipment_anchor,sizeof(equipment_anchor)-1)==0) { equipment_insertion=i; ++equipment_found; }
     for(std::size_t i=0;i+sizeof(marker_anchor)-1<=size;++i)
         if(std::memcmp(source+i,marker_anchor,sizeof(marker_anchor)-1)==0) { marker_insertion=i; ++marker_found; }
-    if(found!=1 || equipment_found!=1 || marker_found!=1 || equipment_insertion<=insertion ||
-       marker_insertion<=equipment_insertion || marker_insertion+sizeof(marker_anchor)-1>=size-8) return false;
+    if(found!=1 || equipment_found!=1 || marker_found!=1 || character_found!=1 || character_insertion<=insertion ||
+       equipment_insertion<=character_insertion || marker_insertion<=equipment_insertion ||
+       marker_insertion+sizeof(marker_anchor)-1>=size-8) return false;
     AcquireSRWLockExclusive(&patch_lock);
     if(!initialized) {
         std::memcpy(result,source,insertion);
         std::memcpy(result+insertion,host_trial_source,sizeof(host_trial_source)-1);
-        std::memcpy(result+insertion+sizeof(host_trial_source)-1,source+insertion,equipment_insertion-insertion);
-        const auto equipment=equipment_insertion+sizeof(host_trial_source)-1;
+        std::memcpy(result+insertion+sizeof(host_trial_source)-1,source+insertion,character_insertion-insertion);
+        const auto character=character_insertion+sizeof(host_trial_source)-1;
+        std::memcpy(result+character,character_source,character_extra);
+        std::memcpy(result+character+character_extra,source+character_insertion,equipment_insertion-character_insertion);
+        const auto equipment=equipment_insertion+sizeof(host_trial_source)-1+character_extra;
         std::memcpy(result+equipment,equipment_loading_source,sizeof(equipment_loading_source)-1);
         std::memcpy(result+equipment+sizeof(equipment_loading_source)-1,source+equipment_insertion,marker_insertion-equipment_insertion);
-        const auto marker=marker_insertion+sizeof(host_trial_source)-1+sizeof(equipment_loading_source)-1;
+        const auto marker=marker_insertion+sizeof(host_trial_source)-1+character_extra+sizeof(equipment_loading_source)-1;
         std::memcpy(result+marker,marker_guard,sizeof(marker_guard)-1);
         std::memcpy(result+marker+sizeof(marker_guard)-1,source+marker_insertion,sizeof(marker_anchor)-1);
         const auto after_marker=marker+sizeof(marker_guard)-1+sizeof(marker_anchor)-1;
         std::memcpy(result+after_marker,marker_guard_end,sizeof(marker_guard_end)-1);
         std::memcpy(result+after_marker+sizeof(marker_guard_end)-1,source+marker_insertion+sizeof(marker_anchor)-1,
             size-marker_insertion-(sizeof(marker_anchor)-1)-8);
-        constexpr auto appended=original_size-8+sizeof(host_trial_source)-1+sizeof(equipment_loading_source)-1+marker_extra;
+        constexpr auto appended=original_size-8+sizeof(host_trial_source)-1+character_extra+sizeof(equipment_loading_source)-1+marker_extra;
         std::memcpy(result+appended,host_admission_source,sizeof(host_admission_source)-1);
         std::memcpy(result+appended+sizeof(host_admission_source)-1,client_join_source,sizeof(client_join_source)-1);
         constexpr auto lifecycle=appended+sizeof(host_admission_source)-1+sizeof(client_join_source)-1;
@@ -185,10 +198,12 @@ bool SelectHostTrialPatch(const char* source, std::size_t size, const char* name
         std::memcpy(result+feedback,session_feedback_source,sizeof(session_feedback_source)-1);
         constexpr auto marker_lifecycle=feedback+sizeof(session_feedback_source)-1;
         std::memcpy(result+marker_lifecycle,marker_loading_source,sizeof(marker_loading_source)-1);
-        std::memcpy(result+marker_lifecycle+sizeof(marker_loading_source)-1,mission_trace_source,sizeof(mission_trace_source)-1);
+        constexpr auto readback=marker_lifecycle+sizeof(marker_loading_source)-1;
+        std::memcpy(result+readback,character_readback_source,sizeof(character_readback_source)-1);
+        std::memcpy(result+readback+sizeof(character_readback_source)-1,mission_trace_source,sizeof(mission_trace_source)-1);
         // The operational termination signal must run before every other
         // wrapper, independently of diagnostic limits or tracing errors.
-        constexpr auto session_lifecycle=marker_lifecycle+sizeof(marker_loading_source)-1+sizeof(mission_trace_source)-1;
+        constexpr auto session_lifecycle=readback+sizeof(character_readback_source)-1+sizeof(mission_trace_source)-1;
         std::memcpy(result+session_lifecycle,session_lifecycle_source,sizeof(session_lifecycle_source)-1);
         static_assert(session_lifecycle+sizeof(session_lifecycle_source)-1==result_size-8);
         std::memcpy(result+result_size-8,"return e",8);

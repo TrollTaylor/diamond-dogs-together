@@ -34,9 +34,21 @@ int main(int argc, char** argv) {
         // insertion sites. Every interval of original code must survive intact.
         const auto equipment=source.find("TppEquip.StartLoadingToEquipMissionBlock()");
         const auto marker=source.find("TppMarker.RestoreMarkerLocator()");
-        check(resumed!=std::string::npos && equipment>insertion && marker>equipment);
-        check(output.substr(resumed,equipment-insertion)==source.substr(insertion,equipment-insertion));
-        const auto equipment_out=output.find(source.substr(equipment,marker-equipment),resumed);
+        // Character selection (lua/coop/character.lua) follows MissionPrepare.
+        const std::string character_anchor="if t(n.sequence.MissionPrepare)then\nn.sequence.MissionPrepare()end\n"
+            "if t(n.sequence.OnEndMissionPrepareSequence)then\n"
+            "TppSequence.SetOnEndMissionPrepareFunction(n.sequence.OnEndMissionPrepareSequence)end\nend\n";
+        const auto character_at=source.find(character_anchor);
+        check(character_at!=std::string::npos && source.find(character_anchor,character_at+1)==std::string::npos);
+        const auto character=character_at+character_anchor.size();
+        check(resumed!=std::string::npos && character>insertion && equipment>character && marker>equipment);
+        check(output.substr(resumed,character-insertion)==source.substr(insertion,character-insertion));
+        const auto character_out=resumed+(character-insertion);
+        const std::string character_header="\n-- MGS co-op character selection (original).";
+        check(output.compare(character_out,character_header.size(),character_header)==0);
+        const auto character_resumed=output.find(source.substr(character,equipment-character),character_out);
+        check(character_resumed!=std::string::npos);
+        const auto equipment_out=output.find(source.substr(equipment,marker-equipment),character_resumed);
         check(equipment_out!=std::string::npos);
         const std::string marker_call="TppMarker.RestoreMarkerLocator()";
         const auto marker_out=output.find(marker_call,equipment_out);
@@ -44,6 +56,7 @@ int main(int argc, char** argv) {
         const auto tail=marker+marker_call.size();
         check(output.substr(marker_out+marker_call.size()+5,source.size()-tail-8)==source.substr(tail,source.size()-tail-8));
         check(output.find("local receipts = 0",resumed)!=std::string::npos);
+        check(output.find("\n-- MGS co-op character readback (original).",equipment_out)!=std::string::npos);
         check(output.substr(output.size()-8) == "return e");
         check(!mgscoop::SelectHostTrialPatch(changed.data(), changed.size(), name, patch, true));
         check(!patch.bytes && !patch.size);

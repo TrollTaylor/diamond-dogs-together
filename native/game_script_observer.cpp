@@ -19,6 +19,8 @@
 #include "mgscoop/result_patch.hpp"
 #include "mgscoop/full_close_patch.hpp"
 #include "mgscoop/marker_loading_patch.hpp"
+#include "mgscoop/character_receipt.hpp"
+#include "mgscoop/player_type_patch.hpp"
 #include "mgscoop/soldier_patch.hpp"
 #include "mgscoop/mission_termination.hpp"
 #include "mgscoop/mission_initialization.hpp"
@@ -266,6 +268,55 @@ bool OnRuntimeThread() noexcept {
 }
 bool OnTerminationThread() noexcept { return termination_scope.OnThread(GetCurrentThreadId()); }
 bool OnMissionThread() noexcept { return OnAllocationThread() || OnRuntimeThread() || OnTerminationThread(); }
+
+// Character selection receipts (lua/coop/character.lua, docs/characters.md).
+// The query is read-only and formatted once from coop.ini (constant for the
+// process). The Ocelot/Quiet reset bypass is enabled only for a configured
+// Ocelot/Quiet during an accepted allocation (an already active bypass is
+// confirmed, e.g. for a checkpoint reload); disabling is always allowed.
+// The players guard (lab only) samples the player object read-only so the
+// readback calls Player.GetPlayerType, which has no null check, only while
+// that object exists. Report/readback receipts are log-only, never replaced.
+char character_query[mgscoop::character::max_line]{};
+std::size_t character_query_size = 0;
+thread_local char character_players[64]{};
+bool SelectCharacterReceipt(mgscoop::character::Receipt kind, const char* buffer, std::size_t size,
+                            mgscoop::script_bridge::Replacement& replacement) noexcept {
+    using mgscoop::character::Receipt;
+    static constexpr char yes[]="return true", no[]="return false";
+    const auto& coop=mgscoop::GetCoopConfig();
+    if(kind==Receipt::query) {
+        if(!character_query_size)
+            character_query_size=mgscoop::character::FormatQuery(coop,mgscoop::GetLabConfig().present,
+                                                                  character_query,sizeof(character_query));
+        if(!character_query_size) return false;
+        replacement={character_query,character_query_size};
+        return true;
+    }
+    if(kind==Receipt::bypass_on || kind==Receipt::bypass_off) {
+        bool accepted=false;
+        if(kind==Receipt::bypass_off) accepted=mgscoop::player_type::SetActive(game_base,game_span,false,Log);
+        else if(!mgscoop::character::NeedsResetBypass(coop) ||
+                (!OnAllocationThread() && !mgscoop::player_type::IsActive()))
+            Log("player_type_patch=refused; reason=not_configured_or_not_allocating\r\n");
+        else accepted=mgscoop::player_type::SetActive(game_base,game_span,true,Log);
+        replacement=accepted ? mgscoop::script_bridge::Replacement{yes,sizeof(yes)-1}
+                             : mgscoop::script_bridge::Replacement{no,sizeof(no)-1};
+        return true;
+    }
+    if(kind==Receipt::players) {
+        mgscoop::player_type::TypeSample sample{"lab_disabled",0,0,{0,0}};
+        const bool ready=mgscoop::GetLabConfig().present && mgscoop::player_type::SampleTypes(game_base,game_span,sample);
+        const auto length=mgscoop::character::FormatPlayersReply(ready,sample.stage,sample.limit,sample.type,sample.count,
+                                                                  character_players,sizeof(character_players));
+        if(!length) return false;
+        replacement={character_players,length};
+        return true;
+    }
+    char line[mgscoop::character::max_line]{};
+    if(mgscoop::character::FormatLogLine(kind,buffer,size,line,sizeof(line))) Log(line);
+    return false;
+}
 bool TransferRuleThread(DWORD previous_thread) noexcept {
     // Both directions are needed: allocation -> runtime for gameplay/cleanup,
     // then runtime -> a later allocation worker for retained cleanup. These
@@ -834,6 +885,11 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     constexpr char admission[]="return 'MGS_COOP_HOST_ADMISSION_V1'";
     constexpr char admission_observed[]="return 'MGS_COOP_HOST_ADMISSION_OBSERVED_V1'";
     constexpr char released[]="return 'MGS_COOP_HOST_RELEASE_V1'";
+    if(!selected && (host_create_enabled || client_enabled)) {
+        const auto character_kind=mgscoop::character::Classify(buffer,size,name);
+        if(character_kind!=mgscoop::character::Receipt::none)
+            selected=SelectCharacterReceipt(character_kind,buffer,size,replacement);
+    }
     if(host_admission_enabled && (OnRuntimeThread() || OnTerminationThread()) && buffer && name && size==sizeof(released)-1 &&
        std::memcmp(buffer,released,size)==0 && std::strcmp(name,released)==0)
         ForgetDynamiteHostAdmission();
@@ -972,6 +1028,16 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                 if (heap_test_enabled) Log("mode=heap_v1; paired_heap_trial=1 host_calls=0 allocator_hook=0\r\n");
                 if (host_create_enabled) Log("mode=host_v2; dynamite_host_creation=enabled max_players=2 peer_acceptance_requested=0\r\n");
                 if (host_admission_enabled) Log("mode=host_v3; peer_acceptance=after_mission_start; max_players=2\r\n");
+            }
+            if (host_create_enabled || client_enabled) {
+                // coop.ini is read once here (kernel32 file I/O), outside the Lua compile path.
+                const auto& coop = mgscoop::GetCoopConfig();
+                char character_line[192]{};
+                if (SUCCEEDED(StringCchPrintfA(character_line, ARRAYSIZE(character_line),
+                    "character_config=%s; fallback=%s; coop_ini=%u; reset_bypass_needed=%u; applied_in=TppMain.OnAllocate\r\n",
+                    coop.character == mgscoop::PlayerCharacter::game_default ? "default" : mgscoop::PlayerCharacterName(coop.character),
+                    mgscoop::PlayerCharacterName(coop.character_fallback), unsigned(coop.present),
+                    unsigned(mgscoop::character::NeedsResetBypass(coop))))) Log(character_line);
             }
             const auto target = reinterpret_cast<mgscoop::script_bridge::LoadBuffer>(static_cast<unsigned char*>(base)+load_rva);
             const auto status = mgscoop::script_bridge::Install(target, expected_body, sizeof(expected_body),
