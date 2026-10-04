@@ -58,8 +58,10 @@ do
         end
         Tpp.MgsCoop.clientJoinRequested = result == "submitted"
         Tpp.MgsCoop.clientJoinStatus = result == "submitted" and "submitted" or "failed"
+        -- Ctrl+F9 re-arms a request that never created a session (the native
+        -- reset machine restores and re-arms; lab reset.trigger does the same).
         announce(result == "submitted" and "Co-op: join request sent. Waiting for connection."
-            or "Co-op: join could not start. Reset (Ctrl+F9 or reset.trigger) to try again.")
+            or "Co-op: join could not start. Press Ctrl+F9, then Ctrl+F8 to retry.")
     end
     -- Reset / re-arm poll. The native observer handles Ctrl+F9, reset.trigger
     -- and the lab's automatic triggers. It leaves this literal receipt unchanged
@@ -79,7 +81,7 @@ do
             announce("Co-op test: check reset. Press Ctrl+F8 to check guest setup again.")
         else
             Tpp.MgsCoop.clientJoinStatus = "waiting"
-            announce("Co-op: join reset. Wait for the host, then press Ctrl+F8 (or drop join.trigger).")
+            announce("Co-op: join reset. When the host is ready, press Ctrl+F8 to join.")
         end
     end
     local function protected(action)

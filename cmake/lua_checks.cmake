@@ -99,6 +99,7 @@ set(_mgs_coop "${CMAKE_CURRENT_SOURCE_DIR}/lua/coop")
 mgs_add_lua_check(host_admission_lua_check "${_mgs_coop}/host_admission.lua")
 mgs_add_lua_check(session_lifecycle_lua_check "${_mgs_coop}/session_lifecycle.lua")
 mgs_add_lua_check(client_join_lua_check "${_mgs_coop}/client_join.lua")
+mgs_add_lua_check(session_feedback_lua_check "${_mgs_coop}/session_feedback.lua")
 mgs_add_lua_check(damage_parameters_lua_check "${_mgs_coop}/damage_parameters.lua")
 mgs_add_lua_check(damage_lifecycle_lua_check "${_mgs_coop}/damage_lifecycle.lua")
 

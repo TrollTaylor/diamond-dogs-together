@@ -11,6 +11,13 @@ do
         session_error = "Co-op: the game reported a session error. Restart before another attempt.",
         unavailable = "Co-op: session status is currently unavailable.",
     }
+    -- A guest can retry: the native Ctrl+F9 reset re-arms the join when the
+    -- game released the failed session; it refuses while a live session
+    -- remains, and then only a restart helps. Messages fit one log line.
+    local guestMessages = {
+        session_error = "Co-op: session error. Press Ctrl+F9 to reset, or restart the game.",
+    }
+    local pendingMessage = "Co-op: still connecting. Ctrl+F9 resets; restart the game if it does not."
     local function announce(text)
         if type(TppUiCommand) == "table" and type(TppUiCommand.AnnounceLogView) == "function" then
             pcall(TppUiCommand.AnnounceLogView, text)
@@ -24,7 +31,14 @@ do
         if not active or vars.missionCode ~= 30050 or type(Tpp.MgsCoop) ~= "table" then return end
         local state = Tpp.MgsCoop
         if state.sessionLost == true then active = false; return end
-        if state.hostSessionCreated ~= true and state.clientJoinRequested ~= true then return end
+        local hosting = state.hostSessionCreated == true
+        if not hosting and state.clientJoinRequested ~= true then
+            -- Between guest attempts (a failed request, or a reset that
+            -- re-armed the join): the next request starts with fresh feedback,
+            -- so a repeated status and the pending reminder are announced again.
+            previous, pendingPolls, pendingNotice, frames = nil, 0, false, 0
+            return
+        end
         frames = frames + 1
         if frames < 60 then return end
         frames = 0
@@ -34,13 +48,14 @@ do
         state.sessionStatus = status
         if previous ~= status then
             previous = status
-            if messages[status] then announce(messages[status]) end
+            local text = (not hosting and guestMessages[status]) or messages[status]
+            if text then announce(text) end
         end
         if status == "client_connecting" then
             pendingPolls = pendingPolls + 1
             if pendingPolls >= 30 and not pendingNotice then
                 pendingNotice = true
-                announce("Co-op: connection is still pending. Confirm the host is ready.")
+                announce(pendingMessage)
             end
         else pendingPolls = 0 end
     end

@@ -1,0 +1,30 @@
+MGS Co-op @VERSION@ - the runtime archive (mgs-coop-player-runtime.dat)
+==============================================================================
+
+The mod needs one more file: mgs-coop-player-runtime.dat
+  size    3,720,192 bytes
+  SHA-256 @ARCHIVE_SHA256@
+
+It is NOT included in this package because it contains data generated from
+the game's own files (player and Mother Base packages from your MGSV install).
+The installer only accepts a file with exactly this SHA-256.
+
+Where it can come from:
+
+ A) Generated from your own game installation. This is currently a developer
+    procedure, not part of this package: it needs Python 3.9 or newer, the
+    project's staging tools (tools/stage_*.py in the source folder), a game
+    archive extractor and the datfpk converter. Those two tools currently
+    have no licence that clearly permits redistribution, so they are not
+    included. See source/docs/friend-test.md, section "Runtime archive".
+
+ B) A copy of the host's file. The installer accepts only this one file
+    (the same SHA-256 on every PC), so a verified copy works the same way as
+    a locally generated one. Whether to pass this game-derived file to
+    another person is the decision of the people involved; this package does
+    not do it.
+
+To use it: put mgs-coop-player-runtime.dat next to Install-Coop.bat (the
+installer finds it there), or give its full path when the installer asks, or
+pass -RuntimeArchive "<path>" on the command line. A reinstall reuses the copy
+that is already installed in <game folder>\mgs-coop.

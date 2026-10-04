@@ -467,6 +467,11 @@ try {
     Assert-Equal (Get-FileLengthOrZero (Join-Path $fixture 'missing.log')) ([Int64]0) 'missing length'
 
     # ------------------------------------------------------------ manifests, backup and seeding
+    # Windows PowerShell 5.1 (friend package) has no [IO.Path]::GetRelativePath.
+    Assert-Equal (Get-RelativeChildPath -Root 'C:\a\b\' -Path 'C:\a\b\c\d.txt') 'c/d.txt' 'relative child path'
+    Assert-Equal (Get-RelativeChildPath -Root 'c:/A/B' -Path 'C:\a\b\x') 'x' 'relative child path: separators and case'
+    Assert-Throws { Get-RelativeChildPath -Root 'C:\a\b' -Path 'C:\a\bc\d.txt' } 'not below' 'a sibling with the same prefix is not a child'
+    Assert-Throws { Get-RelativeChildPath -Root 'C:\a\b' -Path 'C:\a\b' } 'not below' 'the root itself is not a child'
     $userdata = Join-Path $fixture 'steam/userdata/7'
     foreach ($f in '287700/local/TPP_GAME_DATA0', '287700/local/TPP_GRAPHICS_CONFIG', '311340/remote/TPP_GAME_DATA', '287700/remotecache.vdf') {
         $path = Join-Path $userdata $f

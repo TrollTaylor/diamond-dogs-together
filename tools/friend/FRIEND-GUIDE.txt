@@ -1,0 +1,163 @@
+MGS CO-OP - FRIEND TEST GUIDE
+Version @VERSION@ (development build)
+==============================================================================
+
+WHAT THIS IS
+------------
+A test of an unfinished two-player co-op mod for METAL GEAR SOLID V: THE
+PHANTOM PAIN. Two people, each on their own PC with their own Steam account,
+try to get into one co-op session at Mother Base.
+
+Two-player co-op has NOT been seen working yet. This test finds out how far it
+gets between two real PCs. It may well fail somewhere - that is fine. The logs
+you send back afterwards are the useful result.
+
+One player is the HOST, the other one JOINS. Both use this same package.
+
+
+1. WHAT YOU BOTH NEED
+---------------------
+- MGSV: The Phantom Pain from Steam, fully updated (version 1.0.15.4), with no
+  other mods (no other dinput8.dll, no Infinite Heaven/SnakeBite changes). The
+  installer checks the game files and stops if they are not the original ones.
+- A save that can "Continue" into Mother Base (play normally once if needed).
+- Steam running and logged in with YOUR OWN account. The game connects to its
+  normal online service as usual (no special server is used).
+- Be Steam friends with each other.
+- Voice or text chat with each other during the test (Discord, Steam chat...).
+- The file mgs-coop-player-runtime.dat. It is not in this ZIP; read
+  RUNTIME-ARCHIVE.txt to see where it comes from.
+- Windows 10 or 11. Nothing else needs to be installed.
+
+
+2. INSTALL (both players, about 2 minutes)
+------------------------------------------
+ 1. Quit MGSV.
+ 2. Right-click the ZIP > "Extract All..." into a normal folder (for example
+    your Desktop). Do not run anything from inside the ZIP.
+ 3. HOST first: double-click Install-Coop.bat.
+    (If Windows warns about the file: "More info" > "Run anyway".)
+      - Confirm the game folder it found. If it asks for it: in Steam,
+        right-click the game > Manage > Browse local files, and copy that path.
+      - Choose 1 (Host).
+      - Character: press Enter for your normal character, or pick one.
+      - If it asks for mgs-coop-player-runtime.dat, drag the file into the
+        window and press Enter. (Tip: put the file next to Install-Coop.bat
+        and the installer finds it by itself.)
+      - Press Enter (or Y) to install.
+    At the end it shows YOUR SteamID64: 17 digits starting with 7656119.
+    Send that number to your friend (it is also copied to the clipboard).
+ 4. JOINER: double-click Install-Coop.bat.
+      - Choose 2 (Join) and enter the host's SteamID64.
+        The host can also find it in Steam: click your profile name at the
+        top right > Account details > the "Steam ID" line.
+      - Character: press Enter for Quiet, or pick one.
+      - Press Enter (or Y) to install.
+
+What the installer does: it puts dinput8.dll and a "mgs-coop" folder into the
+game folder (whatever was there before is backed up), backs up your real save
+files, and makes the game use a COPY of your save while the mod is installed.
+Your real save files are not written while the mod is installed. Your own
+Steam account and the normal online service are used as usual. You can run
+Install-Coop.bat again at any time to change the role or the character.
+
+
+3. THE TEST (about 10-15 minutes)
+---------------------------------
+Talk to each other during every step and note the time when something odd
+happens. The co-op messages appear in the game's message log at the bottom
+left of the screen.
+
+ 1. HOST: start MGSV from Steam. On the title screen choose Continue so you
+    arrive in Mother Base. Once you can move your character, wait about 30
+    seconds. You should see:
+        Co-op: host is accepting connections. The guest can press Ctrl+F8.
+    Tell your friend you are ready.
+ 2. JOINER: start MGSV from Steam and Continue into Mother Base as well. Once
+    you can move, you should see:
+        Co-op: wait for the host to be ready, then press Ctrl+F8 to join.
+    When the host says "ready", press Ctrl+F8 (hold Ctrl, press F8) while the
+    game window is active. You should see:
+        Co-op: join request sent. Waiting for connection.
+ 3. Watch the messages and tell each other what you see.
+    SUCCESS looks like this:
+        JOINER: Co-op: host connection established.
+        HOST:   Co-op: a guest is present in the session.
+ 4. If it connected: each of you is still in your own copy of Mother Base.
+    Whether you can SEE each other is exactly what this test checks. Try:
+      - both walk to the same spot (for example the helicopter landing pad
+        where you start on the Command Platform) and look around;
+      - move, crouch, run and shoot near that spot, and say what the other
+        one sees on their screen (a second Snake? Quiet? nothing?);
+      - stay connected for 2-3 minutes.
+ 5. When you are done, both quit the game normally (pause menu, exit).
+ 6. Both collect and send the logs (section 4).
+
+IF IT DOES NOT WORK
+- JOINER sees "Co-op: join could not start. Press Ctrl+F9, then Ctrl+F8 to
+  retry.": press Ctrl+F9. You should see "Co-op: join reset. ...". When the
+  host is ready, press Ctrl+F8 again. Try this up to 3 times.
+- JOINER sees "Co-op: still connecting..." or "Co-op: session error...": press
+  Ctrl+F9. If "Co-op: join reset" does not appear, quit the game, start it
+  again, Continue into Mother Base and press Ctrl+F8 when the host is ready.
+- HOST sees no co-op message at all about a minute after you can move: hosting
+  did not start. Check that the game is online (the title screen shows the
+  online connection), quit, start again and Continue. If it still does not
+  appear, stop and collect the logs.
+- JOINER sees no co-op message at all after you can move: restart the game
+  once. If it still does not appear, stop and collect the logs.
+- "Co-op: session status is currently unavailable." - note the time, go on.
+- The game crashes or freezes: note what you were doing. Restarting is fine.
+Always collect the logs after a test - especially when something failed.
+
+
+4. COLLECT AND SEND THE LOGS (both players)
+-------------------------------------------
+ 1. Quit MGSV (collecting while it runs also works, but quitting is better).
+ 2. Double-click Collect-Logs.bat.
+ 3. It saves mgs-coop-logs-host-<time>.zip (or -join-) on your Desktop.
+    Send that file to the person who gave you this package.
+The ZIP contains only the mod's own log and settings files from the
+"mgs-coop" folder plus a summary of file versions. SteamIDs inside are masked
+except their last 4 digits, and your Windows user name is removed from paths.
+You can open the ZIP to check what is in it.
+
+
+5. UNINSTALL - BEFORE YOU PLAY NORMALLY AGAIN
+---------------------------------------------
+While the mod is installed, MGSV in that folder always plays from the save
+COPY and loads a development mod. Before normal (online) play:
+ 1. Quit MGSV.
+ 2. Double-click Uninstall-Coop.bat (in the same extracted folder), press
+    Enter (or Y).
+It puts back what was in the game folder before (it removes dinput8.dll if
+there was none), turns off the co-op settings, and checks that your real save
+files are unchanged ("Real save files: UNCHANGED"). It never overwrites your
+saves; if it reports a difference, it prints how to restore the backup.
+Progress made during co-op tests stays in the save copy and does not carry
+over to your real save. The backups and logs stay in <game folder>\mgs-coop;
+you can delete that folder yourself later.
+
+
+6. KNOWN LIMITS AND RISKS - PLEASE READ
+---------------------------------------
+- This is a development build. Two-player co-op has never been seen working;
+  this test is to find out how far it gets.
+- Each player runs their own Mother Base. Seeing the other player, shared
+  combat and enemies are not verified and may not work at all.
+- The character choice (Quiet and others) is new and not yet verified in a
+  live game.
+- While a co-op scene is active, the mod suppresses the game's submission of
+  game-over and mission results (adapted from the Dynamite mod; not verified
+  in a live game).
+- The mod is loaded into the running game while you are connected to Konami's
+  normal online service with your own account. Konami's terms may not allow
+  modified games online, and an account action cannot be ruled out. Whether
+  you accept that risk is your own decision.
+- Online Mother Base data (resources, staff, FOB) belongs to your account on
+  the server, while the game plays from the save copy. Keep the test short and
+  avoid FOB missions, developing or spending resources while the mod is
+  installed.
+- The mod and the installer never change mgsvtpp.exe, steam_api64.dll or
+  Steam itself. Your real save files are backed up, checked and not written
+  while the mod is installed.
