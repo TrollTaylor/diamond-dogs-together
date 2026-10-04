@@ -20,33 +20,43 @@ $script:PartnerExperiments = @('E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E8')
 # Trigger grammar (2.1)
 # ---------------------------------------------------------------------------
 
+$script:PartnerTriggerKeys = [ordered]@{
+    # key -> allowed values, in canonical order. parts=explicit (one-shot op 16,
+    # SetPartsInfoAtInstanceIndex: variant F3b) and mirror=on (one-shot op 32,
+    # mirror diagnostic: F3c) are the native parser's one-shots
+    # (native/partner_receipt.cpp ParseTrigger); they act only at stage >= 1.
+    stage = @('0', '1', '2', '3'); source = @('fixed', 'orbit', 'net'); apply = @('warp', 'slot', 'both')
+    parts = @('explicit'); mirror = @('on')
+}
+$script:PartnerTriggerUsage = 'stage=0..3 source=fixed|orbit|net apply=warp|slot|both parts=explicit mirror=on, or stop alone'
+
 function ConvertTo-PartnerTriggerText {
     # Canonical trigger line (without the newline): 'stop', or any of
-    # stage=0..3 source=fixed|orbit|net apply=warp|slot|both, each at most once,
-    # in any order, separated by blanks (written back as stage, source, apply).
-    # Lower case and case sensitive, like the native byte-wise parser. Throws
-    # with the reason for anything else.
+    # stage=0..3 source=fixed|orbit|net apply=warp|slot|both and the one-shots
+    # parts=explicit mirror=on, each at most once, in any order, separated by
+    # blanks (written back as stage, source, apply, parts, mirror). Lower case and
+    # case sensitive, like the native byte-wise parser. Throws with the reason
+    # for anything else.
     param([AllowNull()][AllowEmptyString()][string]$Text)
-    if ($null -eq $Text -or !$Text.Trim()) { throw 'Partner trigger text is empty (stage=0..3 source=fixed|orbit|net apply=warp|slot|both, or stop).' }
+    if ($null -eq $Text -or !$Text.Trim()) { throw "Partner trigger text is empty ($script:PartnerTriggerUsage)." }
     $trimmed = $Text.Trim()
     if ($trimmed -match '[^\x20-\x7e\t]') { throw 'Partner trigger text must be printable ASCII on one line.' }
     if ($trimmed -ceq 'stop') { return 'stop' }
     $values = [ordered]@{}
     foreach ($token in ($trimmed -split '[ \t]+')) {
-        if ($token -cnotmatch '^(stage|source|apply)=(.*)$') {
-            throw "Unknown partner trigger token '$token' (stage=0..3 source=fixed|orbit|net apply=warp|slot|both, or stop alone)."
+        if ($token -ceq 'stop') { throw "'stop' must be the only token of a partner trigger." }
+        if ($token -cnotmatch '^(stage|source|apply|parts|mirror)=(.*)$') {
+            throw "Unknown partner trigger token '$token' ($script:PartnerTriggerUsage)."
         }
         $key = $Matches[1]
         $value = $Matches[2]
         if ($values.Contains($key)) { throw "Duplicate partner trigger key '$key'." }
-        $ok = $false
-        if ($key -ceq 'stage') { $ok = $value -cmatch '^[0-3]$' }
-        elseif ($key -ceq 'source') { $ok = $value -cin @('fixed', 'orbit', 'net') }
-        else { $ok = $value -cin @('warp', 'slot', 'both') }
-        if (!$ok) { throw "Invalid partner trigger value '$token' (stage=0..3, source=fixed|orbit|net, apply=warp|slot|both)." }
+        if ($value -cnotin $script:PartnerTriggerKeys[$key]) {
+            throw "Invalid partner trigger value '$token' (allowed: $key=$($script:PartnerTriggerKeys[$key] -join '|'))."
+        }
         $values[$key] = $value
     }
-    $canonical = (@('stage', 'source', 'apply') | Where-Object { $values.Contains($_) } | ForEach-Object { $_ + '=' + $values[$_] }) -join ' '
+    $canonical = (@($script:PartnerTriggerKeys.Keys) | Where-Object { $values.Contains($_) } | ForEach-Object { $_ + '=' + $values[$_] }) -join ' '
     if ($canonical.Length + 1 -gt $script:PartnerTriggerMaxBytes) { throw 'Partner trigger text is longer than 63 bytes.' }
     return $canonical
 }
@@ -54,6 +64,43 @@ function ConvertTo-PartnerTriggerText {
 function Test-PartnerTriggerText {
     param([AllowNull()][AllowEmptyString()][string]$Text)
     try { $null = ConvertTo-PartnerTriggerText -Text $Text; return $true } catch { return $false }
+}
+
+function Get-PartnerTriggerExpectation {
+    # What the native 'partner_stage=changed; stage=..; source=..; apply=..;
+    # via=trigger' line must show after a canonical trigger: 'stop' -> stage 0;
+    # keys the trigger does not name keep their previous values (not checked).
+    # The one-shots parts/mirror are not part of that line.
+    param([Parameter(Mandatory)][string]$Canonical)
+    $expect = [ordered]@{}
+    if ($Canonical -ceq 'stop') { $expect['stage'] = '0'; return $expect }
+    foreach ($token in ($Canonical -split ' ')) {
+        $pair = $token.Split('=', 2)
+        if ($pair[0] -cin @('stage', 'source', 'apply')) { $expect[$pair[0]] = $pair[1] }
+    }
+    return $expect
+}
+
+function Find-PartnerTriggerResult {
+    # Pure: the native result of the newest consumed trigger in a log text that
+    # starts at the offset recorded just before the trigger was written:
+    #   State 'applied'   partner_stage=changed (via=trigger) matching -Canonical
+    #   State 'different' partner_stage=changed for another command (a replaced
+    #                     trigger raced the native poll: the older one was applied)
+    #   State 'rejected'  partner_trigger=rejected (the native parser refused it)
+    #   State 'none'      neither line yet
+    param([AllowNull()][AllowEmptyString()][string]$LogText, [Parameter(Mandatory)][string]$Canonical)
+    $last = $null
+    foreach ($e in (Get-PartnerLogEntries -Text $LogText)) {
+        if ($e.Kind -ceq 'partner_trigger=rejected' -or ($e.Kind -ceq 'partner_stage=changed' -and (Get-PartnerField $e 'via') -ceq 'trigger')) { $last = $e }
+    }
+    if (!$last) { return [pscustomobject]@{ State = 'none'; Line = $null } }
+    if ($last.Kind -ceq 'partner_trigger=rejected') { return [pscustomobject]@{ State = 'rejected'; Line = $last.Line } }
+    $expect = Get-PartnerTriggerExpectation -Canonical $Canonical
+    foreach ($key in $expect.Keys) {
+        if ((Get-PartnerField $last $key) -cne $expect[$key]) { return [pscustomobject]@{ State = 'different'; Line = $last.Line } }
+    }
+    return [pscustomobject]@{ State = 'applied'; Line = $last.Line }
 }
 
 # ---------------------------------------------------------------------------
@@ -198,10 +245,22 @@ function Test-PartnerProbeRealized {
     return $Probe.Ids[1] -ne 0xffff -and $Probe.Pool[1] -ne 0xff
 }
 
+function Test-PartnerVectorAvailable {
+    # A readable 3-vector in mm. Native writes INT32_MIN (-2147483648) for each
+    # component it could not read (partner_units mem_pos_mm while the vars block
+    # is unresolved; any non-finite float converted by ToMm); a magnitude of
+    # 2^31-1 or more is treated the same (no real position is 2000 km away).
+    param($Vector)
+    if ($null -eq $Vector -or $Vector.Count -ne 3) { return $false }
+    foreach ($c in $Vector) { if ([Math]::Abs([double]$c) -ge 2147483647) { return $false } }
+    return $true
+}
+
 function Get-PartnerDistance {
-    # Euclidean distance of two 3-vectors (mm); $null when either is missing.
+    # Euclidean distance of two 3-vectors (mm); $null when either is missing or
+    # unavailable (sentinel components, see Test-PartnerVectorAvailable).
     param($A, $B)
-    if ($null -eq $A -or $null -eq $B -or $A.Count -ne 3 -or $B.Count -ne 3) { return $null }
+    if (!(Test-PartnerVectorAvailable $A) -or !(Test-PartnerVectorAvailable $B)) { return $null }
     $dx = [double]$A[0] - [double]$B[0]; $dy = [double]$A[1] - [double]$B[1]; $dz = [double]$A[2] - [double]$B[2]
     return [Math]::Sqrt($dx * $dx + $dy * $dy + $dz * $dz)
 }
@@ -261,8 +320,9 @@ function Select-PartnerProbe {
 
 function Get-PartnerProbeSpanMs {
     # Probe clock (t_ms) covered by probes: last minus first; 0 with fewer than two.
+    # An empty selection arrives as $null (one null item in the pipeline): skipped.
     param([object[]]$Probes = @())
-    $times = @($Probes | Where-Object { $null -ne $_.TMs } | ForEach-Object { [Int64]$_.TMs })
+    $times = @($Probes | Where-Object { $null -ne $_ -and $null -ne $_.TMs } | ForEach-Object { [Int64]$_.TMs })
     if ($times.Count -lt 2) { return [Int64]0 }
     return [Int64]($times[$times.Count - 1] - $times[0])
 }
@@ -361,9 +421,39 @@ function Complete-PartnerCheck {
     }
 }
 
+function Test-PartnerMissionBoundary {
+    # Lines after which native has no partner_cfg=ready state for the mission:
+    # mission_boundary=runtime_enter (PartnerMissionStart resets it),
+    # mission_boundary=termination_returned and partner_stop.
+    param([Parameter(Mandatory)]$Entry)
+    return $Entry.Kind -ceq 'mission_boundary=runtime_enter' -or $Entry.Kind -ceq 'mission_boundary=termination_returned' -or $Entry.Kind -ceq 'partner_stop'
+}
+
+function Get-PartnerCfgRefusal {
+    # Classifies one partner_cfg=refused line (native/game_script_observer.cpp):
+    #   Kind 'tick': logged by the per-tick ReadState after this mission's
+    #     partner_cfg=ready (change-only); the tick pauses and logs
+    #     partner_cfg=ready again once the state is valid.
+    #   Kind 'cfg': the mission-start CFG receipt refused; partner_sync.lua
+    #     stays inactive until the next mission start.
+    # Recovered: the first later partner_cfg=ready line, or $null.
+    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)]$Entry)
+    $ready = $false
+    foreach ($e in $Context.Entries) {
+        if ($e.Index -ge $Entry.Index) { break }
+        if ($e.Kind -ceq 'partner_cfg=ready') { $ready = $true }
+        elseif (Test-PartnerMissionBoundary -Entry $e) { $ready = $false }
+    }
+    $later = @(Select-PartnerEntry -Context $Context -Kind 'partner_cfg=ready' -From $Entry.Index | Select-Object -First 1)
+    [pscustomobject]@{ Kind = $(if ($ready) { 'tick' } else { 'cfg' }); Recovered = $(if ($later.Count) { $later[0] } else { $null }) }
+}
+
 function Add-PartnerCommonChecks {
     # Rules every experiment shares, within (From, To): no crash_probe=av, no Lua
-    # error or index refusal, no partner_cfg=refused, the process still alive.
+    # error or index refusal, the process still alive, and partner_cfg=refused:
+    # reason=online_bit/sync_present always FAIL; a mission-start (CFG) refusal
+    # FAILs until a later mission start logs partner_cfg=ready; a per-tick
+    # refusal is a note once partner_cfg=ready follows, INCOMPLETE until then.
     param([Parameter(Mandatory)]$Check, [Parameter(Mandatory)]$Context, [int]$From = -1, [int]$To = [int]::MaxValue, $Alive = $null)
     foreach ($e in (Select-PartnerEntry -Context $Context -Kind 'crash_probe=av' -From $From -To $To)) {
         Add-PartnerMatch $Check $e.Line
@@ -381,7 +471,20 @@ function Add-PartnerCommonChecks {
     }
     foreach ($e in (Select-PartnerEntry -Context $Context -Kind 'partner_cfg=refused' -From $From -To $To)) {
         Add-PartnerMatch $Check $e.Line
-        Add-PartnerItem $Check.Failed ('partner_cfg=refused; reason=' + [string](Get-PartnerField $e 'reason'))
+        $reason = [string](Get-PartnerField $e 'reason')
+        if ($reason -cin @('online_bit', 'sync_present')) {
+            Add-PartnerItem $Check.Failed "partner_cfg=refused; reason=$reason`: S_IS_ONLINE or the synchronizer appeared: STOP and audit the host_session_trial path"
+            continue
+        }
+        $refusal = Get-PartnerCfgRefusal -Context $Context -Entry $e
+        if ($refusal.Kind -ceq 'tick') {
+            if ($refusal.Recovered) { Add-PartnerItem $Check.Notes "transient partner_cfg=refused; reason=$reason (the partner tick paused until: $($refusal.Recovered.Line))" }
+            else { Add-PartnerItem $Check.Missing "partner_cfg=ready after partner_cfg=refused; reason=$reason (the partner tick pauses while the player state is refused)" }
+        } elseif ($refusal.Recovered) {
+            Add-PartnerItem $Check.Notes "partner_cfg=refused; reason=$reason at a mission start (CFG); a later mission start logged: $($refusal.Recovered.Line)"
+        } else {
+            Add-PartnerItem $Check.Failed "partner_cfg=refused; reason=$reason at the mission start (CFG receipt): partner_sync.lua stays inactive for this mission"
+        }
     }
     if ($Alive -is [bool]) {
         if (!$Alive) { Add-PartnerItem $Check.Failed 'process_exited: the instance is no longer running' }
@@ -488,7 +591,8 @@ function Invoke-PartnerE0 {
     } else { Add-PartnerItem $Check.Missing 'partner_cfg=ready' }
 
     if ($HostOnly) {
-        Add-PartnerItem $Check.Notes 'host-only run: partner_net receive evidence is not expected'
+        # E0 passes only on both instances (first_rx and tx/rx > 0 on both).
+        Add-PartnerItem $Check.Missing 'the guest instance: E0 PASS needs both instances and partner_net receive evidence (this run is host-only; start it without -HostOnly)'
     } else {
         $rx = @(Select-PartnerEntry -Context $Context -Kind 'partner_net=first_rx')
         if ($rx.Count) { Add-PartnerMatch $Check $rx[0].Line } else { Add-PartnerItem $Check.Missing 'partner_net=first_rx' }
@@ -513,9 +617,21 @@ function Invoke-PartnerE0 {
     } else { Add-PartnerItem $Check.Missing 'partner_tick=rate' }
 
     $units = @(Select-PartnerEntry -Context $Context -Kind 'partner_units')
+    $walk = "Send-LabInput.ps1 -Role $($Check.Role) -Keys w+a:6000"
     if ($units.Count) {
         $lua = @($units | ForEach-Object { Get-PartnerFieldList $_ 'lua_pos_mm' -Count 3 })
         $mem = @($units | ForEach-Object { Get-PartnerFieldList $_ 'mem_pos_mm' -Count 3 })
+        # mem_pos_mm=INT32_MIN,.. means the vars block was not readable (not a units or freshness problem).
+        $memReadable = @($mem | Where-Object { Test-PartnerVectorAvailable $_ }).Count
+        $memUnreadable = $units.Count - $memReadable
+        $Check.Data['units_mem_unreadable'] = $memUnreadable
+        if ($memUnreadable -and $memReadable) { Add-PartnerItem $Check.Notes "$memUnreadable partner_units line(s) with mem_pos_mm unavailable (INT32_MIN: the vars block was not readable at that moment)" }
+        if (!$memReadable) {
+            $first = @($units | Select-Object -First 1)
+            Add-PartnerMatch $Check $first[0].Line
+            if ($units.Count -ge 2) { Add-PartnerItem $Check.Failed 'partner_units: mem_pos_mm unreadable in every line (INT32_MIN sentinel: the vars block at *(B+0x2C16920) did not resolve), so lua_pos cannot be compared with vars.playerPos*' }
+            else { Add-PartnerItem $Check.Missing 'partner_units with a readable mem_pos_mm (the first line had the INT32_MIN sentinel)' }
+        }
         $yaw = @($units | ForEach-Object { Get-PartnerFieldNumber $_ 'yaw_abs_max_cdeg' } | Where-Object { $null -ne $_ })
         $yawMax = if ($yaw.Count) { [Int64]($yaw | Measure-Object -Maximum).Maximum } else { $null }
         $moved = Get-PartnerSpread -Vectors $lua
@@ -538,9 +654,9 @@ function Invoke-PartnerE0 {
         } elseif ($moved -ge 2000) {
             Add-PartnerItem $Check.Failed "partner_units: yaw_abs_max_cdeg=$yawMax <= 628 after walking (rotY is radians: change the Lua multiplier and the native conversion)"
         } else {
-            Add-PartnerItem $Check.Missing 'partner_units yaw_abs_max_cdeg>628 (walk a circle: Send-LabInput.ps1 -Role host -Keys w+a:6000, then wait for the next 30 s units line)'
+            Add-PartnerItem $Check.Missing "partner_units yaw_abs_max_cdeg>628 (walk a circle: $walk, then wait for the next 30 s units line)"
         }
-        if ($moved -lt 500 -or $memSpread -lt 500) { Add-PartnerItem $Check.Missing 'partner_units with changing lua_pos_mm and mem_pos_mm (walk, then wait for the next 30 s units line)' }
+        if ($moved -lt 500 -or ($memReadable -and $memSpread -lt 500)) { Add-PartnerItem $Check.Missing "partner_units with changing lua_pos_mm and mem_pos_mm (walk: $walk, then wait for the next 30 s units line)" }
     } else { Add-PartnerItem $Check.Missing 'partner_units' }
 
     $installed = @(Select-PartnerEntry -Context $Context -Kind 'crash_probe=installed')
@@ -678,11 +794,39 @@ function Invoke-PartnerE3 {
         return
     }
     Add-PartnerMatch $Check $bits[0].Line
-    $realized = @(Select-PartnerEntry -Context $Context -Kind 'partner_realized=1' -From $bits[0].Index -To $to)
-    if (!$realized.Count) {
-        $afterBits = Get-PartnerMsAfterEvent -Context $Context -EventIndex $bits[0].Index -To $to
-        if ($afterBits -ge 10000) {
-            $last = @(Select-PartnerProbe -Context $Context -From $bits[0].Index -To $to -NoExpand | Select-Object -Last 1 | ForEach-Object { Expand-PartnerProbe -Probe $_ })
+    $b = $bits[0].Index
+    # Realization is logged only when it changes. When instance 1 is already
+    # realized as the bits are ORed (E2 outcome B: all-active alone realized it,
+    # possibly in an earlier segment of this mission), no partner_realized=1
+    # follows the bits: the realization reference is then that earlier line.
+    $boundary = @(Select-PartnerEntry -Context $Context -Kind 'mission_boundary=runtime_enter' -To $b)
+    $missionFrom = if ($boundary.Count) { $boundary[-1].Index } else { -1 }
+    $prior = @(Select-PartnerEntry -Context $Context -Prefix 'partner_realized' -From $missionFrom -To $b)
+    $r = $null
+    $afterBits = $false
+    $rIsLine = $true
+    if ($prior.Count -and $prior[-1].Kind -ceq 'partner_realized=1') {
+        $r = $prior[-1]
+        Add-PartnerItem $Check.Notes 'instance 1 was already realized before partner_bits=set (E2 outcome B: all-active alone realizes it), so the 1 s rule after the bits does not apply'
+    } else {
+        $realized = @(Select-PartnerEntry -Context $Context -Kind 'partner_realized=1' -From $b -To $to)
+        if ($realized.Count) { $r = $realized[0]; $afterBits = $true }
+    }
+    if (!$r) {
+        $seen = $null
+        foreach ($p in (Select-PartnerProbe -Context $Context -From $b -To $to -NoExpand)) {
+            if (Test-PartnerProbeRealized (Expand-PartnerProbe -Probe $p)) { $seen = $p; break }
+        }
+        if ($seen) {
+            $r = $seen
+            $rIsLine = $false
+            Add-PartnerItem $Check.Notes 'probes show instance 1 realized after the bits, but no partner_realized=1 line belongs to this mission (timing unknown: the 1 s rule is not checked)'
+        }
+    }
+    $Check.Data['realized_before_bits'] = [bool]($r -and !$afterBits -and $r.Index -lt $b)
+    if (!$r) {
+        if ((Get-PartnerMsAfterEvent -Context $Context -EventIndex $b -To $to) -ge 10000) {
+            $last = @(Select-PartnerProbe -Context $Context -From $b -To $to -NoExpand | Select-Object -Last 1 | ForEach-Object { Expand-PartnerProbe -Probe $_ })
             $hint = 'F3a: ids[1] stayed ffff after the bits'
             if ($last.Count -and $null -ne $last[-1].S0 -and ($last[-1].S0 -band 2) -eq 0) { $hint += '; s0 bit 1 is clear: rerun with partner_force_exists=1' }
             $hint += '; then partner_offset_cm=100, then partner_policy_relax=1 (last resort), then Rank 5'
@@ -690,30 +834,45 @@ function Invoke-PartnerE3 {
         } else { Add-PartnerItem $Check.Missing 'partner_realized=1' }
         return
     }
-    $r = $realized[0]
     Add-PartnerMatch $Check $r.Line
-    $msBits = Get-PartnerFieldNumber $r 'ms_after_bits'
-    $Check.Data['ms_after_bits'] = $msBits
-    if ($null -eq $msBits) { Add-PartnerItem $Check.Failed 'partner_realized=1 has no ms_after_bits field' }
-    elseif ($msBits -gt 1000) { Add-PartnerItem $Check.Failed "partner_realized=1 came $msBits ms after the bits (PASS needs <= 1000 ms)" }
+    if ($afterBits) {
+        $msBits = Get-PartnerFieldNumber $r 'ms_after_bits'
+        $Check.Data['ms_after_bits'] = $msBits
+        if ($null -eq $msBits) { Add-PartnerItem $Check.Failed 'partner_realized=1 has no ms_after_bits field' }
+        elseif ($msBits -gt 1000) { Add-PartnerItem $Check.Failed "partner_realized=1 came $msBits ms after the bits (PASS needs <= 1000 ms)" }
+    } else { $Check.Data['ms_after_bits'] = $null }
+    # A partner_realized=1 line inside this segment carries the native timing
+    # (ms_after_realize on partner_parts). An earlier realization is measured on
+    # the probe clock from the stage=3 line instead (parts are copied there).
+    $native = $rIsLine -and $r.Index -gt $from
+    $ref = [Math]::Max([int]$r.Index, [int]$from)
     $loaded = @(Select-PartnerEntry -Context $Context -Kind 'partner_parts=loaded' -From $r.Index -To $to)
-    $timeout = @(Select-PartnerEntry -Context $Context -Kind 'partner_parts=timeout' -From $r.Index -To $to)
+    $timeout = @(Select-PartnerEntry -Context $Context -Kind 'partner_parts=timeout' -From $ref -To $to)
     if ($loaded.Count) {
-        Add-PartnerMatch $Check $loaded[0].Line
-        $msParts = Get-PartnerFieldNumber $loaded[0] 'ms_after_realize'
+        $l = $loaded[0]
+        Add-PartnerMatch $Check $l.Line
+        $msParts = Get-PartnerFieldNumber $l 'ms_after_realize'
         $Check.Data['parts_ms_after_realize'] = $msParts
-        if ($null -eq $msParts -or $msParts -gt 15000) { Add-PartnerItem $Check.Failed "partner_parts=loaded after $msParts ms (PASS needs <= 15000 ms)" }
+        if ($native) {
+            if ($null -eq $msParts -or $msParts -gt 15000) { Add-PartnerItem $Check.Failed "partner_parts=loaded after $msParts ms (PASS needs <= 15000 ms)" }
+        } elseif ($l.Index -lt $from) {
+            Add-PartnerItem $Check.Notes "parts were already loaded before stage=3 ($($l.Line)); check the appearance in the screenshot"
+        } else {
+            $span = Get-PartnerProbeSpanMs -Probes (Select-PartnerProbe -Context $Context -From $ref -To $l.Index -NoExpand)
+            $Check.Data['parts_ms_after_stage3'] = $span
+            if ($span -gt 15000) { Add-PartnerItem $Check.Failed "partner_parts=loaded at least $span ms (probe clock) after stage=3 (PASS needs <= 15000 ms)" }
+        }
     } elseif ($timeout.Count) {
         Add-PartnerMatch $Check $timeout[0].Line
-        Add-PartnerItem $Check.Failed 'F3b: partner_parts=timeout (check q180 bit 1 and pb_state[1]; try the op16 variant; check partsBlockCount=2)'
-    } elseif ((Get-PartnerMsAfterEvent -Context $Context -EventIndex $r.Index -To $to) -ge 20000) {
-        Add-PartnerItem $Check.Failed 'F3b: no partner_parts=loaded within 20 s of realization'
+        Add-PartnerItem $Check.Failed 'F3b: partner_parts=timeout (check q180 bit 1 and pb_state[1]; try the op16 variant: Set-PartnerTrigger.ps1 -Text parts=explicit; check partsBlockCount=2)'
+    } elseif ((Get-PartnerMsAfterEvent -Context $Context -EventIndex $ref -To $to) -ge 20000) {
+        Add-PartnerItem $Check.Failed $(if ($native) { 'F3b: no partner_parts=loaded within 20 s of realization' } else { 'F3b: no partner_parts=loaded within 20 s of stage=3 (instance 1 was realized earlier)' })
     } else { Add-PartnerItem $Check.Missing 'partner_parts=loaded' }
     foreach ($u in (Select-PartnerEntry -Context $Context -Kind 'partner_realized=0' -From $r.Index -To $to | Select-Object -First 1)) {
         Add-PartnerMatch $Check $u.Line
         Add-PartnerItem $Check.Failed 'partner_realized=0 after realization (thrash, failure mode e)'
     }
-    $stable = Get-PartnerMsAfterEvent -Context $Context -EventIndex $r.Index -To $to
+    $stable = Get-PartnerMsAfterEvent -Context $Context -EventIndex $ref -To $to
     $Check.Data['stable_s'] = [Math]::Round($stable / 1000.0, 1)
     if ($stable -lt 120000) { Add-PartnerItem $Check.Missing ('120 s realized without crash_probe=av or partner_realized=0 (probe clock {0:F0} s)' -f ($stable / 1000.0)) }
     Add-PartnerItem $Check.Notes 'manual: the host screenshot shows a second player model about 3 m from Snake; then repeat on the guest'
@@ -941,7 +1100,7 @@ function Get-PartnerExperimentPlan {
     param([Parameter(Mandatory)][ValidateSet('E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E8')][string]$Experiment)
     $step = { param($Kind, $Role, $Value, $WaitSec) [pscustomobject]@{ Kind = $Kind; Role = $Role; Value = $Value; WaitSec = $WaitSec } }
     $plan = switch ($Experiment) {
-        'E0' { @{ Timeout = 420; Steps = @((& $step 'input' 'host' 'w+a:6000' 2), (& $step 'screens' 'both' 'e0' 0)) } }
+        'E0' { @{ Timeout = 420; Steps = @((& $step 'input' 'host' 'w+a:6000' 2), (& $step 'input' 'guest' 'w+a:6000' 2), (& $step 'screens' 'both' 'e0' 0)) } }
         'E1' { @{ Timeout = 60; Steps = @((& $step 'trigger' 'host' 'stage=1 source=fixed apply=warp' 4), (& $step 'screens' 'both' 'e1' 0)) } }
         'E2' { @{ Timeout = 60; Steps = @((& $step 'trigger' 'host' 'stage=2' 12), (& $step 'screens' 'both' 'e2' 0)) } }
         'E3' { @{ Timeout = 240; Steps = @((& $step 'trigger' 'host' 'stage=3' 20), (& $step 'screens' 'both' 'e3' 0)) } }

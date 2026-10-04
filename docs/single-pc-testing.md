@@ -147,7 +147,9 @@ The game must be closed for steps 1–2. Steam must be running and logged in.
 8. **Before normal online play:** `pwsh -File tools/lab/Prepare-LabInstance.ps1 -Disable`.
    Without it, the lab `coop.ini` keeps sending the host's normal game starts to
    the local fuse (or offline when fuse is stopped), even if `lab.ini` was
-   deleted. `-Disable` renames both generated files and restores your own.
+   deleted. `-Disable` renames both generated files and restores your own, and
+   resets an `offline-v1` marker left by the offline mode to `host-v3` /
+   `client-v1`.
 
 ## Offline lab mode: the partner spike (no server at all)
 
@@ -174,7 +176,8 @@ instance, because the game would otherwise contact Konami's default servers.
    experiments stay INCOMPLETE (no `mode=offline_v1` line).
 2. **Prepare.** `pwsh -File tools/lab/Prepare-LabInstance.ps1 -Offline` (review
    with `-WhatIf` first). It writes `offline-v1` to both markers, the
-   closed-port `coop.ini` (character `default` on both) and a `lab.ini` with
+   closed-port `coop.ini` (character `default` on both, from `lab.json`
+   `offline.characters`; the fuse lab keeps the guest as Quiet) and a `lab.ini` with
    the partner keys of [lab-protocol.md](lab-protocol.md) (`net=1`,
    `partner=1`, `partner_stage=0`, ...). One-off settings for a later
    experiment go through `-PartnerSetting`, for example
@@ -192,16 +195,19 @@ instance, because the game would otherwise contact Konami's default servers.
    and Mother Base loads.
 5. **E0 baseline.** `pwsh -File tools/lab/Test-PartnerSpike.ps1 -Experiment E0`
    (both instances). Walk a circle on each instance for the units check,
-   `Send-LabInput.ps1 -Role host -Keys w+a:6000` (W and A held together for
-   6 s), then wait for the next 30 s `partner_units` line. E0 needs 5 minutes
-   of probes; run it again until PASS or FAIL.
+   `Send-LabInput.ps1 -Role host -Keys w+a:6000` and the same with
+   `-Role guest` (W and A held together for 6 s), then wait for the next 30 s
+   `partner_units` line. E0 needs 5 minutes of probes; run it again until PASS
+   or FAIL. A `-HostOnly` run never passes E0 (INCOMPLETE: it needs both
+   instances).
 6. **Experiments**, one boot, in the plan's order (E0, E1, E2, E3, E4, E5, E6, E8):
 
    | Experiment | Command | Judged on |
    |---|---|---|
    | E1 Warp, unrealized | `Set-PartnerTrigger.ps1 -Role host -Text 'stage=1 source=fixed apply=warp'` | host: `partner_warp_check err_mm<=5` in the first 2 s, ids[1] stays ffff, no Lua error |
    | E2 all-active alone | `Set-PartnerTrigger.ps1 -Role host -Text 'stage=2'` | host: `allactive_set`, `s0=0x03`/`q170=0x3`; outcome A (ffff for 10 s) or B (realized) |
-   | E3 realization | `Set-PartnerTrigger.ps1 -Role host -Text 'stage=3'` | host: `parts_copied`, `partner_bits=set`, `partner_realized=1` within 1 s, `partner_parts=loaded` within 15 s, 120 s without `crash_probe=av` or `partner_realized=0`; screenshot by hand |
+   | E3 realization | `Set-PartnerTrigger.ps1 -Role host -Text 'stage=3'` | host: `parts_copied`, `partner_bits=set`, `partner_realized=1` within 1 s, `partner_parts=loaded` within 15 s, 120 s without `crash_probe=av` or `partner_realized=0`; screenshot by hand. If instance 1 was already realized before the bits (E2 outcome B), the 1 s rule is skipped and parts and stability count from the `stage=3` line |
+   | F3b / F3c variants | `Set-PartnerTrigger.ps1 -Role host -Text parts=explicit` (op 16), `-Text mirror=on` (op 32, at most 10 s) | one-shots at stage 1 or higher; Lua logs `event=parts_set_explicit` / `event=mirror_on` |
    | E4 orbit | `Set-PartnerTrigger.ps1 -Role host -Text 'stage=3 source=orbit'` | host: realized, every `err_mm<=5`, `slot_mm` moving; 4 screenshots 2 s apart |
    | E5 apply modes | `-Text 'stage=3 source=orbit apply=slot'`, later `-Text 'apply=both'` | host: both modes ran realized with `err_mm<=5`; the visual comparison is by hand |
    | E6 network | `Set-PartnerTrigger.ps1 -Role both -Text 'stage=3 source=net'`, then `Send-LabInput.ps1 -Role guest -Keys w:4000` | both: `first_rx`, rx increasing, `status=live`, `last_age_ms<200`, realized; while both stand still, the peer's `pos0_mm` within 200 mm of the local `pos1_mm` |
@@ -211,11 +217,16 @@ instance, because the game would otherwise contact Konami's default servers.
    (add `-Role guest` to judge the guest). `Invoke-PartnerExperiment.ps1
    -Experiment Ex` does the trigger, input and screenshots of the table and polls
    the verdict until PASS or FAIL. `Get-LabScreens.ps1 -Label <name>` saves
-   screenshots at any time.
+   screenshots at any time. `Set-PartnerTrigger.ps1 -WaitSec 10` confirms the
+   native result in `script-observer.log` (exit 0 applied, 2 not consumed,
+   3 rejected or a different command applied, 4 unconfirmed); the native side
+   deletes rejected triggers too, so a vanished file alone proves nothing.
 7. **Stop.** `pwsh -File tools/lab/Stop-Lab.ps1` closes the games, deletes any
-   unconsumed `partner.trigger` and checks the real saves. Afterwards either
-   `Prepare-LabInstance.ps1` (back to the fuse mode) or
-   `Prepare-LabInstance.ps1 -Disable` (before normal online play).
+   unconsumed `partner.trigger`, records the log end offsets in `stop.json`
+   and checks the real saves. Afterwards either `Prepare-LabInstance.ps1`
+   (back to the fuse mode) or `Prepare-LabInstance.ps1 -Disable` (before
+   normal online play; it also resets the `offline-v1` markers to
+   `host-v3` / `client-v1`, since `offline-v1` never creates a session).
 
 ### Verdicts
 
@@ -235,8 +246,14 @@ Each experiment is judged on the part of the log in which its configuration was
 active, from the `partner=configured` or `partner_stage=changed` line that
 started it until the next change that ends it, so E1 to E5 can follow each other
 in one boot. Lines from before `Start-Lab.ps1` recorded the log offsets never
-count. Liveness of the instances is part of the verdict while the run is up and
-is not checked after Stop-Lab.
+count, nor, for a stopped run, lines after the `stop.json` `log_end_offsets`
+(so `-RunDir` on an older run ignores later runs). Liveness of the instances is
+part of the verdict while the run is up and is not checked after Stop-Lab.
+A `partner_cfg=refused` that the per-tick state read logs and that is followed
+by `partner_cfg=ready` is only a note (INCOMPLETE until the ready line
+appears); a refusal at the mission start, or for `online_bit` / `sync_present`,
+fails. `mem_pos_mm=-2147483648,...` (INT32_MIN) means the vars block was
+unreadable and is reported as such, not as a units problem.
 
 ### What this mode cannot show
 

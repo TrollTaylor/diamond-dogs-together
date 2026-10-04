@@ -141,7 +141,13 @@ closed-port URL, `saves=redirected`, guest `mutex=renamed` and `identity=fake`).
 `run.json` then records `offline: true`, `offline_master_url`,
 `ports.offline_master`, `ports.net_host`, `ports.net_guest` and, per instance,
 `partner` (the partner/net `lab.ini` values the instance booted with).
-`Invoke-LabSmoke.ps1` refuses such runs; `Test-PartnerSpike.ps1` judges them.
+`Invoke-LabSmoke.ps1` refuses such runs; `Test-PartnerSpike.ps1` judges them
+(E0 never passes on a host-only run: it needs both instances). The offline
+`coop.ini` takes `character=` from `lab.json` `offline.characters` (`default`
+on both); the fuse lab keeps the top-level `characters` (guest `quiet`).
+`Prepare-LabInstance.ps1 -Disable` resets an `offline-v1` marker to the
+folder's online lab role (`host-v3` / `client-v1`), because `offline-v1` skips
+session creation and normal play could not host or join with it.
 
 ### `partner.trigger` (scripts create, native consumes and deletes)
 
@@ -151,16 +157,33 @@ One ASCII line, at most 63 bytes with its newline, written by
 
 ```text
 stop
-stage=<0..3> source=<fixed|orbit|net> apply=<warp|slot|both>   (any non-empty subset, each key once)
+stage=<0..3> source=<fixed|orbit|net> apply=<warp|slot|both> parts=explicit mirror=on   (any non-empty subset, each key once)
 ```
 
+`parts=explicit` (one-shot op 16, `SetPartsInfoAtInstanceIndex`: variant F3b)
+and `mirror=on` (one-shot op 32, the mirror diagnostic: F3c, at most 10 s) are
+the native parser's one-shot tokens (`native/partner_receipt.cpp`
+`ParseTrigger`). They take effect only at stage 1 or higher and are not part of
+the `partner_stage=changed` line; Lua logs `partner_lua=event=parts_set_explicit`
+and `event=mirror_on` when it runs them.
+
 The scripts validate the grammar (lower case, blanks between tokens, `stop` only
-alone) and write the canonical order `stage source apply`. Native code polls the
-file every 30 Lua ticks, only with `offline-v1` and `lab.ini` `partner=1`. It is
-not gated on `join_trigger`. `Start-Lab.ps1 -Offline` removes a leftover file
-before the start and `Stop-Lab.ps1` removes leftovers after closing the games
-(`stop.json` `partner_triggers_removed`). Each script-written trigger is
-appended to `<run>/partner-triggers.log` (UTC time, role, text).
+alone) and write the canonical order `stage source apply parts mirror` (the
+longest line is 61 bytes with its newline). Native code polls the file every 30
+Lua ticks, only with `offline-v1` and `lab.ini` `partner=1`. It deletes the file
+whether it accepts it or not, then logs `partner_stage=changed; stage=..;
+source=..; apply=..; via=trigger` (the full configuration after the trigger;
+`stop` sets stage 0) or `partner_trigger=rejected; reason=parse`.
+`Set-PartnerTrigger.ps1 -WaitSec` therefore confirms the result in
+`script-observer.log` (lines after the length recorded before the write): exit
+0 applied, 2 not consumed, 3 rejected or a different command applied, 4 no
+result line within 3 s. It never replaces a pending trigger without `-Force`,
+and `Invoke-PartnerExperiment.ps1` never passes `-Force` (it waits for a
+pending trigger instead). The file is not gated on `join_trigger`.
+`Start-Lab.ps1 -Offline` removes a leftover file before the start and
+`Stop-Lab.ps1` removes leftovers after closing the games (`stop.json`
+`partner_triggers_removed`). Each script-written trigger is appended to
+`<run>/partner-triggers.log` (UTC time, role, text).
 
 ### `script-observer.log` lines the partner checks match
 
@@ -168,8 +191,31 @@ appended to `<run>/partner-triggers.log` (UTC time, role, text).
 spellings at the start of a line. The text before the first `;` is the line's
 kind; every `key=value` token after it, separated by `;` or blanks, is a field.
 Lists are comma separated (`ids=0000,ffff` and `pool=00,ff` are hex, `pos0_mm=x,y,z`
-is signed decimal, `0x` values are hex). Lines before the `run.json` offsets
-are ignored.
+is signed decimal, `0x` values are hex). A vector component of `-2147483648`
+(INT32_MIN, which native writes for a value it could not read, for example
+`mem_pos_mm` while the vars block is unresolved) or any magnitude of 2^31-1 or
+more marks the whole vector unavailable: it is excluded from distances and
+spreads and reported as unreadable, never as a units or freshness failure.
+Lines before the `run.json` offsets are ignored, and so are lines after the
+`stop.json` `log_end_offsets` of a stopped run (`Stop-Lab.ps1` records each
+instance's log lengths after closing the games, so judging an older run never
+mixes in a later run's lines).
+
+`partner_cfg=refused; reason=online_bit|sync_present` always fails. Otherwise a
+refusal is classified by what precedes it in the same mission (since the last
+`mission_boundary=runtime_enter`, `mission_boundary=termination_returned` or
+`partner_stop`): after a `partner_cfg=ready` it comes from the per-tick state
+read, which pauses the tick and logs `partner_cfg=ready` again once the state
+is valid (a note when that line follows, INCOMPLETE until then); without one it
+is the mission-start CFG receipt, after which `partner_sync.lua` stays inactive
+for the mission (FAIL unless a later mission start logs `partner_cfg=ready`).
+
+E3 accepts a realization that happened before `partner_bits=set` (E2 outcome B:
+`partner_realized=1` is logged only on a change, so none follows the bits). The
+last `partner_realized=1|0` line of the mission before the bits decides; the
+1 s rule is then skipped, and parts and the 120 s window are measured on the
+probe clock from the `stage=3` line (or with `ms_after_realize` when the
+realization line is inside the stage 3 segment).
 
 | Line | Used for |
 |---|---|
@@ -183,11 +229,12 @@ are ignored.
 | `partner_net=stats; tx=..; rx=..; drop_epoch=..; drop_seq=..; drop_bad=..; status=live\|stale\|lost; last_age_ms=..; ...` | E0 (tx, rx > 0), E6 (rx increasing, `status=live`, `last_age_ms<200`) |
 | `partner_probe=state; t_ms=..; stage=..; ids=..; pool=..; ...; s0=..; q170=..; ...; pos0_mm=..; pos1_mm=..; rec1_mm=..; ...` | all; `t_ms` is the clock for every deadline; realized means `ids[1]!=ffff` and `pool[1]!=ff` |
 | `partner_tick=rate; hz=..; focused=0\|1` | E0 (`focused=0` needs `hz>=10`) |
-| `partner_units; lua_pos_mm=..; mem_pos_mm=..; yaw_cdeg=..; yaw_abs_max_cdeg=..; cam_cdeg=..` | E0 (`yaw_abs_max_cdeg>628`, lua/mem within 50 mm) |
+| `partner_units; lua_pos_mm=..; mem_pos_mm=..; yaw_cdeg=..; yaw_abs_max_cdeg=..; cam_cdeg=..` | E0 (`yaw_abs_max_cdeg>628`, lua/mem within 50 mm; `mem_pos_mm=-2147483648,..` in every line fails as unreadable) |
+| `mission_boundary=runtime_enter; ...`, `mission_boundary=termination_returned; ...` | mission limits for the `partner_cfg=refused` and E3 realization rules |
 | `partner_warp_check; R=1; apply=..; cmd_mm=..; slot_mm=..; err_mm=..` | E1, E4, E5 (`err_mm<=5`, `slot_mm` moving) |
 | `partner_lua=event=<allactive_set\|allactive_cleared\|parts_copied\|error\|refused\|...>` | E2, E3, E8; `error` and `refused` fail any experiment |
 | `partner_bits=set\|lost\|cleared; ...; reason=stop\|trigger` | E3, E8 (`cleared; reason=trigger` while stage 3 is the `stop` trigger) |
-| `partner_realized=1; R=1; id=..; pool=..; ms_after_bits=..` / `partner_realized=0; ...` | E3 (`ms_after_bits<=1000`), E4/E6 (no `=0`), E8 |
+| `partner_realized=1; R=1; id=..; pool=..; ms_after_bits=..` / `partner_realized=0; ...` | E3 (`ms_after_bits<=1000` when it follows the bits), E4/E6 (no `=0`), E8 |
 | `partner_parts=loaded; R=1; ms_after_realize=..` / `partner_parts=timeout; ...` | E3 (`ms_after_realize<=15000`) |
 | `partner_stop; cleared=..; teardown=..` | E8; ends a segment |
 | `crash_probe=installed`, `crash_probe=av; rva=..; ...` | `av` fails any experiment |

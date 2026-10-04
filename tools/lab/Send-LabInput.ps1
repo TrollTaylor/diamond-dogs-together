@@ -12,8 +12,10 @@ Key names: enter, esc, space, up, down, left, right, tab, e, f, q, r, c, x, z,
 v, w, a, s, d, f8, f9, f10, f11, ctrl, shift (LabCommon Get-LabScanCodeTable).
 A key spec is one name or several joined with '+' (pressed together in order,
 released in reverse: ctrl+f8, shift+w), optionally followed by ':<ms>' to hold
-it that long instead of -HoldMs (1..60000): w:4000 walks forward for 4 s,
-w+a:6000 walks a circle for 6 s (spike plan E0/E6/E10).
+it that long instead of -HoldMs (':<ms>' 1..60000; -HoldMs 0..60000, 0 = tap
+as before): w:4000 walks forward for 4 s, w+a:6000 walks a circle for 6 s
+(spike plan E0/E6/E10). Every key pressed is released in a finally block, so
+Ctrl+C or an error during a hold never leaves a key down.
 
 .EXAMPLE
 pwsh -File tools/lab/Send-LabInput.ps1 -Role host -Keys enter -Shot title
@@ -61,12 +63,24 @@ foreach ($spec in $specs) {
         Start-Sleep -Milliseconds 300
     }
     if ([MgsCoopLab.User32]::GetForegroundWindow() -ne $handle) { Write-Warning "[$Role] could not focus the window for '$key'."; continue }
-    # Press in order (modifiers first), hold, release in reverse order.
-    $parts = @($spec.Keys)
-    foreach ($p in $parts) { $null = [MgsCoopLab.User32]::Key($p.Scan, $p.Extended, $false); Start-Sleep -Milliseconds 30 }
-    Start-Sleep -Milliseconds $spec.HoldMs
-    [array]::Reverse($parts)
-    foreach ($p in $parts) { $null = [MgsCoopLab.User32]::Key($p.Scan, $p.Extended, $true); Start-Sleep -Milliseconds 30 }
+    # Press in order (modifiers first), hold, release in reverse order. The
+    # release runs in finally: Ctrl+C (pipeline stop) or an error during a long
+    # hold must not leave synthetic keys down for whatever window has focus.
+    $pressed = [Collections.Generic.List[object]]::new()
+    try {
+        foreach ($p in @($spec.Keys)) {
+            $pressed.Add($p)
+            $null = [MgsCoopLab.User32]::Key($p.Scan, $p.Extended, $false)
+            Start-Sleep -Milliseconds 30
+        }
+        Start-Sleep -Milliseconds $spec.HoldMs
+    } finally {
+        # .NET calls only: cmdlets may refuse to run while the pipeline is stopping.
+        for ($i = $pressed.Count - 1; $i -ge 0; $i--) {
+            $null = [MgsCoopLab.User32]::Key($pressed[$i].Scan, $pressed[$i].Extended, $true)
+            [Threading.Thread]::Sleep(30)
+        }
+    }
     Write-Output "[$Role] sent $key (held $($spec.HoldMs) ms)"
     Start-Sleep -Milliseconds $GapMs
 }

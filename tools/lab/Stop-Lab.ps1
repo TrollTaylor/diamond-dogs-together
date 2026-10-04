@@ -18,7 +18,9 @@ and with the latest backup taken by Prepare-LabInstance.ps1. Writes stop.json
 (and a redacted copy of fuse's console log) into the run folder. Leftover
 mgs-coop/partner.trigger files (offline partner spike, Set-PartnerTrigger.ps1)
 in both lab folders are deleted after the games are closed, so a stale command
-cannot fire in the next run.
+cannot fire in the next run. stop.json also records each instance's log
+lengths after the close (log_end_offsets), which bound this run's lines for
+Test-PartnerSpike.ps1 -RunDir once later runs append to the same logs.
 Exit code 0 = real saves unchanged, 2 = a real save file changed (restore it
 from build/lab/save-backups/<ts>/files/), 1 = error.
 #>
@@ -173,6 +175,22 @@ foreach ($d in $saves.details) {
 }
 if (!$saves.checked) { Write-Warning 'No save manifest to compare against (run Prepare-LabInstance.ps1 / Start-Lab.ps1 first).' }
 
+# ---------------------------------------------------------------- log end offsets
+# Each instance's log lengths now that its game is closed: Test-PartnerSpike.ps1
+# reads this run's lines from run.json log_offsets up to here, so a later run
+# appending to the same logs never mixes into this run's verdicts.
+$logEnds = [ordered]@{}
+if ($current) {
+    foreach ($name in $current.Run.instances.PSObject.Properties.Name) {
+        $dir = [string](Get-ConfigValue $current.Run.instances.$name 'dir' '')
+        if (!$dir) { continue }
+        $mod = (Get-InstancePaths -GameDirectory $dir).Mod
+        $ends = [ordered]@{}
+        foreach ($log in Get-LabLogNames) { $ends[$log] = Get-FileLengthOrZero (Join-Path $mod $log) }
+        $logEnds[$name] = $ends
+    }
+}
+
 # ---------------------------------------------------------------- leftover partner triggers
 $triggersRemoved = @()
 foreach ($pair in @(@('host', $config.Paths.hostDir), @('guest', $config.Paths.guestDir))) {
@@ -200,7 +218,7 @@ if ($labCoop) {
 $stop = [ordered]@{
     product = 'mgs-coop-lab-stop'; finished_utc = [DateTime]::UtcNow.ToString('o')
     games = $outcome; fuse = $fuseState; real_saves = $saves; host_lab_coop_ini_present = [bool]$labCoop
-    partner_triggers_removed = $triggersRemoved
+    partner_triggers_removed = $triggersRemoved; log_end_offsets = $logEnds
 }
 if ($current) { Write-JsonFile -Path (Join-Path $current.Dir 'stop.json') -Value $stop }
 # The run-start manifest is authoritative (normal play between Prepare and Start

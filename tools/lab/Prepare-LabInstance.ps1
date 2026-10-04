@@ -32,8 +32,11 @@ lab.json ports.netHost/netGuest, partner=1 and the lab.json "partner"
 defaults). -PartnerSetting overrides single lab.ini partner keys for this
 preparation ('key=value' for both roles, 'host:key=value' / 'guest:key=value'
 for one), for example -PartnerSetting guest:net_latency_ms=100,guest:net_loss_permille=200
-for E7. Running the script again without -Offline switches both folders back to
-host-v3 / client-v1 and the fuse URL.
+for E7. The coop.ini characters come from lab.json offline.characters (default
+on both). Running the script again without -Offline switches both folders back
+to host-v3 / client-v1 and the fuse URL. -Disable also resets an offline-v1
+marker (which no normal play uses: it skips session creation) to the folder's
+online lab role, host-v3 / client-v1; other markers stay as they are.
 
 .EXAMPLE
 pwsh -File tools/lab/Prepare-LabInstance.ps1 -WhatIf
@@ -104,8 +107,22 @@ if ($Disable) {
                 if (Confirm-LabAction $source "Restore as $file") { Move-Item -LiteralPath $source -Destination $file; Write-Output "[$r] restored your previous $leaf (from $newest)" }
             }
         }
+        # offline-v1 is a lab-only marker that skips session creation: a normal
+        # start from this folder could never host or join with it.
+        $current = if (Test-Path -LiteralPath $p.Marker -PathType Leaf) { [IO.File]::ReadAllText($p.Marker) } else { '' }
+        $reset = Get-LabDisabledMarker -Role $r -Marker $current
+        if ($reset) {
+            Assert-NoReparsePoint -Path $p.Marker -StopAt $p.Game
+            if (Confirm-LabAction $p.Marker "Reset role marker offline-v1 to $reset") {
+                [IO.File]::WriteAllText($p.Marker, "$reset`n", [Text.Encoding]::ASCII)
+                Write-Output "[$r] role marker offline-v1 reset to $reset (the online lab role; tools/set-session-mode.ps1 selects another)."
+            }
+            if ($r -eq 'guest' -and !(Test-Path -LiteralPath $p.ClientHost -PathType Leaf)) { Write-Warning "[guest] client-host.txt is missing; client-v1 needs it (tools/set-session-mode.ps1)." }
+        } elseif ($current.Trim() -ceq 'host-v1') {
+            Write-Warning "[$r] the role marker is host-v1 (the offline lab fallback marker, if lab.json offline.marker selected it); left unchanged."
+        }
     }
-    Write-Output 'Lab configuration disabled (lab.ini and coop.ini renamed, your previous files restored). The loaders, markers and lab save copies were left in place.'
+    Write-Output 'Lab configuration disabled (lab.ini and coop.ini renamed, your previous files restored, offline-v1 markers reset). The loaders, other markers and lab save copies were left in place.'
     return
 }
 

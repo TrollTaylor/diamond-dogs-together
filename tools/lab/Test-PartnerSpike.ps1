@@ -25,6 +25,10 @@ in one boot. Default role: both for E0 and E6, host otherwise.
 
 The instances' liveness is part of the verdict while the run is up; after
 Stop-Lab.ps1 (stop.json present) or with -NoProcessCheck it is not checked.
+Stop-Lab.ps1 records each log's length in stop.json (log_end_offsets); a
+stopped run is read only up to there, so judging an older run with -RunDir
+never mixes in the lines of later runs (an older run without those offsets is
+read to the end of the logs, with a note).
 -OutFile also writes the JSON (redacted) to a file. -PassThru returns the object
 instead of printing it (used by Invoke-PartnerExperiment.ps1).
 Exit code: 0 PASS, 1 FAIL, 2 INCOMPLETE.
@@ -58,8 +62,22 @@ $roles = @(if ($Role -eq 'both') { @('host', 'guest') | Where-Object { $availabl
 foreach ($name in $roles) { if ($available -notcontains $name) { throw "run.json has no $name instance." } }
 if (!$roles.Count) { throw 'run.json has no instances.' }
 $offline = [bool](Get-ConfigValue $run 'offline' $false)
-$hostOnly = [bool](Get-ConfigValue $run 'host_only' $false)
-$stopped = Test-Path -LiteralPath (Join-Path $current.Dir 'stop.json') -PathType Leaf
+# E0 and E6 need both instances: a run without a guest instance counts as host-only.
+$hostOnly = [bool](Get-ConfigValue $run 'host_only' $false) -or $available -notcontains 'guest'
+$stopFile = Join-Path $current.Dir 'stop.json'
+$stopped = Test-Path -LiteralPath $stopFile -PathType Leaf
+$endOffsets = $null
+if ($stopped) {
+    try { $endOffsets = Get-ConfigValue (Get-Content -LiteralPath $stopFile -Raw -Encoding UTF8 | ConvertFrom-Json) 'log_end_offsets' $null } catch { $endOffsets = $null }
+}
+$latest = $false
+try {
+    $pointer = Join-Path $config.Paths.runDir 'current-run.json'
+    $latestDir = [string](Get-Content -LiteralPath $pointer -Raw -Encoding UTF8 | ConvertFrom-Json).run_dir
+    $latest = [IO.Path]::GetFullPath($latestDir).TrimEnd([char]92, [char]47).Equals([IO.Path]::GetFullPath($current.Dir).TrimEnd([char]92, [char]47), [StringComparison]::OrdinalIgnoreCase)
+} catch { $latest = $false }
+$readNotes = [Collections.Generic.List[string]]::new()
+if (!$latest -and !$endOffsets) { $readNotes.Add('this run is not the current one and stop.json has no log_end_offsets: lines of later runs in the same logs are included') }
 
 # This run's log text per instance (both instances: E6 compares them).
 $texts = @{}
@@ -67,9 +85,17 @@ foreach ($name in @(@('host', 'guest') | Where-Object { $available -contains $_ 
     $instance = $run.instances.$name
     $paths = Get-InstancePaths -GameDirectory ([string]$instance.dir)
     $logs = @{}
+    $ends = if ($endOffsets) { Get-ConfigValue $endOffsets $name $null } else { $null }
     foreach ($log in 'script-observer.log', 'early.log', 'steam-observer.log') {
         $offset = [Int64](Get-ConfigValue $instance.log_offsets $log 0)
-        $logs[$log] = (Read-LogFromOffset -Path (Join-Path $paths.Mod $log) -Offset $offset -MaxBytes 64MB).Text
+        $max = [Int64]64MB
+        $end = if ($ends) { Get-ConfigValue $ends $log $null } else { $null }
+        if ($null -ne $end) {
+            # stop.json: the log length when the run was stopped (later runs append after it).
+            if ([Int64]$end -lt $offset) { $readNotes.Add("[$name] $log is shorter at the stop than at the start (replaced?): not read"); $logs[$log] = ''; continue }
+            $max = [Math]::Min($max, [Int64]$end - $offset)
+        }
+        $logs[$log] = if ($max -gt 0) { (Read-LogFromOffset -Path (Join-Path $paths.Mod $log) -Offset $offset -MaxBytes ([int]$max)).Text } else { '' }
     }
     $texts[$name] = $logs
 }
@@ -93,9 +119,11 @@ if ($Role -eq 'both' -and $roles.Count -lt 2) { $perRole[$roles[0]].notes = @($p
 
 $result = Merge-PartnerSpikeVerdict -Experiment $Experiment -Role $Role -PerRole $perRole
 if (!$offline) { $result.notes = @($result.notes) + 'this run was not started with Start-Lab.ps1 -Offline' }
+if ($readNotes.Count) { $result.notes = @($result.notes) + $readNotes.ToArray() }
 if ($stopped -and !$NoProcessCheck) { $result.notes = @($result.notes) + 'run stopped (stop.json present): process liveness not checked' }
 $result | Add-Member -NotePropertyName run -NotePropertyValue ([ordered]@{
         run_dir = $current.Dir; stamp = [string](Get-ConfigValue $run 'stamp' ''); offline = $offline; host_only = $hostOnly
+        current = $latest; bounded_by_stop = [bool]$endOffsets
         checked_utc = [DateTime]::UtcNow.ToString('o')
     })
 

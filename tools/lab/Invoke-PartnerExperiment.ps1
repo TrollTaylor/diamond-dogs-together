@@ -8,8 +8,8 @@ verdict is PASS or FAIL or the timeout passes.
 .DESCRIPTION
 The steps come from Get-PartnerExperimentPlan (PartnerSpike.psm1), following
 docs/offline-partner-spike-plan.md section 3:
-  E0  host walks a circle (w+a:6000) for the units check; verdict on both
-      instances (needs 5 minutes of probes, so the default timeout is 7 min)
+  E0  host, then guest walk a circle (w+a:6000) for the units check; verdict
+      on both instances (needs 5 minutes of probes: default timeout 7 min)
   E1  host trigger 'stage=1 source=fixed apply=warp'
   E2  host trigger 'stage=2'
   E3  host trigger 'stage=3' (bits, parts, realization; 120 s stability)
@@ -21,7 +21,10 @@ Run it after Start-Lab.ps1 -Offline once both instances are in Mother Base
 (Test-PartnerSpike.ps1 -Experiment E0 shows partner_cfg=ready). Keyboard input
 needs window focus and is best effort; -NoInput prints the keys to press
 instead. -NoTrigger skips the triggers (for a run whose lab.ini already has the
-stage), -NoScreens the screenshots. The final verdict is written (redacted) to
+stage), -NoScreens the screenshots. Triggers go through Set-PartnerTrigger.ps1
+-WaitSec 10 without -Force: a pending earlier trigger is waited for (10 s, then
+the helper stops), and a trigger the native side rejects stops the experiment.
+The final verdict is written (redacted) to
 <run>/partner-<experiment>-<HHmmss>.json and printed.
 Exit code: 0 PASS, 1 FAIL, 2 INCOMPLETE at the timeout.
 
@@ -51,6 +54,7 @@ $config = Get-LabConfig -ConfigPath $ConfigPath
 $current = Get-CurrentRun -Config $config -RunDir $RunDir
 if (![bool](Get-ConfigValue $current.Run 'offline' $false)) { throw 'This run was not started with Start-Lab.ps1 -Offline; the partner experiments need the offline lab mode.' }
 $available = @($current.Run.instances.PSObject.Properties.Name)
+$dirs = @{ host = $config.Paths.hostDir; guest = $config.Paths.guestDir }
 $plan = Get-PartnerExperimentPlan -Experiment $Experiment
 if (!$TimeoutSec) { $TimeoutSec = $plan.TimeoutSec }
 function Write-Step([string]$Message) { Write-Output ('[{0:HH:mm:ss}] {1}' -f (Get-Date), $Message) }
@@ -61,9 +65,23 @@ foreach ($step in $plan.Steps) {
     switch ($step.Kind) {
         'trigger' {
             if ($NoTrigger) { Write-Step "trigger skipped (-NoTrigger): $($step.Role) '$($step.Value)'"; break }
+            $stepRoles = @(Get-StepRoles $step.Role)
+            # An earlier trigger that is still pending is waited for, never replaced
+            # (-Force): a replacement can race the native poll and be lost.
+            foreach ($role in $stepRoles) {
+                $pending = (Get-InstancePaths -GameDirectory $dirs[$role]).PartnerTrigger
+                $until = [DateTime]::UtcNow.AddSeconds(10)
+                while ((Test-Path -LiteralPath $pending) -and [DateTime]::UtcNow -lt $until) { Start-Sleep -Milliseconds 250 }
+                if (Test-Path -LiteralPath $pending) { throw "[$role] an earlier partner.trigger is still not consumed after 10 s (is Mother Base 30050 loaded? Stop-Lab.ps1 deletes leftovers)." }
+            }
+            $target = if ($stepRoles.Count -eq 2) { 'both' } else { $stepRoles[0] }
             $global:LASTEXITCODE = 0
-            & (Join-Path $PSScriptRoot 'Set-PartnerTrigger.ps1') -Role $step.Role -Text $step.Value -ConfigPath $ConfigPath -RunDir $current.Dir -Force -WaitSec 10
-            if ($LASTEXITCODE -eq 2) { Write-Warning "The trigger '$($step.Value)' was not consumed within 10 s; is Mother Base (30050) loaded on that instance?" }
+            & (Join-Path $PSScriptRoot 'Set-PartnerTrigger.ps1') -Role $target -Text $step.Value -ConfigPath $ConfigPath -RunDir $current.Dir -WaitSec 10
+            switch ($LASTEXITCODE) {
+                2 { Write-Warning "The trigger '$($step.Value)' was not consumed within 10 s; is Mother Base (30050) loaded on that instance?" }
+                3 { throw "The native side rejected '$($step.Value)' or applied a different command (see the warning above); the experiment stops." }
+                4 { Write-Warning "The trigger '$($step.Value)' was consumed, but no partner_stage=changed line confirmed it." }
+            }
         }
         'input' {
             foreach ($role in (Get-StepRoles $step.Role)) {

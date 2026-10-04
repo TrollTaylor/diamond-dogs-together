@@ -26,7 +26,12 @@
   "offline": {
     "comment": "Offline lab mode (Prepare-LabInstance/Start-Lab -Offline): no fuse; master_url points at masterPort on 127.0.0.1, where nothing may listen.",
     "masterPort": 47899,
-    "marker": "offline-v1"
+    "marker": "offline-v1",
+    "characters": {
+      "comment": "coop.ini characters for the offline partner spike only (spike plan 2.5 and 4: default on both); the fuse lab keeps the top-level characters.",
+      "host": "default",
+      "guest": "default"
+    }
   },
   "partner": {
     "comment": "Offline partner spike lab.ini defaults (docs/offline-partner-spike-plan.md 2.1); Prepare-LabInstance -PartnerSetting overrides them per run.",
@@ -52,7 +57,7 @@
   },
   "characters": {
     "host": "default",
-    "guest": "default"
+    "guest": "quiet"
   },
   "xinput": {
     "host": "none",

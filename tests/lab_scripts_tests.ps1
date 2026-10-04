@@ -209,7 +209,9 @@ try {
     Assert-True (!$hostSettings.Offline -and $null -eq $hostSettings.Partner -and @($g.Keys | Where-Object { $_ -match '^(net|partner|crash_probe)' }).Count -eq 0) 'online settings carry no partner keys'
     Assert-Equal "$($labJson.Ports.netHost)/$($labJson.Ports.netGuest)" '47820/47821' 'lab.json partner net ports'
     Assert-Equal "$($labJson.Offline.masterPort)/$($labJson.Offline.marker)" '47899/offline-v1' 'lab.json offline block'
-    Assert-Equal "$($labJson.Characters.host)/$($labJson.Characters.guest)" 'default/default' 'lab.json characters: default for both during the spike'
+    Assert-Equal "$($labJson.Characters.host)/$($labJson.Characters.guest)" 'default/quiet' 'lab.json characters of the fuse lab unchanged (guest Quiet)'
+    Assert-Equal "$($labJson.Offline.characters.host)/$($labJson.Offline.characters.guest)" 'default/default' 'lab.json offline.characters: default for both during the spike'
+    Assert-Equal "$($hostSettings.Character)/$($guestSettings.Character)" 'default/quiet' 'online settings keep the top-level characters'
     $pj = $labJson.Partner
     Assert-Equal "$($pj.partner)/$($pj.stage)/$($pj.source)/$($pj.apply)/$($pj.rate_hz)/$($pj.interp_ms)/$($pj.offset_cm)/$($pj.teardown)/$($pj.force_exists)/$($pj.policy_relax)/$($pj.anim_probe)/$($pj.crash_probe)/$($pj.net)" '1/0/fixed/warp/30/100/300/clear/0/0/0/1/1' 'lab.json partner defaults'
 
@@ -220,6 +222,11 @@ try {
     Assert-Equal "$($hostOff.MasterUrl)|$($guestOff.MasterUrl)" "$deadUrl|$deadUrl" 'offline master URL: closed local port (no fuse)'
     Assert-True ((Test-LabUrl $deadUrl) -and $deadUrl.Length -eq 34) 'offline URL passes Test-LabUrl (34 characters)'
     Assert-True ($hostOff.Offline -and $guestOff.Offline) 'offline settings flagged'
+    Assert-Equal "$($hostOff.Character)/$($guestOff.Character)" 'default/default' 'offline settings: offline.characters (default on both)'
+    Assert-Equal "$(Get-LabDisabledMarker -Role host -Marker "offline-v1`n")/$(Get-LabDisabledMarker -Role guest -Marker 'offline-v1')" 'host-v3/client-v1' '-Disable resets offline-v1 to the online lab roles'
+    Assert-True ($null -eq (Get-LabDisabledMarker -Role host -Marker "host-v3`n") -and $null -eq (Get-LabDisabledMarker -Role guest -Marker "client-v1`n") -and
+        $null -eq (Get-LabDisabledMarker -Role host -Marker "host-v1`n") -and $null -eq (Get-LabDisabledMarker -Role host -Marker '') -and
+        $null -eq (Get-LabDisabledMarker -Role host -Marker 'OFFLINE-V1')) '-Disable leaves every other marker alone'
     $hostOffIni = New-LabIniFromSettings -Settings $hostOff
     $guestOffIni = New-LabIniFromSettings -Settings $guestOff
     $ho = ConvertFrom-IniText $hostOffIni
@@ -257,6 +264,11 @@ try {
     Assert-Throws { Get-AltConfig { param($c) $c.ports.netHost = 47810 } } 'collides' 'net port must not be a loopback port'
     Assert-Throws { Get-AltConfig { param($c) $c.ports.netGuest = 47820 } } 'collides' 'the two net ports must differ'
     Assert-Throws { Get-AltConfig { param($c) $c.offline.marker = 'host-v3' } } 'offline.marker' 'offline marker restricted'
+    Assert-Throws { Get-AltConfig { param($c) $c.offline.characters.guest = 'dog' } } 'offline.characters.guest' 'offline characters validated'
+    $altChar = Get-AltConfig { param($c) $c.offline.characters.guest = 'quiet' }
+    Assert-Equal (Get-LabInstanceSettings -Role guest -Config $altChar -GameDirectory $altChar.Paths.guestDir -HostSteamId64 $hostId -Offline).Character 'quiet' 'offline.characters honoured'
+    $noChar = Get-AltConfig { param($c) $c.offline.PSObject.Properties.Remove('characters') }
+    Assert-Equal (Get-LabInstanceSettings -Role guest -Config $noChar -GameDirectory $noChar.Paths.guestDir -HostSteamId64 $hostId -Offline).Character 'default' 'offline characters default to default'
     Assert-Throws { Get-AltConfig { param($c) $c.partner.stage = 7 } } 'partner_stage' 'lab.json partner values validated'
     Assert-Throws { Get-AltConfig { param($c) $c.partner | Add-Member -NotePropertyName bogus -NotePropertyValue 1 } } 'Unknown lab.json partner setting' 'unknown lab.json partner key'
 
@@ -327,7 +339,11 @@ try {
     foreach ($bad in 'w:0', 'w:60001', 'w:abc', 'q+q', 'w+', ':100', 'jump', 'w:1:2') {
         Assert-Throws { ConvertFrom-LabKeySpec $bad } '' "key spec '$bad' refused"
     }
-    Assert-Throws { ConvertFrom-LabKeySpec 'enter' -DefaultHoldMs 0 } 'HoldMs' 'HoldMs 0 refused'
+    Assert-Equal (ConvertFrom-LabKeySpec 'enter' -DefaultHoldMs 0).HoldMs 0 '-HoldMs 0 (a tap) is still accepted, as before the key specs'
+    Assert-Throws { ConvertFrom-LabKeySpec 'enter' -DefaultHoldMs -1 } 'HoldMs' 'negative -HoldMs refused'
+    Assert-Throws { ConvertFrom-LabKeySpec 'enter' -DefaultHoldMs 60001 } 'HoldMs' '-HoldMs above 60 s refused'
+    $sendInput = [IO.File]::ReadAllText((Join-Path $projectRoot 'tools/lab/Send-LabInput.ps1'))
+    Assert-True ($sendInput -match '(?s)try \{.*Key\(\$p\.Scan, \$p\.Extended, \$false\).*\} finally \{.*Key\(\$pressed\[\$i\]\.Scan, \$pressed\[\$i\]\.Extended, \$true\)') 'Send-LabInput releases every pressed key in a finally block'
 
     if ($IniCheck) {
         $file = Join-Path $fixture 'host-offline-lab.ini'; [IO.File]::WriteAllText($file, $hostOffIni)
@@ -626,15 +642,30 @@ try {
     Import-Module (Join-Path $projectRoot 'tools/lab/PartnerSpike.psm1') -Force
     foreach ($case in @(
             @('stage=3 source=orbit apply=warp', 'stage=3 source=orbit apply=warp'), @(' apply=slot   stage=1 ', 'stage=1 apply=slot'),
-            @('stop', 'stop'), @("  stop`t", 'stop'), @('source=net', 'source=net'), @("apply=both`tsource=fixed", 'source=fixed apply=both'), @('stage=0', 'stage=0'))) {
+            @('stop', 'stop'), @("  stop`t", 'stop'), @('source=net', 'source=net'), @("apply=both`tsource=fixed", 'source=fixed apply=both'), @('stage=0', 'stage=0'),
+            @('parts=explicit', 'parts=explicit'), @('mirror=on', 'mirror=on'), @('mirror=on stage=3 parts=explicit', 'stage=3 parts=explicit mirror=on'),
+            @('mirror=on apply=both parts=explicit source=orbit stage=3', 'stage=3 source=orbit apply=both parts=explicit mirror=on'))) {
         Assert-Equal (ConvertTo-PartnerTriggerText -Text $case[0]) $case[1] "trigger grammar accepts '$($case[0])'"
     }
+    Assert-True ((ConvertTo-PartnerTriggerText -Text 'stage=3 source=orbit apply=both parts=explicit mirror=on').Length + 1 -le 63) 'the longest canonical trigger fits the native 63 bytes'
     foreach ($bad in @('', '   ', 'STOP', 'Stage=1', 'stop stage=1', 'stage=4', 'stage=-1', 'stage=01', 'stage=1 stage=2', 'source=walk', 'apply=Warp',
-            'speed=3', 'stage=1;source=net', "stage=1`nstop", 'stage=', 'stage=3 source=orbit apply=warp extra=1', "stage=1`u{e9}")) {
+            'speed=3', 'stage=1;source=net', "stage=1`nstop", 'stage=', 'stage=3 source=orbit apply=warp extra=1', "stage=1`u{e9}",
+            'parts=implicit', 'parts=', 'mirror=off', 'Mirror=on', 'parts=explicit parts=explicit', 'mirror=on mirror=on', 'stop parts=explicit', 'mirror=on stop', 'stop stop')) {
         $shown = $bad -replace "`n", '\n'
         Assert-Throws { ConvertTo-PartnerTriggerText -Text $bad } '' "trigger grammar refuses '$shown'"
         Assert-True (-not (Test-PartnerTriggerText $bad)) "Test-PartnerTriggerText is false for '$shown'"
     }
+    # The native result of a consumed trigger (Set-PartnerTrigger -WaitSec).
+    $changedLine = 'partner_stage=changed; stage=3; source=orbit; apply=warp; via=trigger'
+    Assert-Equal (Find-PartnerTriggerResult -LogText "partner_probe=state; t_ms=1`r`n$changedLine`r`n" -Canonical 'stage=3 source=orbit').State 'applied' 'trigger result: applied'
+    Assert-Equal (Find-PartnerTriggerResult -LogText "$changedLine`n" -Canonical 'apply=warp').State 'applied' 'trigger result: keys not named keep their values'
+    Assert-Equal (Find-PartnerTriggerResult -LogText "$changedLine`n" -Canonical 'stage=3 parts=explicit').State 'applied' 'trigger result: one-shots are not part of the line'
+    Assert-Equal (Find-PartnerTriggerResult -LogText "$changedLine`n" -Canonical 'stage=2').State 'different' 'trigger result: another command was applied'
+    Assert-Equal (Find-PartnerTriggerResult -LogText "partner_stage=changed; stage=0; source=fixed; apply=warp; via=trigger`npartner_bits=cleared; reason=trigger`n" -Canonical 'stop').State 'applied' 'trigger result: stop means stage 0'
+    $rejected = Find-PartnerTriggerResult -LogText "$changedLine`npartner_trigger=rejected; reason=parse`n" -Canonical 'stage=3'
+    Assert-Equal "$($rejected.State)|$($rejected.Line)" 'rejected|partner_trigger=rejected; reason=parse' 'trigger result: the newest result line wins (rejected)'
+    Assert-Equal (Find-PartnerTriggerResult -LogText "partner=configured; mode=offline_v1; stage=3; source=fixed; apply=warp`n" -Canonical 'stage=3').State 'none' 'trigger result: only via=trigger lines count'
+    Assert-Equal (Find-PartnerTriggerResult -LogText '' -Canonical 'stage=3').State 'none' 'trigger result: empty log'
 
     $line = ConvertFrom-PartnerLogLine 'partner_probe=state; t_ms=12; ids=0000,ffff; pool=00,ff; pos1_mm=-1,2,-3; s0=0x03; parts=3,x'
     Assert-Equal "$($line.Kind)|$($line.Prefix)|$($line.Value)|$($line.Fields.Count)" 'partner_probe=state|partner_probe|state|6' 'probe line: kind and fields'
@@ -654,6 +685,11 @@ try {
     Assert-True ($null -eq (ConvertFrom-PartnerNumber 'ffff') -and (ConvertFrom-PartnerNumber 'ffff' -Hex) -eq 65535) 'bare hex only with -Hex'
     Assert-True ($null -eq (ConvertFrom-PartnerNumber '1.5') -and $null -eq (ConvertFrom-PartnerNumber '') -and $null -eq (ConvertFrom-PartnerNumber '0x')) 'non-numbers are null'
     Assert-True ($null -eq (ConvertFrom-PartnerList '1,2' -Count 3) -and $null -eq (ConvertFrom-PartnerList '1,,3')) 'lists need every element'
+    $sentinel = ConvertFrom-PartnerList '-2147483648,-2147483648,-2147483648' -Count 3
+    Assert-True ((Test-PartnerVectorAvailable (ConvertFrom-PartnerList '-11000,500,2000' -Count 3)) -and !(Test-PartnerVectorAvailable $sentinel) -and
+        !(Test-PartnerVectorAvailable (ConvertFrom-PartnerList '1,-2147483647,3' -Count 3)) -and !(Test-PartnerVectorAvailable $null)) 'INT32_MIN (and +-INT32_MAX) components mark a vector unavailable'
+    Assert-True ($null -eq (Get-PartnerDistance $sentinel (ConvertFrom-PartnerList '0,0,0' -Count 3))) 'no distance to an unavailable vector'
+    Assert-Equal (Get-PartnerSpread -Vectors @((ConvertFrom-PartnerList '0,0,0' -Count 3), $sentinel, (ConvertFrom-PartnerList '300,0,400' -Count 3))) ([double]500) 'spread ignores unavailable vectors'
 
     # Fixture logs (tests/fixtures/partner-lab) written with the section 2.7 spellings.
     $partnerFixtures = Join-Path $PSScriptRoot 'fixtures/partner-lab'
@@ -705,10 +741,37 @@ try {
     Assert-Verdict (Get-PV E0 host '') 'INCOMPLETE' 'mode=offline_v1' 'E0 without lines is incomplete'
     Assert-Verdict (Get-PV E0 host $fx['e0-host'] @{ Safety = [pscustomobject]@{ State = 'pending'; Reason = ''; Missing = @('master_server') } }) 'INCOMPLETE' 'safety:master_server' 'E0 waits for the redirect line'
     $noRx = Remove-Lines (Remove-Lines $fx['e0-host'] 'partner_net=first_rx') 'partner_net=stats'
-    Assert-Verdict (Get-PV E0 host $noRx @{ HostOnly = $true }) 'PASS' '' 'E0 host-only run: no receive evidence required'
+    Assert-Verdict (Get-PV E0 host $noRx @{ HostOnly = $true }) 'INCOMPLETE' 'the guest instance' 'E0 host-only run: never PASS (E0 needs both instances)'
+    Assert-Verdict (Get-PV E0 host $fx['e0-host'] @{ HostOnly = $true }) 'INCOMPLETE' 'E0 PASS needs both instances' 'E0 host-only run with receive lines: still INCOMPLETE'
     Assert-Verdict (Get-PV E0 host $noRx) 'INCOMPLETE' 'tx>0 and rx>0' 'E0 with two instances: receive evidence required'
     $noTurn = $fx['e0-host'] -replace 'yaw_abs_max_cdeg=17990', 'yaw_abs_max_cdeg=0' -replace 'lua_pos_mm=-9500,500,3900; mem_pos_mm=-9490,500,3900', 'lua_pos_mm=-11000,500,2000; mem_pos_mm=-11000,500,2000' -replace 'lua_pos_mm=-9500,500,3900; mem_pos_mm=-9500,500,3900', 'lua_pos_mm=-11000,500,2000; mem_pos_mm=-11000,500,2000'
     Assert-Verdict (Get-PV E0 host $noTurn) 'INCOMPLETE' 'walk a circle' 'E0 units need a walk before deciding degrees or radians'
+    # The guest must walk too (Invoke-PartnerExperiment E0 walks both); the hint names its role.
+    $guestStill = $fx['e0-guest'] -replace 'lua_pos_mm=[-0-9,]+; mem_pos_mm=[-0-9,]+', 'lua_pos_mm=-9000,500,2500; mem_pos_mm=-9000,500,2500' -replace 'yaw_abs_max_cdeg=17990', 'yaw_abs_max_cdeg=0'
+    Assert-Verdict (Get-PV E0 guest $guestStill) 'INCOMPLETE' 'Send-LabInput.ps1 -Role guest -Keys w+a:6000' 'E0 guest without a walk is INCOMPLETE and names the guest walk'
+    # mem_pos_mm=INT32_MIN: the vars block was unreadable (not a units or freshness failure).
+    $memGone = $fx['e0-host'] -replace 'mem_pos_mm=[-0-9,]+', 'mem_pos_mm=-2147483648,-2147483648,-2147483648'
+    $v = Get-PV E0 host $memGone
+    Assert-Verdict $v 'FAIL' 'mem_pos_mm unreadable' 'E0 mem_pos unreadable in every units line fails with its own reason'
+    Assert-True (!(@($v.failed) -join ' ').Contains('not fresh')) 'the INT32_MIN sentinel is not reported as stale vars.playerPos*'
+    $v = Get-PV E0 host $fx['e0-host'].Replace('mem_pos_mm=-9500,500,3900', 'mem_pos_mm=-2147483648,-2147483648,-2147483648')
+    Assert-Verdict $v 'PASS' '' 'E0 one unreadable units line among readable (moving) ones: PASS'
+    Assert-True ((@($v.notes) -join ' ').Contains('mem_pos_mm unavailable') -and $v.data['units_mem_unreadable'] -eq 1) 'the unreadable units line is noted'
+    $oneUnits = Remove-Lines (Remove-Lines $memGone 'partner_units; lua_pos_mm=-9500') 'partner_units; lua_pos_mm=-9000'
+    Assert-Verdict (Get-PV E0 host $oneUnits) 'INCOMPLETE' 'readable mem_pos_mm' 'E0 a single unreadable units line is INCOMPLETE'
+    # partner_cfg=refused: transient per-tick refusals recover; mission-start refusals and online_bit/sync_present fail.
+    $readyLine = 'partner_cfg=ready; flags=0x00000001; count=2; realized_count=2; local=0; R=1; online_bit=0; sync=null; code_gate=ok'
+    $v = Get-PV E0 host ($fx['e0-host'] + "partner_cfg=refused; reason=player_absent`r`n$readyLine`r`n")
+    Assert-Verdict $v 'PASS' '' 'E0 transient tick refusal followed by partner_cfg=ready: PASS'
+    Assert-True ((@($v.notes) -join ' ').Contains('transient partner_cfg=refused; reason=player_absent')) 'the transient refusal is noted'
+    Assert-Verdict (Get-PV E0 host ($fx['e0-host'] + "partner_cfg=refused; reason=s_null`r`n")) 'INCOMPLETE' 'partner_cfg=ready after partner_cfg=refused; reason=s_null' 'E0 unresolved tick refusal is INCOMPLETE'
+    Assert-Verdict (Get-PV E0 host ($fx['e0-host'] + "partner_cfg=refused; reason=sync_present`r`n$readyLine`r`n")) 'FAIL' 'reason=sync_present' 'E0 sync_present refusal fails even when it recovers'
+    Assert-Verdict (Get-PV E0 host ($fx['e0-host'] + "partner_cfg=refused; reason=online_bit`r`n")) 'FAIL' 'S_IS_ONLINE' 'E0 online_bit refusal fails'
+    $cfgLater = $fx['e0-host'] + "partner_stop; cleared=0; teardown=clear`r`nmission_boundary=runtime_enter; accepted=1 thread=10 mission=30050 phase=1`r`npartner_cfg=refused; reason=player_absent`r`n"
+    Assert-Verdict (Get-PV E0 host $cfgLater) 'FAIL' 'at the mission start (CFG receipt)' 'E0 mission-start refusal without recovery fails'
+    $v = Get-PV E0 host ($cfgLater + "mission_boundary=runtime_enter; accepted=1 thread=10 mission=30050 phase=1`r`n$readyLine`r`n")
+    Assert-Verdict $v 'PASS' '' 'E0 mission-start refusal followed by a later ready mission: PASS with a note'
+    Assert-True ((@($v.notes) -join ' ').Contains('at a mission start (CFG)')) 'the recovered mission-start refusal is noted'
 
     # E1: Warp reaches the unrealized instance 1.
     $v = Get-PV E1 host $fx['e1-host']
@@ -741,6 +804,40 @@ try {
     Assert-Verdict (Get-PV E3 host (Select-Lines $fx['e3-host'] 22)) 'INCOMPLETE' '120 s realized' 'E3 waits for 120 s of stability'
     Assert-Verdict (Get-PV E3 host (Remove-Lines $fx['e3-host'] 'partner_bits=set')) 'FAIL' 'no partner_bits=set' 'E3 without bits after 5 s fails'
     Assert-Verdict (Get-PV E3 host (Select-Lines $fx['e3-host'] 13)) 'INCOMPLETE' 'partner_bits=set' 'E3 just after the trigger is incomplete'
+    # Instance 1 realized before the bits (E2 outcome B): native logs partner_realized=1
+    # only on a change, so none follows the bits; this is not F3a.
+    $e2Lines = @('partner_stage=changed; stage=2; source=fixed; apply=warp; via=trigger', 'partner_lua=event=allactive_set',
+        'partner_realized=1; R=1; id=0001; pool=01; ms_after_bits=0',
+        'partner_probe=state; t_ms=2995000; stage=2; ids=0000,0001; pool=00,01; parts=3,1; rbits=0x3; s0=0x03; s8=0x01; q170=0x3; q180=0x0; q194=0x0; q198=0x0; glob=0; pb_guard=1; pb_flag=0,0; pb_state=3,0; pos0_mm=-11000,500,2000; yaw0_mrad=0; pos1_mm=-11000,500,5000; yaw1_mrad=0; rec1_mm=0,0,0; rec1_status=0x00000000')
+    $outcomeB = foreach ($l in @($fx['e3-host'] -split "\r?\n")) {
+        if ($l.StartsWith('partner_stage=changed; stage=3')) { $e2Lines; $l }
+        elseif ($l.StartsWith('partner_realized=1')) { }
+        else { $l }
+    }
+    $outcomeB = $outcomeB -join "`n"
+    $v = Get-PV E3 host $outcomeB
+    Assert-Verdict $v 'PASS' '' 'E3 after E2 outcome B (realized before the bits): PASS, not F3a'
+    Assert-True ($v.data['realized_before_bits'] -and $null -eq $v.data['ms_after_bits'] -and (@($v.notes) -join ' ').Contains('already realized before partner_bits=set')) 'E3 notes the earlier realization; the 1 s rule is skipped'
+    Assert-Equal "$($v.data['parts_ms_after_stage3'])/$($v.data['stable_s'])" '400/130.4' 'E3 outcome B: parts and stability measured from the stage=3 line on the probe clock'
+    $lateParts = $outcomeB.Replace("partner_parts=loaded; R=1; ms_after_realize=4200`n", '').Replace('partner_probe=state; t_ms=3030600', "partner_parts=loaded; R=1; ms_after_realize=40000`npartner_probe=state; t_ms=3030600")
+    Assert-Verdict (Get-PV E3 host $lateParts) 'FAIL' 'after stage=3' 'E3 outcome B: parts loaded later than 15 s after stage=3 fails'
+    Assert-Verdict (Get-PV E3 host (Remove-Lines $outcomeB 'partner_parts=')) 'FAIL' 'within 20 s of stage=3' 'E3 outcome B: no parts 20 s after stage=3 fails (F3b)'
+    $earlyParts = $outcomeB.Replace('partner_parts=loaded; R=1; ms_after_realize=4200', 'partner_warp_check; R=1; apply=warp; cmd_mm=-11000,500,5000; slot_mm=-11000,500,5000; err_mm=0').Replace('ms_after_bits=0', "ms_after_bits=0`npartner_parts=loaded; R=1; ms_after_realize=900")
+    $v = Get-PV E3 host $earlyParts
+    Assert-Verdict $v 'PASS' '' 'E3 outcome B: parts loaded during stage 2 are accepted'
+    Assert-True ((@($v.notes) -join ' ').Contains('already loaded before stage=3')) 'E3 notes the parts loaded before stage=3'
+    $thrashBefore = $outcomeB.Replace('partner_stage=changed; stage=3', "partner_realized=0; R=1; ms_after_realize=500`npartner_stage=changed; stage=3") -replace 'ids=0000,0001; pool=00,01', 'ids=0000,ffff; pool=00,ff'
+    Assert-Verdict (Get-PV E3 host $thrashBefore) 'FAIL' 'F3a' 'E3: a realization undone before the bits does not count (F3a when none follows)'
+    $otherMission = "partner_realized=1; R=1; id=0001; pool=01; ms_after_bits=90`n" + $fx['e3-host'].Replace('partner_realized=1; R=1; id=0001; pool=01; ms_after_bits=180', '') -replace 'ids=0000,0001; pool=00,01', 'ids=0000,ffff; pool=00,ff'
+    Assert-Verdict (Get-PV E3 host $otherMission) 'FAIL' 'F3a' 'E3: a realization from before the mission boundary does not count'
+    $inSegment = $fx['e3-host'].Replace("partner_realized=1; R=1; id=0001; pool=01; ms_after_bits=180`r`n", '').Replace('partner_lua=event=allactive_set', "partner_lua=event=allactive_set`r`npartner_realized=1; R=1; id=0001; pool=01; ms_after_bits=0")
+    $v = Get-PV E3 host $inSegment
+    Assert-Verdict $v 'PASS' '' 'E3: realized at stage 3 before the bits: PASS with the native parts timing'
+    Assert-Equal "$($v.data['parts_ms_after_realize'])/$($v.data['realized_before_bits'])" '4200/True' 'E3 realized in the segment before the bits: ms_after_realize is the measure'
+    $probeOnly = Remove-Lines $fx['e3-host'] 'partner_realized=1'
+    $v = Get-PV E3 host $probeOnly
+    Assert-Verdict $v 'PASS' '' 'E3: probes showing realization without a partner_realized=1 line are not F3a'
+    Assert-True ((@($v.notes) -join ' ').Contains('no partner_realized=1 line belongs to this mission')) 'E3 notes the missing realization line'
 
     # E6: network-driven partner (both logs).
     $v = Get-PV E6 host $fx['e6-host'] @{ PeerObserverLog = $fx['e6-guest'] }
@@ -818,6 +915,7 @@ try {
         foreach ($s in @($plan.Steps | Where-Object { $_.Kind -eq 'input' })) { Assert-True ($null -ne (ConvertFrom-LabKeySpec -Spec $s.Value)) "$exp plan input '$($s.Value)' is a valid key spec" }
     }
     Assert-Equal @((Get-PartnerExperimentPlan -Experiment E4).Steps | Where-Object { $_.Kind -eq 'screens' }).Count 4 'E4 plan takes 4 screenshots'
+    Assert-Equal (@((Get-PartnerExperimentPlan -Experiment E0).Steps | Where-Object { $_.Kind -eq 'input' } | ForEach-Object { "$($_.Role):$($_.Value)" }) -join ',') 'host:w+a:6000,guest:w+a:6000' 'E0 plan walks both instances (the units rule is judged on both)'
 
     # Scripts on a fixture run (no game): Test-PartnerSpike.ps1, Set-PartnerTrigger.ps1 and the smoke's offline refusal.
     $pwshExe = (Get-Process -Id $PID).Path
@@ -876,6 +974,25 @@ try {
     Write-JsonFile -Path (Join-Path $runPass 'stop.json') -Value ([ordered]@{ product = 'mgs-coop-lab-stop' })
     $r = Invoke-TestSpike @('-Experiment', 'E0', '-RunDir', $runPass)
     Assert-True ($r.Code -eq 0 -and (@($r.Json.notes) -join ' ').Contains('stop.json')) 'after Stop-Lab liveness is not checked'
+    # stop.json log_end_offsets (Stop-Lab) bound a stopped run: lines a later run appends are ignored.
+    $ends = [ordered]@{}
+    foreach ($role in 'host', 'guest') {
+        $ends[$role] = [ordered]@{}
+        foreach ($log in 'script-observer.log', 'early.log', 'steam-observer.log') { $ends[$role][$log] = Get-FileLengthOrZero (Join-Path $prPaths[$role].Mod $log) }
+    }
+    Write-JsonFile -Path (Join-Path $runPass 'stop.json') -Value ([ordered]@{ product = 'mgs-coop-lab-stop'; log_end_offsets = $ends })
+    [IO.File]::AppendAllText((Join-Path $prPaths.host.Mod 'script-observer.log'), "crash_probe=av; rva=0x777; access=read; target=0x0; thread=7; stage=0; realized=0`r`n")
+    $r = Invoke-TestSpike @('-Experiment', 'E0', '-RunDir', $runPass)
+    Assert-True ($r.Code -eq 0 -and !(@($r.Json.failed) -join ' ').Contains('rva=0x777') -and $r.Json.run.bounded_by_stop) ('a stopped run is read up to stop.json log_end_offsets: ' + $r.Text)
+    Write-JsonFile -Path (Join-Path $runPass 'stop.json') -Value ([ordered]@{ product = 'mgs-coop-lab-stop' })
+    $r = Invoke-TestSpike @('-Experiment', 'E0', '-RunDir', $runPass)
+    Assert-True ($r.Code -eq 1 -and (@($r.Json.failed) -join ' ').Contains('rva=0x777') -and (@($r.Json.notes) -join ' ').Contains('not the current one')) 'without end offsets an older run includes later lines, with a note'
+    $runSolo = New-PartnerFixtureRun 'e0-solo' @{ host = $fx['e0-host']; guest = '' }
+    $soloJson = Get-Content -LiteralPath (Join-Path $runSolo 'run.json') -Raw | ConvertFrom-Json
+    $soloJson.instances.PSObject.Properties.Remove('guest')
+    Write-JsonFile -Path (Join-Path $runSolo 'run.json') -Value $soloJson
+    $r = Invoke-TestSpike @('-Experiment', 'E0', '-RunDir', $runSolo, '-NoProcessCheck')
+    Assert-True ($r.Code -eq 2 -and (@($r.Json.missing) -join ' ').Contains('the guest instance')) ('E0 on a run without a guest instance is INCOMPLETE: ' + $r.Text)
     $runFail = New-PartnerFixtureRun 'e3-fail' @{ host = ($fx['e3-host'] + "partner_realized=0; R=1; ms_after_realize=60000`r`n"); guest = '' }
     $r = Invoke-TestSpike @('-Experiment', 'E3', '-RunDir', $runFail, '-NoProcessCheck')
     Assert-Equal "$($r.Code)/$($r.Json.role)/$($r.Json.verdict)" '1/host/FAIL' 'Test-PartnerSpike E3 FAIL (default role host), exit code 1'
@@ -908,11 +1025,28 @@ try {
     $r = Invoke-SetTrigger @('-Role', 'both', '-Text', 'stage=3 source=net')
     Assert-True ($r.Code -eq 0 -and [IO.File]::ReadAllText($prPaths.host.PartnerTrigger) -eq "stage=3 source=net`n" -and [IO.File]::ReadAllText($prPaths.guest.PartnerTrigger) -eq "stage=3 source=net`n") '-Role both writes both instances'
     foreach ($p in $prPaths.Values) { Remove-Item -LiteralPath $p.PartnerTrigger }
-    # -WaitSec: a stand-in for the native side consumes (deletes) the file.
-    $consumer = Start-Process -FilePath $pwshExe -WindowStyle Hidden -PassThru -ArgumentList '-NoProfile', '-NonInteractive', '-Command',
-    ("`$p = '{0}'; `$d = [DateTime]::UtcNow.AddSeconds(30); while (!(Test-Path -LiteralPath `$p) -and [DateTime]::UtcNow -lt `$d) {{ Start-Sleep -Milliseconds 50 }}; Start-Sleep -Milliseconds 200; Remove-Item -LiteralPath `$p" -f $prPaths.host.PartnerTrigger)
+    # -WaitSec: a stand-in for the native side consumes (deletes) the file and logs
+    # its result to script-observer.log, as PollPartnerTrigger does.
+    function Start-TriggerConsumer([string]$Role, [string]$Line) {
+        $append = if ($Line) { "; [IO.File]::AppendAllText('{0}', '{1}' + [char]13 + [char]10)" -f (Join-Path $prPaths[$Role].Mod 'script-observer.log'), $Line } else { '' }
+        Start-Process -FilePath $pwshExe -WindowStyle Hidden -PassThru -ArgumentList '-NoProfile', '-NonInteractive', '-Command',
+        ("`$p = '{0}'; `$d = [DateTime]::UtcNow.AddSeconds(30); while (!(Test-Path -LiteralPath `$p) -and [DateTime]::UtcNow -lt `$d) {{ Start-Sleep -Milliseconds 50 }}; Start-Sleep -Milliseconds 200; Remove-Item -LiteralPath `$p{1}" -f $prPaths[$Role].PartnerTrigger, $append)
+    }
+    $consumer = Start-TriggerConsumer host 'partner_stage=changed; stage=1; source=fixed; apply=warp; via=trigger'
     $r = Invoke-SetTrigger @('-Role', 'host', '-Text', 'stage=1', '-WaitSec', '20')
-    Assert-True ($r.Code -eq 0 -and $r.Text.Contains('consumed by the native side')) ('-WaitSec reports a consumed trigger: ' + $r.Text)
+    Assert-True ($r.Code -eq 0 -and $r.Text.Contains('applied by the native side: partner_stage=changed; stage=1')) ('-WaitSec confirms the applied trigger in script-observer.log: ' + $r.Text)
+    $null = $consumer.WaitForExit(10000)
+    $consumer = Start-TriggerConsumer host 'partner_trigger=rejected; reason=parse'
+    $r = Invoke-SetTrigger @('-Role', 'host', '-Text', 'parts=explicit', '-WaitSec', '20')
+    Assert-True ($r.Code -eq 3 -and $r.Text.Contains('REJECTED')) ('-WaitSec: a rejected trigger is not reported as consumed (exit 3): ' + $r.Text)
+    $null = $consumer.WaitForExit(10000)
+    $consumer = Start-TriggerConsumer host 'partner_stage=changed; stage=1; source=fixed; apply=warp; via=trigger'
+    $r = Invoke-SetTrigger @('-Role', 'host', '-Text', 'stage=2', '-WaitSec', '20')
+    Assert-True ($r.Code -eq 3 -and $r.Text.Contains('different command')) ('-WaitSec: another command applied (a raced replacement) exits 3: ' + $r.Text)
+    $null = $consumer.WaitForExit(10000)
+    $consumer = Start-TriggerConsumer host ''
+    $r = Invoke-SetTrigger @('-Role', 'host', '-Text', 'mirror=on', '-WaitSec', '20')
+    Assert-True ($r.Code -eq 4 -and $r.Text.Contains('unconfirmed')) ('-WaitSec: a consumed trigger without a result line exits 4: ' + $r.Text)
     $null = $consumer.WaitForExit(10000)
     $r = Invoke-SetTrigger @('-Role', 'guest', '-Text', 'stage=1', '-WaitSec', '1')
     Assert-Equal $r.Code 2 '-WaitSec exit code 2 when nothing consumed the trigger'
@@ -921,7 +1055,15 @@ try {
     $experiment = Join-Path $projectRoot 'tools/lab/Invoke-PartnerExperiment.ps1'
     $runPass2 = New-PartnerFixtureRun 'e0-pass-2' @{ host = $fx['e0-host']; guest = $fx['e0-guest'] }
     $out = @(& $pwshExe -NoProfile -NonInteractive -File $experiment -ConfigPath $prConfig -RunDir $runPass2 -Experiment E0 -NoInput -NoScreens -NoProcessCheck -TimeoutSec 1 2>&1)
-    Assert-True ($LASTEXITCODE -eq 0 -and ($out -join ' ').Contains('MANUAL: in the host window press w+a:6000') -and @(Get-ChildItem -LiteralPath $runPass2 -Filter 'partner-E0-*.json').Count -eq 1) ('Invoke-PartnerExperiment E0 PASS on the fixture run: ' + ($out -join ' | '))
+    Assert-True ($LASTEXITCODE -eq 0 -and ($out -join ' ').Contains('MANUAL: in the host window press w+a:6000') -and ($out -join ' ').Contains('MANUAL: in the guest window press w+a:6000') -and
+        @(Get-ChildItem -LiteralPath $runPass2 -Filter 'partner-E0-*.json').Count -eq 1) ('Invoke-PartnerExperiment E0 PASS on the fixture run (both instances walk): ' + ($out -join ' | '))
+    # A trigger the native side rejects stops the experiment (no blind -Force, no carrying on).
+    $runReject = New-PartnerFixtureRun 'e1-reject' @{ host = $fx['e1-host']; guest = $fx['e0-guest'] }
+    $consumer = Start-TriggerConsumer host 'partner_trigger=rejected; reason=parse'
+    $out = @(& $pwshExe -NoProfile -NonInteractive -File $experiment -ConfigPath $prConfig -RunDir $runReject -Experiment E1 -NoInput -NoScreens -NoProcessCheck -TimeoutSec 1 2>&1)
+    Assert-True ($LASTEXITCODE -ne 0 -and ($out -join ' ').Contains('rejected') -and @(Get-ChildItem -LiteralPath $runReject -Filter 'partner-E1-*.json').Count -eq 0) ('Invoke-PartnerExperiment stops on a rejected trigger: ' + ($out -join ' | '))
+    $null = $consumer.WaitForExit(10000)
+    Assert-True (!(Test-Path -LiteralPath $prPaths.host.PartnerTrigger)) 'no trigger left behind after the rejection'
     $runShort = New-PartnerFixtureRun 'e0-short' @{ host = (Select-Lines $fx['e0-host'] 20); guest = $fx['e0-guest'] }
     $out = @(& $pwshExe -NoProfile -NonInteractive -File $experiment -ConfigPath $prConfig -RunDir $runShort -Experiment E0 -NoInput -NoScreens -NoProcessCheck -TimeoutSec 1 -PollSec 1 2>&1)
     Assert-True ($LASTEXITCODE -eq 2 -and ($out -join ' ').Contains('waiting: ')) ('Invoke-PartnerExperiment reports INCOMPLETE at the timeout: ' + ($out -join ' | '))
@@ -1244,6 +1386,8 @@ Start-Sleep -Milliseconds 500
         Assert-True ($stop.games.host.action -eq 'close_then_terminate' -and $stop.games.host.exit -in @('closed', 'terminated')) 'recorded process verified, closed or terminated'
         Assert-True (!(Test-Path -LiteralPath $e2eHostPaths.PartnerTrigger) -and !(Test-Path -LiteralPath $e2eGuestPaths.PartnerTrigger)) 'Stop-Lab deletes leftover partner.trigger files'
         Assert-Equal (@($stop.partner_triggers_removed) -join ',') 'host,guest' 'stop.json lists the removed partner triggers'
+        Assert-Equal ([Int64]$stop.log_end_offsets.host.'early.log') (Get-FileLengthOrZero (Join-Path $e2eHostPaths.Mod 'early.log')) 'stop.json records the log end offsets per instance'
+        Assert-True ($null -ne $stop.log_end_offsets.guest.'script-observer.log') 'stop.json records the guest log end offsets'
         foreach ($dir in $runDir, $runDir2, $runDir3, $runDir4) {
             $leaks = Get-PrivateLeaks -Dir $dir -Secrets @($realHost, 'userdata', '"secret"')
             Assert-Equal ($leaks -join ',') '' "run folder $(Split-Path -Leaf $dir) holds no SteamID, account folder or ticket"
@@ -1465,6 +1609,7 @@ Start-Sleep -Milliseconds 500
             Assert-Equal "$($stop.games.host.exit)/$($stop.games.guest.exit)/$($stop.fuse)" 'closed/closed/not_running' 'offline run closed; no fuse to stop'
             Assert-True (!(Test-Path -LiteralPath $hp.PartnerTrigger) -and !(Test-Path -LiteralPath $gp.PartnerTrigger) -and (@($stop.partner_triggers_removed) -join ',') -eq 'host,guest') 'Stop-Lab removed the unconsumed partner triggers'
             Assert-True (($out -join ' ').Contains('closed local port')) 'Stop-Lab names the lingering offline redirect'
+            Assert-True ([Int64]$stop.log_end_offsets.host.'early.log' -ge [Int64]$offRun.instances.host.log_offsets.'early.log' -and [Int64]$stop.log_end_offsets.host.'early.log' -gt 0) 'offline stop.json: log end offsets after the run start offsets'
             # A listener on the closed master port blocks the offline start (the game would reach it).
             $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $base + 5)
             $listener.Start()
@@ -1472,6 +1617,11 @@ Start-Sleep -Milliseconds 500
                 $out = (& $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Start-Lab.ps1') -ConfigPath $dryConfig -Offline 2>&1 | Out-String)
                 Assert-True ($LASTEXITCODE -ne 0 -and $out.Contains("TCP port $($base + 5)") -and (Test-DryProcessesGone)) 'Start-Lab -Offline refuses a listener on the master port; nothing started'
             } finally { $listener.Stop() }
+            # -Disable after the offline mode resets offline-v1 (it skips session creation) to the online lab roles.
+            $out = & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig -Disable 2>&1
+            Assert-Equal $LASTEXITCODE 0 ('Disable after the offline mode: ' + ($out -join ' | '))
+            Assert-Equal "$([IO.File]::ReadAllText($hp.Marker))|$([IO.File]::ReadAllText($gp.Marker))" "host-v3`n|client-v1`n" '-Disable resets the offline-v1 markers to host-v3 / client-v1'
+            Assert-True (($out -join ' ').Contains('offline-v1 reset to host-v3') -and !(Test-Path -LiteralPath $hp.LabIni) -and [IO.File]::ReadAllText($hp.CoopIni) -ceq $userCoop) '-Disable after offline: lab files renamed, user coop.ini restored, reset reported'
             $out = & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig 2>&1
             Assert-Equal $LASTEXITCODE 0 ('Prepare without -Offline switches back: ' + ($out -join ' | '))
             Assert-Equal "$([IO.File]::ReadAllText($hp.Marker))|$([IO.File]::ReadAllText($gp.Marker))|$((ConvertFrom-IniText ([IO.File]::ReadAllText($hp.CoopIni)))['master_url'])" "host-v3`n|client-v1`n|$dryUrl" 'back to host-v3 / client-v1 and the fuse URL'
@@ -1480,7 +1630,7 @@ Start-Sleep -Milliseconds 500
             $out = & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig -Disable 2>&1
             Assert-Equal $LASTEXITCODE 0 'Disable succeeds'
             Assert-True ((-not (Test-Path -LiteralPath $hp.LabIni)) -and (-not (Test-Path -LiteralPath $gp.CoopIni)) -and
-                @(Get-ChildItem -LiteralPath $gp.Mod -Filter 'lab.ini.disabled-*').Count -eq 1) 'Disable renames lab.ini and coop.ini'
+                @(Get-ChildItem -LiteralPath $gp.Mod -Filter 'lab.ini.disabled-*').Count -eq 2) 'Disable renames lab.ini and coop.ini (one renamed copy per -Disable: offline, then fuse mode)'
             Assert-Equal ([IO.File]::ReadAllText($hp.CoopIni)) $userCoop 'Disable restores the user coop.ini'
             Assert-Equal @(Get-ChildItem -LiteralPath $hp.Mod -File -Filter 'coop.ini.user-*').Count 0 'user backup moved back'
         } finally {

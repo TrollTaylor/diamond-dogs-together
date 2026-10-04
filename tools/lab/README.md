@@ -14,15 +14,15 @@ download anything.
 
 | Script | What it does |
 |---|---|
-| `lab.json` | Paths, hashes, ports (fuse 6667, loopback 47810/47811, partner net `netHost`/`netGuest` 47820/47821), the offline mode (`offline.masterPort` 47899, `offline.marker` `offline-v1`), the partner spike `lab.ini` defaults (`partner`), the guest's fake SteamID, characters (`default` for both during the spike), XInput routing, window layout and timeouts. Relative paths resolve against the repository root. |
+| `lab.json` | Paths, hashes, ports (fuse 6667, loopback 47810/47811, partner net `netHost`/`netGuest` 47820/47821), the offline mode (`offline.masterPort` 47899, `offline.marker` `offline-v1`), the partner spike `lab.ini` defaults (`partner`), the guest's fake SteamID, characters (fuse lab: host `default`, guest `quiet`; `offline.characters`: `default` for both during the spike), XInput routing, window layout and timeouts. Relative paths resolve against the repository root. |
 | `Build-Fuse.ps1` | Builds `work/fuse/fuse.exe` offline (`GOPROXY=off`, `-mod=readonly`) if it is missing. Never clones; if the source is missing it tells you. |
-| `Prepare-LabInstance.ps1` | Idempotent setup of both folders: hashes, owned loader install (with rollback), role markers, `lab.ini`, `coop.ini`, real-save backup and lab save copies, and windowed graphics for the lab copies. `-WhatIf` shows every change. `-Disable` switches the lab off and restores your own files. `-Offline` prepares the offline lab mode instead (below); `-PartnerSetting` overrides partner `lab.ini` keys. |
+| `Prepare-LabInstance.ps1` | Idempotent setup of both folders: hashes, owned loader install (with rollback), role markers, `lab.ini`, `coop.ini`, real-save backup and lab save copies, and windowed graphics for the lab copies. `-WhatIf` shows every change. `-Disable` switches the lab off, restores your own files and resets `offline-v1` markers to `host-v3` / `client-v1`. `-Offline` prepares the offline lab mode instead (below); `-PartnerSetting` overrides partner `lab.ini` keys. |
 | `Start-Lab.ps1` | Preflight, then fuse (always `-standalone`), then the host and the guest, **each behind a safety gate** (below). Stops everything it started if a gate fails. Places the windows and writes `build/lab/runs/<ts>/run.json`. `-HostOnly` is milestone M0. `-LayoutOnly` re-applies window positions. `-Offline`: no fuse; requires a closed master port and free partner UDP ports (below). |
 | `Invoke-LabSmoke.ps1` | Pass/fail from logs, `lab-status.json` and fuse's request log. Creates the guest's `join.trigger` when both sides are ready and writes `result.json` plus redacted log excerpts. `-Assist` prints the manual steps. `-AutoTitle` is best effort. |
 | `Get-LabScreens.ps1` | Saves a PNG of each game window into the run folder. |
-| `Send-LabInput.ps1` | Focuses one game window and sends scan-code keys: `enter`, `ctrl+f8`, held keys `w:4000`, chords `w+a:6000`; `shift`, `f10`, `f11` included. `-Shot` captures the window afterwards. Best effort (focus). |
-| `Stop-Lab.ps1` | Closes **this run's** games (WM_CLOSE, then terminate after a timeout) and fuse, leaves any other MGSV process alone, deletes unconsumed `partner.trigger` files, then checks the real save hashes. |
-| `Set-PartnerTrigger.ps1` | Offline mode: validates a partner command (`stage=0..3 source=fixed\|orbit\|net apply=warp\|slot\|both`, or `stop`) and writes it atomically to an instance's `mgs-coop/partner.trigger`. `-Role both`, `-WaitSec`, `-Force`. |
+| `Send-LabInput.ps1` | Focuses one game window and sends scan-code keys: `enter`, `ctrl+f8`, held keys `w:4000`, chords `w+a:6000`; `shift`, `f10`, `f11` included. Pressed keys are always released (finally block), even on Ctrl+C. `-HoldMs 0` still taps. `-Shot` captures the window afterwards. Best effort (focus). |
+| `Stop-Lab.ps1` | Closes **this run's** games (WM_CLOSE, then terminate after a timeout) and fuse, leaves any other MGSV process alone, deletes unconsumed `partner.trigger` files, records the log end offsets in `stop.json`, then checks the real save hashes. |
+| `Set-PartnerTrigger.ps1` | Offline mode: validates a partner command (`stage=0..3 source=fixed\|orbit\|net apply=warp\|slot\|both` and the one-shots `parts=explicit` / `mirror=on`, or `stop`) and writes it atomically to an instance's `mgs-coop/partner.trigger`. `-Role both`, `-Force`; `-WaitSec` confirms the native result in `script-observer.log` (exit 0 applied, 2 not consumed, 3 rejected or different, 4 unconfirmed). |
 | `Test-PartnerSpike.ps1` | Offline mode: PASS / FAIL / INCOMPLETE JSON verdict for experiment E0..E8 of the spike plan from this run's logs. Exit code 0 / 1 / 2. |
 | `Invoke-PartnerExperiment.ps1` | Offline mode: runs one experiment's triggers, key input and screenshots, then polls `Test-PartnerSpike.ps1` until PASS or FAIL. |
 | `LabCommon.psm1` | Shared helpers. The pure ones are covered by `tests/lab_scripts_tests.ps1` (CTest `lab_scripts_tests`). |
@@ -134,8 +134,9 @@ executable path.
   Both instances also get `loopback=1`, `save_dir=<folder>\mgs-coop\lab\saves` and
   `join_trigger=1`.
 - **`mgs-coop/coop.ini`** contains `master_url=http://127.0.0.1:6667/tppstm/gate`
-  and `character=` from `lab.json` (`default` for both while the offline partner
-  spike runs).
+  and `character=` from `lab.json` `characters` (host `default`, guest
+  `quiet`); the offline mode uses `offline.characters` (`default` for both
+  while the partner spike runs).
   **The native redirect honours `coop.ini` with or without `lab.ini`**, so in the
   host's real `MGS_TPP` folder this file keeps sending a normal game start to the
   local fuse (or offline when fuse is stopped) until you run `-Disable`. Deleting
@@ -143,7 +144,9 @@ executable path.
   while the lab `coop.ini` is present.
 - **Your own files.** A `lab.ini`/`coop.ini` that the scripts did not write is
   kept as `*.user-<ts>`. `-Disable` renames the generated files to
-  `*.disabled-<ts>` and moves the newest `*.user-<ts>` back.
+  `*.disabled-<ts>` and moves the newest `*.user-<ts>` back. It also resets an
+  `offline-v1` role marker (offline mode; it never creates a session) to
+  `host-v3` / `client-v1`; other markers stay.
 - **Saves.**
   - The real `Steam\userdata\<id>\287700` and `311340` folders are read only once.
     They are copied, with a SHA-256 manifest, to `build/lab/save-backups/<ts>/`.
@@ -267,13 +270,17 @@ with no fuse and no session.
   plus the ports and each instance's partner values. A leftover
   `partner.trigger` is removed before the start.
 - **Set-PartnerTrigger.ps1 -Role host|guest|both -Text '...'** sends a runtime
-  command: `stage=N source=... apply=...` (any subset) or `stop`. The text is
-  validated and written in canonical order to a temporary file that is renamed
-  over `mgs-coop/partner.trigger`; no window focus is needed. The native side
-  polls the file every 30 Lua ticks during a 30050 mission and deletes it.
-  `-WaitSec` waits for that (exit code 2 if it does not happen); an
-  unconsumed earlier file is only replaced with `-Force`. Commands are logged
-  to `<run>/partner-triggers.log`.
+  command: `stage=N source=... apply=...` and the one-shots `parts=explicit`
+  (op 16, variant F3b) and `mirror=on` (op 32, F3c), any subset, or `stop`.
+  The text is validated and written in canonical order to a temporary file
+  that is renamed over `mgs-coop/partner.trigger`; no window focus is needed.
+  The native side polls the file every 30 Lua ticks during a 30050 mission and
+  deletes it, accepted or rejected. `-WaitSec` waits for that and then reads
+  the result in `script-observer.log`: exit 0 `partner_stage=changed` with the
+  requested values, 2 not consumed, 3 `partner_trigger=rejected` or a different
+  command applied, 4 no result line within 3 s. An unconsumed earlier file is
+  only replaced with `-Force`. Commands are logged to
+  `<run>/partner-triggers.log`.
 - **Test-PartnerSpike.ps1 -Experiment E0|E1|E2|E3|E4|E5|E6|E8 [-Role host|guest|both]**
   reads this run's `script-observer.log`, `early.log` and `steam-observer.log`
   from the `run.json` offsets and applies the plan's section 3 rules with the
@@ -282,10 +289,10 @@ with no fuse and no session.
 
   | Experiment | PASS (log part) |
   |---|---|
-  | E0 | redirect to the closed port; `mode=offline_v1`; `host_create=skipped`; `partner_net=listening`; `partner_cfg=ready` with `count=2 local=0 R=1 online_bit=0 sync=null`; first stage-0 probe `ids=xxxx,ffff pool=xx,ff`; `first_rx` and stats with tx, rx > 0 (both instances); `partner_tick=rate` (unfocused `hz>=10`); `partner_units` with `yaw_abs_max_cdeg>628` and lua/mem positions within 50 mm while they change; 5 minutes of probes; no `crash_probe=av` |
+  | E0 | both instances (a host-only run stays INCOMPLETE); redirect to the closed port; `mode=offline_v1`; `host_create=skipped`; `partner_net=listening`; `partner_cfg=ready` with `count=2 local=0 R=1 online_bit=0 sync=null`; first stage-0 probe `ids=xxxx,ffff pool=xx,ff`; `first_rx` and stats with tx, rx > 0 (both instances); `partner_tick=rate` (unfocused `hz>=10`); `partner_units` with `yaw_abs_max_cdeg>628` and lua/mem positions within 50 mm while they change; 5 minutes of probes; no `crash_probe=av` |
   | E1 | `stage=1 apply=warp`: `partner_warp_check err_mm<=5` within the first two checks; ids[1] stays ffff; no Lua error |
   | E2 | `stage=2`: `allactive_set`; a probe with `s0` bit 1 and `q170=0x3`; outcome A (ffff for 10 s) or B (realized), in `data.outcome` |
-  | E3 | `stage=3`: `parts_copied`; `partner_bits=set`; `partner_realized=1` with `ms_after_bits<=1000`; `partner_parts=loaded` with `ms_after_realize<=15000`; 120 s of probes without `partner_realized=0` or `crash_probe=av` |
+  | E3 | `stage=3`: `parts_copied`; `partner_bits=set`; `partner_realized=1` with `ms_after_bits<=1000`; `partner_parts=loaded` with `ms_after_realize<=15000`; 120 s of probes without `partner_realized=0` or `crash_probe=av`. Already realized before the bits (E2 outcome B): the 1 s rule is skipped and parts (15 s) and stability (120 s) count from the `stage=3` line on the probe clock |
   | E4 | `stage=3 source=orbit`: realized; at least 4 `partner_warp_check` lines, every `err_mm<=5`; `slot_mm` spread at least 500 mm |
   | E5 | under orbit, `apply=slot` and then `apply=both` both pass the E4 log checks |
   | E6 | `stage=3 source=net` on both: `first_rx`; rx increasing over two stats lines; `status=live` with `last_age_ms<200`; realized; while both stand still, the local `pos1_mm` within 200 mm of the peer's `pos0_mm` |
@@ -293,8 +300,13 @@ with no fuse and no session.
 
   FAIL when a line contradicts a rule or a deadline on the probe clock (`t_ms`)
   passes; INCOMPLETE while evidence is missing. A Lua `event=error`/`refused`,
-  `partner_cfg=refused`, `crash_probe=av` or a dead process fails every
-  experiment. Each experiment is judged on the log segment in which its
+  `crash_probe=av` or a dead process fails every experiment, and so does
+  `partner_cfg=refused` for `online_bit`/`sync_present` or at a mission start
+  (CFG). A per-tick refusal followed by `partner_cfg=ready` is a note
+  (INCOMPLETE until it recovers). `mem_pos_mm=-2147483648,...` is reported as
+  an unreadable vars block, not as a units failure. A stopped run is read up
+  to `stop.json` `log_end_offsets`, so `-RunDir` on an older run ignores later
+  runs' lines. Each experiment is judged on the log segment in which its
   configuration was active, so one boot can walk through E1..E5. Screenshot
   criteria are listed in `notes` as manual. Output: one JSON object
   (`experiment, role, verdict, matched, missing, failed, notes, per_role, run`);
@@ -303,10 +315,12 @@ with no fuse and no session.
   steps (triggers, `Send-LabInput` keys such as `w+a:6000` and `w:4000`,
   screenshots) and polls the verdict until PASS, FAIL or its timeout; the final
   JSON goes to `<run>/partner-<Ex>-<time>.json`. `-NoInput` prints the keys to
-  press instead of sending them.
+  press instead of sending them. E0 walks both instances. Triggers are sent
+  without `-Force`: a pending earlier trigger is waited for, and a rejected
+  trigger stops the experiment.
 - **Invoke-LabSmoke.ps1** refuses offline runs (there is no session to test).
 - **Stop-Lab.ps1** is unchanged apart from deleting unconsumed `partner.trigger`
-  files; with the offline `coop.ini` still in the host folder it warns that a
+  files and recording the log end offsets in `stop.json`; with the offline `coop.ini` still in the host folder it warns that a
   normal start from there runs offline.
 
 ## Run folder
@@ -323,7 +337,7 @@ Steam userdata account folder numbers and fuse player names are replaced.
 | `<role>-<log>` | Redacted excerpts covering only this run. |
 | `fuse-stdout.redacted.log` | Redacted copy of fuse's console log. |
 | `screens/*.png` | Window screenshots. |
-| `stop.json` | Shutdown result per process, the real-save comparison, whether the lab `coop.ini` is still present and which unconsumed partner triggers were deleted. |
+| `stop.json` | Shutdown result per process, the real-save comparison, whether the lab `coop.ini` is still present, which unconsumed partner triggers were deleted and each instance's log lengths after the close (`log_end_offsets`). |
 | `partner-triggers.log`, `partner-<Ex>-<time>.json` | Offline mode: the partner commands sent, and Invoke-PartnerExperiment verdicts. |
 
 `build/lab/current-run.json` points to the newest run.
