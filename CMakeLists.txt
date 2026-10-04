@@ -5,6 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 enable_testing()
+include(cmake/characters.cmake) # character selection; its target part is deferred to the end of this file
 add_executable(session_release_tests tests/session_release_tests.cpp)
 target_include_directories(session_release_tests PRIVATE native/include)
 if(MSVC)

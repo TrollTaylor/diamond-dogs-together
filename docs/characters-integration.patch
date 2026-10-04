@@ -1,0 +1,222 @@
+diff --git a/native/bootstrap_patch.cpp b/native/bootstrap_patch.cpp
+index 63c50ca..c43c4ee 100644
+--- a/native/bootstrap_patch.cpp
++++ b/native/bootstrap_patch.cpp
+@@ -18,6 +18,7 @@
+ #include "session_lifecycle_source.hpp"
+ #include "session_feedback_source.hpp"
+ #include "respawn_source.hpp"
++#include "character_source.hpp"
+ 
+ namespace mgscoop {
+ namespace {
+@@ -137,7 +138,13 @@ bool SelectHostTrialPatch(const char* source, std::size_t size, const char* name
+     constexpr char marker_guard[]="\nif not (Tpp and type(Tpp.MgsCoop)==\"table\" and Tpp.MgsCoop.markerLoadingGuardActive==true) then\n";
+     constexpr char marker_guard_end[]="\nend\n";
+     constexpr auto marker_extra=sizeof(marker_guard)-1+sizeof(marker_guard_end)-1;
+-    constexpr std::size_t result_size=original_size+sizeof(host_trial_source)-1+sizeof(equipment_loading_source)-1+marker_extra+sizeof(host_admission_source)-1+sizeof(client_join_source)-1+sizeof(damage_lifecycle_source)-1+sizeof(enemy_targeting_source)-1+sizeof(respawn_source)-1+sizeof(session_lifecycle_source)-1+sizeof(session_feedback_source)-1+sizeof(marker_loading_source)-1+sizeof(mission_trace_source)-1;
++    // Character selection runs after the mission's MissionPrepare and before
++    // the OnLoad/DeclareSVars/MissionStartPlayerTypeSetting part of OnAllocate.
++    constexpr char character_anchor[]="if t(n.sequence.MissionPrepare)then\nn.sequence.MissionPrepare()end\n"
++        "if t(n.sequence.OnEndMissionPrepareSequence)then\n"
++        "TppSequence.SetOnEndMissionPrepareFunction(n.sequence.OnEndMissionPrepareSequence)end\nend\n";
++    constexpr auto character_extra=sizeof(character_source)-1;
++    constexpr std::size_t result_size=original_size+sizeof(host_trial_source)-1+sizeof(equipment_loading_source)-1+marker_extra+character_extra+sizeof(host_admission_source)-1+sizeof(client_join_source)-1+sizeof(damage_lifecycle_source)-1+sizeof(enemy_targeting_source)-1+sizeof(respawn_source)-1+sizeof(session_lifecycle_source)-1+sizeof(session_feedback_source)-1+sizeof(marker_loading_source)-1+sizeof(character_readback_source)-1+sizeof(mission_trace_source)-1;
+     static_assert(result_size<=script_bridge::max_replacement_bytes);
+     static char result[result_size]{};
+     static bool initialized=false;
+@@ -148,31 +155,37 @@ bool SelectHostTrialPatch(const char* source, std::size_t size, const char* name
+     // Insertions are pinned by the complete original source hash. Require
+     // unique, ordered anchors; the original calls remain in the output once.
+     std::size_t insertion=0,found=0,equipment_insertion=0,equipment_found=0;
+-    std::size_t marker_insertion=0,marker_found=0;
++    std::size_t marker_insertion=0,marker_found=0,character_insertion=0,character_found=0;
+     for(std::size_t i=0;i+sizeof(anchor)-1<=size;++i)
+         if(std::memcmp(source+i,anchor,sizeof(anchor)-1)==0) { insertion=i; ++found; }
++    for(std::size_t i=0;i+sizeof(character_anchor)-1<=size;++i)
++        if(std::memcmp(source+i,character_anchor,sizeof(character_anchor)-1)==0) { character_insertion=i+sizeof(character_anchor)-1; ++character_found; }
+     for(std::size_t i=0;i+sizeof(equipment_anchor)-1<=size;++i)
+         if(std::memcmp(source+i,equipment_anchor,sizeof(equipment_anchor)-1)==0) { equipment_insertion=i; ++equipment_found; }
+     for(std::size_t i=0;i+sizeof(marker_anchor)-1<=size;++i)
+         if(std::memcmp(source+i,marker_anchor,sizeof(marker_anchor)-1)==0) { marker_insertion=i; ++marker_found; }
+-    if(found!=1 || equipment_found!=1 || marker_found!=1 || equipment_insertion<=insertion ||
+-       marker_insertion<=equipment_insertion || marker_insertion+sizeof(marker_anchor)-1>=size-8) return false;
++    if(found!=1 || equipment_found!=1 || marker_found!=1 || character_found!=1 || character_insertion<=insertion ||
++       equipment_insertion<=character_insertion || marker_insertion<=equipment_insertion ||
++       marker_insertion+sizeof(marker_anchor)-1>=size-8) return false;
+     AcquireSRWLockExclusive(&patch_lock);
+     if(!initialized) {
+         std::memcpy(result,source,insertion);
+         std::memcpy(result+insertion,host_trial_source,sizeof(host_trial_source)-1);
+-        std::memcpy(result+insertion+sizeof(host_trial_source)-1,source+insertion,equipment_insertion-insertion);
+-        const auto equipment=equipment_insertion+sizeof(host_trial_source)-1;
++        std::memcpy(result+insertion+sizeof(host_trial_source)-1,source+insertion,character_insertion-insertion);
++        const auto character=character_insertion+sizeof(host_trial_source)-1;
++        std::memcpy(result+character,character_source,character_extra);
++        std::memcpy(result+character+character_extra,source+character_insertion,equipment_insertion-character_insertion);
++        const auto equipment=equipment_insertion+sizeof(host_trial_source)-1+character_extra;
+         std::memcpy(result+equipment,equipment_loading_source,sizeof(equipment_loading_source)-1);
+         std::memcpy(result+equipment+sizeof(equipment_loading_source)-1,source+equipment_insertion,marker_insertion-equipment_insertion);
+-        const auto marker=marker_insertion+sizeof(host_trial_source)-1+sizeof(equipment_loading_source)-1;
++        const auto marker=marker_insertion+sizeof(host_trial_source)-1+character_extra+sizeof(equipment_loading_source)-1;
+         std::memcpy(result+marker,marker_guard,sizeof(marker_guard)-1);
+         std::memcpy(result+marker+sizeof(marker_guard)-1,source+marker_insertion,sizeof(marker_anchor)-1);
+         const auto after_marker=marker+sizeof(marker_guard)-1+sizeof(marker_anchor)-1;
+         std::memcpy(result+after_marker,marker_guard_end,sizeof(marker_guard_end)-1);
+         std::memcpy(result+after_marker+sizeof(marker_guard_end)-1,source+marker_insertion+sizeof(marker_anchor)-1,
+             size-marker_insertion-(sizeof(marker_anchor)-1)-8);
+-        constexpr auto appended=original_size-8+sizeof(host_trial_source)-1+sizeof(equipment_loading_source)-1+marker_extra;
++        constexpr auto appended=original_size-8+sizeof(host_trial_source)-1+character_extra+sizeof(equipment_loading_source)-1+marker_extra;
+         std::memcpy(result+appended,host_admission_source,sizeof(host_admission_source)-1);
+         std::memcpy(result+appended+sizeof(host_admission_source)-1,client_join_source,sizeof(client_join_source)-1);
+         constexpr auto lifecycle=appended+sizeof(host_admission_source)-1+sizeof(client_join_source)-1;
+@@ -185,10 +198,12 @@ bool SelectHostTrialPatch(const char* source, std::size_t size, const char* name
+         std::memcpy(result+feedback,session_feedback_source,sizeof(session_feedback_source)-1);
+         constexpr auto marker_lifecycle=feedback+sizeof(session_feedback_source)-1;
+         std::memcpy(result+marker_lifecycle,marker_loading_source,sizeof(marker_loading_source)-1);
+-        std::memcpy(result+marker_lifecycle+sizeof(marker_loading_source)-1,mission_trace_source,sizeof(mission_trace_source)-1);
++        constexpr auto readback=marker_lifecycle+sizeof(marker_loading_source)-1;
++        std::memcpy(result+readback,character_readback_source,sizeof(character_readback_source)-1);
++        std::memcpy(result+readback+sizeof(character_readback_source)-1,mission_trace_source,sizeof(mission_trace_source)-1);
+         // The operational termination signal must run before every other
+         // wrapper, independently of diagnostic limits or tracing errors.
+-        constexpr auto session_lifecycle=marker_lifecycle+sizeof(marker_loading_source)-1+sizeof(mission_trace_source)-1;
++        constexpr auto session_lifecycle=readback+sizeof(character_readback_source)-1+sizeof(mission_trace_source)-1;
+         std::memcpy(result+session_lifecycle,session_lifecycle_source,sizeof(session_lifecycle_source)-1);
+         static_assert(session_lifecycle+sizeof(session_lifecycle_source)-1==result_size-8);
+         std::memcpy(result+result_size-8,"return e",8);
+diff --git a/native/game_script_observer.cpp b/native/game_script_observer.cpp
+index 5db0f89..2fcfe17 100644
+--- a/native/game_script_observer.cpp
++++ b/native/game_script_observer.cpp
+@@ -19,6 +19,8 @@
+ #include "mgscoop/result_patch.hpp"
+ #include "mgscoop/full_close_patch.hpp"
+ #include "mgscoop/marker_loading_patch.hpp"
++#include "mgscoop/character_receipt.hpp"
++#include "mgscoop/player_type_patch.hpp"
+ #include "mgscoop/soldier_patch.hpp"
+ #include "mgscoop/mission_termination.hpp"
+ #include "mgscoop/mission_initialization.hpp"
+@@ -232,6 +234,55 @@ bool OnRuntimeThread() noexcept {
+ }
+ bool OnTerminationThread() noexcept { return termination_scope.OnThread(GetCurrentThreadId()); }
+ bool OnMissionThread() noexcept { return OnAllocationThread() || OnRuntimeThread() || OnTerminationThread(); }
++
++// Character selection receipts (lua/coop/character.lua, docs/characters.md).
++// The query is read-only and formatted once from coop.ini (constant for the
++// process). The Ocelot/Quiet reset bypass is enabled only for a configured
++// Ocelot/Quiet during an accepted allocation (an already active bypass is
++// confirmed, e.g. for a checkpoint reload); disabling is always allowed.
++// The players guard (lab only) samples the player object read-only so the
++// readback calls Player.GetPlayerType, which has no null check, only while
++// that object exists. Report/readback receipts are log-only, never replaced.
++char character_query[mgscoop::character::max_line]{};
++std::size_t character_query_size = 0;
++thread_local char character_players[64]{};
++bool SelectCharacterReceipt(mgscoop::character::Receipt kind, const char* buffer, std::size_t size,
++                            mgscoop::script_bridge::Replacement& replacement) noexcept {
++    using mgscoop::character::Receipt;
++    static constexpr char yes[]="return true", no[]="return false";
++    const auto& coop=mgscoop::GetCoopConfig();
++    if(kind==Receipt::query) {
++        if(!character_query_size)
++            character_query_size=mgscoop::character::FormatQuery(coop,mgscoop::GetLabConfig().present,
++                                                                  character_query,sizeof(character_query));
++        if(!character_query_size) return false;
++        replacement={character_query,character_query_size};
++        return true;
++    }
++    if(kind==Receipt::bypass_on || kind==Receipt::bypass_off) {
++        bool accepted=false;
++        if(kind==Receipt::bypass_off) accepted=mgscoop::player_type::SetActive(game_base,game_span,false,Log);
++        else if(!mgscoop::character::NeedsResetBypass(coop) ||
++                (!OnAllocationThread() && !mgscoop::player_type::IsActive()))
++            Log("player_type_patch=refused; reason=not_configured_or_not_allocating\r\n");
++        else accepted=mgscoop::player_type::SetActive(game_base,game_span,true,Log);
++        replacement=accepted ? mgscoop::script_bridge::Replacement{yes,sizeof(yes)-1}
++                             : mgscoop::script_bridge::Replacement{no,sizeof(no)-1};
++        return true;
++    }
++    if(kind==Receipt::players) {
++        mgscoop::player_type::TypeSample sample{"lab_disabled",0,0,{0,0}};
++        const bool ready=mgscoop::GetLabConfig().present && mgscoop::player_type::SampleTypes(game_base,game_span,sample);
++        const auto length=mgscoop::character::FormatPlayersReply(ready,sample.stage,sample.limit,sample.type,sample.count,
++                                                                  character_players,sizeof(character_players));
++        if(!length) return false;
++        replacement={character_players,length};
++        return true;
++    }
++    char line[mgscoop::character::max_line]{};
++    if(mgscoop::character::FormatLogLine(kind,buffer,size,line,sizeof(line))) Log(line);
++    return false;
++}
+ bool TransferRuleThread(DWORD previous_thread) noexcept {
+     // Both directions are needed: allocation -> runtime for gameplay/cleanup,
+     // then runtime -> a later allocation worker for retained cleanup. These
+@@ -714,6 +765,11 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
+     constexpr char admission[]="return 'MGS_COOP_HOST_ADMISSION_V1'";
+     constexpr char admission_observed[]="return 'MGS_COOP_HOST_ADMISSION_OBSERVED_V1'";
+     constexpr char released[]="return 'MGS_COOP_HOST_RELEASE_V1'";
++    if(!selected && (host_create_enabled || client_enabled)) {
++        const auto character_kind=mgscoop::character::Classify(buffer,size,name);
++        if(character_kind!=mgscoop::character::Receipt::none)
++            selected=SelectCharacterReceipt(character_kind,buffer,size,replacement);
++    }
+     if(host_admission_enabled && (OnRuntimeThread() || OnTerminationThread()) && buffer && name && size==sizeof(released)-1 &&
+        std::memcmp(buffer,released,size)==0 && std::strcmp(name,released)==0)
+         ForgetDynamiteHostAdmission();
+@@ -850,6 +906,16 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
+                 if (host_create_enabled) Log("mode=host_v2; dynamite_host_creation=enabled max_players=2 peer_acceptance_requested=0\r\n");
+                 if (host_admission_enabled) Log("mode=host_v3; peer_acceptance=after_mission_start; max_players=2\r\n");
+             }
++            if (host_create_enabled || client_enabled) {
++                // coop.ini is read once here (kernel32 file I/O), outside the Lua compile path.
++                const auto& coop = mgscoop::GetCoopConfig();
++                char character_line[192]{};
++                if (SUCCEEDED(StringCchPrintfA(character_line, ARRAYSIZE(character_line),
++                    "character_config=%s; fallback=%s; coop_ini=%u; reset_bypass_needed=%u; applied_in=TppMain.OnAllocate\r\n",
++                    coop.character == mgscoop::PlayerCharacter::game_default ? "default" : mgscoop::PlayerCharacterName(coop.character),
++                    mgscoop::PlayerCharacterName(coop.character_fallback), unsigned(coop.present),
++                    unsigned(mgscoop::character::NeedsResetBypass(coop))))) Log(character_line);
++            }
+             const auto target = reinterpret_cast<mgscoop::script_bridge::LoadBuffer>(static_cast<unsigned char*>(base)+load_rva);
+             const auto status = mgscoop::script_bridge::Install(target, expected_body, sizeof(expected_body),
+                                                                {nullptr, ObserveEntry, ObserveReturn});
+diff --git a/tests/host_trial_patch_check.cpp b/tests/host_trial_patch_check.cpp
+index a6e32c1..6b58e7b 100644
+--- a/tests/host_trial_patch_check.cpp
++++ b/tests/host_trial_patch_check.cpp
+@@ -34,9 +34,21 @@ int main(int argc, char** argv) {
+         // insertion sites. Every interval of original code must survive intact.
+         const auto equipment=source.find("TppEquip.StartLoadingToEquipMissionBlock()");
+         const auto marker=source.find("TppMarker.RestoreMarkerLocator()");
+-        check(resumed!=std::string::npos && equipment>insertion && marker>equipment);
+-        check(output.substr(resumed,equipment-insertion)==source.substr(insertion,equipment-insertion));
+-        const auto equipment_out=output.find(source.substr(equipment,marker-equipment),resumed);
++        // Character selection (lua/coop/character.lua) follows MissionPrepare.
++        const std::string character_anchor="if t(n.sequence.MissionPrepare)then\nn.sequence.MissionPrepare()end\n"
++            "if t(n.sequence.OnEndMissionPrepareSequence)then\n"
++            "TppSequence.SetOnEndMissionPrepareFunction(n.sequence.OnEndMissionPrepareSequence)end\nend\n";
++        const auto character_at=source.find(character_anchor);
++        check(character_at!=std::string::npos && source.find(character_anchor,character_at+1)==std::string::npos);
++        const auto character=character_at+character_anchor.size();
++        check(resumed!=std::string::npos && character>insertion && equipment>character && marker>equipment);
++        check(output.substr(resumed,character-insertion)==source.substr(insertion,character-insertion));
++        const auto character_out=resumed+(character-insertion);
++        const std::string character_header="\n-- MGS co-op character selection (original).";
++        check(output.compare(character_out,character_header.size(),character_header)==0);
++        const auto character_resumed=output.find(source.substr(character,equipment-character),character_out);
++        check(character_resumed!=std::string::npos);
++        const auto equipment_out=output.find(source.substr(equipment,marker-equipment),character_resumed);
+         check(equipment_out!=std::string::npos);
+         const std::string marker_call="TppMarker.RestoreMarkerLocator()";
+         const auto marker_out=output.find(marker_call,equipment_out);
+@@ -44,6 +56,7 @@ int main(int argc, char** argv) {
+         const auto tail=marker+marker_call.size();
+         check(output.substr(marker_out+marker_call.size()+5,source.size()-tail-8)==source.substr(tail,source.size()-tail-8));
+         check(output.find("local receipts = 0",resumed)!=std::string::npos);
++        check(output.find("\n-- MGS co-op character readback (original).",equipment_out)!=std::string::npos);
+         check(output.substr(output.size()-8) == "return e");
+         check(!mgscoop::SelectHostTrialPatch(changed.data(), changed.size(), name, patch, true));
+         check(!patch.bytes && !patch.size);
