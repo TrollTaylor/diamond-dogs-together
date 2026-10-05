@@ -1,8 +1,10 @@
 <#
-MGS Co-op friend-test uninstaller. Double-click Uninstall-Coop.bat, or:
+MGS Co-op uninstaller (two-PC play package). Double-click Uninstall-Coop.bat, or:
 
   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Uninstall-Coop.ps1 -GameDirectory "<MGSV folder>" -NonInteractive -Yes
 
+  0. Switches off a Play-Coop session that did not end cleanly (only the
+     files whose SHA-256 still matches play-session.json are deleted).
   1. Restores the loader state from before each friend install, through the
      package's owned rollback (scripts\install.ps1 -Action Restore). Only the
      install states that Install-Coop recorded in friend-install.json are
@@ -12,10 +14,14 @@ MGS Co-op friend-test uninstaller. Double-click Uninstall-Coop.bat, or:
      the role files are renamed the same way. When a loader remains, the
      copies of lab.ini, coop.ini and the role files from before the friend
      test are put back, and it says plainly that this loader stays active.
+     Files of the earlier online friend test (*.online-old-<time>) are never
+     restored.
   3. Checks the real save files against the backup made before the friend test
      (the first backup of each Steam account) and reports. It never overwrites
      real saves; it prints how to restore them if they differ.
-Nothing is deleted: backups, the co-op save copy and logs stay in <game>\mgs-coop.
+  4. Offers (default No) to remove the Windows Firewall rule that Play-Coop
+     added (administrator prompt).
+Nothing else is deleted: backups, the co-op save copy and logs stay in <game>\mgs-coop.
 #>
 [CmdletBinding()]
 param(
@@ -24,7 +30,9 @@ param(
     [switch]$Yes,
     # Folder with package.json (default: the package folder); used for its
     # installed-location.json only.
-    [string]$PackageDirectory
+    [string]$PackageDirectory,
+    # Remove the Windows Firewall rule Play-Coop added without asking (administrator prompt).
+    [switch]$RemoveFirewallRule
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -44,7 +52,6 @@ function Resolve-Piece([string]$PackagedName, [string]$RepoRelative) {
     if (Test-Path -LiteralPath $repo -PathType Leaf) { return (Resolve-Path -LiteralPath $repo).Path }
     throw "This package is incomplete: $PackagedName is missing. Extract the whole ZIP again."
 }
-Import-Module (Resolve-Piece 'LabCommon.psm1' '..\lab\LabCommon.psm1') -Force -DisableNameChecking
 Import-Module (Resolve-Piece 'FriendCommon.psm1' 'FriendCommon.psm1') -Force -DisableNameChecking
 $installer = Resolve-Piece 'install.ps1' '..\package-install.ps1'
 $interactive = Test-FriendInteractive -NonInteractive:$NonInteractive
@@ -54,7 +61,7 @@ function Ask([string]$Prompt) {
 }
 function Section([string]$Text) { Write-Host ''; Write-Host $Text -ForegroundColor Cyan }
 
-Write-Host 'MGS Co-op - friend test uninstaller' -ForegroundColor Cyan
+Write-Host 'MGS Co-op - uninstaller' -ForegroundColor Cyan
 if (!$PackageDirectory) { $PackageDirectory = Split-Path -Parent $scriptRoot }
 
 # ---------------------------------------------------------------- game folder
@@ -93,6 +100,16 @@ if (!$Yes) {
 $stamp = Get-FriendStamp
 $exitCode = 0
 
+# ---------------------------------------------------------------- 0: play session
+# A session whose launcher window or helper still runs is in use, not a leftover.
+if (Test-CoopPlaySessionLive -GameRoot $gameRoot) { throw 'Another Play-Coop window is active for this folder; close it first (or quit MGSV). Nothing was changed.' }
+$leftover = Invoke-CoopPlayCleanup -GameRoot $gameRoot
+if ($leftover.Ran) {
+    Section 'Step 0: switching off the last Play-Coop session'
+    Write-Host ('Removed: ' + (@($leftover.Removed) -join ', '))
+    foreach ($m in @($leftover.Messages)) { Write-Host $m -ForegroundColor Yellow }
+}
+
 # ---------------------------------------------------------------- 1: loader
 Section 'Step 1: restoring the previous loader'
 $friendIds = @(Get-FriendProperty $state 'rollback_ids' @() | ForEach-Object { [string]$_ })
@@ -120,9 +137,9 @@ for ($i = 0; $i -lt 32; $i++) {
 $loaderLeft = Test-Path -LiteralPath $paths.Loader -PathType Leaf
 if ($restoreFailed) {
     Write-Host "The loader could not be restored: $restoreFailed" -ForegroundColor Red
-    Write-Host 'lab.ini was left in place so that the game keeps using the save copy, not your real save.' -ForegroundColor Red
-    Write-Host 'Do not play MGSV from this folder until this is solved. Moving dinput8.dll out of the game' -ForegroundColor Red
-    Write-Host "folder turns the mod off; the files it replaced are backed up in $($paths.Mod)\install-backups." -ForegroundColor Red
+    Write-Host 'The configuration and the install record were left in place; the loader stays in pass-through.' -ForegroundColor Red
+    Write-Host 'Moving dinput8.dll out of the game folder removes the mod; the files it replaced are backed up' -ForegroundColor Red
+    Write-Host "in $($paths.Mod)\install-backups." -ForegroundColor Red
     Write-Host 'Send the output above to the person who gave you this package.' -ForegroundColor Red
     $exitCode = 2
 } elseif (!$loaderLeft) {
@@ -145,7 +162,7 @@ if ($restoreFailed) {
 # ---------------------------------------------------------------- 2: configuration
 if (!$restoreFailed) {
     Section 'Step 2: disabling the co-op configuration'
-    foreach ($name in @('lab.ini', 'coop.ini')) {
+    foreach ($name in @('lab.ini', 'coop.ini', 'link-secret.txt')) {
         $renamed = Rename-FriendFile -Path (Join-Path $paths.Mod $name) -Suffix 'disabled' -Stamp $stamp
         if ($renamed) { Write-Host "$name -> $(Split-Path -Leaf $renamed)" }
     }
@@ -167,6 +184,8 @@ if (!$restoreFailed) {
             Write-Host "Your $name from before the friend test is kept as $(Split-Path -Leaf $copy) (no loader remains to use it)."
         }
     }
+    $archived = @(Get-FriendProperty $state 'online_archived' @())
+    if ($archived.Count) { Write-Host "Files of the earlier online friend test stay archived (*.online-old-*, $($archived.Count) file(s)); they are not restored." }
     $null = Rename-FriendFile -Path $statePath -Suffix 'uninstalled' -Stamp $stamp
     if ($loaderLeft) {
         $labText = Read-SharedText -Path $paths.LabIni
@@ -223,6 +242,21 @@ if (!@($baseline.Baselines).Count) {
         if ($exitCode -eq 0) { $exitCode = 4 }
     }
 }
+# ---------------------------------------------------------------- 4: firewall rule
+$rule = Get-FriendProperty $state 'firewall_rule' $null
+$ruleName = [string](Get-FriendProperty $rule 'display_name' '')
+if ($ruleName) {
+    Section 'Step 4: the Windows Firewall rule added by Play-Coop'
+    $remove = [bool]$RemoveFirewallRule
+    if (!$remove -and $interactive) { $remove = (Ask "Remove the firewall rule '$ruleName' (administrator prompt)? [y/N]") -match '^(y|yes)$' }
+    if ($remove) {
+        if (Invoke-CoopElevated -Script (New-CoopRemoveFirewallScript -DisplayName $ruleName)) { Write-Host "Firewall rule '$ruleName' removed." }
+        else { Write-Host 'The firewall rule was not removed (cancelled or failed).' -ForegroundColor Yellow }
+    } else {
+        Write-Host "The firewall rule '$ruleName' stays. Remove it later in Windows Defender Firewall > Advanced settings > Inbound Rules."
+    }
+}
+
 Section 'Done.'
 Write-Host "Kept (delete them yourself when no longer needed): save backups in $($paths.Mod)\real-save-backups,"
 Write-Host "the co-op save copy in $($paths.Mod)\coop-saves, and the logs in $($paths.Mod)."

@@ -105,6 +105,8 @@ bool EndsWith(Slice s, const char* literal) noexcept {
     return true;
 }
 
+bool IsLoopbackAddress(std::uint32_t address) noexcept { return (address >> 24) == 127; }
+
 bool ParseCharacter(Slice s, PlayerCharacter& out) noexcept {
     struct Entry { const char* name; PlayerCharacter value; };
     static constexpr Entry entries[] = {
@@ -142,6 +144,12 @@ bool ForEachPair(const char* text, std::size_t length, Visit visit) noexcept {
 bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexcept {
     LabConfig result{};
     bool enabled = false;
+    // Keys whose validity depends on mode or role are resolved after the loop.
+    bool bind_given = false, listen_given = false, listen_zero = false, peer_port_given = false;
+    Slice peer_addr{nullptr, 0};
+    bool peer_addr_given = false;
+    std::uint32_t interp_max = 0;
+    bool interp_max_given = false;
     const bool usable = ForEachPair(text, length, [&](Slice key, Slice value, bool has_value) {
         if (!has_value) { ++result.invalid_values; return; }
         bool ok = true;
@@ -178,8 +186,59 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
         else if (Equals(key, "net_loss_permille")) ok = ParseU32(value, 1000, result.net_loss_permille);
         else if (Equals(key, "trace_packets")) ok = ParseBool(value, result.trace_packets);
         else if (Equals(key, "net")) ok = ParseBool(value, result.net);
-        else if (Equals(key, "net_listen_port")) ok = ParsePort(value, result.net_listen_port);
-        else if (Equals(key, "net_peer_port")) ok = ParsePort(value, result.net_peer_port);
+        else if (Equals(key, "net_listen_port")) {
+            // 0 (an ephemeral port) is valid only for a guest off loopback (resolved below).
+            if (Equals(value, "0")) listen_zero = true;
+            else {
+                ok = ParsePort(value, result.net_listen_port);
+                if (ok) { listen_zero = false; listen_given = true; }
+            }
+        } else if (Equals(key, "net_peer_port")) {
+            ok = ParsePort(value, result.net_peer_port);
+            if (ok) peer_port_given = true;
+        } else if (Equals(key, "mode")) {
+            if (Equals(value, "lab")) result.mode = LabMode::lab;
+            else if (Equals(value, "play")) result.mode = LabMode::play;
+            else ok = false;
+        } else if (Equals(key, "net_link")) {
+            if (Equals(value, "v2")) result.net_link = NetLink::v2;
+            else if (Equals(value, "legacy")) result.net_link = NetLink::legacy;
+            else ok = false;
+        } else if (Equals(key, "net_bind")) {
+            std::uint32_t address = 0;
+            if (Equals(value, "loopback")) { result.net_bind_loopback = true; result.net_bind_address = 0x7F000001; }
+            else if (Equals(value, "any")) { result.net_bind_loopback = false; result.net_bind_address = 0; }
+            else if (ParseIpv4(value.data, value.size, true, address)) {
+                result.net_bind_loopback = IsLoopbackAddress(address);
+                result.net_bind_address = address;
+            } else ok = false;
+            if (ok) bind_given = true;
+        } else if (Equals(key, "net_peer_addr")) {
+            peer_addr = value;
+            peer_addr_given = true;
+        } else if (Equals(key, "net_jitter_ms")) ok = ParseU32(value, 1000, result.net_jitter_ms);
+        else if (Equals(key, "net_loss_model")) {
+            if (Equals(value, "even")) result.net_loss_model = NetLossModel::even;
+            else if (Equals(value, "burst")) result.net_loss_model = NetLossModel::burst;
+            else ok = false;
+        } else if (Equals(key, "net_burst")) ok = ParseRange(value, 1, 16, result.net_burst);
+        else if (Equals(key, "net_dup_permille")) ok = ParseU32(value, 1000, result.net_dup_permille);
+        else if (Equals(key, "net_reorder_permille")) ok = ParseU32(value, 1000, result.net_reorder_permille);
+        else if (Equals(key, "net_reorder_ms")) ok = ParseRange(value, 1, 500, result.net_reorder_ms);
+        else if (Equals(key, "net_seed")) ok = ParseRange(value, 1, 0xFFFFFFFFu, result.net_seed);
+        else if (Equals(key, "partner_interp")) {
+            if (Equals(value, "fixed")) result.partner_interp = PartnerInterp::fixed;
+            else if (Equals(value, "auto")) result.partner_interp = PartnerInterp::auto_;
+            else ok = false;
+        } else if (Equals(key, "partner_interp_min_ms")) ok = ParseRange(value, 20, 500, result.partner_interp_min_ms);
+        else if (Equals(key, "partner_interp_max_ms")) {
+            ok = ParseU32(value, 1000, interp_max);
+            if (ok) interp_max_given = true;
+        } else if (Equals(key, "partner_lost")) {
+            if (Equals(value, "freeze")) result.partner_lost = PartnerLost::freeze;
+            else if (Equals(value, "hide")) result.partner_lost = PartnerLost::hide;
+            else ok = false;
+        }
         else if (Equals(key, "partner")) ok = ParseBool(value, result.partner);
         else if (Equals(key, "partner_stage")) ok = ParseRange(value, 0, 3, result.partner_stage);
         else if (Equals(key, "partner_source")) ok = ParsePartnerSource(value.data, value.size, result.partner_source);
@@ -238,22 +297,6 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
         result.loopback = false;
         ++result.invalid_values;
     }
-    // partner_net: both ports default by role when neither is named; the pair
-    // must be distinct and must not reuse the loopback emulator's ports.
-    if (result.net) {
-        if (!result.net_listen_port && !result.net_peer_port) {
-            if (result.role == LabRole::host) { result.net_listen_port = kNetHostPort; result.net_peer_port = kNetGuestPort; }
-            else if (result.role == LabRole::guest) { result.net_listen_port = kNetGuestPort; result.net_peer_port = kNetHostPort; }
-        }
-        const std::uint16_t a = result.net_listen_port, b = result.net_peer_port;
-        const auto collides = [&](std::uint16_t port) noexcept {
-            return port && (port == result.listen_port || port == result.peer_port);
-        };
-        if (!a || !b || a == b || collides(a) || collides(b)) {
-            result.net = false;
-            ++result.invalid_values;
-        }
-    }
     // save_dir must be absolute (drive letter or UNC) to avoid working-directory surprises.
     if (result.save_dir[0]) {
         const char* p = result.save_dir;
@@ -261,6 +304,118 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
         const bool unc = p[0] == '\\' && p[1] == '\\';
         if (!drive && !unc) { result.save_dir[0] = 0; ++result.invalid_values; }
     }
+    const bool play = result.mode == LabMode::play;
+    // net_peer_addr: a dotted IPv4 only (127/8 only in lab mode).
+    bool peer_addr_valid = false;
+    if (peer_addr_given) {
+        std::uint32_t address = 0;
+        if (ParseIpv4(peer_addr.data, peer_addr.size, !play, address)) {
+            result.net_peer_address = address;
+            peer_addr_valid = true;
+        } else {
+            ++result.invalid_values;
+            if (play) result.play_refused |= kPlayRefusedPeerAddr;
+        }
+    }
+    if (interp_max_given) {
+        if (interp_max < result.partner_interp_min_ms) ++result.invalid_values;
+        else result.partner_interp_max_ms = interp_max;
+    }
+    // 1. Mode-dependent defaults: play binds every address, the host listens
+    // on kNetPlayPort, the guest on an ephemeral port, and both target kNetPlayPort.
+    if (play) {
+        if (!bind_given) { result.net_bind_loopback = false; result.net_bind_address = 0; }
+        if (!listen_given && !listen_zero) {
+            if (result.role == LabRole::host) { result.net_listen_port = kNetPlayPort; listen_given = true; }
+            else if (result.role == LabRole::guest) listen_zero = true;
+        }
+        if (!peer_port_given) { result.net_peer_port = kNetPlayPort; peer_port_given = true; }
+    }
+    // 2. Play refusals: each refused key is forced off, sets its bit and counts.
+    if (play) {
+        const auto refuse = [&](bool condition, std::uint32_t bit) noexcept {
+            if (!condition) return false;
+            result.play_refused |= bit;
+            ++result.invalid_values;
+            return true;
+        };
+        if (refuse(result.loopback, kPlayRefusedLoopback)) result.loopback = false;
+        if (refuse(result.self_steamid != 0, kPlayRefusedSelfSteamId)) result.self_steamid = 0;
+        if (refuse(result.peer_steamid != 0, kPlayRefusedPeerSteamId)) result.peer_steamid = 0;
+        if (refuse(result.self_name[0] != 0, kPlayRefusedSelfName)) result.self_name[0] = 0;
+        if (refuse(result.mutex_suffix[0] != 0, kPlayRefusedMutexSuffix)) result.mutex_suffix[0] = 0;
+        if (refuse(result.xinput != kXInputPassthrough, kPlayRefusedXInput)) result.xinput = kXInputPassthrough;
+        if (refuse(result.join_trigger, kPlayRefusedJoinTrigger)) result.join_trigger = false;
+        if (refuse(result.auto_join_delay_s != 0, kPlayRefusedAutoJoin)) result.auto_join_delay_s = 0;
+        if (refuse(result.role == LabRole::host && peer_addr_given, kPlayRefusedHostPeerAddr)) {
+            peer_addr_valid = false;
+            result.net_peer_address = 0x7F000001;
+        }
+        if (refuse(result.net_bind_loopback, kPlayRefusedBindLoopback)) {
+            result.net_bind_loopback = false;
+            result.net_bind_address = 0;
+        }
+        if (refuse(result.net_link == NetLink::legacy, kPlayRefusedLegacyLink)) result.net_link = NetLink::v2;
+        refuse(result.save_dir[0] == 0, kPlayRefusedNoSaveDir);
+        if (refuse(result.role == LabRole::guest && !peer_addr_valid, kPlayRefusedGuestNoPeer)) result.net = false;
+        std::uint32_t* const impairments[] = {&result.net_latency_ms, &result.net_loss_permille, &result.net_jitter_ms,
+                                              &result.net_dup_permille, &result.net_reorder_permille};
+        for (std::uint32_t* value : impairments)
+            if (refuse(*value != 0, kPlayRefusedImpairment)) *value = 0;
+    }
+    // A loopback bind talks to 127.0.0.1 only.
+    if (result.net_bind_loopback && peer_addr_valid && !IsLoopbackAddress(result.net_peer_address)) {
+        ++result.invalid_values;
+        result.net_peer_address = 0x7F000001;
+        peer_addr_valid = false;
+    }
+    // net_listen_port=0 is an ephemeral port: only a guest off loopback may
+    // ask for it (otherwise invalid and not given, exactly as before).
+    if (listen_zero && !(result.role == LabRole::guest && !result.net_bind_loopback)) {
+        ++result.invalid_values;
+        listen_zero = false;
+    }
+    // 3. partner_net ports.
+    if (result.net) {
+        const auto collides = [&](std::uint16_t port) noexcept {
+            return port && (port == result.listen_port || port == result.peer_port);
+        };
+        if (result.net_bind_loopback) {
+            // Loopback (the lab): both ports default by role when neither is
+            // named; the pair must be distinct and must not reuse the loopback
+            // emulator's ports.
+            if (!result.net_listen_port && !result.net_peer_port) {
+                if (result.role == LabRole::host) { result.net_listen_port = kNetHostPort; result.net_peer_port = kNetGuestPort; }
+                else if (result.role == LabRole::guest) { result.net_listen_port = kNetGuestPort; result.net_peer_port = kNetHostPort; }
+            }
+            const std::uint16_t a = result.net_listen_port, b = result.net_peer_port;
+            if (!a || !b || a == b || collides(a) || collides(b)) {
+                result.net = false;
+                ++result.invalid_values;
+            }
+        } else if (result.role == LabRole::host) {
+            // Any address: the host listens; its peer is learned (peer port ignored).
+            if (!result.net_listen_port) result.net_listen_port = kNetHostPort;
+            if (!result.net_peer_port) result.net_peer_port = kNetGuestPort;
+            if (collides(result.net_listen_port)) {
+                result.net = false;
+                ++result.invalid_values;
+            }
+        } else if (result.role == LabRole::guest) {
+            if (listen_zero) result.net_listen_port = 0;
+            else if (!result.net_listen_port && !peer_port_given) result.net_listen_port = kNetGuestPort;
+            if (!result.net_peer_port) result.net_peer_port = kNetHostPort;
+            const bool listen_ok = listen_zero || result.net_listen_port >= 1024;
+            if (!listen_ok || result.net_peer_port < 1024 || !peer_addr_valid || collides(result.net_listen_port)) {
+                result.net = false;
+                ++result.invalid_values;
+            }
+        } else {
+            result.net = false;
+            ++result.invalid_values;
+        }
+    }
+    // 4. present is unchanged: the play save gate is SavesRedirected() at the observer.
     result.present = enabled && result.role != LabRole::none;
     out = result;
     return true;
@@ -347,6 +502,35 @@ const char* PartnerLookName(PartnerLook value) noexcept {
 
 const char* PartnerTeardownName(PartnerTeardown value) noexcept {
     return value == PartnerTeardown::keep ? "keep" : "clear";
+}
+
+const char* LabModeName(LabMode value) noexcept { return value == LabMode::play ? "play" : "lab"; }
+const char* NetLinkName(NetLink value) noexcept { return value == NetLink::legacy ? "legacy" : "v2"; }
+const char* PartnerInterpName(PartnerInterp value) noexcept { return value == PartnerInterp::auto_ ? "auto" : "fixed"; }
+const char* PartnerLostName(PartnerLost value) noexcept { return value == PartnerLost::hide ? "hide" : "freeze"; }
+const char* NetLossModelName(NetLossModel value) noexcept { return value == NetLossModel::burst ? "burst" : "even"; }
+
+bool ParseIpv4(const char* text, std::size_t size, bool allow_loopback, std::uint32_t& out) noexcept {
+    if (!text || !size || size > 15) return false;
+    std::uint32_t address = 0;
+    std::size_t at = 0;
+    for (int octet = 0; octet < 4; ++octet) {
+        if (octet) {
+            if (at >= size || text[at] != '.') return false;
+            ++at;
+        }
+        const std::size_t start = at;
+        std::uint32_t value = 0;
+        while (at < size && text[at] >= '0' && text[at] <= '9' && at - start < 3) value = value * 10 + static_cast<std::uint32_t>(text[at++] - '0');
+        const std::size_t digits = at - start;
+        if (!digits || (digits > 1 && text[start] == '0') || value > 255) return false;
+        address = (address << 8) | value;
+    }
+    if (at != size) return false;
+    if (address == 0 || address == 0xFFFFFFFFu || (address >> 28) == 0xE) return false;
+    if (!allow_loopback && IsLoopbackAddress(address)) return false;
+    out = address;
+    return true;
 }
 
 bool ParsePartnerSource(const char* text, std::size_t size, PartnerSource& out) noexcept {

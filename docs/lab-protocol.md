@@ -49,6 +49,28 @@ The lab defaults come from `lab.json` `"partner"` (short names such as `stage`, 
 the key names) and `Prepare-LabInstance.ps1 -Offline -PartnerSetting key=value`,
 `host:key=value` or `guest:key=value` (the ports stay in `lab.json`).
 
+### Partner link v2 keys (native; [link-protocol.md](link-protocol.md))
+
+Two-PC play: see docs/two-pc-play.md.
+
+Since the link v2 change the partner transport authenticates every datagram
+and runs a handshake first; in the lab this happens on 127.0.0.1 with today's
+ports and roles and the built-in lab secret, so no lab.ini change is needed
+(the guest instance initiates, the host responds). New keys, all optional, with
+their native parsing in [link-protocol.md](link-protocol.md) 1.1:
+`mode=lab|play` (`lab`), `net_link=v2|legacy` (`v2`; `legacy` restores the raw
+frames for bisecting), `net_bind=loopback|any|<ipv4>` (`loopback`),
+`net_peer_addr=<ipv4>` (127.0.0.1), `net_jitter_ms`, `net_loss_model=even|burst`,
+`net_burst`, `net_dup_permille`, `net_reorder_permille`, `net_reorder_ms`,
+`net_seed`, `partner_interp=fixed|auto`, `partner_interp_min_ms`,
+`partner_interp_max_ms`, `partner_lost=freeze|hide`. `net_listen_port=0` is
+valid only for a guest off loopback; on loopback it still counts as invalid,
+exactly as before. Off loopback (the one-PC LAN rehearsal) the lab secret is
+refused: both folders need the same `mgs-coop\link-secret.txt`, otherwise the
+log shows `link=disabled; reason=secret_missing`. `mode=play` refuses every lab
+identity hack and impairment key (`play_refused` bits) and is never used by the
+lab scripts.
+
 Lab defaults used by the scripts:
 
 | Setting | Host | Guest |
@@ -116,6 +138,7 @@ the guest's `lab.ini` `peer_steamid=`.
 | `mutex=renamed; suffix=<s>` or `mutex=unchanged` | |
 | `identity=fake; steamid=<id>` or `identity=real` | |
 | `saves=redirected; dir=<path>` or `saves=unchanged` | |
+| `play=1; loopback=0; mutex=unchanged; refused=0x<hex>; saves=redirected\|unchanged` | Only with lab.ini `mode=play`, right after the `saves=` line ([link-protocol.md](link-protocol.md) 1.3). |
 | `xinput=<passthrough\|none\|pad N>` | |
 
 ### `loopback.log` (Steam P2P emulation; append-only, bounded)

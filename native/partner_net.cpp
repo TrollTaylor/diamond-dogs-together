@@ -1,11 +1,14 @@
-// Original MGS Co-op offline partner spike netcode: a second loopback
-// UdpTransport carrying fixed-size MGSC transform frames.
+// Original MGS Co-op offline partner spike netcode: a second UdpTransport
+// carrying fixed-size MGSC frames, raw (legacy) or inside link v2 packets.
 #include "mgscoop/partner_net.hpp"
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <bcrypt.h>
 #include <strsafe.h>
+#include "mgscoop/lab_status.hpp"
+#include "mgscoop/link_crypto.hpp"
 #include "mgscoop/player_sync.hpp"
 #include "mgscoop/session.hpp"
 #include "mgscoop/udp_transport.hpp"
@@ -64,6 +67,62 @@ struct Logged {
 Logged g_logged{};
 bool g_stats_logged = false;
 
+// ---- Link v2 (docs/link-protocol.md). Lock order: receipt lock, g_tx_lock, g_lock.
+bool g_v2 = false;
+SRWLOCK g_tx_lock = SRWLOCK_INIT;
+// Under g_tx_lock: the session, the reliable senders and the packer buffer.
+link::Session g_session;
+link::ReliableSender g_rel_tx[link::kReliableChannels];
+std::uint8_t g_body[link::kLinkMaxBody];
+// Under g_lock: the reliable receivers.
+link::ReliableReceiver g_rel_rx[link::kReliableChannels];
+// A receiver has a RELACK to send (avoids taking g_lock on every frame).
+volatile LONG g_relack_dirty = 0;
+volatile LONG g_tx_not_connected = 0;
+volatile LONG g_link_state = static_cast<LONG>(link::LinkState::off);
+volatile LONG g_applied_interp = 100;
+volatile LONG g_partner_shown = 0, g_partner_look = 0, g_partner_mission = 0;
+// LinkInfo seqlock (single writer: the receive thread, or Start before it runs).
+volatile LONG g_info_seq = 0;
+volatile LONG g_info_state = 0, g_info_session = 0, g_info_rtt = 0, g_info_jitter = 0, g_info_interp = 0, g_info_loss = 0;
+// Receive-thread-only link bookkeeping.
+link::InterpController g_interp;
+std::uint64_t g_interp_update_ms = 0;
+const char* g_disabled_reason = nullptr;  // link=disabled reason (state disabled)
+wchar_t g_status_path[lab::kMaxAtomicPath]{};
+std::uint64_t g_status_check_ms = 0, g_status_write_ms = 0;
+char g_status_last[640]{};
+std::uint32_t g_status_fail = 0, g_status_write_ms_max = 0;
+std::uint64_t g_drop_logged[link::kDropReasons]{};
+std::uint64_t g_drop_logged_ms = 0;
+struct LinkLogged {
+    bool valid;
+    link::LinkState state;
+    std::uint32_t session, rtt, rttvar, jitter, loss, resend, tx_bps, rx_bps, interp, rel, dup, src, status_fail, status_ms;
+    std::int32_t offset;
+};
+LinkLogged g_link_logged{};
+std::uint64_t g_link_stats_ms = 0, g_link_tx_bytes = 0, g_link_rx_bytes = 0;
+std::uint32_t g_tx_bps = 0, g_rx_bps = 0;
+link::HandshakeStep g_handshake_logged_step = link::HandshakeStep::hello_rx;
+bool g_handshake_logged = false;
+std::uint64_t g_handshake_logged_ms = 0;
+char g_build[link::kBuildSize]{};
+// Status-file snapshot taken under g_tx_lock by the receive thread.
+struct LinkSnapshot {
+    link::LinkState state;
+    std::uint32_t session, rtt_ms, rttvar_ms, jitter_ms, loss_permille, resend, rel_queued;
+    std::int32_t offset_ms;
+    bool have_offset;
+    link::RejectReason reason;
+    bool verified;
+    bool has_peer;
+    lab::Endpoint peer;
+    char remote_build[link::kBuildSize + 1];
+    std::uint64_t tx_bytes, rx_bytes, replay, src_changed;
+    std::uint64_t drops[link::kDropReasons];
+};
+
 std::uint64_t NowUs() noexcept {
     LARGE_INTEGER frequency{}, counter{};
     QueryPerformanceFrequency(&frequency);
@@ -87,6 +146,66 @@ const char* TransportErrorName(lab::TransportError error) noexcept {
     case lab::TransportError::thread: return "thread";
     default: return "bad_config";
     }
+}
+
+std::uint32_t Clamp32(std::uint64_t value) noexcept { return value > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<std::uint32_t>(value); }
+
+// ---- Link v2 send path (g_tx_lock held by every caller).
+bool LinkTransmit(void*, const lab::Endpoint& to, const std::uint8_t* data, std::size_t size) noexcept {
+    const lab::WireChunk chunk{data, size};
+    return g_transport.transmit_to(to, &chunk, 1, true);
+}
+
+bool LinkRandom(void*, std::uint8_t* out, std::size_t size) noexcept {
+    // Transport thread only (the session draws nonces in OnDatagram / OnTimer).
+    return BCRYPT_SUCCESS(BCryptGenRandom(nullptr, out, static_cast<ULONG>(size), BCRYPT_USE_SYSTEM_PREFERRED_RNG));
+}
+
+// The RELACKs due (dirty for at least min_age_ms) of every receiver
+// (g_tx_lock held; takes g_lock: tx -> rx order). Each one taken is marked
+// clean: PackBody always has room for them after at most one FRAME.
+void TakeRelAcks(link::RelAckState (&acks)[link::kReliableChannels], std::uint64_t now_ms, std::uint64_t min_age_ms) noexcept {
+    for (auto& a : acks) a = link::RelAckState{};
+    if (!g_relack_dirty) return;
+    bool still_dirty = false;
+    AcquireSRWLockExclusive(&g_lock);
+    for (unsigned ch = 1; ch < link::kReliableChannels; ++ch) {
+        link::ReliableReceiver& rx = g_rel_rx[ch];
+        if (!rx.dirty()) continue;
+        if (now_ms - rx.dirty_since() < min_age_ms) { still_dirty = true; continue; }
+        acks[ch].due = true;
+        rx.AckState(acks[ch].next_expected, acks[ch].bits, acks[ch].free_slots);
+        rx.ClearDirty();
+    }
+    // The flag changes only under g_lock, so a store racing with this pass is never lost.
+    if (!still_dirty) InterlockedExchange(&g_relack_dirty, 0);
+    ReleaseSRWLockExclusive(&g_lock);
+}
+
+// Game thread: one DATA packet with the FRAME first, then the RELACKs and
+// any new reliable messages (retransmissions are the receive thread's).
+bool LinkSendFrame(const std::uint8_t* frame, std::size_t size) noexcept {
+    const std::uint64_t now = NowMs();
+    bool sent = false, connected = false;
+    AcquireSRWLockExclusive(&g_tx_lock);
+    if (g_session.CanSendData()) {
+        connected = true;
+        link::RelAckState acks[link::kReliableChannels];
+        TakeRelAcks(acks, now, 0);
+        link::BodyWriter writer(g_body, sizeof(g_body));
+        std::size_t no_retransmits = 0;
+        if (link::PackBody(writer, frame, size, acks, g_rel_tx, now, g_session.rtt().rto_ms(), no_retransmits))
+            sent = g_session.SendData(g_body, writer.size(), now);
+    }
+    ReleaseSRWLockExclusive(&g_tx_lock);
+    if (!connected) InterlockedIncrement(&g_tx_not_connected);
+    return sent;
+}
+
+bool Transmit(const std::uint8_t* frame, std::size_t size) noexcept {
+    if (g_v2) return LinkSendFrame(frame, size);
+    const lab::WireChunk chunk{frame, size};
+    return g_transport.transmit(&chunk, 1, true);
 }
 
 void SendKeepalive() noexcept {
@@ -123,13 +242,12 @@ void OnLook(const sync::LookPacket& packet, std::uint32_t epoch) noexcept {
         Log(line);
 }
 
-// Receive thread: decode and enqueue only. Order: keepalive, look, transform.
-void OnDatagram(void*, const std::uint8_t* data, std::size_t size) noexcept {
-    const DWORD error = GetLastError();
+// Receive thread: one MGSC frame (a raw datagram or a link v2 FRAME
+// message). Decode and enqueue only. Order: keepalive, look, input, transform.
+void OnFrame(const std::uint8_t* data, std::size_t size) noexcept {
     std::uint64_t session = 0;
     if (sync::decode_keepalive_frame(data, size, session)) {
         if (session != kSession) InterlockedIncrement(&g_drop_bad);
-        SetLastError(error);
         return;
     }
     std::uint32_t epoch = 0;
@@ -137,17 +255,15 @@ void OnDatagram(void*, const std::uint8_t* data, std::size_t size) noexcept {
     if (sync::decode_look_frame(data, size, session, epoch, look)) {
         if (session != kSession) InterlockedIncrement(&g_drop_bad);
         else OnLook(look, epoch);
-        SetLastError(error);
         return;
     }
     std::uint32_t in_seq = 0;
     partner_input::InputPacket in{};
     if (sync::decode_input_frame(data, size, session, epoch, in_seq, in)) {
-        if (session != kSession) { InterlockedIncrement(&g_drop_bad); SetLastError(error); return; }
+        if (session != kSession) { InterlockedIncrement(&g_drop_bad); return; }
         const LONG current = g_epoch;
         if (!current || epoch != static_cast<std::uint32_t>(current)) {
             InterlockedIncrement(&g_drop_epoch);
-            SetLastError(error);
             return;
         }
         bool first = false, accepted = false;
@@ -168,7 +284,6 @@ void OnDatagram(void*, const std::uint8_t* data, std::size_t size) noexcept {
             char line[96]{};
             if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "partner_net=input_rx; first=1; seq=%u\r\n", in_seq))) Log(line);
         }
-        SetLastError(error);
         return;
     }
     sync::PlayerTransformPacket packet{};
@@ -176,13 +291,11 @@ void OnDatagram(void*, const std::uint8_t* data, std::size_t size) noexcept {
     bool has_anim = false;
     if (!sync::decode_partner_transform_frame(data, size, session, epoch, packet, anim, has_anim) || session != kSession) {
         InterlockedIncrement(&g_drop_bad);
-        SetLastError(error);
         return;
     }
     const LONG current = g_epoch;
     if (!current || epoch != static_cast<std::uint32_t>(current)) {
         InterlockedIncrement(&g_drop_epoch);
-        SetLastError(error);
         return;
     }
     const std::uint64_t now = NowMs();
@@ -213,18 +326,368 @@ void OnDatagram(void*, const std::uint8_t* data, std::size_t size) noexcept {
         if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "partner_net=first_rx; seq=%u; epoch=%u\r\n",
                                        packet.sequence, epoch))) Log(line);
     }
+}
+
+// The receive half of ResetRemote (g_lock held).
+void ResetReceiveLocked() noexcept {
+    g_ring.Reset();
+    g_have_last = false;
+    g_last_seq = 0;
+    g_last_rx_ms = 0;
+    g_first_logged = false;
+    g_look = RemoteLook{};
+    g_input = partner_input::InputPacket{};
+    g_input_valid = false;
+    g_input_seq = 0;
+    g_input_rx_ms = 0;
+    g_input_first_logged = false;
+    g_edges = partner_input::InputEdges{};
+}
+
+// ---- Link v2 logging (receive thread, outside both locks).
+void FormatPeer(const lab::Endpoint& peer, char (&out)[24]) noexcept {
+    char address[16]{};
+    link::MaskAddress(peer.address, address);
+    if (FAILED(StringCchPrintfA(out, ARRAYSIZE(out), "%s:%u", address, static_cast<unsigned>(peer.port)))) out[0] = 0;
+}
+
+void LogEvent(const link::Event& e, std::uint64_t now_ms) noexcept {
+    char line[256]{}, peer[24]{};
+    FormatPeer(e.peer, peer);
+    HRESULT hr = E_FAIL;
+    switch (e.kind) {
+    case link::EventKind::listening:
+        hr = StringCchPrintfA(line, ARRAYSIZE(line), "link=listening; port=%u\r\n", static_cast<unsigned>(g_transport.local_port()));
+        break;
+    case link::EventKind::connecting:
+        hr = StringCchPrintfA(line, ARRAYSIZE(line), "link=connecting; peer=%s; attempt=%u\r\n", peer, e.attempt);
+        break;
+    case link::EventKind::handshake:
+        // At most one line per step change or per 10 s (HELLO floods stay quiet).
+        if (g_handshake_logged && g_handshake_logged_step == e.step && now_ms - g_handshake_logged_ms < 10000) return;
+        g_handshake_logged = true;
+        g_handshake_logged_step = e.step;
+        g_handshake_logged_ms = now_ms;
+        hr = StringCchPrintfA(line, ARRAYSIZE(line), "link=handshake; step=%s; peer=%s\r\n", link::HandshakeStepName(e.step), peer);
+        break;
+    case link::EventKind::connected:
+        g_handshake_logged = false;
+        hr = StringCchPrintfA(line, ARRAYSIZE(line), "link=connected; session=%u; peer=%s; rtt_ms=%u; remote_build=%s\r\n", e.session,
+                              peer, e.rtt_ms, e.remote_build);
+        break;
+    case link::EventKind::lost:
+        hr = StringCchPrintfA(line, ARRAYSIZE(line), "link=lost; after_ms=%u\r\n", e.after_ms);
+        break;
+    case link::EventKind::reconnecting:
+        hr = StringCchPrintfA(line, ARRAYSIZE(line), "link=reconnecting; attempt=%u\r\n", e.attempt);
+        break;
+    case link::EventKind::reconnected:
+        g_handshake_logged = false;
+        hr = StringCchPrintfA(line, ARRAYSIZE(line), "link=reconnected; session=%u; peer=%s; gap_ms=%u\r\n", e.session, peer, e.gap_ms);
+        break;
+    case link::EventKind::rebound:
+        g_handshake_logged = false;
+        hr = StringCchPrintfA(line, ARRAYSIZE(line), "link=rebound; session=%u; peer=%s\r\n", e.session, peer);
+        break;
+    case link::EventKind::rejected:
+        hr = StringCchPrintfA(line, ARRAYSIZE(line), "link=rejected; reason=%s; remote_proto=%u; remote_build=%s; verified=%u\r\n",
+                              link::RejectReasonName(e.reason), static_cast<unsigned>(e.remote_proto), e.remote_build,
+                              e.verified ? 1u : 0u);
+        break;
+    case link::EventKind::warn_build:
+        hr = StringCchPrintfA(line, ARRAYSIZE(line), "link=warn; reason=build_mismatch; remote_build=%s\r\n", e.remote_build);
+        break;
+    case link::EventKind::crypto:
+        g_disabled_reason = "crypto";
+        hr = StringCchPrintfA(line, ARRAYSIZE(line), "link=disabled; reason=crypto\r\n");
+        break;
+    }
+    if (SUCCEEDED(hr)) Log(line);
+}
+
+void TakeSnapshot(LinkSnapshot& s) noexcept {  // g_tx_lock held
+    s.state = g_session.state();
+    s.session = g_session.session_number();
+    const link::RttEstimator& rtt = g_session.rtt();
+    s.rtt_ms = rtt.have() ? rtt.srtt_ms() : 0;
+    s.rttvar_ms = rtt.have() ? rtt.rttvar_ms() : 0;
+    s.jitter_ms = g_session.jitter().jitter_ms();
+    s.have_offset = g_session.jitter().have_offset();
+    s.offset_ms = g_session.jitter().offset_ms();
+    s.loss_permille = g_session.loss().Permille(NowMs());
+    std::uint64_t resend = 0;
+    unsigned queued = 0;
+    for (const auto& tx : g_rel_tx) {
+        resend += tx.retransmits();
+        queued += tx.queued();
+    }
+    s.resend = Clamp32(resend);
+    s.rel_queued = queued;
+    s.reason = g_session.reject_reason();
+    s.verified = g_session.reject_verified();
+    s.has_peer = g_session.has_peer();
+    s.peer = g_session.peer();
+    StringCchCopyA(s.remote_build, ARRAYSIZE(s.remote_build), g_session.remote_build());
+    const link::SessionStats& st = g_session.stats();
+    s.tx_bytes = st.tx_bytes;
+    s.rx_bytes = st.rx_bytes;
+    s.replay = st.drops[static_cast<unsigned>(link::DropReason::replay)];
+    s.src_changed = st.src_changed;
+    for (unsigned i = 0; i < link::kDropReasons; ++i) s.drops[i] = st.drops[i];
+}
+
+void PublishInfo(const LinkSnapshot& s, std::uint32_t interp_ms) noexcept {
+    InterlockedIncrement(&g_info_seq);  // odd: writing
+    InterlockedExchange(&g_info_state, static_cast<LONG>(s.state));
+    InterlockedExchange(&g_info_session, static_cast<LONG>(s.session));
+    InterlockedExchange(&g_info_rtt, static_cast<LONG>(s.rtt_ms));
+    InterlockedExchange(&g_info_jitter, static_cast<LONG>(s.jitter_ms));
+    InterlockedExchange(&g_info_interp, static_cast<LONG>(interp_ms));
+    InterlockedExchange(&g_info_loss, static_cast<LONG>(s.loss_permille));
+    InterlockedIncrement(&g_info_seq);  // even: stable
+    InterlockedExchange(&g_link_state, static_cast<LONG>(s.state));
+}
+
+const char* PartnerStatusName() noexcept {
+    pose::Status status = pose::Status::none;
+    AcquireSRWLockShared(&g_lock);
+    if (!g_ring.empty()) {
+        const std::uint64_t now = NowMs();
+        status = pose::StatusForAge(now >= g_ring.newest_receive_ms() ? now - g_ring.newest_receive_ms() : 0);
+    }
+    ReleaseSRWLockShared(&g_lock);
+    return status == pose::Status::none ? "none" : pose::StatusName(status);
+}
+
+// link-status.json: one ASCII line, keys in the documented order.
+bool FormatStatus(const LinkSnapshot& s, link::LinkState state, char* out, std::size_t capacity, bool with_time) noexcept {
+    char peer[24]{};
+    if (s.has_peer && s.peer.port) FormatPeer(s.peer, peer);
+    const char* reason = state == link::LinkState::disabled ? (g_disabled_reason ? g_disabled_reason : "")
+                       : s.reason != link::RejectReason::none ? link::RejectReasonName(s.reason) : "";
+    const bool verified = !(s.reason != link::RejectReason::none && !s.verified);
+    char build[2 * link::kBuildSize + 4]{};
+    std::size_t build_length = 0;
+    if (!lab::AppendJsonString(build, sizeof(build), build_length, s.remote_build)) StringCchCopyA(build, ARRAYSIZE(build), "\"\"");
+    char time_utc[32] = "\"\"";
+    if (with_time) {
+        FILETIME ft{};
+        SYSTEMTIME st{};
+        GetSystemTimeAsFileTime(&ft);
+        if (FileTimeToSystemTime(&ft, &st))
+            StringCchPrintfA(time_utc, ARRAYSIZE(time_utc), "\"%04u-%02u-%02uT%02u:%02u:%02uZ\"", st.wYear, st.wMonth, st.wDay,
+                             st.wHour, st.wMinute, st.wSecond);
+    }
+    return SUCCEEDED(StringCchPrintfA(out, capacity,
+        "{\"v\":1,\"pid\":%lu,\"mode\":\"%s\",\"role\":\"%s\",\"state\":\"%s\",\"reason\":\"%s\",\"verified\":%u,\"session\":%u,"
+        "\"peer\":\"%s\",\"local_port\":%u,\"rtt_ms\":%u,\"jitter_ms\":%u,\"loss_permille\":%u,\"resend\":%u,"
+        "\"tx_Bps\":%u,\"rx_Bps\":%u,\"interp_ms\":%u,\"remote_build\":%s,\"partner\":\"%s\",\"partner_shown\":%u,"
+        "\"look\":%u,\"mission\":%u,\"saves\":\"%s\",\"time_utc\":%s}\n",
+        GetCurrentProcessId(), g_config.play ? "play" : "lab", g_config.host ? "host" : "guest", link::LinkStateName(state), reason,
+        verified ? 1u : 0u, s.session, peer, static_cast<unsigned>(g_transport.local_port()), s.rtt_ms, s.jitter_ms,
+        s.loss_permille, s.resend, g_tx_bps, g_rx_bps, static_cast<unsigned>(EffectiveInterpMs(g_config.interp_ms)), build, PartnerStatusName(),
+        g_partner_shown ? 1u : 0u, g_partner_look ? 1u : 0u, static_cast<unsigned>(g_partner_mission),
+        g_config.saves_redirected ? "redirected" : "unchanged", time_utc));
+}
+
+void WriteStatus(const LinkSnapshot& s, link::LinkState state, std::uint64_t now_ms) noexcept {
+    if (!g_status_path[0]) return;
+    if (now_ms - g_status_check_ms < kStatusCheckMs) return;
+    g_status_check_ms = now_ms;
+    char content[640]{};
+    if (!FormatStatus(s, state, content, sizeof(content), false)) return;
+    const bool changed = lstrcmpA(content, g_status_last) != 0;
+    if (!changed && now_ms - g_status_write_ms < kStatusRefreshMs) return;
+    char document[640]{};
+    if (!FormatStatus(s, state, document, sizeof(document), true)) return;
+    std::size_t length = 0;
+    while (document[length]) ++length;
+    const std::uint64_t started = NowMs();
+    if (lab::WriteFileAtomic(g_status_path, document, length)) {
+        StringCchCopyA(g_status_last, ARRAYSIZE(g_status_last), content);
+        g_status_write_ms = now_ms;
+    } else {
+        ++g_status_fail;  // retried on the next check (a reader may hold the file)
+    }
+    const std::uint32_t took = Clamp32(NowMs() - started);
+    if (took > g_status_write_ms_max) g_status_write_ms_max = took;
+}
+
+void LinkStats(const LinkSnapshot& s, link::LinkState state, std::uint64_t now_ms) noexcept {
+    // Byte rates over the last stats window.
+    if (!g_link_stats_ms) {
+        g_link_stats_ms = now_ms;
+        g_link_tx_bytes = s.tx_bytes;
+        g_link_rx_bytes = s.rx_bytes;
+        return;
+    }
+    if (now_ms - g_link_stats_ms < kStatsIntervalMs) return;
+    const std::uint64_t span = now_ms - g_link_stats_ms;
+    g_tx_bps = Clamp32((s.tx_bytes - g_link_tx_bytes) * 1000 / span);
+    g_rx_bps = Clamp32((s.rx_bytes - g_link_rx_bytes) * 1000 / span);
+    g_link_stats_ms = now_ms;
+    g_link_tx_bytes = s.tx_bytes;
+    g_link_rx_bytes = s.rx_bytes;
+    // Drops: one line per reason per window, only when the count changed.
+    for (unsigned i = 0; i < link::kDropReasons; ++i) {
+        if (s.drops[i] == g_drop_logged[i]) continue;
+        g_drop_logged[i] = s.drops[i];
+        char line[96]{};
+        if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "link=drop; reason=%s; count=%llu\r\n",
+                                       link::DropReasonName(static_cast<link::DropReason>(i)),
+                                       static_cast<unsigned long long>(s.drops[i]))))
+            Log(line);
+    }
+    if (state == link::LinkState::off) return;
+    const LinkLogged current{true, state, s.session, s.rtt_ms, s.rttvar_ms, s.jitter_ms, s.loss_permille, s.resend, g_tx_bps,
+                             g_rx_bps, EffectiveInterpMs(g_config.interp_ms), s.rel_queued, Clamp32(s.replay), Clamp32(s.src_changed),
+                             g_status_fail, g_status_write_ms_max, s.have_offset ? s.offset_ms : 0};
+    const LinkLogged& l = g_link_logged;
+    const bool changed = !l.valid || l.state != current.state || l.session != current.session || l.rtt != current.rtt ||
+                         l.rttvar != current.rttvar || l.jitter != current.jitter || l.loss != current.loss ||
+                         l.resend != current.resend || l.tx_bps != current.tx_bps || l.rx_bps != current.rx_bps ||
+                         l.interp != current.interp || l.rel != current.rel || l.dup != current.dup || l.src != current.src ||
+                         l.status_fail != current.status_fail || l.status_ms != current.status_ms || l.offset != current.offset;
+    if (!changed) return;
+    g_link_logged = current;
+    char line[448]{};
+    if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
+            "link=stats; state=%s; session=%u; rtt_ms=%u; rttvar_ms=%u; jitter_ms=%u; loss_pct=%u.%u; resend=%u; tx_Bps=%u; "
+            "rx_Bps=%u; interp_ms=%u; offset_ms=%d; rel_queued=%u; dup=%u; src_changed=%u; status_fail=%u; status_write_ms_max=%u\r\n",
+            link::LinkStateName(state), current.session, current.rtt, current.rttvar, current.jitter, current.loss / 10,
+            current.loss % 10, current.resend, current.tx_bps, current.rx_bps, current.interp, current.offset, current.rel,
+            current.dup, current.src, current.status_fail, current.status_ms)))
+        Log(line);
+}
+
+// Receive thread: one link v2 datagram.
+void LinkDatagram(const std::uint8_t* data, std::size_t size, const lab::Endpoint& from) noexcept {
+    constexpr unsigned kMaxFrames = 64, kMaxReliable = 32, kMaxEvents = 16;
+    struct Piece { const std::uint8_t* data; std::size_t size; };
+    struct Rel { std::uint8_t channel; std::uint16_t id; const std::uint8_t* payload; std::size_t size; };
+    Piece frames[kMaxFrames];
+    Rel rels[kMaxReliable];
+    link::Event events[kMaxEvents];
+    unsigned frame_count = 0, rel_count = 0, event_count = 0;
+    bool close_seen = false;
+    const std::uint64_t now = NowMs();
+    AcquireSRWLockExclusive(&g_tx_lock);
+    const link::Delivery delivery = g_session.OnDatagram(data, size, from, now);
+    if (delivery.new_session) {
+        // Both halves in the commit's g_tx_lock section (tx -> rx order): no
+        // packet of the new session carries a RELACK of the old receivers.
+        for (auto& tx : g_rel_tx) tx.Reset();
+        AcquireSRWLockExclusive(&g_lock);
+        ResetReceiveLocked();
+        for (auto& rx : g_rel_rx) rx.Reset();
+        InterlockedExchange(&g_relack_dirty, 0);
+        ReleaseSRWLockExclusive(&g_lock);
+        InterlockedExchange(&g_look_resend, 1);
+    }
+    unsigned messages = 0;
+    if (delivery.data && link::ValidateBody(delivery.body, delivery.size, messages)) {
+        link::MessageReader reader(delivery.body, delivery.size);
+        link::Message m{};
+        bool transform = false;
+        while (reader.Next(m)) {
+            if (m.type == static_cast<std::uint8_t>(link::MsgType::frame)) {
+                if (frame_count < kMaxFrames) frames[frame_count++] = Piece{m.data, m.size};
+                transform = transform || m.size == sync::transform_frame_size || m.size == sync::transform_anim_frame_size;
+            } else if (m.type == static_cast<std::uint8_t>(link::MsgType::reliable)) {
+                link::ReliableMsg r{};
+                if (link::DecodeReliable(m, r) && r.channel >= 1 && r.channel < link::kReliableChannels && rel_count < kMaxReliable)
+                    rels[rel_count++] = Rel{r.channel, r.id, r.payload, r.size};
+            } else if (m.type == static_cast<std::uint8_t>(link::MsgType::relack)) {
+                link::RelAckMsg a{};
+                if (link::DecodeRelAck(m, a) && a.channel >= 1 && a.channel < link::kReliableChannels)
+                    g_rel_tx[a.channel].OnRelAck(a.next_expected, a.bits, a.free_slots, now);
+            } else if (m.type == static_cast<std::uint8_t>(link::MsgType::close)) {
+                close_seen = true;
+            }
+        }
+        if (transform) g_session.jitter().OnPacket(static_cast<std::uint32_t>(now), delivery.send_ms, now);
+    }
+    link::Event e{};
+    while (event_count < kMaxEvents && g_session.PopEvent(e)) events[event_count++] = e;
+    InterlockedExchange(&g_link_state, static_cast<LONG>(g_session.state()));
+    ReleaseSRWLockExclusive(&g_tx_lock);
+    if (rel_count) {
+        AcquireSRWLockExclusive(&g_lock);
+        for (unsigned i = 0; i < rel_count; ++i) g_rel_rx[rels[i].channel].Accept(rels[i].id, rels[i].payload, rels[i].size, now);
+        InterlockedExchange(&g_relack_dirty, 1);
+        ReleaseSRWLockExclusive(&g_lock);
+    }
+    for (unsigned i = 0; i < frame_count; ++i) OnFrame(frames[i].data, frames[i].size);
+    for (unsigned i = 0; i < event_count; ++i) LogEvent(events[i], now);
+    if (close_seen) Log("link=close; reason=peer\r\n");
+}
+
+void OnDatagram(void*, const std::uint8_t* data, std::size_t size, const lab::Endpoint& from) noexcept {
+    const DWORD error = GetLastError();
+    if (g_v2) LinkDatagram(data, size, from);
+    else OnFrame(data, size);
     SetLastError(error);
 }
 
-// Receive thread, every 250 ms: keepalive after 1 s without a send, and a
-// stats line every 10 s when something changed.
+// Receive thread, every kLinkIdleMs: reliable retransmits and due RELACKs,
+// the session timers, the adaptive delay, stats and the status file.
+void LinkIdle() noexcept {
+    constexpr unsigned kMaxEvents = 16;
+    link::Event events[kMaxEvents];
+    unsigned event_count = 0;
+    LinkSnapshot snapshot{};
+    const std::uint64_t now = NowMs();
+    AcquireSRWLockExclusive(&g_tx_lock);
+    if (g_session.CanSendData()) {
+        // Paced reliable traffic (<= kRetransmitBudgetBytes retransmitted per
+        // tick); RELACKs ride along with data, or go alone once due for
+        // kAckDelayMs.
+        std::size_t budget = link::kRetransmitBudgetBytes;
+        const std::uint32_t rto = g_session.rtt().rto_ms();
+        for (unsigned packets = 0; packets < 4; ++packets) {
+            const bool data = link::ReliableDue(g_rel_tx, now, rto, budget);
+            link::RelAckState acks[link::kReliableChannels];
+            TakeRelAcks(acks, now, data ? 0 : link::kAckDelayMs);
+            link::BodyWriter writer(g_body, sizeof(g_body));
+            link::PackBody(writer, nullptr, 0, acks, g_rel_tx, now, rto, budget);
+            if (!writer.size()) break;
+            if (!g_session.SendData(g_body, writer.size(), now)) break;
+        }
+    }
+    g_session.OnTimer(now);
+    link::Event e{};
+    while (event_count < kMaxEvents && g_session.PopEvent(e)) events[event_count++] = e;
+    TakeSnapshot(snapshot);
+    ReleaseSRWLockExclusive(&g_tx_lock);
+    for (unsigned i = 0; i < event_count; ++i) LogEvent(events[i], now);
+    // Adaptive interpolation: the target once per second, the slew every tick.
+    if (g_config.interp_auto) {
+        if (now - g_interp_update_ms >= 1000) {
+            g_interp_update_ms = now;
+            g_interp.Update(now, g_config.rate_hz, snapshot.jitter_ms, snapshot.loss_permille);
+        }
+        InterlockedExchange(&g_applied_interp, static_cast<LONG>(g_interp.Tick()));
+    }
+    const link::LinkState state = g_disabled_reason ? link::LinkState::disabled : snapshot.state;
+    snapshot.state = state;
+    PublishInfo(snapshot, EffectiveInterpMs(g_config.interp_ms));
+    LinkStats(snapshot, state, now);
+    WriteStatus(snapshot, state, now);
+}
+
+// Receive thread: legacy keepalive after 1 s without a send (raw path), and a
+// partner_net=stats line every 10 s when something changed (both paths).
 void OnIdle(void*) noexcept {
     const DWORD error = GetLastError();
     const std::uint64_t now = NowMs();
-    const auto last_send = static_cast<std::uint64_t>(InterlockedCompareExchange64(&g_last_send_ms, 0, 0));
-    if (now - last_send >= kKeepaliveAfterMs) {
-        InterlockedExchange64(&g_last_send_ms, static_cast<LONG64>(now));
-        SendKeepalive();
+    if (g_v2) {
+        LinkIdle();
+    } else {
+        const auto last_send = static_cast<std::uint64_t>(InterlockedCompareExchange64(&g_last_send_ms, 0, 0));
+        if (now - last_send >= kKeepaliveAfterMs) {
+            InterlockedExchange64(&g_last_send_ms, static_cast<LONG64>(now));
+            SendKeepalive();
+        }
     }
     if (now - g_last_stats_ms < kStatsIntervalMs) { SetLastError(error); return; }
     g_last_stats_ms = now;
@@ -261,10 +724,133 @@ void OnIdle(void*) noexcept {
     SetLastError(error);
 }
 
+// link-secret.txt (kernel32 file I/O; Start runs at observer install, never
+// in DllMain). Every buffer that held the secret is cleared by the caller.
+link::SecretStatus ReadSecret(const wchar_t* directory, char (&out)[link::kSecretChars]) noexcept {
+    wchar_t path[lab::kMaxAtomicPath]{};
+    if (!directory || FAILED(StringCchPrintfW(path, ARRAYSIZE(path), L"%s\\mgs-coop\\link-secret.txt", directory)))
+        return link::SecretStatus::missing;
+    HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return link::SecretStatus::missing;
+    char text[64]{};
+    DWORD read = 0;
+    LARGE_INTEGER size{};
+    const bool ok = GetFileSizeEx(file, &size) && size.QuadPart <= static_cast<LONGLONG>(sizeof(text)) &&
+                    ReadFile(file, text, sizeof(text), &read, nullptr);
+    CloseHandle(file);
+    const link::SecretStatus status = ok ? link::ParseSecretText(text, read, out) : link::SecretStatus::bad_length;
+    link::SecureZero(text, sizeof(text));
+    return status;
+}
+
+// No receive thread will run: publish the disabled state and write
+// link-status.json once from the starting thread.
+void LogDisabled(const char* reason) noexcept {
+    g_disabled_reason = reason;
+    char line[96]{};
+    if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "link=disabled; reason=%s\r\n", reason))) Log(line);
+    LinkSnapshot snapshot{};
+    snapshot.state = link::LinkState::disabled;
+    PublishInfo(snapshot, EffectiveInterpMs(g_config.interp_ms));
+    WriteStatus(snapshot, link::LinkState::disabled, kStatusCheckMs + NowMs());
+}
+
+// Link v2 Start: the secret, then the transport, then the session.
+void StartLink() noexcept {
+    char secret[link::kSecretChars]{};
+    const link::SecretStatus secret_status = ReadSecret(g_config.directory, secret);
+    bool lab_secret = false;
+    if (secret_status != link::SecretStatus::ok) {
+        if (!g_config.play && secret_status == link::SecretStatus::missing && g_config.bind_loopback) {
+            for (std::size_t i = 0; i < link::kSecretChars; ++i) secret[i] = link::kLabSecret[i];
+            lab_secret = true;
+        } else {
+            switch (secret_status) {
+            case link::SecretStatus::bad_length: LogDisabled("secret_bad_length"); break;
+            case link::SecretStatus::bad_char: LogDisabled("secret_bad_char"); break;
+            default: LogDisabled("secret_missing"); break;
+            }
+            link::SecureZero(secret, sizeof(secret));
+            return;
+        }
+    }
+    link::SessionConfig session{};
+    session.role = g_config.host ? link::Role::host : link::Role::guest;
+    session.play = g_config.play;
+    session.exact_filter = g_config.bind_loopback;
+    session.peer = lab::Endpoint{g_config.peer_address, g_config.peer_port};
+    for (std::size_t i = 0; i < link::kBuildSize && g_config.build && g_config.build[i]; ++i) g_build[i] = g_config.build[i];
+    for (std::size_t i = 0; i < link::kBuildSize; ++i) session.build[i] = g_build[i];
+    link::DerivePsk(secret, session.psk);
+    link::SecureZero(secret, sizeof(secret));
+
+    lab::TransportConfig transport{};
+    transport.listen_port = g_config.listen_port;
+    transport.peer_port = g_config.bind_loopback || !g_config.host ? g_config.peer_port : 0;
+    transport.idle_interval_ms = kLinkIdleMs;
+    transport.bind_address = g_config.bind_loopback ? 0x7F000001u : g_config.bind_address;
+    transport.peer_address = g_config.bind_loopback ? 0x7F000001u : g_config.peer_address;
+    transport.any_source = !g_config.bind_loopback;
+    transport.allow_ephemeral = !g_config.bind_loopback && !g_config.host;
+    transport.impair = g_config.impair;
+    transport.impair.latency_ms = g_config.latency_ms;
+    transport.impair.loss_permille = g_config.loss_permille;
+    if (g_config.interp_auto) {
+        g_interp.Init(g_config.interp_min_ms, g_config.interp_max_ms);
+        InterlockedExchange(&g_applied_interp, static_cast<LONG>(g_interp.applied()));
+    }
+    char line[256]{}, bind[16]{}, peer[24]{};
+    if (g_config.bind_loopback) StringCchCopyA(bind, ARRAYSIZE(bind), "loopback");
+    else if (!g_config.bind_address) StringCchCopyA(bind, ARRAYSIZE(bind), "any");
+    else link::FormatAddress(g_config.bind_address, bind);
+    if (g_config.host) StringCchCopyA(peer, ARRAYSIZE(peer), "learned");
+    else FormatPeer(session.peer, peer);
+    if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
+            "link=config; mode=%s; role=%s; proto=%u; bind=%s; port=%u; peer=%s; auth=%s; interp=%s\r\n",
+            g_config.play ? "play" : "lab", g_config.host ? "host" : "guest", static_cast<unsigned>(link::kLinkProto), bind,
+            static_cast<unsigned>(g_config.listen_port), peer, lab_secret ? "lab" : "code", g_config.interp_auto ? "auto" : "fixed")))
+        Log(line);
+    const lab::DatagramSink sink{&OnDatagram, &OnIdle, nullptr};
+    const std::uint64_t now = NowMs();
+    g_last_stats_ms = now;
+    InterlockedExchange64(&g_last_send_ms, static_cast<LONG64>(now));
+    // The session exists before the receive thread starts (it may deliver at once).
+    AcquireSRWLockExclusive(&g_tx_lock);
+    g_session.Start(session, link::SessionIo{nullptr, &LinkTransmit, &LinkRandom}, now);
+    ReleaseSRWLockExclusive(&g_tx_lock);
+    link::SecureZero(&session.psk, sizeof(session.psk));
+    if (!g_transport.start(transport, sink)) {
+        if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "partner_net=disabled; reason=transport_%s\r\n",
+                                       TransportErrorName(g_transport.error()))))
+            Log(line);
+        char reason[32]{};
+        StringCchPrintfA(reason, ARRAYSIZE(reason), "transport_%s", TransportErrorName(g_transport.error()));
+        static char disabled_reason[32];
+        StringCchCopyA(disabled_reason, ARRAYSIZE(disabled_reason), reason);
+        LogDisabled(disabled_reason);
+        return;
+    }
+    InterlockedExchange(&g_running, 1);
+    if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "partner_net=listening; port=%u; peer_port=%u\r\n",
+                                   static_cast<unsigned>(g_transport.local_port()), static_cast<unsigned>(transport.peer_port))))
+        Log(line);
+    // Queued events (listening / connecting) are logged by the receive thread.
+}
+
 BOOL CALLBACK StartOnce(PINIT_ONCE, PVOID parameter, PVOID*) noexcept {
     g_config = *static_cast<const Config*>(parameter);
     if (g_config.rate_hz < 1) g_config.rate_hz = 1;
     if (g_config.rate_hz > 60) g_config.rate_hz = 60;
+    if (g_config.directory &&
+        FAILED(StringCchPrintfW(g_status_path, ARRAYSIZE(g_status_path), L"%s\\mgs-coop\\link-status.json", g_config.directory)))
+        g_status_path[0] = 0;
+    if (g_config.link_v2) {
+        g_v2 = true;
+        StartLink();
+        g_config.directory = nullptr;  // the caller's buffer is not kept
+        return TRUE;
+    }
+    g_config.directory = nullptr;
     lab::TransportConfig transport{};
     transport.listen_port = g_config.listen_port;
     transport.peer_port = g_config.peer_port;
@@ -314,16 +900,12 @@ bool SubmitLocal(const partner::Tick& tick, const sync::AnimState& anim) noexcep
     bool sent = false;
     if ((anim.flags & sync::AnimFlag::Valid) && sync::valid_anim(anim)) {
         std::uint8_t frame[sync::transform_anim_frame_size];
-        if (sync::encode_transform_anim_frame(kSession, static_cast<std::uint32_t>(epoch), packet, anim, frame)) {
-            const lab::WireChunk chunk{frame, sizeof(frame)};
-            sent = g_transport.transmit(&chunk, 1, true);
-        }
+        if (sync::encode_transform_anim_frame(kSession, static_cast<std::uint32_t>(epoch), packet, anim, frame))
+            sent = Transmit(frame, sizeof(frame));
     } else {
         std::uint8_t frame[sync::transform_frame_size];
-        if (sync::encode_transform_frame(kSession, static_cast<std::uint32_t>(epoch), packet, frame)) {
-            const lab::WireChunk chunk{frame, sizeof(frame)};
-            sent = g_transport.transmit(&chunk, 1, true);
-        }
+        if (sync::encode_transform_frame(kSession, static_cast<std::uint32_t>(epoch), packet, frame))
+            sent = Transmit(frame, sizeof(frame));
     }
     g_last_frame_us = now_us;
     InterlockedExchange64(&g_last_send_ms, static_cast<LONG64>(now_us / 1000));
@@ -349,10 +931,7 @@ bool SubmitLook(const partner::Look& look) noexcept {
                             g_look_rev};
     std::uint8_t frame[sync::look_frame_size];
     bool sent = false;
-    if (sync::encode_look_frame(kSession, static_cast<std::uint32_t>(epoch), packet, frame)) {
-        const lab::WireChunk chunk{frame, sizeof(frame)};
-        sent = g_transport.transmit(&chunk, 1, true);
-    }
+    if (sync::encode_look_frame(kSession, static_cast<std::uint32_t>(epoch), packet, frame)) sent = Transmit(frame, sizeof(frame));
     g_look_send_ms = now;
     SetLastError(error);
     return sent;
@@ -367,6 +946,8 @@ RemoteLook SampleLook() noexcept {
 
 bool SubmitInput(const partner_input::InputPacket& packet) noexcept {
     if (!g_running) return false;
+    // The sequence keeps counting across link sessions: the peer's receiver,
+    // reset at the new session, accepts any first sequence.
     const LONG epoch = g_epoch;
     if (!epoch) return false;
     const DWORD error = GetLastError();
@@ -375,10 +956,7 @@ bool SubmitInput(const partner_input::InputPacket& packet) noexcept {
     const std::uint32_t seq = g_input_tx_seq + 1;
     std::uint8_t frame[sync::input_frame_size];
     bool sent = false;
-    if (sync::encode_input_frame(kSession, static_cast<std::uint32_t>(epoch), seq, packet, frame)) {
-        const lab::WireChunk chunk{frame, sizeof(frame)};
-        sent = g_transport.transmit(&chunk, 1, true);
-    }
+    if (sync::encode_input_frame(kSession, static_cast<std::uint32_t>(epoch), seq, packet, frame)) sent = Transmit(frame, sizeof(frame));
     if (sent) { g_input_tx_seq = seq; g_input_tx_ms = now; InterlockedIncrement(&g_in_tx); }
     SetLastError(error);
     return sent;
@@ -419,25 +997,17 @@ bool LatestInput(partner_input::Sample& out) noexcept {
 pose::Sample SampleRemote(std::uint32_t delay_ms) noexcept {
     const std::uint64_t now = NowMs();
     AcquireSRWLockShared(&g_lock);
-    const pose::Sample sample = g_ring.SampleAt(now, delay_ms);
+    pose::Sample sample = g_ring.SampleAt(now, delay_ms);
     ReleaseSRWLockShared(&g_lock);
+    // Link v2 freeze: a link that is not connected holds the last pose as lost.
+    if (g_v2 && sample.valid && static_cast<link::LinkState>(g_link_state) != link::LinkState::connected)
+        sample.status = pose::Status::lost;
     return sample;
 }
 
 void ResetRemote() noexcept {
     AcquireSRWLockExclusive(&g_lock);
-    g_ring.Reset();
-    g_have_last = false;
-    g_last_seq = 0;
-    g_last_rx_ms = 0;
-    g_first_logged = false;
-    g_look = RemoteLook{};
-    g_input = partner_input::InputPacket{};
-    g_input_valid = false;
-    g_input_seq = 0;
-    g_input_rx_ms = 0;
-    g_input_first_logged = false;
-    g_edges = partner_input::InputEdges{};
+    ResetReceiveLocked();
     ReleaseSRWLockExclusive(&g_lock);
     g_input_tx_seq = 0;
     g_input_tx_ms = 0;
@@ -453,6 +1023,57 @@ void RecordNativeMicros(std::uint32_t micros) noexcept {
         if (previous == seen) break;
         seen = previous;
     }
+}
+
+const char* LinkStateName(LinkState state) noexcept { return link::LinkStateName(state); }
+
+LinkInfo GetLinkInfo() noexcept {
+    LinkInfo info{};
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        const LONG before = g_info_seq;
+        if (before & 1) { YieldProcessor(); continue; }
+        info.state = static_cast<LinkState>(g_info_state);
+        info.session = static_cast<std::uint32_t>(g_info_session);
+        info.rtt_ms = static_cast<std::uint32_t>(g_info_rtt);
+        info.jitter_ms = static_cast<std::uint32_t>(g_info_jitter);
+        info.interp_ms = static_cast<std::uint32_t>(g_info_interp);
+        info.loss_permille = static_cast<std::uint32_t>(g_info_loss);
+        MemoryBarrier();
+        if (g_info_seq == before) return info;
+    }
+    info.state = static_cast<LinkState>(g_link_state);  // writer busy: the state alone
+    return info;
+}
+
+std::uint32_t EffectiveInterpMs(std::uint32_t configured) noexcept {
+    return g_v2 && g_config.interp_auto ? static_cast<std::uint32_t>(g_applied_interp) : configured;
+}
+
+void PublishPartnerState(bool shown, bool look_loaded, std::uint32_t mission) noexcept {
+    InterlockedExchange(&g_partner_shown, shown ? 1 : 0);
+    InterlockedExchange(&g_partner_look, look_loaded ? 1 : 0);
+    InterlockedExchange(&g_partner_mission, static_cast<LONG>(mission));
+}
+
+link::ReliableResult SendReliable(std::uint8_t channel, const void* bytes, std::size_t size, link::ReliableMode mode) noexcept {
+    if (channel < 1 || channel >= link::kReliableChannels) return link::ReliableResult::bad_channel;
+    if (size > link::kMaxReliableMessage) return link::ReliableResult::too_large;
+    if (!g_v2 || !g_running) return link::ReliableResult::not_connected;
+    AcquireSRWLockExclusive(&g_tx_lock);
+    const link::ReliableResult result = g_session.CanSendData() ? g_rel_tx[channel].Queue(bytes, size, mode)
+                                                                : link::ReliableResult::not_connected;
+    ReleaseSRWLockExclusive(&g_tx_lock);
+    return result;
+}
+
+bool DrainReliable(std::uint8_t channel, std::uint8_t* out, std::size_t capacity, std::size_t& size) noexcept {
+    size = 0;
+    if (channel < 1 || channel >= link::kReliableChannels || !g_v2) return false;
+    AcquireSRWLockExclusive(&g_lock);
+    const bool drained = g_rel_rx[channel].Drain(out, capacity, size, NowMs());
+    if (drained) InterlockedExchange(&g_relack_dirty, 1);
+    ReleaseSRWLockExclusive(&g_lock);
+    return drained;
 }
 
 } // namespace mgscoop::partner_net

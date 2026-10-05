@@ -323,16 +323,38 @@ try {
     # The I6 plan sets the correction explicitly too (an earlier I3 leaves correct=0).
     $i6 = Get-PartnerExperimentPlan -Experiment I6
     Assert-True ((@($i6.Steps | Where-Object { $_.Kind -eq 'trigger' })[0].Value) -match 'correct=3000 runaway=pin') 'I6 trigger: correct=3000 runaway=pin'
-    # The status line reads the effective recon= and the input pin / stance fixes.
-    Assert-True ($playText.Contains('recon=([a-z]+); err_mm=') -and $playText.Contains('input_pin=(\d); fixes=(\d+)')) 'Play-OfflineCoop status parses recon=/input_pin=/fixes='
-    Assert-True ($playText.Contains("'^partner_recon=runaway;.*action=(pin|disarm)'")) 'Play-OfflineCoop: RUNAWAY only for pin/disarm'
+    # The status line reads the effective recon= and the input pin / stance fixes. The
+    # line parser is shared with the two-PC launcher (tools/CoopPlay.psm1).
+    $coopPlayText = [IO.File]::ReadAllText((Join-Path $projectRoot 'tools/CoopPlay.psm1'))
+    Assert-True ($playText.Contains('Update-CoopPartnerDetails -Details $s -Line $line') -and $playText.Contains('Format-CoopPartnerDetails -Details $state[$role] -Role $role')) 'Play-OfflineCoop uses the shared partner-details reader'
+    Assert-True ($coopPlayText.Contains('recon=([a-z]+); err_mm=') -and $coopPlayText.Contains('input_pin=(\d); fixes=(\d+)')) 'partner-details reader parses recon=/input_pin=/fixes='
+    Assert-True ($coopPlayText.Contains("'^partner_recon=runaway;.*action=(pin|disarm)'")) 'partner-details reader: RUNAWAY only for pin/disarm'
     Assert-True ($playText.Contains("`$startMove = if (`$Experimental) { 'hybrid' } elseif (`$InputDrive) { 'input' } elseif (`$ProvenWarp) { 'warp' } else { 'map' }")) 'Play-OfflineCoop starts with the animated partner (dm=map, live pass 2026-10-05) unless -InputDrive/-Experimental/-ProvenWarp'
     Assert-True ($playText.Contains("'I' {") -and $playText.Contains("'W' {") -and $playText.Contains("'P' {") -and $playText.Contains("'D' {")) 'Play-OfflineCoop defines [I], [W], [P] and [D]'
-    Assert-True ($playText.Contains("'partner_reset=n', 'partner_dm=map'") -and $playText.Contains("if (`$experiment.Move -eq 'map') { 'xform' }")) 'Play-OfflineCoop prepares lab.ini for dm=map (apply xform, reset n, dm map) on both copies'
-    Assert-True ($playText.Contains("'^partner_dmmap; phase=([a-z_]+); cur=(\d+|none);'") -and $playText.Contains("'^partner_dmmap=failed'") -and
-        $playText.Contains('function Get-ClipName')) 'Play-OfflineCoop status shows the dm=map clip'
-    Assert-True ($playText.Contains("'^partner_dmmap=(released|abandoned);' -or `$line -match '^partner_stop;'") -and
-        $playText.Contains("'^partner_stage=changed; stage=[0-2];'") -and $playText.Contains("if (`$Matches[1] -eq 'failed') { 'FAILED' } elseif (`$Matches[1] -eq 'idle') { '' }")) 'Play-OfflineCoop clears the clip on stop/release/stage<3 and keeps FAILED through the summaries'
+    Assert-True ($playText.Contains("if (`$experiment.Move -eq 'map') {") -and
+        $playText.Contains("`$partnerSettings = @('partner_stage=3', 'partner_source=net', 'partner_look=net', 'partner_apply=xform', 'partner_anim=off', 'partner_reset=n', 'partner_dm=map')") -and
+        !$playText.Contains('= Get-PlayPartnerDefaults')) 'Play-OfflineCoop passes only the 7 dm=map keys (lab.json "partner" supplies the rest, as before)'
+    Assert-True ($playText.IndexOf("if (`$LanAddress -and !`$Lan) { throw '-LanAddress applies only with -Lan.' }") -ge 0 -and
+        $playText.IndexOf("if (`$LanAddress -and !`$Lan)") -lt $playText.IndexOf("Prepare-LabInstance.ps1')")) 'Play-OfflineCoop refuses -LanAddress without -Lan before preparing anything'
+    $pd = Get-PlayPartnerDefaults
+    Assert-Equal "$($pd['partner_apply'])/$($pd['partner_reset'])/$($pd['partner_dm'])/$($pd['partner_look'])/$($pd['partner_stage'])/$($pd['partner_source'])" 'xform/n/map/net/3/net' 'Get-PlayPartnerDefaults: dm=map (apply xform, reset n, dm map, look net, stage 3, source net)'
+    Assert-True ($coopPlayText.Contains("'^partner_dmmap; phase=([a-z_]+); cur=(\d+|none);'") -and $coopPlayText.Contains("'^partner_dmmap=failed'") -and
+        $coopPlayText.Contains('function Get-CoopClipName')) 'partner-details reader shows the dm=map clip'
+    Assert-True ($coopPlayText.Contains("'^partner_dmmap=(released|abandoned);' -or `$line -match '^partner_stop;'") -and
+        $coopPlayText.Contains("'^partner_stage=changed; stage=[0-2];'") -and $coopPlayText.Contains("if (`$Matches[1] -eq 'failed') { 'FAILED' } elseif (`$Matches[1] -eq 'idle') { '' }")) 'partner-details reader clears the clip on stop/release/stage<3 and keeps FAILED through the summaries'
+    # The reader behaves as Play-OfflineCoop's status line did (fed line by line).
+    $pdState = New-CoopPartnerDetails
+    foreach ($line in @('x allocation_enter; mission=30050', 'partner_cfg=ready; count=2', 'partner_realized=1', 'partner_parts=loaded',
+            'partner_net=stats; tx=9; rx=12; drop=0; status=live; last_age_ms=33', 'partner_look=loaded; R=1; q40=6',
+            "partner_stage=changed; stage=3; apply=xform; anim=off; input=off; dm=map; look=net`r", 'partner_dmmap; phase=playing; cur=10; t=1',
+            'character=allocated; slot=0; vars=0')) { Update-CoopPartnerDetails -Details $pdState -Line $line }
+    Assert-Equal (Format-CoopPartnerDetails -Details $pdState -Role host) 'host: partner visible, link live (33 ms) [plays Snake, partner looks like Quiet, settings xform/off, clip stand walk]' 'shared reader: status line of a dm=map partner'
+    Update-CoopPartnerDetails -Details $pdState -Line 'partner_dmmap; phase=failed; cur=none; t=2'
+    Assert-Equal (Get-CoopClipName $pdState.Dm) 'FAILED (dm=map gave up; [R] re-sends)' 'shared reader: failed clip'
+    Update-CoopPartnerDetails -Details $pdState -Line 'partner_stop; reason=trigger'
+    Assert-Equal $pdState.Dm '' 'shared reader: stop clears the clip'
+    Update-CoopPartnerDetails -Details $pdState -Line 'mission_termination=entered; x=1'
+    Assert-True (!$pdState.Mission -and !$pdState.Ready -and !$pdState.Shown) 'shared reader: mission end resets the partner state'
     Assert-True ($playText.Contains("'partner_input=net', 'partner_input_send=1'") -and $playText.Contains("'partner_recon=track'") -and
         $playText.Contains("'partner_input_correct_mm=3000'") -and $playText.Contains("'partner_recon_runaway=pin'")) 'Play-OfflineCoop prepares lab.ini for the input drive (correction explicit)'
     $ovInput = ConvertFrom-LabPartnerSettingArgs -Items @('partner_apply=input', 'partner_input=net', 'partner_input_send=1', 'partner_input_cam=sandbox',
@@ -437,6 +459,148 @@ try {
     Assert-True ((Get-OfflineProblemsWith 'partner_stage' '7').Contains('Invalid lab.ini partner_stage=7')) 'offline preflight: invalid partner value refused'
     Assert-Equal @(Get-LabOfflineIniProblems -Role host -Lab $h -Expectation $hostExpect).Count 3 'online lab.ini fails the offline preflight (net, partner, ports)'
     Assert-Equal @(Get-LabOfflineIniProblems -Role host -Lab $null -Expectation $hostExpect).Count 0 'a missing lab.ini is reported by the shared checks'
+
+    # ------------------------------------------------------------ two-PC play: lab rehearsal (-Lan, -WanSim) and shared defaults
+    # docs/two-pc-play.md, spec section 8. Without the new switches the texts stay byte-identical.
+    Assert-True (@($ho.Keys | Where-Object { $_ -in @('net_link', 'net_bind', 'net_peer_addr', 'partner_interp', 'net_jitter_ms', 'net_seed', 'mode') }).Count -eq 0) 'default offline lab.ini has no link v2 keys'
+    Assert-True (!$hostOff.Lan -and $hostOff.WanSim -eq 'off') 'default offline settings: no -Lan, no -WanSim'
+    # Get-PlayPartnerDefaults is the frozen literal of Play-OfflineCoop's dm=map keys:
+    # the lab defaults + lab.json "partner" + the dm=map settings it passed before.
+    $mapOverridesBefore = @('partner_stage=3', 'partner_source=net', 'partner_look=net', 'partner_apply=xform', 'partner_anim=off', 'partner_reset=n', 'partner_dm=map')
+    $playDefaults = Get-PlayPartnerDefaults
+    $playDefaultItems = @($playDefaults.Keys | ForEach-Object { "$_=$($playDefaults[$_])" })
+    foreach ($r in 'host', 'guest') {
+        $dir = if ($r -eq 'host') { $config.Paths.hostDir } else { $config.Paths.guestDir }
+        $before = Get-LabInstanceSettings -Role $r -Config $config -GameDirectory $dir -HostSteamId64 $hostId -Offline -PartnerOverrides (ConvertFrom-LabPartnerSettingArgs -Items $mapOverridesBefore -Role $r)
+        $now = Get-LabInstanceSettings -Role $r -Config $config -GameDirectory $dir -HostSteamId64 $hostId -Offline -PartnerOverrides (ConvertFrom-LabPartnerSettingArgs -Items $playDefaultItems -Role $r)
+        Assert-Equal (New-LabIniFromSettings -Settings $now) (New-LabIniFromSettings -Settings $before) "[$r] Play-OfflineCoop dm=map lab.ini is byte-identical with Get-PlayPartnerDefaults"
+        $effective = @($before.Partner.Keys | Where-Object { $_ -notin @('net', 'net_listen_port', 'net_peer_port') } | ForEach-Object { "$_=$($before.Partner[$_])" }) -join ' '
+        Assert-Equal $effective ($playDefaultItems -join ' ') "[$r] Get-PlayPartnerDefaults equals Play-OfflineCoop's effective dm=map keys (order and values)"
+    }
+    # A tuned lab.json "partner" still reaches the default dm=map run (only the 7 keys override it).
+    $tuned = Get-AltConfig { param($c) $c.partner.offset_cm = 150; $c.partner.crash_probe = 0 }
+    $tunedSettings = Get-LabInstanceSettings -Role host -Config $tuned -GameDirectory $tuned.Paths.hostDir -HostSteamId64 $hostId -Offline -PartnerOverrides (ConvertFrom-LabPartnerSettingArgs -Items $mapOverridesBefore -Role host)
+    Assert-Equal "$($tunedSettings.Partner['partner_offset_cm'])/$($tunedSettings.Partner['crash_probe'])/$($tunedSettings.Partner['partner_dm'])" '150/0/map' 'dm=map run keeps lab.json partner.offset_cm and crash_probe'
+    Assert-Equal ([int]$labJson.Ports.play) 47830 'lab.json ports.play'
+    $wanRows = @()
+    foreach ($name in 'good', 'bad', 'awful') {
+        $wp = Get-LabWanSimPreset -WanSim $labJson.WanSim -Name $name
+        $wanRows += @("$name=" + (@($wp.Keys | ForEach-Object { $wp[$_] }) -join '/'))
+    }
+    Assert-Equal ($wanRows -join ' ') 'good=30/5/5/burst/1/0/0 bad=80/25/20/burst/2/5/10 awful=150/60/60/burst/3/10/30' 'lab.json wanSim presets (latency/jitter/loss/model/burst/dup/reorder)'
+    Assert-Throws { Get-LabWanSimPreset -WanSim $labJson.WanSim -Name 'terrible' } 'Unknown -WanSim preset' 'unknown preset refused'
+    Assert-Throws { Get-AltConfig { param($c) $c.wanSim.bad.net_jitter_ms = 1001 } } 'net_jitter_ms' 'wanSim values validated'
+    Assert-Throws { Get-AltConfig { param($c) $c.wanSim.good.PSObject.Properties.Remove('net_burst') } } 'net_burst is missing' 'wanSim presets are complete'
+    Assert-Throws { Get-AltConfig { param($c) $c.ports.play = 47820 } } 'ports.play' 'play port must not be a lab UDP port'
+    $lanIp = '192.168.1.20'
+    $lanHost = Get-LabInstanceSettings -Role host -Config $config -GameDirectory $config.Paths.hostDir -HostSteamId64 $hostId -Offline -Lan -LanAddress $lanIp
+    $lanGuest = Get-LabInstanceSettings -Role guest -Config $config -GameDirectory $config.Paths.guestDir -HostSteamId64 $hostId -Offline -Lan -LanAddress $lanIp
+    $lanHostIni = New-LabIniFromSettings -Settings $lanHost
+    $lanGuestIni = New-LabIniFromSettings -Settings $lanGuest
+    Assert-True ($lanHostIni.Contains("`nnet=1`nnet_bind=any`nnet_listen_port=47820`nnet_peer_port=47821`npartner=1`n")) '-Lan host lab.ini: net_bind=any, 47820/47821'
+    Assert-True ($lanGuestIni.Contains("`nnet=1`nnet_bind=any`nnet_listen_port=47821`nnet_peer_addr=$lanIp`nnet_peer_port=47820`npartner=1`n")) '-Lan guest lab.ini: net_bind=any, 47821, LAN peer address, 47820'
+    $lg = ConvertFrom-IniText $lanGuestIni
+    Assert-Equal "$($lg['loopback'])/$($lg['self_steamid'])/$($lg['mutex_suffix'])" '1/76561202255233008/-guest' '-Lan stays lab mode: fake guest id and mutex suffix kept'
+    Assert-True (!$lanHostIni.Contains('net_peer_addr') -and !$lanHostIni.Contains('mode=')) '-Lan host: no peer address, no mode key'
+    Assert-Throws { Get-LabInstanceSettings -Role host -Config $config -GameDirectory $config.Paths.hostDir -HostSteamId64 $hostId -Lan -LanAddress $lanIp } 'only to the offline' '-Lan needs -Offline'
+    Assert-Throws { Get-LabInstanceSettings -Role guest -Config $config -GameDirectory $config.Paths.guestDir -HostSteamId64 $hostId -Offline -Lan -LanAddress '127.0.0.1' } 'LAN IPv4' '-Lan refuses a loopback address'
+    Assert-Throws { Get-LabInstanceSettings -Role guest -Config $config -GameDirectory $config.Paths.guestDir -HostSteamId64 $hostId -Offline -Lan -LanAddress 'my-pc' } 'LAN IPv4' '-Lan refuses a host name'
+    $wanHost = Get-LabInstanceSettings -Role host -Config $config -GameDirectory $config.Paths.hostDir -HostSteamId64 $hostId -Offline -WanSim bad
+    $wanGuest = Get-LabInstanceSettings -Role guest -Config $config -GameDirectory $config.Paths.guestDir -HostSteamId64 $hostId -Offline -WanSim bad
+    $wh = ConvertFrom-IniText (New-LabIniFromSettings -Settings $wanHost)
+    $wg = ConvertFrom-IniText (New-LabIniFromSettings -Settings $wanGuest)
+    Assert-Equal "$($wh['net_latency_ms'])/$($wh['net_jitter_ms'])/$($wh['net_loss_permille'])/$($wh['net_loss_model'])/$($wh['net_burst'])/$($wh['net_dup_permille'])/$($wh['net_reorder_permille'])/$($wh['net_seed'])/$($wh['partner_interp'])" '80/25/20/burst/2/5/10/1/auto' '-WanSim bad host: the preset, net_seed 1, partner_interp=auto'
+    Assert-Equal "$($wg['net_seed'])/$($wg['partner_interp'])/$($wg['net_latency_ms'])" '2/auto/80' '-WanSim bad guest: net_seed 2'
+    Assert-True (!$wh.Contains('net_bind')) '-WanSim alone keeps the loopback bind'
+    $both = Get-LabInstanceSettings -Role guest -Config $config -GameDirectory $config.Paths.guestDir -HostSteamId64 $hostId -Offline -Lan -LanAddress $lanIp -WanSim good
+    $bg = ConvertFrom-IniText (New-LabIniFromSettings -Settings $both)
+    Assert-Equal "$($bg['net_bind'])/$($bg['net_peer_addr'])/$($bg['net_latency_ms'])/$($bg['net_seed'])" "any/$lanIp/30/2" '-Lan -WanSim together'
+    Assert-Throws { Get-LabInstanceSettings -Role host -Config $config -GameDirectory $config.Paths.hostDir -HostSteamId64 $hostId -Offline -WanSim nope } 'Unknown -WanSim preset' 'unknown -WanSim refused'
+    # Start-Lab -Offline [-Lan] preflight on the -Lan files.
+    $lanHostExpect = Get-LabOfflineExpectation -Role host -Config $config -Lan
+    $lanGuestExpect = Get-LabOfflineExpectation -Role guest -Config $config -Lan
+    Assert-Equal @(Get-LabOfflineIniProblems -Role host -Lab (ConvertFrom-IniText $lanHostIni) -Expectation $lanHostExpect).Count 0 '-Lan preflight accepts the -Lan host lab.ini'
+    Assert-Equal @(Get-LabOfflineIniProblems -Role guest -Lab $lg -Expectation $lanGuestExpect).Count 0 '-Lan preflight accepts the -Lan guest lab.ini'
+    Assert-True ((@(Get-LabOfflineIniProblems -Role guest -Lab $lg -Expectation (Get-LabOfflineExpectation -Role guest -Config $config)) -join ' ').Contains('prepared with -Lan')) 'a -Lan lab.ini needs Start-Lab -Lan'
+    Assert-True ((@(Get-LabOfflineIniProblems -Role guest -Lab $go -Expectation $lanGuestExpect) -join ' ').Contains('net_bind is not any')) 'Start-Lab -Lan refuses a loopback lab.ini'
+    $noPeer = [ordered]@{}; foreach ($k in $lg.Keys) { if ($k -ne 'net_peer_addr') { $noPeer[$k] = $lg[$k] } }
+    Assert-True ((@(Get-LabOfflineIniProblems -Role guest -Lab $noPeer -Expectation $lanGuestExpect) -join ' ').Contains('no net_peer_addr')) 'Start-Lab -Lan: the guest needs net_peer_addr'
+    # The link v2 keys: validators (spec 1.1) and -PartnerSetting rules.
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key net_link -Value legacy)/$(ConvertTo-LabPartnerValue -Key net_bind -Value any)/$(ConvertTo-LabPartnerValue -Key net_bind -Value 10.0.0.5)" 'legacy/any/10.0.0.5' 'net_link and net_bind values'
+    foreach ($bad in 'Loopback', 'localhost', '10.0.0.05', '1.2.3') { Assert-Throws { ConvertTo-LabPartnerValue -Key net_bind -Value $bad } 'loopback|any' "net_bind '$bad' refused" }
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key net_peer_addr -Value 127.0.0.1)/$(ConvertTo-LabPartnerValue -Key net_peer_addr -Value 203.0.113.7)" '127.0.0.1/203.0.113.7' 'net_peer_addr: dotted IPv4 (127/8 allowed in the lab)'
+    foreach ($bad in '0.0.0.0', '255.255.255.255', '224.0.0.1', '239.1.2.3', '203.000.113.7', 'my-pc', '[::1]', '::1', '1.2.3.4:5') {
+        Assert-Throws { ConvertTo-LabPartnerValue -Key net_peer_addr -Value $bad } 'dotted IPv4' "net_peer_addr '$bad' refused"
+    }
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key net_seed -Value 4294967295)/$(ConvertTo-LabPartnerValue -Key net_burst -Value 16)/$(ConvertTo-LabPartnerValue -Key net_reorder_ms -Value 500)" '4294967295/16/500' 'net_seed (u32), net_burst, net_reorder_ms upper bounds'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key net_seed -Value 0 } '1..4294967295' 'net_seed 0 refused'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key net_seed -Value 4294967296 } '1..4294967295' 'net_seed above u32 refused'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key net_burst -Value 17 } '1..16' 'net_burst 17 refused'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key net_loss_model -Value gilbert } 'even|burst' 'net_loss_model values'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_interp_min_ms -Value 19 } '20..500' 'partner_interp_min_ms range'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_lost -Value drop } 'freeze|hide' 'partner_lost values'
+    Assert-Throws { ConvertTo-LabPartnerIni -Values @{ partner_interp_min_ms = 200; partner_interp_max_ms = 100 } } 'at least partner_interp_min_ms' 'interp max below min refused'
+    Assert-Throws { ConvertTo-LabPartnerIni -Values @{ partner_interp_max_ms = 50 } } 'at least partner_interp_min_ms (60)' 'interp max below the default min refused'
+    $ovLegacy = ConvertFrom-LabPartnerSettingArgs -Items @('net_link=legacy', 'partner_interp=auto', 'guest:net_jitter_ms=20') -Role guest
+    Assert-Equal (@($ovLegacy.Keys | ForEach-Object { "$_=$($ovLegacy[$_])" }) -join ' ') 'net_link=legacy partner_interp=auto net_jitter_ms=20' '-PartnerSetting net_link=legacy (the bisect path) and the new keys'
+    Assert-Throws { ConvertFrom-LabPartnerSettingArgs -Items 'mode=play' -Role host } 'allowed: lab' '-PartnerSetting mode=play refused (play is the two-PC launcher''s)'
+    $modePlay = [ordered]@{}; foreach ($k in $ho.Keys) { $modePlay[$k] = $ho[$k] }; $modePlay['mode'] = 'play'
+    Assert-True ((@(Get-LabOfflineIniProblems -Role host -Lab $modePlay -Expectation $hostExpect) -join ' ').Contains('Invalid lab.ini mode=play')) 'Start-Lab -Offline refuses a play-mode lab.ini'
+    Assert-Throws { ConvertFrom-LabPartnerSettingArgs -Items 'net_bind=any' -Role host } 'use Prepare-LabInstance -Lan' '-PartnerSetting cannot change net_bind'
+    Assert-Throws { ConvertFrom-LabPartnerSettingArgs -Items 'net_peer_addr=192.168.1.2' -Role guest } 'use Prepare-LabInstance -Lan' '-PartnerSetting cannot change net_peer_addr'
+    Assert-Throws { ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ net_bind = 'any' }) } 'Prepare-LabInstance -Lan' 'lab.json cannot set net_bind'
+    $legacyIni = ConvertFrom-IniText (New-LabIniFromSettings -Settings (Get-LabInstanceSettings -Role host -Config $config -GameDirectory $config.Paths.hostDir -HostSteamId64 $hostId -Offline -PartnerOverrides $ovLegacy))
+    Assert-Equal @(Get-LabOfflineIniProblems -Role host -Lab $legacyIni -Expectation $hostExpect).Count 0 'Start-Lab -Offline accepts net_link=legacy and the new keys'
+    $badNew = [ordered]@{}; foreach ($k in $ho.Keys) { $badNew[$k] = $ho[$k] }; $badNew['net_link'] = 'v3'
+    Assert-True ((@(Get-LabOfflineIniProblems -Role host -Lab $badNew -Expectation $hostExpect) -join ' ').Contains('Invalid lab.ini net_link=v3')) 'Start-Lab -Offline refuses an invalid new key value'
+    # LAN address detection (pure part) and the 0.0.0.0 port check of Start-Lab -Lan.
+    $configs = @(
+        [pscustomobject]@{ Status = 'Disconnected'; HasGateway = $true; Addresses = @('192.168.9.9') },
+        [pscustomobject]@{ Status = 'Up'; HasGateway = $false; Addresses = @('10.1.1.1') },
+        [pscustomobject]@{ Status = 'Up'; HasGateway = $true; Addresses = @('169.254.3.4', '127.0.0.1', '192.168.1.20', '192.168.1.21') })
+    Assert-Equal (Select-CoopLanAddress -Configurations $configs) '192.168.1.20' 'LAN address: first IPv4 of an Up adapter with a gateway, no link-local/loopback'
+    Assert-True ($null -eq (Select-CoopLanAddress -Configurations @($configs[0], $configs[1]))) 'no LAN address: $null (Prepare then asks for -LanAddress)'
+    $prepText = [IO.File]::ReadAllText((Join-Path $projectRoot 'tools/lab/Prepare-LabInstance.ps1'))
+    Assert-True ($prepText.Contains("'No LAN IPv4 address found; pass -LanAddress.'")) 'Prepare -Lan: the documented error without a LAN address'
+    $udpProbe = $null
+    for ($i = 0; $i -lt 20 -and !$udpProbe; $i++) {
+        $candidate = Get-Random -Minimum 41000 -Maximum 49000
+        try { $udpProbe = [Net.Sockets.UdpClient]::new([Net.IPEndPoint]::new([Net.IPAddress]::Any, $candidate)) } catch { $udpProbe = $null }
+    }
+    try {
+        $probePort = ([Net.IPEndPoint]$udpProbe.Client.LocalEndPoint).Port
+        Assert-True (-not (Test-LocalPortFree -Port $probePort -Protocol Udp -AnyAddress)) 'Test-LocalPortFree -AnyAddress sees a 0.0.0.0 UDP listener'
+    } finally { $udpProbe.Dispose() }
+    $udpFree = 0
+    for ($i = 0; $i -lt 20 -and !$udpFree; $i++) { $candidate = Get-Random -Minimum 41000 -Maximum 49000; if (Test-LocalPortFree -Port $candidate -Protocol Udp -AnyAddress) { $udpFree = $candidate } }
+    Assert-True ($udpFree -ne 0) 'Test-LocalPortFree -AnyAddress finds a free UDP port'
+    # Play-OfflineCoop: the rehearsal switches reach Prepare and Start-Lab; defaults unchanged.
+    Assert-True ($playText.Contains("[ValidateSet('off', 'good', 'bad', 'awful')][string]`$WanSim = 'off'") -and $playText.Contains('[switch]$Lan') -and $playText.Contains('[string]$LanAddress')) 'Play-OfflineCoop: -Lan, -LanAddress, -WanSim (default off)'
+    Assert-True ($playText.Contains("-Offline -PartnerSetting `$partnerSettings @rehearsal") -and $playText.Contains("'Start-Lab.ps1') -Offline -Lan:`$Lan")) 'Play-OfflineCoop passes -Lan/-WanSim to Prepare-LabInstance and -Lan to Start-Lab'
+    Assert-True ($playText.Contains("if (`$Lan) { `$rehearsal['Lan'] = `$true") -and $playText.Contains("if (`$WanSim -ne 'off') { `$rehearsal['WanSim'] = `$WanSim")) 'Play-OfflineCoop: no rehearsal arguments without the switches'
+    $playOk = $null; $playErr = $null
+    $null = [System.Management.Automation.Language.Parser]::ParseFile($playPath, [ref]$playOk, [ref]$playErr)
+    Assert-Equal @($playErr).Count 0 'Play-OfflineCoop still parses'
+    # Native cross-checks of the rehearsal lab.ini files (link v2 parser, docs/two-pc-play.md).
+    $linkKeys = $false
+    if ($IniCheck) {
+        $file = Join-Path $fixture 'link-probe-lab.ini'; [IO.File]::WriteAllText($file, $hostOffIni)
+        $linkKeys = (Invoke-IniCheck lab $file)['link_keys'] -eq '1'
+    }
+    if ($linkKeys) {
+        $wanBoth = New-LabIniFromSettings -Settings (Get-LabInstanceSettings -Role host -Config $config -GameDirectory $config.Paths.hostDir -HostSteamId64 $hostId -Offline -Lan -LanAddress $lanIp -WanSim awful)
+        foreach ($case in @(@('lan-host', $lanHostIni, 'host'), @('lan-guest', $lanGuestIni, 'guest'), @('wan-host', $wanBoth, 'host'), @('offline-host', $hostOffIni, 'host'))) {
+            $file = Join-Path $fixture "$($case[0])-lab.ini"; [IO.File]::WriteAllText($file, $case[1])
+            $n = Invoke-IniCheck lab $file
+            Assert-Equal "$($n['present'])|$($n['mode'])|$($n['role'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" "1|lab|$($case[2])|0x0|0/0" "native: $($case[0]) lab.ini clean"
+        }
+        $n = Invoke-IniCheck lab (Join-Path $fixture 'lan-guest-lab.ini')
+        Assert-Equal "$($n['net'])|$($n['net_bind'])|$($n['net_listen_port'])|$($n['net_peer_addr'])|$($n['net_peer_port'])|$($n['net_link'])" "1|any|47821|$lanIp|47820|v2" 'native: -Lan guest net keys'
+        $n = Invoke-IniCheck lab (Join-Path $fixture 'wan-host-lab.ini')
+        Assert-Equal "$($n['net_latency_ms'])|$($n['net_jitter_ms'])|$($n['net_loss_permille'])|$($n['net_loss_model'])|$($n['net_burst'])|$($n['net_dup_permille'])|$($n['net_reorder_permille'])|$($n['net_seed'])|$($n['partner_interp'])" '150|60|60|burst|3|10|30|1|auto' 'native: -WanSim awful keys'
+        $n = Invoke-IniCheck lab (Join-Path $fixture 'offline-host-lab.ini')
+        Assert-Equal "$($n['net_bind'])|$($n['net_link'])|$($n['partner_interp'])|$($n['net_peer_addr'])" 'loopback|v2|fixed|127.0.0.1' 'native: the default offline lab.ini keeps the loopback defaults'
+    } else { Write-Output 'link_keys missing: native link cross-checks skipped' }
 
     # Send-LabInput key specs.
     $scanTable = Get-LabScanCodeTable
@@ -1689,7 +1853,8 @@ Start-Sleep -Milliseconds 500
             $candidate = Get-Random -Minimum 20000 -Maximum 40000
             if ((Test-LocalPortFree -Port $candidate -Protocol Tcp) -and (Test-LocalPortFree -Port ($candidate + 1) -Protocol Udp) -and
                 (Test-LocalPortFree -Port ($candidate + 2) -Protocol Udp) -and (Test-LocalPortFree -Port ($candidate + 3) -Protocol Udp) -and
-                (Test-LocalPortFree -Port ($candidate + 4) -Protocol Udp) -and (Test-LocalPortFree -Port ($candidate + 5) -Protocol Tcp)) { $base = $candidate }
+                (Test-LocalPortFree -Port ($candidate + 4) -Protocol Udp) -and (Test-LocalPortFree -Port ($candidate + 5) -Protocol Tcp) -and
+                (Test-LocalPortFree -Port ($candidate + 3) -Protocol Udp -AnyAddress) -and (Test-LocalPortFree -Port ($candidate + 4) -Protocol Udp -AnyAddress)) { $base = $candidate }
         }
         Assert-True ($base -ne 0) 'free fixture ports'
         $dryJson = Get-Content -LiteralPath (Join-Path $projectRoot 'tools/lab/lab.json') -Raw | ConvertFrom-Json
@@ -1870,9 +2035,40 @@ Start-Sleep -Milliseconds 500
                 $out = (& $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Start-Lab.ps1') -ConfigPath $dryConfig -Offline 2>&1 | Out-String)
                 Assert-True ($LASTEXITCODE -ne 0 -and $out.Contains("TCP port $($base + 5)") -and (Test-DryProcessesGone)) 'Start-Lab -Offline refuses a listener on the master port; nothing started'
             } finally { $listener.Stop() }
+            # -Lan rehearsal (docs/two-pc-play.md): net_bind=any, the guest targets the LAN
+            # address, both copies share a random link secret; Start-Lab needs -Lan for it.
+            $out = & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig -Offline -Lan -LanAddress 192.0.2.10 -WanSim good 2>&1
+            Assert-Equal $LASTEXITCODE 0 ('Prepare -Offline -Lan -WanSim good succeeds: ' + ($out -join ' | '))
+            $hostSecret = [IO.File]::ReadAllBytes($hp.LinkSecret)
+            $guestSecret = [IO.File]::ReadAllBytes($gp.LinkSecret)
+            Assert-True ((Get-CoopSecretFileStatus $hostSecret) -eq 'ok' -and [Convert]::ToBase64String($hostSecret) -ceq [Convert]::ToBase64String($guestSecret) -and $hostSecret.Length -eq 22) 'Prepare -Lan: the same random link secret (20 characters + CRLF) in both copies'
+            Assert-True ([Text.Encoding]::ASCII.GetString($hostSecret, 0, 20) -cne (Get-CoopLabSecret)) 'Prepare -Lan: not the public lab secret'
+            Assert-True (!($out -join ' ').Contains([Text.Encoding]::ASCII.GetString($hostSecret, 0, 20))) 'Prepare -Lan never prints the secret'
+            $hl = ConvertFrom-IniText ([IO.File]::ReadAllText($hp.LabIni))
+            $gl = ConvertFrom-IniText ([IO.File]::ReadAllText($gp.LabIni))
+            Assert-Equal "$($hl['net_bind'])/$($gl['net_bind'])/$($gl['net_peer_addr'])/$($hl['net_listen_port'])/$($gl['net_peer_port'])" "any/any/192.0.2.10/$($base + 3)/$($base + 3)" 'Prepare -Lan lab.ini: bind any, guest targets the LAN address on the host port'
+            Assert-Equal "$($hl['net_latency_ms'])/$($hl['net_seed'])/$($gl['net_seed'])/$($gl['partner_interp'])" '30/1/2/auto' 'Prepare -WanSim good: preset, seeds 1/2, adaptive interpolation'
+            $out = (& $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Start-Lab.ps1') -ConfigPath $dryConfig -Offline 2>&1 | Out-String)
+            Assert-True ($LASTEXITCODE -ne 0 -and $out.Contains('prepared with -Lan') -and (Test-DryProcessesGone)) 'Start-Lab -Offline without -Lan refuses -Lan folders'
+            $start = Invoke-DryStart @('-Offline', '-Lan')
+            Assert-Equal $start.Code 0 ('Start-Lab -Offline -Lan succeeds: ' + $start.Text)
+            Assert-True ($start.Run.lan -and $start.Run.offline -and "$($start.Run.instances.guest.partner.net_peer_addr)" -eq '192.0.2.10') 'run.json: lan=true and the guest peer address'
+            $out = & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Stop-Lab.ps1') -ConfigPath $dryConfig -TimeoutSec 10 2>&1
+            Assert-Equal $LASTEXITCODE 0 ('Stop-Lab after the -Lan run: ' + ($out -join ' | '))
+            [IO.File]::WriteAllText($gp.LinkSecret, "SHORT`r`n")
+            $out = (& $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Start-Lab.ps1') -ConfigPath $dryConfig -Offline -Lan 2>&1 | Out-String)
+            Assert-True ($LASTEXITCODE -ne 0 -and $out.Contains('link-secret.txt is bad_length') -and (Test-DryProcessesGone)) 'Start-Lab -Lan refuses a damaged link secret'
+            $out = & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig -Offline 2>&1
+            Assert-Equal $LASTEXITCODE 0 ('Prepare -Offline after -Lan: ' + ($out -join ' | '))
+            Assert-True (!(Test-Path -LiteralPath $hp.LinkSecret) -and !(Test-Path -LiteralPath $gp.LinkSecret)) 'Prepare without -Lan deletes link-secret.txt in both copies'
+            Assert-True (!(ConvertFrom-IniText ([IO.File]::ReadAllText($gp.LabIni))).Contains('net_bind')) 'Prepare without -Lan: the loopback lab.ini again'
+            $out = & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig -Offline -Lan -LanAddress 192.0.2.10 2>&1
+            Assert-True ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $hp.LinkSecret) -and (Test-Path -LiteralPath $gp.LinkSecret)) ('Prepare -Lan again (for the -Disable check): exit ' + $LASTEXITCODE + ': ' + ($out -join ' | '))
+
             # -Disable after the offline mode resets offline-v1 (it skips session creation) to the online lab roles.
             $out = & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig -Disable 2>&1
             Assert-Equal $LASTEXITCODE 0 ('Disable after the offline mode: ' + ($out -join ' | '))
+            Assert-True (!(Test-Path -LiteralPath $hp.LinkSecret) -and !(Test-Path -LiteralPath $gp.LinkSecret)) '-Disable deletes the -Lan link secrets'
             Assert-Equal "$([IO.File]::ReadAllText($hp.Marker))|$([IO.File]::ReadAllText($gp.Marker))" "host-v3`n|client-v1`n" '-Disable resets the offline-v1 markers to host-v3 / client-v1'
             Assert-True (($out -join ' ').Contains('offline-v1 reset to host-v3') -and !(Test-Path -LiteralPath $hp.LabIni) -and [IO.File]::ReadAllText($hp.CoopIni) -ceq $userCoop) '-Disable after offline: lab files renamed, user coop.ini restored, reset reported'
             $out = & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig 2>&1

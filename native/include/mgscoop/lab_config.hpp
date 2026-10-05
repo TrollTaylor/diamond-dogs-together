@@ -1,8 +1,10 @@
 #pragma once
 // Plain-text configuration shared by the loader components.
 //
-// <exeDir>/mgs-coop/lab.ini  - development harness only (single-PC host+guest).
-//                              Ignored unless it exists and contains enabled=1.
+// <exeDir>/mgs-coop/lab.ini  - development harness (single-PC host+guest), or
+//                              mode=play for two-PC play (Play-Coop writes it;
+//                              docs/link-protocol.md). Ignored unless it exists
+//                              and contains enabled=1.
 // <exeDir>/mgs-coop/coop.ini - player-facing options (master server, character).
 //
 // Format: one key=value per line, '#' or ';' comments, surrounding blanks
@@ -111,6 +113,35 @@ inline constexpr std::uint8_t kPartnerWordZero = 0, kPartnerWordPress = 1, kPart
 // guest 47821/47820 (never the loopback emulator's 47810/47811).
 constexpr std::uint16_t kNetHostPort = 47820;
 constexpr std::uint16_t kNetGuestPort = 47821;
+// Two-PC play: the host's UDP port (the guest binds an ephemeral port).
+inline constexpr std::uint16_t kNetPlayPort = 47830;
+
+// lab.ini mode: lab (the one-PC harness, default) or play (two PCs, real
+// identity). Play refuses every lab identity hack and impairment key; each
+// refused key is forced off, sets its bit in play_refused and counts one
+// invalid value.
+enum class LabMode : std::uint8_t { lab, play };
+// Partner link wire: v2 (authenticated link protocol, default) or legacy (the
+// raw lab frames; lab only, the bisect escape hatch).
+enum class NetLink : std::uint8_t { v2, legacy };
+enum class PartnerInterp : std::uint8_t { fixed, auto_ };
+enum class PartnerLost : std::uint8_t { freeze, hide };
+enum class NetLossModel : std::uint8_t { even, burst };
+inline constexpr std::uint32_t kPlayRefusedLoopback = 0x01;
+inline constexpr std::uint32_t kPlayRefusedSelfSteamId = 0x02;
+inline constexpr std::uint32_t kPlayRefusedPeerSteamId = 0x04;
+inline constexpr std::uint32_t kPlayRefusedSelfName = 0x08;
+inline constexpr std::uint32_t kPlayRefusedMutexSuffix = 0x10;
+inline constexpr std::uint32_t kPlayRefusedXInput = 0x20;
+inline constexpr std::uint32_t kPlayRefusedJoinTrigger = 0x40;
+inline constexpr std::uint32_t kPlayRefusedAutoJoin = 0x80;
+inline constexpr std::uint32_t kPlayRefusedHostPeerAddr = 0x100;
+inline constexpr std::uint32_t kPlayRefusedBindLoopback = 0x200;
+inline constexpr std::uint32_t kPlayRefusedLegacyLink = 0x400;
+inline constexpr std::uint32_t kPlayRefusedPeerAddr = 0x800;
+inline constexpr std::uint32_t kPlayRefusedNoSaveDir = 0x1000;
+inline constexpr std::uint32_t kPlayRefusedGuestNoPeer = 0x2000;
+inline constexpr std::uint32_t kPlayRefusedImpairment = 0x4000;
 
 struct LabConfig {
     bool present = false;            // file read and enabled=1
@@ -187,6 +218,20 @@ struct LabConfig {
     PartnerRunaway partner_recon_runaway = PartnerRunaway::pin;
     PartnerWrap partner_input_wrap = PartnerWrap::off;
     bool crash_probe = true;
+    // Two-PC link (docs/link-protocol.md). `mode` is parsed independently of
+    // `present`; the play save gate is lab::SavesRedirected() in the observer.
+    LabMode mode = LabMode::lab;
+    std::uint32_t play_refused = 0;                 // kPlayRefused* bits
+    NetLink net_link = NetLink::v2;
+    bool net_bind_loopback = true;                  // net_bind=loopback (lab default)
+    std::uint32_t net_bind_address = 0x7F000001;    // host byte order; 0 = any
+    std::uint32_t net_peer_address = 0x7F000001;    // host byte order (net_peer_addr, dotted IPv4)
+    std::uint32_t net_jitter_ms = 0, net_dup_permille = 0, net_reorder_permille = 0, net_reorder_ms = 40;
+    NetLossModel net_loss_model = NetLossModel::even;
+    std::uint32_t net_burst = 2, net_seed = 1;
+    PartnerInterp partner_interp = PartnerInterp::fixed;
+    std::uint32_t partner_interp_min_ms = 60, partner_interp_max_ms = 350;
+    PartnerLost partner_lost = PartnerLost::freeze;
     unsigned unknown_keys = 0;
     unsigned invalid_values = 0;
 };
@@ -208,6 +253,15 @@ const char* PartnerReconName(PartnerRecon value) noexcept;
 const char* PartnerSlotName(PartnerSlot value) noexcept;
 const char* PartnerRunawayName(PartnerRunaway value) noexcept;
 const char* PartnerWrapName(PartnerWrap value) noexcept;
+const char* LabModeName(LabMode value) noexcept;
+const char* NetLinkName(NetLink value) noexcept;
+const char* PartnerInterpName(PartnerInterp value) noexcept;
+const char* PartnerLostName(PartnerLost value) noexcept;
+const char* NetLossModelName(NetLossModel value) noexcept;
+// Dotted IPv4 "a.b.c.d": four decimal octets 0..255 without leading zeros
+// (host byte order out). Rejects 0.0.0.0, 255.255.255.255 and 224.0.0.0/4,
+// and 127/8 unless allow_loopback. No names, no IPv6.
+bool ParseIpv4(const char* text, std::size_t size, bool allow_loopback, std::uint32_t& out) noexcept;
 bool ParsePartnerRecon(const char* text, std::size_t size, PartnerRecon& out) noexcept;
 bool ParsePartnerSlot(const char* text, std::size_t size, PartnerSlot& out) noexcept;
 bool ParsePartnerRunaway(const char* text, std::size_t size, PartnerRunaway& out) noexcept;

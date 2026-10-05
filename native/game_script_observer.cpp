@@ -34,6 +34,7 @@
 #include "mgscoop/partner_input_hook.hpp"
 #include "mgscoop/partner_dm_patch.hpp"
 #include "mgscoop/crash_probe.hpp"
+#include "mgscoop/early_patches.hpp"
 #include <cstdarg>
 
 namespace {
@@ -514,6 +515,10 @@ void PartnerDrainInputStats(void*, pd::InputStats& out) noexcept {
     out.wrap = s.wrap;
 }
 bool PartnerInputHookLive(void*) noexcept { return mgscoop::partner_input_hook::PatchLive(game_base); }
+// partner_interp=auto: the link's adaptive delay (the configured one otherwise).
+std::uint32_t PartnerInterpMs(void*, std::uint32_t configured) noexcept {
+    return mgscoop::partner_net::EffectiveInterpMs(configured);
+}
 // --- Round 3 direct motion wiring.
 const char* PartnerDmTargets(void*, const pp::State& state, pp::DmTargets& out) noexcept {
     return pp::ResolveDm(partner_addresses, state, out);
@@ -568,7 +573,9 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerFormatPsProbe, PartnerInputTargets, PartnerFormatInputCensus, PartnerReadPad, PartnerSubmitInput, PartnerNetRunning,
     PartnerInstallInputHook, PartnerPublishArm, PartnerDrainInputStats, PartnerInputHookLive, PartnerDmTargets, PartnerReadDm,
     PartnerFormatDmCensus, PartnerFormatDmProbe, PartnerDmPatch, PartnerDmClearPending, PartnerResetInputFault,
-    PartnerApplyPosition, PartnerReadVelocity, PartnerLatestInput, PartnerInstallWrap};
+    PartnerApplyPosition, PartnerReadVelocity, PartnerLatestInput, PartnerInstallWrap, PartnerInterpMs};
+// The mission of the current partner epoch (link-status.json "mission").
+std::uint32_t partner_mission = 0;
 // Crash-probe context flags: bit0 input window armed, bit1 DM patch applied.
 std::uint32_t PartnerCtxFlags() noexcept {
     return (partner_driver.mission.input_armed ? 1u : 0u) | (partner_driver.mission.dm_patched ? 2u : 0u);
@@ -579,6 +586,8 @@ void PartnerMissionStart(std::uint32_t mission) noexcept {
     pd::MissionStart(partner_driver, partner_hooks);
     mgscoop::partner_net::ResetRemote();
     mgscoop::partner_net::SetEpoch(mission);
+    partner_mission = mission;
+    mgscoop::partner_net::PublishPartnerState(false, false, mission);
     mgscoop::crash_probe::SetContext(partner_driver.settings.stage, 0, PartnerCtxFlags());
 }
 void PartnerMissionEnd() noexcept {
@@ -586,6 +595,8 @@ void PartnerMissionEnd() noexcept {
     pd::MissionEnd(partner_driver, partner_hooks);
     mgscoop::partner_net::ResetRemote();
     mgscoop::partner_net::SetEpoch(0);
+    partner_mission = 0;
+    mgscoop::partner_net::PublishPartnerState(false, false, 0);
     mgscoop::crash_probe::SetContext(partner_driver.settings.stage, 0, PartnerCtxFlags());
 }
 
@@ -636,6 +647,7 @@ const char* HandlePartnerTick(const char* buffer, std::size_t size) noexcept {
         return nullptr;
     if (!partner::FormatReply(reply, partner_reply, sizeof(partner_reply))) return nullptr;
     mgscoop::crash_probe::SetContext(partner_driver.settings.stage, partner_driver.mission.realized ? 1u : 0u, PartnerCtxFlags());
+    mgscoop::partner_net::PublishPartnerState(partner_driver.mission.realized, partner_driver.mission.parts_loaded, partner_mission);
     const std::uint64_t ended_us = QpcMicros();
     mgscoop::partner_net::RecordNativeMicros(Clamp32(ended_us >= started_us ? ended_us - started_us : 0));
     return partner_reply;
@@ -1302,6 +1314,7 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
     DWORD read = 0;
     bool enabled = false;
     bool archive_enabled = false;
+    bool play_saves_refused = false, offline_saves_warn = false;
     if (file != INVALID_HANDLE_VALUE) {
         if (ReadFile(file, mode, sizeof(mode), &read, nullptr)) {
             heap_test_enabled = read == 8 && std::memcmp(mode, "heap-v1\n", 8) == 0;
@@ -1318,6 +1331,29 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
             enabled = bootstrap_enabled || (read == 11 && std::memcmp(mode, "observe-v1\n", 11) == 0);
         }
         CloseHandle(file);
+    }
+    // Save gate (docs/link-protocol.md): two-PC play runs co-op only on the
+    // redirected save copy. If DllMain could not redirect the saves, the
+    // offline-v1 marker is pass-through: no splice, archive, partner,
+    // character receipts or link; the game is plain offline play. The lab
+    // only warns (its defaults are unchanged).
+    if (offline_enabled && !lab::SavesRedirected()) {
+        if (mgscoop::GetLabConfig().mode == mgscoop::LabMode::play) {
+            offline_enabled = host_enabled = allocation_enabled = archive_enabled = bootstrap_enabled = false;
+            play_saves_refused = true;
+        } else {
+            offline_saves_warn = true;
+        }
+    }
+    if (play_saves_refused && script_log == INVALID_HANDLE_VALUE) {
+        // Only the refusal is logged; nothing is installed.
+        script_log = CreateFileW(log_path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (script_log != INVALID_HANDLE_VALUE) {
+            LogFormat("\r\nplay=refused; reason=saves_not_redirected; refused=0x%X\r\n", mgscoop::GetLabConfig().play_refused);
+            Log("mode=pass_through; gameplay=disabled\r\n");
+        }
+        SetLastError(incoming_error); return;
     }
     if (enabled && script_log == INVALID_HANDLE_VALUE) {
         script_log = CreateFileW(log_path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -1379,6 +1415,10 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                 char offline_line[128]{};
                 if (SUCCEEDED(StringCchPrintfA(offline_line, ARRAYSIZE(offline_line),
                     "mode=offline_v1; sessions=0; s_is_online=never; partner=%u\r\n", partner_on ? 1u : 0u))) Log(offline_line);
+                if (labc.mode == mgscoop::LabMode::play)
+                    LogFormat("play=active; role=%s; partner=%u; refused=0x%X\r\n", labc.role == mgscoop::LabRole::host ? "host" : "guest",
+                              partner_on ? 1u : 0u, labc.play_refused);
+                if (offline_saves_warn) Log("offline_v1=warn; reason=saves_not_redirected\r\n");
                 if (partner_on) {
                     pd::Configure(partner_driver, labc);
                     partner_addresses = pp::AddressesFor(base);
@@ -1396,10 +1436,31 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         mgscoop::PartnerLookName(partner_driver.settings.look), partner_addresses.t_vtable ? 1u : 0u);
                     if (labc.crash_probe) mgscoop::crash_probe::Install(base, span, Log);
                     if (labc.net) {
-                        const mgscoop::partner_net::Config net{labc.net_listen_port, labc.net_peer_port, labc.partner_rate_hz,
-                                                               labc.net_latency_ms, labc.net_loss_permille, Log};
+                        mgscoop::partner_net::Config net{labc.net_listen_port, labc.net_peer_port, labc.partner_rate_hz,
+                                                         labc.net_latency_ms, labc.net_loss_permille, Log};
+                        net.link_v2 = labc.net_link == mgscoop::NetLink::v2;
+                        net.play = labc.mode == mgscoop::LabMode::play;
+                        net.host = labc.role == mgscoop::LabRole::host;
+                        net.bind_loopback = labc.net_bind_loopback;
+                        net.bind_address = labc.net_bind_address;
+                        net.peer_address = labc.net_peer_address;
+                        net.impair.jitter_ms = labc.net_jitter_ms;
+                        net.impair.dup_permille = labc.net_dup_permille;
+                        net.impair.reorder_permille = labc.net_reorder_permille;
+                        net.impair.reorder_ms = labc.net_reorder_ms;
+                        net.impair.burst = labc.net_burst;
+                        net.impair.seed = labc.net_seed;
+                        net.impair.burst_model = labc.net_loss_model == mgscoop::NetLossModel::burst;
+                        net.interp_auto = labc.partner_interp == mgscoop::PartnerInterp::auto_;
+                        net.interp_ms = labc.partner_interp_ms;
+                        net.interp_min_ms = labc.partner_interp_min_ms;
+                        net.interp_max_ms = labc.partner_interp_max_ms;
+                        net.saves_redirected = lab::SavesRedirected();
+                        net.directory = directory;
+                        net.build = lab::ProbeVersion();
                         mgscoop::partner_net::Start(net);
                     } else {
+                        if (labc.play_refused & mgscoop::kPlayRefusedGuestNoPeer) Log("link=disabled; reason=no_peer_addr\r\n");
                         Log("partner_net=disabled; reason=transport_bad_config\r\n");
                     }
                 }

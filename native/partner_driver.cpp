@@ -1742,7 +1742,8 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     partner_dmmap::Observation dmobs{};
     dmobs.flag_move = partner_dmmap::kMoveUnknown;
     if (set.source == PartnerSource::net) {
-        const pose::Sample sample = h.sample_remote ? h.sample_remote(h.context, lab.partner_interp_ms) : pose::Sample{};
+        const std::uint32_t delay = h.interp_ms ? h.interp_ms(h.context, lab.partner_interp_ms) : lab.partner_interp_ms;
+        const pose::Sample sample = h.sample_remote ? h.sample_remote(h.context, delay) : pose::Sample{};
         sample_status = sample.status;
         status = sample.status == pose::Status::live ? partner::Status::live
                : sample.status == pose::Status::stale ? partner::Status::stale : partner::Status::lost;
@@ -1785,9 +1786,28 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     }
     if (pose_valid) partner_dmmap::SpeedPush(m.dmmap_speed, now, pose.x_mm, pose.z_mm);
     dmobs.speed_ok = set.source != PartnerSource::fixed && partner_dmmap::SpeedMmps(m.dmmap_speed, dmobs.speed_mmps);
+    // partner_lost=hide (lab-tested only; freeze, the default, holds the pose
+    // with dm speed 0 and stays realized): after kLostHideMs of a lost net
+    // sample the realize bits are cleared; the next live sample re-realizes.
+    if (set.source == PartnerSource::net && lab.partner_lost == PartnerLost::hide) {
+        if (sample_status == pose::Status::live) {
+            m.lost_since_ms = 0;
+            if (m.lost_hidden) {
+                m.lost_hidden = false;
+                Emit(h, "partner_lost=show\r\n");
+            }
+        } else if (sample_status == pose::Status::lost) {
+            if (!m.lost_since_ms) m.lost_since_ms = now;
+            if (!m.lost_hidden && m.bits_set && now - m.lost_since_ms >= kLostHideMs &&
+                ClearBits(d, h, "lost_hide", terminating)) {
+                m.lost_hidden = true;
+                EmitFormat(h, "partner_lost=hide; after_ms=%u\r\n", Clamp32(now - m.lost_since_ms));
+            }
+        }
+    }
     // Realize bits (stage 3): from the tick after the first applied pose, so
     // that S+0x20[1] is already in the area; re-ORed while lost.
-    if (set.stage >= 3 && m.pose_applied) {
+    if (set.stage >= 3 && m.pose_applied && !m.lost_hidden) {
         const bool lost = m.bits_set && (st.q194 & 2u) == 0;
         if (lost && m.bits_lost_logs < kCappedLogs) {
             ++m.bits_lost_logs;

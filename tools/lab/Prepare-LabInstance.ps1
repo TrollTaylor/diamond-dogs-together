@@ -42,6 +42,17 @@ to host-v3 / client-v1 and the fuse URL. -Disable also resets an offline-v1
 marker (which no normal play uses: it skips session creation) to the folder's
 online lab role, host-v3 / client-v1; other markers stay as they are.
 
+-Lan (with -Offline) is the one-PC LAN rehearsal of the two-PC play mode
+(docs/two-pc-play.md): both lab.ini files get net_bind=any, the guest's
+net_peer_addr is this PC's LAN IPv4 (-LanAddress, default: the first IPv4 of
+an Up adapter with a default gateway) and a fresh random link secret is
+written to mgs-coop\link-secret.txt in both folders (a non-loopback bind
+needs it). Without -Lan, and with -Disable, link-secret.txt is deleted.
+-WanSim good|bad|awful (with -Offline) adds the lab.json wanSim impairment
+preset (one-way per instance), net_seed (host 1, guest 2) and
+partner_interp=auto. The firewall may ask about mgsvtpp.exe for -Lan; these
+scripts never change firewall settings.
+
 .EXAMPLE
 pwsh -File tools/lab/Prepare-LabInstance.ps1 -WhatIf
 pwsh -File tools/lab/Prepare-LabInstance.ps1
@@ -49,6 +60,7 @@ pwsh -File tools/lab/Prepare-LabInstance.ps1 -Role guest -Reseed
 pwsh -File tools/lab/Prepare-LabInstance.ps1 -Offline
 pwsh -File tools/lab/Prepare-LabInstance.ps1 -Offline -PartnerSetting host:partner_force_exists=1,partner_offset_cm=100
 pwsh -File tools/lab/Prepare-LabInstance.ps1 -Offline -Character default
+pwsh -File tools/lab/Prepare-LabInstance.ps1 -Offline -Lan -WanSim bad
 pwsh -File tools/lab/Prepare-LabInstance.ps1 -Disable
 #>
 [CmdletBinding(SupportsShouldProcess)]
@@ -74,7 +86,13 @@ param(
     # Offline only: lab.ini partner key overrides, 'key=value' or 'host:key=value' / 'guest:key=value'.
     [string[]]$PartnerSetting = @(),
     # Offline only: coop.ini character override, 'name' or 'host:name' / 'guest:name'.
-    [string[]]$Character = @()
+    [string[]]$Character = @(),
+    # Offline only: one-PC LAN rehearsal (net_bind=any, guest targets the LAN IPv4, random link secret).
+    [switch]$Lan,
+    # -Lan: this PC's LAN IPv4 (default: detected).
+    [string]$LanAddress,
+    # Offline only: lab.json wanSim preset (off, good, bad, awful).
+    [string]$WanSim = 'off'
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -92,6 +110,8 @@ if ($dirs.host.Equals($dirs.guest, [StringComparison]::OrdinalIgnoreCase)) { thr
 if (@($PartnerSetting | Where-Object { $_ }).Count -and !$Offline) { throw '-PartnerSetting applies only with -Offline.' }
 if (@($Character | Where-Object { $_ }).Count -and !$Offline) { throw '-Character applies only with -Offline (the fuse lab uses lab.json characters).' }
 if ($Offline -and $Disable) { throw '-Offline and -Disable cannot be combined (-Disable switches either mode off).' }
+if (($Lan -or $LanAddress -or $WanSim -cne 'off') -and !$Offline) { throw '-Lan, -LanAddress and -WanSim apply only with -Offline.' }
+if ($LanAddress -and !$Lan) { throw '-LanAddress applies only with -Lan.' }
 
 # ---------------------------------------------------------------- -Disable
 if ($Disable) {
@@ -115,6 +135,11 @@ if ($Disable) {
                 if (Confirm-LabAction $source "Restore as $file") { Move-Item -LiteralPath $source -Destination $file; Write-Output "[$r] restored your previous $leaf (from $newest)" }
             }
         }
+        # The -Lan link secret goes with the lab configuration.
+        if (Test-Path -LiteralPath $p.LinkSecret -PathType Leaf) {
+            Assert-NoReparsePoint -Path $p.LinkSecret -StopAt $p.Game
+            if (Confirm-LabAction $p.LinkSecret 'Delete the -Lan link secret') { Remove-Item -LiteralPath $p.LinkSecret -Force; Write-Output "[$r] deleted link-secret.txt" }
+        }
         # offline-v1 is a lab-only marker that skips session creation: a normal
         # start from this folder could never host or join with it.
         $current = if (Test-Path -LiteralPath $p.Marker -PathType Leaf) { [IO.File]::ReadAllText($p.Marker) } else { '' }
@@ -130,7 +155,7 @@ if ($Disable) {
             Write-Warning "[$r] the role marker is host-v1 (the offline lab fallback marker, if lab.json offline.marker selected it); left unchanged."
         }
     }
-    Write-Output 'Lab configuration disabled (lab.ini and coop.ini renamed, your previous files restored, offline-v1 markers reset). The loaders, other markers and lab save copies were left in place.'
+    Write-Output 'Lab configuration disabled (lab.ini and coop.ini renamed, your previous files restored, link secrets deleted, offline-v1 markers reset). The loaders, other markers and lab save copies were left in place.'
     return
 }
 
@@ -148,6 +173,24 @@ if ($previousHostId -and $previousHostId -cne $identity.SteamId64) {
 $loaderPath = if ($Loader) { [IO.Path]::GetFullPath($Loader) } else { $config.Paths.loader }
 $archivePath = if ($RuntimeArchive) { [IO.Path]::GetFullPath($RuntimeArchive) } else { $config.Paths.runtimeArchive }
 $expected = @{ exe = [string]$config.Hashes.exe; steam = [string]$config.Hashes.steamApi; archive = [string]$config.Hashes.runtimeArchive }
+$linkSecret = $null
+if ($Lan) {
+    if (!$LanAddress) {
+        $LanAddress = Select-CoopLanAddress -Configurations @(Get-CoopLocalConfigurations)
+        if (!$LanAddress) { throw 'No LAN IPv4 address found; pass -LanAddress.' }
+    }
+    if (!(Test-CoopPlayPeerAddress $LanAddress)) { throw "-LanAddress must be a dotted IPv4 address of this PC (not $LanAddress)." }
+    Write-Output "LAN rehearsal: the guest targets $LanAddress (net_bind=any on both). Windows Firewall may ask about mgsvtpp.exe; allow it, or the copies cannot reach each other. These scripts change no firewall settings."
+    if ($roles.Count -eq 2) { $linkSecret = New-CoopSecret }
+    else {
+        # One role only: keep the other copy's secret, both must use the same one.
+        $other = if ($roles[0] -eq 'host') { 'guest' } else { 'host' }
+        $otherSecret = (Get-InstancePaths -GameDirectory $dirs[$other]).LinkSecret
+        $bytes = if (Test-Path -LiteralPath $otherSecret -PathType Leaf) { [IO.File]::ReadAllBytes($otherSecret) } else { $null }
+        if ((Get-CoopSecretFileStatus $bytes) -ne 'ok') { throw "-Lan -Role $($roles[0]) needs the $other copy's link-secret.txt; prepare both roles with -Lan." }
+        $linkSecret = [Text.Encoding]::ASCII.GetString($bytes, 0, 20)
+    }
+}
 if (!$SkipLoader) {
     if (!(Test-Path -LiteralPath $loaderPath -PathType Leaf)) { throw "Loader not found: $loaderPath. Build first: pwsh -File tools/build.ps1 -Configuration Release" }
     if (!(Test-FileHash -Path $archivePath -Expected $expected.archive)) { throw "Runtime archive missing or hash differs (expected $($expected.archive)): $archivePath" }
@@ -163,7 +206,8 @@ foreach ($r in $roles) {
     if (!(Test-FileHash -Path $p.SteamApi -Expected $expected.steam)) { throw "[$r] steam_api64.dll is missing or not the shipped DLL ($($expected.steam))" }
     $overrides = if ($Offline) { ConvertFrom-LabPartnerSettingArgs -Items $PartnerSetting -Role $r } else { $null }
     $characterOverride = if ($Offline) { ConvertFrom-LabCharacterArgs -Items $Character -Role $r } else { $null }
-    $settings = Get-LabInstanceSettings -Role $r -Config $config -GameDirectory $p.Game -HostSteamId64 $identity.SteamId64 -Offline:$Offline -PartnerOverrides $overrides -CharacterOverride $characterOverride
+    $settings = Get-LabInstanceSettings -Role $r -Config $config -GameDirectory $p.Game -HostSteamId64 $identity.SteamId64 -Offline:$Offline -PartnerOverrides $overrides -CharacterOverride $characterOverride `
+        -Lan:$Lan -LanAddress $(if ($Lan) { $LanAddress } else { '' }) -WanSim $WanSim
     if ($Offline) { Write-Output "[$r] coop.ini character=$($settings.Character)" }
     if (Test-PathInside -Child $settings.SaveDir -Parent $identity.UserData) { throw 'Internal error: save_dir inside Steam userdata.' }
     $instances[$r] = [pscustomobject]@{ Role = $r; Paths = $p; Settings = $settings }
@@ -268,6 +312,16 @@ foreach ($r in $roles) {
         $null = Write-TextFileIfChanged -Path $file -Text $text
         Write-Output "[$r] wrote $file"
     }
+    # The link secret: written for -Lan (a non-loopback bind needs it), deleted otherwise.
+    if (Test-Path -LiteralPath $p.LinkSecret) { Assert-NoReparsePoint -Path $p.LinkSecret -StopAt $p.Game }
+    if ($linkSecret) {
+        if (Confirm-LabAction $p.LinkSecret 'Write the -Lan link secret') {
+            [IO.File]::WriteAllText($p.LinkSecret, $linkSecret + "`r`n", [Text.Encoding]::ASCII)
+            Write-Output "[$r] wrote link-secret.txt (-Lan)"
+        }
+    } elseif (Test-Path -LiteralPath $p.LinkSecret -PathType Leaf) {
+        if (Confirm-LabAction $p.LinkSecret 'Delete the link secret (no -Lan)') { Remove-Item -LiteralPath $p.LinkSecret -Force; Write-Output "[$r] deleted link-secret.txt (no -Lan)" }
+    }
 }
 
 # ---------------------------------------------------------------- 4. saves
@@ -317,7 +371,9 @@ Write-Output ''
 if ($WhatIfPreference) { Write-Output 'WhatIf: nothing was changed.'; return }
 if ($Offline) {
     $url = $instances[$roles[0]].Settings.MasterUrl
-    Write-Output 'Prepared for the OFFLINE lab mode (offline-v1, no fuse). Next: pwsh -File tools/lab/Start-Lab.ps1 -Offline, then tools/lab/Test-PartnerSpike.ps1 -Experiment E0.'
+    $startArgs = if ($Lan) { '-Offline -Lan' } else { '-Offline' }
+    Write-Output "Prepared for the OFFLINE lab mode (offline-v1, no fuse). Next: pwsh -File tools/lab/Start-Lab.ps1 $startArgs, then tools/lab/Test-PartnerSpike.ps1 -Experiment E0."
+    if ($WanSim -cne 'off') { Write-Output "WAN rehearsal preset '$WanSim' (lab.json wanSim) is in both lab.ini files." }
     Write-Output "The folders now point the master server at a closed local port ($url, coop.ini); run this script with -Disable before normal online play."
     return
 }

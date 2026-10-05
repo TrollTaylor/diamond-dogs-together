@@ -276,6 +276,24 @@ with no fuse and no session.
   the proven Warp movement, [I] / [P] to the input drive (tracked / pinned),
   [M] / [A] to the round 2 experiments; `-ProvenWarp` starts on the proven
   path, `-Experimental` with the round 2 experiments.
+- **Two-PC rehearsal on one PC** ([docs/two-pc-play.md](../../docs/two-pc-play.md)):
+  `Play-OfflineCoop.ps1 -Lan` (also `Prepare-LabInstance.ps1 -Offline -Lan` and
+  `Start-Lab.ps1 -Offline -Lan`) binds both copies to all addresses
+  (`net_bind=any`), points the guest at this PC's LAN IPv4 (`net_peer_addr`,
+  `-LanAddress` or the first IPv4 of an Up adapter with a gateway) and writes a
+  random `mgs-coop/link-secret.txt` into both copies (the built-in lab secret
+  only works on 127.0.0.1); Prepare without `-Lan` and `-Disable` delete it.
+  `-WanSim good|bad|awful` adds the `lab.json` `wanSim` impairment preset
+  (latency, jitter, burst loss, duplicates, reordering; one-way per copy),
+  `net_seed` 1/2 and `partner_interp=auto`. Without these switches every
+  generated file is byte-identical to before. `-PartnerSetting
+  net_link=legacy` selects the raw-frame link (bisect path). The dm=map run
+  passes only its 7 dm=map keys; with the shipped `lab.json` "partner" the
+  result equals `tools/CoopPlay.psm1` `Get-PlayPartnerDefaults`, the keys the
+  two-PC play mode writes (a tuned `lab.json` still applies to the lab), and
+  the status line's partner parser is shared with the two-PC launcher.
+  `-LanAddress` without `-Lan` is refused. The scripts never change firewall
+  settings; Windows may ask about `mgsvtpp.exe` for `-Lan`.
 - **Start-Lab.ps1 -Offline** skips the fuse checks and start. Its preflight
   requires no listener on TCP 47899, free UDP 47810/47811 and 47820/47821, the
   `offline-v1` markers, `lab.ini` `net=1`, `partner=1` and the role's partner

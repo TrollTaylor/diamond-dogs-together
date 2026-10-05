@@ -714,7 +714,7 @@ bool sink_request(void*, std::uint64_t remote) noexcept { return callbacks::post
 bool sink_fail(void*, std::uint64_t remote, std::uint8_t error) noexcept {
     return callbacks::post_connect_fail(remote, error);
 }
-void transport_datagram(void*, const std::uint8_t* data, std::size_t size) noexcept {
+void transport_datagram(void*, const std::uint8_t* data, std::size_t size, const Endpoint&) noexcept {
     DatagramHeader header{};
     const std::uint8_t* payload = nullptr;
     std::size_t payload_size = 0;

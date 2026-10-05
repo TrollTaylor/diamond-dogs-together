@@ -110,6 +110,9 @@ inline constexpr unsigned kDmProbeCap = 400;
 inline constexpr std::uint64_t kDmMapSummaryMs = 5000;
 inline constexpr unsigned kDmMapSummaryCap = 720;
 inline constexpr unsigned kDmMapSwitchCap = 600;
+// partner_lost=hide (lab-tested only): the realize bits are cleared after the
+// net sample has been lost this long; the next live sample re-realizes.
+inline constexpr std::uint64_t kLostHideMs = 10000;
 // Drained input-hook statistics (mirror of partner_input_hook::Stats).
 struct InputStats {
     partner_input::WindowStats window;
@@ -196,6 +199,10 @@ struct Hooks {
     bool (*latest_input)(void* context, partner_input::Sample& out) noexcept;
     // Lazy install of the wrap entries (nullptr ok, else a reason).
     const char* (*install_wrap)(void* context) noexcept;
+    // The interpolation delay for the net source given lab.ini
+    // partner_interp_ms (partner_net::EffectiveInterpMs in the observer: the
+    // adaptive delay with partner_interp=auto). Null: the configured value.
+    std::uint32_t (*interp_ms)(void* context, std::uint32_t configured) noexcept;
 };
 
 // Times passed in by the caller: QPC milliseconds (cadence, poses, net) and
@@ -449,6 +456,10 @@ struct Mission {
     bool looks_logged;
     std::uint64_t looks_ms;
     partner_player::Looks looks;
+    // partner_lost=hide: since when the net sample is lost, and whether the
+    // realize bits were cleared for it.
+    std::uint64_t lost_since_ms;
+    bool lost_hidden;
 };
 
 struct Driver {
