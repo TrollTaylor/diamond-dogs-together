@@ -1039,16 +1039,17 @@ the keys it names.
 - `-ProvenWarp` starts on the proven path; `-Experimental` starts with the
   round 2 experiments.
 
-Since the round 4 live run the default is the proven Warp again (every line
-now also carries `dm=off`); `-InputDrive` starts the input drive. `-Animated`
-and [D] start `dm=map` (`stage=3 source=net apply=xform reset=n anim=off
+Since the live two-copy pass of 2026-10-05 (run 20261005-080408,
+[anim-appearance-findings-2026-10-04.md](anim-appearance-findings-2026-10-04.md))
+the default is `dm=map`; `-ProvenWarp` and [W] give the proven Warp movement
+(every non-map line carries `dm=off`), `-InputDrive` starts the input drive.
+The default, `-Animated` and [D] start `dm=map` (`stage=3 source=net apply=xform reset=n anim=off
 input=off isend=0 dm=map look=net`; lab.ini `partner_apply=xform`,
 `partner_reset=n`, `partner_dm=map` on both copies), and the status line then
 shows `clip <name>` from the 5 s `partner_dmmap` summary (`FAILED` after
 `partner_dmmap=failed` and while the summary says `phase=failed`; [R] re-sends
 and rearms; cleared by `partner_stop`, `released`, `abandoned`, a stage below 3
-and an idle summary). The default flips to
-`dm=map` only after D4/D5 and one live two-copy `-Animated` pass.
+and an idle summary).
 
 The status line adds `input <mode>/<armed>`, `recon <mode> err <cm> snaps ..
 places ..` (`recon OFF` when `correct=0` turned it off), `RUNAWAY(pinned)`

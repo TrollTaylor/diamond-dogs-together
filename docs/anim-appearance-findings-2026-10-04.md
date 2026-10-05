@@ -159,10 +159,51 @@ Notes:
 
 Follow-up (static, 2026-10-05): `dm=map` drives these clips from the other
 player's stance and speed, with stand walk/run/jog loops added as GANI 10-12
-(docs/partner-anim-appearance.md "D-map"). Live result pending (D4/D5).
+(docs/partner-anim-appearance.md "D-map"). Live result: see the next section.
 
 Conclusion: **direct motion is a working animation route for the partner,
 fully on the Lua and main-thread side**, with no worker-thread hooks. Next: a
 DM mapping mode, which maps the remote's stance/speed (already in the net
 frames) to a gani (idle/walk/run/dash per stance, prone idle and crawl), with
 stop+play on change and hysteresis, while xform keeps the placement.
+
+## Live dm=map pass (2026-10-05, run 20261005-080408, coop-lab 613e835)
+
+Setup: offline lab, both copies booted with `partner_dm=map` (lab.ini
+`partner_apply=xform partner_reset=n partner_source=net partner_look=net`),
+host Snake with a Quiet partner, guest Quiet with a Snake partner. The guest
+was driven with Send-LabInput (W/S run, Shift+W dash, C crouch, holding C for
+prone); the host watched. Evidence:
+[evidence/dm-map-2026-10-05/](evidence/dm-map-2026-10-05/).
+
+| Remote movement (guest) | Mapped clip on the host | Result |
+|---|---|---|
+| Boot, guest crouched | 1 squat idle (`after_ms=17`) | **PASS**: the patch applied once parts loaded, and the first play was taken up within one tick |
+| Stand up (C) | 0 stand idle | **PASS** |
+| W, accelerating (2.4-2.6 m/s) | 10 stand walk loop | **PASS** (logs) |
+| W, full speed (4.0-4.7 m/s) | 11 stand run loop | **PASS**: run stride toward the host camera (`stand-run-toward-host.png`) |
+| Shift+W | 5 stand dash (via flags) | **PASS** (logs; the guest was against a wall, at 0.4 m/s) |
+| Release W | 10, then 0 | **PASS**: decel walk, then idle |
+| Quiet stops after a run | 3, then 1 | **PASS**: the guest's Quiet auto-crouches on stopping, and the partner follows |
+| Crouched W (2.3 m/s, then 3.1-3.2 m/s) | 3 squat walk, then 4 squat run | **PASS**: crouch-run stride away and back (`crouch-run-away-and-back.png`) |
+| Hold C (prone) | 7 prone idle | **PASS** |
+| Crawl W/S (1.0-1.6 m/s) | 6 fast crawl loop | **PASS (logs only)**: played and taken up every time; not captured on screen (the camera angles hid it) |
+| The host's own moves, seen by the guest | same table on the guest | **PASS** (logs): Snake partner crawl/prone switches |
+| `dm=off` on both copies | release, then revert | **PASS**: `partner_dmmap=released; result=stopped; to=off; ms=15`, then `partner_dm=reverted; reason=trigger` |
+
+Totals: 29 switches on the host, every stop to play gap 14-26 ms, and over the
+whole run on both copies **zero** `partner_dm=unconsumed|conflict`,
+`partner_dmmap=failed|bad_gani|stop_timeout` and `crash_probe=av`. Real saves
+were UNCHANGED.
+
+Height check: prone moves the body transform down for the game's OWN player
+too (the host's `pos0_mm` y 800 -> 350 when Snake goes prone), so placing the
+partner at the remote's y=350 while prone matches the game's own semantics;
+the partner is not sunk.
+
+Changed afterwards: `Play-OfflineCoop` (`Play-Offline-Coop.bat`) now starts
+with `dm=map` by default. `-ProvenWarp` or [W] gives the old Warp movement.
+
+Open: an eye check of clip 6 (crawl) and clip 10 (stand walk) in a real
+session, and the transitions (each switch is a hard cut; the stop+play gap is
+about one frame).

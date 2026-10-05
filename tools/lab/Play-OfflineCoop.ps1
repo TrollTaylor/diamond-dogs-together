@@ -8,12 +8,13 @@ Runs the offline lab path (docs/testing-2026-10-04.md) with the appearance
 sync of docs/partner-anim-appearance.md:
   1. Prepare-LabInstance.ps1 -Offline with the partner synced over our own link
      from the start: stage 3, source net, look net (each copy shows the other
-     player's own character). Default movement: the PROVEN Warp (Lua Warp every
-     tick, input off, dm off; -ProvenWarp is the same). Opt-in experiments:
-     -Animated (or [D]): dm=map -- the smooth xform movement plus direct-motion
-     clips that follow the other player's stance and speed (walk, run, dash,
-     crouch, prone; docs/partner-anim-appearance.md "D-map"), experimental
-     until the D4/D5 live pass. -InputDrive (or [I]): the round 4 input drive
+     player's own character). Default: the ANIMATED partner (dm=map, live pass
+     2026-10-05) -- the smooth xform movement plus direct-motion clips that
+     follow the other player's stance and speed (walk, run, dash, crouch,
+     prone, crawl; docs/partner-anim-appearance.md "D-map"); -Animated is the
+     same. -ProvenWarp (or [W]): the proven Warp movement (Lua Warp every tick,
+     input off, dm off; no animation). Other experiments:
+     -InputDrive (or [I]): the round 4 input drive
      (apply=input input=net isend=1, words hpr, hold own, recon track), which
      does not start locomotion yet. -Experimental: the round 2 smooth movement
      (hybrid) with stance sync (anim net, aset qs). Test condition: the GUEST
@@ -40,7 +41,7 @@ even while the host window has focus, so one person can test both at once.
 
 .EXAMPLE
 pwsh -File tools/lab/Play-OfflineCoop.ps1
-pwsh -File tools/lab/Play-OfflineCoop.ps1 -Animated
+pwsh -File tools/lab/Play-OfflineCoop.ps1 -ProvenWarp
 pwsh -File tools/lab/Play-OfflineCoop.ps1 -Experimental
 #>
 [CmdletBinding()]
@@ -56,13 +57,13 @@ param(
     # Start with the round 2 native paths on (smooth movement and stance
     # sync) instead of the input drive.
     [switch]$Experimental,
-    # Start with the proven Warp movement (input off). This is the default again
-    # (round 4 live: the input drive does not start locomotion yet); kept for compatibility.
+    # Start with the proven Warp movement (input off, dm off, no animation)
+    # instead of the animated partner.
     [switch]$ProvenWarp,
     # Start with the experimental input drive (round 4) instead of the proven Warp movement.
     [switch]$InputDrive,
-    # dm=map: xform movement + direct-motion clips following the other player;
-    # experimental until the D4/D5 live pass.
+    # dm=map: xform movement + direct-motion clips following the other player.
+    # The default since the 2026-10-05 live pass; kept for compatibility.
     [switch]$Animated
 )
 Set-StrictMode -Version Latest
@@ -234,10 +235,10 @@ function Format-Role([string]$role) {
     return "${role}: $partner, $link$details$crash$exit"
 }
 
-# The partner settings: look net always. Movement: the proven Warp unless
-# -Experimental, -InputDrive or -Animated; [D] / [I] / [P] / [W] / [M] / [A]
+# The partner settings: look net always. Movement: the animated partner (dm=map)
+# unless -Experimental, -InputDrive or -ProvenWarp; [D] / [I] / [P] / [W] / [M] / [A]
 # switch, [R] re-sends. Every key sends the whole line to both copies.
-$startMove = if ($Experimental) { 'hybrid' } elseif ($InputDrive) { 'input' } elseif ($Animated) { 'map' } else { 'warp' }
+$startMove = if ($Experimental) { 'hybrid' } elseif ($InputDrive) { 'input' } elseif ($ProvenWarp) { 'warp' } else { 'map' }
 $experiment = [ordered]@{ Move = $startMove; Anim = $(if ($Experimental) { 'net' } else { 'off' }); Recon = 'track' }
 # The input drive (both copies): the remote pad drives the partner's real
 # locomotion; hold own (prone), words hpr (stance taps), keyboard dash and walk.
@@ -263,8 +264,8 @@ try {
     # ------------------------------------------------------------- prepare
     $mode = if ($Experimental) { 'smooth movement + stance sync ON (-Experimental)' }
             elseif ($InputDrive) { 'INPUT DRIVE (experimental, -InputDrive); [W] falls back to the proven Warp movement' }
-            elseif ($Animated) { 'ANIMATED partner (dm=map, experimental, -Animated); [W] falls back to the proven Warp movement' }
-            else { 'proven Warp movement (default); [D] tries the animated partner (dm=map)' }
+            elseif ($ProvenWarp) { 'proven Warp movement (-ProvenWarp, no animation); [D] switches to the animated partner (dm=map)' }
+            else { 'ANIMATED partner (dm=map, default); [W] falls back to the proven Warp movement' }
     Write-Step "Preparing both game copies (offline, partner sync on, look net; $mode)"
     $partnerSettings = @('partner_stage=3', 'partner_source=net', 'partner_look=net',
         "partner_apply=$(if ($experiment.Move -eq 'map') { 'xform' } else { $experiment.Move })", "partner_anim=$($experiment.Anim)")
@@ -333,7 +334,7 @@ try {
     Write-Host '    Input drive: the partner moves with its own locomotion from the other player''s pad: walk, run, crouch (tap),'
     Write-Host '    prone (hold the stance key ~0.2 s). The status line shows recon err (cm), snaps/places and RUNAWAY(pinned).'
     Write-Host '    Animated partner ([D], dm=map): smooth movement plus walk/run/dash/crouch/prone clips that follow the other'
-    Write-Host '    player; the status line shows the clip. Experimental until the D4/D5 live pass.'
+    Write-Host '    player; the status line shows the clip. This is the default (live pass 2026-10-05).'
     Write-Host '    If the partner misbehaves or a game hangs: [W] switches both copies back to the proven Warp movement.'
     Write-Host '  Console keys (click this window first):  [S] screenshots   [D] animated partner (dm=map)   [I] input drive'
     Write-Host '                                           [P] input drive, partner pinned'

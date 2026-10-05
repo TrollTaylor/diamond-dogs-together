@@ -290,9 +290,9 @@ try {
     Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_anim -Value net)/$(ConvertTo-LabPartnerValue -Key partner_aset -Value r)/$(ConvertTo-LabPartnerValue -Key partner_reset -Value ac)/$(ConvertTo-LabPartnerValue -Key partner_look -Value quiet)" 'net/r/ac/quiet' 'anim/aset/reset/look values'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_anim -Value on } 'off|mirror|net' 'anim values'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_look -Value ocelot } 'copy|net|quiet|snake' 'look values'
-    # Play-OfflineCoop (round 4): the input drive by default, the proven Warp
-    # movement on [W] / -ProvenWarp, the round 2 experiments on [M]/[A] or
-    # -Experimental; every sent line is valid.
+    # Play-OfflineCoop: the animated partner (dm=map) by default, the proven
+    # Warp movement on [W] / -ProvenWarp, the input drive on [I] / -InputDrive,
+    # the round 2 experiments on [M]/[A] or -Experimental; every sent line is valid.
     $playPath = Join-Path $projectRoot 'tools/lab/Play-OfflineCoop.ps1'
     $playTokens = $null; $playErrors = $null
     $playAst = [System.Management.Automation.Language.Parser]::ParseFile($playPath, [ref]$playTokens, [ref]$playErrors)
@@ -326,7 +326,7 @@ try {
     # The status line reads the effective recon= and the input pin / stance fixes.
     Assert-True ($playText.Contains('recon=([a-z]+); err_mm=') -and $playText.Contains('input_pin=(\d); fixes=(\d+)')) 'Play-OfflineCoop status parses recon=/input_pin=/fixes='
     Assert-True ($playText.Contains("'^partner_recon=runaway;.*action=(pin|disarm)'")) 'Play-OfflineCoop: RUNAWAY only for pin/disarm'
-    Assert-True ($playText.Contains("`$startMove = if (`$Experimental) { 'hybrid' } elseif (`$InputDrive) { 'input' } elseif (`$Animated) { 'map' } else { 'warp' }")) 'Play-OfflineCoop starts with the proven Warp unless -InputDrive/-Experimental/-Animated (dm=map waits for the D4/D5 live pass)'
+    Assert-True ($playText.Contains("`$startMove = if (`$Experimental) { 'hybrid' } elseif (`$InputDrive) { 'input' } elseif (`$ProvenWarp) { 'warp' } else { 'map' }")) 'Play-OfflineCoop starts with the animated partner (dm=map, live pass 2026-10-05) unless -InputDrive/-Experimental/-ProvenWarp'
     Assert-True ($playText.Contains("'I' {") -and $playText.Contains("'W' {") -and $playText.Contains("'P' {") -and $playText.Contains("'D' {")) 'Play-OfflineCoop defines [I], [W], [P] and [D]'
     Assert-True ($playText.Contains("'partner_reset=n', 'partner_dm=map'") -and $playText.Contains("if (`$experiment.Move -eq 'map') { 'xform' }")) 'Play-OfflineCoop prepares lab.ini for dm=map (apply xform, reset n, dm map) on both copies'
     Assert-True ($playText.Contains("'^partner_dmmap; phase=([a-z_]+); cur=(\d+|none);'") -and $playText.Contains("'^partner_dmmap=failed'") -and
