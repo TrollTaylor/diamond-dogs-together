@@ -128,6 +128,19 @@ Never written in play: `loopback`, `self_steamid`, `peer_steamid`,
 `self_name`, `mutex_suffix`, `xinput`, `join_trigger`, `auto_join_delay_s`,
 or an impairment key.
 
+### World sync (experimental, opt-in)
+
+`Play-Coop.ps1 -World 1..3` adds `world=N` to the play `lab.ini` (nothing at
+the default 0, which keeps today's behaviour): 1 plumbing only, 2 shared enemy
+outcomes and alert in free roam (30010/30020), 3 also clock and weather
+([world-sync-protocol.md](world-sync-protocol.md)). Both players must choose
+it; the effective level is the lower of the two (a player at 0 never pairs).
+It needs the redirected co-op save (it writes kills, staff and clears there)
+and never runs on the real saves. The players still travel together by hand
+(mission following is a later phase); after a death or a continue the shared
+enemies stay off for that mission. The lab probes and the goto trigger are
+lab-only and refused in play.
+
 ## Join code
 
 `MGS1-SSSSS-SSSSS-SSSSS-SSSSS-CC@<host>:<port>`: S is 20 Crockford base32

@@ -3,7 +3,7 @@
 Research behind this design: [scripts](analysis-2026-10-05/world-sync-scripts-research.md), [native](analysis-2026-10-05/world-sync-native-research.md), [mission flow](analysis-2026-10-05/world-sync-flow-research.md), [critique of rev 1](analysis-2026-10-05/world-sync-design-critique.md). Script citations refer to scripts extracted locally from the installed game (not committed).
 
 
-Status: design only, not implemented. Target: exe 1.0.15.4, branch `coop-lab`. Nothing here has run in-game.
+Status: W0-W2 implemented (see [world-sync-protocol.md](world-sync-protocol.md)); levels 0..3 (lab.ini `world`, default 0 = inert). W3-W6 are design only. Target: exe 1.0.15.4, branch `coop-lab`. Nothing here has run in-game yet.
 Addresses are RVAs from a static read. Script citations use the extracted 1.0.15.4 scripts (`lib/…`, `mission/…`).
 It assumes the parallel two-PC link, with a reliable ordered channel (R), an unreliable channel (U), and host and guest roles.
 
