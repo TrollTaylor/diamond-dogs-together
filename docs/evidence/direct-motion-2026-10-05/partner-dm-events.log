@@ -1,0 +1,25 @@
+partner_dm_census; g=0x2c1bf20; g_ok=1; iface_vt=0x23bff00; prim_vt=0x23bfea8; prim_blk=1; rec_idx=0/1; verdict=ok
+partner_dm=patched; rva=0x1198e25; old=440f44c7; new=0f1f4000
+partner_dm=play; gani=1
+partner_lua=event=dm_play; gani=1
+partner_dm=refused; reason=busy
+partner_dm=stop
+partner_lua=event=dm_stop
+partner_dm=play; gani=5
+partner_lua=event=dm_play; gani=5
+partner_dm=stop
+partner_lua=event=dm_stop
+partner_dm=play; gani=3
+partner_lua=event=dm_play; gani=3
+partner_dm=stop
+partner_lua=event=dm_stop
+partner_dm=play; gani=7
+partner_lua=event=dm_play; gani=7
+partner_dm=stop
+partner_lua=event=dm_stop
+partner_dm=play; gani=7
+partner_lua=event=dm_play; gani=7
+partner_dm=reverted; reason=trigger
+partner_dm; patched=1; g388=0x00; req0=1; q18=0x3,0x8b; ps2d8=68,5; rec10=1; rec11=0; rec18=0x81582ffa24b9; rec1a0=0; rec248=0x02; cam1f0=0x0; cam200=0; cam_ok=1
+partner_dm; patched=1; g388=0x00; req0=1; q18=0x4,0x8b; ps2d8=68,5; rec10=1; rec11=0; rec18=0x81582ffa24b9; rec1a0=0; rec248=0x02; cam1f0=0x0; cam200=0; cam_ok=1
+partner_dm; patched=1; g388=0x00; req0=1; q18=0x3,0x8b; ps2d8=68,5; rec10=1; rec11=0; rec18=0x81582ffa24b9; rec1a0=0; rec248=0x02; cam1f0=0x0; cam200=0; cam_ok=1

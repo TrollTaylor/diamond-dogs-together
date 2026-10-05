@@ -126,3 +126,38 @@ Next work (round 4):
 Revised understanding: round 3's "locomotion" only happened because the partner had already entered a moving state through the host-input leak. The idle-to-move transition (and probably stance toggles) run in the svc28 sub-phases, which read the real pad, outside our window. Round 4 sealed the leak, so nothing starts the partner moving. The in-window consumer only continues an existing movement.
 
 Next (round 5): give instance 1 its own input in the svc28 sub-phases without swapping the shared PP across threads. For example, redirect the PP getters per caller or per thread for block-1 contexts (thread-local "current id" set by wrapping the per-id dispatch of the block-1 nodes inside 0xBF6290/0xBF5F10), or hook the specific idle-to-move and stance-toggle readers. Until then, `Play-OfflineCoop` defaults back to the proven Warp movement (`-InputDrive` or [I] opt in).
+
+Round 5 as planned above (per-thread or per-caller PP redirection for the
+block-1 svc28 jobs) was **not pursued**. The direct-motion lever below was
+tested instead.
+
+## Live D series: the direct-motion lever (2026-10-05, run 20261005-050139)
+
+Setup: offline lab, Mother Base, host Snake with partner Quiet (look=net), guest
+plays Quiet. `stage=3 apply=xform reset=n`, input off. Evidence is in
+[evidence/direct-motion-2026-10-05/](evidence/direct-motion-2026-10-05/).
+
+| Step | Result |
+|---|---|
+| D0, census | **PASS.** `partner_dm_census; g=0x2c1bf20; g_ok=1; ... rec_idx=0/1; verdict=ok` |
+| D1, patch + crouch idle (`dm=on dmplay=1`) | **PASS.** `partner_dm=patched; rva=0x1198e25; old=440f44c7; new=0f1f4000`, `partner_dm=play; gani=1`. The 2 Hz line shows `req0=1 rec10=1 rec248=0x02 cam_ok=1`; Quiet visibly crouches (`d1-crouch-idle.png`). So instance 1 **does** consume DM slot 0 offline once the index compare is patched (the open 55-65% question is answered: yes). |
+| D2, sprint loop while orbiting (`source=orbit dmplay=5`) | **PASS.** The first attempt was `partner_dm=refused; reason=busy`: a looping gani stays active until `dmstop=1`. After stop then play, Quiet runs around Snake with a real stride cycle (legs in opposite phase across frames 1.3 s apart, `d2-sprint-pair.png`). This is the first genuine locomotion animation on the partner. |
+| D2b, crouch-walk loop (`dmplay=3`, orbit) | **PASS.** Crouched stepping pose while orbiting (`d3-crouch-walk-grid.png`). |
+| D2c, prone idle (`source=fixed dmplay=7`) | **PASS.** Quiet lies prone at the fixed spot (`d3-prone.png`; hidden behind Snake until the camera moved). |
+| D3, revert (`dm=off`) | **PASS.** `partner_dm=reverted; reason=trigger`. Both games kept running, with no fault lines. Real saves UNCHANGED at Stop-Lab. |
+
+Notes:
+
+- `q18` (Q+0x18 act) toggled 0x3/0x4 during playback and `ps2d8` stayed 68,5,
+  which is consistent with the Q arrays being bookkeeping, not drivers.
+- Switching clips needs `dmstop=1` first (looping clips stay busy). A mapping
+  mode should stop, then play, on every clip change, at most once per change.
+- Orientation follows the xform yaw (orbit tangent), so the sprint faces the
+  direction of travel; the clip's root motion does not fight the xform mover in
+  these frames.
+
+Conclusion: **direct motion is a working animation route for the partner,
+fully on the Lua and main-thread side**, with no worker-thread hooks. Next: a
+DM mapping mode, which maps the remote's stance/speed (already in the net
+frames) to a gani (idle/walk/run/dash per stance, prone idle and crawl), with
+stop+play on change and hysteresis, while xform keeps the placement.
