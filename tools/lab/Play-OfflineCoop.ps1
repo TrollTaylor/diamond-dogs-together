@@ -47,6 +47,16 @@ Rehearsing the two-PC play mode on this PC (docs/two-pc-play.md):
               reordering) and uses the adaptive partner delay.
 Without these switches the lab.ini and coop.ini are exactly as before.
 
+World sync (docs/world-sync-protocol.md; experimental, default off):
+  -World 1..3 shared world between the copies: 1 plumbing only, 2 also shared
+              enemy outcomes and alert in free roam, 3 also clock and weather.
+              Adds world=N to both lab.ini files (nothing at the default 0).
+              Console key [G]: both copies fly from Mother Base to Afghanistan
+              free roam (30010) through the game's own calls (no menus).
+  -WorldProbe <probe>
+              a lab probe 10 s after each copy's first mission start (needs
+              -World); tools/lab/Set-WorldTrigger.ps1 sends probes at runtime.
+
 Controls while playing: keyboard and mouse go to whichever game window you
 clicked last. An Xbox-style controller always drives the GUEST window (right),
 even while the host window has focus, so one person can test both at once.
@@ -56,6 +66,7 @@ pwsh -File tools/lab/Play-OfflineCoop.ps1
 pwsh -File tools/lab/Play-OfflineCoop.ps1 -ProvenWarp
 pwsh -File tools/lab/Play-OfflineCoop.ps1 -Experimental
 pwsh -File tools/lab/Play-OfflineCoop.ps1 -Lan -WanSim bad
+pwsh -File tools/lab/Play-OfflineCoop.ps1 -World 3 -KeepLabEnabled
 #>
 [CmdletBinding()]
 param(
@@ -83,12 +94,18 @@ param(
     # -Lan: this PC's LAN IPv4 (default: the first IPv4 of an Up adapter with a gateway).
     [string]$LanAddress,
     # WAN rehearsal preset from lab.json wanSim (one-way impairment per copy).
-    [ValidateSet('off', 'good', 'bad', 'awful')][string]$WanSim = 'off'
+    [ValidateSet('off', 'good', 'bad', 'awful')][string]$WanSim = 'off',
+    # World sync level (docs/world-sync-protocol.md): 0 = off (default, lab.ini unchanged).
+    [ValidateRange(0, 3)][int]$World = 0,
+    # A world sync lab probe (needs -World 1..3).
+    [ValidateSet('none', 'p1', 'p3', 'p3b', 'p4', 'p12', 'p17', 'race_kill', 'remote_area_kill', 'kill_near', 'sleep_near',
+        'fulton_near', 'alert_near', 'weather_rain', 'clock_jump', 'clock_fast')][string]$WorldProbe = 'none'
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 # The same refusal as Prepare-LabInstance and Get-LabInstanceSettings, before anything is prepared.
 if ($LanAddress -and !$Lan) { throw '-LanAddress applies only with -Lan.' }
+if ($WorldProbe -ne 'none' -and $World -lt 1) { throw '-WorldProbe needs -World 1..3.' }
 $lab = $PSScriptRoot
 $repo = Split-Path -Parent (Split-Path -Parent $lab)
 Import-Module (Join-Path $lab 'LabCommon.psm1') -Force
@@ -195,6 +212,9 @@ try {
             'partner_input_words=hpr', 'partner_input_mask=0x2200006', 'partner_recon=track', 'partner_input_correct_mm=3000',
             'partner_recon_runaway=pin', 'partner_input_slot=body')
     }
+    # World sync (opt-in): appended after the partner settings above, which stay as they are.
+    if ($World -gt 0) { $partnerSettings += "world=$World" }
+    if ($WorldProbe -ne 'none') { $partnerSettings += "world_probe=$WorldProbe" }
     $rehearsal = @{}
     if ($Lan) { $rehearsal['Lan'] = $true; if ($LanAddress) { $rehearsal['LanAddress'] = $LanAddress } }
     if ($WanSim -ne 'off') { $rehearsal['WanSim'] = $WanSim; Write-Note "WAN rehearsal: lab.json wanSim.$WanSim on both copies (one-way impairment each, adaptive partner delay)." }
@@ -262,6 +282,12 @@ try {
     Write-Host '                                           [P] input drive, partner pinned'
     Write-Host '                                           [W] proven Warp (input off)   [M] smooth movement   [A] stance sync'
     Write-Host '                                           [R] re-send settings   [C] component census   [O] partner off   [Q] quit + clean up'
+    if ($World -gt 0) {
+        Write-Host "  WORLD SYNC level $World (experimental, docs/world-sync-protocol.md): shared enemies and alert in free roam (2+)," -ForegroundColor Yellow
+        Write-Host '    clock and weather (3). [G] both copies fly from Mother Base to Afghanistan free roam (30010); a reward' -ForegroundColor Yellow
+        Write-Host '    screen after the boarding may need Space in both windows (Send-LabInput.ps1 -Role both -Keys space).' -ForegroundColor Yellow
+        if ($WorldProbe -ne 'none') { Write-Host "    Probe $WorldProbe runs 10 s after each copy's first mission start." -ForegroundColor Yellow }
+    }
     Write-Host ''
 
     $readyAt = Get-Date
@@ -294,6 +320,10 @@ try {
             'P' { $experiment.Move = 'input'; $experiment.Anim = 'off'; $experiment.Recon = 'pin'; Send-SyncTrigger 'input drive, partner pinned (recon pin)' }
             'C' { & (Join-Path $lab 'Set-PartnerTrigger.ps1') -Role both -Text 'census=1' -Force | ForEach-Object { Write-Note $_ } }
             'O' { & (Join-Path $lab 'Set-PartnerTrigger.ps1') -Role both -Text 'stop' -Force | ForEach-Object { Write-Note $_ } }
+            'G' {
+                if ($World -gt 0) { & (Join-Path $lab 'Set-WorldTrigger.ps1') -Role both -Text 'goto=30010' -Force | ForEach-Object { Write-Note $_ } }
+                else { Write-Note 'world sync is off (start with -World 1..3)' }
+            }
         }
         if ($key -eq 'Q') { break }
         Start-Sleep -Milliseconds 500

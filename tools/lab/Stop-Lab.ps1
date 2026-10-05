@@ -17,8 +17,9 @@ files and compares them with the manifest taken by Start-Lab.ps1 at run start
 and with the latest backup taken by Prepare-LabInstance.ps1. Writes stop.json
 (and a redacted copy of fuse's console log) into the run folder. Leftover
 mgs-coop/partner.trigger files (offline partner spike, Set-PartnerTrigger.ps1)
-in both lab folders are deleted after the games are closed, so a stale command
-cannot fire in the next run. stop.json also records each instance's log
+and world.trigger files (world sync, Set-WorldTrigger.ps1) in both lab folders
+are deleted after the games are closed, so a stale command cannot fire in the
+next run (stop.json partner_triggers_removed / world_triggers_removed). stop.json also records each instance's log
 lengths after the close (log_end_offsets), which bound this run's lines for
 Test-PartnerSpike.ps1 -RunDir once later runs append to the same logs.
 Exit code 0 = real saves unchanged, 2 = a real save file changed (restore it
@@ -204,6 +205,19 @@ foreach ($pair in @(@('host', $config.Paths.hostDir), @('guest', $config.Paths.g
     }
 }
 
+# ---------------------------------------------------------------- leftover world triggers
+$worldTriggersRemoved = @()
+foreach ($pair in @(@('host', $config.Paths.hostDir), @('guest', $config.Paths.guestDir))) {
+    $trigger = (Get-InstancePaths -GameDirectory $pair[1]).WorldTrigger
+    if (!(Test-Path -LiteralPath $trigger -PathType Leaf)) { continue }
+    if ((Get-Item -LiteralPath $trigger -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { Write-Warning "[$($pair[0])] $trigger is a filesystem link; left alone."; continue }
+    if ($PSCmdlet.ShouldProcess($trigger, 'Delete leftover world trigger')) {
+        Remove-Item -LiteralPath $trigger -Force
+        $worldTriggersRemoved += $pair[0]
+        Write-Output "[$($pair[0])] deleted a leftover (unconsumed) world.trigger."
+    }
+}
+
 # ---------------------------------------------------------------- lingering lab redirect
 $hostCoop = (Get-InstancePaths -GameDirectory $config.Paths.hostDir).CoopIni
 $hostCoopText = Read-SharedText -Path $hostCoop
@@ -218,7 +232,7 @@ if ($labCoop) {
 $stop = [ordered]@{
     product = 'mgs-coop-lab-stop'; finished_utc = [DateTime]::UtcNow.ToString('o')
     games = $outcome; fuse = $fuseState; real_saves = $saves; host_lab_coop_ini_present = [bool]$labCoop
-    partner_triggers_removed = $triggersRemoved; log_end_offsets = $logEnds
+    partner_triggers_removed = $triggersRemoved; world_triggers_removed = $worldTriggersRemoved; log_end_offsets = $logEnds
 }
 if ($current) { Write-JsonFile -Path (Join-Path $current.Dir 'stop.json') -Value $stop }
 # The run-start manifest is authoritative (normal play between Prepare and Start

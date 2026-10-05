@@ -481,9 +481,12 @@ if arg[2] then
     local spliced = '\n' .. standalone .. '\n'
     local at = composed:find(spliced, 1, true)
     check(at ~= nil and composed:find(spliced, at + 1, true) == nil, 'partner chunk spliced once, byte-identical')
+    -- World sync (lua/coop/world_*.lua) is spliced between the partner chunk
+    -- and the marker lifecycle chunk (world_sync_lua_check checks its layout).
     check(composed:find('-- Project-authored session feedback.', 1, true) < at and
-        composed:find('-- Adapted from Dynamite TppMain marker-loading lifecycle', at, true) == at + #spliced,
-        'partner chunk directly precedes the marker lifecycle chunk')
+        composed:find('\n-- MGS co-op world sync W0-W2', at, true) == at + #spliced and
+        composed:find('-- Adapted from Dynamite TppMain marker-loading lifecycle', at, true) > at + #spliced,
+        'partner chunk directly precedes the world sync chunks, then the marker lifecycle chunk')
 
     local function run(options)
         local r = {receipts = {}, calls = {}, ticks = {}, notes = {}}

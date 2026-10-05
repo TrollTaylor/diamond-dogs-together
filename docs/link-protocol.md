@@ -207,10 +207,15 @@ is smaller than that input (asserted for every path in the tests).
 **DATA messages:** `u8 type | u8 0 | u16 len | bytes`: 0x01 FRAME (one MGSC
 frame, unchanged: transform 56/64, input 76/68, look 40), 0x02 RELIABLE
 (`channel | 0 | msg_id | payload <= 1024`), 0x03 CLOSE (accepted and logged,
-never sent), 0x04 RELACK (`channel | free_slots | next_expected | bits`).
-Unknown types are skipped by length; an overrun drops the packet. The packer
-puts the FRAME first, then the RELACKs, then reliable data; the datagram never
-exceeds 1200 bytes. An empty DATA is the keepalive / ack-only packet.
+never sent), 0x04 RELACK (`channel | free_slots | next_expected | bits`),
+0x05 DATAGRAM (world sync, [world-sync-protocol.md](world-sync-protocol.md):
+`channel 1..3 | 0 | u16 0 | payload <= 512`, unreliable and unordered; only
+channel 1 is used, other channels are counted and dropped). Unknown types are
+skipped by length (a reader that predates DATAGRAM skips it); an overrun
+drops the packet. The packer puts the FRAME (or, from
+`partner_net::SendDatagram`, the DATAGRAM: `PackBodyWith`) first, then the
+RELACKs, then reliable data; the datagram never exceeds 1200 bytes. An empty
+DATA is the keepalive / ack-only packet.
 
 ## 5. Handshake and sessions (`link_session.cpp`, pure)
 
@@ -277,7 +282,17 @@ filter (`net_bind=loopback`); `net_link=legacy` keeps the raw frames.
   retry; at most 2400 bytes of retransmitted payload per 20 ms tick; while the
   peer advertises no free slot, one probe per second. A new session clears
   every channel on both sides. `partner_net::SendReliable` / `DrainReliable`;
-  look stays a FRAME with its 2 s heartbeat (no v1 feature uses the channels).
+  look stays a FRAME with its 2 s heartbeat. Channel 1 carries the world sync
+  bundles when `lab.ini` `world>=1` ([world-sync-protocol.md](world-sync-protocol.md));
+  channels 2..3 stay unused. A peer at `world=0` never drains channel 1: its
+  32-message window fills and our sender reports `full` (tolerated; HELLO and
+  READY are sent only at a mission start and on link up, and native logs
+  `world=remote_silent` once when no HELLO arrives within 30 s).
+- World hooks (`partner_net::SetWorldHooks`, installed before `Start` only
+  with world sync): `on_datagram` (DATAGRAM channel 1), `on_idle` (end of every
+  LinkIdle) and `on_session` (after a new session committed), all on the
+  receive thread with no partner_net lock held. Null hooks keep today's
+  behaviour.
 - RTT: RFC 6298 from the packet ack and `ack_delay_ms`. Inbound loss: DATA
   sequence gaps over two 5-s buckets. Jitter: RFC 3550 on transform-carrying
   DATA. Offset: minimum transit (diagnostic).

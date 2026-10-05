@@ -635,9 +635,39 @@ void ReliableReceiver::Reset() noexcept {
     dirty_since_ = 0;
 }
 
+bool DecodeDatagram(const Message& message, DatagramMsg& out) noexcept {
+    if (message.type != static_cast<std::uint8_t>(MsgType::datagram) || message.size < kDatagramHeaderSize ||
+        message.size - kDatagramHeaderSize > kMaxDatagramPayload || message.data[0] < 1 || message.data[0] > 3 ||
+        message.data[1] != 0 || GetU16(message.data + 2) != 0)
+        return false;
+    out.channel = message.data[0];
+    out.payload = message.data + kDatagramHeaderSize;
+    out.size = message.size - kDatagramHeaderSize;
+    return true;
+}
+
+std::size_t EncodeDatagram(std::uint8_t channel, const void* payload, std::size_t size, std::uint8_t* out,
+                           std::size_t capacity) noexcept {
+    if (channel < 1 || channel > 3 || size > kMaxDatagramPayload || !out || capacity < kDatagramHeaderSize + size ||
+        (size && !payload))
+        return 0;
+    out[0] = channel;
+    out[1] = 0;
+    PutU16(out + 2, 0);
+    if (size) std::memcpy(out + kDatagramHeaderSize, payload, size);
+    return kDatagramHeaderSize + size;
+}
+
 bool PackBody(BodyWriter& writer, const std::uint8_t* frame, std::size_t frame_size, const RelAckState* acks,
               ReliableSender* senders, std::uint64_t now_ms, std::uint32_t rto_ms, std::size_t& retransmit_budget) noexcept {
-    if (frame && !writer.Add(MsgType::frame, frame, frame_size)) return false;
+    return PackBodyWith(writer, MsgType::frame, frame, frame_size, acks, senders, now_ms, rto_ms, retransmit_budget);
+}
+
+bool PackBodyWith(BodyWriter& writer, MsgType first_type, const std::uint8_t* first, std::size_t first_size,
+                  const RelAckState* acks, ReliableSender* senders, std::uint64_t now_ms, std::uint32_t rto_ms,
+                  std::size_t& retransmit_budget) noexcept {
+    if (first_type != MsgType::frame && first_type != MsgType::datagram) return false;
+    if (first && !writer.Add(first_type, first, first_size)) return false;
     for (unsigned ch = 1; acks && ch < kReliableChannels; ++ch) {
         const RelAckState& a = acks[ch];
         if (a.due) writer.AddRelAck(static_cast<std::uint8_t>(ch), a.free_slots, a.next_expected, a.bits);

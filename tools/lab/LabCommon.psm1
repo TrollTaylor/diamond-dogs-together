@@ -284,6 +284,12 @@ $script:LabPartnerKeys = @(
     @{ Key = 'net_reorder_permille'; Json = 'net_reorder_permille'; Kind = 'int'; Min = 0; Max = 1000 },
     @{ Key = 'net_reorder_ms'; Json = 'net_reorder_ms'; Kind = 'int'; Min = 1; Max = 500 },
     @{ Key = 'net_seed'; Json = 'net_seed'; Kind = 'u32'; Min = 1 },
+    # World sync (docs/world-sync-protocol.md): 0 = inert (the default; never
+    # written then), 1 plumbing, 2 enemies + alert, 3 clock + weather. The probe
+    # is a lab experiment (Play-OfflineCoop -WorldProbe, world.trigger).
+    @{ Key = 'world'; Json = 'world'; Kind = 'int'; Min = 0; Max = 3 },
+    @{ Key = 'world_probe'; Json = 'world_probe'; Kind = 'enum'; Values = @('none', 'p1', 'p3', 'p3b', 'p4', 'p12', 'p17', 'race_kill',
+            'remote_area_kill', 'kill_near', 'sleep_near', 'fulton_near', 'alert_near', 'weather_rain', 'clock_jump', 'clock_fast') },
     # mode=play belongs to the two-PC launcher (tools/friend/Play-Coop.ps1), never to the lab.
     @{ Key = 'mode'; Json = ''; Kind = 'enum'; Values = @('lab') }
 )

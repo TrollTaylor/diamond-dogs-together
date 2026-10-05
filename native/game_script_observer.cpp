@@ -35,6 +35,8 @@
 #include "mgscoop/partner_dm_patch.hpp"
 #include "mgscoop/crash_probe.hpp"
 #include "mgscoop/early_patches.hpp"
+#include "mgscoop/world_link.hpp"
+#include "mgscoop/world_receipt.hpp"
 #include <cstdarg>
 
 namespace {
@@ -576,6 +578,11 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerApplyPosition, PartnerReadVelocity, PartnerLatestInput, PartnerInstallWrap, PartnerInterpMs};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
+// World sync (docs/world-sync-protocol.md): configured at install only with
+// offline-v1, partner=1, net=1, link v2, redirected saves and lab.ini world>=1.
+// World receipts are quiet (TX/RX/LOG log no entry/return lines; CFG does).
+bool world_on = false;
+thread_local bool world_quiet = false;
 // Crash-probe context flags: bit0 input window armed, bit1 DM patch applied.
 std::uint32_t PartnerCtxFlags() noexcept {
     return (partner_driver.mission.input_armed ? 1u : 0u) | (partner_driver.mission.dm_patched ? 2u : 0u);
@@ -598,6 +605,30 @@ void PartnerMissionEnd() noexcept {
     partner_mission = 0;
     mgscoop::partner_net::PublishPartnerState(false, false, 0);
     mgscoop::crash_probe::SetContext(partner_driver.settings.stage, 0, PartnerCtxFlags());
+}
+
+// World sync install (lab.ini world>=1; partner=1 and net=1 already hold).
+// Logs world=configured (world_link) or world=disabled with the reason.
+void ConfigureWorld(const mgscoop::LabConfig& labc, const wchar_t* directory) noexcept {
+    if (!labc.world) return;
+    const char* reason = labc.net_link != mgscoop::NetLink::v2 ? "legacy_link" : !lab::SavesRedirected() ? "saves_not_redirected" : nullptr;
+    if (reason) {
+        LogFormat("world=disabled; reason=%s; t_ms=%llu\r\n", reason, static_cast<unsigned long long>(QpcMicros() / 1000));
+        return;
+    }
+    mgscoop::world_link::Config world{};
+    world.role = labc.role == mgscoop::LabRole::guest ? 2 : 1;
+    world.level = static_cast<std::uint8_t>(labc.world);
+    world.play = labc.mode == mgscoop::LabMode::play;
+    world.probe = labc.world_probe;
+    world.directory = directory;
+    world.lab_triggers = lab_active && labc.mode == mgscoop::LabMode::lab;
+    world.saves = 1;
+    world.build = mgscoop::world_link::ParseBuild(lab::ProbeVersion());
+    world.log = Log;
+    mgscoop::world_link::Configure(world);
+    mgscoop::partner_net::SetWorldHooks(mgscoop::world_link::Hooks());
+    world_on = true;
 }
 
 const char* HandlePartnerCfg() noexcept {
@@ -697,7 +728,10 @@ bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
            ReadMission(mission) && mission==allocation_mission) {
             accepted=TransferRuleThread(allocation_thread) &&
                 AdoptDynamiteSessionThread(game_base,allocation_thread,Log);
-            if(accepted) { mission_thread=GetCurrentThreadId(); mission_phase=MissionPhase::running; PartnerMissionStart(allocation_mission); }
+            if(accepted) {
+                mission_thread=GetCurrentThreadId(); mission_phase=MissionPhase::running; PartnerMissionStart(allocation_mission);
+                if(world_on) mgscoop::world_link::MissionRuntime(allocation_mission);
+            }
             else RestoreGameplayRules();
         }
     } else if(equals(terminate)) {
@@ -710,6 +744,7 @@ bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
             accepted=termination_scope.Returned(cleanup_thread);
             mission_phase=MissionPhase::idle; allocation_thread=0;
             PartnerMissionEnd();
+            if(world_on) mgscoop::world_link::LocalMissionEnd();
         }
     } else return false;
     static constexpr char yes[]="return true",no[]="return false";
@@ -902,6 +937,41 @@ bool SelectPartnerReceipt(partner::Receipt kind, const char* buffer, std::size_t
         reply ? 1 : 0, 0))) Log(line);
     return reply != nullptr;
 }
+// World sync receipts (world_on only; called under receipt_lock). CFG query
+// runs on any thread, CFG start on the runtime thread before termination,
+// TX on the runtime thread (MISSION_END also on the termination thread), RX
+// on the runtime thread, LOG on the runtime or termination thread. A refused
+// receipt stays literal (Lua treats it as inactive or not sent).
+bool SelectWorldReceipt(mgscoop::world::Receipt kind, const char* buffer, std::size_t size, const char* name, LONG64 count,
+                        mgscoop::script_bridge::Replacement& replacement) noexcept {
+    namespace world=mgscoop::world;
+    const char* reply=nullptr;
+    unsigned short mission=0;
+    if(kind==world::Receipt::cfg) {
+        std::uint32_t lua_mission=0; std::uint8_t phase=0;
+        if(world::ParseCfg(buffer,size,lua_mission,phase) && (phase==0 || (OnRuntimeThread() && !mission_terminating))) {
+            ReadMission(mission);
+            reply=mgscoop::world_link::HandleCfg(buffer,size,mission,mission_terminating);
+        }
+    } else if(kind==world::Receipt::tx) {
+        constexpr char end_prefix[]="return 'MGS_COOP_WORLD_TX_V1' -- 7 ";
+        const bool mission_end=size>sizeof(end_prefix)-1 && std::memcmp(buffer,end_prefix,sizeof(end_prefix)-1)==0;
+        if(OnRuntimeThread() || (mission_end && OnTerminationThread())) reply=mgscoop::world_link::HandleTx(buffer,size);
+    } else if(kind==world::Receipt::rx) {
+        if(OnRuntimeThread()) { ReadMission(mission); reply=mgscoop::world_link::HandleRx(buffer,size,mission,mission_terminating); }
+    } else if(kind==world::Receipt::log) {
+        if(OnRuntimeThread() || OnTerminationThread()) reply=mgscoop::world_link::HandleLog(buffer,size);
+    }
+    if(reply) replacement={reply,std::strlen(reply)};
+    world_quiet=kind!=world::Receipt::cfg;
+    if(world_quiet) return reply!=nullptr;
+    char copied[241]{}, line[512]{};
+    CopyName(name,copied);
+    if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
+        "entry_count=%lld thread=%lu tick_ms=%llu size=%llu name_prefix=%s replacement=%d execution_receipt=%d\r\n",
+        count,GetCurrentThreadId(),GetTickCount64(),static_cast<unsigned long long>(size),copied,reply ? 1 : 0,0))) Log(line);
+    return reply!=nullptr;
+}
 bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
                   mgscoop::script_bridge::Replacement& replacement) noexcept {
     AcquireSRWLockExclusive(&receipt_lock);
@@ -910,6 +980,10 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if(partner_on) {
         const auto partner_kind=partner::Classify(buffer,size,name);
         if(partner_kind!=partner::Receipt::none) return SelectPartnerReceipt(partner_kind,buffer,size,name,count,replacement);
+    }
+    if(world_on) {
+        const auto world_kind=mgscoop::world::Classify(buffer,size,name);
+        if(world_kind!=mgscoop::world::Receipt::none) return SelectWorldReceipt(world_kind,buffer,size,name,count,replacement);
     }
     bool selected = bootstrap_enabled && mgscoop::SelectBootstrapPatch(buffer, size, name, replacement, archive_mounted);
     if(!selected)
@@ -1288,7 +1362,10 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     return selected;
 }
 void ObserveReturn(void*, int result, bool replaced) noexcept {
-    if (pd::ConsumeReturn(partner_quiet)) { InterlockedIncrement64(&returns); return; }
+    const bool partner_was_quiet = pd::ConsumeReturn(partner_quiet);
+    const bool world_was_quiet = world_quiet;
+    world_quiet = false;
+    if (partner_was_quiet || world_was_quiet) { InterlockedIncrement64(&returns); return; }
     const auto count = InterlockedIncrement64(&returns);
     if (Sample(count) || replaced) {
         char line[256]{};
@@ -1436,6 +1513,7 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         mgscoop::PartnerLookName(partner_driver.settings.look), partner_addresses.t_vtable ? 1u : 0u);
                     if (labc.crash_probe) mgscoop::crash_probe::Install(base, span, Log);
                     if (labc.net) {
+                        ConfigureWorld(labc, directory);
                         mgscoop::partner_net::Config net{labc.net_listen_port, labc.net_peer_port, labc.partner_rate_hz,
                                                          labc.net_latency_ms, labc.net_loss_permille, Log};
                         net.link_v2 = labc.net_link == mgscoop::NetLink::v2;
@@ -1462,7 +1540,10 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                     } else {
                         if (labc.play_refused & mgscoop::kPlayRefusedGuestNoPeer) Log("link=disabled; reason=no_peer_addr\r\n");
                         Log("partner_net=disabled; reason=transport_bad_config\r\n");
+                        if (labc.world) LogFormat("world=disabled; reason=net_off; t_ms=%llu\r\n", static_cast<unsigned long long>(QpcMicros() / 1000));
                     }
+                } else if (labc.world) {
+                    LogFormat("world=disabled; reason=partner_off; t_ms=%llu\r\n", static_cast<unsigned long long>(QpcMicros() / 1000));
                 }
             }
             if (mgscoop::character::ReceiptsActive(host_create_enabled, client_enabled, offline_enabled)) {

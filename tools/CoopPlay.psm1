@@ -58,6 +58,7 @@ function Get-InstancePaths {
         JoinTrigger  = Join-Path $mod 'join.trigger'
         ResetTrigger = Join-Path $mod 'reset.trigger'
         PartnerTrigger = Join-Path $mod 'partner.trigger'
+        WorldTrigger = Join-Path $mod 'world.trigger'
         SaveDir   = Join-Path $mod 'lab\saves'
         LinkSecret = Join-Path $mod 'link-secret.txt'
         LinkStatus = Join-Path $mod 'link-status.json'
@@ -680,7 +681,10 @@ function New-CoopPlayLabIniText {
         [Parameter(Mandatory)][string]$SaveDir,
         [int]$Port = 47830,
         # Guest only: the host's dotted IPv4 (the launcher resolves names).
-        [string]$PeerAddress = ''
+        [string]$PeerAddress = '',
+        # World sync level (docs/world-sync-protocol.md; experimental): 0 writes
+        # nothing (today's behaviour), 1..3 add world=N after the partner keys.
+        [ValidateRange(0, 3)][int]$World = 0
     )
     if ($SaveDir -cnotmatch '^[A-Za-z]:\\' -and !$SaveDir.StartsWith('\\')) { throw "save_dir must be an absolute path: $SaveDir" }
     if ($SaveDir -match '[\x00-\x1f\x7f]' -or $SaveDir -ne $SaveDir.Trim() -or $script:CoopUtf8NoBom.GetByteCount($SaveDir) -gt 259) { throw "Invalid save_dir: $SaveDir" }
@@ -705,6 +709,8 @@ function New-CoopPlayLabIniText {
     $lines.Add('partner_interp=auto')
     $defaults = Get-PlayPartnerDefaults
     foreach ($key in $defaults.Keys) { $lines.Add($key + '=' + $defaults[$key]) }
+    # Never world_probe: the probes are lab-only (native refuses them in play).
+    if ($World -gt 0) { $lines.Add('world=' + $World) }
     return ($lines.ToArray() -join "`n") + "`n"
 }
 

@@ -105,7 +105,10 @@ void MaskAddress(std::uint32_t address, char (&out)[16]) noexcept;
 void FormatAddress(std::uint32_t address, char (&out)[16]) noexcept;
 
 // --- Messages inside a DATA body: u8 type | u8 flags (0) | u16 len | len bytes.
-enum class MsgType : std::uint8_t { frame = 1, reliable = 2, close = 3, relack = 4 };
+// DATAGRAM (5, world sync; docs/world-sync-protocol.md): u8 channel 1..3 | u8 0 |
+// u16 0 | payload <= kMaxDatagramPayload, unreliable and unordered. A reader
+// that predates it skips it by its length like any unknown type.
+enum class MsgType : std::uint8_t { frame = 1, reliable = 2, close = 3, relack = 4, datagram = 5 };
 inline constexpr std::size_t kMsgHeaderSize = 4;
 struct Message {
     std::uint8_t type;
@@ -157,6 +160,19 @@ struct RelAckMsg {
 };
 bool DecodeReliable(const Message& message, ReliableMsg& out) noexcept;
 bool DecodeRelAck(const Message& message, RelAckMsg& out) noexcept;
+inline constexpr std::size_t kDatagramHeaderSize = 4;
+inline constexpr std::size_t kMaxDatagramPayload = 512;
+struct DatagramMsg {
+    std::uint8_t channel;
+    const std::uint8_t* payload;
+    std::size_t size;
+};
+// Channel 1..3, reserved bytes zero, at least the 4-byte header, payload <= 512.
+bool DecodeDatagram(const Message& message, DatagramMsg& out) noexcept;
+// Writes the DATAGRAM message data (header + payload, not the 4-byte message
+// header) to `out`; returns its size, or 0 for a bad channel or size.
+std::size_t EncodeDatagram(std::uint8_t channel, const void* payload, std::size_t size, std::uint8_t* out,
+                           std::size_t capacity) noexcept;
 
 // --- Anti-replay: 1024 bits over the u32 sequence (no wrap; seq 0 invalid).
 class ReplayWindow {
@@ -368,6 +384,13 @@ struct RelAckState {
 // does not fit.
 bool PackBody(BodyWriter& writer, const std::uint8_t* frame, std::size_t frame_size, const RelAckState* acks,
               ReliableSender* senders, std::uint64_t now_ms, std::uint32_t rto_ms, std::size_t& retransmit_budget) noexcept;
+// PackBody with the first message's type given: a FRAME (what PackBody passes)
+// or a DATAGRAM (EncodeDatagram data). Any other type, or a first message that
+// does not fit, writes nothing and returns false. The RELACK and reliable fill
+// order after it is PackBody's.
+bool PackBodyWith(BodyWriter& writer, MsgType first_type, const std::uint8_t* first, std::size_t first_size,
+                  const RelAckState* acks, ReliableSender* senders, std::uint64_t now_ms, std::uint32_t rto_ms,
+                  std::size_t& retransmit_budget) noexcept;
 // True when a sender has a message due at `now` (within the budget).
 bool ReliableDue(const ReliableSender* senders, std::uint64_t now_ms, std::uint32_t rto_ms, std::size_t retransmit_budget) noexcept;
 

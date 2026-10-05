@@ -344,6 +344,65 @@ realization line is inside the stage 3 segment).
 | `partner_dmmap=released; result=stopped\|ended\|timeout; to=off\|on\|probe; ms=..` | D4/D5 the mapped clip released when dm leaves map (then reverted with dm=off) |
 | `partner_dmmap; phase=..; cur=..; want=..; stance=..; move=..; via=..; speed_mmps=..; switches=..; ...; bad=0x..; failures=..; deferred=..` | the 5 s dm=map summary (720 per mission; Play-OfflineCoop shows the clip) |
 
+## World sync (opt-in; [world-sync-protocol.md](world-sync-protocol.md))
+
+`lab.ini` keys (written only when set; the default offline `lab.ini` is
+unchanged): `world=0..3` (0 inert, 1 plumbing, 2 enemies + alert, 3 clock +
+weather) and `world_probe=<probe>` (lab only; `p1 p3 p3b p4 p12 p17 race_kill
+remote_area_kill kill_near sleep_near fulton_near alert_near weather_rain
+clock_jump clock_fast`). `Play-OfflineCoop.ps1 -World N [-WorldProbe <probe>]`
+sets them on both copies (or `Prepare-LabInstance.ps1 -Offline -PartnerSetting
+world=N`). World sync needs offline-v1, `partner=1`, `net=1`, `net_link=v2` and
+redirected saves; it logs `world=configured` or `world=disabled; reason=...`.
+
+### `world.trigger` (scripts create, native consumes and deletes)
+
+One line: `world=0..3`, `world_probe=<probe>|off`, `goto=30010|30020`,
+`goto_lz=0|1` (only with goto), each at most once. Written with
+`tools/lab/Set-WorldTrigger.ps1 -Role host|guest|both -Text '<line>' [-WaitSec
+N] [-Force]` (canonical form, atomic rename; `<run>/world-triggers.log`).
+Native polls it at most once per second while a mission with world sync runs
+(lab mode only), deletes it and logs `world_trigger=applied; text=<canonical>`
+or `world_trigger=rejected; reason=token|repeat|empty|too_long|not_lab|level0`;
+a goto is then `world_goto=armed; ...` or `world_goto=refused;
+reason=level|mission|target|busy|terminating`. With `-WaitSec` the script exits
+0 only when applied (a goto: armed), 3 when rejected or refused (or another
+command was applied), 2 when not consumed, 4 when unconfirmed after 3 s.
+`world=0` switches world sync off at once; `world=1..3` applies at the next
+mission start; `world_probe` runs now (or 10 s after the next start); `goto`
+flies a copy standing in Mother Base to free roam (both copies: `-Role both`;
+`[G]` in Play-OfflineCoop). Start-Lab -Offline and Stop-Lab delete leftovers
+(`stop.json world_triggers_removed`).
+
+### Live test recipe (both copies on this PC)
+
+1. Build and test: `pwsh -NoProfile -ExecutionPolicy Bypass -File tools/build.ps1`.
+2. W0-4 (world=0 is inert): `pwsh -File tools/lab/Play-OfflineCoop.ps1
+   -ExitAfterReadySec 180`. Expect no `world` key in either `lab.ini`, no log
+   line starting with `world`, unchanged partner behaviour. Compare each
+   `script-observer.log` with a coop-lab 794d24f baseline after dropping every
+   `entry_count=` and `return_count=` line, the two `MGS_COOP_WORLD_CFG_V1`
+   receipt lines and the `tick_ms=`/`t_ms=` values.
+3. Main run: `pwsh -File tools/lab/Play-OfflineCoop.ps1 -World 3
+   -KeepLabEnabled`. In 30050 both logs show `world=configured; level=3;
+   role=...; mode=lab`, `world=cfg; mission=30050`, `world=hello_rx;
+   mission=30050; ...; level=3; ...; saves=1`, `world=paired; ...;
+   mission=30050; ...; match=1; ...; eff=3` and `world_lua=event=started;
+   level=3; ...`.
+4. Goto: `pwsh -File tools/lab/Set-WorldTrigger.ps1 -Role both -Text
+   'goto=30010' -WaitSec 15` (or `[G]`). Both logs: `world_goto=armed;
+   target=30010; lz=0`, `world_goto=step; step=1; result=reserved`. If neither
+   shows `world=cfg; mission=40050` within 20 s, press Space in both windows
+   (`pwsh -File tools/lab/Send-LabInput.ps1 -Role both -Keys space`). Then
+   `world=cfg; mission=40050`, `world_goto=step; step=2; result=waiting` and
+   `reserved`, `world=cfg; mission=30010`, `world_goto=arrived;
+   mission=30010`. A clock jump of about +6 h is expected.
+5. Probes on one copy: `pwsh -File tools/lab/Set-WorldTrigger.ps1 -Role host
+   -Text 'world_probe=kill_near'` (likewise `sleep_near`, `fulton_near` and
+   `alert_near` on the guest; `race_kill`, `remote_area_kill`, `p1`, `p3`,
+   `p3b`, `p4`, `p12`, `p17`, `weather_rain`, `clock_jump`, `clock_fast` on the
+   host). Every probe line is `world_lua=event=probe; id=<name>; step=...`.
+
 ## Trigger inputs (scripts create, native consumes and deletes)
 
 These files are honoured only when `lab.ini` has `join_trigger=1`

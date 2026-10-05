@@ -169,4 +169,16 @@ void PublishPartnerState(bool shown, bool look_loaded, std::uint32_t mission) no
 link::ReliableResult SendReliable(std::uint8_t channel, const void* bytes, std::size_t size, link::ReliableMode mode) noexcept;
 bool DrainReliable(std::uint8_t channel, std::uint8_t* out, std::size_t capacity, std::size_t& size) noexcept;
 
+// World sync (docs/world-sync-protocol.md). All callbacks run on the transport's
+// receive thread with no partner_net lock held; null hooks = today's behaviour.
+struct WorldHooks {
+    void (*on_datagram)(const std::uint8_t* payload, std::size_t size) noexcept; // DATAGRAM channel 1
+    void (*on_idle)(std::uint64_t now_ms) noexcept;      // end of every LinkIdle (~20 ms)
+    void (*on_session)(std::uint32_t session) noexcept;  // after a new session committed
+};
+void SetWorldHooks(const WorldHooks* hooks) noexcept;     // install time, before Start
+// One DATA packet: the datagram first, then due RELACKs and new reliable data.
+// Game or receive thread; not_connected / too_large / bad_channel as SendReliable.
+link::ReliableResult SendDatagram(std::uint8_t channel, const void* bytes, std::size_t size) noexcept;
+
 } // namespace mgscoop::partner_net

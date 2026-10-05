@@ -1,7 +1,8 @@
 // Link v2 wire format and pure helpers (docs/link-protocol.md): header
 // strictness, message framing, the replay window, RTT / jitter / loss
 // estimators, the adaptive interpolation controller, the reliable channel
-// over a seeded lossy pipe and the DATA body packer.
+// over a seeded lossy pipe, the DATA body packer and the world-sync DATAGRAM
+// message (docs/world-sync-protocol.md).
 #include "mgscoop/link_protocol.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -551,6 +552,115 @@ void Packer() {
     std::size_t budget = 0;
     Check(!link::PackBody(writer, frame, sizeof(frame), nullptr, nullptr, 0, 250, budget) && writer.size() == 0, "frame too big");
 }
+
+void Datagrams() {
+    std::uint8_t data[link::kDatagramHeaderSize + link::kMaxDatagramPayload + 1]{};
+    const std::uint8_t payload[link::kMaxDatagramPayload + 1] = {0x57, 1};
+    Check(link::EncodeDatagram(1, payload, 2, data, sizeof(data)) == 6 && data[0] == 1 && data[1] == 0 && data[2] == 0 &&
+              data[3] == 0 && data[4] == 0x57,
+          "encode channel 1");
+    Check(link::EncodeDatagram(0, payload, 2, data, sizeof(data)) == 0 && link::EncodeDatagram(4, payload, 2, data, sizeof(data)) == 0,
+          "encode refuses channels 0 and 4");
+    Check(link::EncodeDatagram(3, payload, link::kMaxDatagramPayload, data, sizeof(data)) == 4 + link::kMaxDatagramPayload,
+          "encode 512");
+    Check(link::EncodeDatagram(3, payload, link::kMaxDatagramPayload + 1, data, sizeof(data)) == 0, "encode refuses 513");
+    Check(link::EncodeDatagram(1, payload, 10, data, 13) == 0, "encode refuses a short buffer");
+    const auto decode = [&](std::size_t size, link::DatagramMsg& out) {
+        const link::Message m{static_cast<std::uint8_t>(link::MsgType::datagram), data, static_cast<std::uint16_t>(size)};
+        return link::DecodeDatagram(m, out);
+    };
+    link::DatagramMsg d{};
+    Check(link::EncodeDatagram(2, payload, 2, data, sizeof(data)) == 6 && decode(6, d) && d.channel == 2 && d.size == 2 &&
+              d.payload == data + 4,
+          "decode channel 2");
+    Check(decode(4, d) && d.size == 0, "an empty payload decodes");
+    Check(!decode(3, d), "shorter than the header");
+    data[0] = 0;
+    Check(!decode(6, d), "channel 0 refused");
+    data[0] = 4;
+    Check(!decode(6, d), "channel 4 refused");
+    data[0] = 1;
+    data[1] = 1;
+    Check(!decode(6, d), "reserved byte 1");
+    data[1] = 0;
+    data[3] = 1;
+    Check(!decode(6, d), "reserved u16");
+    data[3] = 0;
+    Check(link::EncodeDatagram(1, payload, link::kMaxDatagramPayload, data, sizeof(data)) && decode(4 + 512, d) &&
+              !decode(4 + 513, d),
+          "payload above 512 refused");
+    const link::Message frame_type{static_cast<std::uint8_t>(link::MsgType::frame), data, 6};
+    Check(!link::DecodeDatagram(frame_type, d), "another message type is not a datagram");
+
+    // PackBodyWith: the DATAGRAM first, then RELACKs and reliable data in PackBody order.
+    static link::ReliableSender senders[link::kReliableChannels];
+    for (auto& s : senders) s.Reset();
+    std::uint8_t big[link::kMaxReliableMessage]{};
+    for (unsigned ch = 1; ch < link::kReliableChannels; ++ch)
+        for (unsigned i = 0; i < 4; ++i)
+            Check(senders[ch].Queue(big, link::kMaxReliableMessage - i, link::ReliableMode::append) == link::ReliableResult::queued,
+                  "queue");
+    link::RelAckState acks[link::kReliableChannels]{};
+    for (unsigned ch = 1; ch < link::kReliableChannels; ++ch) acks[ch] = link::RelAckState{true, 32, 1, 0};
+    const std::size_t first = link::EncodeDatagram(1, payload, link::kMaxDatagramPayload, data, sizeof(data));
+    for (int round = 0; round < 50; ++round) {
+        std::uint8_t body[link::kLinkMaxBody];
+        link::BodyWriter writer(body, sizeof(body));
+        std::size_t budget = link::kRetransmitBudgetBytes;
+        Check(link::PackBodyWith(writer, link::MsgType::datagram, data, first, round ? nullptr : acks, senders,
+                                 static_cast<std::uint64_t>(round) * 1000, 250, budget),
+              "packed with a datagram");
+        Check(writer.size() <= link::kLinkMaxBody && link::kLinkOverhead + writer.size() <= link::kLinkMaxDatagram, "1148 bound");
+        unsigned messages = 0;
+        Check(link::ValidateBody(body, writer.size(), messages) && messages >= 1, "valid body");
+        link::MessageReader reader(body, writer.size());
+        link::Message m{};
+        Check(reader.Next(m) && m.type == static_cast<std::uint8_t>(link::MsgType::datagram) && m.size == first &&
+                  link::DecodeDatagram(m, d) && d.size == link::kMaxDatagramPayload,
+              "the DATAGRAM is first");
+        unsigned relacks = 0, reliable = 0;
+        while (reader.Next(m)) {
+            relacks += m.type == static_cast<std::uint8_t>(link::MsgType::relack) ? 1u : 0u;
+            reliable += m.type == static_cast<std::uint8_t>(link::MsgType::reliable) ? 1u : 0u;
+        }
+        if (!round) Check(relacks == 3, "all RELACKs after the DATAGRAM");
+    }
+    std::uint8_t tiny[16];
+    link::BodyWriter small(tiny, sizeof(tiny));
+    std::size_t budget = 0;
+    Check(!link::PackBodyWith(small, link::MsgType::datagram, data, first, nullptr, nullptr, 0, 250, budget) && small.size() == 0,
+          "a datagram that does not fit writes nothing");
+    link::BodyWriter other(tiny, sizeof(tiny));
+    Check(!link::PackBodyWith(other, link::MsgType::reliable, data, 4, nullptr, nullptr, 0, 250, budget) && other.size() == 0,
+          "only FRAME or DATAGRAM may come first");
+    // PackBody is PackBodyWith(frame): byte-identical bodies.
+    std::uint8_t a[link::kLinkMaxBody], b[link::kLinkMaxBody];
+    static link::ReliableSender sa[link::kReliableChannels], sb[link::kReliableChannels];
+    for (unsigned ch = 1; ch < link::kReliableChannels; ++ch) {
+        sa[ch].Reset();
+        sb[ch].Reset();
+        sa[ch].Queue(big, 300, link::ReliableMode::append);
+        sb[ch].Queue(big, 300, link::ReliableMode::append);
+    }
+    const std::uint8_t frame[56] = {0x4D};
+    link::BodyWriter wa(a, sizeof(a)), wb(b, sizeof(b));
+    std::size_t ba = 1000, bb = 1000;
+    Check(link::PackBody(wa, frame, sizeof(frame), acks, sa, 0, 250, ba) &&
+              link::PackBodyWith(wb, link::MsgType::frame, frame, sizeof(frame), acks, sb, 0, 250, bb) && wa.size() == wb.size() &&
+              std::memcmp(a, b, wa.size()) == 0 && ba == bb,
+          "PackBody delegates unchanged");
+    // A reader that predates type 5 skips it by its length: the FRAME behind it survives.
+    std::uint8_t mixed[64];
+    link::BodyWriter mw(mixed, sizeof(mixed));
+    Check(mw.Add(link::MsgType::datagram, data, 6) && mw.Add(link::MsgType::frame, frame, 20), "mixed body");
+    unsigned count = 0;
+    Check(link::ValidateBody(mixed, mw.size(), count) && count == 2, "type 5 validates as a message");
+    link::MessageReader old(mixed, mw.size());
+    link::Message m{};
+    unsigned frames = 0;
+    while (old.Next(m)) frames += m.type == static_cast<std::uint8_t>(link::MsgType::frame) ? 1u : 0u;
+    Check(frames == 1, "the old dispatcher still finds the FRAME after an unknown type");
+}
 } // namespace
 
 int main() {
@@ -563,6 +673,7 @@ int main() {
     ReliableUnits();
     ReliableStress();
     Packer();
+    Datagrams();
     std::printf("link_protocol_tests: %u checks passed\n", checks);
     return 0;
 }

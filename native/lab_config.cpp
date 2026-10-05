@@ -288,6 +288,8 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
         else if (Equals(key, "partner_recon_runaway")) ok = ParsePartnerRunaway(value.data, value.size, result.partner_recon_runaway);
         else if (Equals(key, "partner_input_wrap")) ok = ParsePartnerWrap(value.data, value.size, result.partner_input_wrap);
         else if (Equals(key, "crash_probe")) ok = ParseBool(value, result.crash_probe);
+        else if (Equals(key, "world")) ok = ParseRange(value, 0, kWorldLevelMax, result.world);
+        else if (Equals(key, "world_probe")) ok = ParseWorldProbe(value.data, value.size, result.world_probe);
         else { ++result.unknown_keys; return; }
         if (!ok) ++result.invalid_values;
     });
@@ -362,6 +364,8 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
                                               &result.net_dup_permille, &result.net_reorder_permille};
         for (std::uint32_t* value : impairments)
             if (refuse(*value != 0, kPlayRefusedImpairment)) *value = 0;
+        // World-sync probes are lab experiments; world itself is allowed in play.
+        if (refuse(result.world_probe != WorldProbe::none, kPlayRefusedWorldProbe)) result.world_probe = WorldProbe::none;
     }
     // A loopback bind talks to 127.0.0.1 only.
     if (result.net_bind_loopback && peer_addr_valid && !IsLoopbackAddress(result.net_peer_address)) {
@@ -509,6 +513,30 @@ const char* NetLinkName(NetLink value) noexcept { return value == NetLink::legac
 const char* PartnerInterpName(PartnerInterp value) noexcept { return value == PartnerInterp::auto_ ? "auto" : "fixed"; }
 const char* PartnerLostName(PartnerLost value) noexcept { return value == PartnerLost::hide ? "hide" : "freeze"; }
 const char* NetLossModelName(NetLossModel value) noexcept { return value == NetLossModel::burst ? "burst" : "even"; }
+
+namespace {
+constexpr const char* kWorldProbeNames[] = {"none", "p1", "p3", "p3b", "p4", "p12", "p17", "race_kill", "remote_area_kill",
+    "kill_near", "sleep_near", "fulton_near", "alert_near", "weather_rain", "clock_jump", "clock_fast"};
+static_assert(sizeof(kWorldProbeNames) / sizeof(kWorldProbeNames[0]) == kWorldProbeMax + 1u);
+}
+
+const char* WorldProbeName(WorldProbe value) noexcept {
+    const auto index = static_cast<unsigned>(value);
+    return index <= kWorldProbeMax ? kWorldProbeNames[index] : "?";
+}
+
+bool ParseWorldProbe(const char* text, std::size_t size, WorldProbe& out) noexcept {
+    if (!text) return false;
+    for (unsigned i = 0; i <= kWorldProbeMax; ++i) {
+        const char* name = kWorldProbeNames[i];
+        std::size_t n = 0;
+        while (name[n]) ++n;
+        bool same = n == size;
+        for (std::size_t k = 0; same && k < n; ++k) same = text[k] == name[k];
+        if (same) { out = static_cast<WorldProbe>(i); return true; }
+    }
+    return false;
+}
 
 bool ParseIpv4(const char* text, std::size_t size, bool allow_loopback, std::uint32_t& out) noexcept {
     if (!text || !size || size > 15) return false;
