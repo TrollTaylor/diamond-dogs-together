@@ -108,6 +108,9 @@ link::HandshakeStep g_handshake_logged_step = link::HandshakeStep::hello_rx;
 bool g_handshake_logged = false;
 std::uint64_t g_handshake_logged_ms = 0;
 char g_build[link::kBuildSize]{};
+// World sync hooks (set once before Start; read by the receive thread only).
+WorldHooks g_world{};
+volatile LONG g_world_unknown_channel = 0;
 // Status-file snapshot taken under g_tx_lock by the receive thread.
 struct LinkSnapshot {
     link::LinkState state;
@@ -562,13 +565,14 @@ void LinkStats(const LinkSnapshot& s, link::LinkState state, std::uint64_t now_m
 
 // Receive thread: one link v2 datagram.
 void LinkDatagram(const std::uint8_t* data, std::size_t size, const lab::Endpoint& from) noexcept {
-    constexpr unsigned kMaxFrames = 64, kMaxReliable = 32, kMaxEvents = 16;
+    constexpr unsigned kMaxFrames = 64, kMaxReliable = 32, kMaxEvents = 16, kMaxDatagrams = 8;
     struct Piece { const std::uint8_t* data; std::size_t size; };
     struct Rel { std::uint8_t channel; std::uint16_t id; const std::uint8_t* payload; std::size_t size; };
     Piece frames[kMaxFrames];
+    Piece datagrams[kMaxDatagrams];
     Rel rels[kMaxReliable];
     link::Event events[kMaxEvents];
-    unsigned frame_count = 0, rel_count = 0, event_count = 0;
+    unsigned frame_count = 0, rel_count = 0, event_count = 0, datagram_count = 0;
     bool close_seen = false;
     const std::uint64_t now = NowMs();
     AcquireSRWLockExclusive(&g_tx_lock);
@@ -603,6 +607,11 @@ void LinkDatagram(const std::uint8_t* data, std::size_t size, const lab::Endpoin
                     g_rel_tx[a.channel].OnRelAck(a.next_expected, a.bits, a.free_slots, now);
             } else if (m.type == static_cast<std::uint8_t>(link::MsgType::close)) {
                 close_seen = true;
+            } else if (m.type == static_cast<std::uint8_t>(link::MsgType::datagram)) {
+                link::DatagramMsg d{};
+                if (!link::DecodeDatagram(m, d)) continue;
+                if (d.channel != 1) InterlockedIncrement(&g_world_unknown_channel);
+                else if (datagram_count < kMaxDatagrams) datagrams[datagram_count++] = Piece{d.payload, d.size};
             }
         }
         if (transform) g_session.jitter().OnPacket(static_cast<std::uint32_t>(now), delivery.send_ms, now);
@@ -610,7 +619,12 @@ void LinkDatagram(const std::uint8_t* data, std::size_t size, const lab::Endpoin
     link::Event e{};
     while (event_count < kMaxEvents && g_session.PopEvent(e)) events[event_count++] = e;
     InterlockedExchange(&g_link_state, static_cast<LONG>(g_session.state()));
+    const std::uint32_t new_session = delivery.new_session ? g_session.session_number() : 0;
     ReleaseSRWLockExclusive(&g_tx_lock);
+    // World sync: the session first (it clears the world queues), then the
+    // datagrams of this packet; both outside every partner_net lock.
+    if (delivery.new_session && g_world.on_session) g_world.on_session(new_session);
+    for (unsigned i = 0; g_world.on_datagram && i < datagram_count; ++i) g_world.on_datagram(datagrams[i].data, datagrams[i].size);
     if (rel_count) {
         AcquireSRWLockExclusive(&g_lock);
         for (unsigned i = 0; i < rel_count; ++i) g_rel_rx[rels[i].channel].Accept(rels[i].id, rels[i].payload, rels[i].size, now);
@@ -673,6 +687,7 @@ void LinkIdle() noexcept {
     PublishInfo(snapshot, EffectiveInterpMs(g_config.interp_ms));
     LinkStats(snapshot, state, now);
     WriteStatus(snapshot, state, now);
+    if (g_world.on_idle) g_world.on_idle(now);
 }
 
 // Receive thread: legacy keepalive after 1 s without a send (raw path), and a
@@ -1064,6 +1079,33 @@ link::ReliableResult SendReliable(std::uint8_t channel, const void* bytes, std::
                                                                 : link::ReliableResult::not_connected;
     ReleaseSRWLockExclusive(&g_tx_lock);
     return result;
+}
+
+void SetWorldHooks(const WorldHooks* hooks) noexcept { g_world = hooks ? *hooks : WorldHooks{}; }
+
+link::ReliableResult SendDatagram(std::uint8_t channel, const void* bytes, std::size_t size) noexcept {
+    if (channel < 1 || channel >= link::kReliableChannels) return link::ReliableResult::bad_channel;
+    if (size > link::kMaxDatagramPayload) return link::ReliableResult::too_large;
+    if (!g_v2 || !g_running) return link::ReliableResult::not_connected;
+    std::uint8_t message[link::kDatagramHeaderSize + link::kMaxDatagramPayload];
+    const std::size_t length = link::EncodeDatagram(channel, bytes, size, message, sizeof(message));
+    if (!length) return link::ReliableResult::too_large;
+    const DWORD error = GetLastError();
+    const std::uint64_t now = NowMs();
+    bool sent = false;
+    AcquireSRWLockExclusive(&g_tx_lock);
+    if (g_session.CanSendData()) {
+        link::RelAckState acks[link::kReliableChannels];
+        TakeRelAcks(acks, now, 0);
+        link::BodyWriter writer(g_body, sizeof(g_body));
+        std::size_t no_retransmits = 0;
+        if (link::PackBodyWith(writer, link::MsgType::datagram, message, length, acks, g_rel_tx, now, g_session.rtt().rto_ms(),
+                               no_retransmits))
+            sent = g_session.SendData(g_body, writer.size(), now);
+    }
+    ReleaseSRWLockExclusive(&g_tx_lock);
+    SetLastError(error);
+    return sent ? link::ReliableResult::queued : link::ReliableResult::not_connected;
 }
 
 bool DrainReliable(std::uint8_t channel, std::uint8_t* out, std::size_t capacity, std::size_t& size) noexcept {
