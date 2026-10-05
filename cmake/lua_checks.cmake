@@ -208,6 +208,9 @@ mgs_add_game_lua_check(host_trial_lua_check host_trial_lua_check "${_mgs_tpp_mai
 # The offline partner chunk inside that complete composition, run at 30050.
 mgs_add_game_lua_check(partner_sync_composed_lua_check partner_sync_lua_check "${_mgs_tpp_main}" host_trial_patch_check
   "${_mgs_coop}/partner_sync.lua" "${_mgs_out}/TppMain-host-trial.lua")
+# The world chunks inside that composition: spliced once, in order, inert with a literal CFG.
+mgs_add_game_lua_check(world_sync_composed_lua_check world_sync_lua_check "${_mgs_tpp_main}" host_trial_patch_check
+  ${_mgs_world_chunks} "${_mgs_out}/TppMain-host-trial.lua")
 mgs_add_patch_check(mission_trace_patch_check "${_mgs_tpp_main}" "${_mgs_out}/TppMain-trace.lua")
 # The documented two-argument form runs the fragment; the optional third
 # argument also executes the composed TppMain-trace.lua when it is built.
