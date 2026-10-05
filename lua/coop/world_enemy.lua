@@ -161,7 +161,8 @@ do
             E.done(h, st, ver, src, result, cur)
         end
         -- Life states: read from +200 ms, one retry at +1 s, failed at +2 s.
-        -- FULTONED: IsRecovered until +20 s; one retry at +5 s only without a Fulton message.
+        -- FULTONED: IsRecovered or FULTON_RECOVERD (E.localState) until +20 s; one retry at
+        -- +5 s only without a Fulton message.
         function E.readbacks(now)
             local s, a = E.s, W.api
             for h, r in pairs(s.rb) do
@@ -169,7 +170,7 @@ do
                 if r.st == 6 then
                     if now >= r.next then
                         r.next = now + 250
-                        cur = a.recovered(e.name) == true and 6 or nil
+                        cur = E.localState(e) == 6 and 6 or nil
                         final = age >= 20000
                         if not cur and age >= 5000 and not r.retried and not (s.fmsg[h] and s.fmsg[h] >= r.at) then
                             r.retried = true
