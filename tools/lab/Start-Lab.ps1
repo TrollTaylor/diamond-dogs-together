@@ -38,7 +38,8 @@ folders, lab.ini net=1, partner=1 and the role's partner ports, and coop.ini
 master_url = http://127.0.0.1:<masterPort>/tppstm/gate. The safety gate is
 unchanged: master_server=redirected with that closed-port URL, saves=redirected,
 and for the guest mutex=renamed and identity=fake. run.json records
-offline=true; leftover partner.trigger files are removed before the start.
+offline=true; leftover partner.trigger and world.trigger files are removed
+before the start.
 
 -Lan (with -Offline; prepare with Prepare-LabInstance.ps1 -Offline -Lan): the
 one-PC LAN rehearsal of the two-PC play mode (docs/two-pc-play.md). The
@@ -197,7 +198,7 @@ Write-Output 'Preflight passed.'
 foreach ($name in $roles) {
     $p = $instances[$name].Paths
     $triggers = @($p.JoinTrigger, $p.ResetTrigger)
-    if ($Offline) { $triggers += $p.PartnerTrigger }
+    if ($Offline) { $triggers += @($p.PartnerTrigger, $p.WorldTrigger) }
     foreach ($trigger in $triggers) {
         if ((Test-Path -LiteralPath $trigger) -and $PSCmdlet.ShouldProcess($trigger, 'Remove leftover trigger')) { Remove-Item -LiteralPath $trigger -Force }
     }

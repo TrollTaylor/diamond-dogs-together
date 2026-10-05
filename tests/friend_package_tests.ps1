@@ -298,6 +298,17 @@ try {
     Assert-Throws { New-CoopPlayLabIniText -Role guest -SaveDir $saveDir -PeerAddress 'my-pc.example' } 'Invalid host address' 'play guest refuses a name (the launcher resolves it)'
     Assert-Throws { New-CoopPlayLabIniText -Role host -SaveDir $saveDir -PeerAddress '203.0.113.7' } 'no peer' 'play host has no peer address'
     Assert-Throws { New-CoopPlayLabIniText -Role host -SaveDir 'relative\x' } 'absolute' 'play save_dir absolute'
+    # World sync (docs/world-sync-protocol.md; experimental): world=N after the partner defaults, never world_probe.
+    $worldIni = New-CoopPlayLabIniText -Role host -SaveDir $saveDir -Port 47830 -World 2
+    Assert-Equal $worldIni ($hostIni + "world=2`n") 'play -World 2 appends world=2 after the partner defaults'
+    Assert-Equal (New-CoopPlayLabIniText -Role host -SaveDir $saveDir -Port 47830 -World 0) $hostIni 'play -World 0 is the default text'
+    Assert-True (!$hostIni.Contains('world') -and !$guestIni.Contains('world')) 'the default play lab.ini has no world key'
+    foreach ($w in 1, 2, 3) {
+        $t = New-CoopPlayLabIniText -Role guest -SaveDir $saveDir -Port 47831 -PeerAddress '203.0.113.7' -World $w
+        Assert-True ($t.EndsWith("crash_probe=1`nworld=$w`n") -and !$t.Contains('world_probe')) "play -World ${w}: world=${w}, never world_probe"
+    }
+    Assert-Throws { New-CoopPlayLabIniText -Role host -SaveDir $saveDir -World 4 } '' 'play -World 4 refused'
+    Assert-Throws { New-CoopPlayLabIniText -Role host -SaveDir $saveDir -World -1 } '' 'play -World -1 refused'
     $coopIni = New-CoopPlayCoopIniText -Character quiet
     Assert-Equal $coopIni "$header`nmaster_url=http://127.0.0.1:47899/tppstm/gate`ncharacter=quiet`ncharacter_fallback=dd_male`n" 'play coop.ini text (closed-port master URL)'
     Assert-True (Test-LabUrl (ConvertFrom-IniText $coopIni)['master_url']) 'play master URL passes the redirect validator'
@@ -315,6 +326,11 @@ try {
         }
         $n = Invoke-IniCheck lab (Join-Path $fixture 'play-guest-lab.ini')
         Assert-Equal "$($n['net_listen_port'])|$($n['net_peer_addr'])|$($n['net_peer_port'])" '0|203.0.113.7|47831' 'native: play guest ports and peer'
+        $file = Join-Path $fixture 'play-world-lab.ini'; [IO.File]::WriteAllText($file, $worldIni, $utf8)
+        $n = Invoke-IniCheck lab $file
+        if ($n.ContainsKey('world')) {
+            Assert-Equal "$($n['world'])|$($n['world_probe'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" '2|none|0x0|0/0' 'native: play world=2 accepted'
+        }
         $file = Join-Path $fixture 'play-coop.ini'; [IO.File]::WriteAllText($file, $coopIni)
         $n = Invoke-IniCheck coop $file
         Assert-Equal "$($n['master_url'])|$($n['character'])|$($n['unknown_keys'])/$($n['invalid_values'])" 'http://127.0.0.1:47899/tppstm/gate|quiet|0/0' 'native: play coop.ini'
@@ -434,6 +450,9 @@ try {
     Assert-True ($fwScript.Contains("-Program 'C:\Games\O''Brien`$x\MGS_TPP\mgsvtpp.exe'") -and $fwScript.Contains('-Profile Any') -and $fwScript.Contains('-Protocol UDP -LocalPort 47830') -and $fwScript.Contains("Remove-NetFirewallRule -Name '{b}'")) 'firewall script: quoted path, Profile Any, Block rules removed first'
     Assert-True ($fwScript.IndexOf('Remove-NetFirewallRule -Name') -lt $fwScript.IndexOf('New-NetFirewallRule')) 'firewall script removes the Block rules before adding the Allow rule'
     $playText = [IO.File]::ReadAllText((Join-Path $projectRoot 'tools/friend/Play-Coop.ps1'))
+    Assert-True ($playText.Contains('[ValidateRange(0, 3)][int]$World = 0') -and
+        $playText.Contains('New-CoopPlayLabIniText -Role $labRole -SaveDir $saveDir -Port $Port -PeerAddress $peerAddress -World $World') -and
+        $playText.Contains('World sync level $World (experimental)')) 'Play-Coop -World 0..3 (default 0) reaches lab.ini and is announced'
     Assert-True ($playText.Contains("`$display = 'mgs-coop play'") -and !$playText.Contains('mgs-coop play UDP')) 'one fixed firewall rule name: a later [F] on another port replaces the earlier rule'
     $fixedScript = New-CoopFirewallScript -Port 47900 -ExePath $quoteExe -DisplayName 'mgs-coop play'
     Assert-True ($fixedScript.Contains("Get-NetFirewallRule -DisplayName 'mgs-coop play' -ErrorAction SilentlyContinue | Remove-NetFirewallRule") -and

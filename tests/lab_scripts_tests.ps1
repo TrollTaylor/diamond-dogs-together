@@ -460,6 +460,59 @@ try {
     Assert-Equal @(Get-LabOfflineIniProblems -Role host -Lab $h -Expectation $hostExpect).Count 3 'online lab.ini fails the offline preflight (net, partner, ports)'
     Assert-Equal @(Get-LabOfflineIniProblems -Role host -Lab $null -Expectation $hostExpect).Count 0 'a missing lab.ini is reported by the shared checks'
 
+    # ------------------------------------------------------------ world sync (docs/world-sync-protocol.md)
+    Import-Module (Join-Path $projectRoot 'tools/lab/WorldSync.psm1') -Force
+    Assert-True (@($ho.Keys | Where-Object { $_ -in @('world', 'world_probe') }).Count -eq 0) 'default offline lab.ini has no world keys'
+    Assert-Equal (ConvertTo-LabPartnerValue -Key world -Value 2) '2' 'world 2'
+    Assert-Equal (ConvertTo-LabPartnerValue -Key world -Value '0') '0' 'world 0'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key world -Value 4 } '0..3' 'world 4 refused'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key world -Value 'x' } '0..3' 'world x refused'
+    Assert-Equal (ConvertTo-LabPartnerValue -Key world_probe -Value race_kill) 'race_kill' 'world_probe race_kill'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key world_probe -Value p2 } 'world_probe' 'unknown probe refused'
+    Assert-Equal (@(Get-WorldProbeNames) -join ' ') 'p1 p3 p3b p4 p12 p17 race_kill remote_area_kill kill_near sleep_near fulton_near alert_near weather_rain clock_jump clock_fast' 'probe names and ids 1..15'
+    $worldOv = ConvertFrom-LabPartnerSettingArgs -Items @('world=2', 'host:world_probe=race_kill') -Role host
+    Assert-Equal "$($worldOv['world'])/$($worldOv['world_probe'])" '2/race_kill' '-PartnerSetting world=2 host:world_probe=race_kill'
+    $worldHost = New-LabIniFromSettings -Settings (Get-LabInstanceSettings -Role host -Config $config -GameDirectory $config.Paths.hostDir -HostSteamId64 $hostId -Offline -PartnerOverrides $worldOv)
+    Assert-True ($worldHost.Contains("`nworld=2`n") -and $worldHost.Contains("`nworld_probe=race_kill`n") -and
+        $worldHost.Replace("world=2`n", '').Replace("world_probe=race_kill`n", '') -ceq $hostOffIni) 'world keys are the only difference to the default offline lab.ini'
+    if ($IniCheck) {
+        $file = Join-Path $fixture 'world-host-lab.ini'; [IO.File]::WriteAllText($file, $worldHost)
+        $n = Invoke-IniCheck lab $file
+        if ($n.ContainsKey('world')) {
+            Assert-Equal "$($n['world'])|$($n['world_probe'])|$($n['unknown_keys'])/$($n['invalid_values'])" '2|race_kill|0/0' 'native: lab.ini world=2 world_probe=race_kill'
+            $file = Join-Path $fixture 'default-world-lab.ini'; [IO.File]::WriteAllText($file, $hostOffIni)
+            $n = Invoke-IniCheck lab $file
+            Assert-Equal "$($n['world'])|$($n['world_probe'])" '0|none' 'native: the default offline lab.ini is world 0'
+        }
+    }
+    $worldCases = @(
+        @('goto=30010', 'goto=30010'), @('goto_lz=1 goto=30020', 'goto=30020 goto_lz=1'), @('world=0', 'world=0'),
+        @('  world_probe=race_kill   world=3 ', 'world=3 world_probe=race_kill'), @('world_probe=off', 'world_probe=off'),
+        @('goto=30010 world=2 world_probe=p3b goto_lz=0', 'world=2 world_probe=p3b goto=30010 goto_lz=0'))
+    foreach ($case in $worldCases) { Assert-Equal (ConvertTo-WorldTriggerText -Text $case[0]) $case[1] "world trigger '$($case[0])'" }
+    foreach ($bad in @('', ' ', 'world=4', 'world=1 world=2', 'goto_lz=1', 'goto=30050', 'world_probe=none', 'world_probe=p2', 'stage=3', 'world', 'goto=30010 goto_lz=2')) {
+        Assert-Throws { ConvertTo-WorldTriggerText -Text $bad } '' "world trigger refuses '$bad'"
+        Assert-True (-not (Test-WorldTriggerText $bad)) "Test-WorldTriggerText is false for '$bad'"
+    }
+    Assert-Equal (Find-WorldTriggerResult -LogText "world=cfg; mission=30050`r`nworld_trigger=applied; text=goto=30010; t_ms=55`r`nworld_goto=armed; target=30010; lz=0; t_ms=55`r`n" -Canonical 'goto=30010').State 'applied' 'world trigger applied'
+    Assert-Equal (Find-WorldTriggerResult -LogText "world_trigger=applied; text=world=0; t_ms=1`n" -Canonical 'goto=30010').State 'different' 'another world trigger applied'
+    $wr = Find-WorldTriggerResult -LogText "world_trigger=applied; text=goto=30010; t_ms=1`nworld_trigger=rejected; reason=level0; t_ms=2`n" -Canonical 'goto=30010'
+    Assert-Equal "$($wr.State)|$($wr.Reason)" 'rejected|level0' 'the newest world trigger line wins (rejected)'
+    Assert-Equal (Find-WorldTriggerResult -LogText 'partner_trigger=rejected; reason=parse' -Canonical 'world=1').State 'none' 'partner lines do not count'
+    Assert-Equal (Find-WorldTriggerResult -LogText '' -Canonical 'world=1').State 'none' 'empty log'
+    # Play-OfflineCoop: -World adds world=N only when > 0; -WorldProbe needs -World; [G] sends goto=30010.
+    Assert-True ($playText.Contains("[ValidateRange(0, 3)][int]`$World = 0") -and $playText.Contains("[string]`$WorldProbe = 'none'")) 'Play-OfflineCoop -World 0..3 (default 0), -WorldProbe (default none)'
+    Assert-True ($playText.Contains("if (`$World -gt 0) { `$partnerSettings += `"world=`$World`" }") -and
+        $playText.Contains("if (`$WorldProbe -ne 'none') { `$partnerSettings += `"world_probe=`$WorldProbe`" }")) 'Play-OfflineCoop adds the world keys only when set'
+    Assert-True ($playText.IndexOf("if (`$WorldProbe -ne 'none' -and `$World -lt 1) { throw '-WorldProbe needs -World 1..3.' }") -ge 0 -and
+        $playText.IndexOf("if (`$WorldProbe -ne 'none' -and `$World -lt 1)") -lt $playText.IndexOf("Prepare-LabInstance.ps1')")) 'Play-OfflineCoop refuses -WorldProbe without -World before preparing anything'
+    Assert-True ($playText.Contains("'G' {") -and $playText.Contains("'Set-WorldTrigger.ps1') -Role both -Text 'goto=30010' -Force")) 'Play-OfflineCoop [G]: goto=30010 on both copies'
+    $playWorldErr = $null
+    $playWorldAst = [System.Management.Automation.Language.Parser]::ParseFile($playPath, [ref]$null, [ref]$playWorldErr)
+    $worldProbeParam = @($playWorldAst.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'WorldProbe' })[0]
+    $worldProbeSet = @($worldProbeParam.Attributes | Where-Object { $_.TypeName.Name -eq 'ValidateSet' })[0]
+    Assert-Equal (@($worldProbeSet.PositionalArguments | ForEach-Object { $_.Value }) -join ' ') ('none ' + (@(Get-WorldProbeNames) -join ' ')) 'Play-OfflineCoop -WorldProbe lists every probe'
+
     # ------------------------------------------------------------ two-PC play: lab rehearsal (-Lan, -WanSim) and shared defaults
     # docs/two-pc-play.md, spec section 8. Without the new switches the texts stay byte-identical.
     Assert-True (@($ho.Keys | Where-Object { $_ -in @('net_link', 'net_bind', 'net_peer_addr', 'partner_interp', 'net_jitter_ms', 'net_seed', 'mode') }).Count -eq 0) 'default offline lab.ini has no link v2 keys'
@@ -1479,6 +1532,22 @@ try {
     Assert-True ($LASTEXITCODE -ne 0 -and ($out -join ' ').Contains('rejected') -and @(Get-ChildItem -LiteralPath $runReject -Filter 'partner-E1-*.json').Count -eq 0) ('Invoke-PartnerExperiment stops on a rejected trigger: ' + ($out -join ' | '))
     $null = $consumer.WaitForExit(10000)
     Assert-True (!(Test-Path -LiteralPath $prPaths.host.PartnerTrigger)) 'no trigger left behind after the rejection'
+    # Set-WorldTrigger: canonical text, atomic write, both roles, -Force, refusal.
+    $setWorld = Join-Path $projectRoot 'tools/lab/Set-WorldTrigger.ps1'
+    function Invoke-SetWorld([string[]]$Arguments) {
+        $out = @(& $pwshExe -NoProfile -NonInteractive -File $setWorld -ConfigPath $prConfig @Arguments 2>&1)
+        [pscustomobject]@{ Code = $LASTEXITCODE; Text = ($out -join "`n") }
+    }
+    $r = Invoke-SetWorld @('-Role', 'both', '-Text', 'goto_lz=1  goto=30010')
+    Assert-True ($r.Code -eq 0 -and [IO.File]::ReadAllText($prPaths.host.WorldTrigger) -eq "goto=30010 goto_lz=1`n" -and
+        [IO.File]::ReadAllText($prPaths.guest.WorldTrigger) -eq "goto=30010 goto_lz=1`n") ('Set-WorldTrigger writes both in canonical form: ' + $r.Text)
+    $r = Invoke-SetWorld @('-Role', 'host', '-Text', 'world=0')
+    Assert-True ($r.Code -ne 0 -and [IO.File]::ReadAllText($prPaths.host.WorldTrigger) -eq "goto=30010 goto_lz=1`n") 'an unconsumed world.trigger is not replaced without -Force'
+    $r = Invoke-SetWorld @('-Role', 'host', '-Text', 'world=0', '-Force')
+    Assert-True ($r.Code -eq 0 -and [IO.File]::ReadAllText($prPaths.host.WorldTrigger) -eq "world=0`n") '-Force replaces it'
+    foreach ($p in $prPaths.Values) { Remove-Item -LiteralPath $p.WorldTrigger }
+    $r = Invoke-SetWorld @('-Role', 'guest', '-Text', 'goto=30050')
+    Assert-True ($r.Code -ne 0 -and !(Test-Path -LiteralPath $prPaths.guest.WorldTrigger)) 'invalid world trigger: nothing written'
     $runShort = New-PartnerFixtureRun 'e0-short' @{ host = (Select-Lines $fx['e0-host'] 20); guest = $fx['e0-guest'] }
     $out = @(& $pwshExe -NoProfile -NonInteractive -File $experiment -ConfigPath $prConfig -RunDir $runShort -Experiment E0 -NoInput -NoScreens -NoProcessCheck -TimeoutSec 1 -PollSec 1 2>&1)
     Assert-True ($LASTEXITCODE -eq 2 -and ($out -join ' ').Contains('waiting: ')) ('Invoke-PartnerExperiment reports INCOMPLETE at the timeout: ' + ($out -join ' | '))
@@ -1792,7 +1861,7 @@ Start-Sleep -Milliseconds 500
 
         # Stop-Lab closes/terminates only the run's processes and checks the (fixture) real saves.
         $stopScript = Join-Path $projectRoot 'tools/lab/Stop-Lab.ps1'
-        foreach ($p in $e2eHostPaths, $e2eGuestPaths) { New-TriggerFile -Path $p.PartnerTrigger -Text 'stage=3' }
+        foreach ($p in $e2eHostPaths, $e2eGuestPaths) { New-TriggerFile -Path $p.PartnerTrigger -Text 'stage=3'; New-TriggerFile -Path $p.WorldTrigger -Text 'goto=30010' }
         $null = & $pwshPath -NoProfile -NonInteractive -File $stopScript -ConfigPath $e2eConfigPath -RunDir $runDir -TimeoutSec 3 2>&1
         Assert-Equal $LASTEXITCODE 0 'Stop-Lab exit code with unchanged saves'
         foreach ($d in $dummies) { Assert-True $d.WaitForExit(5000) "stand-in process $($d.Id) stopped" }
@@ -1801,6 +1870,8 @@ Start-Sleep -Milliseconds 500
         Assert-True ($stop.games.host.action -eq 'close_then_terminate' -and $stop.games.host.exit -in @('closed', 'terminated')) 'recorded process verified, closed or terminated'
         Assert-True (!(Test-Path -LiteralPath $e2eHostPaths.PartnerTrigger) -and !(Test-Path -LiteralPath $e2eGuestPaths.PartnerTrigger)) 'Stop-Lab deletes leftover partner.trigger files'
         Assert-Equal (@($stop.partner_triggers_removed) -join ',') 'host,guest' 'stop.json lists the removed partner triggers'
+        Assert-True (!(Test-Path -LiteralPath $e2eHostPaths.WorldTrigger) -and !(Test-Path -LiteralPath $e2eGuestPaths.WorldTrigger)) 'Stop-Lab deletes leftover world.trigger files'
+        Assert-Equal (@($stop.world_triggers_removed) -join ',') 'host,guest' 'stop.json lists the removed world triggers'
         Assert-Equal ([Int64]$stop.log_end_offsets.host.'early.log') (Get-FileLengthOrZero (Join-Path $e2eHostPaths.Mod 'early.log')) 'stop.json records the log end offsets per instance'
         Assert-True ($null -ne $stop.log_end_offsets.guest.'script-observer.log') 'stop.json records the guest log end offsets'
         foreach ($dir in $runDir, $runDir2, $runDir3, $runDir4) {

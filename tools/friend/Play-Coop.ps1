@@ -27,7 +27,7 @@ the end), a Windows Firewall rule (administrator prompt). Nothing else
 contacts the network, and nothing changes firewall or router settings
 without a "y".
 
-  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Play-Coop.ps1 [-GameDirectory <MGSV folder>] [-Role Host|Join] [-Port 47830] [-HostAddress <ip or name>]
+  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Play-Coop.ps1 [-GameDirectory <MGSV folder>] [-Role Host|Join] [-Port 47830] [-HostAddress <ip or name>] [-World 0..3]
   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Play-Coop.ps1 -Cleanup
 #>
 [CmdletBinding()]
@@ -39,6 +39,10 @@ param(
     [ValidateRange(1024, 65535)][int]$Port = 47830,
     # Host: the address to put in the join code (default: this PC's addresses).
     [string]$HostAddress,
+    # World sync level (experimental, docs/two-pc-play.md): 0 off (default),
+    # 1 plumbing, 2 shared enemies and alert in free roam, 3 also clock and
+    # weather. Both players choose it; the effective level is the lower one.
+    [ValidateRange(0, 3)][int]$World = 0,
     # Remove the files of an earlier session that did not end cleanly, then exit.
     [switch]$Cleanup,
     # Internal: the hidden watchdog started by this script (value: the session id).
@@ -365,7 +369,11 @@ try {
 
     # ---------------------------------------------------------------- 4: activate
     Section 'Switching co-op on for the next game start'
-    $labText = New-CoopPlayLabIniText -Role $labRole -SaveDir $saveDir -Port $Port -PeerAddress $peerAddress
+    if ($World -gt 0) {
+        Write-Host "World sync level $World (experimental): shared enemies/alert in free roam (2+), clock and weather (3)."
+        Write-Host 'Both players must choose a level; the lower one applies. It runs on the co-op save copy only.'
+    }
+    $labText = New-CoopPlayLabIniText -Role $labRole -SaveDir $saveDir -Port $Port -PeerAddress $peerAddress -World $World
     $coopText = New-CoopPlayCoopIniText -Character $character
     $utf8 = New-Object Text.UTF8Encoding $false
     $writes = @(
