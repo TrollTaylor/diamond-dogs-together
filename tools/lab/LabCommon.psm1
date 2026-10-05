@@ -1,13 +1,15 @@
 # Shared helpers for the single-PC co-op lab (tools/lab/*.ps1).
 # Pure helpers (no side effects) are unit tested by tests/lab_scripts_tests.ps1.
-# The friend-test package (tools/friend) also ships this module and runs it
-# under Windows PowerShell 5.1: keep the identity, save backup/seed, manifest,
-# ini and process helpers 5.1-compatible (tests/friend_package_tests.ps1 runs
-# them under powershell.exe) and keep this file ASCII-only.
+# The folder layout, Steam account, save backup/seed, manifest, log and process
+# helpers live in tools/CoopPlay.psm1 (Windows PowerShell 5.1-compatible; the
+# friend package ships it instead of this module). It is imported here and its
+# functions are re-exported, so lab scripts keep importing only this module.
+# Keep this file ASCII-only.
 # Nothing in this module launches the game, Steam or fuse by itself, and no
 # helper writes below Steam\userdata (the real saves are only ever read).
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path (Split-Path -Parent $PSScriptRoot) 'CoopPlay.psm1') -Force -DisableNameChecking
 
 $script:SteamId64Base = [UInt64]76561197960265728
 $script:Utf8NoBom = [Text.UTF8Encoding]::new($false)
@@ -67,6 +69,17 @@ function Get-LabConfig {
         if ($udp -contains [int]$value) { throw "lab.json ports.$port collides with another lab UDP port" }
         $udp += [int]$value
     }
+    # Optional: the two-PC play port (docs/two-pc-play.md; informational for the lab).
+    $playPort = Get-ConfigValue $raw.ports 'play' $null
+    if ($null -ne $playPort -and ([int]$playPort -lt 1024 -or [int]$playPort -gt 65535 -or $udp -contains [int]$playPort)) { throw 'lab.json ports.play must be 1024..65535 and differ from the lab UDP ports' }
+    # Optional one-PC WAN rehearsal presets (Play-OfflineCoop -WanSim): lab.ini impairment keys.
+    $wanSim = Get-ConfigValue $raw 'wanSim' $null
+    if ($wanSim) {
+        foreach ($name in @($wanSim.PSObject.Properties.Name | Where-Object { $_ -cne 'comment' })) {
+            if ($name -cnotmatch '^[a-z]+$' -or $name -ceq 'off') { throw "lab.json wanSim.${name}: preset names are lower-case words (not 'off')" }
+            $null = Get-LabWanSimPreset -WanSim $wanSim -Name $name
+        }
+    }
     $offline = Get-ConfigValue $raw 'offline' $null
     if ($offline) {
         $masterPort = [int](Get-ConfigValue $offline 'masterPort' 47899)
@@ -99,7 +112,27 @@ function Get-LabConfig {
         Graphics   = Get-ConfigValue $raw 'graphics' ([pscustomobject]@{})
         Offline    = $offline
         Partner    = $partner
+        WanSim     = $wanSim
     }
+}
+
+# lab.ini keys a -WanSim preset may set (spec section 8; values are one-way, per instance).
+$script:LabWanSimKeys = @('net_latency_ms', 'net_jitter_ms', 'net_loss_permille', 'net_loss_model', 'net_burst', 'net_dup_permille', 'net_reorder_permille')
+
+function Get-LabWanSimPreset {
+    # Pure: one lab.json wanSim preset as validated lab.ini values (ordered by
+    # $script:LabWanSimKeys). Every key must be given.
+    param([AllowNull()]$WanSim, [Parameter(Mandatory)][string]$Name)
+    $preset = Get-ConfigValue $WanSim $Name $null
+    if ($null -eq $preset) { throw "Unknown -WanSim preset '$Name' (lab.json wanSim)." }
+    $names = @($preset.PSObject.Properties.Name | Where-Object { $_ -cne 'comment' })
+    foreach ($n in $names) { if ($script:LabWanSimKeys -cnotcontains $n) { throw "lab.json wanSim.$Name.${n}: not an impairment key ($($script:LabWanSimKeys -join ', '))." } }
+    $out = [ordered]@{}
+    foreach ($key in $script:LabWanSimKeys) {
+        if ($names -cnotcontains $key) { throw "lab.json wanSim.$Name.$key is missing." }
+        $out[$key] = ConvertTo-LabPartnerValue -Key $key -Value $preset.$key
+    }
+    return $out
 }
 
 function Get-ProjectVersion {
@@ -107,32 +140,6 @@ function Get-ProjectVersion {
     $text = Get-Content -LiteralPath (Join-Path $RepoRoot 'CMakeLists.txt') -Raw
     if ($text -notmatch 'project\(mgs_coop VERSION ([0-9]+\.[0-9]+\.[0-9]+)') { throw 'Project version not found in CMakeLists.txt' }
     return $Matches[1]
-}
-
-function Get-InstancePaths {
-    # Folder layout of one instance (docs/lab-protocol.md).
-    param([Parameter(Mandatory)][string]$GameDirectory)
-    $root = [IO.Path]::GetFullPath($GameDirectory).TrimEnd('\', '/')
-    $mod = Join-Path $root 'mgs-coop'
-    [pscustomobject]@{
-        Game      = $root
-        Exe       = Join-Path $root 'mgsvtpp.exe'
-        SteamApi  = Join-Path $root 'steam_api64.dll'
-        Loader    = Join-Path $root 'dinput8.dll'
-        Mod       = $mod
-        Record    = Join-Path $mod 'probe-install.json'
-        Archive   = Join-Path $mod 'mgs-coop-player-runtime.dat'
-        Marker    = Join-Path $mod 'script-observe.enabled'
-        ClientHost = Join-Path $mod 'client-host.txt'
-        LabIni    = Join-Path $mod 'lab.ini'
-        CoopIni   = Join-Path $mod 'coop.ini'
-        Status    = Join-Path $mod 'lab-status.json'
-        HostId    = Join-Path $mod 'host-steamid.txt'
-        JoinTrigger  = Join-Path $mod 'join.trigger'
-        ResetTrigger = Join-Path $mod 'reset.trigger'
-        PartnerTrigger = Join-Path $mod 'partner.trigger'
-        SaveDir   = Join-Path $mod 'lab\saves'
-    }
 }
 
 # ---------------------------------------------------------------------------
@@ -152,55 +159,6 @@ function Test-IndividualSteamId64 {
     [UInt64]$id = 0
     if (![UInt64]::TryParse($Value, [ref]$id)) { return $false }
     return (($id -shr 32) -eq 0x01100001) -and (($id % [UInt64]4294967296) -ne 0)
-}
-
-function Resolve-SteamAccount {
-    # Chooses the Steam account whose saves seed the lab and whose SteamID the host uses.
-    #  - a nonzero registry ActiveUser (Steam running and logged in) wins;
-    #  - otherwise exactly one userdata account with MGSV saves; none or several = refuse.
-    # Candidates: objects with Account (UInt32) and LastWriteUtc (DateTime).
-    param([UInt32]$ActiveUser = 0, [object[]]$Candidates = @())
-    if ($ActiveUser -ne 0) { return [UInt32]$ActiveUser }
-    $list = @($Candidates | Where-Object { $_ -and $_.Account -ne 0 } | Sort-Object LastWriteUtc -Descending)
-    if ($list.Count -eq 1) { return [UInt32]$list[0].Account }
-    if ($list.Count -eq 0) { throw 'No Steam account with MGSV saves found (Steam ActiveUser is 0 and userdata has no 287700/local). Start Steam or pass -HostSteamId.' }
-    throw ('Ambiguous Steam account (Steam is not running and ' + $list.Count + ' userdata accounts have MGSV saves). Start Steam and log in, or pass -HostSteamId.')
-}
-
-function Get-SteamInstallPath {
-    $key = Get-ItemProperty -LiteralPath 'HKCU:\Software\Valve\Steam' -ErrorAction SilentlyContinue
-    if (!$key -or !($key.PSObject.Properties.Name -contains 'SteamPath') -or !$key.SteamPath) { throw 'Steam path not found in HKCU:\Software\Valve\Steam (SteamPath).' }
-    return [IO.Path]::GetFullPath($key.SteamPath).TrimEnd('\', '/')
-}
-
-function ConvertFrom-RegistryDword {
-    # Pure: Get-ItemProperty returns REG_DWORD as Int32, negative from 2^31 up
-    # ([UInt32] of a negative Int32 throws). Returns the unsigned 32-bit value.
-    param([Parameter(Mandatory)][AllowNull()]$Value)
-    if ($null -eq $Value) { return [UInt32]0 }
-    if ($Value -is [int]) { return [BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$Value), 0) }
-    $wide = [Int64]$Value
-    if ($wide -lt 0 -or $wide -gt [Int64][UInt32]::MaxValue) { throw "Not a 32-bit registry value: $Value" }
-    return [UInt32]$wide
-}
-
-function Get-SteamActiveUser {
-    $key = Get-ItemProperty -LiteralPath 'HKCU:\Software\Valve\Steam\ActiveProcess' -ErrorAction SilentlyContinue
-    if (!$key -or !($key.PSObject.Properties.Name -contains 'ActiveUser')) { return [UInt32]0 }
-    return ConvertFrom-RegistryDword $key.ActiveUser
-}
-
-function Get-SteamSaveCandidates {
-    param([Parameter(Mandatory)][string]$SteamPath)
-    $userdata = Join-Path $SteamPath 'userdata'
-    if (!(Test-Path -LiteralPath $userdata -PathType Container)) { return @() }
-    $rows = foreach ($dir in Get-ChildItem -LiteralPath $userdata -Directory) {
-        if ($dir.Name -cnotmatch '^[0-9]{1,10}$') { continue }
-        $local = Join-Path $dir.FullName '287700/local'
-        if (!(Test-Path -LiteralPath $local -PathType Container)) { continue }
-        [pscustomobject]@{ Account = [UInt32]$dir.Name; LastWriteUtc = (Get-Item -LiteralPath $local).LastWriteTimeUtc }
-    }
-    return @($rows)
 }
 
 function Get-HostIdentity {
@@ -250,9 +208,17 @@ function Test-AbsoluteWindowsPath {
 # in the order New-LabIniText writes them. Json is the short name lab.json "partner"
 # may use instead of the key. net_latency_ms / net_loss_permille already exist
 # (docs/lab-protocol.md) and are written only when set.
+# Link v2 keys (docs/two-pc-play.md, spec 1.1) are written only when set, so the
+# default offline lab.ini stays byte-identical: net_link (legacy = the raw-frame
+# bisect path), net_bind / net_peer_addr (-Lan only; like the ports they are not
+# -PartnerSetting / lab.json values), the impairments (-WanSim) and the adaptive
+# interpolation keys.
 $script:LabPartnerKeys = @(
     @{ Key = 'net'; Json = 'net'; Kind = 'bool' },
+    @{ Key = 'net_link'; Json = 'net_link'; Kind = 'enum'; Values = @('v2', 'legacy') },
+    @{ Key = 'net_bind'; Json = ''; Kind = 'bind' },
     @{ Key = 'net_listen_port'; Json = ''; Kind = 'port' },
+    @{ Key = 'net_peer_addr'; Json = ''; Kind = 'ipv4' },
     @{ Key = 'net_peer_port'; Json = ''; Kind = 'port' },
     @{ Key = 'partner'; Json = 'partner'; Kind = 'bool' },
     @{ Key = 'partner_stage'; Json = 'stage'; Kind = 'int'; Min = 0; Max = 3 },
@@ -266,6 +232,10 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_look'; Json = 'look'; Kind = 'enum'; Values = @('copy', 'net', 'quiet', 'snake') },
     @{ Key = 'partner_rate_hz'; Json = 'rate_hz'; Kind = 'int'; Min = 1; Max = 60 },
     @{ Key = 'partner_interp_ms'; Json = 'interp_ms'; Kind = 'int'; Min = 0; Max = 500 },
+    @{ Key = 'partner_interp'; Json = 'interp'; Kind = 'enum'; Values = @('fixed', 'auto') },
+    @{ Key = 'partner_interp_min_ms'; Json = 'interp_min_ms'; Kind = 'int'; Min = 20; Max = 500 },
+    @{ Key = 'partner_interp_max_ms'; Json = 'interp_max_ms'; Kind = 'int'; Min = 20; Max = 1000 },
+    @{ Key = 'partner_lost'; Json = 'lost'; Kind = 'enum'; Values = @('freeze', 'hide') },
     @{ Key = 'partner_offset_cm'; Json = 'offset_cm'; Kind = 'int'; Min = 50; Max = 1000 },
     @{ Key = 'partner_teardown'; Json = 'teardown'; Kind = 'enum'; Values = @('clear', 'keep') },
     @{ Key = 'partner_force_exists'; Json = 'force_exists'; Kind = 'bool' },
@@ -306,7 +276,16 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_input_wrap'; Json = 'input_wrap'; Kind = 'enum'; Values = @('off', 'census', 'window') },
     @{ Key = 'crash_probe'; Json = 'crash_probe'; Kind = 'bool' },
     @{ Key = 'net_latency_ms'; Json = 'net_latency_ms'; Kind = 'int'; Min = 0; Max = 2000 },
-    @{ Key = 'net_loss_permille'; Json = 'net_loss_permille'; Kind = 'int'; Min = 0; Max = 1000 }
+    @{ Key = 'net_jitter_ms'; Json = 'net_jitter_ms'; Kind = 'int'; Min = 0; Max = 1000 },
+    @{ Key = 'net_loss_permille'; Json = 'net_loss_permille'; Kind = 'int'; Min = 0; Max = 1000 },
+    @{ Key = 'net_loss_model'; Json = 'net_loss_model'; Kind = 'enum'; Values = @('even', 'burst') },
+    @{ Key = 'net_burst'; Json = 'net_burst'; Kind = 'int'; Min = 1; Max = 16 },
+    @{ Key = 'net_dup_permille'; Json = 'net_dup_permille'; Kind = 'int'; Min = 0; Max = 1000 },
+    @{ Key = 'net_reorder_permille'; Json = 'net_reorder_permille'; Kind = 'int'; Min = 0; Max = 1000 },
+    @{ Key = 'net_reorder_ms'; Json = 'net_reorder_ms'; Kind = 'int'; Min = 1; Max = 500 },
+    @{ Key = 'net_seed'; Json = 'net_seed'; Kind = 'u32'; Min = 1 },
+    # mode=play belongs to the two-PC launcher (tools/friend/Play-Coop.ps1), never to the lab.
+    @{ Key = 'mode'; Json = ''; Kind = 'enum'; Values = @('lab') }
 )
 # Lab defaults for the spike (lab.json "partner" overrides them).
 $script:LabPartnerDefaults = [ordered]@{
@@ -341,6 +320,18 @@ function ConvertTo-LabPartnerValue {
     } elseif ($spec.Kind -eq 'int') {
         if ($text -cmatch '^[0-9]{1,5}$' -and [int]$text -ge $spec.Min -and [int]$text -le $spec.Max) { return [string][int]$text }
         $allowed = [string]$spec.Min + '..' + [string]$spec.Max
+    } elseif ($spec.Kind -eq 'u32') {
+        if ($text -cmatch '^[0-9]{1,10}$' -and [uint64]$text -ge $spec.Min -and [uint64]$text -le 4294967295) { return [string][uint64]$text }
+        $allowed = [string]$spec.Min + '..4294967295'
+    } elseif ($spec.Kind -eq 'bind') {
+        # Spec 1.1: loopback, any or a dotted IPv4 (the native side never resolves names).
+        if ($text -cin @('loopback', 'any') -or (Test-CoopIPv4Text $text)) { return $text }
+        $allowed = 'loopback|any|<dotted IPv4>'
+    } elseif ($spec.Kind -eq 'ipv4') {
+        # Spec 1.1 net_peer_addr: canonical dotted IPv4, not 0.0.0.0, 255.255.255.255 or
+        # 224.0.0.0/4 (127/8 is lab-only, which this lab helper allows).
+        if ((Test-CoopIPv4Text $text) -and ((Test-CoopPlayPeerAddress $text) -or $text.StartsWith('127.', [StringComparison]::Ordinal))) { return $text }
+        $allowed = 'a dotted IPv4 (no names, no 0.0.0.0/broadcast/multicast)'
     } elseif ($spec.Kind -eq 'sint') {
         if ($text -cmatch '^(0|-?[1-9][0-9]{0,4})$' -and [int]$text -ge $spec.Min -and [int]$text -le $spec.Max) { return [string][int]$text }
         $allowed = [string]$spec.Min + '..' + [string]$spec.Max
@@ -390,6 +381,11 @@ function ConvertTo-LabPartnerIni {
     $netPeer = if ($out.Contains('net_peer_port')) { [int]$out['net_peer_port'] } else { 0 }
     if ($out.Contains('net') -and $out['net'] -eq '1' -and (!$netListen -or !$netPeer)) { throw 'lab.ini net=1 needs net_listen_port and net_peer_port.' }
     if ($netListen -and $netListen -eq $netPeer) { throw 'net_listen_port and net_peer_port must differ.' }
+    if ($out.Contains('partner_interp_max_ms')) {
+        $min = 60
+        if ($out.Contains('partner_interp_min_ms')) { $min = [int]$out['partner_interp_min_ms'] }
+        if ([int]$out['partner_interp_max_ms'] -lt $min) { throw "partner_interp_max_ms must be at least partner_interp_min_ms ($min)." }
+    }
     foreach ($port in @($netListen, $netPeer)) {
         if ($port -and ($port -eq $ListenPort -or $port -eq $PeerPort)) { throw "Partner net port $port collides with listen_port/peer_port." }
     }
@@ -410,6 +406,7 @@ function ConvertFrom-LabPartnerJson {
         foreach ($candidate in $script:LabPartnerKeys) { if ($candidate.Key -ceq $name -or ($candidate.Json -and $candidate.Json -ceq $name)) { $spec = $candidate; break } }
         if (!$spec) { throw "Unknown lab.json partner setting: $name" }
         if ($spec.Kind -eq 'port') { throw "lab.json partner.${name}: set ports.netHost / ports.netGuest instead." }
+        if ($spec.Kind -in @('bind', 'ipv4')) { throw "lab.json partner.${name}: set by Prepare-LabInstance -Lan, not lab.json." }
         $value = if ($Partner -is [Collections.IDictionary]) { $Partner[$name] } else { $Partner.PSObject.Properties[$name].Value }
         $out[$spec.Key] = $value
     }
@@ -452,6 +449,7 @@ function ConvertFrom-LabPartnerSettingArgs {
         $spec = Get-LabPartnerKeySpec -Key $key
         if (!$spec) { throw "Unknown partner lab.ini key in -PartnerSetting: $key" }
         if ($spec.Kind -eq 'port') { throw "-PartnerSetting cannot change $key; set ports.netHost / ports.netGuest in lab.json." }
+        if ($spec.Kind -in @('bind', 'ipv4')) { throw "-PartnerSetting cannot change $key; use Prepare-LabInstance -Lan." }
         $canonical = ConvertTo-LabPartnerValue -Key $key -Value $value
         if (!$target -or $target -ceq $Role) { $out[$key] = $canonical }
     }
@@ -567,21 +565,6 @@ function Select-NewestUserBackup {
     return $best
 }
 
-function ConvertFrom-IniText {
-    # key=value lines, '#'/';' comments, trimmed; later keys win. Pure.
-    param([AllowEmptyString()][string]$Text)
-    $result = [ordered]@{}
-    if (!$Text) { return $result }
-    foreach ($line in ($Text.TrimStart([char]0xFEFF) -split "`n")) {
-        $trimmed = $line.Trim()
-        if (!$trimmed -or $trimmed.StartsWith('#') -or $trimmed.StartsWith(';')) { continue }
-        $equals = $trimmed.IndexOf('=')
-        if ($equals -lt 1) { continue }
-        $result[$trimmed.Substring(0, $equals).Trim()] = $trimmed.Substring($equals + 1).Trim()
-    }
-    return $result
-}
-
 function Get-LabDisabledMarker {
     # Pure: the role marker Prepare-LabInstance -Disable writes instead of the
     # current marker file text, or $null to leave it. Only the lab-only offline-v1
@@ -599,8 +582,10 @@ function Get-LabOfflineExpectation {
     # (lab.json offline.masterPort, default 47899), the partner UDP ports
     # (ports.netHost/netGuest, default 47820/47821; the guest's are swapped) and
     # the coop.ini character (offline.characters, default 'default' on both: the
-    # fuse lab's top-level characters stay untouched).
-    param([Parameter(Mandatory)][ValidateSet('host', 'guest')][string]$Role, [Parameter(Mandatory)]$Config)
+    # fuse lab's top-level characters stay untouched). -Lan (one-PC LAN rehearsal,
+    # docs/two-pc-play.md): both instances bind all addresses (net_bind=any) and
+    # the guest targets the host's LAN IPv4 (net_peer_addr); the ports are unchanged.
+    param([Parameter(Mandatory)][ValidateSet('host', 'guest')][string]$Role, [Parameter(Mandatory)]$Config, [switch]$Lan)
     $offline = Get-ConfigValue $Config 'Offline' $null
     $masterPort = [int](Get-ConfigValue $offline 'masterPort' 47899)
     $netHost = [int](Get-ConfigValue $Config.Ports 'netHost' 47820)
@@ -611,6 +596,7 @@ function Get-LabOfflineExpectation {
         Role = $Role; Marker = [string](Get-ConfigValue $offline 'marker' 'offline-v1'); MasterPort = $masterPort
         MasterUrl = 'http://127.0.0.1:' + $masterPort + '/tppstm/gate'; NetListenPort = $listen; NetPeerPort = $peer
         Character = [string](Get-ConfigValue (Get-ConfigValue $offline 'characters' $null) $Role 'default')
+        Lan = [bool]$Lan
     }
 }
 
@@ -627,12 +613,21 @@ function Get-LabInstanceSettings {
         [switch]$Offline,
         [Collections.IDictionary]$PartnerOverrides = $null,
         # Offline only: replaces lab.json offline.characters.<role> for this preparation.
-        [string]$CharacterOverride = $null
+        [string]$CharacterOverride = $null,
+        # Offline only: one-PC LAN rehearsal (net_bind=any; the guest targets $LanAddress).
+        [switch]$Lan,
+        [string]$LanAddress = '',
+        # Offline only: a lab.json wanSim preset (impairment keys, net_seed 1/2, partner_interp=auto).
+        [string]$WanSim = 'off'
     )
     if (!(Test-IndividualSteamId64 $HostSteamId64)) { throw 'Host SteamID64 is not a valid individual SteamID64.' }
     if (!$Offline -and $PartnerOverrides -and $PartnerOverrides.Count) { throw 'Partner settings apply only to the offline lab mode (-Offline).' }
     if (!$Offline -and $CharacterOverride) { throw 'A character override applies only to the offline lab mode (-Offline).' }
     if ($CharacterOverride -and $CharacterOverride -cnotin $script:LabCharacters) { throw "Invalid character override: $CharacterOverride" }
+    if (!$WanSim) { $WanSim = 'off' }
+    if (!$Offline -and ($Lan -or $WanSim -cne 'off')) { throw '-Lan and -WanSim apply only to the offline lab mode (-Offline).' }
+    if ($Lan -and !(Test-CoopPlayPeerAddress $LanAddress)) { throw "-Lan needs this PC's LAN IPv4 address (got '$LanAddress')." }
+    if (!$Lan -and $LanAddress) { throw '-LanAddress applies only with -Lan.' }
     $saveDir = (Get-InstancePaths -GameDirectory $GameDirectory).SaveDir
     $guestId = [string](Get-ConfigValue $Config.Identity 'guestSteamId' '76561202255233008')
     if (!(Test-IndividualSteamId64 $guestId)) { throw 'lab.json identity.guestSteamId is not a valid individual SteamID64.' }
@@ -657,12 +652,23 @@ function Get-LabInstanceSettings {
         }
     }
     if ($Offline) {
-        $expect = Get-LabOfflineExpectation -Role $Role -Config $Config
+        $expect = Get-LabOfflineExpectation -Role $Role -Config $Config -Lan:$Lan
         $merged = [ordered]@{}
         foreach ($key in $script:LabPartnerDefaults.Keys) { $merged[$key] = $script:LabPartnerDefaults[$key] }
         $fromJson = ConvertFrom-LabPartnerJson -Partner (Get-ConfigValue $Config 'Partner' $null)
         foreach ($key in $fromJson.Keys) { $merged[$key] = $fromJson[$key] }
+        if ($WanSim -cne 'off') {
+            # Each instance impairs its own outbound datagrams (RTT ~ 2x latency).
+            $preset = Get-LabWanSimPreset -WanSim (Get-ConfigValue $Config 'WanSim' $null) -Name $WanSim
+            foreach ($key in $preset.Keys) { $merged[$key] = $preset[$key] }
+            $merged['net_seed'] = if ($Role -eq 'host') { '1' } else { '2' }
+            $merged['partner_interp'] = 'auto'
+        }
         if ($PartnerOverrides) { foreach ($key in $PartnerOverrides.Keys) { $merged[[string]$key] = $PartnerOverrides[$key] } }
+        if ($Lan) {
+            $merged['net_bind'] = 'any'
+            if ($Role -eq 'guest') { $merged['net_peer_addr'] = $LanAddress }
+        }
         $merged['net_listen_port'] = $expect.NetListenPort
         $merged['net_peer_port'] = $expect.NetPeerPort
         $settings.Partner = ConvertTo-LabPartnerIni -Values $merged -ListenPort $settings.ListenPort -PeerPort $settings.PeerPort
@@ -671,6 +677,8 @@ function Get-LabInstanceSettings {
         $settings.Character = if ($CharacterOverride) { $CharacterOverride } else { $expect.Character }
         $settings.Offline = $true
     }
+    $settings | Add-Member -NotePropertyName Lan -NotePropertyValue ([bool]$Lan)
+    $settings | Add-Member -NotePropertyName WanSim -NotePropertyValue $WanSim
     return $settings
 }
 
@@ -691,6 +699,8 @@ function Get-LabOfflineIniProblems {
     # Pure: what Start-Lab -Offline requires of one instance's lab.ini (parsed with
     # ConvertFrom-IniText) beyond the shared checks: net=1, partner=1, the role's
     # partner ports and valid values for every partner/net key that is present.
+    # With Expectation.Lan: net_bind=any on both and a guest net_peer_addr;
+    # without it: no non-loopback bind (a -Lan preparation needs Start-Lab -Lan).
     param([Parameter(Mandatory)][ValidateSet('host', 'guest')][string]$Role, [AllowNull()]$Lab, [Parameter(Mandatory)]$Expectation)
     $problems = [Collections.Generic.List[string]]::new()
     if ($null -eq $Lab) { return }  # a missing lab.ini is reported by the shared checks
@@ -700,6 +710,11 @@ function Get-LabOfflineIniProblems {
         [string](Get-ConfigValue $Lab 'net_peer_port' '') -cne [string]$Expectation.NetPeerPort) {
         $problems.Add("[$Role] lab.ini net_listen_port/net_peer_port are not $($Expectation.NetListenPort)/$($Expectation.NetPeerPort) (lab.json ports.netHost/netGuest).")
     }
+    $bind = [string](Get-ConfigValue $Lab 'net_bind' 'loopback')
+    if ([bool](Get-ConfigValue $Expectation 'Lan' $false)) {
+        if ($bind -cne 'any') { $problems.Add("[$Role] lab.ini net_bind is not any (run Prepare-LabInstance.ps1 -Offline -Lan).") }
+        if ($Role -eq 'guest' -and !(Get-ConfigValue $Lab 'net_peer_addr' $null)) { $problems.Add('[guest] lab.ini has no net_peer_addr (the host''s LAN address; run Prepare-LabInstance.ps1 -Offline -Lan).') }
+    } elseif ($bind -cne 'loopback') { $problems.Add("[$Role] lab.ini net_bind=$bind was prepared with -Lan; start with -Lan or prepare again without it.") }
     foreach ($spec in $script:LabPartnerKeys) {
         $value = Get-ConfigValue $Lab $spec.Key $null
         if ($null -eq $value) { continue }
@@ -835,40 +850,6 @@ function Set-GraphicsConfigWindowedText {
 # Files, hashes, manifests and packages
 # ---------------------------------------------------------------------------
 
-function Get-Sha256 {
-    param([Parameter(Mandatory)][string]$Path)
-    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
-}
-
-function Test-FileHash {
-    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Expected)
-    return (Test-Path -LiteralPath $Path -PathType Leaf) -and (Get-Sha256 $Path) -eq $Expected.ToUpperInvariant()
-}
-
-function Test-PathInside {
-    param([Parameter(Mandatory)][string]$Child, [Parameter(Mandatory)][string]$Parent)
-    $c = [IO.Path]::GetFullPath($Child).TrimEnd('\', '/')
-    $p = [IO.Path]::GetFullPath($Parent).TrimEnd('\', '/')
-    return $c.Equals($p, [StringComparison]::OrdinalIgnoreCase) -or
-        $c.StartsWith($p + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)
-}
-
-function Assert-NoReparsePoint {
-    # Refuses a path (or any existing ancestor down to $StopAt) that is a junction/symlink.
-    param([Parameter(Mandatory)][string]$Path, [string]$StopAt)
-    $cursor = [IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
-    $stop = if ($StopAt) { [IO.Path]::GetFullPath($StopAt).TrimEnd('\', '/') } else { $null }
-    while ($cursor) {
-        if (Test-Path -LiteralPath $cursor) {
-            if ((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Filesystem links are not supported here: $cursor" }
-        }
-        if ($stop -and $cursor.Equals($stop, [StringComparison]::OrdinalIgnoreCase)) { break }
-        $parent = Split-Path -Parent $cursor
-        if (!$parent -or $parent -eq $cursor) { break }
-        $cursor = $parent
-    }
-}
-
 function Write-TextFileIfChanged {
     # Writes UTF-8 (no BOM) / LF text atomically; returns $true when the file changed.
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][AllowEmptyString()][string]$Text)
@@ -880,137 +861,6 @@ function Write-TextFileIfChanged {
     try { Move-Item -LiteralPath $temp -Destination $Path -Force }
     finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
     return $true
-}
-
-function Get-RelativeChildPath {
-    # Pure: $Path relative to $Root with '/' separators. Windows PowerShell 5.1
-    # (the friend-test package) has no [IO.Path]::GetRelativePath, so this
-    # requires $Path to lie below $Root and strips the prefix.
-    param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string]$Path)
-    $r = [IO.Path]::GetFullPath($Root).TrimEnd('\', '/')
-    $p = [IO.Path]::GetFullPath($Path)
-    if (!$p.StartsWith($r + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw "Path is not below ${r}: $p" }
-    return $p.Substring($r.Length + 1).Replace('\', '/')
-}
-
-function New-HashManifest {
-    # Hashes every file below each relative source folder of $Root (read-only).
-    param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string[]]$Folders)
-    $rows = [Collections.Generic.List[object]]::new()
-    foreach ($folder in $Folders) {
-        $full = Join-Path $Root $folder
-        if (!(Test-Path -LiteralPath $full -PathType Container)) { continue }
-        foreach ($file in Get-ChildItem -LiteralPath $full -File -Recurse -Force | Sort-Object FullName) {
-            $relative = Get-RelativeChildPath -Root $Root -Path $file.FullName
-            $rows.Add([pscustomobject]@{ path = $relative; size = $file.Length; sha256 = (Get-Sha256 $file.FullName) })
-        }
-    }
-    return , $rows.ToArray()
-}
-
-function Compare-HashManifest {
-    # Pure: compares expected rows with actual rows by path.
-    param([object[]]$Expected = @(), [object[]]$Actual = @())
-    $want = @{}; foreach ($row in @($Expected)) { if ($row) { $want[[string]$row.path] = $row } }
-    $have = @{}; foreach ($row in @($Actual)) { if ($row) { $have[[string]$row.path] = $row } }
-    $changed = @($want.Keys | Where-Object { $have.ContainsKey($_) -and $have[$_].sha256 -ne $want[$_].sha256 } | Sort-Object)
-    $missing = @($want.Keys | Where-Object { !$have.ContainsKey($_) } | Sort-Object)
-    $added = @($have.Keys | Where-Object { !$want.ContainsKey($_) } | Sort-Object)
-    [pscustomobject]@{
-        Same    = ($changed.Count + $missing.Count + $added.Count) -eq 0
-        Changed = $changed
-        Missing = $missing
-        Added   = $added
-    }
-}
-
-$script:VerifiedSaveFolders = @('287700/local', '311340/remote')
-
-function Get-RealSaveManifest {
-    # Hash-only manifest of the real save folders (read-only).
-    param([Parameter(Mandatory)][string]$UserData)
-    return New-HashManifest -Root ([IO.Path]::GetFullPath($UserData).TrimEnd('\', '/')) -Folders $script:VerifiedSaveFolders
-}
-
-function Backup-RealSaves {
-    # Copies the real MGSV save folders (read-only access) to $Destination and
-    # writes manifest.json. Folders: 287700/local and 311340/remote (verified),
-    # plus the remaining files of 287700 and 311340 (informational backup).
-    param([Parameter(Mandatory)][string]$UserData, [Parameter(Mandatory)][string]$Destination)
-    $userRoot = [IO.Path]::GetFullPath($UserData).TrimEnd('\', '/')
-    if (Test-PathInside -Child $Destination -Parent $userRoot) { throw 'Backup destination must be outside Steam userdata.' }
-    if (Test-Path -LiteralPath $Destination) { throw "Backup destination already exists: $Destination" }
-    $verified = New-HashManifest -Root $userRoot -Folders $script:VerifiedSaveFolders
-    if ($verified.Count -eq 0) { throw "No MGSV save files under $userRoot (287700/local, 311340/remote)." }
-    $everything = New-HashManifest -Root $userRoot -Folders @('287700', '311340')
-    $null = New-Item -ItemType Directory -Path $Destination -Force
-    foreach ($row in $everything) {
-        $source = Join-Path $userRoot $row.path
-        $target = Join-Path $Destination ('files/' + $row.path)
-        $parent = Split-Path -Parent $target
-        if (!(Test-Path -LiteralPath $parent)) { $null = New-Item -ItemType Directory -Path $parent -Force }
-        # Read-only open of the real file; the copy is written only below $Destination.
-        [IO.File]::Copy($source, $target, $false)
-        if ((Get-Sha256 $target) -ne $row.sha256) { throw "Backup copy hash mismatch (file changed while copying?): $($row.path)" }
-    }
-    $manifest = [ordered]@{
-        product     = 'mgs-coop-lab-save-backup'
-        created_utc = [DateTime]::UtcNow.ToString('o')
-        source_root = $userRoot
-        verified    = $verified
-        all_files   = $everything
-        note        = 'Real files were only read. verified = save files whose hashes Stop-Lab re-checks.'
-    }
-    [IO.File]::WriteAllText((Join-Path $Destination 'manifest.json'), ($manifest | ConvertTo-Json -Depth 5) + "`n", $script:Utf8NoBom)
-    return [pscustomobject]$manifest
-}
-
-function Test-RealSavesAgainstBackup {
-    param([Parameter(Mandatory)][string]$BackupDirectory)
-    $manifest = Get-Content -LiteralPath (Join-Path $BackupDirectory 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-    $current = New-HashManifest -Root $manifest.source_root -Folders $script:VerifiedSaveFolders
-    $comparison = Compare-HashManifest -Expected @($manifest.verified) -Actual $current
-    [pscustomobject]@{ Backup = $BackupDirectory; SourceRoot = $manifest.source_root; Comparison = $comparison }
-}
-
-function Copy-SaveSeed {
-    # Seeds a lab save_dir from a verified backup copy (never from the real folder).
-    #   files/287700/local/*  -> <SaveDir>/<LocalSubdir>/
-    #   files/311340/remote/* -> <SaveDir>/<RemoteSubdir>/
-    # An already seeded save_dir is left untouched unless -Reseed is set, in
-    # which case the existing lab copies are first moved to $ArchiveDirectory.
-    param(
-        [Parameter(Mandatory)][string]$BackupDirectory,
-        [Parameter(Mandatory)][string]$SaveDir,
-        [string]$LocalSubdir = '287700/local',
-        [string]$RemoteSubdir = 'remote',
-        [switch]$Reseed,
-        [string]$ArchiveDirectory
-    )
-    $local = Join-Path $SaveDir $LocalSubdir
-    $remote = Join-Path $SaveDir $RemoteSubdir
-    $seeded = (Test-Path -LiteralPath $local) -and @(Get-ChildItem -LiteralPath $local -File -Force).Count -gt 0
-    if ($seeded -and !$Reseed) { return [pscustomobject]@{ Seeded = $false; Reason = 'already_seeded'; Files = 0; SaveDir = $SaveDir } }
-    if ($seeded -or ($Reseed -and (Test-Path -LiteralPath $remote))) {
-        if (!$ArchiveDirectory) { throw 'ArchiveDirectory is required with -Reseed.' }
-        foreach ($pair in @(@($local, 'local'), @($remote, 'remote'))) {
-            if (Test-Path -LiteralPath $pair[0]) {
-                $null = New-Item -ItemType Directory -Path $ArchiveDirectory -Force
-                Move-Item -LiteralPath $pair[0] -Destination (Join-Path $ArchiveDirectory ($pair[1] + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 8)))
-            }
-        }
-    }
-    $copied = 0
-    foreach ($pair in @(@('files/287700/local', $local), @('files/311340/remote', $remote))) {
-        $source = Join-Path $BackupDirectory $pair[0]
-        $null = New-Item -ItemType Directory -Path $pair[1] -Force
-        if (!(Test-Path -LiteralPath $source)) { continue }
-        foreach ($file in Get-ChildItem -LiteralPath $source -File -Force) {
-            [IO.File]::Copy($file.FullName, (Join-Path $pair[1] $file.Name), $true)
-            $copied++
-        }
-    }
-    return [pscustomobject]@{ Seeded = $true; Reason = 'copied'; Files = $copied; SaveDir = $SaveDir }
 }
 
 function New-LabPackage {
@@ -1061,44 +911,6 @@ function New-LabPackage {
 # ---------------------------------------------------------------------------
 # Logs and status
 # ---------------------------------------------------------------------------
-
-function Get-FileLengthOrZero {
-    param([Parameter(Mandatory)][string]$Path)
-    if (Test-Path -LiteralPath $Path -PathType Leaf) { return [Int64](Get-Item -LiteralPath $Path -Force).Length }
-    return [Int64]0
-}
-
-function Read-LogFromOffset {
-    # Reads complete lines appended since $Offset (FileShare.ReadWrite, so the
-    # game keeps writing). A shorter file than $Offset means it was replaced;
-    # reading restarts at 0 and Truncated is set.
-    param([Parameter(Mandatory)][string]$Path, [Int64]$Offset = 0, [int]$MaxBytes = 8MB)
-    $result = [pscustomobject]@{ Text = ''; NewOffset = $Offset; Exists = $false; Truncated = $false }
-    if (!(Test-Path -LiteralPath $Path -PathType Leaf)) { return $result }
-    $result.Exists = $true
-    $stream = [IO.FileStream]::new($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read,
-        [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
-    try {
-        $length = $stream.Length
-        if ($length -lt $Offset) { $Offset = 0; $result.Truncated = $true }
-        $count = [int][Math]::Min([Int64]$MaxBytes, $length - $Offset)
-        if ($count -le 0) { $result.NewOffset = $Offset; return $result }
-        $buffer = [byte[]]::new($count)
-        $null = $stream.Seek($Offset, [IO.SeekOrigin]::Begin)
-        $read = 0
-        while ($read -lt $count) {
-            $n = $stream.Read($buffer, $read, $count - $read)
-            if ($n -le 0) { break }
-            $read += $n
-        }
-        if ($read -le 0) { $result.NewOffset = $Offset; return $result }
-        $last = [Array]::LastIndexOf($buffer, [byte]10, $read - 1)
-        if ($last -lt 0) { $result.NewOffset = $Offset; return $result }  # no complete line yet
-        $result.Text = [Text.Encoding]::UTF8.GetString($buffer, 0, $last + 1)
-        $result.NewOffset = $Offset + $last + 1
-    } finally { $stream.Dispose() }
-    return $result
-}
 
 function Read-LabStatus {
     # Parses lab-status.json; $null when absent, unreadable, mid-write or from another process.
@@ -1151,15 +963,6 @@ function Get-CurrentSessionStatus {
     $fromLog = Get-LastSessionStatus $LogText
     if ($fromLog) { return $fromLog }
     return 'none'
-}
-
-function ConvertTo-LabComparablePath {
-    # Pure: trimmed, backslashes, no \\?\ prefix or trailing separator, case-folded.
-    param([AllowNull()][AllowEmptyString()][string]$Path)
-    if (!$Path) { return '' }
-    $p = $Path.Trim().Replace('/', '\')
-    if ($p.StartsWith('\\?\')) { $p = $p.Substring(4) }
-    return $p.TrimEnd('\').ToUpperInvariant()
 }
 
 function Get-LabSafetyVerdict {
@@ -1255,17 +1058,6 @@ function ConvertTo-LabUtc {
     if ([datetime]::TryParse([string]$Value, [Globalization.CultureInfo]::InvariantCulture,
             [Globalization.DateTimeStyles]::RoundtripKind, [ref]$parsed)) { return $parsed.ToUniversalTime() }
     return $null
-}
-
-function Read-SharedText {
-    # Whole-file text opened with FileShare.ReadWrite|Delete; '' when absent or unreadable.
-    param([Parameter(Mandatory)][string]$Path)
-    if (!(Test-Path -LiteralPath $Path -PathType Leaf)) { return '' }
-    try {
-        $stream = [IO.FileStream]::new($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read,
-            [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
-        try { return [IO.StreamReader]::new($stream).ReadToEnd() } finally { $stream.Dispose() }
-    } catch { return '' }
 }
 
 function Read-FreshText {
@@ -1489,42 +1281,6 @@ function Get-LabEvidence {
 # Processes, ports and fuse
 # ---------------------------------------------------------------------------
 
-function Select-ProcessInDirectory {
-    # Pure: rows (Id, Path) whose executable lives directly in $Directory. Rows
-    # with an unknown path are returned with Unknown=$true (callers must treat
-    # them as possibly matching).
-    param([object[]]$Processes = @(), [Parameter(Mandatory)][string]$Directory)
-    $root = [IO.Path]::GetFullPath($Directory).TrimEnd('\', '/')
-    $rows = foreach ($p in @($Processes)) {
-        if (!$p) { continue }
-        if (!$p.Path) { [pscustomobject]@{ Id = $p.Id; Path = $null; Unknown = $true }; continue }
-        $folder = Split-Path -Parent ([IO.Path]::GetFullPath($p.Path))
-        if ($folder.TrimEnd('\', '/').Equals($root, [StringComparison]::OrdinalIgnoreCase)) {
-            [pscustomobject]@{ Id = $p.Id; Path = $p.Path; Unknown = $false }
-        }
-    }
-    return @($rows)
-}
-
-function Get-ProcessPathSafe {
-    param([Parameter(Mandatory)]$Process)
-    $path = $null
-    try { $path = $Process.Path } catch { $path = $null }
-    if (!$path) {
-        try { $path = (Get-CimInstance Win32_Process -Filter "ProcessId=$($Process.Id)" -ErrorAction Stop).ExecutablePath } catch { $path = $null }
-    }
-    return $path
-}
-
-function Get-GameProcessInDirectory {
-    # mgsvtpp/mgsvmgo processes started from $Directory (by executable path).
-    param([Parameter(Mandatory)][string]$Directory)
-    $rows = foreach ($p in @(Get-Process -Name mgsvtpp, mgsvmgo -ErrorAction SilentlyContinue)) {
-        [pscustomobject]@{ Id = $p.Id; Path = (Get-ProcessPathSafe $p) }
-    }
-    return Select-ProcessInDirectory -Processes @($rows) -Directory $Directory
-}
-
 function Get-ProcessStartUtc {
     # Process creation time in UTC, or $null when it cannot be read.
     param([Parameter(Mandatory)]$Process)
@@ -1573,7 +1329,8 @@ function Select-LabStopTargets {
 }
 
 function Test-LocalPortFree {
-    param([Parameter(Mandatory)][int]$Port, [ValidateSet('Tcp', 'Udp')][string]$Protocol = 'Tcp')
+    # -AnyAddress (Start-Lab -Lan): the exclusive bind uses 0.0.0.0 instead of 127.0.0.1.
+    param([Parameter(Mandatory)][int]$Port, [ValidateSet('Tcp', 'Udp')][string]$Protocol = 'Tcp', [switch]$AnyAddress)
     # Any listener on the port (all addresses), then an exclusive loopback bind.
     $properties = [Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties()
     $listeners = if ($Protocol -eq 'Tcp') { $properties.GetActiveTcpListeners() } else { $properties.GetActiveUdpListeners() }
@@ -1583,7 +1340,8 @@ function Test-LocalPortFree {
     $socket = [Net.Sockets.Socket]::new([Net.Sockets.AddressFamily]::InterNetwork, $type, $proto)
     try {
         $socket.ExclusiveAddressUse = $true
-        $socket.Bind([Net.IPEndPoint]::new([Net.IPAddress]::Loopback, $Port))
+        $address = if ($AnyAddress) { [Net.IPAddress]::Any } else { [Net.IPAddress]::Loopback }
+        $socket.Bind([Net.IPEndPoint]::new($address, $Port))
         return $true
     } catch { return $false }
     finally { $socket.Dispose() }

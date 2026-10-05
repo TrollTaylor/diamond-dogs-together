@@ -6,11 +6,15 @@ Collects the MGS Co-op logs of one PC into a ZIP on the Desktop
 
 Included (bounded, read-only, the game may still be running):
   probe.log (tail), script-observer.log (from the last "script adapter" start
-  line), steam-observer.log (tail), early.log, lab-status.json, lab.ini,
-  coop.ini, script-observe.enabled, probe-install.json, client-host.txt and
-  host-steamid.txt, plus summary.txt with versions, file hashes and the real
-  save check. SteamIDs are masked except their last 4 digits; Steam account
-  folder numbers and the Windows user name in paths are removed.
+  line), steam-observer.log (tail), early.log, lab-status.json,
+  link-status.json, play-session.json, lab.ini, coop.ini,
+  script-observe.enabled, probe-install.json, client-host.txt,
+  host-steamid.txt and friend-install.json, plus summary.txt with versions,
+  file hashes and the real save check. Never included: link-secret.txt (the
+  link key). SteamIDs are masked except their last 4 digits; Steam account
+  folder numbers and the Windows user name in paths are removed; join codes
+  (MGS1-...) are replaced and public IPv4 addresses after peer=,
+  net_peer_addr=, "peer": and host= are shown as a.b.x.x.
 #>
 [CmdletBinding()]
 param(
@@ -40,7 +44,6 @@ function Resolve-Piece([string]$PackagedName, [string]$RepoRelative) {
     if (Test-Path -LiteralPath $repo -PathType Leaf) { return (Resolve-Path -LiteralPath $repo).Path }
     throw "This package is incomplete: $PackagedName is missing. Extract the whole ZIP again."
 }
-Import-Module (Resolve-Piece 'LabCommon.psm1' '..\lab\LabCommon.psm1') -Force -DisableNameChecking
 Import-Module (Resolve-Piece 'FriendCommon.psm1' 'FriendCommon.psm1') -Force -DisableNameChecking
 $interactive = Test-FriendInteractive -NonInteractive:$NonInteractive
 if (!$PackageDirectory) { $PackageDirectory = Split-Path -Parent $scriptRoot }
@@ -66,7 +69,14 @@ if (!(Test-Path -LiteralPath $paths.Mod -PathType Container)) { throw "No mgs-co
 Write-Host "Game folder: $gameRoot"
 
 $marker = Read-SharedText -Path $paths.Marker
+# The ZIP name: the last Play-Coop role, else the install's usual role, else the marker.
 $role = ConvertTo-FriendRoleName $marker
+$playSession = Read-FriendJson $paths.PlaySession
+$installState = Read-FriendJson (Join-Path $paths.Mod 'friend-install.json')
+$playRole = [string](Get-FriendProperty $playSession 'role' '')
+$hint = [string](Get-FriendProperty $installState 'role_hint' (Get-FriendProperty $installState 'role' ''))
+if ($playRole -eq 'host') { $role = 'host' } elseif ($playRole -eq 'guest') { $role = 'join' }
+elseif ($hint -eq 'Host') { $role = 'host' } elseif ($hint -eq 'Join') { $role = 'join' }
 $stamp = Get-FriendStamp
 if (!$OutputDirectory) { $OutputDirectory = [Environment]::GetFolderPath('Desktop') }
 if (!$OutputDirectory -or !(Test-Path -LiteralPath $OutputDirectory -PathType Container)) { throw "Output folder not found: $OutputDirectory" }
@@ -77,7 +87,7 @@ $content = Join-Path $staging ("mgs-coop-logs-$role-$stamp")
 $null = New-Item -ItemType Directory -Path $content -Force
 $utf8 = New-Object Text.UTF8Encoding $false
 function Save([string]$Name, [AllowEmptyString()][string]$Text) {
-    [IO.File]::WriteAllText((Join-Path $content $Name), [string](Hide-FriendSensitiveText $Text), $utf8)
+    [IO.File]::WriteAllText((Join-Path $content $Name), [string](Hide-CoopNetworkText (Hide-FriendSensitiveText $Text)), $utf8)
 }
 try {
     $included = New-Object Collections.Generic.List[string]
@@ -93,7 +103,8 @@ try {
         $text = Read-FriendFileTail -Path (Join-Path $paths.Mod $row[0]) -MaxBytes ([Math]::Min($MaxLogBytes, [int]$row[1]))
         if ($text) { Save $row[0] $text; $included.Add($row[0]) } else { $missing.Add($row[0]) }
     }
-    foreach ($name in @('lab-status.json', 'lab.ini', 'coop.ini', 'script-observe.enabled', 'probe-install.json', 'client-host.txt', 'host-steamid.txt', 'friend-install.json')) {
+    # Allow-list. link-secret.txt (the link key) is never collected.
+    foreach ($name in @('lab-status.json', 'link-status.json', 'play-session.json', 'lab.ini', 'coop.ini', 'script-observe.enabled', 'probe-install.json', 'client-host.txt', 'host-steamid.txt', 'friend-install.json')) {
         $text = Read-FriendFileTail -Path (Join-Path $paths.Mod $name) -MaxBytes 65536
         if ($text) { Save $name $text; $included.Add($name) } else { $missing.Add($name) }
     }
@@ -133,7 +144,9 @@ try {
         ('collected_utc=' + [DateTime]::UtcNow.ToString('o')),
         ('role=' + $role + '; marker=' + ([string]$marker).Trim()),
         ('package_version=' + [string](Get-FriendProperty $package 'version' 'unknown') + '; installed_loader_version=' + [string](Get-FriendProperty $record 'version' 'none')),
-        ('friend_install_role=' + [string](Get-FriendProperty $state 'role' 'none') + '; character=' + [string](Get-FriendProperty $state 'character' 'none') + '; status=' + $installStatus),
+        ('friend_install_role=' + [string](Get-FriendProperty $state 'role_hint' (Get-FriendProperty $state 'role' 'none')) + '; character=' + [string](Get-FriendProperty $state 'character' 'none') + '; status=' + $installStatus),
+        ('play_session=' + [string](Get-FriendProperty $playSession 'state' 'none') + '; role=' + $playRole + '; port=' + [string](Get-FriendProperty $playSession 'port' '')),
+        ('link_secret_present=' + (Test-Path -LiteralPath $paths.LinkSecret -PathType Leaf) + ' (never collected)'),
         ('game_directory=' + $gameRoot),
         ('game_running=' + $running),
         ('mgsvtpp.exe sha256=' + $exe + '; expected=' + ($exe -eq $expectExe.ToUpperInvariant())),
@@ -144,7 +157,7 @@ try {
         ('windows=' + $os + '; powershell=' + $PSVersionTable.PSVersion.ToString()),
         ('included=' + ($included -join ',')),
         ('missing=' + ($missing -join ',')),
-        ('limits=per log ' + $MaxLogBytes + ' bytes; SteamIDs masked except the last 4 digits')
+        ('limits=per log ' + $MaxLogBytes + ' bytes; SteamIDs masked except the last 4 digits; join codes and public peer addresses masked')
     )
     Save 'summary.txt' (($lines -join "`r`n") + "`r`n")
     New-FriendZip -SourceDirectory $content -Destination $zipPath -FolderName ("mgs-coop-logs-$role-$stamp")
@@ -155,6 +168,7 @@ $size = (Get-Item -LiteralPath $zipPath).Length
 Write-Host ''
 Write-Host "Saved: $zipPath ($([Math]::Round($size / 1024)) KB)" -ForegroundColor Green
 Write-Host 'Send this ZIP file to the person who gave you the package. SteamIDs inside are masked'
-Write-Host 'except their last 4 digits. You can open the ZIP to check what it contains.'
+Write-Host 'except their last 4 digits, join codes and public addresses are masked, and the link key is'
+Write-Host 'not included. You can open the ZIP to check what it contains.'
 Write-Output $zipPath
 exit 0

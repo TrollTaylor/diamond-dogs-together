@@ -35,6 +35,18 @@ sync of docs/partner-anim-appearance.md:
      your real save files and switches the lab config off again so normal
      launches behave normally.
 
+Rehearsing the two-PC play mode on this PC (docs/two-pc-play.md):
+  -Lan        both copies bind all addresses and the guest reaches the host
+              through this PC's LAN IPv4 (-LanAddress, default: detected),
+              with a random link secret in both copies (the lab secret only
+              works on 127.0.0.1). Windows Firewall may ask about mgsvtpp.exe:
+              allow it, or the copies cannot reach each other.
+  -WanSim good|bad|awful
+              each copy impairs its own outbound packets with the lab.json
+              wanSim preset (latency, jitter, burst loss, duplicates,
+              reordering) and uses the adaptive partner delay.
+Without these switches the lab.ini and coop.ini are exactly as before.
+
 Controls while playing: keyboard and mouse go to whichever game window you
 clicked last. An Xbox-style controller always drives the GUEST window (right),
 even while the host window has focus, so one person can test both at once.
@@ -43,6 +55,7 @@ even while the host window has focus, so one person can test both at once.
 pwsh -File tools/lab/Play-OfflineCoop.ps1
 pwsh -File tools/lab/Play-OfflineCoop.ps1 -ProvenWarp
 pwsh -File tools/lab/Play-OfflineCoop.ps1 -Experimental
+pwsh -File tools/lab/Play-OfflineCoop.ps1 -Lan -WanSim bad
 #>
 [CmdletBinding()]
 param(
@@ -64,7 +77,13 @@ param(
     [switch]$InputDrive,
     # dm=map: xform movement + direct-motion clips following the other player.
     # The default since the 2026-10-05 live pass; kept for compatibility.
-    [switch]$Animated
+    [switch]$Animated,
+    # One-PC LAN rehearsal of the two-PC play mode (net_bind=any, LAN address, link secret).
+    [switch]$Lan,
+    # -Lan: this PC's LAN IPv4 (default: the first IPv4 of an Up adapter with a gateway).
+    [string]$LanAddress,
+    # WAN rehearsal preset from lab.json wanSim (one-way impairment per copy).
+    [ValidateSet('off', 'good', 'bad', 'awful')][string]$WanSim = 'off'
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -101,16 +120,7 @@ foreach ($role in $dirs.Keys) {
     $logs[$role] = [pscustomobject]@{ Path = $path; Offset = (Get-FileLengthOrZero $path); Tail = '' }
 }
 $state = [ordered]@{}
-foreach ($role in $dirs.Keys) {
-    $state[$role] = [pscustomobject]@{
-        Mission = $false; Ready = $false; Refused = ''; Shown = $false; Loaded = $false
-        Link = 'none'; Rx = 0; Age = 0; Crash = 0; Exited = $false
-        Look = ''; Move = ''; Stance = ''; Character = ''; Fault = $false; Mode = ''
-        Input = 'off'; InputArmed = $false; InputPerS = 0; InputStale = $false; InputFault = ''
-        Recon = ''; ReconErr = 0; Snaps = 0; Places = 0; Runaway = $false; Frozen = ''; Body = ''; InputPin = $false; Fixes = 0
-        Dm = ''
-    }
-}
+foreach ($role in $dirs.Keys) { $state[$role] = New-CoopPartnerDetails }
 function Update-State {
     foreach ($role in $logs.Keys) {
         $log = $logs[$role]; $s = $state[$role]
@@ -126,114 +136,16 @@ function Update-State {
         $cut = $text.LastIndexOf("`n")
         if ($cut -lt 0) { $log.Tail = $text; continue }
         $log.Tail = $text.Substring($cut + 1)
-        foreach ($line in $text.Substring(0, $cut).Split("`n")) {
-            if ($line -match 'allocation_enter.*mission=30050') { $s.Mission = $true }
-            elseif ($line -match '^partner_cfg=ready') { $s.Ready = $true; $s.Refused = '' }
-            elseif ($line -match '^partner_cfg=refused; reason=([^;\s]+)') { $s.Refused = $Matches[1] }
-            elseif ($line -match '^partner_realized=1') { $s.Shown = $true }
-            elseif ($line -match '^partner_realized=0') { $s.Shown = $false; $s.Loaded = $false }
-            elseif ($line -match '^partner_parts=loaded') { $s.Loaded = $true }
-            elseif ($line -match '^partner_net=stats;.*rx=(\d+);.*status=([a-z]+); last_age_ms=(\d+)') {
-                $s.Rx = [int64]$Matches[1]; $s.Link = $Matches[2]; $s.Age = [int]$Matches[3]
-            }
-            elseif ($line -match '^crash_probe=av') { $s.Crash++ }
-            elseif ($line -match '^partner_look=loaded; R=1; q40=(\d+)') { $s.Look = Get-LookName $Matches[1] }
-            elseif ($line -match '^partner_look=(timeout|refused)') { $s.Look = "look $($Matches[1])" }
-            elseif ($line -match '^partner_xform=applied') { $s.Move = 'smooth' }
-            elseif ($line -match '^partner_xform=refused; reason=([^;\s]+)') { $s.Move = "warp ($($Matches[1]))" }
-            elseif ($line -match '^partner_stance=set; .*to=(\d)') { $s.Stance = @('', 'stand', 'crouch', 'prone')[[int]$Matches[1]] }
-            elseif ($line -match '^partner_stance=summary; last=([0-3]);') { if ([int]$Matches[1]) { $s.Stance = @('', 'stand', 'crouch', 'prone')[[int]$Matches[1]] } }
-            elseif ($line -match '^partner_stage=changed; .*apply=([a-z]+); anim=([a-z]+);') {
-                $s.Mode = "$($Matches[1])/$($Matches[2])"
-                if ($Matches[1] -notin @('xform', 'hybrid')) { $s.Move = '' }
-                if ($Matches[2] -eq 'off') { $s.Stance = '' }
-                # [O] stop logs stage=0 with dm=map still set: no clip then either.
-                if ($line -notmatch '; dm=map;' -or $line -match '^partner_stage=changed; stage=[0-2];') { $s.Dm = '' }
-                # (also the input mode: a second branch for the same line would never be reached)
-                if ($line -match '; input=([a-z]+);') { $s.Input = $Matches[1]; if ($Matches[1] -eq 'off') { $s.InputArmed = $false } }
-            }
-            elseif ($line -match '^partner_dmmap; phase=([a-z_]+); cur=(\d+|none);') {
-                # failed stays FAILED until [R]; idle (the release finished) has no clip.
-                $s.Dm = if ($Matches[1] -eq 'failed') { 'FAILED' } elseif ($Matches[1] -eq 'idle') { '' } else { "$($Matches[2])/$($Matches[1])" }
-            }
-            elseif ($line -match '^partner_dmmap=failed') { $s.Dm = 'FAILED' }
-            elseif ($line -match '^partner_dmmap=(released|abandoned);' -or $line -match '^partner_stop;') { $s.Dm = '' }
-            elseif ($line -match '^partner_input=armed; mode=([a-z]+)') { $s.Input = $Matches[1]; $s.InputArmed = $true }
-            elseif ($line -match '^partner_input=disarmed') { $s.InputArmed = $false }
-            elseif ($line -match '^partner_input; mode=([a-z]+); windows=\d+; per_s=(\d+)') { $s.Input = $Matches[1]; $s.InputPerS = [int]$Matches[2] }
-            elseif ($line -match '^partner_input=stale') { $s.InputStale = $true }
-            elseif ($line -match '^partner_input=live') { $s.InputStale = $false }
-            elseif ($line -match '^partner_input=fault; phase=([a-z]+)') { $s.InputFault = $Matches[1] }
-            elseif ($line -match '^partner_recon; mode=([a-z]+); recon=([a-z]+); err_mm=(-?\d+);.* snaps=(\d+); places=(\d+);.* act=(\d+); s=(\d+);.* frozen=([a-z_]+);.* runaway=(\d); input_pin=(\d); fixes=(\d+)') {
-                # recon= is the effective setting (correct=0 turns it off whatever recon= says).
-                $s.Recon = if ($Matches[2] -eq 'off') { 'OFF' } else { $Matches[1] }
-                $s.ReconErr = [int]$Matches[3]; $s.Snaps = [int]$Matches[4]; $s.Places = [int]$Matches[5]
-                $s.Body = @('', 'stand', 'crouch', 'prone')[[Math]::Min(3, [int]$Matches[7])]
-                $s.Frozen = if ($Matches[8] -ne 'none') { $Matches[8] } else { '' }
-                $s.Runaway = $Matches[9] -eq '1'
-                $s.InputPin = $Matches[10] -eq '1'
-                $s.Fixes = [int]$Matches[11]
-            }
-            elseif ($line -match '^partner_recon=runaway;.*action=(pin|disarm)') { $s.Runaway = $true }
-            elseif ($line -match '^partner_recon=runaway_end') { $s.Runaway = $false }
-            elseif ($line -match '^partner_call=fault') { $s.Fault = $true }
-            elseif ($line -match '^character=allocated; .*vars=(\d+)') { $s.Character = Get-LookName $Matches[1] }
-            elseif ($line -match 'mission_termination=entered') { $s.Mission = $false; $s.Ready = $false; $s.Shown = $false; $s.Loaded = $false }
-        }
+        # The line parser (partner state, look, clip, input, recon) is shared with
+        # the two-PC launcher: tools/CoopPlay.psm1 Update-CoopPartnerDetails.
+        foreach ($line in $text.Substring(0, $cut).Split("`n")) { Update-CoopPartnerDetails -Details $s -Line $line }
     }
     foreach ($role in $dirs.Keys) {
         $alive = @(Select-ProcessInDirectory -Processes @(Get-Process mgsvtpp -ErrorAction SilentlyContinue) -Directory $dirs[$role]).Count -gt 0
         $state[$role].Exited = !$alive
     }
 }
-# The dm=map clip of the status line: "<gani>/<phase>" from the 5 s summary.
-function Get-ClipName([string]$Dm) {
-    if ($Dm -eq 'FAILED') { return 'FAILED (dm=map gave up; [R] re-sends)' }
-    $names = @('stand idle', 'crouch idle', 'crawl idle', 'crouch walk', 'crouch run', 'stand dash', 'crawl', 'prone idle',
-        'state crouch idle', 'state stand idle', 'stand walk', 'stand run', 'stand jog')
-    $parts = $Dm.Split('/')
-    $name = if ($parts[0] -match '^\d+$' -and [int]$parts[0] -lt $names.Count) { $names[[int]$parts[0]] } else { $parts[0] }
-    if ($parts.Count -gt 1 -and $parts[1] -ne 'playing') { return "$name ($($parts[1]))" }
-    return $name
-}
-function Get-LookName([string]$type) {
-    switch ($type) { '0' { 'Snake' } '1' { 'DD male' } '2' { 'DD female' } '3' { 'Avatar' } '5' { 'Ocelot' } '6' { 'Quiet' } default { "type $type" } }
-}
-function Format-Role([string]$role) {
-    $s = $state[$role]
-    $partner = if ($s.Loaded) { 'partner visible' } elseif ($s.Shown) { 'partner loading' } elseif ($s.Ready) { 'waiting for partner' } elseif ($s.Refused) { "partner refused ($($s.Refused))" } elseif ($s.Mission) { 'loading Mother Base' } else { 'starting' }
-    $link = if ($s.Link -eq 'live') { "link live ($($s.Age) ms)" } else { "link $($s.Link)" }
-    $crash = if ($s.Crash) { "  CRASH-LOG x$($s.Crash)" } else { '' }
-    $exit = if ($s.Exited) { '  [game closed]' } else { '' }
-    $extra = @()
-    if ($s.Character) { $extra += "plays $($s.Character)" }
-    if ($s.Look) { $extra += "partner looks like $($s.Look)" }
-    if ($s.Mode) { $extra += "settings $($s.Mode)" }
-    if ($s.Move) { $extra += "movement $($s.Move)" }
-    if ($s.Stance) { $extra += "partner $($s.Stance)" }
-    if ($s.Dm) { $extra += "clip $(Get-ClipName $s.Dm)" }
-    if ($s.Input -ne 'off') {
-        $armed = if ($s.InputArmed) { 'armed' } else { 'off' }
-        $perS = if ($s.InputPerS) { " $($s.InputPerS)/s" } else { '' }
-        $stale = if ($s.InputStale) { ' STALE' } else { '' }
-        $extra += "input $($s.Input)/$armed$perS$stale"
-        if ($s.Recon) {
-            $recon = "recon $($s.Recon) err $([Math]::Round($s.ReconErr / 10.0)) cm"
-            if ($s.Snaps) { $recon += " snaps $($s.Snaps)" }
-            if ($s.Places -gt 0) { $recon += " places $($s.Places)" }
-            if ($s.Runaway) { $recon += ' RUNAWAY(pinned)' }
-            if ($s.InputPin) { $recon += ' INPUT-LOST(pinned)' }
-            if ($s.Fixes) { $recon += " stance-fixes $($s.Fixes)" }
-            if ($s.Frozen) { $recon += " frozen $($s.Frozen)" }
-            if ($s.Body) { $recon += " body $($s.Body)" }
-            $extra += $recon
-        }
-    }
-    if ($s.InputFault) { $extra += "INPUT FAULT ($($s.InputFault))" }
-    if ($s.Fault) { $extra += 'NATIVE CALL FAULT (Warp only)' }
-    $details = if ($extra.Count) { ' [' + ($extra -join ', ') + ']' } else { '' }
-    return "${role}: $partner, $link$details$crash$exit"
-}
+function Format-Role([string]$role) { return Format-CoopPartnerDetails -Details $state[$role] -Role $role }
 
 # The partner settings: look net always. Movement: the animated partner (dm=map)
 # unless -Experimental, -InputDrive or -ProvenWarp; [D] / [I] / [P] / [W] / [M] / [A]
@@ -268,21 +180,29 @@ try {
             else { 'ANIMATED partner (dm=map, default); [W] falls back to the proven Warp movement' }
     Write-Step "Preparing both game copies (offline, partner sync on, look net; $mode)"
     $partnerSettings = @('partner_stage=3', 'partner_source=net', 'partner_look=net',
-        "partner_apply=$(if ($experiment.Move -eq 'map') { 'xform' } else { $experiment.Move })", "partner_anim=$($experiment.Anim)")
+        "partner_apply=$($experiment.Move)", "partner_anim=$($experiment.Anim)")
     if ($Experimental) { $partnerSettings += @('partner_aset=qs', 'partner_reset=n') }
-    if ($experiment.Move -eq 'map') { $partnerSettings += @('partner_reset=n', 'partner_dm=map') }
+    if ($experiment.Move -eq 'map') {
+        # dm=map: the same partner keys as the two-PC play mode (tools/CoopPlay.psm1
+        # Get-PlayPartnerDefaults: apply xform, reset n, dm map, look net, stage 3, ...).
+        $playDefaults = Get-PlayPartnerDefaults
+        $partnerSettings = @($playDefaults.Keys | ForEach-Object { "$_=$($playDefaults[$_])" })
+    }
     if ($experiment.Move -eq 'input') {
         $partnerSettings += @('partner_input=net', 'partner_input_send=1', 'partner_input_cam=sandbox', 'partner_input_hold=own',
             'partner_input_words=hpr', 'partner_input_mask=0x2200006', 'partner_recon=track', 'partner_input_correct_mm=3000',
             'partner_recon_runaway=pin', 'partner_input_slot=body')
     }
-    & (Join-Path $lab 'Prepare-LabInstance.ps1') -Offline -PartnerSetting $partnerSettings |
+    $rehearsal = @{}
+    if ($Lan) { $rehearsal['Lan'] = $true; if ($LanAddress) { $rehearsal['LanAddress'] = $LanAddress } }
+    if ($WanSim -ne 'off') { $rehearsal['WanSim'] = $WanSim; Write-Note "WAN rehearsal: lab.json wanSim.$WanSim on both copies (one-way impairment each, adaptive partner delay)." }
+    & (Join-Path $lab 'Prepare-LabInstance.ps1') -Offline -PartnerSetting $partnerSettings @rehearsal |
         ForEach-Object { Write-Note $_ }
 
     # --------------------------------------------------------------- start
     Write-Step 'Starting the host (left) and the guest (right)'
     $started = $true
-    & (Join-Path $lab 'Start-Lab.ps1') -Offline | ForEach-Object { Write-Note $_ }
+    & (Join-Path $lab 'Start-Lab.ps1') -Offline -Lan:$Lan | ForEach-Object { Write-Note $_ }
 
     # ---------------------------------------------------------- title screens
     $deadline = (Get-Date).AddSeconds($ReadyTimeoutSec)

@@ -14,7 +14,10 @@ param(
     [string]$PackageDirectory,
     # Never ask for the runtime archive path (scripts and tests). Without it, an
     # interactive console session (install.bat) is asked when the archive is needed.
-    [switch]$NoPrompt
+    [switch]$NoPrompt,
+    # Do not select the loading diagnostic mode on a first install (the two-PC
+    # play package's Install-Coop.ps1 leaves the game in pass-through).
+    [switch]$NoInitialMode
 )
 $ErrorActionPreference='Stop'
 $packageRoot=if($PackageDirectory) { [IO.Path]::GetFullPath((Get-Item -LiteralPath $PackageDirectory).FullName).TrimEnd('\','/') } else { $PSScriptRoot }
@@ -241,11 +244,12 @@ try {
         }
         throw $failure
     }
-    # A first install starts in loading diagnostic mode. Upgrades retain the
-    # existing role. Configuration is not part of the binary rollback set.
+    # A first install starts in loading diagnostic mode (not with -NoInitialMode).
+    # Upgrades retain the existing role. Configuration is not part of the binary
+    # rollback set.
     try {
         $marker=SafePath $gameRoot 'mgs-coop/script-observe.enabled'
-        if(!(Test-Path -LiteralPath $marker)) {
+        if(!$NoInitialMode -and !(Test-Path -LiteralPath $marker)) {
             $stagedMarker=Join-Path $backupRoot 'initial-mode.txt'
             [IO.File]::WriteAllText($stagedMarker,"client-check-v1`n",[Text.Encoding]::ASCII)
             [IO.File]::Copy($stagedMarker,$marker,$false)

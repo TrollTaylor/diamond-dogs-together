@@ -1,35 +1,35 @@
 <#
-MGS Co-op friend-test installer (two PCs, each player with their own Steam account).
+MGS Co-op installer for two-PC play (each player on their own PC, docs/two-pc-play.md).
 
 Double-click Install-Coop.bat and answer the questions, or run it with
 parameters (every question has one; -NonInteractive never asks):
 
   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Install-Coop.ps1 `
-      -GameDirectory "D:\SteamLibrary\steamapps\common\MGS_TPP" -Role Join `
-      -HostSteamId 7656119XXXXXXXXXX -Character quiet `
+      -GameDirectory "D:\SteamLibrary\steamapps\common\MGS_TPP" -Role Join -Character quiet `
       -RuntimeArchive "C:\path\mgs-coop-player-runtime.dat" -NonInteractive -Yes
 
 What it changes (all reversible with Uninstall-Coop.bat):
   - <game>\dinput8.dll and the managed mgs-coop files, through the package's
     owned installer (scripts\install.ps1: hash-checked backups and rollback);
-  - <game>\mgs-coop\script-observe.enabled (+ client-host.txt for Join), through
-    the shared role command (scripts\set-session-mode.ps1);
-  - <game>\mgs-coop\lab.ini (diagnostic mode: saves redirected to a copy, real
-    Steam identity and networking, status logging) and coop.ini (character only,
-    never a master server URL);
   - a backup of the real save files with a SHA-256 manifest
-    (<game>\mgs-coop\real-save-backups\<time>) and the save copy the game uses
-    while the mod is installed (<game>\mgs-coop\coop-saves).
-It never writes below Steam\userdata, never changes mgsvtpp.exe or
-steam_api64.dll, and never starts the game or Steam.
+    (<game>\mgs-coop\real-save-backups\<time>) and the save copy that co-op
+    games use (<game>\mgs-coop\coop-saves).
+The game is left in PASS-THROUGH: no role marker, lab.ini, coop.ini or link
+secret. A normal start from Steam plays as usual on the real saves with the
+loader inactive; Play-Coop.bat switches co-op on for one game session.
+Files of the earlier online friend test (its lab.ini/coop.ini, client-host.txt,
+a host-v3/client-v1 marker) are renamed *.online-old-<time> and never restored;
+other configuration files are renamed *.disabled-<time>.
+-Role only picks the default character (Host: default, Join: Quiet).
+It never writes below Steam\userdata, never changes mgsvtpp.exe,
+steam_api64.dll or firewall settings, and never starts the game or Steam.
 #>
 [CmdletBinding()]
 param(
     # MGSV folder (contains mgsvtpp.exe). Default: found through Steam, then asked.
     [string]$GameDirectory,
+    # Do you usually host or join? Only picks the default character.
     [ValidateSet('Host', 'Join')][string]$Role,
-    # Join only: the host player's 17-digit SteamID64.
-    [string]$HostSteamId,
     # default, quiet, dd_male, dd_female, snake, avatar, ocelot (default: Host=default, Join=quiet).
     [string]$Character,
     # mgs-coop-player-runtime.dat with the expected SHA-256 (never bundled).
@@ -50,7 +50,9 @@ param(
     # Do not ask for the final confirmation.
     [switch]$Yes,
     # Folder with package.json and payload\ (default: the package folder).
-    [string]$PackageDirectory
+    [string]$PackageDirectory,
+    # Skip the read-only firewall / network profile report (scripts and tests).
+    [switch]$SkipNetworkReport
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -71,10 +73,8 @@ function Resolve-Piece([string]$PackagedName, [string]$RepoRelative) {
     if (Test-Path -LiteralPath $repo -PathType Leaf) { return (Resolve-Path -LiteralPath $repo).Path }
     throw "This package is incomplete: $PackagedName is missing. Extract the whole ZIP again."
 }
-Import-Module (Resolve-Piece 'LabCommon.psm1' '..\lab\LabCommon.psm1') -Force -DisableNameChecking
 Import-Module (Resolve-Piece 'FriendCommon.psm1' 'FriendCommon.psm1') -Force -DisableNameChecking
 $installer = Resolve-Piece 'install.ps1' '..\package-install.ps1'
-$roleCommand = Resolve-Piece 'set-session-mode.ps1' '..\set-session-mode.ps1'
 
 $interactive = Test-FriendInteractive -NonInteractive:$NonInteractive
 function Ask([string]$Prompt) {
@@ -91,8 +91,8 @@ if (!$package -or (Get-FriendProperty $package 'product') -ne 'mgs-coop-local-pa
 $version = [string]$package.version
 $archiveSha256 = ([string]$package.runtime_archive.sha256).ToUpperInvariant()
 
-Write-Host "MGS Co-op $version - friend test installer" -ForegroundColor Cyan
-Write-Host 'Development build. Two-player co-op is NOT verified yet; this install is for testing it.'
+Write-Host "MGS Co-op $version - installer (two-PC play)" -ForegroundColor Cyan
+Write-Host 'Development build: you see your partner in Mother Base; enemies, items and missions are not shared yet.'
 
 # ---------------------------------------------------------------- game folder
 Section 'Step 1: game folder'
@@ -169,7 +169,6 @@ try {
 } catch {
     throw ('Could not tell which Steam account plays MGSV on this PC: ' + $_.Exception.Message + ' Start Steam, log in with your own account, then run the installer again.')
 }
-$ownSteamId = ConvertTo-FriendSteamId64 -AccountId $account
 $userData = Join-Path (Join-Path $steamRoot 'userdata') ([string]$account)
 if ($active -eq 0) { Write-Host 'Note: Steam does not report a logged-in user (is Steam running?). Using the only Steam account with MGSV saves on this PC.' -ForegroundColor Yellow }
 # Every path the installer creates must fit Windows' classic 260-character
@@ -183,6 +182,14 @@ foreach ($app in @('287700', '311340')) {
 }
 $lengthProblem = Get-FriendPathLengthProblem -GameRoot $gameRoot -SaveFiles $saveFiles
 if ($lengthProblem) { throw "$lengthProblem Move the game to a shorter folder path (Steam > Settings > Storage) and try again. Nothing was changed." }
+
+# ---------------------------------------------------------------- earlier Play-Coop session
+# A co-op session that did not end cleanly (crash, power loss): its owned files go first.
+$leftover = Invoke-CoopPlayCleanup -GameRoot $gameRoot
+if ($leftover.Ran) {
+    Write-Host ('Co-op files of an earlier Play-Coop session were removed: ' + (@($leftover.Removed) -join ', ')) -ForegroundColor Yellow
+    foreach ($m in @($leftover.Messages)) { Write-Host $m -ForegroundColor Yellow }
+}
 
 # ---------------------------------------------------------------- earlier friend install
 $statePath = Join-Path $paths.Mod 'friend-install.json'
@@ -226,37 +233,19 @@ if ($state) {
 }
 
 # ---------------------------------------------------------------- role
-Section 'Step 2: role'
+Section 'Step 2: host or join'
 if (!$Role) {
-    Write-Host '  1: Host - your friend joins YOUR game'
-    Write-Host '  2: Join - you join your FRIEND''s game (you need the host''s SteamID64)'
+    Write-Host 'You choose Host or Join again for every game in Play-Coop.bat; this answer only picks'
+    Write-Host 'your default character.'
+    Write-Host '  1: I usually Host (my friend joins me)'
+    Write-Host '  2: I usually Join (I join my friend)'
     switch (Ask 'Choose 1 or 2') {
         '1' { $Role = 'Host' }
         '2' { $Role = 'Join' }
         default { throw 'Choose 1 (Host) or 2 (Join). Nothing was changed.' }
     }
 }
-Write-Host "Role: $Role"
-if ($Role -eq 'Host' -and $HostSteamId) { throw '-HostSteamId is only used with -Role Join.' }
-if ($Role -eq 'Join') {
-    if (!$HostSteamId) {
-        Write-Host 'Enter the HOST player''s SteamID64: 17 digits, usually starting with 7656119.'
-        Write-Host ' - The host''s installer shows it at the end of its install.'
-        Write-Host ' - Or the host opens Steam, clicks their profile name (top right) > Account details;'
-        Write-Host '   the "Steam ID" line shows the number.'
-    }
-    $attempt = 0
-    while ($true) {
-        if (!$HostSteamId) { $HostSteamId = Ask 'Host SteamID64' }
-        $problem = Get-FriendSteamIdProblem -Value $HostSteamId -OwnSteamId $ownSteamId
-        if (!$problem) { $HostSteamId = $HostSteamId.Trim(); break }
-        $attempt++
-        if (!$interactive -or $attempt -ge 5) { throw "Host SteamID64 not accepted: $problem Nothing was changed." }
-        Write-Host $problem -ForegroundColor Yellow
-        $HostSteamId = ''
-    }
-    Write-Host "Host SteamID64: $HostSteamId"
-}
+Write-Host "Usually: $Role"
 
 # ---------------------------------------------------------------- character
 Section 'Step 3: character'
@@ -309,12 +298,11 @@ if ($RuntimeArchive) {
 # ---------------------------------------------------------------- confirm
 Section 'Summary'
 Write-Host "  Game folder:  $gameRoot"
-Write-Host "  Role:         $Role"
-if ($Role -eq 'Join') { Write-Host "  Host ID:      $HostSteamId" }
+Write-Host "  Usually:      $Role"
 Write-Host "  Character:    $Character"
-Write-Host '  Changes:      installs dinput8.dll + mod files (previous files are backed up),'
-Write-Host '                backs up your real MGSV saves, and makes the game use a COPY of'
-Write-Host '                your save while the mod is installed (your real save is not written).'
+Write-Host '  Changes:      installs dinput8.dll + mod files (previous files are backed up) and'
+Write-Host '                backs up your real MGSV saves. Co-op games (Play-Coop.bat) play from a'
+Write-Host '                COPY of your save; normal starts from Steam play as usual on your real save.'
 if (!$Yes) {
     $answer = Ask 'Install now? [Y/n]'
     if ($answer -match '^(n|no)$') { Write-Host 'Cancelled. Nothing was changed.'; exit 1 }
@@ -388,17 +376,23 @@ $loaderHashBefore = Get-FriendFileSha256 $paths.Loader
 $rollbackIds = @()
 $backups = @()
 $installs = @()
+$onlineArchived = @()
+$setAside = @()
 $recordBeforeFriend = $recordBefore
+$firewallRule = $null
 if ($state) {
     $rollbackIds = @(Get-FriendProperty $state 'rollback_ids' @() | ForEach-Object { [string]$_ })
     $backups = @(Get-FriendProperty $state 'backups' @())
     $installs = @(Get-FriendProperty $state 'installs' @())
     $previousFiles = @(Get-FriendProperty $state 'previous_files' @())
+    $onlineArchived = @(Get-FriendProperty $state 'online_archived' @())
+    $setAside = @(Get-FriendProperty $state 'set_aside' @())
+    $firewallRule = Get-FriendProperty $state 'firewall_rule' $null
     $recordBeforeFriend = [string](Get-FriendProperty $state 'record_before_friend' '')
     if ([string](Get-FriendProperty $state 'status' '') -eq 'pending') {
         # An earlier run stopped between the loader install and its final record
         # (window closed, crash, failed restore). A loader it installed belongs
-        # to the friend test too, so Uninstall-Coop undoes it.
+        # to the friend install too, so Uninstall-Coop undoes it.
         $pendingBefore = [string](Get-FriendProperty $state 'pending_record_before' '')
         if ($recordBefore -cmatch '^[0-9a-f]{32}$' -and $recordBefore -cne $pendingBefore -and $rollbackIds -notcontains $recordBefore) {
             $rollbackIds += @($recordBefore)
@@ -410,44 +404,57 @@ $backups += @($backupDir)
 function New-StateText([string]$Status, [string[]]$Ids, [object[]]$Installs) {
     $s = [ordered]@{
         product = 'mgs-coop-friend-install'; version = $version; game_directory = $gameRoot
-        role = $Role; character = $Character; save_dir = $saveDir
+        role_hint = $Role; character = $Character; save_dir = $saveDir
         status = $Status; pending_record_before = $(if ($Status -eq 'pending') { $recordBefore } else { '' })
         record_before_friend = $recordBeforeFriend
         first_backup = [string]$backups[0]; latest_backup = $backupDir; backups = $backups; rollback_ids = @($Ids)
-        previous_files = $previousFiles; installs = @($Installs)
-        note = 'Written by Install-Coop.ps1. Uninstall-Coop.ps1 restores the loader states listed in rollback_ids (status pending: also a newer ownership record than pending_record_before) and checks the real saves against the first backup of each Steam account.'
+        previous_files = $previousFiles; online_archived = @($onlineArchived); set_aside = @($setAside); installs = @($Installs)
+        note = 'Written by Install-Coop.ps1. Uninstall-Coop.ps1 restores the loader states listed in rollback_ids (status pending: also a newer ownership record than pending_record_before), puts back previous_files only while a loader remains, never restores online_archived, and checks the real saves against the first backup of each Steam account.'
     }
+    if ($firewallRule) { $s['firewall_rule'] = $firewallRule }
     return (($s | ConvertTo-Json -Depth 6) + "`n")
 }
 $loaderChanged = $false
 try {
-    # Recorded BEFORE the loader is touched, so that Uninstall-Coop can undo an
+    # Recorded BEFORE anything is touched, so that Uninstall-Coop can undo an
     # install that stops halfway (status pending).
     Write-FriendTextFile -Path $statePath -Text (New-StateText -Status 'pending' -Ids $rollbackIds -Installs $installs)
-    # lab.ini first: without the loader nothing reads it, and with the loader
-    # the game never runs without the save redirection.
-    Write-FriendTextFile -Path $paths.LabIni -Text (New-FriendLabIniText -Role $Role -SaveDir $saveDir)
-    Write-FriendTextFile -Path $paths.CoopIni -Text (New-FriendCoopIniText -Character $Character)
+    # Pass-through: no configuration stays active. Files of the abandoned online
+    # route are archived for good; anything else is set aside (its copy from
+    # before the first install is in previous_files).
+    foreach ($name in $managed) {
+        $path = Join-Path $paths.Mod $name
+        if ($null -eq $snapshots[$name]) { continue }
+        Assert-NoReparsePoint -Path $path -StopAt $gameRoot
+        $reason = Get-FriendOnlineArchiveReason -Name $name -Text ([Text.Encoding]::UTF8.GetString([byte[]]$snapshots[$name]))
+        if ($reason) {
+            $moved = Rename-FriendFile -Path $path -Suffix 'online-old' -Stamp $stamp
+            $onlineArchived += @([ordered]@{ name = $name; path = $moved; reason = $reason; utc = [DateTime]::UtcNow.ToString('o') })
+            Write-Host "$name ($reason) -> $(Split-Path -Leaf $moved) (kept, never restored)"
+        } else {
+            $moved = Rename-FriendFile -Path $path -Suffix 'disabled' -Stamp $stamp
+            $setAside += @([ordered]@{ name = $name; path = $moved; utc = [DateTime]::UtcNow.ToString('o') })
+            Write-Host "$name -> $(Split-Path -Leaf $moved) (set aside: the game stays in pass-through)"
+        }
+    }
+    Write-FriendTextFile -Path $statePath -Text (New-StateText -Status 'pending' -Ids $rollbackIds -Installs $installs)
 
-    $arguments = @{ Action = 'Install'; GameDirectory = $gameRoot; PackageDirectory = $packageRoot; NoPrompt = $true }
+    # -NoInitialMode: the shared installer selects no role marker (pass-through).
+    $arguments = @{ Action = 'Install'; GameDirectory = $gameRoot; PackageDirectory = $packageRoot; NoPrompt = $true; NoInitialMode = $true }
     if ($archiveSource) { $arguments['RuntimeArchive'] = $archiveSource }
     $loaderChanged = $true
-    # The shared commands print developer-package hints (configure-role.bat,
-    # one attempt per restart); the friend sees this script's own lines instead.
+    # The shared installer prints developer-package hints (configure-role.bat);
+    # the friend sees this script's own lines instead.
     $output = @(& $installer @arguments)
     $record = Read-FriendJson $paths.Record
     $rollbackId = [string](Get-FriendProperty $record 'rollback_id' '')
     if ($rollbackId -cnotmatch '^[0-9a-f]{32}$') { throw 'The installer did not leave a valid ownership record.' }
     Write-Host "Loader and mod files installed. Files it replaced are backed up in $($paths.Mod)\install-backups\$rollbackId"
-
-    $roleArguments = @{ Role = $Role; GameDirectory = $gameRoot }
-    if ($Role -eq 'Join') { $roleArguments['HostSteamId'] = $HostSteamId }
-    $null = & $roleCommand @roleArguments
-    if ($Role -eq 'Join') { Write-Host 'Role set: Join (script-observe.enabled = client-v1; the host''s SteamID64 is in client-host.txt).' }
-    else { Write-Host 'Role set: Host (script-observe.enabled = host-v3).' }
+    # (tests/friend_package_tests.ps1 inserts its failure stand-ins after this line.)
+    if (Test-Path -LiteralPath $paths.Marker) { throw 'An unexpected role marker appeared during the install; the game must stay in pass-through.' }
 
     $rollbackIds += @($rollbackId)
-    $installs += @([ordered]@{ utc = [DateTime]::UtcNow.ToString('o'); role = $Role; character = $Character; rollback_id = $rollbackId; backup = $backupDir; package = $packageRoot })
+    $installs += @([ordered]@{ utc = [DateTime]::UtcNow.ToString('o'); role_hint = $Role; character = $Character; rollback_id = $rollbackId; backup = $backupDir; package = $packageRoot })
     Write-FriendTextFile -Path $statePath -Text (New-StateText -Status 'installed' -Ids $rollbackIds -Installs $installs)
 } catch {
     $failure = $_
@@ -464,7 +471,7 @@ try {
         ((Get-FriendFileSha256 $paths.Loader) -ceq $loaderHashBefore)
     if ($loaderAsBefore) {
         # The loader is exactly as before this run: put the configuration and the
-        # install record back as well.
+        # install record back as well (the renamed copies stay next to them).
         foreach ($name in $managed) {
             $path = Join-Path $paths.Mod $name
             try {
@@ -478,38 +485,35 @@ try {
         } catch { Write-Host "Could not restore friend-install.json : $($_.Exception.Message)" -ForegroundColor Yellow }
         Write-Host 'The game folder is back to its state before this run (the new save backup is kept).'
     } else {
-        # Keep lab.ini (the game keeps using the save copy) and the pending
-        # install record (Uninstall-Coop can undo this run).
+        # Keep the pending install record (Uninstall-Coop can undo this run). No
+        # co-op configuration is active, so the loader stays in pass-through.
         Write-Host ''
         Write-Host 'The mod loader could NOT be removed automatically.' -ForegroundColor Red
-        Write-Host 'lab.ini was kept, so the game still uses the save copy, not your real save files.' -ForegroundColor Red
-        Write-Host 'Close this window and run Uninstall-Coop.bat. If that fails too, do not play MGSV' -ForegroundColor Red
-        Write-Host 'from this folder and send the output to the person who gave you this package.' -ForegroundColor Red
-        Write-Host "(Moving dinput8.dll out of $gameRoot also turns the mod off; the files it replaced" -ForegroundColor Red
+        Write-Host 'No co-op configuration is active: the loader stays in pass-through and a normal start' -ForegroundColor Red
+        Write-Host 'plays on your real saves. Close this window and run Uninstall-Coop.bat. If that fails' -ForegroundColor Red
+        Write-Host 'too, send the output to the person who gave you this package.' -ForegroundColor Red
+        Write-Host "(Moving dinput8.dll out of $gameRoot also removes the mod; the files it replaced" -ForegroundColor Red
         Write-Host " are backed up in $($paths.Mod)\install-backups.)" -ForegroundColor Red
     }
     throw $failure
 }
 
+# ---------------------------------------------------------------- firewall (read-only)
+if (!$SkipNetworkReport) {
+    Section 'Network check (read-only; nothing is changed)'
+    foreach ($line in @(Format-CoopFirewallReport -Rules @(Get-CoopFirewallRows -ExePath $paths.Exe) -Profiles @(Get-CoopNetworkProfiles) -Port (Get-CoopPlayPort))) { Write-Host $line }
+    Write-Host 'When Windows asks whether MGSV may use the network, choose Allow (and tick Public networks if'
+    Write-Host 'your network is Public). A refused prompt creates a Block rule; Play-Coop.bat (Host, [F]) can fix it.'
+}
+
 # ---------------------------------------------------------------- done
 Section 'Installed.'
 Write-Host "Your real saves are backed up in: $backupDir"
-Write-Host "While the mod is installed, the game plays from the copy in: $saveDir"
-if ($Role -eq 'Host') {
-    Write-Host ''
-    Write-Host '=================================================================' -ForegroundColor Green
-    Write-Host "  YOUR SteamID64: $ownSteamId" -ForegroundColor Green
-    Write-Host '  Send this number to your friend; their installer asks for it.' -ForegroundColor Green
-    Write-Host '=================================================================' -ForegroundColor Green
-    if ($interactive) { try { Set-Clipboard -Value $ownSteamId; Write-Host '(It has also been copied to the clipboard.)' } catch { } }
-    Write-Host ''
-    Write-Host 'Next: start MGSV from Steam, Continue into Mother Base, and wait for the message'
-    Write-Host '"Co-op: host is accepting connections". Then tell your friend to press Ctrl+F8.'
-} else {
-    Write-Host ''
-    Write-Host 'Next: when the host says they are ready, start MGSV from Steam, Continue into'
-    Write-Host 'Mother Base, wait for "Co-op: wait for the host to be ready, then press Ctrl+F8",'
-    Write-Host 'and press Ctrl+F8.'
-}
-Write-Host 'See FRIEND-GUIDE.txt for the full test steps. Run Uninstall-Coop.bat before normal play.'
+Write-Host "Co-op games play from the save copy in: $saveDir"
+Write-Host 'Normal starts from Steam play as usual on your REAL saves (the mod stays inactive); progress'
+Write-Host 'does not carry over between the two. Run Uninstall-Coop.bat when you stop playing co-op.'
+Write-Host ''
+Write-Host 'Next: both players double-click Play-Coop.bat. The host chooses [H] and sends the join code'
+Write-Host 'over chat; the other chooses [J] and pastes it. Then both go to Mother Base.'
+Write-Host 'See FRIEND-GUIDE.txt for the details (VPN or port forwarding, firewall).'
 exit 0

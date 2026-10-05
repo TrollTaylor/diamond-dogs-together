@@ -40,11 +40,19 @@ unchanged: master_server=redirected with that closed-port URL, saves=redirected,
 and for the guest mutex=renamed and identity=fake. run.json records
 offline=true; leftover partner.trigger files are removed before the start.
 
+-Lan (with -Offline; prepare with Prepare-LabInstance.ps1 -Offline -Lan): the
+one-PC LAN rehearsal of the two-PC play mode (docs/two-pc-play.md). The
+partner UDP ports are checked with an exclusive 0.0.0.0 bind instead of
+127.0.0.1, lab.ini must have net_bind=any (and the guest a net_peer_addr), and
+both folders need mgs-coop\link-secret.txt. Windows Firewall may ask about
+mgsvtpp.exe; this script changes no firewall settings.
+
 .EXAMPLE
 pwsh -File tools/lab/Start-Lab.ps1 -WhatIf
 pwsh -File tools/lab/Start-Lab.ps1
 pwsh -File tools/lab/Start-Lab.ps1 -HostOnly      # milestone M0: host + fuse only
 pwsh -File tools/lab/Start-Lab.ps1 -Offline       # offline partner spike: no fuse, closed master port
+pwsh -File tools/lab/Start-Lab.ps1 -Offline -Lan  # one-PC LAN rehearsal (net_bind=any, link secret)
 pwsh -File tools/lab/Start-Lab.ps1 -LayoutOnly    # re-apply window positions
 #>
 [CmdletBinding(SupportsShouldProcess)]
@@ -54,13 +62,16 @@ param(
     [switch]$LayoutOnly,
     [string]$RunDir,
     # Offline lab mode: no fuse; closed master port, offline-v1 markers, partner keys.
-    [switch]$Offline
+    [switch]$Offline,
+    # With -Offline: the one-PC LAN rehearsal (Prepare-LabInstance.ps1 -Offline -Lan).
+    [switch]$Lan
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'LabCommon.psm1') -Force
 
 $config = Get-LabConfig -ConfigPath $ConfigPath
+if ($Lan -and !$Offline) { throw '-Lan applies only with -Offline.' }
 $labRoot = $config.Paths.runDir
 $dirs = [ordered]@{ host = $config.Paths.hostDir; guest = $config.Paths.guestDir }
 
@@ -90,7 +101,7 @@ if ($LayoutOnly) {
 
 $roles = if ($HostOnly) { @('host') } else { @('host', 'guest') }
 $offlineExpect = @{}
-if ($Offline) { foreach ($name in 'host', 'guest') { $offlineExpect[$name] = Get-LabOfflineExpectation -Role $name -Config $config } }
+if ($Offline) { foreach ($name in 'host', 'guest') { $offlineExpect[$name] = Get-LabOfflineExpectation -Role $name -Config $config -Lan:$Lan } }
 $expectedUrl = if ($Offline) { $offlineExpect.host.MasterUrl } else { 'http://127.0.0.1:' + [int]$config.Ports.fuse + '/tppstm/gate' }
 $guestId = [string](Get-ConfigValue $config.Identity 'guestSteamId' '76561202255233008')
 $guestSuffix = '-guest'
@@ -113,7 +124,7 @@ foreach ($port in [int]$config.Ports.host, [int]$config.Ports.guest) {
 }
 if ($Offline) {
     foreach ($port in [int]$offlineExpect.host.NetListenPort, [int]$offlineExpect.guest.NetListenPort) {
-        if (!(Test-LocalPortFree -Port $port -Protocol Udp)) { $problems.Add("UDP port $port (partner net) is in use.") }
+        if (!(Test-LocalPortFree -Port $port -Protocol Udp -AnyAddress:$Lan)) { $problems.Add("UDP port $port (partner net) is in use.") }
     }
 } elseif (!(Test-Path -LiteralPath $config.Paths.fuseExe -PathType Leaf)) { $problems.Add("fuse.exe not found: $($config.Paths.fuseExe) (run tools/lab/Build-Fuse.ps1).") }
 if (!@(Get-Process -Name steam -ErrorAction SilentlyContinue).Count) { Write-Warning 'Steam is not running. Start Steam and log in first: the game calls SteamAPI_Init and exits without it.' }
@@ -143,6 +154,12 @@ foreach ($name in $roles) {
         }
     }
     if ($Offline) { foreach ($problem in (Get-LabOfflineIniProblems -Role $name -Lab $lab -Expectation $offlineExpect[$name])) { $problems.Add($problem) } }
+    if ($Lan) {
+        # A non-loopback bind needs the shared link secret (the lab secret is loopback-only).
+        $secretBytes = if (Test-Path -LiteralPath $p.LinkSecret -PathType Leaf) { [IO.File]::ReadAllBytes($p.LinkSecret) } else { $null }
+        $secretStatus = Get-CoopSecretFileStatus $secretBytes
+        if ($secretStatus -ne 'ok') { $problems.Add("[$name] mgs-coop\link-secret.txt is $secretStatus (run Prepare-LabInstance.ps1 -Offline -Lan).") }
+    }
     $coop = if (Test-Path -LiteralPath $p.CoopIni -PathType Leaf) { ConvertFrom-IniText ([IO.File]::ReadAllText($p.CoopIni)) } else { $null }
     if (!$coop -or (Get-ConfigValue $coop 'master_url' '') -ne $expectedUrl) { $problems.Add("[$name] coop.ini master_url is not $expectedUrl.") }
     $marker = if (Test-Path -LiteralPath $p.Marker -PathType Leaf) { [IO.File]::ReadAllText($p.Marker) } else { '' }
@@ -207,6 +224,7 @@ if ($Offline) {
     $run.ports.offline_master = [int]$offlineExpect.host.MasterPort
     $run.ports.net_host = [int]$offlineExpect.host.NetListenPort
     $run.ports.net_guest = [int]$offlineExpect.guest.NetListenPort
+    if ($Lan) { $run.lan = $true }
 }
 foreach ($name in $roles) {
     $p = $instances[$name].Paths
