@@ -589,7 +589,9 @@ never carries both 128 and 256):
   the mission (`bad_gani`), and the stance's idle cell plays instead, then
   nothing. Failures back off 1, 2, 4, 8, 8 s; five in a row -> `failed`
   (a `dm=map`, `dmmap=` or `dmspeed=` trigger rearms it, [R] in
-  Play-OfflineCoop).
+  Play-OfflineCoop). An unrealize or a teardown that forgets the clip keeps
+  `failed` and a running backoff (no replay before the retry time); a clip
+  still active when a backoff runs out is adopted only while patched.
 - Decide: a new target holds 200 ms and the playing clip at least 300 ms
   before a switch; a switch is a stop, then the play on the tick the stop is
   confirmed. A play waits (`partner_dmmap=deferred`, change-only) for the patch,
@@ -605,8 +607,12 @@ never carries both 128 and 256):
   mapper waits. While a mapped clip is ours the anim arrays are not written
   (`partner_anim=deferred; reason=dm_map`), so its stop can be confirmed.
 - Release (`dm` leaves map): one stop, then `released; result=stopped|ended`,
-  or `result=timeout` after 1.5 s; with `dm=off` the patch is reverted after the
-  release. A teardown (mission start/end, STOP, tick reject, CFG refusal, fault)
+  or `result=timeout` after 1.5 s (at least 1 s after a stop the gate held
+  back, so the patch is never reverted under our pending stop); with `dm=off`
+  the patch is reverted after the release. `dm=map` again during a release
+  keeps the clip in the phase it was in: a play still pending stays
+  `play_sent` (confirmed or unconsumed as usual), a play that started is
+  `playing` as that gani, a release stop already out is waited for. A teardown (mission start/end, STOP, tick reject, CFG refusal, fault)
   abandons the clip (`partner_dmmap=abandoned`) and reverts at once; as with
   `dm=on` the clip may keep looping into the next state (D3 precedent). The
   input lever stays refused (`reason=dm`) while `dm=on|map` or a release runs.
@@ -1039,7 +1045,9 @@ and [D] start `dm=map` (`stage=3 source=net apply=xform reset=n anim=off
 input=off isend=0 dm=map look=net`; lab.ini `partner_apply=xform`,
 `partner_reset=n`, `partner_dm=map` on both copies), and the status line then
 shows `clip <name>` from the 5 s `partner_dmmap` summary (`FAILED` after
-`partner_dmmap=failed`; [R] re-sends and rearms). The default flips to
+`partner_dmmap=failed` and while the summary says `phase=failed`; [R] re-sends
+and rearms; cleared by `partner_stop`, `released`, `abandoned`, a stage below 3
+and an idle summary). The default flips to
 `dm=map` only after D4/D5 and one live two-copy `-Animated` pass.
 
 The status line adds `input <mode>/<armed>`, `recon <mode> err <cm> snaps ..

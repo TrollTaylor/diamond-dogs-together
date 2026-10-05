@@ -331,6 +331,8 @@ try {
     Assert-True ($playText.Contains("'partner_reset=n', 'partner_dm=map'") -and $playText.Contains("if (`$experiment.Move -eq 'map') { 'xform' }")) 'Play-OfflineCoop prepares lab.ini for dm=map (apply xform, reset n, dm map) on both copies'
     Assert-True ($playText.Contains("'^partner_dmmap; phase=([a-z_]+); cur=(\d+|none);'") -and $playText.Contains("'^partner_dmmap=failed'") -and
         $playText.Contains('function Get-ClipName')) 'Play-OfflineCoop status shows the dm=map clip'
+    Assert-True ($playText.Contains("'^partner_dmmap=(released|abandoned);' -or `$line -match '^partner_stop;'") -and
+        $playText.Contains("'^partner_stage=changed; stage=[0-2];'") -and $playText.Contains("if (`$Matches[1] -eq 'failed') { 'FAILED' } elseif (`$Matches[1] -eq 'idle') { '' }")) 'Play-OfflineCoop clears the clip on stop/release/stage<3 and keeps FAILED through the summaries'
     Assert-True ($playText.Contains("'partner_input=net', 'partner_input_send=1'") -and $playText.Contains("'partner_recon=track'") -and
         $playText.Contains("'partner_input_correct_mm=3000'") -and $playText.Contains("'partner_recon_runaway=pin'")) 'Play-OfflineCoop prepares lab.ini for the input drive (correction explicit)'
     $ovInput = ConvertFrom-LabPartnerSettingArgs -Items @('partner_apply=input', 'partner_input=net', 'partner_input_send=1', 'partner_input_cam=sandbox',

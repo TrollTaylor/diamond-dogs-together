@@ -146,12 +146,17 @@ function Update-State {
                 $s.Mode = "$($Matches[1])/$($Matches[2])"
                 if ($Matches[1] -notin @('xform', 'hybrid')) { $s.Move = '' }
                 if ($Matches[2] -eq 'off') { $s.Stance = '' }
-                if ($line -notmatch '; dm=map;') { $s.Dm = '' }
+                # [O] stop logs stage=0 with dm=map still set: no clip then either.
+                if ($line -notmatch '; dm=map;' -or $line -match '^partner_stage=changed; stage=[0-2];') { $s.Dm = '' }
                 # (also the input mode: a second branch for the same line would never be reached)
                 if ($line -match '; input=([a-z]+);') { $s.Input = $Matches[1]; if ($Matches[1] -eq 'off') { $s.InputArmed = $false } }
             }
-            elseif ($line -match '^partner_dmmap; phase=([a-z_]+); cur=(\d+|none);') { $s.Dm = "$($Matches[2])/$($Matches[1])" }
+            elseif ($line -match '^partner_dmmap; phase=([a-z_]+); cur=(\d+|none);') {
+                # failed stays FAILED until [R]; idle (the release finished) has no clip.
+                $s.Dm = if ($Matches[1] -eq 'failed') { 'FAILED' } elseif ($Matches[1] -eq 'idle') { '' } else { "$($Matches[2])/$($Matches[1])" }
+            }
             elseif ($line -match '^partner_dmmap=failed') { $s.Dm = 'FAILED' }
+            elseif ($line -match '^partner_dmmap=(released|abandoned);' -or $line -match '^partner_stop;') { $s.Dm = '' }
             elseif ($line -match '^partner_input=armed; mode=([a-z]+)') { $s.Input = $Matches[1]; $s.InputArmed = $true }
             elseif ($line -match '^partner_input=disarmed') { $s.InputArmed = $false }
             elseif ($line -match '^partner_input; mode=([a-z]+); windows=\d+; per_s=(\d+)') { $s.Input = $Matches[1]; $s.InputPerS = [int]$Matches[2] }

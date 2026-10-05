@@ -82,6 +82,18 @@ const char* StopGate(const In& in) noexcept {
     if (!in.cam_idle) return "cam_connect";
     return nullptr;
 }
+// The play went on: q18[1] is in the DM act (R1, and map on again during a
+// release that began in play_sent).
+void Confirm(State& s, Out& o, std::uint64_t now) noexcept {
+    s.phase = Phase::playing;
+    s.cur = s.sent;
+    s.play_ms = now;
+    s.failures = 0;
+    s.backoff_ms = 0;
+    o.event = Event::playing;
+    o.gani = s.cur;
+    o.ms = Ms(s.sent_ms, now);
+}
 void SendStop(State& s, Out& o, std::uint8_t to, std::uint32_t ms, std::uint64_t now) noexcept {
     o.action = Action::stop;
     o.event = Event::step;
@@ -270,7 +282,9 @@ void Forget(State& s) noexcept {
     s.cur = kNoGani;
     s.stop_done = false;
     s.release_stop_sent = false;
-    if (s.phase != Phase::idle) s.phase = Phase::wait;
+    // failed stays latched until Rearm and a backoff runs out (R6): a realize
+    // cycle or a patch flicker skips neither.
+    if (s.phase != Phase::idle && s.phase != Phase::failed && s.phase != Phase::backoff) s.phase = Phase::wait;
 }
 
 void Idle(State& s) noexcept {
@@ -291,14 +305,7 @@ Out Step(State& s, const In& in) noexcept {
     switch (s.phase) {
     case Phase::play_sent:
         if (in.dm_ok && in.in_dm) {  // R1
-            s.phase = Phase::playing;
-            s.cur = s.sent;
-            s.play_ms = now;
-            s.failures = 0;
-            s.backoff_ms = 0;
-            o.event = Event::playing;
-            o.gani = s.cur;
-            o.ms = Ms(s.sent_ms, now);
+            Confirm(s, o, now);
             return o;
         }
         if (Ms(s.sent_ms, now) >= kConfirmMs && (!in.dm_ok || !in.our_pending)) {  // R2
@@ -345,8 +352,8 @@ Out Step(State& s, const In& in) noexcept {
         }
         break;
     case Phase::backoff:
-        if (now >= s.retry_ms) {  // R6 (no event)
-            if (in.dm_ok && in.in_dm) {
+        if (now >= s.retry_ms) {  // R6 (no event; adopted only while patched, as in D3)
+            if (in.dm_ok && in.in_dm && in.patched) {
                 s.phase = Phase::playing;
                 s.owned = true;
                 s.play_ms = 0;
@@ -374,6 +381,7 @@ Out Step(State& s, const In& in) noexcept {
             return o;
         }
         if (s.phase != Phase::release) {  // L2
+            s.release_from = s.phase;
             if (s.phase == Phase::stop_sent) {
                 s.release_stop_sent = true;
                 s.release_ms = s.stop_ms;
@@ -399,7 +407,11 @@ Out Step(State& s, const In& in) noexcept {
             ++s.stops;
             return o;
         }
-        if (Ms(s.release_ms, now) >= kReleaseMs) {
+        // A stop the gate held back late in the release still gets kStopWaitMs:
+        // the patch is never reverted while our stop may still be pending.
+        std::uint64_t deadline = s.release_ms + kReleaseMs;
+        if (s.release_stop_sent && s.stop_ms + kStopWaitMs > deadline) deadline = s.stop_ms + kStopWaitMs;
+        if (now >= deadline) {
             o.event = Event::released;
             o.reason = "timeout";
             o.gani = s.cur;
@@ -409,16 +421,25 @@ Out Step(State& s, const In& in) noexcept {
         }
         return o;
     }
-    // map is on again during a release: the clip is still ours.
+    // map is on again during a release: the clip is still ours. A release
+    // that began in play_sent keeps that play (R1/R2 still apply to it).
     if (s.phase == Phase::release) {
-        if (s.release_stop_sent) {
+        const bool from_play = s.release_from == Phase::play_sent;
+        const bool stop_sent = s.release_stop_sent;
+        s.release_stop_sent = false;
+        if (stop_sent) {
+            if (from_play) s.cur = s.sent;  // the stop only went out once the play had started
             s.phase = Phase::stop_sent;
             s.from = s.cur;
+        } else if (from_play && in.dm_ok && in.in_dm) {
+            Confirm(s, o, now);
+            return o;
+        } else if (from_play) {
+            s.phase = Phase::play_sent;
         } else {
             s.phase = Phase::playing;
             s.play_ms = 0;
         }
-        s.release_stop_sent = false;
     }
     // B: blocked.
     if (in.blocked != Block::none) {

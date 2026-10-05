@@ -563,6 +563,108 @@ void TestRelease() {
         g.cls = Cls(0, 3);
         Check(g.RunUntilPlay(5, 1000), "map again: switches normally");
     }
+    // map on again before a play sent just before map off started: that play
+    // is kept (R1 confirms it), no lost/adopted, no stop/replay cycle.
+    {
+        Game g;
+        g.consume = false;
+        g.cls = Cls(0, 3);
+        Check(g.RunUntilPlay(5), "release from play_sent: play 5 (pending)");
+        g.in.map = false;
+        pdm::Out o = g.Tick();
+        Check(o.action == pdm::Action::none && g.s.phase == pdm::Phase::release && g.s.release_from == pdm::Phase::play_sent,
+              "release from play_sent: no stop while the play is pending");
+        g.in.map = true;
+        o = g.Tick();
+        Check(o.action == pdm::Action::none && o.event == pdm::Event::none && g.s.phase == pdm::Phase::play_sent && g.s.sent == 5,
+              "map again, play still pending: back to play_sent");
+        g.in.in_dm = true;  // consumed late
+        g.in.our_pending = false;
+        g.pending_ms = 0;
+        o = g.Tick();
+        Check(o.event == pdm::Event::playing && o.gani == 5 && g.s.cur == 5 && g.s.owned && g.s.play_ms == g.now,
+              "map again: the late play is confirmed as 5");
+        g.Run(1000);
+        Check(g.Events(pdm::Event::lost) == 0 && g.Events(pdm::Event::adopted) == 0 && g.plays == 1 && g.stop_actions == 0,
+              "map again from play_sent: no lost/adopted, no extra stop/play");
+    }
+    // The same, consumed during the release while the stop was gated: playing at once.
+    {
+        Game g;
+        g.consume = false;
+        g.cls = Cls(1, 0);
+        Check(g.RunUntilPlay(1), "release from play_sent (gated stop): play 1");
+        g.in.map = false;
+        g.Tick();
+        g.in.host_dm = true;
+        g.in.in_dm = true;
+        g.in.our_pending = false;
+        g.pending_ms = 0;
+        Check(g.Tick().action == pdm::Action::none && g.s.phase == pdm::Phase::release, "consumed during the release, stop gated");
+        g.in.map = true;
+        g.in.host_dm = false;
+        const pdm::Out o = g.Tick();
+        Check(o.event == pdm::Event::playing && o.gani == 1 && g.s.phase == pdm::Phase::playing && g.s.cur == 1 && g.s.play_ms == g.now,
+              "map again: playing 1 (not adopted as unknown)");
+        g.Run(1000);
+        Check(g.Events(pdm::Event::lost) == 0 && g.Events(pdm::Event::adopted) == 0 && g.plays == 1 && g.stop_actions == 0,
+              "consumed during the release: no stop/replay");
+    }
+    // The same with the release stop already out: wait for that stop, from = the play.
+    {
+        Game g;
+        g.consume = false;
+        g.stops = false;
+        g.cls = Cls(1, 0);
+        Check(g.RunUntilPlay(1), "release from play_sent (stop out): play 1");
+        g.in.map = false;
+        g.Tick();
+        g.in.in_dm = true;
+        g.in.our_pending = false;
+        g.pending_ms = 0;
+        Check(g.Tick().action == pdm::Action::stop && g.s.release_stop_sent, "consumed during the release: the release stop goes out");
+        g.in.map = true;
+        g.Tick();
+        Check(g.s.phase == pdm::Phase::stop_sent && g.s.from == 1 && g.s.cur == 1 && g.stop_actions == 1, "map again: stop_sent, from 1");
+    }
+    // A stop held back by the gate until late in the release still gets the
+    // stop wait: no timeout (and so no revert) the tick after it went out.
+    {
+        Game g;
+        g.Playing(0);
+        g.stops = false;
+        g.in.map = false;
+        g.in.host_dm = true;
+        g.Tick();
+        const std::uint64_t start = g.s.release_ms;
+        while (g.now - start < 1450) Check(g.Tick().event == pdm::Event::none, "late stop: nothing while the gate holds");
+        g.in.host_dm = false;
+        pdm::Out o = g.Tick();
+        const std::uint64_t stop = g.now;
+        Check(o.action == pdm::Action::stop && stop - start < pdm::kReleaseMs, "late stop: sent just before 1.5 s");
+        o = g.Tick();
+        Check(o.event == pdm::Event::none && g.s.phase == pdm::Phase::release && g.now - start >= pdm::kReleaseMs,
+              "late stop: no timeout the tick after (stop still pending)");
+        g.Run(300);
+        Check(g.s.phase == pdm::Phase::release && g.Events(pdm::Event::released) == 0, "late stop: still waiting for it");
+        g.in.in_dm = false;
+        o = g.Tick();
+        Check(o.event == pdm::Event::released && std::strcmp(o.reason, "stopped") == 0, "late stop: released stopped once consumed");
+        Game k;
+        k.Playing(0);
+        k.stops = false;
+        k.in.map = false;
+        k.in.host_dm = true;
+        k.Tick();
+        const std::uint64_t kstart = k.s.release_ms;
+        while (k.now - kstart < 1450) k.Tick();
+        k.in.host_dm = false;
+        Check(k.Tick().action == pdm::Action::stop, "late stop never consumed: sent");
+        const std::uint64_t kstop = k.now;
+        while ((o = k.Tick()).event == pdm::Event::none) {}
+        Check(o.event == pdm::Event::released && std::strcmp(o.reason, "timeout") == 0 && k.now - kstop >= pdm::kStopWaitMs &&
+              k.now - kstop < pdm::kStopWaitMs + 40, "late stop never consumed: timeout after the stop wait");
+    }
     // Failed with a clip, then map off: released.
     {
         Game g;
@@ -587,6 +689,7 @@ void TestRearmAndForget() {
     g.s.retry_ms = g.now + 5000;
     pdm::Rearm(g.s);
     Check(g.s.retry_ms == 0, "Rearm: backoff retries at once");
+    g.s.phase = pdm::Phase::playing;
     pdm::Forget(g.s);
     Check(!g.s.owned && g.s.cur == pdm::kNoGani && g.s.phase == pdm::Phase::wait, "Forget: wait, nothing owned");
     pdm::Idle(g.s);
@@ -595,6 +698,51 @@ void TestRearmAndForget() {
     pdm::Reset(s);
     pdm::Forget(s);
     Check(s.phase == pdm::Phase::idle, "Forget keeps idle");
+    // An unrealize or a patch flicker (Forget) neither leaves failed nor skips a backoff.
+    {
+        Game f;
+        f.Playing(0);
+        f.s.phase = pdm::Phase::failed;
+        f.s.failures = pdm::kMaxFailures;
+        pdm::Forget(f.s);
+        Check(f.s.phase == pdm::Phase::failed && !f.s.owned && f.s.cur == pdm::kNoGani, "Forget keeps failed");
+        f.in.in_dm = false;
+        f.Run(20000);
+        Check(f.plays == 1 && f.s.phase == pdm::Phase::failed && f.Events(pdm::Event::failed) == 0, "failed after Forget: no play");
+    }
+    {
+        Game b;
+        b.Playing(0);
+        b.stops = false;
+        b.cls = Cls(0, 1);
+        while (b.Tick().action != pdm::Action::stop) {}
+        pdm::Out o{};
+        while ((o = b.Tick()).event == pdm::Event::none) {}
+        Check(o.event == pdm::Event::stop_timeout && b.s.phase == pdm::Phase::backoff && b.s.owned, "backoff after a stop timeout");
+        const std::uint64_t retry = b.s.retry_ms;
+        pdm::Forget(b.s);
+        Check(b.s.phase == pdm::Phase::backoff && !b.s.owned && b.s.cur == pdm::kNoGani && b.s.retry_ms == retry, "Forget keeps the backoff");
+        b.in.in_dm = false;  // the body went away with the clip
+        b.stops = true;
+        const unsigned plays = b.plays;
+        while (b.now + 33 < retry) Check(b.Tick().action == pdm::Action::none, "Forget: nothing before retry_ms");
+        Check(b.plays == plays && b.RunUntilPlay(10, 300) && b.now >= retry, "Forget: the play after the backoff");
+    }
+    // R6 adopts an active clip only while patched (as D3 does).
+    {
+        Game r;
+        r.Playing(0);
+        r.stops = false;
+        r.cls = Cls(0, 1);
+        while (r.Tick().action != pdm::Action::stop) {}
+        while (r.Tick().event == pdm::Event::none) {}
+        pdm::Forget(r.s);
+        r.in.patched = false;  // RevertDm: the clip loops on, unpatched
+        r.Run(1100);
+        Check(r.s.phase == pdm::Phase::wait && !r.s.owned, "R6 unpatched: wait, not adopted");
+        r.in.patched = true;
+        Check(r.Tick().event == pdm::Event::adopted && r.s.owned, "patched again: adopted");
+    }
 }
 
 } // namespace
@@ -618,7 +766,8 @@ int main() {
     TestRearmAndForget();
     std::printf("%u partner dmmap checks passed: reset/hold, speed bands and hysteresis, classify (flags/speed/anim/lost), table and "
                 "bad fallback, speed ring, stop-then-play switch, hold/dwell, natural end strikes, loss attribution, unconsumed backoff/"
-                "failed/rearm, late clip, dm_read and stop timeouts, play/stop gates, stale freeze, adopt, blocks, release\n",
+                "failed/rearm, late clip, dm_read and stop timeouts, play/stop gates, stale freeze, adopt, blocks, release (map again "
+                "from play_sent, late stop), Forget keeps failed/backoff\n",
                 checks);
     return 0;
 }

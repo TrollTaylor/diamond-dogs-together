@@ -127,6 +127,7 @@ struct Out {
 };
 struct State {
     Phase phase;
+    Phase release_from;        // the phase the current release began in
     bool owned;
     std::uint8_t cur, sent, from, cand;
     Class cand_cls;
@@ -142,7 +143,7 @@ struct State {
 };
 void Reset(State& s) noexcept;   // all zero, phase idle, cur/sent/from/cand = kNoGani
 void Rearm(State& s) noexcept;   // failures/backoff 0, deferred null, bad/strikes cleared; failed -> (owned ? playing, play_ms 0 : wait); backoff -> retry_ms 0
-void Forget(State& s) noexcept;  // owned false, cur kNoGani, stop_done/release_stop_sent false, phase = (idle ? idle : wait)
+void Forget(State& s) noexcept;  // owned false, cur kNoGani, stop_done/release_stop_sent false; idle, failed and backoff kept, else wait
 void Idle(State& s) noexcept;    // Forget + phase idle, candidate and deferral cleared (statistics kept)
 // One tick: reconcile (R), leave (L, map off), blocked (B) or decide (D). At
 // most one Action and one Event per call.
