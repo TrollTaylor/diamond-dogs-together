@@ -60,8 +60,9 @@ do
             elseif cls == "none" and kind ~= "FultonInfo" and kind ~= "FultonFailed" and s.last[h] and now - s.last[h] <= 10000 then
                 s.attrib[h] = now
             end
-            local c = CAUSE[kind]
-            if c then
+            local c, q = CAUSE[kind], s.pending[h]
+            -- The Neutralize that follows FultonInfo must not cut a fulton read short.
+            if c and not (q and q.cause == 5 and c ~= 5 and now - q.at <= 20000) then
                 local attack = kind == "Dead" and type(attackId) == "number" and attackId >= 0 and attackId < 4294967296 and attackId or 0
                 s.pending[h] = {cause = c, at = now, attack = floor(attack)}
             end
