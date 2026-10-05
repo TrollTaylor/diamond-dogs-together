@@ -169,6 +169,9 @@ stage=<0..3> source=<fixed|orbit|net> apply=<warp|slot|both|xform|hybrid|input> 
   hold=<none|pass> yaw=<rot|rotneg|none> words=<3 of 0prhn> bits=0x<hex> correct=<0..10000>
   isend=<0|1> p218=<0|1> padprobe=<0|1> holdlog=<0|1> dm=<off|probe|on> lookgate=<0|1> lookrecover=<0|1>
   tap=0x<hex> press=0x<hex>:<50..5000> dmplay=<0..9> dmstop=1   (one-shots)
+  # round 4 (docs/partner-anim-appearance.md "Round 4"):
+  hold=<none|pass|own|net> recon=<off|track|pin> align=<-50..150> slot=<remote|body|none>
+  runaway=<pin|disarm|off> wrap=<off|census|window> place=1   (place is a one-shot)
 ```
 
 `census=1` (log `partner_census` for both blocks once, plus `partner_input_census`
@@ -204,7 +207,8 @@ polls the file every 30 Lua ticks, only with `offline-v1` and `lab.ini`
 `partner=1`. It deletes the file whether it accepts it or not, then logs
 `partner_stage=changed; stage=..; source=..; apply=..; anim=..; aset=..;
 reset=..; look=..; probe=..; lookgate=..; lookrecover=..; input=..; cam=..;
-hold=..; yaw=..; words=..; mask=0x..; correct=..; isend=..; dm=..; via=trigger`
+hold=..; yaw=..; words=..; mask=0x..; correct=..; isend=..; dm=..; recon=..;
+align=..; slot=..; runaway=..; wrap=..; via=trigger`
 (the full configuration after the trigger; `stop` sets stage 0) or
 `partner_trigger=rejected; reason=parse`.
 `Set-PartnerTrigger.ps1 -WaitSec` therefore confirms the result in
@@ -288,6 +292,13 @@ realization line is inside the stage 3 segment).
 | `partner_lua=event=parts_set; R=1; type=..; ...`, `partner_lua=event=parts_set_refused; reason=bad_look` | B1, B4 (`parts_set_refused` fails); `parts_copied` after a network look fails B4 |
 | `partner_ps; k=..; id=..; mask740=..; r738_milli=..; r280=..; b2d0=..; b2d8=..; psw=..` | `probe=ps` (4 Hz, read-only, layouts partly unverified) |
 | `character_config=..`, `player_type_patch=active\|refused`, `character=apply; ...; applied=..`, `character=allocated; ...; vars=..` | C1 (guest: `quiet`, `applied=quiet`, `vars=6`) |
+| `partner_recon=place; reason=..; via=warp; target_mm=..; ...`, `partner_recon=placed; ok=1\|0; err_mm=..; tries=..; ms=..` | round 4 R1/R4 (apply=input placement and its verification) |
+| `partner_recon=snap; reason=far_moving\|far_idle\|far_prone; via=xform; err_mm=..; ...`, `partner_recon=diverging; ...` | R2/R3 (a snap only on a large sustained error; no 1 Hz sawtooth) |
+| `partner_recon=runaway; ...; action=pin\|disarm\|off`, `partner_recon=runaway_end; ms=..; reason=..` | R0/R1 (the body moves on its own while the remote stands still) |
+| `partner_recon=frozen; reason=..`, `partner_recon=unfrozen`, `partner_recon=stance; ...`, `partner_recon=stance_mismatch; ...`, `partner_recon=yaw; ...`, `partner_recon=stop_check; ok=..; ...`, `partner_recon=refused; ...` | R0-R6 diagnostics (each family capped at 64 lines) |
+| `partner_recon; mode=..; err_mm=..; dy_mm=..; along_mm=..; cross_mm=..; v_free_mmps=..; v_remote_mmps=..; body_mm=..; target_mm=..; ...; stop_ok=..; runaway=..` | the 1 Hz reconciliation line (3600 per mission) |
+| `partner_body; R=1; body_mm=..; yaw_mrad=..; speed_mmps=<n\|na>; own_mmps=<n\|na>; vel_mmps=<n\|na>; ...; epoch=..; snaps=..` | 2 Hz body readback (3600 per mission; speed only over same-epoch samples) |
+| `partner_wrap; mode=..; svc28=c,s,n,w,0xph; svc30=..; svc40=..; walk7=..; walk11=..; r0=..; other=..`, `partner_input_wrap=installed\|refused; ...` | W0 wrap census (wrap=census\|window) |
 
 ## Trigger inputs (scripts create, native consumes and deletes)
 

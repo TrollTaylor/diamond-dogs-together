@@ -1,8 +1,14 @@
-// Original MGS Co-op round 3 input lever: the block-1 context window hook.
+// Original MGS Co-op round 3/4 input lever: the block-1 context window hook.
 // It wraps the single per-block phase-8 dispatch call at 0x9C2B51 (into
 // 0xBF61D0). Around block 1's call only, with instance 1 realized and every
 // identity re-validated, it swaps in instance 1's own virtual pad and sets the
 // base plugin's per-id isLocal bit, then restores everything. Never blocks.
+//
+// Round 4 (docs/partner-anim-appearance.md "Round 4"): every window installs
+// a PP vtable copy whose key-manager slots answer from the injected words and
+// whose hold classifiers follow hold=none|pass|own|net; PP+0x14 carries the
+// world heading; PP+0x278/PP+0x4B0 are shadowed; the camera sandbox covers the
+// request block; wrap=census|window wraps the other walks of block 1's tree.
 //
 // Exceptions. Our own reads and writes (validation, PRE, POST) handle an
 // access fault themselves: what PRE had saved is restored field by field and
@@ -39,6 +45,8 @@ void* g_stub = nullptr;
 // table[0] cannot tell whether a copy exists: g_vt_ready does.
 std::uintptr_t g_vt_none[43]{};
 std::uintptr_t g_vt_log[43]{};
+std::uintptr_t g_vt_own[43]{};
+std::uintptr_t g_vt_pass[43]{};
 bool g_vt_ready = false;
 
 // Seqlock-published Arm.
@@ -46,18 +54,37 @@ volatile LONG g_seq = 0;
 pi::Arm g_arm{};
 volatile LONG g_arm_enabled = 0;
 volatile LONG g_holdlog = 0;
+// Fast filters for the wrap entries (written by PublishArm).
+volatile LONG g_wrap_mode = 0;  // PartnerWrap
+volatile LONG64 g_wrap_root0 = 0, g_wrap_root1 = 0;
 // Odd while the hook has anything swapped into PP/src/rec/CAM/P (the Lua
 // thread's pad reads retry or refuse while it is odd or changes).
 volatile LONG g_window_seq = 0;
 
 // Hook-thread-only edge/tap/sample state (survives gen bumps; see the Arm
-// comment in partner_input.hpp) and instance 1's private masks (reset per gen).
+// comment in partner_input.hpp) and instance 1's private masks and shadows
+// (reset per gen).
 pi::EdgeState g_edge{};
 pi::TapState g_tap{};
 pi::Sample g_prev{};
 std::uint32_t g_gen = 0;
 bool g_priv_valid = false;
 unsigned char g_priv_masks[c::pp_masks_size + c::pp_mask_tables_size]{};
+bool g_shadow_valid = false;
+std::uint32_t g_shadow_gate = 0;   // PP+0x278 as instance 1 sees it
+std::uint8_t g_shadow_rebind = 0;  // PP+0x4B0 as instance 1 sees it
+pi::HoldHistory g_hist{};
+volatile LONG g_reset_hist = 0;  // set by ResetFault (Lua thread), consumed by the hook thread
+// The main window's injection of the current frame (reused by wrap windows).
+pi::Injection g_last_inj{};
+bool g_inj_valid = false;
+// What the stubs answer during the current window (set before each call).
+struct Current {
+    std::uint32_t held, press, release, w54, long12, tap12;
+    bool live;
+    PartnerInputHold hold;
+};
+Current g_cur{};
 
 // Statistics (atomics).
 volatile LONG g_faulted = 0;
@@ -66,9 +93,27 @@ volatile LONG g_cam_dirty = 0, g_us_max = 0, g_hook_thread = 0, g_gen_seen = 0;
 volatile LONG g_last_skip = 0, g_last_held = 0, g_last_lx = 0, g_last_ly = 0, g_last_dir = 0, g_last_mag = 0;
 volatile LONG g_last_age = static_cast<LONG>(pi::kNoSample), g_last_stale = 0;
 volatile LONG g_fault_phase = 0, g_fault_code = 0;
+volatile LONG g_hold_own[4] = {0, 0, 0, 0};
+volatile LONG g_km_calls = 0, g_synth = 0, g_press_n = 0, g_release_n = 0, g_shadow_changes = 0;
 // Hold log ring (block 0 only).
 pi::HoldRecord g_hold_ring[64]{};
 volatile LONG g_hold_head = 0;
+// Wrap entries.
+volatile LONG g_wrap_installed = 0;
+bool g_wrap_ready = false;
+volatile LONG g_w_calls0[kWrapEntries]{}, g_w_calls1[kWrapEntries]{}, g_w_same[kWrapEntries]{}, g_w_nested[kWrapEntries]{};
+volatile LONG g_w_windows[kWrapEntries]{}, g_w_phases[kWrapEntries]{};
+volatile LONG g_w_other = 0;
+using SvcFn = void (*)(void* ctx, void* root, std::uint32_t phase) noexcept;
+using SvcIdFn = void (*)(void* ctx, void* root, std::uint32_t phase, std::uint32_t id) noexcept;
+using WalkFn = void (*)(void* root, std::uint32_t phase) noexcept;
+using WalkIdFn = void (*)(void* root, std::uint32_t phase, std::uint32_t id) noexcept;
+SvcFn g_svc_active = nullptr, g_svc_all = nullptr;
+SvcIdFn g_svc_id = nullptr;
+WalkFn g_walk7 = nullptr;
+WalkIdFn g_walk11 = nullptr;
+void* g_walk7_stub = nullptr;
+void* g_walk11_stub = nullptr;
 
 std::uint64_t NowMs() noexcept {
     LARGE_INTEGER f{}, cc{};
@@ -205,9 +250,20 @@ struct Save {
     std::uintptr_t vt;
     std::uint32_t rec_2ac;
     std::uint32_t p218;
+    std::uint32_t gate;
+    std::uint8_t rebind;
     unsigned char cam[pi::kCamSaveBytes];
-    bool src_saved, derived_saved, masks_saved, kb_saved, kb_flags_saved, vt_saved, rec_saved, p218_saved, cam_saved;
+    bool src_saved, derived_saved, masks_saved, kb_saved, kb_flags_saved, vt_saved, rec_saved, p218_saved, cam_saved, shadow_saved;
 };
+
+// The vtable copy a window installs for a hold mode.
+std::uintptr_t WindowVtable(PartnerInputHold hold) noexcept {
+    switch (hold) {
+    case PartnerInputHold::none: return reinterpret_cast<std::uintptr_t>(&g_vt_none[1]);
+    case PartnerInputHold::pass: return reinterpret_cast<std::uintptr_t>(&g_vt_pass[1]);
+    default: return reinterpret_cast<std::uintptr_t>(&g_vt_own[1]);
+    }
+}
 
 void ApplyPre(const pi::Arm& a, const pi::Injection& j, Save& save) noexcept {
     std::memcpy(save.src, reinterpret_cast<void*>(a.src + c::src_words), c::src_size);
@@ -221,7 +277,8 @@ void ApplyPre(const pi::Arm& a, const pi::Injection& j, Save& save) noexcept {
     Store<float>(a.src + 0x68, j.lt); Store<float>(a.src + 0x6C, j.rt);
     std::memcpy(save.derived, reinterpret_cast<void*>(a.pp + c::pp_derived), c::pp_derived_size);
     save.derived_saved = true;
-    Store<float>(a.pp + 0x10, j.mag); Store<float>(a.pp + 0x14, j.force); Store<float>(a.pp + 0x18, j.dir);
+    // PP+0x14 is the world move heading (0x12070F9), not a 0..1 value.
+    Store<float>(a.pp + 0x10, j.mag); Store<float>(a.pp + 0x14, j.heading); Store<float>(a.pp + 0x18, j.dir);
     Store<float>(a.pp + 0x1C, j.rmag); Store<float>(a.pp + 0x20, j.rforce); Store<float>(a.pp + 0x24, j.rdir);
     // Masks: save the host's, write instance 1's private copy (zero on a new gen).
     std::memcpy(save.host_masks, reinterpret_cast<void*>(a.pp + c::pp_masks), c::pp_masks_size);
@@ -235,11 +292,25 @@ void ApplyPre(const pi::Arm& a, const pi::Injection& j, Save& save) noexcept {
     save.kb_flags = Load<std::uint8_t>(a.pp + c::pp_kb_flags);
     save.kb_flags_saved = true;
     Store<std::uint8_t>(a.pp + c::pp_kb_flags, static_cast<std::uint8_t>(save.kb_flags & ~c::kb_flags_clear));
-    if (a.hold == PartnerInputHold::none && g_vt_ready) {
+    // Round 4: the vtable copy is installed in every window (key-manager
+    // slots answer from the injected words; hold classifiers per hold mode).
+    if (g_vt_ready) {
         save.vt = Load<std::uintptr_t>(a.pp);
         save.vt_saved = true;
-        Store<std::uintptr_t>(a.pp, reinterpret_cast<std::uintptr_t>(&g_vt_none[1]));
+        Store<std::uintptr_t>(a.pp, WindowVtable(a.hold));
     }
+    // Shadowed PP fields: instance 1's own copy (initialized from the host's
+    // value on the first window of a gen).
+    save.gate = Load<std::uint32_t>(a.pp + c::pp_mouse_gate);
+    save.rebind = Load<std::uint8_t>(a.pp + c::pp_rebind);
+    save.shadow_saved = true;
+    if (!g_shadow_valid) {
+        g_shadow_gate = save.gate;
+        g_shadow_rebind = save.rebind;
+        g_shadow_valid = true;
+    }
+    Store<std::uint32_t>(a.pp + c::pp_mouse_gate, g_shadow_gate);
+    Store<std::uint8_t>(a.pp + c::pp_rebind, g_shadow_rebind);
     save.rec_2ac = Load<std::uint32_t>(a.rec1 + c::rec_local);
     save.rec_saved = true;
     Store<std::uint32_t>(a.rec1 + c::rec_local, save.rec_2ac | 1u);
@@ -260,14 +331,26 @@ void ApplyPre(const pi::Arm& a, const pi::Injection& j, Save& save) noexcept {
 }
 
 // Exact reverse of ApplyPre for the saved fields. capture_private keeps the
-// masks instance 1's update left as its private copy (only after a real call).
+// masks and shadows instance 1's update left as its private copy (only after
+// a real call).
 void ApplyPost(const pi::Arm& a, const Save& save, bool capture_private) noexcept {
     if (save.p218_saved) Store<std::uint32_t>(a.P + c::p_local_id, save.p218);
-    if (save.vt_saved) Store<std::uintptr_t>(a.pp, save.vt);
     if (save.rec_saved) {
         const std::uint32_t now = Load<std::uint32_t>(a.rec1 + c::rec_local);
         Store<std::uint32_t>(a.rec1 + c::rec_local, (now & ~1u) | (save.rec_2ac & 1u));
     }
+    if (save.shadow_saved) {
+        if (capture_private) {
+            const std::uint32_t gate = Load<std::uint32_t>(a.pp + c::pp_mouse_gate);
+            const std::uint8_t rebind = Load<std::uint8_t>(a.pp + c::pp_rebind);
+            if (gate != g_shadow_gate || rebind != g_shadow_rebind) InterlockedIncrement(&g_shadow_changes);
+            g_shadow_gate = gate;
+            g_shadow_rebind = rebind;
+        }
+        Store<std::uint32_t>(a.pp + c::pp_mouse_gate, save.gate);
+        Store<std::uint8_t>(a.pp + c::pp_rebind, save.rebind);
+    }
+    if (save.vt_saved) Store<std::uintptr_t>(a.pp, save.vt);
     if (save.masks_saved) {
         if (capture_private) {
             std::memcpy(g_priv_masks, reinterpret_cast<void*>(a.pp + c::pp_masks), c::pp_masks_size);
@@ -319,12 +402,32 @@ bool SafePre(const pi::Arm& a, const pi::Injection& j, Save& save) noexcept {
     return done;
 }
 
-// The original dispatch with the window's fields swapped in. A fatal game
+// One original call through any of the wrapped entries (entry 255 = the main
+// 0x9C2B51 dispatch).
+struct Call {
+    std::uint8_t entry;
+    void* ctx;
+    void* root;
+    std::uint32_t a, b;
+};
+inline constexpr std::uint8_t kMainEntry = 255;
+void CallOriginal(const Call& k) noexcept {
+    switch (k.entry) {
+    case 0: g_svc_active(k.ctx, k.root, k.a); break;
+    case 1: g_svc_all(k.ctx, k.root, k.a); break;
+    case 2: g_svc_id(k.ctx, k.root, k.a, k.b); break;
+    case 3: g_walk7(k.root, k.a); break;
+    case 4: g_walk11(k.root, k.a, k.b); break;
+    default: g_original(k.root, k.a); break;
+    }
+}
+
+// The original call with the window's fields swapped in. A fatal game
 // exception is recorded and passed on; if an outer handler unwinds through
 // here, the swapped fields are restored and the window closed first.
-void GuardedCall(const pi::Arm& a, const Save& save, void* root, std::uint32_t phase) noexcept {
+void GuardedCall(const pi::Arm& a, const Save& save, const Call& k) noexcept {
     __try {
-        __try { g_original(root, phase); }
+        __try { CallOriginal(k); }
         __finally {
             if (AbnormalTermination()) {
                 SafePost(a, save, false);
@@ -358,9 +461,13 @@ void RunHoldLog(const pi::Arm& a, void* root, std::uint32_t phase) noexcept {
         g_original(root, phase);
         return;
     }
-    GuardedCall(a, save, root, phase);
+    GuardedCall(a, save, Call{kMainEntry, nullptr, root, phase, 0});
     SafePost(a, save, false);
     EndWindow();
+}
+
+void SetCurrent(const pi::Injection& j, PartnerInputHold hold) noexcept {
+    g_cur = Current{j.held, j.edge_press, j.edge_release, j.w[2], j.long12, j.tap12, j.live, hold};
 }
 
 void RunWindow(const pi::Arm& a, void* root, std::uint32_t phase) noexcept {
@@ -377,12 +484,26 @@ void RunWindow(const pi::Arm& a, void* root, std::uint32_t phase) noexcept {
         return;
     }
     InterlockedIncrement(&g_windows);
-    if (a.config.mode == PartnerInput::pass) { g_original(root, phase); return; }
+    if (a.config.mode == PartnerInput::pass) { g_inj_valid = false; g_original(root, phase); return; }
     const std::uint64_t now_ms = NowMs();
+    // One fresh injection per main window (once per frame); wrap windows of
+    // this frame reuse it, so every consumer sees each edge exactly once.
     pi::Sample s{};
-    if (g_sample && g_sample(s)) g_prev = s; else s = g_prev;
+    if (g_sample && g_sample(s)) {
+        g_prev = s;
+    } else {
+        s = g_prev;
+        s.edge_press = s.edge_release = s.edge_tap12 = 0;  // consumed edges never replay
+    }
+    g_prev.edge_press = g_prev.edge_release = g_prev.edge_tap12 = 0;
     const std::uint32_t overlay_bits = pi::StepOverlay(g_tap, a.tap_seq, a.tap_bits, a.press_bits, a.press_until_ms, now_ms);
     const pi::Injection j = pi::Compose(a.config, s, a.host_cam_cdeg, pi::Overlay{overlay_bits}, g_edge);
+    pi::HoldPush(g_hist, j.held);
+    g_last_inj = j;
+    g_inj_valid = true;
+    if (j.synth) InterlockedIncrement(&g_synth);
+    if (j.edge_press) InterlockedIncrement(&g_press_n);
+    if (j.edge_release) InterlockedIncrement(&g_release_n);
     if (j.stale) InterlockedIncrement(&g_stale);
     InterlockedExchange(&g_last_stale, j.stale ? 1 : 0);
     InterlockedExchange(&g_last_held, static_cast<LONG>(j.held));
@@ -400,7 +521,8 @@ void RunWindow(const pi::Arm& a, void* root, std::uint32_t phase) noexcept {
         g_original(root, phase);
         return;
     }
-    GuardedCall(a, save, root, phase);
+    SetCurrent(j, a.hold);
+    GuardedCall(a, save, Call{kMainEntry, nullptr, root, phase, 0});
     SafePost(a, save, true);
     EndWindow();
     Max(g_us_max, static_cast<LONG>(NowUs() - t0));
@@ -412,11 +534,17 @@ void __stdcall InputDispatchHook(void* root, std::uint32_t phase) noexcept {
     pi::Arm a{};
     if (!ReadArm(a)) { g_original(root, phase); return; }
     InterlockedExchange(&g_gen_seen, static_cast<LONG>(a.gen));
+    if (InterlockedExchange(&g_reset_hist, 0)) {
+        g_hist = pi::HoldHistory{};
+        g_inj_valid = false;
+    }
     if (a.gen != g_gen) {
-        // Only instance 1's private masks start afresh with a new gen.
+        // Only instance 1's private masks and shadows start afresh with a new gen.
         g_gen = a.gen;
         std::memset(g_priv_masks, 0, sizeof(g_priv_masks));
         g_priv_valid = false;
+        g_shadow_valid = false;
+        g_inj_valid = false;
     }
     if (phase != 8) { g_original(root, phase); return; }
     if (a.holdlog && reinterpret_cast<std::uintptr_t>(root) == a.root0) { RunHoldLog(a, root, phase); return; }
@@ -424,7 +552,122 @@ void __stdcall InputDispatchHook(void* root, std::uint32_t phase) noexcept {
     RunWindow(a, root, phase);
 }
 
+// --- Wrap entries --------------------------------------------------------------
+// A window around one of block 1's other tree walks, on the hook thread, not
+// nested, with this frame's injection (wrap=window).
+void RunWrapWindow(const Call& k) noexcept {
+    pi::Arm a{};
+    if (!ReadArm(a) || !a.enabled || a.wrap != PartnerWrap::window || a.gen != g_gen || !g_inj_valid || !g_last_inj.write ||
+        reinterpret_cast<std::uintptr_t>(k.root) != a.root1 || g_faulted) {
+        CallOriginal(k);
+        return;
+    }
+    pi::Skip skip = pi::Skip::player;
+    bool validated = false;
+    __try { skip = Validate(a, k.root); validated = true; }
+    __except (OwnFilter(1, GetExceptionCode())) {}
+    if (!validated || skip != pi::Skip::none) { CallOriginal(k); return; }
+    const pi::Injection j = g_last_inj;
+    Save save{};
+    BeginWindow();
+    if (!SafePre(a, j, save)) {
+        EndWindow();
+        CallOriginal(k);
+        return;
+    }
+    SetCurrent(j, a.hold);
+    GuardedCall(a, save, k);
+    SafePost(a, save, true);
+    EndWindow();
+    if (k.entry < kWrapEntries) InterlockedIncrement(&g_w_windows[k.entry]);
+}
+
+void WrapEnter(const Call& k) noexcept {
+    const LONG mode = g_wrap_mode;
+    const auto root = static_cast<LONG64>(reinterpret_cast<std::uintptr_t>(k.root));
+    if (mode == static_cast<LONG>(PartnerWrap::off) || !root) { CallOriginal(k); return; }
+    if (root == g_wrap_root0) {
+        InterlockedIncrement(&g_w_calls0[k.entry]);
+        CallOriginal(k);
+        return;
+    }
+    if (root != g_wrap_root1) {
+        InterlockedIncrement(&g_w_other);
+        CallOriginal(k);
+        return;
+    }
+    InterlockedIncrement(&g_w_calls1[k.entry]);
+    InterlockedOr(&g_w_phases[k.entry], static_cast<LONG>(1u << (k.a & 31u)));
+    const bool same = static_cast<LONG>(GetCurrentThreadId()) == g_hook_thread;
+    const bool nested = (g_window_seq & 1) != 0;
+    if (same) InterlockedIncrement(&g_w_same[k.entry]);
+    if (nested) InterlockedIncrement(&g_w_nested[k.entry]);
+    if (mode == static_cast<LONG>(PartnerWrap::window) && same && !nested) { RunWrapWindow(k); return; }
+    CallOriginal(k);
+}
+void WrapSvcActive(void* ctx, void* root, std::uint32_t phase) noexcept { WrapEnter(Call{0, ctx, root, phase, 0}); }
+void WrapSvcAll(void* ctx, void* root, std::uint32_t phase) noexcept { WrapEnter(Call{1, ctx, root, phase, 0}); }
+void WrapSvcId(void* ctx, void* root, std::uint32_t phase, std::uint32_t id) noexcept { WrapEnter(Call{2, ctx, root, phase, id}); }
+void WrapWalk7(void* root, std::uint32_t phase) noexcept { WrapEnter(Call{3, nullptr, root, phase, 0}); }
+void WrapWalk11(void* root, std::uint32_t phase, std::uint32_t id) noexcept { WrapEnter(Call{4, nullptr, root, phase, id}); }
+
+// --- PP vtable copy slots --------------------------------------------------------
+std::uint32_t WordFor(detail::KmWord w) noexcept {
+    switch (w) {
+    case detail::KmWord::held: return g_cur.held;
+    case detail::KmWord::press: return g_cur.press;
+    case detail::KmWord::release: return g_cur.release;
+    default: return 0;
+    }
+}
+bool BitAt(std::uint32_t word, std::uint32_t idx) noexcept { return idx < 32 && ((word >> idx) & 1u) != 0; }
+// The binding index of a key handle (PP+0x390[i], i < 26), or -1.
+int HandleIndex(void* pp, std::uint64_t handle) noexcept {
+    std::uint64_t handles[pi::kBindingCount]{};
+    std::memcpy(handles, reinterpret_cast<const void*>(reinterpret_cast<std::uintptr_t>(pp) + c::pp_bindings), sizeof(handles));
+    return pi::BindingIndex(handles, handle);
+}
+bool __stdcall KmPressIdx(void*, std::uint32_t idx) noexcept { InterlockedIncrement(&g_km_calls); return BitAt(g_cur.press, idx); }
+bool __stdcall KmReleaseIdx(void*, std::uint32_t idx) noexcept { InterlockedIncrement(&g_km_calls); return BitAt(g_cur.release, idx); }
+bool __stdcall KmHeldIdx(void*, std::uint32_t idx) noexcept { InterlockedIncrement(&g_km_calls); return BitAt(g_cur.held, idx); }
+bool __stdcall KmZeroIdx(void*, std::uint32_t) noexcept { InterlockedIncrement(&g_km_calls); return false; }
+bool __stdcall KmHeldHandle(void* pp, std::uint64_t h) noexcept {
+    InterlockedIncrement(&g_km_calls);
+    const int i = HandleIndex(pp, h);
+    return i >= 0 && BitAt(g_cur.held, static_cast<std::uint32_t>(i));
+}
+bool __stdcall KmPressHandle(void* pp, std::uint64_t h) noexcept {
+    InterlockedIncrement(&g_km_calls);
+    const int i = HandleIndex(pp, h);
+    return i >= 0 && BitAt(g_cur.press, static_cast<std::uint32_t>(i));
+}
+bool __stdcall KmReleaseHandle(void* pp, std::uint64_t h) noexcept {
+    InterlockedIncrement(&g_km_calls);
+    const int i = HandleIndex(pp, h);
+    return i >= 0 && BitAt(g_cur.release, static_cast<std::uint32_t>(i));
+}
+
+std::uint32_t OwnCode(std::uint32_t btn, std::uint32_t frames) noexcept {
+    std::uint32_t code = pi::kHoldUseOwn;
+    if (g_cur.hold == PartnerInputHold::net) code = pi::NetHoldCode(g_cur.live, g_cur.held, g_cur.long12, g_cur.tap12, btn, frames);
+    if (code == pi::kHoldUseOwn) code = pi::ClassifyHold(g_hist, g_cur.held, g_cur.w54, btn, frames);
+    if ((btn & 31u) == 1u && code < 4) InterlockedIncrement(&g_hold_own[code]);
+    return code;
+}
 std::uint32_t __stdcall HoldNone(void*, std::uint32_t, std::uint32_t) noexcept { return 0; }
+// PP vt+0x90 replica: the mask exit of 0x1205C30 (bt [PP+0x28], btn), then
+// the classifier over instance 1's own history.
+std::uint32_t __stdcall HoldOwn(void* pp, std::uint32_t btn, std::uint32_t frames) noexcept {
+    InterlockedIncrement(&g_hold_calls);
+    const std::uint32_t mask = Load<std::uint32_t>(reinterpret_cast<std::uintptr_t>(pp) + c::pp_masks);
+    if ((mask >> (btn & 31u)) & 1u) return 0;
+    return OwnCode(btn, frames);
+}
+// PP vt+0x140 (the key-manager classifier, no mask gate in 0x1205DF0).
+std::uint32_t __stdcall KmHoldOwn(void*, std::uint32_t idx, std::uint32_t frames) noexcept {
+    InterlockedIncrement(&g_hold_calls);
+    return OwnCode(idx, frames);
+}
 std::uint32_t __stdcall HoldLog(void* pp, std::uint32_t btn, std::uint32_t frames) noexcept {
     const std::uint32_t result = g_hold_orig ? g_hold_orig(pp, btn, frames) : 0;
     InterlockedIncrement(&g_hold_calls);
@@ -433,20 +676,85 @@ std::uint32_t __stdcall HoldLog(void* pp, std::uint32_t btn, std::uint32_t frame
     return result;
 }
 
-bool CopyVtable(std::uintptr_t table[43], std::uintptr_t new_slot90) noexcept {
+std::uintptr_t Fn(const void* f) noexcept { return reinterpret_cast<std::uintptr_t>(f); }
+// The key-manager slot stubs of a window copy.
+void InstallKmStubs(std::uintptr_t table[43]) noexcept {
+    const auto set = [&](std::size_t offset, std::uintptr_t value) noexcept { table[1 + offset / 8] = value; };
+    set(c::pp_vt_km_press_idx, Fn(reinterpret_cast<const void*>(&KmPressIdx)));
+    set(c::pp_vt_km_release_idx, Fn(reinterpret_cast<const void*>(&KmReleaseIdx)));
+    set(c::pp_vt_km_148_idx, Fn(reinterpret_cast<const void*>(&KmZeroIdx)));
+    set(c::pp_vt_km_held_idx, Fn(reinterpret_cast<const void*>(&KmHeldIdx)));
+    set(c::pp_vt_km_held_h, Fn(reinterpret_cast<const void*>(&KmHeldHandle)));
+    set(c::pp_vt_km_press2_idx, Fn(reinterpret_cast<const void*>(&KmPressIdx)));
+    set(c::pp_vt_km_press2_h, Fn(reinterpret_cast<const void*>(&KmPressHandle)));
+    set(c::pp_vt_km_release2_idx, Fn(reinterpret_cast<const void*>(&KmReleaseIdx)));
+    set(c::pp_vt_km_release2_h, Fn(reinterpret_cast<const void*>(&KmReleaseHandle)));
+    set(c::pp_vt_km_held2_idx, Fn(reinterpret_cast<const void*>(&KmHeldIdx)));
+    set(c::pp_vt_km_held2_h, Fn(reinterpret_cast<const void*>(&KmHeldHandle)));
+}
+
+// The live slots we replace must equal the image targets before copying.
+bool LiveSlotsOk() noexcept {
     const std::uintptr_t vt = g_base + c::pp_vtable_rva;
-    // Verify the live slots we rely on equal the image targets before copying.
-    if (Load<std::uintptr_t>(vt + c::pp_vt_hold) != g_base + c::pp_hold_rva) return false;
-    std::memcpy(table, reinterpret_cast<const void*>(vt - 8), sizeof(std::uintptr_t) * 43);
-    table[1 + c::pp_vt_hold / 8] = new_slot90;
+    static constexpr struct { std::size_t offset; std::uintptr_t target; } kSlots[] = {
+        {c::pp_vt_hold, c::pp_hold_rva}, {c::pp_vt_km_hold, c::pp_km_hold_rva},
+        {c::pp_vt_km_press_idx, 0x1206290}, {c::pp_vt_km_release_idx, 0x1206300}, {c::pp_vt_km_148_idx, 0x1206260},
+        {c::pp_vt_km_held_idx, 0x12062c0}, {c::pp_vt_km_held_h, 0x12062e0}, {c::pp_vt_km_press2_idx, 0x1206330},
+        {c::pp_vt_km_press2_h, 0x1206350}, {c::pp_vt_km_release2_idx, 0x12063b0}, {c::pp_vt_km_release2_h, 0x12063d0},
+        {c::pp_vt_km_held2_idx, 0x1206370}, {c::pp_vt_km_held2_h, 0x1206390}};
+    for (const auto& s : kSlots)
+        if (Load<std::uintptr_t>(vt + s.offset) != g_base + s.target) return false;
     return true;
+}
+void CopyVtable(std::uintptr_t table[43]) noexcept {
+    std::memcpy(table, reinterpret_cast<const void*>(g_base + c::pp_vtable_rva - 8), sizeof(std::uintptr_t) * 43);
 }
 bool BuildCopies() noexcept {
     g_vt_ready = false;
-    if (!CopyVtable(g_vt_none, reinterpret_cast<std::uintptr_t>(&HoldNone)) ||
-        !CopyVtable(g_vt_log, reinterpret_cast<std::uintptr_t>(&HoldLog))) return false;
+    if (!LiveSlotsOk()) return false;
+    CopyVtable(g_vt_none);
+    CopyVtable(g_vt_log);
+    CopyVtable(g_vt_own);
+    CopyVtable(g_vt_pass);
+    // Block 0 hold log: only +0x90 replaced (the host's own update).
+    g_vt_log[1 + c::pp_vt_hold / 8] = Fn(reinterpret_cast<const void*>(&HoldLog));
+    // Window copies: key-manager stubs everywhere; hold classifiers per mode.
+    InstallKmStubs(g_vt_none);
+    InstallKmStubs(g_vt_own);
+    InstallKmStubs(g_vt_pass);
+    g_vt_none[1 + c::pp_vt_hold / 8] = Fn(reinterpret_cast<const void*>(&HoldNone));
+    g_vt_none[1 + c::pp_vt_km_hold / 8] = Fn(reinterpret_cast<const void*>(&HoldNone));
+    g_vt_own[1 + c::pp_vt_hold / 8] = Fn(reinterpret_cast<const void*>(&HoldOwn));
+    g_vt_own[1 + c::pp_vt_km_hold / 8] = Fn(reinterpret_cast<const void*>(&KmHoldOwn));
+    // pass keeps the game's +0x90 (diagnostic: it reads the host's history)
+    // and answers +0x140 with 0 (its key manager is the host keyboard).
+    g_vt_pass[1 + c::pp_vt_km_hold / 8] = Fn(reinterpret_cast<const void*>(&HoldNone));
     g_vt_ready = true;
     return true;
+}
+
+// A near stub at a rel32 call site retargeted to `target` (Install's pattern).
+const char* RetargetCall(std::uintptr_t site, std::uintptr_t next_ip, std::uint32_t orig_rel, const void* target, void*& stub_out) noexcept {
+    const unsigned char* code = reinterpret_cast<const unsigned char*>(site);
+    std::uint32_t live = 0;
+    std::memcpy(&live, code + 1, 4);
+    if (code[0] != 0xE8 || live != orig_rel) return "bytes";
+    void* stub = near_code::AllocateNear(next_ip, 0x20);
+    if (!stub) return "allocate_near";
+    std::int32_t rel = 0;
+    if (!near_code::Rel32(next_ip, reinterpret_cast<std::uintptr_t>(stub), rel)) { VirtualFree(stub, 0, MEM_RELEASE); return "range"; }
+    unsigned char s[14]{};
+    detail::BuildStub(s, target);
+    std::memcpy(stub, s, sizeof(s));
+    DWORD old = 0;
+    if (!VirtualProtect(stub, 0x20, PAGE_EXECUTE_READ, &old)) { VirtualFree(stub, 0, MEM_RELEASE); return "protect"; }
+    FlushInstructionCache(GetCurrentProcess(), stub, 0x20);
+    stub_out = stub;
+    std::uint32_t new_rel = 0;
+    std::memcpy(&new_rel, &rel, 4);
+    if (const char* why = near_code::PatchDword(reinterpret_cast<void*>(site + 1), orig_rel, new_rel))
+        return std::strcmp(why, "changed") == 0 ? "exchange" : why;
+    return nullptr;
 }
 
 } // namespace
@@ -472,6 +780,20 @@ void BuildStub(unsigned char out[14], const void* target) noexcept {
     std::memcpy(out + 6, &t, 8);
 }
 std::size_t BlockSize() noexcept { return kBlockSize; }
+KmWord KmSlotWord(std::size_t slot) noexcept {
+    switch (slot) {
+    case c::pp_vt_km_press_idx: case c::pp_vt_km_press2_idx: case c::pp_vt_km_press2_h: return KmWord::press;
+    case c::pp_vt_km_release_idx: case c::pp_vt_km_release2_idx: case c::pp_vt_km_release2_h: return KmWord::release;
+    case c::pp_vt_km_held_idx: case c::pp_vt_km_held_h: case c::pp_vt_km_held2_idx: case c::pp_vt_km_held2_h: return KmWord::held;
+    case c::pp_vt_km_148_idx: return KmWord::zero;
+    default: return KmWord::none;
+    }
+}
+bool KmSlotByIndex(std::size_t slot) noexcept {
+    return slot == c::pp_vt_km_press_idx || slot == c::pp_vt_km_release_idx || slot == c::pp_vt_km_148_idx ||
+           slot == c::pp_vt_km_held_idx || slot == c::pp_vt_km_press2_idx || slot == c::pp_vt_km_release2_idx ||
+           slot == c::pp_vt_km_held2_idx;
+}
 
 } // namespace detail
 
@@ -517,7 +839,7 @@ const char* Install(const void* base, LogFn log, SampleFn sample) noexcept {
         char line[160]{};
         if (result) StringCchPrintfA(line, ARRAYSIZE(line), "partner_input_hook=refused; reason=%s\r\n", result);
         else StringCchPrintfA(line, ARRAYSIZE(line),
-                              "partner_input_hook=installed; site=0x9c2b51; stub=0x%llx; rel32=0x%08x; target=0xbf61d0\r\n",
+                              "partner_input_hook=installed; site=0x9c2b51; stub=0x%llx; rel32=0x%08x; target=0xbf61d0; vt_copies=4\r\n",
                               static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(g_stub) - g_base), new_rel);
         g_log(line);
     }
@@ -527,9 +849,59 @@ const char* Install(const void* base, LogFn log, SampleFn sample) noexcept {
 
 bool Installed() noexcept { return g_ready; }
 
-void VtableCopies(std::uintptr_t out[2]) noexcept {
-    out[0] = g_ready && g_vt_ready ? reinterpret_cast<std::uintptr_t>(&g_vt_none[1]) : 0;
-    out[1] = g_ready && g_vt_ready ? reinterpret_cast<std::uintptr_t>(&g_vt_log[1]) : 0;
+const char* InstallWrap() noexcept {
+    if (!g_ready) return "hook";
+    if (InterlockedCompareExchange(&g_wrap_installed, 1, 0) != 0) return g_wrap_ready ? nullptr : "disabled";
+    const DWORD error = GetLastError();
+    const char* result = nullptr;
+    const char* where = "";
+    // The original targets are called by the wrappers; set before any patch.
+    g_svc_active = reinterpret_cast<SvcFn>(g_base + c::svc_active_rva);
+    g_svc_all = reinterpret_cast<SvcFn>(g_base + c::svc_all_rva);
+    g_svc_id = reinterpret_cast<SvcIdFn>(g_base + c::svc_id_rva);
+    g_walk7 = reinterpret_cast<WalkFn>(g_base + c::walk7_target);
+    g_walk11 = reinterpret_cast<WalkIdFn>(g_base + c::walk11_target);
+    const struct { std::size_t offset; std::uintptr_t target; const void* wrapper; const char* name; } slots[] = {
+        {c::svc_vt_active, c::svc_active_rva, reinterpret_cast<const void*>(&WrapSvcActive), "svc28"},
+        {c::svc_vt_all, c::svc_all_rva, reinterpret_cast<const void*>(&WrapSvcAll), "svc30"},
+        {c::svc_vt_id, c::svc_id_rva, reinterpret_cast<const void*>(&WrapSvcId), "svc40"}};
+    for (const auto& s : slots) {
+        if (result) break;
+        void* at = reinterpret_cast<void*>(g_base + c::svc_vtable_rva + s.offset);
+        if (const char* why = near_code::PatchQword(at, g_base + s.target, reinterpret_cast<std::uintptr_t>(s.wrapper))) {
+            result = why;
+            where = s.name;
+        }
+    }
+    if (!result) {
+        if (const char* why = RetargetCall(g_base + c::walk7_site, g_base + c::walk7_next_ip, c::walk7_rel32_orig,
+                                           reinterpret_cast<const void*>(&WrapWalk7), g_walk7_stub)) { result = why; where = "walk7"; }
+    }
+    if (!result) {
+        if (const char* why = RetargetCall(g_base + c::walk11_site, g_base + c::walk11_next_ip, c::walk11_rel32_orig,
+                                           reinterpret_cast<const void*>(&WrapWalk11), g_walk11_stub)) { result = why; where = "walk11"; }
+    }
+    if (!result) g_wrap_ready = true;
+    if (g_log) {
+        char line[192]{};
+        if (result) StringCchPrintfA(line, ARRAYSIZE(line), "partner_input_wrap=refused; reason=%s; at=%s; installed_before=pass_through\r\n",
+                                     result, where);
+        else StringCchCopyA(line, ARRAYSIZE(line),
+                            "partner_input_wrap=installed; entries=svc28,svc30,svc40,walk7@0x9c1da3,walk11@0x9c1aff\r\n");
+        g_log(line);
+    }
+    SetLastError(error);
+    return result;
+}
+
+bool WrapInstalled() noexcept { return g_wrap_ready; }
+
+void VtableCopies(std::uintptr_t out[kVtableCopies]) noexcept {
+    const bool ok = g_ready && g_vt_ready;
+    out[0] = ok ? reinterpret_cast<std::uintptr_t>(&g_vt_none[1]) : 0;
+    out[1] = ok ? reinterpret_cast<std::uintptr_t>(&g_vt_log[1]) : 0;
+    out[2] = ok ? reinterpret_cast<std::uintptr_t>(&g_vt_own[1]) : 0;
+    out[3] = ok ? reinterpret_cast<std::uintptr_t>(&g_vt_pass[1]) : 0;
 }
 
 std::uint32_t WindowSeq() noexcept { return static_cast<std::uint32_t>(g_window_seq); }
@@ -538,6 +910,9 @@ void ResetFault() noexcept {
     InterlockedExchange(&g_fault_phase, 0);
     InterlockedExchange(&g_fault_code, 0);
     InterlockedExchange(&g_faulted, 0);
+    // The hold history and the frame injection never carry into a new
+    // mission: the hook thread clears them before its next window.
+    InterlockedExchange(&g_reset_hist, 1);
 }
 
 void PublishArm(const pi::Arm& arm) noexcept {
@@ -546,6 +921,9 @@ void PublishArm(const pi::Arm& arm) noexcept {
     std::memcpy(const_cast<pi::Arm*>(&g_arm), &arm, sizeof(arm));
     MemoryBarrier();
     InterlockedIncrement(&g_seq);  // even
+    InterlockedExchange64(&g_wrap_root0, static_cast<LONG64>(arm.root0));
+    InterlockedExchange64(&g_wrap_root1, static_cast<LONG64>(arm.root1));
+    InterlockedExchange(&g_wrap_mode, arm.enabled ? static_cast<LONG>(arm.wrap) : static_cast<LONG>(PartnerWrap::off));
     InterlockedExchange(&g_arm_enabled, arm.enabled ? 1 : 0);
     InterlockedExchange(&g_holdlog, arm.holdlog ? 1 : 0);
 }
@@ -571,12 +949,29 @@ void DrainStats(Stats& out) noexcept {
     w.last_stale = static_cast<std::uint8_t>(g_last_stale ? 1 : 0);
     w.fault_phase = static_cast<std::uint8_t>(g_fault_phase);
     w.fault_code = static_cast<std::uint32_t>(g_fault_code);
+    for (unsigned i = 0; i < 4; ++i) w.hold_own[i] = static_cast<std::uint32_t>(g_hold_own[i]);
+    w.km_calls = static_cast<std::uint32_t>(g_km_calls);
+    w.synth_taps = static_cast<std::uint32_t>(g_synth);
+    w.press_n = static_cast<std::uint32_t>(g_press_n);
+    w.release_n = static_cast<std::uint32_t>(g_release_n);
+    w.shadow_changes = static_cast<std::uint32_t>(g_shadow_changes);
     // The ring is written lock-free by the game thread; a record copied while
     // it is being written may be torn (diagnostic only).
     const LONG head = g_hold_head;
     const unsigned count = head > 8 ? 8 : static_cast<unsigned>(head);
     for (unsigned i = 0; i < count; ++i) out.holds[i] = g_hold_ring[(head - count + i) & 63];
     out.hold_count = count;
+    WrapStats& ws = out.wrap;
+    ws.installed = g_wrap_ready;
+    for (std::size_t e = 0; e < kWrapEntries; ++e) {
+        ws.calls0[e] = static_cast<std::uint32_t>(g_w_calls0[e]);
+        ws.calls1[e] = static_cast<std::uint32_t>(g_w_calls1[e]);
+        ws.same_thread[e] = static_cast<std::uint32_t>(g_w_same[e]);
+        ws.nested[e] = static_cast<std::uint32_t>(g_w_nested[e]);
+        ws.windows[e] = static_cast<std::uint32_t>(g_w_windows[e]);
+        ws.phase_mask[e] = static_cast<std::uint32_t>(g_w_phases[e]);
+    }
+    ws.other_calls = static_cast<std::uint32_t>(g_w_other);
 }
 
 bool PatchLive(const void* base) noexcept {

@@ -219,6 +219,13 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
         else if (Equals(key, "partner_look_gate")) ok = ParseBool(value, result.partner_look_gate);
         else if (Equals(key, "partner_look_recover")) ok = ParseBool(value, result.partner_look_recover);
         else if (Equals(key, "partner_dm")) ok = ParsePartnerDm(value.data, value.size, result.partner_dm);
+        else if (Equals(key, "partner_recon")) ok = ParsePartnerRecon(value.data, value.size, result.partner_recon);
+        else if (Equals(key, "partner_recon_align_ms"))
+            ok = ParsePartnerSigned(value.data, value.size, -50, 150, result.partner_recon_align_ms);
+        else if (Equals(key, "partner_recon_nudge_mmps")) ok = ParseRange(value, 100, 3000, result.partner_recon_nudge_mmps);
+        else if (Equals(key, "partner_input_slot")) ok = ParsePartnerSlot(value.data, value.size, result.partner_input_slot);
+        else if (Equals(key, "partner_recon_runaway")) ok = ParsePartnerRunaway(value.data, value.size, result.partner_recon_runaway);
+        else if (Equals(key, "partner_input_wrap")) ok = ParsePartnerWrap(value.data, value.size, result.partner_input_wrap);
         else if (Equals(key, "crash_probe")) ok = ParseBool(value, result.crash_probe);
         else { ++result.unknown_keys; return; }
         if (!ok) ++result.invalid_values;
@@ -425,7 +432,103 @@ const char* PartnerInputCamName(PartnerInputCam value) noexcept {
 }
 
 const char* PartnerInputHoldName(PartnerInputHold value) noexcept {
-    return value == PartnerInputHold::pass ? "pass" : "none";
+    switch (value) {
+    case PartnerInputHold::pass: return "pass";
+    case PartnerInputHold::own: return "own";
+    case PartnerInputHold::net: return "net";
+    default: return "none";
+    }
+}
+
+const char* PartnerReconName(PartnerRecon value) noexcept {
+    switch (value) {
+    case PartnerRecon::off: return "off";
+    case PartnerRecon::pin: return "pin";
+    default: return "track";
+    }
+}
+
+const char* PartnerSlotName(PartnerSlot value) noexcept {
+    switch (value) {
+    case PartnerSlot::remote: return "remote";
+    case PartnerSlot::none: return "none";
+    default: return "body";
+    }
+}
+
+const char* PartnerRunawayName(PartnerRunaway value) noexcept {
+    switch (value) {
+    case PartnerRunaway::disarm: return "disarm";
+    case PartnerRunaway::off: return "off";
+    default: return "pin";
+    }
+}
+
+const char* PartnerWrapName(PartnerWrap value) noexcept {
+    switch (value) {
+    case PartnerWrap::census: return "census";
+    case PartnerWrap::window: return "window";
+    default: return "off";
+    }
+}
+
+bool ParsePartnerRecon(const char* text, std::size_t size, PartnerRecon& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "off")) out = PartnerRecon::off;
+    else if (Equals(s, "track")) out = PartnerRecon::track;
+    else if (Equals(s, "pin")) out = PartnerRecon::pin;
+    else return false;
+    return true;
+}
+
+bool ParsePartnerSlot(const char* text, std::size_t size, PartnerSlot& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "remote")) out = PartnerSlot::remote;
+    else if (Equals(s, "body")) out = PartnerSlot::body;
+    else if (Equals(s, "none")) out = PartnerSlot::none;
+    else return false;
+    return true;
+}
+
+bool ParsePartnerRunaway(const char* text, std::size_t size, PartnerRunaway& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "pin")) out = PartnerRunaway::pin;
+    else if (Equals(s, "disarm")) out = PartnerRunaway::disarm;
+    else if (Equals(s, "off")) out = PartnerRunaway::off;
+    else return false;
+    return true;
+}
+
+bool ParsePartnerWrap(const char* text, std::size_t size, PartnerWrap& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "off")) out = PartnerWrap::off;
+    else if (Equals(s, "census")) out = PartnerWrap::census;
+    else if (Equals(s, "window")) out = PartnerWrap::window;
+    else return false;
+    return true;
+}
+
+bool ParsePartnerSigned(const char* text, std::size_t size, std::int32_t min, std::int32_t max, std::int32_t& out) noexcept {
+    if (!text || !size || size > 11) return false;
+    std::size_t i = 0;
+    bool negative = false;
+    if (text[0] == '-') { negative = true; i = 1; }
+    if (i >= size) return false;
+    if (text[i] == '0' && (size - i > 1 || negative)) return false;  // no leading zeros, no "-0"
+    std::int64_t value = 0;
+    for (; i < size; ++i) {
+        if (text[i] < '0' || text[i] > '9') return false;
+        value = value * 10 + (text[i] - '0');
+        if (value > 0x7FFFFFFFll) return false;
+    }
+    if (negative) value = -value;
+    if (value < min || value > max) return false;
+    out = static_cast<std::int32_t>(value);
+    return true;
 }
 
 const char* PartnerInputYawName(PartnerInputYaw value) noexcept {
@@ -471,6 +574,8 @@ bool ParsePartnerInputHold(const char* text, std::size_t size, PartnerInputHold&
     const Slice s{text, size};
     if (Equals(s, "none")) out = PartnerInputHold::none;
     else if (Equals(s, "pass")) out = PartnerInputHold::pass;
+    else if (Equals(s, "own")) out = PartnerInputHold::own;
+    else if (Equals(s, "net")) out = PartnerInputHold::net;
     else return false;
     return true;
 }

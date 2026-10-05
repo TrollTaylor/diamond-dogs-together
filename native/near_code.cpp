@@ -111,6 +111,21 @@ const char* PatchDword(void* site, std::uint32_t expected, std::uint32_t value) 
     if (observed != static_cast<long>(expected)) return "changed";
     return restored ? nullptr : "protect_restore";
 }
+
+const char* PatchQword(void* site, std::uint64_t expected, std::uint64_t value) noexcept {
+    if (!site || (reinterpret_cast<std::uintptr_t>(site) & 7u) != 0) return "alignment";
+    MEMORY_BASIC_INFORMATION info{};
+    DWORD previous = 0, ignored = 0;
+    if (!VirtualQuery(site, &info, sizeof(info)) || info.State != MEM_COMMIT ||
+        !VirtualProtect(site, 8, WritableFor(info.Protect), &previous)) return "protect";
+    // One aligned locked 64-bit exchange: a concurrent reader of the pointer
+    // sees either the old or the new value.
+    const long long observed = _InterlockedCompareExchange64(static_cast<volatile long long*>(site), static_cast<long long>(value),
+                                                             static_cast<long long>(expected));
+    const bool restored = VirtualProtect(site, 8, previous, &ignored) != 0;
+    if (observed != static_cast<long long>(expected)) return "changed";
+    return restored ? nullptr : "protect_restore";
+}
 #endif
 
 } // namespace mgscoop::near_code

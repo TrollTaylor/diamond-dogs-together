@@ -204,13 +204,36 @@ int main() {
               r3.unknown_keys == 0, "round 3 scalars/bools");
         const auto def = Lab("enabled=1\nrole=host\n");
         Check(def.partner_input == PartnerInput::off && def.partner_input_cam == PartnerInputCam::sandbox &&
-              def.partner_input_hold == PartnerInputHold::none && def.partner_input_yaw == PartnerInputYaw::rot &&
-              def.partner_input_mask == 0x6 && def.partner_input_stick_deg == 180 && def.partner_input_stick_pct == 100 &&
-              def.partner_input_correct_mm == 1500 && def.partner_input_stale_ms == 250 && def.partner_input_hook &&
-              def.partner_look_gate && def.partner_look_recover && def.partner_dm == PartnerDm::off, "round 3 defaults");
+              def.partner_input_hold == PartnerInputHold::own && def.partner_input_yaw == PartnerInputYaw::rot &&
+              def.partner_input_mask == 0x2200006 && def.partner_input_stick_deg == 180 && def.partner_input_stick_pct == 100 &&
+              def.partner_input_correct_mm == 3000 && def.partner_input_stale_ms == 250 && def.partner_input_hook &&
+              def.partner_look_gate && def.partner_look_recover && def.partner_dm == PartnerDm::off, "round 3/4 defaults");
+        Check(def.partner_input_words[0] == kPartnerWordHeld && def.partner_input_words[1] == kPartnerWordPress &&
+              def.partner_input_words[2] == kPartnerWordRelease, "round 4 default words hpr");
+        Check(def.partner_recon == PartnerRecon::track && def.partner_recon_align_ms == 0 && def.partner_recon_nudge_mmps == 600 &&
+              def.partner_input_slot == PartnerSlot::body && def.partner_recon_runaway == PartnerRunaway::pin &&
+              def.partner_input_wrap == PartnerWrap::off, "round 4 defaults");
+        const auto r4 = Lab("enabled=1\nrole=host\npartner_input_hold=net\npartner_recon=pin\npartner_recon_align_ms=-20\n"
+                            "partner_recon_nudge_mmps=900\npartner_input_slot=none\npartner_recon_runaway=disarm\npartner_input_wrap=census\n");
+        Check(r4.partner_input_hold == PartnerInputHold::net && r4.partner_recon == PartnerRecon::pin && r4.partner_recon_align_ms == -20 &&
+              r4.partner_recon_nudge_mmps == 900 && r4.partner_input_slot == PartnerSlot::none &&
+              r4.partner_recon_runaway == PartnerRunaway::disarm && r4.partner_input_wrap == PartnerWrap::census &&
+              r4.invalid_values == 0 && r4.unknown_keys == 0, "round 4 keys");
+        const auto bad4 = Lab("enabled=1\nrole=host\npartner_recon=on\npartner_recon_align_ms=151\npartner_recon_align_ms=-0\n"
+                              "partner_recon_nudge_mmps=99\npartner_input_slot=both\npartner_recon_runaway=warp\npartner_input_wrap=yes\n");
+        Check(bad4.invalid_values == 7 && bad4.partner_recon == PartnerRecon::track && bad4.partner_recon_align_ms == 0 &&
+              bad4.partner_recon_nudge_mmps == 600 && bad4.partner_input_slot == PartnerSlot::body, "round 4 bad values counted");
+        std::int32_t sv = 0;
+        Check(ParsePartnerSigned("-50", 3, -50, 150, sv) && sv == -50 && ParsePartnerSigned("0", 1, -50, 150, sv) && sv == 0 &&
+              !ParsePartnerSigned("-0", 2, -50, 150, sv) && !ParsePartnerSigned("+5", 2, -50, 150, sv) &&
+              !ParsePartnerSigned("05", 2, -50, 150, sv) && !ParsePartnerSigned("-", 1, -50, 150, sv), "signed parse");
+        Check(std::strcmp(PartnerInputHoldName(PartnerInputHold::own), "own") == 0 &&
+              std::strcmp(PartnerReconName(PartnerRecon::track), "track") == 0 && std::strcmp(PartnerSlotName(PartnerSlot::body), "body") == 0 &&
+              std::strcmp(PartnerRunawayName(PartnerRunaway::pin), "pin") == 0 &&
+              std::strcmp(PartnerWrapName(PartnerWrap::window), "window") == 0, "round 4 names");
         const auto badr3 = Lab("enabled=1\nrole=host\npartner_input=walk\npartner_input_cam=on\npartner_input_mask=0xZ\n"
                              "partner_input_words=xyz\npartner_input_stick=360:0\npartner_input_correct_mm=10001\npartner_dm=maybe\n");
-        Check(badr3.invalid_values == 7 && badr3.partner_input == PartnerInput::off && badr3.partner_input_mask == 0x6 &&
+        Check(badr3.invalid_values == 7 && badr3.partner_input == PartnerInput::off && badr3.partner_input_mask == 0x2200006 &&
               badr3.partner_dm == PartnerDm::off, "round 3 bad values counted, defaults kept");
         std::uint32_t mask = 0; std::uint8_t words[3]{}; std::uint32_t deg = 0, pct = 0;
         Check(ParsePartnerMask("6", 1, mask) && mask == 6 && ParsePartnerMask("0x6", 3, mask) && mask == 6 &&

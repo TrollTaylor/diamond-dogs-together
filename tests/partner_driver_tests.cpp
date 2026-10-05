@@ -85,6 +85,13 @@ struct Fake {
     bool dm_cleared = false;
     unsigned dm_clear_calls = 0;
     unsigned fault_resets = 0;
+    // Round 4.
+    const char* position_result = nullptr;
+    float position[4]{};
+    mgscoop::partner_input::Sample latest{};
+    bool latest_ok = true;
+    unsigned wrap_installs = 0;
+    std::vector<std::uint32_t> sample_delays;
 
     Fake() {
         Ready();
@@ -184,8 +191,9 @@ bool HookAnim(void* context, const pp::State&, pp::Anim& out) noexcept {
     out = F(context).anim;
     return F(context).anim_ok;
 }
-mgscoop::pose::Sample HookSample(void* context, std::uint32_t) noexcept {
+mgscoop::pose::Sample HookSample(void* context, std::uint32_t delay) noexcept {
     ++F(context).samples;
+    F(context).sample_delays.push_back(delay);
     return F(context).sample;
 }
 void HookSubmit(void* context, const partner::Tick&, const mgscoop::sync::AnimState& anim) noexcept {
@@ -330,13 +338,31 @@ pd::TriggerRead HookTrigger(void* context, char* text, std::size_t capacity, std
 }
 bool HookFocused(void* context) noexcept { return F(context).focused; }
 
+const char* HookApplyPosition(void* context, bool, const float (&pos)[4]) noexcept {
+    Fake& f = F(context);
+    if (f.position_result) return f.position_result;
+    f.calls.push_back("pos");
+    std::memcpy(f.position, pos, sizeof(pos));
+    return nullptr;
+}
+bool HookReadVelocity(void*, const pp::State&, float (&vel)[4]) noexcept {
+    vel[0] = 1.0f; vel[1] = 0.0f; vel[2] = 0.0f; vel[3] = 0.0f;
+    return true;
+}
+bool HookLatestInput(void* context, mgscoop::partner_input::Sample& out) noexcept {
+    out = F(context).latest;
+    return F(context).latest_ok;
+}
+const char* HookInstallWrap(void* context) noexcept { ++F(context).wrap_installs; return nullptr; }
+
 pd::Hooks HooksFor(Fake& f) {
     return pd::Hooks{&f, HookLog, HookRead, HookOr, HookClear, HookSlot, HookForce, HookPolicy, HookAnim, HookSample,
                      HookSubmit, HookTrigger, HookFocused, HookReadLooks, HookSubmitLook, HookSampleLook, HookWriteAnim,
                      HookWriteFaceEquip, HookSetStance, HookRequestStance, HookApplyTransform, HookReadBody, HookCensus,
                      HookFormatCensus, HookFormatPs, HookInputTargets, HookFormatInputCensus, HookReadPad, HookSubmitInput,
                      HookNetRunning, HookInstallHook, HookPublishArm, HookDrainStats, HookHookLive, HookDmTargets, HookReadDm,
-                     HookFormatDmCensus, HookFormatDmProbe, HookDmPatch, HookDmClearPending, HookResetFault};
+                     HookFormatDmCensus, HookFormatDmProbe, HookDmPatch, HookDmClearPending, HookResetFault,
+                     HookApplyPosition, HookReadVelocity, HookLatestInput, HookInstallWrap};
 }
 
 std::string TickSource(int frame, int luaflags, int x = 1000, int y = 2000, int z = 3000, int yaw = 4500, int cam = 0) {
@@ -478,7 +504,7 @@ void TestTriggerStopAndTeardown() {
     Check(s.fake.trigger_present && s.driver.settings.stage == 3, "not polled before tick 30");
     Check(s.Tick(1), "tick 30");
     Check(!s.fake.trigger_present && s.driver.settings.stage == 0, "stop applied at tick 30");
-    Check(s.fake.Has("partner_stage=changed; stage=0; source=fixed; apply=warp; anim=off; aset=qs; reset=n; look=copy; probe=off; lookgate=1; lookrecover=1; input=off; cam=sandbox; hold=none; yaw=rot; words=0p0; mask=0x6; correct=1500; isend=0; dm=off; via=trigger\r\n") &&
+    Check(s.fake.Has("partner_stage=changed; stage=0; source=fixed; apply=warp; anim=off; aset=qs; reset=n; look=copy; probe=off; lookgate=1; lookrecover=1; input=off; cam=sandbox; hold=own; yaw=rot; words=hpr; mask=0x2200006; correct=3000; isend=0; dm=off; recon=track; align=0; slot=body; runaway=pin; wrap=off; via=trigger\r\n") &&
           s.fake.Has("partner_bits=cleared; reason=trigger\r\n") && s.fake.Has("partner_policy=restored\r\n") &&
           s.fake.Writes("clear") == 1 && s.fake.Writes("restore") == 1 && s.fake.policy_byte == 0, "stop clears bits, restores policy");
     Check(s.reply.op == op::clear_all_active, "stage 0 with Lua all-active: CLEAR only");
@@ -740,6 +766,23 @@ void Loaded(Session& s) {
     s.fake.Realize(true);
     s.fake.state.parts[1] = 3;
 }
+// Round 4, apply=input: the reconciliation places the body with a disarmed
+// Warp to the remote pose, the fake Warp lands it there, the next tick
+// verifies and arms. The remote pose is (1, 2, 3) m, live; the body starts far.
+void PlaceAndArm(Session& s) {
+    s.fake.sample.valid = true; s.fake.sample.x = 1.0f; s.fake.sample.y = 2.0f; s.fake.sample.z = 3.0f;
+    s.fake.sample.status = mgscoop::pose::Status::live;
+    s.fake.latest.valid = true; s.fake.latest.age_ms = 5;
+    s.fake.body_ok = true;
+    s.fake.body_pos[0] = 50.0f; s.fake.body_pos[1] = 2.0f; s.fake.body_pos[2] = 50.0f;
+    Loaded(s);
+    Check(s.Tick(1) && (s.reply.op & op::warp) && s.fake.Count("partner_recon=place; reason=first; via=warp; target_mm=1000,2000,3000;") == 1 &&
+          (s.fake.arms.empty() || !s.fake.arms.back().enabled) && s.reply.x_mm == 1000 && s.reply.z_mm == 3000,
+          "apply=input: placement Warp to the remote pose while disarmed");
+    s.fake.body_pos[0] = 1.0f; s.fake.body_pos[2] = 3.0f;  // the Lua Warp landed
+    Check(s.Tick(1) && s.fake.Count("partner_recon=placed; ok=1;") == 1 && s.fake.arms.back().enabled &&
+          s.fake.Count("partner_input=armed;") == 1 && !(s.reply.op & op::warp), "verified, then armed without a Warp");
+}
 
 void TestAnimationApply() {
     // anim=mirror aset=qs: the local slot 0 drives instance 1 (no network).
@@ -915,7 +958,7 @@ void TestAnimationGuards() {
           "summary counters (the refused crawl was retried and applied)");
     // A trigger that changes anim/aset re-arms the change-only lines.
     c.Trigger("aset=s");
-    Check(c.fake.Has("partner_stage=changed; stage=3; source=fixed; apply=warp; anim=mirror; aset=s; reset=n; look=copy; probe=off; lookgate=1; lookrecover=1; input=off; cam=sandbox; hold=none; yaw=rot; words=0p0; mask=0x6; correct=1500; isend=0; dm=off; via=trigger\r\n"),
+    Check(c.fake.Has("partner_stage=changed; stage=3; source=fixed; apply=warp; anim=mirror; aset=s; reset=n; look=copy; probe=off; lookgate=1; lookrecover=1; input=off; cam=sandbox; hold=own; yaw=rot; words=hpr; mask=0x2200006; correct=3000; isend=0; dm=off; recon=track; align=0; slot=body; runaway=pin; wrap=off; via=trigger\r\n"),
           "trigger accepted");
 }
 
@@ -1079,7 +1122,7 @@ void TestLooks() {
 void TestCensusAndProbes() {
     Session s(3);
     s.Trigger("census=1");
-    Check(s.fake.Has("partner_stage=changed; stage=3; source=fixed; apply=warp; anim=off; aset=qs; reset=n; look=copy; probe=off; lookgate=1; lookrecover=1; input=off; cam=sandbox; hold=none; yaw=rot; words=0p0; mask=0x6; correct=1500; isend=0; dm=off; via=trigger\r\n"),
+    Check(s.fake.Has("partner_stage=changed; stage=3; source=fixed; apply=warp; anim=off; aset=qs; reset=n; look=copy; probe=off; lookgate=1; lookrecover=1; input=off; cam=sandbox; hold=own; yaw=rot; words=hpr; mask=0x2200006; correct=3000; isend=0; dm=off; recon=track; align=0; slot=body; runaway=pin; wrap=off; via=trigger\r\n"),
           "trigger line with the new fields");
     Check(s.Tick(0) && s.fake.Count("partner_census; k=0; verdict=ok") == 1 && s.fake.Count("partner_census; k=1; verdict=ok") == 1,
           "census=1 logs both blocks");
@@ -1098,7 +1141,7 @@ void TestCensusAndProbes() {
     Check(s.driver.settings.apply == mgscoop::PartnerApply::hybrid && s.driver.settings.anim == mgscoop::PartnerAnim::net &&
           s.driver.settings.aset == mgscoop::PartnerAset::r && s.driver.settings.reset == mgscoop::PartnerReset::c &&
           s.driver.settings.look == mgscoop::PartnerLook::snake &&
-          s.fake.Has("partner_stage=changed; stage=3; source=fixed; apply=hybrid; anim=net; aset=r; reset=c; look=snake; probe=off; lookgate=1; lookrecover=1; input=off; cam=sandbox; hold=none; yaw=rot; words=0p0; mask=0x6; correct=1500; isend=0; dm=off; via=trigger\r\n"),
+          s.fake.Has("partner_stage=changed; stage=3; source=fixed; apply=hybrid; anim=net; aset=r; reset=c; look=snake; probe=off; lookgate=1; lookrecover=1; input=off; cam=sandbox; hold=own; yaw=rot; words=hpr; mask=0x2200006; correct=3000; isend=0; dm=off; recon=track; align=0; slot=body; runaway=pin; wrap=off; via=trigger\r\n"),
           "settings via trigger");
     // Configure takes the lab.ini values.
     mgscoop::LabConfig lab{};
@@ -1235,23 +1278,65 @@ void TestInputArming() {
         s.Trigger("stage=2");
         Check(s.Tick(1) && !s.fake.arms.back().enabled && s.fake.Count("partner_input=disarmed;") >= 1, "stage<3 disarms");
     }
-    // apply=input: placement warp while disarmed, then armed; correction snap.
+    // apply=input: placement Warp while disarmed, verification, then armed;
+    // drift is corrected with position-only nudges, a teleport places again.
     {
         Session s(3, mgscoop::PartnerApply::input, mgscoop::PartnerSource::net);
         s.driver.settings.input = mgscoop::PartnerInput::net;
-        s.fake.sample.valid = true; s.fake.sample.x = 1.0f; s.fake.sample.y = 2.0f; s.fake.sample.z = 3.0f;
-        s.fake.sample.status = mgscoop::pose::Status::live;
-        Loaded(s);
-        Check(s.Tick(1) && (s.reply.op & op::warp) && s.fake.Count("partner_input_place; reason=first; err_mm=0; via=warp") == 1 &&
-              !s.fake.arms.back().enabled, "apply=input: placement warp while disarmed (not yet armed)");
-        Check(s.Tick(1) && s.fake.arms.back().enabled && s.fake.Count("partner_input=armed;") == 1, "then armed");
-        // Correction: body far from the command for >= 500 ms snaps via xform.
-        s.fake.body_ok = true;
-        s.fake.body_pos[0] = 100.0f;  // ~99 m away
-        s.driver.settings.correct_mm = 1500;
-        Check(s.Tick(1, 600), "body read, over threshold");
-        Check(s.Tick(1, 600) && s.fake.Calls("xform:") >= 1 &&
-              s.fake.Containing("partner_input_place; reason=err; err_mm=") >= 1, "correction xform snap");
+        PlaceAndArm(s);
+        Check(!s.fake.sample_delays.empty() && s.fake.sample_delays.back() == 1, "aligned target delay (fresh input: 1 ms)");
+        // A 1 m drift: no snap, nudges through T.vt+0x58 after the 700 ms settle.
+        s.fake.body_pos[0] = 2.0f;
+        for (int i = 0; i < 30; ++i) Check(s.Tick(1, 33), "drifted ticks");
+        Check(s.fake.Calls("pos") >= 1 && s.fake.Calls("xform:") == 0 && s.fake.Count("partner_recon=snap") == 0, "nudges, no snap");
+        Check(s.fake.position[0] < 2.0f && s.fake.position[0] > 1.9f && s.fake.position[1] == 2.0f, "a small step towards the target, y kept");
+        // The slot carries the body readback (slot=body).
+        Check(s.fake.state.slot[1][0] == s.fake.body_pos[0], "S+0x20[1] = body");
+        // A teleport of the remote: placed again with a Warp.
+        s.fake.sample.x = 40.0f;
+        Check(s.Tick(1) && (s.reply.op & op::warp) && s.fake.Count("partner_recon=place; reason=teleport;") == 1 &&
+              !s.fake.arms.back().enabled && s.reply.x_mm == 40000, "teleport: placement");
+        // The 1 Hz partner_recon line.
+        for (int i = 0; i < 40; ++i) s.Tick(1, 33);
+        Check(s.fake.Count("partner_recon; mode=") >= 1, "1 Hz partner_recon line");
+        Check(s.fake.Count("partner_body; R=1;") >= 1 && s.fake.Containing("vel_mmps=1000;") >= 1, "partner_body with the PS velocity");
+    }
+    // correct=0: placement only (recon off).
+    {
+        Session s(3, mgscoop::PartnerApply::input, mgscoop::PartnerSource::net);
+        s.driver.settings.input = mgscoop::PartnerInput::net;
+        s.driver.settings.correct_mm = 0;
+        PlaceAndArm(s);
+        s.fake.body_pos[0] = 3.0f;
+        for (int i = 0; i < 60; ++i) s.Tick(1, 33);
+        Check(s.fake.Calls("pos") == 0 && s.fake.Calls("xform:") == 0, "correct=0: no corrections");
+    }
+    // A trigger that changes the input mode places the body again (I6).
+    {
+        Session s(3, mgscoop::PartnerApply::input, mgscoop::PartnerSource::net);
+        s.driver.settings.input = mgscoop::PartnerInput::stick;
+        PlaceAndArm(s);
+        s.Trigger("input=net");
+        Check(s.Tick(1) && (s.reply.op & op::warp) && s.fake.Count("partner_recon=place; reason=rearm;") == 1, "mode change: placed again");
+        s.Trigger("place=1");
+        s.fake.body_pos[0] = 1.0f; s.fake.body_pos[2] = 3.0f;
+        s.Tick(1);
+        Check(s.Tick(1) && s.fake.Count("partner_recon=place; reason=manual;") == 1, "place=1");
+    }
+    // The remote stands still while the body runs on its own: pinned, no sawtooth.
+    {
+        Session s(3, mgscoop::PartnerApply::input, mgscoop::PartnerSource::net);
+        s.driver.settings.input = mgscoop::PartnerInput::net;
+        PlaceAndArm(s);
+        float z = 3.0f;
+        for (int i = 0; i < 300; ++i) {
+            z += 3.2f * 0.016f;
+            s.fake.body_pos[2] = z;
+            s.Tick(1, 16);
+            if (s.fake.xform_pos[2] != 0.0f) z = s.fake.xform_pos[2];  // the pin landed
+        }
+        Check(s.fake.Count("partner_recon=runaway;") == 1 && s.fake.Count("partner_recon=snap") == 0 &&
+              s.fake.Count("partner_recon=place;") == 1 && s.fake.Calls("xform:") > 100, "runaway: pinned every tick, no snaps");
     }
     // Sender: isend submits an input packet every tick (stage >= 1).
     {
@@ -1339,16 +1424,13 @@ void TestReviewFixes() {
     {
         Session s(3, mgscoop::PartnerApply::input, mgscoop::PartnerSource::net);
         s.driver.settings.input = mgscoop::PartnerInput::net;
-        s.fake.sample.valid = true; s.fake.sample.x = 1.0f; s.fake.sample.y = 2.0f; s.fake.sample.z = 3.0f;
-        s.fake.sample.status = mgscoop::pose::Status::live;
-        Loaded(s);
-        Check(s.Tick(1) && s.fake.Count("partner_input_place; reason=first;") == 1, "relink: first placement");
-        Check(s.Tick(1) && s.driver.mission.input_armed, "relink: armed");
+        PlaceAndArm(s);
         s.fake.sample.status = mgscoop::pose::Status::lost;
-        Check(s.Tick(1) && s.driver.mission.input_armed && !(s.reply.op & op::warp), "relink: lost keeps the window, no Warp");
+        Check(s.Tick(1) && s.driver.mission.input_armed && !(s.reply.op & op::warp) &&
+              s.fake.Count("partner_recon=frozen; reason=pose_stale") == 1, "relink: lost keeps the window, frozen, no Warp");
         s.fake.sample.status = mgscoop::pose::Status::live;
-        Check(s.Tick(1) && (s.reply.op & op::warp) && s.fake.Count("partner_input_place; reason=relink;") == 1 &&
-              s.fake.Count("partner_input=disarmed; reason=relink;") == 1 && !s.fake.arms.back().enabled,
+        Check(s.Tick(1) && (s.reply.op & op::warp) && s.fake.Count("partner_recon=place; reason=relink;") == 1 &&
+              s.fake.Count("partner_input=disarmed; reason=place;") == 1 && !s.fake.arms.back().enabled,
               "relink: lost -> live disarms and warps");
         Check(s.Tick(1) && s.driver.mission.input_armed && !(s.reply.op & op::warp), "relink: re-armed without Warp");
     }
@@ -1358,7 +1440,6 @@ void TestReviewFixes() {
         s.driver.settings.input = mgscoop::PartnerInput::neutral;
         s.fake.install_result = "allocate_near";
         Loaded(s);
-        Check(s.Tick(1) && (s.reply.op & op::warp) && s.fake.Count("partner_input_place; reason=first;") == 1, "fallback: placement");
         Check(s.Tick(1) && (s.reply.op & op::warp) && s.fake.Has("partner_input=refused; reason=install_allocate_near\r\n") &&
               s.fake.Count("partner_input_place; reason=fallback;") == 1, "fallback: install refused -> Warp");
         Check(s.Tick(1) && (s.reply.op & op::warp) && s.fake.Count("partner_input_place; reason=fallback;") == 1,

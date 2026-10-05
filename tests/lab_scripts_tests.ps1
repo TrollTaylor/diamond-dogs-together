@@ -290,8 +290,9 @@ try {
     Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_anim -Value net)/$(ConvertTo-LabPartnerValue -Key partner_aset -Value r)/$(ConvertTo-LabPartnerValue -Key partner_reset -Value ac)/$(ConvertTo-LabPartnerValue -Key partner_look -Value quiet)" 'net/r/ac/quiet' 'anim/aset/reset/look values'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_anim -Value on } 'off|mirror|net' 'anim values'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_look -Value ocelot } 'copy|net|quiet|snake' 'look values'
-    # Play-OfflineCoop: the proven movement by default, the native experiments
-    # only on request ([M]/[A] or -Experimental); every sent line is valid.
+    # Play-OfflineCoop (round 4): the input drive by default, the proven Warp
+    # movement on [W] / -ProvenWarp, the round 2 experiments on [M]/[A] or
+    # -Experimental; every sent line is valid.
     $playPath = Join-Path $projectRoot 'tools/lab/Play-OfflineCoop.ps1'
     $playTokens = $null; $playErrors = $null
     $playAst = [System.Management.Automation.Language.Parser]::ParseFile($playPath, [ref]$playTokens, [ref]$playErrors)
@@ -300,21 +301,33 @@ try {
     Assert-True ($null -ne $syncAst) 'Play-OfflineCoop defines Get-SyncTrigger'
     $syncBody = $syncAst.Body.GetScriptBlock()
     Import-Module (Join-Path $projectRoot 'tools/lab/PartnerSpike.psm1') -Force
-    $playLines = @{}
-    foreach ($case in @(@('warp', 'off'), @('hybrid', 'off'), @('warp', 'net'), @('hybrid', 'net'))) {
-        $experiment = [ordered]@{ Move = $case[0]; Anim = $case[1] }
-        $playLines["$($case[0])/$($case[1])"] = & $syncBody
-    }
-    Assert-Equal $playLines['warp/off'] 'stage=3 source=net apply=warp anim=off look=net' 'Play-OfflineCoop default line: proven Warp, no animation calls'
-    Assert-Equal $playLines['hybrid/net'] 'stage=3 source=net apply=hybrid reset=n anim=net aset=qs look=net' 'Play-OfflineCoop experimental line'
-    foreach ($line in $playLines.Values) { Assert-True (Test-PartnerTriggerText $line) "Play-OfflineCoop line '$line' is a valid trigger" }
     $playText = [IO.File]::ReadAllText($playPath)
-    Assert-True ($playText.Contains("Move = `$(if (`$Experimental) { 'hybrid' } else { 'warp' })") -and
-        $playText.Contains("Anim = `$(if (`$Experimental) { 'net' } else { 'off' })")) 'Play-OfflineCoop starts on the proven path unless -Experimental'
-    # The fixed [I] (input drive) and [W] (back to proven) lines are valid triggers.
-    Assert-True (Test-PartnerTriggerText 'stage=3 source=net apply=input input=net isend=1 cam=sandbox hold=none look=net') 'Play-OfflineCoop [I] input-drive line is a valid trigger'
-    Assert-True (Test-PartnerTriggerText 'stage=3 source=net apply=warp anim=off input=off isend=0 look=net') 'Play-OfflineCoop [W] input-off line is a valid trigger'
-    Assert-True ($playText.Contains('apply=input input=net isend=1 cam=sandbox hold=none look=net') -and $playText.Contains("'I' {")) 'Play-OfflineCoop defines the [I] input-drive key'
+    $inputMatch = [regex]::Match($playText, "\`$script:InputTrigger = '([^']+)'")
+    Assert-True $inputMatch.Success 'Play-OfflineCoop defines the input-drive trigger'
+    $script:InputTrigger = $inputMatch.Groups[1].Value
+    $playLines = @{}
+    foreach ($case in @(@('warp', 'off', 'track'), @('hybrid', 'off', 'track'), @('warp', 'net', 'track'), @('hybrid', 'net', 'track'),
+            @('input', 'off', 'track'), @('input', 'off', 'pin'))) {
+        $experiment = [ordered]@{ Move = $case[0]; Anim = $case[1]; Recon = $case[2] }
+        $playLines["$($case[0])/$($case[1])/$($case[2])"] = & $syncBody
+    }
+    Assert-Equal $playLines['input/off/track'] 'stage=3 source=net apply=input anim=off input=net cam=sandbox hold=own words=hpr bits=0x2200006 isend=1 recon=track slot=body look=net' 'Play-OfflineCoop default line: the input drive'
+    Assert-Equal $playLines['input/off/pin'] 'stage=3 source=net apply=input anim=off input=net cam=sandbox hold=own words=hpr bits=0x2200006 isend=1 recon=pin slot=body look=net' 'Play-OfflineCoop [P] line'
+    Assert-Equal $playLines['warp/off/track'] 'stage=3 source=net apply=warp anim=off input=off isend=0 look=net' 'Play-OfflineCoop [W] line: proven Warp, input off'
+    Assert-Equal $playLines['hybrid/net/track'] 'stage=3 source=net apply=hybrid reset=n anim=net aset=qs input=off isend=0 look=net' 'Play-OfflineCoop experimental line'
+    foreach ($line in $playLines.Values) { Assert-True (Test-PartnerTriggerText $line) "Play-OfflineCoop line '$line' is a valid trigger" }
+    Assert-True ($playText.Contains("`$startMove = if (`$Experimental) { 'hybrid' } elseif (`$ProvenWarp) { 'warp' } else { 'input' }")) 'Play-OfflineCoop starts with the input drive unless -ProvenWarp/-Experimental'
+    Assert-True ($playText.Contains("'I' {") -and $playText.Contains("'W' {") -and $playText.Contains("'P' {")) 'Play-OfflineCoop defines [I], [W] and [P]'
+    Assert-True ($playText.Contains("'partner_input=net', 'partner_input_send=1'") -and $playText.Contains("'partner_recon=track'")) 'Play-OfflineCoop prepares lab.ini for the input drive'
+    $ovInput = ConvertFrom-LabPartnerSettingArgs -Items @('partner_apply=input', 'partner_input=net', 'partner_input_send=1', 'partner_input_cam=sandbox',
+        'partner_input_hold=own', 'partner_input_words=hpr', 'partner_input_mask=0x2200006', 'partner_recon=track', 'partner_input_slot=body') -Role host
+    Assert-Equal "$($ovInput['partner_apply'])/$($ovInput['partner_input_hold'])/$($ovInput['partner_recon'])/$($ovInput['partner_input_slot'])/$($ovInput['partner_input_mask'])" 'input/own/track/body/0x2200006' '-PartnerSetting: the Play-OfflineCoop input-drive settings'
+    # Round 4 lab.ini value kinds.
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_recon_align_ms -Value -16)/$(ConvertTo-LabPartnerValue -Key partner_recon_align_ms -Value 150)" '-16/150' 'partner_recon_align_ms (signed)'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_recon_align_ms -Value -51 } '-50..150' 'align range'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_recon_align_ms -Value '-0' } '-50..150' 'align -0 refused'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_recon -Value on } 'off|track|pin' 'recon values'
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_input_wrap -Value census)/$(ConvertTo-LabPartnerValue -Key partner_recon_runaway -Value disarm)/$(ConvertTo-LabPartnerValue -Key partner_recon_nudge_mmps -Value 900)" 'census/disarm/900' 'round 4 enums and ints'
     # Round 3 lab.ini value kinds.
     Assert-Equal (ConvertTo-LabPartnerValue -Key partner_input -Value net) 'net' 'partner_input enum'
     Assert-Equal (ConvertTo-LabPartnerValue -Key partner_input_words -Value rp0) 'rp0' 'partner_input_words'
@@ -719,7 +732,8 @@ try {
             'speed=3', 'stage=1;source=net', "stage=1`nstop", 'stage=', 'stage=3 source=orbit apply=warp extra=1', "stage=1`u{e9}",
             'parts=implicit', 'parts=', 'mirror=off', 'Mirror=on', 'parts=explicit parts=explicit', 'mirror=on mirror=on', 'stop parts=explicit', 'mirror=on stop', 'stop stop',
             'move=warp apply=slot', 'apply=teleport', 'anim=on', 'aset=x', 'reset=b', 'look=ocelot', 'census=2', 'census', 'probe=on', 'stop census=1', 'look=net look=copy',
-            'input=walk', 'cam=on', 'hold=own', 'yaw=left', 'words=xyz', 'words=rp', 'bits=0xZ', 'bits=0x123456789', 'correct=10001',
+            'input=walk', 'cam=on', 'hold=mine', 'yaw=left', 'recon=on', 'align=151', 'align=-0', 'align=016', 'slot=both',
+            'runaway=warp', 'wrap=on', 'place=0', 'place=1 place=1', 'words=xyz', 'words=rp', 'bits=0xZ', 'bits=0x123456789', 'correct=10001',
             'stick=360:0', 'stick=180:101', 'stick=180', 'tap=2', 'press=0x2:49', 'press=0x2:5001', 'press=0x2:0100', 'press=0x2:01200', 'dmplay=10', 'dmstop=0', 'isend=2',
             'dm=maybe', 'input=net input=off', 'tap=0x1 tap=0x2', 'stop input=net')) {
         $shown = $bad -replace "`n", '\n'

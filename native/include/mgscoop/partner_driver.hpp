@@ -26,7 +26,9 @@
 #include <cstdint>
 #include "mgscoop/lab_config.hpp"
 #include "mgscoop/partner_input.hpp"
+#include "mgscoop/partner_input_hook.hpp"
 #include "mgscoop/partner_player.hpp"
+#include "mgscoop/partner_recon.hpp"
 #include "mgscoop/partner_receipt.hpp"
 #include "mgscoop/player_sync.hpp"
 #include "mgscoop/pose_interp.hpp"
@@ -72,13 +74,20 @@ inline constexpr std::uint64_t kStallMs = 1000;
 inline constexpr std::uint64_t kInputStatsMs = 1000;
 inline constexpr std::uint64_t kBodyMs = 500;
 inline constexpr std::uint64_t kPadProbeMs = 50;
-inline constexpr std::uint64_t kCorrectHoldMs = 500;
-inline constexpr std::uint64_t kCorrectGapMs = 500;
 inline constexpr std::uint64_t kP218MaxMs = 20000;
+// Round 4 reconciliation lines: the 1 Hz partner_recon line (3600 per
+// mission = one hour), each event family 64 lines (the counters continue in
+// the 1 Hz line), the 2 Hz partner_body line 3600 per mission, and the 1 Hz
+// partner_wrap census line 600 per mission.
+inline constexpr std::uint64_t kReconLineMs = 1000;
+inline constexpr unsigned kReconLineCap = 3600;
+inline constexpr unsigned kWrapLineCap = 600;
+// partner_body speed: the oldest same-epoch sample at least this much older.
+inline constexpr std::uint64_t kSpeedSpanMs = 250;
 inline constexpr std::uint64_t kDmUnconsumedMs = 2000;
 inline constexpr std::uint64_t kDmProbeMs = 500;
 inline constexpr unsigned kInputStatsCap = 600;
-inline constexpr unsigned kBodyCap = 600;
+inline constexpr unsigned kBodyCap = 3600;
 inline constexpr unsigned kPadProbeCap = 400;
 inline constexpr unsigned kHoldLogCap = 200;
 inline constexpr unsigned kRefusedCap = 64;
@@ -88,6 +97,7 @@ struct InputStats {
     partner_input::WindowStats window;
     partner_input::HoldRecord holds[8];
     unsigned hold_count;
+    partner_input_hook::WrapStats wrap;
 };
 
 enum class TriggerRead : std::uint8_t { none, read, unreadable };
@@ -159,6 +169,15 @@ struct Hooks {
     bool (*dm_clear_pending)(void* context) noexcept;
     // Clears the hook's recorded window fault (MissionStart; may be null).
     void (*reset_input_fault)(void* context) noexcept;
+    // --- Round 4 (any may be null; the feature then refuses or logs na).
+    // Position-only body set (T.vt+0x58) for nudges.
+    const char* (*apply_position)(void* context, bool terminating, const float (&pos)[4]) noexcept;
+    // The game's per-id velocity PS+0x268 (diagnostic).
+    bool (*read_velocity)(void* context, const partner_player::State& state, float (&vel)[4]) noexcept;
+    // partner_net::LatestInput (read-only; the recon's input age and stick).
+    bool (*latest_input)(void* context, partner_input::Sample& out) noexcept;
+    // Lazy install of the wrap entries (nullptr ok, else a reason).
+    const char* (*install_wrap)(void* context) noexcept;
 };
 
 // Times passed in by the caller: QPC milliseconds (cadence, poses, net) and
@@ -196,6 +215,13 @@ struct Settings {
     PartnerDm dm;
     // holdlog=1 trigger (effective only with lab partner_input_holdlog=1).
     bool holdlog;
+    // Round 4 (docs/partner-anim-appearance.md "Round 4").
+    PartnerRecon recon;
+    std::int32_t align_ms;
+    std::uint32_t nudge_mmps;
+    PartnerSlot slot;
+    PartnerRunaway runaway;
+    PartnerWrap wrap;
 };
 
 // A capped change-only log family (one per experiment head).
@@ -293,8 +319,7 @@ struct Mission {
     char input_refused_text[48];   // last refusal logged (change-only)
     unsigned input_refused_logs;
     bool input_refused_capped;
-    std::uint32_t sender_w4c, sender_w50, sender_w54;  // OR of the edge words since the last sent frame
-    bool input_placed;
+    partner_input::SenderEdges sender;  // the input frame v2 edge sets (isend)
     bool input_faulted;
     partner_input::Arm last_arm;   // last published (for the gen bump via SameArm)
     bool have_arm;
@@ -309,9 +334,12 @@ struct Mission {
     std::uint64_t body_ms;
     unsigned body_lines;
     bool body_capped;
-    std::int32_t body_prev_mm[3];
-    std::uint64_t body_prev_ms;
-    bool body_prev_ok;
+    // partner_body speed: horizontal body samples tagged with the epoch of our
+    // last hard write (placement, snap, pin, yaw, Warp fallback, disarm).
+    struct BodySample { std::uint64_t t_ms; std::int32_t x_mm, z_mm; std::uint32_t epoch; };
+    BodySample body_ring[16];
+    unsigned body_head, body_count;
+    std::uint32_t body_epoch;
     std::uint64_t pad_probe_ms;
     unsigned pad_probe_lines;
     bool pad_probe_capped;
@@ -321,8 +349,30 @@ struct Mission {
     unsigned hold_last_count;
     bool input_stale;              // last logged stale/live state
     bool input_stale_logged;
-    std::uint64_t correct_over_ms; // when the body first exceeded correct_mm
-    std::uint64_t correct_last_ms;
+    // --- Round 4: reconciliation (apply=input).
+    partner_recon::State recon;
+    bool recon_active;             // apply=input with input != off this mission (recon state in use)
+    bool recon_last_ok;            // the previous recon action was executed
+    partner_recon::Out recon_out;  // the last step (logs, status)
+    bool recon_have_out;
+    std::uint32_t recon_delay_ms, recon_pose_age_ms;
+    bool recon_in_valid;
+    std::uint32_t recon_in_age_ms;
+    std::int32_t recon_in_r;       // x1000
+    double recon_target[3];
+    double recon_target_yaw;
+    bool recon_target_ok;
+    std::uint64_t recon_line_ms;
+    unsigned recon_lines;
+    bool recon_lines_capped;
+    LogCap recon_cap[10];          // event families (place, placed, snap, runaway, frozen, stance, yaw, stop, diverging, refused)
+    const char* recon_refused;     // last refusal logged (change-only)
+    std::uint32_t recon_snaps_total;
+    // Wrap census line (deltas against the last line).
+    bool wrap_install_tried;
+    partner_input_hook::WrapStats wrap_base;
+    std::uint64_t wrap_line_ms;
+    unsigned wrap_lines;
     unsigned input_census_lines;            // partner_input_census lines this mission (cap kRefusedCap)
     std::uint32_t us_max_acc;               // max window time since the last 1 Hz line
     // Window statistics are hook totals: the line logs deltas against these.
@@ -382,6 +432,9 @@ struct Driver {
     // tap= sequence: process-lifetime (the hook keeps its last seen value
     // across gens and missions, so a value is never reused).
     std::uint32_t tap_seq;
+    // Round 4: a placement requested by a trigger (place=1, or a change of
+    // apply/input/source), consumed by the next reconciliation step.
+    partner_recon::PlaceReason recon_place_request;
     // Bumped by every look= trigger and by parts=explicit outside look=copy:
     // a new value re-applies the desired look once.
     std::uint32_t look_forced_rev;

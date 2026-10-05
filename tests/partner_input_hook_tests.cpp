@@ -85,6 +85,41 @@ void TestPatchDword() {
     VirtualFree(page, 0, MEM_RELEASE);
 }
 
+// Round 4: which injected word each PP key-manager slot answers from, and
+// whether it takes a binding index or a key handle (0x1206260..0x12063D0).
+void TestKmSlots() {
+    using W = hk::detail::KmWord;
+    Check(hk::detail::KmSlotWord(0xE8) == W::press && hk::detail::KmSlotWord(0x110) == W::press &&
+          hk::detail::KmSlotWord(0x118) == W::press, "pressed slots");
+    Check(hk::detail::KmSlotWord(0xF0) == W::release && hk::detail::KmSlotWord(0x120) == W::release &&
+          hk::detail::KmSlotWord(0x128) == W::release, "released slots");
+    Check(hk::detail::KmSlotWord(0x100) == W::held && hk::detail::KmSlotWord(0x108) == W::held &&
+          hk::detail::KmSlotWord(0x130) == W::held && hk::detail::KmSlotWord(0x138) == W::held, "held slots");
+    Check(hk::detail::KmSlotWord(0xF8) == W::zero && hk::detail::KmSlotWord(0x90) == W::none, "km vt+0x148 answers 0; others untouched");
+    Check(hk::detail::KmSlotByIndex(0xE8) && hk::detail::KmSlotByIndex(0x100) && hk::detail::KmSlotByIndex(0x130) &&
+          !hk::detail::KmSlotByIndex(0x108) && !hk::detail::KmSlotByIndex(0x118) && !hk::detail::KmSlotByIndex(0x138),
+          "index slots vs handle slots");
+}
+
+// The vtable data pointer swap (wrap entries) on a read-only page.
+void TestPatchQword() {
+    void* page = VirtualAlloc(nullptr, 0x1000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    Check(page != nullptr, "data page allocated");
+    auto* slot = reinterpret_cast<std::uint64_t*>(static_cast<unsigned char*>(page) + 0x28);
+    *slot = 0x140BF6420ull;
+    DWORD old = 0;
+    Check(VirtualProtect(page, 0x1000, PAGE_READONLY, &old) != 0, "page read-only");
+    Check(nc::PatchQword(slot, 0x140BF6420ull, 0x7FF600001234ull) == nullptr && *slot == 0x7FF600001234ull, "qword swapped");
+    MEMORY_BASIC_INFORMATION info{};
+    VirtualQuery(page, &info, sizeof(info));
+    Check(info.Protect == PAGE_READONLY, "protection restored");
+    const char* why = nc::PatchQword(slot, 0x140BF6420ull, 1);
+    Check(why && std::strcmp(why, "changed") == 0 && *slot == 0x7FF600001234ull, "CAS refusal leaves the value");
+    why = nc::PatchQword(static_cast<unsigned char*>(page) + 0x29, 0, 1);
+    Check(why && std::strcmp(why, "alignment") == 0, "unaligned refused");
+    VirtualFree(page, 0, MEM_RELEASE);
+}
+
 } // namespace
 
 int main() {
@@ -92,7 +127,10 @@ int main() {
     TestRel32();
     TestBlockGate();
     TestPatchDword();
+    TestKmSlots();
+    TestPatchQword();
     std::printf("%u partner input hook checks passed: stub bytes, rel32 reach/cache-line, dispatch-block gate "
-                "(mismatch + retargeted rel32), locked dword CAS (success/refusal/split)\n", checks);
+                "(mismatch + retargeted rel32), locked dword CAS (success/refusal/split), key-manager slot map, "
+                "data qword swap\n", checks);
     return 0;
 }

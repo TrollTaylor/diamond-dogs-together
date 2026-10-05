@@ -168,6 +168,10 @@ std::size_t FormatLogLine(const char* source, std::size_t size, char* out, std::
 //   | isend=0|1 | p218=0|1 | padprobe=0|1 | holdlog=0|1
 //   | dm=off|probe|on | dmplay=<0..9> | dmstop=1   (dmplay/dmstop one-shots)
 //   | lookgate=0|1 | lookrecover=0|1
+// Round 4 (docs/partner-anim-appearance.md "Round 4"):
+//   | hold=none|pass|own|net | recon=off|track|pin | align=<-50..150>
+//   | slot=remote|body|none | runaway=pin|disarm|off | wrap=off|census|window
+//   | place=1   (one-shot: a new placement)
 // Decimal values have no leading zeros. "stop" must be alone. Anything else
 // (unknown token, repeat, empty) is refused.
 inline constexpr std::size_t max_trigger = 255;
@@ -224,6 +228,18 @@ struct Trigger {
     bool dmstop;
     bool has_lookgate, lookgate;
     bool has_lookrecover, lookrecover;
+    // Round 4.
+    bool has_recon;
+    PartnerRecon recon;
+    bool has_align;
+    std::int32_t align_ms;
+    bool has_slot;
+    PartnerSlot slot;
+    bool has_runaway;
+    PartnerRunaway runaway;
+    bool has_wrap;
+    PartnerWrap wrap;
+    bool place;
 };
 bool ParseTrigger(const char* text, std::size_t size, Trigger& out) noexcept;
 

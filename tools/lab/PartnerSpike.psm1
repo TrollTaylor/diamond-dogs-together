@@ -41,8 +41,12 @@ $script:PartnerTriggerKeys = [ordered]@{
     stage = @('0', '1', '2', '3'); source = @('fixed', 'orbit', 'net'); apply = @('warp', 'slot', 'both', 'xform', 'hybrid', 'input')
     anim = @('off', 'mirror', 'net'); aset = @('q', 's', 'qs', 'r'); reset = @('n', 'a', 'c', 'ac'); look = @('copy', 'net', 'quiet', 'snake')
     probe = @('ps', 'off'); census = @('1'); parts = @('explicit'); mirror = @('on')
-    input = @('off', 'pass', 'neutral', 'stick', 'net'); cam = @('off', 'detect', 'sandbox'); hold = @('none', 'pass')
+    input = @('off', 'pass', 'neutral', 'stick', 'net'); cam = @('off', 'detect', 'sandbox'); hold = @('none', 'pass', 'own', 'net')
     yaw = @('rot', 'rotneg', 'none'); dm = @('off', 'probe', 'on'); dmstop = @('1')
+    # Round 4 (docs/partner-anim-appearance.md "Round 4"): reconciliation and the
+    # wrap census; place=1 is a one-shot (a new placement).
+    recon = @('off', 'track', 'pin'); slot = @('remote', 'body', 'none'); runaway = @('pin', 'disarm', 'off')
+    wrap = @('off', 'census', 'window'); place = @('1')
 }
 # Value keys: key -> a scriptblock that returns $true for a valid value.
 $script:PartnerTriggerValueKeys = [ordered]@{
@@ -59,13 +63,15 @@ $script:PartnerTriggerValueKeys = [ordered]@{
     dmplay = { param($v) $v -cmatch '^[0-9]$' }
     lookgate = { param($v) $v -ceq '0' -or $v -ceq '1' }
     lookrecover = { param($v) $v -ceq '0' -or $v -ceq '1' }
+    align = { param($v) if ($v -cnotmatch '^(0|-?[1-9][0-9]{0,2})$') { return $false } [int]$v -ge -50 -and [int]$v -le 150 }
 }
 # Canonical write order (the existing keys, then the round 3 keys).
 $script:PartnerTriggerOrder = @('stage', 'source', 'apply', 'anim', 'aset', 'reset', 'look', 'probe', 'input', 'stick', 'cam',
     'hold', 'yaw', 'words', 'bits', 'correct', 'isend', 'p218', 'padprobe', 'holdlog', 'dm', 'lookgate', 'lookrecover',
-    'census', 'parts', 'mirror', 'tap', 'press', 'dmplay', 'dmstop')
-$script:PartnerTriggerUsage = 'stage=0..3 source=fixed|orbit|net apply|move=warp|slot|both|xform|hybrid|input anim=off|mirror|net aset=q|s|qs|r reset=n|a|c|ac look=copy|net|quiet|snake probe=ps|off input=off|pass|neutral|stick|net stick=<0..359>:<0..100> cam=off|detect|sandbox hold=none|pass yaw=rot|rotneg|none words=<3 of 0prhn> bits=0x<hex> correct=<0..10000> isend=0|1 p218=0|1 padprobe=0|1 holdlog=0|1 dm=off|probe|on dmplay=<0..9> dmstop=1 lookgate=0|1 lookrecover=0|1 census=1 parts=explicit mirror=on tap=0x<hex> press=0x<hex>:<50..5000>, or stop alone'
-$script:PartnerTriggerTokenPattern = '^(stage|source|apply|move|anim|aset|reset|look|probe|census|parts|mirror|input|stick|cam|hold|yaw|words|bits|correct|isend|p218|padprobe|holdlog|dm|dmplay|dmstop|tap|press|lookgate|lookrecover)=(.*)$'
+    'recon', 'align', 'slot', 'runaway', 'wrap',
+    'census', 'parts', 'mirror', 'tap', 'press', 'dmplay', 'dmstop', 'place')
+$script:PartnerTriggerUsage = 'stage=0..3 source=fixed|orbit|net apply|move=warp|slot|both|xform|hybrid|input anim=off|mirror|net aset=q|s|qs|r reset=n|a|c|ac look=copy|net|quiet|snake probe=ps|off input=off|pass|neutral|stick|net stick=<0..359>:<0..100> cam=off|detect|sandbox hold=none|pass|own|net yaw=rot|rotneg|none words=<3 of 0prhn> bits=0x<hex> correct=<0..10000> isend=0|1 p218=0|1 padprobe=0|1 holdlog=0|1 dm=off|probe|on dmplay=<0..9> dmstop=1 lookgate=0|1 lookrecover=0|1 recon=off|track|pin align=<-50..150> slot=remote|body|none runaway=pin|disarm|off wrap=off|census|window census=1 parts=explicit mirror=on tap=0x<hex> press=0x<hex>:<50..5000> place=1, or stop alone'
+$script:PartnerTriggerTokenPattern = '^(stage|source|apply|move|anim|aset|reset|look|probe|census|parts|mirror|input|stick|cam|hold|yaw|words|bits|correct|isend|p218|padprobe|holdlog|dm|dmplay|dmstop|tap|press|lookgate|lookrecover|recon|align|slot|runaway|wrap|place)=(.*)$'
 
 function ConvertTo-PartnerTriggerText {
     # Canonical trigger line (without the newline): 'stop', or any of the keys
@@ -120,7 +126,7 @@ function Get-PartnerTriggerExpectation {
     foreach ($token in ($Canonical -split ' ')) {
         $pair = $token.Split('=', 2)
         if ($pair[0] -cin @('stage', 'source', 'apply', 'anim', 'aset', 'reset', 'look', 'probe', 'input', 'cam', 'hold',
-                'yaw', 'dm', 'lookgate', 'lookrecover')) { $expect[$pair[0]] = $pair[1] }
+                'yaw', 'dm', 'lookgate', 'lookrecover', 'recon', 'align', 'slot', 'runaway', 'wrap')) { $expect[$pair[0]] = $pair[1] }
     }
     return $expect
 }
@@ -1465,7 +1471,7 @@ function Get-PartnerExperimentPlan {
         'I3x' { @{ Timeout = 40; Steps = @((& $step 'trigger' 'host' 'p218=1 input=stick stick=180:100 cam=sandbox' 20), (& $step 'screens' 'host' 'i3x' 0), (& $step 'manual' 'host' 'Hazardous diagnostic (restart_after=1): quit the game WITHOUT saving after I3x; no other experiment in the same process.' 0)) } }
         'I4' { @{ Timeout = 60; Steps = @((& $step 'trigger' 'host' 'input=stick stick=0:0' 2), (& $step 'trigger' 'host' 'tap=0x2' 2), (& $step 'trigger' 'host' 'tap=0x2' 2), (& $step 'trigger' 'host' 'tap=0x2' 1), (& $step 'trigger' 'host' 'stick=180:100' 3), (& $step 'screens' 'host' 'i4' 0)) } }
         'I5' { @{ Timeout = 60; Steps = @((& $step 'trigger' 'host' 'stage=3 source=fixed apply=xform reset=n input=neutral holdlog=1' 2), (& $step 'manual' 'host' 'Hold the stance key ~1.5 s.' 2), (& $step 'trigger' 'host' 'press=0x2:1200 hold=none holdlog=0' 2), (& $step 'screens' 'host' 'i5' 0)) } }
-        'I6' { @{ Timeout = 150; Steps = @((& $step 'trigger' 'both' 'stage=3 source=net apply=input input=net isend=1 cam=sandbox yaw=rot correct=1500 look=net' 5), (& $step 'input' 'guest' 'w:3000' 1), (& $step 'input' 'guest' 'c' 3), (& $step 'input' 'host' 'w:3000' 1), (& $step 'screens' 'both' 'i6' 0)) } }
+        'I6' { @{ Timeout = 150; Steps = @((& $step 'trigger' 'both' 'stage=3 source=net apply=input input=net isend=1 cam=sandbox hold=own words=hpr bits=0x2200006 recon=track slot=body look=net' 5), (& $step 'input' 'guest' 'w:3000' 1), (& $step 'input' 'guest' 'c' 3), (& $step 'input' 'host' 'w:3000' 1), (& $step 'screens' 'both' 'i6' 0)) } }
         'I7' { @{ Timeout = 60; Steps = @((& $step 'trigger' 'host' 'input=off isend=0' 3), (& $step 'screens' 'host' 'i7' 0), (& $step 'manual' 'host' 'Re-arm, then leave Mother Base while armed; then quit while armed.' 0)) } }
         'D0' { @{ Timeout = 60; Steps = @((& $step 'trigger' 'host' 'dm=probe' 10), (& $step 'screens' 'host' 'd0' 0)) } }
         'D1' { @{ Timeout = 60; Steps = @((& $step 'trigger' 'host' 'input=off apply=xform reset=n dm=on dmplay=1' 5), (& $step 'screens' 'host' 'd1' 0)) } }
@@ -1519,6 +1525,11 @@ function Invoke-PartnerRound3 {
         }
         '^I6$' {
             if (& $has 'partner_net=input_rx') { Add-PartnerMatch $Check 'partner_net=input_rx' } else { Add-PartnerItem $Check.Missing 'partner_net=input_rx on the receiver' }
+            # Round 4: the body is placed and verified once; a 1 Hz snap cycle is the round 3 sawtooth.
+            $placed = @(Select-PartnerEntry -Context $Context -Kind 'partner_recon=placed' | Where-Object { (Get-PartnerField $_ 'ok') -ceq '1' })
+            if ($placed.Count) { Add-PartnerMatch $Check 'partner_recon=placed; ok=1' } else { Add-PartnerItem $Check.Missing 'partner_recon=placed; ok=1 (apply=input placement)' }
+            $snaps = @(Select-PartnerEntry -Context $Context -Kind 'partner_recon=snap').Count
+            if ($snaps -gt 10) { Add-PartnerItem $Check.Failed "partner_recon=snap x$snaps (a snap cycle: see partner_recon=runaway / the 1 Hz partner_recon line)" }
             Add-PartnerItem $Check.Notes 'manual: partner animates in step, stale=0, age_ms<100; heading matches the sender yaw within 300 mrad (else retry yaw=rotneg)'
         }
         '^I7$' {

@@ -38,6 +38,7 @@ std::uint64_t g_input_rx_ms = 0;
 bool g_input_first_logged = false;
 std::uint32_t g_input_tx_seq = 0;
 std::uint64_t g_input_tx_ms = 0;
+partner_input::InputEdges g_edges{};
 volatile LONG g_in_tx = 0, g_in_rx = 0, g_in_drop = 0;
 // Look send side (game thread only).
 partner::Look g_look_sent{};
@@ -154,6 +155,7 @@ void OnDatagram(void*, const std::uint8_t* data, std::size_t size) noexcept {
         AcquireSRWLockExclusive(&g_lock);
         if (AcceptInputSequence(g_input_valid, g_input_seq, g_input_rx_ms, in_seq, now)) {
             accepted = true;
+            partner_input::AccumulateEdges(g_edges, in);
             g_input = in;
             g_input_valid = true;
             g_input_seq = in_seq;
@@ -382,6 +384,24 @@ bool SubmitInput(const partner_input::InputPacket& packet) noexcept {
     return sent;
 }
 
+bool ConsumeInput(partner_input::Sample& out) noexcept {
+    out = partner_input::Sample{};
+    if (!TryAcquireSRWLockExclusive(&g_lock)) return false;
+    if (g_input_valid) {
+        const std::uint64_t now = NowMs();
+        out.valid = true;
+        out.seq = g_input_seq;
+        out.age_ms = now >= g_input_rx_ms ? static_cast<std::uint32_t>(now - g_input_rx_ms) : 0u;
+        out.packet = g_input;
+    }
+    out.edge_press = g_edges.press;
+    out.edge_release = g_edges.release;
+    out.edge_tap12 = g_edges.tap12;
+    g_edges.press = g_edges.release = g_edges.tap12 = 0;
+    ReleaseSRWLockExclusive(&g_lock);
+    return true;
+}
+
 bool LatestInput(partner_input::Sample& out) noexcept {
     out = partner_input::Sample{};
     if (!TryAcquireSRWLockShared(&g_lock)) return false;
@@ -417,6 +437,7 @@ void ResetRemote() noexcept {
     g_input_seq = 0;
     g_input_rx_ms = 0;
     g_input_first_logged = false;
+    g_edges = partner_input::InputEdges{};
     ReleaseSRWLockExclusive(&g_lock);
     g_input_tx_seq = 0;
     g_input_tx_ms = 0;

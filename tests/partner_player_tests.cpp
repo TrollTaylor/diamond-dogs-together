@@ -45,10 +45,14 @@ struct CallLog {
     std::uintptr_t pos_addr, quat_addr;
     float pos[4], quat[4];
     std::uint32_t c0_id, a0_id, stance_id, stance_value, request_index, request_value;
+    unsigned setpos;                 // round 4: T.vt+0x58 (position only)
+    std::uintptr_t setpos_this, setpos_addr;
+    float setpos_pos[4];
 };
 CallLog g_calls{};
 void FakeSetRot(void* t, const float* quat);
 void FakeSetPose(void* t, const float* pos, const float* quat);
+void FakeSetPos(void* t, const float* pos);
 void FakeResetA0(void* object, std::uint32_t id);
 void FakeResetC0(void* object, std::uint32_t id);
 void FakeSetStance(void* ps, std::uint32_t id, std::uint32_t stance);
@@ -69,7 +73,7 @@ struct World {
     unsigned char *lt, *lp, *lc, *lh, *lf, *le;  // look arrays (u8, u16 face)
     // Component census world (blocks, PS, CS, T, A0/C0, stance component).
     unsigned char *blocks, *table, *ps[2], *cs, *entries, *tobj[2], *a0[2], *c0[2], *words[2], *sub, *rec738, *rec280, *b2d0,
-        *b2d8, *comp, *inner, *object, *xc[2], *equip;
+        *b2d8, *comp, *inner, *object, *xc[2], *equip, *vel;
     std::uintptr_t block_vt[4]{}, ps_vt[32]{}, cs_vt[0x400 / 8]{}, t_vt[16]{}, t_vt2[16]{}, a0_vt[32]{}, c0_vt[32]{}, sub_vt[2]{},
         object_vt[8]{}, x_vt[4]{}, x_vt2[4]{}, equip_vt[2]{};
     std::uintptr_t p_vt[64]{}, q_vt[16]{}, policy_vt[4]{}, policy_base_vt[4]{}, realizer_vt[4]{}, bitset_vt[2]{};
@@ -113,6 +117,7 @@ struct World {
         sub = region + 0x16300; rec738 = region + 0x16400; rec280 = region + 0x16500; b2d0 = region + 0x16600; b2d8 = region + 0x16610;
         comp = region + 0x16700; inner = region + 0x16800; object = region + 0x16900;
         xc[0] = region + 0x16A00; xc[1] = region + 0x16B00; equip = region + 0x16C00;
+        vel = region + 0x16D00;        // PS+0x268 velocity arrays (16-byte entries)
         Reset();
     }
     ~World() { VirtualFree(region, 0, MEM_RELEASE); }
@@ -171,8 +176,8 @@ struct World {
         ps_vt[0] = Fn(&FakeSetStance);
         ps_vt[0xC8 / 8] = Fn(&FakeComponent);
         cs_vt[0x388 / 8] = Fn(&FakeNever);
-        t_vt[0x68 / 8] = Fn(&FakeSetPose); t_vt[0x70 / 8] = Fn(&FakeSetRot);
-        t_vt2[0x68 / 8] = Fn(&FakeSetPose); t_vt2[0x70 / 8] = Fn(&FakeSetRot);
+        t_vt[0x68 / 8] = Fn(&FakeSetPose); t_vt[0x70 / 8] = Fn(&FakeSetRot); t_vt[0x58 / 8] = Fn(&FakeSetPos);
+        t_vt2[0x68 / 8] = Fn(&FakeSetPose); t_vt2[0x70 / 8] = Fn(&FakeSetRot); t_vt2[0x58 / 8] = Fn(&FakeSetPos);
         a0_vt[0x80 / 8] = Fn(&FakeResetA0);
         c0_vt[0x90 / 8] = Fn(&FakeResetC0);
         sub_vt[0] = Fn(&FakeNever);
@@ -213,6 +218,9 @@ struct World {
             Put<std::uintptr_t>(ps[k], c::ps_comp, Addr(comp));
             Put<std::uintptr_t>(ps[k], c::ps_rec738, Addr(rec738 + k * c::ps_rec738_stride));
             Put<std::uint32_t>(ps[k], c::ps_mask740, 0x10u + k);
+            Put<std::uintptr_t>(ps[k], c::ps_vel268, Addr(vel + k * 0x20));
+            const float v[4] = {0.3f * static_cast<float>(k + 1), -0.1f, 0.4f * static_cast<float>(k + 1), 0.0f};
+            std::memcpy(vel + k * 0x20, v, sizeof(v));
             words[k][0] = 0x11;
             Put<std::uintptr_t>(entries, k * c::cs_entry_stride + c::cs_entry_transform, Addr(tobj[k]));
             Put<std::uintptr_t>(tobj[k], c::transform_view, Addr(t_vt));
@@ -283,6 +291,10 @@ void FakeSetPose(void* t, const float* pos, const float* quat) {
     g_calls.pose_at = ++g_calls.sequence; ++g_calls.pose; g_calls.pose_this = Addr(t); g_calls.pos_addr = Addr(pos);
     std::memcpy(g_calls.pos, pos, sizeof(g_calls.pos));
     if (Addr(quat) != g_calls.quat_addr) g_calls.quat_addr = 1;  // must be the same aligned quaternion
+}
+void FakeSetPos(void* t, const float* pos) {
+    ++g_calls.setpos; g_calls.setpos_this = Addr(t); g_calls.setpos_addr = Addr(pos);
+    std::memcpy(g_calls.setpos_pos, pos, sizeof(g_calls.setpos_pos));
 }
 void FakeResetA0(void* object, std::uint32_t id) { g_calls.a0_at = ++g_calls.sequence; ++g_calls.reset_a0; g_calls.a0_this = Addr(object); g_calls.a0_id = id; }
 void FakeResetC0(void* object, std::uint32_t id) { g_calls.c0_at = ++g_calls.sequence; ++g_calls.reset_c0; g_calls.c0_this = Addr(object); g_calls.c0_id = id; }
@@ -936,8 +948,27 @@ int main() {
         w.t_vt[0x70 / 8] = Fn(&FakeFault);
         Check(std::strcmp(pp::ApplyTransform(w.addresses, 1, false, pos, quat, mgscoop::PartnerReset::none), "fault") == 0, "call fault contained");
         w.t_vt[0x70 / 8] = Fn(&FakeSetRot);
+        // Round 4: the position-only set (T.vt+0x58) for nudges.
+        g_calls = CallLog{};
+        const float npos[4] = {7.5f, 1.0f, -2.5f, 0.0f};
+        Check(pp::ApplyPosition(w.addresses, 1, false, npos) == nullptr && g_calls.setpos == 1 && g_calls.rot == 0 && g_calls.pose == 0,
+              "ApplyPosition: T.vt+0x58 only (no rotation request, no set pose)");
+        Check(g_calls.setpos_this == Addr(w.tobj[1]) + c::transform_view && g_calls.setpos_addr % 16 == 0 &&
+              std::memcmp(g_calls.setpos_pos, npos, sizeof(npos)) == 0, "on T1 with an aligned position");
+        const float nanp[4] = {NAN, 0, 0, 0};
+        Check(std::strcmp(pp::ApplyPosition(w.addresses, 1, true, npos), "terminating") == 0 &&
+              std::strcmp(pp::ApplyPosition(w.addresses, 0, false, npos), "index") == 0 &&
+              std::strcmp(pp::ApplyPosition(w.addresses, 1, false, nanp), "non_finite") == 0 && g_calls.setpos == 1, "ApplyPosition guards");
+        w.t_vt[0x58 / 8] = 0;
+        Check(pp::ApplyPosition(w.addresses, 1, false, npos) && g_calls.setpos == 1, "slot +0x58 outside the code range: refused");
+        w.t_vt[0x58 / 8] = Fn(&FakeSetPos);
         // Body readback (T+0x20, T+0x60).
         Check(Read(w, s) == pp::Refusal::none, "body state");
+        float velocity[4]{};
+        Check(pp::ReadVelocity(w.addresses, s, 1, velocity) && velocity[0] == 0.6f && velocity[2] == 0.8f, "PS+0x268 velocity of instance 1");
+        Put<std::uintptr_t>(w.ps[1], c::ps_vel268, 0);
+        Check(!pp::ReadVelocity(w.addresses, s, 1, velocity), "no velocity array");
+        Put<std::uintptr_t>(w.ps[1], c::ps_vel268, Addr(w.vel + 0x20));
         float body[4]{}, rot[4]{};
         Check(pp::ReadBody(w.addresses, s, 1, body, rot) && body[0] == 4.0f && body[2] == 6.0f && rot[1] == 0.7071068f, "body readback");
         w.ids[1] = 0xFFFF;

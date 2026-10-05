@@ -100,11 +100,13 @@ std::int32_t NormalizeCdeg(std::int64_t cdeg) noexcept {
 
 InputPacket Quantize(const PadSnapshot& s, std::int32_t cam_cdeg) noexcept {
     InputPacket p{};
+    p.version = 2;
     p.flags = static_cast<std::uint8_t>((s.flags & Flag::Known) | Flag::Valid);
     p.held = s.held;
     p.w4c = s.w4c;
-    p.w50 = s.w50;
-    p.w54 = s.w54;
+    // v2: the edge set (w50/w54/tap12) is filled by SenderFill, never from one snapshot.
+    p.w50 = 0;
+    p.w54 = 0;
     p.lx = Axis(s.lx);
     p.ly = Axis(s.ly);
     p.rx = Axis(s.rx);
@@ -119,8 +121,19 @@ InputPacket Quantize(const PadSnapshot& s, std::int32_t cam_cdeg) noexcept {
 }
 
 bool ValidPacket(const InputPacket& p) noexcept {
-    return (p.flags & ~Flag::Known) == 0 && p.lx != -32768 && p.ly != -32768 && p.rx != -32768 && p.ry != -32768 &&
-           p.ldir >= -kMaxDir && p.ldir <= kMaxDir && p.cam_cdeg >= kCamMin && p.cam_cdeg <= kCamMax;
+    if ((p.flags & ~Flag::Known) != 0 || p.lx == -32768 || p.ly == -32768 || p.rx == -32768 || p.ry == -32768 ||
+        p.ldir < -kMaxDir || p.ldir > kMaxDir || p.cam_cdeg < kCamMin || p.cam_cdeg > kCamMax) return false;
+    if (p.version == 1) return p.edge_seq == 0 && p.edge_rep == 0 && p.long12 == 0 && p.tap12 == 0;
+    if (p.version != 2 || p.edge_rep > kEdgeRepeats) return false;
+    // No edge set: no edge words.
+    if (p.edge_seq == 0) return p.edge_rep == 0 && p.w50 == 0 && p.w54 == 0 && p.tap12 == 0;
+    return true;
+}
+
+double Heading(double cam_rad, float lx, float ly) noexcept {
+    const double x = Finite(lx), y = Finite(ly);
+    const double dir = (x != 0.0 || y != 0.0) ? std::atan2(x, y) : 0.0;
+    return NormalizeRadians((std::isfinite(cam_rad) ? cam_rad : 0.0) + dir - kPi);
 }
 
 Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_cdeg, Overlay overlay, EdgeState& edge) noexcept {
@@ -130,14 +143,14 @@ Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_c
     const bool net = c.mode == PartnerInput::net;
     const bool live = net && sample.valid && sample.age_ms <= c.stale_ms;
     j.stale = net && !live;
+    j.live = live;
     std::uint32_t held = overlay.bits;
     if (c.mode == PartnerInput::stick) {
         const double theta = NormalizeRadians(static_cast<double>(c.stick_deg % 360u) * kPi / 180.0);
         const double m = static_cast<double>(c.stick_pct > 100 ? 100 : c.stick_pct) / 100.0;
         j.lx = static_cast<float>(m * std::sin(theta));
         j.ly = static_cast<float>(m * std::cos(theta));
-        j.mag = j.force = static_cast<float>(m);
-        j.dir = static_cast<float>(theta);
+        j.mag = static_cast<float>(m);
     } else if (live) {
         const InputPacket& p = sample.packet;
         held |= p.held;
@@ -149,8 +162,7 @@ Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_c
         j.lx = static_cast<float>(r * std::sin(theta));
         j.ly = static_cast<float>(r * std::cos(theta));
         j.mag = static_cast<float>(p.lmag / 65535.0);
-        j.force = static_cast<float>(p.lforce / 65535.0);
-        j.dir = static_cast<float>(theta);
+        j.long12 = p.long12;
         if (c.rstick) {
             const double rx = p.rx / 32767.0, ry = p.ry / 32767.0;
             const double rr = Clamp(std::sqrt(rx * rx + ry * ry), 0.0, 1.0);
@@ -165,15 +177,153 @@ Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_c
         }
     }
     held &= c.mask;
+    // A tap the window never saw as held (pressed and released between two
+    // samples): one window of held, so the press edge is this window and the
+    // release edge the next one.
+    const std::uint32_t taps =
+        live ? (((sample.edge_press & sample.edge_release) | sample.edge_tap12) & c.mask & ~held & ~edge.prev_held) : 0u;
+    held |= taps;
+    j.synth = taps;
     const std::uint32_t press = held & ~edge.prev_held;
     const std::uint32_t release = edge.prev_held & ~held;
     const bool fresh = live && sample.seq != edge.last_seq;
     const std::uint32_t net_words[3] = {fresh ? sample.packet.w4c : 0u, fresh ? sample.packet.w50 : 0u, fresh ? sample.packet.w54 : 0u};
     j.held = held;
     for (unsigned i = 0; i < 3; ++i) j.w[i] = WordValue(c.words[i], press, release, held, net_words[i]) & c.mask;
+    j.edge_press = press;
+    j.edge_release = release;
+    j.long12 &= c.mask;
+    j.tap12 = live ? (sample.edge_tap12 & c.mask) : 0u;
+    // PP+0x18 = atan2f(LX, LY) and PP+0x14 = the world heading, exactly as the
+    // PP update derives them from the stick it reads (0x12070CC..0x12070FE).
+    j.dir = static_cast<float>((j.lx != 0.0f || j.ly != 0.0f) ? std::atan2(static_cast<double>(j.lx), static_cast<double>(j.ly)) : 0.0);
+    j.heading = static_cast<float>(Heading(static_cast<double>(host_cam_cdeg) * kPi / 18000.0, j.lx, j.ly));
     edge.prev_held = held;
     if (live) edge.last_seq = sample.seq;
     return j;
+}
+
+void AccumulateEdges(InputEdges& e, const InputPacket& p) noexcept {
+    if (p.version == 1) {
+        e.press |= p.w50;
+        e.release |= p.w54;
+        if (p.w50 | p.w54) ++e.sets;
+        return;
+    }
+    if (p.edge_seq == 0 || p.edge_seq == e.last_seq) return;
+    e.last_seq = p.edge_seq;
+    e.press |= p.w50;
+    e.release |= p.w54;
+    e.tap12 |= p.tap12;
+    ++e.sets;
+}
+
+void HoldPush(HoldHistory& h, std::uint32_t held) noexcept {
+    h.head = (h.head + 1) % kHoldHistory;
+    h.ring[h.head] = held;
+    if (h.count < kHoldHistory) ++h.count;
+}
+
+std::uint32_t HoldAt(const HoldHistory& h, std::uint32_t i) noexcept {
+    if (i >= h.count || i >= kHoldHistory) return 0;
+    return h.ring[(h.head + kHoldHistory - i) % kHoldHistory];
+}
+
+std::uint32_t ClassifyHold(const HoldHistory& h, std::uint32_t held_word, std::uint32_t release_word, std::uint32_t btn,
+                           std::uint32_t frames) noexcept {
+    const std::uint32_t bit = 1u << (btn & 31u);
+    const bool released = (release_word & bit) != 0;
+    if (!released && !(held_word & bit)) return 0;
+    std::uint32_t count = 0;
+    bool newest = false;
+    for (std::uint32_t i = 0; i < kHoldHistoryUsed; ++i) {
+        if (HoldAt(h, i) & bit) {
+            ++count;
+            if (i == 0) newest = true;
+            if (count >= frames) break;
+        } else if (count) {
+            break;
+        }
+    }
+    if (released && count < frames) return 2;
+    if (newest) return count < frames ? 1u : 3u;
+    return 0;
+}
+
+std::uint32_t NetHoldCode(bool live, std::uint32_t held, std::uint32_t long12, std::uint32_t tap12, std::uint32_t btn,
+                          std::uint32_t frames) noexcept {
+    if (!live || frames != kHoldFrames) return kHoldUseOwn;
+    const std::uint32_t bit = 1u << (btn & 31u);
+    if (tap12 & bit) return 2;
+    if (held & bit) return (long12 & bit) ? 3u : 1u;
+    return 0;
+}
+
+int BindingIndex(const std::uint64_t (&handles)[kBindingCount], std::uint64_t handle) noexcept {
+    const std::uint64_t h = handle & kHandleMask;
+    if (h == kUnboundHandle) return -1;
+    for (std::uint32_t i = 0; i < kBindingCount; ++i)
+        if ((handles[i] & kHandleMask) == h) return static_cast<int>(i);
+    return -1;
+}
+
+void SenderObserve(SenderEdges& st, const PadSnapshot& snap) noexcept {
+    const std::uint32_t held = snap.held;
+    const std::uint32_t prev = st.have_last ? st.last_held : 0u;
+    st.press |= snap.w50 | (held & ~prev);
+    st.release |= snap.w54 | (prev & ~held);
+    std::uint32_t long12 = 0;
+    for (unsigned b = 0; b < 32; ++b) {
+        const std::uint32_t bit = 1u << b;
+        if (held & bit) {
+            if (st.run[b] < 255) ++st.run[b];
+            if (st.run[b] >= kHoldFrames) long12 |= bit;
+        } else {
+            if (st.run[b] > 0 && st.run[b] < kHoldFrames) st.tap12 |= bit;
+            st.run[b] = 0;
+        }
+    }
+    st.long12 = long12;
+    st.last_held = held;
+    st.have_last = true;
+}
+
+void SenderFill(SenderEdges& st, InputPacket& p) noexcept {
+    p.long12 = st.long12;
+    if (st.press | st.release | st.tap12) {
+        p.edge_seq = static_cast<std::uint8_t>(st.seq == 255 ? 1 : st.seq + 1);
+        p.edge_rep = 0;
+        p.w50 = st.press;
+        p.w54 = st.release;
+        p.tap12 = st.tap12;
+        st.filled_new = true;
+    } else if (st.reps_left && st.seq) {
+        p.edge_seq = st.seq;
+        p.edge_rep = static_cast<std::uint8_t>(kEdgeRepeats - st.reps_left + 1);
+        p.w50 = st.cur_press;
+        p.w54 = st.cur_release;
+        p.tap12 = st.cur_tap12;
+        st.filled_new = false;
+    } else {
+        p.edge_seq = 0;
+        p.edge_rep = 0;
+        p.w50 = p.w54 = p.tap12 = 0;
+        st.filled_new = false;
+    }
+}
+
+void SenderSent(SenderEdges& st) noexcept {
+    if (st.filled_new) {
+        st.seq = static_cast<std::uint8_t>(st.seq == 255 ? 1 : st.seq + 1);
+        st.cur_press = st.press;
+        st.cur_release = st.release;
+        st.cur_tap12 = st.tap12;
+        st.press = st.release = st.tap12 = 0;
+        st.reps_left = kEdgeRepeats;
+        st.filled_new = false;
+    } else if (st.reps_left) {
+        --st.reps_left;
+    }
 }
 
 std::uint32_t StepOverlay(TapState& state, std::uint32_t tap_seq, std::uint32_t tap_bits, std::uint32_t press_bits,
@@ -202,6 +352,7 @@ std::int32_t Milli(float value) noexcept {
 
 bool SameArm(const Arm& a, const Arm& b) noexcept {
     return a.enabled == b.enabled && a.holdlog == b.holdlog && a.p218 == b.p218 && a.cam == b.cam && a.hold == b.hold &&
+           a.wrap == b.wrap &&
            a.P == b.P && a.pp == b.pp && a.src == b.src && a.cam_object == b.cam_object && a.root0 == b.root0 &&
            a.root1 == b.root1 && a.blk1 == b.blk1 && a.rec1 == b.rec1 && a.plugin1 == b.plugin1 && a.p_vtable == b.p_vtable &&
            a.pp_vtable == b.pp_vtable && a.cam_vtable == b.cam_vtable &&

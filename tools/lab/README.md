@@ -269,10 +269,12 @@ with no fuse and no session.
   involved. Running the script without `-Offline` switches both folders back.
 - **Play-OfflineCoop.ps1** (`Play-Offline-Coop.bat`) is the one-click test: the
   guest plays Quiet, `look=net` shows each player's own character on the
-  other copy, and the partner moves by the proven Warp. The unverified native
-  paths are turned on one at a time from its console ([M] smooth movement
-  `apply=hybrid reset=n`, [A] stance sync `anim=net aset=qs`, [W] back to the
-  proven Warp), or all at once with `-Experimental`.
+  other copy, and (round 4) each partner is driven by the other player's pad
+  (`apply=input input=net isend=1 hold=own words=hpr recon=track`, see
+  docs/partner-anim-appearance.md "Round 4"). [W] switches both copies back to
+  the proven Warp movement, [I] / [P] to the input drive (tracked / pinned),
+  [M] / [A] to the round 2 experiments; `-ProvenWarp` starts on the proven
+  path, `-Experimental` with the round 2 experiments.
 - **Start-Lab.ps1 -Offline** skips the fuse checks and start. Its preflight
   requires no listener on TCP 47899, free UDP 47810/47811 and 47820/47821, the
   `offline-v1` markers, `lab.ini` `net=1`, `partner=1` and the role's partner

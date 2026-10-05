@@ -490,7 +490,16 @@ bool PartnerSubmitInput(void*, const mgscoop::partner_input::InputPacket& packet
     return mgscoop::partner_net::SubmitInput(packet);
 }
 bool PartnerNetRunning(void*) noexcept { return mgscoop::partner_net::Running(); }
-bool PartnerSampleInput(mgscoop::partner_input::Sample& out) noexcept { return mgscoop::partner_net::LatestInput(out); }
+// The window consumes the accumulated edge sets with each sample (round 4).
+bool PartnerSampleInput(mgscoop::partner_input::Sample& out) noexcept { return mgscoop::partner_net::ConsumeInput(out); }
+bool PartnerLatestInput(void*, mgscoop::partner_input::Sample& out) noexcept { return mgscoop::partner_net::LatestInput(out); }
+const char* PartnerApplyPosition(void*, bool terminating, const float (&pos)[4]) noexcept {
+    return pp::ApplyPosition(partner_addresses, partner::partner_index, terminating, pos);
+}
+bool PartnerReadVelocity(void*, const pp::State& state, float (&vel)[4]) noexcept {
+    return pp::ReadVelocity(partner_addresses, state, partner::partner_index, vel);
+}
+const char* PartnerInstallWrap(void*) noexcept { return mgscoop::partner_input_hook::InstallWrap(); }
 const char* PartnerInstallInputHook(void*) noexcept {
     return mgscoop::partner_input_hook::Install(game_base, Log, &PartnerSampleInput);
 }
@@ -502,6 +511,7 @@ void PartnerDrainInputStats(void*, pd::InputStats& out) noexcept {
     out.window = s.window;
     for (unsigned i = 0; i < 8; ++i) out.holds[i] = s.holds[i];
     out.hold_count = s.hold_count;
+    out.wrap = s.wrap;
 }
 bool PartnerInputHookLive(void*) noexcept { return mgscoop::partner_input_hook::PatchLive(game_base); }
 // --- Round 3 direct motion wiring.
@@ -557,7 +567,8 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerSetStance, PartnerRequestStance, PartnerApplyTransform, PartnerReadBody, PartnerCensus, PartnerFormatCensus,
     PartnerFormatPsProbe, PartnerInputTargets, PartnerFormatInputCensus, PartnerReadPad, PartnerSubmitInput, PartnerNetRunning,
     PartnerInstallInputHook, PartnerPublishArm, PartnerDrainInputStats, PartnerInputHookLive, PartnerDmTargets, PartnerReadDm,
-    PartnerFormatDmCensus, PartnerFormatDmProbe, PartnerDmPatch, PartnerDmClearPending, PartnerResetInputFault};
+    PartnerFormatDmCensus, PartnerFormatDmProbe, PartnerDmPatch, PartnerDmClearPending, PartnerResetInputFault,
+    PartnerApplyPosition, PartnerReadVelocity, PartnerLatestInput, PartnerInstallWrap};
 // Crash-probe context flags: bit0 input window armed, bit1 DM patch applied.
 std::uint32_t PartnerCtxFlags() noexcept {
     return (partner_driver.mission.input_armed ? 1u : 0u) | (partner_driver.mission.dm_patched ? 2u : 0u);
