@@ -28,6 +28,7 @@ do
         function E.localState(e)
             local a = W.api
             if a.recovered(e.name) == true then return 6 end
+            if a.action and a.fultonRecovered ~= nil and a.action(e.id) == a.fultonRecovered then return 6 end
             local v = a.life(e.id)
             if type(v) ~= "number" then return nil end
             return W.lifeWire[v] or 0
@@ -240,20 +241,25 @@ do
                 E.readbacks(now)
                 for h, p in pairs(s.pending) do
                     local e = W.ent[h]
+                    -- A fulton (FultonInfo, cause 5) reads FULTONED only once IsRecovered
+                    -- turns true, seconds after the message: keep reading up to 20 s.
+                    local fw = p.cause == 5 and now - p.at <= 20000
                     if W.host then
-                        if E.check(h, p.cause, false) or now - p.at > 1000 then s.pending[h] = nil end
+                        if (E.check(h, p.cause, false) and not (fw and e.committed ~= 6)) or now - p.at > (fw and 20000 or 1000) then
+                            s.pending[h] = nil
+                        end
                     else
                         local st = E.localState(e)
-                        if st ~= nil then
+                        if st ~= nil and not (fw and st ~= 6) then
                             s.pending[h] = nil
                             if E.forward(h, st) then
-                                if E.attributed(h, now) then E.request(h, st, p.cause, p.attack, now)
+                                if E.attributed(h, p.at) then E.request(h, st, p.cause, p.attack, now)
                                 else
                                     W.stats.div = W.stats.div + 1
                                     L("event=divergence;ent=%.0f;state=%d;why=not_attributed", h, st)
                                 end
                             end
-                        elseif now - p.at > 1000 then s.pending[h] = nil end
+                        elseif not fw and now - p.at > 1000 then s.pending[h] = nil end
                     end
                 end
                 if W.host then

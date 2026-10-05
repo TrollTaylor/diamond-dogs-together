@@ -11,6 +11,12 @@ do
         local fmt, floor, max = string.format, math.floor, math.max
         local RANK, TERMINAL = E.RANK, E.TERMINAL
         local function L(...) W.log(fmt(...)) end
+        -- IsRecovered only knows the mission's recovered-state list; any fultoned
+        -- soldier reads ACTION_STATUS.FULTON_RECOVERD (live 2026-10-05).
+        W.bindHooks[#W.bindHooks + 1] = function(a, fn)
+            a.action = fn(TppEnemy, "TppEnemy", "GetActionStatus", true)
+            a.fultonRecovered = W.get(W.get(TppEnemy, "ACTION_STATUS"), "FULTON_RECOVERD")
+        end
 
         -- Attribution of an attacker id. local: the local player, its horse or
         -- walker gear; buddy: D-Dog/Quiet.
