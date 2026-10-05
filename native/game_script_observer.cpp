@@ -729,6 +729,11 @@ bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
             accepted=TransferRuleThread(allocation_thread) &&
                 AdoptDynamiteSessionThread(game_base,allocation_thread,Log);
             if(accepted) {
+                // A new mission runs: the previous mission's termination is over. Offline
+                // nothing else clears this flag (the host-create / result / session-close
+                // receipts belong to the online route), and a stale flag refuses the world
+                // CFG start of every later mission (40050, 30010).
+                mission_terminating=false;
                 mission_thread=GetCurrentThreadId(); mission_phase=MissionPhase::running; PartnerMissionStart(allocation_mission);
                 if(world_on) mgscoop::world_link::MissionRuntime(allocation_mission);
             }
