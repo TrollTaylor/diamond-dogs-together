@@ -1,0 +1,67 @@
+#pragma once
+// Pure helpers for the world sync receipts compiled by lua/coop/world_sync.lua
+// through the luaL_loadbuffer observer (docs/world-sync-protocol.md
+// "Receipts"), and the lab world.trigger grammar. No Win32 calls and no game
+// memory: game_script_observer owns threading and logging, world_link the core.
+//
+// Receipts (the chunk name always equals the source, as loadstring sets it;
+// NUL-free, at most max_receipt bytes):
+//   return 'MGS_COOP_WORLD_CFG_V1' -- <mission> <phase>     phase 0 query, 1 start
+//        -> return <level>,<role>,<proto>,<link>,<epoch>,<probe>,<mode>
+//   return 'MGS_COOP_WORLD_TX_V1' -- <op> <v1> ... <vn>      n = the op's Lua field count
+//        -> return 1 | return 0,<reason>   (TxStatus)
+//   return 'MGS_COOP_WORLD_RX_V1' -- <mask>                  1 control, 3 control+world+U
+//        -> return <queue>,<op>,<v...>  or  return 0,0,<flags>,<qctrl>,<qworld>,<epoch>
+//   return 'MGS_COOP_WORLD_LOG_V1' -- <payload>              1..160 bytes -> logs world_lua=...
+// Integers only: an optional '-' (i32 fields only), no '+', no leading zeros,
+// no "-0", no '.', single spaces, nothing trailing; u32 up to 4294967295.
+#include <cstddef>
+#include <cstdint>
+#include "mgscoop/world_wire.hpp"
+
+namespace mgscoop::world {
+
+enum class Receipt : unsigned char { none, cfg, tx, rx, log };
+
+inline constexpr char cfg_prefix[] = "return 'MGS_COOP_WORLD_CFG_V1' -- ";
+inline constexpr char tx_prefix[] = "return 'MGS_COOP_WORLD_TX_V1' -- ";
+inline constexpr char rx_prefix[] = "return 'MGS_COOP_WORLD_RX_V1' -- ";
+inline constexpr char log_prefix[] = "return 'MGS_COOP_WORLD_LOG_V1' -- ";
+inline constexpr std::size_t max_receipt = 240;
+inline constexpr std::size_t max_log_payload = 160;
+// The longest reply: "return " and 17 values (queue, op, 15 fields) of at
+// most 11 characters each with their commas (211 bytes).
+inline constexpr std::size_t reply_capacity = 224;
+// "world_lua=" + payload with ';' -> "; " + "; t_ms=<20 digits>" + CRLF.
+inline constexpr std::size_t log_line_capacity = 10 + 2 * max_log_payload + 30;
+inline constexpr std::size_t max_trigger = 255;
+
+// Exact receipts only (bytewise name == source, NUL-free, size bound).
+Receipt Classify(const char* source, std::size_t size, const char* name) noexcept;
+// mission 0..99999, phase 0|1. Outputs are written only on success.
+bool ParseCfg(const char* source, std::size_t size, std::uint32_t& mission, std::uint8_t& phase) noexcept;
+// syntax (malformed integers or spacing), unknown_op (not a Lua-sendable op),
+// bad_args (wrong count, a negative unsigned value or a value out of range).
+TxStatus ParseTx(const char* source, std::size_t size, std::uint8_t& code, std::int64_t (&values)[kMaxValues],
+                 unsigned& count) noexcept;
+// mask 1 or 3 only.
+bool ParseRx(const char* source, std::size_t size, std::uint8_t& mask) noexcept;
+
+// NUL-terminated replies; 0 when they do not fit.
+std::size_t FormatCfgReply(const CfgReply& reply, char* out, std::size_t capacity) noexcept;
+std::size_t FormatTxReply(TxStatus status, char* out, std::size_t capacity) noexcept;
+std::size_t FormatRxReply(const RxReply& reply, char* out, std::size_t capacity) noexcept;
+// "world_lua=<payload>; t_ms=<now>\r\n" with the partner sanitizer
+// ([A-Za-z0-9_=:,.;-], others -> '_') and ';' expanded to "; ". 0 when the
+// payload is empty or longer than max_log_payload.
+std::size_t FormatLogLine(const char* source, std::size_t size, std::uint64_t now_ms, char* out, std::size_t capacity) noexcept;
+
+// world.trigger: one ASCII line (an optional UTF-8 BOM and trailing CR/LF are
+// ignored), blank-separated tokens, each key at most once, in any order:
+// world=0..3 world_probe=<name>|off goto=30010|30020 goto_lz=0|1 (only with
+// goto). On success `canonical` gets "world=.. world_probe=.. goto=.. goto_lz=.."
+// (present keys, that order). On failure `reason` is token, repeat, empty or too_long.
+bool ParseTrigger(const char* text, std::size_t size, Trigger& out, char* canonical, std::size_t canonical_capacity,
+                  const char*& reason) noexcept;
+
+} // namespace mgscoop::world
