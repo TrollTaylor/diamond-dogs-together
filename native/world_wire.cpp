@@ -889,13 +889,21 @@ void Core::ApplyTrigger(const Trigger& trigger, const char* canonical, std::uint
     }
     if (trigger.has_goto) {
         const char* refusal = nullptr;
+        // From Mother Base (both hops) or already at the ACC (step 2 only: a lab
+        // save that continues into the helicopter).
+        const bool from_mb = read_mission == kMissionMtbsFree && start_mission_ == kMissionMtbsFree;
+        const bool from_acc = read_mission == kMissionMtbsHeli && start_mission_ == kMissionMtbsHeli;
         if (!level_) refusal = "level";
-        else if (!mission_running_ || read_mission != kMissionMtbsFree || start_mission_ != kMissionMtbsFree) refusal = "mission";
+        else if (!mission_running_ || (!from_mb && !from_acc)) refusal = "mission";
         else if (trigger.goto_target != 30010 && trigger.goto_target != 30020) refusal = "target";
         else if (goto_.state != GotoState::idle) refusal = "busy";
         else if (terminating) refusal = "terminating";
         if (refusal) {
             Line("world_goto=refused; reason=%s", refusal);
+        } else if (from_acc) {
+            goto_ = Goto{GotoState::step2, trigger.goto_target, trigger.lz, now_ms, now_ms + 60000, false};
+            PushLocal(op::go_to, 2, trigger.goto_target, trigger.lz);
+            Line("world_goto=armed; target=%u; lz=%u; from=acc", trigger.goto_target, unsigned(trigger.lz));
         } else {
             goto_ = Goto{GotoState::step1, trigger.goto_target, trigger.lz, now_ms, now_ms + 45000, false};
             PushLocal(op::go_to, 1, trigger.goto_target, trigger.lz);

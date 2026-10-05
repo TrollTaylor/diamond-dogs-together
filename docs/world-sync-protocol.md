@@ -399,9 +399,11 @@ unpaused at stop, on LEVEL 0 and after an error.
 
 Trigger `goto=30010|30020 [goto_lz=0|1]`, refused (`world_goto=refused;
 reason=level|mission|target|busy|terminating`) unless world sync is on at
-level >= 1, the copy stands in 30050 (memory and the last CFG start), no goto
-runs and the mission is not terminating. Lua also refuses unless the CFG
-mode is 1.
+level >= 1, the copy stands in 30050 or in the ACC 40050 (memory and the last
+CFG start), no goto runs and the mission is not terminating. Lua also refuses
+unless the CFG mode is 1. Armed in the ACC (a lab save that continues into the
+helicopter) it skips step 1: `world_goto=armed; target=; lz=; from=acc` and
+GOTO{2} at once (60 s timeout).
 
 1. Step 1 (30050): waits up to 30 s for `CheckMissionState() == true`
    (GOTO_ACK{1,2} once), then calls `f30050_sequence.ReserveMissionClear()`
@@ -410,7 +412,9 @@ mode is 1.
    the same two calls). The next frame reads back
    `svars.mis_isDefiniteMissionClear` and sends GOTO_ACK{1,1|0}. Native then
    expects the ACC within 120 s. The 30050 clear runs `MissionGameEnd`, whose
-   reward announce can pause the game for input.
+   reward announce can pause the game for input, and the ACC opens on an
+   "Overall Completion" screen that waits for Enter (live 2026-10-05: Space
+   does not dismiss it; Enter does).
 2. Step 2 (40050): native pushes GOTO{2} at the ACC's CFG start. Lua waits for
    `Seq_Game_MainGame`, `CheckMissionState() == true` and 3 s (GOTO_ACK{2,2}
    once; native timeout 60 s), refuses unless the mission is a heli space and

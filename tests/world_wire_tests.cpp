@@ -774,6 +774,20 @@ void Schedulers() {
     g_host.Cfg(30010, true, 30010, 61000);
     Check(HasLine(Lines(g_host), "world_goto=arrived; mission=30010; ms=60000") && g_host.goto_state() == world::GotoState::idle,
           "arrived");
+    // Already at the ACC (a save that continues into 40050): step 2 only.
+    Setup();
+    g_host.Cfg(40050, true, 40050, 1000);
+    Drain(g_host, 1, 1000);
+    Lines(g_host);
+    g_host.ApplyTrigger(trigger(30010), "goto=30010", 40050, false, 1000);
+    Check(HasLine(Lines(g_host), "world_goto=armed; target=30010; lz=0; from=acc") &&
+              g_host.goto_state() == world::GotoState::step2, "armed at the ACC");
+    rx = Drain(g_host, 1, 1000);
+    p = Find(rx, op::go_to);
+    Check(p && p->v[0] == 2 && p->v[1] == 30010, "GOTO{2} from the ACC");
+    Tx(g_host, op::goto_ack, {2, 1}, 5000);
+    g_host.Cfg(30010, true, 30010, 30000);
+    Check(HasLine(Lines(g_host), "world_goto=arrived; mission=30010; ms=29000"), "arrived from the ACC");
     // Timeouts and an unexpected mission.
     struct Case { std::uint64_t at; const char* reason; };
     Setup();
