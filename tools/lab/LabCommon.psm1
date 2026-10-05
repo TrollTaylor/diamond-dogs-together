@@ -292,7 +292,11 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_pad_probe'; Json = 'pad_probe'; Kind = 'bool' },
     @{ Key = 'partner_look_gate'; Json = 'look_gate'; Kind = 'bool' },
     @{ Key = 'partner_look_recover'; Json = 'look_recover'; Kind = 'bool' },
-    @{ Key = 'partner_dm'; Json = 'dm'; Kind = 'enum'; Values = @('off', 'probe', 'on') },
+    @{ Key = 'partner_dm'; Json = 'dm'; Kind = 'enum'; Values = @('off', 'probe', 'on', 'map') },
+    # dm=map (docs/partner-anim-appearance.md "D-map"): the [stance][move] clip
+    # table (12 gani indices 0..12) and the speed bands <idle>:<run>:<dash> mm/s.
+    @{ Key = 'partner_dm_map'; Json = 'dm_map'; Kind = 'dmmap' },
+    @{ Key = 'partner_dm_speed'; Json = 'dm_speed'; Kind = 'dmspeed' },
     # Round 4 (docs/partner-anim-appearance.md "Round 4"); written only when set.
     @{ Key = 'partner_recon'; Json = 'recon'; Kind = 'enum'; Values = @('off', 'track', 'pin') },
     @{ Key = 'partner_recon_align_ms'; Json = 'recon_align_ms'; Kind = 'sint'; Min = -50; Max = 150 },
@@ -353,6 +357,16 @@ function ConvertTo-LabPartnerValue {
             if ([int]$parts[0] -le 359 -and [int]$parts[1] -le 100) { return $text }
         }
         $allowed = '<0..359>:<0..100>'
+    } elseif ($spec.Kind -eq 'dmmap') {
+        if ($text -cmatch '^((0|[1-9]|1[0-2]),){11}(0|[1-9]|1[0-2])$') { return $text }
+        $allowed = '12 comma-separated gani indices 0..12'
+    } elseif ($spec.Kind -eq 'dmspeed') {
+        # As the native ParsePartnerDmSpeeds: idle 200..2000, run idle+300..10000, dash run+300..20000.
+        if ($text -cmatch '^([1-9][0-9]{2,4}):([1-9][0-9]{2,4}):([1-9][0-9]{2,4})$') {
+            $v = @($text.Split(':') | ForEach-Object { [int]$_ })
+            if ($v[0] -ge 200 -and $v[0] -le 2000 -and $v[1] -ge $v[0] + 300 -and $v[1] -le 10000 -and $v[2] -ge $v[1] + 300 -and $v[2] -le 20000) { return $text }
+        }
+        $allowed = '<idle 200..2000>:<run idle+300..10000>:<dash run+300..20000>'
     } else {
         if ($text -cin $spec.Values) { return $text }
         $allowed = $spec.Values -join '|'
@@ -424,10 +438,12 @@ function ConvertFrom-LabCharacterArgs {
 function ConvertFrom-LabPartnerSettingArgs {
     # Pure: Prepare-LabInstance -PartnerSetting items for one role. 'key=value'
     # applies to both roles, 'host:key=value' / 'guest:key=value' to one; key is a
-    # lab.ini partner/net key (the ports stay in lab.json). Later items win.
+    # lab.ini partner/net key (the ports stay in lab.json). Later items win. A
+    # comma separates items only where a new key= follows, so a value may
+    # contain commas (partner_dm_map=0,10,11,...).
     param([string[]]$Items = @(), [Parameter(Mandatory)][ValidateSet('host', 'guest')][string]$Role)
     $out = [ordered]@{}
-    foreach ($item in @($Items | Where-Object { $_ } | ForEach-Object { $_ -split ',' } | Where-Object { $_.Trim() })) {
+    foreach ($item in @($Items | Where-Object { $_ } | ForEach-Object { $_ -split ',(?=\s*(?:(?:host|guest):)?[a-z_]+=)' } | Where-Object { $_.Trim() })) {
         $text = $item.Trim()
         if ($text -cnotmatch '^(?:(host|guest):)?([a-z_]+)=(.+)$') { throw "Invalid -PartnerSetting '$text' (key=value, host:key=value or guest:key=value)." }
         $target = $Matches[1]

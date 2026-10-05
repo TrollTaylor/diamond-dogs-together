@@ -70,8 +70,18 @@ enum class PartnerInputHold : std::uint8_t { none, pass, own, net };
 // Camera-relative stick rotation sign: +1, -1, or no rotation.
 enum class PartnerInputYaw : std::uint8_t { rot, rotneg, none };
 // Direct-motion lever: off, probe (census and the 2 Hz line), on (also the
-// 4-byte comparator patch at 0x1198E25).
-enum class PartnerDm : std::uint8_t { off, probe, on };
+// 4-byte comparator patch at 0x1198E25), map (on, plus the clip follows the
+// remote stance/speed through the 3x4 table below; manual dmplay/dmstop refused).
+enum class PartnerDm : std::uint8_t { off, probe, on, map };
+// dm=map: highest gani index of partner_sync.lua GANI, the 3x4 [stance][move]
+// table (stand none/walk/run/dash, squat ..., crawl ...) and the speed bands.
+inline constexpr std::uint8_t kPartnerDmGaniMax = 12;
+inline constexpr std::size_t kPartnerDmCells = 12;
+struct PartnerDmTable { std::uint8_t cells[kPartnerDmCells]; };
+inline constexpr PartnerDmTable kPartnerDmTableDefault{{0, 10, 11, 5, 1, 3, 4, 4, 7, 6, 6, 6}};
+// Horizontal speed bands (mm/s): < idle none, < run walk, < dash run, else dash.
+struct PartnerDmSpeeds { std::uint32_t idle_mmps, run_mmps, dash_mmps; };
+inline constexpr PartnerDmSpeeds kPartnerDmSpeedsDefault{300, 2600, 5600};
 // Round 4 reconciliation of an input-driven body (apply=input,
 // docs/partner-anim-appearance.md "Round 4"): off (placement only, then pure
 // locomotion: a diagnostic), track (placement, gentle position nudges, rare
@@ -167,6 +177,8 @@ struct LabConfig {
     bool partner_look_gate = true;
     bool partner_look_recover = true;
     PartnerDm partner_dm = PartnerDm::off;
+    PartnerDmTable partner_dm_map = kPartnerDmTableDefault;
+    PartnerDmSpeeds partner_dm_speed = kPartnerDmSpeedsDefault;
     // Round 4 (docs/partner-anim-appearance.md "Round 4").
     PartnerRecon partner_recon = PartnerRecon::track;
     std::int32_t partner_recon_align_ms = 0;        // -50..150: target delay bias
@@ -211,6 +223,16 @@ bool ParsePartnerDm(const char* text, std::size_t size, PartnerDm& out) noexcept
 bool ParsePartnerWords(const char* text, std::size_t size, std::uint8_t (&out)[3]) noexcept;
 // "0p0" (NUL-terminated); '?' for an out-of-range code.
 void FormatPartnerWords(const std::uint8_t (&words)[3], char (&out)[4]) noexcept;
+// Exactly 12 decimal gani indices 0..kPartnerDmGaniMax, comma-separated, no
+// blanks, no leading zeros, nothing trailing. `out` is written only on success.
+bool ParsePartnerDmMap(const char* text, std::size_t size, PartnerDmTable& out) noexcept;
+// "0,10,11,5,1,3,4,4,7,6,6,6" (NUL-terminated; at most 35 chars; '?' for a cell above 99).
+void FormatPartnerDmMap(const PartnerDmTable& table, char (&out)[40]) noexcept;
+// "<idle>:<run>:<dash>" decimal mm/s, no leading zeros; idle 200..2000,
+// run idle+300..10000, dash run+300..20000. `out` is written only on success.
+bool ParsePartnerDmSpeeds(const char* text, std::size_t size, PartnerDmSpeeds& out) noexcept;
+// "300:2600:5600" (NUL-terminated; at most 17 chars; values clamped to 99999).
+void FormatPartnerDmSpeeds(const PartnerDmSpeeds& speeds, char (&out)[24]) noexcept;
 // A u32 in decimal or 0x hex (1..8 hex digits, either case).
 bool ParsePartnerMask(const char* text, std::size_t size, std::uint32_t& out) noexcept;
 // "<deg>:<pct>" with deg 0..359 and pct 0..100 (no leading zeros except "0").

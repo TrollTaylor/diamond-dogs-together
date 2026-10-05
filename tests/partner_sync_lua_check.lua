@@ -270,8 +270,15 @@ check(c.calls[mark + 1] == 'dmplay:1:/Assets/tpp/motion/SI_game/fani/bodies/snap
 c.reply = {128, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 9}
 update(env)
 check(c.calls[#c.calls] == 'dmplay:1:stateStandIdleLeft' and count(c.logs, 'event=dm_play;gani=9') == 1, 'DM_PLAY gani 9 state name')
--- bad gani index refused.
-for _, bad in ipairs({10, -1, 1.5, '3'}) do
+-- dm=map: 10..12 are the stand walk, run and jog loops (exact resident paths).
+for g, name in pairs({[10] = 'snapnon_s_wk_lp_vr1_l', [11] = 'snapnon_s_rn_lp_vr1_l', [12] = 'snapnon_s_jg_lp_vr1'}) do
+    c.reply = {128, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, g}
+    update(env)
+    check(c.calls[#c.calls] == 'dmplay:1:/Assets/tpp/motion/SI_game/fani/bodies/snap/snapnon/' .. name .. '.gani' and
+        count(c.logs, 'event=dm_play;gani=' .. g) == 1, 'DM_PLAY gani ' .. g .. ' plays ' .. name)
+end
+-- bad gani index refused (13 = partner::max_gani + 1).
+for _, bad in ipairs({13, -1, 1.5, '3'}) do
     local notes = count(c.logs, 'event=dm_refused;reason=bad_gani')
     mark = #c.calls
     c.reply = {128, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, bad}

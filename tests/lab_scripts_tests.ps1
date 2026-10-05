@@ -307,14 +307,15 @@ try {
     $script:InputTrigger = $inputMatch.Groups[1].Value
     $playLines = @{}
     foreach ($case in @(@('warp', 'off', 'track'), @('hybrid', 'off', 'track'), @('warp', 'net', 'track'), @('hybrid', 'net', 'track'),
-            @('input', 'off', 'track'), @('input', 'off', 'pin'))) {
+            @('input', 'off', 'track'), @('input', 'off', 'pin'), @('map', 'off', 'track'))) {
         $experiment = [ordered]@{ Move = $case[0]; Anim = $case[1]; Recon = $case[2] }
         $playLines["$($case[0])/$($case[1])/$($case[2])"] = & $syncBody
     }
-    Assert-Equal $playLines['input/off/track'] 'stage=3 source=net apply=input anim=off input=net cam=sandbox hold=own words=hpr bits=0x2200006 isend=1 recon=track correct=3000 runaway=pin slot=body look=net' 'Play-OfflineCoop default line: the input drive (correction explicit)'
-    Assert-Equal $playLines['input/off/pin'] 'stage=3 source=net apply=input anim=off input=net cam=sandbox hold=own words=hpr bits=0x2200006 isend=1 recon=pin correct=3000 runaway=pin slot=body look=net' 'Play-OfflineCoop [P] line'
-    Assert-Equal $playLines['warp/off/track'] 'stage=3 source=net apply=warp anim=off input=off isend=0 look=net' 'Play-OfflineCoop [W] line: proven Warp, input off'
-    Assert-Equal $playLines['hybrid/net/track'] 'stage=3 source=net apply=hybrid reset=n anim=net aset=qs input=off isend=0 look=net' 'Play-OfflineCoop experimental line'
+    Assert-Equal $playLines['input/off/track'] 'stage=3 source=net apply=input anim=off input=net cam=sandbox hold=own words=hpr bits=0x2200006 isend=1 recon=track correct=3000 runaway=pin slot=body dm=off look=net' 'Play-OfflineCoop [I] line: the input drive (correction explicit, dm off)'
+    Assert-Equal $playLines['input/off/pin'] 'stage=3 source=net apply=input anim=off input=net cam=sandbox hold=own words=hpr bits=0x2200006 isend=1 recon=pin correct=3000 runaway=pin slot=body dm=off look=net' 'Play-OfflineCoop [P] line'
+    Assert-Equal $playLines['warp/off/track'] 'stage=3 source=net apply=warp anim=off input=off isend=0 dm=off look=net' 'Play-OfflineCoop [W] line: proven Warp, input off, dm off'
+    Assert-Equal $playLines['hybrid/net/track'] 'stage=3 source=net apply=hybrid reset=n anim=net aset=qs input=off isend=0 dm=off look=net' 'Play-OfflineCoop experimental line'
+    Assert-Equal $playLines['map/off/track'] 'stage=3 source=net apply=xform reset=n anim=off input=off isend=0 dm=map look=net' 'Play-OfflineCoop [D] line: dm=map with xform movement'
     foreach ($line in $playLines.Values) {
         Assert-True (Test-PartnerTriggerText $line) "Play-OfflineCoop line '$line' is a valid trigger"
         Assert-True ($line.Length + 1 -le 255) "Play-OfflineCoop line '$line' fits 255 bytes"
@@ -325,8 +326,13 @@ try {
     # The status line reads the effective recon= and the input pin / stance fixes.
     Assert-True ($playText.Contains('recon=([a-z]+); err_mm=') -and $playText.Contains('input_pin=(\d); fixes=(\d+)')) 'Play-OfflineCoop status parses recon=/input_pin=/fixes='
     Assert-True ($playText.Contains("'^partner_recon=runaway;.*action=(pin|disarm)'")) 'Play-OfflineCoop: RUNAWAY only for pin/disarm'
-    Assert-True ($playText.Contains("`$startMove = if (`$Experimental) { 'hybrid' } elseif (`$InputDrive) { 'input' } else { 'warp' }")) 'Play-OfflineCoop starts with the proven Warp unless -InputDrive/-Experimental (round 4 live)'
-    Assert-True ($playText.Contains("'I' {") -and $playText.Contains("'W' {") -and $playText.Contains("'P' {")) 'Play-OfflineCoop defines [I], [W] and [P]'
+    Assert-True ($playText.Contains("`$startMove = if (`$Experimental) { 'hybrid' } elseif (`$InputDrive) { 'input' } elseif (`$Animated) { 'map' } else { 'warp' }")) 'Play-OfflineCoop starts with the proven Warp unless -InputDrive/-Experimental/-Animated (dm=map waits for the D4/D5 live pass)'
+    Assert-True ($playText.Contains("'I' {") -and $playText.Contains("'W' {") -and $playText.Contains("'P' {") -and $playText.Contains("'D' {")) 'Play-OfflineCoop defines [I], [W], [P] and [D]'
+    Assert-True ($playText.Contains("'partner_reset=n', 'partner_dm=map'") -and $playText.Contains("if (`$experiment.Move -eq 'map') { 'xform' }")) 'Play-OfflineCoop prepares lab.ini for dm=map (apply xform, reset n, dm map) on both copies'
+    Assert-True ($playText.Contains("'^partner_dmmap; phase=([a-z_]+); cur=(\d+|none);'") -and $playText.Contains("'^partner_dmmap=failed'") -and
+        $playText.Contains('function Get-ClipName')) 'Play-OfflineCoop status shows the dm=map clip'
+    Assert-True ($playText.Contains("'^partner_dmmap=(released|abandoned);' -or `$line -match '^partner_stop;'") -and
+        $playText.Contains("'^partner_stage=changed; stage=[0-2];'") -and $playText.Contains("if (`$Matches[1] -eq 'failed') { 'FAILED' } elseif (`$Matches[1] -eq 'idle') { '' }")) 'Play-OfflineCoop clears the clip on stop/release/stage<3 and keeps FAILED through the summaries'
     Assert-True ($playText.Contains("'partner_input=net', 'partner_input_send=1'") -and $playText.Contains("'partner_recon=track'") -and
         $playText.Contains("'partner_input_correct_mm=3000'") -and $playText.Contains("'partner_recon_runaway=pin'")) 'Play-OfflineCoop prepares lab.ini for the input drive (correction explicit)'
     $ovInput = ConvertFrom-LabPartnerSettingArgs -Items @('partner_apply=input', 'partner_input=net', 'partner_input_send=1', 'partner_input_cam=sandbox',
@@ -349,6 +355,29 @@ try {
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_input_stick -Value '360:0' } '<0..359>:<0..100>' 'bad stick refused'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_input_correct_mm -Value 10001 } '0..10000' 'correct over max refused'
     Assert-Equal (ConvertTo-LabPartnerValue -Key partner_dm -Value probe) 'probe' 'partner_dm enum'
+    Assert-Equal (ConvertTo-LabPartnerValue -Key partner_dm -Value map) 'map' 'partner_dm=map'
+    Assert-Equal (ConvertTo-LabPartnerValue -Key partner_dm_map -Value '0,10,11,5,1,3,4,4,7,6,6,6') '0,10,11,5,1,3,4,4,7,6,6,6' 'partner_dm_map default table'
+    Assert-Equal (ConvertTo-LabPartnerValue -Key partner_dm_map -Value '12,12,12,12,12,12,12,12,12,12,12,12') '12,12,12,12,12,12,12,12,12,12,12,12' 'partner_dm_map up to 12'
+    foreach ($bad in @('0,10,11,5,1,3,4,4,7,6,6', '0,10,11,5,1,3,4,4,7,6,6,13', '0,10,11,5,1,3,4,4,7,6,6,01', '0,10,11,5,1,3,4,4,7,6,6,6,', '0, 10,11,5,1,3,4,4,7,6,6,6')) {
+        Assert-Throws { ConvertTo-LabPartnerValue -Key partner_dm_map -Value $bad } '12 comma-separated' "partner_dm_map '$bad' refused"
+    }
+    Assert-Equal (ConvertTo-LabPartnerValue -Key partner_dm_speed -Value '300:2600:5600') '300:2600:5600' 'partner_dm_speed default'
+    Assert-Equal (ConvertTo-LabPartnerValue -Key partner_dm_speed -Value '2000:10000:20000') '2000:10000:20000' 'partner_dm_speed upper bounds'
+    foreach ($bad in @('300:400:5600', '100:2600:5600', '0300:2600:5600', '300:2600', '300:2600:2800', '300:2600:20001', '2001:2600:5600')) {
+        Assert-Throws { ConvertTo-LabPartnerValue -Key partner_dm_speed -Value $bad } 'idle 200..2000' "partner_dm_speed '$bad' refused"
+    }
+    $ovMap = ConvertFrom-LabPartnerSettingArgs -Items @('partner_dm=map,partner_dm_map=0,12,11,5,1,3,4,4,2,6,6,6,guest:partner_dm_speed=300:1500:5600') -Role guest
+    Assert-Equal (@($ovMap.Keys | ForEach-Object { "$_=$($ovMap[$_])" }) -join ' ') 'partner_dm=map partner_dm_map=0,12,11,5,1,3,4,4,2,6,6,6 partner_dm_speed=300:1500:5600' '-PartnerSetting: a comma inside the dm=map table value'
+    $pjMap = ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ dm = 'map'; dm_map = '0,10,11,5,1,3,4,4,7,6,6,6'; dm_speed = '300:2600:5600' })
+    Assert-Equal "$($pjMap['partner_dm'])/$($pjMap['partner_dm_map'])/$($pjMap['partner_dm_speed'])" 'map/0,10,11,5,1,3,4,4,7,6,6,6/300:2600:5600' 'lab.json dm=map short names'
+    # GANI bound guard: the Lua table, its range check and the native bound agree (0..12, 13 entries).
+    $syncLua = [IO.File]::ReadAllText((Join-Path $projectRoot 'lua/coop/partner_sync.lua'))
+    $labHeader = [IO.File]::ReadAllText((Join-Path $projectRoot 'native/include/mgscoop/lab_config.hpp'))
+    Assert-True ($syncLua.Contains('integer(dg, 0, 12)') -and $labHeader.Contains('kPartnerDmGaniMax = 12')) 'GANI range: Lua integer(dg, 0, 12) and kPartnerDmGaniMax = 12'
+    $ganiTable = [regex]::Match($syncLua, 'local GANI = \{\[0\] = (?<body>[\s\S]*?)\}\r?\n')
+    Assert-True $ganiTable.Success 'partner_sync.lua defines the GANI table'
+    $ganiBody = $ganiTable.Groups['body'].Value
+    Assert-Equal "$([regex]::Matches($ganiBody, '\.\. "snapnon_').Count)/$([regex]::Matches($ganiBody, '"state[A-Za-z]+"').Count)" '11/2' 'GANI has 13 entries: 11 snapnon ganis and 2 state names'
     $ovInput = ConvertFrom-LabPartnerSettingArgs -Items @('partner_input=net', 'partner_input_holdlog=1', 'partner_dm=on') -Role host
     Assert-Equal (@($ovInput.Keys | ForEach-Object { "$_=$($ovInput[$_])" }) -join ' ') 'partner_input=net partner_input_holdlog=1 partner_dm=on' '-PartnerSetting: round 3 overrides'
     $pjInput = ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ input = 'net'; dm = 'probe'; look_gate = 0 })
@@ -733,19 +762,23 @@ try {
             @('apply=input input=net stick=180:100 cam=sandbox hold=none yaw=rot words=rp0 bits=0x6 correct=1500 isend=1 dm=probe lookgate=1 lookrecover=1',
               'apply=input input=net stick=180:100 cam=sandbox hold=none yaw=rot words=rp0 bits=0x6 correct=1500 isend=1 dm=probe lookgate=1 lookrecover=1'),
             @('dmplay=3 dm=on tap=0x2', 'dm=on tap=0x2 dmplay=3'), @('press=0x2:1200', 'press=0x2:1200'),
-            @('p218=1 padprobe=1 holdlog=0 dmstop=1', 'p218=1 padprobe=1 holdlog=0 dmstop=1'))) {
+            @('p218=1 padprobe=1 holdlog=0 dmstop=1', 'p218=1 padprobe=1 holdlog=0 dmstop=1'),
+            @('dm=map', 'dm=map'), @('dmplay=12', 'dmplay=12'), @('dmspeed=300:1500:5600 dm=map lookgate=1 dmmap=0,12,11,5,1,3,4,4,2,6,6,6', 'dm=map dmmap=0,12,11,5,1,3,4,4,2,6,6,6 dmspeed=300:1500:5600 lookgate=1'))) {
         Assert-Equal (ConvertTo-PartnerTriggerText -Text $case[0]) $case[1] "trigger grammar accepts '$($case[0])'"
     }
     Assert-True ((ConvertTo-PartnerTriggerText -Text 'stage=3 source=orbit apply=hybrid anim=mirror aset=qs reset=ac look=quiet probe=off census=1 parts=explicit mirror=on').Length + 1 -le 255) 'the longest classic canonical trigger fits the native 255 bytes'
     Assert-True ((ConvertTo-PartnerTriggerText -Text 'stage=3 source=net apply=input anim=off aset=qs reset=ac look=net input=net stick=359:100 cam=sandbox hold=none yaw=rotneg words=rhn bits=0xffffffff correct=10000 isend=1 padprobe=1 dm=probe lookgate=1 lookrecover=1').Length + 1 -le 255) 'a long round 3 trigger fits 255 bytes'
+    Assert-True ((ConvertTo-PartnerTriggerText -Text 'stage=3 source=net apply=xform reset=n anim=off input=off isend=0 look=net dm=map dmmap=12,12,12,12,12,12,12,12,12,12,12,12 dmspeed=2000:10000:20000').Length + 1 -le 255) 'a long dm=map trigger fits 255 bytes'
+    Assert-Equal (Get-PartnerTriggerExpectation -Canonical 'dm=map dmmap=0,10,11,5,1,3,4,4,7,6,6,6 dmspeed=300:2600:5600')['dm'] 'map' 'dm=map in the expected partner_stage line (dmmap/dmspeed are not part of it)'
     foreach ($bad in @('', '   ', 'STOP', 'Stage=1', 'stop stage=1', 'stage=4', 'stage=-1', 'stage=01', 'stage=1 stage=2', 'source=walk', 'apply=Warp',
             'speed=3', 'stage=1;source=net', "stage=1`nstop", 'stage=', 'stage=3 source=orbit apply=warp extra=1', "stage=1`u{e9}",
             'parts=implicit', 'parts=', 'mirror=off', 'Mirror=on', 'parts=explicit parts=explicit', 'mirror=on mirror=on', 'stop parts=explicit', 'mirror=on stop', 'stop stop',
             'move=warp apply=slot', 'apply=teleport', 'anim=on', 'aset=x', 'reset=b', 'look=ocelot', 'census=2', 'census', 'probe=on', 'stop census=1', 'look=net look=copy',
             'input=walk', 'cam=on', 'hold=mine', 'yaw=left', 'recon=on', 'align=151', 'align=-0', 'align=016', 'slot=both',
             'runaway=warp', 'wrap=on', 'place=0', 'place=1 place=1', 'words=xyz', 'words=rp', 'bits=0xZ', 'bits=0x123456789', 'correct=10001',
-            'stick=360:0', 'stick=180:101', 'stick=180', 'tap=2', 'press=0x2:49', 'press=0x2:5001', 'press=0x2:0100', 'press=0x2:01200', 'dmplay=10', 'dmstop=0', 'isend=2',
-            'dm=maybe', 'input=net input=off', 'tap=0x1 tap=0x2', 'stop input=net')) {
+            'stick=360:0', 'stick=180:101', 'stick=180', 'tap=2', 'press=0x2:49', 'press=0x2:5001', 'press=0x2:0100', 'press=0x2:01200', 'dmplay=13', 'dmstop=0', 'isend=2',
+            'dm=maybe', 'dmmap=0,10,11,5,1,3,4,4,7,6,6', 'dmmap=0,10,11,5,1,3,4,4,7,6,6,13', 'dmmap=0,10,11,5,1,3,4,4,7,6,6,06',
+            'dmspeed=300:400:5600', 'dmspeed=0300:2600:5600', 'dmspeed=300:2600', 'dm=map dm=on', 'input=net input=off', 'tap=0x1 tap=0x2', 'stop input=net')) {
         $shown = $bad -replace "`n", '\n'
         Assert-Throws { ConvertTo-PartnerTriggerText -Text $bad } '' "trigger grammar refuses '$shown'"
         Assert-True (-not (Test-PartnerTriggerText $bad)) "Test-PartnerTriggerText is false for '$shown'"
@@ -1109,6 +1142,31 @@ try {
         Assert-True ($trigger.Contains('apply=hybrid') -and $trigger.Contains('reset=n')) "$exp plan uses hybrid movement without Warp's per-tick resets"
     }
     Assert-Equal (@((Get-PartnerExperimentPlan -Experiment E0).Steps | Where-Object { $_.Kind -eq 'input' } | ForEach-Object { "$($_.Role):$($_.Value)" }) -join ',') 'host:w+a:6000,guest:w+a:6000' 'E0 plan walks both instances (the units rule is judged on both)'
+    # dm=map: D4 on the host (Quiet partner), D5 the same plan on the guest (Snake partner, local Quiet).
+    foreach ($exp in 'D4', 'D5') {
+        $plan = Get-PartnerExperimentPlan -Experiment $exp
+        $role = if ($exp -eq 'D4') { 'host' } else { 'guest' }
+        Assert-True ($plan.TimeoutSec -gt 0 -and $plan.Role -eq $role -and (Get-PartnerExperimentDefaultRole $exp) -eq $role) "$exp plan role $role"
+        $triggers = @($plan.Steps | Where-Object { $_.Kind -eq 'trigger' })
+        foreach ($s in $triggers) { Assert-True ((Test-PartnerTriggerText $s.Value) -and $s.Role -eq $role) "$exp plan trigger '$($s.Value)' is valid" }
+        Assert-Equal (@($triggers | ForEach-Object { $_.Value }) -join ' | ') 'stage=3 source=orbit apply=xform reset=n anim=off input=off dm=map dmspeed=300:2600:5600 | dmspeed=300:1500:5600 | dmspeed=300:1000:2000 | dmspeed=300:2600:5600 | dm=off' "$exp plan: walk, run, dash, stances, off"
+        Assert-Equal @($plan.Steps | Where-Object { $_.Kind -eq 'screens' }).Count 5 "$exp plan takes 5 screenshots"
+    }
+    $d4 = (@('partner_dm=patched; rva=0x1198e25; old=440f44c7; new=0f1f4000',
+        'partner_dmmap=table; cells=0,10,11,5,1,3,4,4,7,6,6,6; speeds=300:2600:5600; reason=start',
+        'partner_dmmap=switch; step=play; from=none; to=10; stance=0; move=1; speed_mmps=2351; via=speed; stance_via=flags; wait_ms=0',
+        'partner_dmmap=playing; gani=10; after_ms=33',
+        'partner_dmmap; phase=playing; cur=10; want=10; stance=0; move=1; via=speed; speed_mmps=2351; switches=1; plays=1; stops=0; deferrals=0; timeouts=0; unconsumed=0; lost=0; adopted=0; bad=0x0; failures=0; deferred=none',
+        'partner_dmmap=released; result=stopped; to=off; ms=33',
+        'partner_dm=reverted; reason=trigger') -join "`r`n")
+    Assert-Verdict (Get-PV D4 host $d4) 'PASS' '' 'D4 dm=map PASS'
+    Assert-Verdict (Get-PV D5 guest $d4) 'PASS' '' 'D5 dm=map PASS on the guest'
+    Assert-Verdict (Get-PV D4 host ($d4 + "`r`npartner_dmmap=bad_gani; gani=11; reason=ended; strikes=2")) 'FAIL' 'bad_gani; gani=11' 'D4 bad gani fails'
+    Assert-Verdict (Get-PV D4 host ($d4 + "`r`npartner_dmmap=failed; failures=5; last=unconsumed")) 'FAIL' 'partner_dmmap=failed' 'D4 failed mapper fails'
+    Assert-Verdict (Get-PV D4 host ($d4 + "`r`npartner_dm=unconsumed; ms=2000")) 'FAIL' 'partner_dm=unconsumed' 'D4 unconsumed fails'
+    $timeouts = (1..4 | ForEach-Object { 'partner_dmmap=stop_timeout; gani=10; ms=1023; failures=1; backoff_ms=1000; reason=stop_timeout' }) -join "`r`n"
+    Assert-Verdict (Get-PV D4 host ($d4 + "`r`n" + $timeouts)) 'FAIL' 'stop_timeout x4' 'D4 repeated stop timeouts fail'
+    Assert-Verdict (Get-PV D4 host (Remove-Lines $d4 'partner_dmmap=released')) 'INCOMPLETE' 'partner_dmmap=released' 'D4 waits for the release'
 
     # Scripts on a fixture run (no game): Test-PartnerSpike.ps1, Set-PartnerTrigger.ps1 and the smoke's offline refusal.
     $pwshExe = (Get-Process -Id $PID).Path

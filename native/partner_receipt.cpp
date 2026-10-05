@@ -334,6 +334,12 @@ bool ParseTrigger(const char* text, std::size_t size, Trigger& out) noexcept {
         } else if (EqualsToken(token, length, "dmstop=1")) {
             if (result.dmstop) return false;
             result.dmstop = true;
+        } else if (StartsToken(token, length, "dmmap=", value_at)) {
+            if (result.has_dmmap || !ParsePartnerDmMap(token + value_at, length - value_at, result.dmmap)) return false;
+            result.has_dmmap = true;
+        } else if (StartsToken(token, length, "dmspeed=", value_at)) {
+            if (result.has_dmspeed || !ParsePartnerDmSpeeds(token + value_at, length - value_at, result.dmspeed)) return false;
+            result.has_dmspeed = true;
         } else if (StartsToken(token, length, "lookgate=", value_at)) {
             if (result.has_lookgate || !ParseFlag(token + value_at, length - value_at, result.lookgate)) return false;
             result.has_lookgate = true;

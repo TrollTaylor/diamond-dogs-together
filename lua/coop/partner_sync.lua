@@ -13,10 +13,12 @@ do
     -- Round 3 direct motion (docs/partner-anim-appearance.md "Round 3", part D).
     -- GANI[index] selects the gani for the op's 14th reply value; these ganis
     -- are resident in player2_resident.mtar (path hashes verified in research).
+    -- 10..12 are the stand walk, run and jog loops (dm=map, docs/partner-anim-appearance.md).
     local DMP = "/Assets/tpp/motion/SI_game/fani/bodies/snap/snapnon/"
     local GANI = {[0] = DMP .. "snapnon_s_idl_l.gani", DMP .. "snapnon_q_idl_l.gani", DMP .. "snapnon_c_idl_l.gani",
         DMP .. "snapnon_q_wk_lp_l.gani", DMP .. "snapnon_q_rn_lp_l.gani", DMP .. "snapnon_s_dh_lp.gani",
-        DMP .. "snapnon_c_fst_lp_r.gani", DMP .. "snapnon_p_idl.gani", "stateSquatIdleLeft", "stateStandIdleLeft"}
+        DMP .. "snapnon_c_fst_lp_r.gani", DMP .. "snapnon_p_idl.gani", "stateSquatIdleLeft", "stateStandIdleLeft",
+        DMP .. "snapnon_s_wk_lp_vr1_l.gani", DMP .. "snapnon_s_rn_lp_vr1_l.gani", DMP .. "snapnon_s_jg_lp_vr1.gani"}
     local function receipt(source)
         local chunk = loadstring(source)
         if type(chunk) ~= "function" then return nil end
@@ -144,10 +146,10 @@ do
         if op % 64 >= 32 and call(api.mirror, "Player.SetOtherInstanceIsForMirrorMode", true) then note("event=mirror_on") end
         -- MIRROR_OFF (extension): native ends the F3c diagnostic after at most 10 s.
         if op % 128 >= 64 and call(api.mirror, "Player.SetOtherInstanceIsForMirrorMode", false) then note("event=mirror_off") end
-        -- DM_PLAY (128) / DM_STOP (256): the gani is the 14th reply value (0..9);
+        -- DM_PLAY (128) / DM_STOP (256): the gani is the 14th reply value (0..12; partner::max_gani);
         -- after SET_PARTS, before WARP. Needs the native comparator patch.
         if op % 256 >= 128 then
-            if integer(dg, 0, 9) and GANI[dg] ~= nil then
+            if integer(dg, 0, 12) and GANI[dg] ~= nil then
                 if call(api.dmPlay, "Player.RequestToPlayDirectMotion", {{"coopLoco", R}, {GANI[dg], true, "", "", "", true}}) then
                     note("event=dm_play;gani=" .. dg)
                 end

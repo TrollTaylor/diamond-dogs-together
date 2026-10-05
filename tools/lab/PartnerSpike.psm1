@@ -22,7 +22,7 @@ $script:PartnerMaxEvidence = 60
 # (0x9CEC0E..0x9CEC2C) cannot mask or undo the stance; run them after M1.
 $script:PartnerA1Trigger = 'stage=3 source=fixed apply=hybrid reset=n anim=mirror aset=q'
 $script:PartnerA3Trigger = 'stage=3 source=fixed apply=hybrid reset=n anim=mirror aset=qs'
-$script:PartnerExperiments = @('E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E8', 'A0', 'A1', 'A3', 'M1', 'N1', 'B1', 'B4', 'C1', 'L1', 'L2', 'L3', 'L4', 'I0', 'I1', 'I2', 'I3', 'I3x', 'I4', 'I5', 'I6', 'I7', 'D0', 'D1', 'D2', 'D3')
+$script:PartnerExperiments = @('E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E8', 'A0', 'A1', 'A3', 'M1', 'N1', 'B1', 'B4', 'C1', 'L1', 'L2', 'L3', 'L4', 'I0', 'I1', 'I2', 'I3', 'I3x', 'I4', 'I5', 'I6', 'I7', 'D0', 'D1', 'D2', 'D3', 'D4', 'D5')
 
 # ---------------------------------------------------------------------------
 # Trigger grammar (2.1)
@@ -38,11 +38,13 @@ $script:PartnerTriggerKeys = [ordered]@{
     # Round 3 (docs/partner-anim-appearance.md "Round 3"): apply gains input;
     # input/cam/hold/yaw/dm are enums; stick/tap/press/words/bits/correct/isend/
     # p218/padprobe/holdlog/dmplay/dmstop/lookgate/lookrecover are value keys.
+    # dm=map (docs/partner-anim-appearance.md "D-map"): dm gains map; dmmap and
+    # dmspeed are value keys (the clip table and the speed bands).
     stage = @('0', '1', '2', '3'); source = @('fixed', 'orbit', 'net'); apply = @('warp', 'slot', 'both', 'xform', 'hybrid', 'input')
     anim = @('off', 'mirror', 'net'); aset = @('q', 's', 'qs', 'r'); reset = @('n', 'a', 'c', 'ac'); look = @('copy', 'net', 'quiet', 'snake')
     probe = @('ps', 'off'); census = @('1'); parts = @('explicit'); mirror = @('on')
     input = @('off', 'pass', 'neutral', 'stick', 'net'); cam = @('off', 'detect', 'sandbox'); hold = @('none', 'pass', 'own', 'net')
-    yaw = @('rot', 'rotneg', 'none'); dm = @('off', 'probe', 'on'); dmstop = @('1')
+    yaw = @('rot', 'rotneg', 'none'); dm = @('off', 'probe', 'on', 'map'); dmstop = @('1')
     # Round 4 (docs/partner-anim-appearance.md "Round 4"): reconciliation and the
     # wrap census; place=1 is a one-shot (a new placement).
     recon = @('off', 'track', 'pin'); slot = @('remote', 'body', 'none'); runaway = @('pin', 'disarm', 'off')
@@ -60,18 +62,21 @@ $script:PartnerTriggerValueKeys = [ordered]@{
     p218 = { param($v) $v -ceq '0' -or $v -ceq '1' }
     padprobe = { param($v) $v -ceq '0' -or $v -ceq '1' }
     holdlog = { param($v) $v -ceq '0' -or $v -ceq '1' }
-    dmplay = { param($v) $v -cmatch '^[0-9]$' }
+    dmplay = { param($v) $v -cmatch '^(0|[1-9]|1[0-2])$' }
+    dmmap = { param($v) $v -cmatch '^((0|[1-9]|1[0-2]),){11}(0|[1-9]|1[0-2])$' }
+    # As the native ParsePartnerDmSpeeds: idle 200..2000, run idle+300..10000, dash run+300..20000.
+    dmspeed = { param($v) if ($v -cnotmatch '^([1-9][0-9]{2,4}):([1-9][0-9]{2,4}):([1-9][0-9]{2,4})$') { return $false } $p = @($v.Split(':') | ForEach-Object { [int]$_ }); $p[0] -ge 200 -and $p[0] -le 2000 -and $p[1] -ge $p[0] + 300 -and $p[1] -le 10000 -and $p[2] -ge $p[1] + 300 -and $p[2] -le 20000 }
     lookgate = { param($v) $v -ceq '0' -or $v -ceq '1' }
     lookrecover = { param($v) $v -ceq '0' -or $v -ceq '1' }
     align = { param($v) if ($v -cnotmatch '^(0|-?[1-9][0-9]{0,2})$') { return $false } [int]$v -ge -50 -and [int]$v -le 150 }
 }
 # Canonical write order (the existing keys, then the round 3 keys).
 $script:PartnerTriggerOrder = @('stage', 'source', 'apply', 'anim', 'aset', 'reset', 'look', 'probe', 'input', 'stick', 'cam',
-    'hold', 'yaw', 'words', 'bits', 'correct', 'isend', 'p218', 'padprobe', 'holdlog', 'dm', 'lookgate', 'lookrecover',
+    'hold', 'yaw', 'words', 'bits', 'correct', 'isend', 'p218', 'padprobe', 'holdlog', 'dm', 'dmmap', 'dmspeed', 'lookgate', 'lookrecover',
     'recon', 'align', 'slot', 'runaway', 'wrap',
     'census', 'parts', 'mirror', 'tap', 'press', 'dmplay', 'dmstop', 'place')
-$script:PartnerTriggerUsage = 'stage=0..3 source=fixed|orbit|net apply|move=warp|slot|both|xform|hybrid|input anim=off|mirror|net aset=q|s|qs|r reset=n|a|c|ac look=copy|net|quiet|snake probe=ps|off input=off|pass|neutral|stick|net stick=<0..359>:<0..100> cam=off|detect|sandbox hold=none|pass|own|net yaw=rot|rotneg|none words=<3 of 0prhn> bits=0x<hex> correct=<0..10000> isend=0|1 p218=0|1 padprobe=0|1 holdlog=0|1 dm=off|probe|on dmplay=<0..9> dmstop=1 lookgate=0|1 lookrecover=0|1 recon=off|track|pin align=<-50..150> slot=remote|body|none runaway=pin|disarm|off wrap=off|census|window census=1 parts=explicit mirror=on tap=0x<hex> press=0x<hex>:<50..5000> place=1, or stop alone'
-$script:PartnerTriggerTokenPattern = '^(stage|source|apply|move|anim|aset|reset|look|probe|census|parts|mirror|input|stick|cam|hold|yaw|words|bits|correct|isend|p218|padprobe|holdlog|dm|dmplay|dmstop|tap|press|lookgate|lookrecover|recon|align|slot|runaway|wrap|place)=(.*)$'
+$script:PartnerTriggerUsage = 'stage=0..3 source=fixed|orbit|net apply|move=warp|slot|both|xform|hybrid|input anim=off|mirror|net aset=q|s|qs|r reset=n|a|c|ac look=copy|net|quiet|snake probe=ps|off input=off|pass|neutral|stick|net stick=<0..359>:<0..100> cam=off|detect|sandbox hold=none|pass|own|net yaw=rot|rotneg|none words=<3 of 0prhn> bits=0x<hex> correct=<0..10000> isend=0|1 p218=0|1 padprobe=0|1 holdlog=0|1 dm=off|probe|on|map dmmap=<12 x 0..12> dmspeed=<idle>:<run>:<dash> dmplay=<0..12> dmstop=1 lookgate=0|1 lookrecover=0|1 recon=off|track|pin align=<-50..150> slot=remote|body|none runaway=pin|disarm|off wrap=off|census|window census=1 parts=explicit mirror=on tap=0x<hex> press=0x<hex>:<50..5000> place=1, or stop alone'
+$script:PartnerTriggerTokenPattern = '^(stage|source|apply|move|anim|aset|reset|look|probe|census|parts|mirror|input|stick|cam|hold|yaw|words|bits|correct|isend|p218|padprobe|holdlog|dm|dmmap|dmspeed|dmplay|dmstop|tap|press|lookgate|lookrecover|recon|align|slot|runaway|wrap|place)=(.*)$'
 
 function ConvertTo-PartnerTriggerText {
     # Canonical trigger line (without the newline): 'stop', or any of the keys
@@ -1368,7 +1373,7 @@ function Get-PartnerSpikeVerdict {
     # (from the run.json offsets); $Safety is Get-InstanceSafety's result (E0);
     # $Alive is $true/$false or $null when not checked.
     param(
-        [Parameter(Mandatory)][ValidateSet('E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E8', 'A0', 'A1', 'A3', 'M1', 'N1', 'B1', 'B4', 'C1', 'L1', 'L2', 'L3', 'L4', 'I0', 'I1', 'I2', 'I3', 'I3x', 'I4', 'I5', 'I6', 'I7', 'D0', 'D1', 'D2', 'D3')][string]$Experiment,
+        [Parameter(Mandatory)][ValidateSet('E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E8', 'A0', 'A1', 'A3', 'M1', 'N1', 'B1', 'B4', 'C1', 'L1', 'L2', 'L3', 'L4', 'I0', 'I1', 'I2', 'I3', 'I3x', 'I4', 'I5', 'I6', 'I7', 'D0', 'D1', 'D2', 'D3', 'D4', 'D5')][string]$Experiment,
         [Parameter(Mandatory)][ValidateSet('host', 'guest')][string]$Role,
         [AllowNull()][AllowEmptyString()][string]$ObserverLog = '',
         [AllowNull()][AllowEmptyString()][string]$EarlyLog = '',
@@ -1430,10 +1435,11 @@ function Merge-PartnerSpikeVerdict {
 
 function Get-PartnerExperimentDefaultRole {
     # E0, E6, N1 and B4 are judged on both instances, C1 on the guest (it plays
-    # Quiet), the rest on the host.
+    # Quiet), D5 on the guest (dm=map with a Snake partner and a local Quiet),
+    # the rest on the host.
     param([Parameter(Mandatory)][string]$Experiment)
     if ($Experiment -in @('E0', 'E6', 'N1', 'B4', 'L1', 'L2', 'L4', 'I6')) { return 'both' }
-    if ($Experiment -eq 'C1') { return 'guest' }
+    if ($Experiment -in @('C1', 'D5')) { return 'guest' }
     return 'host'
 }
 
@@ -1441,7 +1447,7 @@ function Get-PartnerExperimentPlan {
     # Operator steps per experiment for Invoke-PartnerExperiment.ps1: triggers
     # per role, keyboard input (Send-LabInput key specs), screenshots and the
     # default verdict timeout. Section 3 of the spike plan.
-    param([Parameter(Mandatory)][ValidateSet('E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E8', 'A0', 'A1', 'A3', 'M1', 'N1', 'B1', 'B4', 'C1', 'L1', 'L2', 'L3', 'L4', 'I0', 'I1', 'I2', 'I3', 'I3x', 'I4', 'I5', 'I6', 'I7', 'D0', 'D1', 'D2', 'D3')][string]$Experiment)
+    param([Parameter(Mandatory)][ValidateSet('E0', 'E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E8', 'A0', 'A1', 'A3', 'M1', 'N1', 'B1', 'B4', 'C1', 'L1', 'L2', 'L3', 'L4', 'I0', 'I1', 'I2', 'I3', 'I3x', 'I4', 'I5', 'I6', 'I7', 'D0', 'D1', 'D2', 'D3', 'D4', 'D5')][string]$Experiment)
     $step = { param($Kind, $Role, $Value, $WaitSec) [pscustomobject]@{ Kind = $Kind; Role = $Role; Value = $Value; WaitSec = $WaitSec } }
     $plan = switch ($Experiment) {
         'E0' { @{ Timeout = 420; Steps = @((& $step 'input' 'host' 'w+a:6000' 2), (& $step 'input' 'guest' 'w+a:6000' 2), (& $step 'screens' 'both' 'e0' 0)) } }
@@ -1477,6 +1483,21 @@ function Get-PartnerExperimentPlan {
         'D1' { @{ Timeout = 60; Steps = @((& $step 'trigger' 'host' 'input=off apply=xform reset=n dm=on dmplay=1' 5), (& $step 'screens' 'host' 'd1' 0)) } }
         'D2' { @{ Timeout = 60; Steps = @((& $step 'trigger' 'host' 'source=orbit dmplay=3' 5), (& $step 'trigger' 'host' 'dmstop=1' 2), (& $step 'trigger' 'host' 'dmplay=2' 3), (& $step 'screens' 'host' 'd2' 0)) } }
         'D3' { @{ Timeout = 60; Steps = @((& $step 'trigger' 'host' 'dm=off' 3), (& $step 'screens' 'host' 'd3' 0)) } }
+        { $_ -in @('D4', 'D5') } {
+            # dm=map on one role (D4 host: Quiet partner, local Snake; D5 guest:
+            # Snake partner, local Quiet): the orbit partner walks, runs and
+            # dashes through the speed bands, then follows the local stance.
+            $r = if ($Experiment -eq 'D4') { 'host' } else { 'guest' }
+            $p = $Experiment.ToLower()
+            @{ Timeout = 120; Steps = @(
+                    (& $step 'trigger' $r 'stage=3 source=orbit apply=xform reset=n anim=off input=off dm=map dmspeed=300:2600:5600' 6),
+                    (& $step 'screens' $r "$p-walk" 0),
+                    (& $step 'trigger' $r 'dmspeed=300:1500:5600' 6), (& $step 'screens' $r "$p-run" 0),
+                    (& $step 'trigger' $r 'dmspeed=300:1000:2000' 6), (& $step 'screens' $r "$p-dash" 0),
+                    (& $step 'trigger' $r 'dmspeed=300:2600:5600' 2),
+                    (& $step 'manual' $r "On the $r window: crouch 6 s, then prone 6 s, then stand." 14), (& $step 'screens' $r "$p-stances" 0),
+                    (& $step 'trigger' $r 'dm=off' 3), (& $step 'screens' $r "$p-off" 0)) }
+        }
     }
     [pscustomobject]@{ Experiment = $Experiment; Role = (Get-PartnerExperimentDefaultRole -Experiment $Experiment); TimeoutSec = $plan.Timeout; Steps = $plan.Steps }
 }
@@ -1546,6 +1567,24 @@ function Invoke-PartnerRound3 {
             if (& $has 'partner_dm=refused; reason=cam_connect') { Add-PartnerItem $Check.Notes 'partner_dm=refused; reason=cam_connect (host camera connect set: run D1 in free roam)' }
             if (& $has 'partner_dm=patched') { Add-PartnerMatch $Check 'partner_dm=patched' } else { Add-PartnerItem $Check.Missing 'partner_dm=patched (dm=on)' }
             Add-PartnerItem $Check.Notes 'manual: the partner plays the requested gani (D1 crouch idle; D2 crouch-walk loop then prone); partner_dm keeps cam1f0=0x0 cam200=0 and the host camera does not jump; D3 reverts cleanly with 0 AV'
+        }
+        '^D[45]$' {
+            # dm=map: the mapper must patch, log its table, switch and confirm
+            # clips, release and revert; any unconsumed play, conflict, failed
+            # mapper, bad gani or repeated stop timeout fails the run.
+            if (& $has 'partner_dm=unconsumed') { Add-PartnerItem $Check.Failed 'partner_dm=unconsumed (a mapped gani was never consumed)' }
+            if (& $has 'partner_dm=conflict') { Add-PartnerItem $Check.Failed 'partner_dm=conflict (host DM or camera connect while the partner DM was active)' }
+            if (& $has 'partner_dmmap=failed') { Add-PartnerItem $Check.Failed 'partner_dmmap=failed (five failed requests in a row)' }
+            foreach ($bad in @(Select-PartnerEntry -Context $Context -Kind 'partner_dmmap=bad_gani')) {
+                Add-PartnerItem $Check.Failed "partner_dmmap=bad_gani; gani=$(Get-PartnerField $bad 'gani') (reason=$(Get-PartnerField $bad 'reason'): not a usable loop; try another cell value via dmmap=)"
+            }
+            $timeouts = @(Select-PartnerEntry -Context $Context -Kind 'partner_dmmap=stop_timeout').Count
+            if ($timeouts -gt 3) { Add-PartnerItem $Check.Failed "partner_dmmap=stop_timeout x$timeouts (stops are not confirmed)" }
+            foreach ($kind in @('partner_dm=patched', 'partner_dmmap=table', 'partner_dmmap=switch', 'partner_dmmap=playing', 'partner_dmmap=released', 'partner_dm=reverted')) {
+                if (& $has $kind) { Add-PartnerMatch $Check $kind } else { Add-PartnerItem $Check.Missing $kind }
+            }
+            Add-PartnerItem $Check.Notes 'manual: the strides match the travel (walk, run, dash); squat walk and crawl appear with the local stance; no camera jump; 0 crash_probe=av'
+            if ($Experiment -eq 'D5') { Add-PartnerItem $Check.Notes 'manual (D5): the Snake partner animates with a local Quiet (the guest side has never played DM before)' }
         }
     }
 }

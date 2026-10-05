@@ -12,11 +12,13 @@ look=copy|net|quiet|snake probe=ps|off; the round 3 keys (docs/partner-anim-
 appearance.md "Round 3") input=off|pass|neutral|stick|net stick=<0..359>:<0..100>
 cam=off|detect|sandbox hold=none|pass yaw=rot|rotneg|none words=<3 of 0prhn>
 bits=0x<hex> correct=<0..10000> isend=0|1 p218=0|1 padprobe=0|1 holdlog=0|1
-dm=off|probe|on lookgate=0|1 lookrecover=0|1; and the one-shots census=1
+dm=off|probe|on|map dmmap=<12 x 0..12> dmspeed=<idle>:<run>:<dash>
+lookgate=0|1 lookrecover=0|1; and the one-shots census=1
 (component census), parts=explicit (op 16: re-apply the look; with look=copy
 the local look, F3b), mirror=on (op 32, mirror diagnostic), tap=0x<hex>,
-press=0x<hex>:<50..5000>, dmplay=<0..9> and dmstop=1, each at most once,
-separated by blanks. parts/mirror/dmplay act only at stage >= 1; tap/press
+press=0x<hex>:<50..5000>, dmplay=<0..12> and dmstop=1, each at most once,
+separated by blanks. parts/mirror/dmplay act only at stage >= 1 (dmplay and
+dmstop are refused while dm=map owns the direct motion); tap/press
 only while the input window is armed and within the mask; p218 needs lab.ini
 partner_input_p218_allow=1. It is written in canonical form (one ASCII line,
 at most 255 bytes with the newline) to a temporary file in the instance's
@@ -57,6 +59,8 @@ pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role host -Text 'stage=3 source=fix
 pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role both -Text 'stage=3 source=net apply=input input=net isend=1 cam=sandbox hold=own words=hpr bits=0x2200006 recon=track look=net'
 pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role host -Text 'wrap=census'
 pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role host -Text 'dm=on dmplay=1'
+pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role host -Text 'stage=3 source=orbit apply=xform reset=n anim=off input=off dm=map'
+pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role host -Text 'dm=map dmmap=0,12,11,5,1,3,4,4,2,6,6,6'
 pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role host -Text stop
 #>
 [CmdletBinding(SupportsShouldProcess)]
