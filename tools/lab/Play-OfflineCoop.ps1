@@ -57,8 +57,11 @@ param(
     # Start with the round 2 native paths on (smooth movement and stance
     # sync) instead of the input drive.
     [switch]$Experimental,
-    # Start with the proven Warp movement (input off) instead of the input drive.
-    [switch]$ProvenWarp
+    # Start with the proven Warp movement (input off). This is the default again
+    # (round 4 live: the input drive does not start locomotion yet); kept for compatibility.
+    [switch]$ProvenWarp,
+    # Start with the experimental input drive (round 4) instead of the proven Warp movement.
+    [switch]$InputDrive
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -211,7 +214,7 @@ function Format-Role([string]$role) {
 # The partner settings: look net always. Movement (round 4): the input drive
 # unless -ProvenWarp or -Experimental; [I] / [P] / [W] / [M] / [A] switch,
 # [R] re-sends. Every key sends the whole line to both copies.
-$startMove = if ($Experimental) { 'hybrid' } elseif ($ProvenWarp) { 'warp' } else { 'input' }
+$startMove = if ($Experimental) { 'hybrid' } elseif ($InputDrive) { 'input' } else { 'warp' }
 $experiment = [ordered]@{ Move = $startMove; Anim = $(if ($Experimental) { 'net' } else { 'off' }); Recon = 'track' }
 # The input drive (both copies): the remote pad drives the partner's real
 # locomotion; hold own (prone), words hpr (stance taps), keyboard dash and walk.
@@ -233,8 +236,8 @@ $started = $false
 try {
     # ------------------------------------------------------------- prepare
     $mode = if ($Experimental) { 'smooth movement + stance sync ON (-Experimental)' }
-            elseif ($ProvenWarp) { 'proven Warp movement (-ProvenWarp); [I] turns the input drive on' }
-            else { 'INPUT DRIVE (round 4); [W] falls back to the proven Warp movement' }
+            elseif ($InputDrive) { 'INPUT DRIVE (experimental, -InputDrive); [W] falls back to the proven Warp movement' }
+            else { 'proven Warp movement (default); [I] tries the experimental input drive' }
     Write-Step "Preparing both game copies (offline, partner sync on, look net; $mode)"
     $partnerSettings = @('partner_stage=3', 'partner_source=net', 'partner_look=net', "partner_apply=$($experiment.Move)", "partner_anim=$($experiment.Anim)")
     if ($Experimental) { $partnerSettings += @('partner_aset=qs', 'partner_reset=n') }

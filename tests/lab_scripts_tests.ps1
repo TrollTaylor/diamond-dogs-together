@@ -325,7 +325,7 @@ try {
     # The status line reads the effective recon= and the input pin / stance fixes.
     Assert-True ($playText.Contains('recon=([a-z]+); err_mm=') -and $playText.Contains('input_pin=(\d); fixes=(\d+)')) 'Play-OfflineCoop status parses recon=/input_pin=/fixes='
     Assert-True ($playText.Contains("'^partner_recon=runaway;.*action=(pin|disarm)'")) 'Play-OfflineCoop: RUNAWAY only for pin/disarm'
-    Assert-True ($playText.Contains("`$startMove = if (`$Experimental) { 'hybrid' } elseif (`$ProvenWarp) { 'warp' } else { 'input' }")) 'Play-OfflineCoop starts with the input drive unless -ProvenWarp/-Experimental'
+    Assert-True ($playText.Contains("`$startMove = if (`$Experimental) { 'hybrid' } elseif (`$InputDrive) { 'input' } else { 'warp' }")) 'Play-OfflineCoop starts with the proven Warp unless -InputDrive/-Experimental (round 4 live)'
     Assert-True ($playText.Contains("'I' {") -and $playText.Contains("'W' {") -and $playText.Contains("'P' {")) 'Play-OfflineCoop defines [I], [W] and [P]'
     Assert-True ($playText.Contains("'partner_input=net', 'partner_input_send=1'") -and $playText.Contains("'partner_recon=track'") -and
         $playText.Contains("'partner_input_correct_mm=3000'") -and $playText.Contains("'partner_recon_runaway=pin'")) 'Play-OfflineCoop prepares lab.ini for the input drive (correction explicit)'

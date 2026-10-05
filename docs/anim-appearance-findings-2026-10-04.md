@@ -111,3 +111,18 @@ Next work (round 4):
 - Round 4 (reconciliation, `words=hpr`, `hold=own`, the key-manager stubs and
   the wrap census) is in [partner-anim-appearance.md](partner-anim-appearance.md),
   section "Round 4".
+
+## Live round 4 (merged wp/partner-anim4): results
+
+| Step | Result |
+|---|---|
+| Startup placement | **PASS, both.** `partner_recon=place; reason=first; err_mm=0`, then `placed ok=1`. Armed `mode=net recon=track`; partner idle (act=1). No stuck state. |
+| R1, idle | err_mm=0, snaps=0. **Stance desync:** `partner_recon=stance_fix; remote=2; body=1; via=tap` repeats every ~2 s (fixes=21..26). The injected stance taps do not change the partner's stance. |
+| R2, tracking | err_mm ≤ 267, snaps=0, **but locomotion never starts**: act stays 1, v_free_mmps≈0, and `partner_recon=runaway; remote=moving ... action=pin` slides the body by position. The guest's input DID arrive (11 lines: held=0x200000, ly=-1000, mag=1000). |
+| Fixed stick (R0) | **Regression vs round 3:** with ly=-1000 mag=1000 delivered, the partner stays act=1, speed 0. |
+| wrap=census | Block-1 update calls outside the 0x9C2B51 window: `svc28` (UpdateTree service slot +0x28, sub-phases 0..6, mask 0x7F) **420 calls/s**, plus `walk7` (phase 7) 60/s. |
+| wrap=window | Only walk7 gets wrapped (`walk7=60,60,0,60`). svc28 stays unwrapped (`420,0,0,0`), presumably because those calls run on another (job) thread where swapping the shared PP would race. The partner is still idle. |
+
+Revised understanding: round 3's "locomotion" only happened because the partner had already entered a moving state through the host-input leak. The idle-to-move transition (and probably stance toggles) run in the svc28 sub-phases, which read the real pad, outside our window. Round 4 sealed the leak, so nothing starts the partner moving. The in-window consumer only continues an existing movement.
+
+Next (round 5): give instance 1 its own input in the svc28 sub-phases without swapping the shared PP across threads. For example, redirect the PP getters per caller or per thread for block-1 contexts (thread-local "current id" set by wrapping the per-id dispatch of the block-1 nodes inside 0xBF6290/0xBF5F10), or hook the specific idle-to-move and stance-toggle readers. Until then, `Play-OfflineCoop` defaults back to the proven Warp movement (`-InputDrive` or [I] opt in).
