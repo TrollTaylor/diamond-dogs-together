@@ -153,11 +153,13 @@ function ConvertTo-FriendRoleName {
 function Get-FriendOnlineArchiveReason {
     # Pure: why a managed file left by the abandoned online route is archived
     # as *.online-old-<time> on install (never restored), or $null to keep it.
-    # $Name: lab.ini, coop.ini, client-host.txt or script-observe.enabled.
+    # $Name: lab.ini, coop.ini, client-host.txt, script-observe.enabled or
+    # link-secret.txt (never online: always set aside).
     param([Parameter(Mandatory)][string]$Name, [AllowNull()][AllowEmptyString()][string]$Text)
     if ($null -eq $Text) { return $null }
     switch ($Name) {
         'client-host.txt' { return 'online join target' }
+        'link-secret.txt' { return $null }
         'script-observe.enabled' {
             if ($Text.Trim() -cin @('host-v3', 'client-v1')) { return 'online role marker' }
             return $null
@@ -509,6 +511,26 @@ function Test-CoopProcessAlive {
     $want = [DateTime]::MinValue
     if (![DateTime]::TryParse($StartUtc, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind, [ref]$want)) { return $true }
     try { return [Math]::Abs(($p.StartTime.ToUniversalTime() - $want.ToUniversalTime()).TotalSeconds) -lt 1 } catch { return $true }
+}
+
+function Test-CoopPlaySessionLive {
+    # True when play-session.json is active and its launcher window (pid and
+    # start time) or its helper still runs: that session is in use, not a
+    # leftover of a crash. The calling process itself never counts.
+    param([Parameter(Mandatory)][string]$GameRoot)
+    $s = Read-CoopPlaySession -GameRoot $GameRoot
+    if (!$s -or [string](Get-FriendProperty $s 'state' '') -ne 'active') { return $false }
+    $launcher = [int](Get-FriendProperty $s 'launcher_pid' 0)
+    if ($launcher -ne $PID -and (Test-CoopProcessAlive -Id $launcher -StartUtc ([string](Get-FriendProperty $s 'launcher_start_utc' '')))) { return $true }
+    $watchdog = [int](Get-FriendProperty $s 'watchdog_pid' 0)
+    return ($watchdog -ne $PID -and (Test-CoopProcessAlive -Id $watchdog -StartUtc ([string](Get-FriendProperty $s 'watchdog_start_utc' ''))))
+}
+
+function Get-CoopProcessStartUtc {
+    # The start time of process $Id as round-trip UTC text, or '' (gone or denied).
+    param([int]$Id)
+    if ($Id -le 0) { return '' }
+    try { return (Get-Process -Id $Id -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o') } catch { return '' }
 }
 
 function Invoke-CoopUpnp {

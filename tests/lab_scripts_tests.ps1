@@ -331,7 +331,11 @@ try {
     Assert-True ($coopPlayText.Contains("'^partner_recon=runaway;.*action=(pin|disarm)'")) 'partner-details reader: RUNAWAY only for pin/disarm'
     Assert-True ($playText.Contains("`$startMove = if (`$Experimental) { 'hybrid' } elseif (`$InputDrive) { 'input' } elseif (`$ProvenWarp) { 'warp' } else { 'map' }")) 'Play-OfflineCoop starts with the animated partner (dm=map, live pass 2026-10-05) unless -InputDrive/-Experimental/-ProvenWarp'
     Assert-True ($playText.Contains("'I' {") -and $playText.Contains("'W' {") -and $playText.Contains("'P' {") -and $playText.Contains("'D' {")) 'Play-OfflineCoop defines [I], [W], [P] and [D]'
-    Assert-True ($playText.Contains('$playDefaults = Get-PlayPartnerDefaults') -and $playText.Contains("if (`$experiment.Move -eq 'map') {")) 'Play-OfflineCoop prepares lab.ini for dm=map from Get-PlayPartnerDefaults on both copies'
+    Assert-True ($playText.Contains("if (`$experiment.Move -eq 'map') {") -and
+        $playText.Contains("`$partnerSettings = @('partner_stage=3', 'partner_source=net', 'partner_look=net', 'partner_apply=xform', 'partner_anim=off', 'partner_reset=n', 'partner_dm=map')") -and
+        !$playText.Contains('= Get-PlayPartnerDefaults')) 'Play-OfflineCoop passes only the 7 dm=map keys (lab.json "partner" supplies the rest, as before)'
+    Assert-True ($playText.IndexOf("if (`$LanAddress -and !`$Lan) { throw '-LanAddress applies only with -Lan.' }") -ge 0 -and
+        $playText.IndexOf("if (`$LanAddress -and !`$Lan)") -lt $playText.IndexOf("Prepare-LabInstance.ps1')")) 'Play-OfflineCoop refuses -LanAddress without -Lan before preparing anything'
     $pd = Get-PlayPartnerDefaults
     Assert-Equal "$($pd['partner_apply'])/$($pd['partner_reset'])/$($pd['partner_dm'])/$($pd['partner_look'])/$($pd['partner_stage'])/$($pd['partner_source'])" 'xform/n/map/net/3/net' 'Get-PlayPartnerDefaults: dm=map (apply xform, reset n, dm map, look net, stage 3, source net)'
     Assert-True ($coopPlayText.Contains("'^partner_dmmap; phase=([a-z_]+); cur=(\d+|none);'") -and $coopPlayText.Contains("'^partner_dmmap=failed'") -and
@@ -473,6 +477,10 @@ try {
         $effective = @($before.Partner.Keys | Where-Object { $_ -notin @('net', 'net_listen_port', 'net_peer_port') } | ForEach-Object { "$_=$($before.Partner[$_])" }) -join ' '
         Assert-Equal $effective ($playDefaultItems -join ' ') "[$r] Get-PlayPartnerDefaults equals Play-OfflineCoop's effective dm=map keys (order and values)"
     }
+    # A tuned lab.json "partner" still reaches the default dm=map run (only the 7 keys override it).
+    $tuned = Get-AltConfig { param($c) $c.partner.offset_cm = 150; $c.partner.crash_probe = 0 }
+    $tunedSettings = Get-LabInstanceSettings -Role host -Config $tuned -GameDirectory $tuned.Paths.hostDir -HostSteamId64 $hostId -Offline -PartnerOverrides (ConvertFrom-LabPartnerSettingArgs -Items $mapOverridesBefore -Role host)
+    Assert-Equal "$($tunedSettings.Partner['partner_offset_cm'])/$($tunedSettings.Partner['crash_probe'])/$($tunedSettings.Partner['partner_dm'])" '150/0/map' 'dm=map run keeps lab.json partner.offset_cm and crash_probe'
     Assert-Equal ([int]$labJson.Ports.play) 47830 'lab.json ports.play'
     $wanRows = @()
     foreach ($name in 'good', 'bad', 'awful') {
@@ -2055,7 +2063,7 @@ Start-Sleep -Milliseconds 500
             Assert-True (!(Test-Path -LiteralPath $hp.LinkSecret) -and !(Test-Path -LiteralPath $gp.LinkSecret)) 'Prepare without -Lan deletes link-secret.txt in both copies'
             Assert-True (!(ConvertFrom-IniText ([IO.File]::ReadAllText($gp.LabIni))).Contains('net_bind')) 'Prepare without -Lan: the loopback lab.ini again'
             $out = & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig -Offline -Lan -LanAddress 192.0.2.10 2>&1
-            Assert-True ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $hp.LinkSecret) -and (Test-Path -LiteralPath $gp.LinkSecret)) 'Prepare -Lan again (for the -Disable check)'
+            Assert-True ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $hp.LinkSecret) -and (Test-Path -LiteralPath $gp.LinkSecret)) ('Prepare -Lan again (for the -Disable check): exit ' + $LASTEXITCODE + ': ' + ($out -join ' | '))
 
             # -Disable after the offline mode resets offline-v1 (it skips session creation) to the online lab roles.
             $out = & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig -Disable 2>&1

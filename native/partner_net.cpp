@@ -76,9 +76,6 @@ link::ReliableSender g_rel_tx[link::kReliableChannels];
 std::uint8_t g_body[link::kLinkMaxBody];
 // Under g_lock: the reliable receivers.
 link::ReliableReceiver g_rel_rx[link::kReliableChannels];
-// Set by the receive thread at a session commit; the game thread consumes it
-// (its input sequence is game-thread state).
-volatile LONG g_tx_input_reset = 0;
 // A receiver has a RELACK to send (avoids taking g_lock on every frame).
 volatile LONG g_relack_dirty = 0;
 volatile LONG g_tx_not_connected = 0;
@@ -576,8 +573,17 @@ void LinkDatagram(const std::uint8_t* data, std::size_t size, const lab::Endpoin
     const std::uint64_t now = NowMs();
     AcquireSRWLockExclusive(&g_tx_lock);
     const link::Delivery delivery = g_session.OnDatagram(data, size, from, now);
-    if (delivery.new_session)
+    if (delivery.new_session) {
+        // Both halves in the commit's g_tx_lock section (tx -> rx order): no
+        // packet of the new session carries a RELACK of the old receivers.
         for (auto& tx : g_rel_tx) tx.Reset();
+        AcquireSRWLockExclusive(&g_lock);
+        ResetReceiveLocked();
+        for (auto& rx : g_rel_rx) rx.Reset();
+        InterlockedExchange(&g_relack_dirty, 0);
+        ReleaseSRWLockExclusive(&g_lock);
+        InterlockedExchange(&g_look_resend, 1);
+    }
     unsigned messages = 0;
     if (delivery.data && link::ValidateBody(delivery.body, delivery.size, messages)) {
         link::MessageReader reader(delivery.body, delivery.size);
@@ -605,19 +611,11 @@ void LinkDatagram(const std::uint8_t* data, std::size_t size, const lab::Endpoin
     while (event_count < kMaxEvents && g_session.PopEvent(e)) events[event_count++] = e;
     InterlockedExchange(&g_link_state, static_cast<LONG>(g_session.state()));
     ReleaseSRWLockExclusive(&g_tx_lock);
-    if (delivery.new_session || rel_count) {
+    if (rel_count) {
         AcquireSRWLockExclusive(&g_lock);
-        if (delivery.new_session) {
-            ResetReceiveLocked();
-            for (auto& rx : g_rel_rx) rx.Reset();
-        }
         for (unsigned i = 0; i < rel_count; ++i) g_rel_rx[rels[i].channel].Accept(rels[i].id, rels[i].payload, rels[i].size, now);
-        if (rel_count) InterlockedExchange(&g_relack_dirty, 1);
+        InterlockedExchange(&g_relack_dirty, 1);
         ReleaseSRWLockExclusive(&g_lock);
-        if (delivery.new_session) {
-            InterlockedExchange(&g_look_resend, 1);
-            InterlockedExchange(&g_tx_input_reset, 1);
-        }
     }
     for (unsigned i = 0; i < frame_count; ++i) OnFrame(frames[i].data, frames[i].size);
     for (unsigned i = 0; i < event_count; ++i) LogEvent(events[i], now);
@@ -948,11 +946,8 @@ RemoteLook SampleLook() noexcept {
 
 bool SubmitInput(const partner_input::InputPacket& packet) noexcept {
     if (!g_running) return false;
-    // A new link session restarts the input sequence (requested by the receive thread).
-    if (InterlockedExchange(&g_tx_input_reset, 0)) {
-        g_input_tx_seq = 0;
-        g_input_tx_ms = 0;
-    }
+    // The sequence keeps counting across link sessions: the peer's receiver,
+    // reset at the new session, accepts any first sequence.
     const LONG epoch = g_epoch;
     if (!epoch) return false;
     const DWORD error = GetLastError();

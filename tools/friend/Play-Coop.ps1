@@ -157,6 +157,8 @@ foreach ($p in @($paths.LabIni, $paths.CoopIni, $paths.LinkSecret, $paths.Marker
 }
 if (@(Get-GameProcessInDirectory -Directory $gameRoot).Count) { throw 'MGSV is already running from this folder. Quit it normally, then start Play-Coop again.' }
 # A session that did not end cleanly (crash, power loss): its files go first.
+# One whose launcher window or helper still runs is in use (-Cleanup forces it).
+if (Test-CoopPlaySessionLive -GameRoot $gameRoot) { throw 'Another Play-Coop window is active for this folder; close it first (or quit MGSV). Nothing was changed.' }
 $leftover = Invoke-CoopPlayCleanup -GameRoot $gameRoot
 if ($leftover.Ran) { Write-Host 'An earlier co-op session did not end cleanly; its files were cleaned up.' -ForegroundColor Yellow; Write-CleanupResult $leftover }
 $record = Read-FriendJson $paths.Record
@@ -222,7 +224,7 @@ function New-Session {
     try { $start = $me.StartTime.ToUniversalTime().ToString('o') } catch { $start = '' }
     $script:session = [ordered]@{
         v = 2; state = 'active'; role = $labRole; port = $Port; started_utc = [DateTime]::UtcNow.ToString('o')
-        launcher_pid = $PID; launcher_start_utc = $start; watchdog_pid = 0; session_id = [Guid]::NewGuid().ToString('N')
+        launcher_pid = $PID; launcher_start_utc = $start; watchdog_pid = 0; watchdog_start_utc = ''; session_id = [Guid]::NewGuid().ToString('N')
         files = @(); upnp = [ordered]@{ added = $false; port = 0 }; clip_sha256 = ''
         note = 'Written by Play-Coop.ps1; no secrets. The listed files are deleted when the game exits, only while their SHA-256 matches.'
     }
@@ -321,7 +323,9 @@ try {
                 foreach ($b in $block) { Write-Host "  Block rule: '$($b.DisplayName)'" -ForegroundColor Yellow }
                 if ((Ask "Also remove these $($block.Count) Block rule(s)? They stop MGSV from receiving anything. [y/N]") -match '^(y|yes)$') { $remove = @($block | ForEach-Object { $_.Name }) }
             }
-            $display = "mgs-coop play UDP $Port"
+            # One fixed name: a later [F] on another port replaces the rule, and
+            # friend-install.json records the only one Uninstall-Coop must offer.
+            $display = 'mgs-coop play'
             if (Invoke-CoopElevated -Script (New-CoopFirewallScript -Port $Port -ExePath $paths.Exe -RemoveRuleNames $remove -DisplayName $display)) {
                 Write-Host "Firewall rule '$display' added (Uninstall-Coop.bat offers to remove it)." -ForegroundColor Green
                 $statePath = Join-Path $paths.Mod 'friend-install.json'
@@ -398,6 +402,7 @@ try {
     # (tests/friend_package_tests.ps1 starts some sessions without the helper.)
     if ($env:MGS_COOP_TEST_NO_WATCHDOG -ne '1') { $watchdog = Start-CoopWatchdog -ScriptPath $PSCommandPath -GameRoot $gameRoot -SessionId $session.session_id }
     $session.watchdog_pid = $watchdog
+    $session.watchdog_start_utc = Get-CoopProcessStartUtc -Id $watchdog
     Save-Session
     if ($watchdog) { Write-Host 'Co-op is switched on until the game exits (a hidden helper switches it off even if this window is closed).' }
     else { Write-Host 'Warning: the background helper could not start. Keep this window open until you quit MGSV; it switches co-op off.' -ForegroundColor Yellow }
@@ -465,7 +470,11 @@ try {
         if ($banner -and ([DateTime]::UtcNow - $bannerAt).TotalSeconds -ge 30) { Write-Host $banner -ForegroundColor White -BackgroundColor DarkRed; $bannerAt = [DateTime]::UtcNow }
         $key = $null
         try { if ([Console]::KeyAvailable) { $key = [Console]::ReadKey($true).Key } } catch { $key = $null }
-        if ($key -eq 'Q') { Write-Host 'Closing this window; the helper switches co-op off when MGSV exits.'; $skipCleanup = $true; break }
+        if ($key -eq 'Q') {
+            # Only a live helper may take over the cleanup.
+            if (Test-CoopProcessAlive -Id ([int]$session.watchdog_pid) -StartUtc ([string]$session.watchdog_start_utc)) { Write-Host 'Closing this window; the helper switches co-op off when MGSV exits.'; $skipCleanup = $true; break }
+            Write-Host 'No helper is running: keep this window open until MGSV exits (it switches co-op off then).' -ForegroundColor Yellow
+        }
         Start-Sleep -Seconds 1
     }
     if (!$skipCleanup) { Write-Host 'MGSV exited.' }
@@ -473,7 +482,22 @@ try {
     if ($activated -or $session) {
         if ($skipCleanup) { }
         elseif (@(Get-GameProcessInDirectory -Directory $gameRoot).Count) {
-            Write-Host 'MGSV is still running: co-op is switched off when it exits.' -ForegroundColor Yellow
+            # The loop ended early (an error) while the game runs: the cleanup
+            # stays with a live helper, or this window waits for the game.
+            $helper = $session -and (Test-CoopProcessAlive -Id ([int]$session.watchdog_pid) -StartUtc ([string]$session.watchdog_start_utc))
+            if (!$helper -and $session -and $env:MGS_COOP_TEST_NO_WATCHDOG -ne '1') {
+                $session.watchdog_pid = Start-CoopWatchdog -ScriptPath $PSCommandPath -GameRoot $gameRoot -SessionId $session.session_id
+                $session.watchdog_start_utc = Get-CoopProcessStartUtc -Id $session.watchdog_pid
+                try { Save-Session } catch { }
+                $helper = Test-CoopProcessAlive -Id ([int]$session.watchdog_pid) -StartUtc ([string]$session.watchdog_start_utc)
+            }
+            if ($helper) { Write-Host 'MGSV is still running: co-op is switched off when it exits.' -ForegroundColor Yellow }
+            else {
+                Write-Host 'MGSV is still running and no helper is: keep this window open; co-op is switched off when MGSV exits.' -ForegroundColor Yellow
+                while (@(Get-GameProcessInDirectory -Directory $gameRoot).Count) { Start-Sleep -Seconds 2 }
+                $r = Invoke-CoopPlayCleanup -GameRoot $gameRoot
+                Write-CleanupResult $r
+            }
         } else {
             $r = Invoke-CoopPlayCleanup -GameRoot $gameRoot
             Write-CleanupResult $r

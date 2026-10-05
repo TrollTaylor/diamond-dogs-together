@@ -1,8 +1,9 @@
 // Link v2 session state machine (docs/link-protocol.md "Handshake") over an
 // in-memory pipe with an injected clock and nonce source: the handshake, the
-// authenticated rejections and their replay protection, endpoint locking and
-// takeover, DoS budgets, timers, sequence exhaustion, and the rule that no
-// response to unauthenticated input is larger than that input.
+// authenticated rejections and their replay protection (CONFIRM included),
+// endpoint locking, takeover and NAT rebinding, DoS budgets, timers (one lost
+// keepalive), sequence exhaustion, and the rule that no response to
+// unauthenticated input is larger than that input.
 #include "mgscoop/link_session.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -205,7 +206,7 @@ void HandshakeAndData() {
     host->session.OnDatagram(moved.bytes.data(), moved.bytes.size(), Endpoint{0x0A000003u, 50000}, 1080);
     Check(host->Drops(link::DropReason::wrong_endpoint) == 1 && mgscoop::lab::SameEndpoint(host->session.peer(), kGuestEp),
           "wrong_endpoint");
-    // An ack-only packet 50 ms after an ack-eliciting packet, a keepalive after 1 s without a send.
+    // An ack-only packet 50 ms after an ack-eliciting packet, a keepalive after 400 ms without a send.
     Check(guest->session.SendData(body, sizeof(body), 1085), "guest sends a third time");
     const auto third = guest->outbox.back();
     guest->outbox.clear();
@@ -215,10 +216,113 @@ void HandshakeAndData() {
     host->session.OnTimer(1140);
     Check(host->outbox.size() == 1 && host->outbox[0].bytes.size() == link::kLinkOverhead, "ack-only after 50 ms");
     host->outbox.clear();
-    host->session.OnTimer(2139);
+    host->session.OnTimer(1539);
     Check(host->outbox.empty(), "nothing due");
-    host->session.OnTimer(2140);
-    Check(host->outbox.size() == 1 && host->outbox[0].bytes.size() == link::kLinkOverhead, "keepalive after 1 s");
+    host->session.OnTimer(1540);
+    Check(host->outbox.size() == 1 && host->outbox[0].bytes.size() == link::kLinkOverhead, "keepalive after 400 ms");
+}
+
+// The guest's first steps by hand: HELLO -> WELCOME -> CONFIRM. Returns the CONFIRM.
+Datagram HandshakeToConfirm(Node& host, Node& guest, std::uint64_t now) {
+    guest.session.OnTimer(now);
+    for (auto& d : guest.outbox) host.session.OnDatagram(d.bytes.data(), d.bytes.size(), guest.self, now);
+    guest.outbox.clear();
+    for (auto& d : host.outbox) guest.session.OnDatagram(d.bytes.data(), d.bytes.size(), host.self, now);
+    host.outbox.clear();
+    Check(guest.session.state() == link::LinkState::handshake && guest.outbox.size() == 1, "CONFIRM sent");
+    const Datagram confirm = guest.outbox[0];
+    guest.outbox.clear();
+    return confirm;
+}
+
+void ConfirmReplay() {
+    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.0", 0, 1);
+    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.0", 0, 2);
+    const Datagram confirm = HandshakeToConfirm(*host, *guest, 0);
+    host->session.OnDatagram(confirm.bytes.data(), confirm.bytes.size(), kGuestEp, 10);
+    host->Collect();
+    Check(host->session.state() == link::LinkState::connected && host->outbox.size() == 1, "commit and the first DATA");
+    host->outbox.clear();  // that DATA is lost
+    // The guest's resend is answered once more (the resend phase).
+    host->session.OnDatagram(confirm.bytes.data(), confirm.bytes.size(), kGuestEp, 300);
+    Check(host->outbox.size() == 1 && host->Drops(link::DropReason::replay) == 0, "a resent CONFIRM is answered");
+    for (auto& d : host->outbox) guest->session.OnDatagram(d.bytes.data(), d.bytes.size(), kHostEp, 310);
+    host->outbox.clear();
+    Check(guest->session.state() == link::LinkState::connected, "the guest completes");
+    // (a) After guest DATA, the CONFIRM is a replay: dropped, nothing sent.
+    Check(guest->session.SendData(nullptr, 0, 320), "guest DATA");
+    for (auto& d : guest->outbox) host->session.OnDatagram(d.bytes.data(), d.bytes.size(), kGuestEp, 330);
+    guest->outbox.clear();
+    host->Collect();
+    host->session.OnDatagram(confirm.bytes.data(), confirm.bytes.size(), kGuestEp, 700);
+    Check(host->outbox.empty() && host->Drops(link::DropReason::replay) == 1, "CONFIRM after guest DATA: replay, unanswered");
+    // (b) The guest is gone: the host goes lost; the replayed CONFIRM changes nothing.
+    std::uint64_t now = 700;
+    for (; now < 4000; now += 20) host->session.OnTimer(now);
+    host->Collect();
+    host->outbox.clear();
+    Check(host->session.state() == link::LinkState::lost, "host lost");
+    const unsigned connected_before = host->Count(link::EventKind::connected);
+    for (int i = 0; i < 5; ++i) {
+        now += 2900;
+        host->session.OnDatagram(confirm.bytes.data(), confirm.bytes.size(), kGuestEp, now);
+        host->session.OnTimer(now);
+        host->Collect();
+    }
+    Check(host->session.state() == link::LinkState::lost && host->outbox.empty() &&
+          host->Count(link::EventKind::connected) == connected_before && host->Drops(link::DropReason::replay) == 6,
+          "CONFIRM replayed while lost: dropped, no state change, nothing sent");
+    // (c) Without any guest DATA, a CONFIRM after the resend phase is a replay too.
+    auto host2 = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.0", 0, 1);
+    auto guest2 = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.0", 0, 2);
+    const Datagram confirm2 = HandshakeToConfirm(*host2, *guest2, 0);
+    host2->session.OnDatagram(confirm2.bytes.data(), confirm2.bytes.size(), kGuestEp, 10);
+    host2->outbox.clear();
+    host2->session.OnDatagram(confirm2.bytes.data(), confirm2.bytes.size(), kGuestEp, 10 + link::kConfirmAnswerMs + 1);
+    Check(host2->outbox.empty() && host2->Drops(link::DropReason::replay) == 1, "CONFIRM after the resend phase: replay");
+}
+
+void KeepaliveLoss() {
+    // Idle connected session (no game frames): exactly one host keepalive is lost.
+    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.0", 0, 1);
+    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.0", 0, 2);
+    std::uint64_t now = Connect(*host, *guest, 0);
+    bool dropped = false, stayed = true;
+    for (const std::uint64_t end = now + 10000; now < end; now += 20) {
+        Timers({host.get(), guest.get()}, now);
+        if (!dropped && now > 3000 && !host->outbox.empty()) {
+            host->outbox.erase(host->outbox.begin());
+            dropped = true;
+        }
+        Pump({host.get(), guest.get()}, now + 15);  // 15 ms one way
+        stayed = stayed && guest->session.state() == link::LinkState::connected && host->session.state() == link::LinkState::connected;
+    }
+    Check(dropped && stayed && !guest->Saw(link::EventKind::reconnecting) && guest->session.session_number() == 1,
+          "one lost keepalive: the guest stays connected");
+}
+
+void RebindBusy() {
+    // The guest's NAT mapping moves to another port mid-session.
+    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.0", 0, 1);
+    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.0", 0, 2);
+    std::uint64_t now = Connect(*host, *guest, 0);
+    for (const std::uint64_t end = now + 1000; now < end; now += 20) {
+        Timers({host.get(), guest.get()}, now);
+        Pump({host.get(), guest.get()}, now);
+    }
+    const std::uint64_t t0 = now;
+    guest->self = Endpoint{kGuestEp.address, 50777};  // the host's packets to 50000 now go nowhere
+    bool rejected = false;
+    for (; now < t0 + 6000 && guest->session.session_number() < 2; now += 20) {
+        Timers({host.get(), guest.get()}, now);
+        Pump({host.get(), guest.get()}, now);
+        rejected = rejected || guest->session.state() == link::LinkState::rejected;
+    }
+    Check(!rejected && guest->session.reject_reason() == link::RejectReason::none, "rebinding: no rejected state");
+    Check(guest->session.state() == link::LinkState::connected && host->Saw(link::EventKind::rebound) &&
+          mgscoop::lab::SameEndpoint(host->session.peer(), guest->self), "rebinding: rebound");
+    Check(now - t0 <= 3600, "rebound within about 3.5 s");
+    Check(!guest->Saw(link::EventKind::rejected) && guest->session.stats().reject_ignored >= 1, "busy seen, no rejected event");
 }
 
 void ReplayedHello() {
@@ -448,6 +552,58 @@ void RateLimits() {
         host2->session.OnDatagram(junk.data(), junk.size(), spoof, 0);
     }
     Check(host2->Drops(link::DropReason::bad_mac) == 500 && host2->Drops(link::DropReason::rate) == 1500, "global MAC budget 500/s");
+    // One machine cycling 200 source ports at 1000/s shares one bucket (keyed on
+    // the address): the MAC budget stays available to the real guest.
+    auto host3 = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.0", 0, 1);
+    const std::uint32_t attacker = 0xC6336401u;
+    for (int i = 0; i < 1000; ++i) {
+        const Endpoint port{attacker, static_cast<std::uint16_t>(40000 + i % 200)};
+        FeedUnauth(*host3, junk, port, static_cast<std::uint64_t>(i), "port-cycling flood answers are small");
+    }
+    Check(host3->Drops(link::DropReason::bad_mac) <= 16 + 8 + 1 && host3->Drops(link::DropReason::rate) >= 970,
+          "port cycling: one bucket per address");
+    host3->outbox.clear();
+    auto guest3 = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.0", 1000, 2);
+    std::uint64_t t = 1000;
+    for (int i = 0; i < 40 && guest3->session.state() != link::LinkState::connected; ++i, t += 20) {
+        for (int k = 0; k < 20; ++k) {  // the flood goes on at 1000/s
+            const Endpoint port{attacker, static_cast<std::uint16_t>(40000 + (i * 20 + k) % 200)};
+            host3->session.OnDatagram(junk.data(), junk.size(), port, t);
+        }
+        host3->outbox.clear();
+        Timers({host3.get(), guest3.get()}, t);
+        Pump({host3.get(), guest3.get()}, t);
+    }
+    Check(guest3->session.state() == link::LinkState::connected, "the real guest gets a WELCOME during a port-cycling flood");
+    // A spoofed flood from many addresses drains the global budget, but the
+    // lost guest's address has its own: its reconnect still gets through.
+    auto host4 = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.0", 0, 1);
+    auto guest4 = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.0", 0, 2);
+    t = Connect(*host4, *guest4, 0);
+    for (const std::uint64_t end = t + 3100; t < end; t += 20) {
+        host4->session.OnTimer(t);
+        host4->outbox.clear();
+    }
+    host4->Collect();
+    Check(host4->session.state() == link::LinkState::lost, "host4 lost");
+    std::uint32_t spoofed = 0;
+    const auto flood = [&](std::uint64_t at) {
+        for (int k = 0; k < 40; ++k)  // 2000/s from ever new addresses
+            host4->session.OnDatagram(junk.data(), junk.size(), Endpoint{0x0B000000u + spoofed++, 40000}, at);
+        host4->outbox.clear();
+    };
+    for (const std::uint64_t end = t + 1000; t < end; t += 20) flood(t);
+    const std::uint64_t rate_before = host4->Drops(link::DropReason::rate);
+    Check(rate_before > 0, "the spoofed flood drains the global budget");
+    auto back = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.0", t, 9);
+    for (const std::uint64_t end = t + 3000; t < end && back->session.state() != link::LinkState::connected; t += 20) {
+        flood(t);
+        Timers({host4.get(), back.get()}, t);
+        Pump({host4.get(), back.get()}, t);
+    }
+    Check(host4->Drops(link::DropReason::rate) > rate_before, "the flood still runs");
+    Check(back->session.state() == link::LinkState::connected && host4->Saw(link::EventKind::reconnected),
+          "the lost guest's address reconnects during a spoofed flood");
 }
 
 void Malformed() {
@@ -588,6 +744,9 @@ void Names() {
 int main() {
     Names();
     HandshakeAndData();
+    ConfirmReplay();
+    KeepaliveLoss();
+    RebindBusy();
     ReplayedHello();
     WrongCode();
     UnauthRejectWhileConnected();

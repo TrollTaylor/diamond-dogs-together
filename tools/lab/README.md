@@ -287,10 +287,12 @@ with no fuse and no session.
   (latency, jitter, burst loss, duplicates, reordering; one-way per copy),
   `net_seed` 1/2 and `partner_interp=auto`. Without these switches every
   generated file is byte-identical to before. `-PartnerSetting
-  net_link=legacy` selects the raw-frame link (bisect path). The dm=map
-  partner keys come from `tools/CoopPlay.psm1` `Get-PlayPartnerDefaults`, the
-  same keys the two-PC play mode writes, and the status line's partner parser
-  is shared with the two-PC launcher. The scripts never change firewall
+  net_link=legacy` selects the raw-frame link (bisect path). The dm=map run
+  passes only its 7 dm=map keys; with the shipped `lab.json` "partner" the
+  result equals `tools/CoopPlay.psm1` `Get-PlayPartnerDefaults`, the keys the
+  two-PC play mode writes (a tuned `lab.json` still applies to the lab), and
+  the status line's partner parser is shared with the two-PC launcher.
+  `-LanAddress` without `-Lan` is refused. The scripts never change firewall
   settings; Windows may ask about `mgsvtpp.exe` for `-Lan`.
 - **Start-Lab.ps1 -Offline** skips the fuse checks and start. Its preflight
   requires no listener on TCP 47899, free UDP 47810/47811 and 47820/47821, the

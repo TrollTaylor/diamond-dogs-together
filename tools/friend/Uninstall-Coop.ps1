@@ -101,6 +101,8 @@ $stamp = Get-FriendStamp
 $exitCode = 0
 
 # ---------------------------------------------------------------- 0: play session
+# A session whose launcher window or helper still runs is in use, not a leftover.
+if (Test-CoopPlaySessionLive -GameRoot $gameRoot) { throw 'Another Play-Coop window is active for this folder; close it first (or quit MGSV). Nothing was changed.' }
 $leftover = Invoke-CoopPlayCleanup -GameRoot $gameRoot
 if ($leftover.Ran) {
     Section 'Step 0: switching off the last Play-Coop session'

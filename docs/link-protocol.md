@@ -221,17 +221,25 @@ tolerates an RTT longer than one HELLO interval). The WELCOME must come from
 the configured port (any address, counted in `src_changed`), carry a valid
 K_hs tag and `session_id == sid(Ng, Nh)`; the guest then sends CONFIRM
 (`handshake`, resent every 250 ms up to 10 times) and is `connected` on the
-host's first DATA. `connected` with no authenticated packet for 2 s goes
-`reconnecting` (as connecting; the old session stays usable until the new one
-completes, and its DATA brings it back). A K_hs REJECT counts only with the
-echo of a pending Ng, a session REJECT only under the current session key:
-`rejected`, retried every 5 s. An UNAUTH REJECT is a hint (`verified=0`) while
+host's first DATA. Both sides send an empty DATA keepalive after 400 ms
+without a send. `connected` with no authenticated packet for 2 s (five
+keepalives) goes `reconnecting` (as connecting; the old session stays usable
+until the new one completes, and its DATA brings it back). A K_hs REJECT
+counts only with the echo of a pending Ng, a session REJECT only under the
+current session key: `rejected`, retried every 5 s. Exception: a K_hs
+REJECT(`busy`) within 3 s of entering `reconnecting` is our own NAT rebinding
+(the host still holds the old endpoint until it is lost): ignored and counted,
+the HELLO cadence goes on. An UNAUTH REJECT is a hint (`verified=0`) while
 connecting and never changes state or cadence; everything else is ignored and
 counted. The guest only ever sends to its configured endpoint.
 
-**Host:** `listening`. A HELLO passes a per-source token bucket (8/s, burst
-16, 64-entry table) and a global MAC budget (500/s) before its tag is checked;
-a bad tag gets at most one UNAUTH REJECT(`bad_code`) per second in total. A
+**Host:** `listening`. A HELLO passes a per-address token bucket (any source
+port; 8/s, burst 16, 64-entry table; a colliding address shares the entry
+until it has been idle 2 s and a replacement starts with 2 tokens) and a
+global MAC budget (500/s) before its tag is checked; HELLOs from the current
+(or lost) guest's address skip both and use their own budget (16/s), so a
+flood from elsewhere cannot block its reconnect. A bad tag gets at most one
+UNAUTH REJECT(`bad_code`) per second in total. A
 valid HELLO is checked for proto, mode, role and (play) build, then: an Ng of
 a committed session is a replay; while `connected` a HELLO from another
 endpoint gets REJECT(`busy`); the Ng of a pending slot gets the same WELCOME
@@ -240,7 +248,10 @@ or DATA of a pending sid from that slot's endpoint with a valid K_g2h tag
 commits (at most one commit per 2 s): the endpoint is locked, the Ng goes into
 a 32-entry seen ring, the receive state is reset and an empty DATA is sent at
 once (`connected` / `reconnected` same endpoint / `rebound` new endpoint). A
-repeated CONFIRM of the current session is answered with an empty DATA (<= 4/s).
+repeated CONFIRM of the current session is answered with an empty DATA (<= 4/s)
+only in the guest's resend phase (no guest DATA yet, at most 2.75 s after the
+commit, `connected`); otherwise it is a `replay` (CONFIRM always carries seq 1,
+so the window cannot catch it), and it never counts as liveness.
 DATA from any other endpoint is dropped (`wrong_endpoint`, never re-targeted).
 No authenticated packet for 3 s: `lost`; the host then sends nothing at all
 until the guest is back (its DATA, or a new handshake; a takeover by another
@@ -285,8 +296,11 @@ Threads and locks: Submit*/Sample* on the Lua thread inside the receipt lock;
 the session and all send state under `g_tx_lock`; the receive state and the
 reliable receivers under `g_lock`. Order: receipt lock, `g_tx_lock`, `g_lock`;
 the receive thread never takes `g_tx_lock` while holding `g_lock`. No logging
-or file I/O under either lock. The receive thread restarts the game thread's
-input sequence through an atomic flag at a new session.
+or file I/O under either lock. At a new session the receive thread resets the
+reliable senders, the reliable receivers and the receive state in the commit's
+`g_tx_lock` section (taking `g_lock` inside it), so no packet of the new
+session carries a RELACK of the old receivers; the game thread's send
+sequences keep counting (the peer's reset receivers accept any first one).
 
 ## 7. Diagnostics
 

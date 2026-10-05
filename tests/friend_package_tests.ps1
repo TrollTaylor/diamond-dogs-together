@@ -433,6 +433,14 @@ try {
     $fwScript = New-CoopFirewallScript -Port 47830 -ExePath $quoteExe -RemoveRuleNames @('{b}') -DisplayName 'mgs-coop play UDP 47830'
     Assert-True ($fwScript.Contains("-Program 'C:\Games\O''Brien`$x\MGS_TPP\mgsvtpp.exe'") -and $fwScript.Contains('-Profile Any') -and $fwScript.Contains('-Protocol UDP -LocalPort 47830') -and $fwScript.Contains("Remove-NetFirewallRule -Name '{b}'")) 'firewall script: quoted path, Profile Any, Block rules removed first'
     Assert-True ($fwScript.IndexOf('Remove-NetFirewallRule -Name') -lt $fwScript.IndexOf('New-NetFirewallRule')) 'firewall script removes the Block rules before adding the Allow rule'
+    $playText = [IO.File]::ReadAllText((Join-Path $projectRoot 'tools/friend/Play-Coop.ps1'))
+    Assert-True ($playText.Contains("`$display = 'mgs-coop play'") -and !$playText.Contains('mgs-coop play UDP')) 'one fixed firewall rule name: a later [F] on another port replaces the earlier rule'
+    $fixedScript = New-CoopFirewallScript -Port 47900 -ExePath $quoteExe -DisplayName 'mgs-coop play'
+    Assert-True ($fixedScript.Contains("Get-NetFirewallRule -DisplayName 'mgs-coop play' -ErrorAction SilentlyContinue | Remove-NetFirewallRule") -and
+        $fixedScript.IndexOf('Remove-NetFirewallRule') -lt $fixedScript.IndexOf('New-NetFirewallRule')) 'the [F] script replaces the rule of the same name'
+    # [Q] in the status loop hands the cleanup only to a live helper (a key press cannot be scripted here).
+    Assert-True ($playText.Contains("if (Test-CoopProcessAlive -Id ([int]`$session.watchdog_pid) -StartUtc ([string]`$session.watchdog_start_utc)) { Write-Host 'Closing this window") -and
+        $playText.Contains('No helper is running: keep this window open') -and $playText.Contains('MGSV is still running and no helper is')) '[Q] and an early loop end never skip the cleanup without a live helper'
     $tokens = $null; $errors = $null
     $null = [System.Management.Automation.Language.Parser]::ParseInput($fwScript, [ref]$tokens, [ref]$errors)
     Assert-Equal @($errors).Count 0 'firewall script parses (a quote in the path cannot break it)'
@@ -805,6 +813,40 @@ try {
     $r = Invoke-Friend $install (@('-GameDirectory', $joinGame, '-Role', 'Join') + $common)
     Assert-True ($r.Exit -eq 0 -and (Has $r 'Co-op files of an earlier Play-Coop session were removed')) "install cleans up a play session: $($r.Text)"
     Assert-PassThrough $jp 'install after a play session'
+    # A session whose launcher window still runs is not a leftover: Play-Coop,
+    # Install-Coop and Uninstall-Coop refuse; -Cleanup still forces it.
+    $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join') @($joinCode) -NoWatchdog
+    Assert-Equal $r.Exit 0 "join for the live-session test: $($r.Raw)"
+    $liveTable = ConvertTo-CoopSessionTable -Session (Get-SessionJson $jp)
+    $liveTable['launcher_pid'] = $PID
+    $liveTable['launcher_start_utc'] = (Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o')
+    Save-CoopPlaySession -GameRoot $joinGame -Session $liveTable
+    $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join') @($joinCode) -NoWatchdog
+    Assert-Refused $r 'Another Play-Coop window is active for this folder' 'a second Play-Coop leaves a live session alone'
+    $r = Invoke-Friend $install (@('-GameDirectory', $joinGame, '-Role', 'Join') + $common)
+    Assert-Refused $r 'Another Play-Coop window is active for this folder' 'Install-Coop leaves a live session alone'
+    $r = Invoke-Friend $uninstall @('-GameDirectory', $joinGame, '-NonInteractive', '-Yes')
+    Assert-Refused $r 'Another Play-Coop window is active for this folder' 'Uninstall-Coop leaves a live session alone'
+    Assert-True ((Get-PlayFilesPresent $jp) -eq 4 -and (Get-SessionJson $jp).state -eq 'active') 'the live session keeps its files'
+    $r = Invoke-Friend $play @('-GameDirectory', $joinGame, '-Cleanup', '-NonInteractive')
+    Assert-True ($r.Exit -eq 0 -and (Get-PlayFilesPresent $jp) -eq 0) "-Cleanup forces a live session off: $($r.Text)"
+    # A stray link-secret.txt (for example from the single-PC lab -Lan) stops
+    # Play-Coop; Install-Coop sets it aside (never copied), then Play-Coop works.
+    $secretsBefore = @(Get-ChildItem -LiteralPath $jp.Mod -Filter 'link-secret.txt.*' -Force | ForEach-Object { $_.Name })
+    [IO.File]::WriteAllText($jp.LinkSecret, "$s7`r`n")
+    $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join') @($joinCode) -NoWatchdog
+    Assert-Refused $r 'link-secret.txt exists but was not written by this Play-Coop session' 'a stray link secret is refused'
+    $r = Invoke-Friend $install (@('-GameDirectory', $joinGame, '-Role', 'Join') + $common)
+    $asideSecrets = @(Get-ChildItem -LiteralPath $jp.Mod -Filter 'link-secret.txt.*' -Force | Where-Object { $secretsBefore -notcontains $_.Name })
+    Assert-True ($r.Exit -eq 0 -and !(Test-Path -LiteralPath $jp.LinkSecret) -and $asideSecrets.Count -eq 1 -and $asideSecrets[0].Name -like 'link-secret.txt.disabled-*') "install sets a stray link secret aside (never copied): $($r.Text)"
+    $asideRecords = @((Get-Content -LiteralPath (Join-Path $jp.Mod 'friend-install.json') -Raw | ConvertFrom-Json).set_aside | Where-Object { $_ -and $_.name -eq 'link-secret.txt' })
+    Assert-True ($asideRecords.Count -ge 1) 'set_aside records the link secret'
+    Assert-True (!$r.Raw.Contains($s7)) 'the set-aside secret is never printed'
+    Remove-Item -LiteralPath $asideSecrets[0].FullName
+    $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join') @($joinCode) -NoWatchdog
+    Assert-Equal $r.Exit 0 "Play-Coop works after the install set the secret aside: $($r.Raw)"
+    $r = Invoke-Friend $play @('-GameDirectory', $joinGame, '-Cleanup', '-NonInteractive')
+    Assert-PassThrough $jp 'cleanup after the stray-secret test'
     # A DNS name that points to this PC is refused (the launcher resolves names, IPv4 only).
     $localCode = New-CoopJoinCode -Secret $s7 -HostName 'localhost' -Port 47830
     $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join') @($localCode) -NoWatchdog
@@ -968,8 +1010,9 @@ try {
     [IO.File]::WriteAllText($savePath, 'fixture save 287700/local/TPP_GAME_DATA0')
     Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'fixture saves back to the start'
 
-    # Real saves that change while the mod is installed: a reinstall does not
-    # take a new reference silently; uninstall compares with the FIRST backup.
+    # Real saves that change while the mod is installed (normal play in
+    # pass-through): a reinstall reports it and proceeds, but never takes a new
+    # reference; uninstall compares with the FIRST backup.
     $chgGame = New-GameFixture 'changed'
     $cp = Get-InstancePaths -GameDirectory $chgGame
     $r = Invoke-Friend $install (@('-GameDirectory', $chgGame, '-Role', 'Host', '-RuntimeArchive', $archiveFx) + $common)
@@ -977,17 +1020,14 @@ try {
     $chgStatePath = Join-Path $cp.Mod 'friend-install.json'
     $firstBackup = [string](Get-Content -LiteralPath $chgStatePath -Raw | ConvertFrom-Json).backups[0]
     [IO.File]::WriteAllText($savePath, 'changed while the mod was installed')
-    $stateBytes = Get-Sha256 $chgStatePath
     $r = Invoke-Friend $install (@('-GameDirectory', $chgGame, '-Role', 'Host', '-Character', 'quiet') + $common)
-    Assert-Refused $r 'real save files changed since the backup made before the friend test' 'reinstall refused after the real saves changed'
+    Assert-True ($r.Exit -eq 0 -and (Has $r 'Real save files changed since the backup made before the friend test (expected after normal play') -and
+        !(Has $r 'WARNING: your REAL')) "reinstall after normal play reports the change and proceeds: $($r.Text)"
     Assert-True ((Has $r 'changed: 287700/local/TPP_GAME_DATA0') -and (Has $r $firstBackup)) 'reinstall lists the change and the first backup'
-    Assert-Equal (Get-Sha256 $chgStatePath) $stateBytes 'refused reinstall left the install record unchanged'
-    $r = Invoke-FriendAnswers $install @('-GameDirectory', $chgGame, '-SteamPath', $steam, '-SkipNetworkReport') @('')
-    Assert-True ($r.Exit -eq 1 -and (Has $r 'WARNING: your REAL save files changed') -and (Has $r 'Cancelled. Nothing was changed.')) "interactive reinstall asks and defaults to No: $($r.Text)"
     $r = Invoke-Friend $install (@('-GameDirectory', $chgGame, '-Role', 'Host', '-Character', 'quiet', '-AcceptChangedSaves') + $common)
-    Assert-True ($r.Exit -eq 0 -and (Has $r 'WARNING: your REAL save files changed')) "reinstall with -AcceptChangedSaves warns and proceeds: $($r.Text)"
+    Assert-Equal $r.Exit 0 "-AcceptChangedSaves is still accepted: $($r.Text)"
     $cs = Get-Content -LiteralPath $chgStatePath -Raw | ConvertFrom-Json
-    Assert-Equal "$(@($cs.backups).Count)|$($cs.first_backup)" "2|$firstBackup" 'the first backup stays the reference'
+    Assert-Equal "$(@($cs.backups).Count)|$($cs.first_backup)" "3|$firstBackup" 'the first backup stays the reference'
     $r = Invoke-Friend $uninstall @('-GameDirectory', $chgGame, '-NonInteractive', '-Yes')
     Assert-True ($r.Exit -eq 4 -and (Has $r 'DIFFERENT from the backup made before the friend test') -and (Has $r ($firstBackup + '\files\287700\local'))) "uninstall compares with the first backup, not the latest: $($r.Text)"
     [IO.File]::WriteAllText($savePath, 'fixture save 287700/local/TPP_GAME_DATA0')

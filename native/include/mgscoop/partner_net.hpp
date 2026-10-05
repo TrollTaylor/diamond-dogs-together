@@ -139,8 +139,9 @@ bool LatestInput(partner_input::Sample& out) noexcept;
 bool ConsumeInput(partner_input::Sample& out) noexcept;
 // Clears the ring, the sequence state and the received look, and makes the
 // next SubmitLook send at once (mission boundaries). A new link session does
-// the receive half of this on the receive thread and asks the game thread
-// (through an atomic flag) to restart its input sequence.
+// the receive half of this on the receive thread, in the same g_tx_lock
+// section as the commit; the send sequences keep counting (the peer's reset
+// receivers accept any first sequence).
 void ResetRemote() noexcept;
 // Per-tick native cost of the observer's tick handler, for the stats line.
 void RecordNativeMicros(std::uint32_t micros) noexcept;

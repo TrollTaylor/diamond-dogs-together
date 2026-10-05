@@ -87,6 +87,8 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+# The same refusal as Prepare-LabInstance and Get-LabInstanceSettings, before anything is prepared.
+if ($LanAddress -and !$Lan) { throw '-LanAddress applies only with -Lan.' }
 $lab = $PSScriptRoot
 $repo = Split-Path -Parent (Split-Path -Parent $lab)
 Import-Module (Join-Path $lab 'LabCommon.psm1') -Force
@@ -183,10 +185,10 @@ try {
         "partner_apply=$($experiment.Move)", "partner_anim=$($experiment.Anim)")
     if ($Experimental) { $partnerSettings += @('partner_aset=qs', 'partner_reset=n') }
     if ($experiment.Move -eq 'map') {
-        # dm=map: the same partner keys as the two-PC play mode (tools/CoopPlay.psm1
-        # Get-PlayPartnerDefaults: apply xform, reset n, dm map, look net, stage 3, ...).
-        $playDefaults = Get-PlayPartnerDefaults
-        $partnerSettings = @($playDefaults.Keys | ForEach-Object { "$_=$($playDefaults[$_])" })
+        # dm=map: only the dm=map keys; everything else comes from the lab defaults
+        # and lab.json "partner", as before. With the shipped lab.json this equals the
+        # two-PC play keys (tools/CoopPlay.psm1 Get-PlayPartnerDefaults; lab_scripts_tests).
+        $partnerSettings = @('partner_stage=3', 'partner_source=net', 'partner_look=net', 'partner_apply=xform', 'partner_anim=off', 'partner_reset=n', 'partner_dm=map')
     }
     if ($experiment.Move -eq 'input') {
         $partnerSettings += @('partner_input=net', 'partner_input_send=1', 'partner_input_cam=sandbox', 'partner_input_hold=own',

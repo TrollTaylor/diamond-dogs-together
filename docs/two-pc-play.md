@@ -59,8 +59,10 @@ start from Steam is plain MGSV on the real saves.
 1. **Preflight**: install status `installed`; loader hash and ownership
    record (version in `$script:SupportedLoaderVersions`); exe, `steam_api64.dll`
    and runtime archive hashes from `package.json`; `coop-saves` present and
-   short enough; no reparse points; MGSV not running from the folder; a
-   leftover active session is cleaned up first; a `lab.ini`/`coop.ini`, marker
+   short enough; no reparse points; MGSV not running from the folder; an
+   active session whose launcher (pid and start time) or watchdog still runs
+   stops it ("Another Play-Coop window is active"; Install and Uninstall
+   check the same), a leftover one is cleaned up first; a `lab.ini`/`coop.ini`, marker
    or `link-secret.txt` that this session does not own stops it (nothing is
    overwritten); a warning when Steam's MGSV folder is another one.
 2. **Host**: a fresh 100-bit secret; one join code per address (LAN,
@@ -69,7 +71,8 @@ start from Steam is plain MGSV on the real saves.
    `[U]` UPnP mapping (background job, 15 s timeout, recorded before the
    router is asked, removed at the end), `[F]` firewall rule (elevated,
    `-EncodedCommand`, `-Profile Any`, the exe's Block rules listed first and
-   removed on request; recorded in `friend-install.json.firewall_rule`). The
+   removed on request; one rule named `mgs-coop play`, replaced by a later
+   `[F]` on another port; recorded in `friend-install.json.firewall_rule`). The
    chosen code is copied to the clipboard; the clipboard is cleared at the end
    if it still holds the code.
 3. **Join**: paste the code; status-specific sentences for typos; a host name
@@ -100,7 +103,10 @@ start from Steam is plain MGSV on the real saves.
    matches (the marker only when it is exactly `offline-v1\n`); then the UPnP
    mapping and the clipboard; `state=off`. A changed file is kept and named.
    The launcher never deletes files under a running game: closing it while
-   MGSV runs leaves the cleanup to the watchdog at game exit.
+   MGSV runs leaves the cleanup to the watchdog at game exit. `[Q]` in the
+   status loop is refused while no live watchdog exists; a launcher loop that
+   ends early with the game running restarts the watchdog once, else waits for
+   the game to exit and cleans up itself.
 
 Play `lab.ini` (host; the guest has `role=guest`, `net_listen_port=0`,
 `net_peer_addr=<IPv4>`, `net_peer_port=<port>`):
@@ -115,7 +121,7 @@ net=1
 net_bind=any
 net_listen_port=47830
 partner_interp=auto
-<Get-PlayPartnerDefaults: Play-OfflineCoop's dm=map partner keys>
+<Get-PlayPartnerDefaults: Play-OfflineCoop's effective dm=map partner keys under the shipped lab.json>
 ```
 
 Never written in play: `loopback`, `self_steamid`, `peer_steamid`,

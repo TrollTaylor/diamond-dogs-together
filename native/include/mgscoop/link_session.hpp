@@ -47,13 +47,25 @@ inline constexpr unsigned kConfirmMaxResends = 10;
 inline constexpr std::uint64_t kGuestReconnectMs = 2000;
 inline constexpr std::uint64_t kHostLostMs = 3000;
 inline constexpr std::uint64_t kCommitMinGapMs = 2000;
-inline constexpr std::uint64_t kKeepaliveMs = 1000;
+// Five keepalives per reconnect timeout: one lost keepalive never reconnects.
+inline constexpr std::uint64_t kKeepaliveMs = 400;
+// The host answers a CONFIRM of the current session only this long after the
+// commit (the guest's resend phase); later it is a replay.
+inline constexpr std::uint64_t kConfirmAnswerMs = kConfirmResendMs * (kConfirmMaxResends + 1);
 inline constexpr std::uint64_t kAckDelayMs = 50;
 inline constexpr std::uint64_t kDupConfirmGapMs = 250;      // <= 4 answers per second
 inline constexpr std::uint64_t kUnauthRejectGapMs = 1000;   // <= 1 UNAUTH REJECT per second in total
+// Per source address (any port): 8/s, burst 16. A colliding address shares
+// the entry until it has been idle kRateIdleMs, and a replacement starts with
+// kRateReplaceTokens, so neither collisions nor port cycling mint tokens.
 inline constexpr std::uint32_t kHelloRatePerSec = 8, kHelloBurst = 16;
 inline constexpr unsigned kRateTable = 64;
+inline constexpr std::uint64_t kRateIdleMs = 2000;
+inline constexpr std::uint32_t kRateReplaceTokens = 2;
 inline constexpr std::uint32_t kMacBudgetPerSec = 500;
+// HELLOs from the current (or lost) guest's address use their own MAC budget:
+// a flood from other addresses cannot starve its reconnect.
+inline constexpr std::uint32_t kGuestMacPerSec = 16;
 inline constexpr unsigned kSeenRing = 32;
 inline constexpr unsigned kPendingSlots = 2;
 // The guest accepts a WELCOME echoing any of its last kGuestNonces HELLO nonces.
@@ -189,6 +201,7 @@ private:
     void HostHello(const Header& h, const std::uint8_t* data, std::size_t size, const Endpoint& from, std::uint64_t now_ms) noexcept;
     bool RateAllow(const Endpoint& from, std::uint64_t now_ms) noexcept;
     bool MacBudget(std::uint64_t now_ms) noexcept;
+    bool GuestMacBudget(std::uint64_t now_ms) noexcept;
     bool Seen(const std::uint8_t* ng) const noexcept;
     void Commit(Pending& slot, const Endpoint& from, std::uint64_t now_ms) noexcept;
     void HostTimer(std::uint64_t now_ms) noexcept;
@@ -228,6 +241,8 @@ private:
     RateEntry rate_[kRateTable]{};
     std::uint32_t mac_milli_tokens_ = kMacBudgetPerSec * 1000;
     std::uint64_t mac_last_ms_ = 0;
+    std::uint32_t guest_mac_milli_tokens_ = kGuestMacPerSec * 1000;
+    std::uint64_t guest_mac_last_ms_ = 0;
     bool unauth_sent_ = false;
     std::uint64_t unauth_last_ms_ = 0;
     std::uint64_t dup_confirm_last_ms_ = 0;

@@ -17,8 +17,8 @@ bool SameBuild(const char* a, const char* b) noexcept {
     return std::strncmp(a, b, kBuildSize) == 0;
 }
 
-std::uint64_t EndpointHash(const Endpoint& e) noexcept {
-    return (PackEndpoint(e) * 0x9E3779B97F4A7C15ull) >> 58;  // 6 bits: kRateTable entries
+std::uint64_t AddressHash(std::uint32_t address) noexcept {
+    return (address * 0x9E3779B97F4A7C15ull) >> 58;  // 6 bits: kRateTable entries
 }
 
 bool AllZero(const std::uint8_t* p, std::size_t size) noexcept {
@@ -84,6 +84,8 @@ void Session::Start(const SessionConfig& config, const SessionIo& io, std::uint6
     stats_ = SessionStats{};
     mac_milli_tokens_ = kMacBudgetPerSec * 1000;
     mac_last_ms_ = now_ms;
+    guest_mac_milli_tokens_ = kGuestMacPerSec * 1000;
+    guest_mac_last_ms_ = now_ms;
     if (config_.role == Role::host) {
         state_ = LinkState::listening;
         Push(MakeEvent(EventKind::listening));
@@ -278,9 +280,12 @@ Delivery Session::OnDatagram(const std::uint8_t* data, std::size_t size, const E
 
 // ---------------------------------------------------------------- host
 bool Session::RateAllow(const Endpoint& from, std::uint64_t now_ms) noexcept {
-    RateEntry& e = rate_[EndpointHash(from) % kRateTable];
-    const std::uint64_t key = PackEndpoint(from);
-    if (!e.used || e.key != key) e = RateEntry{true, key, kHelloBurst * 1000, now_ms};
+    // Keyed on the address: one machine cycling source ports shares one bucket.
+    RateEntry& e = rate_[AddressHash(from.address) % kRateTable];
+    const std::uint64_t key = from.address;
+    if (!e.used) e = RateEntry{true, key, kHelloBurst * 1000, now_ms};
+    else if (e.key != key && now_ms - e.last_ms >= kRateIdleMs) e = RateEntry{true, key, kRateReplaceTokens * 1000, now_ms};
+    // Otherwise a colliding address draws on the occupant's tokens.
     const std::uint64_t refill = (now_ms - e.last_ms) * kHelloRatePerSec;  // milli-tokens per ms
     e.last_ms = now_ms;
     const std::uint64_t tokens = e.milli_tokens + refill;
@@ -300,6 +305,16 @@ bool Session::MacBudget(std::uint64_t now_ms) noexcept {
     return true;
 }
 
+bool Session::GuestMacBudget(std::uint64_t now_ms) noexcept {
+    const std::uint64_t refill = (now_ms - guest_mac_last_ms_) * kGuestMacPerSec;
+    guest_mac_last_ms_ = now_ms;
+    const std::uint64_t tokens = guest_mac_milli_tokens_ + refill;
+    guest_mac_milli_tokens_ = static_cast<std::uint32_t>(tokens > kGuestMacPerSec * 1000ull ? kGuestMacPerSec * 1000ull : tokens);
+    if (guest_mac_milli_tokens_ < 1000) return false;
+    guest_mac_milli_tokens_ -= 1000;
+    return true;
+}
+
 bool Session::Seen(const std::uint8_t* ng) const noexcept {
     for (unsigned i = 0; i < seen_count_; ++i)
         if (std::memcmp(seen_[i], ng, kNonceSize) == 0) return true;
@@ -308,8 +323,10 @@ bool Session::Seen(const std::uint8_t* ng) const noexcept {
 
 void Session::HostHello(const Header& h, const std::uint8_t* data, std::size_t size, const Endpoint& from,
                         std::uint64_t now_ms) noexcept {
-    // O(1) budgets before any MAC.
-    if (!RateAllow(from, now_ms) || !MacBudget(now_ms)) { Drop(DropReason::rate); return; }
+    // O(1) budgets before any MAC. The current (or lost) guest's address has
+    // its own budget, so a flood from elsewhere cannot block its reconnect.
+    const bool known = current_.valid && from.address == current_.endpoint.address;
+    if (known ? !GuestMacBudget(now_ms) : (!RateAllow(from, now_ms) || !MacBudget(now_ms))) { Drop(DropReason::rate); return; }
     if (h.session_id != 0 || h.seq != 0 || h.body_len != kHelloBodySize || h.flags != 0) { Drop(DropReason::malformed); return; }
     if (!VerifyTag(hs_, data, size)) {
         Drop(DropReason::bad_mac);
@@ -434,13 +451,16 @@ Delivery Session::HostDatagram(const Header& h, const std::uint8_t* data, std::s
         if (!SameEndpoint(from, current_.endpoint)) { Drop(DropReason::wrong_endpoint); return Delivery{}; }
         if (h.type == PacketType::confirm) {
             // Our first DATA was lost: answer the repeated CONFIRM (<= 4/s).
+            // CONFIRM always carries seq 1, so the window cannot catch a replay:
+            // it counts only in the guest's resend phase (no guest DATA yet,
+            // kConfirmAnswerMs after the commit), and it is never a liveness
+            // signal (only fresh DATA brings a lost session back).
             if (!VerifyTag(current_.rx, data, size)) { Drop(DropReason::bad_mac); return Delivery{}; }
-            current_.last_rx_ms = now_ms;
-            if (state_ == LinkState::lost) {
-                state_ = LinkState::connected;
-                Push(MakeEvent(EventKind::connected));
+            if (state_ != LinkState::connected || current_.window.highest() > 1 || now_ms - last_commit_ms_ > kConfirmAnswerMs) {
+                Drop(DropReason::replay);
+                return Delivery{};
             }
-            if (now_ms - dup_confirm_last_ms_ >= kDupConfirmGapMs && state_ == LinkState::connected) {
+            if (now_ms - dup_confirm_last_ms_ >= kDupConfirmGapMs) {
                 dup_confirm_last_ms_ = now_ms;
                 SendDataOn(current_, nullptr, 0, now_ms);
             }
@@ -637,6 +657,13 @@ void Session::GuestReject(const Header& h, const std::uint8_t* data, std::size_t
         verified = VerifyTag(current_.rx, data, size);
     }
     if (!verified || reason == RejectReason::none || r.reason > static_cast<std::uint8_t>(RejectReason::role_mismatch)) {
+        ++stats_.reject_ignored;
+        return;
+    }
+    if (reason == RejectReason::busy && h.session_id == 0 && state_ == LinkState::reconnecting && current_.valid &&
+        now_ms - connecting_since_ms_ < kHostLostMs) {
+        // Our own address moved (NAT rebinding): the host still holds the old
+        // endpoint until it is lost. Keep the HELLO cadence, no state change.
         ++stats_.reject_ignored;
         return;
     }

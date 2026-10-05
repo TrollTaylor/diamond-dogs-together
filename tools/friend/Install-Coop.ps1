@@ -43,8 +43,8 @@ param(
     # (the previous copy is moved aside, never deleted). A first install (no
     # active friend install, also after Uninstall-Coop) always does this.
     [switch]$ReseedSaves,
-    # Reinstall although the real save files changed since the backup made
-    # before the friend test (interactive runs ask instead).
+    # Accepted for compatibility, no effect: a reinstall only reports real save
+    # changes since the first backup (normal play writes the real saves).
     [switch]$AcceptChangedSaves,
     [switch]$NonInteractive,
     # Do not ask for the final confirmation.
@@ -184,7 +184,9 @@ $lengthProblem = Get-FriendPathLengthProblem -GameRoot $gameRoot -SaveFiles $sav
 if ($lengthProblem) { throw "$lengthProblem Move the game to a shorter folder path (Steam > Settings > Storage) and try again. Nothing was changed." }
 
 # ---------------------------------------------------------------- earlier Play-Coop session
-# A co-op session that did not end cleanly (crash, power loss): its owned files go first.
+# A co-op session that did not end cleanly (crash, power loss): its owned files
+# go first. A session whose launcher window or helper still runs is not a leftover.
+if (Test-CoopPlaySessionLive -GameRoot $gameRoot) { throw 'Another Play-Coop window is active for this folder; close it first (or quit MGSV). Nothing was changed.' }
 $leftover = Invoke-CoopPlayCleanup -GameRoot $gameRoot
 if ($leftover.Ran) {
     Write-Host ('Co-op files of an earlier Play-Coop session were removed: ' + (@($leftover.Removed) -join ', ')) -ForegroundColor Yellow
@@ -197,9 +199,9 @@ $state = Read-FriendJson $statePath
 if ($state -and (Get-FriendProperty $state 'product') -ne 'mgs-coop-friend-install') { $state = $null }
 if ($state) {
     # A reinstall (role or character change) takes a new backup, but the backup
-    # from BEFORE the friend test stays the reference: the real saves must not
-    # change while the mod is installed.
-    Write-Host 'An active friend-test install was found; checking your real save files against the backup made before the friend test...'
+    # from BEFORE the friend test stays the reference. Information only: in
+    # pass-through every normal Steam start plays on (and writes) the real saves.
+    Write-Host 'An active friend-test install was found; comparing your real save files with the backup made before the friend test...'
     $baseline = Get-FriendSaveBaselines @(Get-FriendProperty $state 'backups' @())
     $changes = @()
     foreach ($b in @($baseline.Baselines)) {
@@ -208,24 +210,12 @@ if ($state) {
     }
     foreach ($m in @($baseline.Missing)) { Write-Host "Note: the save backup $m is missing; it cannot be used for the check." -ForegroundColor Yellow }
     if ($changes.Count) {
-        Write-Host ''
-        Write-Host 'WARNING: your REAL save files changed while the mod was installed.' -ForegroundColor Yellow
+        Write-Host 'Real save files changed since the backup made before the friend test (expected after normal play; the first backup stays the reference):'
         foreach ($c in $changes) {
             foreach ($p in @($c.Comparison.Changed)) { Write-Host "  changed: $p" }
             foreach ($p in @($c.Comparison.Missing)) { Write-Host "  missing: $p" }
             foreach ($p in @($c.Comparison.Added)) { Write-Host "  new:     $p" }
             Write-Host "  The backup from before the friend test is kept in: $($c.Backup)"
-        }
-        Write-Host 'This should not happen while the mod is installed (the game plays from the save copy).'
-        Write-Host 'Steam Cloud may have brought saves from another PC, or the save redirection did not'
-        Write-Host 'work. Please run Collect-Logs.bat and send the logs. Uninstall-Coop.bat shows how to'
-        Write-Host 'put the backup back. A new install keeps comparing with the backup above.'
-        if ($AcceptChangedSaves) {
-            Write-Host 'Continuing (-AcceptChangedSaves).'
-        } elseif ($interactive) {
-            if ((Ask 'Continue the install anyway? [y/N]') -notmatch '^(y|yes)$') { Write-Host 'Cancelled. Nothing was changed.'; exit 1 }
-        } else {
-            throw 'Your real save files changed since the backup made before the friend test (see above). Nothing was changed. Pass -AcceptChangedSaves to install anyway.'
         }
     } elseif (@($baseline.Baselines).Count) {
         Write-Host 'Real save files: unchanged since the backup made before the friend test.'
@@ -348,9 +338,10 @@ if ($seed.Seeded) {
 
 # ---------------------------------------------------------------- 6: install
 Section 'Step 6: installing the mod'
-$managed = @('lab.ini', 'coop.ini', 'script-observe.enabled', 'client-host.txt')
+$managed = @('lab.ini', 'coop.ini', 'script-observe.enabled', 'client-host.txt', 'link-secret.txt')
 # Previous configuration files: copied aside once, so Uninstall-Coop can report
 # (and, for a previous loader, put back) what was there before the first friend install.
+# A link secret (for example from the single-PC lab -Lan) is only set aside, never copied.
 $previousFiles = @()
 $snapshots = @{}
 foreach ($name in $managed) {
@@ -359,7 +350,7 @@ foreach ($name in $managed) {
     if (Test-Path -LiteralPath $path -PathType Leaf) { $snapshots[$name] = [IO.File]::ReadAllBytes($path) }
     if (!$state) {
         $copy = $null
-        if ($null -ne $snapshots[$name]) {
+        if ($null -ne $snapshots[$name] -and $name -ne 'link-secret.txt') {
             $copy = $path + '.before-friend-' + $stamp
             [IO.File]::Copy($path, $copy, $false)
         }
