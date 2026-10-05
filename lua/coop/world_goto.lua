@@ -40,7 +40,11 @@ do
             if g.step == 1 then
                 if W.inGame() then
                     local f = W.get(f30050_sequence, "ReserveMissionClear")
-                    if type(f) == "function" then
+                    if vars.missionCode ~= 30050 then
+                        -- Free roam: the helicopter ride to this location's ACC.
+                        TppMission.ReserveMissionClearOnRideOnHelicopter()
+                        f = nil
+                    elseif type(f) == "function" then
                         f()
                     else
                         TppDemo.SetNextMBDemo()
@@ -48,7 +52,7 @@ do
                             nextMissionId = TppDefine.SYS_MISSION_ID.MTBS_HELI}
                     end
                     g.check = true
-                    W.log("event=goto;step=1;call=" .. (type(f) == "function" and "f30050_sequence" or "fallback"))
+                    W.log("event=goto;step=1;call=" .. (vars.missionCode ~= 30050 and "ride_heli" or type(f) == "function" and "f30050_sequence" or "fallback"))
                 elseif now - g.since > 30000 then
                     W.gt = nil
                     ack(g, 0, "refused;reason=not_in_game")

@@ -399,8 +399,11 @@ unpaused at stop, on LEVEL 0 and after an error.
 
 Trigger `goto=30010|30020 [goto_lz=0|1]`, refused (`world_goto=refused;
 reason=level|mission|target|busy|terminating`) unless world sync is on at
-level >= 1, the copy stands in 30050 or in the ACC 40050 (memory and the last
-CFG start), no goto runs and the mission is not terminating. Lua also refuses
+level >= 1, the copy stands in 30050, in free roam 30010/30020 or in an ACC
+40010/40020/40050 (memory and the last CFG start), no goto runs and the
+mission is not terminating. In free roam step 1 is
+`TppMission.ReserveMissionClearOnRideOnHelicopter()` (`call=ride_heli`), so a
+continued free roam (W1 off) starts fresh. Lua also refuses
 unless the CFG mode is 1. Armed in the ACC (a lab save that continues into the
 helicopter) it skips step 1: `world_goto=armed; target=; lz=; from=acc` and
 GOTO{2} at once (60 s timeout).

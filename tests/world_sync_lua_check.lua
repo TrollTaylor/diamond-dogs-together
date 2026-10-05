@@ -167,6 +167,10 @@ local function fixture(options)
         CheckMissionState = function() return c.inGame end,
         IsMissionStart = function() return c.missionStart end,
         IsHelicopterSpace = function(m) return math.floor(m / 10000) == 4 end,
+        ReserveMissionClearOnRideOnHelicopter = function()
+            record('RideOnHelicopter')
+            env.svars.mis_isDefiniteMissionClear = true
+        end,
         ReserveMissionClear = function(t)
             record('ReserveMissionClear:' .. tostring(t.missionClearType) .. ':' .. tostring(t.nextMissionId))
             env.svars.mis_isDefiniteMissionClear = true
@@ -1143,6 +1147,14 @@ do
     ack = F.tx(c4, OP.GOTO_ACK)
     check(#ack == 2 and ack[1].v[2] == 2 and ack[2].v[2] == 0 and #c4.calls == 0 and
         has(c4.logs, 'event=goto;step=2;result=refused;reason=not_heli_space'), 'an emergency code refuses step 2')
+    -- Step 1 in free roam: the helicopter ride (a continued mission starts fresh).
+    local env6, c6 = fixture({role = 1, mission = 30010})
+    F.start(env6, c6)
+    F.clear(c6)
+    F.push(c6, 0, OP.GOTO, 1, 30010, 0)
+    F.tick(env6, c6, 2)
+    check(F.callCount(c6, 'RideOnHelicopter') == 1 and F.callCount(c6, 'f30050.ReserveMissionClear') == 0 and
+        has(c6.logs, 'event=goto;step=1;call=ride_heli') and F.tx(c6, OP.GOTO_ACK)[1].v[2] == 1, 'free roam: ride the helicopter')
     local env5, c5 = fixture({role = 1, mission = 30050, mode = 2})
     F.start(env5, c5)
     F.push(c5, 0, OP.GOTO, 1, 30010, 0)

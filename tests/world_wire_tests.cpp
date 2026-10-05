@@ -724,10 +724,10 @@ void Schedulers() {
         return t;
     };
     Setup();
-    g_host.Cfg(30010, true, 30010, 0);
+    g_host.Cfg(10033, true, 10033, 0);
     Lines(g_host);
-    g_host.ApplyTrigger(trigger(30010), "goto=30010", 30010, false, 0);
-    Check(HasLine(Lines(g_host), "world_goto=refused; reason=mission"), "goto only from 30050");
+    g_host.ApplyTrigger(trigger(30010), "goto=30010", 10033, false, 0);
+    Check(HasLine(Lines(g_host), "world_goto=refused; reason=mission"), "goto only from 30050, free roam or an ACC");
     g_host.Cfg(30050, true, 30050, 0);
     g_host.ApplyTrigger(trigger(30010), "goto=30010", 30050, true, 0);
     Check(HasLine(Lines(g_host), "world_goto=refused; reason=terminating"), "not while terminating");
@@ -774,6 +774,20 @@ void Schedulers() {
     g_host.Cfg(30010, true, 30010, 61000);
     Check(HasLine(Lines(g_host), "world_goto=arrived; mission=30010; ms=60000") && g_host.goto_state() == world::GotoState::idle,
           "arrived");
+    // From free roam: step 1, then the Afghanistan ACC (40010).
+    Setup();
+    g_host.Cfg(30010, true, 30010, 1000);
+    Drain(g_host, 1, 1000);
+    Lines(g_host);
+    g_host.ApplyTrigger(trigger(30010), "goto=30010", 30010, false, 1000);
+    Check(HasLine(Lines(g_host), "world_goto=armed; target=30010; lz=0") && g_host.goto_state() == world::GotoState::step1,
+          "armed in free roam");
+    Tx(g_host, op::goto_ack, {1, 1}, 1500);
+    g_host.LocalMissionEnd(4000);
+    g_host.Cfg(40010, true, 40010, 9000);
+    rx = Drain(g_host, 1, 9000);
+    p = Find(rx, op::go_to);
+    Check(p && p->v[0] == 2 && p->v[1] == 30010 && g_host.goto_state() == world::GotoState::step2, "GOTO{2} at the 40010 ACC");
     // Already at the ACC (a save that continues into 40050): step 2 only.
     Setup();
     g_host.Cfg(40050, true, 40050, 1000);

@@ -28,6 +28,9 @@ inline constexpr unsigned kMaxCount = 255;  // ops per bundle
 inline constexpr std::uint8_t kRoleHost = 1, kRoleGuest = 2;
 inline constexpr std::uint8_t kModeLab = 1, kModePlay = 2;
 inline constexpr std::uint32_t kMissionMtbsFree = 30050, kMissionMtbsHeli = 40050;
+inline constexpr std::uint32_t kMissionAfghFree = 30010, kMissionMafrFree = 30020;
+// TppMission.IsHelicopterSpace: an ACC (40010/40020/40050).
+inline constexpr bool IsHeliSpace(std::uint32_t mission) noexcept { return mission / 10000 == 4; }
 
 // Queue sizes (static POD; nothing allocates after Configure).
 inline constexpr unsigned kControlQueue = 256, kLocalReserve = 32, kWorldQueue = 4096, kOutboundQueue = 2048;
