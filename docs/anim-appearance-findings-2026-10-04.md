@@ -148,8 +148,9 @@ plays Quiet. `stage=3 apply=xform reset=n`, input off. Evidence is in
 
 Notes:
 
-- `q18` (Q+0x18 act) toggled 0x3/0x4 during playback and `ps2d8` stayed 68,5,
-  which is consistent with the Q arrays being bookkeeping, not drivers.
+- `q18=<slot0>,<slot1>`: slot 1 (the partner) read 0x8b, the DM act, for the
+  whole playback; slot 0 (the host's own Snake) moved between 0x3 and 0x4.
+  `ps2d8` stayed 68,5.
 - Switching clips needs `dmstop=1` first (looping clips stay busy). A mapping
   mode should stop, then play, on every clip change, at most once per change.
 - Orientation follows the xform yaw (orbit tangent), so the sprint faces the
