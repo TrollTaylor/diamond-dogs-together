@@ -82,8 +82,15 @@ inline constexpr std::uint64_t kP218MaxMs = 20000;
 inline constexpr std::uint64_t kReconLineMs = 1000;
 inline constexpr unsigned kReconLineCap = 3600;
 inline constexpr unsigned kWrapLineCap = 600;
-// partner_body speed: the oldest same-epoch sample at least this much older.
-inline constexpr std::uint64_t kSpeedSpanMs = 250;
+// partner_body speed: over the oldest same-epoch sample of the ring (32 Lua
+// ticks, ~530 ms at 60 Hz), divided by the actual span, which must be at
+// least kSpeedSpanMs (na otherwise).
+inline constexpr std::uint64_t kSpeedSpanMs = 150;
+inline constexpr unsigned kBodyRing = 32;
+// The corrective stance input of the reconciliation (StanceFix): PlayerPad
+// STANCE (0x2); a hold lasts this long (>= 12 windows: classify(1,12) == 3).
+inline constexpr std::uint32_t kStanceBit = 0x2;
+inline constexpr std::uint32_t kStanceFixHoldMs = 400;
 inline constexpr std::uint64_t kDmUnconsumedMs = 2000;
 inline constexpr std::uint64_t kDmProbeMs = 500;
 inline constexpr unsigned kInputStatsCap = 600;
@@ -337,7 +344,7 @@ struct Mission {
     // partner_body speed: horizontal body samples tagged with the epoch of our
     // last hard write (placement, snap, pin, yaw, Warp fallback, disarm).
     struct BodySample { std::uint64_t t_ms; std::int32_t x_mm, z_mm; std::uint32_t epoch; };
-    BodySample body_ring[16];
+    BodySample body_ring[kBodyRing];
     unsigned body_head, body_count;
     std::uint32_t body_epoch;
     std::uint64_t pad_probe_ms;
@@ -365,9 +372,10 @@ struct Mission {
     std::uint64_t recon_line_ms;
     unsigned recon_lines;
     bool recon_lines_capped;
-    LogCap recon_cap[10];          // event families (place, placed, snap, runaway, frozen, stance, yaw, stop, diverging, refused)
+    LogCap recon_cap[12];          // event families (place, placed, snap, runaway, frozen, stance, yaw, stop, diverging, refused, stance_fix, input_pin)
     const char* recon_refused;     // last refusal logged (change-only)
     std::uint32_t recon_snaps_total;
+    std::uint32_t recon_fixes;     // corrective stance inputs this mission (StanceFix)
     // Wrap census line (deltas against the last line).
     bool wrap_install_tried;
     partner_input_hook::WrapStats wrap_base;

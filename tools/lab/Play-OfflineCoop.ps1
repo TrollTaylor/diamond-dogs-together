@@ -101,7 +101,7 @@ foreach ($role in $dirs.Keys) {
         Link = 'none'; Rx = 0; Age = 0; Crash = 0; Exited = $false
         Look = ''; Move = ''; Stance = ''; Character = ''; Fault = $false; Mode = ''
         Input = 'off'; InputArmed = $false; InputPerS = 0; InputStale = $false; InputFault = ''
-        Recon = ''; ReconErr = 0; Snaps = 0; Places = 0; Runaway = $false; Frozen = ''; Body = ''
+        Recon = ''; ReconErr = 0; Snaps = 0; Places = 0; Runaway = $false; Frozen = ''; Body = ''; InputPin = $false; Fixes = 0
     }
 }
 function Update-State {
@@ -147,13 +147,17 @@ function Update-State {
             elseif ($line -match '^partner_input=stale') { $s.InputStale = $true }
             elseif ($line -match '^partner_input=live') { $s.InputStale = $false }
             elseif ($line -match '^partner_input=fault; phase=([a-z]+)') { $s.InputFault = $Matches[1] }
-            elseif ($line -match '^partner_recon; mode=([a-z]+); err_mm=(-?\d+);.* snaps=(\d+); places=(\d+);.* act=(\d+); s=(\d+);.* frozen=([a-z_]+);.* runaway=(\d)') {
-                $s.Recon = $Matches[1]; $s.ReconErr = [int]$Matches[2]; $s.Snaps = [int]$Matches[3]; $s.Places = [int]$Matches[4]
-                $s.Body = @('', 'stand', 'crouch', 'prone')[[Math]::Min(3, [int]$Matches[6])]
-                $s.Frozen = if ($Matches[7] -ne 'none') { $Matches[7] } else { '' }
-                $s.Runaway = $Matches[8] -eq '1'
+            elseif ($line -match '^partner_recon; mode=([a-z]+); recon=([a-z]+); err_mm=(-?\d+);.* snaps=(\d+); places=(\d+);.* act=(\d+); s=(\d+);.* frozen=([a-z_]+);.* runaway=(\d); input_pin=(\d); fixes=(\d+)') {
+                # recon= is the effective setting (correct=0 turns it off whatever recon= says).
+                $s.Recon = if ($Matches[2] -eq 'off') { 'OFF' } else { $Matches[1] }
+                $s.ReconErr = [int]$Matches[3]; $s.Snaps = [int]$Matches[4]; $s.Places = [int]$Matches[5]
+                $s.Body = @('', 'stand', 'crouch', 'prone')[[Math]::Min(3, [int]$Matches[7])]
+                $s.Frozen = if ($Matches[8] -ne 'none') { $Matches[8] } else { '' }
+                $s.Runaway = $Matches[9] -eq '1'
+                $s.InputPin = $Matches[10] -eq '1'
+                $s.Fixes = [int]$Matches[11]
             }
-            elseif ($line -match '^partner_recon=runaway;') { $s.Runaway = $true }
+            elseif ($line -match '^partner_recon=runaway;.*action=(pin|disarm)') { $s.Runaway = $true }
             elseif ($line -match '^partner_recon=runaway_end') { $s.Runaway = $false }
             elseif ($line -match '^partner_stage=changed; .*; input=([a-z]+);') { $s.Input = $Matches[1]; if ($Matches[1] -eq 'off') { $s.InputArmed = $false } }
             elseif ($line -match '^partner_call=fault') { $s.Fault = $true }
@@ -191,6 +195,8 @@ function Format-Role([string]$role) {
             if ($s.Snaps) { $recon += " snaps $($s.Snaps)" }
             if ($s.Places -gt 0) { $recon += " places $($s.Places)" }
             if ($s.Runaway) { $recon += ' RUNAWAY(pinned)' }
+            if ($s.InputPin) { $recon += ' INPUT-LOST(pinned)' }
+            if ($s.Fixes) { $recon += " stance-fixes $($s.Fixes)" }
             if ($s.Frozen) { $recon += " frozen $($s.Frozen)" }
             if ($s.Body) { $recon += " body $($s.Body)" }
             $extra += $recon
@@ -209,7 +215,9 @@ $startMove = if ($Experimental) { 'hybrid' } elseif ($ProvenWarp) { 'warp' } els
 $experiment = [ordered]@{ Move = $startMove; Anim = $(if ($Experimental) { 'net' } else { 'off' }); Recon = 'track' }
 # The input drive (both copies): the remote pad drives the partner's real
 # locomotion; hold own (prone), words hpr (stance taps), keyboard dash and walk.
-$script:InputTrigger = 'stage=3 source=net apply=input anim=off input=net cam=sandbox hold=own words=hpr bits=0x2200006 isend=1 recon={0} slot=body look=net'
+# correct=3000 runaway=pin are explicit: a correct=0 left by an earlier
+# diagnostic (R0, I3) would otherwise turn the reconciliation off silently.
+$script:InputTrigger = 'stage=3 source=net apply=input anim=off input=net cam=sandbox hold=own words=hpr bits=0x2200006 isend=1 recon={0} correct=3000 runaway=pin slot=body look=net'
 function Get-SyncTrigger {
     if ($experiment.Move -eq 'input') { return ($script:InputTrigger -f $experiment.Recon) }
     $move = if ($experiment.Move -eq 'hybrid') { 'apply=hybrid reset=n' } else { 'apply=warp' }
@@ -232,7 +240,8 @@ try {
     if ($Experimental) { $partnerSettings += @('partner_aset=qs', 'partner_reset=n') }
     if ($experiment.Move -eq 'input') {
         $partnerSettings += @('partner_input=net', 'partner_input_send=1', 'partner_input_cam=sandbox', 'partner_input_hold=own',
-            'partner_input_words=hpr', 'partner_input_mask=0x2200006', 'partner_recon=track', 'partner_input_slot=body')
+            'partner_input_words=hpr', 'partner_input_mask=0x2200006', 'partner_recon=track', 'partner_input_correct_mm=3000',
+            'partner_recon_runaway=pin', 'partner_input_slot=body')
     }
     & (Join-Path $lab 'Prepare-LabInstance.ps1') -Offline -PartnerSetting $partnerSettings |
         ForEach-Object { Write-Note $_ }

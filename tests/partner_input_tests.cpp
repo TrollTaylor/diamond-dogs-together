@@ -269,11 +269,92 @@ void TestEdgesAndTaps() {
     Check(j.synth == 0, "outside the mask: nothing");
     j = pi::Compose(c, Live(12, 0x2200000), 0, pi::Overlay{}, edge);
     Check(j.held == 0x2200000, "keyboard dash 0x200000 and walk 0x2000000 pass the default mask");
-    // Stale input: no synthesis, neutral.
+    // Stale input within the grace: the last live level, no synthesis, no edges.
     pi::Sample stale = Live(13, 0x2);
     stale.age_ms = 999; stale.edge_press = stale.edge_release = 0x2;
     j = pi::Compose(c, stale, 0, pi::Overlay{}, edge);
-    Check(j.stale && j.held == 0 && j.synth == 0, "stale: neutral, nothing synthesized");
+    Check(j.stale && j.held == 0x2200000 && j.synth == 0 && j.w[1] == 0 && j.w[2] == 0 && j.hist_freeze,
+          "stale (grace): last live level kept, nothing synthesized, no edges, history frozen");
+    // Beyond the grace: released silently (no release edge), the history restarts.
+    stale.age_ms = 1500;
+    j = pi::Compose(c, stale, 0, pi::Overlay{}, edge);
+    Check(j.stale && j.held == 0 && j.w[2] == 0 && j.edge_release == 0 && j.hist_reset, "stale beyond the grace: silent release");
+}
+
+// Round 4 review: a stall during a held stance never toggles; the first
+// window after a disarm replays no stale edge set; wrap windows get the level only.
+void TestStallAndResync() {
+    pi::Config c = Cfg(pi::Word::held, pi::Word::press, pi::Word::release);
+    c.mask = 0x2200006;
+    c.stale_ms = 250;
+    pi::EdgeState edge{};
+    // The guest holds stance; a 400 ms stall (age 400) keeps the level, no w54.
+    pi::Injection j = pi::Compose(c, Live(1, 0x2), 0, pi::Overlay{}, edge);
+    Check(j.w[1] == 0x2, "stall: press window");
+    pi::Sample s = Live(1, 0x2);
+    s.age_ms = 400;
+    j = pi::Compose(c, s, 0, pi::Overlay{}, edge);
+    Check(j.held == 0x2 && j.w[2] == 0 && j.edge_release == 0 && j.hist_freeze && j.lx == 0.0f && j.ly == 0.0f,
+          "stall: held level kept, no release edge, history frozen, stick neutral");
+    // Live again, still held: no second press edge.
+    j = pi::Compose(c, Live(2, 0x2), 0, pi::Overlay{}, edge);
+    Check(j.held == 0x2 && j.w[1] == 0 && j.w[2] == 0 && !j.hist_freeze, "recovered, still held: no edges");
+    // Live again, released during the stall: exactly one release edge.
+    j = pi::Compose(c, Live(3, 0), 0, pi::Overlay{}, edge);
+    Check(j.w[2] == 0x2 && j.edge_release == 0x2, "released: one release edge");
+    // After a silent release, a press on recovery is a fresh press.
+    j = pi::Compose(c, Live(4, 0x4), 0, pi::Overlay{}, edge);
+    s = Live(4, 0x4);
+    s.age_ms = 2000;
+    j = pi::Compose(c, s, 0, pi::Overlay{}, edge);
+    Check(j.held == 0 && j.w[2] == 0 && j.hist_reset, "dash: silently released after the grace");
+    j = pi::Compose(c, Live(5, 0x4), 0, pi::Overlay{}, edge);
+    Check(j.held == 0x4 && j.w[1] == 0x4, "dash: pressed again on recovery");
+    // Resync (first window after a disarm): edge sets accumulated while
+    // disarmed are dropped, the current level is injected without edges.
+    pi::EdgeState r{};
+    r.prev_held = 0x2;  // the level before the disarm (stance was held)
+    r.resync = true;
+    pi::Sample stale_sets = Live(9, 0);
+    stale_sets.edge_press = stale_sets.edge_release = 0x2;  // a crouch tap while disarmed
+    stale_sets.edge_tap12 = 0x2;
+    j = pi::Compose(c, stale_sets, 0, pi::Overlay{}, r);
+    Check(j.resynced && j.synth == 0 && j.held == 0 && j.w[1] == 0 && j.w[2] == 0 && j.edge_release == 0 && j.tap12 == 0 &&
+          j.hist_reset && !r.resync, "resync: no replayed tap, no release edge for the old level, history restarts");
+    // A bit held across the resync is level only, and its later release is an edge.
+    r.resync = true;
+    j = pi::Compose(c, Live(10, 0x4), 0, pi::Overlay{}, r);
+    Check(j.held == 0x4 && j.w[1] == 0, "resync with dash held: level, no press edge");
+    j = pi::Compose(c, Live(11, 0x4), 0, pi::Overlay{}, r);
+    Check(j.w[1] == 0 && j.w[2] == 0, "then held: no edges");
+    j = pi::Compose(c, Live(12, 0), 0, pi::Overlay{}, r);
+    Check(j.w[2] == 0x4, "then its release edge");
+    // A resync during a stall drops the stalled level (no stale level across a disarm).
+    pi::EdgeState g{};
+    pi::Compose(c, Live(20, 0x4), 0, pi::Overlay{}, g);
+    g.resync = true;
+    pi::Sample stalled = Live(20, 0x4);
+    stalled.age_ms = 500;
+    j = pi::Compose(c, stalled, 0, pi::Overlay{}, g);
+    Check(j.held == 0 && j.w[2] == 0 && g.net_held == 0, "resync during a stall: level dropped silently");
+    // Fresh edge sets after the resync work again.
+    pi::Sample tap = Live(13, 0);
+    tap.edge_press = tap.edge_release = 0x2;
+    j = pi::Compose(c, tap, 0, pi::Overlay{}, r);
+    Check(j.synth == 0x2 && j.w[1] == 0x2, "after the resync: sub-sample taps synthesize again");
+    // LevelOnly: wrap windows keep held words and sticks, drop every edge.
+    pi::Injection full = j;
+    full.w[2] = 0x2;
+    full.edge_release = 0x2;
+    full.tap12 = 0x2;
+    full.lx = 0.5f;
+    const pi::Injection lvl = pi::LevelOnly(full, c);
+    Check(lvl.w[0] == (full.held & c.mask) && lvl.w[1] == 0 && lvl.w[2] == 0 && lvl.edge_press == 0 && lvl.edge_release == 0 &&
+          lvl.tap12 == 0 && lvl.synth == 0 && lvl.held == full.held && lvl.lx == 0.5f, "LevelOnly: level kept, edges dropped");
+    pi::Config n = Cfg(pi::Word::net, pi::Word::net, pi::Word::held);
+    n.mask = 0x6;
+    const pi::Injection lvl2 = pi::LevelOnly(full, n);
+    Check(lvl2.w[0] == 0 && lvl2.w[1] == 0 && lvl2.w[2] == (full.held & 0x6), "LevelOnly: net words dropped, held word kept");
 }
 
 // hold=own: the exact replica of 0x434ED0 over the fed history.
@@ -430,12 +511,13 @@ int main() {
     TestOverlay();
     TestHeading();
     TestEdgesAndTaps();
+    TestStallAndResync();
     TestHoldReplica();
     TestBindings();
     TestSenderEdges();
     TestAccumulate();
     std::printf("%u partner input checks passed: effective pad, dir check, quantize round trip/clamps, compose "
                 "(pass/neutral/stick/net, yaw, stale, edges, net word, mask, overlay), tap/press timers, heading, hpr edges and "
-                "sub-sample taps, hold classifier replica and net codes, key bindings, sender edge sets, receiver accumulation\n", checks);
+                "sub-sample taps, stall grace/silent release, resync after a disarm, level-only wrap windows, hold classifier replica and net codes, key bindings, sender edge sets, receiver accumulation\n", checks);
     return 0;
 }

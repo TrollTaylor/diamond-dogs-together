@@ -270,7 +270,8 @@ with no fuse and no session.
 - **Play-OfflineCoop.ps1** (`Play-Offline-Coop.bat`) is the one-click test: the
   guest plays Quiet, `look=net` shows each player's own character on the
   other copy, and (round 4) each partner is driven by the other player's pad
-  (`apply=input input=net isend=1 hold=own words=hpr recon=track`, see
+  (`apply=input input=net isend=1 hold=own words=hpr recon=track correct=3000
+  runaway=pin`, see
   docs/partner-anim-appearance.md "Round 4"). [W] switches both copies back to
   the proven Warp movement, [I] / [P] to the input drive (tracked / pinned),
   [M] / [A] to the round 2 experiments; `-ProvenWarp` starts on the proven

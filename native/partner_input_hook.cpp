@@ -75,6 +75,10 @@ std::uint32_t g_shadow_gate = 0;   // PP+0x278 as instance 1 sees it
 std::uint8_t g_shadow_rebind = 0;  // PP+0x4B0 as instance 1 sees it
 pi::HoldHistory g_hist{};
 volatile LONG g_reset_hist = 0;  // set by ResetFault (Lua thread), consumed by the hook thread
+// Hook thread: no block-1 window ran since the last disarm (or ever). The
+// next window resyncs the level and drops the edge sets accumulated meanwhile.
+bool g_need_resync = true;
+std::uint64_t g_last_compose_ms = 0;  // the last composed main window (gap -> resync)
 // The main window's injection of the current frame (reused by wrap windows).
 pi::Injection g_last_inj{};
 bool g_inj_valid = false;
@@ -486,8 +490,8 @@ void RunWindow(const pi::Arm& a, void* root, std::uint32_t phase) noexcept {
     InterlockedIncrement(&g_windows);
     if (a.config.mode == PartnerInput::pass) { g_inj_valid = false; g_original(root, phase); return; }
     const std::uint64_t now_ms = NowMs();
-    // One fresh injection per main window (once per frame); wrap windows of
-    // this frame reuse it, so every consumer sees each edge exactly once.
+    // One fresh injection per main window (once per frame); wrap windows
+    // reuse its level only (LevelOnly), so every edge is delivered once.
     pi::Sample s{};
     if (g_sample && g_sample(s)) {
         g_prev = s;
@@ -496,9 +500,18 @@ void RunWindow(const pi::Arm& a, void* root, std::uint32_t phase) noexcept {
         s.edge_press = s.edge_release = s.edge_tap12 = 0;  // consumed edges never replay
     }
     g_prev.edge_press = g_prev.edge_release = g_prev.edge_tap12 = 0;
+    // First window after a disarm: the edge sets that piled up while disarmed
+    // were consumed above and are dropped by Compose (level only).
+    // So is the first window after a gap (skips, pass mode) of kResyncGapMs.
+    if (g_need_resync || !g_last_compose_ms || now_ms - g_last_compose_ms > pi::kResyncGapMs) {
+        g_need_resync = false;
+        g_edge.resync = true;
+    }
+    g_last_compose_ms = now_ms;
     const std::uint32_t overlay_bits = pi::StepOverlay(g_tap, a.tap_seq, a.tap_bits, a.press_bits, a.press_until_ms, now_ms);
     const pi::Injection j = pi::Compose(a.config, s, a.host_cam_cdeg, pi::Overlay{overlay_bits}, g_edge);
-    pi::HoldPush(g_hist, j.held);
+    if (j.hist_reset) g_hist = pi::HoldHistory{};
+    if (!j.hist_freeze) pi::HoldPush(g_hist, j.held);
     g_last_inj = j;
     g_inj_valid = true;
     if (j.synth) InterlockedIncrement(&g_synth);
@@ -530,7 +543,7 @@ void RunWindow(const pi::Arm& a, void* root, std::uint32_t phase) noexcept {
 
 void __stdcall InputDispatchHook(void* root, std::uint32_t phase) noexcept {
     if (InterlockedCompareExchange(&g_hook_thread, static_cast<LONG>(GetCurrentThreadId()), 0) == 0) {}
-    if (!g_arm_enabled && !g_holdlog) { g_original(root, phase); return; }
+    if (!g_arm_enabled && !g_holdlog) { g_need_resync = true; g_original(root, phase); return; }
     pi::Arm a{};
     if (!ReadArm(a)) { g_original(root, phase); return; }
     InterlockedExchange(&g_gen_seen, static_cast<LONG>(a.gen));
@@ -548,7 +561,8 @@ void __stdcall InputDispatchHook(void* root, std::uint32_t phase) noexcept {
     }
     if (phase != 8) { g_original(root, phase); return; }
     if (a.holdlog && reinterpret_cast<std::uintptr_t>(root) == a.root0) { RunHoldLog(a, root, phase); return; }
-    if (!a.enabled || reinterpret_cast<std::uintptr_t>(root) != a.root1 || g_faulted) { g_original(root, phase); return; }
+    if (!a.enabled || g_faulted) { g_need_resync = true; g_original(root, phase); return; }
+    if (reinterpret_cast<std::uintptr_t>(root) != a.root1) { g_original(root, phase); return; }
     RunWindow(a, root, phase);
 }
 
@@ -567,7 +581,8 @@ void RunWrapWindow(const Call& k) noexcept {
     __try { skip = Validate(a, k.root); validated = true; }
     __except (OwnFilter(1, GetExceptionCode())) {}
     if (!validated || skip != pi::Skip::none) { CallOriginal(k); return; }
-    const pi::Injection j = g_last_inj;
+    // Level only: the main window delivered this frame's edges.
+    const pi::Injection j = pi::LevelOnly(g_last_inj, a.config);
     Save save{};
     BeginWindow();
     if (!SafePre(a, j, save)) {

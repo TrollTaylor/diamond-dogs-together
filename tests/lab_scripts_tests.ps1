@@ -311,17 +311,27 @@ try {
         $experiment = [ordered]@{ Move = $case[0]; Anim = $case[1]; Recon = $case[2] }
         $playLines["$($case[0])/$($case[1])/$($case[2])"] = & $syncBody
     }
-    Assert-Equal $playLines['input/off/track'] 'stage=3 source=net apply=input anim=off input=net cam=sandbox hold=own words=hpr bits=0x2200006 isend=1 recon=track slot=body look=net' 'Play-OfflineCoop default line: the input drive'
-    Assert-Equal $playLines['input/off/pin'] 'stage=3 source=net apply=input anim=off input=net cam=sandbox hold=own words=hpr bits=0x2200006 isend=1 recon=pin slot=body look=net' 'Play-OfflineCoop [P] line'
+    Assert-Equal $playLines['input/off/track'] 'stage=3 source=net apply=input anim=off input=net cam=sandbox hold=own words=hpr bits=0x2200006 isend=1 recon=track correct=3000 runaway=pin slot=body look=net' 'Play-OfflineCoop default line: the input drive (correction explicit)'
+    Assert-Equal $playLines['input/off/pin'] 'stage=3 source=net apply=input anim=off input=net cam=sandbox hold=own words=hpr bits=0x2200006 isend=1 recon=pin correct=3000 runaway=pin slot=body look=net' 'Play-OfflineCoop [P] line'
     Assert-Equal $playLines['warp/off/track'] 'stage=3 source=net apply=warp anim=off input=off isend=0 look=net' 'Play-OfflineCoop [W] line: proven Warp, input off'
     Assert-Equal $playLines['hybrid/net/track'] 'stage=3 source=net apply=hybrid reset=n anim=net aset=qs input=off isend=0 look=net' 'Play-OfflineCoop experimental line'
-    foreach ($line in $playLines.Values) { Assert-True (Test-PartnerTriggerText $line) "Play-OfflineCoop line '$line' is a valid trigger" }
+    foreach ($line in $playLines.Values) {
+        Assert-True (Test-PartnerTriggerText $line) "Play-OfflineCoop line '$line' is a valid trigger"
+        Assert-True ($line.Length + 1 -le 255) "Play-OfflineCoop line '$line' fits 255 bytes"
+    }
+    # The I6 plan sets the correction explicitly too (an earlier I3 leaves correct=0).
+    $i6 = Get-PartnerExperimentPlan -Experiment I6
+    Assert-True ((@($i6.Steps | Where-Object { $_.Kind -eq 'trigger' })[0].Value) -match 'correct=3000 runaway=pin') 'I6 trigger: correct=3000 runaway=pin'
+    # The status line reads the effective recon= and the input pin / stance fixes.
+    Assert-True ($playText.Contains('recon=([a-z]+); err_mm=') -and $playText.Contains('input_pin=(\d); fixes=(\d+)')) 'Play-OfflineCoop status parses recon=/input_pin=/fixes='
+    Assert-True ($playText.Contains("'^partner_recon=runaway;.*action=(pin|disarm)'")) 'Play-OfflineCoop: RUNAWAY only for pin/disarm'
     Assert-True ($playText.Contains("`$startMove = if (`$Experimental) { 'hybrid' } elseif (`$ProvenWarp) { 'warp' } else { 'input' }")) 'Play-OfflineCoop starts with the input drive unless -ProvenWarp/-Experimental'
     Assert-True ($playText.Contains("'I' {") -and $playText.Contains("'W' {") -and $playText.Contains("'P' {")) 'Play-OfflineCoop defines [I], [W] and [P]'
-    Assert-True ($playText.Contains("'partner_input=net', 'partner_input_send=1'") -and $playText.Contains("'partner_recon=track'")) 'Play-OfflineCoop prepares lab.ini for the input drive'
+    Assert-True ($playText.Contains("'partner_input=net', 'partner_input_send=1'") -and $playText.Contains("'partner_recon=track'") -and
+        $playText.Contains("'partner_input_correct_mm=3000'") -and $playText.Contains("'partner_recon_runaway=pin'")) 'Play-OfflineCoop prepares lab.ini for the input drive (correction explicit)'
     $ovInput = ConvertFrom-LabPartnerSettingArgs -Items @('partner_apply=input', 'partner_input=net', 'partner_input_send=1', 'partner_input_cam=sandbox',
-        'partner_input_hold=own', 'partner_input_words=hpr', 'partner_input_mask=0x2200006', 'partner_recon=track', 'partner_input_slot=body') -Role host
-    Assert-Equal "$($ovInput['partner_apply'])/$($ovInput['partner_input_hold'])/$($ovInput['partner_recon'])/$($ovInput['partner_input_slot'])/$($ovInput['partner_input_mask'])" 'input/own/track/body/0x2200006' '-PartnerSetting: the Play-OfflineCoop input-drive settings'
+        'partner_input_hold=own', 'partner_input_words=hpr', 'partner_input_mask=0x2200006', 'partner_recon=track', 'partner_input_correct_mm=3000', 'partner_recon_runaway=pin', 'partner_input_slot=body') -Role host
+    Assert-Equal "$($ovInput['partner_apply'])/$($ovInput['partner_input_hold'])/$($ovInput['partner_recon'])/$($ovInput['partner_input_slot'])/$($ovInput['partner_input_mask'])/$($ovInput['partner_input_correct_mm'])/$($ovInput['partner_recon_runaway'])" 'input/own/track/body/0x2200006/3000/pin' '-PartnerSetting: the Play-OfflineCoop input-drive settings'
     # Round 4 lab.ini value kinds.
     Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_recon_align_ms -Value -16)/$(ConvertTo-LabPartnerValue -Key partner_recon_align_ms -Value 150)" '-16/150' 'partner_recon_align_ms (signed)'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_recon_align_ms -Value -51 } '-50..150' 'align range'

@@ -41,8 +41,10 @@ void PushDistance(State& st, std::uint64_t now, double d) noexcept {
     st.d_hist_ms[st.d_head] = now;
     if (st.d_count < 32) ++st.d_count;
 }
+// Per-placement counters; snaps and places stay cumulative (since Reset), so a
+// diverging re-placement never hides the snaps that caused it.
 void ResetArmCounters(State& st) noexcept {
-    st.nudges = st.snaps = st.places = st.pins = st.yaws = 0;
+    st.nudges = st.pins = st.yaws = 0;
     st.nudge_mm = 0.0;
 }
 void ResetMotionFilters(State& st) noexcept {
@@ -53,6 +55,7 @@ void ResetMotionFilters(State& st) noexcept {
     st.d_count = 0;
     st.over_since = st.vertical_since = st.yaw_since = 0;
     st.runaway_since = st.runaway_exit_since = 0;
+    st.runaway_latched = false;
     st.still_since = 0;
 }
 } // namespace
@@ -64,6 +67,14 @@ const char* ActionName(Action action) noexcept {
     case Action::snap: return "snap";
     case Action::pin: return "pin";
     case Action::yaw: return "yaw";
+    default: return "none";
+    }
+}
+
+const char* StanceFixName(StanceFix fix) noexcept {
+    switch (fix) {
+    case StanceFix::tap: return "tap";
+    case StanceFix::hold: return "hold";
     default: return "none";
     }
 }
@@ -224,6 +235,11 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
     const bool remote_idle = Held(st.idle_since, now, P.idle_hold_ms);
     const bool remote_moving = speed_remote >= P.moving_mmps || r >= P.moving_r;
     if (speed_free < P.yaw_still_mmps) { if (!st.still_since) st.still_since = now ? now : 1; } else { st.still_since = 0; }
+    // The body's own velocity against the remote's (runaway with a moving remote).
+    const double dv = Len2(st.v_free[0] - st.v_remote[0], st.v_free[1] - st.v_remote[1]);
+    // Net input staleness (the window injects a neutral pad while stale).
+    const bool input_stale = in.input_net && (!in.in_valid || in.in_age_ms > P.input_stale_ms);
+    if (input_stale) { if (!st.input_stale_since) st.input_stale_since = now ? now : 1; } else { st.input_stale_since = 0; }
 
     // ---- Stance (debounced remote stance) ------------------------------------
     std::uint8_t stance_from = 0, stance_to = 0;
@@ -319,6 +335,9 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
         rp.mismatch_ms = mismatch_ms;
         rp.stop_ms = stop_ms;
         rp.runaway_active = st.runaway_active;
+        rp.runaway_moving = st.runaway_moving;
+        rp.dv_mmps = dv;
+        rp.input_pin = st.input_pin;
         if (rp.place_reason == PlaceReason::none) rp.place_reason = st.place_reason;
         return o;
     };
@@ -342,6 +361,7 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
         }
         st.armable_prev = false;
         if (st.runaway_active) { st.runaway_active = false; }
+        st.input_pin = false;
         st.frozen = Frozen::none;
         o.arm = false;
         return finish(Mode::fallback);
@@ -354,14 +374,17 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
     const bool gap_ok = !st.last_hard_ms || now - st.last_hard_ms >= P.hard_gap_ms;
     bool far_snap = false;
     if (armed_mode && P.recon != PartnerRecon::off) {
+        // Far and vertical errors only with live input: with a neutral pad the
+        // body stands, and the input pin follows the pose instead of a 10 m
+        // Warp cycle.
         if (teleport || body_jump) {
             st.need_place = true;
             st.place_reason = PlaceReason::teleport;
-        } else if (have_err && err >= P.warp_mm && gap_ok) {
+        } else if (have_err && err >= P.warp_mm && gap_ok && !input_stale) {
             if (prone) far_snap = true;
             else request_place(PlaceReason::far_error);
         }
-        if (have_err && std::fabs(dy) >= P.vertical_mm) {
+        if (have_err && std::fabs(dy) >= P.vertical_mm && !input_stale) {
             if (!st.vertical_since) st.vertical_since = now ? now : 1;
             if (Held(st.vertical_since, now, P.vertical_hold_ms) && gap_ok) {
                 if (prone) far_snap = true;
@@ -391,6 +414,7 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
             st.tries = retry_same ? st.tries + 1 : 1;
             st.last_hard_ms = now;
             st.runaway_active = false;
+            st.input_pin = false;
             ResetMotionFilters(st);
             ResetArmCounters(st);
             ++st.places;
@@ -462,27 +486,57 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
         else o.events |= Event::unfrozen;
         st.frozen = frozen;
     }
-    // Runaway: the remote stands still while the body keeps moving on its own.
+    // Stance level (net input): the input carries stance as edges only, so one
+    // lost or extra edge inverts crouch/stand until the remote toggles again.
+    // A mismatch held stance_fix_ms asks for one corrective tap toward the
+    // remote's stance (a hold for prone), at most every stance_fix_gap_ms.
+    if (P.stance_fix && in.input_net && !input_stale && in.target_live && st.stance_applied && in.body_anim_ok &&
+        in.body_stance >= 1 && in.body_stance <= 3 && in.body_stance != st.stance_applied && Loco(in.body_act) &&
+        (!in.remote_anim_valid || Loco(in.remote_act)) && mismatch_ms >= P.stance_fix_ms &&
+        (!st.last_stance_fix_ms || now - st.last_stance_fix_ms >= P.stance_fix_gap_ms)) {
+        o.stance_fix = st.stance_applied == 3 ? StanceFix::hold : StanceFix::tap;
+        o.report.fix_body = in.body_stance;
+        o.report.fix_remote = st.stance_applied;
+        o.events |= Event::stance_fix;
+        st.last_stance_fix_ms = now;
+        st.mismatch_since = now;  // wait for the result before the next one
+    }
+    // Runaway: the body moves on its own. Idle remote: the body moves. Moving
+    // remote: its own velocity differs from the remote's while the error is
+    // large and growing (a turn or a start lags but does not keep diverging).
     std::uint32_t runaway_ms = 0;
     if (!st.runaway_active) {
-        if (remote_idle && speed_free > P.runaway_mmps && in.body_ok) {
+        const bool idle_case = remote_idle && speed_free > P.runaway_mmps;
+        const bool moving_case = !idle_case && remote_moving && dv > P.runaway_mmps;
+        if ((idle_case || moving_case) && in.body_ok) {
             if (!st.runaway_since) st.runaway_since = now ? now : 1;
-            if (Held(st.runaway_since, now, P.runaway_hold_ms)) {
+            bool fire = Held(st.runaway_since, now, P.runaway_hold_ms);
+            if (fire && moving_case) {
+                const double d_ago = DistanceAgo(st, now, 300, d_f);
+                fire = d_f >= P.runaway_moving_mm && d_f >= d_ago + P.runaway_grow_mm;
+            }
+            if (fire && !st.runaway_latched) {
                 o.events |= Event::runaway;
-                st.runaway_since = 0;
                 st.runaway_exit_since = 0;
+                st.runaway_moving = moving_case;
                 if (P.runaway != PartnerRunaway::off) {
                     st.runaway_active = true;
                     st.runaway_start = now;
+                    st.runaway_since = 0;
+                } else {
+                    st.runaway_latched = true;  // runaway=off: one event per episode
                 }
             }
         } else {
             st.runaway_since = 0;
+            st.runaway_latched = false;
         }
     } else {
+        // Ends only when the body's own motion matches the remote's again (a
+        // stuck body never "ends" because the remote starts moving).
+        const double exit = remote_moving ? P.runaway_exit_moving_mmps : P.runaway_exit_mmps;
         bool end = false;
-        if (remote_moving) end = true;
-        else if (speed_free < P.runaway_exit_mmps) {
+        if (dv < exit) {
             if (!st.runaway_exit_since) st.runaway_exit_since = now ? now : 1;
             if (Held(st.runaway_exit_since, now, P.runaway_exit_ms)) end = true;
         } else {
@@ -496,13 +550,32 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
         }
     }
     o.report.runaway_ms = runaway_ms;
-    // Pinned: recon=pin, an active runaway, or a diverging pin.
+    // Input pin: the net input stayed stale while the pose is live. The window
+    // injects a neutral pad, so the body would stand while the remote runs;
+    // follow the pose instead, then resume tracking (settle) once it is live.
+    const bool pose_live = in.target_ok && in.target_live;
+    if (!st.input_pin) {
+        if (Held(st.input_stale_since, now, P.input_pin_ms) && pose_live) {
+            st.input_pin = true;
+            st.input_pin_start = now;
+            o.events |= Event::input_pin;
+        }
+    } else if (!input_stale || !pose_live) {
+        o.report.input_pin_ms = Ms(st.input_pin_start, now);
+        st.input_pin = false;
+        o.events |= Event::input_pin_end;
+        if (!input_stale) {
+            ResetMotionFilters(st);
+            st.settle_until = now + P.settle_ms;
+        }
+    }
+    // Pinned: recon=pin, an active runaway, a diverging pin or the input pin.
     const bool diverge_pin = st.pin_until && now < st.pin_until;
     if (st.pin_until && now >= st.pin_until) {
         st.pin_until = 0;
         o.events |= Event::pin_end;
     }
-    if (P.recon == PartnerRecon::pin || st.runaway_active || diverge_pin) {
+    if (P.recon == PartnerRecon::pin || st.runaway_active || diverge_pin || st.input_pin) {
         if (st.runaway_active && P.runaway == PartnerRunaway::disarm) o.arm = false;
         if (in.target_ok) {
             write(Action::pin, in.target, in.target_yaw);

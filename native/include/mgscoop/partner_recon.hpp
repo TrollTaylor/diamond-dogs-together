@@ -61,7 +61,14 @@ inline constexpr std::uint32_t yaw = 1u << 10;
 inline constexpr std::uint32_t stop_check = 1u << 11;
 inline constexpr std::uint32_t diverging = 1u << 12;
 inline constexpr std::uint32_t pin_end = 1u << 13;
+inline constexpr std::uint32_t stance_fix = 1u << 14;     // Out::stance_fix set this step
+inline constexpr std::uint32_t input_pin = 1u << 15;      // net input stale with a live pose: pinned
+inline constexpr std::uint32_t input_pin_end = 1u << 16;  // input live again: tracking resumes (settle)
 }
+
+// A corrective stance input the driver injects through the tap/press overlay.
+enum class StanceFix : std::uint8_t { none, tap, hold };
+const char* StanceFixName(StanceFix fix) noexcept;
 
 struct Params {
     PartnerRecon recon = PartnerRecon::track;
@@ -87,13 +94,26 @@ struct Params {
     std::uint32_t ema_ms = 150;
     std::uint32_t idle_mmps = 150, idle_hold_ms = 300, moving_mmps = 500;
     double idle_r = 0.1, moving_r = 0.2;
-    // Runaway (the body moves on its own while the remote is idle).
+    // Runaway: the body moves on its own. Idle remote: |v_free| > runaway_mmps;
+    // moving remote: |v_free - v_remote| > runaway_mmps while the filtered
+    // error is >= runaway_moving_mm and growing (>= runaway_grow_mm in 300 ms),
+    // both held runaway_hold_ms. Ends when |v_free - v_remote| stays below the
+    // exit speed (idle / moving remote) for runaway_exit_ms.
     std::uint32_t runaway_mmps = 800, runaway_hold_ms = 300, runaway_exit_mmps = 200, runaway_exit_ms = 500;
+    std::uint32_t runaway_moving_mm = 1000, runaway_grow_mm = 50, runaway_exit_moving_mmps = 400;
+    // Net input stale this long while the pose is live: pin to the pose until
+    // the input is live again (no far/vertical Warps while the pad is neutral).
+    std::uint32_t input_pin_ms = 500;
     // Idle facing.
     std::uint32_t yaw_mrad = 436, yaw_hold_ms = 800, yaw_gap_ms = 2000, yaw_still_mmps = 100, yaw_still_ms = 300;
     // Stance.
     std::uint32_t stance_debounce_ms = 150, stance_suspend_ms = 700, stance_suspend_prone_ms = 1500, stance_dead_ms = 1000;
     std::uint32_t stance_mismatch_ms = 1500;
+    // Stance level correction (net input only): a mismatch held this long asks
+    // for one tap toward the remote's stance (a hold for prone), at most every
+    // stance_fix_gap_ms.
+    bool stance_fix = true;
+    std::uint32_t stance_fix_ms = 2000, stance_fix_gap_ms = 2000;
     // Placement.
     std::uint32_t place_ok_mm = 500, place_tries = 3, place_retry_ms = 250, place_fail_retry_ms = 5000, settle_ms = 700;
     // Input staleness (net input).
@@ -145,8 +165,10 @@ struct Report {
     bool remote_idle, remote_moving, prone;
     Frozen frozen;
     std::int8_t stop_ok;  // -1 unknown, 0, 1
+    // nudges/pins/yaws/nudge_mm since the last placement; snaps/places since
+    // the reconciliation started (Reset), placements included.
     std::uint32_t nudges, snaps, places, pins, yaws;
-    double nudge_mm;      // total nudge distance since the arm
+    double nudge_mm;      // total nudge distance since the last placement
     std::uint32_t snaps_window;  // snaps within the diverging window
     std::uint32_t place_tries;
     double place_err_mm;  // verify: |body - placed target|
@@ -159,6 +181,11 @@ struct Report {
     std::uint32_t stop_ms;
     PlaceReason place_reason;
     bool runaway_active;
+    bool runaway_moving;        // the runaway was detected with a moving remote
+    double dv_mmps;             // |v_free - v_remote|
+    bool input_pin;             // pinned because the net input is stale
+    std::uint32_t input_pin_ms; // how long the input pin lasted (input_pin_end)
+    std::uint8_t fix_body, fix_remote;  // stance_fix: body and remote stance
 };
 
 struct Out {
@@ -168,6 +195,7 @@ struct Out {
     bool arm;        // the window may be armed this tick
     Mode mode;
     PlaceReason place_reason;  // with Action::place
+    StanceFix stance_fix;      // a corrective stance input (armed only)
     std::uint32_t events;
     Report report;
 };
@@ -203,6 +231,11 @@ struct State {
     std::uint64_t pin_until, last_diverge_ms;
     std::uint32_t pin_ms_next;
     bool runaway_active;
+    bool runaway_moving;
+    bool runaway_latched;  // runaway=off: one event per episode
+    // Net input staleness and the input pin.
+    std::uint64_t input_stale_since, input_pin_start;
+    bool input_pin;
     // d history for "not shrinking".
     double d_hist[32];
     std::uint64_t d_hist_ms[32];
@@ -216,6 +249,7 @@ struct State {
     std::uint8_t stance_applied, stance_candidate;
     std::uint64_t stance_since, suspend_until, dead_until, mismatch_since;
     bool mismatch_logged;
+    std::uint64_t last_stance_fix_ms;
     // Stop check.
     double prev_r;
     bool stop_pending;
@@ -223,7 +257,8 @@ struct State {
     std::int8_t stop_ok;
     // Frozen reason last reported.
     Frozen frozen;
-    // Counters since the arm (reset by Reset and on each placement).
+    // Counters: nudges/pins/yaws/nudge_mm since the last placement, snaps and
+    // places since Reset (a placement never hides the snaps that caused it).
     std::uint32_t nudges, snaps, places, pins, yaws;
     double nudge_mm;
 };

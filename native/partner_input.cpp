@@ -142,6 +142,8 @@ Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_c
     j.write = true;
     const bool net = c.mode == PartnerInput::net;
     const bool live = net && sample.valid && sample.age_ms <= c.stale_ms;
+    // A stall: the newest frame is stale but younger than the grace.
+    const bool grace = net && sample.valid && !live && sample.age_ms <= kStaleGraceMs;
     j.stale = net && !live;
     j.live = live;
     std::uint32_t held = overlay.bits;
@@ -177,29 +179,63 @@ Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_c
         }
     }
     held &= c.mask;
+    const bool resync = edge.resync;
+    edge.resync = false;
+    j.resynced = resync;
+    // No stale level survives a mode change or a disarm.
+    if (!net || (resync && !live)) edge.net_held = 0;
+    if (net) {
+        if (live) {
+            edge.net_held = sample.packet.held & c.mask;
+        } else if (grace) {
+            // Keep the last live level, no new edges, the run does not grow.
+            held |= edge.net_held;
+            j.hist_freeze = true;
+        } else if (edge.net_held) {
+            // Beyond the grace (or no sample): release silently.
+            edge.prev_held &= ~(edge.net_held & ~held);
+            edge.net_held = 0;
+            j.hist_reset = true;
+        }
+    }
     // A tap the window never saw as held (pressed and released between two
     // samples): one window of held, so the press edge is this window and the
-    // release edge the next one.
+    // release edge the next one. Never on a resync (stale edge sets).
     const std::uint32_t taps =
-        live ? (((sample.edge_press & sample.edge_release) | sample.edge_tap12) & c.mask & ~held & ~edge.prev_held) : 0u;
+        (live && !resync) ? (((sample.edge_press & sample.edge_release) | sample.edge_tap12) & c.mask & ~held & ~edge.prev_held) : 0u;
     held |= taps;
     j.synth = taps;
+    if (resync) {
+        // The first window after a disarm: the current level, no edges.
+        edge.prev_held = held;
+        j.hist_reset = true;
+    }
     const std::uint32_t press = held & ~edge.prev_held;
     const std::uint32_t release = edge.prev_held & ~held;
-    const bool fresh = live && sample.seq != edge.last_seq;
+    const bool fresh = live && !resync && sample.seq != edge.last_seq;
     const std::uint32_t net_words[3] = {fresh ? sample.packet.w4c : 0u, fresh ? sample.packet.w50 : 0u, fresh ? sample.packet.w54 : 0u};
     j.held = held;
     for (unsigned i = 0; i < 3; ++i) j.w[i] = WordValue(c.words[i], press, release, held, net_words[i]) & c.mask;
     j.edge_press = press;
     j.edge_release = release;
     j.long12 &= c.mask;
-    j.tap12 = live ? (sample.edge_tap12 & c.mask) : 0u;
+    j.tap12 = (live && !resync) ? (sample.edge_tap12 & c.mask) : 0u;
     // PP+0x18 = atan2f(LX, LY) and PP+0x14 = the world heading, exactly as the
     // PP update derives them from the stick it reads (0x12070CC..0x12070FE).
     j.dir = static_cast<float>((j.lx != 0.0f || j.ly != 0.0f) ? std::atan2(static_cast<double>(j.lx), static_cast<double>(j.ly)) : 0.0);
     j.heading = static_cast<float>(Heading(static_cast<double>(host_cam_cdeg) * kPi / 18000.0, j.lx, j.ly));
     edge.prev_held = held;
     if (live) edge.last_seq = sample.seq;
+    return j;
+}
+
+Injection LevelOnly(const Injection& injection, const Config& config) noexcept {
+    Injection j = injection;
+    for (unsigned i = 0; i < 3; ++i) j.w[i] = config.words[i] == Word::held ? (j.held & config.mask) : 0u;
+    j.edge_press = j.edge_release = 0;
+    j.tap12 = 0;
+    j.synth = 0;
+    j.hist_freeze = j.hist_reset = false;
     return j;
 }
 

@@ -129,10 +129,24 @@ struct InputEdges {
 };
 void AccumulateEdges(InputEdges& edges, const InputPacket& packet) noexcept;
 // Hook-thread only; survives Arm gen bumps (see Arm).
+//   net_held: the masked net held level of the last live window. A stall
+//     (stale input) keeps it for kStaleGraceMs without edges (the hold history
+//     is frozen), then releases it silently (no release edge; the history
+//     restarts), so one network hiccup never toggles crouch/stand.
+//   resync: set by the hook for the first window after a disarm. That window
+//     injects the current level without edges (prev_held = held) and drops the
+//     edge sets accumulated while disarmed, so stale taps are never replayed.
 struct EdgeState {
     std::uint32_t prev_held;
     std::uint32_t last_seq;
+    std::uint32_t net_held;
+    bool resync;
 };
+// How long a stall keeps the last live held level (age of the newest frame).
+inline constexpr std::uint32_t kStaleGraceMs = 1000;
+// A main window this long after the previous one (skips, pass mode) resyncs
+// like the first window after a disarm.
+inline constexpr std::uint64_t kResyncGapMs = 250;
 // Held bits added by the tap/press one-shots this frame.
 struct Overlay {
     std::uint32_t bits;
@@ -152,6 +166,10 @@ struct Injection {
     std::uint32_t long12, tap12;
     bool live;
     std::uint32_t synth;  // bits synthesized this window from a sub-sample tap
+    // Hold history control for the hook: freeze (a stall keeps the level, the
+    // run does not grow) and reset (a silent release or a resync: restart).
+    bool hist_freeze, hist_reset;
+    bool resynced;        // this window was a resync (edges dropped)
 };
 // One window's injected pad (rules in partner_input.cpp). Updates `edge`.
 // Held bits: overlay | (live net held); a bit that was pressed and released
@@ -162,6 +180,12 @@ Injection Compose(const Config& config, const Sample& sample, std::int32_t host_
                   EdgeState& edge) noexcept;
 // wrap(cam + atan2(lx, ly) - pi) in radians, atan2(0, 0) = 0 (PP+0x14).
 double Heading(double cam_rad, float lx, float ly) noexcept;
+// The level-only copy of a window's injection for the wrap windows of the
+// same frame (and later frames until the next main window): held words and
+// sticks stay, every edge goes (press/release words, net words, the
+// key-manager press/release answers, tap12), so an edge consumer in a wrapped
+// sub-phase never sees an edge twice.
+Injection LevelOnly(const Injection& injection, const Config& config) noexcept;
 
 // --- Hold classifier replica (hold=own) --------------------------------------
 // src->vt+0x10 = 0x434ED0(src, btn, frames), verified: bit = 1 << (btn & 31);

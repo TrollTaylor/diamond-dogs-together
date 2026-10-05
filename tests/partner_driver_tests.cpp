@@ -92,6 +92,10 @@ struct Fake {
     bool latest_ok = true;
     unsigned wrap_installs = 0;
     std::vector<std::uint32_t> sample_delays;
+    // Round 4 review: the aligned target (delay <= 50 ms) differs from the
+    // 100 ms interpolated pose when sample_by_delay is set.
+    bool sample_by_delay = false;
+    mgscoop::pose::Sample sample_aligned{};
 
     Fake() {
         Ready();
@@ -194,6 +198,7 @@ bool HookAnim(void* context, const pp::State&, pp::Anim& out) noexcept {
 mgscoop::pose::Sample HookSample(void* context, std::uint32_t delay) noexcept {
     ++F(context).samples;
     F(context).sample_delays.push_back(delay);
+    if (F(context).sample_by_delay && delay <= 50) return F(context).sample_aligned;
     return F(context).sample;
 }
 void HookSubmit(void* context, const partner::Tick&, const mgscoop::sync::AnimState& anim) noexcept {
@@ -1627,6 +1632,112 @@ void TestReviewFixes() {
 }
 
 
+// Round 4 review fixes (driver side).
+void TestRound4Review() {
+    // A source-only trigger re-places the body (compared before the overwrite);
+    // the same values do not.
+    {
+        Session s(3, mgscoop::PartnerApply::input, mgscoop::PartnerSource::net);
+        s.driver.settings.input = mgscoop::PartnerInput::net;
+        PlaceAndArm(s);
+        s.Trigger("source=net apply=input input=net");
+        Check(s.Tick(1) && !(s.reply.op & op::warp) && s.fake.Count("partner_recon=place;") == 1, "same values: no new placement");
+        s.Trigger("source=fixed");
+        Check(s.Tick(1) && s.fake.Count("partner_recon=place; reason=rearm;") == 1, "source-only change: placed again");
+    }
+    // An apply round trip (input -> xform -> input) places again.
+    {
+        Session s(3, mgscoop::PartnerApply::input, mgscoop::PartnerSource::net);
+        s.driver.settings.input = mgscoop::PartnerInput::net;
+        PlaceAndArm(s);
+        s.Trigger("apply=xform");
+        s.Tick(1);
+        s.Trigger("apply=input");
+        Check(s.Tick(1) && (s.reply.op & op::warp) && s.fake.Count("partner_recon=place;") == 2, "apply change: placed again");
+    }
+    // The fallback Warp keeps the proven 100 ms interpolated pose; only the
+    // placement uses the aligned target.
+    {
+        Session s(3, mgscoop::PartnerApply::input, mgscoop::PartnerSource::net);
+        s.driver.settings.input = mgscoop::PartnerInput::net;
+        s.fake.sample_by_delay = true;
+        s.fake.sample.valid = true; s.fake.sample.x = 1.0f; s.fake.sample.y = 2.0f; s.fake.sample.z = 3.0f;
+        s.fake.sample.status = mgscoop::pose::Status::live;
+        s.fake.sample_aligned = s.fake.sample;
+        s.fake.sample_aligned.x = 1.5f;  // the extrapolated newest pose
+        s.fake.latest.valid = true; s.fake.latest.age_ms = 5;
+        s.fake.body_ok = true;
+        s.fake.install_result = "allocate_near";  // window refused: per-tick fallback Warp
+        Loaded(s);
+        Check(s.Tick(1) && (s.reply.op & op::warp) && s.reply.x_mm == 1000 && s.fake.Count("partner_input_place; reason=fallback;") == 1,
+              "fallback Warp at the 100 ms interpolated pose");
+        s.fake.install_result = nullptr;
+        s.fake.body_pos[0] = 50.0f; s.fake.body_pos[2] = 50.0f;
+        Check(s.Tick(1) && (s.reply.op & op::warp) && s.reply.x_mm == 1500 && s.fake.Count("partner_recon=place;") == 1,
+              "placement Warp at the aligned target");
+    }
+    // correct=0 turns the reconciliation off (logged), the 1 Hz line says so.
+    {
+        Session s(3, mgscoop::PartnerApply::input, mgscoop::PartnerSource::net);
+        s.driver.settings.input = mgscoop::PartnerInput::net;
+        PlaceAndArm(s);
+        s.Trigger("correct=0");
+        for (int i = 0; i < 40; ++i) s.Tick(1, 33);
+        Check(s.fake.Count("partner_recon=off; reason=correct0; requested=track;") == 1, "correct=0 with recon=track: logged");
+        Check(s.fake.Containing("partner_recon; mode=track; recon=off;") >= 1, "1 Hz line: effective recon=off");
+        s.Trigger("correct=3000");
+        for (int i = 0; i < 40; ++i) s.Tick(1, 33);
+        Check(s.fake.Containing("partner_recon; mode=track; recon=track;") >= 1, "correct=3000: recon=track again");
+    }
+    // A lasting stance mismatch: one corrective STANCE tap through the overlay.
+    {
+        Session s(3, mgscoop::PartnerApply::input, mgscoop::PartnerSource::net);
+        s.driver.settings.input = mgscoop::PartnerInput::net;
+        PlaceAndArm(s);
+        s.fake.sample.anim_valid = true; s.fake.sample.act = 1; s.fake.sample.anim_stance = 2;  // the guest crouches
+        s.fake.anim_ok = true; s.fake.anim.act[1] = 1; s.fake.anim.stance[1] = 1;              // the partner still stands
+        const std::uint32_t seq = s.fake.arms.back().tap_seq;
+        for (int i = 0; i < 80; ++i) s.Tick(1, 33);
+        Check(s.fake.Count("partner_recon=stance_fix; remote=2; body=1; via=tap;") == 1 && s.fake.arms.back().tap_seq == seq + 1 &&
+              s.fake.arms.back().tap_bits == 0x2, "stance mismatch: one corrective tap (overlay tap_seq + 1, STANCE)");
+        // The guest goes prone: a hold through the press overlay.
+        s.fake.sample.anim_stance = 3;
+        for (int i = 0; i < 80; ++i) s.Tick(1, 33);
+        Check(s.fake.Count("partner_recon=stance_fix; remote=3; body=1; via=hold;") >= 1 && s.fake.arms.back().press_bits == 0x2,
+              "prone mismatch: a hold");
+        // Without STANCE in the mask: refused, logged.
+        Session m(3, mgscoop::PartnerApply::input, mgscoop::PartnerSource::net);
+        m.driver.settings.input = mgscoop::PartnerInput::net;
+        m.driver.settings.input_mask = 0x4;
+        PlaceAndArm(m);
+        m.fake.sample.anim_valid = true; m.fake.sample.act = 1; m.fake.sample.anim_stance = 2;
+        m.fake.anim_ok = true; m.fake.anim.act[1] = 1; m.fake.anim.stance[1] = 1;
+        for (int i = 0; i < 80; ++i) m.Tick(1, 33);
+        Check(m.fake.Count("partner_recon=stance_fix; refused=mask;") >= 1, "stance fix outside the mask: refused");
+    }
+    // partner_body speed at a 60 Hz Lua tick: numeric on every line (the ring
+    // spans ~530 ms; no boundary na).
+    {
+        Session s(3, mgscoop::PartnerApply::input, mgscoop::PartnerSource::net);
+        s.driver.settings.input = mgscoop::PartnerInput::net;
+        PlaceAndArm(s);
+        s.fake.latest.packet.ly = -32767;  // the guest runs; body and remote move together
+        float z = 3.0f;
+        s.fake.lines.clear();
+        for (int i = 0; i < 240; ++i) {
+            const std::uint64_t step = (i % 3 == 2) ? 16 : 17;
+            z += 3.2f * static_cast<float>(step) / 1000.0f;
+            s.fake.body_pos[2] = z;
+            s.fake.sample.z = z;
+            s.Tick(1, step);
+        }
+        Check(s.fake.Count("partner_body; R=1;") >= 7, "partner_body at 2 Hz");
+        Check(s.fake.Containing("speed_mmps=na;") == 0, "partner_body: no na at a steady 60 Hz tick");
+        Check(s.fake.Containing("speed_mmps=3199;") + s.fake.Containing("speed_mmps=3200;") + s.fake.Containing("speed_mmps=3201;") +
+              s.fake.Containing("speed_mmps=3198;") + s.fake.Containing("speed_mmps=3202;") >= 6, "partner_body: speed ~3200 mm/s");
+    }
+}
+
 // Input frames: only a newer (wrap-safe) sequence replaces the stored one,
 // unless the peer restarted (kRestartGapMs without a stored frame).
 void TestInputSequence() {
@@ -1663,6 +1774,7 @@ int main() {
     TestInputArming();
     TestDm();
     TestReviewFixes();
+    TestRound4Review();
     TestInputSequence();
     std::printf("%u partner driver checks passed: CFG/boundaries, stage-3 timeline, trigger stop/stage, STOP while terminating, "
                 "teardown keep, refusal caps, realize thrash cap, all-active re-assert, flags, mirror lifecycle, one-shots, "

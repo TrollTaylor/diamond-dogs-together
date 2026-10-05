@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <array>
+#include <deque>
 #include <functional>
 #include "mgscoop/partner_recon.hpp"
 
@@ -31,6 +33,19 @@ struct World {
     double body_yaw = 0;
     double body_v[3] = {0, 0, 0};    // the game's own motion (mm/s)
     bool follow = true;              // body velocity = remote velocity (input-driven locomotion)
+    // Lag model: the remote's actual velocity approaches remote_v with
+    // remote_accel (mm/s^2, 0 = instant: its own locomotion turns and
+    // accelerates); the body (follow) takes the remote's actual velocity of
+    // lag_ms ago with its own acceleration limit accel (0 = instant).
+    double remote_accel = 0;
+    double rv[3] = {0, 0, 0};
+    std::uint32_t lag_ms = 0;
+    double accel = 0;
+    double lag_v[3] = {0, 0, 0};
+    std::deque<std::array<double, 3>> v_hist;
+    bool nudge_sticks = true;        // false: position writes of nudges are ignored by the game
+    pr::StanceFix last_fix = pr::StanceFix::none;
+    bool apply_fix = false;          // the corrective stance input changes body_stance
     bool armable = true;
     bool live = true;
     bool in_valid = true;
@@ -44,7 +59,7 @@ struct World {
     bool last_ok = false;
     pr::Out out{};
     // Counters over the run.
-    unsigned places = 0, snaps = 0, nudges = 0, pins = 0, yaws = 0, ticks = 0;
+    unsigned places = 0, snaps = 0, nudges = 0, pins = 0, yaws = 0, ticks = 0, runaways = 0, fixes = 0, input_pins = 0;
     std::uint32_t events = 0;
     double max_nudge_step = 0;
     unsigned place_reason[16]{};
@@ -54,8 +69,33 @@ struct World {
         now += dt_ms;
         ++ticks;
         // The world advances first (remote path and the body's own motion).
-        for (int i = 0; i < 3; ++i) remote[i] += remote_v[i] * dt_ms / 1000.0;
-        for (int i = 0; i < 3; ++i) body[i] += (follow ? remote_v[i] : body_v[i]) * dt_ms / 1000.0;
+        if (remote_accel > 0) {
+            const double rstep = remote_accel * dt_ms / 1000.0;
+            double ax = remote_v[0] - rv[0], az = remote_v[2] - rv[2];
+            const double alen = std::sqrt(ax * ax + az * az);
+            if (alen > rstep) { ax *= rstep / alen; az *= rstep / alen; }
+            rv[0] += ax;
+            rv[2] += az;
+        } else {
+            for (int i = 0; i < 3; ++i) rv[i] = remote_v[i];
+        }
+        for (int i = 0; i < 3; ++i) remote[i] += rv[i] * dt_ms / 1000.0;
+        if (follow && (lag_ms || accel > 0)) {
+            v_hist.push_back({rv[0], rv[1], rv[2]});
+            const std::size_t lag_ticks = lag_ms / dt_ms;
+            while (v_hist.size() > lag_ticks + 1) v_hist.pop_front();
+            const std::array<double, 3>& want = v_hist.front();
+            const double step = accel > 0 ? accel * dt_ms / 1000.0 : 1e18;
+            double dvx = want[0] - lag_v[0], dvz = want[2] - lag_v[2];
+            const double len = std::sqrt(dvx * dvx + dvz * dvz);
+            if (len > step) { dvx *= step / len; dvz *= step / len; }
+            lag_v[0] += dvx;
+            lag_v[2] += dvz;
+            for (int i = 0; i < 3; ++i) body[i] += lag_v[i] * dt_ms / 1000.0;
+            if (std::sqrt(lag_v[0] * lag_v[0] + lag_v[2] * lag_v[2]) > 100.0) body_yaw = std::atan2(lag_v[0], lag_v[2]);
+        } else {
+            for (int i = 0; i < 3; ++i) body[i] += (follow ? rv[i] : body_v[i]) * dt_ms / 1000.0;
+        }
         pr::In in{};
         in.now_ms = now;
         in.armable = armable;
@@ -85,6 +125,13 @@ struct World {
         in.remote_stance = remote_stance;
         out = pr::Step(st, in, params);
         events |= out.events;
+        if (out.events & pr::Event::runaway) ++runaways;
+        if (out.events & pr::Event::input_pin) ++input_pins;
+        if (out.stance_fix != pr::StanceFix::none) {
+            ++fixes;
+            last_fix = out.stance_fix;
+            if (apply_fix) body_stance = out.stance_fix == pr::StanceFix::hold ? 3 : (body_stance == 2 ? 1 : 2);
+        }
         last_ok = false;
         switch (out.action) {
         case pr::Action::place:
@@ -98,8 +145,10 @@ struct World {
             const double dx = out.pos[0] - body[0], dz = out.pos[2] - body[2];
             const double step = std::sqrt(dx * dx + dz * dz);
             if (step > max_nudge_step) max_nudge_step = step;
-            body[0] = out.pos[0];
-            body[2] = out.pos[2];
+            if (nudge_sticks) {
+                body[0] = out.pos[0];
+                body[2] = out.pos[2];
+            }
             last_ok = true;
             break;
         }
@@ -139,7 +188,12 @@ struct World {
         Check(out.mode == pr::Mode::track && out.arm && (out.events & pr::Event::placed_ok), "verified: armed and tracking");
         ResetCounters();
     }
-    void ResetCounters() { places = snaps = nudges = pins = yaws = 0; events = 0; max_nudge_step = 0; for (auto& c : place_reason) c = 0; }
+    void ResetCounters() {
+        places = snaps = nudges = pins = yaws = runaways = fixes = input_pins = 0;
+        events = 0;
+        max_nudge_step = 0;
+        for (auto& c : place_reason) c = 0;
+    }
 };
 
 void TestHelpers() {
@@ -204,21 +258,203 @@ void TestRunawayReplay() {
     Check(w.snaps == 0 && w.places == 0, "no snap sawtooth and no warps");
     Check(w.out.mode == pr::Mode::pin && w.out.report.runaway_active, "pinned while the remote is idle");
     Check(worst_after <= 100.0, "pinned error <= 100 mm (one tick of motion)");
-    // The remote starts moving: the runaway ends.
+    // The remote starts moving and the body's own motion follows it again:
+    // the runaway ends once both velocities match (not merely because the
+    // remote moves), within ~1 s.
     w.ResetCounters();
     w.remote_v[2] = 3200.0;
     w.r = 1.0;
     w.follow = true;
     w.Run(200);
-    Check((w.events & pr::Event::runaway_end) && w.out.mode != pr::Mode::pin, "runaway ends when the remote moves");
-    // runaway=off only logs.
+    Check(w.out.mode == pr::Mode::pin && !(w.events & pr::Event::runaway_end), "a moving remote alone does not end the runaway");
+    w.Run(1300);
+    Check((w.events & pr::Event::runaway_end) && w.out.mode != pr::Mode::pin, "runaway ends when the body's motion matches the remote's");
+    Check(w.snaps == 0 && w.places == 0, "no snaps or warps through the runaway");
+    // runaway=off only logs, once per episode.
     World o;
     o.params.runaway = mgscoop::PartnerRunaway::off;
     o.Place();
     o.follow = false;
     o.body_v[2] = 3200.0;
-    o.Run(2000);
-    Check((o.events & pr::Event::runaway) && o.out.mode != pr::Mode::pin, "runaway=off: logged, not pinned");
+    o.Run(5000);
+    Check((o.events & pr::Event::runaway) && o.out.mode != pr::Mode::pin && !o.out.report.runaway_active, "runaway=off: logged, not pinned");
+    Check(o.runaways == 1, "runaway=off: one event per episode (latched)");
+}
+
+// The stuck body with a moving remote (the case the idle-only rule missed):
+// the body's own velocity differs from the remote's while the error grows.
+// Expect a runaway pin (remote=moving), no snap cycle and no diverging Warp.
+void TestMovingRunaway() {
+    World w;
+    w.Place();
+    w.remote_v[0] = -3200.0;  // the guest runs -x
+    w.remote_yaw = -kPi / 2;
+    w.r = 1.0;
+    w.follow = false;
+    w.body_v[2] = 3200.0;     // the body keeps running +z on its own
+    double worst = 0;
+    bool pinned = false;
+    w.Run(10000, [&](World& v) {
+        if (v.out.report.runaway_active) pinned = true;
+        if (pinned && v.Err() > worst) worst = v.Err();
+    });
+    Check(w.runaways == 1 && w.out.report.runaway_moving && w.out.mode == pr::Mode::pin, "moving runaway: detected once, pinned");
+    Check(w.snaps == 0 && w.places == 0 && !(w.events & pr::Event::diverging), "no snap cycle, no diverging Warp");
+    Check(worst <= 150.0, "pinned error <= 150 mm (one tick of the relative motion)");
+    // The remote turns into the body's own direction: both motions match, the runaway ends.
+    w.ResetCounters();
+    w.remote_v[0] = 0;
+    w.remote_v[2] = 3200.0;
+    w.remote_yaw = 0;
+    w.Run(2000);
+    Check((w.events & pr::Event::runaway_end) && w.out.mode == pr::Mode::track, "runaway ends when the motions match");
+    // A body drifting sideways at 2 m/s while running: a runaway too (not a snap).
+    World s;
+    s.Place();
+    s.remote_v[2] = 3200.0;
+    s.r = 1.0;
+    s.Run(1000);
+    s.follow = false;
+    s.body_v[2] = 3200.0;
+    s.body_v[0] = 2000.0;
+    s.ResetCounters();
+    s.Run(3000);
+    Check(s.runaways == 1 && s.snaps == 0 && s.places == 0, "sideways drift: runaway pin, no snap");
+}
+
+// The lag model: the remote's own locomotion accelerates and turns at
+// 10 m/s^2; the body takes the remote's velocity of 120 ms ago (the input
+// latency) and accelerates at 10 m/s^2 (the same locomotion) or only at
+// 8 m/s^2 (a pessimistic mismatch). Starts, a 90-degree turn, a sprint and
+// stops never trip the runaway or a snap.
+void RunLagModel(double body_accel, std::uint32_t settle_ms, const char* what_moving, const char* what_stopped) {
+    World w;
+    w.remote_accel = 10000.0;
+    w.lag_ms = 120;
+    w.accel = body_accel;
+    w.Place();
+    double worst_moving = 0, worst_stopped = 0;
+    const auto leg = [&](double vx, double vz, double r, std::uint32_t ms, bool moving) {
+        w.remote_v[0] = vx;
+        w.remote_v[2] = vz;
+        if (vx != 0.0 || vz != 0.0) w.remote_yaw = std::atan2(vx, vz);
+        w.r = r;
+        const std::uint64_t start = w.now;
+        w.Run(ms, [&](World& v) {
+            if (moving && v.now - start > 1500 && v.Err() > worst_moving) worst_moving = v.Err();
+            if (!moving && v.now - start > settle_ms && v.Err() > worst_stopped) worst_stopped = v.Err();
+        });
+    };
+    leg(0, 1600, 0.5, 5000, true);    // walk
+    leg(0, 3200, 1.0, 5000, true);    // run
+    leg(3200, 0, 1.0, 3000, true);    // a 90-degree turn
+    leg(6000, 0, 1.0, 3000, true);    // sprint
+    leg(0, 0, 0, 5000, false);        // stop
+    leg(-3200, 0, 1.0, 3000, true);   // start the other way
+    leg(0, 0, 0, 5000, false);        // stop
+    Check(w.runaways == 0 && w.snaps == 0 && w.places == 0 && w.pins == 0, "lag model: no runaway, snap, warp or pin");
+    Check(worst_moving <= 600.0, what_moving);
+    Check(worst_stopped <= 300.0, what_stopped);
+}
+void TestLagModel() {
+    RunLagModel(10000.0, 2000, "same locomotion, 120 ms latency: error <= 600 mm while moving",
+                "same locomotion: error <= 300 mm 2 s after stopping");
+    RunLagModel(8000.0, 3000, "20 % slower acceleration: error <= 600 mm while moving",
+                "20 % slower acceleration: error <= 300 mm 3 s after a sprint stop");
+}
+
+// Nudges the game ignores (position writes that do not stick): no fake
+// own-motion runaway and no snap for a 1 m idle error.
+void TestNonStickingNudge() {
+    World w;
+    w.Place();
+    w.Run(800);
+    w.nudge_sticks = false;
+    w.body[0] += 1000.0;
+    w.ResetCounters();
+    w.Run(5000);
+    Check(w.nudges > 0 && w.runaways == 0 && w.pins == 0 && w.snaps == 0 && w.places == 0, "non-sticking nudges: no runaway, pin or snap");
+}
+
+// Net input stale while the pose stays live: pinned to the pose (no 10 m Warp
+// cycle with a neutral pad), then tracking resumes once the input is live.
+void TestInputPin() {
+    World w;
+    w.Place();
+    w.remote_v[2] = 6000.0;   // the guest sprints
+    w.r = 1.0;
+    w.Run(1000);
+    w.in_valid = false;       // input frames stop, pose frames continue
+    w.follow = false;         // the window injects a neutral pad: the body stands
+    w.body_v[2] = 0;
+    w.ResetCounters();
+    double worst = 0;
+    w.Run(8000, [&](World& v) { if (v.out.report.input_pin && v.Err() > worst) worst = v.Err(); });
+    Check(w.input_pins == 1 && w.out.mode == pr::Mode::pin && w.out.report.input_pin, "input stale: pinned to the live pose");
+    Check(w.places == 0 && w.place_reason[static_cast<unsigned>(pr::PlaceReason::far_error)] == 0, "no far Warp cycle");
+    Check(worst <= 150.0, "pinned error <= 150 mm");
+    w.in_valid = true;
+    w.follow = true;
+    w.ResetCounters();
+    w.Run(2000);
+    Check((w.events & pr::Event::input_pin_end) && w.out.mode == pr::Mode::track && w.places == 0, "input live: tracking resumes, no Warp");
+    Check(w.Err() < 300.0, "still on the pose");
+}
+
+// The stance level: a lasting mismatch asks for one corrective tap toward
+// the remote's stance (a hold for prone), then waits for the result.
+void TestStanceFix() {
+    World w;
+    w.Place();
+    w.Run(500);
+    w.remote_stance = 2;      // the edge was lost: the body stays standing
+    w.ResetCounters();
+    w.Run(1900);
+    Check(w.fixes == 0, "no fix before 2 s of mismatch");
+    w.Run(600);
+    Check(w.fixes == 1 && w.last_fix == pr::StanceFix::tap && (w.events & pr::Event::stance_fix), "one corrective tap");
+    w.Run(1500);
+    Check(w.fixes == 1, "waits for the result (gap)");
+    w.Run(1000);
+    Check(w.fixes == 2, "retries every 2 s while the body never follows");
+    // A body that follows the fix: exactly one.
+    World f;
+    f.apply_fix = true;
+    f.Place();
+    f.Run(500);
+    f.remote_stance = 2;
+    f.ResetCounters();
+    f.Run(6000);
+    Check(f.fixes == 1 && f.body_stance == 2, "fixed once, stance matches");
+    // Prone: a hold.
+    f.remote_stance = 3;
+    f.ResetCounters();
+    f.Run(6000);
+    Check(f.fixes == 1 && f.last_fix == pr::StanceFix::hold && f.body_stance == 3, "prone: one hold");
+    // Stale input or a transition act: no fix.
+    World s;
+    s.Place();
+    s.Run(500);
+    s.remote_stance = 2;
+    s.in_valid = false;
+    s.ResetCounters();
+    s.Run(4000);
+    Check(s.fixes == 0, "stale input: no stance fix");
+    World a;
+    a.Place();
+    a.Run(500);
+    a.remote_stance = 2;
+    a.body_act = 0x1f;
+    a.ResetCounters();
+    a.Run(4000);
+    Check(a.fixes == 0, "transition act: no stance fix");
+    World o;
+    o.params.stance_fix = false;
+    o.Place();
+    o.Run(500);
+    o.remote_stance = 2;
+    o.Run(4000);
+    Check(o.fixes == 0, "stance_fix=false: none");
 }
 
 // An aligned run: the body follows the input exactly. No corrections at all.
@@ -260,40 +496,44 @@ void TestLateralNudge() {
     Check(w.Err() < 300.0, "stays converged");
 }
 
-// 4 m divergence while moving (a fast sideways drift the nudges cannot hold):
-// exactly one hard snap.
+// 4 m divergence while moving without a velocity difference (the body was
+// pushed or held back by collision in two steps; its own motion still follows
+// the input): exactly one hard snap.
 void TestMovingSnap() {
     World w;
     w.Place();
     w.remote_v[2] = 3200.0;
     w.r = 1.0;
     w.Run(1000);
-    w.follow = false;
-    w.body_v[2] = 3200.0;
-    w.body_v[0] = 2000.0;
     w.ResetCounters();
-    w.Run(2700);
-    w.follow = true;
+    w.body[0] += 2000.0;
+    w.Run(100);
+    w.body[0] += 2000.0;
     w.Run(3000);
     Check(w.snaps == 1, "exactly one snap");
-    Check(w.places == 0 && !(w.events & pr::Event::diverging), "no warp, no diverging");
+    Check(w.places == 0 && w.runaways == 0 && !(w.events & pr::Event::diverging), "no warp, no runaway, no diverging");
     Check(w.Err() < 400.0, "converged afterwards");
 }
 
-// Repeated snaps (diverging): Warp then pin for a while.
+// Repeated snaps (diverging: the body keeps being pushed 4 m off): Warp then
+// pin for a while. The snaps that caused the Warp stay in the counters.
 void TestDiverging() {
     World w;
     w.Place();
     w.remote_v[2] = 3200.0;
     w.r = 1.0;
     w.Run(1000);
-    w.follow = false;
-    w.body_v[2] = -3200.0;  // runs the other way: hopeless
     w.ResetCounters();
-    w.Run(9000);
+    for (int i = 0; i < 5; ++i) {
+        w.body[0] += 2000.0;
+        w.Run(100);
+        w.body[0] += 2000.0;
+        w.Run(1700);
+    }
     Check((w.events & pr::Event::diverging) != 0, "diverging after repeated snaps");
     Check(w.place_reason[static_cast<unsigned>(pr::PlaceReason::diverging)] >= 1 && w.pins > 0, "Warp, then pinned");
     Check(w.snaps <= 6, "snaps bounded (no 1 Hz sawtooth)");
+    Check(w.out.report.snaps >= 3 && w.out.report.places >= 2, "cumulative counters: the snaps and the re-placement stay counted");
 }
 
 // A teleport of the remote: a new placement.
@@ -485,6 +725,11 @@ int main() {
     TestPlacement();
     TestPlacementFailure();
     TestRunawayReplay();
+    TestMovingRunaway();
+    TestLagModel();
+    TestNonStickingNudge();
+    TestInputPin();
+    TestStanceFix();
     TestAlignedRun();
     TestLateralNudge();
     TestMovingSnap();
@@ -497,7 +742,8 @@ int main() {
     TestRearm();
     TestModes();
     TestStopCheck();
-    std::printf("%u partner recon checks passed: placement/verify/retry, I6 runaway replay (pin, no sawtooth), aligned run and turn, "
+    std::printf("%u partner recon checks passed: placement/verify/retry, I6 runaway replay (pin, no sawtooth), moving runaway, "
+                "lag model (walk/run/turn/sprint/stops), non-sticking nudges, input pin, stance fix, aligned run and turn, "
                 "lateral nudges, one moving snap, diverging, teleport/far, stance suspend/prone/mismatch, frozen acts, loss/relink, "
                 "idle yaw and snap, rearm/manual, recon pin/off, stop check\n", checks);
     return 0;
