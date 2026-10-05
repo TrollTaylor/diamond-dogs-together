@@ -233,6 +233,21 @@ void TestSaveDirFits() {
 
 void TestEndpointFilter() {
     using namespace mgscoop::lab;
+    // Two-PC play: the early.log play line and the save-redirect state.
+    {
+        char line[160]{};
+        Check(format_play_line(0, false, false, true, line, sizeof(line)) &&
+              std::strcmp(line, "play=1; loopback=0; mutex=unchanged; refused=0x0; saves=redirected\r\n") == 0, "play line");
+        Check(format_play_line(0x4A01, false, false, false, line, sizeof(line)) &&
+              std::strcmp(line, "play=1; loopback=0; mutex=unchanged; refused=0x4A01; saves=unchanged\r\n") == 0, "play line refused");
+        Check(!format_play_line(0, false, false, true, line, 20) && line[0] == 0, "play line does not fit");
+        Check(!SavesRedirected(), "saves not redirected before the DllMain patches");
+        set_saves_redirected_for_test(true);
+        Check(SavesRedirected(), "saves redirected");
+        set_saves_redirected_for_test(false);
+        Check(!SavesRedirected(), "saves state reset");
+        Check(ProbeVersion() && ProbeVersion()[0] >= '0' && ProbeVersion()[0] <= '9', "probe version");
+    }
     Check(is_expected_peer(0x7F000001u, 47810, 47810), "loopback peer accepted");
     Check(!is_expected_peer(0x7F000001u, 47811, 47810), "wrong port rejected");
     Check(!is_expected_peer(0x08080808u, 47810, 47810), "non-loopback rejected");

@@ -13,6 +13,7 @@
 // renamed only if every isolation patch the configuration requires installed,
 // otherwise the second instance exits at 0x1595 exactly as without the lab.
 #include <cstddef>
+#include <cstdint>
 
 namespace mgscoop::lab {
 
@@ -55,6 +56,22 @@ const char* mutex_rename_blocker(const IsolationState& state) noexcept;
 // True for an http(s) URL whose host is exactly 127.0.0.1 or localhost
 // (optionally with :port), i.e. a local fuse instance. Pure.
 bool is_local_master_url(const char* url) noexcept;
+
+// The early.log play line, printed only with lab.ini mode=play right after the
+// saves= line: "play=1; loopback=%u; mutex=renamed|unchanged; refused=0x%X;
+// saves=redirected|unchanged\r\n". Returns false when it does not fit. Pure.
+bool format_play_line(std::uint32_t refused, bool loopback, bool mutex_renamed, bool saves_redirected, char* out,
+                      std::size_t capacity) noexcept;
+
+// Save-redirect result of InstallEarlyLabPatches (DllMain): true only when the
+// SteamRemoteStorage/SteamUser wrappers for lab.ini save_dir verifiably
+// installed. False before installation, without lab.ini and on any refusal.
+// The observer's play gate: mode=play runs co-op only on redirected saves.
+bool SavesRedirected() noexcept;
+// Test hook for the pure state behind SavesRedirected() (never called by the loader).
+void set_saves_redirected_for_test(bool value) noexcept;
+// This loader's version string (MGS_COOP_PROBE_VERSION; the link HELLO build).
+const char* ProbeVersion() noexcept;
 
 #ifdef _WIN32
 // Install the lab's DllMain-early patches against the running mgsvtpp.exe. Gated

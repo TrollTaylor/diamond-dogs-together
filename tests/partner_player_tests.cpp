@@ -351,7 +351,7 @@ struct PeerInbox {
     unsigned count = 0;
 };
 PeerInbox inbox;
-void PeerDatagram(void*, const std::uint8_t* data, std::size_t size) noexcept {
+void PeerDatagram(void*, const std::uint8_t* data, std::size_t size, const mgscoop::lab::Endpoint&) noexcept {
     AcquireSRWLockExclusive(&inbox.lock);
     if (inbox.count < 32 && size <= 64) {
         std::memcpy(inbox.frames[inbox.count], data, size);

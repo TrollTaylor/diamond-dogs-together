@@ -74,6 +74,49 @@ const char* mutex_rename_blocker(const IsolationState& state) noexcept {
     return nullptr;
 }
 
+namespace {
+// Written once in DllMain (InstallEarlyLabPatches) before any other thread
+// reads it; read by the observer at install.
+volatile long g_saves_redirected = 0;
+}  // namespace
+
+bool SavesRedirected() noexcept { return g_saves_redirected != 0; }
+void set_saves_redirected_for_test(bool value) noexcept { g_saves_redirected = value ? 1 : 0; }
+
+bool format_play_line(std::uint32_t refused, bool loopback, bool mutex_renamed, bool saves_redirected, char* out,
+                      std::size_t capacity) noexcept {
+    if (!out || !capacity) return false;
+    // "play=1; loopback=0; mutex=unchanged; refused=0x" + up to 8 hex digits + "; saves=redirected\r\n".
+    const char* parts[] = {"play=1; loopback=", loopback ? "1" : "0", "; mutex=", mutex_renamed ? "renamed" : "unchanged",
+                           "; refused=0x"};
+    std::size_t at = 0;
+    const auto put = [&](const char* text) noexcept {
+        for (std::size_t i = 0; text[i]; ++i) {
+            if (at + 1 >= capacity) return false;
+            out[at++] = text[i];
+        }
+        return true;
+    };
+    for (const char* part : parts)
+        if (!put(part)) { out[0] = 0; return false; }
+    char hex[9]{};
+    std::size_t digits = 0;
+    std::uint32_t value = refused;
+    do {
+        const unsigned nibble = value & 0xFu;
+        hex[digits++] = static_cast<char>(nibble < 10 ? '0' + nibble : 'A' + nibble - 10);
+        value >>= 4;
+    } while (value && digits < 8);
+    char ordered[9]{};
+    for (std::size_t i = 0; i < digits; ++i) ordered[i] = hex[digits - 1 - i];
+    if (!put(ordered) || !put("; saves=") || !put(saves_redirected ? "redirected" : "unchanged") || !put("\r\n")) {
+        out[0] = 0;
+        return false;
+    }
+    out[at] = 0;
+    return true;
+}
+
 bool is_local_master_url(const char* url) noexcept {
     if (!url) return false;
     const char* rest = skip_prefix(url, "http://");
@@ -420,6 +463,7 @@ void InstallEarlyLabPatches() noexcept {
     // ---- Truthful status lines ----
     iso.identity_ok = settings.self_id != 0 && configured && user_ok && friends_ok;
     iso.saves_ok = want_storage && configured && user_ok && storage_ok;
+    g_saves_redirected = iso.saves_ok ? 1 : 0;
     {
         char line[400]{};
         if (iso.identity_ok) {
@@ -443,6 +487,11 @@ void InstallEarlyLabPatches() noexcept {
         } else {
             log_line("saves=unchanged\r\n");
         }
+        // Two-PC play (lab.ini mode=play): the refusals and the save result
+        // the launcher checks before trusting the session.
+        if (lab.mode == LabMode::play &&
+            format_play_line(lab.play_refused, lab.loopback, iso.second_instance, iso.saves_ok, line, ARRAYSIZE(line)))
+            log_line(line);
     }
 
     // ---- 3. CreateMutexW rename (second instance), only when isolated ----
@@ -500,6 +549,8 @@ void InstallEarlyLabPatches() noexcept {
 }
 
 bool networking_gate_installed() noexcept { return g_gate_installed; }
+
+const char* ProbeVersion() noexcept { return MGS_COOP_PROBE_VERSION; }
 
 unsigned VerifyEarlyLabPatches(void (*log)(const char* line) noexcept) noexcept {
     const auto* base = reinterpret_cast<const std::uint8_t*>(GetModuleHandleW(nullptr));

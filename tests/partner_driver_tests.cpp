@@ -764,6 +764,49 @@ void TestNetSourceAndCadence() {
     Check(s.fake.Count("partner_tick=rejected; reason=parse") == 8, "parse rejections capped at 8");
 }
 
+std::uint32_t HookInterp(void*, std::uint32_t configured) noexcept { return configured + 23; }
+
+// partner_interp=auto reaches the net sample through the interp_ms hook; a
+// null hook keeps the configured delay. partner_lost=hide clears the realize
+// bits after 10 s lost and the next live sample re-realizes; freeze keeps them.
+void TestInterpHookAndLost() {
+    Session s(1, mgscoop::PartnerApply::warp, mgscoop::PartnerSource::net);
+    s.lab.partner_interp_ms = 140;
+    s.fake.sample = mgscoop::pose::Sample{};
+    s.fake.sample.valid = true;
+    s.fake.sample.status = mgscoop::pose::Status::live;
+    Check(s.hooks.interp_ms == nullptr && s.Tick(0) && s.fake.sample_delays.back() == 140, "null interp hook: the configured delay");
+    s.hooks.interp_ms = HookInterp;
+    Check(s.Tick(0) && s.fake.sample_delays.back() == 163, "interp hook: the effective delay");
+
+    for (int mode = 0; mode < 2; ++mode) {
+        const bool hide = mode == 1;
+        Session h(3, mgscoop::PartnerApply::warp, mgscoop::PartnerSource::net);
+        h.lab.partner_lost = hide ? mgscoop::PartnerLost::hide : mgscoop::PartnerLost::freeze;
+        h.fake.sample = mgscoop::pose::Sample{};
+        h.fake.sample.valid = true;
+        h.fake.sample.x = 2.0f;
+        h.fake.sample.status = mgscoop::pose::Status::live;
+        Check(h.Tick(0) && h.Tick(1) && h.fake.Writes("or") == 1, "realize bits set");
+        h.fake.sample.status = mgscoop::pose::Status::lost;
+        for (int i = 0; i < 300; ++i) h.Tick(1);  // 9.9 s
+        Check(h.fake.Writes("clear") == 0, "nothing cleared before 10 s");
+        for (int i = 0; i < 10; ++i) h.Tick(1);
+        if (hide) {
+            Check(h.fake.Writes("clear") == 1 && h.fake.Count("partner_bits=cleared; reason=lost_hide") == 1 &&
+                  h.fake.Count("partner_lost=hide; after_ms=") == 1, "hide: bits cleared after 10 s lost");
+            for (int i = 0; i < 5; ++i) h.Tick(1);
+            Check(h.fake.Writes("or") == 1, "not re-realized while still lost");
+            h.fake.sample.status = mgscoop::pose::Status::live;
+            Check(h.Tick(1) && h.fake.Count("partner_lost=show") == 1 && h.fake.Writes("or") == 2, "live again: re-realized");
+        } else {
+            Check(h.fake.Writes("clear") == 0 && h.fake.Count("partner_lost=") == 0 && (h.reply.op & op::warp) != 0 &&
+                  h.reply.x_mm == 2000 && h.reply.status == partner::Status::lost,
+                  "freeze: stays realized and holds the pose");
+        }
+    }
+}
+
 void TestLuaLogAndQuiet() {
     Session s(0);
     const char note[] = "return 'MGS_COOP_PARTNER_LOG_V1' -- event=started;x=1";
@@ -2276,6 +2319,7 @@ int main() {
     TestMirrorAndOneShots();
     TestForceExistsAndPolicy();
     TestNetSourceAndCadence();
+    TestInterpHookAndLost();
     TestLuaLogAndQuiet();
     TestAnimationApply();
     TestAnimationGuards();
@@ -2297,7 +2341,7 @@ int main() {
     TestDmMapCaps();
     std::printf("%u partner driver checks passed: CFG/boundaries, stage-3 timeline, trigger stop/stage, STOP while terminating, "
                 "teardown keep, refusal caps, realize thrash cap, all-active re-assert, flags, mirror lifecycle, one-shots, "
-                "force_exists, policy, net source, cadence, Lua notes, quiet pairing, probes, anim mirror/net (q/s/r, debounce, "
+                "force_exists, policy, net source, interp hook, lost freeze/hide, cadence, Lua notes, quiet pairing, probes, anim mirror/net (q/s/r, debounce, "
                 "revert, fault), xform/hybrid drivers, looks (quiet/snake/net/copy, verify, timeout, waiting, refusals), census, "
                 "ps probe, dm=map (patch, table, sources, gates, failures, release, teardown, caps); no game\n", checks);
     return 0;

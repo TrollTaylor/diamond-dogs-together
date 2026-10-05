@@ -805,7 +805,7 @@ bool side_wire(void* ctx, const DatagramHeader& header, const WireChunk* chunks,
     all[0] = {head, kHeaderSize};
     return side->transport.transmit(all, count + 1, droppable);
 }
-void side_datagram(void* ctx, const std::uint8_t* data, std::size_t size) noexcept {
+void side_datagram(void* ctx, const std::uint8_t* data, std::size_t size, const Endpoint&) noexcept {
     auto* side = static_cast<SocketSide*>(ctx);
     DatagramHeader header{};
     const std::uint8_t* payload = nullptr;
@@ -900,7 +900,7 @@ void TestRealSockets() {
 // ----- Transport fault injection (the production send path) -----
 volatile unsigned g_rx_count = 0;
 LARGE_INTEGER g_rx_time{};
-void count_datagram(void*, const std::uint8_t*, std::size_t) noexcept {
+void count_datagram(void*, const std::uint8_t*, std::size_t, const Endpoint&) noexcept {
     QueryPerformanceCounter(&g_rx_time);
     g_rx_count = g_rx_count + 1;
 }
