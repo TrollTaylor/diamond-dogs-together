@@ -102,6 +102,8 @@ int main(int argc, char** argv) {
                     "partner_lost=%s\nlink_keys=1\n",
                     c.partner ? 1 : 0, mgscoop::PartnerInterpName(c.partner_interp), c.partner_interp_ms, c.partner_interp_min_ms,
                     c.partner_interp_max_ms, mgscoop::PartnerLostName(c.partner_lost));
+        // World sync keys (docs/world-sync-protocol.md), after link_keys=1.
+        std::printf("world=%u\nworld_probe=%s\n", c.world, mgscoop::WorldProbeName(c.world_probe));
         return 0;
     }
     if (std::strcmp(argv[1], "coop") == 0) {

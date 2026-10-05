@@ -480,5 +480,42 @@ int main() {
           std::strcmp(NetLossModelName(NetLossModel::burst), "burst") == 0 && std::strcmp(LabModeName(LabMode::lab), "lab") == 0,
           "link key names");
 
+    // World sync (docs/world-sync-protocol.md): world 0..3 (default 0) and the lab-only world_probe.
+    const auto worldDefault = Lab("enabled=1\nrole=host\n");
+    Check(worldDefault.world == 0 && worldDefault.world_probe == WorldProbe::none && worldDefault.invalid_values == 0, "world defaults");
+    for (std::uint32_t level = 0; level <= 3; ++level) {
+        const auto c = Lab("enabled=1\nrole=host\nworld=" + std::to_string(level) + "\n");
+        Check(c.world == level && c.invalid_values == 0 && c.unknown_keys == 0, "world 0..3");
+    }
+    for (const char* badWorld : {"4", "x", "-1", "", "3x"}) {
+        const auto c = Lab(std::string("enabled=1\nrole=host\nworld=1\nworld=") + badWorld + "\n");
+        Check(c.world == 1 && c.invalid_values == 1, "invalid world keeps the earlier value");
+    }
+    const auto worldSeven = Lab("enabled=1\nrole=host\nworld=7\n");
+    Check(worldSeven.world == 0 && worldSeven.invalid_values == 1, "invalid world keeps 0");
+    const char* probes[] = {"none", "p1", "p3", "p3b", "p4", "p12", "p17", "race_kill", "remote_area_kill", "kill_near", "sleep_near",
+                            "fulton_near", "alert_near", "weather_rain", "clock_jump", "clock_fast"};
+    for (unsigned i = 0; i <= kWorldProbeMax; ++i) {
+        const auto c = Lab(std::string("enabled=1\nrole=guest\nworld=2\nworld_probe=") + probes[i] + "\n");
+        Check(static_cast<unsigned>(c.world_probe) == i && c.invalid_values == 0 && std::strcmp(WorldProbeName(c.world_probe), probes[i]) == 0,
+              "world_probe names round trip");
+        WorldProbe parsed = WorldProbe::none;
+        Check(ParseWorldProbe(probes[i], std::strlen(probes[i]), parsed) && static_cast<unsigned>(parsed) == i, "ParseWorldProbe");
+    }
+    WorldProbe unchanged = WorldProbe::p1;
+    Check(!ParseWorldProbe("P1", 2, unchanged) && !ParseWorldProbe("p2", 2, unchanged) && !ParseWorldProbe("", 0, unchanged) &&
+              !ParseWorldProbe("race_kill ", 10, unchanged) && unchanged == WorldProbe::p1,
+          "ParseWorldProbe is exact");
+    Check(std::strcmp(WorldProbeName(static_cast<WorldProbe>(16)), "?") == 0, "out-of-range probe name");
+    const auto badProbe = Lab("enabled=1\nrole=host\nworld_probe=p2\n");
+    Check(badProbe.world_probe == WorldProbe::none && badProbe.invalid_values == 1, "unknown probe invalid");
+    const auto playWorld = Lab("enabled=1\nmode=play\nrole=host\n" + saves + "net=1\nworld=2\n");
+    Check(playWorld.world == 2 && playWorld.play_refused == 0 && playWorld.invalid_values == 0, "play keeps world");
+    const auto playProbe = Lab("enabled=1\nmode=play\nrole=host\n" + saves + "net=1\nworld=2\nworld_probe=race_kill\n");
+    Check(playProbe.world == 2 && playProbe.world_probe == WorldProbe::none && playProbe.play_refused == kPlayRefusedWorldProbe &&
+              playProbe.invalid_values == 1,
+          "play refuses world_probe");
+    Check(kPlayRefusedWorldProbe == 0x8000, "world_probe refusal bit");
+
     std::printf("%u lab/coop configuration checks passed; pure parser, no game calls\n", checks);
 }
