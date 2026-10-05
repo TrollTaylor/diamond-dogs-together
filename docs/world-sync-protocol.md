@@ -17,7 +17,7 @@ Code:
 | Link DATAGRAM and hooks | `native/link_protocol.cpp`, `native/partner_net.cpp` |
 | Core (pure, unit tested) | `native/world_wire.cpp` (op table, codec, queues, pairing, schedulers), `native/world_receipt.cpp` (receipts, trigger grammar) |
 | Glue (Win32) | `native/world_link.cpp` (lock, hooks, pump, `world.trigger`), `native/game_script_observer.cpp` (receipt routing, install) |
-| Lua (spliced into TppMain after `partner_sync.lua`) | `lua/coop/world_sync.lua`, `world_enemy.lua`, `world_phase.lua`, `world_env.lua`, `world_probe.lua`, `world_goto.lua` |
+| Lua (spliced into TppMain after `partner_sync.lua`) | `lua/coop/world_sync.lua`, `world_enemy.lua`, `world_outcome.lua`, `world_phase.lua`, `world_env.lua`, `world_probe.lua`, `world_goto.lua` |
 | Config and tools | `lab.ini` `world` / `world_probe`, `tools/lab/Set-WorldTrigger.ps1`, `tools/lab/WorldSync.psm1`, `Play-OfflineCoop.ps1 -World`, `Play-Coop.ps1 -World` |
 | Tests | `tests/world_wire_tests.cpp`, `tests/world_receipt_tests.cpp`, `tests/world_sync_lua_check.lua` (fragment and composed TppMain), additions to the link, lab config, host-trial patch and script suites |
 
@@ -98,13 +98,18 @@ Control (queue 0):
 | 0x03 | RECEIVED | H->G | (native only) | rid, reqOp | 3 |
 | 0x04 | REJECT | H->G | rid, reqOp, reason 1..15, entHash, state 0..7, ver | - | 11 |
 | 0x05 | RESYNC | G->H | rid, what 1..7 (1 outcomes, 2 phases, 4 clock + weather) | - | 3 |
-| 0x06 | RESYNC_END | H->G | rid, what, count, outcomeSeq | - | 7 |
+| 0x06 | RESYNC_END | H->G | rid, what, count, outcomeSeq (queued as a world op, see below) | - | 7 |
 | 0x07 | MISSION_END | both | missionCode | epoch | 6 |
 | 0x08 | PROBE_SYNC | both (lab) | probeId 1..15, step 1..4, entHash, arg | atMs (step 1) | 14 |
 
 REJECT reasons: 1 unknown_entity, 2 terminal, 3 not_forward, 5 epoch, 6
 not_paired, 7 roster_mismatch, 8 bad_state, 9 busy, 10 level, 11 inactive (4
 reserved).
+
+RESYNC_END has a control code but travels like a world op (queue 1,
+epoch-checked, sent only while paired), so the guest handles it after every
+ENEMY_OUTCOME the host sent before it and its `outcomeSeq` matches what the
+guest counted.
 
 World (queue 1):
 
@@ -147,7 +152,10 @@ outbound 2048 encoded R ops with a generation counter (a commit after a clear
 removes nothing). World queue full: a host REQ_* gets REJECT 9 busy,
 everything else is dropped; `resync_needed` is set and RESYNC_NEEDED{7}
 pushed once until the guest sends RESYNC or the next PAIRED. Outbound full:
-TX `0,6`.
+TX `0,6`. Drops are counted per queue and logged as `world=overflow;
+queue=control|world|out; dropped=N`: the first at once, later ones at most
+every 10 s (the next timer tick reports drops that were not logged at once,
+such as a local op with the control queue and its reserve full).
 
 Pairing: the host epoch is `epoch % 65535 + 1` at every CFG start (never 0).
 The host pairs on a guest READY for its own mission carrying its epoch (both
@@ -221,23 +229,26 @@ its stop cleanup and stays off), `world=1..3` at the next CFG start,
 next CFG start (`off` cancels a pending one; a probe at level 0 is
 `level0`), `goto=` see section 8. `tools/lab/Set-WorldTrigger.ps1 -Role
 host|guest|both -Text <line> [-WaitSec] [-Force]` writes it atomically and
-confirms the result line (exit 0, 2 not consumed, 3 rejected/different, 4
-unconfirmed); `<run>/world-triggers.log` records it. Start-Lab -Offline and
+confirms the result line (exit 0 applied, for a goto `world_goto=armed`; 2
+not consumed; 3 rejected, a goto `world_goto=refused`, or a different command;
+4 unconfirmed); `<run>/world-triggers.log` records it. Start-Lab -Offline and
 Stop-Lab delete leftovers (`stop.json world_triggers_removed`).
 
 ## 7. Lua contract
 
-Six chunks, each one `do ... end` block of at most 16000 bytes (CMake fails
+Seven chunks, each one `do ... end` block of at most 16000 bytes (CMake fails
 the configure otherwise), spliced in this order directly after
 `partner_sync.lua` and before the marker lifecycle chunk, so world's wrappers
 sit inside the session lifecycle's and outside partner's: `world_sync.lua`
 (receipts, `W.n`, required bindings, maps and digest, observer, control
 dispatch, tick, error policy, stop), `world_enemy.lua` (lattice, apply,
-commits, requests, sweep, ledger), `world_phase.lua` (W1 bindings and
-attribution, area union, phase cache, escalation, floor, PHASE_VEC),
-`world_env.lua` (digests, host request validation, outcome wire handlers,
-resync stream, stats, clock, weather), `world_probe.lua` (probes),
-`world_goto.lua` (lab goto). Everything lives on `W = e.MgsCoopWorld`.
+commits, sweep, ledger), `world_outcome.lua` (attribution, guest requests and
+held requests, host request validation, outcome wire handlers),
+`world_phase.lua` (W1 bindings, area union, phase cache, escalation, floor,
+PHASE_VEC), `world_env.lua` (digests, resync stream, stats, clock, weather),
+`world_probe.lua` (probes), `world_goto.lua` (lab goto). Everything lives on
+`W = e.MgsCoopWorld`; hook lists `bindHooks`, `startHooks`, `stopHooks`,
+`pairedHooks`, `unpairedHooks` and `observers` are the extension points.
 
 Lifecycle: OnInitialize (after the original) resets the area state, sends the
 CFG query and, at level >= 2 in 30010/30020, wraps `UpdateOutOfAreaSetting`
@@ -300,30 +311,41 @@ active (else held `out_of_area`); a local terminal state is never commanded
 (`terminal_local`); NORMAL is `skip_backward`; a local rank at or above the
 target is `noop`; SLEEP/FAINT/DYING/DEAD use `ChangeLifeState` with the
 validated constant (read back from +200 ms, one retry at +1 s, failed at +2
-s -> held `apply_failed`). Ledger: held entries are re-checked 10 per frame
-(all of them when the active CPs change) and dropped at stop, at an epoch
-change, at UNPAIRED 2 and when W1 goes off.
+s -> held `apply_failed`). An apply for a soldier whose readback is still in
+flight waits (retried once per frame). Ledger: held entries are re-checked 10
+per frame (all of them when the active CPs change) and dropped at stop, at an
+epoch change, at UNPAIRED 2 and when W1 goes off.
 
 Host commits (before the world drain each tick, C32): pending reads from
 life messages and a sweep of 4 entities per frame whose committed state is
 neither NORMAL nor terminal and whose local readback once reached it
 (`reached`): a higher local rank commits forward, a lower one (only if
-reached) commits backward with flags 2 (cause 9 from the sweep). A guest
+reached) commits backward with flags 2 (cause 9 from the sweep). A guest or
+probe commit clears `reached` until a readback reaches the committed state,
+so a late or failed apply never reverts the guest's outcome. A guest
 REQ_OUTCOME is validated after that: W1 off 11, unknown 1, terminal 2, not
 forward 3; otherwise committed with actor 1 and the rid, broadcast and
-applied to the host world. Guest: requests while unpaired are held (at most
-256) and re-checked after RESYNC_END; no RECEIVED within 3 s drops the request
-and sends RESYNC 1 (at most once per 10 s); REJECT 2 and 3 apply the host's
-state.
+applied to the host world. Guest: a request whose answer cannot come is held
+(at most 256) and re-checked after the next RESYNC_END (sent again only while
+still forward of the known state): one made while unpaired or whose TX failed,
+the outstanding ones at UNPAIRED (`event=req_hold;n=`), REJECT 5, 6 and 9, and
+no RECEIVED within 3 s; the last two also send RESYNC 1 (at most once per 10
+s). REJECT 2 and 3 apply the host's state. Re-pairing in the same mission:
+the same host epoch keeps everything; another host epoch is another host
+world (the host restarted the mission), so W1 goes off for the guest's mission
+(`event=inactive;reason=epoch;scope=w1`, held requests dropped) while W2 goes
+on.
 
 Area union: the wrapper records the local area at any time (traps fire during
-preparation). Once started, paired at eff >= 2 with W1 on and with a known
+preparation). Once started, paired (`W.paired`) at eff >= 2 with W1 on and with a known
 partner area that differs, the original runs once with `enemy.cpList[local]`
 replaced by the union set (restored afterwards, errors re-raised), so nothing
 is set out of area and back. Active CPs = local area (or union) plus
 `quest_cp`. PLAYER_AREA goes out at PAIRED and on a local change (at most once
 per 2 s; a pending change after the window); a received area re-runs the
-original (at most once per 2 s). Group shapes (keyed set or array) are
+original (at most once per 2 s). UNPAIRED forgets the partner area and
+re-runs the original for the local area at once (W1 off or stop: at the next
+tick), so vanilla deactivation resumes. Group shapes (keyed set or array) are
 normalised and logged once (`event=area;shape=set|array`).
 
 Alert (escalation only): the host broadcasts every local upward transition
@@ -335,8 +357,11 @@ op or a vector value above its local phase (vector: at most once per 5 s per
 CP); a local upward transition above the host's phase raises `ownPhase` and
 sends REQ_PHASE when higher than the last request (or 30 s later); a decay
 lowers `ownPhase` and never requests; applying a host phase never raises it.
-The host floors a CP to the guest's own phase from the guest vector (at most
-once per 10 s; `event=floor` every 10 s while any floor is set). No mutual
+The host floors a CP to the guest's own phase from the guest vector or a
+REQ_PHASE (at most once per 10 s; `event=floor` every 10 s while any floor is
+set), only while paired at eff >= 2 and while the guest reported that phase in
+the last 5 s; UNPAIRED (which also sets eff 0) and stop clear the guest's
+phases. No mutual
 ALERT latch. Never used: `SetIgnoreCoop`, the soldier `ChangePhase`,
 `SetKeepAlert`/`SetKeepCaution`. A vector packs 2 bits per CP, 16 per u32
 word (arithmetic only); more than 192 CPs disables it
@@ -460,7 +485,7 @@ Lua payloads (`world_lua=event=...`): `started`, `inactive` (reason
 `missing_required`, `bad_const`, `continue`, `game_over`, `roster_mismatch`,
 `level0`), `missing`, `error`, `stop`, `paired`, `unpaired`, `obs`,
 `obs_cap`, `commit`, `req`, `req_rx` (host refusal), `req_done`,
-`req_timeout`, `req_drop`, `apply`, `ledger`, `divergence`, `phase`,
+`req_timeout`, `req_drop`, `req_hold`, `apply`, `ledger`, `divergence`, `phase`,
 `req_phase`, `floor`, `phase_vec`, `area`, `digest_mismatch`, `resync`,
 `resync_needed`, `clock`, `clock_tx`, `clock_check`, `weather`,
 `weather_check`, `roster`, `stats`, `bad_value`, `probe`, `goto`.
@@ -469,7 +494,7 @@ Lua payloads (`world_lua=event=...`): `started`, `inactive` (reason
 
 | Change | Reason |
 |---|---|
-| Six Lua chunks (`world_goto.lua` added) and a different split: W1 bindings and attribution in `world_phase.lua`; host request validation, the outcome wire handlers, the resync stream and the stats line in `world_env.lua` | The enemy and probe logic did not fit 16000 bytes per file |
+| Seven Lua chunks (`world_outcome.lua` and `world_goto.lua` added) and a different split: W1 bindings in `world_phase.lua`; attribution, requests, host request validation and the outcome wire handlers in `world_outcome.lua`; the resync stream and the stats line in `world_env.lua` | The enemy, phase and probe logic did not fit 16000 bytes per file |
 | RX mask 3 needs paired, eff >= 2 and in-game, but not W1 on | W2 must drain CLOCK/WEATHER in 30050 and after a continue (W1 off) |
 | A CFG start drops the queued control and world ops of the previous mission | Stale UNPAIRED/PROBE_FIRE/RESYNC_END of the old mission must not reach the new one |
 | HELLO, READY and MISSION_END are consumed natively, never pushed to Lua | Lua ignored them anyway; one receipt less per message |
@@ -478,6 +503,8 @@ Lua payloads (`world_lua=event=...`): `started`, `inactive` (reason
 | HOLDUP/VANISHED applies are `noop`; an entity with a readback in flight defers new applies | No setter in W1; no double command |
 | Extra lines: `world=pair_refused; reason=role`, `event=clock_tx`, `event=req_rx`, `event=goto`, `event=resync_needed`, `event=phase;src=rx` | Diagnostics for the live tests |
 | WEATHER fog fields accept only "none" | W2 never sends fog; later phases widen the range |
+| RESYNC_END is queued and delivered as a world op | It must not overtake the ENEMY_OUTCOMEs sent before it (`seen` would be over-counted) |
+| The host floor counts a guest phase only while reported in the last 5 s; a guest re-paired to another host epoch turns W1 off; lost requests are held for the next RESYNC_END | Review fixes: no ALERT latch after the guest left or stopped reporting, no lattice carried across host worlds, no guest outcome lost on a session change or REJECT 5/6/9 |
 
 ## 12. Live acceptance (lab, both copies on one PC)
 
@@ -544,6 +571,19 @@ in [lab-protocol.md](lab-protocol.md) "World sync".
   both CPs decay normally (no `floor` line for X 20 s after the guest's own phase
   dropped). Latch check: the host alerts a CP itself -> the guest applies
   (`event=phase;...;src=rx;...;applied=1`) and no `src=floor` line for it.
+  Floor end: with the host CP X floored, send `-Role guest -Text world=0`
+  (the guest stops sending PHASE_VEC): no host `event=floor;cp=X` and no
+  `event=phase;cp=X;...;src=floor` later than 5 s after the guest's
+  `world_trigger=applied; text=world=0`, and X decays normally.
+- **Review fixes (lab):** the goto refusal: `Set-WorldTrigger.ps1 -Role both
+  -Text 'goto=30010' -WaitSec 15` while in 30010 exits 3 with
+  `world_goto=refused; reason=mission`. After the guest leaves 30010
+  (`world=unpaired` on the host), the soldiers of the guest's former area
+  deactivate as in vanilla (the union is not logged; the host's original
+  UpdateOutOfAreaSetting reruns for its own area at once). A guest request outstanding at a link drop shows
+  `event=req_hold;n=` and is sent again after the next `event=resync;...;
+  src=end`. A host mission restart while the guest stays in 30010 gives the
+  guest `event=inactive;reason=epoch;scope=w1` at the next `event=paired`.
 - **W1-6 (`-Role host -Text world_probe=remote_area_kill`):** host
   `event=probe;id=remote_area_kill;step=start;area=X;ent=S`,
   `event=commit;ent=S;state=5;ver=1;actor=probe`; guest

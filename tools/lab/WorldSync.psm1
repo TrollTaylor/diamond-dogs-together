@@ -3,7 +3,8 @@
 #  - the grammar of <game>/mgs-coop/world.trigger, canonicalized exactly as
 #    the native parser does (native/world_receipt.cpp ParseTrigger);
 #  - the native result line in script-observer.log
-#    (world_trigger=applied; text=<canonical> / world_trigger=rejected; reason=...).
+#    (world_trigger=applied; text=<canonical> / world_trigger=rejected; reason=...,
+#    for a goto also world_goto=armed / world_goto=refused; reason=...).
 # Used by Set-WorldTrigger.ps1 and Play-OfflineCoop.ps1; unit tested by
 # tests/lab_scripts_tests.ps1. ASCII only.
 Set-StrictMode -Version Latest
@@ -52,21 +53,39 @@ function Test-WorldTriggerText {
 function Find-WorldTriggerResult {
     # Pure: the native result of the newest consumed world trigger in a log text
     # that starts at the offset recorded just before the trigger was written:
-    #   State 'applied'   world_trigger=applied; text=<-Canonical>
+    #   State 'applied'   world_trigger=applied; text=<-Canonical> (with goto=:
+    #                     and world_goto=armed after it)
     #   State 'different' world_trigger=applied for another text (a replaced
     #                     trigger raced the native poll)
-    #   State 'rejected'  world_trigger=rejected; reason=<Reason>
-    #   State 'none'      neither line yet
+    #   State 'rejected'  world_trigger=rejected; reason=<Reason>, or a goto
+    #                     refused after it (world_goto=refused; reason=<Reason>)
+    #   State 'none'      neither line yet (a goto: neither armed nor refused yet)
     param([AllowNull()][AllowEmptyString()][string]$LogText, [Parameter(Mandatory)][string]$Canonical)
     $last = $null
-    foreach ($line in @(([string]$LogText) -split "\r?\n")) { if ($line.StartsWith('world_trigger=', [StringComparison]::Ordinal)) { $last = $line } }
+    $after = [Collections.Generic.List[string]]::new()
+    foreach ($line in @(([string]$LogText) -split "\r?\n")) {
+        if ($line.StartsWith('world_trigger=', [StringComparison]::Ordinal)) { $last = $line; $after.Clear() }
+        elseif ($last) { $after.Add($line) }
+    }
     if (!$last) { return [pscustomobject]@{ State = 'none'; Line = $null; Reason = '' } }
     if ($last -cmatch '^world_trigger=rejected; reason=([a-z0-9_]+)') {
         return [pscustomobject]@{ State = 'rejected'; Line = $last; Reason = $Matches[1] }
     }
     if ($last -cmatch '^world_trigger=applied; text=(.*?)(; t_ms=[0-9]+)?$') {
-        $state = if ($Matches[1] -ceq $Canonical) { 'applied' } else { 'different' }
-        return [pscustomobject]@{ State = $state; Line = $last; Reason = '' }
+        if ($Matches[1] -cne $Canonical) { return [pscustomobject]@{ State = 'different'; Line = $last; Reason = '' } }
+        # ApplyTrigger logs applied first; a goto is then armed or refused.
+        if ($Canonical -cmatch '(^| )goto=') {
+            foreach ($line in $after) {
+                if ($line -cmatch '^world_goto=refused; reason=([a-z0-9_]+)') {
+                    return [pscustomobject]@{ State = 'rejected'; Line = $line; Reason = $Matches[1] }
+                }
+                if ($line.StartsWith('world_goto=armed;', [StringComparison]::Ordinal)) {
+                    return [pscustomobject]@{ State = 'applied'; Line = $line; Reason = '' }
+                }
+            }
+            return [pscustomobject]@{ State = 'none'; Line = $null; Reason = '' }
+        }
+        return [pscustomobject]@{ State = 'applied'; Line = $last; Reason = '' }
     }
     return [pscustomobject]@{ State = 'none'; Line = $null; Reason = '' }
 }

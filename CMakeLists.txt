@@ -202,9 +202,9 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS lua/coop/partner_sync.lua)
   file(READ "${CMAKE_CURRENT_SOURCE_DIR}/lua/coop/partner_sync.lua" MGS_PARTNER_SYNC_SOURCE)
   configure_file(native/partner_sync_source.hpp.in generated/partner_sync_source.hpp @ONLY)
-  # World sync (docs/world-sync-protocol.md): six chunks, each at most 16000
+  # World sync (docs/world-sync-protocol.md): seven chunks, each at most 16000
   # bytes (LF) so every raw string literal stays under the MSVC literal limit.
-  foreach(_mgs_world_part SYNC ENEMY PHASE ENV PROBE GOTO)
+  foreach(_mgs_world_part SYNC ENEMY OUTCOME PHASE ENV PROBE GOTO)
     string(TOLOWER "${_mgs_world_part}" _mgs_world_file)
     set(_mgs_world_path "${CMAKE_CURRENT_SOURCE_DIR}/lua/coop/world_${_mgs_world_file}.lua")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_mgs_world_path}")

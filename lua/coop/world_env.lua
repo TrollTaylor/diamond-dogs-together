@@ -1,5 +1,5 @@
--- MGS co-op world sync: digests, resync, the outcome wire handlers, clock and
--- weather (original; docs/world-sync-protocol.md). DIGEST/GUEST_DIGEST and the
+-- MGS co-op world sync: digests, the resync stream, clock and weather
+-- (original; docs/world-sync-protocol.md). DIGEST/GUEST_DIGEST and the
 -- phase vectors go out once a second while paired; 3 outcome mismatches ask
 -- for a RESYNC. W2 (eff >= 3): clock jumps and fast samples, a guest clock
 -- more than 60 game s off on 2 digests is corrected, and the host weather is
@@ -167,57 +167,6 @@ do
                 elseif k == 3 then V.txClock(3)
                 else V.txWeather(2) end
             end
-        end
-        -- Host: guest requests, validated after the host's own pending reads (C32).
-        function V.hostReqs()
-            local s, E = W.enemy.s, W.enemy
-            for i = 1, #s.hostReq do
-                local v = s.hostReq[i]
-                local rid, h, st = v[1], v[2], v[4]
-                local e = W.ent[h]
-                local reason
-                if not W.w1 then reason = 11
-                elseif not e then reason = 1
-                elseif not W.rosterOk then reason = 7
-                elseif E.TERMINAL[e.committed] then reason = 2
-                elseif E.RANK[st] <= E.RANK[e.committed] then reason = 3 end
-                if reason then
-                    W.tx(OP.REJECT, rid, OP.REQ_OUTCOME, reason, h, e and e.committed or 0, e and e.ver or 0)
-                    W.log(fmt("event=req_rx;rid=%d;ent=%.0f;state=%d;result=reject;reason=%d", rid, h, st, reason))
-                else
-                    local cur = E.localState(e)
-                    if cur ~= nil and E.RANK[cur] > E.RANK[st] then st = cur end
-                    E.commit(h, st, 1, rid, 6, 0)
-                    E.apply(h, st, e.ver, "commit")
-                end
-            end
-            s.hostReq = {}
-        end
-        -- Enemy outcome wire handlers (the logic is in world_enemy.lua).
-        H[OP.RECEIVED] = function(v)
-            local q = v[2] == OP.REQ_OUTCOME and W.enemy.s.req[v[1]]
-            if q then q.received = true end
-        end
-        H[OP.REJECT] = function(v)
-            local s = W.enemy.s
-            local q = v[2] == OP.REQ_OUTCOME and s.req[v[1]]
-            if q then s.req[v[1]], s.out[q.h] = nil, nil end
-            W.log(fmt("event=req_done;rid=%d;result=reject;reason=%d;op=%d;state=%d;ver=%d", v[1], v[3], v[2], v[5], v[6]))
-            if v[2] == OP.REQ_OUTCOME and (v[3] == 2 or v[3] == 3) then W.enemy.apply(v[4], v[5], v[6], "reject") end
-        end
-        H[OP.OUTCOME] = function(v)
-            local s = W.enemy.s
-            local q = v[7] ~= 0 and s.req[v[7]]
-            if q then
-                s.req[v[7]], s.out[q.h] = nil, nil
-                W.log(fmt("event=req_done;rid=%d;ms=%d;result=outcome", v[7], floor(W.now() - q.sent)))
-            end
-            if v[8] % 2 == 0 then s.seen = (s.seen + 1) % 65536 end
-            W.enemy.apply(v[1], v[3], v[4], v[8] % 2 == 1 and "resync" or "outcome")
-        end
-        H[OP.REQ_OUTCOME] = function(v)
-            local q = W.enemy.s.hostReq
-            q[#q + 1] = v
         end
         H[OP.RESYNC] = function(v)
             local items, what = {}, v[2]

@@ -10,8 +10,8 @@ do
         OUTCOME = 16, REQ_OUTCOME = 17, PHASE = 18, REQ_PHASE = 19, AREA = 20, DIGEST = 21, GDIGEST = 22, PVEC = 23,
         CLOCK = 32, WEATHER = 33, LINK = 112, PAIRED = 113, UNPAIRED = 114, GOTO = 115, PROBE = 116, PROBE_FIRE = 117,
         RESYNC_NEEDED = 118, LEVEL = 119, GOTO_ACK = 120}
-    local W = {OP = OP, handlers = {}, bindHooks = {}, startHooks = {}, stopHooks = {}, pairedHooks = {}, observers = {}, areaState = {},
-        areaWrapped = setmetatable({}, {__mode = "k"})}
+    local W = {OP = OP, handlers = {}, bindHooks = {}, startHooks = {}, stopHooks = {}, pairedHooks = {}, unpairedHooks = {}, observers = {},
+        areaState = {}, areaWrapped = setmetatable({}, {__mode = "k"})}
     e.MgsCoopWorld = W
     -- Per-mission features (W3+ extends it); other missions run level-1 plumbing only.
     W.MISSIONS = {[30010] = {enemies = true, clock = true, weather = "all", areaEnemy = "f30010_enemy"},
@@ -217,9 +217,9 @@ do
         for _, f in ipairs(W.pairedHooks) do f(epochChanged) end
     end
     H[OP.UNPAIRED] = function(v)
-        W.paired = false
+        W.paired, W.eff = false, 0
         W.log("event=unpaired;reason=" .. tostring(v[1]))
-        if W.enemy then W.enemy.unpaired(v[1]) end
+        for _, f in ipairs(W.unpairedHooks) do f(v[1]) end
     end
     H[OP.LEVEL] = function() W.stop(false) end
     -- One RX receipt per idle frame: control first, then (paired, in game)

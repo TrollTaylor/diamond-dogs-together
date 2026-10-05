@@ -610,6 +610,39 @@ void Queues() {
     Check(g_host.stats().auto_reject == 4 && g_host.stats().auto_received == 4096 && g_host.resync_needed(), "REJECT busy on overflow");
     rx = Drain(g_host, 1, 0);
     Check(Count(rx, op::resync_needed) == 1, "host RESYNC_NEEDED once");
+    // Drops after the first line are reported by Tick under their own queue.
+    auto lines = Lines(g_host);
+    Check(HasLine(lines, "world=overflow; queue=world; dropped=1") && !HasLine(lines, "queue=out"), "first world drop logged at once");
+    g_host.Tick(9999);
+    Check(!HasLine(Lines(g_host), "world=overflow"), "at most one overflow line per 10 s");
+    g_host.Tick(10000);
+    lines = Lines(g_host);
+    Check(HasLine(lines, "world=overflow; queue=world; dropped=3") && !HasLine(lines, "queue=out"), "later world drops keep their name");
+
+    // A dropped local op (control queue and reserve full) is logged by Tick.
+    Setup();
+    for (unsigned i = 0; i < world::kControlQueue + world::kLocalReserve + 2; ++i) g_guest.OnLinkState(i % 2 == 0, 1, 0);
+    Check(g_guest.control_size() == world::kControlQueue + world::kLocalReserve && g_guest.stats().overflow == 2, "local ops dropped");
+    g_guest.Tick(0);
+    Check(HasLine(Lines(g_guest), "world=overflow; queue=control; dropped=2"), "a local drop is logged");
+
+    // RESYNC_END rides the world queue behind the OUTCOMEs sent before it.
+    Setup();
+    Pair(30010, 0);
+    Drain(g_host, 1, 0);
+    Drain(g_guest, 1, 0);
+    Check(Tx(g_host, op::enemy_outcome, {7, 1, 5, 1, 1, 0, 0, 0, 0, 0, 0}, 0) == world::TxStatus::ok, "OUTCOME TX");
+    Check(Tx(g_host, op::resync_end, {9, 1, 0, 1}, 0) == world::TxStatus::ok, "RESYNC_END TX");
+    Exchange(0);
+    rx = Drain(g_guest, 1, 0);
+    Check(!Find(rx, op::resync_end) && g_guest.world_size() == 2, "RESYNC_END never overtakes in the control queue");
+    rx = Drain(g_guest, 3, 0);
+    Check(rx.size() == 2 && rx[0].op == op::enemy_outcome && rx[1].op == op::resync_end && rx[1].queue == 1 && rx[1].v[0] == 9,
+          "the OUTCOME, then RESYNC_END (world queue)");
+    g_guest.Cfg(30010, true, 30010, 0);
+    Check(Tx(g_host, op::resync_end, {10, 1, 0, 1}, 0) == world::TxStatus::ok, "a RESYNC_END for the old pairing");
+    Exchange(0);
+    Check(!Find(Drain(g_guest, 3, 0), op::resync_end), "a RESYNC_END of another pairing is never delivered");
 
     // U slots: newer tick replaces, older counted, wrap-safe, epoch-checked.
     Setup();

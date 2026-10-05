@@ -498,6 +498,16 @@ try {
     Assert-Equal (Find-WorldTriggerResult -LogText "world_trigger=applied; text=world=0; t_ms=1`n" -Canonical 'goto=30010').State 'different' 'another world trigger applied'
     $wr = Find-WorldTriggerResult -LogText "world_trigger=applied; text=goto=30010; t_ms=1`nworld_trigger=rejected; reason=level0; t_ms=2`n" -Canonical 'goto=30010'
     Assert-Equal "$($wr.State)|$($wr.Reason)" 'rejected|level0' 'the newest world trigger line wins (rejected)'
+    $wr = Find-WorldTriggerResult -LogText "world_trigger=applied; text=goto=30010; t_ms=1`r`nworld_goto=refused; reason=mission; t_ms=1`r`n" -Canonical 'goto=30010'
+    Assert-Equal "$($wr.State)|$($wr.Reason)" 'rejected|mission' 'a refused goto is rejected, not applied'
+    foreach ($why in 'level', 'target', 'busy', 'terminating') {
+        $wr = Find-WorldTriggerResult -LogText "world_trigger=applied; text=world=3 goto=30010; t_ms=1`nworld_goto=refused; reason=$why; t_ms=1`n" -Canonical 'world=3 goto=30010'
+        Assert-Equal "$($wr.State)|$($wr.Reason)" "rejected|$why" "goto refused: $why"
+    }
+    Assert-Equal (Find-WorldTriggerResult -LogText "world_trigger=applied; text=goto=30010; t_ms=1`n" -Canonical 'goto=30010').State 'none' 'a goto without armed/refused is not confirmed yet'
+    $wr = Find-WorldTriggerResult -LogText "world_goto=refused; reason=busy; t_ms=1`nworld_trigger=applied; text=goto=30010; t_ms=2`nworld_goto=armed; target=30010; lz=0; t_ms=2`n" -Canonical 'goto=30010'
+    Assert-Equal "$($wr.State)|$($wr.Line)" 'applied|world_goto=armed; target=30010; lz=0; t_ms=2' 'only goto lines after the newest trigger line count'
+    Assert-Equal (Find-WorldTriggerResult -LogText "world_trigger=applied; text=world_probe=p1; t_ms=1`nworld_goto=refused; reason=busy; t_ms=1`n" -Canonical 'world_probe=p1').State 'applied' 'goto lines do not affect other triggers'
     Assert-Equal (Find-WorldTriggerResult -LogText 'partner_trigger=rejected; reason=parse' -Canonical 'world=1').State 'none' 'partner lines do not count'
     Assert-Equal (Find-WorldTriggerResult -LogText '' -Canonical 'world=1').State 'none' 'empty log'
     # Play-OfflineCoop: -World adds world=N only when > 0; -WorldProbe needs -World; [G] sends goto=30010.

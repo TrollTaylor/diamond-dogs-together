@@ -30,7 +30,7 @@ constexpr OpSpec kOps[] = {
     {op::reject, "REJECT", 0, Dir::host_to_guest, Wire::reliable, 1, false, false, 6, 0, 0, 11,
      {Rid(), U8(), U8(1, 15), U32(), U8(0, 7), U16()}},
     {op::resync, "RESYNC", 0, Dir::guest_to_host, Wire::reliable, 1, true, false, 2, 0, 0, 3, {Rid(), U8(1, 7)}},
-    {op::resync_end, "RESYNC_END", 0, Dir::host_to_guest, Wire::reliable, 1, false, false, 4, 0, 0, 7,
+    {op::resync_end, "RESYNC_END", 1, Dir::host_to_guest, Wire::reliable, 1, false, false, 4, 0, 0, 7,
      {U16(), U8(1, 7), U16(), U16()}},
     {op::mission_end, "MISSION_END", 0, Dir::both, Wire::reliable, 1, false, false, 1, 1, 0, 6, {Mission(), U16()}},
     {op::probe_sync, "PROBE_SYNC", 0, Dir::both, Wire::reliable, 1, false, true, 4, 1, 0, 14,
@@ -250,7 +250,7 @@ void Core::Configure(const Config& config, std::uint64_t now_ms) noexcept {
     logged_out_ = logged_ctrl_ = logged_world_ = 0;
     stats_ms_ = now_ms;
     last_rx_ms_ = 0;
-    overflow_pending_ = 0;
+    for (std::uint32_t& n : overflow_pending_) n = 0;
     overflow_ms_ = 0;
     overflow_logged_once_ = false;
     line_head_ = line_size_ = 0;
@@ -303,7 +303,7 @@ void Core::PushLocal(std::uint8_t code, std::int64_t a, std::int64_t b, std::int
     for (unsigned i = 0; i < entry.count && i < 6; ++i) entry.v[i] = values[i];
     if (!PushControl(entry, true)) {
         ++stats_.overflow;
-        ++overflow_pending_;
+        Dropped(kDropControl, 0, false);  // logged by Tick
     }
 }
 
@@ -352,26 +352,33 @@ void Core::AutoAnswer(std::uint8_t req_op, std::int64_t rid, std::int64_t ent, s
         out.v[3] = ent >= 0 && ent <= kU32 ? ent : 0;
         ++stats_.auto_reject;
     }
-    if (!QueueOut(out)) {
-        ++overflow_pending_;
-        if (!overflow_ms_) overflow_ms_ = 1;  // logged by Tick within 10 s
-    }
+    if (!QueueOut(out)) Dropped(kDropOut, 0, false);  // logged by Tick
 }
 
-void Core::Overflow(const char* queue, std::uint64_t now_ms) noexcept {
+void Core::Overflow(DropQueue queue, std::uint64_t now_ms) noexcept {
     ++stats_.overflow;
-    ++overflow_pending_;
     resync_needed_ = true;
     if (!resync_pushed_) {
         resync_pushed_ = true;
         PushLocal(op::resync_needed, 7);
     }
-    if (!overflow_logged_once_ || now_ms - overflow_ms_ >= 10000) {
-        Line("world=overflow; queue=%s; dropped=%u", queue, overflow_pending_);
-        overflow_pending_ = 0;
-        overflow_ms_ = now_ms;
-        overflow_logged_once_ = true;
+    Dropped(queue, now_ms, true);
+}
+
+void Core::Dropped(DropQueue queue, std::uint64_t now_ms, bool log_now) noexcept {
+    ++overflow_pending_[queue];
+    if (log_now && (!overflow_logged_once_ || now_ms - overflow_ms_ >= 10000)) FlushOverflow(now_ms);
+}
+
+void Core::FlushOverflow(std::uint64_t now_ms) noexcept {
+    static constexpr const char* kNames[kDropQueues] = {"control", "world", "out"};
+    for (unsigned q = 0; q < kDropQueues; ++q) {
+        if (!overflow_pending_[q]) continue;
+        Line("world=overflow; queue=%s; dropped=%u", kNames[q], overflow_pending_[q]);
+        overflow_pending_[q] = 0;
     }
+    overflow_ms_ = now_ms;
+    overflow_logged_once_ = true;
 }
 
 void Core::OnReliable(const std::uint8_t* data, std::size_t size, std::uint64_t now_ms) noexcept {
@@ -427,14 +434,13 @@ void Core::OnOp(const Op& op, bool datagram, std::uint64_t now_ms) noexcept {
         return;
     case op::received:
     case op::reject:
-    case op::resync_end:
-        if (!PushControl(entry, false)) Overflow("control", now_ms);
+        if (!PushControl(entry, false)) Overflow(kDropControl, now_ms);
         return;
     case op::resync:
         if (!paired_) { AutoAnswer(op::resync, op.v[0], 0, reject::not_paired); return; }
         if (ctrl_size_ >= kControlQueue) {
             AutoAnswer(op::resync, op.v[0], 0, reject::busy);
-            Overflow("control", now_ms);
+            Overflow(kDropControl, now_ms);
             return;
         }
         AutoAnswer(op::resync, op.v[0], 0, 0);
@@ -454,7 +460,7 @@ void Core::OnOp(const Op& op, bool datagram, std::uint64_t now_ms) noexcept {
         return;
     default: break;
     }
-    // World ops.
+    // World ops (RESYNC_END too: it stays behind the OUTCOMEs sent before it).
     if (host) {
         if (!paired_ || op.epoch != epoch_) {
             if (spec->request) AutoAnswer(op.code, op.v[0], op.v[1], reject::epoch);
@@ -479,7 +485,7 @@ void Core::OnOp(const Op& op, bool datagram, std::uint64_t now_ms) noexcept {
     }
     if (world_size_ >= kWorldQueue) {
         if (spec->request && host) AutoAnswer(op.code, op.v[0], op.v[1], reject::busy);
-        Overflow("world", now_ms);
+        Overflow(kDropWorld, now_ms);
         return;
     }
     if (spec->request && host) AutoAnswer(op.code, op.v[0], 0, 0);
@@ -760,13 +766,7 @@ TxStatus Core::Tx(std::uint8_t code, const std::int64_t* values, unsigned count,
         return TxStatus::ok;
     }
     if (!QueueOut(op)) {
-        ++overflow_pending_;
-        if (!overflow_logged_once_ || now_ms - overflow_ms_ >= 10000) {
-            Line("world=overflow; queue=out; dropped=%u", overflow_pending_);
-            overflow_pending_ = 0;
-            overflow_ms_ = now_ms;
-            overflow_logged_once_ = true;
-        }
+        Dropped(kDropOut, now_ms, true);
         return TxStatus::queue_full;
     }
     ++stats_.tx_r;
@@ -954,12 +954,9 @@ void Core::Tick(std::uint64_t now_ms) noexcept {
         silent_logged_ = true;
         Line("world=remote_silent; since_link_ms=%u", U(static_cast<std::int64_t>(now_ms - link_up_ms_)));
     }
-    if (overflow_pending_ && overflow_ms_ && now_ms - overflow_ms_ >= 10000) {
-        Line("world=overflow; queue=out; dropped=%u", overflow_pending_);
-        overflow_pending_ = 0;
-        overflow_ms_ = now_ms;
-        overflow_logged_once_ = true;
-    }
+    if ((overflow_pending_[kDropControl] || overflow_pending_[kDropWorld] || overflow_pending_[kDropOut]) &&
+        (!overflow_logged_once_ || now_ms - overflow_ms_ >= 10000))
+        FlushOverflow(now_ms);
     Stats10s(now_ms);
 }
 

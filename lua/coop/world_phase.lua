@@ -5,8 +5,10 @@
 -- runs once with cpList[area] replaced by the union, so nothing toggles).
 -- Alert syncs escalations only: the host broadcasts its upward transitions,
 -- the guest requests the ones it raised itself (ownPhase), and the host's
--- floor follows the guest's own phases only (no mutual ALERT latch). Phase
--- wire values: 0 SNEAK, 1 CAUTION, 2 EVASION, 3 ALERT (TppGameObject.PHASE_*).
+-- floor follows the guest's own phases only (no mutual ALERT latch), and only
+-- while paired and reported in the last 5 s (PHASE_VEC once a second or
+-- REQ_PHASE). Unpairing clears the guest's phases and area. Phase wire
+-- values: 0 SNEAK, 1 CAUTION, 2 EVASION, 3 ALERT (TppGameObject.PHASE_*).
 do
     local W = e.MgsCoopWorld
     if type(W) == "table" then
@@ -14,7 +16,8 @@ do
         W.area, W.phase = A, P
         local fmt, floor, max, min = string.format, math.floor, math.max, math.min
 
-        -- W1 bindings (enemy outcomes and alert): life/phase constants and attribution.
+        -- W1 bindings (enemy outcomes and alert): life/phase constants and attribution
+        -- (W.attClass is in world_outcome.lua).
         W.bindHooks[#W.bindHooks + 1] = function(a, fn, num, missing)
             local before = #missing
             a.life = fn(TppEnemy, "TppEnemy", "GetLifeStatus")
@@ -46,19 +49,6 @@ do
                 W.log(fmt("event=inactive;reason=bad_const;dead=%s;dying=%s;sleep=%s;faint=%s", tostring(L[1]), tostring(L[2]),
                     tostring(L[3]), tostring(L[4])))
             end
-        end
-        -- local: the local player, its horse or walker gear; buddy: D-Dog/Quiet.
-        function W.attClass(att)
-            local a = W.api
-            if type(att) ~= "number" or att == a.null or not a.isLocal then return "none" end
-            if a.isLocal(att) == true or (a.isHorse and a.isHorse(att) == true) or (a.isWalker and a.isWalker(att) == true) then
-                return "local"
-            end
-            if a.typeIndex and (a.dog or a.quiet) then
-                local t = a.typeIndex(att)
-                if t ~= nil and (t == a.dog or t == a.quiet) then return "buddy" end
-            end
-            return "other"
         end
 
         -- A CP group as a set of names, from either a keyed set or an array.
@@ -95,7 +85,7 @@ do
         -- The union for `area`, or nil (then the original runs unchanged).
         function A.union(enemy, area)
             local partner = W.areaState.partner
-            if not (W.isStarted and W.active and W.eff >= 2 and W.w1 and partner and partner ~= area) then return nil end
+            if not (W.isStarted and W.active and W.paired and W.eff >= 2 and W.w1 and partner and partner ~= area) then return nil end
             local list = enemy.cpList
             local u = A.set(list[area], true)
             for name in pairs(A.set(list[partner])) do u[name] = true end
@@ -138,7 +128,7 @@ do
 
         function P.reset()
             P.echo, P.reqs, P.lastReq, P.floorAt, P.floorSet, P.vecAt, P.rr, P.areaDirty = {}, {}, {}, {}, {}, {}, 0, false
-            P.areaAt, P.recall, P.floorLog, P.vecOff = nil, false, nil, #W.cpOrder > 192
+            P.areaAt, P.recall, P.floorLog, P.vecRxAt, P.vecOff = nil, false, nil, nil, #W.cpOrder > 192
             if P.vecOff then W.log("event=phase_vec;disabled=1;cps=" .. #W.cpOrder) end
             W.activeCp = nil
             local st = W.areaState
@@ -146,6 +136,17 @@ do
         end
         W.startHooks[#W.startHooks + 1] = P.reset
         W.pairedHooks[#W.pairedHooks + 1] = function() P.areaDirty = W.areaState.localArea ~= nil end
+        -- Unpaired (rerun now) or stopped: the guest's phases and the partner's
+        -- area stop counting; the original reruns for the local area alone.
+        function P.forget(rerun)
+            for _, c in pairs(W.cp or {}) do c.guestOwn = 0 end
+            local st = W.areaState
+            if not st.partner then return end
+            st.partner = nil
+            if rerun then pcall(A.simulate, st.localArea) else P.recall = true end
+        end
+        W.unpairedHooks[#W.unpairedHooks + 1] = function() P.forget(true) end
+        W.stopHooks[#W.stopHooks + 1] = function() P.forget(false) end
         function P.txPhase(h, flags, rid)
             local c = W.cp[h]
             if c.ver == 0 then c.ver = 1 end
@@ -212,6 +213,7 @@ do
         end
         H[OP.PVEC] = function(v, now)
             if not W.w1 or v[1] ~= #W.cpOrder then return end
+            if W.host then P.vecRxAt = now end
             for i, h in ipairs(W.cpOrder) do
                 local k = floor((i - 1) / 16)
                 local p = floor(v[4 + k] / 4 ^ ((i - 1) % 16)) % 4
@@ -270,7 +272,7 @@ do
                             W.tx(OP.PHASE, h, cur, c.ver, 0, rid, 0)
                             W.log(fmt("event=phase;cp=%.0f;phase=%d;ver=%d;src=req;rid=%d", h, cur, c.ver, rid))
                         end
-                        c.guestOwn = max(c.guestOwn, req)
+                        c.guestOwn, c.guestAt = max(c.guestOwn, req), now
                     end
                 end
                 P.reqs = {}
@@ -291,10 +293,11 @@ do
                 P.rr = P.rr % #order + 1
                 P.refresh(order[P.rr])
             end
-            if W.host then
-                local logIt = now - (P.floorLog or -1e9) >= 10000
+            if W.host and W.paired and W.eff >= 2 then
+                local logIt, vecAt = now - (P.floorLog or -1e9) >= 10000, P.vecRxAt or -1e9
                 for _, h in ipairs(order) do
                     local c = W.cp[h]
+                    if c.guestOwn > 0 and now - max(vecAt, c.guestAt or -1e9) > 5000 then c.guestOwn = 0 end
                     if c.guestOwn > 0 then
                         if c.localPhase < c.guestOwn and now - (P.floorAt[h] or -1e9) >= 10000 then
                             P.floorAt[h], P.floorSet[h] = now, true

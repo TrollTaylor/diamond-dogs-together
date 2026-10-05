@@ -1,6 +1,6 @@
 -- MGS co-op world sync, enemy outcomes (original; docs/world-sync-protocol.md
--- "Enemy outcomes"): host commits, guest requests, the apply rule, the sweep
--- and the pending ledger (the wire handlers are in world_env.lua). Wire states
+-- "Enemy outcomes"): host commits, the apply rule, the sweep and the pending
+-- ledger (requests and the wire handlers are in world_outcome.lua). Wire states
 -- NORMAL 0 HOLDUP 1 SLEEP 2 FAINT 3 DYING 4 DEAD 5 FULTONED 6 VANISHED 7, ranks
 -- 0 1 2 2 3 4 5 5; terminal local states are never commanded. A fulton counts
 -- once IsRecovered is true; RequestForceFulton is never resent after the
@@ -10,7 +10,7 @@ do
     if type(W) == "table" then
         local E, OP = {}, W.OP
         W.enemy = E
-        local fmt, floor, max = string.format, math.floor, math.max
+        local fmt, floor = string.format, math.floor
         local function L(...) W.log(fmt(...)) end
         local RANK = {[0] = 0, 1, 2, 2, 3, 4, 5, 5}
         local TERMINAL = {[5] = true, [6] = true, [7] = true}
@@ -72,7 +72,8 @@ do
             if e.ver < 65535 then e.ver, s.sum = e.ver + 1, (s.sum + 1) % 4294967296 end
             e.committed, e.known, e.kver = st, st, e.ver
             s.seq = (s.seq + 1) % 65536
-            if actor == 0 then e.reached = true end
+            -- Guest/probe commits wait for a readback before a backward sweep.
+            e.reached = actor == 0
             W.stats.commits = W.stats.commits + 1
             L("event=commit;ent=%.0f;state=%d;ver=%d;actor=%s;rid=%d;cause=%d", h, st, e.ver, ACTOR[actor], rid, cause)
             if W.paired and W.eff >= 2 then
@@ -92,24 +93,6 @@ do
             if RANK[st] > RANK[c] then E.commit(h, st, 0, 0, cause, 0)
             elseif e.reached and RANK[st] < RANK[c] then E.commit(h, st, 0, 0, sweep and 9 or cause, 2) end
             return true
-        end
-        function E.request(h, st, cause, attack, now)
-            local s, e = E.s, W.ent[h]
-            if not W.paired then
-                if #s.held < 256 then s.held[#s.held + 1] = {h = h, st = st, cause = cause, attack = attack} end
-                return
-            end
-            local rid = W.nextRid()
-            local x, y, z = E.pos(e.id)
-            if W.tx(OP.REQ_OUTCOME, rid, h, 1, st, e.kver, cause, attack, 0, x, y, z) then
-                s.req[rid], s.out[h] = {h = h, st = st, sent = now}, st
-                W.stats.reqs = W.stats.reqs + 1
-                L("event=req;rid=%d;ent=%.0f;state=%d;seen=%d", rid, h, st, e.kver)
-            end
-        end
-        function E.forward(h, st)
-            local out = E.s.out[h]
-            return RANK[st] > max(RANK[W.ent[h].known], out and RANK[out] or 0)
         end
 
         -- Apply rule (both PCs). `known` is the state of the highest ver seen.
@@ -229,23 +212,22 @@ do
             for h in pairs(E.s.ledger) do L("event=ledger;ent=%.0f;op=dropped;reason=%s;waited_ms=0", h, why) end
             E.s.ledger, E.s.lkeys, E.s.lidx = {}, {}, 1
         end
-        function E.dropRequests()
-            local n = 0
-            for _ in pairs(E.s.req) do n = n + 1 end
-            E.s.req, E.s.out = {}, {}
-            if n > 0 then W.log("event=req_drop;n=" .. n) end
-        end
         W.stopHooks[#W.stopHooks + 1] = function()
             E.dropLedger("stop")
             E.dropRequests()
+            E.s.held = {}
         end
         W.pairedHooks[#W.pairedHooks + 1] = function(epochChanged)
+            local s = E.s
             if epochChanged then E.dropLedger("epoch") end
+            -- Another host epoch in this mission is another host world: W1 off.
+            if s.pairEpoch and s.pairEpoch ~= W.epoch then W.w1off("epoch") end
+            s.pairEpoch = s.pairEpoch or W.epoch
             -- Guest: the host's truth (outcomes, phases, clock + weather) after every pairing.
             if not W.host then W.tx(OP.RESYNC, W.nextRid(), 7) end
         end
-        function E.unpaired(reason)
-            E.dropRequests()
+        W.unpairedHooks[#W.unpairedHooks + 1] = function(reason)
+            E.dropRequests(true)
             if reason == 2 then E.dropLedger("remote_mission") end
         end
 
@@ -288,25 +270,23 @@ do
                 else
                     for rid, q in pairs(s.req) do
                         if not q.received and now - q.sent > 3000 then
-                            s.req[rid], s.out[q.h] = nil, nil
                             L("event=req_timeout;rid=%d;ent=%.0f", rid, q.h)
-                            if not s.timeoutAt or now - s.timeoutAt >= 10000 then
-                                s.timeoutAt = now
-                                W.tx(OP.RESYNC, W.nextRid(), 1)
-                            end
+                            E.lost(rid, now)
                         end
                     end
                 end
             end
-            if W.host then W.env.hostReqs() end
+            if W.host then E.hostReqs() end
             if W.w1 then
-                local q, n = s.queue, 0
+                -- Deferred entries (readback in flight) retry once per frame.
+                local q, n, later = s.queue, 0, {}
                 while n < 8 and s.qHead <= #q do
                     local a = q[s.qHead]
                     s.qHead, n = s.qHead + 1, n + 1
-                    if E.applyOne(a[1], a[2], a[3], a[4], now) == "defer" then q[#q + 1] = a end
+                    if E.applyOne(a[1], a[2], a[3], a[4], now) == "defer" then later[#later + 1] = a end
                 end
-                if s.qHead > #q then s.queue, s.qHead = {}, 1 end
+                if s.qHead > #q then s.queue, s.qHead = later, 1
+                else for _, a in ipairs(later) do q[#q + 1] = a end end
                 E.recheck(now, false)
             end
         end

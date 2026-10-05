@@ -1,15 +1,15 @@
 -- Exercises lua/coop/world_*.lua (world sync W0-W2, docs/world-sync-protocol.md)
 -- with a simulated native side and recording game-binding fakes. No MGSV, no
 -- network, no real session.
--- Usage: lua51 world_sync_lua_check.lua <world_sync.lua> <world_enemy.lua> <world_phase.lua>
---        <world_env.lua> <world_probe.lua> <world_goto.lua> [composed TppMain-host-trial.lua]
+-- Usage: lua51 world_sync_lua_check.lua <world_sync.lua> <world_enemy.lua> <world_outcome.lua>
+--        <world_phase.lua> <world_env.lua> <world_probe.lua> <world_goto.lua> [composed TppMain-host-trial.lua]
 local checks = 0
 local function check(value, why)
     checks = checks + 1
     if not value then error(tostring(checks) .. ': ' .. (why or 'check failed'), 2) end
 end
-local FILES = {arg[1], arg[2], arg[3], arg[4], arg[5], arg[6]}
-for i = 1, 6 do assert(FILES[i], 'usage: six world chunks') end
+local FILES = {arg[1], arg[2], arg[3], arg[4], arg[5], arg[6], arg[7]}
+for i = 1, 7 do assert(FILES[i], 'usage: seven world chunks') end
 local PRE = "return 'MGS_COOP_WORLD_"
 local OP = {HELLO = 1, READY = 2, RECEIVED = 3, REJECT = 4, RESYNC = 5, RESYNC_END = 6, MISSION_END = 7, PROBE_SYNC = 8,
     OUTCOME = 16, REQ_OUTCOME = 17, PHASE = 18, REQ_PHASE = 19, AREA = 20, DIGEST = 21, GDIGEST = 22, PVEC = 23,
@@ -222,7 +222,7 @@ local function fixture(options)
         if b == '' then env[a] = nil else env[a][b] = nil end
     end
     setmetatable(env, {__index = _G})
-    for i = 1, 6 do
+    for i = 1, 7 do
         local chunk = assert(loadfile(FILES[i]))
         setfenv(chunk, env)
         chunk()
@@ -419,6 +419,35 @@ do
     check(not has(c.logs, 'event=commit;ent=' .. hs('sol_b1')), 'an unreadable soldier never commits')
 end
 
+-- 5b. A guest commit is never swept backward before a readback reached it.
+do
+    local env, c = fixture({role = 1})
+    F.start(env, c, function() c.enemy.UpdateOutOfAreaSetting(1) end)
+    F.pair(env, c, 3)
+    c.life[c.ids.sol_a3] = LIFE.SLEEP
+    F.msg(env, 'GameObject', 'Unconscious', c.ids.sol_a3)
+    F.tick(env, c, 1)
+    c.life[c.ids.sol_a3] = 0
+    F.tick(env, c, 10)
+    check(has(c.logs, 'event=commit;ent=' .. hs('sol_a3') .. ';state=0;ver=2;actor=host'), 'woke up: NORMAL v2 (reached)')
+    F.clear(c)
+    c.inert = true
+    F.push(c, 1, OP.REQ_OUTCOME, 23, u32('sol_a3'), 1, 2, 2, 3, 0, 0, 1, 2, 3)
+    F.tick(env, c, 100, 33)
+    c.inert = false
+    check(has(c.logs, 'event=commit;ent=' .. hs('sol_a3') .. ';state=2;ver=3;actor=guest') and
+        has(c.logs, 'event=apply;ent=' .. hs('sol_a3') .. ';state=2;ver=3;src=commit;result=fail'), 'guest SLEEP v3, the apply failed')
+    check(not has(c.logs, 'event=commit;ent=' .. hs('sol_a3') .. ';state=0;ver=4'), 'no backward sweep over the guest outcome')
+    -- Once the host's soldier reads back at the committed state, the sweep follows it again.
+    c.life[c.ids.sol_a3] = LIFE.SLEEP
+    F.push(c, 1, OP.AREA, 1, 30010)
+    c.enemy.UpdateOutOfAreaSetting(1)
+    F.tick(env, c, 3)
+    c.life[c.ids.sol_a3] = 0
+    F.tick(env, c, 10)
+    check(has(c.logs, 'event=commit;ent=' .. hs('sol_a3') .. ';state=0;ver=4;actor=host;rid=0;cause=9'), 'reached again: swept')
+end
+
 -- 6. Guest: attribution, requests, the apply rule and fultons.
 do
     local env, c = fixture({role = 2})
@@ -541,6 +570,49 @@ do
         'failed after 20 s, no further retry')
 end
 
+-- 6c. A request whose answer cannot come (UNPAIRED, REJECT 5/6/9, timeout) is
+-- held and sent again after the next RESYNC_END.
+do
+    local env, c = fixture({role = 2})
+    F.start(env, c, function() c.enemy.UpdateOutOfAreaSetting(1) end)
+    F.pair(env, c, 3)
+    local s = c.W.enemy.s
+    local function kill(name)
+        c.life[c.ids[name]] = LIFE.DEAD
+        F.msg(env, 'GameObject', 'Dead', c.ids[name], 0, 0)
+        F.tick(env, c, 1)
+        local list = F.tx(c, OP.REQ_OUTCOME)
+        return list[#list].v[1]
+    end
+    F.clear(c)
+    local r1 = kill('sol_a1')
+    F.push(c, 0, OP.RECEIVED, r1, OP.REQ_OUTCOME)
+    F.push(c, 0, OP.UNPAIRED, 1)
+    F.tick(env, c, 1)
+    check(#s.held == 1 and next(s.req) == nil and has(c.logs, 'event=req_hold;n=1'), 'UNPAIRED: the outstanding request is held')
+    F.pair(env, c, 3)
+    F.clear(c)
+    local r2 = kill('sol_a2')
+    F.push(c, 0, OP.REJECT, r2, OP.REQ_OUTCOME, 9, u32('sol_a2'), 0, 0)
+    F.tick(env, c, 1)
+    local rs = F.tx(c, OP.RESYNC)
+    check(#s.held == 2 and next(s.req) == nil and #rs == 1 and rs[1].v[2] == 1, 'REJECT 9 (busy): held, RESYNC 1')
+    local r3 = kill('sol_a3')
+    F.push(c, 0, OP.REJECT, r3, OP.REQ_OUTCOME, 3, u32('sol_a3'), 0, 0)
+    F.tick(env, c, 1)
+    check(#s.held == 2, 'REJECT 3 is final (not held)')
+    F.clear(c)
+    F.push(c, 1, OP.RESYNC_END, 1, 7, 0, 0)
+    F.tick(env, c, 1)
+    local req = F.tx(c, OP.REQ_OUTCOME)
+    check(#req == 2 and req[1].v[2] == u32('sol_a1') and req[2].v[2] == u32('sol_a2') and #s.held == 0, 'both sent again after RESYNC_END')
+    -- No RECEIVED within 3 s: held, RESYNC 1 (once per 10 s), sent again at RESYNC_END.
+    F.clear(c)
+    c.time = c.time + 10000
+    F.tick(env, c, 100, 33)
+    check(#s.held == 2 and has(c.logs, 'event=req_timeout;rid=') and #F.tx(c, OP.RESYNC) == 1, 'timeout: held')
+end
+
 -- 7. Host request validation, REJECT 11 after a continue, no world drain outside the game.
 do
     local env, c = fixture({role = 1})
@@ -614,6 +686,24 @@ do
     check(F.tx(c, OP.MISSION_END)[1] and F.tx(c, OP.MISSION_END)[1].v[1] == 30010, 'MISSION_END at stop')
 end
 
+-- 8b. A deferred apply (readback in flight) is retried once per frame; the queue stays bounded.
+do
+    local env, c = fixture({role = 2})
+    F.start(env, c, function() c.enemy.UpdateOutOfAreaSetting(1) end)
+    F.pair(env, c, 3)
+    F.push(c, 1, OP.OUTCOME, u32('sol_a1'), 1, 6, 1, 5, 0, 0, 0, 0, 0, 0)
+    F.tick(env, c, 1)
+    local s = c.W.enemy.s
+    check(s.rb[u32('sol_a1')] ~= nil, 'force fulton readback in flight')
+    F.push(c, 1, OP.OUTCOME, u32('sol_a1'), 1, 6, 2, 8, 0, 0, 1, 0, 0, 0)
+    F.tick(env, c, 30)
+    check(#s.queue == 1 and s.qHead == 1, 'one deferred entry, no growth')
+    c.recovered.sol_a1 = true
+    F.tick(env, c, 30)
+    check(#s.queue == 0 and has(c.logs, 'event=apply;ent=' .. hs('sol_a1') .. ';state=6;ver=2;src=resync;result=terminal_local'),
+        'applied once the readback ended')
+end
+
 -- 9. The out-of-area wrapper.
 do
     local env, c = fixture({role = 1, cpList = {[1] = {'cp_a'}, [2] = {'cp_b'}}})
@@ -652,6 +742,17 @@ do
     c.W.area.simulate(2)
     F.tick(env, c, 70)
     check(#F.tx(c, OP.AREA) == 0, 'simulate sends no PLAYER_AREA')
+    -- UNPAIRED: the partner's area leaves the union at once (the original reruns for the local area).
+    c.enemy.UpdateOutOfAreaSetting(1)
+    check(c.areaSeen.cp_b, 'union while paired')
+    local calls = c.areaCalls
+    F.push(c, 0, OP.UNPAIRED, 4)
+    F.tick(env, c, 1)
+    check(c.areaCalls == calls + 1 and c.areaArg[1] == 1 and c.areaSeen.cp_a and not c.areaSeen.cp_b and
+        c.W.areaState.partner == nil, 'UNPAIRED: the original reruns for the local area alone')
+    c.W.areaState.partner = 2
+    c.enemy.UpdateOutOfAreaSetting(1)
+    check(not c.areaSeen.cp_b, 'no union while unpaired')
 end
 
 -- 10. Alert: no latch, decays never request, escalations broadcast again, floor rate limit.
@@ -695,16 +796,34 @@ do
     check(#ph == 2 and ph[1].v[2] == 3 and ph[1].v[3] == 1 and ph[2].v[2] == 3 and ph[2].v[3] == 2 and
         has(h.logs, 'event=phase;cp=' .. hs('cp_a') .. ';phase=3;ver=2;src=host;rid=0'), 'a second ALERT after a decay is broadcast')
     h.phase.cp_a = PHASE.SNEAK
-    -- The guest's own ALERT on cp_b (vector): floor, at most once per 10 s.
+    -- The guest's own ALERT on cp_b (vector): floor, at most once per 10 s,
+    -- while the guest keeps reporting it (PHASE_VEC once a second).
     h.inert = true
+    local function guestVec(word, seconds)
+        for _ = 1, seconds do
+            F.push(h, 1, OP.PVEC, 3, 0, 1, word, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+            F.tick(envh, h, 30, 33)
+        end
+    end
     F.push(h, 1, OP.PVEC, 3, 0, 1, 3 * 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
     F.tick(envh, h, 1)
     check(F.callCount(h, 'SetPhase:cp_b:' .. PHASE.ALERT) == 1 and has(h.logs, 'event=floor;cp=' .. hs('cp_b') .. ';host=0;guest=3'),
         'floor to the guest own phase')
-    F.tick(envh, h, 100, 33)
+    guestVec(3 * 4, 4)
     check(F.callCount(h, 'SetPhase:cp_b:' .. PHASE.ALERT) == 1, 'floor rate limit (10 s)')
-    F.tick(envh, h, 250, 33)
+    guestVec(3 * 4, 8)
     check(F.callCount(h, 'SetPhase:cp_b:' .. PHASE.ALERT) == 2, 'floor again after 10 s')
+    -- No report for 5 s (the guest's W1 went off, or the vectors stopped): the floor ends.
+    F.tick(envh, h, 600, 33)
+    check(F.callCount(h, 'SetPhase:cp_b:' .. PHASE.ALERT) == 2 and h.W.cp[u32('cp_b')].guestOwn == 0, 'a stale guest phase never floors')
+    -- Unpaired: the guest's phases are cleared at once and the floor stops.
+    guestVec(3 * 4, 1)
+    check(F.callCount(h, 'SetPhase:cp_b:' .. PHASE.ALERT) == 3, 'floor again with a fresh report')
+    F.push(h, 0, OP.UNPAIRED, 1)
+    F.tick(envh, h, 400, 33)
+    check(F.callCount(h, 'SetPhase:cp_b:' .. PHASE.ALERT) == 3 and h.W.cp[u32('cp_b')].guestOwn == 0 and h.W.eff == 0,
+        'UNPAIRED clears the guest phases (eff 0, no floor)')
+    F.pair(envh, h, 3)
     h.inert = false
     F.push(h, 1, OP.PVEC, 3, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
     F.tick(envh, h, 1)
@@ -786,7 +905,7 @@ do
     check(#F.tx(c, OP.REQ_OUTCOME) == 0, 'held while unpaired')
     F.pair(env, c, 3)
     c.life[c.ids.sol_a2] = 0  -- woke up meanwhile: no longer forward
-    F.push(c, 0, OP.RESYNC_END, 1, 7, 0, 0)
+    F.push(c, 1, OP.RESYNC_END, 1, 7, 0, 0)
     F.tick(env, c, 1)
     local req = F.tx(c, OP.REQ_OUTCOME)
     check(#req == 1 and req[1].v[2] == u32('sol_a1') and has(c.logs, 'event=resync;what=7;count=0;src=end;held=2'),
@@ -816,6 +935,30 @@ do
     local done = F.tx(c, OP.RESYNC_END)[1]
     check(done and done.v[1] == 9 and done.v[2] == 7 and done.v[3] == 42 and done.v[4] == 40 and stream == 42,
         'RESYNC_END{rid, what, count, outcomeSeq} after the outcomes, the clock and the weather')
+end
+
+-- 11b. Re-pairing in a mission: the same host epoch keeps W1; another host
+-- epoch is another host world, so W1 goes off (held requests dropped).
+do
+    local env, c = fixture({role = 2})
+    F.start(env, c, function() c.enemy.UpdateOutOfAreaSetting(1) end)
+    F.pair(env, c, 3)
+    F.push(c, 0, OP.UNPAIRED, 1)
+    F.tick(env, c, 1)
+    F.pair(env, c, 3)
+    check(c.W.w1 and not has(c.logs, 'reason=epoch'), 'the same epoch again: W1 stays on')
+    F.push(c, 0, OP.UNPAIRED, 3)
+    F.tick(env, c, 1)
+    c.life[c.ids.sol_a1] = LIFE.DEAD
+    F.msg(env, 'GameObject', 'Dead', c.ids.sol_a1, 0, 0)
+    F.tick(env, c, 1)
+    check(#c.W.enemy.s.held == 1, 'a kill while unpaired is held')
+    F.clear(c)
+    F.push(c, 0, OP.PAIRED, 6, 30010, 77, 8, 1, 3)
+    F.tick(env, c, 1)
+    check(not c.W.w1 and c.W.active and has(c.logs, 'event=inactive;reason=epoch;scope=w1') and #c.W.enemy.s.held == 0 and
+        #F.tx(c, OP.REQ_OUTCOME) == 0, 'another host epoch: W1 off for the mission')
+    check(F.tx(c, OP.RESYNC)[1] and F.tx(c, OP.RESYNC)[1].v[2] == 7, 'clock and weather still resync')
 end
 
 -- 12. Clock.
@@ -1114,21 +1257,21 @@ do
     check(not c7.W.active and has(c7.logs, 'event=inactive;reason=missing_required;names=Fox.StrCode32'), 'a missing required binding')
 end
 
--- The six chunks inside the composed TppMain (exact splice; inert with a literal CFG).
+-- The seven chunks inside the composed TppMain (exact splice; inert with a literal CFG).
 local composedRuns = 0
-if arg[7] then
+if arg[8] then
     local function slurp(path)
         local file = assert(io.open(path, 'rb'))
         local text = file:read('*a')
         file:close()
         return (text:gsub('\r\n', '\n'))
     end
-    local composed = slurp(arg[7])
+    local composed = slurp(arg[8])
     local at = 1
     local partnerEnd = composed:find('-- MGS co-op world sync W0-W2', 1, true)
     check(partnerEnd and composed:find('-- MGS co-op offline partner spike (original).', 1, true) < partnerEnd,
         'world chunks after the partner chunk')
-    for i = 1, 6 do
+    for i = 1, 7 do
         local spliced = '\n' .. slurp(FILES[i]) .. '\n'
         local found = composed:find(spliced, at, true)
         check(found ~= nil and composed:find(spliced, found + 1, true) == nil, 'chunk ' .. i .. ' spliced once, byte-identical')
@@ -1166,7 +1309,7 @@ if arg[7] then
             if v ~= nil then return v end
             v = stub(k); rawset(t, k, v); return v
         end})
-        local chunk = assert(loadfile(arg[7]))
+        local chunk = assert(loadfile(arg[8]))
         setfenv(chunk, env)
         local mod = chunk()
         check(type(mod) == 'table' and type(mod.MgsCoopWorld) == 'table', 'composed module publishes e.MgsCoopWorld')

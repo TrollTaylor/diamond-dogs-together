@@ -252,7 +252,12 @@ private:
     bool PushWorld(const Entry& entry) noexcept;
     bool QueueOut(const Op& op) noexcept;
     void AutoAnswer(std::uint8_t req_op, std::int64_t rid, std::int64_t ent, std::uint8_t reason) noexcept;
-    void Overflow(const char* queue, std::uint64_t now_ms) noexcept;
+    // Drops are counted per queue and logged as world=overflow; queue=<name>
+    // at once (at most every 10 s) or by Tick.
+    enum DropQueue : unsigned { kDropControl, kDropWorld, kDropOut, kDropQueues };
+    void Overflow(DropQueue queue, std::uint64_t now_ms) noexcept;
+    void Dropped(DropQueue queue, std::uint64_t now_ms, bool log_now) noexcept;
+    void FlushOverflow(std::uint64_t now_ms) noexcept;
     void OnOp(const Op& op, bool datagram, std::uint64_t now_ms) noexcept;
     void OnHello(const Op& op, std::uint64_t now_ms) noexcept;
     void OnReady(const Op& op, std::uint64_t now_ms) noexcept;
@@ -309,7 +314,7 @@ private:
     std::uint16_t logged_epoch_ = 0;
     unsigned logged_out_ = 0, logged_ctrl_ = 0, logged_world_ = 0;
     std::uint64_t stats_ms_ = 0, last_rx_ms_ = 0;
-    std::uint32_t overflow_pending_ = 0;
+    std::uint32_t overflow_pending_[kDropQueues]{};
     std::uint64_t overflow_ms_ = 0;
     bool overflow_logged_once_ = false;
 

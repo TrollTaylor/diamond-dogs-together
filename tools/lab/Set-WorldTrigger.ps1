@@ -25,6 +25,8 @@ ACC sortie (goto_lz=1 picks the second landing zone). Send goto to both copies
 (-Role both). The native side polls the file at most once per second while a
 mission with world sync runs (world>=1), deletes it and logs
 world_trigger=applied; text=<canonical> or world_trigger=rejected; reason=...
+A goto is then either armed (world_goto=armed) or refused
+(world_goto=refused; reason=level|mission|target|busy|terminating).
 
 -WaitSec waits for the native side to consume the file and then confirms the
 result in that instance's script-observer.log (the lines appended since just
@@ -32,10 +34,11 @@ before the write). When a current lab run exists, the command is appended to
 <run>/world-triggers.log (UTC time, role, text). Nothing else is written; the
 game is not touched.
 
-Exit code: 0 written (with -WaitSec: applied); 2 not consumed within -WaitSec;
-3 rejected, or a different command was applied (a -Force replacement raced the
-native poll); 4 consumed but no result line appeared in script-observer.log
-within 3 s.
+Exit code: 0 written (with -WaitSec: applied, and for a goto armed); 2 not
+consumed within -WaitSec; 3 rejected (a goto: refused), or a different command
+was applied (a -Force replacement raced the native poll); 4 consumed but no
+result line (for a goto: no world_goto=armed or refused line) appeared in
+script-observer.log within 3 s.
 
 .EXAMPLE
 pwsh -File tools/lab/Set-WorldTrigger.ps1 -Role both -Text 'goto=30010' -WaitSec 15
@@ -120,13 +123,13 @@ if ($WaitSec -gt 0) {
         } while ([DateTime]::UtcNow -lt $confirmBy)
         switch ($result.State) {
             'applied' { Write-Output "[$($t.Role)] applied by the native side: $($result.Line)"; $codes.Add(0) }
-            'rejected' { Write-Warning "[$($t.Role)] REJECTED by the native side ($($result.Line))."; $codes.Add(3) }
+            'rejected' { Write-Warning "[$($t.Role)] REJECTED by the native side, reason $($result.Reason) ($($result.Line))."; $codes.Add(3) }
             'different' {
                 Write-Warning "[$($t.Role)] the native side applied a different command ($($result.Line)), not '$canonical'. Send it again."
                 $codes.Add(3)
             }
             default {
-                Write-Warning "[$($t.Role)] world.trigger was consumed, but script-observer.log shows no world_trigger= line after it (unconfirmed)."
+                Write-Warning "[$($t.Role)] world.trigger was consumed, but script-observer.log shows no result for it (world_trigger=, and for a goto world_goto=armed|refused) (unconfirmed)."
                 $codes.Add(4)
             }
         }

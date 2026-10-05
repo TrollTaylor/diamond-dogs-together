@@ -1,12 +1,15 @@
 #pragma once
 // World sync (lua/coop/world_*.lua, docs/world-sync-protocol.md): spliced in
-// this order right after partner_sync_source (six chunks). Each file is one do ... end
+// this order right after partner_sync_source (seven chunks). Each file is one do ... end
 // block of at most 16000 bytes (CMakeLists.txt checks it: MSVC literal limit).
 constexpr char world_sync_source[] = R"MGS_WORLD(
 @MGS_WORLD_SYNC_SOURCE@
 )MGS_WORLD";
 constexpr char world_enemy_source[] = R"MGS_WORLD(
 @MGS_WORLD_ENEMY_SOURCE@
+)MGS_WORLD";
+constexpr char world_outcome_source[] = R"MGS_WORLD(
+@MGS_WORLD_OUTCOME_SOURCE@
 )MGS_WORLD";
 constexpr char world_phase_source[] = R"MGS_WORLD(
 @MGS_WORLD_PHASE_SOURCE@

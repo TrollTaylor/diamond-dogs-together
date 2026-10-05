@@ -74,7 +74,7 @@ int main(int argc, char** argv) {
         check(feedback_at<partner_at && partner_at<marker_at);
         check(output.find(partner_header,partner_at+1)==std::string::npos);
         check(output.find(feedback_header,feedback_at+1)==std::string::npos);
-        // Exactly feedback chunk, partner chunk, the six world sync chunks
+        // Exactly feedback chunk, partner chunk, the seven world sync chunks
         // (lua/coop/world_*.lua, in this order), marker chunk, byte for byte
         // and adjacent: nothing else is spliced between them.
         const std::size_t feedback_size=sizeof(session_feedback_source)-1;
@@ -82,8 +82,8 @@ int main(int argc, char** argv) {
         const std::size_t marker_size=sizeof(marker_loading_source)-1;
         check(partner_at>=feedback_size && output.compare(partner_at-feedback_size,feedback_size,session_feedback_source)==0);
         check(output.compare(partner_at,partner_size,partner_sync_source)==0);
-        const std::string world_chunks[]={world_sync_source,world_enemy_source,world_phase_source,world_env_source,world_probe_source,
-                                          world_goto_source};
+        const std::string world_chunks[]={world_sync_source,world_enemy_source,world_outcome_source,world_phase_source,world_env_source,
+                                          world_probe_source,world_goto_source};
         auto world_at=partner_at+partner_size;
         for(const auto& chunk : world_chunks) {
             check(chunk.size()>64 && output.compare(world_at,chunk.size(),chunk)==0);

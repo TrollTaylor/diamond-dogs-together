@@ -363,7 +363,11 @@ One line: `world=0..3`, `world_probe=<probe>|off`, `goto=30010|30020`,
 N] [-Force]` (canonical form, atomic rename; `<run>/world-triggers.log`).
 Native polls it at most once per second while a mission with world sync runs
 (lab mode only), deletes it and logs `world_trigger=applied; text=<canonical>`
-or `world_trigger=rejected; reason=token|repeat|empty|too_long|not_lab|level0`.
+or `world_trigger=rejected; reason=token|repeat|empty|too_long|not_lab|level0`;
+a goto is then `world_goto=armed; ...` or `world_goto=refused;
+reason=level|mission|target|busy|terminating`. With `-WaitSec` the script exits
+0 only when applied (a goto: armed), 3 when rejected or refused (or another
+command was applied), 2 when not consumed, 4 when unconfirmed after 3 s.
 `world=0` switches world sync off at once; `world=1..3` applies at the next
 mission start; `world_probe` runs now (or 10 s after the next start); `goto`
 flies a copy standing in Mother Base to free roam (both copies: `-Role both`;

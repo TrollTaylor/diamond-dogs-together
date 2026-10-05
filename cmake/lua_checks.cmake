@@ -103,9 +103,9 @@ mgs_add_lua_check(session_feedback_lua_check "${_mgs_coop}/session_feedback.lua"
 mgs_add_lua_check(damage_parameters_lua_check "${_mgs_coop}/damage_parameters.lua")
 mgs_add_lua_check(damage_lifecycle_lua_check "${_mgs_coop}/damage_lifecycle.lua")
 mgs_add_lua_check(partner_sync_lua_check "${_mgs_coop}/partner_sync.lua")
-# World sync W0-W2 (docs/world-sync-protocol.md): the six chunks, in splice order.
-set(_mgs_world_chunks "${_mgs_coop}/world_sync.lua" "${_mgs_coop}/world_enemy.lua" "${_mgs_coop}/world_phase.lua"
-  "${_mgs_coop}/world_env.lua" "${_mgs_coop}/world_probe.lua" "${_mgs_coop}/world_goto.lua")
+# World sync W0-W2 (docs/world-sync-protocol.md): the seven chunks, in splice order.
+set(_mgs_world_chunks "${_mgs_coop}/world_sync.lua" "${_mgs_coop}/world_enemy.lua" "${_mgs_coop}/world_outcome.lua"
+  "${_mgs_coop}/world_phase.lua" "${_mgs_coop}/world_env.lua" "${_mgs_coop}/world_probe.lua" "${_mgs_coop}/world_goto.lua")
 mgs_add_lua_check(world_sync_lua_check ${_mgs_world_chunks})
 
 # --- Extracted game inputs ----------------------------------------------------
