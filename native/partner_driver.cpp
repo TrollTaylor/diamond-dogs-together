@@ -369,22 +369,213 @@ void PublishDisarmed(Driver& d, const Hooks& h) noexcept {
     if (h.publish_arm) h.publish_arm(h.context, a);
 }
 
+namespace pdm = mgscoop::partner_dmmap;
+static_assert(partner::max_gani == kPartnerDmGaniMax, "GANI bound");
+
+// dm=map event families (one 64-line cap each).
+enum DmMapFamily : unsigned { kDmDeferred, kDmLost, kDmStopTimeout, kDmUnconsumed, kDmAdopted, kDmAbandoned, kDmBadGani, kDmFamilies };
+static_assert(kDmFamilies == sizeof(Mission::dmmap_cap) / sizeof(LogCap), "one cap per dm=map family");
+const char* DmMapFamilyName(unsigned family) noexcept {
+    static const char* const names[] = {"deferred", "lost", "stop_timeout", "unconsumed", "adopted", "abandoned", "bad_gani"};
+    return family < kDmFamilies ? names[family] : "other";
+}
+void EmitDmMap(Mission& m, const Hooks& h, unsigned family, const char* format, ...) noexcept {
+    va_list arguments;
+    va_start(arguments, format);
+    EmitCappedV(m.dmmap_cap[family < kDmFamilies ? family : kDmDeferred], h, "partner_dmmap", DmMapFamilyName(family), format, arguments);
+    va_end(arguments);
+}
+// partner_dmmap=switch / =playing share one counter (kDmMapSwitchCap).
+void EmitDmMapSwitch(Mission& m, const Hooks& h, const char* format, ...) noexcept {
+    if (m.dmmap_switch_lines >= kDmMapSwitchCap) {
+        if (!m.dmmap_switch_capped) {
+            m.dmmap_switch_capped = true;
+            EmitFormat(h, "partner_dmmap=capped; limit=%u; kind=switch\r\n", kDmMapSwitchCap);
+        }
+        return;
+    }
+    char line[512]{};
+    va_list arguments;
+    va_start(arguments, format);
+    const HRESULT result = StringCchVPrintfA(line, ARRAYSIZE(line), format, arguments);
+    va_end(arguments);
+    if (SUCCEEDED(result)) {
+        ++m.dmmap_switch_lines;
+        Emit(h, line);
+    }
+}
+// A gani index as logged: the number, or "none" (kNoGani).
+struct GaniText {
+    char text[8];
+};
+GaniText Gani(std::uint8_t gani) noexcept {
+    GaniText out{};
+    if (gani == pdm::kNoGani) StringCchCopyA(out.text, ARRAYSIZE(out.text), "none");
+    else StringCchPrintfA(out.text, ARRAYSIZE(out.text), "%u", unsigned(gani));
+    return out;
+}
+void LogDmMapTable(const Settings& set, const Hooks& h, const char* reason) noexcept {
+    char cells[40]{};
+    char speeds[24]{};
+    FormatPartnerDmMap(set.dm_map, cells);
+    FormatPartnerDmSpeeds(set.dm_speed, speeds);
+    EmitFormat(h, "partner_dmmap=table; cells=%s; speeds=%s; reason=%s\r\n", cells, speeds, reason);
+}
+
 // Reverts the DM patch (if ours) and drops pending play state; logs the reason.
+// A mapped clip still ours is abandoned (left looping, as dm=on leaves one).
 void RevertDm(Driver& d, const Hooks& h, const char* reason) noexcept {
     Mission& m = d.mission;
+    if (m.dmmap.owned) {
+        EmitDmMap(m, h, kDmAbandoned, "partner_dmmap=abandoned; reason=%s; gani=%s\r\n", reason, Gani(m.dmmap.cur).text);
+        pdm::Forget(m.dmmap);
+    }
     if (m.dm_patched && h.dm_patch) {
         if (m.dm_play_pending && h.dm_clear_pending && h.dm_clear_pending(h.context)) Emit(h, "partner_dm=cleared_pending\r\n");
         m.dm_patched = h.dm_patch(h.context, false, reason);
+        if (m.dm_patched) m.dm_revert_failed = true;
     }
     m.dm_play_pending = false;
 }
 
-void TickDm(Driver& d, const Hooks& h, const pp::State& st, const Settings& set, const Clock& clock, bool terminating,
-            std::uint32_t& ops, std::uint8_t& gani) noexcept {
+// dm=map: one step of the mapper (partner_dmmap) and its log lines. Runs while
+// dm=map, and after it until the release finished. `tick_ops` are this reply's
+// ops so far (look and Warp gates); the play/stop go into `ops`.
+void TickDmMap(Driver& d, const Hooks& h, const Settings& set, const Clock& clock, bool terminating, const partner::Tick& tick,
+               const pdm::Observation& obs, std::uint32_t tick_ops, bool dm_ok, const pp::DmState& dm, bool parts_loaded,
+               std::uint32_t& ops, std::uint8_t& gani) noexcept {
     Mission& m = d.mission;
     const std::uint64_t now = clock.now_ms;
-    if (set.dm == PartnerDm::off) {
-        if (m.dm_patched) RevertDm(d, h, "trigger");
+    const bool map = set.dm == PartnerDm::map;
+    if (map && !m.dmmap_table_logged) {
+        m.dmmap_table_logged = true;
+        LogDmMapTable(set, h, "start");
+    }
+    if (d.dmmap_rearm) {
+        d.dmmap_rearm = false;
+        pdm::Rearm(m.dmmap);
+    }
+    pdm::In in{};
+    in.map = map;
+    in.blocked = terminating                            ? pdm::Block::terminating
+               : (m.native_disabled || m.input_faulted) ? pdm::Block::fault
+               : set.stage < 3                          ? pdm::Block::stage
+               : !PartnerApplyIsTransform(set.apply)    ? pdm::Block::apply
+               : set.anim != PartnerAnim::off           ? pdm::Block::anim
+               : m.input_armed                          ? pdm::Block::input
+                                                        : pdm::Block::none;
+    // The class: lost keeps the stance (idle cell), stale freezes the candidate.
+    const pdm::State& s = m.dmmap;
+    const std::uint8_t prev_move = s.cand == pdm::kNoGani ? pdm::kMoveUnknown : s.cand_cls.move;
+    in.target_ok = true;
+    if (!obs.lost && !obs.fresh) {
+        in.target_ok = false;
+        in.cls = s.cand_cls;
+        in.cls.via = pdm::Via::stale;
+    } else {
+        in.cls = pdm::Classify(obs, set.dm_speed, prev_move, s.cand_cls.stance);
+    }
+    in.target = pdm::ResolveTarget(set.dm_map, in.cls, s.bad);
+    in.dm_ok = dm_ok;
+    in.patched = m.dm_patched;
+    in.parts_loaded = parts_loaded;
+    in.in_dm = dm_ok && dm.q18[1] == c::q18_dm_act;
+    in.host_dm = dm_ok && dm.q18[0] == c::q18_dm_act;
+    in.pending = dm_ok && (dm.g388 & 0x3C) != 0;
+    in.our_pending = m.dm_play_pending;
+    in.cam_idle = dm_ok && dm.cam_ok && dm.cam1f0 == 0 && dm.cam200 == 0;
+    in.look_busy = (tick_ops & partner::op::set_parts_explicit) != 0 ||
+                   ((tick_ops & partner::op::copy_parts) && !(tick.luaflags & partner::luaflag::parts_copied)) || m.look_verify;
+    in.allactive = (tick_ops & partner::op::set_all_active) != 0;
+    in.warp = (tick_ops & partner::op::warp) != 0;
+    in.prev_look = m.dmmap_prev_look;
+    in.prev_warp = m.dmmap_prev_warp;
+    in.now_ms = now;
+    const pdm::Out out = pdm::Step(m.dmmap, in);
+    if (out.action == pdm::Action::play) {
+        ops |= partner::op::dm_play;
+        gani = out.gani;
+        m.dm_play_pending = true;
+        m.dm_play_ms = now;
+        m.dm_pending_gani = out.gani;
+    } else if (out.action == pdm::Action::stop) {
+        ops |= partner::op::dm_stop;
+    }
+    const int speed = obs.speed_ok ? static_cast<int>(obs.speed_mmps > 0x7FFFFFFFu ? 0x7FFFFFFFu : obs.speed_mmps) : -1;
+    switch (out.event) {
+    case pdm::Event::step:
+        EmitDmMapSwitch(m, h,
+                        "partner_dmmap=switch; step=%s; from=%s; to=%s; stance=%u; move=%u; speed_mmps=%d; via=%s; stance_via=%s; "
+                        "wait_ms=%u\r\n",
+                        out.step_stop ? "stop" : "play", Gani(out.from).text, Gani(out.gani).text, unsigned(in.cls.stance),
+                        unsigned(in.cls.move), speed, pdm::ViaName(in.cls.via), pdm::ViaName(in.cls.stance_via), out.ms);
+        break;
+    case pdm::Event::playing:
+        EmitDmMapSwitch(m, h, "partner_dmmap=playing; gani=%s; after_ms=%u\r\n", Gani(out.gani).text, out.ms);
+        break;
+    case pdm::Event::deferred:
+        EmitDmMap(m, h, kDmDeferred, "partner_dmmap=deferred; reason=%s; phase=%s; want=%s; cur=%s\r\n", out.reason,
+                  pdm::PhaseName(s.phase), Gani(s.cand).text, Gani(s.cur).text);
+        break;
+    case pdm::Event::stop_timeout:
+    case pdm::Event::dm_read:
+        EmitDmMap(m, h, kDmStopTimeout, "partner_dmmap=stop_timeout; gani=%s; ms=%u; failures=%u; backoff_ms=%u; reason=%s\r\n",
+                  Gani(out.gani).text, out.ms, s.failures, s.backoff_ms, out.reason);
+        break;
+    case pdm::Event::unconsumed:
+        EmitDmMap(m, h, kDmUnconsumed, "partner_dmmap=unconsumed; gani=%s; ms=%u; failures=%u; backoff_ms=%u\r\n", Gani(out.gani).text,
+                  out.ms, s.failures, s.backoff_ms);
+        break;
+    case pdm::Event::lost:
+        EmitDmMap(m, h, kDmLost, "partner_dmmap=lost; gani=%s; played_ms=%u; cause=%s; failures=%u\r\n", Gani(out.gani).text, out.ms,
+                  pdm::CauseName(out.cause), s.failures);
+        break;
+    case pdm::Event::failed:
+        EmitFormat(h, "partner_dmmap=failed; failures=%u; last=%s\r\n", s.failures, out.reason ? out.reason : "unknown");
+        break;
+    case pdm::Event::adopted:
+        EmitDmMap(m, h, kDmAdopted, "partner_dmmap=adopted; reason=active_clip\r\n");
+        break;
+    case pdm::Event::released:
+        EmitFormat(h, "partner_dmmap=released; result=%s; to=%s; ms=%u\r\n", out.reason ? out.reason : "unknown", PartnerDmName(set.dm),
+                   out.ms);
+        break;
+    default:
+        break;
+    }
+    if (out.bad_gani != pdm::kNoGani)
+        EmitDmMap(m, h, kDmBadGani, "partner_dmmap=bad_gani; gani=%u; reason=%s; strikes=%u\r\n", unsigned(out.bad_gani),
+                  out.event == pdm::Event::lost ? "ended" : "unconsumed", unsigned(s.strikes[out.bad_gani]));
+    // Summary (the counters keep counting after the line caps).
+    if (!m.dmmap_summary_ms || now - m.dmmap_summary_ms >= kDmMapSummaryMs) {
+        m.dmmap_summary_ms = now;
+        if (m.dmmap_summary_lines < kDmMapSummaryCap) {
+            ++m.dmmap_summary_lines;
+            EmitFormat(h,
+                       "partner_dmmap; phase=%s; cur=%s; want=%s; stance=%u; move=%u; via=%s; speed_mmps=%d; switches=%u; plays=%u; "
+                       "stops=%u; deferrals=%u; timeouts=%u; unconsumed=%u; lost=%u; adopted=%u; bad=0x%x; failures=%u; deferred=%s\r\n",
+                       pdm::PhaseName(s.phase), Gani(s.cur).text, Gani(s.cand).text, unsigned(in.cls.stance), unsigned(in.cls.move),
+                       pdm::ViaName(in.cls.via), speed, s.switches, s.plays, s.stops, s.deferrals, s.timeouts, s.unconsumed, s.lost,
+                       s.adopted, unsigned(s.bad), s.failures, s.deferred ? s.deferred : "none");
+        } else if (!m.dmmap_summary_capped) {
+            m.dmmap_summary_capped = true;
+            EmitFormat(h, "partner_dmmap=capped; limit=%u; kind=summary\r\n", kDmMapSummaryCap);
+        }
+    }
+}
+
+void TickDm(Driver& d, const Hooks& h, const pp::State& st, const Settings& set, const Clock& clock, bool terminating,
+            const partner::Tick& tick, const pdm::Observation& obs, std::uint32_t tick_ops, std::uint32_t& ops,
+            std::uint8_t& gani) noexcept {
+    Mission& m = d.mission;
+    const std::uint64_t now = clock.now_ms;
+    const bool map = set.dm == PartnerDm::map;
+    // dm=off: revert at once, unless a mapped clip is still ours (then the
+    // mapper releases it first, below, and the patch is reverted after).
+    const bool releasing = set.dm == PartnerDm::off && m.dm_patched && m.dmmap.owned && h.dm_targets;
+    if (set.dm == PartnerDm::off && !releasing) {
+        if (m.dm_patched && !m.dm_revert_failed) RevertDm(d, h, "trigger");
+        pdm::Idle(m.dmmap);
         d.dmplay_pending = d.dmstop_pending = d.dm_census_pending = false;
         return;
     }
@@ -404,10 +595,15 @@ void TickDm(Driver& d, const Hooks& h, const pp::State& st, const Settings& set,
         char line[320]{};
         if (h.format_dm_census(h.context, targets, line, sizeof(line))) Emit(h, line);
     }
-    // dm=on: patch once stage 3, parts loaded and input off all hold (the two
-    // levers are mutually exclusive: an armed window or input!=off refuses).
-    if (set.dm == PartnerDm::on && !m.dm_patched) {
-        const char* refused = (m.input_armed || set.input != PartnerInput::off) ? "input_active" : nullptr;
+    // dm=on|map: patch once stage 3, parts loaded and input off all hold (the
+    // two levers are mutually exclusive: an armed window or input!=off
+    // refuses). No patch after a fault, and a failed patch is not retried
+    // until the next dm= trigger.
+    if ((set.dm == PartnerDm::on || map) && !m.dm_patched) {
+        const char* refused = (m.input_armed || set.input != PartnerInput::off) ? "input_active"
+                            : m.native_disabled                                  ? "native_disabled"
+                            : m.dm_patch_failed                                  ? "patch_failed"
+                                                                                 : nullptr;
         if (refused) {
             if (m.dm_refused_state != refused) {
                 m.dm_refused_state = refused;
@@ -415,7 +611,10 @@ void TickDm(Driver& d, const Hooks& h, const pp::State& st, const Settings& set,
             }
         } else {
             m.dm_refused_state = nullptr;
-            if (set.stage >= 3 && parts_loaded && !terminating && h.dm_patch) m.dm_patched = h.dm_patch(h.context, true, "trigger");
+            if (set.stage >= 3 && parts_loaded && !terminating && h.dm_patch) {
+                m.dm_patched = h.dm_patch(h.context, true, "trigger");
+                if (!m.dm_patched) m.dm_patch_failed = true;
+            }
         }
     }
     // The partner's DM entry/End write CAM+0x1F0/+0x200 = 0 for any id
@@ -451,6 +650,29 @@ void TickDm(Driver& d, const Hooks& h, const pp::State& st, const Settings& set,
             EmitFormat(h, "partner_dm=unconsumed; ms=%u\r\n", Clamp32(now - m.dm_play_ms));
             if (h.dm_clear_pending && h.dm_clear_pending(h.context)) Emit(h, "partner_dm=cleared_pending\r\n");
         }
+    }
+    // dm=map, and the release of its clip after map was turned off.
+    if (map || m.dmmap.phase != pdm::Phase::idle)
+        TickDmMap(d, h, set, clock, terminating, tick, obs, tick_ops, dm_ok, dm, parts_loaded, ops, gani);
+    if (set.dm == PartnerDm::off) {
+        // The release finished (or gave up): now the patch goes.
+        if (!m.dmmap.owned && m.dmmap.phase == pdm::Phase::idle && m.dm_patched && !m.dm_revert_failed) RevertDm(d, h, "trigger");
+        d.dmplay_pending = d.dmstop_pending = false;
+        return;
+    }
+    // The mapper owns the DM: manual one-shots are refused (one reply never
+    // carries both 128 and 256).
+    if (map || m.dmmap.phase != pdm::Phase::idle) {
+        const char* reason = map ? "map" : "map_release";
+        if (d.dmplay_pending) {
+            d.dmplay_pending = false;
+            EmitFormat(h, "partner_dm=refused; reason=%s\r\n", reason);
+        }
+        if (d.dmstop_pending) {
+            d.dmstop_pending = false;
+            EmitFormat(h, "partner_dm=refused; reason=%s\r\n", reason);
+        }
+        return;
     }
     // One-shots.
     if (d.dmplay_pending) {
@@ -929,7 +1151,7 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
     if (m.native_disabled) fail("native_disabled");
     if (!(set.apply == PartnerApply::input || set.apply == PartnerApply::xform)) fail("apply");
     if (set.anim != PartnerAnim::off) fail("anim");
-    if (set.dm == PartnerDm::on) fail("dm");
+    if (set.dm == PartnerDm::on || set.dm == PartnerDm::map || d.mission.dmmap.phase != pdm::Phase::idle) fail("dm");
     if (set.stage < 3) fail("stage");
     resolve();
     // "busy": a window was open across every read attempt (hook thread !=
@@ -1187,6 +1409,8 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.look_gate = lab.partner_look_gate;
     d.settings.look_recover = lab.partner_look_recover;
     d.settings.dm = lab.partner_dm;
+    d.settings.dm_map = lab.partner_dm_map;
+    d.settings.dm_speed = lab.partner_dm_speed;
     d.settings.holdlog = lab.partner_input_holdlog;
     d.settings.recon = lab.partner_recon;
     d.settings.align_ms = lab.partner_recon_align_ms;
@@ -1196,6 +1420,7 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.wrap = lab.partner_input_wrap;
     d.look_forced_rev = 1;
     partner_recon::Reset(d.mission.recon);
+    partner_dmmap::Reset(d.mission.dmmap);
 }
 
 void MissionStart(Driver& d, const Hooks& h) noexcept {
@@ -1211,6 +1436,8 @@ void MissionStart(Driver& d, const Hooks& h) noexcept {
     d.mission.anim_source = -1;
     d.mission.last_status = pose::Status::none;
     partner_recon::Reset(d.mission.recon);
+    partner_dmmap::Reset(d.mission.dmmap);
+    d.dmmap_rearm = false;
     d.recon_place_request = partner_recon::PlaceReason::none;
     d.parts_explicit_pending = false;
     d.mirror_pending = false;
@@ -1341,7 +1568,21 @@ void ApplyTrigger(Driver& d, const Hooks& h, const partner::Trigger& trigger, bo
     if (trigger.has_correct) d.settings.correct_mm = trigger.correct_mm;
     if (trigger.has_isend) d.settings.isend = trigger.isend;
     if (trigger.has_padprobe) d.settings.pad_probe = trigger.padprobe;
-    if (trigger.has_dm) d.settings.dm = trigger.dm;
+    if (trigger.has_dm) {
+        // Any dm= trigger retries a failed patch/revert; dm=map rearms the mapper.
+        d.settings.dm = trigger.dm;
+        m.dm_patch_failed = m.dm_revert_failed = false;
+        m.dm_refused_state = nullptr;
+        if (trigger.dm == PartnerDm::map) d.dmmap_rearm = true;
+    }
+    if (trigger.has_dmmap) {
+        d.settings.dm_map = trigger.dmmap;
+        d.dmmap_rearm = true;
+    }
+    if (trigger.has_dmspeed) {
+        d.settings.dm_speed = trigger.dmspeed;
+        d.dmmap_rearm = true;
+    }
     if (trigger.has_lookgate) d.settings.look_gate = trigger.lookgate;
     if (trigger.has_lookrecover) d.settings.look_recover = trigger.lookrecover;
     if (trigger.has_holdlog) { d.settings.holdlog = trigger.holdlog; d.holdlog_changed = true; }
@@ -1363,6 +1604,8 @@ void ApplyTrigger(Driver& d, const Hooks& h, const partner::Trigger& trigger, bo
                d.settings.input_mask, d.settings.correct_mm, d.settings.isend ? 1u : 0u, PartnerDmName(d.settings.dm),
                PartnerReconName(d.settings.recon), d.settings.align_ms, PartnerSlotName(d.settings.slot),
                PartnerRunawayName(d.settings.runaway), PartnerWrapName(d.settings.wrap));
+    // The dm=map table has its own line (confirms dmmap=/dmspeed= in any dm mode).
+    if (trigger.has_dmmap || trigger.has_dmspeed) LogDmMapTable(d.settings, h, "trigger");
     if (trigger.census) d.census_pending = d.input_census_pending = d.dm_census_pending = true;
     // Round 3 one-shots.
     if (trigger.tap) { d.tap_pending = true; d.tap_bits_pending = trigger.tap_bits; }
@@ -1495,6 +1738,9 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     std::uint32_t age_ms = 0;
     sync::AnimState remote_anim{};
     pose::Status sample_status = pose::Status::none;
+    // dm=map: the remote (net) or the local player (orbit/fixed) as observed.
+    partner_dmmap::Observation dmobs{};
+    dmobs.flag_move = partner_dmmap::kMoveUnknown;
     if (set.source == PartnerSource::net) {
         const pose::Sample sample = h.sample_remote ? h.sample_remote(h.context, lab.partner_interp_ms) : pose::Sample{};
         sample_status = sample.status;
@@ -1505,14 +1751,40 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             pose_valid = true;
             age_ms = sample.age_ms;
             if (sample.anim_valid) remote_anim = sync::AnimState{sample.act, sample.anim_stance, sample.anim_speed, sync::AnimFlag::Valid};
+            dmobs.stance = sample.stance;
+            dmobs.sprint = (sample.flags & sync::ActionFlag::Sprinting) != 0;
         }
-    } else if (set.source == PartnerSource::orbit) {
-        pose = partner::OrbitPose(tick, lab.partner_offset_cm, now - m.start_ms);
-        pose_valid = true;
+        dmobs.fresh = sample.valid && sample.status == pose::Status::live;
+        dmobs.lost = !sample.valid || sample.status == pose::Status::lost;
+        dmobs.anim_move = true;
+        if (sample.valid && sample.anim_valid) {
+            dmobs.anim_valid = true;
+            dmobs.act = sample.act;
+            dmobs.anim_stance = sample.anim_stance;
+            dmobs.anim_speed = sample.anim_speed;
+        }
     } else {
-        pose = partner::FixedPose(tick, lab.partner_offset_cm);
+        if (set.source == PartnerSource::orbit) pose = partner::OrbitPose(tick, lab.partner_offset_cm, now - m.start_ms);
+        else pose = partner::FixedPose(tick, lab.partner_offset_cm);
         pose_valid = true;
+        dmobs.fresh = true;
+        dmobs.stance = tick.stance;
+        dmobs.sprint = tick.move == 3;
+        if (set.source == PartnerSource::fixed) dmobs.flag_move = tick.move;
+        if (local_anim.flags & sync::AnimFlag::Valid) {
+            dmobs.anim_valid = true;
+            dmobs.act = local_anim.act;
+            dmobs.anim_stance = local_anim.stance;
+            dmobs.anim_speed = local_anim.speed;
+        }
     }
+    // The commanded pose's horizontal speed (orbit and net; fixed uses the flags).
+    if (m.dmmap_speed_source != set.source) {
+        m.dmmap_speed_source = set.source;
+        partner_dmmap::SpeedReset(m.dmmap_speed);
+    }
+    if (pose_valid) partner_dmmap::SpeedPush(m.dmmap_speed, now, pose.x_mm, pose.z_mm);
+    dmobs.speed_ok = set.source != PartnerSource::fixed && partner_dmmap::SpeedMmps(m.dmmap_speed, dmobs.speed_mmps);
     // Realize bits (stage 3): from the tick after the first applied pose, so
     // that S+0x20[1] is already in the area; re-ORed while lost.
     if (set.stage >= 3 && m.pose_applied) {
@@ -1642,8 +1914,17 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         }
     }
     m.last_status = sample_status;
-    // Animation application (instance 1 only, stage 3 with parts loaded).
-    const bool anim_needed = set.anim != PartnerAnim::off && set.stage >= 3;
+    // Animation application (instance 1 only, stage 3 with parts loaded). Not
+    // while a dm=map clip is ours: aset=q|qs would overwrite Q+0x18[1] before
+    // the mapper reads it, so its stop could never be confirmed.
+    const bool anim_dm = set.anim != PartnerAnim::off && set.stage >= 3 && m.dmmap.owned;
+    if (anim_dm && !m.anim_dm_logged) {
+        m.anim_dm_logged = true;
+        EmitCapped(m.anim_cap, h, "partner_anim", "partner_anim=deferred; reason=dm_map\r\n");
+    } else if (!anim_dm) {
+        m.anim_dm_logged = false;
+    }
+    const bool anim_needed = set.anim != PartnerAnim::off && set.stage >= 3 && !m.dmmap.owned;
     if (anim_needed) {
         const sync::AnimState src = set.anim == PartnerAnim::mirror ? local_anim : remote_anim;
         const bool src_valid = (src.flags & sync::AnimFlag::Valid) != 0;
@@ -1925,6 +2206,9 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         m.census_logged = false;
         m.dm_census_loaded = false;
         m.stance = partner::StanceDebounce{};
+        // A mapped clip ends with the body: forget it (no lost line), new speed.
+        partner_dmmap::Forget(m.dmmap);
+        partner_dmmap::SpeedReset(m.dmmap_speed);
         if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "partner_realized=0; R=1; ms_after_realize=%u\r\n",
                 Clamp32(now - m.realized_ms)))) LogTransition(m, h, line);
     }
@@ -1994,7 +2278,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     InputTick itick{};
     TickInput(d, h, lab, st, set, tick, clock, terminating, parts_loaded, pose_valid, pose, relink, anim_ok, anim, remote_anim,
               extra_ops, itick);
-    TickDm(d, h, st, set, clock, terminating, extra_ops, gani);
+    TickDm(d, h, st, set, clock, terminating, tick, dmobs, ops | extra_ops, extra_ops, gani);
     // apply=input without an armed window falls back to the proven Lua Warp
     // every tick (refused, faulted, install refused, input=off, stage < 3),
     // except while the reconciliation places/verifies the body itself.
@@ -2012,6 +2296,12 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         m.input_fallback = false;
     }
     BodyLine(d, h, st, set, tick, clock, parts_loaded);
+    // dm=map loss attribution: this reply's look ops and Warp, seen next tick.
+    const std::uint32_t final_ops = ops | extra_ops;
+    m.dmmap_prev_warp = (final_ops & partner::op::warp) != 0;
+    m.dmmap_prev_look = (final_ops & partner::op::set_parts_explicit) != 0 ||
+                        ((final_ops & partner::op::copy_parts) && !(tick.luaflags & partner::luaflag::parts_copied)) ||
+                        (final_ops & partner::op::set_all_active) != 0;
     reply = partner::Reply{ops | extra_ops, partner::partner_index, reply_pose.x_mm, reply_pose.y_mm, reply_pose.z_mm,
                            reply_pose.yaw_mrad, status, age_ms, (ops & partner::op::set_parts_explicit) ? apply_look : partner::Look{},
                            gani};

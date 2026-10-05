@@ -156,6 +156,10 @@ Notes:
   direction of travel; the clip's root motion does not fight the xform mover in
   these frames.
 
+Follow-up (static, 2026-10-05): `dm=map` drives these clips from the other
+player's stance and speed, with stand walk/run/jog loops added as GANI 10-12
+(docs/partner-anim-appearance.md "D-map"). Live result pending (D4/D5).
+
 Conclusion: **direct motion is a working animation route for the partner,
 fully on the Lua and main-thread side**, with no worker-thread hooks. Next: a
 DM mapping mode, which maps the remote's stance/speed (already in the net

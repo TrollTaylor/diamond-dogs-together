@@ -291,6 +291,14 @@ int main() {
         Check(ReplyText(dmp16) == "return 144,1,0,0,0,0,1,0,6,27,116,0,0,5", "dm_play | set_parts: look then gani");
         const std::string dmwidest = ReplyText({0xFFFFFFFFu, 1, 0, 0, 0, 0, Status::live, 0, Look{255, 255, 255, 255, 65535, 255}, 9});
         Check(dmwidest.size() < reply_capacity, "widest 14-value reply fits reply_capacity");
+        // dm=map: the stand jog loop (gani 12) is the 14th value; the widest
+        // reply with a two-digit gani is 114 characters.
+        Reply dm12{op::dm_play, 1, 0, 0, 0, 0, Status::live, 0, Look{}, 12};
+        Check(ReplyText(dm12) == "return 128,1,0,0,0,0,1,0,0,0,0,0,0,12", "dm_play: gani 12 as the 14th value");
+        const std::string dm12widest = ReplyText({0xFFFFFFFFu, 0xFFFFFFFFu, -2147483647 - 1, -2147483647 - 1, -2147483647 - 1,
+                                                  -2147483647 - 1, Status::lost, 0xFFFFFFFFu, Look{255, 255, 255, 255, 65535, 255}, 12});
+        Check(dm12widest.size() == 114 && dm12widest.size() < reply_capacity, "widest reply (gani 12) is 114 characters");
+        Check(max_gani == 12 && max_gani == mgscoop::kPartnerDmGaniMax, "max_gani follows the dm=map table bound");
     }
 
     // --- Look normalization (every look that reaches SetPartsInfo).
@@ -362,10 +370,25 @@ int main() {
         Check(TriggerText("press=0x2:1200", tg) && tg.press && tg.press_bits == 0x2 && tg.press_ms == 1200, "press one-shot");
         Check(TriggerText("dm=on dmplay=3", tg) && tg.dm == PartnerDm::on && tg.dmplay && tg.dmplay_gani == 3, "dmplay");
         Check(TriggerText("dmstop=1", tg) && tg.dmstop, "dmstop");
+        Check(TriggerText("dmplay=12", tg) && tg.dmplay && tg.dmplay_gani == 12, "dmplay up to max_gani (12)");
+        // dm=map and its settings.
+        Check(TriggerText("dm=map dmmap=0,12,11,5,1,3,4,4,2,6,6,6 dmspeed=300:1500:5600", tg) && tg.has_dm && tg.dm == PartnerDm::map &&
+              tg.has_dmmap && tg.dmmap.cells[1] == 12 && tg.dmmap.cells[8] == 2 && tg.dmmap.cells[11] == 6 && tg.has_dmspeed &&
+              tg.dmspeed.idle_mmps == 300 && tg.dmspeed.run_mmps == 1500 && tg.dmspeed.dash_mmps == 5600, "dm=map dmmap= dmspeed=");
+        Check(TriggerText("dmmap=0,10,11,5,1,3,4,4,7,6,6,6", tg) && tg.has_dmmap && !tg.has_dm && !tg.has_dmspeed,
+              "dm= does not swallow dmmap= (the whole prefix with '=' is compared)");
+        Check(TriggerText("dmspeed=200:500:800", tg) && tg.has_dmspeed && !tg.has_dm && tg.dmspeed.dash_mmps == 800, "dmspeed alone");
+        Check(!TriggerOk("dmmap=0,10,11,5,1,3,4,4,7,6,6") && !TriggerOk("dmmap=0,10,11,5,1,3,4,4,7,6,6,13") &&
+              !TriggerOk("dmmap=0,10,11,5,1,3,4,4,7,6,6,06") && !TriggerOk("dmmap=0,10,11,5,1,3,4,4,7,6,6,6,") &&
+              !TriggerOk("dmmap=0,10,11,5,1,3,4,4,7,6,6,6,6") && !TriggerOk("dmmap=") &&
+              !TriggerOk("dmmap=0,10,11,5,1,3,4,4,7,6,6,6 dmmap=0,10,11,5,1,3,4,4,7,6,6,6"), "bad or repeated dmmap");
+        Check(!TriggerOk("dmspeed=300:400:5600") && !TriggerOk("dmspeed=100:2600:5600") && !TriggerOk("dmspeed=0300:2600:5600") &&
+              !TriggerOk("dmspeed=300:2600") && !TriggerOk("dmspeed=300:2600:5600:1") && !TriggerOk("dmspeed=300:2600:20001") &&
+              !TriggerOk("dmspeed=300:2600:5600 dmspeed=300:2600:5600") && !TriggerOk("dm=mapx"), "bad or repeated dmspeed");
         Check(!TriggerOk("input=walk") && !TriggerOk("cam=on") && !TriggerOk("hold=mine") && !TriggerOk("yaw=left") &&
               !TriggerOk("words=xyz") && !TriggerOk("words=rp") && !TriggerOk("bits=0xZ") && !TriggerOk("bits=0x123456789") &&
               !TriggerOk("correct=10001") && !TriggerOk("stick=360:0") && !TriggerOk("stick=180:101") && !TriggerOk("stick=180") &&
-              !TriggerOk("tap=2") && !TriggerOk("press=0x2:49") && !TriggerOk("press=0x2:5001") && !TriggerOk("dmplay=10") &&
+              !TriggerOk("tap=2") && !TriggerOk("press=0x2:49") && !TriggerOk("press=0x2:5001") && !TriggerOk("dmplay=13") &&
               !TriggerOk("dmstop=0") && !TriggerOk("isend=2") && !TriggerOk("dm=maybe"), "bad round 3 values");
         // Round 4 tokens.
         Check(TriggerText("hold=own recon=track align=-16 slot=body runaway=disarm wrap=census place=1", tg) && tg.has_hold &&
@@ -388,6 +411,10 @@ int main() {
             "stage=3 source=net apply=input anim=off aset=qs reset=ac look=net input=net stick=359:100 cam=sandbox "
             "hold=none yaw=rotneg words=rhn bits=0xffffffff correct=10000 isend=1 padprobe=1 dm=probe lookgate=1 lookrecover=1";
         Check(longest.size() + 1 <= max_trigger && TriggerOk(longest), "a long trigger fits 255 bytes");
+        const std::string longest_map =
+            "stage=3 source=net apply=xform reset=n anim=off input=off isend=0 look=net dm=map "
+            "dmmap=12,12,12,12,12,12,12,12,12,12,12,12 dmspeed=2000:10000:20000";
+        Check(longest_map.size() + 1 <= max_trigger && TriggerOk(longest_map), "a long dm=map trigger fits 255 bytes");
     }
 
     // --- Driver op policy: xform/hybrid warp only on demand; no copy with an explicit look.

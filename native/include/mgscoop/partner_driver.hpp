@@ -21,10 +21,17 @@
 // partner_stance set/req, refused and reverted 64 each
 // ("partner_stance=capped; limit=64; kind=set|refused|reverted"), plus the
 // uncapped partner_stance=summary at most every kStanceSummaryMs while its
-// counters change; partner_ps probe lines 400.
+// counters change; partner_ps probe lines 400. dm=map (partner_dmmap): the
+// table, failed and released lines uncapped (bounded by triggers and
+// missions); switch and playing lines share kDmMapSwitchCap (then
+// "partner_dmmap=capped; limit=600; kind=switch"); deferred, lost,
+// stop_timeout, unconsumed, adopted, abandoned and bad_gani 64 each
+// ("partner_dmmap=capped; limit=64; kind=<family>"); the summary every
+// kDmMapSummaryMs, kDmMapSummaryCap lines ("...; limit=720; kind=summary").
 #include <cstddef>
 #include <cstdint>
 #include "mgscoop/lab_config.hpp"
+#include "mgscoop/partner_dmmap.hpp"
 #include "mgscoop/partner_input.hpp"
 #include "mgscoop/partner_input_hook.hpp"
 #include "mgscoop/partner_player.hpp"
@@ -99,6 +106,10 @@ inline constexpr unsigned kPadProbeCap = 400;
 inline constexpr unsigned kHoldLogCap = 200;
 inline constexpr unsigned kRefusedCap = 64;
 inline constexpr unsigned kDmProbeCap = 400;
+// dm=map summary cadence and caps (one hour of summaries; switch/playing lines).
+inline constexpr std::uint64_t kDmMapSummaryMs = 5000;
+inline constexpr unsigned kDmMapSummaryCap = 720;
+inline constexpr unsigned kDmMapSwitchCap = 600;
 // Drained input-hook statistics (mirror of partner_input_hook::Stats).
 struct InputStats {
     partner_input::WindowStats window;
@@ -220,6 +231,9 @@ struct Settings {
     bool pad_probe;
     bool look_gate, look_recover;
     PartnerDm dm;
+    // dm=map: the [stance][move] clip table and the speed bands.
+    PartnerDmTable dm_map;
+    PartnerDmSpeeds dm_speed;
     // holdlog=1 trigger (effective only with lab partner_input_holdlog=1).
     bool holdlog;
     // Round 4 (docs/partner-anim-appearance.md "Round 4").
@@ -402,6 +416,24 @@ struct Mission {
     std::uint64_t dm_play_ms;      // when our last play request went out (unconsumed watch)
     bool dm_play_pending;
     std::uint8_t dm_pending_gani;
+    // dm=map (partner_dmmap): the state machine, the speed of the commanded
+    // pose, one cap per event family, the switch/playing and summary caps, and
+    // the previous reply's look/Warp ops (loss attribution).
+    partner_dmmap::State dmmap;
+    partner_dmmap::SpeedRing dmmap_speed;
+    PartnerSource dmmap_speed_source;
+    bool dmmap_table_logged;
+    LogCap dmmap_cap[7];  // deferred, lost, stop_timeout, unconsumed, adopted, abandoned, bad_gani
+    unsigned dmmap_switch_lines;
+    bool dmmap_switch_capped;
+    std::uint64_t dmmap_summary_ms;
+    unsigned dmmap_summary_lines;
+    bool dmmap_summary_capped;
+    bool dmmap_prev_look, dmmap_prev_warp;
+    // A failed patch is not retried every tick (cleared by any dm= trigger and
+    // at mission start); a failed revert is not retried by the per-tick off path.
+    bool dm_patch_failed, dm_revert_failed;
+    bool anim_dm_logged;   // partner_anim=deferred; reason=dm_map (once per suppression)
     // Appearance.
     bool look_applied_any;
     std::uint16_t look_applied_remote_rev;
@@ -432,6 +464,8 @@ struct Driver {
     bool dmplay_pending;
     std::uint8_t dmplay_gani;
     bool dmstop_pending;
+    // dm=map: Rearm the mapper on the next map tick (dm=map, dmmap=, dmspeed= triggers).
+    bool dmmap_rearm;
     bool p218_pending, p218_on;
     bool holdlog_changed;
     // census=1 also latches these, consumed by the input/DM census (TickInput

@@ -219,6 +219,8 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
         else if (Equals(key, "partner_look_gate")) ok = ParseBool(value, result.partner_look_gate);
         else if (Equals(key, "partner_look_recover")) ok = ParseBool(value, result.partner_look_recover);
         else if (Equals(key, "partner_dm")) ok = ParsePartnerDm(value.data, value.size, result.partner_dm);
+        else if (Equals(key, "partner_dm_map")) ok = ParsePartnerDmMap(value.data, value.size, result.partner_dm_map);
+        else if (Equals(key, "partner_dm_speed")) ok = ParsePartnerDmSpeeds(value.data, value.size, result.partner_dm_speed);
         else if (Equals(key, "partner_recon")) ok = ParsePartnerRecon(value.data, value.size, result.partner_recon);
         else if (Equals(key, "partner_recon_align_ms"))
             ok = ParsePartnerSigned(value.data, value.size, -50, 150, result.partner_recon_align_ms);
@@ -543,6 +545,7 @@ const char* PartnerDmName(PartnerDm value) noexcept {
     switch (value) {
     case PartnerDm::probe: return "probe";
     case PartnerDm::on: return "on";
+    case PartnerDm::map: return "map";
     default: return "off";
     }
 }
@@ -596,6 +599,7 @@ bool ParsePartnerDm(const char* text, std::size_t size, PartnerDm& out) noexcept
     if (Equals(s, "off")) out = PartnerDm::off;
     else if (Equals(s, "probe")) out = PartnerDm::probe;
     else if (Equals(s, "on")) out = PartnerDm::on;
+    else if (Equals(s, "map")) out = PartnerDm::map;
     else return false;
     return true;
 }
@@ -621,6 +625,81 @@ void FormatPartnerWords(const std::uint8_t (&words)[3], char (&out)[4]) noexcept
     static constexpr char names[] = "0prhn";
     for (std::size_t i = 0; i < 3; ++i) out[i] = words[i] <= kPartnerWordNet ? names[words[i]] : '?';
     out[3] = 0;
+}
+
+bool ParsePartnerDmMap(const char* text, std::size_t size, PartnerDmTable& out) noexcept {
+    if (!text || !size) return false;
+    PartnerDmTable table{};
+    std::size_t at = 0, cells = 0;
+    for (;;) {
+        if (cells >= kPartnerDmCells) return false;
+        const std::size_t start = at;
+        std::uint32_t value = 0;
+        while (at < size && text[at] >= '0' && text[at] <= '9') {
+            if (at - start >= 2) return false;
+            value = value * 10 + static_cast<std::uint32_t>(text[at] - '0');
+            ++at;
+        }
+        const std::size_t digits = at - start;
+        if (!digits || (digits > 1 && text[start] == '0') || value > kPartnerDmGaniMax) return false;
+        table.cells[cells++] = static_cast<std::uint8_t>(value);
+        if (at == size) break;
+        if (text[at] != ',') return false;
+        ++at;
+    }
+    if (cells != kPartnerDmCells) return false;
+    out = table;
+    return true;
+}
+
+void FormatPartnerDmMap(const PartnerDmTable& table, char (&out)[40]) noexcept {
+    std::size_t at = 0;
+    for (std::size_t i = 0; i < kPartnerDmCells; ++i) {
+        if (i) out[at++] = ',';
+        const unsigned value = table.cells[i];
+        if (value > 99) out[at++] = '?';
+        else {
+            if (value >= 10) out[at++] = static_cast<char>('0' + value / 10);
+            out[at++] = static_cast<char>('0' + value % 10);
+        }
+    }
+    out[at] = 0;
+}
+
+bool ParsePartnerDmSpeeds(const char* text, std::size_t size, PartnerDmSpeeds& out) noexcept {
+    if (!text || !size) return false;
+    std::uint32_t values[3]{};
+    std::size_t at = 0;
+    for (std::size_t i = 0; i < 3; ++i) {
+        const std::size_t start = at;
+        while (at < size && text[at] != ':') ++at;
+        const Slice s{text + start, at - start};
+        if (!s.size || s.size > 5 || (s.size > 1 && s.data[0] == '0') || !ParseU32(s, 99999, values[i])) return false;
+        if (i < 2) {
+            if (at >= size) return false;
+            ++at;
+        }
+    }
+    if (at != size) return false;
+    if (values[0] < 200 || values[0] > 2000 || values[1] < values[0] + 300 || values[1] > 10000 || values[2] < values[1] + 300 ||
+        values[2] > 20000) return false;
+    out = PartnerDmSpeeds{values[0], values[1], values[2]};
+    return true;
+}
+
+void FormatPartnerDmSpeeds(const PartnerDmSpeeds& speeds, char (&out)[24]) noexcept {
+    const std::uint32_t values[3] = {speeds.idle_mmps, speeds.run_mmps, speeds.dash_mmps};
+    std::size_t at = 0;
+    for (std::size_t i = 0; i < 3; ++i) {
+        if (i) out[at++] = ':';
+        const std::uint32_t value = values[i] > 99999 ? 99999 : values[i];
+        char digits[5]{};
+        std::size_t n = 0;
+        std::uint32_t v = value;
+        do { digits[n++] = static_cast<char>('0' + v % 10); v /= 10; } while (v && n < sizeof(digits));
+        while (n) out[at++] = digits[--n];
+    }
+    out[at] = 0;
 }
 
 bool ParsePartnerMask(const char* text, std::size_t size, std::uint32_t& out) noexcept {

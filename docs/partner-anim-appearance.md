@@ -530,6 +530,132 @@ reason=cam_connect`). `partner_dm` logs `cam1f0`/`cam200`, and
 `partner_dm=conflict` is logged once when the host enters its own DM, or a
 camera connect appears, while the partner's DM is active.
 
+### D-map. `dm=map`: the clip follows the other player
+
+The live D series (2026-10-05) proved the lever: instance 1 plays any resident
+gani through direct motion while `apply=xform` moves it. `dm=map` turns that
+into an animated partner. It patches exactly like `dm=on` (same gates; refused
+with `input_active`, `native_disabled` after a fault, or `patch_failed` after a
+failed patch, which is not retried until the next `dm=` trigger), then a pure
+state machine (`native/partner_dmmap.{hpp,cpp}`, unit tested in
+`tests/partner_dmmap_tests.cpp`) picks the clip every tick and sends DM_STOP /
+DM_PLAY through the existing op bits. No wire change; the manual `dmplay=` /
+`dmstop=` are refused while the mapper owns the direct motion
+(`partner_dm=refused; reason=map`, or `reason=map_release` while it releases).
+
+**Clips.** `partner_sync.lua` GANI gains 10 `snapnon_s_wk_lp_vr1_l` (stand walk
+loop), 11 `snapnon_s_rn_lp_vr1_l` (stand run loop) and 12 `snapnon_s_jg_lp_vr1`
+(stand jog loop), all resident in `player2_resident.mtar` (path hashes
+0xfc518eebbaea22fe, 0xfc529e31ab60265c, 0xfc5022ee48683466, each the straight
+centre of its TurnSpeed blend in the motion graph). `c_stp_l` was rejected: it
+is a one-shot stop/turn clip (siblings `c_135/180/l45/r45_stp_l`, no `_lp`).
+`dmplay=` accepts 0..12 (`partner::max_gani` = `kPartnerDmGaniMax`).
+
+**Table** (`dmmap=` / lab.ini `partner_dm_map`, 12 cells, row-major):
+
+| stance \ move | none | walk | run | dash |
+|---|---|---|---|---|
+| 0 stand | 0 `s_idl_l` | 10 `s_wk_lp_vr1_l` | 11 `s_rn_lp_vr1_l` | 5 `s_dh_lp` (proven) |
+| 1 squat | 1 `q_idl_l` (proven) | 3 `q_wk_lp_l` (proven) | 4 `q_rn_lp_l` | 4 (no squat dash exists) |
+| 2 crawl | 7 `p_idl` (proven) | 6 `c_fst_lp_r` | 6 | 6 |
+
+Default `dmmap=0,10,11,5,1,3,4,4,7,6,6,6`. Alternatives: stand walk 12 or 3,
+stand run 12 or 5, squat run/dash 3 or 5, crawl idle 2.
+
+**Classification.** Stance: the PlayerStatus flags (wire stance on `net`, the
+local `tick.stance` on orbit/fixed); when they say stand, the anim stance
+(squat/crawl) wins (`stance_via=anim`). Move, first match: Sprinting (wire flag,
+or local `move == 3`) -> dash; on `source=fixed` the local move flag 0..2; the
+horizontal speed of the commanded pose (newest against the oldest sample within
+300 ms, at least 150 ms; a backwards time or a > 20 m/s step restarts it) in
+the bands `dmspeed=<idle>:<run>:<dash>` (default 300:2600:5600 mm/s, 150 mm/s
+hysteresis); on `net` only, the remote's anim act (odd idle, even moving; speed
+3 = run). A lost remote keeps its stance and idles; a stale one freezes the
+candidate. Full-stick crouch reads 3.19 m/s (run here) while the game's own
+`q38` says walk (findings 2026-10-04): speed wins by design. The orbit source
+moves at 2356 mm/s at `offset_cm = 300` (walk; `dmspeed=300:1500:5600` makes
+it run, `300:1000:2000` dash).
+
+**State machine** (`Step`, at most one action and one event per tick; one reply
+never carries both 128 and 256):
+
+- Reconcile against `q18[1]` every tick: play confirmed (`playing`), never
+  confirmed within 2.5 s (`unconsumed`: a strike against the gani, a failure),
+  stop confirmed (`q18[1]` left 0x8b and no request pending), stop not
+  confirmed within 1 s (`stop_timeout`), the DM unreadable for those windows
+  (`dm_read`), a playing clip gone (`lost` with a cause: `parts` reloading,
+  `look` op or `warp` in the previous reply, `host` DM, else `ended`). A clip
+  that ends on its own within 3 s is a strike; two strikes make a gani bad for
+  the mission (`bad_gani`), and the stance's idle cell plays instead, then
+  nothing. Failures back off 1, 2, 4, 8, 8 s; five in a row -> `failed`
+  (a `dm=map`, `dmmap=` or `dmspeed=` trigger rearms it, [R] in
+  Play-OfflineCoop).
+- Decide: a new target holds 200 ms and the playing clip at least 300 ms
+  before a switch; a switch is a stop, then the play on the tick the stop is
+  confirmed. A play waits (`partner_dmmap=deferred`, change-only) for the patch,
+  loaded parts, a readable DM, no host DM, no pending request (ours or foreign),
+  no camera connect, and a reply without SET_PARTS, an executed COPY, a look
+  apply still verifying, SET_ALLACTIVE or WARP. A stop waits for the patch, a
+  readable DM, no host DM, no pending request (DM End clears `g+0x388` 0x3C
+  globally) and no camera connect. A clip already active when the mapper starts
+  (a manual `dmplay`, a late start) is adopted, then replaced after the hold.
+- Blocked (`terminating`, `fault` = native calls disabled or an input fault,
+  `stage` < 3, `apply` not xform/hybrid, `anim` != off, `input` armed): a
+  playing clip is stopped (fault/terminating: nothing is sent), then the
+  mapper waits. While a mapped clip is ours the anim arrays are not written
+  (`partner_anim=deferred; reason=dm_map`), so its stop can be confirmed.
+- Release (`dm` leaves map): one stop, then `released; result=stopped|ended`,
+  or `result=timeout` after 1.5 s; with `dm=off` the patch is reverted after the
+  release. A teardown (mission start/end, STOP, tick reject, CFG refusal, fault)
+  abandons the clip (`partner_dmmap=abandoned`) and reverts at once; as with
+  `dm=on` the clip may keep looping into the next state (D3 precedent). The
+  input lever stays refused (`reason=dm`) while `dm=on|map` or a release runs.
+
+Constants: hold 200 ms, dwell 300 ms, confirm 2500 ms, stop wait 1000 ms,
+release 1500 ms, loop minimum 3000 ms, backoff 1000..8000 ms, 5 failures, 2
+strikes.
+
+**Log lines** (CRLF; gani as a number or `none`, `speed_mmps=-1` when unknown):
+
+- uncapped: `partner_dmmap=table; cells=..; speeds=..; reason=start|trigger`
+  (first map tick of a mission, and every `dmmap=`/`dmspeed=` trigger in any dm
+  mode), `partner_dmmap=failed; failures=5; last=..`,
+  `partner_dmmap=released; result=stopped|ended|timeout; to=off|on|probe; ms=..`
+- 600 shared, then `partner_dmmap=capped; limit=600; kind=switch`:
+  `partner_dmmap=switch; step=stop|play; from=..; to=..; stance=..; move=..;
+  speed_mmps=..; via=flags|speed|anim|none|lost|stale; stance_via=flags|anim;
+  wait_ms=..` (play: since the stop; stop: how long the new candidate held) and
+  `partner_dmmap=playing; gani=..; after_ms=..`
+- 64 each, then `partner_dmmap=capped; limit=64; kind=<family>`:
+  `deferred; reason=..; phase=..; want=..; cur=..`, `lost; gani=..;
+  played_ms=..; cause=..; failures=..`, `stop_timeout; gani=..; ms=..;
+  failures=..; backoff_ms=..; reason=stop_timeout|dm_read`, `unconsumed;
+  gani=..; ms=..; failures=..; backoff_ms=..`, `adopted; reason=active_clip`,
+  `abandoned; reason=..; gani=..`, `bad_gani; gani=..; reason=unconsumed|ended;
+  strikes=2`
+- every 5 s, 720 lines, then `...; limit=720; kind=summary`: `partner_dmmap;
+  phase=..; cur=..; want=..; stance=..; move=..; via=..; speed_mmps=..;
+  switches=..; plays=..; stops=..; deferrals=..; timeouts=..; unconsumed=..;
+  lost=..; adopted=..; bad=0x..; failures=..; deferred=..`
+- `partner_dm=refused; reason=map|map_release|patch_failed|native_disabled`
+
+**Live plan.** D4 (host: Quiet partner, local Snake) and D5 (the same on the
+guest: Snake partner, local Quiet, never tested with DM): `stage=3
+source=orbit apply=xform reset=n anim=off input=off dm=map
+dmspeed=300:2600:5600` (walk), `dmspeed=300:1500:5600` (run),
+`dmspeed=300:1000:2000` (dash), back to `300:2600:5600`, then crouch 6 s, prone
+6 s and stand on that window, then `dm=off`. FAIL on `partner_dm=unconsumed`,
+`partner_dm=conflict`, `partner_dmmap=failed`, any `bad_gani` or more than 3
+`stop_timeout`; it needs `partner_dm=patched`, `table`, `switch`, `playing`,
+`released` and `partner_dm=reverted`. Visual: the strides match the travel,
+squat walk and crawl appear, no camera jump, 0 AV. Live risks: clips 10, 11,
+12, 4 and 6 have never played through DM (a T-pose is not detectable natively;
+swap cells with `dmmap=`); stand speeds are unmeasured (the summary logs
+`speed_mmps`); the stand pose between a stop and the next play is a short
+hitch; whether a Warp or SET_PARTS ends a looping clip (`lost; cause=warp|look`);
+root motion against xform (about 140 mm under dash); non-locomotion remote
+states (vehicle, horse) may read as dash.
+
 ### Review fixes (second pass, static)
 
 - `hold=none` and `holdlog` now really run. PP vtable slot -1 (0x23C8D38) is 0
@@ -587,7 +713,11 @@ camera connect appears, while the partner's DM is active.
 `partner_input_p218_allow` (default 0), `partner_input_holdlog` (default 0; it
 allows the `holdlog=1` trigger and turns it on when set),
 `partner_pad_probe` (default 0), `partner_look_gate` (default 1),
-`partner_look_recover` (default 1), `partner_dm` (off|probe|on, default off).
+`partner_look_recover` (default 1), `partner_dm` (off|probe|on|map, default
+off), and for `dm=map` `partner_dm_map` (12 gani indices 0..12, default
+`0,10,11,5,1,3,4,4,7,6,6,6`) and `partner_dm_speed` (`<idle>:<run>:<dash>` mm/s,
+idle 200..2000, run idle+300..10000, dash run+300..20000, default
+`300:2600:5600`); the trigger tokens are `dm=map`, `dmmap=` and `dmspeed=`.
 The trigger grammar maximum is now 255 bytes; see
 [lab-protocol.md](lab-protocol.md) for the full token list and canonical order.
 
@@ -603,7 +733,9 @@ The lab is offline-v1 at Mother Base 30050 with `partner_anim_probe=1` for every
 I/D step. L1-L4 run in `Play-OfflineCoop`'s own flow (baseline
 `stage=3 source=net look=net`, guest plays Quiet). I0-I7 and D0-D3 run on the
 host (baseline `stage=3 source=fixed apply=xform reset=n` plus the step's own
-tokens) except I6 (both copies). `Test-PartnerSpike.ps1` /
+tokens) except I6 (both copies). D4 (`dm=map` on the host) and D5 (the same
+plan on the guest, a Snake partner with a local Quiet) follow D-map above.
+`Test-PartnerSpike.ps1` /
 `Invoke-PartnerExperiment.ps1` carry the plans and verdicts. A `crash_probe=av`
 line with `ctx` bit0 = 1 attributes the crash to the input window; a
 `partner_input=fault` means stop, collect the logs, fix and rerun the step. The
@@ -900,6 +1032,15 @@ the keys it names.
 - [M] and [A] are the round 2 experiments.
 - `-ProvenWarp` starts on the proven path; `-Experimental` starts with the
   round 2 experiments.
+
+Since the round 4 live run the default is the proven Warp again (every line
+now also carries `dm=off`); `-InputDrive` starts the input drive. `-Animated`
+and [D] start `dm=map` (`stage=3 source=net apply=xform reset=n anim=off
+input=off isend=0 dm=map look=net`; lab.ini `partner_apply=xform`,
+`partner_reset=n`, `partner_dm=map` on both copies), and the status line then
+shows `clip <name>` from the 5 s `partner_dmmap` summary (`FAILED` after
+`partner_dmmap=failed`; [R] re-sends and rearms). The default flips to
+`dm=map` only after D4/D5 and one live two-copy `-Animated` pass.
 
 The status line adds `input <mode>/<armed>`, `recon <mode> err <cm> snaps ..
 places ..` (`recon OFF` when `correct=0` turned it off), `RUNAWAY(pinned)`

@@ -84,6 +84,12 @@ struct Fake {
     const char* dm_patch_reason = nullptr;
     bool dm_cleared = false;
     unsigned dm_clear_calls = 0;
+    // dm=map: the game reacts to the reply's DM ops (dm_auto): a play starts
+    // the clip (q18[1] = 0x8b) or, unconsumed, stays pending (g388 bit 4); a
+    // stop ends it and clears g388 0x3C. A failing patch logs like the
+    // comparator check.
+    bool dm_auto = false, dm_consume = true, dm_stops = true;
+    bool dm_patch_fail = false;
     unsigned fault_resets = 0;
     // Round 4.
     const char* position_result = nullptr;
@@ -259,11 +265,23 @@ std::size_t HookFormatDmProbe(void* context, const pp::DmState&, bool patched, c
 bool HookDmPatch(void* context, bool on, const char* reason) noexcept {
     Fake& f = F(context);
     ++f.dm_patch_calls;
-    f.dm_patched = on;
     f.dm_patch_reason = reason;
+    // As partner_dm_patch: a refused patch logs its reason, a change logs patched/reverted.
+    if (on && f.dm_patch_fail) {
+        f.lines.emplace_back("partner_dm=refused; reason=comparator_bytes\r\n");
+        return f.dm_patched;
+    }
+    if (on && !f.dm_patched) f.lines.emplace_back("partner_dm=patched; rva=0x1198e25; old=440f44c7; new=0f1f4000\r\n");
+    if (!on && f.dm_patched) f.lines.emplace_back(std::string("partner_dm=reverted; reason=") + (reason ? reason : "unknown") + "\r\n");
+    f.dm_patched = on;
     return f.dm_patched;
 }
-bool HookDmClearPending(void* context) noexcept { ++F(context).dm_clear_calls; return F(context).dm_cleared; }
+bool HookDmClearPending(void* context) noexcept {
+    Fake& f = F(context);
+    ++f.dm_clear_calls;
+    if (f.dm_cleared) f.dm.g388 = static_cast<std::uint8_t>(f.dm.g388 & ~4u);
+    return f.dm_cleared;
+}
 void HookResetFault(void* context) noexcept {
     ++F(context).fault_resets;
     F(context).stats.window.fault_phase = 0;
@@ -370,10 +388,11 @@ pd::Hooks HooksFor(Fake& f) {
                      HookApplyPosition, HookReadVelocity, HookLatestInput, HookInstallWrap};
 }
 
-std::string TickSource(int frame, int luaflags, int x = 1000, int y = 2000, int z = 3000, int yaw = 4500, int cam = 0) {
+std::string TickSource(int frame, int luaflags, int x = 1000, int y = 2000, int z = 3000, int yaw = 4500, int cam = 0, int stance = 0,
+                       int move = 0) {
     char text[200]{};
-    std::snprintf(text, sizeof(text), "return 'MGS_COOP_PARTNER_V1' -- %d %d %d %d %d %d 0 0 %d", frame, x, y, z, yaw, cam,
-                  luaflags);
+    std::snprintf(text, sizeof(text), "return 'MGS_COOP_PARTNER_V1' -- %d %d %d %d %d %d %d %d %d", frame, x, y, z, yaw, cam, stance,
+                  move, luaflags);
     return text;
 }
 
@@ -386,6 +405,11 @@ struct Session {
     std::uint64_t now = 1000;
     int frame = 0;
     partner::Reply reply{};
+    // The local PlayerStatus stance/move every tick reports, the gani of each
+    // DM_PLAY sent, and replies that carried both DM_PLAY and DM_STOP.
+    int stance = 0, move = 0;
+    std::vector<int> played;
+    unsigned both_dm_ops = 0;
 
     explicit Session(std::uint32_t stage, mgscoop::PartnerApply apply = mgscoop::PartnerApply::warp,
                      mgscoop::PartnerSource source = mgscoop::PartnerSource::fixed) : hooks(HooksFor(fake)) {
@@ -402,9 +426,26 @@ struct Session {
     // One frame: advances the clock, returns whether the tick was replied.
     bool Tick(int luaflags, std::uint64_t step_ms = 33, bool terminating = false) {
         now += step_ms;
-        const std::string source = TickSource(++frame, luaflags);
+        const std::string source = TickSource(++frame, luaflags, 1000, 2000, 3000, 4500, 0, stance, move);
         reply = partner::Reply{};
-        return pd::Tick(driver, hooks, lab, source.data(), source.size(), pd::Clock{now, now + 5000}, terminating, reply);
+        const bool replied = pd::Tick(driver, hooks, lab, source.data(), source.size(), pd::Clock{now, now + 5000}, terminating, reply);
+        if (replied && (reply.op & op::dm_play)) played.push_back(reply.gani);
+        if (replied && (reply.op & op::dm_play) && (reply.op & op::dm_stop)) ++both_dm_ops;
+        if (replied && fake.dm_auto) {
+            if (reply.op & op::dm_play) {
+                if (fake.dm_consume) {
+                    fake.dm.q18[1] = c::q18_dm_act;
+                    fake.dm.g388 = static_cast<std::uint8_t>(fake.dm.g388 & ~4u);
+                } else {
+                    fake.dm.g388 = static_cast<std::uint8_t>(fake.dm.g388 | 4u);
+                }
+            }
+            if ((reply.op & op::dm_stop) && fake.dm_stops) {
+                fake.dm.q18[1] = 3;
+                fake.dm.g388 = static_cast<std::uint8_t>(fake.dm.g388 & ~0x3Cu);
+            }
+        }
+        return replied;
     }
     void Trigger(const char* text) {
         fake.trigger = text;
@@ -1751,6 +1792,477 @@ void TestInputSequence() {
     Check(pn::AcceptInputSequence(true, 500, 1000, 1, 1001 + pn::kRestartGapMs), "seq: restart after the gap accepted");
 }
 
+// dm=map (partner_dmmap glued into TickDm): a session with xform movement,
+// instance 1 loaded, the DM idle and readable, and the fake game reacting to
+// the reply's DM ops. Ticks report all-active and parts copied (no COPY or
+// SET_ALLACTIVE executes in Lua), so only the gates a test sets apply.
+struct MapSession : Session {
+    explicit MapSession(mgscoop::PartnerSource source = mgscoop::PartnerSource::fixed)
+        : Session(3, mgscoop::PartnerApply::xform, source) {
+        driver.settings.dm = mgscoop::PartnerDm::map;
+        Loaded(*this);
+        fake.dm.q18[0] = 3; fake.dm.q18[1] = 3; fake.dm.g388 = 0; fake.dm.cam_ok = true;
+        fake.dm_auto = true;
+    }
+    bool T(std::uint64_t step = 33) { return Tick(3, step); }
+    void Run(std::uint64_t ms, std::uint64_t step = 33) {
+        const std::uint64_t end = now + ms;
+        while (now < end) T(step);
+    }
+    // Ticks until a DM_PLAY went out (at most ms): its gani, or -1.
+    int UntilPlay(std::uint64_t ms = 3000, std::uint64_t step = 33) {
+        const std::uint64_t end = now + ms;
+        while (now < end) {
+            T(step);
+            if (reply.op & op::dm_play) return reply.gani;
+        }
+        return -1;
+    }
+    // Ticks until a DM_STOP went out (at most ms).
+    bool UntilStop(std::uint64_t ms = 3000, std::uint64_t step = 33) {
+        const std::uint64_t end = now + ms;
+        while (now < end) {
+            T(step);
+            if (reply.op & op::dm_stop) return true;
+        }
+        return false;
+    }
+    // Playing: the first clip went out and the game confirmed it.
+    int Playing() {
+        const int g = UntilPlay();
+        T();
+        return driver.mission.dmmap.phase == mgscoop::partner_dmmap::Phase::playing ? g : -1;
+    }
+    // Index of the first line starting with `prefix` (-1 if none).
+    int Index(const char* prefix) const {
+        for (std::size_t i = 0; i < fake.lines.size(); ++i)
+            if (fake.lines[i].compare(0, std::strlen(prefix), prefix) == 0) return static_cast<int>(i);
+        return -1;
+    }
+};
+
+void TestDmMapPatchAndTable() {
+    namespace pdm = mgscoop::partner_dmmap;
+    // Patched like dm=on; the table line once at the first map tick.
+    {
+        MapSession s;
+        Check(s.T() && s.driver.mission.dm_patched && s.fake.Count("partner_dm=patched;") == 1, "map: patched like on");
+        Check(s.fake.Has("partner_dmmap=table; cells=0,10,11,5,1,3,4,4,7,6,6,6; speeds=300:2600:5600; reason=start\r\n"), "map: table at start");
+        s.Run(500);
+        Check(s.fake.Count("partner_dmmap=table;") == 1 && s.played.size() == 1 && s.played[0] == 0 && s.both_dm_ops == 0,
+              "map: one table line; stand idle plays after the hold");
+        Check(s.fake.Count("partner_dmmap=switch; step=play; from=none; to=0; stance=0; move=0;") == 1 &&
+              s.fake.Count("partner_dmmap=playing; gani=0; after_ms=33") == 1 && s.fake.Count("partner_dmmap; phase=") >= 1,
+              "map: switch, playing and summary lines");
+    }
+    // input_active and native_disabled refuse the patch (also for dm=on after a fault).
+    {
+        MapSession s;
+        s.driver.settings.input = mgscoop::PartnerInput::neutral;
+        Check(s.T() && !s.driver.mission.dm_patched && s.fake.Has("partner_dm=refused; reason=input_active\r\n") &&
+              s.fake.Has("partner_input=refused; reason=dm\r\n") && !s.driver.mission.input_armed, "map: input refuses the patch, dm the input");
+        MapSession f;
+        f.driver.mission.native_disabled = true;
+        Check(f.T() && f.T() && !f.driver.mission.dm_patched && f.fake.Count("partner_dm=refused; reason=native_disabled") == 1 &&
+              f.fake.dm_patch_calls == 0, "map: native_disabled refuses the patch");
+        Session o(3);
+        o.driver.settings.dm = mgscoop::PartnerDm::on;
+        Loaded(o);
+        o.driver.mission.native_disabled = true;
+        Check(o.Tick(1) && !o.driver.mission.dm_patched && o.fake.Has("partner_dm=refused; reason=native_disabled\r\n"),
+              "dm=on: no re-patch after a fault (native calls disabled for the mission)");
+    }
+    // A failed patch is latched: one refusal, one call, until a dm= trigger.
+    {
+        MapSession s;
+        s.fake.dm_patch_fail = true;
+        for (int i = 0; i < 100; ++i) s.T();
+        Check(s.fake.dm_patch_calls == 1 && s.fake.Count("partner_dm=refused; reason=comparator_bytes") == 1 &&
+              s.fake.Count("partner_dm=refused; reason=patch_failed") == 1 && s.played.empty(), "patch failure latched (no per-tick retry)");
+        Check(s.fake.Count("partner_dmmap=deferred; reason=not_patched") == 1, "map: not_patched deferred once");
+        s.fake.dm_patch_fail = false;
+        s.Trigger("dm=map");
+        Check(s.T() && s.driver.mission.dm_patched && s.fake.dm_patch_calls == 2, "a dm= trigger retries the patch");
+        Check(s.played.size() == 1 && s.played[0] == 0, "then the mapper plays (the hold already ran)");
+    }
+    // The table line on dmmap=/dmspeed= triggers, in any dm mode.
+    {
+        Session s(3);
+        s.driver.settings.dm = mgscoop::PartnerDm::on;
+        s.Trigger("dmspeed=300:1500:5600");
+        Check(s.fake.Has("partner_dmmap=table; cells=0,10,11,5,1,3,4,4,7,6,6,6; speeds=300:1500:5600; reason=trigger\r\n") &&
+              s.driver.settings.dm_speed.run_mmps == 1500 && s.driver.dmmap_rearm, "dmspeed= logs the table while dm=on");
+        s.Trigger("dmmap=0,12,11,5,1,3,4,4,2,6,6,6");
+        Check(s.fake.Has("partner_dmmap=table; cells=0,12,11,5,1,3,4,4,2,6,6,6; speeds=300:1500:5600; reason=trigger\r\n") &&
+              s.driver.settings.dm_map.cells[1] == 12, "dmmap= logs the table");
+        Check(s.Tick(1) && s.fake.Count("partner_dmmap; phase=") == 0 && s.fake.Count("partner_dmmap=switch") == 0, "dm=on: no mapper");
+        pd::MissionStart(s.driver, s.hooks);
+        Check(!s.driver.dmmap_rearm && s.driver.mission.dmmap.cand == pdm::kNoGani && s.driver.settings.dm_map.cells[1] == 12,
+              "MissionStart: the mapper reset, the settings kept");
+        // Configure resets the mapper too (Mission{} alone would leave gani 0 as the candidate).
+        pd::Driver fresh{};
+        pd::Configure(fresh, s.lab);
+        Check(fresh.mission.dmmap.cand == pdm::kNoGani && fresh.mission.dmmap.cur == pdm::kNoGani &&
+              fresh.settings.dm_map.cells[1] == 10 && fresh.settings.dm_speed.dash_mmps == 5600, "Configure: mapper reset, lab table");
+    }
+}
+
+void TestDmMapSources() {
+    // Orbit (2356 mm/s at offset 300 cm): walk, then run and dash through dmspeed.
+    {
+        MapSession s(mgscoop::PartnerSource::orbit);
+        Check(s.UntilPlay() == 10, "orbit: the stand walk loop (2356 mm/s < 2600)");
+        s.Trigger("dmspeed=300:1500:5600");
+        Check(s.UntilPlay() == 11 && s.fake.Count("partner_dmmap=switch; step=stop; from=10; to=11;") == 1, "orbit: run after dmspeed");
+        s.Trigger("dmspeed=300:1000:2000");
+        Check(s.UntilPlay() == 5, "orbit: dash");
+        Check(s.fake.Containing("; via=speed; stance_via=flags;") >= 3 && s.both_dm_ops == 0, "orbit: via speed");
+        // The local stance decides the row.
+        s.stance = 1;
+        Check(s.UntilPlay() == 4, "orbit: squat dash falls back to squat run (4)");
+        s.stance = 2;
+        Check(s.UntilPlay() == 6, "orbit: crawl fast loop");
+    }
+    // Fixed: the local move flags.
+    {
+        MapSession s;
+        Check(s.UntilPlay() == 0, "fixed: stand idle");
+        s.move = 2;
+        Check(s.UntilPlay() == 11, "fixed: move 2 -> stand run loop");
+        s.move = 3;
+        Check(s.UntilPlay() == 5, "fixed: move 3 -> stand dash");
+        s.stance = 1; s.move = 1;
+        Check(s.UntilPlay() == 3, "fixed: squat walk");
+        s.stance = 2; s.move = 0;
+        Check(s.UntilPlay() == 7, "fixed: crawl idle (proven p_idl)");
+        // Flags win: move 0 with a moving local anim stays idle.
+        s.stance = 0;
+        s.fake.anim_ok = true;
+        s.fake.anim.act[0] = 2; s.fake.anim.stance[0] = 1; s.fake.anim.speed[0] = 3;
+        Check(s.UntilPlay() == 0, "fixed: back to stand idle");
+        s.Run(1000);
+        Check(s.played.back() == 0 && s.driver.mission.dmmap.cur == 0, "fixed: move 0 is a flag (the moving anim does not decide)");
+        // A local anim crawl with stance flags stand: the anim stance.
+        s.fake.anim.stance[0] = 3; s.fake.anim.act[0] = 5; s.fake.anim.speed[0] = 0;
+        Check(s.UntilPlay() == 7 && s.fake.Containing("stance_via=anim") >= 1, "fixed: anim crawl stance");
+        Check(s.both_dm_ops == 0, "fixed: never 128 and 256 together");
+    }
+    // Net: the remote's speed, Sprinting flag, anim stance; stale freezes, lost idles.
+    {
+        MapSession s(mgscoop::PartnerSource::net);
+        auto& sm = s.fake.sample;
+        sm.valid = true; sm.status = mgscoop::pose::Status::live; sm.x = 1.0f; sm.y = 2.0f; sm.z = 3.0f;
+        const auto move = [&](double mmps, std::uint64_t ms) {
+            const std::uint64_t end = s.now + ms;
+            while (s.now < end) {
+                sm.x = static_cast<float>(sm.x + mmps * 0.033 / 1000.0);
+                s.T();
+            }
+        };
+        sm.stance = 1;
+        move(3000, 1500);
+        Check(!s.played.empty() && s.played.back() == 4, "net: squat at 3 m/s -> squat run (4)");
+        sm.stance = 0;
+        sm.flags = mgscoop::sync::ActionFlag::Sprinting;
+        move(6000, 1500);
+        Check(s.played.back() == 5, "net: Sprinting -> stand dash");
+        sm.flags = 0;
+        sm.anim_valid = true; sm.act = 6; sm.anim_stance = 3; sm.anim_speed = 2;
+        move(1000, 1500);
+        Check(s.played.back() == 6 && s.fake.Containing("stance_via=anim") >= 1, "net: anim crawl -> crawl fast loop");
+        sm.anim_valid = false;
+        sm.status = mgscoop::pose::Status::stale;
+        const std::size_t plays = s.played.size();
+        move(0, 1500);
+        Check(s.played.size() == plays, "net: stale freezes the clip");
+        sm.status = mgscoop::pose::Status::lost;
+        s.Run(1500);
+        Check(s.played.back() == 7 && s.fake.Containing("via=lost") >= 1, "net: lost -> the idle cell of the last stance (crawl: 7)");
+        Check(s.both_dm_ops == 0, "net: never 128 and 256 together");
+    }
+}
+
+void TestDmMapGates() {
+    // Host DM, a camera connect and a foreign pending request each defer once.
+    const auto once = [](void (*setup)(Fake&), const char* line) {
+        MapSession s;
+        setup(s.fake);
+        for (int i = 0; i < 100; ++i) s.T();
+        return s.played.empty() && s.fake.Count(line) == 1;
+    };
+    Check(once([](Fake& f) { f.dm.q18[0] = c::q18_dm_act; }, "partner_dmmap=deferred; reason=host_dm; phase=wait; want=0; cur=none"),
+          "host DM deferred once");
+    Check(once([](Fake& f) { f.dm.cam1f0 = 0x1234; }, "partner_dmmap=deferred; reason=cam_connect"), "camera connect deferred once");
+    Check(once([](Fake& f) { f.dm.g388 = 0x8; }, "partner_dmmap=deferred; reason=pending"), "foreign pending deferred once");
+    // SET_PARTS defers the play; look_verify keeps it deferred until loaded.
+    {
+        MapSession s;
+        s.Trigger("parts=explicit");
+        Check(s.T() && (s.reply.op & op::set_parts_explicit) && s.driver.mission.look_verify, "parts=explicit: SET_PARTS");
+        s.Run(1000);
+        Check(s.played.empty() && s.fake.Count("partner_dmmap=deferred; reason=look") == 1, "SET_PARTS + verify: deferred look");
+        s.driver.mission.look_verify = false;
+        Check(s.UntilPlay(200) == 0, "look loaded: plays");
+    }
+    // An executed COPY (Lua has not copied yet) defers the play.
+    {
+        MapSession s;
+        for (int i = 0; i < 30; ++i) s.Tick(1);
+        Check(s.played.empty() && (s.reply.op & op::copy_parts) && s.fake.Count("partner_dmmap=deferred; reason=look") == 1,
+              "COPY executing: deferred look");
+        Check(s.UntilPlay(200) == 0, "parts copied: plays");
+    }
+    // An xform refusal falls back to Warp: deferred warp; a Warp that ends the clip is a loss, not a strike.
+    {
+        MapSession s;
+        s.fake.xform_result = "body";
+        s.Run(1000);
+        Check(s.played.empty() && (s.reply.op & op::warp) && s.fake.Count("partner_dmmap=deferred; reason=warp") == 1,
+              "xform refused: deferred warp");
+        s.fake.xform_result = nullptr;
+        Check(s.Playing() == 0, "xform again: plays");
+        s.Run(400);
+        s.fake.xform_result = "body";
+        Check(s.T() && (s.reply.op & op::warp), "one fallback Warp");
+        s.fake.xform_result = nullptr;
+        s.fake.dm.q18[1] = 3;  // the Warp ended the clip
+        Check(s.T() && s.fake.Count("partner_dmmap=lost; gani=0; played_ms=") == 1 &&
+              s.fake.Containing("; cause=warp; failures=0") == 1 && s.fake.Count("partner_dmmap=bad_gani") == 0,
+              "Warp loss: cause warp, no strike");
+        Check(s.UntilPlay(300) == 0, "replayed");
+    }
+}
+
+void TestDmMapFailures() {
+    // Unconsumed plays: backoff, bad_gani on the second strike, failed at five.
+    {
+        MapSession s;
+        s.fake.dm_consume = false;
+        s.fake.dm_cleared = true;
+        s.move = 1;
+        s.Run(60000, 50);
+        Check(s.fake.Count("partner_dm=unconsumed;") == 4 && s.fake.Count("partner_dmmap=unconsumed;") == 4,
+              "unconsumed: the native watch and the mapper");
+        Check(s.fake.Has("partner_dmmap=unconsumed; gani=10; ms=2500; failures=1; backoff_ms=1000\r\n"), "first: backoff 1 s");
+        Check(s.fake.Has("partner_dmmap=bad_gani; gani=10; reason=unconsumed; strikes=2\r\n") &&
+              s.fake.Has("partner_dmmap=bad_gani; gani=0; reason=unconsumed; strikes=2\r\n"), "walk then stand idle bad");
+        Check(s.fake.Count("partner_dmmap=deferred; reason=bad_gani") == 1 && s.played.size() == 4, "stand row exhausted: bad_gani");
+        s.stance = 1;
+        s.Run(10000, 50);
+        Check(s.fake.Has("partner_dmmap=failed; failures=5; last=unconsumed\r\n") && s.played.size() == 5 && s.played[4] == 3 &&
+              s.driver.mission.dmmap.phase == mgscoop::partner_dmmap::Phase::failed, "fifth failure: failed");
+        s.Run(10000, 50);
+        Check(s.played.size() == 5 && s.fake.Containing("; bad=0x401; failures=5; ") >= 1, "failed: nothing more; summary shows bad/failures");
+        s.fake.dm_consume = true;
+        s.Trigger("dm=map");
+        Check(s.UntilPlay() == 3, "dm=map rearms a failed mapper (squat walk again)");
+    }
+    // A stop that never lands: stop_timeout, then the stop again after the backoff.
+    {
+        MapSession s;
+        Check(s.Playing() == 0, "playing");
+        s.fake.dm_stops = false;
+        s.move = 3;
+        Check(s.UntilStop(), "stop sent");
+        s.Run(1100);
+        Check(s.fake.Count("partner_dmmap=stop_timeout; gani=0; ms=10") == 1 &&
+              s.fake.Containing("; failures=1; backoff_ms=1000; reason=stop_timeout") == 1, "stop_timeout");
+        s.fake.dm_stops = true;
+        Check(s.UntilPlay() == 5 && s.both_dm_ops == 0, "stop again, then dash");
+    }
+}
+
+void TestDmMapRelease() {
+    namespace pdm = mgscoop::partner_dmmap;
+    // dm=off: the clip is stopped first, then the patch reverted.
+    {
+        MapSession s;
+        Check(s.Playing() == 0, "release: playing");
+        s.Trigger("dm=off");
+        Check(s.T() && (s.reply.op & op::dm_stop) && s.driver.mission.dm_patched, "release: stop first, patch kept");
+        Check(s.T() && !s.driver.mission.dm_patched && s.fake.Has("partner_dmmap=released; result=stopped; to=off; ms=33\r\n"),
+              "release: released stopped");
+        const int released = s.Index("partner_dmmap=released;"), reverted = s.Index("partner_dm=reverted; reason=trigger");
+        Check(released >= 0 && reverted > released, "release: released, then reverted");
+        s.Run(500);
+        Check(s.played.size() == 1 && s.fake.Count("partner_dmmap; phase=") >= 1 && s.both_dm_ops == 0, "off: nothing more");
+    }
+    // While the host is in DM: no stop, released timeout at 1.5 s.
+    {
+        MapSession s;
+        Check(s.Playing() == 0, "release host: playing");
+        s.fake.dm.q18[0] = c::q18_dm_act;
+        s.Trigger("dm=off");
+        s.Run(1400);
+        Check(s.driver.mission.dm_patched && s.fake.Count("partner_dmmap=released") == 0, "release host: waiting");
+        s.Run(200);
+        Check(!s.driver.mission.dm_patched && s.fake.Count("partner_dmmap=released; result=timeout; to=off; ms=15") == 1,
+              "release host: timeout, then reverted");
+    }
+    // Without dm_targets nothing can be released: abandoned and reverted at once.
+    {
+        MapSession s;
+        Check(s.Playing() == 0, "abandon: playing");
+        s.hooks.dm_targets = nullptr;
+        s.Trigger("dm=off");
+        Check(s.T() && !s.driver.mission.dm_patched && s.fake.Has("partner_dmmap=abandoned; reason=trigger; gani=0\r\n"),
+              "no dm_targets: abandoned, reverted");
+    }
+    // map -> on: released (to=on), the dmplay in the same trigger refused; on -> map adopts a manual clip.
+    {
+        MapSession s;
+        Check(s.Playing() == 0, "map->on: playing");
+        s.Trigger("dm=on dmplay=3");
+        Check(s.T() && (s.reply.op & op::dm_stop) && !(s.reply.op & op::dm_play) && s.fake.Has("partner_dm=refused; reason=map_release\r\n"),
+              "map->on: stop, the manual play refused during the release");
+        Check(s.T() && s.fake.Has("partner_dmmap=released; result=stopped; to=on; ms=33\r\n") && s.driver.mission.dm_patched,
+              "map->on: released, patch kept");
+        s.Trigger("dmplay=3");
+        Check(s.T() && (s.reply.op & op::dm_play) && s.reply.gani == 3 && s.fake.Has("partner_dm=play; gani=3\r\n"), "dm=on: manual play");
+        s.T();
+        s.Trigger("dm=map");
+        Check(s.T() && s.fake.Has("partner_dmmap=adopted; reason=active_clip\r\n"), "on->map: the manual clip is adopted");
+        Check(s.UntilStop() && s.UntilPlay() == 0 && s.both_dm_ops == 0, "on->map: then stopped and replaced by the target");
+        s.Trigger("dmplay=1");
+        s.Trigger("dmstop=1");
+        Check(s.T() && s.fake.Count("partner_dm=refused; reason=map\r\n") == 2 && !(s.reply.op & (op::dm_play | op::dm_stop)),
+              "map: manual dmplay/dmstop refused, one line each");
+    }
+    // [I]-style dm=off input=neutral during a release: input refused (dm) until released.
+    {
+        MapSession s;
+        Check(s.Playing() == 0, "input race: playing");
+        s.fake.dm.q18[0] = c::q18_dm_act;
+        s.Trigger("dm=off input=neutral");
+        s.Run(1000);
+        Check(!s.driver.mission.input_armed && s.fake.Has("partner_input=refused; reason=dm\r\n") && s.driver.mission.dm_patched,
+              "input race: refused while the release runs");
+        s.fake.dm.q18[0] = 3;
+        s.fake.dm.q18[1] = 3;
+        s.Run(700);
+        Check(s.driver.mission.input_armed && !s.driver.mission.dm_patched &&
+              s.driver.mission.dmmap.phase == pdm::Phase::idle, "input race: armed after the release and the revert");
+    }
+}
+
+void TestDmMapInteractions() {
+    namespace pdm = mgscoop::partner_dmmap;
+    // anim=mirror while a mapped clip plays: anim writes wait, the clip is stopped, then aset resumes.
+    {
+        MapSession s;
+        s.fake.anim_ok = true;
+        s.fake.anim.act[0] = 1; s.fake.anim.stance[0] = 1; s.fake.anim.speed[0] = 0;
+        Check(s.Playing() == 0, "anim: playing");
+        s.Trigger("anim=mirror aset=q");
+        Check(s.T() && (s.reply.op & op::dm_stop) && s.fake.Calls("anim:") == 0 &&
+              s.fake.Has("partner_anim=deferred; reason=dm_map\r\n"), "anim: deferred, the clip stopped");
+        s.T();
+        Check(s.fake.Calls("anim:") == 0 && !s.driver.mission.dmmap.owned, "anim: stop confirmed");
+        s.Run(500);
+        Check(s.fake.Calls("anim:1,1,0") >= 10 && s.fake.Count("partner_anim=deferred; reason=dm_map") == 1 &&
+              s.fake.Count("partner_dmmap=deferred; reason=anim") == 1 && s.played.size() == 1, "anim: aset writes resume, map deferred");
+    }
+    // Teardown with a clip: abandoned, then reverted; adopted after a re-patch.
+    {
+        MapSession s;
+        Check(s.Playing() == 0, "teardown: playing");
+        pd::MissionEnd(s.driver, s.hooks);
+        Check(s.fake.Has("partner_dmmap=abandoned; reason=mission_end; gani=0\r\n") &&
+              s.Index("partner_dmmap=abandoned") < s.Index("partner_dm=reverted; reason=mission_end"), "MissionEnd: abandoned, reverted");
+        MapSession m;
+        Check(m.Playing() == 0, "teardown: playing");
+        pd::MissionStart(m.driver, m.hooks);
+        Check(m.fake.Has("partner_dmmap=abandoned; reason=mission_start; gani=0\r\n") && !m.driver.mission.dmmap.owned &&
+              m.driver.mission.dmmap.phase == pdm::Phase::idle, "MissionStart: abandoned, mapper reset");
+        MapSession t;
+        Check(t.Playing() == 0, "teardown: playing");
+        pd::Stop(t.driver, t.hooks, mgscoop::PartnerTeardown::keep, false);
+        Check(t.fake.Has("partner_dmmap=abandoned; reason=stop; gani=0\r\n"), "Stop: abandoned");
+        MapSession r;
+        Check(r.Playing() == 0, "teardown: playing");
+        partner::Reply reply{};
+        Check(!pd::Tick(r.driver, r.hooks, r.lab, "return 'MGS_COOP_PARTNER_V1' -- x", 33, pd::Clock{r.now, r.now}, false, reply) &&
+              r.fake.Has("partner_dmmap=abandoned; reason=tick_rejected; gani=0\r\n") && !r.driver.mission.dm_patched,
+              "tick rejected: abandoned, reverted");
+        Check(r.T() && r.driver.mission.dm_patched && r.fake.Has("partner_dmmap=adopted; reason=active_clip\r\n"),
+              "re-patched: the still looping clip is adopted");
+        MapSession q;
+        Check(q.Playing() == 0, "teardown: playing");
+        q.fake.refusal = pp::Refusal::count;
+        Check(!q.T() && q.fake.Has("partner_dmmap=abandoned; reason=cfg_refused; gani=0\r\n"), "cfg refused: abandoned");
+    }
+    // Unrealize forgets the clip (no lost line); a fresh play once loaded again.
+    {
+        MapSession s;
+        Check(s.Playing() == 0, "unrealize: playing");
+        s.fake.Realize(false);
+        s.fake.dm.q18[1] = 3;
+        s.Run(300);
+        Check(!s.driver.mission.dmmap.owned && s.fake.Count("partner_dmmap=lost") == 0 &&
+              s.fake.Count("partner_dmmap=deferred; reason=parts") == 1, "unrealize: forgotten, parts deferred");
+        Loaded(s);
+        Check(s.UntilPlay(300) == 0 && s.played.size() == 2, "realized again: a fresh play");
+    }
+    // Blocked by the movement driver or the stage: stop, then deferred.
+    {
+        MapSession s;
+        Check(s.Playing() == 0, "blocked: playing");
+        s.Trigger("apply=warp");
+        Check(s.T() && (s.reply.op & op::dm_stop) && s.fake.Has("partner_dmmap=switch; step=stop; from=0; to=none; stance=0; move=0; "
+                                                               "speed_mmps=-1; via=flags; stance_via=flags; wait_ms=0\r\n"),
+              "apply=warp: the clip stopped");
+        s.Run(500);
+        Check(s.fake.Count("partner_dmmap=deferred; reason=apply") == 1 && s.played.size() == 1, "apply=warp: deferred apply");
+        s.Trigger("apply=xform");
+        Check(s.UntilPlay(300) == 0, "apply=xform: plays again");
+        s.T();
+        s.Run(400);
+        s.Trigger("stage=2");
+        Check(s.T() && (s.reply.op & op::dm_stop), "stage=2: the clip stopped");
+        s.Run(300);
+        Check(s.fake.Count("partner_dmmap=deferred; reason=stage") == 1, "stage=2: deferred stage");
+    }
+}
+
+void TestDmMapCaps() {
+    // Each family has its own cap: 64 deferred lines do not silence abandoned.
+    {
+        MapSession s;
+        Check(s.Playing() == 0, "caps: playing");
+        s.move = 3;
+        for (int i = 0; i < 100; ++i) {
+            if (i % 2) { s.fake.dm.q18[0] = c::q18_dm_act; s.fake.dm.g388 = 0; }
+            else { s.fake.dm.q18[0] = 3; s.fake.dm.g388 = 0x8; }
+            s.T();
+        }
+        Check(s.fake.Count("partner_dmmap=deferred;") == 64 && s.fake.Count("partner_dmmap=capped; limit=64; kind=deferred") == 1 &&
+              s.driver.mission.dmmap.deferrals > 64, "deferred: capped at 64, the counter continues");
+        pd::MissionEnd(s.driver, s.hooks);
+        Check(s.fake.Has("partner_dmmap=abandoned; reason=mission_end; gani=0\r\n"), "abandoned still logged");
+    }
+    // switch/playing lines share 600.
+    {
+        MapSession s;
+        for (int i = 0; i < 260; ++i) {
+            s.move = i % 2 ? 3 : 0;
+            s.Run(600, 50);
+        }
+        Check(s.fake.Count("partner_dmmap=switch;") + s.fake.Count("partner_dmmap=playing;") == 600 &&
+              s.fake.Count("partner_dmmap=capped; limit=600; kind=switch") == 1 && s.driver.mission.dmmap.plays > 200 && s.both_dm_ops == 0,
+              "switch/playing: capped at 600");
+    }
+    // The summary: every 5 s, 720 lines, then one cap line; counters match.
+    {
+        MapSession s;
+        for (int i = 0; i < 3700; ++i) s.T(1000);
+        Check(s.fake.Count("partner_dmmap; phase=") == 720 && s.fake.Count("partner_dmmap=capped; limit=720; kind=summary") == 1,
+              "summary: capped at 720");
+        char plays[32]{};
+        std::snprintf(plays, sizeof(plays), "; plays=%u;", s.driver.mission.dmmap.plays);
+        Check(s.fake.Containing(plays) >= 1 && s.fake.Containing("partner_dmmap; phase=playing; cur=0; want=0;") >= 700, "summary counters");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -1776,10 +2288,17 @@ int main() {
     TestReviewFixes();
     TestRound4Review();
     TestInputSequence();
+    TestDmMapPatchAndTable();
+    TestDmMapSources();
+    TestDmMapGates();
+    TestDmMapFailures();
+    TestDmMapRelease();
+    TestDmMapInteractions();
+    TestDmMapCaps();
     std::printf("%u partner driver checks passed: CFG/boundaries, stage-3 timeline, trigger stop/stage, STOP while terminating, "
                 "teardown keep, refusal caps, realize thrash cap, all-active re-assert, flags, mirror lifecycle, one-shots, "
                 "force_exists, policy, net source, cadence, Lua notes, quiet pairing, probes, anim mirror/net (q/s/r, debounce, "
                 "revert, fault), xform/hybrid drivers, looks (quiet/snake/net/copy, verify, timeout, waiting, refusals), census, "
-                "ps probe; no game\n", checks);
+                "ps probe, dm=map (patch, table, sources, gates, failures, release, teardown, caps); no game\n", checks);
     return 0;
 }

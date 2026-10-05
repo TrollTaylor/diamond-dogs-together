@@ -10,7 +10,7 @@
 //   return 'MGS_COOP_PARTNER_V1' -- <frame> <x_mm> <y_mm> <z_mm> <yaw_cdeg> <cam_cdeg> <stance> <move> <luaflags>
 //        -> return <op>,<R>,<x_mm>,<y_mm>,<z_mm>,<yaw_mrad>,<status>,<age_ms>   (quiet; per frame)
 //           followed by ,<type>,<parts>,<camo>,<hand>,<face> when op has SET_PARTS (16) or DM_PLAY (128)
-//           (zeros unless SET_PARTS), and then ,<gani> (0..9) when op has DM_PLAY (128)
+//           (zeros unless SET_PARTS), and then ,<gani> (0..12) when op has DM_PLAY (128)
 //   return 'MGS_COOP_PARTNER_LOG_V1' -- <payload>          -> logs partner_lua=<payload>; return true
 //   return 'MGS_COOP_PARTNER_STOP_V1'                     -> return true
 // Integers only, so neither Lua's nor the C runtime's locale is involved.
@@ -30,7 +30,7 @@ inline constexpr char log_prefix[] = "return 'MGS_COOP_PARTNER_LOG_V1' -- ";
 inline constexpr std::size_t max_receipt = 200;
 inline constexpr std::size_t max_log_payload = 160;
 // Always fits FormatReply output (8 signed 32-bit integers, the 5 bounded look
-// values, the gani index, commas, "return "): at most 113 characters.
+// values, the gani index, commas, "return "): at most 114 characters.
 inline constexpr std::size_t reply_capacity = 128;
 // Fits FormatLogLine output: "partner_lua=" + payload with ';' -> "; " + CRLF.
 inline constexpr std::size_t log_line_capacity = 12 + 2 * max_log_payload + 3;
@@ -59,7 +59,7 @@ inline constexpr std::uint32_t dm_play = 128;
 inline constexpr std::uint32_t dm_stop = 256;
 }
 // Highest gani index of the Lua table (partner_sync.lua GANI).
-inline constexpr std::uint8_t max_gani = 9;
+inline constexpr std::uint8_t max_gani = kPartnerDmGaniMax;  // partner_sync.lua GANI 0..12
 // luaflags reported by Lua in every tick.
 namespace luaflag {
 inline constexpr std::uint32_t all_active = 1;
@@ -166,7 +166,8 @@ std::size_t FormatLogLine(const char* source, std::size_t size, char* out, std::
 //   | cam=off|detect|sandbox | hold=none|pass | yaw=rot|rotneg|none
 //   | words=<3 of 0prhn> | bits=0x<hex> | correct=<0..10000>
 //   | isend=0|1 | p218=0|1 | padprobe=0|1 | holdlog=0|1
-//   | dm=off|probe|on | dmplay=<0..9> | dmstop=1   (dmplay/dmstop one-shots)
+//   | dm=off|probe|on|map | dmplay=<0..12> | dmstop=1   (dmplay/dmstop one-shots)
+//   | dmmap=<12 x 0..12, comma-separated> | dmspeed=<idle>:<run>:<dash>   (dm=map settings)
 //   | lookgate=0|1 | lookrecover=0|1
 // Round 4 (docs/partner-anim-appearance.md "Round 4"):
 //   | hold=none|pass|own|net | recon=off|track|pin | align=<-50..150>
@@ -226,6 +227,10 @@ struct Trigger {
     bool dmplay;
     std::uint8_t dmplay_gani;
     bool dmstop;
+    bool has_dmmap;
+    PartnerDmTable dmmap;
+    bool has_dmspeed;
+    PartnerDmSpeeds dmspeed;
     bool has_lookgate, lookgate;
     bool has_lookrecover, lookrecover;
     // Round 4.

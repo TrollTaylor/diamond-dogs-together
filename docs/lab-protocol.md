@@ -167,8 +167,10 @@ stage=<0..3> source=<fixed|orbit|net> apply=<warp|slot|both|xform|hybrid|input> 
   # round 3 (docs/partner-anim-appearance.md "Round 3"):
   input=<off|pass|neutral|stick|net> stick=<0..359>:<0..100> cam=<off|detect|sandbox>
   hold=<none|pass> yaw=<rot|rotneg|none> words=<3 of 0prhn> bits=0x<hex> correct=<0..10000>
-  isend=<0|1> p218=<0|1> padprobe=<0|1> holdlog=<0|1> dm=<off|probe|on> lookgate=<0|1> lookrecover=<0|1>
-  tap=0x<hex> press=0x<hex>:<50..5000> dmplay=<0..9> dmstop=1   (one-shots)
+  isend=<0|1> p218=<0|1> padprobe=<0|1> holdlog=<0|1> dm=<off|probe|on|map> lookgate=<0|1> lookrecover=<0|1>
+  tap=0x<hex> press=0x<hex>:<50..5000> dmplay=<0..12> dmstop=1   (one-shots)
+  # dm=map (docs/partner-anim-appearance.md "D-map"):
+  dmmap=<12 comma-separated gani 0..12> dmspeed=<idle>:<run>:<dash>   (written after dm=)
   # round 4 (docs/partner-anim-appearance.md "Round 4"):
   hold=<none|pass|own|net> recon=<off|track|pin> align=<-50..150> slot=<remote|body|none>
   runaway=<pin|disarm|off> wrap=<off|census|window> place=1   (place is a one-shot)
@@ -189,7 +191,9 @@ are the native parser's one-shot tokens (`native/partner_receipt.cpp`
 the input window is armed and within `bits=`; refused with
 `partner_input=tap_refused; reason=mask|not_armed`), `dmplay`/`dmstop` (direct
 motion, `dmplay` only at stage 1+; refused with `partner_dm=refused;
-reason=not_patched|parts|busy|cam_connect`) and `p218=1` (the hazardous
+reason=not_patched|parts|busy|cam_connect`, and with `reason=map` while
+`dm=map` owns the direct motion or `reason=map_release` while it releases its
+clip) and `p218=1` (the hazardous
 diagnostic P+0x218 window: needs `lab.ini partner_input_p218_allow=1` and
 `cam=sandbox`, auto-expires after 20 s; quit without saving afterwards).
 `holdlog=0|1` is a setting, not a one-shot: it needs `lab.ini
@@ -305,6 +309,17 @@ realization line is inside the stage 3 segment).
 | `partner_recon; mode=..; recon=off\|track\|pin; err_mm=..; dy_mm=..; along_mm=..; cross_mm=..; v_free_mmps=..; v_remote_mmps=..; dv_mmps=..; body_mm=..; target_mm=..; ...; snaps=..; places=..; ...; stop_ok=..; runaway=..; input_pin=..; fixes=..` | the 1 Hz reconciliation line (3600 per mission; `recon=` is the effective setting; snaps/places are cumulative since the reconciliation started) |
 | `partner_body; R=1; body_mm=..; yaw_mrad=..; speed_mmps=<n\|na>; own_mmps=<n\|na>; vel_mmps=<n\|na>; ...; epoch=..; snaps=..` | 2 Hz body readback (3600 per mission; speed from the oldest same-epoch sample of a 32-tick ring over the actual span, at least 150 ms) |
 | `partner_wrap; mode=..; svc28=c,s,n,w,0xph; svc30=..; svc40=..; walk7=..; walk11=..; r0=..; other=..`, `partner_input_wrap=installed\|refused; ...` | W0 wrap census (wrap=census\|window) |
+| `partner_dm_census; ...`, `partner_dm; patched=..; g388=0x..; ...` (2 Hz, change-only) | D0 (dm=probe\|on\|map) |
+| `partner_dm=patched; rva=0x1198e25; ...`, `partner_dm=reverted; reason=trigger\|stop\|mission_start\|mission_end\|cfg_refused\|tick_rejected\|fault` | D1-D5 (the comparator patch and its revert) |
+| `partner_dm=play; gani=..`, `partner_dm=stop` | D1-D3 manual one-shots (not logged for mapped steps) |
+| `partner_dm=refused; reason=not_patched\|parts\|busy\|cam_connect\|not_in_dm\|map\|map_release`, `partner_dm=refused; reason=input_active\|native_disabled\|patch_failed\|comparator_bytes\|patch_..` | a refused one-shot; a refused patch (change-only; a failed patch is not retried until the next `dm=` trigger) |
+| `partner_dm=unconsumed; ms=..`, `partner_dm=cleared_pending`, `partner_dm=conflict; q18_0=..; cam1f0=..; cam200=..` | a play never consumed (FAIL in D1-D5); our DM met the host's DM or a camera connect (FAIL) |
+| `partner_dmmap=table; cells=..; speeds=..; reason=start\|trigger` | D4/D5 the dm=map table (first map tick; every `dmmap=`/`dmspeed=` trigger) |
+| `partner_dmmap=switch; step=stop\|play; from=..; to=..; stance=..; move=..; speed_mmps=..; via=..; stance_via=..; wait_ms=..`, `partner_dmmap=playing; gani=..; after_ms=..` | D4/D5 clip switches (600 per mission, then `partner_dmmap=capped; limit=600; kind=switch`) |
+| `partner_dmmap=deferred; reason=..; phase=..; want=..; cur=..`, `partner_dmmap=lost; gani=..; played_ms=..; cause=ended\|warp\|look\|parts\|host; ...`, `partner_dmmap=adopted; reason=active_clip`, `partner_dmmap=abandoned; reason=..; gani=..` | D4/D5 diagnostics (each family 64, then `partner_dmmap=capped; limit=64; kind=<family>`) |
+| `partner_dmmap=unconsumed; gani=..; ...`, `partner_dmmap=stop_timeout; ...; reason=stop_timeout\|dm_read`, `partner_dmmap=bad_gani; gani=..; reason=unconsumed\|ended; strikes=2`, `partner_dmmap=failed; failures=5; last=..` | D4/D5 failures (bad_gani, failed or more than 3 stop_timeout FAIL) |
+| `partner_dmmap=released; result=stopped\|ended\|timeout; to=off\|on\|probe; ms=..` | D4/D5 the mapped clip released when dm leaves map (then reverted with dm=off) |
+| `partner_dmmap; phase=..; cur=..; want=..; stance=..; move=..; via=..; speed_mmps=..; switches=..; ...; bad=0x..; failures=..; deferred=..` | the 5 s dm=map summary (720 per mission; Play-OfflineCoop shows the clip) |
 
 ## Trigger inputs (scripts create, native consumes and deletes)
 

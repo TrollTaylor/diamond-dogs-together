@@ -5,31 +5,30 @@ showing the other player as a second character.
 
 .DESCRIPTION
 Runs the offline lab path (docs/testing-2026-10-04.md) with the appearance
-sync and the input drive of docs/partner-anim-appearance.md ("Round 4"):
+sync of docs/partner-anim-appearance.md:
   1. Prepare-LabInstance.ps1 -Offline with the partner synced over our own link
      from the start: stage 3, source net, look net (each copy shows the other
-     player's own character). Default movement (round 4): the INPUT DRIVE --
-     each copy drives its partner from the other player's own pad (apply=input
-     input=net isend=1, words hpr, hold own, keyboard dash/walk in the mask),
-     so the partner runs, crouches and goes prone with its real locomotion;
-     the reconciliation (recon=track) places it once at the remote's position
-     and only nudges drift, snapping on a large error, pinning it when it keeps
-     moving on its own. [W] falls back to the PROVEN movement (Lua Warp every
-     tick, input off); -ProvenWarp starts there. Test condition: the GUEST
+     player's own character). Default movement: the PROVEN Warp (Lua Warp every
+     tick, input off, dm off; -ProvenWarp is the same). Opt-in experiments:
+     -Animated (or [D]): dm=map -- the smooth xform movement plus direct-motion
+     clips that follow the other player's stance and speed (walk, run, dash,
+     crouch, prone; docs/partner-anim-appearance.md "D-map"), experimental
+     until the D4/D5 live pass. -InputDrive (or [I]): the round 4 input drive
+     (apply=input input=net isend=1, words hpr, hold own, recon track), which
+     does not start locomotion yet. -Experimental: the round 2 smooth movement
+     (hybrid) with stance sync (anim net, aset qs). Test condition: the GUEST
      plays Quiet (lab.json offline.characters.guest), the host keeps its
      character. Your real saves are backed up; both copies play on save
      COPIES. No server, no login, no game session.
-     The round 2 experiments stay available from [W]: [M] smooth movement
-     (hybrid) and [A] stance sync (anim net, aset qs); -Experimental starts
-     with both on (instead of the input drive).
   2. Start-Lab.ps1 -Offline: host window left, guest window right.
   3. Presses Enter through the startup screens of both until Mother Base loads
      (skip with -NoAutoTitle and click through yourself).
   4. Waits until both copies report the partner system ready, then shows a live
-     status line. Console keys: [S] screenshots, [I] input drive (default),
-     [W] back to the proven Warp movement (input off), [P] input drive with
-     the partner pinned to the remote pose (recon pin), [M] smooth movement
-     on/off, [A] stance sync on/off, [R] re-send the current settings, [C]
+     status line. Console keys: [S] screenshots, [D] animated partner
+     (dm=map), [I] input drive, [W] back to the proven Warp movement (input
+     off, dm off), [P] input drive with the partner pinned to the remote pose
+     (recon pin), [M] smooth movement on/off, [A] stance sync on/off, [R]
+     re-send the current settings (also re-arms a failed dm=map), [C]
      component census, [O] partner off, [Q] quit and clean up.
   5. On exit (Q, closing a game window, or Ctrl+C): closes both games, checks
      your real save files and switches the lab config off again so normal
@@ -41,7 +40,7 @@ even while the host window has focus, so one person can test both at once.
 
 .EXAMPLE
 pwsh -File tools/lab/Play-OfflineCoop.ps1
-pwsh -File tools/lab/Play-OfflineCoop.ps1 -ProvenWarp
+pwsh -File tools/lab/Play-OfflineCoop.ps1 -Animated
 pwsh -File tools/lab/Play-OfflineCoop.ps1 -Experimental
 #>
 [CmdletBinding()]
@@ -61,7 +60,10 @@ param(
     # (round 4 live: the input drive does not start locomotion yet); kept for compatibility.
     [switch]$ProvenWarp,
     # Start with the experimental input drive (round 4) instead of the proven Warp movement.
-    [switch]$InputDrive
+    [switch]$InputDrive,
+    # dm=map: xform movement + direct-motion clips following the other player;
+    # experimental until the D4/D5 live pass.
+    [switch]$Animated
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -105,6 +107,7 @@ foreach ($role in $dirs.Keys) {
         Look = ''; Move = ''; Stance = ''; Character = ''; Fault = $false; Mode = ''
         Input = 'off'; InputArmed = $false; InputPerS = 0; InputStale = $false; InputFault = ''
         Recon = ''; ReconErr = 0; Snaps = 0; Places = 0; Runaway = $false; Frozen = ''; Body = ''; InputPin = $false; Fixes = 0
+        Dm = ''
     }
 }
 function Update-State {
@@ -143,7 +146,12 @@ function Update-State {
                 $s.Mode = "$($Matches[1])/$($Matches[2])"
                 if ($Matches[1] -notin @('xform', 'hybrid')) { $s.Move = '' }
                 if ($Matches[2] -eq 'off') { $s.Stance = '' }
+                if ($line -notmatch '; dm=map;') { $s.Dm = '' }
+                # (also the input mode: a second branch for the same line would never be reached)
+                if ($line -match '; input=([a-z]+);') { $s.Input = $Matches[1]; if ($Matches[1] -eq 'off') { $s.InputArmed = $false } }
             }
+            elseif ($line -match '^partner_dmmap; phase=([a-z_]+); cur=(\d+|none);') { $s.Dm = "$($Matches[2])/$($Matches[1])" }
+            elseif ($line -match '^partner_dmmap=failed') { $s.Dm = 'FAILED' }
             elseif ($line -match '^partner_input=armed; mode=([a-z]+)') { $s.Input = $Matches[1]; $s.InputArmed = $true }
             elseif ($line -match '^partner_input=disarmed') { $s.InputArmed = $false }
             elseif ($line -match '^partner_input; mode=([a-z]+); windows=\d+; per_s=(\d+)') { $s.Input = $Matches[1]; $s.InputPerS = [int]$Matches[2] }
@@ -162,7 +170,6 @@ function Update-State {
             }
             elseif ($line -match '^partner_recon=runaway;.*action=(pin|disarm)') { $s.Runaway = $true }
             elseif ($line -match '^partner_recon=runaway_end') { $s.Runaway = $false }
-            elseif ($line -match '^partner_stage=changed; .*; input=([a-z]+);') { $s.Input = $Matches[1]; if ($Matches[1] -eq 'off') { $s.InputArmed = $false } }
             elseif ($line -match '^partner_call=fault') { $s.Fault = $true }
             elseif ($line -match '^character=allocated; .*vars=(\d+)') { $s.Character = Get-LookName $Matches[1] }
             elseif ($line -match 'mission_termination=entered') { $s.Mission = $false; $s.Ready = $false; $s.Shown = $false; $s.Loaded = $false }
@@ -172,6 +179,16 @@ function Update-State {
         $alive = @(Select-ProcessInDirectory -Processes @(Get-Process mgsvtpp -ErrorAction SilentlyContinue) -Directory $dirs[$role]).Count -gt 0
         $state[$role].Exited = !$alive
     }
+}
+# The dm=map clip of the status line: "<gani>/<phase>" from the 5 s summary.
+function Get-ClipName([string]$Dm) {
+    if ($Dm -eq 'FAILED') { return 'FAILED (dm=map gave up; [R] re-sends)' }
+    $names = @('stand idle', 'crouch idle', 'crawl idle', 'crouch walk', 'crouch run', 'stand dash', 'crawl', 'prone idle',
+        'state crouch idle', 'state stand idle', 'stand walk', 'stand run', 'stand jog')
+    $parts = $Dm.Split('/')
+    $name = if ($parts[0] -match '^\d+$' -and [int]$parts[0] -lt $names.Count) { $names[[int]$parts[0]] } else { $parts[0] }
+    if ($parts.Count -gt 1 -and $parts[1] -ne 'playing') { return "$name ($($parts[1]))" }
+    return $name
 }
 function Get-LookName([string]$type) {
     switch ($type) { '0' { 'Snake' } '1' { 'DD male' } '2' { 'DD female' } '3' { 'Avatar' } '5' { 'Ocelot' } '6' { 'Quiet' } default { "type $type" } }
@@ -188,6 +205,7 @@ function Format-Role([string]$role) {
     if ($s.Mode) { $extra += "settings $($s.Mode)" }
     if ($s.Move) { $extra += "movement $($s.Move)" }
     if ($s.Stance) { $extra += "partner $($s.Stance)" }
+    if ($s.Dm) { $extra += "clip $(Get-ClipName $s.Dm)" }
     if ($s.Input -ne 'off') {
         $armed = if ($s.InputArmed) { 'armed' } else { 'off' }
         $perS = if ($s.InputPerS) { " $($s.InputPerS)/s" } else { '' }
@@ -211,21 +229,24 @@ function Format-Role([string]$role) {
     return "${role}: $partner, $link$details$crash$exit"
 }
 
-# The partner settings: look net always. Movement (round 4): the input drive
-# unless -ProvenWarp or -Experimental; [I] / [P] / [W] / [M] / [A] switch,
-# [R] re-sends. Every key sends the whole line to both copies.
-$startMove = if ($Experimental) { 'hybrid' } elseif ($InputDrive) { 'input' } else { 'warp' }
+# The partner settings: look net always. Movement: the proven Warp unless
+# -Experimental, -InputDrive or -Animated; [D] / [I] / [P] / [W] / [M] / [A]
+# switch, [R] re-sends. Every key sends the whole line to both copies.
+$startMove = if ($Experimental) { 'hybrid' } elseif ($InputDrive) { 'input' } elseif ($Animated) { 'map' } else { 'warp' }
 $experiment = [ordered]@{ Move = $startMove; Anim = $(if ($Experimental) { 'net' } else { 'off' }); Recon = 'track' }
 # The input drive (both copies): the remote pad drives the partner's real
 # locomotion; hold own (prone), words hpr (stance taps), keyboard dash and walk.
 # correct=3000 runaway=pin are explicit: a correct=0 left by an earlier
 # diagnostic (R0, I3) would otherwise turn the reconciliation off silently.
-$script:InputTrigger = 'stage=3 source=net apply=input anim=off input=net cam=sandbox hold=own words=hpr bits=0x2200006 isend=1 recon={0} correct=3000 runaway=pin slot=body look=net'
+$script:InputTrigger = 'stage=3 source=net apply=input anim=off input=net cam=sandbox hold=own words=hpr bits=0x2200006 isend=1 recon={0} correct=3000 runaway=pin slot=body dm=off look=net'
+# dm=map (the animated partner): xform movement, no anim arrays, no input
+# window; every other line turns dm off (the mapper releases its clip first).
 function Get-SyncTrigger {
     if ($experiment.Move -eq 'input') { return ($script:InputTrigger -f $experiment.Recon) }
+    if ($experiment.Move -eq 'map') { return 'stage=3 source=net apply=xform reset=n anim=off input=off isend=0 dm=map look=net' }
     $move = if ($experiment.Move -eq 'hybrid') { 'apply=hybrid reset=n' } else { 'apply=warp' }
     $anim = if ($experiment.Anim -eq 'net') { 'anim=net aset=qs' } else { 'anim=off' }
-    return "stage=3 source=net $move $anim input=off isend=0 look=net"
+    return "stage=3 source=net $move $anim input=off isend=0 dm=off look=net"
 }
 function Send-SyncTrigger([string]$Why) {
     $text = Get-SyncTrigger
@@ -237,10 +258,13 @@ try {
     # ------------------------------------------------------------- prepare
     $mode = if ($Experimental) { 'smooth movement + stance sync ON (-Experimental)' }
             elseif ($InputDrive) { 'INPUT DRIVE (experimental, -InputDrive); [W] falls back to the proven Warp movement' }
-            else { 'proven Warp movement (default); [I] tries the experimental input drive' }
+            elseif ($Animated) { 'ANIMATED partner (dm=map, experimental, -Animated); [W] falls back to the proven Warp movement' }
+            else { 'proven Warp movement (default); [D] tries the animated partner (dm=map)' }
     Write-Step "Preparing both game copies (offline, partner sync on, look net; $mode)"
-    $partnerSettings = @('partner_stage=3', 'partner_source=net', 'partner_look=net', "partner_apply=$($experiment.Move)", "partner_anim=$($experiment.Anim)")
+    $partnerSettings = @('partner_stage=3', 'partner_source=net', 'partner_look=net',
+        "partner_apply=$(if ($experiment.Move -eq 'map') { 'xform' } else { $experiment.Move })", "partner_anim=$($experiment.Anim)")
     if ($Experimental) { $partnerSettings += @('partner_aset=qs', 'partner_reset=n') }
+    if ($experiment.Move -eq 'map') { $partnerSettings += @('partner_reset=n', 'partner_dm=map') }
     if ($experiment.Move -eq 'input') {
         $partnerSettings += @('partner_input=net', 'partner_input_send=1', 'partner_input_cam=sandbox', 'partner_input_hold=own',
             'partner_input_words=hpr', 'partner_input_mask=0x2200006', 'partner_recon=track', 'partner_input_correct_mm=3000',
@@ -303,8 +327,11 @@ try {
     Write-Host "  Partner movement: $($experiment.Move); stance sync: $($experiment.Anim) (docs/partner-anim-appearance.md 'Round 4')."
     Write-Host '    Input drive: the partner moves with its own locomotion from the other player''s pad: walk, run, crouch (tap),'
     Write-Host '    prone (hold the stance key ~0.2 s). The status line shows recon err (cm), snaps/places and RUNAWAY(pinned).'
+    Write-Host '    Animated partner ([D], dm=map): smooth movement plus walk/run/dash/crouch/prone clips that follow the other'
+    Write-Host '    player; the status line shows the clip. Experimental until the D4/D5 live pass.'
     Write-Host '    If the partner misbehaves or a game hangs: [W] switches both copies back to the proven Warp movement.'
-    Write-Host '  Console keys (click this window first):  [S] screenshots   [I] input drive   [P] input drive, partner pinned'
+    Write-Host '  Console keys (click this window first):  [S] screenshots   [D] animated partner (dm=map)   [I] input drive'
+    Write-Host '                                           [P] input drive, partner pinned'
     Write-Host '                                           [W] proven Warp (input off)   [M] smooth movement   [A] stance sync'
     Write-Host '                                           [R] re-send settings   [C] component census   [O] partner off   [Q] quit + clean up'
     Write-Host ''
@@ -326,8 +353,10 @@ try {
             'M' { $experiment.Move = if ($experiment.Move -eq 'hybrid') { 'warp' } else { 'hybrid' }; Send-SyncTrigger "movement $($experiment.Move)" }
             'A' {
                 if ($experiment.Move -eq 'input') { Write-Note 'stance sync applies to the Warp/smooth movement; the input drive animates the partner itself ([W] first)' }
+                elseif ($experiment.Move -eq 'map') { Write-Note 'stance sync is off while dm=map animates the partner ([W] or [M] first)' }
                 else { $experiment.Anim = if ($experiment.Anim -eq 'net') { 'off' } else { 'net' }; Send-SyncTrigger "stance sync $($experiment.Anim)" }
             }
+            'D' { $experiment.Move = 'map'; $experiment.Anim = 'off'; Send-SyncTrigger 'animated partner (dm=map)' }
             'W' {
                 # Back to the proven path AND turn the input window off.
                 $experiment.Move = 'warp'; $experiment.Anim = 'off'

@@ -248,6 +248,53 @@ int main() {
               !ParsePartnerStick("360:0", 5, deg, pct) && !ParsePartnerStick("18:101", 6, deg, pct) &&
               !ParsePartnerStick("01:5", 4, deg, pct), "stick parse");
     }
+    // dm=map keys: partner_dm=map, the clip table and the speed bands.
+    {
+        const auto def = Lab("enabled=1\nrole=host\n");
+        Check(std::memcmp(def.partner_dm_map.cells, kPartnerDmTableDefault.cells, kPartnerDmCells) == 0 &&
+              def.partner_dm_speed.idle_mmps == 300 && def.partner_dm_speed.run_mmps == 2600 && def.partner_dm_speed.dash_mmps == 5600,
+              "dm=map defaults");
+        const auto map = Lab("enabled=1\nrole=host\npartner_dm=map\npartner_dm_map=0,12,11,5,1,3,4,4,2,6,6,6\n"
+                             "partner_dm_speed=300:1500:5600\n");
+        Check(map.partner_dm == PartnerDm::map && map.partner_dm_map.cells[1] == 12 && map.partner_dm_map.cells[8] == 2 &&
+              map.partner_dm_speed.run_mmps == 1500 && map.invalid_values == 0 && map.unknown_keys == 0, "dm=map keys");
+        const auto badmap = Lab("enabled=1\nrole=host\npartner_dm_map=0,10,11\npartner_dm_map=0,10,11,5,1,3,4,4,7,6,6,13\n"
+                                "partner_dm_speed=300:400:5600\npartner_dm_speed=0300:2600:5600\n");
+        Check(badmap.invalid_values == 4 && std::memcmp(badmap.partner_dm_map.cells, kPartnerDmTableDefault.cells, kPartnerDmCells) == 0 &&
+              badmap.partner_dm_speed.run_mmps == 2600, "dm=map bad values counted, defaults kept");
+        PartnerDmTable table{};
+        Check(ParsePartnerDmMap("0,10,11,5,1,3,4,4,7,6,6,6", 25, table) && table.cells[0] == 0 && table.cells[2] == 11 &&
+              table.cells[11] == 6, "dm map parse");
+        PartnerDmTable keep = table;
+        Check(!ParsePartnerDmMap("0,10,11,5,1,3,4,4,7,6,6", 23, table) && !ParsePartnerDmMap("0,10,11,5,1,3,4,4,7,6,6,6,", 26, table) &&
+              !ParsePartnerDmMap("0,10,11,5,1,3,4,4,7,6,6,06", 26, table) && !ParsePartnerDmMap("0,10,11,5,1,3,4,4,7,6,6,13", 26, table) &&
+              !ParsePartnerDmMap("0,10,11,5,1,3,4,4,7,6,6, 6", 26, table) && !ParsePartnerDmMap("0,100,11,5,1,3,4,4,7,6,6,6", 26, table) &&
+              !ParsePartnerDmMap(",0,10,11,5,1,3,4,4,7,6,6", 24, table) && !ParsePartnerDmMap(nullptr, 1, table) &&
+              std::memcmp(table.cells, keep.cells, kPartnerDmCells) == 0, "dm map refusals leave the output untouched");
+        char cells[40]{};
+        FormatPartnerDmMap(kPartnerDmTableDefault, cells);
+        Check(std::strcmp(cells, "0,10,11,5,1,3,4,4,7,6,6,6") == 0, "dm map format");
+        PartnerDmTable wide{};
+        for (auto& cell : wide.cells) cell = 255;
+        FormatPartnerDmMap(wide, cells);
+        Check(std::strcmp(cells, "?,?,?,?,?,?,?,?,?,?,?,?") == 0, "dm map format: out of range cells");
+        PartnerDmSpeeds speeds{};
+        Check(ParsePartnerDmSpeeds("300:2600:5600", 13, speeds) && speeds.idle_mmps == 300 && speeds.run_mmps == 2600 &&
+              speeds.dash_mmps == 5600 && ParsePartnerDmSpeeds("2000:10000:20000", 16, speeds) && speeds.dash_mmps == 20000 &&
+              ParsePartnerDmSpeeds("200:500:800", 11, speeds) && speeds.run_mmps == 500, "dm speed parse (bounds)");
+        Check(!ParsePartnerDmSpeeds("199:2600:5600", 13, speeds) && !ParsePartnerDmSpeeds("2001:2600:5600", 14, speeds) &&
+              !ParsePartnerDmSpeeds("300:599:5600", 12, speeds) && !ParsePartnerDmSpeeds("300:10001:20000", 15, speeds) &&
+              !ParsePartnerDmSpeeds("300:2600:2899", 13, speeds) && !ParsePartnerDmSpeeds("300:2600:20001", 14, speeds) &&
+              !ParsePartnerDmSpeeds("300:2600", 8, speeds) && !ParsePartnerDmSpeeds("300:2600:5600:", 14, speeds) &&
+              !ParsePartnerDmSpeeds("0300:2600:5600", 14, speeds) && !ParsePartnerDmSpeeds("300::5600", 9, speeds) &&
+              speeds.run_mmps == 500, "dm speed refusals leave the output untouched");
+        char st[24]{};
+        FormatPartnerDmSpeeds(kPartnerDmSpeedsDefault, st);
+        Check(std::strcmp(st, "300:2600:5600") == 0, "dm speed format");
+        FormatPartnerDmSpeeds(PartnerDmSpeeds{0, 4000000000u, 20000}, st);
+        Check(std::strcmp(st, "0:99999:20000") == 0, "dm speed format clamps");
+        Check(std::strcmp(PartnerDmName(PartnerDm::map), "map") == 0, "dm map name");
+    }
     // Shared spellings.
     PartnerSource source{};
     PartnerApply apply{};
