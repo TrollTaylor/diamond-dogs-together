@@ -54,7 +54,8 @@ pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role host -Text 'stage=3 source=orb
 pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role host -Text 'stage=3 source=fixed anim=mirror aset=qs look=quiet'
 pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role both -Text 'stage=3 source=net apply=hybrid anim=net aset=qs look=net'
 pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role host -Text 'stage=3 source=fixed apply=input input=stick stick=180:100 cam=sandbox'
-pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role both -Text 'stage=3 source=net apply=input input=net isend=1 cam=sandbox hold=none look=net'
+pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role both -Text 'stage=3 source=net apply=input input=net isend=1 cam=sandbox hold=own words=hpr bits=0x2200006 recon=track look=net'
+pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role host -Text 'wrap=census'
 pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role host -Text 'dm=on dmplay=1'
 pwsh -File tools/lab/Set-PartnerTrigger.ps1 -Role host -Text stop
 #>

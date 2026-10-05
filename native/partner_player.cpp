@@ -475,6 +475,7 @@ const char* ResolveTransform(const Addresses& a, Block& b) noexcept {
     if (!object) return "t_null";
     b.t = object + c::transform_view;
     if (!Callable(a, b.t, c::t_vt_set_pose, c::t_vt_set_rot, a.t_vtable, b.t_vt, b.t68, b.t70)) return "t_class";
+    if (!ReadValue(b.t_vt + c::t_vt_set_position, b.t58) || !InRange(b.t58, a.code_begin, a.code_end)) return "t_class";
     return nullptr;
 }
 
@@ -493,6 +494,12 @@ bool CallTransform(std::uintptr_t t, std::uintptr_t set_rot, std::uintptr_t set_
         reinterpret_cast<SetPoseFn>(set_pose)(reinterpret_cast<void*>(t), pos, quat);
         if (c0_reset) reinterpret_cast<ResetFn>(c0_reset)(reinterpret_cast<void*>(c0), id);
         if (a0_reset) reinterpret_cast<ResetFn>(a0_reset)(reinterpret_cast<void*>(a0), id);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+bool CallPosition(std::uintptr_t t, std::uintptr_t set_pos, const float* pos) noexcept {
+    __try {
+        reinterpret_cast<SetRotFn>(set_pos)(reinterpret_cast<void*>(t), pos);
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
@@ -560,7 +567,8 @@ const char* ResolveCensus(const Addresses& a, const State& s, Census& out) noexc
     if (out.k[1].refusal) return out.refusal = out.k[1].refusal;
     if (out.k[1].id != 1) return out.refusal = "id_mismatch";
     if (out.k[0].refusal) return out.refusal = out.k[0].refusal;
-    if (out.k[0].t_vt != out.k[1].t_vt || out.k[0].t68 != out.k[1].t68 || out.k[0].t70 != out.k[1].t70)
+    if (out.k[0].t_vt != out.k[1].t_vt || out.k[0].t68 != out.k[1].t68 || out.k[0].t70 != out.k[1].t70 ||
+        out.k[0].t58 != out.k[1].t58)
         return out.refusal = "t_class";
     return out.refusal = nullptr;
 }
@@ -677,11 +685,34 @@ const char* ApplyTransform(const Addresses& a, std::uint32_t index, bool termina
     return CallTransform(b.t, b.t70, b.t68, p, q, b.c0, want_c0 ? b.c090 : 0, b.a0, want_a0 ? b.a080 : 0, b.id) ? nullptr : "fault";
 }
 
+const char* ApplyPosition(const Addresses& a, std::uint32_t index, bool terminating, const float (&pos)[4]) noexcept {
+    const Preserve preserve;
+    State s{};
+    if (const char* reason = PrepareCall(a, index, terminating, s)) return reason;
+    for (float v : pos) if (!std::isfinite(v)) return "non_finite";
+    Census census{};
+    if (const char* reason = ResolveCensus(a, s, census)) return reason;
+    const Block& b = census.k[index];
+    if (!b.t58) return "t_class";
+    alignas(16) float p[4] = {pos[0], pos[1], pos[2], pos[3]};
+    return CallPosition(b.t, b.t58, p) ? nullptr : "fault";
+}
+
 bool ReadBody(const Addresses& a, const State& s, std::uint32_t index, float (&pos)[4], float (&quat)[4]) noexcept {
     const Preserve preserve;
     Block b{};
     if (ResolveBlock(a, s, index, b)) return false;
     return ReadBlock(b.t + c::t_pos, pos, sizeof(pos)) && ReadBlock(b.t + c::t_quat, quat, sizeof(quat));
+}
+
+bool ReadVelocity(const Addresses& a, const State& s, std::uint32_t index, float (&vel)[4]) noexcept {
+    const Preserve preserve;
+    Block b{};
+    if (ResolveCore(a, s, index, b)) return false;
+    std::uintptr_t array = 0;
+    if (!ReadValue(b.ps + c::ps_vel268, array) || !array) return false;
+    const std::uintptr_t rel = b.id - b.base_id;
+    return ReadBlock(array + rel * c::ps_vel268_stride, vel, sizeof(vel));
 }
 
 std::size_t FormatPsProbe(const Addresses& a, const State& s, std::uint32_t k, char* out, std::size_t capacity) noexcept {

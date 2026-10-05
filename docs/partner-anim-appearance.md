@@ -13,7 +13,7 @@ partner of [offline-partner-spike-plan.md](offline-partner-spike-plan.md) and
 Everything here is fully offline. Nothing touches S_IS_ONLINE (P+0x204 bit
 0x100), the synchronizer P+0xA8, a game session or the master server.
 
-**Status: built and unit tested; nothing in this page has run live yet.**
+**Status: rounds 1-3 ran live (see the findings page); round 4 (the last section) is built and unit tested, not yet run live.**
 Section 7 lists what still has to be proven in the game. A third round (the
 input-drive lever, the Snake-load fix and the direct-motion lever) is in the
 "Round 3" section at the end of this page; it is likewise built and unit tested,
@@ -626,3 +626,323 @@ precise plan is the one returned alongside this change.
 - The window itself (validate/PRE/call/POST, the vtable swap, the unwind
   restore) has no synthetic-memory unit test yet; the live I1/I2 steps are its
   first exercise.
+
+## Round 4: reconciliation, stance taps, prone, the host-input leak
+
+Round 4 (branch `wp/partner-anim4`) acts on live round 3
+([anim-appearance-findings-2026-10-04.md](anim-appearance-findings-2026-10-04.md),
+"Live round 3"). Built and unit tested; not yet run live. Every new address is
+in the code gate (`tools/generate_partner_contract.py`: now 208 code sites, 65
+vtable slots, all re-verified against 1.0.15.4). Nothing touches S_IS_ONLINE
+(P+0x204 bit 0x100), the synchronizer P+0xA8, P+0x214, sessions or the master
+server.
+
+### What round 3 actually showed (re-read of the live logs)
+
+- **The sawtooth.** The old correction compared T+0x20 with the remote pose
+  100 ms in the past (`partner_interp_ms`) and teleported the body with an
+  xform (T.vt+0x70 + T.vt+0x68) after 1.5 m held 500 ms. The body ran on its
+  own at 3.19-3.20 m/s, so the error reached 1.5 m after about 0.47 s and the
+  snap fired at about 0.98 s: `err_mm` 3146 or 3200 (one tick apart), 322
+  snaps in 320 s.
+- **The body was not following the guest.** The guest stood still (pos0
+  constant, 312 of 319 input lines with a zero stick) while slot 1 stayed in
+  act=4 s=2 v=2 (crouch-move) from the I2 host-input leak on. The "3.1-3.2 m/s
+  matching the guest" was the full-stick crouch-move speed, not the guest's.
+  The stuck moving state survived disarming and Warp every tick.
+- **pos1/rec1 were not readbacks**: they were our own writes of the remote
+  pose into S+0x20[1]. `partner_body` had stopped at its 600-line mission cap.
+- **No placement in I6**: `input_placed` was set by the earlier stick run and
+  never reset, so switching to input=net did not place the body.
+- **Stance press words.** On keyboard the press frame shows held = w4c = w50 =
+  0x2, held frames held = w4c, and the release frame only w54. The round 3
+  note "only w54" came from 2 Hz sampling.
+
+### R. Reconciliation (`native/partner_recon.{hpp,cpp}`, pure, unit tested)
+
+`apply=input` now runs a placement and correction state machine per Lua tick.
+The driver feeds the body readback (T+0x20/T+0x60), the time-aligned target,
+the input state and both instances' anim fields, and executes the returned
+action:
+
+| Action | Native effect |
+|---|---|
+| `place` | The window is disarmed for this tick and the Lua Warp (with its resets) goes to the aligned target and remote yaw. The next ticks verify that the body is within 500 mm of the target before arming (3 tries, 250 ms apart; then `placed ok=0`, the Warp fallback, and a retry after 5 s). |
+| `nudge` | **T.vt+0x58 only** (0x1AD5660, verified): T+0x20 = pos, foot = pos - (0, T+0x160, 0); no rotation write and no rotation request (T.vt+0x70 is never called); y stays the body's own. At most every 66 ms. |
+| `snap`, `pin`, `yaw` | An xform (T.vt+0x70 + T.vt+0x68, no resets) to the target (snap, pin) or to the body position with the remote yaw (yaw). |
+
+**Target.** `SampleRemote(d)` with `d = clamp(in_age - 16 + align, 1, 150)` ms:
+the newest snapshot extrapolated by at most about 33 ms, that is the remote
+state that the input being consumed produced. The 100 ms interpolated pose is
+no longer used by apply=input. `align` (trigger; lab.ini
+`partner_recon_align_ms`) corrects a measured along-track bias.
+
+**Decision order each tick:**
+
+1. Placement when needed: the first one, re-arm after any arming refusal, a
+   trigger that changes apply/input/source, `place=1`, relink (lost -> live),
+   a remote teleport (a jump of more than 5 m), a body jump of more than 3 m
+   that we did not cause, far (10 m or more), vertical (2 m or more held
+   500 ms), diverging.
+2. Runaway: the body moves on its own. Either the remote is idle (below
+   150 mm/s and stick below 0.1 for 300 ms) while the body moves above
+   800 mm/s for 300 ms, or the remote moves while the body's own velocity
+   differs from the remote's by more than 800 mm/s for 300 ms and the filtered
+   error is 1 m or more and growing (50 mm or more in 300 ms; a turn or a start
+   lags without diverging). The body is pinned to the target every tick
+   (`runaway=pin`, the default; `disarm` also disarms the window; `off` logs
+   once per episode) until its own velocity matches the remote's again (below
+   200 mm/s difference with an idle remote, 400 mm/s with a moving one, for
+   500 ms). A moving remote alone never ends it.
+3. Input pin: the net input has been stale for 500 ms while the pose is live
+   (the window injects a neutral pad, so the body would stand while the remote
+   runs). The body is pinned to the pose; far and vertical errors never Warp
+   while the input is stale. When the input is live again, tracking resumes
+   from the pinned pose with the 700 ms settle (no Warp).
+4. Frozen (pose stale, input stale, a non-locomotion act on either side, a
+   stance-change suspend, the 700 ms settle after a placement, no body): no
+   corrections.
+5. Hard snap: `correct` mm or more (default 3000) for 300 ms while moving, or
+   2000 mm or more for 1 s and not shrinking while idle; at most one per
+   1.5 s. Three in 10 s means diverging: Warp, then pin for 2 s (doubling up
+   to 30 s). With the moving runaway rule, snaps are left for discontinuities
+   (collision pushes, a body held back by an obstacle for a moment).
+6. Idle facing: both still and a yaw error above 25 degrees for 800 ms (gap
+   2 s).
+7. Nudge: `e_f * (1 - exp(-dt/tau))`, capped at 600 mm/s while moving
+   (`partner_recon_nudge_mmps`), 300 idle, 150 prone; dead zone 300/200/400 mm
+   (doubled for 1 s after a stance change).
+
+Prone never Warps for a far error (an xform snap instead). The body's own
+motion is measured as the readback minus our last write (`own_mmps`); per-tick
+motion above 20 m/s is a discontinuity and never counts as velocity.
+
+**Stance.** The remote stance (anim extension) is debounced 150 ms. A change
+suspends corrections for 700 ms (1 <-> 2) or 1500 ms (to or from prone);
+`stance_mismatch` is logged when Q+0x30[1] still differs 1.5 s later.
+
+**Stance level (net input).** The input carries stance only as edges, so one
+lost or extra edge would invert crouch/stand until the remote toggles again.
+When the body's stance Q+0x30[1] still differs from the remote's debounced
+stance 2 s after the change (both in locomotion acts 1..6, input and pose
+live), the reconciliation asks the driver for one corrective STANCE input
+through the tap/press overlay: a 4-window tap toward the remote's stance, or a
+400 ms hold (12+ windows: classify(1,12) == 3) when the remote is prone. It
+then waits 2 s for the result before the next one (`partner_recon=stance_fix`,
+`fixes=` in the 1 Hz line). Outside the mask it is refused and logged.
+
+**Slot.** `slot=body` (the default with apply=input): S+0x20[1] carries the
+body readback and its yaw (the remote pose until the body is readable), so
+`pos1/rec1` in the probe are real readbacks. `slot=remote` is the round 3
+behaviour; `slot=none` writes nothing once the body is readable.
+
+**Modes.** `recon=track` (default); `recon=pin` (input-driven animation, body
+pinned every tick: the proven smooth mover); `recon=off` or `correct=0`
+(placement only, then pure locomotion: the stick diagnostics I3 and R0).
+
+### S. Stance taps and held buttons
+
+- **Words default `hpr`**: w4c = held, w50 = press edge, w54 = release edge,
+  each edge for exactly one window. The stance toggle reads PP vt+0x40 (w50,
+  masked) when rec+0x361 bit 0x08 is set, else PP vt+0x50 (w54, raw)
+  (0x10CE317..0x10CE344, verified). With `0p0` the release-gated half never
+  fired.
+- **Mask default `0x2200006`**: STANCE 0x2, DASH 0x4, keyboard dash 0x200000
+  (the host keyboard's Shift arrives as 0x200000) and keyboard walk 0x2000000
+  (binding 0x19).
+- **Input frame v2** (76 bytes; v1 68-byte frames are still decoded): an edge
+  set with its own `edge_seq` (press, release, and `tap12` = released after a
+  run of 1..11 frames), repeated twice for loss tolerance, plus the level
+  `long12` (held for 12 frames or more). The sender feeds every tick's
+  snapshot, sent or not. The receiver accumulates edge sets by sequence until
+  the window consumes them (`partner_net::ConsumeInput`). A tap that was
+  pressed and released between two samples is injected as one held window
+  (`synth_taps`).
+- **Resync after a disarm.** The first main window after a disarm (placement,
+  refusal, [W] then [I], mission start) or after a gap of more than 250 ms
+  (skips, pass mode) consumes and drops the edge sets that piled up meanwhile
+  and injects the current level without edges (prev_held = held; the hold
+  history restarts). Stale taps are never replayed as stance toggles.
+- **Stalls.** Stale input (older than `stale_ms`, 250 ms) zeroes the stick but
+  keeps the last live held level for up to 1 s without edges, and the hold
+  history does not grow (a stall never produces a release edge or a prone).
+  After 1 s the level is released silently (no release edge) and the history
+  restarts.
+- **Keyboard dash.** The host keyboard's Shift is binding 21 (held bit
+  0x200000), forwarded by the mask and by the key-manager stubs. The `rt=255`
+  that `partner_pad` shows with Shift+W comes from the W key: handle
+  0x4872B2C95A55 writes both PP+0x484 (T1) = 1.0 and the forward axis PP+0x478
+  = -1.0 (0x1206D03..0x1206D32, 0x1206D79..0x1206D8C), so `triggers` stays off.
+
+### P. Prone: the hold classifier (`hold=own`, default)
+
+PP vt+0x90 = 0x1205C30 returns 0 for a masked button (bt [PP+0x28]); with
+PP+0x488 bit 0x10 it asks the key manager, else it tail-calls src vt+0x10 =
+**0x434ED0** (verified): skip the leading zeros of the newest-first history
+*(src+8) (n = src+0x40), count the newest run, stop at `frames` or at the
+first gap; released && count < frames gives 2 (tap), newest gives
+count < frames ? 1 : 3 (hold), else 0. Prone fires on classify(1, 12) == 3
+(0x10CE030, 0x10CE45E).
+
+`hold=own` replicates it exactly (`partner_input::ClassifyHold`) over a
+128-entry history of what instance 1 was fed (one entry per main window). It
+is installed in the window's vtable copy at +0x90 (with the mask exit) and at
++0x140. `hold=net` uses the sender's `long12`/`tap12` for frames == 12.
+`hold=pass` stays diagnostic only (it reads the HOST's history); `hold=none`
+returns 0 (no prone).
+
+### C. The host-input leak
+
+- **Key-manager slots.** PP vt+0xE8..+0x138 query the host keyboard through
+  *(PP+0x388) with the handles PP+0x390[i] (verified; for example 0x10D50DA
+  calls vt+0x100(0x19), the walk key). Every window now installs the vtable
+  copy (not only with hold=none), and its slots answer from the injected
+  words: pressed (+0xE8, +0x110, +0x118), released (+0xF0, +0x120, +0x128),
+  held (+0x100, +0x108, +0x130, +0x138; the handle slots map a handle to its
+  binding index with a 48-bit compare, unbound gives 0). +0xF8 (km vt+0x148,
+  not decoded) answers 0.
+- **PP+0x14** is written as the world heading wrap(host cam + atan2(lx, ly) -
+  pi); it was a 0..1 value. PP+0x18 = atan2(lx, ly) of the injected stick.
+- **Shadowed PP fields**: PP+0x278 (mouse-look gate, 0x120714E) and PP+0x4B0
+  (rebind request, PP vt+0x18 = 0x1206540, consumed at 0x1206A8A). Instance 1
+  sees and writes its own copy; the host keeps its value.
+- **Camera sandbox** adds CAM+0x150 and the request block: CAM+0xD38,
+  +0xD80..0xD97, +0xDB0..0xDBF, +0xDD0..0xDDF and +0xE9C..0xEEB (the setters
+  vt+0xE0/+0xF8/+0x100/+0x128 write them for any id).
+- **Other walks of block 1's tree (`wrap=census|window`, default off).** The
+  base plugin, Move and PS do their per-id work in node vt+0x18 sub-phases,
+  reached through the UpdateTree service (vtable 0x2306660: +0x28 active walk
+  0xBF6420, +0x30 all-ids walk 0xBF61C0, +0x40 per-id walk 0xBF61E0) and the
+  calls 0x9C1DA3 (phase 7) and 0x9C1AFF (phase 11). None of them runs inside
+  the 0x9C2B51 window. `wrap=census` installs pass-through wrappers (the three
+  service slots by a locked qword swap in read-only data, the two calls by
+  rel32 stubs, every old value verified first) and logs a 1 Hz `partner_wrap`
+  line: per entry the block-1 calls, the calls on the hook thread, the calls
+  nested in a window, the wrap windows and the phases seen, plus the block-0
+  calls. `wrap=window` runs the same window (this frame's injection, computed
+  once by the main window) around block 1's calls that arrive on the hook
+  thread outside a window. Decide it from the census: calls on other threads
+  cannot be fixed by swapping. Wrap windows inject the frame's level only
+  (`partner_input::LevelOnly`: held words and sticks; no press/release words,
+  no net words, no key-manager press/release answers, no tap12), so an edge
+  consumer in a wrapped sub-phase never sees an edge twice.
+- **Not fixable by a window**: reads of host data by host id or block
+  (0x121ED31, 0x12257CD, 0x12257E3, 0x10E14DD) and the look angles PS+0x290,
+  which are computed from the host camera quaternion for every id offline
+  (0xFFAC41..0xFFAD57).
+
+### Readbacks
+
+`partner_body` (2 Hz while apply=input or an input mode is set, 3600 lines per
+mission, emitted outside TickInput's early returns):
+
+- `speed_mmps` is horizontal, from the oldest same-epoch sample of a 32-tick
+  ring (about 530 ms at 60 Hz) over the actual span, which must be at least
+  150 ms (`na` otherwise; every placement, snap, pin, yaw, Warp fallback or
+  disarm starts a new epoch). The round 4 first pass used a 16-tick ring with
+  a 250 ms span, which sat on the boundary at 60 Hz and gave `na` on about
+  half the lines.
+- `own_mmps` is the reconciliation's estimate of the game's own motion.
+- `vel_mmps` is the game's per-id velocity PS+0x268, stored at 0xFF23BC as
+  T+0x40 / (S+0x38[id] * S+0x48); that it is m/s is inferred.
+- `epoch=` and `snaps=`.
+
+### Settings (lab.ini / trigger)
+
+| lab.ini key | trigger | values (default) |
+|---|---|---|
+| `partner_input_hold` | `hold=` | none, pass, own, net (own) |
+| `partner_input_words` | `words=` | 3 of 0prhn (hpr) |
+| `partner_input_mask` | `bits=` | u32 (0x2200006) |
+| `partner_input_correct_mm` | `correct=` | 0..10000 (3000; 0 = recon off) |
+| `partner_recon` | `recon=` | off, track, pin (track) |
+| `partner_recon_align_ms` | `align=` | -50..150 (0) |
+| `partner_recon_nudge_mmps` | (lab.ini only) | 100..3000 (600) |
+| `partner_input_slot` | `slot=` | remote, body, none (body) |
+| `partner_recon_runaway` | `runaway=` | pin, disarm, off (pin) |
+| `partner_input_wrap` | `wrap=` | off, census, window (off) |
+| (none) | `place=1` | one-shot: a new placement |
+
+### Log lines
+
+- `partner_recon=place; reason=first|rearm|relink|teleport|far|vertical|diverging|manual|retry; via=warp; target_mm=..; yaw_mrad=..; body_mm=..; err_mm=..; delay_ms=..; pose_age_ms=..; in_age_ms=..; tries=..`
+- `partner_recon=placed; ok=1|0; err_mm=..; tries=..; ms=..`
+- `partner_recon=snap; reason=far_moving|far_idle|far_prone; via=xform; err_mm=..; dy_mm=..; v_free_mmps=..; v_remote_mmps=..; snaps_10s=..`
+- `partner_recon=diverging; ...` and `partner_recon=pin_end`
+- `partner_recon=runaway; remote=idle|moving; v_free_mmps=..; v_remote_mmps=..; dv_mmps=..; err_mm=..; remote_idle_ms=..; act=..; s=..; v=..; action=pin|disarm|off` and `partner_recon=runaway_end; ms=..; reason=stopped|remote_moving` (both mean: the body's own motion matches the remote's again)
+- `partner_recon=input_pin; in_age_ms=..; err_mm=..; reason=input_stale` and `partner_recon=input_pin_end; ms=..; reason=input_live|pose_stale`
+- `partner_recon=stance_fix; remote=..; body=..; via=tap|hold; ms=..; fixes=..` or `partner_recon=stance_fix; refused=mask; remote=..; body=..`
+- `partner_recon=off; reason=correct0; requested=track|pin; fix=correct=3000` (a trigger left `correct=0`: the reconciliation is off whatever `recon=` says)
+- `partner_recon=frozen; reason=pose_stale|input_stale|act|remote_act|stance|settle|body` and `partner_recon=unfrozen`
+- `partner_recon=stance; from=..; to=..; suspend_ms=..` and `partner_recon=stance_mismatch; remote=..; body=..; ms=..`
+- `partner_recon=yaw; err_mrad=..` and `partner_recon=stop_check; ok=1|0; ms=..; v_free_mmps=..`
+- `partner_recon=refused; action=..; reason=..; fallback=none|place` (change-only)
+- 1 Hz: `partner_recon; mode=..; recon=off|track|pin; err_mm=..; dy_mm=..; along_mm=..; cross_mm=..; v_free_mmps=..; v_remote_mmps=..; dv_mmps=..; body_mm=..; target_mm=..; yaw_err_mrad=..; nudges=..; nudge_mm=..; snaps=..; places=..; pins=..; yaws=..; act=..; s=..; rs=..; frozen=..; delay_ms=..; pose_age_ms=..; in_age_ms=..; in_r=..; stop_ok=0|1|na; runaway=0|1; input_pin=0|1; fixes=..` (3600 per mission). `recon=` is the effective setting; `snaps` and `places` count since the reconciliation started (a diverging re-placement keeps the snaps that caused it), nudges/pins/yaws since the last placement.
+- `partner_input` (1 Hz) adds `words=..; hold=..; press_n=..; release_n=..; synth_taps=..; h=c0,c1,c2,c3` (the hold classifier's answers for btn 1) `; km=..; shadow=..`
+- `partner_wrap; mode=census|window; svc28=calls,same,nested,windows,0xphases; svc30=..; svc40=..; walk7=..; walk11=..; r0=..; other=..` and `partner_input_wrap=installed|refused; ...`
+- Removed: `partner_input_place; reason=err|first|relink`. Kept: `partner_input_place; reason=fallback`.
+
+Each event family has a 64-line cap; the counters continue in the 1 Hz line.
+
+### Play-OfflineCoop
+
+`tools/lab/Play-OfflineCoop.ps1` now starts with the input drive on both
+copies: `stage=3 source=net apply=input anim=off input=net cam=sandbox
+hold=own words=hpr bits=0x2200006 isend=1 recon=track correct=3000 runaway=pin
+slot=body look=net`, also written into lab.ini through
+`Prepare-LabInstance -Offline -PartnerSetting` (`partner_input_correct_mm=3000`,
+`partner_recon_runaway=pin`). `correct=3000 runaway=pin` are explicit because
+`correct=0` (R0, I3) turns the reconciliation off and a trigger only changes
+the keys it names.
+
+- [W] goes back to the proven Warp movement (`apply=warp input=off isend=0`).
+- [I] re-sends the input drive; [P] sends it with `recon=pin`.
+- [M] and [A] are the round 2 experiments.
+- `-ProvenWarp` starts on the proven path; `-Experimental` starts with the
+  round 2 experiments.
+
+The status line adds `input <mode>/<armed>`, `recon <mode> err <cm> snaps ..
+places ..` (`recon OFF` when `correct=0` turned it off), `RUNAWAY(pinned)`
+(only for runaway=pin|disarm), `INPUT-LOST(pinned)`, `stance-fixes ..`,
+`frozen <reason>` and the body stance.
+
+### Review fixes (round 4, second pass, static)
+
+- [I]/[P] and the I6 plan set `correct=3000 runaway=pin` (finding: a
+  `correct=0` from R0/I3 turned the reconciliation off silently; the 1 Hz line
+  still said `mode=track`). The 1 Hz line has `recon=` (effective) and a
+  trigger that leaves `correct=0` with `recon=track|pin` logs
+  `partner_recon=off; reason=correct0`.
+- Stale edge sets are dropped on the first window after a disarm or a gap
+  (resync), and a stall keeps the held level without edges (no extra toggle).
+- Stance level correction (`stance_fix`), the moving-remote runaway, the
+  input pin (no far-Warp cycle while the input is stale), level-only wrap
+  windows, cumulative snaps/places counters, a latched `runaway=off` event.
+- `ApplyTrigger` compares apply/input/source before overwriting them, so a
+  source-only or apply-only change re-places.
+- The per-tick Warp fallback uses the proven 100 ms interpolated pose again
+  (only the placement uses the aligned target).
+- `partner_body speed_mmps` from a 32-tick ring with a 150 ms minimum span.
+- Rejected: keyboard sprint through `rt` (see S: `rt=255` is the W key).
+- Tests: a lag model (120 ms input latency, 10 vs 8 m/s^2), a stuck body with
+  a moving remote, the input pin, non-sticking nudges, the stance fix, resync
+  and stall rules, level-only wrap windows, source/apply re-placement, the
+  fallback pose, `speed_mmps` at 60 Hz.
+
+### Still open (settled live)
+
+- Whether the stuck moving state recurs from a fresh mission (the R0 stop
+  check), and whether its source is a sub-phase outside the window (the wrap
+  census). Until then the runaway pin (idle or moving remote) keeps the
+  partner smooth.
+- What a STANCE tap does from prone (crouch or stand): the stance fix taps
+  and retries every 2 s, so either converges; R5 records it.
+- Whether position-only nudges (T.vt+0x58 zeroes T+0x1A4/T+0x1F0 and clears
+  T+0x1A0 bit 2) disturb grounding at up to 15 Hz: watch for vertical hitches
+  (`dy_mm`) while `nudges` grows.
+- Whether instance-1 sub-phases arrive on the hook thread (the wrap census):
+  only then can `wrap=window` close the gap.
+- The meaning of km vt+0x148 (PP vt+0xF8 answers 0 inside the window).
+- The along-track timing bias (`align=`), measured from the 1 Hz line.
+- Steering (a stick bias towards the target) is not implemented: nudges carry
+  the correction.

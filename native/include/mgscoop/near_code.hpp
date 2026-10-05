@@ -41,6 +41,10 @@ void* AllocateNear(std::uintptr_t next_ip, std::size_t size) noexcept;
 // "cache_line" (the dword spans two lines), "protect", "changed" (the dword
 // was not `expected`; nothing written) or "protect_restore".
 const char* PatchDword(void* site, std::uint32_t expected, std::uint32_t value) noexcept;
+// The same for an 8-byte-aligned data pointer (a vtable slot in read-only
+// data): one locked 64-bit compare-exchange, protection restored. nullptr on
+// success, otherwise "alignment", "protect", "changed" or "protect_restore".
+const char* PatchQword(void* site, std::uint64_t expected, std::uint64_t value) noexcept;
 #endif
 
 } // namespace mgscoop::near_code

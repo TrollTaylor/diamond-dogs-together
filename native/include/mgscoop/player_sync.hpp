@@ -150,22 +150,33 @@ bool decode_look_frame(const std::uint8_t* data, std::size_t size, std::uint64_t
                        LookPacket& out) noexcept;
 
 // Input frame (round 3, docs/partner-anim-appearance.md "Round 3"): header
-// kind event, sequence = running u32 >= 1, payload length 40, frame 68 bytes:
+// kind event, sequence = running u32 >= 1.
+// Version 1, payload length 40, frame 68 bytes (decoded only):
 //   [0] 0x49 ("I")  [1] version 1  [2] flags (partner_input::Flag, subset of 0x07)  [3] 0
 //   [4..19] held, w4c, w50, w54 (u32 LE)  [20..27] lx, ly, rx, ry (i16 LE, never -32768)
 //   [28] lt  [29] rt  [30..31] lmag  [32..33] lforce (u16 LE)  [34..35] ldir (i16, |x| <= 31416)
 //   [36..37] cam_cdeg (i16, -18000..17999)  [38..39] 0
-// A build without it drops the frame as malformed (both copies must run it).
-constexpr std::size_t input_packet_size = 40;
-constexpr std::size_t input_frame_size = wire::header_size + input_packet_size;  // 68
+// Version 2 (round 4, "Round 4"), payload length 48, frame 76 bytes (encoded):
+//   [0] 0x49  [1] version 2  [2] flags  [3] edge_seq (0 = no edge set)
+//   [4..7] held  [8..11] now (w4c)  [12..15] press  [16..19] release (the edge set)
+//   [20..37] as version 1  [38] edge_rep (0 new, 1..2 repeats; 0 without a set)  [39] 0
+//   [40..43] long12 (level)  [44..47] tap12 (part of the edge set)
+// With edge_seq 0 the press, release and tap12 words must be 0.
+// A build without v2 drops the frame as malformed (both copies must run it).
+constexpr std::size_t input_packet_size_v1 = 40;
+constexpr std::size_t input_frame_size_v1 = wire::header_size + input_packet_size_v1;  // 68
+constexpr std::size_t input_packet_size = 48;
+constexpr std::size_t input_frame_size = wire::header_size + input_packet_size;  // 76
 constexpr std::uint8_t input_magic = 0x49;
-constexpr std::uint8_t input_version = 1;
-// Returns input_frame_size, or 0 (out zeroed) for a zero session/epoch/sequence
-// or a packet outside the wire ranges (partner_input::ValidPacket).
+constexpr std::uint8_t input_version = 2;
+// Returns input_frame_size (a v2 frame), or 0 (out zeroed) for a zero
+// session/epoch/sequence or a packet outside the wire ranges
+// (partner_input::ValidPacket; packet.version must be 2).
 std::size_t encode_input_frame(std::uint64_t session, std::uint32_t epoch, std::uint32_t sequence,
                                const partner_input::InputPacket& packet, std::uint8_t (&out)[input_frame_size]) noexcept;
-// Strict: exact size, magic/version, kind event, payload length 40, non-zero
-// session/epoch/sequence, known flag bits, reserved bytes zero, the ranges above.
+// Strict: a 68-byte v1 or a 76-byte v2 frame; magic/version matching the size,
+// kind event, the payload length, non-zero session/epoch/sequence, known flag
+// bits, reserved bytes zero, the ranges above. out.version tells which.
 bool decode_input_frame(const std::uint8_t* data, std::size_t size, std::uint64_t& session, std::uint32_t& epoch,
                         std::uint32_t& sequence, partner_input::InputPacket& out) noexcept;
 

@@ -284,44 +284,59 @@ int main() {
               "look size and null refused");
     }
 
-    // 9. Input frame (round 3).
+    // 9. Input frame (round 3 v1 decode, round 4 v2 encode/decode).
     {
         namespace pi = mgscoop::partner_input;
         pi::InputPacket pkt{};
+        pkt.version = 2;
         pkt.flags = pi::Flag::Valid;
         pkt.held = 0x12345678u; pkt.w4c = 0xAAu; pkt.w50 = 0xBBu; pkt.w54 = 0xCCu;
         pkt.lx = 1000; pkt.ly = -2000; pkt.rx = 3000; pkt.ry = -4000;
         pkt.lt = 10; pkt.rt = 250; pkt.lmag = 50000; pkt.lforce = 40000; pkt.ldir = 12345; pkt.cam_cdeg = -9000;
+        pkt.edge_seq = 7; pkt.edge_rep = 1; pkt.long12 = 0x2u; pkt.tap12 = 0x200000u;
         std::uint8_t frame[input_frame_size]{};
-        Check(encode_input_frame(0x55, 7, 42, pkt, frame) == input_frame_size && input_frame_size == 68, "input frame 68 bytes");
+        Check(encode_input_frame(0x55, 7, 42, pkt, frame) == input_frame_size && input_frame_size == 76, "input frame v2 76 bytes");
+        Check(frame[wire::header_size + 1] == 2 && frame[wire::header_size + 3] == 7 && frame[wire::header_size + 38] == 1,
+              "v2 version, edge_seq, edge_rep bytes");
         std::uint64_t s = 0; std::uint32_t e = 0, seq = 0;
         pi::InputPacket got{};
         Check(decode_input_frame(frame, sizeof(frame), s, e, seq, got) && s == 0x55 && e == 7 && seq == 42, "input decode header");
-        Check(got.held == pkt.held && got.w4c == pkt.w4c && got.w50 == pkt.w50 && got.w54 == pkt.w54 && got.lx == pkt.lx &&
-              got.ly == pkt.ly && got.rx == pkt.rx && got.ry == pkt.ry && got.lt == pkt.lt && got.rt == pkt.rt &&
-              got.lmag == pkt.lmag && got.lforce == pkt.lforce && got.ldir == pkt.ldir && got.cam_cdeg == pkt.cam_cdeg,
-              "input fields round trip");
-        // Zero session/epoch/sequence refused.
+        Check(got.version == 2 && got.held == pkt.held && got.w4c == pkt.w4c && got.w50 == pkt.w50 && got.w54 == pkt.w54 &&
+              got.lx == pkt.lx && got.ly == pkt.ly && got.rx == pkt.rx && got.ry == pkt.ry && got.lt == pkt.lt && got.rt == pkt.rt &&
+              got.lmag == pkt.lmag && got.lforce == pkt.lforce && got.ldir == pkt.ldir && got.cam_cdeg == pkt.cam_cdeg &&
+              got.edge_seq == 7 && got.edge_rep == 1 && got.long12 == 0x2u && got.tap12 == 0x200000u, "input v2 fields round trip");
+        // Zero session/epoch/sequence refused; a v1 packet is never encoded.
         Check(encode_input_frame(0, 7, 42, pkt, frame) == 0 && encode_input_frame(0x55, 0, 42, pkt, frame) == 0 &&
               encode_input_frame(0x55, 7, 0, pkt, frame) == 0, "zero session/epoch/seq refused");
+        pi::InputPacket v1 = pkt; v1.version = 1;
+        Check(encode_input_frame(0x55, 7, 42, v1, frame) == 0, "encode writes v2 only");
+        // Without an edge set the edge words must be zero.
+        pi::InputPacket noset = pkt; noset.edge_seq = 0; noset.edge_rep = 0;
+        Check(encode_input_frame(0x55, 7, 42, noset, frame) == 0, "edge words without edge_seq refused");
+        noset.w50 = noset.w54 = noset.tap12 = 0;
+        Check(encode_input_frame(0x55, 7, 42, noset, frame) == input_frame_size, "no edge set, zero edge words: ok");
+        pi::InputPacket rep3 = pkt; rep3.edge_rep = 3;
+        Check(encode_input_frame(0x55, 7, 42, rep3, frame) == 0, "edge_rep > 2 refused");
         // Strict decode: size, magic, version, kind, length, flag bits, reserved, ranges.
         Check(encode_input_frame(0x55, 7, 42, pkt, frame) == input_frame_size, "re-encode");
         Check(!decode_input_frame(frame, sizeof(frame) - 1, s, e, seq, got), "input size");
         std::uint8_t tweak[input_frame_size];
         std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size] = 0x48;
         Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "input magic");
-        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 1] = 2;
-        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "input version");
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 1] = 1;
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "input version must match the size");
         std::memcpy(tweak, frame, sizeof(tweak)); tweak[6] = static_cast<std::uint8_t>(wire::Kind::snapshot);
         Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "input kind");
-        std::memcpy(tweak, frame, sizeof(tweak)); tweak[24] = 39;
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[24] = 47;
         Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "input length");
         std::memcpy(tweak, frame, sizeof(tweak)); tweak[20] = 0; tweak[21] = 0; tweak[22] = 0; tweak[23] = 0;  // seq 0
         Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "input seq 0");
         std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 2] = 0x08;
         Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "input flag bits");
-        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 3] = 1;
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 39] = 1;
         Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "input reserved byte");
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 38] = 3;
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "edge_rep 3 refused on decode");
         // -32768 axis refused.
         std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 20] = 0x00; tweak[wire::header_size + 21] = 0x80;
         Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "axis -32768 refused");
@@ -330,6 +345,24 @@ int main() {
         Check(encode_input_frame(0x55, 7, 42, bad, frame) == 0, "ldir > 31416 refused by encode");
         bad = pkt; bad.cam_cdeg = 18000;
         Check(encode_input_frame(0x55, 7, 42, bad, frame) == 0, "cam out of range refused by encode");
+        // A v1 frame (68 bytes, from a round 3 build) still decodes: version 1,
+        // the latched w50/w54 kept, no edge sequence or 12-frame words.
+        Check(encode_input_frame(0x55, 7, 42, pkt, frame) == input_frame_size, "re-encode for the v1 copy");
+        std::uint8_t old[input_frame_size_v1]{};
+        std::memcpy(old, frame, wire::header_size);
+        old[24] = static_cast<std::uint8_t>(input_packet_size_v1);
+        old[25] = old[26] = old[27] = 0;
+        std::uint8_t* ob = old + wire::header_size;
+        const std::uint8_t* nb = frame + wire::header_size;
+        std::memcpy(ob, nb, 38);
+        ob[1] = 1; ob[3] = 0; ob[38] = 0; ob[39] = 0;
+        Check(decode_input_frame(old, sizeof(old), s, e, seq, got) && got.version == 1 && got.w50 == 0xBBu && got.w54 == 0xCCu &&
+              got.edge_seq == 0 && got.long12 == 0 && got.tap12 == 0 && got.held == pkt.held, "v1 frame decoded");
+        std::uint8_t old2[input_frame_size_v1];
+        std::memcpy(old2, old, sizeof(old2)); old2[wire::header_size + 3] = 1;
+        Check(!decode_input_frame(old2, sizeof(old2), s, e, seq, got), "v1 reserved byte 3 refused");
+        std::memcpy(old2, old, sizeof(old2)); old2[wire::header_size + 1] = 2;
+        Check(!decode_input_frame(old2, sizeof(old2), s, e, seq, got), "v1 size with version 2 refused");
     }
 
     std::printf("%u checks passed; player_sync transform codec, fixed-buffer frames, v2 anim extension, look and input frames verified\n", checks);

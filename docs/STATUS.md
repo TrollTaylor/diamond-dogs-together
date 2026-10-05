@@ -1,5 +1,16 @@
 # Development status
 
+## October 4, 2026 (round 4): input-drive reconciliation, stance taps, prone, host-input leak (branch `wp/partner-anim4`, not run live)
+
+Acts on live round 3 (see [partner-anim-appearance.md](partner-anim-appearance.md), "Round 4"):
+
+- **Reconciliation** (`native/partner_recon`, pure, 101 unit checks): apply=input places the body once with a disarmed Warp at the time-aligned remote pose and verifies it before arming; drift is corrected by position-only nudges (T.vt+0x58); xform snaps only on a large sustained error; Warp only on teleport, relink, far, vertical or diverging; a body that keeps moving while the remote is idle (the round 3 stuck state) is pinned instead of sawtoothing. S+0x20[1] carries the body readback.
+- **Stance and prone**: words default `hpr`, mask `0x2200006`, input frame v2 with edge sets and 12-frame hold/tap words, and `hold=own`, an exact replica of the classifier 0x434ED0 over instance 1's own history.
+- **Host-input leak**: every window installs a PP vtable copy whose key-manager slots answer from the injected words, PP+0x14 carries the world heading, PP+0x278/0x4B0 are shadowed, the camera sandbox covers the request block, and `wrap=census|window` measures (and can close) the other walks of block 1's tree.
+- `Play-OfflineCoop.ps1` now starts with the input drive; [W] falls back to the proven Warp. CTest passes 66 of 66 suites.
+- **Review fixes (second pass)**: [I]/[P] and I6 send `correct=3000 runaway=pin` (a leftover `correct=0` had turned the reconciliation off silently); stale edge sets are dropped after a disarm and a stall keeps the held level without edges; a lasting stance mismatch gets one corrective tap (a hold for prone); the runaway pin also covers a stuck body with a moving remote; stale input with a live pose pins instead of a 10 m Warp cycle; wrap windows inject the level only; source/apply-only triggers re-place; the fallback Warp uses the 100 ms interpolated pose again; `speed_mmps` no longer sits on its span boundary. 153 recon checks including a lag model.
+
+
 ## October 4, 2026: partner animation and appearance (branch `wp/partner-anim`, not run live)
 
 The fully offline partner (offline-v1, our own UDP link; [test report](testing-2026-10-04.md)) gets three new pieces. All three are experimental and switchable, and none has run live yet. See [partner-anim-appearance.md](partner-anim-appearance.md).

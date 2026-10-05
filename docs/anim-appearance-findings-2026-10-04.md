@@ -95,3 +95,19 @@ Next work (round 4):
 3. Prone (the hold classifier, `hold=own`).
 4. Find and stop the host-input leak into instance 1.
 5. Then promote the input lever to the default in Play-OfflineCoop.
+
+### Correction after re-reading the round 3 logs (round 4)
+
+- The I6 body did **not** follow the guest: the guest stood still while slot 1
+  stayed in act=4 s=2 v=2 (crouch-move) since the I2 host-input leak, at the
+  full-stick crouch-move speed of 3.19-3.20 m/s. The xform snaps fired about
+  every 0.98 s (1.5 m threshold held 500 ms) against the remote pose 100 ms in
+  the past, which is the sawtooth.
+- pos1/rec1 were our own writes of the remote pose, not body readbacks, and
+  `partner_body` had hit its 600-line mission cap; the body stayed within
+  3.2 m of the remote.
+- A stance press on keyboard shows held = w4c = w50 on the press frame and w54
+  only on the release frame; "only w54" came from 2 Hz sampling.
+- Round 4 (reconciliation, `words=hpr`, `hold=own`, the key-manager stubs and
+  the wrap census) is in [partner-anim-appearance.md](partner-anim-appearance.md),
+  section "Round 4".

@@ -60,14 +60,38 @@ enum class PartnerInput : std::uint8_t { off, pass, neutral, stick, net };
 // Camera POD fields inside the window: untouched, compared (dirty bits
 // logged) or compared and restored.
 enum class PartnerInputCam : std::uint8_t { off, detect, sandbox };
-// Hold classifier PP vt+0x90 inside the window: none (a per-window vtable
-// copy returns 0) or pass (the host's classifier).
-enum class PartnerInputHold : std::uint8_t { none, pass };
+// Hold classifiers PP vt+0x90 (0x1205C30) and vt+0x140 (0x1205DF0) inside the
+// window (round 4): none (both return 0, no prone), pass (vt+0x90 stays the
+// game's: diagnostic only, it reads the HOST's src history at *(src+8)), own
+// (an exact replica of src->vt+0x10 = 0x434ED0 over a history of what
+// instance 1 was fed, one entry per window; the default) or net (the sender's
+// 12-frame hold/tap words for frames == 12, own otherwise).
+enum class PartnerInputHold : std::uint8_t { none, pass, own, net };
 // Camera-relative stick rotation sign: +1, -1, or no rotation.
 enum class PartnerInputYaw : std::uint8_t { rot, rotneg, none };
 // Direct-motion lever: off, probe (census and the 2 Hz line), on (also the
 // 4-byte comparator patch at 0x1198E25).
 enum class PartnerDm : std::uint8_t { off, probe, on };
+// Round 4 reconciliation of an input-driven body (apply=input,
+// docs/partner-anim-appearance.md "Round 4"): off (placement only, then pure
+// locomotion: a diagnostic), track (placement, gentle position nudges, rare
+// snaps; the default) or pin (the body is xform-pinned to the remote pose every
+// tick while the window still drives its animation).
+enum class PartnerRecon : std::uint8_t { off, track, pin };
+// What the S+0x20[1] slot carries with apply=input: the remote pose (the old
+// behaviour), the body readback (what the game publishes for a local player;
+// the default) or nothing.
+enum class PartnerSlot : std::uint8_t { remote, body, none };
+// A body that keeps moving while the remote stands still (the stuck-moving
+// state seen live): pin it to the remote (default), disarm the window, or only
+// log it (off, diagnostic).
+enum class PartnerRunaway : std::uint8_t { pin, disarm, off };
+// Other walks of block 1's update tree (UpdateTree service slots +0x28/+0x30/
+// +0x40, the phase-7 call 0x9C1DA3, the phase-11 call 0x9C1AFF): off (not
+// hooked), census (pass-through wrappers that count calls per phase, thread
+// and window nesting) or window (the same instance-1 pad window around block
+// 1's calls on the hook thread; needs the census first).
+enum class PartnerWrap : std::uint8_t { off, census, window };
 // Sources of the three pad edge words src+0x4C/+0x50/+0x54 inside the window
 // (partner_input::Word): '0' zero, 'p' press, 'r' release, 'h' held, 'n' the
 // partner's own word (once per received frame).
@@ -121,15 +145,19 @@ struct LabConfig {
     // the look fix (look gate and stall recovery), which is on.
     PartnerInput partner_input = PartnerInput::off;
     PartnerInputCam partner_input_cam = PartnerInputCam::sandbox;
-    PartnerInputHold partner_input_hold = PartnerInputHold::none;
+    PartnerInputHold partner_input_hold = PartnerInputHold::own;
     PartnerInputYaw partner_input_yaw = PartnerInputYaw::rot;
-    std::uint8_t partner_input_words[3] = {kPartnerWordZero, kPartnerWordPress, kPartnerWordZero};  // "0p0"
-    std::uint32_t partner_input_mask = 0x6;      // STANCE | DASH
+    // Round 4: "hpr" (w4c held, w50 press edge, w54 release edge; the stance
+    // toggle fires on w50 or w54 bit 1, 0x10CE317..0x10CE344).
+    std::uint8_t partner_input_words[3] = {kPartnerWordHeld, kPartnerWordPress, kPartnerWordRelease};
+    // STANCE 0x2 | DASH 0x4 | keyboard dash 0x200000 | keyboard walk 0x2000000 (binding 0x19).
+    std::uint32_t partner_input_mask = 0x2200006;
     bool partner_input_rstick = false;
     bool partner_input_triggers = false;
     std::uint32_t partner_input_stick_deg = 180;  // 0..359
     std::uint32_t partner_input_stick_pct = 100;  // 0..100
-    std::uint32_t partner_input_correct_mm = 1500;  // 0..10000 (0 = never)
+    // Round 4: the hard xform snap threshold while moving (0 = recon off).
+    std::uint32_t partner_input_correct_mm = 3000;  // 0..10000
     std::uint32_t partner_input_stale_ms = 250;     // 50..2000
     bool partner_input_send = false;
     bool partner_input_hook = true;               // 0 forbids installing the 0x9C2B51 hook
@@ -139,6 +167,13 @@ struct LabConfig {
     bool partner_look_gate = true;
     bool partner_look_recover = true;
     PartnerDm partner_dm = PartnerDm::off;
+    // Round 4 (docs/partner-anim-appearance.md "Round 4").
+    PartnerRecon partner_recon = PartnerRecon::track;
+    std::int32_t partner_recon_align_ms = 0;        // -50..150: target delay bias
+    std::uint32_t partner_recon_nudge_mmps = 600;   // 100..3000: nudge cap while moving
+    PartnerSlot partner_input_slot = PartnerSlot::body;
+    PartnerRunaway partner_recon_runaway = PartnerRunaway::pin;
+    PartnerWrap partner_input_wrap = PartnerWrap::off;
     bool crash_probe = true;
     unsigned unknown_keys = 0;
     unsigned invalid_values = 0;
@@ -157,6 +192,16 @@ const char* PartnerInputCamName(PartnerInputCam value) noexcept;
 const char* PartnerInputHoldName(PartnerInputHold value) noexcept;
 const char* PartnerInputYawName(PartnerInputYaw value) noexcept;
 const char* PartnerDmName(PartnerDm value) noexcept;
+const char* PartnerReconName(PartnerRecon value) noexcept;
+const char* PartnerSlotName(PartnerSlot value) noexcept;
+const char* PartnerRunawayName(PartnerRunaway value) noexcept;
+const char* PartnerWrapName(PartnerWrap value) noexcept;
+bool ParsePartnerRecon(const char* text, std::size_t size, PartnerRecon& out) noexcept;
+bool ParsePartnerSlot(const char* text, std::size_t size, PartnerSlot& out) noexcept;
+bool ParsePartnerRunaway(const char* text, std::size_t size, PartnerRunaway& out) noexcept;
+bool ParsePartnerWrap(const char* text, std::size_t size, PartnerWrap& out) noexcept;
+// A signed decimal in [min, max]: optional '-', no '+', no leading zeros, no "-0".
+bool ParsePartnerSigned(const char* text, std::size_t size, std::int32_t min, std::int32_t max, std::int32_t& out) noexcept;
 bool ParsePartnerInput(const char* text, std::size_t size, PartnerInput& out) noexcept;
 bool ParsePartnerInputCam(const char* text, std::size_t size, PartnerInputCam& out) noexcept;
 bool ParsePartnerInputHold(const char* text, std::size_t size, PartnerInputHold& out) noexcept;

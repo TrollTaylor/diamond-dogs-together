@@ -257,7 +257,7 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner'; Json = 'partner'; Kind = 'bool' },
     @{ Key = 'partner_stage'; Json = 'stage'; Kind = 'int'; Min = 0; Max = 3 },
     @{ Key = 'partner_source'; Json = 'source'; Kind = 'enum'; Values = @('fixed', 'orbit', 'net') },
-    @{ Key = 'partner_apply'; Json = 'apply'; Kind = 'enum'; Values = @('warp', 'slot', 'both', 'xform', 'hybrid') },
+    @{ Key = 'partner_apply'; Json = 'apply'; Kind = 'enum'; Values = @('warp', 'slot', 'both', 'xform', 'hybrid', 'input') },
     # Animation / movement / appearance (docs/partner-anim-appearance.md). The
     # native parser also accepts partner_move as an alias of partner_apply.
     @{ Key = 'partner_anim'; Json = 'anim'; Kind = 'enum'; Values = @('off', 'mirror', 'net') },
@@ -276,7 +276,7 @@ $script:LabPartnerKeys = @(
     # keeping the default offline lab.ini unchanged.
     @{ Key = 'partner_input'; Json = 'input'; Kind = 'enum'; Values = @('off', 'pass', 'neutral', 'stick', 'net') },
     @{ Key = 'partner_input_cam'; Json = 'input_cam'; Kind = 'enum'; Values = @('off', 'detect', 'sandbox') },
-    @{ Key = 'partner_input_hold'; Json = 'input_hold'; Kind = 'enum'; Values = @('none', 'pass') },
+    @{ Key = 'partner_input_hold'; Json = 'input_hold'; Kind = 'enum'; Values = @('none', 'pass', 'own', 'net') },
     @{ Key = 'partner_input_yaw'; Json = 'input_yaw'; Kind = 'enum'; Values = @('rot', 'rotneg', 'none') },
     @{ Key = 'partner_input_words'; Json = 'input_words'; Kind = 'words' },
     @{ Key = 'partner_input_mask'; Json = 'input_mask'; Kind = 'mask' },
@@ -293,6 +293,13 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_look_gate'; Json = 'look_gate'; Kind = 'bool' },
     @{ Key = 'partner_look_recover'; Json = 'look_recover'; Kind = 'bool' },
     @{ Key = 'partner_dm'; Json = 'dm'; Kind = 'enum'; Values = @('off', 'probe', 'on') },
+    # Round 4 (docs/partner-anim-appearance.md "Round 4"); written only when set.
+    @{ Key = 'partner_recon'; Json = 'recon'; Kind = 'enum'; Values = @('off', 'track', 'pin') },
+    @{ Key = 'partner_recon_align_ms'; Json = 'recon_align_ms'; Kind = 'sint'; Min = -50; Max = 150 },
+    @{ Key = 'partner_recon_nudge_mmps'; Json = 'recon_nudge_mmps'; Kind = 'int'; Min = 100; Max = 3000 },
+    @{ Key = 'partner_input_slot'; Json = 'input_slot'; Kind = 'enum'; Values = @('remote', 'body', 'none') },
+    @{ Key = 'partner_recon_runaway'; Json = 'recon_runaway'; Kind = 'enum'; Values = @('pin', 'disarm', 'off') },
+    @{ Key = 'partner_input_wrap'; Json = 'input_wrap'; Kind = 'enum'; Values = @('off', 'census', 'window') },
     @{ Key = 'crash_probe'; Json = 'crash_probe'; Kind = 'bool' },
     @{ Key = 'net_latency_ms'; Json = 'net_latency_ms'; Kind = 'int'; Min = 0; Max = 2000 },
     @{ Key = 'net_loss_permille'; Json = 'net_loss_permille'; Kind = 'int'; Min = 0; Max = 1000 }
@@ -329,6 +336,9 @@ function ConvertTo-LabPartnerValue {
         $allowed = '1024..65535'
     } elseif ($spec.Kind -eq 'int') {
         if ($text -cmatch '^[0-9]{1,5}$' -and [int]$text -ge $spec.Min -and [int]$text -le $spec.Max) { return [string][int]$text }
+        $allowed = [string]$spec.Min + '..' + [string]$spec.Max
+    } elseif ($spec.Kind -eq 'sint') {
+        if ($text -cmatch '^(0|-?[1-9][0-9]{0,4})$' -and [int]$text -ge $spec.Min -and [int]$text -le $spec.Max) { return [string][int]$text }
         $allowed = [string]$spec.Min + '..' + [string]$spec.Max
     } elseif ($spec.Kind -eq 'words') {
         if ($text -cmatch '^[0prhn]{3}$') { return $text }

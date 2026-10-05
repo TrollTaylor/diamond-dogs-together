@@ -267,32 +267,45 @@ bool decode_look_frame(const std::uint8_t* data, std::size_t size, std::uint64_t
 std::size_t encode_input_frame(std::uint64_t session, std::uint32_t epoch, std::uint32_t sequence,
                                const partner_input::InputPacket& packet, std::uint8_t (&out)[input_frame_size]) noexcept {
     std::memset(out, 0, sizeof(out));
-    if (session == 0 || epoch == 0 || sequence == 0 || !partner_input::ValidPacket(packet)) return 0;
+    if (session == 0 || epoch == 0 || sequence == 0 || packet.version != input_version || !partner_input::ValidPacket(packet))
+        return 0;
     put_header(out, wire::Kind::event, session, epoch, sequence, static_cast<std::uint32_t>(input_packet_size));
     auto* b = out + wire::header_size;
-    b[0] = input_magic; b[1] = input_version; b[2] = packet.flags; b[3] = 0;
+    b[0] = input_magic; b[1] = input_version; b[2] = packet.flags; b[3] = packet.edge_seq;
     put(b + 4, packet.held); put(b + 8, packet.w4c); put(b + 12, packet.w50); put(b + 16, packet.w54);
     put(b + 20, static_cast<std::uint16_t>(packet.lx), 2); put(b + 22, static_cast<std::uint16_t>(packet.ly), 2);
     put(b + 24, static_cast<std::uint16_t>(packet.rx), 2); put(b + 26, static_cast<std::uint16_t>(packet.ry), 2);
     b[28] = packet.lt; b[29] = packet.rt;
     put(b + 30, packet.lmag, 2); put(b + 32, packet.lforce, 2);
     put(b + 34, static_cast<std::uint16_t>(packet.ldir), 2); put(b + 36, static_cast<std::uint16_t>(packet.cam_cdeg), 2);
-    b[38] = 0; b[39] = 0;
+    b[38] = packet.edge_rep; b[39] = 0;
+    put(b + 40, packet.long12); put(b + 44, packet.tap12);
     return input_frame_size;
 }
 
 bool decode_input_frame(const std::uint8_t* data, std::size_t size, std::uint64_t& session, std::uint32_t& epoch,
                         std::uint32_t& sequence, partner_input::InputPacket& out) noexcept {
-    if (!data || size != input_frame_size || !header_matches(data, wire::Kind::event, static_cast<std::uint32_t>(input_packet_size)))
+    if (!data) return false;
+    const bool v2 = size == input_frame_size;
+    if (!v2 && size != input_frame_size_v1) return false;
+    if (!header_matches(data, wire::Kind::event, static_cast<std::uint32_t>(v2 ? input_packet_size : input_packet_size_v1)))
         return false;
     const std::uint64_t frame_session = get64(data + 8);
     const std::uint32_t frame_epoch = get(data + 16);
     const std::uint32_t frame_sequence = get(data + 20);
     if (frame_session == 0 || frame_epoch == 0 || frame_sequence == 0) return false;
     const auto* b = data + wire::header_size;
-    if (b[0] != input_magic || b[1] != input_version || b[3] != 0 || b[38] != 0 || b[39] != 0) return false;
+    if (b[0] != input_magic || b[1] != (v2 ? input_version : 1) || b[39] != 0) return false;
+    if (!v2 && (b[3] != 0 || b[38] != 0)) return false;
     partner_input::InputPacket p{};
+    p.version = v2 ? 2 : 1;
     p.flags = b[2];
+    if (v2) {
+        p.edge_seq = b[3];
+        p.edge_rep = b[38];
+        p.long12 = get(b + 40);
+        p.tap12 = get(b + 44);
+    }
     p.held = get(b + 4); p.w4c = get(b + 8); p.w50 = get(b + 12); p.w54 = get(b + 16);
     p.lx = static_cast<std::int16_t>(get(b + 20, 2)); p.ly = static_cast<std::int16_t>(get(b + 22, 2));
     p.rx = static_cast<std::int16_t>(get(b + 24, 2)); p.ry = static_cast<std::int16_t>(get(b + 26, 2));

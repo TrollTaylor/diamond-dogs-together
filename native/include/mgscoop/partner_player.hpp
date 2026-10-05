@@ -187,6 +187,7 @@ struct Block {
     std::uintptr_t blk, ps, cs, entry, t, a0, c0, b70;
     std::uintptr_t blk_vt, ps_vt, cs_vt;  // as read (0 when unreadable)
     std::uintptr_t t_vt, t68, t70, a0_vt, a080, c0_vt, c090, b70_vt;
+    std::uintptr_t t58;   // T.vt+0x58: set position only (0x1AD5660)
     std::uint8_t psw;     // low byte of the stance word *(PS+0x298)[id - base] (0 unless stance_refusal is null)
 };
 struct Census {
@@ -228,8 +229,20 @@ const char* RequestStance(const Addresses& addresses, std::uint32_t index, bool 
 // copied to 16-byte aligned buffers (Warp passes aligned vectors).
 const char* ApplyTransform(const Addresses& addresses, std::uint32_t index, bool terminating, const float (&pos)[4],
                            const float (&quat)[4], PartnerReset reset) noexcept;
+// Round 4: T.vt+0x58(T, pos) only (0x1AD5660, verified): T+0x20 = pos,
+// T+0x10 = pos - (0, T+0x160, 0), T+0x174 = that foot y, T+0x1A4 = 0,
+// T+0x1F0 = 0, T+0x1A0 &= ~4. The rotation (T+0x60), the pending rotation
+// request (T+0x80 / T+0x178 bit 0x100) and the locomotion state are left as
+// the game has them: a nudge moves the body without turning it. Same guards
+// as ApplyTransform (census identities, slot +0x58 equal to the local
+// instance's and inside the code section).
+const char* ApplyPosition(const Addresses& addresses, std::uint32_t index, bool terminating, const float (&pos)[4]) noexcept;
 // Read-only: T+0x20 (position) and T+0x60 (rotation quaternion) of `index`.
 bool ReadBody(const Addresses& addresses, const State& state, std::uint32_t index, float (&pos)[4], float (&quat)[4]) noexcept;
+// Read-only diagnostic: the game's per-id velocity PS+0x268[id - PS+8]
+// (16-byte stride), which the PS per-id update stores as T+0x40 divided by
+// S+0x38[id] * S+0x48 (0xFF2364..0xFF23CD). That it is m/s is inferred.
+bool ReadVelocity(const Addresses& addresses, const State& state, std::uint32_t index, float (&vel)[4]) noexcept;
 
 // --- Round 3: input lever targets (pure reads) -------------------------------
 // The objects the block-1 context window touches, resolved in this order

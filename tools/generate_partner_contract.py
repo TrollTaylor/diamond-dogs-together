@@ -209,6 +209,68 @@ SITES = [
     (0x9B47D0, '833d1969260200751f8b41183bd0750b488b491033d2e9c5f9ffff7302ffc2488b4910e9b8f9ffff', 'slot mapping'),
     (0xFDFD11, '488b4660c60402ff488b4668c60402ff488b4670c60402ff488b4678c60402ff', 'Q reset: look = 0xFF'),
     (0x9CD6CE, '4180f9ff0f84e2fbffff', 'state 0 waits while Q parts == 0xFF'),
+    # --- Round 4 (docs/partner-anim-appearance.md "Round 4").
+    # Body transform T (live census t_vt 0x24C8EF0): +0x58 sets the position only,
+    # +0x60 the rotation, +0x68 = +0x58 then +0x60, +0x70 queues a rotation request.
+    (0x1AD5660, '0f281a33c00f57c00f2959200f57d2f30f108960010000', 'T.vt+0x58: T+0x20 = pos (movaps), foot = pos - (0, T+0x160, 0)'),
+    (0x1AD5680, '0f29591083a1a0010000fb0fc6db558981a4010000488981f0010000f30f119974010000c3',
+     'T.vt+0x58: T+0x10 foot, T+0x1A0 &= ~4, T+0x1A4 = 0, T+0x1F0 = 0, T+0x174 = foot y; ret'),
+    (0x1AD56B0, '0f28020f29416083a1a0010000fb48c781f001000000000000c3', 'T.vt+0x60: T+0x60 = quat'),
+    (0x1AD56D0, '48895c2408574883ec20488b01498bd8488bf9ff5058488b07488bd3488bcfff5060', 'T.vt+0x68 = vt+0x58(pos) then vt+0x60(quat)'),
+    (0x1AD4450, '0f28020f29818000000081897801000000010000c3', 'T.vt+0x70: T+0x80 = quat, T+0x178 |= 0x100 (pending rotation)'),
+    # The game's per-id velocity (diagnostic read): PS+0x268[id - PS+8] = T+0x40 / (S+0x38[id] * S+0x48).
+    (0xFF235E, 'ff90880300000f287040', 'PS per-id update: T = CS.vt+0x388(id); xmm6 = T+0x40'),
+    (0xFF23BC, '488b87680200008bce2b4f088bd64803c90f2904c8', 'PS per-id update stores the velocity at *(PS+0x268) + (id - PS+8)*16'),
+    # PP hold classifier and stance consumers (hold=own, words=hpr).
+    (0x1205C43, 'f681880400001074', 'PP vt+0x90: PP+0x488 bit 0x10 selects the key-manager path, else src->vt+0x10'),
+    (0x434ED0, '48895c240848897c24104c8bc9bf010000008bca448bd7458bd841d3e245855154',
+     'src vt+0x10 classifier: bit = 1 << btn; released = src+0x54 & bit'),
+    (0x434EF8, '45855148746f498b5108458b494033c94532c08bc14585c97427448512750685c9751eeb11ffc185c0450fb6c0440f44c7413bcb730bffc04883c204413bc172d9',
+     'src vt+0x10 classifier: held src+0x48, history *(src+8), n = src+0x40, leading zeros skipped, run counted, newest = entry 0'),
+    (0x434F39, '84db7415413bcb7310b802000000', 'src vt+0x10 classifier: released && count < frames -> 2'),
+    (0x434F52, '4584c07416b803000000413bcb0f42c7', 'src vt+0x10 classifier: newest -> count < frames ? 1 : 3'),
+    (0x10CE317, 'a808740f488b03488bcbff5040d1e8a8017520f68761030000080f85eafcffff488b03488bcbff5050d1e8a8010f84d7fcffff',
+     'stance toggle: press edge vt+0x40 bit 1 when rec+0x361 bit 8, else release edge vt+0x50 bit 1'),
+    (0x10CE021, '488b03ba01000000488bcb448d420bff909000000083f803', 'prone: PP vt+0x90(btn 1, 12 frames) == 3'),
+    # PP key-manager slots (the window answers them from the injected words).
+    (0x1206260, '4883ec284c8bc1488b89880300008bd2488b01498b94d090030000ff9048010000', 'PP vt+0xF8(idx): km vt+0x148(handle[idx])'),
+    (0x1206290, '4883ec284c8bc1488b89880300008bd2488b01498b94d090030000ff90f8000000', 'PP vt+0xE8(idx): km vt+0xF8 (pressed)'),
+    (0x12062C0, '488b018bd2488b94d19003000048ffa008010000', 'PP vt+0x100(idx): jmp PP vt+0x108(handle[idx])'),
+    (0x12062E0, '4883ec28488b8988030000488b01ff9008010000', 'PP vt+0x108(handle): km vt+0x108 (held)'),
+    (0x1206300, '4883ec284c8bc1488b89880300008bd2488b01498b94d090030000ff9018010000', 'PP vt+0xF0(idx): km vt+0x118 (released)'),
+    (0x1206330, '488b018bd2488b94d19003000048ffa018010000', 'PP vt+0x110(idx): jmp PP vt+0x118(handle[idx])'),
+    (0x1206350, '4883ec28488b8988030000488b01ff9088010000', 'PP vt+0x118(handle): km vt+0x188 (pressed, second set)'),
+    (0x1206370, '488b018bd2488b94d19003000048ffa038010000', 'PP vt+0x130(idx): jmp PP vt+0x138(handle[idx])'),
+    (0x1206390, '4883ec28488b8988030000488b01ff9098010000', 'PP vt+0x138(handle): km vt+0x198 (held, second set)'),
+    (0x12063B0, '488b018bd2488b94d19003000048ffa028010000', 'PP vt+0x120(idx): jmp PP vt+0x128(handle[idx])'),
+    (0x12063D0, '4883ec28488b8988030000488b01ff90a8010000', 'PP vt+0x128(handle): km vt+0x1A8 (released, second set)'),
+    (0x1205DF0, '4883ec280f57d2418bc04c8bc9488b89880300008bd2498b94d190030000', 'PP vt+0x140(idx, frames): km classifier by handle[idx]'),
+    (0x1205E1E, 'ff90b0010000', 'PP vt+0x140: km vt+0x1B0 (codes mapped 1->3, 2->1, 3->2)'),
+    (0x1206C30, '488b06418bee488bce488b94ee90030000ff9008010000', 'PP update: binding i held through PP vt+0x108(PP+0x390[i]) -> bit (1 << i)'),
+    (0x1206C17, '48b9989f16bfa0b80000', 'PP update: unbound handle 0xB8A0BF169F98 (48-bit compare)'),
+    # PP fields instance-1 code writes (shadowed by the window).
+    (0x1206540, '80a1b0040000f98089b004000010c3', 'PP vt+0x18: PP+0x4B0 &= ~6, |= 0x10 (rebind request)'),
+    (0x1206A8A, 'f686b004000010', 'PP update: rebind when PP+0x4B0 bit 0x10'),
+    (0x120714E, '4439a678020000', 'PP update: mouse look gated on PP+0x278'),
+    (0x11FB528, '83a378020000fe', 'plugin: PP+0x278 &= ~1'),
+    (0x1206A5F, 'f20f588170020000f20f118170020000', 'PP update: PP+0x270 += P+0x22C (frame time)'),
+    # PP+0x14 is the world move heading src->vt+0x00(src, LX, LY).
+    (0x12070D1, '498b07410f28d1498bcf410f28ca440f28e8ff10', 'PP update: PP+0x14 source = src->vt+0x00(src, LX, LY)'),
+    # Camera request setters (any id; restored by the window's camera sandbox).
+    (0x111A93D, '4183c802448981380d00008b028981800d0000', 'CAM vt+0xE0: CAM+0xD38 |= 2, CAM+0xD80..'),
+    (0x111A727, '8389380d0000048b028981b00d0000', 'CAM vt+0xF8: CAM+0xD38 |= 4, CAM+0xDB0..'),
+    (0x111A760, '8189380d0000000001008b028981d00d0000', 'CAM vt+0x100: CAM+0xD38 |= 0x10000, CAM+0xDD0..'),
+    (0x111A8E7, '8bc248c1e0044803c8418b0089819c0e0000', 'CAM vt+0x128: CAM+0xE9C + 16k'),
+    (0x10CDFCC, '0f298050010000', 'plugin: CAM+0x150 vector store'),
+    # Other walks of the block trees (wrap census/window).
+    (0xBF6420, '488bca418bd0e965feffff', 'UpdateTree service +0x28: (ctx, root, phase) -> active walker 0xBF6290'),
+    (0xBF6430, 'e95bfeffff', 'jmp 0xBF6290 (active walker)'),
+    (0xBF61C0, '488bca418bd0e9d5feffff', 'UpdateTree service +0x30: (ctx, root, phase) -> all-ids walker 0xBF60A0'),
+    (0xBF61E0, '418bc0488bca458bc18bd0e950ffffff', 'UpdateTree service +0x40: (ctx, root, phase, id) -> per-id walker 0xBF6140'),
+    (0xBF61F0, 'e94bffffff', 'jmp 0xBF6140 (per-id walker)'),
+    (0xBF62F8, '488b471844850401750e498b06448bc38bd6498bceff5018', 'active walker: node vt+0x18(phase, id) for ids active and not paused'),
+    (0x9C1D9B, 'ba07000000488bcfe888462300', 'player stage 0x9C1CD0: active walk of each block root, phase 7 (call 0x9C1DA3)'),
+    (0x9C1AF4, '448bc6ba0b000000498bcfe8ec462300', 'player stage 0x9C1A30: per-id walk, phase 11 (call 0x9C1AFF)'),
 ]
 
 # (vtable rva, slot offset, expected target rva).
@@ -252,6 +314,34 @@ SLOTS = [
     (0x23BFF00, 0x00, 0x1198DD0, 'DM iface slot 0 = consume thunk'),
     (0x23BFF00, 0x08, 0x119A350, 'DM iface slot 1 = Start'),
     (0x23BFF00, 0x20, 0x1198680, 'DM iface slot 4 = phase-8 per-id update'),
+    # Round 4.
+    (0x24C8EF0, 0x58, 0x1AD5660, 'T vtable +0x58 = set position (nudge)'),
+    (0x24C8EF0, 0x60, 0x1AD56B0, 'T vtable +0x60 = set rotation'),
+    (0x24C8EF0, 0x68, 0x1AD56D0, 'T vtable +0x68 = set pose'),
+    (0x24C8EF0, 0x70, 0x1AD4450, 'T vtable +0x70 = rotation request'),
+    (0x21534E0, 0x10, 0x434ED0, 'src vtable +0x10 = hold classifier (replicated by hold=own)'),
+    (0x21534E0, 0x38, 0x435260, 'src vtable +0x38 = frame update (called by the PP update at 0x1206BC3)'),
+    (0x23C8D40, 0x18, 0x1206540, 'PP vt+0x18 = rebind request'),
+    (0x23C8D40, 0x98, 0x12063F0, 'PP vt+0x98 = keyboard mode (PP+0x488 bit 6)'),
+    (0x23C8D40, 0xE8, 0x1206290, 'PP vt+0xE8 = key pressed (idx)'),
+    (0x23C8D40, 0xF0, 0x1206300, 'PP vt+0xF0 = key released (idx)'),
+    (0x23C8D40, 0xF8, 0x1206260, 'PP vt+0xF8 = km vt+0x148 (idx)'),
+    (0x23C8D40, 0x100, 0x12062C0, 'PP vt+0x100 = key held (idx)'),
+    (0x23C8D40, 0x108, 0x12062E0, 'PP vt+0x108 = key held (handle)'),
+    (0x23C8D40, 0x110, 0x1206330, 'PP vt+0x110 = key pressed 2 (idx)'),
+    (0x23C8D40, 0x118, 0x1206350, 'PP vt+0x118 = key pressed 2 (handle)'),
+    (0x23C8D40, 0x120, 0x12063B0, 'PP vt+0x120 = key released 2 (idx)'),
+    (0x23C8D40, 0x128, 0x12063D0, 'PP vt+0x128 = key released 2 (handle)'),
+    (0x23C8D40, 0x130, 0x1206370, 'PP vt+0x130 = key held 2 (idx)'),
+    (0x23C8D40, 0x138, 0x1206390, 'PP vt+0x138 = key held 2 (handle)'),
+    (0x23C8D40, 0x140, 0x1205DF0, 'PP vt+0x140 = key hold classifier (idx, frames)'),
+    (0x23B8250, 0xE0, 0x111A920, 'CAM vt+0xE0 = request setter (CAM+0xD80)'),
+    (0x23B8250, 0xF8, 0x111A710, 'CAM vt+0xF8 = request setter (CAM+0xDB0)'),
+    (0x23B8250, 0x100, 0x111A760, 'CAM vt+0x100 = request setter (CAM+0xDD0)'),
+    (0x23B8250, 0x128, 0x111A8A0, 'CAM vt+0x128 = request setter (CAM+0xE9C)'),
+    (0x2306660, 0x28, 0xBF6420, 'UpdateTree service vtable +0x28 = active walk (wrap)'),
+    (0x2306660, 0x30, 0xBF61C0, 'UpdateTree service vtable +0x30 = all-ids walk (wrap)'),
+    (0x2306660, 0x40, 0xBF61E0, 'UpdateTree service vtable +0x40 = per-id walk (wrap)'),
 ]
 
 failures = []
@@ -366,6 +456,8 @@ w('inline constexpr std::size_t ps_rec280_stride=0x20, ps_rec738_stride=0x28, co
 w('inline constexpr std::size_t cs_base_id=0xc, cs_entries=0x10, cs_entry_stride=0xc0, cs_entry_transform=0x60, transform_view=0x10;')
 w('inline constexpr std::size_t t_pos=0x20, t_quat=0x60;')
 w('inline constexpr std::size_t t_vt_set_pose=0x68, t_vt_set_rot=0x70, a0_vt_reset=0x80, c0_vt_reset=0x90, x_vt_request=0x10;')
+w('inline constexpr std::size_t t_vt_set_position=0x58;  // round 4: position only (nudges)')
+w('inline constexpr std::size_t ps_vel268=0x268, ps_vel268_stride=0x10;  // round 4: per-id velocity (diagnostic)')
 w('// --- Round 3 (docs/partner-anim-appearance.md "Round 3") -------------------')
 w('// P and block: g (script object 0x2c1bf20) = *(P+0x48); PP = *(P+0xb0); CAM = *(P+0xb8);')
 w('// P+0x218 = ids[P+0x214] (0x9c2810); blocks P+0x210; the root of block k is *(blk_k+0x190).')
@@ -404,6 +496,27 @@ w('inline constexpr std::uintptr_t dm_patch_rva=0x1198e25, dm_patch_block_rva=0x
 w('inline constexpr std::uint32_t dm_patch_old=0xc7440f44, dm_patch_new=0x00401f0f;  // little-endian dwords of 44 0f 44 c7 / 0f 1f 40 00')
 w('// Parts: the requested (descriptor) look of slot s is *(u64*)(M+0x1100+8*s) (0x9b442d).')
 w('inline constexpr std::size_t x_req_look=0x1100;')
+w('// --- Round 4 (docs/partner-anim-appearance.md "Round 4") -------------------')
+w('// PP key-manager slots answered inside the window (by binding index or by handle).')
+w('inline constexpr std::size_t pp_vt_rebind=0x18, pp_vt_kb_mode=0x98, pp_vt_km_hold=0x140;')
+w('inline constexpr std::size_t pp_vt_km_press_idx=0xe8, pp_vt_km_release_idx=0xf0, pp_vt_km_148_idx=0xf8, pp_vt_km_held_idx=0x100;')
+w('inline constexpr std::size_t pp_vt_km_held_h=0x108, pp_vt_km_press2_idx=0x110, pp_vt_km_press2_h=0x118, pp_vt_km_release2_idx=0x120;')
+w('inline constexpr std::size_t pp_vt_km_release2_h=0x128, pp_vt_km_held2_idx=0x130, pp_vt_km_held2_h=0x138;')
+w('inline constexpr std::uintptr_t pp_km_hold_rva=0x1205df0;  // PP vt+0x140')
+w('inline constexpr std::size_t pp_bindings=0x390, pp_binding_count=26;')
+w('// PP fields instance-1 code writes: the mouse-look gate (dword) and the rebind byte (shadowed).')
+w('inline constexpr std::size_t pp_mouse_gate=0x278, pp_rebind=0x4b0;')
+w('// The raw pad: src vtable 0x21534e0; +0x10 = 0x434ed0 is the hold classifier hold=own replicates.')
+w('inline constexpr std::uintptr_t src_vtable_rva=0x21534e0, src_hold_rva=0x434ed0;')
+w('// Other walks of the block trees (wrap=census|window): the UpdateTree service')
+w('// vtable data slots (read-only data, swapped with VirtualProtect) and two rel32 calls.')
+w('inline constexpr std::uintptr_t svc_vtable_rva=0x2306660;')
+w('inline constexpr std::size_t svc_vt_active=0x28, svc_vt_all=0x30, svc_vt_id=0x40;')
+w('inline constexpr std::uintptr_t svc_active_rva=0xbf6420, svc_all_rva=0xbf61c0, svc_id_rva=0xbf61e0;')
+w('inline constexpr std::uintptr_t walk7_site=0x9c1da3, walk7_next_ip=0x9c1da8, walk7_target=0xbf6430;')
+w('inline constexpr std::uint32_t walk7_rel32_orig=0x00234688;')
+w('inline constexpr std::uintptr_t walk11_site=0x9c1aff, walk11_next_ip=0x9c1b04, walk11_target=0xbf61f0;')
+w('inline constexpr std::uint32_t walk11_rel32_orig=0x002346ec;')
 w('// --- Code gate: exact bytes in .xtext ---------------------------------------')
 w('struct Site { std::uintptr_t rva; std::size_t size; unsigned char bytes[80]; };')
 w('inline constexpr Site code_sites[]={')

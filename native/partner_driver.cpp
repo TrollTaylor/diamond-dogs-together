@@ -306,6 +306,7 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
     a.p218 = m.p218_active;
     a.cam = set.input_cam;
     a.hold = set.input_hold;
+    a.wrap = set.wrap;
     a.P = t.P;
     a.pp = t.pp;
     a.src = t.src;
@@ -491,11 +492,334 @@ void LogInputCensus(Mission& m, const Hooks& h, const pp::InputTargets& targets)
     }
 }
 
-void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State& st, const Settings& set, const partner::Tick& tick,
-               const Clock& clock, bool terminating, bool parts_loaded, bool pose_valid, const partner::Pose& pose, bool relink,
-               std::uint32_t& ops) noexcept {
+namespace pr = mgscoop::partner_recon;
+
+// What TickInput hands back to Tick: the Reply pose for a reconciliation
+// placement (the time-aligned target), and whether the fallback Warp is
+// suppressed (the reconciliation places/verifies itself). The fallback Warp
+// itself keeps the proven 100 ms interpolated pose.
+struct InputTick {
+    bool pose_override;
+    partner::Pose pose;
+    bool suppress_fallback;
+};
+
+// Reconciliation event families (one 64-line cap each).
+enum ReconFamily : unsigned { kRcPlace, kRcPlaced, kRcSnap, kRcRunaway, kRcFrozen, kRcStance, kRcYaw, kRcStop, kRcDiverge, kRcRefused,
+                             kRcFix, kRcInputPin, kRcFamilies };
+static_assert(kRcFamilies == sizeof(Mission::recon_cap) / sizeof(LogCap), "one cap per recon family");
+const char* ReconFamilyName(unsigned family) noexcept {
+    static const char* const names[] = {"place", "placed", "snap", "runaway", "frozen", "stance", "yaw", "stop_check", "diverging", "refused",
+                                        "stance_fix", "input_pin"};
+    return family < kRcFamilies ? names[family] : "other";
+}
+void EmitRecon(Mission& m, const Hooks& h, unsigned family, const char* format, ...) noexcept {
+    va_list arguments;
+    va_start(arguments, format);
+    EmitCappedV(m.recon_cap[family < kRcFamilies ? family : kRcRefused], h, "partner_recon", ReconFamilyName(family), format, arguments);
+    va_end(arguments);
+}
+std::int32_t Mm(double value) noexcept {
+    if (!std::isfinite(value)) return INT32_MIN;
+    if (value >= 2147483647.0) return INT32_MAX;
+    if (value <= -2147483647.0) return -INT32_MAX;
+    return static_cast<std::int32_t>(std::llround(value));
+}
+
+pr::Params ReconParams(const Settings& set) noexcept {
+    pr::Params p{};
+    // correct=0 keeps the round 3 meaning "never correct": placement only.
+    p.recon = set.correct_mm == 0 ? PartnerRecon::off : set.recon;
+    p.runaway = set.runaway;
+    if (set.correct_mm) p.snap_moving_mm = set.correct_mm;
+    if (p.snap_idle_mm > p.snap_moving_mm) p.snap_idle_mm = p.snap_moving_mm;
+    p.cap_moving_mmps = set.nudge_mmps;
+    p.cap_idle_mmps = set.nudge_mmps / 2;
+    p.cap_prone_mmps = set.nudge_mmps / 4 < 150 ? set.nudge_mmps / 4 : 150;
+    p.input_stale_ms = set.stale_ms;
+    return p;
+}
+
+// One reconciliation step from this tick's observations.
+pr::Out StepRecon(Driver& d, const Hooks& h, const Settings& set, const Clock& clock, bool armable, bool pose_valid,
+                  const partner::Pose& pose, bool relink, bool anim_ok, const pp::Anim& anim, const sync::AnimState& remote_anim) noexcept {
+    Mission& m = d.mission;
+    pr::In in{};
+    in.now_ms = clock.now_ms;
+    in.armable = armable;
+    in.place_request = d.recon_place_request;
+    d.recon_place_request = pr::PlaceReason::none;
+    in.body_ok = m.body_ok;
+    for (unsigned i = 0; i < 3; ++i) in.body[i] = static_cast<double>(m.body_pos[i]) * 1000.0;
+    in.body_yaw = partner::QuatToYaw(m.body_quat);
+    in.last_ok = m.recon_last_ok;
+    in.relink = relink;
+    // Input: the newest received frame (net), or the local stick modes.
+    pin::Sample latest{};
+    const bool latest_ok = set.input == PartnerInput::net && h.latest_input && h.latest_input(h.context, latest) && latest.valid;
+    in.input_net = set.input == PartnerInput::net;
+    in.in_valid = in.input_net ? latest_ok : true;
+    in.in_age_ms = latest_ok ? latest.age_ms : 0;
+    if (latest_ok) {
+        const double lx = latest.packet.lx / 32767.0, ly = latest.packet.ly / 32767.0;
+        in.in_r = std::sqrt(lx * lx + ly * ly);
+        if (in.in_r > 1.0) in.in_r = 1.0;
+    } else if (set.input == PartnerInput::stick) {
+        in.in_r = static_cast<double>(set.stick_pct > 100 ? 100 : set.stick_pct) / 100.0;
+    }
+    m.recon_in_valid = latest_ok;
+    m.recon_in_age_ms = in.in_age_ms;
+    m.recon_in_r = static_cast<std::int32_t>(std::lround(in.in_r * 1000.0));
+    // Target: the remote pose aligned with the input being consumed (net), or
+    // the synthetic pose (fixed/orbit).
+    m.recon_delay_ms = 0;
+    m.recon_pose_age_ms = 0;
+    if (set.source == PartnerSource::net) {
+        const std::uint32_t delay = pr::AlignedDelayMs(in.input_net && latest_ok, in.in_age_ms, set.align_ms);
+        const pose::Sample sample = h.sample_remote ? h.sample_remote(h.context, delay) : pose::Sample{};
+        m.recon_delay_ms = delay;
+        m.recon_pose_age_ms = sample.age_ms;
+        in.target_ok = sample.valid;
+        if (sample.valid) {
+            in.target[0] = static_cast<double>(sample.x) * 1000.0;
+            in.target[1] = static_cast<double>(sample.y) * 1000.0;
+            in.target[2] = static_cast<double>(sample.z) * 1000.0;
+            in.target_yaw = static_cast<double>(sample.yaw);
+        }
+        in.target_live = sample.status == pose::Status::live;
+        in.target_snapped = sample.snapped;
+        in.remote_anim_valid = sample.anim_valid;
+        in.remote_act = sample.act;
+        in.remote_stance = sample.anim_stance;
+    } else {
+        in.target_ok = pose_valid;
+        in.target[0] = pose.x_mm; in.target[1] = pose.y_mm; in.target[2] = pose.z_mm;
+        in.target_yaw = pose.yaw_mrad / 1000.0;
+        in.target_live = pose_valid;
+        in.remote_anim_valid = (remote_anim.flags & sync::AnimFlag::Valid) != 0;
+        in.remote_act = remote_anim.act;
+        in.remote_stance = remote_anim.stance;
+    }
+    m.recon_target_ok = in.target_ok;
+    for (unsigned i = 0; i < 3; ++i) m.recon_target[i] = in.target[i];
+    m.recon_target_yaw = in.target_yaw;
+    in.body_anim_ok = anim_ok;
+    in.body_act = anim_ok ? anim.act[1] : 0;
+    in.body_stance = anim_ok ? anim.stance[1] : 0;
+    const pr::Out out = pr::Step(m.recon, in, ReconParams(set));
+    m.recon_out = out;
+    m.recon_have_out = true;
+    return out;
+}
+
+void LogReconEvents(Driver& d, const Hooks& h, const Settings& set, const pr::Out& o, bool anim_ok, const pp::Anim& anim) noexcept {
+    Mission& m = d.mission;
+    const pr::Report& r = o.report;
+    const std::uint32_t ev = o.events;
+    char age[16]{};
+    if (m.recon_in_valid) StringCchPrintfA(age, sizeof(age), "%u", m.recon_in_age_ms);
+    else StringCchCopyA(age, sizeof(age), "none");
+    if (ev & pr::Event::place) {
+        char body[48]{};
+        if (m.body_ok)
+            StringCchPrintfA(body, sizeof(body), "%d,%d,%d", MetresToMm(m.body_pos[0]), MetresToMm(m.body_pos[1]), MetresToMm(m.body_pos[2]));
+        else StringCchCopyA(body, sizeof(body), "na");
+        EmitRecon(m, h, kRcPlace,
+                  "partner_recon=place; reason=%s; via=warp; target_mm=%d,%d,%d; yaw_mrad=%d; body_mm=%s; err_mm=%d; delay_ms=%u; "
+                  "pose_age_ms=%u; in_age_ms=%s; tries=%u\r\n",
+                  pr::PlaceReasonName(o.place_reason), Mm(o.pos[0]), Mm(o.pos[1]), Mm(o.pos[2]), Mm(o.yaw * 1000.0), body,
+                  m.body_ok ? Mm(r.err_mm) : -1, m.recon_delay_ms, m.recon_pose_age_ms, age, m.recon.tries);
+    }
+    if (ev & pr::Event::placed_ok)
+        EmitRecon(m, h, kRcPlaced, "partner_recon=placed; ok=1; err_mm=%d; tries=%u; ms=%u\r\n", Mm(r.place_err_mm), r.place_tries,
+                  r.place_ms);
+    if (ev & pr::Event::placed_fail)
+        EmitRecon(m, h, kRcPlaced, "partner_recon=placed; ok=0; err_mm=%d; tries=%u; ms=%u; next=fallback_warp,retry_ms=5000\r\n",
+                  Mm(r.place_err_mm), r.place_tries, r.place_ms);
+    if (ev & pr::Event::snap) {
+        ++m.recon_snaps_total;
+        EmitRecon(m, h, kRcSnap,
+                  "partner_recon=snap; reason=%s; via=xform; err_mm=%d; dy_mm=%d; v_free_mmps=%d; v_remote_mmps=%d; snaps_10s=%u\r\n",
+                  r.remote_moving ? "far_moving" : r.prone ? "far_prone" : "far_idle", Mm(r.err_mm), Mm(r.dy_mm), Mm(r.v_free_mmps),
+                  Mm(r.v_remote_mmps), r.snaps_window);
+    }
+    if (ev & pr::Event::diverging)
+        EmitRecon(m, h, kRcDiverge, "partner_recon=diverging; snaps_10s=3; next=place,pin\r\n");
+    if (ev & pr::Event::runaway)
+        EmitRecon(m, h, kRcRunaway,
+                  "partner_recon=runaway; remote=%s; v_free_mmps=%d; v_remote_mmps=%d; dv_mmps=%d; err_mm=%d; remote_idle_ms=%u; act=%u; "
+                  "s=%u; v=%u; action=%s\r\n",
+                  r.runaway_moving ? "moving" : "idle", Mm(r.v_free_mmps), Mm(r.v_remote_mmps), Mm(r.dv_mmps), Mm(r.err_mm), r.idle_ms,
+                  anim_ok ? unsigned(anim.act[1]) : 0u, anim_ok ? unsigned(anim.stance[1]) : 0u, anim_ok ? unsigned(anim.speed[1]) : 0u,
+                  PartnerRunawayName(set.runaway));
+    if (ev & pr::Event::runaway_end)
+        EmitRecon(m, h, kRcRunaway, "partner_recon=runaway_end; ms=%u; reason=%s\r\n", r.runaway_ms,
+                  r.remote_moving ? "remote_moving" : "stopped");
+    if (ev & pr::Event::pin_end) EmitRecon(m, h, kRcDiverge, "partner_recon=pin_end\r\n");
+    if (ev & pr::Event::frozen) EmitRecon(m, h, kRcFrozen, "partner_recon=frozen; reason=%s\r\n", pr::FrozenName(r.frozen));
+    if (ev & pr::Event::unfrozen) EmitRecon(m, h, kRcFrozen, "partner_recon=unfrozen\r\n");
+    if (ev & pr::Event::stance)
+        EmitRecon(m, h, kRcStance, "partner_recon=stance; from=%u; to=%u; suspend_ms=%u\r\n", unsigned(r.stance_from),
+                  unsigned(r.stance_to), r.suspend_ms);
+    if (ev & pr::Event::stance_mismatch)
+        EmitRecon(m, h, kRcStance, "partner_recon=stance_mismatch; remote=%u; body=%u; ms=%u\r\n", unsigned(m.recon.stance_applied),
+                  anim_ok ? unsigned(anim.stance[1]) : 0u, r.mismatch_ms);
+    if (ev & pr::Event::yaw) EmitRecon(m, h, kRcYaw, "partner_recon=yaw; err_mrad=%d\r\n", Mm(r.yaw_err_mrad));
+    if (ev & pr::Event::stop_check)
+        EmitRecon(m, h, kRcStop, "partner_recon=stop_check; ok=%u; ms=%u; v_free_mmps=%d\r\n", r.stop_ok == 1 ? 1u : 0u, r.stop_ms,
+                  Mm(r.v_free_mmps));
+    if (ev & pr::Event::input_pin)
+        EmitRecon(m, h, kRcInputPin, "partner_recon=input_pin; in_age_ms=%s; err_mm=%d; reason=input_stale\r\n", age, Mm(r.err_mm));
+    if (ev & pr::Event::input_pin_end)
+        EmitRecon(m, h, kRcInputPin, "partner_recon=input_pin_end; ms=%u; reason=%s\r\n", r.input_pin_ms,
+                  m.recon_in_valid ? "input_live" : "pose_stale");
+}
+
+// Executes a nudge/snap/pin/yaw (a placement is the caller's Warp op).
+// Returns whether it reached the body.
+bool ExecuteRecon(Driver& d, const Hooks& h, const pr::Out& o, bool terminating) noexcept {
+    Mission& m = d.mission;
+    alignas(16) float pos[4] = {static_cast<float>(o.pos[0] / 1000.0), static_cast<float>(o.pos[1] / 1000.0),
+                                static_cast<float>(o.pos[2] / 1000.0), 0.0f};
+    const bool nudge = o.action == pr::Action::nudge;
+    const char* refused = nullptr;
+    if (m.native_disabled) {
+        refused = "native_disabled";
+    } else if (nudge) {
+        refused = h.apply_position ? h.apply_position(h.context, terminating, pos) : "unavailable";
+    } else {
+        alignas(16) float q[4]{};
+        partner::YawToQuat(static_cast<float>(o.yaw), q);
+        refused = h.apply_transform ? h.apply_transform(h.context, terminating, pos, q, PartnerReset::none) : "unavailable";
+    }
+    if (IsFault(refused)) NoteFault(m, h, nudge ? "recon_nudge" : "recon_xform");
+    if (refused) {
+        if (m.recon_refused != refused) {
+            m.recon_refused = refused;
+            EmitRecon(m, h, kRcRefused, "partner_recon=refused; action=%s; reason=%s; fallback=%s\r\n", pr::ActionName(o.action),
+                      refused, nudge ? "none" : "place");
+        }
+        // A refused xform places the body with a Warp on the next tick.
+        if (!nudge) d.recon_place_request = pr::PlaceReason::rearm;
+        return false;
+    }
+    m.recon_refused = nullptr;
+    if (!nudge) ++m.body_epoch;
+    return true;
+}
+
+// The 1 Hz partner_recon line (apply=input). recon= is the effective setting
+// (correct=0 turns the reconciliation off whatever recon= says).
+void ReconLine(Mission& m, const Hooks& h, const Settings& set, bool anim_ok, const pp::Anim& anim, std::uint64_t now) noexcept {
+    if (!m.recon_have_out || now - m.recon_line_ms < kReconLineMs) return;
+    m.recon_line_ms = now;
+    if (m.recon_lines >= kReconLineCap) {
+        if (!m.recon_lines_capped) { m.recon_lines_capped = true; Emit(h, "partner_recon=capped; limit=3600; kind=line\r\n"); }
+        return;
+    }
+    ++m.recon_lines;
+    const pr::Out& o = m.recon_out;
+    const pr::Report& r = o.report;
+    char age[16]{}, body[48]{}, target[48]{}, stop[4]{};
+    if (m.recon_in_valid) StringCchPrintfA(age, sizeof(age), "%u", m.recon_in_age_ms);
+    else StringCchCopyA(age, sizeof(age), "none");
+    if (m.body_ok) StringCchPrintfA(body, sizeof(body), "%d,%d,%d", MetresToMm(m.body_pos[0]), MetresToMm(m.body_pos[1]), MetresToMm(m.body_pos[2]));
+    else StringCchCopyA(body, sizeof(body), "na");
+    if (m.recon_target_ok) StringCchPrintfA(target, sizeof(target), "%d,%d,%d", Mm(m.recon_target[0]), Mm(m.recon_target[1]), Mm(m.recon_target[2]));
+    else StringCchCopyA(target, sizeof(target), "na");
+    StringCchCopyA(stop, sizeof(stop), r.stop_ok < 0 ? "na" : r.stop_ok ? "1" : "0");
+    EmitFormat(h,
+        "partner_recon; mode=%s; recon=%s; err_mm=%d; dy_mm=%d; along_mm=%d; cross_mm=%d; v_free_mmps=%d; v_remote_mmps=%d; dv_mmps=%d; "
+        "body_mm=%s; target_mm=%s; yaw_err_mrad=%d; nudges=%u; nudge_mm=%d; snaps=%u; places=%u; pins=%u; yaws=%u; act=%u; s=%u; "
+        "rs=%u; frozen=%s; delay_ms=%u; pose_age_ms=%u; in_age_ms=%s; in_r=%d; stop_ok=%s; runaway=%u; input_pin=%u; fixes=%u\r\n",
+        pr::ModeName(o.mode), PartnerReconName(ReconParams(set).recon), Mm(r.err_mm), Mm(r.dy_mm), Mm(r.along_mm), Mm(r.cross_mm),
+        Mm(r.v_free_mmps), Mm(r.v_remote_mmps), Mm(r.dv_mmps), body, target, Mm(r.yaw_err_mrad), r.nudges, Mm(r.nudge_mm), r.snaps,
+        r.places, r.pins, r.yaws, anim_ok ? unsigned(anim.act[1]) : 0u, anim_ok ? unsigned(anim.stance[1]) : 0u,
+        unsigned(m.recon.stance_applied), pr::FrozenName(r.frozen), m.recon_delay_ms, m.recon_pose_age_ms, age, m.recon_in_r, stop,
+        r.runaway_active ? 1u : 0u, r.input_pin ? 1u : 0u, m.recon_fixes);
+}
+
+// The 1 Hz wrap census line (wrap != off, entries installed): per entry the
+// block-1 calls, same-thread, nested and window deltas plus the phases seen.
+void WrapLine(Mission& m, const Hooks& h, const Settings& set, const partner_input_hook::WrapStats& w, std::uint64_t now) noexcept {
+    if (set.wrap == PartnerWrap::off || !w.installed || now - m.wrap_line_ms < kInputStatsMs || m.wrap_lines >= kWrapLineCap) return;
+    m.wrap_line_ms = now;
+    ++m.wrap_lines;
+    const partner_input_hook::WrapStats& b = m.wrap_base;
+    char parts[5][64]{};
+    for (std::size_t e = 0; e < partner_input_hook::kWrapEntries; ++e)
+        StringCchPrintfA(parts[e], sizeof(parts[e]), "%u,%u,%u,%u,0x%x", w.calls1[e] - b.calls1[e], w.same_thread[e] - b.same_thread[e],
+                         w.nested[e] - b.nested[e], w.windows[e] - b.windows[e], w.phase_mask[e]);
+    EmitFormat(h, "partner_wrap; mode=%s; svc28=%s; svc30=%s; svc40=%s; walk7=%s; walk11=%s; r0=%u,%u,%u,%u,%u; other=%u\r\n",
+               PartnerWrapName(set.wrap), parts[0], parts[1], parts[2], parts[3], parts[4], w.calls0[0] - b.calls0[0],
+               w.calls0[1] - b.calls0[1], w.calls0[2] - b.calls0[2], w.calls0[3] - b.calls0[3], w.calls0[4] - b.calls0[4],
+               w.other_calls - b.other_calls);
+    m.wrap_base = w;
+}
+
+// The 2 Hz partner_body line (apply=input or an input mode), from Tick so no
+// early return can hide it. speed_mmps is horizontal over same-epoch samples
+// at least kSpeedSpanMs apart (na otherwise: our own placements, snaps, pins
+// and Warps start a new epoch); own_mmps is the reconciliation's estimate of
+// the game's own motion (readback minus our writes); vel_mmps the game's
+// PS+0x268 per-id velocity (diagnostic).
+void BodyLine(Driver& d, const Hooks& h, const pp::State& st, const Settings& set, const partner::Tick& tick, const Clock& clock,
+              bool parts_loaded) noexcept {
     Mission& m = d.mission;
     const std::uint64_t now = clock.now_ms;
+    if (!m.body_ok || !parts_loaded) return;
+    const std::int32_t bx = MetresToMm(m.body_pos[0]), by = MetresToMm(m.body_pos[1]), bz = MetresToMm(m.body_pos[2]);
+    m.body_head = (m.body_head + 1) % kBodyRing;
+    m.body_ring[m.body_head] = Mission::BodySample{now, bx, bz, m.body_epoch};
+    if (m.body_count < kBodyRing) ++m.body_count;
+    if (!(set.apply == PartnerApply::input || set.input != PartnerInput::off)) return;
+    if (now - m.body_ms < kBodyMs) return;
+    if (m.body_lines >= kBodyCap) {
+        if (!m.body_capped) { m.body_capped = true; Emit(h, "partner_body=capped; limit=3600\r\n"); }
+        return;
+    }
+    m.body_ms = now;
+    ++m.body_lines;
+    char speed[16] = "na", own[16] = "na", vel[16] = "na";
+    std::int32_t heading = 0;
+    const Mission::BodySample& newest = m.body_ring[m.body_head];
+    // The oldest same-epoch sample (oldest first), over the actual span.
+    for (unsigned i = m.body_count; i-- > 1;) {
+        const Mission::BodySample& old = m.body_ring[(m.body_head + kBodyRing - i) % kBodyRing];
+        if (old.epoch != newest.epoch) continue;
+        if (newest.t_ms < old.t_ms + kSpeedSpanMs) break;  // newer ones are shorter still
+        const double dx = static_cast<double>(newest.x_mm) - old.x_mm, dz = static_cast<double>(newest.z_mm) - old.z_mm;
+        StringCchPrintfA(speed, sizeof(speed), "%u", Clamp32(static_cast<std::uint64_t>(std::sqrt(dx * dx + dz * dz) * 1000.0 /
+                                                                                         static_cast<double>(newest.t_ms - old.t_ms))));
+        if (dx != 0.0 || dz != 0.0) heading = partner::NormalizeMrad(static_cast<std::int64_t>(std::atan2(dx, dz) * 1000.0));
+        break;
+    }
+    if (m.recon_active && m.recon_have_out) StringCchPrintfA(own, sizeof(own), "%d", Mm(m.recon_out.report.v_free_mmps));
+    float v[4]{};
+    if (h.read_velocity && h.read_velocity(h.context, st, v) && std::isfinite(v[0]) && std::isfinite(v[2]))
+        StringCchPrintfA(vel, sizeof(vel), "%d", Mm(std::sqrt(static_cast<double>(v[0]) * v[0] + static_cast<double>(v[2]) * v[2]) * 1000.0));
+    pp::Anim banim{};
+    const bool banim_ok = h.read_anim && h.read_anim(h.context, st, banim);
+    std::uint8_t psw = 0;
+    if (h.census) {
+        pp::Census cen{};
+        h.census(h.context, st, cen);
+        psw = cen.k[1].psw;
+    }
+    EmitFormat(h,
+        "partner_body; R=1; body_mm=%d,%d,%d; yaw_mrad=%d; speed_mmps=%s; own_mmps=%s; vel_mmps=%s; heading_mrad=%d; cam_mrad=%d; "
+        "act=%u; s=%u; v=%u; psw=0x%02x; epoch=%u; snaps=%u\r\n",
+        bx, by, bz, pp::ToMrad(partner::QuatToYaw(m.body_quat)), speed, own, vel, heading, partner::CdegToMrad(tick.cam_cdeg),
+        banim_ok ? unsigned(banim.act[1]) : 0u, banim_ok ? unsigned(banim.stance[1]) : 0u, banim_ok ? unsigned(banim.speed[1]) : 0u,
+        unsigned(psw), m.body_epoch, m.recon_snaps_total);
+}
+
+void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State& st, const Settings& set, const partner::Tick& tick,
+               const Clock& clock, bool terminating, bool parts_loaded, bool pose_valid, const partner::Pose& pose, bool relink,
+               bool anim_ok, const pp::Anim& anim, const sync::AnimState& remote_anim, std::uint32_t& ops, InputTick& out) noexcept {
+    Mission& m = d.mission;
+    const std::uint64_t now = clock.now_ms;
+    (void)parts_loaded;
     // Diagnostic P+0x218 window: pending request, then auto-expiry. Hazardous
     // (P+0x218 is paired with P+0x214 / the local block P+0x58, e.g. 0x11AD05D
     // and 0xFE8F85): it needs the lab key and the camera sandbox.
@@ -541,18 +865,16 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
         if (m.dm_patched) RevertDm(d, h, "fault");
     }
     // Sender: the local pad, every tick, independent of arming (stage >= 1).
+    // Input frame v2: every tick's snapshot feeds the edge sets (press/release
+    // edges, 12-frame taps and holds), sent or not.
     if (set.isend && set.stage >= 1 && h.read_pad && h.submit_input) {
         pin::PadRaw raw{};
         if (h.read_pad(h.context, st, raw)) {
             const pin::PadSnapshot snap = pin::Effective(raw);
-            m.sender_w4c |= snap.w4c;
-            m.sender_w50 |= snap.w50;
-            m.sender_w54 |= snap.w54;
+            pin::SenderObserve(m.sender, snap);
             pin::InputPacket pkt = pin::Quantize(snap, tick.cam_cdeg);
-            pkt.w4c = m.sender_w4c;
-            pkt.w50 = m.sender_w50;
-            pkt.w54 = m.sender_w54;
-            if (h.submit_input(h.context, pkt)) { m.sender_w4c = m.sender_w50 = m.sender_w54 = 0; }
+            pin::SenderFill(m.sender, pkt);
+            if (h.submit_input(h.context, pkt)) pin::SenderSent(m.sender);
         }
     }
     // Pad probe (read-only), change-only, at most 20 Hz.
@@ -593,6 +915,11 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
     if (set.input == PartnerInput::off) {
         DisarmInput(d, h, "trigger");
         d.tap_pending = d.press_pending = false;
+        if (m.recon_active) {
+            pr::Reset(m.recon);
+            m.recon_active = false;
+            m.recon_have_out = false;
+        }
         return;
     }
     // Arming conditions in order; the first failure is the refusal reason.
@@ -610,26 +937,6 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
     const bool busy = census && std::strcmp(census, "busy") == 0;
     const bool keep_arm = busy && m.input_armed;
     if (!reason[0] && census && !keep_arm) { StringCchPrintfA(reason, sizeof(reason), "census_%s", census); }
-    // Placement (apply=input): a Lua Warp places the body while disarmed, on
-    // the first parts load and on a net relink (lost -> live). It runs only
-    // when nothing else refuses arming, takes this whole tick (publishing a
-    // disarmed Arm), and arming re-evaluates next tick.
-    if (!reason[0] && input_apply && pose_valid && set.stage >= 1) {
-        const bool first = !m.input_armed && !m.input_placed && parts_loaded;
-        if (relink || first) {
-            ops |= partner::op::warp;
-            m.input_placed = true;
-            DisarmInput(d, h, "relink");  // logs only if it was armed
-            if (!m.input_armed) {
-                pin::Arm idle{};
-                idle.gen = m.input_gen;
-                if (h.publish_arm) h.publish_arm(h.context, idle);
-            }
-            EmitFormat(h, "partner_input_place; reason=%s; err_mm=0; via=warp\r\n", relink ? "relink" : "first");
-            return;
-        }
-    }
-    if (input_apply && !m.input_placed) fail("placing");
     if (set.input == PartnerInput::net && h.net_running && !h.net_running(h.context)) fail("net");
     // Lazy hook install.
     if (!reason[0]) {
@@ -638,12 +945,78 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
             if (const char* why = h.install_input_hook(h.context)) StringCchPrintfA(reason, sizeof(reason), "install_%s", why);
         } else fail("unavailable");
     }
+    // Lazy wrap install (wrap=census|window, after the main hook).
+    if (!reason[0] && set.wrap != PartnerWrap::off && !m.wrap_install_tried && h.install_wrap) {
+        m.wrap_install_tried = true;
+        h.install_wrap(h.context);
+        m.wrap_base = s.wrap;
+        m.wrap_line_ms = now;
+    }
     if (terminating) fail("terminating");
-    // One-shot acceptance (only while about to be armed and within the mask).
     const bool will_arm = reason[0] == 0;
+    // Round 4: reconciliation of the input-driven body (apply=input). It
+    // decides placement (window disarmed, Lua Warp to the aligned target),
+    // verification, and the corrections executed below.
+    pr::Out ro{};
+    bool recon_used = false;
+    if (input_apply) {
+        if (!m.recon_active) {
+            pr::Reset(m.recon);
+            m.recon_active = true;
+        }
+        recon_used = true;
+        ro = StepRecon(d, h, set, clock, will_arm, pose_valid, pose, relink, anim_ok, anim, remote_anim);
+        LogReconEvents(d, h, set, ro, anim_ok, anim);
+    } else if (m.recon_active) {
+        pr::Reset(m.recon);
+        m.recon_active = false;
+        m.recon_have_out = false;
+    }
+    m.recon_last_ok = false;
+    if (recon_used) {
+        if (ro.action == pr::Action::place) {
+            ops |= partner::op::warp;
+            out.pose_override = true;
+            out.pose = partner::PoseFromMetres(static_cast<float>(ro.pos[0] / 1000.0), static_cast<float>(ro.pos[1] / 1000.0),
+                                               static_cast<float>(ro.pos[2] / 1000.0), static_cast<float>(ro.yaw));
+            m.recon_last_ok = true;
+            ++m.body_epoch;
+        } else if (ro.action != pr::Action::none) {
+            m.recon_last_ok = ExecuteRecon(d, h, ro, terminating);
+        }
+        // Placing or verifying: no per-tick Warp on top (waiting for a live
+        // pose keeps the fallback, so the partner never freezes). The
+        // fallback Warp itself (window not armed) keeps the proven 100 ms
+        // interpolated pose: the aligned target extrapolates the newest
+        // snapshot and would overshoot stops and jitter on turns.
+        if (ro.action == pr::Action::place || ro.mode == pr::Mode::verify) out.suppress_fallback = true;
+    }
+    const bool arm_now = will_arm && (!recon_used || ro.arm);
+    // The reconciliation's corrective stance input (stance level): one tap
+    // toward the remote's stance, or a hold for prone, through the overlay.
+    if (recon_used && ro.stance_fix != pr::StanceFix::none && arm_now) {
+        const bool hold = ro.stance_fix == pr::StanceFix::hold;
+        if (!(set.input_mask & kStanceBit)) {
+            EmitRecon(m, h, kRcFix, "partner_recon=stance_fix; refused=mask; remote=%u; body=%u\r\n", unsigned(ro.report.fix_remote),
+                      unsigned(ro.report.fix_body));
+        } else {
+            if (hold) {
+                m.press_bits = kStanceBit;
+                m.press_until_ms = now + kStanceFixHoldMs;
+            } else {
+                ++d.tap_seq;
+                m.tap_bits = kStanceBit;
+            }
+            ++m.recon_fixes;
+            EmitRecon(m, h, kRcFix, "partner_recon=stance_fix; remote=%u; body=%u; via=%s; ms=%u; fixes=%u\r\n",
+                      unsigned(ro.report.fix_remote), unsigned(ro.report.fix_body), pr::StanceFixName(ro.stance_fix),
+                      hold ? kStanceFixHoldMs : static_cast<std::uint32_t>(pin::kTapFrames), m.recon_fixes);
+        }
+    }
+    // One-shot acceptance (only while about to be armed and within the mask).
     if (d.tap_pending) {
         d.tap_pending = false;
-        if (!will_arm) Emit(h, "partner_input=tap_refused; reason=not_armed\r\n");
+        if (!arm_now) Emit(h, "partner_input=tap_refused; reason=not_armed\r\n");
         else if (d.tap_bits_pending & ~set.input_mask) Emit(h, "partner_input=tap_refused; reason=mask\r\n");
         else {
             ++d.tap_seq;
@@ -653,7 +1026,7 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
     }
     if (d.press_pending) {
         d.press_pending = false;
-        if (!will_arm) Emit(h, "partner_input=tap_refused; reason=not_armed\r\n");
+        if (!arm_now) Emit(h, "partner_input=tap_refused; reason=not_armed\r\n");
         else if (d.press_bits_pending & ~set.input_mask) Emit(h, "partner_input=tap_refused; reason=mask\r\n");
         else {
             m.press_bits = d.press_bits_pending;
@@ -672,10 +1045,25 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
                 Emit(h, "partner_input=refused; reason=capped; limit=64\r\n");
             }
         }
+        if (m.input_armed) ++m.body_epoch;
         DisarmInput(d, h, "refused");
+        if (recon_used) ReconLine(m, h, set, anim_ok, anim, now);
         return;
     }
     m.input_refused_text[0] = 0;
+    if (!arm_now) {
+        // The reconciliation holds the window off (placement, verification,
+        // runaway=disarm, a failed placement): the window stays disarmed.
+        if (m.input_armed) ++m.body_epoch;
+        const char* why = ro.mode == pr::Mode::verify || ro.mode == pr::Mode::place ? "place"
+                        : ro.mode == pr::Mode::pin ? "runaway" : "place_failed";
+        const bool was_armed = m.input_armed;
+        DisarmInput(d, h, why);
+        if (!was_armed) PublishDisarmed(d, h);
+        ReconLine(m, h, set, anim_ok, anim, now);
+        if (h.input_hook_live && !h.input_hook_live(h.context)) Emit(h, "partner_input_hook=lost\r\n");
+        return;
+    }
     // Build and publish the Arm (gen bumps only when a tracked field changes).
     // A busy tick keeps the Arm already published (its targets are unread).
     if (!keep_arm) {
@@ -696,41 +1084,14 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
         m.input_stale_logged = false;
         m.us_max_acc = 0;
         char words[4]{};
-        EmitInput(m, h, "partner_input=armed; mode=%s; gen=%u; apply=%s; cam=%s; hold=%s; yaw=%s; words=%s; mask=0x%x; correct_mm=%u; p218=%u\r\n",
+        EmitInput(m, h,
+                  "partner_input=armed; mode=%s; gen=%u; apply=%s; cam=%s; hold=%s; yaw=%s; words=%s; mask=0x%x; correct_mm=%u; "
+                  "recon=%s; slot=%s; wrap=%s; p218=%u\r\n",
                   PartnerInputName(set.input), m.input_gen, PartnerApplyName(set.apply), PartnerInputCamName(set.input_cam),
                   PartnerInputHoldName(set.input_hold), PartnerInputYawName(set.input_yaw), WordsText(set, words), set.input_mask,
-                  set.correct_mm, m.p218_active ? 1u : 0u);
+                  set.correct_mm, PartnerReconName(ReconParams(set).recon), PartnerSlotName(set.slot), PartnerWrapName(set.wrap),
+                  m.p218_active ? 1u : 0u);
         LogInputCensus(m, h, targets);  // once per arm
-    }
-    // Correction (apply=input, armed): a rare xform snap when the body drifts.
-    if (input_apply && set.correct_mm > 0 && m.body_ok && m.have_cmd) {
-        const std::uint32_t err = partner::DistanceMm(m.cmd.x_mm, m.cmd.y_mm, m.cmd.z_mm, MetresToMm(m.body_pos[0]),
-                                                      MetresToMm(m.body_pos[1]), MetresToMm(m.body_pos[2]));
-        if (err > set.correct_mm) {
-            if (!m.correct_over_ms) m.correct_over_ms = now;
-            if (now - m.correct_over_ms >= kCorrectHoldMs && (!m.correct_last_ms || now - m.correct_last_ms >= kCorrectGapMs)) {
-                m.correct_last_ms = now;
-                m.correct_over_ms = 0;
-                alignas(16) float p[4] = {static_cast<float>(pose.x_mm / 1000.0), static_cast<float>(pose.y_mm / 1000.0),
-                                          static_cast<float>(pose.z_mm / 1000.0), 0.0f};
-                alignas(16) float q[4]{};
-                partner::YawToQuat(static_cast<float>(pose.yaw_mrad / 1000.0), q);
-                const char* refused = m.native_disabled ? "native_disabled"
-                                    : !h.apply_transform ? "unavailable"
-                                    : h.apply_transform(h.context, terminating, p, q, PartnerReset::none);
-                if (IsFault(refused)) NoteFault(m, h, "input_correct");
-                if (refused) {
-                    // Disarm, warp, and re-arm next tick.
-                    ops |= partner::op::warp;
-                    DisarmInput(d, h, "correct");
-                    EmitFormat(h, "partner_input_place; reason=err; err_mm=%u; via=warp\r\n", err);
-                } else {
-                    EmitFormat(h, "partner_input_place; reason=err; err_mm=%u; via=xform\r\n", err);
-                }
-            }
-        } else {
-            m.correct_over_ms = 0;
-        }
     }
     // Stale/live transitions (net only, once this arm has run a window): the
     // state of the most recent window (a missing sample is stale too).
@@ -746,7 +1107,10 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
         }
     }
     // 1 Hz line: windows since the arm; per_s, root1_calls, skips and stale
-    // are this interval's deltas (per_s normalized to one second).
+    // are this interval's deltas (per_s normalized to one second). Round 4
+    // adds the words, the edges injected, the synthesized taps, the hold
+    // classifier answers for btn 1 (h0..h3), the key-manager stub calls and
+    // the shadowed PP field changes.
     if (now - m.input_stats_ms >= kInputStatsMs) {
         const pin::WindowStats& b = m.stats_base;
         const std::uint64_t dt = now > m.stats_base_ms ? now - m.stats_base_ms : 0;
@@ -755,13 +1119,19 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
         char age[16]{};
         if (s.window.last_age_ms == pin::kNoSample) StringCchCopyA(age, sizeof(age), "none");
         else StringCchPrintfA(age, sizeof(age), "%u", s.window.last_age_ms);
+        char words[4]{};
         EmitInput(m, h,
             "partner_input; mode=%s; windows=%u; per_s=%u; root1_calls=%u; skips=%u; skip=%s; stale=%u; age_ms=%s; held=0x%x; "
-            "lx=%d; ly=%d; dir_mrad=%d; mag=%d; cam_dirty=0x%x; cam_restored=%u; hold_calls=%u; us_max=%u; hook_thread=%u; lua_thread=%u\r\n",
+            "lx=%d; ly=%d; dir_mrad=%d; mag=%d; cam_dirty=0x%x; cam_restored=%u; hold_calls=%u; us_max=%u; hook_thread=%u; lua_thread=%u; "
+            "words=%s; hold=%s; press_n=%u; release_n=%u; synth_taps=%u; h=%u,%u,%u,%u; km=%u; shadow=%u\r\n",
             PartnerInputName(set.input), windows_armed, per_s, s.window.root1_calls - b.root1_calls, s.window.skips - b.skips,
             pin::SkipName(s.window.last_skip), s.window.stale - b.stale, age, s.window.last_held, s.window.last_lx,
             s.window.last_ly, s.window.last_dir, s.window.last_mag, s.window.cam_dirty_or, s.window.cam_restored - b.cam_restored,
-            s.window.hold_calls - b.hold_calls, m.us_max_acc, s.window.hook_thread, static_cast<unsigned>(GetCurrentThreadId()));
+            s.window.hold_calls - b.hold_calls, m.us_max_acc, s.window.hook_thread, static_cast<unsigned>(GetCurrentThreadId()),
+            WordsText(set, words), PartnerInputHoldName(set.input_hold), s.window.press_n - b.press_n, s.window.release_n - b.release_n,
+            s.window.synth_taps - b.synth_taps, s.window.hold_own[0] - b.hold_own[0], s.window.hold_own[1] - b.hold_own[1],
+            s.window.hold_own[2] - b.hold_own[2], s.window.hold_own[3] - b.hold_own[3], s.window.km_calls - b.km_calls,
+            s.window.shadow_changes - b.shadow_changes);
         m.input_stats_ms = now;
         m.stats_base = s.window;
         m.stats_base_ms = now;
@@ -778,38 +1148,8 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
         ++m.hold_logs;
         EmitFormat(h, "partner_holdlog; btn=%u; frames=%u; result=%u\r\n", r.btn, r.frames, r.result);
     }
-    // Body line (2 Hz): position/heading/speed and the slot-1 anim fields.
-    if (h.read_body && m.body_ok && now - m.body_ms >= kBodyMs && m.body_lines < kBodyCap) {
-        const std::int32_t bx = MetresToMm(m.body_pos[0]), by = MetresToMm(m.body_pos[1]), bz = MetresToMm(m.body_pos[2]);
-        const float body_yaw = partner::QuatToYaw(m.body_quat);
-        std::uint32_t speed = 0;
-        std::int32_t heading = 0;
-        if (m.body_prev_ok && now > m.body_prev_ms) {
-            const double dx = bx - m.body_prev_mm[0], dz = bz - m.body_prev_mm[2];
-            const double dist = std::sqrt(dx * dx + (static_cast<double>(by - m.body_prev_mm[1])) * (by - m.body_prev_mm[1]) + dz * dz);
-            speed = Clamp32(static_cast<std::uint64_t>(dist * 1000.0 / (now - m.body_prev_ms)));
-            if (dx != 0.0 || dz != 0.0) heading = pp::ToMrad(static_cast<float>(partner::NormalizeMrad(
-                static_cast<std::int64_t>(std::atan2(dx, dz) * 1000.0))) / 1000.0f);
-        }
-        pp::Anim banim{};
-        const bool banim_ok = h.read_anim && h.read_anim(h.context, st, banim);
-        std::uint8_t psw = 0;
-        if (h.census) {
-            pp::Census cen{};
-            h.census(h.context, st, cen);
-            psw = cen.k[1].psw;
-        }
-        m.body_ms = now;
-        ++m.body_lines;
-        EmitFormat(h,
-            "partner_body; R=1; body_mm=%d,%d,%d; yaw_mrad=%d; speed_mmps=%u; heading_mrad=%d; cam_mrad=%d; act=%u; s=%u; v=%u; psw=0x%02x\r\n",
-            bx, by, bz, pp::ToMrad(body_yaw), speed, heading, partner::CdegToMrad(tick.cam_cdeg),
-            banim_ok ? unsigned(banim.act[1]) : 0u, banim_ok ? unsigned(banim.stance[1]) : 0u, banim_ok ? unsigned(banim.speed[1]) : 0u,
-            unsigned(psw));
-        m.body_prev_mm[0] = bx; m.body_prev_mm[1] = by; m.body_prev_mm[2] = bz;
-        m.body_prev_ms = now;
-        m.body_prev_ok = true;
-    }
+    if (recon_used) ReconLine(m, h, set, anim_ok, anim, now);
+    WrapLine(m, h, set, s.wrap, now);
     // The patch-live check.
     if (h.input_hook_live && !h.input_hook_live(h.context)) {
         Emit(h, "partner_input_hook=lost\r\n");
@@ -848,7 +1188,14 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.look_recover = lab.partner_look_recover;
     d.settings.dm = lab.partner_dm;
     d.settings.holdlog = lab.partner_input_holdlog;
+    d.settings.recon = lab.partner_recon;
+    d.settings.align_ms = lab.partner_recon_align_ms;
+    d.settings.nudge_mmps = lab.partner_recon_nudge_mmps;
+    d.settings.slot = lab.partner_input_slot;
+    d.settings.runaway = lab.partner_recon_runaway;
+    d.settings.wrap = lab.partner_input_wrap;
     d.look_forced_rev = 1;
+    partner_recon::Reset(d.mission.recon);
 }
 
 void MissionStart(Driver& d, const Hooks& h) noexcept {
@@ -863,6 +1210,8 @@ void MissionStart(Driver& d, const Hooks& h) noexcept {
     d.mission = Mission{};
     d.mission.anim_source = -1;
     d.mission.last_status = pose::Status::none;
+    partner_recon::Reset(d.mission.recon);
+    d.recon_place_request = partner_recon::PlaceReason::none;
     d.parts_explicit_pending = false;
     d.mirror_pending = false;
     d.census_pending = false;
@@ -943,6 +1292,13 @@ void Stop(Driver& d, const Hooks& h, PartnerTeardown teardown, bool terminating)
 void ApplyTrigger(Driver& d, const Hooks& h, const partner::Trigger& trigger, bool terminating) noexcept {
     Mission& m = d.mission;
     const std::uint32_t stage = trigger.stop ? 0 : trigger.has_stage ? trigger.stage : d.settings.stage;
+    // Round 4: a change of the movement driver, the input mode or the pose
+    // source while apply=input runs places the body again (I6 switched
+    // input=stick -> net without a new placement). Compared before any
+    // setting is overwritten.
+    const bool replace = (trigger.has_apply && trigger.apply != d.settings.apply) ||
+                         (trigger.has_input && trigger.input != d.settings.input) ||
+                         (trigger.has_source && trigger.source != d.settings.source);
     if (trigger.has_source && trigger.source != d.settings.source) m.have_cmd = false;
     if (trigger.has_source) d.settings.source = trigger.source;
     if (trigger.has_apply) {
@@ -965,6 +1321,13 @@ void ApplyTrigger(Driver& d, const Hooks& h, const partner::Trigger& trigger, bo
         m.anim_write_logged = false;
         m.anim_source = -1;
     }
+    if (replace) d.recon_place_request = partner_recon::PlaceReason::rearm;
+    if (trigger.place) d.recon_place_request = partner_recon::PlaceReason::manual;
+    if (trigger.has_recon) d.settings.recon = trigger.recon;
+    if (trigger.has_align) d.settings.align_ms = trigger.align_ms;
+    if (trigger.has_slot) d.settings.slot = trigger.slot;
+    if (trigger.has_runaway) d.settings.runaway = trigger.runaway;
+    if (trigger.has_wrap) d.settings.wrap = trigger.wrap;
     // Round 3 settings.
     if (trigger.has_input) d.settings.input = trigger.input;
     if (trigger.has_stick) { d.settings.stick_deg = static_cast<std::uint16_t>(trigger.stick_deg);
@@ -982,17 +1345,24 @@ void ApplyTrigger(Driver& d, const Hooks& h, const partner::Trigger& trigger, bo
     if (trigger.has_lookgate) d.settings.look_gate = trigger.lookgate;
     if (trigger.has_lookrecover) d.settings.look_recover = trigger.lookrecover;
     if (trigger.has_holdlog) { d.settings.holdlog = trigger.holdlog; d.holdlog_changed = true; }
+    // correct=0 keeps the round 3 meaning (no corrections) and overrides
+    // recon=track|pin: say so, so a later recon= is never silently ignored.
+    if ((trigger.has_recon || trigger.has_correct) && d.settings.correct_mm == 0 && d.settings.recon != PartnerRecon::off)
+        EmitFormat(h, "partner_recon=off; reason=correct0; requested=%s; fix=correct=3000\r\n", PartnerReconName(d.settings.recon));
     d.settings.stage = stage;
     char words_text[4]{};
     FormatPartnerWords(d.settings.input_words, words_text);
     EmitFormat(h, "partner_stage=changed; stage=%u; source=%s; apply=%s; anim=%s; aset=%s; reset=%s; look=%s; probe=%s; "
-               "lookgate=%u; lookrecover=%u; input=%s; cam=%s; hold=%s; yaw=%s; words=%s; mask=0x%x; correct=%u; isend=%u; dm=%s; via=trigger\r\n",
+               "lookgate=%u; lookrecover=%u; input=%s; cam=%s; hold=%s; yaw=%s; words=%s; mask=0x%x; correct=%u; isend=%u; dm=%s; "
+               "recon=%s; align=%d; slot=%s; runaway=%s; wrap=%s; via=trigger\r\n",
                stage, PartnerSourceName(d.settings.source), PartnerApplyName(d.settings.apply), PartnerAnimName(d.settings.anim),
                PartnerAsetName(d.settings.aset), PartnerResetName(d.settings.reset), PartnerLookName(d.settings.look),
                d.settings.probe_ps ? "ps" : "off", d.settings.look_gate ? 1u : 0u, d.settings.look_recover ? 1u : 0u,
                PartnerInputName(d.settings.input), PartnerInputCamName(d.settings.input_cam),
                PartnerInputHoldName(d.settings.input_hold), PartnerInputYawName(d.settings.input_yaw), words_text,
-               d.settings.input_mask, d.settings.correct_mm, d.settings.isend ? 1u : 0u, PartnerDmName(d.settings.dm));
+               d.settings.input_mask, d.settings.correct_mm, d.settings.isend ? 1u : 0u, PartnerDmName(d.settings.dm),
+               PartnerReconName(d.settings.recon), d.settings.align_ms, PartnerSlotName(d.settings.slot),
+               PartnerRunawayName(d.settings.runaway), PartnerWrapName(d.settings.wrap));
     if (trigger.census) d.census_pending = d.input_census_pending = d.dm_census_pending = true;
     // Round 3 one-shots.
     if (trigger.tap) { d.tap_pending = true; d.tap_bits_pending = trigger.tap_bits; }
@@ -1188,23 +1558,37 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     }
     const bool realized = pp::Realized(st, partner::partner_index);
     const bool parts_loaded = realized && st.parts[1] == c::parts_loaded_state;
-    const bool slot = partner::WritesSlot(set.stage, set.apply, pose_valid);
-    if (slot) {
-        const float xyzw[4] = {static_cast<float>(pose.x_mm / 1000.0), static_cast<float>(pose.y_mm / 1000.0),
-                               static_cast<float>(pose.z_mm / 1000.0), static_cast<float>(pose.yaw_mrad / 1000.0)};
-        if (const char* refused = h.write_slot(h.context, terminating, xyzw)) LogWriteRefusal(m, h, "slot", refused);
-    }
-    // Movement drivers xform / hybrid (the slot write above keeps S+0x20 as
-    // Warp would). The body readback compares the previous command.
-    bool transform_warp = false;
     const bool transform = PartnerApplyIsTransform(set.apply);
-    // lost -> live on the net source this tick (hybrid and apply=input relink).
-    const bool relink = set.source == PartnerSource::net && m.last_status == pose::Status::lost && sample_status == pose::Status::live;
+    // The body readback first: with apply=input the slot publishes it.
     if ((transform || set.apply == PartnerApply::input) && parts_loaded && h.read_body) {
         m.body_ok = h.read_body(h.context, st, m.body_pos, m.body_quat);
     } else {
         m.body_ok = false;
     }
+    const bool slot = partner::WritesSlot(set.stage, set.apply, pose_valid);
+    if (slot) {
+        float xyzw[4] = {static_cast<float>(pose.x_mm / 1000.0), static_cast<float>(pose.y_mm / 1000.0),
+                         static_cast<float>(pose.z_mm / 1000.0), static_cast<float>(pose.yaw_mrad / 1000.0)};
+        bool write = true;
+        // Round 4, apply=input: S+0x20[1] carries the body (what the game
+        // publishes for a local player), so pos1/rec1 are real readbacks;
+        // before the body is readable (realization) it still carries the pose.
+        if (set.apply == PartnerApply::input && m.body_ok) {
+            if (set.slot == PartnerSlot::body) {
+                xyzw[0] = m.body_pos[0]; xyzw[1] = m.body_pos[1]; xyzw[2] = m.body_pos[2];
+                xyzw[3] = partner::QuatToYaw(m.body_quat);
+            } else if (set.slot == PartnerSlot::none) {
+                write = false;
+            }
+        }
+        if (write)
+            if (const char* refused = h.write_slot(h.context, terminating, xyzw)) LogWriteRefusal(m, h, "slot", refused);
+    }
+    // Movement drivers xform / hybrid (the slot write above keeps S+0x20 as
+    // Warp would). The body readback compares the previous command.
+    bool transform_warp = false;
+    // lost -> live on the net source this tick (hybrid and apply=input relink).
+    const bool relink = set.source == PartnerSource::net && m.last_status == pose::Status::lost && sample_status == pose::Status::live;
     if (transform && m.body_ok && m.have_cmd && now - m.xform_check_ms >= 1000) {
         m.xform_check_ms = now;
         const std::int32_t bx = MetresToMm(m.body_pos[0]), by = MetresToMm(m.body_pos[1]), bz = MetresToMm(m.body_pos[2]);
@@ -1229,6 +1613,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         if (hybrid_reason) {
             transform_warp = true;
             m.hybrid_placed = true;
+            ++m.body_epoch;
             EmitCapped(m.hybrid_cap, h, "partner_hybrid", "partner_hybrid=warp; reason=%s\r\n", hybrid_reason);
         } else {
             alignas(16) float p[4] = {static_cast<float>(pose.x_mm / 1000.0), static_cast<float>(pose.y_mm / 1000.0),
@@ -1242,6 +1627,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             if (refused) {
                 // The partner keeps moving through the proven Lua Warp.
                 transform_warp = true;
+                ++m.body_epoch;
                 if (!m.xform_logged || m.xform_state != refused) {
                     m.xform_logged = true;
                     m.xform_state = refused;
@@ -1535,6 +1921,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     } else if (!realized && m.realized) {
         m.realized = false;
         m.hybrid_placed = false;
+        ++m.body_epoch;
         m.census_logged = false;
         m.dm_census_loaded = false;
         m.stance = partner::StanceDebounce{};
@@ -1604,13 +1991,18 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     // dmplay) disarms here, so TickDm can patch and play in the same tick.
     std::uint32_t extra_ops = 0;
     std::uint8_t gani = 0;
-    TickInput(d, h, lab, st, set, tick, clock, terminating, parts_loaded, pose_valid, pose, relink, extra_ops);
+    InputTick itick{};
+    TickInput(d, h, lab, st, set, tick, clock, terminating, parts_loaded, pose_valid, pose, relink, anim_ok, anim, remote_anim,
+              extra_ops, itick);
     TickDm(d, h, st, set, clock, terminating, extra_ops, gani);
     // apply=input without an armed window falls back to the proven Lua Warp
-    // every tick (refused, faulted, install refused, input=off, stage < 3).
-    if (set.apply == PartnerApply::input && !m.input_armed && pose_valid && set.stage >= 1) {
+    // every tick (refused, faulted, install refused, input=off, stage < 3),
+    // except while the reconciliation places/verifies the body itself.
+    const partner::Pose reply_pose = itick.pose_override ? itick.pose : pose;
+    if (set.apply == PartnerApply::input && !m.input_armed && pose_valid && set.stage >= 1 && !itick.suppress_fallback) {
         if (!(extra_ops & partner::op::warp)) {
             extra_ops |= partner::op::warp;
+            ++m.body_epoch;
             if (!m.input_fallback) {
                 m.input_fallback = true;
                 EmitInput(m, h, "partner_input_place; reason=fallback; err_mm=0; via=warp\r\n");
@@ -1619,8 +2011,10 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     } else if (m.input_armed) {
         m.input_fallback = false;
     }
-    reply = partner::Reply{ops | extra_ops, partner::partner_index, pose.x_mm, pose.y_mm, pose.z_mm, pose.yaw_mrad, status, age_ms,
-                           (ops & partner::op::set_parts_explicit) ? apply_look : partner::Look{}, gani};
+    BodyLine(d, h, st, set, tick, clock, parts_loaded);
+    reply = partner::Reply{ops | extra_ops, partner::partner_index, reply_pose.x_mm, reply_pose.y_mm, reply_pose.z_mm,
+                           reply_pose.yaw_mrad, status, age_ms, (ops & partner::op::set_parts_explicit) ? apply_look : partner::Look{},
+                           gani};
     return true;
 }
 

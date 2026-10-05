@@ -34,7 +34,7 @@
     }
   },
   "partner": {
-    "comment": "Offline partner lab.ini defaults (docs/offline-partner-spike-plan.md 2.1, docs/partner-anim-appearance.md); Prepare-LabInstance -PartnerSetting overrides them per run (Play-OfflineCoop.ps1 uses hybrid/net/qs/net).",
+    "comment": "Offline partner lab.ini defaults (docs/offline-partner-spike-plan.md 2.1, docs/partner-anim-appearance.md); Prepare-LabInstance -PartnerSetting overrides them per run (Play-OfflineCoop.ps1 uses the round 4 input drive: apply=input, input=net, isend, hold own, words hpr, recon track).",
     "partner": 1,
     "stage": 0,
     "source": "fixed",

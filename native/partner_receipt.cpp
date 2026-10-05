@@ -340,6 +340,24 @@ bool ParseTrigger(const char* text, std::size_t size, Trigger& out) noexcept {
         } else if (StartsToken(token, length, "lookrecover=", value_at)) {
             if (result.has_lookrecover || !ParseFlag(token + value_at, length - value_at, result.lookrecover)) return false;
             result.has_lookrecover = true;
+        } else if (StartsToken(token, length, "recon=", value_at)) {
+            if (result.has_recon || !ParsePartnerRecon(token + value_at, length - value_at, result.recon)) return false;
+            result.has_recon = true;
+        } else if (StartsToken(token, length, "align=", value_at)) {
+            if (result.has_align || !ParsePartnerSigned(token + value_at, length - value_at, -50, 150, result.align_ms)) return false;
+            result.has_align = true;
+        } else if (StartsToken(token, length, "slot=", value_at)) {
+            if (result.has_slot || !ParsePartnerSlot(token + value_at, length - value_at, result.slot)) return false;
+            result.has_slot = true;
+        } else if (StartsToken(token, length, "runaway=", value_at)) {
+            if (result.has_runaway || !ParsePartnerRunaway(token + value_at, length - value_at, result.runaway)) return false;
+            result.has_runaway = true;
+        } else if (StartsToken(token, length, "wrap=", value_at)) {
+            if (result.has_wrap || !ParsePartnerWrap(token + value_at, length - value_at, result.wrap)) return false;
+            result.has_wrap = true;
+        } else if (EqualsToken(token, length, "place=1")) {
+            if (result.place) return false;
+            result.place = true;
         } else {
             return false;
         }

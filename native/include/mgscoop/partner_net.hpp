@@ -83,15 +83,23 @@ struct RemoteLook {
 };
 RemoteLook SampleLook() noexcept;
 
-// Input frames (round 3, 68 bytes, kind event): SubmitInput sends at once
-// (min gap 8 ms) with a running sequence >= 1. The receive path decodes the
-// frame in OnDatagram (between look and transform), stores it for the current
-// epoch, and logs partner_net=input_rx; first=1 once per epoch.
+// Input frames (round 3/4, kind event; v2 76 bytes sent, v1 68 bytes still
+// accepted): SubmitInput sends at once (min gap 8 ms) with a running sequence
+// >= 1. The receive path decodes the frame in OnDatagram (between look and
+// transform), stores its level fields for the current epoch, accumulates its
+// edge set (InputEdges), and logs partner_net=input_rx; first=1 once per epoch.
 inline constexpr std::uint32_t kInputMinGapMs = 8;
 bool SubmitInput(const partner_input::InputPacket& packet) noexcept;
+// Edge sets of accepted frames are accumulated (partner_input::AccumulateEdges)
+// until ConsumeInput takes them.
 // The newest received input (non-blocking): false when the lock is busy (the
-// caller keeps its previous sample). age_ms = NowMs() - rx_ms.
+// caller keeps its previous sample). age_ms = NowMs() - rx_ms. Read-only: the
+// edge fields stay 0 (Lua-side stats and probes).
 bool LatestInput(partner_input::Sample& out) noexcept;
+// LatestInput plus the edges accumulated since the previous call, which it
+// clears (the input window's sample; false when the lock is busy, and then
+// nothing is consumed).
+bool ConsumeInput(partner_input::Sample& out) noexcept;
 // Clears the ring, the sequence state and the received look, and makes the
 // next SubmitLook send at once (mission boundaries).
 void ResetRemote() noexcept;

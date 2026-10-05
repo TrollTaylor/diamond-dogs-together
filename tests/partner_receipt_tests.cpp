@@ -362,11 +362,26 @@ int main() {
         Check(TriggerText("press=0x2:1200", tg) && tg.press && tg.press_bits == 0x2 && tg.press_ms == 1200, "press one-shot");
         Check(TriggerText("dm=on dmplay=3", tg) && tg.dm == PartnerDm::on && tg.dmplay && tg.dmplay_gani == 3, "dmplay");
         Check(TriggerText("dmstop=1", tg) && tg.dmstop, "dmstop");
-        Check(!TriggerOk("input=walk") && !TriggerOk("cam=on") && !TriggerOk("hold=own") && !TriggerOk("yaw=left") &&
+        Check(!TriggerOk("input=walk") && !TriggerOk("cam=on") && !TriggerOk("hold=mine") && !TriggerOk("yaw=left") &&
               !TriggerOk("words=xyz") && !TriggerOk("words=rp") && !TriggerOk("bits=0xZ") && !TriggerOk("bits=0x123456789") &&
               !TriggerOk("correct=10001") && !TriggerOk("stick=360:0") && !TriggerOk("stick=180:101") && !TriggerOk("stick=180") &&
               !TriggerOk("tap=2") && !TriggerOk("press=0x2:49") && !TriggerOk("press=0x2:5001") && !TriggerOk("dmplay=10") &&
               !TriggerOk("dmstop=0") && !TriggerOk("isend=2") && !TriggerOk("dm=maybe"), "bad round 3 values");
+        // Round 4 tokens.
+        Check(TriggerText("hold=own recon=track align=-16 slot=body runaway=disarm wrap=census place=1", tg) && tg.has_hold &&
+              tg.hold == PartnerInputHold::own && tg.has_recon && tg.recon == mgscoop::PartnerRecon::track && tg.has_align &&
+              tg.align_ms == -16 && tg.has_slot && tg.slot == mgscoop::PartnerSlot::body && tg.has_runaway &&
+              tg.runaway == mgscoop::PartnerRunaway::disarm && tg.has_wrap && tg.wrap == mgscoop::PartnerWrap::census && tg.place,
+              "every round 4 token");
+        Check(TriggerText("hold=net recon=pin align=150 slot=remote runaway=off wrap=window", tg) && tg.hold == PartnerInputHold::net &&
+              tg.recon == mgscoop::PartnerRecon::pin && tg.align_ms == 150 && tg.slot == mgscoop::PartnerSlot::remote &&
+              tg.runaway == mgscoop::PartnerRunaway::off && tg.wrap == mgscoop::PartnerWrap::window && !tg.place, "round 4 values");
+        Check(TriggerText("recon=off align=0 slot=none", tg) && tg.recon == mgscoop::PartnerRecon::off && tg.align_ms == 0 &&
+              tg.slot == mgscoop::PartnerSlot::none, "recon off, align 0, slot none");
+        Check(!TriggerOk("recon=on") && !TriggerOk("align=151") && !TriggerOk("align=-51") && !TriggerOk("align=-0") &&
+              !TriggerOk("align=016") && !TriggerOk("align=+5") && !TriggerOk("slot=both") && !TriggerOk("runaway=warp") &&
+              !TriggerOk("wrap=on") && !TriggerOk("place=0") && !TriggerOk("place=1 place=1") && !TriggerOk("align=1 align=2"),
+              "bad round 4 values");
         Check(!TriggerOk("input=net input=off") && !TriggerOk("tap=0x1 tap=0x2") && !TriggerOk("dmplay=1 dmplay=2"), "round 3 repeats");
         // A long trigger within the 255-byte limit (not every token at once).
         const std::string longest =
