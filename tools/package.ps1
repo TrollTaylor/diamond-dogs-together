@@ -4,15 +4,18 @@
 # and passed to install.ps1 -RuntimeArchive (an installed copy with the
 # expected hash is reused). Only the archive's SHA-256 is recorded here.
 #
-# -Friend stages the two-PC friend-test package instead
-# (dist/mgs-coop-friend-<version>-<stamp>/ + .zip, docs/friend-test.md): the
+# -Friend stages the two-PC play package instead (flavor friend-play,
+# dist/mgs-coop-friend-<version>-<stamp>/ + .zip, docs/two-pc-play.md): the
 # same payload, package.json and owned installer, plus double-click
-# Install-Coop / Uninstall-Coop / Collect-Logs scripts (scripts/, Windows
-# PowerShell 5.1) and FRIEND-GUIDE.txt.
+# Install-Coop / Play-Coop / Uninstall-Coop / Collect-Logs scripts (scripts/,
+# Windows PowerShell 5.1, with FriendCommon.psm1 and CoopPlay.psm1),
+# FRIEND-GUIDE.txt and RUNTIME-ARCHIVE.txt. It never contains the lab module
+# (LabCommon.psm1), the session-role command, the runtime archive or a
+# link-secret.txt.
 param(
     # Optional: verify that this local archive has the expected hash. It is never copied.
     [string]$RuntimeArchive,
-    # Stage the two-PC friend-test package.
+    # Stage the two-PC play package (friend package).
     [switch]$Friend,
     # Package this loader instead of building one (tests). Default: the
     # tools/build.ps1 -BuildOnly output build/native/dinput8.dll.
@@ -58,7 +61,7 @@ foreach($inputFile in $inputs) {
     $files+=@([ordered]@{source=$relative;target=$inputFile.target;sha256=(Get-FileHash -LiteralPath (Join-Path $packageRoot $relative)).Hash})
 }
 $scope=if($Friend) {
-    'Two-PC friend-test package (docs/friend-test.md). Contains no game-derived files; the runtime archive is generated or copied locally. Two-player gameplay remains unverified.'
+    'Two-PC play package (docs/two-pc-play.md). Contains no game-derived files; the runtime archive is generated or copied locally. Development build: the partner is shown in Mother Base; the world is not synchronized.'
 } else {
     'Local development package. Contains no game-derived files; the runtime archive is generated or copied locally. Two-player gameplay remains unverified.'
 }
@@ -70,7 +73,7 @@ $manifest=[ordered]@{
     runtime_archive=[ordered]@{target='mgs-coop/mgs-coop-player-runtime.dat';sha256=$archiveSha256}
     scope=$scope
 }
-if($Friend) { $manifest['flavor']='friend-test' }
+if($Friend) { $manifest['flavor']='friend-play' }
 [IO.File]::WriteAllText((Join-Path $packageRoot 'package.json'),($manifest | ConvertTo-Json -Depth 5)+"`n",[Text.UTF8Encoding]::new($false))
 function Write-CrlfAscii([string]$Path,[string]$Text) {
     # Windows PowerShell 5.1 reads BOM-less scripts as ANSI: keep them ASCII.
@@ -78,23 +81,23 @@ function Write-CrlfAscii([string]$Path,[string]$Text) {
     [IO.File]::WriteAllText($Path,$Text.Replace("`r`n","`n").Replace("`n","`r`n"),[Text.Encoding]::ASCII)
 }
 if($Friend) {
-    # Friend layout: three double-click entry points at the top, the scripts in scripts\.
+    # Friend layout: four double-click entry points at the top, the scripts in scripts\.
     $scripts=Join-Path $packageRoot 'scripts'
     $null=New-Item -ItemType Directory -Path $scripts
     $pieces=[ordered]@{
         'Install-Coop.ps1'=(Join-Path $PSScriptRoot 'friend/Install-Coop.ps1')
+        'Play-Coop.ps1'=(Join-Path $PSScriptRoot 'friend/Play-Coop.ps1')
         'Uninstall-Coop.ps1'=(Join-Path $PSScriptRoot 'friend/Uninstall-Coop.ps1')
         'Collect-Logs.ps1'=(Join-Path $PSScriptRoot 'friend/Collect-Logs.ps1')
         'FriendCommon.psm1'=(Join-Path $PSScriptRoot 'friend/FriendCommon.psm1')
-        'LabCommon.psm1'=(Join-Path $PSScriptRoot 'lab/LabCommon.psm1')
+        'CoopPlay.psm1'=(Join-Path $PSScriptRoot 'CoopPlay.psm1')
         'install.ps1'=(Join-Path $PSScriptRoot 'package-install.ps1')
-        'set-session-mode.ps1'=(Join-Path $PSScriptRoot 'set-session-mode.ps1')
     }
     foreach($name in $pieces.Keys) { Write-CrlfAscii (Join-Path $scripts $name) ([IO.File]::ReadAllText($pieces[$name])) }
-    foreach($entry in @('Install-Coop','Uninstall-Coop','Collect-Logs')) {
+    foreach($entry in @('Install-Coop','Play-Coop','Uninstall-Coop','Collect-Logs')) {
         # PSModulePath is cleared so that Windows PowerShell uses its own module
         # path even when started from a PowerShell 7 window.
-        $batch="@echo off`r`nsetlocal`r`nrem MGS Co-op friend test: runs scripts\$entry.ps1 with Windows PowerShell.`r`nset `"PSModulePath=`"`r`n"+
+        $batch="@echo off`r`nsetlocal`r`nrem MGS Co-op two-PC play: runs scripts\$entry.ps1 with Windows PowerShell.`r`nset `"PSModulePath=`"`r`n"+
             "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%~dp0scripts\$entry.ps1`" %*`r`n"+
             "set `"result=%errorlevel%`"`r`necho.`r`n"+
             "if not `"%result%`"==`"0`" echo Finished with code %result%. Please read the messages above.`r`n"+
@@ -130,6 +133,8 @@ $sourceHashes=@()
 foreach($relative in $sourceFiles) {
     $source=Join-Path $projectRoot $relative
     if([IO.Path]::GetExtension($source) -notin $extensions -and [IO.Path]::GetFileName($source) -notmatch '^LICENSE') { continue }
+    # Never a link key or a runtime archive, whatever lies in the working tree.
+    if([IO.Path]::GetFileName($source) -like 'link-secret*' -or [IO.Path]::GetFileName($source) -like 'mgs-coop-player-runtime*') { continue }
     $destination=Join-Path $sourceRoot $relative
     $parent=Split-Path -Parent $destination
     if(!(Test-Path -LiteralPath $parent)) { $null=New-Item -ItemType Directory -Path $parent -Force }

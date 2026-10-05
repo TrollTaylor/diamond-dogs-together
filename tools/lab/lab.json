@@ -21,7 +21,8 @@
     "host": 47810,
     "guest": 47811,
     "netHost": 47820,
-    "netGuest": 47821
+    "netGuest": 47821,
+    "play": 47830
   },
   "offline": {
     "comment": "Offline lab mode (Prepare-LabInstance/Start-Lab -Offline): no fuse; master_url points at masterPort on 127.0.0.1, where nothing may listen.",
@@ -52,6 +53,12 @@
     "anim_probe": 0,
     "crash_probe": 1,
     "net": 1
+  },
+  "wanSim": {
+    "comment": "One-PC WAN rehearsal presets (Play-OfflineCoop/Prepare-LabInstance -WanSim good|bad|awful, docs/two-pc-play.md). Values are one-way: each instance impairs its own outbound datagrams, so the round trip sees about twice the latency. -WanSim also writes net_seed (host 1, guest 2) and partner_interp=auto.",
+    "good": { "net_latency_ms": 30, "net_jitter_ms": 5, "net_loss_permille": 5, "net_loss_model": "burst", "net_burst": 1, "net_dup_permille": 0, "net_reorder_permille": 0 },
+    "bad": { "net_latency_ms": 80, "net_jitter_ms": 25, "net_loss_permille": 20, "net_loss_model": "burst", "net_burst": 2, "net_dup_permille": 5, "net_reorder_permille": 10 },
+    "awful": { "net_latency_ms": 150, "net_jitter_ms": 60, "net_loss_permille": 60, "net_loss_model": "burst", "net_burst": 3, "net_dup_permille": 10, "net_reorder_permille": 30 }
   },
   "identity": {
     "hostSteamId": "auto",
