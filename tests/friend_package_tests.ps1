@@ -53,8 +53,16 @@ function Assert-InFixture([string]$Path) {
     if (!(Test-PathInside -Child $Path -Parent $fixture)) { throw "Test path escaped its fixture: $Path" }
 }
 function Invoke-IniCheck([string]$Mode, [string]$Value) {
-    $output = & $IniCheck $Mode $Value
-    if ($LASTEXITCODE -ne 0) { throw "lab_ini_check $Mode failed ($LASTEXITCODE)" }
+    # The helper prints the ini bytes as they are (save_dir is UTF-8): decode
+    # its output as UTF-8, not with whatever console code page CTest inherits.
+    $psi = [Diagnostics.ProcessStartInfo]::new($IniCheck)
+    $psi.ArgumentList.Add($Mode); $psi.ArgumentList.Add($Value)
+    $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true
+    $psi.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
+    $proc = [Diagnostics.Process]::Start($psi)
+    $output = $proc.StandardOutput.ReadToEnd() -split "`r?`n"
+    $proc.WaitForExit()
+    if ($proc.ExitCode -ne 0) { throw "lab_ini_check $Mode failed ($($proc.ExitCode))" }
     $map = @{}
     foreach ($line in $output) { $i = $line.IndexOf('='); if ($i -gt 0) { $map[$line.Substring(0, $i)] = $line.Substring($i + 1) } }
     return $map
@@ -335,6 +343,9 @@ try {
     Assert-True ($null -eq (ConvertFrom-CoopStatusText -Text $statusText -ExpectedPid 4243)) 'status of another process ignored (pid check)'
     Assert-True ($null -eq (ConvertFrom-CoopStatusText -Text '{"v":2,"state":"x"}') -and $null -eq (ConvertFrom-CoopStatusText -Text '{"v":1,') -and $null -eq (ConvertFrom-CoopStatusText -Text '')) 'unknown, partial or empty status ignored'
     Assert-True ((Format-CoopStatusLine -Status $st -Role guest -NowUtc $now.AddSeconds(30)).StartsWith('[JOIN] game not responding')) 'a status older than 15 s: game not responding'
+    # The loader writes a disabled link once (link-protocol.md 7.2): an old one still names its reason.
+    $disabled = ConvertFrom-CoopStatusText -Text ($statusText.Replace('"state":"connected","reason":""', '"state":"disabled","reason":"secret_missing"'))
+    Assert-True ((Format-CoopStatusLine -Status $disabled -Role guest -NowUtc $now.AddSeconds(600)).StartsWith('[JOIN] link=disabled (secret_missing: ')) 'a disabled status is never reported as not responding'
     $elsewhere = ConvertFrom-CoopStatusText -Text ($statusText.Replace('"mission":30050', '"mission":10020'))
     Assert-True ((Format-CoopStatusLine -Status $elsewhere -Role host -NowUtc $now).EndsWith('mission 10020 - Go to Mother Base; the partner appears only there.')) 'outside mission 30050: go to Mother Base'
     $rejected = ConvertFrom-CoopStatusText -Text ($statusText.Replace('"state":"connected","reason":""', '"state":"rejected","reason":"build_mismatch"').Replace('"remote_build":"0.12.0"', '"remote_build":"0.12.1"'))

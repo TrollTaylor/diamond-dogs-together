@@ -870,14 +870,15 @@ function Format-CoopStatusLine {
     $tag = '[JOIN]'
     if ($Role -eq 'host') { $tag = '[HOST]' }
     if ($null -eq $Status) { return "$tag waiting for the game's link status..." }
+    $state = [string](Get-CoopValue $Status 'state' 'off')
     $time = [DateTime]::MinValue
     $timeText = [string](Get-CoopValue $Status 'time_utc' '')
     $styles = [Globalization.DateTimeStyles]::AdjustToUniversal -bor [Globalization.DateTimeStyles]::AssumeUniversal
-    if ($timeText -and [DateTime]::TryParse($timeText, [Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$time)) {
+    # A disabled link is written once (no receive thread runs): its age means nothing.
+    if ($state -ne 'disabled' -and $timeText -and [DateTime]::TryParse($timeText, [Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$time)) {
         $age = ($NowUtc - $time).TotalSeconds
         if ($age -gt 15) { return "$tag game not responding (no status for $([int]$age) s)" }
     }
-    $state = [string](Get-CoopValue $Status 'state' 'off')
     $text = "$tag link=$state"
     if ($state -in @('connected', 'reconnecting', 'lost')) {
         $lp = [int](Get-CoopValue $Status 'loss_permille' 0)
