@@ -5,17 +5,10 @@ local F, OP, H = {queue = {}, seeds = {}, serial = 0, last = 0, token = false, i
 W.follow = F
 local floor, fmt = math.floor, string.format
 local SUPPORTED = {[30010] = 10, [30020] = 20, [30050] = 50, [40010] = 10, [40020] = 20, [40050] = 50}
-local KEYS = {{"solface_groupNumber"}, {"hosface_groupNumber"}, {"rev_revengeRandomValue"},
-{"rev_revengeLv", "revenge"}, {"missionStartClock"}, {"missionStartWeather"},
-{"missionStartWeatherNextTime", nil, 1000}, {"missionStartExtraWeatherInterval", nil, 1000},
-{"heli_missionStartRoute"}, {"mis_isStartFromHelispace", nil, "bool"}, {"mis_isStartFromFreePlay", nil, "bool"},
-{"ply_initialPlayerState"}, {"ply_useMissionStartPos", nil, "bool"}, {"ply_missionStartPos", 3, 1000},
-{"ply_missionStartRot", nil, 1}, {"ply_useMissionStartPosForNoOrderBox", nil, "bool"},
-{"ply_missionStartPosForNoOrderBox", 3, 1000}, {"ply_missionStartRotForNoOrderBox", nil, 1},
-{"initialPlayerFlag", nil, nil, true}, {"initialPlayerPosX", nil, 1000, true},
-{"initialPlayerPosY", nil, 1000, true}, {"initialPlayerPosZ", nil, 1000, true},
-{"initialPlayerRotY", nil, 1000, true}, {"mis_checkPoint"}}
+local S = W.followSeeds
+local KEYS = S.keys
 local function log(text) W.log("event=follow;" .. text) end
+local function reject(why) F.enabled = false; F.clear(); W.fail(why) end
 local function on()
 return F.enabled and W.active and W.level >= 3 and SUPPORTED[W.mission] and (not W.paired or W.eff >= 3)
 end
@@ -43,23 +36,6 @@ if not F.reqAt or now - F.reqAt >= 2000 then
     log(fmt("step=request;kind=%d;mission=%d", kind, W.mission))
 end
 end
-local function dims(key)
-if key[2] ~= "revenge" then return key[2] end
-local typ = W.get(TppRevenge, "REVENGE_TYPE")
-local n = W.get(typ, "MAX")
-return type(n) == "number" and n >= 1 and n <= 128 and n or nil
-end
-local function encoded(key, value)
-if key[3] == "bool" then return type(value) == "boolean" and (value and 1 or 0) or nil end
-if type(value) ~= "number" or value ~= value then return nil end
-return u32(floor(value * (key[3] or 1) + 0.5))
-end
-local function decoded(key, value)
-if key[3] == "bool" then return value == 1 end
-if key[3] and value >= 2147483648 then value = value - 4294967296 end
-return value / (key[3] or 1)
-end
-local function checksum(d, k, i, v) return (d * 31 + k * 1024 + i + v) % 4294967296 end
 function F.pump()
 local t = F.outgoing
 if not t or t.sent then return end
@@ -83,27 +59,16 @@ end
 end
 function F.sendSeeds(nextMission)
 local t = F.outgoing
-if not t or t[4] ~= nextMission or t.sent then return end
-if t.values then F.pump(); return end
-local values, digest = {}, 0
-for k, key in ipairs(KEYS) do
-    local n = dims(key)
-    local data = W.get(key[4] and vars or gvars, key[1])
-    if not key[2] then
-        local value = encoded(key, data)
-        if value ~= nil then values[#values + 1] = {k, 0, value} end
-    elseif n then
-        for i = 0, n - 1 do
-            local value = encoded(key, W.get(data, i))
-            if value ~= nil then values[#values + 1] = {k, i, value} end
-        end
-    end
-end
-for _, v in ipairs(values) do
-    digest = checksum(digest, v[1], v[2], v[3])
+if not t or t[4] ~= nextMission or t.sent then return true end
+if t.values then F.pump(); return true end
+local values, digest = S.snapshot()
+if not values then
+    if t.missing ~= digest then log("step=refused;reason=unreadable_seed;key=" .. digest); t.missing = digest end
+    return false
 end
 t.values, t.digest, t.i = values, digest, 1
 F.pump()
+return true
 end
 H[OP.TRANSITION] = function(v, now)
 if W.host or not F.enabled then return end
@@ -115,25 +80,24 @@ if v[1] <= F.last then return end
 for _, t in ipairs(F.queue) do if t[1] == v[1] then return end end
 if #F.queue >= 8 then W.fail("follow_queue_full"); return end
 v.since = now
+v.session = F.session()
 F.queue[#F.queue + 1] = v
 log(fmt("step=queued;id=%.0f;src=%d;next=%d;kind=%d", v[1], v[3], v[4], v[2]))
 end
 H[OP.SEED] = function(v)
 if W.host or not F.enabled or v[1] <= F.last then return end
 local key = KEYS[v[3]]
-if not key or (not key[2] and v[4] ~= 0) or (key[2] and (not dims(key) or v[4] >= dims(key))) or
-    (key[3] == "bool" and v[5] > 1) then W.fail("follow_bad_seed"); return end
+if not key then reject("follow_bad_seed"); return end
 local s = F.seeds[v[1]]
 if not s then s = {mission = v[2], values = {}, digest = 0}; F.seeds[v[1]] = s end
-if s.mission ~= v[2] or #s.values >= 256 then W.fail("follow_seed_overflow"); return end
-s.values[#s.values + 1] = {v[3], v[4], v[5]}
-s.digest = checksum(s.digest, v[3], v[4], v[5])
+if s.mission ~= v[2] or #s.values >= 256 then reject("follow_seed_overflow"); return end
+if s.ready or not S.accept(s, v[3], v[4], v[5]) then reject("follow_bad_seed"); return end
 end
 H[OP.SEEDS_END] = function(v)
 if W.host or not F.enabled or v[1] <= F.last then return end
 local s = F.seeds[v[1]]
 if not s then s = {mission = v[2], values = {}, digest = 0}; F.seeds[v[1]] = s end
-if s.mission ~= v[2] or #s.values ~= v[3] or s.digest ~= v[4] then W.fail("follow_seed_checksum"); return end
+if s.mission ~= v[2] or #s.values ~= v[3] or s.digest ~= v[4] or not S.complete(s) then reject("follow_seed_checksum"); return end
 s.ready = true
 log(fmt("step=seeds_ready;id=%.0f;mission=%d;n=%d", v[1], v[2], v[3]))
 end
@@ -147,6 +111,8 @@ if W.host then log(fmt("step=ack;id=%.0f;mission=%d;status=%d", v[1], v[2], v[3]
 end
 function F.publish(kind)
 if not on() or not W.host or not W.paired or W.eff < 3 then return end
+local session = F.session()
+if not session then log("step=refused;reason=link_session"); return end
 local target = vars.missionCode
 if not SUPPORTED[target] then log("step=refused;reason=unsupported_mission"); return end
 F.serial = F.serial % 4294967295 + 1
@@ -156,6 +122,7 @@ local t = {F.serial, F.deploying and 6 or kind, W.mission, target,
     W.get(mvars, "mis_selectedDeployTime") or 0,
     (F.abortNoSave or (kind == 2 and W.get(mvars, "mis_abortWithSave") == false)) and 1 or 0, W.epoch % 65535 + 1}
 F.outgoing = t
+t.session = session
 F.pump()
 F.deploying, F.abortNoSave = false, false
 end
@@ -163,7 +130,7 @@ function F.applySeeds(t)
 local s = F.seeds[t[1]]
 if not s or not s.ready or s.mission ~= t[4] then return false end
 for _, v in ipairs(s.values) do
-    local key, value = KEYS[v[1]], decoded(KEYS[v[1]], v[3])
+    local key, value = KEYS[v[1]], S.decode(KEYS[v[1]], v[3])
     local data = key[4] and vars or gvars
     if key[2] then
         local array = W.get(data, key[1])
@@ -175,8 +142,27 @@ vars.mbLayoutCode, vars.mbClusterId = t[7], t[8]
 log(fmt("step=seeds_apply;id=%.0f;mission=%d;n=%d", t[1], t[4], #s.values))
 return true
 end
+function F.clear()
+F.queue, F.seeds, F.current, F.armed, F.last = {}, {}, nil, false, 0
+F.outgoing, F.hostDeploy = nil, nil
+end
+function F.session()
+if type(W.cfg) ~= "function" then return nil end
+local r = W.cfg(vars.missionCode, 0)
+if r[1] >= 3 and r[2] == W.role and r[4] == 1 and type(r[8]) == "number" and r[8] > 0 then return r[8] end
+end
+function F.configured()
+if not F.enabled or W.level < 3 or W.failed or (W.paired and W.eff < 3) then return false end
+if type(W.cfg) == "function" then
+    local r = W.cfg(vars.missionCode, 0)
+    if r[1] < 3 or r[2] ~= W.role then F.enabled = false; F.clear(); return false end
+    local t = W.host and F.outgoing or F.current
+    if t and (r[4] ~= 1 or not r[8] or r[8] == 0 or r[8] ~= t.session) then F.clear(); return false end
+end
+return true
+end
 function F.prepare()
-if not on() or W.host or not F.current then return true end
+if W.host or not F.current or not F.configured() then return true end
 local ok, ready = pcall(F.applySeeds, F.current)
 if not ok then W.fail(ready) end
 return ok and ready
@@ -200,6 +186,10 @@ local demo = W.get(DemoDaemon, "IsDemoPlaying")
 if type(demo) == "function" and demo() == true then return end
 local seeds = F.seeds[t[1]]
 if not seeds or not seeds.ready then return end
+local session = F.session()
+if not session then return end
+if t.session and t.session ~= session then F.clear(); log("step=refused;reason=link_session"); return end
+t.session = session
 F.current = t
 local ok, result
 if t[2] == 3 then
@@ -241,8 +231,8 @@ end
 W.pairedHooks[#W.pairedHooks + 1] = function() F.armed = F.enabled and W.eff >= 3 end
 W.unpairedHooks[#W.unpairedHooks + 1] = function(reason)
 if reason == 1 or reason == 5 then
-    F.queue, F.seeds, F.current, F.armed, F.last = {}, {}, nil, false, 0
-    F.outgoing, F.hostDeploy = nil, nil
+    F.clear()
+    if reason == 5 then F.enabled = false end
 end
 end
 W.stopHooks[#W.stopHooks + 1] = function(final)
@@ -310,6 +300,24 @@ if type(reserve) == "function" then
         return reserve(kind, ...)
     end
 end
+local function pack(...) return {n = select("#", ...), ...} end
+for _, name in ipairs({"VarRestoreOnContinueFromCheckPoint", "VarRestoreOnMissionStart"}) do
+    local restore = W.get(TppSave, name)
+    if type(restore) == "function" then
+        TppSave[name] = function(...)
+            local r = pack(restore(...))
+            F.prepare()
+            return unpack(r, 1, r.n)
+        end
+    end
+end
+local stage = W.get(e, "StageBlockCurrentPosition")
+if type(stage) == "function" then
+    e.StageBlockCurrentPosition = function(...)
+        if not F.prepare() then return end
+        return stage(...)
+    end
+end
 local request = W.get(TppMission, "RequestLoad")
 if type(request) == "function" then
     TppMission.RequestLoad = function(nextMission, ...)
@@ -321,7 +329,11 @@ end
 local load, loadCheck = W.get(TppMission, "Load"), W.get(TppMission, "LoadWithChunkCheck")
 if type(load) == "function" then
     TppMission.Load = function(nextMission, ...)
-        if on() and W.host then local ok, err = pcall(F.sendSeeds, nextMission); if not ok then W.fail(err) end end
+        if on() and W.host then
+            local ok, ready = pcall(F.sendSeeds, nextMission)
+            if not ok then W.fail(ready); return end
+            if not ready then return end
+        end
         if on() and not W.host and F.current then
             local ok, applied = pcall(F.applySeeds, F.current)
             if not ok then W.fail(applied); return end
@@ -333,6 +345,14 @@ if type(load) == "function" then
 end
 if type(loadCheck) == "function" then
     TppMission.LoadWithChunkCheck = function(...)
+        if on() and W.host then
+            local req = W.get(mvars, "mis_loadRequest")
+            if req then
+                local ok, ready = pcall(F.sendSeeds, req.nextMission)
+                if not ok then W.fail(ready); return end
+                if not ready then return end
+            end
+        end
         if on() and not W.host and F.current then
             local s = F.seeds[F.current[1]]
             if not s or not s.ready then return end
@@ -343,8 +363,8 @@ end
 local allocate = W.get(e, "OnAllocate")
 if type(allocate) == "function" then
     e.OnAllocate = function(...)
-        local t = cfg[2] == 1 and F.outgoing or F.current
-        if F.enabled and t and vars.missionCode == t[4] then math.randomseed((t[1] + t[6]) % 2147483647) end
+        local t = W.host and F.outgoing or F.current
+        if t and F.configured() and vars.missionCode == t[4] then math.randomseed((t[1] + t[6]) % 2147483647) end
         return allocate(...)
     end
 end

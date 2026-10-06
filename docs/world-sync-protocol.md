@@ -19,7 +19,7 @@ Code:
 | Link DATAGRAM and hooks | `native/link_protocol.cpp`, `native/partner_net.cpp` |
 | Core (pure, unit tested) | `native/world_wire.cpp` (op table, codec, queues, pairing, schedulers), `native/world_receipt.cpp` (receipts, trigger grammar) |
 | Glue (Win32) | `native/world_link.cpp` (lock, hooks, pump, `world.trigger`), `native/game_script_observer.cpp` (receipt routing, install) |
-| Lua (spliced into TppMain after `partner_sync.lua`) | `lua/coop/world_sync.lua`, `world_enemy.lua`, `world_outcome.lua`, `world_phase.lua`, `world_env.lua`, `world_probe.lua`, `world_goto.lua`, `world_follow.lua`, `world_align.lua`, `world_recovery.lua` |
+| Lua (spliced into TppMain after `partner_sync.lua`) | `lua/coop/world_sync.lua`, `world_enemy.lua`, `world_outcome.lua`, `world_phase.lua`, `world_env.lua`, `world_probe.lua`, `world_goto.lua`, `world_follow_seed.lua`, `world_follow.lua`, `world_align.lua`, `world_recovery.lua` |
 | Config and tools | `lab.ini` `world` / `world_probe`, `tools/lab/Set-WorldTrigger.ps1`, `tools/lab/WorldSync.psm1`, `Play-OfflineCoop.ps1 -World`, `Play-Coop.ps1 -World` |
 | Tests | `tests/world_wire_tests.cpp`, `tests/world_receipt_tests.cpp`, `tests/world_sync_lua_check.lua` (fragment and composed TppMain), additions to the link, lab config, host-trial patch and script suites |
 
@@ -194,7 +194,7 @@ released) -> `g_tx_lock` -> `g_lock`. The observer calls
 
 | Receipt | Source | Reply | Threads |
 |---|---|---|---|
-| CFG | `return 'MGS_COOP_WORLD_CFG_V1' -- <mission> <phase>` (0 query, 1 start) | `return level,role,proto,link,epoch,probe,mode` (mode 1 lab, 2 play; the start consumes a scheduled probe) | query any; start runtime, not terminating |
+| CFG | `return 'MGS_COOP_WORLD_CFG_V1' -- <mission> <phase>` (0 query, 1 start) | `return level,role,proto,link,epoch,probe,mode,session` (first seven fields preserved; mode 1 lab, 2 play; session is local link generation, zero disconnected; the start consumes a scheduled probe) | query any; start runtime, not terminating |
 | TX | `return 'MGS_COOP_WORLD_TX_V1' -- <op> <v1> ... <vn>` | `return 1` / `return 0,<reason>`: 1 syntax, 2 unknown_op, 3 bad_args, 4 wrong_role, 5 not_paired, 6 queue_full, 7 disabled, 8 lab_only | runtime; MISSION_END also termination |
 | RX | `return 'MGS_COOP_WORLD_RX_V1' -- <mask>` (1 control; 3 control, world, U slots) | `return queue,op,v...` or empty `return 0,0,flags,qctrl,qworld,epoch` (flags 1 link, 2 paired, 4 resync_needed, 8 level0) | runtime |
 | LOG | `return 'MGS_COOP_WORLD_LOG_V1' -- <payload>` (1..160 bytes) | `return true`; logs `world_lua=...` (partner sanitizer, `;` -> `; `; at most 200 lines per 10 s, then `world=log_cap`) | runtime or termination |
@@ -244,7 +244,7 @@ Stop-Lab delete leftovers (`stop.json world_triggers_removed`).
 
 ## 7. Lua contract
 
-Ten chunks, each one `do ... end` block of at most 16000 bytes (CMake fails
+Eleven chunks, each one `do ... end` block of at most 16000 bytes (CMake fails
 the configure otherwise), spliced in this order directly after
 `partner_sync.lua` and before the marker lifecycle chunk, so world's wrappers
 sit inside the session lifecycle's and outside partner's: `world_sync.lua`
@@ -254,9 +254,10 @@ commits, sweep, ledger), `world_outcome.lua` (attribution, guest requests and
 held requests, host request validation, outcome wire handlers),
 `world_phase.lua` (W1 bindings, area union, phase cache, escalation, floor,
 PHASE_VEC), `world_env.lua` (digests, resync stream, stats, clock, weather),
-`world_probe.lua` (probes), `world_goto.lua` (lab goto), `world_follow.lua`
-(host travel and seed replay), `world_align.lua` (forward-only reload
-alignment), `world_recovery.lua` (shared game over and checkpoints). Everything lives on
+`world_probe.lua` (probes), `world_goto.lua` (lab goto),
+`world_follow_seed.lua` (required seed schema and coverage), `world_follow.lua`
+(mission travel), `world_align.lua` (checkpoint enemy alignment),
+`world_recovery.lua` (shared death and accepted checkpoint saves). Everything lives on
 `W = e.MgsCoopWorld`; hook lists `bindHooks`, `startHooks`, `stopHooks`,
 `pairedHooks`, `unpairedHooks` and `observers` are the extension points.
 
@@ -686,6 +687,26 @@ instead of reloading ACC. Seed keys 19-23 carry those saved vars and key
 Continue, stage-block, chunk-check and loading functions for all three
 supported field missions; title-menu automatic following still needs live
 validation.
+
+All 24 seed keys are required, with every declared array index exactly
+once; completion checks coverage as well as count and ordered digest.
+The normal 16-entry revenge array produces 43 records. The host retains
+its pending load if any required field is unreadable; it sends no partial
+END. Duplicate, empty or self-consistent partial streams fail closed on
+the guest. The schema lives in the separate bounded `world_follow_seed`
+Lua chunk. Guest restore wrappers reapply the checked stream after later
+mission-start/Continue restores, and the stage-block wrapper reasserts it
+before vanilla placement reads, including helicopter preparation.
+Already accepted pending preparation survives the inactive mission-loading
+gap only while fresh CFG confirms level 3, the same role, an active link
+and the unchanged nonzero local transport session. A changed session,
+disconnect, explicit level zero or mixed negotiated level cannot apply
+that stale preparation or reseed allocation. Idle save/stage hooks delegate
+without extra CFG queries when no pending transaction exists.
+
+Initial pairing still requires both copies in the same supported scene.
+Joining with copied saves in different ACC/location scenes has no W3
+bootstrap route yet; bring both copies to the same scene before following.
 
 Travel controls survive native CFG mission resets, but are discarded on a
 new link session. Lua transaction history resets even if the previous link

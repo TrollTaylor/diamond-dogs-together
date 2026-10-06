@@ -8,6 +8,7 @@ local OP = {TRANSITION = 9, SEED = 10, SEEDS_END = 11, REQ_MISSION = 12, FOLLOW_
 local function fixture(role, level)
     local c = {calls = {}, tx = {}, logs = {}, time = 1000, inGame = true}
     local env = setmetatable({}, {__index = _G})
+    env.math = setmetatable({randomseed = function(seed) c.randomSeeds = (c.randomSeeds or 0) + 1; c.randomSeed = seed end}, {__index = math})
     env.vars = {missionCode = 30050, locationCode = 50, mbLayoutCode = 0, mbClusterId = 2,
         initialPlayerFlag = 1, initialPlayerPosX = -123.125, initialPlayerPosY = 34.625,
         initialPlayerPosZ = 456.875, initialPlayerRotY = -45.125}
@@ -45,6 +46,7 @@ local function fixture(role, level)
         level = level or 3, role = role, host = role == 1, active = true, mission = 30050, epoch = 7, paired = true, eff = 3}
     env.e.MgsCoopWorld = W
     W.get = function(t, k) return t and t[k] end
+    W.cfg = function() return {c.configLevel or W.level, c.configRole or W.role, 1, c.link or 1, 7, 0, 1, c.session or 55} end
     W.h = function() return 4294967295 end
     W.now = function() return c.time end
     W.inGame = function() return c.inGame end
@@ -56,7 +58,9 @@ local function fixture(role, level)
         c.tx[#c.tx + 1] = {op = op, v = {...}}; return true
     end
     W.fail = function(s) c.failure = s; W.active = false end
-    local chunk = assert(loadfile(arg[1])); setfenv(chunk, env); chunk()
+    for _, path in ipairs({arg[2], arg[1]}) do
+        local chunk = assert(loadfile(path)); setfenv(chunk, env); chunk()
+    end
     W.follow.install({level or 3, role})
     for _, f in ipairs(W.startHooks) do f() end
     for _, f in ipairs(W.pairedHooks) do f(false) end
@@ -66,6 +70,29 @@ end
 local function send(c, op, v) c.W.handlers[op](v, c.time) end
 local function transfer(h, g)
     for _, p in ipairs(h.tx) do if p.op == OP.TRANSITION or p.op == OP.SEED or p.op == OP.SEEDS_END then send(g, p.op, p.v) end end
+end
+local function donor(target)
+    local h = fixture(1)
+    h.env.vars.missionCode = target
+    h.env.e.ReservePlayerLoadingPosition(1)
+    h.env.TppMission.Load(target)
+    for _ = 1, 4 do h.F.tick(h.time) end
+    return h
+end
+local function seedStream(g, target, id, filter, duplicateKey)
+    local h, count, digest = donor(target), 0, 0
+    for _, p in ipairs(h.tx) do
+        if p.op == OP.SEED and (not filter or filter(p.v)) then
+            local v = {id, target, p.v[3], p.v[4], p.v[5]}
+            send(g, OP.SEED, v)
+            count, digest = count + 1, (digest * 31 + v[3] * 1024 + v[4] + v[5]) % 4294967296
+            if v[3] == duplicateKey and v[4] == 0 then
+                send(g, OP.SEED, v)
+                count, digest = count + 1, (digest * 31 + v[3] * 1024 + v[4] + v[5]) % 4294967296
+            end
+        end
+    end
+    send(g, OP.SEEDS_END, {id, target, count, digest})
 end
 local h, g = fixture(1), fixture(2)
 h.env.vars.missionCode = 40050
@@ -108,10 +135,14 @@ local t = {5, 1, 30050, 40050, 6, 10, 0, 2, 0, 0, 8}
 send(wait, OP.TRANSITION, t)
 wait.F.tick(wait.time)
 check(#wait.calls == 0 and wait.F.current == nil, 'guest waits for complete seed stream')
-send(wait, OP.SEED, {5, 40050, 1, 0, 42})
+send(wait, OP.SEED, {5, 40050, 1, 0, 111})
 wait.F.tick(wait.time)
 check(#wait.calls == 0, 'partial seeds do not reserve a clear')
-send(wait, OP.SEEDS_END, {5, 40050, 1, 1066})
+local complete = donor(40050)
+for _, p in ipairs(complete.tx) do
+    if p.op == OP.SEED and p.v[3] ~= 1 then send(wait, p.op, {5, 40050, p.v[3], p.v[4], p.v[5]})
+    elseif p.op == OP.SEEDS_END then send(wait, p.op, {5, 40050, p.v[3], p.v[4]}) end
+end
 wait.F.tick(wait.time)
 check(wait.F.current and wait.calls[1] == 'clear', 'complete checked stream permits replay')
 wait.F.seeds[5].ready = false
@@ -121,7 +152,7 @@ check(wait.env.mvars.mis_loadRequest ~= nil and wait.loaded == nil, 'load barrie
 local bad = fixture(2)
 send(bad, OP.SEED, {1, 40050, 1, 0, 42})
 send(bad, OP.SEEDS_END, {1, 40050, 1, 99})
-check(bad.failure == 'follow_seed_checksum', 'corrupt snapshot stops follow')
+check(bad.failure and #bad.calls == 0, 'corrupt snapshot stops follow without game calls')
 local solo = fixture(1)
 solo.W.paired = false
 solo.env.TppMission.OnEndMissionPreparation(2, nil)
@@ -194,7 +225,7 @@ end)
 check(tokenHeld and not nested.F.token, 'nested replay restores the outer replay token')
 local restart = fixture(2)
 send(restart, OP.TRANSITION, {1, 3, 30050, 30050, 0, 0, 0, 2, 0, 0, 8})
-send(restart, OP.SEEDS_END, {1, 30050, 0, 0})
+seedStream(restart, 30050, 1)
 restart.F.tick(restart.time)
 check(restart.calls[1] == 'restart' and restart.restartArgs == 0,
     'ordinary ExecuteRestartMission receives no truthy return-to-mission argument')
@@ -206,7 +237,7 @@ local deadAbort = fixture(2)
 deadAbort.inGame = false
 deadAbort.env.svars.mis_isDefiniteGameOver = true
 send(deadAbort, OP.TRANSITION, {1, 2, 30050, 40050, 0, 0, 0, 2, 0, 1, 8})
-send(deadAbort, OP.SEEDS_END, {1, 40050, 0, 0})
+seedStream(deadAbort, 40050, 1)
 deadAbort.F.tick(deadAbort.time)
 check(deadAbort.calls[1] == 'abort' and deadAbort.abort.nextMissionId == 40050 and deadAbort.abort.isNoSave == true and
     deadAbort.abort.isAlreadyGameOver == true and deadAbort.abort.isNoFade == true,
@@ -215,4 +246,72 @@ local menuAbort = fixture(1)
 menuAbort.env.vars.missionCode, menuAbort.env.mvars.mis_abortWithSave = 40050, false
 menuAbort.env.e.ReservePlayerLoadingPosition(2)
 check(menuAbort.tx[1].v[10] == 1, 'host menu abort captures actual choke-point no-save state')
+local function invalidStream(filter, why)
+    local g = fixture(2)
+    send(g, OP.TRANSITION, {1, 1, 30050, 40050, 6, 10, 0, 2, 0, 0, 8})
+    seedStream(g, 40050, 1, filter)
+    g.F.tick(g.time)
+    check(g.failure and not g.F.current and #g.F.queue == 0 and next(g.F.seeds) == nil and #g.calls == 0 and not g.loaded, why)
+end
+invalidStream(function() return false end, 'self-consistent empty count0/digest0 cannot authorize travel')
+invalidStream(function(v) return v[3] == 1 end, 'self-consistent one-field stream cannot authorize travel')
+invalidStream(function(v) return v[3] < 19 end, 'old complete18-key stream without checkpoint pose/hashes is refused')
+for missing = 19, 24 do
+    invalidStream(function(v) return v[3] ~= missing end, 'missing mandatory seed key' .. missing .. ' is refused')
+end
+invalidStream(function(v) return not (v[3] == 4 and v[4] == 1) end,
+    'self-consistent stream missing one required revenge array cell is refused')
+local duplicate = fixture(2)
+send(duplicate, OP.TRANSITION, {1, 1, 30050, 40050, 6, 10, 0, 2, 0, 0, 8})
+seedStream(duplicate, 40050, 1, nil, 1)
+duplicate.F.tick(duplicate.time)
+check(duplicate.failure and not duplicate.F.current and #duplicate.F.queue == 0 and next(duplicate.F.seeds) == nil and #duplicate.calls == 0,
+    'self-consistent count/digest with duplicate seed key/index cannot pass coverage')
+for _, missing in ipairs({'hosface_groupNumber', 'rev_revengeLv', 'initialPlayerPosZ'}) do
+    local unreadable = fixture(1)
+    if missing == 'initialPlayerPosZ' then unreadable.env.vars[missing] = nil
+    elseif missing == 'rev_revengeLv' then unreadable.env.gvars[missing][1] = nil
+    else unreadable.env.gvars[missing] = nil end
+    unreadable.env.vars.missionCode = 40050
+    unreadable.env.e.ReservePlayerLoadingPosition(1)
+    unreadable.env.mvars.mis_loadRequest = {nextMission = 40050, currentMission = 30050}
+    local request = unreadable.env.mvars.mis_loadRequest
+    unreadable.env.TppMission.LoadWithChunkCheck()
+    check(not unreadable.loaded and unreadable.env.mvars.mis_loadRequest == request,
+        'host unreadable mandatory field ' .. missing .. ' retains request without Load')
+    local ended = false
+    for _, p in ipairs(unreadable.tx) do if p.op == OP.SEEDS_END then ended = true end end
+    check(not ended, 'host unreadable ' .. missing .. ' never emits a partial completion marker')
+end
+local handoff = fixture(2)
+transfer(donor(40050), handoff); handoff.F.tick(handoff.time)
+handoff.W.active = false
+handoff.env.vars.missionCode = 40050
+handoff.configLevel = 0
+local alloc = coroutine.create(function() return handoff.env.e.OnAllocate() end)
+check(coroutine.resume(alloc) and not handoff.randomSeeds and not handoff.F.current,
+    'explicit level0 pending allocation cannot seed RNG and clears accepted travel')
+local disconnected = fixture(1)
+disconnected.env.vars.missionCode = 40050
+disconnected.env.e.ReservePlayerLoadingPosition(1)
+disconnected.env.TppMission.Load(40050)
+disconnected.F.current = disconnected.F.outgoing
+for _, f in ipairs(disconnected.W.unpairedHooks) do f(5) end
+local orphan = coroutine.create(function() return disconnected.env.e.OnAllocate() end)
+check(coroutine.resume(orphan) and not disconnected.randomSeeds and not disconnected.F.current and not disconnected.F.outgoing,
+    'session reason5 clears retained current/outgoing before allocation and never applies stale RNG')
+local negotiated = fixture(1)
+negotiated.env.vars.missionCode = 40050
+negotiated.env.e.ReservePlayerLoadingPosition(1)
+negotiated.env.TppMission.Load(40050)
+negotiated.W.eff = 2
+local limited = coroutine.create(function() return negotiated.env.e.OnAllocate() end)
+check(coroutine.resume(limited) and not negotiated.randomSeeds,
+    'paired effective level2 cannot seed allocation from stale level3 outgoing travel')
+local down = fixture(2)
+transfer(donor(40050), down); down.link = 0; down.F.tick(down.time)
+check(not down.F.current and #down.calls == 0, 'link-down configuration defers first travel replay before any vanilla call')
+down.link = 1; down.F.tick(down.time)
+check(down.F.current and down.F.current.session == 55 and down.calls[1] == 'clear',
+    'reconnected live session is captured before first authorized replay')
 print('world_follow_lua_check: ' .. checks .. ' checks passed')

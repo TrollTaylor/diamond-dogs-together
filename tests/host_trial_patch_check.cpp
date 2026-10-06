@@ -83,7 +83,7 @@ int main(int argc, char** argv) {
         check(partner_at>=feedback_size && output.compare(partner_at-feedback_size,feedback_size,session_feedback_source)==0);
         check(output.compare(partner_at,partner_size,partner_sync_source)==0);
         const std::string world_chunks[]={world_sync_source,world_enemy_source,world_outcome_source,world_phase_source,world_env_source,
-                                          world_probe_source,world_goto_source,world_follow_source,world_align_source,world_recovery_source};
+                                          world_probe_source,world_goto_source,world_follow_seed_source,world_follow_source,world_align_source,world_recovery_source};
         auto world_at=partner_at+partner_size;
         for(const auto& chunk : world_chunks) {
             check(chunk.size()>64 && output.compare(world_at,chunk.size(),chunk)==0);

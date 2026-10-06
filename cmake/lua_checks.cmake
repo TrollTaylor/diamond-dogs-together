@@ -107,7 +107,7 @@ mgs_add_lua_check(partner_sync_lua_check "${_mgs_coop}/partner_sync.lua")
 set(_mgs_world_chunks "${_mgs_coop}/world_sync.lua" "${_mgs_coop}/world_enemy.lua" "${_mgs_coop}/world_outcome.lua"
   "${_mgs_coop}/world_phase.lua" "${_mgs_coop}/world_env.lua" "${_mgs_coop}/world_probe.lua" "${_mgs_coop}/world_goto.lua")
 mgs_add_lua_check(world_sync_lua_check ${_mgs_world_chunks})
-mgs_add_lua_check(world_follow_lua_check "${_mgs_coop}/world_follow.lua")
+mgs_add_lua_check(world_follow_lua_check "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_follow_seed.lua")
 mgs_add_lua_check(world_align_lua_check "${_mgs_coop}/world_align.lua" "${_mgs_coop}/world_enemy.lua"
   "${_mgs_coop}/world_outcome.lua" "${_mgs_coop}/world_phase.lua" "${_mgs_coop}/world_recovery.lua" "${_mgs_coop}/world_probe.lua")
 
@@ -157,7 +157,7 @@ mgs_find_game_input(_mgs_tpp_mission "respawn-scripts-20260910/package-00.lua"
   e99e6addd4c5135fb2d77ab58632d5e349a626eb7f10ea38301372d127f7404a
   "startup-script-inspection-20260909/package-02.lua")
 if(_mgs_tpp_mission AND _mgs_tpp_main)
-  mgs_add_lua_check(world_follow_game_lua_check "${_mgs_coop}/world_follow.lua" "${_mgs_tpp_mission}" "${_mgs_tpp_main}")
+  mgs_add_lua_check(world_follow_game_lua_check "${_mgs_coop}/world_follow.lua" "${_mgs_tpp_mission}" "${_mgs_tpp_main}" "${_mgs_coop}/world_follow_seed.lua")
 endif()
 
 if(TARGET mgs_bootstrap_patch)
@@ -216,7 +216,7 @@ mgs_add_game_lua_check(partner_sync_composed_lua_check partner_sync_lua_check "$
   "${_mgs_coop}/partner_sync.lua" "${_mgs_out}/TppMain-host-trial.lua")
 # The world chunks inside that composition: spliced once, in order, inert with a literal CFG.
 mgs_add_game_lua_check(world_sync_composed_lua_check world_sync_lua_check "${_mgs_tpp_main}" host_trial_patch_check
-  ${_mgs_world_chunks} "${_mgs_out}/TppMain-host-trial.lua" "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_align.lua" "${_mgs_coop}/world_recovery.lua")
+  ${_mgs_world_chunks} "${_mgs_out}/TppMain-host-trial.lua" "${_mgs_coop}/world_follow_seed.lua" "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_align.lua" "${_mgs_coop}/world_recovery.lua")
 mgs_add_patch_check(mission_trace_patch_check "${_mgs_tpp_main}" "${_mgs_out}/TppMain-trace.lua")
 # The documented two-argument form runs the fragment; the optional third
 # argument also executes the composed TppMain-trace.lua when it is built.

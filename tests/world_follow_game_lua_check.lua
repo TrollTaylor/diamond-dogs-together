@@ -1,6 +1,6 @@
 -- W3 startup Continue against exact extracted game function bodies. The engine
 -- records calls; no game, real save, external service or transport is used.
--- Args: world_follow.lua, extracted TppMission.lua, extracted TppMain.lua.
+-- Args: world_follow.lua, extracted TppMission.lua, extracted TppMain.lua, world_follow_seed.lua.
 local checks = 0
 local function check(ok, why) checks = checks + 1; if not ok then error(checks .. ': ' .. why, 2) end end
 local function read(path) local f = assert(io.open(path, 'rb')); local s = f:read('*a'); f:close(); return s end
@@ -10,13 +10,15 @@ local function slice(s, first, last)
     return s:sub(a, b - 1)
 end
 local missionSource, mainSource = read(arg[2]), read(arg[3])
+local worldPath = (arg[1]:gsub('world_follow%.lua$', 'world_sync.lua'))
+local stopSource = slice(read(worldPath), 'function W.stop(final)', '-- Control dispatch')
 local continueSource = slice(missionSource, 'function e.ExecuteContinueFromCheckPoint(', 'function e.IncrementRetryCount(')
 local loadSource = slice(missionSource, 'function e.RequestLoad(', 'function e.ExecuteReload(')
 local reserveSource = slice(mainSource, 'function e.ReservePlayerLoadingPosition(', 'function e.OnReload(')
-local OP = {TRANSITION = 9, SEED = 10, SEEDS_END = 11, REQ_MISSION = 12, FOLLOW_ACK = 13, REJECT = 4}
+local OP = {TRANSITION = 9, SEED = 10, SEEDS_END = 11, REQ_MISSION = 12, FOLLOW_ACK = 13, REJECT = 4, MISSION_END = 7}
 local locations = {[30010] = 10, [40010] = 10, [30020] = 20, [40020] = 20, [30050] = 50, [40050] = 50}
 local function fixture(host, target, level, active)
-    local c = {time = 1000, tx = {}, logs = {}, chunkChecks = {}, engine = {}, stages = {}}
+    local c = {time = 1000, tx = {}, logs = {}, chunkChecks = {}, engine = {}, stages = {}, configLevel = level or 3}
     local env = setmetatable({}, {__index = _G})
     local function noop() end
     env.vars = {missionCode = 40020, locationCode = 20, mbLayoutCode = 0, mbClusterId = 2,
@@ -44,7 +46,18 @@ local function fixture(host, target, level, active)
     env.TppMarker = {StoreMarkerLocator = noop}
     env.TppRadioCommand = {StoreRadioState = noop}
     env.TppPlayer = {StoreSupplyCbox = noop, StoreSupportAttack = noop, StorePlayerDecoyInfos = noop,
-        UnsetRetryFlag = noop, SetRetryFlag = noop, SetRetryFlagWithChickCap = noop}
+        UnsetRetryFlag = noop, SetRetryFlag = noop, SetRetryFlagWithChickCap = noop,
+        SetStartStatusRideOnHelicopter = function() env.gvars.ply_initialPlayerState = 1 end,
+        SetInitialPosition = function(pos, rot)
+            env.vars.initialPlayerFlag = 1
+            env.vars.initialPlayerPosX, env.vars.initialPlayerPosY, env.vars.initialPlayerPosZ, env.vars.initialPlayerRotY = pos[1], pos[2], pos[3], rot
+        end,
+        SetMissionStartPosition = function(pos, rot)
+            env.gvars.ply_useMissionStartPos = true
+            env.gvars.ply_missionStartPos = {[0] = pos[1], [1] = pos[2], [2] = pos[3]}
+            env.gvars.ply_missionStartRot = rot
+        end,
+        ResetNoOrderBoxMissionStartPosition = function() env.gvars.ply_useMissionStartPosForNoOrderBox = false end}
     env.TppUiStatusManager = {SetStatus = noop}
     env.TppUiCommand = {IsShowPopup = function() return false end, ErasePopup = noop}
     env.TppUI = {ShowAccessIcon = noop}
@@ -77,7 +90,9 @@ local function fixture(host, target, level, active)
             env.gvars.solface_groupNumber = 999
         end
         env.gvars.usingNormalMissionSlot = true
+        return 17, nil, 19
     end, VarSaveOnRetry = noop, SaveGameData = function(m) c.savedMission = m end}
+    env.TppSave.VarRestoreOnMissionStart = env.TppSave.VarRestoreOnContinueFromCheckPoint
     env.Mission = {LoadLocation = function() c.engine[#c.engine + 1] = 'location' end,
         LoadMission = function()
             c.engine[#c.engine + 1] = 'mission'
@@ -93,6 +108,8 @@ local function fixture(host, target, level, active)
     env.TppMission = {SafeStopSettingOnMissionReload = noop, IncrementRetryCount = noop,
         IsFOBMission = function() return false end, IsHardMission = function() return false end,
         IsHelicopterSpace = function(m) return m == 40010 or m == 40020 or m == 40050 end,
+        SetIsStartFromHelispace = function() env.gvars.mis_isStartFromHelispace = true end,
+        ResetIsStartFromFreePlay = function() env.gvars.mis_isStartFromFreePlay = false end,
         ResetEmegerncyMissionSetting = noop, ExecuteOnReturnToMissionCallback = function() return false end}
     env.TppMain = {EnablePause = noop, EnableBlackLoading = noop, DisableGameStatus = noop}
     env.e = env.TppMain
@@ -103,9 +120,10 @@ local function fixture(host, target, level, active)
     compile('local e=TppMain\n' .. reserveSource)
     local W = {OP = OP, handlers = {}, startHooks = {}, pairedHooks = {}, unpairedHooks = {}, stopHooks = {},
         level = level or 3, role = host and 1 or 2, host = host, active = active ~= false, mission = 40020,
-        epoch = 7, paired = true, eff = 3}
+        epoch = 7, paired = true, eff = 3, isStarted = true}
     env.e.MgsCoopWorld = W
     W.get = function(t, k) return t and t[k] end
+    W.cfg = function() return {c.configLevel, c.configRole or W.role, 1, c.link or 1, 7, 0, 1, c.session or 55} end
     W.h = function() return 444 end
     W.now = function() return c.time end
     W.inGame = function() return false end
@@ -113,6 +131,8 @@ local function fixture(host, target, level, active)
     W.log = function(text) c.logs[#c.logs + 1] = text end
     W.fail = function(text) c.failure = text; W.active = false end
     W.tx = function(op, ...) c.tx[#c.tx + 1] = {op = op, v = {...}}; return true end
+    compile('local W=e.MgsCoopWorld\nlocal OP=W.OP\n' .. stopSource)
+    compile(read(arg[4]))
     compile(read(arg[1]))
     W.follow.install({level or 3, W.role})
     for _, f in ipairs(W.startHooks) do f() end
@@ -156,7 +176,37 @@ for _, target in ipairs({30020, 30010, 30050}) do
     check(g.engine[1] == 'location' and g.engine[2] == 'mission' and not g.reloaded and
         g.preload[1] == target and g.preload[2] == 40020 and not g.env.mvars.mis_loadRequest,
         'source/target difference loads new assets rather than reloading ACC and clears accepted request')
+    g.W.stop(true)
+    check(not g.W.active and not g.W.isStarted and g.F.current,
+        'real world stop retains accepted pending guest travel across allocation gap')
+    g.env.TppSave.VarRestoreOnContinueFromCheckPoint()
+    check(g.env.vars.missionCode == target and g.env.vars.locationCode == locations[target] and
+        g.env.vars.initialPlayerPosX == -123.125 and g.env.gvars.solface_groupNumber == 11,
+        'second checkpoint restore after real W.stop(true) cannot overwrite authoritative destination or spawn')
+    local a, b, c = g.env.TppSave.VarRestoreOnMissionStart()
+    check(a == 17 and b == nil and c == 19 and g.env.vars.missionCode == target and
+        g.env.vars.initialPlayerPosX == -123.125 and g.env.gvars.solface_groupNumber == 11,
+        'mission-start restore also preserves exact original returns while reapplying authoritative seeds')
+    g.env.vars.initialPlayerPosX, g.env.vars.initialPlayerPosZ, g.env.vars.initialPlayerRotY = 900, 901, 902
+    g.env.TppMain.StageBlockCurrentPosition()
+    local restage = g.stages[#g.stages]
+    check(restage[3] == -123.125 and restage[4] == 456.875 and restage[6] == -45.125,
+        'StageBlock choke replaces stale local deployment preparation with host seed pose')
 end
+local deploymentHost, deploymentGuest = fixture(true, 30020), fixture(false, 30020)
+deploymentHost.env.vars.missionCode, deploymentHost.F.deploying = 30020, true
+deploymentHost.env.mvars.mis_helicopterMissionStartPosition = {-123.125, 34.625, 456.875}
+deploymentHost.env.TppMain.ReservePlayerLoadingPosition(1, true)
+deploymentHost.env.TppMission.Load(30020, 40020)
+for _ = 1, 4 do deploymentHost.F.tick(deploymentHost.time) end
+transfer(deploymentHost, deploymentGuest)
+deploymentGuest.F.current = deploymentGuest.F.queue[1]
+deploymentGuest.F.current.session = 55
+deploymentGuest.env.mvars.mis_helicopterMissionStartPosition = {900, 901, 902}
+deploymentGuest.env.TppMain.ReservePlayerLoadingPosition(1, true)
+local stage = deploymentGuest.stages[#deploymentGuest.stages]
+check(deploymentHost.F.outgoing[2] == 6 and stage[3] == -123.125 and stage[4] == 456.875 and stage[5] == 34.625,
+    'real source-helicopter deployment Reserve cannot stage stale guest landing-zone prep over host seed pose')
 local h, blocked = fixture(true, 30020), fixture(false, 30020)
 hostContinue(h); transfer(h, blocked, true); blocked.F.tick(blocked.time)
 check(not blocked.restores and not blocked.env.mvars.mis_loadRequest and not blocked.loaded,
@@ -171,4 +221,60 @@ for _, settings in ipairs({{0, true}, {3, false}}) do
     check(untouched.reloaded == 40020 and not untouched.loaded and untouched.chunkChecks[1] == 20,
         'inert Load follows exact vanilla RequestToReload path and original chunk')
 end
+local function invalidStream(filter, duplicateKey, why)
+    local host, guest = fixture(true, 30020), fixture(false, 30020)
+    hostContinue(host)
+    local count, digest = 0, 0
+    for _, p in ipairs(host.tx) do
+        if p.op == OP.TRANSITION then guest.W.handlers[p.op](p.v, guest.time)
+        elseif p.op == OP.SEED and filter(p.v) then
+            guest.W.handlers[p.op](p.v, guest.time)
+            local v = p.v
+            count, digest = count + 1, (digest * 31 + v[3] * 1024 + v[4] + v[5]) % 4294967296
+            if v[3] == duplicateKey and v[4] == 0 then
+                guest.W.handlers[p.op](p.v, guest.time)
+                count, digest = count + 1, (digest * 31 + v[3] * 1024 + v[4] + v[5]) % 4294967296
+            end
+        end
+    end
+    guest.W.handlers[OP.SEEDS_END]({host.F.outgoing[1], 30020, count, digest}, guest.time)
+    guest.F.tick(guest.time)
+    check(guest.failure and not guest.restores and not guest.env.mvars.mis_loadRequest and not guest.loaded,
+        why .. ' prevents every real Continue/VarRestore/load API')
+end
+invalidStream(function() return false end, nil, 'self-consistent empty stream')
+invalidStream(function(v) return v[3] == 1 end, nil, 'self-consistent partial stream')
+invalidStream(function(v) return v[3] < 19 end, nil, 'stream lacking all checkpoint pose/hash keys19..24')
+invalidStream(function() return true end, 1, 'self-consistent duplicate key/index stream')
+local unreadable = fixture(true, 30020)
+unreadable.env.TppMission.ExecuteContinueFromCheckPoint()
+local request = unreadable.env.mvars.mis_loadRequest
+unreadable.env.gvars.hosface_groupNumber = nil
+unreadable.env.TppMission.LoadWithChunkCheck()
+check(request and unreadable.env.mvars.mis_loadRequest == request and not unreadable.loaded and #unreadable.engine == 0,
+    'actual host chunk/load wrapper retains pending request when mandatory seed is unreadable')
+local heldHost, disabled = fixture(true, 30020), fixture(false, 30020)
+hostContinue(heldHost); transfer(heldHost, disabled); disabled.F.tick(disabled.time)
+disabled.env.TppMission.LoadWithChunkCheck(); disabled.W.stop(true)
+disabled.configLevel = 0
+disabled.env.TppSave.VarRestoreOnContinueFromCheckPoint()
+check(disabled.env.vars.missionCode == 40020 and disabled.env.vars.initialPlayerPosX == 99 and not disabled.F.current,
+    'explicit native configuration level0 cancels pending inactive travel and restores vanilla checkpoint')
+for _, change in ipairs({'session', 'link'}) do
+    local host, guest = fixture(true, 30020), fixture(false, 30020)
+    hostContinue(host); transfer(host, guest); guest.F.tick(guest.time)
+    guest.env.TppMission.LoadWithChunkCheck(); guest.W.stop(true)
+    if change == 'session' then guest.session = 99 else guest.link = 0 end
+    guest.env.TppSave.VarRestoreOnContinueFromCheckPoint()
+    check(guest.env.vars.missionCode == 40020 and guest.env.vars.initialPlayerPosX == 99 and not guest.F.current,
+        'fresh native ' .. change .. ' change during allocation gap discards old authenticated travel before restore setup')
+end
+local downHost, beforeReplay = fixture(true, 30020), fixture(false, 30020)
+hostContinue(downHost); transfer(downHost, beforeReplay)
+beforeReplay.link = 0; beforeReplay.F.tick(beforeReplay.time)
+check(not beforeReplay.F.current and not beforeReplay.restores and not beforeReplay.env.mvars.mis_loadRequest,
+    'link-down check before first replay leaves actual Continue/restore/load untouched')
+beforeReplay.link = 1; beforeReplay.F.tick(beforeReplay.time)
+check(beforeReplay.F.current and beforeReplay.F.current.session == 55 and beforeReplay.restores == 1,
+    'first replay binds the current native session after link returns')
 print(checks .. ' exact-game W3 Continue/load checks passed; no game')
