@@ -156,6 +156,9 @@ mgs_find_game_input(_mgs_damage_tables "damage-parameters-current-20260910/packa
 mgs_find_game_input(_mgs_tpp_mission "respawn-scripts-20260910/package-00.lua"
   e99e6addd4c5135fb2d77ab58632d5e349a626eb7f10ea38301372d127f7404a
   "startup-script-inspection-20260909/package-02.lua")
+if(_mgs_tpp_mission AND _mgs_tpp_main)
+  mgs_add_lua_check(world_follow_game_lua_check "${_mgs_coop}/world_follow.lua" "${_mgs_tpp_mission}" "${_mgs_tpp_main}")
+endif()
 
 if(TARGET mgs_bootstrap_patch)
   add_executable(damage_parameters_patch_check tests/damage_parameters_patch_check.cpp)

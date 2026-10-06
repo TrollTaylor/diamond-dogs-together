@@ -8,7 +8,9 @@ local OP = {TRANSITION = 9, SEED = 10, SEEDS_END = 11, REQ_MISSION = 12, FOLLOW_
 local function fixture(role, level)
     local c = {calls = {}, tx = {}, logs = {}, time = 1000, inGame = true}
     local env = setmetatable({}, {__index = _G})
-    env.vars = {missionCode = 30050, mbLayoutCode = 0, mbClusterId = 2}
+    env.vars = {missionCode = 30050, locationCode = 50, mbLayoutCode = 0, mbClusterId = 2,
+        initialPlayerFlag = 1, initialPlayerPosX = -123.125, initialPlayerPosY = 34.625,
+        initialPlayerPosZ = 456.875, initialPlayerRotY = -45.125}
     env.mvars = {mis_selectedDeployTime = 0}
     env.gvars = {solface_groupNumber = 111, hosface_groupNumber = 222, heli_missionStartRoute = 4294967295,
         rev_revengeRandomValue = 333, rev_revengeLv = {[0] = 1, [1] = 2}, missionStartClock = 43200,
@@ -16,7 +18,8 @@ local function fixture(role, level)
         mis_isStartFromHelispace = true, mis_isStartFromFreePlay = false, ply_initialPlayerState = 0,
         ply_useMissionStartPos = true, ply_missionStartPos = {[0] = -2.25, [1] = 3.5, [2] = 10},
         ply_missionStartRot = -90, ply_useMissionStartPosForNoOrderBox = false,
-        ply_missionStartPosForNoOrderBox = {[0] = 0, [1] = 0, [2] = 0}, ply_missionStartRotForNoOrderBox = 0}
+        ply_missionStartPosForNoOrderBox = {[0] = 0, [1] = 0, [2] = 0}, ply_missionStartRotForNoOrderBox = 0,
+        mis_checkPoint = 4294967295}
     env.svars = {mis_missionClearType = 6}
     env.TppDefine = {MISSION_LOAD_TYPE = {MISSION_FINALIZE = 1, MISSION_ABORT = 2, MISSION_RESTART = 3, CONTINUE_FROM_CHECK_POINT = 4}}
     env.TppRevenge = {REVENGE_TYPE = {MAX = 2}}
@@ -80,6 +83,10 @@ check(g.loaded == 40050 and g.seedAtLoad == 111 and g.env.mvars.mis_loadRequest 
 check(g.env.gvars.ply_missionStartPos[0] == -2.25 and g.env.gvars.ply_missionStartRot == -90 and
     g.env.gvars.missionStartWeatherNextTime == 123.25 and g.env.gvars.rev_revengeRandomValue == 333,
     'signed positions, rotations, scalar revenge seed and float weather round trip')
+check(g.env.vars.initialPlayerFlag == 1 and g.env.vars.initialPlayerPosX == -123.125 and
+    g.env.vars.initialPlayerRotY == -45.125 and g.env.gvars.mis_checkPoint == 4294967295 and
+    g.env.vars.missionCode == 40050 and g.env.vars.locationCode == 50,
+    'saved initial pose, checkpoint hash and authoritative destination round trip')
 g.W.mission, g.env.vars.missionCode = 40050, 40050
 for _, f in ipairs(g.W.startHooks) do f() end
 check(g.F.current == nil and #g.F.queue == 0 and g.F.last == 1, 'arrival retires one transition')

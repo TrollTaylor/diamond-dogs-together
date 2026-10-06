@@ -676,6 +676,17 @@ barrier retains the game's pending request until seeds exist. Seed fields
 include face/revenge choices, clock/weather preparation, initial player
 flags/pose and helicopter route; hashes use unsigned `%.0f` formatting.
 
+Startup Continue restores each copy's local checkpoint before the loading
+position callback. The guest applies the host mission/location and saved
+initial-player flag/pose at that callback, before vanilla stage-block
+selection. RequestLoad and Load reassert the destination while preserving
+the original current mission, so crossing from ACC loads the new assets
+instead of reloading ACC. Seed keys 19-23 carry those saved vars and key
+24 carries `mis_checkPoint`. A fixture executes the SHA-pinned extracted
+Continue, stage-block, chunk-check and loading functions for all three
+supported field missions; title-menu automatic following still needs live
+validation.
+
 Travel controls survive native CFG mission resets, but are discarded on a
 new link session. Lua transaction history resets even if the previous link
 was already unpaired. A frozen outgoing stream retries refused TX items and
