@@ -6,14 +6,19 @@ WHAT THIS IS
 ------------
 An unfinished two-player co-op mod for METAL GEAR SOLID V: THE PHANTOM PAIN.
 Two people, each on their own PC, play OFFLINE at the same time and each sees
-the other player as a second character in Mother Base.
+the other player as a second character in Mother Base or Afghanistan/Africa
+free roam.
 
 What works today:
 - You see your partner's body move, walk and run, crouch and go prone, with
-  their own character, face and camouflage - in Mother Base only.
-What is NOT shared yet:
-- Enemies, the world state, items, mission progress. Each player plays their
-  own offline game; only the partner's body is synchronized.
+  their own character, face and camouflage in those supported scenes.
+- The default (World 0) shares partner movement. Experimental World 3 also
+  shares supported enemy outcomes, alert, clock/weather, host travel,
+  Continue/restart alignment, checkpoints and death (see section 3).
+What is NOT fully shared yet:
+- Story missions, items and full campaign progression. This is a development
+  build; live verification used two game instances on one PC. Actual two-PC
+  play has not been validated yet.
 
 One player HOSTS, the other JOINS. Both use this same package (the same
 version on both PCs). Konami's servers are never contacted: the game plays
@@ -25,7 +30,9 @@ offline, and the message "Failed to log in" at the start is expected.
 - MGSV: The Phantom Pain from Steam, version 1.0.15.4, with no other mods (no
   other dinput8.dll, no Infinite Heaven/SnakeBite changes). The installer
   checks the game files and stops if they are not the original ones.
-- A save that can "Continue" into Mother Base (play normally once if needed).
+- Saves that can "Continue" into the same supported scene: Mother Base,
+  Afghanistan/Africa free roam, or the corresponding ACC. Play normally
+  first if needed; each installer copies its player's save independently.
 - Steam running and logged in with your own account.
 - The file mgs-coop-player-runtime.dat. It is not in this ZIP; read
   RUNTIME-ARCHIVE.txt to see where it comes from.
@@ -97,6 +104,21 @@ BOTH:
  - Quit MGSV normally when you are done. Co-op switches itself off when the
    game exits, even if the Play-Coop window was closed: the next normal start
    from Steam is plain MGSV on your real saves again.
+
+EXPERIMENTAL SHARED WORLD (opt-in, both players):
+ - Instead of double-clicking Play-Coop.bat, open Command Prompt in the
+   extracted package folder and run this on BOTH PCs:
+        Play-Coop.bat -World 3
+   Then choose H on the host and J on the joining PC as above.
+ - Both games must first enter the same supported scene to pair. Different
+   saved scenes do not bootstrap automatically. Once paired, the host chooses
+   travel, Continue/restart and abort; the guest follows. Press Space on each
+   game's loading-tip screen when asked.
+ - Enemy sync waits for a matching readable host snapshot after reload;
+   unloaded areas may delay it. Existing terminal guest enemies are never
+   revived. Story missions and full campaign progression remain unsupported.
+ - A normal double-click keeps World 0, with partner movement only. The
+   launcher keeps each existing co-op save copy between sessions.
 
 
 4. HOW THE JOINER REACHES THE HOST
@@ -190,8 +212,11 @@ stay in <game folder>\mgs-coop; you can delete that folder yourself later.
 
 10. KNOWN LIMITS AND RISKS - PLEASE READ
 ----------------------------------------
-- Development build. Only the partner's body is shared, and only in Mother
-  Base. Enemies, items and missions are separate on each PC.
+- Development build. Partner bodies support Mother Base and Afghanistan/
+  Africa free roam. World 3 is experimental and requires both players to opt
+  in; story missions, items and full campaign progression are not supported.
+  Actual two-PC play has not been validated; recorded live tests used two
+  game instances on one PC.
 - The two PCs talk directly over UDP. No relay server exists: if neither a
   VPN nor port forwarding works for you, co-op cannot connect.
 - The join code is a key: whoever has it can connect while the host's game

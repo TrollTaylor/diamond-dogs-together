@@ -3,7 +3,9 @@
 Two people on two PCs play the offline co-op of the single-PC lab: each game
 runs offline (the `offline-v1` marker and the dead-port `master_url`), plays
 from a save COPY, and shows the other player as the partner in Mother Base
-(mission 30050). The PCs talk over our own UDP link (link v2, PART N; see
+or Afghanistan/Africa free roam (30050/30010/30020). Partner movement is the
+default; experimental shared-world play requires both players to opt in
+with `Play-Coop.bat -World 3`. The PCs talk over our own UDP link (link v2, PART N; see
 `docs/link-protocol.md`), never over Konami's servers or Steam P2P.
 
 The player-facing guide is `tools/friend/FRIEND-GUIDE.txt` (shipped in the
@@ -95,8 +97,8 @@ start from Steam is plain MGSV on the real saves.
    `saves=redirected` shows a red banner (normal offline play on the REAL
    saves); a missing `play=` line with redirected saves means the loader is too
    old. Then one status line per second from `link-status.json` (pid checked,
-   older than 15 s = "game not responding", outside 30050 = "go to Mother
-   Base").
+   older than 15 s = "game not responding", outside 30050/30010/30020 =
+   "Partner body unavailable in this mission").
 6. **Deactivate** (game exit, `[Q]` before the launch, Ctrl+C, the watchdog,
    the next Play-Coop, Install, Uninstall, `Play-Coop.ps1 -Cleanup`): marker,
    `coop.ini`, `lab.ini`, `link-secret.txt`, each deleted only while its hash
@@ -130,8 +132,21 @@ or an impairment key.
 
 ### World sync (experimental, opt-in)
 
+On **both PCs**, open Command Prompt in the extracted friend-package folder
+and run:
+
+```bat
+Play-Coop.bat -World 3
+```
+
+Choose Host on one PC and Join on the other. Both copies must first enter
+the same supported scene (Mother Base, Afghanistan/Africa free roam, or its
+corresponding ACC) so they can pair; different saved scenes do not bootstrap
+automatically. After pairing, the host controls supported travel and recovery.
+The launcher keeps the existing co-op save copy between sessions.
+
 `Play-Coop.ps1 -World 1..3` adds `world=N` to the play `lab.ini` (nothing at
-the default 0, which keeps today's behaviour): 1 plumbing only, 2 shared enemy
+the default 0, which shares partner movement): 1 plumbing only, 2 shared enemy
 outcomes and alert in free roam (30010/30020), 3 also clock/weather, host-driven
 supported-scene travel, reload alignment, shared death and checkpoint copying
 ([world-sync-protocol.md](world-sync-protocol.md)). Both players must choose
@@ -145,7 +160,9 @@ unknown until discovered, and terminal guest soldiers are never revived.
 Lower levels retain manual travel and the Continue gate. Story missions and
 full progression copying remain unsupported. Lab recovery probes and the
 goto trigger are refused in play. See protocol section13 for current limits
-and separate live acceptance requirements.
+and separate live acceptance requirements. Recorded live verification uses
+two game instances on one PC; actual two-PC play and full campaign progression
+have not been validated.
 
 ## Join code
 
