@@ -93,8 +93,11 @@ do
         if W.host or not on() or A.dead or not r or r.id ~= v[1] or r.epoch ~= W.epoch or v[6] ~= W.epoch then return end
         local readable = 0
         for _, a in ipairs(r.records) do if a[2] == 1 and a[5] == 1 then readable = readable + 1 end end
-        if r.invalid or readable == 0 or r.ns ~= r.soldiers or r.nc ~= r.cps or v[2] ~= r.ns or v[3] ~= r.nc or v[4] ~= r.digest then
-            log("step=refused;reason=incomplete_snapshot")
+        local complete = not r.invalid and r.ns == r.soldiers and r.nc == r.cps and v[2] == r.ns and v[3] == r.nc and v[4] == r.digest
+        if not complete or readable == 0 then
+            log(fmt("step=refused;reason=%s;id=%.0f;soldiers=%d/%d;cps=%d/%d;readable=%d;invalid=%d;digest_match=%d",
+                complete and "no_readable_state" or "incomplete_snapshot", r.id, r.ns, r.soldiers, r.nc, r.cps, readable,
+                r.invalid and 1 or 0, v[4] == r.digest and 1 or 0))
             A.ack = {r.id, W.mission, W.epoch, 0}
             A.rx = nil
             return

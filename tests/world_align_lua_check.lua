@@ -157,6 +157,8 @@ check(g.life[5] == 1 and commands(g, 'RequestForceFulton') == 1, 'later discover
 local missing = fixture(false)
 transfer(h, missing, function(p) return not (p.op == OP.ALIGN_RECORD and p.v[2] == 1 and p.v[3] == 2) end)
 check(not missing.W.w1 and logged(missing, 'reason=incomplete_snapshot') and #missing.commands == 0, 'missing record refuses alignment and every side effect')
+check(logCount(missing, 'soldiers=4/5;cps=2/2;readable=3;invalid=0;digest_match=0') == 1,
+    'truncated snapshot reports bounded received/expected counts and digest failure')
 local wrong = fixture(false)
 transfer(h, wrong, function(p) return p.op ~= OP.ALIGN_END end)
 wrong.W.epoch = 8
@@ -208,8 +210,19 @@ check(not empty.W.w1 and empty.A.tx == nil and #empty.tx == 0, 'empty roster hol
 local unknown, untouched = fixture(true), fixture(false)
 unknown.W.activeCp = nil
 capture(unknown); transfer(unknown, untouched)
-check(not untouched.W.w1 and #untouched.commands == 0 and logged(untouched, 'reason=incomplete_snapshot'),
+check(not untouched.W.w1 and #untouched.commands == 0 and logged(untouched, 'reason=no_readable_state'),
     'unknown active area cannot prove readiness by numeric NORMAL fallback')
+check(logCount(untouched, 'soldiers=5/5;cps=2/2;readable=0;invalid=0;digest_match=1') == 1,
+    'complete all-unknown snapshot is distinguished from lost or malformed records')
+untouched.A.tick(untouched.now)
+transfer(untouched, unknown, function(p) return p.op == OP.ALIGN_ACK end)
+unknown.tx, untouched.tx = {}, {}
+unknown.W.activeCp, unknown.life[1] = {[100] = true}, 1
+capture(unknown); transfer(unknown, untouched)
+untouched.W.enemy.tick(untouched.now)
+untouched.now = untouched.now + 300; untouched.W.enemy.tick(untouched.now)
+check(untouched.W.w1 and untouched.life[1] == 1 and logged(untouched, 'state=5;ver=1;src=resync;result=ok;readback=5'),
+    'delayed area readiness permits a later complete snapshot and verifies restored host death through real apply readback')
 for _, raw in ipairs({255, -1, 99}) do
     local sentinel = fixture(true)
     sentinel.life[1], sentinel.life[2], sentinel.life[3], sentinel.life[4] = raw, raw, raw, raw
