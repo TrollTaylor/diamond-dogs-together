@@ -132,7 +132,7 @@ if not s or not s.ready or s.mission ~= t[4] then return false end
 for _, v in ipairs(s.values) do
     local key, value = KEYS[v[1]], S.decode(KEYS[v[1]], v[3])
     if not key[5] then
-    local data = key[4] and vars or gvars
+    local data = S.data(key)
     if key[2] then
         local array = W.get(data, key[1])
         if array ~= nil then array[v[2]] = value end

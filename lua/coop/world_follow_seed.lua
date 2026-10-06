@@ -12,9 +12,10 @@ do
         {"initialPlayerPosY", nil, 1000, true}, {"initialPlayerPosZ", nil, 1000, true},
         {"initialPlayerRotY", nil, 1000, true}, {"mis_checkPoint"},
         {"ini_isTitleMode", nil, "bool", nil, true}, {"ini_isReturnToTitle", nil, "bool", nil, true},
-        {"isContinueFromTitle", nil, "bool", nil, true}}}
+        {"isContinueFromTitle", nil, "bool", nil, true}, {"ply_isUsedPlayerInitialAction", nil, "bool", "svars"}}}
     W.followSeeds = S
     local floor = math.floor
+    function S.data(key) return key[4] == "svars" and svars or key[4] and vars or gvars end
     function S.dims(key)
         if key[2] ~= "revenge" then return key[2] or 1 end
         local n = W.get(W.get(TppRevenge, "REVENGE_TYPE"), "MAX")
@@ -45,7 +46,7 @@ do
     function S.snapshot()
         local values, digest = {}, 0
         for k, key in ipairs(S.keys) do
-            local n, data = S.dims(key), W.get(key[4] and vars or gvars, key[1])
+            local n, data = S.dims(key), W.get(S.data(key), key[1])
             if not n then return nil, key[1] end
             for i = 0, n - 1 do
                 local value = S.encode(key, key[2] and W.get(data, i) or data)

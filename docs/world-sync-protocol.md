@@ -720,9 +720,9 @@ supported field missions. Run `20261006-111828` also verifies native host
 title Continue following to Mother Base and onward through ACC to Afghanistan
 with the integrated DLL.
 
-All 27 seed keys are required, with every declared array index exactly
+All 28 seed keys are required, with every declared array index exactly
 once; completion checks coverage as well as count and ordered digest.
-The normal 16-entry revenge array produces 46 records. The host retains
+The normal 16-entry revenge array produces 47 records. The host retains
 its pending load if any required field is unreadable; it sends no partial
 END. Duplicate, empty or self-consistent partial streams fail closed on
 the guest. The schema lives in the separate bounded `world_follow_seed`
@@ -738,6 +738,12 @@ preparation skips these keys, so vanilla allocation's
 not pressed the native title Continue button enter ordinary mission/ACC
 initialization when following the host's Continue, rather than retaining
 title-mode sky and UI into the subsequent deployment.
+Key 28 carries the saved BOOL `svars.ply_isUsedPlayerInitialAction`.
+Player initialization uses that flag together with the initial player
+state to choose whether to enter from the helicopter. Copying it after
+restore prevents an old guest helicopter checkpoint from overriding the
+host's resumed on-foot checkpoint pose. The exact player initialization
+branch is covered by the SHA-pinned TppPlayer fixture input.
 Already accepted pending preparation survives the inactive mission-loading
 gap only while fresh CFG confirms level 3, the same role, an active link
 and the unchanged nonzero local transport session. A changed session,

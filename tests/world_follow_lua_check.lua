@@ -21,7 +21,7 @@ local function fixture(role, level)
         ply_missionStartRot = -90, ply_useMissionStartPosForNoOrderBox = false,
         ply_missionStartPosForNoOrderBox = {[0] = 0, [1] = 0, [2] = 0}, ply_missionStartRotForNoOrderBox = 0,
         mis_checkPoint = 4294967295, ini_isTitleMode = false, ini_isReturnToTitle = false, isContinueFromTitle = true}
-    env.svars = {mis_missionClearType = 6}
+    env.svars = {mis_missionClearType = 6, ply_isUsedPlayerInitialAction = true}
     env.TppDefine = {MISSION_LOAD_TYPE = {MISSION_FINALIZE = 1, MISSION_ABORT = 2, MISSION_RESTART = 3, CONTINUE_FROM_CHECK_POINT = 4}}
     env.TppRevenge = {REVENGE_TYPE = {MAX = 2}}
     env.DemoDaemon = {IsDemoPlaying = function() return c.demo == true end}
@@ -114,10 +114,12 @@ check(titleLog and #titleLog <= 160 and titleLog:find('title_before=1;title_afte
 check(g.clear and g.clear.nextMissionId == 40050 and g.clear.nextHeliRoute == 4294967295, 'guest replays host clear and unsigned route')
 g.env.gvars.solface_groupNumber = 999
 g.env.gvars.isContinueFromTitle = false
+g.env.svars.ply_isUsedPlayerInitialAction = false
 g.env.mvars.mis_loadRequest = {nextMission = 40050}
 g.env.TppMission.LoadWithChunkCheck()
 check(g.loaded == 40050 and g.seedAtLoad == 111 and g.env.mvars.mis_loadRequest == nil, 'host seeds applied before original Load and request cleanup')
 check(g.env.gvars.isContinueFromTitle == false, 'repeated seed preparation preserves vanilla title-continue cleanup')
+check(g.env.svars.ply_isUsedPlayerInitialAction == true, 'host saved player initial-action flag replaces old guest helicopter entry')
 check(g.env.gvars.ply_missionStartPos[0] == -2.25 and g.env.gvars.ply_missionStartRot == -90 and
     g.env.gvars.missionStartWeatherNextTime == 123.25 and g.env.gvars.rev_revengeRandomValue == 333,
     'signed positions, rotations, scalar revenge seed and float weather round trip')
@@ -267,7 +269,7 @@ end
 invalidStream(function() return false end, 'self-consistent empty count0/digest0 cannot authorize travel')
 invalidStream(function(v) return v[3] == 1 end, 'self-consistent one-field stream cannot authorize travel')
 invalidStream(function(v) return v[3] < 19 end, 'old complete18-key stream without checkpoint pose/hashes is refused')
-for missing = 19, 27 do
+for missing = 19, 28 do
     invalidStream(function(v) return v[3] ~= missing end, 'missing mandatory seed key' .. missing .. ' is refused')
 end
 invalidStream(function(v) return not (v[3] == 4 and v[4] == 1) end,

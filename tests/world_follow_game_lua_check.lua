@@ -1,6 +1,6 @@
 -- W3 startup Continue against exact extracted game function bodies. The engine
 -- records calls; no game, real save, external service or transport is used.
--- Args: world_follow.lua, extracted TppMission.lua, extracted TppMain.lua, world_follow_seed.lua.
+-- Args: world_follow.lua, extracted TppMission.lua, extracted TppMain.lua, world_follow_seed.lua, extracted TppPlayer.lua.
 local checks = 0
 local function check(ok, why) checks = checks + 1; if not ok then error(checks .. ': ' .. why, 2) end end
 local function read(path) local f = assert(io.open(path, 'rb')); local s = f:read('*a'); f:close(); return s end
@@ -16,6 +16,8 @@ local continueSource = slice(missionSource, 'function e.ExecuteContinueFromCheck
 local loadSource = slice(missionSource, 'function e.RequestLoad(', 'function e.ExecuteReload(')
 local reserveSource = slice(mainSource, 'function e.ReservePlayerLoadingPosition(', 'function e.OnReload(')
 local allocationTitleSource = slice(mainSource, 'if gvars.ini_isTitleMode then', 'TppUiCommand.ExcludeNonPermissionContents()')
+local initialActionSource = slice(read(arg[5]), 'if(gvars.ply_initialPlayerState==TppDefine.INITIAL_PLAYER_STATE.RIDEON_HELICOPTER)',
+    'mvars.ply_locationStationTable={}')
 local OP = {TRANSITION = 9, SEED = 10, SEEDS_END = 11, REQ_MISSION = 12, FOLLOW_ACK = 13, REJECT = 4, MISSION_END = 7}
 local locations = {[30010] = 10, [40010] = 10, [30020] = 20, [40020] = 20, [30050] = 50, [40050] = 50}
 local function fixture(host, target, level, active)
@@ -24,7 +26,7 @@ local function fixture(host, target, level, active)
     local function noop() end
     env.vars = {missionCode = 40020, locationCode = 20, mbLayoutCode = 0, mbClusterId = 2,
         initialPlayerFlag = 1, initialPlayerPosX = 99, initialPlayerPosY = 88, initialPlayerPosZ = 77, initialPlayerRotY = 66}
-    env.mvars, env.svars = {}, {mis_missionClearType = 6}
+    env.mvars, env.svars = {}, {mis_missionClearType = 6, ply_isUsedPlayerInitialAction = host}
     env.gvars = {usingNormalMissionSlot = false, str_storySequence = 200, solface_groupNumber = 11, hosface_groupNumber = 22,
         rev_revengeRandomValue = 33, rev_revengeLv = {[0] = 1, [1] = 2}, missionStartClock = 43200,
         missionStartWeather = 0, missionStartWeatherNextTime = 123.25, missionStartExtraWeatherInterval = 200,
@@ -35,7 +37,10 @@ local function fixture(host, target, level, active)
         mis_checkPoint = 0, ini_isTitleMode = false, ini_isReturnToTitle = false, isContinueFromTitle = false}
     env.TppDefine = {MISSION_LOAD_TYPE = {MISSION_FINALIZE = 1, MISSION_ABORT = 2, MISSION_RESTART = 3, CONTINUE_FROM_CHECK_POINT = 4},
         STORY_SEQUENCE = {CLEARD_ESCAPE_THE_HOSPITAL = 100}, STORY_MISSION_LAYOUT_CODE = {},
-        SYS_MISSION_ID = {MTBS_HELI = 40050}, ERROR_ID = {NOW_INSTALLING = 123}}
+        SYS_MISSION_ID = {MTBS_HELI = 40050}, ERROR_ID = {NOW_INSTALLING = 123},
+        INITIAL_PLAYER_STATE = {ON_FOOT = 0, RIDEON_HELICOPTER = 1}}
+    env.PlayerInitialAction = {FROM_HELI_SPACE = 100}
+    env.GameObject = {NULL_ID = 65535, GetGameObjectId = function(kind, name) return kind == 'TppHeli2' and name == 'SupportHeli' and 998 or 65535 end}
     env.TppRevenge = {REVENGE_TYPE = {MAX = 2}}
     env.PlayerFlag = {USE_VARS_FOR_INITIAL_POS = 1}
     env.GameOverMenu = {POPUP_RESULT_YES = 1, STEALTH_ASSIST_POPUP = 2, PERFECT_STEALTH_POPUP = 3}
@@ -80,6 +85,7 @@ local function fixture(host, target, level, active)
     env.TppSave = {VarRestoreOnContinueFromCheckPoint = function()
         c.restores = (c.restores or 0) + 1
         c.restoreTitle = {env.gvars.ini_isTitleMode, env.gvars.ini_isReturnToTitle, env.gvars.isContinueFromTitle}
+        env.svars.ply_isUsedPlayerInitialAction = host
         local m = host and target or 40020
         env.vars.missionCode, env.vars.locationCode = m, locations[m]
         if host then
@@ -134,6 +140,7 @@ local function fixture(host, target, level, active)
     compile('local e=TppMission\n' .. continueSource .. loadSource)
     compile('local e=TppMain\n' .. reserveSource)
     compile('function TppMain.TestAllocationTitleContext(n)\n' .. allocationTitleSource .. '\nend')
+    compile('function TppPlayer.TestInitialAction(a)\nlocal i=GameObject.GetGameObjectId\nlocal n=GameObject.NULL_ID\n' .. initialActionSource .. '\nend')
     local W = {OP = OP, handlers = {}, startHooks = {}, pairedHooks = {}, unpairedHooks = {}, stopHooks = {},
         level = level or 3, role = host and 1 or 2, host = host, active = active ~= false, mission = 40020,
         epoch = 7, paired = true, eff = 3, isStarted = true}
@@ -200,6 +207,26 @@ for _, line in ipairs(titleGuest.logs) do
     end
 end
 check(titleLogs == 1, 'accepted guest transition applies title context exactly once')
+local landedHost, oldHeliGuest = fixture(true, 30020), fixture(false, 30020)
+landedHost.env.gvars.ply_initialPlayerState, oldHeliGuest.env.gvars.ply_initialPlayerState = 1, 1
+oldHeliGuest.env.TppPlayer.TestInitialAction({})
+check(oldHeliGuest.env.vars.initialPlayerAction == oldHeliGuest.env.PlayerInitialAction.FROM_HELI_SPACE and
+    oldHeliGuest.env.vars.initialPlayerPairGameObjectId == 998,
+    'exact player Init branch reproduces old guest helicopter action despite a valid initial position flag')
+oldHeliGuest.env.vars.initialPlayerAction, oldHeliGuest.env.vars.initialPlayerPairGameObjectId = nil, nil
+hostContinue(landedHost); transfer(landedHost, oldHeliGuest); oldHeliGuest.F.tick(oldHeliGuest.time)
+oldHeliGuest.env.TppMission.LoadWithChunkCheck(); oldHeliGuest.W.stop(true)
+oldHeliGuest.env.TppMain.TestAllocationTitleContext({})
+oldHeliGuest.env.TppPlayer.TestInitialAction({})
+check(oldHeliGuest.env.svars.ply_isUsedPlayerInitialAction == true and oldHeliGuest.env.vars.initialPlayerAction == nil and
+    oldHeliGuest.env.vars.initialPlayerPairGameObjectId == nil and oldHeliGuest.env.vars.initialPlayerPosX == -123.125,
+    'mandatory host initial-action SVar survives second checkpoint restore and prevents old guest helicopter startup')
+local vanillaHeli = fixture(false, 30020, 0)
+vanillaHeli.env.gvars.ply_initialPlayerState = 1
+vanillaHeli.env.TppSave.VarRestoreOnContinueFromCheckPoint(); vanillaHeli.env.TppPlayer.TestInitialAction({})
+check(vanillaHeli.env.svars.ply_isUsedPlayerInitialAction == false and
+    vanillaHeli.env.vars.initialPlayerAction == vanillaHeli.env.PlayerInitialAction.FROM_HELI_SPACE,
+    'level0 keeps the exact vanilla old-save helicopter initial action')
 for _, target in ipairs({30020, 30010, 30050}) do
     local h, g = fixture(true, target), fixture(false, target)
     hostContinue(h); transfer(h, g); g.F.tick(g.time)
@@ -304,6 +331,7 @@ invalidStream(function() return true end, 1, 'self-consistent duplicate key/inde
 for missing = 25, 27 do
     invalidStream(function(v) return v[3] ~= missing end, nil, 'stream missing mandatory title-context key ' .. missing)
 end
+invalidStream(function(v) return v[3] ~= 28 end, nil, 'stream missing mandatory initial-action SVar key28')
 local unreadable = fixture(true, 30020)
 unreadable.env.TppMission.ExecuteContinueFromCheckPoint()
 local request = unreadable.env.mvars.mis_loadRequest
@@ -320,6 +348,13 @@ for _, key in ipairs({'ini_isTitleMode', 'ini_isReturnToTitle', 'isContinueFromT
     check(pending and host.env.mvars.mis_loadRequest == pending and not host.loaded and #host.engine == 0,
         'actual host retains load request when required title flag is unreadable: ' .. key)
 end
+local noAction = fixture(true, 30020)
+noAction.env.TppMission.ExecuteContinueFromCheckPoint()
+local actionRequest = noAction.env.mvars.mis_loadRequest
+noAction.env.svars.ply_isUsedPlayerInitialAction = nil
+noAction.env.TppMission.LoadWithChunkCheck()
+check(actionRequest and noAction.env.mvars.mis_loadRequest == actionRequest and not noAction.loaded and #noAction.engine == 0,
+    'host holds actual load request when mandatory initial-action SVar is unreadable')
 local heldHost, disabled = fixture(true, 30020), fixture(false, 30020)
 hostContinue(heldHost); transfer(heldHost, disabled); disabled.F.tick(disabled.time)
 disabled.env.TppMission.LoadWithChunkCheck(); disabled.W.stop(true)
