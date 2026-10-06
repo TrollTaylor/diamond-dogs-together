@@ -195,4 +195,17 @@ local noReload = fixture(1)
 noReload.env.TppMission.Reload()
 noReload.env.TppMission.ReturnToMission()
 check(#noReload.calls == 0, 'unsupported host midmission reload and ReturnToMission are refused before side effects')
+local deadAbort = fixture(2)
+deadAbort.inGame = false
+deadAbort.env.svars.mis_isDefiniteGameOver = true
+send(deadAbort, OP.TRANSITION, {1, 2, 30050, 40050, 0, 0, 0, 2, 0, 1, 8})
+send(deadAbort, OP.SEEDS_END, {1, 40050, 0, 0})
+deadAbort.F.tick(deadAbort.time)
+check(deadAbort.calls[1] == 'abort' and deadAbort.abort.nextMissionId == 40050 and deadAbort.abort.isNoSave == true and
+    deadAbort.abort.isAlreadyGameOver == true and deadAbort.abort.isNoFade == true,
+    'host game-over abort replays while gameplay is disabled with original noSave option')
+local menuAbort = fixture(1)
+menuAbort.env.vars.missionCode, menuAbort.env.mvars.mis_abortWithSave = 40050, false
+menuAbort.env.e.ReservePlayerLoadingPosition(2)
+check(menuAbort.tx[1].v[10] == 1, 'host menu abort captures actual choke-point no-save state')
 print('world_follow_lua_check: ' .. checks .. ' checks passed')

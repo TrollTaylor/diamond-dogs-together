@@ -150,7 +150,8 @@ function F.publish(kind)
     local t = {F.serial, F.deploying and 6 or kind, W.mission, target,
         W.get(svars, "mis_missionClearType") or 0, hash(W.get(gvars, "heli_missionStartRoute")) or 0,
         hash(W.get(vars, "mbLayoutCode")) or 0, W.get(vars, "mbClusterId") or 0,
-        W.get(mvars, "mis_selectedDeployTime") or 0, F.abortNoSave and 1 or 0, W.epoch % 65535 + 1}
+        W.get(mvars, "mis_selectedDeployTime") or 0,
+        (F.abortNoSave or (kind == 2 and W.get(mvars, "mis_abortWithSave") == false)) and 1 or 0, W.epoch % 65535 + 1}
     F.outgoing = t
     F.pump()
     F.deploying, F.abortNoSave = false, false
@@ -183,7 +184,7 @@ function F.tick(now)
         table.remove(F.queue, 1); F.last = t[1]; F.seeds[t[1]] = nil
         W.tx(OP.FOLLOW_ACK, t[1], W.mission, 0); log("step=refused;reason=timeout"); return
     end
-    if W.mission ~= t[3] or ((t[2] ~= 3 and t[2] ~= 4) and not W.inGame()) or (t.retryAt and now < t.retryAt) then return end
+    if W.mission ~= t[3] or ((t[2] ~= 2 and t[2] ~= 3 and t[2] ~= 4) and not W.inGame()) or (t.retryAt and now < t.retryAt) then return end
     local demo = W.get(DemoDaemon, "IsDemoPlaying")
     if type(demo) == "function" and demo() == true then return end
     local seeds = F.seeds[t[1]]
@@ -195,7 +196,8 @@ function F.tick(now)
     elseif t[2] == 4 then
         ok = run(TppMission.ExecuteContinueFromCheckPoint)
     elseif t[2] == 2 then
-        ok = run(TppMission.AbortMission, {nextMissionId = t[4], isNoSave = t[10] == 1})
+        ok = run(TppMission.AbortMission, {nextMissionId = t[4], isNoSave = t[10] == 1, isNoFade = true,
+            isAlreadyGameOver = W.get(svars, "mis_isDefiniteGameOver") == true or W.get(mvars, "mis_isReserveGameOver") == true})
     elseif t[2] == 6 then
         ok = run(function()
             TppMission.SelectNextMissionHeliStartRoute(t[4], t[6], false)
