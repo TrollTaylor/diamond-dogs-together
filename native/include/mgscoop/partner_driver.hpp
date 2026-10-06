@@ -261,6 +261,11 @@ struct LogCap {
 // Per-mission state, reset at runtime_enter.
 struct Mission {
     bool cfg_ready, stopped;
+    std::uint32_t mission_code;
+    // Free-roam safety latch: nearby fresh packets place the slot before
+    // realization; distant/unloaded partners never receive Warp fallbacks.
+    bool range_hidden, range_needs_place;
+    LogCap range_cap;
     std::uint64_t start_ms, ticks;
     bool pose_applied, have_cmd;
     partner::Pose cmd;
@@ -499,7 +504,7 @@ void Configure(Driver& driver, const LabConfig& lab) noexcept;
 // runtime_enter: fresh mission state, pending one-shots dropped, and a
 // partner.trigger left over from earlier is deleted unapplied
 // ("partner_trigger=discarded; reason=stale").
-void MissionStart(Driver& driver, const Hooks& hooks) noexcept;
+void MissionStart(Driver& driver, const Hooks& hooks, std::uint32_t mission_code = 30050) noexcept;
 // termination_returned: no more ticks; the input window is disarmed, the DM
 // patch reverted, and pending one-shots dropped.
 void MissionEnd(Driver& driver, const Hooks& hooks) noexcept;

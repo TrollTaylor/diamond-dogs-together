@@ -29,6 +29,7 @@
 #include "mgscoop/client_reset.hpp"
 #include "mgscoop/partner_receipt.hpp"
 #include "mgscoop/partner_player.hpp"
+#include "mgscoop/partner_missions.hpp"
 #include "mgscoop/partner_net.hpp"
 #include "mgscoop/partner_driver.hpp"
 #include "mgscoop/partner_input_hook.hpp"
@@ -590,7 +591,7 @@ std::uint32_t PartnerCtxFlags() noexcept {
 
 void PartnerMissionStart(std::uint32_t mission) noexcept {
     if (!partner_on) return;
-    pd::MissionStart(partner_driver, partner_hooks);
+    pd::MissionStart(partner_driver, partner_hooks, mission);
     mgscoop::partner_net::ResetRemote();
     mgscoop::partner_net::SetEpoch(mission);
     partner_mission = mission;
@@ -636,7 +637,7 @@ const char* HandlePartnerCfg() noexcept {
     unsigned short mission = 0;
     const char* precheck = nullptr;
     if (!OnRuntimeThread() || mission_terminating) precheck = "not_runtime_thread";
-    else if (!ReadMission(mission) || mission != 30050) precheck = "mission";
+    else if (!ReadMission(mission) || !mgscoop::SupportsPartnerBody(mission)) precheck = "mission";
     else if (!partner_gate_ok) precheck = "code_gate";
     if (!pd::Cfg(partner_driver, partner_hooks, precheck, mgscoop::partner_net::NowMs())) return no;
     mgscoop::partner_net::SetEpoch(mission);
@@ -1096,7 +1097,8 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
             recognized=true;
             unsigned short mission=0; SIZE_T read=0;
             const bool mission_ready=ReadProcessMemory(GetCurrentProcess(),static_cast<unsigned char*>(game_base)+0x2c01372,
-                &mission,sizeof(mission),&read) && read==sizeof(mission) && mission==30050;
+                &mission,sizeof(mission),&read) && read==sizeof(mission) &&
+                (mission==30050 || (offline_enabled && mgscoop::SupportsPartnerBody(mission)));
             const bool cleanup_ready=!gameplay_restore_pending || RestoreGameplayRules();
             allowed=OnAllocationThread() && archive_mounted && allocation_enabled && mission_ready && cleanup_ready &&
                 mgscoop::marker_loading::Begin(game_base,game_span,Log);

@@ -119,7 +119,7 @@ try {
     $archive = Get-FriendFileSha256 $paths.Archive
     $expectExe = [string](Get-FriendProperty $package 'executable_sha256' '085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45')
     $expectSteam = [string](Get-FriendProperty $package 'steam_dll_sha256' '08BD0152356E5619EE56A6714AC951B6800DBB21821693A4EFAF85278442C60A')
-    $expectArchive = '26CE7C2168D655C35BE39E4F17A295206AA0522DE8782CD57A36C4FEEA382F54'
+    $expectArchive = '87BBE82BB1E907CF405200155DA2794BF7E1F5A3D45BF66426A38CDD31A91F96'
     if ($package) { $expectArchive = [string]$package.runtime_archive.sha256 }
     $saveCheck = 'not checked (no install record)'
     # Against the first backup of each Steam account (the state before the

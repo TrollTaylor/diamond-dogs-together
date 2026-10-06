@@ -26,7 +26,7 @@ param(
 $ErrorActionPreference='Stop'
 $projectRoot=Split-Path -Parent $PSScriptRoot
 $version='0.11.0'
-$archiveSha256='26CE7C2168D655C35BE39E4F17A295206AA0522DE8782CD57A36C4FEEA382F54'
+$archiveSha256='87BBE82BB1E907CF405200155DA2794BF7E1F5A3D45BF66426A38CDD31A91F96'
 $dll=Join-Path $projectRoot 'build/native/dinput8.dll'
 if($RuntimeArchive) {
     $archive=(Resolve-Path -LiteralPath $RuntimeArchive).Path
@@ -61,7 +61,7 @@ foreach($inputFile in $inputs) {
     $files+=@([ordered]@{source=$relative;target=$inputFile.target;sha256=(Get-FileHash -LiteralPath (Join-Path $packageRoot $relative)).Hash})
 }
 $scope=if($Friend) {
-    'Two-PC play package (docs/two-pc-play.md). Contains no game-derived files; the runtime archive is generated or copied locally. Development build: the partner is shown in Mother Base; the world is not synchronized.'
+    'Two-PC play package (docs/two-pc-play.md). Contains no game-derived files; the runtime archive is generated or copied locally. Development build: partner bodies support Mother Base and free roam; world synchronization is experimental.'
 } else {
     'Local development package. Contains no game-derived files; the runtime archive is generated or copied locally. Two-player gameplay remains unverified.'
 }

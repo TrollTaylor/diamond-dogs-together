@@ -363,7 +363,7 @@ try {
     $disabled = ConvertFrom-CoopStatusText -Text ($statusText.Replace('"state":"connected","reason":""', '"state":"disabled","reason":"secret_missing"'))
     Assert-True ((Format-CoopStatusLine -Status $disabled -Role guest -NowUtc $now.AddSeconds(600)).StartsWith('[JOIN] link=disabled (secret_missing: ')) 'a disabled status is never reported as not responding'
     $elsewhere = ConvertFrom-CoopStatusText -Text ($statusText.Replace('"mission":30050', '"mission":10020'))
-    Assert-True ((Format-CoopStatusLine -Status $elsewhere -Role host -NowUtc $now).EndsWith('mission 10020 - Go to Mother Base; the partner appears only there.')) 'outside mission 30050: go to Mother Base'
+    Assert-True ((Format-CoopStatusLine -Status $elsewhere -Role host -NowUtc $now).EndsWith('mission 10020 - Partner body unavailable in this mission; use Mother Base or free roam.')) 'story mission reports unavailable partner body'
     $rejected = ConvertFrom-CoopStatusText -Text ($statusText.Replace('"state":"connected","reason":""', '"state":"rejected","reason":"build_mismatch"').Replace('"remote_build":"0.12.0"', '"remote_build":"0.12.1"'))
     Assert-True ((Format-CoopStatusLine -Status $rejected -Role guest -NowUtc $now -OwnBuild '0.12.0').Contains('Your friend runs mgs-coop 0.12.1; you run 0.12.0. Both must install the same package.')) 'build mismatch sentence'
     Assert-Equal (Get-CoopLinkReasonText -Reason busy) 'The host is already connected to someone.' 'busy sentence'
@@ -371,7 +371,11 @@ try {
     foreach ($reason in 'proto_mismatch', 'mode_mismatch', 'role_mismatch', 'secret_missing', 'secret_bad_char', 'crypto', 'no_peer_addr', 'transport_bind', 'transport_socket', 'something_new') {
         Assert-True ([bool](Get-CoopLinkReasonText -Reason $reason)) "sentence for $reason"
     }
-    Assert-True ((Format-CoopStatusLine -Status (ConvertFrom-CoopStatusText -Text '{"v":1,"state":"connecting"}') -Role guest) -ceq '[JOIN] link=connecting | partner=none | mission 0 - Go to Mother Base; the partner appears only there.') 'a sparse status still formats (StrictMode-safe)'
+    Assert-True ((Format-CoopStatusLine -Status (ConvertFrom-CoopStatusText -Text '{"v":1,"state":"connecting"}') -Role guest) -ceq '[JOIN] link=connecting | partner=none | mission 0 - Partner body unavailable in this mission; use Mother Base or free roam.') 'a sparse status still formats (StrictMode-safe)'
+    foreach ($freeMission in @(30010, 30020)) {
+        $elsewhere.mission = $freeMission
+        Assert-True ((Format-CoopStatusLine -Status $elsewhere -Role host -NowUtc $now).EndsWith("mission $freeMission")) 'free roam does not send the player back to Mother Base'
+    }
     # The reader shares ReadWrite|Delete, so the game's MoveFileExW(REPLACE_EXISTING) never fails because of it.
     $statusFile = Join-Path $fixture 'link-status.json'
     [IO.File]::WriteAllText($statusFile, $statusText)
@@ -490,7 +494,7 @@ try {
     Assert-Equal "$($manifest.product)|$($manifest.version)|$($manifest.flavor)" 'mgs-coop-local-package|0.11.0|friend-play' 'package manifest identity'
     Assert-Equal @($manifest.files).Count 5 'five payload files (loader + licenses)'
     Assert-Equal ($manifest.files | Where-Object target -eq 'dinput8.dll').sha256 (Get-Sha256 $fakeLoader) 'payload loader hash'
-    Assert-Equal $manifest.runtime_archive.sha256 '26CE7C2168D655C35BE39E4F17A295206AA0522DE8782CD57A36C4FEEA382F54' 'runtime archive referenced by hash'
+    Assert-Equal $manifest.runtime_archive.sha256 '87BBE82BB1E907CF405200155DA2794BF7E1F5A3D45BF66426A38CDD31A91F96' 'runtime archive referenced by hash'
     Assert-True (-not (@($manifest.files.target) -contains 'mgs-coop/mgs-coop-player-runtime.dat')) 'runtime archive not bundled'
     $all = @(Get-ChildItem -LiteralPath $pkg -File -Recurse -Force)
     $gameExtensions = @('.dat', '.fpk', '.fpkd', '.fox2', '.mtar', '.qar', '.ftex', '.fmdl', '.subp', '.lng', '.lng2', '.sbp', '.gani', '.frig', '.fv2', '.fsm', '.fpkl')
@@ -530,7 +534,7 @@ try {
     $statusExample = [regex]::Match($guide, '\[HOST\] link=connected[^\r\n]+').Value
     Assert-Equal $statusExample (Format-CoopStatusLine -Status $st -Role host -NowUtc $now) 'the guide quotes the launcher status line exactly'
     $archiveNote = [IO.File]::ReadAllText((Join-Path $pkg 'RUNTIME-ARCHIVE.txt'))
-    Assert-True ($archiveNote.Contains('26CE7C2168D655C35BE39E4F17A295206AA0522DE8782CD57A36C4FEEA382F54') -and $archiveNote.Contains('3,720,192') -and !$archiveNote.Contains('Ctrl+F8') -and !$archiveNote.Contains('SteamID')) 'archive note names hash and size, nothing of the online route'
+    Assert-True ($archiveNote.Contains('87BBE82BB1E907CF405200155DA2794BF7E1F5A3D45BF66426A38CDD31A91F96') -and $archiveNote.Contains('3,720,192') -and !$archiveNote.Contains('Ctrl+F8') -and !$archiveNote.Contains('SteamID')) 'archive note names hash and size, nothing of the online route'
 
     # ------------------------------------------------------------ installer fixtures
     # Steam fixture: account 7 with saves; staged package with fixture hashes and

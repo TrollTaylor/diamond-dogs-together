@@ -19,7 +19,7 @@ What it changes, only while the game runs (all in <game>\mgs-coop):
 
 While co-op is active the game uses the save COPY in mgs-coop\coop-saves and
 plays offline ("Failed to log in" is expected; Konami's servers are never
-contacted). The partner appears in Mother Base (mission 30050) only.
+contacted). The partner body supports Mother Base and Afghanistan/Africa free roam.
 
 Optional steps, each asked with default No: look up the public IP
 (contacts api.ipify.org), a UPnP port mapping on the router (removed again at
@@ -468,7 +468,7 @@ try {
     if ($banner) { Write-Host ''; Write-Host $banner -ForegroundColor White -BackgroundColor DarkRed; Write-Host '' }
 
     # ---------------------------------------------------------------- status
-    Write-Host 'Go to Mother Base (mission 30050): the partner appears only there. [Q] closes this window (co-op stays on until MGSV exits).'
+    Write-Host 'Meet in Mother Base or Afghanistan/Africa free roam. [Q] closes this window (co-op stays on until MGSV exits).'
     $last = ''
     $bannerAt = [DateTime]::UtcNow
     while (Test-CoopProcessAlive -Id $gamePid) {

@@ -13,8 +13,8 @@
 namespace {
 constexpr std::size_t mount_rva = 0x48e20, mount_size = 0x16c;
 constexpr char body_digest[] = "dc556b49319c37495c86d14dbb6eb93f22251aa4eaa4fb7a54deae4bd0fffea7";
-constexpr char archive_digest[] = "26ce7c2168d655c35be39e4f17a295206aa0522de8782cd57a36c4feea382f54";
-constexpr DWORD archive_size = 3720192;
+constexpr char archive_digest[] = "87bbe82bb1e907cf405200155da2794bf7e1f5a3d45bf66426a38cdd31a91f96";
+constexpr DWORD archive_size = 16333824;
 void* mount_handle = nullptr;
 volatile LONG attempted = 0;
 char archive_path[32768]{};

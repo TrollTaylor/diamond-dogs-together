@@ -87,8 +87,9 @@ JOINER:
  3. Play-Coop starts MGSV through Steam.
 BOTH:
  - Click through the start screens ("Failed to log in" is normal), choose
-   Continue and go to MOTHER BASE. The partner appears only in Mother Base
-   (mission 30050); elsewhere you play alone.
+   Continue and meet in Mother Base or Afghanistan/Africa free roam.
+   The partner body supports missions 30050, 30010 and 30020. In free roam,
+   stay near one another; a distant partner is hidden until you meet again.
  - Leave the Play-Coop window open. Every second it shows a status line:
         [HOST] link=connected rtt=42ms jitter=3ms loss=0.4% interp=80ms | partner=live shown look | mission 30050
    link=connected means the two PCs talk to each other; partner=live shown
@@ -136,7 +137,7 @@ The Play-Coop status line explains most problems:
 - "The host is already connected to someone": only one joiner at a time.
 - "Your friend runs mgs-coop X; you run Y": both must install the same
   package version.
-- "Go to Mother Base; the partner appears only there."
+- "Partner body unavailable in this mission": meet in Mother Base or free roam.
 - "game not responding": the game hangs or is in a loading screen for a long
   time; wait, or restart both games.
 - A RED banner "Co-op did NOT start and save protection is NOT active" means

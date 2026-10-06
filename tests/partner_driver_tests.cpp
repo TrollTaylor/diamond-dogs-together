@@ -412,13 +412,14 @@ struct Session {
     unsigned both_dm_ops = 0;
 
     explicit Session(std::uint32_t stage, mgscoop::PartnerApply apply = mgscoop::PartnerApply::warp,
-                     mgscoop::PartnerSource source = mgscoop::PartnerSource::fixed) : hooks(HooksFor(fake)) {
+                     mgscoop::PartnerSource source = mgscoop::PartnerSource::fixed,
+                     std::uint32_t mission = 30050) : hooks(HooksFor(fake)) {
         lab.partner = true;
         lab.partner_stage = stage;
         lab.partner_apply = apply;
         lab.partner_source = source;
         pd::Configure(driver, lab);
-        pd::MissionStart(driver, hooks);
+        pd::MissionStart(driver, hooks, mission);
         fake.state.flags = c::flag_valid | c::flag_all_active;  // as after Lua's SET
         Check(pd::Cfg(driver, hooks, nullptr, now), "cfg ready");
         fake.lines.clear();
@@ -738,6 +739,83 @@ void TestForceExistsAndPolicy() {
     p.fake.write_result = "policy_vtable";
     for (int i = 0; i < 5; ++i) Check(p.Tick(1), "policy tick");
     Check(p.fake.Count("partner_policy=refused; reason=policy_vtable") == 1 && !p.driver.mission.policy_relaxed, "relax refused once");
+}
+
+void TestFreeRoamRange() {
+    for (std::uint32_t mission : {30010u, 30020u}) {
+        Session s(3, mgscoop::PartnerApply::xform, mgscoop::PartnerSource::net, mission);
+        s.fake.sample.valid = true;
+        s.fake.sample.status = mgscoop::pose::Status::live;
+        s.fake.sample.x = 191.0f; s.fake.sample.y = 2.0f; s.fake.sample.z = 3.0f;
+        Check(s.Tick(1) && s.reply.op == 0 && s.fake.Writes("slot") == 0 && s.fake.submits == 1,
+              "free roam: initial hysteresis band stays hidden but sends local pose");
+        s.fake.sample.x = 101.0f;
+        s.fake.sample.status = mgscoop::pose::Status::stale;
+        Check(s.Tick(1) && s.reply.op == 0 && s.fake.Writes("slot") == 0, "stale near sample cannot release range latch");
+        s.fake.sample.status = mgscoop::pose::Status::live;
+        s.fake.write_result = "fault";
+        Check(s.Tick(1) && s.reply.op == 0 && s.driver.mission.range_needs_place && !s.driver.mission.pose_applied,
+              "refused near placement cannot enable realization");
+        s.fake.write_result = nullptr;
+        Check(s.Tick(1) && s.reply.op == 0 && s.fake.Writes("slot") == 1 && s.fake.Writes("or") == 0,
+              "fresh near sample writes slot first, with no Lua calls or realization");
+        s.fake.sample.status = mgscoop::pose::Status::stale;
+        Check(s.Tick(1) && s.reply.op == 0 && s.fake.Writes("or") == 0, "stale packet after placement cannot realize");
+        s.fake.sample.status = mgscoop::pose::Status::live;
+        Check(s.Tick(1) && s.fake.Writes("or") == 1 && !(s.reply.op & op::warp) && s.fake.Calls("xform:") == 0,
+              "next fresh tick realizes without Warp into an unrealized body");
+        s.fake.Realize(true); s.fake.state.parts[1] = 3;
+        s.fake.xform_result = "unrealized";
+        Check(s.Tick(1) && !(s.reply.op & op::warp) && s.fake.Has("partner_xform=refused; reason=unrealized; fallback=defer\r\n"),
+              "free-roam native realization race does not fall back to Warp");
+        s.fake.xform_result = nullptr;
+        Check(s.Tick(1) && s.fake.Calls("xform:") == 1, "near validated body resumes transform");
+        s.driver.mission.input_armed = true;
+        s.driver.mission.dm_patched = s.fake.dm_patched = true;
+        s.fake.sample.x = 201.0f; // exactly 200 m from the local receipt
+        const auto calls = s.fake.calls.size();
+        const auto slots = s.fake.Writes("slot");
+        const auto submits = s.fake.submits;
+        Check(s.Tick(1) && s.reply.op == 0 && s.fake.Writes("clear") == 1 && s.driver.mission.range_hidden &&
+              !s.driver.mission.pose_applied && !s.driver.mission.input_armed && !s.driver.mission.dm_patched &&
+              !s.driver.mission.realized && !s.driver.mission.parts_loaded && !s.driver.mission.body_ok &&
+              s.fake.calls.size() == calls && s.fake.Writes("slot") == slots && s.fake.submits == submits + 1,
+              "far latch clears own bits, disarms/reverts, suppresses movement and keeps sending");
+        s.fake.sample.x = 161.0f;
+        Check(s.Tick(1) && s.reply.op == 0 && s.fake.Writes("clear") == 1 && s.fake.Writes("or") == 1,
+              "return hysteresis band remains hidden and does not thrash bits");
+        s.fake.sample.x = 101.0f;
+        s.fake.sample.status = mgscoop::pose::Status::lost;
+        Check(s.Tick(1) && s.reply.op == 0 && s.driver.mission.range_hidden, "lost near sample cannot re-realize far latch");
+        s.fake.sample.status = mgscoop::pose::Status::live;
+        s.fake.Realize(false); s.fake.state.parts[1] = 0;
+        Check(s.Tick(1) && s.reply.op == 0 && s.fake.Writes("or") == 1 && s.fake.Writes("slot") == slots + 1 &&
+              !s.driver.mission.realized && !s.driver.mission.parts_loaded,
+              "near return re-places before realizing again");
+        Check(s.Tick(1) && s.fake.Writes("or") == 2 && !(s.reply.op & op::warp), "near return next tick realizes safely");
+    }
+    Session mb(3, mgscoop::PartnerApply::xform, mgscoop::PartnerSource::net);
+    mb.fake.sample.valid = true; mb.fake.sample.status = mgscoop::pose::Status::live; mb.fake.sample.x = 500.0f;
+    mb.fake.xform_result = "unrealized";
+    Check(mb.Tick(1) && (mb.reply.op & op::warp) && mb.fake.Writes("slot") == 1 && mb.fake.Count("partner_range") == 0,
+          "Mother Base keeps its proven transform fallback and has no distance latch");
+    Session rearm(3, mgscoop::PartnerApply::warp, mgscoop::PartnerSource::net, 30010);
+    rearm.fake.sample.valid = true; rearm.fake.sample.status = mgscoop::pose::Status::live;
+    rearm.fake.sample.x = 1.0f; rearm.fake.sample.y = 2.0f; rearm.fake.sample.z = 3.0f;
+    Check(rearm.Tick(1) && rearm.Tick(1) && rearm.driver.mission.bits_set, "free-roam Warp initially realizes after placement");
+    rearm.Trigger("stage=0");
+    Check(!rearm.driver.mission.bits_set && rearm.driver.mission.range_needs_place && !rearm.driver.mission.pose_applied,
+          "stage decrease requires new free-roam placement");
+    rearm.Trigger("stage=3");
+    const auto ors = rearm.fake.Writes("or");
+    Check(rearm.Tick(1) && rearm.reply.op == 0 && rearm.fake.Writes("or") == ors, "stage restart places without realizing on same tick");
+    Check(rearm.Tick(1) && rearm.fake.Writes("or") == ors + 1, "stage restart realizes on next fresh tick");
+    rearm.fake.Realize(true); rearm.fake.state.parts[1] = 3;
+    Check(rearm.Tick(1) && rearm.driver.mission.realized, "body observed before engine unrealizes it");
+    rearm.fake.Realize(false); rearm.fake.state.parts[1] = 0;
+    Check(rearm.Tick(1) && rearm.reply.op == 0 && !rearm.driver.mission.realized && !rearm.driver.mission.bits_set,
+          "engine unrealization clears old request and re-places safely");
+    Check(rearm.Tick(1) && rearm.fake.Writes("or") == ors + 2, "engine-unrealized partner can realize after fresh placement");
 }
 
 void TestNetSourceAndCadence() {
@@ -2318,6 +2396,7 @@ int main() {
     TestAllActiveAndFlags();
     TestMirrorAndOneShots();
     TestForceExistsAndPolicy();
+    TestFreeRoamRange();
     TestNetSourceAndCadence();
     TestInterpHookAndLost();
     TestLuaLogAndQuiet();

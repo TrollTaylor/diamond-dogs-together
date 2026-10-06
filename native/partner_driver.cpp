@@ -1423,7 +1423,7 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     partner_dmmap::Reset(d.mission.dmmap);
 }
 
-void MissionStart(Driver& d, const Hooks& h) noexcept {
+void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcept {
     // A missed MissionEnd/Stop must not leave the window armed or the DM
     // patch applied into the next mission: tear down before the reset, and
     // always publish a disarmed Arm. The hook's recorded fault is cleared
@@ -1433,6 +1433,9 @@ void MissionStart(Driver& d, const Hooks& h) noexcept {
     PublishDisarmed(d, h);
     if (h.reset_input_fault) h.reset_input_fault(h.context);
     d.mission = Mission{};
+    d.mission.mission_code = mission_code;
+    d.mission.range_hidden = mission_code == 30010 || mission_code == 30020;
+    d.mission.range_needs_place = d.mission.range_hidden;
     d.mission.anim_source = -1;
     d.mission.last_status = pose::Status::none;
     partner_recon::Reset(d.mission.recon);
@@ -1637,6 +1640,8 @@ void ApplyTrigger(Driver& d, const Hooks& h, const partner::Trigger& trigger, bo
         RestorePolicy(d, h, terminating);
         // Back at stage 3, the bits again wait for a freshly applied pose.
         m.pose_applied = false;
+        if (d.settings.source == PartnerSource::net && (m.mission_code == 30010 || m.mission_code == 30020))
+            m.range_needs_place = true;
     }
 }
 
@@ -1779,6 +1784,70 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             dmobs.anim_speed = local_anim.speed;
         }
     }
+    const bool free_roam_net = set.source == PartnerSource::net &&
+                               (m.mission_code == 30010 || m.mission_code == 30020);
+    if (free_roam_net) {
+        if (m.realized && !pp::Realized(st, partner::partner_index)) {
+            m.range_needs_place = true;
+            m.pose_applied = m.have_cmd = false;
+            if (m.bits_set) ClearBits(d, h, "range_rearm", terminating);
+        }
+        // Distance is a conservative streaming safety bound, not an engine
+        // area query. Hysteresis prevents realization thrash at its edge.
+        const std::uint32_t distance = pose_valid ? partner::DistanceMm(pose.x_mm, pose.y_mm, pose.z_mm,
+                                                                         tick.x_mm, tick.y_mm, tick.z_mm) : UINT32_MAX;
+        const bool fresh = pose_valid && sample_status == pose::Status::live;
+        if (!m.range_hidden && pose_valid && distance >= 200000) {
+            m.range_hidden = m.range_needs_place = true;
+            m.pose_applied = m.have_cmd = m.hybrid_placed = false;
+            partner_dmmap::SpeedReset(m.dmmap_speed);
+            EmitCapped(m.range_cap, h, "partner_range", "partner_range=hide; distance_mm=%u; reason=far\r\n", distance);
+        }
+        if (m.range_hidden) {
+            DisarmInput(d, h, "range_hidden");
+            PublishDisarmed(d, h);
+            if (m.dm_patched) RevertDm(d, h, "range_hidden");
+            // Clear only bits set by this driver; retry a refused restore.
+            if (m.bits_set) ClearBits(d, h, "range_hidden", terminating);
+            if (fresh && distance <= 150000 && !m.bits_set) {
+                m.range_hidden = false;
+                m.lost_hidden = false;
+                m.lost_since_ms = 0;
+                EmitCapped(m.range_cap, h, "partner_range", "partner_range=near; distance_mm=%u; next=place\r\n", distance);
+            }
+        }
+        const auto deferred_reply = [&]() noexcept {
+            // Published readiness is conservative while latched/placing.
+            // Clearing realize bits does not prove the engine unloaded yet.
+            m.realized = m.parts_loaded = m.body_ok = false;
+            // Keep the peer informed while our local partner is latched.
+            if (h.submit_local) h.submit_local(h.context, tick, local_anim);
+            if (h.submit_look && looks_ok && st.local < 2 && st.parts[st.local] == c::parts_loaded_state)
+                h.submit_look(h.context, looks.look[st.local]);
+            Probe(d, h, st, clock);
+            reply = partner::Reply{0, partner::partner_index, pose.x_mm, pose.y_mm, pose.z_mm, pose.yaw_mrad,
+                                   status, age_ms, partner::Look{}, 0};
+            return true;
+        };
+        if (m.range_hidden) return deferred_reply();
+        if (m.range_needs_place) {
+            if (fresh && set.stage >= 1 && !m.bits_set) {
+                float xyzw[4] = {static_cast<float>(pose.x_mm / 1000.0), static_cast<float>(pose.y_mm / 1000.0),
+                                 static_cast<float>(pose.z_mm / 1000.0), static_cast<float>(pose.yaw_mrad / 1000.0)};
+                const char* refused = h.write_slot ? h.write_slot(h.context, terminating, xyzw) : "unavailable";
+                if (refused) LogWriteRefusal(m, h, "range_place", refused);
+                else {
+                    m.cmd = pose;
+                    m.have_cmd = m.pose_applied = true;
+                    m.range_needs_place = false;
+                    EmitCapped(m.range_cap, h, "partner_range", "partner_range=placed; next=realize\r\n");
+                }
+            }
+            return deferred_reply();
+        }
+        // A stale packet cannot start/restart realization after placement.
+        if (!fresh && !m.bits_set) return deferred_reply();
+    }
     // The commanded pose's horizontal speed (orbit and net; fixed uses the flags).
     if (m.dmmap_speed_source != set.source) {
         m.dmmap_speed_source = set.source;
@@ -1891,7 +1960,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                    partner::DistanceMm(m.cmd.x_mm, m.cmd.y_mm, m.cmd.z_mm, bx, by, bz), yaw_err < 0 ? -yaw_err : yaw_err,
                    PartnerResetName(set.reset));
     }
-    if (transform && set.stage >= 1 && pose_valid) {
+    if (transform && set.stage >= 1 && pose_valid && (!free_roam_net || parts_loaded)) {
         const char* hybrid_reason = nullptr;
         if (set.apply == PartnerApply::hybrid && parts_loaded) {
             if (!m.hybrid_placed) hybrid_reason = "first";
@@ -1917,13 +1986,15 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                                 : h.apply_transform(h.context, terminating, p, q, set.reset);
             if (IsFault(refused)) NoteFault(m, h, "xform");
             if (refused) {
-                // The partner keeps moving through the proven Lua Warp.
-                transform_warp = true;
-                ++m.body_epoch;
+                // Free roam waits for the validated native body to recover;
+                // an unrealized/parts race must not become an unchecked Warp.
+                transform_warp = !free_roam_net;
+                if (transform_warp) ++m.body_epoch;
                 if (!m.xform_logged || m.xform_state != refused) {
                     m.xform_logged = true;
                     m.xform_state = refused;
-                    EmitCapped(m.xform_cap, h, "partner_xform", "partner_xform=refused; reason=%s; fallback=warp\r\n", refused);
+                    EmitCapped(m.xform_cap, h, "partner_xform", "partner_xform=refused; reason=%s; fallback=%s\r\n",
+                               refused, free_roam_net ? "defer" : "warp");
                 }
             } else if (!m.xform_logged || m.xform_state) {
                 m.xform_logged = true;
@@ -2169,8 +2240,9 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     }
     // A fresh mirror=on request restarts the window instead of ending it.
     const bool mirror_off = !d.mirror_pending && MirrorOffDue(d, h, st, now);
-    const std::uint32_t ops = partner::OpsFor(partner::OpInput{set.stage, set.apply, pose_valid, tick.luaflags, reassert, set_parts,
-                                                               d.mirror_pending, mirror_off, no_copy, transform_warp, false, false});
+    std::uint32_t ops = partner::OpsFor(partner::OpInput{set.stage, set.apply, pose_valid, tick.luaflags, reassert, set_parts,
+                                                       d.mirror_pending, mirror_off, no_copy, transform_warp, false, false});
+    if (free_roam_net && !parts_loaded) ops &= ~partner::op::warp;
     const partner::Look apply_look = recover_now ? recover_look : desired.look;
     const char* apply_source = recover_now ? "recover" : desired.source;
     if (ops & partner::op::set_parts_explicit) {
@@ -2303,7 +2375,8 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     // every tick (refused, faulted, install refused, input=off, stage < 3),
     // except while the reconciliation places/verifies the body itself.
     const partner::Pose reply_pose = itick.pose_override ? itick.pose : pose;
-    if (set.apply == PartnerApply::input && !m.input_armed && pose_valid && set.stage >= 1 && !itick.suppress_fallback) {
+    if (set.apply == PartnerApply::input && !m.input_armed && pose_valid && set.stage >= 1 && !itick.suppress_fallback &&
+        (!free_roam_net || parts_loaded)) {
         if (!(extra_ops & partner::op::warp)) {
             extra_ops |= partner::op::warp;
             ++m.body_epoch;

@@ -2,11 +2,11 @@ MGS Co-op @VERSION@ - the runtime archive (mgs-coop-player-runtime.dat)
 ==============================================================================
 
 The mod needs one more file: mgs-coop-player-runtime.dat
-  size    3,720,192 bytes
+  size    16,333,824 bytes
   SHA-256 @ARCHIVE_SHA256@
 
 It is NOT included in this package because it contains data generated from
-the game's own files (player and Mother Base packages from your MGSV install).
+the game's own files (player, Mother Base and free-roam packages from your MGSV install).
 The installer only accepts a file with exactly this SHA-256.
 
 Where it can come from:
