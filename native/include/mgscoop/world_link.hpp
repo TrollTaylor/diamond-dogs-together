@@ -30,7 +30,7 @@ struct Config {
     LogFn log;
 };
 
-// "0.11.0" -> 1100 (major*10000 + minor*100 + patch); 0 when malformed.
+// "0.11.1" -> 1101 (major*10000 + minor*100 + patch); 0 when malformed.
 std::uint32_t ParseBuild(const char* version) noexcept;
 // Install time (before partner_net::Start). Logs world=configured.
 void Configure(const Config& config) noexcept;

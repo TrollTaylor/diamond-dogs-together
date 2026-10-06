@@ -100,12 +100,12 @@ void Bodies() {
     hello.mode = link::kModePlay;
     hello.role = link::kRoleGuest;
     for (int i = 0; i < 16; ++i) hello.nonce_g[i] = static_cast<std::uint8_t>(i);
-    std::memcpy(hello.build, "0.11.0", 6);
+    std::memcpy(hello.build, "0.11.1", 6);
     std::uint8_t body[link::kHelloBodySize];
     link::EncodeHelloBody(hello, body);
     link::Hello back{};
     Check(link::DecodeHelloBody(body, sizeof(body), back) && back.proto == 2 && back.mode == 2 && back.role == 2 &&
-          back.nonce_g[15] == 15 && std::strcmp(back.build, "0.11.0") == 0, "HELLO body");
+          back.nonce_g[15] == 15 && std::strcmp(back.build, "0.11.1") == 0, "HELLO body");
     Check(!link::DecodeHelloBody(body, sizeof(body) - 1, back), "HELLO body size");
     Check(link::kLinkOverhead + link::kWelcomeBodySize == 104 && link::kLinkOverhead + link::kRejectBodySize == 88 &&
           link::kLinkOverhead + link::kHelloBodySize == 1200, "handshake sizes 1200/104/88");

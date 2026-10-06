@@ -63,7 +63,7 @@ trap {
 }
 # The loader versions whose native side implements the play mode. The
 # integrator sets this to the release version (0.12.0) with the version bump.
-$script:SupportedLoaderVersions = @('0.11.0')
+$script:SupportedLoaderVersions = @('0.11.1')
 
 function Resolve-Piece([string]$PackagedName, [string]$RepoRelative) {
     # Packaged layout: scripts\<name>. Repository layout: tools\friend\..\<path>.

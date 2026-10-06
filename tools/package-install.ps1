@@ -123,7 +123,7 @@ try {
     # Older packages bundled the archive; current packages record only its hash.
     $bundlesArchive=@($package.files | ForEach-Object { $_.target }) -contains $archiveTarget
     $packageFileCount=if($bundlesArchive) { $allowed.Count-1 } else { $allowed.Count-2 }
-    if($package.product -ne 'mgs-coop-local-package' -or $package.version -ne '0.11.0' -or
+    if($package.product -ne 'mgs-coop-local-package' -or $package.version -ne '0.11.1' -or
         @($package.files).Count -ne $packageFileCount -or @($package.files.target | Select-Object -Unique).Count -ne $packageFileCount) { throw 'Unexpected package manifest.' }
     $archiveHash=$null
     if($bundlesArchive) {

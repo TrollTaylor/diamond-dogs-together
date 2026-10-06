@@ -1,4 +1,4 @@
-MGS Co-op 0.11.0 - local development build
+MGS Co-op 0.11.1 - local development build
 
 Playable two-player co-op is not verified. This package contains the current
 loader, a locally generated two-slot runtime archive, source and license notices.

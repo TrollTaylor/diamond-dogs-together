@@ -25,7 +25,7 @@ param(
 )
 $ErrorActionPreference='Stop'
 $projectRoot=Split-Path -Parent $PSScriptRoot
-$version='0.11.0'
+$version='0.11.1'
 $archiveSha256='87BBE82BB1E907CF405200155DA2794BF7E1F5A3D45BF66426A38CDD31A91F96'
 $dll=Join-Path $projectRoot 'build/native/dinput8.dll'
 if($RuntimeArchive) {
