@@ -122,8 +122,12 @@ play=active; role=host|guest; partner=1; refused=0x0
 A play guest whose lab.ini had no usable address logs `link=disabled;
 reason=no_peer_addr` before `partner_net=disabled; reason=transport_bad_config`.
 
-The partner still exists only in Mother Base (mission 30050); the
-`link-status.json` `mission` field shows the current one as is.
+The partner body supports the normal mission packs for Mother Base (30050),
+Afghanistan free roam (30010) and Africa free roam (30020). ACC, story and
+alternate packs remain excluded; `link-status.json` reports the current
+mission even when no partner body is supported. At World 3, supported-scene
+host travel is implemented behind the world gate; its integrated live
+acceptance is separate from the verified field-body tests.
 
 ## 2. Transport (`lab::UdpTransport`)
 

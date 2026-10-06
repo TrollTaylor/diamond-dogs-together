@@ -370,12 +370,17 @@ reason=level|mission|target|busy|terminating`. With `-WaitSec` the script exits
 command was applied), 2 when not consumed, 4 when unconfirmed after 3 s.
 `world=0` switches world sync off at once; `world=1..3` applies at the next
 mission start; `world_probe` runs now (or 10 s after the next start); `goto`
-flies a copy standing in Mother Base or the ACC to free roam. With world3,
-send it to the host only; `[G]` also selects host only and travel follows the
-guest. With lower levels use `-Role both`. Start-Lab -Offline and Stop-Lab delete leftovers
+flies a copy standing in Mother Base, normal Afghanistan/Africa free roam
+or the ACC to the target free roam. With World 3, send it to the host only;
+`[G]` also selects host only and the guest follows the host's travel. At
+levels 1/2 use `-Role both` for independent travel. Start-Lab -Offline and Stop-Lab delete leftovers
 (`stop.json world_triggers_removed`).
 
 ### Live test recipe (both copies on this PC)
+
+These are expected results for acceptance; W3/W4 live acceptance remains
+pending for the integrated DLL. Automated fixture passes do not replace
+the two running games and their readbacks.
 
 1. Build and test: `pwsh -NoProfile -ExecutionPolicy Bypass -File tools/build.ps1`.
 2. W0-4 (world=0 is inert): `pwsh -File tools/lab/Play-OfflineCoop.ps1

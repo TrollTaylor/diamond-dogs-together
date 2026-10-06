@@ -105,7 +105,7 @@ Control (queue 0):
 | 0x05 | RESYNC | G->H | rid, what 1..7 (1 outcomes, 2 phases, 4 clock + weather) | - | 3 |
 | 0x06 | RESYNC_END | H->G | rid, what, count, outcomeSeq (queued as a world op, see below) | - | 7 |
 | 0x07 | MISSION_END | both | missionCode | epoch | 6 |
-| 0x08 | PROBE_SYNC | both (lab) | probeId 1..15, step 1..4, entHash, arg | atMs (step 1) | 14 |
+| 0x08 | PROBE_SYNC | both (lab) | probeId 1..18, step 1..4, entHash, arg | atMs (step 1) | 14 |
 
 REJECT reasons: 1 unknown_entity, 2 terminal, 3 not_forward, 5 epoch, 6
 not_paired, 7 roster_mismatch, 8 bad_state, 9 busy, 10 level, 11 inactive (4
@@ -144,8 +144,8 @@ UNPAIRED{reason: 1 session, 2 remote_mission, 3 epoch, 4 remote_end, 5 level0,
 6 local_end}, 0x73 GOTO{step, target, lz}, 0x74 PROBE{id, arg}, 0x75
 PROBE_FIRE{id, step, ent, arg}, 0x76 RESYNC_NEEDED{what}, 0x77 LEVEL{0}, and
 0x78 GOTO_ACK{step, result} (Lua -> native: 0 refused, 1 reserved, 2 waiting).
-Reserved for later phases: control 0x09-0x0F, world 0x18-0x1F, bundle flag
-bit 0 (chunking).
+W3/W4 use codes 0x09-0x0F and 0x18-0x1C (section 13). Codes 0x1D-0x1F
+and bundle flag bit 0 (chunking) remain reserved.
 
 ## 4. Queues, pairing, epoch
 
@@ -210,15 +210,18 @@ refused receipt stays literal and Lua treats it as inactive or not sent.
 `lab.ini`: `world=0..3` (lab and play; other values count as invalid and keep
 the previous value) and `world_probe=none|p1|p3|p3b|p4|p12|p17|race_kill|
 remote_area_kill|kill_near|sleep_near|fulton_near|alert_near|weather_rain|
-clock_jump|clock_fast` (ids 1..15 in this order; lab only: play forces none,
+clock_jump|clock_fast|shared_death|host_continue|shared_checkpoint` (ids
+1..18 in this order after `none`; lab only: play forces none,
 sets `play_refused |= 0x8000` and counts one invalid value). `lab_ini_check
 lab` prints `world=` and `world_probe=` after `link_keys=1`.
 
 Launchers: `Play-OfflineCoop.ps1 -World 0..3 [-WorldProbe <probe>]` adds
 `world=N` (and `world_probe=`) to both lab.ini files only when set; console key
-`[G]` sends `goto=30010` to both copies. `Play-Coop.ps1 -World 0..3` adds
-`world=N` after the play partner keys (never `world_probe`). `Prepare-
-LabInstance.ps1 -Offline -PartnerSetting world=2` works too.
+`[G]` sends `goto=30010` to the host at `-World 3`, letting W3 bring the
+guest along. At levels 1/2 it sends to both copies for independent manual
+travel; at level 0 it sends nothing. `Play-Coop.ps1 -World 0..3` adds
+`world=N` after the play partner keys (never `world_probe`).
+`Prepare-LabInstance.ps1 -Offline -PartnerSetting world=3` works too.
 
 `<game>\mgs-coop\world.trigger` (lab only: honoured with `world_on`, lab.ini
 present and `mode=lab`; never read in play): one ASCII line of at most 255
@@ -241,7 +244,7 @@ Stop-Lab delete leftovers (`stop.json world_triggers_removed`).
 
 ## 7. Lua contract
 
-Seven chunks, each one `do ... end` block of at most 16000 bytes (CMake fails
+Ten chunks, each one `do ... end` block of at most 16000 bytes (CMake fails
 the configure otherwise), spliced in this order directly after
 `partner_sync.lua` and before the marker lifecycle chunk, so world's wrappers
 sit inside the session lifecycle's and outside partner's: `world_sync.lua`
@@ -251,7 +254,9 @@ commits, sweep, ledger), `world_outcome.lua` (attribution, guest requests and
 held requests, host request validation, outcome wire handlers),
 `world_phase.lua` (W1 bindings, area union, phase cache, escalation, floor,
 PHASE_VEC), `world_env.lua` (digests, resync stream, stats, clock, weather),
-`world_probe.lua` (probes), `world_goto.lua` (lab goto). Everything lives on
+`world_probe.lua` (probes), `world_goto.lua` (lab goto), `world_follow.lua`
+(host travel and seed replay), `world_align.lua` (forward-only reload
+alignment), `world_recovery.lua` (shared game over and checkpoints). Everything lives on
 `W = e.MgsCoopWorld`; hook lists `bindHooks`, `startHooks`, `stopHooks`,
 `pairedHooks`, `unpairedHooks` and `observers` are the extension points.
 
@@ -400,7 +405,13 @@ and every digest while the host weather is 0..5. The same userId and FORCE
 priority as the game's own forces: forces are cancelled and random weather
 unpaused at stop, on LEVEL 0 and after an error.
 
-## 8. Lab goto (30050 -> 30010/30020, both copies, no menus)
+## 8. Lab goto (supported free roam/ACC -> 30010/30020)
+
+At World 3, use `Set-WorldTrigger.ps1 -Role host -Text 'goto=30010'`
+(or target `30020`); the guest follows host travel through W3. Do not send
+a separate goto to the guest. At levels 1/2, use `-Role both` so each copy
+travels independently. The following native goto steps describe the copy
+that receives the trigger; only the host receives it in the World 3 recipe.
 
 Trigger `goto=30010|30020 [goto_lz=0|1]`, refused (`world_goto=refused;
 reason=level|mission|target|busy|terminating`) unless world sync is on at
@@ -465,8 +476,13 @@ refused|fail` (refusals: `reason=role|level|mission|paired|mode|busy`).
 | alert_near | guest, paired at eff >= 2 | the nearest CP: `SetPhase ALERT`, re-asserted every 5 s for 60 s |
 | weather_rain | host, eff >= 3, 30010/30020 | `TppWeather.ForceRequestWeather(RAINY, 5)` (cancelled at stop) |
 | clock_jump / clock_fast | host, eff >= 3 | `TppClock.AddTime(3600)` / `vars.clock += 300` every 250 ms for 10 s |
+| shared_death | either, supported W3/W4 scene at eff >= 3 | reserve PLAYER_DEAD shared game over through the wrapped `TppMission.ReserveGameOver` |
+| host_continue | host, shared game over at eff >= 3 | `TppMission.ContinueFromCheckPoint({isNoFade = true})`; guest follows and aligns in the new epoch |
+| shared_checkpoint | host, ready alignment at eff >= 3 | request a current-position checkpoint through `TppMission.UpdateCheckPoint`; require an accepted save/version change |
 
-Probe ids 1..15 are all used; W3 widens `probeId`.
+Probe ids 1..18 are assigned; ids 16..18 exercise W4 recovery and are
+single-call lab probes. A probe's `result=ok` is an API/receipt result, not
+proof that both games reached the expected state; record both readbacks.
 
 ## 10. Log lines
 
@@ -520,6 +536,9 @@ Lua payloads (`world_lua=event=...`): `started`, `inactive` (reason
 
 ## 12. Live acceptance (lab, both copies on one PC)
 
+This is the test recipe and expected evidence, not a live pass report.
+W3/W4 acceptance remains pending for the integrated DLL.
+
 Logs: `<host|guest dir>\mgs-coop\script-observer.log`; Lua lines appear as
 `world_lua=event=...` with `;` expanded to `; ` (below written as in Lua).
 Hashes are `%.0f` decimals. A tips or "Resume" screen can block a mission
@@ -537,13 +556,16 @@ in [lab-protocol.md](lab-protocol.md) "World sync".
   mode=lab`, `world=cfg; mission=30050`, `world=hello_rx; mission=30050; ...;
   level=3; ...; saves=1`, `world=paired; ...; mission=30050; ...; match=1; ...;
   eff=3`, `event=started;level=3;...`.
-- **Goto:** `Set-WorldTrigger.ps1 -Role both -Text 'goto=30010' -WaitSec 15`
-  -> `world_goto=armed; target=30010; lz=0`, `world_goto=step; step=1;
+- **Goto (World 3):** `Set-WorldTrigger.ps1 -Role host -Text 'goto=30010' -WaitSec 15`
+  -> host `world_goto=armed; target=30010; lz=0`, `world_goto=step; step=1;
   result=reserved` (Space if no `world=cfg; mission=40050` within 20 s), then
   `world=cfg; mission=40050`, `world_goto=step; step=2; result=waiting`, then
   `reserved`, `world=cfg; mission=30010`, `world_goto=arrived; mission=30010`.
-  Both land at LZ field_N; a clock jump of about +6 h, W2 converges within 2
-  digests.
+  The guest must log `event=follow;step=queued|seeds_ready|replay|arrived`
+  for the transitions. Record matching missions/epochs on both copies and
+  complete alignment before accepting enemy sync. Both should land at LZ
+  field_N; a clock jump of about +6 h is expected, with W2 convergence
+  within 2 digests. At levels 1/2, use `-Role both` for independent travel.
 - **W0-3 (30010):** `world=paired; ...; mission=30010; roster_local=X;
   roster_remote=X; soldiers_local=271; soldiers_remote=271; match=1`,
   `event=started;...;soldiers=271;cps=77;w1=1`, `event=area;shape=set|array`
@@ -587,15 +609,17 @@ in [lab-protocol.md](lab-protocol.md) "World sync".
   (the guest stops sending PHASE_VEC): no host `event=floor;cp=X` and no
   `event=phase;cp=X;...;src=floor` later than 5 s after the guest's
   `world_trigger=applied; text=world=0`, and X decays normally.
-- **Review fixes (lab):** the goto refusal: `Set-WorldTrigger.ps1 -Role both
-  -Text 'goto=30010' -WaitSec 15` while in 30010 exits 3 with
-  `world_goto=refused; reason=mission`. After the guest leaves 30010
+- **Review fixes (lab):** a goto from an unsupported scene is refused with
+  `world_goto=refused; reason=mission`; normal 30010/30020 free roam is now
+  an allowed source and rides the helicopter to its ACC. Use host-only
+  triggers at World 3. After the guest leaves 30010
   (`world=unpaired` on the host), the soldiers of the guest's former area
   deactivate as in vanilla (the union is not logged; the host's original
   UpdateOutOfAreaSetting reruns for its own area at once). A guest request outstanding at a link drop shows
   `event=req_hold;n=` and is sent again after the next `event=resync;...;
-  src=end`. A host mission restart while the guest stays in 30010 gives the
-  guest `event=inactive;reason=epoch;scope=w1` at the next `event=paired`.
+  src=end`. At levels 1/2, a host mission restart while the guest stays in
+  30010 gives the guest `event=inactive;reason=epoch;scope=w1` at the next
+  `event=paired`. At level 3, test follow and alignment as in section 13.
 - **W1-6 (`-Role host -Text world_probe=remote_area_kill`):** host
   `event=probe;id=remote_area_kill;step=start;area=X;ent=S`,
   `event=commit;ent=S;state=5;ver=1;actor=probe`; guest

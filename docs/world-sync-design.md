@@ -314,7 +314,7 @@ Inventory, ammo, health, suit, buddy, supply drops, support fire, decoys, interr
 
 ### 10. Phased plan
 
-**Lab:** one PC, `MGS_TPP` (host) and `MGS_TPP_guest`, windowed, loopback, `Play-OfflineCoop`. The host uses keyboard and mouse, the guest a gamepad. lab.ini `world=0..6`; `world=0` means today's behaviour.
+**Lab:** one PC, `MGS_TPP` (host) and `MGS_TPP_guest`, windowed, loopback, `Play-OfflineCoop`. The host uses keyboard and mouse, the guest a gamepad. Current launchers and `lab.ini` accept `world=0..3`; `world=0` keeps partner-only behaviour, and level 3 includes the implemented W3/W4 subset. W0-W6 below are development phases, not available runtime levels. At `-World 3`, console `[G]` sends the goto to the host only; the guest follows host travel. Integrated W3/W4 live acceptance remains pending.
 
 **Probes:** `world_probe=<name>` runs one Lua probe 10 s after `OnMissionGameStart` and logs through `WORLD_LOG`.
 
