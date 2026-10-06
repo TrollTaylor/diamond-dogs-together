@@ -224,7 +224,7 @@ try {
     Assert-True ((Test-LabUrl $deadUrl) -and $deadUrl.Length -eq 34) 'offline URL passes Test-LabUrl (34 characters)'
     Assert-True ($hostOff.Offline -and $guestOff.Offline) 'offline settings flagged'
     Assert-Equal "$($hostOff.Character)/$($guestOff.Character)" 'default/quiet' 'offline settings: offline.characters (guest Quiet)'
-    Assert-Equal "$(Get-LabDisabledMarker -Role host -Marker "offline-v1`n")/$(Get-LabDisabledMarker -Role guest -Marker 'offline-v1')" 'host-v3/client-v1' '-Disable resets offline-v1 to the online lab roles'
+    Assert-Equal "$(Get-LabDisabledMarker -Role host -Marker "offline-v1`n")/$(Get-LabDisabledMarker -Role guest -Marker 'offline-v1')" 'archive/archive' '-Disable archives offline-v1 for both roles instead of enabling legacy sessions'
     Assert-True ($null -eq (Get-LabDisabledMarker -Role host -Marker "host-v3`n") -and $null -eq (Get-LabDisabledMarker -Role guest -Marker "client-v1`n") -and
         $null -eq (Get-LabDisabledMarker -Role host -Marker "host-v1`n") -and $null -eq (Get-LabDisabledMarker -Role host -Marker '') -and
         $null -eq (Get-LabDisabledMarker -Role host -Marker 'OFFLINE-V1')) '-Disable leaves every other marker alone'
@@ -2147,12 +2147,16 @@ Start-Sleep -Milliseconds 500
             $out = & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig -Offline -Lan -LanAddress 192.0.2.10 2>&1
             Assert-True ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $hp.LinkSecret) -and (Test-Path -LiteralPath $gp.LinkSecret)) ('Prepare -Lan again (for the -Disable check): exit ' + $LASTEXITCODE + ': ' + ($out -join ' | '))
 
-            # -Disable after the offline mode resets offline-v1 (it skips session creation) to the online lab roles.
+            # -Disable after offline mode must remove the active marker, never enable legacy sessions.
             $out = & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig -Disable 2>&1
             Assert-Equal $LASTEXITCODE 0 ('Disable after the offline mode: ' + ($out -join ' | '))
             Assert-True (!(Test-Path -LiteralPath $hp.LinkSecret) -and !(Test-Path -LiteralPath $gp.LinkSecret)) '-Disable deletes the -Lan link secrets'
-            Assert-Equal "$([IO.File]::ReadAllText($hp.Marker))|$([IO.File]::ReadAllText($gp.Marker))" "host-v3`n|client-v1`n" '-Disable resets the offline-v1 markers to host-v3 / client-v1'
-            Assert-True (($out -join ' ').Contains('offline-v1 reset to host-v3') -and !(Test-Path -LiteralPath $hp.LabIni) -and [IO.File]::ReadAllText($hp.CoopIni) -ceq $userCoop) '-Disable after offline: lab files renamed, user coop.ini restored, reset reported'
+            Assert-True (!(Test-Path -LiteralPath $hp.Marker) -and !(Test-Path -LiteralPath $gp.Marker)) '-Disable removes both active offline markers for native pass-through'
+            foreach ($instance in @($hp, $gp)) {
+                $archives = @(Get-ChildItem -LiteralPath $instance.Mod -File -Filter 'script-observe.enabled.disabled-*')
+                Assert-True ($archives.Count -eq 1 -and [IO.File]::ReadAllText($archives[0].FullName) -ceq "offline-v1`n") '-Disable archives exact offline marker bytes once'
+            }
+            Assert-True (($out -join ' ').Contains('normal launches use pass-through') -and !(Test-Path -LiteralPath $hp.LabIni) -and [IO.File]::ReadAllText($hp.CoopIni) -ceq $userCoop) '-Disable after offline: lab files renamed, user coop.ini restored, pass-through reported'
             $out = & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig 2>&1
             Assert-Equal $LASTEXITCODE 0 ('Prepare without -Offline switches back: ' + ($out -join ' | '))
             Assert-Equal "$([IO.File]::ReadAllText($hp.Marker))|$([IO.File]::ReadAllText($gp.Marker))|$((ConvertFrom-IniText ([IO.File]::ReadAllText($hp.CoopIni)))['master_url'])" "host-v3`n|client-v1`n|$dryUrl" 'back to host-v3 / client-v1 and the fuse URL'
@@ -2160,6 +2164,7 @@ Start-Sleep -Milliseconds 500
 
             $out = & $pwshPath -NoProfile -NonInteractive -File (Join-Path $labDir 'Prepare-LabInstance.ps1') -ConfigPath $dryConfig -Disable 2>&1
             Assert-Equal $LASTEXITCODE 0 'Disable succeeds'
+            Assert-Equal "$([IO.File]::ReadAllText($hp.Marker))|$([IO.File]::ReadAllText($gp.Marker))" "host-v3`n|client-v1`n" '-Disable preserves separately selected explicit online markers'
             Assert-True ((-not (Test-Path -LiteralPath $hp.LabIni)) -and (-not (Test-Path -LiteralPath $gp.CoopIni)) -and
                 @(Get-ChildItem -LiteralPath $gp.Mod -Filter 'lab.ini.disabled-*').Count -eq 2) 'Disable renames lab.ini and coop.ini (one renamed copy per -Disable: offline, then fuse mode)'
             Assert-Equal ([IO.File]::ReadAllText($hp.CoopIni)) $userCoop 'Disable restores the user coop.ini'

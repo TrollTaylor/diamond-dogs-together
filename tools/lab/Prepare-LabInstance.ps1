@@ -38,9 +38,9 @@ preparation ('key=value' for both roles, 'host:key=value' / 'guest:key=value'
 for one), for example -PartnerSetting guest:net_latency_ms=100,guest:net_loss_permille=200
 for E7. The coop.ini characters come from lab.json offline.characters (default
 on both). Running the script again without -Offline switches both folders back
-to host-v3 / client-v1 and the fuse URL. -Disable also resets an offline-v1
-marker (which no normal play uses: it skips session creation) to the folder's
-online lab role, host-v3 / client-v1; other markers stay as they are.
+to host-v3 / client-v1 and the fuse URL. -Disable archives an offline-v1
+marker as script-observe.enabled.disabled-<ts>, leaving the native script
+adapter in pass-through mode; other explicit markers stay as they are.
 
 -Lan (with -Offline) is the one-PC LAN rehearsal of the two-PC play mode
 (docs/two-pc-play.md): both lab.ini files get net_bind=any, the guest's
@@ -140,22 +140,23 @@ if ($Disable) {
             Assert-NoReparsePoint -Path $p.LinkSecret -StopAt $p.Game
             if (Confirm-LabAction $p.LinkSecret 'Delete the -Lan link secret') { Remove-Item -LiteralPath $p.LinkSecret -Force; Write-Output "[$r] deleted link-secret.txt" }
         }
-        # offline-v1 is a lab-only marker that skips session creation: a normal
-        # start from this folder could never host or join with it.
+        # Archive the offline marker so a later normal launch stays pass-through.
+        # The legacy online role markers enable sessions independently of lab.ini.
         $current = if (Test-Path -LiteralPath $p.Marker -PathType Leaf) { [IO.File]::ReadAllText($p.Marker) } else { '' }
-        $reset = Get-LabDisabledMarker -Role $r -Marker $current
-        if ($reset) {
+        $markerAction = Get-LabDisabledMarker -Role $r -Marker $current
+        if ($markerAction -ceq 'archive') {
             Assert-NoReparsePoint -Path $p.Marker -StopAt $p.Game
-            if (Confirm-LabAction $p.Marker "Reset role marker offline-v1 to $reset") {
-                [IO.File]::WriteAllText($p.Marker, "$reset`n", [Text.Encoding]::ASCII)
-                Write-Output "[$r] role marker offline-v1 reset to $reset (the online lab role; tools/set-session-mode.ps1 selects another)."
+            $markerArchive = [IO.Path]::GetFullPath("$($p.Marker).disabled-$stamp")
+            if (!(Test-PathInside -Child $p.Marker -Parent $p.Mod) -or !(Test-PathInside -Child $markerArchive -Parent $p.Mod)) { throw 'Role marker archive escaped the mod folder.' }
+            if (Confirm-LabAction $p.Marker "Archive offline-v1 marker as $markerArchive") {
+                Move-Item -LiteralPath $p.Marker -Destination $markerArchive
+                Write-Output "[$r] offline-v1 marker archived; normal launches use pass-through (no co-op session)."
             }
-            if ($r -eq 'guest' -and !(Test-Path -LiteralPath $p.ClientHost -PathType Leaf)) { Write-Warning "[guest] client-host.txt is missing; client-v1 needs it (tools/set-session-mode.ps1)." }
         } elseif ($current.Trim() -ceq 'host-v1') {
             Write-Warning "[$r] the role marker is host-v1 (the offline lab fallback marker, if lab.json offline.marker selected it); left unchanged."
         }
     }
-    Write-Output 'Lab configuration disabled (lab.ini and coop.ini renamed, your previous files restored, link secrets deleted, offline-v1 markers reset). The loaders, other markers and lab save copies were left in place.'
+    Write-Output 'Lab configuration disabled (lab.ini and coop.ini renamed, your previous files restored, link secrets deleted, offline-v1 markers archived). The loaders, other explicit markers and lab save copies were left in place.'
     return
 }
 

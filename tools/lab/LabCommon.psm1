@@ -573,14 +573,13 @@ function Select-NewestUserBackup {
 }
 
 function Get-LabDisabledMarker {
-    # Pure: the role marker Prepare-LabInstance -Disable writes instead of the
-    # current marker file text, or $null to leave it. Only the lab-only offline-v1
-    # marker (it skips session creation, so normal play could never host or join
-    # with it) is reset, to the online lab role: host-v3 / client-v1.
+    # Pure: return the archive action for the lab's offline-v1 marker, or $null
+    # to preserve an explicit marker selected separately. Removing the active
+    # offline marker leaves the native loader in pass-through mode; replacing
+    # it with host-v3/client-v1 would enable legacy sessions without lab.ini.
     param([Parameter(Mandatory)][ValidateSet('host', 'guest')][string]$Role, [AllowNull()][AllowEmptyString()][string]$Marker)
     if ($null -eq $Marker -or $Marker.Trim() -cne 'offline-v1') { return $null }
-    if ($Role -eq 'host') { return 'host-v3' }
-    return 'client-v1'
+    return 'archive'
 }
 
 function Get-LabOfflineExpectation {
