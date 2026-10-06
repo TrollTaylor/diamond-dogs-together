@@ -55,6 +55,20 @@ local packages = patched.MgsCoop.GetPlayerPackages()
 assert(#packages == 2)
 packages[1] = "changed"
 assert(patched.MgsCoop.GetPlayerPackages()[1] ~= "changed")
+local coop = patched.MgsCoop
+for _,code in ipairs({30010,30020,30050}) do
+    assert(type(coop.partnerMissions[code]) == "table")
+    assert(not coop.IsPartnerBodyMission(code))
+    coop.playerPackageSelected, coop.playerPackageMission, coop.archiveDirectReadSucceeded = true, code, true
+    assert(coop.IsPartnerBodyMission(code))
+    assert(not coop.IsPartnerBodyMission(code == 30010 and 30020 or 30010))
+    coop.playerPackageSelected = false
+    assert(not coop.IsPartnerBodyMission(code))
+end
+for _,code in ipairs({30011,10010,10036,40010,40020,40050,50050}) do
+    coop.playerPackageSelected, coop.playerPackageMission = true, code
+    assert(coop.partnerMissions[code] == nil and not coop.IsPartnerBodyMission(code))
+end
 print("Lua 5.1 bootstrap executed; original exports and dependency lists retained; one execution receipt; gameplay disabled")
 if arg[3] then
     for _, mode in ipairs({"success", "failure"}) do

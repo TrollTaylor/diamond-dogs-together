@@ -96,8 +96,13 @@ do
         if ok and within(value, 36000) then return value end
         return 0
     end
+    local function supported()
+        local coop = type(Tpp) == "table" and Tpp.MgsCoop
+        return type(coop) == "table" and type(coop.IsPartnerBodyMission) == "function"
+            and coop.IsPartnerBodyMission(vars.missionCode) == true
+    end
     local function tick()
-        if not active or failed or vars.missionCode ~= 30050 or not api.isValid() then return end
+        if not active or failed or not supported() or not api.isValid() then return end
         local x, y, z, ry = vars.playerPosX, vars.playerPosY, vars.playerPosZ, vars.playerRotY
         if not (within(x, 1e6) and within(y, 1e6) and within(z, 1e6) and within(ry, 36000)) then return end
         frame = frame + 1
@@ -164,7 +169,7 @@ do
         end
     end
     local function begin()
-        if vars.missionCode ~= 30050 or receipt("return 'MGS_COOP_PARTNER_CFG_V1'") ~= true then return end
+        if not supported() or receipt("return 'MGS_COOP_PARTNER_CFG_V1'") ~= true then return end
         local missing, required = resolve()
         if not required then note("event=inactive;reason=missing_required;names=" .. missing); return end
         active = true

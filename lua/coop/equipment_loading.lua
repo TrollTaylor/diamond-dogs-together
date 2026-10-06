@@ -4,7 +4,7 @@
 -- Insert after ordinary equipment-group setup, before equipment loading.
 do
     local state = Tpp and Tpp.MgsCoop
-    if vars.missionCode == 30050 and type(state) == "table"
+    if type(state) == "table" and type(state.IsPartnerBodyMission) == "function" and state.IsPartnerBodyMission(vars.missionCode)
         and (state.hostSessionCreated == true or state.clientPrepared == true) then
         state.equipmentPreparationAttempted = true
         state.equipmentPreparationReturned = false

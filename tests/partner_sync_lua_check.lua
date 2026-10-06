@@ -12,6 +12,15 @@ local TICK = "return 'MGS_COOP_PARTNER_V1' -- "
 local LOG = "return 'MGS_COOP_PARTNER_LOG_V1' -- "
 local sentinel = {}
 local STATUS = {STAND = 4, SQUAT = 5, CRAWL = 6, WALK = 13, RUN = 14, DASH = 15}
+local bootstrapPath = (arg[0]:match('^(.*[/\\])') or '') .. '../lua/coop/bootstrap.lua'
+local function newCoop(mission, selected)
+    local bootstrapEnv = {e = {}, loadstring = function() return function() end end}
+    setmetatable(bootstrapEnv, {__index = _G})
+    local chunk = assert(loadfile(bootstrapPath)); setfenv(chunk, bootstrapEnv); chunk()
+    local coop = bootstrapEnv.e.MgsCoop
+    coop.playerPackageSelected, coop.playerPackageMission, coop.archiveDirectReadSucceeded = selected ~= false, mission, true
+    return coop
+end
 
 local function starts(text, prefix) return text:sub(1, #prefix) == prefix end
 local function remove(env, path)
@@ -26,7 +35,8 @@ local function fixture(options)
     local c = {cfg = true, reply = nil, receipts = {}, ticks = {}, logs = {}, stops = 0, calls = {}, warps = {},
                status = {}, valid = true, localIndex = 0, order = {}}
     if options.cfg ~= nil then c.cfg = options.cfg end
-    local env = {e = {}, vars = {missionCode = 30050, playerPosX = 1.5, playerPosY = 0.25, playerPosZ = -3.0,
+    local env = {e = {}, Tpp = {MgsCoop = newCoop(options.mission or 30050, options.selected)},
+        vars = {missionCode = options.mission or 30050, playerPosX = 1.5, playerPosY = 0.25, playerPosZ = -3.0,
         playerRotY = 45.5, playerCameraRotation = {[0] = 10, [1] = 90}, playerType = 0, playerPartsType = 1,
         playerCamoType = 2, playerHandType = 3, playerFaceId = 4}}
     for _, name in ipairs({'OnMissionGameStart', 'OnUpdate', 'OnTerminate'}) do
@@ -146,13 +156,41 @@ do
     local env, c = fixture()
     env.vars.missionCode = 10010
     call(env, 'OnMissionGameStart'); update(env, 5); call(env, 'OnTerminate')
-    check(#c.receipts == 0, 'only Mother Base 30050 asks for CFG')
+    check(#c.receipts == 0, 'unsupported mission never asks for CFG')
     env, c = fixture({compileFail = true})
     call(env, 'OnMissionGameStart'); update(env, 5)
     check(#c.ticks == 0 and #c.calls == 0, 'CFG compile failure keeps it inactive')
     env, c = fixture({cfgThrow = true})
     call(env, 'OnMissionGameStart'); update(env, 5)
     check(#c.ticks == 0 and #c.logs == 1 and starts(c.logs[1], 'event=error;msg='), 'CFG error contained and noted')
+end
+-- The real bootstrap whitelist also requires the current normal pack latch.
+-- Afghanistan's 30011 demo can retain code 30010, so a whitelist alone fails.
+for _, mission in ipairs({30010, 30020, 30050}) do
+    local env, c = fixture({mission = mission})
+    call(env, 'OnMissionGameStart')
+    c.reply = {3, 1, 2000, 0, -1000, 1571, 1, 0}
+    update(env, 2); call(env, 'OnTerminate')
+    check(#c.ticks == 2 and #c.warps == 2 and c.stops == 1, 'normal free roam partner runs: ' .. mission)
+    env, c = fixture({mission = mission, selected = false})
+    call(env, 'OnMissionGameStart'); update(env); call(env, 'OnTerminate')
+    check(#c.receipts == 0 and #c.calls == 0, 'unselected/variant pack stays inert: ' .. mission)
+end
+for _, mission in ipairs({30011, 10010, 10036, 40010, 40020, 40050, 50050}) do
+    local env, c = fixture({mission = mission})
+    call(env, 'OnMissionGameStart'); update(env); call(env, 'OnTerminate')
+    check(#c.receipts == 0 and #c.calls == 0, 'excluded partner body mission: ' .. mission)
+end
+for _, missing in ipairs({'Tpp', 'Tpp.MgsCoop'}) do
+    local env, c = fixture({missing = {missing}})
+    call(env, 'OnMissionGameStart'); update(env); call(env, 'OnTerminate')
+    check(#c.receipts == 0 and #c.calls == 0, 'missing capability owner stays inert: ' .. missing)
+end
+do
+    local env, c = fixture()
+    env.Tpp.MgsCoop.IsPartnerBodyMission = nil
+    call(env, 'OnMissionGameStart'); update(env); call(env, 'OnTerminate')
+    check(#c.receipts == 0 and #c.calls == 0, 'missing capability function stays inert')
 end
 
 -- 2. Active: one quiet tick receipt per frame with 9 strict integers.
@@ -508,7 +546,8 @@ if arg[2] then
                     playerRotY = 45.5, playerCameraRotation = {[1] = 90}, playerType = 0, playerPartsType = 1,
                     playerCamoType = 2, playerHandType = 3, playerFaceId = 4},
             Tpp = setmetatable({IsTypeFunc = function(v) return type(v) == 'function' end,
-                                IsTypeTable = function(v) return type(v) == 'table' end, MgsCoop = {}},
+                                IsTypeTable = function(v) return type(v) == 'table' end,
+                                MgsCoop = newCoop(options.mission or 30050, options.selected)},
                                {__index = function(t, k) local v = stub('Tpp.' .. k); rawset(t, k, v); return v end}),
             Player = {
                 IsInstanceValid = function() return options.valid ~= false end,
@@ -586,6 +625,13 @@ if arg[2] then
     -- Another mission: not even the CFG receipt.
     r = run({mission = 10036, cfg = true, reply = {3, 1, 0, 0, 0, 0, 0, 0}})
     check(partnerReceipts(r) == 0 and playerCalls(r) == 0, 'other mission: no partner receipt')
+    for _, mission in ipairs({30010, 30020}) do
+        r = run({mission = mission, cfg = true, reply = {3, 1, 2000, 0, -1000, 1571, 1, 0}, updates = 3})
+        check(#r.ticks == 3 and count(r.calls, 'warp:TppPlayer2:1:Warp') == 3 and count(r.receipts, STOP) == 1,
+            'composed normal free roam path: ' .. mission)
+        r = run({mission = mission, selected = false, cfg = true})
+        check(partnerReceipts(r) == 0 and playerCalls(r) == 0, 'composed variant pack stays off: ' .. mission)
+    end
     -- Active.
     r = run({cfg = true, reply = {3, 1, 2000, 0, -1000, 1571, 1, 0}, updates = 3})
     check(#r.ticks == 3 and r.ticks[1] == '1 1500 250 -3000 4550 9000 0 0 0' and r.ticks[2] == '2 1500 250 -3000 4550 9000 0 0 1',
@@ -601,4 +647,4 @@ end
 
 print(checks .. ' partner sync Lua checks passed: inactive unless CFG is true, strict tick format, op bits 1/2/4/8/16/32/64, ' ..
     'bad index refusal, pcall error path, STOP on terminate, missing/raising bindings, original returns/errors/yields' ..
-    (composedRuns > 0 and ('; composed TppMain at 30050 (' .. composedRuns .. ' runs)') or '') .. '; no game calls')
+    (composedRuns > 0 and ('; composed TppMain across free roam (' .. composedRuns .. ' runs)') or '') .. '; no game calls')

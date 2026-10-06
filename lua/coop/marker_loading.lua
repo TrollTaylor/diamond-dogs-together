@@ -15,8 +15,7 @@ do
     local function begin()
         stop()
         local state = Tpp and Tpp.MgsCoop
-        if vars.missionCode == 30050 and type(state) == "table"
-            and state.playerPackageSelected and state.archiveDirectReadSucceeded then
+        if type(state) == "table" and type(state.IsPartnerBodyMission) == "function" and state.IsPartnerBodyMission(vars.missionCode) then
             state.markerLoadingGuardActive = receipt("return 'MGS_COOP_MARKER_LOADING_BEGIN_V1'")
         end
     end
