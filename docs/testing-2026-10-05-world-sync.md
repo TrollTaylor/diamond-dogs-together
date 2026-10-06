@@ -1,5 +1,76 @@
 # World sync and field partner tests (2026-10-05–06)
 
+## October 6: integrated title Continue, travel and alignment
+
+**PASS for this subset on two game processes on one PC.** Run
+`build/lab/runs/20261006-111828` uses the earlier integrated **0.11.1** DLL,
+SHA-256 `171041C2A598FD758FCC67A0B19B59BE4EC6C35FBA4CD98C2529BF946A9E97D6`,
+and the same local 13-entry archive as the field patch below. Both games use
+our offline UDP link and separate co-op save copies. The newer diagnostic-only
+build from `5ab2c5a` has DLL SHA-256
+`59CD23348386815A84DA0CE9D18DB2B308E52BE21D1B5DDF9C254FC1910A9B13`;
+it is installed in both copies. Its separate run
+`build/lab/runs/20261006-113833` finds a guest initial-action mismatch:
+the host starts on foot, but the guest retains its old helicopter action
+although the seeded coordinates match. Both remote bodies are realized
+with parts `3,3` and 0 mm transform readback error; an unobscured on-foot
+two-player view has not passed on this build. Exact `TppPlayer.Init` reads
+`ply_initialPlayerState=RIDEON_HELICOPTER` together with
+`svars.ply_isUsedPlayerInitialAction`, which is true on the host after landing
+and false in the guest's older checkpoint. An additional mandatory seed and
+regression fixture are in progress. This current-build run then closes both
+games normally; all ten real save/config files remain unchanged against
+run-start and latest-backup hashes. The table below records the preceding
+build's larger test run, not acceptance of this current startup path.
+
+| Item | Integrated result |
+|---|---|
+| Native title Continue | **PASS.** Only the host selected the game's title Continue. The guest followed to Mother Base `30050`. |
+| Host-only mission travel | **PASS.** A `goto=30010` trigger on the host brought the guest along `30050` → `40050` → `30010`, without a guest mission trigger. |
+| Complete travel seeds | **PASS.** The stream contains all 27 keys / 46 records. The guest applies title context once; later allocation clears Continue-from-title normally. |
+| Afghanistan pairing | **PASS.** Both CFGs report mission `30010`, epoch `5`, roster `2772775463`, 271 soldiers and 77 CPs. |
+| Initial checkpoint alignment | **PASS.** Guest snapshot `id=1` is accepted with `unknown=191`, `divergence=0`, `w1=1`. Unknown soldiers remain held until their areas can be read. |
+| Afghanistan bodies and movement | **PASS.** Guest native W input for 1.5 s moved its local player and the host's partner. At rest both directions match with 0 mm position difference; screenshots show the separate Snake and Quiet bodies. |
+| Partner warp rearm | **PASS.** Stage 0 → 3 with `apply=warp` places the partner before enabling its bits; realized/parts readiness and warp error 0 are confirmed. Restored `xform` / `dm=map` afterward. |
+| Shared Afghanistan kill | **PASS.** Host `kill_near` selects entity `486459779`; the guest applies DEAD (`state=5`, `ver=2`) with readback `5`. This is a lab API probe. |
+| Africa host travel and alignment | **PASS.** Host-only `30010` → `40010` → `30020` brings both copies to epoch `8`, roster `2220786415`, 265 soldiers and 68 CPs (`match=1`, `eff=3`). Guest alignment `id=37` accepts `unknown=157`, `divergence=0`, `w1=1`; host readiness follows 33 ms later. |
+| Africa bodies and movement | **PASS.** Host's Quiet partner has parts `3,3`; guest has Snake's remote body. Native guest W for 1.3 s / D for 1.2 s and host W for 1 s show two independent actors. Reciprocal transforms match at rest with 0 mm difference. |
+| Afghanistan range hide/re-entry | **PASS.** Partner hides at 200.004 m and re-enters at 149.969 m with placement before realization. |
+| Exit and real saves | **PASS.** Both games close normally via `WM_CLOSE`; all ten real save/config files match the run-start manifest and latest backup. |
+| Shared checkpoint | **PASS.** Host probe publishes hash `0`, version `2`, pose `(801012,339760,1638620)` mm / yaw `-60000` millidegrees. Guest's actual VarSave callback confirms the identical pose and `receipt=1` 19 ms later. This is an in-memory save receipt; asynchronous disk completion is not claimed. |
+| Shared death | **PASS for the API probe.** Injected guest PLAYER_DEAD requests host authority; host reserves shared game over 32 ms later, guest applies it 33 ms afterward. Both windows show the real Mission Failed menu. Physical damage death remains untested. |
+| Native host Continue recovery | **PASS with a loading delay.** Only the host pressed native menu Enter. Both games reloaded and paired at epoch `6`. Guest readiness was about 74 s behind the host; all 271 host soldiers were initially unknown, so snapshots were refused. The unchanged DLL recovered when the host area activated: guest snapshot `id=36` was accepted about 1.9 s later with `unknown=206`, `divergence=0`, `w1=1`, followed by host readiness. Transport overflow stayed zero. |
+| Killed soldier after Continue | **PENDING.** Post-Continue readback for entity `486459779` is not yet recorded; checkpoint copying and alignment acceptance do not alone prove its persisted state. |
+
+All 78 automated suites pass in aggregate: the lab installer suite was
+rerun separately after its failure in the combined run. The latest
+diagnostic/title/recovery subset passes 11/11. This is single-PC evidence; it does not
+verify a two-PC session, identical enemy AI/positions or full campaign
+progression. Initial pairing still needs both copied-save games in the same
+supported scene; automatic bootstrap from different ACC/location scenes is
+not implemented.
+
+Local evidence: [run configuration](../build/lab/runs/20261006-111828/run.json),
+[host title Continue](../build/lab/runs/20261006-111828/screens/final-title-host-continue-host-112027.png),
+[Mother Base host](../build/lab/runs/20261006-111828/screens/final2-mb-host-host-112117.png),
+[Mother Base guest](../build/lab/runs/20261006-111828/screens/final2-mb-guest-guest-112118.png),
+[ACC host](../build/lab/runs/20261006-111828/screens/final-acc-host-host-112243.png),
+[ACC guest](../build/lab/runs/20261006-111828/screens/final-acc-guest-guest-112244.png),
+[Afghanistan host](../build/lab/runs/20261006-111828/screens/final-afghan-host-exit-host-112749.png)
+and [Afghanistan guest](../build/lab/runs/20261006-111828/screens/final-afghan-guest-exit-guest-112750.png),
+[movement host](../build/lab/runs/20261006-111828/screens/final-afghan-motion-host-112811.png)
+[movement guest](../build/lab/runs/20261006-111828/screens/final-afghan-motion-guest-112811.png),
+[Mission Failed host](../build/lab/runs/20261006-111828/screens/final-shared-gameover-host-112940.png)
+[Mission Failed guest](../build/lab/runs/20261006-111828/screens/final-shared-gameover-guest-112940.png),
+[Africa bodies](../build/lab/runs/20261006-111828/screens/final-africa-bodies-host-113742.png)
+and [stop/save verification](../build/lab/runs/20261006-111828/stop.json).
+Automated evidence: [combined suite log](../build/codex-recovery-final-20261006.log),
+[serialized lab recheck](../build/codex-recovery-lab-recheck-20261006.log)
+[title/recovery checks](../build/codex-title-recovery-final-20261006.log)
+[latest diagnostic checks](../build/codex-alignment-diagnostic-tests-20261006.log)
+and [preceding build exit/save log](../build/codex-d171-live-stop-20261006.log).
+These artifacts remain local under `build/`.
+
 ## October 6: free-roam partner field patch
 
 **PASS for the field patch on two game instances on one PC.** Run
@@ -31,11 +102,13 @@ Local evidence: [run configuration](../build/lab/runs/20261006-095606/run.json),
 and [Africa guest view](../build/lab/runs/20261006-095606/screens/africa-partner-motion-guest-101546.png).
 These generated artifacts remain local under `build/`.
 
-This run verifies supported field bodies and movement. It does not verify
-the final integrated 0.11.1 DLL, W3 host-led travel, W4 checkpoint/shared
-failure recovery, a real two-PC session or full campaign gameplay. W3/W4
-fixtures and final integrated validation remain in progress. Story and
-alternate packs such as `30011` remain excluded from partner-body support.
+This earlier run verifies supported field bodies and movement for its
+pre-integration DLL. The integrated run above records travel, alignment, Afghanistan movement,
+checkpoint, injected death and delayed native Continue recovery evidence.
+That run also verifies Africa; the newer DLL's smoke check and the killed
+soldier's post-Continue readback remain pending.
+Neither run establishes a two-PC session or full campaign gameplay. Story
+and alternate packs such as `30011` remain excluded from partner-body support.
 
 ## October 5: W0–W2 live results
 
@@ -84,7 +157,7 @@ UNCHANGED after every run.
   usually starts with a continue, so W4 (checkpoint snapshot) is the next
   priority for enemies to be shared from the first minute.
 - That build only showed the partner body in Mother Base (30050). The
-  October 6 field patch above extends normal 30010/30020 packs; W3 host-led
-  mission changes still need final integrated live validation.
+  October 6 field patch above extends normal 30010/30020 packs. The later
+  integrated run above verifies host-led Mother Base–ACC–Afghanistan travel.
 - `remote_area_kill` is a probe-only commit: the host's own soldier stays
   alive (only the guest applies it).

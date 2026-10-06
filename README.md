@@ -2,17 +2,23 @@
 
 An in-development campaign co-op mod for **Metal Gear Solid V: The Phantom Pain**. The immediate target is fully playable **two-player co-op**, using direct, attributed Dynamite adaptations. Four-player expansion is deferred. The full-campaign target includes the hospital, both chapters, endings, side ops, travel and Mother Base.
 
-**Current development version: 0.11.1.** Two game instances on one PC now exchange movement over our own offline UDP link, and both show a second player body in normal Afghanistan and Africa free roam as well as Mother Base. This is a tested development prototype; complete shared gameplay, a two-PC session and the full campaign remain unfinished.
+**Current development version: 0.11.1.** This prototype uses our own offline UDP link and separate co-op save copies. Normal Afghanistan, Africa and Mother Base packs support a second player body. The preceding test build verified two independently moving players, host-led travel through ACC, accepted initial enemy alignment, shared checkpoints and an injected guest death followed by native host Continue. The current build adds clearer readiness diagnostics, but its startup check exposed a guest helicopter starting-action mismatch after Continue. A missing save-variable seed is being fixed; the final startup check remains pending. [Build-specific live evidence](docs/testing-2026-10-05-world-sync.md), [current status](docs/STATUS.md).
 
-The October 6 field test used the extended partner/archive changes (`7ec1e39`, `07520e0`) in a DLL still labelled **0.11.0**, before the version change in `a4a5aab` and before W3/W4 integration. Guest keyboard movement in Afghanistan matched the host's partner body to about 20 mm; Africa loaded two player IDs with both parts sets ready and showed 0–18 mm command/readback differences. Both copies hid a partner at 200 m. The games closed normally, and all ten real save/config files matched the run-start and backup hashes. [Field test and earlier world-sync results](docs/testing-2026-10-05-world-sync.md).
+For the configured single-PC lab, launch both copies with world sync enabled:
 
-Earlier October 5 tests verified shared enemy kill, sleep and Fulton outcomes, alerts, clock and weather in a fresh Afghanistan mission. W3 host-led travel and W4 checkpoint alignment, shared failure and restart are under development; their fixtures and final integrated live validation are still in progress. Normal mission packs `30010`, `30020` and `30050` support partner bodies; ACC, story missions and alternate packs such as `30011` remain excluded. [Current status](docs/STATUS.md), [world-sync design](docs/world-sync-design.md).
+```powershell
+pwsh -File tools/lab/Play-OfflineCoop.ps1 -World 3
+```
+
+All 78 automated suites pass in aggregate after the lab installer test was rerun separately; the latest diagnostic/title/recovery checks pass 11/11.
+
+Both copied-save games must first reach the same supported scene. Unknown enemy states stay held until their areas load; alignment does not establish identical AI or positions. A real two-PC session, full campaign/progression and physical damage death remain unverified. ACC has no partner body, and story missions and alternate packs such as `30011` are excluded. [World-sync design](docs/world-sync-design.md).
 
 ## What exists
 
 - An original x64 DirectInput loader with exact-build script and actor guards. The local 13-entry runtime archive replaces each supported mission's single-player controller with one two-player controller. Afghanistan retains its scarf controller type; Africa and Mother Base use the normal type. Live field tests verified both player bodies and movement on two independently controlled game instances. Game-derived archive files stay local and are never committed or bundled.
 - Our own offline UDP link sends player pose, appearance and movement data between the two games. The single-PC lab uses separate save copies; the friend launcher also activates co-op only for a copied-save session. The older native Steam-session experiments below are historical groundwork, separate from this active transport.
-- Experimental shared enemy outcomes, alerts, clock and weather, with live W0–W2 evidence from fresh Afghanistan free roam. Checkpoint alignment and host-led mission changes need final integrated validation. Hospital, story sequences, side-op progression, rewards, vehicles and full campaign support remain unverified.
+- Experimental shared enemy outcomes, alerts, clock and weather, with live W0–W2 evidence from fresh Afghanistan free roam. The preceding live-tested integration DLL also follows host title Continue and Mother Base–ACC–Afghanistan travel, then accepts an initial host snapshot. Unreadable enemy states stay unknown until their areas load. Checkpoint copying and injected shared death have receipts on that DLL; native menu Continue reloads both copies and resumes enemy sync after the host area becomes readable. Hospital, story sequences, side-op progression, rewards, vehicles and full campaign support remain unverified.
 - A checked import-table parser and pointer patch, plus a lifecycle-gated Steam context reader. The live callback trace demonstrates multiple callback threads; it does not establish a Lua owner thread. The context reader is tested but not yet called against the live game.
 - An original bounded debugger observation that captured the game's natural network registrar entry and matching return, skipped a nested return, and detached successfully. A read-only external sampler reads independently mapped mission/player fields; startup samples do not establish an active actor or playable mission.
 - A separate live startup capture recorded the game's own Steam initialization returning true and detached cleanly. This established one successful call; that experiment did not enable SDK access or multiplayer.
@@ -75,7 +81,7 @@ Close the game before installation or removal. The installer refuses to overwrit
 
 ## Architecture boundaries
 
-The active offline link and guarded partner driver are distinct from the earlier portable coordinator and Steam-adapter experiments described below. W3/W4 are intended to extend the offline world path; their current development status is recorded above.
+The active offline link and guarded partner driver are distinct from the earlier portable coordinator and Steam-adapter experiments described below. W3/W4 extend the offline world path; their tested subset and remaining live checks are recorded above.
 
 The future engine adapter must authenticate peers, bind session IDs, connect the host input receiver, and call the portable coordinator on the game thread. A claimed identity inside a packet is never trusted. The router's `ValidatedByEngine` flag is an internal adapter contract; it does not perform Steam authentication. Reordering storage does not implement retransmission, acknowledgement, timeout or encryption.
 

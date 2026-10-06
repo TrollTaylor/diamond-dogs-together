@@ -8,9 +8,16 @@ lab-only mission jump. Level 3 also includes supported-scene host travel
 (W4), described in section 13. Story missions (W5), full progression copying
 and soldier transforms (W6) remain unimplemented.
 
-W0-W2 ran live in [October 5 testing](testing-2026-10-05-world-sync.md).
-W3/W4 automated fixtures do not establish live acceptance. Script citations
-refer to the extracted 1.0.15.4 scripts (`lib/...`, `mission/...`).
+W0-W2 ran live in October 5 testing. The earlier integrated October 6 run
+`20261006-111828` verifies host title Continue, host-only Mother Base–ACC–
+Afghanistan travel and accepted initial alignment on two processes on one
+PC. That DLL's checkpoint copying and injected shared death also have live
+receipts. Native host menu Continue reloads both copies and eventually
+restores W1 once the host area becomes readable. The same run verifies
+host-only Africa travel, alignment and independently moving field bodies.
+See [recorded live results](testing-2026-10-05-world-sync.md). Automated
+fixtures do not establish additional live acceptance. Script citations refer
+to the extracted 1.0.15.4 scripts (`lib/...`, `mission/...`).
 
 Code:
 
@@ -537,8 +544,32 @@ Lua payloads (`world_lua=event=...`): `started`, `inactive` (reason
 
 ## 12. Live acceptance (lab, both copies on one PC)
 
-This is the test recipe and expected evidence, not a live pass report.
-W3/W4 acceptance remains pending for the integrated DLL.
+This is the test recipe and expected evidence. The live-tested integrated DLL
+`171041C2A598FD758FCC67A0B19B59BE4EC6C35FBA4CD98C2529BF946A9E97D6`
+has a live pass for host title Continue, host-only 30050 → 40050 → 30010
+travel and initial alignment in run `20261006-111828`. Guest alignment
+`id=1` accepts epoch `5` with roster `2772775463`, 271 soldiers, 77 CPs,
+191 unknown soldiers, zero divergences and `w1=1`. Unknown states remain
+held. That DLL's Afghanistan movement also passes in both directions with
+matching positions at rest. Host checkpoint copying has an actual guest
+VarSave receipt, and the injected guest death opens Mission Failed on both
+windows. Native host menu Continue reloads both games and pairs epoch `6`.
+Initially all host soldiers are unknown, so W1 remains gated; after host area
+activation the guest accepts snapshot `id=36` with 206 unknown soldiers and
+`w1=1`. The unchanged DLL thus recovers after the loading delay. Subsequent
+host-only Africa travel reaches matching epoch `8`, roster `2220786415`,
+265 soldiers and 68 CPs; guest snapshot `id=37` accepts 157 unknowns and
+`w1=1`, with both bodies and native movement verified. Killed-soldier
+post-Continue readback remains pending. The newer diagnostic-only
+DLL `59CD23348386815A84DA0CE9D18DB2B308E52BE21D1B5DDF9C254FC1910A9B13`
+has 11/11 targeted checks and is installed in both copies. Its separate
+run `20261006-113833` realizes both remote bodies but exposes a copied-save
+initial-action mismatch: seeded XYZ matches while the guest retains its
+old helicopter action. `TppPlayer.Init` also reads the unsynchronized
+`svars.ply_isUsedPlayerInitialAction`; a mandatory seed and regression
+fixture are being added. Current-build startup acceptance remains pending,
+separate from the preceding test build's results.
+[Results](testing-2026-10-05-world-sync.md).
 
 Logs: `<host|guest dir>\mgs-coop\script-observer.log`; Lua lines appear as
 `world_lua=event=...` with `;` expanded to `; ` (below written as in Lua).
@@ -685,8 +716,9 @@ the original current mission, so crossing from ACC loads the new assets
 instead of reloading ACC. Seed keys 19-23 carry those saved vars and key
 24 carries `mis_checkPoint`. A fixture executes the SHA-pinned extracted
 Continue, stage-block, chunk-check and loading functions for all three
-supported field missions; title-menu automatic following still needs live
-validation.
+supported field missions. Run `20261006-111828` also verifies native host
+title Continue following to Mother Base and onward through ACC to Afghanistan
+with the integrated DLL.
 
 All 27 seed keys are required, with every declared array index exactly
 once; completion checks coverage as well as count and ordered digest.
@@ -737,6 +769,11 @@ epoch, unique indices, counts and ordered digest before applying through
 the existing forward-only life ledger and phase floors. ALIGN_END is in the
 world queue so it cannot overtake its records. Both sides resume W1 only
 after complete acceptance; failed TX and ACK timeout retry safely.
+A structurally complete snapshot with zero readable soldiers keeps W1 off
+and logs `reason=no_readable_state`, with bounded readiness counts. It is
+retried as host areas become active; a finished reload and matching epoch
+do not by themselves establish enemy readiness. Malformed, missing or
+digest-mismatched streams still log `reason=incomplete_snapshot`.
 
 This does not revive a guest soldier that is already terminal when the host
 reports NORMAL: the divergence is logged as `action=no_revive`. Unknown
