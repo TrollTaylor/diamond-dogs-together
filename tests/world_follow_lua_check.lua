@@ -20,7 +20,7 @@ local function fixture(role, level)
         ply_useMissionStartPos = true, ply_missionStartPos = {[0] = -2.25, [1] = 3.5, [2] = 10},
         ply_missionStartRot = -90, ply_useMissionStartPosForNoOrderBox = false,
         ply_missionStartPosForNoOrderBox = {[0] = 0, [1] = 0, [2] = 0}, ply_missionStartRotForNoOrderBox = 0,
-        mis_checkPoint = 4294967295}
+        mis_checkPoint = 4294967295, ini_isTitleMode = false, ini_isReturnToTitle = false, isContinueFromTitle = true}
     env.svars = {mis_missionClearType = 6}
     env.TppDefine = {MISSION_LOAD_TYPE = {MISSION_FINALIZE = 1, MISSION_ABORT = 2, MISSION_RESTART = 3, CONTINUE_FROM_CHECK_POINT = 4}}
     env.TppRevenge = {REVENGE_TYPE = {MAX = 2}}
@@ -95,18 +95,29 @@ local function seedStream(g, target, id, filter, duplicateKey)
     send(g, OP.SEEDS_END, {id, target, count, digest})
 end
 local h, g = fixture(1), fixture(2)
+g.env.gvars.ini_isTitleMode, g.env.gvars.ini_isReturnToTitle, g.env.gvars.isContinueFromTitle = true, true, false
 h.env.vars.missionCode = 40050
 local a, b, d = h.env.e.ReservePlayerLoadingPosition(1)
 check(a == 7 and b == nil and d == 9, 'original choke-point returns preserved')
 h.env.TppMission.Load(40050)
+h.F.tick(h.time)
 check(#h.tx > 20 and h.tx[1].op == OP.TRANSITION and h.tx[#h.tx].op == OP.SEEDS_END, 'host publishes transition then complete seed stream')
 transfer(h, g)
 g.F.tick(g.time)
+check(g.env.gvars.ini_isTitleMode == false and g.env.gvars.ini_isReturnToTitle == false and g.env.gvars.isContinueFromTitle == true,
+    'authorized replay copies one-time host title context before guest mission transition')
+local titleLog
+for _, entry in ipairs(g.logs) do if entry:find('step=title_context', 1, true) then titleLog = entry end end
+check(titleLog and #titleLog <= 160 and titleLog:find('title_before=1;title_after=0', 1, true) and
+    titleLog:find('return_before=1;return_after=0', 1, true) and titleLog:find('continue_before=0;continue_after=1', 1, true),
+    'bounded replay context receipt records all observed before/after flags')
 check(g.clear and g.clear.nextMissionId == 40050 and g.clear.nextHeliRoute == 4294967295, 'guest replays host clear and unsigned route')
 g.env.gvars.solface_groupNumber = 999
+g.env.gvars.isContinueFromTitle = false
 g.env.mvars.mis_loadRequest = {nextMission = 40050}
 g.env.TppMission.LoadWithChunkCheck()
 check(g.loaded == 40050 and g.seedAtLoad == 111 and g.env.mvars.mis_loadRequest == nil, 'host seeds applied before original Load and request cleanup')
+check(g.env.gvars.isContinueFromTitle == false, 'repeated seed preparation preserves vanilla title-continue cleanup')
 check(g.env.gvars.ply_missionStartPos[0] == -2.25 and g.env.gvars.ply_missionStartRot == -90 and
     g.env.gvars.missionStartWeatherNextTime == 123.25 and g.env.gvars.rev_revengeRandomValue == 333,
     'signed positions, rotations, scalar revenge seed and float weather round trip')
@@ -256,7 +267,7 @@ end
 invalidStream(function() return false end, 'self-consistent empty count0/digest0 cannot authorize travel')
 invalidStream(function(v) return v[3] == 1 end, 'self-consistent one-field stream cannot authorize travel')
 invalidStream(function(v) return v[3] < 19 end, 'old complete18-key stream without checkpoint pose/hashes is refused')
-for missing = 19, 24 do
+for missing = 19, 27 do
     invalidStream(function(v) return v[3] ~= missing end, 'missing mandatory seed key' .. missing .. ' is refused')
 end
 invalidStream(function(v) return not (v[3] == 4 and v[4] == 1) end,

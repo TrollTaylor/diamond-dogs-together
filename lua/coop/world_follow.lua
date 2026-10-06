@@ -131,11 +131,13 @@ local s = F.seeds[t[1]]
 if not s or not s.ready or s.mission ~= t[4] then return false end
 for _, v in ipairs(s.values) do
     local key, value = KEYS[v[1]], S.decode(KEYS[v[1]], v[3])
+    if not key[5] then
     local data = key[4] and vars or gvars
     if key[2] then
         local array = W.get(data, key[1])
         if array ~= nil then array[v[2]] = value end
     else data[key[1]] = value end
+    end
 end
 vars.missionCode, vars.locationCode = t[4], SUPPORTED[t[4]]
 vars.mbLayoutCode, vars.mbClusterId = t[7], t[8]
@@ -191,6 +193,7 @@ if not session then return end
 if t.session and t.session ~= session then F.clear(); log("step=refused;reason=link_session"); return end
 t.session = session
 F.current = t
+S.context(seeds, t[1])
 local ok, result
 if t[2] == 3 then
     ok = run(TppMission.ExecuteRestartMission)

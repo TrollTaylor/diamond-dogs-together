@@ -10,7 +10,9 @@ do
         {"ply_missionStartPosForNoOrderBox", 3, 1000}, {"ply_missionStartRotForNoOrderBox", nil, 1},
         {"initialPlayerFlag", nil, nil, true}, {"initialPlayerPosX", nil, 1000, true},
         {"initialPlayerPosY", nil, 1000, true}, {"initialPlayerPosZ", nil, 1000, true},
-        {"initialPlayerRotY", nil, 1000, true}, {"mis_checkPoint"}}}
+        {"initialPlayerRotY", nil, 1000, true}, {"mis_checkPoint"},
+        {"ini_isTitleMode", nil, "bool", nil, true}, {"ini_isReturnToTitle", nil, "bool", nil, true},
+        {"isContinueFromTitle", nil, "bool", nil, true}}}
     W.followSeeds = S
     local floor = math.floor
     function S.dims(key)
@@ -77,5 +79,18 @@ do
             end
         end
         return true
+    end
+    function S.context(s, id)
+        local function flag(name)
+            local value = W.get(gvars, name)
+            return type(value) == "boolean" and (value and 1 or 0) or -1
+        end
+        local title, returning, continuing = flag("ini_isTitleMode"), flag("ini_isReturnToTitle"), flag("isContinueFromTitle")
+        for _, v in ipairs(s.values) do
+            local key = S.keys[v[1]]
+            if key[5] then gvars[key[1]] = S.decode(key, v[3]) end
+        end
+        W.log(string.format("event=follow;step=title_context;id=%.0f;title_before=%d;title_after=%d;return_before=%d;return_after=%d;continue_before=%d;continue_after=%d",
+            id, title, flag("ini_isTitleMode"), returning, flag("ini_isReturnToTitle"), continuing, flag("isContinueFromTitle")))
     end
 end

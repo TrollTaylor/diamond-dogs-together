@@ -688,15 +688,24 @@ Continue, stage-block, chunk-check and loading functions for all three
 supported field missions; title-menu automatic following still needs live
 validation.
 
-All 24 seed keys are required, with every declared array index exactly
+All 27 seed keys are required, with every declared array index exactly
 once; completion checks coverage as well as count and ordered digest.
-The normal 16-entry revenge array produces 43 records. The host retains
+The normal 16-entry revenge array produces 46 records. The host retains
 its pending load if any required field is unreadable; it sends no partial
 END. Duplicate, empty or self-consistent partial streams fail closed on
 the guest. The schema lives in the separate bounded `world_follow_seed`
 Lua chunk. Guest restore wrappers reapply the checked stream after later
 mission-start/Continue restores, and the stage-block wrapper reasserts it
 before vanilla placement reads, including helicopter preparation.
+Keys 25-27 carry the host's BOOL, non-saved `ini_isTitleMode`,
+`ini_isReturnToTitle` and `isContinueFromTitle` context. An authenticated
+replay applies these once, before the high-level mission API, and logs
+the observed before/after flags as `step=title_context`. Repeated seed
+preparation skips these keys, so vanilla allocation's
+`ClearIsContinueFromTitle` remains effective. This lets a guest that has
+not pressed the native title Continue button enter ordinary mission/ACC
+initialization when following the host's Continue, rather than retaining
+title-mode sky and UI into the subsequent deployment.
 Already accepted pending preparation survives the inactive mission-loading
 gap only while fresh CFG confirms level 3, the same role, an active link
 and the unchanged nonzero local transport session. A changed session,

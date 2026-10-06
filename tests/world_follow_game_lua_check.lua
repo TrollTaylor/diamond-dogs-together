@@ -15,6 +15,7 @@ local stopSource = slice(read(worldPath), 'function W.stop(final)', '-- Control 
 local continueSource = slice(missionSource, 'function e.ExecuteContinueFromCheckPoint(', 'function e.IncrementRetryCount(')
 local loadSource = slice(missionSource, 'function e.RequestLoad(', 'function e.ExecuteReload(')
 local reserveSource = slice(mainSource, 'function e.ReservePlayerLoadingPosition(', 'function e.OnReload(')
+local allocationTitleSource = slice(mainSource, 'if gvars.ini_isTitleMode then', 'TppUiCommand.ExcludeNonPermissionContents()')
 local OP = {TRANSITION = 9, SEED = 10, SEEDS_END = 11, REQ_MISSION = 12, FOLLOW_ACK = 13, REJECT = 4, MISSION_END = 7}
 local locations = {[30010] = 10, [40010] = 10, [30020] = 20, [40020] = 20, [30050] = 50, [40050] = 50}
 local function fixture(host, target, level, active)
@@ -31,7 +32,7 @@ local function fixture(host, target, level, active)
         ply_initialPlayerState = 0, ply_useMissionStartPos = true, ply_missionStartPos = {[0] = 2, [1] = 3, [2] = 4},
         ply_missionStartRot = 0, ply_useMissionStartPosForNoOrderBox = false,
         ply_missionStartPosForNoOrderBox = {[0] = 0, [1] = 0, [2] = 0}, ply_missionStartRotForNoOrderBox = 0,
-        mis_checkPoint = 0}
+        mis_checkPoint = 0, ini_isTitleMode = false, ini_isReturnToTitle = false, isContinueFromTitle = false}
     env.TppDefine = {MISSION_LOAD_TYPE = {MISSION_FINALIZE = 1, MISSION_ABORT = 2, MISSION_RESTART = 3, CONTINUE_FROM_CHECK_POINT = 4},
         STORY_SEQUENCE = {CLEARD_ESCAPE_THE_HOSPITAL = 100}, STORY_MISSION_LAYOUT_CODE = {},
         SYS_MISSION_ID = {MTBS_HELI = 40050}, ERROR_ID = {NOW_INSTALLING = 123}}
@@ -78,6 +79,7 @@ local function fixture(host, target, level, active)
         end}
     env.TppSave = {VarRestoreOnContinueFromCheckPoint = function()
         c.restores = (c.restores or 0) + 1
+        c.restoreTitle = {env.gvars.ini_isTitleMode, env.gvars.ini_isReturnToTitle, env.gvars.isContinueFromTitle}
         local m = host and target or 40020
         env.vars.missionCode, env.vars.locationCode = m, locations[m]
         if host then
@@ -111,6 +113,19 @@ local function fixture(host, target, level, active)
         SetIsStartFromHelispace = function() env.gvars.mis_isStartFromHelispace = true end,
         ResetIsStartFromFreePlay = function() env.gvars.mis_isStartFromFreePlay = false end,
         ResetEmegerncyMissionSetting = noop, ExecuteOnReturnToMissionCallback = function() return false end}
+    env.TppMission.IsMissionStart = function() return c.isMissionStart == true end
+    env.TppPlayer.MissionStartPlayerTypeSetting = function() c.playerTypeInits = (c.playerTypeInits or 0) + 1 end
+    env.TppSave.VarSave = noop
+    env.TppVarInit = {InitializeForContinue = function()
+        c.continueInits = (c.continueInits or 0) + 1
+        env.TppSave.VarRestoreOnContinueFromCheckPoint()
+    end, InitializeForNewMission = function()
+        c.missionInits = (c.missionInits or 0) + 1
+        env.TppSave.VarRestoreOnMissionStart()
+    end, ClearIsContinueFromTitle = function()
+        c.titleClears = (c.titleClears or 0) + 1
+        env.gvars.isContinueFromTitle = false
+    end}
     env.TppMain = {EnablePause = noop, EnableBlackLoading = noop, DisableGameStatus = noop}
     env.e = env.TppMain
     local function compile(text)
@@ -118,6 +133,7 @@ local function fixture(host, target, level, active)
     end
     compile('local e=TppMission\n' .. continueSource .. loadSource)
     compile('local e=TppMain\n' .. reserveSource)
+    compile('function TppMain.TestAllocationTitleContext(n)\n' .. allocationTitleSource .. '\nend')
     local W = {OP = OP, handlers = {}, startHooks = {}, pairedHooks = {}, unpairedHooks = {}, stopHooks = {},
         level = level or 3, role = host and 1 or 2, host = host, active = active ~= false, mission = 40020,
         epoch = 7, paired = true, eff = 3, isStarted = true}
@@ -155,6 +171,35 @@ local function transfer(h, g, omitEnd)
         end
     end
 end
+local titleHost, titleGuest = fixture(true, 30050), fixture(false, 30050)
+titleHost.env.gvars.isContinueFromTitle = true
+titleGuest.env.gvars.ini_isTitleMode, titleGuest.env.gvars.ini_isReturnToTitle = true, true
+hostContinue(titleHost); transfer(titleHost, titleGuest); titleGuest.F.tick(titleGuest.time)
+check(titleGuest.F.current and titleGuest.restoreTitle and titleGuest.restoreTitle[1] == false and
+    titleGuest.restoreTitle[2] == false and titleGuest.restoreTitle[3] == true,
+    'authenticated title Continue copies host title context before the actual guest checkpoint restore')
+titleGuest.env.TppMission.LoadWithChunkCheck(); titleGuest.W.stop(true)
+titleGuest.env.TppMain.TestAllocationTitleContext({})
+check(titleGuest.continueInits == 1 and titleGuest.titleClears == 1 and not titleGuest.playerTypeInits and
+    titleGuest.env.vars.missionCode == 30050 and titleGuest.env.vars.initialPlayerPosX == -123.125,
+    'exact OnAllocate title decision enters checkpoint initialization after host-only Continue, preserving host spawn')
+check(titleGuest.env.gvars.ini_isTitleMode == false and titleGuest.env.gvars.ini_isReturnToTitle == false and
+    titleGuest.env.gvars.isContinueFromTitle == false,
+    'actual allocation branch clears the one-shot Continue-from-title context')
+titleGuest.env.TppMain.StageBlockCurrentPosition()
+titleGuest.env.TppSave.VarRestoreOnContinueFromCheckPoint()
+check(titleGuest.env.gvars.isContinueFromTitle == false and titleGuest.env.gvars.ini_isTitleMode == false,
+    'later StageBlock and restore seed reapplication cannot revive cleared title context')
+local titleLogs = 0
+for _, line in ipairs(titleGuest.logs) do
+    if line:find('step=title_context;', 1, true) then
+        titleLogs = titleLogs + 1
+        check(#line < 256 and line:find('title_before=1;title_after=0', 1, true) and
+            line:find('return_before=1;return_after=0', 1, true) and line:find('continue_before=0;continue_after=1', 1, true),
+            'bounded title receipt records actual before/after state')
+    end
+end
+check(titleLogs == 1, 'accepted guest transition applies title context exactly once')
 for _, target in ipairs({30020, 30010, 30050}) do
     local h, g = fixture(true, target), fixture(false, target)
     hostContinue(h); transfer(h, g); g.F.tick(g.time)
@@ -208,11 +253,15 @@ local stage = deploymentGuest.stages[#deploymentGuest.stages]
 check(deploymentHost.F.outgoing[2] == 6 and stage[3] == -123.125 and stage[4] == 456.875 and stage[5] == 34.625,
     'real source-helicopter deployment Reserve cannot stage stale guest landing-zone prep over host seed pose')
 local h, blocked = fixture(true, 30020), fixture(false, 30020)
+blocked.env.gvars.ini_isTitleMode, blocked.env.gvars.ini_isReturnToTitle = true, true
 hostContinue(h); transfer(h, blocked, true); blocked.F.tick(blocked.time)
 check(not blocked.restores and not blocked.env.mvars.mis_loadRequest and not blocked.loaded,
     'missing completed seed stream prevents actual Continue and all load side effects')
+check(blocked.env.gvars.ini_isTitleMode and blocked.env.gvars.ini_isReturnToTitle and not blocked.env.gvars.isContinueFromTitle,
+    'incomplete seed stream cannot dismiss the guest title context')
 for _, settings in ipairs({{0, true}, {3, false}}) do
     local untouched = fixture(false, 30020, settings[1], settings[2])
+    untouched.env.gvars.ini_isTitleMode, untouched.env.gvars.ini_isReturnToTitle = true, true
     untouched.env.TppMission.ExecuteContinueFromCheckPoint()
     local request = untouched.env.mvars.mis_loadRequest
     check(request and request.nextMission == 40020 and request.currentMission == 40020,
@@ -220,9 +269,14 @@ for _, settings in ipairs({{0, true}, {3, false}}) do
     untouched.env.TppMission.LoadWithChunkCheck()
     check(untouched.reloaded == 40020 and not untouched.loaded and untouched.chunkChecks[1] == 20,
         'inert Load follows exact vanilla RequestToReload path and original chunk')
+    untouched.env.TppMain.TestAllocationTitleContext({})
+    check(untouched.env.gvars.ini_isTitleMode and untouched.env.gvars.ini_isReturnToTitle and
+        untouched.playerTypeInits == 1 and not untouched.continueInits and not untouched.titleClears,
+        'level0/inactive exact allocation retains vanilla title branch and flags')
 end
 local function invalidStream(filter, duplicateKey, why)
     local host, guest = fixture(true, 30020), fixture(false, 30020)
+    guest.env.gvars.ini_isTitleMode, guest.env.gvars.ini_isReturnToTitle = true, true
     hostContinue(host)
     local count, digest = 0, 0
     for _, p in ipairs(host.tx) do
@@ -239,13 +293,17 @@ local function invalidStream(filter, duplicateKey, why)
     end
     guest.W.handlers[OP.SEEDS_END]({host.F.outgoing[1], 30020, count, digest}, guest.time)
     guest.F.tick(guest.time)
-    check(guest.failure and not guest.restores and not guest.env.mvars.mis_loadRequest and not guest.loaded,
+    check(guest.failure and not guest.restores and not guest.env.mvars.mis_loadRequest and not guest.loaded and
+        guest.env.gvars.ini_isTitleMode and guest.env.gvars.ini_isReturnToTitle and not guest.env.gvars.isContinueFromTitle,
         why .. ' prevents every real Continue/VarRestore/load API')
 end
 invalidStream(function() return false end, nil, 'self-consistent empty stream')
 invalidStream(function(v) return v[3] == 1 end, nil, 'self-consistent partial stream')
 invalidStream(function(v) return v[3] < 19 end, nil, 'stream lacking all checkpoint pose/hash keys19..24')
 invalidStream(function() return true end, 1, 'self-consistent duplicate key/index stream')
+for missing = 25, 27 do
+    invalidStream(function(v) return v[3] ~= missing end, nil, 'stream missing mandatory title-context key ' .. missing)
+end
 local unreadable = fixture(true, 30020)
 unreadable.env.TppMission.ExecuteContinueFromCheckPoint()
 local request = unreadable.env.mvars.mis_loadRequest
@@ -253,6 +311,15 @@ unreadable.env.gvars.hosface_groupNumber = nil
 unreadable.env.TppMission.LoadWithChunkCheck()
 check(request and unreadable.env.mvars.mis_loadRequest == request and not unreadable.loaded and #unreadable.engine == 0,
     'actual host chunk/load wrapper retains pending request when mandatory seed is unreadable')
+for _, key in ipairs({'ini_isTitleMode', 'ini_isReturnToTitle', 'isContinueFromTitle'}) do
+    local host = fixture(true, 30020)
+    host.env.TppMission.ExecuteContinueFromCheckPoint()
+    local pending = host.env.mvars.mis_loadRequest
+    host.env.gvars[key] = nil
+    host.env.TppMission.LoadWithChunkCheck()
+    check(pending and host.env.mvars.mis_loadRequest == pending and not host.loaded and #host.engine == 0,
+        'actual host retains load request when required title flag is unreadable: ' .. key)
+end
 local heldHost, disabled = fixture(true, 30020), fixture(false, 30020)
 hostContinue(heldHost); transfer(heldHost, disabled); disabled.F.tick(disabled.time)
 disabled.env.TppMission.LoadWithChunkCheck(); disabled.W.stop(true)
