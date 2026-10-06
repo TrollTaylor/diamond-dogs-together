@@ -152,6 +152,7 @@ struct CfgReply {
     std::uint8_t level, role, proto, link;
     std::uint16_t epoch;
     std::uint8_t probe, mode;
+    std::uint32_t session; // Local transport generation; zero while disconnected.
 };
 
 struct RxReply {

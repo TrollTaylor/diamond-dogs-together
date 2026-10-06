@@ -69,9 +69,14 @@ void Cfg() {
     Check(!parse("30050 2") && !parse("30050") && !parse("30050  1") && !parse("030050 1") && !parse("100000 1") && !parse("30050 1 ") &&
               !parse("-1 1") && !parse("30050 -0") && !parse("3005.0 1") && !parse("+30050 1"),
           "strict CFG");
-    world::CfgReply r{3, 2, 1, 1, 65535, 15, 1};
+    world::CfgReply r{3, 2, 1, 1, 65535, 15, 1, 4294967295u};
     char out[world::reply_capacity];
-    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1") == 0, "CFG reply");
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,1,65535,15,1,4294967295") == 0,
+          "CFG first seven fields preserved, unsigned session appended");
+    r.link = 0; r.session = 0;
+    Check(world::FormatCfgReply(r, out, sizeof(out)) && std::strcmp(out, "return 3,2,1,0,65535,15,1,0") == 0, "disconnected CFG session zero");
+    char tiny[16];
+    Check(!world::FormatCfgReply(r, tiny, sizeof(tiny)) && tiny[0] == 0, "CFG insufficient buffer produces no partial reply");
 }
 
 void TxParse() {
