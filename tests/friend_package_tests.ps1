@@ -492,7 +492,7 @@ try {
     $packages = @(Get-ChildItem -LiteralPath $distFx -Directory)
     Assert-Equal $packages.Count 1 'one friend package staged'
     $pkg = $packages[0].FullName
-    Assert-True ($packages[0].Name -cmatch '^mgs-coop-friend-0\.11\.0-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$') 'package folder name'
+    Assert-True ($packages[0].Name -cmatch '^mgs-coop-friend-0\.11\.1-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$') 'package folder name'
     Assert-True (Test-Path -LiteralPath ($pkg + '.zip') -PathType Leaf) 'package zip written'
     $required = @('Install-Coop.bat', 'Play-Coop.bat', 'Uninstall-Coop.bat', 'Collect-Logs.bat', 'FRIEND-GUIDE.txt', 'RUNTIME-ARCHIVE.txt', 'package.json', 'source-files.json',
         'payload/dinput8.dll', 'payload/DYNAMITE-LICENSE', 'payload/MinHook-LICENSE.txt', 'payload/tpp-mod-LICENSE', 'payload/THIRD_PARTY_NOTICES.md',
@@ -546,7 +546,7 @@ try {
     $statusExample = [regex]::Match($guide, '\[HOST\] link=connected[^\r\n]+').Value
     Assert-Equal $statusExample (Format-CoopStatusLine -Status $st -Role host -NowUtc $now) 'the guide quotes the launcher status line exactly'
     $archiveNote = [IO.File]::ReadAllText((Join-Path $pkg 'RUNTIME-ARCHIVE.txt'))
-    Assert-True ($archiveNote.Contains('87BBE82BB1E907CF405200155DA2794BF7E1F5A3D45BF66426A38CDD31A91F96') -and $archiveNote.Contains('3,720,192') -and !$archiveNote.Contains('Ctrl+F8') -and !$archiveNote.Contains('SteamID')) 'archive note names hash and size, nothing of the online route'
+    Assert-True ($archiveNote.Contains('87BBE82BB1E907CF405200155DA2794BF7E1F5A3D45BF66426A38CDD31A91F96') -and $archiveNote.Contains('16,333,824') -and !$archiveNote.Contains('Ctrl+F8') -and !$archiveNote.Contains('SteamID')) 'archive note names hash and size, nothing of the online route'
 
     # ------------------------------------------------------------ installer fixtures
     # Steam fixture: account 7 with saves; staged package with fixture hashes and
