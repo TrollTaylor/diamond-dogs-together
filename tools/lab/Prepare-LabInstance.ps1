@@ -327,7 +327,9 @@ foreach ($r in $roles) {
 
 # ---------------------------------------------------------------- 4. saves
 if (!$SkipSaves) {
-    $backupDir = Join-Path $labRoot ('save-backups/' + $stamp)
+    # Back-to-back preparations may occur within the same second. Keep each
+    # read-only backup distinct rather than colliding with an earlier run.
+    $backupDir = Join-Path $labRoot ('save-backups/' + $stamp + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
     if (Confirm-LabAction $identity.UserData "Back up (read-only) 287700 and 311340 to $backupDir") {
         $manifest = Backup-RealSaves -UserData $identity.UserData -Destination $backupDir
         Write-JsonFile -Path (Join-Path $labRoot 'latest-save-backup.json') -Value ([ordered]@{ backup_dir = $backupDir; created_utc = $manifest.created_utc })

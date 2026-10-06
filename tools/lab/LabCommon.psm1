@@ -889,6 +889,7 @@ function New-LabPackage {
     $inputs = @(
         @{ key = 'dynamite'; path = (Join-Path $RepoRoot 'third_party/dynamite/LICENSE'); name = 'DYNAMITE-LICENSE'; target = 'mgs-coop/DYNAMITE-LICENSE' },
         @{ key = 'minhook'; path = (Join-Path $RepoRoot 'third_party/minhook/LICENSE.txt'); name = 'MinHook-LICENSE.txt'; target = 'mgs-coop/MinHook-LICENSE.txt' },
+        @{ key = 'imgui'; path = (Join-Path $RepoRoot 'third_party/imgui/LICENSE.txt'); name = 'ImGui-LICENSE.txt'; target = 'mgs-coop/ImGui-LICENSE.txt' },
         @{ key = 'tppmod'; path = (Join-Path $RepoRoot 'third_party/tpp-mod/LICENSE'); name = 'tpp-mod-LICENSE'; target = 'mgs-coop/tpp-mod-LICENSE' },
         @{ key = 'notices'; path = (Join-Path $RepoRoot 'THIRD_PARTY_NOTICES.md'); name = 'THIRD_PARTY_NOTICES.md'; target = 'mgs-coop/THIRD_PARTY_NOTICES.md' },
         @{ key = 'loader'; path = $LoaderPath; name = 'dinput8.dll'; target = 'dinput8.dll' }

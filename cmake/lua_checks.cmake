@@ -103,6 +103,7 @@ mgs_add_lua_check(session_feedback_lua_check "${_mgs_coop}/session_feedback.lua"
 mgs_add_lua_check(damage_parameters_lua_check "${_mgs_coop}/damage_parameters.lua")
 mgs_add_lua_check(damage_lifecycle_lua_check "${_mgs_coop}/damage_lifecycle.lua")
 mgs_add_lua_check(partner_sync_lua_check "${_mgs_coop}/partner_sync.lua")
+mgs_add_lua_check(debug_menu_lua_check "${_mgs_coop}/debug_menu.lua" "${_mgs_coop}/debug_equipment.lua")
 # World sync W0-W2 (docs/world-sync-protocol.md): the seven chunks, in splice order.
 set(_mgs_world_chunks "${_mgs_coop}/world_sync.lua" "${_mgs_coop}/world_enemy.lua" "${_mgs_coop}/world_outcome.lua"
   "${_mgs_coop}/world_phase.lua" "${_mgs_coop}/world_env.lua" "${_mgs_coop}/world_probe.lua" "${_mgs_coop}/world_goto.lua")
@@ -160,6 +161,26 @@ mgs_find_game_input(_mgs_world_tpp_player "startup-script-inspection-20260909/pa
   7407bd41dd82913edfe9ef7fbb344f443adc7399d42f86c7798ba6b02c94e5b9)
 if(_mgs_tpp_mission AND _mgs_tpp_main AND _mgs_world_tpp_player)
   mgs_add_lua_check(world_follow_game_lua_check "${_mgs_coop}/world_follow.lua" "${_mgs_tpp_mission}" "${_mgs_tpp_main}" "${_mgs_coop}/world_follow_seed.lua" "${_mgs_world_tpp_player}")
+endif()
+mgs_find_game_input(_mgs_debug_clock "debug-api-source-audit-20261006/lib/TppClock.lua"
+  12a3f7b1af62af4d74149aa7220af56b13c8502ea6b28d714f1875467794fc32)
+mgs_find_game_input(_mgs_debug_weather "debug-api-source-audit-20261006/lib/TppWeather.lua"
+  1042bfb11197d4778a741329abd5898c5d67907a6dd40e3c367a8e029530471d)
+mgs_find_game_input(_mgs_debug_enemy "debug-api-source-audit-20261006/lib/TppEnemy.lua"
+  f6a55d989a910cac907f57abf78d5a26ef2c580b7d84dda68c8c01ddd2c1a844)
+mgs_find_game_input(_mgs_debug_quest "debug-api-source-audit-20261006/lib/TppQuest.lua"
+  6d3e08b1817b79d1022cc471616a85f9e653fc0286ad54ef5bf5f933e85c9e34)
+mgs_find_game_input(_mgs_debug_weapon_sequence "debug-weapon-source-audit-20261006/package-01_fpkd/Assets/tpp/level/mission2/story/s10260/s10260_sequence.lua"
+  59c4dd532b25a09b3ba5dc495a729d39aa014a3548b6d0f19c567d82f2813356)
+mgs_find_game_input(_mgs_debug_spawn_sequence "debug-spawn-source-audit-20261006/package-02_fpkd/Assets/tpp/level/mission2/story/s10121/s10121_sequence.lua"
+  aff5b23d2f4630c90879b455d33374a8d0b7362e4ebffaba060ec22be949bebc)
+mgs_find_game_input(_mgs_debug_active_slot "debug-spawn-source-audit-20261006/package-00_fpkd/Assets/tpp/level/mission2/story/s10030/s10030_sequence.lua"
+  3616b5437ef537e63f925d90fd84922b982f7e4aebf710e1d25c4da105821776)
+if(_mgs_world_tpp_player AND _mgs_tpp_mission AND _mgs_debug_clock AND _mgs_debug_weather AND
+   _mgs_debug_enemy AND _mgs_debug_quest AND _mgs_debug_weapon_sequence AND _mgs_debug_spawn_sequence AND _mgs_debug_active_slot)
+  mgs_add_lua_check(debug_menu_game_lua_check "${_mgs_coop}/debug_menu.lua" "${_mgs_coop}/debug_equipment.lua"
+    "${_mgs_world_tpp_player}" "${_mgs_debug_clock}" "${_mgs_debug_weather}" "${_mgs_debug_enemy}"
+    "${_mgs_debug_quest}" "${_mgs_debug_weapon_sequence}" "${_mgs_debug_spawn_sequence}" "${_mgs_tpp_mission}" "${_mgs_debug_active_slot}")
 endif()
 
 if(TARGET mgs_bootstrap_patch)

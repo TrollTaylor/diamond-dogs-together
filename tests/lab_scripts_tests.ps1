@@ -1677,7 +1677,8 @@ try {
     $stage1 = Join-Path $fixture 'stage1'
     $null = New-LabPackage -RepoRoot $projectRoot -Destination $stage1 -LoaderPath $loader1 -Version '0.11.1' -ExecutableSha256 $exeHash -SteamDllSha256 $steamHash -ArchiveSha256 $archiveHash
     $package = Get-Content -LiteralPath (Join-Path $stage1 'package.json') -Raw | ConvertFrom-Json
-    Assert-Equal @($package.files).Count 5 'package has no runtime archive payload'
+    Assert-Equal @($package.files).Count 6 'package has loader and licenses with no runtime archive payload'
+    Assert-Equal ($package.files | Where-Object target -eq 'mgs-coop/ImGui-LICENSE.txt').sha256 (Get-Sha256 (Join-Path $projectRoot 'third_party/imgui/LICENSE.txt')) 'lab package preserves overlay MIT license'
     Assert-True (-not (@($package.files.target) -contains 'mgs-coop/mgs-coop-player-runtime.dat')) 'archive referenced by hash only'
     Assert-Equal $package.runtime_archive.sha256 $archiveHash 'archive hash recorded'
     Assert-InFixture $hostGame
@@ -1697,6 +1698,28 @@ try {
     # Upgrade reuses the installed archive.
     $stage2 = Join-Path $fixture 'stage2'
     $null = New-LabPackage -RepoRoot $projectRoot -Destination $stage2 -LoaderPath $loader2 -Version '0.11.1' -ExecutableSha256 $exeHash -SteamDllSha256 $steamHash -ArchiveSha256 $archiveHash
+    # A pre-overlay package and its seven-row rollback remain usable. Upgrading
+    # it adds the MIT license; restoring removes only that newly owned file.
+    $legacyStage = Join-Path $fixture 'legacy-stage'
+    $null = New-LabPackage -RepoRoot $projectRoot -Destination $legacyStage -LoaderPath $loader1 -Version '0.11.1' -ExecutableSha256 $exeHash -SteamDllSha256 $steamHash -ArchiveSha256 $archiveHash
+    $legacyManifest = Get-Content -LiteralPath (Join-Path $legacyStage 'package.json') -Raw | ConvertFrom-Json
+    $legacyManifest.files = @($legacyManifest.files | Where-Object { $_.target -cne 'mgs-coop/ImGui-LICENSE.txt' })
+    [IO.File]::WriteAllText((Join-Path $legacyStage 'package.json'), ($legacyManifest | ConvertTo-Json -Depth 5))
+    $legacyGame = Join-Path $games 'legacy-game'
+    Assert-InFixture $legacyGame
+    $null = New-Item -ItemType Directory -Path $legacyGame
+    foreach ($name in 'mgsvtpp.exe', 'steam_api64.dll') { Copy-Item -LiteralPath (Join-Path $hostGame $name) -Destination $legacyGame }
+    $null = & $installer -Action Install -GameDirectory $legacyGame -PackageDirectory $legacyStage -RuntimeArchive $archiveSource -NoPrompt
+    $legacyRecord = Get-Content -LiteralPath (Join-Path $legacyGame 'mgs-coop/probe-install.json') -Raw | ConvertFrom-Json
+    $legacyRollback = Get-Content -LiteralPath (Join-Path $legacyGame ("mgs-coop/install-backups/$($legacyRecord.rollback_id)/rollback.json")) -Raw | ConvertFrom-Json
+    Assert-Equal @($legacyRollback.files).Count 7 'legacy rollback inventory remains supported'
+    $null = & $installer -Action Install -GameDirectory $legacyGame -PackageDirectory $stage2 -NoPrompt
+    Assert-True (Test-Path -LiteralPath (Join-Path $legacyGame 'mgs-coop/ImGui-LICENSE.txt')) 'upgrade installs the new overlay license'
+    $null = & $installer -Action Restore -GameDirectory $legacyGame
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $legacyGame 'mgs-coop/ImGui-LICENSE.txt'))) 'upgrade rollback removes only its added license'
+    Assert-Equal (Get-Sha256 (Join-Path $legacyGame 'dinput8.dll')) (Get-Sha256 $loader1) 'upgrade rollback returns legacy loader'
+    $null = & $installer -Action Restore -GameDirectory $legacyGame
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $legacyGame 'dinput8.dll'))) 'legacy seven-row rollback still restores the original installation'
     $null = & $installer -Action Install -GameDirectory $hostGame -PackageDirectory $stage2 -NoPrompt
     Assert-Equal (Get-Sha256 (Join-Path $hostGame 'dinput8.dll')) (Get-Sha256 $loader2) 'upgrade without -RuntimeArchive reuses the installed archive'
     # The guest folder starts as a copy of the host folder (record names the host).
@@ -1712,7 +1735,7 @@ try {
     Assert-Equal (Get-Sha256 (Join-Path $guestGame 'dinput8.dll')) (Get-Sha256 $loader1) 'guest loader installed'
     Assert-Equal (Get-Sha256 (Join-Path $hostGame 'dinput8.dll')) (Get-Sha256 $loader2) 'host untouched by the guest install'
     $rollback = Get-Content -LiteralPath (Join-Path $guestGame ("mgs-coop/install-backups/$($guestRecord.rollback_id)/rollback.json")) -Raw | ConvertFrom-Json
-    Assert-Equal @($rollback.files).Count 7 'guest rollback inventory complete'
+    Assert-Equal @($rollback.files).Count 8 'guest rollback inventory complete'
     $null = & $installer -Action Restore -GameDirectory $guestGame
     Assert-Equal (Get-Sha256 (Join-Path $guestGame 'dinput8.dll')) (Get-Sha256 $loader2) 'guest restore returns the copied loader'
     Assert-Equal (Get-Content -LiteralPath (Join-Path $guestGame 'mgs-coop/probe-install.json') -Raw | ConvertFrom-Json).game_directory $hostGame 'guest restore returns the copied record'

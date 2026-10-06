@@ -1295,7 +1295,8 @@ do
     check(not c7.W.active and has(c7.logs, 'event=inactive;reason=missing_required;names=Fox.StrCode32'), 'a missing required binding')
 end
 
--- The seven chunks inside the composed TppMain (exact splice; inert with a literal CFG).
+-- The world and debug chunks inside the composed TppMain (exact splice;
+-- inert with literal native receipts).
 local composedRuns = 0
 if arg[8] then
     local function slurp(path)
@@ -1321,8 +1322,15 @@ if arg[8] then
         check(composed:find(spliced, at, true) == at and not composed:find(spliced, at + 1, true), 'extension chunk spliced once')
         at = at + #spliced
     end
+    local coopDir = assert(FILES[1]:match('^(.*[/\\])'), 'world chunk directory')
+    for _, name in ipairs({'debug_menu.lua', 'debug_equipment.lua'}) do
+        local spliced = '\n' .. slurp(coopDir .. name) .. '\n'
+        check(composed:find(spliced, at, true) == at and not composed:find(spliced, at + 1, true),
+            name .. ' spliced once, byte-identical, directly after the previous chunk')
+        at = at + #spliced
+    end
     check(composed:find('-- Adapted from Dynamite TppMain marker-loading lifecycle', at, true) == at, 'then the marker lifecycle chunk')
-    local function run()
+    local function run(disableDebug)
         local r = {receipts = {}, calls = {}}
         local function record(text) r.calls[#r.calls + 1] = text end
         local function stub(name)
@@ -1356,6 +1364,13 @@ if arg[8] then
         setfenv(chunk, env)
         local mod = chunk()
         check(type(mod) == 'table' and type(mod.MgsCoopWorld) == 'table', 'composed module publishes e.MgsCoopWorld')
+        check(type(mod.MgsCoopDebug) == 'table' and type(mod.MgsCoopDebug.equipment) == 'table',
+            'composed module publishes debug core and equipment')
+        if disableDebug then
+            -- Execute the same composition with only its optional debug
+            -- callbacks inert, to compare the original game's call trace.
+            mod.MgsCoopDebug.update, mod.MgsCoopDebug.stop = function() end, function() end
+        end
         local mission = {sequence = {OnTerminate = function() record('sequence.OnTerminate') end}}
         local ok, err = pcall(mod.OnMissionGameStart, mission)
         check(ok, 'composed OnMissionGameStart: ' .. tostring(err))
@@ -1376,6 +1391,21 @@ if arg[8] then
     local terminated = false
     for _, v in ipairs(r.calls) do if v == 'sequence.OnTerminate' then terminated = true end end
     check(terminated, 'the original OnTerminate ran')
+    local baseline = run(true)
+    check(#r.calls == #baseline.calls, 'literal debug receipts add no game-binding calls')
+    for i, name in ipairs(r.calls) do
+        check(name == baseline.calls[i], 'literal debug receipts preserve game-binding call order: ' .. i)
+    end
+    local debugCmd, debugState = 0, 0
+    local baselineWorld = {}
+    for _, s in ipairs(r.receipts) do
+        if s == "return 'MGS_COOP_DEBUG_CMD_V1'" then debugCmd = debugCmd + 1
+        elseif starts(s, "return 'MGS_COOP_DEBUG_STATE_V1' -- ") then debugState = debugState + 1
+        elseif starts(s, "return 'MGS_COOP_DEBUG_") then check(false, 'idle debug composition emitted an action receipt') end
+    end
+    for _, s in ipairs(baseline.receipts) do if starts(s, PRE) then baselineWorld[#baselineWorld + 1] = s end end
+    check(debugCmd == 3 and debugState == 1, 'idle debug composition only polls and reports cleanup state')
+    check(#baselineWorld == #world and baselineWorld[1] == world[1], 'idle debug preserves literal world CFG receipt')
 end
 
 print(checks .. ' world sync Lua checks passed: inert literal CFG (2 loads per mission), receipts < 256 bytes, %.0f hashes, ' ..

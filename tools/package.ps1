@@ -50,6 +50,7 @@ $null=New-Item -ItemType Directory -Path (Join-Path $packageRoot 'payload')
 $inputs=@(
     @{path=(Join-Path $projectRoot 'third_party/dynamite/LICENSE');name='DYNAMITE-LICENSE';target='mgs-coop/DYNAMITE-LICENSE'},
     @{path=(Join-Path $projectRoot 'third_party/minhook/LICENSE.txt');name='MinHook-LICENSE.txt';target='mgs-coop/MinHook-LICENSE.txt'},
+    @{path=(Join-Path $projectRoot 'third_party/imgui/LICENSE.txt');name='ImGui-LICENSE.txt';target='mgs-coop/ImGui-LICENSE.txt'},
     @{path=(Join-Path $projectRoot 'third_party/tpp-mod/LICENSE');name='tpp-mod-LICENSE';target='mgs-coop/tpp-mod-LICENSE'},
     @{path=(Join-Path $projectRoot 'THIRD_PARTY_NOTICES.md');name='THIRD_PARTY_NOTICES.md';target='mgs-coop/THIRD_PARTY_NOTICES.md'},
     @{path=$dll;name='dinput8.dll';target='dinput8.dll'}
@@ -123,7 +124,7 @@ $sourceRoot=Join-Path $packageRoot 'source'
 $extensions=@('.cpp','.hpp','.h','.c','.in','.lua','.ps1','.psm1','.py','.cmake','.txt','.md','.json','.def','.rc','.bat','.vdf')
 Push-Location $projectRoot
 try {
-    $sourceFiles=@(& rg --files --hidden native lua tools tests third_party data -g '!.git' -g '!__pycache__' -g '!*.exe' -g '!*.dll' -g '!*.obj')
+    $sourceFiles=@(& rg --files --hidden native lua tools tests third_party data cmake -g '!.git' -g '!__pycache__' -g '!*.exe' -g '!*.dll' -g '!*.obj')
     if($LASTEXITCODE -ne 0) { throw 'Could not enumerate source files.' }
     $sourceFiles+=@(& rg --files docs -g '*.md')
     if($LASTEXITCODE -ne 0) { throw 'Could not enumerate source documentation.' }

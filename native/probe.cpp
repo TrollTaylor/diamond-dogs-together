@@ -7,6 +7,7 @@
 #include <strsafe.h>
 #include "mgscoop/steam_observer.hpp"
 #include "mgscoop/early_patches.hpp"
+#include "mgscoop/debug_overlay.hpp"
 
 #if !defined(_M_X64) && !defined(__x86_64__)
 #error The MGS Co-op probe supports only Windows x64.
@@ -193,7 +194,10 @@ extern "C" HRESULT WINAPI DirectInput8Create(HINSTANCE instance, DWORD version, 
     else if (output) *output = nullptr;
     const DWORD forwarded_error = GetLastError();
     InitOnceExecuteOnce(&probe_once, RecordProbe, &result, nullptr);
-    if (SUCCEEDED(result)) InstallSteamCallbackObserver();
+    if (SUCCEEDED(result)) {
+        InstallSteamCallbackObserver();
+        mgscoop::debug_overlay::Install();
+    }
     SetLastError(forwarded_error);
     return result;
 }

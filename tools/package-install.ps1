@@ -30,7 +30,9 @@ $modRoot=Join-Path $gameRoot 'mgs-coop'
 $manifestPath=Join-Path $modRoot 'probe-install.json'
 $archiveTarget='mgs-coop/mgs-coop-player-runtime.dat'
 $allowed=@($archiveTarget,'mgs-coop/DYNAMITE-LICENSE','mgs-coop/MinHook-LICENSE.txt',
-    'mgs-coop/tpp-mod-LICENSE','mgs-coop/THIRD_PARTY_NOTICES.md','dinput8.dll','mgs-coop/probe-install.json')
+    'mgs-coop/ImGui-LICENSE.txt','mgs-coop/tpp-mod-LICENSE','mgs-coop/THIRD_PARTY_NOTICES.md','dinput8.dll','mgs-coop/probe-install.json')
+# Retain owned rollback/install compatibility with packages from before the overlay.
+$legacyAllowed=@($allowed | Where-Object { $_ -cne 'mgs-coop/ImGui-LICENSE.txt' })
 function Hash([string]$Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash }
 function RunningFromGame {
     # Only mgsvtpp/mgsvmgo processes whose executable is in this folder block the
@@ -113,8 +115,10 @@ try {
         RequireHash (SafePath $gameRoot 'dinput8.dll') $installed.dll_sha256
         $backupRoot=SafePath $gameRoot ('mgs-coop/install-backups/'+$installed.rollback_id)
         $record=Get-Content -LiteralPath (Join-Path $backupRoot 'rollback.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $recordAllowed=if(@($record.files.target) -ccontains 'mgs-coop/ImGui-LICENSE.txt') { $allowed } else { $legacyAllowed }
         if($record.product -ne 'mgs-coop-package-rollback' -or $record.game_directory -ne $gameRoot -or
-            @($record.files).Count -ne $allowed.Count -or @($record.files.target | Select-Object -Unique).Count -ne $allowed.Count) { throw 'Invalid rollback file inventory.' }
+            @($record.files).Count -ne $recordAllowed.Count -or @($record.files.target | Select-Object -Unique).Count -ne $recordAllowed.Count -or
+            @($record.files.target | Where-Object { $_ -cnotin $recordAllowed }).Count) { throw 'Invalid rollback file inventory.' }
         RestoreFiles $record.files $backupRoot
         Write-Output 'Previous loader and managed mod files restored. Role configuration and logs are retained.'
         return
@@ -122,9 +126,11 @@ try {
     $package=Get-Content -LiteralPath (Join-Path $packageRoot 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     # Older packages bundled the archive; current packages record only its hash.
     $bundlesArchive=@($package.files | ForEach-Object { $_.target }) -contains $archiveTarget
-    $packageFileCount=if($bundlesArchive) { $allowed.Count-1 } else { $allowed.Count-2 }
+    $packageAllowed=if(@($package.files.target) -ccontains 'mgs-coop/ImGui-LICENSE.txt') { $allowed } else { $legacyAllowed }
+    $packageFileCount=if($bundlesArchive) { $packageAllowed.Count-1 } else { $packageAllowed.Count-2 }
     if($package.product -ne 'mgs-coop-local-package' -or $package.version -ne '0.11.1' -or
-        @($package.files).Count -ne $packageFileCount -or @($package.files.target | Select-Object -Unique).Count -ne $packageFileCount) { throw 'Unexpected package manifest.' }
+        @($package.files).Count -ne $packageFileCount -or @($package.files.target | Select-Object -Unique).Count -ne $packageFileCount -or
+        @($package.files.target | Where-Object { $_ -cnotin $packageAllowed -or $_ -ceq 'mgs-coop/probe-install.json' }).Count) { throw 'Unexpected package manifest.' }
     $archiveHash=$null
     if($bundlesArchive) {
         if($RuntimeArchive) { throw 'This package bundles the runtime archive; do not pass -RuntimeArchive.' }

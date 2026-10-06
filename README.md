@@ -4,7 +4,7 @@ An in-development campaign co-op mod for **Metal Gear Solid V: The Phantom Pain*
 
 **Current development version: 0.11.1.** This prototype uses our own offline UDP link and separate co-op save copies. Normal Afghanistan, Africa and Mother Base packs support a second player body.
 
-The current build verifies both players on foot in Africa after host-only title Continue, independent movement, initial enemy alignment and checkpoint copying. An injected guest death opens Mission Failed on both games; host-only native Continue restores both to the shared checkpoint and resumes enemy sync. Host-only travel from Africa follows through ACC into Afghanistan, with both players using the fresh helicopter entry and moving independently on the ground. Both games close normally and all ten real save/config files remain unchanged. The lab configuration and activation markers are disabled after the test. [Build-specific live evidence](docs/testing-2026-10-05-world-sync.md), [current status](docs/STATUS.md).
+The debug-menu build was tested with both players on foot in Afghanistan after host-only title Continue. Live checks cover F9 input capture and restored movement, teleports and bookmark return, a visible equipped-weapon pickup, inventory refill feedback, daylight and rain. The earlier world-sync build also verified Africa, checkpoint copying, injected shared death, host-only Continue recovery and Africa–ACC–Afghanistan travel. Each build's receipts and limitations are recorded separately. [Build-specific live evidence](docs/testing-2026-10-05-world-sync.md), [current status](docs/STATUS.md).
 
 For the configured single-PC lab, launch both copies with world sync enabled:
 
@@ -14,7 +14,16 @@ pwsh -File tools/lab/Play-OfflineCoop.ps1 -World 3
 
 Double-click [Play-World-Coop.bat](Play-World-Coop.bat) for the same world-level-3 launch.
 
-All 78 automated suites pass in aggregate after the lab installer test was rerun separately; the latest arrival/title/recovery checks pass 11/11. The focused lab cleanup suite also passes.
+In an offline copied-save session, **F9** opens the Dear ImGui debug menu. Mouse and keyboard navigation operate the menu; F9 closes it and restores game control. Actions run on the game's natural Lua update, with feedback in the menu and `mgs-coop/script-observer.log`. They are refused outside supported on-foot gameplay, including demos, loading and game-over. The menu provides:
+
+- Position/yaw readouts, eight teleport bookmarks, return-to-bookmark and coordinate/relative teleports.
+- Infinite ammo, refill the currently loaded hip/back/secondary gun, and local pickups of equipped weapons/items. Select guns with normal game controls; arbitrary unloaded guns are refused.
+- Nearest authored guard inspection, enable/disable and bounded nearby enemy clearing. These operate on existing mission guards; creating a new soldier at an arbitrary position is not implemented.
+- Host time/weather controls and partner movement/animation presets, manual locomotion clips, transform/heading errors and network telemetry.
+
+The default partner animation map currently has 13 locomotion/stance clips. Gun actions, aiming, firing and full turn animations are not transported yet. Changing a debug preset does not implement those missing actions. Spawned pickups and guard enable/disable are local debug operations; they do not establish replication of new objects.
+
+All 82 automated suites pass in aggregate, including native graphics/input fixtures, actual retail Lua composition, guarded debug commands and new/legacy installer rollback. The final wording-only build also passes 13 focused debug/bootstrap/composition checks.
 
 Both copied-save games must first reach the same supported scene. Unknown enemy states stay held until their areas load; alignment does not establish identical AI or positions. A real two-PC session, full campaign/progression and physical damage death remain unverified. ACC has no partner body, and story missions and alternate packs such as `30011` are excluded. [World-sync design](docs/world-sync-design.md).
 
@@ -22,7 +31,7 @@ Both copied-save games must first reach the same supported scene. Unknown enemy 
 
 - An original x64 DirectInput loader with exact-build script and actor guards. The local 13-entry runtime archive replaces each supported mission's single-player controller with one two-player controller. Afghanistan retains its scarf controller type; Africa and Mother Base use the normal type. Live field tests verified both player bodies and movement on two independently controlled game instances. Game-derived archive files stay local and are never committed or bundled.
 - Our own offline UDP link sends player pose, appearance and movement data between the two games. The single-PC lab uses separate save copies; the friend launcher also activates co-op only for a copied-save session. The older native Steam-session experiments below are historical groundwork, separate from this active transport.
-- Experimental shared enemy outcomes, alerts, clock and weather, with live W0–W2 evidence from fresh Afghanistan free roam. The current build follows host title Continue and Africa–ACC–Afghanistan travel, then accepts an initial host snapshot. A preceding build also verified Mother Base–ACC–Afghanistan travel. Unreadable enemy states stay unknown until their areas load. Checkpoint copying and injected shared death have current-build receipts; host-only native menu Continue reloads both copies at the shared checkpoint and resumes enemy sync. Hospital, story sequences, side-op progression, rewards, vehicles and full campaign support remain unverified.
+- Experimental shared enemy outcomes, alerts, clock and weather, with live W0–W2 evidence from fresh Afghanistan free roam. Earlier world builds verified host title Continue, Africa–ACC–Afghanistan and Mother Base–ACC–Afghanistan travel, initial enemy alignment, checkpoint copying and injected shared death/Continue recovery. The debug build retains that logic, with separate Afghanistan menu evidence. Unreadable enemy states stay unknown until their areas load. Hospital, story sequences, side-op progression, rewards, vehicles and full campaign support remain unverified.
 - A checked import-table parser and pointer patch, plus a lifecycle-gated Steam context reader. The live callback trace demonstrates multiple callback threads; it does not establish a Lua owner thread. The context reader is tested but not yet called against the live game.
 - An original bounded debugger observation that captured the game's natural network registrar entry and matching return, skipped a nested return, and detached successfully. A read-only external sampler reads independently mapped mission/player fields; startup samples do not establish an active actor or playable mission.
 - A separate live startup capture recorded the game's own Steam initialization returning true and detached cleanly. This established one successful call; that experiment did not enable SDK access or multiplayer.

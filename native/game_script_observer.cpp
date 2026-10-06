@@ -38,6 +38,9 @@
 #include "mgscoop/early_patches.hpp"
 #include "mgscoop/world_link.hpp"
 #include "mgscoop/world_receipt.hpp"
+#include "mgscoop/debug_menu.hpp"
+#include <charconv>
+#include <cmath>
 #include <cstdarg>
 
 namespace {
@@ -584,6 +587,8 @@ std::uint32_t partner_mission = 0;
 // World receipts are quiet (TX/RX/LOG log no entry/return lines; CFG does).
 bool world_on = false;
 thread_local bool world_quiet = false;
+thread_local bool debug_quiet = false;
+thread_local char debug_reply[320]{};
 // Crash-probe context flags: bit0 input window armed, bit1 DM patch applied.
 std::uint32_t PartnerCtxFlags() noexcept {
     return (partner_driver.mission.input_armed ? 1u : 0u) | (partner_driver.mission.dm_patched ? 2u : 0u);
@@ -591,6 +596,7 @@ std::uint32_t PartnerCtxFlags() noexcept {
 
 void PartnerMissionStart(std::uint32_t mission) noexcept {
     if (!partner_on) return;
+    mgscoop::debug_menu::BeginMission(mission);
     pd::MissionStart(partner_driver, partner_hooks, mission);
     mgscoop::partner_net::ResetRemote();
     mgscoop::partner_net::SetEpoch(mission);
@@ -600,6 +606,7 @@ void PartnerMissionStart(std::uint32_t mission) noexcept {
 }
 void PartnerMissionEnd() noexcept {
     if (!partner_on) return;
+    mgscoop::debug_menu::EndMission();
     pd::MissionEnd(partner_driver, partner_hooks);
     mgscoop::partner_net::ResetRemote();
     mgscoop::partner_net::SetEpoch(0);
@@ -683,6 +690,143 @@ const char* HandlePartnerTick(const char* buffer, std::size_t size) noexcept {
     const std::uint64_t ended_us = QpcMicros();
     mgscoop::partner_net::RecordNativeMicros(Clamp32(ended_us >= started_us ? ended_us - started_us : 0));
     return partner_reply;
+}
+
+void PublishDebugSnapshot() noexcept {
+    namespace debug = mgscoop::debug_menu;
+    if (!debug::Enabled()) return;
+    const auto now = mgscoop::partner_net::NowMs();
+    static std::uint64_t published_ms = 0;
+    if (now >= published_ms && now - published_ms < 100) return;
+    published_ms = now;
+    debug::Snapshot snapshot{};
+    const auto& settings = partner_driver.settings;
+    const auto& mission = partner_driver.mission;
+    const auto& config = mgscoop::GetLabConfig();
+    const auto link = mgscoop::partner_net::GetLinkInfo();
+    snapshot.tick_ms = now;
+    snapshot.mission = partner_mission;
+    snapshot.stage = settings.stage;
+    snapshot.world_level = config.world;
+    snapshot.realized = mission.realized;
+    snapshot.parts_loaded = mission.parts_loaded;
+    snapshot.range_hidden = mission.range_hidden;
+    snapshot.input_armed = mission.input_armed;
+    snapshot.body_valid = mission.body_ok;
+    snapshot.rtt_ms = link.rtt_ms;
+    snapshot.jitter_ms = link.jitter_ms;
+    snapshot.loss_permille = link.loss_permille;
+    snapshot.interp_ms = mgscoop::partner_net::EffectiveInterpMs(config.partner_interp_ms);
+    StringCchCopyA(snapshot.link_state, ARRAYSIZE(snapshot.link_state), mgscoop::partner_net::LinkStateName(link.state));
+    StringCchCopyA(snapshot.source, ARRAYSIZE(snapshot.source), mgscoop::PartnerSourceName(settings.source));
+    StringCchCopyA(snapshot.apply, ARRAYSIZE(snapshot.apply), mgscoop::PartnerApplyName(settings.apply));
+    StringCchCopyA(snapshot.anim, ARRAYSIZE(snapshot.anim), mgscoop::PartnerAnimName(settings.anim));
+    StringCchCopyA(snapshot.dm, ARRAYSIZE(snapshot.dm), mgscoop::PartnerDmName(settings.dm));
+    StringCchCopyA(snapshot.look, ARRAYSIZE(snapshot.look), mgscoop::PartnerLookName(settings.look));
+    if (mission.refusal) StringCchCopyA(snapshot.refusal, ARRAYSIZE(snapshot.refusal), mission.refusal);
+    pp::State current{};
+    if (pp::ReadState(partner_addresses, current) == pp::Refusal::none && current.vars_ok) {
+        snapshot.pose_valid = true;
+        for (unsigned i = 0; i < 3; ++i) snapshot.player_pos[i] = current.vars_pos[i];
+        if (current.slots_ok) snapshot.player_yaw = current.slot[0][3] * 57.2957795f;
+    }
+    if (mission.have_cmd) {
+        snapshot.remote_pos[0] = static_cast<float>(mission.cmd.x_mm) * 0.001f;
+        snapshot.remote_pos[1] = static_cast<float>(mission.cmd.y_mm) * 0.001f;
+        snapshot.remote_pos[2] = static_cast<float>(mission.cmd.z_mm) * 0.001f;
+        snapshot.remote_yaw = static_cast<float>(mission.cmd.yaw_mrad) * 0.0572957795f;
+    }
+    float error = 0;
+    for (unsigned i = 0; i < 3; ++i) {
+        snapshot.body_pos[i] = mission.body_pos[i];
+        const float delta = snapshot.body_pos[i] - snapshot.remote_pos[i];
+        error += delta * delta;
+    }
+    snapshot.position_error_m = std::sqrt(error);
+    if (mission.body_ok) {
+        const auto& q = mission.body_quat;
+        snapshot.body_yaw = std::atan2(2.0f * (q[3] * q[1] + q[0] * q[2]), 1.0f - 2.0f * (q[1] * q[1] + q[2] * q[2])) * 57.2957795f;
+        snapshot.heading_error_deg = std::remainder(snapshot.body_yaw - snapshot.remote_yaw, 360.0f);
+    }
+    const auto sample = mgscoop::partner_net::SampleRemote(snapshot.interp_ms);
+    snapshot.remote_age_ms = sample.age_ms;
+    debug::Publish(snapshot);
+}
+
+bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
+                        mgscoop::script_bridge::Replacement& replacement) noexcept {
+    namespace debug = mgscoop::debug_menu;
+    if (!debug::Enabled() || !buffer || !name || size >= 256 || std::strlen(name) != size ||
+        std::memcmp(buffer, name, size) != 0) return false;
+    constexpr char command[] = "return 'MGS_COOP_DEBUG_CMD_V1'";
+    constexpr char log[] = "return 'MGS_COOP_DEBUG_LOG_V1' -- ";
+    constexpr char state[] = "return 'MGS_COOP_DEBUG_STATE_V1' -- ";
+    constexpr char partner_control[] = "return 'MGS_COOP_DEBUG_PARTNER_V1' -- ";
+    const bool is_command = size == sizeof(command) - 1 && std::memcmp(buffer, command, size) == 0;
+    const bool is_log = size >= sizeof(log) - 1 && std::memcmp(buffer, log, sizeof(log) - 1) == 0;
+    const bool is_state = size >= sizeof(state) - 1 && std::memcmp(buffer, state, sizeof(state) - 1) == 0;
+    const bool is_partner = size >= sizeof(partner_control) - 1 && std::memcmp(buffer, partner_control, sizeof(partner_control) - 1) == 0;
+    if (!is_command && !is_log && !is_state && !is_partner) return false;
+    if (!OnRuntimeThread() && !(is_log || is_state ? OnTerminationThread() : false)) return false;
+    const char* reply = "return nil";
+    if (is_command) {
+        PublishDebugSnapshot();
+        unsigned short read_mission = 0;
+        debug::Command pending{};
+        if (!mission_terminating && ReadMission(read_mission) && read_mission == partner_mission &&
+            mgscoop::SupportsPartnerBody(read_mission) && debug::Pop(pending)) {
+            const auto snapshot = debug::GetSnapshot();
+            StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {id=%u,text=\"%s\",host=%s,paired=%s,mission=%u}", pending.id, pending.text,
+                snapshot.host ? "true" : "false", std::strcmp(snapshot.link_state, "connected") == 0 ? "true" : "false", partner_mission);
+            reply = debug_reply;
+            LogFormat("debug_menu=dispatch; id=%u; text=%s; generation=%u\r\n", pending.id, pending.text, pending.generation);
+        }
+    } else if (is_partner) {
+        // The Lua owner emits this only after public gameplay/on-foot/demo checks.
+        // Recheck native mission ownership before changing the partner driver.
+        reply = "return false";
+        const char* start = buffer + sizeof(partner_control) - 1;
+        const char* end = buffer + size;
+        std::uint32_t id = 0;
+        unsigned short mission = 0;
+        const auto parsed = std::from_chars(start, end, id);
+        if (parsed.ec == std::errc{} && id && parsed.ptr < end && *parsed.ptr == ' ' &&
+            end - parsed.ptr - 1 <= 160 && partner_gate_ok && !mission_terminating &&
+            ReadMission(mission) && mission == partner_mission && mgscoop::SupportsPartnerBody(mission)) {
+            char text[161]{};
+            const auto text_size = static_cast<std::size_t>(end - parsed.ptr - 1);
+            std::memcpy(text, parsed.ptr + 1, text_size);
+            partner::Trigger trigger{};
+            const bool accepted = partner::ParseTrigger(text, text_size, trigger);
+            if (accepted) pd::ApplyTrigger(partner_driver, partner_hooks, trigger, false);
+            reply = accepted ? "return true" : "return false";
+            LogFormat("debug_menu=partner; id=%u; accepted=%u; text=%s\r\n", id, unsigned(accepted), text);
+        }
+    } else {
+        const char* cursor = buffer + (is_log ? sizeof(log) - 1 : sizeof(state) - 1);
+        const char* end = buffer + size;
+        std::uint32_t first = 0, second = 0;
+        const auto a = std::from_chars(cursor, end, first);
+        if (a.ec == std::errc{} && a.ptr < end && *a.ptr == ' ') {
+            const auto b = std::from_chars(a.ptr + 1, end, second);
+            if (b.ec == std::errc{}) {
+                if (is_state && b.ptr == end && first <= 1 && second <= 255) debug::LuaState(first == 1, second);
+                else if (is_log && b.ptr < end && *b.ptr == ' ' && second <= 1) {
+                    char message[192]{};
+                    const auto n = static_cast<std::size_t>(end - b.ptr - 1);
+                    if (n < sizeof(message)) {
+                        std::memcpy(message, b.ptr + 1, n);
+                        debug::Result(first, second == 1, message);
+                        LogFormat("debug_menu=result; id=%u; ok=%u; message=%s\r\n", first, second, message);
+                    }
+                }
+            }
+        }
+        reply = "return true";
+    }
+    replacement = {reply, std::strlen(reply)};
+    debug_quiet = true;
+    return true;
 }
 
 bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
@@ -983,6 +1127,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     AcquireSRWLockExclusive(&receipt_lock);
     struct Unlock { ~Unlock(){ ReleaseSRWLockExclusive(&receipt_lock); } } unlock;
     const auto count = InterlockedIncrement64(&entries);
+    if (SelectDebugReceipt(buffer, size, name, replacement)) return true;
     if(partner_on) {
         const auto partner_kind=partner::Classify(buffer,size,name);
         if(partner_kind!=partner::Receipt::none) return SelectPartnerReceipt(partner_kind,buffer,size,name,count,replacement);
@@ -1372,7 +1517,9 @@ void ObserveReturn(void*, int result, bool replaced) noexcept {
     const bool partner_was_quiet = pd::ConsumeReturn(partner_quiet);
     const bool world_was_quiet = world_quiet;
     world_quiet = false;
-    if (partner_was_quiet || world_was_quiet) { InterlockedIncrement64(&returns); return; }
+    const bool debug_was_quiet = debug_quiet;
+    debug_quiet = false;
+    if (partner_was_quiet || world_was_quiet || debug_was_quiet) { InterlockedIncrement64(&returns); return; }
     const auto count = InterlockedIncrement64(&returns);
     if (Sample(count) || replaced) {
         char line[256]{};
@@ -1429,6 +1576,9 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
             offline_saves_warn = true;
         }
     }
+    const auto& debug_config = mgscoop::GetLabConfig();
+    mgscoop::debug_menu::Configure(offline_enabled && debug_config.present && debug_config.partner && lab::SavesRedirected(),
+        debug_config.role != mgscoop::LabRole::guest, lab::SavesRedirected());
     if (play_saves_refused && script_log == INVALID_HANDLE_VALUE) {
         // Only the refusal is logged; nothing is installed.
         script_log = CreateFileW(log_path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,

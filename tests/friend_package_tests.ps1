@@ -495,16 +495,18 @@ try {
     Assert-True ($packages[0].Name -cmatch '^mgs-coop-friend-0\.11\.1-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$') 'package folder name'
     Assert-True (Test-Path -LiteralPath ($pkg + '.zip') -PathType Leaf) 'package zip written'
     $required = @('Install-Coop.bat', 'Play-Coop.bat', 'Uninstall-Coop.bat', 'Collect-Logs.bat', 'FRIEND-GUIDE.txt', 'RUNTIME-ARCHIVE.txt', 'package.json', 'source-files.json',
-        'payload/dinput8.dll', 'payload/DYNAMITE-LICENSE', 'payload/MinHook-LICENSE.txt', 'payload/tpp-mod-LICENSE', 'payload/THIRD_PARTY_NOTICES.md',
+        'payload/dinput8.dll', 'payload/DYNAMITE-LICENSE', 'payload/MinHook-LICENSE.txt', 'payload/ImGui-LICENSE.txt', 'payload/tpp-mod-LICENSE', 'payload/THIRD_PARTY_NOTICES.md',
         'scripts/Install-Coop.ps1', 'scripts/Play-Coop.ps1', 'scripts/Uninstall-Coop.ps1', 'scripts/Collect-Logs.ps1', 'scripts/FriendCommon.psm1', 'scripts/CoopPlay.psm1',
-        'scripts/install.ps1', 'source/tools/friend/Play-Coop.ps1', 'source/tools/CoopPlay.psm1', 'source/lua/coop/session_feedback.lua')
+        'scripts/install.ps1', 'source/tools/friend/Play-Coop.ps1', 'source/tools/CoopPlay.psm1', 'source/lua/coop/session_feedback.lua',
+        'source/cmake/lua_checks.cmake', 'source/native/debug_overlay.cpp', 'source/lua/coop/debug_menu.lua', 'source/third_party/imgui/imgui.cpp')
     foreach ($r in $required) { Assert-True (Test-Path -LiteralPath (Join-Path $pkg $r) -PathType Leaf) "package contains $r" }
     $wantScripts = @('Install-Coop.ps1', 'Play-Coop.ps1', 'Uninstall-Coop.ps1', 'Collect-Logs.ps1', 'FriendCommon.psm1', 'CoopPlay.psm1', 'install.ps1') | Sort-Object
     Assert-Equal ((@(Get-ChildItem -LiteralPath (Join-Path $pkg 'scripts') -File | ForEach-Object { $_.Name } | Sort-Object)) -join ',') ($wantScripts -join ',') 'scripts: exactly the play package pieces (no LabCommon.psm1, no set-session-mode.ps1)'
     Assert-Equal ((@(Get-ChildItem -LiteralPath $pkg -File -Filter '*.bat' | ForEach-Object { $_.Name } | Sort-Object)) -join ',') 'Collect-Logs.bat,Install-Coop.bat,Play-Coop.bat,Uninstall-Coop.bat' 'the four double-click entry points'
     $manifest = Get-Content -LiteralPath (Join-Path $pkg 'package.json') -Raw | ConvertFrom-Json
     Assert-Equal "$($manifest.product)|$($manifest.version)|$($manifest.flavor)" 'mgs-coop-local-package|0.11.1|friend-play' 'package manifest identity'
-    Assert-Equal @($manifest.files).Count 5 'five payload files (loader + licenses)'
+    Assert-Equal @($manifest.files).Count 6 'six payload files (loader + licenses)'
+    Assert-Equal ($manifest.files | Where-Object target -eq 'mgs-coop/ImGui-LICENSE.txt').sha256 (Get-Sha256 (Join-Path $projectRoot 'third_party/imgui/LICENSE.txt')) 'overlay MIT license packaged intact'
     Assert-Equal ($manifest.files | Where-Object target -eq 'dinput8.dll').sha256 (Get-Sha256 $fakeLoader) 'payload loader hash'
     Assert-Equal $manifest.runtime_archive.sha256 '87BBE82BB1E907CF405200155DA2794BF7E1F5A3D45BF66426A38CDD31A91F96' 'runtime archive referenced by hash'
     Assert-True (-not (@($manifest.files.target) -contains 'mgs-coop/mgs-coop-player-runtime.dat')) 'runtime archive not bundled'

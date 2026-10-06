@@ -11,6 +11,8 @@
 #include "session_feedback_source.hpp"
 #include "partner_sync_source.hpp"
 #include "world_sync_source.hpp"
+#include "debug_menu_source.hpp"
+#include "debug_equipment_source.hpp"
 #include "marker_loading_source.hpp"
 int main(int argc, char** argv) {
     if (argc != 3) return 2;
@@ -74,8 +76,8 @@ int main(int argc, char** argv) {
         check(feedback_at<partner_at && partner_at<marker_at);
         check(output.find(partner_header,partner_at+1)==std::string::npos);
         check(output.find(feedback_header,feedback_at+1)==std::string::npos);
-        // Exactly feedback chunk, partner chunk, the seven world sync chunks
-        // (lua/coop/world_*.lua, in this order), marker chunk, byte for byte
+        // Exactly feedback, partner, world sync and debug chunks followed by
+        // the marker chunk, byte for byte
         // and adjacent: nothing else is spliced between them.
         const std::size_t feedback_size=sizeof(session_feedback_source)-1;
         const std::size_t partner_size=sizeof(partner_sync_source)-1;
@@ -90,9 +92,16 @@ int main(int argc, char** argv) {
             check(output.find(chunk)==world_at && output.find(chunk,world_at+1)==std::string::npos);
             world_at+=chunk.size();
         }
+        const auto world_end=world_at;
+        const std::string debug_chunks[]={debug_menu_source,debug_equipment_source};
+        for(const auto& chunk : debug_chunks) {
+            check(chunk.size()>64 && output.compare(world_at,chunk.size(),chunk)==0);
+            check(output.find(chunk)==world_at && output.find(chunk,world_at+1)==std::string::npos);
+            world_at+=chunk.size();
+        }
         check(output.compare(world_at,marker_size,marker_loading_source)==0);
         check(marker_at>=world_at && marker_at<world_at+64);
-        check(output.find("MGS_COOP_WORLD_CFG_V1")>partner_at+partner_size && output.find("MGS_COOP_WORLD_CFG_V1")<world_at);
+        check(output.find("MGS_COOP_WORLD_CFG_V1")>partner_at+partner_size && output.find("MGS_COOP_WORLD_CFG_V1")<world_end);
         check(output.find(partner_sync_source)==partner_at && output.find(partner_sync_source,partner_at+1)==std::string::npos);
         check(output.find("MGS_COOP_SESSION_STATUS_V1",partner_at)>marker_at);
         check(output.find("MGS_COOP_PARTNER_CFG_V1",partner_at)<marker_at && output.find("MGS_COOP_PARTNER_CFG_V1")>feedback_at);

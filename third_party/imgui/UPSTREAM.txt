@@ -1,0 +1,7 @@
+Dear ImGui v1.92.6
+Repository: https://github.com/ocornut/imgui
+Pinned commit: 6ded5230d043aa32c755e65c910c2af5002fb9f9
+License: MIT; complete terms in LICENSE.txt.
+Vendored files: unmodified core headers/sources and Win32/DX11 backends.
+Archive SHA-256: B6F2026BDEAC74E840FA937FAF645EC3E75B07794EE5F35D8FC47186CA92A6EE
+Our graphics/input integration is native/debug_overlay.cpp.

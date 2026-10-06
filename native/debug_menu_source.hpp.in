@@ -1,0 +1,4 @@
+#pragma once
+constexpr char debug_menu_source[] = R"MGS_DEBUG(
+@MGS_DEBUG_MENU_SOURCE@
+)MGS_DEBUG";

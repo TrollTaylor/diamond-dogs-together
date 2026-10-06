@@ -1,5 +1,12 @@
 # Third-party source references
 
+The offline debug menu uses Dear ImGui v1.92.6, pinned to Omar Cornut's official
+repository commit `6ded5230d043aa32c755e65c910c2af5002fb9f9`. The vendored core
+and Win32/DX11 backends are unmodified and use the MIT license retained in
+[third_party/imgui/LICENSE.txt](third_party/imgui/LICENSE.txt). Our graphics
+and input integration is `native/debug_overlay.cpp`; gameplay actions remain
+in the project's separate bounded debug bridge.
+
 Source version 0.10.26 adds `native/teammate_marker_patch.cpp`, adapting DYNAMITE's `GetUiMarkerTypeFromSystemType2Hook` and marker constants from unknown321, revision `c90f252f8200765f66c005d6bf4357fda0c0d98e`, under GPLv3 with Commons Clause 1.0. Complete terms are retained in [third_party/dynamite/LICENSE](third_party/dynamite/LICENSE). Changes: current-build semantic mapping, complete converter/switch-table and owner/caller gates, and active owned-session scope. The original call is preserved and only exact result `0x200005` becomes `0x1c`. No marker creation or supplementary networking is included.
 
 Source version 0.10.16 adds `native/result_patch.cpp`, adapting Dynamite's game-over and FOB-result submission bypasses from `c90f252f8200765f66c005d6bf4357fda0c0d98e`, GPLv3 with Commons Clause 1.0, whose complete license is retained below. Changes: current-build shared submission routine and Boolean ABI mapping, two exact return-address filters, complete body/table gates, original forwarding elsewhere and a co-op result scope retained through teardown. An original receipt before the next `Mission.Start` clears that scope. Skipped calls return false without changing request queues or claiming online success. No results or gameplay were executed.

@@ -1,10 +1,95 @@
 # World sync and field partner tests (2026-10-05–06)
 
-## October 6: integrated title Continue, travel and alignment
+## October 6: debug menu candidate and final wording build
 
-The current **0.11.1** DLL is
+The final **0.11.1** DLL is
+`0CB53F278436EA845D4240BC82EB2B09A4F51F08CA9C5C826460168067E898C6`.
+It changes only UI labels/help from B3, including **Refill** wording for the
+current-gun ammo action; functional logic is unchanged. It is installed and
+hash-verified in both copies. The broader functional live results in the
+table below belong to B3; the final DLL's separate smoke is recorded here.
+
+Final run `build/lab/runs/20261006-164030` verifies F9 in both on-foot
+Afghanistan games, corrected refill labels and ammo inventory readback,
+automatic menu close on focus loss, and the default partner preset in both
+roles. Manual preparation used stage 0; each menu's preset returned
+`partner_applied` and enabled stage 3 / net / xform / map / net look. Both
+player parts became `3,3`. After closing F9, host W for 1.2 s moved to
+`(797494,339428,1640439)` mm; the guest's remote/body position matched at
+rest with 0 mm error. Both title menus used Continue for this smoke; it does
+not re-test host-only title following. [Preset host view](../build/lab/runs/20261006-164030/screens/debug-final-partners-host-164712.png),
+[movement guest view](../build/lab/runs/20261006-164030/screens/debug-final-movement-guest-164725.png)
+and [input receipt](../build/codex-debug-menu-release-movement-20261006.log).
+
+Both final-run games exited normally after `WM_CLOSE`, with no fuse
+process; all ten real save/config files match run-start and latest-backup
+hashes ([stop receipt](../build/lab/runs/20261006-164030/stop.json)). Actual
+Disable archived offline markers and removed active lab/coop config and
+link secrets ([log](../build/codex-debug-menu-release-disable-20261006.log)).
+The final [verification receipt](../build/codex-debug-menu-release-verification-20261006.json)
+matches the DLL, original executable/Steam DLL, local runtime archive and
+ImGui license in both folders, with all four activation files absent.
+Normal real-save gameplay was not launched after cleanup. The final
+[Defender scan](../build/codex-debug-menu-release-defender-20261006.log)
+found no threats.
+
+B3 DLL SHA-256 is
+`B3B8EE78C8222EE35CDEF08C608B59EED9F15D5010A9F48E2BE8249902428F02`.
+It was installed in both copied-save instances for
+[run `20261006-163001`](../build/lab/runs/20261006-163001/run.json), using
+the offline link on one PC.
+
+| Item | B3 live result |
+|---|---|
+| Startup and bodies | **PASS.** Host-only Continue brought both players on foot to Afghanistan `30010`. |
+| Menu access and layout | **PASS.** F9 opened the menu in both games; scrolling exposed its header and footer. |
+| Modal movement capture | **PASS.** With the host menu open, held W left position at `(800452,339300,1638765)` mm. With it closed, W moved the host to `(795493,339440,1641624)` mm. Guest remote/body position matched at rest with 0 mm error. This checks live keyboard movement capture, not physical controller behavior. |
+| Inventory inspection | **PASS.** Hip/back/secondary equipment IDs were `871/873/875`, active inventory slot `1`. |
+| Current-hip pickup | **PASS for a local visible pickup.** Dropping the current hip gun produced a visible AM MRS-4 in the host view. The payload sets item contents rather than a count of separate pickups. New-object replication is not established. |
+| Current-hip ammo refill | **PASS for inventory readback.** Ammo `30`, stock `210`, active slot `1`. The receipt says `render_unverified`; it does not establish a newly equipped/rendered gun. The final UI calls this action Refilling. |
+| Bookmark and teleport | **PASS for position readback.** Bookmark `0`, a 2 m step and return reported errors 0.003 m and 0.000 m. |
+| Host time and weather | **PASS.** Noon produced clock readback and visible daylight. The rainy-weather receipt coincided with visible rain. |
+| Exit and real saves | **PASS.** Both games exited normally after `WM_CLOSE`, with no fuse process. All ten real save/config files matched run-start and backup hashes. This is the B3 stop, not final-release Disable verification. |
+
+Local evidence: [pickup host view](../build/lab/runs/20261006-163001/screens/debug-pickup-visible-host-163722.png),
+[rain/daylight host view](../build/lab/runs/20261006-163001/screens/debug-world-controls-host-163946.png),
+[menu guest view](../build/lab/runs/20261006-163001/screens/debug-guest-menu-guest-163311.png),
+[open-menu W input](../build/codex-debug-menu-open-w-20261006.log),
+[closed-menu W input](../build/codex-debug-menu-closed-w-20261006.log)
+and [normal exits/save verification](../build/lab/runs/20261006-163001/stop.json).
+
+All **82 automated suites pass in aggregate after fixes**. The
+[combined log](../build/codex-debug-menu-final-ctest-20261006.log) records
+81/82 before the composition-fixture correction; the
+[13/13 focused checks](../build/codex-debug-menu-layout-tests-20261006.log)
+include both corrected world Lua checks. The
+[friend-package recheck](../build/codex-debug-menu-package-tests-20261006.log)
+passed after CMake/source inventory coverage was added. The final wording
+DLL passes [13/13 focused checks in 3.10 s](../build/codex-debug-menu-release-tests-20261006.log)
+after all fixture targets were rebuilt.
+These results are aggregate checks, not a single clean 82-suite run on the
+final wording DLL.
+
+The overlay uses Windows SDK D3D11/DXGI and Win32 input, with pinned Dear
+ImGui core/backends. Render code queues bounded commands and reads copied
+telemetry; gameplay executes through mission-scoped guards on the natural
+Lua update. Full MIT terms accompany the ImGui payload. Installer fixtures
+cover a legacy seven-target install, upgrade to eight targets and both
+restore steps. Public packages contain the complete ImGui license and
+source inventory, including CMake files; game-derived assets remain local.
+
+The default partner animation map has 13 locomotion/stance clips. Gun aim,
+fire, reload and full turn actions are not transported. Arbitrary new guards
+and unloaded-gun spawning are not implemented. Pickups and guard
+enable/disable remain local debug operations. This one-PC run does not
+establish a real two-PC session, full campaign/progression or physical damage
+death.
+
+## October 6: previous world build, title Continue, travel and alignment
+
+The previous world-build **0.11.1** DLL was
 `4666A7DA7ED2711CED7D397ED0EFF92E41782C27127DFF9374C63B1DBBF99D65`
-from `046bb63`, installed and hash-verified in both copies. Run
+from `046bb63`, installed and hash-verified in both copies for this run. Run
 `build/lab/runs/20261006-115055` verifies the startup fix: only the host uses
 native title Continue; the guest receives all 47 records and starts on foot
 at the host's same position `(1232994,20775,-125517)` mm, with player IDs
@@ -16,7 +101,7 @@ positions at rest (0 mm). A ground-view frame shows local Quiet and remote
 Snake on foot; observations of transparency in other views do not establish
 a camouflage cause or a cloak fix.
 
-On this DLL, host checkpoint hash `0`, version `1`, pose
+On that previous DLL, host checkpoint hash `0`, version `1`, pose
 `(1233009,21370,-123172)` mm / yaw `0` is confirmed by the guest's actual
 VarSave callback 17 ms later. This proves the in-memory save receipt;
 asynchronous disk-write completion remains unobserved. Injected guest
@@ -53,7 +138,7 @@ the real saves. Physical damage death remains untested.
 The fix adds mandatory seed 28, `svars.ply_isUsedPlayerInitialAction`, for
 47 records with the normal revenge array. The exact-source regression and
 latest arrival/title/recovery subset pass 11/11.
-Local current-build evidence: [run configuration](../build/lab/runs/20261006-115055/run.json),
+Local previous-world-build evidence: [run configuration](../build/lab/runs/20261006-115055/run.json),
 [host title Continue](../build/lab/runs/20261006-115055/screens/final4666-host-continue-host-115234.png),
 [on-foot bodies and movement](../build/lab/runs/20261006-115055/screens/final4666-ground-motion-guest-115433.png),
 [Mission Failed host](../build/lab/runs/20261006-115055/screens/final4666-gameover-host-115746.png),
@@ -81,11 +166,11 @@ with parts `3,3` and 0 mm transform readback error; that startup did not
 establish an unobscured on-foot two-player view. Exact `TppPlayer.Init` reads
 `ply_initialPlayerState=RIDEON_HELICOPTER` together with
 `svars.ply_isUsedPlayerInitialAction`, which is true on the host after landing
-and false in the guest's older checkpoint. The current build adds the missing
+and false in the guest's older checkpoint. The 4666 world build added the missing
 seed and regression fixture. This diagnostic-build run then closes both
 games normally; all ten real save/config files remain unchanged against
 run-start and latest-backup hashes. The table below records the preceding
-build's larger test run; the current startup acceptance is recorded above.
+build's larger test run; the 4666 startup acceptance is recorded above.
 
 | Item | Integrated result |
 |---|---|
@@ -106,7 +191,7 @@ build's larger test run; the current startup acceptance is recorded above.
 | Native host Continue recovery | **PASS with a loading delay.** Only the host pressed native menu Enter. Both games reloaded and paired at epoch `6`. Guest readiness was about 74 s behind the host; all 271 host soldiers were initially unknown, so snapshots were refused. The unchanged DLL recovered when the host area activated: guest snapshot `id=36` was accepted about 1.9 s later with `unknown=206`, `divergence=0`, `w1=1`, followed by host readiness. Transport overflow stayed zero. |
 | Killed soldier after Continue | **PENDING.** Post-Continue readback for entity `486459779` is not yet recorded; checkpoint copying and alignment acceptance do not alone prove its persisted state. |
 
-All 78 automated suites pass in aggregate: the lab installer suite was
+At that stage, all 78 automated suites passed in aggregate: the lab installer suite was
 rerun separately after its failure in the combined run. The latest
 diagnostic/title/recovery subset passes 11/11. This is single-PC evidence; it does not
 verify a two-PC session, identical enemy AI/positions or full campaign
@@ -132,7 +217,7 @@ Automated evidence: [combined suite log](../build/codex-recovery-final-20261006.
 [serialized lab recheck](../build/codex-recovery-lab-recheck-20261006.log),
 [title/recovery checks](../build/codex-title-recovery-final-20261006.log),
 [diagnostic checks](../build/codex-alignment-diagnostic-tests-20261006.log),
-[current arrival checks](../build/codex-arrival-fix-tests-20261006.log)
+[4666 arrival checks](../build/codex-arrival-fix-tests-20261006.log)
 and [preceding build exit/save log](../build/codex-d171-live-stop-20261006.log).
 These artifacts remain local under `build/`.
 
@@ -170,7 +255,7 @@ These generated artifacts remain local under `build/`.
 This earlier run verifies supported field bodies and movement for its
 pre-integration DLL. The integrated run above records travel, alignment, Afghanistan movement,
 checkpoint, injected death and delayed native Continue recovery evidence.
-The current DLL's separate run above verifies Africa and Afghanistan
+The previous 4666 DLL's separate run above verifies Africa and Afghanistan
 bodies/movement, checkpoint copying and native Continue recovery. The
 previously killed soldier's post-Continue readback remains unverified.
 These runs do not establish a two-PC session or full campaign gameplay. Story

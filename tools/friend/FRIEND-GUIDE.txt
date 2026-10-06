@@ -15,7 +15,14 @@ What works today:
 - The default (World 0) shares partner movement. Experimental World 3 also
   shares supported enemy outcomes, alert, clock/weather, host travel,
   Continue/restart alignment, checkpoints and death (see section 3).
+- F9 opens the in-game debug menu. It provides teleport bookmarks, ammo
+  controls, equipped-item pickups, existing-guard controls, host time/weather
+  and partner movement diagnostics. F9 closes it and restores game controls.
+  Actions require supported on-foot gameplay. Guard actions use authored
+  mission soldiers; arbitrary new soldiers and unloaded guns are unsupported.
 What is NOT fully shared yet:
+- Partner aiming, firing, reload and full turn actions; the animation mapper
+  currently contains 13 movement/stance clips. Debug pickups are local.
 - Story missions, items and full campaign progression. This is a development
   build; live verification used two game instances on one PC. Actual two-PC
   play has not been validated yet.
