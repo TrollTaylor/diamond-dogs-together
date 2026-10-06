@@ -119,7 +119,19 @@ function Wait-Until([scriptblock]$Condition, [int]$TimeoutSec = 30) {
 function Get-PlayFilesPresent($Paths) {
     return @(@($Paths.LabIni, $Paths.LinkSecret, $Paths.CoopIni, $Paths.Marker) | Where-Object { Test-Path -LiteralPath $_ }).Count
 }
-function Get-SessionJson($Paths) { return [IO.File]::ReadAllText($Paths.PlaySession, [Text.Encoding]::UTF8) | ConvertFrom-Json }
+function Get-SessionJson($Paths) {
+    # The watchdog briefly owns the file while writing its next complete JSON.
+    # Retry sharing failures only; parsing and all evidence checks stay strict.
+    for ($sessionReadAttempt = 0; $sessionReadAttempt -lt 250; $sessionReadAttempt++) {
+        try {
+            $sessionText = [IO.File]::ReadAllText($Paths.PlaySession, [Text.Encoding]::UTF8)
+            return $sessionText | ConvertFrom-Json
+        } catch [IO.IOException] {
+            if ($sessionReadAttempt -eq 249) { throw }
+            Start-Sleep -Milliseconds 20
+        }
+    }
+}
 function Get-CodeFromOutput([string]$Raw) {
     $m = [regex]::Match($Raw, 'MGS1-[0-9A-Z]{5}-[0-9A-Z]{5}-[0-9A-Z]{5}-[0-9A-Z]{5}-[0-9A-Z]{2}@[^\s]+')
     if (!$m.Success) { throw "No join code in the output: $Raw" }
