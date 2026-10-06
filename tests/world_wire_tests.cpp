@@ -954,6 +954,89 @@ void Following() {
     Check(Find(Drain(g_host, 1, 304), op::req_mission) && Find(Drain(g_guest, 1, 304), op::received),
           "exit request is control and receives native receipt");
 }
+void ConfigSession() {
+    Setup();
+    auto cfg = g_guest.Cfg(30050, false, 30050, 0);
+    Check(cfg.session == 0 && cfg.link == 0, "disconnected CFG has no live transport generation");
+    g_guest.OnLinkState(true, 41, 10);
+    cfg = g_guest.Cfg(30050, false, 30050, 11);
+    Check(cfg.session == 41 && cfg.link == 1 && cfg.level == 3 && cfg.role == world::kRoleGuest &&
+              cfg.proto == world::kProto && cfg.epoch == 0 && cfg.probe == 0 && cfg.mode == world::kModeLab,
+          "CFG appends the transport generation without changing the first seven fields");
+    Check(g_guest.Cfg(30050, false, 30050, 12).session == 41 &&
+              g_guest.Cfg(30050, true, 30050, 13).session == 41,
+          "query and mission start retain the same connection generation");
+    g_guest.OnSession(0xFFFFFFFFu, 20);
+    cfg = g_guest.Cfg(30050, false, 30050, 21);
+    Check(cfg.session == 0xFFFFFFFFu && cfg.link == 1, "new session exposes its full unsigned generation");
+    Check(g_guest.Cfg(40050, true, 40050, 22).session == 0xFFFFFFFFu,
+          "loading CFG keeps the replacement session generation");
+    g_guest.OnLinkState(false, 0xFFFFFFFFu, 30);
+    cfg = g_guest.Cfg(40050, false, 40050, 31);
+    Check(cfg.session == 0 && cfg.link == 0 && cfg.level == 3 && cfg.role == world::kRoleGuest,
+          "link loss clears only the live generation/link metadata");
+}
+void WorldDisable() {
+    Setup();
+    Pair(30050, 100);
+    Drain(g_host, 3, 101);
+    Drain(g_guest, 3, 101);
+    Check(Tx(g_host, op::transition, {1, 1, 30050, 40050, 6, 0, 0, 2, 0, 0, 2}, 110) == world::TxStatus::ok &&
+              Tx(g_host, op::seed, {1, 40050, 1, 0, 672983}, 111) == world::TxStatus::ok &&
+              Tx(g_host, op::seeds_end, {1, 40050, 1, 674007}, 112) == world::TxStatus::ok,
+          "old travel stream is queued before disable");
+    Exchange(120);
+    g_guest.Cfg(40050, true, 40050, 130);
+    Check(!g_guest.paired() && g_guest.control_size() == 3, "loading preserves pending travel while already unpaired");
+    world::Trigger go{};
+    go.has_goto = true;
+    go.goto_target = 30010;
+    g_guest.ApplyTrigger(go, "goto=30010", 40050, false, 131);
+    Check(Tx(g_guest, op::probe_sync, {7, 1, 123, 3000}, 132) == world::TxStatus::ok &&
+              Tx(g_guest, op::follow_ack, {1, 40050, 1}, 133) == world::TxStatus::ok,
+          "local scheduled probe and outbound acknowledgement exist before disable");
+    std::uint8_t bundle[world::kMaxReliableBundle];
+    std::uint32_t old_generation = 0;
+    Check(g_guest.PeekBundle(bundle, sizeof(bundle), old_generation) > 0, "worker has peeked an old outgoing bundle");
+
+    world::Trigger zero{};
+    zero.has_world = true;
+    g_guest.ApplyTrigger(zero, "world=0", 40050, false, 134);
+    Check(g_guest.level() == 0 && !g_guest.paired() && g_guest.control_size() == 2 &&
+              g_guest.world_size() == 0 && g_guest.outbound_size() == 0 && g_guest.goto_state() == world::GotoState::idle,
+          "disable cancels old control, world, outgoing and goto work before reset delivery");
+    auto reset = Drain(g_guest, 3, 135);
+    Check(reset.size() == 2 && reset[0].op == op::unpaired && reset[0].v[0] == world::unpair::level0 &&
+              reset[1].op == op::level && reset[1].v[0] == 0,
+          "already-unpaired disable delivers reset before LEVEL0 with no old transaction ahead of it");
+    g_guest.Tick(10000);
+    Check(Drain(g_guest, 3, 10001).empty(), "disabled scheduler cannot revive a delayed probe or goto");
+    Check(Tx(g_host, op::seed, {1, 40050, 1, 0, 672983}, 10002) == world::TxStatus::ok,
+          "peer may still have old seed traffic in flight");
+    Pump(g_host, g_guest, 10003);
+    Check(Drain(g_guest, 3, 10004).empty(), "old incoming traffic cannot restore a disabled transaction");
+    g_guest.ApplyTrigger(zero, "world=0", 40050, false, 10005);
+    reset = Drain(g_guest, 3, 10006);
+    Check(reset.size() == 2 && reset[0].op == op::unpaired && reset[0].v[0] == world::unpair::level0 &&
+              reset[1].op == op::level,
+          "repeated explicit disable still resets persistent Lua state before cleanup");
+
+    world::Trigger three{};
+    three.has_world = true;
+    three.world = 3;
+    g_guest.ApplyTrigger(three, "world=3", 40050, false, 10007);
+    Check(g_guest.Cfg(40050, true, 40050, 10008).level == 3 && Drain(g_guest, 3, 10009).empty(),
+          "re-enable starts without old pending travel");
+    Check(Tx(g_guest, op::hello, {40050, 50, 77, 10, 3}, 10010) == world::TxStatus::ok, "fresh HELLO after re-enable");
+    std::uint32_t new_generation = 0;
+    Check(g_guest.PeekBundle(bundle, sizeof(bundle), new_generation) > 0 && new_generation != old_generation,
+          "disable invalidates the worker's old outbound generation");
+    const unsigned fresh_out = g_guest.outbound_size();
+    g_guest.CommitBundle(old_generation);
+    Check(g_guest.outbound_size() == fresh_out, "stale worker commit cannot remove newly queued traffic");
+    g_guest.CommitBundle(new_generation);
+    Check(g_guest.outbound_size() == 0, "current worker commit still drains its own fresh traffic");
+}
 void Alignment() {
     Setup();
     Pair(30010, 100);
@@ -1013,6 +1096,8 @@ int main() {
     Schedulers();
     Stats();
     Following();
+    ConfigSession();
+    WorldDisable();
     Alignment();
     std::printf("world_wire_tests: %u checks passed\n", checks);
     return 0;

@@ -782,6 +782,7 @@ CfgReply Core::Cfg(std::uint32_t mission, bool start, std::uint32_t read_mission
     reply.link = link_up_ ? 1 : 0;
     reply.epoch = TxEpoch();
     reply.mode = config_.play ? kModePlay : kModeLab;
+    reply.session = link_up_ ? session_ : 0;
     return reply;
 }
 
@@ -948,7 +949,16 @@ void Core::ApplyTrigger(const Trigger& trigger, const char* canonical, std::uint
             level_ = 0;
             pending_level_set_ = false;
             mission_running_ = false;
-            Unpair(unpair::level0);
+            // Disable is a Lua transaction reset even during unpaired loading.
+            // Old controls must not precede it or survive a later re-enable.
+            ClearWire();
+            ctrl_head_ = ctrl_size_ = 0;
+            pending_probe_ = WorldProbe::none;
+            for (Fire& fire : fires_) fire = Fire{};
+            goto_ = Goto{};
+            resync_needed_ = resync_pushed_ = false;
+            if (paired_) Unpair(unpair::level0);
+            else PushLocal(op::unpaired, unpair::level0);
             PushLocal(op::level, 0);
         } else {
             pending_level_ = trigger.world;
