@@ -81,7 +81,14 @@ do
         R.applying = nil
         if ok and R.receipt then
             R.seen, R.pending = v[2], nil
-            log(fmt("step=checkpoint;hash=%.0f;ver=%d;receipt=1", v[1], v[2]))
+            local pose = ""
+            if v[1] == 0 then
+                local x, y, z = mm(W.get(vars, "initialPlayerPosX"), 10000000), mm(W.get(vars, "initialPlayerPosY"), 10000000),
+                    mm(W.get(vars, "initialPlayerPosZ"), 10000000)
+                local rot = mm(W.get(vars, "initialPlayerRotY"), 360000)
+                pose = x and y and z and rot and fmt(";x_mm=%d;y_mm=%d;z_mm=%d;yaw_mdeg=%d", x, y, z, rot) or ";pose=unreadable"
+            end
+            log(fmt("step=checkpoint;hash=%.0f;ver=%d;receipt=1", v[1], v[2]) .. pose)
         elseif R.why ~= "save" then log("step=checkpoint_wait;reason=no_save_receipt"); R.why = "save" end
     end
     H[OP.REQ_GAME_OVER] = function(v)
@@ -98,6 +105,7 @@ do
         local ok, result = W.follow.run(R.originalReserve, v[1], v[2])
         if ok and result == true then
             R.dead, A.dead, W.w1, A.tx, A.rx, R.pending, R.req, R.inGame = true, true, false, nil, nil, nil, nil, nil
+            log(fmt("step=game_over_applied;type=%d;cause=%d", v[1], v[3]))
         end
     end
     H[OP.GAME_OVER] = function(v, now)
@@ -192,7 +200,11 @@ do
         if R.req and now >= (R.reqAt or 0) and W.tx(OP.REQ_GAME_OVER, unpack(R.req)) then R.reqAt = now + 500 end
         if R.game and W.tx(OP.GAME_OVER, unpack(R.game)) then R.game = nil end
         if R.inGame then applyGame(now) end
-        if R.out and ready() and W.tx(OP.CHECKPOINT, unpack(R.out)) then R.out = nil end
+        if R.out and ready() and W.tx(OP.CHECKPOINT, unpack(R.out)) then
+            local v = R.out
+            log(fmt("step=checkpoint_tx;hash=%.0f;ver=%d;x_mm=%d;y_mm=%d;z_mm=%d;yaw_mdeg=%d", unpack(v)))
+            R.out = nil
+        end
         if not R.dead then applyCheckpoint(now) end
     end
     W.follow.installHooks[#W.follow.installHooks + 1] = R.install

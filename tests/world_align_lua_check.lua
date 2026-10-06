@@ -62,6 +62,7 @@ local function fixture(host, level)
     env.TppMission.VarSaveOnUpdateCheckPoint = function()
         c.saves = (c.saves or 0) + 1
         c.savePose = {env.vars.initialPlayerPosX, env.vars.initialPlayerPosY, env.vars.initialPlayerPosZ, env.vars.initialPlayerRotY}
+        if c.saveReadbackX ~= nil then env.vars.initialPlayerPosX = c.saveReadbackX end
         if c.saveFalse then return false end
         if c.saveNil then return end
         return 7, nil, 9
@@ -118,6 +119,11 @@ end
 local function logged(c, text)
     for _, line in ipairs(c.logs) do if line:find(text, 1, true) then return true end end
     return false
+end
+local function logCount(c, text)
+    local n = 0
+    for _, line in ipairs(c.logs) do if line:find(text, 1, true) then n = n + 1; check(#line < 256, 'recovery receipt stays bounded') end end
+    return n
 end
 local h, g = fixture(true), fixture(false)
 h.life[1], h.life[2], h.action[3] = 1, 3, 10
@@ -257,6 +263,8 @@ check(deadGuest.reserved == 1 and deadGuest.R.dead and deadGuest.A.dead and not 
     'authorized broadcast reserves guest game over and cancels alignment')
 transfer(deadHost, deadGuest, function(p) return p.op == OP.GAME_OVER end)
 check(deadGuest.reserved == 1, 'duplicate host broadcast is idempotent')
+check(logCount(deadGuest, 'step=game_over_applied;type=2;cause=2') == 1,
+    'accepted guest game-over receipt records type/cause once across duplicate broadcasts')
 local refuseDeath = fixture(true)
 refuseDeath.gameRefuse = true
 check(refuseDeath.env.TppMission.ReserveGameOver(1, 1) == false and not refuseDeath.R.dead and not refuseDeath.R.game,
@@ -286,6 +294,7 @@ retryGuest.gameRefuse = true
 send(retryGuest, retryHost.tx[#retryHost.tx])
 check(retryHost.R.dead and retryGuest.reserved == 1 and not retryGuest.R.dead and retryGuest.R.inGame,
     'transient guest vanilla refusal retains authorized game-over broadcast')
+check(not logged(retryGuest, 'step=game_over_applied;'), 'refused guest game over cannot log an accepted receipt')
 retryGuest.now = retryGuest.now + 499; retryGuest.A.tick(retryGuest.now)
 check(retryGuest.reserved == 1, 'guest game-over retry is bounded to 500ms')
 retryGuest.gameRefuse = false
@@ -297,6 +306,8 @@ retryGuest.now = retryGuest.now + 1000; retryGuest.A.tick(retryGuest.now)
 send(retryGuest, retryHost.tx[#retryHost.tx])
 check(#retryGuest.tx == stopped and retryGuest.reserved == 2,
     'accepted game over stops retries and duplicate broadcast never reserves again')
+check(logCount(retryGuest, 'step=game_over_applied;type=1;cause=2') == 1,
+    'game-over receipt appears once only after the retry returns actual true')
 local inert = fixture(true, 0)
 inert.W.handlers[OP.REQ_GAME_OVER]({1, 1, 1, 1})
 inert.W.handlers[OP.GAME_OVER]({1, 1, 1})
@@ -321,6 +332,7 @@ check(cpGuest.R.seen == 0 and cpGuest.R.pending, 'save with a different checkpoi
 cpGuest.wrongHash, cpGuest.saveFalse = false, true
 cpGuest.now = cpGuest.now + 500; cpGuest.A.tick(cpGuest.now)
 check(cpGuest.R.seen == 0 and cpGuest.R.pending, 'explicit false from save receipt cannot acknowledge checkpoint')
+check(not logged(cpGuest, 'receipt=1'), 'refused or mismatched checkpoints cannot log accepted save receipts')
 cpGuest.saveFalse, cpGuest.saveNil = false, true
 cpGuest.now = cpGuest.now + 500; cpGuest.A.tick(cpGuest.now)
 check(cpGuest.R.seen == 1 and not cpGuest.R.pending and cpGuest.checkpointOptions.checkPoint == 'cp_start',
@@ -336,12 +348,26 @@ cpHost.env.TppMission.UpdateCheckPoint({atCurrentPosition = true})
 cpHost.failOp = OP.CHECKPOINT; cpHost.A.tick(cpHost.now)
 check(cpHost.R.out and cpHost.R.out[3] == 12250 and cpHost.R.out[4] == 30600 and cpHost.R.out[6] == -45125,
     'current checkpoint captures accepted host initial pose including vanilla height offset and retries TX')
+check(not logged(cpHost, 'step=checkpoint_tx;hash=0;'), 'refused native TX cannot log an accepted checkpoint send')
 cpHost.A.tick(cpHost.now); transfer(cpHost, cpGuest, function(p) return p.op == OP.CHECKPOINT end)
 cpGuest.env.vars.playerPosX, cpGuest.env.vars.playerPosY, cpGuest.env.vars.playerPosZ = 99, 88, 77
 cpGuest.A.tick(cpGuest.now)
 check(cpGuest.R.seen == 2 and cpGuest.savePose[1] == 12.25 and cpGuest.savePose[2] == 30.6 and
     cpGuest.savePose[3] == -8.5 and cpGuest.savePose[4] == -45.125,
     'hash0 checkpoint stores host position and yaw before VarSave despite different guest current pose')
+check(logCount(cpHost, 'step=checkpoint_tx;hash=0;ver=2;x_mm=12250;y_mm=30600;z_mm=-8500;yaw_mdeg=-45125') == 1 and
+    logCount(cpGuest, 'step=checkpoint;hash=0;ver=2;receipt=1;x_mm=12250;y_mm=30600;z_mm=-8500;yaw_mdeg=-45125') == 1,
+    'accepted live receipts expose matching host payload and guest initial-pose readback')
+local readback = fixture(false)
+readback.W.w1 = true
+readback.saveReadbackX = 9.875
+readback.W.handlers[OP.CHECKPOINT]({0, 1, 1100, 2200, 3300, 4400}); readback.A.tick(readback.now)
+check(readback.R.seen == 1 and logged(readback, 'receipt=1;x_mm=9875;y_mm=2200;z_mm=3300;yaw_mdeg=4400'),
+    'guest receipt reads actual post-save initial pose rather than echoing host wire payload')
+readback.saveReadbackX = false
+readback.W.handlers[OP.CHECKPOINT]({0, 2, 1100, 2200, 3300, 4400}); readback.A.tick(readback.now)
+check(readback.R.seen == 2 and logged(readback, 'ver=2;receipt=1;pose=unreadable'),
+    'accepted save with unreadable pose is labelled explicitly without invented coordinates')
 local before = cpGuest.checkpointCalls
 cpGuest.W.handlers[OP.CHECKPOINT]({0, 3, 10000001, 0, 0, 0}); cpGuest.A.tick(cpGuest.now)
 check(cpGuest.checkpointCalls == before and cpGuest.R.seen == 2, 'out-of-bounds checkpoint pose is inert')
