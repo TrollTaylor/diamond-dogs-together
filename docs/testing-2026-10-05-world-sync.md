@@ -2,26 +2,90 @@
 
 ## October 6: integrated title Continue, travel and alignment
 
-**PASS for this subset on two game processes on one PC.** Run
+The current **0.11.1** DLL is
+`4666A7DA7ED2711CED7D397ED0EFF92E41782C27127DFF9374C63B1DBBF99D65`
+from `046bb63`, installed and hash-verified in both copies. Run
+`build/lab/runs/20261006-115055` verifies the startup fix: only the host uses
+native title Continue; the guest receives all 47 records and starts on foot
+at the host's same position `(1232994,20775,-125517)` mm, with player IDs
+`0,1` and parts states `3,3`. Both pair in Africa `30020`, epoch `3`, roster
+`2220786415`, 265 soldiers and 68 CPs. Guest alignment `id=1` accepts
+`unknown=151`, `divergence=0`, `w1=1`; host readiness follows 16 ms later.
+Independent native keyboard movement has matching reciprocal commanded/body
+positions at rest (0 mm). A ground-view frame shows local Quiet and remote
+Snake on foot; observations of transparency in other views do not establish
+a camouflage cause or a cloak fix.
+
+On this DLL, host checkpoint hash `0`, version `1`, pose
+`(1233009,21370,-123172)` mm / yaw `0` is confirmed by the guest's actual
+VarSave callback 17 ms later. This proves the in-memory save receipt;
+asynchronous disk-write completion remains unobserved. Injected guest
+PLAYER_DEAD reserves host shared game over after 33 ms; guest game-over
+application follows another 33 ms later. Both games show Mission Failed.
+Only the host then presses native menu Continue. The guest receives all
+47 records and replays the same mission; both return on foot to the shared
+checkpoint ground position `(1233009,20870,-123172)` mm, pair at epoch `4`
+and have parts `3,3` with reciprocal transform readback 0 mm. Guest alignment
+`id=2` accepts `unknown=151`, `divergence=0`, `w1=1` at `367964252`; host
+readiness follows 34 ms later.
+
+Only the host then requests fresh Afghanistan deployment. Both copies follow
+Africa `30020` → ACC `40020` → Afghanistan `30010`, with 47 records on each
+leg. Direct game views show Snake and Quiet seated in their own arriving
+helicopters, checking the fresh-entry action after the on-foot checkpoint
+case. The guest arrives at epoch `6` and accepts alignment `id=3` at
+`368261214`: 271 soldiers, 77 CPs, 191 unknowns, zero divergences and
+`w1=1`. Host readiness follows 32 ms later. After both helicopter exits,
+the host ground view shows Snake and opaque Quiet. Native guest W for 1.5 s
+and host W for 6 s have matching reciprocal transforms at rest (0 mm).
+
+Setting `world=0` in both games logs UNPAIRED reason `5` followed by inactive
+level `0`; partner transform sync continues. Both games accept `WM_CLOSE`
+and exit normally at 12:08:41, with no fuse process. All ten real save/config
+files match the run-start manifest and latest backup. Actual Disable then
+archives both offline markers and removes the active `lab.ini`, `coop.ini`
+and link secrets. The owned DLL and game/archive hashes remain intact.
+Cleanup commit `9d5aac6` passes the focused `lab_scripts_tests` suite (1/1).
+File-state checks and the absent-marker source gate establish inactive
+pass-through; a normal launch afterward was not tested, since it would use
+the real saves. Physical damage death remains untested.
+
+The fix adds mandatory seed 28, `svars.ply_isUsedPlayerInitialAction`, for
+47 records with the normal revenge array. The exact-source regression and
+latest arrival/title/recovery subset pass 11/11.
+Local current-build evidence: [run configuration](../build/lab/runs/20261006-115055/run.json),
+[host title Continue](../build/lab/runs/20261006-115055/screens/final4666-host-continue-host-115234.png),
+[on-foot bodies and movement](../build/lab/runs/20261006-115055/screens/final4666-ground-motion-guest-115433.png),
+[Mission Failed host](../build/lab/runs/20261006-115055/screens/final4666-gameover-host-115746.png),
+[Mission Failed guest](../build/lab/runs/20261006-115055/screens/final4666-gameover-guest-115746.png),
+[Continue recovery](../build/lab/runs/20261006-115055/screens/final4666-continue-resume-guest-120017.png),
+[Afghanistan ground bodies](../build/lab/runs/20261006-115055/screens/final4666-afg-bodies-host-120717.png)
+and [stop/save verification](../build/lab/runs/20261006-115055/stop.json).
+The [exit verification log](../build/codex-4666-live-stop-20261006.log) records
+unchanged real files against both baselines. Cleanup evidence is the
+[Disable log](../build/codex-final-disable-20261006.log) and
+[final file-state/hash receipt](../build/codex-final-install-verification-20261006.json).
+
+**PASS for the preceding integration subset on two game processes on one PC.** Run
 `build/lab/runs/20261006-111828` uses the earlier integrated **0.11.1** DLL,
 SHA-256 `171041C2A598FD758FCC67A0B19B59BE4EC6C35FBA4CD98C2529BF946A9E97D6`,
 and the same local 13-entry archive as the field patch below. Both games use
 our offline UDP link and separate co-op save copies. The newer diagnostic-only
 build from `5ab2c5a` has DLL SHA-256
 `59CD23348386815A84DA0CE9D18DB2B308E52BE21D1B5DDF9C254FC1910A9B13`;
-it is installed in both copies. Its separate run
+its separate run
 `build/lab/runs/20261006-113833` finds a guest initial-action mismatch:
 the host starts on foot, but the guest retains its old helicopter action
-although the seeded coordinates match. Both remote bodies are realized
-with parts `3,3` and 0 mm transform readback error; an unobscured on-foot
-two-player view has not passed on this build. Exact `TppPlayer.Init` reads
+although the seeded coordinates match. Both remote bodies were realized
+with parts `3,3` and 0 mm transform readback error; that startup did not
+establish an unobscured on-foot two-player view. Exact `TppPlayer.Init` reads
 `ply_initialPlayerState=RIDEON_HELICOPTER` together with
 `svars.ply_isUsedPlayerInitialAction`, which is true on the host after landing
-and false in the guest's older checkpoint. An additional mandatory seed and
-regression fixture are in progress. This current-build run then closes both
+and false in the guest's older checkpoint. The current build adds the missing
+seed and regression fixture. This diagnostic-build run then closes both
 games normally; all ten real save/config files remain unchanged against
 run-start and latest-backup hashes. The table below records the preceding
-build's larger test run, not acceptance of this current startup path.
+build's larger test run; the current startup acceptance is recorded above.
 
 | Item | Integrated result |
 |---|---|
@@ -65,9 +129,10 @@ and [Afghanistan guest](../build/lab/runs/20261006-111828/screens/final-afghan-g
 [Africa bodies](../build/lab/runs/20261006-111828/screens/final-africa-bodies-host-113742.png)
 and [stop/save verification](../build/lab/runs/20261006-111828/stop.json).
 Automated evidence: [combined suite log](../build/codex-recovery-final-20261006.log),
-[serialized lab recheck](../build/codex-recovery-lab-recheck-20261006.log)
-[title/recovery checks](../build/codex-title-recovery-final-20261006.log)
-[latest diagnostic checks](../build/codex-alignment-diagnostic-tests-20261006.log)
+[serialized lab recheck](../build/codex-recovery-lab-recheck-20261006.log),
+[title/recovery checks](../build/codex-title-recovery-final-20261006.log),
+[diagnostic checks](../build/codex-alignment-diagnostic-tests-20261006.log),
+[current arrival checks](../build/codex-arrival-fix-tests-20261006.log)
 and [preceding build exit/save log](../build/codex-d171-live-stop-20261006.log).
 These artifacts remain local under `build/`.
 
@@ -105,9 +170,10 @@ These generated artifacts remain local under `build/`.
 This earlier run verifies supported field bodies and movement for its
 pre-integration DLL. The integrated run above records travel, alignment, Afghanistan movement,
 checkpoint, injected death and delayed native Continue recovery evidence.
-That run also verifies Africa; the newer DLL's smoke check and the killed
-soldier's post-Continue readback remain pending.
-Neither run establishes a two-PC session or full campaign gameplay. Story
+The current DLL's separate run above verifies Africa and Afghanistan
+bodies/movement, checkpoint copying and native Continue recovery. The
+previously killed soldier's post-Continue readback remains unverified.
+These runs do not establish a two-PC session or full campaign gameplay. Story
 and alternate packs such as `30011` remain excluded from partner-body support.
 
 ## October 5: W0–W2 live results

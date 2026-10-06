@@ -544,31 +544,48 @@ Lua payloads (`world_lua=event=...`): `started`, `inactive` (reason
 
 ## 12. Live acceptance (lab, both copies on one PC)
 
-This is the test recipe and expected evidence. The live-tested integrated DLL
+The current live-tested **0.11.1** DLL is
+`4666A7DA7ED2711CED7D397ED0EFF92E41782C27127DFF9374C63B1DBBF99D65`.
+Run `20261006-115055` verifies host-only native title Continue to Africa
+with all 28 seed keys / 47 records, both players starting on foot at matching
+coordinates and independent native keyboard movement. Guest alignment
+`id=1` accepts epoch `3`, roster `2220786415`, 265 soldiers, 68 CPs,
+151 unknown soldiers, zero divergences and `w1=1`.
+
+The host checkpoint probe has an actual guest VarSave receipt. An injected
+guest PLAYER_DEAD opens Mission Failed on both windows. Host-only native
+menu Continue returns both players on foot to the shared checkpoint and
+accepts epoch `4` alignment (`id=2`, 151 unknowns, zero divergences, `w1=1`).
+Host-only fresh deployment then follows 30020 → 40020 → 30010 with 47
+records per leg and both players entering through their own helicopters.
+Guest alignment `id=3` accepts epoch `6`, roster `2772775463`, 271 soldiers,
+77 CPs, 191 unknowns, zero divergences and `w1=1`; host readiness follows
+32 ms later. Independent ground movement shows two bodies with reciprocal
+transforms matching at rest. Unknown states remain held until readable;
+alignment does not establish identical AI or positions.
+
+Live `world=0` sends UNPAIRED reason `5` and inactive level `0` while partner
+sync continues. Both games close normally via `WM_CLOSE`; all ten real
+save/config files match run-start and latest-backup hashes. Actual Disable
+archives the offline markers and leaves marker, `lab.ini`, `coop.ini` and
+link secret absent in both game folders. Cleanup commit `9d5aac6` passes
+the focused lab suite; file-state checks and the source gate establish
+inactive pass-through. No normal game launch after cleanup was exercised.
+Arrival/title/recovery checks pass 11/11. Disk-write completion, physical
+damage death and a camouflage cause remain unverified.
+
+The preceding integrated DLL
 `171041C2A598FD758FCC67A0B19B59BE4EC6C35FBA4CD98C2529BF946A9E97D6`
-has a live pass for host title Continue, host-only 30050 → 40050 → 30010
-travel and initial alignment in run `20261006-111828`. Guest alignment
-`id=1` accepts epoch `5` with roster `2772775463`, 271 soldiers, 77 CPs,
-191 unknown soldiers, zero divergences and `w1=1`. Unknown states remain
-held. That DLL's Afghanistan movement also passes in both directions with
-matching positions at rest. Host checkpoint copying has an actual guest
-VarSave receipt, and the injected guest death opens Mission Failed on both
-windows. Native host menu Continue reloads both games and pairs epoch `6`.
-Initially all host soldiers are unknown, so W1 remains gated; after host area
-activation the guest accepts snapshot `id=36` with 206 unknown soldiers and
-`w1=1`. The unchanged DLL thus recovers after the loading delay. Subsequent
-host-only Africa travel reaches matching epoch `8`, roster `2220786415`,
-265 soldiers and 68 CPs; guest snapshot `id=37` accepts 157 unknowns and
-`w1=1`, with both bodies and native movement verified. Killed-soldier
-post-Continue readback remains pending. The newer diagnostic-only
-DLL `59CD23348386815A84DA0CE9D18DB2B308E52BE21D1B5DDF9C254FC1910A9B13`
-has 11/11 targeted checks and is installed in both copies. Its separate
-run `20261006-113833` realizes both remote bodies but exposes a copied-save
-initial-action mismatch: seeded XYZ matches while the guest retains its
-old helicopter action. `TppPlayer.Init` also reads the unsynchronized
-`svars.ply_isUsedPlayerInitialAction`; a mandatory seed and regression
-fixture are being added. Current-build startup acceptance remains pending,
-separate from the preceding test build's results.
+has the larger Mother Base → ACC → Afghanistan → Africa run
+`20261006-111828`, including range hide/re-entry and Continue recovery after
+an all-unknown host area became readable. The intervening diagnostic DLL
+`59CD23348386815A84DA0CE9D18DB2B308E52BE21D1B5DDF9C254FC1910A9B13`
+exposed a helicopter/foot initial-action mismatch in run `20261006-113833`.
+The current build adds mandatory seed 28,
+`svars.ply_isUsedPlayerInitialAction`, and passes both checkpoint-on-foot
+and fresh-helicopter-entry cases. The previously killed soldier's
+post-Continue readback remains unverified. These are separate build-specific
+results on two copies on one PC; two-PC and full campaign play are untested.
 [Results](testing-2026-10-05-world-sync.md).
 
 Logs: `<host|guest dir>\mgs-coop\script-observer.log`; Lua lines appear as
@@ -579,10 +596,12 @@ tools/lab/Send-LabInput.ps1 -Role both -Keys space`. Commands and triggers are
 in [lab-protocol.md](lab-protocol.md) "World sync".
 
 - **W0-4 (world=0 inert, first):** `Play-OfflineCoop.ps1 -ExitAfterReadySec
-  180`: no `world` lab.ini key, no line starting with `world`; the log equals a
-  coop-lab 794d24f baseline after dropping every `entry_count=` and
-  `return_count=` line, the two world CFG receipt lines and the `tick_ms`/`t_ms`
-  values.
+  180` uses the default level 0. Expect no active world configuration, pairing
+  or enemy/environment sync; verify the partner still behaves normally.
+  Also disable an active level-3 run with `Set-WorldTrigger.ps1 -Role both
+  -Text 'world=0'`: each copy must receive UNPAIRED reason `5` then
+  `event=inactive;reason=level0`, with no later old travel or alignment replay.
+  Partner pose sync remains independent of the world level.
 - **Main run:** `Play-OfflineCoop.ps1 -World 3 -KeepLabEnabled`.
 - **W0-1 (30050):** both logs `world=configured; level=3; role=...;
   mode=lab`, `world=cfg; mission=30050`, `world=hello_rx; mission=30050; ...;
