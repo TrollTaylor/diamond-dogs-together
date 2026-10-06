@@ -62,7 +62,7 @@ trap {
     exit 1
 }
 # The loader versions whose native side implements the play mode. The
-# integrator sets this to the release version (0.12.0) with the version bump.
+# integrator keeps this list matched to the packaged loader version.
 $script:SupportedLoaderVersions = @('0.11.1')
 
 function Resolve-Piece([string]$PackagedName, [string]$RepoRelative) {
@@ -316,7 +316,7 @@ try {
         Write-Host '  - a VPN such as Tailscale, ZeroTier or Radmin VPN on both PCs (recommended; use the VPN code);'
         Write-Host "  - port forwarding of UDP $Port on your router to this PC's LAN address (use the internet code);"
         Write-Host '  - the same home network (use the LAN code).'
-        Write-Host 'Both players must have installed the same package version. The partner appears in Mother Base only.'
+        Write-Host 'Both players must have installed the same package version. Partner bodies support Mother Base, Afghanistan and Africa free roam.'
         Write-Host 'A new code is made every time you host; an old code stops working.'
         $rules = @(Get-CoopFirewallRows -ExePath $paths.Exe)
         Write-Lines -Lines (Format-CoopFirewallReport -Rules $rules -Profiles @(Get-CoopNetworkProfiles) -Port $Port)

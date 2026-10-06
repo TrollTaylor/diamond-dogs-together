@@ -267,8 +267,21 @@ this package may change:
 
 ## Runtime archive
 
-`mgs-coop-player-runtime.dat` (SHA-256 `26CE7C21…382F54`, 3,720,192 bytes)
-holds game-derived bytes and is never bundled.
+The current 0.11.1 `mgs-coop-player-runtime.dat` has SHA-256
+`87BBE82BB1E907CF405200155DA2794BF7E1F5A3D45BF66426A38CDD31A91F96`,
+is 16,333,824 bytes and contains 13 entries. It retains the seven-entry
+Mother Base runtime and adds normal Afghanistan/Africa packages and their
+two-slot controllers. It holds game-derived bytes and is never bundled.
+
+The chain below first reproduces the historical Mother Base base archive
+(`26CE7C21…382F54`, 3,720,192 bytes). To generate the current archive, run
+`stage_controller_replacement.py --players 2 --freeroam` with that verified
+base as `--runtime`, the pinned converter, the game executable and the
+locally extracted normal free-roam packs. The staging tool verifies source
+hashes, keeps all resource packages unchanged, checks both controller slots
+and round-trips every retained entry. Alternate/demo packs are refused.
+Two October 6 builds produced the current archive byte for byte. Do not
+substitute an old seven-entry archive for the current loader.
 
 The existing generator chain (local, developer-only) needs these game inputs,
 read with `build/archive_probe.exe` from `master/0/00.dat` and

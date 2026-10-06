@@ -1,5 +1,19 @@
 # Development status
 
+## October 6, 2026: current development 0.11.1
+
+The current route uses our own offline UDP link and separate co-op save copies. Two independently controlled game instances on one PC have now shown both player bodies and synchronized movement in normal Afghanistan (`30010`) and Africa (`30020`) free roam. Mother Base (`30050`) remains supported. ACC, story missions and alternate mission packs such as `30011` do not receive a partner body.
+
+Source commits `7ec1e39` and `07520e0` add the local free-roam controllers, mission gates and distance safety. `a4a5aab` versions the source and package as **0.11.1**. The field test ran the partner changes in a DLL still labelled **0.11.0**, before W3/W4 integration; it does not establish live results for the final integrated 0.11.1 DLL.
+
+Run `build/lab/runs/20261006-095606` verified the 13-entry archive installed in both copies. Afghanistan guest movement matched the host's partner body to about 20 mm, and both copies hid the partner at 200 m. Africa loaded the normal replacement pack with two IDs and parts states `3,3`; movement command/readback differences were 0–18 mm. Screenshots are retained under that run's `screens/`. Both games accepted `WM_CLOSE` and exited normally; all ten real save/config files were unchanged against both the run-start manifest and latest backup. [Field test details](testing-2026-10-05-world-sync.md).
+
+The October 5 W0–W2 tests also verified shared enemy outcomes, alerts, clock and weather in fresh Afghanistan free roam. W3 host-led mission travel and W4 checkpoint alignment, shared failure and restart are in progress. Their fixture checks and the final integrated live run still need completion. A real two-PC session, complete campaign gameplay/progression and four players remain unverified. The [friend launcher](two-pc-play.md) uses the same offline UDP route and copied saves; the earlier native Steam-join investigations are historical.
+
+## Earlier development records
+
+The dated sections below retain their original builds, test counts and limitations. They describe earlier native-session or offline development stages; their claims of current installation or missing guest control do not override the October 6 state above.
+
 ## October 4, 2026 (round 4): input-drive reconciliation, stance taps, prone, host-input leak (branch `wp/partner-anim4`, not run live)
 
 Acts on live round 3 (see [partner-anim-appearance.md](partner-anim-appearance.md), "Round 4"):
@@ -23,13 +37,13 @@ The defaults keep the proven behaviour. `Play-OfflineCoop.ps1` turns on the appe
 
 ## October 3-4, 2026: 0.11.0 (branch `coop-lab`)
 
-**Playable co-op is still unverified. A guest has never joined.** CTest passes 57 of 57 suites. See [October 3 test report](testing-2026-10-03.md).
+**At this native Steam-session stage, no guest join had been verified.** CTest passed 57 of 57 suites. The current offline partner route is recorded above. See [October 3 test report](testing-2026-10-03.md).
 
 - **Single-PC lab** ([how-to](single-pc-testing.md), [protocol](lab-protocol.md), `tools/lab/`):
   - Two instances run side by side. The guest has a fake SteamID and a renamed mutex, both instances use isolated save copies, and ISteamNetworking is emulated over loopback. The master URL is redirected to a local fuse.
   - Verified live: both instances boot together, the guest reaches Mother Base on its own save copy, the real saves are unchanged, and the join trigger, status file and connect diagnostics all work.
 - **Blocker for the single-PC lab:** co-op sessions need a master-server login. fuse `f75b41d` (written for exe 1.0.15.3) makes the 1.0.15.4 client go offline. Offline, the host's `CreateHostSession` returns 0, and the guest's IsConnectReady sees login state 3 < 4. Deriving the version the client expects, and bypassing the login gate, were both stopped by the assistant's safety checks. Neither is pursued in this project.
-- **Testing route now:** two PCs with real accounts on the normal online service. The friend package is built with `tools/package.ps1 -Friend`; see [friend test](friend-test.md). The runtime archive is game-derived and is never bundled.
+- **Testing route at the time:** two PCs with real accounts on the normal online service. That earlier friend-test plan is retained in [friend test](friend-test.md); the current package uses the [offline two-PC workflow](two-pc-play.md). The runtime archive is game-derived and is never bundled.
 - **Characters:** `coop.ini character=` (default guest = Quiet, fallback DD soldier). The Continue-path fix (`ALWAYS_APPLY_TEMPORATY_PLAYER_PARTS_SETTING` for one allocation) and the UpdatePartsStatus Quiet/Ocelot bypass are in place, but have not been confirmed live. D-Dog is not a playable type. See [characters](characters.md).
 - **Other 0.11.0 changes:** Lua and patch checks run in CTest. Damage-table field 13 clearing is opt-in, which matches Dynamite. Client join reset/re-arm: Ctrl+F9 or `reset.trigger`.
 
@@ -37,9 +51,9 @@ The defaults keep the proven behaviour. `Play-OfflineCoop.ps1` turns on the appe
 
 Updated 2026-09-12. Immediate scope: two independently controlled players together in a scene with shared gameplay/combat, using direct attributed Dynamite adaptations. Complete campaign scripting/progression and four players are deferred. **Playable co-op remains unfinished and unverified.**
 
-## Current code and installation
+## September 12 code and installation
 
-**Installed/workspace 0.10.33, Host mode.** DLL SHA-256 `FCB0E16A5AF1EE3E1884C7EB14D2EADFD33AC83280D7C0104EA2190EA564F9B6`. The user authorized testing on September 12. All 21 native suites passed, including session release and initialization/termination ownership regressions. Actual-source transformation, complete Lua parse, prestart execution and 91 lifecycle forwarding/cleanup checks passed. Installer upgrade/restore testing also found and fixed PowerShell's empty backup-path conversion in `File.Replace`. The owned live install succeeded. [Test results](testing-2026-09-12.md), [package workflow](local-package.md).
+**Recorded installation: 0.10.33, Host mode.** DLL SHA-256 `FCB0E16A5AF1EE3E1884C7EB14D2EADFD33AC83280D7C0104EA2190EA564F9B6`. The user authorized testing on September 12. All 21 native suites passed, including session release and initialization/termination ownership regressions. Actual-source transformation, complete Lua parse, prestart execution and 91 lifecycle forwarding/cleanup checks passed. Installer upgrade/restore testing also found and fixed PowerShell's empty backup-path conversion in `File.Replace`. The owned live install succeeded. [Test results](testing-2026-09-12.md), [package workflow](local-package.md).
 
 **Loading and termination fixes, 0.10.31–33:** live runs exposed termination on a different worker and OnInitialize running independently of the eventual gameplay thread. 0.10.33 records matched initialization callbacks and establishes runtime ownership at OnMissionGameStart. Its live Diagnostic run (PID 20680) prepared Mother Base, polled the manual guest shortcut, restored rules on a different termination worker and accepted the next scene's setup. It returned to title and quit normally, with all seven save/config hashes and original EXE/Steam DLL hashes unchanged. Automated F8/Ctrl+F8 taps produced no input receipt; a physical shortcut check remains unverified.
 
@@ -66,7 +80,7 @@ The preceding 0.10.25 adds host/guest status messages from owned-session and rep
 - 0.10.4 guest setup loaded Mother Base and returned to title. Read-only native client prerequisites passed; no native guest request or peer was involved. The game was subsequently quit normally and all seven save/config hashes matched the backup. [Result](evidence/client-loading-result-2026-09-09.json).
 - Eighteen native suites passed for 0.10.5 before the user requested no further tests. The September 12 test run above supersedes that automated result; no test count establishes a connected player.
 
-## Remaining immediate work
+## September 12 remaining work
 
 A real guest connection and independent actor control remain unproven. Guest/enemy damage, enemy targeting, world authority and synchronization, death/respawn and disconnect handling still need completion and eventual gameplay verification. Host targeting now has an integrated code path, but remote position publication and targeting behavior are unverified. Disconnect and owned-close code are now connected, but event delivery and asynchronous cleanup remain unverified; automatic reconnect is not enabled. Death/respawn now has a scoped code path, but actual recovery, placement, simultaneous deaths and post-respawn control remain unverified. Sight, damage-controller, hostage flag, trap, soldier action-task and CP status rules are now implemented but unverified. Online-result suppression and the full close-session branch adaptation are implemented but unverified. The concrete FOB service implementation remains unmapped; its existing game-owned dispatch is retained. These adaptations do not establish complete shared combat. Only one PC is available. A local simulated peer could exercise packet logic or actor loading, but would not verify a real remote connection or independent game client.
 
@@ -174,7 +188,7 @@ Independently map a read-only mission/actor observation path in the exact execut
 
 The [independent decoded analysis](network-binding-analysis.md) establishes that the network registrar builds a temporary 23-entry table on its stack. Its two inspected queries push Lua values and return a result count, and their shared accessor can lazily initialize state. Do not actively call these wrappers as diagnostic queries. No-hit recovery, the live VM-dispatch caller, and the paired natural registrar return are now observed. Next correlate [published player-status records](player-update-investigation.md) and [named player fields](player-observation-candidates.md) with a real loaded actor and transitions. A [natural Steam initialization call site](steam-init-caller-investigation.md) is now independently mapped for an earlier observation. The Steam callback pump remains unsuitable as an assumed single Lua-owner thread.
 
-## Implementation order
+## Historical implementation order
 
 1. Verify title-screen/input behavior with the installed original probe.
 2. Port the authorized Dynamite engine paths using current-build source maps and existing observations. Verify safe update, Lua/actor ownership and build gates before enabling the bridge.
@@ -188,7 +202,9 @@ The [independent decoded analysis](network-binding-analysis.md) establishes that
 
 There is no release date estimate yet: the four-actor engine proof determines the scope of native work. Steam lobbies do not create actors or synchronize campaign scripts. Authorized Dynamite and current-build source reuse now accelerates the engine port; each integration still requires exact-build and runtime verification.
 
-## Deliberate missing behavior
+## Historical missing behavior
+
+This describes the earlier probe/coordinator stage. The current offline transport, remote bodies and copied-save route are recorded at the top of this page.
 
 No real networking transport or Steam lobby is connected. The installed script-load hook and bootstrap do not provide remote actors, runtime message dispatch, full snapshots, late join, campaign save redirection, mission adapters, voice chat, host migration or playable co-op UI. The portable host input receiver is groundwork for runtime integration.
 

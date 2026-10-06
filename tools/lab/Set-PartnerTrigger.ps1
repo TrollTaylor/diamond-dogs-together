@@ -28,7 +28,8 @@ docs/partner-anim-appearance.md describes the animation, movement and look
 experiments and their log lines.
 
 The native side honours the file only with the offline-v1 marker and lab.ini
-partner=1, polls it every 30 Lua ticks during a 30050 mission, deletes it and
+partner=1, polls it every 30 Lua ticks during a supported partner mission
+(30010, 30020 or 30050), deletes it and
 logs partner_stage=changed (or partner_trigger=rejected; 'stop' clears the
 realize bits: partner_bits=cleared; reason=trigger). The script warns when the
 instance is not prepared that way. An earlier partner.trigger that was not
@@ -123,7 +124,7 @@ if ($WaitSec -gt 0) {
     $codes = [Collections.Generic.List[int]]::new()
     foreach ($t in $written) {
         if (Test-Path -LiteralPath $t.Path) {
-            Write-Warning "[$($t.Role)] partner.trigger was not consumed within $WaitSec s (is a 30050 mission running in offline-v1 with partner=1?)."
+            Write-Warning "[$($t.Role)] partner.trigger was not consumed within $WaitSec s (is Mother Base or free roam running in offline-v1 with partner=1?)."
             $codes.Add(2)
             continue
         }
