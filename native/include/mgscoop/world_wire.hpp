@@ -29,6 +29,10 @@ inline constexpr std::uint8_t kRoleHost = 1, kRoleGuest = 2;
 inline constexpr std::uint8_t kModeLab = 1, kModePlay = 2;
 inline constexpr std::uint32_t kMissionMtbsFree = 30050, kMissionMtbsHeli = 40050;
 inline constexpr std::uint32_t kMissionAfghFree = 30010, kMissionMafrFree = 30020;
+inline constexpr bool FollowMission(std::uint32_t mission) noexcept {
+    return mission == 30010 || mission == 30020 || mission == 30050 ||
+           mission == 40010 || mission == 40020 || mission == 40050;
+}
 // TppMission.IsHelicopterSpace: an ACC (40010/40020/40050).
 inline constexpr bool IsHeliSpace(std::uint32_t mission) noexcept { return mission / 10000 == 4; }
 
@@ -42,6 +46,11 @@ namespace op {
 // Control (queue 0).
 inline constexpr std::uint8_t hello = 0x01, ready = 0x02, received = 0x03, reject = 0x04, resync = 0x05, resync_end = 0x06,
                               mission_end = 0x07, probe_sync = 0x08;
+// W3 control survives a local mission start; it never enters the world queue.
+inline constexpr std::uint8_t transition = 0x09, seed = 0x0A, seeds_end = 0x0B,
+                              req_mission = 0x0C, follow_ack = 0x0D;
+inline constexpr std::uint8_t align_begin = 0x0E, align_end = 0x0F, align_record = 0x18,
+                              align_ack = 0x19, game_over = 0x1A, req_game_over = 0x1B, checkpoint = 0x1C;
 // World (queue 1).
 inline constexpr std::uint8_t enemy_outcome = 0x10, req_outcome = 0x11, phase = 0x12, req_phase = 0x13, player_area = 0x14,
                               digest = 0x15, guest_digest = 0x16, phase_vec = 0x17, clock = 0x20, weather = 0x21;

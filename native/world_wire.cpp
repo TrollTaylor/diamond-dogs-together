@@ -16,6 +16,7 @@ constexpr Field U8(std::int64_t lo = 0, std::int64_t hi = kU8, std::int64_t alt 
 constexpr Field U16(std::int64_t lo = 0, std::int64_t hi = kU16) { return Field{Type::u16, lo, hi, -1}; }
 constexpr Field U32(std::int64_t lo = 0, std::int64_t hi = kU32) { return Field{Type::u32, lo, hi, -1}; }
 constexpr Field I32() { return Field{Type::i32, kI32Min, kI32Max, -1}; }
+constexpr Field I32(std::int64_t lo, std::int64_t hi) { return Field{Type::i32, lo, hi, -1}; }
 constexpr Field Mission() { return U32(0, 99999); }
 constexpr Field Rid() { return U16(1, kU16); }
 constexpr Field Weather() { return U8(0, 5, 255); }
@@ -35,6 +36,30 @@ constexpr OpSpec kOps[] = {
     {op::mission_end, "MISSION_END", 0, Dir::both, Wire::reliable, 1, false, false, 1, 1, 0, 6, {Mission(), U16()}},
     {op::probe_sync, "PROBE_SYNC", 0, Dir::both, Wire::reliable, 1, false, true, 4, 1, 0, 14,
      {U8(1, kWorldProbeMax), U8(1, 4), U32(), U32(), U32()}},
+    {op::transition, "MISSION_TRANSITION", 0, Dir::host_to_guest, Wire::reliable, 3, false, false, 11, 0, 0, 27,
+     {U32(1), U8(1, 6), Mission(), Mission(), U8(), U32(), U32(), U8(), U8(), U8(0, 1), U16(1)}},
+    {op::seed, "MISSION_SEED", 0, Dir::host_to_guest, Wire::reliable, 3, false, false, 5, 0, 0, 15,
+     {U32(1), Mission(), U8(1, 63), U16(0, 1023), U32()}},
+    {op::seeds_end, "MISSION_SEEDS_END", 0, Dir::host_to_guest, Wire::reliable, 3, false, false, 4, 0, 0, 14,
+     {U32(1), Mission(), U16(0, 1024), U32()}},
+    {op::req_mission, "REQ_MISSION", 0, Dir::guest_to_host, Wire::reliable, 3, true, false, 4, 0, 0, 11,
+     {Rid(), U8(1, 8), Mission(), U32()}},
+    {op::follow_ack, "FOLLOW_ACK", 0, Dir::guest_to_host, Wire::reliable, 3, false, false, 3, 0, 0, 9,
+     {U32(1), Mission(), U8(0, 2)}},
+    {op::align_begin, "ALIGN_BEGIN", 0, Dir::host_to_guest, Wire::reliable, 3, false, false, 5, 1, 0, 18,
+     {U32(1), Mission(), U32(), U16(0, 1024), U16(0, 512), U16(1)}},
+    {op::align_end, "ALIGN_END", 1, Dir::host_to_guest, Wire::reliable, 3, false, false, 5, 1, 0, 16,
+     {U32(1), U16(0, 1024), U16(0, 512), U32(), U16(), U16(1)}},
+    {op::align_record, "ALIGN_RECORD", 1, Dir::host_to_guest, Wire::reliable, 3, false, false, 7, 0, 0, 15,
+     {U32(1), U8(1, 2), U16(1, 1024), U32(), U8(0, 1), U8(0, 7), U16(1)}},
+    {op::align_ack, "ALIGN_ACK", 0, Dir::guest_to_host, Wire::reliable, 3, false, false, 4, 0, 0, 11,
+     {U32(1), Mission(), U16(1), U8(0, 1)}},
+    {op::game_over, "GAME_OVER", 0, Dir::host_to_guest, Wire::reliable, 3, false, false, 3, 0, 0, 6,
+     {U8(), U32(), U8()}},
+    {op::req_game_over, "REQ_GAME_OVER", 0, Dir::guest_to_host, Wire::reliable, 3, true, false, 4, 0, 0, 8,
+     {Rid(), U8(), U32(), U8()}},
+    {op::checkpoint, "CHECKPOINT", 0, Dir::host_to_guest, Wire::reliable, 3, false, false, 6, 0, 0, 22,
+     {U32(), U16(1), I32(-10000000, 10000000), I32(-10000000, 10000000), I32(-10000000, 10000000), I32(-360000, 360000)}},
     {op::enemy_outcome, "ENEMY_OUTCOME", 1, Dir::host_to_guest, Wire::reliable, 2, false, false, 11, 0, 0, 25,
      {U32(), U8(1, 1), U8(0, 7), U16(1, kU16), U8(0, 15), U8(0, 2), U16(), U8(0, 3), I32(), I32(), I32()}},
     {op::req_outcome, "REQ_OUTCOME", 1, Dir::guest_to_host, Wire::reliable, 2, true, false, 11, 0, 0, 28,
@@ -436,6 +461,29 @@ void Core::OnOp(const Op& op, bool datagram, std::uint64_t now_ms) noexcept {
     case op::reject:
         if (!PushControl(entry, false)) Overflow(kDropControl, now_ms);
         return;
+    case op::transition:
+    case op::seed:
+    case op::seeds_end:
+    case op::follow_ack:
+        // Mission control must work while the peer is loading/unpaired. It
+        // still requires the save/role/level HELLO gates of this link session.
+        if (!remote_hello_ || remote_saves_ != 1 || remote_level_ < 3 || remote_role_ == config_.role) {
+            ++stats_.purged;
+            return;
+        }
+        if ((op.code == op::transition && (!FollowMission(U(op.v[2])) || !FollowMission(U(op.v[3])))) ||
+            (op.code != op::transition && !FollowMission(U(op.v[1])))) {
+            ++stats_.bad_op;
+            return;
+        }
+        if (!PushControl(entry, false)) Overflow(kDropControl, now_ms);
+        return;
+    case op::req_mission:
+        if (!paired_ || op.epoch != epoch_) { AutoAnswer(op.code, op.v[0], 0, reject::not_paired); return; }
+        if (ctrl_size_ >= kControlQueue) { AutoAnswer(op.code, op.v[0], 0, reject::busy); Overflow(kDropControl, now_ms); return; }
+        AutoAnswer(op.code, op.v[0], 0, 0);
+        PushControl(entry, false);
+        return;
     case op::resync:
         if (!paired_) { AutoAnswer(op::resync, op.v[0], 0, reject::not_paired); return; }
         if (ctrl_size_ >= kControlQueue) {
@@ -469,6 +517,16 @@ void Core::OnOp(const Op& op, bool datagram, std::uint64_t now_ms) noexcept {
         }
     } else if (!known_host_epoch_ || op.epoch != known_host_epoch_) {
         ++stats_.purged;
+        return;
+    }
+    if (spec->queue == 0) {
+        if (ctrl_size_ >= kControlQueue) {
+            if (spec->request && host) AutoAnswer(op.code, op.v[0], 0, reject::busy);
+            Overflow(kDropControl, now_ms);
+            return;
+        }
+        if (spec->request && host) AutoAnswer(op.code, op.v[0], 0, 0);
+        PushControl(entry, false);
         return;
     }
     if (spec->wire == Wire::datagram) {
@@ -638,7 +696,8 @@ void Core::OnSession(std::uint32_t session, std::uint64_t now_ms) noexcept {
     link_up_ms_ = now_ms;
     hello_since_up_ = silent_logged_ = false;
     PushLocal(op::link, 1, session);
-    Unpair(unpair::link_session);
+    if (paired_) Unpair(unpair::link_session);
+    else if (level_ >= 3) PushLocal(op::unpaired, unpair::link_session); // Lua transaction history belongs to this session too.
 }
 
 void Core::OnLinkState(bool up, std::uint32_t session, std::uint64_t now_ms) noexcept {
@@ -662,7 +721,17 @@ CfgReply Core::Cfg(std::uint32_t mission, bool start, std::uint32_t read_mission
             pending_level_set_ = false;
         }
         Unpair(unpair::local_end);
-        ctrl_head_ = ctrl_size_ = 0;
+        // Loading can finish on one PC while the other is still in its old
+        // mission. Preserve only W3 control; stale gameplay/local ops are gone.
+        unsigned kept = 0;
+        constexpr unsigned ctrl_capacity = kControlQueue + kLocalReserve;
+        for (unsigned i = 0; i < ctrl_size_; ++i) {
+            const Entry& item = ctrl_[(ctrl_head_ + i) % ctrl_capacity];
+            if (level_ >= 3 && (item.op == op::transition || item.op == op::seed || item.op == op::seeds_end || item.op == op::follow_ack ||
+                               (item.local && item.op == op::unpaired && item.v[0] == unpair::link_session)))
+                ctrl_[(ctrl_head_ + kept++) % ctrl_capacity] = item;
+        }
+        ctrl_size_ = kept;
         world_head_ = world_size_ = 0;
         digest_.valid = guest_digest_.valid = phase_vec_.valid = false;
         local_ = Ready{};
@@ -723,15 +792,23 @@ TxStatus Core::Tx(std::uint8_t code, const std::int64_t* values, unsigned count,
     if (count != spec->lua || (count && !values)) return TxStatus::bad_args;
     for (unsigned i = 0; i < count; ++i)
         if (!FieldValid(spec->fields[i], values[i])) return TxStatus::bad_args;
-    if (!level_) return TxStatus::disabled;
+    if (!level_ || spec->level > level_) return TxStatus::disabled;
     if (spec->lab_only && config_.play) return TxStatus::lab_only;
     const bool host = config_.role == kRoleHost;
     if ((spec->dir == Dir::host_to_guest && !host) || (spec->dir == Dir::guest_to_host && host)) return TxStatus::wrong_role;
+    if (code >= op::transition && code <= op::follow_ack) {
+        if (level_ < 3 || !remote_hello_ || remote_level_ < 3 || remote_saves_ != 1 || remote_role_ == config_.role)
+            return TxStatus::disabled;
+        if (code == op::req_mission && !paired_) return TxStatus::not_paired;
+        if ((code == op::transition && (!FollowMission(U(values[2])) || !FollowMission(U(values[3])))) ||
+            ((code == op::seed || code == op::seeds_end || code == op::follow_ack) && !FollowMission(U(values[1]))))
+            return TxStatus::bad_args;
+    }
     if (code == op::goto_ack) {
         GotoTx(values[0], values[1], now_ms);
         return TxStatus::ok;
     }
-    if (spec->queue == 1) {
+    if (spec->queue == 1 || (spec->level >= 3 && code > op::follow_ack)) {
         if (!paired_) return TxStatus::not_paired;
         if (eff_ < spec->level) return TxStatus::disabled;
     }
@@ -753,6 +830,8 @@ TxStatus Core::Tx(std::uint8_t code, const std::int64_t* values, unsigned count,
         op.v[4] = host ? epoch_ : (host_mission_ == U(values[0]) ? known_host_epoch_ : 0);
         break;
     case op::mission_end: op.v[1] = TxEpoch(); break;
+    case op::align_begin: op.v[5] = TxEpoch(); break;
+    case op::align_end: op.v[5] = TxEpoch(); break;
     case op::probe_sync: op.v[4] = values[1] == 1 ? U(static_cast<std::int64_t>((now_ms + U(values[3])) & 0xFFFFFFFFu)) : 0; break;
     default: break;
     }

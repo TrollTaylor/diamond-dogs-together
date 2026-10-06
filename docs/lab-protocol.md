@@ -347,10 +347,10 @@ realization line is inside the stage 3 segment).
 ## World sync (opt-in; [world-sync-protocol.md](world-sync-protocol.md))
 
 `lab.ini` keys (written only when set; the default offline `lab.ini` is
-unchanged): `world=0..3` (0 inert, 1 plumbing, 2 enemies + alert, 3 clock +
-weather) and `world_probe=<probe>` (lab only; `p1 p3 p3b p4 p12 p17 race_kill
+unchanged): `world=0..3` (0 inert, 1 plumbing, 2 enemies + alert, 3 also clock/
+weather, host travel and reload recovery) and `world_probe=<probe>` (lab only; `p1 p3 p3b p4 p12 p17 race_kill
 remote_area_kill kill_near sleep_near fulton_near alert_near weather_rain
-clock_jump clock_fast`). `Play-OfflineCoop.ps1 -World N [-WorldProbe <probe>]`
+clock_jump clock_fast shared_death host_continue shared_checkpoint`). `Play-OfflineCoop.ps1 -World N [-WorldProbe <probe>]`
 sets them on both copies (or `Prepare-LabInstance.ps1 -Offline -PartnerSetting
 world=N`). World sync needs offline-v1, `partner=1`, `net=1`, `net_link=v2` and
 redirected saves; it logs `world=configured` or `world=disabled; reason=...`.
@@ -370,8 +370,9 @@ reason=level|mission|target|busy|terminating`. With `-WaitSec` the script exits
 command was applied), 2 when not consumed, 4 when unconfirmed after 3 s.
 `world=0` switches world sync off at once; `world=1..3` applies at the next
 mission start; `world_probe` runs now (or 10 s after the next start); `goto`
-flies a copy standing in Mother Base or the ACC to free roam (both copies: `-Role both`;
-`[G]` in Play-OfflineCoop). Start-Lab -Offline and Stop-Lab delete leftovers
+flies a copy standing in Mother Base or the ACC to free roam. With world3,
+send it to the host only; `[G]` also selects host only and travel follows the
+guest. With lower levels use `-Role both`. Start-Lab -Offline and Stop-Lab delete leftovers
 (`stop.json world_triggers_removed`).
 
 ### Live test recipe (both copies on this PC)
@@ -389,15 +390,18 @@ flies a copy standing in Mother Base or the ACC to free roam (both copies: `-Rol
    mission=30050; ...; level=3; ...; saves=1`, `world=paired; ...;
    mission=30050; ...; match=1; ...; eff=3` and `world_lua=event=started;
    level=3; ...`.
-4. Goto: `pwsh -File tools/lab/Set-WorldTrigger.ps1 -Role both -Text
-   'goto=30010' -WaitSec 15` (or `[G]`). Both logs: `world_goto=armed;
+4. Goto: `pwsh -File tools/lab/Set-WorldTrigger.ps1 -Role host -Text
+   'goto=30010' -WaitSec 15` (or `[G]`). Host logs: `world_goto=armed;
    target=30010; lz=0`, `world_goto=step; step=1; result=reserved`. If neither
    shows `world=cfg; mission=40050` within 20 s, press Space in both windows
    (`pwsh -File tools/lab/Send-LabInput.ps1 -Role both -Keys space`); the
    ACC's "Overall Completion" screen needs Enter (`-Keys enter`). Then
    `world=cfg; mission=40050`, `world_goto=step; step=2; result=waiting` and
    `reserved`, `world=cfg; mission=30010`, `world_goto=arrived;
-   mission=30010`. A clock jump of about +6 h is expected.
+   mission=30010`. Guest logs `event=follow;step=queued|seeds_ready|replay|arrived`
+   for each transition and both logs reach matching mission epochs. A clock
+   jump of about +6 h is expected. Complete `event=align;step=accepted` on the
+   guest and `step=ready` on the host must precede enemy-sync acceptance.
 5. Probes on one copy: `pwsh -File tools/lab/Set-WorldTrigger.ps1 -Role host
    -Text 'world_probe=kill_near'` (likewise `sleep_near`, `fulton_near` and
    `alert_near` on the guest; `race_kill`, `remote_area_kill`, `p1`, `p3`,

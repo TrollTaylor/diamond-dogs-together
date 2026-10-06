@@ -494,7 +494,8 @@ int main() {
     const auto worldSeven = Lab("enabled=1\nrole=host\nworld=7\n");
     Check(worldSeven.world == 0 && worldSeven.invalid_values == 1, "invalid world keeps 0");
     const char* probes[] = {"none", "p1", "p3", "p3b", "p4", "p12", "p17", "race_kill", "remote_area_kill", "kill_near", "sleep_near",
-                            "fulton_near", "alert_near", "weather_rain", "clock_jump", "clock_fast"};
+                            "fulton_near", "alert_near", "weather_rain", "clock_jump", "clock_fast",
+                            "shared_death", "host_continue", "shared_checkpoint"};
     for (unsigned i = 0; i <= kWorldProbeMax; ++i) {
         const auto c = Lab(std::string("enabled=1\nrole=guest\nworld=2\nworld_probe=") + probes[i] + "\n");
         Check(static_cast<unsigned>(c.world_probe) == i && c.invalid_values == 0 && std::strcmp(WorldProbeName(c.world_probe), probes[i]) == 0,
@@ -506,7 +507,7 @@ int main() {
     Check(!ParseWorldProbe("P1", 2, unchanged) && !ParseWorldProbe("p2", 2, unchanged) && !ParseWorldProbe("", 0, unchanged) &&
               !ParseWorldProbe("race_kill ", 10, unchanged) && unchanged == WorldProbe::p1,
           "ParseWorldProbe is exact");
-    Check(std::strcmp(WorldProbeName(static_cast<WorldProbe>(16)), "?") == 0, "out-of-range probe name");
+    Check(std::strcmp(WorldProbeName(static_cast<WorldProbe>(kWorldProbeMax + 1)), "?") == 0, "out-of-range probe name");
     const auto badProbe = Lab("enabled=1\nrole=host\nworld_probe=p2\n");
     Check(badProbe.world_probe == WorldProbe::none && badProbe.invalid_values == 1, "unknown probe invalid");
     const auto playWorld = Lab("enabled=1\nmode=play\nrole=host\n" + saves + "net=1\nworld=2\n");

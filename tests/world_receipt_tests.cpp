@@ -96,7 +96,7 @@ void TxParse() {
           "single spaces, nothing trailing");
     Check(Tx("1 30050 1 12345678901 10 3") == world::TxStatus::syntax, "more than 10 digits");
     Check(Tx("") == world::TxStatus::syntax && Tx("x") == world::TxStatus::syntax, "empty / not a number");
-    Check(Tx("9 1") == world::TxStatus::unknown_op && Tx("3 1 3") == world::TxStatus::unknown_op && Tx("113") == world::TxStatus::unknown_op &&
+    Check(Tx("29 1") == world::TxStatus::unknown_op && Tx("3 1 3") == world::TxStatus::unknown_op && Tx("113") == world::TxStatus::unknown_op &&
               Tx("0") == world::TxStatus::unknown_op && Tx("256") == world::TxStatus::unknown_op,
           "unknown, native-only and local ops");
     Check(Tx("120 1 2", code, v, n) == world::TxStatus::ok && code == 120 && n == 2, "GOTO_ACK is the one Lua local op");
@@ -104,6 +104,10 @@ void TxParse() {
     Check(Tx("23 77 0 5 1 2 3 4 5 0 0 0 0 0 0 0", code, v, n) == world::TxStatus::ok && n == 15, "PHASE_VEC: 15 fields");
     Check(Tx("21 1 86400 2000 1 0 0 0 3 1") == world::TxStatus::bad_args, "clock 86400 refused");
     Check(Tx("21 1 86399 2000 255 0 0 0 3 1") == world::TxStatus::ok, "weather 255 (release)");
+    Check(Tx("28 4294967295 65535 -10000000 10000000 0 -360000", code, v, n) == world::TxStatus::ok && n == 6,
+          "checkpoint hash, version and bounded signed pose");
+    Check(Tx("28 0 1 0 0 0 360001") == world::TxStatus::bad_args && Tx("28 0 1 0 -10000001 0 0") == world::TxStatus::bad_args,
+          "checkpoint angle and position bounds");
     char out[world::reply_capacity];
     Check(world::FormatTxReply(world::TxStatus::ok, out, sizeof(out)) && std::strcmp(out, "return 1") == 0, "TX ok reply");
     Check(world::FormatTxReply(world::TxStatus::queue_full, out, sizeof(out)) && std::strcmp(out, "return 0,6") == 0, "TX refusal");
@@ -182,7 +186,8 @@ void Triggers() {
     pad.insert(0, " ");
     Check(!Trigger(pad, t, canonical, reason) && reason == "too_long", "256 bytes refused");
     const char* names[] = {"p1", "p3", "p3b", "p4", "p12", "p17", "race_kill", "remote_area_kill", "kill_near", "sleep_near",
-                           "fulton_near", "alert_near", "weather_rain", "clock_jump", "clock_fast"};
+                           "fulton_near", "alert_near", "weather_rain", "clock_jump", "clock_fast",
+                           "shared_death", "host_continue", "shared_checkpoint"};
     for (unsigned i = 0; i < 15; ++i) {
         Check(Trigger(std::string("world_probe=") + names[i], t, canonical, reason) && static_cast<unsigned>(t.probe) == i + 1 &&
                   canonical == std::string("world_probe=") + names[i],

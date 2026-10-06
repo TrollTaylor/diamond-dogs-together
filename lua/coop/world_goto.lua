@@ -64,6 +64,10 @@ do
             end
             local seq = W.get(TppSequence, "GetCurrentSequenceName")
             if type(seq) == "function" and seq() == "Seq_Game_MainGame" and W.inGame() and now - W.t0 >= 3000 then
+                if W.follow and W.follow.enabled and W.host and not W.paired then
+                    if not g.waiting then g.waiting = true; ack(g, 2, "waiting") end
+                    return
+                end
                 if TppMission.IsHelicopterSpace(vars.missionCode) ~= true or W.get(gvars, "mis_nextMissionCodeForEmergency") ~= 0 then
                     W.gt = nil
                     return ack(g, 0, "refused;reason=not_heli_space")

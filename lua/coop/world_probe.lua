@@ -7,6 +7,7 @@ do
     if type(W) == "table" then
         local R, B, OP, H = {}, {}, W.OP, W.handlers
         W.probe = R
+        R.handlers = B
         local fmt, floor = string.format, math.floor
         local NAMES = {"p1", "p3", "p3b", "p4", "p12", "p17", "race_kill", "remote_area_kill", "kill_near", "sleep_near",
             "fulton_near", "alert_near", "weather_rain", "clock_jump", "clock_fast"}

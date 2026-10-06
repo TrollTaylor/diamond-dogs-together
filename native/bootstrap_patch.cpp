@@ -150,7 +150,7 @@ bool SelectHostTrialPatch(const char* source, std::size_t size, const char* name
     constexpr auto character_extra=sizeof(character_source)-1;
     // World sync (lua/coop/world_*.lua): seven chunks, in this order, right after partner sync.
     constexpr std::size_t world_size=sizeof(world_sync_source)-1+sizeof(world_enemy_source)-1+sizeof(world_outcome_source)-1+
-        sizeof(world_phase_source)-1+sizeof(world_env_source)-1+sizeof(world_probe_source)-1+sizeof(world_goto_source)-1;
+        sizeof(world_phase_source)-1+sizeof(world_env_source)-1+sizeof(world_probe_source)-1+sizeof(world_goto_source)-1+sizeof(world_follow_source)-1+sizeof(world_align_source)-1+sizeof(world_recovery_source)-1;
     constexpr std::size_t result_size=original_size+sizeof(host_trial_source)-1+sizeof(equipment_loading_source)-1+marker_extra+character_extra+sizeof(host_admission_source)-1+sizeof(client_join_source)-1+sizeof(damage_lifecycle_source)-1+sizeof(enemy_targeting_source)-1+sizeof(respawn_source)-1+sizeof(session_lifecycle_source)-1+sizeof(session_feedback_source)-1+sizeof(partner_sync_source)-1+world_size+sizeof(marker_loading_source)-1+sizeof(character_readback_source)-1+sizeof(mission_trace_source)-1;
     static_assert(result_size<=script_bridge::max_replacement_bytes);
     static char result[result_size]{};
@@ -217,7 +217,10 @@ bool SelectHostTrialPatch(const char* source, std::size_t size, const char* name
                                  std::pair<const char*,std::size_t>{world_phase_source,sizeof(world_phase_source)-1},
                                  std::pair<const char*,std::size_t>{world_env_source,sizeof(world_env_source)-1},
                                  std::pair<const char*,std::size_t>{world_probe_source,sizeof(world_probe_source)-1},
-                                 std::pair<const char*,std::size_t>{world_goto_source,sizeof(world_goto_source)-1}}) {
+                                 std::pair<const char*,std::size_t>{world_goto_source,sizeof(world_goto_source)-1},
+                                 std::pair<const char*,std::size_t>{world_follow_source,sizeof(world_follow_source)-1},
+                                 std::pair<const char*,std::size_t>{world_align_source,sizeof(world_align_source)-1},
+                                 std::pair<const char*,std::size_t>{world_recovery_source,sizeof(world_recovery_source)-1}}) {
             std::memcpy(result+world,chunk.first,chunk.second);
             world+=chunk.second;
         }

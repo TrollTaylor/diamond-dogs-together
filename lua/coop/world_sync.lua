@@ -1,19 +1,17 @@
--- MGS co-op world sync W0-W2 (original; docs/world-sync-protocol.md). Inert
--- unless native answers MGS_COOP_WORLD_CFG_V1 with level >= 1; otherwise the
--- receipt stays a literal and a mission costs the two CFG loads. Hashes and
--- words go through W.n (%.0f: %d is 32-bit on Windows), receipts stay under
--- 256 bytes, and a Lua error turns world sync off for the mission (logged
--- once) while the original callbacks keep running. world_enemy/phase/env/
--- probe/goto.lua extend the W table published here as e.MgsCoopWorld.
+-- MGS co-op world sync W0-W2 plus W3/W4. MGS_COOP_WORLD_CFG_V1 literals stay inert.
+-- W.n formats hashes via %.0f; receipts <256 bytes. Companion chunks extend W.
+-- Errors stop sync for this mission while original callbacks keep running.
 do
     local OP = {HELLO = 1, READY = 2, RECEIVED = 3, REJECT = 4, RESYNC = 5, RESYNC_END = 6, MISSION_END = 7, PROBE_SYNC = 8,
         OUTCOME = 16, REQ_OUTCOME = 17, PHASE = 18, REQ_PHASE = 19, AREA = 20, DIGEST = 21, GDIGEST = 22, PVEC = 23,
         CLOCK = 32, WEATHER = 33, LINK = 112, PAIRED = 113, UNPAIRED = 114, GOTO = 115, PROBE = 116, PROBE_FIRE = 117,
-        RESYNC_NEEDED = 118, LEVEL = 119, GOTO_ACK = 120}
+        RESYNC_NEEDED = 118, LEVEL = 119, GOTO_ACK = 120,
+        TRANSITION = 9, SEED = 10, SEEDS_END = 11, REQ_MISSION = 12, FOLLOW_ACK = 13,
+        ALIGN_BEGIN = 14, ALIGN_END = 15, ALIGN_RECORD = 24, ALIGN_ACK = 25,
+        GAME_OVER = 26, REQ_GAME_OVER = 27, CHECKPOINT = 28}
     local W = {OP = OP, handlers = {}, bindHooks = {}, startHooks = {}, stopHooks = {}, pairedHooks = {}, unpairedHooks = {}, observers = {},
         areaState = {}, areaWrapped = setmetatable({}, {__mode = "k"})}
     e.MgsCoopWorld = W
-    -- Per-mission features (W3+ extends it); other missions run level-1 plumbing only.
     W.MISSIONS = {[30010] = {enemies = true, clock = true, weather = "all", areaEnemy = "f30010_enemy"},
         [30020] = {enemies = true, clock = true, weather = "nofog", areaEnemy = "f30020_enemy"},
         [30050] = {clock = true}}
@@ -246,6 +244,8 @@ do
         if W.env then W.env.tick(now) end
         if W.probe then W.probe.tick(now) end
         if W.gt and W.go then W.go.tick(now) end
+        if W.follow then W.follow.tick(now) end
+        if W.align then W.align.tick(now) end
     end
 
     -- Observer (after the original; records only, never sends).
@@ -280,17 +280,14 @@ do
         for _, f in ipairs(W.observers) do f(kind, h, class2) end
     end
 
-    -- TppMain wrappers (originals outside pcall; returns, errors and yields kept).
     local initialize, start, update, message, terminate = e.OnInitialize, e.OnMissionGameStart, e.OnUpdate, e.OnMessage, e.OnTerminate
     function W.init(subScripts)
         W.areaState = {}
-        local level = W.cfg(vars.missionCode, 0)[1]
+        local cfg = W.cfg(vars.missionCode, 0)
+        local level = cfg[1]
+        if level >= 3 and W.follow then W.follow.install(cfg) end
         local feature = W.MISSIONS[vars.missionCode]
         if level >= 2 and feature and feature.areaEnemy and W.area then W.area.install(subScripts, feature.areaEnemy) end
-    end
-    local function initialized(subScripts, ...)
-        pcall(W.init, subScripts)
-        return ...
     end
     local function started(...)
         local ok, err = pcall(W.begin)
@@ -315,7 +312,11 @@ do
         return ...
     end
     if type(initialize) == "function" then
-        e.OnInitialize = function(subScripts, ...) return initialized(subScripts, initialize(subScripts, ...)) end
+        -- Install before Init captures menu closures.
+        e.OnInitialize = function(subScripts, ...)
+            pcall(W.init, subScripts)
+            return initialize(subScripts, ...)
+        end
     end
     if type(start) == "function" then e.OnMissionGameStart = function(...) return started(start(...)) end end
     if type(update) == "function" then e.OnUpdate = function(...) return updated(update(...)) end end

@@ -516,7 +516,8 @@ const char* NetLossModelName(NetLossModel value) noexcept { return value == NetL
 
 namespace {
 constexpr const char* kWorldProbeNames[] = {"none", "p1", "p3", "p3b", "p4", "p12", "p17", "race_kill", "remote_area_kill",
-    "kill_near", "sleep_near", "fulton_near", "alert_near", "weather_rain", "clock_jump", "clock_fast"};
+    "kill_near", "sleep_near", "fulton_near", "alert_near", "weather_rain", "clock_jump", "clock_fast",
+    "shared_death", "host_continue", "shared_checkpoint"};
 static_assert(sizeof(kWorldProbeNames) / sizeof(kWorldProbeNames[0]) == kWorldProbeMax + 1u);
 }
 

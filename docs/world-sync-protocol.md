@@ -1,14 +1,16 @@
-# World sync W0-W2: protocol and implementation
+# World sync W0-W4: protocol and implementation
 
 Implements phases W0 (plumbing), W1 (shared enemy outcomes and alert
 escalation in free roam) and W2 (clock and weather) of
 [world-sync-design.md](world-sync-design.md), plus the lab probes and a
-lab-only mission jump. Mission following (W3), the partner body outside
-30050, game over and checkpoints (W4), story missions (W5) and soldier
-transforms (W6) are not implemented (section 13 lists the extension points).
+lab-only mission jump. Level 3 also includes supported-scene host travel
+(W3), forward-only reload alignment, shared death and checkpoint copying
+(W4), described in section 13. Story missions (W5), full progression copying
+and soldier transforms (W6) remain unimplemented.
 
-Nothing here has run in-game yet. Script citations refer to the extracted
-1.0.15.4 scripts (`lib/...`, `mission/...`).
+W0-W2 ran live in [October 5 testing](testing-2026-10-05-world-sync.md).
+W3/W4 automated fixtures do not establish live acceptance. Script citations
+refer to the extracted 1.0.15.4 scripts (`lib/...`, `mission/...`).
 
 Code:
 
@@ -17,7 +19,7 @@ Code:
 | Link DATAGRAM and hooks | `native/link_protocol.cpp`, `native/partner_net.cpp` |
 | Core (pure, unit tested) | `native/world_wire.cpp` (op table, codec, queues, pairing, schedulers), `native/world_receipt.cpp` (receipts, trigger grammar) |
 | Glue (Win32) | `native/world_link.cpp` (lock, hooks, pump, `world.trigger`), `native/game_script_observer.cpp` (receipt routing, install) |
-| Lua (spliced into TppMain after `partner_sync.lua`) | `lua/coop/world_sync.lua`, `world_enemy.lua`, `world_outcome.lua`, `world_phase.lua`, `world_env.lua`, `world_probe.lua`, `world_goto.lua` |
+| Lua (spliced into TppMain after `partner_sync.lua`) | `lua/coop/world_sync.lua`, `world_enemy.lua`, `world_outcome.lua`, `world_phase.lua`, `world_env.lua`, `world_probe.lua`, `world_goto.lua`, `world_follow.lua`, `world_align.lua`, `world_recovery.lua` |
 | Config and tools | `lab.ini` `world` / `world_probe`, `tools/lab/Set-WorldTrigger.ps1`, `tools/lab/WorldSync.psm1`, `Play-OfflineCoop.ps1 -World`, `Play-Coop.ps1 -World` |
 | Tests | `tests/world_wire_tests.cpp`, `tests/world_receipt_tests.cpp`, `tests/world_sync_lua_check.lua` (fragment and composed TppMain), additions to the link, lab config, host-trial patch and script suites |
 
@@ -31,7 +33,7 @@ in Play-Coop):
 | 0 | Inert: the native world module is not configured, no partner_net hook is installed, the world receipts are not classified (they stay literals), `world.trigger` is never read, no `world` log line. Lua makes exactly two loads per mission (the CFG query in OnInitialize and the CFG start in OnMissionGameStart), installs nothing and never ticks. |
 | 1 | W0: HELLO, MISSION_READY, pairing and epoch, RECEIVED/REJECT, name maps and the roster digest, the observer (logging only), the probe runner, the lab goto. |
 | 2 | Level 1 plus W1 in 30010/30020: enemy outcomes, the out-of-area union, alert escalation, digests and resync. |
-| 3 | Level 2 plus W2: clock (30010, 30020, 30050) and weather (30010; 30020 without FOGGY). |
+| 3 | Level 2 plus W2 clock/weather, W3 supported-scene travel, and W4 checkpoint alignment/shared recovery. |
 
 Native switch: `world_on = offline-v1 && partner=1 && net=1 && net_link=v2 &&
 SavesRedirected() && world >= 1`. Otherwise, with `world >= 1`, the log says
@@ -47,14 +49,17 @@ pushed in PAIRED, used for native TX gating and by Lua. A remote HELLO with
 Per mission (Lua `W.MISSIONS`): 30010 `{enemies, clock, weather=all,
 areaEnemy=f30010_enemy}`, 30020 `{enemies, clock, weather=nofog,
 areaEnemy=f30020_enemy}`, 30050 `{clock}`; every other mission (the ACC 40050
-included) runs the level-1 plumbing only.
+included) runs the level-1 plumbing only for enemy/environment sync. W3/W4
+travel and shared game over also support 40010/40020/40050.
 
 W1 is off for the rest of the mission (W2 continues) after a continue or
 checkpoint reload (`TppMission.IsMissionStart()` false at the CFG start), a
 game over (`svars.mis_isDefiniteGameOver` or `mvars.mis_isReserveGameOver`
 seen in the tick), a roster mismatch (PAIRED `match=0`, or duplicate hashes),
-or missing or invalid W1 bindings. Until W4, both players redeploy by hand
-after a death.
+or missing or invalid W1 bindings. At negotiated level 3, W4 lifts the
+continue/reload gate only after a validated host snapshot (section 13).
+Lower levels retain the original continue gate. Shared death keeps W1 off
+until the host chooses Continue/restart and the new epoch aligns.
 
 ## 2. Link use (docs/link-protocol.md)
 
@@ -616,22 +621,100 @@ in [lab-protocol.md](lab-protocol.md) "World sync".
   `step=sec;n=;frames=;dt_ms=` lines (pause during it) against `world=stats;
   ...; rx_gap_ms_max=`.
 
-## 13. Extension points (out of scope)
+## 13. W3/W4 implemented subset
 
-- Op ranges for W3-W6 (control 0x09-0x0F, world 0x18-0x1F), bundle flag bit 0
-  (chunking); `probeId` widens to 1..63 in W3.
-- `W.MISSIONS`, `W.handlers[op]`, `W.observers`, `W.bindHooks`,
-  `W.startHooks`/`stopHooks`/`pairedHooks`: guest suppression wrappers (W3)
-  plug into the TppMain-chunk section of `world_sync.lua`; the Trap filter
-  (P14) into `W.observe`; proximity-owner attribution (W6) into
-  `W.attClass`/`E.attributed`; HOLDUP, VANISHED, hostages and vehicles use
-  `entType` 2/3 (refused today); W4 replaces the continue/game-over "W1 off"
-  rule.
-- `world_link::MissionRuntime` is the native hook for mission following.
-- Untouched: the partner gates (30050 only), death and respawn, game over,
-  checkpoints.
-- Risks to watch live: P1 (`SetPhase` emits ChangePhase), P4 (out-of-area
-  apply), P3 (FAINT = 4; the attacker of applied deaths), step 2 of the goto
-  outside the preparation UI, the LZ route hash readback, the cpList shape,
-  weather FORCE against the game's own forces, receipt cost during a resync
-  stream.
+These operations are reliable and require both peers at level 3 with
+redirected saves. H/G mean host/guest. The same bundle format and channel
+are used; the exact body schemas are in `native/world_wire.cpp`.
+
+| Code | Name | Dir | Lua fields | Queue | Body |
+|---|---|---|---|---|---|
+| 0x09 | MISSION_TRANSITION | H->G | id, kind, source, destination, clearType, route, layout, cluster, deployTime, noSave, nextEpoch | control | 27 |
+| 0x0A | MISSION_SEED | H->G | id, destination, key, index, value | control | 15 |
+| 0x0B | MISSION_SEEDS_END | H->G | id, destination, count, digest | control | 14 |
+| 0x0C | REQ_MISSION | G->H | rid, kind, mission, arg | control | 11 |
+| 0x0D | FOLLOW_ACK | G->H | id, mission, status (0 refused, 1 replay, 2 arrived) | control | 9 |
+| 0x0E | ALIGN_BEGIN | H->G | id, mission, roster, soldierCount, cpCount (+ native epoch) | control | 18 |
+| 0x0F | ALIGN_END | H->G | id, soldierCount, cpCount, digest, outcomeSeq (+ native epoch) | world | 16 |
+| 0x18 | ALIGN_RECORD | H->G | id, type (1 soldier, 2 CP), index, hash, readable, state, version | world | 15 |
+| 0x19 | ALIGN_ACK | G->H | id, mission, epoch, accepted | control | 11 |
+| 0x1A | GAME_OVER | H->G | type, radio, cause | control | 6 |
+| 0x1B | REQ_GAME_OVER | G->H | rid, type, radio, cause | control | 8 |
+| 0x1C | CHECKPOINT | H->G | hash, version, x/y/z mm, yaw millidegrees | control | 22 |
+
+**Travel.** Only 30010/30020/30050 and ACC 40010/40020/40050 are supported.
+The wrappers install before `TppMission.Init` captures message callbacks.
+The host captures `ReservePlayerLoadingPosition` and the prepared seed
+values before vanilla `Load`. The guest waits for the complete checked seed
+stream, then replays clear, abort, deployment, ordinary restart or Continue
+through the corresponding vanilla Lua API. An outer `LoadWithChunkCheck`
+barrier retains the game's pending request until seeds exist. Seed fields
+include face/revenge choices, clock/weather preparation, initial player
+flags/pose and helicopter route; hashes use unsigned `%.0f` formatting.
+
+Travel controls survive native CFG mission resets, but are discarded on a
+new link session. Lua transaction history resets even if the previous link
+was already unpaired. A frozen outgoing stream retries refused TX items and
+END without advancing its count. Guest queues are bounded and a transition
+times out after 120 seconds. Host deployment waits for readiness; a lower
+negotiated level releases the vanilla deployment without enabling W3.
+Guest exits, hot-zone clear, abort and menu choices are suppressed while
+W3 is armed; exit requests are logged and explicitly refused, leaving the
+host to decide. Story destinations, midmission Reload and ReturnToMission
+are refused before supported host paths change vanilla state.
+
+**Reload alignment.** Every supported enemy mission at level 3 starts W1
+inactive. The host scans all mapped soldiers and CPs in bounded batches,
+including initial checkpoint state whose version was previously zero.
+The frozen snapshot names every soldier/CP by index and hash, with explicit
+unknown markers for unreadable areas. The guest validates mission, roster,
+epoch, unique indices, counts and ordered digest before applying through
+the existing forward-only life ledger and phase floors. ALIGN_END is in the
+world queue so it cannot overtake its records. Both sides resume W1 only
+after complete acceptance; failed TX and ACK timeout retry safely.
+
+This does not revive a guest soldier that is already terminal when the host
+reports NORMAL: the divergence is logged as `action=no_revive`. Unknown
+host entities are discovered when their areas become readable. Unknown
+does not mean VANISHED and does not establish fully identical enemy AI or
+positions. Full story progress, arbitrary svars, hostages and vehicles are
+not copied.
+
+**Recovery.** Either player's PLAYER_DEAD/PLAYER_FALL_DEAD reserves shared
+game over. The host retains menu authority; its Continue/restart travels
+both copies and starts another alignment. Accepted host checkpoint saves
+are versioned and copied via vanilla checkpoint APIs on the guest's
+redirected save. Hash-zero/current-position checkpoints carry the host's
+exact saved initial pose. Named checkpoints resolve the local mission's
+declared name. Suppressed guest checkpoint updates do not independently
+advance that copied checkpoint.
+
+**Live acceptance (still required for a newly built DLL).** Start both
+copies with `-World 3`; wait for pairing and alignment ready/accepted in
+30010. From Mother Base, send `goto=30010` to the host only and record
+30050 -> 40050 -> 30010 on both copies. Ordinary guest heli/boundary/menu
+choices must leave both in the same mission. For recovery:
+
+```powershell
+pwsh -File tools/lab/Set-WorldTrigger.ps1 -Role host -Text 'world_probe=kill_near' -WaitSec 10
+pwsh -File tools/lab/Set-WorldTrigger.ps1 -Role host -Text 'world_probe=shared_checkpoint' -WaitSec 10
+pwsh -File tools/lab/Set-WorldTrigger.ps1 -Role guest -Text 'world_probe=shared_death' -WaitSec 10
+pwsh -File tools/lab/Set-WorldTrigger.ps1 -Role host -Text 'world_probe=host_continue' -WaitSec 10
+```
+
+Record shared game-over state on both windows, the new matching epoch,
+complete alignment, dead-soldier readback, phase floor and host checkpoint
+pose copied into the guest save. The three new probes are lab-only,
+single-call, role/readiness-gated exercises of public Lua APIs; actual input
+death and host menu Continue remain a separate runtime check. Setting
+`world=0` must remain inert. Automated fixtures cover malformed/incomplete
+snapshots, versions, unknown discovery, no revive/double Fulton, queue
+pressure, session replacement and mixed levels, not physical game input.
+
+## 14. Remaining extension points
+
+W5 full campaign/progression and W6 AI transforms remain design work.
+World op codes 0x1D-0x1F and 0x22 onward are available; control codes
+0x09-0x0F are now used. HOLDUP, hostages/vehicles and dynamic quest roster
+changes still require separate handling and live acceptance. Partner body
+rendering and input drive are independent of these world modules.

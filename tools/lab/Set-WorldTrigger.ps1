@@ -9,7 +9,7 @@ writing <game>/mgs-coop/world.trigger (docs/world-sync-protocol.md
 The text is validated against the trigger grammar first: any of world=0..3,
 world_probe=<probe>|off (p1 p3 p3b p4 p12 p17 race_kill remote_area_kill
 kill_near sleep_near fulton_near alert_near weather_rain clock_jump
-clock_fast), goto=30010|30020 and goto_lz=0|1 (only with goto), each at most
+clock_fast shared_death host_continue shared_checkpoint), goto=30010|30020 and goto_lz=0|1 (only with goto), each at most
 once, separated by blanks. It is written in canonical form (one ASCII line,
 at most 255 bytes with the newline) to a temporary file in the instance's
 mgs-coop folder, which is then renamed over world.trigger, so the native side
@@ -21,8 +21,9 @@ mission start; world_probe=<probe> runs that probe now when a mission runs
 with world sync active, else 10 s after the next mission start (off cancels a
 pending one); goto=30010|30020 sends a copy that stands in Mother Base (30050)
 to free roam through the game's own calls: the helicopter boarding, then the
-ACC sortie (goto_lz=1 picks the second landing zone). Send goto to both copies
-(-Role both). The native side polls the file at most once per second while a
+ACC sortie (goto_lz=1 picks the second landing zone). At world3 send goto to the
+host only; mission follow travels the guest. At lower levels send it to both copies.
+The native side polls the file at most once per second while a
 mission with world sync runs (world>=1), deletes it and logs
 world_trigger=applied; text=<canonical> or world_trigger=rejected; reason=...
 A goto is then either armed (world_goto=armed) or refused

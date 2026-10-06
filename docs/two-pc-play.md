@@ -132,14 +132,20 @@ or an impairment key.
 
 `Play-Coop.ps1 -World 1..3` adds `world=N` to the play `lab.ini` (nothing at
 the default 0, which keeps today's behaviour): 1 plumbing only, 2 shared enemy
-outcomes and alert in free roam (30010/30020), 3 also clock and weather
+outcomes and alert in free roam (30010/30020), 3 also clock/weather, host-driven
+supported-scene travel, reload alignment, shared death and checkpoint copying
 ([world-sync-protocol.md](world-sync-protocol.md)). Both players must choose
 it; the effective level is the lower of the two (a player at 0 never pairs).
 It needs the redirected co-op save (it writes kills, staff and clears there)
-and never runs on the real saves. The players still travel together by hand
-(mission following is a later phase); after a death or a continue the shared
-enemies stay off for that mission. The lab probes and the goto trigger are
-lab-only and refused in play.
+and never runs on the real saves. At negotiated level 3, the host selects
+travel and Continue/restart/abort; the guest follows through vanilla Lua APIs.
+Only 30010/30020/30050 and their ACC scenes are supported. Enemy sync resumes
+after a complete matching host alignment snapshot; unreadable areas remain
+unknown until discovered, and terminal guest soldiers are never revived.
+Lower levels retain manual travel and the Continue gate. Story missions and
+full progression copying remain unsupported. Lab recovery probes and the
+goto trigger are refused in play. See protocol section13 for current limits
+and separate live acceptance requirements.
 
 ## Join code
 

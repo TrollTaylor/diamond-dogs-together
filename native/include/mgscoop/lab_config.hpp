@@ -144,13 +144,13 @@ inline constexpr std::uint32_t kPlayRefusedGuestNoPeer = 0x2000;
 inline constexpr std::uint32_t kPlayRefusedImpairment = 0x4000;
 inline constexpr std::uint32_t kPlayRefusedWorldProbe = 0x8000;
 // World sync lab probes (docs/world-sync-protocol.md "Probes"): lab.ini
-// world_probe and the world.trigger key. The ids 1..15 are the wire probeId of
-// PROBE_SYNC and the Lua probe number, in this order (all 15 are used).
+// world_probe and the world.trigger key. The ids are the wire probeId of
+// PROBE_SYNC and the Lua probe number, in this order.
 enum class WorldProbe : std::uint8_t {
     none, p1, p3, p3b, p4, p12, p17, race_kill, remote_area_kill, kill_near, sleep_near, fulton_near, alert_near,
-    weather_rain, clock_jump, clock_fast
+    weather_rain, clock_jump, clock_fast, shared_death, host_continue, shared_checkpoint
 };
-inline constexpr std::uint8_t kWorldProbeMax = 15;
+inline constexpr std::uint8_t kWorldProbeMax = 18;
 inline constexpr std::uint32_t kWorldLevelMax = 3;
 
 struct LabConfig {
@@ -273,7 +273,7 @@ const char* NetLinkName(NetLink value) noexcept;
 const char* PartnerInterpName(PartnerInterp value) noexcept;
 const char* PartnerLostName(PartnerLost value) noexcept;
 const char* NetLossModelName(NetLossModel value) noexcept;
-// "none", "p1" ... "clock_fast" (the lab.ini / trigger spelling); "?" when out of range.
+// The lab.ini / trigger spelling; "?" when out of range.
 const char* WorldProbeName(WorldProbe value) noexcept;
 bool ParseWorldProbe(const char* text, std::size_t size, WorldProbe& out) noexcept;
 // Dotted IPv4 "a.b.c.d": four decimal octets 0..255 without leading zeros

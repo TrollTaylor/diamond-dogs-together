@@ -942,6 +942,32 @@ do
 end
 
 -- 11b. Re-pairing in a mission: the same host epoch keeps W1; another host
+do
+    local env, c = fixture({role = 1})
+    F.start(env, c)
+    F.pair(env, c, 3)
+    local h = u32('sol_a1')
+    c.W.ent[h].committed, c.W.ent[h].ver = 5, 1
+    c.W.env.s.resync = {rid = 10, what = 1, items = {{1, h}}, i = 1, count = 0}
+    c.txReply = {0, 8}
+    c.W.env.resyncTick(c.time)
+    check(c.W.env.s.resync.i == 1 and c.W.env.s.resync.count == 0,
+        'resync queue pressure retains unsent item and count')
+    c.txReply = nil
+    local original = c.W.tx
+    c.W.tx = function(op, ...)
+        if op == OP.RESYNC_END then return false end
+        return original(op, ...)
+    end
+    c.W.env.resyncTick(c.time)
+    check(c.W.env.s.resync.i == 2 and c.W.env.s.resync.count == 1,
+        'resync end queue pressure retains accepted stream')
+    c.W.tx = original
+    c.W.env.resyncTick(c.time)
+    check(c.W.env.s.resync == nil, 'resync only retires after completion accepted')
+end
+
+-- Re-pairing keeps W1 only for the same authoritative world.
 -- epoch is another host world, so W1 goes off (held requests dropped).
 do
     local env, c = fixture({role = 2})
@@ -1280,7 +1306,7 @@ if arg[8] then
     end
     local composed = slurp(arg[8])
     local at = 1
-    local partnerEnd = composed:find('-- MGS co-op world sync W0-W2', 1, true)
+    local partnerEnd = composed:find('\n' .. slurp(FILES[1]) .. '\n', 1, true)
     check(partnerEnd and composed:find('-- MGS co-op offline partner spike (original).', 1, true) < partnerEnd,
         'world chunks after the partner chunk')
     for i = 1, 7 do
@@ -1289,6 +1315,11 @@ if arg[8] then
         check(found ~= nil and composed:find(spliced, found + 1, true) == nil, 'chunk ' .. i .. ' spliced once, byte-identical')
         check(i == 1 or found == at, 'chunk ' .. i .. ' directly follows the previous one')
         at = found + #spliced
+    end
+    for i = 9, #arg do
+        local spliced = '\n' .. slurp(arg[i]) .. '\n'
+        check(composed:find(spliced, at, true) == at and not composed:find(spliced, at + 1, true), 'extension chunk spliced once')
+        at = at + #spliced
     end
     check(composed:find('-- Adapted from Dynamite TppMain marker-loading lifecycle', at, true) == at, 'then the marker lifecycle chunk')
     local function run()

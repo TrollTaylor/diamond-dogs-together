@@ -31,7 +31,8 @@ do
             if a.action and a.fultonRecovered ~= nil and a.action(e.id) == a.fultonRecovered then return 6 end
             local v = a.life(e.id)
             if type(v) ~= "number" then return nil end
-            return W.lifeWire[v] or 0
+            if v == 0 then return 0 end
+            return W.lifeWire[v]
         end
         function E.active(cp)
             local act = W.activeCp

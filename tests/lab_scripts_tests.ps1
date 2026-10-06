@@ -469,7 +469,7 @@ try {
     Assert-Throws { ConvertTo-LabPartnerValue -Key world -Value 'x' } '0..3' 'world x refused'
     Assert-Equal (ConvertTo-LabPartnerValue -Key world_probe -Value race_kill) 'race_kill' 'world_probe race_kill'
     Assert-Throws { ConvertTo-LabPartnerValue -Key world_probe -Value p2 } 'world_probe' 'unknown probe refused'
-    Assert-Equal (@(Get-WorldProbeNames) -join ' ') 'p1 p3 p3b p4 p12 p17 race_kill remote_area_kill kill_near sleep_near fulton_near alert_near weather_rain clock_jump clock_fast' 'probe names and ids 1..15'
+    Assert-Equal (@(Get-WorldProbeNames) -join ' ') 'p1 p3 p3b p4 p12 p17 race_kill remote_area_kill kill_near sleep_near fulton_near alert_near weather_rain clock_jump clock_fast shared_death host_continue shared_checkpoint' 'probe names and ids 1..18'
     $worldOv = ConvertFrom-LabPartnerSettingArgs -Items @('world=2', 'host:world_probe=race_kill') -Role host
     Assert-Equal "$($worldOv['world'])/$($worldOv['world_probe'])" '2/race_kill' '-PartnerSetting world=2 host:world_probe=race_kill'
     $worldHost = New-LabIniFromSettings -Settings (Get-LabInstanceSettings -Role host -Config $config -GameDirectory $config.Paths.hostDir -HostSteamId64 $hostId -Offline -PartnerOverrides $worldOv)
@@ -516,7 +516,8 @@ try {
         $playText.Contains("if (`$WorldProbe -ne 'none') { `$partnerSettings += `"world_probe=`$WorldProbe`" }")) 'Play-OfflineCoop adds the world keys only when set'
     Assert-True ($playText.IndexOf("if (`$WorldProbe -ne 'none' -and `$World -lt 1) { throw '-WorldProbe needs -World 1..3.' }") -ge 0 -and
         $playText.IndexOf("if (`$WorldProbe -ne 'none' -and `$World -lt 1)") -lt $playText.IndexOf("Prepare-LabInstance.ps1')")) 'Play-OfflineCoop refuses -WorldProbe without -World before preparing anything'
-    Assert-True ($playText.Contains("'G' {") -and $playText.Contains("'Set-WorldTrigger.ps1') -Role both -Text 'goto=30010' -Force")) 'Play-OfflineCoop [G]: goto=30010 on both copies'
+    Assert-True ($playText.Contains("'G' {") -and $playText.Contains("`$travelRole = if (`$World -ge 3) { 'host' } else { 'both' }") -and
+        $playText.Contains("'Set-WorldTrigger.ps1') -Role `$travelRole -Text 'goto=30010' -Force")) 'Play-OfflineCoop [G]: host-only world3, both copies at lower levels'
     $playWorldErr = $null
     $playWorldAst = [System.Management.Automation.Language.Parser]::ParseFile($playPath, [ref]$null, [ref]$playWorldErr)
     $worldProbeParam = @($playWorldAst.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'WorldProbe' })[0]

@@ -152,20 +152,22 @@ do
             for _ = 1, 32 do
                 local item = r.items[r.i]
                 if not item then
-                    W.tx(OP.RESYNC_END, r.rid, r.what, r.count, W.enemy.s.seq)
+                    if not W.tx(OP.RESYNC_END, r.rid, r.what, r.count, W.enemy.s.seq) then return end
                     W.log(fmt("event=resync;what=%d;count=%d", r.what, r.count))
                     V.s.resync = nil
                     return
                 end
-                r.i, r.count = r.i + 1, r.count + 1
                 local k, h = item[1], item[2]
+                local ok
                 if k == 1 then
                     local e = W.ent[h]
                     local x, y, z = W.enemy.pos(e.id)
-                    W.tx(OP.OUTCOME, h, 1, e.committed, e.ver, 8, 0, 0, 1, x, y, z)
-                elseif k == 2 then W.phase.txPhase(h, 1)
-                elseif k == 3 then V.txClock(3)
-                else V.txWeather(2) end
+                    ok = W.tx(OP.OUTCOME, h, 1, e.committed, e.ver, 8, 0, 0, 1, x, y, z)
+                elseif k == 2 then ok = W.phase.txPhase(h, 1)
+                elseif k == 3 then ok = V.txClock(3)
+                else ok = V.txWeather(2) end
+                if not ok then return end
+                r.i, r.count = r.i + 1, r.count + 1
             end
         end
         H[OP.RESYNC] = function(v)

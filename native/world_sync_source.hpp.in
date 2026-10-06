@@ -23,3 +23,12 @@ constexpr char world_probe_source[] = R"MGS_WORLD(
 constexpr char world_goto_source[] = R"MGS_WORLD(
 @MGS_WORLD_GOTO_SOURCE@
 )MGS_WORLD";
+constexpr char world_follow_source[] = R"MGS_WORLD(
+@MGS_WORLD_FOLLOW_SOURCE@
+)MGS_WORLD";
+constexpr char world_align_source[] = R"MGS_WORLD(
+@MGS_WORLD_ALIGN_SOURCE@
+)MGS_WORLD";
+constexpr char world_recovery_source[] = R"MGS_WORLD(
+@MGS_WORLD_RECOVERY_SOURCE@
+)MGS_WORLD";

@@ -113,7 +113,7 @@ void Pair(std::uint32_t mission, std::uint64_t now, std::uint32_t host_roster = 
 void Table() {
     std::size_t count = 0;
     const world::OpSpec* ops = world::OpTable(count);
-    Check(count == 27, "27 ops (W0-W2 wire ops and the local ops)");
+    Check(count == 39, "39 ops (W0-W4 wire ops and the local ops)");
     for (std::size_t i = 0; i < count; ++i) {
         for (std::size_t j = i + 1; j < count; ++j) Check(ops[i].code != ops[j].code, "codes unique");
         const unsigned fields = ops[i].lua + ops[i].native + ops[i].rx;
@@ -136,10 +136,9 @@ void Table() {
     const Size sizes[] = {{op::hello, 24}, {op::ready, 14}, {op::received, 3}, {op::reject, 11}, {op::resync, 3}, {op::resync_end, 7},
                           {op::mission_end, 6}, {op::probe_sync, 14}, {op::enemy_outcome, 25}, {op::req_outcome, 28}, {op::phase, 11},
                           {op::req_phase, 24}, {op::player_area, 5}, {op::digest, 22}, {op::guest_digest, 22}, {op::phase_vec, 53},
-                          {op::clock, 11}, {op::weather, 7}};
+                          {op::clock, 11}, {op::weather, 7}, {op::checkpoint, 22}};
     for (const auto& s : sizes) Check(world::FindOp(s.code) && world::FindOp(s.code)->body == s.body, "documented body size");
-    for (unsigned code = 0x09; code <= 0x0F; ++code) Check(!world::FindOp(static_cast<std::uint8_t>(code)), "reserved control codes");
-    for (unsigned code = 0x18; code <= 0x1F; ++code) Check(!world::FindOp(static_cast<std::uint8_t>(code)), "reserved world codes");
+    for (unsigned code = 0x1D; code <= 0x1F; ++code) Check(!world::FindOp(static_cast<std::uint8_t>(code)), "reserved world codes");
     Check(!world::FindOp(0) && !world::FindOp(0x22) && !world::FindOp(0x79) && !world::FindOp(0xFF), "unknown codes");
     Check(world::FindOp(op::phase_vec)->lua == 15 && world::FindOp(op::digest)->rx == 1 && world::FindOp(op::clock)->rx == 1,
           "PHASE_VEC 15 fields, DIGEST/CLOCK receiver latency");
@@ -224,7 +223,7 @@ void Codec() {
     std::size_t at = world::kBundleHeaderSize;
     a.v[0] = 3;
     at += world::EncodeOp(a, bundle + at, sizeof(bundle) - at);
-    const std::uint8_t unknown[] = {0x19, 2, 0, 0, 0xEE, 0xEE};
+    const std::uint8_t unknown[] = {0x1D, 2, 0, 0, 0xEE, 0xEE};
     std::memcpy(bundle + at, unknown, sizeof(unknown));
     at += sizeof(unknown);
     const std::uint8_t bad_len[] = {op::player_area, 4, 0, 0, 1, 2, 3, 4};
@@ -525,7 +524,7 @@ void Gating() {
     Check(Tx(g_host, op::req_outcome, {1, 7, 1, 2, 0, 3, 0, 0, 1, 2, 3}, 0) == world::TxStatus::wrong_role, "host cannot request");
     Check(Tx(g_host, op::received, {}, 0) == world::TxStatus::unknown_op, "RECEIVED is native only");
     Check(Tx(g_host, op::paired, {}, 0) == world::TxStatus::unknown_op, "local ops are not TXable");
-    Check(Tx(g_host, 0x19, {}, 0) == world::TxStatus::unknown_op, "reserved code");
+    Check(Tx(g_host, 0x1D, {}, 0) == world::TxStatus::unknown_op, "reserved code");
     Check(Tx(g_host, op::hello, {30050, 1, 5, 10}, 0) == world::TxStatus::bad_args, "wrong count");
     Check(Tx(g_host, op::hello, {100000, 1, 5, 10, 3}, 0) == world::TxStatus::bad_args, "mission out of range");
     Check(Tx(g_host, op::probe_sync, {7, 1, 5, 3000}, 0) == world::TxStatus::ok, "PROBE_SYNC in the lab");
@@ -910,6 +909,98 @@ void Stats() {
     g_host.Rx(3, 0, 30000, empty);
     Check(empty.empty && empty.flags == 3 && empty.epoch == 1, "empty RX flags: link + paired");
 }
+void Following() {
+    Setup();
+    Pair(30050, 100);
+    Drain(g_host, 3, 100);
+    Drain(g_guest, 3, 100);
+    Check(Tx(g_host, op::transition, {1, 1, 30050, 40050, 6, 4294967295LL, 0, 2, 0, 0, 2}, 110) == world::TxStatus::ok,
+          "host transition accepts unsigned route");
+    Check(Tx(g_host, op::seed, {1, 40050, 1, 0, 672983}, 111) == world::TxStatus::ok &&
+              Tx(g_host, op::seeds_end, {1, 40050, 1, 673007}, 112) == world::TxStatus::ok,
+          "seed stream queued on control");
+    Exchange(120);
+    g_guest.Cfg(40050, true, 40050, 130);
+    auto r = Drain(g_guest, 1, 131);
+    Check(r.size() == 3 && r[0].op == op::transition && r[1].op == op::seed && r[2].op == op::seeds_end,
+          "ordered travel and seeds survive guest CFG start");
+    Check(!g_guest.paired() && g_guest.world_size() == 0, "old world is gone while durable control waits");
+    Check(Tx(g_host, op::transition, {2, 1, 40050, 10033, 6, 0, 0, 2, 0, 0, 2}, 140) == world::TxStatus::bad_args,
+          "story destination refused before enqueue");
+    Check(Tx(g_guest, op::transition, {2, 1, 40050, 30010, 6, 0, 0, 2, 0, 0, 2}, 140) == world::TxStatus::wrong_role,
+          "guest cannot commit travel");
+    Check(Tx(g_guest, op::follow_ack, {1, 40050, 2}, 141) == world::TxStatus::ok,
+          "arrival acknowledgement works while unpaired");
+    Exchange(142);
+    Check(Find(Drain(g_host, 1, 143), op::follow_ack) != nullptr, "host receives control while mission readiness differs");
+    Check(Tx(g_host, op::seed, {3, 40050, 1, 0, 1}, 144) == world::TxStatus::ok, "seed queued before link replacement");
+    Exchange(145);
+    g_guest.OnSession(2, 146);
+    g_guest.Cfg(40050, true, 40050, 147);
+    const auto replaced = Drain(g_guest, 1, 148);
+    Check(!Find(replaced, op::seed), "durability does not cross authenticated link sessions");
+    const auto* reset = Find(replaced, op::unpaired);
+    Check(reset && reset->v[0] == 1, "session reset reaches Lua even while unpaired and after CFG clears");
+    Setup(3, 2);
+    Pair(30050, 200);
+    Check(Tx(g_host, op::transition, {1, 1, 30050, 40050, 6, 0, 0, 2, 0, 0, 2}, 210) == world::TxStatus::disabled,
+          "mixed levels preserve W0-W2 behavior");
+    Setup();
+    Pair(30010, 300);
+    Drain(g_host, 3, 301);
+    Drain(g_guest, 3, 301);
+    Check(Tx(g_guest, op::req_mission, {37, 1, 30010, 0}, 302) == world::TxStatus::ok, "guest requests an exit");
+    Exchange(303);
+    Check(Find(Drain(g_host, 1, 304), op::req_mission) && Find(Drain(g_guest, 1, 304), op::received),
+          "exit request is control and receives native receipt");
+}
+void Alignment() {
+    Setup();
+    Pair(30010, 100);
+    Drain(g_host, 3, 101);
+    Drain(g_guest, 3, 101);
+    Check(Tx(g_host, op::align_begin, {5, 30010, 77, 1, 1}, 102) == world::TxStatus::ok, "paired host begins alignment");
+    Check(Tx(g_host, op::align_record, {5, 1, 1, 0xF1234567LL, 1, 5, 1}, 103) == world::TxStatus::ok,
+          "soldier snapshot with unsigned hash");
+    Check(Tx(g_host, op::align_record, {5, 2, 1, 0xF1234568LL, 1, 3, 1}, 104) == world::TxStatus::ok,
+          "CP snapshot record");
+    Check(Tx(g_host, op::align_end, {5, 1, 1, 0xFFFFFFFFLL, 9}, 105) == world::TxStatus::ok, "snapshot completion queued");
+    Exchange(110);
+    auto control = Drain(g_guest, 1, 111);
+    const auto* begin = Find(control, op::align_begin);
+    Check(begin && begin->count == 6 && begin->v[5] == g_host.epoch(), "BEGIN carries established epoch in control");
+    auto world_rx = Drain(g_guest, 3, 112);
+    Check(world_rx.size() == 3 && world_rx[0].op == op::align_record && world_rx[1].op == op::align_record &&
+              world_rx[2].op == op::align_end && world_rx[2].v[4] == 9 && world_rx[2].v[5] == g_host.epoch(),
+          "END cannot overtake records and carries sequence plus epoch");
+    Check(Tx(g_guest, op::align_ack, {5, 30010, 1, 1}, 113) == world::TxStatus::ok, "guest accepts matching snapshot");
+    Exchange(114);
+    Check(Find(Drain(g_host, 1, 115), op::align_ack), "host receives acceptance on control");
+    Check(Tx(g_guest, op::req_game_over, {51, 1, 1, 1}, 115) == world::TxStatus::ok, "guest requests shared death");
+    Exchange(115);
+    Check(Find(Drain(g_host, 1, 115), op::req_game_over) && Find(Drain(g_guest, 1, 115), op::received),
+          "death request gets native receipt and reaches host control");
+    Check(Tx(g_host, op::game_over, {1, 1, 2}, 115) == world::TxStatus::ok &&
+              Tx(g_host, op::checkpoint, {0, 1, -748011, 329852, 1668605, -90000}, 115) == world::TxStatus::ok,
+          "host broadcasts death and exact signed checkpoint pose");
+    Check(Tx(g_guest, op::checkpoint, {0, 1, 0, 0, 0, 0}, 115) == world::TxStatus::wrong_role &&
+              Tx(g_host, op::checkpoint, {0, 1, 10000001, 0, 0, 0}, 115) == world::TxStatus::bad_args,
+          "checkpoint authority and bounded pose validated");
+    Exchange(115);
+    const auto recovery = Drain(g_guest, 1, 115);
+    const auto* point = Find(recovery, op::checkpoint);
+    Check(Find(recovery, op::game_over) && point && point->count == 6 && point->v[2] == -748011 && point->v[5] == -90000,
+          "recovery controls carry exact pose on matching epoch");
+    g_host.LocalMissionEnd(116);
+    Check(Tx(g_host, op::game_over, {1, 0xFFFFFFFFLL, 0}, 117) == world::TxStatus::not_paired,
+          "game over cannot escape old mission epoch");
+    Check(Tx(g_host, op::align_begin, {6, 30010, 77, 1, 1}, 117) == world::TxStatus::not_paired,
+          "no alignment without readiness barrier");
+    Setup(2, 3);
+    Pair(30010, 200);
+    Check(Tx(g_host, op::align_begin, {5, 30010, 77, 1, 1}, 210) == world::TxStatus::disabled,
+          "level two remains W0-W2 only");
+}
 } // namespace
 
 int main() {
@@ -921,6 +1012,8 @@ int main() {
     Queues();
     Schedulers();
     Stats();
+    Following();
+    Alignment();
     std::printf("world_wire_tests: %u checks passed\n", checks);
     return 0;
 }

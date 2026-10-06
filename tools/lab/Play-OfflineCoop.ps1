@@ -22,7 +22,7 @@ sync of docs/partner-anim-appearance.md:
      character. Your real saves are backed up; both copies play on save
      COPIES. No server, no login, no game session.
   2. Start-Lab.ps1 -Offline: host window left, guest window right.
-  3. Presses Enter through the startup screens of both until Mother Base loads
+  3. Presses Enter through startup until the saved supported scene loads
      (skip with -NoAutoTitle and click through yourself).
   4. Waits until both copies report the partner system ready, then shows a live
      status line. Console keys: [S] screenshots, [D] animated partner
@@ -49,10 +49,11 @@ Without these switches the lab.ini and coop.ini are exactly as before.
 
 World sync (docs/world-sync-protocol.md; experimental, default off):
   -World 1..3 shared world between the copies: 1 plumbing only, 2 also shared
-              enemy outcomes and alert in free roam, 3 also clock and weather.
+              enemy outcomes and alert in free roam, 3 also clock/weather,
+              host-driven mission travel and Continue alignment.
               Adds world=N to both lab.ini files (nothing at the default 0).
-              Console key [G]: both copies fly from Mother Base to Afghanistan
-              free roam (30010) through the game's own calls (no menus).
+              Console [G]: travel to Afghanistan through the game's APIs.
+              At level 3 the host travels and the guest follows automatically.
   -WorldProbe <probe>
               a lab probe 10 s after each copy's first mission start (needs
               -World); tools/lab/Set-WorldTrigger.ps1 sends probes at runtime.
@@ -72,7 +73,7 @@ pwsh -File tools/lab/Play-OfflineCoop.ps1 -World 3 -KeepLabEnabled
 param(
     # Do not press Enter through the startup screens automatically.
     [switch]$NoAutoTitle,
-    # How long to wait for both copies to reach Mother Base and report ready.
+    # How long to wait for both copies to reach a supported scene and report ready.
     [int]$ReadyTimeoutSec = 900,
     # Leave lab.ini/coop.ini enabled after quitting (default: switch them off).
     [switch]$KeepLabEnabled,
@@ -99,7 +100,8 @@ param(
     [ValidateRange(0, 3)][int]$World = 0,
     # A world sync lab probe (needs -World 1..3).
     [ValidateSet('none', 'p1', 'p3', 'p3b', 'p4', 'p12', 'p17', 'race_kill', 'remote_area_kill', 'kill_near', 'sleep_near',
-        'fulton_near', 'alert_near', 'weather_rain', 'clock_jump', 'clock_fast')][string]$WorldProbe = 'none'
+        'fulton_near', 'alert_near', 'weather_rain', 'clock_jump', 'clock_fast',
+        'shared_death', 'host_continue', 'shared_checkpoint')][string]$WorldProbe = 'none'
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -230,7 +232,7 @@ try {
     $deadline = (Get-Date).AddSeconds($ReadyTimeoutSec)
     if (!$NoAutoTitle) {
         Write-Step 'Pressing Enter through the startup screens (a "Failed to log in to server" notice is normal offline)'
-        Write-Note 'Please do not click into the game windows until both reach Mother Base.'
+        Write-Note 'Please leave startup input to the launcher until both copies reach their saved scene.'
         while ((Get-Date) -lt $deadline) {
             Update-State
             $pending = @($dirs.Keys | Where-Object { !$state[$_].Mission -and !$state[$_].Exited })
@@ -245,7 +247,7 @@ try {
     }
 
     # ---------------------------------------------------------------- ready
-    Write-Step 'Waiting for Mother Base and the partner system in both copies'
+    Write-Step 'Waiting for a supported scene and the partner system in both copies'
     $spaceAt = (Get-Date).AddSeconds(20)
     while ((Get-Date) -lt $deadline) {
         Update-State
@@ -265,7 +267,12 @@ try {
     foreach ($role in $dirs.Keys) { if (!$state[$role].Ready) { Write-Warning ("Not ready yet: " + (Format-Role $role)) } }
 
     Write-Host ''
-    Write-Host '  BOTH COPIES ARE IN MOTHER BASE' -ForegroundColor Green
+    $bothReady = @($dirs.Keys | Where-Object { !$state[$_].Ready }).Count -eq 0
+    if ($bothReady) {
+        Write-Host "  BOTH COPIES READY: host mission $($state['host'].Mission), guest mission $($state['guest'].Mission)" -ForegroundColor Green
+    } else {
+        Write-Host '  WAITING FOR A SUPPORTED SCENE; the status line will show progress.' -ForegroundColor Yellow
+    }
     Write-Host '  - If a window shows "Resume Game", click into it and press Space.'
     Write-Host '  - Keyboard + mouse: click the window you want to control (host = left, guest = right).'
     Write-Host '  - A controller always drives the GUEST (right) window, even while the host has focus.'
@@ -284,7 +291,7 @@ try {
     Write-Host '                                           [R] re-send settings   [C] component census   [O] partner off   [Q] quit + clean up'
     if ($World -gt 0) {
         Write-Host "  WORLD SYNC level $World (experimental, docs/world-sync-protocol.md): shared enemies and alert in free roam (2+)," -ForegroundColor Yellow
-        Write-Host '    clock and weather (3). [G] both copies fly from Mother Base to Afghanistan free roam (30010); a reward' -ForegroundColor Yellow
+        Write-Host '    clock/weather, host-driven travel and Continue alignment (3). [G] travels to Afghanistan (30010); a reward' -ForegroundColor Yellow
         Write-Host '    screen after the boarding may need Space in both windows (Send-LabInput.ps1 -Role both -Keys space).' -ForegroundColor Yellow
         if ($WorldProbe -ne 'none') { Write-Host "    Probe $WorldProbe runs 10 s after each copy's first mission start." -ForegroundColor Yellow }
     }
@@ -321,7 +328,10 @@ try {
             'C' { & (Join-Path $lab 'Set-PartnerTrigger.ps1') -Role both -Text 'census=1' -Force | ForEach-Object { Write-Note $_ } }
             'O' { & (Join-Path $lab 'Set-PartnerTrigger.ps1') -Role both -Text 'stop' -Force | ForEach-Object { Write-Note $_ } }
             'G' {
-                if ($World -gt 0) { & (Join-Path $lab 'Set-WorldTrigger.ps1') -Role both -Text 'goto=30010' -Force | ForEach-Object { Write-Note $_ } }
+                if ($World -gt 0) {
+                    $travelRole = if ($World -ge 3) { 'host' } else { 'both' }
+                    & (Join-Path $lab 'Set-WorldTrigger.ps1') -Role $travelRole -Text 'goto=30010' -Force | ForEach-Object { Write-Note $_ }
+                }
                 else { Write-Note 'world sync is off (start with -World 1..3)' }
             }
         }
