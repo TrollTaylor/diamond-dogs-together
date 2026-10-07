@@ -18,7 +18,8 @@ param(
     # Stage the two-PC play package (friend package).
     [switch]$Friend,
     # Package this loader instead of building one (tests). Default: the
-    # tools/build.ps1 -BuildOnly output build/native/dinput8.dll.
+    # tools/build.ps1 -BuildOnly -DisableLocalExperiments output build/native/dinput8.dll.
+    # A supplied loader is packaged as-is; its experiment settings are not inferred.
     [string]$LoaderPath,
     # Output folder (default: <repo>/dist). Tests use a fixture folder.
     [string]$OutputRoot
@@ -38,7 +39,7 @@ if($LoaderPath) {
     $dll=(Resolve-Path -LiteralPath $LoaderPath).Path
     Write-Output "Packaging the existing loader $dll (no build)."
 } else {
-    & (Join-Path $PSScriptRoot 'build.ps1') -Configuration Release -BuildOnly
+    & (Join-Path $PSScriptRoot 'build.ps1') -Configuration Release -BuildOnly -DisableLocalExperiments
 }
 $stamp=[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')+'-'+[Guid]::NewGuid().ToString('N').Substring(0,8)
 $distRoot=if($OutputRoot) { [IO.Path]::GetFullPath($OutputRoot) } else { Join-Path $projectRoot 'dist' }

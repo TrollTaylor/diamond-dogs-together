@@ -20,14 +20,14 @@ bool Same(const char* a, const char* b) noexcept { return a && b && std::strcmp(
 std::uint8_t Band(std::uint64_t mmps, const PartnerDmSpeeds& s) noexcept {
     return mmps < s.idle_mmps ? 0 : mmps < s.run_mmps ? 1 : mmps < s.dash_mmps ? 2 : 3;
 }
-bool Usable(std::uint8_t gani, std::uint16_t bad) noexcept { return gani <= kPartnerDmGaniMax && !(bad & (1u << gani)); }
+bool Usable(std::uint8_t gani, std::uint32_t bad) noexcept { return gani <= kPartnerDmGaniMax && !(bad & (1u << gani)); }
 
 // One strike against a gani; the kStrikes-th makes it bad (reported once).
 void Strike(State& s, Out& o, std::uint8_t gani) noexcept {
     if (gani > kPartnerDmGaniMax) return;
     if (s.strikes[gani] < 0xFF) ++s.strikes[gani];
     if (s.strikes[gani] >= kStrikes && !(s.bad & (1u << gani))) {
-        s.bad = static_cast<std::uint16_t>(s.bad | (1u << gani));
+        s.bad |= (1u << gani);
         ++s.bad_ganis;
         o.bad_gani = gani;
     }
@@ -66,6 +66,7 @@ void Adopt(State& s, Out& o) noexcept {
     s.phase = Phase::playing;
     s.owned = true;
     s.cur = kNoGani;
+    s.cur_event = 0;
     s.play_ms = 0;
     s.deferred = nullptr;
     ++s.adopted;
@@ -87,6 +88,7 @@ const char* StopGate(const In& in) noexcept {
 void Confirm(State& s, Out& o, std::uint64_t now) noexcept {
     s.phase = Phase::playing;
     s.cur = s.sent;
+    s.cur_event = s.sent_event;
     s.play_ms = now;
     s.failures = 0;
     s.backoff_ms = 0;
@@ -107,6 +109,47 @@ void SendStop(State& s, Out& o, std::uint8_t to, std::uint32_t ms, std::uint64_t
     ++s.stops;
     ++s.switches;
     s.deferred = nullptr;
+}
+void EraseFiniteEvent(State& s, std::size_t at) noexcept {
+    for (std::size_t i = at + 1; i < s.finite_count; ++i) s.finite_events[i - 1] = s.finite_events[i];
+    --s.finite_count;
+}
+void CompleteFiniteEvent(State& s, std::uint64_t id) noexcept {
+    if (!id) return;
+    for (std::size_t i = 0; i < s.finite_count; ++i) {
+        if (s.finite_events[i].id == id) { EraseFiniteEvent(s, i); return; }
+    }
+}
+void ObserveFiniteEvent(State& s, const In& in) noexcept {
+    if (!in.map || in.blocked != Block::none || !in.parts_loaded || in.cls.via == Via::lost ||
+        (in.urgent && !(in.finite_token && OneShot(in.target)))) {
+        CancelFiniteEvents(s);
+        return;
+    }
+    if (!in.target_ok) return; // stale freezes a request rather than producing a new one
+    if (!in.finite_token) { s.observed_finite_token = 0; return; }
+    if (!OneShot(in.target) || !Usable(in.target, s.bad)) return;
+    if (s.observed_finite_token == in.finite_token && s.observed_finite_gani == in.target) return;
+    s.observed_finite_token = in.finite_token;
+    s.observed_finite_gani = in.target;
+    if (s.finite_count == State::finite_capacity) {
+        // Retain the playing/in-flight request and the most recent waiting
+        // pivots. A flood cannot grow a backlog or alter the active identity.
+        const bool active_first = s.finite_events[0].id == s.cur_event || s.finite_events[0].id == s.sent_event;
+        EraseFiniteEvent(s, active_first ? 1 : 0);
+        if (s.finite_dropped != 0xFFFFFFFFu) ++s.finite_dropped;
+    }
+    // Skip zero and identities that are still in flight when the bounded
+    // counter wraps. At most three state IDs and four queue IDs are reserved.
+    for (std::size_t attempt = 0; attempt < State::finite_capacity + 4; ++attempt) {
+        if (++s.next_finite_id == 0) ++s.next_finite_id;
+        bool used = s.next_finite_id == s.cur_event || s.next_finite_id == s.sent_event || s.next_finite_id == s.cand_event;
+        for (std::size_t i = 0; i < s.finite_count; ++i) used = used || s.next_finite_id == s.finite_events[i].id;
+        if (!used) {
+            s.finite_events[s.finite_count++] = State::FiniteEvent{s.next_finite_id, in.target, in.cls, in.now_ms};
+            return;
+        }
+    }
 }
 } // namespace
 
@@ -203,7 +246,7 @@ Class Classify(const Observation& o, const PartnerDmSpeeds& speeds, std::uint8_t
     return c;
 }
 
-std::uint8_t ResolveTarget(const PartnerDmTable& table, const Class& c, std::uint16_t bad) noexcept {
+std::uint8_t ResolveTarget(const PartnerDmTable& table, const Class& c, std::uint32_t bad) noexcept {
     if (c.stance > 2 || c.move > 3) return kNoGani;
     const std::uint8_t gani = table.cells[Cell(c)];
     if (Usable(gani, bad)) return gani;
@@ -212,29 +255,99 @@ std::uint8_t ResolveTarget(const PartnerDmTable& table, const Class& c, std::uin
     return kNoGani;
 }
 
+bool OneShot(std::uint8_t gani) noexcept { return gani >= 13 && gani <= 20; }
+
+std::uint8_t ObserveTurn(TurnState& s, std::uint64_t now, bool fresh, float yaw, std::uint8_t stance, bool moving) noexcept {
+    if (!fresh || !std::isfinite(yaw) || stance > 1 || moving) { s = {}; return kNoGani; }
+    if (!s.valid || now < s.sample_ms || s.stance != stance) {
+        s = {};
+        s.valid = true;
+        s.yaw = s.activity_yaw = yaw;
+        s.stance = stance;
+        s.began_ms = s.changed_ms = s.sample_ms = now;
+        return kNoGani;
+    }
+    const float delta = std::remainder(yaw - s.yaw, 6.28318530718f);
+    s.yaw = yaw;
+    s.sample_ms = now;
+    // Ignore sub-degree heading noise for settling, but retain every delta
+    // once a pivot starts. Comparing with the last meaningful heading also
+    // detects a smooth pivot whose individual owner-tick deltas are tiny.
+    const float activity = std::remainder(yaw - s.activity_yaw, 6.28318530718f);
+    constexpr float noise = 0.01f;
+    if (!s.collecting) {
+        if (std::fabs(activity) >= noise) {
+            s.collecting = true;
+            s.accumulated = activity;
+            s.began_ms = s.changed_ms = now;
+            s.activity_yaw = yaw;
+        }
+    } else {
+        s.accumulated += delta;
+        if (std::fabs(activity) >= noise) {
+            s.changed_ms = now;
+            s.activity_yaw = yaw;
+        }
+    }
+    // A settled subsequent pivot emits a distinct request while the previous
+    // clip can still be playing; Step queues it by identity until completion.
+    const bool ready = s.collecting && (now - s.changed_ms >= kTurnSettleMs || now - s.began_ms >= kTurnCollectMs);
+    if (!ready) {
+        if (s.gani != kNoGani && now < s.until_ms) return s.gani;
+        s.gani = kNoGani;
+        return kNoGani;
+    }
+    s.collecting = false;
+    s.activity_yaw = yaw;
+    if (std::fabs(s.accumulated) < 1.20f) {
+        s.accumulated = 0;
+        if (s.gani != kNoGani && now < s.until_ms) return s.gani;
+        s.gani = kNoGani;
+        return kNoGani;
+    }
+    const bool large = std::fabs(s.accumulated) >= 2.35f;
+    s.gani = static_cast<std::uint8_t>(13 + stance * 4 + (large ? 2 : 0) + (s.accumulated > 0 ? 1 : 0));
+    s.until_ms = now + (large ? 1200 : 900);
+    s.accumulated = 0;
+    s.began_ms = now;
+    if (++s.event_token == 0) ++s.event_token;
+    return s.gani;
+}
+
 void SpeedReset(SpeedRing& ring) noexcept {
     ring.head = 0;
     ring.count = 0;
+    ring.anchor_ms = 0;
 }
 
-void SpeedPush(SpeedRing& ring, std::uint64_t t_ms, std::int32_t x_mm, std::int32_t z_mm) noexcept {
+bool SpeedPush(SpeedRing& ring, std::uint64_t t_ms, std::int32_t x_mm, std::int32_t z_mm) noexcept {
+    bool restarted = false;
     if (ring.count) {
         SpeedRing::Entry& newest = ring.entries[ring.head];
         if (t_ms < newest.t_ms) {
             SpeedReset(ring);
+            restarted = true;
         } else if (t_ms == newest.t_ms) {
             newest.x_mm = x_mm;
             newest.z_mm = z_mm;
-            return;
+            return false;
         } else {
             const double dx = static_cast<double>(x_mm) - newest.x_mm, dz = static_cast<double>(z_mm) - newest.z_mm;
             const double mmps = std::sqrt(dx * dx + dz * dz) * 1000.0 / static_cast<double>(t_ms - newest.t_ms);
-            if (mmps > kSpeedJumpMmps) SpeedReset(ring);
+            if (mmps > kSpeedJumpMmps) { SpeedReset(ring); restarted = true; }
         }
+    }
+    if (ring.count && t_ms - ring.anchor_ms < kSpeedSampleMs) {
+        // Keep the latest pose without spending another history slot. The
+        // jump/backwards checks above still inspect every incoming sample.
+        ring.entries[ring.head] = SpeedRing::Entry{t_ms, x_mm, z_mm};
+        return false;
     }
     ring.head = ring.count ? static_cast<std::uint8_t>((ring.head + 1) % kSpeedRing) : 0;
     ring.entries[ring.head] = SpeedRing::Entry{t_ms, x_mm, z_mm};
+    ring.anchor_ms = t_ms;
     if (ring.count < kSpeedRing) ++ring.count;
+    return restarted;
 }
 
 bool SpeedMmps(const SpeedRing& ring, std::uint32_t& out) noexcept {
@@ -257,13 +370,22 @@ void Reset(State& s) noexcept {
     s = State{};
     s.phase = Phase::idle;
     s.cur = s.sent = s.from = s.cand = kNoGani;
+    s.completed_once = kNoGani;
+}
+
+void CancelFiniteEvents(State& s) noexcept {
+    s.finite_count = 0;
+    s.observed_finite_token = 0;
+    s.observed_finite_gani = kNoGani;
 }
 
 void Rearm(State& s) noexcept {
+    CancelFiniteEvents(s);
     s.failures = 0;
     s.backoff_ms = 0;
     s.deferred = nullptr;
     s.bad = 0;
+    s.completed_once = kNoGani;
     std::memset(s.strikes, 0, sizeof(s.strikes));
     if (s.phase == Phase::failed) {
         if (s.owned) {
@@ -278,8 +400,11 @@ void Rearm(State& s) noexcept {
 }
 
 void Forget(State& s) noexcept {
+    CancelFiniteEvents(s);
     s.owned = false;
     s.cur = kNoGani;
+    s.cur_event = s.sent_event = s.cand_event = 0;
+    s.completed_once = kNoGani;
     s.stop_done = false;
     s.release_stop_sent = false;
     // failed stays latched until Rearm and a backoff runs out (R6): a realize
@@ -295,7 +420,26 @@ void Idle(State& s) noexcept {
     s.deferred = nullptr;
 }
 
-Out Step(State& s, const In& in) noexcept {
+Out Step(State& s, const In& observation) noexcept {
+    In in = observation;
+    if (in.available_ganis > kPartnerDmGaniMax + 1) in.available_ganis = 0;
+    if (in.target >= in.available_ganis) { in.target = kNoGani; in.finite_token = 0; }
+    // Observe even on confirmation/completion ticks, which otherwise return
+    // before candidate selection. A brief second request cannot be lost there.
+    ObserveFiniteEvent(s, in);
+    while (s.finite_count && (s.finite_events[0].gani >= in.available_ganis || !Usable(s.finite_events[0].gani, s.bad))) EraseFiniteEvent(s, 0);
+    std::uint64_t target_event = 0;
+    if (s.finite_count && in.map && in.blocked == Block::none && in.target_ok) {
+        const auto& request = s.finite_events[0];
+        in.target = request.gani;
+        in.cls = request.cls;
+        in.responsive = true;
+        target_event = request.id;
+    } else if (in.finite_token && OneShot(in.target)) {
+        // A held request already completed (or was canceled). It must not
+        // fall through to the legacy clip-only path and replay anonymously.
+        in.target_ok = false;
+    }
     Out o{};
     o.gani = kNoGani;
     o.from = kNoGani;
@@ -319,6 +463,8 @@ Out Step(State& s, const In& in) noexcept {
         break;
     case Phase::stop_sent:
         if (in.dm_ok && !in.in_dm && !in.pending) {  // R3 (no event; the play may follow below)
+            CompleteFiniteEvent(s, s.cur_event);
+            s.cur_event = 0;
             s.cur = kNoGani;
             s.owned = false;
             s.stop_done = true;
@@ -339,13 +485,17 @@ Out Step(State& s, const In& in) noexcept {
                     : in.prev_warp     ? Cause::warp
                     : in.host_dm       ? Cause::host
                                        : Cause::ended;
-            const bool short_loop = o.cause == Cause::ended && old != kNoGani && s.play_ms && played < kLoopMinMs;
+            const bool finished_once = o.cause == Cause::ended && OneShot(old);
+            const bool short_loop = !finished_once && o.cause == Cause::ended && old != kNoGani && s.play_ms && played < kLoopMinMs;
             s.owned = false;
             s.cur = kNoGani;
             s.phase = Phase::wait;
             ++s.lost;
             if (short_loop) Strike(s, o, old);
-            o.event = Event::lost;
+            if (finished_once) s.completed_once = old;
+            if (finished_once) CompleteFiniteEvent(s, s.cur_event);
+            s.cur_event = 0;
+            o.event = finished_once ? Event::finished : Event::lost;
             o.gani = old;
             o.ms = played;
             return o;
@@ -358,7 +508,7 @@ Out Step(State& s, const In& in) noexcept {
                 s.owned = true;
                 s.play_ms = 0;
                 // A play that was declared unconsumed and started late is that clip.
-                if (Same(s.last_failure, kUnconsumed)) s.cur = s.sent;
+                if (Same(s.last_failure, kUnconsumed)) { s.cur = s.sent; s.cur_event = s.sent_event; }
             } else {
                 s.phase = Phase::wait;
                 s.owned = false;
@@ -428,7 +578,7 @@ Out Step(State& s, const In& in) noexcept {
         const bool stop_sent = s.release_stop_sent;
         s.release_stop_sent = false;
         if (stop_sent) {
-            if (from_play) s.cur = s.sent;  // the stop only went out once the play had started
+            if (from_play) { s.cur = s.sent; s.cur_event = s.sent_event; }  // the stop only went out once the play had started
             s.phase = Phase::stop_sent;
             s.from = s.cur;
         } else if (from_play && in.dm_ok && in.in_dm) {
@@ -459,14 +609,18 @@ Out Step(State& s, const In& in) noexcept {
         return o;
     }
     // D: decide. D1 the candidate and its hold.
-    if (in.target_ok && in.target != s.cand) {
+    if (in.target_ok && (in.target != s.cand || target_event != s.cand_event)) {
+        s.completed_once = kNoGani;
         s.cand = in.target;
+        s.cand_event = target_event;
         s.cand_cls = in.cls;
         s.cand_ms = now;
     } else if (in.target_ok) {
         s.cand_cls = in.cls;
     }
-    const bool stable = in.target_ok && Ms(s.cand_ms, now) >= kHoldMs;
+    const auto hold = in.responsive ? 16 : (in.measured ? kMeasuredHoldMs : kHoldMs);
+    const auto dwell = in.responsive ? 80 : (in.measured ? kMeasuredDwellMs : kDwellMs);
+    const bool stable = in.target_ok && Ms(s.cand_ms, now) >= hold;
     if (s.phase == Phase::idle) {  // D2
         if (in.dm_ok && in.in_dm) {
             Adopt(s, o);
@@ -476,6 +630,7 @@ Out Step(State& s, const In& in) noexcept {
     }
     if (s.phase == Phase::wait) {  // D3
         if (!stable) return o;
+        if (!s.cand_event && OneShot(s.cand) && s.completed_once == s.cand) return o;
         if (s.cand == kNoGani) {
             Defer(s, o, "bad_gani");
             return o;
@@ -503,6 +658,7 @@ Out Step(State& s, const In& in) noexcept {
         o.gani = s.cand;
         s.phase = Phase::play_sent;
         s.sent = s.cand;
+        s.sent_event = s.cand_event;
         s.sent_ms = now;
         s.owned = true;
         ++s.plays;
@@ -517,11 +673,12 @@ Out Step(State& s, const In& in) noexcept {
         return o;
     }
     if (s.phase == Phase::playing) {  // D4
-        if (!in.target_ok || s.cand == s.cur) {
+        if (!in.target_ok || (s.cand == s.cur && s.cand_event == s.cur_event)) {
             s.deferred = nullptr;
             return o;
         }
-        if (!stable || (s.play_ms && Ms(s.play_ms, now) < kDwellMs)) return o;
+        if (OneShot(s.cur) && !in.urgent && s.play_ms && Ms(s.play_ms, now) < 1800) return o;
+        if (!stable || (s.play_ms && Ms(s.play_ms, now) < dwell)) return o;
         if (const char* why = StopGate(in)) {
             Defer(s, o, why);
             return o;

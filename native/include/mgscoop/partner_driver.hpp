@@ -32,6 +32,7 @@
 #include <cstdint>
 #include "mgscoop/lab_config.hpp"
 #include "mgscoop/partner_dmmap.hpp"
+#include "mgscoop/partner_source_turns.hpp"
 #include "mgscoop/partner_input.hpp"
 #include "mgscoop/partner_input_hook.hpp"
 #include "mgscoop/partner_player.hpp"
@@ -203,6 +204,10 @@ struct Hooks {
     // partner_interp_ms (partner_net::EffectiveInterpMs in the observer: the
     // adaptive delay with partner_interp=auto). Null: the configured value.
     std::uint32_t (*interp_ms)(void* context, std::uint32_t configured) noexcept;
+    // Process-lifetime verified runtime archive bound; nullptr is baseline13.
+    unsigned (*dm_motion_count)(void* context) noexcept = nullptr;
+    pose::RemoteFrame (*sample_remote_with_turns)(void* context, std::uint32_t delay_ms,
+                                                const pose::HistoryCursor& cursor) noexcept = nullptr;
 };
 
 // Times passed in by the caller: QPC milliseconds (cadence, poses, net) and
@@ -433,6 +438,9 @@ struct Mission {
     // the previous reply's look/Warp ops (loss attribution).
     partner_dmmap::State dmmap;
     partner_dmmap::SpeedRing dmmap_speed;
+    partner_dmmap::TurnState dmmap_turn;
+    partner_source_turns::State dmmap_source_turns;
+    pose::RemoteFrame dmmap_source_frame;
     PartnerSource dmmap_speed_source;
     bool dmmap_table_logged;
     LogCap dmmap_cap[7];  // deferred, lost, stop_timeout, unconsumed, adopted, abandoned, bad_gani

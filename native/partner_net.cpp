@@ -1,6 +1,7 @@
 // Original MGS Co-op offline partner spike netcode: a second UdpTransport
 // carrying fixed-size MGSC frames, raw (legacy) or inside link v2 packets.
 #include "mgscoop/partner_net.hpp"
+#include "mgscoop/partner_action_mailbox.hpp"
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -53,6 +54,11 @@ volatile LONG g_look_resend = 1;
 // shared with the keepalive timer.
 std::uint32_t g_seq = 0;
 std::uint64_t g_last_frame_us = 0;
+partner_actions::Payload g_local_actions{}; // owner-thread cache only
+bool g_local_actions_valid = false;
+std::uint64_t g_local_actions_ms = 0, g_action_tx_log_ms = 0, g_action_rx_log_ms = 0;
+std::uint32_t g_action_tx_seq = 0;
+partner_actions::Mailbox g_action_mailbox{}; // g_lock
 volatile LONG64 g_last_send_ms = 0;
 // Native tick cost, reset by each stats line.
 volatile LONG64 g_us_sum = 0;
@@ -247,13 +253,30 @@ void OnLook(const sync::LookPacket& packet, std::uint32_t epoch) noexcept {
 
 // Receive thread: one MGSC frame (a raw datagram or a link v2 FRAME
 // message). Decode and enqueue only. Order: keepalive, look, input, transform.
-void OnFrame(const std::uint8_t* data, std::size_t size) noexcept {
+void OnFrame(const std::uint8_t* data, std::size_t size, std::uint64_t trusted_action_peer) noexcept {
     std::uint64_t session = 0;
     if (sync::decode_keepalive_frame(data, size, session)) {
         if (session != kSession) InterlockedIncrement(&g_drop_bad);
         return;
     }
     std::uint32_t epoch = 0;
+    partner_actions::Frame actions{};
+    if (partner_actions::Decode(data,size,actions)) {
+        if (!ActionEventsCompiled()) return;
+        const auto current = static_cast<std::uint32_t>(g_epoch);
+        if (!trusted_action_peer || actions.session != kSession || !current || actions.epoch != current) { InterlockedIncrement(&g_drop_bad); return; }
+        const auto now = NowMs();
+        AcquireSRWLockExclusive(&g_lock);
+        const bool stored = partner_actions::Store(g_action_mailbox,actions,trusted_action_peer,kSession,current,now,kRestartGapMs);
+        ReleaseSRWLockExclusive(&g_lock);
+        if (!stored) { InterlockedIncrement(&g_drop_seq); return; }
+        if (!g_action_rx_log_ms || now - g_action_rx_log_ms >= 1000) {
+            g_action_rx_log_ms = now; char line[240]{};
+            if (SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),"partner_actions=rx; mission=%u; generation=%u; burst_onsets=%u; reload_requests=%u; retained=%u; seq=%u; playback=off\r\n",
+                actions.action.mission,actions.action.generation,actions.action.fire_count,actions.action.reload_count,unsigned(actions.action.count),actions.sequence))) Log(line);
+        }
+        return;
+    }
     sync::LookPacket look{};
     if (sync::decode_look_frame(data, size, session, epoch, look)) {
         if (session != kSession) InterlockedIncrement(&g_drop_bad);
@@ -304,7 +327,7 @@ void OnFrame(const std::uint8_t* data, std::size_t size) noexcept {
     const std::uint64_t now = NowMs();
     const bool anim_valid = has_anim && (anim.flags & sync::AnimFlag::Valid) != 0;
     const pose::Snapshot snapshot{packet.tick_ms, packet.x, packet.y, packet.z, packet.rot_y, packet.stance, packet.action_flags,
-                                  anim_valid, anim.act, anim.stance, anim.speed};
+                                  anim_valid, anim.act, anim.stance, anim.speed, packet.equip_id};
     bool accepted = true, first = false;
     AcquireSRWLockExclusive(&g_lock);
     const bool restart_gap = g_have_last && now - g_last_rx_ms > kRestartGapMs;
@@ -333,6 +356,7 @@ void OnFrame(const std::uint8_t* data, std::size_t size) noexcept {
 
 // The receive half of ResetRemote (g_lock held).
 void ResetReceiveLocked() noexcept {
+    partner_actions::Reset(g_action_mailbox);
     g_ring.Reset();
     g_have_last = false;
     g_last_seq = 0;
@@ -577,6 +601,8 @@ void LinkDatagram(const std::uint8_t* data, std::size_t size, const lab::Endpoin
     const std::uint64_t now = NowMs();
     AcquireSRWLockExclusive(&g_tx_lock);
     const link::Delivery delivery = g_session.OnDatagram(data, size, from, now);
+    std::uint64_t action_peer = 0;
+    partner_actions::TrustedPeer(true, delivery.data, from, {}, action_peer);
     if (delivery.new_session) {
         // Both halves in the commit's g_tx_lock section (tx -> rx order): no
         // packet of the new session carries a RELACK of the old receivers.
@@ -631,7 +657,7 @@ void LinkDatagram(const std::uint8_t* data, std::size_t size, const lab::Endpoin
         InterlockedExchange(&g_relack_dirty, 1);
         ReleaseSRWLockExclusive(&g_lock);
     }
-    for (unsigned i = 0; i < frame_count; ++i) OnFrame(frames[i].data, frames[i].size);
+    for (unsigned i = 0; i < frame_count; ++i) OnFrame(frames[i].data, frames[i].size, action_peer);
     for (unsigned i = 0; i < event_count; ++i) LogEvent(events[i], now);
     if (close_seen) Log("link=close; reason=peer\r\n");
 }
@@ -639,7 +665,11 @@ void LinkDatagram(const std::uint8_t* data, std::size_t size, const lab::Endpoin
 void OnDatagram(void*, const std::uint8_t* data, std::size_t size, const lab::Endpoint& from) noexcept {
     const DWORD error = GetLastError();
     if (g_v2) LinkDatagram(data, size, from);
-    else OnFrame(data, size);
+    else {
+        std::uint64_t action_peer = 0;
+        partner_actions::TrustedPeer(false,false,from,lab::Endpoint{g_config.peer_address,g_config.peer_port},action_peer);
+        OnFrame(data,size,action_peer);
+    }
     SetLastError(error);
 }
 
@@ -900,7 +930,36 @@ bool Start(const Config& config) noexcept {
 
 bool Running() noexcept { return g_running != 0; }
 
-void SetEpoch(std::uint32_t epoch) noexcept { InterlockedExchange(&g_epoch, static_cast<LONG>(epoch)); }
+bool ActionEventsCompiled() noexcept {
+#if defined(MGS_LOCAL_ACTION_EVENTS) && MGS_LOCAL_ACTION_EVENTS
+    return true;
+#else
+    return false;
+#endif
+}
+bool SetLocalActions(const partner_actions::Payload& payload) noexcept {
+    if (!ActionEventsCompiled() || !g_running || !partner_actions::Valid(payload)) return false;
+    g_local_actions = payload; g_local_actions_valid = true; g_local_actions_ms = NowMs(); return true;
+}
+void ClearLocalActions() noexcept { g_local_actions = {}; g_local_actions_valid = false; g_local_actions_ms = 0; }
+bool SampleActions(std::uint32_t mission, ActionSample& out) noexcept {
+    out = {};
+    if (!ActionEventsCompiled() || !g_running || !mission || !TryAcquireSRWLockExclusive(&g_lock)) return false;
+    const bool connected = !g_v2 || static_cast<link::LinkState>(g_link_state) == link::LinkState::connected;
+    out.fresh = partner_actions::SampleMailbox(g_action_mailbox,kSession,static_cast<std::uint32_t>(g_epoch),mission,NowMs(),connected,out.receipt,out.age_ms);
+    ReleaseSRWLockExclusive(&g_lock);
+    return out.fresh;
+}
+
+void SetEpoch(std::uint32_t epoch) noexcept {
+    const auto old = InterlockedExchange(&g_epoch, static_cast<LONG>(epoch));
+    if (static_cast<std::uint32_t>(old) != epoch) {
+        ClearLocalActions();
+        AcquireSRWLockExclusive(&g_lock);
+        partner_actions::Reset(g_action_mailbox);
+        ReleaseSRWLockExclusive(&g_lock);
+    }
+}
 
 bool SubmitLocal(const partner::Tick& tick, const sync::AnimState& anim) noexcept {
     if (!g_running) return false;
@@ -921,6 +980,18 @@ bool SubmitLocal(const partner::Tick& tick, const sync::AnimState& anim) noexcep
         std::uint8_t frame[sync::transform_frame_size];
         if (sync::encode_transform_frame(kSession, static_cast<std::uint32_t>(epoch), packet, frame))
             sent = Transmit(frame, sizeof(frame));
+    }
+    const auto now_ms = now_us / 1000;
+    if (ActionEventsCompiled() && g_local_actions_valid && now_ms >= g_local_actions_ms
+        && now_ms - g_local_actions_ms <= partner_actions::kNetworkAgeMs) {
+        partner_actions::Frame actions{kSession,static_cast<std::uint32_t>(epoch),++g_action_tx_seq,g_local_actions};
+        std::uint8_t frame[partner_actions::kFrameSize];
+        if (partner_actions::Encode(actions,frame) && Transmit(frame,sizeof(frame))
+            && (!g_action_tx_log_ms || now_ms - g_action_tx_log_ms >= 1000)) {
+            g_action_tx_log_ms = now_ms; char line[240]{};
+            if (SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),"partner_actions=tx; mission=%u; generation=%u; burst_onsets=%u; reload_requests=%u; retained=%u; seq=%u; playback=off\r\n",
+                actions.action.mission,actions.action.generation,actions.action.fire_count,actions.action.reload_count,unsigned(actions.action.count),actions.sequence))) Log(line);
+        }
     }
     g_last_frame_us = now_us;
     InterlockedExchange64(&g_last_send_ms, static_cast<LONG64>(now_us / 1000));
@@ -1020,7 +1091,18 @@ pose::Sample SampleRemote(std::uint32_t delay_ms) noexcept {
     return sample;
 }
 
+pose::RemoteFrame SampleRemoteWithTurns(std::uint32_t delay_ms, const pose::HistoryCursor& cursor) noexcept {
+    AcquireSRWLockShared(&g_lock);
+    const std::uint64_t now = NowMs();
+    pose::RemoteFrame frame = g_ring.ReadFrame(now, delay_ms, cursor);
+    ReleaseSRWLockShared(&g_lock);
+    if (g_v2 && frame.visual.valid && static_cast<link::LinkState>(g_link_state) != link::LinkState::connected)
+        frame.visual.status = pose::Status::lost;
+    return frame;
+}
+
 void ResetRemote() noexcept {
+    ClearLocalActions();
     AcquireSRWLockExclusive(&g_lock);
     ResetReceiveLocked();
     ReleaseSRWLockExclusive(&g_lock);

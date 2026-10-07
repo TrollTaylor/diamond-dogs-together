@@ -5,11 +5,13 @@
 // for 2 s (the native watch). Every action the module returns is applied
 // before the next tick, exactly as the driver does.
 #include <cstdint>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
 #include "mgscoop/partner_dmmap.hpp"
+#include "mgscoop/pose_interp.hpp"
 
 namespace {
 namespace pdm = mgscoop::partner_dmmap;
@@ -211,7 +213,7 @@ void TestResolveTarget() {
     Check(pdm::ResolveTarget(t, Cls(0, 1), (1u << 10) | 1u) == pdm::kNoGani, "bad idle too: no clip");
     Check(pdm::ResolveTarget(t, Cls(3, 0), 0) == pdm::kNoGani && pdm::ResolveTarget(t, Cls(0, 4), 0) == pdm::kNoGani, "out of range");
     mgscoop::PartnerDmTable odd = t;
-    odd.cells[1] = 13;
+    odd.cells[1] = mgscoop::kPartnerDmGaniMax + 1;
     Check(pdm::ResolveTarget(odd, Cls(0, 1), 0) == 0, "a cell above the GANI bound falls back");
 }
 
@@ -220,8 +222,10 @@ void TestSpeedRing() {
     pdm::SpeedReset(r);
     std::uint32_t v = 0;
     Check(!pdm::SpeedMmps(r, v), "empty ring");
-    for (int i = 0; i <= 4; ++i) pdm::SpeedPush(r, 1000 + 33u * i, 2356 * 33 * i / 1000, 0);
-    Check(!pdm::SpeedMmps(r, v), "span below 150 ms");
+    for (int i = 0; i <= 3; ++i) pdm::SpeedPush(r, 1000 + 33u * i, 2356 * 33 * i / 1000, 0);
+    Check(!pdm::SpeedMmps(r, v), "span below 100 ms");
+    pdm::SpeedPush(r, 1132, 2356 * 132 / 1000, 0);
+    Check(pdm::SpeedMmps(r, v) && v >= 2300 && v <= 2400, "four 30 Hz intervals provide the first reliable speed estimate");
     for (int i = 5; i <= 20; ++i) pdm::SpeedPush(r, 1000 + 33u * i, 2356 * 33 * i / 1000, 0);
     Check(pdm::SpeedMmps(r, v) && v >= 2300 && v <= 2400, "steady 2356 mm/s");
     pdm::SpeedPush(r, 1000 + 33u * 20, 2356 * 33 * 20 / 1000 + 5000, 0);
@@ -233,7 +237,107 @@ void TestSpeedRing() {
     pdm::SpeedPush(r, 900 + 33u * 11, 0, 50000);  // 50 m in 33 ms: a teleport
     Check(r.count == 1, "a teleport restarts");
     for (int i = 0; i < 100; ++i) pdm::SpeedPush(r, 5000 + 33u * i, 0, 1000 * 33 * i / 1000);
-    Check(r.count == pdm::kSpeedRing && pdm::SpeedMmps(r, v) && v >= 980 && v <= 1020, "the ring wraps; only the newest 300 ms count");
+    Check(r.count == pdm::kSpeedRing && pdm::SpeedMmps(r, v) && v >= 980 && v <= 1020, "the ring wraps; only the newest 200 ms count");
+    for (const unsigned hz : {20u, 60u, 120u, 240u, 500u}) {
+        pdm::SpeedReset(r);
+        for (unsigned frame = 0; frame <= hz * 2; ++frame) {
+            const std::uint64_t elapsed = frame * 1000u / hz;
+            const auto travel = elapsed <= 1000 ? elapsed : 1000;
+            pdm::SpeedPush(r, 10000 + elapsed, static_cast<std::int32_t>(travel * 3), 0);
+            Check(r.count <= pdm::kSpeedRing && r.entries[r.head].t_ms == 10000 + elapsed,
+                  "time-spaced history stays bounded and retains the latest pose at every owner cadence");
+            if (elapsed >= 200 && elapsed <= 1000)
+                Check(pdm::SpeedMmps(r, v) && v >= 2990 && v <= 3010,
+                      "100..200ms measured speed survives20/60/120/240/500Hz owner cadence");
+            if (elapsed >= 1200)
+                Check(pdm::SpeedMmps(r, v) && v == 0, "all owner cadences observe a complete stop within the speed window");
+        }
+    }
+    pdm::SpeedReset(r);
+    Check(!pdm::SpeedPush(r, 1000, 0, 0) && !pdm::SpeedPush(r, 1002, 6, 0) && r.count == 1,
+          "a high-cadence sample updates the latest pose without adding history");
+    Check(pdm::SpeedPush(r, 1004, 10000, 0) && r.count == 1 && r.entries[r.head].x_mm == 10000,
+          "a teleport resets even on a tick that would have skipped a history insertion");
+    Check(pdm::SpeedPush(r, 1003, 10000, 0) && r.count == 1 && r.anchor_ms == 1003,
+          "a backwards tick resets the history cadence even between spaced insertions");
+}
+
+void TestMeasuredPoseTimeline() {
+    // Real interpolation and speed measurement: 30 Hz sender snapshots, a
+    // 20..500 Hz owner, 100 ms pose delay, no WALK/RUN flags, and idle raw acts.
+    // This tests observed start/stop latency rather than timing constants.
+    const auto timeline = [](bool jitter, unsigned profile, unsigned owner_hz) {
+        Game g;
+        mgscoop::pose::SnapshotRing poses;
+        pdm::SpeedRing speeds{};
+        const std::uint64_t base = g.now, start = base + 1000, stop = start + 1000;
+        std::uint64_t first_move = 0, first_idle_after_stop = 0;
+        unsigned sender = 0, moving_plays = 0;
+        bool steady_walk = true;
+        for (unsigned owner = 1; owner <= owner_hz * 4; ++owner) {
+            const std::uint64_t now = base + owner * 1000u / owner_hz;
+            for (;;) {
+                const std::uint64_t sent = base + sender * 1000u / 30u;
+                const unsigned transit[] = {0, 15, 5, 20, 0};
+                const std::uint64_t received = sent + 20 + (jitter ? transit[sender % 5] : 0);
+                if (received > now) break;
+                const auto elapsed = sent <= start ? 0 : (sent >= stop ? 1000 : sent - start);
+                const float rate = profile == 2 ? 2.6f : 3.0f;
+                const float noise = jitter ? static_cast<float>(static_cast<int>(sender % 5) - 2) * 0.004f : 0.0f;
+                const float x = (profile == 1 ? 0.0f : static_cast<float>(elapsed) * rate / 1000.0f) + noise;
+                const mgscoop::pose::Snapshot snapshot{static_cast<std::uint32_t>(sent), x, 0, 0, 0, 0, 0, true, 1, 1, 0, 0};
+                Check(poses.Push(snapshot, received), "30 Hz source accepts monotonic snapshots with bounded transit jitter");
+                ++sender;
+            }
+            const auto sample = poses.SampleAt(now, 100);
+            pdm::Observation observed{};
+            observed.flag_move = pdm::kMoveUnknown;
+            observed.fresh = sample.valid && sample.status == mgscoop::pose::Status::live;
+            observed.lost = !sample.valid || sample.status == mgscoop::pose::Status::lost;
+            observed.anim_move = true;
+            if (sample.valid) {
+                pdm::SpeedPush(speeds, now, static_cast<std::int32_t>(std::lround(sample.x * 1000)), 0);
+                observed.speed_ok = pdm::SpeedMmps(speeds, observed.speed_mmps);
+                observed.stance = sample.stance;
+                observed.anim_valid = sample.anim_valid;
+                observed.act = sample.act;
+                observed.anim_stance = sample.anim_stance;
+                observed.anim_speed = sample.anim_speed;
+            }
+            g.cls = pdm::Classify(observed, kPartnerDmSpeedsDefault,
+                                 g.s.cand == pdm::kNoGani ? pdm::kMoveUnknown : g.s.cand_cls.move, g.s.cand_cls.stance);
+            g.in.measured = observed.fresh && observed.speed_ok && g.cls.via == pdm::Via::speed;
+            g.in.urgent = g.cls.move != 0;
+            g.in.target_ok = observed.fresh || observed.lost;
+            const auto out = g.Tick(now - g.now);
+            if (out.action == pdm::Action::play) {
+                if (out.gani != 0) {
+                    ++moving_plays;
+                    if (!first_move) first_move = now;
+                } else if (now >= stop && !first_idle_after_stop) first_idle_after_stop = now;
+            }
+            if (profile == 2 && now >= start + 400 && now <= stop - 100) steady_walk = steady_walk && g.cls.move == 1;
+        }
+        if (profile == 1) {
+            Check(moving_plays == 0 && g.last_play == 0, "centimetre-scale stationary jitter never starts a walk/run clip");
+        } else {
+            const std::uint64_t tick_budget = (1000u + owner_hz - 1) / owner_hz;
+            Check(first_move >= start + 100 && first_move <= start + 350 + tick_budget,
+                  "flagless real interpolated movement starts within350ms plus one owner tick, including100ms pose delay");
+            Check(first_idle_after_stop >= stop + 100 && first_idle_after_stop <= stop + 480 + tick_budget && g.last_play == 0,
+                  "flagless real interpolated stop returns to idle within480ms plus one owner tick, including100ms pose delay");
+            if (profile == 2) Check(steady_walk, "150mmps hysteresis keeps near-boundary measured walking stable under snapshot noise");
+            std::printf("measured pose timeline:30Hz/%uHz jitter=%u profile=%u start=%llu ms stop=%llu ms\n",
+                        owner_hz, unsigned(jitter), profile, static_cast<unsigned long long>(first_move - start),
+                        static_cast<unsigned long long>(first_idle_after_stop - stop));
+        }
+    };
+    for (const unsigned hz : {20u, 60u, 120u, 240u, 500u}) {
+        timeline(false, 0, hz);
+        timeline(true, 0, hz);
+        timeline(true, 1, hz);
+        timeline(true, 2, hz);
+    }
 }
 
 void TestSwitchFlow() {
@@ -745,6 +849,298 @@ void TestRearmAndForget() {
     }
 }
 
+void TestPivotTimelines() {
+    constexpr float pi = 3.14159265358979323846f;
+    for (const unsigned hz : {20u, 60u, 120u}) {
+        for (const std::uint8_t stance : {std::uint8_t{0}, std::uint8_t{1}}) {
+            for (const bool large : {false, true}) {
+                for (const bool right : {false, true}) {
+                    pdm::TurnState state{};
+                    const float initial = right ? 3.0f : -3.0f;  // both cross the +/-pi boundary
+                    const float angle = (right ? 1.0f : -1.0f) * (large ? pi : pi / 2);
+                    const auto expected = static_cast<std::uint8_t>(13 + stance * 4 + (large ? 2 : 0) + (right ? 1 : 0));
+                    const std::uint64_t base = 10000, end = base + 500;
+                    Check(pdm::ObserveTurn(state, base, true, initial, stance, false) == pdm::kNoGani,
+                          "smooth pivot establishes its starting heading");
+                    std::uint64_t selected_ms = 0;
+                    for (unsigned frame = 1; frame <= hz; ++frame) {
+                        const std::uint64_t elapsed = frame * 1000u / hz;
+                        const float progress = elapsed < 500 ? static_cast<float>(elapsed) / 500 : 1.0f;
+                        const float noise = elapsed >= 500 ? ((frame & 1u) ? 0.003f : -0.003f) : 0;
+                        const float yaw = mgscoop::pose::WrapAngle(initial + angle * progress + noise);
+                        const auto clip = pdm::ObserveTurn(state, base + elapsed, true, yaw, stance, false);
+                        if (clip != pdm::kNoGani) {
+                            Check(clip == expected, "smooth90/180 pivot selects the full signed angle after wrap and settling noise");
+                            if (!selected_ms) selected_ms = base + elapsed;
+                        }
+                    }
+                    const auto tick = (1000u + hz - 1) / hz;
+                    Check(selected_ms >= end + pdm::kTurnSettleMs && selected_ms <= end + pdm::kTurnSettleMs + tick,
+                          "smooth pivot waits70ms for settling and selects within one20/60/120Hz owner tick");
+                }
+            }
+        }
+        pdm::TurnState noise{};
+        pdm::ObserveTurn(noise, 1000, true, 3.14f, 0, false);
+        for (unsigned frame = 1; frame <= hz * 2; ++frame) {
+            const float yaw = mgscoop::pose::WrapAngle(3.14f + ((frame & 1u) ? 0.004f : -0.004f));
+            Check(pdm::ObserveTurn(noise, 1000 + frame * 1000u / hz, true, yaw, 0, false) == pdm::kNoGani,
+                  "wrapped stationary heading noise never requests a turn");
+        }
+        pdm::TurnState interrupted{};
+        pdm::ObserveTurn(interrupted, 1000, true, 0, 0, false);
+        for (unsigned frame = 1; frame * 1000u / hz <= 350; ++frame)
+            Check(pdm::ObserveTurn(interrupted, 1000 + frame * 1000u / hz, true, pi * (frame * 1000u / hz) / 500, 0, false) == pdm::kNoGani,
+                  "a moving smooth pivot does not commit its partial90degree angle");
+        Check(pdm::ObserveTurn(interrupted, 1351, true, 2.2f, 0, true) == pdm::kNoGani && !interrupted.valid,
+              "movement cancels a collected pivot before it is committed");
+        Check(pdm::ObserveTurn(interrupted, 1400, true, pi, 0, false) == pdm::kNoGani &&
+              pdm::ObserveTurn(interrupted, 1600, true, pi, 0, false) == pdm::kNoGani,
+              "a canceled pivot cannot replay when movement ends");
+        pdm::TurnState bounded{};
+        pdm::ObserveTurn(bounded, 1000, true, 0, 0, false);
+        std::uint64_t selected = 0;
+        for (unsigned frame = 1; frame <= hz; ++frame) {
+            const auto elapsed = frame * 1000u / hz;
+            const auto clip = pdm::ObserveTurn(bounded, 1000 + elapsed, true,
+                                              mgscoop::pose::WrapAngle(3.0f * elapsed / 1000), 0, false);
+            if (clip != pdm::kNoGani && !selected) selected = 1000 + elapsed;
+        }
+        const auto tick = (1000u + hz - 1) / hz;
+        Check(selected >= 1000 + pdm::kTurnCollectMs && selected <= 1000 + pdm::kTurnCollectMs + 2 * tick,
+              "an ongoing pivot selects at the600ms collection deadline without requiring settling");
+    }
+    pdm::TurnState queued{};
+    pdm::ObserveTurn(queued, 1000, true, 0, 0, false);
+    Check(pdm::ObserveTurn(queued, 1100, true, 1.3f, 0, false) == pdm::kNoGani &&
+          pdm::ObserveTurn(queued, 1170, true, 1.3f, 0, false) == 14, "queued fixture starts a settled90degree pivot");
+    const auto first_token = queued.event_token;
+    Check(pdm::ObserveTurn(queued, 1300, true, -1.2f, 0, false) == 14 &&
+          pdm::ObserveTurn(queued, 1400, true, -1.2f, 0, false) == 15 && queued.event_token != first_token,
+          "a settled new pivot emits a distinct request before the active turn hold ends");
+    const auto second_token = queued.event_token;
+    Check(pdm::ObserveTurn(queued, 2070, true, -1.2f, 0, false) == 15 && queued.event_token == second_token &&
+          pdm::ObserveTurn(queued, 2600, true, -1.2f, 0, false) == pdm::kNoGani,
+          "a held pivot keeps its event identity until its request expires");
+    Check(pdm::ObserveTurn(queued, 2599, true, -1.2f, 0, false) == pdm::kNoGani && queued.valid && queued.gani == pdm::kNoGani,
+          "a backwards clock resets a held pivot even when it stays after the collection start");
+}
+
+void TestFiniteRequestIdentity() {
+    Game defaults;
+    const auto start = [&](pdm::State& state, pdm::In& in) {
+        pdm::Reset(state);
+        in = defaults.in;
+        in.cls = Cls(0, 0);
+        in.target = 14;
+        in.finite_token = 1;
+        in.responsive = true;
+        in.now_ms = 1000;
+        Check(pdm::Step(state, in).action == pdm::Action::none, "finite event observes the candidate hold");
+        in.now_ms = 1017;
+        Check(pdm::Step(state, in).action == pdm::Action::play, "first finite event starts");
+        in.in_dm = true; in.now_ms = 1034;
+        Check(pdm::Step(state, in).event == pdm::Event::playing && state.cur_event != 0,
+              "finite event confirms with a discrete identity");
+    };
+    pdm::State state{};
+    pdm::In in{};
+    start(state, in);
+    const auto first = state.cur_event;
+    for (unsigned i = 0; i < 10; ++i) {
+        in.now_ms += 17;
+        Check(pdm::Step(state, in).action == pdm::Action::none && state.finite_count == 1,
+              "a held finite token cannot generate duplicate requests");
+    }
+    in.finite_token = 2; in.now_ms = 1300;
+    Check(pdm::Step(state, in).action == pdm::Action::none && state.finite_count == 2 && state.cur_event == first,
+          "second identical turn queues before first completes without interrupting it");
+    in.in_dm = false; in.now_ms = 1800;
+    Check(pdm::Step(state, in).event == pdm::Event::finished && state.finite_count == 1 && state.strikes[14] == 0,
+          "first natural completion consumes only its own event identity");
+    in.now_ms = 1817;
+    Check(pdm::Step(state, in).action == pdm::Action::none, "queued identical turn observes its new candidate hold");
+    in.now_ms = 1834;
+    Check(pdm::Step(state, in).action == pdm::Action::play && state.sent == 14 && state.sent_event != first,
+          "second identical turn survives clip-only completion suppression");
+    in.in_dm = true; in.now_ms = 1851;
+    Check(pdm::Step(state, in).event == pdm::Event::playing, "second identical turn confirms");
+    in.in_dm = false; in.now_ms = 2600;
+    Check(pdm::Step(state, in).event == pdm::Event::finished && state.finite_count == 0,
+          "second natural completion leaves no queued event");
+    for (unsigned i = 0; i < 20; ++i) {
+        in.now_ms += 17;
+        Check(pdm::Step(state, in).action == pdm::Action::none && state.finite_count == 0,
+              "completed held event does not fall through to an anonymous third play");
+    }
+
+    // Requests can arrive on the exact confirmation/end ticks, before Step's
+    // early reconciliation return. Each must still retain its identity.
+    pdm::Reset(state); in = defaults.in; in.target = 14; in.cls = Cls(0, 0); in.finite_token = 1; in.responsive = true;
+    in.now_ms = 1000; pdm::Step(state, in);
+    in.now_ms = 1017; pdm::Step(state, in);
+    in.in_dm = true; in.finite_token = 2; in.now_ms = 1034;
+    Check(pdm::Step(state, in).event == pdm::Event::playing && state.finite_count == 2,
+          "a second event arriving on confirmation is retained");
+    in.in_dm = false; in.finite_token = 3; in.now_ms = 1800;
+    Check(pdm::Step(state, in).event == pdm::Event::finished && state.finite_count == 2,
+          "a third event arriving on completion is retained while only the first is consumed");
+
+    start(state, in);
+    const auto retained_active = state.cur_event;
+    for (std::uint32_t token = 2; token <= 9; ++token) {
+        in.finite_token = token; in.now_ms += 17;
+        pdm::Step(state, in);
+        Check(state.finite_count <= pdm::State::finite_capacity && state.finite_events[0].id == retained_active,
+              "event bursts stay bounded and cannot overwrite the active turn");
+    }
+    Check(state.finite_count == 4 && state.finite_dropped == 5 && state.finite_events[1].id == 7 &&
+          state.finite_events[2].id == 8 && state.finite_events[3].id == 9,
+          "bounded queue retains the active and three most recent waiting events");
+    for (unsigned canceled = 0; canceled < 7; ++canceled) {
+        auto copy = state;
+        auto changed = in;
+        changed.now_ms += 17;
+        switch (canceled) {
+        case 0: changed.map = false; break;
+        case 1: changed.blocked = pdm::Block::fault; break;
+        case 2: changed.parts_loaded = false; break;
+        case 3: changed.cls.via = pdm::Via::lost; changed.finite_token = 0; changed.target = 0; break;
+        case 4: changed.urgent = true; changed.cls.move = 1; changed.finite_token = 0; changed.target = 10; break;
+        case 5: pdm::Forget(copy); break;
+        case 6: pdm::Rearm(copy); break;
+        }
+        if (canceled < 5) pdm::Step(copy, changed);
+        Check(copy.finite_count == 0, "map/fault/parts/loss/movement/unrealize/rearm cancels queued turns");
+    }
+    auto stale = in; stale.target_ok = false; stale.finite_token = 10; stale.now_ms += 17;
+    pdm::Step(state, stale);
+    Check(state.finite_count == 4 && state.next_finite_id == 9, "stale input cannot produce a new finite event");
+    const auto phase_before_reset = state.phase;
+    pdm::CancelFiniteEvents(state);
+    Check(state.finite_count == 0 && state.phase == phase_before_reset && state.cur_event == retained_active,
+          "explicit source/teleport reset drops events without bypassing native ownership gates");
+    start(state, in);
+    state.next_finite_id = 0xFFFFFFFFFFFFFFFFull;
+    in.finite_token = 2; in.now_ms += 17;
+    pdm::Step(state, in);
+    Check(state.finite_count == 2 && state.finite_events[1].id != 0 && state.finite_events[1].id != state.cur_event,
+          "finite ID wrap skips zero and every active identity without collision");
+
+    // Exercise the actual collector -> mapper contract at realistic owner
+    // rates. The second token expires before the first 1500ms clip ends.
+    for (const unsigned hz : {20u, 60u, 120u}) {
+        pdm::Reset(state); in = defaults.in; in.cls = Cls(0, 0);
+        pdm::TurnState turn{};
+        bool have_request = false, native_dm = false;
+        std::uint64_t natural_end = 0;
+        unsigned finite_plays = 0, finite_ends = 0, stops = 0;
+        pdm::ObserveTurn(turn, 10000, true, 0, 0, false);
+        for (unsigned frame = 1; frame <= hz * 5; ++frame) {
+            const auto elapsed = frame * 1000u / hz;
+            const float first_progress = elapsed <= 200 ? static_cast<float>(elapsed) / 200 : 1.0f;
+            const float second_progress = elapsed <= 500 ? 0 : elapsed < 700 ? static_cast<float>(elapsed - 500) / 200 : 1.0f;
+            const auto clip = pdm::ObserveTurn(turn, 10000 + elapsed, true,
+                                              mgscoop::pose::WrapAngle(1.5707963f * (first_progress + second_progress)), 0, false);
+            if (clip != pdm::kNoGani) have_request = true;
+            if (natural_end && 10000 + elapsed >= natural_end) { native_dm = false; natural_end = 0; }
+            in.now_ms = 10000 + elapsed;
+            in.target_ok = have_request;
+            in.target = clip == pdm::kNoGani ? 0 : clip;
+            in.finite_token = clip == pdm::kNoGani ? 0 : turn.event_token;
+            in.responsive = clip != pdm::kNoGani;
+            in.in_dm = native_dm;
+            const auto out = pdm::Step(state, in);
+            if (out.action == pdm::Action::play) {
+                native_dm = true;
+                if (pdm::OneShot(out.gani)) {
+                    Check(out.gani == 14, "real collector repeats the identical signed90degree turn");
+                    ++finite_plays;
+                    natural_end = in.now_ms + 1500;
+                }
+            } else if (out.action == pdm::Action::stop) { native_dm = false; natural_end = 0; ++stops; }
+            if (out.event == pdm::Event::finished) ++finite_ends;
+            Check(state.finite_count <= pdm::State::finite_capacity, "collector replay queue stays bounded throughout native timing");
+        }
+        Check(finite_plays == 2 && finite_ends == 2 && stops == 0 && state.strikes[14] == 0,
+              "two identical turns replay exactly twice after natural completion without idle hacks or strikes");
+    }
+    pdm::TurnState wrap{};
+    pdm::ObserveTurn(wrap, 1000, true, 0, 0, false);
+    wrap.event_token = 0xFFFFFFFFu;
+    pdm::ObserveTurn(wrap, 1100, true, 1.3f, 0, false);
+    Check(pdm::ObserveTurn(wrap, 1170, true, 1.3f, 0, false) == 14 && wrap.event_token == 1,
+          "collector token wrap skips the reserved zero identity");
+}
+
+void TestTransitionsAndResponsiveness() {
+    pdm::TurnState turn{};
+    Check(pdm::ObserveTurn(turn, 1000, true, 3.10f, 0, false) == pdm::kNoGani, "turn first sample establishes heading");
+    Check(pdm::ObserveTurn(turn, 1100, true, -3.10f, 0, false) == pdm::kNoGani, "wrap across pi is a small turn");
+    Check(pdm::ObserveTurn(turn, 1200, true, -1.85f, 0, false) == pdm::kNoGani, "positive idle pivot first collects its angle");
+    Check(pdm::ObserveTurn(turn, 1250, true, -1.80f, 0, false) == pdm::kNoGani &&
+          pdm::ObserveTurn(turn, 1320, true, -1.80f, 0, false) == 14, "settled positive idle turn selects resident stand right90");
+    Check(pdm::ObserveTurn(turn, 1330, true, -1.70f, 0, true) == pdm::kNoGani, "movement interrupts turn");
+    Check(pdm::ObserveTurn(turn, 1400, true, 0, 1, false) == pdm::kNoGani &&
+          pdm::ObserveTurn(turn, 1500, true, -2.5f, 1, false) == pdm::kNoGani &&
+          pdm::ObserveTurn(turn, 1570, true, -2.5f, 1, false) == 19, "settled large squat turn selects left180");
+    Check(pdm::ObserveTurn(turn, 1580, false, -2.5f, 1, false) == pdm::kNoGani && !turn.valid, "lost peer clears turn intent");
+    pdm::ObserveTurn(turn, 1600, true, 0, 0, false);
+    Check(pdm::ObserveTurn(turn, 1700, true, 1.3f, 0, false) == pdm::kNoGani &&
+          pdm::ObserveTurn(turn, 1770, true, 1.3f, 0, false) == 14 &&
+          pdm::ObserveTurn(turn, 1780, true, 1.3f, 1, false) == pdm::kNoGani, "stance change cancels stand turn");
+    Check(pdm::OneShot(13) && pdm::OneShot(20) && !pdm::OneShot(12), "transition metadata separates one-shots and loops");
+
+    Game g;
+    auto in = g.in;
+    pdm::State state{}; pdm::Reset(state);
+    in.target = 13; in.responsive = true; in.now_ms = 1000;
+    Check(pdm::Step(state, in).action == pdm::Action::none, "responsive first observation is held one frame");
+    in.now_ms = 1017;
+    Check(pdm::Step(state, in).action == pdm::Action::play, "responsive transition plays after17ms");
+    in.in_dm = true; in.now_ms = 1034;
+    Check(pdm::Step(state, in).event == pdm::Event::playing, "one-shot consumed");
+    in.in_dm = false; in.now_ms = 1400;
+    Check(pdm::Step(state, in).event == pdm::Event::finished && state.strikes[13] == 0, "short one-shot completion never strikes");
+    in.now_ms = 1417;
+    Check(pdm::Step(state, in).action == pdm::Action::none, "completed held one-shot does not replay");
+    in.target = 10; in.urgent = true; in.now_ms = 1434;
+    Check(pdm::Step(state, in).action == pdm::Action::none, "next movement observes one frame hold");
+    in.now_ms = 1451;
+    Check(pdm::Step(state, in).action == pdm::Action::play && state.sent == 10, "movement resumes promptly after transition");
+    in.in_dm = true; in.now_ms = 1468; pdm::Step(state, in);
+    in.target = 11; in.now_ms = 1501; pdm::Step(state, in);
+    in.now_ms = 1549;
+    Check(pdm::Step(state, in).action == pdm::Action::stop, "authoritative movement uses80ms dwell instead300ms");
+
+    // Measured movement and observed gun intent can interrupt a finite turn;
+    // merely becoming idle keeps its protection against premature truncation.
+    for (const bool gun : {false, true}) {
+        pdm::Reset(state);
+        in = g.in; in.target = 13; in.responsive = true; in.now_ms = 2000;
+        pdm::Step(state, in);
+        in.now_ms = 2017;
+        Check(pdm::Step(state, in).action == pdm::Action::play, "interrupt fixture starts a finite turn");
+        in.in_dm = true; in.now_ms = 2034;
+        Check(pdm::Step(state, in).event == pdm::Event::playing, "interrupt fixture confirms the turn");
+        in.target = gun ? 0 : 10;
+        in.responsive = gun; in.measured = !gun; in.urgent = true; in.now_ms = 2051;
+        Check(pdm::Step(state, in).action == pdm::Action::none, "new interrupt candidate still observes its hold");
+        in.now_ms = gun ? 2113 : 2133;
+        Check(pdm::Step(state, in).action == pdm::Action::none, "gun/measured interrupts preserve80/100ms minimum dwell");
+        ++in.now_ms;
+        Check(pdm::Step(state, in).action == pdm::Action::stop,
+              "gun/measured intent interrupts finite turn promptly without waiting1800ms");
+    }
+    pdm::Reset(state);
+    in = g.in; in.target = 13; in.responsive = true; in.now_ms = 3000; pdm::Step(state, in);
+    in.now_ms = 3017; pdm::Step(state, in);
+    in.in_dm = true; in.now_ms = 3034; pdm::Step(state, in);
+    in.target = 0; in.responsive = false; in.measured = true; in.urgent = false; in.now_ms = 3051; pdm::Step(state, in);
+    in.now_ms = 3134;
+    Check(pdm::Step(state, in).action == pdm::Action::none, "measured idle does not truncate a finite turn merely to shorten dwell");
+}
+
 } // namespace
 
 int main() {
@@ -753,6 +1149,7 @@ int main() {
     TestClassify();
     TestResolveTarget();
     TestSpeedRing();
+    TestMeasuredPoseTimeline();
     TestSwitchFlow();
     TestNaturalEnd();
     TestLossAttribution();
@@ -764,6 +1161,9 @@ int main() {
     TestBlocked();
     TestRelease();
     TestRearmAndForget();
+    TestPivotTimelines();
+    TestFiniteRequestIdentity();
+    TestTransitionsAndResponsiveness();
     std::printf("%u partner dmmap checks passed: reset/hold, speed bands and hysteresis, classify (flags/speed/anim/lost), table and "
                 "bad fallback, speed ring, stop-then-play switch, hold/dwell, natural end strikes, loss attribution, unconsumed backoff/"
                 "failed/rearm, late clip, dm_read and stop timeouts, play/stop gates, stale freeze, adopt, blocks, release (map again "

@@ -32,8 +32,8 @@ Code:
 
 ## 1. Levels and gating
 
-`lab.ini` `world=0..3` (default 0 in the lab, in play, in Play-OfflineCoop and
-in Play-Coop):
+`lab.ini` `world=0..3`: the low-level lab/native config defaults to 0.
+`Play-OfflineCoop` and `Play-Coop` default to 3; explicit `-World 0` opts out:
 
 | Level | What runs |
 |---|---|
@@ -223,11 +223,12 @@ sets `play_refused |= 0x8000` and counts one invalid value). `lab_ini_check
 lab` prints `world=` and `world_probe=` after `link_keys=1`.
 
 Launchers: `Play-OfflineCoop.ps1 -World 0..3 [-WorldProbe <probe>]` adds
-`world=N` (and `world_probe=`) to both lab.ini files only when set; console key
+`world=N` (and `world_probe=`) to both lab.ini files when the level is above
+0; default 3 enables shared time/weather and travel. Console key
 `[G]` sends `goto=30010` to the host at `-World 3`, letting W3 bring the
 guest along. At levels 1/2 it sends to both copies for independent manual
 travel; at level 0 it sends nothing. `Play-Coop.ps1 -World 0..3` adds
-`world=N` after the play partner keys (never `world_probe`).
+`world=N` after the play partner keys (default 3, never `world_probe`).
 `Prepare-LabInstance.ps1 -Offline -PartnerSetting world=3` works too.
 
 `<game>\mgs-coop\world.trigger` (lab only: honoured with `world_on`, lab.ini
@@ -404,14 +405,31 @@ more than 60 s off; suspended in demos, outside the game
 `event=clock;cause=;diff=;applied=1`, `event=clock_check;diff=` every 10 s.
 A guest cigar is reverted (host authority).
 
+The October 6 source update observes the host's public `TppClock.SetTime`
+after the original call, sending explicit changes immediately even below
+the jump threshold. Host-only level-3 wrappers preserve returns, errors and
+yields, and restore only their own function identities on teardown. Guest
+CLOCK/WEATHER commands received during a demo or unavailable gameplay keep
+the latest value until gameplay resumes; fresh digests replace stale held
+values. Link loss and level 0 discard held controls and release our forces.
+
 Weather (eff >= 3; 30010, 30020): the host sends `vars.weather` on change
 (30020: FOGGY becomes 255 = release; the mist is local to an area); the guest
-calls `TppWeather.ForceRequestWeather(type, 20)` (nothing during demos), a 255
+calls `TppWeather.ForceRequestWeather(type, interp)` (nothing during demos), a 255
 cancels its force and unpauses random weather, and it re-forces after three
 digests that disagree (after interp + 5 s). Random weather is paused at PAIRED
 and every digest while the host weather is 0..5. The same userId and FORCE
 priority as the game's own forces: forces are cancelled and random weather
 unpaused at stop, on LEVEL 0 and after an error.
+
+The same source update observes host `ForceRequestWeather` and cancel calls.
+Explicit force commands carry their requested interpolation (bounded to
+0..600 s); ordinary weather changes use 20 s. A bounded pending intent covers
+the engine's asynchronous weather readback, then yields to actual host
+weather. Failed queue writes retry. `event=weather_readback;type=;matches=1`
+confirms actual guest `vars.weather`, separately from API application.
+`world_env_game_lua_check` exercises the pinned retail Clock/Weather modules;
+these new paths have fixture evidence, with live verification pending.
 
 ## 8. Lab goto (supported free roam/ACC -> 30010/30020)
 
@@ -595,8 +613,8 @@ start or follow the 30050 clear announce: `pwsh -File
 tools/lab/Send-LabInput.ps1 -Role both -Keys space`. Commands and triggers are
 in [lab-protocol.md](lab-protocol.md) "World sync".
 
-- **W0-4 (world=0 inert, first):** `Play-OfflineCoop.ps1 -ExitAfterReadySec
-  180` uses the default level 0. Expect no active world configuration, pairing
+- **W0-4 (world=0 inert, first):** `Play-OfflineCoop.ps1 -World 0 -ExitAfterReadySec
+  180` explicitly disables shared world. Expect no active world configuration, pairing
   or enemy/environment sync; verify the partner still behaves normally.
   Also disable an active level-3 run with `Set-WorldTrigger.ps1 -Role both
   -Text 'world=0'`: each copy must receive UNPAIRED reason `5` then

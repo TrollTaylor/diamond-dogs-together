@@ -258,16 +258,23 @@ int main() {
                              "partner_dm_speed=300:1500:5600\n");
         Check(map.partner_dm == PartnerDm::map && map.partner_dm_map.cells[1] == 12 && map.partner_dm_map.cells[8] == 2 &&
               map.partner_dm_speed.run_mmps == 1500 && map.invalid_values == 0 && map.unknown_keys == 0, "dm=map keys");
-        const auto badmap = Lab("enabled=1\nrole=host\npartner_dm_map=0,10,11\npartner_dm_map=0,10,11,5,1,3,4,4,7,6,6,13\n"
+        const auto badmap = Lab("enabled=1\nrole=host\npartner_dm_map=0,10,11\npartner_dm_map=0,10,11,5,1,3,4,4,7,6,6,31\n"
                                 "partner_dm_speed=300:400:5600\npartner_dm_speed=0300:2600:5600\n");
         Check(badmap.invalid_values == 4 && std::memcmp(badmap.partner_dm_map.cells, kPartnerDmTableDefault.cells, kPartnerDmCells) == 0 &&
               badmap.partner_dm_speed.run_mmps == 2600, "dm=map bad values counted, defaults kept");
         PartnerDmTable table{};
         Check(ParsePartnerDmMap("0,10,11,5,1,3,4,4,7,6,6,6", 25, table) && table.cells[0] == 0 && table.cells[2] == 11 &&
               table.cells[11] == 6, "dm map parse");
+        PartnerDmTable probes{};
+        const char* probe_map = "26,27,28,29,30,0,1,2,3,4,5,6";
+        Check(ParsePartnerDmMap(probe_map, std::strlen(probe_map), probes) && probes.cells[0] == 26 && probes.cells[4] == 30,
+              "receiver probe indices accepted by strict map parser");
+        const auto probe_ini = Lab("enabled=1\nrole=host\npartner_dm_map=26,27,28,29,30,0,1,2,3,4,5,6\n");
+        Check(probe_ini.invalid_values == 0 && probe_ini.partner_dm_map.cells[4] == 30 && probe_ini.partner_dm == PartnerDm::off,
+              "receiver probe table parses without activating DM");
         PartnerDmTable keep = table;
         Check(!ParsePartnerDmMap("0,10,11,5,1,3,4,4,7,6,6", 23, table) && !ParsePartnerDmMap("0,10,11,5,1,3,4,4,7,6,6,6,", 26, table) &&
-              !ParsePartnerDmMap("0,10,11,5,1,3,4,4,7,6,6,06", 26, table) && !ParsePartnerDmMap("0,10,11,5,1,3,4,4,7,6,6,13", 26, table) &&
+              !ParsePartnerDmMap("0,10,11,5,1,3,4,4,7,6,6,06", 26, table) && !ParsePartnerDmMap("0,10,11,5,1,3,4,4,7,6,6,31", 26, table) &&
               !ParsePartnerDmMap("0,10,11,5,1,3,4,4,7,6,6, 6", 26, table) && !ParsePartnerDmMap("0,100,11,5,1,3,4,4,7,6,6,6", 26, table) &&
               !ParsePartnerDmMap(",0,10,11,5,1,3,4,4,7,6,6", 24, table) && !ParsePartnerDmMap(nullptr, 1, table) &&
               std::memcmp(table.cells, keep.cells, kPartnerDmCells) == 0, "dm map refusals leave the output untouched");

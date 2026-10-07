@@ -28,6 +28,7 @@
 #include "mgscoop/link_protocol.hpp"
 #include "mgscoop/link_session.hpp"
 #include "mgscoop/partner_input.hpp"
+#include "mgscoop/partner_action_events.hpp"
 #include "mgscoop/partner_receipt.hpp"
 #include "mgscoop/pose_interp.hpp"
 #include "mgscoop/udp_transport.hpp"
@@ -101,6 +102,7 @@ bool SubmitLocal(const partner::Tick& tick, const sync::AnimState& anim) noexcep
 // Link v2: while the link is not connected a held pose reports status lost
 // (partner_lost=freeze holds it, forces dm speed 0 and stays realized).
 pose::Sample SampleRemote(std::uint32_t delay_ms) noexcept;
+pose::RemoteFrame SampleRemoteWithTurns(std::uint32_t delay_ms, const pose::HistoryCursor& cursor) noexcept;
 
 // Appearance frames (40 bytes, kind event). The local look is sent at once
 // when it differs from the last one sent (the revision bumps; never 0), then
@@ -127,6 +129,16 @@ RemoteLook SampleLook() noexcept;
 // (InputEdges), and logs partner_net=input_rx; first=1 once per epoch.
 inline constexpr std::uint32_t kInputMinGapMs = 8;
 bool SubmitInput(const partner_input::InputPacket& packet) noexcept;
+// Default-off data transport only (MGS_LOCAL_ACTION_EVENTS). The observer
+// authorizes a natural owner receipt before caching it. SubmitLocal sends this
+// separate companion at the same rate gate as movement, never enables gun DM.
+bool ActionEventsCompiled() noexcept;
+bool SetLocalActions(const partner_actions::Payload& payload) noexcept;
+void ClearLocalActions() noexcept;
+struct ActionSample { partner_actions::Receipt receipt{}; std::uint32_t age_ms = 0; bool fresh = false; };
+// Current mission comes from the owner's verified game state, not the packet.
+// Samples consume history once; returns false when disabled/busy/stale/lost.
+bool SampleActions(std::uint32_t expected_mission, ActionSample& out) noexcept;
 // Edge sets of accepted frames are accumulated (partner_input::AccumulateEdges)
 // until ConsumeInput takes them.
 // The newest received input (non-blocking): false when the lock is busy (the

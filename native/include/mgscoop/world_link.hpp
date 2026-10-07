@@ -35,6 +35,9 @@ std::uint32_t ParseBuild(const char* version) noexcept;
 // Install time (before partner_net::Start). Logs world=configured.
 void Configure(const Config& config) noexcept;
 bool Configured() noexcept;
+// Copied status under the world leaf lock, without game/network calls.
+struct Status { bool configured{}, paired{}, link_up{}; std::uint8_t level{}, effective{}; std::uint16_t epoch{}; };
+Status GetStatus() noexcept;
 // The receive-thread hooks for partner_net::SetWorldHooks.
 const partner_net::WorldHooks* Hooks() noexcept;
 

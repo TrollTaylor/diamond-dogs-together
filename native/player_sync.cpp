@@ -27,9 +27,11 @@ bool bounded_rot(float value) noexcept {
 }
 
 bool valid_transform(const PlayerTransformPacket& t) noexcept {
+    constexpr unsigned known_actions = ActionFlag::Aiming | ActionFlag::Firing | ActionFlag::Sprinting |
+                                       ActionFlag::Reloading | ActionFlag::Walking | ActionFlag::Running;
     return bounded_coord(t.x) && bounded_coord(t.y) && bounded_coord(t.z) &&
            bounded_rot(t.rot_y) && t.stance <= static_cast<std::uint8_t>(Stance::Crawl) &&
-           (t.action_flags & 0xf0u) == 0;
+           (t.action_flags & ~known_actions) == 0;
 }
 
 void put(std::uint8_t* out, std::uint32_t value, unsigned width = 4) noexcept {

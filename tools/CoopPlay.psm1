@@ -683,9 +683,8 @@ function New-CoopPlayLabIniText {
         [int]$Port = 47830,
         # Guest only: the host's dotted IPv4 (the launcher resolves names).
         [string]$PeerAddress = '',
-        # World sync level (docs/world-sync-protocol.md; experimental): 0 writes
-        # nothing (today's behaviour), 1..3 add world=N after the partner keys.
-        [ValidateRange(0, 3)][int]$World = 0
+        # Shared world by default; explicit 0 retains partner-only configuration.
+        [ValidateRange(0, 3)][int]$World = 3
     )
     if ($SaveDir -cnotmatch '^[A-Za-z]:\\' -and !$SaveDir.StartsWith('\\')) { throw "save_dir must be an absolute path: $SaveDir" }
     if ($SaveDir -match '[\x00-\x1f\x7f]' -or $SaveDir -ne $SaveDir.Trim() -or $script:CoopUtf8NoBom.GetByteCount($SaveDir) -gt 259) { throw "Invalid save_dir: $SaveDir" }

@@ -25,6 +25,10 @@ do
     msg = tostring(msg):gsub("[^%w_=,.;:%-]", "_"):sub(1, 160)
     receipt("return 'MGS_COOP_DEBUG_LOG_V1' -- " .. fmt("%.0f %d %s", id, ok and 1 or 0, msg))
   end
+  local function bindingError(prefix, failure)
+    if type(failure) ~= "string" then return prefix end
+    return prefix .. ";detail=" .. failure:gsub("^.-:%d+: ", ""):sub(1, 120)
+  end
   local function state()
     local mask = 0
     for i = 0, 7 do if D.bookmarks[i] then mask = mask + 2 ^ i end end
@@ -33,7 +37,10 @@ do
   function D.stop()
     if D.ammoTouched then pcall(call, Player, "SetInfiniteAmmoFromScript", false) end
     if D.weatherTouched then pcall(call, TppWeather, "CancelForceRequestWeather") end
+    if D.enemy then pcall(D.enemy.stop) end
     D.bookmarks, D.infinite, D.ammoTouched, D.weatherTouched, D.pending, D.mission = {}, false, nil, nil, nil, nil
+    D.equipmentObservationMission = nil
+    D.equipmentObservationFrames, D.equipmentObservationAttempts = nil, nil
     pcall(state)
   end
   local function guard()
@@ -70,65 +77,14 @@ do
     for s in text:gmatch("%S+") do a[#a + 1] = s; if #a > 16 then return nil end end
     return a
   end
-  D.api = {get = get, call = call, number = number, integer = integer, pose = pose, note = note}
+  D.api = {get = get, call = call, number = number, integer = integer, pose = pose, note = note,
+    finite = finite, hostOnly = hostOnly, receipt = receipt}
   local function warp(p, id)
     call(TppPlayer, "Warp", {pos = {p[1], p[2], p[3]}, rotY = p[4]})
     D.pending = {kind = "warp", id = id, pose = p, mission = D.mission, frames = 0}
     return true, "submitted_warp"
   end
-  -- Only authored soldiers; nearest actions require position/life readback.
-  local function soldiers()
-    local defs, list, seen = get(mvars, "ene_soldierDefine"), {}, {}
-    if type(defs) ~= "table" then return list end
-    local null = get(GameObject, "NULL_ID")
-    if type(null) ~= "number" then return list end
-    for _, group in pairs(defs) do
-      if type(group) == "table" then
-        for _, name in ipairs(group) do
-          if type(name) == "string" and not seen[name] and #list < 512 then
-            seen[name] = true
-            local id = call(GameObject, "GetGameObjectId", "TppSoldier2", name)
-            if integer(id, 0, 65535) and id ~= null then
-              local h = call(Fox, "StrCode32", name)
-              if integer(h, -2147483648, 4294967295) then
-                if h < 0 then h = h + 4294967296 end
-                list[#list + 1] = {id = id, name = name, hash = h}
-              end
-            end
-          end
-        end
-      end
-    end
-    table.sort(list, function(a, b) return a.name < b.name end)
-    return list
-  end
-  local function nearby(radius)
-    local p, list = pose(), {}
-    for _, s in ipairs(soldiers()) do
-      local life = call(GameObject, "SendCommand", s.id, {id = "GetLifeStatus"})
-      if integer(life, 0, 4) then
-        local v = call(GameObject, "SendCommand", s.id, {id = "GetPosition"})
-        if v and type(get(v, "GetX")) == "function" and type(get(v, "GetY")) == "function" and type(get(v, "GetZ")) == "function" then
-          local x, y, z = v:GetX(), v:GetY(), v:GetZ()
-          if finite(x) and finite(y) and finite(z) then
-            s.distance = (x - p[1]) ^ 2 + (y - p[2]) ^ 2 + (z - p[3]) ^ 2
-            if s.distance <= radius * radius then list[#list + 1] = s end
-          end
-        end
-      end
-    end
-    table.sort(list, function(a, b) return a.distance == b.distance and a.name < b.name or a.distance < b.distance end)
-    return list
-  end
-  local function usable(s)
-    local n = call(GameObject, "SendCommand", s.id, {id = "GetLifeStatus"})
-    local dead, status = get(TppGameObject, "NPC_LIFE_STATE_DEAD"), get(TppEnemy, "ACTION_STATUS")
-    if not integer(dead, 1, 4) or not integer(n, 0, 4) or n == dead or type(status) ~= "table" then return false end
-    local action, known = call(TppEnemy, "GetActionStatus", s.id), false
-    for _, value in pairs(status) do if type(value) == "number" and action == value then known = true end end
-    return known and type(status.FULTON_RECOVERD) == "number" and action ~= status.FULTON_RECOVERD
-      and call(TppEnemy, "IsRecovered", s.name) ~= true
-  end
+  D.api.warp = warp
   local WEATHER = {sunny = "SUNNY", cloudy = "CLOUDY", rainy = "RAINY", sandstorm = "SANDSTORM", foggy = "FOGGY"}
   local function run(a, id)
     local cmd = a[1]
@@ -184,47 +140,9 @@ do
       D.weatherTouched = true
       call(TppWeather, "ForceRequestWeather", t, 1)
       return true, "submitted_weather_" .. a[2]
-    elseif cmd == "enemy_enable" or cmd == "enemy_disable" then
-      if #a ~= 2 then return false, "enemy_args" end
-      if not hostOnly() then return false, "host_only" end
-      local hash = number(a[2], 0, 4294967295, true)
-      if not hash then return false, "enemy_args" end
-      for _, s in ipairs(soldiers()) do if s.hash == hash then
-        if cmd == "enemy_enable" and not usable(s) then return false, "enemy_terminal_unknown" end
-        call(TppEnemy, cmd == "enemy_enable" and "SetEnable" or "SetDisable", s.id)
-          return true, "submitted_local;ent=" .. fmt("%.0f", hash)
-      end end
-      return false, "enemy_not_authored"
-    elseif cmd == "enemy_nearest" or cmd == "enemy_enable_nearest" or cmd == "enemy_disable_nearest" or cmd == "enemy_kill_nearest" or cmd == "clear_enemies" then
-      if cmd == "clear_enemies" then
-        if #a ~= 2 then return false, "radius_args" end
-      elseif #a ~= 1 then return false, "enemy_args" end
-      if cmd ~= "enemy_nearest" and not hostOnly() then return false, "host_only" end
-      local radius = 150
-      if cmd == "clear_enemies" then radius = number(a[2], 1, 100) end
-      if not radius then return false, "radius_args" end
-      local list = nearby(radius)
-      if cmd == "enemy_kill_nearest" or cmd == "clear_enemies" or cmd == "enemy_enable_nearest" then
-        local living = {}
-        for _, s in ipairs(list) do if usable(s) then living[#living + 1] = s end end
-        list = living
-      end
-      if #list == 0 then return false, "no_readable_soldier" end
-      if cmd == "enemy_nearest" then return true, fmt("nearest_ent=%.0f;distance_m=%.3f", list[1].hash, math.sqrt(list[1].distance)) end
-      if cmd == "enemy_enable_nearest" or cmd == "enemy_disable_nearest" then
-        if cmd == "enemy_enable_nearest" and not usable(list[1]) then return false, "enemy_terminal_unknown" end
-        call(TppEnemy, cmd == "enemy_enable_nearest" and "SetEnable" or "SetDisable", list[1].id)
-        return true, "submitted_local;ent=" .. fmt("%.0f", list[1].hash)
-      end
-      local dead = get(TppGameObject, "NPC_LIFE_STATE_DEAD")
-      if not integer(dead, 1, 4) then return false, "missing_dead_enum" end
-      local n = cmd == "clear_enemies" and math.min(#list, 16) or 1
-      local readback = 0
-      for i = 1, n do
-        call(GameObject, "SendCommand", list[i].id, {id = "ChangeLifeState", state = dead})
-        if call(GameObject, "SendCommand", list[i].id, {id = "GetLifeStatus"}) == dead then readback = readback + 1 end
-      end
-      return true, fmt("submitted=%d;dead_readback=%d;scope=local;max=16", n, readback)
+    elseif cmd:match("^enemy_") or cmd == "clear_enemies" or cmd == "spawn_enemy" or cmd == "goto_spawn" or cmd == "goto_camp" then
+      if not D.enemy then return false, "enemy_unavailable" end
+      return D.enemy.run(a, id)
     elseif cmd == "partner" and #a >= 2 then
       local keys = {stage = true, source = true, apply = true, anim = true, aset = true, reset = true,
         look = true, dm = true, input = true, dmplay = true, dmstop = true}
@@ -240,7 +158,7 @@ do
       if #payload > 160 then return false, "partner_args" end
       local ok = receipt("return 'MGS_COOP_DEBUG_PARTNER_V1' -- " .. fmt("%.0f %s", id, payload)) == true
       return ok, ok and "partner_applied" or "partner_refused"
-    elseif cmd == "heal" or cmd == "godmode" or cmd == "spawn_enemy" then
+    elseif cmd == "heal" or cmd == "godmode" then
       return false, "unsupported_public_api"
     end
     return false, "command_args"
@@ -264,7 +182,7 @@ do
     if D.mission and D.mission ~= mission then D.stop() end
     D.mission = mission
     local ok, failure = pcall(pending)
-    if not ok then D.pending = nil; pcall(note, 0, false, "pending_binding_error") end
+    if not ok then D.pending = nil; pcall(note, 0, false, bindingError("pending_binding_error", failure)) end
     local command = receipt("return 'MGS_COOP_DEBUG_CMD_V1'")
     if type(command) ~= "table" then return end
     local id = get(command, "id")
@@ -288,7 +206,7 @@ do
     end)
     if not ok then
       good = false
-      why = type(failure) == "string" and failure:match("^missing_%w+$") and failure or "binding_error"
+      why = type(failure) == "string" and failure:match("^missing_%w+$") and failure or bindingError("binding_error", failure)
     end
     note(id, good, why)
     state()

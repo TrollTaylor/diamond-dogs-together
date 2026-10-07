@@ -1,21 +1,36 @@
 <#
 .SYNOPSIS
-Send keyboard input to one lab game window and optionally capture it afterwards.
+Send keyboard, mouse-button or relative mouse input to one lab game window and optionally capture it afterwards.
 
 .DESCRIPTION
 Focuses the host or guest window of the current lab run and sends scan-code key
-presses (what DirectInput reads). Use it to click through title screens and
+presses (what DirectInput reads) or left/right mouse-button transitions. Use it to click through title screens and
 menus during automated lab runs. Synthetic input only reaches the foreground
 window, so the script focuses the window first.
 
 Key names: enter, esc, space, up, down, left, right, tab, e, f, q, r, c, x, z,
-v, w, a, s, d, f8, f9, f10, f11, ctrl, shift (LabCommon Get-LabScanCodeTable).
+v, w, a, s, d, f8, f9, f10, f11, ctrl, shift (LabCommon Get-LabScanCodeTable),
+mouseleft, mouseright. Mouse buttons do not move the cursor.
 A key spec is one name or several joined with '+' (pressed together in order,
 released in reverse: ctrl+f8, shift+w), optionally followed by ':<ms>' to hold
 it that long instead of -HoldMs (':<ms>' 1..60000; -HoldMs 0..60000, 0 = tap
 as before): w:4000 walks forward for 4 s, w+a:6000 walks a circle for 6 s
-(spike plan E0/E6/E10). Every key pressed is released in a finally block, so
-Ctrl+C or an error during a hold never leaves a key down.
+(spike plan E0/E6/E10). Mouse buttons can combine with keyboard keys:
+mouseright+mouseleft:1000 aims and fires; mouseright+r:300 requests reload while
+aiming. Every button pressed is released in a finally block, so Ctrl+C or an
+error during a hold never leaves a button down.
+
+For camera/turn tests after the gameplay window is ready, -MouseDeltaX and
+-MouseDeltaY send a signed relative mouse move (-2000..2000 each). -MouseRepeat
+repeats the same move 1..8 times, with -MouseIntervalMs (1..2000, default 150)
+between moves while the first combination remains held. -MouseStartDelayMs
+(0..2000, default 0) waits once after that combination is pressed and before the
+first move, allowing aim to settle. Foreground is checked after the wait and
+before each move. Movement occurs only in the first combination, or alone when
+-Keys is empty. A repeat above 1 requires a nonzero movement axis.
+An initial delay above 0 also requires a nonzero movement axis.
+The values are mouse counts; the resulting angle depends on game sensitivity.
+Movement uses MOVE only, with no implicit button, wheel or absolute-position flag.
 
 .EXAMPLE
 pwsh -File tools/lab/Send-LabInput.ps1 -Role host -Keys enter -Shot title
@@ -23,12 +38,22 @@ pwsh -File tools/lab/Send-LabInput.ps1 -Role guest -Keys down,down,enter -GapMs 
 pwsh -File tools/lab/Send-LabInput.ps1 -Role host -Keys w+a:6000
 pwsh -File tools/lab/Send-LabInput.ps1 -Role guest -Keys w:4000 -Shot walked
 pwsh -File tools/lab/Send-LabInput.ps1 -Role host -Keys shift+w:3000,c
+pwsh -File tools/lab/Send-LabInput.ps1 -Role host -Keys mouseright+mouseleft:1000
+pwsh -File tools/lab/Send-LabInput.ps1 -Role host -MouseDeltaX 250 -Shot turned
+pwsh -File tools/lab/Send-LabInput.ps1 -Role guest -Keys mouseright:500 -MouseDeltaX -250
+pwsh -File tools/lab/Send-LabInput.ps1 -Role host -Keys mouseright:500 -MouseDeltaX 1500 -MouseRepeat 2
+pwsh -File tools/lab/Send-LabInput.ps1 -Role host -Keys mouseright:500 -MouseDeltaX 1500 -MouseRepeat 2 -MouseStartDelayMs 300
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][ValidateSet('host', 'guest')][string]$Role,
     [string[]]$Keys = @(),
-    [int]$HoldMs = 150,
+    [ValidateRange(0, 60000)][int]$HoldMs = 150,
+    [ValidateRange(-2000, 2000)][int]$MouseDeltaX = 0,
+    [ValidateRange(-2000, 2000)][int]$MouseDeltaY = 0,
+    [ValidateRange(1, 8)][int]$MouseRepeat = 1,
+    [ValidateRange(1, 2000)][int]$MouseIntervalMs = 150,
+    [ValidateRange(0, 2000)][int]$MouseStartDelayMs = 0,
     [int]$GapMs = 500,
     [string]$Shot,
     [string]$ConfigPath = (Join-Path $PSScriptRoot 'lab.json'),
@@ -49,8 +74,7 @@ Initialize-LabWin32
 
 # pwsh -File passes "a,b" as one string; accept both forms. Every spec is
 # validated before the first key is sent.
-$Keys = @($Keys | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
-$specs = @($Keys | ForEach-Object { ConvertFrom-LabKeySpec -Spec $_ -DefaultHoldMs $HoldMs })
+$specs = @(Get-LabInputPlan -Keys $Keys -HoldMs $HoldMs -MouseDeltaX $MouseDeltaX -MouseDeltaY $MouseDeltaY -MouseRepeat $MouseRepeat -MouseIntervalMs $MouseIntervalMs -MouseStartDelayMs $MouseStartDelayMs)
 foreach ($spec in $specs) {
     $key = $spec.Spec
     if ([MgsCoopLab.User32]::IsIconic($handle)) { $null = [MgsCoopLab.User32]::ShowWindow($handle, 9) }
@@ -65,19 +89,35 @@ foreach ($spec in $specs) {
     if ([MgsCoopLab.User32]::GetForegroundWindow() -ne $handle) { Write-Warning "[$Role] could not focus the window for '$key'."; continue }
     # Press in order (modifiers first), hold, release in reverse order. The
     # release runs in finally: Ctrl+C (pipeline stop) or an error during a long
-    # hold must not leave synthetic keys down for whatever window has focus.
+    # hold must not leave synthetic keys/buttons down for whatever window has focus.
     $pressed = [Collections.Generic.List[object]]::new()
     try {
         foreach ($p in @($spec.Keys)) {
             $pressed.Add($p)
-            $null = [MgsCoopLab.User32]::Key($p.Scan, $p.Extended, $false)
+            if ($p.Kind -ceq 'Mouse') {
+                $null = [MgsCoopLab.User32]::Mouse($p.DownFlags)
+            } else {
+                $null = [MgsCoopLab.User32]::Key($p.Scan, $p.Extended, $false)
+            }
             Start-Sleep -Milliseconds 30
+        }
+        if ($null -ne $spec.MouseMove) {
+            if ($spec.MouseMove.StartDelayMs -gt 0) { Start-Sleep -Milliseconds $spec.MouseMove.StartDelayMs }
+            for ($moveIndex = 0; $moveIndex -lt $spec.MouseMove.Repeat; $moveIndex++) {
+                if ($moveIndex -gt 0) { Start-Sleep -Milliseconds $spec.MouseMove.IntervalMs }
+                if ([MgsCoopLab.User32]::GetForegroundWindow() -ne $handle) { throw "[$Role] foreground changed before the relative mouse move." }
+                if ([MgsCoopLab.User32]::RelativeMouse($spec.MouseMove.DeltaX, $spec.MouseMove.DeltaY) -ne 1) { throw "[$Role] relative mouse move was not accepted by SendInput." }
+            }
         }
         Start-Sleep -Milliseconds $spec.HoldMs
     } finally {
         # .NET calls only: cmdlets may refuse to run while the pipeline is stopping.
         for ($i = $pressed.Count - 1; $i -ge 0; $i--) {
-            $null = [MgsCoopLab.User32]::Key($pressed[$i].Scan, $pressed[$i].Extended, $true)
+            if ($pressed[$i].Kind -ceq 'Mouse') {
+                $null = [MgsCoopLab.User32]::Mouse($pressed[$i].UpFlags)
+            } else {
+                $null = [MgsCoopLab.User32]::Key($pressed[$i].Scan, $pressed[$i].Extended, $true)
+            }
             [Threading.Thread]::Sleep(30)
         }
     }

@@ -19,6 +19,8 @@
 #include "backends/imgui_impl_dx11.h"
 #include "mgscoop/debug_overlay.hpp"
 #include "mgscoop/debug_menu.hpp"
+#include "mgscoop/worker_scenario.hpp"
+#include "mgscoop/worker_frames.hpp"
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
 
@@ -33,6 +35,12 @@ using CursorPosFn = BOOL (WINAPI*)(int, int);
 using ClipFn = BOOL (WINAPI*)(const RECT*);
 using KeyboardFn = BOOL (WINAPI*)(PBYTE);
 using PadFn = DWORD (WINAPI*)(DWORD, XINPUT_STATE*);
+using InputFormatFn = HRESULT (STDMETHODCALLTYPE*)(IDirectInputDevice8W*, LPCDIDATAFORMAT);
+using InputCoopFn = HRESULT (STDMETHODCALLTYPE*)(IDirectInputDevice8W*, HWND, DWORD);
+using AsyncFn = SHORT (WINAPI*)(int);
+using KeyStateFn = SHORT (WINAPI*)(int);
+using RawInputFn = UINT (WINAPI*)(HRAWINPUT, UINT, LPVOID, PUINT, UINT);
+using RawBufferFn = UINT (WINAPI*)(PRAWINPUT, PUINT, UINT);
 struct Hook { void* target; void* original; };
 struct Message { UINT id; WPARAM wparam; LPARAM lparam; };
 
@@ -44,9 +52,19 @@ std::atomic<HWND> window{nullptr};
 std::atomic<ULONGLONG> release_after{0};
 Hook present_hook{}, resize_hook{}, state_hooks[2]{}, data_hooks[2]{};
 Hook cursor_hook{}, clip_hook{}, keyboard_hook{}, pad_hook{};
+#if MGS_BACKGROUND_WORKER
+Hook format_hooks[2]{}, coop_hooks[2]{}, async_hook{}, key_state_hook{}, raw_hook{}, raw_buffer_hook{};
+SRWLOCK worker_device_lock = SRWLOCK_INIT;
+struct WorkerDevice { IDirectInputDevice8W* object{}; DWORD type{}, bytes{}; GUID instance{}; };
+WorkerDevice worker_devices[32]{};
+#endif
 #ifdef MGS_DEBUG_OVERLAY_TESTING
 Hook fixture_state{}, fixture_data{}, fixture_pad{};
+#if MGS_BACKGROUND_WORKER && defined(MGS_WORKER_TESTING)
+Hook fixture_format{}, fixture_coop{}, fixture_raw_buffer{}, fixture_raw_input{};
+#endif
 std::atomic<bool> test_foreground{true};
+std::atomic<bool> test_mouse_held{false};
 #endif
 PresentFn original_present = nullptr;
 ResizeFn original_resize = nullptr;
@@ -87,6 +105,7 @@ void Push(UINT id, WPARAM wp, LPARAM lp) noexcept {
     input_messages.fetch_add(1, std::memory_order_relaxed);
 }
 void NativeClip(const RECT* rect) noexcept {
+    if (worker_scenario::Requested()) return;
 #ifdef MGS_DEBUG_OVERLAY_TESTING
     (void)rect; // hidden tests never change the user's global cursor clip
 #else
@@ -94,6 +113,7 @@ void NativeClip(const RECT* rect) noexcept {
 #endif
 }
 void SaveClip() noexcept {
+    if (worker_scenario::Requested()) return;
     AcquireSRWLockExclusive(&clip_lock);
     if (!clip_saved) {
         clip_saved = GetClipCursor(&previous_clip) != FALSE;
@@ -106,6 +126,7 @@ void SaveClip() noexcept {
     NativeClip(nullptr);
 }
 void RestoreClip(HWND hwnd) noexcept {
+    if (worker_scenario::Requested()) return;
     AcquireSRWLockExclusive(&clip_lock);
     const bool saved = clip_saved, no_clip = restore_unclipped;
     const RECT rect = previous_clip; clip_saved = false;
@@ -133,6 +154,7 @@ bool Foreground() noexcept {
 #endif
 }
 void F9(bool down) noexcept {
+    if (worker_scenario::Requested()) return;
     const bool prior = f9_down.exchange(down, std::memory_order_acq_rel);
     if (down && !prior && debug_menu::Enabled() && Foreground()) ChangeOpen(!open.load(std::memory_order_acquire));
 }
@@ -180,6 +202,8 @@ void RawText(const RAWKEYBOARD& key) noexcept {
 }
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT id, WPARAM wp, LPARAM lp) noexcept {
     const WNDPROC previous = original_wndproc.load(std::memory_order_acquire);
+    if (worker_scenario::Requested() && InputMessage(id))
+        return id == WM_INPUT ? DefWindowProcW(hwnd, id, wp, lp) : 0;
     bool toggle_event = false;
     if ((id == WM_KEYDOWN || id == WM_SYSKEYDOWN || id == WM_KEYUP || id == WM_SYSKEYUP) && wp == VK_F9) {
         F9(id == WM_KEYDOWN || id == WM_SYSKEYDOWN);
@@ -234,12 +258,30 @@ void RemoveHooks() noexcept {
     for (auto& hook : state_hooks) RemoveHook(hook);
     for (auto& hook : data_hooks) RemoveHook(hook);
     RemoveHook(cursor_hook); RemoveHook(clip_hook); RemoveHook(keyboard_hook); RemoveHook(pad_hook);
+#if MGS_BACKGROUND_WORKER
+    for (auto& hook : format_hooks) RemoveHook(hook);
+    for (auto& hook : coop_hooks) RemoveHook(hook);
+    RemoveHook(async_hook);
+    RemoveHook(key_state_hook);
+    RemoveHook(raw_hook);
+    RemoveHook(raw_buffer_hook);
+#endif
 }
 bool EnableHooks() noexcept {
     Hook* hooks[] = {&present_hook, &resize_hook, &state_hooks[0], &state_hooks[1],
                     &data_hooks[0], &data_hooks[1], &cursor_hook, &clip_hook, &keyboard_hook, &pad_hook};
     for (const auto* hook : hooks)
         if (hook->target && MH_QueueEnableHook(hook->target) != MH_OK) return false;
+#if MGS_BACKGROUND_WORKER
+    if (worker_scenario::Requested()) {
+        for (const auto& hook : format_hooks) if (hook.target && MH_QueueEnableHook(hook.target) != MH_OK) return false;
+        for (const auto& hook : coop_hooks) if (hook.target && MH_QueueEnableHook(hook.target) != MH_OK) return false;
+        if (!async_hook.target || MH_QueueEnableHook(async_hook.target) != MH_OK) return false;
+        if (!key_state_hook.target || MH_QueueEnableHook(key_state_hook.target) != MH_OK) return false;
+        if (!raw_hook.target || MH_QueueEnableHook(raw_hook.target) != MH_OK) return false;
+        if (!raw_buffer_hook.target || MH_QueueEnableHook(raw_buffer_hook.target) != MH_OK) return false;
+    }
+#endif
     return MH_ApplyQueued() == MH_OK;
 }
 template<class Function>
@@ -248,8 +290,12 @@ Function DeviceOriginal(IDirectInputDevice8W* self, unsigned index, const Hook (
     for (const auto& hook : hooks)
         if (hook.target == address) return reinterpret_cast<Function>(hook.original);
 #ifdef MGS_DEBUG_OVERLAY_TESTING
-    const auto& fixture = index == 9 ? fixture_state : fixture_data;
-    if (fixture.target == address) return reinterpret_cast<Function>(fixture.original);
+    if (index == 9 && fixture_state.target == address) return reinterpret_cast<Function>(fixture_state.original);
+    if (index == 10 && fixture_data.target == address) return reinterpret_cast<Function>(fixture_data.original);
+#if MGS_BACKGROUND_WORKER && defined(MGS_WORKER_TESTING)
+    if (index == 11 && fixture_format.target == address) return reinterpret_cast<Function>(fixture_format.original);
+    if (index == 13 && fixture_coop.target == address) return reinterpret_cast<Function>(fixture_coop.original);
+#endif
 #endif
     return nullptr;
 }
@@ -259,11 +305,161 @@ bool KeyboardOrMouse(IDirectInputDevice8W* self) noexcept {
     const DWORD type = GET_DIDEVICE_TYPE(info.dwDevType);
     return type == DI8DEVTYPE_KEYBOARD || type == DI8DEVTYPE_MOUSE;
 }
+#if MGS_BACKGROUND_WORKER
+bool WorkerInfo(IDirectInputDevice8W* self, DIDEVICEINSTANCEW& info) noexcept {
+    info = {}; info.dwSize = sizeof(info);
+    return self && SUCCEEDED(self->GetDeviceInfo(&info)) &&
+        (GET_DIDEVICE_TYPE(info.dwDevType) == DI8DEVTYPE_KEYBOARD || GET_DIDEVICE_TYPE(info.dwDevType) == DI8DEVTYPE_MOUSE);
+}
+bool EqualFormat(LPCDIDATAFORMAT input, const DIDATAFORMAT& expected) noexcept {
+    if (!input || input->dwSize != sizeof(DIDATAFORMAT) || input->dwObjSize != sizeof(DIOBJECTDATAFORMAT) ||
+        input->dwFlags != expected.dwFlags || input->dwDataSize != expected.dwDataSize || input->dwNumObjs != expected.dwNumObjs ||
+        !input->rgodf || input->dwNumObjs > 256) return false;
+    for (DWORD i = 0; i < input->dwNumObjs; ++i) {
+        const auto& a = input->rgodf[i]; const auto& b = expected.rgodf[i];
+        if (a.dwOfs != b.dwOfs || a.dwType != b.dwType || a.dwFlags != b.dwFlags ||
+            (!a.pguid != !b.pguid) || (a.pguid && !IsEqualGUID(*a.pguid, *b.pguid))) return false;
+    }
+    return true;
+}
+bool WorkerTyped(IDirectInputDevice8W* self, DWORD bytes, DWORD& type) noexcept {
+    DIDEVICEINSTANCEW info{}; if (!WorkerInfo(self, info)) return false;
+    bool valid = false; AcquireSRWLockShared(&worker_device_lock);
+    for (const auto& value : worker_devices) if (value.object == self) {
+        type = value.type; valid = bytes == value.bytes && value.type == GET_DIDEVICE_TYPE(info.dwDevType) && IsEqualGUID(value.instance, info.guidInstance); break;
+    }
+    ReleaseSRWLockShared(&worker_device_lock); return valid;
+}
+HRESULT STDMETHODCALLTYPE WorkerFormat(IDirectInputDevice8W* self, LPCDIDATAFORMAT format) noexcept {
+    const auto original = DeviceOriginal<InputFormatFn>(self, 11, format_hooks);
+    if (!original) return DIERR_GENERIC;
+    const HRESULT result = original(self, format); const DWORD error = GetLastError();
+    if (worker_scenario::Requested()) {
+        DIDEVICEINSTANCEW info{}; const bool known = WorkerInfo(self, info);
+        const DWORD type = known ? GET_DIDEVICE_TYPE(info.dwDevType) : 0;
+        const bool typed = SUCCEEDED(result) && known && worker_scenario::ThreadAdmitted() &&
+            (type == DI8DEVTYPE_KEYBOARD ? EqualFormat(format, c_dfDIKeyboard) :
+             (EqualFormat(format, c_dfDIMouse) || EqualFormat(format, c_dfDIMouse2)));
+        AcquireSRWLockExclusive(&worker_device_lock);
+        WorkerDevice* slot = nullptr;
+        for (auto& value : worker_devices) if (value.object == self) { slot = &value; break; }
+        if (!slot) for (auto& value : worker_devices) if (!value.object) { slot = &value; break; }
+        if (slot) *slot = {self, typed ? type : 0, typed ? format->dwDataSize : 0, info.guidInstance};
+        ReleaseSRWLockExclusive(&worker_device_lock);
+        worker_scenario::DeviceConfiguration("SetDataFormat", result, typed && slot, 0, 0);
+    }
+    SetLastError(error); return result;
+}
+HRESULT STDMETHODCALLTYPE WorkerCoop(IDirectInputDevice8W* self, HWND hwnd, DWORD flags) noexcept {
+    const auto original = DeviceOriginal<InputCoopFn>(self, 13, coop_hooks);
+    if (!original) return DIERR_GENERIC;
+    const DWORD incoming_error = GetLastError();
+    DWORD forwarded = flags; bool qualified = false;
+    if (worker_scenario::Requested()) {
+#ifdef MGS_WORKER_TESTING
+        DIDEVICEINSTANCEW info{};
+        const bool valid = worker_scenario::ThreadAdmitted() && WorkerInfo(self, info);
+#else
+        DWORD pid = 0; const DWORD thread = GetWindowThreadProcessId(hwnd, &pid);
+        wchar_t desktop[256]{}; DWORD needed = 0; DIDEVICEINSTANCEW info{};
+        const auto run = worker_scenario::GetContext();
+        const bool valid = worker_scenario::ThreadAdmitted() && WorkerInfo(self, info) && pid == run.pid && thread &&
+            GetUserObjectInformationW(GetThreadDesktop(thread), UOI_NAME, desktop, sizeof(desktop), &needed) &&
+            needed <= sizeof(desktop) && !std::wcscmp(desktop, run.desktop);
+#endif
+        if (valid) { forwarded = DISCL_NONEXCLUSIVE | DISCL_BACKGROUND; qualified = true; }
+        else {
+            DIDEVICEINSTANCEW rejected_info{};
+            if (WorkerInfo(self, rejected_info)) worker_scenario::Refuse("cooperative_private_window_or_thread");
+        }
+    }
+    SetLastError(incoming_error);
+    const HRESULT result = original(self, hwnd, forwarded); const DWORD error = GetLastError();
+    if (worker_scenario::Requested()) worker_scenario::DeviceConfiguration("SetCooperativeLevel", result, qualified, flags, forwarded);
+    SetLastError(error); return result;
+}
+SHORT WINAPI WorkerAsync(int key) noexcept {
+    if (worker_scenario::Requested()) return 0; // physical/global state is never queried for worker scripts
+    return reinterpret_cast<AsyncFn>(async_hook.original)(key);
+}
+SHORT WINAPI WorkerKeyState(int key) noexcept {
+    if (worker_scenario::Requested()) return 0;
+    return reinterpret_cast<KeyStateFn>(key_state_hook.original)(key);
+}
+UINT WINAPI WorkerRawBuffer(PRAWINPUT output, PUINT size, UINT header_size) noexcept {
+    void* entry = raw_buffer_hook.original;
+#if defined(MGS_WORKER_TESTING) && defined(MGS_DEBUG_OVERLAY_TESTING)
+    if (fixture_raw_buffer.original) entry = fixture_raw_buffer.original;
+#endif
+    if (!entry) return static_cast<UINT>(-1);
+    const UINT capacity = size ? *size : 0;
+    const UINT result = reinterpret_cast<RawBufferFn>(entry)(output, size, header_size);
+    const DWORD error = GetLastError();
+    if (worker_scenario::Requested() && result != static_cast<UINT>(-1)) {
+        // The API returns a record count, not a byte count. Do not interpret
+        // unknown variable records. Ignore all successful physical batches.
+        if (output && size && capacity <= 65536) std::memset(output, 0, capacity);
+        SetLastError(error); return 0;
+    }
+    // Failure preserves the original output, size, UINT sentinel and error.
+    SetLastError(error); return result;
+}
+UINT WINAPI WorkerRawInput(HRAWINPUT input, UINT command, LPVOID output, PUINT size, UINT header_size) noexcept {
+    void* entry = raw_hook.original;
+#if defined(MGS_WORKER_TESTING) && defined(MGS_DEBUG_OVERLAY_TESTING)
+    if (fixture_raw_input.original) entry = fixture_raw_input.original;
+#endif
+    if (!entry) return static_cast<UINT>(-1);
+    const UINT capacity = size ? *size : 0;
+    const UINT result = reinterpret_cast<RawInputFn>(entry)(input, command, output, size, header_size);
+    const DWORD error = GetLastError();
+    if (worker_scenario::Requested() && result != static_cast<UINT>(-1) && output && command == RID_INPUT) {
+        const bool bounded = size && header_size == sizeof(RAWINPUTHEADER) && result >= sizeof(RAWINPUTHEADER) &&
+            result <= 65536 && result <= capacity && result <= *size && *size <= capacity;
+        if (!bounded) {
+            worker_scenario::InputFailure("GetRawInputData_worker_refusal", DIERR_UNSUPPORTED, true);
+            SetLastError(error); return static_cast<UINT>(-1);
+        }
+        auto* raw = static_cast<RAWINPUT*>(output);
+        const bool typed = raw->header.dwSize >= sizeof(RAWINPUTHEADER) && raw->header.dwSize <= result &&
+            ((raw->header.dwType == RIM_TYPEMOUSE && result >= sizeof(RAWINPUTHEADER) + sizeof(RAWMOUSE)) ||
+             (raw->header.dwType == RIM_TYPEKEYBOARD && result >= sizeof(RAWINPUTHEADER) + sizeof(RAWKEYBOARD)) ||
+             (raw->header.dwType == RIM_TYPEHID && result >= sizeof(RAWINPUTHEADER) + offsetof(RAWHID,bRawData)));
+        if (!typed) {
+            worker_scenario::InputFailure("GetRawInputData_worker_refusal", DIERR_UNSUPPORTED, true);
+            SetLastError(error); return static_cast<UINT>(-1);
+        }
+        if (raw->header.dwType == RIM_TYPEMOUSE) raw->data.mouse = {};
+        else if (raw->header.dwType == RIM_TYPEKEYBOARD) {
+            raw->data.keyboard = {}; raw->data.keyboard.Flags = RI_KEY_BREAK;
+        } else if (result > sizeof(RAWINPUTHEADER))
+            std::memset(static_cast<unsigned char*>(output) + sizeof(RAWINPUTHEADER), 0, result - sizeof(RAWINPUTHEADER));
+    }
+    SetLastError(error); return result;
+}
+#endif
 HRESULT STDMETHODCALLTYPE DeviceState(IDirectInputDevice8W* self, DWORD bytes, LPVOID output) noexcept {
     const auto original = DeviceOriginal<InputStateFn>(self, 9, state_hooks);
     if (!original) return DIERR_GENERIC;
     const HRESULT result = original(self, bytes, output);
     const DWORD error = GetLastError();
+#if MGS_BACKGROUND_WORKER
+    if (worker_scenario::Requested()) {
+        if (FAILED(result)) {
+            worker_scenario::InputFailure("GetDeviceState_original_failure", result, true);
+            SetLastError(error); return result;
+        }
+        DWORD type = 0; const bool typed = WorkerTyped(self, bytes, type);
+        const bool admitted = worker_scenario::ThreadAdmitted();
+        if (output && bytes <= 4096) std::memset(output, 0, bytes);
+        bool supplied = false;
+        if (output && worker_scenario::MayReplaceState(result, typed, admitted))
+            supplied = type == DI8DEVTYPE_KEYBOARD ? worker_scenario::Keyboard(output, bytes) : worker_scenario::Mouse(output, bytes);
+        if (!supplied) worker_scenario::InputFailure("GetDeviceState_worker_refusal", DIERR_UNSUPPORTED, typed);
+        SetLastError(error);
+        return SUCCEEDED(result) && !supplied ? DIERR_UNSUPPORTED : result;
+    }
+#endif
     if (SUCCEEDED(result) && output && CapturingInput() && KeyboardOrMouse(self) &&
         (bytes == 256 || bytes == sizeof(DIMOUSESTATE) || bytes == sizeof(DIMOUSESTATE2)))
         std::memset(output, 0, bytes);
@@ -273,6 +469,30 @@ HRESULT STDMETHODCALLTYPE DeviceState(IDirectInputDevice8W* self, DWORD bytes, L
 HRESULT STDMETHODCALLTYPE DeviceData(IDirectInputDevice8W* self, DWORD bytes, LPDIDEVICEOBJECTDATA output, LPDWORD count, DWORD flags) noexcept {
     const auto original = DeviceOriginal<InputDataFn>(self, 10, data_hooks);
     if (!original) return DIERR_GENERIC;
+#if MGS_BACKGROUND_WORKER
+    if (worker_scenario::Requested()) {
+        const DWORD capacity = count ? *count : 0;
+        const HRESULT result = original(self, bytes, output, count, flags);
+        const DWORD error = GetLastError();
+        if (FAILED(result)) {
+            worker_scenario::InputFailure("GetDeviceData_original_failure", result, true);
+            SetLastError(error); return result;
+        }
+        DWORD type = 0; bool typed = WorkerTyped(self, 256, type);
+        if (!typed) typed = WorkerTyped(self, sizeof(DIMOUSESTATE), type) || WorkerTyped(self, sizeof(DIMOUSESTATE2), type);
+        const bool valid = typed && worker_scenario::ThreadAdmitted() && count && bytes == sizeof(DIDEVICEOBJECTDATA) && !(flags & ~DIGDD_PEEK) && (capacity <= 64 || (!output && capacity == INFINITE));
+        if (output && capacity <= 64 && bytes == sizeof(DIDEVICEOBJECTDATA)) std::memset(output, 0, static_cast<std::size_t>(capacity) * bytes);
+        if (count) *count = 0;
+        if (SUCCEEDED(result) && valid) {
+            worker_scenario::Event events[64]{};
+            const auto amount = worker_scenario::Buffered(type == DI8DEVTYPE_KEYBOARD ? worker_scenario::Device::keyboard : worker_scenario::Device::mouse,
+                events, capacity == INFINITE ? 64 : capacity, (flags & DIGDD_PEEK) != 0);
+            if (output) for (unsigned i = 0; i < amount; ++i) output[i] = {events[i].offset, events[i].value, events[i].timestamp, events[i].sequence, 0};
+            *count = amount;
+        } else worker_scenario::InputFailure("GetDeviceData_worker_refusal", DIERR_UNSUPPORTED, typed);
+        SetLastError(error); return SUCCEEDED(result) && !valid ? DIERR_UNSUPPORTED : result;
+    }
+#endif
     const bool capture = CapturingInput() && KeyboardOrMouse(self);
     const HRESULT result = original(self, bytes, output, count, capture ? flags & ~DIGDD_PEEK : flags);
     const DWORD error = GetLastError();
@@ -287,12 +507,14 @@ HRESULT STDMETHODCALLTYPE DeviceData(IDirectInputDevice8W* self, DWORD bytes, LP
 }
 BOOL WINAPI CursorPos(int x, int y) noexcept {
     const DWORD error = GetLastError();
+    if (worker_scenario::Requested()) { SetLastError(error); return TRUE; }
     if (CapturingInput()) { SetLastError(error); return TRUE; }
     SetLastError(error);
     return reinterpret_cast<CursorPosFn>(cursor_hook.original)(x, y);
 }
 BOOL WINAPI Clip(const RECT* rect) noexcept {
     const DWORD error = GetLastError();
+    if (worker_scenario::Requested()) { SetLastError(error); return TRUE; }
     if (CapturingInput()) {
         AcquireSRWLockExclusive(&clip_lock);
         clip_saved = true; restore_unclipped = rect == nullptr;
@@ -306,6 +528,10 @@ BOOL WINAPI Clip(const RECT* rect) noexcept {
 BOOL WINAPI Keyboard(PBYTE keys) noexcept {
     const BOOL result = reinterpret_cast<KeyboardFn>(keyboard_hook.original)(keys);
     const DWORD error = GetLastError();
+    if (worker_scenario::Requested()) {
+        if (keys) std::memset(keys, 0, 256);
+        SetLastError(error); return result;
+    }
     if (result && keys && CapturingInput()) std::memset(keys, 0, 256);
     SetLastError(error);
     return result;
@@ -338,6 +564,7 @@ bool PadsReleased() noexcept {
     return released;
 }
 DWORD WINAPI Pad(DWORD index, XINPUT_STATE* state) noexcept {
+    if (worker_scenario::Requested()) { if (state) *state = {}; return ERROR_DEVICE_NOT_CONNECTED; }
     const DWORD result = PadOriginal()(index, state);
     const DWORD error = GetLastError();
     if (result == ERROR_SUCCESS && state && CapturingInput()) std::memset(&state->Gamepad, 0, sizeof(state->Gamepad));
@@ -362,6 +589,12 @@ bool InputHooks() noexcept {
             ok = AddHook(state_hooks[i], methods[9], reinterpret_cast<void*>(&DeviceState));
         if (ok && (i == 0 || methods[10] != data_hooks[0].target))
             ok = AddHook(data_hooks[i], methods[10], reinterpret_cast<void*>(&DeviceData));
+#if MGS_BACKGROUND_WORKER
+        if (ok && worker_scenario::Requested() && (i == 0 || methods[11] != format_hooks[0].target))
+            ok = AddHook(format_hooks[i], methods[11], reinterpret_cast<void*>(&WorkerFormat));
+        if (ok && worker_scenario::Requested() && (i == 0 || methods[13] != coop_hooks[0].target))
+            ok = AddHook(coop_hooks[i], methods[13], reinterpret_cast<void*>(&WorkerCoop));
+#endif
         object->Release();
     }
     input->Release();
@@ -371,6 +604,13 @@ bool InputHooks() noexcept {
     if (ok) ok = AddHook(keyboard_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetKeyboardState")), reinterpret_cast<void*>(&Keyboard));
     const HMODULE xinput = GetModuleHandleW(L"XINPUT1_3.dll");
     if (ok && xinput) ok = AddHook(pad_hook, reinterpret_cast<void*>(GetProcAddress(xinput, "XInputGetState")), reinterpret_cast<void*>(&Pad));
+#if MGS_BACKGROUND_WORKER
+    if (ok && worker_scenario::Requested()) ok = xinput && pad_hook.target &&
+        AddHook(async_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetAsyncKeyState")), reinterpret_cast<void*>(&WorkerAsync)) &&
+        AddHook(key_state_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetKeyState")), reinterpret_cast<void*>(&WorkerKeyState)) &&
+        AddHook(raw_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetRawInputData")), reinterpret_cast<void*>(&WorkerRawInput)) &&
+        AddHook(raw_buffer_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetRawInputBuffer")), reinterpret_cast<void*>(&WorkerRawBuffer));
+#endif
     return ok;
 }
 
@@ -516,6 +756,9 @@ void Movement(const debug_menu::Snapshot& s) noexcept {
     ImGui::TextUnformatted("Local partner controls");
     ImGui::Text("Current: stage %u / %s / %s / animation %s", s.stage, s.apply, s.dm, s.anim);
     if (s.body_valid) ImGui::Text("Body yaw %.1f   remote yaw %.1f   heading error %.1f degrees", s.body_yaw, s.remote_yaw, s.heading_error_deg);
+    ImGui::Text("Remote action %u / gun %u / flags 0x%02x / clip %u", s.remote_act, s.remote_equip, s.remote_action_flags, s.mapped_clip);
+    ImGui::Text("Aim request %s / shot %s / reload request %s", (s.remote_action_flags & 1) ? "yes" : "no",
+        (s.remote_action_flags & 2) ? "yes" : "no", (s.remote_action_flags & 8) ? "yes" : "no");
     Action("Hide partner", "partner stage=0"); ImGui::SameLine();
     Action("Show partner", "partner stage=3 source=net look=net");
     Action("Default network movement", "partner stage=3 source=net apply=xform anim=off input=off dm=map look=net");
@@ -537,11 +780,21 @@ void Movement(const debug_menu::Snapshot& s) noexcept {
         Send(command);
     }
     static int clip = 0;
-    ImGui::SetNextItemWidth(210); ImGui::SliderInt("Manual animation clip", &clip, 0, 12);
+    const char* clip_names[] = {"Stand idle", "Crouch idle", "Prone transition", "Crouch walk", "Crouch run", "Sprint",
+        "Crawl", "Prone idle", "Crouch graph state", "Stand graph state", "Walk", "Run", "Jog",
+        "Stand turn left 90", "Stand turn right 90", "Stand turn left 180", "Stand turn right 180",
+        "Crouch turn left 90", "Crouch turn right 90", "Crouch turn left 180", "Crouch turn right 180",
+        "Gun hold (graph probe)", "Gun hold start (graph probe)", "Gun hold end (graph probe)", "Gun fire (graph probe)", "Gun reload (graph probe)"};
+    ImGui::SetNextItemWidth(260); ImGui::Combo("Manual animation clip", &clip, clip_names, ARRAYSIZE(clip_names));
+    ImGui::Text("Available animation clips: %u", s.motion_count);
+    const bool clip_available = clip >= 0 && static_cast<unsigned>(clip) < s.motion_count;
+    ImGui::BeginDisabled(!clip_available);
     if (ImGui::Button("Play clip")) {
         char command[64]{}; StringCchPrintfA(command, ARRAYSIZE(command), "partner dm=on dmplay=%d", clip); Send(command);
     }
+    ImGui::EndDisabled();
     ImGui::SameLine(); Action("Stop clip", "partner dmstop=1");
+    if (!clip_available) ImGui::TextUnformatted("This clip is unavailable in this runtime.");
 }
 void Player(const debug_menu::Snapshot& s) noexcept {
     ImGui::TextUnformatted("Local player / copied save session");
@@ -603,7 +856,64 @@ void Player(const debug_menu::Snapshot& s) noexcept {
     ImGui::TextWrapped("The item must already be equipped. Payload changes the dropped item's contents; it does not create multiple pickups.");
 }
 void Enemies(const debug_menu::Snapshot& s) noexcept {
-    ImGui::TextUnformatted("Existing mission enemies / host mutation controls");
+    ImGui::TextUnformatted("Spawn patrol guards / host controls");
+    static std::uint32_t generation = 0;
+    static char camp[65]{};
+    static int route = 0;
+    if (generation != s.generation) {
+        generation = s.generation;
+        camp[0] = 0; route = 0;
+        Send("enemy_camps");
+    }
+    Action("Refresh camps", "enemy_camps"); ImGui::SameLine();
+    ImGui::BeginDisabled(!s.host);
+    Action("Spawn guard at closest camp", "spawn_enemy closest");
+    ImGui::EndDisabled();
+    if (!camp[0] && s.enemy_camp_count) StringCchCopyA(camp, ARRAYSIZE(camp), s.enemy_camps[0].name);
+    ImGui::SetNextItemWidth(390);
+    if (ImGui::BeginCombo("Camp", camp[0] ? camp : "Refresh camps to choose")) {
+        for (std::uint32_t i = 0; i < s.enemy_camp_count; ++i) {
+            const auto& entry = s.enemy_camps[i];
+            char label[128]{};
+            if (entry.distance_mm >= 0) StringCchPrintfA(label, ARRAYSIZE(label), "%s (%.0f m)", entry.name, entry.distance_mm * 0.001);
+            else StringCchPrintfA(label, ARRAYSIZE(label), "%s (position unavailable)", entry.name);
+            if (ImGui::Selectable(label, std::strcmp(camp, entry.name) == 0)) {
+                StringCchCopyA(camp, ARRAYSIZE(camp), entry.name); route = 0;
+                char command[100]{}; StringCchPrintfA(command, ARRAYSIZE(command), "enemy_routes %s", camp); Send(command);
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::BeginDisabled(!camp[0]);
+    if (ImGui::Button("Load patrol routes")) {
+        char command[100]{}; StringCchPrintfA(command, ARRAYSIZE(command), "enemy_routes %s", camp); Send(command);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Teleport to camp")) {
+        char command[100]{}; StringCchPrintfA(command, ARRAYSIZE(command), "goto_camp %s", camp); Send(command);
+    }
+    ImGui::EndDisabled();
+    const bool routes_ready = camp[0] && std::strcmp(camp, s.enemy_routes_camp) == 0 && s.enemy_route_count;
+    if (route < 0 || route >= static_cast<int>(s.enemy_route_count)) route = 0;
+    ImGui::SetNextItemWidth(390);
+    if (ImGui::BeginCombo("Patrol route", routes_ready ? s.enemy_routes[route].name : "Load routes for this camp")) {
+        if (routes_ready) for (std::uint32_t i = 0; i < s.enemy_route_count; ++i)
+            if (ImGui::Selectable(s.enemy_routes[i].name, route == static_cast<int>(i))) route = static_cast<int>(i);
+        ImGui::EndCombo();
+    }
+    ImGui::BeginDisabled(!s.host || !routes_ready);
+    if (ImGui::Button("Spawn guard on selected patrol")) {
+        char command[110]{}; StringCchPrintfA(command, ARRAYSIZE(command), "spawn_enemy %s %u", camp, s.enemy_routes[route].index); Send(command);
+    }
+    ImGui::EndDisabled();
+    ImGui::BeginDisabled(!s.enemy_spawn_valid);
+    Action("Teleport near spawned guard", "goto_spawn");
+    ImGui::EndDisabled();
+    if (s.enemy_spawn_valid) ImGui::Text("Last guard %u / X %.1f Y %.1f Z %.1f m", s.enemy_spawn_hash,
+        s.enemy_spawn_pos_mm[0] * 0.001, s.enemy_spawn_pos_mm[1] * 0.001, s.enemy_spawn_pos_mm[2] * 0.001);
+    ImGui::TextWrapped("Spawning reuses a living guard near the camp on an authored patrol route. Placement is local to the host. Up to eight guards can be reused per mission. Teleport near it to check visibility.");
+    ImGui::Separator();
+    ImGui::TextUnformatted("Existing mission enemies");
     Action("Read nearest enemy", "enemy_nearest");
     ImGui::BeginDisabled(!s.host);
     Action("Enable nearest enemy", "enemy_enable_nearest"); ImGui::SameLine();
@@ -623,10 +933,13 @@ void Enemies(const debug_menu::Snapshot& s) noexcept {
     if (ImGui::Button("Disable enemy")) { char command[64]{}; StringCchPrintfA(command, ARRAYSIZE(command), "enemy_disable %u", id); Send(command); }
     ImGui::EndDisabled();
     ImGui::EndDisabled();
-    ImGui::TextWrapped("Arbitrary new soldier creation is unavailable. These controls use the mission's existing roster.");
+    if (!s.host) ImGui::TextWrapped("Use the host's menu to spawn or change guards.");
 }
 void World(const debug_menu::Snapshot& s) noexcept {
-    ImGui::Text("Configured world level %u / host controls", s.world_level);
+    ImGui::Text("World level %u / active level %u", s.world_level, s.world_effective);
+    ImGui::Text("World handshake: %s / link %s", s.world_paired ? "paired" : "waiting", s.world_link_up ? "connected" : "disconnected");
+    if (!s.world_configured || s.world_level < 3) ImGui::TextWrapped("Time and weather sharing requires world level 3. Restart with Play-Offline-Coop.bat to use the default shared world.");
+    else if (!s.world_paired) ImGui::TextWrapped("Waiting for both players to be in the same supported mission before sharing the environment.");
     ImGui::BeginDisabled(!s.host);
     static int seconds = 12 * 3600, weather = 0;
     ImGui::SetNextItemWidth(220); ImGui::SliderInt("Time (seconds)", &seconds, 0, 86399);
@@ -720,7 +1033,25 @@ void Draw() noexcept {
 }
 HRESULT STDMETHODCALLTYPE Present(IDXGISwapChain* chain, UINT interval, UINT flags) noexcept {
     presents.fetch_add(1, std::memory_order_relaxed);
-    if ((flags & DXGI_PRESENT_TEST) == 0 && debug_menu::Enabled() && !resizing.load(std::memory_order_acquire)) {
+    const DWORD incoming_error = GetLastError();
+    if (worker_scenario::Requested() && (flags & DXGI_PRESENT_TEST) == 0 && !resizing.load(std::memory_order_acquire)) {
+        AcquireSRWLockExclusive(&render_lock);
+        if (!window.load() && worker_scenario::ThreadAdmitted()) {
+            DXGI_SWAP_CHAIN_DESC desc{}; DWORD pid = 0; wchar_t desktop[256]{}; DWORD needed = 0;
+            const auto run = worker_scenario::GetContext();
+            const DWORD thread = SUCCEEDED(chain->GetDesc(&desc)) && desc.OutputWindow ? GetWindowThreadProcessId(desc.OutputWindow, &pid) : 0;
+            if (thread && pid == GetCurrentProcessId() && GetUserObjectInformationW(GetThreadDesktop(thread), UOI_NAME, desktop, sizeof(desktop), &needed) &&
+                needed <= sizeof(desktop) && !std::wcscmp(desktop, run.desktop)) {
+                SetLastError(ERROR_SUCCESS);
+                const auto previous = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(desc.OutputWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&WindowProc)));
+                if (previous || GetLastError() == ERROR_SUCCESS) {original_wndproc.store(previous);window.store(desc.OutputWindow);}
+                else worker_scenario::Refuse("worker_wndproc");
+            }
+        }
+        worker_frames::Capture(chain, worker_scenario::TakeCapture(GetTickCount64()));
+        ReleaseSRWLockExclusive(&render_lock);
+    }
+    if (!worker_scenario::Requested() && (flags & DXGI_PRESENT_TEST) == 0 && debug_menu::Enabled() && !resizing.load(std::memory_order_acquire)) {
         AcquireSRWLockExclusive(&render_lock);
         if (initialized && swapchain != chain) Cleanup();
         if (initialized || Initialize(chain)) {
@@ -729,32 +1060,39 @@ HRESULT STDMETHODCALLTYPE Present(IDXGISwapChain* chain, UINT interval, UINT fla
         ReleaseSRWLockExclusive(&render_lock);
     }
     // DXGI may wait on the window's message thread. Never hold our lock here.
+    SetLastError(incoming_error);
     const HRESULT result = original_present(chain, interval, flags);
+    const DWORD original_error = GetLastError();
     if (result == DXGI_ERROR_DEVICE_REMOVED || result == DXGI_ERROR_DEVICE_RESET) {
         AcquireSRWLockExclusive(&render_lock);
         if (swapchain == chain) Cleanup();
         ReleaseSRWLockExclusive(&render_lock);
         Log("overlay=device_lost; resources=released\r\n");
     }
-    return result;
+    SetLastError(original_error); return result;
 }
 HRESULT STDMETHODCALLTYPE Resize(IDXGISwapChain* chain, UINT buffers, UINT width, UINT height, DXGI_FORMAT format, UINT flags) noexcept {
+    const DWORD incoming_error = GetLastError();
     resizing.store(true, std::memory_order_release);
     AcquireSRWLockExclusive(&render_lock);
+    if (worker_scenario::Requested()) worker_frames::Reset();
     const bool ours = initialized && swapchain == chain;
     if (ours) { Release(target); ImGui::SetCurrentContext(gui); ImGui_ImplDX11_InvalidateDeviceObjects(); }
     ReleaseSRWLockExclusive(&render_lock);
+    SetLastError(incoming_error);
     const HRESULT result = original_resize(chain, buffers, width, height, format, flags);
+    const DWORD original_error = GetLastError();
     AcquireSRWLockExclusive(&render_lock);
     if (ours && initialized && swapchain == chain) CreateTarget(chain);
     ReleaseSRWLockExclusive(&render_lock);
     resizing.store(false, std::memory_order_release);
     resizes.fetch_add(1, std::memory_order_relaxed);
     Log(SUCCEEDED(result) ? "overlay=resize; result=ok\r\n" : "overlay=resize; result=failed\r\n");
-    return result;
+    SetLastError(original_error); return result;
 }
 BOOL CALLBACK InstallOnce(PINIT_ONCE, PVOID, PVOID*) noexcept {
-    if (!debug_menu::Enabled()) return TRUE;
+    if (!debug_menu::Enabled() && !worker_scenario::Requested()) return TRUE;
+    if (worker_scenario::Requested() && !worker_scenario::GetContext().run_id) return TRUE;
     InitializeLog();
     const MH_STATUS status = MH_Initialize();
     if (status != MH_OK && status != MH_ERROR_ALREADY_INITIALIZED) { Log("overlay=refused; reason=minhook\r\n"); return TRUE; }
@@ -780,6 +1118,7 @@ BOOL CALLBACK InstallOnce(PINIT_ONCE, PVOID, PVOID*) noexcept {
         if (ok) ok = InputHooks() && EnableHooks();
     }
     if (!ok) RemoveHooks();
+    if (worker_scenario::Requested()) worker_scenario::SetHooksReady(ok);
     Release(dummy_context); Release(dummy_device); Release(dummy);
     if (hidden) DestroyWindow(hidden);
     UnregisterClassW(cls.lpszClassName, cls.hInstance);
@@ -789,11 +1128,16 @@ BOOL CALLBACK InstallOnce(PINIT_ONCE, PVOID, PVOID*) noexcept {
 } // namespace
 
 bool CapturingInput() noexcept {
+    if (worker_scenario::Requested()) return false;
     if (!debug_menu::Enabled() || !Foreground()) return false;
     if (open.load(std::memory_order_acquire)) return true;
     if (!releasing.load(std::memory_order_acquire)) return false;
+#ifdef MGS_DEBUG_OVERLAY_TESTING
+    if (test_mouse_held.load(std::memory_order_acquire)) return true;
+#else
     const int held[] = {VK_F9, VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2};
     for (const int key : held) if (GetAsyncKeyState(key) & 0x8000) return true;
+#endif
     if (!PadsReleased()) return true;
     if (GetTickCount64() < release_after.load(std::memory_order_acquire)) return true;
     releasing.store(false, std::memory_order_release);
@@ -801,10 +1145,11 @@ bool CapturingInput() noexcept {
 }
 void Install() noexcept {
     const DWORD error = GetLastError();
-    if (debug_menu::Enabled()) InitOnceExecuteOnce(&install_once, &InstallOnce, nullptr, nullptr);
+    if (debug_menu::Enabled() || worker_scenario::Requested()) InitOnceExecuteOnce(&install_once, &InstallOnce, nullptr, nullptr);
     SetLastError(error);
 }
 #ifdef MGS_DEBUG_OVERLAY_TESTING
+void SetMouseHeldForTest(bool value) noexcept { test_mouse_held.store(value, std::memory_order_release); }
 void SetOpenForTest(bool value) noexcept { ChangeOpen(value); }
 void SetForegroundForTest(bool value) noexcept { test_foreground.store(value); }
 bool HookPadFixtureForTest(void* function) noexcept {
@@ -828,8 +1173,38 @@ void ShutdownForTest() noexcept {
     AcquireSRWLockExclusive(&render_lock); Cleanup(); ReleaseSRWLockExclusive(&render_lock);
     RemoveHooks();
     RemoveHook(fixture_state); RemoveHook(fixture_data); RemoveHook(fixture_pad);
+#if MGS_BACKGROUND_WORKER && defined(MGS_WORKER_TESTING)
+    RemoveHook(fixture_format); RemoveHook(fixture_coop); RemoveHook(fixture_raw_buffer); RemoveHook(fixture_raw_input);
+#endif
     if (log_file != INVALID_HANDLE_VALUE) CloseHandle(log_file);
     log_file = INVALID_HANDLE_VALUE;
 }
+#if MGS_BACKGROUND_WORKER && defined(MGS_WORKER_TESTING)
+bool HookWorkerDeviceFixtureForTest(void* state, void* data, void* format, void* coop) noexcept {
+    return HookInputFixtureForTest(state, data) &&
+        AddHook(fixture_format, format, reinterpret_cast<void*>(&WorkerFormat)) &&
+        AddHook(fixture_coop, coop, reinterpret_cast<void*>(&WorkerCoop)) &&
+        MH_EnableHook(fixture_format.target) == MH_OK && MH_EnableHook(fixture_coop.target) == MH_OK;
+}
+bool HookWorkerRawBufferFixtureForTest(void* original) noexcept {
+    return AddHook(fixture_raw_buffer, original, reinterpret_cast<void*>(&WorkerRawBuffer)) &&
+        MH_EnableHook(fixture_raw_buffer.target) == MH_OK;
+}
+bool HookWorkerRawInputFixtureForTest(void* original) noexcept {
+    return AddHook(fixture_raw_input, original, reinterpret_cast<void*>(&WorkerRawInput)) &&
+        MH_EnableHook(fixture_raw_input.target) == MH_OK;
+}
+HRESULT WorkerStateForTest(IDirectInputDevice8W* object, DWORD bytes, void* state) noexcept { return DeviceState(object, bytes, state); }
+HRESULT WorkerDataForTest(IDirectInputDevice8W* object, DWORD bytes, DIDEVICEOBJECTDATA* data, DWORD* count, DWORD flags) noexcept { return DeviceData(object, bytes, data, count, flags); }
+HRESULT WorkerFormatForTest(IDirectInputDevice8W* object, const DIDATAFORMAT* format) noexcept { return WorkerFormat(object, format); }
+HRESULT WorkerCoopForTest(IDirectInputDevice8W* object, HWND hwnd, DWORD flags) noexcept { return WorkerCoop(object, hwnd, flags); }
+BOOL WorkerCursorForTest(int x, int y) noexcept { return CursorPos(x, y); }
+BOOL WorkerClipForTest(const RECT* rect) noexcept { return Clip(rect); }
+SHORT WorkerAsyncForTest(int key) noexcept { return WorkerAsync(key); }
+SHORT WorkerKeyStateForTest(int key) noexcept { return WorkerKeyState(key); }
+UINT WorkerRawBufferForTest(RAWINPUT* output, UINT* size, UINT header) noexcept { return WorkerRawBuffer(output,size,header); }
+UINT WorkerRawInputForTest(HRAWINPUT input,UINT command,void* output,UINT* size,UINT header) noexcept { return WorkerRawInput(input,command,output,size,header); }
+DWORD WorkerPadForTest(DWORD index, XINPUT_STATE* state) noexcept { return Pad(index, state); }
+#endif
 #endif
 } // namespace mgscoop::debug_overlay

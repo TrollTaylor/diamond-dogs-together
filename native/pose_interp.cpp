@@ -22,6 +22,7 @@ void CopyAnim(const Snapshot& from, Sample& to) noexcept {
     to.act = from.act;
     to.anim_stance = from.anim_stance;
     to.anim_speed = from.anim_speed;
+    to.equip_id = from.equip_id;
 }
 void Copy(const Snapshot& from, Sample& to) noexcept {
     to.x = from.x; to.y = from.y; to.z = from.z;
@@ -57,7 +58,7 @@ bool SnapshotRing::Push(const Snapshot& snapshot, std::uint64_t receive_ms) noex
         if (delta <= 0) return false;
         sender_time = newest.sender_time + delta;
     }
-    const Entry entry{snapshot, sender_time, receive_ms};
+    const Entry entry{snapshot, sender_time, receive_ms, count_ ? at(count_ - 1).sender_time : -1};
     if (count_ == capacity) {
         entries_[head_] = entry;
         head_ = (head_ + 1) % capacity;
@@ -72,9 +73,33 @@ void SnapshotRing::Reset() noexcept {
     for (auto& entry : entries_) entry = Entry{};
     head_ = 0;
     count_ = 0;
+    if (++generation_ == 0) ++generation_;
 }
 
 std::uint64_t SnapshotRing::newest_receive_ms() const noexcept { return count_ ? at(count_ - 1).receive_ms : 0; }
+
+RemoteFrame SnapshotRing::ReadFrame(std::uint64_t now, std::uint32_t delay, const HistoryCursor& cursor) const noexcept {
+    RemoteFrame out{};
+    out.now_ms = now;
+    out.visual = SampleAt(now, delay);
+    out.next = HistoryCursor{generation_, count_ ? at(count_ - 1).sender_time : -1};
+    out.reset = cursor.generation != generation_;
+    if (!count_) return out;
+    const Entry& newest = at(count_ - 1);
+    const Entry& oldest = at(0);
+    out.overflow = !out.reset && (cursor.sender_ms > newest.sender_time ||
+        (cursor.sender_ms < oldest.sender_time && cursor.sender_ms != oldest.previous_sender_ms));
+    if (out.reset || out.overflow) {
+        out.records[out.count++] = SourceRecord{newest.snapshot, newest.sender_time, newest.receive_ms};
+        return out;
+    }
+    for (std::size_t i = 0; i < count_; ++i) {
+        const Entry& e = at(i);
+        if (e.sender_time > cursor.sender_ms)
+            out.records[out.count++] = SourceRecord{e.snapshot, e.sender_time, e.receive_ms};
+    }
+    return out;
+}
 
 Sample SnapshotRing::SampleAt(std::uint64_t now_ms, std::uint32_t delay_ms) const noexcept {
     Sample out{};

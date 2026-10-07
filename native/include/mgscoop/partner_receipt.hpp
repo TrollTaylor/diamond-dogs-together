@@ -7,10 +7,10 @@
 // Receipts (the chunk name always equals the source, as loadstring sets it;
 // at most max_receipt bytes):
 //   return 'MGS_COOP_PARTNER_CFG_V1'                      -> return true|false
-//   return 'MGS_COOP_PARTNER_V1' -- <frame> <x_mm> <y_mm> <z_mm> <yaw_cdeg> <cam_cdeg> <stance> <move> <luaflags>
+//   return 'MGS_COOP_PARTNER_V1' -- <frame> <x_mm> <y_mm> <z_mm> <yaw_cdeg> <cam_cdeg> <stance> <move> <luaflags> [<action_flags> <equip_id>]
 //        -> return <op>,<R>,<x_mm>,<y_mm>,<z_mm>,<yaw_mrad>,<status>,<age_ms>   (quiet; per frame)
 //           followed by ,<type>,<parts>,<camo>,<hand>,<face> when op has SET_PARTS (16) or DM_PLAY (128)
-//           (zeros unless SET_PARTS), and then ,<gani> (0..12) when op has DM_PLAY (128)
+//           (zeros unless SET_PARTS), and then ,<gani> (0..25) when op has DM_PLAY (128)
 //   return 'MGS_COOP_PARTNER_LOG_V1' -- <payload>          -> logs partner_lua=<payload>; return true
 //   return 'MGS_COOP_PARTNER_STOP_V1'                     -> return true
 // Integers only, so neither Lua's nor the C runtime's locale is involved.
@@ -59,7 +59,7 @@ inline constexpr std::uint32_t dm_play = 128;
 inline constexpr std::uint32_t dm_stop = 256;
 }
 // Highest gani index of the Lua table (partner_sync.lua GANI).
-inline constexpr std::uint8_t max_gani = kPartnerDmGaniMax;  // partner_sync.lua GANI 0..12
+inline constexpr std::uint8_t max_gani = kPartnerDmGaniMax;  // partner_sync.lua GANI 0..25
 // luaflags reported by Lua in every tick.
 namespace luaflag {
 inline constexpr std::uint32_t all_active = 1;
@@ -79,11 +79,15 @@ struct Tick {
     std::uint8_t stance;    // 0 stand, 1 squat, 2 crawl
     std::uint8_t move;      // 0 none, 1 walk, 2 run, 3 dash
     std::uint8_t luaflags;  // luaflag bits
+    // Optional suffix: executed gun fire, requested aim/reload (not an
+    // assertion that the engine accepted the input), and current gun ID.
+    std::uint8_t action_flags;
+    std::uint16_t equip_id;
 };
 inline constexpr std::int32_t max_frame = 999999;
 inline constexpr std::int32_t max_pos_mm = 1000000000;   // matches sync::max_coord_component (1e6 m)
 inline constexpr std::int32_t max_angle_cdeg = 3600000;  // +-36000 degrees, normalized later
-// Strict: the tick prefix, then exactly 9 signed decimal integers separated by
+// Strict: the tick prefix, then exactly 9 or 11 signed decimal integers separated by
 // single spaces; no '+', no leading zeros, no "-0", nothing trailing, every
 // value within its bound. `out` is written only on success.
 bool ParseTick(const char* source, std::size_t size, Tick& out) noexcept;
@@ -166,8 +170,8 @@ std::size_t FormatLogLine(const char* source, std::size_t size, char* out, std::
 //   | cam=off|detect|sandbox | hold=none|pass | yaw=rot|rotneg|none
 //   | words=<3 of 0prhn> | bits=0x<hex> | correct=<0..10000>
 //   | isend=0|1 | p218=0|1 | padprobe=0|1 | holdlog=0|1
-//   | dm=off|probe|on|map | dmplay=<0..12> | dmstop=1   (dmplay/dmstop one-shots)
-//   | dmmap=<12 x 0..12, comma-separated> | dmspeed=<idle>:<run>:<dash>   (dm=map settings)
+//   | dm=off|probe|on|map | dmplay=<0..25> | dmstop=1   (dmplay/dmstop one-shots)
+//   | dmmap=<12 x 0..25, comma-separated> | dmspeed=<idle>:<run>:<dash>   (dm=map settings)
 //   | lookgate=0|1 | lookrecover=0|1
 // Round 4 (docs/partner-anim-appearance.md "Round 4"):
 //   | hold=none|pass|own|net | recon=off|track|pin | align=<-50..150>
@@ -337,7 +341,7 @@ std::uint32_t DistanceMm(std::int32_t ax, std::int32_t ay, std::int32_t az,
                          std::int32_t bx, std::int32_t by, std::int32_t bz) noexcept;
 
 // The local pose as a sync transform (metres, radians in [-pi, pi], stance,
-// Sprinting when move == 3).
+// gun flags/equipment plus the exact reported locomotion class).
 sync::PlayerTransformPacket MakeTransform(const Tick& tick, std::uint32_t sequence, std::uint32_t tick_ms) noexcept;
 
 } // namespace mgscoop::partner

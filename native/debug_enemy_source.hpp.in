@@ -1,0 +1,4 @@
+#pragma once
+constexpr char debug_enemy_source[] = R"MGS_DEBUG_ENEMY(
+@MGS_DEBUG_ENEMY_SOURCE@
+)MGS_DEBUG_ENEMY";

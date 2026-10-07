@@ -3,14 +3,22 @@
 Two people on two PCs play the offline co-op of the single-PC lab: each game
 runs offline (the `offline-v1` marker and the dead-port `master_url`), plays
 from a save COPY, and shows the other player as the partner in Mother Base
-or Afghanistan/Africa free roam (30050/30010/30020). Partner movement is the
-default; experimental shared-world play requires both players to opt in
-with `Play-Coop.bat -World 3`. The PCs talk over our own UDP link (link v2, PART N; see
+or Afghanistan/Africa free roam (30050/30010/30020). Shared world level 3 is
+the default, including host time/weather and supported travel. Use
+`Play-Coop.bat -World 0` for partner movement only. The PCs talk over our own UDP link (link v2, PART N; see
 `docs/link-protocol.md`), never over Konami's servers or Steam P2P.
 
 The player-facing guide is `tools/friend/FRIEND-GUIDE.txt` (shipped in the
 friend ZIP). This page describes the tooling (PART T) and the files it relies
 on.
+
+F9 opens the in-game debug menu during an offline copied-save session. The
+new source Enemy controls select an authored camp and patrol route, teleport
+to a readable guard or validated player checkpoint, and let the host reuse
+up to eight nearby normal living guards per mission. Placement is local;
+new soldier allocation and replicated AI are not provided. Unloaded or
+unreadable guards refuse placement. Follow the [menu instructions](../README.md)
+for the controls and their pending live validation.
 
 ## Package
 
@@ -130,7 +138,7 @@ Never written in play: `loopback`, `self_steamid`, `peer_steamid`,
 `self_name`, `mutex_suffix`, `xinput`, `join_trigger`, `auto_join_delay_s`,
 or an impairment key.
 
-### World sync (experimental, opt-in)
+### World sync (experimental, enabled by default)
 
 On **both PCs**, open Command Prompt in the extracted friend-package folder
 and run:
@@ -145,12 +153,12 @@ corresponding ACC) so they can pair; different saved scenes do not bootstrap
 automatically. After pairing, the host controls supported travel and recovery.
 The launcher keeps the existing co-op save copy between sessions.
 
-`Play-Coop.ps1 -World 1..3` adds `world=N` to the play `lab.ini` (nothing at
-the default 0, which shares partner movement): 1 plumbing only, 2 shared enemy
+`Play-Coop.ps1 -World 1..3` adds `world=N` to the play `lab.ini` (default 3;
+explicit `-World 0` writes no world key and shares partner movement): 1 plumbing only, 2 shared enemy
 outcomes and alert in free roam (30010/30020), 3 also clock/weather, host-driven
 supported-scene travel, reload alignment, shared death and checkpoint copying
-([world-sync-protocol.md](world-sync-protocol.md)). Both players must choose
-it; the effective level is the lower of the two (a player at 0 never pairs).
+([world-sync-protocol.md](world-sync-protocol.md)). The effective level is
+the lower of the two (a player at 0 never pairs).
 It needs the redirected co-op save (it writes kills, staff and clears there)
 and never runs on the real saves. At negotiated level 3, the host selects
 travel and Continue/restart/abort; the guest follows through vanilla Lua APIs.

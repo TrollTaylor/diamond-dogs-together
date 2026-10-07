@@ -1,5 +1,6 @@
 @echo off
-rem One-click offline co-op test: two MGSV copies side by side on this PC.
+rem One-click offline co-op with shared world: two MGSV copies on this PC.
+rem Shared time/weather and host travel are on by default; -World 0 opts out.
 rem See tools\lab\Play-OfflineCoop.ps1 for details.
 where pwsh >nul 2>nul
 if errorlevel 1 goto nopwsh

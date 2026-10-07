@@ -1,13 +1,14 @@
 -- Lua 5.1 debug executor regression: the owner update is the only dispatcher.
--- Args: debug_menu.lua, debug_equipment.lua. Engine fakes record calls; no game or saves are used.
+-- Args: debug_menu.lua, debug_equipment.lua, debug_enemy.lua. No game or saves are used.
 local checks = 0
 local function check(ok, why) checks = checks + 1; if not ok then error(checks .. ': ' .. why, 2) end end
 local source = assert(io.open(assert(arg[1]), 'rb')):read('*a')
 local equipment = assert(io.open(assert(arg[2]), 'rb')):read('*a')
-check(#source:gsub('\r\n', '\n') <= 16000 and #equipment:gsub('\r\n', '\n') <= 16000, 'fragment native LF byte limits')
+local enemy = assert(io.open(assert(arg[3]), 'rb')):read('*a')
+check(#source:gsub('\r\n', '\n') <= 16000 and #equipment:gsub('\r\n', '\n') <= 16000 and #enemy:gsub('\r\n', '\n') <= 16000, 'fragment native LF byte limits')
 local function fixture(options)
     options = options or {}
-    local c = {calls = {}, logs = {}, state = {}, id = 1, updates = 0, terms = 0, host = options.host ~= false}
+    local c = {calls = {}, logs = {}, state = {}, menu = {}, id = 1, updates = 0, terms = 0, host = options.host ~= false}
     local env = setmetatable({}, {__index = _G})
     local function record(name, ...) c.calls[#c.calls + 1] = {name, ...} end
     env.vars = {missionCode = options.mission or 30010, playerPosX = 10, playerPosY = 20, playerPosZ = 30, playerRotY = -60,
@@ -37,13 +38,20 @@ local function fixture(options)
     env.DemoDaemon = {IsDemoPlaying = function() return c.demo or false end}
     env.TppMission = {CheckMissionState = function() return not c.loading end, IsMissionStart = function() return not c.ended end}
     env.Tpp = {IsHelicopter = function(v) return c.heli or false end}
+    env.TppCheckPoint = {GetCheckPointLocator = function(key)
+        check(type(key) == 'string', 'retail checkpoint lookup requires authored name')
+        record('checkpoint', key)
+        if c.checkpointError then error('locator unloaded') end
+        local p = c.checkpoints and c.checkpoints[key]
+        if p then return {p[1], p[2], p[3]}, p[4] end
+    end}
     env.TppGameObject = {NPC_LIFE_STATE_DEAD = 3}
     env.TppDefine = {WEAPONSLOT = {PRIMARY_HIP = 0, PRIMARY_BACK = 1, SECONDARY = 2},
         WEATHER = {SUNNY = 0, CLOUDY = 1, RAINY = 2, SANDSTORM = 3, FOGGY = 4}}
     env.TppEquip = {EQP_WP_30101 = 301, EQP_WP_10101 = 101, EQP_WP_10004 = 104,
         GetAmmoInfo = function(id) record('metadata', id); return 11, 30, 90, 0, 0, 0 end}
     env.TppPlayer = {Warp = function(a)
-        record('warp', a); if c.warpError then error('warp error') end
+        record('warp', a); if c.warpError then error(c.warpFailure or 'warp error') end
         if c.warpNow then env.vars.playerPosX, env.vars.playerPosY, env.vars.playerPosZ = a.pos[1], a.pos[2], a.pos[3] end
     end, SavePlayerCurrentAmmoCount = function() record('ammo_save') end,
         SetWeapons = function(a)
@@ -70,27 +78,45 @@ local function fixture(options)
         record(a.id, id, a)
         if a.id == 'GetLifeStatus' then return life[id] end
         if a.id == 'GetPosition' then
+            if c.positionUnknown then return nil end
             local p = positions[id]
             if not p then return nil end
-            return {GetX = function() return p[1] end, GetY = function() return p[2] end, GetZ = function() return p[3] end}
+            local v = {}
+            for i, axis in ipairs({'GetX', 'GetY', 'GetZ'}) do
+                local component = i
+                v[axis] = function(self) check(self == v, 'native Vector3 method requires receiver'); return p[component] end
+            end
+            return v
         end
         if a.id == 'ChangeLifeState' and not c.deferDead then life[id] = a.state end
+        if a.id == 'SetSneakRoute' and not c.routeRefuse then positions[id] = {20, 20, 40} end
+        if c.spawnError and a.id == 'SetCautionRoute' then error('route failed') end
     end}
     env.Fox = {StrCode32 = function(s) return s == 'sol_a' and -1 or s == 'sol_b' and 2147483648 or 99 end}
     env.TppEnemy = {SetEnable = function(id) record('enable', id) end, SetDisable = function(id) record('disable', id) end,
         IsRecovered = function(name) return c.recovered == name end,
-        GetActionStatus = function(id) if c.actionUnknown then return nil end; return c.fultoned == id and 123 or 0 end,
-        ACTION_STATUS = {NORMAL = 0, FULTON_RECOVERD = 123}}
+        GetActionStatus = function(id) check(type(id) == 'number', 'retail action state accepts numeric game object ID'); if c.actionUnknown then return nil end; return c.fultoned == id and 123 or 0 end,
+        ACTION_STATUS = {NORMAL = 0, FULTON_RECOVERD = 123}, LIFE_STATUS = {NORMAL = 0}}
     env.e = {OnUpdate = function(...) c.updates = c.updates + 1; c.args = {...}; return 'original', nil, 'tail' end,
         OnTerminate = function(...) c.terms = c.terms + 1; return 'terminated', nil, ... end}
     env.loadstring = function(s)
         check(#s < 256, 'receipt byte limit')
+        if s == "return 'MGS_COOP_EQUIPMENT_OBSERVATION_QUERY_V1'" then
+            c.observationQueries = (c.observationQueries or 0) + 1
+            return function() return c.observationValue end
+        end
+        if s:find("return 'MGS_COOP_EQUIPMENT_OBSERVATION_RECEIPT_V1' -- ", 1, true) == 1 then
+            c.observationReceipts = (c.observationReceipts or 0) + 1
+            return function() return c.observationAccepted end
+        end
         if s == "return 'MGS_COOP_DEBUG_CMD_V1'" then
             if c.literal then return function() return 'MGS_COOP_DEBUG_CMD_V1' end end
             local command = c.command; c.command = nil; return function() return command end
         end
         local request, payload = s:match("^return 'MGS_COOP_DEBUG_PARTNER_V1' %-%- (%d+) (.+)$")
         if request then record('partner', payload); return function() return c.partnerRefuse ~= true end end
+        request, payload = s:match("^return 'MGS_COOP_DEBUG_ENEMY_V1' %-%- (%d+) (.+)$")
+        if request then c.menu[#c.menu + 1] = {tonumber(request), payload}; return function() return not c.menuRefuse end end
         local id, ok, msg = s:match("^return 'MGS_COOP_DEBUG_LOG_V1' %-%- (%d+) ([01]) ([%w_=,.;:%-]+)$")
         if id then c.logs[#c.logs + 1] = {tonumber(id), tonumber(ok), msg}; return function() end end
         local ammo, mask = s:match("^return 'MGS_COOP_DEBUG_STATE_V1' %-%- ([01]) (%d+)$")
@@ -98,6 +124,7 @@ local function fixture(options)
     end
     local chunk = assert(loadstring(source)); setfenv(chunk, env); chunk()
     chunk = assert(loadstring(equipment)); setfenv(chunk, env); chunk()
+    chunk = assert(loadstring(enemy)); setfenv(chunk, env); chunk()
     c.env, c.D = env, env.e.MgsCoopDebug
     function c:tick()
         local a, b, d = env.e.OnUpdate('arg')
@@ -253,8 +280,12 @@ f = fixture(); f.heli = true
 check(f:send('partner stage=3')[3] == 'helicopter' and f:count('partner') == 0, 'partner handler cannot bypass gameplay guard')
 f = fixture(); f.ammoRefuse = true; check(f:send('infinite_ammo 1')[3] == 'ammo_refused' and f.state[1] == 0, 'explicit ammo refusal')
 f = fixture(); f.warpError = true
-check(f:send('teleport 1 2 3 0')[3] == 'binding_error', 'binding exception reported')
+check(f:send('teleport 1 2 3 0')[3] == 'binding_error;detail=warp_error', 'binding exception reports bounded sanitized detail')
 f:tick(); check(f.updates == 2, 'original update survives debug error')
+f = fixture(); f.warpError, f.warpFailure = true, 'bad "argument"\n' .. string.rep('x', 300)
+local detail = f:send('teleport 1 2 3 0')[3]
+check(detail:find('binding_error;detail=bad__argument__', 1, true) == 1 and #detail <= 160 and not detail:find('["\n]'),
+    'long binding detail stays bounded and cannot inject receipt syntax')
 f = fixture(); f:send('infinite_ammo 1'); f:send('weather rainy'); f:send('bookmark 1')
 f.env.vars.missionCode = 30020; f:tick()
 check(not f.D.infinite and f.state[2] == 0 and f:count('infinite') == 2 and f:count('weather_auto') == 1, 'mission change releases toggles and bookmarks')
@@ -273,6 +304,186 @@ for i = 1, 300 do f:tick() end
 check(f.logs[#f.logs][3] == 'warp_readback_timeout', 'warp finite retry budget')
 f = fixture(); f:send('teleport 100 200 300 90'); f.env.vars.missionCode = 30020; f:tick()
 check(f.D.pending == nil and f:count('warp') == 1, 'mission change cancels old warp')
+local function spawnFixture(options)
+    local s = fixture(options)
+    s.env.mvars.ene_soldierDefine = {afgh_test_cp = {'sol_a', 'sol_b', 'sol_u'}, quest_cp = {'sol_quest'}}
+    s.env.mvars.ene_routeSetsDefine = {afgh_test_cp = {sneak_day = {group_b = {'rt_second', 'rt_first'}, group_a = {'rt_first'}},
+        caution = {group_c = {'rt_caution'}}}, quest_cp = {sneak_day = {group = {'rt_quest'}}}}
+    return s
+end
+local function routeDefinitions(count, reverse)
+    local groups = {}
+    for offset = 1, count do
+        local i = reverse and count + 1 - offset or offset
+        local key = 'group_' .. i % 3
+        groups[key] = groups[key] or {}
+        groups[key][#groups[key] + 1] = string.format('rt_%04d', i)
+    end
+    return {afgh_test_cp = {sneak_day = groups, caution = {duplicate = {'rt_0001', 'rt_0001', 'bad/name'}}}}
+end
+local function selectedRoutes(s)
+    local result = {}
+    for _, receipt in ipairs(s.menu) do
+        local index, route = receipt[2]:match('^route (%d+) (.+)$')
+        if index then result[tonumber(index)] = route end
+    end
+    return result
+end
+for _, count in ipairs({65, 83, 512}) do
+    local ordered = spawnFixture()
+    ordered.env.mvars.ene_routeSetsDefine = routeDefinitions(count, false)
+    check(ordered:send('enemy_camps')[3] == 'camps=1;more=0;local_pool=1'
+        and ordered.menu[2][2] == 'camp afgh_test_cp 1000 64', 'route menu truncates only after validating and sorting')
+    check(ordered:send('enemy_routes afgh_test_cp')[3] == 'routes=64;point=0', 'bounded sorted route menu')
+    local before = selectedRoutes(ordered)
+    ordered.env.mvars.ene_routeSetsDefine = routeDefinitions(count, true)
+    ordered.menu = {}
+    check(ordered:send('enemy_routes afgh_test_cp')[3] == 'routes=64;point=0', 'reconstructed route groups retain selected indices')
+    local after = selectedRoutes(ordered)
+    for i = 1, 64 do
+        check(before[i] == string.format('rt_%04d', i) and after[i] == before[i], 'group/array reconstruction cannot change the first64 sorted routes')
+    end
+    check(ordered:send('spawn_enemy afgh_test_cp 64')[2] == 1, 'selected route remains usable after reconstruction')
+    for _, entry in ipairs(ordered.calls) do
+        if entry[1] == 'SetSneakRoute' then check(entry[3].route == 'rt_0064', 'spawn resolves the displayed sorted route index') end
+    end
+end
+for _, reverse in ipairs({false, true}) do
+    local overflow = spawnFixture()
+    overflow.env.mvars.ene_routeSetsDefine = routeDefinitions(513, reverse)
+    for _, command in ipairs({'enemy_camps', 'enemy_routes afgh_test_cp', 'spawn_enemy closest', 'goto_camp afgh_test_cp'}) do
+        check(overflow:send(command)[3] == 'spawn_route_limit_512', 'oversized route source refuses both reconstruction orders')
+    end
+    check(#overflow.menu == 0 and overflow:count('disable') == 0 and overflow:count('SetSneakRoute') == 0
+        and overflow:count('warp') == 0 and overflow.D.pending == nil, 'overflow emits no arbitrary subset or gameplay mutation')
+end
+local sp = spawnFixture()
+check(sp:send('enemy_camps')[3] == 'camps=1;more=0;local_pool=1', 'bounded authored camp listing')
+check(sp.menu[1][2] == 'clear 30010' and sp.menu[2][2] == 'camp afgh_test_cp 1000 3' and sp.menu[3][2] == 'done', 'camp metadata uses loaded distance and deduplicated routes')
+check(sp:send('enemy_routes afgh_test_cp')[3] == 'routes=3;point=0', 'authored route selector lists safe point0')
+check(sp.menu[5][2] == 'route 1 rt_caution' and sp.menu[7][2] == 'route 3 rt_second', 'route indices sorted and stable')
+check(sp:send('spawn_enemy afgh_test_cp 2')[3]:find('submitted_patrol_guard;ent=4294967295;reuse=1', 1, true), 'selected camp spawns from existing living pool')
+check(sp:count('disable') == 1 and sp:count('SetSneakRoute') == 1 and sp:count('SetCautionRoute') == 1 and sp:count('SetAlertRoute') == 1 and sp:count('enable') == 1 and sp:count('SetForceRealize') == 1, 'exact retail disable/routes/enable then force-realize calls')
+for _, entry in ipairs(sp.calls) do if entry[1] == 'SetSneakRoute' then check(entry[3].route == 'rt_first' and entry[3].point == 0, 'only resident chosen route point0') end end
+sp:tick(); check(sp.D.pending ~= nil, 'actor enable is not immediate placement proof')
+sp:tick(); check(sp.logs[#sp.logs][3]:find('guard_position_readback', 1, true) and sp.logs[#sp.logs][3]:find('visible_unverified', 1, true), 'actual guard position receipt keeps rendering uncertainty')
+check(sp.menu[#sp.menu][2] == 'spawned 20000 20000 40000 4294967295', 'actual spawn location metadata unsigned ID')
+check(sp:send('goto_spawn')[3] == 'submitted_warp' and sp.calls[#sp.calls][2].pos[1] == 23 and sp.calls[#sp.calls][2].pos[2] == 20.5, 'go to confirmed spawn uses owner-thread player Warp nearby')
+sp.env.vars.playerPosX, sp.env.vars.playerPosY, sp.env.vars.playerPosZ = 23, 20.5, 40; sp:tick()
+check(sp:send('spawn_enemy closest')[3]:find('ent=2147483648', 1, true), 'second placement does not recycle prior selected guard')
+sp = spawnFixture({host = false})
+check(sp:send('spawn_enemy closest')[3] == 'host_only' and sp:count('disable') == 0, 'guest cannot mutate pool even unpaired')
+sp = spawnFixture(); sp.life[5], sp.life[6] = 3, 255
+check(sp:send('spawn_enemy closest')[3] == 'spawn_no_loaded_living_guard' and sp:count('disable') == 0, 'dead/unknown pool never revived')
+sp = spawnFixture(); sp.life[5], sp.life[6] = 2, 4
+check(sp:send('spawn_enemy closest')[3] == 'spawn_no_loaded_living_guard', 'unconscious/dying pool not used as combat guard')
+sp = spawnFixture(); sp.recovered, sp.fultoned = 'sol_a', 6
+check(sp:send('spawn_enemy closest')[3] == 'spawn_no_loaded_living_guard', 'saved/action Fulton pool never reused')
+sp = spawnFixture(); sp.positions[5], sp.positions[6] = {1000, 20, 30}, {2000, 20, 30}
+check(sp:send('spawn_enemy closest')[3] == 'spawn_no_loaded_living_guard' and sp:count('disable') == 0, 'distant actor packs cannot be assumed resident')
+sp = spawnFixture(); sp.spawnError = true
+check(sp:send('spawn_enemy closest')[3] == 'spawn_binding_error' and sp:count('enable') == 1, 'partial route failure restores enabled guard instead of leaving disabled')
+sp = spawnFixture(); sp:send('spawn_enemy closest'); sp.positionUnknown = true
+for i = 1, 120 do sp:tick() end
+check(sp.logs[#sp.logs][3] == 'spawn_position_timeout' and sp.D.enemy.last == nil, 'unreadable placement cannot invent a location')
+sp = spawnFixture(); for i = 1, 8 do sp.D.enemy.used['old_' .. i] = true end
+check(sp:send('spawn_enemy closest')[3] == 'spawn_pool_limit_8' and sp:count('disable') == 0, 'bounded pool avoids unbounded force-realized guard lifetime')
+sp = spawnFixture(); sp:send('spawn_enemy closest'); sp.env.vars.missionCode = 30020; sp:tick()
+check(sp.D.pending == nil and sp.D.enemy.last == nil and next(sp.D.enemy.used) == nil, 'travel clears pool reservations and old spawn coordinates')
+sp = spawnFixture(); sp.menuRefuse = true
+check(sp:send('enemy_camps')[3] == 'enemy_menu_unavailable', 'missing native metadata handler refuses camp UI cleanly')
+for _, text in ipairs({'spawn_enemy unknown_cp 1', 'spawn_enemy afgh_test_cp 0', 'spawn_enemy afgh_test_cp 65',
+    'spawn_enemy afgh_test_cp 1.5', 'spawn_enemy quest_cp 1', 'spawn_enemy closest extra', 'enemy_routes nope',
+    'spawn_enemy afgh_test_cp 1;evil', 'enemy_camps extra', 'goto_spawn extra'}) do
+    sp = spawnFixture(); check(sp:send(text)[2] == 0 and sp:count('disable') == 0, 'invalid pool placement has no actor mutation')
+end
+sp = spawnFixture(); check(sp:send('goto_spawn')[3] == 'spawn_position_unavailable', 'no invented spawn coordinates')
+sp = spawnFixture(); sp.warpNow = true; sp.positions[5], sp.positions[6] = {1000, 20, 30}, {2000, 20, 30}
+check(sp:send('goto_camp afgh_test_cp')[3] == 'submitted_warp' and sp:count('disable') == 0 and sp:count('SetSneakRoute') == 0,
+    'camp travel uses readable distant guard position without enemy mutation')
+check(sp.env.vars.playerPosX == 1003 and sp.env.vars.playerPosY == 20.5 and sp.env.vars.playerPosZ == 30,
+    'camp travel preserves current yaw and offsets confirmed actor position')
+sp:tick(); check(sp.logs[#sp.logs][3]:find('warp_position_readback', 1, true), 'camp travel verifies actual player position')
+sp = spawnFixture({host = false}); check(sp:send('goto_camp afgh_test_cp')[3] == 'submitted_warp' and sp:count('disable') == 0,
+    'guest can use local camp travel without mutating guards')
+sp = spawnFixture(); sp.life[5], sp.life[6] = 3, 255
+check(sp:send('goto_camp afgh_test_cp')[3] == 'camp_position_unavailable' and sp:count('warp') == 0,
+    'dead or unknown camp positions never authorize travel')
+sp = spawnFixture(); sp.positions[5], sp.positions[6] = {99999, 20, 30}, {100000, 20, 30}
+check(sp:send('goto_camp afgh_test_cp')[3] == 'camp_position_bounds' and sp:count('warp') == 0, 'offset remains inside teleport bounds')
+sp = spawnFixture(); sp.life[5], sp.life[6] = 255, 255; sp.warpNow = true
+sp.env.mvars.loc_locationCommonCheckPointList = {test = {'CHK_authored_test'}}
+sp.checkpoints = {CHK_authored_test = {1010, 20, 30, 90}}
+check(sp:send('enemy_camps')[3] == 'camps=1;more=0;local_pool=1' and sp.menu[2][2] == 'camp afgh_test_cp 1000000 3',
+    'unloaded guard camp distance uses actual declared player checkpoint')
+check(sp:send('goto_camp afgh_test_cp')[3] == 'submitted_warp;via=checkpoint' and sp:count('disable') == 0,
+    'wilderness camp travel falls back without enabling an unknown soldier')
+check(sp.env.vars.playerPosX == 1010 and sp.env.vars.playerPosY == 20 and sp.env.vars.playerPosZ == 30 and sp.calls[#sp.calls][2].rotY == 90,
+    'checkpoint travel preserves authored player XYZ and degree yaw')
+sp:tick(); check(sp.logs[#sp.logs][3]:find('warp_position_readback', 1, true), 'checkpoint fallback verifies actual player arrival')
+sp = spawnFixture(); sp.env.mvars.loc_locationCommonCheckPointList = {test = {'CHK_authored_test'}}
+sp.checkpoints = {CHK_authored_test = {1000, 20, 30, 90}}
+check(sp:send('goto_camp afgh_test_cp')[3] == 'submitted_warp' and sp:count('checkpoint') == 0,
+    'current readable guard remains preferred over checkpoint')
+for _, bad in ipairs({{100001, 20, 30, 90}, {10, 20, 30, 36001}, {10, 20, 0/0, 90}, {10, 20, 30}}) do
+    sp = spawnFixture(); sp.life[5], sp.life[6] = 255, 255
+    sp.env.mvars.loc_locationCommonCheckPointList = {test = {'CHK_authored_test'}}; sp.checkpoints = {CHK_authored_test = bad}
+    check(sp:send('goto_camp afgh_test_cp')[3] == 'camp_position_unavailable' and sp:count('warp') == 0,
+        'unreadable/invalid checkpoint coordinates or yaw cannot authorize teleport')
+end
+sp = spawnFixture(); sp.life[5], sp.life[6] = 255, 255; sp.checkpointError = true
+sp.env.mvars.loc_locationCommonCheckPointList = {test = {'CHK_authored_test'}}
+check(sp:send('goto_camp afgh_test_cp')[3] == 'camp_position_unavailable' and sp:count('warp') == 0,
+    'unloaded throwing locator refuses without guessing a camp position')
+sp = spawnFixture(); sp.life[5], sp.life[6] = 255, 255
+sp.env.mvars.loc_locationCommonCheckPointList = {test = {'CHK_authored_test'}}; sp.env.TppCheckPoint = nil
+check(sp:send('goto_camp afgh_test_cp')[3] == 'camp_position_unavailable', 'missing retail checkpoint binding refuses cleanly')
+sp = spawnFixture(); sp.life[5], sp.life[6] = 255, 255; sp.env.vars.missionCode = 30020
+sp.env.mvars.loc_locationCommonCheckPointList = {test = {'CHK_authored_test'}}
+sp.checkpoints = {CHK_authored_test = {1000, 20, 30, 90}}
+check(sp:send('goto_camp afgh_test_cp')[3] == 'camp_position_unavailable' and sp:count('checkpoint') == 0,
+    'different location prefix cannot use stale camp checkpoint metadata')
+sp = spawnFixture(); sp.life[5], sp.life[6] = 255, 255
+sp.ids.sol_n, sp.life[8] = 8, 255
+sp.env.mvars.ene_soldierDefine.afgh_bridgeNorth_ob = {'sol_n'}
+sp.env.mvars.ene_routeSetsDefine.afgh_bridgeNorth_ob = {sneak_day = {group = {'rt_outpost'}}}
+sp.env.mvars.loc_locationCommonCheckPointList = {test = {'CHK_test'}, bridgeNorth = {'CHK_bridgeNorth'}}
+sp.checkpoints = {CHK_test = {1010, 20, 30, 0}, CHK_bridgeNorth = {13, 24, 30, -180}}
+check(sp:send('enemy_camps')[3] == 'camps=2;more=0;local_pool=1' and sp.menu[2][2] == 'camp afgh_bridgeNorth_ob 5000 1',
+    'wilderness distance sorts an actual authored outpost checkpoint before a distant camp')
+check(sp:send('goto_camp afgh_bridgeNorth_ob')[3] == 'submitted_warp;via=checkpoint' and sp.calls[#sp.calls][2].rotY == -180,
+    'outpost suffix maps through declared base key and preserves negative yaw')
+for _, text in ipairs({'goto_camp unknown_cp', 'goto_camp quest_cp', 'goto_camp', 'goto_camp afgh_test_cp extra', 'goto_camp bad/name'}) do
+    sp = spawnFixture(); check(sp:send(text)[2] == 0 and sp:count('warp') == 0 and sp:count('disable') == 0, 'invalid camp travel has no mutation')
+end
 f = fixture(); f.warpNow = true; check(f:send('step -5 2 0')[3] == 'submitted_warp', 'bounded relative teleport')
 f:tick(); check(f.env.vars.playerPosX == 5 and f.env.vars.playerPosY == 22 and f.logs[#f.logs][3]:find('readback'), 'relative teleport actual position readback')
+-- Read-only equipment observation can begin before the player is ready. A
+-- transient refusal must not permanently consume the mission's observation.
+local ob = fixture()
+ob:tick(); ob:tick()
+check(ob.observationQueries == 1 and ob.D.equipmentObservationMission == 30010,
+    'disabled observation is queried once and remains inert')
+ob = fixture(); ob.observationValue = false
+ob:tick()
+check(ob.observationQueries == 1 and ob.D.equipmentObservationMission == nil,
+    'loading observation refusal retains a later attempt')
+for i = 1, 29 do ob:tick() end
+check(ob.observationQueries == 1, 'observation retry is throttled')
+ob.observationValue = 'MGS_COOP_EQUIPMENT_OBSERVATION_V1;mission=30010;read_only=1;'
+ob.observationAccepted = false; ob:tick()
+check(ob.observationQueries == 2 and ob.observationReceipts == 1 and ob.D.equipmentObservationMission == nil,
+    'refused native receipt does not report completion')
+ob.observationAccepted = true
+for i = 1, 30 do ob:tick() end
+check(ob.observationQueries == 3 and ob.observationReceipts == 2 and ob.D.equipmentObservationMission == 30010,
+    'accepted observation completes only after owner receipt')
+for i = 1, 40 do ob:tick() end
+check(ob.observationQueries == 3 and #ob.calls == 0, 'completed observation causes no API mutations or repeat queries')
+ob.env.vars.missionCode = 30020; ob.observationValue = false; ob:tick()
+check(ob.observationQueries == 4 and ob.D.equipmentObservationAttempts == 1,
+    'mission transition clears observation retry history')
+for i = 1, 3600 do ob:tick() end
+check(ob.observationQueries == 123 and ob.D.equipmentObservationMission == 30020,
+    'persistent refusal stops at exactly 120 attempts per mission')
 print('debug_menu_lua_check: PASS ' .. checks .. ' checks')

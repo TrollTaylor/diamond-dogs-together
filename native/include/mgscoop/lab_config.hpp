@@ -77,7 +77,7 @@ enum class PartnerInputYaw : std::uint8_t { rot, rotneg, none };
 enum class PartnerDm : std::uint8_t { off, probe, on, map };
 // dm=map: highest gani index of partner_sync.lua GANI, the 3x4 [stance][move]
 // table (stand none/walk/run/dash, squat ..., crawl ...) and the speed bands.
-inline constexpr std::uint8_t kPartnerDmGaniMax = 12;
+inline constexpr std::uint8_t kPartnerDmGaniMax = 30;
 inline constexpr std::size_t kPartnerDmCells = 12;
 struct PartnerDmTable { std::uint8_t cells[kPartnerDmCells]; };
 inline constexpr PartnerDmTable kPartnerDmTableDefault{{0, 10, 11, 5, 1, 3, 4, 4, 7, 6, 6, 6}};

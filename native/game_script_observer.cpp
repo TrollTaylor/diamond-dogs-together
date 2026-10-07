@@ -24,6 +24,11 @@
 #include "mgscoop/soldier_patch.hpp"
 #include "mgscoop/mission_termination.hpp"
 #include "mgscoop/mission_initialization.hpp"
+#include "mgscoop/equipment_allocation_probe.hpp"
+#include "mgscoop/equipment_stock_probe.hpp"
+#include "mgscoop/equipment_stock_contract.hpp"
+#include "mgscoop/equipment_stock_writer.hpp"
+#include "equipment_observation_source.hpp"
 #include "mgscoop/lab_config.hpp"
 #include "mgscoop/lab_status.hpp"
 #include "mgscoop/client_reset.hpp"
@@ -31,14 +36,20 @@
 #include "mgscoop/partner_player.hpp"
 #include "mgscoop/partner_missions.hpp"
 #include "mgscoop/partner_net.hpp"
+#include "mgscoop/partner_action_events.hpp"
 #include "mgscoop/partner_driver.hpp"
 #include "mgscoop/partner_input_hook.hpp"
 #include "mgscoop/partner_dm_patch.hpp"
+#include "mgscoop/partner_upper_probe.hpp"
+#include "mgscoop/partner_upper_end_observer.hpp"
+#include "mgscoop/partner_upper_phase_observer.hpp"
+#include "mgscoop/partner_upper_manual_idle.hpp"
 #include "mgscoop/crash_probe.hpp"
 #include "mgscoop/early_patches.hpp"
 #include "mgscoop/world_link.hpp"
 #include "mgscoop/world_receipt.hpp"
 #include "mgscoop/debug_menu.hpp"
+#include "mgscoop/worker_debug.hpp"
 #include <charconv>
 #include <cmath>
 #include <cstdarg>
@@ -76,6 +87,12 @@ DWORD allocation_thread = 0, mission_thread = 0;
 DWORD cleanup_thread = 0;
 mgscoop::MissionTermination termination_scope;
 mgscoop::MissionInitialization initialization_scope;
+mgscoop::equipment_allocation_probe::Authorization equipment_allocation_authorization;
+mgscoop::equipment_stock_probe::Authorization stock46_authorization;
+mgscoop::equipment_stock_contract::Snapshot stock46_before;
+bool stock46_groups_authorized=false,stock46_groups_returned=false;
+std::uint64_t equipment_observation_requested_ms = 0;
+unsigned short equipment_observation_mission = 0;
 unsigned short allocation_mission = 0;
 void* game_base = nullptr;
 std::size_t game_span = 0;
@@ -381,6 +398,9 @@ bool partner_on = false;
 bool partner_gate_ok = false;
 pp::Addresses partner_addresses{};
 wchar_t partner_trigger_path[lab::kMaxAtomicPath]{};
+// Only an exact standalone trigger creates one request; mapper refreshes cannot.
+bool upper_idle_requested = false;
+std::uint64_t upper_idle_nonce = 0;
 thread_local pd::Quiet partner_quiet{};
 thread_local char partner_reply[partner::reply_capacity]{};
 pd::Driver partner_driver{};
@@ -415,6 +435,10 @@ const char* PartnerSetPolicy(void*, bool relax, std::uint8_t restore_value, bool
 bool PartnerReadAnim(void*, const pp::State& state, pp::Anim& out) noexcept { return pp::ReadAnim(state, out); }
 mgscoop::pose::Sample PartnerSampleRemote(void*, std::uint32_t delay_ms) noexcept {
     return mgscoop::partner_net::SampleRemote(delay_ms);
+}
+mgscoop::pose::RemoteFrame PartnerSampleRemoteWithTurns(void*, std::uint32_t delay_ms,
+                                                      const mgscoop::pose::HistoryCursor& cursor) noexcept {
+    return mgscoop::partner_net::SampleRemoteWithTurns(delay_ms, cursor);
 }
 void PartnerSubmitLocal(void*, const partner::Tick& tick, const mgscoop::sync::AnimState& anim) noexcept {
     mgscoop::partner_net::SubmitLocal(tick, anim);
@@ -548,6 +572,7 @@ bool PartnerDmClearPending(void*) noexcept {
     mgscoop::partner_player::ClearDmPending(partner_addresses, mission_terminating, cleared);
     return cleared;
 }
+unsigned PartnerDmMotionCount(void*) noexcept { return MountedPlayerMotionCount(); }
 // partner.trigger (lab only): reads at most `capacity` bytes, then deletes it.
 pd::TriggerRead PartnerTakeTrigger(void*, char* text, std::size_t capacity, std::size_t& length) noexcept {
     length = 0;
@@ -564,6 +589,13 @@ pd::TriggerRead PartnerTakeTrigger(void*, char* text, std::size_t capacity, std:
     DeleteFileW(partner_trigger_path);
     SetLastError(error);
     length = read_bytes;
+    if (read && mgscoop::partner_upper_manual_idle::IsTrigger(text, length)) {
+        const bool allowed = mgscoop::partner_upper_manual_idle::Compiled() && OnRuntimeThread();
+        upper_idle_requested = allowed;
+        LogFormat("upper_manual_idle=trigger; queued=%u; standalone=1; driver_changed=0; dm_changed=0; automatic_capability=0\r\n", allowed ? 1u : 0u);
+        SetLastError(error); length = 0;
+        return pd::TriggerRead::none;
+    }
     return read ? pd::TriggerRead::read : pd::TriggerRead::unreadable;
 }
 bool PartnerFocused(void*) noexcept {
@@ -579,7 +611,8 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerFormatPsProbe, PartnerInputTargets, PartnerFormatInputCensus, PartnerReadPad, PartnerSubmitInput, PartnerNetRunning,
     PartnerInstallInputHook, PartnerPublishArm, PartnerDrainInputStats, PartnerInputHookLive, PartnerDmTargets, PartnerReadDm,
     PartnerFormatDmCensus, PartnerFormatDmProbe, PartnerDmPatch, PartnerDmClearPending, PartnerResetInputFault,
-    PartnerApplyPosition, PartnerReadVelocity, PartnerLatestInput, PartnerInstallWrap, PartnerInterpMs};
+    PartnerApplyPosition, PartnerReadVelocity, PartnerLatestInput, PartnerInstallWrap, PartnerInterpMs, PartnerDmMotionCount,
+    PartnerSampleRemoteWithTurns};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
@@ -594,7 +627,195 @@ std::uint32_t PartnerCtxFlags() noexcept {
     return (partner_driver.mission.input_armed ? 1u : 0u) | (partner_driver.mission.dm_patched ? 2u : 0u);
 }
 
+namespace upper_end = mgscoop::partner_upper_end_observer;
+namespace upper_phase = mgscoop::partner_upper_phase_observer;
+namespace upper_idle = mgscoop::partner_upper_manual_idle;
+bool UpperPhaseRead(void*, std::uintptr_t address, void* out, std::size_t size) noexcept {
+    SIZE_T copied = 0;
+    return address && size && ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(address), out, size, &copied) && copied == size;
+}
+struct UpperEndOwner {
+    bool active = false;
+    std::uint64_t generation = 0, body_epoch = 0;
+    std::uint32_t mission = 0, thread = 0;
+} upper_end_owner, upper_phase_owner, upper_idle_owner;
+void ClearUpperIdleOwner() noexcept {
+    upper_idle::Clear(); upper_idle_owner.active = false; upper_idle_requested = false;
+}
+void ClearUpperPhaseOwner() noexcept {
+    upper_phase::Clear(); upper_phase_owner.active = false;
+}
+void ClearUpperEndOwner() noexcept {
+    ClearUpperIdleOwner();
+    if (!upper_end::Compiled()) return;
+    // Revoke first. A worker already inside a CS wrapper cannot publish stale
+    // readback into a later mission even if its original native call returns.
+    ClearUpperPhaseOwner(); upper_end::Clear(); upper_end_owner.active = false;
+}
+template<std::size_t N> void UpperEndHex(const std::array<std::uint8_t, N>& input, char (&output)[2 * N + 1]) noexcept {
+    constexpr char digits[] = "0123456789abcdef";
+    for (std::size_t i = 0; i < N; ++i) { output[2 * i] = digits[input[i] >> 4]; output[2 * i + 1] = digits[input[i] & 15]; }
+    output[2 * N] = 0;
+}
+void DrainUpperIdleReceipts() noexcept {
+    if (!upper_idle::Compiled() || !OnRuntimeThread()) return;
+    upper_idle::Receipt r{};
+    for (unsigned n = 0; n < upper_idle::kReceiptCap && upper_idle::Drain(r); ++n) {
+        const auto& s = r.snapshot;
+        char upper_record[81]{}, lower_record[81]{};
+        UpperEndHex(s.upper.record, upper_record); UpperEndHex(s.lower.record, lower_record);
+        const auto base = reinterpret_cast<std::uintptr_t>(game_base);
+        const auto caller = r.update.caller >= base ? r.update.caller - base : 0;
+        LogFormat("upper_manual_idle=receipt; command=%llu; gen=%llu; epoch=%llu; mission=%u; owner=%u; thread=%u; caller=%llx; stage=%u; t_ms=%llu; submit_attempted=%u; submit_rax=%llx; update_rax=%llx; refusal=%s; immediate_lower_unchanged=%u; idle_current=%u; noqueued=%u; automatic_capability=0; accepted=unverified; stopped=unverified\r\n",
+            r.command, r.owner.generation, r.owner.body_epoch, r.owner.mission, r.owner.owner_thread, r.update.thread,
+            static_cast<unsigned long long>(caller), unsigned(r.stage), r.now_ms, r.submit_attempted ? 1u : 0u,
+            static_cast<unsigned long long>(r.raw_submit_rax), static_cast<unsigned long long>(r.raw_update_rax),
+            r.refusal ? r.refusal : "none", r.immediate_lower_unchanged ? 1u : 0u,
+            r.upper_idle_current ? 1u : 0u, r.upper_noqueued ? 1u : 0u);
+        LogFormat("upper_manual_idle=readback; command=%llu; stage=%u; P=%llx; block=%llx; cs=%llx; entry=%llx; records=%llx; upper_cur=%u,%u,%llx; upper_queued=%u,%u,%llx; lower_cur=%u,%u,%llx; masks=%x,%x,%x,%x; upper_record=%s; lower_record=%s\r\n",
+            r.command, unsigned(r.stage), s.identity.P, s.identity.block, s.identity.cs, s.identity.entry, s.identity.records,
+            s.upper.current.index, unsigned(s.upper.current.type), s.upper.current.code,
+            s.upper.queued.index, unsigned(s.upper.queued.type), s.upper.queued.code,
+            s.lower.current.index, unsigned(s.lower.current.type), s.lower.current.code,
+            unsigned(s.masks[0]), unsigned(s.masks[1]), unsigned(s.masks[2]), unsigned(s.masks[3]), upper_record, lower_record);
+    }
+}
+void DrainUpperEndObservations() noexcept {
+    if (!upper_end::Compiled() || !OnRuntimeThread()) return;
+    upper_end::Observation o{};
+    for (unsigned i = 0; i < upper_end::kObservationCap && upper_end::Drain(o); ++i) {
+        const auto& s = o.snapshot; const auto& id = s.identity;
+        const auto actual_thread = o.phase == upper_end::Phase::submission_before || o.phase == upper_end::Phase::submission_after
+            ? o.submission.thread : o.update.thread;
+        const auto actual_caller = o.phase == upper_end::Phase::submission_before || o.phase == upper_end::Phase::submission_after
+            ? o.submission.caller : o.update.caller;
+        LogFormat("upper_end_observe=receipt; phase=%u; serial=%llu; end=%llu; gen=%llu; epoch=%llu; mission=%u; t_ms=%llu; owner=%u; thread=%u; caller=%llx; rax=%llx; equip=%u; stance=%u; flags=%u; observe_only=1; acceptance=unverified; completion=unverified; stopped=unverified\r\n",
+            unsigned(o.phase), o.serial, o.correlated_end, o.generation, o.body_epoch, o.owner.mission, o.now_ms,
+            o.owner.owner_thread, actual_thread, static_cast<unsigned long long>(actual_caller - reinterpret_cast<std::uintptr_t>(game_base)),
+            static_cast<unsigned long long>(o.original_rax), unsigned(o.owner.equip), unsigned(o.owner.stance), unsigned(o.owner.flags));
+        LogFormat("upper_end_observe=identity; serial=%llu; P=%llx; Q=%llx; S=%llx; block=%llx; ps=%llx; cs=%llx; entry=%llx; allocation=%llx; controllers=%llx; buffer=%llx; records=%llx; lower=%llx; upper=%llx; bank=%llx; lower_table=%llx; upper_table=%llx; counts=%u,%u\r\n",
+            o.serial, id.P, id.Q, id.S, id.block, id.ps, id.cs, id.entry, id.allocation, id.controllers, id.buffer,
+            id.records, id.lower, id.upper, id.bank, id.lower_table, id.upper_table, id.lower_count, id.upper_count);
+        LogFormat("upper_end_observe=upper; serial=%llu; cur=%u,%u,%llx,%llx; queued=%u,%u,%llx,%llx; alternate=%u,%u,%llx,%llx; Fire=%u,%u,%u; End=%u,%llx; entry_flags=%x; masks=%x,%x,%x,%x; slot=%u; channel=%u; blend=%08x; option=%u\r\n",
+            o.serial, s.upper.current.index, unsigned(s.upper.current.type), s.upper.current.code, s.upper.current.pointer,
+            s.upper.queued.index, unsigned(s.upper.queued.type), s.upper.queued.code, s.upper.queued.pointer,
+            s.upper.alternate.index, unsigned(s.upper.alternate.type), s.upper.alternate.code, s.upper.alternate.pointer,
+            s.fire_selector.index, unsigned(s.fire_selector.type), s.fire_selector.child_index, s.end_node.index, s.end_node.code,
+            s.entry_flags, unsigned(s.masks[0]), unsigned(s.masks[1]), unsigned(s.masks[2]), unsigned(s.masks[3]),
+            o.submission.slot190 ? 190u : 170u, o.submission.channel, o.submission.blend_bits, o.submission.option);
+        char upper_flags[21]{}, lower_flags[21]{}, upper_record[81]{}, lower_record[81]{};
+        UpperEndHex(s.upper.flags, upper_flags); UpperEndHex(s.lower.flags, lower_flags);
+        UpperEndHex(s.upper.record, upper_record); UpperEndHex(s.lower.record, lower_record);
+        LogFormat("upper_end_observe=records; serial=%llu; upper_flags=%s; lower_flags=%s; upper_record=%s; lower_record=%s; lower_cur=%u,%u,%llx; lower_queued=%u,%u,%llx; lower_alternate=%u,%u,%llx\r\n",
+            o.serial, upper_flags, lower_flags, upper_record, lower_record,
+            s.lower.current.index, unsigned(s.lower.current.type), s.lower.current.code,
+            s.lower.queued.index, unsigned(s.lower.queued.type), s.lower.queued.code,
+            s.lower.alternate.index, unsigned(s.lower.alternate.type), s.lower.alternate.code);
+    }
+}
+void DrainUpperPhaseObservations() noexcept {
+    if (!upper_phase::Compiled() || !OnRuntimeThread()) return;
+    upper_phase::Observation o{};
+    for (unsigned n = 0; n < upper_phase::kPairCap * 2 && upper_phase::Drain(o); ++n) {
+        const auto& s = o.snapshot; const auto& id = s.identity;
+        char upper_flags[21]{}, lower_flags[21]{}, upper_record[81]{}, lower_record[81]{};
+        UpperEndHex(s.upper.flags, upper_flags); UpperEndHex(s.lower.flags, lower_flags);
+        UpperEndHex(s.upper.record, upper_record); UpperEndHex(s.lower.record, lower_record);
+        LogFormat("upper_phase_observe=receipt; body=1; after=%u; serial=%llu; gen=%llu; epoch=%llu; mission=%u; owner=%u; thread=%u; caller=%llx; t_ms=%llu; rax=%llx; observe_only=1; acceptance=unverified; completion=unverified; stopped=unverified\r\n",
+            o.after ? 1u : 0u, o.serial, o.owner.generation, o.owner.body_epoch, o.owner.mission, o.owner.owner_thread, o.update.thread,
+            static_cast<unsigned long long>(o.update.caller - reinterpret_cast<std::uintptr_t>(game_base)), o.now_ms, static_cast<unsigned long long>(o.original_rax));
+        LogFormat("upper_phase_observe=identity; serial=%llu; P=%llx; Q=%llx; S=%llx; block=%llx; ps=%llx; cs=%llx; entry=%llx; allocation=%llx; controllers=%llx; buffer=%llx; records=%llx; lower=%llx; upper=%llx; bank=%llx; counts=%u,%u; entry_flags=%x; masks=%x,%x,%x,%x\r\n",
+            o.serial, id.P, id.Q, id.S, id.block, id.ps, id.cs, id.entry, id.allocation, id.controllers, id.buffer, id.records,
+            id.lower, id.upper, id.bank, id.lower_count, id.upper_count, s.entry_flags, unsigned(s.masks[0]), unsigned(s.masks[1]), unsigned(s.masks[2]), unsigned(s.masks[3]));
+        LogFormat("upper_phase_observe=nodes; serial=%llu; upper_cur=%u,%u,%llx,%llx; upper_queued=%u,%u,%llx,%llx; upper_alt=%u,%u,%llx,%llx; lower_cur=%u,%u,%llx,%llx; lower_queued=%u,%u,%llx,%llx; lower_alt=%u,%u,%llx,%llx\r\n",
+            o.serial, s.upper.current.index, unsigned(s.upper.current.type), s.upper.current.code, s.upper.current.pointer,
+            s.upper.queued.index, unsigned(s.upper.queued.type), s.upper.queued.code, s.upper.queued.pointer,
+            s.upper.alternate.index, unsigned(s.upper.alternate.type), s.upper.alternate.code, s.upper.alternate.pointer,
+            s.lower.current.index, unsigned(s.lower.current.type), s.lower.current.code, s.lower.current.pointer,
+            s.lower.queued.index, unsigned(s.lower.queued.type), s.lower.queued.code, s.lower.queued.pointer,
+            s.lower.alternate.index, unsigned(s.lower.alternate.type), s.lower.alternate.code, s.lower.alternate.pointer);
+        LogFormat("upper_phase_observe=records; serial=%llu; upper_flags=%s; lower_flags=%s; upper_record=%s; lower_record=%s; mask6_acceptance=0\r\n",
+            o.serial, upper_flags, lower_flags, upper_record, lower_record);
+    }
+}
+void PublishUpperEndOwner(const char* buffer, std::size_t size, const pd::Clock& clock, bool manual_trial, bool manual_safe) noexcept {
+    // Drain terminal receipts before a failed lease refresh revokes them.
+    DrainUpperIdleReceipts();
+    if (!upper_end::Compiled()) return;
+    const auto& mission = partner_driver.mission;
+    const auto& settings = partner_driver.settings;
+    unsigned short live_mission = 0; partner::Tick tick{};
+    const bool context = mgscoop::partner_upper_probe::Installed() && offline_enabled && lab_active && lab::SavesRedirected() &&
+        partner_on && partner_gate_ok && archive_mounted && host_source_selected && allocation_enabled && OnRuntimeThread() &&
+        !mission_terminating && !termination_scope.Active() && !gameplay_restore_pending && !HasDynamiteSessionOwnership() &&
+        ReadMission(live_mission) && live_mission == partner_mission && live_mission == allocation_mission &&
+        mgscoop::SupportsPartnerBody(live_mission) && mission.cfg_ready && !mission.stopped &&
+        mission.mission_code == live_mission && mission.realized && mission.parts_loaded && !mission.range_hidden &&
+        !mission.range_needs_place && !mission.lost_hidden && !mission.native_disabled && !mission.input_faulted &&
+        settings.stage >= 3 && partner::ParseTick(buffer, size, tick);
+    if (!context) { ClearUpperEndOwner(); return; }
+    if (upper_end_owner.active && (upper_end_owner.body_epoch != mission.body_epoch ||
+        upper_end_owner.mission != live_mission || upper_end_owner.thread != mission_thread)) ClearUpperEndOwner();
+    if (!upper_end_owner.active) {
+        if (upper_end_owner.generation == UINT64_MAX) return;
+        ++upper_end_owner.generation;
+    }
+    const upper_end::Owner owner{upper_end_owner.generation, mission.body_epoch, live_mission, mission_thread,
+        tick.equip_id, tick.stance, tick.action_flags};
+    if (!upper_end::PublishOwner(owner, GetCurrentThreadId(), clock.tick_ms)) { ClearUpperEndOwner(); return; }
+    // A new manual reply renews only remote read-observation budget. The local
+    // End lease/generation and every native playback permission remain unchanged.
+    if (upper_phase::Compiled()) {
+        if (manual_trial || (upper_phase_owner.active && (upper_phase_owner.body_epoch != mission.body_epoch ||
+            upper_phase_owner.mission != live_mission || upper_phase_owner.thread != mission_thread))) ClearUpperPhaseOwner();
+        bool phase_ok = upper_phase::Installed();
+        if (!upper_phase_owner.active) {
+            if (upper_phase_owner.generation == UINT64_MAX) phase_ok = false;
+            else ++upper_phase_owner.generation;
+        }
+        auto phase_owner = owner; phase_owner.generation = upper_phase_owner.generation;
+        phase_ok = phase_ok && upper_phase::PublishGhostOwner(phase_owner, GetCurrentThreadId(), clock.tick_ms);
+        if (phase_ok) {
+            upper_phase_owner.active = true; upper_phase_owner.body_epoch = mission.body_epoch;
+            upper_phase_owner.mission = live_mission; upper_phase_owner.thread = mission_thread;
+            if (manual_trial) LogFormat("upper_phase_observe=manual_window; gen=%llu; epoch=%llu; owner=%u; read_only=1; native_submission=0\r\n",
+                phase_owner.generation, phase_owner.body_epoch, phase_owner.owner_thread);
+        } else ClearUpperPhaseOwner();
+    }
+    if (upper_idle::Compiled()) {
+        if (!manual_safe || !upper_phase::Installed()) ClearUpperIdleOwner();
+        else {
+            if (upper_idle_owner.active && (upper_idle_owner.body_epoch != mission.body_epoch ||
+                upper_idle_owner.mission != live_mission || upper_idle_owner.thread != mission_thread)) ClearUpperIdleOwner();
+            bool idle_ok = true;
+            if (!upper_idle_owner.active) {
+                if (upper_idle_owner.generation == UINT64_MAX) idle_ok = false;
+                else ++upper_idle_owner.generation;
+            }
+            auto idle_owner = owner; idle_owner.generation = upper_idle_owner.generation;
+            idle_ok = idle_ok && upper_idle::PublishOwner(idle_owner, GetCurrentThreadId(), clock.tick_ms);
+            if (!idle_ok) ClearUpperIdleOwner();
+            else {
+                upper_idle_owner.active = true; upper_idle_owner.body_epoch = mission.body_epoch;
+                upper_idle_owner.mission = live_mission; upper_idle_owner.thread = mission_thread;
+                if (upper_idle_requested) {
+                    upper_idle_requested = false;
+                    const bool armed = upper_idle_nonce != UINT64_MAX && upper_idle::Arm(++upper_idle_nonce, GetCurrentThreadId(), clock.tick_ms);
+                    LogFormat("upper_manual_idle=arm; command=%llu; gen=%llu; armed=%u; body=1; channel=2; state=c1a2050d3802; blend=0; option=0; dm_changed=0; automatic_capability=0\r\n",
+                        upper_idle_nonce, idle_owner.generation, armed ? 1u : 0u);
+                }
+            }
+        }
+    }
+    upper_end_owner.active = true; upper_end_owner.body_epoch = mission.body_epoch;
+    upper_end_owner.mission = live_mission; upper_end_owner.thread = mission_thread;
+    // Independent of DM replies, finite lower clips, manual probe TLS and
+    // remote event consumption. This publishes read authority only.
+    DrainUpperEndObservations(); DrainUpperPhaseObservations();
+}
+
 void PartnerMissionStart(std::uint32_t mission) noexcept {
+    ClearUpperEndOwner();
     if (!partner_on) return;
     mgscoop::debug_menu::BeginMission(mission);
     pd::MissionStart(partner_driver, partner_hooks, mission);
@@ -605,6 +826,7 @@ void PartnerMissionStart(std::uint32_t mission) noexcept {
     mgscoop::crash_probe::SetContext(partner_driver.settings.stage, 0, PartnerCtxFlags());
 }
 void PartnerMissionEnd() noexcept {
+    ClearUpperEndOwner();
     if (!partner_on) return;
     mgscoop::debug_menu::EndMission();
     pd::MissionEnd(partner_driver, partner_hooks);
@@ -662,10 +884,39 @@ const char* HandlePartnerStop() noexcept {
     static constexpr char yes[]="return true";
     // Sent from OnTerminate after MISSION_TERMINATING: allowed while terminating.
     if (!OnRuntimeThread() && !OnTerminationThread()) return nullptr;
+    ClearUpperEndOwner();
     pd::Stop(partner_driver, partner_hooks, mgscoop::GetLabConfig().partner_teardown, mission_terminating);
+    mgscoop::partner_net::ClearLocalActions();
     mgscoop::partner_net::ResetRemote();
     mgscoop::crash_probe::SetContext(0, partner_driver.mission.realized ? 1u : 0u, PartnerCtxFlags());
     return yes;
+}
+
+void ObserveRemoteActionEvents() noexcept {
+    if (!mgscoop::partner_net::ActionEventsCompiled() || !OnRuntimeThread()) return;
+    mgscoop::partner_net::ActionSample sample{};
+    if (!mgscoop::partner_net::SampleActions(partner_mission, sample) || !sample.fresh) return;
+    const auto& event = sample.receipt;
+    if (event.status == mgscoop::partner_actions::ReceiptStatus::duplicate ||
+        event.status == mgscoop::partner_actions::ReceiptStatus::rejected) return;
+    static std::uint32_t generation = 0, mission = 0, flags = UINT32_MAX;
+    static unsigned lines = 0;
+    if (mission != event.context.mission || generation != event.context.generation) {
+        mission = event.context.mission; generation = event.context.generation;
+        flags = UINT32_MAX; lines = 0;
+    }
+    const bool changed = flags != event.flags;
+    flags = event.flags;
+    if (!changed && !event.count && !event.expired &&
+        event.status != mgscoop::partner_actions::ReceiptStatus::history_gap) return;
+    if (lines++ >= 96) return;
+    LogFormat("partner_action_events=rx; mission=%u; generation=%u; equip=%u; stance=%u; flags=0x%x; sequence=%u; status=%u; count=%u; expired=%u; age_ms=%u; fire_source=%u; reload_source=%u; engine_accepted=unverified\r\n",
+        unsigned(mission),unsigned(generation),unsigned(event.context.equip),unsigned(event.context.stance),
+        unsigned(event.flags),unsigned(event.sequence),unsigned(event.status),unsigned(event.count),unsigned(event.expired),
+        unsigned(sample.age_ms),unsigned(event.context.fire_source),unsigned(event.context.reload_source));
+    for (unsigned i=0;i<event.count;++i)
+        LogFormat("partner_action_event=rx; mission=%u; generation=%u; token=%u; tick=%u; kind=%u; engine_accepted=unverified\r\n",
+            unsigned(mission),unsigned(generation),unsigned(event.events[i].token),unsigned(event.events[i].tick_ms),unsigned(event.events[i].kind));
 }
 
 // The per-frame tick. Returns the quiet reply, or nullptr to leave the literal
@@ -680,16 +931,135 @@ const char* HandlePartnerStop() noexcept {
 const char* HandlePartnerTick(const char* buffer, std::size_t size) noexcept {
     if (!OnRuntimeThread()) return nullptr;
     const std::uint64_t started_us = QpcMicros();
+    const auto upper_body_epoch = partner_driver.mission.body_epoch;
     partner::Reply reply{};
     const pd::Clock clock{mgscoop::partner_net::NowMs(), GetTickCount64()};
-    if (!pd::Tick(partner_driver, partner_hooks, mgscoop::GetLabConfig(), buffer, size, clock, mission_terminating, reply))
-        return nullptr;
-    if (!partner::FormatReply(reply, partner_reply, sizeof(partner_reply))) return nullptr;
+    if (!pd::Tick(partner_driver, partner_hooks, mgscoop::GetLabConfig(), buffer, size, clock, mission_terminating, reply)) {
+        ClearUpperEndOwner(); return nullptr;
+    }
+    ObserveRemoteActionEvents();
+    if (!partner::FormatReply(reply, partner_reply, sizeof(partner_reply))) {
+        ClearUpperEndOwner(); mgscoop::partner_upper_probe::Clear("reply_format"); return nullptr;
+    }
+    const auto manual_invalid_ops = partner::op::dm_play | partner::op::dm_stop | partner::op::warp |
+        partner::op::set_parts_explicit | partner::op::set_all_active;
+    const bool manual_idle_safe = partner_driver.mission.body_epoch == upper_body_epoch &&
+        !partner_driver.mission.dmmap_prev_look && !partner_driver.mission.look_verify && !partner_driver.mission.input_armed &&
+        partner_driver.settings.input == mgscoop::PartnerInput::off && partner_driver.settings.anim == mgscoop::PartnerAnim::off &&
+        !(reply.op & manual_invalid_ops);
+    PublishUpperEndOwner(buffer, size, clock,
+        partner_driver.settings.dm == mgscoop::PartnerDm::on && (reply.op & partner::op::dm_play), manual_idle_safe);
+    const auto& upper_mission = partner_driver.mission;
+    const auto& upper_settings = partner_driver.settings;
+    const bool upper_context = !mission_terminating && upper_mission.cfg_ready && !upper_mission.stopped &&
+        upper_mission.mission_code == partner_mission && upper_mission.realized && upper_mission.parts_loaded &&
+        !upper_mission.range_hidden && !upper_mission.range_needs_place && !upper_mission.lost_hidden &&
+        !upper_mission.native_disabled && !upper_mission.input_faulted && !upper_mission.input_armed &&
+        upper_settings.stage >= 3 && upper_settings.dm == mgscoop::PartnerDm::on &&
+        upper_settings.input == mgscoop::PartnerInput::off && upper_settings.anim == mgscoop::PartnerAnim::off;
+    const auto upper_invalid_ops = partner::op::dm_stop | partner::op::warp | partner::op::set_parts_explicit |
+                                   partner::op::set_all_active;
+    const bool upper_look_changed = upper_mission.dmmap_prev_look;
+    if (!upper_context || upper_mission.body_epoch != upper_body_epoch || upper_look_changed || (reply.op & upper_invalid_ops))
+        mgscoop::partner_upper_probe::Clear("owner_context");
+    if (upper_context && !upper_look_changed && !(reply.op & upper_invalid_ops) && (reply.op & partner::op::dm_play) &&
+        mgscoop::partner_upper_probe::RequestCode(reply.gani)) {
+        // Unique request generation spans mission epochs; only the established
+        // natural mission owner reaches this branch. Overflow disables arming.
+        static std::uint64_t upper_request_generation = 0;
+        if (upper_request_generation != UINT64_MAX)
+            mgscoop::partner_upper_probe::ArmRequest(++upper_request_generation, partner_mission, mission_thread, reply.gani,
+                mgscoop::partner_upper_probe::RewriteCompiled() &&
+                upper_mission.dmmap.phase == mgscoop::partner_dmmap::Phase::idle && !upper_mission.dmmap.owned);
+        else mgscoop::partner_upper_probe::Clear("generation_exhausted");
+    }
     mgscoop::crash_probe::SetContext(partner_driver.settings.stage, partner_driver.mission.realized ? 1u : 0u, PartnerCtxFlags());
     mgscoop::partner_net::PublishPartnerState(partner_driver.mission.realized, partner_driver.mission.parts_loaded, partner_mission);
     const std::uint64_t ended_us = QpcMicros();
     mgscoop::partner_net::RecordNativeMicros(Clamp32(ended_us >= started_us ? ended_us - started_us : 0));
     return partner_reply;
+}
+
+void ObserveEquipmentVtables() noexcept {
+#ifdef MGS_LOCAL_OFFLINE_EQUIPMENT_TEST
+    static std::uint32_t observed_epoch=UINT32_MAX;
+    const auto& mission=partner_driver.mission;
+    if(observed_epoch==mission.body_epoch || !offline_enabled || !lab_active || !lab::SavesRedirected() ||
+       !partner_gate_ok || !OnRuntimeThread() || mission_terminating || gameplay_restore_pending ||
+       HasDynamiteSessionOwnership() || !mgscoop::SupportsPartnerBody(partner_mission) ||
+       !mission.parts_loaded || !mission.realized) return;
+    pp::State state{};
+    pp::DmTargets targets{};
+    if(pp::ReadState(partner_addresses,state)!=pp::Refusal::none || !state.arrays_ok ||
+       state.count!=2 || state.local!=0 || state.ids[1]!=1 || !pp::Realized(state,1) ||
+       state.parts[1]!=3 || pp::ResolveDm(partner_addresses,state,targets)) return;
+    const auto read=[](std::uintptr_t at,std::uintptr_t& value) noexcept {
+        value=0; SIZE_T count=0;
+        return at && at<=UINTPTR_MAX-sizeof(value) &&
+            ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<void*>(at),&value,sizeof(value),&count) && count==sizeof(value);
+    };
+    const auto base=reinterpret_cast<std::uintptr_t>(game_base);
+    const auto rva=[&](std::uintptr_t at) noexcept { return at>=base && at-base<game_span ? at-base : 0u; };
+    const auto method=[&](std::uintptr_t object,std::size_t slot,std::uintptr_t& vt,std::uintptr_t& fn) noexcept {
+        std::uintptr_t table=0,target=0; vt=fn=0;
+        if(!read(object,table) || !rva(table) || table>UINTPTR_MAX-slot || !read(table+slot,target)) return;
+        vt=rva(table); fn=rva(target);
+    };
+    std::uintptr_t resource=0,resource_vt=0,resource_fn=0,blocks=0,block_buffer=0;
+    if(state.P>UINTPTR_MAX-0xa20 || !read(state.P+0x48,resource) || !read(state.P+0x50,blocks) ||
+       !read(state.P+0x378,block_buffer) || !resource || !blocks || !block_buffer ||
+       block_buffer>UINTPTR_MAX-0x6a8) return;
+    method(resource,0x1b8,resource_vt,resource_fn);
+    if(!resource_vt || !resource_fn) return;
+    // Exact ChangeEquip reads table[pool] (11AC35E). ResolveDm independently
+    // validates remote block identity. Only log local/remote methods; no call.
+    observed_epoch=mission.body_epoch;
+    for(unsigned i=0;i<2;++i) {
+        if(!pp::Realized(state,i) || state.pool[i]>=2 || state.ids[i]!=i || state.parts[i]!=3) return;
+        std::uintptr_t block=0;
+        if(blocks>UINTPTR_MAX-8u*state.pool[i] || !read(blocks+8u*state.pool[i],block) || !block ||
+           block!=block_buffer+std::uintptr_t(state.pool[i])*0x6a8 ||
+           (i==1 && block!=targets.blk1) || block>UINTPTR_MAX-0xf8) return;
+        std::uintptr_t predicate=0,writer=0,predicate_vt=0,predicate_fn=0,writer_vt=0,writer_fn=0;
+        read(block+0x70,predicate); read(block+0xf0,writer);
+        method(predicate,0x30,predicate_vt,predicate_fn); method(writer,0x28,writer_vt,writer_fn);
+        LogFormat("equipment_vtables; epoch=%u; instance=%u; id=%u; pool=%u; resource_vt=%llx; resource_1b8=%llx; predicate_vt=%llx; predicate_30=%llx; writer_vt=%llx; writer_28=%llx; read_only=1; remote_readiness=unverified\r\n",
+            unsigned(mission.body_epoch),i,unsigned(state.ids[i]),unsigned(state.pool[i]),
+            static_cast<unsigned long long>(resource_vt),static_cast<unsigned long long>(resource_fn),
+            static_cast<unsigned long long>(predicate_vt),static_cast<unsigned long long>(predicate_fn),
+            static_cast<unsigned long long>(writer_vt),static_cast<unsigned long long>(writer_fn));
+    }
+#endif
+}
+
+
+// Separate opt-in, one-shot stock46 instance1 equipment experiment. This runs
+// under the existing receipt lock on the natural mission owner, never a worker.
+void ObserveStock46Writer() noexcept {
+#ifdef MGS_LOCAL_STOCK46_WRITER_TEST
+    mgscoop::equipment_stock_writer::Context context{};
+    const auto& mission=partner_driver.mission;
+    context.enabled=true;context.owner=OnRuntimeThread();
+    context.mission=partner_mission;context.body_epoch=mission.body_epoch;
+    context.base=reinterpret_cast<std::uintptr_t>(game_base);context.image_span=game_span;
+    context.preload_queued=stock46_authorization.QueuedFor(partner_mission);
+    unsigned short current_mission=0;
+    context.offline_gates=offline_enabled && lab_active && lab::SavesRedirected() &&
+        allocation_enabled && archive_mounted && host_source_selected && partner_on && partner_gate_ok &&
+        !mission_terminating && !termination_scope.Active() && !gameplay_restore_pending &&
+        !HasDynamiteSessionOwnership() && ReadMission(current_mission) &&
+        current_mission==30010 && current_mission==partner_mission && current_mission==allocation_mission;
+    pp::State state{};pp::DmTargets targets{};
+    if(context.owner && context.offline_gates && mission.parts_loaded && mission.realized &&
+       pp::ReadState(partner_addresses,state)==pp::Refusal::none && state.vars_ok && state.arrays_ok &&
+       state.count==2 && state.local==0 && (state.flags&1u) && !(state.flags&0x100u) && !state.sync &&
+       state.ids[0]==0 && state.ids[1]==1 && state.pool[0]==0 && state.pool[1]==1 &&
+       state.parts[0]==3 && state.parts[1]==3 && pp::Realized(state,0) && pp::Realized(state,1) &&
+       !pp::ResolveDm(partner_addresses,state,targets)) {
+        context.body_ready=true;context.player=state.P;context.remote_block=targets.blk1;
+    }
+    mgscoop::equipment_stock_writer::Observe(context,Log);
+#endif
 }
 
 void PublishDebugSnapshot() noexcept {
@@ -699,15 +1069,22 @@ void PublishDebugSnapshot() noexcept {
     static std::uint64_t published_ms = 0;
     if (now >= published_ms && now - published_ms < 100) return;
     published_ms = now;
+    ObserveEquipmentVtables();
+    ObserveStock46Writer();
     debug::Snapshot snapshot{};
     const auto& settings = partner_driver.settings;
     const auto& mission = partner_driver.mission;
     const auto& config = mgscoop::GetLabConfig();
     const auto link = mgscoop::partner_net::GetLinkInfo();
+    const auto world_status = mgscoop::world_link::GetStatus();
     snapshot.tick_ms = now;
     snapshot.mission = partner_mission;
     snapshot.stage = settings.stage;
-    snapshot.world_level = config.world;
+    snapshot.world_level = world_status.configured ? world_status.level : config.world;
+    snapshot.world_configured = world_status.configured;
+    snapshot.world_paired = world_status.paired;
+    snapshot.world_link_up = world_status.link_up;
+    snapshot.world_effective = world_status.effective;
     snapshot.realized = mission.realized;
     snapshot.parts_loaded = mission.parts_loaded;
     snapshot.range_hidden = mission.range_hidden;
@@ -750,6 +1127,31 @@ void PublishDebugSnapshot() noexcept {
     }
     const auto sample = mgscoop::partner_net::SampleRemote(snapshot.interp_ms);
     snapshot.remote_age_ms = sample.age_ms;
+    snapshot.remote_action_flags = sample.flags;
+    snapshot.remote_equip = sample.equip_id;
+    snapshot.remote_act = sample.anim_valid ? sample.act : 0;
+    snapshot.mapped_clip = mission.dmmap.cur;
+    snapshot.motion_count = MountedPlayerMotionCount();
+    // Change-only action receipts expose actual received gun intent during
+    // copied-save gameplay, including when the overlay closes on focus loss.
+    // The display's intent bits do not establish accepted weapon behavior.
+    static std::uint64_t action_epoch = UINT64_MAX;
+    static std::uint32_t action_bits = UINT32_MAX, action_equip = UINT32_MAX;
+    static unsigned action_lines = 0;
+    if (action_epoch != mission.body_epoch) {
+        action_epoch = mission.body_epoch;
+        action_bits = action_equip = UINT32_MAX;
+        action_lines = 0;
+    }
+    const auto gun_bits = sample.valid && sample.status == mgscoop::pose::Status::live
+        ? sample.flags & (mgscoop::sync::ActionFlag::Aiming | mgscoop::sync::ActionFlag::Firing | mgscoop::sync::ActionFlag::Reloading) : 0u;
+    const auto gun_equip = sample.valid && sample.status == mgscoop::pose::Status::live ? sample.equip_id : 0u;
+    if (gun_bits != action_bits || gun_equip != action_equip) {
+        action_bits = gun_bits; action_equip = gun_equip;
+        if (action_lines++ < 64)
+            LogFormat("partner_action_state; mission=%u; flags=0x%x; equip=%u; act=%u; age_ms=%u; engine_accepted=unverified\r\n",
+                unsigned(partner_mission), unsigned(gun_bits), unsigned(gun_equip), unsigned(snapshot.remote_act), unsigned(sample.age_ms));
+    }
     debug::Publish(snapshot);
 }
 
@@ -762,25 +1164,33 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
     constexpr char log[] = "return 'MGS_COOP_DEBUG_LOG_V1' -- ";
     constexpr char state[] = "return 'MGS_COOP_DEBUG_STATE_V1' -- ";
     constexpr char partner_control[] = "return 'MGS_COOP_DEBUG_PARTNER_V1' -- ";
+    constexpr char enemy[] = "return 'MGS_COOP_DEBUG_ENEMY_V1' -- ";
     const bool is_command = size == sizeof(command) - 1 && std::memcmp(buffer, command, size) == 0;
     const bool is_log = size >= sizeof(log) - 1 && std::memcmp(buffer, log, sizeof(log) - 1) == 0;
     const bool is_state = size >= sizeof(state) - 1 && std::memcmp(buffer, state, sizeof(state) - 1) == 0;
     const bool is_partner = size >= sizeof(partner_control) - 1 && std::memcmp(buffer, partner_control, sizeof(partner_control) - 1) == 0;
-    if (!is_command && !is_log && !is_state && !is_partner) return false;
+    const bool is_enemy = size >= sizeof(enemy) - 1 && std::memcmp(buffer, enemy, sizeof(enemy) - 1) == 0;
+    if (!is_command && !is_log && !is_state && !is_partner && !is_enemy) return false;
     if (!OnRuntimeThread() && !(is_log || is_state ? OnTerminationThread() : false)) return false;
     const char* reply = "return nil";
     if (is_command) {
         PublishDebugSnapshot();
+        mgscoop::worker_debug::PollOwner();
         unsigned short read_mission = 0;
         debug::Command pending{};
         if (!mission_terminating && ReadMission(read_mission) && read_mission == partner_mission &&
             mgscoop::SupportsPartnerBody(read_mission) && debug::Pop(pending)) {
             const auto snapshot = debug::GetSnapshot();
             StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {id=%u,text=\"%s\",host=%s,paired=%s,mission=%u}", pending.id, pending.text,
-                snapshot.host ? "true" : "false", std::strcmp(snapshot.link_state, "connected") == 0 ? "true" : "false", partner_mission);
+                snapshot.host ? "true" : "false", snapshot.world_paired ? "true" : "false", partner_mission);
             reply = debug_reply;
             LogFormat("debug_menu=dispatch; id=%u; text=%s; generation=%u\r\n", pending.id, pending.text, pending.generation);
         }
+    } else if (is_enemy) {
+        unsigned short mission = 0;
+        const bool accepted = !mission_terminating && ReadMission(mission) && mission == partner_mission &&
+            mgscoop::SupportsPartnerBody(mission) && debug::EnemyReceipt(buffer, size);
+        reply = accepted ? "return true" : "return false";
     } else if (is_partner) {
         // The Lua owner emits this only after public gameplay/on-foot/demo checks.
         // Recheck native mission ownership before changing the partner driver.
@@ -829,6 +1239,262 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
     return true;
 }
 
+// Public Lua equipment allocation experiment. No direct native allocator or
+// equipment dispatch is called here; this receipt supplies a one-use boolean
+// to the already fingerprinted, natural TppMain.OnAllocate insertion.
+bool SelectOfflineEquipmentAllocationReceipt(const char* buffer,std::size_t size,const char* name,
+                                             mgscoop::script_bridge::Replacement& replacement) noexcept {
+    constexpr char query[]="return 'MGS_COOP_OFFLINE_EQUIPMENT_GROUPS_PREPLAYER_V2'";
+    if(!buffer || !name || size!=sizeof(query)-1 || std::memcmp(buffer,query,size)!=0 ||
+       std::strcmp(name,query)!=0) return false;
+    mgscoop::equipment_allocation_probe::Context context{};
+#ifdef MGS_LOCAL_OFFLINE_EQUIPMENT_TEST
+    context.enabled=true;
+#endif
+    context.offline=offline_enabled; context.lab=lab_active;
+    context.allocation=allocation_enabled; context.archive=archive_mounted;
+    context.host_source=host_source_selected; context.partner=partner_on; context.code_gate=partner_gate_ok;
+    context.saves_redirected=lab::SavesRedirected(); context.allocation_thread=OnAllocationThread();
+    context.terminating=termination_scope.Active(); context.native_session=HasDynamiteSessionOwnership();
+    context.cleanup_pending=gameplay_restore_pending;
+    unsigned short mission=0;
+    context.mission_read=ReadMission(mission); context.mission=mission;
+    context.supported_mission=mgscoop::SupportsPartnerBody(mission);
+    // PREPLAYER_V2 is emitted only after the protected exact-source Lua
+    // checks prove current selected package/direct-read, TPP and mission offline.
+    // Both archive hashes accepted by MountPlayerArchive contain two slots.
+    context.pre_player_source=true; context.requested_count=2;
+    pp::State state{};
+    pp::Refusal state_refusal=pp::Refusal::player_absent;
+    const bool sample=context.enabled && context.offline && context.lab && context.allocation && context.archive &&
+        context.host_source && context.partner && context.code_gate && context.saves_redirected &&
+        context.allocation_thread && !context.terminating && !context.native_session && !context.cleanup_pending &&
+        context.mission_read && mission==allocation_mission && context.supported_mission;
+    std::uintptr_t raw_player=0, manager=0, request_state=0;
+    std::uintptr_t groups[3]{}; std::uint32_t group_sizes[3]{};
+    const auto read=[&](std::uintptr_t object,std::size_t offset,auto& value) noexcept {
+        if(!object || object>UINTPTR_MAX-offset || object+offset>UINTPTR_MAX-sizeof(value)) return false;
+        SIZE_T copied=0;
+        return ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(object+offset),
+            &value,sizeof(value),&copied)!=0 && copied==sizeof(value);
+    };
+    if(sample) {
+        context.player_slot_read=read(partner_addresses.player_slot,0,raw_player);
+        context.player_slot_null=context.player_slot_read && !raw_player;
+        constexpr std::size_t manager_rva=0x2c1e3b0;
+        const bool manager_global=game_base && manager_rva<=game_span && sizeof(manager)<=game_span-manager_rva;
+        context.equipment_manager_ready=manager_global &&
+            read(reinterpret_cast<std::uintptr_t>(game_base),manager_rva,manager) && manager &&
+            read(manager,0xf0,request_state) && request_state &&
+            read(manager,0x48,groups[0]) && groups[0] && read(groups[0],0x18,group_sizes[0]) && group_sizes[0] &&
+            read(manager,0x50,groups[1]) && groups[1] && read(groups[1],0x18,group_sizes[1]) && group_sizes[1] &&
+            read(manager,0x58,groups[2]) && groups[2] && read(groups[2],0x18,group_sizes[2]) && group_sizes[2];
+        // Never treat the ambiguous ReadState=player_absent as a null proof.
+        // A non-null P must still satisfy every original strict actor guard.
+        if(context.player_slot_read && !context.player_slot_null) {
+            state_refusal=pp::ReadState(partner_addresses,state);
+            context.state_ok=state_refusal==pp::Refusal::none;
+            context.state_valid=(state.flags & 0x1u)!=0; context.state_online=(state.flags & 0x100u)!=0;
+            context.state_sync=state.sync!=0; context.count=state.count; context.local=state.local;
+        }
+    }
+    const char* reason=equipment_allocation_authorization.Try(context);
+    stock46_groups_authorized=reason==nullptr; stock46_groups_returned=false;
+    static constexpr char yes[]="return true",no[]="return false";
+    replacement=reason ? mgscoop::script_bridge::Replacement{no,sizeof(no)-1}
+                       : mgscoop::script_bridge::Replacement{yes,sizeof(yes)-1};
+    char line[640]{};
+    StringCchPrintfA(line,sizeof(line),"equipment_offline_probe=%s; reason=%s read_state=%s mission=%u allocation_mission=%u count=%u local=%u online=%u sync=%u requested_count=%u slot_read=%u slot_null=%u equipment_manager=%u group_sizes=%u,%u,%u attempt_consumed=%u public_calls=lua_only ghost_count=1 remote_gear_loaded=unverified\r\n",
+        reason ? "refused" : "authorized",reason ? reason : "ok",sample ? pp::RefusalName(state_refusal) : "not_sampled",
+        unsigned(mission),unsigned(allocation_mission),context.count,context.local,unsigned(context.state_online),
+        unsigned(context.state_sync),context.requested_count,unsigned(context.player_slot_read),unsigned(context.player_slot_null),
+        unsigned(context.equipment_manager_ready),group_sizes[0],group_sizes[1],group_sizes[2],
+        unsigned(equipment_allocation_authorization.Attempted()));
+    Log(line);
+    return true;
+}
+
+
+// One PUBLIC stock46 load request at the natural copied-save allocation owner.
+// Native performs read-only preflight/readback only; Lua owns the public call.
+bool Stock46AllocationOwner(unsigned short& mission) noexcept {
+    return offline_enabled && lab_active && allocation_enabled && archive_mounted &&
+        host_source_selected && partner_on && partner_gate_ok && lab::SavesRedirected() &&
+        OnAllocationThread() && !termination_scope.Active() && !gameplay_restore_pending &&
+        !HasDynamiteSessionOwnership() && ReadMission(mission) &&
+        mission==30010 && mission==allocation_mission;
+}
+bool SelectStock46PreloadReceipt(const char* buffer,std::size_t size,const char* name,
+                               mgscoop::script_bridge::Replacement& replacement) noexcept {
+    constexpr char query[]="return 'MGS_COOP_REMOTE_STOCK46_PRELOAD_QUERY_V1'";
+    constexpr char returned[]="return 'MGS_COOP_REMOTE_STOCK46_PRELOAD_RETURNED_V1'";
+    constexpr char failed[]="return 'MGS_COOP_REMOTE_STOCK46_PRELOAD_FAILED_V1'";
+    const auto equals=[&](const char* value,std::size_t bytes) noexcept {
+        return buffer && name && size==bytes && std::memcmp(buffer,value,bytes)==0 && std::strcmp(name,value)==0;
+    };
+    const bool is_query=equals(query,sizeof(query)-1),is_returned=equals(returned,sizeof(returned)-1);
+    if(!is_query && !is_returned && !equals(failed,sizeof(failed)-1)) return false;
+    bool enabled=false;
+#ifdef MGS_LOCAL_STOCK46_PRELOAD_TEST
+    enabled=true;
+#endif
+    unsigned short mission=0;
+    const bool owner=enabled && Stock46AllocationOwner(mission);
+    const auto reader=[](std::uintptr_t address,void* destination,std::size_t bytes) noexcept {
+        if(!address || address>UINTPTR_MAX-bytes) return false;
+        SIZE_T copied=0;
+        return ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(address),
+            destination,bytes,&copied)!=0 && copied==bytes;
+    };
+    auto read=reader;
+    static constexpr char yes[]="return true",no[]="return false";
+    if(is_query) {
+        mgscoop::equipment_stock_probe::Context context{};
+        context.enabled=enabled; context.allocation_owner=OnAllocationThread();
+        context.mission_read=ReadMission(mission); context.mission=mission;
+        context.offline_owner_gates=owner;
+        context.groups_authorized=stock46_groups_authorized; context.groups_returned=stock46_groups_returned;
+        mgscoop::equipment_stock_contract::Snapshot candidate{};
+        const char* sample_reason="not_sampled";
+        if(owner && stock46_groups_authorized && stock46_groups_returned)
+            sample_reason=mgscoop::equipment_stock_contract::Capture(
+                reinterpret_cast<std::uintptr_t>(game_base),game_span,read,candidate);
+        context.preflight_ok=sample_reason==nullptr;
+        const char* reason=stock46_authorization.Try(context);
+        if(!reason) stock46_before=candidate;
+        replacement=reason ? mgscoop::script_bridge::Replacement{no,sizeof(no)-1}
+                           : mgscoop::script_bridge::Replacement{yes,sizeof(yes)-1};
+        LogFormat("stock46_preload=%s; reason=%s preflight=%s mission=%u owner=%u groups_authorized=%u groups_returned=%u queue_count=%u queue_capacity=%u cache_index=4 cache_refs=%u attempt_consumed=%u public_calls=lua_only equip=46 packages_loaded=unverified remote_gear_loaded=unverified\r\n",
+            reason ? "refused" : "authorized",reason ? reason : "ok",sample_reason ? sample_reason : "ok",
+            unsigned(mission),unsigned(owner),unsigned(stock46_groups_authorized),unsigned(stock46_groups_returned),
+            candidate.queue_count,candidate.queue_capacity,candidate.cache_refs,unsigned(stock46_authorization.Attempted()));
+    } else {
+        mgscoop::equipment_stock_contract::Snapshot after{};
+        const char* sample_reason="not_sampled";
+        if(owner && is_returned && stock46_groups_authorized && stock46_groups_returned)
+            sample_reason=mgscoop::equipment_stock_contract::Verify(
+                reinterpret_cast<std::uintptr_t>(game_base),game_span,read,stock46_before,after);
+        const bool accepted=stock46_authorization.Receipt(owner,mission,is_returned,sample_reason==nullptr);
+        replacement=accepted ? mgscoop::script_bridge::Replacement{yes,sizeof(yes)-1}
+                             : mgscoop::script_bridge::Replacement{no,sizeof(no)-1};
+        LogFormat("stock46_preload=%s; readback=%s mission=%u public_returned=%u queue_before=%u queue_after=%u hash_mask=%u cache_unchanged=%u public_calls=lua_only equip=46 packages_loaded=unverified remote_gear_loaded=unverified\r\n",
+            accepted ? "queued_verified" : "receipt_refused",sample_reason ? sample_reason : "ok",unsigned(mission),
+            unsigned(is_returned),stock46_before.queue_count,after.queue_count,after.seen_hashes,unsigned(sample_reason==nullptr));
+    }
+    return true;
+}
+
+bool SelectEquipmentObservationReceipt(const char* buffer,std::size_t size,const char* name,
+                                      mgscoop::script_bridge::Replacement& replacement) noexcept {
+    constexpr char query[]="return 'MGS_COOP_EQUIPMENT_OBSERVATION_QUERY_V1'";
+    constexpr char receipt[]="return 'MGS_COOP_EQUIPMENT_OBSERVATION_RECEIPT_V1' -- ";
+    const bool is_query=buffer && size==sizeof(query)-1 && std::memcmp(buffer,query,size)==0;
+    const bool is_receipt=buffer && size>sizeof(receipt)-1 && size<768 && std::memcmp(buffer,receipt,sizeof(receipt)-1)==0;
+    if((!is_query && !is_receipt) || !name || std::strlen(name)!=size || std::memcmp(buffer,name,size)!=0) return false;
+    static constexpr char no[]="return nil",yes[]="return true";
+    replacement={no,sizeof(no)-1};
+    bool ready=false;
+    unsigned short mission=0;
+#ifdef MGS_LOCAL_OFFLINE_EQUIPMENT_TEST
+    pp::State state{};
+    ready=offline_enabled && lab_active && lab::SavesRedirected() && partner_on && partner_gate_ok &&
+        archive_mounted && host_source_selected && OnRuntimeThread() && !mission_terminating &&
+        !gameplay_restore_pending && !HasDynamiteSessionOwnership() && ReadMission(mission) &&
+        mission==partner_mission && mgscoop::SupportsPartnerBody(mission) &&
+        pp::ReadState(partner_addresses,state)==pp::Refusal::none && state.count==2 && state.local==0 &&
+        (state.flags & 1u) && !(state.flags & 0x100u) && !state.sync && state.vars_ok;
+#endif
+    if(is_query) {
+        equipment_observation_requested_ms=0; equipment_observation_mission=0;
+#ifdef MGS_LOCAL_OFFLINE_EQUIPMENT_TEST
+        static constexpr char waiting[]="return false";
+        replacement={waiting,sizeof(waiting)-1};
+#endif
+        if(ready) {
+            equipment_observation_requested_ms=GetTickCount64(); equipment_observation_mission=mission;
+            replacement={equipment_observation_source,sizeof(equipment_observation_source)-1};
+        }
+        return true;
+    }
+    const auto now=GetTickCount64();
+    const bool pending=equipment_observation_requested_ms && now>=equipment_observation_requested_ms &&
+        now-equipment_observation_requested_ms<=2000 && mission==equipment_observation_mission;
+    equipment_observation_requested_ms=0; equipment_observation_mission=0;
+    if(!ready || !pending) return true;
+    const auto payload=buffer+sizeof(receipt)-1;
+    const auto payload_size=size-(sizeof(receipt)-1);
+    char prefix[80]{};
+    StringCchPrintfA(prefix,sizeof(prefix),"MGS_COOP_EQUIPMENT_OBSERVATION_V1;mission=%u;",unsigned(mission));
+    const auto prefix_size=std::strlen(prefix);
+    if(payload_size<=prefix_size || std::memcmp(payload,prefix,prefix_size)!=0) return true;
+    for(std::size_t i=0;i<payload_size;++i) {
+        const auto c=static_cast<unsigned char>(payload[i]);
+        if(!((c>='0' && c<='9') || (c>='A' && c<='Z') || (c>='a' && c<='z') || c=='_' || c=='=' || c==';' || c==',' || c=='?')) return true;
+    }
+    LogFormat("equipment_observation=%.*s\r\n",int(payload_size),payload);
+    replacement={yes,sizeof(yes)-1};
+    return true;
+}
+
+// Separate raw-event data experiment. It cannot enable a native gun backend.
+// A source-owned natural Lua owner must pass the offline copied-save gate on
+// every receipt; packet context never supplies game mission authorization.
+bool SelectActionEventsReceipt(const char* buffer,std::size_t size,const char* name,
+                               mgscoop::script_bridge::Replacement& replacement) noexcept {
+    constexpr char query[]="return 'MGS_COOP_ACTION_EVENTS_CFG_V1'";
+    constexpr char clear[]="return 'MGS_COOP_ACTION_EVENTS_CLEAR_V1'";
+    constexpr char receipt[]="return 'MGS_COOP_PARTNER_ACTIONS_V1' -- ";
+    const bool is_query=buffer && size==sizeof(query)-1 && std::memcmp(buffer,query,size)==0;
+    const bool is_clear=buffer && size==sizeof(clear)-1 && std::memcmp(buffer,clear,size)==0;
+    const bool is_receipt=buffer && size>sizeof(receipt)-1 && size<=512 && std::memcmp(buffer,receipt,sizeof(receipt)-1)==0;
+    if((!is_query && !is_clear && !is_receipt) || !name || std::strlen(name)!=size || std::memcmp(buffer,name,size)!=0) return false;
+    static constexpr char disabled[]="return nil",yes[]="return true",no[]="return false";
+    replacement={disabled,sizeof(disabled)-1};
+    debug_quiet=true;
+    if(!mgscoop::partner_net::ActionEventsCompiled()) return true;
+    replacement={no,sizeof(no)-1};
+    const bool owner=OnRuntimeThread();
+    if(is_clear) {
+        if((owner || OnTerminationThread()) && offline_enabled && lab_active && lab::SavesRedirected()) {
+            mgscoop::partner_net::ClearLocalActions(); replacement={yes,sizeof(yes)-1};
+        }
+        return true;
+    }
+    unsigned short mission=0;
+    pp::State state{};
+    const bool ready=owner && offline_enabled && lab_active && lab::SavesRedirected() &&
+        partner_on && partner_gate_ok && archive_mounted && host_source_selected && !mission_terminating &&
+        !gameplay_restore_pending && !HasDynamiteSessionOwnership() && ReadMission(mission) &&
+        mission==partner_mission && mgscoop::SupportsPartnerBody(mission) &&
+        pp::ReadState(partner_addresses,state)==pp::Refusal::none && state.count==2 && state.local==0 &&
+        (state.flags & 1u) && !(state.flags & 0x100u) && !state.sync && state.vars_ok;
+    if(!ready) { if(owner) mgscoop::partner_net::ClearLocalActions(); return true; }
+    if(is_query) {
+        replacement={yes,sizeof(yes)-1};
+        LogFormat("partner_action_events=authorized; mission=%u; owner=%lu; native_playback=0\r\n",unsigned(mission),GetCurrentThreadId());
+        return true;
+    }
+    mgscoop::partner_actions::Payload payload{};
+    const bool accepted=mgscoop::partner_actions::DecodeReceipt(buffer,size,payload) && payload.mission==mission &&
+        mgscoop::partner_net::SetLocalActions(payload);
+    if(!accepted) { mgscoop::partner_net::ClearLocalActions(); return true; }
+    replacement={yes,sizeof(yes)-1};
+    static std::uint32_t logged_mission=0, generation=0, cursor=UINT32_MAX, flags=UINT32_MAX;
+    static unsigned lines=0;
+    if(logged_mission!=payload.mission || generation!=payload.generation) {
+        logged_mission=payload.mission; generation=payload.generation; cursor=flags=UINT32_MAX; lines=0;
+    }
+    if(cursor!=payload.cursor || flags!=payload.flags) {
+        cursor=payload.cursor; flags=payload.flags;
+        if(lines++<96)
+            LogFormat("partner_action_events=local; mission=%u; generation=%u; equip=%u; stance=%u; flags=0x%x; fire_count=%u; reload_count=%u; cursor=%u; history=%u; fire_source=%u; reload_source=%u; native_playback=0\r\n",
+                unsigned(payload.mission),unsigned(payload.generation),unsigned(payload.equip),unsigned(payload.stance),unsigned(payload.flags),
+                unsigned(payload.fire_count),unsigned(payload.reload_count),unsigned(payload.cursor),unsigned(payload.count),
+                unsigned(payload.fire_source),unsigned(payload.reload_source));
+    }
+    return true;
+}
+
 bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
                            mgscoop::script_bridge::Replacement& replacement) noexcept {
     if(!host_source_selected || !buffer || !name || size>=96 ||
@@ -847,14 +1513,20 @@ bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
         unsigned short mission=0;
         if(mission_phase==MissionPhase::idle && !termination_scope.Active() && !HasDynamiteSessionOwnership() && ReadMission(mission) &&
            TransferRuleThread(cleanup_thread ? cleanup_thread : mission_thread)) {
+            ClearUpperEndOwner(); mgscoop::partner_upper_probe::Clear("allocation_enter");
             allocation_thread=GetCurrentThreadId(); allocation_mission=mission;
             cleanup_thread=0;
             initialization_scope.Reset();
             mission_phase=MissionPhase::allocating; accepted=true;
+            equipment_allocation_authorization.Begin(mission);
+            stock46_authorization.Begin(mission); stock46_before={};
+            mgscoop::equipment_stock_writer::BeginAllocation(mission);
+            stock46_groups_authorized=stock46_groups_returned=false;
+            equipment_observation_requested_ms=0; equipment_observation_mission=0;
         }
     } else if(equals(end)) {
         boundary="allocation_returned";
-        if(OnAllocationThread()) { mission_phase=MissionPhase::allocated; accepted=true; }
+        if(OnAllocationThread()) { equipment_allocation_authorization.End(); stock46_authorization.SealAllocation(); mission_phase=MissionPhase::allocated; accepted=true; }
     } else if(equals(initialize)) {
         boundary="initialization_enter";
         unsigned short mission=0;
@@ -892,6 +1564,10 @@ bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
             if(owned_before && !HasDynamiteSessionOwnership()) ApplySessionReleased();
             cleanup_thread=GetCurrentThreadId();
             accepted=termination_scope.Returned(cleanup_thread);
+            equipment_allocation_authorization.End();
+            stock46_authorization.End(); stock46_before={};
+            mgscoop::equipment_stock_writer::End();
+            stock46_groups_authorized=stock46_groups_returned=false;
             mission_phase=MissionPhase::idle; allocation_thread=0;
             PartnerMissionEnd();
             if(world_on) mgscoop::world_link::LocalMissionEnd();
@@ -1127,6 +1803,10 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     AcquireSRWLockExclusive(&receipt_lock);
     struct Unlock { ~Unlock(){ ReleaseSRWLockExclusive(&receipt_lock); } } unlock;
     const auto count = InterlockedIncrement64(&entries);
+    if(SelectOfflineEquipmentAllocationReceipt(buffer,size,name,replacement)) return true;
+    if(SelectStock46PreloadReceipt(buffer,size,name,replacement)) return true;
+    if(SelectEquipmentObservationReceipt(buffer,size,name,replacement)) return true;
+    if(SelectActionEventsReceipt(buffer,size,name,replacement)) return true;
     if (SelectDebugReceipt(buffer, size, name, replacement)) return true;
     if(partner_on) {
         const auto partner_kind=partner::Classify(buffer,size,name);
@@ -1165,6 +1845,8 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
         const auto equals=[buffer,size](const char* value,std::size_t bytes) { return size==bytes && std::memcmp(buffer,value,bytes)==0; };
         static constexpr char yes[]="return true",no[]="return false";
         if(equals(equipment_returned,sizeof(equipment_returned)-1) || equals(equipment_failed,sizeof(equipment_failed)-1)) {
+            stock46_groups_returned=stock46_groups_authorized && OnAllocationThread() &&
+                equals(equipment_returned,sizeof(equipment_returned)-1);
             Log(equals(equipment_returned,sizeof(equipment_returned)-1)
                 ? "equipment_groups=lua_calls_returned; ghost_count=1 remote_gear_loaded=unverified\r\n"
                 : "equipment_groups=lua_setup_failed; host_admission_and_client_join_withheld=1\r\n");
@@ -1268,6 +1950,11 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
             GetCurrentThreadId(),HasDynamiteSessionOwnership(),TransferRuleThread);
         bool restored=false;
         if(accepted) {
+            ClearUpperEndOwner(); mgscoop::partner_upper_probe::Clear("mission_terminating");
+            equipment_allocation_authorization.End();
+            stock46_authorization.End(); stock46_before={};
+            mgscoop::equipment_stock_writer::End();
+            stock46_groups_authorized=stock46_groups_returned=false;
             mission_terminating=true;
             restored=RestoreGameplayRules();
             // The partner tick stops while terminating, so the input window and
@@ -1530,6 +2217,8 @@ void ObserveReturn(void*, int result, bool replaced) noexcept {
 }
 }
 
+bool OfflineScriptObserverEnabled() noexcept { return offline_enabled && game_base && game_span; }
+
 void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* directory) noexcept {
     const DWORD incoming_error = GetLastError();
     // Explicit development modes. Bootstrap mode changes only fingerprinted
@@ -1635,7 +2324,8 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
             Log(bootstrap_enabled ? "mode=bootstrap_v1; gameplay=disabled\r\n" : "mode=pass_through; gameplay=disabled\r\n");
             if (archive_enabled) {
                 Log("mode=archive_v1; actor_packages_selected=0\r\n");
-                archive_mounted = MountPlayerArchive(base, span, directory, Log);
+                archive_mounted = MountPlayerArchive(base, span, directory, Log,
+                    offline_enabled && lab_active && lab::SavesRedirected());
                 if (allocation_enabled) Log("mode=players_v1; mission_selection_trial=30050; live_actor_count=unverified\r\n");
                 if (host_enabled) Log("mode=host_v1; one_attempt=1; peer_acceptance_requested=0\r\n");
                 if (heap_test_enabled) Log("mode=heap_v1; paired_heap_trial=1 host_calls=0 allocator_hook=0\r\n");
@@ -1660,6 +2350,27 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                     partner_gate_ok = pp::CodeGate(base, span, mismatch);
                     if (partner_gate_ok) Log("partner_code_gate=ok; scope=contract_sites_and_vtable_slots\r\n");
                     else LogFormat("partner_code_gate=mismatch; rva=0x%llx\r\n", static_cast<unsigned long long>(mismatch));
+                    if (partner_gate_ok && (mgscoop::partner_upper_probe::Compiled() || upper_end::Compiled()))
+                        mgscoop::partner_upper_probe::Install(base, span,
+                            {offline_enabled, lab_active, lab::SavesRedirected()}, Log);
+                    if (upper_phase::Compiled() && mgscoop::partner_upper_probe::Installed()) {
+                        // Installed UpperProbe already matched the exact executable,
+                        // full CS170/B6 writer and End/phase bodies BEFORE hooks.
+                        // Do not hash now: their authorized prologues are detoured.
+                        std::uintptr_t idle_mismatch = 0;
+                        const bool idle_gate = upper_idle::Compiled() && upper_idle::CodeGate(reinterpret_cast<std::uintptr_t>(base), span,
+                            {nullptr, UpperPhaseRead}, &idle_mismatch);
+                        const bool idle_configured = idle_gate && upper_idle::Configure(reinterpret_cast<std::uintptr_t>(base),
+                            {offline_enabled, lab::SavesRedirected(), true, true}, {nullptr, UpperPhaseRead});
+                        LogFormat("upper_manual_idle=configure; compiled=%u; extra_code_gate=%u; mismatch=%llx; configured=%u; default_off=1; automatic_capability=0\r\n",
+                            upper_idle::Compiled() ? 1u : 0u, idle_gate ? 1u : 0u,
+                            static_cast<unsigned long long>(idle_mismatch), idle_configured ? 1u : 0u);
+                        const bool configured = upper_phase::Configure(reinterpret_cast<std::uintptr_t>(base),
+                            {offline_enabled, lab::SavesRedirected(), true, true}, {nullptr, UpperPhaseRead});
+                        const bool phase_installed = configured && upper_phase::Install(const_cast<void*>(base), span);
+                        LogFormat("upper_phase_observe=install; configured=%u; installed=%u; observe_only=1; native_submission=0\r\n",
+                            configured ? 1u : 0u, phase_installed ? 1u : 0u);
+                    }
                     LogFormat("partner=configured; mode=offline_v1; stage=%u; source=%s; apply=%s; rate_hz=%u; interp_ms=%u; offset_cm=%u; teardown=%s; "
                         "anim=%s; aset=%s; reset=%s; look=%s; t_pinned=%u\r\n",
                         partner_driver.settings.stage, mgscoop::PartnerSourceName(partner_driver.settings.source),

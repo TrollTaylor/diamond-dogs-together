@@ -8,6 +8,10 @@
 #include "mgscoop/steam_observer.hpp"
 #include "mgscoop/early_patches.hpp"
 #include "mgscoop/debug_overlay.hpp"
+#include "mgscoop/game_script_observer.hpp"
+#include "mgscoop/lab_config.hpp"
+#include "mgscoop/worker_scenario.hpp"
+#include "mgscoop/archive_mount.hpp"
 
 #if !defined(_M_X64) && !defined(__x86_64__)
 #error The MGS Co-op probe supports only Windows x64.
@@ -196,6 +200,11 @@ extern "C" HRESULT WINAPI DirectInput8Create(HINSTANCE instance, DWORD version, 
     InitOnceExecuteOnce(&probe_once, RecordProbe, &result, nullptr);
     if (SUCCEEDED(result)) {
         InstallSteamCallbackObserver();
+        const auto& config = mgscoop::GetLabConfig();
+        const bool verified_offline = OfflineScriptObserverEnabled();
+        mgscoop::worker_scenario::Initialize({verified_offline,
+            config.present && config.mode == mgscoop::LabMode::lab,
+            mgscoop::lab::SavesRedirected(), verified_offline && MountedPlayerMotionCount() == 21});
         mgscoop::debug_overlay::Install();
     }
     SetLastError(forwarded_error);

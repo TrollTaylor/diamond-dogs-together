@@ -97,13 +97,17 @@ endfunction()
 
 set(_mgs_coop "${CMAKE_CURRENT_SOURCE_DIR}/lua/coop")
 mgs_add_lua_check(host_admission_lua_check "${_mgs_coop}/host_admission.lua")
+mgs_add_lua_check(equipment_allocation_lua_check "${_mgs_coop}/equipment_loading.lua")
+mgs_add_lua_check(equipment_stock_preload_lua_check "${_mgs_coop}/equipment_stock_preload.lua")
+mgs_add_lua_check(equipment_observation_lua_check "${_mgs_coop}/equipment_observation.lua")
 mgs_add_lua_check(session_lifecycle_lua_check "${_mgs_coop}/session_lifecycle.lua")
 mgs_add_lua_check(client_join_lua_check "${_mgs_coop}/client_join.lua")
 mgs_add_lua_check(session_feedback_lua_check "${_mgs_coop}/session_feedback.lua")
 mgs_add_lua_check(damage_parameters_lua_check "${_mgs_coop}/damage_parameters.lua")
 mgs_add_lua_check(damage_lifecycle_lua_check "${_mgs_coop}/damage_lifecycle.lua")
 mgs_add_lua_check(partner_sync_lua_check "${_mgs_coop}/partner_sync.lua")
-mgs_add_lua_check(debug_menu_lua_check "${_mgs_coop}/debug_menu.lua" "${_mgs_coop}/debug_equipment.lua")
+mgs_add_lua_check(partner_actions_lua_check "${_mgs_coop}/partner_actions.lua")
+mgs_add_lua_check(debug_menu_lua_check "${_mgs_coop}/debug_menu.lua" "${_mgs_coop}/debug_equipment.lua" "${_mgs_coop}/debug_enemy.lua")
 # World sync W0-W2 (docs/world-sync-protocol.md): the seven chunks, in splice order.
 set(_mgs_world_chunks "${_mgs_coop}/world_sync.lua" "${_mgs_coop}/world_enemy.lua" "${_mgs_coop}/world_outcome.lua"
   "${_mgs_coop}/world_phase.lua" "${_mgs_coop}/world_env.lua" "${_mgs_coop}/world_probe.lua" "${_mgs_coop}/world_goto.lua")
@@ -176,11 +180,18 @@ mgs_find_game_input(_mgs_debug_spawn_sequence "debug-spawn-source-audit-20261006
   aff5b23d2f4630c90879b455d33374a8d0b7362e4ebffaba060ec22be949bebc)
 mgs_find_game_input(_mgs_debug_active_slot "debug-spawn-source-audit-20261006/package-00_fpkd/Assets/tpp/level/mission2/story/s10030/s10030_sequence.lua"
   3616b5437ef537e63f925d90fd84922b982f7e4aebf710e1d25c4da105821776)
+mgs_find_game_input(_mgs_debug_tpp_debug "debug-api-source-audit-20261006/lib/TppDebug.lua"
+  974cebba26b12e1e504776133a5a8ea31a816da46191e82118769c9ec212d50a)
+mgs_find_game_input(_mgs_debug_checkpoint "debug-api-source-audit-20261006/lib/TppCheckPoint.lua"
+  55bbca7895395d9413d22a3a3257779f553b57b60a4f41e9a1a472802ad5b36f)
+if(_mgs_debug_clock AND _mgs_debug_weather)
+  mgs_add_lua_check(world_env_game_lua_check "${_mgs_coop}/world_env.lua" "${_mgs_debug_clock}" "${_mgs_debug_weather}")
+endif()
 if(_mgs_world_tpp_player AND _mgs_tpp_mission AND _mgs_debug_clock AND _mgs_debug_weather AND
-   _mgs_debug_enemy AND _mgs_debug_quest AND _mgs_debug_weapon_sequence AND _mgs_debug_spawn_sequence AND _mgs_debug_active_slot)
+   _mgs_debug_enemy AND _mgs_debug_quest AND _mgs_debug_weapon_sequence AND _mgs_debug_spawn_sequence AND _mgs_debug_active_slot AND _mgs_debug_tpp_debug AND _mgs_debug_checkpoint)
   mgs_add_lua_check(debug_menu_game_lua_check "${_mgs_coop}/debug_menu.lua" "${_mgs_coop}/debug_equipment.lua"
     "${_mgs_world_tpp_player}" "${_mgs_debug_clock}" "${_mgs_debug_weather}" "${_mgs_debug_enemy}"
-    "${_mgs_debug_quest}" "${_mgs_debug_weapon_sequence}" "${_mgs_debug_spawn_sequence}" "${_mgs_tpp_mission}" "${_mgs_debug_active_slot}")
+    "${_mgs_debug_quest}" "${_mgs_debug_weapon_sequence}" "${_mgs_debug_spawn_sequence}" "${_mgs_tpp_mission}" "${_mgs_debug_active_slot}" "${_mgs_coop}/debug_enemy.lua" "${_mgs_debug_tpp_debug}" "${_mgs_debug_checkpoint}")
 endif()
 
 if(TARGET mgs_bootstrap_patch)

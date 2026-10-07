@@ -146,13 +146,26 @@ bool ParseTick(const char* source, std::size_t size, Tick& out) noexcept {
         }
         if (!ParseInt(p, end, bounds[i].min, bounds[i].max, values[i])) return false;
     }
+    std::int32_t action_flags = 0, equip_id = 0;
+    if (p != end) {
+        // The suffix is atomic; a partially upgraded producer cannot silently
+        // retain a prior gun/action. Locomotion is carried separately by move.
+        if (*p++ != ' ' || !ParseInt(p, end, 0, 11, action_flags) ||
+            p == end || *p++ != ' ' || !ParseInt(p, end, 0, 65535, equip_id)) return false;
+        constexpr std::uint8_t gun_flags = sync::ActionFlag::Aiming | sync::ActionFlag::Firing | sync::ActionFlag::Reloading;
+        if (action_flags & ~gun_flags) return false;
+    }
     if (p != end) return false;
-    out.frame = values[0];
-    out.x_mm = values[1]; out.y_mm = values[2]; out.z_mm = values[3];
-    out.yaw_cdeg = values[4]; out.cam_cdeg = values[5];
-    out.stance = static_cast<std::uint8_t>(values[6]);
-    out.move = static_cast<std::uint8_t>(values[7]);
-    out.luaflags = static_cast<std::uint8_t>(values[8]);
+    Tick parsed{};
+    parsed.frame = values[0];
+    parsed.x_mm = values[1]; parsed.y_mm = values[2]; parsed.z_mm = values[3];
+    parsed.yaw_cdeg = values[4]; parsed.cam_cdeg = values[5];
+    parsed.stance = static_cast<std::uint8_t>(values[6]);
+    parsed.move = static_cast<std::uint8_t>(values[7]);
+    parsed.luaflags = static_cast<std::uint8_t>(values[8]);
+    parsed.action_flags = static_cast<std::uint8_t>(action_flags);
+    parsed.equip_id = static_cast<std::uint16_t>(equip_id);
+    out = parsed;
     return true;
 }
 
@@ -506,9 +519,13 @@ sync::PlayerTransformPacket MakeTransform(const Tick& tick, std::uint32_t sequen
     packet.y = static_cast<float>(tick.y_mm / 1000.0);
     packet.z = static_cast<float>(tick.z_mm / 1000.0);
     packet.rot_y = static_cast<float>(CdegToMrad(tick.yaw_cdeg) / 1000.0);
-    packet.equip_id = 0;
+    packet.equip_id = tick.equip_id;
     packet.stance = tick.stance <= 2 ? tick.stance : 0;
-    packet.action_flags = tick.move == 3 ? sync::ActionFlag::Sprinting : 0;
+    constexpr std::uint8_t gun_flags = sync::ActionFlag::Aiming | sync::ActionFlag::Firing | sync::ActionFlag::Reloading;
+    packet.action_flags = tick.action_flags & gun_flags;
+    packet.action_flags |= tick.move == 3 ? sync::ActionFlag::Sprinting :
+                           tick.move == 2 ? sync::ActionFlag::Running :
+                           tick.move == 1 ? sync::ActionFlag::Walking : 0;
     packet.tick_ms = tick_ms;
     return packet;
 }

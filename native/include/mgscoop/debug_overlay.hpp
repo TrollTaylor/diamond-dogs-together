@@ -19,6 +19,7 @@ struct TestStats {
 };
 void SetOpenForTest(bool value) noexcept;
 void SetForegroundForTest(bool value) noexcept;
+void SetMouseHeldForTest(bool value) noexcept;
 bool HookInputFixtureForTest(void* state, void* data) noexcept;
 bool HookPadFixtureForTest(void* function) noexcept;
 void RawKeyForTest(unsigned key) noexcept;

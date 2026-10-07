@@ -1,0 +1,467 @@
+#Requires -Version 7
+<#
+.SYNOPSIS
+Builds and checks the mod without launching MGSV or using desktop input.
+.DESCRIPTION
+Uses a separate cache, one checkout coordinator lock and immutable per-run
+receipts. Only explicitly audited CTest commands run. Full lab/friend launch
+fixtures and installer flows are excluded. This is not a runtime game worker.
+-PlanOnly prints the policy without configuring, building or writing files.
+#>
+[CmdletBinding()]
+param(
+    [ValidateSet('Normal', 'Research')][string]$Profile = 'Normal',
+    [ValidateSet('Debug', 'Release')][string]$Configuration = 'Release',
+    [string[]]$EnableExperiment = @(),
+    [switch]$EnableBackgroundWorker,
+    [string]$BuildDirectory,
+    [ValidateRange(1, 3600)][int]$LockTimeoutSec = 120,
+    [ValidateRange(1, 7200)][int]$CommandTimeoutSec = 1200,
+    [ValidateRange(1, 600)][int]$TestTimeoutSec = 120,
+    [ValidateRange(1, 64)][int]$BuildJobs = 8,
+    [switch]$PlanOnly
+)
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+function Get-WorkerExperiments {
+    return @(
+        'MGS_LOCAL_GUN_PRELOAD_TEST', 'MGS_LOCAL_OFFLINE_EQUIPMENT_TEST',
+        'MGS_LOCAL_STOCK46_PRELOAD_TEST', 'MGS_LOCAL_STOCK46_WRITER_TEST',
+        'MGS_LOCAL_ACTION_EVENTS', 'MGS_LOCAL_UPPER_END_OBSERVE',
+        'MGS_LOCAL_UPPER_PHASE_OBSERVE', 'MGS_LOCAL_UPPER_MANUAL_IDLE',
+        'MGS_LOCAL_UPPER_PROBE', 'MGS_LOCAL_UPPER_CHANNEL2', 'MGS_LOCAL_UPPER_FIRE_ZERO_BLEND'
+    )
+}
+function Get-WorkerTests {
+    # Fixed names: a newly registered test never silently becomes executable.
+    # Native calls in these fixtures target recording/fake backends, not MGSV.
+    return @(
+        'session_release_tests', 'mission_termination_tests',
+        'equipment_allocation_probe_tests', 'equipment_stock_probe_tests',
+        'equipment_stock_contract_tests', 'equipment_stock_writer_tests',
+        'client_session_request_tests', 'heap_trial_tests', 'lab_config_tests', 'lab_status_tests',
+        'link_protocol_tests', 'link_session_tests', 'link_crypto_tests', 'world_wire_tests', 'world_receipt_tests',
+        'partner_receipt_tests', 'partner_input_tests', 'partner_recon_tests', 'partner_dmmap_tests',
+        'pose_interp_tests', 'partner_source_turns_tests', 'partner_action_events_tests',
+        'partner_action_link_tests', 'partner_upper_pipeline_tests', 'client_reset_tests',
+        'session_tests', 'import_table_tests', 'steam_runtime_tests', 'steam_lifecycle_tests',
+        'steam_getter_tests', 'typed_payload_tests', 'player_sync_tests', 'input_receiver_tests',
+        'steam_packet_tests', 'four_player_lab', 'peer_router_tests', 'allocation_bridge_tests',
+        'session_allocation_reuse_tests', 'script_load_bridge_tests', 'player_ghost_tests',
+        'link_udp_tests', 'steam_loopback_tests', 'steam_shim_patches_tests', 'steam_identity_tests',
+        'partner_upper_end_off_tests', 'partner_upper_end_on_tests',
+        'partner_upper_phase_off_tests', 'partner_upper_phase_on_tests', 'partner_upper_phase_combined_tests',
+        'partner_upper_manual_idle_off_tests', 'partner_upper_manual_idle_on_tests',
+        'partner_upper_probe_tests', 'partner_upper_probe_forwarding_tests',
+        'partner_upper_channel2_tests', 'partner_upper_fire_zero_blend_tests',
+        'partner_player_tests', 'partner_driver_tests', 'partner_input_hook_tests',
+        'debug_menu_tests', 'debug_overlay_tests', 'win_import_patch_tests', 'probe_forwarding',
+        'master_server_patch_tests', 'master_server_patch_retarget_tests', 'master_server_patch_retarget_loopback_tests',
+        'worker_scenario_off_tests', 'worker_scenario_on_tests', 'worker_protocol_tests', 'worker_debug_tests', 'worker_input_fixture_tests',
+        'build_profile_tests', 'worker_session_tests',
+        'host_admission_lua_check', 'equipment_allocation_lua_check', 'equipment_stock_preload_lua_check',
+        'equipment_observation_lua_check', 'session_lifecycle_lua_check', 'client_join_lua_check',
+        'session_feedback_lua_check', 'damage_parameters_lua_check', 'damage_lifecycle_lua_check',
+        'partner_sync_lua_check', 'partner_actions_lua_check', 'debug_menu_lua_check',
+        'world_sync_lua_check', 'world_follow_lua_check', 'world_align_lua_check',
+        'world_follow_game_lua_check', 'world_env_game_lua_check', 'debug_menu_game_lua_check',
+        'bootstrap_patch_check', 'bootstrap_lua_check', 'host_trial_patch_check', 'host_trial_lua_check',
+        'partner_sync_composed_lua_check', 'world_sync_composed_lua_check',
+        'mission_trace_patch_check', 'mission_trace_lua_check', 'death_policy_lua_check',
+        'death_policy_patch_check', 'death_policy_composed_lua_check',
+        'player_package_patch_check', 'player_package_lua_check', 'damage_parameters_patch_check',
+        'damage_parameters_composed_lua_check', 'character_receipt_tests', 'player_type_patch_tests',
+        'character_lua_check', 'character_game_lua_check', 'character_composed_lua_check'
+    )
+}
+function Get-WorkerHash([string]$Text) {
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($Text)))
+}
+function Test-WorkerUnder([string]$Path, [string]$Root) {
+    $full = [IO.Path]::GetFullPath($Path).TrimEnd([char]92, [char]47)
+    $base = [IO.Path]::GetFullPath($Root).TrimEnd([char]92, [char]47)
+    return $full.StartsWith($base + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)
+}
+function Assert-WorkerPath([string]$Path, [string]$Root) {
+    if (!(Test-WorkerUnder $Path $Root)) { throw "Worker path must remain below $Root" }
+    $cursor = [IO.Path]::GetFullPath($Path)
+    while ($cursor) {
+        if (Test-Path -LiteralPath $cursor) {
+            if ((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                throw "Worker path refuses filesystem links: $cursor"
+            }
+        }
+        $cursor = [IO.Path]::GetDirectoryName($cursor)
+    }
+}
+function Get-WorkerPlan {
+    param([string]$Root, [string]$SelectedProfile, [string]$SelectedConfiguration,
+        [string[]]$Experiments, [bool]$Background, [string]$Directory)
+    $Root = [IO.Path]::GetFullPath($Root).TrimEnd([char]92, [char]47)
+    $known = @(Get-WorkerExperiments)
+    $enabled = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($name in @($Experiments)) {
+        if ($known -cnotcontains $name) { throw "Unknown or noncanonical experiment: $name" }
+        if (!$enabled.Add($name)) { throw "Duplicate experiment: $name" }
+    }
+    if ($SelectedProfile -eq 'Normal' -and $enabled.Count) { throw 'Normal profile cannot enable research experiments' }
+    if ($SelectedProfile -eq 'Research' -and !$enabled.Count) { throw 'Research profile requires explicit experiments' }
+    $sorted = @($enabled | Sort-Object)
+    $profileKey = $SelectedProfile.ToLowerInvariant()
+    if ($enabled.Count) { $profileKey += '-' + (Get-WorkerHash ($sorted -join "`n")).Substring(0, 12) }
+    $profileKey += $(if ($Background) { '-worker-on' } else { '-worker-off' })
+    $buildRoot = Join-Path $Root 'build'
+    $cache = if ($Directory) { [IO.Path]::GetFullPath($Directory, $Root) }
+        else { Join-Path $buildRoot ('worker-checks\' + $profileKey + '-' + $SelectedConfiguration.ToLowerInvariant()) }
+    Assert-WorkerPath $cache $buildRoot
+    $legacy = Join-Path $buildRoot 'native'
+    if ($cache.Equals($legacy, [StringComparison]::OrdinalIgnoreCase) -or (Test-WorkerUnder $cache $legacy)) {
+        throw 'Worker checks refuse the shared development build/native cache'
+    }
+    $runs = Join-Path $buildRoot 'worker-runs'
+    if ($cache.Equals($runs, [StringComparison]::OrdinalIgnoreCase) -or (Test-WorkerUnder $cache $runs)) {
+        throw 'Worker cache cannot overlap immutable run receipts'
+    }
+    $flags = [ordered]@{}
+    foreach ($name in $known) { $flags[$name] = $(if ($enabled.Contains($name)) { 'ON' } else { 'OFF' }) }
+    $flags.MGS_BACKGROUND_WORKER = $(if ($Background) { 'ON' } else { 'OFF' })
+    return [pscustomobject][ordered]@{
+        schema = 1; profile = $SelectedProfile; configuration = $SelectedConfiguration; profile_key = $profileKey
+        project = $Root; build_directory = $cache; flags = $flags
+        coordinator_lock = 'Local\mgs-coop-checks-' + (Get-WorkerHash ([IO.Path]::GetFullPath($Root).ToUpperInvariant())).Substring(0, 16)
+        tests = @(Get-WorkerTests)
+        excluded = @('lab_scripts_tests', 'friend_package_tests', 'probe_install_recovery')
+        pure_input_script = 'tests\lab_scripts_tests.ps1 -InputOnly'
+        retail_game_launch = $false; system_input = $false; installation = $false
+        evidence = 'Automated fixture checks only; runtime worker and gameplay are not validated.'
+    }
+}
+function Assert-WorkerOptions([string]$Root) {
+    $source = [IO.File]::ReadAllText((Join-Path $Root 'CMakeLists.txt'))
+    $declared = @([regex]::Matches($source, '(?m)^option\((MGS_LOCAL_[A-Z0-9_]+) [^\r\n]+\)') |
+        ForEach-Object { $_.Groups[1].Value })
+    $known = @(Get-WorkerExperiments)
+    if ($declared.Count -ne $known.Count -or @($declared | Where-Object { $known -cnotcontains $_ }).Count) {
+        throw 'Local experiment policy differs from CMake; review the runner allowlist before building'
+    }
+    if ($source -notmatch '(?m)^option\(MGS_BACKGROUND_WORKER ') { throw 'MGS_BACKGROUND_WORKER option is not declared' }
+}
+function Assert-WorkerCache([string]$Directory, $Flags) {
+    $text = [IO.File]::ReadAllText((Join-Path $Directory 'CMakeCache.txt'))
+    foreach ($name in $Flags.Keys) {
+        if ($text -notmatch ('(?m)^' + [regex]::Escape($name) + ':BOOL=' + $Flags[$name] + '\r?$')) {
+            throw "Unexpected cached option: $name (expected $($Flags[$name]))"
+        }
+    }
+}
+function Assert-WorkerCacheOwnership($Plan) {
+    $marker = Join-Path $Plan.build_directory '.worker-check-profile.json'
+    if (Test-Path -LiteralPath $marker -PathType Leaf) {
+        $owner = [IO.File]::ReadAllText($marker) | ConvertFrom-Json
+        if ($owner.project -ine $Plan.project -or $owner.profile_key -cne $Plan.profile_key -or
+            $owner.configuration -cne $Plan.configuration) { throw 'Worker cache belongs to a different profile or checkout' }
+    } elseif (Test-Path -LiteralPath (Join-Path $Plan.build_directory 'CMakeCache.txt')) {
+        throw 'Worker checks cannot adopt an unowned existing CMake cache'
+    } else {
+        $null = New-Item -ItemType Directory -Path $Plan.build_directory -Force
+        Write-WorkerJson $marker ([ordered]@{ schema=1; project=$Plan.project; profile_key=$Plan.profile_key; configuration=$Plan.configuration })
+    }
+}
+function Assert-WorkerInventory {
+    param($Inventory, [string]$Root, [string]$Directory, [string[]]$Allowed)
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $allow = [Collections.Generic.HashSet[string]]::new([string[]]$Allowed, [StringComparer]::Ordinal)
+    $byName = @{}
+    foreach ($test in @($Inventory.tests)) {
+        if (!$seen.Add([string]$test.name)) { throw "Duplicate CTest name: $($test.name)" }
+        $byName[$test.name] = $test
+    }
+    $luaAliases = @{
+        partner_sync_composed_lua_check='partner_sync_lua_check'; world_sync_composed_lua_check='world_sync_lua_check'
+        death_policy_composed_lua_check='death_policy_lua_check'; damage_parameters_composed_lua_check='damage_parameters_lua_check'
+        character_composed_lua_check='character_lua_check'; character_game_lua_check='character_lua_check'
+    }
+    $exeAliases = @{ four_player_lab='coop_lab'; probe_forwarding='probe_smoke';
+        master_server_patch_retarget_tests='master_server_patch_tests'; master_server_patch_retarget_loopback_tests='master_server_patch_tests' }
+    foreach ($name in $Allowed) {
+        if (!$byName.ContainsKey($name)) { throw "Required audited test is missing: $name" }
+        $test = $byName[$name]
+        $command = @($test.command)
+        if (!$command.Count) { throw "Missing audited command: $name" }
+        if ($name -cin @('build_profile_tests', 'worker_session_tests')) {
+            if ([IO.Path]::GetFileName($command[0]) -cne 'pwsh.exe' -or $command.Count -ne 6 -or
+                ($command[1..4] -join '|') -cne '-NoProfile|-ExecutionPolicy|Bypass|-File' -or
+                [IO.Path]::GetFullPath($command[5]) -ine (Join-Path $Root ('tests\' + $name + '.ps1'))) {
+                throw "Unaudited PowerShell command: $name"
+            }
+        } elseif ($name -like '*_lua_check') {
+            $scriptName = if ($luaAliases.ContainsKey($name)) { $luaAliases[$name] } else { $name }
+            if ($command.Count -lt 2 -or [IO.Path]::GetFullPath($command[0]) -ine (Join-Path $Directory 'lua-fixture\lua51.exe') -or
+                [IO.Path]::GetFullPath($command[1]) -ine (Join-Path $Root ('tests\' + $scriptName + '.lua'))) {
+                throw "Unaudited Lua command: $name"
+            }
+        } else {
+            $binaryName = if ($exeAliases.ContainsKey($name)) { $exeAliases[$name] } else { $name }
+            if ([IO.Path]::GetFullPath($command[0]) -ine (Join-Path $Directory ($binaryName + '.exe'))) {
+                throw "Unaudited fixture executable: $name"
+            }
+            if ($name -like '*_patch_check') {
+                $outputs = @{
+                    bootstrap_patch_check=@('Tpp-bootstrap.lua','Tpp-archive.lua'); host_trial_patch_check=@('TppMain-host-trial.lua')
+                    mission_trace_patch_check=@('TppMain-trace.lua'); death_policy_patch_check=@('TppMission-death-policy.lua')
+                    player_package_patch_check=@('TppPackList.lua'); damage_parameters_patch_check=@('DamageParameterTables.lua')
+                }
+                if (!$outputs.ContainsKey($name) -or $command.Count -ne (2 + $outputs[$name].Count) -or
+                    !(Test-WorkerUnder $command[1] (Join-Path $Root 'build')) -or [IO.Path]::GetExtension($command[1]) -cne '.lua') {
+                    throw "Unaudited patch input: $name"
+                }
+                for ($i=0; $i -lt $outputs[$name].Count; ++$i) {
+                    if ([IO.Path]::GetFullPath($command[$i+2]) -ine (Join-Path $Directory ('lua-check\' + $outputs[$name][$i]))) {
+                        throw "Foreign patch output: $name"
+                    }
+                }
+            } elseif ($name -eq 'probe_forwarding') {
+                if ($command.Count -ne 2 -or [IO.Path]::GetFullPath($command[1]) -ine (Join-Path $Directory 'dinput8.dll')) {
+                    throw 'Proxy forwarding must load only this worker artifact'
+                }
+            } elseif ($exeAliases.ContainsKey($name) -and $name -like 'master_server_patch_retarget*') {
+                $mode = if ($name -eq 'master_server_patch_retarget_tests') { 'retarget' } else { 'retarget_loopback' }
+                if ($command.Count -ne 2 -or $command[1] -cne $mode) { throw "Unaudited patch fixture mode: $name" }
+            } elseif ($command.Count -ne 1) { throw "Unexpected fixture arguments: $name" }
+        }
+        foreach ($property in @($test.properties)) {
+            if ($property.name -notin @('WORKING_DIRECTORY', 'FIXTURES_SETUP', 'FIXTURES_REQUIRED', 'FIXTURES_CLEANUP', 'DEPENDS',
+                'DISABLED', 'TIMEOUT', 'LABELS', 'RUN_SERIAL', 'RESOURCE_LOCK', 'PROCESSORS')) {
+                throw "Unaudited CTest property: $name/$($property.name)"
+            }
+            if ($property.name -eq 'WORKING_DIRECTORY' -and [IO.Path]::GetFullPath([string]$property.value) -ine $Directory -and
+                !(Test-WorkerUnder ([string]$property.value) $Directory)) { throw "Foreign test working directory: $name" }
+            if ($property.name -eq 'DISABLED' -and $property.value) { throw "Audited test is disabled: $name" }
+            if ($property.name -eq 'DEPENDS') {
+                foreach ($dependency in @($property.value)) {
+                    if (!$allow.Contains([string]$dependency) -or !$byName.ContainsKey([string]$dependency)) {
+                        throw "Unaudited ordered dependency: $dependency"
+                    }
+                }
+            }
+            if ($property.name -eq 'FIXTURES_REQUIRED') {
+                foreach ($fixture in @($property.value)) {
+                    $providers = @($Inventory.tests | Where-Object {
+                        @($_.properties | Where-Object { $_.name -in @('FIXTURES_SETUP', 'FIXTURES_CLEANUP') -and @($_.value) -contains $fixture }).Count
+                    })
+                    if (!@($providers | Where-Object { @($_.properties | Where-Object { $_.name -eq 'FIXTURES_SETUP' -and @($_.value) -contains $fixture }).Count }).Count) {
+                        throw "Missing fixture provider: $fixture"
+                    }
+                    foreach ($provider in $providers) {
+                        if (!$allow.Contains([string]$provider.name)) { throw "Unaudited fixture dependency: $($provider.name)" }
+                    }
+                }
+            }
+        }
+    }
+}
+function Get-WorkerSourceHashes([string]$Root) {
+    $paths = [ordered]@{}
+    $paths['CMakeLists.txt'] = Join-Path $Root 'CMakeLists.txt'
+    $minhookPath = Join-Path $Root 'third_party\minhook'
+    $provenance = [ordered]@{}
+    foreach ($folder in @('cmake', 'native', 'lua', 'tests', 'tools', 'third_party', 'work\lua-5.1.5\src')) {
+        $path = Join-Path $Root $folder
+        if (!(Test-Path -LiteralPath $path -PathType Container)) { continue }
+        if ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw "Source snapshot refuses an unreviewed directory link: $path"
+        }
+        foreach ($directory in Get-ChildItem -LiteralPath $path -Recurse -Directory -Force) {
+            if (($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) -and $directory.FullName -ine $minhookPath) {
+                throw "Source snapshot refuses an unreviewed directory link: $($directory.FullName)"
+            }
+        }
+        foreach ($file in Get-ChildItem -LiteralPath $path -Recurse -File) {
+            if ($file.Extension -in @('.cpp','.hpp','.h','.c','.lua','.ps1','.psm1','.cmake','.in','.def','.rc') -or $file.Name -eq 'CMakeLists.txt') {
+                if ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Source snapshot refuses links: $($file.FullName)" }
+                $paths[[IO.Path]::GetRelativePath($Root, $file.FullName)] = $file.FullName
+            }
+        }
+    }
+    # A known MinHook directory link may be skipped by ordinary recursion.
+    # Resolve it explicitly, preserve it, and hash exactly the dependency tree
+    # that add_subdirectory(third_party/minhook) compiles. Unknown links refuse.
+    if (!(Test-Path -LiteralPath $minhookPath -PathType Container)) { throw 'MinHook source dependency is missing' }
+    $minhook = Get-Item -LiteralPath $minhookPath -Force
+    $linked = [bool]($minhook.Attributes -band [IO.FileAttributes]::ReparsePoint)
+    $target = if ($linked) { $minhook.ResolveLinkTarget($true) } else { $minhook }
+    if (!$target -or !($target.Attributes -band [IO.FileAttributes]::Directory) -or
+        ($target.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'MinHook directory link did not resolve to an ordinary source directory' }
+    $provenance['third_party\minhook'] = [ordered]@{
+        logical_path=$minhookPath; resolved_path=$target.FullName; linked=$linked
+        link_type=$(if ($linked) { [string]$minhook.LinkType } else { 'ordinary_directory' })
+        link_target=$(if ($linked) { @($minhook.Target) } else { @() })
+    }
+    foreach ($directory in Get-ChildItem -LiteralPath $target.FullName -Recurse -Directory -Force) {
+        if ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Nested MinHook directory link is unreviewed: $($directory.FullName)" }
+    }
+    foreach ($file in Get-ChildItem -LiteralPath $target.FullName -Recurse -File) {
+        if ($file.Extension -in @('.cpp','.hpp','.h','.c','.cmake','.in','.def','.rc') -or $file.Name -eq 'CMakeLists.txt' -or $file.Name -like 'LICENSE*') {
+            if ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Nested MinHook file link is unreviewed: $($file.FullName)" }
+            $paths['third_party\minhook\' + [IO.Path]::GetRelativePath($target.FullName, $file.FullName)] = $file.FullName
+        }
+    }
+    $hashes = [ordered]@{}
+    foreach ($relative in $paths.Keys | Sort-Object) {
+        $hashes[$relative] = (Get-FileHash -LiteralPath $paths[$relative] -Algorithm SHA256).Hash
+    }
+    return [pscustomobject]@{ hashes=$hashes; dependencies=$provenance }
+}
+function Write-WorkerJson([string]$Path, $Value) {
+    $tmp = $Path + '.tmp'
+    [IO.File]::WriteAllText($tmp, ($Value | ConvertTo-Json -Depth 16) + "`n", [Text.UTF8Encoding]::new($false))
+    [IO.File]::Move($tmp, $Path, $true)
+}
+function Assert-WorkerSourceUnchanged($Before, $After) {
+    if (($After.dependencies | ConvertTo-Json -Depth 8 -Compress) -cne ($Before.dependencies | ConvertTo-Json -Depth 8 -Compress)) {
+        throw 'Source dependency target changed during worker checks'
+    }
+    if ($After.hashes.Count -ne $Before.hashes.Count) { throw 'Source file set changed during worker checks' }
+    foreach ($relative in @($Before.hashes.Keys)) {
+        if (!$After.hashes.Contains($relative) -or $After.hashes[$relative] -cne $Before.hashes[$relative]) {
+            throw "Source changed during worker checks: $relative"
+        }
+    }
+}
+function Invoke-WorkerCommand {
+    param($Context, [string]$Executable, [string[]]$Arguments, [string]$Tag, [int]$Timeout)
+    $index = $Context.receipt.commands.Count + 1
+    $prefix = '{0:D3}-{1}' -f $index, $Tag
+    $stdout = Join-Path $Context.run_directory ($prefix + '.stdout.log')
+    $stderr = Join-Path $Context.run_directory ($prefix + '.stderr.log')
+    $row = [ordered]@{ tag=$Tag; executable=$Executable; arguments=$Arguments; started_utc=[DateTime]::UtcNow.ToString('o');
+        stdout=$stdout; stderr=$stderr; exit_code=$null; timed_out=$false; finished_utc=$null; pid=$null }
+    $Context.receipt.commands.Add($row)
+    & $Context.write_json $Context.receipt_path $Context.receipt
+    Write-Host "Worker check: $Tag"
+    $psi = [Diagnostics.ProcessStartInfo]::new()
+    $psi.FileName = $Executable; $psi.WorkingDirectory = $Context.project_root
+    $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+    foreach ($argument in $Arguments) { $psi.ArgumentList.Add($argument) }
+    $process = [Diagnostics.Process]::new(); $process.StartInfo = $psi
+    $output = ''; $errorText = ''
+    try {
+        if (!$process.Start()) { throw "Cannot start audited command: $Tag" }
+        $row.pid = $process.Id
+        $row.process_started_utc = $process.StartTime.ToUniversalTime().ToString('o')
+        $outTask = $process.StandardOutput.ReadToEndAsync(); $errTask = $process.StandardError.ReadToEndAsync()
+        if (!$process.WaitForExit($Timeout * 1000)) { $row.timed_out = $true; $process.Kill($true); $process.WaitForExit() }
+        $output = $outTask.GetAwaiter().GetResult(); $errorText = $errTask.GetAwaiter().GetResult()
+        $row.exit_code = $process.ExitCode
+        if ($row.timed_out) { throw "Audited command timed out: $Tag" }
+        if ($row.exit_code -ne 0) { throw "Audited command failed: $Tag (exit $($row.exit_code)); see $stderr" }
+    } finally {
+        if ($row.pid -and !$process.HasExited) { $process.Kill($true); $null = $process.WaitForExit(5000) }
+        [IO.File]::WriteAllText($stdout, $output, [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($stderr, $errorText, [Text.UTF8Encoding]::new($false))
+        $row.finished_utc = [DateTime]::UtcNow.ToString('o')
+        & $Context.write_json $Context.receipt_path $Context.receipt
+        $process.Dispose()
+    }
+    return [pscustomobject]@{ Output=$output; Error=$errorText; ExitCode=$row.exit_code }
+}
+function New-WorkerCmakeOverride($Context) {
+    # tools/build.ps1 has its own script scope. Capture the owner's explicit
+    # context before its nested cmake calls, including command/JSON bodies.
+    return {
+        $nativeArguments = @($args)
+        $tag = if ($nativeArguments[0] -eq '-S') { 'configure-bootstrap' } else { 'build-loader-bootstrap' }
+        if ($nativeArguments[0] -eq '--build' -and $nativeArguments[-1] -eq '--parallel') { $nativeArguments += "$($Context.build_jobs)" }
+        $null = & $Context.invoke_command $Context $Context.cmake_path $nativeArguments $tag $Context.command_timeout
+        $global:LASTEXITCODE = 0
+    }.GetNewClosure()
+}
+
+$projectRoot = [IO.Path]::GetFullPath((Split-Path -Parent (Split-Path -Parent $PSScriptRoot)))
+$plan = Get-WorkerPlan $projectRoot $Profile $Configuration $EnableExperiment $EnableBackgroundWorker.IsPresent $BuildDirectory
+if ($PlanOnly) { $plan | ConvertTo-Json -Depth 8; return }
+Assert-WorkerOptions $projectRoot
+$cmakePath = (Get-Command cmake -CommandType Application -ErrorAction Stop).Source
+$ctestPath = (Get-Command ctest -CommandType Application -ErrorAction Stop).Source
+$pwshPath = (Get-Process -Id $PID).Path
+$runRoot = Join-Path $projectRoot 'build\worker-runs'
+$runId = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N')
+$runDirectory = Join-Path $runRoot $runId
+Assert-WorkerPath $runDirectory (Join-Path $projectRoot 'build')
+$null = New-Item -ItemType Directory -Path $runDirectory
+$receiptPath = Join-Path $runDirectory 'receipt.json'
+$receipt = [ordered]@{ schema=1; run_id=$runId; plan=$plan; status='waiting_for_coordinator';
+    started_utc=[DateTime]::UtcNow.ToString('o'); finished_utc=$null; failure=$null;
+    commands=[Collections.Generic.List[object]]::new(); source_hashes=[ordered]@{}; artifacts=[ordered]@{} }
+[IO.File]::WriteAllText((Join-Path $runDirectory '.worker-owner'), $runId, [Text.UTF8Encoding]::new($false))
+Write-WorkerJson $receiptPath $receipt
+$workerCommandContext = [pscustomobject]@{
+    receipt=$receipt; receipt_path=$receiptPath; run_directory=$runDirectory; project_root=$projectRoot
+    write_json=${function:Write-WorkerJson}; invoke_command=${function:Invoke-WorkerCommand}
+    cmake_path=$cmakePath; build_jobs=$BuildJobs; command_timeout=$CommandTimeoutSec
+}
+$mutex = [Threading.Mutex]::new($false, $plan.coordinator_lock)
+$owned = $false
+$savedEnvironment = @{}
+foreach ($name in @('PATH', 'INCLUDE', 'LIB')) { $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+try {
+    try { $owned = $mutex.WaitOne([TimeSpan]::FromSeconds($LockTimeoutSec)) }
+    catch [Threading.AbandonedMutexException] {
+        $mutex.ReleaseMutex()
+        throw 'Previous coordinator abandoned its lock; audit leftover build processes before retrying'
+    }
+    if (!$owned) { throw 'Worker check coordinator lock timed out' }
+    Assert-WorkerCacheOwnership $plan
+    $receipt.status = 'running'
+    $sourceSnapshot = Get-WorkerSourceHashes $projectRoot
+    $receipt.source_hashes = $sourceSnapshot.hashes
+    $receipt.source_dependencies = $sourceSnapshot.dependencies
+    Write-WorkerJson $receiptPath $receipt
+    Set-Item -Path Function:cmake -Value (New-WorkerCmakeOverride $workerCommandContext)
+    & (Join-Path $projectRoot 'tools\build.ps1') -Configuration $Configuration -BuildOnly -DisableLocalExperiments -BuildDirectory $plan.build_directory
+    # Configure every option explicitly; research/worker ON cannot leak from a
+    # previous run and compilation below uses only this final profile.
+    $flagArguments = @('-S', $projectRoot, '-B', $plan.build_directory) + @($plan.flags.Keys | ForEach-Object { '-D' + $_ + '=' + $plan.flags[$_] })
+    $null = Invoke-WorkerCommand $workerCommandContext $cmakePath $flagArguments 'configure-profile' $CommandTimeoutSec
+    Assert-WorkerCache $plan.build_directory $plan.flags
+    $null = Invoke-WorkerCommand $workerCommandContext $cmakePath @('--build', $plan.build_directory, '--parallel', "$BuildJobs") 'build-fixtures' $CommandTimeoutSec
+    $inventoryResult = Invoke-WorkerCommand $workerCommandContext $ctestPath @('--test-dir', $plan.build_directory, '--show-only=json-v1') 'inventory' 60
+    $inventory = $inventoryResult.Output | ConvertFrom-Json
+    Assert-WorkerInventory $inventory $projectRoot $plan.build_directory $plan.tests
+    Write-WorkerJson (Join-Path $runDirectory 'ctest-inventory.json') $inventory
+    $regex = '^(' + (($plan.tests | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')$'
+    # CTest retains setup/cleanup scheduling; the dependency audit above refuses
+    # any provider outside the allowlist before CTest can execute it.
+    $selectedResult = Invoke-WorkerCommand $workerCommandContext $ctestPath @('--test-dir', $plan.build_directory, '--show-only=json-v1', '-R', $regex) 'selected-inventory' 60
+    $selected = $selectedResult.Output | ConvertFrom-Json
+    if (@($selected.tests).Count -ne $plan.tests.Count -or @($selected.tests | Where-Object { $plan.tests -cnotcontains $_.name }).Count) {
+        throw 'CTest selected an unexpected test/dependency set'
+    }
+    Write-WorkerJson (Join-Path $runDirectory 'ctest-selected.json') $selected
+    $null = Invoke-WorkerCommand $workerCommandContext $ctestPath @('--test-dir', $plan.build_directory, '-R', $regex, '--output-on-failure', '-j', '1',
+        '--timeout', "$TestTimeoutSec", '--output-junit', (Join-Path $runDirectory 'ctest-results.xml')) 'ctest-audited' $CommandTimeoutSec
+    $null = Invoke-WorkerCommand $workerCommandContext $pwshPath @('-NoProfile', '-NonInteractive', '-File', (Join-Path $projectRoot 'tests\lab_scripts_tests.ps1'), '-InputOnly') 'pure-input-fixture' $TestTimeoutSec
+    $null = Invoke-WorkerCommand $workerCommandContext $pwshPath @('-NoProfile', '-NonInteractive', '-File', (Join-Path $projectRoot 'tests\worker_checks_tests.ps1')) 'worker-policy-fixture' $TestTimeoutSec
+    Assert-WorkerCache $plan.build_directory $plan.flags
+    $finalSnapshot = Get-WorkerSourceHashes $projectRoot
+    Assert-WorkerSourceUnchanged $sourceSnapshot $finalSnapshot
+    $loader = Join-Path $plan.build_directory 'dinput8.dll'
+    $receipt.artifacts.loader_sha256 = (Get-FileHash -LiteralPath $loader -Algorithm SHA256).Hash
+    [IO.File]::Copy($loader, (Join-Path $runDirectory 'dinput8.dll'), $false)
+    [IO.File]::Copy((Join-Path $plan.build_directory 'CMakeCache.txt'), (Join-Path $runDirectory 'CMakeCache.txt'), $false)
+    $receipt.status = 'passed'
+} catch {
+    $receipt.status = 'failed'; $receipt.failure = $_.Exception.Message
+    throw
+} finally {
+    foreach ($name in $savedEnvironment.Keys) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name], 'Process') }
+    $receipt.finished_utc = [DateTime]::UtcNow.ToString('o')
+    try { Write-WorkerJson $receiptPath $receipt }
+    finally {
+        if ($owned) { $mutex.ReleaseMutex() }
+        $mutex.Dispose()
+        Write-Output "Worker check receipt: $receiptPath"
+    }
+}

@@ -264,7 +264,7 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_look_recover'; Json = 'look_recover'; Kind = 'bool' },
     @{ Key = 'partner_dm'; Json = 'dm'; Kind = 'enum'; Values = @('off', 'probe', 'on', 'map') },
     # dm=map (docs/partner-anim-appearance.md "D-map"): the [stance][move] clip
-    # table (12 gani indices 0..12) and the speed bands <idle>:<run>:<dash> mm/s.
+    # table (12 gani indices 0..30) and the speed bands <idle>:<run>:<dash> mm/s.
     @{ Key = 'partner_dm_map'; Json = 'dm_map'; Kind = 'dmmap' },
     @{ Key = 'partner_dm_speed'; Json = 'dm_speed'; Kind = 'dmspeed' },
     # Round 4 (docs/partner-anim-appearance.md "Round 4"); written only when set.
@@ -356,8 +356,8 @@ function ConvertTo-LabPartnerValue {
         }
         $allowed = '<0..359>:<0..100>'
     } elseif ($spec.Kind -eq 'dmmap') {
-        if ($text -cmatch '^((0|[1-9]|1[0-2]),){11}(0|[1-9]|1[0-2])$') { return $text }
-        $allowed = '12 comma-separated gani indices 0..12'
+        if ($text -cmatch '^((0|[1-9]|1[0-9]|2[0-9]|30),){11}(0|[1-9]|1[0-9]|2[0-9]|30)$') { return $text }
+        $allowed = '12 comma-separated gani indices 0..30'
     } elseif ($spec.Kind -eq 'dmspeed') {
         # As the native ParsePartnerDmSpeeds: idle 200..2000, run idle+300..10000, dash run+300..20000.
         if ($text -cmatch '^([1-9][0-9]{2,4}):([1-9][0-9]{2,4}):([1-9][0-9]{2,4})$') {
@@ -1525,9 +1525,9 @@ function Get-LabScanCodeTable {
 }
 
 function ConvertFrom-LabKeySpec {
-    # Pure: one Send-LabInput key spec -> the keys pressed together (in order;
+    # Pure: one Send-LabInput key spec -> the buttons pressed together (in order;
     # released in reverse) and how long they are held:
-    #   enter | ctrl+f8 | w:4000 (hold W 4 s) | w+a:6000 (W and A together for 6 s)
+    #   enter | ctrl+f8 | w:4000 | mouseright+mouseleft:1000 (aim and fire)
     # Hold time ':<ms>' 1..60000; without ':' it is -DefaultHoldMs (Send-LabInput
     # -HoldMs, 0..60000: 0 taps the key, as Send-LabInput always allowed).
     param([Parameter(Mandatory)][string]$Spec, [int]$DefaultHoldMs = 150)
@@ -1543,14 +1543,52 @@ function ConvertFrom-LabKeySpec {
     }
     if (!$text) { throw "Empty key spec '$Spec'." }
     $table = Get-LabScanCodeTable
+    $mouse = @{ mouseleft = @([uint32]0x0002, [uint32]0x0004); mouseright = @([uint32]0x0008, [uint32]0x0010) }
     $names = @($text.Split('+'))
     $keys = [Collections.Generic.List[object]]::new()
     foreach ($name in $names) {
-        if (!$name -or !$table.Contains($name)) { throw "Unknown key name: $name" }
+        if (!$name -or (!$table.Contains($name) -and !$mouse.ContainsKey($name))) { throw "Unknown key name: $name" }
         if (@($keys | Where-Object { $_.Name -ceq $name }).Count) { throw "Key $name repeated in '$Spec'." }
-        $keys.Add([pscustomobject]@{ Name = $name; Scan = [uint16]$table[$name][0]; Extended = [bool]$table[$name][1] })
+        if ($mouse.ContainsKey($name)) {
+            $keys.Add([pscustomobject]@{ Name = $name; Kind = 'Mouse'; DownFlags = $mouse[$name][0]; UpFlags = $mouse[$name][1] })
+        } else {
+            $keys.Add([pscustomobject]@{ Name = $name; Kind = 'Keyboard'; Scan = [uint16]$table[$name][0]; Extended = [bool]$table[$name][1] })
+        }
     }
     [pscustomobject]@{ Spec = $Spec.Trim(); Keys = $keys.ToArray(); HoldMs = $hold }
+}
+
+function Get-LabInputPlan {
+    # Pure complete plan: optional relative movement belongs to the first step
+    # and repeats while its keys/buttons remain down. A camera-only step uses
+    # the same foreground gate and hold/finally path as all other lab input.
+    param(
+        [string[]]$Keys = @(),
+        [ValidateRange(0, 60000)][int]$HoldMs = 150,
+        [ValidateRange(-2000, 2000)][int]$MouseDeltaX = 0,
+        [ValidateRange(-2000, 2000)][int]$MouseDeltaY = 0,
+        [ValidateRange(1, 8)][int]$MouseRepeat = 1,
+        [ValidateRange(1, 2000)][int]$MouseIntervalMs = 150,
+        [ValidateRange(0, 2000)][int]$MouseStartDelayMs = 0
+    )
+    if ($MouseRepeat -gt 1 -and $MouseDeltaX -eq 0 -and $MouseDeltaY -eq 0) {
+        throw 'MouseRepeat above 1 requires a nonzero MouseDeltaX or MouseDeltaY.'
+    }
+    if ($MouseStartDelayMs -gt 0 -and $MouseDeltaX -eq 0 -and $MouseDeltaY -eq 0) {
+        throw 'MouseStartDelayMs above 0 requires a nonzero MouseDeltaX or MouseDeltaY.'
+    }
+    $keysNormalized = @($Keys | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
+    $steps = @($keysNormalized | ForEach-Object {
+        $key = ConvertFrom-LabKeySpec -Spec $_ -DefaultHoldMs $HoldMs
+        [pscustomobject]@{ Spec = $key.Spec; Keys = $key.Keys; HoldMs = $key.HoldMs; MouseMove = $null }
+    })
+    if ($MouseDeltaX -ne 0 -or $MouseDeltaY -ne 0) {
+        if (!$steps.Count) {
+            $steps = @([pscustomobject]@{ Spec = "relative_mouse($MouseDeltaX,$MouseDeltaY)"; Keys = @(); HoldMs = $HoldMs; MouseMove = $null })
+        }
+        $steps[0].MouseMove = [pscustomobject]@{ Kind = 'MouseMove'; DeltaX = $MouseDeltaX; DeltaY = $MouseDeltaY; Flags = [uint32]0x0001; Repeat = $MouseRepeat; IntervalMs = $MouseIntervalMs; StartDelayMs = $MouseStartDelayMs }
+    }
+    $steps
 }
 
 # ---------------------------------------------------------------------------
@@ -1584,6 +1622,32 @@ public static class User32 {
         input[0].type = 1; // INPUT_KEYBOARD
         input[0].u.ki.wScan = scan;
         input[0].u.ki.dwFlags = 0x0008u | (extended ? 0x0001u : 0u) | (up ? 0x0002u : 0u); // SCANCODE | EXTENDED | KEYUP
+        return SendInput(1, input, Marshal.SizeOf(typeof(INPUT)));
+    }
+    public static INPUT CreateMouseInput(uint flags) {
+        if (flags != 0x0002u && flags != 0x0004u && flags != 0x0008u && flags != 0x0010u)
+            throw new ArgumentOutOfRangeException("flags", "Expected a left or right mouse-button transition.");
+        INPUT input = new INPUT();
+        input.type = 0; // INPUT_MOUSE
+        input.u.mi.dwFlags = flags; // LEFTDOWN / LEFTUP / RIGHTDOWN / RIGHTUP
+        return input;
+    }
+    public static uint Mouse(uint flags) {
+        INPUT[] input = new INPUT[] { CreateMouseInput(flags) };
+        return SendInput(1, input, Marshal.SizeOf(typeof(INPUT)));
+    }
+    public static INPUT CreateRelativeMouseInput(int dx, int dy) {
+        if (dx < -2000 || dx > 2000) throw new ArgumentOutOfRangeException("dx", "Relative mouse dx must be -2000..2000.");
+        if (dy < -2000 || dy > 2000) throw new ArgumentOutOfRangeException("dy", "Relative mouse dy must be -2000..2000.");
+        INPUT input = new INPUT();
+        input.type = 0; // INPUT_MOUSE
+        input.u.mi.dx = dx;
+        input.u.mi.dy = dy;
+        input.u.mi.dwFlags = 0x0001u; // MOVE only: relative, no button or wheel
+        return input;
+    }
+    public static uint RelativeMouse(int dx, int dy) {
+        INPUT[] input = new INPUT[] { CreateRelativeMouseInput(dx, dy) };
         return SendInput(1, input, Marshal.SizeOf(typeof(INPUT)));
     }
 }

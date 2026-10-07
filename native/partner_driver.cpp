@@ -9,6 +9,7 @@
 #include <cstdarg>
 #include <cstring>
 #include "mgscoop/partner_driver.hpp"
+#include "mgscoop/partner_upper_probe.hpp"
 #include "partner_player_contract.hpp"
 
 namespace mgscoop::partner_driver {
@@ -425,6 +426,7 @@ void LogDmMapTable(const Settings& set, const Hooks& h, const char* reason) noex
 // Reverts the DM patch (if ours) and drops pending play state; logs the reason.
 // A mapped clip still ours is abandoned (left looping, as dm=on leaves one).
 void RevertDm(Driver& d, const Hooks& h, const char* reason) noexcept {
+    partner_upper_probe::Clear(reason);
     Mission& m = d.mission;
     if (m.dmmap.owned) {
         EmitDmMap(m, h, kDmAbandoned, "partner_dmmap=abandoned; reason=%s; gani=%s\r\n", reason, Gani(m.dmmap.cur).text);
@@ -436,6 +438,11 @@ void RevertDm(Driver& d, const Hooks& h, const char* reason) noexcept {
         if (m.dm_patched) m.dm_revert_failed = true;
     }
     m.dm_play_pending = false;
+}
+
+unsigned DmMotionCount(const Hooks& h) noexcept {
+    const unsigned count = h.dm_motion_count ? h.dm_motion_count(h.context) : 13;
+    return count <= kPartnerDmGaniMax + 1 ? count : 0;
 }
 
 // dm=map: one step of the mapper (partner_dmmap) and its log lines. Runs while
@@ -454,6 +461,8 @@ void TickDmMap(Driver& d, const Hooks& h, const Settings& set, const Clock& cloc
     if (d.dmmap_rearm) {
         d.dmmap_rearm = false;
         pdm::Rearm(m.dmmap);
+        m.dmmap_turn = {};
+        m.dmmap_source_turns = {};
     }
     pdm::In in{};
     in.map = map;
@@ -475,7 +484,46 @@ void TickDmMap(Driver& d, const Hooks& h, const Settings& set, const Clock& cloc
     } else {
         in.cls = pdm::Classify(obs, set.dm_speed, prev_move, s.cand_cls.stance);
     }
-    in.target = pdm::ResolveTarget(set.dm_map, in.cls, s.bad);
+    const unsigned motion_count = DmMotionCount(h);
+    in.available_ganis = static_cast<std::uint8_t>(motion_count);
+    const std::uint32_t unavailable = ~((1u << motion_count) - 1u);
+    in.target = pdm::ResolveTarget(set.dm_map, in.cls, s.bad | unavailable);
+    in.responsive = obs.flag_move <= 3 || obs.sprint || obs.gun_actions != 0;
+    in.measured = set.source == PartnerSource::net && obs.fresh && !obs.lost && obs.speed_ok && in.cls.via == pdm::Via::speed;
+    // Retail stationary body yaw turns while aiming. Aim alone can coexist
+    // with lower-body pivots; firing/reloading and every other action still
+    // interrupt their collector and pending finite requests.
+    const bool gun_busy = (obs.gun_actions & ~sync::ActionFlag::Aiming) != 0;
+    in.urgent = in.cls.move != 0 || in.cls.stance != s.cand_cls.stance || gun_busy;
+    const bool turn_allowed = motion_count >= 21 && map && in.blocked == pdm::Block::none && parts_loaded && obs.fresh && !obs.lost;
+    std::uint8_t turn = pdm::kNoGani;
+    std::uint32_t turn_token = 0;
+    if (set.source == PartnerSource::net && h.sample_remote_with_turns) {
+        const auto& frame = m.dmmap_source_frame;
+        const bool body_transition = m.look_verify || (tick_ops & (partner::op::set_parts_explicit |
+            partner::op::warp | partner::op::set_all_active)) != 0 ||
+            ((tick_ops & partner::op::copy_parts) && !(tick.luaflags & partner::luaflag::parts_copied));
+        const auto result = partner_source_turns::Step(m.dmmap_source_turns, m.dmmap_turn, frame,
+            frame.now_ms > now ? frame.now_ms : now, turn_allowed && !body_transition && in.cls.move == 0 && !gun_busy,
+            set.dm_speed, in.cls.stance);
+        if (result.cancel_queue) pdm::CancelFiniteEvents(m.dmmap);
+        in.urgent = in.urgent || result.busy;
+        turn = result.event.gani;
+        turn_token = result.event.token;
+        if (turn_token) EmitDmMapSwitch(m, h,
+            "partner_dmmap=source_turn; gani=%u; token=%u; generation=%u; sender_ms=%lld; receive_ms=%llu; owner_ms=%llu; age_ms=%u\r\n",
+            unsigned(turn), unsigned(turn_token), unsigned(result.event.generation), static_cast<long long>(result.event.sender_ms),
+            static_cast<unsigned long long>(result.event.receive_ms), static_cast<unsigned long long>(now),
+            Clamp32((frame.now_ms > now ? frame.now_ms : now) - result.event.receive_ms));
+    } else {
+        turn = pdm::ObserveTurn(m.dmmap_turn, now, turn_allowed, obs.yaw, in.cls.stance, in.cls.move != 0 || gun_busy);
+        turn_token = m.dmmap_turn.event_token;
+    }
+    if (turn != pdm::kNoGani && !(s.bad & (1u << turn))) {
+        in.target = turn;
+        in.finite_token = turn_token;
+        in.responsive = true;
+    }
     in.dm_ok = dm_ok;
     in.patched = m.dm_patched;
     in.parts_loaded = parts_loaded;
@@ -529,6 +577,9 @@ void TickDmMap(Driver& d, const Hooks& h, const Settings& set, const Clock& cloc
     case pdm::Event::lost:
         EmitDmMap(m, h, kDmLost, "partner_dmmap=lost; gani=%s; played_ms=%u; cause=%s; failures=%u\r\n", Gani(out.gani).text, out.ms,
                   pdm::CauseName(out.cause), s.failures);
+        break;
+    case pdm::Event::finished:
+        EmitDmMapSwitch(m, h, "partner_dmmap=finished; gani=%s; played_ms=%u; once=1\r\n", Gani(out.gani).text, out.ms);
         break;
     case pdm::Event::failed:
         EmitFormat(h, "partner_dmmap=failed; failures=%u; last=%s\r\n", s.failures, out.reason ? out.reason : "unknown");
@@ -682,7 +733,8 @@ void TickDm(Driver& d, const Hooks& h, const pp::State& st, const Settings& set,
         // Without a locator the entry writes CAM+0x1F0 = 0 and CAM+0x200 = 0
         // (0x1198D9D): a no-op only while both already are 0.
         const bool cam_idle = dm_ok && dm.cam_ok && dm.cam1f0 == 0 && dm.cam200 == 0;
-        if (!m.dm_patched) Emit(h, "partner_dm=refused; reason=not_patched\r\n");
+        if (d.dmplay_gani >= DmMotionCount(h)) Emit(h, "partner_dm=refused; reason=motion_not_in_archive\r\n");
+        else if (!m.dm_patched) Emit(h, "partner_dm=refused; reason=not_patched\r\n");
         else if (!parts_loaded) Emit(h, "partner_dm=refused; reason=parts\r\n");
         else if (!dm_ok || busy || pending) Emit(h, "partner_dm=refused; reason=busy\r\n");
         else if (!cam_idle) Emit(h, "partner_dm=refused; reason=cam_connect\r\n");
@@ -1381,6 +1433,7 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
 } // namespace
 
 void Configure(Driver& d, const LabConfig& lab) noexcept {
+    partner_upper_probe::Clear("configure");
     d = Driver{};
     d.settings.stage = lab.partner_stage;
     d.settings.source = lab.partner_source;
@@ -1424,6 +1477,7 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
 }
 
 void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcept {
+    partner_upper_probe::Clear("mission_start");
     // A missed MissionEnd/Stop must not leave the window armed or the DM
     // patch applied into the next mission: tear down before the reset, and
     // always publish a disarmed Arm. The hook's recorded fault is cleared
@@ -1455,6 +1509,7 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
 }
 
 void MissionEnd(Driver& d, const Hooks& h) noexcept {
+    partner_upper_probe::Clear("mission_end");
     DisarmInput(d, h, "mission_end");
     if (d.mission.dm_patched) RevertDm(d, h, "mission_end");
     d.mission.cfg_ready = false;
@@ -1465,6 +1520,7 @@ void MissionEnd(Driver& d, const Hooks& h) noexcept {
 }
 
 bool Cfg(Driver& d, const Hooks& h, const char* precheck, std::uint64_t now_ms) noexcept {
+    partner_upper_probe::Clear("cfg");
     Mission& m = d.mission;
     const char* reason = precheck;
     pp::State st{};
@@ -1504,6 +1560,7 @@ void LuaLog(Driver& d, const Hooks& h, const char* source, std::size_t size) noe
 }
 
 void Stop(Driver& d, const Hooks& h, PartnerTeardown teardown, bool terminating) noexcept {
+    partner_upper_probe::Clear("stop");
     Mission& m = d.mission;
     unsigned cleared = 0;
     DisarmInput(d, h, "stop");
@@ -1520,6 +1577,7 @@ void Stop(Driver& d, const Hooks& h, PartnerTeardown teardown, bool terminating)
 }
 
 void ApplyTrigger(Driver& d, const Hooks& h, const partner::Trigger& trigger, bool terminating) noexcept {
+    partner_upper_probe::ClearTrigger(trigger);
     Mission& m = d.mission;
     const std::uint32_t stage = trigger.stop ? 0 : trigger.has_stage ? trigger.stage : d.settings.stage;
     // Round 4: a change of the movement driver, the input mode or the pose
@@ -1662,7 +1720,7 @@ void PollTrigger(Driver& d, const Hooks& h, bool terminating) noexcept {
 bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, std::size_t size, const Clock& clock,
           bool terminating, partner::Reply& reply) noexcept {
     Mission& m = d.mission;
-    if (!m.cfg_ready || m.stopped || terminating) return false;
+    if (!m.cfg_ready || m.stopped || terminating) { partner_upper_probe::Clear("tick_inactive"); return false; }
     partner::Tick tick{};
     if (!partner::ParseTick(source, size, tick)) {
         if (m.tick_rejects < kCappedLogs) {
@@ -1748,7 +1806,11 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     dmobs.flag_move = partner_dmmap::kMoveUnknown;
     if (set.source == PartnerSource::net) {
         const std::uint32_t delay = h.interp_ms ? h.interp_ms(h.context, lab.partner_interp_ms) : lab.partner_interp_ms;
-        const pose::Sample sample = h.sample_remote ? h.sample_remote(h.context, delay) : pose::Sample{};
+        pose::Sample sample{};
+        if (h.sample_remote_with_turns) {
+            m.dmmap_source_frame = h.sample_remote_with_turns(h.context, delay, m.dmmap_source_turns.cursor);
+            sample = m.dmmap_source_frame.visual;
+        } else sample = h.sample_remote ? h.sample_remote(h.context, delay) : pose::Sample{};
         sample_status = sample.status;
         status = sample.status == pose::Status::live ? partner::Status::live
                : sample.status == pose::Status::stale ? partner::Status::stale : partner::Status::lost;
@@ -1759,6 +1821,11 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             if (sample.anim_valid) remote_anim = sync::AnimState{sample.act, sample.anim_stance, sample.anim_speed, sync::AnimFlag::Valid};
             dmobs.stance = sample.stance;
             dmobs.sprint = (sample.flags & sync::ActionFlag::Sprinting) != 0;
+            dmobs.gun_actions = sample.equip_id ? sample.flags & (sync::ActionFlag::Aiming | sync::ActionFlag::Firing | sync::ActionFlag::Reloading) : 0;
+            // Authoritative movement flags avoid waiting for a 150 ms speed
+            // window when the sender has just started walking or running.
+            if (sample.flags & sync::ActionFlag::Running) dmobs.flag_move = 2;
+            else if (sample.flags & sync::ActionFlag::Walking) dmobs.flag_move = 1;
         }
         dmobs.fresh = sample.valid && sample.status == pose::Status::live;
         dmobs.lost = !sample.valid || sample.status == pose::Status::lost;
@@ -1768,6 +1835,8 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             dmobs.act = sample.act;
             dmobs.anim_stance = sample.anim_stance;
             dmobs.anim_speed = sample.anim_speed;
+            // Idle-encoded acts can persist while the pose moves. Keep the
+            // movement unknown so measured speed can still decide the band.
         }
     } else {
         if (set.source == PartnerSource::orbit) pose = partner::OrbitPose(tick, lab.partner_offset_cm, now - m.start_ms);
@@ -1776,6 +1845,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         dmobs.fresh = true;
         dmobs.stance = tick.stance;
         dmobs.sprint = tick.move == 3;
+        dmobs.gun_actions = tick.equip_id ? tick.action_flags : 0;
         if (set.source == PartnerSource::fixed) dmobs.flag_move = tick.move;
         if (local_anim.flags & sync::AnimFlag::Valid) {
             dmobs.anim_valid = true;
@@ -1784,10 +1854,12 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             dmobs.anim_speed = local_anim.speed;
         }
     }
+    dmobs.yaw = static_cast<float>(pose.yaw_mrad) * 0.001f;
     const bool free_roam_net = set.source == PartnerSource::net &&
                                (m.mission_code == 30010 || m.mission_code == 30020);
     if (free_roam_net) {
         if (m.realized && !pp::Realized(st, partner::partner_index)) {
+            partner_upper_probe::Clear("range_unrealized");
             m.range_needs_place = true;
             m.pose_applied = m.have_cmd = false;
             if (m.bits_set) ClearBits(d, h, "range_rearm", terminating);
@@ -1798,9 +1870,13 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                                                                          tick.x_mm, tick.y_mm, tick.z_mm) : UINT32_MAX;
         const bool fresh = pose_valid && sample_status == pose::Status::live;
         if (!m.range_hidden && pose_valid && distance >= 200000) {
+            partner_upper_probe::Clear("range_hidden");
             m.range_hidden = m.range_needs_place = true;
             m.pose_applied = m.have_cmd = m.hybrid_placed = false;
             partner_dmmap::SpeedReset(m.dmmap_speed);
+            partner_dmmap::CancelFiniteEvents(m.dmmap);
+            m.dmmap_turn = {};
+            m.dmmap_source_turns = {};
             EmitCapped(m.range_cap, h, "partner_range", "partner_range=hide; distance_mm=%u; reason=far\r\n", distance);
         }
         if (m.range_hidden) {
@@ -1852,8 +1928,15 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     if (m.dmmap_speed_source != set.source) {
         m.dmmap_speed_source = set.source;
         partner_dmmap::SpeedReset(m.dmmap_speed);
+        partner_dmmap::CancelFiniteEvents(m.dmmap);
+        m.dmmap_turn = {};
+        m.dmmap_source_turns = {};
     }
-    if (pose_valid) partner_dmmap::SpeedPush(m.dmmap_speed, now, pose.x_mm, pose.z_mm);
+    if (pose_valid && partner_dmmap::SpeedPush(m.dmmap_speed, now, pose.x_mm, pose.z_mm)) {
+        m.dmmap_turn = {};
+        m.dmmap_source_turns = {};
+        partner_dmmap::CancelFiniteEvents(m.dmmap);
+    }
     dmobs.speed_ok = set.source != PartnerSource::fixed && partner_dmmap::SpeedMmps(m.dmmap_speed, dmobs.speed_mmps);
     // partner_lost=hide (lab-tested only; freeze, the default, holds the pose
     // with dm speed 0 and stays realized): after kLostHideMs of a lost net
@@ -1950,6 +2033,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     bool transform_warp = false;
     // lost -> live on the net source this tick (hybrid and apply=input relink).
     const bool relink = set.source == PartnerSource::net && m.last_status == pose::Status::lost && sample_status == pose::Status::live;
+    if (relink) partner_upper_probe::Clear("relink");
     if (transform && m.body_ok && m.have_cmd && now - m.xform_check_ms >= 1000) {
         m.xform_check_ms = now;
         const std::int32_t bx = MetresToMm(m.body_pos[0]), by = MetresToMm(m.body_pos[1]), bz = MetresToMm(m.body_pos[2]);
@@ -2301,6 +2385,8 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         // A mapped clip ends with the body: forget it (no lost line), new speed.
         partner_dmmap::Forget(m.dmmap);
         partner_dmmap::SpeedReset(m.dmmap_speed);
+        m.dmmap_turn = {};
+        m.dmmap_source_turns = {};
         if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "partner_realized=0; R=1; ms_after_realize=%u\r\n",
                 Clamp32(now - m.realized_ms)))) LogTransition(m, h, line);
     }

@@ -121,6 +121,9 @@ int main() {
     pad.state.Gamepad = {}; pad.state.Gamepad.sThumbLX = 16000;
     Check(ui::CapturingInput(), "held controller stick prolongs release guard");
     pad.state.Gamepad = {};
+    ui::SetMouseHeldForTest(true);
+    Check(ui::CapturingInput(), "held mouse also prolongs release guard");
+    ui::SetMouseHeldForTest(false);
     Check(!ui::CapturingInput() && DebugFixturePad(0, &state) == ERROR_SUCCESS && state.dwPacketNumber == 77, "controller release restores original polling");
     ui::SetOpenForTest(true); pad.result = ERROR_DEVICE_NOT_CONNECTED;
     state.dwPacketNumber = 42; state.Gamepad.wButtons = XINPUT_GAMEPAD_B;

@@ -3,7 +3,7 @@
 # -PackageDirectory installer path. Everything runs inside an owned temporary
 # folder under build/; no real game folder, Steam folder or process is touched.
 [CmdletBinding()]
-param([string]$IniCheck, [string]$FakeProcess)
+param([string]$IniCheck, [string]$FakeProcess, [switch]$InputOnly)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -31,6 +31,251 @@ function Assert-Throws([scriptblock]$Operation, [string]$Expected, [string]$Mess
     if (!$failure) { throw "Assertion failed: expected failure: $Message" }
     if ($Expected -and !$failure.Exception.Message.Contains($Expected)) { throw "Assertion failed: $Message (unexpected error: $($failure.Exception.Message))" }
 }
+function Test-LabInputSpecs {
+    # Pure input planning and native INPUT construction; never calls SendInput.
+    $scanTable = Get-LabScanCodeTable
+    Assert-Equal "$($scanTable['shift'][0])/$($scanTable['f10'][0])/$($scanTable['f11'][0])/$($scanTable['enter'][0])/$($scanTable['up'][1])" '42/68/87/28/True' 'scan codes: shift 0x2A, f10 0x44, f11 0x57'
+    function Get-KeySpecText($Spec) { "$(@($Spec.Keys | ForEach-Object { $_.Name }) -join '+')/$($Spec.HoldMs)/$(@($Spec.Keys | ForEach-Object { $_.Scan }) -join ',')" }
+    Assert-Equal (Get-KeySpecText (ConvertFrom-LabKeySpec 'enter')) 'enter/150/28' 'plain key, default hold'
+    Assert-Equal (Get-KeySpecText (ConvertFrom-LabKeySpec 'w:4000')) 'w/4000/17' 'hold W for 4 s'
+    Assert-Equal (Get-KeySpecText (ConvertFrom-LabKeySpec 'W+A:6000')) 'w+a/6000/17,30' 'W and A together for 6 s'
+    Assert-Equal (Get-KeySpecText (ConvertFrom-LabKeySpec 'ctrl+f8' -DefaultHoldMs 300)) 'ctrl+f8/300/29,66' 'combination with -HoldMs'
+    Assert-Equal (Get-KeySpecText (ConvertFrom-LabKeySpec 'shift+w:3000')) 'shift+w/3000/42,17' 'shift+W (sprint) held'
+    foreach ($bad in 'w:0', 'w:60001', 'w:abc', 'q+q', 'w+', ':100', 'jump', 'w:1:2', 'mousemiddle', 'mouseleft+mouseleft', 'MouseRight+mouseright:100', 'mouseleft:0', 'mouseright:60001', 'w+mouseleft+') {
+        Assert-Throws { ConvertFrom-LabKeySpec $bad } '' "key spec '$bad' refused"
+    }
+    Assert-Equal (ConvertFrom-LabKeySpec 'enter' -DefaultHoldMs 0).HoldMs 0 '-HoldMs 0 (a tap) is still accepted, as before the key specs'
+    Assert-Throws { ConvertFrom-LabKeySpec 'enter' -DefaultHoldMs -1 } 'HoldMs' 'negative -HoldMs refused'
+    Assert-Throws { ConvertFrom-LabKeySpec 'enter' -DefaultHoldMs 60001 } 'HoldMs' '-HoldMs above 60 s refused'
+    $left = (ConvertFrom-LabKeySpec 'mouseleft').Keys[0]
+    $right = (ConvertFrom-LabKeySpec 'MOUSERIGHT:60000').Keys[0]
+    Assert-Equal "$($left.Name)/$($left.Kind)/$($left.DownFlags)/$($left.UpFlags)" 'mouseleft/Mouse/2/4' 'left mouse button uses LEFTDOWN and LEFTUP'
+    Assert-Equal "$($right.Name)/$($right.Kind)/$($right.DownFlags)/$($right.UpFlags)" 'mouseright/Mouse/8/16' 'right mouse button uses RIGHTDOWN and RIGHTUP'
+    Assert-True (!$left.PSObject.Properties['Scan'] -and !$right.PSObject.Properties['Scan']) 'mouse buttons have no keyboard scan code'
+    $combo = ConvertFrom-LabKeySpec 'ctrl+mouseright+mouseleft+w:1000'
+    Assert-Equal "$(@($combo.Keys | ForEach-Object { $_.Name }) -join '+')/$($combo.HoldMs)" 'ctrl+mouseright+mouseleft+w/1000' 'mixed keyboard and mouse order and hold are preserved'
+    Assert-Equal (@($combo.Keys | ForEach-Object { $_.Kind }) -join ',') 'Keyboard,Mouse,Mouse,Keyboard' 'mixed input uses explicit types'
+    Assert-Equal "$($combo.Keys[0].Scan)/$($combo.Keys[3].Scan)" '29/17' 'mixed input retains keyboard scan codes'
+    Assert-Equal (ConvertFrom-LabKeySpec 'mouseright+mouseleft' -DefaultHoldMs 0).HoldMs 0 'mouse combo permits default tap hold'
+    Assert-Equal (ConvertFrom-LabKeySpec 'mouseright+r:300').Keys[1].Name 'r' 'aim and reload combination accepted'
+    foreach ($name in $scanTable.Keys) {
+        $keyboard = (ConvertFrom-LabKeySpec $name).Keys[0]
+        Assert-Equal "$($keyboard.Kind)/$($keyboard.Scan)/$($keyboard.Extended)" "Keyboard/$($scanTable[$name][0])/$($scanTable[$name][1])" "keyboard '$name' remains unchanged"
+    }
+    Initialize-LabWin32
+    Assert-Equal ([Runtime.InteropServices.Marshal]::SizeOf([MgsCoopLab.User32]::CreateMouseInput([uint32]2))) $(if ([IntPtr]::Size -eq 8) { 40 } else { 28 }) 'INPUT retains Win32 ABI alignment'
+    foreach ($flags in [uint32]2, [uint32]4, [uint32]8, [uint32]16) {
+        $input = [MgsCoopLab.User32]::CreateMouseInput($flags)
+        Assert-Equal $input.type 0 "mouse transition $flags uses INPUT_MOUSE"
+        Assert-Equal $input.u.mi.dwFlags $flags "mouse transition $flags retains its flag"
+        Assert-True ($input.u.mi.dx -eq 0 -and $input.u.mi.dy -eq 0 -and $input.u.mi.mouseData -eq 0 -and $input.u.mi.time -eq 0 -and $input.u.mi.dwExtraInfo -eq [IntPtr]::Zero) "mouse transition $flags does not move the cursor or add metadata"
+    }
+    foreach ($flags in [uint32]0, [uint32]1, [uint32]6, [uint32]18, [uint32]::MaxValue) {
+        Assert-Throws { [MgsCoopLab.User32]::CreateMouseInput($flags) } 'Expected a left or right mouse-button transition' "unsupported mouse flags $flags refused"
+    }
+    foreach ($pair in @(@(0,0), @(2000,-2000), @(-2000,2000), @(250,-130), @(-1,1))) {
+        $move = [MgsCoopLab.User32]::CreateRelativeMouseInput($pair[0],$pair[1])
+        Assert-Equal $move.type 0 'relative move uses INPUT_MOUSE'
+        Assert-Equal "$($move.u.mi.dx)/$($move.u.mi.dy)" "$($pair[0])/$($pair[1])" 'relative move retains signed axes'
+        Assert-Equal $move.u.mi.dwFlags ([uint32]1) 'relative move uses MOVE only (no button/wheel/absolute flag)'
+        Assert-True ($move.u.mi.mouseData -eq 0 -and $move.u.mi.time -eq 0 -and $move.u.mi.dwExtraInfo -eq [IntPtr]::Zero) 'relative move has no wheel data or metadata'
+    }
+    foreach ($bad in -2001,2001,[int]::MinValue,[int]::MaxValue) {
+        Assert-Throws { [MgsCoopLab.User32]::CreateRelativeMouseInput($bad,0) } 'Relative mouse dx' "native relative dx bound rejects $bad"
+        Assert-Throws { [MgsCoopLab.User32]::CreateRelativeMouseInput(0,$bad) } 'Relative mouse dy' "native relative dy bound rejects $bad"
+    }
+    Assert-Equal @(Get-LabInputPlan).Count 0 'no keys/no movement leaves screenshot-only plan empty'
+    $movementOnly = @(Get-LabInputPlan -MouseDeltaX -2000 -MouseDeltaY 2000 -HoldMs 0)
+    Assert-Equal $movementOnly.Count 1 'relative-only request gets one foreground-gated step'
+    Assert-Equal @($movementOnly[0].Keys).Count 0 'relative-only step presses no keys or buttons'
+    Assert-Equal $movementOnly[0].HoldMs 0 'relative-only step preserves explicit tap hold'
+    Assert-Equal "$($movementOnly[0].MouseMove.Kind)/$($movementOnly[0].MouseMove.DeltaX)/$($movementOnly[0].MouseMove.DeltaY)/$($movementOnly[0].MouseMove.Flags)" 'MouseMove/-2000/2000/1' 'relative step carries a typed bounded movement'
+    Assert-Equal "$($movementOnly[0].MouseMove.Repeat)/$($movementOnly[0].MouseMove.IntervalMs)" '1/150' 'default movement remains a single move with no interval wait'
+    Assert-Equal $movementOnly[0].MouseMove.StartDelayMs 0 'default movement adds no initial wait'
+    $mixedPlan = @(Get-LabInputPlan -Keys 'ctrl+mouseright:500,w:250' -MouseDeltaX 120 -MouseDeltaY -20)
+    Assert-Equal $mixedPlan.Count 2 'comma-separated keyboard/mouse specs still expand'
+    Assert-Equal (@($mixedPlan[0].Keys | ForEach-Object { $_.Name }) -join '+') 'ctrl+mouseright' 'mouse movement retains original combination order'
+    Assert-Equal "$($mixedPlan[0].HoldMs)/$($mixedPlan[1].HoldMs)" '500/250' 'mouse movement preserves per-spec holds'
+    Assert-True ($null -ne $mixedPlan[0].MouseMove -and $null -eq $mixedPlan[1].MouseMove) 'relative movement belongs only to the first combination'
+    $repeatPlan = @(Get-LabInputPlan -Keys 'mouseright:5,w:10' -MouseDeltaY 1 -MouseRepeat 8 -MouseIntervalMs 2000)
+    Assert-Equal "$($repeatPlan[0].MouseMove.Repeat)/$($repeatPlan[0].MouseMove.IntervalMs)" '8/2000' 'planner retains upper repeat and interval boundaries'
+    Assert-True ($null -eq $repeatPlan[1].MouseMove) 'repeated movement never belongs to a later combination'
+    $repeatMinimum = @(Get-LabInputPlan -MouseDeltaX 1 -MouseRepeat 1 -MouseIntervalMs 1)
+    Assert-Equal "$($repeatMinimum[0].MouseMove.Repeat)/$($repeatMinimum[0].MouseMove.IntervalMs)" '1/1' 'planner accepts lower repeat and interval boundaries'
+    foreach ($delay in 0,300,2000) {
+        $delayedPlan = @(Get-LabInputPlan -Keys 'mouseright:5,w:10' -MouseDeltaX 1 -MouseStartDelayMs $delay)
+        Assert-Equal $delayedPlan[0].MouseMove.StartDelayMs $delay 'planner retains bounded initial delay'
+        Assert-True ($null -eq $delayedPlan[1].MouseMove) 'initial delay belongs only to the first movement combination'
+    }
+    Assert-True ($null -eq @(Get-LabInputPlan -Keys 'w')[0].MouseMove) 'existing key-only plan remains unchanged'
+    Assert-Throws { Get-LabInputPlan -MouseDeltaX -2001 } 'MouseDeltaX' 'PowerShell planner bounds dx'
+    Assert-Throws { Get-LabInputPlan -MouseDeltaY 2001 } 'MouseDeltaY' 'PowerShell planner bounds dy'
+    foreach ($bad in 0,9) { Assert-Throws { Get-LabInputPlan -MouseDeltaX 1 -MouseRepeat $bad } 'MouseRepeat' "planner rejects repeat $bad" }
+    foreach ($bad in 0,2001) { Assert-Throws { Get-LabInputPlan -MouseDeltaX 1 -MouseIntervalMs $bad } 'MouseIntervalMs' "planner rejects interval $bad" }
+    foreach ($bad in -1,2001,[int]::MaxValue) { Assert-Throws { Get-LabInputPlan -MouseDeltaX 1 -MouseStartDelayMs $bad } 'MouseStartDelayMs' "planner rejects initial delay $bad" }
+    Assert-Throws { Get-LabInputPlan -MouseStartDelayMs 300 } 'requires a nonzero' 'initial-delay-only request is refused'
+    Assert-Throws { Get-LabInputPlan -Keys mouseright -MouseStartDelayMs 300 } 'requires a nonzero' 'held buttons cannot enable a zero-axis initial delay'
+    Assert-Throws { Get-LabInputPlan -MouseRepeat 2 } 'requires a nonzero' 'repeat-only request is refused before any dispatch'
+    Assert-Throws { Get-LabInputPlan -Keys 'mouseright' -MouseRepeat 2 } 'requires a nonzero' 'held buttons cannot enable a zero-axis repeated move'
+    Assert-Throws { Get-LabInputPlan -MouseDeltaX 10 -Keys 'mouseleft+mouseleft' } 'repeated' 'invalid combo cannot reach a movement dispatch'
+    $sendInput = [IO.File]::ReadAllText((Join-Path $projectRoot 'tools/lab/Send-LabInput.ps1'))
+    Assert-True ($sendInput -match '(?s)try \{.*Key\(\$p\.Scan, \$p\.Extended, \$false\).*\} finally \{.*Key\(\$pressed\[\$i\]\.Scan, \$pressed\[\$i\]\.Extended, \$true\)') 'Send-LabInput releases every pressed key in a finally block'
+    Assert-True ($sendInput -match '(?s)try \{.*Mouse\(\$p\.DownFlags\).*\} finally \{.*Mouse\(\$pressed\[\$i\]\.UpFlags\)') 'Send-LabInput releases every pressed mouse button in a finally block'
+    Assert-True ($sendInput -match '(?s)GetForegroundWindow\(\) -ne \$handle\) \{ Write-Warning.*continue \}.*try \{') 'foreground gate still precedes keyboard or mouse dispatch'
+    # Execute the real dispatch try/finally against a recording native substitute.
+    # No user32 method, actual window, process or SendInput call is executed.
+    $tokens = $null; $parseErrors = $null
+    $sendAst = [Management.Automation.Language.Parser]::ParseInput($sendInput,[ref]$tokens,[ref]$parseErrors)
+    Assert-Equal @($parseErrors).Count 0 'input script parses with bounded relative parameters'
+    $bindOnly = [scriptblock]::Create($sendAst.ParamBlock.Extent.Text + "`n[pscustomobject]@{ X = `$MouseDeltaX; Y = `$MouseDeltaY; Repeat = `$MouseRepeat; IntervalMs = `$MouseIntervalMs; StartDelayMs = `$MouseStartDelayMs }")
+    $bound = & $bindOnly -Role host -ConfigPath fixture -MouseDeltaX -2000 -MouseDeltaY 2000
+    Assert-Equal "$($bound.X)/$($bound.Y)" '-2000/2000' 'real script parameter binding accepts signed boundary deltas'
+    Assert-Throws { & $bindOnly -Role host -ConfigPath fixture -MouseDeltaX 2001 } 'MouseDeltaX' 'real script binding refuses excessive dx before any side effects'
+    Assert-Throws { & $bindOnly -Role host -ConfigPath fixture -MouseDeltaY -2001 } 'MouseDeltaY' 'real script binding refuses excessive dy before any side effects'
+    Assert-Equal "$($bound.Repeat)/$($bound.IntervalMs)" '1/150' 'real script binding preserves repeat defaults'
+    Assert-Equal $bound.StartDelayMs 0 'real script binding preserves zero initial delay'
+    foreach ($delay in 0,300,2000) {
+        $boundDelay = & $bindOnly -Role host -ConfigPath fixture -MouseDeltaX 1 -MouseStartDelayMs $delay
+        Assert-Equal $boundDelay.StartDelayMs $delay 'real script binding accepts bounded initial delays'
+    }
+    foreach ($bad in -1,2001,[int]::MaxValue) { Assert-Throws { & $bindOnly -Role host -ConfigPath fixture -MouseStartDelayMs $bad } 'MouseStartDelayMs' "real script binding refuses initial delay $bad before side effects" }
+    foreach ($pair in @(@(1,1),@(8,2000))) {
+        $boundRepeat = & $bindOnly -Role host -ConfigPath fixture -MouseDeltaX 1 -MouseRepeat $pair[0] -MouseIntervalMs $pair[1]
+        Assert-Equal "$($boundRepeat.Repeat)/$($boundRepeat.IntervalMs)" "$($pair[0])/$($pair[1])" 'real script binding accepts repeat and interval boundaries'
+    }
+    foreach ($bad in 0,9) { Assert-Throws { & $bindOnly -Role host -ConfigPath fixture -MouseRepeat $bad } 'MouseRepeat' "real script binding refuses repeat $bad" }
+    foreach ($bad in 0,2001) { Assert-Throws { & $bindOnly -Role host -ConfigPath fixture -MouseIntervalMs $bad } 'MouseIntervalMs' "real script binding refuses interval $bad" }
+    if (!('MgsCoopLab.InputFixture' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+namespace MgsCoopLab {
+public static class InputFixture {
+    public static List<string> Calls = new List<string>();
+    public static List<int> Sleeps = new List<int>();
+    public static List<string> Events = new List<string>();
+    public static IntPtr Foreground = new IntPtr(123);
+    public static uint MoveResult = 1;
+    public static int Moves = 0;
+    public static int ForegroundChecks = 0;
+    public static int LoseFocusAfterMove = 0;
+    public static int FailMoveAt = 0;
+    public static int LoseFocusAtSleepMs = 0;
+    public static int FailSleepAtMs = 0;
+    private static void Record(string value) { Calls.Add(value); Events.Add(value); }
+    public static void Wait(int milliseconds) {
+        Sleeps.Add(milliseconds); Events.Add("sleep:" + milliseconds);
+        if (LoseFocusAtSleepMs > 0 && milliseconds == LoseFocusAtSleepMs) Foreground = new IntPtr(456);
+        if (FailSleepAtMs > 0 && milliseconds == FailSleepAtMs) throw new InvalidOperationException("fixture sleep interrupted");
+    }
+    public static IntPtr GetForegroundWindow() { ForegroundChecks++; return Foreground; }
+    public static uint Key(ushort scan, bool extended, bool up) { Record("key:" + scan + ":" + (up ? "up" : "down")); return 1; }
+    public static uint Mouse(uint flags) { Record("mouse:" + flags); return 1; }
+    public static uint RelativeMouse(int dx, int dy) {
+        Record("relative:" + dx + ":" + dy); Moves++;
+        if (Moves == LoseFocusAfterMove) Foreground = new IntPtr(456);
+        return Moves == FailMoveAt ? 0 : MoveResult;
+    }
+}
+}
+'@
+    }
+    $dispatchAst = @($sendAst.FindAll({ param($node) $node -is [Management.Automation.Language.TryStatementAst] },$true))
+    Assert-Equal $dispatchAst.Count 1 'fixture exercises the actual dispatch try/finally'
+    $sleepFixture = 'function Start-Sleep { param([int]$Milliseconds) [MgsCoopLab.InputFixture]::Wait($Milliseconds) }'
+    $dispatchText = $dispatchAst[0].Extent.Text.Replace('[MgsCoopLab.User32]','[MgsCoopLab.InputFixture]')
+    $dispatch = [scriptblock]::Create($sleepFixture + "`n" + $dispatchText)
+    $spec = @(Get-LabInputPlan -Keys 'ctrl+mouseright:5' -MouseDeltaX 100 -MouseDeltaY -90)[0]
+    $Role = 'fixture'; $handle = [IntPtr]123
+    foreach ($scenario in 'accepted','rejected','foreground_lost') {
+        [MgsCoopLab.InputFixture]::Calls.Clear()
+        [MgsCoopLab.InputFixture]::Sleeps.Clear()
+        [MgsCoopLab.InputFixture]::Moves = 0
+        [MgsCoopLab.InputFixture]::ForegroundChecks = 0
+        [MgsCoopLab.InputFixture]::LoseFocusAfterMove = 0
+        [MgsCoopLab.InputFixture]::FailMoveAt = 0
+        [MgsCoopLab.InputFixture]::MoveResult = $(if ($scenario -eq 'rejected') { 0 } else { 1 })
+        [MgsCoopLab.InputFixture]::Foreground = $(if ($scenario -eq 'foreground_lost') { [IntPtr]456 } else { $handle })
+        $pressed = [Collections.Generic.List[object]]::new()
+        if ($scenario -eq 'accepted') { & $dispatch }
+        elseif ($scenario -eq 'rejected') { Assert-Throws { & $dispatch } 'not accepted' 'failed relative move still runs original finally' }
+        else { Assert-Throws { & $dispatch } 'foreground changed' 'lost foreground prevents relative submission and runs finally' }
+        $expected = if ($scenario -eq 'foreground_lost') { 'key:29:down,mouse:8,mouse:16,key:29:up' } else { 'key:29:down,mouse:8,relative:100:-90,mouse:16,key:29:up' }
+        Assert-Equal ([MgsCoopLab.InputFixture]::Calls -join ',') $expected "actual dispatch releases mixed inputs in reverse order after $scenario"
+        if ($scenario -eq 'accepted') { Assert-Equal ([MgsCoopLab.InputFixture]::Sleeps -join ',') '30,30,5' 'default single move adds no interval sleep' }
+    }
+    $spec = @(Get-LabInputPlan -Keys 'ctrl+mouseright:5' -MouseDeltaX 100 -MouseDeltaY -90 -MouseRepeat 2 -MouseIntervalMs 150)[0]
+    foreach ($scenario in 'accepted','second_focus_lost','second_rejected') {
+        [MgsCoopLab.InputFixture]::Calls.Clear()
+        [MgsCoopLab.InputFixture]::Sleeps.Clear()
+        [MgsCoopLab.InputFixture]::MoveResult = 1
+        [MgsCoopLab.InputFixture]::Foreground = $handle
+        [MgsCoopLab.InputFixture]::Moves = 0
+        [MgsCoopLab.InputFixture]::ForegroundChecks = 0
+        [MgsCoopLab.InputFixture]::LoseFocusAfterMove = $(if ($scenario -eq 'second_focus_lost') { 1 } else { 0 })
+        [MgsCoopLab.InputFixture]::FailMoveAt = $(if ($scenario -eq 'second_rejected') { 2 } else { 0 })
+        $pressed = [Collections.Generic.List[object]]::new()
+        if ($scenario -eq 'accepted') { & $dispatch }
+        elseif ($scenario -eq 'second_rejected') { Assert-Throws { & $dispatch } 'not accepted' 'second move failure releases the original held combination' }
+        else { Assert-Throws { & $dispatch } 'foreground changed' 'focus lost between moves blocks the second move and releases the combination' }
+        $expected = if ($scenario -eq 'second_focus_lost') { 'key:29:down,mouse:8,relative:100:-90,mouse:16,key:29:up' } else { 'key:29:down,mouse:8,relative:100:-90,relative:100:-90,mouse:16,key:29:up' }
+        Assert-Equal ([MgsCoopLab.InputFixture]::Calls -join ',') $expected "repeated $scenario dispatch keeps one mouse-down/up and releases in reverse"
+        Assert-Equal ([MgsCoopLab.InputFixture]::ForegroundChecks) 2 "repeated $scenario dispatch checks focus before each move"
+        $expectedSleeps = if ($scenario -eq 'accepted') { '30,30,150,5' } else { '30,30,150' }
+        Assert-Equal ([MgsCoopLab.InputFixture]::Sleeps -join ',') $expectedSleeps "repeated $scenario dispatch waits only between moves before the final hold"
+    }
+    $spec = @(Get-LabInputPlan -Keys 'ctrl+mouseright:5' -MouseDeltaX 100 -MouseDeltaY -90 -MouseRepeat 2 -MouseIntervalMs 150 -MouseStartDelayMs 300)[0]
+    foreach ($scenario in 'accepted','settle_focus_lost','settle_interrupted','first_rejected') {
+        [MgsCoopLab.InputFixture]::Calls.Clear()
+        [MgsCoopLab.InputFixture]::Sleeps.Clear()
+        [MgsCoopLab.InputFixture]::Events.Clear()
+        [MgsCoopLab.InputFixture]::Foreground = $handle
+        [MgsCoopLab.InputFixture]::Moves = 0
+        [MgsCoopLab.InputFixture]::ForegroundChecks = 0
+        [MgsCoopLab.InputFixture]::LoseFocusAfterMove = 0
+        [MgsCoopLab.InputFixture]::FailMoveAt = 0
+        [MgsCoopLab.InputFixture]::MoveResult = $(if ($scenario -eq 'first_rejected') { 0 } else { 1 })
+        [MgsCoopLab.InputFixture]::LoseFocusAtSleepMs = $(if ($scenario -eq 'settle_focus_lost') { 300 } else { 0 })
+        [MgsCoopLab.InputFixture]::FailSleepAtMs = $(if ($scenario -eq 'settle_interrupted') { 300 } else { 0 })
+        $pressed = [Collections.Generic.List[object]]::new()
+        if ($scenario -eq 'accepted') { & $dispatch }
+        elseif ($scenario -eq 'settle_focus_lost') { Assert-Throws { & $dispatch } 'foreground changed' 'focus lost during initial delay prevents the first move and releases buttons' }
+        elseif ($scenario -eq 'settle_interrupted') { Assert-Throws { & $dispatch } 'sleep interrupted' 'interrupted initial delay runs the original finally release' }
+        else { Assert-Throws { & $dispatch } 'not accepted' 'failed first move after initial delay releases buttons' }
+        $middle = if ($scenario -eq 'accepted') { ',relative:100:-90,sleep:150,relative:100:-90,sleep:5' } elseif ($scenario -eq 'first_rejected') { ',relative:100:-90' } else { '' }
+        Assert-Equal ([MgsCoopLab.InputFixture]::Events -join ',') ("key:29:down,sleep:30,mouse:8,sleep:30,sleep:300${middle},mouse:16,key:29:up") "delayed $scenario dispatch waits after buttons down, once before movement, and releases in reverse"
+        $expectedChecks = if ($scenario -eq 'accepted') { 2 } elseif ($scenario -eq 'settle_interrupted') { 0 } else { 1 }
+        Assert-Equal ([MgsCoopLab.InputFixture]::ForegroundChecks) $expectedChecks "delayed $scenario keeps foreground checks immediately before movement"
+    }
+    [MgsCoopLab.InputFixture]::LoseFocusAtSleepMs = 0
+    [MgsCoopLab.InputFixture]::FailSleepAtMs = 0
+    [MgsCoopLab.InputFixture]::MoveResult = 1
+    # The real plan assignment and real dispatch body prove semantic validation
+    # prevents even the first button-down, without calling window APIs.
+    $planAst = @($sendAst.FindAll({ param($node) $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -ceq '$specs' },$true))
+    Assert-Equal $planAst.Count 1 'fixture uses the real complete-plan assignment'
+    Assert-True ($planAst[0].Extent.EndOffset -lt $dispatchAst[0].Extent.StartOffset) 'complete input plan is validated before dispatch'
+    $planAndDispatch = [scriptblock]::Create($sendAst.ParamBlock.Extent.Text + "`n" + $sleepFixture + "`n" + $planAst[0].Extent.Text + "`nforeach (`$spec in `$specs) { `$pressed = [Collections.Generic.List[object]]::new(); " + $dispatchText + ' }')
+    [MgsCoopLab.InputFixture]::Calls.Clear()
+    Assert-Throws { & $planAndDispatch -Role host -ConfigPath fixture -Keys mouseright -MouseRepeat 2 } 'requires a nonzero' 'real planning path refuses zero-axis repeats before a button-down'
+    Assert-Equal ([MgsCoopLab.InputFixture]::Calls.Count) 0 'invalid repeated movement dispatches no input'
+    Assert-Throws { & $planAndDispatch -Role host -ConfigPath fixture -Keys mouseright -MouseStartDelayMs 300 } 'requires a nonzero' 'real planning path refuses zero-axis initial delay before button-down'
+    Assert-Equal ([MgsCoopLab.InputFixture]::Calls.Count) 0 'invalid initial delay dispatches no input'
+    [MgsCoopLab.InputFixture]::Sleeps.Clear()
+    [MgsCoopLab.InputFixture]::Foreground = $handle
+    [MgsCoopLab.InputFixture]::Moves = 0
+    [MgsCoopLab.InputFixture]::ForegroundChecks = 0
+    [MgsCoopLab.InputFixture]::LoseFocusAfterMove = 0
+    [MgsCoopLab.InputFixture]::FailMoveAt = 0
+    & $planAndDispatch -Role host -ConfigPath fixture -Keys 'mouseright:5,w:10' -MouseDeltaX 100 -MouseRepeat 2 -MouseIntervalMs 1
+    Assert-Equal ([MgsCoopLab.InputFixture]::Calls -join ',') 'mouse:8,relative:100:0,relative:100:0,mouse:16,key:17:down,key:17:up' 'real two-combination plan repeats only in the first held combination'
+    Assert-Equal ([MgsCoopLab.InputFixture]::Sleeps -join ',') '30,1,5,30,10' 'later combination keeps its original hold without repeated movement waits'
+    [MgsCoopLab.InputFixture]::Calls.Clear()
+    [MgsCoopLab.InputFixture]::Sleeps.Clear()
+    & $planAndDispatch -Role host -ConfigPath fixture -Keys 'mouseright:5,w:10' -MouseDeltaX 100 -MouseRepeat 2 -MouseIntervalMs 1 -MouseStartDelayMs 300
+    Assert-Equal ([MgsCoopLab.InputFixture]::Calls -join ',') 'mouse:8,relative:100:0,relative:100:0,mouse:16,key:17:down,key:17:up' 'real script forwards initial delay without changing input order'
+    Assert-Equal ([MgsCoopLab.InputFixture]::Sleeps -join ',') '30,300,1,5,30,10' 'real script delays only once before the first move, with no delay in the later combination'
+}
 function Assert-InFixture([string]$Path) {
     if (!(Test-PathInside -Child $Path -Parent $fixture)) { throw "Test path escaped its fixture: $Path" }
 }
@@ -49,6 +294,12 @@ function Remove-OwnedFixture {
         if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Refusing cleanup of a fixture containing links' }
     }
     Remove-Item -LiteralPath $fixture -Recurse -Force
+}
+
+if ($InputOnly) {
+    Test-LabInputSpecs
+    Write-Output "PASS: $script:checks pure lab input checks (no windows or input sent)"
+    return
 }
 
 if (!(Test-Path -LiteralPath $buildRoot)) { $null = New-Item -ItemType Directory -Path $buildRoot }
@@ -379,8 +630,9 @@ try {
     Assert-Equal (ConvertTo-LabPartnerValue -Key partner_dm -Value probe) 'probe' 'partner_dm enum'
     Assert-Equal (ConvertTo-LabPartnerValue -Key partner_dm -Value map) 'map' 'partner_dm=map'
     Assert-Equal (ConvertTo-LabPartnerValue -Key partner_dm_map -Value '0,10,11,5,1,3,4,4,7,6,6,6') '0,10,11,5,1,3,4,4,7,6,6,6' 'partner_dm_map default table'
+    Assert-Equal (ConvertTo-LabPartnerValue -Key partner_dm_map -Value '26,27,28,29,30,0,1,2,3,4,5,6') '26,27,28,29,30,0,1,2,3,4,5,6' 'partner_dm_map receiver probes accepted'
     Assert-Equal (ConvertTo-LabPartnerValue -Key partner_dm_map -Value '12,12,12,12,12,12,12,12,12,12,12,12') '12,12,12,12,12,12,12,12,12,12,12,12' 'partner_dm_map up to 12'
-    foreach ($bad in @('0,10,11,5,1,3,4,4,7,6,6', '0,10,11,5,1,3,4,4,7,6,6,13', '0,10,11,5,1,3,4,4,7,6,6,01', '0,10,11,5,1,3,4,4,7,6,6,6,', '0, 10,11,5,1,3,4,4,7,6,6,6')) {
+    foreach ($bad in @('0,10,11,5,1,3,4,4,7,6,6', '0,10,11,5,1,3,4,4,7,6,6,31', '0,10,11,5,1,3,4,4,7,6,6,01', '0,10,11,5,1,3,4,4,7,6,6,6,', '0, 10,11,5,1,3,4,4,7,6,6,6')) {
         Assert-Throws { ConvertTo-LabPartnerValue -Key partner_dm_map -Value $bad } '12 comma-separated' "partner_dm_map '$bad' refused"
     }
     Assert-Equal (ConvertTo-LabPartnerValue -Key partner_dm_speed -Value '300:2600:5600') '300:2600:5600' 'partner_dm_speed default'
@@ -392,14 +644,14 @@ try {
     Assert-Equal (@($ovMap.Keys | ForEach-Object { "$_=$($ovMap[$_])" }) -join ' ') 'partner_dm=map partner_dm_map=0,12,11,5,1,3,4,4,2,6,6,6 partner_dm_speed=300:1500:5600' '-PartnerSetting: a comma inside the dm=map table value'
     $pjMap = ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ dm = 'map'; dm_map = '0,10,11,5,1,3,4,4,7,6,6,6'; dm_speed = '300:2600:5600' })
     Assert-Equal "$($pjMap['partner_dm'])/$($pjMap['partner_dm_map'])/$($pjMap['partner_dm_speed'])" 'map/0,10,11,5,1,3,4,4,7,6,6,6/300:2600:5600' 'lab.json dm=map short names'
-    # GANI bound guard: the Lua table, its range check and the native bound agree (0..12, 13 entries).
+    # GANI bound guard: resident movement, finite turns and manual graph probes agree.
     $syncLua = [IO.File]::ReadAllText((Join-Path $projectRoot 'lua/coop/partner_sync.lua'))
     $labHeader = [IO.File]::ReadAllText((Join-Path $projectRoot 'native/include/mgscoop/lab_config.hpp'))
-    Assert-True ($syncLua.Contains('integer(dg, 0, 12)') -and $labHeader.Contains('kPartnerDmGaniMax = 12')) 'GANI range: Lua integer(dg, 0, 12) and kPartnerDmGaniMax = 12'
+    Assert-True ($syncLua.Contains('integer(dg, 0, 30)') -and $labHeader.Contains('kPartnerDmGaniMax = 30')) 'GANI range: Lua integer(dg, 0, 30) and kPartnerDmGaniMax = 30'
     $ganiTable = [regex]::Match($syncLua, 'local GANI = \{\[0\] = (?<body>[\s\S]*?)\}\r?\n')
     Assert-True $ganiTable.Success 'partner_sync.lua defines the GANI table'
     $ganiBody = $ganiTable.Groups['body'].Value
-    Assert-Equal "$([regex]::Matches($ganiBody, '\.\. "snapnon_').Count)/$([regex]::Matches($ganiBody, '"state[A-Za-z]+"').Count)" '11/2' 'GANI has 13 entries: 11 snapnon ganis and 2 state names'
+    Assert-Equal "$([regex]::Matches($ganiBody, '\.\. "snapnon_').Count)/$([regex]::Matches($ganiBody, '"state[A-Za-z]+"').Count)/$([regex]::Matches($ganiBody, '\.\. "snap(hg00|ar00|ar01|sr02)/').Count)" '19/7/5' 'GANI has 31 entries: 19 snapnon clips, 7 state names, 5 receiver clips'
     $ovInput = ConvertFrom-LabPartnerSettingArgs -Items @('partner_input=net', 'partner_input_holdlog=1', 'partner_dm=on') -Role host
     Assert-Equal (@($ovInput.Keys | ForEach-Object { "$_=$($ovInput[$_])" }) -join ' ') 'partner_input=net partner_input_holdlog=1 partner_dm=on' '-PartnerSetting: round 3 overrides'
     $pjInput = ConvertFrom-LabPartnerJson -Partner ([pscustomobject]@{ input = 'net'; dm = 'probe'; look_gate = 0 })
@@ -511,7 +763,7 @@ try {
     Assert-Equal (Find-WorldTriggerResult -LogText 'partner_trigger=rejected; reason=parse' -Canonical 'world=1').State 'none' 'partner lines do not count'
     Assert-Equal (Find-WorldTriggerResult -LogText '' -Canonical 'world=1').State 'none' 'empty log'
     # Play-OfflineCoop: -World adds world=N only when > 0; -WorldProbe needs -World; [G] sends goto=30010.
-    Assert-True ($playText.Contains("[ValidateRange(0, 3)][int]`$World = 0") -and $playText.Contains("[string]`$WorldProbe = 'none'")) 'Play-OfflineCoop -World 0..3 (default 0), -WorldProbe (default none)'
+    Assert-True ($playText.Contains("[ValidateRange(0, 3)][int]`$World = 3") -and $playText.Contains("[string]`$WorldProbe = 'none'")) 'Play-OfflineCoop -World 0..3 (shared world default 3), -WorldProbe (default none)'
     Assert-True ($playText.Contains("if (`$World -gt 0) { `$partnerSettings += `"world=`$World`" }") -and
         $playText.Contains("if (`$WorldProbe -ne 'none') { `$partnerSettings += `"world_probe=`$WorldProbe`" }")) 'Play-OfflineCoop adds the world keys only when set'
     Assert-True ($playText.IndexOf("if (`$WorldProbe -ne 'none' -and `$World -lt 1) { throw '-WorldProbe needs -World 1..3.' }") -ge 0 -and
@@ -666,23 +918,7 @@ try {
         Assert-Equal "$($n['net_bind'])|$($n['net_link'])|$($n['partner_interp'])|$($n['net_peer_addr'])" 'loopback|v2|fixed|127.0.0.1' 'native: the default offline lab.ini keeps the loopback defaults'
     } else { Write-Output 'link_keys missing: native link cross-checks skipped' }
 
-    # Send-LabInput key specs.
-    $scanTable = Get-LabScanCodeTable
-    Assert-Equal "$($scanTable['shift'][0])/$($scanTable['f10'][0])/$($scanTable['f11'][0])/$($scanTable['enter'][0])/$($scanTable['up'][1])" '42/68/87/28/True' 'scan codes: shift 0x2A, f10 0x44, f11 0x57'
-    function Get-KeySpecText($Spec) { "$(@($Spec.Keys | ForEach-Object { $_.Name }) -join '+')/$($Spec.HoldMs)/$(@($Spec.Keys | ForEach-Object { $_.Scan }) -join ',')" }
-    Assert-Equal (Get-KeySpecText (ConvertFrom-LabKeySpec 'enter')) 'enter/150/28' 'plain key, default hold'
-    Assert-Equal (Get-KeySpecText (ConvertFrom-LabKeySpec 'w:4000')) 'w/4000/17' 'hold W for 4 s'
-    Assert-Equal (Get-KeySpecText (ConvertFrom-LabKeySpec 'W+A:6000')) 'w+a/6000/17,30' 'W and A together for 6 s'
-    Assert-Equal (Get-KeySpecText (ConvertFrom-LabKeySpec 'ctrl+f8' -DefaultHoldMs 300)) 'ctrl+f8/300/29,66' 'combination with -HoldMs'
-    Assert-Equal (Get-KeySpecText (ConvertFrom-LabKeySpec 'shift+w:3000')) 'shift+w/3000/42,17' 'shift+W (sprint) held'
-    foreach ($bad in 'w:0', 'w:60001', 'w:abc', 'q+q', 'w+', ':100', 'jump', 'w:1:2') {
-        Assert-Throws { ConvertFrom-LabKeySpec $bad } '' "key spec '$bad' refused"
-    }
-    Assert-Equal (ConvertFrom-LabKeySpec 'enter' -DefaultHoldMs 0).HoldMs 0 '-HoldMs 0 (a tap) is still accepted, as before the key specs'
-    Assert-Throws { ConvertFrom-LabKeySpec 'enter' -DefaultHoldMs -1 } 'HoldMs' 'negative -HoldMs refused'
-    Assert-Throws { ConvertFrom-LabKeySpec 'enter' -DefaultHoldMs 60001 } 'HoldMs' '-HoldMs above 60 s refused'
-    $sendInput = [IO.File]::ReadAllText((Join-Path $projectRoot 'tools/lab/Send-LabInput.ps1'))
-    Assert-True ($sendInput -match '(?s)try \{.*Key\(\$p\.Scan, \$p\.Extended, \$false\).*\} finally \{.*Key\(\$pressed\[\$i\]\.Scan, \$pressed\[\$i\]\.Extended, \$true\)') 'Send-LabInput releases every pressed key in a finally block'
+    Test-LabInputSpecs
 
     if ($IniCheck) {
         $file = Join-Path $fixture 'host-offline-lab.ini'; [IO.File]::WriteAllText($file, $hostOffIni)
@@ -991,7 +1227,7 @@ try {
               'apply=input input=net stick=180:100 cam=sandbox hold=none yaw=rot words=rp0 bits=0x6 correct=1500 isend=1 dm=probe lookgate=1 lookrecover=1'),
             @('dmplay=3 dm=on tap=0x2', 'dm=on tap=0x2 dmplay=3'), @('press=0x2:1200', 'press=0x2:1200'),
             @('p218=1 padprobe=1 holdlog=0 dmstop=1', 'p218=1 padprobe=1 holdlog=0 dmstop=1'),
-            @('dm=map', 'dm=map'), @('dmplay=12', 'dmplay=12'), @('dmspeed=300:1500:5600 dm=map lookgate=1 dmmap=0,12,11,5,1,3,4,4,2,6,6,6', 'dm=map dmmap=0,12,11,5,1,3,4,4,2,6,6,6 dmspeed=300:1500:5600 lookgate=1'))) {
+            @('dm=map', 'dm=map'), @('dmplay=12', 'dmplay=12'), @('dmplay=25', 'dmplay=25'), @('dmplay=26', 'dmplay=26'), @('dmplay=27', 'dmplay=27'), @('dmplay=28', 'dmplay=28'), @('dmplay=29', 'dmplay=29'), @('dmplay=30', 'dmplay=30'), @('dmmap=25,24,23,22,21,20,19,18,17,16,15,14', 'dmmap=25,24,23,22,21,20,19,18,17,16,15,14'), @('dmspeed=300:1500:5600 dm=map lookgate=1 dmmap=0,12,11,5,1,3,4,4,2,6,6,6', 'dm=map dmmap=0,12,11,5,1,3,4,4,2,6,6,6 dmspeed=300:1500:5600 lookgate=1'))) {
         Assert-Equal (ConvertTo-PartnerTriggerText -Text $case[0]) $case[1] "trigger grammar accepts '$($case[0])'"
     }
     Assert-True ((ConvertTo-PartnerTriggerText -Text 'stage=3 source=orbit apply=hybrid anim=mirror aset=qs reset=ac look=quiet probe=off census=1 parts=explicit mirror=on').Length + 1 -le 255) 'the longest classic canonical trigger fits the native 255 bytes'
@@ -1004,8 +1240,8 @@ try {
             'move=warp apply=slot', 'apply=teleport', 'anim=on', 'aset=x', 'reset=b', 'look=ocelot', 'census=2', 'census', 'probe=on', 'stop census=1', 'look=net look=copy',
             'input=walk', 'cam=on', 'hold=mine', 'yaw=left', 'recon=on', 'align=151', 'align=-0', 'align=016', 'slot=both',
             'runaway=warp', 'wrap=on', 'place=0', 'place=1 place=1', 'words=xyz', 'words=rp', 'bits=0xZ', 'bits=0x123456789', 'correct=10001',
-            'stick=360:0', 'stick=180:101', 'stick=180', 'tap=2', 'press=0x2:49', 'press=0x2:5001', 'press=0x2:0100', 'press=0x2:01200', 'dmplay=13', 'dmstop=0', 'isend=2',
-            'dm=maybe', 'dmmap=0,10,11,5,1,3,4,4,7,6,6', 'dmmap=0,10,11,5,1,3,4,4,7,6,6,13', 'dmmap=0,10,11,5,1,3,4,4,7,6,6,06',
+            'stick=360:0', 'stick=180:101', 'stick=180', 'tap=2', 'press=0x2:49', 'press=0x2:5001', 'press=0x2:0100', 'press=0x2:01200', 'dmplay=31', 'dmstop=0', 'isend=2',
+            'dm=maybe', 'dmmap=0,10,11,5,1,3,4,4,7,6,6', 'dmmap=0,10,11,5,1,3,4,4,7,6,6,31', 'dmmap=0,10,11,5,1,3,4,4,7,6,6,06',
             'dmspeed=300:400:5600', 'dmspeed=0300:2600:5600', 'dmspeed=300:2600', 'dm=map dm=on', 'input=net input=off', 'tap=0x1 tap=0x2', 'stop input=net')) {
         $shown = $bad -replace "`n", '\n'
         Assert-Throws { ConvertTo-PartnerTriggerText -Text $bad } '' "trigger grammar refuses '$shown'"

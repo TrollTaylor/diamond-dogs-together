@@ -39,6 +39,7 @@ struct Snapshot {
     bool anim_valid;
     std::uint16_t act;
     std::uint8_t anim_stance, anim_speed;
+    std::uint16_t equip_id;  // discrete current gun; zero when unknown
 };
 
 enum class Status : std::uint8_t { none, live, stale, lost };
@@ -60,6 +61,20 @@ struct Sample {
     bool snapped;          // a snap-sized jump was held instead of interpolated
     bool extrapolated;     // moved past the newest snapshot
     bool held;             // clamped: extrapolation cap, oldest hold, or no velocity
+    std::uint16_t equip_id;  // same snapshot as stance/flags; never blended
+};
+
+// A source-history cursor is private receive state, never a game/action token.
+// Sender times are the same strictly accepted, unwrapped times used by the ring.
+struct HistoryCursor { std::uint32_t generation{}; std::int64_t sender_ms{-1}; };
+struct SourceRecord { Snapshot snapshot{}; std::int64_t sender_ms{}; std::uint64_t receive_ms{}; };
+struct RemoteFrame {
+    Sample visual{};
+    SourceRecord records[16]{};
+    std::uint8_t count{};
+    HistoryCursor next{};
+    std::uint64_t now_ms{};
+    bool reset{}, overflow{};
 };
 
 class SnapshotRing {
@@ -70,6 +85,10 @@ public:
     // newest one (signed 32-bit difference). Returns false otherwise.
     bool Push(const Snapshot& snapshot, std::uint64_t receive_ms) noexcept;
     Sample SampleAt(std::uint64_t now_ms, std::uint32_t delay_ms) const noexcept;
+    // Read visual pose and accepted raw history together under the caller's
+    // existing receive lock. A new/reset/overrun cursor receives only a current
+    // baseline; it cannot manufacture old pivots from missing history.
+    RemoteFrame ReadFrame(std::uint64_t now_ms, std::uint32_t delay_ms, const HistoryCursor& cursor) const noexcept;
     void Reset() noexcept;
     std::size_t size() const noexcept { return count_; }
     bool empty() const noexcept { return count_ == 0; }
@@ -81,11 +100,15 @@ private:
         Snapshot snapshot;
         std::int64_t sender_time;  // unwrapped sender clock
         std::uint64_t receive_ms;
+        std::int64_t previous_sender_ms;
     };
     const Entry& at(std::size_t index) const noexcept { return entries_[(head_ + index) % capacity]; }
     Entry entries_[capacity]{};
     std::size_t head_ = 0;   // oldest entry
     std::size_t count_ = 0;
+    std::uint32_t generation_ = 1;
 };
+static_assert(SnapshotRing::capacity <= sizeof(RemoteFrame::records) / sizeof(SourceRecord),
+              "paired raw source frame must hold the entire snapshot ring");
 
 } // namespace mgscoop::pose

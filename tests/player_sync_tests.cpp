@@ -89,6 +89,62 @@ int main() {
     Check(final_transform.has_value(), "end-to-end wire transform decode succeeds");
     Check(final_transform->sequence == 101, "end-to-end sequence preserved");
 
+    // The same pose byte carries six known action bits. Walk/run must survive
+    // every live codec, including mixed gun flags; bits 6/7 remain reserved.
+    // Exercise all 256 values so a future producer/codec mismatch is visible.
+    {
+        constexpr std::uint64_t session = 0x4D4753434F4F5001ULL;
+        std::uint8_t legacy[transform_frame_size]{}, extended[transform_anim_frame_size]{};
+        const AnimState anim{3, 2, 0, AnimFlag::Valid};
+        Check(encode_transform_frame(session, 3, p1, legacy) == sizeof(legacy) &&
+              encode_transform_anim_frame(session, 3, p1, anim, extended) == sizeof(extended),
+              "reference legacy and animated action frames retain their sizes");
+        for (unsigned flags = 0; flags <= 255; ++flags) {
+            PlayerTransformPacket sample = p1;
+            sample.action_flags = static_cast<std::uint8_t>(flags);
+            std::uint8_t plain[transform_frame_size]{}, rich[transform_anim_frame_size]{};
+            std::uint64_t got_session = 0;
+            std::uint32_t got_epoch = 0;
+            PlayerTransformPacket got{};
+            AnimState got_anim{};
+            bool has_anim = false;
+            if (flags <= 0x3f) {
+                const auto packet = encode_transform(session, 3, sample);
+                Check(packet.has_value(), "all known locomotion/gun action combinations encode");
+                const auto parsed = decode_transform(*packet);
+                Check(parsed.has_value() && parsed->action_flags == flags && parsed->equip_id == p1.equip_id,
+                      "object codec round trips exact new and legacy action combinations");
+                Check(encode_transform_frame(session, 3, sample, plain) == sizeof(plain) &&
+                      decode_transform_frame(plain, sizeof(plain), got_session, got_epoch, got) &&
+                      got.action_flags == flags && got_session == session && got_epoch == 3,
+                      "fixed legacy codec accepts six known bits without changing framing");
+                Check(decode_partner_transform_frame(plain, sizeof(plain), got_session, got_epoch, got, got_anim, has_anim) &&
+                      !has_anim && got.action_flags == flags,
+                      "partner codec preserves locomotion and gun flags from legacy-sized frames");
+                Check(encode_transform_anim_frame(session, 3, sample, anim, rich) == sizeof(rich) &&
+                      decode_partner_transform_frame(rich, sizeof(rich), got_session, got_epoch, got, got_anim, has_anim) &&
+                      has_anim && got.action_flags == flags && got_anim.act == 3 && got_anim.stance == 2,
+                      "live animated partner codec preserves combined action flags and raw animation");
+            } else {
+                Check(!encode_transform(session, 3, sample), "reserved action bits refuse object encoding");
+                Check(encode_transform_frame(session, 3, sample, plain) == 0 && plain[0] == 0 && plain[sizeof(plain) - 1] == 0 &&
+                      encode_transform_anim_frame(session, 3, sample, anim, rich) == 0 && rich[0] == 0 && rich[sizeof(rich) - 1] == 0,
+                      "reserved action bits refuse and zero both fixed encoders");
+                auto bad = *encoded;
+                bad.payload[23] = sample.action_flags;
+                Check(!decode_transform(bad), "reserved received action bits refuse object decoding");
+                std::memcpy(plain, legacy, sizeof(plain));
+                std::memcpy(rich, extended, sizeof(rich));
+                plain[wire::header_size + 23] = rich[wire::header_size + 23] = sample.action_flags;
+                Check(!decode_transform_frame(plain, sizeof(plain), got_session, got_epoch, got) &&
+                      !decode_partner_transform_frame(plain, sizeof(plain), got_session, got_epoch, got, got_anim, has_anim) &&
+                      !decode_partner_transform_frame(rich, sizeof(rich), got_session, got_epoch, got, got_anim, has_anim) &&
+                      got_session == 0 && got_epoch == 0 && got.sequence == 0 && got_anim.act == 0 && !has_anim,
+                      "reserved bits refuse legacy and animated receive paths without publishing output");
+            }
+        }
+    }
+
     // 8. Fixed-buffer frame codec: byte-identical to wire::encode(encode_transform()).
     {
         const std::uint64_t session = 0x4D4753434F4F5001ULL;

@@ -1,0 +1,2 @@
+#pragma once
+constexpr char equipment_observation_source[] = R"MGS_EQUIP_OBS(@MGS_EQUIPMENT_OBSERVATION_SOURCE@)MGS_EQUIP_OBS";

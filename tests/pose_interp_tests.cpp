@@ -144,19 +144,31 @@ int main() {
     Snapshot a = At(1000, 0.0f), b = At(1100, 1.0f);
     a.anim_valid = true; a.act = 1; a.anim_stance = 1; a.anim_speed = 0;
     b.anim_valid = true; b.act = 4; b.anim_stance = 2; b.anim_speed = 2;
+    a.flags = 1; a.equip_id = 10004;
+    b.flags = 10; b.equip_id = 30103;
     Check(ring.Push(a, 2000) && ring.Push(b, 2100), "push anim snapshots");
     s = ring.SampleAt(2150, 100);  // render 1050: between a and b
     Check(s.interpolated && s.anim_valid && s.act == 4 && s.anim_stance == 2 && s.anim_speed == 2, "anim of the newer snapshot");
+    Check(s.flags == 10 && s.equip_id == 30103, "interpolated gun metadata is discrete newer data");
     s = ring.SampleAt(2050, 100);  // render 950: before the oldest
     Check(s.held && s.anim_valid && s.act == 1 && s.anim_stance == 1, "held oldest keeps its anim");
+    Check(s.flags == 1 && s.equip_id == 10004, "oldest hold keeps its gun metadata");
     s = ring.SampleAt(2300, 0);
     Check(s.anim_valid && s.act == 4 && s.anim_speed == 2, "latest-only keeps the newest anim");
+    Check(s.flags == 10 && s.equip_id == 30103, "latest-only gun metadata");
     s = ring.SampleAt(2300, 100);  // extrapolated past b
     Check(s.extrapolated && s.act == 4, "extrapolation keeps the newest anim");
+    Check(s.flags == 10 && s.equip_id == 30103, "extrapolation does not fabricate gun transitions");
     Snapshot v1 = At(1200, 1.1f);
     Check(ring.Push(v1, 2200), "push a v1 snapshot");
     s = ring.SampleAt(2400, 0);
     Check(!s.anim_valid && s.act == 0, "a v1 snapshot has no anim");
+    Check(s.flags == 0 && s.equip_id == 0, "legacy/default snapshot clears rich action state");
+    ring.Reset(); a = At(1000, 0); b = At(1100, 20);
+    a.equip_id = 10004; a.flags = 1; b.equip_id = 30103; b.flags = 10;
+    ring.Push(a, 2000); ring.Push(b, 2100);
+    s = ring.SampleAt(2150, 100);
+    Check(s.snapped && s.equip_id == 10004 && s.flags == 1, "snap hold preserves older action metadata until destination");
 
     std::printf("%u pose interpolation checks passed: lerp, jitter offset, shortest-arc yaw, snap, extrapolation cap, "
                 "stale/lost, latest-only, capacity, clock wrap, discrete anim fields; deterministic, no game calls\n", checks);

@@ -1,5 +1,7 @@
 #pragma once
 #include <cstddef>
+// Admission signal after the exact executable observer and offline marker gate.
+bool OfflineScriptObserverEnabled() noexcept;
 
 // Called only after the existing exact-executable/loader-location gates and
 // process-lifetime pin, from the successful DirectInput8Create return path.

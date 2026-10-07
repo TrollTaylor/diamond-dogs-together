@@ -36,6 +36,8 @@ struct Fake {
     const char* write_result = nullptr;  // forced refusal for every write
     std::uint8_t policy_byte = 0;
     mgscoop::pose::Sample sample{};
+    mgscoop::pose::SnapshotRing raw_ring;
+    std::uint64_t raw_now{};
     unsigned submits = 0, samples = 0;
     std::string trigger;
     bool trigger_present = false, trigger_unreadable = false;
@@ -79,6 +81,7 @@ struct Fake {
     pp::DmTargets dm_targets{};
     pp::DmState dm{};
     bool dm_ok = true;
+    unsigned dm_motion_count = 31;
     int dm_patch_calls = 0;
     bool dm_patched = false;
     const char* dm_patch_reason = nullptr;
@@ -377,6 +380,7 @@ bool HookLatestInput(void* context, mgscoop::partner_input::Sample& out) noexcep
     return F(context).latest_ok;
 }
 const char* HookInstallWrap(void* context) noexcept { ++F(context).wrap_installs; return nullptr; }
+unsigned HookDmMotionCount(void* context) noexcept { return F(context).dm_motion_count; }
 
 pd::Hooks HooksFor(Fake& f) {
     return pd::Hooks{&f, HookLog, HookRead, HookOr, HookClear, HookSlot, HookForce, HookPolicy, HookAnim, HookSample,
@@ -385,7 +389,7 @@ pd::Hooks HooksFor(Fake& f) {
                      HookFormatCensus, HookFormatPs, HookInputTargets, HookFormatInputCensus, HookReadPad, HookSubmitInput,
                      HookNetRunning, HookInstallHook, HookPublishArm, HookDrainStats, HookHookLive, HookDmTargets, HookReadDm,
                      HookFormatDmCensus, HookFormatDmProbe, HookDmPatch, HookDmClearPending, HookResetFault,
-                     HookApplyPosition, HookReadVelocity, HookLatestInput, HookInstallWrap};
+                     HookApplyPosition, HookReadVelocity, HookLatestInput, HookInstallWrap, nullptr, HookDmMotionCount};
 }
 
 std::string TickSource(int frame, int luaflags, int x = 1000, int y = 2000, int z = 3000, int yaw = 4500, int cam = 0, int stance = 0,
@@ -816,6 +820,12 @@ void TestFreeRoamRange() {
     Check(rearm.Tick(1) && rearm.reply.op == 0 && !rearm.driver.mission.realized && !rearm.driver.mission.bits_set,
           "engine unrealization clears old request and re-places safely");
     Check(rearm.Tick(1) && rearm.fake.Writes("or") == ors + 2, "engine-unrealized partner can realize after fresh placement");
+}
+mgscoop::pose::RemoteFrame HookSampleWithTurns(void* context, std::uint32_t delay,
+                                            const mgscoop::pose::HistoryCursor& cursor) noexcept {
+    Fake& f = F(context);
+    f.sample_delays.push_back(delay);
+    return f.raw_ring.ReadFrame(f.raw_now, delay, cursor);
 }
 
 void TestNetSourceAndCadence() {
@@ -2080,10 +2090,18 @@ void TestDmMapSources() {
                 s.T();
             }
         };
-        sm.stance = 1;
-        move(3000, 1500);
-        Check(!s.played.empty() && s.played.back() == 4, "net: squat at 3 m/s -> squat run (4)");
+        // An idle-encoded raw action can persist while the real pose moves.
+        // It is a stance hint, not authoritative proof that movement stopped.
         sm.stance = 0;
+        sm.anim_valid = true; sm.act = 3; sm.anim_stance = 2; sm.anim_speed = 0;
+        Check(s.Playing() == 1, "net: odd raw action initially uses crouch idle");
+        move(3000, 1500);
+        Check(!s.played.empty() && s.played.back() == 4 && s.driver.mission.dmmap.cand_cls.move == 2 &&
+              s.driver.mission.dmmap.cand_cls.via == mgscoop::partner_dmmap::Via::speed &&
+              s.driver.mission.dmmap.cand_cls.stance_via == mgscoop::partner_dmmap::Via::anim,
+              "net: valid odd raw action cannot override moving pose speed or its crouch stance");
+        sm.stance = 0;
+        sm.anim_valid = false;
         sm.flags = mgscoop::sync::ActionFlag::Sprinting;
         move(6000, 1500);
         Check(s.played.back() == 5, "net: Sprinting -> stand dash");
@@ -2100,6 +2118,305 @@ void TestDmMapSources() {
         s.Run(1500);
         Check(s.played.back() == 7 && s.fake.Containing("via=lost") >= 1, "net: lost -> the idle cell of the last stance (crawl: 7)");
         Check(s.both_dm_ops == 0, "net: never 128 and 256 together");
+    }
+    // Positive authoritative flags still start a clip before the speed window
+    // is populated, even with an idle-encoded raw action and stationary pose.
+    for (const auto flag : {mgscoop::sync::ActionFlag::Walking, mgscoop::sync::ActionFlag::Running}) {
+        MapSession s(mgscoop::PartnerSource::net);
+        auto& sm = s.fake.sample;
+        sm.valid = true; sm.status = mgscoop::pose::Status::live;
+        sm.x = 1.0f; sm.y = 2.0f; sm.z = 3.0f; sm.flags = flag;
+        sm.anim_valid = true; sm.act = 1; sm.anim_stance = 1; sm.anim_speed = 0;
+        const int expected = flag == mgscoop::sync::ActionFlag::Walking ? 10 : 11;
+        Check(s.UntilPlay(100) == expected && s.driver.mission.dmmap.cand_cls.via == mgscoop::partner_dmmap::Via::flags,
+              "net: authoritative walk/run starts immediately before measured speed is available");
+        std::uint32_t speed{};
+        Check(!mgscoop::partner_dmmap::SpeedMmps(s.driver.mission.dmmap_speed, speed),
+              "net: early authoritative clip does not wait for the 100 ms speed window");
+    }
+}
+
+// Retail stationary body yaw changes while aiming. Feed the transported pose,
+// stance, weapon and raw action through the driver, rather than invoking the
+// mapper directly. Native completion is modeled by the recording DM reader.
+struct AimPivotSession : MapSession {
+    explicit AimPivotSession(std::uint64_t step) : MapSession(mgscoop::PartnerSource::net) {
+        auto& sm = fake.sample;
+        sm.valid = true; sm.status = mgscoop::pose::Status::live;
+        sm.x = 1.0f; sm.y = 2.0f; sm.z = 3.0f;
+        sm.stance = 1; sm.equip_id = 873; sm.flags = mgscoop::sync::ActionFlag::Aiming;
+        sm.anim_valid = true; sm.act = 14; sm.anim_stance = 2; sm.anim_speed = 0;
+        fake.dm.q18[0] = 14;
+        Check(Playing() == 1, "aim pivot: stationary crouch starts its lower idle loop");
+        Run(200, step);
+    }
+    std::size_t TurnPlays() const {
+        std::size_t n = 0;
+        for (const int gani : played) if (gani == 17) ++n;
+        return n;
+    }
+    void Pivot(std::uint64_t step) {
+        const float start = fake.sample.yaw;
+        constexpr std::uint64_t duration = 200;
+        std::uint64_t elapsed = 0;
+        while (elapsed < duration) {
+            elapsed = elapsed + step < duration ? elapsed + step : duration;
+            fake.sample.yaw = std::remainder(start - 1.55f * static_cast<float>(elapsed) / duration, 6.28318530718f);
+            Check(T(step), "aim pivot: live pose tick accepted");
+        }
+        Run(70 + step, step);
+    }
+    void FirstTurn(std::uint64_t step) {
+        namespace pdm = mgscoop::partner_dmmap;
+        Pivot(step);
+        const std::uint64_t end = now + 500;
+        while (now < end && !(driver.mission.dmmap.phase == pdm::Phase::playing && driver.mission.dmmap.cur == 17)) T(step);
+        Check(driver.mission.dmmap.phase == pdm::Phase::playing && driver.mission.dmmap.cur == 17 && TurnPlays() == 1,
+              "aim pivot: stationary aim-only yaw starts finite lower turn 17");
+    }
+    void TwoTurns(std::uint64_t step) {
+        FirstTurn(step);
+        const auto first = driver.mission.dmmap.cur_event;
+        const auto token = driver.mission.dmmap_turn.event_token;
+        Check(first != 0 && token != 0, "aim pivot: first turn has a discrete request identity");
+        Pivot(step);
+        const auto& dm = driver.mission.dmmap;
+        Check(dm.phase == mgscoop::partner_dmmap::Phase::playing && dm.cur == 17 && dm.cur_event == first &&
+              dm.finite_count == 2 && dm.finite_events[0].id == first && dm.finite_events[1].id != first &&
+              driver.mission.dmmap_turn.event_token != token && TurnPlays() == 1,
+              "aim pivot: second identical 90-degree turn queues while first remains active");
+    }
+};
+
+void TestDmMapRawTurnFeed() {
+    namespace pose = mgscoop::pose;
+    namespace sync = mgscoop::sync;
+    namespace dm = mgscoop::partner_dmmap;
+    for (const unsigned interruption : {0u, 2u, 8u, 16u, 32u, 64u, 128u, 256u}) {
+        MapSession s(mgscoop::PartnerSource::net);
+        s.hooks.sample_remote_with_turns = HookSampleWithTurns;
+        s.fake.dm_motion_count = 21;
+        const auto base = s.now;
+        unsigned source_frame = 0;
+        std::uint64_t first = 0;
+        bool had_queue = false;
+        bool transition_seen = false, transition_canceled = false;
+        for (unsigned owner = 1; owner <= 240; ++owner) {
+            const auto elapsed = owner * 1000u / 60;
+            while (source_frame * 1000u / 30 <= elapsed) {
+                const auto t = source_frame * 1000u / 30;
+                const float a = t <= 400 ? 0 : t >= 600 ? 1 : static_cast<float>(t - 400) / 200;
+                const float b = t <= 850 ? 0 : t >= 1050 ? 1 : static_cast<float>(t - 850) / 200;
+                pose::Snapshot p{};
+                p.sender_ms = static_cast<std::uint32_t>(base + t);
+                p.x = 1; p.y = 2; p.z = 3; p.yaw = pose::WrapAngle(-1.55f * (a + b));
+                p.stance = 1; p.equip_id = 873; p.flags = sync::ActionFlag::Aiming;
+                if (interruption && interruption <= 8 && t >= 1250 && t <= 1450)
+                    p.flags |= static_cast<std::uint8_t>(interruption);
+                Check(s.fake.raw_ring.Push(p, base + t), "raw driver: source30Hz accepted by actual pose ring");
+                ++source_frame;
+            }
+            s.fake.raw_now = base + elapsed;
+            const bool transitioning = elapsed >= 1250 && elapsed <= 1450;
+            if (interruption == 16) {
+                s.driver.mission.look_verify = transitioning;
+                s.driver.mission.look_applied = partner::Look{255,255,255,255,255};
+                s.driver.mission.look_applied_ms = s.now;
+            }
+            if (interruption == 32 && transitioning) s.driver.parts_explicit_pending = true;
+            if (interruption == 128) s.fake.xform_result = transitioning ? "candidate_near" : nullptr;
+            auto& state = s.driver.mission.dmmap;
+            if (state.phase == dm::Phase::playing && dm::OneShot(state.cur) && s.now - state.play_ms >= 951)
+                s.fake.dm.q18[1] = 3;
+            const int flags = transitioning && interruption == 64 ? 1 : transitioning && interruption == 256 ? 2 : 3;
+            Check(s.Tick(flags, base + elapsed - s.now), "raw driver: natural owner60Hz tick accepted");
+            if (interruption >= 16 && transitioning) {
+                transition_seen = transition_seen || (interruption == 16 && s.driver.mission.look_verify) ||
+                    (interruption == 32 && (s.reply.op & op::set_parts_explicit)) ||
+                    (interruption == 64 && (s.reply.op & op::copy_parts) && !(flags & partner::luaflag::parts_copied)) ||
+                    (interruption == 128 && (s.reply.op & op::warp)) ||
+                    (interruption == 256 && (s.reply.op & op::set_all_active));
+                Check(s.driver.mission.dmmap.finite_count == 0 && s.driver.mission.dmmap_source_turns.count == 0 &&
+                      !s.driver.mission.dmmap_turn.collecting && s.driver.mission.dmmap.cur == 17,
+                      "raw driver: actual body transition clears waiting pivot context while active17 continues");
+                transition_canceled = true;
+            }
+            if (s.driver.mission.dmmap.cur_event && !first) first = s.driver.mission.dmmap.cur_event;
+            had_queue = had_queue || (s.driver.mission.dmmap.finite_count == 2 && s.driver.mission.dmmap.cur_event == first);
+            const auto visual = s.fake.raw_ring.SampleAt(s.fake.raw_now, 100);
+            Check(s.driver.mission.dmmap_source_frame.visual.yaw == visual.yaw &&
+                  s.driver.mission.cmd.yaw_mrad == mgscoop::partner_player::ToMrad(visual.yaw),
+                  "raw driver: visual command keeps original100ms interpolated yaw");
+        }
+        std::size_t turns = 0;
+        for (const int g : s.played) if (g == 17) ++turns;
+        Check(had_queue && s.driver.mission.dmmap.bad == 0 && s.driver.mission.dmmap.unconsumed == 0 && s.both_dm_ops == 0,
+              "raw driver: two identities queue while first finite clip is active without gate violations");
+        Check(turns == (interruption ? 1u : 2u), "raw driver: fire/reload cancels queued pivot, unchanged aim replays both exactly once");
+        if (interruption >= 16) Check(transition_seen && transition_canceled && s.fake.Count("partner_dmmap=switch; step=stop; from=17;") == 0,
+            "raw driver: look/copy/warp/allactive invalidation cancels waiting identities without forcing an active lower stop");
+        Check(s.driver.mission.dmmap.finite_count == 0, "raw driver: natural completion or interruption drains request queue");
+        Check(s.fake.sample_delays.back() == 100, "raw driver: paired read retains configured visual delay");
+    }
+}
+
+void TestDmArchiveBounds() {
+    for (const unsigned count : {0u, 13u, 21u, 31u, 32u, 255u}) {
+        Session s(3);
+        s.fake.dm_motion_count = count;
+        s.driver.settings.dm = mgscoop::PartnerDm::on;
+        Loaded(s);
+        s.fake.dm.q18[0] = 1; s.fake.dm.q18[1] = 1; s.fake.dm.g388 = 0; s.fake.dm.cam_ok = true;
+        Check(s.Tick(1), "archive bound: manual owner ready");
+        const unsigned bounded = count <= 31 ? count : 0;
+        for (const unsigned gani : {0u, 12u, 13u, 20u, 21u, 30u}) {
+            char trigger[32]{};
+            std::snprintf(trigger, sizeof(trigger), "dmplay=%u", gani);
+            s.Trigger(trigger);
+            s.fake.dm.q18[1] = 1; s.fake.dm.g388 = 0;
+            Check(s.Tick(1) && ((s.reply.op & op::dm_play) != 0) == (gani < bounded),
+                  "archive bound: manual requests require a loaded motion index");
+        }
+        if (!bounded || bounded < 31)
+            Check(s.fake.Containing("reason=motion_not_in_archive") != 0, "archive bound: refusal is explicit");
+    }
+    {
+        Session s(3);
+        s.hooks.dm_motion_count = nullptr;
+        s.driver.settings.dm = mgscoop::PartnerDm::on;
+        Loaded(s);
+        s.fake.dm.q18[0] = 1; s.fake.dm.q18[1] = 1; s.fake.dm.g388 = 0; s.fake.dm.cam_ok = true;
+        s.Trigger("dmplay=13");
+        Check(s.Tick(1) && !(s.reply.op & op::dm_play) && s.fake.Containing("reason=motion_not_in_archive") == 1,
+              "archive bound: absent capability uses baseline13");
+    }
+    for (const unsigned count : {0u, 13u, 20u, 32u}) {
+        AimPivotSession s(16);
+        s.fake.dm_motion_count = count;
+        s.Pivot(16);
+        s.Run(1000, 16);
+        Check(s.TurnPlays() == 0 && !s.driver.mission.dmmap_turn.valid && s.driver.mission.dmmap.finite_count == 0,
+              "archive bound: an unavailable turn never enters the finite queue");
+    }
+    {
+        AimPivotSession s(16);
+        s.FirstTurn(16);
+        s.Pivot(16);
+        s.fake.dm_motion_count = 13;
+        s.fake.dm.q18[1] = 3;
+        s.Run(2200, 16);
+        Check(s.TurnPlays() == 1 && s.driver.mission.dmmap.finite_count == 0,
+              "archive bound: a revoked motion bound cannot play a queued turn");
+    }
+    {
+        MapSession s;
+        s.fake.dm_motion_count = 13;
+        s.driver.settings.dm_map.cells[1] = 30;
+        s.move = 1;
+        s.Run(1000);
+        Check(!s.played.empty() && s.played.front() == 0, "archive bound: baseline map still plays its available idle fallback");
+        for (const int gani : s.played) Check(gani < 13, "archive bound: custom map uses a loaded fallback");
+    }
+}
+
+void TestDmMapAimPivots() {
+    namespace pdm = mgscoop::partner_dmmap;
+    // Owner samples at 20, 60 and 120 Hz, including two identical requested
+    // turns before the first modeled 1.5 s native clip naturally finishes.
+    for (const std::uint64_t step : {50u, 16u, 8u}) {
+        AimPivotSession s(step);
+        s.fake.dm_motion_count = 21; // unchanged normal archive + existing resident turns
+        s.TwoTurns(step);
+        const auto first = s.driver.mission.dmmap.cur_event;
+        const auto second = s.driver.mission.dmmap.finite_events[1].id;
+        bool second_playing = false;
+        const std::uint64_t end = s.now + 4000;
+        while (s.now < end && s.fake.Count("partner_dmmap=finished; gani=17;") < 2) {
+            const auto& dm = s.driver.mission.dmmap;
+            if (dm.phase == pdm::Phase::playing && pdm::OneShot(dm.cur) && s.now + step - dm.play_ms >= 1500)
+                s.fake.dm.q18[1] = 3;  // modeled engine natural finite completion
+            s.T(step);
+            const auto& after = s.driver.mission.dmmap;
+            if (after.phase == pdm::Phase::playing && after.cur == 17 && after.cur_event == second) second_playing = true;
+        }
+        Check(second_playing && first != second && s.TurnPlays() == 2 &&
+              s.fake.Count("partner_dmmap=finished; gani=17;") == 2 && s.driver.mission.dmmap.finite_count == 0,
+              "aim pivot: both distinct turn requests naturally finish exactly once");
+        s.Run(700, step);
+        const auto& dm = s.driver.mission.dmmap;
+        Check(s.TurnPlays() == 2 && dm.cur == 1 && dm.phase == pdm::Phase::playing && dm.bad == 0 &&
+              dm.strikes[17] == 0 && dm.failures == 0 && dm.timeouts == 0 && s.both_dm_ops == 0 &&
+              s.fake.Count("partner_dmmap=switch; step=stop; from=17;") == 0,
+              "aim pivot: unchanged aim returns to idle without replay, interruption or bad strike");
+    }
+    // Firing/reloading (alone or while still aiming) must drop the active
+    // collector and every waiting finite request. Walking also interrupts.
+    for (const unsigned flags : {2u, 8u, 3u, 9u, 17u}) {
+        AimPivotSession s(16);
+        s.TwoTurns(16);
+        s.fake.sample.flags = static_cast<std::uint8_t>(flags);
+        s.T(16);
+        Check(!s.driver.mission.dmmap_turn.valid && s.driver.mission.dmmap.finite_count == 0,
+              "aim pivot: fire, reload or movement immediately clears collector and queued requests");
+        s.Run(200, 16);
+        Check(s.TurnPlays() == 1 && s.fake.Count("partner_dmmap=switch; step=stop; from=17;") == 1,
+              "aim pivot: busy action cancels the active lower turn without starting the queued turn");
+        s.fake.sample.flags = mgscoop::sync::ActionFlag::Aiming;
+        s.Run(2200, 16);
+        Check(s.TurnPlays() == 1 && s.driver.mission.dmmap.finite_count == 0 && s.driver.mission.dmmap.bad == 0,
+              "aim pivot: returning to stationary aim cannot resurrect canceled requests");
+    }
+    {
+        AimPivotSession s(16);
+        s.TwoTurns(16);
+        s.fake.sample.status = mgscoop::pose::Status::lost;
+        s.T(16);
+        Check(!s.driver.mission.dmmap_turn.valid && s.driver.mission.dmmap.finite_count == 0,
+              "aim pivot: network loss clears active collector and queued requests");
+        s.Run(200, 16);
+        s.fake.sample.status = mgscoop::pose::Status::live;
+        s.Run(2200, 16);
+        Check(s.TurnPlays() == 1 && s.driver.mission.dmmap.bad == 0,
+              "aim pivot: restored network cannot replay a lost request");
+    }
+    for (const unsigned flags : {2u, 8u}) {
+        AimPivotSession s(16);
+        s.fake.sample.yaw -= 0.7f;
+        s.T(16);
+        Check(s.driver.mission.dmmap_turn.collecting, "aim pivot: partial yaw starts collection");
+        s.fake.sample.flags = static_cast<std::uint8_t>(flags);
+        s.T(16);
+        Check(!s.driver.mission.dmmap_turn.valid && s.driver.mission.dmmap.finite_count == 0,
+              "aim pivot: fire or reload discards an unfinished angle");
+        s.fake.sample.flags = mgscoop::sync::ActionFlag::Aiming;
+        s.T(16);  // a new yaw baseline after interruption
+        s.fake.sample.yaw -= 0.9f;
+        s.Run(300, 16);
+        Check(s.TurnPlays() == 0 && s.driver.mission.dmmap.finite_count == 0,
+              "aim pivot: two partial angles across a gun interruption cannot combine into a turn");
+    }
+    {
+        AimPivotSession s(16);
+        s.TwoTurns(16);
+        s.Trigger("source=fixed");
+        s.T(16);
+        Check(s.driver.mission.dmmap.finite_count == 0 && s.driver.mission.dmmap_turn.event_token == 0,
+              "aim pivot: source change resets queued turn identity");
+        s.Run(200, 16);
+        s.Trigger("source=net");
+        s.Run(2200, 16);
+        Check(s.TurnPlays() == 1 && s.driver.mission.dmmap.bad == 0,
+              "aim pivot: returning to the old source cannot replay its queued request");
+    }
+    {
+        AimPivotSession s(16);
+        s.TwoTurns(16);
+        pd::MissionEnd(s.driver, s.hooks);
+        Check(s.driver.mission.dmmap.finite_count == 0 && !s.driver.mission.dmmap.owned,
+              "aim pivot: mission end discards queued requests and DM ownership");
+        pd::MissionStart(s.driver, s.hooks, 30050);
+        Check(s.driver.mission.dmmap.finite_count == 0 && !s.driver.mission.dmmap_turn.valid,
+              "aim pivot: next mission starts without turn identities or yaw collection");
     }
 }
 
@@ -2413,6 +2730,9 @@ int main() {
     TestInputSequence();
     TestDmMapPatchAndTable();
     TestDmMapSources();
+    TestDmMapAimPivots();
+    TestDmMapRawTurnFeed();
+    TestDmArchiveBounds();
     TestDmMapGates();
     TestDmMapFailures();
     TestDmMapRelease();
@@ -2422,6 +2742,6 @@ int main() {
                 "teardown keep, refusal caps, realize thrash cap, all-active re-assert, flags, mirror lifecycle, one-shots, "
                 "force_exists, policy, net source, interp hook, lost freeze/hide, cadence, Lua notes, quiet pairing, probes, anim mirror/net (q/s/r, debounce, "
                 "revert, fault), xform/hybrid drivers, looks (quiet/snake/net/copy, verify, timeout, waiting, refusals), census, "
-                "ps probe, dm=map (patch, table, sources, gates, failures, release, teardown, caps); no game\n", checks);
+                "ps probe, dm=map (patch, table, sources, aim pivots, gates, failures, release, teardown, caps); no game\n", checks);
     return 0;
 }

@@ -81,6 +81,21 @@ int main() {
     Check(t.frame == 12 && t.x_mm == -1500 && t.y_mm == 250 && t.z_mm == 999 && t.yaw_cdeg == -17999 &&
           t.cam_cdeg == 4500 && t.stance == 2 && t.move == 3 && t.luaflags == 3, "tick fields");
     Check(TickOk("0 0 0 0 0 0 0 0 0"), "all zero");
+    Check(t.action_flags == 0 && t.equip_id == 0, "legacy tick clears the optional suffix");
+    Tick rich{};
+    Check(TickArgs("12 -1500 250 999 -17999 4500 2 3 3 11 65535", rich) &&
+          rich.action_flags == 11 && rich.equip_id == 65535 && rich.move == 3, "complete bounded gun suffix");
+    Check(!TickOk("0 0 0 0 0 0 0 0 0 1"), "partial gun suffix refused");
+    Check(!TickOk("0 0 0 0 0 0 0 0 0 4 1"), "locomotion bit in gun suffix refused");
+    Check(!TickOk("0 0 0 0 0 0 0 0 0 12 1") && !TickOk("0 0 0 0 0 0 0 0 0 64 1"), "unknown suffix flags refused");
+    Check(!TickOk("0 0 0 0 0 0 0 0 0 1 65536") && !TickOk("0 0 0 0 0 0 0 0 0 1 -1"), "equipment bounds");
+    Check(!TickOk("0 0 0 0 0 0 0 0 0 1 1 0") && !TickOk("0 0 0 0 0 0 0 0 0 1 1 "), "suffix count and trailing data strict");
+    rich.action_flags = 11; rich.equip_id = 65535;
+    Check(TickArgs("0 0 0 0 0 0 0 0 0", rich) && rich.action_flags == 0 && rich.equip_id == 0,
+          "legacy receipt after rich receipt resets gun metadata");
+    rich.action_flags = 11; rich.equip_id = 65535;
+    Check(!TickArgs("0 0 0 0 0 0 0 0 0 1 65536", rich) && rich.action_flags == 11 && rich.equip_id == 65535,
+          "invalid optional suffix leaves output untouched");
     Check(TickOk("999999 1000000000 -1000000000 1000000000 3600000 -3600000 0 0 0"), "upper bounds");
     Check(!TickOk("1000000 0 0 0 0 0 0 0 0"), "frame bound");
     Check(!TickOk("-1 0 0 0 0 0 0 0 0"), "negative frame");
@@ -265,7 +280,14 @@ int main() {
           "transform metres");
     Check(std::fabs(std::fabs(transform.rot_y) - 3.142f) < 1e-3f, "transform radians normalized");
     moving.move = 2;
-    Check(MakeTransform(moving, 1, 0).action_flags == 0, "running is not sprinting");
+    Check(MakeTransform(moving, 1, 0).action_flags == sync::ActionFlag::Running, "explicit running class");
+    moving.move = 1; moving.action_flags = sync::ActionFlag::Aiming | sync::ActionFlag::Firing | sync::ActionFlag::Reloading;
+    moving.equip_id = 30103;
+    const auto gun = MakeTransform(moving, 1, 0);
+    Check(gun.action_flags == (sync::ActionFlag::Walking | 11) && gun.equip_id == 30103,
+          "walking and gun flags/equipment share unchanged transform");
+    moving.move = 0; moving.action_flags = 255;
+    Check(MakeTransform(moving, 1, 0).action_flags == 11, "transform drops untrusted suffix movement/unknown bits");
     std::uint8_t frame[sync::transform_frame_size];
     Check(sync::encode_transform_frame(0x4D4753434F4F5001ULL, 30050, transform, frame) == sync::transform_frame_size,
           "transform encodes as a frame");
@@ -298,7 +320,7 @@ int main() {
         const std::string dm12widest = ReplyText({0xFFFFFFFFu, 0xFFFFFFFFu, -2147483647 - 1, -2147483647 - 1, -2147483647 - 1,
                                                   -2147483647 - 1, Status::lost, 0xFFFFFFFFu, Look{255, 255, 255, 255, 65535, 255}, 12});
         Check(dm12widest.size() == 114 && dm12widest.size() < reply_capacity, "widest reply (gani 12) is 114 characters");
-        Check(max_gani == 12 && max_gani == mgscoop::kPartnerDmGaniMax, "max_gani follows the dm=map table bound");
+        Check(max_gani == 30 && max_gani == mgscoop::kPartnerDmGaniMax, "max_gani follows the dm=map table bound");
     }
 
     // --- Look normalization (every look that reaches SetPartsInfo).
@@ -370,7 +392,11 @@ int main() {
         Check(TriggerText("press=0x2:1200", tg) && tg.press && tg.press_bits == 0x2 && tg.press_ms == 1200, "press one-shot");
         Check(TriggerText("dm=on dmplay=3", tg) && tg.dm == PartnerDm::on && tg.dmplay && tg.dmplay_gani == 3, "dmplay");
         Check(TriggerText("dmstop=1", tg) && tg.dmstop, "dmstop");
-        Check(TriggerText("dmplay=12", tg) && tg.dmplay && tg.dmplay_gani == 12, "dmplay up to max_gani (12)");
+        Check(TriggerText("dmplay=12", tg) && tg.dmplay && tg.dmplay_gani == 12, "resident dmplay 12");
+        for (unsigned id = 26; id <= 30; ++id) {
+            Check(TriggerText("dmplay=" + std::to_string(id), tg) && tg.dmplay && tg.dmplay_gani == id,
+                  "finite receiver probe index accepted");
+        }
         // dm=map and its settings.
         Check(TriggerText("dm=map dmmap=0,12,11,5,1,3,4,4,2,6,6,6 dmspeed=300:1500:5600", tg) && tg.has_dm && tg.dm == PartnerDm::map &&
               tg.has_dmmap && tg.dmmap.cells[1] == 12 && tg.dmmap.cells[8] == 2 && tg.dmmap.cells[11] == 6 && tg.has_dmspeed &&
@@ -378,7 +404,7 @@ int main() {
         Check(TriggerText("dmmap=0,10,11,5,1,3,4,4,7,6,6,6", tg) && tg.has_dmmap && !tg.has_dm && !tg.has_dmspeed,
               "dm= does not swallow dmmap= (the whole prefix with '=' is compared)");
         Check(TriggerText("dmspeed=200:500:800", tg) && tg.has_dmspeed && !tg.has_dm && tg.dmspeed.dash_mmps == 800, "dmspeed alone");
-        Check(!TriggerOk("dmmap=0,10,11,5,1,3,4,4,7,6,6") && !TriggerOk("dmmap=0,10,11,5,1,3,4,4,7,6,6,13") &&
+        Check(!TriggerOk("dmmap=0,10,11,5,1,3,4,4,7,6,6") && !TriggerOk("dmmap=0,10,11,5,1,3,4,4,7,6,6,31") &&
               !TriggerOk("dmmap=0,10,11,5,1,3,4,4,7,6,6,06") && !TriggerOk("dmmap=0,10,11,5,1,3,4,4,7,6,6,6,") &&
               !TriggerOk("dmmap=0,10,11,5,1,3,4,4,7,6,6,6,6") && !TriggerOk("dmmap=") &&
               !TriggerOk("dmmap=0,10,11,5,1,3,4,4,7,6,6,6 dmmap=0,10,11,5,1,3,4,4,7,6,6,6"), "bad or repeated dmmap");
@@ -388,7 +414,7 @@ int main() {
         Check(!TriggerOk("input=walk") && !TriggerOk("cam=on") && !TriggerOk("hold=mine") && !TriggerOk("yaw=left") &&
               !TriggerOk("words=xyz") && !TriggerOk("words=rp") && !TriggerOk("bits=0xZ") && !TriggerOk("bits=0x123456789") &&
               !TriggerOk("correct=10001") && !TriggerOk("stick=360:0") && !TriggerOk("stick=180:101") && !TriggerOk("stick=180") &&
-              !TriggerOk("tap=2") && !TriggerOk("press=0x2:49") && !TriggerOk("press=0x2:5001") && !TriggerOk("dmplay=13") &&
+              !TriggerOk("tap=2") && !TriggerOk("press=0x2:49") && !TriggerOk("press=0x2:5001") && !TriggerOk("dmplay=31") &&
               !TriggerOk("dmstop=0") && !TriggerOk("isend=2") && !TriggerOk("dm=maybe"), "bad round 3 values");
         // Round 4 tokens.
         Check(TriggerText("hold=own recon=track align=-16 slot=body runaway=disarm wrap=census place=1", tg) && tg.has_hold &&

@@ -15,8 +15,13 @@ constexpr std::size_t mount_rva = 0x48e20, mount_size = 0x16c;
 constexpr char body_digest[] = "dc556b49319c37495c86d14dbb6eb93f22251aa4eaa4fb7a54deae4bd0fffea7";
 constexpr char archive_digest[] = "87bbe82bb1e907cf405200155da2794bf7e1f5a3d45bf66426a38cdd31a91f96";
 constexpr DWORD archive_size = 16333824;
+#if defined(MGS_LOCAL_GUN_PRELOAD_TEST)
+constexpr char experimental_archive_digest[] = "2e314419b3e42794e5b89a253ad767d28a1e6834f88aae22df5d0dedfed66c9a";
+constexpr DWORD experimental_archive_size = 16944128;
+#endif
 void* mount_handle = nullptr;
 volatile LONG attempted = 0;
+volatile LONG mounted_motion_count = 0;
 char archive_path[32768]{};
 constexpr char mount_name[] = "mgs_coop_player_runtime_v1";
 
@@ -62,8 +67,16 @@ bool CodeMatches(void* base, std::size_t span) noexcept {
 }
 }
 
+unsigned MountedPlayerMotionCount() noexcept {
+    return static_cast<unsigned>(InterlockedCompareExchange(&mounted_motion_count, 0, 0));
+}
+
 bool MountPlayerArchive(void* base, std::size_t span, const wchar_t* directory,
-                        void (*log)(const char*) noexcept) noexcept {
+                        void (*log)(const char*) noexcept,
+                        bool allow_experimental) noexcept {
+#if !defined(MGS_LOCAL_GUN_PRELOAD_TEST)
+    (void)allow_experimental;
+#endif
     // Called by the existing once-only accepted-build startup path. Never retry
     // a partial engine operation, including another call in this same process.
     if (!log || !directory || InterlockedCompareExchange(&attempted, 1, 0) != 0) return false;
@@ -81,13 +94,26 @@ bool MountPlayerArchive(void* base, std::size_t span, const wchar_t* directory,
     // Do not impose our fingerprinting handle's sharing mode on the engine.
     HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     LARGE_INTEGER size{};
-    const bool valid = file != INVALID_HANDLE_VALUE && GetFileSizeEx(file, &size) && size.QuadPart == archive_size &&
-        HashMatches(file, nullptr, archive_size, archive_digest);
+    const bool size_read = file != INVALID_HANDLE_VALUE && GetFileSizeEx(file, &size);
+    const char* expected_digest = archive_digest;
+    DWORD expected_size = archive_size;
+    bool experimental = false;
+#if defined(MGS_LOCAL_GUN_PRELOAD_TEST)
+    if (allow_experimental && size_read && size.QuadPart == experimental_archive_size) {
+        expected_digest = experimental_archive_digest;
+        expected_size = experimental_archive_size;
+        experimental = true;
+    }
+#endif
+    const bool valid = size_read && size.QuadPart == expected_size &&
+        HashMatches(file, nullptr, expected_size, expected_digest);
     if (!valid) {
         if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
         log("archive_mount=refused; reason=missing_or_changed_archive\r\n"); return false;
     }
     CloseHandle(file);
+    log(experimental ? "archive_mount=verified; profile=local_gun_preload_test\r\n"
+                     : "archive_mount=verified; profile=two_player_baseline\r\n");
     char line[256]{};
     StringCchPrintfA(line, ARRAYSIZE(line), "archive_mount=calling; thread=%lu name=%s tag=0 flags=33 lifetime=process\r\n", GetCurrentThreadId(), mount_name);
     log(line);
@@ -106,5 +132,8 @@ bool MountPlayerArchive(void* base, std::size_t span, const wchar_t* directory,
     StringCchPrintfA(line, ARRAYSIZE(line), "archive_mount=returned; thread=%lu handle=%p kind=%u stream=%p success=%d; actor_packages_selected=0\r\n",
                      GetCurrentThreadId(), mount_handle, kind, stream, ready ? 1 : 0);
     log(line);
+    // This is the verified resident GANI catalogue allowance, not QAR entry count.
+    // Eight turns already live in the unchanged game resident MTAR; no receiver preload is needed.
+    if (ready) InterlockedExchange(&mounted_motion_count, experimental ? 31 : 21);
     return ready;
 }

@@ -12,8 +12,8 @@ free roam.
 What works today:
 - You see your partner's body move, walk and run, crouch and go prone, with
   their own character, face and camouflage in those supported scenes.
-- The default (World 0) shares partner movement. Experimental World 3 also
-  shares supported enemy outcomes, alert, clock/weather, host travel,
+- The default (World 3) shares partner movement plus supported enemy
+  outcomes, alert, clock/weather, host travel,
   Continue/restart alignment, checkpoints and death (see section 3).
 - F9 opens the in-game debug menu. It provides teleport bookmarks, ammo
   controls, equipped-item pickups, existing-guard controls, host time/weather
@@ -112,9 +112,9 @@ BOTH:
    game exits, even if the Play-Coop window was closed: the next normal start
    from Steam is plain MGSV on your real saves again.
 
-EXPERIMENTAL SHARED WORLD (opt-in, both players):
- - Instead of double-clicking Play-Coop.bat, open Command Prompt in the
-   extracted package folder and run this on BOTH PCs:
+EXPERIMENTAL SHARED WORLD (enabled by default):
+ - A normal double-click enables World 3. To choose the level explicitly,
+   open Command Prompt in the extracted package folder on BOTH PCs:
         Play-Coop.bat -World 3
    Then choose H on the host and J on the joining PC as above.
  - Both games must first enter the same supported scene to pair. Different
@@ -124,7 +124,7 @@ EXPERIMENTAL SHARED WORLD (opt-in, both players):
  - Enemy sync waits for a matching readable host snapshot after reload;
    unloaded areas may delay it. Existing terminal guest enemies are never
    revived. Story missions and full campaign progression remain unsupported.
- - A normal double-click keeps World 0, with partner movement only. The
+ - For partner movement only, use Play-Coop.bat -World 0 on both PCs. The
    launcher keeps each existing co-op save copy between sessions.
 
 
@@ -220,8 +220,8 @@ stay in <game folder>\mgs-coop; you can delete that folder yourself later.
 10. KNOWN LIMITS AND RISKS - PLEASE READ
 ----------------------------------------
 - Development build. Partner bodies support Mother Base and Afghanistan/
-  Africa free roam. World 3 is experimental and requires both players to opt
-  in; story missions, items and full campaign progression are not supported.
+  Africa free roam. World 3 is experimental and enabled by default;
+  story missions, items and full campaign progression are not supported.
   Actual two-PC play has not been validated; recorded live tests used two
   game instances on one PC.
 - The two PCs talk directly over UDP. No relay server exists: if neither a

@@ -1,0 +1,4 @@
+#pragma once
+constexpr char partner_actions_source[] = R"MGS_ACTIONS(
+@MGS_PARTNER_ACTIONS_SOURCE@
+)MGS_ACTIONS";

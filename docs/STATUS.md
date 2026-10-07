@@ -1,5 +1,54 @@
 # Development status
 
+## October 7, 2026: background-worker implementation resumed
+
+The user requested implementation and continued development without Computer
+Use or visible game windows. A default-off worker is being integrated with
+separate build profiles, audited fixture selection, a private-desktop
+supervisor/DX11 probe, bounded in-process input/backbuffer capture and the
+existing Lua-owner debug action queue. The dedicated Normal/worker-ON build
+has passed all109 audited CTests,198 input-only checks and72 runner-policy
+checks. All11 native research flags remain OFF. Three bounded private DX11
+probe attempts refused before qualification; the latest records an empty
+private-window enumeration (FALSE, error0, no bad callback) at startup.
+No MGSV has launched under the worker, and private MGSV startup, rendering,
+input and playability remain unverified. Receipts are retained under
+`build/worker-runs` and `build/worker-runtime`.
+No global input or visible fallback is authorized. Gun pose work retains its
+existing exact-build, native-contract, owner and lifecycle gates.
+
+The separate read-only clip-timing V3 correction is implemented in the
+research workbench: metadata is bounded to16 layer pointers/128 bytes,
+and only explicitly selected layers are followed. It accepts the saved H8
+nine-layer allocation while retaining the exact native allocation/table
+bounds. Root verification passed617 detached checks,24 complete disk-code
+spans and21 exact instruction assertions. This has no process reads or game
+writes in its detached/static modes; actual V3 game readback remains pending.
+
+## October 7, 2026: paused at user request
+
+H8 completed a fresh two-game Mother Base → helicopter → Afghanistan transition with host-only Continue and guest arrival acknowledgments. The explicit manual upper-idle diagnostic passed live: remote Fire116 returned to Idle89 at its natural update, with no queued state and an unchanged lower-channel request record. Automatic gun animation remains disabled: selecting Fire still produces no visible gun pose, and all ten remote Motion/Gun inputs remain zero. Guest weapon initialization succeeded; the host writer refused before dispatch after travel because its selected equipment bank was not empty. The pure animation reader's refusal was independently diagnosed as its five-layer limit against an actual nine-layer body; the proposed bounded reader correction has not been implemented.
+
+The H8 build passed105 non-long suites and both long installer suites. Both games closed normally at18:52:22 UTC; all ten real save/config files match run-start and backup. Active lab settings and markers were disabled, and both installations were restored through the owned installer to the previously tested normal21 DLL `D4AF2A7F...CF5230` and baseline runtime archive. The newer accepted-source collector and gun diagnostics remain saved in source/research artifacts and require a fresh normal-profile release check. No new release or commit was made. [H8 evidence and next steps](testing-2026-10-07-animation-debug.md#october-7-h8-manual-idle-validation-and-user-requested-wrap-up).
+
+## October 7, 2026: animation and debug continuation
+
+Current source allows eight existing resident turn clips alongside the 13 locomotion/stance clips, while retaining the original runtime archive hash and bytes. A fresh normal-profile run with all research flags OFF verified all eight resources finishing naturally and actual aimed mouse pivots selecting crouched turn 18 and standing turn 16. The subsequent T7 research run verified accepted-source collection with a crouched pivot and two separately settled identical pivots: both queued clips played once for950 ms and returned to idle. Visual interpolation remains unchanged. Measured improvement over the previous collector and a fresh normal-profile check of the newer source remain pending.
+
+F9 patrol placement visibly reused an armed living guard in a development build; its local combat killed the player and host Continue reloaded both instances. Fresh H2/H3/H5 environment checks separately verified host noon/rain with guest clock differences of 1–2 seconds and matching rainy weather. Guard placement remains host-local, with no new soldier allocation or AI replication claim.
+
+Gun intent and the default-off bounded action-history companion have live transport receipts. Automatic upper gun playback remains disabled. H3 manually selected upper Fire child 116 but showed no gun/firing pose or finite finish. H5 installed the corrected observation hooks and captured one natural local End path through departure to idle. Its remote Fire request with zero blend still showed low arms and no gun. The writer refused before native dispatch; a later resource-mapping review requires qualification beyond a predicted bank. Remote update observation succeeded after a documented Warp advanced the body epoch from 0 to 1; source now accepts the legitimate initial epoch 0, with focused regression checks. Both H4 and H5 closed normally and all ten real save/config files remained unchanged. Later candidates require fresh gameplay checks. [Build-specific evidence](testing-2026-10-07-animation-debug.md).
+
+H6 verified remote update observation at initial epoch 0, but its writer refused because an old helper read logical45 rather than native46. The corrected H7 build subsequently dispatched the stock46 writer once in each game and bound handle605C4. A remote rifle is visible on the host partner's back. Pure owned readback in both games confirms active equipment46 and unchanged local slots/handles. A separately primed manual upper request selects Fire116, but its ten Gun/MotionVars inputs and caches remain zero, with low arms and no gun pose or finite finish. H7 also re-tested host noon/rain with guest clock differences of1–2 seconds and matching rain in both views. H6 and H7 closed normally with all ten real save/config files unchanged. Automatic gun playback remains disabled. The subsequent H8 run validates only the separately gated manual upper-idle diagnostic, as described above.
+
+Normal packaging now explicitly disables all local research options before building, preventing cached experiment settings from entering a normal package. Supplied DLLs are packaged with their existing settings; the tool does not claim those settings are disabled.
+
+## October 6, 2026: Enemy controls in source development
+
+The F9 Enemy section now has camp and patrol-route selectors, host-only **Spawn guard on selected patrol** / **Spawn guard at closest camp**, and player teleports to the selected camp or last confirmed guard position. Placement reuses at most eight distinct normal living guards per mission, within 150 m of the player, and requests placement on an authored route at point 0. It refuses dead, recovered, unknown or unloaded guards; it does not allocate a new soldier. Guard placement remains a local host debug action, not replicated AI.
+
+Camp travel prefers a readable living guard position, then falls back to the camp's actual declared player checkpoint through the retail `TppCheckPoint.GetCheckPointLocator` contract. Unloaded camps can use that validated pose for distance sorting. Missing/invalid locators refuse without guessed coordinates. Source fixtures pass **4,987 checks** and **224 exact-retail checks**, including strict vector method receivers and checkpoint fallback. **Live wilderness travel and visible guard placement are pending**; the dated installed-build evidence below does not validate these additions.
+
 ## October 6, 2026: debug menu development 0.11.1
 
 The final debug-menu DLL is `0CB53F278436EA845D4240BC82EB2B09A4F51F08CA9C5C826460168067E898C6`, installed and hash-verified in both copies. Its only change from the B3 candidate is UI labels/help, including wording the current-gun action as **Refill**. Functional logic is unchanged. Final run `build/lab/runs/20261006-164030` separately verifies F9 in both Afghanistan games, corrected refill wording and inventory readback, automatic close on focus loss, and the menu's default partner preset on both roles. This manual preparation began with stage 0; the menu enabled stage 3 / net / xform / map / net look and received `partner_applied`. Both bodies then had parts `3,3`. After F9 closed, host W moved to `(797494,339428,1640439)` mm and guest remote/body readback matched at rest with 0 mm error ([movement views](../build/lab/runs/20261006-164030/screens/debug-final-movement-guest-164725.png), [preset view](../build/lab/runs/20261006-164030/screens/debug-final-partners-host-164712.png)). Both title menus used Continue in this smoke; it does not re-test host-only title following. The broader cheat results below remain B3 evidence.

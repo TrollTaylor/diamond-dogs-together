@@ -47,11 +47,11 @@ Rehearsing the two-PC play mode on this PC (docs/two-pc-play.md):
               reordering) and uses the adaptive partner delay.
 Without these switches the lab.ini and coop.ini are exactly as before.
 
-World sync (docs/world-sync-protocol.md; experimental, default off):
+World sync (docs/world-sync-protocol.md; default level 3):
   -World 1..3 shared world between the copies: 1 plumbing only, 2 also shared
               enemy outcomes and alert in free roam, 3 also clock/weather,
               host-driven mission travel and Continue alignment.
-              Adds world=N to both lab.ini files (nothing at the default 0).
+              Adds world=N to both lab.ini files. -World 0 opts out.
               Console [G]: travel to Afghanistan through the game's APIs.
               At level 3 the host travels and the guest follows automatically.
   -WorldProbe <probe>
@@ -96,8 +96,8 @@ param(
     [string]$LanAddress,
     # WAN rehearsal preset from lab.json wanSim (one-way impairment per copy).
     [ValidateSet('off', 'good', 'bad', 'awful')][string]$WanSim = 'off',
-    # World sync level (docs/world-sync-protocol.md): 0 = off (default, lab.ini unchanged).
-    [ValidateRange(0, 3)][int]$World = 0,
+    # Shared enemies, time/weather and host travel by default; -World 0 opts out.
+    [ValidateRange(0, 3)][int]$World = 3,
     # A world sync lab probe (needs -World 1..3).
     [ValidateSet('none', 'p1', 'p3', 'p3b', 'p4', 'p12', 'p17', 'race_kill', 'remote_area_kill', 'kill_near', 'sleep_near',
         'fulton_near', 'alert_near', 'weather_rain', 'clock_jump', 'clock_fast',
@@ -214,7 +214,7 @@ try {
             'partner_input_words=hpr', 'partner_input_mask=0x2200006', 'partner_recon=track', 'partner_input_correct_mm=3000',
             'partner_recon_runaway=pin', 'partner_input_slot=body')
     }
-    # World sync (opt-in): appended after the partner settings above, which stay as they are.
+    # Shared world by default; the explicit level 0 opt-out writes no world key.
     if ($World -gt 0) { $partnerSettings += "world=$World" }
     if ($WorldProbe -ne 'none') { $partnerSettings += "world_probe=$WorldProbe" }
     $rehearsal = @{}

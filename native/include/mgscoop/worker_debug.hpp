@@ -1,0 +1,12 @@
+#pragma once
+#include <cstddef>
+#include <cstdint>
+
+namespace mgscoop::worker_debug {
+struct Request { std::uint64_t sequence{}, expires{}; std::uint32_t mission{}, generation{}; char text[201]{}; };
+// A copied debug command, never Lua source or a native address.
+bool Parse(const char*, std::size_t, const char* run, const char* role, Request&) noexcept;
+bool Timely(const Request&, std::uint64_t now, std::uint64_t previous) noexcept;
+// Called exclusively from the existing natural Lua command receipt owner.
+void PollOwner() noexcept;
+}

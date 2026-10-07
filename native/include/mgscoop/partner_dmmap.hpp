@@ -34,6 +34,8 @@ inline constexpr std::uint8_t kNoGani = 0xFF;          // nothing / unknown (ado
 inline constexpr std::uint8_t kMoveUnknown = 0xFF;
 inline constexpr std::uint64_t kHoldMs = 200;          // candidate stable before a switch
 inline constexpr std::uint64_t kDwellMs = 300;         // current clip played before a switch
+inline constexpr std::uint64_t kMeasuredHoldMs = 70;   // fresh validated pose speed, including idle
+inline constexpr std::uint64_t kMeasuredDwellMs = 100;
 inline constexpr std::uint64_t kConfirmMs = 2500;      // play sent -> q18[1]==0x8b (the native watch is 2000)
 inline constexpr std::uint64_t kStopWaitMs = 1000;     // stop sent -> q18[1] left the DM act
 inline constexpr std::uint64_t kReleaseMs = 1500;      // leaving map: give up waiting
@@ -43,11 +45,12 @@ inline constexpr std::uint32_t kBackoffMaxMs = 8000;   // ... up to this
 inline constexpr unsigned kMaxFailures = 5;            // consecutive -> failed
 inline constexpr unsigned kStrikes = 2;                // per gani -> bad for the mission (until Rearm)
 inline constexpr std::uint32_t kSpeedHystMmps = 150;
-inline constexpr std::uint64_t kSpeedSpanMinMs = 150;
-inline constexpr std::uint64_t kSpeedSpanMaxMs = 300;
+inline constexpr std::uint64_t kSpeedSpanMinMs = 100;
+inline constexpr std::uint64_t kSpeedSpanMaxMs = 200;
+inline constexpr std::uint64_t kSpeedSampleMs = 10;    // history spacing; newest observation is always retained
 inline constexpr std::uint32_t kSpeedJumpMmps = 20000;
 inline constexpr std::size_t kSpeedRing = 32;
-static_assert(kPartnerDmGaniMax < 16, "the bad mask is 16 bits");
+static_assert(kPartnerDmGaniMax < 32, "the bad mask is 32 bits");
 
 // How the class was decided (move: flags, speed, anim, none; lost; stale).
 enum class Via : std::uint8_t { none, flags, speed, anim, lost, stale };
@@ -64,6 +67,8 @@ struct Observation {
     std::uint8_t anim_stance, anim_speed;
     bool speed_ok;
     std::uint32_t speed_mmps;
+    float yaw;
+    std::uint8_t gun_actions;
 };
 struct Class { std::uint8_t stance, move; Via via, stance_via; };
 // The move band of a horizontal speed with kSpeedHystMmps hysteresis around
@@ -77,14 +82,33 @@ std::uint8_t MoveForSpeed(std::uint32_t speed_mmps, const PartnerDmSpeeds& speed
 Class Classify(const Observation& o, const PartnerDmSpeeds& speeds, std::uint8_t prev_move, std::uint8_t prev_stance) noexcept;
 inline std::uint8_t Cell(const Class& c) noexcept { return static_cast<std::uint8_t>(c.stance * 4u + c.move); }
 // table[Cell]; a bad gani falls back to the stance's idle cell, then kNoGani.
-std::uint8_t ResolveTarget(const PartnerDmTable& table, const Class& c, std::uint16_t bad) noexcept;
+std::uint8_t ResolveTarget(const PartnerDmTable& table, const Class& c, std::uint32_t bad) noexcept;
+// Verified resident transition clips 13..20 play once, unlike locomotion loops.
+bool OneShot(std::uint8_t gani) noexcept;
+inline constexpr std::uint64_t kTurnSettleMs = 70;
+inline constexpr std::uint64_t kTurnCollectMs = 600;
+struct TurnState {
+    bool valid{}, collecting{};
+    float yaw{}, activity_yaw{}, accumulated{};
+    std::uint64_t began_ms{}, changed_ms{}, sample_ms{}, until_ms{};
+    std::uint8_t gani{kNoGani}, stance{};
+    std::uint32_t event_token{};  // changes only when a collected pivot is committed
+};
+// Only idle stand/squat turns; movement/loss interrupts and teleports reset.
+// Collect the full pivot until its yaw settles, with a bounded collection window.
+std::uint8_t ObserveTurn(TurnState& state, std::uint64_t now_ms, bool fresh, float yaw, std::uint8_t stance, bool moving) noexcept;
 
 // Horizontal speed of the commanded pose: newest against the oldest entry
 // within kSpeedSpanMaxMs (at least kSpeedSpanMinMs apart). Time going
 // backwards or a step faster than kSpeedJumpMmps (a teleport) restarts it.
-struct SpeedRing { struct Entry { std::uint64_t t_ms; std::int32_t x_mm, z_mm; }; Entry entries[kSpeedRing]; std::uint8_t head, count; };
+struct SpeedRing {
+    struct Entry { std::uint64_t t_ms; std::int32_t x_mm, z_mm; };
+    Entry entries[kSpeedRing];
+    std::uint64_t anchor_ms;  // newest slot's creation time; overwrites do not move the history cadence
+    std::uint8_t head, count;
+};
 void SpeedReset(SpeedRing& ring) noexcept;
-void SpeedPush(SpeedRing& ring, std::uint64_t t_ms, std::int32_t x_mm, std::int32_t z_mm) noexcept;
+bool SpeedPush(SpeedRing& ring, std::uint64_t t_ms, std::int32_t x_mm, std::int32_t z_mm) noexcept;
 bool SpeedMmps(const SpeedRing& ring, std::uint32_t& out) noexcept;
 
 enum class Phase : std::uint8_t { idle, wait, play_sent, playing, stop_sent, backoff, failed, release };
@@ -94,12 +118,16 @@ const char* BlockName(Block block) noexcept;
 enum class Cause : std::uint8_t { none, ended, warp, look, parts, host };
 const char* CauseName(Cause cause) noexcept;
 enum class Action : std::uint8_t { none, play, stop };
-enum class Event : std::uint8_t { none, step, playing, deferred, stop_timeout, unconsumed, dm_read, lost, failed, adopted, released };
+enum class Event : std::uint8_t { none, step, playing, deferred, stop_timeout, unconsumed, dm_read, lost, finished, failed, adopted, released };
 struct In {
     bool map;                  // settings.dm == map
     Block blocked;
     bool target_ok;            // false: freeze (stale remote)
     std::uint8_t target;       // ResolveTarget(...)
+    std::uint32_t finite_token; // nonzero discrete request identity; held copies are not new events
+    bool responsive;           // authoritative movement/action: one frame hold
+    bool measured;             // fresh net pose speed: shorter start/stop hold
+    bool urgent;               // a move/action can interrupt a one-shot
     Class cls;
     bool dm_ok, patched, parts_loaded;
     bool in_dm;                // q18[1] == 0x8b
@@ -112,6 +140,7 @@ struct In {
     bool warp;                 // this reply has WARP (1)
     bool prev_look, prev_warp; // the previous reply had a look op / WARP (loss attribution)
     std::uint64_t now_ms;
+    std::uint8_t available_ganis = kPartnerDmGaniMax + 1;
 };
 struct Out {
     Action action;
@@ -130,6 +159,8 @@ struct State {
     Phase release_from;        // the phase the current release began in
     bool owned;
     std::uint8_t cur, sent, from, cand;
+    std::uint8_t completed_once;
+    std::uint64_t cur_event, sent_event, cand_event;
     Class cand_cls;
     std::uint64_t cand_ms, sent_ms, play_ms, stop_ms, retry_ms, release_ms;
     bool stop_done, release_stop_sent;
@@ -137,10 +168,21 @@ struct State {
     unsigned failures;
     const char* deferred;      // static strings; compared with strcmp
     const char* last_failure;
-    std::uint16_t bad;         // bit g: gani g unusable
+    std::uint32_t bad;         // bit g: gani g unusable
     std::uint8_t strikes[kPartnerDmGaniMax + 1];
     std::uint32_t switches, plays, stops, deferrals, timeouts, unconsumed, lost, adopted, bad_ganis;
+    struct FiniteEvent { std::uint64_t id; std::uint8_t gani; Class cls; std::uint64_t requested_ms; };
+    static constexpr std::size_t finite_capacity = 4;  // includes the playing request, with at most three waiting
+    FiniteEvent finite_events[finite_capacity];
+    std::uint8_t finite_count;
+    std::uint32_t observed_finite_token;
+    std::uint8_t observed_finite_gani;
+    std::uint64_t next_finite_id;
+    std::uint32_t finite_dropped;
 };
+// Drop queued finite requests at explicit source/teleport lifecycle resets.
+// Current DM ownership and native stop gates remain the caller's responsibility.
+void CancelFiniteEvents(State& state) noexcept;
 void Reset(State& s) noexcept;   // all zero, phase idle, cur/sent/from/cand = kNoGani
 void Rearm(State& s) noexcept;   // failures/backoff 0, deferred null, bad/strikes cleared; failed -> (owned ? playing, play_ms 0 : wait); backoff -> retry_ms 0
 void Forget(State& s) noexcept;  // owned false, cur kNoGani, stop_done/release_stop_sent false; idle, failed and backoff kept, else wait

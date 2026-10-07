@@ -1,0 +1,307 @@
+#Requires -Version 7
+# Pure worker policy/receipt checks. No build, process launch, game or input APIs.
+[CmdletBinding()]
+param()
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+$repo = Split-Path -Parent $PSScriptRoot
+$scriptPath = Join-Path $repo 'tools\worker\Invoke-WorkerChecks.ps1'
+$tokens = $null; $errors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'Worker runner parse failed' }
+# Load actual pure boundaries, never the top-level execution pipeline.
+$pure = @('Get-WorkerExperiments','Get-WorkerTests','Get-WorkerHash','Test-WorkerUnder','Assert-WorkerPath',
+    'Get-WorkerPlan','Assert-WorkerOptions','Assert-WorkerCache','Assert-WorkerCacheOwnership',
+    'Assert-WorkerInventory','Write-WorkerJson','Get-WorkerSourceHashes','Assert-WorkerSourceUnchanged','New-WorkerCmakeOverride')
+foreach ($name in $pure) {
+    $definitions = @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true))
+    if ($definitions.Count -ne 1) { throw "Missing or duplicate pure boundary: $name" }
+    . ([scriptblock]::Create($definitions[0].Extent.Text))
+}
+$checks = 0
+function Check([bool]$Value, [string]$Message) { $script:checks++; if (!$Value) { throw "Assertion failed: $Message" } }
+function Refuses([scriptblock]$Call, [string]$Pattern) {
+    $caught = $null
+    try { & $Call | Out-Null } catch { $caught = $_ }
+    Check ($null -ne $caught -and $caught.Exception.Message -match $Pattern) "refuses $Pattern"
+}
+$nonce = [Guid]::NewGuid().ToString('N')
+$buildRoot = Join-Path $repo 'build'
+$fixture = Join-Path $buildRoot ('worker-checks-tests-' + $nonce)
+$marker = Join-Path $fixture '.fixture-owner'
+$ownedLinks = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+try {
+    $null = New-Item -ItemType Directory -Path $fixture
+    [IO.File]::WriteAllText($marker, $nonce)
+    $normal = Get-WorkerPlan $fixture 'Normal' 'Release' @() $false ''
+    $background = Get-WorkerPlan $fixture 'Normal' 'Release' @() $true ''
+    $research = Get-WorkerPlan $fixture 'Research' 'Release' @('MGS_LOCAL_ACTION_EVENTS') $false ''
+    Check ($normal.flags.Count -eq 12 -and @($normal.flags.Values | Where-Object { $_ -cne 'OFF' }).Count -eq 0) 'normal explicitly disables all 11 local experiments and the separate worker'
+    Check ($background.flags.MGS_BACKGROUND_WORKER -ceq 'ON' -and @($background.flags.Keys | Where-Object { $_ -like 'MGS_LOCAL_*' -and $background.flags[$_] -cne 'OFF' }).Count -eq 0) 'background opt-in cannot enable research flags'
+    Check ($research.flags.MGS_LOCAL_ACTION_EVENTS -ceq 'ON' -and @($research.flags.Values | Where-Object { $_ -ceq 'ON' }).Count -eq 1) 'research enables exactly the named option'
+    Check ($normal.build_directory -ine $background.build_directory -and $normal.build_directory -ine $research.build_directory) 'profiles use separate default caches'
+    Check ($normal.coordinator_lock -ceq $background.coordinator_lock -and $normal.coordinator_lock -ceq $research.coordinator_lock) 'one checkout coordinator covers every cache/profile'
+    $equivalent = Get-WorkerPlan ($fixture.ToUpperInvariant() + '\') 'Normal' 'Release' @() $false ''
+    Check ($equivalent.coordinator_lock -ceq $normal.coordinator_lock) 'case/trailing slash cannot bypass the coordinator'
+    $orderA = Get-WorkerPlan $fixture 'Research' 'Release' @('MGS_LOCAL_ACTION_EVENTS','MGS_LOCAL_UPPER_PROBE') $false ''
+    $orderB = Get-WorkerPlan $fixture 'Research' 'Release' @('MGS_LOCAL_UPPER_PROBE','MGS_LOCAL_ACTION_EVENTS') $false ''
+    Check ($orderA.build_directory -ceq $orderB.build_directory) 'explicit experiment order preserves profile identity'
+    $custom = Get-WorkerPlan $fixture 'Normal' 'Release' @() $false ('build\space ' + [char]0x96EA)
+    Check ($custom.build_directory -ceq (Join-Path $fixture ('build\space ' + [char]0x96EA))) 'spaced/non-ASCII cache remains a literal checkout-relative path'
+    Check (!$normal.retail_game_launch -and !$normal.system_input -and !$normal.installation) 'plan makes no runtime/installation claim'
+    foreach ($excluded in @('lab_scripts_tests','friend_package_tests','probe_install_recovery')) {
+        Check ($normal.tests -cnotcontains $excluded -and $normal.excluded -ccontains $excluded) "unsafe default flow excluded: $excluded"
+    }
+    Check (@($normal.tests | Select-Object -Unique).Count -eq $normal.tests.Count) 'test allowlist contains no duplicates'
+    Check ($normal.tests -ccontains 'worker_session_tests') 'audited detached controller fixture is explicitly included'
+    Refuses { Get-WorkerPlan $fixture 'Normal' 'Release' @('MGS_LOCAL_ACTION_EVENTS') $false '' } 'Normal profile'
+    Refuses { Get-WorkerPlan $fixture 'Research' 'Release' @() $false '' } 'requires explicit'
+    Refuses { Get-WorkerPlan $fixture 'Research' 'Release' @('MGS_LOCAL_ACTION_EVENTS','MGS_LOCAL_ACTION_EVENTS') $false '' } 'Duplicate'
+    Refuses { Get-WorkerPlan $fixture 'Research' 'Release' @('mgs_local_action_events') $false '' } 'noncanonical'
+    Refuses { Get-WorkerPlan $fixture 'Research' 'Release' @('MGS_LOCAL_NEW_UNREVIEWED') $false '' } 'Unknown'
+    Refuses { Get-WorkerPlan $fixture 'Normal' 'Release' @() $false 'build\native' } 'shared development'
+    Refuses { Get-WorkerPlan $fixture 'Normal' 'Release' @() $false 'build\native\child' } 'shared development'
+    Refuses { Get-WorkerPlan $fixture 'Normal' 'Release' @() $false 'build\worker-runs\receipt' } 'immutable run'
+    Refuses { Get-WorkerPlan $fixture 'Normal' 'Release' @() $false '..\escape' } 'below'
+    Refuses { Get-WorkerPlan $fixture 'Normal' 'Release' @() $false (Join-Path $fixture 'build') } 'below'
+
+    Assert-WorkerCacheOwnership $normal
+    $ownerFile = Join-Path $normal.build_directory '.worker-check-profile.json'
+    Check (Test-Path -LiteralPath $ownerFile -PathType Leaf) 'a fresh cache has an explicit profile owner'
+    Assert-WorkerCacheOwnership $normal
+    $wrongProfile = Get-WorkerPlan $fixture 'Research' 'Release' @('MGS_LOCAL_ACTION_EVENTS') $false $normal.build_directory
+    Refuses { Assert-WorkerCacheOwnership $wrongProfile } 'different profile'
+    $unowned = Get-WorkerPlan $fixture 'Normal' 'Release' @() $false 'build\unowned'
+    $null = New-Item -ItemType Directory -Path $unowned.build_directory
+    [IO.File]::WriteAllText((Join-Path $unowned.build_directory 'CMakeCache.txt'),'CMAKE_BUILD_TYPE:STRING=Release')
+    Refuses { Assert-WorkerCacheOwnership $unowned } 'unowned existing'
+    $cacheFile = Join-Path $normal.build_directory 'CMakeCache.txt'
+    $cacheText = ($normal.flags.Keys | ForEach-Object { $_ + ':BOOL=' + $normal.flags[$_] }) -join "`n"
+    [IO.File]::WriteAllText($cacheFile,$cacheText+"`n")
+    Assert-WorkerCache $normal.build_directory $normal.flags
+    [IO.File]::WriteAllText($cacheFile,$cacheText.Replace('MGS_BACKGROUND_WORKER:BOOL=OFF','MGS_BACKGROUND_WORKER:BOOL=ON')+"`n")
+    Refuses { Assert-WorkerCache $normal.build_directory $normal.flags } 'Unexpected cached option'
+    $localOptions = @(Get-WorkerExperiments | ForEach-Object { 'option(' + $_ + ' "fixture" OFF)' })
+    $fixtureCmake = ($localOptions -join "`n") + "`noption(MGS_BACKGROUND_WORKER `"fixture`" OFF)`n"
+    [IO.File]::WriteAllText((Join-Path $fixture 'CMakeLists.txt'),$fixtureCmake)
+    Assert-WorkerOptions $fixture
+    [IO.File]::AppendAllText((Join-Path $fixture 'CMakeLists.txt'),'option(MGS_LOCAL_EXTRA "new" OFF)'+"`n")
+    Refuses { Assert-WorkerOptions $fixture } 'differs from CMake'
+
+    $directory = $normal.build_directory
+    $selected = @('partner_driver_tests','host_trial_patch_check','host_trial_lua_check')
+    $inventory = [pscustomobject]@{tests=@(
+        [pscustomobject]@{name='partner_driver_tests';command=@((Join-Path $directory 'partner_driver_tests.exe'));properties=@([pscustomobject]@{name='WORKING_DIRECTORY';value=$directory})},
+        [pscustomobject]@{name='host_trial_patch_check';command=@((Join-Path $directory 'host_trial_patch_check.exe'),(Join-Path $fixture 'build\asset\package-00.lua'),(Join-Path $directory 'lua-check\TppMain-host-trial.lua'));properties=@([pscustomobject]@{name='WORKING_DIRECTORY';value=$directory},[pscustomobject]@{name='FIXTURES_SETUP';value=@('host_output')})},
+        [pscustomobject]@{name='host_trial_lua_check';command=@((Join-Path $directory 'lua-fixture\lua51.exe'),(Join-Path $fixture 'tests\host_trial_lua_check.lua'));properties=@([pscustomobject]@{name='WORKING_DIRECTORY';value=$directory},[pscustomobject]@{name='FIXTURES_REQUIRED';value=@('host_output')})}
+    )}
+    function Copy-Inventory { return ($inventory | ConvertTo-Json -Depth 8 | ConvertFrom-Json) }
+    Assert-WorkerInventory $inventory $fixture $directory $selected
+    Check $true 'actual command/fixture policy accepts an owned setup-dependent Lua composition'
+    $bad = Copy-Inventory; $bad.tests = @($bad.tests)+@($bad.tests[0])
+    Refuses { Assert-WorkerInventory $bad $fixture $directory $selected } 'Duplicate CTest'
+    $bad = Copy-Inventory; $bad.tests = @($bad.tests[0],$bad.tests[2])
+    Refuses { Assert-WorkerInventory $bad $fixture $directory $selected } 'missing'
+    $bad = Copy-Inventory; $bad.tests[0].command[0] = Join-Path $fixture 'mgsvtpp.exe'
+    Refuses { Assert-WorkerInventory $bad $fixture $directory $selected } 'Unaudited fixture executable'
+    $bad = Copy-Inventory; $bad.tests[0].command += '--new-mode'
+    Refuses { Assert-WorkerInventory $bad $fixture $directory $selected } 'Unexpected fixture arguments'
+    $bad = Copy-Inventory; $bad.tests[1].command[2] = Join-Path $fixture 'foreign-output.lua'
+    Refuses { Assert-WorkerInventory $bad $fixture $directory $selected } 'Foreign patch output'
+    $bad = Copy-Inventory; $bad.tests[2].command[1] = Join-Path $fixture 'tests\unreviewed.lua'
+    Refuses { Assert-WorkerInventory $bad $fixture $directory $selected } 'Unaudited Lua command'
+    $bad = Copy-Inventory; $bad.tests[0].properties[0].value = $fixture
+    Refuses { Assert-WorkerInventory $bad $fixture $directory $selected } 'Foreign test working'
+    $bad = Copy-Inventory; $bad.tests[0].properties += [pscustomobject]@{name='DISABLED';value=$true}
+    Refuses { Assert-WorkerInventory $bad $fixture $directory $selected } 'disabled'
+    $bad = Copy-Inventory; $bad.tests[0].properties += [pscustomobject]@{name='ENVIRONMENT';value='PATH=foreign'}
+    Refuses { Assert-WorkerInventory $bad $fixture $directory $selected } 'Unaudited CTest property'
+    $bad = Copy-Inventory; $bad.tests[2].properties += [pscustomobject]@{name='DEPENDS';value=@('host_trial_patch_check')}
+    Assert-WorkerInventory $bad $fixture $directory $selected
+    Check $true 'CTest ordering dependencies remain inside the audited closure'
+    $bad.tests[2].properties[-1].value = @('unaudited_launch')
+    Refuses { Assert-WorkerInventory $bad $fixture $directory $selected } 'Unaudited ordered dependency'
+    $bad = Copy-Inventory; $bad.tests[1].name = 'unaudited_setup'
+    Refuses { Assert-WorkerInventory $bad $fixture $directory @('partner_driver_tests','host_trial_lua_check') } 'Unaudited fixture dependency'
+    $bad = Copy-Inventory; $bad.tests[1].properties = @([pscustomobject]@{name='WORKING_DIRECTORY';value=$directory})
+    Refuses { Assert-WorkerInventory $bad $fixture $directory $selected } 'Missing fixture provider'
+    $bad = Copy-Inventory
+    $bad.tests += [pscustomobject]@{name='unaudited_cleanup';command=@('mgsvtpp.exe');properties=@([pscustomobject]@{name='FIXTURES_CLEANUP';value=@('host_output')})}
+    Refuses { Assert-WorkerInventory $bad $fixture $directory $selected } 'Unaudited fixture dependency'
+
+    # Detached controller fixtures share the exact six-argument PowerShell
+    # contract. Names, script paths, interpreter flags and arity stay explicit.
+    $psNames=@('build_profile_tests','worker_session_tests')
+    $psInventory=[pscustomobject]@{tests=@($psNames|ForEach-Object {
+        [pscustomobject]@{name=$_;command=@('C:\fixture\pwsh.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $fixture ('tests\'+$_+'.ps1')));properties=@()}
+    })}
+    function Copy-PsInventory { return ($psInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json) }
+    Assert-WorkerInventory $psInventory $fixture $directory $psNames
+    Check $true 'both audited PowerShell fixtures accept exact registered six-argument command'
+    foreach($index in @(0,1)) {
+        $bad=Copy-PsInventory;$bad.tests[$index].command[0]='C:\fixture\powershell.exe'
+        Refuses {Assert-WorkerInventory $bad $fixture $directory $psNames} 'Unaudited PowerShell command'
+        $bad=Copy-PsInventory;$bad.tests[$index].command[5]=Join-Path $fixture 'tests\unreviewed-controller.ps1'
+        Refuses {Assert-WorkerInventory $bad $fixture $directory $psNames} 'Unaudited PowerShell command'
+        $bad=Copy-PsInventory;$bad.tests[$index].command+=@('-RunDirectory','C:\real-game')
+        Refuses {Assert-WorkerInventory $bad $fixture $directory $psNames} 'Unaudited PowerShell command'
+        $bad=Copy-PsInventory;$bad.tests[$index].command[1]='-NonInteractive'
+        Refuses {Assert-WorkerInventory $bad $fixture $directory $psNames} 'Unaudited PowerShell command'
+    }
+    $bad=Copy-PsInventory;$bad.tests[1].properties=@([pscustomobject]@{name='DEPENDS';value=@('build_profile_tests')})
+    Assert-WorkerInventory $bad $fixture $directory $psNames
+    Check $true 'controller fixture ordered dependencies remain audited'
+    $bad.tests[1].properties[0].value=@('unaudited_launch')
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $psNames} 'Unaudited ordered dependency'
+
+    $receipt = Join-Path $fixture 'receipt.json'
+    Write-WorkerJson $receipt ([ordered]@{arguments=@('space value',('line1'+"`n"+'line2'));status='first'})
+    Write-WorkerJson $receipt ([ordered]@{arguments=@('space value',('line1'+"`n"+'line2'));status='final'})
+    $read = [IO.File]::ReadAllText($receipt) | ConvertFrom-Json
+    Check ($read.status -ceq 'final' -and $read.arguments[0] -ceq 'space value' -and $read.arguments[1] -ceq "line1`nline2" -and !(Test-Path -LiteralPath ($receipt+'.tmp'))) 'atomic receipt replacement preserves literal arguments/newlines'
+
+    $sourceRoot=Join-Path $fixture 'source-project'
+    $null=New-Item -ItemType Directory -Path (Join-Path $sourceRoot 'third_party') -Force
+    [IO.File]::WriteAllText((Join-Path $sourceRoot 'CMakeLists.txt'),'project(fixture LANGUAGES NONE)')
+    $targetA=Join-Path $fixture 'dependency-a'; $targetB=Join-Path $fixture 'dependency-b'
+    foreach($target in @($targetA,$targetB)) {
+        $null=New-Item -ItemType Directory -Path (Join-Path $target 'src') -Force
+        [IO.File]::WriteAllText((Join-Path $target 'CMakeLists.txt'),'add_library(fixture STATIC src/hook.c)')
+        [IO.File]::WriteAllText((Join-Path $target 'src\hook.c'),'int fixture_hook=1;')
+        [IO.File]::WriteAllText((Join-Path $target 'LICENSE.txt'),'INERT dependency license fixture')
+    }
+    $knownLink=Join-Path $sourceRoot 'third_party\minhook'
+    $null=New-Item -ItemType Junction -Path $knownLink -Target $targetA
+    $null=$ownedLinks.Add($knownLink)
+    $before=Get-WorkerSourceHashes $sourceRoot
+    Check ($before.dependencies['third_party\minhook'].linked -and $before.dependencies['third_party\minhook'].resolved_path -ieq $targetA) 'snapshot records the actual resolved MinHook junction target'
+    Check ($before.hashes.Contains('third_party\minhook\src\hook.c') -and $before.hashes['third_party\minhook\src\hook.c'] -ceq (Get-FileHash -LiteralPath (Join-Path $targetA 'src\hook.c')).Hash) 'snapshot hashes actual linked dependency bytes under their logical source path'
+    Check ($before.hashes.Contains('third_party\minhook\LICENSE.txt') -and (Get-Item -LiteralPath $knownLink).Attributes -band [IO.FileAttributes]::ReparsePoint) 'dependency attribution is hashed and the existing link remains intact'
+    Assert-WorkerSourceUnchanged $before (Get-WorkerSourceHashes $sourceRoot)
+    [IO.File]::WriteAllText((Join-Path $targetA 'src\hook.c'),'int fixture_hook=2;')
+    Refuses { Assert-WorkerSourceUnchanged $before (Get-WorkerSourceHashes $sourceRoot) } 'Source changed'
+    [IO.File]::WriteAllText((Join-Path $targetA 'src\hook.c'),'int fixture_hook=1;')
+    # Remove only this fixture-owned link, never its target; no recursive delete.
+    Remove-Item -LiteralPath $knownLink -Force
+    $null=New-Item -ItemType Junction -Path $knownLink -Target $targetB
+    $retargeted=Get-WorkerSourceHashes $sourceRoot
+    Check ($retargeted.hashes['third_party\minhook\src\hook.c'] -ceq $before.hashes['third_party\minhook\src\hook.c']) 'replacement target has intentionally identical source bytes'
+    Refuses { Assert-WorkerSourceUnchanged $before $retargeted } 'dependency target changed'
+    $unknownLink=Join-Path $sourceRoot 'tools\foreign'
+    $null=New-Item -ItemType Directory -Path (Split-Path -Parent $unknownLink) -Force
+    $null=New-Item -ItemType Junction -Path $unknownLink -Target $targetA
+    $null=$ownedLinks.Add($unknownLink)
+    Refuses { Get-WorkerSourceHashes $sourceRoot } 'unreviewed directory link'
+
+    # Execute the actual command wrapper with ONLY its Process constructor
+    # replaced. ProcessStartInfo/argument lists, receipts and finally blocks
+    # are real; the recording process class has no native/process APIs.
+    Add-Type -TypeDefinition @'
+using System;
+using System.Diagnostics;
+using System.Threading.Tasks;
+public sealed class MgsCoopWorkerStreamFixture {
+    readonly string text;
+    public MgsCoopWorkerStreamFixture(string value) { text=value; }
+    public Task<string> ReadToEndAsync() { return Task.FromResult(text); }
+}
+public sealed class MgsCoopWorkerProcessFixture : IDisposable {
+    public static string Mode="success";
+    public static ProcessStartInfo LastInfo;
+    public static int KillCalls, DisposeCalls;
+    public static bool EntireTree;
+    public ProcessStartInfo StartInfo { get; set; }
+    public bool HasExited { get; private set; }
+    public int Id { get { return 731; } }
+    public DateTime StartTime { get { return new DateTime(2026,10,7,1,2,3,DateTimeKind.Utc); } }
+    public int ExitCode { get { return Mode=="nonzero" ? 17 : 0; } }
+    public MgsCoopWorkerStreamFixture StandardOutput { get { return new MgsCoopWorkerStreamFixture("stdout\nline2\n"); } }
+    public MgsCoopWorkerStreamFixture StandardError { get { return new MgsCoopWorkerStreamFixture("stderr\n"); } }
+    public bool Start() { LastInfo=StartInfo; return Mode!="start_refused"; }
+    public bool WaitForExit(int milliseconds) {
+        if(Mode=="abort" && !HasExited) throw new InvalidOperationException("fixture interrupted");
+        if(Mode=="timeout" && !HasExited) return false;
+        HasExited=true; return true;
+    }
+    public void WaitForExit() { HasExited=true; }
+    public void Kill(bool entireProcessTree) { ++KillCalls; EntireTree=entireProcessTree; HasExited=true; }
+    public void Dispose() { ++DisposeCalls; }
+}
+'@
+    $nativeDefinition = @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Invoke-WorkerCommand' },$true))
+    Check ($nativeDefinition.Count -eq 1 -and [regex]::Matches($nativeDefinition[0].Extent.Text,[regex]::Escape('[Diagnostics.Process]::new()')).Count -eq 1) 'only the real Process constructor is replaced for detached forwarding tests'
+    . ([scriptblock]::Create($nativeDefinition[0].Extent.Text.Replace('[Diagnostics.Process]::new()','[MgsCoopWorkerProcessFixture]::new()')))
+    $script:projectRoot=$fixture; $script:runDirectory=$fixture
+    $script:receiptPath=Join-Path $fixture 'command-receipt.json'
+    $script:receipt=[ordered]@{commands=[Collections.Generic.List[object]]::new()}
+    $commandContext=[pscustomobject]@{
+        receipt=$script:receipt; receipt_path=$script:receiptPath; run_directory=$fixture; project_root=$fixture
+        write_json=${function:Write-WorkerJson}; invoke_command=${function:Invoke-WorkerCommand}
+        cmake_path='fixture-only.exe'; build_jobs=3; command_timeout=2
+    }
+    $arguments=@('space value',"line1`nline2",'literal$(never-run)')
+    $result=Invoke-WorkerCommand $commandContext 'fixture-only.exe' $arguments 'success' 2
+    $info=[MgsCoopWorkerProcessFixture]::LastInfo
+    Check (!$info.UseShellExecute -and $info.CreateNoWindow -and $info.RedirectStandardOutput -and $info.RedirectStandardError) 'real start-info requires hidden shell-free redirected execution'
+    Check ($info.ArgumentList.Count -eq 3 -and $info.ArgumentList[0] -ceq $arguments[0] -and $info.ArgumentList[1] -ceq $arguments[1] -and $info.ArgumentList[2] -ceq $arguments[2]) 'literal spaces/newlines/command-substitution characters remain typed arguments'
+    Check ($result.Output -ceq "stdout`nline2`n" -and $result.Error -ceq "stderr`n" -and $result.ExitCode -eq 0) 'wrapper returns exactly the original stdout/stderr/exit without progress contamination'
+    $last=$script:receipt.commands[-1]
+    Check ([IO.File]::ReadAllText($last.stdout) -ceq $result.Output -and [IO.File]::ReadAllText($last.stderr) -ceq $result.Error -and $last.exit_code -eq 0 -and $last.pid -eq 731) 'successful command gets exact output and process identity receipt'
+    Check ([MgsCoopWorkerProcessFixture]::DisposeCalls -eq 1 -and [MgsCoopWorkerProcessFixture]::KillCalls -eq 0) 'finished command disposes without killing another process'
+    [MgsCoopWorkerProcessFixture]::Mode='nonzero'
+    Refuses { Invoke-WorkerCommand $commandContext 'fixture-only.exe' @() 'nonzero' 2 } 'exit 17'
+    Check ($script:receipt.commands[-1].exit_code -eq 17 -and [IO.File]::ReadAllText($script:receipt.commands[-1].stderr) -ceq "stderr`n") 'failed command retains its real error stream and exit code'
+    [MgsCoopWorkerProcessFixture]::Mode='timeout'
+    Refuses { Invoke-WorkerCommand $commandContext 'fixture-only.exe' @() 'timeout' 2 } 'timed out'
+    Check ($script:receipt.commands[-1].timed_out -and [MgsCoopWorkerProcessFixture]::KillCalls -eq 1 -and [MgsCoopWorkerProcessFixture]::EntireTree) 'timeout cleans the owned child tree and remains a failed receipt'
+    [MgsCoopWorkerProcessFixture]::Mode='start_refused'
+    Refuses { Invoke-WorkerCommand $commandContext 'fixture-only.exe' @() 'start-refused' 2 } 'Cannot start'
+    Check ($null -eq $script:receipt.commands[-1].pid -and $null -eq $script:receipt.commands[-1].exit_code -and [MgsCoopWorkerProcessFixture]::KillCalls -eq 1) 'start failure cannot kill a nonexistent/unowned process'
+    [MgsCoopWorkerProcessFixture]::Mode='abort'
+    Refuses { Invoke-WorkerCommand $commandContext 'fixture-only.exe' @() 'interrupted' 2 } 'fixture interrupted'
+    Check ([MgsCoopWorkerProcessFixture]::KillCalls -eq 2 -and [MgsCoopWorkerProcessFixture]::EntireTree -and [MgsCoopWorkerProcessFixture]::DisposeCalls -eq 5) 'interrupted command cleans its child tree and every path disposes the process object'
+    $stored=[IO.File]::ReadAllText($script:receiptPath)|ConvertFrom-Json
+    Check ($stored.commands.Count -eq 5 -and $stored.commands[0].arguments[2] -ceq 'literal$(never-run)' -and $stored.commands[2].timed_out) 'JSON keeps failed/completed command history and exact arguments'
+    # Exercise nested child-script -> cmake -> actual command body. Former
+    # script-scope names and closure inputs deliberately have wrong values.
+    $child=Join-Path $fixture 'nested-build-fixture.ps1'
+    [IO.File]::WriteAllText($child, @'
+Set-StrictMode -Version Latest
+$script:receipt=$null; $script:runDirectory='wrong'; $script:receiptPath='wrong'; $script:projectRoot='wrong'
+$Context=$null; $workerCommandContext=$null; $cmakePath='wrong'; $BuildJobs=999; $CommandTimeoutSec=999
+cmake -S 'literal source space' -B 'literal cache space'
+cmake --build 'literal cache space' --parallel
+if($LASTEXITCODE -ne 0) { throw 'nested native exit was not preserved' }
+'@)
+    [MgsCoopWorkerProcessFixture]::Mode='success'
+    Set-Item -Path Function:cmake -Value (New-WorkerCmakeOverride $commandContext)
+    & $child
+    Check ($commandContext.receipt.commands.Count -eq 7 -and $commandContext.receipt.commands[-2].tag -ceq 'configure-bootstrap' -and $commandContext.receipt.commands[-1].tag -ceq 'build-loader-bootstrap') 'nested calls retain the owner receipt and both command identities'
+    Check ([MgsCoopWorkerProcessFixture]::LastInfo.WorkingDirectory -ceq $fixture -and [MgsCoopWorkerProcessFixture]::LastInfo.FileName -ceq 'fixture-only.exe') 'nested lexical capture keeps owner executable and working directory'
+    Check ([MgsCoopWorkerProcessFixture]::LastInfo.ArgumentList.Count -eq 4 -and [MgsCoopWorkerProcessFixture]::LastInfo.ArgumentList[1] -ceq 'literal cache space' -and [MgsCoopWorkerProcessFixture]::LastInfo.ArgumentList[3] -ceq '3') 'nested build keeps literal paths and captured bounded jobs'
+    Check (([IO.File]::ReadAllText($commandContext.receipt_path)|ConvertFrom-Json).commands.Count -eq 7 -and [MgsCoopWorkerProcessFixture]::DisposeCalls -eq 7) 'nested completion writes owner JSON and disposes both fake processes'
+    [MgsCoopWorkerProcessFixture]::Mode='nonzero'
+    Refuses { & $child } 'exit 17'
+    Check ($commandContext.receipt.commands.Count -eq 8 -and $commandContext.receipt.commands[-1].exit_code -eq 17 -and [MgsCoopWorkerProcessFixture]::DisposeCalls -eq 8) 'nested failure retains native exit and stops before second command'
+    Write-Output "Worker policy checks passed: $checks. No process launch, build, game, installation or system input ran."
+} finally {
+    foreach($link in $ownedLinks) {
+        if(!(Test-WorkerUnder $link $fixture)) { throw 'Fixture link cleanup escaped its owned root' }
+        if(Test-Path -LiteralPath $link) {
+            if(!((Get-Item -LiteralPath $link -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Fixture link identity changed; refusing cleanup' }
+            Remove-Item -LiteralPath $link -Force
+        }
+    }
+    if (Test-Path -LiteralPath $fixture) {
+        $resolved = (Resolve-Path -LiteralPath $fixture).Path
+        if ((Split-Path -Parent $resolved) -ine [IO.Path]::GetFullPath($buildRoot) -or
+            (Split-Path -Leaf $resolved) -cne ('worker-checks-tests-'+$nonce) -or
+            !(Test-Path -LiteralPath $marker -PathType Leaf) -or [IO.File]::ReadAllText($marker) -cne $nonce) {
+            throw 'Worker fixture cleanup ownership check failed'
+        }
+        foreach ($item in @((Get-Item -LiteralPath $resolved)) + @(Get-ChildItem -LiteralPath $resolved -Recurse -Force)) {
+            if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Worker fixture refuses link cleanup' }
+        }
+        Remove-Item -LiteralPath $resolved -Recurse -Force
+    }
+}

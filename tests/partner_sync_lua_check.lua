@@ -10,8 +10,12 @@ local CFG = "return 'MGS_COOP_PARTNER_CFG_V1'"
 local STOP = "return 'MGS_COOP_PARTNER_STOP_V1'"
 local TICK = "return 'MGS_COOP_PARTNER_V1' -- "
 local LOG = "return 'MGS_COOP_PARTNER_LOG_V1' -- "
+local ACTION_CFG = "return 'MGS_COOP_ACTION_EVENTS_CFG_V1'"
+local ACTION_CLEAR = "return 'MGS_COOP_ACTION_EVENTS_CLEAR_V1'"
+local ACTION_TICK = "return 'MGS_COOP_PARTNER_ACTIONS_V1' -- "
 local sentinel = {}
-local STATUS = {STAND = 4, SQUAT = 5, CRAWL = 6, WALK = 13, RUN = 14, DASH = 15}
+local STATUS = {STAND = 4, SQUAT = 5, CRAWL = 6, WALK = 13, RUN = 14, DASH = 15,
+    GUN_FIRE = 7, GUN_FIRE_SUPPRESSOR = 8, ON_HELICOPTER = 16, BINOCLE = 17, SUBJECT = 18, DEAD = 19}
 local bootstrapPath = (arg[0]:match('^(.*[/\\])') or '') .. '../lua/coop/bootstrap.lua'
 local function newCoop(mission, selected)
     local bootstrapEnv = {e = {}, loadstring = function() return function() end end}
@@ -33,12 +37,30 @@ end
 local function fixture(options)
     options = options or {}
     local c = {cfg = true, reply = nil, receipts = {}, ticks = {}, logs = {}, stops = 0, calls = {}, warps = {},
-               status = {}, valid = true, localIndex = 0, order = {}}
+               status = {}, valid = true, localIndex = 0, order = {}, now = 100}
+    c.actionCfg, c.actionQueries, c.actionClears, c.actions, c.actionAccepted = options.actionCfg, 0, 0, {}, true
     if options.cfg ~= nil then c.cfg = options.cfg end
     local env = {e = {}, Tpp = {MgsCoop = newCoop(options.mission or 30050, options.selected)},
         vars = {missionCode = options.mission or 30050, playerPosX = 1.5, playerPosY = 0.25, playerPosZ = -3.0,
         playerRotY = 45.5, playerCameraRotation = {[0] = 10, [1] = 90}, playerType = 0, playerPartsType = 1,
         playerCamoType = 2, playerHandType = 3, playerFaceId = 4}}
+    env.TppDefine = {WEAPONSLOT = {PRIMARY_HIP = 0, PRIMARY_BACK = 1, SECONDARY = 2}}
+    env.PlayerPad = {HOLD = 256, RELOAD = 512}
+    env.PlayerVars = {scannedButtonsDirect = 0}
+    env._testClock = c
+    env.Time = {GetRawElapsedTimeSinceStartUp = function()
+        if c.clockThrow then error('clock unavailable') end
+        if c.clockOverride then return c.clockValue end
+        return c.now
+    end}
+    env.bit = {band = function(a, b)
+        local value, place = 0, 1
+        while a > 0 or b > 0 do
+            if a % 2 == 1 and b % 2 == 1 then value = value + place end
+            a, b, place = math.floor(a / 2), math.floor(b / 2), place * 2
+        end
+        return value
+    end}
     for _, name in ipairs({'OnMissionGameStart', 'OnUpdate', 'OnTerminate'}) do
         env.e[name] = function(...)
             check(select('#', ...) == 3, 'original argument count')
@@ -50,13 +72,28 @@ local function fixture(options)
         end
     end
     env.loadstring = function(source)
-        check(type(source) == 'string' and #source <= 200, 'receipt within 200 bytes: ' .. tostring(source))
+        check(type(source) == 'string' and #source <= (starts(source, ACTION_TICK) and 512 or 200), 'bounded receipt: ' .. tostring(source))
         c.receipts[#c.receipts + 1] = source
         if options.compileFail then return nil, 'fixture compile failure' end
         if source == CFG then
             return function()
                 if options.cfgThrow then error(sentinel) end
                 return c.cfg
+            end
+        end
+        if source == ACTION_CFG then
+            c.actionQueries = c.actionQueries + 1
+            return function() return c.actionCfg end
+        end
+        if source == ACTION_CLEAR then
+            c.actionClears = c.actionClears + 1; c.actionCache = nil
+            return function() return true end
+        end
+        if starts(source, ACTION_TICK) then
+            c.actions[#c.actions+1] = source
+            return function()
+                c.actionCache = c.actionAccepted and source or nil
+                return c.actionAccepted
             end
         end
         if source == STOP then
@@ -89,7 +126,8 @@ local function fixture(options)
         SetOtherInstanceIsForMirrorMode = function(on) record('mirror:' .. tostring(on)) end,
         RequestToPlayDirectMotion = function(t)
             check(type(t) == 'table' and type(t[1]) == 'table' and t[1][1] == 'coopLoco' and type(t[2]) == 'table' and
-                t[2][2] == true and t[2][3] == '' and t[2][6] == true, 'dmPlay arg shape')
+                type(t[2][2]) == 'boolean' and t[2][3] == '' and t[2][6] == true, 'dmPlay arg shape')
+            c.dmLoop = t[2][2]
             record('dmplay:' .. tostring(t[1][2]) .. ':' .. tostring(t[2][1]))
         end,
         RequestToStopDirectMotion = function() record('dmstop') end,
@@ -119,6 +157,10 @@ local function fixture(options)
         end})
     end
     setmetatable(env, {__index = _G})
+    if options.actions then
+        local actionPath = (arg[0]:match('^(.*[/\\])') or '') .. '../lua/coop/partner_actions.lua'
+        local actions = assert(loadfile(actionPath)); setfenv(actions, env); actions()
+    end
     local chunk = assert(loadfile(arg[1])); setfenv(chunk, env); chunk()
     return env, c
 end
@@ -129,7 +171,12 @@ local function call(env, name)
     end
     returns(env.e[name](7, nil, 9))
 end
-local function update(env, count) for _ = 1, count or 1 do call(env, 'OnUpdate') end end
+local function update(env, count, dt)
+    for _ = 1, count or 1 do
+        env._testClock.now = env._testClock.now + (dt or 1 / 60)
+        call(env, 'OnUpdate')
+    end
+end
 local function count(list, value) local n = 0 for _, v in ipairs(list) do if v == value then n = n + 1 end end return n end
 local function hasLog(c, text) for _, v in ipairs(c.logs) do if v == text then return true end end return false end
 local function lastTick(c) return c.ticks[#c.ticks] end
@@ -193,22 +240,22 @@ do
     check(#c.receipts == 0 and #c.calls == 0, 'missing capability function stays inert')
 end
 
--- 2. Active: one quiet tick receipt per frame with 9 strict integers.
+-- 2. Active: one quiet tick receipt per frame with 11 strict integers.
 local env, c = fixture()
 call(env, 'OnMissionGameStart')
 check(hasLog(c, 'event=started') and #c.logs == 1, 'started noted, nothing missing')
 update(env)
-check(#c.ticks == 1 and lastTick(c) == '1 1500 250 -3000 4550 9000 0 0 0', 'tick fields: ' .. tostring(lastTick(c)))
+check(#c.ticks == 1 and lastTick(c) == '1 1500 250 -3000 4550 9000 0 0 0 0 0', 'tick fields: ' .. tostring(lastTick(c)))
 c.status[STATUS.CRAWL], c.status[STATUS.DASH] = true, true
 update(env)
-check(lastTick(c) == '2 1500 250 -3000 4550 9000 2 3 0', 'crawl + dash')
+check(lastTick(c) == '2 1500 250 -3000 4550 9000 2 3 0 0 0', 'crawl + dash')
 c.status = {[STATUS.SQUAT] = true, [STATUS.RUN] = true}
 update(env)
 check(fields(lastTick(c))[7] == '1' and fields(lastTick(c))[8] == '2', 'squat + run')
 c.status = {[STATUS.WALK] = true}
 env.vars.playerPosX, env.vars.playerRotY = -0.0004, -179.994
 update(env)
-check(lastTick(c) == '4 0 250 -3000 -17999 9000 0 1 0', 'walk, rounding, negative yaw: ' .. lastTick(c))
+check(lastTick(c) == '4 0 250 -3000 -17999 9000 0 1 0 0 0', 'walk, rounding, negative yaw: ' .. lastTick(c))
 env.vars.playerCameraRotation = nil
 update(env)
 check(fields(lastTick(c))[6] == '0', 'missing camera rotation reads 0')
@@ -240,6 +287,123 @@ check(#c.ticks == before, 'other mission: no tick')
 env.vars.missionCode = 30050
 update(env)
 check(#c.ticks == before + 1 and #c.calls == 0, 'literal reply (not replaced): nothing done')
+
+-- Gun producer observes actual fire and public aim/reload input requests.
+do
+    local a, r = fixture(); call(a, 'OnMissionGameStart')
+    a.vars.currentInventorySlot, a.vars.weapons = 1, {[0] = 10101, [1] = 30103, [2] = 10004}
+    a.PlayerVars.scannedButtonsDirect = 256 + 512; r.status[STATUS.GUN_FIRE] = true; update(a)
+    check(fields(lastTick(r))[10] == '11' and fields(lastTick(r))[11] == '30103', 'gun flags and active back equipment')
+    check(#r.calls == 0 and #r.warps == 0, 'producer sends observations only')
+    a.PlayerVars.scannedButtonsDirect = 0; r.status = {}; update(a, 1, 0.09)
+    check(fields(lastTick(r))[10] == '10', 'fire and reload retained after 90ms')
+    update(a, 1, 0.02); check(fields(lastTick(r))[10] == '8', 'fire expires after 100ms wall time')
+    update(a, 1, 0.19); check(fields(lastTick(r))[10] == '8', 'reload request retained at 300ms')
+    update(a, 1, 0.04); check(fields(lastTick(r))[10] == '0', 'reload request expires after one third second')
+    r.status = {[STATUS.SUBJECT] = true}; update(a)
+    check(fields(lastTick(r))[10] == '0', 'subject alone never invents aiming')
+    r.status = {[STATUS.GUN_FIRE_SUPPRESSOR] = true}; update(a)
+    check(fields(lastTick(r))[10] == '2', 'suppressed firing uses executed status')
+    a.vars.currentInventorySlot = 2; r.status = {}; update(a)
+    check(fields(lastTick(r))[10] == '0' and fields(lastTick(r))[11] == '10004', 'weapon switch clears previous gun pulse')
+    a.PlayerVars.scannedButtonsDirect = 256 + 512; r.status = {[STATUS.BINOCLE] = true}; update(a)
+    check(fields(lastTick(r))[10] == '0', 'binocular mode refuses gun input interpretation')
+    r.status = {[STATUS.ON_HELICOPTER] = true}; update(a)
+    check(fields(lastTick(r))[10] == '0', 'helicopter input never produces gun actions')
+    r.status = {}; a.vars.currentInventorySlot = 3; update(a)
+    check(fields(lastTick(r))[10] == '0' and fields(lastTick(r))[11] == '0', 'item slot refused')
+    a.vars.currentInventorySlot = 2; a.vars.weapons[2] = 65536; update(a)
+    check(fields(lastTick(r))[10] == '0' and fields(lastTick(r))[11] == '0', 'invalid gun ID refused')
+    a.vars.weapons[2] = 10004; r.status = {[STATUS.GUN_FIRE] = true}; update(a)
+    r.status = {}; a.PlayerVars.scannedButtonsDirect = 0; r.valid = false; update(a); r.valid = true; update(a)
+    check(fields(lastTick(r))[10] == '0', 'invalid-instance gap clears retained actions')
+    r.status = {[STATUS.GUN_FIRE] = true}; update(a); r.status = {}; call(a, 'OnTerminate'); call(a, 'OnMissionGameStart'); update(a)
+    check(fields(lastTick(r))[10] == '0', 'new mission never retains prior firing')
+    for _, missing in ipairs({'PlayerPad', 'bit', 'PlayerVars'}) do
+        local b, q = fixture({missing = {missing}}); call(b, 'OnMissionGameStart')
+        b.vars.currentInventorySlot, b.vars.weapons = 0, {[0] = 10101}; q.status = {[STATUS.GUN_FIRE] = true}; update(b)
+        check(fields(lastTick(q))[10] == '2', 'missing input source preserves executed fire only: ' .. missing)
+    end
+    a, r = fixture(); call(a, 'OnMissionGameStart')
+    a.vars.currentInventorySlot, a.vars.weapons = 0, {[0] = 10101}
+    a.PlayerVars.scannedButtonsDirect = {}; update(a)
+    check(fields(lastTick(r))[10] == '0', 'unreadable button data yields no requested flags')
+end
+
+-- Natural owner updates and a separate 30Hz latest-pose consumer. A one-frame
+-- event must survive different owner rates and sender phases, then expire.
+do
+    for _, fps in ipairs({20, 60, 120}) do
+        for phase = 1, 3 do
+            local a, r = fixture(); call(a, 'OnMissionGameStart')
+            a.vars.currentInventorySlot, a.vars.weapons = 0, {[0] = 10101}
+            local fireN, reloadN, fireLast, reloadLast, consumed = 0, 0
+            for n = 0, 60 do
+                local t = n / 120
+                if n % (120 / fps) == 0 then
+                    r.now = 100 + t
+                    r.status = n == 0 and {[STATUS.GUN_FIRE] = true} or {}
+                    a.PlayerVars.scannedButtonsDirect = n == 0 and 512 or 0
+                    call(a, 'OnUpdate')
+                end
+                if n % 4 == phase then
+                    consumed = tonumber(fields(lastTick(r))[10])
+                    if math.floor(consumed / 2) % 2 == 1 then fireN, fireLast = fireN + 1, t end
+                    if math.floor(consumed / 8) % 2 == 1 then reloadN, reloadLast = reloadN + 1, t end
+                end
+            end
+            check(fireN >= 2 and fireLast >= 0.06 and fireLast < 0.1 + 1 / fps,
+                fps .. 'Hz fire survives 30Hz phase ' .. phase .. ' with bounded wall-time duration')
+            check(reloadN >= 9 and reloadLast >= 0.3 and reloadLast < 1 / 3 + 1 / fps,
+                fps .. 'Hz reload intent survives 30Hz phase ' .. phase .. ' with bounded duration')
+            check(consumed == 0, fps .. 'Hz latest-pose consumer observes both expirations')
+        end
+    end
+
+    local a, r = fixture(); call(a, 'OnMissionGameStart')
+    a.vars.currentInventorySlot, a.vars.weapons = 0, {[0] = 10101}
+    r.status = {[STATUS.GUN_FIRE] = true}; a.PlayerVars.scannedButtonsDirect = 512; update(a)
+    update(a, 1, 0.2) -- Still observed/requested: deadlines refresh from this observation.
+    r.status = {}; a.PlayerVars.scannedButtonsDirect = 0; update(a, 1, 0.09)
+    check(fields(lastTick(r))[10] == '10', 'continuous signals refresh deadlines from the latest observation')
+    update(a, 1, 0.25)
+    check(fields(lastTick(r))[10] == '0', 'refreshed actions still expire by wall time')
+    r.status = {[STATUS.GUN_FIRE] = true}; a.PlayerVars.scannedButtonsDirect = 512; update(a)
+    r.status = {}; a.PlayerVars.scannedButtonsDirect = 0; update(a, 1, 10)
+    check(fields(lastTick(r))[10] == '0', 'long owner gap does not resume an old gun pulse')
+    r.status = {[STATUS.GUN_FIRE] = true}; a.PlayerVars.scannedButtonsDirect = 512; update(a)
+    r.status = {}; a.PlayerVars.scannedButtonsDirect = 0; r.now = 90; call(a, 'OnUpdate')
+    check(fields(lastTick(r))[10] == '0', 'backward raw clock clears retained pulses')
+    r.now = 90.05; call(a, 'OnUpdate')
+    check(fields(lastTick(r))[10] == '0', 'clock reset cannot revive prior deadlines')
+    r.status = {[STATUS.GUN_FIRE] = true}; r.now = 80; call(a, 'OnUpdate')
+    r.status = {}; r.now = 80.05; call(a, 'OnUpdate')
+    check(fields(lastTick(r))[10] == '2', 'new directly observed fire may latch against the reset clock')
+    a.vars.missionCode = 10010; update(a); a.vars.missionCode = 30050; update(a)
+    check(fields(lastTick(r))[10] == '0', 'unsupported mission gap clears retained action deadlines')
+
+    for _, bad in ipairs({{value = 0 / 0}, {value = math.huge}, {value = -math.huge}, {value = -1},
+        {value = 1e9}, {value = 1e15}, {value = '100'}, {value = {}}, {}, {throws = true}}) do
+        local b, q = fixture(); call(b, 'OnMissionGameStart')
+        b.vars.currentInventorySlot, b.vars.weapons = 0, {[0] = 10101}
+        q.status = {[STATUS.GUN_FIRE] = true}; b.PlayerVars.scannedButtonsDirect = 512; update(b)
+        q.clockOverride, q.clockValue, q.clockThrow = true, bad.value, bad.throws
+        b.PlayerVars.scannedButtonsDirect = 256 + 512; update(b)
+        check(fields(lastTick(q))[10] == '11', 'bad raw clock preserves only direct fire/aim/reload observations')
+        q.status = {}; b.PlayerVars.scannedButtonsDirect = 0; update(b)
+        check(fields(lastTick(q))[10] == '0', 'bad raw clock discards prior retained actions')
+        q.clockOverride, q.clockThrow = false, false; update(b)
+        check(fields(lastTick(q))[10] == '0', 'restored raw clock cannot revive cleared pulses')
+    end
+    for _, missing in ipairs({'Time', 'Time.GetRawElapsedTimeSinceStartUp'}) do
+        local b, q = fixture({missing = {missing}}); call(b, 'OnMissionGameStart')
+        b.vars.currentInventorySlot, b.vars.weapons = 0, {[0] = 10101}
+        q.status = {[STATUS.GUN_FIRE] = true}; b.PlayerVars.scannedButtonsDirect = 256 + 512; update(b)
+        check(fields(lastTick(q))[10] == '11', 'missing raw clock keeps direct observations: ' .. missing)
+        q.status = {}; b.PlayerVars.scannedButtonsDirect = 0; update(b)
+        check(fields(lastTick(q))[10] == '0', 'missing raw clock never falls back to frame-count retention')
+    end
+end
 
 -- 3. op bits.
 env, c = fixture(); call(env, 'OnMissionGameStart')
@@ -315,8 +479,35 @@ for g, name in pairs({[10] = 'snapnon_s_wk_lp_vr1_l', [11] = 'snapnon_s_rn_lp_vr
     check(c.calls[#c.calls] == 'dmplay:1:/Assets/tpp/motion/SI_game/fani/bodies/snap/snapnon/' .. name .. '.gani' and
         count(c.logs, 'event=dm_play;gani=' .. g) == 1, 'DM_PLAY gani ' .. g .. ' plays ' .. name)
 end
--- bad gani index refused (13 = partner::max_gani + 1).
-for _, bad in ipairs({13, -1, 1.5, '3'}) do
+-- Resident turn transitions play once, retaining the exact partner index.
+for g, name in ipairs({'snapnon_s_tn_l90', 'snapnon_s_tn_r90', 'snapnon_s_tn_l180', 'snapnon_s_tn_r180',
+    'snapnon_q_tn_l90', 'snapnon_q_tn_r90', 'snapnon_q_tn_l180', 'snapnon_q_tn_r180'}) do
+    local id = g + 12
+    c.reply = {128, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, id}
+    update(env)
+    check(c.calls[#c.calls] == 'dmplay:1:/Assets/tpp/motion/SI_game/fani/bodies/snap/snapnon/' .. name .. '.gani' and
+        c.dmLoop == false, 'turn clip ' .. id .. ' is a finite transition')
+end
+-- Resident Upper graph states are manual probes, with finite entry/exit/action requests.
+for offset, name in ipairs({'stateGunHold', 'stateGunHoldStart', 'stateGunHoldEnd', 'stateGunFire', 'stateGunReload'}) do
+    local id = offset + 20
+    c.reply = {128, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, id}
+    update(env)
+    check(c.calls[#c.calls] == 'dmplay:1:' .. name and c.dmLoop == (id == 21), 'gun graph probe ' .. id .. ' shape')
+end
+-- Exact receiver clips require the staged MTAR preload; all are manual one-shots.
+for offset, name in ipairs({
+    "snaphg00/snaphg00_s_fre", "snapar00/snapar00_aw1_s_fre", "snapar01/snapar01_aw0_s_fre",
+    "snapsr02/snapsr02_s_fre2", "snapsr02/snapsr02_s_fre_rld"}) do
+    local id = offset + 25
+    c.reply = {128, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, id}
+    mark = #c.calls
+    update(env)
+    check(#c.calls == mark + 1 and c.calls[#c.calls] == "dmplay:1:/Assets/tpp/motion/SI_game/fani/bodies/snap/" .. name .. ".gani" and
+        c.dmLoop == false, "receiver probe " .. id .. " exact path/instance and finite playback")
+end
+-- bad gani index refused (31 = partner::max_gani + 1).
+for _, bad in ipairs({31, -1, 1.5, '3'}) do
     local notes = count(c.logs, 'event=dm_refused;reason=bad_gani')
     mark = #c.calls
     c.reply = {128, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, bad}
@@ -490,6 +681,52 @@ for _, name in ipairs({'OnMissionGameStart', 'OnUpdate', 'OnTerminate'}) do
         check(coroutine.resume(co), 'original resumes: ' .. name)
     end
 end
+-- Compose the actual data producer with the actual callback wrapper; the
+-- fixture consumes source receipts but performs no native or game playback.
+do
+    local function armed(reply)
+        local env,c = fixture({actions=true,actionCfg=reply})
+        env.vars.currentInventorySlot=0; env.vars.weapons={[0]=873}
+        call(env,'OnMissionGameStart'); return env,c,env.e.MgsCoopPartnerActions
+    end
+    local env,c,A = armed(nil)
+    update(env,90)
+    check(c.actionQueries==1 and A.enabled==false and #c.actions==0, 'compiled-off query nil disables capture without retries')
+    env,c,A = armed(false)
+    update(env,29)
+    check(c.actionQueries==1 and A.enabled==false and #c.actions==0, 'not-ready owner waits for bounded retry cadence')
+    c.actionCfg=true; update(env,1)
+    check(c.actionQueries==2 and A.enabled==true and #c.actions==1 and c.actionCache~=nil, 'later natural owner query enables raw capture and receipt consumption')
+    local function actionFields() return fields(c.actions[#c.actions]:sub(#ACTION_TICK+1)) end
+    local baseline=actionFields(); check(baseline[7]=='0' and baseline[8]=='0', 'first enabled sample baselines rather than deriving events from frame')
+    c.status[STATUS.GUN_FIRE]=true; update(env,1,0.01)
+    c.status[STATUS.GUN_FIRE]=false; update(env,1,0.01)
+    c.status[STATUS.GUN_FIRE]=true; update(env,1,0.01)
+    local fire=actionFields()
+    check(fire[7]=='2' and fire[9]=='2' and fire[10]=='2', 'two raw fire rises under100ms survive old firing latch')
+    env.PlayerVars.scannedButtonsDirect=512; update(env,1,0.01); update(env,5,0.01)
+    check(actionFields()[8]=='1', 'held reload pad counts one request through composed owner hook')
+    local clears=c.actionClears; env.vars.currentInventorySlot=9; update(env,1)
+    check(c.actionClears==clears+1 and c.actionCache==nil and A.s==nil, 'nongun transition clears published native cache')
+    update(env,3); check(c.actionClears==clears+1, 'nongun clear is idempotent')
+    env.vars.currentInventorySlot=0; c.status[STATUS.GUN_FIRE]=false; env.PlayerVars.scannedButtonsDirect=0; update(env,1)
+    clears=c.actionClears; c.clockThrow=true; update(env,1)
+    check(c.actionClears==clears+1 and c.actionCache==nil, 'missing raw clock cancels published data')
+    c.clockThrow=false; update(env,1)
+    local generation=tonumber(actionFields()[1]); env.vars.weapons[0]=874; update(env,1)
+    check(tonumber(actionFields()[1])>generation and actionFields()[3]=='874' and actionFields()[9]=='0', 'equipment reset carries fresh generation and zero event baseline')
+    generation=tonumber(actionFields()[1]); c.status[STATUS.SQUAT]=true; update(env,1)
+    check(tonumber(actionFields()[1])>generation and actionFields()[4]=='1', 'stance context resets before publication')
+    c.actionAccepted=false; update(env,1); check(c.actionCache==nil, 'native refusal clears old cache and never enables playback')
+    c.actionAccepted=true; update(env,1)
+    c.actionCfg=false; call(env,'OnMissionGameStart')
+    check(A.enabled==false and A.s==nil and c.actionCache==nil, 'mission start reset disables prior capture before fresh query')
+    c.actionCfg=true; update(env,30); check(A.enabled==true and c.actionCache~=nil, 'new mission can reauthorize on bounded cadence')
+    clears=c.actionClears; call(env,'OnTerminate')
+    check(c.actionClears==clears+1 and c.actionCache==nil and A.s==nil, 'terminate clears capture before original callback')
+    env,c,A=armed(false); update(env,3600)
+    check(c.actionQueries==120 and A.enabled==false and #c.actions==0, 'not-ready queries stop at120 attempts without capture')
+end
 -- A module without the callbacks installs nothing.
 do
     local bare = {e = {}}
@@ -634,7 +871,7 @@ if arg[2] then
     end
     -- Active.
     r = run({cfg = true, reply = {3, 1, 2000, 0, -1000, 1571, 1, 0}, updates = 3})
-    check(#r.ticks == 3 and r.ticks[1] == '1 1500 250 -3000 4550 9000 0 0 0' and r.ticks[2] == '2 1500 250 -3000 4550 9000 0 0 1',
+    check(#r.ticks == 3 and r.ticks[1] == '1 1500 250 -3000 4550 9000 0 0 0 0 0' and r.ticks[2] == '2 1500 250 -3000 4550 9000 0 0 1 0 0',
         'composed ticks: ' .. tostring(r.ticks[1]) .. ' / ' .. tostring(r.ticks[2]))
     check(r.notes[1] == 'event=started' and index(r.notes, 'event=allactive_set') ~= nil, 'composed notes')
     check(count(r.calls, 'allactive:true') == 3 and count(r.calls, 'warp:TppPlayer2:1:Warp') == 3, 'composed ops: set + warp per tick')

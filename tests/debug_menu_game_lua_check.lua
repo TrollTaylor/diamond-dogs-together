@@ -1,7 +1,7 @@
 -- Debug actions against pinned, extracted retail function bodies. No game,
 -- external service or save files are used. Inputs are local and never bundled.
 -- Args: core, equipment, TppPlayer, TppClock, TppWeather, TppEnemy, TppQuest,
---       s10260_sequence, s10121_sequence, TppMission, s10030_sequence.
+--       s10260_sequence, s10121_sequence, TppMission, s10030_sequence, enemy helper, TppDebug, TppCheckPoint.
 local checks = 0
 local function check(ok, why) checks = checks + 1; if not ok then error(checks .. ': ' .. why, 2) end end
 local function read(p) local f = assert(io.open(p, 'rb')); local s = f:read('*a'); f:close(); return s end
@@ -42,16 +42,27 @@ env.foxmath = {DegreeToRadian = function(deg) return deg * math.pi / 180 end,
 env.Fox = {StrCode32 = function(s) return -1 end, Log = function() end}
 env.Vector3 = setmetatable({}, {__call = function(_, x, y, z) return {x, y, z} end})
 env.Quat = {RotationY = function(y) return {yaw = y} end}
-local life = 0
-env.GameObject = {NULL_ID = 65535, GetGameObjectId = function(kind, name) return (name or kind) == 'sol_a' and 8 or 65535 end,
+local life, guardPosition = 0, {-9, 20, 30}
+env.GameObject = {NULL_ID = 65535, GetGameObjectId = function(kind, name)
+        check(type(kind) == 'string' and (name == nil or type(name) == 'string'), 'native locator lookup accepts names, not numeric IDs')
+        return (name or kind) == 'sol_a' and 8 or 65535
+    end,
     SendCommand = function(target, a)
         record(a.id, {target = target, args = a})
         if a.id == 'WarpAndWaitBlock' then
             check(type(target) == 'table' and target.type == 'TppPlayer2' and target.index == 0, 'retail warp targets local player zero')
             env.vars.playerPosX, env.vars.playerPosY, env.vars.playerPosZ = a.pos[1], a.pos[2], a.pos[3]
         elseif a.id == 'GetLifeStatus' then return life
-        elseif a.id == 'GetPosition' then return {GetX = function() return -9 end, GetY = function() return 20 end, GetZ = function() return 30 end}
+        elseif a.id == 'GetActionStatus' then check(type(target) == 'number', 'retail action wrapper preserves numeric ID'); return 0
+        elseif a.id == 'GetPosition' then
+            local v = {}
+            for i, axis in ipairs({'GetX', 'GetY', 'GetZ'}) do
+                local component = i
+                v[axis] = function(self) check(self == v, 'exact source Vector3 method requires receiver'); return guardPosition[component] end
+            end
+            return v
         elseif a.id == 'ChangeLifeState' then life = a.state end
+        if a.id == 'SetSneakRoute' then guardPosition = {-12, 20, 35} end
     end}
 env.Player = {IsInstanceValid = function() return true end,
     SetInfiniteAmmoFromScript = function(v) record('InfiniteAmmo', v) end,
@@ -75,7 +86,7 @@ env.TppEnemy = load('local e={};local o=Tpp.IsTypeString;local l=Tpp.IsTypeNumbe
     slice(enemySource, 'function e.SetEnable(', 'function e.SetEnableRestrictNotice(') ..
     slice(enemySource, 'function e.GetLifeStatus(', 'function e.ChangeLifeState(') .. 'return e')
 env.TppEnemy.ACTION_STATUS = {NORMAL = 0, FULTON_RECOVERD = 100}
-env.TppEnemy.GetActionStatus = function() return 0 end
+env.TppEnemy.LIFE_STATUS = {NORMAL = 0}
 env.TppMission = load('local e={};' .. slice(missionSource, 'function e.IsMissionStart(', 'function e.IsSysMissionId(') ..
     slice(missionSource, 'function e.CheckMissionState(', 'function e.CheckMissionClearOnOutOfMissionArea(') .. 'return e')
 -- Regression: IsMissionStart is false after Continue while actual readiness
@@ -90,6 +101,11 @@ check(env.vars.currentInventorySlot == 2, 'retail active slot uses inventory enu
 env.TppPlayer.SetWeapons({{primaryHip = 'EQP_WP_30101'}})
 check(env.vars.ammoInWeapons[0] == 2 and env.gvars.initAmmoInWeapons[0] == 30, 'SetWeapons is not current runtime ammo/equip')
 check(#calls == 0, 'SetWeapons calls no Player runtime equip API')
+check(env.TppEnemy.GetActionStatus(8) == 0 and env.TppEnemy.GetActionStatus('sol_a') == 0,
+    'unmodified retail action wrapper accepts numeric IDs and resolves authored names')
+local retailVector = env.GameObject.SendCommand(8, {id = 'GetPosition'})
+check(not pcall(retailVector.GetX) and retailVector:GetX() == guardPosition[1],
+    'native-vector fixture rejects an unbound getter and accepts retail colon call')
 -- Execute the retail gameplay launcher function to establish the real binding
 -- and complete field names, without copying game-derived source into this repo.
 local launcher = load('local this={};' .. slice(read(arg[8]), 'function this.GetRocketLuncher()', 'function this.UnsetEquipments()') .. 'return this')
@@ -118,7 +134,7 @@ env.loadstring = function(s)
     if i then logs[#logs + 1] = {tonumber(i), tonumber(ok), message} end
     return function() end
 end
-load(read(arg[1])); load(read(arg[2]))
+load(read(arg[1])); load(read(arg[2])); load(read(arg[12]))
 local function tick() local a, b, c = env.e.OnUpdate(); check(a == 'original' and b == nil and c == 77, 'exact API fixture preserves owner return tuple') end
 local function issue(text) id = id + 1; command = {id = id, text = text, mission = env.vars.missionCode, host = true}; tick(); return logs[#logs] end
 check(issue('bookmark 0')[2] == 1, 'debug available after checkpoint Continue')
@@ -158,4 +174,66 @@ check(issue('infinite_ammo 1')[2] == 1 and calls[#calls][1] == 'InfiniteAmmo' an
 local a, b, c = env.e.OnTerminate()
 check(a == 'term' and b == nil and c == 88, 'termination owner return tuple')
 check(calls[#calls][1] == 'InfiniteAmmo' and calls[#calls][2] == false, 'terminate releases script ammo force')
+
+-- Execute retail's authored-route placement verbatim, then compare the new
+-- pooled spawner's actual command sequence against those original contracts.
+env.gvars.sav_varRestoreForContinue = true
+local retailDebug = load('local o={};local n=Tpp.IsTypeTable;' ..
+    slice(read(arg[13]), 'function o.DEBUG_WarpVehicleAndSoldier(', 'o.DEBUG_SkipOnChangeSVarsLog=') .. 'return o')
+local start = #calls
+retailDebug.DEBUG_WarpVehicleAndSoldier({'sol_a'}, 'vehicle_test', 'rt_test', env.Vector3(0, 0, 0), 0, false)
+local retailPlacement = {}
+for i = start + 1, #calls do if calls[i][2].target == 8 then retailPlacement[#retailPlacement + 1] = calls[i][2].args end end
+check(#retailPlacement == 5 and retailPlacement[1].id == 'SetEnabled' and not retailPlacement[1].enabled
+    and retailPlacement[5].id == 'SetEnabled' and retailPlacement[5].enabled, 'exact retail route snap disables then re-enables guard')
+local force = 't(e,{id="SetForceRealize"})'
+local forceAt = assert(enemySource:find(force, 1, true), 'retail force-realize contract')
+load('local t,e=GameObject.SendCommand,8;' .. enemySource:sub(forceAt, forceAt + #force - 1))
+check(calls[#calls][1] == 'SetForceRealize' and calls[#calls][2].target == 8, 'exact retail force-realize public command')
+env.mvars.ene_soldierDefine = {mafr_test_cp = {'sol_a'}}
+env.mvars.ene_routeSetsDefine = {mafr_test_cp = {sneak_day = {priority_group = {'rt_test'}}}}
+env.loadstring = function(s)
+    check(#s < 256, 'bounded spawn native receipt')
+    if s == "return 'MGS_COOP_DEBUG_CMD_V1'" then local c = command; command = nil; return function() return c end end
+    if s:match("^return 'MGS_COOP_DEBUG_ENEMY_V1' %-%- %d+ [a-z]+ .*") or s:match("^return 'MGS_COOP_DEBUG_ENEMY_V1' %-%- %d+ done$") then return function() return true end end
+    local i, ok, message = s:match("^return 'MGS_COOP_DEBUG_LOG_V1' %-%- (%d+) ([01]) ([%w_=,.;:%-]+)$")
+    if i then logs[#logs + 1] = {tonumber(i), tonumber(ok), message} end
+    return function() end
+end
+check(issue('enemy_camps')[3] == 'camps=1;more=0;local_pool=1', 'current authored route definitions feed camp UI')
+start = #calls
+check(issue('spawn_enemy mafr_test_cp 1')[3]:find('submitted_patrol_guard', 1, true), 'exact-source pooled guard placement requested')
+local placed = {}
+for i = start + 1, #calls do
+    local cmd = calls[i][2].args
+    if cmd.id == 'SetEnabled' or cmd.id == 'SetSneakRoute' or cmd.id == 'SetCautionRoute' or cmd.id == 'SetAlertRoute' then placed[#placed + 1] = cmd end
+end
+check(#placed == #retailPlacement, 'new actor placement matches exact retail command count')
+for i, cmd in ipairs(retailPlacement) do for key, value in pairs(cmd) do check(placed[i][key] == value, 'exact retail placement field: ' .. key) end end
+tick(); tick()
+check(logs[#logs][3]:find('guard_position_readback', 1, true) and logs[#logs][3]:find('visible_unverified', 1, true), 'guard position readback does not invent live renderer proof')
+check(issue('goto_spawn')[3] == 'submitted_warp' and calls[#calls][2].args.pos[1] == -9, 'exact retail player Warp near confirmed guard')
+tick(); check(logs[#logs][3]:find('warp_position_readback', 1, true), 'guard teleport verifies player position separately')
+local beforeCamp = #calls
+check(issue('goto_camp mafr_test_cp')[3] == 'submitted_warp' and calls[#calls][2].args.pos[1] == -9,
+    'camp travel calls exact retail player Warp near current authored guard')
+for i = beforeCamp + 1, #calls do check(calls[i][1] ~= 'SetEnabled' and calls[i][1] ~= 'SetSneakRoute', 'camp travel has no actor mutation') end
+tick(); check(logs[#logs][3]:find('warp_position_readback', 1, true), 'camp travel exact player position readback')
+env.TppCheckPoint = load('local e={};local t=Tpp.IsTypeString;' ..
+    slice(read(arg[14]), 'function e.GetCheckPointLocator(', 'function e.FindNearestCheckPoint(') .. 'return e')
+env.Tpp.GetLocator = function(identifier, key)
+    check(identifier == 'CheckPointIdentifier' and key == 'CHK_factory_Player', 'unmodified retail player checkpoint identifier and suffix')
+    return {-400, 17, 800}, -90
+end
+env.mvars.ene_soldierDefine = {mafr_factory_cp = {'sol_a'}}
+env.mvars.ene_routeSetsDefine = {mafr_factory_cp = {sneak_day = {priority_group = {'rt_test'}}}}
+env.mvars.loc_locationCommonCheckPointList = {factory = {'CHK_factory'}}
+life = 255
+beforeCamp = #calls
+check(issue('goto_camp mafr_factory_cp')[3] == 'submitted_warp;via=checkpoint', 'unmodified retail checkpoint fallback works without readable actors')
+local campWarp = calls[#calls][2].args
+check(campWarp.pos[1] == -400 and campWarp.pos[2] == 17 and campWarp.pos[3] == 800 and math.abs(campWarp.rotY + math.pi / 2) < 1e-9,
+    'authored checkpoint coordinates and degree yaw pass through exact retail Warp conversion')
+for i = beforeCamp + 1, #calls do check(calls[i][1] ~= 'SetEnabled' and calls[i][1] ~= 'SetSneakRoute', 'unloaded camp travel never mutates unreadable actor') end
+tick(); check(logs[#logs][3]:find('warp_position_readback', 1, true), 'checkpoint fallback actual player readback')
 print('debug_menu_game_lua_check: PASS ' .. checks .. ' checks')

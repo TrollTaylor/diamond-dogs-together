@@ -192,6 +192,11 @@ void Configure(const Config& config) noexcept {
 }
 
 bool Configured() noexcept { return g_configured != 0; }
+Status GetStatus() noexcept {
+    if (!Configured()) return {};
+    Locked lock;
+    return {true, g_core.paired(), g_core.link_up(), g_core.level(), g_core.eff(), g_core.epoch()};
+}
 
 const partner_net::WorldHooks* Hooks() noexcept { return &kHooks; }
 

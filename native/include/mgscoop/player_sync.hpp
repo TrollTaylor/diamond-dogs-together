@@ -31,6 +31,8 @@ namespace ActionFlag {
     constexpr std::uint8_t Firing    = 1 << 1;
     constexpr std::uint8_t Sprinting = 1 << 2;
     constexpr std::uint8_t Reloading = 1 << 3;
+    constexpr std::uint8_t Walking   = 1 << 4;
+    constexpr std::uint8_t Running   = 1 << 5;
 }
 
 #pragma pack(push, 1)

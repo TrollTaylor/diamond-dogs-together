@@ -14,6 +14,30 @@ do
         local slot = get(vars, "currentInventorySlot")
         return integer(slot, 0, 15) and fmt("%.0f", slot) or "unknown"
     end
+    -- A default-off native query replaces this literal with a separately
+    -- checked read-only fragment. It never selects or changes equipment.
+    local update = D.update
+    D.update = function(...)
+        local result = update(...)
+        local mission = get(vars, "missionCode")
+        if (mission == 30010 or mission == 30020 or mission == 30050)
+            and D.equipmentObservationMission ~= mission then
+            D.equipmentObservationFrames = (D.equipmentObservationFrames or 0) + 1
+            if D.equipmentObservationFrames % 30 ~= 1 then return result end
+            D.equipmentObservationAttempts = (D.equipmentObservationAttempts or 0) + 1
+            local value = A.receipt("return 'MGS_COOP_EQUIPMENT_OBSERVATION_QUERY_V1'")
+            local accepted = false
+            if type(value) == "string" and value:sub(1, 34) == "MGS_COOP_EQUIPMENT_OBSERVATION_V1;" then
+                accepted = A.receipt("return 'MGS_COOP_EQUIPMENT_OBSERVATION_RECEIPT_V1' -- " .. value) == true
+            end
+            -- nil means disabled; false means enabled but the player is still
+            -- loading. Retry a bounded number of times on natural updates.
+            if value == nil or accepted or D.equipmentObservationAttempts >= 120 then
+                D.equipmentObservationMission = mission
+            end
+        end
+        return result
+    end
     function E.run(a, id)
         local cmd = a[1]
         if cmd == "inventory" and #a == 1 then

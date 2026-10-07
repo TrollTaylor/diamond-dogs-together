@@ -62,8 +62,8 @@ $script:PartnerTriggerValueKeys = [ordered]@{
     p218 = { param($v) $v -ceq '0' -or $v -ceq '1' }
     padprobe = { param($v) $v -ceq '0' -or $v -ceq '1' }
     holdlog = { param($v) $v -ceq '0' -or $v -ceq '1' }
-    dmplay = { param($v) $v -cmatch '^(0|[1-9]|1[0-2])$' }
-    dmmap = { param($v) $v -cmatch '^((0|[1-9]|1[0-2]),){11}(0|[1-9]|1[0-2])$' }
+    dmplay = { param($v) $v -cmatch '^(0|[1-9]|1[0-9]|2[0-9]|30)$' }
+    dmmap = { param($v) $v -cmatch '^((0|[1-9]|1[0-9]|2[0-9]|30),){11}(0|[1-9]|1[0-9]|2[0-9]|30)$' }
     # As the native ParsePartnerDmSpeeds: idle 200..2000, run idle+300..10000, dash run+300..20000.
     dmspeed = { param($v) if ($v -cnotmatch '^([1-9][0-9]{2,4}):([1-9][0-9]{2,4}):([1-9][0-9]{2,4})$') { return $false } $p = @($v.Split(':') | ForEach-Object { [int]$_ }); $p[0] -ge 200 -and $p[0] -le 2000 -and $p[1] -ge $p[0] + 300 -and $p[1] -le 10000 -and $p[2] -ge $p[1] + 300 -and $p[2] -le 20000 }
     lookgate = { param($v) $v -ceq '0' -or $v -ceq '1' }
@@ -75,7 +75,7 @@ $script:PartnerTriggerOrder = @('stage', 'source', 'apply', 'anim', 'aset', 'res
     'hold', 'yaw', 'words', 'bits', 'correct', 'isend', 'p218', 'padprobe', 'holdlog', 'dm', 'dmmap', 'dmspeed', 'lookgate', 'lookrecover',
     'recon', 'align', 'slot', 'runaway', 'wrap',
     'census', 'parts', 'mirror', 'tap', 'press', 'dmplay', 'dmstop', 'place')
-$script:PartnerTriggerUsage = 'stage=0..3 source=fixed|orbit|net apply|move=warp|slot|both|xform|hybrid|input anim=off|mirror|net aset=q|s|qs|r reset=n|a|c|ac look=copy|net|quiet|snake probe=ps|off input=off|pass|neutral|stick|net stick=<0..359>:<0..100> cam=off|detect|sandbox hold=none|pass|own|net yaw=rot|rotneg|none words=<3 of 0prhn> bits=0x<hex> correct=<0..10000> isend=0|1 p218=0|1 padprobe=0|1 holdlog=0|1 dm=off|probe|on|map dmmap=<12 x 0..12> dmspeed=<idle>:<run>:<dash> dmplay=<0..12> dmstop=1 lookgate=0|1 lookrecover=0|1 recon=off|track|pin align=<-50..150> slot=remote|body|none runaway=pin|disarm|off wrap=off|census|window census=1 parts=explicit mirror=on tap=0x<hex> press=0x<hex>:<50..5000> place=1, or stop alone'
+$script:PartnerTriggerUsage = 'stage=0..3 source=fixed|orbit|net apply|move=warp|slot|both|xform|hybrid|input anim=off|mirror|net aset=q|s|qs|r reset=n|a|c|ac look=copy|net|quiet|snake probe=ps|off input=off|pass|neutral|stick|net stick=<0..359>:<0..100> cam=off|detect|sandbox hold=none|pass|own|net yaw=rot|rotneg|none words=<3 of 0prhn> bits=0x<hex> correct=<0..10000> isend=0|1 p218=0|1 padprobe=0|1 holdlog=0|1 dm=off|probe|on|map dmmap=<12 x 0..30> dmspeed=<idle>:<run>:<dash> dmplay=<0..30> dmstop=1 lookgate=0|1 lookrecover=0|1 recon=off|track|pin align=<-50..150> slot=remote|body|none runaway=pin|disarm|off wrap=off|census|window census=1 parts=explicit mirror=on tap=0x<hex> press=0x<hex>:<50..5000> place=1, or stop alone'
 $script:PartnerTriggerTokenPattern = '^(stage|source|apply|move|anim|aset|reset|look|probe|census|parts|mirror|input|stick|cam|hold|yaw|words|bits|correct|isend|p218|padprobe|holdlog|dm|dmmap|dmspeed|dmplay|dmstop|tap|press|lookgate|lookrecover|recon|align|slot|runaway|wrap|place)=(.*)$'
 
 function ConvertTo-PartnerTriggerText {

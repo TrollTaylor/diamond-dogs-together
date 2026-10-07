@@ -5,6 +5,108 @@ decide pass/fail from logs alone. The contract with the native loader is
 [docs/lab-protocol.md](../../docs/lab-protocol.md). The how-to and its limits
 are in [docs/single-pc-testing.md](../../docs/single-pc-testing.md).
 
+## Background agent setup
+
+The user now requires no Computer Use and no game windows on the visible
+desktop. Existing `Start-Lab`, `Play-OfflineCoop`, `Send-LabInput` and screenshot
+helpers use that desktop and must not be used for background development.
+Implementation is in progress under `tools/worker` and the default-off
+`MGS_BACKGROUND_WORKER` build option. No hidden retail-game launch has yet been
+validated. See [worker controls and admission](../worker/README.md).
+
+`tools/worker/Invoke-WorkerChecks.ps1` supplies the separate cache, explicit
+experiment flags, checkout coordinator lock, audited CTest dependency checks
+and per-run source/artifact/log receipts. `-PlanOnly` has no mutations.
+`-EnableBackgroundWorker` selects its own worker cache; normal builds and
+packages explicitly disable this option. Installer and visible helper launch
+fixtures are excluded from this runner.
+
+`Invoke-WorkerProbe.ps1` runs the GUI supervisor and a pinned hardware DX11
+fixture on a unique private desktop. It checks job restrictions, child/window
+ownership, the unchanged input desktop, pixels read from the backbuffer and
+matching process/file receipts. Passing this probe establishes those worker
+properties only. It does not establish MGSV startup, input or animation.
+
+The in-process bridge consumes bounded DirectInput commands only after exact
+game/offline/copied-save/private-desktop/hooks admission. Original input API
+failures remain failures. Existing natural Lua-owner debug commands are copied
+through a separate bounded inbox, and atomic snapshots expose their results.
+`Send-WorkerCommand.ps1` writes only to a freshly supervised admitted run; it
+does not use global input or window activation.
+
+Use two stages:
+
+1. **Development worker:** agents edit assigned native/Lua/test components;
+   one coordinator integrates and runs audited tests. Add a separate build
+   directory option to `tools/build.ps1` so worker builds cannot overwrite
+   `build/native` or inherit its experimental cache. Normal and research
+   profiles need distinct directories and explicit flags. Test admission uses
+   an audited allowlist: native/pure Lua/retail-composition checks first,
+   hidden graphics fixtures separately. Full installer fixtures launch fake
+   helper executables, not retail MGSV, but some deliberately show offscreen
+   windows. Exclude them from the initial background allowlist until they
+   also run within the qualified worker; serialize their shared installer use.
+   Preserve exact source/artifact hashes and JSON/JUnit results per run.
+2. **Runtime worker candidate:** create a new Win32 desktop for each run and
+   assign both copied-save game processes to it at process creation through
+   `STARTUPINFO.lpDesktop`. Never call `SwitchDesktop`, send global input or
+   activate a window on the user's desktop. Keep a supervised process job
+   and a timeout, with graceful shutdown followed by owned-process cleanup.
+   This separates windows; it is not a VM or a filesystem security boundary.
+
+The runtime candidate needs a new default-off, offline-only **in-process
+scenario bridge**. Commands should carry a run identity, role, sequence and
+bounded duration; duplicate/stale requests refuse. Native input polling
+consumes scripted local movement/aim/fire/reload without `SendInput`, and
+existing natural Lua-owner queues handle validated gameplay commands. Local
+input synthesis requires separate exact-contract and lifecycle review; the
+existing partner pad hook is not permission to reuse it for body0. Title
+navigation, host-only Continue, load waits and guest following also require
+state-based scenarios rather than sleeps or blind button presses.
+
+Read results through atomic JSON/log receipts and the already reviewed pure
+process readers. Capture frames inside the graphics hook to prove visible
+poses; a log/state transition alone cannot establish an animation. Suppress
+worker audio without changing the user's system sound settings. End each run
+with real-save hash comparison, worker cleanup and a precise capability report.
+No arbitrary Lua evaluation or shell-execution endpoint belongs in the bridge.
+
+The existing `debug_overlay_tests` creates an unshown DX11 window and can be
+part of the audited fixture stage. This does not establish private-desktop
+MGSV compatibility. Current CTest registrations have no labels/resource locks;
+keep their fixture dependencies when selecting tests.
+
+Before enabling retail-game scenarios, qualify a bounded private-desktop DX11
+fixture, process/window ownership and unchanged visible input desktop. Then
+separately prove Steam startup stays contained, MGSV keeps ticking/rendering,
+scripted input is independent for both roles, and captured frames show real
+animation. Test a job's desktop UI restrictions before claiming they prevent
+child desktop changes. If those checks fail, record the failure and use a separate
+GPU-equipped Windows worker or a qualified persistent VM; no visible fallback.
+
+An October 7 read-only host check found Windows11 Pro/build26200, about61.6GB
+RAM and an RTX5080. Windows Sandbox and full Hyper-V are currently disabled;
+VirtualMachinePlatform/HypervisorPlatform are enabled. Nothing was enabled or
+installed. Windows Sandbox has vGPU and CLI control, but its documented user
+session setup opens a remote-desktop client; Microsoft's winapp tooling warns
+that initial connection/reconnection can take focus. It is therefore not an
+already proven zero-interference solution. Microsoft's documented Hyper-V
+GPU partitioning targets supported server hardware, not this consumer setup.
+
+Relevant primary documentation:
+
+- [Windows desktops](https://learn.microsoft.com/en-us/windows/win32/winstation/desktops)
+  and [process desktop selection](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/ns-processthreadsapi-startupinfow).
+- [DirectInput cooperative levels](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ee416848%28v%3Dvs.85%29): foreground acquisition is lost when the window is in the background.
+- [Windows Sandbox CLI](https://learn.microsoft.com/en-us/windows/security/application-security/application-isolation/windows-sandbox/windows-sandbox-cli)
+  and [Sandbox execution limitations](https://learn.microsoft.com/en-us/windows/apps/dev-tools/winapp-cli/sandbox-execution).
+- [Supported Hyper-V GPU partitioning](https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/gpu-partitioning).
+
+Implementation order: separate build/output directories and audited no-game
+checks; private-desktop DX11 probe; leased scenario/input bridge and frame
+capture; only then hidden two-game animation and world regression scenarios.
+Runtime workers stay unavailable until their admission checks pass.
+
 Requirements: PowerShell 7 (`pwsh`), Steam running and logged in, MGSV
 1.0.15.4 in `MGS_TPP` and a guest folder `MGS_TPP_guest` (the same executable
 and the shipped `steam_api64.dll`), a built loader (`tools/build.ps1`) that

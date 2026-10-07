@@ -1,24 +1,29 @@
--- MGS co-op offline partner spike (original). Inert unless native answers
--- MGS_COOP_PARTNER_CFG_V1 with true (offline-v1 marker + lab.ini partner=1);
--- in every other mode the receipt stays a literal string and nothing runs.
--- docs/offline-partner-spike-plan.md 2.4. Every game binding is resolved once
--- with type checks; a missing one is reported through the LOG receipt and its
--- feature is skipped instead of raising. Lua errors stop the spike for the
--- rest of the mission (noted once); the original callbacks are never affected.
+-- MGS co-op offline partner spike (original).
+-- Native CFG authorizes offline-v1 + partner=1 only.
+-- Typed optional bindings, owner-thread calls; errors stop this mission's spike.
+-- Original callbacks preserve their arguments, returns, errors and yields.
 do
     local start, update, terminate = e.OnMissionGameStart, e.OnUpdate, e.OnTerminate
     local active, failed, frame, allActive, partsCopied = false, false, 0, false, false
     local api, skipped = {}, {}
+    local fireUntil, reloadUntil, actionTime, lastGun
+    local actionCfgDone, actionCfgAttempts, actionPublished = false, 0, false
     local fmt, floor, gsub, sub = string.format, math.floor, string.gsub, string.sub
-    -- Round 3 direct motion (docs/partner-anim-appearance.md "Round 3", part D).
-    -- GANI[index] selects the gani for the op's 14th reply value; these ganis
-    -- are resident in player2_resident.mtar (path hashes verified in research).
-    -- 10..12 are the stand walk, run and jog loops (dm=map, docs/partner-anim-appearance.md).
+    -- Direct-motion catalogue; GANI[index] is the op's 14th reply value.
     local DMP = "/Assets/tpp/motion/SI_game/fani/bodies/snap/snapnon/"
+    local GMP = "/Assets/tpp/motion/SI_game/fani/bodies/snap/"
     local GANI = {[0] = DMP .. "snapnon_s_idl_l.gani", DMP .. "snapnon_q_idl_l.gani", DMP .. "snapnon_c_idl_l.gani",
         DMP .. "snapnon_q_wk_lp_l.gani", DMP .. "snapnon_q_rn_lp_l.gani", DMP .. "snapnon_s_dh_lp.gani",
         DMP .. "snapnon_c_fst_lp_r.gani", DMP .. "snapnon_p_idl.gani", "stateSquatIdleLeft", "stateStandIdleLeft",
-        DMP .. "snapnon_s_wk_lp_vr1_l.gani", DMP .. "snapnon_s_rn_lp_vr1_l.gani", DMP .. "snapnon_s_jg_lp_vr1.gani"}
+        DMP .. "snapnon_s_wk_lp_vr1_l.gani", DMP .. "snapnon_s_rn_lp_vr1_l.gani", DMP .. "snapnon_s_jg_lp_vr1.gani",
+        DMP .. "snapnon_s_tn_l90.gani", DMP .. "snapnon_s_tn_r90.gani", DMP .. "snapnon_s_tn_l180.gani", DMP .. "snapnon_s_tn_r180.gani",
+        DMP .. "snapnon_q_tn_l90.gani", DMP .. "snapnon_q_tn_r90.gani", DMP .. "snapnon_q_tn_l180.gani", DMP .. "snapnon_q_tn_r180.gani",
+        -- Manual probes only: these Upper-layer state hashes exist in the
+        -- resident MOG; DirectMotion acceptance is not yet demonstrated.
+        "stateGunHold", "stateGunHoldStart", "stateGunHoldEnd", "stateGunFire", "stateGunReload",
+        -- Manual finite probes only; exact receiver MTAR paths, layering unverified.
+        GMP .. "snaphg00/snaphg00_s_fre.gani", GMP .. "snapar00/snapar00_aw1_s_fre.gani",
+        GMP .. "snapar01/snapar01_aw0_s_fre.gani", GMP .. "snapsr02/snapsr02_s_fre2.gani", GMP .. "snapsr02/snapsr02_s_fre_rld.gani"}
     local function receipt(source)
         local chunk = loadstring(source)
         if type(chunk) ~= "function" then return nil end
@@ -71,6 +76,12 @@ do
             DASH = num(PlayerStatus, "PlayerStatus", "DASH"),
             RUN = num(PlayerStatus, "PlayerStatus", "RUN"),
             WALK = num(PlayerStatus, "PlayerStatus", "WALK"),
+            GUN_FIRE = num(PlayerStatus, "PlayerStatus", "GUN_FIRE"),
+            GUN_FIRE_SUPPRESSOR = num(PlayerStatus, "PlayerStatus", "GUN_FIRE_SUPPRESSOR"),
+            band = fn(bit, "bit", "band"),
+            HOLD = num(PlayerPad, "PlayerPad", "HOLD"),
+            RELOAD = num(PlayerPad, "PlayerPad", "RELOAD"),
+            time = fn(Time, "Time", "GetRawElapsedTimeSinceStartUp"),
         }
         local required = vars ~= nil and api.isValid ~= nil
         if vars == nil then missing[#missing + 1] = "vars" end
@@ -101,19 +112,96 @@ do
         return type(coop) == "table" and type(coop.IsPartnerBodyMission) == "function"
             and coop.IsPartnerBodyMission(vars.missionCode) == true
     end
+    local function clearActions()
+        fireUntil, reloadUntil, actionTime, lastGun = nil, nil, nil, nil
+        if actionPublished then
+            receipt("return 'MGS_COOP_ACTION_EVENTS_CLEAR_V1'")
+            actionPublished = false
+        end
+        local A = get(e, "MgsCoopPartnerActions")
+        if type(A) == "table" and type(A.reset) == "function" then A.reset() end
+    end
+    local function configureActions()
+        if actionCfgDone or actionCfgAttempts >= 120 then return end
+        local A = get(e, "MgsCoopPartnerActions")
+        if type(A) ~= "table" then actionCfgDone = true; return end
+        actionCfgAttempts = actionCfgAttempts + 1
+        local accepted = receipt("return 'MGS_COOP_ACTION_EVENTS_CFG_V1'")
+        A.enabled = accepted == true
+        actionCfgDone = accepted == true or accepted == nil
+    end
+    local function gunActions()
+        -- currentInventorySlot is a retail vars value, not PlayerSlotType.
+        -- Restrict it to authored gun slots; items/binoculars are not guns.
+        local slot, gun, slots = get(vars, "currentInventorySlot"), 0, get(TppDefine, "WEAPONSLOT")
+        for _, name in ipairs({"PRIMARY_HIP", "PRIMARY_BACK", "SECONDARY"}) do
+            local known = get(slots, name)
+            if integer(known, 0, 15) and slot == known then
+                local id = get(get(vars, "weapons"), slot)
+                if integer(id, 1, 65535) then gun = id end
+            end
+        end
+        if gun == 0 then clearActions(); return 0, 0, false end
+        if gun ~= lastGun then clearActions(); lastGun = gun end
+        -- Avoid translating input scanned during non-gameplay/player modes.
+        for _, name in ipairs({"ON_HELICOPTER", "ON_VEHICLE", "ON_HORSE", "BINOCLE", "DEAD", "DEAD_FRESH", "CUTIN"}) do
+            if has(get(PlayerStatus, name)) then clearActions(); return 0, gun, false end
+        end
+        local flags = 0
+        local now
+        if api.time then
+            local ok, v = pcall(api.time)
+            if ok and finite(v) and v >= 0 and v < 1e9 then now = v end
+        end
+        if not now or (actionTime and now < actionTime) then fireUntil, reloadUntil = nil, nil end
+        actionTime = now
+        local fire = has(api.GUN_FIRE) or has(api.GUN_FIRE_SUPPRESSOR)
+        -- Public scannedButtonsDirect is used by the exact retail TppPlayer.
+        -- HOLD/RELOAD mean requested input, not executed aim/reload state.
+        -- SUBJECT is deliberately not used: binocular/first-person is broader.
+        local buttons = get(PlayerVars, "scannedButtonsDirect")
+        local function pressed(mask)
+            if api.band == nil or not integer(mask, 1, 4294967295) or not integer(buttons, 0, 4294967295) then return false end
+            local ok, value = pcall(api.band, buttons, mask)
+            return ok and value == mask
+        end
+        if pressed(api.HOLD) then flags = flags + 1 end
+        local reload = pressed(api.RELOAD)
+        -- Retail raw time is seconds. Bounded pulses bridge the 30 Hz sender.
+        if fire and now then fireUntil = now + 0.1 end
+        if reload and now then reloadUntil = now + 1 / 3 end
+        if fire or (now and fireUntil and now < fireUntil) then flags = flags + 2 end
+        if reload or (now and reloadUntil and now < reloadUntil) then flags = flags + 8 end
+        return flags, gun, true
+    end
     local function tick()
-        if not active or failed or not supported() or not api.isValid() then return end
+        if not active or failed or not supported() or not api.isValid() then clearActions(); return end
         local x, y, z, ry = vars.playerPosX, vars.playerPosY, vars.playerPosZ, vars.playerRotY
-        if not (within(x, 1e6) and within(y, 1e6) and within(z, 1e6) and within(ry, 36000)) then return end
+        if not (within(x, 1e6) and within(y, 1e6) and within(z, 1e6) and within(ry, 36000)) then clearActions(); return end
         frame = frame + 1
+        if not actionCfgDone and frame % 30 == 0 then configureActions() end
         local stance = (has(api.CRAWL) and 2) or (has(api.SQUAT) and 1) or 0
         local move = (has(api.DASH) and 3) or (has(api.RUN) and 2) or (has(api.WALK) and 1) or 0
         local cam = camera()
+        local actions, gun, gunEligible = gunActions()
+        local A = get(e, "MgsCoopPartnerActions")
+        -- A.enabled stays false until a separate owner-validated native opt-in.
+        -- Automatic upper playback capabilities remain independently false.
+        if type(A) == "table" and A.enabled == true and type(A.sample) == "function"
+            and type(A.receipt) == "function" then
+            if A.sample(gunEligible == true, gun, stance) ~= nil then
+                local source = A.receipt()
+                if type(source) == "string" then actionPublished = receipt(source) == true end
+            elseif actionPublished then
+                receipt("return 'MGS_COOP_ACTION_EVENTS_CLEAR_V1'")
+                actionPublished = false
+            end
+        end
         -- The reply carries 5 look values after the 8 pose values when op has
         -- SET_PARTS (16): type, partsType, camoType, handType, faceId.
-        local op, R, px, py, pz, pry, _, _, lt, lp, lc, lh, lf, dg = receipt(fmt("return 'MGS_COOP_PARTNER_V1' -- %d %d %d %d %d %d %d %d %d",
+        local op, R, px, py, pz, pry, _, _, lt, lp, lc, lh, lf, dg = receipt(fmt("return 'MGS_COOP_PARTNER_V1' -- %d %d %d %d %d %d %d %d %d %d %d",
             frame % 1000000, floor(x * 1000 + 0.5), floor(y * 1000 + 0.5), floor(z * 1000 + 0.5),
-            floor(ry * 100 + 0.5), floor(cam * 100 + 0.5), stance, move, (allActive and 1 or 0) + (partsCopied and 2 or 0)))
+            floor(ry * 100 + 0.5), floor(cam * 100 + 0.5), stance, move, (allActive and 1 or 0) + (partsCopied and 2 or 0), actions, gun))
         if type(op) ~= "number" or op <= 0 then return end
         if R ~= 1 or (api.localIndex ~= nil and R == api.localIndex()) then
             failed = true; note("event=refused;reason=bad_index;R=" .. tostring(R)); return
@@ -151,11 +239,12 @@ do
         if op % 64 >= 32 and call(api.mirror, "Player.SetOtherInstanceIsForMirrorMode", true) then note("event=mirror_on") end
         -- MIRROR_OFF (extension): native ends the F3c diagnostic after at most 10 s.
         if op % 128 >= 64 and call(api.mirror, "Player.SetOtherInstanceIsForMirrorMode", false) then note("event=mirror_off") end
-        -- DM_PLAY (128) / DM_STOP (256): the gani is the 14th reply value (0..12; partner::max_gani);
+        -- DM_PLAY (128) / DM_STOP (256): the gani is the 14th reply value (0..30; partner::max_gani);
         -- after SET_PARTS, before WARP. Needs the native comparator patch.
         if op % 256 >= 128 then
-            if integer(dg, 0, 12) and GANI[dg] ~= nil then
-                if call(api.dmPlay, "Player.RequestToPlayDirectMotion", {{"coopLoco", R}, {GANI[dg], true, "", "", "", true}}) then
+            if integer(dg, 0, 30) and GANI[dg] ~= nil then
+                -- Resident turn clips 13..20 are finite transitions, not loops.
+                if call(api.dmPlay, "Player.RequestToPlayDirectMotion", {{"coopLoco", R}, {GANI[dg], dg <= 12 or dg == 21, "", "", "", true}}) then
                     note("event=dm_play;gani=" .. dg)
                 end
             else
@@ -173,11 +262,16 @@ do
         local missing, required = resolve()
         if not required then note("event=inactive;reason=missing_required;names=" .. missing); return end
         active = true
+        configureActions()
         note("event=started")
         if missing ~= "" then note("event=missing;names=" .. missing) end
     end
     local function started(...)
         frame, failed, allActive, partsCopied, active, skipped = 0, false, false, false, false, {}
+        clearActions()
+        actionCfgDone, actionCfgAttempts = false, 0
+        local A = get(e, "MgsCoopPartnerActions")
+        if type(A) == "table" then A.enabled = false end
         local ok, failure = pcall(begin)
         if not ok then active = false; pcall(note, "event=error;msg=" .. tostring(failure)) end
         return ...
@@ -196,6 +290,7 @@ do
     local function stopping()
         if not active then return end
         active = false
+        clearActions()
         if allActive and api.setAllActive ~= nil then
             local ok, valid = pcall(api.isValid)
             if ok and valid == true then

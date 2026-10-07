@@ -12,11 +12,11 @@ look=copy|net|quiet|snake probe=ps|off; the round 3 keys (docs/partner-anim-
 appearance.md "Round 3") input=off|pass|neutral|stick|net stick=<0..359>:<0..100>
 cam=off|detect|sandbox hold=none|pass yaw=rot|rotneg|none words=<3 of 0prhn>
 bits=0x<hex> correct=<0..10000> isend=0|1 p218=0|1 padprobe=0|1 holdlog=0|1
-dm=off|probe|on|map dmmap=<12 x 0..12> dmspeed=<idle>:<run>:<dash>
+dm=off|probe|on|map dmmap=<12 x 0..25> dmspeed=<idle>:<run>:<dash>
 lookgate=0|1 lookrecover=0|1; and the one-shots census=1
 (component census), parts=explicit (op 16: re-apply the look; with look=copy
 the local look, F3b), mirror=on (op 32, mirror diagnostic), tap=0x<hex>,
-press=0x<hex>:<50..5000>, dmplay=<0..12> and dmstop=1, each at most once,
+press=0x<hex>:<50..5000>, dmplay=<0..25> and dmstop=1, each at most once,
 separated by blanks. parts/mirror/dmplay act only at stage >= 1 (dmplay and
 dmstop are refused while dm=map owns the direct motion); tap/press
 only while the input window is armed and within the mask; p218 needs lab.ini
