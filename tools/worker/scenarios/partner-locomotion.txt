@@ -1,0 +1,32 @@
+# Partner animation check: the guest watches the host's body (its partner)
+# from behind while the host runs, sprints, turns and stops.
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+state
+placebehind guest host 7
+both capture start
+host hold w 1500 nowait
+wait 700
+guest capture run-a
+wait 400
+guest capture run-b
+wait 900
+host hold shift+w 1500 nowait
+wait 700
+guest capture sprint-a
+wait 400
+guest capture sprint-b
+wait 900
+guest capture stopped
+host mouse 600 0
+wait 300
+guest capture turn
+wait 1500
+guest capture after-turn
+host hold w+a 1500 nowait
+wait 800
+guest capture strafe
+wait 1200
+state

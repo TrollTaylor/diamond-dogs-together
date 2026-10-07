@@ -115,6 +115,13 @@ int main() {
     changed = lc; changed.partner_input = mgscoop::PartnerInput::off; Check(!OfflineLab(changed, "host", save), "missing_virtual_partner_input");
     changed = lc; changed.partner_input_send = false; Check(!OfflineLab(changed, "host", save), "missing_local_input_transport");
     changed = lc; changed.invalid_values = 1; Check(!OfflineLab(changed, "host", save), "invalid_lab_config");
+    // The normal animated profile (Play-OfflineCoop default): xform, input off, dm=map.
+    auto animated = lc; animated.partner_apply = mgscoop::PartnerApply::xform; animated.partner_input = mgscoop::PartnerInput::off;
+    animated.partner_input_send = false; animated.partner_dm = mgscoop::PartnerDm::map;
+    Check(OfflineLab(animated, "host", save), "animated_partner_profile");
+    changed = animated; changed.partner_dm = mgscoop::PartnerDm::off; Check(!OfflineLab(changed, "host", save), "animated_profile_needs_dm_map");
+    changed = animated; changed.partner_input = mgscoop::PartnerInput::net; Check(!OfflineLab(changed, "host", save), "animated_profile_without_input_window");
+    changed = animated; changed.partner_apply = mgscoop::PartnerApply::warp; Check(!OfflineLab(changed, "host", save), "animated_profile_needs_xform");
     std::cout << "worker_protocol_tests: " << checks << " checks passed; OS calls=0, processes=0, windows=0\n";
     return 0;
 }

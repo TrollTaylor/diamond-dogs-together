@@ -14,7 +14,8 @@ param(
     [Parameter(Mandatory)][ValidatePattern('^[A-Fa-f0-9]{64}$')][string]$BaselineLoaderSha256,
     [string]$ConfigPath,
     [ValidateRange(30,600)][int]$TimeoutSec=600,
-    [ValidateRange(10,180)][int]$ReadyTimeoutSec=120
+    [ValidateRange(10,180)][int]$ReadyTimeoutSec=120,
+    [ValidateSet('animated','input')][string]$PartnerProfile='animated'
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -138,8 +139,12 @@ try {
     $raw.graphics.windowMode='Windowed';$raw.saves.localSubdir='287700\local';$raw.saves.remoteSubdir='remote'
     $copyConfig=Join-Path $runDirectory 'worker-lab.json';Write-WorkerSessionJson $copyConfig $raw
     $session.configuration=$copyConfig;$session.prepare_started=$true;$session.status='preparing';Write-WorkerSessionJson $statePath $session
-    $settings=@('partner=1','net=1','partner_source=net','partner_apply=input','partner_input=net','partner_input_send=1',
-        'partner_input_hold=own','partner_input_words=hpr','partner_recon=track','partner_stage=3','world=3')
+    # Default: the normal animated partner of Play-OfflineCoop (xform + dm=map).
+    # -PartnerProfile input selects the round-4 input drive.
+    $settings=if($PartnerProfile -ceq 'input'){@('partner=1','net=1','partner_source=net','partner_apply=input','partner_input=net','partner_input_send=1',
+        'partner_input_hold=own','partner_input_words=hpr','partner_recon=track','partner_stage=3','world=3')}
+        else{@('partner=1','net=1','partner_stage=3','partner_source=net','partner_look=net','partner_apply=xform','partner_anim=off',
+        'partner_reset=n','partner_input=off','partner_dm=map','world=3')}
     & (Join-Path $repo 'tools\lab\Prepare-LabInstance.ps1') -ConfigPath $copyConfig -Role both -Offline -Loader $loader -RuntimeArchive $archive -PartnerSetting $settings -SkipSaves -SkipGraphics | ForEach-Object {Write-Host $_}
     $session.prepare_completed=$true
     foreach($role in @('host','guest')) {
