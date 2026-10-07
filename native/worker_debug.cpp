@@ -95,7 +95,10 @@ void Publish(const worker_scenario::RunContext& c) noexcept {
     BY_HANDLE_FILE_INFORMATION info{};DWORD written=0;
     const bool ok=GetFileInformationByHandle(file,&info) && !(info.dwFileAttributes&FILE_ATTRIBUTE_REPARSE_POINT) &&
         WriteFile(file,j.bytes,static_cast<DWORD>(j.used),&written,nullptr) && written==j.used;
-    CloseHandle(file);if(ok)MoveFileExW(temporary,path,MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH);
+    CloseHandle(file);
+    // Bounded retry: sync clients/scanners can briefly hold the published file.
+    for(int attempt=0;ok&&attempt<20;++attempt){if(MoveFileExW(temporary,path,MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH))break;
+        const DWORD error=GetLastError();if((error!=ERROR_ACCESS_DENIED&&error!=ERROR_SHARING_VIOLATION)||attempt==19){DeleteFileW(temporary);break;}Sleep(5);}
 }
 }
 void PollOwner() noexcept {

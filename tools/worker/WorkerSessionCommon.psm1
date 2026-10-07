@@ -199,7 +199,9 @@ function Read-WorkerBoundedText([string]$Path,[int]$Maximum=65536) {
 function Write-WorkerAtomicText([string]$Path,[string]$Text) {
     $null=Assert-WorkerPlainPath $Path
     $temporary=$Path+'.'+[Guid]::NewGuid().ToString('N')+'.tmp'
-    try{[IO.File]::WriteAllText($temporary,$Text,[Text.UTF8Encoding]::new($false));[IO.File]::Move($temporary,$Path,$true)}
+    try{[IO.File]::WriteAllText($temporary,$Text,[Text.UTF8Encoding]::new($false))
+        # Bounded retry: sync clients (OneDrive) and scanners briefly hold files.
+        for($attempt=0;;$attempt++){try{[IO.File]::Move($temporary,$Path,$true);break}catch [UnauthorizedAccessException],[IO.IOException]{if($attempt -ge 49){throw};Start-Sleep -Milliseconds 10}}}
     finally{if(Test-Path -LiteralPath $temporary){Remove-Item -LiteralPath $temporary}}
 }
 function Get-WorkerConfigSnapshot([string]$Path,[string]$BackupDirectory,[string]$Name) {

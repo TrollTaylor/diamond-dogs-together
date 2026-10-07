@@ -5,6 +5,14 @@ It is separate from the normal mod. The supervisor and probe use the GUI
 subsystem and create no console. No worker code calls `SwitchDesktop`, system
 input injection, foreground/focus APIs, or changes GPU timeout settings.
 
+MGSV reads input only while `GetForegroundWindow()` is its own window, which a
+window on a never-displayed desktop never is. In the worker build only, the
+in-process bridge answers `GetForegroundWindow()` for admitted game threads on
+the private desktop with the game's own private window (the validated
+`SetCooperativeLevel` target, else the process's top-level window found on that
+desktop). This is a process-local answer: nothing calls `SetForegroundWindow`,
+activation or focus APIs, and the user's desktop is unaffected.
+
 The coordinator alone builds, scans and admits runtime artifacts. Compilation
 and pure fixtures do not qualify a retail-game run. First qualify the probe;
 then independently qualify MGSV startup, continuing simulation, virtual input,

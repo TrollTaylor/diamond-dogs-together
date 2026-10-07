@@ -177,7 +177,21 @@ inline void Atomic(const std::wstring& path, const std::string& bytes, bool repl
     const auto tmp = path + L".tmp-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64());
     Handle file(CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr));
     Require(file.Valid(), "atomic_create");
-    try { WriteAll(file.value, bytes); file.Reset(); Require(MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_WRITE_THROUGH | (replace ? MOVEFILE_REPLACE_EXISTING : 0)) != FALSE, "atomic_publish"); }
+    try { WriteAll(file.value, bytes); file.Reset();
+        // Sync clients (the repo may live under OneDrive), indexers and scanners
+        // briefly open freshly written files without delete sharing. Retry only
+        // those two transient errors, bounded to about 0.5 s; anything else and
+        // a persistent denial still refuse.
+        BOOL moved = FALSE; DWORD error = ERROR_SUCCESS;
+        for (int attempt = 0; attempt < 50; ++attempt) {
+            moved = MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_WRITE_THROUGH | (replace ? MOVEFILE_REPLACE_EXISTING : 0));
+            if (moved) break;
+            error = GetLastError();
+            if (error != ERROR_ACCESS_DENIED && error != ERROR_SHARING_VIOLATION) break;
+            Sleep(10);
+        }
+        if (!moved) SetLastError(error);
+        Require(moved != FALSE, "atomic_publish"); }
     catch (...) { file.Reset(); DeleteFileW(tmp.c_str()); throw; }
 }
 inline std::wstring Quote(const std::wstring& s) {

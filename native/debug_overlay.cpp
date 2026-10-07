@@ -53,7 +53,10 @@ std::atomic<ULONGLONG> release_after{0};
 Hook present_hook{}, resize_hook{}, state_hooks[2]{}, data_hooks[2]{};
 Hook cursor_hook{}, clip_hook{}, keyboard_hook{}, pad_hook{};
 #if MGS_BACKGROUND_WORKER
-Hook format_hooks[2]{}, coop_hooks[2]{}, async_hook{}, key_state_hook{}, raw_hook{}, raw_buffer_hook{};
+Hook format_hooks[2]{}, coop_hooks[2]{}, async_hook{}, key_state_hook{}, raw_hook{}, raw_buffer_hook{}, foreground_hook{};
+// The game's own window on the private desktop (validated SetCooperativeLevel
+// target, or found by enumerating this thread's desktop).
+std::atomic<HWND> worker_window{nullptr};
 SRWLOCK worker_device_lock = SRWLOCK_INIT;
 struct WorkerDevice { IDirectInputDevice8W* object{}; DWORD type{}, bytes{}; GUID instance{}; };
 WorkerDevice worker_devices[32]{};
@@ -162,6 +165,65 @@ bool InputMessage(UINT id) noexcept {
     return (id >= WM_KEYFIRST && id <= WM_KEYLAST) ||
            (id >= WM_MOUSEFIRST && id <= WM_MOUSELAST) || id == WM_INPUT;
 }
+#if MGS_BACKGROUND_WORKER
+// MGSV reads keyboard and mouse only through WM_INPUT + GetRawInputData (two
+// RAWINPUTDEVICEs registered at 0x1A45BC3; DirectInput serves pads). A private
+// desktop receives no physical raw input that we let through, so the worker's
+// scripted events become synthetic WM_INPUT messages posted to the game's own
+// window; GetRawInputData answers their tokens from this store. Tokens carry a
+// tag that no real HRAWINPUT has, and only tagged messages reach the game.
+constexpr std::uintptr_t kRawTag = 0x7EA0000000000000ull, kRawTagMask = 0xFFFF000000000000ull;
+struct SyntheticRaw { std::uintptr_t token{}; RAWINPUT raw{}; };
+SRWLOCK synthetic_lock = SRWLOCK_INIT;
+SyntheticRaw synthetic_ring[128]{};
+std::uint32_t synthetic_next = 0;
+bool SyntheticToken(std::uintptr_t value) noexcept { return (value & kRawTagMask) == kRawTag; }
+bool SyntheticLookup(std::uintptr_t token, RAWINPUT& out) noexcept {
+    AcquireSRWLockShared(&synthetic_lock);
+    const auto& slot = synthetic_ring[token & 127];
+    const bool found = slot.token == token;
+    if (found) out = slot.raw;
+    ReleaseSRWLockShared(&synthetic_lock); return found;
+}
+std::uintptr_t SyntheticStore(const RAWINPUT& raw) noexcept {
+    AcquireSRWLockExclusive(&synthetic_lock);
+    const std::uint32_t n = ++synthetic_next;
+    const std::uintptr_t token = kRawTag | n;
+    synthetic_ring[n & 127] = {token, raw};
+    ReleaseSRWLockExclusive(&synthetic_lock); return token;
+}
+// Called on the admitted render thread (Present) with the game's own window.
+void PumpSyntheticInput(HWND game) noexcept {
+    if (!game) return;
+    worker_scenario::Event events[64]{};
+    std::uint32_t count = worker_scenario::Buffered(worker_scenario::Device::keyboard, events, 64, false);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        RAWINPUT raw{}; const UINT scan = events[i].offset & 0xFF; const bool down = (events[i].value & 0x80) != 0;
+        raw.header.dwType = RIM_TYPEKEYBOARD; raw.header.dwSize = sizeof(RAWINPUTHEADER) + sizeof(RAWKEYBOARD);
+        raw.header.hDevice = reinterpret_cast<HANDLE>(kRawTag | 1); raw.header.wParam = RIM_INPUT;
+        raw.data.keyboard.MakeCode = static_cast<USHORT>(scan & 0x7F);
+        raw.data.keyboard.Flags = static_cast<USHORT>((down ? RI_KEY_MAKE : RI_KEY_BREAK) | ((scan & 0x80) ? RI_KEY_E0 : 0));
+        raw.data.keyboard.VKey = static_cast<USHORT>(MapVirtualKeyW((scan & 0x7F) | ((scan & 0x80) ? 0xE000 : 0), MAPVK_VSC_TO_VK_EX));
+        raw.data.keyboard.Message = down ? WM_KEYDOWN : WM_KEYUP;
+        PostMessageW(game, WM_INPUT, RIM_INPUT, static_cast<LPARAM>(SyntheticStore(raw)));
+    }
+    count = worker_scenario::Buffered(worker_scenario::Device::mouse, events, 64, false);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        RAWINPUT raw{}; const bool down = (events[i].value & 0x80) != 0;
+        raw.header.dwType = RIM_TYPEMOUSE; raw.header.dwSize = sizeof(RAWINPUTHEADER) + sizeof(RAWMOUSE);
+        raw.header.hDevice = reinterpret_cast<HANDLE>(kRawTag | 2); raw.header.wParam = RIM_INPUT;
+        raw.data.mouse.usFlags = MOUSE_MOVE_RELATIVE;
+        switch (events[i].offset) {
+        case 0: raw.data.mouse.lLastX = static_cast<LONG>(static_cast<std::int32_t>(events[i].value)); break;
+        case 4: raw.data.mouse.lLastY = static_cast<LONG>(static_cast<std::int32_t>(events[i].value)); break;
+        case 12: raw.data.mouse.usButtonFlags = down ? RI_MOUSE_LEFT_BUTTON_DOWN : RI_MOUSE_LEFT_BUTTON_UP; break;
+        case 13: raw.data.mouse.usButtonFlags = down ? RI_MOUSE_RIGHT_BUTTON_DOWN : RI_MOUSE_RIGHT_BUTTON_UP; break;
+        default: continue;
+        }
+        PostMessageW(game, WM_INPUT, RIM_INPUT, static_cast<LPARAM>(SyntheticStore(raw)));
+    }
+}
+#endif
 void RawMouse(const RAWMOUSE& mouse) noexcept {
     struct Button { USHORT down, up; UINT press, release; WPARAM wp; };
     constexpr Button buttons[] = {
@@ -202,8 +264,13 @@ void RawText(const RAWKEYBOARD& key) noexcept {
 }
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT id, WPARAM wp, LPARAM lp) noexcept {
     const WNDPROC previous = original_wndproc.load(std::memory_order_acquire);
-    if (worker_scenario::Requested() && InputMessage(id))
+    if (worker_scenario::Requested() && InputMessage(id)) {
+#if MGS_BACKGROUND_WORKER
+        if (id == WM_INPUT && SyntheticToken(static_cast<std::uintptr_t>(lp)) && previous)
+            return CallWindowProcW(previous, hwnd, id, wp, lp);
+#endif
         return id == WM_INPUT ? DefWindowProcW(hwnd, id, wp, lp) : 0;
+    }
     bool toggle_event = false;
     if ((id == WM_KEYDOWN || id == WM_SYSKEYDOWN || id == WM_KEYUP || id == WM_SYSKEYUP) && wp == VK_F9) {
         F9(id == WM_KEYDOWN || id == WM_SYSKEYDOWN);
@@ -265,6 +332,7 @@ void RemoveHooks() noexcept {
     RemoveHook(key_state_hook);
     RemoveHook(raw_hook);
     RemoveHook(raw_buffer_hook);
+    RemoveHook(foreground_hook);
 #endif
 }
 bool EnableHooks() noexcept {
@@ -280,6 +348,7 @@ bool EnableHooks() noexcept {
         if (!key_state_hook.target || MH_QueueEnableHook(key_state_hook.target) != MH_OK) return false;
         if (!raw_hook.target || MH_QueueEnableHook(raw_hook.target) != MH_OK) return false;
         if (!raw_buffer_hook.target || MH_QueueEnableHook(raw_buffer_hook.target) != MH_OK) return false;
+        if (!foreground_hook.target || MH_QueueEnableHook(foreground_hook.target) != MH_OK) return false;
     }
 #endif
     return MH_ApplyQueued() == MH_OK;
@@ -367,7 +436,7 @@ HRESULT STDMETHODCALLTYPE WorkerCoop(IDirectInputDevice8W* self, HWND hwnd, DWOR
             GetUserObjectInformationW(GetThreadDesktop(thread), UOI_NAME, desktop, sizeof(desktop), &needed) &&
             needed <= sizeof(desktop) && !std::wcscmp(desktop, run.desktop);
 #endif
-        if (valid) { forwarded = DISCL_NONEXCLUSIVE | DISCL_BACKGROUND; qualified = true; }
+        if (valid) { forwarded = DISCL_NONEXCLUSIVE | DISCL_BACKGROUND; qualified = true; worker_window.store(hwnd); }
         else {
             DIDEVICEINSTANCEW rejected_info{};
             if (WorkerInfo(self, rejected_info)) worker_scenario::Refuse("cooperative_private_window_or_thread");
@@ -377,6 +446,31 @@ HRESULT STDMETHODCALLTYPE WorkerCoop(IDirectInputDevice8W* self, HWND hwnd, DWOR
     const HRESULT result = original(self, hwnd, forwarded); const DWORD error = GetLastError();
     if (worker_scenario::Requested()) worker_scenario::DeviceConfiguration("SetCooperativeLevel", result, qualified, flags, forwarded);
     SetLastError(error); return result;
+}
+// MGSV only reads input while GetForegroundWindow() is its own window. A window
+// on a never-displayed desktop is never the input desktop's foreground, so an
+// admitted game thread on the private desktop is answered with the game's own
+// private window. This is a process-local answer: no focus, activation or
+// SetForegroundWindow call is made and the user's desktop is never touched.
+BOOL CALLBACK FindWorkerWindow(HWND hwnd, LPARAM out) noexcept {
+    DWORD pid = 0; GetWindowThreadProcessId(hwnd, &pid);
+    if (pid != GetCurrentProcessId() || !IsWindowVisible(hwnd) || GetWindow(hwnd, GW_OWNER)) return TRUE;
+    wchar_t name[64]{};
+    if (GetClassNameW(hwnd, name, ARRAYSIZE(name)) && !std::wcscmp(name, L"MGSCoopDX11Probe")) return TRUE;
+    *reinterpret_cast<HWND*>(out) = hwnd; return FALSE;
+}
+HWND WINAPI WorkerForeground() noexcept {
+    const DWORD error = GetLastError();
+    if (worker_scenario::Requested() && worker_scenario::ThreadAdmitted()) {
+        HWND own = worker_window.load();
+        if (!own || !IsWindow(own)) {
+            own = nullptr; EnumWindows(&FindWorkerWindow, reinterpret_cast<LPARAM>(&own));
+            if (own) worker_window.store(own);
+        }
+        if (own) { SetLastError(error); return own; }
+    }
+    SetLastError(error);
+    return reinterpret_cast<HWND (WINAPI*)()>(foreground_hook.original)();
 }
 SHORT WINAPI WorkerAsync(int key) noexcept {
     if (worker_scenario::Requested()) return 0; // physical/global state is never queried for worker scripts
@@ -410,6 +504,17 @@ UINT WINAPI WorkerRawInput(HRAWINPUT input, UINT command, LPVOID output, PUINT s
     if (fixture_raw_input.original) entry = fixture_raw_input.original;
 #endif
     if (!entry) return static_cast<UINT>(-1);
+#if MGS_BACKGROUND_WORKER
+    if (worker_scenario::Requested() && SyntheticToken(reinterpret_cast<std::uintptr_t>(input))) {
+        RAWINPUT raw{};
+        if (!size || header_size != sizeof(RAWINPUTHEADER) || (command != RID_INPUT && command != RID_HEADER) ||
+            !SyntheticLookup(reinterpret_cast<std::uintptr_t>(input), raw)) { SetLastError(ERROR_INVALID_HANDLE); return static_cast<UINT>(-1); }
+        const UINT needed = command == RID_HEADER ? static_cast<UINT>(sizeof(RAWINPUTHEADER)) : raw.header.dwSize;
+        if (!output) { *size = needed; return 0; }
+        if (*size < needed) { *size = needed; SetLastError(ERROR_INSUFFICIENT_BUFFER); return static_cast<UINT>(-1); }
+        std::memcpy(output, &raw, needed); return needed;
+    }
+#endif
     const UINT capacity = size ? *size : 0;
     const UINT result = reinterpret_cast<RawInputFn>(entry)(input, command, output, size, header_size);
     const DWORD error = GetLastError();
@@ -529,7 +634,19 @@ BOOL WINAPI Keyboard(PBYTE keys) noexcept {
     const BOOL result = reinterpret_cast<KeyboardFn>(keyboard_hook.original)(keys);
     const DWORD error = GetLastError();
     if (worker_scenario::Requested()) {
-        if (keys) std::memset(keys, 0, 256);
+        if (keys) {
+            std::memset(keys, 0, 256);
+#if MGS_BACKGROUND_WORKER
+            std::uint8_t scans[256]{};
+            if (worker_scenario::Keyboard(scans, sizeof(scans)))
+                for (UINT scan = 0; scan < 256; ++scan) if (scans[scan] & 0x80) {
+                    const UINT vk = MapVirtualKeyW((scan & 0x7F) | ((scan & 0x80) ? 0xE000 : 0), MAPVK_VSC_TO_VK_EX);
+                    if (vk && vk < 256) keys[vk] = 0x80;
+                    if (vk == VK_LSHIFT || vk == VK_RSHIFT) keys[VK_SHIFT] = 0x80;
+                    if (vk == VK_LCONTROL || vk == VK_RCONTROL) keys[VK_CONTROL] = 0x80;
+                }
+#endif
+        }
         SetLastError(error); return result;
     }
     if (result && keys && CapturingInput()) std::memset(keys, 0, 256);
@@ -609,7 +726,8 @@ bool InputHooks() noexcept {
         AddHook(async_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetAsyncKeyState")), reinterpret_cast<void*>(&WorkerAsync)) &&
         AddHook(key_state_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetKeyState")), reinterpret_cast<void*>(&WorkerKeyState)) &&
         AddHook(raw_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetRawInputData")), reinterpret_cast<void*>(&WorkerRawInput)) &&
-        AddHook(raw_buffer_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetRawInputBuffer")), reinterpret_cast<void*>(&WorkerRawBuffer));
+        AddHook(raw_buffer_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetRawInputBuffer")), reinterpret_cast<void*>(&WorkerRawBuffer)) &&
+        AddHook(foreground_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetForegroundWindow")), reinterpret_cast<void*>(&WorkerForeground));
 #endif
     return ok;
 }
@@ -1048,6 +1166,9 @@ HRESULT STDMETHODCALLTYPE Present(IDXGISwapChain* chain, UINT interval, UINT fla
                 else worker_scenario::Refuse("worker_wndproc");
             }
         }
+#if MGS_BACKGROUND_WORKER
+        if (window.load() && worker_scenario::ThreadAdmitted()) PumpSyntheticInput(window.load());
+#endif
         worker_frames::Capture(chain, worker_scenario::TakeCapture(GetTickCount64()));
         ReleaseSRWLockExclusive(&render_lock);
     }

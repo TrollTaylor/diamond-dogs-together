@@ -32,7 +32,7 @@ struct Worker {
     std::uint64_t offending_desktop_handle = 0; DWORD offending_desktop_error = 0, offending_name_error = 0;
     std::string offending_desktop_name, offending_reason;
     DWORD cross_desktop_available = 0, cross_desktop_unavailable = 0, cross_desktop_mismatch = 0;
-    DWORD window_thread_leases = 0, owned_thread_leases = 0;
+    DWORD window_thread_leases = 0, owned_thread_leases = 0, vanished_thread_skips = 0;
     Handle job, mutex, run_lock; std::vector<Child> children; std::vector<Pin> pins; std::vector<Handle> paths;
     HDESK desktop = nullptr;
     std::wstring At(const std::string& name) const { return Wide(manifest.directory + "\\" + name); }
@@ -61,6 +61,7 @@ struct Worker {
           << ",\"thread_desktop_last_error\":" << offending_desktop_error << ",\"queried_desktop_name\":" << Json(offending_desktop_name)
           << ",\"queried_desktop_name_error\":" << offending_name_error
           << ",\"window_thread_leases\":" << window_thread_leases << ",\"owned_thread_leases\":" << owned_thread_leases
+          << ",\"vanished_thread_skips\":" << vanished_thread_skips
           << ",\"cross_desktop_query_available\":" << cross_desktop_available << ",\"cross_desktop_query_unavailable\":" << cross_desktop_unavailable
           << ",\"cross_desktop_query_mismatch\":" << cross_desktop_mismatch << ",\"cross_desktop_unavailable_is_mismatch\":false"
           << ",\"offending_pid\":" << private_offending_pid << ",\"offending_tid\":" << private_offending_tid
@@ -269,6 +270,19 @@ Handle LeaseThread(const Worker& worker, const Child& child, DWORD tid) {
     DWORD exit = 0; Require(GetExitCodeThread(thread.value, &exit) != FALSE && exit == STILL_ACTIVE, "owned_thread_not_alive");
     worker.Lease(child); return thread;
 }
+// A thread snapshot can name a thread that exited (or whose id was reused by
+// another process) before OpenThread: that thread no longer belongs to the
+// child, so it is skipped and counted, never treated as admitted or foreign.
+// Any other open failure still refuses. Window owner threads stay strict.
+bool LeaseSnapshotThread(const Worker& worker, const Child& child, DWORD tid) {
+    worker.Lease(child); SetLastError(ERROR_SUCCESS);
+    Handle thread(OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, tid));
+    if (!thread.Valid()) { Require(GetLastError() == ERROR_INVALID_PARAMETER, "owned_thread_open_query"); return false; }
+    if (GetProcessIdOfThread(thread.value) != child.pid) return false;
+    DWORD exit = 0; Require(GetExitCodeThread(thread.value, &exit) != FALSE, "owned_thread_exit_query");
+    if (exit != STILL_ACTIVE) return false;
+    worker.Lease(child); return true;
+}
 struct ForeignDesktop {
     HDESK handle = nullptr; DWORD desktop_error = 0, name_error = 0; std::string name; bool available = false;
 };
@@ -335,7 +349,7 @@ void Inspect(Worker& worker) {
     Require(worker.last_input == worker.initial_input && worker.last_input != worker.manifest.desktop, "visible_input_desktop_changed");
     VerifySentinel(worker);
     worker.cross_desktop_available = worker.cross_desktop_unavailable = worker.cross_desktop_mismatch = 0;
-    worker.window_thread_leases = worker.owned_thread_leases = 0;
+    worker.window_thread_leases = worker.owned_thread_leases = worker.vanished_thread_skips = 0;
     // No unowned children/broker adoption. The child policy is defense in depth;
     // Windows documents bypass limits outside a stronger security sandbox.
     alignas(JOBOBJECT_BASIC_PROCESS_ID_LIST) unsigned char bytes[sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST) + 8 * sizeof(ULONG_PTR)]{};
@@ -367,9 +381,10 @@ void Inspect(Worker& worker) {
     do {
         Require(++traversed <= 65536, "thread_snapshot_bound"); const auto* child = worker.Owned(entry.th32OwnerProcessID);
         if (child) { Require(++owned_threads <= 512, "owned_thread_count_bound");
-            auto thread = LeaseThread(worker, *child, entry.th32ThreadID); (void)thread; ++worker.owned_thread_leases;
-            const auto desktop = ObserveForeignDesktop(worker, entry.th32ThreadID);
-            Require(!desktop.available || desktop.name == worker.manifest.desktop, "owned_thread_positive_desktop_mismatch"); }
+            if (!LeaseSnapshotThread(worker, *child, entry.th32ThreadID)) { ++worker.vanished_thread_skips; }
+            else { ++worker.owned_thread_leases;
+                const auto desktop = ObserveForeignDesktop(worker, entry.th32ThreadID);
+                Require(!desktop.available || desktop.name == worker.manifest.desktop, "owned_thread_positive_desktop_mismatch"); } }
         entry.dwSize = sizeof(entry);
     } while (Thread32Next(snapshot.value, &entry));
     Require(GetLastError() == ERROR_NO_MORE_FILES, "thread_ownership_iteration");

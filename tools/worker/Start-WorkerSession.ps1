@@ -198,7 +198,10 @@ try {
     $psi.UseShellExecute=$false;$psi.CreateNoWindow=$true;$psi.WindowStyle=[Diagnostics.ProcessWindowStyle]::Hidden
     $psi.ArgumentList.Add('--launch');$psi.ArgumentList.Add($launch)
     $process=[Diagnostics.Process]::new();$process.StartInfo=$psi
-    if(!$process.Start()){throw 'Owned worker supervisor did not start.'}
+    # The supervisor outlives this script: keep it from inheriting our stdout/
+    # stderr, or a caller capturing our output would wait for the whole session.
+    $startedSupervisor=Invoke-WithoutStdHandleInheritance {$process.Start()}
+    if(!$startedSupervisor){throw 'Owned worker supervisor did not start.'}
     $null=$process.SafeHandle
     $session.supervisor=[ordered]@{pid=$process.Id;creation_filetime=[string]$process.StartTime.ToUniversalTime().ToFileTimeUtc();exe=$supervisor;sha256=$qualification.SupervisorSha256}
     $session.process_started_utc=$process.StartTime.ToUniversalTime().ToString('o');Write-WorkerSessionJson $statePath $session
@@ -229,7 +232,10 @@ try {
         $hostId=Read-WorkerFreshLog $instances.host.HostId 0 ([datetime]::Parse($session.process_started_utc).ToUniversalTime()) 1024
         $idCheck=Get-HostIdCheck -HostIdText $hostId -ClientHostText (Read-WorkerBoundedText $instances.guest.ClientHost 1024) -PeerSteamId $session.roles.guest.expected_peer
         if($idCheck -ceq 'mismatch'){throw 'Actual fresh host identity differs from guest configuration.'}
-        if($idCheck -cne 'ok'){$allSafe=$false}
+        # Offline, host-steamid.txt is only written once an online host session
+        # exists, so 'not_written' is the normal offline state (as in Start-Lab);
+        # only an actual mismatch refuses.
+        if($idCheck -cne 'ok' -and $idCheck -cne 'not_written'){$allSafe=$false}
         $session.host_identity_check=$idCheck;Write-WorkerSessionJson $statePath $session
         if($allSafe){$session.status='ready';$session.ready_utc=[DateTime]::UtcNow.ToString('o');Write-WorkerSessionJson $statePath $session
             Write-Host "Private worker context and startup safety admitted: $runDirectory"
