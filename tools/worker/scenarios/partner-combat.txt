@@ -1,0 +1,26 @@
+# Partner combat-pose evaluation: aim, fire, reload, aim while moving.
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+host debug time 43200
+host debug weather sunny
+host debug infinite_ammo 1
+wait 2500
+placebehind guest host 4 3
+both capture start
+host hold rmb 1400 nowait
+guest burst aim 5 150
+host capture aim-host
+wait 600
+host hold rmb+lmb 1200 nowait
+guest burst fire 5 150
+host capture fire-host
+wait 700
+host press r
+guest burst reload 6 200
+wait 800
+host hold rmb+w 1400 nowait
+guest burst aim-walk 6 150
+wait 800
+state

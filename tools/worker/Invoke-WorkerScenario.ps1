@@ -15,17 +15,22 @@ Scenario: one step per line (a file via -ScenarioPath or lines via -Step);
 blank lines and lines starting with # are ignored. Roles: host, guest, both.
 
   title [timeoutSec]               press Enter on each role until it reports gameplay ready
-  <role> press <keys> [ms]         keys joined by +: w a s d enter space escape e r shift ctrl 1 2 f lmb rmb
+  <role> press <keys> [ms]         keys joined by +: w a s d enter space escape e r shift ctrl 1 2 f
+                                   c q x z tab lmb rmb (c = crouch, hold c ~0.3 s = prone)
   <role> hold <keys> <ms> [nowait] hold for 1..1500 ms (repeat the step for longer holds);
                                    nowait continues at once (e.g. to capture mid-movement)
   <role> mouse <dx> <dy>           relative mouse move, each -1500..1500
-  <role> capture [label]           save the role's next rendered frame (BMP in the run folder)
-  <role> debug <command>           one F9 debug-menu command through the game's own queue
+  <role> capture [label]           save the role's next rendered frame (BMP in the run folder);
+                                   every capture also appends the role's partner telemetry to captures.jsonl
+  <role> burst <label> <n> <ms>    n captures (2..30) every ms milliseconds (>= 100): label-01, label-02, ...
+  <role> debug <command>           one F9 debug-menu command through the game's own queue;
+                                   waits for and prints its result
   wait <ms>                        sleep up to 60000 ms
   waitgameplay <role> <timeoutSec>   poll until the role is on foot in gameplay (debug guard passes);
                                      every 6 s presses escape then enter to try skipping a cutscene
-  placebehind <viewer> <target> <m>  teleport viewer m meters behind target, facing the same way
-                                     (its camera then frames the target's body / the partner)
+  placebehind <viewer> <target> <back_m> [side_m]
+                                     teleport viewer behind (and to the right of) target, facing it,
+                                     so its camera frames the target's body (the viewer's partner)
   state                            print both roles' mission / gameplay-ready state
 
 The session has a hard 600 s limit (supervisor). The result object lists the
@@ -41,7 +46,8 @@ param(
     [ValidatePattern('^[A-Fa-f0-9]{64}$')][string]$BaselineLoaderSha256,
     [ValidateRange(60,600)][int]$TimeoutSec=600,
     [ValidateRange(10,180)][int]$ReadyTimeoutSec=180,
-    [ValidateSet('animated','input')][string]$PartnerProfile='animated'
+    [ValidateSet('animated','input')][string]$PartnerProfile='animated',
+    [ValidateSet('real','lab')][string]$SaveSeed='lab'
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -63,11 +69,12 @@ foreach($line in $steps){
         '^wait$' {$t.Count -eq 2 -and [int]$t[1] -ge 0 -and [int]$t[1] -le 60000}
         '^state$' {$t.Count -eq 1}
         '^waitgameplay$' {$t.Count -eq 3 -and $t[1] -in 'host','guest' -and [int]$t[2] -ge 5 -and [int]$t[2] -le 400}
-        '^placebehind$' {$t.Count -eq 4 -and $t[1] -in 'host','guest' -and $t[2] -in 'host','guest' -and $t[1] -ne $t[2] -and [double]$t[3] -ge 1 -and [double]$t[3] -le 40}
+        '^placebehind$' {$t.Count -in 4,5 -and $t[1] -in 'host','guest' -and $t[2] -in 'host','guest' -and $t[1] -ne $t[2] -and [double]$t[3] -ge 1 -and [double]$t[3] -le 40}
         default {
             $roleNames -ccontains $t[0] -and $t.Count -ge 2 -and $(switch($t[1]){
                 'press'{$t.Count -in 3,4}; 'hold'{$t.Count -eq 4 -or ($t.Count -eq 5 -and $t[4] -ceq 'nowait')}; 'mouse'{$t.Count -eq 4}
-                'capture'{$t.Count -le 3}; 'debug'{$t.Count -ge 3}; default{$false}})
+                'capture'{$t.Count -le 3}; 'debug'{$t.Count -ge 3}
+                'burst'{$t.Count -eq 5 -and [int]$t[3] -ge 2 -and [int]$t[3] -le 30 -and [int]$t[4] -ge 100 -and [int]$t[4] -le 5000}; default{$false}})
         }
     }
     if(!$ok){throw "Invalid scenario step: '$line'"}
@@ -85,7 +92,7 @@ if(!$CheckReceipt){
 $receipt=Get-Content -LiteralPath $CheckReceipt -Raw|ConvertFrom-Json
 if($receipt.status -cne 'passed'){throw "Worker checks did not pass: $($receipt.failure)"}
 
-$session=& (Join-Path $worker 'Start-WorkerSession.ps1') -BuildDirectory $build -CheckReceipt $CheckReceipt -BaselineLoaderSha256 $BaselineLoaderSha256 -TimeoutSec $TimeoutSec -ReadyTimeoutSec $ReadyTimeoutSec -PartnerProfile $PartnerProfile
+$session=& (Join-Path $worker 'Start-WorkerSession.ps1') -BuildDirectory $build -CheckReceipt $CheckReceipt -BaselineLoaderSha256 $BaselineLoaderSha256 -TimeoutSec $TimeoutSec -ReadyTimeoutSec $ReadyTimeoutSec -PartnerProfile $PartnerProfile -SaveSeed $SaveSeed
 $session=@($session|Where-Object{$_ -isnot [string]})[-1]
 $run=[string]$session.RunDirectory
 $frames=[Collections.Generic.List[object]]::new();$failure=$null;$stop=$null
@@ -123,6 +130,13 @@ function Wait-Frame([string]$Role,[uint64]$Sequence,[string]$Label){
     $name=if($Label){"$Role-$Label.bmp"}else{"$Role-frame-$Sequence.bmp"}
     if($Label){Copy-Item -LiteralPath $path -Destination (Join-Path $run $name)}
     $frames.Add([pscustomobject]@{Role=$Role;Label=$Label;Path=(Join-Path $run $name)})
+    # Partner telemetry seen by this role at capture time (its partner = the other player).
+    $st=Read-RoleRaw $Role
+    if($st){
+        $row=[ordered]@{label=$(if($Label){$Label}else{"frame-$Sequence"});role=$Role;sequence=$Sequence;tick_ms=$st['tick_ms']}
+        foreach($k in 'mission','realized','body_valid','pose_valid','mapped_clip','remote_act','remote_action_flags','remote_age_ms','position_error_m','heading_error_deg','player_pos','remote_pos','body_pos','queue_depth'){$row[$k]=$st[$k]}
+        Add-Content -LiteralPath (Join-Path $run 'captures.jsonl') -Value ($row|ConvertTo-Json -Compress -Depth 4)
+    }
 }
 try {
     foreach($line in $steps){
@@ -159,10 +173,13 @@ try {
             $result=Invoke-DebugResult $t[2] 'position'
             if($result -notmatch '^position=(-?[\d.]+),(-?[\d.]+),(-?[\d.]+);yaw=(-?[\d.]+)'){throw "[$($t[2])] position result: $result"}
             $x=[double]$Matches[1];$y=[double]$Matches[2];$z=[double]$Matches[3];$yaw=[double]$Matches[4];$d=[double]$t[3]
+            $side=if($t.Count -eq 5){[double]$t[4]}else{0.0}
             $rad=$yaw*[Math]::PI/180.0
-            $tx=$x-$d*[Math]::Sin($rad);$tz=$z-$d*[Math]::Cos($rad)
+            # forward = (sin, cos); right = (cos, -sin). Face the target.
+            $tx=$x-$d*[Math]::Sin($rad)+$side*[Math]::Cos($rad);$tz=$z-$d*[Math]::Cos($rad)-$side*[Math]::Sin($rad)
+            $face=[Math]::Atan2($x-$tx,$z-$tz)*180.0/[Math]::PI
             $inv=[Globalization.CultureInfo]::InvariantCulture
-            $command=[string]::Format($inv,'teleport {0:0.000} {1:0.000} {2:0.000} {3:0.000}',$tx,$y,$tz,$yaw)
+            $command=[string]::Format($inv,'teleport {0:0.000} {1:0.000} {2:0.000} {3:0.000}',$tx,$y,$tz,$face)
             $placed=Invoke-DebugResult $t[1] $command 12000
             Write-Host "  $($t[2]) at ($x,$y,$z) yaw $yaw -> $($t[1]) $command : $placed"
             Start-Sleep -Milliseconds 1500
@@ -175,7 +192,18 @@ try {
                 'hold' {$null=Send-Step $r @{Operation='hold';Keys=$t[2];DurationMs=[int]$t[3]}}
                 'mouse' {$null=Send-Step $r @{Operation='mouse';Dx=[int]$t[2];Dy=[int]$t[3]}}
                 'capture' {$c=Send-Step $r @{Operation='capture'};Wait-Frame $r ([uint64]$c.sequence) $(if($t.Count -eq 3){$t[2]}else{''})}
-                'debug' {$null=Send-Step $r @{Operation='debug';DebugCommand=(($t|Select-Object -Skip 2) -join ' ')}}
+                'burst' {
+                    for($i=1;$i -le [int]$t[3];$i++){
+                        $c=Send-Step $r @{Operation='capture'};Wait-Frame $r ([uint64]$c.sequence) ('{0}-{1:00}' -f $t[2],$i)
+                        Start-Sleep -Milliseconds ([int]$t[4])
+                    }
+                }
+                'debug' {
+                    # The game's debug inbox holds one command: wait for each result.
+                    $text=(($t|Select-Object -Skip 2) -join ' ')
+                    try{$result=Invoke-DebugResult $r $text 12000}catch{$result="no result: $($_.Exception.Message)"}
+                    Write-Host "  $r $text -> $result"
+                }
             }
         }
         if($t[1] -in 'hold','press' -and $t[-1] -cne 'nowait'){Start-Sleep -Milliseconds ($(if($t[1] -eq 'hold'){[int]$t[3]}else{150})+100)}

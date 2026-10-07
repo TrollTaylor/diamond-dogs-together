@@ -81,15 +81,21 @@ $prepareCommands=@($startAst.FindAll({param($node)$node -is [Management.Automati
 Assert-True ($prepareCommands.Count -eq 1) 'one exact Prepare boundary'
 $prepareParameters=@($prepareCommands[0].CommandElements|Where-Object {$_ -is [Management.Automation.Language.CommandParameterAst]}|ForEach-Object {$_.ParameterName})
 Assert-True ('SkipSaves' -cin $prepareParameters -and 'SkipGraphics' -cin $prepareParameters) 'Prepare cannot copy stale lab saves or edit existing lab graphics'
-Assert-True (@($startAst.FindAll({param($node)$node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -ceq 'Copy-WorkerSaveTree'},$true)).Count -eq 0) 'Start never copies previous lab progress'
+Assert-True (@($startAst.FindAll({param($node)$node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -ceq 'Copy-WorkerSaveTree'},$true)).Count -eq 0) 'Start never copies previous lab progress through the old tree helper'
 Assert-True ($start.Contains('Assert-WorkerRealSaveSource $identity.UserData') -and $start.Contains('backup_receipt_sha256=Get-WorkerHash $backupReceipt') -and $start.Contains("backup_manifest_sha256=Get-WorkerHash (Join-Path `$freshBackup 'manifest.json')")) 'fresh save source and backup receipts are qualified'
 $startAssignments=@{}
-foreach($name in @('freshBackup','manifestBackup','saveRoot','seed','graphics')) {
+foreach($name in @('freshBackup','manifestBackup','saveRoot','graphics')) {
     $definition=@($startAst.FindAll({param($node)$node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left -is [Management.Automation.Language.VariableExpressionAst] -and $node.Left.VariablePath.UserPath -ceq $name},$true))
     Assert-True ($definition.Count -eq 1) ('actual fresh-save assignment '+$name)
     $startAssignments[$name]=$definition[0].Extent.Text
 }
-Assert-True ($startAssignments.seed -ceq "`$seed=Copy-SaveSeed -BackupDirectory `$freshBackup -SaveDir `$saveRoot -LocalSubdir '287700\local' -RemoteSubdir 'remote'") 'role seed reads only this run verified backup'
+# Two seed forms: the default reads only this run's verified real-save backup;
+# the explicit -SaveSeed lab opt-in copies each folder's own lab save copy
+# (never the real saves) into the fresh run directory.
+$seedDefinitions=@($startAst.FindAll({param($node)$node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left -is [Management.Automation.Language.VariableExpressionAst] -and $node.Left.VariablePath.UserPath -ceq 'seed'},$true)|ForEach-Object{$_.Extent.Text})
+Assert-True ($seedDefinitions.Count -eq 2) 'two seed forms'
+Assert-True ($seedDefinitions -ccontains "`$seed=Copy-SaveSeed -BackupDirectory `$freshBackup -SaveDir `$saveRoot -LocalSubdir '287700\local' -RemoteSubdir 'remote'") 'default role seed reads only this run verified backup'
+Assert-True ($start.Contains("[ValidateSet('real','lab')][string]`$SaveSeed='real'") -and $start.Contains("`$labSaves=Assert-WorkerPlainPath `$p.SaveDir -MustExist")) 'lab seed is an explicit opt-in from the folder lab save copy'
 Assert-True ($startAssignments.graphics -ceq "`$graphics=Join-Path `$saveRoot '287700\local\TPP_GRAPHICS_CONFIG'") 'graphics edits target the fresh role copy'
 $stop=[IO.File]::ReadAllText((Join-Path $SourceDirectory 'Stop-WorkerSession.ps1'))
 Assert-True ($stop.Contains('Get-WorkerLeasedProcess') -and $stop.Contains('MGSWORKERCTL1')) 'owned control shutdown'
@@ -204,7 +210,7 @@ try {
     foreach($role in @('host','guest')) {
         . ([scriptblock]::Create($startAssignments.saveRoot))
         Assert-True (!(Test-Path -LiteralPath $saveRoot)) 'each actual role seed path is initially absent'
-        . ([scriptblock]::Create($startAssignments.seed))
+        . ([scriptblock]::Create(@($seedDefinitions|Where-Object{$_ -clike '*Copy-SaveSeed*'})[0]))
         . ([scriptblock]::Create($startAssignments.graphics))
         Assert-True ($seed.Seeded -and $seed.Files -eq 3 -and (Test-WorkerDescendant $saveRoot $runDirectory)) 'actual role seed copies exactly the fresh backup files'
         Assert-True ((Get-WorkerHash (Join-Path $saveRoot '287700\local\TPP_GAME_DATA')) -ceq (Get-WorkerHash (Join-Path $source '287700\local\TPP_GAME_DATA'))) 'each role begins with current local progress'

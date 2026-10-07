@@ -15,7 +15,12 @@ param(
     [string]$ConfigPath,
     [ValidateRange(30,600)][int]$TimeoutSec=600,
     [ValidateRange(10,180)][int]$ReadyTimeoutSec=120,
-    [ValidateSet('animated','input')][string]$PartnerProfile='animated'
+    [ValidateSet('animated','input')][string]$PartnerProfile='animated',
+    # real: fresh copies of the real saves (a pending story demo can block the
+    # partner's two-player pack in Mother Base). lab: copies of each folder's
+    # existing Play-OfflineCoop lab saves (read only), the state earlier live
+    # runs used. The real saves are backed up and re-checked either way.
+    [ValidateSet('real','lab')][string]$SaveSeed='real'
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -157,7 +162,15 @@ try {
         $null=Assert-WorkerPlainPath $saveRoot
         $row.worker_save_dir=$saveRoot
         Assert-WorkerHash (Join-Path $freshBackup 'manifest.json') $session.real_saves.backup_manifest_sha256
-        $seed=Copy-SaveSeed -BackupDirectory $freshBackup -SaveDir $saveRoot -LocalSubdir '287700\local' -RemoteSubdir 'remote'
+        if($SaveSeed -ceq 'lab'){
+            $labSaves=Assert-WorkerPlainPath $p.SaveDir -MustExist
+            foreach($sub in @('287700\local','remote')){if(!(Test-Path -LiteralPath (Join-Path $labSaves $sub) -PathType Container)){throw "Lab save copy is missing $sub in $labSaves."}}
+            $null=New-Item -ItemType Directory -Path $saveRoot
+            foreach($sub in @('287700','remote')){Copy-Item -LiteralPath (Join-Path $labSaves $sub) -Destination $saveRoot -Recurse}
+            $seed=[pscustomobject]@{Seeded=$true;Files=@(Get-ChildItem -LiteralPath $saveRoot -Recurse -File).Count}
+        } else {
+            $seed=Copy-SaveSeed -BackupDirectory $freshBackup -SaveDir $saveRoot -LocalSubdir '287700\local' -RemoteSubdir 'remote'
+        }
         if(!$seed.Seeded -or !$seed.Files){throw 'Fresh worker save copy was not seeded from the verified backup.'}
         $row.save_seed=@(Get-WorkerCopyInventory $saveRoot)
         $row.mutex_suffix='worker_'+$role+'_'+$runId.Substring(0,8)

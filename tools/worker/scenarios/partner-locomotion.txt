@@ -1,32 +1,62 @@
-# Partner animation check: the guest watches the host's body (its partner)
-# from behind while the host runs, sprints, turns and stops.
+# Partner locomotion evaluation (normal animated profile, lab saves, noon).
+# The guest films the host's body (its partner) from behind-right while the
+# host walks, runs, sprints, stops, crouches, crawls, turns and strafes.
 title 200
 wait 4000
 waitgameplay host 120
 waitgameplay guest 240
-state
-placebehind guest host 7
+host debug time 43200
+host debug weather sunny
+wait 2500
+placebehind guest host 5 4
 both capture start
-host hold w 1500 nowait
-wait 700
-guest capture run-a
-wait 400
-guest capture run-b
+# run (W) then stop
+host hold w 1400 nowait
+guest burst run 6 150
+wait 600
+guest burst run-stop 4 150
+placebehind guest host 5 4
+# sprint (Shift+W)
+host hold shift+w 1400 nowait
+guest burst sprint 6 150
+wait 600
+guest burst sprint-stop 4 150
+placebehind guest host 5 4
+# walk (Ctrl+W)
+host hold ctrl+w 1400 nowait
+guest burst walk 6 150
+wait 600
+# crouch, crouch-walk, stand
+host press c
 wait 900
-host hold shift+w 1500 nowait
-wait 700
-guest capture sprint-a
-wait 400
-guest capture sprint-b
+guest burst crouch 3 200
+host hold w 1400 nowait
+guest burst crouch-move 6 150
+wait 600
+host press c
 wait 900
-guest capture stopped
-host mouse 600 0
-wait 300
-guest capture turn
-wait 1500
-guest capture after-turn
-host hold w+a 1500 nowait
-wait 800
-guest capture strafe
+placebehind guest host 5 4
+# prone (hold C), crawl, stand
+host hold c 500
 wait 1200
+guest burst prone 3 200
+host hold w 1400 nowait
+guest burst crawl 6 150
+wait 600
+host press c
+wait 800
+host press c
+wait 1200
+placebehind guest host 5 4
+# stationary turns
+host mouse 700 0
+guest burst turn-right 6 120
+wait 800
+host mouse -700 0
+guest burst turn-left 6 120
+wait 800
+# strafe
+host hold a 1400 nowait
+guest burst strafe 6 150
+wait 800
 state

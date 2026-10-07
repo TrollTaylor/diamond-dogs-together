@@ -19,7 +19,7 @@ struct RunContext {
 enum class Operation : std::uint8_t { press, hold, release, mouse, capture };
 enum class Device : std::uint8_t { keyboard, mouse };
 enum class Key : std::uint8_t {
-    w, a, s, d, enter, space, escape, e, r, shift, ctrl, one, two, f, lmb, rmb, count
+    w, a, s, d, enter, space, escape, e, r, shift, ctrl, one, two, f, c, q, x, z, tab, lmb, rmb, count
 };
 struct Command {
     std::uint64_t sequence{}, expires{}, keys{};

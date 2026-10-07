@@ -46,7 +46,7 @@ if($context.Count -ne 7 -or $context[0] -cne 'MGSWORKERCTX1' -or $context[1] -cn
    $context[3] -cne [string]$game.Id -or $context[4] -cne [string]$owned[0].creation_filetime -or $context[5] -cne $status.desktop -or
    $context[6] -cne 'admitted'){throw 'Native role context does not match its supervisor lease.'}
 if($Operation -in @('press','hold')) {
-    $known=@('w','a','s','d','enter','space','escape','e','r','shift','ctrl','1','2','f','lmb','rmb')
+    $known=@('w','a','s','d','enter','space','escape','e','r','shift','ctrl','1','2','f','c','q','x','z','tab','lmb','rmb')
     $tokens=$Keys.Split('+')
     if(!$tokens.Count -or @($tokens|Where-Object{$known -cnotcontains $_}).Count -or @($tokens|Sort-Object -Unique).Count -ne $tokens.Count){throw 'Unknown or duplicated typed worker key.'}
 }
@@ -75,7 +75,9 @@ try {
         elseif($Operation -eq 'mouse'){"MGSWORKER1 $($status.run_id) $Role $sequence $expires mouse $Dx $Dy 0`n"}
         else{"MGSWORKER1 $($status.run_id) $Role $sequence $expires $Operation 0 0 0`n"}
     $path=Join-Path $run ($Role+'.'+$suffix);$temp=$path+'.'+[Guid]::NewGuid().ToString('N')+'.tmp'
-    [IO.File]::WriteAllText($temp,$text,[Text.UTF8Encoding]::new($false));[IO.File]::Move($temp,$path,$true)
+    [IO.File]::WriteAllText($temp,$text,[Text.UTF8Encoding]::new($false))
+    # Bounded retry: sync clients (OneDrive) and scanners briefly hold the command file.
+    for($attempt=0;;$attempt++){try{[IO.File]::Move($temp,$path,$true);break}catch [UnauthorizedAccessException],[IO.IOException]{if($attempt -ge 49){Remove-Item -LiteralPath $temp -ErrorAction SilentlyContinue;throw};Start-Sleep -Milliseconds 10}}
     [IO.File]::WriteAllText($counterPath,[string]$sequence,[Text.UTF8Encoding]::new($false))
     [pscustomobject]@{run_id=$status.run_id;role=$Role;sequence=$sequence;operation=$Operation;expires_tick_ms=$expires;path=$path;gameplay_validated=$false}
 } finally {if($locked){$mutex.ReleaseMutex()};$mutex.Dispose()}
