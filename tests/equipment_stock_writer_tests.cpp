@@ -181,6 +181,10 @@ template<class Edit> void Refuse(Edit edit,const char* reason) {
 }
 }
 int main() {
+    // The request amounts: the qualified writer asks 0/0; only the research
+    // ammo experiment (MGS_LOCAL_STOCK46_AMMO_TEST, default OFF) asks 30 rounds / 210 stock.
+    Check(p::kQualifiedAmounts.stock==0 && p::kQualifiedAmounts.ammo==0 && p::kAmmoTestAmounts.stock==210 && p::kAmmoTestAmounts.ammo==30);
+    Check(p::RequestAmountsFor(false).ammo==0 && p::RequestAmountsFor(true).ammo==30 && !p::kAmmoTest);
     p::Authorization a;p::Context x{};x.enabled=x.owner=x.offline_gates=x.preload_queued=x.body_ready=true;
     x.mission=30010;x.base=base;x.player=P;x.remote_block=fixture_buffer+0x6A8;x.image_span=0xA01D000;
     a.Begin(30010);auto disabled=x;disabled.enabled=false;Check(std::strcmp(a.Try(disabled),"disabled")==0 && !a.Attempted());
