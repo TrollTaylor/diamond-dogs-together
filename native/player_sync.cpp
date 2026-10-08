@@ -286,13 +286,34 @@ std::size_t encode_input_frame(std::uint64_t session, std::uint32_t epoch, std::
 }
 
 std::size_t encode_input_frame_any(std::uint64_t session, std::uint32_t epoch, std::uint32_t sequence,
-                                   const partner_input::InputPacket& packet, std::uint8_t (&out)[input_frame_size_v3]) noexcept {
+                                   const partner_input::InputPacket& packet, std::uint8_t (&out)[input_frame_size_v4]) noexcept {
     std::memset(out, 0, sizeof(out));
     if (packet.version == input_version) {
         std::uint8_t v2[input_frame_size]{};
         const std::size_t n = encode_input_frame(session, epoch, sequence, packet, v2);
         std::memcpy(out, v2, n);
         return n;
+    }
+    if (packet.version == input_version_v4) {
+        if (session == 0 || epoch == 0 || sequence == 0 || !partner_input::ValidPacket(packet)) return 0;
+        // The v3 part, then the version byte, the payload length and the rates.
+        partner_input::InputPacket as3 = packet;
+        as3.version = input_version_v3;
+        as3.xflags = static_cast<std::uint8_t>(as3.xflags & ~partner_input::XFlag::Rates);
+        as3.rate_dash = as3.rate_crawl = as3.rate_crawl_factor = 0;
+        if (encode_input_frame_any(session, epoch, sequence, as3, out) != input_frame_size_v3) {
+            std::memset(out, 0, sizeof(out));
+            return 0;
+        }
+        put_header(out, wire::Kind::event, session, epoch, sequence, static_cast<std::uint32_t>(input_packet_size_v4));
+        auto* b = out + wire::header_size;
+        b[1] = input_version_v4;
+        b[66] = packet.xflags;
+        put(b + 72, packet.rate_dash, 2);
+        put(b + 74, packet.rate_crawl, 2);
+        put(b + 76, packet.rate_crawl_factor, 2);
+        b[78] = b[79] = 0;
+        return input_frame_size_v4;
     }
     if (packet.version != input_version_v3 || session == 0 || epoch == 0 || sequence == 0 || !partner_input::ValidPacket(packet))
         return 0;
@@ -324,20 +345,28 @@ std::size_t encode_input_frame_any(std::uint64_t session, std::uint32_t epoch, s
 bool decode_input_frame(const std::uint8_t* data, std::size_t size, std::uint64_t& session, std::uint32_t& epoch,
                         std::uint32_t& sequence, partner_input::InputPacket& out) noexcept {
     if (!data) return false;
-    const bool v3 = size == input_frame_size_v3;
+    const bool v4 = size == input_frame_size_v4;
+    const bool v3 = size == input_frame_size_v3 || v4;
     const bool v2 = size == input_frame_size || v3;
     if (!v2 && size != input_frame_size_v1) return false;
-    const std::size_t payload = v3 ? input_packet_size_v3 : v2 ? input_packet_size : input_packet_size_v1;
+    const std::size_t payload = v4 ? input_packet_size_v4 : v3 ? input_packet_size_v3 : v2 ? input_packet_size : input_packet_size_v1;
     if (!header_matches(data, wire::Kind::event, static_cast<std::uint32_t>(payload))) return false;
     const std::uint64_t frame_session = get64(data + 8);
     const std::uint32_t frame_epoch = get(data + 16);
     const std::uint32_t frame_sequence = get(data + 20);
     if (frame_session == 0 || frame_epoch == 0 || frame_sequence == 0) return false;
     const auto* b = data + wire::header_size;
-    if (b[0] != input_magic || b[1] != (v3 ? input_version_v3 : v2 ? input_version : 1) || b[39] != 0) return false;
+    if (b[0] != input_magic || b[1] != (v4 ? input_version_v4 : v3 ? input_version_v3 : v2 ? input_version : 1) || b[39] != 0) return false;
     if (!v2 && (b[3] != 0 || b[38] != 0)) return false;
     partner_input::InputPacket p{};
-    p.version = v3 ? 3 : v2 ? 2 : 1;
+    p.version = v4 ? 4 : v3 ? 3 : v2 ? 2 : 1;
+    if (v4) {
+        if (b[78] != 0 || b[79] != 0) return false;
+        p.rate_dash = static_cast<std::uint16_t>(get(b + 72, 2));
+        p.rate_crawl = static_cast<std::uint16_t>(get(b + 74, 2));
+        p.rate_crawl_factor = static_cast<std::uint16_t>(get(b + 76, 2));
+    }
+
     p.flags = b[2];
     if (v3) {
         if (b[70] != 0 || b[71] != 0) return false;

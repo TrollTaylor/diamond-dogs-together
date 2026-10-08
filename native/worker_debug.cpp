@@ -123,6 +123,20 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
     j.Add("\"remote_flags\":%u,\"remote_equip\":%u,\"body_equip\":",n.remote_flags,n.remote_equip);i32(n.body_equip);
     j.Add(",\"aim_match\":%s,\"aim_err_mdeg\":",Bool(n.aim_match));i32(n.aim_err_mdeg);
     j.Add(",\"manifest_rev\":%u,\"ammo_experiment\":%s}",n.manifest_rev,Bool(n.ammo_experiment));
+    // Native rates (docs/native-puppet.md "Rates"): x1000, records in rec+0x3C..+0x50 order.
+    const auto record=[&](bool ok,const std::int32_t (&f)[6]) noexcept {
+        if(!ok){j.Add("null");return;}
+        j.Add("{\"crawl\":");i32(f[0]);j.Add(",\"crawl_factor\":");i32(f[1]);j.Add(",\"crawl_rate\":");i32(f[2]);
+        j.Add(",\"dash\":");i32(f[3]);j.Add(",\"dash_factor\":");i32(f[4]);j.Add(",\"dash_rate\":");i32(f[5]);j.Add("}");
+    };
+    j.Add(",\"rates\":{\"setting\":\"%s\",\"id0\":",PartnerNativeRatesName(n.rates_setting));record(n.rates_id0_ok,n.rates_id0);
+    j.Add(",\"id1\":");record(n.rates_id1_ok,n.rates_id1);
+    j.Add(",\"id1_read\":");j.String(n.rates_id1_refusal,sizeof(n.rates_id1_refusal));
+    j.Add(",\"remote\":{\"valid\":%s,\"age_ms\":",Bool(n.rates_remote_ok));
+    if(n.rates_remote_age_ms==0xFFFFFFFFu) j.Add("null"); else j.Add("%u",n.rates_remote_age_ms);
+    j.Add(",\"dash\":%u,\"crawl\":%u,\"crawl_factor\":%u},\"mirror\":",n.rates_remote[0],n.rates_remote[1],n.rates_remote[2]);
+    j.String(n.rates_mirror,sizeof(n.rates_mirror));j.Add(",\"reason\":");j.String(n.rates_reason,sizeof(n.rates_reason));
+    j.Add(",\"writes\":%u,\"reapplied\":%u,\"restores\":%u,\"drops\":%u}",n.rates_writes,n.rates_reapplied,n.rates_restores,n.rates_drops);
     j.Add(",\"ring_fields\":[\"ms\",\"mode\",\"remote_stance\",\"body_stance\",\"remote_mmps\",\"body_mmps\",\"err_mm\",\"steer_mdeg\",\"held\",\"gun3c0\","
           "\"act\",\"rec_act\",\"rec_next\",\"rec_mag\",\"p1_forced\",\"recon_mode\",\"recon_action\",\"warp\"],\"ring\":[");
     for(std::size_t i=0;i<n.ring.count;++i){

@@ -116,7 +116,20 @@ int main() {
         const auto doc=NativeDocument(t,&n);
         if(!check(n>0 && ValidJson(doc) && doc.find(",\"native\":{\"drive\":\"legacy\",\"mode\":\"off\"")!=std::string::npos &&
                   doc.find("\"per_s\":null")!=std::string::npos && doc.find("\"ring\":[]")!=std::string::npos &&
-                  doc.find("\"runaway\":false,\"runaway_idle\":false,\"lag\":false,\"stop_grace\":false,\"dv_along_mmps\":0")!=std::string::npos))return 1;
+                  doc.find("\"runaway\":false,\"runaway_idle\":false,\"lag\":false,\"stop_grace\":false,\"dv_along_mmps\":0")!=std::string::npos &&
+                  doc.find("\"rates\":{\"setting\":\"off\",\"id0\":null,\"id1\":null,\"id1_read\":\"\",\"remote\":{\"valid\":false,\"age_ms\":0,")!=std::string::npos))return 1;
+    }
+    {
+        pn::Telemetry t{};
+        t.configured=true;t.rates_setting=mgscoop::PartnerNativeRates::mirror;t.rates_id0_ok=t.rates_id1_ok=true;
+        for(unsigned i=0;i<6;++i){t.rates_id0[i]=1200;t.rates_id1[i]=1000;}
+        t.rates_id1[4]=pn::kNull;t.rates_remote_ok=true;t.rates_remote_age_ms=0xFFFFFFFFu;t.rates_remote[0]=1200;
+        strcpy_s(t.rates_mirror,"ok");strcpy_s(t.rates_reason,"none");strcpy_s(t.rates_id1_refusal,"ok");t.rates_writes=3;
+        const auto doc=NativeDocument(t);
+        if(!check(ValidJson(doc) && doc.find("\"rates\":{\"setting\":\"mirror\",\"id0\":{\"crawl\":1200,")!=std::string::npos &&
+                  doc.find("\"dash_factor\":null,\"dash_rate\":1000}")!=std::string::npos &&
+                  doc.find("\"remote\":{\"valid\":true,\"age_ms\":null,\"dash\":1200,")!=std::string::npos &&
+                  doc.find("\"mirror\":\"ok\",\"reason\":\"none\",\"writes\":3,")!=std::string::npos))return 1;
     }
     {
         pn::Telemetry t{};

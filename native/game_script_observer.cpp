@@ -610,6 +610,10 @@ bool PartnerReadLookSource(void*, const pp::State& state, pp::LookSource& out) n
     return pp::ReadLookSource(partner_addresses, state, out);
 }
 std::uint32_t PartnerWindowSeq(void*) noexcept { return mgscoop::partner_input_hook::WindowSeq(); }
+bool PartnerReadRates(void*, const pp::State& state, std::uint32_t index, pp::RateRead& out) noexcept {
+    return pp::ReadRates(partner_addresses, state, index, out);
+}
+void PartnerForgetRates(void*) noexcept { mgscoop::partner_input_hook::ForgetRates(); }
 bool PartnerLinkLive(void*) noexcept {
     const auto info = mgscoop::partner_net::GetLinkInfo();
     return info.state == mgscoop::link::LinkState::connected ||
@@ -693,7 +697,7 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerApplyPosition, PartnerReadVelocity, PartnerLatestInput, PartnerInstallWrap, PartnerInterpMs, PartnerDmMotionCount,
     PartnerSampleRemoteWithTurns, PartnerReadLocalBody, PartnerInstallDefer, PartnerNativeInstall, PartnerDrainDeferStats,
     PartnerSetDefer, PartnerPublishIdentity, PartnerPublishWrapRoots, PartnerNativeTargets, PartnerReadGun1, PartnerReadLookSource,
-    PartnerWindowSeq, PartnerLinkLive, PartnerLinkSession, PartnerDrainReliable, kAmmoExperiment};
+    PartnerWindowSeq, PartnerLinkLive, PartnerLinkSession, PartnerDrainReliable, PartnerReadRates, PartnerForgetRates, kAmmoExperiment};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with

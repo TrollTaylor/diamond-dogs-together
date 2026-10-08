@@ -437,18 +437,18 @@ int main() {
         pi::Fill3(v3, src);
         Check(v3.version == 3 && v3.xflags == 0x0F && v3.heading_mrad == static_cast<std::int16_t>(std::lround((3.5 - 2 * 3.14159265358979323846) * 1000)) &&
               v3.inv_slot == 2 && v3.equip_rev == 9 && pi::ValidPacket(v3), "Fill3 builds a valid v3 packet");
-        std::uint8_t frame[input_frame_size_v3]{};
+        std::uint8_t frame[input_frame_size_v4]{};
         Check(input_frame_size_v3 == 100 && encode_input_frame_any(0x55, 7, 42, v3, frame) == 100, "v3 encodes 100 bytes");
         Check(frame[wire::header_size + 1] == 3 && frame[24] == 72 && frame[wire::header_size + 66] == 0x0F &&
               frame[wire::header_size + 67] == 2 && frame[wire::header_size + 68] == 9, "v3 version, payload length, xflags, inv, rev");
         std::uint64_t s = 0; std::uint32_t e = 0, seq = 0;
         pi::InputPacket got{};
-        Check(decode_input_frame(frame, sizeof(frame), s, e, seq, got) && got.version == 3 && got.look_pitch == -0.25f &&
+        Check(decode_input_frame(frame, input_frame_size_v3, s, e, seq, got) && got.version == 3 && got.look_pitch == -0.25f &&
               got.look_yaw == 2.5f && got.cam270 == 1.5f && got.cam274 == -0.75f && got.heading_mrad == v3.heading_mrad &&
               got.xflags == 0x0F && got.inv_slot == 2 && got.equip_rev == 9 && got.held == 0x8u && got.ly == -32767 && seq == 42,
               "v3 round trip");
         // v2 via the generic encoder; a legacy sender still encodes v2.
-        std::uint8_t any[input_frame_size_v3]{};
+        std::uint8_t any[input_frame_size_v4]{};
         Check(encode_input_frame_any(0x55, 7, 43, pkt, any) == input_frame_size && decode_input_frame(any, input_frame_size, s, e, seq, got) &&
               got.version == 2 && got.xflags == 0 && got.look_pitch == 0.0f, "legacy sender still encodes v2");
         std::uint8_t v2frame[input_frame_size]{};
@@ -492,6 +492,65 @@ int main() {
         Check(pi::ValidPacket(f) && !(f.xflags & pi::XFlag::Look) && !(f.xflags & pi::XFlag::Cam) && f.look_pitch == 0.0f &&
               f.inv_slot == 0xFF, "Fill3 clears invalid groups");
     }
+
+    // 11. Input frame v4 (native rates): 108 bytes, the sender's dash/crawl/crawl factor rates.
+    {
+        namespace pi = mgscoop::partner_input;
+        pi::InputPacket pkt{};
+        pkt.version = 2;
+        pkt.flags = pi::Flag::Valid;
+        pkt.held = 0x40004u; pkt.w4c = 0x40004u; pkt.ly = 32767; pkt.lmag = 65535;
+        pi::V3Source src{};
+        src.heading_valid = true; src.heading_rad = 0.5; src.inv_slot = 0xFF;
+        pi::InputPacket v4 = pkt;
+        pi::Fill3(v4, src);
+        pi::Fill4(v4, true, 1200, 1000, 1200);
+        Check(v4.version == 4 && (v4.xflags & pi::XFlag::Rates) && (v4.xflags & pi::XFlag::Heading) && v4.rate_dash == 1200 &&
+              v4.rate_crawl == 1000 && v4.rate_crawl_factor == 1200 && pi::ValidPacket(v4), "Fill4 builds a valid v4 packet");
+        std::uint8_t frame[input_frame_size_v4]{};
+        Check(input_frame_size_v4 == 108 && encode_input_frame_any(0x55, 7, 50, v4, frame) == 108, "v4 encodes 108 bytes");
+        Check(frame[wire::header_size + 1] == 4 && frame[24] == 80 && frame[wire::header_size + 66] == (pi::XFlag::Rates | pi::XFlag::Heading) &&
+              frame[wire::header_size + 72] == 0xB0 && frame[wire::header_size + 73] == 0x04 && frame[wire::header_size + 74] == 0xE8 &&
+              frame[wire::header_size + 76] == 0xB0 && frame[wire::header_size + 78] == 0 && frame[wire::header_size + 79] == 0,
+              "v4 version, payload length 80, xflags with Rates, rates little-endian at 72/74/76");
+        std::uint64_t s = 0; std::uint32_t e = 0, seq = 0;
+        pi::InputPacket got{};
+        Check(decode_input_frame(frame, input_frame_size_v4, s, e, seq, got) && got.version == 4 && got.rate_dash == 1200 &&
+              got.rate_crawl == 1000 && got.rate_crawl_factor == 1200 && (got.xflags & pi::XFlag::Rates) && got.held == 0x40004u &&
+              got.heading_mrad == v4.heading_mrad && seq == 50, "v4 round trip (EVADE held, rates)");
+        // Without readable rates: v4 with no Rates flag and zero fields.
+        pi::InputPacket none = pkt;
+        pi::Fill3(none, src);
+        pi::Fill4(none, false, 1200, 1000, 1200);
+        Check(none.version == 4 && !(none.xflags & pi::XFlag::Rates) && none.rate_dash == 0 && pi::ValidPacket(none) &&
+              encode_input_frame_any(0x55, 7, 51, none, frame) == 108 && decode_input_frame(frame, 108, s, e, seq, got) &&
+              got.rate_dash == 0 && !(got.xflags & pi::XFlag::Rates), "v4 without rates");
+        pi::InputPacket out_of_range = pkt;
+        pi::Fill3(out_of_range, src);
+        pi::Fill4(out_of_range, true, 2001, 1000, 1000);
+        Check(!(out_of_range.xflags & pi::XFlag::Rates) && out_of_range.rate_dash == 0, "Fill4 drops out-of-range rates");
+        auto refused4 = [&](void (*edit)(pi::InputPacket&)) {
+            pi::InputPacket b = v4;
+            edit(b);
+            std::uint8_t f4[input_frame_size_v4]{};
+            return !pi::ValidPacket(b) && encode_input_frame_any(0x55, 7, 52, b, f4) == 0;
+        };
+        Check(refused4([](pi::InputPacket& b) { b.rate_dash = 499; }), "rate below 0.5 refused");
+        Check(refused4([](pi::InputPacket& b) { b.rate_crawl_factor = 2001; }), "rate above 2.0 refused");
+        Check(refused4([](pi::InputPacket& b) { b.xflags &= static_cast<std::uint8_t>(~pi::XFlag::Rates); }), "rates without their xflag refused");
+        Check(refused4([](pi::InputPacket& b) { b.version = 3; }), "rates in a v3 packet refused");
+        Check(refused4([](pi::InputPacket& b) { b.xflags |= 0x20; }), "unknown v4 xflags refused");
+        std::uint8_t tweak[input_frame_size_v4];
+        Check(encode_input_frame_any(0x55, 7, 50, v4, frame) == 108, "re-encode v4");
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 78] = 1;
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "v4 reserved byte 78 refused");
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 1] = 3;
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "108-byte frame with version 3 refused");
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 72] = 0xF3; tweak[wire::header_size + 73] = 0x01;
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "rate 499 refused on decode");
+        Check(!decode_input_frame(frame, input_frame_size_v3, s, e, seq, got), "a v4 frame cut to 100 bytes is refused");
+    }
+
 
     std::printf("%u checks passed; player_sync transform codec, fixed-buffer frames, v2 anim extension, look and input frames verified\n", checks);
     return 0;

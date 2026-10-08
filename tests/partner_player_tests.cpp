@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <string>
 #include "mgscoop/partner_player.hpp"
 #include "mgscoop/crash_probe.hpp"
@@ -991,6 +992,46 @@ int main() {
         Put<std::uint32_t>(node, c::gun_node_row, 0x3D);
         Put<std::uintptr_t>(prim, c::prim_node, Addr(rec));
         Check(!pp::ReadGun1(a, s, g) && std::strcmp(g.refusal, "gun_prim") == 0, "prim+0x38 must be the node");
+        // Movement rate records (native rates): sp = *(PS+0x260), rec by id.
+        unsigned char* rates = w.region + 0x18000;
+        static std::uintptr_t sp_vt[2]{}, rec_vt[2]{};
+        a.rate_sp_vtable = Addr(sp_vt);
+        a.rate_rec_vtable = Addr(rec_vt);
+        unsigned char* sp[2] = {rates, rates + 0x40};
+        unsigned char* rrec[2] = {rates + 0x100, rates + 0x200};
+        for (unsigned k = 0; k < 2; ++k) {
+            Put<std::uintptr_t>(sp[k], 0, Addr(sp_vt));
+            Put<std::uint32_t>(sp[k], c::sp_base_id, k);
+            Put<std::uint32_t>(sp[k], c::sp_count, 1);
+            Put<std::uintptr_t>(sp[k], c::sp_records, Addr(rrec[k]));
+            Put<std::uintptr_t>(rrec[k], 0, Addr(rec_vt));
+            const float f[6] = {1.0f, k ? 1.0f : 1.2f, k ? 1.0f : 1.2f, k ? 1.0f : 1.2f, 1.0f, k ? 1.0f : 1.2f};
+            std::memcpy(rrec[k] + c::rate_first, f, sizeof(f));
+            Put<std::uintptr_t>(w.ps[k], c::ps_rates, Addr(sp[k]));
+        }
+        pp::RateRead rr{};
+        Check(pp::ReadRates(a, s, 1, rr) && !rr.refusal && rr.sp == Addr(sp[1]) && rr.rec == Addr(rrec[1]) && rr.id == 1 && rr.f[3] == 1.0f,
+              "rates: instance 1's record (the mirror target)");
+        Check(pp::ReadRates(a, s, 0, rr) && rr.id == 0 && rr.rec == Addr(rrec[0]) && rr.f[3] == 1.2f && rr.f[1] == 1.2f,
+              "rates: the local player's record (the sender's)");
+        Put<std::uintptr_t>(sp[1], 0, Addr(rec_vt));
+        Check(!pp::ReadRates(a, s, 1, rr) && std::strcmp(rr.refusal, "sp_vtable") == 0 && !rr.rec, "rates: sp vtable refused");
+        Put<std::uintptr_t>(sp[1], 0, Addr(sp_vt));
+        Put<std::uint32_t>(sp[1], c::sp_count, 0);
+        Check(!pp::ReadRates(a, s, 1, rr) && std::strcmp(rr.refusal, "bounds") == 0, "rates: id outside the record range");
+        Put<std::uint32_t>(sp[1], c::sp_count, 1);
+        Put<std::uintptr_t>(rrec[1], 0, Addr(sp_vt));
+        Check(!pp::ReadRates(a, s, 1, rr) && std::strcmp(rr.refusal, "rec_vtable") == 0, "rates: record vtable refused");
+        Put<std::uintptr_t>(rrec[1], 0, Addr(rec_vt));
+        Put<float>(rrec[1], c::rate_first + 4, std::numeric_limits<float>::quiet_NaN());
+        Check(!pp::ReadRates(a, s, 1, rr) && std::strcmp(rr.refusal, "nonfinite") == 0, "rates: non-finite refused");
+        Put<float>(rrec[1], c::rate_first + 4, 1.0f);
+        Put<std::uintptr_t>(w.ps[1], c::ps_rates, 0);
+        Check(!pp::ReadRates(a, s, 1, rr) && std::strcmp(rr.refusal, "sp") == 0, "rates: no sp");
+        pp::Addresses unpinned = a;
+        unpinned.rate_rec_vtable = 0;
+        Check(!pp::ReadRates(unpinned, s, 0, rr) && std::strcmp(rr.refusal, "unpinned") == 0, "rates: unpinned vtables refused");
+        Check(!pp::ReadRates(a, s, 2, rr) && std::strcmp(rr.refusal, "index") == 0, "rates: index 0/1 only");
         w.Reset();
     }
 

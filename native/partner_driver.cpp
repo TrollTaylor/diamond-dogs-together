@@ -9,6 +9,7 @@
 #include <cstdarg>
 #include <cstring>
 #include "mgscoop/partner_driver.hpp"
+#include "mgscoop/partner_rates.hpp"
 #include "mgscoop/partner_upper_probe.hpp"
 #include "partner_player_contract.hpp"
 
@@ -359,6 +360,24 @@ pin::V3Source SenderV3(const Driver& d, const Hooks& h, const pp::State& st, con
     return v;
 }
 
+// Native rates (docs/native-puppet.md "Rates"): the remote's wire rates stay
+// live this long after the last v4 frame carrying them; both records are read
+// at most every kRatesReadMs.
+constexpr std::uint64_t kRatesRemoteMs = 2000;
+constexpr std::uint64_t kRatesReadMs = 100;
+bool RatesRemoteLive(const Mission& m, std::uint64_t now) noexcept {
+    return m.rates_remote_ok && now >= m.rates_remote_ms && now - m.rates_remote_ms <= kRatesRemoteMs;
+}
+partner_rates::Record RatesRecord(const pp::RateRead& r) noexcept {
+    partner_rates::Record out{};
+    for (unsigned i = 0; i < partner_rates::kFields; ++i) out.f[i] = r.f[i];
+    return out;
+}
+std::int32_t RateMilli(float value) noexcept {
+    if (!std::isfinite(value) || value > 2000000.0f || value < -2000000.0f) return INT32_MIN;
+    return static_cast<std::int32_t>(std::lround(static_cast<double>(value) * 1000.0));
+}
+
 // Build the Arm from the resolved targets and the current settings.
 pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& t, const pp::State& st, const partner::Tick& tick,
                   std::uint64_t now, bool enabled) noexcept {
@@ -413,8 +432,16 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
     if (!look_slot) a.naim = PartnerNativeAim::off;
     a.steer_rad = set.native_active ? m.steer_rad : 0.0;
     a.mag_scale = set.native_active && m.mag_scale > 0.0 ? m.mag_scale : 1.0;
+    // Native rates: mirror the remote's rates into instance 1's own record
+    // (validated on this tick, re-validated in the drain window), or restore.
+    const bool rates_record = m.rates_id1_ok && m.rates_id1.sp && m.rates_id1.rec;
+    a.rates_mirror = set.native_active && set.nrates == PartnerNativeRates::mirror && rates_record && RatesRemoteLive(m, now);
+    a.rates_sp = rates_record ? m.rates_id1.sp : 0;
+    a.rates_rec = rates_record ? m.rates_id1.rec : 0;
+    a.rates_id = rates_record ? m.rates_id1.id : 0;
+    a.rates_epoch = d.rates_epoch;
+    for (unsigned i = 0; i < 3; ++i) a.rates_remote[i] = m.rates_remote[i];
     (void)st;
-    (void)now;
     return a;
 }
 
@@ -1288,7 +1315,15 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
             pin::SenderFill(m.sender, pkt);
             // Native puppet: v3 (look, camera, heading) only when this copy runs
             // the native drive; the peer refuses aim with no_v3 otherwise.
-            if (d.settings.drive == PartnerDrive::native) pin::Fill3(pkt, SenderV3(d, h, st, snap));
+            if (d.settings.drive == PartnerDrive::native) {
+                pin::Fill3(pkt, SenderV3(d, h, st, snap));
+                // v4: the local player's own movement rates (the peer mirrors them).
+                if (d.settings.nrates != PartnerNativeRates::off) {
+                    partner_rates::Wire w{};
+                    const bool ok = m.rates_id0_ok && partner_rates::ToWire(RatesRecord(m.rates_id0), w);
+                    pin::Fill4(pkt, ok, w.dash, w.crawl, w.crawl_factor);
+                }
+            }
             if (h.submit_input(h.context, pkt)) pin::SenderSent(m.sender);
         }
     }
@@ -1732,6 +1767,13 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     in.link_live = h.link_live ? h.link_live(h.context) : (h.net_running && h.net_running(h.context));
     pin::Sample latest{};
     const bool latest_ok = h.latest_input && h.latest_input(h.context, latest) && latest.valid;
+    if (latest_ok && latest.packet.version >= 4 && (latest.packet.xflags & pin::XFlag::Rates)) {
+        m.rates_remote[0] = latest.packet.rate_dash;
+        m.rates_remote[1] = latest.packet.rate_crawl;
+        m.rates_remote[2] = latest.packet.rate_crawl_factor;
+        m.rates_remote_ok = true;
+        m.rates_remote_ms = now;
+    }
     in.input_valid = latest_ok;
     in.input_age_ms = latest_ok ? latest.age_ms : 0xFFFFFFFFu;
     in.dm_idle = m.dmmap.phase == pdm::Phase::idle && !m.dmmap.owned;
@@ -1833,6 +1875,60 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
                 gun_ok ? "ok" : (gun.refusal ? gun.refusal : "unavailable")))) {
             if (change) EmitNative(m, h, m.native_gun_cap, "partner_native_gun", "%s", line);
             else Emit(h, line);
+        }
+    }
+    // Native rates: both records at most every kRatesReadMs (read-only; the
+    // mirror itself runs in the drain window through the Arm).
+    if (set.nrates == PartnerNativeRates::off || !realized || !h.read_rates) {
+        m.rates_id0_ok = m.rates_id1_ok = false;
+        m.rates_id0 = m.rates_id1 = pp::RateRead{};
+    } else if (!m.rates_read_ms || now - m.rates_read_ms >= kRatesReadMs) {
+        m.rates_read_ms = now ? now : 1;
+        m.rates_id0_ok = h.read_rates(h.context, st, 0, m.rates_id0);
+        m.rates_id1_ok = h.read_rates(h.context, st, 1, m.rates_id1);
+    }
+    const bool rates_remote_live = RatesRemoteLive(m, now);
+    const char* rates_mirror = "off";
+    const char* rates_reason = set.nrates == PartnerNativeRates::log ? "log" : "none";
+    if (set.nrates == PartnerNativeRates::mirror) {
+        if (is.native.rates_latched) {
+            rates_mirror = "latched";
+            rates_reason = partner_rates::ReasonName(static_cast<partner_rates::Reason>(is.native.rates_reason));
+        } else if (is.native.rates_applied) {
+            rates_mirror = "ok";
+        } else {
+            rates_mirror = "wait";
+            rates_reason = !m.native_out.active ? "inactive" : !rates_remote_live ? "no_remote" : !m.rates_id1_ok ? "no_record" : "pending";
+        }
+    }
+    if (set.nrates != PartnerNativeRates::off) {
+        const auto triple = [](const pp::RateRead& r, bool ok, std::int32_t (&out)[3]) noexcept {
+            out[0] = ok ? RateMilli(r.f[partner_rates::kDash]) : INT32_MIN;
+            out[1] = ok ? RateMilli(r.f[partner_rates::kCrawl]) : INT32_MIN;
+            out[2] = ok ? RateMilli(r.f[partner_rates::kCrawlFactor]) : INT32_MIN;
+        };
+        std::int32_t r0[3]{}, r1[3]{};
+        triple(m.rates_id0, m.rates_id0_ok, r0);
+        triple(m.rates_id1, m.rates_id1_ok, r1);
+        std::uint64_t key = 1469598103934665603ull;
+        const auto mix = [&key](std::uint64_t v) noexcept { key = (key ^ v) * 1099511628211ull; };
+        for (unsigned i = 0; i < 3; ++i) {
+            mix(static_cast<std::uint32_t>(r0[i]));
+            mix(static_cast<std::uint32_t>(r1[i]));
+            mix(rates_remote_live ? m.rates_remote[i] : 0u);
+        }
+        mix(reinterpret_cast<std::uintptr_t>(rates_mirror));
+        mix(reinterpret_cast<std::uintptr_t>(rates_reason));
+        if (!m.rates_logged || key != m.rates_logged_key) {
+            m.rates_logged = true;
+            m.rates_logged_key = key;
+            EmitNative(m, h, m.native_rates_cap, "partner_native_rates",
+                       "partner_native_rates; setting=%s; mirror=%s; reason=%s; id0=%d,%d,%d; id1=%d,%d,%d; id1_read=%s; remote=%u,%u,%u; "
+                       "remote_live=%u; writes=%u; reapplied=%u; restores=%u; drops=%u\r\n",
+                       PartnerNativeRatesName(set.nrates), rates_mirror, rates_reason, r0[0], r0[1], r0[2], r1[0], r1[1], r1[2],
+                       m.rates_id1_ok ? "ok" : (m.rates_id1.refusal ? m.rates_id1.refusal : "unread"), unsigned(m.rates_remote[0]),
+                       unsigned(m.rates_remote[1]), unsigned(m.rates_remote[2]), rates_remote_live ? 1u : 0u, is.native.rates_writes,
+                       is.native.rates_reapplied, is.native.rates_restores, is.native.rates_drops);
         }
     }
     // Parity windows (10 s).
@@ -1950,6 +2046,24 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     t.aim_err_mdeg = pnat::kNull;
     t.manifest_rev = m.equip.have ? m.equip.manifest.revision : 0u;
     t.ammo_experiment = h.ammo_experiment;
+    t.rates_setting = set.nrates;
+    t.rates_id0_ok = m.rates_id0_ok;
+    t.rates_id1_ok = m.rates_id1_ok;
+    for (unsigned i = 0; i < 6; ++i) {
+        t.rates_id0[i] = m.rates_id0_ok ? RateMilli(m.rates_id0.f[i]) : pnat::kNull;
+        t.rates_id1[i] = m.rates_id1_ok ? RateMilli(m.rates_id1.f[i]) : pnat::kNull;
+    }
+    CopyText(t.rates_id1_refusal, sizeof(t.rates_id1_refusal),
+             m.rates_id1_ok ? "ok" : (m.rates_id1.refusal ? m.rates_id1.refusal : "unread"));
+    t.rates_remote_ok = rates_remote_live;
+    t.rates_remote_age_ms = m.rates_remote_ok && now >= m.rates_remote_ms ? Clamp32(now - m.rates_remote_ms) : 0xFFFFFFFFu;
+    for (unsigned i = 0; i < 3; ++i) t.rates_remote[i] = m.rates_remote_ok ? m.rates_remote[i] : 0u;
+    CopyText(t.rates_mirror, sizeof(t.rates_mirror), rates_mirror);
+    CopyText(t.rates_reason, sizeof(t.rates_reason), rates_reason);
+    t.rates_writes = is.native.rates_writes;
+    t.rates_reapplied = is.native.rates_reapplied;
+    t.rates_restores = is.native.rates_restores;
+    t.rates_drops = is.native.rates_drops;
     if (!m.rate_ok) {
         m.rate_ok = true;
         m.rate_ms_native = now;
@@ -2133,6 +2247,8 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.nfire = lab.partner_native_fire;
     d.settings.steer_deg = lab.partner_native_steer_deg;
     d.settings.trim_pct = lab.partner_native_trim_pct;
+    d.settings.nrates = lab.partner_native_rates;
+
     d.settings.play_mode = lab.mode == LabMode::play;
     d.look_forced_rev = 1;
     partner_recon::Reset(d.mission.recon);
@@ -2152,6 +2268,10 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
     if (h.set_defer && d.settings.drive == PartnerDrive::native)
         h.set_defer(h.context, false, EffectivePartnerDefer(d.settings.drive, d.settings.defer));
     WithdrawNativeTargets(d.mission, h);
+    // Native rates: the old mission's record is never written again (before
+    // the disarmed Arm, so the hook drops instead of restoring); a new epoch.
+    if (h.forget_rates) h.forget_rates(h.context);
+    if (!++d.rates_epoch) d.rates_epoch = 1;
     DisarmInput(d, h, "mission_start");
     if (d.mission.dm_patched) RevertDm(d, h, "mission_start");
     PublishDisarmed(d, h);
@@ -2186,6 +2306,7 @@ void MissionEnd(Driver& d, const Hooks& h) noexcept {
         h.set_defer(h.context, false, EffectivePartnerDefer(d.settings.drive, d.settings.defer));
     d.mission.native_defer_armed = false;
     WithdrawNativeTargets(d.mission, h);
+    if (h.forget_rates) h.forget_rates(h.context);
     DisarmInput(d, h, "mission_end");
     if (d.mission.dm_patched) RevertDm(d, h, "mission_end");
     d.mission.cfg_ready = false;

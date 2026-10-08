@@ -123,6 +123,16 @@ struct NativeStats {
     bool rec_ok;
     std::uint32_t rec_act, rec_next;       // rec+0x2A0 current act, rec+0x2A1 requested next act
     std::int32_t rec_mag, rec_heading_mrad;  // rec+0x2C0 move magnitude x1000, rec+0x2C4 heading
+    // Native rates mirror (docs/native-puppet.md "Rates"): whether instance
+    // 1's record holds the mirrored rates (applied) or the mirror latched for
+    // the epoch (reason: partner_rates::Reason), process totals of plans that
+    // wrote (writes), of game rewrites taken over (reapplied), of restores, of
+    // states dropped without a write (forget, record or epoch change), and
+    // the last written {dash, crawl, crawl factor} x 1000.
+    bool rates_applied, rates_latched;
+    std::uint32_t rates_reason;
+    std::uint32_t rates_writes, rates_reapplied, rates_restores, rates_drops;
+    std::uint32_t rates_written[3];
 };
 
 // Drained by the driver. Counters are process-lifetime totals (the driver
@@ -155,6 +165,11 @@ using JobCallFn = void (*)(void* go, const void* param) noexcept;
 bool RunJobWindow(void* go, const void* param, std::uint32_t block, JobCallFn job, partner_input::Consumer consumer) noexcept;
 // True while the 5 bytes at 0x9C2B51 still call our stub (1 Hz check).
 bool PatchLive(const void* base) noexcept;
+// Native rates: drop the mirror state without writing anything (MissionEnd /
+// MissionStart: the record dies with the mission). Any thread; the hook
+// thread applies it before its next rates step.
+void ForgetRates() noexcept;
+
 
 namespace detail {
 // Test seams (also used by Install). BlockMatches ignores the retargetable

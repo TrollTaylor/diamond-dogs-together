@@ -188,6 +188,8 @@ Addresses AddressesFor(const void* base) noexcept {
     a.gun_node_vtable = b + c::gun_node_vtable_rva;
     a.gun_prim_vtable = b + c::gun_prim_vt_rva;
     a.gun_iface_vtable = b + c::gun_iface_vt_rva;
+    a.rate_sp_vtable = b + c::rate_sp_vtable_rva;
+    a.rate_rec_vtable = b + c::rate_rec_vtable_rva;
     return a;
 }
 
@@ -1031,8 +1033,39 @@ bool ReadGun1(const Addresses& a, const State& s, Gun1& out) noexcept {
     return true;
 }
 
+bool ReadRates(const Addresses& a, const State& s, std::uint32_t index, RateRead& out) noexcept {
+    const Preserve preserve;
+    out = RateRead{};
+    static_assert(c::rate_count == 6 && sizeof(out.f) == 6 * sizeof(float), "rec+0x3C..+0x53");
+    if (!a.rate_sp_vtable || !a.rate_rec_vtable) { out.refusal = "unpinned"; return false; }
+    // The state guards (index 1 = the write guards' partner index; the read itself may be instance 0, the sender).
+    if (const char* why = CheckWrite(Refusal::none, s, 1, false, WriteKind::restore)) { out.refusal = why; return false; }
+    if (index >= 2) { out.refusal = "index"; return false; }
+    Block b{};
+    if (const char* why = ResolveCore(a, s, index, b)) { out.refusal = why; return false; }
+    std::uintptr_t sp = 0, sp_vt = 0, recs = 0, rec_vt = 0;
+    std::uint32_t base = 0, count = 0;
+    if (!ReadValue(b.ps + c::ps_rates, sp) || !sp) { out.refusal = "sp"; return false; }
+    if (!ReadValue(sp, sp_vt) || sp_vt != a.rate_sp_vtable) { out.refusal = "sp_vtable"; return false; }
+    if (!ReadValue(sp + c::sp_base_id, base) || !ReadValue(sp + c::sp_count, count) || b.id < base || b.id - base >= count ||
+        count > 64) { out.refusal = "bounds"; return false; }
+    if (!ReadValue(sp + c::sp_records, recs) || !recs) { out.refusal = "rec"; return false; }
+    const std::uintptr_t rec = recs + static_cast<std::uintptr_t>(b.id - base) * c::rate_rec_stride;
+    if (!ReadValue(rec, rec_vt) || rec_vt != a.rate_rec_vtable) { out.refusal = "rec_vtable"; return false; }
+    float f[6]{};
+    if (!ReadBlock(rec + c::rate_first, f, sizeof(f))) { out.refusal = "rec"; return false; }
+    for (float v : f)
+        if (!std::isfinite(v)) { out.refusal = "nonfinite"; return false; }
+    out.sp = sp;
+    out.rec = rec;
+    out.id = b.id;
+    std::memcpy(out.f, f, sizeof(f));
+    return true;
+}
+
 const char* ResolveDm(const Addresses& a, const State& s, DmTargets& out) noexcept {
     const Preserve preserve;
+
     out = DmTargets{};
     if (const char* reason = CheckWrite(Refusal::none, s, 1, false, WriteKind::restore)) return out.refusal = reason;
     out.g_ok = ReadValue(s.P + c::p_g, out.g_value) && out.g_value && out.g_value == a.script_object;

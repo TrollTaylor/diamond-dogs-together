@@ -1,5 +1,6 @@
 // Original MGS Co-op round 3 input lever: pure pad logic (portable).
 #include "mgscoop/partner_input.hpp"
+#include "mgscoop/partner_rates.hpp"
 #include <cmath>
 #include <cstring>
 
@@ -121,13 +122,20 @@ InputPacket Quantize(const PadSnapshot& s, std::int32_t cam_cdeg) noexcept {
 }
 
 namespace {
+bool NoV4(const InputPacket& p) noexcept { return p.rate_dash == 0 && p.rate_crawl == 0 && p.rate_crawl_factor == 0; }
 bool NoV3(const InputPacket& p) noexcept {
     return p.look_pitch == 0.0f && p.look_yaw == 0.0f && p.cam270 == 0.0f && p.cam274 == 0.0f && p.heading_mrad == 0 &&
-           p.xflags == 0 && p.inv_slot == 0 && p.equip_rev == 0;
+           p.xflags == 0 && p.inv_slot == 0 && p.equip_rev == 0 && NoV4(p);
 }
 bool In(float v, float limit) noexcept { return std::isfinite(v) && v >= -limit && v <= limit; }
+bool RateIn(std::uint16_t milli) noexcept { return milli >= partner_rates::kMinMilli && milli <= partner_rates::kMaxMilli; }
+bool ValidV4(const InputPacket& p) noexcept {
+    if (p.xflags & XFlag::Rates) return RateIn(p.rate_dash) && RateIn(p.rate_crawl) && RateIn(p.rate_crawl_factor);
+    return NoV4(p);
+}
 bool ValidV3(const InputPacket& p) noexcept {
-    if ((p.xflags & ~XFlag::Known) != 0) return false;
+    if ((p.xflags & ~(p.version >= 4 ? XFlag::KnownV4 : XFlag::Known)) != 0) return false;
+    if (p.version >= 4 ? !ValidV4(p) : !NoV4(p)) return false;
     if (!In(p.look_pitch, kMaxLookPitch) || !In(p.look_yaw, kMaxLookYaw) || !In(p.cam270, kMaxCamField) || !In(p.cam274, kMaxCamField))
         return false;
     if (p.heading_mrad < -kMaxHeadingMrad || p.heading_mrad > kMaxHeadingMrad) return false;
@@ -164,11 +172,24 @@ void Fill3(InputPacket& p, const V3Source& v) noexcept {
     p.equip_rev = v.equip_rev;
 }
 
+void Fill4(InputPacket& p, bool valid, std::uint16_t dash, std::uint16_t crawl, std::uint16_t crawl_factor) noexcept {
+    p.version = 4;
+    p.xflags = static_cast<std::uint8_t>(p.xflags & ~XFlag::Rates);
+    p.rate_dash = p.rate_crawl = p.rate_crawl_factor = 0;
+    if (valid && RateIn(dash) && RateIn(crawl) && RateIn(crawl_factor)) {
+        p.xflags = static_cast<std::uint8_t>(p.xflags | XFlag::Rates);
+        p.rate_dash = dash;
+        p.rate_crawl = crawl;
+        p.rate_crawl_factor = crawl_factor;
+    }
+}
+
 bool ValidPacket(const InputPacket& p) noexcept {
     if ((p.flags & ~Flag::Known) != 0 || p.lx == -32768 || p.ly == -32768 || p.rx == -32768 || p.ry == -32768 ||
         p.ldir < -kMaxDir || p.ldir > kMaxDir || p.cam_cdeg < kCamMin || p.cam_cdeg > kCamMax) return false;
     if (p.version == 1) return p.edge_seq == 0 && p.edge_rep == 0 && p.long12 == 0 && p.tap12 == 0 && NoV3(p);
-    if ((p.version != 2 && p.version != 3) || p.edge_rep > kEdgeRepeats) return false;
+    if ((p.version < 2 || p.version > 4) || p.edge_rep > kEdgeRepeats) return false;
+
     if (p.version == 2 ? !NoV3(p) : !ValidV3(p)) return false;
     // No edge set: no edge words.
     if (p.edge_seq == 0) return p.edge_rep == 0 && p.w50 == 0 && p.w54 == 0 && p.tap12 == 0;

@@ -73,6 +73,8 @@ struct Addresses {
     std::uintptr_t gun_node_vtable;     // 0x2306628
     std::uintptr_t gun_prim_vtable;     // 0x23B3E80
     std::uintptr_t gun_iface_vtable;    // 0x23B3FA0 (prim+0x30)
+    // Native rates: the PS+0x260 interface (0x23AD380) and the per-id rate record (0x23AD2B0).
+    std::uintptr_t rate_sp_vtable, rate_rec_vtable;
 };
 Addresses AddressesFor(const void* base) noexcept;
 
@@ -316,6 +318,22 @@ struct Gun1 {
     std::uint8_t mode;
 };
 bool ReadGun1(const Addresses& addresses, const State& state, Gun1& out) noexcept;
+// Instance `index`'s movement rate record (docs/native-puppet.md "Rates";
+// read-only): the core chain of `index` (ResolveCore), sp = *(PS+0x260) with
+// the interface vtable 0x23AD380 exactly, base = *(u32*)(sp+8), count =
+// *(u32*)(sp+0xC), id = ids[index] with id - base < count, rec = *(sp+0x10) +
+// (id - base)*0x88 with the record vtable 0x23AD2B0 exactly, and its six
+// floats rec+0x3C..+0x50 (partner_rates::Record order), all finite.
+// Refusals: the ResolveCore reasons | sp | sp_vtable | bounds | rec |
+// rec_vtable | nonfinite.
+struct RateRead {
+    const char* refusal;
+    std::uintptr_t sp, rec;
+    std::uint32_t id;
+    float f[6];
+};
+bool ReadRates(const Addresses& addresses, const State& state, std::uint32_t index, RateRead& out) noexcept;
+
 
 // --- Round 3: direct motion (pure reads plus one restoration write) ---------
 // g = *(P+0x48) == 0x2C1BF20 (g); block 1 as ResolveBlock checks it; iface =

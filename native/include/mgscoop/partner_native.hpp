@@ -283,7 +283,24 @@ struct Telemetry {
     bool gun_enabled, gun_read_ok, node_active, aim_match, ammo_experiment;
     std::uint32_t gun3c0, mode2c1, remote_flags, remote_equip, manifest_rev;
     std::int32_t body_equip, aim_err_mdeg;
+    // Native rates (docs/native-puppet.md "Rates"): the setting; instance 0's
+    // (the local player) and instance 1's (the partner body) rate records
+    // rec+0x3C..+0x50 x 1000 in partner_rates::Field order (ok false: unread,
+    // `refusal` names why); the remote's wire rates {dash +0x48, crawl +0x3C,
+    // crawl factor +0x40} x 1000 and their age; the mirror state off|wait|
+    // ok|latched with its reason, and the hook's process totals.
+    PartnerNativeRates rates_setting;
+    bool rates_id0_ok, rates_id1_ok;
+    std::int32_t rates_id0[6], rates_id1[6];
+    char rates_id1_refusal[12];
+    bool rates_remote_ok;
+    std::uint32_t rates_remote_age_ms;
+    std::uint32_t rates_remote[3];
+    char rates_mirror[8];
+    char rates_reason[12];
+    std::uint32_t rates_writes, rates_reapplied, rates_restores, rates_drops;
     Ring ring;
 };
+
 
 } // namespace mgscoop::partner_native

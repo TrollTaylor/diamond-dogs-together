@@ -498,6 +498,8 @@ void TestAccumulate() {
     bad.edge_rep = 0; bad.version = 3;
     Check(pi::ValidPacket(bad), "version 3 (native) with no v3 fields is valid");
     bad.version = 4;
+    Check(pi::ValidPacket(bad), "version 4 (native rates) with no rates is valid");
+    bad.version = 5;
     Check(!pi::ValidPacket(bad), "unknown version refused");
     bad.version = 1; bad.long12 = 1;
     Check(!pi::ValidPacket(bad), "v1 with v2 fields refused");

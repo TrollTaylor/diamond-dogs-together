@@ -9,6 +9,8 @@
 #include <initializer_list>
 #include "mgscoop/partner_input.hpp"
 #include "mgscoop/partner_native.hpp"
+#include "mgscoop/partner_rates.hpp"
+#include <limits>
 
 namespace {
 namespace pn = mgscoop::partner_native;
@@ -573,6 +575,83 @@ void TestRing() {
     Check(r.count == pn::kRing && pn::At(r, 0).ms == 2 && pn::At(r, pn::kRing - 1).ms == 49, "ring keeps the newest 48, oldest first");
 }
 
+// Native rates mirror (partner_rates, pure): records in rec+0x3C..+0x50 order.
+void TestRates() {
+    namespace pr = mgscoop::partner_rates;
+    // The game's record of instance 1: every rate 1.0, the dash factor 0.8 this frame.
+    pr::Record rec{{1.0f, 1.0f, 1.0f, 1.0f, 0.8f, 0.8f}};
+    pr::Wire w{};
+    Check(pr::ToWire(pr::Record{{1.0f, 1.2f, 1.2f, 1.2f, 1.0f, 1.2f}}, w) && w.dash == 1200 && w.crawl == 1000 && w.crawl_factor == 1200,
+          "ToWire: dash +0x48, crawl +0x3C, crawl factor +0x40 x 1000");
+    Check(!pr::ToWire(pr::Record{{1.0f, 1.0f, 1.0f, 2.1f, 1.0f, 2.1f}}, w) && w.dash == 0, "ToWire refuses > 2.0");
+    Check(!pr::ToWire(pr::Record{{0.4f, 1.0f, 0.4f, 1.0f, 1.0f, 1.0f}}, w), "ToWire refuses < 0.5");
+    Check(!pr::ToWire(pr::Record{{1.0f, std::nanf(""), 1.0f, 1.0f, 1.0f, 1.0f}}, w), "ToWire refuses non-finite");
+    Check(pr::ValidWire(pr::Wire{500, 2000, 1000}) && !pr::ValidWire(pr::Wire{499, 1000, 1000}) && !pr::ValidWire(pr::Wire{1000, 1000, 2001}),
+          "ValidWire bounds 500..2000");
+    // First apply: originals saved, the three inputs written, products recomputed with the body's own dash factor.
+    pr::MirrorState st{};
+    pr::Plan p = pr::Apply(st, rec, pr::Wire{1200, 1000, 1200});
+    pr::Record after = pr::After(rec, p);
+    Check(st.applied && !st.latched && st.writes == 1 && st.orig[0] == 1.0f && st.orig[1] == 1.0f && st.orig[2] == 1.0f &&
+          std::fabs(after.f[pr::kDash] - 1.2f) < 1e-6f && std::fabs(after.f[pr::kDashRate] - 0.8f * 1.2f) < 1e-6f &&
+          after.f[pr::kCrawl] == 1.0f && std::fabs(after.f[pr::kCrawlFactor] - 1.2f) < 1e-6f &&
+          std::fabs(after.f[pr::kCrawlRate] - 1.2f) < 1e-6f && after.f[pr::kDashFactor] == 0.8f && !(p.mask & (1u << pr::kDashFactor)),
+          "apply: +0x48 = 1.2, +0x50 = +0x4C * +0x48, +0x44 = +0x3C * +0x40; +0x4C never written");
+    // Steady state: nothing to write.
+    p = pr::Apply(st, after, pr::Wire{1200, 1000, 1200});
+    Check(p.mask == 0 && st.writes == 1 && !p.reapplied, "steady: no write");
+    // The game's per-frame dash factor changes +0x4C and +0x50 (with our +0x48): consistent, nothing to write.
+    after.f[pr::kDashFactor] = 1.0f;
+    after.f[pr::kDashRate] = 1.0f * after.f[pr::kDash];
+    p = pr::Apply(st, after, pr::Wire{1200, 1000, 1200});
+    Check(p.mask == 0, "the game's own dash factor update is consistent with the mirror");
+    // The instance setup rewrites +0x48 (provider 1.0) and +0x50: reapplied, the new original kept.
+    after.f[pr::kDash] = 1.0f;
+    after.f[pr::kDashRate] = 1.0f;
+    p = pr::Apply(st, after, pr::Wire{1200, 1000, 1200});
+    after = pr::After(after, p);
+    Check(p.reapplied && st.reapplied == 1 && st.orig[0] == 1.0f && std::fabs(after.f[pr::kDash] - 1.2f) < 1e-6f &&
+          std::fabs(after.f[pr::kDashRate] - 1.2f) < 1e-6f, "a game rewrite is reapplied");
+    // The crawl factor event resets +0x40 to 1.0 (0x11313F1) with +0x44 = +0x3C.
+    after.f[pr::kCrawlFactor] = 1.0f;
+    after.f[pr::kCrawlRate] = after.f[pr::kCrawl];
+    p = pr::Apply(st, after, pr::Wire{1200, 1000, 1200});
+    after = pr::After(after, p);
+    Check(p.reapplied && st.orig[2] == 1.0f && std::fabs(after.f[pr::kCrawlFactor] - 1.2f) < 1e-6f &&
+          std::fabs(after.f[pr::kCrawlRate] - 1.2f) < 1e-6f, "the crawl factor event is reapplied");
+    // Restore: the game's values back, products recomputed.
+    p = pr::Restore(st, after);
+    const pr::Record restored = pr::After(after, p);
+    Check(!st.applied && st.restores == 1 && restored.f[pr::kDash] == 1.0f && restored.f[pr::kCrawlFactor] == 1.0f &&
+          restored.f[pr::kCrawl] == 1.0f && restored.f[pr::kDashRate] == restored.f[pr::kDashFactor] * 1.0f &&
+          restored.f[pr::kCrawlRate] == 1.0f, "restore: the originals, products recomputed");
+    Check(pr::Restore(st, restored).mask == 0 && st.restores == 1, "restore twice: nothing");
+    // A field the game rewrote after our last write keeps the game's value on restore.
+    pr::MirrorState g{};
+    pr::Record r2 = pr::After(rec, pr::Apply(g, rec, pr::Wire{1500, 1000, 1000}));
+    r2.f[pr::kDash] = 1.1f;  // the setup ran again (provider 1.1)
+    const pr::Record back = pr::After(r2, pr::Restore(g, r2));
+    Check(std::fabs(back.f[pr::kDash] - 1.1f) < 1e-6f && std::fabs(back.f[pr::kDashRate] - 1.1f * back.f[pr::kDashFactor]) < 1e-6f,
+          "restore keeps a rewrite the mirror has not seen");
+    // Refusals latch: out-of-range remote (after restoring), non-finite record.
+    pr::MirrorState q{};
+    pr::Record r3 = pr::After(rec, pr::Apply(q, rec, pr::Wire{1200, 1000, 1000}));
+    p = pr::Apply(q, r3, pr::Wire{2500, 1000, 1000});
+    const pr::Record r4 = pr::After(r3, p);
+    Check(q.latched && !q.applied && q.reason == pr::Reason::range && r4.f[pr::kDash] == 1.0f, "out-of-range remote: restored, latched");
+    Check(pr::Apply(q, r4, pr::Wire{1200, 1000, 1000}).mask == 0 && q.latched, "latched: nothing more");
+    pr::MirrorState n{};
+    pr::Record bad = rec;
+    bad.f[pr::kDashFactor] = std::numeric_limits<float>::infinity();
+    Check(pr::Apply(n, bad, pr::Wire{1200, 1000, 1000}).mask == 0 && n.latched && n.reason == pr::Reason::nonfinite, "non-finite record: latched");
+    pr::MirrorState l{};
+    pr::Latch(l, pr::Reason::rec_vtable);
+    Check(l.latched && pr::Apply(l, rec, pr::Wire{1200, 1000, 1000}).mask == 0 && std::strcmp(pr::ReasonName(l.reason), "rec_vtable") == 0 &&
+          std::strcmp(pr::MirrorName(pr::Mirror::ok), "ok") == 0, "caller refusals latch; names");
+    pr::Reset(l);
+    Check(!l.latched && !l.applied && l.writes == 0, "Reset clears the mission state");
+}
+
 } // namespace
 
 int main() {
@@ -589,10 +668,12 @@ int main() {
     TestSteer();
     TestConsumers();
     TestRing();
+    TestRates();
     std::printf("%u partner native checks passed: arbiter (off, settling hold, entering steps dm_stop/dm_revert/place/armed, "
                 "timeouts, DM revert latch, hard and soft reasons, health warm-up and windows, cost, cooldown, 3-fallback latch, "
                 "unlatch, MissionStart reset, fallback reasons, publication order defer before Arm, left_reason through "
                 "cooldown, phase-1 detour precondition), effective settings and mask, HOLD latch, "
-                "steering and trim, per-consumer frame injection, telemetry ring\n", checks);
+                "steering and trim, per-consumer frame injection, telemetry ring, rates mirror (apply, reapply, restore, "
+                "refusals)\n", checks);
     return 0;
 }

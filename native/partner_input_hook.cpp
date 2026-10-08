@@ -41,6 +41,7 @@
 #include "mgscoop/partner_defer.hpp"
 #include "mgscoop/partner_local_detour.hpp"
 #include "mgscoop/partner_native.hpp"
+#include "mgscoop/partner_rates.hpp"
 #include "partner_player_contract.hpp"
 
 namespace mgscoop::partner_input_hook {
@@ -127,6 +128,16 @@ volatile LONG g_w_in_batch = 0, g_w_svc_native = 0;
 // magnitude x1000 and heading in mrad; rec_ok 0 when the read faulted).
 volatile LONG g_d_held = 0, g_d_mag = 0, g_d_view = 0, g_d_mask28 = 0, g_d_mask2c = 0, g_d_mask30 = 0, g_d_local_pre = 0;
 volatile LONG g_d_rec_ok = 0, g_d_rec_act = 0, g_d_rec_next = 0, g_d_rec_mag = 0, g_d_rec_heading = 0;
+// Native rates mirror (hook thread only, docs/native-puppet.md "Rates"): the
+// state of instance 1's record, the record it applies to and its epoch; the
+// forget request (any thread) and the published statistics.
+namespace prt = mgscoop::partner_rates;
+prt::MirrorState g_rates{};
+std::uintptr_t g_rates_sp = 0, g_rates_rec = 0;
+std::uint32_t g_rates_id = 0, g_rates_epoch = 0;
+volatile LONG g_rates_forget = 0;
+volatile LONG g_n_rates_applied = 0, g_n_rates_latched = 0, g_n_rates_reason = 0, g_n_rates_writes = 0, g_n_rates_reapplied = 0;
+volatile LONG g_n_rates_restores = 0, g_n_rates_drops = 0, g_n_rates_w[3] = {0, 0, 0};
 // What the stubs answer during the current window (set before each call).
 struct Current {
     std::uint32_t held, press, release, w54, long12, tap12;
@@ -589,6 +600,109 @@ void RunHoldLog(const pi::Arm& a, void* root, std::uint32_t phase) noexcept {
     EndWindow();
 }
 
+// --- Native rates mirror ------------------------------------------------------
+// Runs on the hook thread only with no batch in flight (the drain window, or
+// the main dispatch while disarmed): block 1's job, the only reader of the
+// rates besides the instance setup, never runs concurrently.
+int RatesFilter(DWORD code) noexcept { return IsAccessFault(code) ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH; }
+void RatesPublish() noexcept {
+    InterlockedExchange(&g_n_rates_applied, g_rates.applied ? 1 : 0);
+    InterlockedExchange(&g_n_rates_latched, g_rates.latched ? 1 : 0);
+    InterlockedExchange(&g_n_rates_reason, static_cast<LONG>(g_rates.reason));
+}
+void RatesDrop() noexcept {
+    if (g_rates.applied) InterlockedIncrement(&g_n_rates_drops);
+    g_rates.applied = false;
+}
+void RatesForgetPending() noexcept {
+    if (!InterlockedExchange(&g_rates_forget, 0)) return;
+    RatesDrop();
+    prt::Reset(g_rates);
+    g_rates_sp = g_rates_rec = 0;
+    g_rates_id = g_rates_epoch = 0;
+}
+// The identity of a rate record (the contract's chain, read under the caller's SEH).
+prt::Reason RatesIdentity(std::uintptr_t sp, std::uintptr_t rec, std::uint32_t id) noexcept {
+    if (Load<std::uintptr_t>(sp) != g_base + c::rate_sp_vtable_rva) return prt::Reason::sp_vtable;
+    const std::uint32_t base = Load<std::uint32_t>(sp + c::sp_base_id), count = Load<std::uint32_t>(sp + c::sp_count);
+    const std::uintptr_t recs = Load<std::uintptr_t>(sp + c::sp_records);
+    if (id < base || id - base >= count || count > 64 || !recs || recs + static_cast<std::uintptr_t>(id - base) * c::rate_rec_stride != rec)
+        return prt::Reason::bounds;
+    if (Load<std::uintptr_t>(rec) != g_base + c::rate_rec_vtable_rva) return prt::Reason::rec_vtable;
+    return prt::Reason::none;
+}
+void RatesWrite(std::uintptr_t rec, const prt::Plan& plan) noexcept {
+    for (unsigned i = 0; i < prt::kFields; ++i)
+        if (plan.mask & (1u << i)) Store<float>(rec + c::rate_first + 4 * i, plan.value[i]);
+}
+// Restore what the mirror changed on its own record (identity re-checked;
+// a record that no longer validates is dropped, never written).
+void RatesRestore() noexcept {
+    RatesForgetPending();
+    if (!g_rates.applied) { RatesPublish(); return; }
+    __try {
+        if (RatesIdentity(g_rates_sp, g_rates_rec, g_rates_id) != prt::Reason::none) {
+            RatesDrop();
+        } else {
+            prt::Record cur{};
+            std::memcpy(cur.f, reinterpret_cast<const void*>(g_rates_rec + c::rate_first), sizeof(cur.f));
+            const prt::Plan plan = prt::Restore(g_rates, cur);
+            RatesWrite(g_rates_rec, plan);
+            InterlockedIncrement(&g_n_rates_restores);
+        }
+    } __except (RatesFilter(GetExceptionCode())) {
+        RatesDrop();
+        prt::Latch(g_rates, prt::Reason::fault);
+    }
+    RatesPublish();
+}
+// The drain window's step under a native Arm: mirror the remote's rates into
+// instance 1's record (a.rates_mirror) or restore them.
+void RatesStep(const pi::Arm& a) noexcept {
+    RatesForgetPending();
+    if (a.rates_epoch != g_rates_epoch) {
+        // A new epoch: whatever the old state referred to is not touched.
+        RatesDrop();
+        prt::Reset(g_rates);
+        g_rates_epoch = a.rates_epoch;
+        g_rates_sp = g_rates_rec = 0;
+    }
+    if (!a.rates_mirror) { RatesRestore(); return; }
+    if (g_rates.latched || !a.rates_sp || !a.rates_rec) { RatesPublish(); return; }
+    if (g_rates.applied && (a.rates_rec != g_rates_rec || a.rates_sp != g_rates_sp || a.rates_id != g_rates_id)) RatesDrop();
+    __try {
+        const prt::Reason why = RatesIdentity(a.rates_sp, a.rates_rec, a.rates_id);
+        if (why != prt::Reason::none) {
+            RatesDrop();
+            prt::Latch(g_rates, why);
+        } else {
+            prt::Record cur{};
+            std::memcpy(cur.f, reinterpret_cast<const void*>(a.rates_rec + c::rate_first), sizeof(cur.f));
+            const std::uint32_t reapplied = g_rates.reapplied;
+            const prt::Plan plan = prt::Apply(g_rates, cur, prt::Wire{a.rates_remote[0], a.rates_remote[1], a.rates_remote[2]});
+            RatesWrite(a.rates_rec, plan);  // a latching plan restores first
+            if (!g_rates.latched) {
+                g_rates_sp = a.rates_sp;
+                g_rates_rec = a.rates_rec;
+                g_rates_id = a.rates_id;
+                if (plan.mask) InterlockedIncrement(&g_n_rates_writes);
+                if (g_rates.reapplied != reapplied) InterlockedIncrement(&g_n_rates_reapplied);
+                for (unsigned i = 0; i < 3; ++i) InterlockedExchange(&g_n_rates_w[i], static_cast<LONG>(a.rates_remote[i]));
+            }
+        }
+    } __except (RatesFilter(GetExceptionCode())) {
+        RatesDrop();
+        prt::Latch(g_rates, prt::Reason::fault);
+    }
+    RatesPublish();
+}
+// Main dispatch (hook thread): restore once no drain will run any more (the
+// Arm disarmed), never while a batch is in flight.
+void RatesIdle() noexcept {
+    if (partner_defer::InBatch()) return;
+    RatesRestore();
+}
+
 void SetCurrent(const pi::Injection& j, PartnerInputHold hold) noexcept {
     g_cur = Current{j.held, j.edge_press, j.edge_release, j.w[2], j.long12, j.tap12, j.live, hold};
 }
@@ -675,6 +789,7 @@ void RunWindow(const pi::Arm& a, void* root, std::uint32_t phase) noexcept {
 
 void __stdcall InputDispatchHook(void* root, std::uint32_t phase) noexcept {
     if (InterlockedCompareExchange(&g_hook_thread, static_cast<LONG>(GetCurrentThreadId()), 0) == 0) {}
+    if ((g_rates.applied && !g_arm_enabled) || g_rates_forget) RatesIdle();
     if (!g_arm_enabled && !g_holdlog) { g_need_resync = true; g_original(root, phase); return; }
     pi::Arm a{};
     if (!ReadArm(a)) { g_original(root, phase); return; }
@@ -1227,6 +1342,9 @@ bool RunJobWindow(void* go, const void* param, std::uint32_t block, JobCallFn jo
     InterlockedExchange(&g_d_mag, pi::Milli(j.mag));
     InterlockedExchange(&g_d_view, static_cast<LONG>(view));
     InterlockedExchange(&g_d_local_pre, static_cast<LONG>(save.rec_2ac));
+    // Native rates: instance 1's record gets the remote's movement rates
+    // before its job reads them (or what the mirror changed goes back).
+    RatesStep(a);
     // Phase 1 picks its pad-sampling branch by id == P+0x218: instance 1 (id 1,
     // validated: ids[1] == 1) takes it for this job only, on this thread.
     const bool detour = partner_local_detour::Installed();
@@ -1422,7 +1540,18 @@ void DrainStats(Stats& out) noexcept {
     n.rec_next = static_cast<std::uint32_t>(g_d_rec_next);
     n.rec_mag = g_d_rec_mag;
     n.rec_heading_mrad = g_d_rec_heading;
+    n.rates_applied = g_n_rates_applied != 0;
+    n.rates_latched = g_n_rates_latched != 0;
+    n.rates_reason = static_cast<std::uint32_t>(g_n_rates_reason);
+    n.rates_writes = static_cast<std::uint32_t>(g_n_rates_writes);
+    n.rates_reapplied = static_cast<std::uint32_t>(g_n_rates_reapplied);
+    n.rates_restores = static_cast<std::uint32_t>(g_n_rates_restores);
+    n.rates_drops = static_cast<std::uint32_t>(g_n_rates_drops);
+    for (unsigned i = 0; i < 3; ++i) n.rates_written[i] = static_cast<std::uint32_t>(g_n_rates_w[i]);
 }
+
+void ForgetRates() noexcept { InterlockedExchange(&g_rates_forget, 1); }
+
 
 bool PatchLive(const void* base) noexcept {
     const auto b = reinterpret_cast<std::uintptr_t>(base);

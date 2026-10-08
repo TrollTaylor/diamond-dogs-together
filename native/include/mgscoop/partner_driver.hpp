@@ -249,6 +249,11 @@ struct Hooks {
     std::uint32_t (*link_session)(void* context) noexcept = nullptr;
     // Reliable channel 2 (equipment manifest): drained every tick in every drive mode.
     bool (*drain_reliable)(void* context, std::uint8_t channel, std::uint8_t* out, std::size_t capacity, std::size_t& size) noexcept = nullptr;
+    // Native rates (docs/native-puppet.md "Rates"): instance `index`'s rate
+    // record (partner_player::ReadRates), and the hook's forget (MissionStart/End).
+    bool (*read_rates)(void* context, const partner_player::State& state, std::uint32_t index, partner_player::RateRead& out) noexcept =
+        nullptr;
+    void (*forget_rates)(void* context) noexcept = nullptr;
     // Whether the build carries the ammo experiment (MGS_LOCAL_STOCK46_AMMO_TEST); telemetry only.
     bool ammo_experiment = false;
 };
@@ -305,6 +310,7 @@ struct Settings {
     PartnerNativeAim naim;
     bool ngun, nfire;
     std::uint32_t steer_deg, trim_pct;
+    PartnerNativeRates nrates;
     // Set only in the effective copy: the native settings apply this tick.
     bool native_active;
     // lab.ini mode=play (Configure): the trigger file never enables the native
@@ -589,6 +595,17 @@ struct Mission {
     // Equipment manifest (channel 2): store and counters.
     partner_equip_wire::Store equip;
     std::uint32_t equip_logged_rev;
+    // Native rates (docs/native-puppet.md "Rates"): both records (read at most
+    // every 100 ms), the remote's wire rates (input frame v4) and the log key.
+    std::uint64_t rates_read_ms;
+    bool rates_id0_ok, rates_id1_ok;
+    partner_player::RateRead rates_id0, rates_id1;
+    bool rates_remote_ok;
+    std::uint16_t rates_remote[3];
+    std::uint64_t rates_remote_ms;
+    LogCap native_rates_cap;
+    std::uint64_t rates_logged_key;
+    bool rates_logged;
 };
 
 struct Driver {
@@ -620,8 +637,12 @@ struct Driver {
     // Bumped by every look= trigger and by parts=explicit outside look=copy:
     // a new value re-applies the desired look once.
     std::uint32_t look_forced_rev;
+    // Native rates: the mirror's epoch (bumped at every MissionStart, never 0
+    // once a mission ran), published with the Arm.
+    std::uint32_t rates_epoch;
     Mission mission;
 };
+
 
 // Install: settings from lab.ini, everything else cleared.
 void Configure(Driver& driver, const LabConfig& lab) noexcept;

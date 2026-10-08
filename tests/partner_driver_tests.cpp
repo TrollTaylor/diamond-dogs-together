@@ -11,6 +11,7 @@
 #include <vector>
 #include "mgscoop/partner_driver.hpp"
 #include "mgscoop/partner_net.hpp"
+#include "mgscoop/partner_rates.hpp"
 #include "partner_player_contract.hpp"
 
 namespace {
@@ -129,6 +130,10 @@ struct Fake {
     pp::LookSource look_source{};
     bool look_source_ok = false;
     std::uint32_t window_seq = 0;
+    // Native rates: the records ReadRates returns for instance 0 / 1 and the forget calls.
+    pp::RateRead rates[2]{};
+    bool rates_ok[2] = {false, false};
+    unsigned rates_forgets = 0;
     bool link_live = true;
     std::uint32_t link_session = 7;
     std::vector<std::vector<std::uint8_t>> channel2;
@@ -453,6 +458,14 @@ bool HookReadLookSource(void* context, const pp::State&, pp::LookSource& out) no
     return F(context).look_source_ok;
 }
 std::uint32_t HookWindowSeq(void* context) noexcept { return F(context).window_seq; }
+bool HookReadRates(void* context, const pp::State&, std::uint32_t index, pp::RateRead& out) noexcept {
+    out = index < 2 ? F(context).rates[index] : pp::RateRead{};
+    return index < 2 && F(context).rates_ok[index];
+}
+void HookForgetRates(void* context) noexcept {
+    ++F(context).rates_forgets;
+    F(context).native_order.push_back("rates_forget");
+}
 bool HookLinkLive(void* context) noexcept { return F(context).link_live; }
 std::uint32_t HookLinkSession(void* context) noexcept { return F(context).link_session; }
 bool HookDrainReliable(void* context, std::uint8_t channel, std::uint8_t* out, std::size_t capacity, std::size_t& size) noexcept {
@@ -478,6 +491,8 @@ void AddNativeHooks(pd::Hooks& h) {
     h.link_live = HookLinkLive;
     h.link_session = HookLinkSession;
     h.drain_reliable = HookDrainReliable;
+    h.read_rates = HookReadRates;
+    h.forget_rates = HookForgetRates;
 }
 
 pd::Hooks HooksFor(Fake& f) {
@@ -3200,12 +3215,18 @@ void TestNativeChannel2AndSender() {
         s.fake.pad.src_w[0] = 0x8;  // HOLD held
         s.fake.inputs.clear();
         s.N();
-        Check(!s.fake.inputs.empty() && s.fake.inputs.back().version == 3 && (s.fake.inputs.back().xflags & 0x0F) == 0x0F &&
-              s.fake.inputs.back().look_pitch == 0.25f && s.fake.inputs.back().heading_mrad == 500, "native sender: v3 with every group");
+        // partner_native_rates=log (default): v4, no rates while the local record is unread.
+        Check(!s.fake.inputs.empty() && s.fake.inputs.back().version == 4 && (s.fake.inputs.back().xflags & 0x0F) == 0x0F &&
+              !(s.fake.inputs.back().xflags & mgscoop::partner_input::XFlag::Rates) && s.fake.inputs.back().rate_dash == 0 &&
+              s.fake.inputs.back().look_pitch == 0.25f && s.fake.inputs.back().heading_mrad == 500, "native sender: v3 groups in v4");
         s.fake.window_seq = 3;  // a window open: camera and heading not quiet
         s.N();
-        Check(s.fake.inputs.back().version == 3 && (s.fake.inputs.back().xflags & 0x06) == 0 && (s.fake.inputs.back().xflags & 0x01),
+        Check(s.fake.inputs.back().version == 4 && (s.fake.inputs.back().xflags & 0x06) == 0 && (s.fake.inputs.back().xflags & 0x01),
               "odd WindowSeq: camera/heading dropped, look kept");
+        s.driver.settings.nrates = mgscoop::PartnerNativeRates::off;
+        s.N();
+        Check(s.fake.inputs.back().version == 3, "partner_native_rates=off: v3");
+
         Session l(3, mgscoop::PartnerApply::xform, mgscoop::PartnerSource::net);
         l.driver.settings.isend = true;
         AddNativeHooks(l.hooks);
@@ -3213,6 +3234,94 @@ void TestNativeChannel2AndSender() {
         l.Tick(1);
         Check(!l.fake.inputs.empty() && l.fake.inputs.back().version == 2, "legacy sender still sends v2");
     }
+}
+
+// Native rates (docs/native-puppet.md "Rates"): the sender's v4 rates, the
+// mirror request in the Arm, telemetry and the forget at mission boundaries.
+void TestNativeRates() {
+    namespace pn = mgscoop::partner_native;
+    namespace pi = mgscoop::partner_input;
+    const auto record = [](std::uintptr_t sp, std::uintptr_t rec, std::uint32_t id, float dash, float crawl, float factor) {
+        pp::RateRead r{};
+        r.sp = sp; r.rec = rec; r.id = id;
+        r.f[0] = crawl; r.f[1] = factor; r.f[2] = crawl * factor; r.f[3] = dash; r.f[4] = 1.0f; r.f[5] = dash;
+        return r;
+    };
+    NativeSession s;
+    s.driver.settings.nrates = mgscoop::PartnerNativeRates::mirror;
+    s.fake.rates[0] = record(0x8000, 0x8100, 0, 1.2f, 1.0f, 1.2f);
+    s.fake.rates[1] = record(0x9000, 0x9100, 1, 1.0f, 1.0f, 1.0f);
+    s.fake.rates_ok[0] = s.fake.rates_ok[1] = true;
+    s.fake.inputs.clear();
+    s.N();
+    Check(!s.fake.inputs.empty() && s.fake.inputs.back().version == 4 && (s.fake.inputs.back().xflags & pi::XFlag::Rates) &&
+          s.fake.inputs.back().rate_dash == 1200 && s.fake.inputs.back().rate_crawl == 1000 && s.fake.inputs.back().rate_crawl_factor == 1200,
+          "sender: the local record's dash/crawl/crawl factor in v4");
+    // Before the remote's rates arrive: the mirror waits (no_remote), never requested.
+    Check(s.Until(pn::Mode::active, 9000), "active");
+    Check(!s.fake.arms.back().rates_mirror && s.fake.arms.back().rates_rec == 0x9100 && s.fake.arms.back().rates_sp == 0x9000 &&
+          s.fake.arms.back().rates_id == 1 && std::strcmp(s.driver.mission.tele.rates_mirror, "wait") == 0 &&
+          std::strcmp(s.driver.mission.tele.rates_reason, "no_remote") == 0, "no remote rates: wait (no_remote), no mirror request");
+    // The remote's v4 rates: the Arm requests the mirror with them and the epoch.
+    s.fake.latest.packet.version = 4;
+    s.fake.latest.packet.xflags = pi::XFlag::Rates;
+    s.fake.latest.packet.rate_dash = 1200;
+    s.fake.latest.packet.rate_crawl = 1000;
+    s.fake.latest.packet.rate_crawl_factor = 1200;
+    s.N();
+    const pi::Arm& arm = s.fake.arms.back();
+    Check(arm.enabled && arm.native && arm.rates_mirror && arm.rates_remote[0] == 1200 && arm.rates_remote[1] == 1000 &&
+          arm.rates_remote[2] == 1200 && arm.rates_epoch == s.driver.rates_epoch, "remote v4 rates: the Arm requests the mirror");
+    // The hook applied it: telemetry ok with both records and the remote.
+    s.fake.stats.native.rates_applied = true;
+    s.fake.stats.native.rates_writes = 1;
+    s.N();
+    const pn::Telemetry& t = s.driver.mission.tele;
+    Check(std::strcmp(t.rates_mirror, "ok") == 0 && t.rates_setting == mgscoop::PartnerNativeRates::mirror && t.rates_id0_ok &&
+          t.rates_id1_ok && t.rates_id0[3] == 1200 && t.rates_id1[3] == 1000 && t.rates_remote_ok && t.rates_remote[0] == 1200 &&
+          t.rates_writes == 1, "telemetry: mirror ok, id0/id1 records, remote");
+    Check(s.fake.Containing("partner_native_rates; setting=mirror; mirror=ok;") >= 1 &&
+          s.fake.Containing("partner_native_rates; setting=mirror; mirror=wait; reason=no_remote;") >= 1, "rates lines on change");
+    // The hook latched (an identity refusal): reported with its reason.
+    s.fake.stats.native.rates_applied = false;
+    s.fake.stats.native.rates_latched = true;
+    s.fake.stats.native.rates_reason = static_cast<std::uint32_t>(mgscoop::partner_rates::Reason::rec_vtable);
+    s.N();
+    Check(std::strcmp(s.driver.mission.tele.rates_mirror, "latched") == 0 && std::strcmp(s.driver.mission.tele.rates_reason, "rec_vtable") == 0,
+          "latched with its reason");
+    // An unreadable instance-1 record: never a mirror request.
+    s.fake.stats.native.rates_latched = false;
+    s.fake.rates_ok[1] = false;
+    s.fake.rates[1].refusal = "rec_vtable";
+    for (int i = 0; i < 5; ++i) s.N();
+    Check(!s.fake.arms.back().rates_mirror && s.fake.arms.back().rates_rec == 0 &&
+          std::strcmp(s.driver.mission.tele.rates_id1_refusal, "rec_vtable") == 0, "unreadable id1 record: no mirror request");
+    // Stale remote rates (no v4 frame for > 2 s): the mirror request ends (the hook restores).
+    s.fake.rates_ok[1] = true;
+    s.fake.rates[1].refusal = nullptr;
+    s.fake.latest.packet.version = 3;
+    s.fake.latest.packet.xflags = 0;
+    s.fake.latest.packet.rate_dash = s.fake.latest.packet.rate_crawl = s.fake.latest.packet.rate_crawl_factor = 0;
+    for (int i = 0; i < 80; ++i) s.N();
+    Check(!s.fake.arms.back().rates_mirror && !s.driver.mission.tele.rates_remote_ok, "remote rates older than 2 s: no mirror request");
+    // log: records and remote read, never a mirror request.
+    s.driver.settings.nrates = mgscoop::PartnerNativeRates::log;
+    s.fake.latest.packet.version = 4;
+    s.fake.latest.packet.xflags = pi::XFlag::Rates;
+    s.fake.latest.packet.rate_dash = 1200; s.fake.latest.packet.rate_crawl = 1000; s.fake.latest.packet.rate_crawl_factor = 1200;
+    s.N();
+    Check(!s.fake.arms.back().rates_mirror && std::strcmp(s.driver.mission.tele.rates_mirror, "off") == 0 &&
+          std::strcmp(s.driver.mission.tele.rates_reason, "log") == 0 && s.driver.mission.tele.rates_remote_ok,
+          "log: telemetry only");
+    // Mission boundaries: the hook forgets before the disarmed Arm; a new epoch.
+    const std::uint32_t epoch = s.driver.rates_epoch;
+    const unsigned forgets = s.fake.rates_forgets;
+    s.fake.native_order.clear();
+    pd::MissionEnd(s.driver, s.hooks);
+    Check(s.fake.rates_forgets == forgets + 1 && s.OrderIndex("rates_forget") >= 0 && s.OrderIndex("arm:0") > s.OrderIndex("rates_forget"),
+          "MissionEnd: forget before the disarmed Arm");
+    pd::MissionStart(s.driver, s.hooks, 30010);
+    Check(s.fake.rates_forgets == forgets + 2 && s.driver.rates_epoch == epoch + 1, "MissionStart: forget and a new epoch");
 }
 
 // Review fixes: play mode never takes the native drive from the trigger file;
@@ -3316,6 +3425,7 @@ int main() {
     TestNativeEnterAndLeave();
     TestNativeRefusalsAndCensus();
     TestNativeChannel2AndSender();
+    TestNativeRates();
     TestNativePlayAndWithdraw();
     std::printf("%u partner driver checks passed: CFG/boundaries, stage-3 timeline, trigger stop/stage, STOP while terminating, "
                 "teardown keep, refusal caps, realize thrash cap, all-active re-assert, flags, mirror lifecycle, one-shots, "
