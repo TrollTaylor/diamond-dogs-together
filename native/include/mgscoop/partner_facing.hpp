@@ -1,11 +1,13 @@
 #pragma once
 // Receiver-side partner facing (apply=xform/hybrid, net source). Pure, portable
 // and deterministic: every time is passed in, nothing allocates or touches the
-// game. The remote yaw is the sender's vars.playerRotY (= S+0x20[0] yaw); at
-// 30 Hz a direction change such as W -> W+A arrives as a 45-90 degree step
-// between two packets, which the 33 ms snapshot lerp turned into a visible
-// snap of a rigid run loop. The applied body yaw instead turns toward the
-// interpolated target with an angular-rate limit and easing:
+// game. vars.playerRotY (= S+0x20[0] yaw) is the control direction: on
+// W -> W+A it steps 45 degrees in one tick while the body turns over about
+// 250 ms (hidden run 442f6081...). The sender therefore publishes the local
+// body-transform yaw and falls back to vars.playerRotY when that read fails,
+// and this limiter is the receiver's safety net: a stepped target (the
+// fallback, a late packet) turns at a bounded eased rate instead of snapping
+// in one 33 ms lerp, while genuine body turns stay below the limits:
 //   - ease-in: the turn rate grows by at most accel * dt per tick;
 //   - ease-out: the rate never exceeds sqrt(2 * accel * |error|), so it brakes
 //     onto the target without overshoot;
@@ -20,9 +22,9 @@
 
 namespace mgscoop::partner_facing {
 
-inline constexpr std::uint32_t kDefaultRateDps = 540;   // lab.ini partner_facing_dps
+inline constexpr std::uint32_t kDefaultRateDps = 900;   // lab.ini partner_facing_dps (safety net)
 inline constexpr std::uint32_t kMaxRateDps = 1440;
-inline constexpr std::uint32_t kAccelPerRate = 10;      // full rate after 100 ms
+inline constexpr std::uint32_t kAccelPerRate = 20;      // full rate after 50 ms
 inline constexpr std::uint64_t kMaxStepMs = 250;        // longer owner gaps snap
 inline constexpr float kPi = 3.14159265358979323846f;
 inline constexpr float kDegPerRad = 57.2957795f;

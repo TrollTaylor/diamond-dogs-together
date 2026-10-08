@@ -223,13 +223,13 @@ int main() {
                               "partner_recon_nudge_mmps=99\npartner_input_slot=both\npartner_recon_runaway=warp\npartner_input_wrap=yes\n");
         Check(bad4.invalid_values == 7 && bad4.partner_recon == PartnerRecon::track && bad4.partner_recon_align_ms == 0 &&
               bad4.partner_recon_nudge_mmps == 600 && bad4.partner_input_slot == PartnerSlot::body, "round 4 bad values counted");
-        // Receiver facing rate limit: default on (540 deg/s), 0 disables, 0..1440.
-        Check(def.partner_facing_dps == 540, "partner_facing_dps default 540");
+        // Receiver facing rate limit: default on (900 deg/s), 0 disables, 0..1440.
+        Check(def.partner_facing_dps == 900, "partner_facing_dps default 900");
         const auto facing_off = Lab("enabled=1\nrole=host\npartner_facing_dps=0\n");
         const auto facing_max = Lab("enabled=1\nrole=host\npartner_facing_dps=1440\n");
         const auto facing_bad = Lab("enabled=1\nrole=host\npartner_facing_dps=1441\n");
         Check(facing_off.partner_facing_dps == 0 && facing_off.invalid_values == 0 && facing_off.unknown_keys == 0 &&
-              facing_max.partner_facing_dps == 1440 && facing_bad.partner_facing_dps == 540 && facing_bad.invalid_values == 1,
+              facing_max.partner_facing_dps == 1440 && facing_bad.partner_facing_dps == 900 && facing_bad.invalid_values == 1,
               "partner_facing_dps parses 0..1440 and rejects out-of-range values");
         std::int32_t sv = 0;
         Check(ParsePartnerSigned("-50", 3, -50, 150, sv) && sv == -50 && ParsePartnerSigned("0", 1, -50, 150, sv) && sv == 0 &&

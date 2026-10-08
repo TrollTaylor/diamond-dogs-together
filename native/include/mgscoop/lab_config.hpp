@@ -229,7 +229,7 @@ struct LabConfig {
     PartnerWrap partner_input_wrap = PartnerWrap::off;
     // Receiver facing rate limit for apply=xform/hybrid on the net source
     // (partner_facing.hpp): degrees per second, 0 = exact remote yaw.
-    std::uint32_t partner_facing_dps = 540;         // 0..1440
+    std::uint32_t partner_facing_dps = 900;         // 0..1440
     bool crash_probe = true;
     // Two-PC link (docs/link-protocol.md). `mode` is parsed independently of
     // `present`; the play save gate is lab::SavesRedirected() in the observer.

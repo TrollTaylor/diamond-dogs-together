@@ -1201,24 +1201,32 @@ std::uint64_t Converge(pf::State& s, float target, std::uint64_t& now, unsigned 
 void TestFacing() {
     constexpr float pi = 3.14159265358979323846f;
     const pf::Params p = pf::ParamsForDps(pf::kDefaultRateDps);
-    Check(std::fabs(Deg(p.max_rate) - 540.0f) < 0.01f && std::fabs(Deg(p.accel) - 5400.0f) < 0.1f,
-          "default limits: 540 deg/s, full rate after 100 ms");
+    Check(std::fabs(Deg(p.max_rate) - 900.0f) < 0.01f && std::fabs(Deg(p.accel) - 18000.0f) < 0.5f,
+          "default safety net: 900 deg/s, full rate after 50 ms");
+    const float rate_dps = Deg(p.max_rate), accel_dps2 = Deg(p.accel);
+    // Ideal continuous time for a stepped target of `degrees` (trapezoid or triangle).
+    const auto ideal_ms = [&](float degrees) {
+        const float ramp = rate_dps * rate_dps / accel_dps2;
+        const float seconds = degrees >= ramp ? degrees / rate_dps + rate_dps / accel_dps2 : 2.0f * std::sqrt(degrees / accel_dps2);
+        return static_cast<std::uint64_t>(seconds * 1000.0f);
+    };
     Check(pf::ParamsForDps(5000).max_rate == pf::ParamsForDps(pf::kMaxRateDps).max_rate, "rate clamps to 1440 deg/s");
     for (const unsigned step : {8u, 16u, 33u}) {
         // W -> W+A (45), W -> A (90), W -> S reversal (180, crossing +-pi).
-        struct Case { float from, to; std::uint64_t min_ms, max_ms; };
-        // Ideal continuous profile: 183 / 267 / 433 / 211 ms; 30 Hz ticks land a little sooner.
-        for (const Case c : {Case{-60.0f, -15.0f, 120, 230}, Case{0.0f, 90.0f, 200, 310}, Case{120.0f, -60.0f, 370, 480},
-                             Case{-150.0f, 150.0f, 150, 230}}) {
+        struct Case { float from, to, degrees; };
+        // Ideal 900 deg/s profile: 100 / 150 / 250 / 117 ms; coarse ticks land a little sooner.
+        for (const Case c : {Case{-60.0f, -15.0f, 45.0f}, Case{0.0f, 90.0f, 90.0f}, Case{120.0f, -60.0f, 180.0f},
+                             Case{-150.0f, 150.0f, 60.0f}}) {
+            const std::uint64_t ideal = ideal_ms(c.degrees);
             pf::State s{};
             std::uint64_t now = 5000;
             Check(pf::Step(s, Rad(c.from), now, p, pf::Snap::none) == pf::Wrap(Rad(c.from)) && s.last_snap == pf::Snap::first,
                   "first sample snaps exactly");
             float peak = 0;
             const auto took = Converge(s, Rad(c.to), now, step, p, peak);
-            Check(took >= c.min_ms && took <= c.max_ms + step, "a direction step turns over a bounded, eased interval");
-            Check(peak > 300.0f && peak <= 540.5f, "the turn reaches a run-turn rate but never exceeds the limit");
-            Check(s.rate == 0.0f || std::fabs(Deg(s.rate)) < 540.5f, "landing keeps a bounded rate");
+            Check(took >= ideal / 2 && took <= ideal + 2 * step, "a direction step turns over a bounded, eased interval");
+            Check(peak > rate_dps * 0.5f && peak <= rate_dps + 0.5f, "the stepped turn reaches the safety-net rate but never exceeds it");
+            Check(s.rate == 0.0f || std::fabs(Deg(s.rate)) < rate_dps + 0.5f, "landing keeps a bounded rate");
             // Held target: stays exactly on it without drift.
             for (unsigned i = 0; i < 5; ++i) { now += step; pf::Step(s, Rad(c.to), now, p, pf::Snap::none); }
             Check(s.yaw == pf::Wrap(Rad(c.to)) && s.rate == 0.0f, "settled facing holds the target exactly");
@@ -1243,7 +1251,24 @@ void TestFacing() {
             const float lag = std::fabs(Deg(pf::Wrap(target - applied)));
             if (lag > worst) worst = lag;
         }
-        Check(worst <= 3.5f, "a smooth 180 deg/s source turn is followed within 3.5 degrees");
+        Check(worst <= 2.0f, "a smooth 180 deg/s source turn is followed within 2 degrees");
+        // The recorded host body curve for W -> W+A (run 442f6081, about 42 ms
+        // apart) must pass through the safety net essentially unchanged.
+        const float body[] = {-59.9f, -50.0f, -40.6f, -30.6f, -24.7f, -18.6f, -16.4f, -15.4f, -15.4f, -15.4f};
+        pf::State recorded{};
+        now = 1000;
+        pf::Step(recorded, Rad(body[0]), now, p, pf::Snap::none);
+        float recorded_lag = 0;
+        for (unsigned t = step; t < 42u * 9u; t += step) {
+            now += step;
+            const unsigned i = t / 42u;
+            const float f = static_cast<float>(t - i * 42u) / 42.0f;
+            const float target = body[i] + (body[i + 1] - body[i]) * f;
+            const float lag = std::fabs(Deg(pf::Wrap(Rad(target) - pf::Step(recorded, Rad(target), now, p, pf::Snap::none))));
+            if (lag > recorded_lag) recorded_lag = lag;
+        }
+        Check(recorded_lag <= 2.0f && std::fabs(Deg(recorded.yaw) + 15.4f) < 0.01f,
+              "a genuine body turn (about 240 deg/s peak) is not clipped by the safety net");
         for (unsigned i = 0; i < 6; ++i) { now += step; pf::Step(smooth, Rad(90.0f), now, p, pf::Snap::none); }
         Check(smooth.yaw == pf::Wrap(Rad(90.0f)), "a smooth pivot settles exactly on the source heading");
     }

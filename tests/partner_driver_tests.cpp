@@ -46,6 +46,10 @@ struct Fake {
     bool anim_ok = false;
     pp::Anim anim{};
     mgscoop::sync::AnimState last_submit_anim{};
+    partner::Tick last_submit_tick{};
+    // Local instance-0 body transform (sender facing).
+    bool local_body_ok = false;
+    float local_body_pos[4]{}, local_body_quat[4] = {0, 0, 0, 1};
     // Animation / movement / appearance fakes.
     bool looks_ok = true;
     pp::Looks looks{};
@@ -210,9 +214,10 @@ mgscoop::pose::Sample HookSample(void* context, std::uint32_t delay) noexcept {
     if (F(context).sample_by_delay && delay <= 50) return F(context).sample_aligned;
     return F(context).sample;
 }
-void HookSubmit(void* context, const partner::Tick&, const mgscoop::sync::AnimState& anim) noexcept {
+void HookSubmit(void* context, const partner::Tick& tick, const mgscoop::sync::AnimState& anim) noexcept {
     ++F(context).submits;
     F(context).last_submit_anim = anim;
+    F(context).last_submit_tick = tick;
 }
 bool HookReadLooks(void* context, const pp::State&, pp::Looks& out) noexcept {
     out = F(context).looks;
@@ -967,13 +972,14 @@ void TestFacingSmoothing() {
         Check(s.Tick(1, 16), "facing: tick accepted");
         ++ticks;
         const float moved = yaw() - previous;
-        Check(moved >= -1e-3f && moved <= 9.4248f * 0.016f + 2e-3f, "facing: turns left no faster than 540 deg/s");
+        Check(moved >= -1e-3f && moved <= pf::ParamsForDps(pf::kDefaultRateDps).max_rate * 0.016f + 2e-3f,
+              "facing: turns left no faster than the 900 deg/s safety net");
         Check(exact_position(), "facing: position stays the exact interpolated remote position");
         Check(std::abs(s.driver.mission.cmd.yaw_mrad - static_cast<std::int32_t>(std::lround(yaw() * 1000.0f))) <= 2,
               "facing: the commanded/telemetry yaw is the applied yaw");
         previous = yaw();
     }
-    Check(ticks >= 9 && ticks <= 15, "facing: a 45-degree packet step turns over about 150-240 ms, not one packet");
+    Check(ticks >= 4 && ticks <= 10, "facing: a 45-degree packet step turns over about 70-160 ms, not one packet");
     Check(s.reply.yaw_mrad == -262, "facing: the reply (Lua Warp fallback) keeps the exact remote yaw");
     const auto& ring = s.driver.mission.facing_ring;
     const auto& last = pf::At(ring, ring.count - 1);
@@ -1011,6 +1017,48 @@ void TestFacingSmoothing() {
     w.fake.sample = sm;
     w.Tick(1, 16);
     Check(!w.driver.mission.facing_active && !w.driver.mission.facing.valid, "facing: inactive outside xform/hybrid");
+}
+bool HookReadLocalBody(void* context, const pp::State&, float (&pos)[4], float (&quat)[4]) noexcept {
+    Fake& f = F(context);
+    std::memcpy(pos, f.local_body_pos, sizeof(pos));
+    std::memcpy(quat, f.local_body_quat, sizeof(quat));
+    return f.local_body_ok;
+}
+// Sender facing: vars.playerRotY is the control direction, so the local
+// body-transform yaw is published when it is a unit quaternion at the
+// published position; every other case falls back to vars.playerRotY.
+void TestSenderBodyYaw() {
+    namespace pf = mgscoop::partner_facing;
+    Session s(3, mgscoop::PartnerApply::xform, mgscoop::PartnerSource::net);
+    // TickSource publishes vars yaw 4500 cdeg at (1, 2, 3) m.
+    Check(s.Tick(1) && s.fake.last_submit_tick.yaw_cdeg == 4500 && s.fake.Has("partner_facing=source; yaw=vars\r\n"),
+          "sender: without a body reader the vars yaw is published");
+    s.hooks.read_local_body = HookReadLocalBody;
+    s.fake.local_body_ok = true;
+    s.fake.local_body_pos[0] = 1.2f; s.fake.local_body_pos[1] = 2.0f; s.fake.local_body_pos[2] = 3.1f;
+    partner::YawToQuat(-0.5f, s.fake.local_body_quat);  // body still turning: -28.65 degrees
+    Check(s.Tick(1) && s.fake.last_submit_tick.yaw_cdeg == -2865 && s.fake.last_submit_tick.x_mm == 1000 &&
+          s.fake.last_submit_tick.cam_cdeg == 0 && s.fake.Has("partner_facing=source; yaw=body\r\n"),
+          "sender: the body-transform yaw replaces only the yaw field (centidegrees)");
+    const auto& ring = s.driver.mission.facing_ring;
+    const auto& last = pf::At(ring, ring.count - 1);
+    Check(std::fabs(last.source_yaw - 45.0f) < 0.01f && std::fabs(last.source_body_yaw + 28.65f) < 0.01f,
+          "sender: the ring keeps both the vars and the body yaw");
+    struct Bad { const char* what; float x; float q[4]; bool ok; };
+    for (const Bad b : {Bad{"read refused", 1.0f, {0, 0, 0, 1}, false}, Bad{"not a unit quaternion", 1.0f, {0, 0.5f, 0, 0.5f}, true},
+                        Bad{"non-finite", 1.0f, {0, NAN, 0, 1}, true}, Bad{"far from the published position", 3.5f, {0, 0, 0, 1}, true}}) {
+        s.fake.local_body_ok = b.ok;
+        s.fake.local_body_pos[0] = b.x;
+        std::memcpy(s.fake.local_body_quat, b.q, sizeof(b.q));
+        Check(s.Tick(1) && s.fake.last_submit_tick.yaw_cdeg == 4500, b.what);
+    }
+    Check(s.fake.Count("partner_facing=source; yaw=vars") == 2 && s.fake.Count("partner_facing=source; yaw=body") == 1,
+          "sender: source changes are logged once per change");
+    // The guest instance (local != 0) never reads instance 0 as its own body.
+    s.fake.local_body_ok = true; s.fake.local_body_pos[0] = 1.0f;
+    partner::YawToQuat(-0.5f, s.fake.local_body_quat);
+    s.fake.state.local = 1;
+    Check(s.Tick(1) && s.fake.last_submit_tick.yaw_cdeg == 4500, "sender: only local instance 0 is read");
 }
 // Round 4, apply=input: the reconciliation places the body with a disarmed
 // Warp to the remote pose, the fake Warp lands it there, the next tick
@@ -2848,6 +2896,7 @@ int main() {
     TestAnimationGuards();
     TestTransformDrivers();
     TestFacingSmoothing();
+    TestSenderBodyYaw();
     TestLooks();
     TestCensusAndProbes();
     TestLookFix();

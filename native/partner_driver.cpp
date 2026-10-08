@@ -1039,20 +1039,42 @@ void WrapLine(Mission& m, const Hooks& h, const Settings& set, const partner_inp
 // and Warps start a new epoch); own_mmps is the reconciliation's estimate of
 // the game's own motion (readback minus our writes); vel_mmps the game's
 // PS+0x268 per-id velocity (diagnostic).
+// Sender facing: vars.playerRotY is the control direction. It steps at once on
+// W -> W+A while the body turns over about 250 ms (hidden run
+// 442f60813e23409da970d49be0c21788, facing ring). Publish the local instance-0
+// body-transform yaw when it is a finite unit quaternion read this tick at the
+// published position; otherwise fall back to vars.playerRotY.
+constexpr std::uint32_t kLocalBodyMaxMm = 2000;
+bool LocalBodyYaw(const Hooks& h, const pp::State& st, const partner::Tick& tick, float& yaw) noexcept {
+    float pos[4]{}, quat[4]{};
+    if (!h.read_local_body || st.local != 0 || !h.read_local_body(h.context, st, pos, quat)) return false;
+    double norm = 0.0;
+    for (const float v : quat) {
+        if (!std::isfinite(v)) return false;
+        norm += static_cast<double>(v) * v;
+    }
+    if (std::fabs(norm - 1.0) > 0.01) return false;
+    for (unsigned i = 0; i < 3; ++i)
+        if (!std::isfinite(pos[i]) || std::fabs(pos[i]) > 1000000.0f) return false;
+    if (partner::DistanceMm(tick.x_mm, tick.y_mm, tick.z_mm, MetresToMm(pos[0]), MetresToMm(pos[1]), MetresToMm(pos[2])) >
+        kLocalBodyMaxMm)
+        return false;
+    yaw = partner::QuatToYaw(quat);
+    return std::isfinite(yaw);
+}
+
 // One facing evidence sample per net tick (worker state.json "facing"):
 // the local published and body-transform yaw (the sender side of this game),
 // the interpolated remote target, the applied yaw, the partner body readback
 // and the mapped clip. Degrees; NaN when unread.
-void RecordFacing(Mission& m, const Hooks& h, const pp::State& st, const partner::Tick& tick, std::uint64_t now,
+void RecordFacing(Mission& m, const partner::Tick& tick, std::uint64_t now, bool local_body, float local_body_yaw,
                   bool pose_valid, const partner::Pose& pose, partner_facing::Snap snap) noexcept {
     namespace pf = partner_facing;
     pf::Sample s{};
     s.ms = static_cast<std::uint32_t>(now);
     s.source_yaw = static_cast<float>(tick.yaw_cdeg) * 0.01f;
     s.source_body_yaw = s.target_yaw = s.applied_yaw = s.body_yaw = NAN;
-    float pos[4]{}, quat[4]{};
-    if (h.read_local_body && st.local == 0 && h.read_local_body(h.context, st, pos, quat))
-        s.source_body_yaw = partner::QuatToYaw(quat) * pf::kDegPerRad;
+    if (local_body) s.source_body_yaw = local_body_yaw * pf::kDegPerRad;
     if (pose_valid) {
         s.target_yaw = static_cast<float>(pose.yaw_mrad) * 0.001f * pf::kDegPerRad;
         s.applied_yaw = m.facing_active ? m.facing_applied_yaw * pf::kDegPerRad : s.target_yaw;
@@ -1884,6 +1906,17 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         }
     }
     dmobs.yaw = static_cast<float>(pose.yaw_mrad) * 0.001f;
+    // Sender: publish the local body facing (LocalBodyYaw), else vars.playerRotY.
+    // Same wire field and units (centidegrees).
+    float local_body_yaw = 0.0f;
+    const bool local_body = LocalBodyYaw(h, st, tick, local_body_yaw);
+    partner::Tick sent = tick;
+    if (local_body) sent.yaw_cdeg = static_cast<std::int32_t>(std::lround(local_body_yaw * 5729.57795f));
+    if (local_body != m.facing_source_body || !m.facing_source_logged) {
+        m.facing_source_logged = true;
+        m.facing_source_body = local_body;
+        EmitCapped(m.facing_cap, h, "partner_facing", "partner_facing=source; yaw=%s\r\n", local_body ? "body" : "vars");
+    }
     const bool free_roam_net = set.source == PartnerSource::net &&
                                (m.mission_code == 30010 || m.mission_code == 30020);
     if (free_roam_net) {
@@ -1926,7 +1959,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             // Clearing realize bits does not prove the engine unloaded yet.
             m.realized = m.parts_loaded = m.body_ok = false;
             // Keep the peer informed while our local partner is latched.
-            if (h.submit_local) h.submit_local(h.context, tick, local_anim);
+            if (h.submit_local) h.submit_local(h.context, sent, local_anim);
             if (h.submit_look && looks_ok && st.local < 2 && st.parts[st.local] == c::parts_loaded_state)
                 h.submit_look(h.context, looks.look[st.local]);
             Probe(d, h, st, clock);
@@ -2142,7 +2175,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         }
     }
     m.last_status = sample_status;
-    if (set.source == PartnerSource::net) RecordFacing(m, h, st, tick, now, pose_valid, pose, facing_snap);
+    if (set.source == PartnerSource::net) RecordFacing(m, tick, now, local_body, local_body_yaw, pose_valid, pose, facing_snap);
     // Animation application (instance 1 only, stage 3 with parts loaded). Not
     // while a dm=map clip is ours: aset=q|qs would overwrite Q+0x18[1] before
     // the mapper reads it, so its stop could never be confirmed.
@@ -2465,7 +2498,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                    partner::DistanceMm(m.cmd.x_mm, m.cmd.y_mm, m.cmd.z_mm, sx, sy, sz));
     }
     // Sender: the local pose with its anim extension, and the local look once loaded.
-    if (h.submit_local) h.submit_local(h.context, tick, local_anim);
+    if (h.submit_local) h.submit_local(h.context, sent, local_anim);
     if (h.submit_look && looks_ok && st.local < 2 && st.parts[st.local] == c::parts_loaded_state)
         h.submit_look(h.context, looks.look[st.local]);
     Probe(d, h, st, clock);

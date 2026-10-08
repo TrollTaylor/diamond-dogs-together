@@ -450,6 +450,8 @@ struct Mission {
     partner_facing::Ring facing_ring;
     bool facing_active;
     float facing_target_yaw, facing_applied_yaw;  // radians, valid while facing_active
+    bool facing_source_body, facing_source_logged;  // sender: body-transform yaw published (else vars)
+    LogCap facing_cap;
     PartnerSource dmmap_speed_source;
     bool dmmap_table_logged;
     LogCap dmmap_cap[7];  // deferred, lost, stop_timeout, unconsumed, adopted, abandoned, bad_gani

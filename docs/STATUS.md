@@ -2,19 +2,25 @@
 
 ## October 7, 2026: partner facing while moving (fixture-tested, runtime unverified)
 
-The sender publishes `vars.playerRotY` at 30 Hz and the receiver lerped it
-over one 33 ms packet gap, so a W -> W+A direction step appeared as a rigid
-snap of the run loop. With apply=xform/hybrid on the net source, the applied
-body yaw now turns toward the interpolated target at most 540 deg/s with
-eased acceleration (`partner_facing_dps`, 0 restores the exact yaw); position
-stays exact and teleport, relink, Warp, realization and stale poses snap.
+The sender published `vars.playerRotY`, which is the control direction. Hidden run
+442f60813e23409da970d49be0c21788 showed it stepping -59 to -14 degrees in one
+tick on W -> W+A while the local body transform eased over about 250 ms. The
+receiver lerped that step over one 33 ms packet gap, so the run loop snapped.
+The sender now publishes the census-validated local body-transform yaw. It
+falls back to `vars.playerRotY` when the read fails or the body is more than
+2 m from the published position. A `partner_facing=source; yaw=body|vars`
+line is logged on each change. With apply=xform/hybrid on the net source, the
+receiver also limits the applied yaw to 900 deg/s with eased acceleration as
+a safety net (`partner_facing_dps`, 0 restores the exact yaw). Position stays
+exact, and teleport, relink, Warp, realization and stale poses snap.
 Resident turn clips were mirrored: increasing yaw is a left turn in the
 right-handed Fox frame, so the hidden run's mouse-right pivots (-75 degrees)
 had selected `tn_l90`. The mapping now selects `tn_r90` for them. Worker
 `state.json` carries a per-tick `facing` ring (source, source body,
 target, applied and body yaw, clip, move, snap) for
-`tools/worker/scenarios/partner-turns-moving.txt`. No hidden run has
-verified these changes yet.
+`tools/worker/scenarios/partner-turns-moving.txt`. That run of 370f570
+confirmed the mirror fix: the right pivot played clip 14, which finished
+naturally after 834 ms. The body-yaw sender is not yet verified at runtime.
 
 ## October 7, 2026: animation continuation after Claude's hidden-worker tests
 
