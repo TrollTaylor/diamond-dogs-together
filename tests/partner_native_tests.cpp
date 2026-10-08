@@ -182,6 +182,7 @@ void TestHardReasons() {
         {"unrealized", [](pn::In& in) { in.realized = false; }},
         {"range_hidden", [](pn::In& in) { in.range_hidden = true; }},
         {"configured", [](pn::In& in) { in.configured = false; }},
+        {"defer_off", [](pn::In& in) { in.defer_on = false; }},
         {"stage", [](pn::In& in) { in.stage = 2; }},
         {"lost", [](pn::In& in) { in.lost = 1; }},
         {"wrap_in_batch", [](pn::In& in) { in.wrap_in_batch = 1; }},

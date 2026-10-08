@@ -193,23 +193,46 @@ void HookJob(void* go, const void* param) noexcept { g_job_orig(go, static_cast<
 
 // Inside the read lock and the scope: the gate, the param, the job (windowed
 // when possible). Returns false only when nothing ran (gate closed).
+// Our own reads of the drain's inputs (gate, live nbits/bits, id 1's bit) under
+// SEH: an access fault faults the deferral and nothing runs (lost-like).
+enum class Inputs : std::uint8_t { ok, gate_closed, fault };
+Inputs ReadInputs(std::uintptr_t entry, const Rec& rec, std::uint32_t mode, JobParam& param, std::uint32_t& bit1) noexcept {
+    Inputs result = Inputs::fault;
+    __try {
+        const std::uintptr_t flags_ptr = Load<std::uintptr_t>(rec.go + c::go_flags_ptr);
+        if (!flags_ptr || !(Load<std::uint32_t>(flags_ptr + c::go_flags) & c::go_flags_bit)) {
+            result = Inputs::gate_closed;
+        } else {
+            param.block = rec.block;
+            param.sub = 0;
+            param.mode = mode;
+            param.nbits = Load<std::uint32_t>(entry + c::entry_nbits);
+            param.bits = Load<const std::uint8_t*>(entry + c::entry_bits);
+            // id 1's bit as 0x9C1C15 reads it: bit = 1 < nbits ? bits[0] >> 1 & 1 : 1.
+            bit1 = param.nbits > 1 && param.bits ? (Load<std::uint8_t>(reinterpret_cast<std::uintptr_t>(param.bits)) >> 1) & 1u : 1u;
+            result = Inputs::ok;
+        }
+    } __except (OwnFilter(FaultPhase::find, GetExceptionCode())) {
+        result = Inputs::fault;
+    }
+    return result;
+}
+
 void DrainCall(std::uintptr_t entry, const Rec& rec, std::uint32_t mode) noexcept {
     void* const go = reinterpret_cast<void*>(rec.go);
-    const std::uintptr_t flags_ptr = Load<std::uintptr_t>(rec.go + c::go_flags_ptr);
-    if (!flags_ptr || !(Load<std::uint32_t>(flags_ptr + c::go_flags) & c::go_flags_bit)) {
+    JobParam param{};
+    std::uint32_t bit1 = 1;
+    const Inputs inputs = ReadInputs(entry, rec, mode, param, bit1);
+    if (inputs == Inputs::fault) {
+        InterlockedIncrement(&g_lost);
+        return;
+    }
+    if (inputs == Inputs::gate_closed) {
         InterlockedIncrement(&g_gate_closed);
         DeferFault(FaultPhase::gate, 0);
         return;
     }
-    JobParam param{};
-    param.block = rec.block;
-    param.sub = 0;
-    param.mode = mode;
-    param.nbits = Load<std::uint32_t>(entry + c::entry_nbits);
-    param.bits = Load<const std::uint8_t*>(entry + c::entry_bits);
     if (param.nbits != rec.nbits || param.bits != rec.bits) InterlockedIncrement(&g_entry_changed);
-    // id 1's bit as 0x9C1C15 reads it: bit = 1 < nbits ? bits[0] >> 1 & 1 : 1.
-    const std::uint32_t bit1 = param.nbits > 1 && param.bits ? (Load<std::uint8_t>(reinterpret_cast<std::uintptr_t>(param.bits)) >> 1) & 1u : 1u;
     if (bit1 == mode) InterlockedOr(&g_id1_pass, static_cast<LONG>(1u << mode));
     else InterlockedAnd(&g_id1_pass, static_cast<LONG>(~(1u << mode)));
     const bool windowable = static_cast<std::uint32_t>(GetCurrentThreadId()) == HookThread() && g_armed && hk::Installed();

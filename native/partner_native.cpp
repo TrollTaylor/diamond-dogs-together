@@ -47,6 +47,7 @@ const char* EnterBlocker(const State& s, const In& in, const Params& p) noexcept
 // Reasons that leave entering/active immediately.
 const char* HardLeave(const In& in) noexcept {
     if (!in.configured) return "configured";
+    if (!in.defer_on) return "defer_off";
     if (in.terminating) return "terminating";
     if (in.faulted) return "faulted";
     if (!in.live_h0 || !in.live_h1 || !in.live_h2) return "hook_lost";
