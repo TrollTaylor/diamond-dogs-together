@@ -3,7 +3,8 @@
 # The worker opens the menu by text ("menu open"), never by an F9 key press.
 # Mother Base (30050) has no authored camp soldiers: spawn/enemy refusals are expected there.
 # Native "Spawn enemy here" placement (docs/debug-menu.md): the guard must land within
-# 10 m (mode=warp), still be within 10 m 5 s later, and "come" must also land.
+# 10 m (mode=warp), must not snap back (nearest soldier within 15 m 3 s later; he may
+# start walking back to his route), and "come" must also land.
 # The soldier_warp_census lines in script-observer.log pin the dispatch hop.
 labsetting debug_soldier_warp=1
 title 200
@@ -45,9 +46,9 @@ host capture spawn-here-menu
 host run menu close
 host expect ^menu_closed
 host capture spawn-here-world
-wait 5000
+wait 3000
 host run enemy info nearest
-host expect ^enemy_info;ent=\d+;name=[^;]+;cp=[^;]+;state=0;distance_m=(\d|10)\.\d$
+host expect ^enemy_info;ent=\d+;name=[^;]+;cp=[^;]+;state=0;distance_m=(\d|1[0-4])\.\d$
 host capture spawn-here-stay
 host run enemy sleep nearest
 host expect ^enemy_sleep;ent=\d+;life_readback=2;sync=|^no_readable_soldier
