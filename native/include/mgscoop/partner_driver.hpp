@@ -305,6 +305,9 @@ struct Settings {
     std::uint32_t steer_deg, trim_pct;
     // Set only in the effective copy: the native settings apply this tick.
     bool native_active;
+    // lab.ini mode=play (Configure): the trigger file never enables the native
+    // drive there (lab.ini already refuses it, kPlayRefusedNativeDrive).
+    bool play_mode;
 };
 
 // A capped change-only log family (one per experiment head).
@@ -536,6 +539,7 @@ struct Mission {
     partner_native::Out native_out;   // the last arbiter step (native_out.active: effective settings)
     bool native_defer_armed;          // we armed the deferral (set_defer true)
     bool native_identity;             // an identity is published
+    bool native_roots;                // census wrap roots are published (PublishWrapRoots)
     partner_player::NativeTargets native_targets;
     bool native_targets_ok;
     partner_defer::Stats defer_last;  // the previous drain (deltas for the arbiter)

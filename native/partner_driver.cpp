@@ -1568,6 +1568,16 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
 }
 
 // --- Native puppet (docs/native-puppet.md 7) -----------------------------------
+// The GO identity and the census wrap roots name per-mission objects: they are
+// withdrawn at mission boundaries and once the native drive is no longer
+// configured (the deferral is disarmed first by every caller).
+void WithdrawNativeTargets(Mission& m, const Hooks& h) noexcept {
+    if (m.native_identity && h.publish_identity) h.publish_identity(h.context, partner_defer::Identity{}, false);
+    m.native_identity = false;
+    if (m.native_roots && h.publish_wrap_roots) h.publish_wrap_roots(h.context, 0, 0, false);
+    m.native_roots = false;
+}
+
 void EmitNative(Mission& m, const Hooks& h, LogCap& cap, const char* head, const char* format, ...) noexcept {
     if (cap.lines >= kNativeEventCap) {
         if (!cap.capped) {
@@ -1642,6 +1652,7 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     in.lost = (ds.lost - db.lost) + (ds.torn - db.torn) + (ds.gate_closed - db.gate_closed);
     in.wrap_in_batch = is.wrap.wrap_in_batch - wb.wrap_in_batch;
     in.frames = is.native.frames - nb.frames;
+    in.drain_block = is.native.drain_block_refused - nb.drain_block_refused;
     in.drain_us_max = ds.drain_us_max;
     if (ds.drain_us_max > m.native_drain_us_acc) m.native_drain_us_acc = ds.drain_us_max;
     m.defer_last = ds;
@@ -1671,7 +1682,10 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         if (h.publish_identity)
             h.publish_identity(h.context, partner_defer::Identity{m.native_targets.go, m.native_targets.pool0, m.native_targets.pool1}, true);
         m.native_identity = true;
-        if (h.publish_wrap_roots) h.publish_wrap_roots(h.context, targets.root0, targets.root1, defer != PartnerDefer::off);
+        if (h.publish_wrap_roots) {
+            h.publish_wrap_roots(h.context, targets.root0, targets.root1, defer != PartnerDefer::off);
+            m.native_roots = true;
+        }
     } else if (m.native_identity && !m.native_out.active && !(tref && std::strcmp(tref, "busy") == 0)) {
         if (h.publish_identity) h.publish_identity(h.context, partner_defer::Identity{}, false);
         m.native_identity = false;
@@ -1737,6 +1751,8 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         if (h.set_defer) h.set_defer(h.context, true, defer);
         m.native_defer_armed = true;
     }
+    // drive=legacy again (trigger): nothing native stays published.
+    if (!configured && !out.active) WithdrawNativeTargets(m, h);
     if (out.transition && configured) {
         EmitNative(m, h, m.native_cap, "partner_native", "partner_native=%s; reason=%s; fallbacks=%u; since_ms=%u\r\n",
                    pnat::ModeName(out.mode), out.reason ? out.reason : "none", m.native.fallbacks, Clamp32(now - m.native.since_ms));
@@ -1928,20 +1944,31 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         t.svc28_b1_same = Rate(is.wrap.same_thread[0], m.rate_wrap.same_thread[0], dt);
         t.svc28_b1_nested = Rate(is.wrap.nested[0], m.rate_wrap.nested[0], dt);
         t.walk7_b1 = Rate(is.wrap.calls1[3], m.rate_wrap.calls1[3], dt);
+        t.nested = Rate(ds.nested_batches, r.nested_batches, dt);
+        t.foreign = Rate(ds.foreign_batches, r.foreign_batches, dt);
+        t.unwound = Rate(ds.unwound, r.unwound, dt);
+        t.drain_block = Rate(is.native.drain_block_refused, m.rate_hook.drain_block_refused, dt);
+        t.drain_in_batch = Rate(is.native.drain_in_batch, m.rate_hook.drain_in_batch, dt);
         t.drain_us_max = m.native_drain_us_acc;
         // The 1 Hz partner_defer line (installed deferral only) and partner_native line.
         if (ni.h2 && m.defer_lines < kNativeLineCap) {
             ++m.defer_lines;
-            EmitFormat(h,
+            // Longer than EmitFormat's 512 bytes at worst: its own buffer.
+            char line[1024]{};
+            if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
                 "partner_defer; batches=%u; threads=%u; w50_b0=%u; w50_b1=%u; subs=%u; ret_other=%u; inline=%u; deferred=%u; drains=%u,%u; "
                 "windowed=%u; unwindowed=%u; lost=%u; gate_closed=%u; torn=%u; entry_changed=%u; dup=%u; stale_frame=%u; wrap_in_batch=%u; "
+                "nested=%u; foreign=%u; unwound=%u; drain_block=%u; drain_in_batch=%u; "
                 "id1_pass=%u; us_max=%u; spin_max=%u; batch_thread=%u; hook_thread=%u; lua_thread=%u; faults=%u\r\n",
                 ds.batches - r.batches, ds.batch_threads_seen, ds.w50_b0_s0 - r.w50_b0_s0, ds.w50_b1_s0 - r.w50_b1_s0,
                 ds.w50_subs - r.w50_subs, ds.ret_other - r.ret_other, ds.w50_inline - r.w50_inline, ds.deferred - r.deferred,
                 ds.drains[0] - r.drains[0], ds.drains[1] - r.drains[1], ds.windowed - r.windowed, ds.unwindowed - r.unwindowed,
                 ds.lost - r.lost, ds.gate_closed - r.gate_closed, ds.torn - r.torn, ds.entry_changed - r.entry_changed, ds.dup - r.dup,
-                is.native.views[2] - m.rate_hook.views[2], is.wrap.wrap_in_batch - m.rate_wrap.wrap_in_batch, ds.id1_pass,
-                m.native_drain_us_acc, t.spin_max, ds.batch_thread, ds.hook_thread, t.lua_thread, ds.faulted ? 1u : 0u);
+                is.native.views[2] - m.rate_hook.views[2], is.wrap.wrap_in_batch - m.rate_wrap.wrap_in_batch,
+                ds.nested_batches - r.nested_batches, ds.foreign_batches - r.foreign_batches, ds.unwound - r.unwound,
+                is.native.drain_block_refused - m.rate_hook.drain_block_refused, is.native.drain_in_batch - m.rate_hook.drain_in_batch,
+                ds.id1_pass, m.native_drain_us_acc, t.spin_max, ds.batch_thread, ds.hook_thread, t.lua_thread, ds.faulted ? 1u : 0u)))
+                Emit(h, line);
         } else if (ni.h2 && !m.defer_lines_capped) {
             m.defer_lines_capped = true;
             Emit(h, "partner_defer=capped; limit=3600\r\n");
@@ -2031,6 +2058,7 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.nfire = lab.partner_native_fire;
     d.settings.steer_deg = lab.partner_native_steer_deg;
     d.settings.trim_pct = lab.partner_native_trim_pct;
+    d.settings.play_mode = lab.mode == LabMode::play;
     d.look_forced_rev = 1;
     partner_recon::Reset(d.mission.recon);
     partner_dmmap::Reset(d.mission.dmmap);
@@ -2048,6 +2076,7 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
     // order); the pending records and batch flags are never touched here.
     if (h.set_defer && d.settings.drive == PartnerDrive::native)
         h.set_defer(h.context, false, EffectivePartnerDefer(d.settings.drive, d.settings.defer));
+    WithdrawNativeTargets(d.mission, h);
     DisarmInput(d, h, "mission_start");
     if (d.mission.dm_patched) RevertDm(d, h, "mission_start");
     PublishDisarmed(d, h);
@@ -2081,6 +2110,7 @@ void MissionEnd(Driver& d, const Hooks& h) noexcept {
     if (h.set_defer && d.mission.native_defer_armed)
         h.set_defer(h.context, false, EffectivePartnerDefer(d.settings.drive, d.settings.defer));
     d.mission.native_defer_armed = false;
+    WithdrawNativeTargets(d.mission, h);
     DisarmInput(d, h, "mission_end");
     if (d.mission.dm_patched) RevertDm(d, h, "mission_end");
     d.mission.cfg_ready = false;
@@ -2222,11 +2252,17 @@ void ApplyTrigger(Driver& d, const Hooks& h, const partner::Trigger& trigger, bo
     // drive=native after a mission latch clears the latch.
     const bool native_keys = trigger.has_drive || trigger.has_defer || trigger.has_local || trigger.has_naim || trigger.has_ngun ||
                              trigger.has_nfire || trigger.has_steer;
-    if (trigger.has_drive) {
+    // Play mode refuses the native drive in lab.ini (kPlayRefusedNativeDrive);
+    // the trigger file can never turn it on either.
+    const bool native_refused = d.settings.play_mode &&
+                                ((trigger.has_drive && trigger.drive != PartnerDrive::legacy) ||
+                                 (trigger.has_defer && trigger.defer != PartnerDefer::off));
+    if (native_refused) Emit(h, "partner_native=trigger_refused; reason=play; drive=legacy; defer=off\r\n");
+    if (trigger.has_drive && !native_refused) {
         d.settings.drive = trigger.drive;
         if (trigger.drive == PartnerDrive::native) partner_native::Unlatch(m.native, m.native.since_ms);
     }
-    if (trigger.has_defer) d.settings.defer = trigger.defer;
+    if (trigger.has_defer && !native_refused) d.settings.defer = trigger.defer;
     if (trigger.has_local) d.settings.local = trigger.local;
     if (trigger.has_naim) d.settings.naim = trigger.naim;
     if (trigger.has_ngun) d.settings.ngun = trigger.ngun;

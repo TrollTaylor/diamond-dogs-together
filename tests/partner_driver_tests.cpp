@@ -121,6 +121,7 @@ struct Fake {
     mgscoop::partner_defer::Identity identity{};
     unsigned roots_published = 0;
     bool roots_census = false;
+    std::uintptr_t roots_last[2] = {0, 0};
     const char* native_targets_refusal = nullptr;
     pp::NativeTargets native_targets{};
     pp::Gun1 gun{};
@@ -432,9 +433,11 @@ void HookPublishIdentity(void* context, const mgscoop::partner_defer::Identity& 
     if (valid != f.identity_valid) f.native_order.push_back(valid ? "identity" : "identity_clear");
     f.identity_valid = valid;
 }
-void HookPublishRoots(void* context, std::uintptr_t, std::uintptr_t, bool census) noexcept {
+void HookPublishRoots(void* context, std::uintptr_t root0, std::uintptr_t root1, bool census) noexcept {
     ++F(context).roots_published;
     F(context).roots_census = census;
+    F(context).roots_last[0] = root0;
+    F(context).roots_last[1] = root1;
 }
 const char* HookNativeTargets(void* context, const pp::State&, const pp::InputTargets&, pp::NativeTargets& out) noexcept {
     out = F(context).native_targets;
@@ -3210,6 +3213,66 @@ void TestNativeChannel2AndSender() {
     }
 }
 
+// Review fixes: play mode never takes the native drive from the trigger file;
+// the GO identity and census wrap roots never outlive a mission or the drive.
+void TestNativePlayAndWithdraw() {
+    namespace pn = mgscoop::partner_native;
+    {
+        pd::Driver d{};
+        mgscoop::LabConfig lab{};
+        lab.mode = mgscoop::LabMode::play;
+        pd::Configure(d, lab);
+        Check(d.settings.play_mode, "Configure: mode=play is remembered");
+        lab.mode = mgscoop::LabMode::lab;
+        pd::Configure(d, lab);
+        Check(!d.settings.play_mode, "Configure: lab mode");
+    }
+    {
+        MapSession s;
+        AddNativeHooks(s.hooks);
+        s.driver.settings.play_mode = true;
+        s.Trigger("drive=native defer=on steer=10");
+        Check(s.driver.settings.drive == mgscoop::PartnerDrive::legacy && s.driver.settings.defer == mgscoop::PartnerDefer::off &&
+              s.driver.settings.steer_deg == 10 &&
+              s.fake.Has("partner_native=trigger_refused; reason=play; drive=legacy; defer=off\r\n"),
+              "play mode: drive=native / defer=on refused, other keys applied");
+        s.Run(3000);
+        Check(s.fake.defer_installs == 0 && !s.fake.identity_valid && s.fake.roots_published == 0 &&
+              s.driver.mission.native_out.mode == pn::Mode::off, "play mode: nothing native installed or published");
+        s.driver.settings.play_mode = false;
+        s.Trigger("drive=native defer=census");
+        Check(s.driver.settings.drive == mgscoop::PartnerDrive::native && s.driver.settings.defer == mgscoop::PartnerDefer::census,
+              "lab mode: the same trigger applies");
+    }
+    {
+        NativeSession s(mgscoop::PartnerDefer::census);
+        for (int i = 0; i < 30; ++i) s.N();
+        Check(s.fake.identity_valid && s.fake.roots_last[1] == 0x6100 && s.fake.roots_census, "census: identity and roots published");
+        pd::MissionEnd(s.driver, s.hooks);
+        Check(!s.fake.identity_valid && s.fake.roots_last[0] == 0 && s.fake.roots_last[1] == 0 && !s.fake.roots_census &&
+              !s.driver.mission.native_identity && !s.driver.mission.native_roots, "MissionEnd withdraws the identity and the roots");
+    }
+    {
+        NativeSession s;
+        for (int i = 0; i < 30; ++i) s.N();
+        Check(s.fake.identity_valid, "identity published");
+        const std::size_t order = s.fake.native_order.size();
+        pd::MissionStart(s.driver, s.hooks, 30010);
+        const int def0 = s.OrderIndex("defer:0", static_cast<int>(order));
+        const int clear = s.OrderIndex("identity_clear", static_cast<int>(order));
+        Check(!s.fake.identity_valid && s.fake.roots_last[1] == 0 && def0 >= 0 && clear > def0,
+              "MissionStart: deferral disarmed, then the identity and roots withdrawn");
+    }
+    {
+        NativeSession s(mgscoop::PartnerDefer::census);
+        for (int i = 0; i < 30; ++i) s.N();
+        s.Trigger("drive=legacy");
+        s.N();
+        Check(!s.fake.identity_valid && s.fake.roots_last[1] == 0 && !s.fake.roots_census &&
+              s.driver.mission.native_out.mode == pn::Mode::off, "drive=legacy: identity and roots withdrawn");
+    }
+}
+
 int main() {
     TestCfgAndMissionBoundaries();
     TestStageThreeTimeline();
@@ -3251,12 +3314,13 @@ int main() {
     TestNativeEnterAndLeave();
     TestNativeRefusalsAndCensus();
     TestNativeChannel2AndSender();
+    TestNativePlayAndWithdraw();
     std::printf("%u partner driver checks passed: CFG/boundaries, stage-3 timeline, trigger stop/stage, STOP while terminating, "
                 "teardown keep, refusal caps, realize thrash cap, all-active re-assert, flags, mirror lifecycle, one-shots, "
                 "force_exists, policy, net source, interp hook, lost freeze/hide, cadence, Lua notes, quiet pairing, probes, anim mirror/net (q/s/r, debounce, "
                 "revert, fault), xform/hybrid drivers, looks (quiet/snake/net/copy, verify, timeout, waiting, refusals), census, "
                 "ps probe, dm=map (patch, table, sources, aim pivots, gates, failures, release, teardown, caps), native puppet "
                 "(enter sequence, publication order, leave on fault, dm=map rearm, census, install refusals, thread, revert latch, "
-                "unlatch, channel 2 in legacy, v3 sender); no game\n", checks);
+                "unlatch, channel 2 in legacy, v3 sender, play-mode trigger refusal, identity/roots withdrawal); no game\n", checks);
     return 0;
 }
