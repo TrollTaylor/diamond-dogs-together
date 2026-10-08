@@ -73,8 +73,8 @@ struct Json {
     void Position(const float (&v)[3]) noexcept {Add("[");for(unsigned i=0;i<3;++i){if(i)Add(",");Float(v[i]);}Add("]");}
 };
 const char* Bool(bool value) noexcept {return value?"true":"false";}
-// Owner thread only: one static 32 KB buffer instead of a large game-thread stack frame.
-char json_bytes[32768]{};
+// Owner thread only: one static 64 KB buffer instead of a large game-thread stack frame
+char json_bytes[65536]{};
 void Publish(const worker_scenario::RunContext& c) noexcept {
     const auto s=debug_menu::GetSnapshot();Json j{json_bytes,sizeof(json_bytes)};
     j.Add("{\"schema\":2,\"queued_kind\":\"%s\",\"queued_ref\":%u,",queued_menu?"menu":"command",queued_ref);
