@@ -142,7 +142,19 @@ The movement base is `kPartnerNativeBaseMask = 0x2240006`; the gun stage
 mask is `0x224004E`. EVADE's press consumers (`0x1148C6C`, `0x1299821`,
 `0x129B7DB`: PP vt+0x40 bit 18 -> `Q+0x18[id] = 0x1B`, act 27) first ask
 `0x114DB20` / `0x12B60D0` whether the player is network-remote, which is true
-only with S_IS_ONLINE (P+0x204 bit 8), so offline instance 1 takes them. ACTION
+only with S_IS_ONLINE (P+0x204 bit 8), so offline instance 1 takes them.
+EVADE has nine pad readers in all (`EVADE_CONSUMERS` in
+`tools/generate_partner_contract.py`: every PP vt+0x20/+0x30/+0x40/+0x58 read
+through P+0xB0 followed by a bit-18 test; `--check` fails on a new one): the
+three act-27 sites and six state-specific ones (`0x1097F74`, `0x11B56CF`,
+`0x11B8347`, `0x11BA26E`, `0x11D8FDD`, `0x12213B5`) that write per-id player
+state (`[PS+0x280]`/`[PS+0x298]` entries, the act record's +0x11/+0x292).
+`0x11D8FDD` (EVADE press in a state checked through `[P+0x88]` vt+0x30 >= 4)
+also calls a global service's vt+0x28 with the object id held at +0x29C of
+its per-id record, i.e. it may message another GameObject in the receiver's
+world. Which states reach these six, and whether instance 1 can enter them
+with ACTION masked, is not verified (open item; the action census records
+`remote_act`/`body.act`). ACTION
 stays masked: it aliases ride, knife kill and pickup, which would act on the
 receiver's world. RELOAD aliases CARRY (gun stage only; gating it on the
 remote's aim state is an open item). Phase 2 (vault/climb) would replay a
@@ -191,9 +203,20 @@ inferred; `native.rates` records the real values.
   game rewrote keeps the game's value); out-of-range or non-finite values latch.
 - The hook runs it in the drain window right before block 1's job (hook
   thread, no batch in flight, identity re-validated, SEH-contained; a changed
-  record vtable latches without writing) and restores at the next main
-  dispatch once the Arm is disarmed. MissionStart/End forget the state without
-  writing (the record dies with the mission); each MissionStart is a new epoch.
+  record vtable latches without writing). The record must be instance 1's
+  own, re-derived in the hook, never only the driver tick's pointers: id 1
+  (Validate checked ids[1] == 1) and `sp == *(PS1+0x260)` with `PS1 =
+  *(blk1+0x78)` (player PS vtable, `PS1+0x408 == blk1`), else it latches with
+  `owner`. It restores at the next main dispatch once no enabled native Arm is
+  published (disarmed, or a legacy Arm after leaving the native drive, e.g.
+  Play's [I]); outside the drain the restore first re-checks the chain it was
+  applied through (player slot P and vtable, ids[1] == 1, pool[1] unchanged
+  and not instance 0's, its block, then the owner check) and drops without
+  writing when it no longer holds. MissionStart/End forget the state without
+  writing (the record dies with the mission) and pass the ending mission's
+  epoch: an Arm still carrying it (published before the driver's disarm
+  lands, a drain may run meanwhile) never applies the mirror again; each
+  MissionStart is a new epoch.
 - The driver reads both records every 100 ms and requests the mirror
   (`Arm.rates_mirror`) with `partner_native_rates=mirror` while the native drive
   is active and the remote's rates are under 2 s old.
@@ -262,8 +285,10 @@ Native actions add `native.recon.runaway_idle`, `lag`, `stop_grace`,
 the records x1000 as crawl, crawl_factor, crawl_rate, dash, dash_factor,
 dash_rate or null, `id1_read`, `remote` {valid, age_ms, dash, crawl,
 crawl_factor}, `mirror` off|wait|ok|latched, `reason`, `writes`, `reapplied`,
-`restores`, `drops`), and the log lines `partner_native_rates; ...` (on change),
-`partner_recon=lag|lag_end`; `partner_recon=runaway` carries dv_along/dv_cross.
+`restores`, `drops`; latched reasons sp_vtable, rec_vtable, bounds, nonfinite,
+range, fault, owner), and the log lines `partner_native_rates; ...` (on change),
+`partner_recon=lag|lag_end` (their own 64-line cap, so a flapping lag never
+starves the `runaway` lines); `partner_recon=runaway` carries dv_along/dv_cross.
 
 ## Runtime stages (coordinator, hidden worker only)
 
@@ -294,7 +319,11 @@ evidence per stage).
   produce on the body (27 expected for EVADE presses); whether the provider
   difference is in the dash and crawl inputs only (`native.rates.id0` vs
   `id1` decides); a remote whose rates go stale (no v4 for 2 s) restores the
-  body's own rates until they return; ACTION (vault, climb) is still masked.
+  body's own rates until they return; ACTION (vault, climb) is still masked;
+  the six state-specific EVADE readers (see Actions) are census-pinned but
+  their states are unverified, and `0x11D8FDD` may message another
+  GameObject; the dive's collision effects on enemies (if any) happen in the
+  receiver's world like any body contact.
 
 - The ammo experiment (`MGS_LOCAL_STOCK46_AMMO_TEST`, research only) changes a
   qualified native call's arguments (stock 210 / ammo 30) and needs its own run.

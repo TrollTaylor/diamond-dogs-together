@@ -16,6 +16,12 @@ reconciliation no longer pins a body that is only slower (split runaway,
 `lag`, along-track nudges, a stop grace), and the arbiter times only the idle
 runaway. New hidden scenario `tools/worker/scenarios/partner-native-actions.txt`
 ([details](native-puppet.md#actions)). Fixture evidence only.
+Review fixes: the rates write re-derives instance 1's own record in the hook
+(id 1, the rate service of instance 1's block PS; else `owner`), the restore
+outside the drain re-checks its chain, a legacy Arm restores like a disarm,
+the forgotten mission's Arm never re-applies after MissionEnd, `lag` lines
+have their own log cap, and the contract census pins all nine EVADE pad
+readers (six state-specific ones beyond act 27 are an open item).
 
 ## October 8, 2026: native puppet (fixture-tested, default off, never run)
 

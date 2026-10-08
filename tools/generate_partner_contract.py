@@ -671,12 +671,45 @@ PAD_ENUM = [  # (site of mov r9d,1; name; value)
 ]
 
 
+# Every PlayerPad word read that tests EVADE (bit 18): a call [r64+0x20|0x30|
+# 0x40|0x58] (held, now, press, release) on a pad loaded from +0xB0 (P+0xB0)
+# within the 24 bytes before, followed within 28 bytes by shr r,18 / bt r,18 /
+# test|and r,0x40000. The three act-27 consumers are pinned above; the other
+# six run in other action states and write per-id player state (0x11D8FDD also
+# messages the object id held in its per-id record through a global service:
+# docs/native-puppet.md "Actions"). A new consumer fails the check.
+EVADE_CONSUMERS = [0x1097F74, 0x1148C6C, 0x11B56CF, 0x11B8347, 0x11BA26E, 0x11D8FDD, 0x12213B5, 0x1299821, 0x129B7DB]
+
+
+def evade_census():
+    import re
+    pad_call = re.compile(rb'\xff[\x50-\x53\x55-\x57][\x20\x30\x40\x58]|\x41\xff[\x50-\x53\x55-\x57][\x20\x30\x40\x58]')
+    pad_load = re.compile(rb'\x8b[\x80-\xbf]\xb0\x00\x00\x00')
+    bit18 = re.compile(rb'(?:\x41)?\xc1[\xe8-\xef]\x12|(?:\x41)?\x0f\xba[\xe0-\xe7]\x12|\xa9\x00\x00\x04\x00|\x25\x00\x00\x04\x00|'
+                       rb'(?:\x41)?\xf7[\xc0-\xc7]\x00\x00\x04\x00|(?:\x41)?\x81[\xe0-\xe7]\x00\x00\x04\x00')
+    hits = []
+    for s in pe.sections:
+        if s.Name.rstrip(b'\0').decode() not in ('.text', '.xtext'):
+            continue
+        data = s.get_data()
+        va = s.VirtualAddress
+        for m in pad_call.finditer(data):
+            at = m.start() + (1 if data[m.start()] == 0x41 else 0)
+            if at < 24 or not pad_load.search(data, at - 24, at):
+                continue
+            if bit18.search(data, at + 3, at + 3 + 28):
+                hits.append(va + at)
+    return sorted(set(hits))
+
+
 def actions_assertions():
     out = []
 
     def need(cond, what):
         if not cond:
             out.append(what)
+    census = evade_census()
+    need(census == EVADE_CONSUMERS, f'EVADE (bit 18) pad consumers: {[hex(x) for x in census]}')
     for site, name, value in PAD_ENUM:
         b = rd(site, 19)
         if b[:6] != bytes.fromhex('41b901000000'):
@@ -711,7 +744,7 @@ def actions_assertions():
     need(qword_hits(0xFDD610) == [0x23AD328, 0x23AD380], f'getter 0xFDD610 slots: {[hex(x) for x in qword_hits(0xFDD610)]}')
     need(rel_refs(0xFDD610) == [], 'the record getter is only called virtually')
     need(rel_refs(0x109F690) == [0x10B9DC1, 0x10BA6B7], f'rate getter callers: {[hex(x) for x in rel_refs(0x109F690)]}')
-    need(0xFDD6AA + struct.unpack('<i', rd(0xFDD6A6, 4))[0] == 0x23AD2B0 and 0xFDD6A3 + 7 - 7 == 0xFDD6A3,
+    need(rd(0xFDD6A3, 3) == bytes.fromhex('4c8d15') and 0xFDD6AA + struct.unpack('<i', rd(0xFDD6A6, 4))[0] == 0x23AD2B0,
          'record init r10 = 0x23AD2B0 (stored last at 0xFDD736)')
     need(rd(0xFDD736, 3) == bytes.fromhex('4c8911'), 'record init: mov [rcx], r10 (final vtable) after the rates')
     need(struct.unpack('<f', rd(0xFDD70C + 3, 4))[0] == 1.0, 'rates start at 1.0')
