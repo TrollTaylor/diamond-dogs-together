@@ -148,8 +148,43 @@ do
   local function menu(id, text)
     return A.receipt("return 'MGS_COOP_DEBUG_ENEMY_V1' -- " .. fmt("%.0f %s", id, text)) == true
   end
+  local function dist(a, b) return math.sqrt((a[1] - b[1]) ^ 2 + (a[2] - b[2]) ^ 2 + (a[3] - b[3]) ^ 2) end
+  -- Route score in metres from the player, at most 192 SendCommands per request.
+  local function score(c, route, p, budget)
+    local cached = E.routePos[route]
+    if cached then return dist(cached, p) end
+    if budget.n < 192 then
+      budget.n = budget.n + 1
+      local ok, best = pcall(function()
+        local ids = call(GameObject, "SendCommand", {type = "TppSoldier2"}, {id = "GetGameObjectIdUsingRoute", route = route})
+        if type(ids) ~= "table" then ids = {ids} end
+        local best
+        for i = 1, 3 do
+          local v = get(ids, i)
+          if type(v) == "string" then v = call(GameObject, "GetGameObjectId", "TppSoldier2", v) end
+          if integer(v, 0, 65534) and budget.n < 192 then
+            budget.n = budget.n + 1
+            local at = position({id = v})
+            if at and (not best or dist(at, p) < best) then best = dist(at, p) end
+          end
+        end
+        return best
+      end)
+      if ok and best then return best end
+    end
+    return (c.distance < math.huge and math.sqrt(c.distance) or 1e6) + 50
+  end
+  -- Spawn sync tag (lua/coop/world_place.lua): the host announces the action for the
+  -- guest's copy; "sync=world;seq=n" or "sync=none;why=<reason>".
+  local function share(kind, s, x, y, z, yaw, flags, route, dy)
+    local P = get(get(e, "MgsCoopWorld"), "place")
+    if type(get(P, "share")) ~= "function" then return "sync=none;why=world_off" end
+    local ok, tag = pcall(P.share, kind, s.hash, x, y, z, yaw, flags, route, dy)
+    return ok and type(tag) == "string" and tag or "sync=none;why=world_error"
+  end
   -- Spawn/list/op commands live in debug_spawn.lua and reuse these readers.
-  E.api = {soldiers = soldiers, nearby = nearby, usable = usable, position = position, camps = camps, name = name, menu = menu}
+  E.api = {soldiers = soldiers, nearby = nearby, usable = usable, position = position, camps = camps, name = name, menu = menu,
+    dist = dist, score = score, share = share}
   function E.stop() E.used, E.last, E.routePos, E.marked, E.ignored = {}, nil, {}, {}, {} end
   E.stop()
   function E.run(a, id)
@@ -200,7 +235,7 @@ do
       for _, s in ipairs(soldiers()) do if s.hash == hash then
         if cmd == "enemy_enable" and not usable(s) then return false, "enemy_terminal_unknown" end
         call(TppEnemy, cmd == "enemy_enable" and "SetEnable" or "SetDisable", s.id)
-          return true, "submitted_local;ent=" .. fmt("%.0f", hash)
+          return true, "submitted_local;ent=" .. fmt("%.0f", hash) .. ";" .. share(cmd == "enemy_enable" and 8 or 7, s)
       end end
       return false, "enemy_not_authored"
     elseif cmd == "enemy_nearest" or cmd == "enemy_enable_nearest" or cmd == "enemy_disable_nearest" or cmd == "enemy_kill_nearest" or cmd == "clear_enemies" then
@@ -222,7 +257,7 @@ do
       if cmd == "enemy_enable_nearest" or cmd == "enemy_disable_nearest" then
         if cmd == "enemy_enable_nearest" and not usable(list[1]) then return false, "enemy_terminal_unknown" end
         call(TppEnemy, cmd == "enemy_enable_nearest" and "SetEnable" or "SetDisable", list[1].id)
-        return true, "submitted_local;ent=" .. fmt("%.0f", list[1].hash)
+        return true, "submitted_local;ent=" .. fmt("%.0f", list[1].hash) .. ";" .. share(cmd == "enemy_enable_nearest" and 8 or 7, list[1])
       end
       local dead = get(TppGameObject, "NPC_LIFE_STATE_DEAD")
       if not integer(dead, 1, 4) then return false, "missing_dead_enum" end

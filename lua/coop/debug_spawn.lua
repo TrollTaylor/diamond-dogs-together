@@ -2,6 +2,7 @@
 -- Placement reuses a living guard: "here" moves him 5 m in front of the player by
 -- the native set-transform message (lab.ini debug_soldier_warp=1); else, and for
 -- camp/route modes, an authored patrol route snap (retail TppDebug sequence).
+-- Placements and come/ignore/notice/disable/enable reach the guest's copy (R.share).
 do
   local D, A = e.MgsCoopDebug, e.MgsCoopDebug.api
   local E = D.enemy
@@ -45,31 +46,6 @@ do
     end
     return best, 1
   end
-  -- Route score in metres from the player, at most 192 SendCommands per request.
-  local function score(c, route, p, budget)
-    local cached = E.routePos[route]
-    if cached then return dist(cached, p) end
-    if budget.n < 192 then
-      budget.n = budget.n + 1
-      local ok, best = pcall(function()
-        local ids = send({type = "TppSoldier2"}, {id = "GetGameObjectIdUsingRoute", route = route})
-        if type(ids) ~= "table" then ids = {ids} end
-        local best
-        for i = 1, 3 do
-          local v = get(ids, i)
-          if type(v) == "string" then v = call(GameObject, "GetGameObjectId", "TppSoldier2", v) end
-          if integer(v, 0, 65534) and budget.n < 192 then
-            budget.n = budget.n + 1
-            local at = R.position({id = v})
-            if at and (not best or dist(at, p) < best) then best = dist(at, p) end
-          end
-        end
-        return best
-      end)
-      if ok and best then return best end
-    end
-    return (c.distance < math.huge and sqrt(c.distance) or 1e6) + 50
-  end
   local function cachedRoute(c, p)
     local best, route
     for _, r in ipairs(c.routes) do
@@ -101,8 +77,9 @@ do
         if o.come then pcall(send, s.id, {id = "SetDiscoveryPlayer"}) end
         E.last, E.routePos[route] = {position = v, mission = D.mission}, v
         R.menu(id, fmt("spawned %.0f %.0f %.0f %.0f", mm(v[1]), mm(v[2]), mm(v[3]), s.hash))
-        A.note(id, true, fmt("%s;ent=%.0f;d=%.1f;moved=%.1f;far=%d;%s;come=%d;sync=none;route=%s", o.prefix, s.hash, d,
-          dist(v, s.position), d > 60 and 1 or 0, o.tag, o.come and 1 or 0, route))
+        local tag = R.share(2, s, mm(v[1]), mm(v[2]), mm(v[3]), 0, (o.come and 1 or 0) + (E.ignored[s.name] and 2 or 0), route)
+        A.note(id, true, fmt("%s;ent=%.0f;d=%.1f;moved=%.1f;far=%d;%s;come=%d;%s;route=%s", o.prefix, s.hash, d,
+          dist(v, s.position), d > 60 and 1 or 0, o.tag, o.come and 1 or 0, tag, route))
       elseif q.frames >= 120 then D.pending = nil; A.note(id, false, "spawn_position_timeout") end
     end
     D.pending = q
@@ -112,8 +89,9 @@ do
   local function warp(s, id)
     local c = pose()
     local y = math.rad(c[4])
-    local r = A.receipt(fmt("return 'MGS_COOP_DEBUG_WARP_V1' -- %.0f %.0f %.0f %.0f %.0f %.0f", id, s.id, mm(c[1] + 5 * math.sin(y)),
-      mm(c[2] + .2), mm(c[3] + 5 * math.cos(y)), mm(math.atan2(-math.sin(y), -math.cos(y)))))
+    local q = {mm(c[1] + 5 * math.sin(y)), mm(c[2] + .2), mm(c[3] + 5 * math.cos(y)), mm(math.atan2(-math.sin(y), -math.cos(y)))}
+    s.req = q
+    local r = A.receipt(fmt("return 'MGS_COOP_DEBUG_WARP_V1' -- %.0f %.0f %.0f %.0f %.0f %.0f", id, s.id, q[1], q[2], q[3], q[4]))
     if type(r) ~= "table" then return nil, "native_unavailable" end
     local why = get(r, "refused")
     if why ~= nil then return nil, R.name(why) and why or "refused" end
@@ -147,7 +125,7 @@ do
       local best, br, budget, p = nil, nil, {n = 0}, pose()
       for i = 1, min(4, #list) do
         for _, r in ipairs(list[i].routes) do
-          local value = score(list[i], r, p, budget)
+          local value = R.score(list[i], r, p, budget)
           if not best or value < best then best, br = value, r end
         end
       end
@@ -178,11 +156,12 @@ do
       D.pending = nil
       release()
       if come then pcall(send, s.id, {id = "SetDiscoveryPlayer"}) end
-      local d = dist(v, pose())
+      local d, w = dist(v, pose()), s.req
       E.last = {position = v, mission = D.mission}
       R.menu(id, fmt("spawned %.0f %.0f %.0f %.0f", mm(v[1]), mm(v[2]), mm(v[3]), s.hash))
-      A.note(id, true, fmt("guard_here;ent=%.0f;d=%.1f;moved=%.1f;far=%d;mode=warp;come=%d;sync=none;frames=%d;leaf=%s", s.hash, d,
-        dist(v, s.position), d > 10 and 1 or 0, come and 1 or 0, q.done, R.name(get(r, "leaf")) and r.leaf or "unknown"))
+      local tag = R.share(1, s, w[1], w[2], w[3], w[4], come and 1 or 2, nil, mm(v[2]) - w[2])
+      A.note(id, true, fmt("guard_here;ent=%.0f;d=%.1f;moved=%.1f;far=%d;mode=warp;come=%d;%s;frames=%d;leaf=%s", s.hash, d,
+        dist(v, s.position), d > 10 and 1 or 0, come and 1 or 0, tag, q.done, R.name(get(r, "leaf")) and r.leaf or "unknown"))
     end
     D.pending = q
     return true, fmt("submitted_guard_here;ent=%.0f;scope=local;mode=warp", s.hash)
@@ -270,15 +249,15 @@ do
       return true, head .. ";" .. tag
     elseif o == "come" then
       send(s.id, {id = "SetDiscoveryPlayer"})
-      return true, head .. ";hostile;unverified;" .. tag
+      return true, head .. ";hostile;unverified;" .. R.share(4, s)
     elseif o == "ignore" or o == "notice" then
       call(TppEnemy, o == "ignore" and "SetEnableRestrictNotice" or "SetDisableRestrictNotice", s.id)
       E.ignored[s.name] = o == "ignore" or nil
-      return true, head .. ";sync=none"
+      return true, head .. ";" .. R.share(o == "ignore" and 5 or 6, s)
     elseif o == "disable" or o == "enable" then
       if o == "enable" and not R.usable(s) then return false, "enemy_terminal_unknown" end
       call(TppEnemy, o == "enable" and "SetEnable" or "SetDisable", s.id)
-      return true, head .. ";sync=none"
+      return true, head .. ";" .. R.share(o == "disable" and 7 or 8, s)
     elseif o == "mark" or o == "unmark" then
       if o == "mark" then call(TppMarker, "Enable", s.id, 0, "moving", "map_and_world_only_icon", 0, false, false)
       else call(TppMarker, "Disable", s.id) end

@@ -1,6 +1,7 @@
 -- Offline W4 checkpoint alignment. Host reads a bounded initial sweep; the
 -- guest stays inactive until a complete same-epoch snapshot is validated.
 -- Unreadable soldiers are explicit unknowns, discovered when their area loads.
+-- Before any free-roam area trap the host infers its area (A.infer).
 do
     local W = e.MgsCoopWorld
     local A, OP, H = {serial = 0}, W.OP, W.handlers
@@ -18,7 +19,8 @@ do
     end
     local function read(e)
         if e.id == W.api.null then return nil end
-        if not W.activeCp or W.activeCp[e.cp] ~= true then
+        local act = W.activeCp or W.inferredCp
+        if not act or act[e.cp] ~= true then
             local ok, recovered = pcall(W.api.recovered, e.name)
             return ok and recovered == true and 6 or nil
         end
@@ -36,8 +38,47 @@ do
     function A.install(cfg)
         A.enabled = cfg and cfg[1] >= 3 or false
     end
+    -- No trap_FreePlay_areaNN crossed yet: the snapshot reads the area holding the CP
+    -- of the nearest soldier with a readable position. Bookkeeping only (no original
+    -- call, no SetOutOfArea, W.activeCp untouched); a real trap replaces it.
+    if W.area then
+        local install = W.area.install
+        W.area.install = function(subScripts, name)
+            local t = W.get(subScripts, "enemy")
+            A.areaEnemy = type(t) == "table" and t or rawget(_G, name)
+            return install(subScripts, name)
+        end
+    end
+    function A.infer()
+        local enemy = A.areaEnemy
+        local list = type(enemy) == "table" and W.get(enemy, "cpList")
+        if W.areaState.localArea ~= nil or W.activeCp ~= nil or type(list) ~= "table" or not W.area then return end
+        local x, z = W.get(vars, "playerPosX"), W.get(vars, "playerPosZ")
+        if type(x) ~= "number" or type(z) ~= "number" then return end
+        local areaOf, best, bd = {}, nil, nil
+        for k, g in pairs(list) do for name in pairs(W.area.set(g)) do if areaOf[name] == nil then areaOf[name] = k end end end
+        for _, h in ipairs(W.entOrder) do
+            local e = W.ent[h]
+            local k = areaOf[W.cp[e.cp].name]
+            if k ~= nil and e.id ~= W.api.null then
+                local ok, p = pcall(W.api.send, e.id, {id = "GetPosition"})
+                local good, px, pz = false, nil, nil
+                if ok and (type(p) == "userdata" or type(p) == "table") then good, px, pz = pcall(function() return p:GetX(), p:GetZ() end) end
+                if good and type(px) == "number" and type(pz) == "number" and px == px and pz == pz then
+                    local d = (px - x) ^ 2 + (pz - z) ^ 2
+                    if not bd or d < bd then best, bd = k, d end
+                end
+            end
+        end
+        if best == nil then log("step=area;inferred=none"); return end
+        local act = {[W.h("quest_cp")] = true}
+        for name in pairs(W.area.set(list[best])) do act[W.h(name)] = true end
+        W.inferredCp, W.inferredArea = act, best
+        W.log(fmt("event=area;inferred=%s;nearest_m=%.0f", tostring(best), math.sqrt(bd)))
+    end
     function A.reset()
         A.tx, A.rx, A.ack, A.unknown, A.discovery, A.pairEpoch = nil, nil, nil, {}, 0, nil
+        W.inferredCp, W.inferredArea = nil, nil
         A.dead = false
         A.baseW1 = W.w1 and W.api.isStart and W.api.isStart() == true
         if A.enabled and W.active and W.level >= 3 and W.feature and W.feature.enemies then
@@ -56,6 +97,7 @@ do
         if A.pairEpoch == W.epoch or A.dead then return end
         A.pairEpoch, W.w1 = W.epoch, false
         if W.host then
+            A.infer()
             A.serial = A.serial % 4294967295 + 1
             A.tx = {id = A.serial, mission = W.mission, epoch = W.epoch, at = W.now(), records = {},
                 scan = 1, cp = 1, sent = 1, digest = 0, soldiers = #W.entOrder, cps = #W.cpOrder}

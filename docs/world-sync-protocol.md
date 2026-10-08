@@ -137,6 +137,8 @@ World (queue 1):
 | 0x17 | PHASE_VEC | both | U | cpCount 0..192, first 0, nwords 1..12, w1..w12 (host: local phases; guest: own phases) | - | 53 |
 | 0x20 | CLOCK | H->G | R | clock 0..86399, rateX100, cause 1..4 (jump, fast, resync, fast_end), tick | latencyMs | 11 |
 | 0x21 | WEATHER | H->G | R | weatherType 0..5/255 (release), interpTime 0..600, fogDensityMilli 65535, fogType 255, cause 1..3 (change, resync, digest) | - | 7 |
+| 0x22 | ENEMY_DEBUG | H->G | R | seq 1.., entHash, kind 1..8 (warp, route, correct, come, ignore, notice, disable, enable), x, y, z mm (+-1e8), yaw mrad (+-8000), flags 0..3 (1 come, 2 restrict notice), routeHash, hostGameObjectId | - | 30 |
+| 0x23 | ENEMY_DEBUG_ACK | G->H | R | seq 1.., entHash, result 0..1 (applied, refused), reason 0..31, errCm, frames | - | 12 |
 
 `latencyMs = min(65535, rtt/2 + time queued on the receiver)`. Life-state
 wire enum: NORMAL 0, HOLDUP 1, SLEEP 2, FAINT 3, DYING 4, DEAD 5, FULTONED 6,
@@ -151,8 +153,10 @@ UNPAIRED{reason: 1 session, 2 remote_mission, 3 epoch, 4 remote_end, 5 level0,
 6 local_end}, 0x73 GOTO{step, target, lz}, 0x74 PROBE{id, arg}, 0x75
 PROBE_FIRE{id, step, ent, arg}, 0x76 RESYNC_NEEDED{what}, 0x77 LEVEL{0}, and
 0x78 GOTO_ACK{step, result} (Lua -> native: 0 refused, 1 reserved, 2 waiting).
-W3/W4 use codes 0x09-0x0F and 0x18-0x1C (section 13). Codes 0x1D-0x1F
-and bundle flag bit 0 (chunking) remain reserved.
+W3/W4 use codes 0x09-0x0F and 0x18-0x1C (section 13). Spawn sync (F9 guard
+placement and per-soldier debug actions, [debug-menu.md](debug-menu.md)
+"Spawn sync") uses 0x22-0x23 at level 2 (paired, eff >= 2, roster match; not
+W1). Codes 0x1D-0x1F and bundle flag bit 0 (chunking) remain reserved.
 
 ## 4. Queues, pairing, epoch
 
@@ -205,6 +209,7 @@ released) -> `g_tx_lock` -> `g_lock`. The observer calls
 | TX | `return 'MGS_COOP_WORLD_TX_V1' -- <op> <v1> ... <vn>` | `return 1` / `return 0,<reason>`: 1 syntax, 2 unknown_op, 3 bad_args, 4 wrong_role, 5 not_paired, 6 queue_full, 7 disabled, 8 lab_only | runtime; MISSION_END also termination |
 | RX | `return 'MGS_COOP_WORLD_RX_V1' -- <mask>` (1 control; 3 control, world, U slots) | `return queue,op,v...` or empty `return 0,0,flags,qctrl,qworld,epoch` (flags 1 link, 2 paired, 4 resync_needed, 8 level0) | runtime |
 | LOG | `return 'MGS_COOP_WORLD_LOG_V1' -- <payload>` (1..160 bytes) | `return true`; logs `world_lua=...` (partner sanitizer, `;` -> `; `; at most 200 lines per 10 s, then `world=log_cap`) | runtime or termination |
+| WARP | `return 'MGS_COOP_WORLD_WARP_V1' -- <seq> <goId>` (guest spawn sync) | `return {r=,h=,leaf=}` or `return {refused="<reason>"}`: one native placement of the grant the core recorded when the guest's RX popped ENEMY_DEBUG `seq` (kind warp/correct, same epoch, at most 15 s old); the target never comes from Lua ([debug-menu.md](debug-menu.md) "Spawn sync") | runtime |
 
 Exact classification (name == source, NUL-free, at most 240 bytes). Integers
 only: an optional `-` (i32 fields), no `+`, no leading zeros, no `-0`, no `.`,
@@ -859,7 +864,7 @@ pressure, session replacement and mixed levels, not physical game input.
 ## 14. Remaining extension points
 
 W5 full campaign/progression and W6 AI transforms remain design work.
-World op codes 0x1D-0x1F and 0x22 onward are available; control codes
+World op codes 0x1D-0x1F and 0x24 onward are available; control codes
 0x09-0x0F are now used. HOLDUP, hostages/vehicles and dynamic quest roster
 changes still require separate handling and live acceptance. Partner body
 rendering and input drive are independent of these world modules.

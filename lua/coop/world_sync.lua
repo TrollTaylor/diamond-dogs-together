@@ -246,6 +246,7 @@ do
         if W.gt and W.go then W.go.tick(now) end
         if W.follow then W.follow.tick(now) end
         if W.align then W.align.tick(now) end
+        if W.place then W.place.tick(now) end
     end
 
     -- Observer (after the original; records only, never sends).
