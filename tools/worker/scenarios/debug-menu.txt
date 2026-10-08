@@ -60,7 +60,7 @@ host expect ^guard_here;ent=\d+;d=(\d\.\d|10\.0);moved=\d+\.\d;far=0;mode=warp;c
 wait 1500
 host capture spawn-come-world
 host run clear_enemies 25
-host expect ^submitted=[1-9]\d*;dead_readback=d+
+host expect ^submitted=[1-9]\d*;dead_readback=\d+
 guest run spawn_enemy here
 guest expect ^host_only
 guest run goto_partner
