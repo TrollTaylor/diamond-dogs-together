@@ -122,9 +122,15 @@ void CompleteFiniteEvent(State& s, std::uint64_t id) noexcept {
 }
 void ObserveFiniteEvent(State& s, const In& in) noexcept {
     if (!in.map || in.blocked != Block::none || !in.parts_loaded || in.cls.via == Via::lost ||
-        (in.urgent && !(in.finite_token && OneShot(in.target)))) {
+        (in.urgent && !in.stance_only_urgent && !(in.finite_token && OneShot(in.target)))) {
         CancelFiniteEvents(s);
         return;
+    }
+    if (in.urgent && in.stance_only_urgent) {
+        for (std::size_t i = 0; i < s.finite_count;) {
+            if (s.finite_events[i].cls.stance != in.cls.stance) EraseFiniteEvent(s, i);
+            else ++i;
+        }
     }
     if (!in.target_ok) return; // stale freezes a request rather than producing a new one
     if (!in.finite_token) { s.observed_finite_token = 0; return; }
@@ -678,7 +684,8 @@ Out Step(State& s, const In& observation) noexcept {
             return o;
         }
         if (OneShot(s.cur) && !in.urgent && s.play_ms && Ms(s.play_ms, now) < 1800) return o;
-        if (!stable || (s.play_ms && Ms(s.play_ms, now) < dwell)) return o;
+        const bool stance_interrupt = in.stance_only_urgent && IncompatibleTurnStance(s.cur, in.cls.stance);
+        if (!stance_interrupt && (!stable || (s.play_ms && Ms(s.play_ms, now) < dwell))) return o;
         if (const char* why = StopGate(in)) {
             Defer(s, o, why);
             return o;

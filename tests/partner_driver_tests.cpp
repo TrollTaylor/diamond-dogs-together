@@ -2260,6 +2260,60 @@ void TestDmMapRawTurnFeed() {
     }
 }
 
+void TestDmMapRawVisualLag() {
+    namespace pose = mgscoop::pose;
+    namespace sync = mgscoop::sync;
+    namespace dm = mgscoop::partner_dmmap;
+    for (const bool stance_change : {false, true}) {
+        MapSession s(mgscoop::PartnerSource::net);
+        s.hooks.sample_remote_with_turns = HookSampleWithTurns;
+        s.fake.dm_motion_count = 21;
+        const auto base = s.now;
+        unsigned source_frame = 0, turn_plays = 0;
+        bool collected_during_lag = false;
+        for (unsigned owner = 1; owner <= 90; ++owner) {
+            const auto elapsed = owner * 1000u / 60;
+            while (source_frame * 1000u / 30 <= elapsed) {
+                const auto t = source_frame * 1000u / 30;
+                pose::Snapshot p{};
+                p.sender_ms = static_cast<std::uint32_t>(base + t);
+                p.x = 1 + (stance_change ? 0 : 4.0f * static_cast<float>(t < 400 ? t : 400) / 1000);
+                p.y = 2; p.z = 3; p.yaw = t <= 400 ? 0 : -1.55f;
+                p.stance = stance_change && t >= 400 ? 1 : 0;
+                p.equip_id = 873;
+                p.flags = !stance_change && t < 400 ? sync::ActionFlag::Running : sync::ActionFlag::Aiming;
+                p.anim_valid = true; p.act = !stance_change && t < 400 ? 2 : 14;
+                p.anim_stance = static_cast<std::uint8_t>(p.stance + 1);
+                p.anim_speed = !stance_change && t < 400 ? 2 : 0;
+                Check(s.fake.raw_ring.Push(p, base + t), "raw visual lag: source30Hz accepted by actual pose ring");
+                ++source_frame;
+            }
+            s.fake.raw_now = base + elapsed;
+            Check(s.Tick(3, base + elapsed - s.now), "raw visual lag: actual recording owner60Hz tick accepted");
+            const auto& mission = s.driver.mission;
+            const auto& raw = mission.dmmap_source_turns;
+            collected_during_lag = collected_during_lag ||
+                (mission.dmmap_turn.collecting && raw.have_previous && raw.cls.move == 0 &&
+                 (mission.dmmap.cand_cls.move != 0 || mission.dmmap.cand_cls.stance != raw.cls.stance));
+            if ((s.reply.op & op::dm_play) && dm::OneShot(static_cast<std::uint8_t>(s.reply.gani))) {
+                ++turn_plays;
+                std::uint32_t visual_speed = 0;
+                const auto& visual = mission.dmmap_source_frame.visual;
+                Check(dm::SpeedMmps(mission.dmmap_speed, visual_speed) && visual_speed < 300 &&
+                      !(visual.flags & (sync::ActionFlag::Running | sync::ActionFlag::Walking | sync::ActionFlag::Sprinting)) &&
+                      visual.stance == (stance_change ? 1u : 0u),
+                      "raw visual lag: actual interpolated movement and stance are ready before native play");
+                Check(s.reply.gani == (stance_change ? 17u : 13u) && mission.dmmap.cand_cls.move == 0 &&
+                      mission.dmmap.cand_cls.stance == (stance_change ? 1u : 0u),
+                      "raw visual lag: full pivot plays only after visual idle and the matching stance");
+            }
+        }
+        Check(collected_during_lag && turn_plays == 1 && s.both_dm_ops == 0 && s.driver.mission.dmmap.bad == 0,
+              "raw visual lag: immediate post-W-release/stance pivot survives delayed visual class exactly once");
+        Check(s.fake.sample_delays.back() == 100, "raw visual lag: original visual interpolation delay stays unchanged");
+    }
+}
+
 void TestDmArchiveBounds() {
     for (const unsigned count : {0u, 13u, 21u, 31u, 32u, 255u}) {
         Session s(3);
@@ -2732,6 +2786,7 @@ int main() {
     TestDmMapSources();
     TestDmMapAimPivots();
     TestDmMapRawTurnFeed();
+    TestDmMapRawVisualLag();
     TestDmArchiveBounds();
     TestDmMapGates();
     TestDmMapFailures();

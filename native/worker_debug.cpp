@@ -43,13 +43,14 @@ bool Timely(const Request& request,std::uint64_t now,std::uint64_t previous) noe
 #include <cstdarg>
 #include <cmath>
 #include "mgscoop/debug_menu.hpp"
+#include "mgscoop/debug_overlay.hpp"
 #include "mgscoop/worker_scenario.hpp"
 namespace mgscoop::worker_debug {
 namespace {
 std::uint64_t last_poll{}, last_sequence{}, accepted_sequence{};
 bool last_queued{};
 struct Json {
-    char bytes[32768]{}; std::size_t used{}; bool ok{true};
+    char bytes[65536]{}; std::size_t used{}; bool ok{true};
     void Add(const char* format, ...) noexcept {
         if(!ok) return;
         va_list args; va_start(args,format);
@@ -78,6 +79,11 @@ void Publish(const worker_scenario::RunContext& c) noexcept {
         s.mission,s.generation,Bool(s.enabled),Bool(s.offline),Bool(s.saves_redirected),Bool(s.gameplay_ready),Bool(s.terminating),Bool(s.realized),Bool(s.body_valid),Bool(s.pose_valid));
     j.Add("\"world_level\":%u,\"world_paired\":%s,\"world_effective\":%u,\"remote_action_flags\":%u,\"remote_equip\":%u,\"remote_act\":%u,\"mapped_clip\":%u,\"motion_count\":%u,\"remote_age_ms\":%u,",
         s.world_level,Bool(s.world_paired),s.world_effective,s.remote_action_flags,s.remote_equip,s.remote_act,s.mapped_clip,s.motion_count,s.remote_age_ms);
+    j.Add("\"local_anim_valid\":%s,\"local_act\":%u,\"local_anim_stance\":%u,\"local_anim_speed\":%u,\"remote_anim_valid\":%s,\"remote_stance\":%u,\"remote_anim_stance\":%u,\"remote_anim_speed\":%u,\"dm_stance\":%u,\"dm_move\":%u,\"dm_phase\":",
+        Bool(s.local_anim_valid),s.local_act,s.local_anim_stance,s.local_anim_speed,Bool(s.remote_anim_valid),s.remote_stance,s.remote_anim_stance,s.remote_anim_speed,s.dm_stance,s.dm_move);
+    j.String(s.dm_phase,sizeof(s.dm_phase));j.Add(",\"local_yaw_valid\":%s,\"player_yaw\":",Bool(s.local_yaw_valid));j.Float(s.player_yaw);
+    j.Add(",\"remote_yaw\":");j.Float(s.remote_yaw);j.Add(",\"body_yaw\":");j.Float(s.body_yaw);j.Add(",");
+    j.Add("\"dm_speed_valid\":%s,\"dm_speed_mmps\":%u,",Bool(s.dm_speed_valid),s.dm_speed_mmps);
     j.Add("\"player_pos\":");j.Position(s.player_pos);j.Add(",\"remote_pos\":");j.Position(s.remote_pos);j.Add(",\"body_pos\":");j.Position(s.body_pos);
     j.Add(",\"heading_error_deg\":");j.Float(s.heading_error_deg);j.Add(",\"position_error_m\":");j.Float(s.position_error_m);
     j.Add(",\"queue_depth\":%u,\"last_id\":%u,\"completed\":%u,\"rejected\":%u,\"last_command\":",s.queue_depth,s.last_id,s.completed,s.rejected);
@@ -86,7 +92,39 @@ void Publish(const worker_scenario::RunContext& c) noexcept {
     j.Add("],\"enemy_camps\":[");for(unsigned i=0;i<s.enemy_camp_count && i<32;++i){if(i)j.Add(",");j.Add("{\"name\":");j.String(s.enemy_camps[i].name,sizeof(s.enemy_camps[i].name));j.Add(",\"distance_mm\":%d,\"route_count\":%u}",s.enemy_camps[i].distance_mm,s.enemy_camps[i].route_count);}
     j.Add("],\"enemy_routes_camp\":");j.String(s.enemy_routes_camp,sizeof(s.enemy_routes_camp));j.Add(",\"enemy_routes\":[");
     for(unsigned i=0;i<s.enemy_route_count && i<64;++i){if(i)j.Add(",");j.Add("{\"name\":");j.String(s.enemy_routes[i].name,sizeof(s.enemy_routes[i].name));j.Add(",\"index\":%u}",s.enemy_routes[i].index);}
-    j.Add("]}\n");if(!j.ok)return;
+    j.Add("],\"worker_input\":{");
+    const auto input = debug_overlay::GetWorkerInputStats();
+    j.Add("\"raw_keyboard_posted\":%u", input.raw_keyboard_posted);
+    j.Add(",\"raw_mouse_posted\":%u", input.raw_mouse_posted);
+    j.Add(",\"raw_post_failed\":%u", input.raw_post_failed);
+    j.Add(",\"raw_mouse_axes_posted\":%u", input.raw_mouse_axes_posted);
+    j.Add(",\"raw_mouse_buttons_posted\":%u", input.raw_mouse_buttons_posted);
+    j.Add(",\"raw_keyboard_reads\":%u", input.raw_keyboard_reads);
+    j.Add(",\"raw_mouse_reads\":%u", input.raw_mouse_reads);
+    j.Add(",\"raw_mouse_axes_reads\":%u", input.raw_mouse_axes_reads);
+    j.Add(",\"raw_mouse_buttons_reads\":%u", input.raw_mouse_buttons_reads);
+    j.Add(",\"raw_keyboard_packets_read\":%u", input.raw_keyboard_packets_read);
+    j.Add(",\"raw_mouse_packets_read\":%u", input.raw_mouse_packets_read);
+    j.Add(",\"raw_mouse_axis_packets_read\":%u", input.raw_mouse_axis_packets_read);
+    j.Add(",\"raw_mouse_button_packets_read\":%u", input.raw_mouse_button_packets_read);
+    j.Add(",\"raw_read_refused\":%u", input.raw_read_refused);
+    j.Add(",\"cursor_success\":%u", input.cursor_success);
+    j.Add(",\"cursor_null\":%u", input.cursor_null);
+    j.Add(",\"cursor_thread_refused\":%u", input.cursor_thread_refused);
+    j.Add(",\"cursor_window_refused\":%u", input.cursor_window_refused);
+    j.Add(",\"cursor_geometry_refused\":%u", input.cursor_geometry_refused);
+    j.Add(",\"cursor_map_refused\":%u", input.cursor_map_refused);
+    j.Add(",\"cursor_window_match\":%u", input.cursor_window_match);
+    j.Add(",\"cursor_window_mismatch\":%u", input.cursor_window_mismatch);
+    j.Add(",\"cursor_present_missing\":%u", input.cursor_present_missing);
+    j.Add(",\"di_mouse_state_calls\":%u", input.di_mouse_state_calls);
+    j.Add(",\"di_mouse_state_supplied\":%u", input.di_mouse_state_supplied);
+    j.Add(",\"di_mouse_state_axes\":%u", input.di_mouse_state_axes);
+    j.Add(",\"di_mouse_state_buttons\":%u", input.di_mouse_state_buttons);
+    j.Add(",\"di_mouse_buffer_calls\":%u", input.di_mouse_buffer_calls);
+    j.Add(",\"di_mouse_buffer_events\":%u", input.di_mouse_buffer_events);
+    j.Add(",\"di_mouse_buffer_peek_events\":%u", input.di_mouse_buffer_peek_events);
+    j.Add("}}\n");if(!j.ok)return;
     wchar_t path[32768]{},temporary[32768]{};
     if(FAILED(StringCchPrintfW(path,ARRAYSIZE(path),L"%s\\%S.state.json",c.run_dir,c.role)) ||
        FAILED(StringCchPrintfW(temporary,ARRAYSIZE(temporary),L"%s.%llu.tmp",path,GetTickCount64())))return;

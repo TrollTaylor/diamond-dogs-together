@@ -1,6 +1,46 @@
 # Development status
 
-## October 7, 2026: background-worker implementation resumed
+## October 7, 2026: animation continuation after Claude's hidden-worker tests
+
+Claude committed the prior work and private-desktop runtime fixes on
+`dev/oct7-continue`, through 805a8ec. Its two-game Afghanistan locomotion run
+904f772a2df64307a469db4ef05fface closed normally, restored both installations
+and matched all real saves. Controlled continuation disproved the proposed
+stand/crouch inversion: the host started crouching and the old runner captured
+movement after input expired. Corrected hidden tests confirm standing run 11,
+sprint 5, walk 10, crouch idle/move 1/4 and prone idle/crawl 7/6. Worker Raw
+Input modifiers and a private cursor getter now supply actual source gaits and
+gun input. Captures require native timing, held input and fresh pose readback.
+
+Two production turn losses are fixed: raw pivots survive delayed visual
+movement/stance, and new matching-stance turns survive old native-clip
+confirmation. Existing lifecycle, gun/movement cancellation, freshness and
+native stop/confirmation gates remain. Recording regressions and all 110
+audited suites pass. Final hidden run `1a2de304f22243d2b8900a7f2301c742`
+qualified both standing directions and a crouched pivot (about 75/75/82
+degrees), confirmed finite turn playback and return to idle, and completed
+16 timely frames including held strafe. Both instances closed normally, both
+baselines were restored and all ten real saves matched. No system input,
+focus or desktop switch was used.
+
+Automatic upper-body aim/fire/reload playback remains disabled. Genuine
+source aim/fire/reload reaches the guest; guarded read-only comparison finds
+populated source weapon animation inputs but all ten partner inputs zero.
+Static requested-allocation and default-allocator proofs are frozen; the
+natural current-context scheduler caller/root/lifecycle is still unqualified.
+The V3 timing reader refused without samples and was not expanded. The
+separate unfinished `wp/debug-menu` worktree is not merged in this animation
+continuation. See [build-specific evidence and remaining work](testing-2026-10-07-hidden-worker-animation.md).
+
+Normal release `DC5F5FDF...B1B3755` passed all 110 audited suites with worker
+and all research options OFF, and is installed in both local game copies and
+staged at the usual launcher's `build/native/dinput8.dll`. Owned rollback
+backups are retained. Post-install checks confirm unchanged retail/Steam/runtime
+files and all ten real saves, with no game or worker remaining. This exact
+normal DLL has automated checks; the fresh gameplay evidence above belongs to
+the separate Worker-ON build. Nothing was pushed.
+
+## October 7, 2026: initial background-worker implementation
 
 The user requested implementation and continued development without Computer
 Use or visible game windows. A default-off worker is being integrated with
@@ -11,8 +51,8 @@ has passed all109 audited CTests,198 input-only checks and72 runner-policy
 checks. All11 native research flags remain OFF. Three bounded private DX11
 probe attempts refused before qualification; the latest records an empty
 private-window enumeration (FALSE, error0, no bad callback) at startup.
-No MGSV has launched under the worker, and private MGSV startup, rendering,
-input and playability remain unverified. Receipts are retained under
+These were the initial implementation results, before Claude's subsequent
+qualified private-desktop game runs described above. Receipts are retained under
 `build/worker-runs` and `build/worker-runtime`.
 No global input or visible fallback is authorized. Gun pose work retains its
 existing exact-build, native-contract, owner and lifecycle gates.

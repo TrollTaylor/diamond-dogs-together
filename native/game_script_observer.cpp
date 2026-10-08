@@ -1105,7 +1105,17 @@ void PublishDebugSnapshot() noexcept {
     if (pp::ReadState(partner_addresses, current) == pp::Refusal::none && current.vars_ok) {
         snapshot.pose_valid = true;
         for (unsigned i = 0; i < 3; ++i) snapshot.player_pos[i] = current.vars_pos[i];
-        if (current.slots_ok) snapshot.player_yaw = current.slot[0][3] * 57.2957795f;
+        if (current.slots_ok) {
+            snapshot.player_yaw = current.slot[0][3] * 57.2957795f;
+            snapshot.local_yaw_valid = true;
+        }
+        pp::Anim animation{};
+        if (pp::ReadAnim(current, animation)) {
+            snapshot.local_anim_valid = true;
+            snapshot.local_act = animation.act[0];
+            snapshot.local_anim_stance = animation.stance[0];
+            snapshot.local_anim_speed = animation.speed[0];
+        }
     }
     if (mission.have_cmd) {
         snapshot.remote_pos[0] = static_cast<float>(mission.cmd.x_mm) * 0.001f;
@@ -1130,7 +1140,15 @@ void PublishDebugSnapshot() noexcept {
     snapshot.remote_action_flags = sample.flags;
     snapshot.remote_equip = sample.equip_id;
     snapshot.remote_act = sample.anim_valid ? sample.act : 0;
+    snapshot.remote_anim_valid = sample.anim_valid;
+    snapshot.remote_stance = sample.stance;
+    snapshot.remote_anim_stance = sample.anim_stance;
+    snapshot.remote_anim_speed = sample.anim_speed;
     snapshot.mapped_clip = mission.dmmap.cur;
+    snapshot.dm_stance = mission.dmmap.cand_cls.stance;
+    snapshot.dm_move = mission.dmmap.cand_cls.move;
+    snapshot.dm_speed_valid = mgscoop::partner_dmmap::SpeedMmps(mission.dmmap_speed, snapshot.dm_speed_mmps);
+    StringCchCopyA(snapshot.dm_phase, ARRAYSIZE(snapshot.dm_phase), mgscoop::partner_dmmap::PhaseName(mission.dmmap.phase));
     snapshot.motion_count = MountedPlayerMotionCount();
     // Change-only action receipts expose actual received gun intent during
     // copied-save gameplay, including when the overlay closes on focus loss.

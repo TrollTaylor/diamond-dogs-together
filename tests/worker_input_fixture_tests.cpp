@@ -19,11 +19,15 @@ HRESULT WorkerDataForTest(IDirectInputDevice8W*,DWORD,DIDEVICEOBJECTDATA*,DWORD*
 HRESULT WorkerFormatForTest(IDirectInputDevice8W*,const DIDATAFORMAT*) noexcept;
 HRESULT WorkerCoopForTest(IDirectInputDevice8W*,HWND,DWORD) noexcept;
 BOOL WorkerCursorForTest(int,int) noexcept;
+void ConfigureWorkerCursorFixtureForTest(HWND,BOOL (WINAPI*)(HWND,LPRECT),BOOL (WINAPI*)(HWND,LPPOINT),BOOL (WINAPI*)(LPPOINT)) noexcept;
+BOOL WorkerGetCursorForTest(LPPOINT) noexcept;
+void SetWorkerPresentWindowForTest(HWND) noexcept;
 BOOL WorkerClipForTest(const RECT*) noexcept;
 SHORT WorkerAsyncForTest(int) noexcept;
 SHORT WorkerKeyStateForTest(int) noexcept;
 UINT WorkerRawBufferForTest(RAWINPUT*,UINT*,UINT) noexcept;
 UINT WorkerRawInputForTest(HRAWINPUT,UINT,void*,UINT*,UINT) noexcept;
+HRAWINPUT WorkerSyntheticKeyboardForTest(unsigned,bool) noexcept;
 DWORD WorkerPadForTest(DWORD,XINPUT_STATE*) noexcept;
 }
 namespace w=mgscoop::worker_scenario;namespace ui=mgscoop::debug_overlay;
@@ -47,6 +51,56 @@ __declspec(noinline) UINT WINAPI RawData(HRAWINPUT input,UINT command,void* outp
     }}
     if(size)*size=raw_data_size;SetLastError(0x10203040);return raw_data_result;
 }
+const HWND cursor_window=reinterpret_cast<HWND>(0x789a);
+RECT cursor_rect{0,0,1280,720};
+unsigned cursor_original_calls{},cursor_rect_calls{},cursor_map_calls{};
+BOOL cursor_original_result=TRUE,cursor_rect_result=TRUE,cursor_map_result=TRUE;
+BOOL WINAPI CursorOriginal(LPPOINT point){++cursor_original_calls;if(point)*point={11,-22};SetLastError(0x33445566);return cursor_original_result;}
+BOOL WINAPI CursorRect(HWND own,LPRECT rect){++cursor_rect_calls;Check(own==cursor_window,"cursorgeometryqualifiedwindow");*rect=cursor_rect;SetLastError(0x55667788);return cursor_rect_result;}
+BOOL WINAPI CursorToScreen(HWND own,LPPOINT point){++cursor_map_calls;Check(own==cursor_window,"cursormappingqualifiedwindow");point->x-=1920;point->y+=37;SetLastError(0x778899aa);return cursor_map_result;}
+void ConfigureCursor(HWND own=cursor_window){ui::ConfigureWorkerCursorFixtureForTest(own,CursorRect,CursorToScreen,CursorOriginal);}
+void CursorPassthrough(){
+    ConfigureCursor();POINT point{31,41};
+    for(const BOOL result:{TRUE,FALSE}){
+        cursor_original_result=result;const auto before=cursor_original_calls;SetLastError(0x11223344);
+        Check(ui::WorkerGetCursorForTest(&point)==result&&cursor_original_calls==before+1&&point.x==11&&point.y==-22&&
+              GetLastError()==0x33445566,"normalcursororiginalonceexactBOOLoutputandLastError");
+    }
+    Check(cursor_rect_calls==0&&cursor_map_calls==0,"normalcursorneverusesvirtualgeometry");
+}
+void CursorWorker(){
+    ConfigureCursor();POINT point{31,41};const auto physical=cursor_original_calls;
+    SetLastError(0x11223344);
+    Check(ui::WorkerGetCursorForTest(&point)&&point.x==-1280&&point.y==397&&GetLastError()==0x11223344,
+          "privatecursorclientcentremappedtoscreenwithoutglobalcursor");
+    Check(point.x+1920>cursor_rect.left&&point.x+1920<cursor_rect.right&&point.y-37>cursor_rect.top&&point.y-37<cursor_rect.bottom,
+          "virtualcursorstrictlyinsideactualretailclientbounds");
+    for(unsigned refused=0;refused<8;++refused){
+        point={31,41};cursor_rect={0,0,1280,720};cursor_rect_result=cursor_map_result=TRUE;ConfigureCursor();
+        if(refused==1)w::SetPrivateForTest(false);
+        if(refused==2)ConfigureCursor(nullptr);
+        if(refused==3)cursor_rect_result=FALSE;
+        if(refused==4)cursor_map_result=FALSE;
+        if(refused==5)cursor_rect.right=1;
+        if(refused==6)cursor_rect.bottom=0;
+        if(refused==7)cursor_rect.right=-10;
+        SetLastError(0x11223344);
+        Check(!ui::WorkerGetCursorForTest(refused==0?nullptr:&point)&&point.x==31&&point.y==41&&GetLastError()==0x11223344,
+              "nullforeignmissingwindowfailedorunusablegeometryrefuseswithoutoutputorerrorchanges");
+        w::SetPrivateForTest(true);
+    }
+    Check(cursor_original_calls==physical,"requestedworkernevercallsphysicalGetCursorPos");
+    cursor_rect={0,0,1280,720};cursor_rect_result=cursor_map_result=TRUE;ConfigureCursor();
+    auto stats=ui::GetWorkerInputStats();
+    Check(stats.cursor_success==1&&stats.cursor_null==1&&stats.cursor_thread_refused==1&&stats.cursor_window_refused==1&&
+          stats.cursor_geometry_refused==4&&stats.cursor_map_refused==1,
+          "copiedcursorcountersdistinguishsuccessfulqueryandeveryrefusalreason");
+    ui::SetWorkerPresentWindowForTest(cursor_window);Check(ui::WorkerGetCursorForTest(&point),"cursorwindowmatchfixture");
+    ui::SetWorkerPresentWindowForTest(reinterpret_cast<HWND>(0x3456));Check(ui::WorkerGetCursorForTest(&point),"cursorwindowmismatchfixture");
+    ui::SetWorkerPresentWindowForTest(nullptr);stats=ui::GetWorkerInputStats();
+    Check(stats.cursor_window_match==1&&stats.cursor_window_mismatch==1&&stats.cursor_present_missing>0&&cursor_original_calls==physical,
+          "cursorwindowdiagnosticscompareselectionwithPresentwithoutchangingselection");
+}
 }
 int main(){
     Check(MH_Initialize()==MH_OK,"fixtureMinHookonly");
@@ -55,7 +109,9 @@ int main(){
     Check(ui::HookWorkerDeviceFixtureForTest(methods[9],methods[10],methods[11],methods[13]),"realwrappersfakeorigins");
     Check(ui::HookWorkerRawBufferFixtureForTest(reinterpret_cast<void*>(&RawBuffer)),"typedrawbufferfakeorigin");
     Check(ui::HookWorkerRawInputFixtureForTest(reinterpret_cast<void*>(&RawData)),"typedrawinputfakeorigin");
+    CursorPassthrough();
     w::ConfigureForTest({true,true,true,true},true,true);Check(w::Active()&&w::ThreadAdmitted(),"fixturemockprivateadmission");
+    CursorWorker();
     Check(ui::WorkerFormatForTest(object,&c_dfDIKeyboard)==DI_OK&&fake.format_calls==1,"typedkeyboardcanonicalformat");Check(GetLastError()==0x12345678,"formatLastErrorunchanged");
     const auto now=GetTickCount64();w::Command c{1,now+2000,std::uint64_t{1}<<static_cast<unsigned>(w::Key::w),w::Operation::hold,500,0,0};
     Check(w::AcceptForTest(c,now),"scriptcommandaccepted");std::array<unsigned char,256> keys{};
@@ -77,6 +133,16 @@ int main(){
     DIMOUSESTATE2 mouse{};Check(ui::WorkerStateForTest(object,sizeof(mouse),&mouse)==DI_OK&&mouse.rgbButtons[0]==0x80&&mouse.rgbButtons[1]==0x80&&mouse.rgbButtons[7]==0&&mouse.lX==0,"virtualaimfiresuppressesphysicalmouse");
     c.sequence=3;c.operation=w::Operation::mouse;c.keys=0;c.dx=90;c.dy=-12;c.duration=0;Check(w::AcceptForTest(c,GetTickCount64()),"scriptmousemoveaccepted");
     Check(ui::WorkerStateForTest(object,sizeof(mouse),&mouse)==DI_OK&&mouse.lX==90&&mouse.lY==-12,"onemoveconsumed");Check(ui::WorkerStateForTest(object,sizeof(mouse),&mouse)==DI_OK&&mouse.lX==0,"movenotrepeated");
+    Check(ui::GetWorkerInputStats().di_mouse_state_supplied==3&&ui::GetWorkerInputStats().di_mouse_state_axes==1&&
+          ui::GetWorkerInputStats().di_mouse_state_buttons==3,"DImousediagnosticsdistinguishheldstatefromsingleaxisconsumption");
+    count=64;std::array<DIDEVICEOBJECTDATA,64> mouse_events{};
+    const auto buffered_before=ui::GetWorkerInputStats();
+    Check(ui::WorkerDataForTest(object,sizeof(event),mouse_events.data(),&count,DIGDD_PEEK)==DI_OK&&count==2,"DImousebuttonedgesremainafterstateaxisconsumption");
+    count=64;Check(ui::WorkerDataForTest(object,sizeof(event),mouse_events.data(),&count,0)==DI_OK&&count==2,"DImousebufferconsumestwoheldbuttonedges");
+    const auto buffered_after=ui::GetWorkerInputStats();
+    Check(buffered_after.di_mouse_buffer_calls==buffered_before.di_mouse_buffer_calls+2&&
+          buffered_after.di_mouse_buffer_peek_events==buffered_before.di_mouse_buffer_peek_events+2&&
+          buffered_after.di_mouse_buffer_events==buffered_before.di_mouse_buffer_events+2,"DIbufferpeeksandactualconsumptioncountseparately");
     const HWND sentinel=reinterpret_cast<HWND>(0x1234);Check(ui::WorkerCoopForTest(object,sentinel,DISCL_EXCLUSIVE|DISCL_FOREGROUND)==DI_OK&&fake.flags==(DISCL_NONEXCLUSIVE|DISCL_BACKGROUND)&&fake.hwnd==sentinel,"workercoopforwardedboundedbackgroundmode");
     fake.result=DIERR_INPUTLOST;Check(ui::WorkerCoopForTest(object,sentinel,DISCL_EXCLUSIVE|DISCL_FOREGROUND)==DIERR_INPUTLOST,"cooperativefailureunchanged");Check(GetLastError()==0x12345678,"cooperativeLastError");fake.result=DI_OK;
     fake.type=DI8DEVTYPE_JOYSTICK;const auto prior_coop=fake.coop_calls;
@@ -84,6 +150,31 @@ int main(){
     Check(w::Active()&&GetLastError()==0x12345678,"unknowncontrollerdoesnotfabricatesuccessorrevokekeyboard");fake.type=DI8DEVTYPE_MOUSE;
     SetLastError(0x22222222);Check(ui::WorkerCursorForTest(1500,1500)&&ui::WorkerClipForTest(nullptr)&&GetLastError()==0x22222222,"cursorcallsneverreachglobalAPI");
     Check(ui::WorkerAsyncForTest('W')==0&&ui::WorkerKeyStateForTest('W')==0,"neverqueriesglobalkeyboard");XINPUT_STATE pad{};pad.Gamepad.wButtons=0xffff;
+    struct RawKeyCase { unsigned scan; USHORT vk, flags; bool down; };
+    const RawKeyCase modifier_cases[] = {
+        {0x2a,VK_SHIFT,RI_KEY_MAKE,true}, {0x2a,VK_SHIFT,RI_KEY_BREAK,false},
+        {0x36,VK_SHIFT,RI_KEY_MAKE,true}, {0x1d,VK_CONTROL,RI_KEY_MAKE,true},
+        {0x9d,VK_CONTROL,RI_KEY_E0,true}, {0x9d,VK_CONTROL,RI_KEY_E0|RI_KEY_BREAK,false}
+    };
+    for(const auto& key:modifier_cases) {
+        const auto token=ui::WorkerSyntheticKeyboardForTest(key.scan,key.down);
+        RAWINPUT packet{};UINT size=sizeof(packet);const auto calls=raw_data_calls;
+        Check(ui::WorkerRawInputForTest(token,RID_INPUT,&packet,&size,sizeof(RAWINPUTHEADER))==sizeof(RAWINPUTHEADER)+sizeof(RAWKEYBOARD),"scriptmodifierpacketreadwithoutphysicalinput");
+        Check(packet.data.keyboard.VKey==key.vk&&packet.data.keyboard.MakeCode==(key.scan&0x7f)&&packet.data.keyboard.Flags==key.flags&&
+              packet.data.keyboard.Message==static_cast<UINT>(key.down?WM_KEYDOWN:WM_KEYUP),"rawmodifiergenericVKeywithsideandreleasepreserved");
+        Check(raw_data_calls==calls,"syntheticmodifierneverqueriesoriginalrawinput");
+    }
+    const auto packet_stats=ui::GetWorkerInputStats();
+    Check(packet_stats.raw_keyboard_reads==6&&packet_stats.raw_keyboard_packets_read==6,"syntheticRIDINPUTreadcountersexcludephysicaldata");
+    const auto repeated_token=ui::WorkerSyntheticKeyboardForTest(0x11,true);
+    RAWINPUT repeated{};UINT repeated_size=sizeof(repeated);
+    ui::WorkerRawInputForTest(repeated_token,RID_INPUT,&repeated,&repeated_size,sizeof(RAWINPUTHEADER));
+    repeated_size=sizeof(repeated);ui::WorkerRawInputForTest(repeated_token,RID_INPUT,&repeated,&repeated_size,sizeof(RAWINPUTHEADER));
+    repeated_size=sizeof(repeated);ui::WorkerRawInputForTest(repeated_token,RID_HEADER,&repeated,&repeated_size,sizeof(RAWINPUTHEADER));
+    repeated_size=0;ui::WorkerRawInputForTest(repeated_token,RID_INPUT,nullptr,&repeated_size,sizeof(RAWINPUTHEADER));
+    const auto duplicate_stats=ui::GetWorkerInputStats();
+    Check(duplicate_stats.raw_keyboard_reads==8&&duplicate_stats.raw_keyboard_packets_read==7,
+          "multipleAPIreadsareseparatefromuniqueinputtokensheaderandsizequeriesexcluded");
     Check(ui::WorkerPadForTest(0,&pad)==ERROR_DEVICE_NOT_CONNECTED&&!pad.Gamepad.wButtons,"physicalpadneverforwarded");
     RAWINPUT raw{};UINT raw_bytes=sizeof(raw);
     Check(ui::WorkerRawBufferForTest(&raw,&raw_bytes,sizeof(RAWINPUTHEADER))==0&&raw_calls==1&&raw_output==&raw&&raw_size==&raw_bytes&&raw_header==sizeof(RAWINPUTHEADER),"rawbufferoriginalonceunchangedargumentsneutralcount");
@@ -114,5 +205,7 @@ int main(){
     Check(ui::WorkerCoopForTest(object,sentinel,DISCL_EXCLUSIVE|DISCL_FOREGROUND)==DI_OK&&fake.coop_calls==before_refused+1&&fake.flags==(DISCL_EXCLUSIVE|DISCL_FOREGROUND),"refusedcoopforwardsoriginalonceunchanged");
     Check(!w::Active()&&GetLastError()==0x12345678,"refusedprivatecooprevokesworkerpreserveserror");w::SetPrivateForTest(true);
     w::Refuse("fixture_end");Check(!w::Active(),"revocation");Check(ui::WorkerStateForTest(object,sizeof(mouse),&mouse)==DIERR_UNSUPPORTED&&!mouse.rgbButtons[0],"revocationcannotleakphysicalorheldvirtual");
-    ui::ShutdownForTest();MH_Uninitialize();std::printf("worker_input_fixture checks=%u failures=%u no_windows_no_input_no_game\n",checks,failures);return failures?1:0;
+    ui::ShutdownForTest();Check(ui::GetWorkerInputStats().cursor_success==0&&ui::GetWorkerInputStats().raw_keyboard_reads==0,
+                              "fixturecleanupclearsdiagnosticsandboundedtokenstore");
+    MH_Uninitialize();std::printf("worker_input_fixture checks=%u failures=%u no_windows_no_input_no_game\n",checks,failures);return failures?1:0;
 }

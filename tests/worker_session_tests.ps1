@@ -112,6 +112,204 @@ foreach($name in @('Assert-WorkerConfigSnapshotPreflight','Invoke-WorkerRestoreO
     Assert-True ($definition.Count -eq 1) ('actual cleanup boundary '+$name)
     . ([scriptblock]::Create($definition[0].Extent.Text))
 }
+# Extract only the reader helper. The scenario controller is never invoked.
+$tokens=$null;$errors=$null
+$scenarioAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'tools\worker\Invoke-WorkerScenario.ps1'),[ref]$tokens,[ref]$errors)
+Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
+$receiptReader=@($scenarioAst.FindAll({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Read-NativeReceipt'},$true))
+Assert-True ($receiptReader.Count -eq 1) 'one actual native receipt reader boundary'
+. ([scriptblock]::Create($receiptReader[0].Extent.Text))
+$landingDefinitions=@{}
+foreach($name in @('Wait-ViewerLanding','Reset-ScenarioPose')) {
+    $definition=@($scenarioAst.FindAll({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true))
+    Assert-True ($definition.Count -eq 1) ('actual placement boundary '+$name)
+    $landingDefinitions[$name]=$definition[0].Extent.Text
+}
+# Exercise trajectories through the actual helper bodies. The scoped mocks
+# supply copied telemetry; no scenario, input writer or game is invoked.
+& {
+    . ([scriptblock]::Create($landingDefinitions['Wait-ViewerLanding']))
+    . ([scriptblock]::Create($landingDefinitions['Reset-ScenarioPose']))
+    $fixtureLandingState=[pscustomobject]@{tick=[uint64]1000;sample=0;case='settled'}
+    $fixtureSleeps=[Collections.Generic.List[int]]::new()
+    function Start-Sleep([int]$Milliseconds){$fixtureSleeps.Add($Milliseconds)}
+    function Read-FreshRole([string]$Role){
+        $fixtureLandingState.tick+=250;$fixtureLandingState.sample++
+        $y=if($fixtureLandingState.case -ceq 'falling'){350.0-$fixtureLandingState.sample}else{348.0}
+        $state=@{tick_ms=$fixtureLandingState.tick;mission=30010;generation=3;realized=$true;body_valid=$true;pose_valid=$true;
+            player_pos=@(10.0,$y,20.0);local_yaw_valid=$true;player_yaw=-60.0}
+        if($fixtureLandingState.case -ceq 'wrong-place'){$state.player_pos[0]=30.0}
+        if($fixtureLandingState.case -ceq 'natural-slide'){$state.player_pos[0]=11.44}
+        if($fixtureLandingState.case -ceq 'vanishing'){$state.pose_valid=$false}
+        if($fixtureLandingState.case -ceq 'transition' -and $fixtureLandingState.sample -ge 2){$state.generation=4}
+        if($fixtureLandingState.case -ceq 'nonfinite'){$state.player_pos[1]=[double]::NaN}
+        return $state
+    }
+    $settled=Wait-ViewerLanding 'guest' 10.0 20.0
+    Assert-True ($settled.player_pos[1] -eq 348.0 -and $fixtureSleeps.Count -eq 3) 'landing requires three spaced stable observations'
+    Assert-True (@($fixtureSleeps|Where-Object{$_ -ne 250}).Count -eq 0) 'landing samples stay250ms apart'
+    $fixtureLandingState.case='natural-slide';$fixtureLandingState.sample=0;$fixtureSleeps.Clear()
+    $settled=Wait-ViewerLanding 'guest' 10.0 20.0
+    Assert-True ($settled.player_pos[0] -eq 11.44 -and $fixtureSleeps.Count -eq 3) 'viewer accepts1.44m natural horizontal landing slide'
+    $fixtureLandingState.sample=0;$fixtureSleeps.Clear()
+    Assert-Throws {Wait-ViewerLanding 'host' 10.0 20.0 -MaximumHorizontalError 0.75} 'same landing slide cannot satisfy strict benchmark arrival'
+    foreach($case in @('falling','wrong-place','vanishing','transition','nonfinite')){
+        $fixtureLandingState.case=$case;$fixtureLandingState.sample=0;$fixtureSleeps.Clear()
+        Assert-Throws {Wait-ViewerLanding 'guest' 10.0 20.0} ('landing refuses '+$case)
+        Assert-True ($fixtureSleeps.Count -le 12) 'landing observation count stays bounded'
+    }
+    # Restore the telemetry mocks to test the real benchmark formatter and
+    # its fresh post-teleport readback, independently of the landing algorithm.
+    $poseAnchors=@{};$fixturePosition=@(800.860,339.262,1639.299);$fixtureYaw=-60.0;$fixtureGeneration=3
+    $fixtureTeleports=[Collections.Generic.List[string]]::new();$fixtureBenchmarkState=[pscustomobject]@{releases=0};$fixtureBadArrival=$false
+    function Read-FreshRole([string]$Role){return @{mission=30010;generation=$fixtureGeneration;
+        player_pos=$fixturePosition.Clone();local_yaw_valid=$true;player_yaw=$fixtureYaw}}
+    function Release-RoleInput([string]$Role){$fixtureBenchmarkState.releases++}
+    function Invoke-DebugResult([string]$Role,[string]$Command,[int]$TimeoutMs){
+        $fixtureTeleports.Add($Command);return 'warp_position_readback;error_m=0.003'
+    }
+    function Wait-ViewerLanding([string]$Role,[double]$ExpectedX,[double]$ExpectedZ,[double]$MaximumHorizontalError=2.0){
+        Assert-True ($MaximumHorizontalError -eq 0.75) 'benchmark explicitly keeps strict horizontal arrival tolerance'
+        $anchor=$poseAnchors[$Role]
+        return @{player_pos=$anchor.position.Clone();local_yaw_valid=$true;player_yaw=$(if($fixtureBadArrival){10.0}else{$anchor.yaw})}
+    }
+    Reset-ScenarioPose 'host'
+    Assert-True ($fixtureTeleports[0] -ceq 'teleport 800.860 339.262 1639.299 -60.000') 'benchmark uses exact existing debug teleport grammar'
+    $fixturePosition=@(810.0,345.0,1650.0);$fixtureYaw=80.0
+    Reset-ScenarioPose 'host'
+    Assert-True ($fixtureTeleports.Count -eq 2 -and $fixtureTeleports[1] -ceq $fixtureTeleports[0]) 'later phase returns to recorded initial pose rather than current drift'
+    Assert-True ($fixtureBenchmarkState.releases -eq 2) 'benchmark clears previous simulated input'
+    $fixtureBadArrival=$true
+    Assert-Throws {Reset-ScenarioPose 'host'} 'benchmark refuses mismatched fresh heading readback'
+    $fixtureBadArrival=$false;$fixtureGeneration=4;$beforeCount=$fixtureTeleports.Count
+    Assert-Throws {Reset-ScenarioPose 'host'} 'benchmark refuses mission generation change'
+    Assert-True ($fixtureTeleports.Count -eq $beforeCount) 'generation refusal happens before teleport submission'
+}
+$aimDefinitions=@{}
+foreach($name in @('Send-AimTurnCommand','Read-AimTurnState','Wait-AimTurnReady','Invoke-AimTurn')){
+    $definition=@($scenarioAst.FindAll({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true))
+    Assert-True ($definition.Count -eq 1) ('actual aim-turn boundary '+$name)
+    $aimDefinitions[$name]=$definition[0].Extent.Text
+}
+# Recorded time/telemetry and input effects exercise the actual helper bodies.
+# Sleep advances a detached clock only; no input writer or controller is called.
+& {
+    foreach($definition in $aimDefinitions.Values){. ([scriptblock]::Create($definition))}
+    function New-AimFixture([string]$Case,[string]$Source='host'){
+        return [pscustomobject]@{now=[int64]10000;case=$Case;source=$Source;firstHold=[int64]-1;lastHold=[int64]-1;
+            mouseAt=[int64]-1;sequence=[uint64]0;receipts=@{};commands=[Collections.Generic.List[hashtable]]::new();
+            captures=[Collections.Generic.List[hashtable]]::new();reads=[Collections.Generic.List[string]]::new()}
+    }
+    function Get-ScenarioTick{return $aimFixture.now}
+    function Start-Sleep([int]$Milliseconds){$aimFixture.now+=$Milliseconds}
+    function Send-Step([string]$Role,[hashtable]$Arguments){
+        $aimFixture.sequence++
+        $nativeAt=$aimFixture.now+$(if($aimFixture.case -ceq 'controller-io'){50}else{0})
+        $row=@{role=$Role;sequence=$aimFixture.sequence;tick=$aimFixture.now;accepted_tick_ms=$nativeAt;arguments=$Arguments.Clone()}
+        $aimFixture.commands.Add($row)
+        if($Arguments.Operation -ceq 'hold'){
+            if($aimFixture.firstHold -lt 0){$aimFixture.firstHold=$nativeAt}
+            $aimFixture.lastHold=$nativeAt
+        }
+        if($Arguments.Operation -ceq 'mouse'){$aimFixture.mouseAt=$nativeAt}
+        $aimFixture.receipts[[string]$row.sequence]=@{event='command_accepted';tick_ms=$nativeAt}
+        if($aimFixture.case -ceq 'controller-io'){$aimFixture.now+=150}
+        return @{sequence=$row.sequence}
+    }
+    function Read-NativeReceipt([string]$Role,[uint64]$Sequence,[string[]]$Events){
+        if($aimFixture.case -ceq 'missing-acceptance' -and $aimFixture.firstHold -ge 0){return $null}
+        return $aimFixture.receipts[[string]$Sequence]
+    }
+    function Release-RoleFinally([string]$Role){$null=Send-Step $Role @{Operation='release'}}
+    function Capture-Step([string]$Role,[string]$Label,[hashtable]$Hold=$null){
+        $aimFixture.captures.Add(@{role=$Role;label=$Label;hold=$Hold;tick=$aimFixture.now})
+    }
+    function Read-FreshRole([string]$Role){
+        $aimFixture.reads.Add($Role)
+        $elapsed=if($aimFixture.firstHold -ge 0){$aimFixture.now-$aimFixture.firstHold}else{-1}
+        $aimDelay=if($aimFixture.case -ceq 'late-aim'){1800}else{800}
+        $flags=if($elapsed -ge $aimDelay -and $aimFixture.now -le $aimFixture.lastHold+1500){1}else{0}
+        if($aimFixture.case -ceq 'old-aim'){$flags=1}
+        if($aimFixture.case -ceq 'never-aim'){$flags=0}
+        if($aimFixture.case -ceq 'busy-aim' -and $flags){$flags=3}
+        if($aimFixture.case -ceq 'aim-lost' -and $aimFixture.mouseAt -ge 0){$flags=0}
+        $yaw=if($elapsed -lt 500){-60.0}elseif($elapsed -lt 700){20.0}else{30.0}
+        if($aimFixture.case -ceq 'unsettled' -and $elapsed -ge 0){$yaw=$elapsed*0.1}
+        if($aimFixture.mouseAt -ge 0 -and $aimFixture.now-$aimFixture.mouseAt -ge 150){
+            $yaw=if($aimFixture.case -ceq 'small-pivot'){35.0}else{110.0}
+        }
+        $invalid=$aimFixture.case -ceq 'invalid-yaw' -or
+            ($aimFixture.case -ceq 'invalid-post-yaw' -and $aimFixture.mouseAt -ge 0)
+        $generation=if($Role -ceq 'host'){3}else{4}
+        if($aimFixture.case -ceq 'scene-change' -and $elapsed -ge 600){$generation++}
+        $tick=$aimFixture.now-($aimFixture.now%100)
+        if($aimFixture.case -ceq 'repeated-tick' -and $Role -ceq $aimFixture.source){$tick=10000}
+        if(($aimFixture.case -ceq 'stale-source' -and $Role -ceq $aimFixture.source) -or
+            ($aimFixture.case -ceq 'stale-observer' -and $Role -cne $aimFixture.source)){$tick=$aimFixture.now-300}
+        return @{mission=30010;generation=$generation;tick_ms=$tick;local_yaw_valid=(!$invalid);
+            player_yaw=$(if($invalid){[double]::NaN}else{$yaw});
+            # The source's own remote flags deliberately claim aim. Looking at
+            # Viewer==Source instead of the independent receiver must not pass.
+            remote_action_flags=$(if($Role -ceq $aimFixture.source){1}else{$flags});remote_equip=873;
+            remote_age_ms=$(if($aimFixture.case -ceq 'stale-aim'){300}else{50})}
+    }
+    $aimFixture=New-AimFixture 'pass'
+    Invoke-AimTurn 'host' 'host' 700 'fixture-turn'
+    Assert-True ($aimFixture.captures.Count -eq 2) 'genuine aim pivot and settled frame captured'
+    $turn=$aimFixture.captures[0].hold.turn
+    Assert-True ($turn.observer_role -ceq 'guest' -and @($aimFixture.reads|Where-Object{$_ -ceq 'guest'}).Count -gt 3) 'self-viewer still uses opposite source observer'
+    Assert-True ($turn.baseline_yaw -eq 30 -and $turn.excursion_degrees -eq 80) 'pre-aim90degree camera alignment excluded from settled baseline'
+    Assert-True ($turn.baseline_samples.Count -ge 3 -and $turn.baseline_samples[-1].tick_ms-$turn.baseline_samples[0].tick_ms -ge 250) 'distinct settled baseline samples span250ms'
+    Assert-True ($turn.mouse_dispatched_tick_ms -ge $turn.readiness_tick_ms -and $turn.measured_tick_ms -gt $turn.mouse_accepted_tick_ms) 'pivot measurement follows ready baseline and mouse acceptance'
+    Assert-True ($turn.latest_hold_sequence -eq $aimFixture.captures[0].hold.sequence) 'capture uses latest accepted hold sequence'
+    Assert-True (@($aimFixture.commands|Where-Object{$_.arguments.Operation -ceq 'release'}).Count -eq 2) 'successful aim turn releases before and finally after input'
+    $aimFixture=New-AimFixture 'late-aim' 'guest'
+    Invoke-AimTurn 'guest' 'guest' -700 'fixture-late'
+    $holds=@($aimFixture.commands|Where-Object{$_.arguments.Operation -ceq 'hold'})
+    Assert-True ($holds.Count -ge 4 -and $aimFixture.captures[0].hold.turn.observer_role -ceq 'host') 'late genuine aim renews holds and reverses independent observer role'
+    for($i=0;$i -lt $holds.Count;$i++){
+        Assert-True ($holds[$i].arguments.Keys -ceq 'rmb' -and $holds[$i].arguments.DurationMs -eq 1500) 'renewal retains identical bounded RMB hold'
+        if($i){Assert-True ($holds[$i].tick-$holds[$i-1].tick -le 750) 'readiness hold renewal interval bounded750ms'}
+    }
+    Assert-True (@($aimFixture.commands|Where-Object{$_.arguments.Operation -ceq 'release'}).Count -eq 2) 'renewal never releases between readiness holds'
+    $aimFixture=New-AimFixture 'controller-io'
+    Invoke-AimTurn 'host' 'guest' 700 'fixture-controller-io'
+    $holds=@($aimFixture.commands|Where-Object{$_.arguments.Operation -ceq 'hold'})
+    Assert-True ($aimFixture.captures.Count -eq 2 -and $holds.Count -ge 3) 'readiness and pivot tolerate150ms controller I/O per command'
+    for($i=1;$i -lt $holds.Count;$i++){
+        Assert-True ($holds[$i].accepted_tick_ms-$holds[$i-1].accepted_tick_ms -le 750) 'controller I/O still leaves each native renewal within750ms'
+    }
+    foreach($caseName in @('old-aim','never-aim','busy-aim','stale-aim','stale-source','stale-observer','unsettled','repeated-tick','invalid-yaw',
+        'invalid-post-yaw','scene-change','aim-lost','small-pivot','missing-acceptance')){
+        $aimFixture=New-AimFixture $caseName
+        Assert-Throws {Invoke-AimTurn 'host' 'host' 700 'fixture-refused'} ('aim timeline refuses '+$caseName)
+        Assert-True ($aimFixture.captures.Count -eq 0) ('refused timeline cannot create misleading pivot frame '+$caseName)
+        Assert-True (@($aimFixture.commands|Where-Object{$_.arguments.Operation -ceq 'release'}).Count -eq 2) ('failure finally releases '+$caseName)
+        Assert-True ($aimFixture.now -le 15000) ('readiness plus pivot deadline bounded '+$caseName)
+        if($caseName -notin 'invalid-post-yaw','aim-lost','small-pivot'){
+            Assert-True (@($aimFixture.commands|Where-Object{$_.arguments.Operation -ceq 'mouse'}).Count -eq 0) ('unready aim cannot dispatch mouse '+$caseName)
+        }
+    }
+    # Native admission can precede a delayed controller return. Its timestamp,
+    # rather than receipt-reader entry time, decides whether the hold was timely.
+    $ioFixture=[pscustomobject]@{now=[int64]10000;case='timely';reads=0;sleeps=0}
+    function Get-ScenarioTick{return $ioFixture.now}
+    function Send-Step([string]$Role,[hashtable]$Arguments){$ioFixture.now+=800;return @{sequence=41}}
+    function Read-NativeReceipt([string]$Role,[uint64]$Sequence,[string[]]$Events){
+        $ioFixture.reads++
+        if($ioFixture.case -ceq 'missing'){return $null}
+        return @{event='command_accepted';tick_ms=$(if($ioFixture.case -ceq 'late'){10501}else{10499})}
+    }
+    function Start-Sleep([int]$Milliseconds){$ioFixture.sleeps++;$ioFixture.now+=$Milliseconds}
+    $accepted=Send-AimTurnCommand 'host' @{Operation='hold';Keys='rmb';DurationMs=1500} 10750
+    Assert-True ($accepted.accepted_tick_ms -eq 10499 -and $ioFixture.reads -eq 1) 'controller late return still reads and accepts native hold within its500ms bound'
+    Assert-True ($ioFixture.sleeps -eq 0) 'timely native acknowledgement after controller return needs no additional wait'
+    foreach($caseName in 'late','missing'){
+        $ioFixture.now=10000;$ioFixture.case=$caseName;$ioFixture.reads=0;$ioFixture.sleeps=0
+        Assert-Throws {Send-AimTurnCommand 'host' @{Operation='hold';Keys='rmb';DurationMs=1500} 10750} ('delayed controller refuses '+$caseName+' native acknowledgement')
+        Assert-True ($ioFixture.reads -eq 1 -and $ioFixture.sleeps -eq 0) ('deadline-expired first receipt cannot start another wait '+$caseName)
+    }
+}
 $nonce=[Guid]::NewGuid().ToString('N')
 $fixture=Join-Path $RepoRoot ('build\worker-session-tests-'+$nonce)
 $marker=Join-Path $fixture '.fixture-owner'
@@ -183,6 +381,47 @@ function New-WorkerCleanupFixture([string]$Name) {
 try {
     $null=New-Item -ItemType Directory -Path $fixture
     [IO.File]::WriteAllText($marker,$nonce)
+    # Native receipts use a persistent append writer that shares READ only.
+    # The real failed run wrote this frame, but ReadAllLines could not open its
+    # log while that writer was alive. Reproduce the OS sharing contract using
+    # actual receipt-shaped bytes and the production reader, without a game.
+    $run=Join-Path $fixture 'native-receipt-sharing'
+    $runId='c646217606fd4b2aae1d4860ef235bcc'
+    $null=New-Item -ItemType Directory -Path $run
+    $receiptPath=Join-Path $run 'host.worker.jsonl'
+    $frameLine='{"run_id":"c646217606fd4b2aae1d4860ef235bcc","role":"host","pid":61704,"event":"frame_written","reason":"dx11_backbuffer_bmp","sequence":25,"tick_ms":477756593,"thread":67116,"api_result":0,"width":1280,"height":720,"requested_flags":0,"forwarded_flags":0,"gameplay_accepted":null}'
+    $writer=$null
+    try {
+        $writer=[IO.FileStream]::new($receiptPath,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
+        $bytes=[Text.Encoding]::UTF8.GetBytes($frameLine+[char]10)
+        $writer.Write($bytes,0,$bytes.Length);$writer.Flush()
+        Assert-Throws {[IO.File]::ReadAllLines($receiptPath)} 'old receipt open refuses while native-style writer remains open'
+        $frame=Read-NativeReceipt 'host' 25 @('frame_written')
+        Assert-True ($writer.CanWrite -and $frame -and $frame['tick_ms'] -eq 477756593 -and $frame['width'] -eq 1280) 'actual reader finds exact frame while writer is still open'
+        Assert-True ($null -eq (Read-NativeReceipt 'host' 26 @('frame_written'))) 'different sequence cannot satisfy capture'
+        Assert-True ($null -eq (Read-NativeReceipt 'host' 25 @('command_refused'))) 'different event cannot satisfy capture'
+        $runId=$id
+        Assert-True ($null -eq (Read-NativeReceipt 'host' 25 @('frame_written'))) 'foreign run cannot satisfy capture'
+        $runId='c646217606fd4b2aae1d4860ef235bcc'
+        Assert-True ($null -eq (Read-NativeReceipt 'guest' 25 @('frame_written'))) 'missing other-role log does not adopt host frame'
+        $partial=$frameLine.Replace('"sequence":25','"sequence":26')
+        $bytes=[Text.Encoding]::UTF8.GetBytes($partial)
+        $writer.Write($bytes,0,$bytes.Length);$writer.Flush()
+        Assert-True ($null -eq (Read-NativeReceipt 'host' 26 @('frame_written'))) 'unterminated append tail is not a completed receipt'
+        Assert-True ((Read-NativeReceipt 'host' 25 @('frame_written'))['tick_ms'] -eq 477756593) 'partial tail preserves earlier complete frame'
+        $writer.WriteByte(10);$writer.Flush()
+        Assert-True ((Read-NativeReceipt 'host' 26 @('frame_written'))['tick_ms'] -eq 477756593) 'completed append becomes readable without closing writer'
+        $refused=$frameLine.Replace('"event":"frame_written"','"event":"command_refused"').Replace('"sequence":25','"sequence":27')
+        $bytes=[Text.Encoding]::UTF8.GetBytes($refused+[char]10+'null'+[char]10+'[]'+[char]10+'{invalid'+[char]10)
+        $writer.Write($bytes,0,$bytes.Length);$writer.Flush()
+        Assert-True ((Read-NativeReceipt 'host' 27 @('frame_written','command_refused'))['event'] -ceq 'command_refused') 'exact rejection is readable through malformed trailing rows'
+        $writer.SetLength(8388609);$writer.Flush()
+        Assert-True ($null -eq (Read-NativeReceipt 'host' 25 @('frame_written'))) 'oversized receipt log refuses before parsing'
+        $writer.SetLength(0);$writer.Position=0
+        $bytes=[Text.Encoding]::UTF8.GetBytes(([string]::new([char]10,16384))+$frameLine+[char]10)
+        $writer.Write($bytes,0,$bytes.Length);$writer.Flush()
+        Assert-True ($null -eq (Read-NativeReceipt 'host' 25 @('frame_written'))) 'excessive receipt row count refuses before parsing'
+    } finally {if($writer){$writer.Dispose()}}
     # Run the actual Start backup/seed assignments on fake source/save bytes.
     # This catches stale lab-copy reuse while exercising the real copier/hash
     # implementation; the Start controller itself is never invoked.

@@ -65,9 +65,12 @@ inline dm::Class Classify(State& s, const pose::SourceRecord& r, const PartnerDm
 // source records advance the70ms settle/600ms deadline. Every queued delivery
 // retains its original context and receive age, even if the latest packet is
 // fresh after an owner stall. One delivery per owner tick preserves Step's
-// existing request queue and at-most-one native action contract.
+// existing request queue and at-most-one native action contract. Collection
+// eligibility is a lifecycle gate; delayed visual movement/stance only gates
+// delivery so it cannot discard the start of a new stationary source pivot.
 inline Result Step(State& s, dm::TurnState& turn, const pose::RemoteFrame& frame, std::uint64_t now,
-                   bool eligible, const PartnerDmSpeeds& speeds, std::uint8_t expected_stance) noexcept {
+                   bool eligible, const PartnerDmSpeeds& speeds, std::uint8_t expected_stance,
+                   bool delivery_ready = true) noexcept {
     Result out{};
     const bool owner_stall = s.have_owner && (now < s.owner_ms || now - s.owner_ms > kSourceFreshMs);
     s.have_owner = true; s.owner_ms = now;
@@ -92,9 +95,16 @@ inline Result Step(State& s, dm::TurnState& turn, const pose::RemoteFrame& frame
         if (jump) { Clear(s, turn); out.cancel_queue = true;
             dm::SpeedPush(s.speed, static_cast<std::uint64_t>(r.sender_ms), Mm(r.snapshot.x), Mm(r.snapshot.z)); }
         const auto cls = Classify(s, r, speeds);
+        // Animation readback can reveal a stance transition before posture
+        // flags change. Keep speed/history, but never deliver its old pivot.
+        if (s.have_previous && cls.stance != s.cls.stance) {
+            s.count = 0;
+            turn = {};
+            out.cancel_queue = true;
+        }
         const bool gun_busy = r.snapshot.equip_id &&
             (r.snapshot.flags & (sync::ActionFlag::Firing | sync::ActionFlag::Reloading)) != 0;
-        const bool busy = cls.move != 0 || gun_busy || cls.stance > 1 || cls.stance != expected_stance;
+        const bool busy = cls.move != 0 || gun_busy || cls.stance > 1;
         if (busy) { Clear(s, turn); out.cancel_queue = true; }
         const auto old_token = turn.event_token;
         const auto gani = dm::ObserveTurn(turn, static_cast<std::uint64_t>(r.sender_ms), true,
@@ -116,7 +126,7 @@ inline Result Step(State& s, dm::TurnState& turn, const pose::RemoteFrame& frame
     while (s.count && (!Fresh(s.pending[0].receive_ms, now) || s.pending[0].generation != frame.next.generation)) {
         Clear(s, turn); out.cancel_queue = true;
     }
-    if (s.count) {
+    if (s.count && delivery_ready && s.pending[0].stance == expected_stance) {
         out.event = s.pending[0];
         for (std::size_t i = 1; i < s.count; ++i) s.pending[i - 1] = s.pending[i];
         --s.count;

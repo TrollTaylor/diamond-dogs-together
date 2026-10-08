@@ -85,6 +85,9 @@ inline std::uint8_t Cell(const Class& c) noexcept { return static_cast<std::uint
 std::uint8_t ResolveTarget(const PartnerDmTable& table, const Class& c, std::uint32_t bad) noexcept;
 // Verified resident transition clips 13..20 play once, unlike locomotion loops.
 bool OneShot(std::uint8_t gani) noexcept;
+inline bool IncompatibleTurnStance(std::uint8_t gani, std::uint8_t stance) noexcept {
+    return OneShot(gani) && static_cast<std::uint8_t>((gani - 13) / 4) != stance;
+}
 inline constexpr std::uint64_t kTurnSettleMs = 70;
 inline constexpr std::uint64_t kTurnCollectMs = 600;
 struct TurnState {
@@ -128,6 +131,7 @@ struct In {
     bool responsive;           // authoritative movement/action: one frame hold
     bool measured;             // fresh net pose speed: shorter start/stop hold
     bool urgent;               // a move/action can interrupt a one-shot
+    bool stance_only_urgent{}; // preserve fresh matching-stance finite events while replacing an old-stance turn
     Class cls;
     bool dm_ok, patched, parts_loaded;
     bool in_dm;                // q18[1] == 0x8b
@@ -180,6 +184,11 @@ struct State {
     std::uint64_t next_finite_id;
     std::uint32_t finite_dropped;
 };
+inline bool StanceUrgency(const State& state, const Class& cls, bool gun_busy) noexcept {
+    const auto active = state.phase == Phase::play_sent ? state.sent : state.cur;
+    return cls.move == 0 && !gun_busy && (cls.stance != state.cand_cls.stance ||
+        IncompatibleTurnStance(active, cls.stance));
+}
 // Drop queued finite requests at explicit source/teleport lifecycle resets.
 // Current DM ownership and native stop gates remain the caller's responsibility.
 void CancelFiniteEvents(State& state) noexcept;

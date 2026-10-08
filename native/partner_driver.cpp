@@ -494,7 +494,8 @@ void TickDmMap(Driver& d, const Hooks& h, const Settings& set, const Clock& cloc
     // with lower-body pivots; firing/reloading and every other action still
     // interrupt their collector and pending finite requests.
     const bool gun_busy = (obs.gun_actions & ~sync::ActionFlag::Aiming) != 0;
-    in.urgent = in.cls.move != 0 || in.cls.stance != s.cand_cls.stance || gun_busy;
+    in.stance_only_urgent = pdm::StanceUrgency(s, in.cls, gun_busy);
+    in.urgent = in.cls.move != 0 || gun_busy || in.stance_only_urgent;
     const bool turn_allowed = motion_count >= 21 && map && in.blocked == pdm::Block::none && parts_loaded && obs.fresh && !obs.lost;
     std::uint8_t turn = pdm::kNoGani;
     std::uint32_t turn_token = 0;
@@ -504,10 +505,11 @@ void TickDmMap(Driver& d, const Hooks& h, const Settings& set, const Clock& cloc
             partner::op::warp | partner::op::set_all_active)) != 0 ||
             ((tick_ops & partner::op::copy_parts) && !(tick.luaflags & partner::luaflag::parts_copied));
         const auto result = partner_source_turns::Step(m.dmmap_source_turns, m.dmmap_turn, frame,
-            frame.now_ms > now ? frame.now_ms : now, turn_allowed && !body_transition && in.cls.move == 0 && !gun_busy,
-            set.dm_speed, in.cls.stance);
+            frame.now_ms > now ? frame.now_ms : now, turn_allowed && !body_transition,
+            set.dm_speed, in.cls.stance, in.cls.move == 0 && !gun_busy);
         if (result.cancel_queue) pdm::CancelFiniteEvents(m.dmmap);
         in.urgent = in.urgent || result.busy;
+        if (result.busy) in.stance_only_urgent = false;
         turn = result.event.gani;
         turn_token = result.event.token;
         if (turn_token) EmitDmMapSwitch(m, h,

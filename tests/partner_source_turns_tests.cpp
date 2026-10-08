@@ -30,15 +30,21 @@ struct Session {
     dm::TurnState turn{};
     dm::State mapper{};
     bool active{};
+    bool driver_urgency{};
     std::uint64_t finish_ms{};
     std::vector<raw::Event> emitted;
     std::vector<std::uint8_t> played;
+    std::vector<std::uint64_t> played_at;
     std::vector<std::uint64_t> identities;
+    std::vector<std::uint64_t> stopped_at;
+    std::vector<std::uint8_t> stopped_from;
     unsigned finished{};
+    unsigned confirmed{};
     Session() { dm::Reset(mapper); }
-    raw::Result Tick(std::uint64_t t, std::uint8_t stance = 0, bool eligible = true, std::uint32_t delay = 100) {
+    raw::Result Tick(std::uint64_t t, std::uint8_t stance = 0, bool eligible = true, std::uint32_t delay = 100,
+                     bool delivery_ready = true) {
         const auto frame = ring.ReadFrame(t, delay, source.cursor);
-        const auto result = raw::Step(source, turn, frame, t, eligible, speeds, stance);
+        const auto result = raw::Step(source, turn, frame, t, eligible, speeds, stance, delivery_ready);
         if (result.cancel_queue) dm::CancelFiniteEvents(mapper);
         if (result.event.token) emitted.push_back(result.event);
         if (active && t >= finish_ms) active = false;
@@ -47,16 +53,25 @@ struct Session {
         in.target = stance; in.cls = dm::Class{stance, 0, dm::Via::speed, dm::Via::flags};
         in.dm_ok = in.patched = in.parts_loaded = in.cam_idle = true;
         in.in_dm = active; in.now_ms = t; in.available_ganis = 21;
-        in.urgent = result.busy;
+        in.stance_only_urgent = driver_urgency && dm::StanceUrgency(mapper, in.cls, false);
+        in.urgent = result.busy || (driver_urgency && (in.cls.move != 0 || in.stance_only_urgent));
+        if (result.busy) in.stance_only_urgent = false;
         if (result.event.token) { in.target = result.event.gani; in.finite_token = result.event.token; in.responsive = true; }
         const auto out = dm::Step(mapper, in);
-        if (out.action == dm::Action::stop) active = false;
+        if (out.action == dm::Action::stop) {
+            active = false;
+            stopped_at.push_back(t);
+            stopped_from.push_back(out.from);
+        }
         if (out.action == dm::Action::play) {
             active = true;
             finish_ms = dm::OneShot(out.gani) ? t + 951 : UINT64_MAX;
-            if (dm::OneShot(out.gani)) { played.push_back(out.gani); identities.push_back(mapper.sent_event); }
+            if (dm::OneShot(out.gani)) {
+                played.push_back(out.gani); played_at.push_back(t); identities.push_back(mapper.sent_event);
+            }
         }
         if (out.event == dm::Event::finished) ++finished;
+        if (out.event == dm::Event::playing && dm::OneShot(out.gani)) ++confirmed;
         return result;
     }
     void Push(std::uint64_t t, float yaw, std::uint8_t stance = 0, std::uint8_t flags = sync::ActionFlag::Aiming, float x = 0) {
@@ -217,6 +232,57 @@ void Interruptions() {
     Check(pending.Tick(7000).cancel_queue && pending.emitted.empty(), "old outbox receive age is not overwritten by current owner time");
 }
 
+void VisualReadiness() {
+    for (const bool stance_change : {false, true}) {
+        Session s;
+        s.Push(1000, 0); s.Tick(1000);
+        s.Push(1050, 0, 0, sync::ActionFlag::Running);
+        s.Tick(1050);
+        const std::uint8_t source_stance = stance_change ? 1 : 0;
+        // W releases (or the source changes stance) and establishes the new
+        // stationary heading while the visual lower class still lags behind.
+        s.Push(1100, 0, source_stance);
+        s.Tick(1100, 0, true, 100, false);
+        s.Push(1150, -1.55f, source_stance);
+        s.Tick(1150, 0, true, 100, false);
+        s.Push(1200, -1.55f, source_stance);
+        s.Tick(1200, 0, true, 100, false);
+        s.Push(1250, -1.55f, source_stance);
+        s.Tick(1250, 0, true, 100, false);
+        Check(s.source.count == 1 && s.emitted.empty() && s.played.empty(),
+              "visual move/stance lag retains the complete fresh raw pivot without playing it");
+        const auto pending = s.source.pending[0];
+        Check(pending.gani == (stance_change ? 17 : 13) && pending.stance == source_stance,
+              "retained pivot keeps its raw stance and full signed90degree clip");
+        if (stance_change) {
+            s.Push(1300, -1.55f, source_stance);
+            s.Tick(1300, 0); // Idle alone cannot deliver the wrong stance.
+            Check(s.emitted.empty() && s.source.count == 1,
+                  "visual idle in the old stance cannot deliver a new-stance pivot");
+        }
+        const auto ready = stance_change ? 1350u : 1300u;
+        s.Push(ready, -1.55f, source_stance);
+        const auto out = s.Tick(ready, source_stance);
+        Check(out.event.token == pending.token && out.event.receive_ms == pending.receive_ms &&
+              out.event.sender_ms == pending.sender_ms && s.source.count == 0,
+              "visual readiness delivers the original pivot identity and age exactly once");
+        s.Tick(ready + 1, source_stance);
+        Check(s.emitted.size() == 1, "duplicate owner ticks cannot replay a retained pivot");
+    }
+    for (const bool interrupted : {false, true}) {
+        Session s;
+        for (unsigned t = 2000; t <= 2700; t += 50) {
+            const auto flags = interrupted && t >= 2250 ? sync::ActionFlag::Firing : sync::ActionFlag::Aiming;
+            s.Push(t, t == 2000 ? 0 : -1.55f, 0, flags);
+            s.Tick(t, 0, true, 100, false);
+        }
+        Check(s.source.count == 0 && s.emitted.empty(),
+              "waiting visual readiness does not extend raw-event freshness or survive an actual gun action");
+        s.Push(2750, -1.55f); s.Tick(2750);
+        Check(s.emitted.empty(), "expired or interrupted retained pivot cannot resurrect at visual readiness");
+    }
+}
+
 void BoundedHistoryAndDeadline() {
     Session history;
     history.Push(10000, 0); history.Tick(10000);
@@ -262,8 +328,104 @@ void BoundedHistoryAndDeadline() {
     backwards.Push(40050, 1.55f); backwards.Tick(40050);
     Check(backwards.Tick(40049).cancel_queue && backwards.emitted.empty(), "backwards owner clock invalidates source collection");
 }
+
+void DriverStanceConfirmation() {
+    for (const unsigned case_id : {0u, 1u, 2u}) {
+        const bool completing = case_id == 1;
+        const bool confirming_turn = case_id == 2;
+        Session s;
+        s.driver_urgency = true;
+        // A native request issued in the old stance reconciles precisely when
+        // the delayed visual stance first becomes crouched. No timing fiction:
+        // accepted source packets arrive at30Hz and the owner reads at60Hz.
+        s.mapper.phase = completing ? dm::Phase::playing : dm::Phase::play_sent;
+        s.mapper.cand = 0;
+        s.mapper.cand_cls = dm::Class{0, 0, dm::Via::speed, dm::Via::flags};
+        s.mapper.sent = confirming_turn ? 14 : 0;
+        s.mapper.sent_ms = 1000;
+        s.mapper.owned = true;
+        s.mapper.cur = completing ? 14 : dm::kNoGani;
+        s.mapper.play_ms = completing ? 900 : 0;
+        s.active = completing;
+        s.finish_ms = UINT64_MAX;
+        bool visual_changed = false, delivered = false, checked_next = false;
+        std::uint64_t delivered_at = 0;
+        unsigned source_frame = 0;
+        for (unsigned owner_tick = 0; owner_tick * 1000u / 60 <= 2200; ++owner_tick) {
+            const auto elapsed = owner_tick * 1000u / 60;
+            while (source_frame * 1000u / 30 <= elapsed) {
+                const auto source_elapsed = source_frame * 1000u / 30;
+                s.Push(1000 + source_elapsed, source_elapsed >= 66 ? -1.55f : 0,
+                       source_elapsed >= 33 ? 1 : 0);
+                ++source_frame;
+            }
+            const auto visual = s.ring.SampleAt(1000 + elapsed, 200);
+            if (!visual_changed && visual.stance == 1) {
+                visual_changed = true;
+                s.active = true;
+                s.finish_ms = completing ? 1000 + elapsed : UINT64_MAX;
+            }
+            const bool was_delivered = delivered;
+            const auto result = s.Tick(1000 + elapsed, visual.stance, true, 200);
+            if (result.event.token) {
+                delivered = true;
+                delivered_at = 1000 + elapsed;
+                Check(visual_changed && result.event.gani == 17 && s.mapper.finite_count == 1,
+                      "delayed crouch pivot queues on old-stance native reconciliation tick");
+            }
+            if (was_delivered && !checked_next) {
+                checked_next = true;
+                Check(s.mapper.finite_count == 1,
+                      "driver stance urgency cannot cancel retained pivot after an early reconciliation return");
+                if (confirming_turn) Check(!s.stopped_at.empty() && s.stopped_at.back() == 1000 + elapsed &&
+                    s.stopped_from.back() == 14,
+                    "incompatible standing turn stops on the next owner tick without awaiting its natural end");
+            }
+        }
+        Check(delivered && checked_next && s.emitted.size() == 1,
+              "stand-to-crouch source pivot is delivered once at delayed visual readiness");
+        Check(s.played.size() == 1 && s.played[0] == 17 && s.confirmed == (confirming_turn ? 2u : 1u) &&
+              s.finished == (completing ? 2u : 1u),
+              "retained crouch turn plays once, confirms and finishes naturally");
+        Check(!confirming_turn || (!s.stopped_at.empty() && s.stopped_at[0] <= delivered_at + 17),
+              "old-stance turn urgency remains actionable across native confirmation");
+        Check(!confirming_turn || (!s.played_at.empty() && s.played_at[0] >= s.stopped_at[0] + 16),
+              "stance interruption cannot play the new turn until the stop confirms and its candidate hold passes");
+    }
+}
+
+void AnimationStanceReseeding() {
+    Session s;
+    const auto push = [&](std::uint64_t t, float yaw, std::uint8_t anim_stance) {
+        auto p = At(t, yaw); // Posture flags remain stand throughout.
+        p.anim_valid = true;
+        p.anim_stance = anim_stance;
+        p.act = anim_stance == 2 ? 3 : 1;
+        p.anim_speed = 1;
+        Check(s.ring.Push(p, t), "animation-only stance source packet accepted");
+    };
+    push(1000, 0, 2); s.Tick(1000, 0, true, 100, false);
+    for (const unsigned t : {1050u, 1100u, 1150u}) {
+        push(t, -1.55f, 2); s.Tick(t, 0, true, 100, false);
+    }
+    Check(s.source.count == 1 && s.source.pending[0].stance == 1 && s.emitted.empty(),
+          "animation-only crouch pivot waits for delayed visual stance");
+    push(1200, -1.55f, 1);
+    const auto changed = s.Tick(1200, 1);
+    Check(changed.cancel_queue && s.source.count == 0 && !changed.event.token &&
+          s.turn.valid && !s.turn.collecting && s.turn.stance == 0,
+          "effective animation stance change clears old pending crouch pivot and reseeds stand");
+    push(1250, -1.55f, 1); s.Tick(1250, 1);
+    Check(s.emitted.empty() && s.played.empty(),
+          "delayed crouch visual readiness cannot resurrect a canceled animation-stance pivot");
+    for (const unsigned t : {1300u, 1350u, 1400u}) {
+        push(t, 0, 1); s.Tick(t, 0);
+    }
+    Check(s.emitted.size() == 1 && s.emitted[0].gani == 14 && s.emitted[0].stance == 0,
+          "a fresh stand pivot after animation-stance reseeding retains its own full angle");
+}
 } // namespace
 int main() {
-    History(); Timelines(); Interruptions(); BoundedHistoryAndDeadline();
+    History(); Timelines(); Interruptions(); VisualReadiness(); BoundedHistoryAndDeadline(); DriverStanceConfirmation(); AnimationStanceReseeding();
     std::printf("partner_source_turns_tests: %u checks passed\n", checks);
 }

@@ -1,62 +1,73 @@
 # Partner locomotion evaluation (normal animated profile, lab saves, noon).
 # The guest films the host's body (its partner) from behind-right while the
 # host walks, runs, sprints, stops, crouches, crawls, turns and strafes.
+# Postures are confirmed from local engine readback. Each motion frame has a
+# renewed bounded hold and records both roles plus native frame timing.
 title 200
 wait 4000
 waitgameplay host 120
 waitgameplay guest 240
+stance host stand
+stance guest stand
 host debug time 43200
 host debug weather sunny
 wait 2500
+# Preserve this run's validated initial position/yaw as the phase benchmark.
+# The known lab seed starts near 800.860,339.262,1639.299 with yaw -60 degrees.
+resetpose host
+stance host stand
 placebehind guest host 5 4
 both capture start
 # run (W) then stop
-host hold w 1400 nowait
-guest burst run 6 150
-wait 600
-guest burst run-stop 4 150
-placebehind guest host 5 4
+heldcapture host guest w run 5
+wait 900
+guest burst run-stop 3 300
 # sprint (Shift+W)
-host hold shift+w 1400 nowait
-guest burst sprint 6 150
-wait 600
-guest burst sprint-stop 4 150
+resetpose host
+stance host stand
 placebehind guest host 5 4
+heldcapture host guest shift+w sprint 5
+wait 900
+guest burst sprint-stop 3 300
 # walk (Ctrl+W)
-host hold ctrl+w 1400 nowait
-guest burst walk 6 150
-wait 600
+resetpose host
+stance host stand
+placebehind guest host 5 4
+heldcapture host guest ctrl+w walk 5
+wait 900
 # crouch, crouch-walk, stand
-host press c
-wait 900
+resetpose host
+stance host crouch
+placebehind guest host 5 4
 guest burst crouch 3 200
-host hold w 1400 nowait
-guest burst crouch-move 6 150
-wait 600
-host press c
+heldcapture host guest w crouch-move 5
 wait 900
-placebehind guest host 5 4
 # prone (hold C), crawl, stand
-host hold c 500
-wait 1200
-guest burst prone 3 200
-host hold w 1400 nowait
-guest burst crawl 6 150
-wait 600
-host press c
-wait 800
-host press c
-wait 1200
+resetpose host
+stance host prone
 placebehind guest host 5 4
-# stationary turns
-host mouse 700 0
-guest burst turn-right 6 120
-wait 800
-host mouse -700 0
-guest burst turn-left 6 120
-wait 800
-# strafe
-host hold a 1400 nowait
-guest burst strafe 6 150
-wait 800
+guest burst prone 3 200
+heldcapture host guest w crawl 5
+wait 900
+# Aim turns must change the source body heading past the native threshold.
+# Each also captures after the finite turn should have completed naturally.
+resetpose host
+stance host stand
+placebehind guest host 5 4
+aimturn host guest 1500 turn-right
+resetpose host
+stance host stand
+placebehind guest host 5 4
+aimturn host guest -1500 turn-left
+resetpose host
+stance host crouch
+placebehind guest host 5 4
+aimturn host guest 1500 crouch-turn-right
+# Aim while moving sideways, then observe the stop.
+resetpose host
+stance host stand
+placebehind guest host 5 4
+heldcapture host guest rmb+a strafe 5
+wait 900
+guest burst strafe-stop 3 300
 state

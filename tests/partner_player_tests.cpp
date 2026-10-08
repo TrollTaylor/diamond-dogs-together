@@ -452,7 +452,9 @@ void NetTests() {
     net::SetEpoch(30050);
     SendFrame(peer, net::kSession, 30050, 1, 100, 9.0f);         // after reset any sequence starts fresh
     Check(WaitFor([] { return net::SampleRemote(0).x == 9.0f; }), "fresh sequence after reset");
-    Check(CapturedPrefix("partner_net=first_rx") == 2, "first_rx again after reset");
+    // The receive thread publishes the pose before invoking the log callback.
+    // Waiting for the pose cannot establish that the callback has completed.
+    Check(WaitFor([] { return CapturedPrefix("partner_net=first_rx") == 2; }), "first_rx again after reset");
     // Peer restart: an older sequence is accepted only after a 2 s gap. The
     // same wait proves the keepalive (no local send for 1 s).
     const unsigned before = InboxCount();

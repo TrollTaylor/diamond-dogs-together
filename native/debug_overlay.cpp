@@ -32,6 +32,9 @@ using InputCreateFn = HRESULT (WINAPI*)(HINSTANCE, DWORD, REFIID, LPVOID*, LPUNK
 using InputStateFn = HRESULT (STDMETHODCALLTYPE*)(IDirectInputDevice8W*, DWORD, LPVOID);
 using InputDataFn = HRESULT (STDMETHODCALLTYPE*)(IDirectInputDevice8W*, DWORD, LPDIDEVICEOBJECTDATA, LPDWORD, DWORD);
 using CursorPosFn = BOOL (WINAPI*)(int, int);
+using GetCursorPosFn = BOOL (WINAPI*)(LPPOINT);
+using ClientRectFn = BOOL (WINAPI*)(HWND, LPRECT);
+using ClientToScreenFn = BOOL (WINAPI*)(HWND, LPPOINT);
 using ClipFn = BOOL (WINAPI*)(const RECT*);
 using KeyboardFn = BOOL (WINAPI*)(PBYTE);
 using PadFn = DWORD (WINAPI*)(DWORD, XINPUT_STATE*);
@@ -53,7 +56,49 @@ std::atomic<ULONGLONG> release_after{0};
 Hook present_hook{}, resize_hook{}, state_hooks[2]{}, data_hooks[2]{};
 Hook cursor_hook{}, clip_hook{}, keyboard_hook{}, pad_hook{};
 #if MGS_BACKGROUND_WORKER
-Hook format_hooks[2]{}, coop_hooks[2]{}, async_hook{}, key_state_hook{}, raw_hook{}, raw_buffer_hook{}, foreground_hook{};
+enum class WorkerCounter : unsigned {
+    raw_keyboard_posted,
+    raw_mouse_posted,
+    raw_post_failed,
+    raw_mouse_axes_posted,
+    raw_mouse_buttons_posted,
+    raw_keyboard_reads,
+    raw_mouse_reads,
+    raw_mouse_axes_reads,
+    raw_mouse_buttons_reads,
+    raw_keyboard_packets_read,
+    raw_mouse_packets_read,
+    raw_mouse_axis_packets_read,
+    raw_mouse_button_packets_read,
+    raw_read_refused,
+    cursor_success,
+    cursor_null,
+    cursor_thread_refused,
+    cursor_window_refused,
+    cursor_geometry_refused,
+    cursor_map_refused,
+    cursor_window_match,
+    cursor_window_mismatch,
+    cursor_present_missing,
+    di_mouse_state_calls,
+    di_mouse_state_supplied,
+    di_mouse_state_axes,
+    di_mouse_state_buttons,
+    di_mouse_buffer_calls,
+    di_mouse_buffer_events,
+    di_mouse_buffer_peek_events,
+    count
+};
+std::atomic<std::uint32_t> worker_counters[static_cast<unsigned>(WorkerCounter::count)]{};
+void CountWorker(WorkerCounter field, std::uint32_t amount = 1) noexcept {
+    auto& counter = worker_counters[static_cast<unsigned>(field)];
+    auto value = counter.load(std::memory_order_relaxed);
+    while (value != UINT32_MAX) {
+        const auto next = amount > UINT32_MAX - value ? UINT32_MAX : value + amount;
+        if (counter.compare_exchange_weak(value, next, std::memory_order_relaxed)) return;
+    }
+}
+Hook format_hooks[2]{}, coop_hooks[2]{}, async_hook{}, key_state_hook{}, raw_hook{}, raw_buffer_hook{}, foreground_hook{}, get_cursor_hook{};
 // The game's own window on the private desktop (validated SetCooperativeLevel
 // target, or found by enumerating this thread's desktop).
 std::atomic<HWND> worker_window{nullptr};
@@ -65,6 +110,14 @@ WorkerDevice worker_devices[32]{};
 Hook fixture_state{}, fixture_data{}, fixture_pad{};
 #if MGS_BACKGROUND_WORKER && defined(MGS_WORKER_TESTING)
 Hook fixture_format{}, fixture_coop{}, fixture_raw_buffer{}, fixture_raw_input{};
+struct CursorFixture {
+    bool enabled{};
+    HWND window{};
+    ClientRectFn rect{};
+    ClientToScreenFn to_screen{};
+    GetCursorPosFn original{};
+};
+CursorFixture fixture_cursor{};
 #endif
 std::atomic<bool> test_foreground{true};
 std::atomic<bool> test_mouse_held{false};
@@ -173,7 +226,7 @@ bool InputMessage(UINT id) noexcept {
 // window; GetRawInputData answers their tokens from this store. Tokens carry a
 // tag that no real HRAWINPUT has, and only tagged messages reach the game.
 constexpr std::uintptr_t kRawTag = 0x7EA0000000000000ull, kRawTagMask = 0xFFFF000000000000ull;
-struct SyntheticRaw { std::uintptr_t token{}; RAWINPUT raw{}; };
+struct SyntheticRaw { std::uintptr_t token{}; RAWINPUT raw{}; bool counted_read{}; };
 SRWLOCK synthetic_lock = SRWLOCK_INIT;
 SyntheticRaw synthetic_ring[128]{};
 std::uint32_t synthetic_next = 0;
@@ -189,23 +242,71 @@ std::uintptr_t SyntheticStore(const RAWINPUT& raw) noexcept {
     AcquireSRWLockExclusive(&synthetic_lock);
     const std::uint32_t n = ++synthetic_next;
     const std::uintptr_t token = kRawTag | n;
-    synthetic_ring[n & 127] = {token, raw};
+    synthetic_ring[n & 127] = {token, raw, false};
     ReleaseSRWLockExclusive(&synthetic_lock); return token;
 }
+bool SyntheticFirstRead(std::uintptr_t token) noexcept {
+    AcquireSRWLockExclusive(&synthetic_lock);
+    auto& slot = synthetic_ring[token & 127];
+    const bool first = slot.token == token && !slot.counted_read;
+    if (first) slot.counted_read = true;
+    ReleaseSRWLockExclusive(&synthetic_lock); return first;
+}
+void CountSyntheticRead(std::uintptr_t token, const RAWINPUT& raw) noexcept {
+    const DWORD error = GetLastError();
+    const bool first = SyntheticFirstRead(token);
+    if (raw.header.dwType == RIM_TYPEKEYBOARD) {
+        CountWorker(WorkerCounter::raw_keyboard_reads);
+        if (first) CountWorker(WorkerCounter::raw_keyboard_packets_read);
+    } else if (raw.header.dwType == RIM_TYPEMOUSE) {
+        CountWorker(WorkerCounter::raw_mouse_reads);
+        if (first) CountWorker(WorkerCounter::raw_mouse_packets_read);
+        if (raw.data.mouse.lLastX || raw.data.mouse.lLastY) {
+            CountWorker(WorkerCounter::raw_mouse_axes_reads);
+            if (first) CountWorker(WorkerCounter::raw_mouse_axis_packets_read);
+        }
+        if (raw.data.mouse.usButtonFlags) {
+            CountWorker(WorkerCounter::raw_mouse_buttons_reads);
+            if (first) CountWorker(WorkerCounter::raw_mouse_button_packets_read);
+        }
+    }
+    SetLastError(error);
+}
+void PostSynthetic(HWND game, const RAWINPUT& raw) noexcept {
+    const BOOL posted = PostMessageW(game, WM_INPUT, RIM_INPUT, static_cast<LPARAM>(SyntheticStore(raw)));
+    if (!posted) { CountWorker(WorkerCounter::raw_post_failed); return; }
+    if (raw.header.dwType == RIM_TYPEKEYBOARD) CountWorker(WorkerCounter::raw_keyboard_posted);
+    else {
+        CountWorker(WorkerCounter::raw_mouse_posted);
+        if (raw.data.mouse.lLastX || raw.data.mouse.lLastY) CountWorker(WorkerCounter::raw_mouse_axes_posted);
+        if (raw.data.mouse.usButtonFlags) CountWorker(WorkerCounter::raw_mouse_buttons_posted);
+    }
+}
 // Called on the admitted render thread (Present) with the game's own window.
+RAWINPUT SyntheticKeyboard(const worker_scenario::Event& event) noexcept {
+    RAWINPUT raw{};
+    const UINT scan = event.offset & 0xFF;
+    const bool down = (event.value & 0x80) != 0;
+    raw.header.dwType = RIM_TYPEKEYBOARD;
+    raw.header.dwSize = sizeof(RAWINPUTHEADER) + sizeof(RAWKEYBOARD);
+    raw.header.hDevice = reinterpret_cast<HANDLE>(kRawTag | 1);
+    raw.header.wParam = RIM_INPUT;
+    raw.data.keyboard.MakeCode = static_cast<USHORT>(scan & 0x7F);
+    raw.data.keyboard.Flags = static_cast<USHORT>((down ? RI_KEY_MAKE : RI_KEY_BREAK) | ((scan & 0x80) ? RI_KEY_E0 : 0));
+    // Raw keyboard packets use generic modifier VKeys; scan code/E0 retain
+    // the side. VK_LSHIFT/VK_LCONTROL from MAPVK_VSC_TO_VK_EX are key-state
+    // API values, rather than the corresponding legacy raw-packet VKeys.
+    raw.data.keyboard.VKey = static_cast<USHORT>(MapVirtualKeyW((scan & 0x7F) | ((scan & 0x80) ? 0xE000 : 0), MAPVK_VSC_TO_VK));
+    raw.data.keyboard.Message = down ? WM_KEYDOWN : WM_KEYUP;
+    return raw;
+}
 void PumpSyntheticInput(HWND game) noexcept {
     if (!game) return;
     worker_scenario::Event events[64]{};
     std::uint32_t count = worker_scenario::Buffered(worker_scenario::Device::keyboard, events, 64, false);
     for (std::uint32_t i = 0; i < count; ++i) {
-        RAWINPUT raw{}; const UINT scan = events[i].offset & 0xFF; const bool down = (events[i].value & 0x80) != 0;
-        raw.header.dwType = RIM_TYPEKEYBOARD; raw.header.dwSize = sizeof(RAWINPUTHEADER) + sizeof(RAWKEYBOARD);
-        raw.header.hDevice = reinterpret_cast<HANDLE>(kRawTag | 1); raw.header.wParam = RIM_INPUT;
-        raw.data.keyboard.MakeCode = static_cast<USHORT>(scan & 0x7F);
-        raw.data.keyboard.Flags = static_cast<USHORT>((down ? RI_KEY_MAKE : RI_KEY_BREAK) | ((scan & 0x80) ? RI_KEY_E0 : 0));
-        raw.data.keyboard.VKey = static_cast<USHORT>(MapVirtualKeyW((scan & 0x7F) | ((scan & 0x80) ? 0xE000 : 0), MAPVK_VSC_TO_VK_EX));
-        raw.data.keyboard.Message = down ? WM_KEYDOWN : WM_KEYUP;
-        PostMessageW(game, WM_INPUT, RIM_INPUT, static_cast<LPARAM>(SyntheticStore(raw)));
+        const RAWINPUT raw = SyntheticKeyboard(events[i]);
+        PostSynthetic(game, raw);
     }
     count = worker_scenario::Buffered(worker_scenario::Device::mouse, events, 64, false);
     for (std::uint32_t i = 0; i < count; ++i) {
@@ -220,7 +321,7 @@ void PumpSyntheticInput(HWND game) noexcept {
         case 13: raw.data.mouse.usButtonFlags = down ? RI_MOUSE_RIGHT_BUTTON_DOWN : RI_MOUSE_RIGHT_BUTTON_UP; break;
         default: continue;
         }
-        PostMessageW(game, WM_INPUT, RIM_INPUT, static_cast<LPARAM>(SyntheticStore(raw)));
+        PostSynthetic(game, raw);
     }
 }
 #endif
@@ -333,6 +434,7 @@ void RemoveHooks() noexcept {
     RemoveHook(raw_hook);
     RemoveHook(raw_buffer_hook);
     RemoveHook(foreground_hook);
+    RemoveHook(get_cursor_hook);
 #endif
 }
 bool EnableHooks() noexcept {
@@ -349,6 +451,7 @@ bool EnableHooks() noexcept {
         if (!raw_hook.target || MH_QueueEnableHook(raw_hook.target) != MH_OK) return false;
         if (!raw_buffer_hook.target || MH_QueueEnableHook(raw_buffer_hook.target) != MH_OK) return false;
         if (!foreground_hook.target || MH_QueueEnableHook(foreground_hook.target) != MH_OK) return false;
+        if (!get_cursor_hook.target || MH_QueueEnableHook(get_cursor_hook.target) != MH_OK) return false;
     }
 #endif
     return MH_ApplyQueued() == MH_OK;
@@ -452,25 +555,78 @@ HRESULT STDMETHODCALLTYPE WorkerCoop(IDirectInputDevice8W* self, HWND hwnd, DWOR
 // admitted game thread on the private desktop is answered with the game's own
 // private window. This is a process-local answer: no focus, activation or
 // SetForegroundWindow call is made and the user's desktop is never touched.
-BOOL CALLBACK FindWorkerWindow(HWND hwnd, LPARAM out) noexcept {
-    DWORD pid = 0; GetWindowThreadProcessId(hwnd, &pid);
-    if (pid != GetCurrentProcessId() || !IsWindowVisible(hwnd) || GetWindow(hwnd, GW_OWNER)) return TRUE;
+bool PrivateWorkerWindow(HWND hwnd) noexcept {
+    DWORD pid = 0; const DWORD thread = GetWindowThreadProcessId(hwnd, &pid);
+    const auto run = worker_scenario::GetContext();
+    if (!thread || pid != GetCurrentProcessId() || pid != run.pid || !IsWindow(hwnd) ||
+        !IsWindowVisible(hwnd) || GetWindow(hwnd, GW_OWNER) || !run.desktop || !*run.desktop) return false;
     wchar_t name[64]{};
-    if (GetClassNameW(hwnd, name, ARRAYSIZE(name)) && !std::wcscmp(name, L"MGSCoopDX11Probe")) return TRUE;
+    if (!GetClassNameW(hwnd, name, ARRAYSIZE(name)) || !std::wcscmp(name, L"MGSCoopDX11Probe")) return false;
+    wchar_t desktop[256]{}; DWORD needed = 0;
+    return GetUserObjectInformationW(GetThreadDesktop(thread), UOI_NAME, desktop, sizeof(desktop), &needed) &&
+        needed <= sizeof(desktop) && !std::wcscmp(desktop, run.desktop);
+}
+BOOL CALLBACK FindWorkerWindow(HWND hwnd, LPARAM out) noexcept {
+    if (!PrivateWorkerWindow(hwnd)) return TRUE;
     *reinterpret_cast<HWND*>(out) = hwnd; return FALSE;
+}
+HWND CurrentWorkerWindow() noexcept {
+    HWND own = worker_window.load();
+    if (!own || !PrivateWorkerWindow(own)) {
+        own = nullptr; EnumWindows(&FindWorkerWindow, reinterpret_cast<LPARAM>(&own));
+        worker_window.store(own);
+    }
+    return own;
 }
 HWND WINAPI WorkerForeground() noexcept {
     const DWORD error = GetLastError();
     if (worker_scenario::Requested() && worker_scenario::ThreadAdmitted()) {
-        HWND own = worker_window.load();
-        if (!own || !IsWindow(own)) {
-            own = nullptr; EnumWindows(&FindWorkerWindow, reinterpret_cast<LPARAM>(&own));
-            if (own) worker_window.store(own);
-        }
+        const HWND own = CurrentWorkerWindow();
         if (own) { SetLastError(error); return own; }
     }
     SetLastError(error);
     return reinterpret_cast<HWND (WINAPI*)()>(foreground_hook.original)();
+}
+// Retail raw-mouse ingestion rejects axes when GetCursorPos fails and rejects
+// button-down outside its client rectangle. A private desktop cannot query the
+// input desktop's cursor. Supply only a local, qualified window centre; neither
+// this getter nor the worker's SetCursorPos wrapper touches the real cursor.
+BOOL WINAPI WorkerGetCursorPos(LPPOINT point) noexcept {
+    const DWORD error = GetLastError();
+    if (worker_scenario::Requested()) {
+        if (!point) { CountWorker(WorkerCounter::cursor_null); SetLastError(error); return FALSE; }
+        if (!worker_scenario::ThreadAdmitted()) { CountWorker(WorkerCounter::cursor_thread_refused); SetLastError(error); return FALSE; }
+        ClientRectFn rect = &GetClientRect;
+        ClientToScreenFn to_screen = &ClientToScreen;
+        HWND own = nullptr;
+#if defined(MGS_WORKER_TESTING) && defined(MGS_DEBUG_OVERLAY_TESTING)
+        if (fixture_cursor.enabled) {
+            own = fixture_cursor.window; rect = fixture_cursor.rect; to_screen = fixture_cursor.to_screen;
+        } else
+#endif
+        { own = CurrentWorkerWindow(); }
+        RECT client{};
+        if (!own) { CountWorker(WorkerCounter::cursor_window_refused); SetLastError(error); return FALSE; }
+        const HWND present_window = window.load();
+        CountWorker(!present_window ? WorkerCounter::cursor_present_missing :
+                    own == present_window ? WorkerCounter::cursor_window_match : WorkerCounter::cursor_window_mismatch);
+        if (!rect || !to_screen || !rect(own, &client) ||
+            static_cast<std::int64_t>(client.right) - client.left < 2 ||
+            static_cast<std::int64_t>(client.bottom) - client.top < 2) {
+            CountWorker(WorkerCounter::cursor_geometry_refused); SetLastError(error); return FALSE;
+        }
+        POINT centre{
+            static_cast<LONG>(static_cast<std::int64_t>(client.left) + (static_cast<std::int64_t>(client.right) - client.left) / 2),
+            static_cast<LONG>(static_cast<std::int64_t>(client.top) + (static_cast<std::int64_t>(client.bottom) - client.top) / 2)};
+        if (!to_screen(own, &centre)) { CountWorker(WorkerCounter::cursor_map_refused); SetLastError(error); return FALSE; }
+        CountWorker(WorkerCounter::cursor_success); *point = centre; SetLastError(error); return TRUE;
+    }
+    auto original = reinterpret_cast<GetCursorPosFn>(get_cursor_hook.original);
+#if defined(MGS_WORKER_TESTING) && defined(MGS_DEBUG_OVERLAY_TESTING)
+    if (fixture_cursor.enabled) original = fixture_cursor.original;
+#endif
+    SetLastError(error);
+    return original ? original(point) : FALSE;
 }
 SHORT WINAPI WorkerAsync(int key) noexcept {
     if (worker_scenario::Requested()) return 0; // physical/global state is never queried for worker scripts
@@ -508,11 +664,17 @@ UINT WINAPI WorkerRawInput(HRAWINPUT input, UINT command, LPVOID output, PUINT s
     if (worker_scenario::Requested() && SyntheticToken(reinterpret_cast<std::uintptr_t>(input))) {
         RAWINPUT raw{};
         if (!size || header_size != sizeof(RAWINPUTHEADER) || (command != RID_INPUT && command != RID_HEADER) ||
-            !SyntheticLookup(reinterpret_cast<std::uintptr_t>(input), raw)) { SetLastError(ERROR_INVALID_HANDLE); return static_cast<UINT>(-1); }
+            !SyntheticLookup(reinterpret_cast<std::uintptr_t>(input), raw)) {
+            CountWorker(WorkerCounter::raw_read_refused); SetLastError(ERROR_INVALID_HANDLE); return static_cast<UINT>(-1);
+        }
         const UINT needed = command == RID_HEADER ? static_cast<UINT>(sizeof(RAWINPUTHEADER)) : raw.header.dwSize;
         if (!output) { *size = needed; return 0; }
-        if (*size < needed) { *size = needed; SetLastError(ERROR_INSUFFICIENT_BUFFER); return static_cast<UINT>(-1); }
-        std::memcpy(output, &raw, needed); return needed;
+        if (*size < needed) {
+            CountWorker(WorkerCounter::raw_read_refused); *size = needed; SetLastError(ERROR_INSUFFICIENT_BUFFER); return static_cast<UINT>(-1);
+        }
+        std::memcpy(output, &raw, needed);
+        if (command == RID_INPUT) CountSyntheticRead(reinterpret_cast<std::uintptr_t>(input), raw);
+        return needed;
     }
 #endif
     const UINT capacity = size ? *size : 0;
@@ -555,11 +717,18 @@ HRESULT STDMETHODCALLTYPE DeviceState(IDirectInputDevice8W* self, DWORD bytes, L
             SetLastError(error); return result;
         }
         DWORD type = 0; const bool typed = WorkerTyped(self, bytes, type);
+        if (typed && type == DI8DEVTYPE_MOUSE) CountWorker(WorkerCounter::di_mouse_state_calls);
         const bool admitted = worker_scenario::ThreadAdmitted();
         if (output && bytes <= 4096) std::memset(output, 0, bytes);
         bool supplied = false;
         if (output && worker_scenario::MayReplaceState(result, typed, admitted))
             supplied = type == DI8DEVTYPE_KEYBOARD ? worker_scenario::Keyboard(output, bytes) : worker_scenario::Mouse(output, bytes);
+        if (supplied && type == DI8DEVTYPE_MOUSE) {
+            CountWorker(WorkerCounter::di_mouse_state_supplied);
+            DIMOUSESTATE state{}; std::memcpy(&state, output, sizeof(state));
+            if (state.lX || state.lY) CountWorker(WorkerCounter::di_mouse_state_axes);
+            if (state.rgbButtons[0] || state.rgbButtons[1]) CountWorker(WorkerCounter::di_mouse_state_buttons);
+        }
         if (!supplied) worker_scenario::InputFailure("GetDeviceState_worker_refusal", DIERR_UNSUPPORTED, typed);
         SetLastError(error);
         return SUCCEEDED(result) && !supplied ? DIERR_UNSUPPORTED : result;
@@ -585,6 +754,7 @@ HRESULT STDMETHODCALLTYPE DeviceData(IDirectInputDevice8W* self, DWORD bytes, LP
         }
         DWORD type = 0; bool typed = WorkerTyped(self, 256, type);
         if (!typed) typed = WorkerTyped(self, sizeof(DIMOUSESTATE), type) || WorkerTyped(self, sizeof(DIMOUSESTATE2), type);
+        if (typed && type == DI8DEVTYPE_MOUSE) CountWorker(WorkerCounter::di_mouse_buffer_calls);
         const bool valid = typed && worker_scenario::ThreadAdmitted() && count && bytes == sizeof(DIDEVICEOBJECTDATA) && !(flags & ~DIGDD_PEEK) && (capacity <= 64 || (!output && capacity == INFINITE));
         if (output && capacity <= 64 && bytes == sizeof(DIDEVICEOBJECTDATA)) std::memset(output, 0, static_cast<std::size_t>(capacity) * bytes);
         if (count) *count = 0;
@@ -592,6 +762,7 @@ HRESULT STDMETHODCALLTYPE DeviceData(IDirectInputDevice8W* self, DWORD bytes, LP
             worker_scenario::Event events[64]{};
             const auto amount = worker_scenario::Buffered(type == DI8DEVTYPE_KEYBOARD ? worker_scenario::Device::keyboard : worker_scenario::Device::mouse,
                 events, capacity == INFINITE ? 64 : capacity, (flags & DIGDD_PEEK) != 0);
+            if (type == DI8DEVTYPE_MOUSE) CountWorker((flags & DIGDD_PEEK) ? WorkerCounter::di_mouse_buffer_peek_events : WorkerCounter::di_mouse_buffer_events, amount);
             if (output) for (unsigned i = 0; i < amount; ++i) output[i] = {events[i].offset, events[i].value, events[i].timestamp, events[i].sequence, 0};
             *count = amount;
         } else worker_scenario::InputFailure("GetDeviceData_worker_refusal", DIERR_UNSUPPORTED, typed);
@@ -727,7 +898,8 @@ bool InputHooks() noexcept {
         AddHook(key_state_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetKeyState")), reinterpret_cast<void*>(&WorkerKeyState)) &&
         AddHook(raw_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetRawInputData")), reinterpret_cast<void*>(&WorkerRawInput)) &&
         AddHook(raw_buffer_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetRawInputBuffer")), reinterpret_cast<void*>(&WorkerRawBuffer)) &&
-        AddHook(foreground_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetForegroundWindow")), reinterpret_cast<void*>(&WorkerForeground));
+        AddHook(foreground_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetForegroundWindow")), reinterpret_cast<void*>(&WorkerForeground)) &&
+        AddHook(get_cursor_hook, reinterpret_cast<void*>(GetProcAddress(user, "GetCursorPos")), reinterpret_cast<void*>(&WorkerGetCursorPos));
 #endif
     return ok;
 }
@@ -1264,6 +1436,42 @@ bool CapturingInput() noexcept {
     releasing.store(false, std::memory_order_release);
     return false;
 }
+WorkerInputStats GetWorkerInputStats() noexcept {
+    WorkerInputStats out{};
+#if MGS_BACKGROUND_WORKER
+    out.raw_keyboard_posted = worker_counters[static_cast<unsigned>(WorkerCounter::raw_keyboard_posted)].load(std::memory_order_relaxed);
+    out.raw_mouse_posted = worker_counters[static_cast<unsigned>(WorkerCounter::raw_mouse_posted)].load(std::memory_order_relaxed);
+    out.raw_post_failed = worker_counters[static_cast<unsigned>(WorkerCounter::raw_post_failed)].load(std::memory_order_relaxed);
+    out.raw_mouse_axes_posted = worker_counters[static_cast<unsigned>(WorkerCounter::raw_mouse_axes_posted)].load(std::memory_order_relaxed);
+    out.raw_mouse_buttons_posted = worker_counters[static_cast<unsigned>(WorkerCounter::raw_mouse_buttons_posted)].load(std::memory_order_relaxed);
+    out.raw_keyboard_reads = worker_counters[static_cast<unsigned>(WorkerCounter::raw_keyboard_reads)].load(std::memory_order_relaxed);
+    out.raw_mouse_reads = worker_counters[static_cast<unsigned>(WorkerCounter::raw_mouse_reads)].load(std::memory_order_relaxed);
+    out.raw_mouse_axes_reads = worker_counters[static_cast<unsigned>(WorkerCounter::raw_mouse_axes_reads)].load(std::memory_order_relaxed);
+    out.raw_mouse_buttons_reads = worker_counters[static_cast<unsigned>(WorkerCounter::raw_mouse_buttons_reads)].load(std::memory_order_relaxed);
+    out.raw_keyboard_packets_read = worker_counters[static_cast<unsigned>(WorkerCounter::raw_keyboard_packets_read)].load(std::memory_order_relaxed);
+    out.raw_mouse_packets_read = worker_counters[static_cast<unsigned>(WorkerCounter::raw_mouse_packets_read)].load(std::memory_order_relaxed);
+    out.raw_mouse_axis_packets_read = worker_counters[static_cast<unsigned>(WorkerCounter::raw_mouse_axis_packets_read)].load(std::memory_order_relaxed);
+    out.raw_mouse_button_packets_read = worker_counters[static_cast<unsigned>(WorkerCounter::raw_mouse_button_packets_read)].load(std::memory_order_relaxed);
+    out.raw_read_refused = worker_counters[static_cast<unsigned>(WorkerCounter::raw_read_refused)].load(std::memory_order_relaxed);
+    out.cursor_success = worker_counters[static_cast<unsigned>(WorkerCounter::cursor_success)].load(std::memory_order_relaxed);
+    out.cursor_null = worker_counters[static_cast<unsigned>(WorkerCounter::cursor_null)].load(std::memory_order_relaxed);
+    out.cursor_thread_refused = worker_counters[static_cast<unsigned>(WorkerCounter::cursor_thread_refused)].load(std::memory_order_relaxed);
+    out.cursor_window_refused = worker_counters[static_cast<unsigned>(WorkerCounter::cursor_window_refused)].load(std::memory_order_relaxed);
+    out.cursor_geometry_refused = worker_counters[static_cast<unsigned>(WorkerCounter::cursor_geometry_refused)].load(std::memory_order_relaxed);
+    out.cursor_map_refused = worker_counters[static_cast<unsigned>(WorkerCounter::cursor_map_refused)].load(std::memory_order_relaxed);
+    out.cursor_window_match = worker_counters[static_cast<unsigned>(WorkerCounter::cursor_window_match)].load(std::memory_order_relaxed);
+    out.cursor_window_mismatch = worker_counters[static_cast<unsigned>(WorkerCounter::cursor_window_mismatch)].load(std::memory_order_relaxed);
+    out.cursor_present_missing = worker_counters[static_cast<unsigned>(WorkerCounter::cursor_present_missing)].load(std::memory_order_relaxed);
+    out.di_mouse_state_calls = worker_counters[static_cast<unsigned>(WorkerCounter::di_mouse_state_calls)].load(std::memory_order_relaxed);
+    out.di_mouse_state_supplied = worker_counters[static_cast<unsigned>(WorkerCounter::di_mouse_state_supplied)].load(std::memory_order_relaxed);
+    out.di_mouse_state_axes = worker_counters[static_cast<unsigned>(WorkerCounter::di_mouse_state_axes)].load(std::memory_order_relaxed);
+    out.di_mouse_state_buttons = worker_counters[static_cast<unsigned>(WorkerCounter::di_mouse_state_buttons)].load(std::memory_order_relaxed);
+    out.di_mouse_buffer_calls = worker_counters[static_cast<unsigned>(WorkerCounter::di_mouse_buffer_calls)].load(std::memory_order_relaxed);
+    out.di_mouse_buffer_events = worker_counters[static_cast<unsigned>(WorkerCounter::di_mouse_buffer_events)].load(std::memory_order_relaxed);
+    out.di_mouse_buffer_peek_events = worker_counters[static_cast<unsigned>(WorkerCounter::di_mouse_buffer_peek_events)].load(std::memory_order_relaxed);
+#endif
+    return out;
+}
 void Install() noexcept {
     const DWORD error = GetLastError();
     if (debug_menu::Enabled() || worker_scenario::Requested()) InitOnceExecuteOnce(&install_once, &InstallOnce, nullptr, nullptr);
@@ -1296,6 +1504,12 @@ void ShutdownForTest() noexcept {
     RemoveHook(fixture_state); RemoveHook(fixture_data); RemoveHook(fixture_pad);
 #if MGS_BACKGROUND_WORKER && defined(MGS_WORKER_TESTING)
     RemoveHook(fixture_format); RemoveHook(fixture_coop); RemoveHook(fixture_raw_buffer); RemoveHook(fixture_raw_input);
+    fixture_cursor = {};
+    for (auto& counter : worker_counters) counter.store(0, std::memory_order_relaxed);
+    AcquireSRWLockExclusive(&synthetic_lock);
+    for (auto& slot : synthetic_ring) slot = {};
+    synthetic_next = 0;
+    ReleaseSRWLockExclusive(&synthetic_lock);
 #endif
     if (log_file != INVALID_HANDLE_VALUE) CloseHandle(log_file);
     log_file = INVALID_HANDLE_VALUE;
@@ -1320,11 +1534,20 @@ HRESULT WorkerDataForTest(IDirectInputDevice8W* object, DWORD bytes, DIDEVICEOBJ
 HRESULT WorkerFormatForTest(IDirectInputDevice8W* object, const DIDATAFORMAT* format) noexcept { return WorkerFormat(object, format); }
 HRESULT WorkerCoopForTest(IDirectInputDevice8W* object, HWND hwnd, DWORD flags) noexcept { return WorkerCoop(object, hwnd, flags); }
 BOOL WorkerCursorForTest(int x, int y) noexcept { return CursorPos(x, y); }
+void ConfigureWorkerCursorFixtureForTest(HWND own, ClientRectFn rect, ClientToScreenFn to_screen, GetCursorPosFn original) noexcept {
+    fixture_cursor = {true, own, rect, to_screen, original};
+}
+BOOL WorkerGetCursorForTest(LPPOINT point) noexcept { return WorkerGetCursorPos(point); }
+void SetWorkerPresentWindowForTest(HWND own) noexcept { window.store(own); }
 BOOL WorkerClipForTest(const RECT* rect) noexcept { return Clip(rect); }
 SHORT WorkerAsyncForTest(int key) noexcept { return WorkerAsync(key); }
 SHORT WorkerKeyStateForTest(int key) noexcept { return WorkerKeyState(key); }
 UINT WorkerRawBufferForTest(RAWINPUT* output, UINT* size, UINT header) noexcept { return WorkerRawBuffer(output,size,header); }
 UINT WorkerRawInputForTest(HRAWINPUT input,UINT command,void* output,UINT* size,UINT header) noexcept { return WorkerRawInput(input,command,output,size,header); }
+HRAWINPUT WorkerSyntheticKeyboardForTest(unsigned scan,bool down) noexcept {
+    worker_scenario::Event event{};event.offset=scan;event.value=down?0x80u:0u;
+    return reinterpret_cast<HRAWINPUT>(SyntheticStore(SyntheticKeyboard(event)));
+}
 DWORD WorkerPadForTest(DWORD index, XINPUT_STATE* state) noexcept { return Pad(index, state); }
 #endif
 #endif

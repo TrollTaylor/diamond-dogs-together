@@ -26,6 +26,12 @@ struct Snapshot {
     bool world_configured{}, world_paired{}, world_link_up{}, enemy_spawn_valid{};
     std::uint32_t world_effective{}, enemy_camp_count{}, enemy_route_count{}, enemy_spawn_hash{};
     std::uint32_t remote_action_flags{}, remote_equip{}, remote_act{}, mapped_clip{};
+    bool local_anim_valid{}, remote_anim_valid{}, local_yaw_valid{};
+    std::uint32_t local_act{}, local_anim_stance{}, local_anim_speed{};
+    std::uint32_t remote_stance{}, remote_anim_stance{}, remote_anim_speed{}, dm_stance{}, dm_move{};
+    bool dm_speed_valid{};
+    std::uint32_t dm_speed_mmps{};
+    char dm_phase[24]{};
     std::uint32_t motion_count{};
     EnemyCamp enemy_camps[32]{};
     EnemyRoute enemy_routes[64]{};
