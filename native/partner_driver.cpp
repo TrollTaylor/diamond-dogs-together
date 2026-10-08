@@ -296,6 +296,69 @@ const char* WordsText(const Settings& set, char (&out)[4]) noexcept {
     return out;
 }
 
+namespace pnat = mgscoop::partner_native;
+
+// Native puppet (docs/native-puppet.md 3.3): the settings that take effect
+// this tick. While the arbiter is entering or active the native drive's
+// fixed values replace the configured ones; never written to lab.ini.
+Settings EffectiveSettings(const Settings& base, bool active) noexcept {
+    Settings e = base;
+    e.defer = EffectivePartnerDefer(base.drive, base.defer);
+    e.native_active = active && base.drive == PartnerDrive::native;
+    if (!e.native_active) return e;
+    pnat::DriveSettings ds{};
+    ds.apply = base.apply;
+    ds.input = base.input;
+    ds.dm = base.dm;
+    ds.anim = base.anim;
+    ds.wrap = base.wrap;
+    ds.hold = base.input_hold;
+    for (unsigned i = 0; i < 3; ++i) ds.words[i] = base.input_words[i];
+    ds.cam = base.input_cam;
+    ds.recon = base.recon;
+    ds.slot = base.slot;
+    ds.p218 = false;
+    ds.mask = base.input_mask;
+    const pnat::DriveSettings x = pnat::Effective(ds, true, pnat::NativeConfig{base.ngun, base.nfire, base.naim});
+    e.apply = x.apply;
+    e.input = x.input;
+    e.dm = x.dm;
+    e.anim = x.anim;
+    e.wrap = x.wrap;
+    e.input_hold = x.hold;
+    for (unsigned i = 0; i < 3; ++i) e.input_words[i] = x.words[i];
+    e.input_cam = x.cam;
+    e.recon = x.recon;
+    e.slot = x.slot;
+    e.input_mask = x.mask;
+    if (!e.correct_mm) e.correct_mm = 3000;  // correct=0 would turn the reconciliation off
+    return e;
+}
+
+// The sender's v3 fields (this copy runs the native drive). PP+0x14 and the
+// camera are swapped inside windows: only an even, unchanged WindowSeq counts.
+pin::V3Source SenderV3(const Driver& d, const Hooks& h, const pp::State& st, const pin::PadSnapshot& snap) noexcept {
+    (void)d;
+    pin::V3Source v{};
+    v.inv_slot = pin::kInvSlotUnknown;
+    v.aiming = (snap.held & 0x8u) != 0;  // HOLD level
+    if (!h.read_look_source) return v;
+    const std::uint32_t seq0 = h.window_seq ? h.window_seq(h.context) : 0;
+    pp::LookSource src{};
+    if (!h.read_look_source(h.context, st, src)) return v;
+    const std::uint32_t seq1 = h.window_seq ? h.window_seq(h.context) : 0;
+    const bool quiet = !(seq0 & 1u) && seq0 == seq1;
+    v.look_valid = src.look_ok;
+    v.look_pitch = src.pitch;
+    v.look_yaw = src.yaw;
+    v.cam_valid = src.cam_ok && quiet;
+    v.cam270 = src.cam270;
+    v.cam274 = src.cam274;
+    v.heading_valid = src.heading_ok && quiet;
+    v.heading_rad = src.heading;
+    return v;
+}
+
 // Build the Arm from the resolved targets and the current settings.
 pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& t, const pp::State& st, const partner::Tick& tick,
                   std::uint64_t now, bool enabled) noexcept {
@@ -338,6 +401,18 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
     a.tap_bits = m.tap_bits;
     a.press_bits = m.press_bits;
     a.press_until_ms = m.press_until_ms;
+    // Native puppet: native window rules, isLocal policy, the look override's
+    // slot (only with a validated look slot), the GO identity and steering.
+    a.native = set.native_active;
+    a.local_all = set.native_active && set.local == PartnerLocal::all;
+    a.naim = set.native_active ? set.naim : PartnerNativeAim::off;
+    a.go = set.native_active && m.native_targets_ok ? m.native_targets.go : 0;
+    const bool look_slot = set.native_active && m.native_targets_ok && !m.native_targets.look_refusal;
+    a.ps1 = look_slot ? m.native_targets.ps1 : 0;
+    a.ps1_idx = look_slot ? m.native_targets.ps1_idx : 0;
+    if (!look_slot) a.naim = PartnerNativeAim::off;
+    a.steer_rad = set.native_active ? m.steer_rad : 0.0;
+    a.mag_scale = set.native_active && m.mag_scale > 0.0 ? m.mag_scale : 1.0;
     (void)st;
     (void)now;
     return a;
@@ -813,6 +888,11 @@ pr::Params ReconParams(const Settings& set) noexcept {
     p.cap_idle_mmps = set.nudge_mmps / 2;
     p.cap_prone_mmps = set.nudge_mmps / 4 < 150 ? set.nudge_mmps / 4 : 150;
     p.input_stale_ms = set.stale_ms;
+    // Native puppet: steering corrects; nudges, snaps and pins are safety nets.
+    if (set.native_active) {
+        p = pr::NativeParams(p);
+        p.recon = PartnerRecon::track;
+    }
     return p;
 }
 
@@ -1165,6 +1245,10 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
         m.p218_active = false;
         Emit(h, "partner_input=p218; on=0; reason=cam\r\n");
     }
+    if (m.p218_active && set.native_active) {
+        m.p218_active = false;
+        Emit(h, "partner_input=p218; on=0; reason=native\r\n");
+    }
     if (m.p218_active && now - m.p218_ms >= kP218MaxMs) {
         m.p218_active = false;
         Emit(h, "partner_input=p218_expired\r\n");
@@ -1197,6 +1281,9 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
             pin::SenderObserve(m.sender, snap);
             pin::InputPacket pkt = pin::Quantize(snap, tick.cam_cdeg);
             pin::SenderFill(m.sender, pkt);
+            // Native puppet: v3 (look, camera, heading) only when this copy runs
+            // the native drive; the peer refuses aim with no_v3 otherwise.
+            if (d.settings.drive == PartnerDrive::native) pin::Fill3(pkt, SenderV3(d, h, st, snap));
             if (h.submit_input(h.context, pkt)) pin::SenderSent(m.sender);
         }
     }
@@ -1254,6 +1341,10 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
     if (set.anim != PartnerAnim::off) fail("anim");
     if (set.dm == PartnerDm::on || set.dm == PartnerDm::map || d.mission.dmmap.phase != pdm::Phase::idle) fail("dm");
     if (set.stage < 3) fail("stage");
+    // Native: the deferral is armed before the native Arm is published (the
+    // arbiter requests it from the place step on), so no frame runs block 1's
+    // job inline in a batch under a native Arm.
+    if (set.native_active && !m.native_defer_armed) fail("native_defer");
     resolve();
     // "busy": a window was open across every read attempt (hook thread !=
     // Lua thread). An armed window keeps its published Arm for this tick.
@@ -1479,6 +1570,508 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
         DisarmInput(d, h, "hook_lost");
     }
 }
+
+// --- Native puppet (docs/native-puppet.md 7) -----------------------------------
+// The GO identity and the census wrap roots name per-mission objects: they are
+// withdrawn at mission boundaries and once the native drive is no longer
+// configured (the deferral is disarmed first by every caller).
+void WithdrawNativeTargets(Mission& m, const Hooks& h) noexcept {
+    if (m.native_identity && h.publish_identity) h.publish_identity(h.context, partner_defer::Identity{}, false);
+    m.native_identity = false;
+    if (m.native_roots && h.publish_wrap_roots) h.publish_wrap_roots(h.context, 0, 0, false);
+    m.native_roots = false;
+}
+
+void EmitNative(Mission& m, const Hooks& h, LogCap& cap, const char* head, const char* format, ...) noexcept {
+    if (cap.lines >= kNativeEventCap) {
+        if (!cap.capped) {
+            cap.capped = true;
+            EmitFormat(h, "%s=capped; limit=%u\r\n", head, kNativeEventCap);
+        }
+        return;
+    }
+    char line[384]{};
+    va_list arguments;
+    va_start(arguments, format);
+    const HRESULT result = StringCchVPrintfA(line, ARRAYSIZE(line), format, arguments);
+    va_end(arguments);
+    if (SUCCEEDED(result)) { ++cap.lines; Emit(h, line); }
+    (void)m;
+}
+
+// Reliable channel 2 (equipment manifest): drained every tick in every drive
+// mode so the sender's window never stalls; the receiver only stores it.
+void DrainEquip(Driver& d, const Hooks& h) noexcept {
+    if (!h.drain_reliable) return;
+    Mission& m = d.mission;
+    const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
+    for (unsigned i = 0; i < 32; ++i) {
+        std::uint8_t message[128]{};
+        std::size_t size = 0;
+        if (!h.drain_reliable(h.context, partner_equip_wire::kChannel, message, sizeof(message), size)) break;
+        if (partner_equip_wire::Accept(m.equip, message, size, epoch) && m.equip.manifest.revision != m.equip_logged_rev) {
+            m.equip_logged_rev = m.equip.manifest.revision;
+            const auto& e = m.equip.manifest;
+            EmitNative(m, h, m.native_equip_cap, "partner_equip",
+                       "partner_equip=manifest; rev=%u; inv=%u; slots=%u:%u,%u:%u,%u:%u\r\n", unsigned(e.revision), unsigned(e.inv_slot),
+                       unsigned(e.slots[0].base_id), unsigned(e.slots[0].alias), unsigned(e.slots[1].base_id), unsigned(e.slots[1].alias),
+                       unsigned(e.slots[2].base_id), unsigned(e.slots[2].alias));
+        }
+    }
+}
+
+std::uint32_t Rate(std::uint32_t now, std::uint32_t before, std::uint64_t dt_ms) noexcept {
+    return dt_ms ? Clamp32(static_cast<std::uint64_t>(now - before) * 1000u / dt_ms) : 0u;
+}
+
+void CopyText(char* out, std::size_t capacity, const char* text) noexcept {
+    StringCchCopyA(out, capacity, text ? text : "");
+}
+
+// Arbiter step, identity/wrap-root publication, lazy install, deferral arming,
+// steering for the next Arm, telemetry and the native log lines.
+void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State& st, const partner::Tick& tick, const Clock& clock,
+                bool terminating, bool realized, bool parts_loaded, bool anim_ok, const pp::Anim& anim,
+                const sync::AnimState& remote_anim, std::uint32_t remote_flags, std::uint32_t remote_equip) noexcept {
+    Mission& m = d.mission;
+    const Settings& set = d.settings;
+    const std::uint64_t now = clock.now_ms;
+    const bool configured = set.drive == PartnerDrive::native;
+    const PartnerDefer defer = EffectivePartnerDefer(set.drive, set.defer);
+    // Statistics: the deferral (process totals) and the hook's wrap/native parts.
+    partner_defer::Stats ds{};
+    if (h.drain_defer_stats) h.drain_defer_stats(h.context, ds);
+    InputStats is{};
+    if (h.drain_input_stats) h.drain_input_stats(h.context, is);
+    if (is.window.us_max > m.us_max_acc) m.us_max_acc = is.window.us_max;
+    const partner_defer::Stats& db = m.defer_last_ok ? m.defer_last : ds;
+    const partner_input_hook::WrapStats& wb = m.hook_native_last_ok ? m.wrap_native_last : is.wrap;
+    const partner_input_hook::NativeStats& nb = m.hook_native_last_ok ? m.hook_native_last : is.native;
+    pnat::In in{};
+    in.w50_b1_s0 = ds.w50_b1_s0 - db.w50_b1_s0;
+    in.deferred = ds.deferred - db.deferred;
+    in.drains = (ds.drains[0] - db.drains[0]) + (ds.drains[1] - db.drains[1]);
+    in.windowed = ds.windowed - db.windowed;
+    in.unwindowed = ds.unwindowed - db.unwindowed;
+    in.lost = (ds.lost - db.lost) + (ds.torn - db.torn) + (ds.gate_closed - db.gate_closed);
+    in.wrap_in_batch = is.wrap.wrap_in_batch - wb.wrap_in_batch;
+    in.frames = is.native.frames - nb.frames;
+    in.drain_block = is.native.drain_block_refused - nb.drain_block_refused;
+    in.drain_us_max = ds.drain_us_max;
+    if (ds.drain_us_max > m.native_drain_us_acc) m.native_drain_us_acc = ds.drain_us_max;
+    m.defer_last = ds;
+    m.defer_last_ok = true;
+    m.wrap_native_last = is.wrap;
+    m.hook_native_last = is.native;
+    m.hook_native_last_ok = true;
+    if (ds.faulted && !m.native_fault_logged && configured) {
+        m.native_fault_logged = true;
+        EmitFormat(h, "partner_defer=fault; phase=%s; code=0x%08x; deferral=disabled\r\n", partner_defer::FaultPhaseName(ds.fault_phase),
+                   ds.fault_code);
+    }
+    // Identity and wrap roots: every tick where the input targets resolve,
+    // independent of arming (census needs block classes without an Arm).
+    pp::InputTargets targets{};
+    const char* tref = "unavailable";
+    if (configured && set.stage >= 3 && realized && h.input_targets) tref = h.input_targets(h.context, st, targets);
+    m.native_targets_ok = false;
+    if (configured && !tref && h.native_targets) {
+        pp::NativeTargets nt{};
+        if (!h.native_targets(h.context, st, targets, nt)) {
+            m.native_targets = nt;
+            m.native_targets_ok = true;
+        }
+    }
+    if (m.native_targets_ok) {
+        if (h.publish_identity)
+            h.publish_identity(h.context, partner_defer::Identity{m.native_targets.go, m.native_targets.pool0, m.native_targets.pool1}, true);
+        m.native_identity = true;
+        if (h.publish_wrap_roots) {
+            h.publish_wrap_roots(h.context, targets.root0, targets.root1, defer != PartnerDefer::off);
+            m.native_roots = true;
+        }
+    } else if (m.native_identity && !m.native_out.active && !(tref && std::strcmp(tref, "busy") == 0)) {
+        if (h.publish_identity) h.publish_identity(h.context, partner_defer::Identity{}, false);
+        m.native_identity = false;
+    }
+    // Lazy install (once per process; the refusal is sticky).
+    const char* install_refusal = nullptr;
+    if (configured && defer != PartnerDefer::off) {
+        if (!h.install_defer) install_refusal = "unavailable";
+        else if (!lab.partner_input_hook) install_refusal = "hook_disabled";
+        else if (set.stage >= 3 && realized && parts_loaded && !terminating) install_refusal = h.install_defer(h.context, defer);
+    }
+    NativeInstall ni{};
+    if (h.native_install) h.native_install(h.context, ni);
+    // The arbiter.
+    in.now_ms = now;
+    in.configured = configured;
+    in.defer_on = defer == PartnerDefer::on;
+    in.terminating = terminating;
+    in.installed_h0 = ni.h0;
+    in.installed_wrap = ni.wrap;
+    in.installed_h2 = ni.h2;
+    in.installed_h1 = ni.h1;
+    in.live_h0 = ni.live_h0;
+    in.live_h1 = ni.live_h1;
+    in.live_h2 = ni.live_h2;
+    in.installed_p1 = ni.p1;
+    in.live_p1 = ni.live_p1;
+    in.install_refusal = install_refusal;
+    in.thread_ok = ds.batch_threads_seen == 1 && ds.batch_thread != 0 && ds.batch_thread == ds.hook_thread && ds.batches >= 120;
+    in.faulted = m.input_faulted || ds.faulted || is.window.fault_phase != 0;
+    in.realized = realized;
+    in.parts_loaded = parts_loaded;
+    in.range_hidden = m.range_hidden;
+    in.stage = set.stage;
+    in.link_live = h.link_live ? h.link_live(h.context) : (h.net_running && h.net_running(h.context));
+    pin::Sample latest{};
+    const bool latest_ok = h.latest_input && h.latest_input(h.context, latest) && latest.valid;
+    in.input_valid = latest_ok;
+    in.input_age_ms = latest_ok ? latest.age_ms : 0xFFFFFFFFu;
+    in.dm_idle = m.dmmap.phase == pdm::Phase::idle && !m.dmmap.owned;
+    in.dm_patched = m.dm_patched;
+    in.dm_revert_failed = m.dm_revert_failed;
+    in.window_armed = m.input_armed;
+    in.recon_placed = m.input_armed && m.recon_active;
+    in.snaps_10s = m.recon_active && m.recon_have_out ? m.recon_out.report.snaps_window : 0;
+    // Only a true runaway pin feeds the runaway timer (a diverge or input pin
+    // has its own reason: diverging snaps, input_stale).
+    if (m.recon_active && m.recon_have_out && m.recon_out.report.runaway_active) {
+        if (!m.runaway_since_ms) m.runaway_since_ms = now ? now : 1;
+        in.runaway_ms = Clamp32(now - m.runaway_since_ms);
+    } else {
+        m.runaway_since_ms = 0;
+    }
+    const pnat::Mode before = m.native.mode;
+    const pnat::Out out = pnat::Step(m.native, in);
+    m.native_out = out;
+    // Requests in publication order: leaving disarms the deferral first, then
+    // the window, then rearms dm=map; entering arms the deferral from the
+    // place step on, before TickInput may publish the native Arm (it refuses
+    // with native_defer until then).
+    if (out.req_defer_disarm || (!out.active && m.native_defer_armed)) {
+        if (h.set_defer) h.set_defer(h.context, false, defer);
+        m.native_defer_armed = false;
+    }
+    if (out.req_disarm) DisarmInput(d, h, "native_leave");
+    if (out.req_dmmap_rearm) d.dmmap_rearm = true;
+    if (out.req_epoch) ++m.body_epoch;
+    if (out.req_defer_arm && !m.native_defer_armed) {
+        if (h.set_defer) h.set_defer(h.context, true, defer);
+        m.native_defer_armed = true;
+    }
+    // drive=legacy again (trigger): nothing native stays published.
+    if (!configured && !out.active) WithdrawNativeTargets(m, h);
+    if (out.transition && configured) {
+        EmitNative(m, h, m.native_cap, "partner_native", "partner_native=%s; reason=%s; fallbacks=%u; since_ms=%u\r\n",
+                   pnat::ModeName(out.mode), out.reason ? out.reason : "none", m.native.fallbacks, Clamp32(now - m.native.since_ms));
+        if (out.mode == pnat::Mode::latched && !m.native_latched_logged) {
+            m.native_latched_logged = true;
+            EmitFormat(h, "partner_native=latched; reason=%s; fallbacks=%u\r\n", out.reason ? out.reason : "none", m.native.fallbacks);
+        }
+    }
+    if (out.enter_step)
+        EmitNative(m, h, m.native_enter_cap, "partner_native_enter", "partner_native=enter; step=%s; ms=%u\r\n", out.enter_step,
+                   Clamp32(now - m.native.since_ms));
+    (void)before;
+    // Steering for the next Arm (entering/active only; SameArm ignores it).
+    if (out.active && m.recon_active && m.recon_have_out && m.recon_target_ok && m.body_ok) {
+        pnat::SteerIn si{};
+        si.now_ms = now;
+        si.e_x = m.recon_target[0] - static_cast<double>(m.body_pos[0]) * 1000.0;
+        si.e_z = m.recon_target[2] - static_cast<double>(m.body_pos[2]) * 1000.0;
+        si.v_x = m.recon.v_remote[0];
+        si.v_z = m.recon.v_remote[1];
+        si.in_r = static_cast<double>(m.recon_in_r) / 1000.0;
+        si.frozen = m.recon_out.mode == pr::Mode::frozen || m.recon_out.mode == pr::Mode::pin;
+        const bool body_prone = anim_ok && anim.stance[1] == 2;
+        const bool remote_prone = (remote_anim.flags & sync::AnimFlag::Valid) && remote_anim.stance == 2;
+        si.prone_transition = body_prone != remote_prone;
+        si.walk_key = latest_ok && (latest.packet.held & (1u << 25)) != 0;
+        pnat::SteerParams sp{};
+        sp.max_deg = static_cast<double>(set.steer_deg);
+        sp.trim_pct = static_cast<double>(set.trim_pct);
+        const pnat::SteerOut so = pnat::Steer(m.steer, si, sp);
+        m.steer_rad = so.bias_rad;
+        m.mag_scale = so.mag_scale;
+    } else {
+        m.steer = pnat::SteerState{};
+        m.steer_rad = 0.0;
+        m.mag_scale = 1.0;
+    }
+    m.steer_mdeg = static_cast<std::int32_t>(std::lround(m.steer_rad * 180000.0 / 3.14159265358979323846));
+    if (!configured) return;
+    // Gun (telemetry reads only).
+    pp::Gun1 gun{};
+    const bool gun_ok = h.read_gun1 && h.read_gun1(h.context, st, gun);
+    const bool remote_aiming = (latest_ok && (latest.packet.xflags & pin::XFlag::Aiming)) || (remote_flags & sync::ActionFlag::Aiming);
+    const bool body_aiming = gun_ok && gun.node_active && (gun.gun3c0 & c::gun_flag_hold);
+    if (remote_aiming == body_aiming) {
+        if (!m.aim_since_ms) m.aim_since_ms = now ? now : 1;
+        if (now - m.aim_since_ms >= kAimMatchMs) m.aim_match = true;
+    } else {
+        m.aim_since_ms = 0;
+        m.aim_match = false;
+    }
+    const std::uint32_t gun_key = gun_ok ? (gun.gun3c0 | (gun.node_active ? 0x80000000u : 0u)) : 0xFFFFFFFFu;
+    if (gun_key != m.native_gun_last || (set.ngun && now - m.native_gun_line_ms >= kNativeLineMs && m.native_gun_lines < kNativeLineCap)) {
+        const bool change = gun_key != m.native_gun_last;
+        m.native_gun_last = gun_key;
+        if (!change) { m.native_gun_line_ms = now; ++m.native_gun_lines; }
+        char line[256]{};
+        if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
+                "partner_native_gun; node=%u; gun3c0=0x%x; b2=%u; b18=%u; mode=%u; remote_flags=0x%x; equip=%u,na; aim_match=%u; aim_err_mdeg=na; read=%s\r\n",
+                gun_ok && gun.node_active ? 1u : 0u, gun.gun3c0, (gun.gun3c0 & c::gun_flag_in_hand) ? 1u : 0u,
+                (gun.gun3c0 & c::gun_flag_hold) ? 1u : 0u, unsigned(gun.mode), remote_flags, remote_equip, m.aim_match ? 1u : 0u,
+                gun_ok ? "ok" : (gun.refusal ? gun.refusal : "unavailable")))) {
+            if (change) EmitNative(m, h, m.native_gun_cap, "partner_native_gun", "%s", line);
+            else Emit(h, line);
+        }
+    }
+    // Parity windows (10 s).
+    const std::uint32_t body_speed = m.recon_have_out ? static_cast<std::uint32_t>(m.recon_out.report.v_free_mmps < 0 ? 0 : m.recon_out.report.v_free_mmps) : 0u;
+    const std::uint32_t remote_speed = m.recon_have_out ? static_cast<std::uint32_t>(m.recon_out.report.v_remote_mmps < 0 ? 0 : m.recon_out.report.v_remote_mmps) : 0u;
+    const bool remote_anim_valid = (remote_anim.flags & sync::AnimFlag::Valid) != 0;
+    if (anim_ok && remote_anim_valid) {
+        ++m.match_ticks;
+        if (anim.stance[1] == remote_anim.stance) ++m.stance_hits;
+        if ((body_speed > 500) == (remote_speed > 500)) ++m.move_hits;
+    }
+    if (!m.match_window_ms) m.match_window_ms = now ? now : 1;
+    if (now - m.match_window_ms >= kNativeMatchWindowMs) {
+        m.stance_pct = m.match_ticks ? m.stance_hits * 100u / m.match_ticks : 0u;
+        m.move_pct = m.match_ticks ? m.move_hits * 100u / m.match_ticks : 0u;
+        m.match_ticks = m.stance_hits = m.move_hits = 0;
+        m.match_window_ms = now;
+    }
+    // Telemetry (every tick; rates per ~1 s window).
+    pnat::Telemetry& t = m.tele;
+    t.configured = configured;
+    t.mode = out.mode;
+    CopyText(t.reason, sizeof(t.reason), out.reason);
+    CopyText(t.left_reason, sizeof(t.left_reason), m.native.left_reason);
+    t.since_ms = m.native.since_ms;
+    t.fallbacks = m.native.fallbacks;
+    t.latched = out.mode == pnat::Mode::latched;
+    // Phase-1 detour and the last windowed drain (the rates below).
+    t.p1_installed = ni.p1;
+    t.p1_live = ni.live_p1;
+    t.drain_held = is.native.drain_held;
+    t.drain_mag = is.native.drain_mag;
+    t.drain_view = is.native.drain_view;
+    t.drain_local_pre = is.native.drain_local_pre;
+    t.drain_mask28 = is.native.drain_mask28;
+    t.drain_mask2c = is.native.drain_mask2c;
+    t.drain_mask30 = is.native.drain_mask30;
+    t.rec_ok = is.native.rec_ok;
+    t.rec_act = is.native.rec_act;
+    t.rec_next = is.native.rec_next;
+    t.rec_mag = is.native.rec_ok ? is.native.rec_mag : pnat::kNull;
+    t.rec_heading_mrad = is.native.rec_ok ? is.native.rec_heading_mrad : pnat::kNull;
+    t.setting = defer;
+    t.h0 = ni.h0; t.h1 = ni.h1; t.h2 = ni.h2; t.wrap = ni.wrap;
+    t.thread_ok = in.thread_ok;
+    t.armed = m.native_defer_armed;
+    t.batch_thread = ds.batch_thread;
+    t.hook_thread = ds.hook_thread;
+    t.lua_thread = static_cast<std::uint32_t>(GetCurrentThreadId());
+    t.batch_threads_seen = ds.batch_threads_seen;
+    t.id1_pass = ds.id1_pass;
+    t.scope_unbalanced = ds.scope_unbalanced;
+    t.faults = ds.faulted ? 1u : 0u;
+    t.fault_code = ds.fault_code;
+    CopyText(t.fault_phase, sizeof(t.fault_phase), partner_defer::FaultPhaseName(ds.fault_phase));
+    if (ds.spin_max > t.spin_max) t.spin_max = ds.spin_max;
+    t.look_writes = is.native.look_writes;
+    t.look_skipped_rec = is.native.look_skipped_rec;
+    CopyText(t.look_refused, sizeof(t.look_refused),
+             set.naim == PartnerNativeAim::off ? "off" : partner_input_hook::LookRefusalName(is.native.look_last));
+    t.input_live = latest_ok && latest.age_ms <= set.stale_ms;
+    t.input_age_ms = latest_ok ? latest.age_ms : 0xFFFFFFFFu;
+    t.input_version = latest_ok ? latest.packet.version : 0u;
+    t.held = is.window.last_held;
+    t.mask = EffectiveSettings(set, true).input_mask;
+    t.latch27c = is.native.latch_last;
+    t.lx = is.window.last_lx;
+    t.ly = is.window.last_ly;
+    t.cam_cdeg_remote = latest_ok ? latest.packet.cam_cdeg : pnat::kNull;
+    t.cam_cdeg_host = tick.cam_cdeg;
+    t.heading_err_mrad = pnat::kNull;
+    if (latest_ok && (latest.packet.xflags & pin::XFlag::Heading) && is.window.last_dir != INT32_MIN) {
+        const double composed = pin::Heading(static_cast<double>(tick.cam_cdeg) * 3.14159265358979323846 / 18000.0,
+                                             static_cast<float>(is.window.last_lx) / 1000.0f, static_cast<float>(is.window.last_ly) / 1000.0f);
+        const double err = pin::NormalizeRadians(latest.packet.heading_mrad / 1000.0 - composed);
+        t.heading_err_mrad = static_cast<std::int32_t>(std::lround(err * 1000.0));
+    }
+    t.steer_mdeg = m.steer_mdeg;
+    t.mag_scale_pct = static_cast<std::int32_t>(std::lround(m.mag_scale * 100.0));
+    t.body_valid = anim_ok;
+    t.act = anim_ok ? anim.act[1] : 0u;
+    t.stance = anim_ok ? anim.stance[1] : 0u;
+    t.speed = anim_ok ? anim.speed[1] : 0u;
+    t.speed_mmps = body_speed;
+    t.remote_act = remote_anim_valid ? remote_anim.act : 0u;
+    t.remote_stance = remote_anim_valid ? remote_anim.stance : 0u;
+    t.remote_speed = remote_anim_valid ? remote_anim.speed : 0u;
+    t.remote_speed_mmps = remote_speed;
+    t.stance_match_pct = m.stance_pct;
+    t.move_match_pct = m.move_pct;
+    CopyText(t.recon_mode, sizeof(t.recon_mode), m.recon_active && m.recon_have_out ? pr::ModeName(m.recon_out.mode) : "off");
+    t.err_mm = m.recon_have_out ? Mm(m.recon_out.report.err_mm) : pnat::kNull;
+    t.along_mm = m.recon_have_out ? Mm(m.recon_out.report.along_mm) : pnat::kNull;
+    t.cross_mm = m.recon_have_out ? Mm(m.recon_out.report.cross_mm) : pnat::kNull;
+    t.dy_mm = m.recon_have_out ? Mm(m.recon_out.report.dy_mm) : pnat::kNull;
+    t.nudges = m.recon_have_out ? m.recon_out.report.nudges : 0u;
+    t.snaps = m.recon_snaps_total;
+    t.places = m.recon_have_out ? m.recon_out.report.places : 0u;
+    t.runaway = m.runaway_since_ms != 0;
+    t.gun_enabled = set.ngun;
+    t.gun_read_ok = gun_ok;
+    t.node_active = gun_ok && gun.node_active;
+    t.gun3c0 = gun.gun3c0;
+    t.mode2c1 = gun.mode;
+    t.remote_flags = remote_flags;
+    t.remote_equip = remote_equip;
+    t.body_equip = pnat::kNull;
+    t.aim_match = m.aim_match;
+    t.aim_err_mdeg = pnat::kNull;
+    t.manifest_rev = m.equip.have ? m.equip.manifest.revision : 0u;
+    t.ammo_experiment = h.ammo_experiment;
+    if (!m.rate_ok) {
+        m.rate_ok = true;
+        m.rate_ms_native = now;
+        m.rate_defer = ds;
+        m.rate_wrap = is.wrap;
+        m.rate_hook = is.native;
+    } else if (now - m.rate_ms_native >= kNativeLineMs) {
+        const std::uint64_t dt = now - m.rate_ms_native;
+        const partner_defer::Stats& r = m.rate_defer;
+        t.per_s_valid = true;
+        t.batches = Rate(ds.batches, r.batches, dt);
+        t.w50_b0_s0 = Rate(ds.w50_b0_s0, r.w50_b0_s0, dt);
+        t.w50_b1_s0 = Rate(ds.w50_b1_s0, r.w50_b1_s0, dt);
+        t.w50_subs = Rate(ds.w50_subs, r.w50_subs, dt);
+        t.w50_inline = Rate(ds.w50_inline, r.w50_inline, dt);
+        t.ret_other = Rate(ds.ret_other, r.ret_other, dt);
+        t.deferred = Rate(ds.deferred, r.deferred, dt);
+        t.drains0 = Rate(ds.drains[0], r.drains[0], dt);
+        t.drains1 = Rate(ds.drains[1], r.drains[1], dt);
+        t.windowed = Rate(ds.windowed, r.windowed, dt);
+        t.unwindowed = Rate(ds.unwindowed, r.unwindowed, dt);
+        t.lost = Rate(ds.lost, r.lost, dt);
+        t.gate_closed = Rate(ds.gate_closed, r.gate_closed, dt);
+        t.torn = Rate(ds.torn, r.torn, dt);
+        t.entry_changed = Rate(ds.entry_changed, r.entry_changed, dt);
+        t.dup = Rate(ds.dup, r.dup, dt);
+        t.stale_frame = Rate(is.native.views[2], m.rate_hook.views[2], dt);
+        t.wrap_in_batch = Rate(is.wrap.wrap_in_batch, m.rate_wrap.wrap_in_batch, dt);
+        t.svc28_b1 = Rate(is.wrap.calls1[0], m.rate_wrap.calls1[0], dt);
+        t.svc28_b1_same = Rate(is.wrap.same_thread[0], m.rate_wrap.same_thread[0], dt);
+        t.svc28_b1_nested = Rate(is.wrap.nested[0], m.rate_wrap.nested[0], dt);
+        t.walk7_b1 = Rate(is.wrap.calls1[3], m.rate_wrap.calls1[3], dt);
+        t.nested = Rate(ds.nested_batches, r.nested_batches, dt);
+        t.foreign = Rate(ds.foreign_batches, r.foreign_batches, dt);
+        t.unwound = Rate(ds.unwound, r.unwound, dt);
+        t.drain_block = Rate(is.native.drain_block_refused, m.rate_hook.drain_block_refused, dt);
+        t.drain_in_batch = Rate(is.native.drain_in_batch, m.rate_hook.drain_in_batch, dt);
+        t.p1_forced = Rate(is.native.p1_forced, m.rate_hook.p1_forced, dt);
+        t.p1_refused = Rate(is.native.p1_refused, m.rate_hook.p1_refused, dt);
+        t.p1_windows = Rate(is.native.p1_windows, m.rate_hook.p1_windows, dt);
+        t.drain_us_max = m.native_drain_us_acc;
+        // The 1 Hz partner_defer line (installed deferral only) and partner_native line.
+        if (ni.h2 && m.defer_lines < kNativeLineCap) {
+            ++m.defer_lines;
+            // Longer than EmitFormat's 512 bytes at worst: its own buffer.
+            char line[1024]{};
+            if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
+                "partner_defer; batches=%u; threads=%u; w50_b0=%u; w50_b1=%u; subs=%u; ret_other=%u; inline=%u; deferred=%u; drains=%u,%u; "
+                "windowed=%u; unwindowed=%u; lost=%u; gate_closed=%u; torn=%u; entry_changed=%u; dup=%u; stale_frame=%u; wrap_in_batch=%u; "
+                "nested=%u; foreign=%u; unwound=%u; drain_block=%u; drain_in_batch=%u; "
+                "id1_pass=%u; us_max=%u; spin_max=%u; batch_thread=%u; hook_thread=%u; lua_thread=%u; faults=%u\r\n",
+                ds.batches - r.batches, ds.batch_threads_seen, ds.w50_b0_s0 - r.w50_b0_s0, ds.w50_b1_s0 - r.w50_b1_s0,
+                ds.w50_subs - r.w50_subs, ds.ret_other - r.ret_other, ds.w50_inline - r.w50_inline, ds.deferred - r.deferred,
+                ds.drains[0] - r.drains[0], ds.drains[1] - r.drains[1], ds.windowed - r.windowed, ds.unwindowed - r.unwindowed,
+                ds.lost - r.lost, ds.gate_closed - r.gate_closed, ds.torn - r.torn, ds.entry_changed - r.entry_changed, ds.dup - r.dup,
+                is.native.views[2] - m.rate_hook.views[2], is.wrap.wrap_in_batch - m.rate_wrap.wrap_in_batch,
+                ds.nested_batches - r.nested_batches, ds.foreign_batches - r.foreign_batches, ds.unwound - r.unwound,
+                is.native.drain_block_refused - m.rate_hook.drain_block_refused, is.native.drain_in_batch - m.rate_hook.drain_in_batch,
+                ds.id1_pass, m.native_drain_us_acc, t.spin_max, ds.batch_thread, ds.hook_thread, t.lua_thread, ds.faulted ? 1u : 0u)))
+                Emit(h, line);
+        } else if (ni.h2 && !m.defer_lines_capped) {
+            m.defer_lines_capped = true;
+            Emit(h, "partner_defer=capped; limit=3600\r\n");
+        }
+        if (m.native_lines < kNativeLineCap) {
+            ++m.native_lines;
+            char e1[16]{}, e2[16]{}, e3[16]{}, e4[16]{};
+            const auto num = [](char (&out)[16], std::int32_t v) noexcept {
+                if (v == pnat::kNull) StringCchCopyA(out, sizeof(out), "na");
+                else StringCchPrintfA(out, sizeof(out), "%d", v);
+            };
+            num(e1, t.err_mm); num(e2, t.along_mm); num(e3, t.cross_mm); num(e4, t.heading_err_mrad);
+            EmitFormat(h, "partner_native; mode=%s; err_mm=%s; along=%s; cross=%s; steer_mdeg=%d; mag_pct=%d; stance=%u,%u; speed_mmps=%u,%u; "
+                          "heading_err_mrad=%s; match=%u,%u; latch=%u; look_writes=%u; left=%s\r\n",
+                       pnat::ModeName(out.mode), e1, e2, e3, t.steer_mdeg, t.mag_scale_pct, t.stance, t.remote_stance, t.speed_mmps,
+                       t.remote_speed_mmps, e4, t.stance_match_pct, t.move_match_pct, t.latch27c, t.look_writes,
+                       t.left_reason[0] ? t.left_reason : "none");
+        } else if (!m.native_lines_capped) {
+            m.native_lines_capped = true;
+            Emit(h, "partner_native=capped; limit=3600\r\n");
+        }
+        // What block 1's update did with the pad in the last windowed drain:
+        // phase-1 detour calls forced/refused and drain windows (per second),
+        // the injection the drain got, isLocal before the window, instance 1's
+        // private PP masks, its base action record (act, next act, sampled
+        // move magnitude/heading) and the body's act.
+        if (m.native_drain_lines < kNativeLineCap) {
+            ++m.native_drain_lines;
+            char r1[16]{}, r2[16]{};
+            const auto num = [](char (&o)[16], std::int32_t v) noexcept {
+                if (v == pnat::kNull) StringCchCopyA(o, sizeof(o), "na");
+                else StringCchPrintfA(o, sizeof(o), "%d", v);
+            };
+            num(r1, t.rec_mag); num(r2, t.rec_heading_mrad);
+            EmitFormat(h, "partner_native_drain; p1=%u,%u,%u; p1_installed=%u; p1_live=%u; held=0x%x; mag=%d; view=%u; local_pre=0x%x; "
+                          "masks=0x%x,0x%x,0x%x; rec_act=%u; rec_next=%u; rec_mag=%s; rec_heading_mrad=%s; body_act=%u\r\n",
+                       t.p1_forced, t.p1_refused, t.p1_windows, t.p1_installed ? 1u : 0u, t.p1_live ? 1u : 0u, t.drain_held, t.drain_mag,
+                       t.drain_view, t.drain_local_pre, t.drain_mask28, t.drain_mask2c, t.drain_mask30, t.rec_act, t.rec_next, r1, r2, t.act);
+        } else if (!m.native_drain_lines_capped) {
+            m.native_drain_lines_capped = true;
+            Emit(h, "partner_native_drain=capped; limit=3600\r\n");
+        }
+        m.native_drain_us_acc = 0;
+        t.spin_max = 0;
+        m.rate_ms_native = now;
+        m.rate_defer = ds;
+        m.rate_wrap = is.wrap;
+        m.rate_hook = is.native;
+    }
+    pnat::RingEntry e{};
+    e.ms = static_cast<std::uint32_t>(clock.tick_ms);
+    e.mode = static_cast<std::uint8_t>(out.mode);
+    e.remote_stance = static_cast<std::uint8_t>(t.remote_stance);
+    e.body_stance = static_cast<std::uint8_t>(t.stance);
+    e.remote_mmps = static_cast<std::int32_t>(remote_speed);
+    e.body_mmps = static_cast<std::int32_t>(body_speed);
+    e.err_mm = t.err_mm;
+    e.steer_mdeg = t.steer_mdeg;
+    e.held = t.held;
+    e.gun3c0 = gun.gun3c0;
+    e.act = static_cast<std::uint16_t>(t.act);
+    e.rec_act = static_cast<std::uint8_t>(t.rec_act);
+    e.rec_next = static_cast<std::uint8_t>(t.rec_next);
+    e.rec_mag = t.rec_mag;
+    const std::uint32_t p1_delta = t.ring.count ? is.native.p1_forced - m.ring_p1_last : 0u;  // totals are process-wide
+    m.ring_p1_last = is.native.p1_forced;
+    e.p1_forced = static_cast<std::uint16_t>(p1_delta > 0xFFFFu ? 0xFFFFu : p1_delta);
+    // The reconciliation's step of the previous tick (TickInput runs after this).
+    const bool recon_on = m.recon_active && m.recon_have_out;
+    e.recon_mode = recon_on ? static_cast<std::uint8_t>(m.recon_out.mode) : pnat::kReconOff;
+    e.recon_action = recon_on ? static_cast<std::uint8_t>(m.recon_out.action) : pnat::kReconOff;
+    e.warp = m.dmmap_prev_warp;
+    pnat::Push(t.ring, e);
+}
 } // namespace
 
 void Configure(Driver& d, const LabConfig& lab) noexcept {
@@ -1520,9 +2113,20 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.slot = lab.partner_input_slot;
     d.settings.runaway = lab.partner_recon_runaway;
     d.settings.wrap = lab.partner_input_wrap;
+    d.settings.drive = lab.partner_drive;
+    d.settings.defer = lab.partner_input_defer;
+    d.settings.local = lab.partner_input_local;
+    d.settings.naim = lab.partner_native_aim;
+    d.settings.ngun = lab.partner_native_gun;
+    d.settings.nfire = lab.partner_native_fire;
+    d.settings.steer_deg = lab.partner_native_steer_deg;
+    d.settings.trim_pct = lab.partner_native_trim_pct;
+    d.settings.play_mode = lab.mode == LabMode::play;
     d.look_forced_rev = 1;
     partner_recon::Reset(d.mission.recon);
     partner_dmmap::Reset(d.mission.dmmap);
+    partner_native::Reset(d.mission.native, d.settings.drive == PartnerDrive::native);
+    d.mission.mag_scale = 1.0;
 }
 
 void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcept {
@@ -1531,11 +2135,18 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
     // patch applied into the next mission: tear down before the reset, and
     // always publish a disarmed Arm. The hook's recorded fault is cleared
     // (input_faulted is per mission).
+    // Native puppet: the deferral is disarmed before the window (publication
+    // order); the pending records and batch flags are never touched here.
+    if (h.set_defer && d.settings.drive == PartnerDrive::native)
+        h.set_defer(h.context, false, EffectivePartnerDefer(d.settings.drive, d.settings.defer));
+    WithdrawNativeTargets(d.mission, h);
     DisarmInput(d, h, "mission_start");
     if (d.mission.dm_patched) RevertDm(d, h, "mission_start");
     PublishDisarmed(d, h);
     if (h.reset_input_fault) h.reset_input_fault(h.context);
     d.mission = Mission{};
+    partner_native::Reset(d.mission.native, d.settings.drive == PartnerDrive::native);
+    d.mission.mag_scale = 1.0;
     d.mission.mission_code = mission_code;
     d.mission.range_hidden = mission_code == 30010 || mission_code == 30020;
     d.mission.range_needs_place = d.mission.range_hidden;
@@ -1559,6 +2170,10 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
 
 void MissionEnd(Driver& d, const Hooks& h) noexcept {
     partner_upper_probe::Clear("mission_end");
+    if (h.set_defer && d.mission.native_defer_armed)
+        h.set_defer(h.context, false, EffectivePartnerDefer(d.settings.drive, d.settings.defer));
+    d.mission.native_defer_armed = false;
+    WithdrawNativeTargets(d.mission, h);
     DisarmInput(d, h, "mission_end");
     if (d.mission.dm_patched) RevertDm(d, h, "mission_end");
     d.mission.cfg_ready = false;
@@ -1696,6 +2311,32 @@ void ApplyTrigger(Driver& d, const Hooks& h, const partner::Trigger& trigger, bo
     if (trigger.has_lookgate) d.settings.look_gate = trigger.lookgate;
     if (trigger.has_lookrecover) d.settings.look_recover = trigger.lookrecover;
     if (trigger.has_holdlog) { d.settings.holdlog = trigger.holdlog; d.holdlog_changed = true; }
+    // Native puppet keys. defer=on never installs by itself (the tick decides);
+    // drive=native after a mission latch clears the latch.
+    const bool native_keys = trigger.has_drive || trigger.has_defer || trigger.has_local || trigger.has_naim || trigger.has_ngun ||
+                             trigger.has_nfire || trigger.has_steer;
+    // Play mode refuses the native drive in lab.ini (kPlayRefusedNativeDrive);
+    // the trigger file can never turn it on either.
+    const bool native_refused = d.settings.play_mode &&
+                                ((trigger.has_drive && trigger.drive != PartnerDrive::legacy) ||
+                                 (trigger.has_defer && trigger.defer != PartnerDefer::off));
+    if (native_refused) Emit(h, "partner_native=trigger_refused; reason=play; drive=legacy; defer=off\r\n");
+    if (trigger.has_drive && !native_refused) {
+        d.settings.drive = trigger.drive;
+        if (trigger.drive == PartnerDrive::native) partner_native::Unlatch(m.native, m.native.since_ms);
+    }
+    if (trigger.has_defer && !native_refused) d.settings.defer = trigger.defer;
+    if (trigger.has_local) d.settings.local = trigger.local;
+    if (trigger.has_naim) d.settings.naim = trigger.naim;
+    if (trigger.has_ngun) d.settings.ngun = trigger.ngun;
+    if (trigger.has_nfire) d.settings.nfire = trigger.nfire;
+    if (trigger.has_steer) d.settings.steer_deg = trigger.steer_deg;
+    if (native_keys)
+        EmitFormat(h, "partner_native=trigger; drive=%s; defer=%s; local=%s; naim=%s; ngun=%u; nfire=%u; steer=%u; mask=0x%x\r\n",
+                   PartnerDriveName(d.settings.drive), PartnerDeferName(EffectivePartnerDefer(d.settings.drive, d.settings.defer)),
+                   PartnerLocalName(d.settings.local), PartnerNativeAimName(d.settings.naim), d.settings.ngun ? 1u : 0u,
+                   d.settings.nfire ? 1u : 0u, d.settings.steer_deg,
+                   partner_native::NativeMask(d.settings.input_mask, d.settings.ngun, d.settings.nfire));
     // correct=0 keeps the round 3 meaning (no corrections) and overrides
     // recon=track|pin: say so, so a later recon= is never silently ignored.
     if ((trigger.has_recon || trigger.has_correct) && d.settings.correct_mm == 0 && d.settings.recon != PartnerRecon::off)
@@ -1769,6 +2410,7 @@ void PollTrigger(Driver& d, const Hooks& h, bool terminating) noexcept {
 bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, std::size_t size, const Clock& clock,
           bool terminating, partner::Reply& reply) noexcept {
     Mission& m = d.mission;
+    DrainEquip(d, h);  // reliable channel 2, every tick in every drive mode
     if (!m.cfg_ready || m.stopped || terminating) { partner_upper_probe::Clear("tick_inactive"); return false; }
     partner::Tick tick{};
     if (!partner::ParseTick(source, size, tick)) {
@@ -1836,7 +2478,10 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                    st.vars_ok ? pp::ToMm(st.vars_pos[1]) : INT32_MIN, st.vars_ok ? pp::ToMm(st.vars_pos[2]) : INT32_MIN,
                    tick.yaw_cdeg, m.yaw_abs_max, tick.cam_cdeg);
     }
-    const Settings& set = d.settings;
+    // Native puppet: the effective settings of the arbiter's last step (the
+    // configured ones unless it is entering or active).
+    const Settings set_effective = EffectiveSettings(d.settings, m.native_out.active);
+    const Settings& set = set_effective;
     // Local animation fields and looks (sender side; anim=mirror source).
     pp::Anim anim{};
     const bool anim_ok = h.read_anim && h.read_anim(h.context, st, anim);
@@ -1851,6 +2496,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     sync::AnimState remote_anim{};
     pose::Status sample_status = pose::Status::none;
     bool sample_snapped = false;  // a snap-sized remote jump held, never lerped
+    std::uint32_t remote_flags = 0, remote_equip = 0;  // native gun telemetry
     // dm=map: the remote (net) or the local player (orbit/fixed) as observed.
     partner_dmmap::Observation dmobs{};
     dmobs.flag_move = partner_dmmap::kMoveUnknown;
@@ -1871,6 +2517,8 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             age_ms = sample.age_ms;
             if (sample.anim_valid) remote_anim = sync::AnimState{sample.act, sample.anim_stance, sample.anim_speed, sync::AnimFlag::Valid};
             dmobs.stance = sample.stance;
+            remote_flags = sample.flags;
+            remote_equip = sample.equip_id;
             dmobs.sprint = (sample.flags & sync::ActionFlag::Sprinting) != 0;
             dmobs.gun_actions = sample.equip_id ? sample.flags & (sync::ActionFlag::Aiming | sync::ActionFlag::Firing | sync::ActionFlag::Reloading) : 0;
             // Authoritative movement flags avoid waiting for a 150 ms speed
@@ -2541,14 +3189,18 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     std::uint32_t extra_ops = 0;
     std::uint8_t gani = 0;
     InputTick itick{};
-    TickInput(d, h, lab, st, set, tick, clock, terminating, parts_loaded, pose_valid, pose, relink, anim_ok, anim, remote_anim,
+    // Native puppet: the arbiter steps first; its requests (disarm on leaving,
+    // dm=map rearm) and settings take effect for the input and DM levers now.
+    TickNative(d, h, lab, st, tick, clock, terminating, realized, parts_loaded, anim_ok, anim, remote_anim, remote_flags, remote_equip);
+    const Settings set_levers = EffectiveSettings(d.settings, m.native_out.active);
+    TickInput(d, h, lab, st, set_levers, tick, clock, terminating, parts_loaded, pose_valid, pose, relink, anim_ok, anim, remote_anim,
               extra_ops, itick);
-    TickDm(d, h, st, set, clock, terminating, tick, dmobs, ops | extra_ops, extra_ops, gani);
+    TickDm(d, h, st, set_levers, clock, terminating, tick, dmobs, ops | extra_ops, extra_ops, gani);
     // apply=input without an armed window falls back to the proven Lua Warp
     // every tick (refused, faulted, install refused, input=off, stage < 3),
     // except while the reconciliation places/verifies the body itself.
     const partner::Pose reply_pose = itick.pose_override ? itick.pose : pose;
-    if (set.apply == PartnerApply::input && !m.input_armed && pose_valid && set.stage >= 1 && !itick.suppress_fallback &&
+    if (set_levers.apply == PartnerApply::input && !m.input_armed && pose_valid && set.stage >= 1 && !itick.suppress_fallback &&
         (!free_roam_net || parts_loaded)) {
         if (!(extra_ops & partner::op::warp)) {
             extra_ops |= partner::op::warp;
@@ -2561,7 +3213,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     } else if (m.input_armed) {
         m.input_fallback = false;
     }
-    BodyLine(d, h, st, set, tick, clock, parts_loaded);
+    BodyLine(d, h, st, set_levers, tick, clock, parts_loaded);
     // dm=map loss attribution: this reply's look ops and Warp, seen next tick.
     const std::uint32_t final_ops = ops | extra_ops;
     m.dmmap_prev_warp = (final_ops & partner::op::warp) != 0;

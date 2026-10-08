@@ -285,23 +285,71 @@ std::size_t encode_input_frame(std::uint64_t session, std::uint32_t epoch, std::
     return input_frame_size;
 }
 
+std::size_t encode_input_frame_any(std::uint64_t session, std::uint32_t epoch, std::uint32_t sequence,
+                                   const partner_input::InputPacket& packet, std::uint8_t (&out)[input_frame_size_v3]) noexcept {
+    std::memset(out, 0, sizeof(out));
+    if (packet.version == input_version) {
+        std::uint8_t v2[input_frame_size]{};
+        const std::size_t n = encode_input_frame(session, epoch, sequence, packet, v2);
+        std::memcpy(out, v2, n);
+        return n;
+    }
+    if (packet.version != input_version_v3 || session == 0 || epoch == 0 || sequence == 0 || !partner_input::ValidPacket(packet))
+        return 0;
+    partner_input::InputPacket as2 = packet;
+    as2.version = input_version;
+    as2.look_pitch = as2.look_yaw = as2.cam270 = as2.cam274 = 0.0f;
+    as2.heading_mrad = 0;
+    as2.xflags = as2.inv_slot = 0;
+    as2.equip_rev = 0;
+    std::uint8_t v2[input_frame_size]{};
+    if (!encode_input_frame(session, epoch, sequence, as2, v2)) return 0;
+    std::memcpy(out, v2, sizeof(v2));
+    put_header(out, wire::Kind::event, session, epoch, sequence, static_cast<std::uint32_t>(input_packet_size_v3));
+    auto* b = out + wire::header_size;
+    b[1] = input_version_v3;
+    std::uint32_t f = 0;
+    std::memcpy(&f, &packet.look_pitch, 4); put(b + 48, f);
+    std::memcpy(&f, &packet.look_yaw, 4); put(b + 52, f);
+    std::memcpy(&f, &packet.cam270, 4); put(b + 56, f);
+    std::memcpy(&f, &packet.cam274, 4); put(b + 60, f);
+    put(b + 64, static_cast<std::uint16_t>(packet.heading_mrad), 2);
+    b[66] = packet.xflags;
+    b[67] = packet.inv_slot;
+    put(b + 68, packet.equip_rev, 2);
+    b[70] = b[71] = 0;
+    return input_frame_size_v3;
+}
+
 bool decode_input_frame(const std::uint8_t* data, std::size_t size, std::uint64_t& session, std::uint32_t& epoch,
                         std::uint32_t& sequence, partner_input::InputPacket& out) noexcept {
     if (!data) return false;
-    const bool v2 = size == input_frame_size;
+    const bool v3 = size == input_frame_size_v3;
+    const bool v2 = size == input_frame_size || v3;
     if (!v2 && size != input_frame_size_v1) return false;
-    if (!header_matches(data, wire::Kind::event, static_cast<std::uint32_t>(v2 ? input_packet_size : input_packet_size_v1)))
-        return false;
+    const std::size_t payload = v3 ? input_packet_size_v3 : v2 ? input_packet_size : input_packet_size_v1;
+    if (!header_matches(data, wire::Kind::event, static_cast<std::uint32_t>(payload))) return false;
     const std::uint64_t frame_session = get64(data + 8);
     const std::uint32_t frame_epoch = get(data + 16);
     const std::uint32_t frame_sequence = get(data + 20);
     if (frame_session == 0 || frame_epoch == 0 || frame_sequence == 0) return false;
     const auto* b = data + wire::header_size;
-    if (b[0] != input_magic || b[1] != (v2 ? input_version : 1) || b[39] != 0) return false;
+    if (b[0] != input_magic || b[1] != (v3 ? input_version_v3 : v2 ? input_version : 1) || b[39] != 0) return false;
     if (!v2 && (b[3] != 0 || b[38] != 0)) return false;
     partner_input::InputPacket p{};
-    p.version = v2 ? 2 : 1;
+    p.version = v3 ? 3 : v2 ? 2 : 1;
     p.flags = b[2];
+    if (v3) {
+        if (b[70] != 0 || b[71] != 0) return false;
+        std::uint32_t f = get(b + 48); std::memcpy(&p.look_pitch, &f, 4);
+        f = get(b + 52); std::memcpy(&p.look_yaw, &f, 4);
+        f = get(b + 56); std::memcpy(&p.cam270, &f, 4);
+        f = get(b + 60); std::memcpy(&p.cam274, &f, 4);
+        p.heading_mrad = static_cast<std::int16_t>(get(b + 64, 2));
+        p.xflags = b[66];
+        p.inv_slot = b[67];
+        p.equip_rev = static_cast<std::uint16_t>(get(b + 68, 2));
+    }
     if (v2) {
         p.edge_seq = b[3];
         p.edge_rep = b[38];

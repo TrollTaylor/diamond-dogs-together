@@ -149,6 +149,27 @@ void Reset(State& st) noexcept {
     st.stop_ok = -1;
 }
 
+Params NativeParams(const Params& base) noexcept {
+    Params p = base;
+    p.cap_moving_mmps = 300;
+    p.cap_idle_mmps = 300;
+    p.cap_prone_mmps = 150;
+    p.dead_moving_mm = 300;
+    p.dead_idle_mm = 200;
+    p.dead_prone_mm = 400;
+    p.snap_moving_mm = 3000;
+    p.snap_moving_hold_ms = 300;
+    p.snap_idle_mm = 2000;
+    p.snap_idle_hold_ms = 1000;
+    p.warp_mm = 10000;
+    p.runaway_mmps = 1500;
+    p.runaway_moving_mm = 2000;
+    p.input_pin_ms = 60000;
+    p.diverge_snaps = 3;
+    p.diverge_window_ms = 10000;
+    return p;
+}
+
 Out Step(State& st, const In& in, const Params& P) noexcept {
     Out o{};
     const std::uint64_t now = in.now_ms;

@@ -90,6 +90,10 @@ param(
     # dm=map: xform movement + direct-motion clips following the other player.
     # The default since the 2026-10-05 live pass; kept for compatibility.
     [switch]$Animated,
+    # Native puppet (lab only, opt-in; docs/native-puppet.md): the animated
+    # partner as the fallback plus partner_drive=native with the job deferral
+    # (loco stage). Unqualified until the coordinator's hidden runs pass.
+    [switch]$Native,
     # One-PC LAN rehearsal of the two-PC play mode (net_bind=any, LAN address, link secret).
     [switch]$Lan,
     # -Lan: this PC's LAN IPv4 (default: the first IPv4 of an Up adapter with a gateway).
@@ -208,6 +212,13 @@ try {
         # and lab.json "partner", as before. With the shipped lab.json this equals the
         # two-PC play keys (tools/CoopPlay.psm1 Get-PlayPartnerDefaults; lab_scripts_tests).
         $partnerSettings = @('partner_stage=3', 'partner_source=net', 'partner_look=net', 'partner_apply=xform', 'partner_anim=off', 'partner_reset=n', 'partner_dm=map')
+    }
+    if ($Native) {
+        if ($experiment.Move -ne 'map') { throw '-Native runs on the animated partner (dm=map); drop -InputDrive/-ProvenWarp/-Experimental.' }
+        $partnerSettings += @('partner_drive=native', 'partner_input_send=1', 'partner_input_hook=1', 'partner_input_hold=own',
+            'partner_input_words=hpr', 'partner_input_wrap=window', 'partner_input_cam=sandbox', 'partner_input_local=main',
+            'partner_recon=track', 'partner_input_slot=body', 'partner_input_defer=on', 'partner_input_mask=0x2200006', 'partner_native_aim=off')
+        Write-Note 'NATIVE PUPPET (lab, unqualified): partner_drive=native with the job deferral; dm=map stays the automatic fallback.'
     }
     if ($experiment.Move -eq 'input') {
         $partnerSettings += @('partner_input=net', 'partner_input_send=1', 'partner_input_cam=sandbox', 'partner_input_hold=own',

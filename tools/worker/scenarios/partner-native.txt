@@ -1,0 +1,130 @@
+# Native puppet evaluation (docs/native-puppet.md 13.3). Run with -PartnerProfile native -NativeStage census|loco
+# (normal worker build), or -NativeStage gun -BuildProfile research (stock46 weapon on body 1); lab saves, noon.
+# "Partner of role R" = body 1 on R's machine = the puppet of the other role; captures record only the
+# capturing role's state.json (including "native") in captures.jsonl.
+# Evidence per stage ("native" in captures.jsonl, per capturing role):
+#  census: native.mode "fallback"; defer.h1/h2/wrap true; per_s w50_b1_s0 ~2/frame, ret_other 0, deferred 0;
+#          batch_threads_seen 1; thread_ok; faults 0; wrap.svc28_b1 ~7/frame; the partner still animates via dm=map.
+#  loco:   native.mode "active" before the first motion capture; deferred == w50_b1_s0; windowed/drains >= 0.99;
+#          lost/torn/unwound/scope_unbalanced/wrap_in_batch/drain_block/drain_in_batch/nested/foreign 0;
+#          body.stance follows remote_stance; body.speed_mmps within 20%
+#          of remote while moving; recon.snaps 0; err_mm p95 < 500 moving, < 200 idle; fallbacks 0;
+#          leak-* captures: the capturing role's partner speed_mmps < 100 and stance unchanged while the other role idles.
+#          Gun section: negative control only if body 1 carries a weapon (normal build: vacuous, record only).
+#  gun:    as loco, plus during "aim": gun.bit18 1 and node_active true within 300 ms, aim_match true (aim_err_mdeg
+#          stays null until its reader is qualified); leak-aim: the capturing role's partner bit18 0 while only the local player aims;
+#          "reload": only with the ammo experiment in the receipt (otherwise: no fallback, no fault).
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+stance host stand
+stance guest stand
+host debug time 43200
+host debug weather sunny
+wait 3000
+resetpose host
+stance host stand
+placebehind guest host 5 4
+both capture start
+# Arbiter entry: placement + arming happen while idle.
+wait 4000
+both capture native-idle
+# --- Host drives, guest films its partner ---------------------------------
+heldcapture host guest w run 5
+wait 900
+guest burst run-stop 3 300
+# Leak check on the host machine: host input must not move the host's partner (guest idle).
+heldcapture host host w leak-host-run 2
+wait 900
+resetpose host
+stance host stand
+placebehind guest host 5 4
+heldcapture host guest shift+w sprint 5
+wait 900
+guest burst sprint-stop 3 300
+resetpose host
+stance host stand
+placebehind guest host 5 4
+heldcapture host guest ctrl+w walk 5
+wait 900
+resetpose host
+stance host stand
+placebehind guest host 6 4
+host hold w 1500 nowait
+wait 800
+host hold w+a 1500 nowait
+guest burst run-left 4 200
+host hold w+d 1500 nowait
+guest burst run-right 4 200
+host release
+wait 900
+guest burst turns-stop 2 300
+resetpose host
+stance host stand
+placebehind guest host 5 4
+host press c
+wait 700
+guest burst crouch-tap 3 200
+heldcapture host guest w crouch-move 5
+wait 900
+host press c
+wait 700
+guest burst stand-tap 2 200
+resetpose host
+stance host prone
+placebehind guest host 5 4
+guest burst prone 3 200
+heldcapture host guest w crawl 5
+wait 900
+stance host stand
+wait 900
+guest capture prone-exit
+resetpose host
+stance host stand
+placebehind guest host 6 4
+host hold w 1500 nowait
+wait 1400
+host hold w 1500 nowait
+wait 1400
+host hold w+a 1500 nowait
+wait 1400
+host hold w 1500 nowait
+guest burst drift 4 350
+host release
+wait 1200
+both capture drift-settled
+# --- Guest drives, host films (the other direction) ------------------------
+resetpose guest
+stance guest stand
+placebehind host guest 5 4
+heldcapture guest host w g-run 5
+wait 900
+host burst g-run-stop 3 300
+heldcapture guest guest w leak-guest-run 2
+wait 900
+host capture g-pre-crouch
+guest press c
+wait 700
+host burst g-crouch 3 200
+heldcapture guest host w g-crouch-move 5
+wait 900
+stance guest stand
+wait 900
+# --- Gun section (gun stage: positive; loco stage: record only) -------------
+resetpose host
+stance host stand
+placebehind guest host 4 3
+heldcapture host guest rmb aim 3
+heldcapture host host rmb leak-aim-host 1
+wait 600
+heldcapture guest guest rmb leak-aim-guest 1
+wait 600
+host press r
+guest burst reload 6 200
+wait 1800
+heldcapture host guest rmb+w aim-walk 5
+wait 900
+guest burst aim-walk-stop 3 300
+both capture end
+state

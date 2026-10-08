@@ -104,6 +104,31 @@ enum class PartnerRunaway : std::uint8_t { pin, disarm, off };
 // and window nesting) or window (the same instance-1 pad window around block
 // 1's calls on the hook thread; needs the census first).
 enum class PartnerWrap : std::uint8_t { off, census, window };
+// Native puppet (docs/native-puppet.md). partner_drive=native enables the
+// arbiter that switches between the game's own locomotion/action/gun systems
+// driven by the remote pad (block 1's per-block job deferred onto the main
+// thread inside the input window) and the proven dm=map + xform fallback.
+// legacy (default, with partner_input_defer=off) installs nothing new.
+enum class PartnerDrive : std::uint8_t { legacy, native };
+// The job deferral hooks H1/H2: off (not installed), census (installed as
+// pass-through counters; the arbiter cannot activate) or on (deferral allowed;
+// the arbiter still decides). Ignored unless partner_drive=native.
+enum class PartnerDefer : std::uint8_t { off, census, on };
+// isLocal (base plugin rec+0x2AC bit 0) in native windows: the main window
+// only (round-3 behaviour) or also the drains and walk windows.
+enum class PartnerLocal : std::uint8_t { main, all };
+// Native aim: off; look (the remote look angles written into instance 1's PS
+// slot after phase 0 inside a drain); lookcam (also CAM+0x270/+0x274 inside
+// block-1 windows, sandboxed).
+enum class PartnerNativeAim : std::uint8_t { off, look, lookcam };
+// Native puppet ranges and the effective-mask base (STANCE 2, DASH 4,
+// keyboard dash bit 21, keyboard walk bit 25); HOLD 0x8 + RELOAD 0x40 with
+// partner_native_gun, FIRE 0x10 with partner_native_gun and _fire.
+inline constexpr std::uint32_t kPartnerNativeSteerMaxDeg = 30;
+inline constexpr std::uint32_t kPartnerNativeTrimMaxPct = 10;
+inline constexpr std::uint32_t kPartnerNativeBaseMask = 0x2200006u;
+inline constexpr std::uint32_t kPartnerNativeGunBits = 0x48u;
+inline constexpr std::uint32_t kPartnerNativeFireBit = 0x10u;
 // Sources of the three pad edge words src+0x4C/+0x50/+0x54 inside the window
 // (partner_input::Word): '0' zero, 'p' press, 'r' release, 'h' held, 'n' the
 // partner's own word (once per received frame).
@@ -144,6 +169,8 @@ inline constexpr std::uint32_t kPlayRefusedGuestNoPeer = 0x2000;
 inline constexpr std::uint32_t kPlayRefusedImpairment = 0x4000;
 inline constexpr std::uint32_t kPlayRefusedWorldProbe = 0x8000;
 inline constexpr std::uint32_t kPlayRefusedDebugSoldierWarp = 0x10000;
+// partner_drive=native / partner_input_defer != off are lab-only until qualified.
+inline constexpr std::uint32_t kPlayRefusedNativeDrive = 0x20000;
 // World sync lab probes (docs/world-sync-protocol.md "Probes"): lab.ini
 // world_probe and the world.trigger key. The ids are the wire probeId of
 // PROBE_SYNC and the Lua probe number, in this order.
@@ -231,6 +258,15 @@ struct LabConfig {
     // Receiver facing rate limit for apply=xform/hybrid on the net source
     // (partner_facing.hpp): degrees per second, 0 = exact remote yaw.
     std::uint32_t partner_facing_dps = 900;         // 0..1440
+    // Native puppet (docs/native-puppet.md); every default keeps today's behaviour.
+    PartnerDrive partner_drive = PartnerDrive::legacy;
+    PartnerDefer partner_input_defer = PartnerDefer::off;
+    PartnerLocal partner_input_local = PartnerLocal::main;
+    PartnerNativeAim partner_native_aim = PartnerNativeAim::off;
+    bool partner_native_gun = false;                // HOLD 0x8 + RELOAD 0x40 allowed through the mask
+    bool partner_native_fire = false;               // FIRE 0x10 (only with partner_native_gun)
+    std::uint32_t partner_native_steer_deg = 15;    // 0..30 (0 disables steering)
+    std::uint32_t partner_native_trim_pct = 0;      // 0..10
     bool crash_probe = true;
     // Two-PC link (docs/link-protocol.md). `mode` is parsed independently of
     // `present`; the play save gate is lab::SavesRedirected() in the observer.
@@ -276,6 +312,10 @@ const char* PartnerReconName(PartnerRecon value) noexcept;
 const char* PartnerSlotName(PartnerSlot value) noexcept;
 const char* PartnerRunawayName(PartnerRunaway value) noexcept;
 const char* PartnerWrapName(PartnerWrap value) noexcept;
+const char* PartnerDriveName(PartnerDrive value) noexcept;
+const char* PartnerDeferName(PartnerDefer value) noexcept;
+const char* PartnerLocalName(PartnerLocal value) noexcept;
+const char* PartnerNativeAimName(PartnerNativeAim value) noexcept;
 const char* LabModeName(LabMode value) noexcept;
 const char* NetLinkName(NetLink value) noexcept;
 const char* PartnerInterpName(PartnerInterp value) noexcept;
@@ -292,6 +332,18 @@ bool ParsePartnerRecon(const char* text, std::size_t size, PartnerRecon& out) no
 bool ParsePartnerSlot(const char* text, std::size_t size, PartnerSlot& out) noexcept;
 bool ParsePartnerRunaway(const char* text, std::size_t size, PartnerRunaway& out) noexcept;
 bool ParsePartnerWrap(const char* text, std::size_t size, PartnerWrap& out) noexcept;
+bool ParsePartnerDrive(const char* text, std::size_t size, PartnerDrive& out) noexcept;
+bool ParsePartnerDefer(const char* text, std::size_t size, PartnerDefer& out) noexcept;
+bool ParsePartnerLocal(const char* text, std::size_t size, PartnerLocal& out) noexcept;
+bool ParsePartnerNativeAim(const char* text, std::size_t size, PartnerNativeAim& out) noexcept;
+// partner_input_defer as it takes effect: off unless partner_drive=native.
+inline PartnerDefer EffectivePartnerDefer(PartnerDrive drive, PartnerDefer defer) noexcept {
+    return drive == PartnerDrive::native ? defer : PartnerDefer::off;
+}
+// The bits the native drive may pass to instance 1 (ANDed with partner_input_mask).
+inline std::uint32_t PartnerNativeAllowed(bool gun, bool fire) noexcept {
+    return kPartnerNativeBaseMask | (gun ? kPartnerNativeGunBits : 0u) | (gun && fire ? kPartnerNativeFireBit : 0u);
+}
 // A signed decimal in [min, max]: optional '-', no '+', no leading zeros, no "-0".
 bool ParsePartnerSigned(const char* text, std::size_t size, std::int32_t min, std::int32_t max, std::int32_t& out) noexcept;
 bool ParsePartnerInput(const char* text, std::size_t size, PartnerInput& out) noexcept;

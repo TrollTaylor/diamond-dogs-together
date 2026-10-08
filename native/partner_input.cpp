@@ -120,11 +120,56 @@ InputPacket Quantize(const PadSnapshot& s, std::int32_t cam_cdeg) noexcept {
     return p;
 }
 
+namespace {
+bool NoV3(const InputPacket& p) noexcept {
+    return p.look_pitch == 0.0f && p.look_yaw == 0.0f && p.cam270 == 0.0f && p.cam274 == 0.0f && p.heading_mrad == 0 &&
+           p.xflags == 0 && p.inv_slot == 0 && p.equip_rev == 0;
+}
+bool In(float v, float limit) noexcept { return std::isfinite(v) && v >= -limit && v <= limit; }
+bool ValidV3(const InputPacket& p) noexcept {
+    if ((p.xflags & ~XFlag::Known) != 0) return false;
+    if (!In(p.look_pitch, kMaxLookPitch) || !In(p.look_yaw, kMaxLookYaw) || !In(p.cam270, kMaxCamField) || !In(p.cam274, kMaxCamField))
+        return false;
+    if (p.heading_mrad < -kMaxHeadingMrad || p.heading_mrad > kMaxHeadingMrad) return false;
+    // Invalid groups are zero.
+    if (!(p.xflags & XFlag::Look) && (p.look_pitch != 0.0f || p.look_yaw != 0.0f)) return false;
+    if (!(p.xflags & XFlag::Cam) && (p.cam270 != 0.0f || p.cam274 != 0.0f)) return false;
+    if (!(p.xflags & XFlag::Heading) && p.heading_mrad != 0) return false;
+    return p.inv_slot <= kInvSlotMax || p.inv_slot == kInvSlotUnknown;
+}
+} // namespace
+
+void Fill3(InputPacket& p, const V3Source& v) noexcept {
+    p.version = 3;
+    p.xflags = 0;
+    p.look_pitch = p.look_yaw = p.cam270 = p.cam274 = 0.0f;
+    p.heading_mrad = 0;
+    if (v.look_valid && In(v.look_pitch, kMaxLookPitch) && In(v.look_yaw, kMaxLookYaw)) {
+        p.xflags |= XFlag::Look;
+        p.look_pitch = v.look_pitch;
+        p.look_yaw = v.look_yaw;
+    }
+    if (v.cam_valid && In(v.cam270, kMaxCamField) && In(v.cam274, kMaxCamField)) {
+        p.xflags |= XFlag::Cam;
+        p.cam270 = v.cam270;
+        p.cam274 = v.cam274;
+    }
+    if (v.heading_valid && std::isfinite(v.heading_rad)) {
+        const long mrad = std::lround(NormalizeRadians(v.heading_rad) * 1000.0);
+        p.xflags |= XFlag::Heading;
+        p.heading_mrad = static_cast<std::int16_t>(mrad > kMaxHeadingMrad ? kMaxHeadingMrad : mrad < -kMaxHeadingMrad ? -kMaxHeadingMrad : mrad);
+    }
+    if (v.aiming) p.xflags |= XFlag::Aiming;
+    p.inv_slot = v.inv_slot <= kInvSlotMax ? v.inv_slot : kInvSlotUnknown;
+    p.equip_rev = v.equip_rev;
+}
+
 bool ValidPacket(const InputPacket& p) noexcept {
     if ((p.flags & ~Flag::Known) != 0 || p.lx == -32768 || p.ly == -32768 || p.rx == -32768 || p.ry == -32768 ||
         p.ldir < -kMaxDir || p.ldir > kMaxDir || p.cam_cdeg < kCamMin || p.cam_cdeg > kCamMax) return false;
-    if (p.version == 1) return p.edge_seq == 0 && p.edge_rep == 0 && p.long12 == 0 && p.tap12 == 0;
-    if (p.version != 2 || p.edge_rep > kEdgeRepeats) return false;
+    if (p.version == 1) return p.edge_seq == 0 && p.edge_rep == 0 && p.long12 == 0 && p.tap12 == 0 && NoV3(p);
+    if ((p.version != 2 && p.version != 3) || p.edge_rep > kEdgeRepeats) return false;
+    if (p.version == 2 ? !NoV3(p) : !ValidV3(p)) return false;
     // No edge set: no edge words.
     if (p.edge_seq == 0) return p.edge_rep == 0 && p.w50 == 0 && p.w54 == 0 && p.tap12 == 0;
     return true;
@@ -136,7 +181,8 @@ double Heading(double cam_rad, float lx, float ly) noexcept {
     return NormalizeRadians((std::isfinite(cam_rad) ? cam_rad : 0.0) + dir - kPi);
 }
 
-Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_cdeg, Overlay overlay, EdgeState& edge) noexcept {
+Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_cdeg, Overlay overlay, EdgeState& edge,
+                  double steer_rad, double mag_scale) noexcept {
     Injection j{};
     if (c.mode == PartnerInput::off || c.mode == PartnerInput::pass) return j;
     j.write = true;
@@ -157,13 +203,14 @@ Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_c
         const InputPacket& p = sample.packet;
         held |= p.held;
         const double lx = p.lx / 32767.0, ly = p.ly / 32767.0;
-        const double r = Clamp(std::sqrt(lx * lx + ly * ly), 0.0, 1.0);
+        const double scale = std::isfinite(mag_scale) ? mag_scale : 1.0;
+        const double r = Clamp(Clamp(std::sqrt(lx * lx + ly * ly), 0.0, 1.0) * scale, 0.0, 1.0);
         double theta = p.lmag > 655 ? p.ldir / 10000.0 : ((lx != 0.0 || ly != 0.0) ? std::atan2(lx, ly) : 0.0);
         const double delta = static_cast<double>(NormalizeCdeg(static_cast<std::int64_t>(p.cam_cdeg) - host_cam_cdeg)) * kPi / 18000.0;
-        theta = NormalizeRadians(theta + c.yaw_sign * delta);
+        theta = NormalizeRadians(theta + c.yaw_sign * delta + (std::isfinite(steer_rad) ? steer_rad : 0.0));
         j.lx = static_cast<float>(r * std::sin(theta));
         j.ly = static_cast<float>(r * std::cos(theta));
-        j.mag = static_cast<float>(p.lmag / 65535.0);
+        j.mag = static_cast<float>(Clamp(p.lmag / 65535.0 * scale, 0.0, 1.0));
         j.long12 = p.long12;
         if (c.rstick) {
             const double rx = p.rx / 32767.0, ry = p.ry / 32767.0;
@@ -176,6 +223,15 @@ Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_c
         if (c.triggers) {
             j.lt = static_cast<float>(p.lt / 255.0);
             j.rt = static_cast<float>(p.rt / 255.0);
+        }
+        if (p.version >= 3) {
+            j.look_valid = (p.xflags & XFlag::Look) != 0;
+            j.cam_valid = (p.xflags & XFlag::Cam) != 0;
+            j.aiming = (p.xflags & XFlag::Aiming) != 0;
+            j.look_pitch = p.look_pitch;
+            j.look_yaw = p.look_yaw;
+            j.cam270 = p.cam270;
+            j.cam274 = p.cam274;
         }
     }
     held &= c.mask;
@@ -237,6 +293,29 @@ Injection LevelOnly(const Injection& injection, const Config& config) noexcept {
     j.synth = 0;
     j.hist_freeze = j.hist_reset = false;
     return j;
+}
+
+Injection Neutral(const Injection& frame) noexcept {
+    Injection j{};
+    j.write = frame.write;
+    j.heading = frame.heading;
+    j.stale = true;
+    return j;
+}
+
+Injection ForConsumer(const Injection& frame, std::uint32_t frame_id, std::uint32_t& last_used, std::uint64_t age_ms,
+                      const Config& config, ConsumerView* view) noexcept {
+    if (age_ms > kFrameMaxAgeMs) {
+        if (view) *view = ConsumerView::neutral;
+        return Neutral(frame);
+    }
+    if (frame_id != last_used) {
+        last_used = frame_id;
+        if (view) *view = ConsumerView::full;
+        return frame;
+    }
+    if (view) *view = ConsumerView::level;
+    return LevelOnly(frame, config);
 }
 
 void AccumulateEdges(InputEdges& e, const InputPacket& p) noexcept {
@@ -397,7 +476,8 @@ bool SameArm(const Arm& a, const Arm& b) noexcept {
            std::memcmp(a.config.words, b.config.words, sizeof(a.config.words)) == 0 && a.config.yaw_sign == b.config.yaw_sign &&
            a.config.rstick == b.config.rstick && a.config.triggers == b.config.triggers &&
            a.config.stick_deg == b.config.stick_deg && a.config.stick_pct == b.config.stick_pct &&
-           a.config.stale_ms == b.config.stale_ms;
+           a.config.stale_ms == b.config.stale_ms && a.native == b.native && a.local_all == b.local_all && a.naim == b.naim &&
+           a.go == b.go && a.ps1 == b.ps1 && a.ps1_idx == b.ps1_idx;
 }
 
 const char* SkipName(Skip skip) noexcept {

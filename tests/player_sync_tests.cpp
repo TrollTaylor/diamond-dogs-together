@@ -421,6 +421,78 @@ int main() {
         Check(!decode_input_frame(old2, sizeof(old2), s, e, seq, got), "v1 size with version 2 refused");
     }
 
+    // 10. Input frame v3 (native puppet): 100 bytes, look/camera/heading fields.
+    {
+        namespace pi = mgscoop::partner_input;
+        pi::InputPacket pkt{};
+        pkt.version = 2;
+        pkt.flags = pi::Flag::Valid;
+        pkt.held = 0x8u; pkt.w4c = 0x8u; pkt.lx = 100; pkt.ly = -32767; pkt.lmag = 65535; pkt.ldir = 31416; pkt.cam_cdeg = 4500;
+        pi::V3Source src{};
+        src.look_valid = true; src.look_pitch = -0.25f; src.look_yaw = 2.5f;
+        src.cam_valid = true; src.cam270 = 1.5f; src.cam274 = -0.75f;
+        src.heading_valid = true; src.heading_rad = 3.5;  // wraps to 3.5 - 2 pi
+        src.aiming = true; src.inv_slot = 2; src.equip_rev = 9;
+        pi::InputPacket v3 = pkt;
+        pi::Fill3(v3, src);
+        Check(v3.version == 3 && v3.xflags == 0x0F && v3.heading_mrad == static_cast<std::int16_t>(std::lround((3.5 - 2 * 3.14159265358979323846) * 1000)) &&
+              v3.inv_slot == 2 && v3.equip_rev == 9 && pi::ValidPacket(v3), "Fill3 builds a valid v3 packet");
+        std::uint8_t frame[input_frame_size_v3]{};
+        Check(input_frame_size_v3 == 100 && encode_input_frame_any(0x55, 7, 42, v3, frame) == 100, "v3 encodes 100 bytes");
+        Check(frame[wire::header_size + 1] == 3 && frame[24] == 72 && frame[wire::header_size + 66] == 0x0F &&
+              frame[wire::header_size + 67] == 2 && frame[wire::header_size + 68] == 9, "v3 version, payload length, xflags, inv, rev");
+        std::uint64_t s = 0; std::uint32_t e = 0, seq = 0;
+        pi::InputPacket got{};
+        Check(decode_input_frame(frame, sizeof(frame), s, e, seq, got) && got.version == 3 && got.look_pitch == -0.25f &&
+              got.look_yaw == 2.5f && got.cam270 == 1.5f && got.cam274 == -0.75f && got.heading_mrad == v3.heading_mrad &&
+              got.xflags == 0x0F && got.inv_slot == 2 && got.equip_rev == 9 && got.held == 0x8u && got.ly == -32767 && seq == 42,
+              "v3 round trip");
+        // v2 via the generic encoder; a legacy sender still encodes v2.
+        std::uint8_t any[input_frame_size_v3]{};
+        Check(encode_input_frame_any(0x55, 7, 43, pkt, any) == input_frame_size && decode_input_frame(any, input_frame_size, s, e, seq, got) &&
+              got.version == 2 && got.xflags == 0 && got.look_pitch == 0.0f, "legacy sender still encodes v2");
+        std::uint8_t v2frame[input_frame_size]{};
+        Check(encode_input_frame(0x55, 7, 42, v3, v2frame) == 0, "the v2 encoder refuses a v3 packet");
+        // Refusals.
+        auto refused = [&](void (*edit)(pi::InputPacket&)) {
+            pi::InputPacket b = v3;
+            edit(b);
+            return !pi::ValidPacket(b) && encode_input_frame_any(0x55, 7, 42, b, frame) == 0;
+        };
+        Check(refused([](pi::InputPacket& b) { b.look_pitch = std::nanf(""); }), "non-finite pitch refused");
+        Check(refused([](pi::InputPacket& b) { b.look_pitch = 1.61f; }), "|pitch| > 1.6 refused");
+        Check(refused([](pi::InputPacket& b) { b.look_yaw = -3.2f; }), "|yaw| > pi refused");
+        Check(refused([](pi::InputPacket& b) { b.cam270 = 65.0f; }), "|cam270| > 64 refused");
+        Check(refused([](pi::InputPacket& b) { b.cam274 = std::numeric_limits<float>::infinity(); }), "infinite cam274 refused");
+        Check(refused([](pi::InputPacket& b) { b.heading_mrad = 3143; }), "heading > 3142 refused");
+        Check(refused([](pi::InputPacket& b) { b.xflags = 0x10; }), "unknown xflags refused");
+        Check(refused([](pi::InputPacket& b) { b.xflags &= static_cast<std::uint8_t>(~pi::XFlag::Look); }), "look fields without their xflag refused");
+        Check(refused([](pi::InputPacket& b) { b.inv_slot = 16; }), "inv_slot 16 refused");
+        Check(refused([](pi::InputPacket& b) { b.version = 2; }), "v3 fields in a v2 packet refused");
+        pi::InputPacket unk = v3;
+        unk.inv_slot = 0xFF;
+        Check(pi::ValidPacket(unk), "inv_slot unknown accepted");
+        Check(encode_input_frame_any(0x55, 7, 42, v3, frame) == 100, "re-encode");
+        std::uint8_t tweak[input_frame_size_v3];
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 70] = 1;
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "v3 reserved byte 70 refused");
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 71] = 1;
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "v3 reserved byte 71 refused");
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 1] = 2;
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "100-byte frame with version 2 refused");
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 66] = 0x1F;
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "unknown xflags refused on decode");
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 51] = 0x7F; tweak[wire::header_size + 50] = 0xC0;
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "NaN pitch refused on decode");
+        // Fill3 drops invalid groups instead of sending them.
+        pi::V3Source badsrc = src;
+        badsrc.look_pitch = 5.0f; badsrc.cam_valid = false; badsrc.inv_slot = 40;
+        pi::InputPacket f = pkt;
+        pi::Fill3(f, badsrc);
+        Check(pi::ValidPacket(f) && !(f.xflags & pi::XFlag::Look) && !(f.xflags & pi::XFlag::Cam) && f.look_pitch == 0.0f &&
+              f.inv_slot == 0xFF, "Fill3 clears invalid groups");
+    }
+
     std::printf("%u checks passed; player_sync transform codec, fixed-buffer frames, v2 anim extension, look and input frames verified\n", checks);
     return 0;
 }

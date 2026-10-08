@@ -3,6 +3,23 @@
 #include <cstdint>
 
 namespace mgscoop::equipment_stock_writer {
+// The change-equip request's stock/ammo fields (request +10 / +14). The
+// qualified writer requests 0 / 0; MGS_LOCAL_STOCK46_AMMO_TEST (research only,
+// default OFF, its own qualification run) requests a loaded magazine so a
+// native reload has stock: ammo 30, stock 210 (the debug refill's values for
+// this weapon class). Changing a qualified native call's arguments is a new
+// native path: never enable it in a normal build.
+struct RequestAmounts {
+    std::uint16_t stock, ammo;
+};
+inline constexpr RequestAmounts kQualifiedAmounts{0, 0};
+inline constexpr RequestAmounts kAmmoTestAmounts{210, 30};
+inline constexpr RequestAmounts RequestAmountsFor(bool ammo_test) noexcept { return ammo_test ? kAmmoTestAmounts : kQualifiedAmounts; }
+#if defined(MGS_LOCAL_STOCK46_AMMO_TEST) && MGS_LOCAL_STOCK46_AMMO_TEST
+inline constexpr bool kAmmoTest = true;
+#else
+inline constexpr bool kAmmoTest = false;
+#endif
 // Separate copied-save experiment. The owner supplies existing runtime/code,
 // source, lab/save and session guards; the implementation re-reads every native
 // equipment/resource owner before its sole stock46 instance1 dispatch.

@@ -36,6 +36,9 @@
 #include "mgscoop/partner_source_turns.hpp"
 #include "mgscoop/partner_input.hpp"
 #include "mgscoop/partner_input_hook.hpp"
+#include "mgscoop/partner_defer.hpp"
+#include "mgscoop/partner_equip_wire.hpp"
+#include "mgscoop/partner_native.hpp"
 #include "mgscoop/partner_player.hpp"
 #include "mgscoop/partner_recon.hpp"
 #include "mgscoop/partner_receipt.hpp"
@@ -121,6 +124,20 @@ struct InputStats {
     partner_input::HoldRecord holds[8];
     unsigned hold_count;
     partner_input_hook::WrapStats wrap;
+    partner_input_hook::NativeStats native;
+};
+// Native puppet (docs/native-puppet.md): log cadences and caps.
+inline constexpr std::uint64_t kNativeLineMs = 1000;
+inline constexpr unsigned kNativeLineCap = 3600;   // partner_defer / partner_native 1 Hz lines per mission
+inline constexpr unsigned kNativeEventCap = 64;    // transitions, enter steps, gun changes, manifests
+inline constexpr std::uint64_t kNativeMatchWindowMs = 10000;
+inline constexpr std::uint64_t kAimMatchMs = 300;
+// What the observer reports about the native installs (H0 input hook, wraps,
+// H2, H1, and the phase-1 local detour P1, installed with defer=on).
+struct NativeInstall {
+    bool h0, wrap, h1, h2;
+    bool live_h0, live_h1, live_h2;
+    bool p1, live_p1;
 };
 
 enum class TriggerRead : std::uint8_t { none, read, unreadable };
@@ -211,6 +228,29 @@ struct Hooks {
                                                 const pose::HistoryCursor& cursor) noexcept = nullptr;
     // Read-only local body transform (instance 0) for facing telemetry; null: unread.
     bool (*read_local_body)(void* context, const partner_player::State& state, float (&pos)[4], float (&quat)[4]) noexcept = nullptr;
+    // --- Native puppet (docs/native-puppet.md; any may be null: native then
+    // refuses with reason=install_unavailable and stays in fallback).
+    // Lazy install of H0 + wraps + H2 + H1 (once per process): nullptr ok, else
+    // a static reason ("hook_disabled" when lab partner_input_hook=0).
+    const char* (*install_defer)(void* context, PartnerDefer mode) noexcept = nullptr;
+    void (*native_install)(void* context, NativeInstall& out) noexcept = nullptr;
+    void (*drain_defer_stats)(void* context, partner_defer::Stats& out) noexcept = nullptr;
+    // Arms/disarms the deferral and sets its mode (census|on).
+    void (*set_defer)(void* context, bool armed, PartnerDefer mode) noexcept = nullptr;
+    // valid=false clears the identity.
+    void (*publish_identity)(void* context, const partner_defer::Identity& identity, bool valid) noexcept = nullptr;
+    void (*publish_wrap_roots)(void* context, std::uintptr_t root0, std::uintptr_t root1, bool census) noexcept = nullptr;
+    const char* (*native_targets)(void* context, const partner_player::State& state, const partner_player::InputTargets& targets,
+                                  partner_player::NativeTargets& out) noexcept = nullptr;
+    bool (*read_gun1)(void* context, const partner_player::State& state, partner_player::Gun1& out) noexcept = nullptr;
+    bool (*read_look_source)(void* context, const partner_player::State& state, partner_player::LookSource& out) noexcept = nullptr;
+    std::uint32_t (*window_seq)(void* context) noexcept = nullptr;
+    bool (*link_live)(void* context) noexcept = nullptr;
+    std::uint32_t (*link_session)(void* context) noexcept = nullptr;
+    // Reliable channel 2 (equipment manifest): drained every tick in every drive mode.
+    bool (*drain_reliable)(void* context, std::uint8_t channel, std::uint8_t* out, std::size_t capacity, std::size_t& size) noexcept = nullptr;
+    // Whether the build carries the ammo experiment (MGS_LOCAL_STOCK46_AMMO_TEST); telemetry only.
+    bool ammo_experiment = false;
 };
 
 // Times passed in by the caller: QPC milliseconds (cadence, poses, net) and
@@ -258,6 +298,18 @@ struct Settings {
     PartnerSlot slot;
     PartnerRunaway runaway;
     PartnerWrap wrap;
+    // Native puppet (docs/native-puppet.md).
+    PartnerDrive drive;
+    PartnerDefer defer;      // effective: off unless drive=native
+    PartnerLocal local;
+    PartnerNativeAim naim;
+    bool ngun, nfire;
+    std::uint32_t steer_deg, trim_pct;
+    // Set only in the effective copy: the native settings apply this tick.
+    bool native_active;
+    // lab.ini mode=play (Configure): the trigger file never enables the native
+    // drive there (lab.ini already refuses it, kPlayRefusedNativeDrive).
+    bool play_mode;
 };
 
 // A capped change-only log family (one per experiment head).
@@ -484,6 +536,59 @@ struct Mission {
     // realize bits were cleared for it.
     std::uint64_t lost_since_ms;
     bool lost_hidden;
+    // --- Native puppet (docs/native-puppet.md).
+    partner_native::State native;
+    partner_native::Out native_out;   // the last arbiter step (native_out.active: effective settings)
+    bool native_defer_armed;          // we armed the deferral (set_defer true)
+    bool native_identity;             // an identity is published
+    bool native_roots;                // census wrap roots are published (PublishWrapRoots)
+    partner_player::NativeTargets native_targets;
+    bool native_targets_ok;
+    partner_defer::Stats defer_last;  // the previous drain (deltas for the arbiter)
+    bool defer_last_ok;
+    partner_defer::Stats defer_line;  // at the last 1 Hz partner_defer line
+    std::uint64_t defer_line_ms;
+    unsigned defer_lines;
+    bool defer_lines_capped;
+    partner_input_hook::WrapStats wrap_native_last;
+    partner_input_hook::NativeStats hook_native_last;
+    bool hook_native_last_ok;
+    std::uint32_t native_drain_us_acc;   // max drain time since the last arbiter step
+    LogCap native_cap;                   // transitions
+    LogCap native_enter_cap;             // enter steps
+    LogCap native_gun_cap;               // gun change lines
+    LogCap native_equip_cap;             // manifest lines
+    bool native_latched_logged;
+    bool native_fault_logged;
+    std::uint64_t native_line_ms;
+    unsigned native_lines;
+    bool native_lines_capped;
+    unsigned native_drain_lines;         // 1 Hz partner_native_drain lines (own cap)
+    bool native_drain_lines_capped;
+    std::uint32_t ring_p1_last;          // p1_forced total at the previous ring entry
+    unsigned native_gun_lines;
+    std::uint64_t native_gun_line_ms;
+    std::uint32_t native_gun_last;       // gun3c0 | active << 31 at the last change line
+    partner_native::SteerState steer;
+    double steer_rad, mag_scale;
+    std::int32_t steer_mdeg;
+    std::uint64_t runaway_since_ms;      // recon runaway pin (report.runaway_active) held since (0 = not)
+    // Parity windows (10 s) and aim match.
+    std::uint64_t match_window_ms;
+    std::uint32_t match_ticks, stance_hits, move_hits, stance_pct, move_pct;
+    bool aim_last;
+    std::uint64_t aim_since_ms;
+    bool aim_match;
+    // The 1 s rates window.
+    std::uint64_t rate_ms_native;
+    partner_defer::Stats rate_defer;
+    partner_input_hook::WrapStats rate_wrap;
+    partner_input_hook::NativeStats rate_hook;
+    bool rate_ok;
+    partner_native::Telemetry tele;
+    // Equipment manifest (channel 2): store and counters.
+    partner_equip_wire::Store equip;
+    std::uint32_t equip_logged_rev;
 };
 
 struct Driver {

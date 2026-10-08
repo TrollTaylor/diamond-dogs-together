@@ -109,6 +109,30 @@ struct Fake {
     // 100 ms interpolated pose when sample_by_delay is set.
     bool sample_by_delay = false;
     mgscoop::pose::Sample sample_aligned{};
+    bool dm_revert_fail = false;
+    // Native puppet fakes (docs/native-puppet.md).
+    const char* defer_install_result = nullptr;
+    unsigned defer_installs = 0;
+    mgscoop::PartnerDefer defer_install_mode = mgscoop::PartnerDefer::off;
+    pd::NativeInstall native_install{};
+    mgscoop::partner_defer::Stats defer{};
+    std::vector<std::string> native_order;   // "identity", "identity_clear", "defer:1", "defer:0", "arm:1", "arm:0"
+    bool identity_valid = false;
+    mgscoop::partner_defer::Identity identity{};
+    unsigned roots_published = 0;
+    bool roots_census = false;
+    std::uintptr_t roots_last[2] = {0, 0};
+    const char* native_targets_refusal = nullptr;
+    pp::NativeTargets native_targets{};
+    pp::Gun1 gun{};
+    bool gun_ok = false;
+    pp::LookSource look_source{};
+    bool look_source_ok = false;
+    std::uint32_t window_seq = 0;
+    bool link_live = true;
+    std::uint32_t link_session = 7;
+    std::vector<std::vector<std::uint8_t>> channel2;
+    unsigned channel2_drains = 0;
 
     Fake() {
         Ready();
@@ -248,7 +272,10 @@ bool HookSubmitInput(void* context, const mgscoop::partner_input::InputPacket& p
 }
 bool HookNetRunning(void* context) noexcept { return F(context).net_running; }
 const char* HookInstallHook(void* context) noexcept { ++F(context).installs; return F(context).install_result; }
-void HookPublishArm(void* context, const mgscoop::partner_input::Arm& a) noexcept { F(context).arms.push_back(a); }
+void HookPublishArm(void* context, const mgscoop::partner_input::Arm& a) noexcept {
+    F(context).arms.push_back(a);
+    F(context).native_order.push_back(a.enabled ? "arm:1" : "arm:0");
+}
 void HookDrainStats(void* context, pd::InputStats& out) noexcept { out = F(context).stats; }
 bool HookHookLive(void* context) noexcept { return F(context).hook_live; }
 const char* HookDmTargets(void* context, const pp::State&, pp::DmTargets& out) noexcept {
@@ -274,6 +301,7 @@ bool HookDmPatch(void* context, bool on, const char* reason) noexcept {
     Fake& f = F(context);
     ++f.dm_patch_calls;
     f.dm_patch_reason = reason;
+    if (!on && f.dm_revert_fail && f.dm_patched) return true;
     // As partner_dm_patch: a refused patch logs its reason, a change logs patched/reverted.
     if (on && f.dm_patch_fail) {
         f.lines.emplace_back("partner_dm=refused; reason=comparator_bytes\r\n");
@@ -386,6 +414,71 @@ bool HookLatestInput(void* context, mgscoop::partner_input::Sample& out) noexcep
 }
 const char* HookInstallWrap(void* context) noexcept { ++F(context).wrap_installs; return nullptr; }
 unsigned HookDmMotionCount(void* context) noexcept { return F(context).dm_motion_count; }
+
+// --- Native puppet hooks ------------------------------------------------------------
+const char* HookInstallDefer(void* context, mgscoop::PartnerDefer mode) noexcept {
+    Fake& f = F(context);
+    ++f.defer_installs;
+    f.defer_install_mode = mode;
+    return f.defer_install_result;
+}
+void HookNativeInstall(void* context, pd::NativeInstall& out) noexcept { out = F(context).native_install; }
+void HookDrainDefer(void* context, mgscoop::partner_defer::Stats& out) noexcept { out = F(context).defer; }
+void HookSetDefer(void* context, bool armed, mgscoop::PartnerDefer) noexcept {
+    F(context).native_order.push_back(armed ? "defer:1" : "defer:0");
+}
+void HookPublishIdentity(void* context, const mgscoop::partner_defer::Identity& id, bool valid) noexcept {
+    Fake& f = F(context);
+    f.identity = id;
+    if (valid != f.identity_valid) f.native_order.push_back(valid ? "identity" : "identity_clear");
+    f.identity_valid = valid;
+}
+void HookPublishRoots(void* context, std::uintptr_t root0, std::uintptr_t root1, bool census) noexcept {
+    ++F(context).roots_published;
+    F(context).roots_census = census;
+    F(context).roots_last[0] = root0;
+    F(context).roots_last[1] = root1;
+}
+const char* HookNativeTargets(void* context, const pp::State&, const pp::InputTargets&, pp::NativeTargets& out) noexcept {
+    out = F(context).native_targets;
+    out.refusal = F(context).native_targets_refusal;
+    return out.refusal;
+}
+bool HookReadGun1(void* context, const pp::State&, pp::Gun1& out) noexcept {
+    out = F(context).gun;
+    return F(context).gun_ok;
+}
+bool HookReadLookSource(void* context, const pp::State&, pp::LookSource& out) noexcept {
+    out = F(context).look_source;
+    return F(context).look_source_ok;
+}
+std::uint32_t HookWindowSeq(void* context) noexcept { return F(context).window_seq; }
+bool HookLinkLive(void* context) noexcept { return F(context).link_live; }
+std::uint32_t HookLinkSession(void* context) noexcept { return F(context).link_session; }
+bool HookDrainReliable(void* context, std::uint8_t channel, std::uint8_t* out, std::size_t capacity, std::size_t& size) noexcept {
+    Fake& f = F(context);
+    ++f.channel2_drains;
+    if (channel != 2 || f.channel2.empty() || f.channel2.front().size() > capacity) return false;
+    size = f.channel2.front().size();
+    std::memcpy(out, f.channel2.front().data(), size);
+    f.channel2.erase(f.channel2.begin());
+    return true;
+}
+void AddNativeHooks(pd::Hooks& h) {
+    h.install_defer = HookInstallDefer;
+    h.native_install = HookNativeInstall;
+    h.drain_defer_stats = HookDrainDefer;
+    h.set_defer = HookSetDefer;
+    h.publish_identity = HookPublishIdentity;
+    h.publish_wrap_roots = HookPublishRoots;
+    h.native_targets = HookNativeTargets;
+    h.read_gun1 = HookReadGun1;
+    h.read_look_source = HookReadLookSource;
+    h.window_seq = HookWindowSeq;
+    h.link_live = HookLinkLive;
+    h.link_session = HookLinkSession;
+    h.drain_reliable = HookDrainReliable;
+}
 
 pd::Hooks HooksFor(Fake& f) {
     return pd::Hooks{&f, HookLog, HookRead, HookOr, HookClear, HookSlot, HookForce, HookPolicy, HookAnim, HookSample,
@@ -2878,6 +2971,310 @@ void TestDmMapCaps() {
 
 } // namespace
 
+// --- Native puppet (docs/native-puppet.md 7) ------------------------------------
+// A healthy deferral: installed, live, one batch thread == hook thread, enough batches.
+void NativeHealthy(Fake& f) {
+    f.native_install = pd::NativeInstall{true, true, true, true, true, true, true, true, true};
+    f.defer.h1 = f.defer.h2 = true;
+    f.defer.batches = 1000;
+    f.defer.batch_threads_seen = 1;
+    f.defer.batch_thread = f.defer.hook_thread = 77;
+    f.native_targets.go = 0x1000 - 0x20;
+    f.native_targets.pool0 = 0;
+    f.native_targets.pool1 = 1;
+    f.native_targets.ps1 = 0x7000;
+    f.native_targets.ps1_idx = 0;
+    f.input_targets.root0 = 0x6000;
+    f.input_targets.root1 = 0x6100;
+}
+// Every tick of an active deferral: block 1 deferred and drained in both passes.
+void NativeFrame(Fake& f) {
+    f.defer.batches += 8;
+    f.defer.w50_b1_s0 += 2;
+    f.defer.w50_b0_s0 += 2;
+    f.defer.deferred += 2;
+    f.defer.drains[0] += 1;
+    f.defer.drains[1] += 1;
+    f.defer.windowed += 2;
+}
+struct NativeSession : MapSession {
+    explicit NativeSession(mgscoop::PartnerDefer defer = mgscoop::PartnerDefer::on) : MapSession(mgscoop::PartnerSource::net) {
+        AddNativeHooks(hooks);
+        lab.partner_drive = mgscoop::PartnerDrive::native;
+        lab.partner_input_defer = defer;
+        lab.partner_input_hook = true;
+        lab.partner_input_wrap = mgscoop::PartnerWrap::window;
+        lab.partner_input_send = true;
+        driver.settings.drive = mgscoop::PartnerDrive::native;
+        driver.settings.defer = defer;
+        driver.settings.isend = true;
+        driver.settings.steer_deg = 15;
+        mgscoop::partner_native::Reset(driver.mission.native, true);
+        driver.mission.mag_scale = 1.0;
+        NativeHealthy(fake);
+        fake.sample.valid = true; fake.sample.x = 1.0f; fake.sample.y = 2.0f; fake.sample.z = 3.0f;
+        fake.sample.status = mgscoop::pose::Status::live;
+        fake.latest.valid = true; fake.latest.age_ms = 5; fake.latest.packet.version = 3;
+        fake.latest_ok = true;
+        fake.body_ok = true;
+        fake.body_pos[0] = 1.0f; fake.body_pos[1] = 2.0f; fake.body_pos[2] = 3.0f;
+    }
+    bool N(std::uint64_t step = 33) {
+        NativeFrame(fake);
+        return T(step);
+    }
+    // Runs until the arbiter reaches `mode` (at most ms); true when it did.
+    bool Until(mgscoop::partner_native::Mode mode, std::uint64_t ms) {
+        const std::uint64_t end = now + ms;
+        while (now < end) {
+            N();
+            if (driver.mission.native_out.mode == mode) return true;
+        }
+        return false;
+    }
+    int OrderIndex(const char* what, int from = 0) const {
+        for (std::size_t i = static_cast<std::size_t>(from); i < fake.native_order.size(); ++i)
+            if (fake.native_order[i] == what) return static_cast<int>(i);
+        return -1;
+    }
+};
+
+void TestNativeEnterAndLeave() {
+    namespace pn = mgscoop::partner_native;
+    NativeSession s;
+    // A dm=map clip plays first (the proven fallback).
+    Check(s.Playing() >= 0 && s.driver.mission.dm_patched, "fallback: dm=map plays first");
+    Check(s.driver.mission.native_out.mode == pn::Mode::fallback && s.fake.defer_installs >= 1 &&
+          s.fake.defer_install_mode == mgscoop::PartnerDefer::on, "fallback while settling; install requested with defer=on");
+    Check(s.OrderIndex("identity") >= 0 && s.fake.identity.go == 0x1000 - 0x20 && s.fake.identity.pool1 == 1 && s.fake.roots_published >= 1,
+          "identity and wrap roots published every resolving tick, before any arming");
+    // Entering after 2000 ms: dm stop -> revert -> place -> armed -> active.
+    Check(s.Until(pn::Mode::entering, 3000), "entering after the 2000 ms hold");
+    Check(s.fake.Count("partner_native=entering; reason=ok;") == 1 && s.fake.Containing("partner_native=enter; step=dm_stop") == 1,
+          "entering logged with the dm_stop step");
+    const bool active = s.Until(pn::Mode::active, 6000);
+    Check(active, "active after the DM release, revert, placement and arming");
+    Check(!s.driver.mission.dm_patched && s.driver.mission.input_armed && s.fake.Containing("partner_dm=reverted;") >= 1,
+          "the DM patch is reverted and the window armed");
+    Check(s.fake.Containing("partner_native=enter; step=place") == 1 && s.fake.Containing("partner_native=enter; step=armed") == 1,
+          "every enter step logged once");
+    const auto& arm = s.fake.arms.back();
+    Check(arm.enabled && arm.native && arm.config.mode == mgscoop::PartnerInput::net && arm.config.mask == 0x2200006u &&
+          arm.wrap == mgscoop::PartnerWrap::window && arm.hold == mgscoop::PartnerInputHold::own && arm.go == 0x1000 - 0x20 &&
+          !arm.local_all && arm.naim == mgscoop::PartnerNativeAim::off && !arm.p218, "the native Arm (effective settings)");
+    // Publication order: identity -> deferral armed -> enabled native Arm (run
+    // 27c64c8d: an Arm before the deferral let block 1's job run inline in a
+    // batch for one frame, which left with wrap_in_batch).
+    const int id = s.OrderIndex("identity"), arm1 = s.OrderIndex("arm:1"), def1 = s.OrderIndex("defer:1");
+    Check(id >= 0 && def1 > id && arm1 > def1, "publication order on entering: identity, defer, Arm");
+    Check(s.driver.mission.native_defer_armed, "deferral armed");
+    // Steady active: no xform (apply=input), no dm play.
+    const std::size_t xforms = s.fake.Calls("xform:");
+    const std::size_t plays = s.played.size();
+    for (int i = 0; i < 60; ++i) s.N();
+    Check(s.driver.mission.native_out.mode == pn::Mode::active && s.fake.Calls("xform:") == xforms && s.played.size() == plays,
+          "active: the native drive owns the body (no xform, no clips)");
+    Check(s.fake.Count("partner_defer; batches=") >= 1 && s.fake.Count("partner_native; mode=active;") >= 1, "1 Hz native lines");
+    // Steering never bumps the Arm generation (SameArm ignores it).
+    {
+        const std::uint32_t gen = s.fake.arms.back().gen;
+        s.driver.mission.steer_rad = 0.2;  // as if the remote track drifted left
+        s.fake.sample.x = 1.5f;            // the target moves; the body stays
+        for (int i = 0; i < 10; ++i) s.N();
+        Check(s.fake.arms.back().enabled && s.fake.arms.back().gen == gen, "steering changes never bump the Arm gen");
+        s.fake.sample.x = 1.0f;
+    }
+    // Telemetry for the worker state.json.
+    const auto& tele = s.driver.mission.tele;
+    Check(tele.configured && tele.mode == pn::Mode::active && tele.armed && tele.h1 && tele.h2 && tele.thread_ok &&
+          tele.setting == mgscoop::PartnerDefer::on && tele.per_s_valid && tele.deferred > 0 && tele.ring.count > 0 &&
+          std::strcmp(tele.reason, "ok") == 0, "telemetry populated (mode, deferral, rates, ring)");
+    // A deferral fault: leave at once (defer off -> window off -> dm=map rearm).
+    s.fake.defer.faulted = true;
+    s.fake.defer.fault_phase = 1;
+    const std::size_t order = s.fake.native_order.size();
+    const std::uint32_t epoch = s.driver.mission.body_epoch;
+    s.N();
+    Check(s.driver.mission.native_out.mode == pn::Mode::leaving && s.fake.Count("partner_native=leaving; reason=faulted;") == 1,
+          "a deferral fault leaves immediately");
+    const int def0 = s.OrderIndex("defer:0", static_cast<int>(order)), arm0 = s.OrderIndex("arm:0", static_cast<int>(order));
+    Check(def0 >= 0 && arm0 > def0, "publication order on leaving: defer disarmed before the window");
+    Check(s.driver.mission.body_epoch > epoch && s.fake.Has("partner_defer=fault; phase=lost; code=0x00000000; deferral=disabled\r\n"),
+          "epoch bumped; fault line once");
+    s.N();
+    Check(s.driver.mission.native_out.mode == pn::Mode::fallback && s.driver.mission.native.fallbacks == 1, "then fallback");
+    // dm=map resumes (patched again, a clip plays).
+    bool replayed = false;
+    for (int i = 0; i < 200 && !replayed; ++i) { s.N(); replayed = s.driver.mission.dm_patched && !s.played.empty() && s.played.size() > plays; }
+    Check(replayed, "dm=map rearmed after leaving");
+    // Faulted stays in fallback (no re-entry).
+    for (int i = 0; i < 300; ++i) s.N();
+    Check(s.driver.mission.native_out.mode == pn::Mode::fallback && std::strcmp(s.driver.mission.native_out.reason, "faulted") == 0,
+          "faulted: stays in fallback");
+}
+
+void TestNativeRefusalsAndCensus() {
+    namespace pn = mgscoop::partner_native;
+    // drive=legacy: today's behaviour, nothing new installed or armed.
+    {
+        MapSession s;
+        AddNativeHooks(s.hooks);
+        s.Run(3000);
+        bool native_calls = false;
+        for (const auto& e : s.fake.native_order) native_calls = native_calls || e.rfind("defer:", 0) == 0 || e.rfind("identity", 0) == 0;
+        Check(s.fake.defer_installs == 0 && !native_calls && s.fake.roots_published == 0 && !s.played.empty() &&
+              s.driver.mission.native_out.mode == mgscoop::partner_native::Mode::off, "legacy installs, arms and publishes nothing new");
+    }
+    // census: identity published while disarmed, never active, the partner still animates via dm=map.
+    {
+        NativeSession s(mgscoop::PartnerDefer::census);
+        for (int i = 0; i < 200; ++i) s.N();
+        Check(s.driver.mission.native_out.mode == pn::Mode::fallback && std::strcmp(s.driver.mission.native_out.reason, "defer_census") == 0,
+              "census never activates");
+        Check(s.fake.identity_valid && s.fake.roots_census && s.fake.defer_install_mode == mgscoop::PartnerDefer::census &&
+              s.OrderIndex("defer:1") < 0 && !s.played.empty(), "census: identity + census roots, never armed, dm=map plays");
+    }
+    // partner_input_hook=0 refuses the install (hook_disabled), nothing installed.
+    {
+        NativeSession s;
+        s.lab.partner_input_hook = false;
+        for (int i = 0; i < 100; ++i) s.N();
+        Check(s.fake.defer_installs == 0 && std::strcmp(s.driver.mission.native_out.reason, "install_hook_disabled") == 0,
+              "hook disabled: install refused");
+    }
+    // An install refusal (bytes) keeps the fallback for the process.
+    {
+        NativeSession s;
+        s.fake.defer_install_result = "bytes";
+        for (int i = 0; i < 200; ++i) s.N();
+        Check(std::strcmp(s.driver.mission.native_out.reason, "install_bytes") == 0 && !s.played.empty(), "install_bytes keeps dm=map");
+    }
+    // A thread mismatch never enters.
+    {
+        NativeSession s;
+        s.fake.defer.batch_thread = 78;
+        for (int i = 0; i < 200; ++i) s.N();
+        Check(std::strcmp(s.driver.mission.native_out.reason, "thread") == 0, "batch thread != hook thread refuses");
+    }
+    // A failed DM revert while entering: leave and latch for the mission.
+    {
+        NativeSession s;
+        s.Playing();
+        s.fake.dm_revert_fail = true;
+        bool latched = false;
+        for (int i = 0; i < 400 && !latched; ++i) { s.N(); latched = s.driver.mission.native_out.mode == pn::Mode::latched; }
+        Check(latched && s.fake.Has("partner_native=latched; reason=dm_revert_failed; fallbacks=1\r\n"), "dm revert failure latches");
+        s.fake.dm_revert_fail = false;
+        s.Trigger("drive=native");
+        Check(s.driver.mission.native.mode == pn::Mode::fallback && s.fake.Count("partner_native=trigger; drive=native;") == 1,
+              "a drive=native trigger unlatches");
+        pd::MissionStart(s.driver, s.hooks, 30010);
+        Check(s.driver.mission.native.mode == pn::Mode::fallback && s.driver.mission.native.fallbacks == 0, "MissionStart resets");
+    }
+}
+
+void TestNativeChannel2AndSender() {
+    // Reliable channel 2 is drained every tick, also in the legacy drive.
+    {
+        MapSession s;
+        AddNativeHooks(s.hooks);
+        mgscoop::partner_equip_wire::Manifest m{};
+        m.revision = 3; m.epoch = 7; m.inv_slot = 1; m.slots[1].base_id = 46; m.slots[1].alias = 0x2E;
+        std::uint8_t bytes[mgscoop::partner_equip_wire::kSize]{};
+        Check(mgscoop::partner_equip_wire::Encode(m, bytes) == sizeof(bytes), "manifest encodes");
+        s.fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        s.fake.channel2.emplace_back(std::vector<std::uint8_t>{1, 2, 3});
+        s.T();
+        Check(s.fake.channel2.empty() && s.driver.mission.equip.have && s.driver.mission.equip.manifest.revision == 3 &&
+              s.driver.mission.equip.invalid == 1 && s.fake.Has("partner_equip=manifest; rev=3; inv=1; slots=0:0,46:46,0:0\r\n"),
+              "channel 2 drained in legacy: stored, invalid counted, logged");
+        const unsigned drains = s.fake.channel2_drains;
+        s.T();
+        Check(s.fake.channel2_drains > drains, "drained every tick");
+    }
+    // A native sender writes v3 (look, gated camera/heading); a legacy one v2.
+    {
+        NativeSession s;
+        s.fake.look_source_ok = true;
+        s.fake.look_source = pp::LookSource{true, true, true, 0.25f, -1.5f, 2.0f, 3.0f, 0.5f};
+        s.fake.pad.src_w[0] = 0x8;  // HOLD held
+        s.fake.inputs.clear();
+        s.N();
+        Check(!s.fake.inputs.empty() && s.fake.inputs.back().version == 3 && (s.fake.inputs.back().xflags & 0x0F) == 0x0F &&
+              s.fake.inputs.back().look_pitch == 0.25f && s.fake.inputs.back().heading_mrad == 500, "native sender: v3 with every group");
+        s.fake.window_seq = 3;  // a window open: camera and heading not quiet
+        s.N();
+        Check(s.fake.inputs.back().version == 3 && (s.fake.inputs.back().xflags & 0x06) == 0 && (s.fake.inputs.back().xflags & 0x01),
+              "odd WindowSeq: camera/heading dropped, look kept");
+        Session l(3, mgscoop::PartnerApply::xform, mgscoop::PartnerSource::net);
+        l.driver.settings.isend = true;
+        AddNativeHooks(l.hooks);
+        l.fake.look_source_ok = true;
+        l.Tick(1);
+        Check(!l.fake.inputs.empty() && l.fake.inputs.back().version == 2, "legacy sender still sends v2");
+    }
+}
+
+// Review fixes: play mode never takes the native drive from the trigger file;
+// the GO identity and census wrap roots never outlive a mission or the drive.
+void TestNativePlayAndWithdraw() {
+    namespace pn = mgscoop::partner_native;
+    {
+        pd::Driver d{};
+        mgscoop::LabConfig lab{};
+        lab.mode = mgscoop::LabMode::play;
+        pd::Configure(d, lab);
+        Check(d.settings.play_mode, "Configure: mode=play is remembered");
+        lab.mode = mgscoop::LabMode::lab;
+        pd::Configure(d, lab);
+        Check(!d.settings.play_mode, "Configure: lab mode");
+    }
+    {
+        MapSession s;
+        AddNativeHooks(s.hooks);
+        s.driver.settings.play_mode = true;
+        s.Trigger("drive=native defer=on steer=10");
+        Check(s.driver.settings.drive == mgscoop::PartnerDrive::legacy && s.driver.settings.defer == mgscoop::PartnerDefer::off &&
+              s.driver.settings.steer_deg == 10 &&
+              s.fake.Has("partner_native=trigger_refused; reason=play; drive=legacy; defer=off\r\n"),
+              "play mode: drive=native / defer=on refused, other keys applied");
+        s.Run(3000);
+        Check(s.fake.defer_installs == 0 && !s.fake.identity_valid && s.fake.roots_published == 0 &&
+              s.driver.mission.native_out.mode == pn::Mode::off, "play mode: nothing native installed or published");
+        s.driver.settings.play_mode = false;
+        s.Trigger("drive=native defer=census");
+        Check(s.driver.settings.drive == mgscoop::PartnerDrive::native && s.driver.settings.defer == mgscoop::PartnerDefer::census,
+              "lab mode: the same trigger applies");
+    }
+    {
+        NativeSession s(mgscoop::PartnerDefer::census);
+        for (int i = 0; i < 30; ++i) s.N();
+        Check(s.fake.identity_valid && s.fake.roots_last[1] == 0x6100 && s.fake.roots_census, "census: identity and roots published");
+        pd::MissionEnd(s.driver, s.hooks);
+        Check(!s.fake.identity_valid && s.fake.roots_last[0] == 0 && s.fake.roots_last[1] == 0 && !s.fake.roots_census &&
+              !s.driver.mission.native_identity && !s.driver.mission.native_roots, "MissionEnd withdraws the identity and the roots");
+    }
+    {
+        NativeSession s;
+        for (int i = 0; i < 30; ++i) s.N();
+        Check(s.fake.identity_valid, "identity published");
+        const std::size_t order = s.fake.native_order.size();
+        pd::MissionStart(s.driver, s.hooks, 30010);
+        const int def0 = s.OrderIndex("defer:0", static_cast<int>(order));
+        const int clear = s.OrderIndex("identity_clear", static_cast<int>(order));
+        Check(!s.fake.identity_valid && s.fake.roots_last[1] == 0 && def0 >= 0 && clear > def0,
+              "MissionStart: deferral disarmed, then the identity and roots withdrawn");
+    }
+    {
+        NativeSession s(mgscoop::PartnerDefer::census);
+        for (int i = 0; i < 30; ++i) s.N();
+        s.Trigger("drive=legacy");
+        s.N();
+        Check(!s.fake.identity_valid && s.fake.roots_last[1] == 0 && !s.fake.roots_census &&
+              s.driver.mission.native_out.mode == pn::Mode::off, "drive=legacy: identity and roots withdrawn");
+    }
+}
+
 int main() {
     TestCfgAndMissionBoundaries();
     TestStageThreeTimeline();
@@ -2916,10 +3313,16 @@ int main() {
     TestDmMapRelease();
     TestDmMapInteractions();
     TestDmMapCaps();
+    TestNativeEnterAndLeave();
+    TestNativeRefusalsAndCensus();
+    TestNativeChannel2AndSender();
+    TestNativePlayAndWithdraw();
     std::printf("%u partner driver checks passed: CFG/boundaries, stage-3 timeline, trigger stop/stage, STOP while terminating, "
                 "teardown keep, refusal caps, realize thrash cap, all-active re-assert, flags, mirror lifecycle, one-shots, "
                 "force_exists, policy, net source, interp hook, lost freeze/hide, cadence, Lua notes, quiet pairing, probes, anim mirror/net (q/s/r, debounce, "
                 "revert, fault), xform/hybrid drivers, looks (quiet/snake/net/copy, verify, timeout, waiting, refusals), census, "
-                "ps probe, dm=map (patch, table, sources, aim pivots, gates, failures, release, teardown, caps); no game\n", checks);
+                "ps probe, dm=map (patch, table, sources, aim pivots, gates, failures, release, teardown, caps), native puppet "
+                "(enter sequence, publication order, leave on fault, dm=map rearm, census, install refusals, thread, revert latch, "
+                "unlatch, channel 2 in legacy, v3 sender, play-mode trigger refusal, identity/roots withdrawal); no game\n", checks);
     return 0;
 }

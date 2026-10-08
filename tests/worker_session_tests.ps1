@@ -37,7 +37,7 @@ $context="MGSWORKERCTX1 $id host 41 12345 MGSWorker_$id admitted`n"
 Assert-True (Test-WorkerContextText $context $id 'host' $lease) 'native context exact owner'
 foreach($changed in @($context.Replace('host','guest'),$context.Replace('41','42'),$context.Replace('12345','99999'),$context.Replace('admitted','pending'),$context.TrimEnd([char]10),$context.Replace("`n","`r`n"),($context+"`n"))){Assert-True (!(Test-WorkerContextText $changed $id 'host' $lease)) 'context mismatch'}
 $flags=[ordered]@{}
-foreach($name in @('MGS_LOCAL_GUN_PRELOAD_TEST','MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST','MGS_LOCAL_ACTION_EVENTS','MGS_LOCAL_UPPER_END_OBSERVE','MGS_LOCAL_UPPER_PHASE_OBSERVE','MGS_LOCAL_UPPER_MANUAL_IDLE','MGS_LOCAL_UPPER_PROBE','MGS_LOCAL_UPPER_CHANNEL2','MGS_LOCAL_UPPER_FIRE_ZERO_BLEND')){$flags[$name]='OFF'}
+foreach($name in @('MGS_LOCAL_GUN_PRELOAD_TEST','MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST','MGS_LOCAL_STOCK46_AMMO_TEST','MGS_LOCAL_ACTION_EVENTS','MGS_LOCAL_UPPER_END_OBSERVE','MGS_LOCAL_UPPER_PHASE_OBSERVE','MGS_LOCAL_UPPER_MANUAL_IDLE','MGS_LOCAL_UPPER_PROBE','MGS_LOCAL_UPPER_CHANNEL2','MGS_LOCAL_UPPER_FIRE_ZERO_BLEND')){$flags[$name]='OFF'}
 $flags.MGS_BACKGROUND_WORKER='ON'
 $receipt=@{schema=1;status='passed';plan=@{profile='Normal';project='C:\repo';build_directory='C:\repo\build\worker';flags=$flags};artifacts=@{loader_sha256=$hash}}
 Assert-True (Test-WorkerCheckReceipt $receipt 'C:\repo\build\worker' 'C:\repo' $hash) 'normal21 worker build checks'
@@ -46,6 +46,47 @@ foreach($name in @($flags.Keys|Where-Object {$_ -cne 'MGS_BACKGROUND_WORKER'})){
 $flags.MGS_BACKGROUND_WORKER='OFF';Assert-True (!(Test-WorkerCheckReceipt $receipt 'C:\repo\build\worker' 'C:\repo' $hash)) 'worker disabled';$flags.MGS_BACKGROUND_WORKER='ON'
 Assert-True (!(Test-WorkerCheckReceipt $receipt 'C:\repo\build\other' 'C:\repo' $hash)) 'different build'
 Assert-True (!(Test-WorkerCheckReceipt $receipt 'C:\repo\build\worker' 'C:\repo' ('B'*64))) 'different loader'
+# Native puppet worker profile (docs/native-puppet.md 13.1): exact settings per stage.
+$animatedSettings=@('partner=1','net=1','partner_stage=3','partner_source=net','partner_look=net','partner_apply=xform','partner_anim=off',
+    'partner_reset=n','partner_input=off','partner_dm=map','world=3')
+Assert-True (((Get-WorkerPartnerSettings 'animated') -join ' ') -ceq ($animatedSettings -join ' ')) 'animated profile unchanged'
+Assert-True ((Get-WorkerPartnerSettings 'input') -ccontains 'partner_apply=input' -and (Get-WorkerPartnerSettings 'input') -ccontains 'partner_input=net') 'input profile unchanged'
+$nativeBase=$animatedSettings+@('partner_drive=native','partner_input_send=1','partner_input_hook=1','partner_input_hold=own','partner_input_words=hpr',
+    'partner_input_wrap=window','partner_input_cam=sandbox','partner_input_local=main','partner_recon=track','partner_input_slot=body')
+$stages=@{
+    census=@('partner_input_defer=census','partner_input_mask=0x2200006','partner_native_aim=off')
+    loco=@('partner_input_defer=on','partner_input_mask=0x2200006','partner_native_aim=off')
+    gun=@('partner_input_defer=on','partner_input_mask=0x220004E','partner_native_gun=1','partner_native_fire=0','partner_native_aim=look',
+        'partner_input_triggers=1','partner_input_rstick=1')
+}
+foreach($stage in @('census','loco','gun')){
+    Assert-True (((Get-WorkerPartnerSettings 'native' $stage) -join ' ') -ceq (($nativeBase+$stages[$stage]) -join ' ')) ('native stage settings '+$stage)
+}
+Assert-True (((Get-WorkerPartnerSettings 'native') -join ' ') -ceq (($nativeBase+$stages.loco) -join ' ')) 'native default stage is loco'
+foreach($setting in (Get-WorkerPartnerSettings 'native' 'gun')){$kv=$setting.Split('=',2);$null=ConvertTo-LabPartnerValue -Key $kv[0] -Value $kv[1]}
+Assert-True $true 'every native setting is a known LabCommon key with a valid value'
+Assert-Throws {Get-WorkerPartnerSettings 'native' 'fire'} 'unknown native stage throws'
+Assert-Throws {Get-WorkerPartnerSettings 'animated' 'loco'} 'NativeStage needs the native profile'
+Assert-Throws {Get-WorkerPartnerSettings 'puppet'} 'unknown profile throws'
+$research=@(Get-WorkerResearchExperiments)
+Assert-True (($research -join ',') -ceq 'MGS_LOCAL_OFFLINE_EQUIPMENT_TEST,MGS_LOCAL_STOCK46_PRELOAD_TEST,MGS_LOCAL_STOCK46_WRITER_TEST') 'research experiments: offline equipment + stock46 preload + writer'
+Assert-True ((@(Get-WorkerResearchExperiments -Ammo)) -ccontains 'MGS_LOCAL_STOCK46_AMMO_TEST') 'research experiments: optional ammo'
+$researchDirectory=Get-WorkerResearchBuildDirectory 'C:\repo' $research
+$expectedHash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes(($research -join "`n")))).Substring(0,12)
+Assert-True ($researchDirectory -ceq ('C:\repo\build\worker-checks\research-'+$expectedHash+'-worker-on-release')) 'research cache directory = Invoke-WorkerChecks profile key'
+$researchFlags=[ordered]@{}
+foreach($name in @($flags.Keys)){$researchFlags[$name]='OFF'}
+$researchFlags.MGS_BACKGROUND_WORKER='ON';$researchFlags.MGS_LOCAL_OFFLINE_EQUIPMENT_TEST='ON';$researchFlags.MGS_LOCAL_STOCK46_PRELOAD_TEST='ON';$researchFlags.MGS_LOCAL_STOCK46_WRITER_TEST='ON'
+$researchReceipt=@{schema=1;status='passed';plan=@{profile='Research';project='C:\repo';build_directory=$researchDirectory;flags=$researchFlags};artifacts=@{loader_sha256=$hash}}
+Assert-True (Test-WorkerResearchReceipt $researchReceipt $researchDirectory 'C:\repo' $hash $research) 'research receipt with exactly the stock46 experiments'
+$researchFlags.MGS_LOCAL_UPPER_PROBE='ON';Assert-True (!(Test-WorkerResearchReceipt $researchReceipt $researchDirectory 'C:\repo' $hash $research)) 'research receipt refuses an upper_* experiment';$researchFlags.MGS_LOCAL_UPPER_PROBE='OFF'
+$researchFlags.MGS_LOCAL_STOCK46_WRITER_TEST='OFF';Assert-True (!(Test-WorkerResearchReceipt $researchReceipt $researchDirectory 'C:\repo' $hash $research)) 'research receipt needs the writer';$researchFlags.MGS_LOCAL_STOCK46_WRITER_TEST='ON'
+$researchReceipt.plan.profile='Normal';Assert-True (!(Test-WorkerResearchReceipt $researchReceipt $researchDirectory 'C:\repo' $hash $research)) 'research receipt needs the Research profile';$researchReceipt.plan.profile='Research'
+Assert-True (!(Test-WorkerCheckReceipt $researchReceipt $researchDirectory 'C:\repo' $hash)) 'a research receipt never passes the normal check'
+$startText=[IO.File]::ReadAllText((Join-Path $SourceDirectory 'Start-WorkerSession.ps1'))
+Assert-True ($startText.Contains('$settings=Get-WorkerPartnerSettings $PartnerProfile $NativeStage') -and
+    $startText.Contains("[ValidateSet('animated','input','native')][string]`$PartnerProfile='animated'") -and
+    $startText.Contains("throw '-NativeStage gun needs -BuildProfile research (a weapon on body 1).'")) 'Start-WorkerSession uses the pure profile settings and refuses gun without research'
 $ini="# Generated by tools/lab/Prepare-LabInstance.ps1`nenabled=1`nrole=host`nloopback=1`nxinput=none`nsave_dir=C:\copies`nmutex_suffix=host`n"
 $updated=Set-WorkerIniValue $ini 'save_dir' 'C:\fresh\host'
 Assert-True ($updated.Contains("save_dir=C:\fresh\host`n")) 'literal INI path rewrite'

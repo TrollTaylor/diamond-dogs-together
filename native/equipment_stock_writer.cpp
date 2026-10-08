@@ -24,7 +24,7 @@ bool readiness_logged=false;
 #pragma pack(push,1)
 struct Request {
     std::uint64_t type=0x326C48DA30C0ull;
-    std::uint16_t equip=46,stock=0,stock_sub=0,ammo=0,ammo_sub=0;
+    std::uint16_t equip=46,stock=RequestAmountsFor(kAmmoTest).stock,stock_sub=0,ammo=RequestAmountsFor(kAmmoTest).ammo,ammo_sub=0;
     std::uint8_t suppression_life=0,flags=4;
 };
 #pragma pack(pop)
@@ -73,9 +73,10 @@ void Receipt(void (*log)(const char*) noexcept,const char* phase,const char* rea
     if(!log) return;
     char line[640]{};
     StringCchPrintfA(line,sizeof(line),
-        "stock46_writer=%s; reason=%s mission=30010 instance=1 slot=1 equip=46 receiver=157 epoch=%u expected_handle=%x result=%d mismatch_rva=%llx attempted=%u retry=0 local_index_write=0 alias_call=0 rollback_calls=0\r\n",
+        "stock46_writer=%s; reason=%s mission=30010 instance=1 slot=1 equip=46 receiver=157 epoch=%u expected_handle=%x result=%d mismatch_rva=%llx attempted=%u retry=0 local_index_write=0 alias_call=0 rollback_calls=0 stock=%u ammo=%u ammo_experiment=%u\r\n",
         phase,reason ? reason : "ok",observed_epoch,expected_handle,result,
-        static_cast<unsigned long long>(mismatch),unsigned(authorization.Attempted()));
+        static_cast<unsigned long long>(mismatch),unsigned(authorization.Attempted()),unsigned(RequestAmountsFor(kAmmoTest).stock),
+        unsigned(RequestAmountsFor(kAmmoTest).ammo),kAmmoTest ? 1u : 0u);
     log(line);
 }
 void PackageReceipt(void (*log)(const char*) noexcept,const Context& c,const contract::PackageObservation& sample) noexcept {

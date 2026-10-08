@@ -68,6 +68,11 @@ struct Addresses {
     std::uintptr_t plugin_vt[4];        // base action plugin +0/+0x10/+0x30/+0x48
     std::uintptr_t dm_prim_vtable, dm_iface_vtable;
     std::uintptr_t script_object;       // g = 0x2C1BF20 (P+0x48)
+    // Native puppet (docs/native-puppet.md).
+    std::uintptr_t go_vtable;           // 0x22953D0 (GO = P - 0x20, primary view)
+    std::uintptr_t gun_node_vtable;     // 0x2306628
+    std::uintptr_t gun_prim_vtable;     // 0x23B3E80
+    std::uintptr_t gun_iface_vtable;    // 0x23B3FA0 (prim+0x30)
 };
 Addresses AddressesFor(const void* base) noexcept;
 
@@ -274,6 +279,43 @@ inline constexpr std::size_t input_census_capacity = 768;
 // The local pad (sender side): PP/pp_owner/src as above, then src+0x48..+0x6F,
 // PP+0x10..+0x33 and PP+0x460..+0x488. Needs only the state guards.
 bool ReadPad(const Addresses& addresses, const State& state, partner_input::PadRaw& out) noexcept;
+
+// --- Native puppet (docs/native-puppet.md; pure reads) ------------------------
+// Identity the deferral needs (GO = P - 0x20 with the primary vtable, both
+// pool indices) and instance 1's look slot: PS1 = *(blk1+0x78) with the PS or
+// player-PS vtable and *(PS1+0x3E8) == that vtable + 0x1E0, PS1 != PS0,
+// *(u32*)(PS1+8) == root1+0x24 with root1+0x24 <= 1 < root1+0x24 + root1+0x20,
+// and the look (*(PS1+0x290)) and record (*(PS1+0x280)) arrays non-null.
+// `refusal` covers the identity; `look_refusal` the look slot only.
+struct NativeTargets {
+    const char* refusal;
+    const char* look_refusal;
+    std::uintptr_t go, go_vt;
+    std::uint8_t pool0, pool1;
+    std::uintptr_t ps0, ps1, ps1_vt, ps1_look, ps1_rec;
+    std::uint32_t ps1_base, ps1_idx;
+};
+const char* ResolveNative(const Addresses& addresses, const State& state, const InputTargets& targets, NativeTargets& out) noexcept;
+// The sender's v3 fields (the local instance): its look angles {pitch, yaw}
+// at *(PS0+0x290) + (local - PS0+8)*8 (PS0 validated like PS1 against root0),
+// CAM+0x270/+0x274 and PP+0x14 (the caller gates PP on an even WindowSeq).
+struct LookSource {
+    bool look_ok, cam_ok, heading_ok;
+    float pitch, yaw, cam270, cam274, heading;
+};
+bool ReadLookSource(const Addresses& addresses, const State& state, LookSource& out) noexcept;
+// Instance 1's gun node (builder row 0x3D) for telemetry: node = *(blk1+0x378)
+// (vtable 0x2306628, +0x20 == 1, +0x24 == id, +0x2C == 0x3D), iface =
+// *(blk1+0x5A0) (vtable 0x23B3FA0), prim = iface - 0x30 (vtable 0x23B3E80,
+// prim+8 == blk1, prim+0x38 == node), rec = *(prim+0x58): Gun3C0 = rec+0x3C0,
+// mode = rec+0x2C1, active = *(u32*)*(node+8) bit 0.
+struct Gun1 {
+    const char* refusal;
+    bool node_active;
+    std::uint32_t gun3c0;
+    std::uint8_t mode;
+};
+bool ReadGun1(const Addresses& addresses, const State& state, Gun1& out) noexcept;
 
 // --- Round 3: direct motion (pure reads plus one restoration write) ---------
 // g = *(P+0x48) == 0x2C1BF20 (g); block 1 as ResolveBlock checks it; iface =

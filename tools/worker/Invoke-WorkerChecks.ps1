@@ -27,7 +27,7 @@ $ErrorActionPreference = 'Stop'
 function Get-WorkerExperiments {
     return @(
         'MGS_LOCAL_GUN_PRELOAD_TEST', 'MGS_LOCAL_OFFLINE_EQUIPMENT_TEST',
-        'MGS_LOCAL_STOCK46_PRELOAD_TEST', 'MGS_LOCAL_STOCK46_WRITER_TEST',
+        'MGS_LOCAL_STOCK46_PRELOAD_TEST', 'MGS_LOCAL_STOCK46_WRITER_TEST', 'MGS_LOCAL_STOCK46_AMMO_TEST',
         'MGS_LOCAL_ACTION_EVENTS', 'MGS_LOCAL_UPPER_END_OBSERVE',
         'MGS_LOCAL_UPPER_PHASE_OBSERVE', 'MGS_LOCAL_UPPER_MANUAL_IDLE',
         'MGS_LOCAL_UPPER_PROBE', 'MGS_LOCAL_UPPER_CHANNEL2', 'MGS_LOCAL_UPPER_FIRE_ZERO_BLEND'
@@ -56,6 +56,7 @@ function Get-WorkerTests {
         'partner_upper_probe_tests', 'partner_upper_probe_forwarding_tests',
         'partner_upper_channel2_tests', 'partner_upper_fire_zero_blend_tests',
         'partner_player_tests', 'partner_driver_tests', 'partner_input_hook_tests',
+        'partner_native_tests', 'partner_equip_wire_tests', 'partner_defer_tests',
         'debug_menu_tests', 'debug_overlay_tests', 'soldier_warp_tests', 'win_import_patch_tests', 'probe_forwarding',
         'master_server_patch_tests', 'master_server_patch_retarget_tests', 'master_server_patch_retarget_loopback_tests',
         'worker_scenario_off_tests', 'worker_scenario_on_tests', 'worker_protocol_tests', 'worker_debug_tests', 'worker_input_fixture_tests',

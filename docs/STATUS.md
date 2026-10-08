@@ -1,5 +1,26 @@
 # Development status
 
+## October 8, 2026: native puppet (fixture-tested, default off, never run)
+
+The partner body can now be driven by the remote player's real pad through the
+game's own locomotion, action and gun systems ([design](native-puppet.md)).
+Block 1's per-block job is deferred out of the parallel batch (H1: job slot
+`0x2295420`) and run on the main thread after the join (H2: call `0xBF4D55`),
+inside the game's own TLS scratch scope and entry read lock, in a drain window
+that swaps in instance 1's pad. Native windows also follow the remote HOLD
+latch, never open while a hook-thread batch is in flight, and (aim stage) write
+the remote look angles after phase 0. A pure arbiter switches between this
+drive and the proven `dm=map` + xform partner, which stays the automatic
+fallback. Input frame v3 carries the sender's look, camera and heading; the
+equipment manifest codec and channel-2 drain are in place (sender pending).
+Everything is behind `partner_drive=native` and `partner_input_defer` (default
+legacy/off; play mode refuses it). The worker gains a `native` profile with
+census/loco/gun stages and `tools/worker/scenarios/partner-native.txt`. Fixture
+evidence only: the contract generator re-verifies every site against the exe,
+`partner_defer_tests` runs the deferral end to end on a synthetic image with
+real worker threads, and the driver tests walk the full entering/leaving
+sequence with fakes. The coordinator's hidden runs (S0 census, then S1 loco)
+decide whether any default changes.
 ## October 8, 2026: native "Spawn enemy here" (fixture-tested, runtime unverified)
 
 **Spawn enemy here** now moves the nearest unused living, enabled, on-foot guard

@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "mgscoop/partner_facing.hpp"
+#include "mgscoop/partner_native.hpp"
 
 // UI exchanges copied data only. The natural Lua runtime thread owns actions.
 namespace mgscoop::debug_menu {
@@ -73,6 +74,8 @@ struct Snapshot {
     char facing_last_snap[16]{};
     float facing_target_yaw{}, facing_applied_yaw{}, facing_rate_dps{};
     partner_facing::Ring facing_ring{};
+    // Native puppet (partner_native.hpp Telemetry): worker state.json "native".
+    partner_native::Telemetry native{};
     char role[16]{}, link_state[24]{}, source[16]{}, apply[16]{}, anim[16]{}, aset[16]{}, dm[16]{}, look[16]{};
     char pending_kind[16]{}, guard_reason[24]{};
     char overlay_category[16]{}, overlay_search[49]{}, overlay_result[96]{}, last_ui_action[40]{};

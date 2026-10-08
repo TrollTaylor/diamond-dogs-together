@@ -432,6 +432,20 @@ int main() {
               !TriggerOk("wrap=on") && !TriggerOk("place=0") && !TriggerOk("place=1 place=1") && !TriggerOk("align=1 align=2"),
               "bad round 4 values");
         Check(!TriggerOk("input=net input=off") && !TriggerOk("tap=0x1 tap=0x2") && !TriggerOk("dmplay=1 dmplay=2"), "round 3 repeats");
+        // Native puppet tokens (docs/native-puppet.md).
+        Check(TriggerText("drive=native defer=on local=all naim=look ngun=1 nfire=0 steer=30", tg) && tg.has_drive &&
+              tg.drive == mgscoop::PartnerDrive::native && tg.has_defer && tg.defer == mgscoop::PartnerDefer::on && tg.has_local &&
+              tg.local == mgscoop::PartnerLocal::all && tg.has_naim && tg.naim == mgscoop::PartnerNativeAim::look && tg.has_ngun &&
+              tg.ngun && tg.has_nfire && !tg.nfire && tg.has_steer && tg.steer_deg == 30, "every native token");
+        Check(TriggerText("drive=legacy defer=census naim=lookcam steer=0", tg) && tg.drive == mgscoop::PartnerDrive::legacy &&
+              tg.defer == mgscoop::PartnerDefer::census && tg.naim == mgscoop::PartnerNativeAim::lookcam && tg.steer_deg == 0 &&
+              !tg.has_local && !tg.has_ngun && !tg.has_nfire, "native values; absent keys stay unset");
+        Check(TriggerText("defer=off local=main naim=off", tg) && tg.defer == mgscoop::PartnerDefer::off &&
+              tg.local == mgscoop::PartnerLocal::main && tg.naim == mgscoop::PartnerNativeAim::off && !tg.has_drive, "native off values");
+        Check(!TriggerOk("drive=puppet") && !TriggerOk("defer=yes") && !TriggerOk("local=none") && !TriggerOk("naim=cam") &&
+              !TriggerOk("ngun=2") && !TriggerOk("nfire=yes") && !TriggerOk("steer=31") && !TriggerOk("steer=-1") &&
+              !TriggerOk("drive=native drive=legacy") && !TriggerOk("steer=1 steer=2") && !TriggerOk("defer=on defer=off"),
+              "bad native values and repeats");
         // A long trigger within the 255-byte limit (not every token at once).
         const std::string longest =
             "stage=3 source=net apply=input anim=off aset=qs reset=ac look=net input=net stick=359:100 cam=sandbox "

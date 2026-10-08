@@ -15,7 +15,14 @@ param(
     [string]$ConfigPath,
     [ValidateRange(30,600)][int]$TimeoutSec=600,
     [ValidateRange(10,180)][int]$ReadyTimeoutSec=120,
-    [ValidateSet('animated','input')][string]$PartnerProfile='animated',
+    [ValidateSet('animated','input','native')][string]$PartnerProfile='animated',
+    # Native puppet stage (docs/native-puppet.md 13): census|loco|gun, only with
+    # -PartnerProfile native (default loco there). gun needs -BuildProfile research.
+    [ValidateSet('','census','loco','gun')][string]$NativeStage='',
+    # research: the Research worker build (stock46 preload+writer, optionally
+    # ammo; no upper_* experiment), only with -NativeStage gun.
+    [ValidateSet('normal','research')][string]$BuildProfile='normal',
+    [switch]$AmmoExperiment,
     # real: fresh copies of the real saves (a pending story demo can block the
     # partner's two-player pack in Mother Base). lab: copies of each folder's
     # existing Play-OfflineCoop lab saves (read only), the state earlier live
@@ -40,8 +47,16 @@ $config=Get-LabConfig -ConfigPath $configFile -RepoRoot $repo
 $loader=Assert-WorkerPlainPath (Join-Path $build 'dinput8.dll') -MustExist
 $loaderHash=Get-WorkerHash $loader
 if($loaderHash -ieq $BaselineLoaderSha256){throw 'Worker loader must differ from the saved normal baseline.'}
+if($PartnerProfile -cne 'native' -and $NativeStage){throw '-NativeStage needs -PartnerProfile native.'}
+if($BuildProfile -ceq 'research' -and !($PartnerProfile -ceq 'native' -and $NativeStage -ceq 'gun')){throw '-BuildProfile research is only for -NativeStage gun.'}
+if($PartnerProfile -ceq 'native' -and $NativeStage -ceq 'gun' -and $BuildProfile -cne 'research'){throw '-NativeStage gun needs -BuildProfile research (a weapon on body 1).'}
+if($AmmoExperiment -and $BuildProfile -cne 'research'){throw '-AmmoExperiment needs -BuildProfile research.'}
 $checks=Read-WorkerSessionJson ([IO.Path]::GetFullPath($CheckReceipt,$repo))
-if(!(Test-WorkerCheckReceipt $checks $build $repo $loaderHash)){throw 'Require passed Normal/background ON/all experiments OFF checks for this exact build and loader.'}
+if($BuildProfile -ceq 'research'){
+    if(!(Test-WorkerResearchReceipt $checks $build $repo $loaderHash (Get-WorkerResearchExperiments -Ammo:$AmmoExperiment))){
+        throw 'Require passed Research/background ON checks with exactly the stock46 experiments (no upper_*) for this exact build and loader.'
+    }
+} elseif(!(Test-WorkerCheckReceipt $checks $build $repo $loaderHash)){throw 'Require passed Normal/background ON/all experiments OFF checks for this exact build and loader.'}
 foreach($name in @('Start-WorkerSession.ps1','Stop-WorkerSession.ps1','WorkerSessionCommon.psm1')) {
     if(!$checks.source_hashes.Contains('tools\worker\'+$name)){throw 'Re-run worker checks after adding the runtime controllers.'}
 }
@@ -148,11 +163,9 @@ try {
     $copyConfig=Join-Path $runDirectory 'worker-lab.json';Write-WorkerSessionJson $copyConfig $raw
     $session.configuration=$copyConfig;$session.prepare_started=$true;$session.status='preparing';Write-WorkerSessionJson $statePath $session
     # Default: the normal animated partner of Play-OfflineCoop (xform + dm=map).
-    # -PartnerProfile input selects the round-4 input drive.
-    $settings=if($PartnerProfile -ceq 'input'){@('partner=1','net=1','partner_source=net','partner_apply=input','partner_input=net','partner_input_send=1',
-        'partner_input_hold=own','partner_input_words=hpr','partner_recon=track','partner_stage=3','world=3')}
-        else{@('partner=1','net=1','partner_stage=3','partner_source=net','partner_look=net','partner_apply=xform','partner_anim=off',
-        'partner_reset=n','partner_input=off','partner_dm=map','world=3')}
+    # -PartnerProfile input selects the round-4 input drive; native the native
+    # puppet stage (docs/native-puppet.md 13.1) on the animated fallback base.
+    $settings=Get-WorkerPartnerSettings $PartnerProfile $NativeStage
     $settings=@($settings)+@($LabSetting)
     & (Join-Path $repo 'tools\lab\Prepare-LabInstance.ps1') -ConfigPath $copyConfig -Role both -Offline -Loader $loader -RuntimeArchive $archive -PartnerSetting $settings -SkipSaves -SkipGraphics | ForEach-Object {Write-Host $_}
     $session.prepare_completed=$true

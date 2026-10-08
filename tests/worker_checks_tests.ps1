@@ -36,7 +36,7 @@ try {
     $normal = Get-WorkerPlan $fixture 'Normal' 'Release' @() $false ''
     $background = Get-WorkerPlan $fixture 'Normal' 'Release' @() $true ''
     $research = Get-WorkerPlan $fixture 'Research' 'Release' @('MGS_LOCAL_ACTION_EVENTS') $false ''
-    Check ($normal.flags.Count -eq 12 -and @($normal.flags.Values | Where-Object { $_ -cne 'OFF' }).Count -eq 0) 'normal explicitly disables all 11 local experiments and the separate worker'
+    Check ($normal.flags.Count -eq 13 -and @($normal.flags.Values | Where-Object { $_ -cne 'OFF' }).Count -eq 0) 'normal explicitly disables all 12 local experiments and the separate worker'
     Check ($background.flags.MGS_BACKGROUND_WORKER -ceq 'ON' -and @($background.flags.Keys | Where-Object { $_ -like 'MGS_LOCAL_*' -and $background.flags[$_] -cne 'OFF' }).Count -eq 0) 'background opt-in cannot enable research flags'
     Check ($research.flags.MGS_LOCAL_ACTION_EVENTS -ceq 'ON' -and @($research.flags.Values | Where-Object { $_ -ceq 'ON' }).Count -eq 1) 'research enables exactly the named option'
     Check ($normal.build_directory -ine $background.build_directory -and $normal.build_directory -ine $research.build_directory) 'profiles use separate default caches'
