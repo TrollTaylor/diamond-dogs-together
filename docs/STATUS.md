@@ -1,5 +1,25 @@
 # Development status
 
+## October 8, 2026: native partner weapons (fixture-tested, never run)
+
+The partner body's shots are now visible on the other screen without real
+bullets ([design](native-puppet.md#weapons)). The RequestBullet owner filter
+swaps slot 0 of the bullet iface vtables (`0x2337DE8`, `0x2337D18`) and drops
+only requests stamped with instance 1's id; muzzle flash, recoil, sound and
+casings stay. The gun stage of Play-OfflineCoop and the worker now runs
+`partner_native_fire=visual` (mask `0x220005E`); FIRE stays masked whenever
+the filter is not installed, live and armed. Reload: instance 1's non-local
+shots never spend its magazine, so input frame v4 carries the sender's
+magazine and the drain window mirrors it into instance 1's gun record before
+its update (FIRE/RELOAD edges and remote changes), which lets CanReload pass
+exactly when the remote can reload. Loadout: each copy sends its equipment
+manifest (weapons, customized aliases, receivers mapped to stock ids) on
+channel 2 and logs the apply verdict; only stock46 can be loaded on body 1.
+Contract checker: 315 sites, 87 slots, a reachability proof that the
+non-local shoot path skips every local side effect. Open: the shot noise of
+visual shots (census pins its interface), projectile weapons, a generalized
+writer. Hidden scenario: `tools/worker/scenarios/partner-native-weapons.txt`.
+
 ## October 8, 2026: native puppet (fixture-tested, default off, never run)
 
 The partner body can now be driven by the remote player's real pad through the

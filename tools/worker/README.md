@@ -187,6 +187,13 @@ experiment set. The settings of each profile and stage come from
 `Get-WorkerPartnerSettings` (WorkerSessionCommon) and the supervisor admits only
 them (`worker_game_gate.hpp`). `scenarios/partner-native.txt` is the native
 evaluation; its header lists the evidence each stage must show in captures.jsonl.
+The gun stage runs visual fire (`partner_input_mask=0x220005E`,
+`partner_native_fire=visual`: the partner's shots are animation, sound and
+effects on the receiving machine, never bullets; FIRE stays masked whenever the
+RequestBullet owner filter is not live) and the magazine mirror;
+`scenarios/partner-native-weapons.txt` is its evaluation (fire, held fire,
+reload aiming and holstered, weapon switch, crouched fire, both directions,
+leak and noise records).
 
 ## Primary API contracts and acceptance limits
 

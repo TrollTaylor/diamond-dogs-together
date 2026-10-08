@@ -114,6 +114,138 @@ is generated from it.
   objects: they are withdrawn at MissionEnd/MissionStart (after the deferral is
   disarmed) and once `partner_drive` is no longer native.
 
+## Weapons
+
+Status (2026-10-08, branch `wp/native-weapons`): implemented, fixture-tested,
+**not yet run in the game**. Static analysis of `mgsvtpp.exe` 1.0.15.4 only;
+`tools/generate_partner_contract.py --check` pins every site below (315 code
+sites, 87 vtable slots, plus the reachability and reference assertions).
+
+### Fire visuals (`partner_native_fire=visual`)
+
+- **How the partner shoots.** Instance 1's gun update `0x103E2D0` runs inside
+  block 1's drain; the shoot function `0x1041110` stamps the shooter's id into
+  the shot request (`request+0x2A = id & 0x1FF`, `0x1041219`) and queues it
+  (equip vt+0x138, `0x10414FC`). The model group's shot handler `0x1302F50`
+  later spawns every bullet through **RequestBullet `0xD32C60`** (calls
+  `0x13031C8`, `0x13031FA`, pellets `0x130343C`; `rdx` = the record, whose
+  `+0x2A` it tests itself at `0x1302FF3`) and plays sound and the "Shoot"
+  effect independently of that call.
+- **Instance 1 is a non-local shooter.** `rec+0x3C0` bit 0 (`id == P+0x218`)
+  is clear for it; `0x10415AB` then skips the whole local block. The checker
+  proves by reachability (capstone, branches at `0x104122C`, `0x10415B4`,
+  `0x1041E6E` taken) that the ammo call `0x1041650`, the camera kick
+  `0x1041775`, CAM+0xB0 `0x1041BDB`, the shot origin `0x1041C6E`, the shoot
+  count `0x1041CA5`, suppressor life `0x10417D6`, the synchronizer `0x1041946`
+  and `0x1041BF4` are unreachable for it. No sandbox is needed for them.
+- **The filter** (`native/partner_fire_filter.cpp`): RequestBullet has no
+  direct caller; it is reached only through slot 0 of the bullet iface
+  vtables `0x2337DE8` (live, stored by the ctor `0xD32D14`) and `0x2337D18`
+  (while destroying, dtor `0xD32619`), both read-only data and 8-aligned. The
+  install checks the prologue bytes and both slots, then swaps each slot with
+  one locked qword exchange (protection restored; the first slot is swapped
+  back when the second fails). The hook drops a request whose owner equals the
+  armed id (instance 1's GameObjectId, type bits `0xFE00` clear; armed with
+  `ids[1]`) and returns 0, the value RequestBullet itself returns when its slot
+  allocator yields nothing (`0xD32CB4`); every other request goes to
+  `0xD32C60` unchanged. Any thread (atomics only). Installed lazily by the
+  driver tick once per process, never removed.
+- **Kept on the viewer's machine:** fire animation, recoil, muzzle and "Shoot"
+  effects, gunshot audio, casings, the prone ground-dust effect. **Removed:**
+  projectile, hit-scan, damage, impacts and tracers.
+- **The fire gate.** FIRE (0x10) reaches instance 1 only while
+  `partner_native_fire=visual`, `partner_native_gun=1`, the filter is
+  installed, live (both slots still hold it) and armed for `ids[1]`, and
+  instance 1's gun record has shown a gun class (`(rec+0x27C>>6)&7 == 1`) in
+  this mission (latched: body 1 only carries stock46, and a holster/draw or
+  an unreadable tick must not toggle the mask, whose change bumps the Arm gen
+  and resets instance 1's private pad masks).
+  Otherwise FIRE is masked and the reason is logged once per change
+  (`partner_fire=masked; reason=off|gun_off|unavailable|not_ready|owner|bytes|slot|changed|protect|alignment|disabled|hook_lost|disarmed|gun_read|weapon`).
+- **Not covered (open risks):** projectile weapons (row type 3 go through
+  `gm+0x210`, not filtered; body 1 only ever carries stock46, a bullet weapon)
+  and the **unsuppressed shot noise** `{pos, 0x145, owner}` that `0x1302F50`
+  sends through `group+0xA0` vt+0 at `0x1303D06` (skipped only for suppressed
+  weapons). Its interface `*(*(svc+0xA8)+8)` is not statically classifiable,
+  so the filter logs a read-only census once per mission
+  (`partner_fire_census; ...; noise_vt=...; noise_fn0=...`) to pin it; the
+  scenario's noise section records whether the receiver's guards react.
+
+### Reload: the magazine mirror
+
+- CanReload `0x1051F30` needs `mag < capacity` (and no `rec+0x280` bit 19,
+  and spare stock); the reload request `0x1094770` (gate `0x103E3A4`: class 1,
+  equip `rec+0x24C != 0`, `rec+0x3D5 != 4`) sets `rec+0x3C0` bit 20 from the
+  R press while aiming (else the tap classifier). Instance 1's non-local shots
+  never spend its magazine (`0x1041650` is local-only), so its magazine stayed
+  at the change-equip ammo: 0 (fire impossible) or 30 with the ammo
+  experiment (above the sniper's capacity: reload impossible, run bec857fb).
+- **Input frame v4** (104 bytes) adds the sender's magazine as its getter
+  reads it (`0x10435D0`: capacity with `rec+0x3C0` bit 28, else `rec+0x25E`
+  with `rec+0x27C` bit 9, else `rec+0x25C`) and its capacity (`rec+0x210/212`,
+  doubled for equip `0x42B..0x42E` with bit 20, halved with bit 19), xflag
+  `Mag` (bit 4). Sent whenever the copy runs `partner_drive=native`.
+- **The mirror** (`partner_input_hook.cpp` MirrorMag) runs in block 1's drain
+  window before the job, on the thread of the gun update, under a native Arm
+  with `partner_native_gun=1` (fire on or off). On a FIRE or RELOAD press
+  edge of the drain's view, or when the remote's (mag, cap) changed, it
+  re-validates the gun prim (vtable `0x23B3E80`, `prim+8 == blk1`,
+  `prim+0x58 == rec`), refuses a full-magazine gun (bit 28), a non-gun class
+  and a capacity outside 1..999, and writes `partner_native::MirrorMagazine`
+  into the live magazine field (`0x25E` or `0x25C`, as the ammo setter
+  `0x1058ABF` does) only when it differs: full stays full (no reload), empty
+  stays empty, anything between maps into 1..cap-1 (rounded up), and a FIRE
+  edge never leaves 0. A fault disables it until MissionStart.
+- The ammo experiment (`MGS_LOCAL_STOCK46_AMMO_TEST`) is superseded by the
+  mirror; it stays research-only and is not used by the weapons scenario.
+
+### Loadout mirroring
+
+- **Sender** (pure reads, at most once per second): `vars.weapons[0..2]`
+  (u16 at vars+0x548, registration `0x99B0BA`, `0x8070006` = u16[6]),
+  `customizedWeapon[0..2]` (vars+0xB06) and `chimeraParts` (u8[36] at
+  vars+0xB30). A slot's base id is the equip id itself below 649, else the
+  lowest stock id whose GunBasic recipe (`0x2C25C50 + (row-1)*12`, row =
+  packed>>6 of the type table `0x2A70920+8+id*2`) has the slot's receiver
+  (`chimeraParts[i*12]`); the tables count only after the stock46 sanity
+  checks (type table vtable `0x22AD180`, packed 46 == `0x6244`, row 393 == the
+  stock46 recipe). The manifest (`partner_equip_wire`, channel 2, latest
+  mode) gets a new revision on change and is resent after a new link session
+  (`partner_equip=sent; rev=..; base=..; alias=..; receiver=..; tables=..`);
+  the v4 frame names the revision (`equip_rev`).
+- **Receiver**: stores it (`partner_equip=manifest; ...`) and logs the apply
+  verdict for the back slot against instance 1's loaded equip
+  (`partner_equip=apply; ...; result=already|unsupported|no_weapon|unknown;
+  writer=stock46`). Only stock46 is qualified to load on body 1; the
+  generalized writer (any equip id) and a generalized preload remain open
+  (each needs its own native qualification; replacing a filled slot was never
+  qualified).
+
+### Telemetry and logs
+
+state.json `native` gains: `gun` (`fields_ok`, `cap`, `mag`, `stock`,
+`class`, `b3d5`, `slot`, `noreload`, `b20`, `can_reload`, `gate`, and
+`body_equip`), `fire` (`mode`, `installed`, `live`, `armed`, `effective`,
+`refused`, `suppressed`, `passed`, `passed_player`, `owner_disarmed`,
+`suppressed_per_s`, `census`), `mag` (`remote`, `remote_cap`, `local`,
+`local_cap`, `writes`, `refused`, `fire_edges`, `reload_edges`, `cap`,
+`written`, `last`, `faulted`), `leak` (`shot_count` = the viewer's
+`vars.playerShootCountInMission`, `shot_leaks` = drains whose job changed it,
+`reload_drains`) and `equip` (`tx_rev`, `tx_base`, `tx_alias`, `tables_ok`,
+`rx_base`, `rx_alias`, `apply`); the ring gains `mag`. Log lines:
+`partner_fire=installed|refused`, `partner_fire=live|masked; reason=..`, the
+1 Hz `partner_fire; suppressed=..; ...` while counts change,
+`partner_fire_census; ...`, `partner_native_gun; ...` with the record fields,
+`partner_equip=sent|manifest|apply`.
+
+### Proof (hidden worker; coordinator only)
+
+`pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-native-weapons.txt -PartnerProfile native -NativeStage gun -BuildProfile research`
+
+The scenario header lists the evidence per section (aim, single shot, held
+fire, reload aiming/holstered, weapon switch 1/2, crouched fire, both
+directions, leak captures, loadout, census, noise record).
+
 ## Configuration
 
 lab.ini (`native/lab_config.cpp`, LabCommon key table):
@@ -125,34 +257,38 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_input_local` | main, all |
 | `partner_native_aim` | off, look, lookcam |
 | `partner_native_gun` | 0, 1 (HOLD 0x8 + RELOAD 0x40) |
-| `partner_native_fire` | 0, 1 (FIRE 0x10, only with gun) |
+| `partner_native_fire` | 0 (off), visual (= 1: FIRE 0x10 only with gun and a live owner filter; never real partner bullets) |
 | `partner_native_steer_deg` | 15 (0..30, 0 = no steering) |
 | `partner_native_trim_pct` | 0 (0..10) |
 
 Play mode forces legacy/off and sets `kPlayRefusedNativeDrive` (0x10000); in
 play mode a partner.trigger `drive=native` or `defer=census|on` is refused too
 (`partner_native=trigger_refused; reason=play`), the trigger's other keys apply.
-partner.trigger: `drive= defer= local= naim= ngun= nfire= steer=`.
+partner.trigger: `drive= defer= local= naim= ngun= nfire=0|off|1|visual steer=`.
 
 To enable (lab only), on both copies: the animated partner settings plus
 `partner_drive=native partner_input_send=1 partner_input_hook=1 partner_input_hold=own
 partner_input_words=hpr partner_input_wrap=window partner_input_cam=sandbox
 partner_input_local=main partner_recon=track partner_input_slot=body
 partner_input_defer=census|on partner_input_mask=0x2200006 partner_native_aim=off`
-(gun stage: mask `0x220004E`, `partner_native_gun=1 partner_native_aim=look
-partner_input_triggers=1 partner_input_rstick=1`). `Get-WorkerPartnerSettings`
+(gun stage: mask `0x220005E`, `partner_native_gun=1 partner_native_fire=visual
+partner_native_aim=look partner_input_triggers=1 partner_input_rstick=1`; the
+worker gate admits the gun stage with mask `0x220004E` and fire off, or mask
+`0x220005E` with fire visual). `Get-WorkerPartnerSettings`
 (tools/worker/WorkerSessionCommon.psm1) is the source of truth;
 `Play-OfflineCoop.ps1 -Native` opts into the loco stage.
 
 ## Wire
 
 - Input frame v3 (100 bytes): v2 plus the sender's look angles, `CAM+0x270/+0x274`,
-  the `PP+0x14` heading, xflags, inv slot and manifest revision. Sent only when
-  the sender runs `partner_drive=native` (both copies must). A receiver without
-  v3 look refuses the look write with `look_refused=no_v3`.
-- Equipment manifest (`partner_equip_wire`, reliable channel 2): codec, receiver
-  store and the always-on drain are implemented; the sender (a Lua
-  `MGS_COOP_EQUIP_V1` receipt) is not yet (W2 research).
+  the `PP+0x14` heading, xflags, inv slot and manifest revision. A receiver
+  without v3 look refuses the look write with `look_refused=no_v3`.
+- Input frame v4 (104 bytes, "Weapons"): v3 plus the sender's magazine and
+  capacity (xflag `Mag`). Sent whenever the sender runs
+  `partner_drive=native` (both copies must run the same build).
+- Equipment manifest (`partner_equip_wire`, reliable channel 2): the sender
+  is native pure reads of vars (see "Loadout mirroring"); the receiver stores
+  it and logs the apply verdict.
 
 ## Telemetry
 
@@ -178,7 +314,7 @@ evidence per stage).
 | S2 | loco + `partner_input_local=all` (gate change) | only if S1 stance/actions fail |
 | S3a | `-NativeStage gun -BuildProfile research` | gun bit18 and node active within 300 ms of aiming, aim_match; leak-aim clean; CamSub/dirty bits recorded; no host camera/zoom/HUD disturbance |
 | S3a-r | as S3a with `-AmmoExperiment` (after its own qualification) | reload visible, no fallback |
-| S3b | `partner_native_fire=1` (gate change) | fire-policy decision; aim error measured |
+| S3b | `partner-native-weapons.txt` with `-NativeStage gun -BuildProfile research` (gun stage = visual fire) | see "Weapons": suppressed shots, mirror writes, reload bit, no leaks, manifest/apply lines |
 
 ## Known risks and open items
 
@@ -191,7 +327,14 @@ evidence per stage).
   `0x5020E975DFD` sub-controller are not sandboxable (S3a decides).
 - `aim_err_mdeg` and `body_equip` stay null: their readers are not qualified.
 - The ammo experiment (`MGS_LOCAL_STOCK46_AMMO_TEST`, research only) changes a
-  qualified native call's arguments (stock 210 / ammo 30) and needs its own run.
+  qualified native call's arguments (stock 210 / ammo 30); the magazine mirror
+  supersedes it (never combine them in a weapons run).
+- Weapons (untested at runtime): the shot noise of body 1's visual shots is
+  not filtered (census only); projectile weapons are not filtered (body 1 only
+  carries stock46); the magazine mirror writes instance 1's own record (a
+  wrong rule shows as a refused or faulted mirror, never a write elsewhere);
+  only stock46 can be loaded on body 1 (the manifest's other weapons log
+  `result=unsupported`).
 - No test asserts mechanically that no CodeGate caller runs after a lazy
   install; today CodeGate runs once at configure and `partner_upper_probe::Install`
   calls it there too, before any partner install.
