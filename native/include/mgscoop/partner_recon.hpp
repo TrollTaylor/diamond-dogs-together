@@ -265,6 +265,12 @@ struct State {
 void Reset(State& state) noexcept;
 
 Out Step(State& state, const In& in, const Params& params) noexcept;
+// Native puppet preset (docs/native-puppet.md 8.2): steering is the main
+// corrector, nudges are capped low (moving/idle 300 mm/s, prone 150), snaps
+// only at 3 m held 300 ms moving / 2 m held 1 s idle, the runaway pin is a
+// safety net (1500 mm/s, 2 m), and stale input never pins (the arbiter leaves
+// after 1000 ms of stale input). Everything else stays `base`.
+Params NativeParams(const Params& base) noexcept;
 
 // Helpers (also used by tests): wrap radians to (-pi, pi]; the exponential
 // smoothing factor 1 - exp(-dt/tau).

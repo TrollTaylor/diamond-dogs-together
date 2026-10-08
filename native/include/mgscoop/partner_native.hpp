@@ -20,6 +20,7 @@
 //     body epoch bumped; then fallback, or latched after kLatchFallbacks
 //     fallbacks in one mission (until MissionStart or a drive=native trigger).
 #include <cstddef>
+#include <climits>
 #include <cstdint>
 #include "mgscoop/lab_config.hpp"
 
@@ -198,5 +199,48 @@ inline void Push(Ring& ring, const RingEntry& entry) noexcept {
 inline const RingEntry& At(const Ring& ring, std::size_t i) noexcept {
     return ring.entries[(ring.head + kRing - ring.count + i) % kRing];
 }
+
+// --- Telemetry (driver-owned POD, copied into the worker state.json "native") --
+// Rates are per second over the driver's last ~1 s interval (per_s_valid
+// false before the first interval). kNull marks an unread signed value.
+inline constexpr std::int32_t kNull = INT32_MIN;
+struct Telemetry {
+    bool configured;
+    Mode mode;
+    char reason[32];
+    std::uint64_t since_ms;
+    std::uint32_t fallbacks;
+    bool latched;
+    // Deferral.
+    PartnerDefer setting;
+    bool h0, h1, h2, wrap, thread_ok, armed;
+    std::uint32_t batch_thread, hook_thread, lua_thread, batch_threads_seen;
+    bool per_s_valid;
+    std::uint32_t batches, w50_b0_s0, w50_b1_s0, w50_subs, w50_inline, ret_other, deferred, drains0, drains1, windowed, unwindowed;
+    std::uint32_t lost, gate_closed, torn, entry_changed, dup, stale_frame, wrap_in_batch;
+    std::uint32_t id1_pass, scope_unbalanced, drain_us_max, spin_max, faults, fault_code;
+    char fault_phase[12];
+    // Wrap census of block 1 (per second) and the look write.
+    std::uint32_t svc28_b1, svc28_b1_same, svc28_b1_nested, walk7_b1, look_writes, look_skipped_rec;
+    char look_refused[12];
+    // Input.
+    bool input_live;
+    std::uint32_t input_age_ms, input_version, held, mask, latch27c;
+    std::int32_t lx, ly, cam_cdeg_remote, cam_cdeg_host, heading_err_mrad, steer_mdeg, mag_scale_pct;
+    // Body vs remote (animation arrays of instance 1 and the remote's anim state).
+    bool body_valid;
+    std::uint32_t act, stance, speed, speed_mmps, remote_act, remote_stance, remote_speed, remote_speed_mmps;
+    std::uint32_t stance_match_pct, move_match_pct;
+    // Reconciliation.
+    char recon_mode[12];
+    std::int32_t err_mm, along_mm, cross_mm, dy_mm;
+    std::uint32_t nudges, snaps, places;
+    bool runaway;
+    // Gun.
+    bool gun_enabled, gun_read_ok, node_active, aim_match, ammo_experiment;
+    std::uint32_t gun3c0, mode2c1, remote_flags, remote_equip, manifest_rev;
+    std::int32_t body_equip, aim_err_mdeg;
+    Ring ring;
+};
 
 } // namespace mgscoop::partner_native
