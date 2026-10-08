@@ -1,6 +1,11 @@
 #include "mgscoop/worker_debug.hpp"
 #include <charconv>
+#include <cmath>
+#include <cstdarg>
+#include <cstdio>
 #include <cstring>
+#include "mgscoop/lab_config.hpp"
+#include "mgscoop/partner_native.hpp"
 
 namespace mgscoop::worker_debug {
 bool Parse(const char* text, std::size_t size, const char* run, const char* role, Request& out) noexcept {
@@ -34,23 +39,9 @@ bool IsMenuText(const char* text) noexcept { return text && std::strncmp(text,"m
 bool Timely(const Request& request,std::uint64_t now,std::uint64_t previous) noexcept {
     return request.sequence>previous && request.expires>now && request.expires-now<=15000;
 }
-}
-
-#if defined(_WIN32) && defined(MGS_BACKGROUND_WORKER) && MGS_BACKGROUND_WORKER
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <windows.h>
-#include <strsafe.h>
-#include <cstdarg>
-#include <cmath>
-#include "mgscoop/debug_menu.hpp"
-#include "mgscoop/debug_overlay.hpp"
-#include "mgscoop/worker_scenario.hpp"
-namespace mgscoop::worker_debug {
+// The state.json writer (worker builds) and its "native" member (every build:
+// unit-tested for JSON validity).
 namespace {
-std::uint64_t last_poll{}, last_sequence{}, accepted_sequence{};
-bool last_queued{}, queued_menu{};
-std::uint32_t queued_ref{};
 struct Json {
     char* bytes{}; std::size_t limit{}, used{}; bool ok{true};
     void Add(const char* format, ...) noexcept {
@@ -90,7 +81,9 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
             n.batches,n.w50_b0_s0,n.w50_b1_s0,n.w50_subs,n.w50_inline,n.ret_other,n.deferred);
         j.Add("\"drains0\":%u,\"drains1\":%u,\"windowed\":%u,\"unwindowed\":%u,\"lost\":%u,\"gate_closed\":%u,\"torn\":%u,",
             n.drains0,n.drains1,n.windowed,n.unwindowed,n.lost,n.gate_closed,n.torn);
-        j.Add("\"entry_changed\":%u,\"dup\":%u,\"stale_frame\":%u,\"wrap_in_batch\":%u}",n.entry_changed,n.dup,n.stale_frame,n.wrap_in_batch);
+        j.Add("\"entry_changed\":%u,\"dup\":%u,\"stale_frame\":%u,\"wrap_in_batch\":%u,",n.entry_changed,n.dup,n.stale_frame,n.wrap_in_batch);
+        j.Add("\"nested\":%u,\"foreign\":%u,\"unwound\":%u,\"drain_block\":%u,\"drain_in_batch\":%u}",
+            n.nested,n.foreign,n.unwound,n.drain_block,n.drain_in_batch);
     }
     j.Add(",\"id1_pass\":%u,\"scope_unbalanced\":%u,\"drain_us_max\":%u,\"spin_max\":%u,\"faults\":%u,\"fault_phase\":",
         n.id1_pass,n.scope_unbalanced,n.drain_us_max,n.spin_max,n.faults);
@@ -127,6 +120,29 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
     }
     j.Add("]}");
 }
+} // namespace
+std::size_t FormatNativeJson(const partner_native::Telemetry& telemetry, char* out, std::size_t capacity) noexcept {
+    if(!out || !capacity) return 0;
+    Json j{out,capacity};
+    NativeJson(j,telemetry);
+    if(!j.ok){out[0]=0;return 0;}
+    return j.used;
+}
+}
+
+#if defined(_WIN32) && defined(MGS_BACKGROUND_WORKER) && MGS_BACKGROUND_WORKER
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <strsafe.h>
+#include "mgscoop/debug_menu.hpp"
+#include "mgscoop/debug_overlay.hpp"
+#include "mgscoop/worker_scenario.hpp"
+namespace mgscoop::worker_debug {
+namespace {
+std::uint64_t last_poll{}, last_sequence{}, accepted_sequence{};
+bool last_queued{}, queued_menu{};
+std::uint32_t queued_ref{};
 // Owner thread only: one static 64 KB buffer instead of a large game-thread stack frame
 char json_bytes[65536]{};
 void Publish(const worker_scenario::RunContext& c) noexcept {
