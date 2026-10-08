@@ -366,8 +366,12 @@ void RawText(const RAWKEYBOARD& key) noexcept {
         if (text[i] >= 32) { Push(WM_CHAR, text[i], 0); characters.fetch_add(1, std::memory_order_relaxed); }
     }
 }
+std::atomic<ShutdownFn> shutdown_handler{nullptr};
+std::atomic<bool> shutdown_fired{false};
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT id, WPARAM wp, LPARAM lp) noexcept {
     const WNDPROC previous = original_wndproc.load(std::memory_order_acquire);
+    if ((id == WM_CLOSE || id == WM_DESTROY || (id == WM_ENDSESSION && wp)) && !shutdown_fired.exchange(true, std::memory_order_acq_rel))
+        if (const ShutdownFn fn = shutdown_handler.load(std::memory_order_acquire)) fn();
     if (worker_scenario::Requested() && InputMessage(id)) {
 #if MGS_BACKGROUND_WORKER
         if (id == WM_INPUT && SyntheticToken(static_cast<std::uintptr_t>(lp)) && previous)
@@ -1296,6 +1300,8 @@ BOOL CALLBACK InstallOnce(PINIT_ONCE, PVOID, PVOID*) noexcept {
     return TRUE;
 }
 } // namespace
+
+void SetShutdownHandler(ShutdownFn fn) noexcept { shutdown_handler.store(fn, std::memory_order_release); }
 
 bool CapturingInput() noexcept {
     if (worker_scenario::Requested()) return false;

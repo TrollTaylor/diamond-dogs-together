@@ -48,6 +48,7 @@
 #include "mgscoop/partner_upper_phase_observer.hpp"
 #include "mgscoop/partner_upper_manual_idle.hpp"
 #include "mgscoop/crash_probe.hpp"
+#include "mgscoop/debug_overlay.hpp"
 #include "mgscoop/early_patches.hpp"
 #include "mgscoop/world_link.hpp"
 #include "mgscoop/world_receipt.hpp"
@@ -950,6 +951,22 @@ void PartnerMissionEnd() noexcept {
     partner_mission = 0;
     mgscoop::partner_net::PublishPartnerState(false, false, 0);
     mgscoop::crash_probe::SetContext(partner_driver.settings.stage, 0, PartnerCtxFlags());
+}
+
+// The game window is closing (debug_overlay's WndProc, first WM_CLOSE/WM_DESTROY/
+// WM_ENDSESSION): disarm the per-mission native hooks exactly as a MissionEnd
+// does, before the engine destroys the objects the deferred block-1 job, the
+// drain window and the rate/magazine mirrors name. Main (mission) thread only;
+// a run that intermittently crashed at close (guest, 0x21E72 write to 0x38)
+// had the native drive still armed.
+void PartnerShutdown() noexcept {
+    if (!partner_on || !partner_mission) return;
+    if (mission_thread && mission_thread != GetCurrentThreadId()) {
+        LogFormat("partner_shutdown=skipped; reason=thread; thread=%lu; mission_thread=%lu\r\n", GetCurrentThreadId(), mission_thread);
+        return;
+    }
+    Log("partner_shutdown=disarm; reason=window_close\r\n");
+    PartnerMissionEnd();
 }
 
 // World sync install (lab.ini world>=1; partner=1 and net=1 already hold).
@@ -2698,6 +2715,7 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         mgscoop::PartnerAsetName(partner_driver.settings.aset), mgscoop::PartnerResetName(partner_driver.settings.reset),
                         mgscoop::PartnerLookName(partner_driver.settings.look), partner_addresses.t_vtable ? 1u : 0u);
                     if (labc.crash_probe) mgscoop::crash_probe::Install(base, span, Log);
+                    mgscoop::debug_overlay::SetShutdownHandler(&PartnerShutdown);
                     if (labc.debug_soldier_warp) {
                         // Read-only byte gate; nothing is called until a host "spawn_enemy here"
                         // or a guest spawn-sync grant (GuestWarpReceipt).

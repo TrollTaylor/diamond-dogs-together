@@ -5,6 +5,11 @@
 namespace mgscoop::debug_overlay {
 // Called after the real DirectInput factory succeeds, outside loader lock.
 void Install() noexcept;
+// Called once, on the window's thread, at the game window's first WM_CLOSE /
+// WM_DESTROY / WM_ENDSESSION (before the game handles it), so per-mission
+// native hooks can disarm before the engine tears its objects down.
+using ShutdownFn = void (*)() noexcept;
+void SetShutdownHandler(ShutdownFn fn) noexcept;
 // Also available to game-owned input wrappers. False on normal launches.
 bool CapturingInput() noexcept;
 
