@@ -18,6 +18,7 @@
 #include <vector>
 #include "mgscoop/partner_defer.hpp"
 #include "mgscoop/partner_input_hook.hpp"
+#include "mgscoop/partner_player.hpp"
 #include "partner_player_contract.hpp"
 
 namespace {
@@ -325,8 +326,17 @@ void TestInstall() {
     Image img;
     pd::detail::ResetForTest();
     g_log.clear();
+    // The code gate covers the H1/H2 sites, so it must run once per process
+    // before any lazy install (the observer runs it at configure): before the
+    // install it passes, after it the patched sites no longer match.
+    std::uintptr_t mismatch = 0;
+    Check(mgscoop::partner_player::CodeGate(reinterpret_cast<void*>(img.base), img.span, mismatch) && mismatch == 0,
+          "the code gate passes on the pristine contract image");
     Check(pd::Install(reinterpret_cast<void*>(img.base), pd::Mode::census, &Log) == nullptr && pd::H2Installed() && pd::H1Installed(),
           "install succeeds on the contract bytes");
+    Check(!mgscoop::partner_player::CodeGate(reinterpret_cast<void*>(img.base), img.span, mismatch) &&
+          (mismatch == c::batch_block_rva || mismatch == c::go_vtable_rva),
+          "after the install the gate sees the patched H2 block or H1 slot (never re-run it after an install)");
     Check(Get<std::uintptr_t>(img.base + c::job_slot_rva) == Addr(pd::detail::W50Entry()), "H1 slot holds W50");
     std::int32_t rel = 0;
     std::memcpy(&rel, img.mem + c::batch_site + 1, 4);

@@ -3070,6 +3070,20 @@ void TestNativeEnterAndLeave() {
     Check(s.driver.mission.native_out.mode == pn::Mode::active && s.fake.Calls("xform:") == xforms && s.played.size() == plays,
           "active: the native drive owns the body (no xform, no clips)");
     Check(s.fake.Count("partner_defer; batches=") >= 1 && s.fake.Count("partner_native; mode=active;") >= 1, "1 Hz native lines");
+    // Steering never bumps the Arm generation (SameArm ignores it).
+    {
+        const std::uint32_t gen = s.fake.arms.back().gen;
+        s.driver.mission.steer_rad = 0.2;  // as if the remote track drifted left
+        s.fake.sample.x = 1.5f;            // the target moves; the body stays
+        for (int i = 0; i < 10; ++i) s.N();
+        Check(s.fake.arms.back().enabled && s.fake.arms.back().gen == gen, "steering changes never bump the Arm gen");
+        s.fake.sample.x = 1.0f;
+    }
+    // Telemetry for the worker state.json.
+    const auto& tele = s.driver.mission.tele;
+    Check(tele.configured && tele.mode == pn::Mode::active && tele.armed && tele.h1 && tele.h2 && tele.thread_ok &&
+          tele.setting == mgscoop::PartnerDefer::on && tele.per_s_valid && tele.deferred > 0 && tele.ring.count > 0 &&
+          std::strcmp(tele.reason, "ok") == 0, "telemetry populated (mode, deferral, rates, ring)");
     // A deferral fault: leave at once (defer off -> window off -> dm=map rearm).
     s.fake.defer.faulted = true;
     s.fake.defer.fault_phase = 1;
