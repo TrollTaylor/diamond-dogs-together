@@ -501,6 +501,44 @@ void TestAccumulate() {
     Check(!pi::ValidPacket(bad), "v1 with v2 fields refused");
 }
 
+// Native puppet: Compose's steer_rad (added to the stick direction, positive =
+// left = world heading up) and mag_scale (radius and PP+0x10 scaled, clamped).
+void TestComposeSteer() {
+    pi::Config c = Cfg();
+    c.yaw_sign = 0;
+    pi::Sample live{};
+    live.valid = true; live.age_ms = 10; live.seq = 1;
+    live.packet.version = 2; live.packet.flags = pi::Flag::Valid;
+    live.packet.ly = -32767; live.packet.lmag = 65535;
+    live.packet.ldir = static_cast<std::int16_t>(std::lround(kPi * 10000));
+    pi::EdgeState edge{};
+    const pi::Injection base = pi::Compose(c, live, 0, pi::Overlay{}, edge);
+    edge = pi::EdgeState{};
+    const pi::Injection same = pi::Compose(c, live, 0, pi::Overlay{}, edge, 0.0, 1.0);
+    Check(same.lx == base.lx && same.ly == base.ly && same.mag == base.mag && same.heading == base.heading,
+          "defaults reproduce the legacy injection");
+    edge = pi::EdgeState{};
+    const double steer = 10.0 * kPi / 180.0;
+    const pi::Injection left = pi::Compose(c, live, 0, pi::Overlay{}, edge, steer, 1.0);
+    Check(Near(pi::NormalizeRadians(left.dir - base.dir), steer, 1e-3), "steer adds to the stick direction");
+    Check(Near(pi::NormalizeRadians(left.heading - base.heading), steer, 1e-3), "a positive steer increases the world heading (left)");
+    edge = pi::EdgeState{};
+    const pi::Injection slow = pi::Compose(c, live, 0, pi::Overlay{}, edge, 0.0, 0.9);
+    Check(Near(slow.mag, 0.9, 1e-3) && Near(std::sqrt(slow.lx * slow.lx + slow.ly * slow.ly), 0.9, 1e-3), "mag_scale scales radius and PP+0x10");
+    edge = pi::EdgeState{};
+    const pi::Injection big = pi::Compose(c, live, 0, pi::Overlay{}, edge, 0.0, 3.0);
+    Check(big.mag <= 1.0f && std::sqrt(big.lx * big.lx + big.ly * big.ly) <= 1.0001f, "mag_scale clamps to 1");
+    edge = pi::EdgeState{};
+    const pi::Injection nanv = pi::Compose(c, live, 0, pi::Overlay{}, edge, std::nan(""), std::nan(""));
+    Check(nanv.lx == base.lx && nanv.mag == base.mag, "non-finite steer/scale ignored");
+    // Not live: the stick is neutral whatever the steer.
+    pi::Sample stale = live;
+    stale.age_ms = 5000;
+    edge = pi::EdgeState{};
+    const pi::Injection none = pi::Compose(c, stale, 0, pi::Overlay{}, edge, steer, 0.5);
+    Check(none.lx == 0.0f && none.ly == 0.0f && none.mag == 0.0f, "stale input: no stick despite steering");
+}
+
 } // namespace
 
 int main() {
@@ -516,6 +554,7 @@ int main() {
     TestBindings();
     TestSenderEdges();
     TestAccumulate();
+    TestComposeSteer();
     std::printf("%u partner input checks passed: effective pad, dir check, quantize round trip/clamps, compose "
                 "(pass/neutral/stick/net, yaw, stale, edges, net word, mask, overlay), tap/press timers, heading, hpr edges and "
                 "sub-sample taps, stall grace/silent release, resync after a disarm, level-only wrap windows, hold classifier replica and net codes, key bindings, sender edge sets, receiver accumulation\n", checks);

@@ -176,8 +176,11 @@ struct Injection {
 // between two samples (sample edge set, or tap12) and is in neither this nor
 // the previous window's held is injected for exactly this window (the next
 // window then carries its release edge).
+// Native puppet (docs/native-puppet.md 5.6): steer_rad is added to the stick
+// direction of a live net sample (positive = left = world heading up) and
+// mag_scale scales its radius and PP+0x10 magnitude (clamped to 0..1).
 Injection Compose(const Config& config, const Sample& sample, std::int32_t host_cam_cdeg, Overlay overlay,
-                  EdgeState& edge) noexcept;
+                  EdgeState& edge, double steer_rad = 0.0, double mag_scale = 1.0) noexcept;
 // wrap(cam + atan2(lx, ly) - pi) in radians, atan2(0, 0) = 0 (PP+0x14).
 double Heading(double cam_rad, float lx, float ly) noexcept;
 // The level-only copy of a window's injection for the wrap windows of the
@@ -186,6 +189,24 @@ double Heading(double cam_rad, float lx, float ly) noexcept;
 // key-manager press/release answers, tap12), so an edge consumer in a wrapped
 // sub-phase never sees an edge twice.
 Injection LevelOnly(const Injection& injection, const Config& config) noexcept;
+
+// --- Native puppet: one frame injection, consumed once per consumer ----------
+// The main window (phase 8) composes the frame injection; each consumer that
+// runs block-1 code in the same frame (the drains of the two batch passes, the
+// phase-7 walk; walk11 only runs in frames without drains) gets its edges on
+// first use and the level afterwards, so every edge is delivered once per
+// consumer as the game's own once-per-frame latch would.
+enum class Consumer : std::uint8_t { main, drain0, drain1, walk7, walk11 };
+inline constexpr std::size_t kConsumers = 5;
+// An injection older than this is not replayed: the consumer gets Neutral().
+inline constexpr std::uint64_t kFrameMaxAgeMs = 100;
+enum class ConsumerView : std::uint8_t { full, level, neutral };
+// write stays, every level, stick, edge and word is zero (stale set).
+Injection Neutral(const Injection& frame) noexcept;
+// age_ms > kFrameMaxAgeMs: Neutral; frame_id != last_used: the full frame
+// (last_used = frame_id); otherwise LevelOnly. `view` (optional) tells which.
+Injection ForConsumer(const Injection& frame, std::uint32_t frame_id, std::uint32_t& last_used, std::uint64_t age_ms,
+                      const Config& config, ConsumerView* view = nullptr) noexcept;
 
 // --- Hold classifier replica (hold=own) --------------------------------------
 // src->vt+0x10 = 0x434ED0(src, btn, frames), verified: bit = 1 << (btn & 31);
