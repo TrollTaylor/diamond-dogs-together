@@ -92,8 +92,9 @@ const char* LookRefusalName(LookRefusal refusal) noexcept;
 // (the live sample carries no magazine), prim (the gun prim chain changed),
 // full (rec+0x3C0 bit 28: the getter ignores the field), cls (not a gun
 // class), cap (capacity outside 1..999), fault (a read/write faulted: the
-// mirror is off until MissionStart).
-enum class MagRefusal : std::uint8_t { none, off, no_v4, prim, full, cls, cap, fault };
+// mirror is off until MissionStart), leak (a drain's job changed the viewer's
+// weapon/ammo vars: the mirror is off until MissionStart).
+enum class MagRefusal : std::uint8_t { none, off, no_v4, prim, full, cls, cap, fault, leak };
 const char* MagRefusalName(MagRefusal refusal) noexcept;
 struct NativeStats {
     std::uint32_t frames;          // frame injections composed (main windows under a native Arm)
@@ -138,12 +139,16 @@ struct NativeStats {
     std::uint32_t mag_writes, mag_refused, mag_fire_edges, mag_reload_edges;
     MagRefusal mag_last;
     std::uint32_t mag_remote, mag_remote_cap, mag_cap, mag_written;
-    bool mag_faulted;
+    bool mag_faulted, mag_leak_off;  // mag_leak_off: an ammo leak turned the mirror off until MissionStart
     // Leak check: drain windows whose job changed the viewer's
     // vars.playerShootCountInMission (vars+0x144; never written by us), its
     // value after the last drain (0xFFFFFFFF unread), and drains after which
     // instance 1's reload request (rec+0x3C0 bit 20) was set.
     std::uint32_t shot_leaks, shot_count, reload_drains;
+    // The same for the viewer's weapon/ammo vars block (vars+0x548..+0x670):
+    // drain windows whose job changed it, and its FNV-1a digest after the
+    // last drain (0 unread).
+    std::uint32_t ammo_leaks, ammo_digest;
 };
 
 // Drained by the driver. Counters are process-lifetime totals (the driver

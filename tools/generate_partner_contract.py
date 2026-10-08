@@ -369,6 +369,18 @@ SITES = [
     (0x1303432, '488b8ea8000000488b01ff10', 'model group shot: pellet-loop RequestBullet (call at 0x130343C, rdx = rdi)'),
     (0x1303CD4, '807c244000752d807c24410474260fb7472a0f2807488b8ea000000066c745e04501660f7f45d0668945e2488b01488d55d0ff10',
      'model group shot: unsuppressed shot noise {pos, 0x145, owner} through group+0xA0 vt+0 (not filtered; census only)'),
+    # The other shot request builders (asserted complete for the vt+0x138 queue below) stamp a typed owner,
+    # so only player instance 1 itself can carry the filter's owner id 1.
+    (0x13A18B2, 'b9ff0100000f2945c7660f7f4dd76623c133ff48c7450bffffffff48c74513ffffffffb90004000048c745e700000000660bc1',
+     'soldier shot request: owner = (id & 0x1FF) | 0x400 (type 2, never a player id)'),
+    (0x13A190E, '668945f1', 'soldier shot request: the typed owner at request+0x2A ([rbp-0x39]+0x2A)'),
+    (0x1453329, 'b9ff01000048c745fbffffffff48c74503ffffffff0f2945b7660f7f4dc70fb7c64c897dd76644897ddf6623c1b900040000c745e3ffff0000660bc1',
+     'second soldier shot request: owner = (id & 0x1FF) | 0x400'),
+    (0x1453385, '668945e1', 'second soldier shot request: the typed owner at request+0x2A ([rbp-0x49]+0x2A)'),
+    (0xEDABB9, '410fb7b068010000', 'system shot request: the owner type = word [this+0x70]+0x168'),
+    (0xEDABD2, '66c1e609', 'system shot request: type << 9'),
+    (0xEDABE6, '660bf1', 'system shot request: | (index & 0x1FF)'),
+    (0xEDAC19, '668974247a', 'system shot request: the typed owner at request+0x2A ([rsp+0x50]+0x2A)'),
     (0x1041180, '0fb6bac0030000', 'shoot 0x1041110: edi = byte rec+0x3C0'),
     (0x10411D8, '4080e701', 'shoot: dil = rec+0x3C0 bit 0 (the local player)'),
     (0x10411EC, '40887c2444', 'shoot: [rsp+0x44] = local bit'),
@@ -415,6 +427,9 @@ SITES = [
     (0x99C412, '4c8b0507a527024981c0300b0000', 'vars registration: chimeraParts at vars+0xB30'),
     (0x99C449, 'c744c8101fdde3ccc744c81424000508', 'vars registration: chimeraParts u8[36]'),
     (0x998DE4, '4c8b0535db27024981c044010000', 'vars registration: playerShootCountInMission at vars+0x144 (leak check)'),
+    # The viewer's weapon/ammo vars block vars+0x548..+0x670 (read-only leak digest; contiguity asserted below).
+    (0x99B839, '4c8b05e0b027024981c014060000', 'vars registration: the last weapon/ammo block member at vars+0x614'),
+    (0x99B870, 'c744c810826b9ae1c744c8142e000708', 'vars registration: u16[46] at +0x614 (the block ends at +0x670)'),
     # Service root (read-only census of the noise interface).
     (0xBFEFAD, '488b05ecb80302', 'service root: *(0x2C3A8A0)'),
     (0xBFF050, '4883ec28e847ffffff488b40084883c428c3', 'service locator 0xBFF050 = *(root+8)'),
@@ -690,6 +705,47 @@ def nonlocal_shoot_reach():
     return seen
 
 
+def shot_owner_stamps():
+    """Every word store to request+0x2A in the 0x300 bytes before a
+    `call [rax+0x138]` whose r8 is `lea r8, [reg+disp]` (the equip/weapon shot
+    queue the model group's shot handler drains): the owner stamps of every
+    shot request builder that uses this queue."""
+    import re
+    import capstone
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
+    stamps = []
+    for s in pe.sections:
+        if s.Name.rstrip(b'\0').decode() != '.xtext':
+            continue
+        data, va = s.get_data(), s.VirtualAddress
+        i = data.find(b'\xff\x90\x38\x01\x00\x00')
+        while i >= 0:
+            site = va + i
+            ins = []
+            for back in range(0x300, 0x300 - 16, -1):
+                ins = list(md.disasm(rd(site - back, back + 6), IB + site - back))
+                if any(x.address - IB == site for x in ins):
+                    break
+            k = next((n for n, x in enumerate(ins) if x.address - IB == site), None)
+            lea = None
+            if k is not None:
+                for x in reversed(ins[max(0, k - 8):k]):
+                    if x.mnemonic == 'lea' and x.op_str.startswith('r8, '):
+                        lea = re.fullmatch(r'r8, \[(\w+)(?: ([+-]) (0x[0-9a-f]+|\d+))?\]', x.op_str)
+                        break
+            if lea:
+                reg = lea.group(1)
+                disp = int(lea.group(3), 0) * (-1 if lea.group(2) == '-' else 1) if lea.group(2) else 0
+                for x in ins[:k]:
+                    m = re.fullmatch(r'word ptr \[(\w+)(?: ([+-]) (0x[0-9a-f]+|\d+))?\], \w+', x.op_str)
+                    if x.mnemonic == 'mov' and m and m.group(1) == reg:
+                        d = int(m.group(3), 0) * (-1 if m.group(2) == '-' else 1) if m.group(2) else 0
+                        if d == disp + 0x2A:
+                            stamps.append(x.address - IB)
+            i = data.find(b'\xff\x90\x38\x01\x00\x00', i + 1)
+    return sorted(stamps)
+
+
 # Native weapons (docs/native-puppet.md "Weapons").
 def weapon_assertions():
     out = []
@@ -721,6 +777,35 @@ def weapon_assertions():
     need(section_of(0x2A70920) == '.data2' and section_of(0x2C25C50 + 0x1817) == '.data2',
          'both tables lie in writable image data (bounded reads)')
     need(rel_refs(0xBFEFA0, (0xE8,)).count(0xBFF054) == 1, 'the service locator calls the root getter')
+    # The weapon/ammo vars block the leak digest reads: the registrations from weapons (+0x548) to the u16[46]
+    # at +0x614 are contiguous (each offset + element size * count is the next offset) and end at +0x670.
+    import re
+    region = rd(0x99B0BA, 0x99B839 + 0x60 - 0x99B0BA)
+    chain, expect, last = [], 0x548, None
+    for m in re.finditer(rb'\x4c\x8b\x05(....)\x49\x81\xc0(....)', region, re.S):
+        rva = 0x99B0BA + m.start()
+        if rva > 0x99B839:
+            break
+        off = struct.unpack('<I', m.group(2))[0]
+        if off == last:
+            continue  # a scalar's second load of the same member (its accessor registration at 0x99B6E7)
+        last = off
+        kind_m = re.search(rb'\xc7\x44\xc8\x14(....)', region[m.end():m.end() + 0x60], re.S)
+        kind = struct.unpack('<I', kind_m.group(1))[0] if kind_m else 0
+        size = {0x0807: 2, 0x0805: 1}.get(kind >> 16)
+        chain.append(rva)
+        need(rip_target(rva, 7) == 0x2C16920 and off == expect and size is not None,
+             f'vars weapon/ammo registration {rva:#x}: offset {off:#x} (expected {expect:#x}), kind {kind:#x}')
+        if size is None:
+            break
+        expect = off + size * (kind & 0xFFFF)
+    need(len(chain) == 14 and chain[0] == 0x99B0BA and chain[-1] == 0x99B839 and expect == 0x670,
+         f'the weapon/ammo vars block is 14 contiguous registrations ending at +0x670: {[hex(x) for x in chain]}, {expect:#x}')
+    # The owner filter drops owner 1 only: the player shoot stamps id & 0x1FF (instance 1 = 1); every other
+    # builder of the shot queue stamps a typed owner (pinned sites above), so no soldier shot is ever dropped.
+    stamps = shot_owner_stamps()
+    need(stamps == [0xEDAC19, 0x1041225, 0x13A190E, 0x1453385],
+         f'the shot request owner stamps are the player shoot plus the three typed builders: {[hex(x) for x in stamps]}')
     return out
 
 failures = []
@@ -962,6 +1047,8 @@ w('inline constexpr std::uint32_t gun_class_shift=6, gun_class_mask=7, gun_class
 w('// vars = *(vars_slot_rva): loadout and the shoot-count leak check (registrations pinned below).')
 w('inline constexpr std::size_t vars_weapons=0x548, vars_customized=0xb06, vars_chimera=0xb30, vars_shoot_count=0x144;')
 w('inline constexpr std::size_t vars_weapons_count=6, vars_customized_count=3, vars_chimera_count=36;')
+w('// The viewer\'s weapon/ammo vars block (14 contiguous registrations, weapons .. u16[46] at +0x614): read-only leak digest.')
+w('inline constexpr std::size_t vars_ammo_begin=0x548, vars_ammo_end=0x670;')
 w('// Service root (read-only noise census): svc = *(*(0x2c3a8a0)+8); gm = *(svc+0x98), bullets = *(gm+0x218);')
 w('// the shot noise iface (group+0xa0) = *(*(svc+0xa8)+8).')
 w('inline constexpr std::uintptr_t service_root_rva=0x2c3a8a0;')

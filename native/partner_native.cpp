@@ -312,7 +312,8 @@ std::uint32_t MirrorMagazine(const MagIn& in) noexcept {
         if (out >= in.cap) out = in.cap - 1;  // not full stays reloadable (0 for a capacity of 1)
         if (out == 0 && in.cap > 1) out = 1;
     }
-    if (in.fire_edge && out == 0) out = 1;
+    // The remote fired a round: show it (never on a dry fire of an empty remote).
+    if (in.fire_edge && out == 0 && (in.remote_mag > 0 || in.remote_was_loaded)) out = 1;
     return out;
 }
 

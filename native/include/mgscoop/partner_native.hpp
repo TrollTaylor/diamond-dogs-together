@@ -222,12 +222,15 @@ bool GunReloadGate(const GunFields& gun, std::uint8_t b3d5) noexcept;
 // whether the partner can fire (magazine > 0) and reload (magazine <
 // capacity): the remote's (mag, cap) mapped onto the partner's capacity.
 // Full stays full, empty stays empty, anything between maps into
-// 1..cap-1 (rounded up); a FIRE press edge never leaves 0 (the remote fired a
-// round, so the partner shows it).
+// 1..cap-1 (rounded up). A FIRE press edge leaves 1 instead of 0 only when
+// the remote fired a round: it still has one (a partner capacity of 1) or
+// its previous magazine was loaded (the press spent its last round in the
+// same sample). A press on an already empty remote is a dry fire and stays 0.
 struct MagIn {
     std::uint16_t remote_mag, remote_cap;  // the sender's v4 fields (remote_cap 1..kMaxMagCap, mag <= cap)
     std::uint32_t cap;                     // the partner's GunCapacity (1..kMaxMagCap)
     bool fire_edge;
+    bool remote_was_loaded;                // the previous remote magazine the mirror acted on was > 0
 };
 inline constexpr std::uint16_t kMaxMagCap = 999;
 std::uint32_t MirrorMagazine(const MagIn& in) noexcept;
@@ -353,9 +356,14 @@ struct Telemetry {
     std::int32_t local_mag, local_mag_cap;
     std::uint32_t mag_writes, mag_refused, mag_fire_edges, mag_reload_edges, mag_cap, mag_written;
     char mag_last[8];
-    bool mag_faulted;
+    bool mag_faulted, mag_leak_off;  // mag_leak_off: an ammo leak turned the mirror off until MissionStart
     std::uint32_t shot_leaks, reload_drains;
     std::int64_t shot_count;
+    // The viewer's weapon/ammo vars block (vars+0x548..+0x670): drain windows
+    // whose job changed it (instance 1's reload must never touch the viewer's
+    // inventory) and its digest after the last drain (kNull unread).
+    std::uint32_t ammo_leaks;
+    std::int64_t ammo_digest;
     // Loadout: what this copy sends (manifest revision, base ids, aliases,
     // tables verified) and the apply verdict of the received manifest.
     std::uint32_t equip_tx_rev;

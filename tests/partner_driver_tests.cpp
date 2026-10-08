@@ -3323,11 +3323,38 @@ void TestNativeWeapons() {
         s.fake.gun.fields.flags27c = 0;
         Check(s.Until(pn::Mode::active, 9000), "active before body 1 drew a gun");
         Check(!s.driver.settings.fire_live && !(s.fake.arms.back().config.mask & 0x10u) && !s.fake.arms.back().mag_mirror &&
-              s.fake.Containing("partner_fire=masked; reason=weapon;") == 1, "no gun class yet: FIRE masked, no mirror");
+              s.fake.Containing("partner_fire=masked; reason=weapon;") == 1 && s.fake.fire_installs == 0,
+              "no gun class yet: FIRE masked, no mirror, the filter not installed");
         s.fake.gun.fields.flags27c = 1u << 6;
         s.N();
-        Check(s.driver.settings.fire_live && (s.fake.arms.back().config.mask & 0x10u) && s.fake.arms.back().mag_mirror,
-              "the first gun class: FIRE live and the mirror on");
+        Check(s.driver.settings.fire_live && (s.fake.arms.back().config.mask & 0x10u) && s.fake.arms.back().mag_mirror &&
+              s.fake.fire_installs >= 1 && s.fake.fire_owner == 1, "the first gun class: the filter installs, FIRE live and the mirror on");
+    }
+    {
+        // An owner id equal to the local instance's id is refused: the local player's shots are never dropped.
+        NativeSession s;
+        SetVisualFire(s);
+        Check(s.Until(pn::Mode::active, 9000) && s.driver.settings.fire_live, "active with visual fire (owner check)");
+        const unsigned installs = s.fake.fire_installs;
+        s.fake.state.ids[0] = 1;
+        s.N();
+        Check(!s.driver.settings.fire_live && s.fake.fire_installs == installs &&
+              s.fake.Containing("partner_fire=masked; reason=owner; owner=1;") == 1 && std::strcmp(s.driver.mission.tele.fire_refused, "owner") == 0,
+              "owner == the local instance's id: FIRE masked, the filter never armed for it");
+    }
+    for (const bool native : {true, false}) {
+        // With the native drive configured, a legacy input lever (a trigger's input=net while the native
+        // drive is not active) never passes FIRE whatever the mask; drive=legacy keeps its research mask.
+        Session s(3, mgscoop::PartnerApply::input, mgscoop::PartnerSource::net);
+        s.driver.settings.input = mgscoop::PartnerInput::net;
+        s.driver.settings.input_mask = 0x220005Eu;
+        s.driver.settings.ngun = true;
+        s.driver.settings.nfire = mgscoop::PartnerNativeFire::visual;
+        if (native) s.driver.settings.drive = mgscoop::PartnerDrive::native;
+        PlaceAndArm(s);
+        Check(!s.driver.mission.native_out.active && s.fake.arms.back().enabled && !s.fake.arms.back().native &&
+              ((s.fake.arms.back().config.mask & 0x10u) != 0) == !native && (s.fake.arms.back().config.mask & 0x48u) == 0x48u,
+              native ? "drive=native, legacy lever armed: FIRE stripped (HOLD/RELOAD kept)" : "drive=legacy: the configured mask unchanged");
     }
     {
         // An install refusal keeps FIRE masked for the mission.

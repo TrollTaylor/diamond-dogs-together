@@ -305,7 +305,14 @@ Settings EffectiveSettings(const Settings& base, bool active) noexcept {
     Settings e = base;
     e.defer = EffectivePartnerDefer(base.drive, base.defer);
     e.native_active = active && base.drive == PartnerDrive::native;
-    if (!e.native_active) return e;
+    if (!e.native_active) {
+        // Native weapons: with the native drive configured, FIRE reaches
+        // instance 1 only through the native gate below (visual fire with a
+        // live owner filter), never through the fallback or a legacy input
+        // lever a trigger armed (the gun stage's mask carries FIRE).
+        if (base.drive == PartnerDrive::native) e.input_mask &= ~kPartnerNativeFireBit;
+        return e;
+    }
     pnat::DriveSettings ds{};
     ds.apply = base.apply;
     ds.input = base.input;
@@ -1685,14 +1692,17 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
     else if (!set.ngun) why = "gun_off";
     else if (!h.install_fire || !have_stats) why = "unavailable";
     else if (!fs.installed && !ready) why = "not_ready";
-    else if (owner == 0xFFFFu || (owner & 0xFE00u) != 0) why = "owner";
+    // A player id distinct from the local instance's (whose shots must never be dropped).
+    else if (owner == 0xFFFFu || (owner & 0xFE00u) != 0 || owner == st.ids[0]) why = "owner";
+    // No install before body 1 showed a gun class: a body that cannot fire
+    // (a build without the stock46 writer) never gets the vtable patch.
+    else if (!m.weapon_known) why = "gun_read";
+    else if (!m.weapon_ok) why = "weapon";
     else if (const char* refused = h.install_fire(h.context, owner)) why = refused;
     else {
         h.fire_stats(h.context, fs);
         if (!fs.live) why = "hook_lost";
         else if (!fs.armed || fs.owner != owner) why = "disarmed";
-        else if (!m.weapon_known) why = "gun_read";
-        else if (!m.weapon_ok) why = "weapon";
     }
     set.fire_live = why == nullptr;
     m.fire_refusal = why;
@@ -1717,10 +1727,10 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
                 m.fire_lines < kNativeLineCap) {
                 ++m.fire_lines;
                 EmitFormat(h, "partner_fire; suppressed=%u; passed=%u; passed_player=%u; owner_disarmed=%u; per_s=%u; owner=%u; "
-                              "last_owner=%u; thread=%u; mag_writes=%u; shot_leaks=%u\r\n",
+                              "last_owner=%u; thread=%u; mag_writes=%u; shot_leaks=%u; ammo_leaks=%u\r\n",
                            fs.suppressed - m.fire_rate.suppressed, fs.passed - m.fire_rate.passed, fs.passed_player - m.fire_rate.passed_player,
                            fs.owner_disarmed - m.fire_rate.owner_disarmed, m.fire_suppressed_s, unsigned(fs.owner), unsigned(fs.last_owner),
-                           fs.last_thread, ns.mag_writes, ns.shot_leaks);
+                           fs.last_thread, ns.mag_writes, ns.shot_leaks, ns.ammo_leaks);
             }
             m.fire_rate = fs;
             m.fire_rate_ms = now;
@@ -2172,9 +2182,12 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         t.mag_written = n.mag_written;
         CopyText(t.mag_last, sizeof(t.mag_last), partner_input_hook::MagRefusalName(n.mag_last));
         t.mag_faulted = n.mag_faulted;
+        t.mag_leak_off = n.mag_leak_off;
         t.shot_leaks = n.shot_leaks;
         t.reload_drains = n.reload_drains;
         t.shot_count = n.shot_count == 0xFFFFFFFFu ? pnat::kNull : static_cast<std::int64_t>(n.shot_count);
+        t.ammo_leaks = n.ammo_leaks;
+        t.ammo_digest = n.ammo_digest ? static_cast<std::int64_t>(n.ammo_digest) : pnat::kNull;
         t.equip_tx_rev = m.equip_tx_have ? m.equip_tx.revision : 0u;
         for (unsigned i = 0; i < 3; ++i) {
             t.equip_tx_base[i] = m.equip_tx_have ? m.equip_tx.slots[i].base_id : 0u;

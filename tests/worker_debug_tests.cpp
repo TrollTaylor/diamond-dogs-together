@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <utility>
+#include <vector>
 namespace {
 // Strict RFC 8259 syntax check (no extensions): the worker state.json must
 // stay parseable by ConvertFrom-Json and the coordinator's tools.
@@ -41,8 +43,16 @@ struct JsonCheck {
         if (*p == '{') {
             ++p; Ws();
             if (p < e && *p == '}') { ++p; return true; }
+            // Duplicate member names are refused too: ConvertFrom-Json rejects them.
+            std::vector<std::string> keys;
             for (;;) {
-                Ws(); if (!String()) return false; Ws();
+                Ws();
+                const char* key = p;
+                if (!String()) return false;
+                std::string name(key, p);
+                for (const auto& k : keys) if (k == name) return false;
+                keys.push_back(std::move(name));
+                Ws();
                 if (p >= e || *p != ':') return false;
                 ++p; if (!Value(depth + 1)) return false; Ws();
                 if (p < e && *p == ',') { ++p; continue; }
@@ -141,7 +151,7 @@ int main() {
                   doc.find("\"equip\":{\"tx_rev\":0,\"tx_base\":[0,0,0]")!=std::string::npos &&
                   doc.find("\"warp\",\"mag\"],\"ring\":[")!=std::string::npos && doc.find("false,0]")!=std::string::npos))return 1;
         t.gun_cap=t.gun_mag=t.gun_stock=t.gun_class=t.gun_b3d5=t.gun_slot=pn::kNull;t.remote_mag=t.remote_mag_cap=pn::kNull;
-        t.shot_count=pn::kNull;t.census_noise_vt=pn::kNull;t.census_noise_fn=0x2337de8;
+        t.shot_count=pn::kNull;t.ammo_digest=pn::kNull;t.ammo_leaks=3;t.census_noise_vt=pn::kNull;t.census_noise_fn=0x2337de8;
         strcpy_s(t.fire_mode,"visual");strcpy_s(t.fire_refused,"by\"tes");strcpy_s(t.mag_last,"no_v4");strcpy_s(t.equip_apply,"already");
         t.fire_suppressed=0xFFFFFFFFu;t.mag_written=0xFFFFu;t.equip_tx_base[1]=46;t.equip_rx_alias[1]=873;
         for(unsigned i=0;i<pn::kRing;++i){pn::RingEntry e{};e.mag=(i%2)?0xFFFF:5;pn::Push(t.ring,e);}
@@ -151,6 +161,7 @@ int main() {
                   weapons.find("\"fire\":{\"mode\":\"visual\"")!=std::string::npos && weapons.find("\"refused\":\"by\\\"tes\"")!=std::string::npos &&
                   weapons.find("\"suppressed\":4294967295,")!=std::string::npos && weapons.find("\"noise_vt\":null,\"noise_fn\":36929000")!=std::string::npos &&
                   weapons.find("\"remote\":null,\"remote_cap\":null,\"local\":0,\"local_cap\":0")!=std::string::npos && weapons.find("\"shot_count\":null")!=std::string::npos &&
+                  weapons.find("\"ammo_leaks\":3,\"ammo_vars\":null}")!=std::string::npos &&
                   weapons.find("\"tx_base\":[0,46,0]")!=std::string::npos && weapons.find("\"rx_alias\":[0,873,0]")!=std::string::npos &&
                   weapons.find("\"apply\":\"already\"")!=std::string::npos && weapons.find(",null]")!=std::string::npos &&
                   weapons.find(",5]")!=std::string::npos))return 1;
@@ -159,8 +170,11 @@ int main() {
         if(!check(mgscoop::worker_debug::FormatNativeJson(t,small,sizeof(small))==0 && small[0]==0))return 1;
     }
     // The checker itself rejects the classic writer slips.
-    for(const char* bad:{"{\"a\":1,}","{\"a\":1","{\"a\":[1,2}","{\"a\":01}","{\"a\":\"x\ny\"}","{\"a\":1}}","{\"a\":nul}"})
+    for(const char* bad:{"{\"a\":1,}","{\"a\":1","{\"a\":[1,2}","{\"a\":01}","{\"a\":\"x\ny\"}","{\"a\":1}}","{\"a\":nul}",
+                         "{\"a\":1,\"a\":2}","{\"o\":{\"m\":1,\"b\":2,\"m\":3}}"})
         if(!check(!ValidJson(bad)))return 1;
     if(!check(ValidJson("{\"a\":[1,-2.5e3,true,null,{\"b\":\"\\u00e9\"}]}")))return 1;
+    // The same member name in different objects is fine (gun.mag, native.mag, drain.mag).
+    if(!check(ValidJson("{\"mag\":{\"mag\":1},\"o\":{\"mag\":[{\"mag\":2},{\"mag\":3}]}}")))return 1;
     std::printf("worker debug policy %u PASS; gameplay command validation remains the existing debug queue; the state.json native member is valid JSON\n",checks);return 0;
 }

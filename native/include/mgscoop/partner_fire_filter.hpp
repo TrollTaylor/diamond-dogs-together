@@ -30,8 +30,15 @@
 // (0x1303D06): ReadCensus reports that interface's vtable read-only so it can
 // be pinned.
 //
-// Installed once per process, never removed. Any thread may run Hook (the
-// group update's thread is not established statically): atomics only.
+// Installed once per process, never removed; once armed, the driver never
+// disarms it (it re-arms the same id every tick): a shot request of instance 1
+// queued while FIRE was allowed can reach RequestBullet after FIRE is masked
+// again (mission end, drive change), so dropping instance 1's bullets for the
+// process lifetime is the leak-proof choice. Instance 1 fires only under the
+// native drive, and the local instance (id 0) is never the armed owner (the
+// driver refuses an owner equal to ids[0]). Disarm exists for tests.
+// Any thread may run Hook (the group update's thread is not established
+// statically): atomics only.
 #include <cstddef>
 #include <cstdint>
 
@@ -50,7 +57,7 @@ bool Installed() noexcept;
 bool PatchLive(const void* base) noexcept;
 
 // The instance GameObjectId whose bullets are dropped (type bits must be 0:
-// a player instance); Disarm forwards every request again.
+// a player instance); Disarm (tests only) forwards every request again.
 bool Arm(std::uint16_t owner) noexcept;
 void Disarm() noexcept;
 bool Armed() noexcept;

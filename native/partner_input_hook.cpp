@@ -126,6 +126,10 @@ volatile LONG g_d_rec_ok = 0, g_d_rec_act = 0, g_d_rec_next = 0, g_d_rec_mag = 0
 volatile LONG g_m_writes = 0, g_m_refused = 0, g_m_fire = 0, g_m_reload = 0, g_m_last = 0, g_m_faulted = 0;
 volatile LONG g_m_remote = 0xFFFF, g_m_remote_cap = 0xFFFF, g_m_cap = 0xFFFF, g_m_written = 0xFFFF;
 volatile LONG g_shot_leaks = 0, g_shot_count = -1, g_reload_drains = 0;
+// The same for the viewer's weapon/ammo vars block (FNV-1a digest; 0 unread).
+// An ammo leak under the magazine mirror turns the mirror off until
+// MissionStart (it is what lets instance 1 reload): g_m_leak.
+volatile LONG g_ammo_leaks = 0, g_ammo_digest = 0, g_m_leak = 0;
 bool g_m_seen = false;  // hook thread only: the last remote (mag, cap) acted on
 std::uint16_t g_m_seen_mag = 0, g_m_seen_cap = 0;
 // What the stubs answer during the current window (set before each call).
@@ -892,11 +896,14 @@ void MagRefused(MagRefusal why, bool count) noexcept {
 void MirrorMag(const pi::Arm& a, const pi::Injection& j) noexcept {
     if (g_m_faulted) { MagRefused(MagRefusal::fault, false); return; }
     if (!a.mag_mirror || !a.gun_prim || !a.gun_rec) { MagRefused(MagRefusal::off, false); return; }
+    if (g_m_leak) { MagRefused(MagRefusal::leak, false); return; }
     if (!j.ammo_valid) { MagRefused(MagRefusal::no_v4, false); return; }
     const bool fire = (j.edge_press & partner_native::kPadFire) != 0;
     const bool reload = (j.edge_press & partner_native::kPadReload) != 0;
     const bool changed = !g_m_seen || j.ammo != g_m_seen_mag || j.ammo_cap != g_m_seen_cap;
     if (!fire && !reload && !changed) return;
+    // A FIRE edge shows a round only if the remote had one (MirrorMagazine).
+    const bool was_loaded = g_m_seen && g_m_seen_mag > 0;
     g_m_seen = true;
     g_m_seen_mag = j.ammo;
     g_m_seen_cap = j.ammo_cap;
@@ -921,7 +928,7 @@ void MirrorMag(const pi::Arm& a, const pi::Injection& j) noexcept {
             else if (partner_native::GunClass(g.flags27c) != c::gun_class_gun) why = MagRefusal::cls;
             else if (cap == 0 || cap > partner_native::kMaxMagCap) why = MagRefusal::cap;
             else {
-                target = partner_native::MirrorMagazine(partner_native::MagIn{j.ammo, j.ammo_cap, cap, fire});
+                target = partner_native::MirrorMagazine(partner_native::MagIn{j.ammo, j.ammo_cap, cap, fire, was_loaded});
                 const std::uintptr_t field = a.gun_rec + partner_native::GunMagazineOffset(g.flags27c);
                 if (Load<std::uint16_t>(field) != target) {
                     Store<std::uint16_t>(field, static_cast<std::uint16_t>(target));
@@ -950,11 +957,39 @@ std::uint32_t ReadShotCount() noexcept {
     } __except (ProbeFilter(GetExceptionCode())) {}
     return value;
 }
-// After the job: the leak verdict and whether instance 1's reload request is set.
-void AfterJob(const pi::Arm& a, std::uint32_t shots_before) noexcept {
+// The viewer's weapon/ammo vars block vars+0x548..+0x670 (the contiguous
+// registrations weapons .. u16[46] at +0x614, contract-pinned): an FNV-1a
+// digest, 0 when unread (read-only leak evidence: instance 1's job, its
+// reload completion included, must never change the viewer's inventory).
+std::uint32_t ReadAmmoDigest() noexcept {
+    static_assert(c::vars_ammo_end > c::vars_ammo_begin && c::vars_ammo_end - c::vars_ammo_begin <= 0x200, "bounded vars block");
+    unsigned char block[c::vars_ammo_end - c::vars_ammo_begin];
+    bool ok = false;
+    __try {
+        const std::uintptr_t vars = Load<std::uintptr_t>(g_base + c::vars_slot_rva);
+        if (vars) {
+            std::memcpy(block, reinterpret_cast<const void*>(vars + c::vars_ammo_begin), sizeof(block));
+            ok = true;
+        }
+    } __except (ProbeFilter(GetExceptionCode())) {}
+    if (!ok) return 0;
+    std::uint32_t h = 2166136261u;
+    for (const unsigned char b : block) h = (h ^ b) * 16777619u;
+    return h ? h : 1u;
+}
+// After the job: the leak verdicts and whether instance 1's reload request is set.
+void AfterJob(const pi::Arm& a, std::uint32_t shots_before, std::uint32_t ammo_before) noexcept {
     const std::uint32_t shots = ReadShotCount();
     if (shots_before != 0xFFFFFFFFu && shots != 0xFFFFFFFFu && shots != shots_before) InterlockedIncrement(&g_shot_leaks);
     InterlockedExchange(&g_shot_count, static_cast<LONG>(shots));
+    const std::uint32_t ammo = ReadAmmoDigest();
+    if (ammo_before && ammo && ammo != ammo_before) {
+        InterlockedIncrement(&g_ammo_leaks);
+        // Instance 1's job changed the viewer's inventory: no more mirrored
+        // magazines (no reloads they enable) until MissionStart.
+        if (a.mag_mirror && InterlockedExchange(&g_m_leak, 1) == 0 && g_log) g_log("partner_input=ammo_leak; mag_mirror=disabled\r\n");
+    }
+    InterlockedExchange(&g_ammo_digest, static_cast<LONG>(ammo));
     if (!a.gun_rec || !a.gun_prim) return;
     bool reload = false;
     __try {
@@ -1251,6 +1286,7 @@ const char* MagRefusalName(MagRefusal refusal) noexcept {
     case MagRefusal::cls: return "cls";
     case MagRefusal::cap: return "cap";
     case MagRefusal::fault: return "fault";
+    case MagRefusal::leak: return "leak";
     default: return "none";
     }
 }
@@ -1346,12 +1382,13 @@ bool RunJobWindow(void* go, const void* param, std::uint32_t block, JobCallFn jo
     // update reads it, and the viewer's shoot count around the job.
     MirrorMag(a, j);
     const std::uint32_t shots_before = ReadShotCount();
+    const std::uint32_t ammo_before = ReadAmmoDigest();
     const bool detour = partner_local_detour::Installed();
     if (detour) partner_local_detour::Force(a.P, 1);
     GuardedCall(a, save, Call{kJobEntry, go, const_cast<void*>(param), 0, 0}, detour);
     g_in_drain = false;
     ProbeRecord(a.rec1);
-    AfterJob(a, shots_before);
+    AfterJob(a, shots_before, ammo_before);
     SafePost(a, save, true);
     EndWindow();
     std::uint32_t masks[3]{};
@@ -1440,6 +1477,7 @@ void ResetFault() noexcept {
     InterlockedExchange(&g_reset_hist, 1);
     InterlockedExchange(&g_n_look_faulted, 0);
     InterlockedExchange(&g_m_faulted, 0);
+    InterlockedExchange(&g_m_leak, 0);
 }
 
 void PublishArm(const pi::Arm& arm) noexcept {
@@ -1551,9 +1589,12 @@ void DrainStats(Stats& out) noexcept {
     n.mag_cap = static_cast<std::uint32_t>(g_m_cap);
     n.mag_written = static_cast<std::uint32_t>(g_m_written);
     n.mag_faulted = g_m_faulted != 0;
+    n.mag_leak_off = g_m_leak != 0;
     n.shot_leaks = static_cast<std::uint32_t>(g_shot_leaks);
     n.shot_count = static_cast<std::uint32_t>(g_shot_count);
     n.reload_drains = static_cast<std::uint32_t>(g_reload_drains);
+    n.ammo_leaks = static_cast<std::uint32_t>(g_ammo_leaks);
+    n.ammo_digest = static_cast<std::uint32_t>(g_ammo_digest);
 }
 
 bool PatchLive(const void* base) noexcept {

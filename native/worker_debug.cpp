@@ -138,9 +138,10 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
     j.Add(",\"local\":");i32(n.local_mag);j.Add(",\"local_cap\":");i32(n.local_mag_cap);
     j.Add(",\"writes\":%u,\"refused\":%u,\"fire_edges\":%u,\"reload_edges\":%u,\"cap\":%u,\"written\":%u,\"last\":",
         n.mag_writes,n.mag_refused,n.mag_fire_edges,n.mag_reload_edges,n.mag_cap,n.mag_written);
-    j.String(n.mag_last,sizeof(n.mag_last));j.Add(",\"faulted\":%s}",Bool(n.mag_faulted));
+    j.String(n.mag_last,sizeof(n.mag_last));j.Add(",\"faulted\":%s,\"leak_off\":%s}",Bool(n.mag_faulted),Bool(n.mag_leak_off));
     j.Add(",\"leak\":{\"shot_count\":");i64(n.shot_count);
-    j.Add(",\"shot_leaks\":%u,\"reload_drains\":%u}",n.shot_leaks,n.reload_drains);
+    j.Add(",\"shot_leaks\":%u,\"reload_drains\":%u,\"ammo_leaks\":%u,\"ammo_vars\":",n.shot_leaks,n.reload_drains,n.ammo_leaks);
+    i64(n.ammo_digest);j.Add("}");
     j.Add(",\"equip\":{\"tx_rev\":%u,\"tx_base\":[%u,%u,%u],\"tx_alias\":[%u,%u,%u],\"tables_ok\":%s,",
         n.equip_tx_rev,n.equip_tx_base[0],n.equip_tx_base[1],n.equip_tx_base[2],n.equip_tx_alias[0],n.equip_tx_alias[1],n.equip_tx_alias[2],
         Bool(n.equip_tables_ok));

@@ -636,10 +636,12 @@ void TestWeapons() {
     Check(pn::MirrorMagazine(M{1, 30, 5, false}) == 1, "one round maps to at least 1");
     Check(pn::MirrorMagazine(M{15, 30, 5, false}) == 3, "half rounds up");
     Check(pn::MirrorMagazine(M{3, 5, 5, false}) == 3, "same capacity: the same count");
-    Check(pn::MirrorMagazine(M{0, 30, 5, true}) == 1, "a FIRE edge never leaves 0");
+    Check(pn::MirrorMagazine(M{0, 30, 5, true, true}) == 1, "a FIRE edge that spent the remote's last round shows it (1)");
+    Check(pn::MirrorMagazine(M{0, 30, 5, true, false}) == 0, "a FIRE edge on an already empty remote (dry fire) stays 0");
+    Check(pn::MirrorMagazine(M{0, 30, 5, false, true}) == 0, "no FIRE edge: an empty remote stays empty");
     Check(pn::MirrorMagazine(M{4, 5, 30, false}) == 24, "a larger partner capacity scales up");
     Check(pn::MirrorMagazine(M{1, 2, 1, false}) == 0 && pn::MirrorMagazine(M{2, 2, 1, false}) == 1, "capacity 1: not full is empty");
-    Check(pn::MirrorMagazine(M{1, 2, 1, true}) == 1, "capacity 1: a FIRE edge loads it");
+    Check(pn::MirrorMagazine(M{1, 2, 1, true}) == 1, "capacity 1: a FIRE edge of a loaded remote loads it");
     Check(pn::MirrorMagazine(M{1, 0, 5, true}) == 0 && pn::MirrorMagazine(M{1, 5, 0, true}) == 0, "zero capacities write nothing useful");
     for (std::uint32_t cap = 1; cap <= 50; ++cap)
         for (std::uint16_t rc = 1; rc <= 40; ++rc)
