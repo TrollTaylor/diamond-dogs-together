@@ -29,6 +29,8 @@ All 82 automated suites pass in aggregate, including native graphics/input fixtu
 
 Both copied-save games must first reach the same supported scene. Unknown enemy states stay held until their areas load; alignment does not establish identical AI or positions. A real two-PC session, full campaign/progression and physical damage death remain unverified. ACC has no partner body, and story missions and alternate packs such as `30011` are excluded. [World-sync design](docs/world-sync-design.md).
 
+An experimental, default-off **native puppet** drive (lab only, never run in the game yet) can drive the partner through the game's own locomotion, action and gun systems from the other player's pad, with the animated partner as its automatic fallback. [Native puppet design and status](docs/native-puppet.md).
+
 ## What exists
 
 - An original x64 DirectInput loader with exact-build script and actor guards. The local 13-entry runtime archive replaces each supported mission's single-player controller with one two-player controller. Afghanistan retains its scarf controller type; Africa and Mother Base use the normal type. Live field tests verified both player bodies and movement on two independently controlled game instances. Game-derived archive files stay local and are never committed or bundled.
