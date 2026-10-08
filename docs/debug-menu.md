@@ -269,12 +269,14 @@ or 10 s, force-realize always released). The native handler
 adds no game address. It refuses unless all of these hold: guest role in lab mode,
 lab.ini `debug_soldier_warp=1`, `soldier_warp=ready` at startup, the mission gates,
 the grant `world::Core` recorded when the guest's Lua popped that `ENEMY_DEBUG`
-(kind warp or correct, same epoch, at most 15 s old; cleared at unpair, link session,
-host epoch and local mission changes), and a live remote pose of the host at most
-1 s old. The target always comes from the grant. The range is checked against the
+(kind warp or correct, same epoch, at most 15 s old, 16 slots; cleared at unpair, link
+session, host epoch and local mission changes), and a live remote pose of the host at
+most 1 s old. The target always comes from the grant. The range is checked against the
 guest's view of the host: 20 m for kind 1, 60 m for corrections. One GameObjectId per
 grant, at most 160 sends, nothing after landing, and the process-wide `fault` /
-`anomaly` latch of the host path. `tools/generate_soldier_warp_contract.py --check`
+`anomaly` latch of the host path. The per-grant gate id is the grant's process-unique
+serial (bit 31 set), so a restarted host that reuses an epoch and seq is a new grant,
+never a spent one. `tools/generate_soldier_warp_contract.py --check`
 asserts that `Warp()` has exactly these two callers and their gates. Play mode
 forces the key off, so there only route placements (kind 2) move the guest's copy.
 
@@ -282,9 +284,16 @@ forces the key off, so there only route placements (kind 2) move the guest's cop
 second while he is NORMAL and sends a correction when he moved 1 m or every 5 s. The
 guest logs every sample (`event=place_div`) and re-warps only when he is more than
 6 m off on two samples in a row, NORMAL, below ALERT and not a "come" guard; at most
-one correction per 5 s and 10 per guard. "Come" guards chase each PC's own player,
+one correction per 5 s and 10 per guard. A guard whose placement is still pending
+on the guest is not sampled, and a queued correction is refreshed in place by a newer
+one (newest target and grant). "Come" guards chase each PC's own player,
 so they are never corrected. A re-pair in the same epoch re-sends the tracked
 guards at once.
+
+**Lifecycle.** Unpairing drops the guest's queue. A world-link stop (mission end,
+level 0) also forgets the pins and tracked guards. A pending force-realize is released
+only while the mission is still in gameplay (as the menu's own cancel), never during
+teardown. Outcome sync (W1) turning off changes nothing here.
 
 **Results.**
 
@@ -303,7 +312,7 @@ guards at once.
 |---|---|
 | `not_ready`, `roster` | not paired or not in gameplay, roster mismatch |
 | `unknown_entity`, `unmapped` | hash not in this roster, GameObjectId NULL |
-| `terminal_local`, `unreadable_local`, `vehicle_local`, `disabled_local` | this copy is dead/Fultoned (never revived), unreadable, riding or disabled |
+| `terminal_local`, `unreadable_local`, `vehicle_local`, `disabled_local` | this copy is dead/Fultoned (never revived), unreadable, riding or disabled (the last two for native placements only: a route placement re-enables him, as on the host) |
 | `native_off` | key off, play mode, contract refused, latched, or an older loader |
 | `grant`, `pose`, `range`, `stance` | native gates above |
 | `realize_timeout`, `position_timeout` | no landing within 150 updates / 10 s, no readback |

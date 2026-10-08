@@ -1372,8 +1372,11 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
     request.yaw = grant.yaw;
     request.max_range = grant.kind == mgscoop::world::place::correct ? sw::kMaxRangeLimitM : sw::kMaxRangeM;
     const auto base = reinterpret_cast<std::uintptr_t>(game_base);
-    // One grant, one guard, bounded attempts; ids never collide with menu command ids (< 2^31).
-    const std::uint32_t id = 0x80000000u | (static_cast<std::uint32_t>(grant.epoch & 0x7fffu) << 16) | grant.seq;
+    // One grant, one guard, bounded attempts. The id is the grant's process-unique
+    // serial with bit 31 set: never a menu command id (< 2^31) and never a spent
+    // grant of an earlier host process that reused the same epoch and seq.
+    if (!grant.serial || grant.serial > 0x7FFFFFFFu) return refuse("grant");
+    const std::uint32_t id = 0x80000000u | grant.serial;
     sw::Result result{};
     if (const char* gate = soldier_warp_gate.Admit(id, request.go_id)) result.refusal = gate;
     else {
@@ -2667,7 +2670,8 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         mgscoop::PartnerLookName(partner_driver.settings.look), partner_addresses.t_vtable ? 1u : 0u);
                     if (labc.crash_probe) mgscoop::crash_probe::Install(base, span, Log);
                     if (labc.debug_soldier_warp) {
-                        // Read-only byte gate; nothing is called until a host "spawn_enemy here".
+                        // Read-only byte gate; nothing is called until a host "spawn_enemy here"
+                        // or a guest spawn-sync grant (GuestWarpReceipt).
                         std::uintptr_t warp_mismatch = 0;
                         const char* warp_reason = mgscoop::soldier_warp::Verify(reinterpret_cast<std::uintptr_t>(base), span, warp_mismatch);
                         soldier_warp_ready = warp_reason == nullptr;

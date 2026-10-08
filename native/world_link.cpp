@@ -296,6 +296,7 @@ WarpGrant FindGrant(std::uint16_t seq) noexcept {
     for (unsigned i = 0; i < 3; ++i) out.pos[i] = static_cast<float>(grant.pos_mm[i]) * 0.001f;
     out.yaw = static_cast<float>(grant.yaw_mrad) * 0.001f;
     out.age_ms = now - grant.rx_ms;
+    out.serial = grant.serial;
     return out;
 }
 

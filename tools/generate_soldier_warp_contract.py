@@ -300,9 +300,9 @@ if 'GuestWarpReceipt' in {name for _, name in callers}:
     start = guest.find('const char* GuestWarpReceipt(')
     body = guest[start:guest.find('\n}\n', start)] if start >= 0 else ''
     for needle in ('world_link::FindGrant(seq)', 'request.pos[i] = grant.pos[i]', 'request.player[i] = snapshot.remote_pos[i]',
-                   'snapshot.remote_age_ms > 1000', 'LabRole::guest'):
+                   'snapshot.remote_age_ms > 1000', 'LabRole::guest', '0x80000000u | grant.serial'):
         if needle not in body.replace('\r\n', '\n'):
-            failures.append(f'GuestWarpReceipt: missing {needle!r} (target from the grant, range from the remote pose)')
+            failures.append(f'GuestWarpReceipt: missing {needle!r} (target from the grant, range from the remote pose, gate id from its serial)')
 
 if failures:
     print('\n'.join(failures))

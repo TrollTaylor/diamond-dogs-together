@@ -1118,6 +1118,9 @@ void SpawnSync() {
               grant.pos_mm[1] == 329852 && grant.pos_mm[2] == 1668605 && grant.yaw_mrad == -3141 && grant.flags == 2 &&
               grant.epoch == g_guest.epoch() && grant.rx_ms == 105,
           "the popped warp is the guest's grant");
+    const std::uint32_t first_serial = grant.serial;
+    const std::uint16_t first_epoch = grant.epoch;
+    Check(first_serial >= 1 && first_serial <= 0x7FFFFFFFu, "a grant serial is 1..2^31-1 (the gate id sets bit 31)");
     Check(!g_guest.FindGrant(2, 105, grant) && !grant.valid, "an ignore is not a placement grant");
     Check(!g_host.FindGrant(1, 105, grant), "the host never holds grants");
     Check(g_guest.FindGrant(1, 105 + world::kGrantLifeMs, grant) && !g_guest.FindGrant(1, 106 + world::kGrantLifeMs, grant),
@@ -1130,20 +1133,22 @@ void SpawnSync() {
     const auto acks = Drain(g_host, 3, 108);
     Check(acks.size() == 1 && acks[0].op == op::enemy_debug_ack && acks[0].v[1] == ent && acks[0].v[4] == 12 && acks[0].v[5] == 34,
           "ACK reaches the host world queue");
-    // Ten corrections: the pending warp grant survives, the oldest corrections go.
-    for (std::int64_t seq = 10; seq < 20; ++seq)
+    // Twenty corrections: the pending warp grant survives, the oldest corrections go.
+    Check(world::kGrants == 16, "16 grant slots");
+    for (std::int64_t seq = 10; seq < 30; ++seq)
         Check(Tx(g_host, op::enemy_debug, {seq, 9, 3, 1000, 0, 1000, 0, 0, 0, 7}, 110) == world::TxStatus::ok, "correction");
     Exchange(111);
     std::uint64_t at = 112;
-    for (int i = 0; i < 10; ++i) {
+    for (int i = 0; i < 20; ++i) {
         world::RxReply r{};
         g_guest.Rx(3, 40, at++, r);
         Check(!r.empty && r.op == op::enemy_debug && r.v[2] == 3, "correction popped");
     }
-    Check(g_guest.grant_count() == world::kGrants && g_guest.FindGrant(1, at, grant) && grant.kind == 1, "the warp grant is kept");
-    Check(g_guest.FindGrant(19, at, grant) && grant.kind == 3 && g_guest.FindGrant(13, at, grant) && !g_guest.FindGrant(12, at, grant) &&
-              !g_guest.FindGrant(10, at, grant),
-          "the oldest corrections are replaced");
+    Check(g_guest.grant_count() == world::kGrants && g_guest.FindGrant(1, at, grant) && grant.kind == 1 && grant.serial == first_serial,
+          "the warp grant is kept with its serial");
+    Check(g_guest.FindGrant(29, at, grant) && grant.kind == 3 && grant.serial == first_serial + 20 && g_guest.FindGrant(15, at, grant) &&
+              grant.serial == first_serial + 6 && !g_guest.FindGrant(14, at, grant) && !g_guest.FindGrant(10, at, grant),
+          "the oldest corrections are replaced; every recorded grant gets the next serial");
     // Resets: unpair (link session), local mission start/end, a new host epoch.
     g_guest.OnLinkState(true, 2, 200);
     Check(g_guest.grant_count() == 0 && !g_guest.FindGrant(19, 200, grant), "a link session change clears the grants");
@@ -1165,6 +1170,15 @@ void SpawnSync() {
     Check(g_guest.grant_count() == 0, "a local mission start clears the grants");
     g_host.LocalMissionEnd(406);
     Check(Tx(g_host, op::enemy_debug, {2, ent, 1, 0, 0, 0, 0, 0, 0, 0}, 407) == world::TxStatus::not_paired, "nothing unpaired");
+    // A restarted host (fresh Configure) reuses epoch and seq; the serial never repeats.
+    Setup();
+    Pair(30010, 450);
+    Drain(g_guest, 3, 451);
+    Check(Tx(g_host, op::enemy_debug, {1, ent, 1, 0, 0, 0, 0, 0, 0, 0}, 452) == world::TxStatus::ok, "warp after a restart");
+    Exchange(453);
+    Drain(g_guest, 3, 454);
+    Check(g_guest.FindGrant(1, 454, grant) && grant.epoch == first_epoch && grant.seq == 1 && grant.serial > first_serial + 20,
+          "same epoch and seq as the first grant, a new serial (Configure never resets it)");
     Setup(1, 3);
     Pair(30010, 500);
     Check(Tx(g_host, op::enemy_debug, {1, ent, 1, 0, 0, 0, 0, 0, 0, 0}, 501) == world::TxStatus::disabled, "level 1 carries no spawn sync");

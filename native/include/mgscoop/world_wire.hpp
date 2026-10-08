@@ -75,7 +75,9 @@ inline constexpr std::uint8_t flag_come = 1, flag_restrict_notice = 2;
 }
 // Guest warp grants: a warp/correct ENEMY_DEBUG popped by the guest's Lua is
 // the only source of a guest native placement target (never a Lua value).
-inline constexpr unsigned kGrants = 8;
+// 16 slots: up to 8 tracked guards send 1 Hz corrections while one placement
+// may wait up to 15 s.
+inline constexpr unsigned kGrants = 16;
 inline constexpr std::uint64_t kGrantLifeMs = 15000;
 struct Grant {
     bool valid;
@@ -85,6 +87,10 @@ struct Grant {
     std::int32_t pos_mm[3];
     std::int32_t yaw_mrad;
     std::uint64_t rx_ms;
+    // 1..0x7FFFFFFF, unique per recorded grant for the life of the process (never
+    // reset by Configure, a session or an epoch), so a restarted host that reuses an
+    // epoch and seq can never alias a spent soldier_warp::Gate command.
+    std::uint32_t serial;
 };
 // UNPAIRED reasons.
 namespace unpair {
@@ -346,6 +352,7 @@ private:
     unsigned world_head_ = 0, world_size_ = 0;
     Slot digest_{}, guest_digest_{}, phase_vec_{};
     Grant grants_[kGrants]{};
+    std::uint32_t grant_serial_ = 0;  // process lifetime; see Grant::serial
     OutEntry out_[kOutboundQueue]{};
     unsigned out_head_ = 0, out_size_ = 0, peeked_ = 0;
     std::uint32_t generation_ = 0;

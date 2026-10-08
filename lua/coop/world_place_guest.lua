@@ -39,6 +39,15 @@ do
         function P.sample(c)
             local en = W.ent[c.h]
             if not en or P.come[c.h] or c.flags % 2 == 1 or type(en.id) ~= "number" then return end
+            -- Never while this guard's placement is pending; a queued correction takes the
+            -- newest target (and its newer grant) in place.
+            if P.cur and P.cur.h == c.h then return end
+            for _, q in ipairs(P.q) do
+                if q.h == c.h then
+                    if q.kind == 3 then q.seq, q.x, q.y, q.z, q.yaw, q.at = c.seq, c.x, c.y, c.z, c.yaw, c.at end
+                    return
+                end
+            end
             local x, _, z = pos(en.id)
             if not x then return end
             local d = flat(x, z, c.x, c.z)
@@ -63,7 +72,9 @@ do
             local st = P.state(en)
             if st == nil then return "unreadable_local" end
             if E.TERMINAL[st] then return "terminal_local" end
-            if c.kind <= 3 then
+            -- Native placements only, as the host's pick; a route placement re-enables
+            -- the guard on both PCs (the retail sequence) and never checks a vehicle.
+            if c.kind == 1 or c.kind == 3 then
                 local ok, v = pcall(send, en.id, {id = "GetVehicleGameObjectId"})
                 if ok and type(v) == "number" and v ~= W.api.null then return "vehicle_local" end
                 local off = W.get(TppGameObject, "NPC_STATE_DISABLE")
@@ -106,6 +117,9 @@ do
             end
             if c.flags % 4 >= 2 and call(TppEnemy, "SetEnableRestrictNotice", id) and m and type(m.ignored) == "table" then
                 m.ignored[en.name] = true
+            elseif k == 1 and c.flags % 2 == 1 and m and type(m.ignored) == "table" and m.ignored[en.name] and
+                call(TppEnemy, "SetDisableRestrictNotice", id) then
+                m.ignored[en.name] = nil  -- as the host: a "come" warp of an ignoring guard notices again
             end
             if c.flags % 2 == 1 then P.come[c.h] = true end
             P.pinOn(c.h)
@@ -148,8 +162,7 @@ do
         -- Ends one entry: force-realize released, ACK, menu row (not for corrections).
         function P.done(c, why)
             local en = c.en
-            if c.forced and en then pcall(send, en.id, {id = "SetForceRealize", forceRealize = false}) end
-            c.forced = nil
+            P.release(c)
             if P.cur == c then P.cur = nil end
             local m = menu()
             c.why, c.errCm = why, c.err and min(65535, floor(c.err / 10 + 0.5)) or 0
@@ -194,7 +207,7 @@ do
             W.rosterMatch = false
             P.out, P.q = {}, {}
             local c = P.cur
-            if c and c.forced and c.en then pcall(send, c.en.id, {id = "SetForceRealize", forceRealize = false}) end
+            P.release(c)
             P.cur = nil
         end
     end

@@ -235,7 +235,7 @@ do
       for _, s in ipairs(soldiers()) do if s.hash == hash then
         if cmd == "enemy_enable" and not usable(s) then return false, "enemy_terminal_unknown" end
         call(TppEnemy, cmd == "enemy_enable" and "SetEnable" or "SetDisable", s.id)
-          return true, "submitted_local;ent=" .. fmt("%.0f", hash) .. ";" .. share(cmd == "enemy_enable" and 8 or 7, s)
+        return true, "submitted_local;ent=" .. fmt("%.0f", hash) .. ";" .. share(cmd == "enemy_enable" and 8 or 7, s)
       end end
       return false, "enemy_not_authored"
     elseif cmd == "enemy_nearest" or cmd == "enemy_enable_nearest" or cmd == "enemy_disable_nearest" or cmd == "enemy_kill_nearest" or cmd == "clear_enemies" then

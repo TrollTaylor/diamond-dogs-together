@@ -49,7 +49,23 @@ do
         end
         P.reset()
         W.startHooks[#W.startHooks + 1] = P.reset
-        W.stopHooks[#W.stopHooks + 1] = function() P.q, P.cur, P.live, P.pin = {}, nil, {}, {}; W.pinned = P.pin end
+        -- Releases an entry's force-realize; the game call only while its mission is still in
+        -- gameplay (as the debug menu's cancel), never during teardown.
+        function P.release(c)
+            if not (c and c.forced and c.en) then return end
+            c.forced = nil
+            if W.get(vars, "missionCode") ~= W.mission then return end
+            local ok, live = pcall(W.inGame)
+            if ok and live == true then pcall(W.api.send, c.en.id, {id = "SetForceRealize", forceRealize = false}) end
+        end
+        -- Stop (OnTerminate, LEVEL 0): release a pending force-realize, then forget. W1 off
+        -- (full=false) keeps everything: spawn sync does not depend on outcome sync.
+        W.stopHooks[#W.stopHooks + 1] = function(full)
+            if not full then return end
+            P.release(P.cur)
+            P.q, P.cur, P.live, P.pin = {}, nil, {}, {}
+            W.pinned = P.pin
+        end
         local paired = H[OP.PAIRED]
         H[OP.PAIRED] = function(v, now)
             W.rosterMatch = v[5] == 1 and W.rosterOk == true
@@ -73,8 +89,9 @@ do
 
         -- Host: one ENEMY_DEBUG; seq, or nil and why.
         function P.announce(kind, h, x, y, z, yaw, flags, route)
+            if not W.active then return nil, "world_off" end
             if not W.host then return nil, "guest" end
-            if not (W.active and W.paired and W.eff >= 2) then return nil, "not_paired" end
+            if not (W.paired and W.eff >= 2) then return nil, "not_paired" end
             if W.rosterMatch ~= true then return nil, "roster" end
             local en = W.ent[h]
             if not en then return nil, "unknown_entity" end

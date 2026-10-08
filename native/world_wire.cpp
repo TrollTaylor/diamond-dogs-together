@@ -965,9 +965,10 @@ void Core::RecordGrant(const Entry& e, std::uint64_t now_ms) noexcept {
         if (g.kind == place::correct && (!oldest_correct || g.rx_ms < oldest_correct->rx_ms)) oldest_correct = &g;
     }
     if (!slot) slot = oldest_correct ? oldest_correct : oldest;
+    grant_serial_ = grant_serial_ % 0x7FFFFFFFu + 1u;
     *slot = Grant{true, static_cast<std::uint16_t>(e.v[0]), e.epoch, static_cast<std::uint8_t>(e.v[2]), static_cast<std::uint8_t>(e.v[7]),
                   U(e.v[1]), {static_cast<std::int32_t>(e.v[3]), static_cast<std::int32_t>(e.v[4]), static_cast<std::int32_t>(e.v[5])},
-                  static_cast<std::int32_t>(e.v[6]), now_ms};
+                  static_cast<std::int32_t>(e.v[6]), now_ms, grant_serial_};
 }
 
 void Core::ClearGrants() noexcept {

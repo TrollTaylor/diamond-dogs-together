@@ -58,6 +58,7 @@ struct WarpGrant {
     float pos[3]{};      // metres
     float yaw{};         // radians
     std::uint64_t age_ms{};
+    std::uint32_t serial{};  // world::Grant::serial (1..0x7FFFFFFF, process-unique)
 };
 WarpGrant FindGrant(std::uint16_t seq) noexcept;
 

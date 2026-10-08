@@ -41,6 +41,7 @@ local function fixture(host, level)
                 local p = c.positions[id] or {0, 0, 0}
                 return {GetX = function() return p[1] end, GetY = function() return p[2] end, GetZ = function() return p[3] end}
             end
+            if command.id == 'GetStatus' and c.status then return c.status[id] end
             c.commands[#c.commands + 1] = {id, command.id, command.state or command.phase, command.forceRealize, command.route}
             if command.id == 'ChangeLifeState' then c.life[id] = command.state
             elseif command.id == 'RequestForceFulton' then c.action[id] = 10
@@ -439,6 +440,7 @@ if arg[7] and arg[8] then
     local HASH = {cp_a = 100, cp_b = 200, quest_cp = 300, rt_a = 7001, rt_b = 7002}
     local function placeFixture(host)
         local c = fixture(host)
+        c.env.vars.missionCode = 30010
         c.W.h = function(name) return HASH[name] or #name * 1000 + name:byte(-1) end
         c.P, c.E = c.W.place, c.W.enemy
         c.W.handlers[OP.PAIRED]({7, 30010, c.W.roster, 5, 1, 3})
@@ -636,6 +638,67 @@ if arg[7] and arg[8] then
     for _, f in ipairs(gu.W.unpairedHooks) do f(1) end
     check(gu.P.cur == nil and #gu.P.q == 0 and sent(gu, 1, 'SetForceRealize', false) == 1 and #placeTx(gu, 35) == 0 and
         not gu.W.rosterMatch, 'unpair drops the queue and releases force-realize')
+    -- W1 off keeps spawn sync; a stop releases the pending force-realize and forgets everything.
+    local hs, gs = placeFixture(true), placeFixture(false)
+    gs.warp = {{r = -1, h = 0}}
+    hs.P.share(1, ENT1, 1000, 0, 1000, 0, 2); hs.P.share(5, ENT1)
+    deliver(hs, gs, 34); run(gs, 2)
+    local placeStop = gs.W.stopHooks[#gs.W.stopHooks]
+    placeStop(false)
+    check(gs.P.cur and #gs.P.q == 1 and gs.W.pinned[ENT1] and sent(gs, 1, 'SetForceRealize', false) == 0,
+        'W1 off (stop hook false) keeps the pending placement, queue and pins')
+    placeStop(true)
+    check(gs.P.cur == nil and #gs.P.q == 0 and next(gs.W.pinned) == nil and sent(gs, 1, 'SetForceRealize', false) == 1,
+        'a stop releases force-realize and clears the queue and pins')
+    local ht, gt = placeFixture(true), placeFixture(false)
+    gt.warp = {{r = -1, h = 0}}
+    ht.P.share(1, ENT1, 1000, 0, 1000, 0, 2)
+    deliver(ht, gt, 34); run(gt, 2)
+    gt.inGame = false
+    gt.W.stopHooks[#gt.W.stopHooks](true)
+    check(gt.P.cur == nil and sent(gt, 1, 'SetForceRealize', false) == 0, 'teardown (not in gameplay): no game call, state forgotten')
+    hs.W.active = false
+    check(hs.P.share(5, ENT1) == 'sync=none;why=world_off', 'an inactive world link reports world_off, not guest')
+    -- Corrections are not sampled while the guard's placement is pending; a queued one takes the newest target.
+    local hp, gp = placeFixture(true), placeFixture(false)
+    gp.warp = {{r = -1, h = 0}}
+    hp.positions[1] = {1.0, 0, 1.0}
+    hp.P.share(1, ENT1, 1000, 0, 1000, 0, 2)
+    deliver(hp, gp, 34); run(gp, 1)
+    gp.positions[1] = {90.0, 0, 90.0}
+    for i = 1, 3 do
+        hp.positions[1] = {1.0 + 2 * i, 0, 1.0}
+        hp.now = hp.now + 1000; hp.P.tick(hp.now)
+        deliver(hp, gp, 34)
+    end
+    check(gp.P.cur and gp.P.cur.kind == 1 and #gp.P.q == 0 and gp.P.div[ENT1] == nil, 'no divergence samples while the warp is pending')
+    gp.P.cur, gp.P.q = {h = 3000000002, kind = 5, seq = 99, flags = 0, at = gp.now, frames = 0}, {}
+    gp.P.div[ENT1] = {n = 1, fixes = 0, at = -1e9}
+    hp.positions[1] = {12.0, 0, 1.0}; hp.now = hp.now + 1000; hp.P.tick(hp.now); deliver(hp, gp, 34)
+    local queued = gp.P.q[1]
+    check(#gp.P.q == 1 and queued.kind == 3 and queued.x == 12000, 'two samples over 6 m queue a correction behind another entry')
+    hp.positions[1] = {14.0, 0, 1.0}; hp.now = hp.now + 1000; hp.P.tick(hp.now); deliver(hp, gp, 34)
+    check(#gp.P.q == 1 and gp.P.q[1] == queued and queued.x == 14000 and queued.seq == hp.P.seq and queued.at == gp.now,
+        'a later correction refreshes the queued one in place (newest seq, target and grant)')
+    -- Disabled copies: a warp refuses, a route placement re-enables him (the host's own sequence).
+    check(refusal(function(gg) gg.env.TppGameObject = {NPC_STATE_DISABLE = 9}; gg.status = {[1] = 9} end, 'disabled_local'),
+        'a disabled copy is never warped')
+    local hr, gr = placeFixture(true), placeFixture(false)
+    gr.env.TppGameObject = {NPC_STATE_DISABLE = 9}; gr.status = {[1] = 9}
+    gr.env.mvars.ene_routeSetsDefine = {cp_a = {sneak_day = {{'rt_a'}}}}
+    hr.P.share(2, ENT1, 0, 0, 0, 0, 0, 'rt_a')
+    deliver(hr, gr, 34); run(gr, 4)
+    local routeAck = placeTx(gr, 35)[1]
+    check(routeAck and routeAck.v[3] == 0 and gr.enemyCalls[1] == 'SetDisable:1' and gr.enemyCalls[2] == 'SetEnable:1',
+        'a route placement of a disabled copy runs the retail sequence (re-enabled), as on the host')
+    -- A "come" warp of a guard the guest ignores turns noticing back on, as on the host.
+    local hc, gc = placeFixture(true), placeFixture(false)
+    gc.warp = {{r = 0, h = 1}}
+    gc.env.e.MgsCoopDebug.enemy.ignored.sol_1 = true
+    hc.P.share(1, ENT1, 1000, 0, 1000, 0, 1)
+    deliver(hc, gc, 34); run(gc, 4)
+    check(gc.enemyCalls[1] == 'SetDisableRestrictNotice:1' and not gc.env.e.MgsCoopDebug.enemy.ignored.sol_1 and
+        sent(gc, 1, 'SetDiscoveryPlayer') == 1, 'come warp: restrict notice off, then discovery')
     -- Host area inference (W4): no trap yet -> the area of the nearest readable soldier's CP.
     local ih, ig = placeFixture(true), placeFixture(false)
     ih.W.activeCp, ih.A.tx, ih.A.pairEpoch, ih.tx, ih.W.w1 = nil, nil, nil, {}, false
