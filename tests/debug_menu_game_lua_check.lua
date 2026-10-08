@@ -1,7 +1,11 @@
 -- Debug actions against pinned, extracted retail function bodies. No game,
 -- external service or save files are used. Inputs are local and never bundled.
 -- Args: core, equipment, TppPlayer, TppClock, TppWeather, TppEnemy, TppQuest,
---       s10260_sequence, s10121_sequence, TppMission, s10030_sequence, enemy helper, TppDebug, TppCheckPoint.
+--       s10260_sequence, s10121_sequence, TppMission, s10030_sequence, enemy helper, TppDebug, TppCheckPoint,
+--       player helper, spawn helper.
+-- Unverified calls the chunks label "unverified" (no retail call site in these inputs):
+-- SetDiscoveryPlayer, Player.SetFultonCountInfinity, vars.playerLifeMax writes,
+-- ChangeLifeState FAINT, GetGameObjectIdUsingRoute and TppMarker.Enable/Disable.
 local checks = 0
 local function check(ok, why) checks = checks + 1; if not ok then error(checks .. ': ' .. why, 2) end end
 local function read(p) local f = assert(io.open(p, 'rb')); local s = f:read('*a'); f:close(); return s end
@@ -130,11 +134,11 @@ env.e = {OnUpdate = function() return 'original', nil, 77 end, OnTerminate = fun
 env.loadstring = function(s)
     check(#s < 256, 'bounded native receipt')
     if s == "return 'MGS_COOP_DEBUG_CMD_V1'" then local c = command; command = nil; return function() return c end end
-    local i, ok, message = s:match("^return 'MGS_COOP_DEBUG_LOG_V1' %-%- (%d+) ([01]) ([%w_=,.;:%-]+)$")
+    local i, ok, message = s:match("^return 'MGS_COOP_DEBUG_LOG_V1' %-%- (%d+) ([012]) ([%w_=,.;:%-]+)$")
     if i then logs[#logs + 1] = {tonumber(i), tonumber(ok), message} end
     return function() end
 end
-load(read(arg[1])); load(read(arg[2])); load(read(arg[12]))
+load(read(arg[1])); load(read(arg[2])); load(read(arg[12])); load(read(arg[15])); load(read(arg[16]))
 local function tick() local a, b, c = env.e.OnUpdate(); check(a == 'original' and b == nil and c == 77, 'exact API fixture preserves owner return tuple') end
 local function issue(text) id = id + 1; command = {id = id, text = text, mission = env.vars.missionCode, host = true}; tick(); return logs[#logs] end
 check(issue('bookmark 0')[2] == 1, 'debug available after checkpoint Continue')
@@ -196,12 +200,13 @@ env.loadstring = function(s)
     check(#s < 256, 'bounded spawn native receipt')
     if s == "return 'MGS_COOP_DEBUG_CMD_V1'" then local c = command; command = nil; return function() return c end end
     if s:match("^return 'MGS_COOP_DEBUG_ENEMY_V1' %-%- %d+ [a-z]+ .*") or s:match("^return 'MGS_COOP_DEBUG_ENEMY_V1' %-%- %d+ done$") then return function() return true end end
-    local i, ok, message = s:match("^return 'MGS_COOP_DEBUG_LOG_V1' %-%- (%d+) ([01]) ([%w_=,.;:%-]+)$")
+    local i, ok, message = s:match("^return 'MGS_COOP_DEBUG_LOG_V1' %-%- (%d+) ([012]) ([%w_=,.;:%-]+)$")
     if i then logs[#logs + 1] = {tonumber(i), tonumber(ok), message} end
     return function() end
 end
 check(issue('enemy_camps')[3] == 'camps=1;more=0;local_pool=1', 'current authored route definitions feed camp UI')
 start = #calls
+guardPosition = {-50, 20, 30} -- inside the 30-500 m placement band
 check(issue('spawn_enemy mafr_test_cp 1')[3]:find('submitted_patrol_guard', 1, true), 'exact-source pooled guard placement requested')
 local placed = {}
 for i = start + 1, #calls do
@@ -211,7 +216,7 @@ end
 check(#placed == #retailPlacement, 'new actor placement matches exact retail command count')
 for i, cmd in ipairs(retailPlacement) do for key, value in pairs(cmd) do check(placed[i][key] == value, 'exact retail placement field: ' .. key) end end
 tick(); tick()
-check(logs[#logs][3]:find('guard_position_readback', 1, true) and logs[#logs][3]:find('visible_unverified', 1, true), 'guard position readback does not invent live renderer proof')
+check(logs[#logs][3]:find('guard_position_readback', 1, true) and logs[#logs][3]:find(';borrowed=0;', 1, true) and logs[#logs][2] == 1, 'guard position final readback')
 check(issue('goto_spawn')[3] == 'submitted_warp' and calls[#calls][2].args.pos[1] == -9, 'exact retail player Warp near confirmed guard')
 tick(); check(logs[#logs][3]:find('warp_position_readback', 1, true), 'guard teleport verifies player position separately')
 local beforeCamp = #calls
@@ -236,4 +241,14 @@ check(campWarp.pos[1] == -400 and campWarp.pos[2] == 17 and campWarp.pos[3] == 8
     'authored checkpoint coordinates and degree yaw pass through exact retail Warp conversion')
 for i = beforeCamp + 1, #calls do check(calls[i][1] ~= 'SetEnabled' and calls[i][1] ~= 'SetSneakRoute', 'unloaded camp travel never mutates unreadable actor') end
 tick(); check(logs[#logs][3]:find('warp_position_readback', 1, true), 'checkpoint fallback actual player readback')
+-- Retail contracts behind the new player/enemy actions (existing inputs only).
+check(playerSource:find('HighSpeedCamera.RequestEvent{continueTime=', 1, true) and playerSource:find('worldTimeRate=', 1, true)
+    and playerSource:find('localPlayerTimeRate=', 1, true), 'retail slow-motion event keys')
+local clockSource = read(arg[4])
+check(clockSource:find('function e.SetTime', 1, true) and clockSource:find('function e.AddTime', 1, true), 'retail clock setters')
+for _, name in ipairs({'function e.SetEnableRestrictNotice(', 'function e.SetDisableRestrictNotice(', 'function e.IsNeutralized(',
+    'id="RequestForceFulton"', 'e.LIFE_STATUS={NORMAL=0,DEAD=1,DYING=2,SLEEP=3,FAINT=4}'}) do
+    check(enemySource:find(name, 1, true), 'retail enemy contract: ' .. name)
+end
+check(missionSource:find('HighSpeedCamera.RequestToCancel()', 1, true), 'retail slow-motion cancel')
 print('debug_menu_game_lua_check: PASS ' .. checks .. ' checks')

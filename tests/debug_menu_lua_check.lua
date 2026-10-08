@@ -1,11 +1,13 @@
 -- Lua 5.1 debug executor regression: the owner update is the only dispatcher.
--- Args: debug_menu.lua, debug_equipment.lua, debug_enemy.lua. No game or saves are used.
+-- Args: debug_menu.lua, debug_equipment.lua, debug_enemy.lua, debug_player.lua,
+-- debug_spawn.lua (splice order). No game or saves are used.
 local checks = 0
 local function check(ok, why) checks = checks + 1; if not ok then error(checks .. ': ' .. why, 2) end end
-local source = assert(io.open(assert(arg[1]), 'rb')):read('*a')
-local equipment = assert(io.open(assert(arg[2]), 'rb')):read('*a')
-local enemy = assert(io.open(assert(arg[3]), 'rb')):read('*a')
-check(#source:gsub('\r\n', '\n') <= 16000 and #equipment:gsub('\r\n', '\n') <= 16000 and #enemy:gsub('\r\n', '\n') <= 16000, 'fragment native LF byte limits')
+local chunks = {}
+for i = 1, 5 do
+    chunks[i] = assert(io.open(assert(arg[i]), 'rb')):read('*a')
+    check(#chunks[i]:gsub('\r\n', '\n') <= 16000, 'fragment native LF byte limit ' .. arg[i])
+end
 local function fixture(options)
     options = options or {}
     local c = {calls = {}, logs = {}, state = {}, menu = {}, id = 1, updates = 0, terms = 0, host = options.host ~= false}
@@ -45,7 +47,11 @@ local function fixture(options)
         local p = c.checkpoints and c.checkpoints[key]
         if p then return {p[1], p[2], p[3]}, p[4] end
     end}
-    env.TppGameObject = {NPC_LIFE_STATE_DEAD = 3}
+    -- Distinct raw values: the chunks must map enums by name, never by number.
+    env.TppGameObject = {NPC_LIFE_STATE_DEAD = 3, NPC_LIFE_STATE_SLEEP = 1, NPC_LIFE_STATE_FAINT = 4, NPC_LIFE_STATE_DYING = 2,
+        PHASE_SNEAK = 0, PHASE_CAUTION = 1, PHASE_EVASION = 2, PHASE_ALERT = 3}
+    env.HighSpeedCamera = {RequestEvent = function(a) record('slowmo', a) end, RequestToCancel = function() record('slowmo_cancel') end}
+    env.TppMarker = {Enable = function(...) record('mark', ...) end, Disable = function(id) record('unmark', id) end}
     env.TppDefine = {WEAPONSLOT = {PRIMARY_HIP = 0, PRIMARY_BACK = 1, SECONDARY = 2},
         WEATHER = {SUNNY = 0, CLOUDY = 1, RAINY = 2, SANDSTORM = 3, FOGGY = 4}}
     env.TppEquip = {EQP_WP_30101 = 301, EQP_WP_10101 = 101, EQP_WP_10004 = 104,
@@ -73,9 +79,15 @@ local function fixture(options)
     local ids, positions, life = {sol_a = 5, sol_b = 6, sol_u = 7}, {[5] = {11, 20, 30}, [6] = {13, 20, 30}, [7] = {10, 20, 30}}, {[5] = 0, [6] = 0, [7] = 255}
     c.life, c.positions, c.ids = life, positions, ids
     env.GameObject = {NULL_ID = 65535, GetGameObjectId = function(kind, name)
+        if name == nil then record('cp_lookup', kind); return c.cpIds and c.cpIds[kind] or 65535 end
         check(kind == 'TppSoldier2', 'soldier typed locator lookup'); return ids[name] or 65535
     end, SendCommand = function(id, a)
         record(a.id, id, a)
+        if type(id) == 'table' then
+            check(id.type == 'TppSoldier2' and a.id == 'GetGameObjectIdUsingRoute', 'typed route query only')
+            if c.routeError then error('route query failed') end
+            return c.routeIds and c.routeIds[a.route]
+        end
         if a.id == 'GetLifeStatus' then return life[id] end
         if a.id == 'GetPosition' then
             if c.positionUnknown then return nil end
@@ -117,14 +129,17 @@ local function fixture(options)
         if request then record('partner', payload); return function() return c.partnerRefuse ~= true end end
         request, payload = s:match("^return 'MGS_COOP_DEBUG_ENEMY_V1' %-%- (%d+) (.+)$")
         if request then c.menu[#c.menu + 1] = {tonumber(request), payload}; return function() return not c.menuRefuse end end
-        local id, ok, msg = s:match("^return 'MGS_COOP_DEBUG_LOG_V1' %-%- (%d+) ([01]) ([%w_=,.;:%-]+)$")
+        if s == "return 'MGS_COOP_DEBUG_POLL_V1'" then c.polls = (c.polls or 0) + 1; return function() end end
+        local id, ok, msg = s:match("^return 'MGS_COOP_DEBUG_LOG_V1' %-%- (%d+) ([012]) ([%w_=,.;:%-]+)$")
         if id then c.logs[#c.logs + 1] = {tonumber(id), tonumber(ok), msg}; return function() end end
-        local ammo, mask = s:match("^return 'MGS_COOP_DEBUG_STATE_V1' %-%- ([01]) (%d+)$")
-        check(ammo ~= nil, 'strict result/state receipt'); c.state = {tonumber(ammo), tonumber(mask)}; return function() end
+        local text = s:match("^return 'MGS_COOP_DEBUG_STATE_V1' %-%- (.+)$")
+        local fields = {}
+        for v in (text or ''):gmatch('%S+') do fields[#fields + 1] = tonumber(v) or v end
+        check(#fields == 12 and text:match('^[01] %d+ %d+ [a-z]+ %d+ [01] [01] [01] %d+ %-?%d+ %-?%d+ [a-z_]+$'),
+            'strict result/state receipt: ' .. tostring(text))
+        c.state = fields; c.stateCount = (c.stateCount or 0) + 1; return function() end
     end
-    local chunk = assert(loadstring(source)); setfenv(chunk, env); chunk()
-    chunk = assert(loadstring(equipment)); setfenv(chunk, env); chunk()
-    chunk = assert(loadstring(enemy)); setfenv(chunk, env); chunk()
+    for i = 1, 5 do local chunk = assert(loadstring(chunks[i])); setfenv(chunk, env); chunk() end
     c.env, c.D = env, env.e.MgsCoopDebug
     function c:tick()
         local a, b, d = env.e.OnUpdate('arg')
@@ -145,9 +160,14 @@ check(c:send('bookmark 7')[2] == 1 and c.state[2] == 128, 'bookmark mask')
 c.env.vars.playerPosX = 80
 check(c:send('return 7')[3] == 'submitted_warp' and c:count('warp') == 1, 'bookmark warp submits')
 check(c.calls[#c.calls][2].pos[1] == 10 and c.calls[#c.calls][2].rotY == -60, 'bookmark captured pose')
-check(c:send('infinite_ammo 1')[3] == 'busy_action' and c:count('infinite') == 0, 'pending warp serializes actions')
+check(c.logs[#c.logs][2] == 2, 'submitted warp is an interim ok receipt')
+local polls = c.polls or 0
+c:send('infinite_ammo 1')
+check(c:count('infinite') == 0 and c.polls == polls + 1 and c.command ~= nil, 'pending warp polls; the next command waits in the queue')
+check(not c.logs[#c.logs][3]:find('busy_action', 1, true), 'no busy_action refusal')
 c.env.vars.playerPosX = 10; c:tick()
-check(c.logs[#c.logs][3]:find('warp_position_readback', 1, true), 'warp checks actual position')
+check(c.logs[#c.logs - 1][3]:find('warp_position_readback', 1, true) and c.logs[#c.logs - 1][2] == 1, 'warp checks actual position (final)')
+check(c.logs[#c.logs][3] == 'infinite_ammo_1' and c:count('infinite') == 1, 'queued command runs after the readback')
 check(c:send('infinite_ammo 1')[2] == 1 and c.state[1] == 1, 'ammo force state')
 check(c:send('infinite_ammo 0')[2] == 1 and c.state[1] == 0, 'ammo release state')
 check(c:send('weapon hip EQP_WP_30101')[3] == 'submitted_equip;equip=301;native_slot=5;ammo=30;stock=90', 'resident weapon actual runtime API and diagnostic submitted')
@@ -202,7 +222,7 @@ for clip = 0, 12 do partnerPreset('partner dm=on dmplay=' .. clip) end
 for _, text in ipairs({'teleport 1 2 3 nan', 'teleport 100001 2 3 0', 'teleport 1e2 2 3 0', 'step 101 0 0',
     'infinite_ammo 2', 'bookmark -1', 'bookmark 1.5', 'return 8', 'return 1', 'time 86400', 'time -1', 'time 1.1',
     'weapon hip EQP_ITEM_1', 'weapon hip EQP_WP_99999', 'weapon head EQP_WP_30101', 'weather unknown',
-    'enemy_enable 4294967296', 'enemy_enable -1', 'clear_enemies 0', 'clear_enemies 101', 'heal', 'godmode 1',
+    'enemy_enable 4294967296', 'enemy_enable -1', 'clear_enemies 0', 'clear_enemies 101', 'heal', 'godmode 2', 'slowmo 2 1', 'forward 101', 'time_add 1.5',
     'drop_item EQP_WP_10004 1', 'drop_item EQP_WP_30101 0', 'drop_item EQP_WP_30101 11', 'drop_item EQP_WP_30101 1.5',
     'drop_item EQP_UNKNOWN 1', 'drop_item EQP_WP_30101;evil 1',
     'drop_item current_head 1', 'drop_item current_hip 11',
@@ -306,6 +326,8 @@ f = fixture(); f:send('teleport 100 200 300 90'); f.env.vars.missionCode = 30020
 check(f.D.pending == nil and f:count('warp') == 1, 'mission change cancels old warp')
 local function spawnFixture(options)
     local s = fixture(options)
+    -- Guards 40 m and 50 m away: inside the 30-500 m placement band.
+    s.positions[5], s.positions[6] = {50, 20, 30}, {60, 20, 30}
     s.env.mvars.ene_soldierDefine = {afgh_test_cp = {'sol_a', 'sol_b', 'sol_u'}, quest_cp = {'sol_quest'}}
     s.env.mvars.ene_routeSetsDefine = {afgh_test_cp = {sneak_day = {group_b = {'rt_second', 'rt_first'}, group_a = {'rt_first'}},
         caution = {group_c = {'rt_caution'}}}, quest_cp = {sneak_day = {group = {'rt_quest'}}}}
@@ -333,7 +355,7 @@ for _, count in ipairs({65, 83, 512}) do
     local ordered = spawnFixture()
     ordered.env.mvars.ene_routeSetsDefine = routeDefinitions(count, false)
     check(ordered:send('enemy_camps')[3] == 'camps=1;more=0;local_pool=1'
-        and ordered.menu[2][2] == 'camp afgh_test_cp 1000 64', 'route menu truncates only after validating and sorting')
+        and ordered.menu[2][2] == 'camp afgh_test_cp 40000 64', 'route menu truncates only after validating and sorting')
     check(ordered:send('enemy_routes afgh_test_cp')[3] == 'routes=64;point=0', 'bounded sorted route menu')
     local before = selectedRoutes(ordered)
     ordered.env.mvars.ene_routeSetsDefine = routeDefinitions(count, true)
@@ -343,7 +365,7 @@ for _, count in ipairs({65, 83, 512}) do
     for i = 1, 64 do
         check(before[i] == string.format('rt_%04d', i) and after[i] == before[i], 'group/array reconstruction cannot change the first64 sorted routes')
     end
-    check(ordered:send('spawn_enemy afgh_test_cp 64')[2] == 1, 'selected route remains usable after reconstruction')
+    check(ordered:send('spawn_enemy afgh_test_cp 64')[2] == 2, 'selected route remains usable after reconstruction')
     for _, entry in ipairs(ordered.calls) do
         if entry[1] == 'SetSneakRoute' then check(entry[3].route == 'rt_0064', 'spawn resolves the displayed sorted route index') end
     end
@@ -359,14 +381,14 @@ for _, reverse in ipairs({false, true}) do
 end
 local sp = spawnFixture()
 check(sp:send('enemy_camps')[3] == 'camps=1;more=0;local_pool=1', 'bounded authored camp listing')
-check(sp.menu[1][2] == 'clear 30010' and sp.menu[2][2] == 'camp afgh_test_cp 1000 3' and sp.menu[3][2] == 'done', 'camp metadata uses loaded distance and deduplicated routes')
+check(sp.menu[1][2] == 'clear 30010' and sp.menu[2][2] == 'camp afgh_test_cp 40000 3' and sp.menu[3][2] == 'done', 'camp metadata uses loaded distance and deduplicated routes')
 check(sp:send('enemy_routes afgh_test_cp')[3] == 'routes=3;point=0', 'authored route selector lists safe point0')
 check(sp.menu[5][2] == 'route 1 rt_caution' and sp.menu[7][2] == 'route 3 rt_second', 'route indices sorted and stable')
-check(sp:send('spawn_enemy afgh_test_cp 2')[3]:find('submitted_patrol_guard;ent=4294967295;reuse=1', 1, true), 'selected camp spawns from existing living pool')
+check(sp:send('spawn_enemy afgh_test_cp 2')[3] == 'submitted_patrol_guard;ent=4294967295;scope=local' and sp.logs[#sp.logs][2] == 2, 'selected camp spawns from existing living pool')
 check(sp:count('disable') == 1 and sp:count('SetSneakRoute') == 1 and sp:count('SetCautionRoute') == 1 and sp:count('SetAlertRoute') == 1 and sp:count('enable') == 1 and sp:count('SetForceRealize') == 1, 'exact retail disable/routes/enable then force-realize calls')
 for _, entry in ipairs(sp.calls) do if entry[1] == 'SetSneakRoute' then check(entry[3].route == 'rt_first' and entry[3].point == 0, 'only resident chosen route point0') end end
 sp:tick(); check(sp.D.pending ~= nil, 'actor enable is not immediate placement proof')
-sp:tick(); check(sp.logs[#sp.logs][3]:find('guard_position_readback', 1, true) and sp.logs[#sp.logs][3]:find('visible_unverified', 1, true), 'actual guard position receipt keeps rendering uncertainty')
+sp:tick(); check(sp.logs[#sp.logs][3]:find('guard_position_readback', 1, true) and sp.logs[#sp.logs][3]:find(';far=0;borrowed=0;come=0;sync=none;route=rt_first', 1, true) and sp.logs[#sp.logs][2] == 1, 'actual guard position final receipt')
 check(sp.menu[#sp.menu][2] == 'spawned 20000 20000 40000 4294967295', 'actual spawn location metadata unsigned ID')
 check(sp:send('goto_spawn')[3] == 'submitted_warp' and sp.calls[#sp.calls][2].pos[1] == 23 and sp.calls[#sp.calls][2].pos[2] == 20.5, 'go to confirmed spawn uses owner-thread player Warp nearby')
 sp.env.vars.playerPosX, sp.env.vars.playerPosY, sp.env.vars.playerPosZ = 23, 20.5, 40; sp:tick()
@@ -374,13 +396,13 @@ check(sp:send('spawn_enemy closest')[3]:find('ent=2147483648', 1, true), 'second
 sp = spawnFixture({host = false})
 check(sp:send('spawn_enemy closest')[3] == 'host_only' and sp:count('disable') == 0, 'guest cannot mutate pool even unpaired')
 sp = spawnFixture(); sp.life[5], sp.life[6] = 3, 255
-check(sp:send('spawn_enemy closest')[3] == 'spawn_no_loaded_living_guard' and sp:count('disable') == 0, 'dead/unknown pool never revived')
+check(sp:send('spawn_enemy closest')[3] == 'spawn_no_guard' and sp:count('disable') == 0, 'dead/unknown pool never revived')
 sp = spawnFixture(); sp.life[5], sp.life[6] = 2, 4
-check(sp:send('spawn_enemy closest')[3] == 'spawn_no_loaded_living_guard', 'unconscious/dying pool not used as combat guard')
+check(sp:send('spawn_enemy closest')[3] == 'spawn_no_guard', 'unconscious/dying pool not used as combat guard')
 sp = spawnFixture(); sp.recovered, sp.fultoned = 'sol_a', 6
-check(sp:send('spawn_enemy closest')[3] == 'spawn_no_loaded_living_guard', 'saved/action Fulton pool never reused')
+check(sp:send('spawn_enemy closest')[3] == 'spawn_no_guard', 'saved/action Fulton pool never reused')
 sp = spawnFixture(); sp.positions[5], sp.positions[6] = {1000, 20, 30}, {2000, 20, 30}
-check(sp:send('spawn_enemy closest')[3] == 'spawn_no_loaded_living_guard' and sp:count('disable') == 0, 'distant actor packs cannot be assumed resident')
+check(sp:send('spawn_enemy closest')[3] == 'spawn_no_guard' and sp:count('disable') == 0, 'distant actor packs cannot be assumed resident')
 sp = spawnFixture(); sp.spawnError = true
 check(sp:send('spawn_enemy closest')[3] == 'spawn_binding_error' and sp:count('enable') == 1, 'partial route failure restores enabled guard instead of leaving disabled')
 sp = spawnFixture(); sp:send('spawn_enemy closest'); sp.positionUnknown = true
@@ -486,4 +508,146 @@ check(ob.observationQueries == 4 and ob.D.equipmentObservationAttempts == 1,
 for i = 1, 3600 do ob:tick() end
 check(ob.observationQueries == 123 and ob.D.equipmentObservationMission == 30020,
     'persistent refusal stops at exactly 120 attempts per mission')
+-- Overhaul: dispatch, STATE-12, POLL, interim receipts, player and spawn chunks.
+f = fixture()
+check(f.D.player and f.D.player.handles.heal and f.D.spawn and f.D.spawn.handles.spawn_enemy and f.D.spawn.handles.enemy,
+    'player and spawn modules registered for dispatch')
+for i = 1, 40 do f:tick() end
+check(f.stateCount == 2 and #f.state == 12 and f.state[4] == 'none' and f.state[12] == 'ok', 'idle STATE is 12 fields and rate limited')
+f.env.vars.clock = 3600; f:tick()
+check(f.stateCount == 3 and f.state[9] == 3600, 'changed STATE emits after 5 updates')
+f = fixture(); f:send('teleport 1 2 3 0'); local warpId = f.logs[#f.logs][1]
+check(f.state[3] == warpId and f.state[4] == 'warp', 'STATE reports the pending action')
+f.env.vars.playerPosX = nil; f:tick()
+check(f.logs[#f.logs][1] == warpId and f.logs[#f.logs][3]:find('pending_binding_error', 1, true) == 1 and f.D.pending == nil,
+    'pending binding error is reported against the pending command id')
+f = fixture(); f.sitting = true
+local st = f:send('status')[3]
+check(st:find('status;mission=30010;guard=on_foot;host=1;pending=none;god=0;ammo=0;fulton=0;slowmo=0;clock=0;life=-1,-1', 1, true) == 1,
+    'status answers outside on-foot gameplay with the guard reason')
+check(fixture({mission = 40010}):send('status')[3] == 'mission', 'status needs a supported mission')
+-- heal / godmode
+f = fixture(); check(f:send('heal')[3] == 'life_vars_unreadable', 'heal refuses unreadable life')
+f.env.vars.playerLife, f.env.vars.playerLifeMax = 0, 100
+check(f:send('heal')[3] == 'life_dead' and f.env.vars.playerLife == 0, 'heal never revives')
+f.env.vars.playerLife = 40
+check(f:send('heal')[3] == 'heal;life=100,100;unverified' and f.env.vars.playerLife == 100, 'heal writes max and reads it back')
+check(f:send('godmode 1')[3] == 'godmode_1;autoheal;lethal_unprotected;unverified' and f.state[6] == 1, 'godmode on')
+f.env.vars.playerLife = 40; f:tick(); check(f.env.vars.playerLife == 100, 'auto-heal refills before intake')
+f.loading = true; f.env.vars.playerLife = 40; f:tick(); check(f.env.vars.playerLife == 40, 'no auto-heal outside CheckMissionState')
+f.loading = nil; f.demo = true; f:tick(); check(f.env.vars.playerLife == 40, 'no auto-heal during a demo')
+f.demo = nil; f.env.vars.playerLife = 0; f:tick(); check(f.env.vars.playerLife == 0, 'auto-heal never writes at 0 life')
+check(f:send('godmode 0')[3] == 'godmode_0', 'godmode off')
+f.env.vars.playerLife = 40; f:tick(); check(f.env.vars.playerLife == 40, 'godmode off stops refills')
+f:send('godmode 1'); f.env.vars.missionCode = 30020; f:tick(); check(not f.D.god, 'mission change clears godmode')
+-- fulton, slowmo, forward, goto_partner, time_add
+f = fixture(); check(f:send('fulton_infinite 1')[3] == 'missing_SetFultonCountInfinity', 'missing Fulton API is named')
+f.env.Player.SetFultonCountInfinity = function(v) f.calls[#f.calls + 1] = {'fulton', v} end
+check(f:send('fulton_infinite 1')[3] == 'fulton_infinite_1;unverified' and f.calls[#f.calls][2] == true and f.state[7] == 1, 'Fulton infinity')
+f.env.vars.missionCode = 30020; f:tick(); check(f.calls[#f.calls][1] == 'fulton' and f.calls[#f.calls][2] == false, 'stop restores Fulton count')
+f = fixture()
+check(f:send('slowmo 0.25 3')[3] == 'submitted_slowmo;rate=0.25;seconds=3.0;experimental', 'slowmo submits')
+local ev, keys = f.calls[#f.calls][2], 0
+for _ in pairs(ev) do keys = keys + 1 end
+check(keys == 3 and ev.continueTime == 3 and ev.worldTimeRate == 0.25 and ev.localPlayerTimeRate == 0.25, 'slowmo uses exactly the retail keys')
+check(f.state[8] == 1 and f:send('slowmo off')[3] == 'slowmo_off' and f:count('slowmo_cancel') == 1 and f.state[8] == 0, 'slowmo off cancels')
+f = fixture(); f.env.vars.playerRotY = 90
+check(f:send('forward 5')[3] == 'submitted_warp', 'forward warps')
+local w = f.calls[#f.calls][2]
+check(math.abs(w.pos[1] - 15) < 1e-6 and math.abs(w.pos[3] - 30) < 1e-6 and w.rotY == 90, 'forward at yaw 90 moves +x')
+f = fixture(); check(f:send('goto_partner')[3] == 'partner_pose_unavailable' and f:count('warp') == 0, 'goto_partner needs pp')
+check(f:send('goto_partner', {pp = {20000, 20000, 30000, 40}})[3] == 'submitted_warp;via=partner;age_ms=40', 'goto_partner submits')
+w = f.calls[#f.calls][2]
+check(math.abs(w.pos[1] - 18) < 1e-6 and math.abs(w.pos[2] - 20.3) < 1e-6 and math.abs(w.pos[3] - 30) < 1e-6 and math.abs(w.rotY - 90) < 1e-6,
+    'goto_partner lands 2 m from the partner, facing him')
+f = fixture(); check(f:send('goto_partner', {pp = {1e9, 0, 0, 40}})[3] == 'partner_pose_bounds', 'partner pose bounds')
+f = fixture(); f.env.vars.clock = 86000
+check(f:send('time_add 1000')[3] == 'time_readback;sync=none' and f.env.vars.clock == 600, 'time_add wraps')
+f.env.e.MgsCoopWorld = {paired = true, eff = 3}
+check(f:send('time 43200')[3] == 'time_readback;sync=world', 'clock sync tag at world level 3')
+check(fixture({host = false}):send('time_add 60')[3] == 'host_only', 'guest time_add refused')
+-- spawn_enemy here / closest / route
+local function guardsFixture(options)
+    local s = spawnFixture(options)
+    s.env.mvars.ene_soldierDefine.afgh_other_cp = {'sol_c'}
+    s.env.mvars.ene_routeSetsDefine.afgh_other_cp = {sneak_day = {group = {'rt_other'}}}
+    s.ids.sol_c, s.life[9], s.positions[9] = 9, 0, {100, 20, 30}
+    return s
+end
+sp = guardsFixture(); sp.routeIds = {rt_second = {6}}
+check(sp:send('spawn_enemy here')[3] == 'submitted_guard_here;ent=4294967295;scope=local' and sp.logs[#sp.logs][2] == 2, 'spawn here interim')
+for _, entry in ipairs(sp.calls) do if entry[1] == 'SetSneakRoute' then check(entry[3].route == 'rt_second' and entry[3].point == 0, 'nearest scored route') end end
+check(sp.state[4] == 'spawn', 'spawn pending kind')
+sp:tick(); sp:tick()
+local final = sp.logs[#sp.logs][3]
+check(final == 'guard_here;ent=4294967295;d=14.1;moved=31.6;far=0;borrowed=0;come=0;sync=none;route=rt_second' and sp.logs[#sp.logs][2] == 1,
+    'spawn here final readback: ' .. final)
+check(sp.D.enemy.routePos.rt_second ~= nil and sp.D.enemy.last ~= nil, 'route position cached')
+sp.routeError = true
+local queries = sp:count('GetGameObjectIdUsingRoute')
+check(sp:send('spawn_enemy here')[3] == 'submitted_guard_here;ent=2147483648;scope=local', 'cached route reused with a failing route query')
+check(sp:count('GetGameObjectIdUsingRoute') == queries + 3, 'cached route is not queried again')
+for _, entry in ipairs(sp.calls) do if entry[1] == 'SetSneakRoute' then check(entry[3].route == 'rt_second', 'cache wins') end end
+sp = guardsFixture(); sp.positions[5] = {12, 20, 30}
+check(sp:send('spawn_enemy here')[3]:find('ent=2147483648', 1, true), 'guards within 30 m are skipped')
+sp = guardsFixture(); sp.life[5], sp.life[6] = 3, 3
+check(sp:send('spawn_enemy afgh_test_cp 1')[3] == 'submitted_patrol_guard;ent=99;scope=local', 'own camp dead: nearest other guard borrowed')
+sp:tick(); sp:tick(); check(sp.logs[#sp.logs][3]:find(';borrowed=1;', 1, true), 'borrowed flag in the final result')
+sp = guardsFixture(); sp.positions[9] = {600, 20, 30}; sp.life[5], sp.life[6] = 3, 3
+check(sp:send('spawn_enemy afgh_test_cp 1')[3] == 'spawn_no_guard', 'borrowing is capped at 500 m')
+sp = guardsFixture(); sp:send('spawn_enemy here come'); sp:tick(); sp:tick()
+check(sp:count('SetDiscoveryPlayer') == 1 and sp.logs[#sp.logs][3]:find(';come=1;', 1, true), 'come sends discovery once')
+local long = string.rep('r', 64)
+sp = guardsFixture(); sp.env.mvars.ene_routeSetsDefine.afgh_test_cp = {sneak_day = {group = {long}}}
+sp:send('spawn_enemy afgh_test_cp 1'); sp:tick(); sp:tick()
+final = sp.logs[#sp.logs][3]
+check(#final <= 160 and final:find('guard_position_readback;', 1, true) == 1 and final:find(';route=rrrr', 1, true), '64-character route stays within 160')
+sp = guardsFixture(); for i = 1, 8 do sp.D.enemy.used['old_' .. i] = true end
+check(sp:send('spawn_enemy here')[3] == 'spawn_pool_limit_8' and sp:count('disable') == 0, 'pool cap applies to spawn here')
+sp = fixture(); check(sp:send('spawn_enemy here')[3] == 'spawn_no_route', 'no camp routes refuse spawn here')
+sp = guardsFixture(); sp.positions[5], sp.positions[6] = {11, 20, 30}, {12, 20, 30}
+check(sp:send('spawn_enemy closest')[3] == 'submitted_patrol_guard;ent=99;scope=local', 'closest falls through to the next camp')
+for _, entry in ipairs(sp.calls) do if entry[1] == 'SetSneakRoute' then check(entry[3].route == 'rt_other', 'closest uses the camp route') end end
+sp:tick(); sp:tick(); check(sp.logs[#sp.logs][3]:find(';borrowed=0;', 1, true), 'fall-through guard is the camp own guard')
+sp = guardsFixture({host = false}); check(sp:send('spawn_enemy here')[3] == 'host_only' and sp:count('disable') == 0, 'guest spawn refused')
+-- enemy_list and enemy <op>
+f = fixture(); f.life[6] = 1
+check(f:send('enemy_list 50')[3] == 'nearby=2;radius=50', 'nearby list result')
+check(f.menu[1][2] == 'nearby 30010 50' and f.menu[2][2] == 'soldier 1 4294967295 1000 0 0 sol_a'
+    and f.menu[3][2] == 'soldier 2 2147483648 3000 2 0 sol_b' and f.menu[4][2] == 'done', 'nearby wire codes by enum name')
+check(fixture():send('enemy_list 301')[3] == 'radius_args', 'nearby radius bounds')
+f = fixture()
+check(f:send('enemy sleep nearest')[3] == 'enemy_sleep;ent=4294967295;life_readback=2;sync=none', 'sleep nearest')
+check(f.calls[#f.calls - 1][1] == 'ChangeLifeState' and f.calls[#f.calls - 1][3].state == 1, 'sleep enum by name')
+f.env.e.MgsCoopWorld = {paired = true, w1 = true}
+check(f:send('enemy kill nearest')[3] == 'enemy_kill;ent=4294967295;life_readback=5;sync=world', 'kill nearest with W1 sync tag')
+check(f:send('enemy faint 2147483648')[3] == 'enemy_faint;ent=2147483648;life_readback=3;unverified;sync=world', 'faint by hash')
+check(f:send('enemy fulton 2147483648')[3] == 'enemy_fulton;ent=2147483648;sync=world' and f:count('RequestForceFulton') == 1, 'fulton')
+f = fixture()
+check(f:send('enemy come nearest')[3] == 'enemy_come;ent=4294967295;hostile;unverified;sync=none' and f:count('SetDiscoveryPlayer') == 1, 'come')
+f.env.TppEnemy.SetEnableRestrictNotice = function(id) f.calls[#f.calls + 1] = {'restrict', id, true} end
+f.env.TppEnemy.SetDisableRestrictNotice = function(id) f.calls[#f.calls + 1] = {'restrict', id, false} end
+check(f:send('enemy ignore nearest')[3] == 'enemy_ignore;ent=4294967295;sync=none' and f.calls[#f.calls][2] == 5, 'ignore uses the game object id')
+check(f:send('enemy mark 2147483648')[3] == 'enemy_mark;ent=2147483648;sync=none;unverified' and f:count('mark') == 1, 'mark')
+local mark = f.calls[#f.calls]
+check(mark[2] == 6 and mark[3] == 0 and mark[4] == 'moving' and mark[5] == 'map_and_world_only_icon' and mark[7] == false, 'retail marker form')
+f:send('enemy_list 50')
+check(f.menu[#f.menu - 1][2] == 'soldier 2 2147483648 3000 0 1 sol_b' and f.menu[#f.menu - 2][2] == 'soldier 1 4294967295 1000 0 2 sol_a', 'marked and ignoring flags')
+check(f:send('enemy_unmark')[3] == 'unmarked=1' and f:count('unmark') == 1, 'unmark all tracked markers')
+f.env.TppGameObject.NPC_LIFE_STATE_SLEEP = nil
+check(f:send('enemy sleep nearest')[3] == 'missing_NPC_LIFE_STATE_SLEEP', 'missing enum named')
+check(f:send('enemy kill 123')[3] == 'enemy_not_authored' and f:send('enemy jump nearest')[3] == 'enemy_args', 'op/target validation')
+f = fixture({host = false})
+check(f:send('enemy info nearest')[3] == 'enemy_info;ent=4294967295;name=sol_a;cp=cp_a;state=0;distance_m=1.0', 'guest info')
+check(f:send('enemy kill nearest')[3] == 'host_only' and f:count('ChangeLifeState') == 0, 'guest ops refused')
+f = fixture(); f.env.e.MgsCoopWorld = {paired = true, w1 = true}
+check(f:send('enemy_kill_nearest')[3] == 'submitted=1;dead_readback=1;sync=world;max=16', 'kill alias keeps text with the sync tag')
+-- cp_phase
+f = fixture(); f.cpIds = {cp_a = 300}
+check(f:send('cp_phase cp_a alert')[3] == 'submitted_phase;cp=cp_a;phase=alert;sync=none', 'phase by name')
+check(f.calls[#f.calls][1] == 'SetPhase' and f.calls[#f.calls][2] == 300 and f.calls[#f.calls][3].phase == 3, 'SetPhase enum by name')
+check(f:send('cp_phase cp_x alert')[3] == 'cp_unknown' and f:send('cp_phase cp_a bogus')[3] == 'phase_args', 'phase refusals')
+sp = spawnFixture(); sp.cpIds = {afgh_test_cp = 301}
+check(sp:send('cp_phase nearest sneak')[3] == 'submitted_phase;cp=afgh_test_cp;phase=sneak;sync=none', 'nearest command post')
+check(fixture({host = false}):send('cp_phase cp_a alert')[3] == 'host_only', 'guest phase refused')
 print('debug_menu_lua_check: PASS ' .. checks .. ' checks')

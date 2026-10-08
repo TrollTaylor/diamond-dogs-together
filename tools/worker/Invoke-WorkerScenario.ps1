@@ -34,6 +34,13 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    through the existing debug teleport and verify arrival/settling
   <role> debug <command>           one F9 debug-menu command through the game's own queue;
                                    waits for and prints its result
+  <role> run <command>             like debug, but paired by command id (or overlay serial for
+                                   "menu ..." requests) and stored as the role's last result;
+                                   menu open [cat] | close | toggle | category <cat> | search [text]
+                                   | press <action_id> | confirm | cancel | footer 0|1 | select <hash>
+                                   drive the worker-drawn F9 overlay (worker builds only)
+  <role> expect <regex>            the role's last run result must match; a mismatch is recorded in
+                                   ExpectFailures and the scenario continues
   wait <ms>                        sleep up to 60000 ms
   waitgameplay <role> <timeoutSec>   poll until the role is on foot in gameplay (debug guard passes);
                                      every 6 s presses escape then enter to try skipping a cutscene
@@ -98,6 +105,8 @@ foreach($line in $steps){
                 'hold'{($t.Count -eq 4 -or ($t.Count -eq 5 -and $t[4] -ceq 'nowait')) -and (Test-ScenarioKeys $t[2]) -and [int]$t[3] -ge 1 -and [int]$t[3] -le 1500}
                 'mouse'{$t.Count -eq 4 -and [int]$t[2] -ge -1500 -and [int]$t[2] -le 1500 -and [int]$t[3] -ge -1500 -and [int]$t[3] -le 1500 -and ([int]$t[2] -ne 0 -or [int]$t[3] -ne 0)}
                 'release'{$t.Count -eq 2}; 'capture'{$t.Count -eq 2 -or ($t.Count -eq 3 -and (Test-ScenarioLabel $t[2]))}; 'debug'{$t.Count -ge 3}
+                'run'{$t.Count -ge 3 -and $t[0] -cne 'both'}
+                'expect'{$t.Count -ge 3 -and $t[0] -cne 'both' -and $(try{$null=[regex]::new((($t|Select-Object -Skip 2) -join ' '));$true}catch{$false})}
                 'burst'{$t.Count -eq 5 -and (Test-ScenarioLabel $t[2]) -and [int]$t[3] -ge 2 -and [int]$t[3] -le 30 -and [int]$t[4] -ge 100 -and [int]$t[4] -le 5000}; default{$false}})
         }
     }
@@ -123,6 +132,8 @@ $runId=[string]$session.RunId
 $frames=[Collections.Generic.List[object]]::new();$failure=$null;$stop=$null
 $releaseFailures=[Collections.Generic.List[string]]::new()
 $lastFrameAt=@{host=[uint64]0;guest=[uint64]0}
+$lastResult=@{host='';guest=''}
+$expectations=[Collections.Generic.List[string]]::new();$expectFailures=[Collections.Generic.List[string]]::new()
 $poseAnchors=@{}
 function Read-RoleState([string]$Role){
     # Early state files lack later fields; always return the three used here.
@@ -192,8 +203,29 @@ function Release-RoleFinally([string]$Role){
 }
 function Invoke-DebugResult([string]$Role,[string]$Command,[int]$TimeoutMs=8000){
     $before=Read-RoleRaw $Role;$was=if($before){[uint64]$before['debug_sequence']}else{[uint64]0}
-    $null=Send-Step $Role @{Operation='debug';DebugCommand=$Command}
+    $sent=try{Send-Step $Role @{Operation='debug';DebugCommand=$Command}}catch{return "SEND_REFUSED: $($_.Exception.Message)"}
     $deadline=[Environment]::TickCount64+$TimeoutMs
+    if($before -and [int]$before['schema'] -ge 2 -and $sent -and $sent.sequence){
+        # Schema 2: pair by the accepted sequence, then by command id or overlay serial.
+        $seq=[uint64]$sent.sequence
+        while([Environment]::TickCount64 -lt $deadline){
+            Start-Sleep -Milliseconds 150
+            $now=Read-RoleRaw $Role
+            if(!$now -or [uint64]$now['debug_sequence'] -lt $seq){continue}
+            if([uint64]$now['queued_sequence'] -lt $seq){
+                $refusal=@($now['receipts']|Where-Object{$_ -and [int]$_['status'] -eq 3})|Select-Object -First 1
+                return "QUEUE_REFUSED: $(if($refusal){$refusal['result']}else{$now['last_result']})"
+            }
+            $ref=[uint64]$now['queued_ref']
+            if([string]$now['queued_kind'] -ceq 'menu'){
+                if([uint64]$now['overlay_result_serial'] -eq $ref){return [string]$now['overlay_result']}
+                continue
+            }
+            $final=@($now['receipts']|Where-Object{$_ -and [uint64]$_['id'] -eq $ref -and [int]$_['status'] -in 0,1})|Select-Object -First 1
+            if($final){return [string]$final['result']}
+        }
+        throw "[$Role] '$Command' produced no final result."
+    }
     while([Environment]::TickCount64 -lt $deadline){
         Start-Sleep -Milliseconds 200
         $now=Read-RoleRaw $Role
@@ -586,6 +618,20 @@ try {
                         Start-Sleep -Milliseconds ([int]$t[4])
                     }
                 }
+                'run' {
+                    $text=(($t|Select-Object -Skip 2) -join ' ')
+                    $timeout=if($text -like 'spawn_enemy*'){30000}else{15000}
+                    try{$result=Invoke-DebugResult $r $text $timeout}catch{$result="NO_RESULT: $($_.Exception.Message)"}
+                    $lastResult[$r]=$result
+                    Write-Host "  $r $text -> $result"
+                }
+                'expect' {
+                    $pattern=(($t|Select-Object -Skip 2) -join ' ')
+                    $line="$r expect $pattern <- $($lastResult[$r])"
+                    $expectations.Add($line)
+                    if($lastResult[$r] -cnotmatch $pattern){$expectFailures.Add($line);Write-Warning "  expectation failed: $line"}
+                    else{Write-Host "  expectation met: $pattern"}
+                }
                 'debug' {
                     # The game's debug inbox holds one command: wait for each result.
                     $text=(($t|Select-Object -Skip 2) -join ' ')
@@ -607,5 +653,6 @@ try {
 }
 [pscustomobject]@{
     RunDirectory=$run;Frames=$frames.ToArray();Failure=$failure;InputReleaseFailures=$releaseFailures.ToArray()
+    Expectations=$expectations.ToArray();ExpectFailures=$expectFailures.ToArray()
     Closed=$stop.Closed;BaselineRestored=$stop.BaselineRestored;RealSavesUnchanged=$stop.RealSavesUnchanged;Forced=$stop.Forced
 }

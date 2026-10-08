@@ -33,7 +33,8 @@ constexpr ActionDef kActions[] = {
     {"player_drop_back", C::player, "Drop back gun", "drop_item current_back n", "drop pickup weapon", "Drops a pickup of the current back weapon.", P},
     {"player_drop_secondary", C::player, "Drop secondary gun", "drop_item current_secondary n", "drop pickup weapon pistol", "Drops a pickup of the current secondary weapon.", P},
     // Enemies
-    {"spawn_enemy_here", C::enemies, "Spawn guard near me", "spawn_enemy here", "enemy soldier guard create bring", "Moves an existing living guard onto the nearest authored patrol route.", H | P},
+    {"spawn_enemy_here", C::enemies, "Spawn enemy here", "spawn_enemy here", "enemy soldier guard create bring near me",
+     "Brings an existing living guard to the authored patrol route nearest you. The game cannot create soldiers at runtime or place them at coordinates, so he may appear 5-60 m away.", H | P},
     {"spawn_enemy_closest", C::enemies, "Spawn at closest camp", "spawn_enemy closest", "enemy soldier guard camp", "Moves a guard of the closest camp onto its patrol route.", H},
     {"spawn_enemy_route", C::enemies, "Spawn on selected route", "spawn_enemy camp route", "enemy soldier guard patrol", "Moves a guard onto the selected camp route (point 0).", H | P | kNeedsRoutes},
     {"enemy_goto_spawn", C::enemies, "Go to spawned guard", "goto_spawn", "teleport travel guard", "Teleports next to the last confirmed spawned guard.", kNeedsSpawn},

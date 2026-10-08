@@ -1,5 +1,9 @@
 # Development status
 
+## October 7, 2026: debug menu overhaul (source)
+
+The F9 menu now has a header with pending/telemetry state, a quick bar with recent commands, a searchable category rail (Player, Enemies, Partner / Co-op, World, Tools), per-button results and inline confirmation, and keyboard shortcuts ([guide](debug-menu.md)). **Spawn enemy here** heads the Enemies page: it moves an existing living guard onto the scored patrol route nearest the player (host-local; no new soldier allocation or coordinate placement). New host/local actions include heal/auto-heal, Fulton infinity, slow motion, go to partner, time +1 h, a nearby-soldier table with per-soldier kill/sleep/faint/Fulton/mark and command-post phase. Busy actions now queue instead of being refused. Worker builds draw the menu into captured frames and drive it with `menu ...` text (`tools/worker/scenarios/debug-menu.txt`). Source and fixture checks only; nothing here has run in the game yet, and the APIs marked unverified need live evidence.
+
 ## October 7, 2026: animation continuation after Claude's hidden-worker tests
 
 Claude committed the prior work and private-desktop runtime fixes on

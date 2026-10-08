@@ -1323,7 +1323,7 @@ if arg[8] then
         at = at + #spliced
     end
     local coopDir = assert(FILES[1]:match('^(.*[/\\])'), 'world chunk directory')
-    for _, name in ipairs({'debug_menu.lua', 'debug_equipment.lua', 'debug_enemy.lua'}) do
+    for _, name in ipairs({'debug_menu.lua', 'debug_equipment.lua', 'debug_enemy.lua', 'debug_player.lua', 'debug_spawn.lua'}) do
         local spliced = '\n' .. slurp(coopDir .. name) .. '\n'
         check(composed:find(spliced, at, true) == at and not composed:find(spliced, at + 1, true),
             name .. ' spliced once, byte-identical, directly after the previous chunk')
@@ -1404,7 +1404,8 @@ if arg[8] then
         elseif starts(s, "return 'MGS_COOP_DEBUG_") then check(false, 'idle debug composition emitted an action receipt') end
     end
     for _, s in ipairs(baseline.receipts) do if starts(s, PRE) then baselineWorld[#baselineWorld + 1] = s end end
-    check(debugCmd == 3 and debugState == 1, 'idle debug composition only polls and reports cleanup state')
+    -- STATE_V1 is rate limited: the first idle update publishes it once, then cleanup reports it.
+    check(debugCmd == 3 and debugState == 2, 'idle debug composition only polls, publishes state once and reports cleanup state')
     check(#baselineWorld == #world and baselineWorld[1] == world[1], 'idle debug preserves literal world CFG receipt')
 end
 

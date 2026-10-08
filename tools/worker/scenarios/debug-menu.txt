@@ -1,0 +1,89 @@
+# F9 debug menu overhaul: hidden-worker overlay, categories, search/press/confirm,
+# spawn near player, partner and world tools. Scene captures are taken with the menu closed.
+# The worker opens the menu by text ("menu open"), never by an F9 key press.
+# Mother Base (30050) has no authored camp soldiers: spawn/enemy refusals are expected there.
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+state
+host run status
+host expect ^status;mission=(30010|30020|30050);guard=ok;host=1
+guest run status
+guest expect ^status;.*host=0
+host run menu open player
+host expect ^menu_open;category=player
+host capture menu-player
+host run position
+host expect ^position=
+host run heal
+host expect ^heal;life=|^life_vars_unreadable
+host run godmode 1
+host expect ^godmode_1
+host run bookmark 0
+host expect ^bookmarked_0
+host run forward 5
+host expect ^warp_position_readback
+host run return 0
+host expect ^warp_position_readback
+host run menu category enemies
+host expect ^menu_category=enemies
+host run enemy_camps
+host expect ^camps=\d+
+host run enemy_list 120
+host expect ^nearby=\d+;radius=120
+host capture menu-enemies
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+|^spawn_no_(route|guard)|^spawn_pool_limit_8
+host run enemy_list 120
+host expect ^nearby=\d+;radius=120
+host capture spawn-here-menu
+host run menu close
+host expect ^menu_closed
+host capture spawn-here-world
+host run enemy info nearest
+host expect ^enemy_info;|^no_readable_soldier
+host run enemy sleep nearest
+host expect ^enemy_sleep;ent=\d+;life_readback=2;sync=|^no_readable_soldier
+host run goto_spawn
+host expect ^warp_position_readback|^spawn_position_unavailable
+guest run spawn_enemy here
+guest expect ^host_only
+guest run goto_partner
+guest expect ^warp_position_readback|^partner_pose_unavailable
+guest capture guest-at-partner
+placebehind host guest 6
+host run partner dm=on dmplay=11
+host expect ^partner_applied
+host run slowmo 0.25 3
+host expect ^submitted_slowmo|^missing_
+host capture partner-clip-slowmo
+host run partner dmstop=1
+host run slowmo off
+host run time 43200
+host expect ^time_readback
+host run weather rainy
+host expect ^submitted_weather_rainy
+host run menu open world
+host expect ^menu_open;category=world
+host capture menu-world
+host run menu search spawn
+host expect ^menu_search;matches=[3-9]
+host capture menu-search-spawn
+host run menu press player_position
+host expect ^pressed;action=player_position;command=position
+host run menu press enemy_clear
+host expect ^needs_confirm;action=enemy_clear|^disabled;
+host capture menu-confirm
+host run menu cancel
+host expect ^cancelled|^no_confirm_pending
+host run menu category tools
+host capture menu-tools
+host run menu close
+host run godmode 0
+host expect ^godmode_0
+guest run menu open enemies
+guest expect ^menu_open
+guest capture guest-menu-enemies
+guest run menu close
+state

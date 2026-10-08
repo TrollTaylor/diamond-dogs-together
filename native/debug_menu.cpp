@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include "mgscoop/debug_menu.hpp"
+#include "mgscoop/debug_actions.hpp"
 
 namespace mgscoop::debug_menu {
 namespace {
@@ -420,11 +421,44 @@ void SetOverlayStatus(const OverlayStatus& value) noexcept {
     AcquireSRWLockExclusive(&lock);
     state.overlay_open = value.open;
     state.overlay_frames = value.frames;
-    state.overlay_request_serial = value.request_serial;
-    state.overlay_result_serial = value.result_serial;
     Copy(state.overlay_category, sizeof(state.overlay_category), value.category);
     Copy(state.overlay_search, sizeof(state.overlay_search), value.search);
-    Copy(state.overlay_result, sizeof(state.overlay_result), value.result);
+    ReleaseSRWLockExclusive(&lock);
+}
+namespace {
+std::uint32_t menu_serial{}, menu_outstanding{};
+bool menu_ready{};
+char menu_text[kCommandCapacity]{};
+void MenuResultLocked(std::uint32_t serial, const char* result) noexcept {
+    state.overlay_result_serial = serial;
+    Copy(state.overlay_result, sizeof(state.overlay_result), result);
+    if (menu_outstanding == serial) { menu_outstanding = 0; menu_ready = false; }
+}
+}
+std::uint32_t RequestMenu(const char* text, std::uint32_t mission, std::uint32_t generation) noexcept {
+    debug_actions::OverlayRequest parsed{};
+    const bool valid = debug_actions::ParseOverlayRequest(text, parsed);
+    AcquireSRWLockExclusive(&lock);
+    std::uint32_t serial = ++menu_serial;
+    if (!serial) serial = ++menu_serial;
+    state.overlay_request_serial = serial;
+    const char* refusal = !valid ? "menu_args" : !state.enabled ? "menu_unavailable;reason=disabled" :
+        generation != state.generation || mission != state.mission ? "menu_stale" : menu_outstanding ? "menu_busy" : nullptr;
+    if (refusal) MenuResultLocked(serial, refusal);
+    else { menu_outstanding = serial; menu_ready = true; Copy(menu_text, sizeof(menu_text), text); }
+    ReleaseSRWLockExclusive(&lock);
+    return serial;
+}
+bool TakeMenuRequest(std::uint32_t& serial, char (&text)[kCommandCapacity]) noexcept {
+    AcquireSRWLockExclusive(&lock);
+    const bool ready = menu_ready;
+    if (ready) { serial = menu_outstanding; std::memcpy(text, menu_text, sizeof(text)); menu_ready = false; }
+    ReleaseSRWLockExclusive(&lock);
+    return ready;
+}
+void ReportMenuResult(std::uint32_t serial, const char* result) noexcept {
+    AcquireSRWLockExclusive(&lock);
+    MenuResultLocked(serial, result);
     ReleaseSRWLockExclusive(&lock);
 }
 void SetLastUiAction(const char* action) noexcept {

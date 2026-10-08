@@ -8,6 +8,8 @@
 #include "imgui_internal.h"
 #include "mgscoop/debug_menu.hpp"
 #include "mgscoop/debug_overlay.hpp"
+#include "mgscoop/debug_actions.hpp"
+#include "mgscoop/debug_menu_ui.hpp"
 
 namespace {
 unsigned checks = 0, failures = 0, window_keys = 0;
@@ -167,31 +169,70 @@ int main() {
     Release(restored[0]); Release(restored[1]); Release(restored_uav); Release(restored_shader);
     ctx->ClearState();
     Release(backbuffer_input); Release(backbuffer);
-    auto* gui = ImGui::GetCurrentContext();
-    Check(gui->TabBars.GetAliveCount() == 1, "debug tab bar is present outside action scrolling");
-    if (gui->TabBars.GetAliveCount() == 1) {
-        auto* bar = gui->TabBars.GetByIndex(0);
-        for (auto& tab : bar->Tabs) if (std::strcmp(ImGui::TabBarGetTabName(bar, &tab), "Player / weapons") == 0) ImGui::TabBarQueueFocus(bar, &tab);
-    }
-    Check(SUCCEEDED(chain->Present(0, 0)) && SUCCEEDED(chain->Present(0, 0)), "render full Player tab layout");
-    auto* main_window = ImGui::FindWindowByName("MGS Co-op Debug  |  F9");
-    auto* player_actions = Child("/player_actions_");
-    auto* results = Child("/results_"); auto* receipts = Child("/receipts_");
-    Check(player_actions && player_actions->ScrollMax.y > 100, "long Player controls scroll within their bounded child");
-    Check(main_window && main_window->ScrollMax.y == 0, "long Player controls do not scroll the menu header or footer");
-    Check(main_window && results && results->OuterRectClipped.Max.y <= main_window->InnerClipRect.Max.y && results->Size.y >= 185 && results->Size.y <= 205,
-        "fixed results panel remains visible inside menu viewport");
-    Check(results && receipts && receipts->OuterRectClipped.Max.y <= results->InnerClipRect.Max.y && receipts->Size.y >= 90,
-        "receipt history has its own visible footer area");
-    Check(bridge::QueueCommand("position") && SUCCEEDED(chain->Present(0, 0)), "queue action and render immediate footer snapshot");
-    Check(std::strncmp(ui::FooterStatusForTest(), "Queued.", 7) == 0, "footer reflects a waiting command");
+    namespace mui = mgscoop::debug_menu_ui;
+    namespace act = mgscoop::debug_actions;
+    const auto present = [&](unsigned count) { bool ok = true; for (unsigned i = 0; i < count; ++i) ok = SUCCEEDED(chain->Present(0, 0)) && ok; return ok; };
+    mui::SelectCategory(act::Category::player);
+    Check(present(2), "render full Player page layout");
+    auto* main_window = ImGui::FindWindowByName("MGS Co-op Debug | F9");
+    auto* rail = Child("/rail_"); auto* page = Child("/page_"); auto* results = Child("/results_");
+    Check(main_window && rail && page && results, "titled menu with rail, page and results children");
+    Check(rail && rail->Size.x >= 148 && rail->Size.x <= 152, "category rail is 150 px");
+    Check(page && page->ScrollMax.y > 100, "long Player page scrolls within its own child");
+    Check(main_window && main_window->ScrollMax.y == 0, "header, quick bar and footer never scroll");
+    Check(main_window && results && results->OuterRectClipped.Max.y <= main_window->InnerClipRect.Max.y && results->Size.y >= 20 && results->Size.y <= 60,
+        "collapsed results footer stays visible inside the menu");
+    Check(mui::RowDrawnForTest("player_teleport") && mui::RowDrawnForTest("player_heal"), "Player rows drawn");
+    mui::SetFooterExpanded(true); Check(present(1), "expanded footer renders");
+    results = Child("/results_");
+    Check(results && results->Size.y <= 171 && results->OuterRectClipped.Max.y <= main_window->InnerClipRect.Max.y, "expanded footer bounded");
+    mui::SetFooterExpanded(false);
+    Check(mui::SetSearch("spawn") >= 3 && present(1), "search spawn renders");
+    Check(mui::RowDrawnForTest("spawn_enemy_here") && mui::RowDrawnForTest("spawn_enemy_closest") && mui::RowDrawnForTest("spawn_enemy_route") &&
+        !mui::RowDrawnForTest("player_heal"), "search shows the three spawn rows and nothing unrelated");
+    mui::SetSearch("");
+    char press[200]{};
+    Check(mui::BeginPress("player_teleport") && present(3) && mui::TakePressResult(press, sizeof(press)) &&
+        !std::strcmp(press, "disabled;action=player_teleport;reason=set_destination"), "Teleport is disabled until a destination is set");
+    Check(mui::CurrentCategory() == act::Category::player, "press switches to the action's home page");
+    const auto depth = bridge::GetSnapshot().queue_depth;
+    Check(mui::BeginPress("enemy_clear") && present(3) && mui::TakePressResult(press, sizeof(press)) &&
+        !std::strcmp(press, "needs_confirm;action=enemy_clear") && bridge::GetSnapshot().queue_depth == depth && mui::HasPendingConfirm(),
+        "first press of a confirm action only opens the inline confirmation");
+    Check(mui::CurrentCategory() == act::Category::enemies && mui::RowDrawnForTest("enemy_clear"), "press scrolls the Enemies page to the row");
+    mui::Confirm(press, sizeof(press));
+    Check(!std::strncmp(press, "confirmed;action=enemy_clear;queued_id=", 39) && bridge::GetSnapshot().queue_depth == depth + 1, "second step sends the command");
+    bridge::Command queued{};
+    Check(bridge::Pop(queued) && !std::strcmp(queued.text, "clear_enemies 25"), "confirmed command text");
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddKeyEvent(ImGuiMod_Ctrl, true); io.AddKeyEvent(ImGuiKey_R, true);
+    Check(present(1), "Ctrl+R frame");
+    io.AddKeyEvent(ImGuiKey_R, false); io.AddKeyEvent(ImGuiMod_Ctrl, false);
+    Check(present(1) && mui::HasPendingConfirm() && bridge::GetSnapshot().queue_depth == depth, "Ctrl+R on a confirm action reopens the confirmation");
+    mui::Cancel(press, sizeof(press)); Check(!std::strcmp(press, "cancelled") && !mui::HasPendingConfirm(), "cancel clears the confirmation");
+    mui::SelectCategory(act::Category::player);
+    Check(present(1), "Player page frame");
+    io.AddKeyEvent(ImGuiMod_Ctrl, true); io.AddKeyEvent(ImGuiKey_2, true);
+    Check(present(1), "Ctrl+2 frame");
+    io.AddKeyEvent(ImGuiKey_2, false); io.AddKeyEvent(ImGuiMod_Ctrl, false);
+    Check(present(1) && mui::CurrentCategory() == act::Category::enemies, "Ctrl+2 selects Enemies");
+    Check(mui::RowDrawnForTest("spawn_enemy_here") && mui::RowDrawnForTest("spawn_enemy_closest"), "Enemies opens at the top with Spawn enemy here");
+    Check(mui::BeginPress("player_position") && present(3) && mui::TakePressResult(press, sizeof(press)) &&
+        !std::strncmp(press, "pressed;action=player_position;command=position;queued_id=", 58), "press sends the row command");
+    Check(bridge::GetSnapshot().queue_depth == depth + 1, "press queued one command");
     bridge::Command command{};
     Check(bridge::Pop(command), "natural-owner fixture consumes queued action");
-    bridge::Result(command.id, true, "position=1,2,3; yaw=0");
-    Check(SUCCEEDED(chain->Present(0, 0)) && std::strncmp(ui::FooterStatusForTest(), "No commands waiting.", 20) == 0,
-        "footer clears queued status after a completed action");
+    bridge::Result(command.id, 1, "position=1,2,3;yaw=0");
+    Check(present(1) && bridge::GetSnapshot().receipts[0].id == command.id && bridge::GetSnapshot().receipts[0].status == 0,
+        "result receipt reaches the footer source");
+    const auto frames_before_resize = ui::StatsForTest().frames;
     Check(SUCCEEDED(chain->ResizeBuffers(1, 800, 600, DXGI_FORMAT_R8G8B8A8_UNORM, 0)), "resize succeeds without leaked backbuffer reference");
-    Check(ui::StatsForTest().resizes == 1 && SUCCEEDED(chain->Present(0, 0)) && ui::StatsForTest().frames == 6, "menu renders after resize");
+    Check(ui::StatsForTest().resizes == 1 && present(1) && ui::StatsForTest().frames == frames_before_resize + 1, "menu renders after resize");
+    io.AddKeyEvent(ImGuiKey_Escape, true);
+    Check(present(1) && !ui::StatsForTest().open, "Esc closes the menu");
+    io.AddKeyEvent(ImGuiKey_Escape, false);
+    Sleep(150);
+    ui::SetOpenForTest(true); Check(present(1) && ui::StatsForTest().open, "menu reopens");
     SendMessageW(hwnd, WM_KILLFOCUS, 0, 0);
     Check(!ui::StatsForTest().open, "focus loss closes modal menu");
     // The guard is time/physical-release based. Wait only 150ms; no user input.

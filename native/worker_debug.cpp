@@ -30,6 +30,7 @@ bool Parse(const char* text, std::size_t size, const char* run, const char* role
     out.mission=static_cast<std::uint32_t>(mission);out.generation=static_cast<std::uint32_t>(generation);
     std::memcpy(out.text,p,static_cast<std::size_t>(end-p)); return true;
 }
+bool IsMenuText(const char* text) noexcept { return text && std::strncmp(text,"menu ",5)==0; }
 bool Timely(const Request& request,std::uint64_t now,std::uint64_t previous) noexcept {
     return request.sequence>previous && request.expires>now && request.expires-now<=15000;
 }
@@ -48,13 +49,14 @@ bool Timely(const Request& request,std::uint64_t now,std::uint64_t previous) noe
 namespace mgscoop::worker_debug {
 namespace {
 std::uint64_t last_poll{}, last_sequence{}, accepted_sequence{};
-bool last_queued{};
+bool last_queued{}, queued_menu{};
+std::uint32_t queued_ref{};
 struct Json {
-    char bytes[65536]{}; std::size_t used{}; bool ok{true};
+    char* bytes{}; std::size_t limit{}, used{}; bool ok{true};
     void Add(const char* format, ...) noexcept {
         if(!ok) return;
         va_list args; va_start(args,format);
-        const int n=vsnprintf_s(bytes+used,sizeof(bytes)-used,_TRUNCATE,format,args);
+        const int n=vsnprintf_s(bytes+used,limit-used,_TRUNCATE,format,args);
         va_end(args);if(n<0){ok=false;return;}used+=static_cast<std::size_t>(n);
     }
     void String(const char* s,std::size_t capacity) noexcept {
@@ -71,9 +73,12 @@ struct Json {
     void Position(const float (&v)[3]) noexcept {Add("[");for(unsigned i=0;i<3;++i){if(i)Add(",");Float(v[i]);}Add("]");}
 };
 const char* Bool(bool value) noexcept {return value?"true":"false";}
+// Owner thread only: one static 32 KB buffer instead of a large game-thread stack frame.
+char json_bytes[32768]{};
 void Publish(const worker_scenario::RunContext& c) noexcept {
-    const auto s=debug_menu::GetSnapshot();Json j;
-    j.Add("{\"schema\":1,\"run_id\":\"%s\",\"role\":\"%s\",\"pid\":%u,\"process_start_filetime\":%llu,\"tick_ms\":%llu,\"debug_sequence\":%llu,\"queued_sequence\":%llu,\"last_queued\":%s,",
+    const auto s=debug_menu::GetSnapshot();Json j{json_bytes,sizeof(json_bytes)};
+    j.Add("{\"schema\":2,\"queued_kind\":\"%s\",\"queued_ref\":%u,",queued_menu?"menu":"command",queued_ref);
+    j.Add("\"run_id\":\"%s\",\"role\":\"%s\",\"pid\":%u,\"process_start_filetime\":%llu,\"tick_ms\":%llu,\"debug_sequence\":%llu,\"queued_sequence\":%llu,\"last_queued\":%s,",
         c.run_id,c.role,c.pid,c.process_start_filetime,GetTickCount64(),last_sequence,accepted_sequence,Bool(last_queued));
     j.Add("\"mission\":%u,\"generation\":%u,\"enabled\":%s,\"offline\":%s,\"saves_redirected\":%s,\"gameplay_ready\":%s,\"terminating\":%s,\"realized\":%s,\"body_valid\":%s,\"pose_valid\":%s,",
         s.mission,s.generation,Bool(s.enabled),Bool(s.offline),Bool(s.saves_redirected),Bool(s.gameplay_ready),Bool(s.terminating),Bool(s.realized),Bool(s.body_valid),Bool(s.pose_valid));
@@ -88,7 +93,43 @@ void Publish(const worker_scenario::RunContext& c) noexcept {
     j.Add(",\"heading_error_deg\":");j.Float(s.heading_error_deg);j.Add(",\"position_error_m\":");j.Float(s.position_error_m);
     j.Add(",\"queue_depth\":%u,\"last_id\":%u,\"completed\":%u,\"rejected\":%u,\"last_command\":",s.queue_depth,s.last_id,s.completed,s.rejected);
     j.String(s.last_command,sizeof(s.last_command));j.Add(",\"last_result\":");j.String(s.last_result,sizeof(s.last_result));j.Add(",\"refusal\":");j.String(s.refusal,sizeof(s.refusal));
-    j.Add(",\"history\":[");for(unsigned i=0;i<8;++i){if(i)j.Add(",");j.String(s.history[i],sizeof(s.history[i]));}
+    j.Add(",\"history\":[");
+    for(unsigned i=0;i<8;++i){
+        char line[260]{};const auto& r=s.receipts[i];
+        if(r.result[0])StringCchPrintfA(line,ARRAYSIZE(line),"#%u %s %s -> %s",r.id,r.status==0?"OK":r.status==1?"REFUSED":r.status==2?"PENDING":"QUEUE",r.command,r.result);
+        if(i)j.Add(",");j.String(line,sizeof(line));
+    }
+    j.Add("],\"receipts\":[");
+    for(unsigned i=0;i<debug_menu::kReceiptCount;++i){
+        const auto& r=s.receipts[i];if(i)j.Add(",");
+        j.Add("{\"id\":%u,\"status\":%u,\"command\":",r.id,static_cast<unsigned>(r.status));j.String(r.command,sizeof(r.command));
+        j.Add(",\"result\":");j.String(r.result,sizeof(r.result));j.Add("}");
+    }
+    j.Add("],\"enemy_nearby\":[");
+    for(unsigned i=0;i<s.enemy_nearby_count && i<debug_menu::kNearbyCount;++i){
+        const auto& e=s.enemy_nearby[i];if(i)j.Add(",");
+        j.Add("{\"name\":");j.String(e.name,sizeof(e.name));j.Add(",\"hash\":%u,\"state\":%u,\"flags\":%u,\"distance_mm\":%d}",e.hash,e.state,e.flags,e.distance_mm);
+    }
+    j.Add("],\"enemy_nearby_radius\":%u,\"enemy_camps_loaded\":%s,\"enemy_spawn_valid\":%s,\"enemy_spawn_hash\":%u,\"enemy_spawn_pos_mm\":[%d,%d,%d]",
+        s.enemy_nearby_radius,Bool(s.enemy_camps_loaded),Bool(s.enemy_spawn_valid),s.enemy_spawn_hash,s.enemy_spawn_pos_mm[0],s.enemy_spawn_pos_mm[1],s.enemy_spawn_pos_mm[2]);
+    j.Add(",\"host\":%s,\"infinite_ammo\":%s,\"bookmark_mask\":%u,\"god_mode\":%s,\"fulton_infinite\":%s,\"slowmo_active\":%s,\"game_clock_s\":%u,\"player_life\":%d,\"player_life_max\":%d,\"guard_reason\":",
+        Bool(s.host),Bool(s.infinite_ammo),s.bookmark_mask,Bool(s.god_mode),Bool(s.fulton_infinite),Bool(s.slowmo_active),s.game_clock_s,s.player_life,s.player_life_max);
+    j.String(s.guard_reason,sizeof(s.guard_reason));
+    const ULONGLONG tick=GetTickCount64();
+    j.Add(",\"pending_id\":%u,\"pending_kind\":",s.pending_id);j.String(s.pending_kind,sizeof(s.pending_kind));
+    j.Add(",\"pending_frames\":%u,\"interim\":%u,\"telemetry_age_ms\":%llu,\"link_state\":",s.pending_frames,s.interim,
+        s.published_tick64 && tick>=s.published_tick64?tick-s.published_tick64:0ull);
+    j.String(s.link_state,sizeof(s.link_state));
+    j.Add(",\"rtt_ms\":%u,\"jitter_ms\":%u,\"loss_permille\":%u,\"interp_ms\":%u,\"stage\":%u",s.rtt_ms,s.jitter_ms,s.loss_permille,s.interp_ms,s.stage);
+    const struct {const char* key;const char* value;std::size_t size;} texts[]={{"source",s.source,sizeof(s.source)},{"apply",s.apply,sizeof(s.apply)},
+        {"anim",s.anim,sizeof(s.anim)},{"aset",s.aset,sizeof(s.aset)},{"dm",s.dm,sizeof(s.dm)},{"look",s.look,sizeof(s.look)},
+        {"overlay_category",s.overlay_category,sizeof(s.overlay_category)},{"overlay_search",s.overlay_search,sizeof(s.overlay_search)},
+        {"overlay_result",s.overlay_result,sizeof(s.overlay_result)},{"last_ui_action",s.last_ui_action,sizeof(s.last_ui_action)}};
+    for(const auto& t:texts){j.Add(",\"%s\":",t.key);j.String(t.value,t.size);}
+    j.Add(",\"input_armed\":%s,\"parts_loaded\":%s,\"range_hidden\":%s,\"remote_valid\":%s,\"world_configured\":%s,\"world_link_up\":%s",
+        Bool(s.input_armed),Bool(s.parts_loaded),Bool(s.range_hidden),Bool(s.remote_valid),Bool(s.world_configured),Bool(s.world_link_up));
+    j.Add(",\"overlay_open\":%s,\"overlay_frames\":%u,\"overlay_request_serial\":%u,\"overlay_result_serial\":%u",
+        Bool(s.overlay_open),s.overlay_frames,s.overlay_request_serial,s.overlay_result_serial);
     j.Add("],\"enemy_camps\":[");for(unsigned i=0;i<s.enemy_camp_count && i<32;++i){if(i)j.Add(",");j.Add("{\"name\":");j.String(s.enemy_camps[i].name,sizeof(s.enemy_camps[i].name));j.Add(",\"distance_mm\":%d,\"route_count\":%u}",s.enemy_camps[i].distance_mm,s.enemy_camps[i].route_count);}
     j.Add("],\"enemy_routes_camp\":");j.String(s.enemy_routes_camp,sizeof(s.enemy_routes_camp));j.Add(",\"enemy_routes\":[");
     for(unsigned i=0;i<s.enemy_route_count && i<64;++i){if(i)j.Add(",");j.Add("{\"name\":");j.String(s.enemy_routes[i].name,sizeof(s.enemy_routes[i].name));j.Add(",\"index\":%u}",s.enemy_routes[i].index);}
@@ -153,8 +194,13 @@ void PollOwner() noexcept {
             CloseHandle(file);Request request{};
             if(ok && Parse(text,read,c.run_id,c.role,request) && request.sequence>last_sequence) {
                 const bool timely=Timely(request,now,last_sequence);last_sequence=request.sequence;
-                last_queued=timely && debug_menu::QueueCommandForGeneration(request.text,request.mission,request.generation);
-                if(last_queued)accepted_sequence=request.sequence;
+                // "menu ..." drives the worker-drawn overlay; everything else is a game command.
+                // Both record the reference (command id or overlay serial) the runner pairs with.
+                const bool menu=IsMenuText(request.text);
+                const std::uint32_t ref=!timely?0:menu?debug_menu::RequestMenu(request.text,request.mission,request.generation):
+                    debug_menu::QueueCommandForGeneration(request.text,request.mission,request.generation);
+                last_queued=ref!=0;
+                if(last_queued){accepted_sequence=request.sequence;queued_menu=menu;queued_ref=ref;}
             }
         }
     }

@@ -81,8 +81,8 @@ struct LuaFlags {
 // Overlay-owned fields. The overlay never writes last_command/last_result/receipts.
 struct OverlayStatus {
     bool open{};
-    std::uint32_t frames{}, request_serial{}, result_serial{};
-    char category[16]{}, search[49]{}, result[96]{};
+    std::uint32_t frames{};
+    char category[16]{}, search[49]{};
 };
 bool Enabled() noexcept;
 Snapshot GetSnapshot() noexcept;
@@ -94,6 +94,13 @@ std::uint32_t QueueCommandId(const char* text) noexcept;
 std::uint32_t QueueCommandForGeneration(const char* text, std::uint32_t mission, std::uint32_t generation) noexcept;
 void ClearHistory() noexcept;
 void SetOverlayStatus(const OverlayStatus& value) noexcept;
+// Worker-only `menu ...` requests: one slot, consumed by the overlay on its render
+// thread. Every request gets a serial; refusals (menu_args, menu_busy, menu_stale,
+// menu_unavailable;reason=disabled) are reported at once under that serial.
+std::uint32_t RequestMenu(const char* text, std::uint32_t mission, std::uint32_t generation) noexcept;
+bool TakeMenuRequest(std::uint32_t& serial, char (&text)[kCommandCapacity]) noexcept;
+// Final overlay result for a taken request; frees the slot.
+void ReportMenuResult(std::uint32_t serial, const char* result) noexcept;
 void SetLastUiAction(const char* action) noexcept;
 // Configure/lifecycle/publish/pop/results: natural observer thread only.
 void Configure(bool enabled, bool host, bool saves_redirected) noexcept;

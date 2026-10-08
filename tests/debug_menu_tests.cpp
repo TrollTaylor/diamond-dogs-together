@@ -206,13 +206,28 @@ int main() {
     Check(rs.god_mode && rs.player_life == 10 && rs.pending_id == 7 && !rs.overlay_open && rs.receipts[0].id != 77 &&
           rs.enemy_nearby_count == 0 && !rs.enemy_camps_loaded && rs.interim == 1 && rs.published_tick64 != 0,
           "Publish preserves Lua-, receipt-, enemy- and overlay-owned fields");
-    debug::OverlayStatus overlay{}; overlay.open = true; overlay.frames = 4; overlay.request_serial = 3; overlay.result_serial = 3;
-    strcpy_s(overlay.category, "enemies"); strcpy_s(overlay.result, "menu_open;category=enemies;frames=4");
+    debug::OverlayStatus overlay{}; overlay.open = true; overlay.frames = 4; strcpy_s(overlay.category, "enemies");
     const auto before_overlay = debug::GetSnapshot();
+    const auto serial = debug::RequestMenu("menu open enemies", before_overlay.mission, before_overlay.generation);
+    std::uint32_t taken = 0; char menu_text[debug::kCommandCapacity]{};
+    Check(serial && debug::TakeMenuRequest(taken, menu_text) && taken == serial && !std::strcmp(menu_text, "menu open enemies") &&
+          !debug::TakeMenuRequest(taken, menu_text), "menu request taken once");
+    const auto busy = debug::RequestMenu("menu close", before_overlay.mission, before_overlay.generation);
+    Check(busy == serial + 1 && !std::strcmp(debug::GetSnapshot().overlay_result, "menu_busy") && debug::GetSnapshot().overlay_result_serial == busy,
+          "single menu slot refuses a second request until the first resolves");
+    debug::ReportMenuResult(serial, "menu_open;category=enemies;frames=4");
+    const auto stale = debug::RequestMenu("menu close", before_overlay.mission, before_overlay.generation + 1);
+    Check(!std::strcmp(debug::GetSnapshot().overlay_result, "menu_stale") && debug::GetSnapshot().overlay_result_serial == stale, "stale menu request refused");
+    const auto malformed = debug::RequestMenu("menu press nothing", before_overlay.mission, before_overlay.generation);
+    Check(!std::strcmp(debug::GetSnapshot().overlay_result, "menu_args") && debug::GetSnapshot().overlay_result_serial == malformed &&
+          !debug::TakeMenuRequest(taken, menu_text), "malformed menu request refused without a slot");
+    const auto ok = debug::RequestMenu("menu close", before_overlay.mission, before_overlay.generation);
+    Check(debug::TakeMenuRequest(taken, menu_text) && taken == ok, "slot free after the result");
+    debug::ReportMenuResult(ok, "menu_open;category=enemies;frames=4");
     debug::SetOverlayStatus(overlay); debug::SetLastUiAction("spawn_enemy_here");
     debug::Publish(over);
     rs = debug::GetSnapshot();
-    Check(rs.overlay_open && rs.overlay_frames == 4 && rs.overlay_result_serial == 3 && std::strcmp(rs.overlay_category, "enemies") == 0 &&
+    Check(rs.overlay_open && rs.overlay_frames == 4 && rs.overlay_result_serial == ok && !std::strcmp(rs.overlay_result, "menu_open;category=enemies;frames=4") && std::strcmp(rs.overlay_category, "enemies") == 0 &&
           std::strcmp(rs.last_ui_action, "spawn_enemy_here") == 0, "overlay status survives telemetry");
     Check(std::strcmp(rs.last_command, before_overlay.last_command) == 0 && std::strcmp(rs.last_result, before_overlay.last_result) == 0 &&
           rs.receipts[0].id == before_overlay.receipts[0].id, "overlay status never touches last_command/last_result/receipts");

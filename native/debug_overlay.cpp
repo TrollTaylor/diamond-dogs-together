@@ -14,11 +14,14 @@
 #include <cstring>
 #include <cmath>
 #include <cwchar>
+#include <cstdlib>
 #include "imgui.h"
 #include "backends/imgui_impl_win32.h"
 #include "backends/imgui_impl_dx11.h"
 #include "mgscoop/debug_overlay.hpp"
 #include "mgscoop/debug_menu.hpp"
+#include "mgscoop/debug_actions.hpp"
+#include "mgscoop/debug_menu_ui.hpp"
 #include "mgscoop/worker_scenario.hpp"
 #include "mgscoop/worker_frames.hpp"
 
@@ -400,7 +403,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT id, WPARAM wp, LPARAM lp) noexcept {
         }
     }
     if (id == WM_KILLFOCUS || id == WM_DESTROY) {
-        ChangeOpen(false);
+        // A worker-opened menu stays open through private-desktop focus churn.
+        if (!(worker_scenario::Requested() && id == WM_KILLFOCUS)) ChangeOpen(false);
         f9_down.store(false, std::memory_order_release);
     }
     if (id != WM_INPUT) Push(id, wp, lp);
@@ -928,6 +932,14 @@ void Cleanup() noexcept {
     Release(target); Release(context); Release(device);
     AcquireSRWLockExclusive(&message_lock); message_count = 0; ReleaseSRWLockExclusive(&message_lock);
 }
+// Readable defaults shared by the interactive and worker-drawn menus.
+void Style(ImGuiIO& io) noexcept {
+    ImFontConfig font{}; font.SizePixels = 18.0f; io.Fonts->AddFontDefault(&font);
+    ImGui::StyleColorsDark();
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.WindowRounding = 6.0f; style.FrameRounding = 4.0f;
+    style.WindowPadding = ImVec2(14, 12); style.ItemSpacing = ImVec2(10, 8); style.FramePadding = ImVec2(8, 5);
+}
 bool Initialize(IDXGISwapChain* chain) noexcept {
     DXGI_SWAP_CHAIN_DESC desc{};
     if (FAILED(chain->GetDesc(&desc)) || !desc.OutputWindow || !IsWindow(desc.OutputWindow)) return false;
@@ -941,11 +953,7 @@ bool Initialize(IDXGISwapChain* chain) noexcept {
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr; io.LogFilename = nullptr;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NoMouseCursorChange;
-    ImFontConfig font{}; font.SizePixels = 17.0f; io.Fonts->AddFontDefault(&font);
-    ImGui::StyleColorsDark();
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 6.0f; style.FrameRounding = 4.0f;
-    style.WindowPadding = ImVec2(18, 16); style.ItemSpacing = ImVec2(10, 9);
+    Style(io);
     if (!ImGui_ImplWin32_Init(desc.OutputWindow) || !ImGui_ImplDX11_Init(device, context)) { Cleanup(); return false; }
     SetLastError(ERROR_SUCCESS);
     original_wndproc.store(reinterpret_cast<WNDPROC>(GetWindowLongPtrW(desc.OutputWindow, GWLP_WNDPROC)), std::memory_order_release);
@@ -1013,287 +1021,10 @@ struct ExtraState {
         for (UINT i = 0; i < compute_count; ++i) Release(compute_classes[i]);
     }
 };
-const char* footer_status = "Choose an action; its game-thread result appears below.";
-void Send(const char* command) noexcept {
-    debug_menu::QueueCommand(command);
-}
-bool Action(const char* label, const char* command) noexcept {
-    if (!ImGui::Button(label)) return false;
-    Send(command); return true;
-}
-void Pose(const char* label, const float (&pos)[3]) noexcept {
-    ImGui::Text("%s  X %.2f   Y %.2f   Z %.2f m", label, pos[0], pos[1], pos[2]);
-}
-void Overview(const debug_menu::Snapshot& s) noexcept {
-    ImGui::Text("Link: %s   RTT %u ms   jitter %u ms", s.link_state[0] ? s.link_state : "unavailable", s.rtt_ms, s.jitter_ms);
-    ImGui::Text("Loss %.1f%%   interpolation %u ms   pose age %u ms", s.loss_permille / 10.0f, s.interp_ms, s.remote_age_ms);
-    ImGui::Separator();
-    ImGui::Text("Partner: %s   appearance: %s   range: %s", s.realized ? "visible" : "hidden", s.parts_loaded ? "loaded" : "pending", s.range_hidden ? "too far" : "near");
-    ImGui::Text("Stage %u   source %s   movement %s   motion %s", s.stage, s.source, s.apply, s.dm);
-    ImGui::Text("Animation %s   look %s   input %s", s.anim, s.look, s.input_armed ? "armed" : "off");
-    if (s.pose_valid) { Pose("You", s.player_pos); Pose("Remote", s.remote_pos); }
-    if (s.body_valid) {
-        Pose("Partner body", s.body_pos);
-        ImGui::Text("Body / remote error %.3f m   heading error %.1f degrees", s.position_error_m, s.heading_error_deg);
-        ImGui::Text("Remote yaw %.1f   body yaw %.1f degrees", s.remote_yaw, s.body_yaw);
-    }
-    if (s.refusal[0]) ImGui::TextWrapped("Readiness: %s", s.refusal);
-    ImGui::Spacing();
-    Action("Read player position", "position");
-    ImGui::TextWrapped("F9 closes this menu. Gameplay input is captured while it is open.");
-}
-void Movement(const debug_menu::Snapshot& s) noexcept {
-    ImGui::TextUnformatted("Local partner controls");
-    ImGui::Text("Current: stage %u / %s / %s / animation %s", s.stage, s.apply, s.dm, s.anim);
-    if (s.body_valid) ImGui::Text("Body yaw %.1f   remote yaw %.1f   heading error %.1f degrees", s.body_yaw, s.remote_yaw, s.heading_error_deg);
-    ImGui::Text("Remote action %u / gun %u / flags 0x%02x / clip %u", s.remote_act, s.remote_equip, s.remote_action_flags, s.mapped_clip);
-    ImGui::Text("Aim request %s / shot %s / reload request %s", (s.remote_action_flags & 1) ? "yes" : "no",
-        (s.remote_action_flags & 2) ? "yes" : "no", (s.remote_action_flags & 8) ? "yes" : "no");
-    Action("Hide partner", "partner stage=0"); ImGui::SameLine();
-    Action("Show partner", "partner stage=3 source=net look=net");
-    Action("Default network movement", "partner stage=3 source=net apply=xform anim=off input=off dm=map look=net");
-    Action("Warp movement", "partner stage=3 source=net apply=warp anim=off input=off dm=off look=net");
-    ImGui::Separator();
-    static int movement = 0, animation = 0, motion = 0;
-    const char* movement_names[] = {"Transform", "Warp", "Hybrid", "Input"};
-    const char* movement_values[] = {"xform", "warp", "hybrid", "input"};
-    const char* animation_names[] = {"Off", "Network", "Mirror local"};
-    const char* animation_values[] = {"off", "net", "mirror"};
-    const char* motion_names[] = {"Automatic map", "Off", "Manual"};
-    const char* motion_values[] = {"map", "off", "on"};
-    ImGui::SetNextItemWidth(210); ImGui::Combo("Movement", &movement, movement_names, ARRAYSIZE(movement_names));
-    ImGui::SetNextItemWidth(210); ImGui::Combo("Animation", &animation, animation_names, ARRAYSIZE(animation_names));
-    ImGui::SetNextItemWidth(210); ImGui::Combo("Direct motion", &motion, motion_names, ARRAYSIZE(motion_names));
-    if (ImGui::Button("Apply selected modes")) {
-        char command[180]{};
-        StringCchPrintfA(command, ARRAYSIZE(command), "partner stage=3 source=net apply=%s input=%s anim=%s aset=qs dm=%s look=net", movement_values[movement], movement == 3 ? "net" : "off", animation_values[animation], motion_values[motion]);
-        Send(command);
-    }
-    static int clip = 0;
-    const char* clip_names[] = {"Stand idle", "Crouch idle", "Prone transition", "Crouch walk", "Crouch run", "Sprint",
-        "Crawl", "Prone idle", "Crouch graph state", "Stand graph state", "Walk", "Run", "Jog",
-        "Stand turn left 90", "Stand turn right 90", "Stand turn left 180", "Stand turn right 180",
-        "Crouch turn left 90", "Crouch turn right 90", "Crouch turn left 180", "Crouch turn right 180",
-        "Gun hold (graph probe)", "Gun hold start (graph probe)", "Gun hold end (graph probe)", "Gun fire (graph probe)", "Gun reload (graph probe)"};
-    ImGui::SetNextItemWidth(260); ImGui::Combo("Manual animation clip", &clip, clip_names, ARRAYSIZE(clip_names));
-    ImGui::Text("Available animation clips: %u", s.motion_count);
-    const bool clip_available = clip >= 0 && static_cast<unsigned>(clip) < s.motion_count;
-    ImGui::BeginDisabled(!clip_available);
-    if (ImGui::Button("Play clip")) {
-        char command[64]{}; StringCchPrintfA(command, ARRAYSIZE(command), "partner dm=on dmplay=%d", clip); Send(command);
-    }
-    ImGui::EndDisabled();
-    ImGui::SameLine(); Action("Stop clip", "partner dmstop=1");
-    if (!clip_available) ImGui::TextUnformatted("This clip is unavailable in this runtime.");
-}
-void Player(const debug_menu::Snapshot& s) noexcept {
-    ImGui::TextUnformatted("Local player / copied save session");
-    Action("Read equipped inventory", "inventory");
-    static float destination[3] = {}, yaw = 0, step[3] = {0, 0, 2};
-    if (ImGui::Button("Use current position") && s.pose_valid) { std::memcpy(destination, s.player_pos, sizeof(destination)); yaw = s.player_yaw; }
-    ImGui::SetNextItemWidth(330); ImGui::InputFloat3("Teleport XYZ (m)", destination, "%.3f");
-    ImGui::SetNextItemWidth(150); ImGui::InputFloat("Yaw (degrees)", &yaw, 0, 0, "%.2f");
-    if (ImGui::Button("Teleport")) {
-        char command[160]{}; StringCchPrintfA(command, ARRAYSIZE(command), "teleport %.3f %.3f %.3f %.3f", destination[0], destination[1], destination[2], yaw); Send(command);
-    }
-    ImGui::SetNextItemWidth(330); ImGui::InputFloat3("Offset XYZ (m)", step, "%.2f");
-    if (ImGui::Button("Move by offset")) {
-        char command[128]{}; StringCchPrintfA(command, ARRAYSIZE(command), "step %.3f %.3f %.3f", step[0], step[1], step[2]); Send(command);
-    }
-    static int bookmark = 0;
-    ImGui::SetNextItemWidth(150); ImGui::SliderInt("Bookmark", &bookmark, 0, 7);
-    if (ImGui::Button("Save position")) {
-        char command[32]{}; StringCchPrintfA(command, ARRAYSIZE(command), "bookmark %d", bookmark); Send(command);
-    }
-    ImGui::SameLine();
-    ImGui::BeginDisabled((s.bookmark_mask & (1u << bookmark)) == 0);
-    if (ImGui::Button("Return")) {
-        char command[32]{}; StringCchPrintfA(command, ARRAYSIZE(command), "return %d", bookmark); Send(command);
-    }
-    ImGui::EndDisabled();
-    ImGui::Separator();
-    bool ammo = s.infinite_ammo;
-    if (ImGui::Checkbox("Infinite ammunition", &ammo)) Send(ammo ? "infinite_ammo 1" : "infinite_ammo 0");
-    Action("Refill current hip", "weapon hip current"); ImGui::SameLine();
-    Action("Refill current back", "weapon back current");
-    Action("Refill current secondary", "weapon secondary current");
-    ImGui::TextWrapped("Refill uses current loaded equipment. Select the gun with normal game controls. A different unloaded preset is refused.");
-    static int weapon = 0, slot = 0;
-    const char* weapon_names[] = {"Secondary 10101", "Hip weapon 30101", "Secondary 10004", "Hip weapon 30103"};
-    const char* weapon_values[] = {"EQP_WP_10101", "EQP_WP_30101", "EQP_WP_10004", "EQP_WP_30103"};
-    const char* slots[] = {"secondary", "hip", "back"};
-    ImGui::SetNextItemWidth(210); ImGui::Combo("Weapon preset", &weapon, weapon_names, ARRAYSIZE(weapon_names));
-    ImGui::SetNextItemWidth(210); ImGui::Combo("Weapon slot", &slot, slots, ARRAYSIZE(slots));
-    if (ImGui::Button("Refill resident preset")) {
-        char command[96]{}; StringCchPrintfA(command, ARRAYSIZE(command), "weapon %s %s", slots[slot], weapon_values[weapon]); Send(command);
-    }
-    ImGui::TextWrapped("Weapon and equipment changes affect your local player. The partner motion mapper does not synchronize weapons.");
-    static char equipment[64] = "EQP_WP_10101";
-    static int payload = 1;
-    ImGui::SetNextItemWidth(280); ImGui::InputText("Equipped item", equipment, ARRAYSIZE(equipment));
-    ImGui::SetNextItemWidth(220); ImGui::SliderInt("Dropped item payload", &payload, 1, 10);
-    if (ImGui::Button("Drop equipped item")) {
-        char command[100]{}; StringCchPrintfA(command, ARRAYSIZE(command), "drop_item %s %d", equipment, payload); Send(command);
-    }
-    const char* drop_slots[] = {"current_hip", "current_back", "current_secondary"};
-    const char* drop_labels[] = {"Drop hip gun", "Drop back gun", "Drop secondary gun"};
-    for (unsigned i = 0; i < ARRAYSIZE(drop_slots); ++i) {
-        if (i) ImGui::SameLine();
-        if (ImGui::Button(drop_labels[i])) {
-            char command[64]{}; StringCchPrintfA(command, ARRAYSIZE(command), "drop_item %s %d", drop_slots[i], payload); Send(command);
-        }
-    }
-    ImGui::TextWrapped("The item must already be equipped. Payload changes the dropped item's contents; it does not create multiple pickups.");
-}
-void Enemies(const debug_menu::Snapshot& s) noexcept {
-    ImGui::TextUnformatted("Spawn patrol guards / host controls");
-    static std::uint32_t generation = 0;
-    static char camp[65]{};
-    static int route = 0;
-    if (generation != s.generation) {
-        generation = s.generation;
-        camp[0] = 0; route = 0;
-        Send("enemy_camps");
-    }
-    Action("Refresh camps", "enemy_camps"); ImGui::SameLine();
-    ImGui::BeginDisabled(!s.host);
-    Action("Spawn guard at closest camp", "spawn_enemy closest");
-    ImGui::EndDisabled();
-    if (!camp[0] && s.enemy_camp_count) StringCchCopyA(camp, ARRAYSIZE(camp), s.enemy_camps[0].name);
-    ImGui::SetNextItemWidth(390);
-    if (ImGui::BeginCombo("Camp", camp[0] ? camp : "Refresh camps to choose")) {
-        for (std::uint32_t i = 0; i < s.enemy_camp_count; ++i) {
-            const auto& entry = s.enemy_camps[i];
-            char label[128]{};
-            if (entry.distance_mm >= 0) StringCchPrintfA(label, ARRAYSIZE(label), "%s (%.0f m)", entry.name, entry.distance_mm * 0.001);
-            else StringCchPrintfA(label, ARRAYSIZE(label), "%s (position unavailable)", entry.name);
-            if (ImGui::Selectable(label, std::strcmp(camp, entry.name) == 0)) {
-                StringCchCopyA(camp, ARRAYSIZE(camp), entry.name); route = 0;
-                char command[100]{}; StringCchPrintfA(command, ARRAYSIZE(command), "enemy_routes %s", camp); Send(command);
-            }
-        }
-        ImGui::EndCombo();
-    }
-    ImGui::BeginDisabled(!camp[0]);
-    if (ImGui::Button("Load patrol routes")) {
-        char command[100]{}; StringCchPrintfA(command, ARRAYSIZE(command), "enemy_routes %s", camp); Send(command);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Teleport to camp")) {
-        char command[100]{}; StringCchPrintfA(command, ARRAYSIZE(command), "goto_camp %s", camp); Send(command);
-    }
-    ImGui::EndDisabled();
-    const bool routes_ready = camp[0] && std::strcmp(camp, s.enemy_routes_camp) == 0 && s.enemy_route_count;
-    if (route < 0 || route >= static_cast<int>(s.enemy_route_count)) route = 0;
-    ImGui::SetNextItemWidth(390);
-    if (ImGui::BeginCombo("Patrol route", routes_ready ? s.enemy_routes[route].name : "Load routes for this camp")) {
-        if (routes_ready) for (std::uint32_t i = 0; i < s.enemy_route_count; ++i)
-            if (ImGui::Selectable(s.enemy_routes[i].name, route == static_cast<int>(i))) route = static_cast<int>(i);
-        ImGui::EndCombo();
-    }
-    ImGui::BeginDisabled(!s.host || !routes_ready);
-    if (ImGui::Button("Spawn guard on selected patrol")) {
-        char command[110]{}; StringCchPrintfA(command, ARRAYSIZE(command), "spawn_enemy %s %u", camp, s.enemy_routes[route].index); Send(command);
-    }
-    ImGui::EndDisabled();
-    ImGui::BeginDisabled(!s.enemy_spawn_valid);
-    Action("Teleport near spawned guard", "goto_spawn");
-    ImGui::EndDisabled();
-    if (s.enemy_spawn_valid) ImGui::Text("Last guard %u / X %.1f Y %.1f Z %.1f m", s.enemy_spawn_hash,
-        s.enemy_spawn_pos_mm[0] * 0.001, s.enemy_spawn_pos_mm[1] * 0.001, s.enemy_spawn_pos_mm[2] * 0.001);
-    ImGui::TextWrapped("Spawning reuses a living guard near the camp on an authored patrol route. Placement is local to the host. Up to eight guards can be reused per mission. Teleport near it to check visibility.");
-    ImGui::Separator();
-    ImGui::TextUnformatted("Existing mission enemies");
-    Action("Read nearest enemy", "enemy_nearest");
-    ImGui::BeginDisabled(!s.host);
-    Action("Enable nearest enemy", "enemy_enable_nearest"); ImGui::SameLine();
-    Action("Disable nearest enemy", "enemy_disable_nearest");
-    Action("Kill nearest enemy", "enemy_kill_nearest");
-    static int radius = 25;
-    ImGui::SetNextItemWidth(230); ImGui::SliderInt("Clear radius (m)", &radius, 1, 100);
-    if (ImGui::Button("Clear nearby enemies")) { char command[48]{}; StringCchPrintfA(command, ARRAYSIZE(command), "clear_enemies %d", radius); Send(command); }
-    ImGui::TextUnformatted("Clear affects up to 16 readable soldiers per request.");
-    ImGui::Separator();
-    ImGui::TextWrapped("Enable or disable an existing mission enemy using its roster ID.");
-    static unsigned id = 0;
-    ImGui::SetNextItemWidth(250); ImGui::InputScalar("Roster ID", ImGuiDataType_U32, &id);
-    ImGui::BeginDisabled(id == 0);
-    if (ImGui::Button("Enable enemy")) { char command[64]{}; StringCchPrintfA(command, ARRAYSIZE(command), "enemy_enable %u", id); Send(command); }
-    ImGui::SameLine();
-    if (ImGui::Button("Disable enemy")) { char command[64]{}; StringCchPrintfA(command, ARRAYSIZE(command), "enemy_disable %u", id); Send(command); }
-    ImGui::EndDisabled();
-    ImGui::EndDisabled();
-    if (!s.host) ImGui::TextWrapped("Use the host's menu to spawn or change guards.");
-}
-void World(const debug_menu::Snapshot& s) noexcept {
-    ImGui::Text("World level %u / active level %u", s.world_level, s.world_effective);
-    ImGui::Text("World handshake: %s / link %s", s.world_paired ? "paired" : "waiting", s.world_link_up ? "connected" : "disconnected");
-    if (!s.world_configured || s.world_level < 3) ImGui::TextWrapped("Time and weather sharing requires world level 3. Restart with Play-Offline-Coop.bat to use the default shared world.");
-    else if (!s.world_paired) ImGui::TextWrapped("Waiting for both players to be in the same supported mission before sharing the environment.");
-    ImGui::BeginDisabled(!s.host);
-    static int seconds = 12 * 3600, weather = 0;
-    ImGui::SetNextItemWidth(220); ImGui::SliderInt("Time (seconds)", &seconds, 0, 86399);
-    ImGui::Text("%02d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60);
-    if (ImGui::Button("Set time")) { char command[32]{}; StringCchPrintfA(command, ARRAYSIZE(command), "time %d", seconds); Send(command); }
-    const char* values[] = {"sunny", "cloudy", "rainy", "sandstorm", "foggy", "auto"};
-    ImGui::SetNextItemWidth(220); ImGui::Combo("Weather", &weather, values, ARRAYSIZE(values));
-    if (ImGui::Button("Set weather")) { char command[40]{}; StringCchPrintfA(command, ARRAYSIZE(command), "weather %s", values[weather]); Send(command); }
-    ImGui::EndDisabled();
-    if (!s.host) ImGui::TextUnformatted("Use the host's menu to change the shared environment.");
-}
 void DrawMenu() noexcept {
-    const auto s = debug_menu::GetSnapshot();
-    const ImVec2 display = ImGui::GetIO().DisplaySize;
-    ImGui::SetNextWindowSize(ImVec2((display.x < 800 ? display.x - 24 : 760), (display.y < 700 ? display.y - 24 : 650)), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSizeConstraints(ImVec2(560, 500), ImVec2(FLT_MAX, FLT_MAX));
-    ImGui::SetNextWindowPos(ImVec2(24, 24), ImGuiCond_FirstUseEver);
-    bool visible = true;
-    if (!ImGui::Begin("MGS Co-op Debug  |  F9", &visible, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) { ImGui::End(); if (!visible) ChangeOpen(false); return; }
-    ImGui::Text("%s  /  mission %u  /  %s", s.role[0] ? s.role : "offline", s.mission, s.gameplay_ready ? "supported scene" : "waiting for supported scene");
-    ImGui::TextUnformatted("Offline session / redirected co-op save");
-    ImGui::Text("Configured world level: %u", s.world_level);
-    ImGui::TextWrapped("Actions require on-foot gameplay; loading, demos and game-over refuse them.");
-    ImGui::Separator();
-    const float available_actions = ImGui::GetContentRegionAvail().y - 205.0f - ImGui::GetStyle().ItemSpacing.y * 2;
-    const float action_height = available_actions < 40 ? 40 : available_actions;
-    if (ImGui::BeginChild("actions", ImVec2(0, action_height), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
-        if (ImGui::BeginTabBar("debug_tabs")) {
-            struct Tab { const char* name; const char* child; void (*draw)(const debug_menu::Snapshot&) noexcept; };
-            const Tab tabs[] = {{"Overview", "overview_actions", &Overview}, {"Movement / animations", "movement_actions", &Movement},
-                {"Player / weapons", "player_actions", &Player}, {"Enemies", "enemy_actions", &Enemies}, {"World", "world_actions", &World}};
-            for (const auto& tab : tabs) if (ImGui::BeginTabItem(tab.name)) {
-                if (ImGui::BeginChild(tab.child, ImVec2(0, 0))) {
-                    ImGui::BeginDisabled(!s.gameplay_ready || s.terminating);
-                    tab.draw(s);
-                    ImGui::EndDisabled();
-                }
-                ImGui::EndChild(); ImGui::EndTabItem();
-            }
-            ImGui::EndTabBar();
-        }
-    }
-    ImGui::EndChild();
-    ImGui::Separator();
-    if (ImGui::BeginChild("results", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
-        // Read after button handling, so queue depth and results also reflect
-        // commands submitted during this frame without persistent UI status.
-        const auto result = debug_menu::GetSnapshot();
-        footer_status = result.queue_depth ? "Queued. Waiting for the game update thread." :
-            result.last_id || result.rejected ? "No commands waiting. Latest result below." : "Choose an action; its game-thread result appears below.";
-        ImGui::TextUnformatted(footer_status);
-        ImGui::Text("Pending %u   completed %u   refused %u", result.queue_depth, result.completed, result.rejected);
-        if (ImGui::BeginChild("latest_result", ImVec2(0, ImGui::GetTextLineHeight() * 2 + ImGui::GetStyle().ItemSpacing.y), ImGuiChildFlags_None,
-            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) ImGui::TextWrapped("Latest: %s", result.last_result);
-        const bool latest_hovered = ImGui::IsWindowHovered();
-        ImGui::EndChild();
-        if (latest_hovered && result.last_result[0]) { ImGui::BeginTooltip(); ImGui::PushTextWrapPos(600); ImGui::TextUnformatted(result.last_result); ImGui::PopTextWrapPos(); ImGui::EndTooltip(); }
-        if (ImGui::BeginChild("receipts", ImVec2(0, 0), ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar))
-            for (const auto& entry : result.history) if (entry[0]) ImGui::TextUnformatted(entry);
-        ImGui::EndChild();
-    }
-    ImGui::EndChild();
-    ImGui::End();
-    if (!visible) ChangeOpen(false);
+    debug_menu_ui::Options options{};
+    options.worker = worker_scenario::Requested();
+    if (!debug_menu_ui::Draw(options)) ChangeOpen(false);
 }
 void Draw() noexcept {
     ImGui::SetCurrentContext(gui);
@@ -1321,6 +1052,147 @@ void Draw() noexcept {
     saved.Restore(context);
     if (frames.fetch_add(1, std::memory_order_relaxed) == 0) Log("overlay=drawn; frame=1\r\n");
 }
+#if MGS_BACKGROUND_WORKER
+// Worker builds: the menu is drawn without the Win32 backend, never subclasses
+// again and never takes mouse/keyboard; `menu ...` text requests drive it.
+LARGE_INTEGER worker_clock{};
+std::uint32_t worker_request{};
+enum class Deferred : std::uint8_t { none, open, press };
+Deferred worker_deferred{};
+void WorkerRelease() noexcept {
+    if (gui) {
+        ImGui::SetCurrentContext(gui);
+        if (ImGui::GetIO().BackendRendererUserData) ImGui_ImplDX11_Shutdown();
+        ImGui::DestroyContext(gui);
+    }
+    gui = nullptr; initialized = false; swapchain = nullptr; worker_clock = {};
+    Release(target); Release(context); Release(device);
+}
+bool WorkerInitialize(IDXGISwapChain* chain) noexcept {
+    DXGI_SWAP_CHAIN_DESC desc{};
+    if (FAILED(chain->GetDesc(&desc)) || !desc.OutputWindow || desc.OutputWindow != window.load(std::memory_order_acquire)) return false;
+    if (FAILED(chain->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(&device))) || FAILED(device->GetDeviceRemovedReason())) {
+        WorkerRelease(); return false;
+    }
+    device->GetImmediateContext(&context);
+    if (!context || !CreateTarget(chain)) { WorkerRelease(); return false; }
+    gui = ImGui::CreateContext();
+    ImGui::SetCurrentContext(gui);
+    ImGuiIO& io = ImGui::GetIO();
+    io.IniFilename = nullptr; io.LogFilename = nullptr;
+    io.ConfigFlags |= ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoMouseCursorChange;
+    Style(io);
+    if (!ImGui_ImplDX11_Init(device, context)) { WorkerRelease(); return false; }
+    swapchain = chain; initialized = true;
+    Log("overlay=worker_render_ready; api=dx11; input=none\r\n");
+    return true;
+}
+void WorkerDraw(IDXGISwapChain* chain) noexcept {
+    ImGui::SetCurrentContext(gui);
+    DXGI_SWAP_CHAIN_DESC desc{};
+    if (FAILED(chain->GetDesc(&desc)) || !desc.BufferDesc.Width || !desc.BufferDesc.Height) return;
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(static_cast<float>(desc.BufferDesc.Width), static_cast<float>(desc.BufferDesc.Height));
+    LARGE_INTEGER now{}, frequency{};
+    QueryPerformanceCounter(&now); QueryPerformanceFrequency(&frequency);
+    const double delta = worker_clock.QuadPart && now.QuadPart > worker_clock.QuadPart && frequency.QuadPart ?
+        static_cast<double>(now.QuadPart - worker_clock.QuadPart) / static_cast<double>(frequency.QuadPart) : 1.0 / 60.0;
+    io.DeltaTime = delta > 0 && delta < 1.0 ? static_cast<float>(delta) : 1.0f / 60.0f;
+    worker_clock = now;
+    io.MouseDrawCursor = false;
+    ImGui_ImplDX11_NewFrame(); ImGui::NewFrame();
+    DrawMenu();
+    ImGui::Render();
+    ExtraState saved(context);
+    context->OMSetRenderTargets(1, &target, nullptr);
+    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+    saved.Restore(context);
+    if (frames.fetch_add(1, std::memory_order_relaxed) == 0) Log("overlay=drawn; frame=1; worker=1\r\n");
+}
+void WorkerResult(const char* text) noexcept {
+    debug_menu::ReportMenuResult(worker_request, text);
+    worker_request = 0; worker_deferred = Deferred::none;
+}
+void ApplyOverlayRequest() noexcept {
+    if (worker_request) return;
+    std::uint32_t serial = 0;
+    char text[debug_menu::kCommandCapacity]{};
+    if (!debug_menu::TakeMenuRequest(serial, text)) return;
+    worker_request = serial;
+    debug_actions::OverlayRequest request{};
+    if (!debug_actions::ParseOverlayRequest(text, request)) { WorkerResult("menu_args"); return; }
+    char out[160]{};
+    debug_actions::Category category{};
+    using Op = debug_actions::OverlayOp;
+    const bool is_open = open.load(std::memory_order_acquire);
+    switch (request.op) {
+    case Op::open:
+    case Op::toggle:
+        if (request.op == Op::toggle && is_open) { ChangeOpen(false); WorkerResult("menu_closed"); return; }
+        if (request.arg[0] && debug_actions::ParseCategory(request.arg, category)) debug_menu_ui::SelectCategory(category);
+        ChangeOpen(true); worker_deferred = Deferred::open; return;
+    case Op::close: ChangeOpen(false); WorkerResult("menu_closed"); return;
+    case Op::category:
+        debug_actions::ParseCategory(request.arg, category); debug_menu_ui::SelectCategory(category);
+        StringCchPrintfA(out, ARRAYSIZE(out), "menu_category=%s", debug_actions::CategoryName(category)); break;
+    case Op::search:
+        StringCchPrintfA(out, ARRAYSIZE(out), "menu_search;matches=%u", static_cast<unsigned>(debug_menu_ui::SetSearch(request.arg))); break;
+    case Op::press:
+        if (!debug_menu_ui::BeginPress(request.arg)) { WorkerResult("menu_args"); return; }
+        worker_deferred = Deferred::press; return;
+    case Op::confirm: debug_menu_ui::Confirm(out, sizeof(out)); break;
+    case Op::cancel: debug_menu_ui::Cancel(out, sizeof(out)); break;
+    case Op::footer:
+        debug_menu_ui::SetFooterExpanded(request.arg[0] == '1');
+        StringCchPrintfA(out, ARRAYSIZE(out), "menu_footer=%s", request.arg); break;
+    case Op::select:
+        if (debug_menu_ui::Select(static_cast<std::uint32_t>(std::strtoul(request.arg, nullptr, 10))))
+            StringCchPrintfA(out, ARRAYSIZE(out), "menu_selected=%s", request.arg);
+        else StringCchCopyA(out, ARRAYSIZE(out), "not_in_list");
+        break;
+    default: StringCchCopyA(out, ARRAYSIZE(out), "menu_args"); break;
+    }
+    WorkerResult(out);
+}
+void FinishOverlayRequest(bool drawn, bool failed) noexcept {
+    if (!worker_request) return;
+    char out[160]{};
+    if (worker_deferred == Deferred::open) {
+        if (failed) WorkerResult("menu_unavailable;reason=init");
+        else if (drawn) {
+            StringCchPrintfA(out, ARRAYSIZE(out), "menu_open;category=%s;frames=%u",
+                debug_actions::CategoryName(debug_menu_ui::CurrentCategory()), frames.load(std::memory_order_relaxed));
+            WorkerResult(out);
+        }
+    } else if (worker_deferred == Deferred::press) {
+        if (!drawn) debug_menu_ui::NoteUndrawnFrame();
+        if (debug_menu_ui::TakePressResult(out, sizeof(out))) WorkerResult(out);
+    }
+}
+void PublishOverlayStatus() noexcept {
+    debug_menu::OverlayStatus status{};
+    status.open = open.load(std::memory_order_acquire);
+    status.frames = frames.load(std::memory_order_relaxed);
+    StringCchCopyA(status.category, ARRAYSIZE(status.category), debug_actions::CategoryName(debug_menu_ui::CurrentCategory()));
+    StringCchCopyA(status.search, ARRAYSIZE(status.search), debug_menu_ui::Search());
+    debug_menu::SetOverlayStatus(status);
+}
+// Under render_lock, after the synthetic input pump and before the frame capture,
+// so a capture taken in this Present already contains the menu.
+void WorkerMenu(IDXGISwapChain* chain) noexcept {
+    if (gui) ImGui::SetCurrentContext(gui);
+    ApplyOverlayRequest();
+    bool drawn = false, failed = false;
+    if (open.load(std::memory_order_acquire) && debug_menu::Enabled()) {
+        if (initialized && swapchain != chain) WorkerRelease();
+        if (initialized || WorkerInitialize(chain)) {
+            if (target) { WorkerDraw(chain); drawn = true; }
+        } else { failed = true; ChangeOpen(false); }
+    }
+    FinishOverlayRequest(drawn, failed);
+    PublishOverlayStatus();
+}
+#endif
 HRESULT STDMETHODCALLTYPE Present(IDXGISwapChain* chain, UINT interval, UINT flags) noexcept {
     presents.fetch_add(1, std::memory_order_relaxed);
     const DWORD incoming_error = GetLastError();
@@ -1339,7 +1211,7 @@ HRESULT STDMETHODCALLTYPE Present(IDXGISwapChain* chain, UINT interval, UINT fla
             }
         }
 #if MGS_BACKGROUND_WORKER
-        if (window.load() && worker_scenario::ThreadAdmitted()) PumpSyntheticInput(window.load());
+        if (window.load() && worker_scenario::ThreadAdmitted()) { PumpSyntheticInput(window.load()); WorkerMenu(chain); }
 #endif
         worker_frames::Capture(chain, worker_scenario::TakeCapture(GetTickCount64()));
         ReleaseSRWLockExclusive(&render_lock);
@@ -1358,7 +1230,12 @@ HRESULT STDMETHODCALLTYPE Present(IDXGISwapChain* chain, UINT interval, UINT fla
     const DWORD original_error = GetLastError();
     if (result == DXGI_ERROR_DEVICE_REMOVED || result == DXGI_ERROR_DEVICE_RESET) {
         AcquireSRWLockExclusive(&render_lock);
-        if (swapchain == chain) Cleanup();
+        if (swapchain == chain) {
+#if MGS_BACKGROUND_WORKER
+            if (worker_scenario::Requested()) WorkerRelease(); else
+#endif
+            Cleanup();
+        }
         ReleaseSRWLockExclusive(&render_lock);
         Log("overlay=device_lost; resources=released\r\n");
     }
@@ -1428,7 +1305,7 @@ bool CapturingInput() noexcept {
 #ifdef MGS_DEBUG_OVERLAY_TESTING
     if (test_mouse_held.load(std::memory_order_acquire)) return true;
 #else
-    const int held[] = {VK_F9, VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2};
+    const int held[] = {VK_F9, VK_ESCAPE, VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2};
     for (const int key : held) if (GetAsyncKeyState(key) & 0x8000) return true;
 #endif
     if (!PadsReleased()) return true;
@@ -1494,9 +1371,6 @@ TestStats StatsForTest() noexcept {
     AcquireSRWLockShared(&render_lock);
     const TestStats result{presents.load(), frames.load(), resizes.load(), input_messages.load(), characters.load(), initialized, open.load()};
     ReleaseSRWLockShared(&render_lock); return result;
-}
-const char* FooterStatusForTest() noexcept {
-    AcquireSRWLockShared(&render_lock); const char* result = footer_status; ReleaseSRWLockShared(&render_lock); return result;
 }
 void ShutdownForTest() noexcept {
     AcquireSRWLockExclusive(&render_lock); Cleanup(); ReleaseSRWLockExclusive(&render_lock);
