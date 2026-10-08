@@ -3,6 +3,7 @@
 // debug_menu, and the natural Lua update owns the game calls.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include <cstdarg>
 #include <windows.h>
 #include <algorithm>
 #include <cstdio>
@@ -350,51 +351,57 @@ void Wrapped(const char* text) noexcept {
     ImGui::PopStyleColor();
 }
 // ---------------------------------------------------------------- header
+// Flow layout: continue the current line only when an item of `width` still
+// fits, so the header and quick bar wrap instead of clipping at the edge.
+void Flow(float width) noexcept {
+    const float right = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+    if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + width <= right) ImGui::SameLine();
+}
+float ButtonWidth(const char* label) noexcept {
+    return ImGui::CalcTextSize(label, nullptr, true).x + 2.0f * ImGui::GetStyle().FramePadding.x;
+}
+void Segment(const ImVec4& color, const char* format, ...) noexcept {
+    char text[128]{};
+    va_list args; va_start(args, format); std::vsnprintf(text, sizeof(text), format, args); va_end(args);
+    Flow(ImGui::CalcTextSize(text).x);
+    ImGui::TextColored(color, "%s", text);
+}
 const char* LinkWord(const Snapshot& s) noexcept { return s.link_state[0] ? s.link_state : "unavailable"; }
 void Header(const Snapshot& s) noexcept {
     const char* mission = act::MissionName(s.mission);
     ImGui::TextColored(s.host ? kAccent : kAmber, "%s", s.host ? "HOST" : "GUEST");
-    ImGui::SameLine(); ImGui::TextUnformatted("|");
-    ImGui::SameLine();
-    if (mission) ImGui::Text("%u %s", s.mission, mission); else ImGui::Text("mission %u", s.mission);
-    ImGui::SameLine(); ImGui::Text("| gen %u |", s.generation);
-    ImGui::SameLine();
+    const ImVec4 plain = ImGui::GetStyleColorVec4(ImGuiCol_Text);
+    if (mission) Segment(plain, "| %u %s", s.mission, mission); else Segment(plain, "| mission %u", s.mission);
+    Segment(plain, "| gen %u", s.generation);
     const bool ready = s.gameplay_ready && !s.terminating && std::strcmp(s.guard_reason, "ok") == 0;
-    if (ready) ImGui::TextColored(kGreen, "READY");
-    else ImGui::TextColored(kAmber, "WAITING: %s", s.terminating ? "mission_end" : !s.gameplay_ready ? "scene" :
+    if (ready) Segment(kGreen, "| READY");
+    else Segment(kAmber, "| WAITING: %s", s.terminating ? "mission_end" : !s.gameplay_ready ? "scene" :
         s.guard_reason[0] ? s.guard_reason : "update");
-    ImGui::SameLine(); ImGui::TextUnformatted("|");
-    ImGui::SameLine();
     const bool up = std::strcmp(s.link_state, "connected") == 0;
-    if (up) ImGui::TextColored(kGreen, "Link up %u ms %.1f%% loss", s.rtt_ms, s.loss_permille / 10.0f);
-    else ImGui::TextColored(kGrey, "Link %s", LinkWord(s));
-    ImGui::SameLine(); ImGui::TextUnformatted("|");
-    ImGui::SameLine();
-    ImGui::TextColored(s.world_paired ? kGreen : kGrey, "World L%u %s", s.world_effective, s.world_paired ? "paired" : "waiting");
-    ImGui::SameLine(); ImGui::TextUnformatted("|");
-    ImGui::SameLine();
-    if (s.realized) ImGui::TextColored(kGreen, "Partner visible clip %u age %u ms", s.mapped_clip, s.remote_age_ms);
-    else ImGui::TextColored(kGrey, "Partner hidden");
+    if (up) Segment(kGreen, "| Link up %u ms %.1f%% loss", s.rtt_ms, s.loss_permille / 10.0f);
+    else Segment(kGrey, "| Link %s", LinkWord(s));
+    Segment(s.world_paired ? kGreen : kGrey, "| World L%u %s", s.world_effective, s.world_paired ? "paired" : "waiting");
+    if (s.realized) Segment(kGreen, "| Partner visible clip %u age %u ms", s.mapped_clip, s.remote_age_ms);
+    else Segment(kGrey, "| Partner hidden");
     // Line 2: pending state, active toggles and telemetry age.
     if (s.pending_kind[0] && std::strcmp(s.pending_kind, "none") != 0)
         ImGui::TextColored(kAmber, "Pending: %s #%u (frame %u)", s.pending_kind, s.pending_id, s.pending_frames);
     else ImGui::TextColored(kGreen, "Idle");
-    ImGui::SameLine(); ImGui::Text("| Queue %u", s.queue_depth);
+    Segment(ImGui::GetStyleColorVec4(ImGuiCol_Text), "| Queue %u", s.queue_depth);
     const struct { bool on; const char* text; } toggles[] = {{s.god_mode, "Auto-heal ON"}, {s.infinite_ammo, "Inf ammo ON"},
         {s.fulton_infinite, "Fulton inf ON"}, {s.slowmo_active, "Slowmo ON"}};
-    for (const auto& t : toggles) if (t.on) { ImGui::SameLine(); ImGui::TextColored(kAmber, "| %s", t.text); }
+    for (const auto& t : toggles) if (t.on) Segment(kAmber, "| %s", t.text);
     const ULONGLONG now = GetTickCount64();
     const double age = s.published_tick64 && now >= s.published_tick64 ? static_cast<double>(now - s.published_tick64) / 1000.0 : -1.0;
-    ImGui::SameLine();
-    if (age < 0) ImGui::TextColored(kGrey, "| telemetry none");
-    else ImGui::TextColored(age > 1.0 ? kAmber : kGrey, "| telemetry %.1f s", age);
+    if (age < 0) Segment(kGrey, "| telemetry none");
+    else Segment(age > 1.0 ? kAmber : kGrey, "| telemetry %.1f s", age);
     if (age > 1.0) ImGui::SetItemTooltip("No game-thread update for %.0f s (pause, loading or menu).", age);
 }
 void QuickBar(const Snapshot& s) noexcept {
     ImGui::TextColored(kGrey, "Quick:");
     for (const char* id : kQuick) {
-        ImGui::SameLine();
         const auto& a = Def(id);
+        Flow(ButtonWidth(a.label));
         char command[kText]{};
         const bool built = Build(a, s, command, sizeof(command));
         const char* reason = Reason(a, s, built);
@@ -409,11 +416,11 @@ void QuickBar(const Snapshot& s) noexcept {
         ImGui::PopID();
     }
     ImGui::TextColored(kGrey, "Recent:");
-    if (!ui.recent[0].action) { ImGui::SameLine(); ImGui::TextColored(kGrey, "(commands you send appear here; Ctrl+R repeats the last)"); }
+    if (!ui.recent[0].action) Segment(kGrey, "(commands you send appear here; Ctrl+R repeats the last)");
     for (int i = 0; i < 6 && ui.recent[i].action; ++i) {
-        ImGui::SameLine();
         char label[40]{};
         std::snprintf(label, sizeof(label), "%.28s##recent%d", ui.recent[i].action->label, i);
+        Flow(ButtonWidth(label));
         const bool host_blocked = (ui.recent[i].action->flags & act::kHostOnly) && !s.host;
         ImGui::BeginDisabled(host_blocked || !s.gameplay_ready);
         if (ImGui::Button(label)) Repeat(*ui.recent[i].action, ui.recent[i].command);
@@ -738,7 +745,7 @@ void SearchResults(const Snapshot& s) noexcept {
 void Rail(const Snapshot& s) noexcept {
     if (ui.focus_search) { ImGui::SetKeyboardFocusHere(); ui.focus_search = false; }
     ImGui::SetNextItemWidth(-1);
-    ImGui::InputTextWithHint("##search", "Search (Ctrl+F)", ui.search, sizeof(ui.search), ImGuiInputTextFlags_EscapeClearsAll);
+    ImGui::InputTextWithHint("##search", "Search...", ui.search, sizeof(ui.search), ImGuiInputTextFlags_EscapeClearsAll);
     ui.search_active = ImGui::IsItemActive();
     ImGui::Spacing();
     for (std::size_t i = 0; i < act::kCategoryCount; ++i) {
@@ -761,6 +768,7 @@ void Rail(const Snapshot& s) noexcept {
         if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) && at + 1 < static_cast<int>(act::kCategoryCount)) ui.category = static_cast<Category>(at + 1);
     }
     ImGui::Spacing();
+    ImGui::TextColored(kGrey, "Ctrl+F search");
     ImGui::TextColored(kGrey, "Ctrl+1..5 pages");
     ImGui::TextColored(kGrey, "Ctrl+R repeat");
     ImGui::TextColored(kGrey, "Esc / F9 close");
@@ -814,7 +822,7 @@ bool Draw(const Options& options) noexcept {
         ImGui::SetNextWindowSize(ImVec2(900, 600), ImGuiCond_Always);
     } else {
         const ImGuiCond cond = ui.reset_layout ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
-        const float w = display.x - 48 < 920 ? display.x - 48 : 920, h = display.y - 48 < 620 ? display.y - 48 : 620;
+        const float w = display.x - 48 < 1040 ? display.x - 48 : 1040, h = display.y - 48 < 620 ? display.y - 48 : 620;
         ImGui::SetNextWindowPos(ImVec2(24, 24), cond);
         ImGui::SetNextWindowSize(ImVec2(w < 640 ? 640 : w, h < 420 ? 420 : h), cond);
         ImGui::SetNextWindowSizeConstraints(ImVec2(640, 420), ImVec2(FLT_MAX, FLT_MAX));
