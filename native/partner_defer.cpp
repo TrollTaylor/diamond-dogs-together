@@ -51,8 +51,12 @@ volatile LONG g_fault_phase = 0, g_fault_code = 0;
 volatile LONG64 g_id_go = 0;
 volatile LONG g_id_pools = 0;
 
-// Batches and pending records (per pass/mode 0..1).
-volatile LONG g_batch_active[2] = {0, 0};
+// Batches in flight and pending records (per pass/mode 0..1). g_depth[m] and
+// g_main_depth count hook-thread batches (nesting included), g_foreign the
+// batches running on any other thread.
+volatile LONG g_depth[2] = {0, 0};
+volatile LONG g_main_depth = 0;
+volatile LONG g_foreign = 0;
 volatile LONG g_pending[2] = {0, 0};   // 0 free, 2 claimed, 1 published
 struct Rec {
     std::uintptr_t go;
@@ -69,6 +73,7 @@ volatile LONG g_deferred = 0, g_dup = 0, g_pass[16]{};
 volatile LONG g_drains[2] = {0, 0}, g_windowed = 0, g_unwindowed = 0, g_lost = 0, g_gate_closed = 0, g_torn = 0;
 volatile LONG g_entry_changed = 0, g_scope_unbalanced = 0, g_id1_pass = 0;
 volatile LONG g_drain_us_max = 0, g_batch_us_max = 0, g_spin_max = 0;
+volatile LONG g_nested_batches = 0, g_foreign_batches = 0, g_unwound = 0;
 
 std::uint64_t NowUs() noexcept {
     LARGE_INTEGER f{}, cc{};
@@ -237,7 +242,7 @@ void DrainCall(std::uintptr_t entry, const Rec& rec, std::uint32_t mode) noexcep
     else InterlockedAnd(&g_id1_pass, static_cast<LONG>(~(1u << mode)));
     const bool windowable = static_cast<std::uint32_t>(GetCurrentThreadId()) == HookThread() && g_armed && hk::Installed();
     const auto consumer = mode == 0 ? partner_input::Consumer::drain0 : partner_input::Consumer::drain1;
-    if (windowable && hk::RunJobWindow(go, &param, &HookJob, consumer)) InterlockedIncrement(&g_windowed);
+    if (windowable && hk::RunJobWindow(go, &param, param.block, &HookJob, consumer)) InterlockedIncrement(&g_windowed);
     else {
         if (!windowable) GuardedJob(go, &param);
         InterlockedIncrement(&g_unwindowed);
@@ -289,6 +294,16 @@ void Drain(void* group, std::uint32_t mode) noexcept {
     Max(g_drain_us_max, static_cast<LONG>(NowUs() - t0));
 }
 
+// A record whose batch unwound (an exception through the join) is dropped,
+// never drained in a later frame: counted as torn, the deferral faults.
+void DropPending(std::uint32_t mode) noexcept {
+    if (InterlockedExchange(&g_pending[mode], 0) != 0) {
+        InterlockedIncrement(&g_unwound);
+        InterlockedIncrement(&g_torn);
+        DeferFault(FaultPhase::torn, 0);
+    }
+}
+
 // --- H2: the batch wrapper ------------------------------------------------------
 void WrapBatch(void* group, std::uint32_t mode) noexcept {
     const auto tid = static_cast<std::uint32_t>(GetCurrentThreadId());
@@ -297,14 +312,34 @@ void WrapBatch(void* group, std::uint32_t mode) noexcept {
     NoteThread(tid);
     const std::uint32_t hook = HookThread();
     const bool main = hook != 0 && tid == hook && mode <= 1;
-    const std::uint64_t t0 = main ? NowUs() : 0;
-    if (main) InterlockedExchange(&g_batch_active[mode], 1);
+    if (!main) {
+        // Any other thread: counted while in flight (InBatch, W50 foreign),
+        // never deferred into and never drained.
+        InterlockedIncrement(&g_foreign_batches);
+        InterlockedIncrement(&g_foreign);
+        __try {
+            g_batch_orig(group, mode);
+        } __finally {
+            InterlockedDecrement(&g_foreign);
+        }
+        return;
+    }
+    const std::uint64_t t0 = NowUs();
+    InterlockedIncrement(&g_depth[mode]);
+    if (InterlockedIncrement(&g_main_depth) > 1) InterlockedIncrement(&g_nested_batches);
+    LONG left = 0;
     __try {
         g_batch_orig(group, mode);
     } __finally {
-        if (main) InterlockedExchange(&g_batch_active[mode], 0);
+        InterlockedDecrement(&g_depth[mode]);
+        left = InterlockedDecrement(&g_main_depth);
+        if (AbnormalTermination() && left == 0) {
+            DropPending(0);
+            DropPending(1);
+        }
     }
-    if (!main) return;
+    // A nested batch never drains: the outermost one does after its own join.
+    if (left != 0) return;
     Max(g_batch_us_max, static_cast<LONG>(NowUs() - t0));
     const LONG s = InterlockedCompareExchange(&g_pending[mode], 0, 1);
     if (s == 1) {
@@ -342,7 +377,9 @@ void W50(void* go, const JobParam* p) noexcept {
     in.pmode = p->mode;
     in.sub = p->sub;
     in.block = p->block;
-    in.batch_active = p->mode <= 1 && g_batch_active[p->mode] != 0;
+    in.batch_active = p->mode <= 1 && g_depth[p->mode] != 0;
+    in.nested = g_main_depth > 1;
+    in.foreign = g_foreign != 0;
     in.identity = identity;
     in.go = reinterpret_cast<std::uintptr_t>(go);
     in.id_go = id_go;
@@ -493,7 +530,7 @@ void MissionStart() noexcept {
     InterlockedExchange(&g_faulted, 0);
 }
 
-bool InBatch() noexcept { return (g_batch_active[0] | g_batch_active[1]) != 0; }
+bool InBatch() noexcept { return (g_main_depth | g_foreign) != 0; }
 
 void DrainStats(Stats& out) noexcept {
     out = Stats{};
@@ -532,6 +569,9 @@ void DrainStats(Stats& out) noexcept {
     out.drain_us_max = static_cast<std::uint32_t>(InterlockedExchange(&g_drain_us_max, 0));
     out.batch_us_max = static_cast<std::uint32_t>(InterlockedExchange(&g_batch_us_max, 0));
     out.spin_max = static_cast<std::uint32_t>(InterlockedExchange(&g_spin_max, 0));
+    out.nested_batches = static_cast<std::uint32_t>(g_nested_batches);
+    out.foreign_batches = static_cast<std::uint32_t>(g_foreign_batches);
+    out.unwound = static_cast<std::uint32_t>(g_unwound);
 }
 
 namespace detail {
@@ -545,6 +585,8 @@ const char* PassName(Pass pass) noexcept {
     case Pass::ret_other: return "ret_other";
     case Pass::pmode: return "pmode";
     case Pass::no_batch: return "no_batch";
+    case Pass::nested: return "nested";
+    case Pass::foreign: return "foreign";
     case Pass::sub: return "sub";
     case Pass::identity: return "identity";
     case Pass::go: return "go";
@@ -561,6 +603,8 @@ Pass DeferDecision(const DecisionIn& in) noexcept {
     if (!in.expected_ret || in.ret != in.expected_ret) return Pass::ret_other;
     if (in.pmode > 1) return Pass::pmode;
     if (!in.batch_active) return Pass::no_batch;
+    if (in.nested) return Pass::nested;
+    if (in.foreign) return Pass::foreign;
     if (in.sub != 0) return Pass::sub;
     if (!in.identity) return Pass::identity;
     if (in.go != in.id_go) return Pass::go;
@@ -644,7 +688,8 @@ void ResetForTest() noexcept {
     g_mode = g_armed = g_faulted = g_fault_phase = g_fault_code = 0;
     g_id_go = 0;
     g_id_pools = 0;
-    g_batch_active[0] = g_batch_active[1] = g_pending[0] = g_pending[1] = 0;
+    g_depth[0] = g_depth[1] = g_main_depth = g_foreign = g_pending[0] = g_pending[1] = 0;
+    g_nested_batches = g_foreign_batches = g_unwound = 0;
     std::memset(const_cast<Rec*>(g_def), 0, sizeof(g_def));
     g_batches = g_batch_thread = g_thread_count = 0;
     for (auto& t : g_threads) t = 0;

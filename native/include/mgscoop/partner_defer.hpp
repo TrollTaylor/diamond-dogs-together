@@ -16,8 +16,14 @@
 // address 0xBF4CEE) inside an active main-thread batch, for sub 0 of the
 // published identity's block 1. WrapBatch runs on whatever thread runs the
 // ticker; only the hook (main) thread marks batches active and drains.
+// Batches are counted, not flagged: a batch nested in another hook-thread
+// batch (a job run inline during the join that ticks again) or any batch on
+// another thread never defers (nested / foreign), and only the outermost
+// hook-thread batch drains, after its join, once no batch is in flight.
 // Pending records: claim (0 -> 2), write, publish (1); the owning WrapBatch
-// consumes with 1 -> 0 after the join. MissionStart/disarm never touch them.
+// consumes with 1 -> 0 after the join. MissionStart/disarm never touch them;
+// a batch that unwinds (an exception through the join) drops its record
+// (counted as torn) so it is never drained in a later frame.
 //
 // Patches are never removed (the DLL is pinned); disarmed wrappers forward.
 #include <cstddef>
@@ -65,9 +71,11 @@ void ClearIdentity() noexcept;
 // leaving: SetArmed(false) first.
 void SetArmed(bool armed) noexcept;
 bool Armed() noexcept;
-// Disarms and clears the deferral fault (never touches pending or batch_active).
+// Disarms and clears the deferral fault (never touches pending or the batch counts).
 void MissionStart() noexcept;
-// Hook thread: a hook-thread batch is in flight (windows must not open).
+// A batch is in flight: on the hook thread (a job running inline during the
+// join; nested or not) or on any other thread (block 0's job may be running
+// on a worker). Shared PP/CAM fields must not be swapped while it is true.
 bool InBatch() noexcept;
 
 // Process-lifetime totals (the driver logs deltas); the *_us_max and
@@ -84,6 +92,9 @@ struct Stats {
     std::uint32_t drains[2], windowed, unwindowed, lost, gate_closed, torn, entry_changed, scope_unbalanced;
     std::uint32_t id1_pass;     // bit m: the last drain of pass m had id 1's bit == m
     std::uint32_t drain_us_max, batch_us_max, spin_max;
+    // Hook-thread batches nested in another hook-thread batch, batches on any
+    // other thread, and records dropped because their batch unwound (also in torn).
+    std::uint32_t nested_batches, foreign_batches, unwound;
 };
 void DrainStats(Stats& out) noexcept;
 enum class FaultPhase : std::uint8_t { none, lost, torn, gate, scope, find, lock, job };
@@ -91,14 +102,18 @@ const char* FaultPhaseName(std::uint32_t phase) noexcept;
 
 namespace detail {
 // W50's pure decision (unit-tested).
-enum class Pass : std::uint8_t { defer, mode, unarmed, faulted, h2, ret_other, pmode, no_batch, sub, identity, go, block, count_ };
+enum class Pass : std::uint8_t { defer, mode, unarmed, faulted, h2, ret_other, pmode, no_batch, nested, foreign, sub, identity, go,
+                                  block, count_ };
+static_assert(static_cast<unsigned>(Pass::count_) <= 16, "pass_reason has 16 slots");
 const char* PassName(Pass pass) noexcept;
 struct DecisionIn {
     Mode mode;
     bool armed, faulted, h2_ready;
     std::uintptr_t ret, expected_ret;
     std::uint32_t pmode, sub, block;
-    bool batch_active;  // g_batch_active[pmode] (pmode <= 1)
+    bool batch_active;  // a hook-thread batch of pass pmode is in flight (pmode <= 1)
+    bool nested;        // more than one hook-thread batch is in flight
+    bool foreign;       // a batch on another thread is in flight
     bool identity;      // an identity is published
     std::uintptr_t go, id_go;
     std::uint8_t id_pool1;

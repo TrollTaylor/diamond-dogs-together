@@ -69,6 +69,8 @@ struct In {
     // Health deltas (block-1 sub-0 W50 calls, deferred, drains, windowed and
     // unwindowed drains, lost records, windows refused inside a batch, frames).
     std::uint32_t w50_b1_s0, deferred, drains, windowed, unwindowed, lost, wrap_in_batch, frames;
+    // Drains refused because the deferred job's block was not instance 1's.
+    std::uint32_t drain_block;
     std::uint32_t drain_us_max;   // max since the previous Step
     std::uint32_t snaps_10s;      // reconciliation snaps in the last 10 s
     std::uint32_t runaway_ms;     // how long the runaway condition has held (0 = not)
@@ -218,6 +220,10 @@ struct Telemetry {
     bool per_s_valid;
     std::uint32_t batches, w50_b0_s0, w50_b1_s0, w50_subs, w50_inline, ret_other, deferred, drains0, drains1, windowed, unwindowed;
     std::uint32_t lost, gate_closed, torn, entry_changed, dup, stale_frame, wrap_in_batch;
+    // Nested hook-thread batches, batches on other threads, records dropped
+    // by an unwound batch, drains refused for a block that is not instance 1's
+    // and drains refused because a batch was in flight (per second).
+    std::uint32_t nested, foreign, unwound, drain_block, drain_in_batch;
     std::uint32_t id1_pass, scope_unbalanced, drain_us_max, spin_max, faults, fault_code;
     char fault_phase[12];
     // Wrap census of block 1 (per second) and the look write.

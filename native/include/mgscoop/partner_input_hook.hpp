@@ -97,8 +97,14 @@ struct NativeStats {
     std::uint32_t look_writes, look_skipped_rec, look_refused;
     LookRefusal look_last;
     bool look_faulted;
-    std::uint32_t camsub_dirty_or;  // CamSub ranges changed (bit 0: +0x3C..+0x48, bit 1: +0xB8)
+    // CamSub ranges changed (bit 0: +0x3C..+0x48, bit 1: +0xB8); bit 2: the
+    // sub-controller pointer *(CAM+0x360) itself changed inside the window
+    // (then nothing of the old object is read or restored).
+    std::uint32_t camsub_dirty_or;
     std::uint32_t lookcam_writes;
+    // RunJobWindow refusals: the job's block is not instance 1's (the Arm's
+    // pool1, never the live pool of instance 0), or a batch was in flight.
+    std::uint32_t drain_block_refused, drain_in_batch;
 };
 
 // Drained by the driver. Counters are process-lifetime totals (the driver
@@ -120,12 +126,14 @@ std::uint32_t HookThread() noexcept;
 // them without input arming); census also turns the counting wrappers on.
 void PublishWrapRoots(std::uintptr_t root0, std::uintptr_t root1, bool census) noexcept;
 // Runs block 1's deferred job once on the hook thread inside a native window
-// (Validate with root1, GO == P - 0x20 checks, the frame injection's view for
-// `consumer`, PRE incl. HOLD latch, the job, POST). Returns true when the job
-// ran windowed; when the Arm, validation or PRE refuses, the job still runs
-// exactly once without a window (false).
+// (Validate with root1, GO == P - 0x20 checks, `block` == the Arm's pool1 and
+// never instance 0's live pool, no batch in flight anywhere, the frame
+// injection's view for `consumer`, PRE incl. HOLD latch, the job, POST).
+// Returns true when the job ran windowed; when the Arm, validation, the block,
+// a batch in flight or PRE refuses, the job still runs exactly once without a
+// window (false): instance 0's job never sees instance 1's pad.
 using JobCallFn = void (*)(void* go, const void* param) noexcept;
-bool RunJobWindow(void* go, const void* param, JobCallFn job, partner_input::Consumer consumer) noexcept;
+bool RunJobWindow(void* go, const void* param, std::uint32_t block, JobCallFn job, partner_input::Consumer consumer) noexcept;
 // True while the 5 bytes at 0x9C2B51 still call our stub (1 Hz check).
 bool PatchLive(const void* base) noexcept;
 
@@ -160,6 +168,10 @@ void BindWrapForTest(SvcFn active, SvcFn all, SvcIdFn per_id, WalkFn walk7, Walk
 void CallWrapForTest(std::uint8_t entry, void* ctx, void* root, std::uint32_t phase, std::uint32_t id) noexcept;
 // Simulates being inside a drain window (for the post-phase-0 look write).
 void SetDrainForTest(const partner_input::Arm& arm, const partner_input::Injection& injection, bool in_drain) noexcept;
+// After Install on a synthetic image: the original the main window calls
+// (0xBF61D0) and the near stub at 0x9C2B51 (InputDispatchHook's entry).
+void BindDispatchForTest(DispatchFn original) noexcept;
+void* DispatchStubForTest() noexcept;
 }
 
 } // namespace mgscoop::partner_input_hook

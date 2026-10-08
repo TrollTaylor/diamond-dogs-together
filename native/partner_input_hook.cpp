@@ -109,6 +109,7 @@ volatile LONG g_wrap_native = 0;  // the enabled Arm is native
 volatile LONG g_n_frames = 0, g_n_views[3] = {0, 0, 0}, g_n_drain_windows = 0, g_n_drain_refused = 0, g_n_walk_windows = 0;
 volatile LONG g_n_latch_other = 0, g_n_latch_last = 0, g_n_look_writes = 0, g_n_look_skipped = 0, g_n_look_refused = 0;
 volatile LONG g_n_look_last = 0, g_n_look_faulted = 0, g_n_camsub_dirty = 0, g_n_lookcam = 0;
+volatile LONG g_n_drain_block = 0, g_n_drain_in_batch = 0;
 volatile LONG g_w_in_batch = 0, g_w_svc_native = 0;
 // What the stubs answer during the current window (set before each call).
 struct Current {
@@ -471,11 +472,17 @@ void ApplyPost(const pi::Arm& a, const Save& save, bool capture_private) noexcep
     if (save.camsub_saved) {
         std::uint32_t dirty = 0;
         const auto sub = save.camsub_ptr;
-        if (std::memcmp(save.camsub, reinterpret_cast<void*>(sub + c::cam_sub_begin), c::cam_sub_end - c::cam_sub_begin) != 0) dirty |= 1u;
-        if (std::memcmp(save.camsub + 0xC, reinterpret_cast<void*>(sub + c::cam_sub_b8), c::cam_sub_bc - c::cam_sub_b8) != 0) dirty |= 2u;
-        if (dirty && a.cam == PartnerInputCam::sandbox) {
-            std::memcpy(reinterpret_cast<void*>(sub + c::cam_sub_begin), save.camsub, c::cam_sub_end - c::cam_sub_begin);
-            std::memcpy(reinterpret_cast<void*>(sub + c::cam_sub_b8), save.camsub + 0xC, c::cam_sub_bc - c::cam_sub_b8);
+        // Aim init may replace the sub-controller inside the window: the old
+        // object may be gone, so it is neither compared nor restored (bit 2).
+        if (Load<std::uintptr_t>(a.cam_object + c::cam_aim_sub) != sub) {
+            dirty = 4u;
+        } else {
+            if (std::memcmp(save.camsub, reinterpret_cast<void*>(sub + c::cam_sub_begin), c::cam_sub_end - c::cam_sub_begin) != 0) dirty |= 1u;
+            if (std::memcmp(save.camsub + 0xC, reinterpret_cast<void*>(sub + c::cam_sub_b8), c::cam_sub_bc - c::cam_sub_b8) != 0) dirty |= 2u;
+            if (dirty && a.cam == PartnerInputCam::sandbox) {
+                std::memcpy(reinterpret_cast<void*>(sub + c::cam_sub_begin), save.camsub, c::cam_sub_end - c::cam_sub_begin);
+                std::memcpy(reinterpret_cast<void*>(sub + c::cam_sub_b8), save.camsub + 0xC, c::cam_sub_bc - c::cam_sub_b8);
+            }
         }
         if (dirty) InterlockedOr(&g_n_camsub_dirty, static_cast<LONG>(dirty));
     }
@@ -570,6 +577,13 @@ void SetCurrent(const pi::Injection& j, PartnerInputHold hold) noexcept {
 
 void RunWindow(const pi::Arm& a, void* root, std::uint32_t phase) noexcept {
     InterlockedIncrement(&g_root1);
+    // Native: never swap the shared pad while any batch is in flight (block 0's
+    // job may be running on a worker); the arbiter leaves on wrap_in_batch.
+    if (a.native && partner_defer::InBatch()) {
+        InterlockedIncrement(&g_w_in_batch);
+        g_original(root, phase);
+        return;
+    }
     pi::Skip skip = pi::Skip::player;
     bool validated = false;
     __try { skip = Validate(a, root); validated = true; }
@@ -1018,6 +1032,8 @@ void SetDrainForTest(const pi::Arm& arm, const pi::Injection& injection, bool in
     // A drain is a window: odd while inside.
     if (((g_window_seq & 1) != 0) != in_drain) InterlockedIncrement(&g_window_seq);
 }
+void BindDispatchForTest(DispatchFn original) noexcept { g_original = original; }
+void* DispatchStubForTest() noexcept { return g_stub; }
 bool KmSlotByIndex(std::size_t slot) noexcept {
     return slot == c::pp_vt_km_press_idx || slot == c::pp_vt_km_release_idx || slot == c::pp_vt_km_148_idx ||
            slot == c::pp_vt_km_held_idx || slot == c::pp_vt_km_press2_idx || slot == c::pp_vt_km_release2_idx ||
@@ -1092,7 +1108,7 @@ const char* LookRefusalName(LookRefusal refusal) noexcept {
     }
 }
 
-bool RunJobWindow(void* go, const void* param, JobCallFn job, pi::Consumer consumer) noexcept {
+bool RunJobWindow(void* go, const void* param, std::uint32_t block, JobCallFn job, pi::Consumer consumer) noexcept {
     g_job_fn = job;
     pi::Arm a{};
     const bool armed = g_ready && !g_faulted && g_inj_valid && ReadArm(a) && a.enabled && a.native &&
@@ -1102,14 +1118,29 @@ bool RunJobWindow(void* go, const void* param, JobCallFn job, pi::Consumer consu
         GuardedJobCall(job, go, param);
         return false;
     }
+    // A batch in flight anywhere (nested on this thread or on another thread):
+    // block 0's job may be running on a worker, the shared pad must not be
+    // swapped. The arbiter leaves on wrap_in_batch.
+    if (partner_defer::InBatch()) {
+        InterlockedIncrement(&g_n_drain_in_batch);
+        InterlockedIncrement(&g_w_in_batch);
+        InterlockedIncrement(&g_n_drain_refused);
+        GuardedJobCall(job, go, param);
+        return false;
+    }
     pi::Skip skip = pi::Skip::player;
-    bool validated = false;
+    bool validated = false, block_ok = false;
     const auto go_addr = reinterpret_cast<std::uintptr_t>(go);
     __try {
         skip = Validate(a, reinterpret_cast<void*>(a.root1));
         if (skip == pi::Skip::none && (go_addr != a.go || Load<std::uintptr_t>(go_addr) != g_base + c::go_vtable_rva ||
                                        go_addr + c::go_to_p != a.P))
             skip = pi::Skip::p_vtable;
+        // Only instance 1's block ever runs inside the window: the job's block
+        // is the Arm's pool1 (Validate checked the live pool[1]) and never
+        // instance 0's live pool.
+        if (skip == pi::Skip::none)
+            block_ok = block == a.pool1 && Load<std::uint8_t>(Load<std::uintptr_t>(a.P + c::p_pool)) != block;
         validated = true;
     } __except (OwnFilter(1, GetExceptionCode())) {}
     if (!validated || skip != pi::Skip::none) {
@@ -1117,6 +1148,12 @@ bool RunJobWindow(void* go, const void* param, JobCallFn job, pi::Consumer consu
             InterlockedIncrement(&g_skips);
             InterlockedExchange(&g_last_skip, static_cast<LONG>(skip));
         }
+        InterlockedIncrement(&g_n_drain_refused);
+        GuardedJobCall(job, go, param);
+        return false;
+    }
+    if (!block_ok) {
+        InterlockedIncrement(&g_n_drain_block);
         InterlockedIncrement(&g_n_drain_refused);
         GuardedJobCall(job, go, param);
         return false;
@@ -1148,11 +1185,13 @@ bool RunJobWindow(void* go, const void* param, JobCallFn job, pi::Consumer consu
 }
 
 void PublishWrapRoots(std::uintptr_t root0, std::uintptr_t root1, bool census) noexcept {
-    InterlockedExchange64(&g_wrap_root0, static_cast<LONG64>(root0));
-    InterlockedExchange64(&g_wrap_root1, static_cast<LONG64>(root1));
     const LONG floor = census ? static_cast<LONG>(PartnerWrap::census) : static_cast<LONG>(PartnerWrap::off);
     InterlockedExchange(&g_wrap_floor, floor);
-    if (!g_arm_enabled) InterlockedExchange(&g_wrap_mode, floor);
+    // An enabled Arm owns the roots and the mode (PublishArm, same thread).
+    if (g_arm_enabled) return;
+    InterlockedExchange64(&g_wrap_root0, static_cast<LONG64>(root0));
+    InterlockedExchange64(&g_wrap_root1, static_cast<LONG64>(root1));
+    InterlockedExchange(&g_wrap_mode, floor);
 }
 
 const char* InstallWrap() noexcept {
@@ -1301,6 +1340,8 @@ void DrainStats(Stats& out) noexcept {
     n.look_faulted = g_n_look_faulted != 0;
     n.camsub_dirty_or = static_cast<std::uint32_t>(g_n_camsub_dirty);
     n.lookcam_writes = static_cast<std::uint32_t>(g_n_lookcam);
+    n.drain_block_refused = static_cast<std::uint32_t>(g_n_drain_block);
+    n.drain_in_batch = static_cast<std::uint32_t>(g_n_drain_in_batch);
 }
 
 bool PatchLive(const void* base) noexcept {

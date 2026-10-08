@@ -119,11 +119,17 @@ struct World {
 World g_world;
 
 // --- Fake originals ----------------------------------------------------------------
+// With the input hook installed (TestJobWindow) the jobs also record what the
+// shared pad looks like when they run: src+0x48 (held), PP+0x27C (HOLD latch)
+// and the PP vtable pointer (the window installs a copy).
+std::uintptr_t g_watch_src = 0, g_watch_pp = 0;
 struct JobCall {
     std::uint32_t tid, block, sub, mode, nbits;
     int scope_depth;
     LONG lock;
     bool in_batch;
+    std::uint32_t held, latch;
+    std::uintptr_t pp_vt;
 };
 std::mutex g_calls_lock;
 std::vector<JobCall> g_calls;
@@ -160,6 +166,11 @@ void FakeJob(void* go, const pd::JobParam* p) noexcept {
     call.scope_depth = t_depth;
     call.lock = Get<LONG>(Addr(g_world.entry) + c::entry_lock);
     call.in_batch = pd::InBatch();
+    if (g_watch_src) call.held = Get<std::uint32_t>(g_watch_src + 0x48);
+    if (g_watch_pp) {
+        call.latch = Get<std::uint32_t>(g_watch_pp + c::pp_hold_latch);
+        call.pp_vt = Get<std::uintptr_t>(g_watch_pp);
+    }
     (void)go;
     {
         std::lock_guard<std::mutex> guard(g_calls_lock);
@@ -181,16 +192,35 @@ struct Scenario {
     bool drop_entry = false, close_gate = false, change_nbits = false, hold_lock = false;
     bool ret_other = false;       // also call W50 directly (another return address)
     bool wrap_probe = false;      // call the walk7 wrapper on the batch thread during the batch
+    bool nest = false;            // after the join, a nested hook-thread batch (pass nest_mode) inside this one
+    std::uint32_t nest_mode = 0;
+    bool raise_after_join = false;  // an access violation escapes the batch after its join
+    bool foreign_hold = false;    // a batch on another thread stays in flight until released (no jobs)
+    bool window_probe = false;    // RunJobWindow called during the batch (TestJobWindow)
+    bool dispatch_probe = false;  // the main window (0x9C2B51 stub) called during the batch (TestJobWindow)
 };
 Scenario g_sc;
 std::thread g_releaser;
+std::atomic<bool> g_nesting{false}, g_inner_in_batch{false};
+std::atomic<bool> g_foreign_entered{false}, g_foreign_release{false};
+std::atomic<int> g_probe_ran{0};
+std::atomic<bool> g_probe_windowed{false};
+void* g_job_go = nullptr;  // TestJobWindow: the GO the job body calls (default g_world.go)
+void* JobGo() { return g_job_go ? g_job_go : static_cast<void*>(g_world.go); }
+void ProbeJob(void*, const void*) noexcept { ++g_probe_ran; }
 void Job(std::uint32_t block, std::uint32_t sub, std::uint32_t mode) {
     pd::JobParam param{block, sub, mode, Get<std::uint32_t>(Addr(g_world.entry) + c::entry_nbits),
                        Get<const std::uint8_t*>(Addr(g_world.entry) + c::entry_bits)};
-    g_thunk(g_world.go, &param);
+    g_thunk(JobGo(), &param);
 }
+using DispatchEntry = void (*)(void* root, std::uint32_t phase);
+void* g_probe_root = nullptr;
 void FakeBatch(void* group, std::uint32_t mode) noexcept {
-    (void)group;
+    if (g_sc.foreign_hold && GetCurrentThreadId() != g_main_tid) {
+        g_foreign_entered = true;
+        while (!g_foreign_release) Sleep(1);
+        return;
+    }
     std::vector<std::thread> workers;
     for (std::uint32_t block = 0; block < 2; ++block)
         for (std::uint32_t sub = 0; sub < g_sc.subs; ++sub) {
@@ -203,7 +233,21 @@ void FakeBatch(void* group, std::uint32_t mode) noexcept {
         reinterpret_cast<pd::detail::JobFn>(pd::detail::W50Entry())(g_world.go, &param);
     }
     if (g_sc.wrap_probe) hk::detail::CallWrapForTest(3, nullptr, reinterpret_cast<void*>(0x5000), 7, 0);
+    if (g_sc.window_probe) {
+        pd::JobParam param{1, 0, mode, 8, g_world.bits};
+        g_probe_windowed = hk::RunJobWindow(JobGo(), &param, 1, &ProbeJob, pi::Consumer::drain1);
+    }
+    if (g_sc.dispatch_probe) reinterpret_cast<DispatchEntry>(hk::detail::DispatchStubForTest())(g_probe_root, 8);
     for (auto& w : workers) w.join();
+    if (g_sc.nest && !g_nesting.exchange(true)) {
+        reinterpret_cast<pd::detail::BatchFn>(pd::detail::WrapBatchEntry())(group, g_sc.nest_mode);
+        g_inner_in_batch = pd::InBatch();
+        g_nesting = false;
+    }
+    if (g_sc.raise_after_join) {
+        volatile int* nowhere = nullptr;
+        *nowhere = 1;
+    }
     if (g_sc.mission_start) pd::MissionStart();
     if (g_sc.drop_entry) g_world.group[1] = g_world.group[0];
     if (g_sc.close_gate) Put<std::uint32_t>(Addr(g_world.flags) + c::go_flags, 0);
@@ -288,6 +332,8 @@ void TestPureSeams() {
         {Pass::ret_other, [](pd::detail::DecisionIn& d) { d.expected_ret = 0; d.ret = 0; }},
         {Pass::pmode, [](pd::detail::DecisionIn& d) { d.pmode = 2; }},
         {Pass::no_batch, [](pd::detail::DecisionIn& d) { d.batch_active = false; }},
+        {Pass::nested, [](pd::detail::DecisionIn& d) { d.nested = true; }},
+        {Pass::foreign, [](pd::detail::DecisionIn& d) { d.foreign = true; }},
         {Pass::sub, [](pd::detail::DecisionIn& d) { d.sub = 1; }},
         {Pass::identity, [](pd::detail::DecisionIn& d) { d.identity = false; }},
         {Pass::go, [](pd::detail::DecisionIn& d) { d.go = 0x6000; }},
@@ -733,6 +779,285 @@ void TestWrapRules() {
     hk::PublishWrapRoots(0, 0, false);
 }
 
+// Review fixes: batches are counted (nesting, other threads), a nested batch
+// never defers or drains, and a batch that unwinds drops its record.
+void TestNestingForeignUnwind() {
+    {
+        // A hook-thread batch nested in another (a job run inline during the
+        // join ticks again): the outer record survives the inner batch and is
+        // drained once by the outer; the inner never defers.
+        Image img;
+        Setup(img);
+        g_sc.nest = true;
+        g_sc.nest_mode = 1;
+        RunBatch(0);
+        auto calls = TakeCalls();
+        pd::Stats st{};
+        pd::DrainStats(st);
+        Check(g_inner_in_batch && st.nested_batches == 1 && st.deferred == 1 && st.drains[0] == 1 && st.drains[1] == 0 &&
+              st.pass_reason[static_cast<unsigned>(pd::detail::Pass::nested)] >= 1, "nested: no deferral inside, the outer drains once");
+        int main_b1 = 0, worker_b1 = 0;
+        for (const auto& k : calls) if (k.block == 1) (k.tid == g_main_tid ? main_b1 : worker_b1) += 1;
+        Check(Count(calls, 1) == 2 && main_b1 == 1 && worker_b1 == 1 && !pd::InBatch(),
+              "nested: the inner block 1 ran in place, the outer one after the outer join");
+    }
+    {
+        // A batch on another thread in flight: InBatch, nothing deferred meanwhile.
+        Image img;
+        Setup(img);
+        g_sc.foreign_hold = true;
+        g_foreign_entered = false;
+        g_foreign_release = false;
+        std::thread other([] { RunBatch(0); });
+        while (!g_foreign_entered) Sleep(1);
+        Check(pd::InBatch(), "a batch on another thread is in flight");
+        RunBatch(1);
+        auto calls = TakeCalls();
+        pd::Stats st{};
+        pd::DrainStats(st);
+        Check(st.deferred == 0 && st.foreign_batches == 1 && Find(calls, 1) && Find(calls, 1)->tid != g_main_tid &&
+              st.pass_reason[static_cast<unsigned>(pd::detail::Pass::foreign)] >= 1, "foreign batch in flight: no deferral");
+        g_foreign_release = true;
+        other.join();
+        Check(!pd::InBatch(), "foreign batch done");
+    }
+    {
+        // An exception through the join: the published record is dropped (never
+        // drained in a later frame); the next batch runs block 1 exactly once.
+        Image img;
+        Setup(img);
+        g_sc.raise_after_join = true;
+        Check(RunBatchCatching(0), "the exception reaches the outer handler");
+        g_sc.raise_after_join = false;
+        auto calls = TakeCalls();
+        pd::Stats st{};
+        pd::DrainStats(st);
+        Check(Count(calls, 1) == 0 && st.unwound == 1 && st.torn == 1 && st.faulted &&
+              st.fault_phase == static_cast<std::uint32_t>(pd::FaultPhase::torn) && !pd::InBatch(),
+              "unwound batch: the record is dropped, counted torn, the deferral faults");
+        pd::MissionStart();
+        pd::SetArmed(true);
+        RunBatch(0);
+        calls = TakeCalls();
+        pd::DrainStats(st);
+        Check(Count(calls, 1) == 1 && st.drains[0] == 1 && Find(calls, 1)->tid == g_main_tid, "no stale record drained afterwards");
+    }
+}
+
+// --- The drain window with the real input hook ----------------------------------
+// The hook installs once per process, so this runs last on an image that is
+// never freed; partner_defer is installed on the same image (H2 + H1), so the
+// job body's call reaches W50 through the patched GO vtable and the drain runs
+// the job inside RunJobWindow. A fake world satisfies Validate (P, PP, src,
+// CAM, ids/pools/parts, blocks, plugin, records) with host sentinels.
+pi::Sample g_hook_sample{};
+bool FakeSample(pi::Sample& out) noexcept { out = g_hook_sample; return true; }
+std::atomic<int> g_dispatch_calls{0};
+std::uint32_t g_dispatch_held = 0;
+void FakeDispatch(void*, std::uint32_t) noexcept {
+    ++g_dispatch_calls;
+    g_dispatch_held = g_watch_src ? Get<std::uint32_t>(g_watch_src + 0x48) : 0;
+}
+struct PadWorld {
+    alignas(16) unsigned char go[0x1000];  // P = go + 0x20
+    alignas(16) unsigned char flags[0x40];
+    alignas(16) unsigned char q[0x40];
+    alignas(16) unsigned char pp[0x600];
+    alignas(16) unsigned char src[0x100];
+    alignas(16) unsigned char cam[0x1000];
+    alignas(16) unsigned char ids[16], pool[16], parts[16];
+    alignas(16) unsigned char blocks[2 * c::block_stride];
+    alignas(16) unsigned char plugin[0x200];
+    alignas(16) unsigned char node[0x40];
+    alignas(16) unsigned char recs[2 * c::plugin_rec_stride];
+    alignas(16) unsigned char root0[0x40], root1[0x40];
+};
+inline constexpr std::uint32_t kHostHeld = 0x11111111u;  // the local player's held word in src+0x48
+inline constexpr std::uint32_t kRemoteHeld = 0x48u;      // HOLD + RELOAD from the remote
+
+void TestJobWindow() {
+    static Image* img = new Image();  // never freed: the input hook keeps its base
+    static PadWorld* w = new PadWorld();
+    std::memset(w, 0, sizeof(*w));
+    const std::uintptr_t base = img->base;
+    const std::uintptr_t P = Addr(w->go) + c::go_to_p;
+    Put<std::uintptr_t>(Addr(w->go), base + c::go_vtable_rva);
+    Put<std::uintptr_t>(Addr(w->go) + c::go_flags_ptr, Addr(w->flags));
+    Put<std::uint32_t>(Addr(w->flags) + c::go_flags, c::go_flags_bit);
+    Put<std::uintptr_t>(base + c::player_slot_rva, P);
+    const std::uintptr_t p_vt = base + c::p_vtable_rva, cam_vt = base + c::cam_vtable_rva, pp_vt = base + c::pp_vtable_rva;
+    Put<std::uintptr_t>(P, p_vt);
+    Put<std::uint32_t>(P + c::p_count, 2);
+    Put<std::uintptr_t>(P + c::p_q, Addr(w->q));
+    Put<std::uintptr_t>(Addr(w->q), base + c::q_vtable_rva);
+    Put<std::uintptr_t>(P + c::p_pad, Addr(w->pp));
+    Put<std::uintptr_t>(Addr(w->pp), pp_vt);
+    Put<std::uintptr_t>(Addr(w->pp) + c::pp_src, Addr(w->src));
+    Put<std::uintptr_t>(P + c::p_cam, Addr(w->cam));
+    Put<std::uintptr_t>(Addr(w->cam), cam_vt);
+    Put<std::uintptr_t>(P + c::p_ids, Addr(w->ids));
+    Put<std::uint16_t>(Addr(w->ids) + 2, 1);
+    Put<std::uintptr_t>(P + c::p_pool, Addr(w->pool));
+    w->pool[0] = 0;
+    w->pool[1] = 1;
+    Put<std::uintptr_t>(P + c::p_parts, Addr(w->parts));
+    w->parts[1] = c::parts_loaded_state;
+    Put<std::uintptr_t>(P + c::p_blocks, Addr(w->blocks));
+    const std::uintptr_t blk1 = Addr(w->blocks) + c::block_stride;
+    Put<std::uintptr_t>(Addr(w->blocks) + c::blk_root, Addr(w->root0));
+    Put<std::uintptr_t>(blk1 + c::blk_root, Addr(w->root1));
+    const std::uintptr_t plugin_vt[4] = {base + c::plugin_vt0_rva, base + c::plugin_vt1_rva, base + c::plugin_vt2_rva, base + c::plugin_vt3_rva};
+    static constexpr std::size_t off[4] = {0x0, 0x10, 0x30, 0x48};
+    for (unsigned i = 0; i < 4; ++i) Put<std::uintptr_t>(Addr(w->plugin) + off[i], plugin_vt[i]);
+    Put<std::uintptr_t>(Addr(w->plugin) + c::plugin_node, Addr(w->node));
+    Put<std::uint32_t>(Addr(w->node) + c::node_base, 0);
+    Put<std::uintptr_t>(Addr(w->plugin) + c::plugin_recs, Addr(w->recs));
+    const std::uintptr_t rec1 = Addr(w->recs) + c::plugin_rec_stride;
+    // Host sentinels: the local player's pad and the HOLD latch.
+    Put<std::uint32_t>(Addr(w->src) + 0x48, kHostHeld);
+    Put<std::uint32_t>(Addr(w->pp) + c::pp_hold_latch, 0xA0u);
+    // Install the input hook and the deferral on the same image.
+    g_log.clear();
+    Check(hk::Install(reinterpret_cast<void*>(base), &Log, &FakeSample) == nullptr && hk::Installed(), "input hook on the image");
+    hk::detail::BindDispatchForTest(&FakeDispatch);
+    pd::detail::ResetForTest();
+    Check(pd::Install(reinterpret_cast<void*>(base), pd::Mode::on, &Log) == nullptr && pd::H1Installed(), "deferral on the same image");
+    pd::detail::Bindings b{};
+    b.batch = &FakeBatch; b.job = &FakeJob; b.scope_ctor = &FakeScopeCtor; b.scope_dtor = &FakeScopeDtor;
+    b.scope_read = &FakeScopeRead; b.job_return = g_thunk_return; b.hook_thread = &MainTid;
+    pd::detail::BindForTest(b);
+    g_world.Reset(*img);
+    Put<std::uintptr_t>(Addr(g_world.entry) + c::entry_go, Addr(w->go));
+    g_job_go = w->go;
+    g_sc = Scenario{};
+    TakeCalls();
+    g_watch_src = Addr(w->src);
+    g_watch_pp = Addr(w->pp);
+    pd::PublishIdentity(pd::Identity{Addr(w->go), 0, 1});
+    pd::SetArmed(true);
+    // The native Arm (as the driver builds it).
+    pi::Arm a{};
+    a.gen = 1;
+    a.enabled = true;
+    a.native = true;
+    a.cam = mgscoop::PartnerInputCam::sandbox;
+    a.hold = mgscoop::PartnerInputHold::own;
+    a.wrap = mgscoop::PartnerWrap::window;
+    a.P = P; a.pp = Addr(w->pp); a.src = Addr(w->src); a.cam_object = Addr(w->cam);
+    a.root0 = Addr(w->root0); a.root1 = Addr(w->root1); a.blk1 = blk1; a.rec1 = rec1; a.plugin1 = Addr(w->plugin);
+    a.p_vtable = p_vt; a.pp_vtable = pp_vt; a.cam_vtable = cam_vt;
+    for (unsigned i = 0; i < 4; ++i) a.plugin_vt[i] = plugin_vt[i];
+    a.pool1 = 1;
+    a.config.mode = mgscoop::PartnerInput::net;
+    a.config.mask = 0xFFFFFFFFu;
+    a.config.words[0] = pi::Word::held; a.config.words[1] = pi::Word::press; a.config.words[2] = pi::Word::release;
+    a.config.stale_ms = 1000;
+    a.go = Addr(w->go);
+    a.mag_scale = 1.0;
+    hk::PublishArm(a);
+    g_hook_sample = pi::Sample{};
+    g_hook_sample.valid = true;
+    g_hook_sample.age_ms = 5;
+    g_hook_sample.packet.version = 3;
+    g_hook_sample.packet.held = kRemoteHeld;
+    // The main window (phase 8 for root1) composes the frame injection.
+    const auto dispatch = reinterpret_cast<DispatchEntry>(hk::detail::DispatchStubForTest());
+    Check(dispatch != nullptr, "dispatch stub");
+    dispatch(w->root1, 8);
+    hk::Stats hs{};
+    hk::DrainStats(hs);
+    Check(g_dispatch_calls == 1 && g_dispatch_held == kRemoteHeld && hs.window.windows == 1 && hs.window.faults == 0 &&
+          hs.native.frames == 1, "main window: instance 1's update saw the remote's held word");
+    Check(Get<std::uint32_t>(Addr(w->src) + 0x48) == kHostHeld && Get<std::uintptr_t>(Addr(w->pp)) == pp_vt &&
+          Get<std::uint32_t>(Addr(w->pp) + c::pp_hold_latch) == 0xA0u, "after the main window: the host's pad is back");
+    // Block 0's update (root0) is never windowed.
+    dispatch(w->root0, 8);
+    Check(g_dispatch_calls == 2 && g_dispatch_held == kHostHeld, "root0: the local player's pad, untouched");
+    // The deferred job end to end: block 0 on its worker with the host's pad,
+    // block 1 after the join inside the drain window with the remote's.
+    RunBatch(0);
+    auto calls = TakeCalls();
+    const JobCall* b0 = Find(calls, 0);
+    const JobCall* b1 = Find(calls, 1);
+    pd::Stats st{};
+    pd::DrainStats(st);
+    hk::DrainStats(hs);
+    Check(b0 && b1 && b0->tid != g_main_tid && b0->held == kHostHeld && (b0->latch & 1u) == 0 && b0->pp_vt == pp_vt,
+          "instance 0's job never sees the remote's pad");
+    Check(b1->tid == g_main_tid && b1->held == kRemoteHeld && (b1->latch & 1u) == 1u && (b1->latch & ~1u) == 0xA0u &&
+          b1->pp_vt != pp_vt && !b1->in_batch, "instance 1's deferred job ran in the drain window (remote held, HOLD latch, vtable copy)");
+    Check(st.windowed == 1 && st.unwindowed == 0 && hs.native.drain_windows == 1 && hs.native.drain_refused == 0,
+          "one windowed drain");
+    Check(Get<std::uint32_t>(Addr(w->src) + 0x48) == kHostHeld && Get<std::uintptr_t>(Addr(w->pp)) == pp_vt &&
+          Get<std::uint32_t>(Addr(w->pp) + c::pp_hold_latch) == 0xA0u, "after the drain: the host's pad and latch are back");
+    // A job whose block is not instance 1's never gets a window, even with a
+    // valid Arm: instance 0's block (pool 0), or anything else.
+    {
+        g_probe_ran = 0;
+        g_watch_src = Addr(w->src);
+        pd::JobParam param{0, 0, 0, 8, g_world.bits};
+        const bool windowed = hk::RunJobWindow(w->go, &param, 0, &ProbeJob, pi::Consumer::drain0);
+        hk::DrainStats(hs);
+        Check(!windowed && g_probe_ran == 1 && hs.native.drain_block_refused == 1, "block 0: refused, run once without a window");
+        param.block = 2;
+        Check(!hk::RunJobWindow(w->go, &param, 2, &ProbeJob, pi::Consumer::drain0) && g_probe_ran == 2, "block 2: refused");
+        w->pool[0] = 1;  // the live pools collide: refused even for the Arm's pool1
+        param.block = 1;
+        Check(!hk::RunJobWindow(w->go, &param, 1, &ProbeJob, pi::Consumer::drain0) && g_probe_ran == 3, "pool0 == block: refused");
+        w->pool[0] = 0;
+        Check(hk::RunJobWindow(w->go, &param, 1, &ProbeJob, pi::Consumer::drain0) && g_probe_ran == 4, "instance 1's block: windowed");
+    }
+    // Never a window (main or drain) while any batch is in flight.
+    {
+        g_sc.window_probe = true;
+        g_sc.dispatch_probe = true;
+        g_probe_root = w->root1;
+        g_probe_ran = 0;
+        hk::DrainStats(hs);
+        const std::uint32_t in_batch = hs.wrap.wrap_in_batch, windows = hs.window.windows;
+        const int dispatches = g_dispatch_calls;
+        RunBatch(1);
+        TakeCalls();
+        hk::DrainStats(hs);
+        Check(g_probe_ran == 1 && !g_probe_windowed && hs.native.drain_in_batch == 1, "RunJobWindow in a batch: run without a window");
+        Check(g_dispatch_calls == dispatches + 1 && g_dispatch_held == kHostHeld && hs.window.windows == windows &&
+              hs.wrap.wrap_in_batch == in_batch + 2, "main window in a batch: no window; both counted (wrap_in_batch)");
+        g_sc = Scenario{};
+    }
+    // A sub-controller replaced inside the window is never read or restored.
+    {
+        alignas(16) static unsigned char sub_a[0x100], sub_b[0x100];
+        std::memset(sub_a, 0x5A, sizeof(sub_a));
+        std::memset(sub_b, 0x3C, sizeof(sub_b));
+        Put<std::uintptr_t>(Addr(w->cam) + c::cam_aim_sub, Addr(sub_a));
+        a.naim = mgscoop::PartnerNativeAim::look;
+        a.ps1 = 0x1;  // not used by the window itself
+        hk::PublishArm(a);
+        dispatch(w->root1, 8);  // a new frame for the Arm's gen
+        struct Swap {
+            static void Job(void* go, const void*) noexcept {
+                const std::uintptr_t cam = Get<std::uintptr_t>(reinterpret_cast<std::uintptr_t>(go) + c::go_to_p + c::p_cam);
+                std::memset(sub_a + c::cam_sub_begin, 0, 4);  // the old object is changed, then replaced
+                Put<std::uintptr_t>(cam + c::cam_aim_sub, Addr(sub_b));
+            }
+        };
+        pd::JobParam param{1, 0, 0, 8, g_world.bits};
+        hk::DrainStats(hs);
+        const std::uint32_t dirty_before = hs.native.camsub_dirty_or;
+        Check(hk::RunJobWindow(w->go, &param, 1, &Swap::Job, pi::Consumer::drain0), "aim window ran");
+        hk::DrainStats(hs);
+        Check((hs.native.camsub_dirty_or & 4u) && !(dirty_before & 4u) && sub_a[c::cam_sub_begin] == 0 && sub_b[c::cam_sub_begin] == 0x3C &&
+              Get<std::uintptr_t>(Addr(w->cam) + c::cam_aim_sub) != Addr(sub_a),
+              "replaced sub-controller: flagged (bit 2), neither object written back");
+        Put<std::uintptr_t>(Addr(w->cam) + c::cam_aim_sub, 0);
+    }
+    hk::DrainStats(hs);
+    Check(hs.window.faults == 0, "no window fault in the fixture");
+    g_watch_src = g_watch_pp = 0;
+    g_job_go = nullptr;
+    hk::PublishArm(pi::Arm{});
+}
+
 } // namespace
 
 int main() {
@@ -744,10 +1069,14 @@ int main() {
     TestEndToEnd();
     TestAnomalies();
     TestWrapRules();
+    TestNestingForeignUnwind();
+    TestJobWindow();
     std::printf("%u partner defer checks passed: decision truth table, FindEntry bounds, patch verdicts, install on the contract "
                 "image (H2 stub, H1 slot, live check, idempotent), byte/scope/slot refusals, end-to-end deferral on real threads "
                 "(scope + read lock, sub-0 counters, census, disarm), dup, ret_other, inline jobs, MissionStart mid-batch, lost, "
-                "gate closed, live nbits, write-lock spin, exception unwind order, foreign-thread batch, identity; hook: census "
-                "counting, no window in a batch, native svc rule, post-phase-0 look write\n", checks);
+                "gate closed, live nbits, write-lock spin, exception unwind order, foreign-thread batch, identity, nested batch, "
+                "foreign batch in flight, unwound batch; hook: census counting, no window in a batch, native svc rule, "
+                "post-phase-0 look write; drain window with the real hook (instance 0 never sees the remote pad, instance 1's "
+                "job windowed, block refusals, no window in a batch, replaced aim sub-controller)\n", checks);
     return 0;
 }

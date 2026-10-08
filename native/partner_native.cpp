@@ -57,6 +57,7 @@ const char* HardLeave(const In& in) noexcept {
     if (in.stage < 3) return "stage";
     if (in.lost) return "lost";
     if (in.wrap_in_batch) return "wrap_in_batch";
+    if (in.drain_block) return "drain_block";
     return nullptr;
 }
 

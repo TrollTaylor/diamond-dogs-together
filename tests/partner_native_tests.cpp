@@ -186,6 +186,7 @@ void TestHardReasons() {
         {"stage", [](pn::In& in) { in.stage = 2; }},
         {"lost", [](pn::In& in) { in.lost = 1; }},
         {"wrap_in_batch", [](pn::In& in) { in.wrap_in_batch = 1; }},
+        {"drain_block", [](pn::In& in) { in.drain_block = 1; }},
         {"diverging", [](pn::In& in) { in.snaps_10s = 3; }},
         {"runaway", [](pn::In& in) { in.runaway_ms = 2001; }},
     };
