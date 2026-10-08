@@ -348,8 +348,20 @@ struct Arm {
     std::int32_t host_cam_cdeg;
     std::uint32_t tap_seq, tap_bits, press_bits;
     std::uint64_t press_until_ms;
+    // Native puppet (docs/native-puppet.md 5): native windows (frame injection
+    // per consumer, HOLD latch, svc entries never window, look write), isLocal
+    // in drains/walks (local=all), the look override, the GO identity and
+    // instance 1's look slot (validated on the driver tick, re-checked in the
+    // hook), and the steering applied to the composed stick.
+    bool native;
+    bool local_all;
+    PartnerNativeAim naim;
+    std::uintptr_t go, ps1;
+    std::uint32_t ps1_idx;
+    double steer_rad;   // not compared by SameArm (like host_cam_cdeg)
+    double mag_scale;   // not compared by SameArm; 0 is treated as 1
 };
-bool SameArm(const Arm& a, const Arm& b) noexcept;  // every field except gen, host_cam_cdeg and the one-shots
+bool SameArm(const Arm& a, const Arm& b) noexcept;  // every field except gen, host_cam_cdeg, steer/mag and the one-shots
 
 // Hook statistics drained by the driver (the hook keeps atomics).
 // state: P+0x208 count != 2, P+0x214 local index != 0, or the Q vtable changed.

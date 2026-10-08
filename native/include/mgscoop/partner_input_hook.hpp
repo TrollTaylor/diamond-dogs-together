@@ -76,6 +76,29 @@ struct WrapStats {
     std::uint32_t windows[kWrapEntries];      // wrap=window windows run
     std::uint32_t phase_mask[kWrapEntries];   // phases seen for block 1 (bit = phase & 31)
     std::uint32_t other_calls;                // calls for any other root (all entries)
+    // Native puppet: windows refused because a hook-thread batch was in flight
+    // (a job running inline during the join), and svc entries that would have
+    // windowed under a native Arm (block 1's job runs only inside drains).
+    std::uint32_t wrap_in_batch;
+    std::uint32_t svc_native_skips;
+};
+
+// Native puppet window statistics (process-lifetime totals).
+enum class LookRefusal : std::uint8_t { none, off, no_v3, stale, ps, rec_read, fault };
+const char* LookRefusalName(LookRefusal refusal) noexcept;
+struct NativeStats {
+    std::uint32_t frames;          // frame injections composed (main windows under a native Arm)
+    std::uint32_t views[3];        // consumer views: full, level, neutral
+    std::uint32_t drain_windows;   // RunJobWindow windows
+    std::uint32_t drain_refused;   // RunJobWindow ran the job without a window
+    std::uint32_t walk_windows;    // native walk7/walk11 windows
+    std::uint32_t latch_other;     // windows that left PP+0x27C bits 1..31 changed
+    std::uint32_t latch_last;      // the last latch value written (bit 0)
+    std::uint32_t look_writes, look_skipped_rec, look_refused;
+    LookRefusal look_last;
+    bool look_faulted;
+    std::uint32_t camsub_dirty_or;  // CamSub ranges changed (bit 0: +0x3C..+0x48, bit 1: +0xB8)
+    std::uint32_t lookcam_writes;
 };
 
 // Drained by the driver. Counters are process-lifetime totals (the driver
@@ -85,8 +108,24 @@ struct Stats {
     partner_input::HoldRecord holds[8];
     unsigned hold_count;
     WrapStats wrap;
+    NativeStats native;
 };
 void DrainStats(Stats& out) noexcept;
+
+// --- Native puppet (docs/native-puppet.md 5) ------------------------------------
+// The thread that runs the main window (0x9C2B51, inside the ticker): 0 before
+// the first call.
+std::uint32_t HookThread() noexcept;
+// The wrap roots for counting, independent of an enabled Arm (census needs
+// them without input arming); census also turns the counting wrappers on.
+void PublishWrapRoots(std::uintptr_t root0, std::uintptr_t root1, bool census) noexcept;
+// Runs block 1's deferred job once on the hook thread inside a native window
+// (Validate with root1, GO == P - 0x20 checks, the frame injection's view for
+// `consumer`, PRE incl. HOLD latch, the job, POST). Returns true when the job
+// ran windowed; when the Arm, validation or PRE refuses, the job still runs
+// exactly once without a window (false).
+using JobCallFn = void (*)(void* go, const void* param) noexcept;
+bool RunJobWindow(void* go, const void* param, JobCallFn job, partner_input::Consumer consumer) noexcept;
 // True while the 5 bytes at 0x9C2B51 still call our stub (1 Hz check).
 bool PatchLive(const void* base) noexcept;
 
@@ -110,6 +149,17 @@ enum class KmWord : std::uint8_t { held, press, release, zero, none };
 KmWord KmSlotWord(std::size_t slot_offset) noexcept;
 // Whether the slot takes a binding index (true) or a key handle (false).
 bool KmSlotByIndex(std::size_t slot_offset) noexcept;
+// --- Fixture seams (never called in the game) ---------------------------------
+// The wrap originals and the hook thread, bound without patching anything.
+using SvcFn = void (*)(void* ctx, void* root, std::uint32_t phase) noexcept;
+using SvcIdFn = void (*)(void* ctx, void* root, std::uint32_t phase, std::uint32_t id) noexcept;
+using WalkFn = void (*)(void* root, std::uint32_t phase) noexcept;
+using WalkIdFn = void (*)(void* root, std::uint32_t phase, std::uint32_t id) noexcept;
+void BindWrapForTest(SvcFn active, SvcFn all, SvcIdFn per_id, WalkFn walk7, WalkIdFn walk11, std::uint32_t hook_thread) noexcept;
+// Calls the wrapper of entry e (0 svc28, 1 svc30, 2 svc40, 3 walk7, 4 walk11).
+void CallWrapForTest(std::uint8_t entry, void* ctx, void* root, std::uint32_t phase, std::uint32_t id) noexcept;
+// Simulates being inside a drain window (for the post-phase-0 look write).
+void SetDrainForTest(const partner_input::Arm& arm, const partner_input::Injection& injection, bool in_drain) noexcept;
 }
 
 } // namespace mgscoop::partner_input_hook

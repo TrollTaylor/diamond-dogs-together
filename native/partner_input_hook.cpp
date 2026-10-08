@@ -10,6 +10,17 @@
 // world heading; PP+0x278/PP+0x4B0 are shadowed; the camera sandbox covers the
 // request block; wrap=census|window wraps the other walks of block 1's tree.
 //
+// Native puppet (docs/native-puppet.md 5): under a native Arm the main window
+// composes one frame injection (with steering) that every consumer of the
+// frame gets once with its edges and then as level only (drains of the two
+// batch passes, walk7/walk11); every native window swaps the HOLD latch
+// PP+0x27C bit 0 to the remote's; svc entries never open windows (block 1's
+// job runs only inside drains) and no window opens while a hook-thread batch
+// is in flight (a job run inline during the join would race block 0 on a
+// worker); after phase 0 inside a drain the remote look angles are written
+// into instance 1's own PS slot (naim=look|lookcam). RunJobWindow is the
+// drain window partner_defer runs the deferred job in.
+//
 // Exceptions. Our own reads and writes (validation, PRE, POST) handle an
 // access fault themselves: what PRE had saved is restored field by field and
 // the window is disabled until the next MissionStart (ResetFault). An
@@ -24,6 +35,8 @@
 #include <cstring>
 #include "mgscoop/partner_input_hook.hpp"
 #include "mgscoop/near_code.hpp"
+#include "mgscoop/partner_defer.hpp"
+#include "mgscoop/partner_native.hpp"
 #include "partner_player_contract.hpp"
 
 namespace mgscoop::partner_input_hook {
@@ -82,6 +95,21 @@ std::uint64_t g_last_compose_ms = 0;  // the last composed main window (gap -> r
 // The main window's injection of the current frame (reused by wrap windows).
 pi::Injection g_last_inj{};
 bool g_inj_valid = false;
+// Native puppet (hook thread only): the frame injection's id and time, each
+// consumer's last frame id, the drain window and the look write's inputs.
+std::uint32_t g_frame_id = 0;
+std::uint64_t g_frame_ms = 0;
+std::uint32_t g_consumer_last[pi::kConsumers]{};
+bool g_in_drain = false;
+pi::Injection g_drain_inj{};
+pi::Arm g_drain_arm{};
+JobCallFn g_job_fn = nullptr;
+volatile LONG g_wrap_floor = 0;   // PartnerWrap counting without an enabled Arm (census)
+volatile LONG g_wrap_native = 0;  // the enabled Arm is native
+volatile LONG g_n_frames = 0, g_n_views[3] = {0, 0, 0}, g_n_drain_windows = 0, g_n_drain_refused = 0, g_n_walk_windows = 0;
+volatile LONG g_n_latch_other = 0, g_n_latch_last = 0, g_n_look_writes = 0, g_n_look_skipped = 0, g_n_look_refused = 0;
+volatile LONG g_n_look_last = 0, g_n_look_faulted = 0, g_n_camsub_dirty = 0, g_n_lookcam = 0;
+volatile LONG g_w_in_batch = 0, g_w_svc_native = 0;
 // What the stubs answer during the current window (set before each call).
 struct Current {
     std::uint32_t held, press, release, w54, long12, tap12;
@@ -108,10 +136,10 @@ bool g_wrap_ready = false;
 volatile LONG g_w_calls0[kWrapEntries]{}, g_w_calls1[kWrapEntries]{}, g_w_same[kWrapEntries]{}, g_w_nested[kWrapEntries]{};
 volatile LONG g_w_windows[kWrapEntries]{}, g_w_phases[kWrapEntries]{};
 volatile LONG g_w_other = 0;
-using SvcFn = void (*)(void* ctx, void* root, std::uint32_t phase) noexcept;
-using SvcIdFn = void (*)(void* ctx, void* root, std::uint32_t phase, std::uint32_t id) noexcept;
-using WalkFn = void (*)(void* root, std::uint32_t phase) noexcept;
-using WalkIdFn = void (*)(void* root, std::uint32_t phase, std::uint32_t id) noexcept;
+using detail::SvcFn;
+using detail::SvcIdFn;
+using detail::WalkFn;
+using detail::WalkIdFn;
 SvcFn g_svc_active = nullptr, g_svc_all = nullptr;
 SvcIdFn g_svc_id = nullptr;
 WalkFn g_walk7 = nullptr;
@@ -258,7 +286,23 @@ struct Save {
     std::uint8_t rebind;
     unsigned char cam[pi::kCamSaveBytes];
     bool src_saved, derived_saved, masks_saved, kb_saved, kb_flags_saved, vt_saved, rec_saved, p218_saved, cam_saved, shadow_saved;
+    // Native windows: the HOLD latch PP+0x27C, the aim sub-controller ranges
+    // (CamSub: [sub+0x3C, +0x48) and [sub+0xB8, +0xBC) of *(CAM+0x360)) and
+    // range 6 as it was after our lookcam write.
+    std::uint32_t latch, latch_written;
+    bool latch_saved;
+    std::uintptr_t camsub_ptr;
+    unsigned char camsub[0x10];
+    bool camsub_saved;
+    unsigned char cam6_after[0x20];
+    bool lookcam_written;
 };
+// What a window does beyond the round-3/4 swap.
+struct WindowOpts {
+    bool set_local;  // isLocal (rec+0x2AC bit 0)
+    bool native;     // HOLD latch, CamSub (aim stage), lookcam
+};
+inline constexpr std::size_t kCam6 = 6;  // kCamRanges[6] = {0x270, 0x290}
 
 // The vtable copy a window installs for a hold mode.
 std::uintptr_t WindowVtable(PartnerInputHold hold) noexcept {
@@ -269,7 +313,7 @@ std::uintptr_t WindowVtable(PartnerInputHold hold) noexcept {
     }
 }
 
-void ApplyPre(const pi::Arm& a, const pi::Injection& j, Save& save) noexcept {
+void ApplyPre(const pi::Arm& a, const pi::Injection& j, Save& save, const WindowOpts& o) noexcept {
     std::memcpy(save.src, reinterpret_cast<void*>(a.src + c::src_words), c::src_size);
     save.src_saved = true;
     Store<std::uint32_t>(a.src + 0x48, j.held);
@@ -315,9 +359,22 @@ void ApplyPre(const pi::Arm& a, const pi::Injection& j, Save& save) noexcept {
     }
     Store<std::uint32_t>(a.pp + c::pp_mouse_gate, g_shadow_gate);
     Store<std::uint8_t>(a.pp + c::pp_rebind, g_shadow_rebind);
-    save.rec_2ac = Load<std::uint32_t>(a.rec1 + c::rec_local);
-    save.rec_saved = true;
-    Store<std::uint32_t>(a.rec1 + c::rec_local, save.rec_2ac | 1u);
+    if (o.set_local) {
+        save.rec_2ac = Load<std::uint32_t>(a.rec1 + c::rec_local);
+        save.rec_saved = true;
+        Store<std::uint32_t>(a.rec1 + c::rec_local, save.rec_2ac | 1u);
+    }
+    if (o.native) {
+        // Gun eligibility (0x1054210) reads PP+0x27C bit 0: the latch of the
+        // injected "now" word under instance 1's private PP+0x28.
+        std::uint32_t mask28 = 0;
+        std::memcpy(&mask28, g_priv_masks, sizeof(mask28));
+        save.latch = Load<std::uint32_t>(a.pp + c::pp_hold_latch);
+        save.latch_saved = true;
+        save.latch_written = partner_native::Latch27c(save.latch, j.w[0], mask28);
+        Store<std::uint32_t>(a.pp + c::pp_hold_latch, save.latch_written);
+        InterlockedExchange(&g_n_latch_last, static_cast<LONG>(save.latch_written & 1u));
+    }
     if (a.cam != PartnerInputCam::off) {
         std::size_t at = 0;
         for (const pi::CamRange& r : pi::kCamRanges) {
@@ -326,6 +383,23 @@ void ApplyPre(const pi::Arm& a, const pi::Injection& j, Save& save) noexcept {
             at += n;
         }
         save.cam_saved = true;
+        if (o.native && a.naim != PartnerNativeAim::off) {
+            // Aim init's writes through *(CAM+0x360) (sub+0x3C..+0x48, sub+0xB8).
+            const std::uintptr_t sub = Load<std::uintptr_t>(a.cam_object + c::cam_aim_sub);
+            if (sub) {
+                std::memcpy(save.camsub, reinterpret_cast<void*>(sub + c::cam_sub_begin), c::cam_sub_end - c::cam_sub_begin);
+                std::memcpy(save.camsub + 0xC, reinterpret_cast<void*>(sub + c::cam_sub_b8), c::cam_sub_bc - c::cam_sub_b8);
+                save.camsub_ptr = sub;
+                save.camsub_saved = true;
+            }
+        }
+        if (o.native && a.naim == PartnerNativeAim::lookcam && j.cam_valid && a.cam == PartnerInputCam::sandbox) {
+            Store<float>(a.cam_object + c::cam270, j.cam270);
+            Store<float>(a.cam_object + c::cam274, j.cam274);
+            std::memcpy(save.cam6_after, reinterpret_cast<void*>(a.cam_object + pi::kCamRanges[kCam6].begin), sizeof(save.cam6_after));
+            save.lookcam_written = true;
+            InterlockedIncrement(&g_n_lookcam);
+        }
     }
     if (a.p218) {
         save.p218 = Load<std::uint32_t>(a.P + c::p_local_id);
@@ -354,6 +428,11 @@ void ApplyPost(const pi::Arm& a, const Save& save, bool capture_private) noexcep
         Store<std::uint32_t>(a.pp + c::pp_mouse_gate, save.gate);
         Store<std::uint8_t>(a.pp + c::pp_rebind, save.rebind);
     }
+    if (save.latch_saved) {
+        const std::uint32_t now = Load<std::uint32_t>(a.pp + c::pp_hold_latch);
+        if ((now ^ save.latch_written) & ~1u) InterlockedIncrement(&g_n_latch_other);
+        Store<std::uint32_t>(a.pp + c::pp_hold_latch, partner_native::LatchRestore(now, save.latch));
+    }
     if (save.vt_saved) Store<std::uintptr_t>(a.pp, save.vt);
     if (save.masks_saved) {
         if (capture_private) {
@@ -375,18 +454,30 @@ void ApplyPost(const pi::Arm& a, const Save& save, bool capture_private) noexcep
         for (std::size_t i = 0; i < pi::kCamRangeCount; ++i) {
             const pi::CamRange& r = pi::kCamRanges[i];
             const std::size_t n = static_cast<std::size_t>(r.end - r.begin);
-            const bool changed = std::memcmp(save.cam + at, reinterpret_cast<void*>(a.cam_object + r.begin), n) != 0;
-            if (changed) {
-                dirty |= (1u << i);
-                if (a.cam == PartnerInputCam::sandbox) {
-                    std::memcpy(reinterpret_cast<void*>(a.cam_object + r.begin), save.cam + at, n);
-                    ++restored;
-                }
+            // Range 6 after a lookcam write: only changes beyond ours are dirty,
+            // and it is always restored.
+            const bool ours = i == kCam6 && save.lookcam_written;
+            const bool changed = std::memcmp(ours ? save.cam6_after : save.cam + at, reinterpret_cast<void*>(a.cam_object + r.begin), n) != 0;
+            if (changed) dirty |= (1u << i);
+            if ((changed || ours) && a.cam == PartnerInputCam::sandbox) {
+                std::memcpy(reinterpret_cast<void*>(a.cam_object + r.begin), save.cam + at, n);
+                ++restored;
             }
             at += n;
         }
         if (dirty) InterlockedOr(&g_cam_dirty, static_cast<LONG>(dirty));
         if (restored) InterlockedAdd(&g_cam_restored, static_cast<LONG>(restored));
+    }
+    if (save.camsub_saved) {
+        std::uint32_t dirty = 0;
+        const auto sub = save.camsub_ptr;
+        if (std::memcmp(save.camsub, reinterpret_cast<void*>(sub + c::cam_sub_begin), c::cam_sub_end - c::cam_sub_begin) != 0) dirty |= 1u;
+        if (std::memcmp(save.camsub + 0xC, reinterpret_cast<void*>(sub + c::cam_sub_b8), c::cam_sub_bc - c::cam_sub_b8) != 0) dirty |= 2u;
+        if (dirty && a.cam == PartnerInputCam::sandbox) {
+            std::memcpy(reinterpret_cast<void*>(sub + c::cam_sub_begin), save.camsub, c::cam_sub_end - c::cam_sub_begin);
+            std::memcpy(reinterpret_cast<void*>(sub + c::cam_sub_b8), save.camsub + 0xC, c::cam_sub_bc - c::cam_sub_b8);
+        }
+        if (dirty) InterlockedOr(&g_n_camsub_dirty, static_cast<LONG>(dirty));
     }
 }
 
@@ -398,9 +489,9 @@ void SafePost(const pi::Arm& a, const Save& save, bool capture_private) noexcept
 
 // PRE under SEH; on an access fault the saved prefix is restored and false
 // returned (the window is then disabled by Fault).
-bool SafePre(const pi::Arm& a, const pi::Injection& j, Save& save) noexcept {
+bool SafePre(const pi::Arm& a, const pi::Injection& j, Save& save, const WindowOpts& o) noexcept {
     bool done = false;
-    __try { ApplyPre(a, j, save); done = true; }
+    __try { ApplyPre(a, j, save, o); done = true; }
     __except (OwnFilter(1, GetExceptionCode())) {}
     if (!done) SafePost(a, save, false);
     return done;
@@ -415,8 +506,10 @@ struct Call {
     std::uint32_t a, b;
 };
 inline constexpr std::uint8_t kMainEntry = 255;
+inline constexpr std::uint8_t kJobEntry = 5;  // partner_defer's drain: g_job_fn(go = ctx, param = root)
 void CallOriginal(const Call& k) noexcept {
     switch (k.entry) {
+    case kJobEntry: g_job_fn(k.ctx, k.root); break;
     case 0: g_svc_active(k.ctx, k.root, k.a); break;
     case 1: g_svc_all(k.ctx, k.root, k.a); break;
     case 2: g_svc_id(k.ctx, k.root, k.a, k.b); break;
@@ -434,6 +527,7 @@ void GuardedCall(const pi::Arm& a, const Save& save, const Call& k) noexcept {
         __try { CallOriginal(k); }
         __finally {
             if (AbnormalTermination()) {
+                g_in_drain = false;
                 SafePost(a, save, false);
                 EndWindow();
             }
@@ -509,11 +603,17 @@ void RunWindow(const pi::Arm& a, void* root, std::uint32_t phase) noexcept {
     }
     g_last_compose_ms = now_ms;
     const std::uint32_t overlay_bits = pi::StepOverlay(g_tap, a.tap_seq, a.tap_bits, a.press_bits, a.press_until_ms, now_ms);
-    const pi::Injection j = pi::Compose(a.config, s, a.host_cam_cdeg, pi::Overlay{overlay_bits}, g_edge);
+    const pi::Injection j = pi::Compose(a.config, s, a.host_cam_cdeg, pi::Overlay{overlay_bits}, g_edge, a.native ? a.steer_rad : 0.0,
+                                        a.native && a.mag_scale > 0.0 ? a.mag_scale : 1.0);
     if (j.hist_reset) g_hist = pi::HoldHistory{};
     if (!j.hist_freeze) pi::HoldPush(g_hist, j.held);
     g_last_inj = j;
     g_inj_valid = true;
+    // The frame injection: the main window is its first consumer.
+    ++g_frame_id;
+    g_frame_ms = now_ms;
+    g_consumer_last[static_cast<std::size_t>(pi::Consumer::main)] = g_frame_id;
+    if (a.native) InterlockedIncrement(&g_n_frames);
     if (j.synth) InterlockedIncrement(&g_synth);
     if (j.edge_press) InterlockedIncrement(&g_press_n);
     if (j.edge_release) InterlockedIncrement(&g_release_n);
@@ -528,7 +628,7 @@ void RunWindow(const pi::Arm& a, void* root, std::uint32_t phase) noexcept {
     const std::uint64_t t0 = NowUs();
     Save save{};
     BeginWindow();
-    if (!SafePre(a, j, save)) {
+    if (!SafePre(a, j, save, WindowOpts{true, a.native})) {
         // The prefix was restored; block 1 still updates once this frame.
         EndWindow();
         g_original(root, phase);
@@ -581,11 +681,21 @@ void RunWrapWindow(const Call& k) noexcept {
     __try { skip = Validate(a, k.root); validated = true; }
     __except (OwnFilter(1, GetExceptionCode())) {}
     if (!validated || skip != pi::Skip::none) { CallOriginal(k); return; }
-    // Level only: the main window delivered this frame's edges.
-    const pi::Injection j = pi::LevelOnly(g_last_inj, a.config);
+    // Legacy: level only (the main window delivered this frame's edges).
+    // Native: this consumer's view of the frame injection (edges once).
+    pi::Injection j{};
+    if (a.native) {
+        const auto consumer = k.entry == 3 ? pi::Consumer::walk7 : pi::Consumer::walk11;
+        pi::ConsumerView view{};
+        j = pi::ForConsumer(g_last_inj, g_frame_id, g_consumer_last[static_cast<std::size_t>(consumer)], NowMs() - g_frame_ms,
+                            a.config, &view);
+        InterlockedIncrement(&g_n_views[static_cast<std::size_t>(view)]);
+    } else {
+        j = pi::LevelOnly(g_last_inj, a.config);
+    }
     Save save{};
     BeginWindow();
-    if (!SafePre(a, j, save)) {
+    if (!SafePre(a, j, save, WindowOpts{a.native ? a.local_all : true, a.native})) {
         EndWindow();
         CallOriginal(k);
         return;
@@ -595,6 +705,57 @@ void RunWrapWindow(const Call& k) noexcept {
     SafePost(a, save, true);
     EndWindow();
     if (k.entry < kWrapEntries) InterlockedIncrement(&g_w_windows[k.entry]);
+    if (a.native) InterlockedIncrement(&g_n_walk_windows);
+}
+
+// Native look write (aim stage): instance 1's own per-id look slot after the
+// game computed it in PS phase 0 (svc28 phase 0 returns before activation),
+// skipped when the record bit 1 says the game skipped it. Never restored: the
+// game recomputes it every phase 0. A fault disables the look for the mission.
+int LookFilter(DWORD code) noexcept {
+    if (!IsAccessFault(code)) return EXCEPTION_CONTINUE_SEARCH;
+    if (InterlockedExchange(&g_n_look_faulted, 1) == 0 && g_log) {
+        char line[128]{};
+        if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "partner_input=fault; phase=look; code=0x%08x; aim=disabled\r\n", code)))
+            g_log(line);
+    }
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+void LookRefused(LookRefusal why) noexcept {
+    InterlockedIncrement(&g_n_look_refused);
+    InterlockedExchange(&g_n_look_last, static_cast<LONG>(why));
+}
+void LookWrite() noexcept {
+    const pi::Arm& a = g_drain_arm;
+    if (a.naim == PartnerNativeAim::off) { InterlockedExchange(&g_n_look_last, static_cast<LONG>(LookRefusal::off)); return; }
+    if (g_n_look_faulted) { LookRefused(LookRefusal::fault); return; }
+    const pi::Injection& j = g_drain_inj;
+    if (!j.look_valid) { LookRefused(j.stale ? LookRefusal::stale : LookRefusal::no_v3); return; }
+    LookRefusal why = LookRefusal::none;
+    __try {
+        const std::uintptr_t ps = a.ps1;
+        const std::uintptr_t vt = ps ? Load<std::uintptr_t>(ps) : 0;
+        const std::uint32_t base_id = ps ? Load<std::uint32_t>(ps + c::ps_base_id) : 0xFFFFFFFFu;
+        if (!ps || (vt != g_base + c::ps_vtable_rva && vt != g_base + c::ps_vtable_alt_rva) ||
+            Load<std::uintptr_t>(ps + c::ps_phase_comp) != vt + c::ps_phase_comp_vt_delta || base_id > 1 || 1 - base_id != a.ps1_idx) {
+            why = LookRefusal::ps;
+        } else {
+            const std::uintptr_t rec = Load<std::uintptr_t>(ps + c::ps_rec);
+            const std::uintptr_t look = Load<std::uintptr_t>(ps + c::ps_look);
+            if (!rec || !look) why = LookRefusal::ps;
+            else if (Load<std::uint32_t>(rec + static_cast<std::uintptr_t>(a.ps1_idx) * c::ps_rec_stride) & c::ps_rec_skip_bit) {
+                InterlockedIncrement(&g_n_look_skipped);
+            } else {
+                const float pair[2] = {j.look_pitch, j.look_yaw};
+                std::memcpy(reinterpret_cast<void*>(look + static_cast<std::uintptr_t>(a.ps1_idx) * c::ps_look_stride), pair, sizeof(pair));
+                InterlockedIncrement(&g_n_look_writes);
+                InterlockedExchange(&g_n_look_last, static_cast<LONG>(LookRefusal::none));
+            }
+        }
+    } __except (LookFilter(GetExceptionCode())) {
+        why = LookRefusal::fault;
+    }
+    if (why != LookRefusal::none) LookRefused(why);
 }
 
 void WrapEnter(const Call& k) noexcept {
@@ -617,8 +778,36 @@ void WrapEnter(const Call& k) noexcept {
     const bool nested = (g_window_seq & 1) != 0;
     if (same) InterlockedIncrement(&g_w_same[k.entry]);
     if (nested) InterlockedIncrement(&g_w_nested[k.entry]);
-    if (mode == static_cast<LONG>(PartnerWrap::window) && same && !nested) { RunWrapWindow(k); return; }
+    if (mode == static_cast<LONG>(PartnerWrap::window) && same && !nested) {
+        // A job run inline during a hook-thread batch's join: block 0's job may
+        // be running on a worker, the shared PP must not be swapped now.
+        if (partner_defer::InBatch()) {
+            InterlockedIncrement(&g_w_in_batch);
+            CallOriginal(k);
+            return;
+        }
+        // Native: block 1's job runs only in drains (already windows).
+        if (g_wrap_native && k.entry <= 2) {
+            InterlockedIncrement(&g_w_svc_native);
+            CallOriginal(k);
+            return;
+        }
+        RunWrapWindow(k);
+        return;
+    }
+    // The post-phase-0 look write, nested in a drain window.
+    if (k.entry == 0 && k.a == 0 && same && g_in_drain) {
+        CallOriginal(k);
+        LookWrite();
+        return;
+    }
     CallOriginal(k);
+}
+
+// A deferred job without a window: a fatal game code is recorded and passed on.
+void GuardedJobCall(JobCallFn job, void* go, const void* param) noexcept {
+    __try { job(go, param); }
+    __except (GameFilter(GetExceptionCode())) {}
 }
 void WrapSvcActive(void* ctx, void* root, std::uint32_t phase) noexcept { WrapEnter(Call{0, ctx, root, phase, 0}); }
 void WrapSvcAll(void* ctx, void* root, std::uint32_t phase) noexcept { WrapEnter(Call{1, ctx, root, phase, 0}); }
@@ -805,6 +994,30 @@ KmWord KmSlotWord(std::size_t slot) noexcept {
     default: return KmWord::none;
     }
 }
+void BindWrapForTest(SvcFn active, SvcFn all, SvcIdFn per_id, WalkFn walk7, WalkIdFn walk11, std::uint32_t hook_thread) noexcept {
+    g_svc_active = active;
+    g_svc_all = all;
+    g_svc_id = per_id;
+    g_walk7 = walk7;
+    g_walk11 = walk11;
+    InterlockedExchange(&g_hook_thread, static_cast<LONG>(hook_thread));
+}
+void CallWrapForTest(std::uint8_t entry, void* ctx, void* root, std::uint32_t phase, std::uint32_t id) noexcept {
+    switch (entry) {
+    case 0: WrapSvcActive(ctx, root, phase); break;
+    case 1: WrapSvcAll(ctx, root, phase); break;
+    case 2: WrapSvcId(ctx, root, phase, id); break;
+    case 3: WrapWalk7(root, phase); break;
+    default: WrapWalk11(root, phase, id); break;
+    }
+}
+void SetDrainForTest(const pi::Arm& arm, const pi::Injection& injection, bool in_drain) noexcept {
+    g_drain_arm = arm;
+    g_drain_inj = injection;
+    g_in_drain = in_drain;
+    // A drain is a window: odd while inside.
+    if (((g_window_seq & 1) != 0) != in_drain) InterlockedIncrement(&g_window_seq);
+}
 bool KmSlotByIndex(std::size_t slot) noexcept {
     return slot == c::pp_vt_km_press_idx || slot == c::pp_vt_km_release_idx || slot == c::pp_vt_km_148_idx ||
            slot == c::pp_vt_km_held_idx || slot == c::pp_vt_km_press2_idx || slot == c::pp_vt_km_release2_idx ||
@@ -864,6 +1077,83 @@ const char* Install(const void* base, LogFn log, SampleFn sample) noexcept {
 }
 
 bool Installed() noexcept { return g_ready; }
+
+std::uint32_t HookThread() noexcept { return static_cast<std::uint32_t>(g_hook_thread); }
+
+const char* LookRefusalName(LookRefusal refusal) noexcept {
+    switch (refusal) {
+    case LookRefusal::off: return "off";
+    case LookRefusal::no_v3: return "no_v3";
+    case LookRefusal::stale: return "stale";
+    case LookRefusal::ps: return "ps";
+    case LookRefusal::rec_read: return "rec_read";
+    case LookRefusal::fault: return "fault";
+    default: return "none";
+    }
+}
+
+bool RunJobWindow(void* go, const void* param, JobCallFn job, pi::Consumer consumer) noexcept {
+    g_job_fn = job;
+    pi::Arm a{};
+    const bool armed = g_ready && !g_faulted && g_inj_valid && ReadArm(a) && a.enabled && a.native &&
+                       a.config.mode == PartnerInput::net && a.gen == g_gen;
+    if (!armed) {
+        InterlockedIncrement(&g_n_drain_refused);
+        GuardedJobCall(job, go, param);
+        return false;
+    }
+    pi::Skip skip = pi::Skip::player;
+    bool validated = false;
+    const auto go_addr = reinterpret_cast<std::uintptr_t>(go);
+    __try {
+        skip = Validate(a, reinterpret_cast<void*>(a.root1));
+        if (skip == pi::Skip::none && (go_addr != a.go || Load<std::uintptr_t>(go_addr) != g_base + c::go_vtable_rva ||
+                                       go_addr + c::go_to_p != a.P))
+            skip = pi::Skip::p_vtable;
+        validated = true;
+    } __except (OwnFilter(1, GetExceptionCode())) {}
+    if (!validated || skip != pi::Skip::none) {
+        if (validated) {
+            InterlockedIncrement(&g_skips);
+            InterlockedExchange(&g_last_skip, static_cast<LONG>(skip));
+        }
+        InterlockedIncrement(&g_n_drain_refused);
+        GuardedJobCall(job, go, param);
+        return false;
+    }
+    pi::ConsumerView view{};
+    const pi::Injection j = pi::ForConsumer(g_last_inj, g_frame_id, g_consumer_last[static_cast<std::size_t>(consumer)],
+                                            NowMs() - g_frame_ms, a.config, &view);
+    InterlockedIncrement(&g_n_views[static_cast<std::size_t>(view)]);
+    const std::uint64_t t0 = NowUs();
+    Save save{};
+    BeginWindow();
+    if (!SafePre(a, j, save, WindowOpts{a.local_all, true})) {
+        EndWindow();
+        InterlockedIncrement(&g_n_drain_refused);
+        GuardedJobCall(job, go, param);
+        return false;
+    }
+    SetCurrent(j, a.hold);
+    g_drain_arm = a;
+    g_drain_inj = j;
+    g_in_drain = true;
+    GuardedCall(a, save, Call{kJobEntry, go, const_cast<void*>(param), 0, 0});
+    g_in_drain = false;
+    SafePost(a, save, true);
+    EndWindow();
+    InterlockedIncrement(&g_n_drain_windows);
+    Max(g_us_max, static_cast<LONG>(NowUs() - t0));
+    return true;
+}
+
+void PublishWrapRoots(std::uintptr_t root0, std::uintptr_t root1, bool census) noexcept {
+    InterlockedExchange64(&g_wrap_root0, static_cast<LONG64>(root0));
+    InterlockedExchange64(&g_wrap_root1, static_cast<LONG64>(root1));
+    const LONG floor = census ? static_cast<LONG>(PartnerWrap::census) : static_cast<LONG>(PartnerWrap::off);
+    InterlockedExchange(&g_wrap_floor, floor);
+    if (!g_arm_enabled) InterlockedExchange(&g_wrap_mode, floor);
+}
 
 const char* InstallWrap() noexcept {
     if (!g_ready) return "hook";
@@ -929,6 +1219,7 @@ void ResetFault() noexcept {
     // The hold history and the frame injection never carry into a new
     // mission: the hook thread clears them before its next window.
     InterlockedExchange(&g_reset_hist, 1);
+    InterlockedExchange(&g_n_look_faulted, 0);
 }
 
 void PublishArm(const pi::Arm& arm) noexcept {
@@ -937,9 +1228,14 @@ void PublishArm(const pi::Arm& arm) noexcept {
     std::memcpy(const_cast<pi::Arm*>(&g_arm), &arm, sizeof(arm));
     MemoryBarrier();
     InterlockedIncrement(&g_seq);  // even
-    InterlockedExchange64(&g_wrap_root0, static_cast<LONG64>(arm.root0));
-    InterlockedExchange64(&g_wrap_root1, static_cast<LONG64>(arm.root1));
-    InterlockedExchange(&g_wrap_mode, arm.enabled ? static_cast<LONG>(arm.wrap) : static_cast<LONG>(PartnerWrap::off));
+    // A disarmed Arm keeps the last roots (PublishWrapRoots may count with
+    // them); without an enabled Arm the wrappers only count (census) or forward.
+    if (arm.enabled) {
+        InterlockedExchange64(&g_wrap_root0, static_cast<LONG64>(arm.root0));
+        InterlockedExchange64(&g_wrap_root1, static_cast<LONG64>(arm.root1));
+    }
+    InterlockedExchange(&g_wrap_native, arm.enabled && arm.native ? 1 : 0);
+    InterlockedExchange(&g_wrap_mode, arm.enabled ? static_cast<LONG>(arm.wrap) : g_wrap_floor);
     InterlockedExchange(&g_arm_enabled, arm.enabled ? 1 : 0);
     InterlockedExchange(&g_holdlog, arm.holdlog ? 1 : 0);
 }
@@ -988,6 +1284,23 @@ void DrainStats(Stats& out) noexcept {
         ws.phase_mask[e] = static_cast<std::uint32_t>(g_w_phases[e]);
     }
     ws.other_calls = static_cast<std::uint32_t>(g_w_other);
+    ws.wrap_in_batch = static_cast<std::uint32_t>(g_w_in_batch);
+    ws.svc_native_skips = static_cast<std::uint32_t>(g_w_svc_native);
+    NativeStats& n = out.native;
+    n.frames = static_cast<std::uint32_t>(g_n_frames);
+    for (unsigned i = 0; i < 3; ++i) n.views[i] = static_cast<std::uint32_t>(g_n_views[i]);
+    n.drain_windows = static_cast<std::uint32_t>(g_n_drain_windows);
+    n.drain_refused = static_cast<std::uint32_t>(g_n_drain_refused);
+    n.walk_windows = static_cast<std::uint32_t>(g_n_walk_windows);
+    n.latch_other = static_cast<std::uint32_t>(g_n_latch_other);
+    n.latch_last = static_cast<std::uint32_t>(g_n_latch_last);
+    n.look_writes = static_cast<std::uint32_t>(g_n_look_writes);
+    n.look_skipped_rec = static_cast<std::uint32_t>(g_n_look_skipped);
+    n.look_refused = static_cast<std::uint32_t>(g_n_look_refused);
+    n.look_last = static_cast<LookRefusal>(g_n_look_last);
+    n.look_faulted = g_n_look_faulted != 0;
+    n.camsub_dirty_or = static_cast<std::uint32_t>(g_n_camsub_dirty);
+    n.lookcam_writes = static_cast<std::uint32_t>(g_n_lookcam);
 }
 
 bool PatchLive(const void* base) noexcept {

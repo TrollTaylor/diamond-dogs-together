@@ -476,7 +476,8 @@ bool SameArm(const Arm& a, const Arm& b) noexcept {
            std::memcmp(a.config.words, b.config.words, sizeof(a.config.words)) == 0 && a.config.yaw_sign == b.config.yaw_sign &&
            a.config.rstick == b.config.rstick && a.config.triggers == b.config.triggers &&
            a.config.stick_deg == b.config.stick_deg && a.config.stick_pct == b.config.stick_pct &&
-           a.config.stale_ms == b.config.stale_ms;
+           a.config.stale_ms == b.config.stale_ms && a.native == b.native && a.local_all == b.local_all && a.naim == b.naim &&
+           a.go == b.go && a.ps1 == b.ps1 && a.ps1_idx == b.ps1_idx;
 }
 
 const char* SkipName(Skip skip) noexcept {
