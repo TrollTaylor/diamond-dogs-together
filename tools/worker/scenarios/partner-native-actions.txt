@@ -1,0 +1,101 @@
+# Native movement actions (docs/native-puppet.md "Actions", "Rates"): sprint parity, sprint stop without
+# runaway, crawl speed, dive while running, evade, prone rolls, an ACTION census and a vault probe.
+# Run (hidden worker, coordinator only):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-native-actions.txt -PartnerProfile native -NativeStage gun -BuildProfile research
+#   (or -NativeStage loco on the normal worker build: the same masks and rates mirror, no rifle on body 1).
+# Both stages pass EVADE 0x40000 (mask 0x2240006 / 0x224004E) and run partner_native_rates=mirror.
+# "Partner of role R" = body 1 on R's machine = the puppet of the other role; each capture appends the capturing
+# role's state.json ("native") to captures.jsonl.
+# Evidence per section (native.* of the capturing role):
+#  start:        native.mode "active" before "sprint-01"; rates.id0/id1 read (id1_read "ok"), rates.remote.valid.
+#  sprint / g-sprint (captures 03..05): body.speed_mmps / body.remote_speed_mmps in 0.95..1.05;
+#                rates.mirror "ok" and rates.id1.dash == rates.remote.dash (+-10); recon.runaway false,
+#                recon.runaway_idle false; mode "active" through *-stop-04 with fallbacks unchanged.
+#  sprint-stop:  stop_grace may be true, runaway_idle stays false, err_mm < 500 at stop-04.
+#  crawl:        speed ratio 0.95..1.05 (rates.id1.crawl_rate == the remote's crawl x factor), err_mm < 300.
+#  dive / evade: the ring's held includes 0x40000 (EVADE) in the burst; body.remote_act leaves 1..6 (27 expected)
+#                and body.act equals it within 2 captures; after "dive-settle": stance matches, err_mm < 500,
+#                gun.remote_equip unchanged, mode not "leaving"/"fallback".
+#  leak-evade-host: the host's own partner (guest idle) keeps its act and speed_mmps < 100.
+#  roll-dash / roll-evade (prone): body.act follows remote_act; final err_mm < 500.
+#  action-census: ACTION 0x20 is never passed: body.act stays in 1..6 while remote_act changes (record the ids).
+#  vault-probe:  record only (ACTION masked; whether a low obstacle lies ahead of the lab start is unverified):
+#                remote_act ids, recon snaps; body.act never in the vault ids.
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+stance host stand
+stance guest stand
+host debug time 43200
+host debug weather sunny
+wait 3000
+resetpose host
+stance host stand
+placebehind guest host 6 4
+both capture start
+# Arbiter entry and the first v4 rates: placement + arming happen while idle.
+wait 4000
+both capture native-idle
+# --- Sprint parity and the stop (host drives, guest films) ---------------------
+heldcapture host guest shift+w sprint 5
+wait 900
+guest burst sprint-stop 4 300
+# --- The other direction (guest drives, host films) ----------------------------
+resetpose guest
+stance guest stand
+placebehind host guest 6 4
+heldcapture guest host shift+w g-sprint 5
+wait 900
+host burst g-sprint-stop 4 300
+# --- Crawl speed -----------------------------------------------------------------
+resetpose host
+stance host prone
+placebehind guest host 5 4
+heldcapture host guest w crawl 5
+wait 900
+stance host stand
+# --- Dive while running ----------------------------------------------------------
+resetpose host
+stance host stand
+placebehind guest host 8 4
+host hold shift+w 1500 nowait
+wait 1100
+host hold shift+w+space 200 nowait
+guest burst dive 8 120
+wait 1200
+guest burst dive-settle 2 400
+# --- Evade from standing, and the leak check on the host's machine --------------
+resetpose host
+stance host stand
+placebehind guest host 5 4
+host press space
+guest burst evade 6 120
+heldcapture host host space leak-evade-host 1
+wait 1200
+# --- Prone rolls (DASH + direction, EVADE + direction) ----------------------------
+resetpose host
+stance host prone
+placebehind guest host 5 4
+host hold shift+d 600 nowait
+guest burst roll-dash 5 120
+wait 1000
+host hold space+a 300 nowait
+guest burst roll-evade 5 120
+wait 1000
+stance host stand
+# --- ACTION census (masked) and a vault probe ------------------------------------
+resetpose host
+stance host stand
+placebehind guest host 5 4
+host press e
+guest burst action-census 4 150
+wait 800
+host hold w 1500 nowait
+wait 700
+host hold w+e 200 nowait
+guest burst vault-probe 6 150
+host release
+wait 1200
+both capture actions-end
+state

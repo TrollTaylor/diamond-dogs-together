@@ -10,6 +10,12 @@ The partner body (player instance 1) is driven by the remote player's real pad
 through the game's own locomotion, action and gun systems. The proven
 `dm=map` + xform partner stays the automatic fallback.
 
+Native actions (2026-10-08, `wp/native-actions`, fixture-tested; hidden runs
+pending): the dive, evade and prone rolls now reach the partner (EVADE in the
+masks), the partner body runs at the remote's own movement rates (the rates
+mirror) and the reconciliation no longer pins a body that is only slower. See
+"Actions" and "Rates" below.
+
 ## Mechanism
 
 Executable: `mgsvtpp.exe` 1.0.15.4 (SHA-256 `085c2f82...bb45`). All addresses are
@@ -114,6 +120,87 @@ is generated from it.
   objects: they are withdrawn at MissionEnd/MissionStart (after the deferral is
   disarmed) and once `partner_drive` is no longer native.
 
+## Actions
+
+Pad bits (`native/include/mgscoop/partner_pad_bits.hpp`; values from the Lua
+`PlayerPad` enum registration `0x9D3A78..0x9D3EE5`, each pair pinned by the
+contract with its string; keyboard bit i is key binding i, `0x1206C21..0x1206CF2`):
+
+| bit | name (aliases) | PC key | passed |
+|---|---|---|---|
+| 0x2 | STANCE | C (hold = prone) | always |
+| 0x4 | DASH | Shift (while prone + A/D: roll) | always |
+| 0x40000 | EVADE | Space: dive while running, evade, roll while prone | always (new) |
+| 0x200000 | VEHICLE_DASH (keyboard binding 21) | W | always |
+| 0x2000000 | keyboard binding 25 (walk) | Ctrl | always |
+| 0x8 / 0x40 | HOLD / RELOAD = CARRY | RMB / R | gun stage |
+| 0x10 | FIRE | LMB aimed | fire gate only |
+| 0x20 | ACTION = MOVE_ACTION = JUMP = RIDE_ON/OFF = CQC_KNIFE_KILL | E | never |
+| 0x200, 0x400, 0x8000, ... | CALL/INTERROGATE, SUBJECT, CQC, weapons, markers | | never |
+
+The movement base is `kPartnerNativeBaseMask = 0x2240006`; the gun stage
+mask is `0x224004E`. EVADE's press consumers (`0x1148C6C`, `0x1299821`,
+`0x129B7DB`: PP vt+0x40 bit 18 -> `Q+0x18[id] = 0x1B`, act 27) first ask
+`0x114DB20` / `0x12B60D0` whether the player is network-remote, which is true
+only with S_IS_ONLINE (P+0x204 bit 8), so offline instance 1 takes them. ACTION
+stays masked: it aliases ride, knife kill and pickup, which would act on the
+receiver's world. RELOAD aliases CARRY (gun stage only; gating it on the
+remote's aim state is an open item). Phase 2 (vault/climb) would replay a
+one-frame ACTION press only when the remote's act enters a vault/climb census
+whitelist near the body; not implemented.
+
+Reconciliation (native preset, `partner_recon::NativeParams`): the moving
+runaway compares the body's own velocity with the remote's along and across
+the remote's motion and fires only on an overrun (`dv_along > thr`) or a
+sideways drift (`|dv_cross| > thr`), `thr = max(1500, 20 % of |v_remote|)`
+mm/s; a body that is only slower raises `partner_recon=lag` (never a pin) and
+the along-track nudges go up to `clamp(15 % of |v_remote|, 300, 1500)` mm/s
+(prone 150..400). After a stick release the idle runaway waits 1200 ms while
+the slide decelerates (`stop_grace`). The arbiter's runaway timer counts only
+the idle-remote runaway (`report.runaway_idle`). Runs a7823/63199 showed the
+old rule: a sprint at 0.835 speed pinned, never exited, and the arbiter left
+with `runaway`.
+
+## Rates
+
+The locomotion speed is `base(0x109F7E0) * rate(0x109F690)` (callers
+`0x10B9DC1`, `0x10BA6B7`); the rate is `rec+0x44` while crawling (stance 2),
+`rec+0x50` while dashing (move class 3), 1.0 otherwise, from the body's own
+record: `sp = *(PS+0x260)` (interface vtable `0x23AD380` at object+0x20,
+`0x23AD328` while destroyed), `rec = *(sp+0x10) + (id - *(u32)(sp+8))*0x88`,
+`id - base < *(u32)(sp+0xC)`, record vtable `0x23AD2B0` (`0x23AD260` while
+constructed). The instance setup (`0x9CB7A5..0x9CB80C`) fills `+0x48` (dash)
+and `+0x3C` (crawl) from the provider `*(P+0x130)` vt+0x28(id, 1|2) and derives
+`+0x50 = +0x48 * +0x4C` and `+0x44 = +0x3C * +0x40`; `+0x4C` is a per-frame
+dash factor (`0x10BD1C3`, reset `0x10A4C6B`), `+0x40` a crawl factor (provider
+type 0x17 at `0x11403C9`, reset to 1.0 at `0x11313ED`). The provider answers
+per id, so instance 1 kept 1.0 while the remote's local player had about 1.2
+(runs a7823/63199: sprint 8.35 vs 10.0 m/s, crawl 1.38 vs 1.65; run and crouch
+walk 1.00). Which provider input differs (hand mobility or staff skill) is
+inferred; `native.rates` records the real values.
+
+- `partner_player::ReadRates` reads instance 0's or 1's record read-only
+  through the pinned chain (refusals: sp, sp_vtable, bounds, rec, rec_vtable,
+  nonfinite, unpinned).
+- Input frame v4 carries the sender's `+0x48`, `+0x3C`, `+0x40` x1000
+  (500..2000, xflags bit 4).
+- `partner_rates` (pure) plans the writes: the three inputs, then `+0x50` and
+  `+0x44` by the game's formulas (the dash factor stays the body's own); a
+  field the game rewrote since the last write becomes the new original and is
+  written again (`reapplied`); restore puts the originals back (a field the
+  game rewrote keeps the game's value); out-of-range or non-finite values latch.
+- The hook runs it in the drain window right before block 1's job (hook
+  thread, no batch in flight, identity re-validated, SEH-contained; a changed
+  record vtable latches without writing) and restores at the next main
+  dispatch once the Arm is disarmed. MissionStart/End forget the state without
+  writing (the record dies with the mission); each MissionStart is a new epoch.
+- The driver reads both records every 100 ms and requests the mirror
+  (`Arm.rates_mirror`) with `partner_native_rates=mirror` while the native drive
+  is active and the remote's rates are under 2 s old.
+
+Only instance 1's own record is written; instance 0, the provider and
+S_IS_ONLINE are never touched.
+
 ## Configuration
 
 lab.ini (`native/lab_config.cpp`, LabCommon key table):
@@ -128,6 +215,7 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_fire` | 0, 1 (FIRE 0x10, only with gun) |
 | `partner_native_steer_deg` | 15 (0..30, 0 = no steering) |
 | `partner_native_trim_pct` | 0 (0..10) |
+| `partner_native_rates` | log, off, mirror (rates telemetry; mirror writes instance 1's rate record) |
 
 Play mode forces legacy/off and sets `kPlayRefusedNativeDrive` (0x10000); in
 play mode a partner.trigger `drive=native` or `defer=census|on` is refused too
@@ -138,14 +226,18 @@ To enable (lab only), on both copies: the animated partner settings plus
 `partner_drive=native partner_input_send=1 partner_input_hook=1 partner_input_hold=own
 partner_input_words=hpr partner_input_wrap=window partner_input_cam=sandbox
 partner_input_local=main partner_recon=track partner_input_slot=body
-partner_input_defer=census|on partner_input_mask=0x2200006 partner_native_aim=off`
-(gun stage: mask `0x220004E`, `partner_native_gun=1 partner_native_aim=look
+partner_input_defer=census|on partner_input_mask=0x2240006 partner_native_aim=off`
+(loco stage also `partner_native_rates=mirror`; gun stage: mask `0x224004E`,
+`partner_native_rates=mirror partner_native_gun=1 partner_native_aim=look
 partner_input_triggers=1 partner_input_rstick=1`). `Get-WorkerPartnerSettings`
 (tools/worker/WorkerSessionCommon.psm1) is the source of truth;
 `Play-OfflineCoop.ps1 -Native` opts into the loco stage.
 
 ## Wire
 
+- Input frame v4 (108 bytes): v3 plus the sender's dash, crawl and crawl
+  factor rates (milli, xflags bit 4); sent with `partner_drive=native` unless
+  `partner_native_rates=off`. Older receivers drop it (both copies must run it).
 - Input frame v3 (100 bytes): v2 plus the sender's look angles, `CAM+0x270/+0x274`,
   the `PP+0x14` heading, xflags, inv slot and manifest revision. Sent only when
   the sender runs `partner_drive=native` (both copies must). A receiver without
@@ -165,6 +257,13 @@ Log lines (`mgs-coop/script-observer.log`): `partner_defer=installed|refused|war
 the 1 Hz `partner_defer; ...` and `partner_native; ...` lines, transitions
 `partner_native=<mode>; reason=..`, `partner_native=enter; step=..`,
 `partner_native_gun; ...`, `partner_equip=manifest; ...`.
+Native actions add `native.recon.runaway_idle`, `lag`, `stop_grace`,
+`dv_along_mmps`, `dv_cross_mmps` and `native.rates` (`setting`, `id0`/`id1`:
+the records x1000 as crawl, crawl_factor, crawl_rate, dash, dash_factor,
+dash_rate or null, `id1_read`, `remote` {valid, age_ms, dash, crawl,
+crawl_factor}, `mirror` off|wait|ok|latched, `reason`, `writes`, `reapplied`,
+`restores`, `drops`), and the log lines `partner_native_rates; ...` (on change),
+`partner_recon=lag|lag_end`; `partner_recon=runaway` carries dv_along/dv_cross.
 
 ## Runtime stages (coordinator, hidden worker only)
 
@@ -179,6 +278,7 @@ evidence per stage).
 | S3a | `-NativeStage gun -BuildProfile research` | gun bit18 and node active within 300 ms of aiming, aim_match; leak-aim clean; CamSub/dirty bits recorded; no host camera/zoom/HUD disturbance |
 | S3a-r | as S3a with `-AmmoExperiment` (after its own qualification) | reload visible, no fallback |
 | S3b | `partner_native_fire=1` (gate change) | fire-policy decision; aim error measured |
+| A1 | `pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-native-actions.txt -PartnerProfile native -NativeStage gun -BuildProfile research` (or `-NativeStage loco`) | the scenario header: sprint/crawl speed ratio 0.95..1.05 with `rates.mirror` ok and `rates.id1.dash == rates.remote.dash`; no runaway pin and no leaving through the sprint stop; the dive/evade/rolls: EVADE in the ring's held, body.act follows remote_act (27) within 2 captures, settles within 500 mm; leak-evade-host clean; ACTION never reaches the body |
 
 ## Known risks and open items
 
@@ -190,6 +290,12 @@ evidence per stage).
 - Aim init side effects through `*(CAM+0x360)` vt+0x50 and the hash
   `0x5020E975DFD` sub-controller are not sandboxable (S3a decides).
 - `aim_err_mdeg` and `body_equip` stay null: their readers are not qualified.
+- Actions/rates (fixture-tested only): which act ids the dive, evade and rolls
+  produce on the body (27 expected for EVADE presses); whether the provider
+  difference is in the dash and crawl inputs only (`native.rates.id0` vs
+  `id1` decides); a remote whose rates go stale (no v4 for 2 s) restores the
+  body's own rates until they return; ACTION (vault, climb) is still masked.
+
 - The ammo experiment (`MGS_LOCAL_STOCK46_AMMO_TEST`, research only) changes a
   qualified native call's arguments (stock 210 / ammo 30) and needs its own run.
 - No test asserts mechanically that no CodeGate caller runs after a lazy

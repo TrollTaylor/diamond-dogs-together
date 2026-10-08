@@ -187,6 +187,12 @@ experiment set. The settings of each profile and stage come from
 `Get-WorkerPartnerSettings` (WorkerSessionCommon) and the supervisor admits only
 them (`worker_game_gate.hpp`). `scenarios/partner-native.txt` is the native
 evaluation; its header lists the evidence each stage must show in captures.jsonl.
+`scenarios/partner-native-actions.txt` covers the movement actions (sprint
+parity with the rates mirror, sprint stop, crawl, dive, evade, prone rolls, an
+ACTION census and a vault probe) on the loco or gun stage. Both native loco and
+gun stages pass EVADE (masks 0x2240006 / 0x224004E) and run
+`partner_native_rates=mirror`; `worker_session_tests` checks every shipped
+scenario against the runner's own step validation.
 
 ## Primary API contracts and acceptance limits
 

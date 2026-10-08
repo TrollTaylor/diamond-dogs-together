@@ -1,5 +1,22 @@
 # Development status
 
+## October 8, 2026: native movement actions (fixture-tested, hidden runs pending)
+
+The dive was missing on the other player's screen because EVADE (0x40000,
+Space) was outside every native mask. The native masks are now 0x2240006
+(loco) and 0x224004E (gun), in lab_config, the worker gate and stages and
+Play-OfflineCoop; ACTION (ride, knife kill, pickup) stays masked. The
+contract pins the PlayerPad enum pairs, the three EVADE press consumers (act
+27) and their network-remote gates. Sprint and crawl ran at 0.835 of the
+remote's speed because the per-id movement rate record of instance 1 kept the
+default 1.0: `partner_native_rates=mirror` (worker loco/gun stages and Play)
+copies the remote's dash/crawl rates (input frame v4) into instance 1's own
+record inside the drain window and restores them on leave. The native
+reconciliation no longer pins a body that is only slower (split runaway,
+`lag`, along-track nudges, a stop grace), and the arbiter times only the idle
+runaway. New hidden scenario `tools/worker/scenarios/partner-native-actions.txt`
+([details](native-puppet.md#actions)). Fixture evidence only.
+
 ## October 8, 2026: native puppet (fixture-tested, default off, never run)
 
 The partner body can now be driven by the remote player's real pad through the

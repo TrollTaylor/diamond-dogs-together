@@ -165,6 +165,45 @@ foreach($name in @('Assert-WorkerConfigSnapshotPreflight','Invoke-WorkerRestoreO
 $tokens=$null;$errors=$null
 $scenarioAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'tools\worker\Invoke-WorkerScenario.ps1'),[ref]$tokens,[ref]$errors)
 Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
+# Every shipped scenario passes the runner's own step validation (its helper
+# functions, key/role lists and validation loop, extracted; nothing runs).
+& {
+    $parts=@()
+    foreach($name in @('Test-ScenarioKeys','Test-ScenarioLabel')) {
+        $definition=@($scenarioAst.FindAll({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true))
+        Assert-True ($definition.Count -eq 1) ('scenario validator helper '+$name)
+        $parts+=$definition[0].Extent.Text
+    }
+    foreach($variable in @('roleNames','keyNames')) {
+        $assignment=@($scenarioAst.FindAll({param($node)$node -is [Management.Automation.Language.AssignmentStatementAst] -and
+            $node.Left.Extent.Text -ceq ('$'+$variable)},$false))
+        Assert-True ($assignment.Count -eq 1) ('scenario validator list '+$variable)
+        $parts+=$assignment[0].Extent.Text
+    }
+    $loop=@($scenarioAst.FindAll({param($node)$node -is [Management.Automation.Language.ForEachStatementAst] -and
+        $node.Condition.Extent.Text -ceq '$steps' -and $node.Body.Extent.Text.Contains('switch -Regex')},$false))
+    Assert-True ($loop.Count -eq 1) 'one scenario validation loop'
+    $validator=[scriptblock]::Create(($parts -join "`n")+"`n"+$loop[0].Extent.Text)
+    $scenarioFiles=@(Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'tools\worker\scenarios') -Filter '*.txt' -File)
+    Assert-True ($scenarioFiles.Count -ge 6 -and @($scenarioFiles|Where-Object{$_.Name -ceq 'partner-native-actions.txt'}).Count -eq 1) 'the scenarios include partner-native-actions.txt'
+    foreach($file in $scenarioFiles) {
+        $steps=@([IO.File]::ReadAllLines($file.FullName)|ForEach-Object{$_.Trim()}|Where-Object{$_ -and !$_.StartsWith('#') -and $_ -cnotmatch '^labsetting(\s|$)'})
+        Assert-True ($steps.Count -gt 0) ('scenario has steps: '+$file.Name)
+        $failure=$null
+        try { & $validator } catch { $failure=$_.Exception.Message }
+        Assert-True (!$failure) ('scenario steps valid: '+$file.Name+' '+$failure)
+    }
+    $steps=@('host hold shift+w+space 200 nowait','guest burst dive 8 120','host hold w+jump 200')
+    $failure=$null
+    try { & $validator } catch { $failure=$_.Exception.Message }
+    Assert-True ($failure -and $failure.Contains("host hold w+jump 200")) 'the validator refuses an unknown key'
+    $actions=[IO.File]::ReadAllText((Join-Path $RepoRoot 'tools\worker\scenarios\partner-native-actions.txt'))
+    foreach($label in @('heldcapture host guest shift+w sprint 5','guest burst sprint-stop 4 300','heldcapture guest host shift+w g-sprint 5',
+        'heldcapture host guest w crawl 5','host hold shift+w+space 200 nowait','guest burst dive 8 120','heldcapture host host space leak-evade-host 1',
+        'host hold shift+d 600 nowait','host hold space+a 300 nowait','guest burst action-census 4 150','guest burst vault-probe 6 150')) {
+        Assert-True ($actions.Contains($label)) ('partner-native-actions covers: '+$label)
+    }
+}
 $receiptReader=@($scenarioAst.FindAll({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Read-NativeReceipt'},$true))
 Assert-True ($receiptReader.Count -eq 1) 'one actual native receipt reader boundary'
 . ([scriptblock]::Create($receiptReader[0].Extent.Text))
