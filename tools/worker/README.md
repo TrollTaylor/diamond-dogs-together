@@ -176,6 +176,18 @@ overlay is drawn without the Win32 backend, never takes mouse or keyboard input
 and draws before the capture of the same Present. No F9 key is ever sent.
 `scenarios/debug-menu.txt` exercises every category; see `docs/debug-menu.md`.
 
+Partner profiles (`-PartnerProfile`): `animated` (default; xform + dm=map), `input`
+(round-4 input drive) and `native` (the native puppet, `docs/native-puppet.md`: the
+animated profile as the automatic fallback plus `partner_drive=native`). `native`
+takes `-NativeStage census|loco|gun` (default `loco`); `gun` needs
+`-BuildProfile research` (the Research worker build with exactly the stock46
+preload and writer experiments, optionally `-AmmoExperiment`; no `upper_*`
+experiment), whose cache is the Invoke-WorkerChecks research directory for that
+experiment set. The settings of each profile and stage come from
+`Get-WorkerPartnerSettings` (WorkerSessionCommon) and the supervisor admits only
+them (`worker_game_gate.hpp`). `scenarios/partner-native.txt` is the native
+evaluation; its header lists the evidence each stage must show in captures.jsonl.
+
 ## Primary API contracts and acceptance limits
 
 - [Desktop connection precedence](https://learn.microsoft.com/en-us/windows/win32/winstation/thread-connection-to-a-desktop): inherited desktop handles take precedence over `lpDesktop`; the worker inherits none.

@@ -122,6 +122,39 @@ int main() {
     changed = animated; changed.partner_dm = mgscoop::PartnerDm::off; Check(!OfflineLab(changed, "host", save), "animated_profile_needs_dm_map");
     changed = animated; changed.partner_input = mgscoop::PartnerInput::net; Check(!OfflineLab(changed, "host", save), "animated_profile_without_input_window");
     changed = animated; changed.partner_apply = mgscoop::PartnerApply::warp; Check(!OfflineLab(changed, "host", save), "animated_profile_needs_xform");
+    // Native puppet (docs/native-puppet.md 13.2): exactly the census, loco and gun stages.
+    changed = animated; changed.partner_drive = mgscoop::PartnerDrive::native; Check(!OfflineLab(changed, "host", save), "native_drive_not_admitted_as_animated");
+    changed = lc; changed.partner_input_defer = mgscoop::PartnerDefer::on; Check(!OfflineLab(changed, "host", save), "defer_not_admitted_as_input_profile");
+    const std::string native_lab = lab + "partner_stage=3\npartner_apply=xform\npartner_input=off\npartner_dm=map\npartner_drive=native\n"
+        "partner_input_hook=1\npartner_input_hold=own\npartner_input_words=hpr\npartner_input_wrap=window\npartner_input_cam=sandbox\n"
+        "partner_input_local=main\npartner_recon=track\npartner_input_slot=body\n";
+    mgscoop::LabConfig census{}, loco{}, gun{};
+    const std::string census_text = native_lab + "partner_input_defer=census\npartner_input_mask=0x2200006\npartner_native_aim=off\n";
+    const std::string loco_text = native_lab + "partner_input_defer=on\npartner_input_mask=0x2200006\npartner_native_aim=off\n";
+    const std::string gun_text = native_lab + "partner_input_defer=on\npartner_input_mask=0x220004E\npartner_native_gun=1\npartner_native_fire=0\n"
+        "partner_native_aim=look\npartner_input_triggers=1\npartner_input_rstick=1\n";
+    Check(mgscoop::ParseLabConfig(census_text.data(), census_text.size(), census) && OfflineLab(census, "host", save) && NativeProfile(census),
+          "native_census_stage");
+    Check(mgscoop::ParseLabConfig(loco_text.data(), loco_text.size(), loco) && OfflineLab(loco, "host", save) && NativeProfile(loco),
+          "native_loco_stage");
+    Check(mgscoop::ParseLabConfig(gun_text.data(), gun_text.size(), gun) && OfflineLab(gun, "host", save) && NativeProfile(gun),
+          "native_gun_stage");
+    Check(!InputProfile(loco) && !AnimatedProfile(loco), "native is not a legacy profile");
+    changed = loco; changed.partner_input_defer = mgscoop::PartnerDefer::off; Check(!OfflineLab(changed, "host", save), "native_needs_defer");
+    changed = loco; changed.partner_input_p218_allow = true; Check(!OfflineLab(changed, "host", save), "native_refuses_p218");
+    changed = loco; changed.partner_input_mask = 0x2200007u; Check(!OfflineLab(changed, "host", save), "native_loco_exact_mask");
+    changed = gun; changed.partner_input_mask = 0x220005Eu; Check(!OfflineLab(changed, "host", save), "native_gun_mask_without_fire");
+    changed = gun; changed.partner_native_fire = true; Check(!OfflineLab(changed, "host", save), "native_fire_needs_a_gate_change");
+    changed = gun; changed.partner_native_aim = mgscoop::PartnerNativeAim::lookcam; Check(!OfflineLab(changed, "host", save), "native_lookcam_needs_a_gate_change");
+    changed = gun; changed.partner_native_aim = mgscoop::PartnerNativeAim::off; Check(!OfflineLab(changed, "host", save), "native_gun_needs_look");
+    changed = census; changed.partner_native_aim = mgscoop::PartnerNativeAim::look; Check(!OfflineLab(changed, "host", save), "native_census_without_aim");
+    changed = loco; changed.partner_native_gun = true; Check(!OfflineLab(changed, "host", save), "native_loco_without_gun");
+    changed = loco; changed.partner_input_local = mgscoop::PartnerLocal::all; Check(!OfflineLab(changed, "host", save), "native_local_all_needs_a_gate_change");
+    changed = loco; changed.partner_input_hook = false; Check(!OfflineLab(changed, "host", save), "native_needs_the_hook");
+    changed = loco; changed.partner_input_wrap = mgscoop::PartnerWrap::census; Check(!OfflineLab(changed, "host", save), "native_needs_wrap_window");
+    changed = loco; changed.partner_dm = mgscoop::PartnerDm::off; Check(!OfflineLab(changed, "host", save), "native_needs_dm_map_fallback");
+    changed = loco; changed.partner_input_send = false; Check(!OfflineLab(changed, "host", save), "native_needs_the_sender");
+    changed = loco; changed.partner_input_slot = mgscoop::PartnerSlot::remote; Check(!OfflineLab(changed, "host", save), "native_slot_body");
     std::cout << "worker_protocol_tests: " << checks << " checks passed; OS calls=0, processes=0, windows=0\n";
     return 0;
 }

@@ -62,7 +62,12 @@ param(
     [ValidatePattern('^[A-Fa-f0-9]{64}$')][string]$BaselineLoaderSha256,
     [ValidateRange(60,600)][int]$TimeoutSec=600,
     [ValidateRange(10,180)][int]$ReadyTimeoutSec=180,
-    [ValidateSet('animated','input')][string]$PartnerProfile='animated',
+    [ValidateSet('animated','input','native')][string]$PartnerProfile='animated',
+    # Native puppet (docs/native-puppet.md 13): census|loco|gun (default loco).
+    [ValidateSet('','census','loco','gun')][string]$NativeStage='',
+    # research: the stock46 Research worker build (gun stage only).
+    [ValidateSet('normal','research')][string]$BuildProfile='normal',
+    [switch]$AmmoExperiment,
     [ValidateSet('real','lab')][string]$SaveSeed='lab'
 )
 Set-StrictMode -Version Latest
@@ -70,6 +75,15 @@ $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Split-Path -Parent (Split-Path -Parent $PSScriptRoot)))
 $worker=$PSScriptRoot
 $build=Join-Path $repo 'build\worker-checks\normal-worker-on-release'
+Import-Module (Join-Path $worker 'WorkerSessionCommon.psm1') -Force -DisableNameChecking
+if($PartnerProfile -cne 'native' -and $NativeStage){throw '-NativeStage needs -PartnerProfile native.'}
+if($BuildProfile -ceq 'research' -and !($PartnerProfile -ceq 'native' -and $NativeStage -ceq 'gun')){throw '-BuildProfile research is only for -NativeStage gun.'}
+if($PartnerProfile -ceq 'native' -and $NativeStage -ceq 'gun' -and $BuildProfile -cne 'research'){throw '-NativeStage gun needs -BuildProfile research.'}
+$researchExperiments=@()
+if($BuildProfile -ceq 'research'){
+    $researchExperiments=@(Get-WorkerResearchExperiments -Ammo:$AmmoExperiment)
+    $build=Get-WorkerResearchBuildDirectory $repo $researchExperiments
+}
 
 $lines=@()
 if($ScenarioPath){$lines+=[IO.File]::ReadAllLines([IO.Path]::GetFullPath($ScenarioPath))}
@@ -118,14 +132,15 @@ if(!$BaselineLoaderSha256){
     $BaselineLoaderSha256=[string]$record.dll_sha256
 }
 if(!$CheckReceipt){
-    $out=@(& (Join-Path $worker 'Invoke-WorkerChecks.ps1') -EnableBackgroundWorker 2>&1)
+    $out=if($BuildProfile -ceq 'research'){@(& (Join-Path $worker 'Invoke-WorkerChecks.ps1') -Profile Research -EnableExperiment $researchExperiments -EnableBackgroundWorker 2>&1)}
+        else{@(& (Join-Path $worker 'Invoke-WorkerChecks.ps1') -EnableBackgroundWorker 2>&1)}
     $CheckReceipt=@($out|ForEach-Object{[string]$_}|Select-String -Pattern 'Worker check receipt: (.+receipt\.json)'|ForEach-Object{$_.Matches[0].Groups[1].Value})[-1]
     if(!$CheckReceipt){throw "Worker checks produced no receipt:`n$($out -join "`n")"}
 }
 $receipt=Get-Content -LiteralPath $CheckReceipt -Raw|ConvertFrom-Json
 if($receipt.status -cne 'passed'){throw "Worker checks did not pass: $($receipt.failure)"}
 
-$session=& (Join-Path $worker 'Start-WorkerSession.ps1') -BuildDirectory $build -CheckReceipt $CheckReceipt -BaselineLoaderSha256 $BaselineLoaderSha256 -TimeoutSec $TimeoutSec -ReadyTimeoutSec $ReadyTimeoutSec -PartnerProfile $PartnerProfile -SaveSeed $SaveSeed
+$session=& (Join-Path $worker 'Start-WorkerSession.ps1') -BuildDirectory $build -CheckReceipt $CheckReceipt -BaselineLoaderSha256 $BaselineLoaderSha256 -TimeoutSec $TimeoutSec -ReadyTimeoutSec $ReadyTimeoutSec -PartnerProfile $PartnerProfile -NativeStage $NativeStage -BuildProfile $BuildProfile -AmmoExperiment:$AmmoExperiment -SaveSeed $SaveSeed
 $session=@($session|Where-Object{$_ -isnot [string]})[-1]
 $run=[string]$session.RunDirectory
 $runId=[string]$session.RunId

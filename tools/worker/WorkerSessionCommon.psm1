@@ -243,4 +243,63 @@ function Test-WorkerPreparedConfigText([string]$Name,[string]$Text,[string]$Role
         default {return $false}
     }
 }
+# The lab.ini partner settings of each admitted worker profile (pure; the
+# native gate tools/worker/worker_game_gate.hpp admits exactly these).
+# -NativeStage only with the native profile (default loco there).
+function Get-WorkerPartnerSettings([string]$PartnerProfile,[string]$NativeStage='') {
+    $animated=@('partner=1','net=1','partner_stage=3','partner_source=net','partner_look=net','partner_apply=xform','partner_anim=off',
+        'partner_reset=n','partner_input=off','partner_dm=map','world=3')
+    if($PartnerProfile -cne 'native' -and $NativeStage){throw '-NativeStage needs -PartnerProfile native.'}
+    switch -CaseSensitive ($PartnerProfile) {
+        'animated' { return $animated }
+        'input' {
+            return @('partner=1','net=1','partner_source=net','partner_apply=input','partner_input=net','partner_input_send=1',
+                'partner_input_hold=own','partner_input_words=hpr','partner_recon=track','partner_stage=3','world=3')
+        }
+        'native' {
+            # Fallback base identical to the animated profile, plus the native drive (docs/native-puppet.md 13.1).
+            $native=$animated+@('partner_drive=native','partner_input_send=1','partner_input_hook=1','partner_input_hold=own',
+                'partner_input_words=hpr','partner_input_wrap=window','partner_input_cam=sandbox','partner_input_local=main',
+                'partner_recon=track','partner_input_slot=body')
+            $stage=if($NativeStage){$NativeStage}else{'loco'}
+            $extra=switch -CaseSensitive ($stage) {
+                'census' {@('partner_input_defer=census','partner_input_mask=0x2200006','partner_native_aim=off')}
+                'loco' {@('partner_input_defer=on','partner_input_mask=0x2200006','partner_native_aim=off')}
+                'gun' {@('partner_input_defer=on','partner_input_mask=0x220004E','partner_native_gun=1','partner_native_fire=0',
+                    'partner_native_aim=look','partner_input_triggers=1','partner_input_rstick=1')}
+                default {throw "Unknown native stage: $stage"}
+            }
+            return @($native+$extra)
+        }
+        default { throw "Unknown partner profile: $PartnerProfile" }
+    }
+}
+# The research build the native gun stage runs on: exactly the stock46
+# preload+writer experiments (optionally the ammo experiment), worker ON, no
+# upper_* probe/phase/idle experiment (they detour gun functions the native
+# drive now runs on the main thread). Returns the sorted experiment list.
+function Get-WorkerResearchExperiments([switch]$Ammo) {
+    $list=@('MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST')
+    if($Ammo){$list+='MGS_LOCAL_STOCK46_AMMO_TEST'}
+    return @($list|Sort-Object)
+}
+function Test-WorkerResearchReceipt($Receipt,[string]$BuildDirectory,[string]$RepoRoot,[string]$LoaderSha256,[string[]]$Experiments) {
+    if($Receipt.schema -ne 1 -or $Receipt.status -cne 'passed' -or $Receipt.plan.profile -cne 'Research' -or
+       $Receipt.plan.project -ine $RepoRoot -or $Receipt.plan.build_directory -ine $BuildDirectory -or
+       $Receipt.plan.flags.MGS_BACKGROUND_WORKER -cne 'ON' -or $Receipt.artifacts.loader_sha256 -ine $LoaderSha256){return $false}
+    foreach($name in @($Receipt.plan.flags.Keys)){
+        if($name -ceq 'MGS_BACKGROUND_WORKER'){continue}
+        $expected=if($Experiments -ccontains $name){'ON'}else{'OFF'}
+        if($Receipt.plan.flags[$name] -cne $expected){return $false}
+    }
+    foreach($name in $Experiments){if(!$Receipt.plan.flags.Contains($name) -or $name -clike 'MGS_LOCAL_UPPER_*'){return $false}}
+    return $true
+}
+# The Invoke-WorkerChecks cache directory of a Research worker build with
+# exactly these experiments (its Get-WorkerPlan profile key).
+function Get-WorkerResearchBuildDirectory([string]$RepoRoot,[string[]]$Experiments) {
+    $text=(@($Experiments|Sort-Object)) -join "`n"
+    $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($text))).Substring(0,12)
+    return Join-Path $RepoRoot ('build\worker-checks\research-'+$hash+'-worker-on-release')
+}
 Export-ModuleMember -Function *
