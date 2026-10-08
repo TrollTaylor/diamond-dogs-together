@@ -69,14 +69,14 @@ Assert-Throws {Get-WorkerPartnerSettings 'native' 'fire'} 'unknown native stage 
 Assert-Throws {Get-WorkerPartnerSettings 'animated' 'loco'} 'NativeStage needs the native profile'
 Assert-Throws {Get-WorkerPartnerSettings 'puppet'} 'unknown profile throws'
 $research=@(Get-WorkerResearchExperiments)
-Assert-True (($research -join ',') -ceq 'MGS_LOCAL_STOCK46_PRELOAD_TEST,MGS_LOCAL_STOCK46_WRITER_TEST') 'research experiments: stock46 preload + writer'
+Assert-True (($research -join ',') -ceq 'MGS_LOCAL_OFFLINE_EQUIPMENT_TEST,MGS_LOCAL_STOCK46_PRELOAD_TEST,MGS_LOCAL_STOCK46_WRITER_TEST') 'research experiments: offline equipment + stock46 preload + writer'
 Assert-True ((@(Get-WorkerResearchExperiments -Ammo)) -ccontains 'MGS_LOCAL_STOCK46_AMMO_TEST') 'research experiments: optional ammo'
 $researchDirectory=Get-WorkerResearchBuildDirectory 'C:\repo' $research
 $expectedHash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes(($research -join "`n")))).Substring(0,12)
 Assert-True ($researchDirectory -ceq ('C:\repo\build\worker-checks\research-'+$expectedHash+'-worker-on-release')) 'research cache directory = Invoke-WorkerChecks profile key'
 $researchFlags=[ordered]@{}
 foreach($name in @($flags.Keys)){$researchFlags[$name]='OFF'}
-$researchFlags.MGS_BACKGROUND_WORKER='ON';$researchFlags.MGS_LOCAL_STOCK46_PRELOAD_TEST='ON';$researchFlags.MGS_LOCAL_STOCK46_WRITER_TEST='ON'
+$researchFlags.MGS_BACKGROUND_WORKER='ON';$researchFlags.MGS_LOCAL_OFFLINE_EQUIPMENT_TEST='ON';$researchFlags.MGS_LOCAL_STOCK46_PRELOAD_TEST='ON';$researchFlags.MGS_LOCAL_STOCK46_WRITER_TEST='ON'
 $researchReceipt=@{schema=1;status='passed';plan=@{profile='Research';project='C:\repo';build_directory=$researchDirectory;flags=$researchFlags};artifacts=@{loader_sha256=$hash}}
 Assert-True (Test-WorkerResearchReceipt $researchReceipt $researchDirectory 'C:\repo' $hash $research) 'research receipt with exactly the stock46 experiments'
 $researchFlags.MGS_LOCAL_UPPER_PROBE='ON';Assert-True (!(Test-WorkerResearchReceipt $researchReceipt $researchDirectory 'C:\repo' $hash $research)) 'research receipt refuses an upper_* experiment';$researchFlags.MGS_LOCAL_UPPER_PROBE='OFF'

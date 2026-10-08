@@ -279,7 +279,8 @@ function Get-WorkerPartnerSettings([string]$PartnerProfile,[string]$NativeStage=
 # upper_* probe/phase/idle experiment (they detour gun functions the native
 # drive now runs on the main thread). Returns the sorted experiment list.
 function Get-WorkerResearchExperiments([switch]$Ammo) {
-    $list=@('MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST')
+    # The stock46 preload requires the offline equipment allocation (CMakeLists.txt).
+    $list=@('MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST')
     if($Ammo){$list+='MGS_LOCAL_STOCK46_AMMO_TEST'}
     return @($list|Sort-Object)
 }
