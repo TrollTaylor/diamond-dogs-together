@@ -496,6 +496,8 @@ void TestAccumulate() {
     bad.w50 = 0; bad.edge_rep = 1;
     Check(!pi::ValidPacket(bad), "edge_rep without a set refused");
     bad.edge_rep = 0; bad.version = 3;
+    Check(pi::ValidPacket(bad), "version 3 (native) with no v3 fields is valid");
+    bad.version = 4;
     Check(!pi::ValidPacket(bad), "unknown version refused");
     bad.version = 1; bad.long12 = 1;
     Check(!pi::ValidPacket(bad), "v1 with v2 fields refused");
@@ -537,6 +539,19 @@ void TestComposeSteer() {
     edge = pi::EdgeState{};
     const pi::Injection none = pi::Compose(c, stale, 0, pi::Overlay{}, edge, steer, 0.5);
     Check(none.lx == 0.0f && none.ly == 0.0f && none.mag == 0.0f, "stale input: no stick despite steering");
+    Check(!none.look_valid, "stale input: no look");
+    // v3: the live sample's look and camera fields reach the frame injection.
+    pi::Sample v3 = live;
+    pi::V3Source src{};
+    src.look_valid = true; src.look_pitch = 0.2f; src.look_yaw = -1.0f;
+    src.cam_valid = true; src.cam270 = 3.0f; src.cam274 = 4.0f; src.aiming = true;
+    pi::Fill3(v3.packet, src);
+    edge = pi::EdgeState{};
+    const pi::Injection look = pi::Compose(c, v3, 0, pi::Overlay{}, edge);
+    Check(look.look_valid && look.cam_valid && look.aiming && look.look_pitch == 0.2f && look.look_yaw == -1.0f && look.cam270 == 3.0f &&
+          look.cam274 == 4.0f, "v3 look fields copied into the injection");
+    Check(pi::LevelOnly(look, c).look_valid && !pi::Neutral(look).look_valid, "level-only keeps the look; neutral drops it");
+    Check(!base.look_valid && !base.cam_valid, "a v2 sample carries no look");
 }
 
 } // namespace

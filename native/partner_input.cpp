@@ -120,11 +120,56 @@ InputPacket Quantize(const PadSnapshot& s, std::int32_t cam_cdeg) noexcept {
     return p;
 }
 
+namespace {
+bool NoV3(const InputPacket& p) noexcept {
+    return p.look_pitch == 0.0f && p.look_yaw == 0.0f && p.cam270 == 0.0f && p.cam274 == 0.0f && p.heading_mrad == 0 &&
+           p.xflags == 0 && p.inv_slot == 0 && p.equip_rev == 0;
+}
+bool In(float v, float limit) noexcept { return std::isfinite(v) && v >= -limit && v <= limit; }
+bool ValidV3(const InputPacket& p) noexcept {
+    if ((p.xflags & ~XFlag::Known) != 0) return false;
+    if (!In(p.look_pitch, kMaxLookPitch) || !In(p.look_yaw, kMaxLookYaw) || !In(p.cam270, kMaxCamField) || !In(p.cam274, kMaxCamField))
+        return false;
+    if (p.heading_mrad < -kMaxHeadingMrad || p.heading_mrad > kMaxHeadingMrad) return false;
+    // Invalid groups are zero.
+    if (!(p.xflags & XFlag::Look) && (p.look_pitch != 0.0f || p.look_yaw != 0.0f)) return false;
+    if (!(p.xflags & XFlag::Cam) && (p.cam270 != 0.0f || p.cam274 != 0.0f)) return false;
+    if (!(p.xflags & XFlag::Heading) && p.heading_mrad != 0) return false;
+    return p.inv_slot <= kInvSlotMax || p.inv_slot == kInvSlotUnknown;
+}
+} // namespace
+
+void Fill3(InputPacket& p, const V3Source& v) noexcept {
+    p.version = 3;
+    p.xflags = 0;
+    p.look_pitch = p.look_yaw = p.cam270 = p.cam274 = 0.0f;
+    p.heading_mrad = 0;
+    if (v.look_valid && In(v.look_pitch, kMaxLookPitch) && In(v.look_yaw, kMaxLookYaw)) {
+        p.xflags |= XFlag::Look;
+        p.look_pitch = v.look_pitch;
+        p.look_yaw = v.look_yaw;
+    }
+    if (v.cam_valid && In(v.cam270, kMaxCamField) && In(v.cam274, kMaxCamField)) {
+        p.xflags |= XFlag::Cam;
+        p.cam270 = v.cam270;
+        p.cam274 = v.cam274;
+    }
+    if (v.heading_valid && std::isfinite(v.heading_rad)) {
+        const long mrad = std::lround(NormalizeRadians(v.heading_rad) * 1000.0);
+        p.xflags |= XFlag::Heading;
+        p.heading_mrad = static_cast<std::int16_t>(mrad > kMaxHeadingMrad ? kMaxHeadingMrad : mrad < -kMaxHeadingMrad ? -kMaxHeadingMrad : mrad);
+    }
+    if (v.aiming) p.xflags |= XFlag::Aiming;
+    p.inv_slot = v.inv_slot <= kInvSlotMax ? v.inv_slot : kInvSlotUnknown;
+    p.equip_rev = v.equip_rev;
+}
+
 bool ValidPacket(const InputPacket& p) noexcept {
     if ((p.flags & ~Flag::Known) != 0 || p.lx == -32768 || p.ly == -32768 || p.rx == -32768 || p.ry == -32768 ||
         p.ldir < -kMaxDir || p.ldir > kMaxDir || p.cam_cdeg < kCamMin || p.cam_cdeg > kCamMax) return false;
-    if (p.version == 1) return p.edge_seq == 0 && p.edge_rep == 0 && p.long12 == 0 && p.tap12 == 0;
-    if (p.version != 2 || p.edge_rep > kEdgeRepeats) return false;
+    if (p.version == 1) return p.edge_seq == 0 && p.edge_rep == 0 && p.long12 == 0 && p.tap12 == 0 && NoV3(p);
+    if ((p.version != 2 && p.version != 3) || p.edge_rep > kEdgeRepeats) return false;
+    if (p.version == 2 ? !NoV3(p) : !ValidV3(p)) return false;
     // No edge set: no edge words.
     if (p.edge_seq == 0) return p.edge_rep == 0 && p.w50 == 0 && p.w54 == 0 && p.tap12 == 0;
     return true;
@@ -178,6 +223,15 @@ Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_c
         if (c.triggers) {
             j.lt = static_cast<float>(p.lt / 255.0);
             j.rt = static_cast<float>(p.rt / 255.0);
+        }
+        if (p.version >= 3) {
+            j.look_valid = (p.xflags & XFlag::Look) != 0;
+            j.cam_valid = (p.xflags & XFlag::Cam) != 0;
+            j.aiming = (p.xflags & XFlag::Aiming) != 0;
+            j.look_pitch = p.look_pitch;
+            j.look_yaw = p.look_yaw;
+            j.cam270 = p.cam270;
+            j.cam274 = p.cam274;
         }
     }
     held &= c.mask;

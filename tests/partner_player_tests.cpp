@@ -906,6 +906,94 @@ int main() {
         Check(pp::ResolveCensus(pinned, s, census) == nullptr, "the pinned T vtable");
     }
 
+    // --- Native puppet reads (pure): identity, instance 1's look slot, the
+    // sender's look source and the gun node (docs/native-puppet.md).
+    {
+        w.Reset();
+        w.RealizePartner();
+        Check(Read(w, s) == pp::Refusal::none, "native state");
+        unsigned char* roots = w.region + 0x17000;
+        unsigned char* looks = w.region + 0x17100;
+        unsigned char* gor = w.region + 0x17200;   // GO primary view; P' = GO + 0x20
+        unsigned char* gun = w.region + 0x17400;   // node, iface/prim, record, bitmap
+        static std::uintptr_t go_vt[16]{}, node_vt[4]{}, prim_vt[4]{}, iface_vt[4]{};
+        Put<std::uint32_t>(roots, c::node_base, 0); Put<std::uint32_t>(roots, c::node_count, 1);
+        Put<std::uint32_t>(roots + 0x40, c::node_base, 1); Put<std::uint32_t>(roots + 0x40, c::node_count, 1);
+        for (unsigned k = 0; k < 2; ++k) {
+            Put<std::uintptr_t>(w.ps[k], c::ps_phase_comp, Addr(w.ps_vt) + c::ps_phase_comp_vt_delta);
+            Put<std::uintptr_t>(w.ps[k], c::ps_look, Addr(looks + 0x10 * k));
+            Put<std::uintptr_t>(w.blocks + k * c::block_stride, c::blk_root, Addr(roots + 0x40 * k));
+        }
+        const float look0[2] = {-0.25f, 1.75f};
+        std::memcpy(looks, look0, sizeof(look0));
+        Put<std::uintptr_t>(gor, 0, Addr(go_vt));
+        pp::Addresses a = w.addresses;
+        a.go_vtable = Addr(go_vt);
+        a.gun_node_vtable = Addr(node_vt);
+        a.gun_prim_vtable = Addr(prim_vt);
+        a.gun_iface_vtable = Addr(iface_vt);
+        pp::State s2 = s;
+        s2.P = Addr(gor) + c::go_to_p;
+        pp::InputTargets t{};
+        t.blk0 = Addr(w.blocks); t.blk1 = Addr(w.blocks + c::block_stride);
+        t.root0 = Addr(roots); t.root1 = Addr(roots + 0x40);
+        pp::NativeTargets n{};
+        Check(pp::ResolveNative(a, s2, t, n) == nullptr && !n.refusal && n.go == Addr(gor) && n.go_vt == Addr(go_vt) && n.pool0 == 0 &&
+              n.pool1 == 1 && n.ps0 == Addr(w.ps[0]) && n.ps1 == Addr(w.ps[1]) && n.ps1_look == Addr(looks + 0x10) &&
+              n.ps1_rec == Addr(w.rec280 + c::ps_rec280_stride) && n.ps1_base == 1 && n.ps1_idx == 0,
+              "native identity (GO = P - 0x20, pools) and instance 1's look slot");
+        pp::InputTargets tr = t;
+        tr.refusal = "parts";
+        Check(std::strcmp(pp::ResolveNative(a, s2, tr, n), "parts") == 0 && n.refusal && !n.go, "an input-target refusal passes through");
+        Check(std::strcmp(pp::ResolveNative(a, s, t, n), "go_vtable") == 0, "GO must carry the primary vtable");
+        Put<std::uintptr_t>(w.ps[1], c::ps_phase_comp, Addr(w.ps_vt) + 0x1D8);
+        Check(pp::ResolveNative(a, s2, t, n) == nullptr && !n.refusal && std::strcmp(n.look_refusal, "ps_comp") == 0,
+              "a wrong phase component refuses only the look slot");
+        Put<std::uintptr_t>(w.ps[1], c::ps_phase_comp, Addr(w.ps_vt) + c::ps_phase_comp_vt_delta);
+        Put<std::uint32_t>(roots + 0x40, c::node_base, 2);
+        Check(pp::ResolveNative(a, s2, t, n) == nullptr && std::strcmp(n.look_refusal, "ps_base") == 0, "PS1+8 must equal root1+0x24");
+        Put<std::uint32_t>(roots + 0x40, c::node_base, 1);
+        Put<std::uint32_t>(roots + 0x40, c::node_count, 0);
+        Check(pp::ResolveNative(a, s2, t, n) == nullptr && std::strcmp(n.look_refusal, "ps_range") == 0, "id 1 must be in root1's range");
+        Put<std::uint32_t>(roots + 0x40, c::node_count, 1);
+        Put<std::uintptr_t>(w.ps[1], c::ps_look, 0);
+        Check(pp::ResolveNative(a, s2, t, n) == nullptr && std::strcmp(n.look_refusal, "ps_arrays") == 0, "null look array refused");
+        Put<std::uintptr_t>(w.ps[1], c::ps_look, Addr(looks + 0x10));
+        Put<std::uintptr_t>(w.blocks + c::block_stride, c::blk_ps, Addr(w.ps[0]));
+        Check(pp::ResolveNative(a, s2, t, n) == nullptr && n.look_refusal, "PS1 == PS0 (or its base mismatch) refused");
+        Put<std::uintptr_t>(w.blocks + c::block_stride, c::blk_ps, Addr(w.ps[1]));
+        // Sender look source (local 0).
+        pp::LookSource src{};
+        Check(pp::ReadLookSource(a, s, src) && src.look_ok && src.pitch == -0.25f && src.yaw == 1.75f && !src.cam_ok && !src.heading_ok,
+              "sender look angles from the local PS slot");
+        // Gun node of instance 1.
+        unsigned char* node = gun;
+        unsigned char* prim = gun + 0x100;
+        unsigned char* rec = gun + 0x200;
+        unsigned char* bitmap = gun + 0x180;
+        Put<std::uintptr_t>(node, 0, Addr(node_vt));
+        Put<std::uint32_t>(node, 0x20, 1); Put<std::uint32_t>(node, c::gun_node_body, 1); Put<std::uint32_t>(node, c::gun_node_row, 0x3D);
+        Put<std::uintptr_t>(node, c::gun_node_bitmap, Addr(bitmap));
+        Put<std::uint32_t>(bitmap, 0, 1);
+        Put<std::uintptr_t>(prim, 0, Addr(prim_vt));
+        Put<std::uintptr_t>(prim, c::prim_blk, Addr(w.blocks + c::block_stride));
+        Put<std::uintptr_t>(prim, c::prim_node, Addr(node));
+        Put<std::uintptr_t>(prim, c::prim_gun_rec, Addr(rec));
+        Put<std::uintptr_t>(prim, c::gun_iface_prim, Addr(iface_vt));
+        Put<std::uint32_t>(rec, c::gun_flags, 0x40004u);
+        rec[c::gun_mode] = 2;
+        Put<std::uintptr_t>(w.blocks + c::block_stride, c::blk_gun_node, Addr(node));
+        Put<std::uintptr_t>(w.blocks + c::block_stride, c::blk_gun_iface, Addr(prim) + c::gun_iface_prim);
+        pp::Gun1 g{};
+        Check(pp::ReadGun1(a, s, g) && !g.refusal && g.node_active && g.gun3c0 == 0x40004u && g.mode == 2, "gun node, record and bitmap");
+        Put<std::uint32_t>(node, c::gun_node_row, 0x3C);
+        Check(!pp::ReadGun1(a, s, g) && std::strcmp(g.refusal, "gun_node") == 0, "wrong builder row refused");
+        Put<std::uint32_t>(node, c::gun_node_row, 0x3D);
+        Put<std::uintptr_t>(prim, c::prim_node, Addr(rec));
+        Check(!pp::ReadGun1(a, s, g) && std::strcmp(g.refusal, "gun_prim") == 0, "prim+0x38 must be the node");
+        w.Reset();
+    }
+
     // --- Native calls on the synthetic world (fake targets record the calls).
     {
         w.Reset();

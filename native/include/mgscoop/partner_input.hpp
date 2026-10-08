@@ -81,7 +81,28 @@ struct InputPacket {
     std::uint8_t edge_rep;     // 0 first send of edge_seq, 1..2 repeats (loss tolerance)
     std::uint32_t long12;      // level: bits the sender has held for >= 12 frames
     std::uint32_t tap12;       // edge set: bits released after a run of 1..11 frames
+    // v3 only (native puppet, docs/native-puppet.md 6.1; 0 otherwise). Each
+    // group is 0 unless its xflags bit is set.
+    float look_pitch, look_yaw;   // sender *(PS0+0x290)[local]: |pitch| <= 1.6, |yaw| <= pi + 1e-3
+    float cam270, cam274;         // sender CAM+0x270 / +0x274: finite, |x| <= 64
+    std::int16_t heading_mrad;    // sender PP+0x14 wrapped to (-pi, pi] x 1000, |x| <= 3142
+    std::uint8_t xflags;          // XFlag bits
+    std::uint8_t inv_slot;        // 0..15, 0xFF unknown
+    std::uint16_t equip_rev;      // 0 = no manifest
 };
+namespace XFlag {
+inline constexpr std::uint8_t Look = 1 << 0;
+inline constexpr std::uint8_t Cam = 1 << 1;
+inline constexpr std::uint8_t Heading = 1 << 2;
+inline constexpr std::uint8_t Aiming = 1 << 3;  // HOLD level
+inline constexpr std::uint8_t Known = 0x0F;
+}
+inline constexpr float kMaxLookPitch = 1.6f;
+inline constexpr float kMaxLookYaw = 3.14259265f;  // pi + 1e-3
+inline constexpr float kMaxCamField = 64.0f;
+inline constexpr std::int16_t kMaxHeadingMrad = 3142;
+inline constexpr std::uint8_t kInvSlotUnknown = 0xFF;
+inline constexpr std::uint8_t kInvSlotMax = 15;
 inline constexpr std::uint8_t kEdgeRepeats = 2;
 inline constexpr std::uint32_t kHoldFrames = 12;  // classify(btn, 12) at every stance/subject/action site
 inline constexpr std::int16_t kMaxDir = 31416;
@@ -91,7 +112,22 @@ std::int32_t NormalizeCdeg(std::int64_t cdeg) noexcept;
 // The clamps above; non-finite values become 0.
 InputPacket Quantize(const PadSnapshot& snapshot, std::int32_t cam_cdeg) noexcept;
 // Whether every value is inside the wire ranges (player_sync checks the same).
+// Versions 1..3; a v1/v2 packet carries no v3 field.
 bool ValidPacket(const InputPacket& packet) noexcept;
+// The sender's v3 fields (read on the driver tick; invalid groups have their
+// valid flag clear). Fill3 sets version 3 and the v3 fields of a v2 packet.
+struct V3Source {
+    bool look_valid;
+    float look_pitch, look_yaw;
+    bool cam_valid;
+    float cam270, cam274;
+    bool heading_valid;
+    float heading_rad;
+    bool aiming;
+    std::uint8_t inv_slot;
+    std::uint16_t equip_rev;
+};
+void Fill3(InputPacket& packet, const V3Source& source) noexcept;
 
 // Sources of the three edge words src+0x4C/+0x50/+0x54 inside the window.
 enum class Word : std::uint8_t { zero = kPartnerWordZero, press = kPartnerWordPress, release = kPartnerWordRelease,
@@ -170,6 +206,10 @@ struct Injection {
     // run does not grow) and reset (a silent release or a resync: restart).
     bool hist_freeze, hist_reset;
     bool resynced;        // this window was a resync (edges dropped)
+    // Native puppet: the live v3 sample's look (xflags Look) and camera fields
+    // (xflags Cam); absent otherwise.
+    bool look_valid, cam_valid, aiming;
+    float look_pitch, look_yaw, cam270, cam274;
 };
 // One window's injected pad (rules in partner_input.cpp). Updates `edge`.
 // Held bits: overlay | (live net held); a bit that was pressed and released

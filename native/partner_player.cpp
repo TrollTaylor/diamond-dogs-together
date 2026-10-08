@@ -184,6 +184,10 @@ Addresses AddressesFor(const void* base) noexcept {
     a.dm_prim_vtable = b + c::dm_prim_vt_rva;
     a.dm_iface_vtable = b + c::dm_iface_vt_rva;
     a.script_object = b + c::g_rva;
+    a.go_vtable = b + c::go_vtable_rva;
+    a.gun_node_vtable = b + c::gun_node_vtable_rva;
+    a.gun_prim_vtable = b + c::gun_prim_vt_rva;
+    a.gun_iface_vtable = b + c::gun_iface_vt_rva;
     return a;
 }
 
@@ -919,6 +923,111 @@ bool ReadPad(const Addresses& a, const State& s, partner_input::PadRaw& out) noe
     std::memcpy(out.kb_w, kb, sizeof(out.kb_w));
     std::memcpy(out.kb_f, kb + 0x10, sizeof(out.kb_f));
     out.kb_flags = kb[c::pp_kb_size];
+    return true;
+}
+
+namespace {
+// PS of a block validated as the look owner of `id` against the block root.
+const char* LookSlot(const Addresses& a, std::uintptr_t blk, std::uintptr_t root, std::uint32_t id, std::uintptr_t& ps,
+                     std::uintptr_t& ps_vt, std::uintptr_t& look, std::uintptr_t& rec, std::uint32_t& base) noexcept {
+    std::uintptr_t comp = 0;
+    std::uint32_t root_base = 0, root_count = 0;
+    if (!ReadValue(blk + c::blk_ps, ps) || !ps || !ReadValue(ps, ps_vt) || (ps_vt != a.ps_vtable && ps_vt != a.ps_vtable_alt))
+        return "ps_vtable";
+    if (!ReadValue(ps + c::ps_phase_comp, comp) || comp != ps_vt + c::ps_phase_comp_vt_delta) return "ps_comp";
+    if (!ReadValue(ps + c::ps_base_id, base) || !ReadValue(root + c::node_base, root_base) ||
+        !ReadValue(root + c::node_count, root_count) || base != root_base) return "ps_base";
+    if (id < root_base || id - root_base >= root_count) return "ps_range";
+    if (!ReadValue(ps + c::ps_look, look) || !look || !ReadValue(ps + c::ps_rec, rec) || !rec) return "ps_arrays";
+    return nullptr;
+}
+} // namespace
+
+const char* LookSlotOf(const Addresses& a, const State& s, const InputTargets& t, NativeTargets& out) noexcept {
+    std::uintptr_t ps0_vt = 0, l0 = 0, r0 = 0, ps1_vt = 0;
+    std::uint32_t b0 = 0;
+    if (!t.blk0 || !t.root0 || LookSlot(a, t.blk0, t.root0, s.ids[0], out.ps0, ps0_vt, l0, r0, b0)) return "ps0";
+    if (const char* why = LookSlot(a, t.blk1, t.root1, 1, out.ps1, ps1_vt, out.ps1_look, out.ps1_rec, out.ps1_base)) return why;
+    out.ps1_vt = ps1_vt;
+    if (out.ps1 == out.ps0) return "ps_shared";
+    out.ps1_idx = 1 - out.ps1_base;
+    return nullptr;
+}
+
+const char* ResolveNative(const Addresses& a, const State& s, const InputTargets& t, NativeTargets& out) noexcept {
+    const Preserve preserve;
+    out = NativeTargets{};
+    if (t.refusal) return out.refusal = out.look_refusal = t.refusal;
+    out.go = s.P - c::go_to_p;
+    if (!ReadValue(out.go, out.go_vt) || out.go_vt != a.go_vtable) return out.refusal = out.look_refusal = "go_vtable";
+    if (!Realized(s, 0)) return out.refusal = out.look_refusal = "unrealized0";
+    out.pool0 = s.pool[0];
+    out.pool1 = s.pool[1];
+    if (out.pool0 == out.pool1) return out.refusal = out.look_refusal = "pool";
+    // The identity holds from here on; the look slot has its own verdict.
+    out.refusal = nullptr;
+    out.look_refusal = LookSlotOf(a, s, t, out);
+    return nullptr;
+}
+
+bool ReadLookSource(const Addresses& a, const State& s, LookSource& out) noexcept {
+    const Preserve preserve;
+    out = LookSource{};
+    if (CheckWrite(Refusal::none, s, 1, false, WriteKind::restore)) return false;
+    const std::uint32_t local = s.local;
+    if (local >= 2 || !Realized(s, local)) return false;
+    Block b{};
+    if (!ResolveCore(a, s, local, b)) {
+        std::uintptr_t root = 0, ps = 0, ps_vt = 0, look = 0, rec = 0;
+        std::uint32_t base = 0;
+        if (ReadValue(b.blk + c::blk_root, root) && root && !LookSlot(a, b.blk, root, s.ids[local], ps, ps_vt, look, rec, base)) {
+            float pair[2]{};
+            if (ReadBlock(look + static_cast<std::uintptr_t>(s.ids[local] - base) * c::ps_look_stride, pair, sizeof(pair)) &&
+                std::isfinite(pair[0]) && std::isfinite(pair[1])) {
+                out.pitch = pair[0];
+                out.yaw = pair[1];
+                out.look_ok = true;
+            }
+        }
+    }
+    std::uintptr_t cam = 0, cam_vt = 0, pp = 0, pp_vt = 0;
+    float cams[2]{};
+    if (ReadValue(s.P + c::p_cam, cam) && cam && ReadValue(cam, cam_vt) && cam_vt == a.cam_vtable &&
+        ReadBlock(cam + c::cam270, cams, sizeof(cams)) && std::isfinite(cams[0]) && std::isfinite(cams[1])) {
+        out.cam270 = cams[0];
+        out.cam274 = cams[1];
+        out.cam_ok = true;
+    }
+    float heading = 0.0f;
+    if (ReadValue(s.P + c::p_pad, pp) && pp && ReadValue(pp, pp_vt) && pp_vt == a.pp_vtable && ReadValue(pp + 0x14, heading) &&
+        std::isfinite(heading)) {
+        out.heading = heading;
+        out.heading_ok = true;
+    }
+    return out.look_ok || out.cam_ok || out.heading_ok;
+}
+
+bool ReadGun1(const Addresses& a, const State& s, Gun1& out) noexcept {
+    const Preserve preserve;
+    out = Gun1{};
+    if (const char* why = CheckWrite(Refusal::none, s, 1, false, WriteKind::restore)) { out.refusal = why; return false; }
+    Block b{};
+    if (const char* why = ResolveCore(a, s, 1, b)) { out.refusal = why; return false; }
+    std::uintptr_t node = 0, node_vt = 0, iface = 0, iface_vt = 0, prim_vt = 0, prim_blk = 0, prim_node = 0, rec = 0, bitmap = 0;
+    std::uint32_t one = 0, id = 0, row = 0, bits = 0;
+    if (!ReadValue(b.blk + c::blk_gun_node, node) || !node || !ReadValue(node, node_vt) || node_vt != a.gun_node_vtable ||
+        !ReadValue(node + 0x20, one) || one != 1 || !ReadValue(node + c::gun_node_body, id) || id != b.id ||
+        !ReadValue(node + c::gun_node_row, row) || row != 0x3D) { out.refusal = "gun_node"; return false; }
+    if (!ReadValue(b.blk + c::blk_gun_iface, iface) || !iface || !ReadValue(iface, iface_vt) || iface_vt != a.gun_iface_vtable) {
+        out.refusal = "gun_iface";
+        return false;
+    }
+    const std::uintptr_t prim = iface - c::gun_iface_prim;
+    if (!ReadValue(prim, prim_vt) || prim_vt != a.gun_prim_vtable || !ReadValue(prim + c::prim_blk, prim_blk) || prim_blk != b.blk ||
+        !ReadValue(prim + c::prim_node, prim_node) || prim_node != node) { out.refusal = "gun_prim"; return false; }
+    if (!ReadValue(prim + c::prim_gun_rec, rec) || !rec || !ReadValue(rec + c::gun_flags, out.gun3c0) ||
+        !ReadValue(rec + c::gun_mode, out.mode)) { out.refusal = "gun_rec"; return false; }
+    if (ReadValue(node + c::gun_node_bitmap, bitmap) && bitmap && ReadValue(bitmap, bits)) out.node_active = (bits & 1u) != 0;
     return true;
 }
 
