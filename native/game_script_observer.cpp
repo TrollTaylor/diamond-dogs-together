@@ -39,6 +39,7 @@
 #include "mgscoop/partner_action_events.hpp"
 #include "mgscoop/partner_driver.hpp"
 #include "mgscoop/partner_input_hook.hpp"
+#include "mgscoop/partner_defer.hpp"
 #include "mgscoop/partner_dm_patch.hpp"
 #include "mgscoop/partner_upper_probe.hpp"
 #include "mgscoop/partner_upper_end_observer.hpp"
@@ -539,7 +540,12 @@ const char* PartnerInstallWrap(void*) noexcept { return mgscoop::partner_input_h
 const char* PartnerInstallInputHook(void*) noexcept {
     return mgscoop::partner_input_hook::Install(game_base, Log, &PartnerSampleInput);
 }
-void PartnerResetInputFault(void*) noexcept { mgscoop::partner_input_hook::ResetFault(); }
+void PartnerResetInputFault(void*) noexcept {
+    mgscoop::partner_input_hook::ResetFault();
+    // Native puppet: MissionStart disarms the deferral and clears its fault
+    // (never the pending records or the batch flags).
+    mgscoop::partner_defer::MissionStart();
+}
 void PartnerPublishArm(void*, const mgscoop::partner_input::Arm& arm) noexcept { mgscoop::partner_input_hook::PublishArm(arm); }
 void PartnerDrainInputStats(void*, pd::InputStats& out) noexcept {
     mgscoop::partner_input_hook::Stats s{};
@@ -548,8 +554,69 @@ void PartnerDrainInputStats(void*, pd::InputStats& out) noexcept {
     for (unsigned i = 0; i < 8; ++i) out.holds[i] = s.holds[i];
     out.hold_count = s.hold_count;
     out.wrap = s.wrap;
+    out.native = s.native;
 }
 bool PartnerInputHookLive(void*) noexcept { return mgscoop::partner_input_hook::PatchLive(game_base); }
+// --- Native puppet wiring (docs/native-puppet.md). Only the driver's tick
+// installs, lazily, after the once-per-process code gate passed (Cfg requires
+// it): H0 (the input hook), the wraps, then H2 and H1.
+mgscoop::partner_defer::Mode DeferMode(mgscoop::PartnerDefer mode) noexcept {
+    return mode == mgscoop::PartnerDefer::on ? mgscoop::partner_defer::Mode::on
+         : mode == mgscoop::PartnerDefer::census ? mgscoop::partner_defer::Mode::census : mgscoop::partner_defer::Mode::off;
+}
+const char* PartnerInstallDefer(void*, mgscoop::PartnerDefer mode) noexcept {
+    if (!mgscoop::GetLabConfig().partner_input_hook) return "hook_disabled";
+    if (mode == mgscoop::PartnerDefer::off) return "disabled";
+    if (mgscoop::partner_input_hook::Install(game_base, Log, &PartnerSampleInput)) return "hook";
+    if (mgscoop::partner_input_hook::InstallWrap()) return "wrap";
+    if (const char* why = mgscoop::partner_defer::Install(game_base, DeferMode(mode), Log)) return why;
+    return nullptr;
+}
+void PartnerNativeInstall(void*, pd::NativeInstall& out) noexcept {
+    out.h0 = mgscoop::partner_input_hook::Installed();
+    out.wrap = mgscoop::partner_input_hook::WrapInstalled();
+    out.h1 = mgscoop::partner_defer::H1Installed();
+    out.h2 = mgscoop::partner_defer::H2Installed();
+    out.live_h0 = out.h0 && mgscoop::partner_input_hook::PatchLive(game_base);
+    const bool live = out.h1 && out.h2 && mgscoop::partner_defer::PatchLive(game_base);
+    out.live_h1 = out.live_h2 = live;
+}
+void PartnerDrainDeferStats(void*, mgscoop::partner_defer::Stats& out) noexcept { mgscoop::partner_defer::DrainStats(out); }
+void PartnerSetDefer(void*, bool armed, mgscoop::PartnerDefer mode) noexcept {
+    // Leaving disarms first; entering sets the mode before arming.
+    if (!armed) mgscoop::partner_defer::SetArmed(false);
+    mgscoop::partner_defer::SetMode(DeferMode(mode));
+    if (armed) mgscoop::partner_defer::SetArmed(true);
+}
+void PartnerPublishIdentity(void*, const mgscoop::partner_defer::Identity& identity, bool valid) noexcept {
+    if (valid) mgscoop::partner_defer::PublishIdentity(identity);
+    else mgscoop::partner_defer::ClearIdentity();
+}
+void PartnerPublishWrapRoots(void*, std::uintptr_t root0, std::uintptr_t root1, bool census) noexcept {
+    mgscoop::partner_input_hook::PublishWrapRoots(root0, root1, census);
+}
+const char* PartnerNativeTargets(void*, const pp::State& state, const pp::InputTargets& targets, pp::NativeTargets& out) noexcept {
+    return pp::ResolveNative(partner_addresses, state, targets, out);
+}
+bool PartnerReadGun1(void*, const pp::State& state, pp::Gun1& out) noexcept { return pp::ReadGun1(partner_addresses, state, out); }
+bool PartnerReadLookSource(void*, const pp::State& state, pp::LookSource& out) noexcept {
+    return pp::ReadLookSource(partner_addresses, state, out);
+}
+std::uint32_t PartnerWindowSeq(void*) noexcept { return mgscoop::partner_input_hook::WindowSeq(); }
+bool PartnerLinkLive(void*) noexcept {
+    const auto info = mgscoop::partner_net::GetLinkInfo();
+    return info.state == mgscoop::link::LinkState::connected ||
+           (info.state == mgscoop::link::LinkState::off && mgscoop::partner_net::Running());
+}
+std::uint32_t PartnerLinkSession(void*) noexcept { return mgscoop::partner_net::GetLinkInfo().session; }
+bool PartnerDrainReliable(void*, std::uint8_t channel, std::uint8_t* out, std::size_t capacity, std::size_t& size) noexcept {
+    return mgscoop::partner_net::DrainReliable(channel, out, capacity, size);
+}
+#if defined(MGS_LOCAL_STOCK46_AMMO_TEST) && MGS_LOCAL_STOCK46_AMMO_TEST
+constexpr bool kAmmoExperiment = true;
+#else
+constexpr bool kAmmoExperiment = false;
+#endif
 // partner_interp=auto: the link's adaptive delay (the configured one otherwise).
 std::uint32_t PartnerInterpMs(void*, std::uint32_t configured) noexcept {
     return mgscoop::partner_net::EffectiveInterpMs(configured);
@@ -617,7 +684,9 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerInstallInputHook, PartnerPublishArm, PartnerDrainInputStats, PartnerInputHookLive, PartnerDmTargets, PartnerReadDm,
     PartnerFormatDmCensus, PartnerFormatDmProbe, PartnerDmPatch, PartnerDmClearPending, PartnerResetInputFault,
     PartnerApplyPosition, PartnerReadVelocity, PartnerLatestInput, PartnerInstallWrap, PartnerInterpMs, PartnerDmMotionCount,
-    PartnerSampleRemoteWithTurns, PartnerReadLocalBody};
+    PartnerSampleRemoteWithTurns, PartnerReadLocalBody, PartnerInstallDefer, PartnerNativeInstall, PartnerDrainDeferStats,
+    PartnerSetDefer, PartnerPublishIdentity, PartnerPublishWrapRoots, PartnerNativeTargets, PartnerReadGun1, PartnerReadLookSource,
+    PartnerWindowSeq, PartnerLinkLive, PartnerLinkSession, PartnerDrainReliable, kAmmoExperiment};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
@@ -1169,6 +1238,9 @@ void PublishDebugSnapshot() noexcept {
         snapshot.facing_rate_dps = mission.facing.rate * mgscoop::partner_facing::kDegPerRad;
     }
     snapshot.facing_ring = mission.facing_ring;
+    // Native puppet telemetry (docs/native-puppet.md 11.1).
+    snapshot.native = mission.tele;
+    snapshot.native.configured = settings.drive == mgscoop::PartnerDrive::native;
     // Change-only action receipts expose actual received gun intent during
     // copied-save gameplay, including when the overlay closes on focus loss.
     // The display's intent bits do not establish accepted weapon behavior.

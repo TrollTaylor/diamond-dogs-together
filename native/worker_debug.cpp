@@ -73,6 +73,60 @@ struct Json {
     void Position(const float (&v)[3]) noexcept {Add("[");for(unsigned i=0;i<3;++i){if(i)Add(",");Float(v[i]);}Add("]");}
 };
 const char* Bool(bool value) noexcept {return value?"true":"false";}
+// Native puppet object (docs/native-puppet.md 11.1): rates per second over the
+// driver's last ~1 s interval, null when unread.
+void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
+    const auto i32=[&](std::int32_t v) noexcept { if(v==partner_native::kNull) j.Add("null"); else j.Add("%d",v); };
+    j.Add(",\"native\":{\"drive\":\"%s\",\"mode\":\"%s\",\"reason\":",n.configured?"native":"legacy",partner_native::ModeName(n.mode));
+    j.String(n.reason,sizeof(n.reason));
+    j.Add(",\"since_ms\":%llu,\"fallbacks\":%u,\"latched\":%s",static_cast<unsigned long long>(n.since_ms),n.fallbacks,Bool(n.latched));
+    j.Add(",\"defer\":{\"setting\":\"%s\",\"h0\":%s,\"h1\":%s,\"h2\":%s,\"wrap\":%s,\"thread_ok\":%s,\"armed\":%s,",
+        PartnerDeferName(n.setting),Bool(n.h0),Bool(n.h1),Bool(n.h2),Bool(n.wrap),Bool(n.thread_ok),Bool(n.armed));
+    j.Add("\"batch_thread\":%u,\"hook_thread\":%u,\"lua_thread\":%u,\"batch_threads_seen\":%u,\"per_s\":",
+        n.batch_thread,n.hook_thread,n.lua_thread,n.batch_threads_seen);
+    if(!n.per_s_valid) j.Add("null");
+    else {
+        j.Add("{\"batches\":%u,\"w50_b0_s0\":%u,\"w50_b1_s0\":%u,\"w50_subs\":%u,\"w50_inline\":%u,\"ret_other\":%u,\"deferred\":%u,",
+            n.batches,n.w50_b0_s0,n.w50_b1_s0,n.w50_subs,n.w50_inline,n.ret_other,n.deferred);
+        j.Add("\"drains0\":%u,\"drains1\":%u,\"windowed\":%u,\"unwindowed\":%u,\"lost\":%u,\"gate_closed\":%u,\"torn\":%u,",
+            n.drains0,n.drains1,n.windowed,n.unwindowed,n.lost,n.gate_closed,n.torn);
+        j.Add("\"entry_changed\":%u,\"dup\":%u,\"stale_frame\":%u,\"wrap_in_batch\":%u}",n.entry_changed,n.dup,n.stale_frame,n.wrap_in_batch);
+    }
+    j.Add(",\"id1_pass\":%u,\"scope_unbalanced\":%u,\"drain_us_max\":%u,\"spin_max\":%u,\"faults\":%u,\"fault_phase\":",
+        n.id1_pass,n.scope_unbalanced,n.drain_us_max,n.spin_max,n.faults);
+    j.String(n.fault_phase,sizeof(n.fault_phase));
+    j.Add(",\"fault_code\":%u}",n.fault_code);
+    j.Add(",\"wrap\":{\"svc28_b1\":%u,\"svc28_b1_same\":%u,\"svc28_b1_nested\":%u,\"walk7_b1\":%u,\"look_writes\":%u,\"look_skipped_rec\":%u,\"look_refused\":",
+        n.svc28_b1,n.svc28_b1_same,n.svc28_b1_nested,n.walk7_b1,n.look_writes,n.look_skipped_rec);
+    j.String(n.look_refused,sizeof(n.look_refused));
+    j.Add("},\"input\":{\"live\":%s,\"age_ms\":",Bool(n.input_live));
+    if(n.input_age_ms==0xFFFFFFFFu) j.Add("null"); else j.Add("%u",n.input_age_ms);
+    j.Add(",\"version\":%u,\"held\":%u,\"mask\":%u,\"lx\":",n.input_version,n.held,n.mask);i32(n.lx);
+    j.Add(",\"ly\":");i32(n.ly);j.Add(",\"cam_cdeg_remote\":");i32(n.cam_cdeg_remote);j.Add(",\"cam_cdeg_host\":");i32(n.cam_cdeg_host);
+    j.Add(",\"heading_err_mrad\":");i32(n.heading_err_mrad);
+    j.Add(",\"steer_mdeg\":%d,\"mag_scale_pct\":%d,\"latch27c\":%u}",n.steer_mdeg,n.mag_scale_pct,n.latch27c);
+    j.Add(",\"body\":{\"valid\":%s,\"act\":%u,\"stance\":%u,\"speed\":%u,\"speed_mmps\":%u,\"remote_act\":%u,\"remote_stance\":%u,",
+        Bool(n.body_valid),n.act,n.stance,n.speed,n.speed_mmps,n.remote_act,n.remote_stance);
+    j.Add("\"remote_speed\":%u,\"remote_speed_mmps\":%u,\"stance_match_pct\":%u,\"move_match_pct\":%u}",
+        n.remote_speed,n.remote_speed_mmps,n.stance_match_pct,n.move_match_pct);
+    j.Add(",\"recon\":{\"mode\":");j.String(n.recon_mode,sizeof(n.recon_mode));
+    j.Add(",\"err_mm\":");i32(n.err_mm);j.Add(",\"along_mm\":");i32(n.along_mm);j.Add(",\"cross_mm\":");i32(n.cross_mm);
+    j.Add(",\"dy_mm\":");i32(n.dy_mm);
+    j.Add(",\"nudges\":%u,\"snaps\":%u,\"places\":%u,\"runaway\":%s}",n.nudges,n.snaps,n.places,Bool(n.runaway));
+    j.Add(",\"gun\":{\"enabled\":%s,\"read_ok\":%s,\"node_active\":%s,\"gun3c0\":%u,\"bit2\":%u,\"bit18\":%u,\"mode2c1\":%u,",
+        Bool(n.gun_enabled),Bool(n.gun_read_ok),Bool(n.node_active),n.gun3c0,(n.gun3c0>>2)&1u,(n.gun3c0>>18)&1u,n.mode2c1);
+    j.Add("\"remote_flags\":%u,\"remote_equip\":%u,\"body_equip\":",n.remote_flags,n.remote_equip);i32(n.body_equip);
+    j.Add(",\"aim_match\":%s,\"aim_err_mdeg\":",Bool(n.aim_match));i32(n.aim_err_mdeg);
+    j.Add(",\"manifest_rev\":%u,\"ammo_experiment\":%s}",n.manifest_rev,Bool(n.ammo_experiment));
+    j.Add(",\"ring_fields\":[\"ms\",\"mode\",\"remote_stance\",\"body_stance\",\"remote_mmps\",\"body_mmps\",\"err_mm\",\"steer_mdeg\",\"held\",\"gun3c0\"],\"ring\":[");
+    for(std::size_t i=0;i<n.ring.count;++i){
+        const auto& e=partner_native::At(n.ring,i);if(i)j.Add(",");
+        j.Add("[%u,\"%s\",%u,%u,%d,%d,",e.ms,partner_native::ModeName(static_cast<partner_native::Mode>(e.mode)),unsigned(e.remote_stance),
+            unsigned(e.body_stance),e.remote_mmps,e.body_mmps);
+        i32(e.err_mm);j.Add(",%d,%u,%u]",e.steer_mdeg,e.held,e.gun3c0);
+    }
+    j.Add("]}");
+}
 // Owner thread only: one static 64 KB buffer instead of a large game-thread stack frame
 char json_bytes[65536]{};
 void Publish(const worker_scenario::RunContext& c) noexcept {
@@ -103,6 +157,7 @@ void Publish(const worker_scenario::RunContext& c) noexcept {
         j.Float(f.applied_yaw);j.Add(",");j.Float(f.body_yaw);j.Add(",%u,%u,\"%s\"]",unsigned(f.clip),unsigned(f.move),partner_facing::SnapName(f.snap));
     }
     j.Add("]}");
+    NativeJson(j,s.native);
     j.Add(",\"queue_depth\":%u,\"last_id\":%u,\"completed\":%u,\"rejected\":%u,\"last_command\":",s.queue_depth,s.last_id,s.completed,s.rejected);
     j.String(s.last_command,sizeof(s.last_command));j.Add(",\"last_result\":");j.String(s.last_result,sizeof(s.last_result));j.Add(",\"refusal\":");j.String(s.refusal,sizeof(s.refusal));
     j.Add(",\"history\":[");
