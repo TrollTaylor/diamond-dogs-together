@@ -139,6 +139,18 @@ struct Fake {
     std::uint32_t link_session = 7;
     std::vector<std::vector<std::uint8_t>> channel2;
     unsigned channel2_drains = 0;
+    // Native weapons fakes (docs/native-puppet.md "Weapons").
+    const char* fire_install_result = nullptr;
+    unsigned fire_installs = 0;
+    std::uint16_t fire_owner = 0xFFFF;
+    mgscoop::partner_fire_filter::Stats fire{};
+    mgscoop::partner_fire_filter::Census fire_census{};
+    pp::Gun1 gun0{};
+    bool gun0_ok = false;
+    pp::Loadout loadout{};
+    bool loadout_ok = false;
+    std::vector<std::vector<std::uint8_t>> reliable_sent;
+    bool reliable_ok = true;
 
     Fake() {
         Ready();
@@ -478,6 +490,42 @@ bool HookDrainReliable(void* context, std::uint8_t channel, std::uint8_t* out, s
     std::memcpy(out, f.channel2.front().data(), size);
     f.channel2.erase(f.channel2.begin());
     return true;
+}
+const char* HookInstallFire(void* context, std::uint16_t owner) noexcept {
+    Fake& f = F(context);
+    ++f.fire_installs;
+    f.fire_owner = owner;
+    if (f.fire_install_result) return f.fire_install_result;
+    if (!f.fire.installed) {
+        f.fire.installed = f.fire.live = f.fire.armed = true;
+        f.fire.owner = owner;
+    }
+    return nullptr;
+}
+void HookFireStats(void* context, mgscoop::partner_fire_filter::Stats& out) noexcept { out = F(context).fire; }
+void HookFireCensus(void* context, mgscoop::partner_fire_filter::Census& out) noexcept { out = F(context).fire_census; }
+bool HookReadGun(void* context, const pp::State&, std::uint32_t k, pp::Gun1& out) noexcept {
+    Fake& f = F(context);
+    out = k ? f.gun : f.gun0;
+    return k ? f.gun_ok : f.gun0_ok;
+}
+bool HookReadLoadout(void* context, const pp::State&, pp::Loadout& out) noexcept {
+    out = F(context).loadout;
+    return F(context).loadout_ok;
+}
+bool HookSendReliable(void* context, std::uint8_t channel, const std::uint8_t* bytes, std::size_t size) noexcept {
+    Fake& f = F(context);
+    if (!f.reliable_ok || channel != 2) return false;
+    f.reliable_sent.emplace_back(bytes, bytes + size);
+    return true;
+}
+void AddWeaponHooks(pd::Hooks& h) {
+    h.install_fire = HookInstallFire;
+    h.fire_stats = HookFireStats;
+    h.fire_census = HookFireCensus;
+    h.read_gun = HookReadGun;
+    h.read_loadout = HookReadLoadout;
+    h.send_reliable = HookSendReliable;
 }
 void AddNativeHooks(pd::Hooks& h) {
     h.install_defer = HookInstallDefer;
@@ -3217,17 +3265,21 @@ void TestNativeChannel2AndSender() {
         s.fake.pad.src_w[0] = 0x8;  // HOLD held
         s.fake.inputs.clear();
         s.N();
-        // partner_native_rates=log (default): v4, no rates while the local record is unread.
+        // partner_native_rates=log (default): v4, no rates while the local record is unread; no gun hook: no magazine.
         Check(!s.fake.inputs.empty() && s.fake.inputs.back().version == 4 && (s.fake.inputs.back().xflags & 0x0F) == 0x0F &&
               !(s.fake.inputs.back().xflags & mgscoop::partner_input::XFlag::Rates) && s.fake.inputs.back().rate_dash == 0 &&
-              s.fake.inputs.back().look_pitch == 0.25f && s.fake.inputs.back().heading_mrad == 500, "native sender: v3 groups in v4");
+              !(s.fake.inputs.back().xflags & mgscoop::partner_input::XFlag::Mag) && s.fake.inputs.back().mag == 0 &&
+              s.fake.inputs.back().look_pitch == 0.25f && s.fake.inputs.back().heading_mrad == 500,
+              "native sender: v4 with every v3 group (no rates, no magazine)");
         s.fake.window_seq = 3;  // a window open: camera and heading not quiet
         s.N();
         Check(s.fake.inputs.back().version == 4 && (s.fake.inputs.back().xflags & 0x06) == 0 && (s.fake.inputs.back().xflags & 0x01),
               "odd WindowSeq: camera/heading dropped, look kept");
         s.driver.settings.nrates = mgscoop::PartnerNativeRates::off;
         s.N();
-        Check(s.fake.inputs.back().version == 3, "partner_native_rates=off: v3");
+        Check(s.fake.inputs.back().version == 4 && !(s.fake.inputs.back().xflags & mgscoop::partner_input::XFlag::Rates) &&
+                  s.fake.inputs.back().rate_dash == 0 && s.fake.inputs.back().rate_crawl == 0,
+              "partner_native_rates=off: still v4 (the magazine group), never rates");
 
         Session l(3, mgscoop::PartnerApply::xform, mgscoop::PartnerSource::net);
         l.driver.settings.isend = true;
@@ -3326,6 +3378,195 @@ void TestNativeRates() {
     pd::MissionStart(s.driver, s.hooks, 30010);
     Check(s.fake.rates_forgets == forgets + 2 && s.fake.rates_forget_epoch == epoch && s.driver.rates_epoch == epoch + 1,
           "MissionStart: forget the old epoch, then a new epoch");
+}
+
+// Native weapons (docs/native-puppet.md "Weapons"): the fire gate, the
+// mirror's Arm fields, the v4 magazine, the loadout manifest and its verdict.
+void SetVisualFire(NativeSession& s) {
+    AddWeaponHooks(s.hooks);
+    s.driver.settings.ngun = true;
+    s.driver.settings.nfire = mgscoop::PartnerNativeFire::visual;
+    s.driver.settings.input_mask = 0x224005Eu;
+    s.fake.Realize(true);
+    s.fake.gun_ok = true;
+    s.fake.gun.fields_ok = true;
+    s.fake.gun.fields.flags27c = 1u << 6;  // class 1 (a gun)
+    s.fake.gun.prim = 0x9000;
+    s.fake.gun.rec = 0x9100;
+}
+void TestNativeWeapons() {
+    namespace pn = mgscoop::partner_native;
+    namespace ew = mgscoop::partner_equip_wire;
+    {
+        NativeSession s;
+        SetVisualFire(s);
+        Check(s.Until(pn::Mode::active, 9000), "active with visual fire configured");
+        Check(s.fake.fire_installs >= 1 && s.fake.fire_owner == 1 && s.driver.settings.fire_live,
+              "the owner filter installs lazily, armed for instance 1's id");
+        Check(s.fake.Has("partner_fire=live; reason=ok; owner=1; installed=1; live=1; armed=1\r\n"), "live line");
+        Check(!s.fake.arms.empty() && (s.fake.arms.back().config.mask & 0x10u) && s.fake.arms.back().mag_mirror &&
+              s.fake.arms.back().gun_rec == 0x9100 && s.fake.arms.back().gun_prim == 0x9000,
+              "FIRE in the native Arm's mask; the magazine mirror on instance 1's gun record");
+        Check(s.driver.mission.tele.fire_effective && s.driver.mission.tele.fire_live && std::strcmp(s.driver.mission.tele.fire_mode, "visual") == 0,
+              "telemetry: visual, live, effective");
+        // A lost filter masks FIRE at once.
+        s.fake.fire.live = false;
+        s.N();
+        Check(!s.driver.settings.fire_live && !(s.fake.arms.back().config.mask & 0x10u) &&
+              s.fake.Has("partner_fire=masked; reason=hook_lost; owner=1; installed=1; live=0; armed=1\r\n"), "hook lost: FIRE masked");
+        s.fake.fire.live = true;
+        s.N();
+        Check(s.driver.settings.fire_live && (s.fake.arms.back().config.mask & 0x10u), "live again");
+        // Unreadable gun ticks keep the verdict (no mask flapping, no gen bump).
+        const std::uint32_t gen = s.fake.arms.back().gen;
+        s.fake.gun_ok = false;
+        s.N();
+        s.N();
+        Check(s.driver.settings.fire_live && s.fake.arms.back().gen == gen && s.fake.arms.back().mag_mirror,
+              "unreadable gun record: the last verdict, the Arm gen and the mirror stay");
+        // Once a gun class was seen, a later other class (holster/draw) keeps the verdict and the record.
+        s.fake.gun_ok = true;
+        s.fake.gun.fields.flags27c = 2u << 6;
+        s.N();
+        Check(s.driver.settings.fire_live && (s.fake.arms.back().config.mask & 0x10u) && s.fake.arms.back().gun_rec == 0x9100 &&
+              s.fake.Containing("partner_fire=masked; reason=weapon;") == 0, "the gun-class verdict latches for the mission");
+    }
+    {
+        // Before any gun class (no weapon drawn yet): FIRE masked, no mirror.
+        NativeSession s;
+        SetVisualFire(s);
+        s.fake.gun.fields.flags27c = 0;
+        Check(s.Until(pn::Mode::active, 9000), "active before body 1 drew a gun");
+        Check(!s.driver.settings.fire_live && !(s.fake.arms.back().config.mask & 0x10u) && !s.fake.arms.back().mag_mirror &&
+              s.fake.Containing("partner_fire=masked; reason=weapon;") == 1 && s.fake.fire_installs == 0,
+              "no gun class yet: FIRE masked, no mirror, the filter not installed");
+        s.fake.gun.fields.flags27c = 1u << 6;
+        s.N();
+        Check(s.driver.settings.fire_live && (s.fake.arms.back().config.mask & 0x10u) && s.fake.arms.back().mag_mirror &&
+              s.fake.fire_installs >= 1 && s.fake.fire_owner == 1, "the first gun class: the filter installs, FIRE live and the mirror on");
+    }
+    {
+        // An owner id equal to the local instance's id is refused: the local player's shots are never dropped.
+        NativeSession s;
+        SetVisualFire(s);
+        Check(s.Until(pn::Mode::active, 9000) && s.driver.settings.fire_live, "active with visual fire (owner check)");
+        const unsigned installs = s.fake.fire_installs;
+        s.fake.state.ids[0] = 1;
+        s.N();
+        Check(!s.driver.settings.fire_live && s.fake.fire_installs == installs &&
+              s.fake.Containing("partner_fire=masked; reason=owner; owner=1;") == 1 && std::strcmp(s.driver.mission.tele.fire_refused, "owner") == 0,
+              "owner == the local instance's id: FIRE masked, the filter never armed for it");
+    }
+    for (const bool native : {true, false}) {
+        // With the native drive configured, a legacy input lever (a trigger's input=net while the native
+        // drive is not active) never passes FIRE whatever the mask; drive=legacy keeps its research mask.
+        Session s(3, mgscoop::PartnerApply::input, mgscoop::PartnerSource::net);
+        s.driver.settings.input = mgscoop::PartnerInput::net;
+        s.driver.settings.input_mask = 0x224005Eu;
+        s.driver.settings.ngun = true;
+        s.driver.settings.nfire = mgscoop::PartnerNativeFire::visual;
+        if (native) s.driver.settings.drive = mgscoop::PartnerDrive::native;
+        PlaceAndArm(s);
+        Check(!s.driver.mission.native_out.active && s.fake.arms.back().enabled && !s.fake.arms.back().native &&
+              ((s.fake.arms.back().config.mask & 0x10u) != 0) == !native && (s.fake.arms.back().config.mask & 0x48u) == 0x48u,
+              native ? "drive=native, legacy lever armed: FIRE stripped (HOLD/RELOAD kept)" : "drive=legacy: the configured mask unchanged");
+    }
+    {
+        // An install refusal keeps FIRE masked for the mission.
+        NativeSession s;
+        SetVisualFire(s);
+        s.fake.fire_install_result = "bytes";
+        Check(s.Until(pn::Mode::active, 9000), "active (movement and aim) despite the fire refusal");
+        Check(!s.driver.settings.fire_live && !s.fake.arms.empty() && !(s.fake.arms.back().config.mask & 0x10u) &&
+              s.fake.Containing("partner_fire=masked; reason=bytes;") == 1 && std::strcmp(s.driver.mission.tele.fire_refused, "bytes") == 0,
+              "install refused: FIRE stays masked, logged once");
+    }
+    {
+        // nfire=off never installs the filter and never passes FIRE.
+        NativeSession s;
+        SetVisualFire(s);
+        s.driver.settings.nfire = mgscoop::PartnerNativeFire::off;
+        s.driver.settings.input_mask = 0x224004Eu;
+        Check(s.Until(pn::Mode::active, 9000), "active without fire");
+        Check(s.fake.fire_installs == 0 && !s.driver.settings.fire_live && s.fake.Containing("partner_fire=") == 0 &&
+              !(s.fake.arms.back().config.mask & 0x10u) && s.fake.arms.back().mag_mirror,
+              "nfire=off: no install, no FIRE, the magazine mirror still on (reload)");
+    }
+    {
+        // The v4 sender: the local gun's magazine (getter rule) and capacity.
+        NativeSession s;
+        AddWeaponHooks(s.hooks);
+        s.fake.gun0_ok = true;
+        s.fake.gun0.fields_ok = true;
+        s.fake.gun0.fields.flags27c = 1u << 6;
+        s.fake.gun0.fields.equip = 46;
+        s.fake.gun0.fields.cap = 5;
+        s.fake.gun0.fields.mag = 3;
+        s.fake.inputs.clear();
+        s.N();
+        const auto& p = s.fake.inputs.back();
+        Check(!s.fake.inputs.empty() && p.version == 4 && (p.xflags & mgscoop::partner_input::XFlag::Mag) && p.mag == 3 && p.mag_cap == 5,
+              "v4 carries the local magazine 3/5");
+        s.fake.gun0.fields.gun3c0 = 0x10000000u;
+        s.N();
+        Check(s.fake.inputs.back().mag == 5 && s.fake.inputs.back().mag_cap == 5, "rec+0x3C0 bit 28: the getter's full magazine");
+        s.fake.gun0.fields.equip = 0;
+        s.N();
+        Check(!(s.fake.inputs.back().xflags & mgscoop::partner_input::XFlag::Mag) && s.fake.inputs.back().mag == 0,
+              "no equip: no magazine sent");
+    }
+    {
+        // Loadout manifest: sent on change and per link session; the receiver's apply verdict.
+        NativeSession s;
+        AddWeaponHooks(s.hooks);
+        s.fake.loadout_ok = true;
+        s.fake.loadout.ok = s.fake.loadout.tables_ok = true;
+        s.fake.loadout.weapons[1] = 873;
+        s.fake.loadout.base[1] = 46;
+        s.fake.loadout.chimera[12] = 157;
+        s.N();
+        ew::Manifest m{};
+        Check(s.fake.reliable_sent.size() == 1 &&
+              ew::Decode(s.fake.reliable_sent[0].data(), s.fake.reliable_sent[0].size(), 7, m) == ew::Result::ok && m.revision == 1 &&
+              m.epoch == 7 && m.slots[1].base_id == 46 && m.slots[1].alias == 873 && m.slots[1].recipe[0] == 157 && m.inv_slot == 0xFF,
+              "manifest rev 1 sent on channel 2");
+        Check(s.fake.Has("partner_equip=sent; rev=1; epoch=7; base=0,46,0; alias=0,873,0; receiver=0,157,0; tables=1\r\n"), "sent line");
+        s.N(1100);
+        Check(s.fake.reliable_sent.size() == 1, "unchanged loadout: not resent");
+        s.fake.link_session = 8;
+        s.N(1100);
+        Check(s.fake.reliable_sent.size() == 2 &&
+              ew::Decode(s.fake.reliable_sent[1].data(), s.fake.reliable_sent[1].size(), 8, m) == ew::Result::ok && m.revision == 1 && m.epoch == 8,
+              "a new link session resends the same revision");
+        s.fake.loadout.weapons[1] = 875;
+        s.N(1100);
+        Check(s.fake.reliable_sent.size() == 3 &&
+              ew::Decode(s.fake.reliable_sent[2].data(), s.fake.reliable_sent[2].size(), 8, m) == ew::Result::ok && m.revision == 2 &&
+              m.slots[1].alias == 875, "a changed loadout gets revision 2");
+        Check(s.fake.inputs.back().equip_rev == 2, "the v4 frame names the manifest revision");
+        // The receiver's verdict for the back slot.
+        s.fake.gun_ok = true;
+        s.fake.gun.fields_ok = true;
+        s.fake.gun.fields.equip = 46;
+        ew::Manifest rx{};
+        rx.revision = 4; rx.epoch = 8; rx.inv_slot = 0xFF; rx.slots[1].base_id = 46; rx.slots[1].alias = 873;
+        std::uint8_t bytes[ew::kSize]{};
+        Check(ew::Encode(rx, bytes) == sizeof(bytes), "rx manifest encodes");
+        s.fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        s.N();
+        Check(s.fake.Has("partner_equip=apply; rev=4; slot=1; want=46; loaded=46; result=already; writer=stock46\r\n") &&
+              std::strcmp(s.driver.mission.tele.equip_apply, "already") == 0, "apply: already (stock46 loaded)");
+        rx.revision = 5; rx.slots[1].base_id = 40;
+        Check(ew::Encode(rx, bytes) == sizeof(bytes), "rx manifest 5 encodes");
+        s.fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        s.N();
+        Check(s.fake.Has("partner_equip=apply; rev=5; slot=1; want=40; loaded=46; result=unsupported; writer=stock46\r\n"),
+              "apply: unsupported (only stock46 is qualified)");
+        s.fake.gun.fields.equip = 0;
+        s.N();
+        Check(s.fake.Has("partner_equip=apply; rev=5; slot=1; want=40; loaded=0; result=no_weapon; writer=stock46\r\n"),
+              "apply: re-judged when the loaded equip changes");
+    }
 }
 
 // Review fixes: play mode never takes the native drive from the trigger file;
@@ -3431,6 +3672,7 @@ int main() {
     TestNativeChannel2AndSender();
     TestNativeRates();
     TestNativePlayAndWithdraw();
+    TestNativeWeapons();
     std::printf("%u partner driver checks passed: CFG/boundaries, stage-3 timeline, trigger stop/stage, STOP while terminating, "
                 "teardown keep, refusal caps, realize thrash cap, all-active re-assert, flags, mirror lifecycle, one-shots, "
                 "force_exists, policy, net source, interp hook, lost freeze/hide, cadence, Lua notes, quiet pairing, probes, anim mirror/net (q/s/r, debounce, "

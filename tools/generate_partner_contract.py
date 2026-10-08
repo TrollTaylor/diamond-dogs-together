@@ -418,6 +418,92 @@ SITES = [
      'f30f59703cf30f117044',
      'crawl factor: +0x40 = provider vt+0x28(id, 0x17), +0x44 = +0x40 * +0x3C'),
     (0x11313ED, '488b4878488b8960020000488b01ff108b483cc740400000803f894844', 'crawl reset: +0x40 = 1, +0x44 = +0x3C'),
+    # --- Native weapons (docs/native-puppet.md "Weapons"). Fire visuals: the
+    # partner's shots stay visual on the viewer's machine (RequestBullet owner
+    # filter, partner_fire_filter.cpp); reload and magazine (gun record fields,
+    # partner_input_hook.cpp MirrorMag); loadout (vars registrations).
+    # RequestBullet 0xD32C60(iface, record): only reached through the bullet
+    # system's vtable slot 0 (0x2337DE8 live, 0x2337D18 while destroying).
+    (0xD32C60, '48895c2408574883ec20488bfa488bd9e8dbc3ecff', 'RequestBullet prologue: rdi = record (rdx), rbx = iface (rcx)'),
+    (0xD32CB1, '4885c0740b488bd7488bc8e8cff9ffff488b5c24304883c4205fc3',
+     'RequestBullet: a null slot skips the copy 0xD32690 and returns 0 (the filter returns 0 the same way)'),
+    (0xD32D0A, '488d05a7506001488903488d05cd50600148894320', 'bullet system ctor: +0 = 0x2337DB8, +0x20 (iface) = 0x2337DE8'),
+    (0xD32619, '488d05f8566001488907', 'bullet system dtor: iface vtable 0x2337D18 while destroying'),
+    (0xD32639, 'e812caecff488b88980000004839b918020000750b48c7811802000000000000',
+     'bullet system dtor: gm+0x218 (= *(svc+0x98)+0x218) cleared if it is this iface'),
+    (0x1306A3A, 'e811868fff488b88a8000000488b4108488983a0000000e8fa858fff488b8898000000488b8118020000488983a8000000',
+     'model group setup: group+0xA0 = *(*(svc+0xA8)+8) (noise), group+0xA8 = *(*(svc+0x98)+0x218) (bullets)'),
+    (0x1302FA6, '498bf9', 'model group shot 0x1302F50: rdi = record (r9)'),
+    (0x1302FE9, 'b800fe0000b9000000006685472a', 'model group shot: record+0x2A is the owner GameObjectId (type bits 0xFE00 tested)'),
+    (0x13031BB, '488b8ea8000000488bd7488b01ff10', 'model group shot: RequestBullet(group+0xA8, record) (call at 0x13031C8)'),
+    (0x13031F7, '488bd7ff10', 'model group shot: second RequestBullet (call at 0x13031FA)'),
+    (0x1303432, '488b8ea8000000488b01ff10', 'model group shot: pellet-loop RequestBullet (call at 0x130343C, rdx = rdi)'),
+    (0x1303CD4, '807c244000752d807c24410474260fb7472a0f2807488b8ea000000066c745e04501660f7f45d0668945e2488b01488d55d0ff10',
+     'model group shot: unsuppressed shot noise {pos, 0x145, owner} through group+0xA0 vt+0 (not filtered; census only)'),
+    # The other shot request builders (asserted complete for the vt+0x138 queue below) stamp a typed owner,
+    # so only player instance 1 itself can carry the filter's owner id 1.
+    (0x13A18B2, 'b9ff0100000f2945c7660f7f4dd76623c133ff48c7450bffffffff48c74513ffffffffb90004000048c745e700000000660bc1',
+     'soldier shot request: owner = (id & 0x1FF) | 0x400 (type 2, never a player id)'),
+    (0x13A190E, '668945f1', 'soldier shot request: the typed owner at request+0x2A ([rbp-0x39]+0x2A)'),
+    (0x1453329, 'b9ff01000048c745fbffffffff48c74503ffffffff0f2945b7660f7f4dc70fb7c64c897dd76644897ddf6623c1b900040000c745e3ffff0000660bc1',
+     'second soldier shot request: owner = (id & 0x1FF) | 0x400'),
+    (0x1453385, '668945e1', 'second soldier shot request: the typed owner at request+0x2A ([rbp-0x49]+0x2A)'),
+    (0xEDABB9, '410fb7b068010000', 'system shot request: the owner type = word [this+0x70]+0x168'),
+    (0xEDABD2, '66c1e609', 'system shot request: type << 9'),
+    (0xEDABE6, '660bf1', 'system shot request: | (index & 0x1FF)'),
+    (0xEDAC19, '668974247a', 'system shot request: the typed owner at request+0x2A ([rsp+0x50]+0x2A)'),
+    (0x1041180, '0fb6bac0030000', 'shoot 0x1041110: edi = byte rec+0x3C0'),
+    (0x10411D8, '4080e701', 'shoot: dil = rec+0x3C0 bit 0 (the local player)'),
+    (0x10411EC, '40887c2444', 'shoot: [rsp+0x44] = local bit'),
+    (0x1041219, '410fb7c4b9ff0100006623c1668945aa', 'shoot: request+0x2A = id & 0x1FF (the owner stamp)'),
+    (0x10414F1, '498b4f604c8d4580488b01ff9038010000', 'shoot: the shot request [rbp-0x80] queued through equip vt+0x138'),
+    (0x10415AB, '807c244400895c24400f84e4070000',
+     'shoot: a non-local shooter jumps to 0x1041D9E (no ammo, camera kick, shot origin, shoot count, suppressor life)'),
+    (0x1041229, '4084ff0f842a010000', 'shoot: non-local skips the local request fields (je 0x104135C)'),
+    (0x1041E67, 'f686c003000001743b', 'shoot tail: rec+0x3C0 bit 0 clear -> 0x1041EAB'),
+    # The local-only side effects the non-local path never reaches (asserted below).
+    (0x1041650, 'e88b730100', 'shoot (local only): ammo 0x10589E0'),
+    (0x1041772, '488b01ff9010010000', 'shoot (local only): camera kick CAM vt+0x110'),
+    (0x10417D0, '488b01418bd4ff9050010000', 'shoot (local only): suppressor life equip ctl vt+0x150'),
+    (0x1041BDB, '0f298bb0000000', 'shoot (local only): CAM+0xB0'),
+    (0x1041C54, 'e8f7d3bbff488d5580488b8898000000488b8918020000488b01ff5008',
+     'shoot (local only): bullet system vt+8 (last shot origin)'),
+    (0x1041C9E, '498b87880000004401a844010000', 'shoot (local only): vars.playerShootCountInMission += pellets'),
+    # Gun record fields (R1 telemetry and the magazine mirror).
+    (0x10435D0, 'f781c0030000000000107446448b817c020000410fbae00973090fb78112020000eb070fb781100200000fb7d0',
+     'magazine getter: rec+0x3C0 bit 28 = full; capacity u16 rec+0x212 (flags rec+0x27C bit 9) or rec+0x210'),
+    (0x10435FD, '8b814c02000005d5fbffff83f8037709410fbae014730203d2410fbae0137302d1ea8bc2c3',
+     'magazine getter: capacity x2 for equip rec+0x24C in 0x42B..0x42E with flag bit 20, /2 with bit 19'),
+    (0x1043622, 'f7817c02000000020000740b0fb7815e0200000fb7c0c30fb7815c0200000fb7c0c3',
+     'magazine getter: u16 rec+0x25E (flags bit 9) or rec+0x25C'),
+    (0x1051F36, 'f7818002000000000800488bf1', 'CanReload: rec+0x280 bit 19 refuses'),
+    (0x1051F4D, 'f781c003000000000020', 'CanReload: rec+0x3C0 bit 29 selects the capacity-based stock check'),
+    (0x1051F76, 'f783cc0000000002000074090fb7bbb2000000eb070fb7bbb0000000e83916ffff0fb7cf2bc8',
+     'CanReload: stock u16 rec+0x262/+0x260 minus the magazine'),
+    (0x1051FA0, '8b8bcc0000000fbae10973060fb74362eb040fb743600fb7f88b839c00000005d5fbffff83f80377080fbae114730203ff0fbae1137302d1ef488bcee8ef15ffff3bc77315',
+     'CanReload: magazine < capacity (the getter rule)'),
+    (0x1094820, '488bcfe808d7fbff84c0', 'reload request 0x1094770: CanReload'),
+    (0x1094861, '488b06488bceff5040c1e8060fb6c8c1e114338fc003000081e100001000318fc0030000',
+     'reload request while aiming: rec+0x3C0 bit 20 = PP vt+0x40 press bit 6'),
+    (0x10948D3, '81a7c0030000ffffefff', 'reload request: CanReload false clears rec+0x3C0 bit 20'),
+    (0x103E3A4, '8b8b7c0200004c897424488bc1c1e80683e00783f8010f858400000081e10018000041be00080000413bce747383bb4c02000000746a80bbd5030000047461448bc6488bd3488bcfe87f630500',
+     'gun update reload gate: class (rec+0x27C>>6)&7 == 1, rec+0x24C != 0, rec+0x3D5 != 4 -> 0x1094770'),
+    (0x1058ABF, '8b937c020000c1ea09f6c201740a6644898b5e020000eb086644898b5c020000',
+     'ammo setter 0x10589E0: the magazine is u16 rec+0x25E (flags bit 9) or rec+0x25C'),
+    # Loadout (pure reads of vars = *(0x2C16920)).
+    (0x99B0BA, '4c8b055fb827024981c048050000', 'vars registration: weapons at vars+0x548'),
+    (0x99B0F1, 'c744c810da14dde6c744c81406000708', 'vars registration: weapons u16[6]'),
+    (0x99C2E4, '4c8b0535a627024981c0060b0000', 'vars registration: customizedWeapon at vars+0xB06'),
+    (0x99C31B, 'c744c810bccaa14fc744c81403000708', 'vars registration: customizedWeapon u16[3]'),
+    (0x99C412, '4c8b0507a527024981c0300b0000', 'vars registration: chimeraParts at vars+0xB30'),
+    (0x99C449, 'c744c8101fdde3ccc744c81424000508', 'vars registration: chimeraParts u8[36]'),
+    (0x998DE4, '4c8b0535db27024981c044010000', 'vars registration: playerShootCountInMission at vars+0x144 (leak check)'),
+    # The viewer's weapon/ammo vars block vars+0x548..+0x670 (read-only leak digest; contiguity asserted below).
+    (0x99B839, '4c8b05e0b027024981c014060000', 'vars registration: the last weapon/ammo block member at vars+0x614'),
+    (0x99B870, 'c744c810826b9ae1c744c8142e000708', 'vars registration: u16[46] at +0x614 (the block ends at +0x670)'),
+    # Service root (read-only census of the noise interface).
+    (0xBFEFAD, '488b05ecb80302', 'service root: *(0x2C3A8A0)'),
+    (0xBFF050, '4883ec28e847ffffff488b40084883c428c3', 'service locator 0xBFF050 = *(root+8)'),
 ]
 # The H1 slot itself (value checked as a slot below) and the patched sites:
 # the code gate runs once per process before any lazy install.
@@ -515,6 +601,12 @@ SLOTS = [
     (0x23AD328, 0x00, 0xFDD610, 'sp base interface vtable (destruction, refused) slot 0 = record getter'),
     (0x23AD350, 0x18, 0xFDD5E0, 'sp object primary vtable +0x18 = QI'),
     (0x23AD2B0, 0x00, 0xFDD440, 'rate record vtable slot 0'),
+    # --- Native weapons: the bullet system iface vtables (live and destroying), slot 0 = RequestBullet.
+    (0x2337DE8, 0x00, 0xD32C60, 'bullet iface vtable slot 0 = RequestBullet (fire filter slot)'),
+    (0x2337D18, 0x00, 0xD32C60, 'bullet iface destruction vtable slot 0 = RequestBullet (fire filter slot)'),
+    (0x2337DE8, 0x08, 0xD33350, 'bullet iface vtable slot 1 (shot origin; untouched)'),
+    # Loadout base ids: the equip type table object (the stock46 writer contract checks the same method).
+    (0x22AD180, 0x00, 0xA2A3E0, 'equip type table object 0x2A70920 vtable slot 0'),
 ]
 
 
@@ -643,6 +735,153 @@ def native_assertions():
     need(into == [], f'no rel32 call/jmp/jcc into the padding or the replaced span: {[hex(x) for x in into]}')
     need((0x109E182 & 63) + 4 <= 64 and (0x109E128 & 63) + 5 <= 64, 'setne dword and padding jmp each inside one cache line')
     need(-128 <= 0x109E128 - 0x109E184 <= 127, 'jmp rel8 from 0x109E182 reaches the padding jump')
+    out += weapon_assertions()
+    return out
+
+
+def rip_target(rva, length):
+    """The rip-relative target of the length-byte instruction at rva (disp32 at its end - 4)."""
+    return rva + length + struct.unpack('<i', rd(rva + length - 4, 4))[0]
+
+
+def nonlocal_shoot_reach():
+    """Instruction starts of the shoot function 0x1041110 reachable for a
+    non-local shooter (rec+0x3C0 bit 0 clear: the je at 0x104122C, 0x10415B4
+    and 0x1041E6E taken), following every other branch both ways."""
+    try:
+        import capstone
+    except ImportError as error:
+        raise SystemExit('capstone is required for the weapon reachability assertion: ' + str(error))
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
+    start, end = 0x1041110, 0x1042087
+    ins = {i.address - IB: (i.size, i.mnemonic, i.op_str) for i in md.disasm(rd(start, end - start), IB + start)}
+    forced = {0x104122C: 'taken', 0x10415B4: 'taken', 0x1041E6E: 'taken'}
+    seen, work = set(), [start]
+    while work:
+        a = work.pop()
+        while a not in seen and start <= a < end and a in ins:
+            seen.add(a)
+            size, m, o = ins[a]
+            if m in ('ret', 'int3'):
+                break
+            if m == 'jmp':
+                if o.startswith('0x'):
+                    a = int(o, 16) - IB
+                    continue
+                break
+            if m.startswith('j'):
+                t = int(o, 16) - IB
+                f = forced.get(a)
+                if f == 'taken':
+                    a = t
+                    continue
+                if f != 'fall':
+                    work.append(t)
+            a += size
+    return seen
+
+
+def shot_owner_stamps():
+    """Every word store to request+0x2A in the 0x300 bytes before a
+    `call [rax+0x138]` whose r8 is `lea r8, [reg+disp]` (the equip/weapon shot
+    queue the model group's shot handler drains): the owner stamps of every
+    shot request builder that uses this queue."""
+    import re
+    import capstone
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
+    stamps = []
+    for s in pe.sections:
+        if s.Name.rstrip(b'\0').decode() != '.xtext':
+            continue
+        data, va = s.get_data(), s.VirtualAddress
+        i = data.find(b'\xff\x90\x38\x01\x00\x00')
+        while i >= 0:
+            site = va + i
+            ins = []
+            for back in range(0x300, 0x300 - 16, -1):
+                ins = list(md.disasm(rd(site - back, back + 6), IB + site - back))
+                if any(x.address - IB == site for x in ins):
+                    break
+            k = next((n for n, x in enumerate(ins) if x.address - IB == site), None)
+            lea = None
+            if k is not None:
+                for x in reversed(ins[max(0, k - 8):k]):
+                    if x.mnemonic == 'lea' and x.op_str.startswith('r8, '):
+                        lea = re.fullmatch(r'r8, \[(\w+)(?: ([+-]) (0x[0-9a-f]+|\d+))?\]', x.op_str)
+                        break
+            if lea:
+                reg = lea.group(1)
+                disp = int(lea.group(3), 0) * (-1 if lea.group(2) == '-' else 1) if lea.group(2) else 0
+                for x in ins[:k]:
+                    m = re.fullmatch(r'word ptr \[(\w+)(?: ([+-]) (0x[0-9a-f]+|\d+))?\], \w+', x.op_str)
+                    if x.mnemonic == 'mov' and m and m.group(1) == reg:
+                        d = int(m.group(3), 0) * (-1 if m.group(2) == '-' else 1) if m.group(2) else 0
+                        if d == disp + 0x2A:
+                            stamps.append(x.address - IB)
+            i = data.find(b'\xff\x90\x38\x01\x00\x00', i + 1)
+    return sorted(stamps)
+
+
+# Native weapons (docs/native-puppet.md "Weapons").
+def weapon_assertions():
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+    need(rel_refs(0xD32C60) == [], f'no direct call/jmp to RequestBullet 0xD32C60: {[hex(x) for x in rel_refs(0xD32C60)]}')
+    need(qword_hits(0xD32C60) == [0x2337D18, 0x2337DE8],
+         f'RequestBullet occurs only in the two bullet iface vtables: {[hex(x) for x in qword_hits(0xD32C60)]}')
+    need(lea_rip_refs(0x2337DE8) == [0xD32D14] and lea_rip_refs(0x2337D18) == [0xD32619],
+         f'the live iface vtable is stored only by the ctor, the destruction one only by the dtor: '
+         f'{[hex(x) for x in lea_rip_refs(0x2337DE8)]} {[hex(x) for x in lea_rip_refs(0x2337D18)]}')
+    need(0x2337DE8 % 8 == 0 and 0x2337D18 % 8 == 0, 'both filter slots 8-aligned (one locked qword exchange)')
+    need(section_of(0x2337DE8) == '.edata' and section_of(0x2337D18) == '.edata', 'the filter slots are read-only data')
+    need(rip_target(0xD32D14, 7) == 0x2337DE8 and rip_target(0xD32619, 7) == 0x2337D18, 'ctor/dtor lea targets')
+    seen = nonlocal_shoot_reach()
+    need(0x1041219 in seen and 0x10414FC in seen, 'the non-local shooter stamps the owner and queues the shot')
+    for site in (0x1041650, 0x1041775, 0x10417D6, 0x1041946, 0x1041BDB, 0x1041BF4, 0x1041C6E, 0x1041CA5):
+        need(site not in seen, f'local-only shoot side effect {site:#x} unreachable for a non-local shooter')
+    for rva, offset in ((0x99B0BA, 0x548), (0x99C2E4, 0xB06), (0x99C412, 0xB30), (0x998DE4, 0x144)):
+        need(rip_target(rva, 7) == 0x2C16920 and struct.unpack('<I', rd(rva + 10, 4))[0] == offset,
+             f'vars registration {rva:#x}: *(0x2C16920)+{offset:#x}')
+    need(rip_target(0xBFEFAD, 7) == 0x2C3A8A0, 'service root global 0x2C3A8A0')
+    # The loadout base-id tables (runtime-filled .bss/.data): referenced by code, not in the file image.
+    need(len(lea_rip_refs(0x2A70920)) >= 2 and len(lea_rip_refs(0x2C25C50)) >= 2,
+         f'equip type table 0x2A70920 and GunBasic 0x2C25C50 are code-referenced: '
+         f'{[hex(x) for x in lea_rip_refs(0x2A70920)]} {[hex(x) for x in lea_rip_refs(0x2C25C50)]}')
+    need(section_of(0x2A70920) == '.data2' and section_of(0x2C25C50 + 0x1817) == '.data2',
+         'both tables lie in writable image data (bounded reads)')
+    need(rel_refs(0xBFEFA0, (0xE8,)).count(0xBFF054) == 1, 'the service locator calls the root getter')
+    # The weapon/ammo vars block the leak digest reads: the registrations from weapons (+0x548) to the u16[46]
+    # at +0x614 are contiguous (each offset + element size * count is the next offset) and end at +0x670.
+    import re
+    region = rd(0x99B0BA, 0x99B839 + 0x60 - 0x99B0BA)
+    chain, expect, last = [], 0x548, None
+    for m in re.finditer(rb'\x4c\x8b\x05(....)\x49\x81\xc0(....)', region, re.S):
+        rva = 0x99B0BA + m.start()
+        if rva > 0x99B839:
+            break
+        off = struct.unpack('<I', m.group(2))[0]
+        if off == last:
+            continue  # a scalar's second load of the same member (its accessor registration at 0x99B6E7)
+        last = off
+        kind_m = re.search(rb'\xc7\x44\xc8\x14(....)', region[m.end():m.end() + 0x60], re.S)
+        kind = struct.unpack('<I', kind_m.group(1))[0] if kind_m else 0
+        size = {0x0807: 2, 0x0805: 1}.get(kind >> 16)
+        chain.append(rva)
+        need(rip_target(rva, 7) == 0x2C16920 and off == expect and size is not None,
+             f'vars weapon/ammo registration {rva:#x}: offset {off:#x} (expected {expect:#x}), kind {kind:#x}')
+        if size is None:
+            break
+        expect = off + size * (kind & 0xFFFF)
+    need(len(chain) == 14 and chain[0] == 0x99B0BA and chain[-1] == 0x99B839 and expect == 0x670,
+         f'the weapon/ammo vars block is 14 contiguous registrations ending at +0x670: {[hex(x) for x in chain]}, {expect:#x}')
+    # The owner filter drops owner 1 only: the player shoot stamps id & 0x1FF (instance 1 = 1); every other
+    # builder of the shot queue stamps a typed owner (pinned sites above), so no soldier shot is ever dropped.
+    stamps = shot_owner_stamps()
+    need(stamps == [0xEDAC19, 0x1041225, 0x13A190E, 0x1453385],
+         f'the shot request owner stamps are the player shoot plus the three typed builders: {[hex(x) for x in stamps]}')
     return out
 
 failures = []
@@ -973,6 +1212,36 @@ w('inline constexpr std::uintptr_t rate_sp_vtable_rva=0x23ad380, rate_rec_vtable
 w('inline constexpr std::size_t ps_rates=0x260, sp_base_id=0x8, sp_count=0xc, sp_records=0x10, rate_rec_stride=0x88;')
 w('inline constexpr std::size_t rate_first=0x3c, rate_count=6;  // +0x3c crawl, +0x40 crawl factor, +0x44, +0x48 dash, +0x4c dash factor, +0x50')
 
+w('// --- Native weapons (docs/native-puppet.md "Weapons") ---------------------------')
+w('// Fire filter: RequestBullet 0xd32c60(iface, record) is reached only through slot 0 of the bullet iface vtables')
+w('// 0x2337de8 (live) and 0x2337d18 (destroying); record+0x2a is the shooter (GameObjectId, type bits 0xfe00).')
+w('inline constexpr std::uintptr_t fire_request_rva=0xd32c60, fire_slot_live_rva=0x2337de8, fire_slot_dying_rva=0x2337d18;')
+w('inline constexpr std::size_t shot_owner=0x2a;')
+w('inline constexpr std::uint16_t shot_owner_type_mask=0xfe00;')
+w('// Gun record (rec = *(prim+0x58) + (id - node base)*0x610) fields: magazine getter 0x10435d0, CanReload 0x1051f30,')
+w('// the reload request 0x1094770 (rec+0x3c0 bit 20) and its gate in 0x103e2d0.')
+w('inline constexpr std::size_t gun_cap=0x210, gun_cap_sub=0x212, gun_equip=0x24c, gun_mag=0x25c, gun_mag_sub=0x25e;')
+w('inline constexpr std::size_t gun_stock=0x260, gun_stock_sub=0x262, gun_flags27c=0x27c, gun_flags280=0x280, gun_b3d5=0x3d5, gun_slot=0x3da;')
+w('inline constexpr std::uint32_t gun27c_sub=0x200, gun27c_double=0x100000, gun27c_half=0x80000, gun280_noreload=0x80000;')
+w('inline constexpr std::uint32_t gun3c0_local=0x1, gun3c0_reload=0x100000, gun3c0_full_mag=0x10000000, gun3c0_cap_stock=0x20000000;')
+w('inline constexpr std::uint32_t gun_double_equip_lo=0x42b, gun_double_equip_span=4;  // equip 0x42b..0x42e')
+w('inline constexpr std::uint32_t gun_class_shift=6, gun_class_mask=7, gun_class_gun=1;')
+w('// vars = *(vars_slot_rva): loadout and the shoot-count leak check (registrations pinned below).')
+w('inline constexpr std::size_t vars_weapons=0x548, vars_customized=0xb06, vars_chimera=0xb30, vars_shoot_count=0x144;')
+w('inline constexpr std::size_t vars_weapons_count=6, vars_customized_count=3, vars_chimera_count=36;')
+w('// The viewer\'s weapon/ammo vars block (14 contiguous registrations, weapons .. u16[46] at +0x614): read-only leak digest.')
+w('inline constexpr std::size_t vars_ammo_begin=0x548, vars_ammo_end=0x670;')
+w('// Service root (read-only noise census): svc = *(*(0x2c3a8a0)+8); gm = *(svc+0x98), bullets = *(gm+0x218);')
+w('// the shot noise iface (group+0xa0) = *(*(svc+0xa8)+8).')
+w('inline constexpr std::uintptr_t service_root_rva=0x2c3a8a0;')
+w('inline constexpr std::size_t root_service=0x8, svc_gm=0x98, svc_noise_owner=0xa8, noise_owner_iface=0x8, gm_bullets=0x218;')
+w('// Loadout base ids (pure reads; the stock46 writer contract checks the same tables): the equip type table object')
+w('// (vtable 0x22ad180) holds u16 packed descriptors at +8 + id*2 (row = packed >> 6, type = packed & 0x3f; 46 -> 0x6244),')
+w('// GunBasic holds 12-byte recipes at (row - 1)*12 (byte 0 = receiver; row 393 = the stock46 recipe). Stock ids < 649.')
+w('inline constexpr std::uintptr_t equip_types_rva=0x2a70920, equip_types_vt_rva=0x22ad180, gun_basic_rva=0x2c25c50;')
+w('inline constexpr std::size_t equip_types_packed=0x8, gun_basic_row=12, gun_basic_rows=0x1818 / 12, stock_ids=649;')
+w('inline constexpr std::uint16_t stock46_packed=0x6244;')
+w('inline constexpr unsigned char stock46_recipe[12]={157,85,110,36,0,0,17,0,0,8,0,4};')
 w('struct Site { std::uintptr_t rva; std::size_t size; unsigned char bytes[80]; };')
 w('inline constexpr Site code_sites[]={')
 for rva, expected, what in SITES:

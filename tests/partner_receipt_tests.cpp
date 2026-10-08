@@ -436,14 +436,18 @@ int main() {
         Check(TriggerText("drive=native defer=on local=all naim=look ngun=1 nfire=0 steer=30", tg) && tg.has_drive &&
               tg.drive == mgscoop::PartnerDrive::native && tg.has_defer && tg.defer == mgscoop::PartnerDefer::on && tg.has_local &&
               tg.local == mgscoop::PartnerLocal::all && tg.has_naim && tg.naim == mgscoop::PartnerNativeAim::look && tg.has_ngun &&
-              tg.ngun && tg.has_nfire && !tg.nfire && tg.has_steer && tg.steer_deg == 30, "every native token");
+              tg.ngun && tg.has_nfire && tg.nfire == mgscoop::PartnerNativeFire::off && tg.has_steer && tg.steer_deg == 30,
+              "every native token");
+        Check(TriggerText("nfire=visual", tg) && tg.has_nfire && tg.nfire == mgscoop::PartnerNativeFire::visual &&
+              TriggerText("nfire=1", tg) && tg.nfire == mgscoop::PartnerNativeFire::visual &&
+              TriggerText("nfire=off", tg) && tg.nfire == mgscoop::PartnerNativeFire::off, "nfire=visual|1|off|0");
         Check(TriggerText("drive=legacy defer=census naim=lookcam steer=0", tg) && tg.drive == mgscoop::PartnerDrive::legacy &&
               tg.defer == mgscoop::PartnerDefer::census && tg.naim == mgscoop::PartnerNativeAim::lookcam && tg.steer_deg == 0 &&
               !tg.has_local && !tg.has_ngun && !tg.has_nfire, "native values; absent keys stay unset");
         Check(TriggerText("defer=off local=main naim=off", tg) && tg.defer == mgscoop::PartnerDefer::off &&
               tg.local == mgscoop::PartnerLocal::main && tg.naim == mgscoop::PartnerNativeAim::off && !tg.has_drive, "native off values");
         Check(!TriggerOk("drive=puppet") && !TriggerOk("defer=yes") && !TriggerOk("local=none") && !TriggerOk("naim=cam") &&
-              !TriggerOk("ngun=2") && !TriggerOk("nfire=yes") && !TriggerOk("steer=31") && !TriggerOk("steer=-1") &&
+              !TriggerOk("ngun=2") && !TriggerOk("nfire=yes") && !TriggerOk("nfire=raw") && !TriggerOk("steer=31") && !TriggerOk("steer=-1") &&
               !TriggerOk("drive=native drive=legacy") && !TriggerOk("steer=1 steer=2") && !TriggerOk("defer=on defer=off"),
               "bad native values and repeats");
         // A long trigger within the 255-byte limit (not every token at once).

@@ -56,20 +56,34 @@ $nativeBase=$animatedSettings+@('partner_drive=native','partner_input_send=1','p
 $stages=@{
     census=@('partner_input_defer=census','partner_input_mask=0x2240006','partner_native_aim=off')
     loco=@('partner_input_defer=on','partner_input_mask=0x2240006','partner_native_aim=off','partner_native_rates=mirror')
-    gun=@('partner_input_defer=on','partner_input_mask=0x224004E','partner_native_gun=1','partner_native_fire=0','partner_native_aim=look',
+    gun=@('partner_input_defer=on','partner_input_mask=0x224005E','partner_native_gun=1','partner_native_fire=visual','partner_native_aim=look',
         'partner_input_triggers=1','partner_input_rstick=1','partner_native_rates=mirror')
 }
-# EVADE 0x40000 (dive/evade/roll) is in every native mask; ACTION 0x20 (ride, knife kill, pickup) and FIRE 0x10 never.
+# EVADE 0x40000 (dive/evade/roll) is in every native mask; ACTION 0x20 (ride, knife kill, pickup) never; FIRE 0x10
+# only in the gun stage and only together with partner_native_fire=visual (the RequestBullet owner filter).
 foreach($stage in @('census','loco','gun')){
-    $maskSetting=@((Get-WorkerPartnerSettings 'native' $stage)|Where-Object{$_ -clike 'partner_input_mask=*'})
+    $settings=@(Get-WorkerPartnerSettings 'native' $stage)
+    $maskSetting=@($settings|Where-Object{$_ -clike 'partner_input_mask=*'})
     Assert-True ($maskSetting.Count -eq 1) ('one mask in native stage '+$stage)
     $maskValue=[Convert]::ToUInt32($maskSetting[0].Substring('partner_input_mask=0x'.Length),16)
-    Assert-True ((($maskValue -band 0x40000) -ne 0) -and (($maskValue -band 0x30) -eq 0)) ('native stage '+$stage+' passes EVADE, never ACTION/FIRE')
+    Assert-True ((($maskValue -band 0x40000) -ne 0) -and (($maskValue -band 0x20) -eq 0)) ('native stage '+$stage+' passes EVADE, never ACTION')
+    $fire=($maskValue -band 0x10) -ne 0
+    Assert-True ($fire -eq ($stage -ceq 'gun') -and $fire -eq ($settings -ccontains 'partner_native_fire=visual')) ('native stage '+$stage+': FIRE only as visual fire in the gun stage')
 }
 foreach($stage in @('census','loco','gun')){
     Assert-True (((Get-WorkerPartnerSettings 'native' $stage) -join ' ') -ceq (($nativeBase+$stages[$stage]) -join ' ')) ('native stage settings '+$stage)
 }
 Assert-True (((Get-WorkerPartnerSettings 'native') -join ' ') -ceq (($nativeBase+$stages.loco) -join ' ')) 'native default stage is loco'
+# The supervisor gate (worker_game_gate.hpp) compares exactly the masks the native stages emit (worker_protocol_tests
+# parses the stage texts through it).
+$gateText=[IO.File]::ReadAllText((Join-Path $SourceDirectory 'worker_game_gate.hpp'))
+$gateMasks=@([regex]::Matches($gateText,'partner_input_mask == (0x[0-9A-Fa-f]+)u')|ForEach-Object{$_.Groups[1].Value.ToUpperInvariant()}|Sort-Object -Unique)
+$stageMasks=@(@(foreach($stage in @('census','loco','gun')){
+    @((Get-WorkerPartnerSettings 'native' $stage)|Where-Object{$_ -clike 'partner_input_mask=*'})[0].Substring('partner_input_mask='.Length).ToUpperInvariant()
+})|Sort-Object -Unique)
+Assert-True ($gateMasks.Count -eq 2 -and ($gateMasks -join ',') -ceq ($stageMasks -join ',')) ('the gate admits exactly the native stage masks: '+($gateMasks -join ','))
+Assert-True ($gateText.Contains('lab.partner_native_fire == mgscoop::PartnerNativeFire::visual') -and
+    !$gateText.Contains('0x224004E') -and !$gateText.Contains('0x220')) 'the gate: visual fire only in the gun stage, no pre-EVADE mask'
 foreach($setting in (Get-WorkerPartnerSettings 'native' 'gun')+(Get-WorkerPartnerSettings 'native' 'loco')){$kv=$setting.Split('=',2);$null=ConvertTo-LabPartnerValue -Key $kv[0] -Value $kv[1]}
 
 Assert-True $true 'every native setting is a known LabCommon key with a valid value'

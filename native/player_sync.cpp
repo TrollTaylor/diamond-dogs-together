@@ -294,28 +294,9 @@ std::size_t encode_input_frame_any(std::uint64_t session, std::uint32_t epoch, s
         std::memcpy(out, v2, n);
         return n;
     }
-    if (packet.version == input_version_v4) {
-        if (session == 0 || epoch == 0 || sequence == 0 || !partner_input::ValidPacket(packet)) return 0;
-        // The v3 part, then the version byte, the payload length and the rates.
-        partner_input::InputPacket as3 = packet;
-        as3.version = input_version_v3;
-        as3.xflags = static_cast<std::uint8_t>(as3.xflags & ~partner_input::XFlag::Rates);
-        as3.rate_dash = as3.rate_crawl = as3.rate_crawl_factor = 0;
-        if (encode_input_frame_any(session, epoch, sequence, as3, out) != input_frame_size_v3) {
-            std::memset(out, 0, sizeof(out));
-            return 0;
-        }
-        put_header(out, wire::Kind::event, session, epoch, sequence, static_cast<std::uint32_t>(input_packet_size_v4));
-        auto* b = out + wire::header_size;
-        b[1] = input_version_v4;
-        b[66] = packet.xflags;
-        put(b + 72, packet.rate_dash, 2);
-        put(b + 74, packet.rate_crawl, 2);
-        put(b + 76, packet.rate_crawl_factor, 2);
-        b[78] = b[79] = 0;
-        return input_frame_size_v4;
-    }
-    if (packet.version != input_version_v3 || session == 0 || epoch == 0 || sequence == 0 || !partner_input::ValidPacket(packet))
+    const bool v4 = packet.version == input_version_v4;
+    if ((packet.version != input_version_v3 && !v4) || session == 0 || epoch == 0 || sequence == 0 ||
+        !partner_input::ValidPacket(packet))
         return 0;
     partner_input::InputPacket as2 = packet;
     as2.version = input_version;
@@ -323,12 +304,15 @@ std::size_t encode_input_frame_any(std::uint64_t session, std::uint32_t epoch, s
     as2.heading_mrad = 0;
     as2.xflags = as2.inv_slot = 0;
     as2.equip_rev = 0;
+    as2.rate_dash = as2.rate_crawl = as2.rate_crawl_factor = 0;
+    as2.mag = as2.mag_cap = 0;
     std::uint8_t v2[input_frame_size]{};
     if (!encode_input_frame(session, epoch, sequence, as2, v2)) return 0;
     std::memcpy(out, v2, sizeof(v2));
-    put_header(out, wire::Kind::event, session, epoch, sequence, static_cast<std::uint32_t>(input_packet_size_v3));
+    put_header(out, wire::Kind::event, session, epoch, sequence,
+               static_cast<std::uint32_t>(v4 ? input_packet_size_v4 : input_packet_size_v3));
     auto* b = out + wire::header_size;
-    b[1] = input_version_v3;
+    b[1] = v4 ? input_version_v4 : input_version_v3;
     std::uint32_t f = 0;
     std::memcpy(&f, &packet.look_pitch, 4); put(b + 48, f);
     std::memcpy(&f, &packet.look_yaw, 4); put(b + 52, f);
@@ -339,7 +323,14 @@ std::size_t encode_input_frame_any(std::uint64_t session, std::uint32_t epoch, s
     b[67] = packet.inv_slot;
     put(b + 68, packet.equip_rev, 2);
     b[70] = b[71] = 0;
-    return input_frame_size_v3;
+    if (!v4) return input_frame_size_v3;
+    put(b + 72, packet.rate_dash, 2);
+    put(b + 74, packet.rate_crawl, 2);
+    put(b + 76, packet.rate_crawl_factor, 2);
+    put(b + 78, packet.mag, 2);
+    put(b + 80, packet.mag_cap, 2);
+    b[82] = b[83] = 0;
+    return input_frame_size_v4;
 }
 
 bool decode_input_frame(const std::uint8_t* data, std::size_t size, std::uint64_t& session, std::uint32_t& epoch,
@@ -356,17 +347,19 @@ bool decode_input_frame(const std::uint8_t* data, std::size_t size, std::uint64_
     const std::uint32_t frame_sequence = get(data + 20);
     if (frame_session == 0 || frame_epoch == 0 || frame_sequence == 0) return false;
     const auto* b = data + wire::header_size;
-    if (b[0] != input_magic || b[1] != (v4 ? input_version_v4 : v3 ? input_version_v3 : v2 ? input_version : 1) || b[39] != 0) return false;
+    if (b[0] != input_magic || b[1] != (v4 ? input_version_v4 : v3 ? input_version_v3 : v2 ? input_version : 1) || b[39] != 0)
+        return false;
     if (!v2 && (b[3] != 0 || b[38] != 0)) return false;
     partner_input::InputPacket p{};
     p.version = v4 ? 4 : v3 ? 3 : v2 ? 2 : 1;
     if (v4) {
-        if (b[78] != 0 || b[79] != 0) return false;
+        if (b[82] != 0 || b[83] != 0) return false;
         p.rate_dash = static_cast<std::uint16_t>(get(b + 72, 2));
         p.rate_crawl = static_cast<std::uint16_t>(get(b + 74, 2));
         p.rate_crawl_factor = static_cast<std::uint16_t>(get(b + 76, 2));
+        p.mag = static_cast<std::uint16_t>(get(b + 78, 2));
+        p.mag_cap = static_cast<std::uint16_t>(get(b + 80, 2));
     }
-
     p.flags = b[2];
     if (v3) {
         if (b[70] != 0 || b[71] != 0) return false;

@@ -132,26 +132,36 @@ int main() {
     const std::string census_text = native_lab + "partner_input_defer=census\npartner_input_mask=0x2240006\npartner_native_aim=off\n";
     const std::string loco_text = native_lab + "partner_input_defer=on\npartner_input_mask=0x2240006\npartner_native_aim=off\n"
         "partner_native_rates=mirror\n";
-    const std::string gun_text = native_lab + "partner_input_defer=on\npartner_input_mask=0x224004E\npartner_native_gun=1\npartner_native_fire=0\n"
-        "partner_native_aim=look\npartner_input_triggers=1\npartner_input_rstick=1\npartner_native_rates=mirror\n";
+    // The stage settings of Get-WorkerPartnerSettings (WorkerSessionCommon.psm1), in its order.
+    const std::string gun_text = native_lab + "partner_input_defer=on\npartner_input_mask=0x224005E\npartner_native_gun=1\n"
+        "partner_native_fire=visual\npartner_native_aim=look\npartner_input_triggers=1\npartner_input_rstick=1\npartner_native_rates=mirror\n";
     Check(mgscoop::ParseLabConfig(census_text.data(), census_text.size(), census) && OfflineLab(census, "host", save) && NativeProfile(census),
           "native_census_stage");
     Check(mgscoop::ParseLabConfig(loco_text.data(), loco_text.size(), loco) && OfflineLab(loco, "host", save) && NativeProfile(loco),
           "native_loco_stage");
-    Check(mgscoop::ParseLabConfig(gun_text.data(), gun_text.size(), gun) && OfflineLab(gun, "host", save) && NativeProfile(gun),
-          "native_gun_stage");
+    Check(mgscoop::ParseLabConfig(gun_text.data(), gun_text.size(), gun) && OfflineLab(gun, "host", save) && NativeProfile(gun) &&
+          gun.partner_native_fire == mgscoop::PartnerNativeFire::visual && gun.partner_input_mask == 0x224005Eu,
+          "native_gun_stage (visual fire, EVADE and FIRE in the mask)");
     Check(!InputProfile(loco) && !AnimatedProfile(loco), "native is not a legacy profile");
     changed = loco; changed.partner_input_defer = mgscoop::PartnerDefer::off; Check(!OfflineLab(changed, "host", save), "native_needs_defer");
     changed = loco; changed.partner_input_p218_allow = true; Check(!OfflineLab(changed, "host", save), "native_refuses_p218");
     changed = loco; changed.partner_input_mask = 0x2240007u; Check(!OfflineLab(changed, "host", save), "native_loco_exact_mask");
     changed = loco; changed.partner_input_mask = 0x2200006u; Check(!OfflineLab(changed, "host", save), "native_loco_mask_with_evade");
-    changed = gun; changed.partner_input_mask = 0x224005Eu; Check(!OfflineLab(changed, "host", save), "native_gun_mask_without_fire");
-    changed = gun; changed.partner_input_mask = 0x220004Eu; Check(!OfflineLab(changed, "host", save), "native_gun_mask_with_evade");
+    changed = gun; changed.partner_input_mask = 0x220005Eu; Check(!OfflineLab(changed, "host", save), "native_gun_mask_with_evade");
+    // Native weapons: the gun stage is visual fire with FIRE in the mask, exactly as the profile emits it.
+    changed = gun; changed.partner_input_mask = 0x224004Eu; Check(!OfflineLab(changed, "host", save), "native_visual_fire_needs_the_fire_mask");
+    changed = gun; changed.partner_native_fire = mgscoop::PartnerNativeFire::off;
+    Check(!OfflineLab(changed, "host", save), "native_fire_mask_needs_visual_fire");
+    changed.partner_input_mask = 0x224004Eu; Check(!OfflineLab(changed, "host", save), "native_gun_without_fire_needs_a_gate_change");
+    changed = loco; changed.partner_native_fire = mgscoop::PartnerNativeFire::visual;
+    Check(!OfflineLab(changed, "host", save), "native_loco_without_fire");
+    changed = census; changed.partner_native_fire = mgscoop::PartnerNativeFire::visual;
+    Check(!OfflineLab(changed, "host", save), "native_census_without_fire");
+    // Native rates: census never mirrors, loco and gun always do.
     changed = census; changed.partner_native_rates = mgscoop::PartnerNativeRates::mirror;
     Check(!OfflineLab(changed, "host", save), "native_census_never_mirrors");
     changed = loco; changed.partner_native_rates = mgscoop::PartnerNativeRates::log; Check(!OfflineLab(changed, "host", save), "native_loco_mirrors_rates");
     changed = gun; changed.partner_native_rates = mgscoop::PartnerNativeRates::off; Check(!OfflineLab(changed, "host", save), "native_gun_mirrors_rates");
-    changed = gun; changed.partner_native_fire = true; Check(!OfflineLab(changed, "host", save), "native_fire_needs_a_gate_change");
     changed = gun; changed.partner_native_aim = mgscoop::PartnerNativeAim::lookcam; Check(!OfflineLab(changed, "host", save), "native_lookcam_needs_a_gate_change");
     changed = gun; changed.partner_native_aim = mgscoop::PartnerNativeAim::off; Check(!OfflineLab(changed, "host", save), "native_gun_needs_look");
     changed = census; changed.partner_native_aim = mgscoop::PartnerNativeAim::look; Check(!OfflineLab(changed, "host", save), "native_census_without_aim");

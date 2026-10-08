@@ -939,6 +939,7 @@ struct PadWorld {
 };
 inline constexpr std::uint32_t kHostHeld = 0x11111111u;  // the local player's held word in src+0x48
 inline constexpr std::uint32_t kRemoteHeld = 0x48u;      // HOLD + RELOAD from the remote
+constexpr std::uint32_t partner_native_fire_bit() { return mgscoop::partner_native::kPadFire; }
 
 // The job of the rates checks: the dash rate instance 1's job reads.
 std::uintptr_t g_rates_probe_rec = 0;
@@ -1338,6 +1339,149 @@ void TestJobWindow() {
         a.rates_sp = a.rates_rec = 0;
         a.rates_id = 0;
     }
+    // Native weapons (docs/native-puppet.md "Weapons"): the magazine mirror
+    // writes instance 1's live magazine before its job (on a FIRE or RELOAD
+    // press edge or a changed remote magazine), never through a changed prim
+    // chain or into a full-magazine gun; the viewer's shoot count and
+    // instance 1's reload request are watched around the job.
+    {
+        alignas(16) static unsigned char gun_prim[0x100], gun_rec[c::gun_rec_size], vars[c::vars_ammo_end + 0x10];
+        std::memset(gun_prim, 0, sizeof(gun_prim));
+        std::memset(gun_rec, 0, sizeof(gun_rec));
+        std::memset(vars, 0, sizeof(vars));
+        Put<std::uintptr_t>(Addr(gun_prim), base + c::gun_prim_vt_rva);
+        Put<std::uintptr_t>(Addr(gun_prim) + c::prim_blk, blk1);
+        Put<std::uintptr_t>(Addr(gun_prim) + c::prim_gun_rec, Addr(gun_rec));
+        Put<std::uint32_t>(Addr(gun_rec) + c::gun_flags27c, 1u << 6);  // class 1
+        Put<std::uint16_t>(Addr(gun_rec) + c::gun_cap, 5);
+        Put<std::uintptr_t>(base + c::vars_slot_rva, Addr(vars));
+        Put<std::uint32_t>(Addr(vars) + c::vars_shoot_count, 7);
+        static std::uintptr_t s_rec = 0, s_vars = 0;
+        static std::uint16_t s_seen = 0;
+        static bool s_shoot = false, s_reload = false, s_ammo = false;
+        s_rec = Addr(gun_rec);
+        s_vars = Addr(vars);
+        struct GunJob {
+            static void Job(void*, const void*) noexcept {
+                s_seen = Get<std::uint16_t>(s_rec + c::gun_mag);
+                if (s_shoot) Put<std::uint32_t>(s_vars + c::vars_shoot_count, Get<std::uint32_t>(s_vars + c::vars_shoot_count) + 1);
+                if (s_reload) Put<std::uint32_t>(s_rec + c::gun_flags, Get<std::uint32_t>(s_rec + c::gun_flags) | c::gun3c0_reload);
+                // A cross-instance inventory write (what the ammo digest must catch): the viewer's vars+0x5A4.
+                if (s_ammo) Put<std::uint16_t>(s_vars + 0x5A4, static_cast<std::uint16_t>(Get<std::uint16_t>(s_vars + 0x5A4) + 1));
+            }
+        };
+        a.naim = mgscoop::PartnerNativeAim::off;
+        a.ps1 = 0;
+        a.mag_mirror = true;
+        a.gun_prim = Addr(gun_prim);
+        a.gun_rec = Addr(gun_rec);
+        hk::PublishArm(a);
+        g_hook_sample.packet.version = 4;
+        g_hook_sample.packet.xflags = pi::XFlag::Mag;
+        g_hook_sample.packet.mag = 20;
+        g_hook_sample.packet.mag_cap = 30;
+        g_hook_sample.packet.held = kRemoteHeld;
+        pd::JobParam param{1, 0, 0, 8, g_world.bits};
+        const auto run = [&]() {
+            dispatch(w->root1, 8);  // a new frame injection from the sample
+            const bool windowed = hk::RunJobWindow(w->go, &param, 1, &GunJob::Job, pi::Consumer::drain0);
+            hk::DrainStats(hs);
+            return windowed;
+        };
+        Check(run() && s_seen == 4 && Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag) == 4 && hs.native.mag_writes == 1 &&
+              hs.native.mag_written == 4 && hs.native.mag_cap == 5 && hs.native.mag_remote == 20 && hs.native.mag_remote_cap == 30 &&
+              hs.native.mag_last == hk::MagRefusal::none, "first v4 sample: 20/30 mapped onto capacity 5 -> 4, written before the job");
+        Put<std::uint16_t>(Addr(gun_rec) + c::gun_mag, 2);  // the game changed it; the remote did not
+        Check(run() && s_seen == 2 && hs.native.mag_writes == 1, "no edge and no remote change: no write");
+        g_hook_sample.packet.held = kRemoteHeld | partner_native_fire_bit();
+        Check(run() && s_seen == 4 && hs.native.mag_writes == 2 && hs.native.mag_fire_edges == 1, "a FIRE press edge re-asserts the mirror");
+        g_hook_sample.packet.held = kRemoteHeld;
+        g_hook_sample.packet.mag = 0;
+        Check(run() && s_seen == 0 && hs.native.mag_writes == 3 && hs.native.mag_written == 0, "the remote ran dry: the partner too");
+        g_hook_sample.packet.held = kRemoteHeld | partner_native_fire_bit();
+        Check(run() && s_seen == 0 && hs.native.mag_writes == 3 && hs.native.mag_fire_edges == 1,
+              "a FIRE edge on an already empty remote is a dry fire: the partner stays empty (no visual shot)");
+        g_hook_sample.packet.held = 0x08u;  // FIRE and RELOAD released: no press edge, the remote unchanged
+        Check(run() && s_seen == 0 && hs.native.mag_writes == 3, "releases write nothing");
+        Put<std::uint16_t>(Addr(gun_rec) + c::gun_mag, 3);  // the game changed it
+        g_hook_sample.packet.held = kRemoteHeld;  // RELOAD pressed (edge) with the remote still empty
+        Check(run() && s_seen == 0 && hs.native.mag_writes == 4 && hs.native.mag_reload_edges == 1,
+              "a RELOAD press edge re-asserts the remote's magazine (empty: reloadable)");
+        g_hook_sample.packet.mag = 1;  // one round left on the remote
+        Check(run() && s_seen == 1 && hs.native.mag_writes == 5, "one remote round maps to 1");
+        Put<std::uint16_t>(Addr(gun_rec) + c::gun_mag, 0);
+        g_hook_sample.packet.held = kRemoteHeld | partner_native_fire_bit();
+        g_hook_sample.packet.mag = 0;  // the press spent the last round in the same sample
+        Check(run() && s_seen == 1 && hs.native.mag_writes == 6 && hs.native.mag_fire_edges == 2,
+              "a FIRE edge that spent the remote's last round still shows that shot");
+        g_hook_sample.packet.held = kRemoteHeld;
+        g_hook_sample.packet.mag = 30;
+        Check(run() && s_seen == 5 && Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag) == 5, "the remote reloaded: full");
+        // The sub magazine (flags bit 9) is the field written then.
+        Put<std::uint32_t>(Addr(gun_rec) + c::gun_flags27c, (1u << 6) | c::gun27c_sub);
+        Put<std::uint16_t>(Addr(gun_rec) + c::gun_cap_sub, 3);
+        g_hook_sample.packet.mag = 10;
+        Check(run() && Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag_sub) == 1 && Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag) == 5,
+              "flags bit 9: the sub magazine rec+0x25E (capacity 3) is written, rec+0x25C untouched");
+        Put<std::uint32_t>(Addr(gun_rec) + c::gun_flags27c, 1u << 6);
+        // Refusals: a changed prim chain, a full-magazine gun, a non-gun class.
+        const std::uint32_t writes = hs.native.mag_writes;
+        Put<std::uintptr_t>(Addr(gun_prim) + c::prim_gun_rec, Addr(gun_rec) + 0x10);
+        g_hook_sample.packet.mag = 11;
+        Check(run() && hs.native.mag_writes == writes && hs.native.mag_last == hk::MagRefusal::prim && s_seen == 5,
+              "prim+0x58 changed: refused, nothing written");
+        Put<std::uintptr_t>(Addr(gun_prim) + c::prim_gun_rec, Addr(gun_rec));
+        Put<std::uint32_t>(Addr(gun_rec) + c::gun_flags, c::gun3c0_full_mag);
+        g_hook_sample.packet.mag = 12;
+        Check(run() && hs.native.mag_writes == writes && hs.native.mag_last == hk::MagRefusal::full, "full-magazine gun: refused");
+        Put<std::uint32_t>(Addr(gun_rec) + c::gun_flags, 0);
+        Put<std::uint32_t>(Addr(gun_rec) + c::gun_flags27c, 2u << 6);
+        g_hook_sample.packet.mag = 13;
+        Check(run() && hs.native.mag_writes == writes && hs.native.mag_last == hk::MagRefusal::cls, "class 2: refused");
+        Put<std::uint32_t>(Addr(gun_rec) + c::gun_flags27c, 1u << 6);
+        // A v3 sample carries no magazine: nothing happens.
+        g_hook_sample.packet.version = 3;
+        g_hook_sample.packet.xflags = 0;
+        g_hook_sample.packet.mag = g_hook_sample.packet.mag_cap = 0;
+        Check(run() && hs.native.mag_writes == writes && hs.native.mag_last == hk::MagRefusal::no_v4, "v3: no_v4, no write");
+        // Leak and reload evidence around the job.
+        const std::uint32_t leaks = hs.native.shot_leaks, reloads = hs.native.reload_drains;
+        const std::uint32_t ammo_leaks = hs.native.ammo_leaks;
+        Check(run() && hs.native.shot_leaks == leaks && hs.native.shot_count == 7, "the viewer's shoot count is read, unchanged");
+        Check(hs.native.ammo_leaks == ammo_leaks && hs.native.ammo_digest != 0, "the viewer's weapon/ammo vars block is read, unchanged");
+        const std::uint32_t digest = hs.native.ammo_digest;
+        s_ammo = true;
+        Check(run() && hs.native.ammo_leaks == ammo_leaks + 1 && hs.native.ammo_digest != digest && hs.native.shot_leaks == leaks,
+              "a job that changes the viewer's weapon/ammo vars block is an ammo leak");
+        s_ammo = false;
+        s_shoot = true;
+        s_reload = true;
+        Check(run() && hs.native.shot_leaks == leaks + 1 && hs.native.shot_count == 8 && hs.native.reload_drains == reloads + 1,
+              "a job that bumps vars.playerShootCountInMission is a leak; the reload request bit is counted");
+        s_shoot = s_reload = false;
+        // The ammo leak (under a mirror Arm) turned the mirror off until MissionStart.
+        g_hook_sample.packet.version = 4;
+        g_hook_sample.packet.xflags = pi::XFlag::Mag;
+        g_hook_sample.packet.mag = 14;
+        g_hook_sample.packet.mag_cap = 30;
+        Check(run() && hs.native.mag_leak_off && hs.native.mag_writes == writes && hs.native.mag_last == hk::MagRefusal::leak &&
+                  Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag) == 5,
+              "after an ammo leak the mirror refuses (leak), nothing written");
+        hk::ResetFault();  // MissionStart
+        Check(run() && !hs.native.mag_leak_off && hs.native.mag_writes == writes + 1 && Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag) == 3,
+              "MissionStart re-enables the mirror (14/30 -> 3 of 5)");
+        const std::uint32_t writes2 = hs.native.mag_writes;
+        // The mirror is off in an Arm without it.
+        a.mag_mirror = false;
+        a.gun_prim = a.gun_rec = 0;
+        hk::PublishArm(a);
+        g_hook_sample.packet.mag = 1;
+        Check(run() && hs.native.mag_writes == writes2 && hs.native.mag_last == hk::MagRefusal::off, "mirror off: no write");
+        Put<std::uintptr_t>(base + c::vars_slot_rva, 0);
+        g_hook_sample.packet = pi::InputPacket{};
+        g_hook_sample.packet.version = 3;
+        g_hook_sample.packet.held = kRemoteHeld;
+    }
     hk::DrainStats(hs);
     Check(hs.window.faults == 0, "no window fault in the fixture");
     g_watch_src = g_watch_pp = g_watch_rec = 0;
@@ -1368,6 +1512,7 @@ int main() {
                 "real hook (instance 0 never sees the remote pad, instance 1's job windowed with isLocal and the phase-1 detour "
                 "forced, drain telemetry, block refusals, no window in a batch, replaced aim sub-controller, private masks, rates "
                 "mirror before the job, reapply, restore at the main dispatch (disarmed or legacy Arm), record-vtable latch, forget "
-                "with the forgotten epoch refused, owner refusals, instance 0's record untouched, broken restore chain)\n", checks);
+                "with the forgotten epoch refused, owner refusals, instance 0's record untouched, broken restore chain, magazine "
+                "mirror with edges/refusals/dry fire, the shoot-count and ammo-vars leak checks, mirror off after an ammo leak)\n", checks);
     return 0;
 }

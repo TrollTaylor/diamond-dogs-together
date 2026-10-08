@@ -128,10 +128,17 @@ enum class PartnerNativeAim : std::uint8_t { off, look, lookcam };
 // or mirror (also write the remote's rates into instance 1's own record inside
 // the drain window, restored on leave). Inert unless partner_drive=native.
 enum class PartnerNativeRates : std::uint8_t { off, log, mirror };
+// Native fire (docs/native-puppet.md "Weapons"): off (FIRE masked) or visual
+// (FIRE reaches instance 1 only while the RequestBullet owner filter is
+// installed, live and armed: the partner's shots are animation, sound and
+// effects on this machine, never bullets). lab.ini/trigger spellings: 0|off,
+// 1|visual. There is no mode with real partner bullets.
+enum class PartnerNativeFire : std::uint8_t { off, visual };
 // Native puppet ranges and the effective-mask base (partner_pad_bits.hpp:
 // STANCE 2, DASH 4, EVADE 0x40000, keyboard dash bit 21, keyboard walk bit
 // 25); HOLD 0x8 + RELOAD 0x40 with partner_native_gun, FIRE 0x10 with
-// partner_native_gun and _fire. ACTION 0x20 (ride, knife kill, pickup) never.
+// partner_native_gun and partner_native_fire=visual (and only while the fire
+// filter is live). ACTION 0x20 (ride, knife kill, pickup) never.
 inline constexpr std::uint32_t kPartnerNativeSteerMaxDeg = 30;
 inline constexpr std::uint32_t kPartnerNativeTrimMaxPct = 10;
 inline constexpr std::uint32_t kPartnerNativeBaseMask = partner_pad::kNativeBase;
@@ -275,7 +282,7 @@ struct LabConfig {
     PartnerLocal partner_input_local = PartnerLocal::main;
     PartnerNativeAim partner_native_aim = PartnerNativeAim::off;
     bool partner_native_gun = false;                // HOLD 0x8 + RELOAD 0x40 allowed through the mask
-    bool partner_native_fire = false;               // FIRE 0x10 (only with partner_native_gun)
+    PartnerNativeFire partner_native_fire = PartnerNativeFire::off;  // FIRE 0x10 (only with partner_native_gun, visual only)
     std::uint32_t partner_native_steer_deg = 15;    // 0..30 (0 disables steering)
     std::uint32_t partner_native_trim_pct = 0;      // 0..10
     PartnerNativeRates partner_native_rates = PartnerNativeRates::log;
@@ -329,6 +336,7 @@ const char* PartnerDeferName(PartnerDefer value) noexcept;
 const char* PartnerLocalName(PartnerLocal value) noexcept;
 const char* PartnerNativeAimName(PartnerNativeAim value) noexcept;
 const char* PartnerNativeRatesName(PartnerNativeRates value) noexcept;
+const char* PartnerNativeFireName(PartnerNativeFire value) noexcept;
 const char* LabModeName(LabMode value) noexcept;
 const char* NetLinkName(NetLink value) noexcept;
 const char* PartnerInterpName(PartnerInterp value) noexcept;
@@ -350,6 +358,7 @@ bool ParsePartnerDefer(const char* text, std::size_t size, PartnerDefer& out) no
 bool ParsePartnerLocal(const char* text, std::size_t size, PartnerLocal& out) noexcept;
 bool ParsePartnerNativeAim(const char* text, std::size_t size, PartnerNativeAim& out) noexcept;
 bool ParsePartnerNativeRates(const char* text, std::size_t size, PartnerNativeRates& out) noexcept;
+bool ParsePartnerNativeFire(const char* text, std::size_t size, PartnerNativeFire& out) noexcept;
 // partner_input_defer as it takes effect: off unless partner_drive=native.
 inline PartnerDefer EffectivePartnerDefer(PartnerDrive drive, PartnerDefer defer) noexcept {
     return drive == PartnerDrive::native ? defer : PartnerDefer::off;

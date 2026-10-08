@@ -3,7 +3,7 @@
 # Run (hidden worker, coordinator only):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-native-actions.txt -PartnerProfile native -NativeStage gun -BuildProfile research
 #   (or -NativeStage loco on the normal worker build: the same masks and rates mirror, no rifle on body 1).
-# Both stages pass EVADE 0x40000 (mask 0x2240006 / 0x224004E) and run partner_native_rates=mirror.
+# Both stages pass EVADE 0x40000 (mask 0x2240006 / 0x224005E, the gun stage with visual fire) and run partner_native_rates=mirror.
 # "Partner of role R" = body 1 on R's machine = the puppet of the other role; each capture appends the capturing
 # role's state.json ("native") to captures.jsonl.
 # Evidence per section (native.* of the capturing role):

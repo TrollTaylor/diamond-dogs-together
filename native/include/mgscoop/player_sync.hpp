@@ -170,24 +170,28 @@ bool decode_look_frame(const std::uint8_t* data, std::size_t size, std::uint64_t
 //   [0..47] as version 2 (version byte 3)  [48..51] look_pitch f32  [52..55] look_yaw f32
 //   [56..59] cam270 f32  [60..63] cam274 f32  [64..65] heading_mrad i16  [66] xflags
 //   [67] inv_slot (0..15, 0xFF)  [68..69] equip_rev u16  [70..71] 0
-// Non-finite or out-of-range floats, unknown xflags, a non-zero field whose
-// xflag is clear and non-zero reserved bytes are refused.
-// Version 4 (native rates, docs/native-puppet.md "Rates"), payload 80, frame
-// 108 (encoded only when the sender runs partner_drive=native with
-// partner_native_rates other than off):
+// Version 4 (native rates and weapons, docs/native-puppet.md "Rates" and
+// "Weapons"), payload 84, frame 112 (encoded whenever the sender runs
+// partner_drive=native):
 //   [0..71] as version 3 (version byte 4)  [72..73] rate_dash u16  [74..75] rate_crawl u16
-//   [76..77] rate_crawl_factor u16 (milli, 500..2000 each with xflags bit 4, else 0)  [78..79] 0
+//   [76..77] rate_crawl_factor u16 (milli, 500..2000 each with xflags Rates 0x10, else all 0;
+//   sent unless partner_native_rates=off)  [78..79] mag u16  [80..81] mag_cap u16 (both 0
+//   unless xflags Mag 0x20: 1 <= mag_cap <= 999, mag <= mag_cap)  [82..83] 0
+// Non-finite or out-of-range floats, unknown xflags, a non-zero field whose
+// xflag is clear and non-zero reserved bytes are refused. The earlier
+// single-feature v4 drafts (104 bytes: magazine only; 108 bytes: rates only)
+// never shipped together; their sizes are refused as malformed.
 constexpr std::size_t input_packet_size_v1 = 40;
 constexpr std::size_t input_frame_size_v1 = wire::header_size + input_packet_size_v1;  // 68
 constexpr std::size_t input_packet_size = 48;
 constexpr std::size_t input_frame_size = wire::header_size + input_packet_size;  // 76
 constexpr std::size_t input_packet_size_v3 = 72;
 constexpr std::size_t input_frame_size_v3 = wire::header_size + input_packet_size_v3;  // 100
+constexpr std::size_t input_packet_size_v4 = 84;
+constexpr std::size_t input_frame_size_v4 = wire::header_size + input_packet_size_v4;  // 112
 constexpr std::uint8_t input_magic = 0x49;
 constexpr std::uint8_t input_version = 2;
 constexpr std::uint8_t input_version_v3 = 3;
-constexpr std::size_t input_packet_size_v4 = 80;
-constexpr std::size_t input_frame_size_v4 = wire::header_size + input_packet_size_v4;  // 108
 constexpr std::uint8_t input_version_v4 = 4;
 // Returns input_frame_size (a v2 frame), or 0 (out zeroed) for a zero
 // session/epoch/sequence or a packet outside the wire ranges
@@ -195,12 +199,11 @@ constexpr std::uint8_t input_version_v4 = 4;
 std::size_t encode_input_frame(std::uint64_t session, std::uint32_t epoch, std::uint32_t sequence,
                                const partner_input::InputPacket& packet, std::uint8_t (&out)[input_frame_size]) noexcept;
 // packet.version 2 -> a 76-byte v2 frame, 3 -> a 100-byte v3 frame, 4 -> a
-// 108-byte v4 frame (returned size), 0 (out zeroed) otherwise or for anything
+// 112-byte v4 frame (returned size), 0 (out zeroed) otherwise or for anything
 // encode_input_frame refuses.
 std::size_t encode_input_frame_any(std::uint64_t session, std::uint32_t epoch, std::uint32_t sequence,
                                    const partner_input::InputPacket& packet, std::uint8_t (&out)[input_frame_size_v4]) noexcept;
-// Strict: a 68-byte v1, a 76-byte v2, a 100-byte v3 or a 108-byte v4 frame; magic/version matching the size,
-
+// Strict: a 68-byte v1, a 76-byte v2, a 100-byte v3 or a 112-byte v4 frame; magic/version matching the size,
 // kind event, the payload length, non-zero session/epoch/sequence, known flag
 // bits, reserved bytes zero, the ranges above. out.version tells which.
 bool decode_input_frame(const std::uint8_t* data, std::size_t size, std::uint64_t& session, std::uint32_t& epoch,

@@ -1040,7 +1040,7 @@ bool SubmitInput(const partner_input::InputPacket& packet) noexcept {
     const std::uint64_t now = NowMs();
     if (g_input_tx_ms && now - g_input_tx_ms < kInputMinGapMs) { SetLastError(error); return false; }
     const std::uint32_t seq = g_input_tx_seq + 1;
-    // v2, or v3/v4 when the sender runs the native drive (packet.version 3, 4 with rates).
+    // v2, or v4 when the sender runs the native drive (packet.version 4: rates and magazine).
     std::uint8_t frame[sync::input_frame_size_v4];
     bool sent = false;
     if (const std::size_t n = sync::encode_input_frame_any(kSession, static_cast<std::uint32_t>(epoch), seq, packet, frame))

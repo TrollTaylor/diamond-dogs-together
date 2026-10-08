@@ -190,9 +190,17 @@ evaluation; its header lists the evidence each stage must show in captures.jsonl
 `scenarios/partner-native-actions.txt` covers the movement actions (sprint
 parity with the rates mirror, sprint stop, crawl, dive, evade, prone rolls, an
 ACTION census and a vault probe) on the loco or gun stage. Both native loco and
-gun stages pass EVADE (masks 0x2240006 / 0x224004E) and run
+gun stages pass EVADE (masks 0x2240006 / 0x224005E) and run
 `partner_native_rates=mirror`; `worker_session_tests` checks every shipped
-scenario against the runner's own step validation.
+scenario against the runner's own step validation and that the gate compares
+exactly the stage masks.
+The gun stage runs visual fire (`partner_input_mask=0x224005E`,
+`partner_native_fire=visual`: the partner's shots are animation, sound and
+effects on the receiving machine, never bullets; FIRE stays masked whenever the
+RequestBullet owner filter is not live) and the magazine mirror;
+`scenarios/partner-native-weapons.txt` is its evaluation (fire, held fire,
+reload aiming and holstered, weapon switch, crouched fire, both directions,
+leak and noise records).
 
 ## Primary API contracts and acceptance limits
 

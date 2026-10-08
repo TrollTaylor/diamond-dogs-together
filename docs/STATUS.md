@@ -1,11 +1,26 @@
 # Development status
 
+## October 8, 2026: native actions and weapons integrated (fixture-tested, never run together)
+
+`integ/finish` carries both native work packages below. One input frame v4
+(112 bytes, payload 84) carries both new groups: the sender's movement rates
+(xflags Rates 0x10, bytes 72..77) and its magazine (xflags Mag 0x20, bytes
+78..81); every native sender sends v4 (rates only unless
+`partner_native_rates=off`, the magazine only with a readable gun). v1..v3
+frames still decode; the unreleased single-feature v4 drafts (104 and 108
+bytes) are refused. Masks are the union: loco/census 0x2240006 (EVADE), gun
+stage 0x224005E (EVADE, HOLD, RELOAD and FIRE with `partner_native_fire=visual`);
+the worker gate admits exactly the three stages Get-WorkerPartnerSettings
+emits (a gun stage without fire needs a gate change). Contract checker: 365
+code sites, 91 vtable slots (both packages' sites, slots and assertions).
+
 ## October 8, 2026: native movement actions (fixture-tested, hidden runs pending)
 
 The dive was missing on the other player's screen because EVADE (0x40000,
 Space) was outside every native mask. The native masks are now 0x2240006
-(loco) and 0x224004E (gun), in lab_config, the worker gate and stages and
-Play-OfflineCoop; ACTION (ride, knife kill, pickup) stays masked. The
+(loco) and 0x224005E (gun, with visual fire since the weapons merge), in
+lab_config, the worker gate and stages and Play-OfflineCoop; ACTION (ride,
+knife kill, pickup) stays masked. The
 contract pins the PlayerPad enum pairs, the three EVADE press consumers (act
 27) and their network-remote gates. Sprint and crawl ran at 0.835 of the
 remote's speed because the per-id movement rate record of instance 1 kept the
@@ -22,6 +37,28 @@ outside the drain re-checks its chain, a legacy Arm restores like a disarm,
 the forgotten mission's Arm never re-applies after MissionEnd, `lag` lines
 have their own log cap, and the contract census pins all nine EVADE pad
 readers (six state-specific ones beyond act 27 are an open item).
+
+## October 8, 2026: native partner weapons (fixture-tested, never run)
+
+The partner body's shots are now visible on the other screen without real
+bullets ([design](native-puppet.md#weapons)). The RequestBullet owner filter
+swaps slot 0 of the bullet iface vtables (`0x2337DE8`, `0x2337D18`) and drops
+only requests stamped with instance 1's id; muzzle flash, recoil, sound and
+casings stay. The gun stage of Play-OfflineCoop and the worker now runs
+`partner_native_fire=visual` (mask `0x224005E` with EVADE since the actions
+merge); FIRE stays masked whenever
+the filter is not installed, live and armed. Reload: instance 1's non-local
+shots never spend its magazine, so input frame v4 carries the sender's
+magazine and the drain window mirrors it into instance 1's gun record before
+its update (FIRE/RELOAD edges and remote changes), which lets CanReload pass
+exactly when the remote can reload. Loadout: each copy sends its equipment
+manifest (weapons, customized aliases, receivers mapped to stock ids) on
+channel 2 and logs the apply verdict; only stock46 can be loaded on body 1.
+Contract checker (weapons package alone): 325 sites, 87 slots, a reachability proof that the
+non-local shoot path skips every local side effect, and an owner-stamp
+assertion (every other shot request builder stamps a typed owner). Open: the shot noise of
+visual shots (census pins its interface), projectile weapons, a generalized
+writer. Hidden scenario: `tools/worker/scenarios/partner-native-weapons.txt`.
 
 ## October 8, 2026: native puppet (fixture-tested, default off, never run)
 

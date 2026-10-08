@@ -465,7 +465,8 @@ int main() {
         Check(refused([](pi::InputPacket& b) { b.cam270 = 65.0f; }), "|cam270| > 64 refused");
         Check(refused([](pi::InputPacket& b) { b.cam274 = std::numeric_limits<float>::infinity(); }), "infinite cam274 refused");
         Check(refused([](pi::InputPacket& b) { b.heading_mrad = 3143; }), "heading > 3142 refused");
-        Check(refused([](pi::InputPacket& b) { b.xflags = 0x10; }), "unknown xflags refused");
+        Check(refused([](pi::InputPacket& b) { b.xflags = 0x20; }), "unknown xflags refused");
+        Check(refused([](pi::InputPacket& b) { b.xflags |= pi::XFlag::Mag; b.mag = 1; b.mag_cap = 5; }), "the v4 magazine in a v3 packet refused");
         Check(refused([](pi::InputPacket& b) { b.xflags &= static_cast<std::uint8_t>(~pi::XFlag::Look); }), "look fields without their xflag refused");
         Check(refused([](pi::InputPacket& b) { b.inv_slot = 16; }), "inv_slot 16 refused");
         Check(refused([](pi::InputPacket& b) { b.version = 2; }), "v3 fields in a v2 packet refused");
@@ -493,42 +494,49 @@ int main() {
               f.inv_slot == 0xFF, "Fill3 clears invalid groups");
     }
 
-    // 11. Input frame v4 (native rates): 108 bytes, the sender's dash/crawl/crawl factor rates.
+    // 11. Input frame v4 (native rates and weapons): 112 bytes, v3 plus the sender's
+    // rates (xflags Rates, 72/74/76) and magazine (xflags Mag, 78/80). Here: rates.
     {
         namespace pi = mgscoop::partner_input;
         pi::InputPacket pkt{};
         pkt.version = 2;
         pkt.flags = pi::Flag::Valid;
         pkt.held = 0x40004u; pkt.w4c = 0x40004u; pkt.ly = 32767; pkt.lmag = 65535;
-        pi::V3Source src{};
-        src.heading_valid = true; src.heading_rad = 0.5; src.inv_slot = 0xFF;
+        pi::V4Source src{};
+        src.v3.heading_valid = true; src.v3.heading_rad = 0.5; src.v3.inv_slot = 0xFF;
+        src.rates_valid = true; src.rate_dash = 1200; src.rate_crawl = 1000; src.rate_crawl_factor = 1200;
         pi::InputPacket v4 = pkt;
-        pi::Fill3(v4, src);
-        pi::Fill4(v4, true, 1200, 1000, 1200);
-        Check(v4.version == 4 && (v4.xflags & pi::XFlag::Rates) && (v4.xflags & pi::XFlag::Heading) && v4.rate_dash == 1200 &&
-              v4.rate_crawl == 1000 && v4.rate_crawl_factor == 1200 && pi::ValidPacket(v4), "Fill4 builds a valid v4 packet");
+        pi::Fill4(v4, src);
+        Check(v4.version == 4 && (v4.xflags & pi::XFlag::Rates) && (v4.xflags & pi::XFlag::Heading) && !(v4.xflags & pi::XFlag::Mag) &&
+              v4.rate_dash == 1200 && v4.rate_crawl == 1000 && v4.rate_crawl_factor == 1200 && v4.mag == 0 && v4.mag_cap == 0 &&
+              pi::ValidPacket(v4), "Fill4 builds a valid v4 packet (rates, no magazine)");
         std::uint8_t frame[input_frame_size_v4]{};
-        Check(input_frame_size_v4 == 108 && encode_input_frame_any(0x55, 7, 50, v4, frame) == 108, "v4 encodes 108 bytes");
-        Check(frame[wire::header_size + 1] == 4 && frame[24] == 80 && frame[wire::header_size + 66] == (pi::XFlag::Rates | pi::XFlag::Heading) &&
+        Check(input_frame_size_v4 == 112 && encode_input_frame_any(0x55, 7, 50, v4, frame) == 112, "v4 encodes 112 bytes");
+        Check(frame[wire::header_size + 1] == 4 && frame[24] == 84 && frame[wire::header_size + 66] == (pi::XFlag::Rates | pi::XFlag::Heading) &&
               frame[wire::header_size + 72] == 0xB0 && frame[wire::header_size + 73] == 0x04 && frame[wire::header_size + 74] == 0xE8 &&
-              frame[wire::header_size + 76] == 0xB0 && frame[wire::header_size + 78] == 0 && frame[wire::header_size + 79] == 0,
-              "v4 version, payload length 80, xflags with Rates, rates little-endian at 72/74/76");
+              frame[wire::header_size + 76] == 0xB0 && frame[wire::header_size + 78] == 0 && frame[wire::header_size + 80] == 0 &&
+              frame[wire::header_size + 82] == 0 && frame[wire::header_size + 83] == 0,
+              "v4 version, payload length 84, xflags with Rates, rates little-endian at 72/74/76, no magazine");
         std::uint64_t s = 0; std::uint32_t e = 0, seq = 0;
         pi::InputPacket got{};
         Check(decode_input_frame(frame, input_frame_size_v4, s, e, seq, got) && got.version == 4 && got.rate_dash == 1200 &&
               got.rate_crawl == 1000 && got.rate_crawl_factor == 1200 && (got.xflags & pi::XFlag::Rates) && got.held == 0x40004u &&
-              got.heading_mrad == v4.heading_mrad && seq == 50, "v4 round trip (EVADE held, rates)");
-        // Without readable rates: v4 with no Rates flag and zero fields.
+              got.heading_mrad == v4.heading_mrad && got.mag == 0 && !(got.xflags & pi::XFlag::Mag) && seq == 50,
+              "v4 round trip (EVADE held, rates)");
+        // Without readable rates (or partner_native_rates=off): v4 with no Rates flag and zero fields.
+        pi::V4Source no_rates = src;
+        no_rates.rates_valid = false;
         pi::InputPacket none = pkt;
-        pi::Fill3(none, src);
-        pi::Fill4(none, false, 1200, 1000, 1200);
+        pi::Fill4(none, no_rates);
         Check(none.version == 4 && !(none.xflags & pi::XFlag::Rates) && none.rate_dash == 0 && pi::ValidPacket(none) &&
-              encode_input_frame_any(0x55, 7, 51, none, frame) == 108 && decode_input_frame(frame, 108, s, e, seq, got) &&
+              encode_input_frame_any(0x55, 7, 51, none, frame) == 112 && decode_input_frame(frame, 112, s, e, seq, got) &&
               got.rate_dash == 0 && !(got.xflags & pi::XFlag::Rates), "v4 without rates");
+        pi::V4Source big = src;
+        big.rate_dash = 2001;
         pi::InputPacket out_of_range = pkt;
-        pi::Fill3(out_of_range, src);
-        pi::Fill4(out_of_range, true, 2001, 1000, 1000);
-        Check(!(out_of_range.xflags & pi::XFlag::Rates) && out_of_range.rate_dash == 0, "Fill4 drops out-of-range rates");
+        pi::Fill4(out_of_range, big);
+        Check(!(out_of_range.xflags & pi::XFlag::Rates) && out_of_range.rate_dash == 0 && out_of_range.rate_crawl == 0,
+              "Fill4 drops out-of-range rates");
         auto refused4 = [&](void (*edit)(pi::InputPacket&)) {
             pi::InputPacket b = v4;
             edit(b);
@@ -539,18 +547,97 @@ int main() {
         Check(refused4([](pi::InputPacket& b) { b.rate_crawl_factor = 2001; }), "rate above 2.0 refused");
         Check(refused4([](pi::InputPacket& b) { b.xflags &= static_cast<std::uint8_t>(~pi::XFlag::Rates); }), "rates without their xflag refused");
         Check(refused4([](pi::InputPacket& b) { b.version = 3; }), "rates in a v3 packet refused");
-        Check(refused4([](pi::InputPacket& b) { b.xflags |= 0x20; }), "unknown v4 xflags refused");
+        Check(refused4([](pi::InputPacket& b) { b.xflags |= 0x40; }), "unknown v4 xflags refused");
+        Check(refused4([](pi::InputPacket& b) { b.xflags |= pi::XFlag::Mag; }), "xflags Mag without a capacity refused");
         std::uint8_t tweak[input_frame_size_v4];
-        Check(encode_input_frame_any(0x55, 7, 50, v4, frame) == 108, "re-encode v4");
-        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 78] = 1;
-        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "v4 reserved byte 78 refused");
+        Check(encode_input_frame_any(0x55, 7, 50, v4, frame) == 112, "re-encode v4");
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 82] = 1;
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "v4 reserved byte 82 refused");
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 83] = 1;
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "v4 reserved byte 83 refused");
         std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 1] = 3;
-        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "108-byte frame with version 3 refused");
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "112-byte frame with version 3 refused");
         std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 72] = 0xF3; tweak[wire::header_size + 73] = 0x01;
         Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "rate 499 refused on decode");
+        std::memcpy(tweak, frame, sizeof(tweak));
+        tweak[wire::header_size + 66] = static_cast<std::uint8_t>(0x40 | pi::XFlag::Rates | pi::XFlag::Heading);
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "unknown v4 xflags refused on decode");
         Check(!decode_input_frame(frame, input_frame_size_v3, s, e, seq, got), "a v4 frame cut to 100 bytes is refused");
+        // The single-feature v4 drafts (104: magazine only, 108: rates only) never decode.
+        Check(!decode_input_frame(frame, 104, s, e, seq, got) && !decode_input_frame(frame, 108, s, e, seq, got),
+              "104- and 108-byte frames are refused");
     }
-
+    // 12. Input frame v4 (native weapons): the sender's magazine (xflags Mag, mag at 78, cap at 80).
+    {
+        namespace pi = mgscoop::partner_input;
+        pi::InputPacket pkt{};
+        pkt.version = 2;
+        pkt.flags = pi::Flag::Valid;
+        pkt.held = 0x18u; pkt.w4c = 0x18u; pkt.lmag = 100; pkt.cam_cdeg = -18000;
+        pi::V4Source src{};
+        src.v3.look_valid = true; src.v3.look_pitch = 0.5f; src.v3.look_yaw = -1.0f;
+        src.v3.aiming = true; src.v3.inv_slot = 0xFF; src.v3.equip_rev = 3;
+        src.mag_valid = true; src.mag = 4; src.mag_cap = 5;
+        pi::InputPacket v4 = pkt;
+        pi::Fill4(v4, src);
+        Check(v4.version == 4 && (v4.xflags & pi::XFlag::Mag) && (v4.xflags & pi::XFlag::Look) && !(v4.xflags & pi::XFlag::Rates) &&
+              v4.mag == 4 && v4.mag_cap == 5 && v4.rate_dash == 0 && v4.equip_rev == 3 && pi::ValidPacket(v4),
+              "Fill4 builds a valid v4 packet (magazine, no rates)");
+        std::uint8_t frame[input_frame_size_v4]{};
+        Check(encode_input_frame_any(0x55, 7, 50, v4, frame) == 112, "v4 with a magazine encodes 112 bytes");
+        Check(frame[wire::header_size + 1] == 4 && frame[24] == 84 && frame[wire::header_size + 72] == 0 && frame[wire::header_size + 76] == 0 &&
+              frame[wire::header_size + 78] == 4 && frame[wire::header_size + 80] == 5, "v4 version, payload length 84, mag at 78, cap at 80");
+        std::uint64_t s = 0; std::uint32_t e = 0, seq = 0;
+        pi::InputPacket got{};
+        Check(decode_input_frame(frame, sizeof(frame), s, e, seq, got) && got.version == 4 && got.mag == 4 && got.mag_cap == 5 &&
+              (got.xflags & pi::XFlag::Mag) && got.look_pitch == 0.5f && got.equip_rev == 3 && got.held == 0x18u && seq == 50,
+              "v4 round trip (magazine)");
+        Check(!decode_input_frame(frame, input_frame_size_v3, s, e, seq, got), "a v4 frame cut to 100 bytes is refused");
+        std::uint8_t tweak[input_frame_size_v4];
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 78] = 6;
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "mag > cap refused on decode");
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 80] = 0; tweak[wire::header_size + 78] = 0;
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "Mag with capacity 0 refused");
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 66] &= static_cast<std::uint8_t>(~pi::XFlag::Mag);
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "magazine fields without xflags Mag refused");
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 1] = 3;
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "112-byte frame with version 3 refused");
+        // An invalid magazine is not sent (Mag clear, both fields 0), and capacity 999 is the limit.
+        pi::V4Source bad = src;
+        bad.mag = 6;
+        pi::InputPacket f = pkt;
+        pi::Fill4(f, bad);
+        Check(pi::ValidPacket(f) && f.version == 4 && !(f.xflags & pi::XFlag::Mag) && f.mag == 0 && f.mag_cap == 0, "Fill4 drops mag > cap");
+        bad = src; bad.mag_cap = 1000; bad.mag = 1;
+        f = pkt; pi::Fill4(f, bad);
+        Check(!(f.xflags & pi::XFlag::Mag), "Fill4 drops capacity > 999");
+        bad = src; bad.mag_valid = false;
+        f = pkt; pi::Fill4(f, bad);
+        Check(pi::ValidPacket(f) && !(f.xflags & pi::XFlag::Mag) && encode_input_frame_any(0x55, 7, 51, f, frame) == 112 &&
+              decode_input_frame(frame, sizeof(frame), s, e, seq, got) && got.version == 4 && got.mag == 0 && !(got.xflags & pi::XFlag::Mag),
+              "a v4 frame without a magazine round-trips");
+        pi::InputPacket v2 = pkt;
+        v2.mag = 1;
+        Check(!pi::ValidPacket(v2), "magazine fields in a v2 packet refused");
+        pi::InputPacket v3 = v4;
+        v3.version = 3;
+        Check(!pi::ValidPacket(v3), "the magazine in a v3 packet refused");
+        // Both groups in one frame (a native sender with a gun and readable rates).
+        pi::V4Source both = src;
+        both.rates_valid = true; both.rate_dash = 1100; both.rate_crawl = 900; both.rate_crawl_factor = 1500;
+        pi::InputPacket b4 = pkt;
+        pi::Fill4(b4, both);
+        Check(pi::ValidPacket(b4) && (b4.xflags & pi::XFlag::Rates) && (b4.xflags & pi::XFlag::Mag) &&
+              encode_input_frame_any(0x55, 7, 53, b4, frame) == 112 && frame[wire::header_size + 66] == b4.xflags &&
+              decode_input_frame(frame, sizeof(frame), s, e, seq, got) && got.rate_dash == 1100 && got.rate_crawl == 900 &&
+              got.rate_crawl_factor == 1500 && got.mag == 4 && got.mag_cap == 5 && got.look_yaw == -1.0f && got.equip_rev == 3,
+              "v4 carries the rates and the magazine together");
+        // Fill3 (a v3 sender) clears both v4 groups.
+        pi::InputPacket back = b4;
+        pi::Fill3(back, both.v3);
+        Check(back.version == 3 && back.rate_dash == 0 && back.mag == 0 && !(back.xflags & (pi::XFlag::Rates | pi::XFlag::Mag)) &&
+              pi::ValidPacket(back), "Fill3 leaves no v4 field");
+    }
 
     std::printf("%u checks passed; player_sync transform codec, fixed-buffer frames, v2 anim extension, look and input frames verified\n", checks);
     return 0;

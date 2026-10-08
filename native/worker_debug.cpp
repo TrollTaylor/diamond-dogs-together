@@ -122,7 +122,34 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
         Bool(n.gun_enabled),Bool(n.gun_read_ok),Bool(n.node_active),n.gun3c0,(n.gun3c0>>2)&1u,(n.gun3c0>>18)&1u,n.mode2c1);
     j.Add("\"remote_flags\":%u,\"remote_equip\":%u,\"body_equip\":",n.remote_flags,n.remote_equip);i32(n.body_equip);
     j.Add(",\"aim_match\":%s,\"aim_err_mdeg\":",Bool(n.aim_match));i32(n.aim_err_mdeg);
-    j.Add(",\"manifest_rev\":%u,\"ammo_experiment\":%s}",n.manifest_rev,Bool(n.ammo_experiment));
+    j.Add(",\"manifest_rev\":%u,\"ammo_experiment\":%s,\"fields_ok\":%s,\"cap\":",n.manifest_rev,Bool(n.ammo_experiment),Bool(n.gun_fields_ok));
+    i32(n.gun_cap);j.Add(",\"mag\":");i32(n.gun_mag);j.Add(",\"stock\":");i32(n.gun_stock);j.Add(",\"class\":");i32(n.gun_class);
+    j.Add(",\"b3d5\":");i32(n.gun_b3d5);j.Add(",\"slot\":");i32(n.gun_slot);
+    j.Add(",\"noreload\":%u,\"b20\":%u,\"can_reload\":%u,\"gate\":%u}",n.gun_noreload,n.gun_b20,n.gun_can_reload,n.gun_gate);
+    // Native weapons (docs/native-puppet.md "Weapons").
+    const auto i64=[&](std::int64_t v) noexcept { if(v==partner_native::kNull) j.Add("null"); else j.Add("%lld",static_cast<long long>(v)); };
+    j.Add(",\"fire\":{\"mode\":");j.String(n.fire_mode,sizeof(n.fire_mode));
+    j.Add(",\"installed\":%s,\"live\":%s,\"armed\":%s,\"effective\":%s,\"refused\":",
+        Bool(n.fire_installed),Bool(n.fire_live),Bool(n.fire_armed),Bool(n.fire_effective));
+    j.String(n.fire_refused,sizeof(n.fire_refused));
+    j.Add(",\"suppressed\":%u,\"passed\":%u,\"passed_player\":%u,\"owner_disarmed\":%u,\"suppressed_per_s\":%u,",
+        n.fire_suppressed,n.fire_passed,n.fire_passed_player,n.fire_owner_disarmed,n.fire_suppressed_s);
+    j.Add("\"census\":{\"ok\":%s,\"bullets_ok\":%s,\"noise_vt\":",Bool(n.census_ok),Bool(n.census_bullets_ok));
+    i64(n.census_noise_vt);j.Add(",\"noise_fn\":");i64(n.census_noise_fn);j.Add("}}");
+    j.Add(",\"mag\":{\"remote\":");i32(n.remote_mag);j.Add(",\"remote_cap\":");i32(n.remote_mag_cap);
+    j.Add(",\"local\":");i32(n.local_mag);j.Add(",\"local_cap\":");i32(n.local_mag_cap);
+    j.Add(",\"writes\":%u,\"refused\":%u,\"fire_edges\":%u,\"reload_edges\":%u,\"cap\":%u,\"written\":%u,\"last\":",
+        n.mag_writes,n.mag_refused,n.mag_fire_edges,n.mag_reload_edges,n.mag_cap,n.mag_written);
+    j.String(n.mag_last,sizeof(n.mag_last));j.Add(",\"faulted\":%s,\"leak_off\":%s}",Bool(n.mag_faulted),Bool(n.mag_leak_off));
+    j.Add(",\"leak\":{\"shot_count\":");i64(n.shot_count);
+    j.Add(",\"shot_leaks\":%u,\"reload_drains\":%u,\"ammo_leaks\":%u,\"ammo_vars\":",n.shot_leaks,n.reload_drains,n.ammo_leaks);
+    i64(n.ammo_digest);j.Add("}");
+    j.Add(",\"equip\":{\"tx_rev\":%u,\"tx_base\":[%u,%u,%u],\"tx_alias\":[%u,%u,%u],\"tables_ok\":%s,",
+        n.equip_tx_rev,n.equip_tx_base[0],n.equip_tx_base[1],n.equip_tx_base[2],n.equip_tx_alias[0],n.equip_tx_alias[1],n.equip_tx_alias[2],
+        Bool(n.equip_tables_ok));
+    j.Add("\"rx_base\":[%u,%u,%u],\"rx_alias\":[%u,%u,%u],\"apply\":",n.equip_rx_base[0],n.equip_rx_base[1],n.equip_rx_base[2],
+        n.equip_rx_alias[0],n.equip_rx_alias[1],n.equip_rx_alias[2]);
+    j.String(n.equip_apply,sizeof(n.equip_apply));j.Add("}");
     // Native rates (docs/native-puppet.md "Rates"): x1000, records in rec+0x3C..+0x50 order.
     const auto record=[&](bool ok,const std::int32_t (&f)[6]) noexcept {
         if(!ok){j.Add("null");return;}
@@ -138,7 +165,7 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
     j.String(n.rates_mirror,sizeof(n.rates_mirror));j.Add(",\"reason\":");j.String(n.rates_reason,sizeof(n.rates_reason));
     j.Add(",\"writes\":%u,\"reapplied\":%u,\"restores\":%u,\"drops\":%u}",n.rates_writes,n.rates_reapplied,n.rates_restores,n.rates_drops);
     j.Add(",\"ring_fields\":[\"ms\",\"mode\",\"remote_stance\",\"body_stance\",\"remote_mmps\",\"body_mmps\",\"err_mm\",\"steer_mdeg\",\"held\",\"gun3c0\","
-          "\"act\",\"rec_act\",\"rec_next\",\"rec_mag\",\"p1_forced\",\"recon_mode\",\"recon_action\",\"warp\"],\"ring\":[");
+          "\"act\",\"rec_act\",\"rec_next\",\"rec_mag\",\"p1_forced\",\"recon_mode\",\"recon_action\",\"warp\",\"mag\"],\"ring\":[");
     for(std::size_t i=0;i<n.ring.count;++i){
         const auto& e=partner_native::At(n.ring,i);if(i)j.Add(",");
         j.Add("[%u,\"%s\",%u,%u,%d,%d,",e.ms,partner_native::ModeName(static_cast<partner_native::Mode>(e.mode)),unsigned(e.remote_stance),
@@ -146,9 +173,10 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
         i32(e.err_mm);j.Add(",%d,%u,%u,%u,%u,%u,",e.steer_mdeg,e.held,e.gun3c0,unsigned(e.act),unsigned(e.rec_act),unsigned(e.rec_next));
         i32(e.rec_mag);
         const bool recon=e.recon_mode!=partner_native::kReconOff;
-        j.Add(",%u,\"%s\",\"%s\",%s]",unsigned(e.p1_forced),
+        j.Add(",%u,\"%s\",\"%s\",%s,",unsigned(e.p1_forced),
             recon?partner_recon::ModeName(static_cast<partner_recon::Mode>(e.recon_mode)):"off",
             recon?partner_recon::ActionName(static_cast<partner_recon::Action>(e.recon_action)):"off",Bool(e.warp));
+        if(e.mag==0xFFFFu) j.Add("null]"); else j.Add("%u]",unsigned(e.mag));
     }
     j.Add("]}");
 }

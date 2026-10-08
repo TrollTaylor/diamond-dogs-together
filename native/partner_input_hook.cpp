@@ -54,6 +54,10 @@ static_assert(c::pad_stance == pad::kStance && c::pad_dash == pad::kDash && c::p
                   c::pad_vehicle_dash == pad::kKbDash && c::pad_hold == pad::kHold && c::pad_fire == pad::kFire &&
                   c::pad_action == pad::kAction && c::pad_reload == pad::kReload && c::pad_side_roll == pad::kSideRoll,
               "partner_pad_bits.hpp matches the pinned PlayerPad enum");
+// The magazine mirror's edge bits and limits are the same pad bits and wire limits.
+static_assert(mgscoop::partner_native::kPadFire == pad::kFire && mgscoop::partner_native::kPadReload == pad::kReload &&
+                  mgscoop::partner_native::kMaxMagCap == pi::kMaxMagCap,
+              "weapons pad bits and magazine limit match partner_pad_bits.hpp and the input frame");
 
 // Process-level state (the DLL is pinned; nothing here is ever torn down).
 volatile LONG g_installed = 0;
@@ -142,6 +146,17 @@ std::uint8_t g_rates_pool = 0;
 volatile LONG g_rates_forget = 0, g_rates_forget_epoch = 0;
 volatile LONG g_n_rates_applied = 0, g_n_rates_latched = 0, g_n_rates_reason = 0, g_n_rates_writes = 0, g_n_rates_reapplied = 0;
 volatile LONG g_n_rates_restores = 0, g_n_rates_drops = 0, g_n_rates_w[3] = {0, 0, 0};
+// Native weapons: the magazine mirror (hook thread writes; atomics for the
+// driver) and the shoot-count leak check of drain windows.
+volatile LONG g_m_writes = 0, g_m_refused = 0, g_m_fire = 0, g_m_reload = 0, g_m_last = 0, g_m_faulted = 0;
+volatile LONG g_m_remote = 0xFFFF, g_m_remote_cap = 0xFFFF, g_m_cap = 0xFFFF, g_m_written = 0xFFFF;
+volatile LONG g_shot_leaks = 0, g_shot_count = -1, g_reload_drains = 0;
+// The same for the viewer's weapon/ammo vars block (FNV-1a digest; 0 unread).
+// An ammo leak under the magazine mirror turns the mirror off until
+// MissionStart (it is what lets instance 1 reload): g_m_leak.
+volatile LONG g_ammo_leaks = 0, g_ammo_digest = 0, g_m_leak = 0;
+bool g_m_seen = false;  // hook thread only: the last remote (mag, cap) acted on
+std::uint16_t g_m_seen_mag = 0, g_m_seen_cap = 0;
 // What the stubs answer during the current window (set before each call).
 struct Current {
     std::uint32_t held, press, release, w54, long12, tap12;
@@ -845,6 +860,7 @@ void __stdcall InputDispatchHook(void* root, std::uint32_t phase) noexcept {
     if (InterlockedExchange(&g_reset_hist, 0)) {
         g_hist = pi::HoldHistory{};
         g_inj_valid = false;
+        g_m_seen = false;
     }
     if (a.gen != g_gen) {
         // Only instance 1's private masks and shadows start afresh with a new gen.
@@ -1025,6 +1041,135 @@ void ProbeRecord(std::uintptr_t rec) noexcept {
     InterlockedExchange(&g_d_rec_next, static_cast<LONG>(next));
     InterlockedExchange(&g_d_rec_mag, ok ? pi::Milli(mag) : 0);
     InterlockedExchange(&g_d_rec_heading, ok ? pi::Milli(heading) : 0);
+}
+
+// --- Native weapons (docs/native-puppet.md "Weapons") ---------------------------
+static_assert(c::gun_mag == 0x25C && c::gun_mag_sub == 0x25E && c::gun27c_sub == 0x200 && c::gun3c0_full_mag == 0x10000000u &&
+                  c::gun_cap == 0x210 && c::gun_cap_sub == 0x212 && c::gun27c_double == 0x100000u && c::gun27c_half == 0x80000u &&
+                  c::gun_double_equip_lo == 0x42B && c::gun_class_shift == 6 && c::gun_class_mask == 7 && c::gun_class_gun == 1,
+              "the pure gun rules of partner_native match the contract");
+int MagFilter(DWORD code) noexcept {
+    if (!IsAccessFault(code)) return EXCEPTION_CONTINUE_SEARCH;
+    if (InterlockedExchange(&g_m_faulted, 1) == 0 && g_log) {
+        char line[128]{};
+        if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "partner_input=fault; phase=mag; code=0x%08x; mag_mirror=disabled\r\n", code)))
+            g_log(line);
+    }
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+void MagRefused(MagRefusal why, bool count) noexcept {
+    if (count) InterlockedIncrement(&g_m_refused);
+    InterlockedExchange(&g_m_last, static_cast<LONG>(why));
+}
+// The magazine mirror (drain window, before block 1's job, on the thread that
+// runs instance 1's gun update): on a FIRE or RELOAD press edge of this
+// consumer's view, or when the remote's (mag, cap) changed, instance 1's live
+// magazine field becomes partner_native::MirrorMagazine (only when it
+// differs). Its non-local shots never spend it (0x1041650 is local-only).
+void MirrorMag(const pi::Arm& a, const pi::Injection& j) noexcept {
+    if (g_m_faulted) { MagRefused(MagRefusal::fault, false); return; }
+    if (!a.mag_mirror || !a.gun_prim || !a.gun_rec) { MagRefused(MagRefusal::off, false); return; }
+    if (g_m_leak) { MagRefused(MagRefusal::leak, false); return; }
+    if (!j.ammo_valid) { MagRefused(MagRefusal::no_v4, false); return; }
+    const bool fire = (j.edge_press & partner_native::kPadFire) != 0;
+    const bool reload = (j.edge_press & partner_native::kPadReload) != 0;
+    const bool changed = !g_m_seen || j.ammo != g_m_seen_mag || j.ammo_cap != g_m_seen_cap;
+    if (!fire && !reload && !changed) return;
+    // A FIRE edge shows a round only if the remote had one (MirrorMagazine).
+    const bool was_loaded = g_m_seen && g_m_seen_mag > 0;
+    g_m_seen = true;
+    g_m_seen_mag = j.ammo;
+    g_m_seen_cap = j.ammo_cap;
+    InterlockedExchange(&g_m_remote, j.ammo);
+    InterlockedExchange(&g_m_remote_cap, j.ammo_cap);
+    MagRefusal why = MagRefusal::none;
+    std::uint32_t cap = 0, target = 0;
+    bool wrote = false;
+    __try {
+        if (Load<std::uintptr_t>(a.gun_prim) != g_base + c::gun_prim_vt_rva || Load<std::uintptr_t>(a.gun_prim + c::prim_blk) != a.blk1 ||
+            Load<std::uintptr_t>(a.gun_prim + c::prim_gun_rec) != a.gun_rec) {
+            why = MagRefusal::prim;
+        } else {
+            partner_native::GunFields g{};
+            g.flags27c = Load<std::uint32_t>(a.gun_rec + c::gun_flags27c);
+            g.gun3c0 = Load<std::uint32_t>(a.gun_rec + c::gun_flags);
+            g.equip = Load<std::uint32_t>(a.gun_rec + c::gun_equip);
+            g.cap = Load<std::uint16_t>(a.gun_rec + c::gun_cap);
+            g.cap_sub = Load<std::uint16_t>(a.gun_rec + c::gun_cap_sub);
+            cap = partner_native::GunCapacity(g);
+            if (g.gun3c0 & c::gun3c0_full_mag) why = MagRefusal::full;
+            else if (partner_native::GunClass(g.flags27c) != c::gun_class_gun) why = MagRefusal::cls;
+            else if (cap == 0 || cap > partner_native::kMaxMagCap) why = MagRefusal::cap;
+            else {
+                target = partner_native::MirrorMagazine(partner_native::MagIn{j.ammo, j.ammo_cap, cap, fire, was_loaded});
+                const std::uintptr_t field = a.gun_rec + partner_native::GunMagazineOffset(g.flags27c);
+                if (Load<std::uint16_t>(field) != target) {
+                    Store<std::uint16_t>(field, static_cast<std::uint16_t>(target));
+                    wrote = true;
+                }
+            }
+        }
+    } __except (MagFilter(GetExceptionCode())) {
+        why = MagRefusal::fault;
+    }
+    InterlockedExchange(&g_m_cap, static_cast<LONG>(cap));
+    if (why != MagRefusal::none) { MagRefused(why, true); return; }
+    InterlockedExchange(&g_m_last, static_cast<LONG>(MagRefusal::none));
+    InterlockedExchange(&g_m_written, static_cast<LONG>(target));
+    if (!wrote) return;
+    InterlockedIncrement(&g_m_writes);
+    if (fire) InterlockedIncrement(&g_m_fire);
+    if (reload) InterlockedIncrement(&g_m_reload);
+}
+// vars.playerShootCountInMission (read-only leak evidence; 0xFFFFFFFF unread).
+std::uint32_t ReadShotCount() noexcept {
+    std::uint32_t value = 0xFFFFFFFFu;
+    __try {
+        const std::uintptr_t vars = Load<std::uintptr_t>(g_base + c::vars_slot_rva);
+        if (vars) value = Load<std::uint32_t>(vars + c::vars_shoot_count);
+    } __except (ProbeFilter(GetExceptionCode())) {}
+    return value;
+}
+// The viewer's weapon/ammo vars block vars+0x548..+0x670 (the contiguous
+// registrations weapons .. u16[46] at +0x614, contract-pinned): an FNV-1a
+// digest, 0 when unread (read-only leak evidence: instance 1's job, its
+// reload completion included, must never change the viewer's inventory).
+std::uint32_t ReadAmmoDigest() noexcept {
+    static_assert(c::vars_ammo_end > c::vars_ammo_begin && c::vars_ammo_end - c::vars_ammo_begin <= 0x200, "bounded vars block");
+    unsigned char block[c::vars_ammo_end - c::vars_ammo_begin];
+    bool ok = false;
+    __try {
+        const std::uintptr_t vars = Load<std::uintptr_t>(g_base + c::vars_slot_rva);
+        if (vars) {
+            std::memcpy(block, reinterpret_cast<const void*>(vars + c::vars_ammo_begin), sizeof(block));
+            ok = true;
+        }
+    } __except (ProbeFilter(GetExceptionCode())) {}
+    if (!ok) return 0;
+    std::uint32_t h = 2166136261u;
+    for (const unsigned char b : block) h = (h ^ b) * 16777619u;
+    return h ? h : 1u;
+}
+// After the job: the leak verdicts and whether instance 1's reload request is set.
+void AfterJob(const pi::Arm& a, std::uint32_t shots_before, std::uint32_t ammo_before) noexcept {
+    const std::uint32_t shots = ReadShotCount();
+    if (shots_before != 0xFFFFFFFFu && shots != 0xFFFFFFFFu && shots != shots_before) InterlockedIncrement(&g_shot_leaks);
+    InterlockedExchange(&g_shot_count, static_cast<LONG>(shots));
+    const std::uint32_t ammo = ReadAmmoDigest();
+    if (ammo_before && ammo && ammo != ammo_before) {
+        InterlockedIncrement(&g_ammo_leaks);
+        // Instance 1's job changed the viewer's inventory: no more mirrored
+        // magazines (no reloads they enable) until MissionStart.
+        if (a.mag_mirror && InterlockedExchange(&g_m_leak, 1) == 0 && g_log) g_log("partner_input=ammo_leak; mag_mirror=disabled\r\n");
+    }
+    InterlockedExchange(&g_ammo_digest, static_cast<LONG>(ammo));
+    if (!a.gun_rec || !a.gun_prim) return;
+    bool reload = false;
+    __try {
+        reload = Load<std::uintptr_t>(a.gun_prim + c::prim_gun_rec) == a.gun_rec &&
+                 (Load<std::uint32_t>(a.gun_rec + c::gun_flags) & c::gun3c0_reload) != 0;
+    } __except (ProbeFilter(GetExceptionCode())) {}
+    if (reload) InterlockedIncrement(&g_reload_drains);
 }
 
 // A deferred job without a window: a fatal game code is recorded and passed on.
@@ -1305,6 +1450,20 @@ bool Installed() noexcept { return g_ready; }
 
 std::uint32_t HookThread() noexcept { return static_cast<std::uint32_t>(g_hook_thread); }
 
+const char* MagRefusalName(MagRefusal refusal) noexcept {
+    switch (refusal) {
+    case MagRefusal::off: return "off";
+    case MagRefusal::no_v4: return "no_v4";
+    case MagRefusal::prim: return "prim";
+    case MagRefusal::full: return "full";
+    case MagRefusal::cls: return "cls";
+    case MagRefusal::cap: return "cap";
+    case MagRefusal::fault: return "fault";
+    case MagRefusal::leak: return "leak";
+    default: return "none";
+    }
+}
+
 const char* LookRefusalName(LookRefusal refusal) noexcept {
     switch (refusal) {
     case LookRefusal::off: return "off";
@@ -1393,6 +1552,11 @@ bool RunJobWindow(void* go, const void* param, std::uint32_t block, JobCallFn jo
     // Native rates: instance 1's record gets the remote's movement rates
     // before its job reads them (or what the mirror changed goes back).
     RatesStep(a);
+    // Native weapons: the magazine mirror on this thread, before the gun
+    // update reads it, and the viewer's shoot count around the job.
+    MirrorMag(a, j);
+    const std::uint32_t shots_before = ReadShotCount();
+    const std::uint32_t ammo_before = ReadAmmoDigest();
     // Phase 1 picks its pad-sampling branch by id == P+0x218: instance 1 (id 1,
     // validated: ids[1] == 1) takes it for this job only, on this thread.
     const bool detour = partner_local_detour::Installed();
@@ -1400,6 +1564,7 @@ bool RunJobWindow(void* go, const void* param, std::uint32_t block, JobCallFn jo
     GuardedCall(a, save, Call{kJobEntry, go, const_cast<void*>(param), 0, 0}, detour);
     g_in_drain = false;
     ProbeRecord(a.rec1);
+    AfterJob(a, shots_before, ammo_before);
     SafePost(a, save, true);
     EndWindow();
     std::uint32_t masks[3]{};
@@ -1487,6 +1652,8 @@ void ResetFault() noexcept {
     // mission: the hook thread clears them before its next window.
     InterlockedExchange(&g_reset_hist, 1);
     InterlockedExchange(&g_n_look_faulted, 0);
+    InterlockedExchange(&g_m_faulted, 0);
+    InterlockedExchange(&g_m_leak, 0);
 }
 
 void PublishArm(const pi::Arm& arm) noexcept {
@@ -1588,6 +1755,22 @@ void DrainStats(Stats& out) noexcept {
     n.rec_next = static_cast<std::uint32_t>(g_d_rec_next);
     n.rec_mag = g_d_rec_mag;
     n.rec_heading_mrad = g_d_rec_heading;
+    n.mag_writes = static_cast<std::uint32_t>(g_m_writes);
+    n.mag_refused = static_cast<std::uint32_t>(g_m_refused);
+    n.mag_fire_edges = static_cast<std::uint32_t>(g_m_fire);
+    n.mag_reload_edges = static_cast<std::uint32_t>(g_m_reload);
+    n.mag_last = static_cast<MagRefusal>(g_m_last);
+    n.mag_remote = static_cast<std::uint32_t>(g_m_remote);
+    n.mag_remote_cap = static_cast<std::uint32_t>(g_m_remote_cap);
+    n.mag_cap = static_cast<std::uint32_t>(g_m_cap);
+    n.mag_written = static_cast<std::uint32_t>(g_m_written);
+    n.mag_faulted = g_m_faulted != 0;
+    n.mag_leak_off = g_m_leak != 0;
+    n.shot_leaks = static_cast<std::uint32_t>(g_shot_leaks);
+    n.shot_count = static_cast<std::uint32_t>(g_shot_count);
+    n.reload_drains = static_cast<std::uint32_t>(g_reload_drains);
+    n.ammo_leaks = static_cast<std::uint32_t>(g_ammo_leaks);
+    n.ammo_digest = static_cast<std::uint32_t>(g_ammo_digest);
     n.rates_applied = g_n_rates_applied != 0;
     n.rates_latched = g_n_rates_latched != 0;
     n.rates_reason = static_cast<std::uint32_t>(g_n_rates_reason);

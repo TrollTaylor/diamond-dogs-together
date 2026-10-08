@@ -89,10 +89,14 @@ struct InputPacket {
     std::uint8_t xflags;          // XFlag bits
     std::uint8_t inv_slot;        // 0..15, 0xFF unknown
     std::uint16_t equip_rev;      // 0 = no manifest
-    // v4 only (native rates, docs/native-puppet.md "Rates"; 0 otherwise): the
-    // sender's own +0x48 dash, +0x3C crawl and +0x40 crawl factor rates x 1000
-    // (partner_rates::Wire), each 500..2000 with xflags Rates, all 0 without.
+    // v4 only (native rates and weapons, docs/native-puppet.md "Rates" and
+    // "Weapons"; 0 otherwise). Each group is 0 unless its xflags bit is set.
+    // Rates: the sender's own +0x48 dash, +0x3C crawl and +0x40 crawl factor
+    // rates x 1000 (partner_rates::Wire), each 500..2000 with xflags Rates.
     std::uint16_t rate_dash, rate_crawl, rate_crawl_factor;
+    // Weapons: the sender's magazine as its getter reads it and its capacity,
+    // with xflags Mag (then 1 <= mag_cap <= kMaxMagCap and mag <= mag_cap).
+    std::uint16_t mag, mag_cap;
 };
 namespace XFlag {
 inline constexpr std::uint8_t Look = 1 << 0;
@@ -100,9 +104,13 @@ inline constexpr std::uint8_t Cam = 1 << 1;
 inline constexpr std::uint8_t Heading = 1 << 2;
 inline constexpr std::uint8_t Aiming = 1 << 3;  // HOLD level
 inline constexpr std::uint8_t Known = 0x0F;      // v3
-inline constexpr std::uint8_t Rates = 1 << 4;    // v4 only
-inline constexpr std::uint8_t KnownV4 = 0x1F;
+inline constexpr std::uint8_t Rates = 1 << 4;    // v4 only: rate_dash / rate_crawl / rate_crawl_factor
+inline constexpr std::uint8_t Mag = 1 << 5;      // v4 only: mag / mag_cap
+inline constexpr std::uint8_t KnownV4 = 0x3F;
+static_assert((Rates & Known) == 0 && (Mag & Known) == 0 && (Rates & Mag) == 0 && KnownV4 == (Known | Rates | Mag),
+              "v4 xflags are distinct and outside the v3 set");
 }
+inline constexpr std::uint16_t kMaxMagCap = 999;
 inline constexpr float kMaxLookPitch = 1.6f;
 inline constexpr float kMaxLookYaw = 3.14259265f;  // pi + 1e-3
 inline constexpr float kMaxCamField = 64.0f;
@@ -118,7 +126,8 @@ std::int32_t NormalizeCdeg(std::int64_t cdeg) noexcept;
 // The clamps above; non-finite values become 0.
 InputPacket Quantize(const PadSnapshot& snapshot, std::int32_t cam_cdeg) noexcept;
 // Whether every value is inside the wire ranges (player_sync checks the same).
-// Versions 1..4; a v1/v2 packet carries no v3 field, a v1..v3 packet no v4 field.
+// Versions 1..4; a v1/v2 packet carries no v3 field, a v1..v3 packet no v4
+// field (xflags Rates and Mag are v4 only).
 bool ValidPacket(const InputPacket& packet) noexcept;
 // The sender's v3 fields (read on the driver tick; invalid groups have their
 // valid flag clear). Fill3 sets version 3 and the v3 fields of a v2 packet.
@@ -134,9 +143,18 @@ struct V3Source {
     std::uint16_t equip_rev;
 };
 void Fill3(InputPacket& packet, const V3Source& source) noexcept;
-// Version 4 (the v3 fields stay): the sender's rates when `valid` and every
-// value is within 500..2000 milli (xflags Rates), otherwise none.
-void Fill4(InputPacket& packet, bool valid, std::uint16_t dash, std::uint16_t crawl, std::uint16_t crawl_factor) noexcept;
+// Version 4 (native rates and weapons): Fill3's fields plus the sender's
+// rates (xflags Rates, when rates_valid and each is within 500..2000 milli)
+// and its magazine (xflags Mag, when mag_valid, 1 <= mag_cap <= kMaxMagCap and
+// mag <= mag_cap). An invalid group leaves its flag clear and its fields 0.
+struct V4Source {
+    V3Source v3;
+    bool rates_valid;
+    std::uint16_t rate_dash, rate_crawl, rate_crawl_factor;
+    bool mag_valid;
+    std::uint32_t mag, mag_cap;
+};
+void Fill4(InputPacket& packet, const V4Source& source) noexcept;
 
 // Sources of the three edge words src+0x4C/+0x50/+0x54 inside the window.
 enum class Word : std::uint8_t { zero = kPartnerWordZero, press = kPartnerWordPress, release = kPartnerWordRelease,
@@ -219,6 +237,9 @@ struct Injection {
     // (xflags Cam); absent otherwise.
     bool look_valid, cam_valid, aiming;
     float look_pitch, look_yaw, cam270, cam274;
+    // Native weapons: the live v4 sample's magazine and capacity (xflags Mag); absent otherwise.
+    bool ammo_valid;
+    std::uint16_t ammo, ammo_cap;
 };
 // One window's injected pad (rules in partner_input.cpp). Updates `edge`.
 // Held bits: overlay | (live net held); a bit that was pressed and released
@@ -379,9 +400,18 @@ struct Arm {
     std::uintptr_t rates_sp, rates_rec;
     std::uint32_t rates_id, rates_epoch;
     std::uint16_t rates_remote[3];
+    // Native weapons (docs/native-puppet.md "Weapons"), not compared by
+    // SameArm: the magazine mirror of drain windows (mag_mirror) on instance
+    // 1's gun record gun_rec of prim gun_prim (both from the driver tick's
+    // ReadGun1; the hook re-validates prim's vtable, prim+8 == blk1 and
+    // prim+0x58 == gun_rec before any write; 0 = no mirror) and the
+    // shoot-count leak check (always, read-only).
+    bool mag_mirror;
+    std::uintptr_t gun_prim, gun_rec;
 };
 
-bool SameArm(const Arm& a, const Arm& b) noexcept;  // every field except gen, host_cam_cdeg, steer/mag and the one-shots
+// Every field except gen, host_cam_cdeg, steer/mag, the rates and gun fields and the one-shots.
+bool SameArm(const Arm& a, const Arm& b) noexcept;
 
 // Hook statistics drained by the driver (the hook keeps atomics).
 // state: P+0x208 count != 2, P+0x214 local index != 0, or the Q vtable changed.

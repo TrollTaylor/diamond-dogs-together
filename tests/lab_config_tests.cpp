@@ -547,15 +547,15 @@ int main() {
         const auto def = Lab("enabled=1\nrole=host\n");
         Check(def.partner_drive == PartnerDrive::legacy && def.partner_input_defer == PartnerDefer::off &&
               def.partner_input_local == PartnerLocal::main && def.partner_native_aim == PartnerNativeAim::off &&
-              !def.partner_native_gun && !def.partner_native_fire && def.partner_native_steer_deg == 15 &&
+              !def.partner_native_gun && def.partner_native_fire == mgscoop::PartnerNativeFire::off && def.partner_native_steer_deg == 15 &&
               def.partner_native_trim_pct == 0 && def.partner_native_rates == PartnerNativeRates::log,
-              "native defaults (legacy, defer off, local main, aim off, steer 15, trim 0, rates log)");
+              "native defaults (legacy, defer off, local main, aim off, fire off, steer 15, trim 0, rates log)");
         const auto nat = Lab("enabled=1\nrole=host\npartner_drive=native\npartner_input_defer=census\npartner_input_local=all\n"
                              "partner_native_aim=lookcam\npartner_native_gun=1\npartner_native_fire=1\npartner_native_steer_deg=30\n"
                              "partner_native_trim_pct=10\npartner_native_rates=mirror\n");
         Check(nat.partner_drive == PartnerDrive::native && nat.partner_input_defer == PartnerDefer::census &&
               nat.partner_input_local == PartnerLocal::all && nat.partner_native_aim == PartnerNativeAim::lookcam &&
-              nat.partner_native_gun && nat.partner_native_fire && nat.partner_native_steer_deg == 30 &&
+              nat.partner_native_gun && nat.partner_native_fire == mgscoop::PartnerNativeFire::visual && nat.partner_native_steer_deg == 30 &&
               nat.partner_native_trim_pct == 10 && nat.partner_native_rates == PartnerNativeRates::mirror && nat.invalid_values == 0 &&
               nat.unknown_keys == 0, "native keys parse");
         const auto ratesOff = Lab("enabled=1\nrole=host\npartner_native_rates=off\n");
@@ -602,6 +602,19 @@ int main() {
         const auto playLegacy = Lab("enabled=1\nmode=play\nrole=host\n" + saves + "net=1\npartner_drive=legacy\npartner_native_gun=1\n");
         Check(playLegacy.play_refused == 0 && playLegacy.invalid_values == 0, "play keeps an explicit legacy drive");
         Check(kPlayRefusedNativeDrive == 0x20000 && kPlayRefusedNativeDrive == (kPlayRefusedDebugSoldierWarp << 1), "native refusal bit");
+        // Every play refusal is its own bit (no two refusals share one).
+        const std::uint32_t play_refusal_bits[] = {kPlayRefusedLoopback, kPlayRefusedSelfSteamId, kPlayRefusedPeerSteamId, kPlayRefusedSelfName,
+                                          kPlayRefusedMutexSuffix, kPlayRefusedXInput, kPlayRefusedJoinTrigger, kPlayRefusedAutoJoin,
+                                          kPlayRefusedHostPeerAddr, kPlayRefusedBindLoopback, kPlayRefusedLegacyLink, kPlayRefusedPeerAddr,
+                                          kPlayRefusedNoSaveDir, kPlayRefusedGuestNoPeer, kPlayRefusedImpairment, kPlayRefusedWorldProbe,
+                                          kPlayRefusedDebugSoldierWarp, kPlayRefusedNativeDrive};
+        std::uint32_t refusal_union = 0;
+        bool refusal_distinct = true;
+        for (const std::uint32_t bit : play_refusal_bits) {
+            refusal_distinct = refusal_distinct && bit != 0 && (bit & (bit - 1)) == 0 && (refusal_union & bit) == 0;
+            refusal_union |= bit;
+        }
+        Check(refusal_distinct && refusal_union == 0x3FFFFu, "kPlayRefused* are 18 distinct single bits");
     }
 
     std::printf("%u lab/coop configuration checks passed; pure parser, no game calls\n", checks);

@@ -612,8 +612,9 @@ try {
         'partner_input_hold=own', 'partner_input_words=hpr', 'partner_input_mask=0x2240006', 'partner_recon=track', 'partner_input_correct_mm=3000', 'partner_recon_runaway=pin', 'partner_input_slot=body') -Role host
     Assert-Equal "$($ovInput['partner_apply'])/$($ovInput['partner_input_hold'])/$($ovInput['partner_recon'])/$($ovInput['partner_input_slot'])/$($ovInput['partner_input_mask'])/$($ovInput['partner_input_correct_mm'])/$($ovInput['partner_recon_runaway'])" 'input/own/track/body/0x2240006/3000/pin' '-PartnerSetting: the Play-OfflineCoop input-drive settings'
     Assert-True ($playText.Contains("'partner_input_words=hpr', 'partner_input_mask=0x2240006'") -and
-        $playText.Contains("'partner_input_defer=on', 'partner_input_mask=0x224004E'") -and $playText.Contains("'partner_native_rates=mirror'") -and
-        !$playText.Contains('0x2200006') -and !$playText.Contains('0x220004E')) 'Play-OfflineCoop passes EVADE (0x40000) in every mask and mirrors the movement rates (native)'
+        $playText.Contains("'partner_input_defer=on', 'partner_input_mask=0x224005E'") -and $playText.Contains("'partner_native_fire=visual'") -and
+        $playText.Contains("'partner_native_rates=mirror'") -and !$playText.Contains('0x2200006') -and !$playText.Contains('0x220004E') -and
+        !$playText.Contains('0x220005E') -and !$playText.Contains('0x224004E')) 'Play-OfflineCoop passes EVADE (0x40000) in every mask, visual fire in the native gun stage (0x224005E) and mirrors the movement rates (native)'
     # Round 4 lab.ini value kinds.
     Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_recon_align_ms -Value -16)/$(ConvertTo-LabPartnerValue -Key partner_recon_align_ms -Value 150)" '-16/150' 'partner_recon_align_ms (signed)'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_recon_align_ms -Value -51 } '-50..150' 'align range'
@@ -623,13 +624,15 @@ try {
     # Native puppet lab.ini keys (docs/native-puppet.md).
     Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_drive -Value native)/$(ConvertTo-LabPartnerValue -Key partner_input_defer -Value census)/$(ConvertTo-LabPartnerValue -Key partner_input_local -Value all)/$(ConvertTo-LabPartnerValue -Key partner_native_aim -Value lookcam)" 'native/census/all/lookcam' 'native enums'
     Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_native_gun -Value $true)/$(ConvertTo-LabPartnerValue -Key partner_native_fire -Value 0)/$(ConvertTo-LabPartnerValue -Key partner_native_steer_deg -Value 30)/$(ConvertTo-LabPartnerValue -Key partner_native_trim_pct -Value 0)" '1/0/30/0' 'native bools and ints'
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_native_fire -Value visual)/$(ConvertTo-LabPartnerValue -Key partner_native_fire -Value $true)/$(ConvertTo-LabPartnerValue -Key partner_native_fire -Value 1)/$(ConvertTo-LabPartnerValue -Key partner_native_fire -Value off)" 'visual/visual/visual/0' 'native fire: 0 or visual'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_fire -Value raw } '0|visual' 'native fire values'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_drive -Value puppet } 'legacy|native' 'drive values'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_input_defer -Value yes } 'off|census|on' 'defer values'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_steer_deg -Value 31 } '0..30' 'steer range'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_trim_pct -Value 11 } '0..10' 'trim range'
     $ovNative = ConvertFrom-LabPartnerSettingArgs -Items @('partner_drive=native', 'partner_input_defer=on', 'partner_native_aim=look',
-        'partner_native_gun=1', 'partner_input_mask=0x224004E', 'partner_native_rates=mirror') -Role guest
-    Assert-Equal "$($ovNative['partner_drive'])/$($ovNative['partner_input_defer'])/$($ovNative['partner_native_aim'])/$($ovNative['partner_native_gun'])/$($ovNative['partner_input_mask'])/$($ovNative['partner_native_rates'])" 'native/on/look/1/0x224004e/mirror' '-PartnerSetting: the native gun-stage settings'
+        'partner_native_gun=1', 'partner_native_fire=visual', 'partner_input_mask=0x224005E', 'partner_native_rates=mirror') -Role guest
+    Assert-Equal "$($ovNative['partner_drive'])/$($ovNative['partner_input_defer'])/$($ovNative['partner_native_aim'])/$($ovNative['partner_native_gun'])/$($ovNative['partner_native_fire'])/$($ovNative['partner_input_mask'])/$($ovNative['partner_native_rates'])" 'native/on/look/1/visual/0x224005e/mirror' '-PartnerSetting: the native gun-stage settings'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_rates -Value copy } 'off|log|mirror' 'rates values'
 
     # Round 3 lab.ini value kinds.

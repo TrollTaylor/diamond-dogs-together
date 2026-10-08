@@ -280,7 +280,10 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_input_local'; Json = 'input_local'; Kind = 'enum'; Values = @('main', 'all') },
     @{ Key = 'partner_native_aim'; Json = 'native_aim'; Kind = 'enum'; Values = @('off', 'look', 'lookcam') },
     @{ Key = 'partner_native_gun'; Json = 'native_gun'; Kind = 'bool' },
-    @{ Key = 'partner_native_fire'; Json = 'native_fire'; Kind = 'bool' },
+    # Native fire (docs/native-puppet.md "Weapons"): 0 (FIRE masked) or visual
+    # (the partner's shots are animation, sound and effects only; FIRE passes
+    # only while the RequestBullet owner filter is live). 1/true mean visual.
+    @{ Key = 'partner_native_fire'; Json = 'native_fire'; Kind = 'fire' },
     @{ Key = 'partner_native_steer_deg'; Json = 'native_steer_deg'; Kind = 'int'; Min = 0; Max = 30 },
     @{ Key = 'partner_native_trim_pct'; Json = 'native_trim_pct'; Kind = 'int'; Min = 0; Max = 10 },
     @{ Key = 'partner_native_rates'; Json = 'native_rates'; Kind = 'enum'; Values = @('off', 'log', 'mirror') },
@@ -334,6 +337,10 @@ function ConvertTo-LabPartnerValue {
         if ($text -cin @('1', 'true', 'yes', 'on')) { return '1' }
         if ($text -cin @('0', 'false', 'no', 'off')) { return '0' }
         $allowed = '0 or 1'
+    } elseif ($spec.Kind -eq 'fire') {
+        if ($text -cin @('0', 'off', 'false', 'no')) { return '0' }
+        if ($text -cin @('1', 'visual', 'true', 'yes', 'on')) { return 'visual' }
+        $allowed = '0|visual'
     } elseif ($spec.Kind -eq 'port') {
         if ($text -cmatch '^[0-9]{1,5}$' -and [int]$text -ge 1024 -and [int]$text -le 65535) { return [string][int]$text }
         $allowed = '1024..65535'
