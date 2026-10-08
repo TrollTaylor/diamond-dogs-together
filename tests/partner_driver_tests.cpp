@@ -3433,6 +3433,7 @@ int main() {
                 "revert, fault), xform/hybrid drivers, looks (quiet/snake/net/copy, verify, timeout, waiting, refusals), census, "
                 "ps probe, dm=map (patch, table, sources, aim pivots, gates, failures, release, teardown, caps), native puppet "
                 "(enter sequence, publication order, leave on fault, dm=map rearm, census, install refusals, thread, revert latch, "
-                "unlatch, channel 2 in legacy, v3 sender, play-mode trigger refusal, identity/roots withdrawal); no game\n", checks);
+                "unlatch, channel 2 in legacy, v3 sender, play-mode trigger refusal, identity/roots withdrawal, rates: v4 sender, "
+                "mirror request, telemetry, forget/epoch); no game\n", checks);
     return 0;
 }

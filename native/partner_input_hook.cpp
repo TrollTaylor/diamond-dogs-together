@@ -1552,7 +1552,6 @@ void DrainStats(Stats& out) noexcept {
 
 void ForgetRates() noexcept { InterlockedExchange(&g_rates_forget, 1); }
 
-
 bool PatchLive(const void* base) noexcept {
     const auto b = reinterpret_cast<std::uintptr_t>(base);
     if (!g_stub) return false;

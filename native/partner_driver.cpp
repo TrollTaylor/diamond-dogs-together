@@ -1879,13 +1879,19 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     }
     // Native rates: both records at most every kRatesReadMs (read-only; the
     // mirror itself runs in the drain window through the Arm).
-    if (set.nrates == PartnerNativeRates::off || !realized || !h.read_rates) {
+    // The sender's own record (id0) does not depend on instance 1 being realized.
+    if (set.nrates == PartnerNativeRates::off || !h.read_rates) {
         m.rates_id0_ok = m.rates_id1_ok = false;
         m.rates_id0 = m.rates_id1 = pp::RateRead{};
     } else if (!m.rates_read_ms || now - m.rates_read_ms >= kRatesReadMs) {
         m.rates_read_ms = now ? now : 1;
         m.rates_id0_ok = h.read_rates(h.context, st, 0, m.rates_id0);
-        m.rates_id1_ok = h.read_rates(h.context, st, 1, m.rates_id1);
+        m.rates_id1_ok = realized && h.read_rates(h.context, st, 1, m.rates_id1);
+    }
+    if (!realized && h.read_rates && set.nrates != PartnerNativeRates::off) {
+        m.rates_id1_ok = false;
+        m.rates_id1 = pp::RateRead{};
+        m.rates_id1.refusal = "unrealized";
     }
     const bool rates_remote_live = RatesRemoteLive(m, now);
     const char* rates_mirror = "off";
