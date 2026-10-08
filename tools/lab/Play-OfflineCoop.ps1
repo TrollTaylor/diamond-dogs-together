@@ -90,10 +90,13 @@ param(
     # dm=map: xform movement + direct-motion clips following the other player.
     # The default since the 2026-10-05 live pass; kept for compatibility.
     [switch]$Animated,
-    # Native puppet (lab only, opt-in; docs/native-puppet.md): the animated
-    # partner as the fallback plus partner_drive=native with the job deferral
-    # (loco stage). Unqualified until the coordinator's hidden runs pass.
+    # Native puppet (docs/native-puppet.md) is the default since the
+    # 2026-10-08 hidden runs (a7823dbe loco, 63199c7a/bec857fb gun): the
+    # partner runs the game's own locomotion/aim from the other player's pad,
+    # with the animated partner (dm=map) as the automatic fallback. -Native is
+    # kept for compatibility; -NoNative plays the clip-driven animated partner.
     [switch]$Native,
+    [switch]$NoNative,
     # One-PC LAN rehearsal of the two-PC play mode (net_bind=any, LAN address, link secret).
     [switch]$Lan,
     # -Lan: this PC's LAN IPv4 (default: the first IPv4 of an Up adapter with a gateway).
@@ -213,12 +216,18 @@ try {
         # two-PC play keys (tools/CoopPlay.psm1 Get-PlayPartnerDefaults; lab_scripts_tests).
         $partnerSettings = @('partner_stage=3', 'partner_source=net', 'partner_look=net', 'partner_apply=xform', 'partner_anim=off', 'partner_reset=n', 'partner_dm=map')
     }
-    if ($Native) {
-        if ($experiment.Move -ne 'map') { throw '-Native runs on the animated partner (dm=map); drop -InputDrive/-ProvenWarp/-Experimental.' }
+    if ($Native -and $NoNative) { throw 'Use either -Native or -NoNative.' }
+    if ($Native -and $experiment.Move -ne 'map') { throw '-Native runs on the animated partner (dm=map); drop -InputDrive/-ProvenWarp/-Experimental.' }
+    if ($experiment.Move -eq 'map' -and !$NoNative) {
+        # The worker's native gun stage (tools/worker/WorkerSessionCommon.psm1
+        # Get-WorkerPartnerSettings): aim/hold with the stock46 rifle on body 1
+        # (needs a loader built with the stock46 experiments); native firing stays
+        # off so the partner never fires real shots into the receiver's world.
         $partnerSettings += @('partner_drive=native', 'partner_input_send=1', 'partner_input_hook=1', 'partner_input_hold=own',
             'partner_input_words=hpr', 'partner_input_wrap=window', 'partner_input_cam=sandbox', 'partner_input_local=main',
-            'partner_recon=track', 'partner_input_slot=body', 'partner_input_defer=on', 'partner_input_mask=0x2200006', 'partner_native_aim=off')
-        Write-Note 'NATIVE PUPPET (lab, unqualified): partner_drive=native with the job deferral; dm=map stays the automatic fallback.'
+            'partner_recon=track', 'partner_input_slot=body', 'partner_input_defer=on', 'partner_input_mask=0x220004E',
+            'partner_native_gun=1', 'partner_native_fire=0', 'partner_native_aim=look', 'partner_input_triggers=1', 'partner_input_rstick=1')
+        Write-Note 'NATIVE PARTNER: the other player''s body runs the game''s own movement and aiming; dm=map clips are the automatic fallback (-NoNative turns this off).'
     }
     if ($experiment.Move -eq 'input') {
         $partnerSettings += @('partner_input=net', 'partner_input_send=1', 'partner_input_cam=sandbox', 'partner_input_hold=own',
