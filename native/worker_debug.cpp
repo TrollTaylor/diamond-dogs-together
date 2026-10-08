@@ -142,7 +142,7 @@ void Publish(const worker_scenario::RunContext& c) noexcept {
         Bool(s.input_armed),Bool(s.parts_loaded),Bool(s.range_hidden),Bool(s.remote_valid),Bool(s.world_configured),Bool(s.world_link_up));
     j.Add(",\"overlay_open\":%s,\"overlay_frames\":%u,\"overlay_request_serial\":%u,\"overlay_result_serial\":%u",
         Bool(s.overlay_open),s.overlay_frames,s.overlay_request_serial,s.overlay_result_serial);
-    j.Add("],\"enemy_camps\":[");for(unsigned i=0;i<s.enemy_camp_count && i<32;++i){if(i)j.Add(",");j.Add("{\"name\":");j.String(s.enemy_camps[i].name,sizeof(s.enemy_camps[i].name));j.Add(",\"distance_mm\":%d,\"route_count\":%u}",s.enemy_camps[i].distance_mm,s.enemy_camps[i].route_count);}
+    j.Add(",\"enemy_camps\":[");for(unsigned i=0;i<s.enemy_camp_count && i<32;++i){if(i)j.Add(",");j.Add("{\"name\":");j.String(s.enemy_camps[i].name,sizeof(s.enemy_camps[i].name));j.Add(",\"distance_mm\":%d,\"route_count\":%u}",s.enemy_camps[i].distance_mm,s.enemy_camps[i].route_count);}
     j.Add("],\"enemy_routes_camp\":");j.String(s.enemy_routes_camp,sizeof(s.enemy_routes_camp));j.Add(",\"enemy_routes\":[");
     for(unsigned i=0;i<s.enemy_route_count && i<64;++i){if(i)j.Add(",");j.Add("{\"name\":");j.String(s.enemy_routes[i].name,sizeof(s.enemy_routes[i].name));j.Add(",\"index\":%u}",s.enemy_routes[i].index);}
     j.Add("],\"worker_input\":{");
