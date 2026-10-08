@@ -5,6 +5,7 @@
 #define NOMINMAX
 #include <windows.h>
 #include <strsafe.h>
+#include <charconv>
 #include <cmath>
 #include <cstring>
 #include "mgscoop/soldier_warp.hpp"
@@ -77,13 +78,16 @@ const char* ResolveChain(std::uintptr_t base, std::size_t span, std::uint32_t id
         !ReadValue(chain.handle_vt + c::handle_send_slot, chain.hop) || !Inside(base, span, chain.hop))
         return "chain";
     chain.hop_read = ReadBlock(chain.hop, chain.hop_bytes, sizeof(chain.hop_bytes));
+    if (!chain.hop_read) return "chain";
     std::uint32_t displacement = 0;
-    if (!chain.hop_read || !Forwarder(chain.hop_bytes, displacement)) return nullptr;  // engine dispatch, unpinned
+    if (!Forwarder(chain.hop_bytes, displacement)) return nullptr;  // unknown hop shape: engine dispatch, unpinned
+    // A recognized forwarder is evidence of where the message goes: it must reach the
+    // verified handler on a soldier subobject, or nothing is sent.
     std::uintptr_t leaf = 0, leaf_vt = 0, handler = 0;
-    if (!ReadValue(chain.handle_object + displacement, leaf) || !leaf || !ReadValue(leaf, leaf_vt)) return nullptr;
+    if (!ReadValue(chain.handle_object + displacement, leaf) || !leaf || !ReadValue(leaf, leaf_vt)) return "leaf";
     chain.leaf = leaf; chain.leaf_vt = leaf_vt;
     if ((leaf_vt != base + c::soldier_vtable_a_rva && leaf_vt != base + c::soldier_vtable_b_rva) ||
-        !ReadValue(leaf_vt + c::soldier_handler_slot, handler) || handler != base + c::handler_rva) return nullptr;
+        !ReadValue(leaf_vt + c::soldier_handler_slot, handler) || handler != base + c::handler_rva) return "leaf";
     chain.pinned = true;
     return nullptr;
 }
@@ -106,6 +110,28 @@ bool ReadLeafState(const Chain& chain, std::uint32_t index, Chain& out) noexcept
     return true;
 }
 } // namespace
+
+bool ParseReceipt(const char* text, std::size_t size, std::uint32_t& command, Request& request) noexcept {
+    if (!text || !size || size > 128) return false;
+    std::int64_t field[6]{};
+    const char* cursor = text;
+    const char* const end = text + size;
+    for (unsigned i = 0; i < 6; ++i) {
+        if (i && (cursor >= end || *cursor++ != ' ')) return false;
+        if (cursor >= end || !((*cursor >= '0' && *cursor <= '9') || *cursor == '-')) return false;
+        const auto parsed = std::from_chars(cursor, end, field[i]);
+        if (parsed.ec != std::errc{} || parsed.ptr == cursor) return false;
+        cursor = parsed.ptr;
+    }
+    if (cursor != end || field[0] <= 0 || field[0] > 0xffffffffll || field[1] < 0 || field[1] > 0xffff ||
+        field[5] < -8000 || field[5] > 8000) return false;
+    for (unsigned i = 2; i < 5; ++i) if (field[i] < -100000000 || field[i] > 100000000) return false;
+    command = static_cast<std::uint32_t>(field[0]);
+    request.go_id = static_cast<std::uint32_t>(field[1]);
+    for (unsigned i = 0; i < 3; ++i) request.pos[i] = static_cast<float>(field[2 + i]) * 0.001f;
+    request.yaw = static_cast<float>(field[5]) * 0.001f;
+    return true;
+}
 
 const char* Verify(std::uintptr_t base, std::size_t span, std::uintptr_t& mismatch) noexcept {
     const Preserve preserve;
@@ -174,10 +200,33 @@ Result Warp(std::uintptr_t base, std::size_t span, const Request& request) noexc
     std::memcpy(message + c::message_quat, quat, sizeof(quat));
     // +0x30 u16 local player index (used only by stance 1-2), +0x32 flag 0, +0x33 handled (out).
     alignas(16) std::int32_t out[4] = {-2, 0, 0, 0};
+    result.sent = true;
     if (!CallSend(send, manager, out, request.go_id, message)) { result.refusal = "fault"; return result; }
     result.out = out[0];
     result.handled = message[c::message_handled];
+    // The handler (0x13619e5/0x13619ea, 0x1364e5b) and SendCommand (0xbf3aa6) give only these two answers.
+    const bool moved = result.out == 0 && result.handled == 1, waiting = result.out == -1 && result.handled == 0;
+    if (!moved && !waiting) result.refusal = "anomaly";
     return result;
+}
+
+const char* Gate::Admit(std::uint32_t command_id, std::uint32_t go) noexcept {
+    if (latched) return "latched";
+    if (!command_id) return "target";
+    if (command_id != command) { command = command_id; go_id = go; attempts = 0; landed = false; }
+    else if (go != go_id) return "target";
+    if (landed) return "landed";
+    if (attempts >= kMaxAttempts) return "budget";
+    ++attempts;
+    return nullptr;
+}
+
+const char* Gate::Record(const Result& result) noexcept {
+    if (!result.refusal && result.out == 0 && result.handled == 1) landed = true;
+    if (latched || !result.refusal || (std::strcmp(result.refusal, "fault") != 0 && std::strcmp(result.refusal, "anomaly") != 0))
+        return nullptr;
+    latched = result.refusal;
+    return latched;
 }
 
 std::size_t FormatCensus(std::uintptr_t base, std::size_t span, std::uint32_t go_id, const Result& result, char* out,

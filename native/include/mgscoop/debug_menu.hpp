@@ -126,8 +126,8 @@ bool ParseLuaState(const char* text, std::size_t size, LuaFlags& out) noexcept;
 bool LuaStateReceipt(const char* text, std::size_t size) noexcept;
 // Called only by the owner-thread observer after its offline/save/context gate.
 bool EnemyReceipt(const char* text, std::size_t size) noexcept;
-// True while `id` is a host command of the current generation, already popped
-// by the owner, whose text is `prefix` or starts with `prefix` and a space
+// True while `id` is the most recently popped host command of the current
+// generation and its text is `prefix` or starts with `prefix` and a space
 // (soldier_warp authorization). Gameplay must be ready and not terminating.
 bool DispatchedCommand(std::uint32_t id, const char* prefix) noexcept;
 } // namespace mgscoop::debug_menu

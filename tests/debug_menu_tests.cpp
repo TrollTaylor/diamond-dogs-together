@@ -156,6 +156,7 @@ int main() {
     const auto here_id = command.id;
     Check(debug::QueueCommand("spawn_enemy closest") && debug::Pop(command), "closest dispatched");
     Check(!debug::DispatchedCommand(command.id, "spawn_enemy here"), "other spawn modes cannot warp");
+    Check(!debug::DispatchedCommand(here_id, "spawn_enemy here"), "a later pop ends the earlier spawn's warp authorization");
     debug::BeginMission(30020);
     Check(!debug::DispatchedCommand(here_id, "spawn_enemy here"), "travel invalidates the warp authorization");
     debug::Configure(true, false, true); debug::BeginMission(30010);

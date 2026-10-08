@@ -106,7 +106,7 @@ try {
     if(!$beforeSaves.Count){throw 'No real save manifest; refusing worker preparation.'}
     $session=[ordered]@{schema=1;run_id=$runId;run_dir=$runDirectory;repo=$repo;build_directory=$build;status='staging';
         started_utc=[DateTime]::UtcNow.ToString('o');failure=$null;supervisor=$null;owned_processes=@();
-        candidate_sha256=$loaderHash;baseline_sha256=$BaselineLoaderSha256;archive_sha256=$pins.Archive;
+        candidate_sha256=$loaderHash;baseline_sha256=$BaselineLoaderSha256;archive_sha256=$pins.Archive;lab_settings=@($LabSetting);
         check_receipt=[IO.Path]::GetFullPath($CheckReceipt,$repo);check_receipt_sha256=Get-WorkerHash ([IO.Path]::GetFullPath($CheckReceipt,$repo));
         qualification=$qualification.QualificationPath;qualification_sha256=Get-WorkerHash $qualification.QualificationPath;
         prepare_started=$false;prepare_completed=$false;configuration=$null;real_saves=[ordered]@{root=$identity.UserData;before=$beforeSaves};

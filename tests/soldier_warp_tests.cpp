@@ -47,6 +47,12 @@ std::int32_t* Record(Seen& s, void* self, std::int32_t* out, std::uint32_t index
 }
 std::int32_t* Handler(void* self, std::int32_t* out, std::uint32_t index, unsigned char* message) { return Record(seen, self, out, index, message); }
 std::int32_t* Engine(void* self, std::int32_t* out, std::uint32_t index, unsigned char* message) { return Record(engine, self, out, index, message); }
+// The shape of the soldier vtable +0x10 getter (0x1351f30): stores a qword into *out, never handles.
+std::int32_t* Getter(void*, std::int32_t* out, std::uint32_t, unsigned char*) {
+    const std::uint64_t value = 0x100000000ull;
+    std::memcpy(out, &value, sizeof(value));
+    return out;
+}
 // mov rax, imm64; jmp rax
 void Stub(unsigned char* at, const void* target) {
     const unsigned char code[] = {0x48, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xe0};
@@ -84,6 +90,7 @@ int main() {
     Stub(image + c::handler_rva, reinterpret_cast<const void*>(&Handler));
     Stub(image + 0x100, reinterpret_cast<const void*>(&CountFn));
     Stub(image + 0x200, reinterpret_cast<const void*>(&Engine));
+    Stub(image + 0x300, reinterpret_cast<const void*>(&Getter));
     // Manager static (0xbf3920 constructed) and registry.
     Put(image + c::manager_object_rva, base + c::manager_vtable_rva);
     Put<std::uint32_t>(image + c::manager_guard_rva, 1);
@@ -203,9 +210,23 @@ int main() {
           "census marks the unpinned hop");
     engine.answer = -1;
     r = sw::Warp(base, span, request);
-    Check(r.refusal == nullptr && r.out == -1 && r.handled == 0, "unpinned unrealized answer passes through");
-    engine.answer = 0;
-    // Forwarder to a non-soldier inner object stays unpinned (engine dispatch).
+    Check(r.refusal == nullptr && r.sent && r.out == -1 && r.handled == 0, "unpinned unrealized answer passes through");
+    // Any other answer from the unpinned dispatch is an anomaly (sent, then latched by the gate).
+    engine.answer = 7;
+    r = sw::Warp(base, span, request);
+    Check(std::strcmp(r.refusal, "anomaly") == 0 && r.sent && r.out == 7 && engine.calls == 3, "unexpected out value is an anomaly");
+    engine.answer = 0; engine.handled = 0;
+    r = sw::Warp(base, span, request);
+    Check(std::strcmp(r.refusal, "anomaly") == 0 && r.out == 0 && r.handled == 0, "out=0 without the handled flag is an anomaly");
+    engine.handled = 1;
+    handle_vt[0x10 / 8] = base + 0x300;
+    r = sw::Warp(base, span, request);
+    Check(std::strcmp(r.refusal, "anomaly") == 0 && r.out == 0 && r.handled == 0 && seen.calls == 3,
+          "a getter-shaped hop writes a qword into the 16-byte answer and is an anomaly");
+    sw::Gate latch{};
+    Check(latch.Admit(1, go) == nullptr && std::strcmp(latch.Record(r), "anomaly") == 0 &&
+          std::strcmp(latch.Admit(2, go), "latched") == 0, "an anomaly latches the feature off");
+    // A recognized forwarder that does not reach the verified handler on a soldier subobject refuses unsent.
     handle_vt[0x10 / 8] = base + c::forwarder_rva;
     alignas(16) static unsigned char other[0x100]{};
     std::uintptr_t other_vt[0x20]{};
@@ -213,10 +234,52 @@ int main() {
     Put(other, reinterpret_cast<std::uintptr_t>(other_vt));
     handle_object[0x48 / 8] = reinterpret_cast<std::uintptr_t>(other);
     r = sw::Warp(base, span, request);
-    Check(r.refusal == nullptr && !r.chain.pinned && engine.calls == 3 && engine.self == other, "forwarder to a non-soldier is not pinned");
+    Check(std::strcmp(r.refusal, "leaf") == 0 && !r.sent && !r.chain.pinned && engine.calls == 4 && seen.calls == 3,
+          "forwarder to a non-soldier refuses unsent");
+    handle_object[0x48 / 8] = 0;
+    r = sw::Warp(base, span, request);
+    Check(std::strcmp(r.refusal, "leaf") == 0 && !r.sent && engine.calls == 4, "forwarder to a missing object refuses unsent");
     handle_object[0x48 / 8] = reinterpret_cast<std::uintptr_t>(leaf);
     r = sw::Warp(base, span, request);
-    Check(r.refusal == nullptr && r.chain.pinned && seen.calls == 4, "pinned again");
+    Check(r.refusal == nullptr && r.sent && r.chain.pinned && seen.calls == 4, "pinned again");
+
+    // Per-command gate: one guard, bounded attempts, nothing after landing, latch on fault.
+    sw::Gate gate{};
+    Check(std::strcmp(gate.Admit(0, go), "target") == 0, "command id 0 is never admitted");
+    Check(gate.Admit(7, go) == nullptr && gate.attempts == 1, "first attempt admitted");
+    Check(std::strcmp(gate.Admit(7, go + 1), "target") == 0, "one guard per command");
+    for (unsigned i = 1; i < sw::kMaxAttempts; ++i) Check(gate.Admit(7, go) == nullptr, "retries within the budget");
+    Check(std::strcmp(gate.Admit(7, go), "budget") == 0 && gate.attempts == sw::kMaxAttempts, "attempt budget");
+    Check(gate.Admit(8, go + 1) == nullptr && gate.attempts == 1 && gate.go_id == go + 1, "a new command starts a fresh budget");
+    sw::Result answer{};
+    answer.out = -1;
+    Check(gate.Record(answer) == nullptr && !gate.landed && gate.Admit(8, go + 1) == nullptr, "waiting answer keeps retrying");
+    answer.refusal = "unrealized";
+    Check(gate.Record(answer) == nullptr && !gate.latched, "a refusal before sending does not latch");
+    answer.refusal = nullptr; answer.out = 0; answer.handled = 1;
+    Check(gate.Record(answer) == nullptr && gate.landed, "handled answer lands");
+    Check(std::strcmp(gate.Admit(8, go + 1), "landed") == 0, "nothing is sent after the guard landed");
+    answer = {}; answer.refusal = "fault";
+    Check(std::strcmp(gate.Record(answer), "fault") == 0 && gate.Record(answer) == nullptr, "a fault latches once");
+    Check(std::strcmp(gate.Admit(9, go), "latched") == 0, "latched until process exit");
+    // WARP_V1 receipt grammar (the Lua -> native trust boundary).
+    const auto parse = [](const char* text, std::uint32_t& command, sw::Request& out) {
+        out = {}; command = 0;
+        return sw::ParseReceipt(text, std::strlen(text), command, out);
+    };
+    std::uint32_t command = 0;
+    sw::Request parsed{};
+    Check(parse("12 1027 5670 20200 -32500 2094", command, parsed) && command == 12 && parsed.go_id == 1027 &&
+          std::fabs(parsed.pos[0] - 5.67f) < 1e-4f && std::fabs(parsed.pos[1] - 20.2f) < 1e-4f && std::fabs(parsed.pos[2] + 32.5f) < 1e-4f &&
+          std::fabs(parsed.yaw - 2.094f) < 1e-6f && parsed.player[0] == 0.0f, "receipt parsed (player left to the caller)");
+    Check(parse("4294967295 65535 -100000000 100000000 0 -8000", command, parsed) && command == 0xffffffffu, "receipt bounds inclusive");
+    const char* const bad_receipts[] = {"", "0 1027 0 0 0 0", "-1 1027 0 0 0 0", "4294967296 1027 0 0 0 0", "1 65536 0 0 0 0",
+        "1 -1 0 0 0 0", "1 1027 100000001 0 0 0", "1 1027 0 0 -100000001 0", "1 1027 0 0 0 8001", "1 1027 0 0 0 -8001",
+        "1 1027 0 0 0", "1 1027 0 0 0 0 0", "1 1027 0 0 0 0 ", " 1 1027 0 0 0 0", "1  1027 0 0 0 0", "1 +1027 0 0 0 0",
+        "1 1027 0.5 0 0 0", "1 1027 0 0 0 1e3", "1 1027 0 0 0 99999999999999999999", "1 1027 0 0 0 0x10", "1 1027 0 0 0 --1"};
+    for (const char* text : bad_receipts) Check(!parse(text, command, parsed), text);
+    Check(!sw::ParseReceipt(nullptr, 4, command, parsed) && !sw::ParseReceipt("1 1027 0 0 0 0", 0, command, parsed),
+          "null or empty receipt refused");
     VirtualFree(image, 0, MEM_RELEASE);
     std::printf("soldier_warp_tests: PASS %u checks\n", checks);
     return 0;

@@ -526,7 +526,11 @@ bool DispatchedCommand(std::uint32_t id, const char* prefix) noexcept {
     if (!id || !prefix || !*prefix) return false;
     AcquireSRWLockShared(&lock);
     const auto n = std::strlen(prefix);
-    const char* text = state.enabled && state.gameplay_ready && !state.terminating && state.host ? DispatchedText(id) : "";
+    // Only the most recently popped command: Lua pops nothing while an action is
+    // pending, so a finished or superseded command can no longer authorize.
+    const Command& latest = dispatched[(dispatch_at + 63) % 64];
+    const char* text = state.enabled && state.gameplay_ready && !state.terminating && state.host && latest.id == id &&
+        latest.generation == state.generation ? latest.text : "";
     const bool found = std::strncmp(text, prefix, n) == 0 && (text[n] == 0 || text[n] == ' ');
     ReleaseSRWLockShared(&lock);
     return found;

@@ -172,12 +172,19 @@ Results:
   `far=1` means more than 10 m away; `frames` is the number of updates until the
   engine handled the message.
 - Fallback: `submitted_guard_here;ent=<id>;scope=local;mode=route;why=<reason>`, then
-  `guard_here;ent=<id>;d=..;moved=..;far=0|1;mode=route;come=0|1;sync=none;route=<route>`
+  `guard_here;ent=<id>;d=..;moved=..;far=0|1;mode=route;why=<reason>;come=0|1;sync=none;route=<route>`
   (`far=1` above 60 m). `why` is `disabled` (key off), `native_unavailable` (no
-  native answer), `realize_timeout`, or a native refusal: `contract`, `host`,
-  `mission`, `command`, `pose`, `type`, `range` (target over 20 m from you), `input`,
-  `manager`, `registry`, `chain`, `index`, `stance` (crouched/prone guards are not
-  moved) or `fault`.
+  native answer), `realize_timeout`, or a native refusal: `contract`, `host`, `pose`,
+  `type`, `range` (target over 20 m from you), `input`, `manager`, `registry`, `chain`,
+  `leaf` (the hop is a known forwarder that does not reach the verified handler),
+  `index`, `stance` (stance 1-4 guards are not moved), `budget`, `fault`, `anomaly`
+  or `latched` (see below).
+- `command` or `mission` from the native side (the spawn command is no longer the
+  current one, or the mission is ending) end the command with
+  `spawn_context;why=command|mission` and no route snap: no guard commands are sent
+  during travel or teardown. A pending native placement that the menu drops
+  (`action_context_changed`) releases its force-realize only while the same mission is
+  still in gameplay.
 
 At most 8 guards per mission (native and route together). Placement is local to the
 host: the guest's copy of that soldier does not move. Sleep, kill, Fulton and the
@@ -204,9 +211,19 @@ RVAs and the hop's first bytes.
 subobject whose vtable +0xa8 is the verified handler; the loader then mirrors the
 handler's own checks first (index, realized bit, stance 1-4) without sending.
 `leaf=engine` means the engine's own dispatch was used without that proof; pin it
-from the census before relying on it. Every change of outcome (the menu retries each
+from the census before relying on it. A recognized forwarder that lands anywhere else
+refuses (`leaf`) without sending. Every change of outcome (the menu retries each
 update while the guard realizes) logs
 `debug_menu=soldier_warp; id=; go=; r=; h=; leaf=; refused=`.
+
+Native bounds per command: only the most recently popped `spawn_enemy here` command
+authorizes a send, it moves one GameObjectId, at most 160 sends (the menu needs 151 at
+most: one, then one per update for 150 updates) and nothing after the engine handled
+it (`target`, `budget`, `landed`). The handler and SendCommand only answer `r=0;h=1`
+(moved) or `r=-1;h=0` (not yet). Any other answer (`anomaly`) or a caught exception
+(`fault`) logs `soldier_warp=disabled; reason=fault|anomaly; id=..; go=..; r=..; h=..;
+until=process_exit` and every later attempt in that process refuses with `latched`,
+so an unexpected unpinned dispatch is used at most once.
 
 The hidden-worker scenario `tools/worker/scenarios/debug-menu.txt` turns the key on
 with `labsetting debug_soldier_warp=1` and expects `mode=warp` with `d` of 10 m or
@@ -260,7 +277,7 @@ In the hidden worker the menu is never opened with F9. Scenario steps:
   confirms and runs the spawn, partner and world commands. It enables the native
   placement and expects `spawn_enemy here` to report `mode=warp` with `d` of 10 m or
   less, then checks that the nearest soldier is still close a few seconds later.
-  Mother Base has no authored camp soldiers, so spawn refusals are expected there.
+  Mother Base has no authored camp soldiers, so the scenario needs 30010 or 30020.
 
 ## Not available
 

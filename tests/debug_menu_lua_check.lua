@@ -594,7 +594,7 @@ for _, entry in ipairs(sp.calls) do if entry[1] == 'SetSneakRoute' then check(en
 check(sp.state[4] == 'spawn', 'spawn pending kind')
 sp:tick(); sp:tick()
 local final = sp.logs[#sp.logs][3]
-check(final == 'guard_here;ent=4294967295;d=14.1;moved=31.6;far=0;mode=route;come=0;sync=none;route=rt_second' and sp.logs[#sp.logs][2] == 1,
+check(final == 'guard_here;ent=4294967295;d=14.1;moved=31.6;far=0;mode=route;why=disabled;come=0;sync=none;route=rt_second' and sp.logs[#sp.logs][2] == 1,
     'spawn here final readback: ' .. final)
 check(sp.D.enemy.routePos.rt_second ~= nil and sp.D.enemy.last ~= nil, 'route position cached')
 sp.routeError = true
@@ -666,7 +666,7 @@ sp:send('spawn_enemy here'); sp:tick()
 check(sp.logs[#sp.logs][3] == 'submitted_guard_here;ent=4294967295;scope=local;mode=route;why=dispatch' and sp.logs[#sp.logs][2] == 2,
     'native refusal mid-retry falls back to the route snap')
 check(forced(sp, false) == 1 and sp:count('SetSneakRoute') == 1, 'warp force realize released before the route snap')
-sp:tick(); sp:tick(); check(sp.logs[#sp.logs][3]:find(';mode=route;come=0;', 1, true), 'route fallback final')
+sp:tick(); sp:tick(); check(sp.logs[#sp.logs][3]:find(';mode=route;why=dispatch;come=0;', 1, true), 'route fallback final keeps why')
 sp = warpFixture({{r = -1, h = 0}})
 sp:send('spawn_enemy here')
 for _ = 1, 149 do sp:tick() end
@@ -689,6 +689,23 @@ end
 check(sp:send('spawn_enemy here')[3]:find(';mode=route;why=native_unavailable', 1, true), 'old loader (literal receipt) falls back')
 sp = warpFixture({{r = -1, h = 0}}); sp:send('spawn_enemy here'); sp.life[5] = 3; sp:tick()
 check(sp.logs[#sp.logs][3] == 'spawn_terminal_unknown' and forced(sp, false) == 1 and sp.D.pending == nil, 'guard died while waiting')
+-- Native context refusals end the command: no route snap once the command or mission ended natively.
+for _, why in ipairs({'command', 'mission'}) do
+    sp = warpFixture({{refused = why}})
+    check(sp:send('spawn_enemy here')[3] == 'spawn_context;why=' .. why and sp.logs[#sp.logs][2] == 0, 'context refusal is final: ' .. why)
+    check(sp:count('SetSneakRoute') == 0 and sp:count('disable') == 0 and forced(sp, nil) == 0 and sp.D.pending == nil, 'no route snap: ' .. why)
+end
+sp = warpFixture({{r = -1, h = 0}, {refused = 'mission'}})
+sp:send('spawn_enemy here'); sp:tick()
+check(sp.logs[#sp.logs][3] == 'spawn_context;why=mission' and sp.logs[#sp.logs][2] == 0 and sp.D.pending == nil, 'mid-retry mission end is final')
+check(forced(sp, false) == 0 and sp:count('SetSneakRoute') == 0, 'mid-retry context end: no guard command at all during teardown')
+-- A pending warp dropped by the context check releases force realize only while its mission is in gameplay.
+sp = warpFixture({{r = -1, h = 0}}); sp:send('spawn_enemy here'); sp.sitting = true; sp:tick()
+check(sp.logs[#sp.logs][3] == 'action_context_changed' and forced(sp, false) == 1 and sp.D.pending == nil, 'off foot: force realize released')
+sp = warpFixture({{r = -1, h = 0}}); sp:send('spawn_enemy here'); sp.loading = true; sp:tick()
+check(sp.logs[#sp.logs][3] == 'action_context_changed' and forced(sp, false) == 0, 'mission not in gameplay: no guard command')
+sp = warpFixture({{r = -1, h = 0}}); sp:send('spawn_enemy here'); sp.env.vars.missionCode = 30020; sp:tick()
+check(sp.D.pending == nil and forced(sp, false) == 0, 'mission change: no guard command to the old mission')
 sp = warpFixture({{r = 0, h = 1}}); for i = 1, 7 do sp.D.enemy.used['old_' .. i] = true end
 sp:send('spawn_enemy here'); sp:tick(); sp:tick()
 check(sp:send('spawn_enemy here')[3] == 'spawn_pool_limit_8' and #sp.warps == 1, 'eight per mission includes warped guards')

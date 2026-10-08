@@ -210,11 +210,16 @@ do
       D.mission, reason(), D.host and 1 or 0, q and q.kind or "none", D.god and 1 or 0, D.infinite and 1 or 0,
       D.fulton and 1 or 0, D.slowmo and 1 or 0, clock(), l, m)
   end
+  -- A dropped action undoes its own side effects (q.cancel), only while its mission
+  -- is still in gameplay: never during travel or teardown.
+  local function cancel(q)
+    if q and q.cancel and get(vars, "missionCode") == q.mission and call(TppMission, "CheckMissionState") == true then q.cancel() end
+  end
   local function pending()
     local q = D.pending
     if not q then return end
     local ok, mission = guard()
-    if not ok or mission ~= q.mission then D.pending = nil; note(q.id, false, "action_context_changed"); return end
+    if not ok or mission ~= q.mission then D.pending = nil; pcall(cancel, q); note(q.id, false, "action_context_changed"); return end
     q.frames = q.frames + 1
     if q.kind ~= "warp" then q.poll(); return end
     local p, target = pose(), q.pose
@@ -230,7 +235,7 @@ do
     D.mission = mission
     local q = D.pending
     local ok, failure = pcall(pending)
-    if not ok then D.pending = nil; pcall(note, q and q.id or 0, false, bindingError("pending_binding_error", failure)) end
+    if not ok then D.pending = nil; pcall(cancel, q); pcall(note, q and q.id or 0, false, bindingError("pending_binding_error", failure)) end
     -- A pending action polls: telemetry stays live and commands wait in the native queue.
     if D.pending then receipt("return 'MGS_COOP_DEBUG_POLL_V1'"); pcall(state); return end
     local command = receipt("return 'MGS_COOP_DEBUG_CMD_V1'")

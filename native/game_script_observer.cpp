@@ -632,6 +632,7 @@ thread_local char debug_reply[400]{};
 // debug_soldier_warp=1): the contract is verified once at startup.
 bool soldier_warp_ready = false;
 unsigned soldier_warp_census = 0;  // census lines logged by this process (bounded)
+mgscoop::soldier_warp::Gate soldier_warp_gate{};  // Lua owner thread only
 // Crash-probe context flags: bit0 input window armed, bit1 DM patch applied.
 std::uint32_t PartnerCtxFlags() noexcept {
     return (partner_driver.mission.input_armed ? 1u : 0u) | (partner_driver.mission.dm_patched ? 2u : 0u);
@@ -1206,18 +1207,9 @@ const char* SoldierWarpReceipt(const char* text, std::size_t size) noexcept {
         StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {refused=\"%s\"}", why);
         return static_cast<const char*>(debug_reply);
     };
-    std::int64_t field[6]{};
-    const char* cursor = text;
-    const char* const end = text + size;
-    for (unsigned i = 0; i < 6; ++i) {
-        if (i && (cursor >= end || *cursor++ != ' ')) return refuse("args");
-        const auto parsed = std::from_chars(cursor, end, field[i]);
-        if (parsed.ec != std::errc{} || parsed.ptr == cursor) return refuse("args");
-        cursor = parsed.ptr;
-    }
-    if (cursor != end || field[0] <= 0 || field[0] > 0xffffffffll || field[1] < 0 || field[1] > 0xffff ||
-        field[5] < -8000 || field[5] > 8000) return refuse("args");
-    for (unsigned i = 2; i < 5; ++i) if (field[i] < -100000000 || field[i] > 100000000) return refuse("args");
+    std::uint32_t id = 0;
+    sw::Request request{};
+    if (!sw::ParseReceipt(text, size, id, request)) return refuse("args");
     const auto& labc = mgscoop::GetLabConfig();
     if (!labc.debug_soldier_warp) return refuse("disabled");
     if (!soldier_warp_ready || !game_base) return refuse("contract");
@@ -1225,19 +1217,20 @@ const char* SoldierWarpReceipt(const char* text, std::size_t size) noexcept {
     if (labc.role == mgscoop::LabRole::guest || labc.mode != mgscoop::LabMode::lab) return refuse("host");
     if (mission_terminating || !ReadMission(mission) || mission != partner_mission || !mgscoop::SupportsPartnerBody(mission))
         return refuse("mission");
-    const auto id = static_cast<std::uint32_t>(field[0]);
     if (!debug::DispatchedCommand(id, "spawn_enemy here")) return refuse("command");
     const auto snapshot = debug::GetSnapshot();
     if (!snapshot.host || !snapshot.pose_valid) return refuse("pose");
-    sw::Request request{};
-    request.go_id = static_cast<std::uint32_t>(field[1]);
-    for (unsigned i = 0; i < 3; ++i) {
-        request.pos[i] = static_cast<float>(field[2 + i]) * 0.001f;
-        request.player[i] = snapshot.player_pos[i];
-    }
-    request.yaw = static_cast<float>(field[5]) * 0.001f;
+    for (unsigned i = 0; i < 3; ++i) request.player[i] = snapshot.player_pos[i];
     const auto base = reinterpret_cast<std::uintptr_t>(game_base);
-    const auto result = sw::Warp(base, game_span, request);
+    // One command, one guard, bounded attempts; a fault or anomaly latches the feature off.
+    sw::Result result{};
+    if (const char* gate = soldier_warp_gate.Admit(id, request.go_id)) result.refusal = gate;
+    else {
+        result = sw::Warp(base, game_span, request);
+        if (const char* latched = soldier_warp_gate.Record(result))
+            LogFormat("soldier_warp=disabled; reason=%s; id=%u; go=%u; r=%d; h=%u; until=process_exit\r\n", latched, id,
+                      request.go_id, result.out, unsigned(result.handled));
+    }
     // The Lua side retries every update while the guard realizes: log changes only.
     static std::uint32_t last_id = 0, last_go = 0;
     static std::int32_t last_out = 0;
@@ -1248,7 +1241,7 @@ const char* SoldierWarpReceipt(const char* text, std::size_t size) noexcept {
         result.refusal != last_refusal || result.chain.pinned != last_pinned) {
         last_id = id; last_go = request.go_id; last_out = result.out; last_handled = result.handled;
         last_refusal = result.refusal; last_pinned = result.chain.pinned;
-        if (soldier_warp_census < 24) {
+        if (soldier_warp_census < 24 && result.chain.type_object) {
             ++soldier_warp_census;
             char line[512]{};
             if (sw::FormatCensus(base, game_span, request.go_id, result, line, sizeof(line))) Log(line);

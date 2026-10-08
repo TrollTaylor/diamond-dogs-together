@@ -139,8 +139,10 @@ do
     if (not come or E.ignored[s.name]) and pcall(call, TppEnemy, notice, s.id) then E.ignored[s.name] = not come or nil end
     local q, forced = {kind = "spawn", id = id, mission = D.mission, frames = 0}
     local function release() if forced then forced = nil; pcall(send, s.id, {id = "SetForceRealize", forceRealize = false}) end end
-    -- Route snap fallback when the native placement refuses or never lands.
+    q.cancel = release
+    -- Route snap fallback, never once the command or mission has ended natively.
     local function route(why)
+      if why == "command" or why == "mission" then return false, "spawn_context;why=" .. why end
       release()
       local best, br, budget, p = nil, nil, {n = 0}, pose()
       for i = 1, min(4, #list) do
@@ -150,7 +152,7 @@ do
         end
       end
       if not br then return false, "spawn_no_route;why=" .. why end
-      local ok, msg = place(s, br, id, {prefix = "guard_here", submitted = "submitted_guard_here", come = come, tag = "mode=route"})
+      local ok, msg = place(s, br, id, {prefix = "guard_here", submitted = "submitted_guard_here", come = come, tag = "mode=route;why=" .. why})
       return ok, msg .. ";mode=route;why=" .. why
     end
     local r, why = warp(s, id)

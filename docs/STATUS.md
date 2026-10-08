@@ -32,6 +32,19 @@ debug_soldier_warp=1`) expects `mode=warp` with `d` of 10 m or less. Nothing has
 run in the game yet. Open: realize latency of far guards, patrol AI or navmesh
 correction moving the guard afterwards, and host-local positions.
 
+Review fixes (same day, still fixture-only): a recognized forwarder hop that does
+not reach the verified handler on a soldier subobject now refuses unsent (`leaf`)
+instead of using the engine dispatch. Each `spawn_enemy here` command may move one
+GameObjectId, at most 160 times and never after it was handled, and only while it is
+the most recently popped command. Any answer other than `r=0;h=1` or `r=-1;h=0`, or a
+caught exception, latches the feature off for the process
+(`soldier_warp=disabled; reason=anomaly|fault`). Native `command`/`mission`
+refusals end the command (`spawn_context`) instead of snapping a guard to a route
+during travel or teardown. A pending placement dropped by the menu's context check
+releases its force-realize only while its mission is still in gameplay. The route
+fallback's final result keeps `why=`. The debug-menu scenario now requires 30010 or
+30020.
+
 ## October 7, 2026: partner facing while moving (fixture-tested, runtime unverified)
 
 The sender published `vars.playerRotY`, which is the control direction. Hidden run
