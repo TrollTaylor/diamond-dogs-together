@@ -11,10 +11,12 @@
 //   fallback -> entering: every precondition held kEnterHoldMs continuously and
 //     at least kCooldownMs after the last leaving.
 //   entering: the native settings apply (dm off, apply=input, input=net), the
-//     driver's DM machinery stops the clip and reverts the patch, the
+//     driver's DM machinery stops the clip and reverts the patch; from the
+//     place step on the deferral is armed (req_defer_arm), and only then does
+//     the driver publish the native Arm (a frame between a native Arm and the
+//     deferral would run block 1's job inline in a batch); the
 //     reconciliation places and verifies the body and arms the window; then
-//     active (the driver arms the deferral last). Timeouts and a failed DM
-//     revert leave.
+//     active. Timeouts and a failed DM revert leave.
 //   active -> leaving: hard reasons immediately, soft reasons after a hold.
 //   leaving (one step): defer disarmed -> window disarmed -> dm=map rearmed,
 //     body epoch bumped; then fallback, or latched after kLatchFallbacks
@@ -57,6 +59,8 @@ struct In {
     bool terminating;
     bool installed_h0, installed_h2, installed_h1, installed_wrap;
     bool live_h0, live_h1, live_h2;
+    // The phase-1 local detour (partner_local_detour; installed with defer=on).
+    bool installed_p1, live_p1;
     const char* install_refusal;  // nullptr, or the static reason the lazy install gave
     bool thread_ok;         // batch_threads_seen == 1 && batch_thread == hook_thread && batches >= min_batches
     bool faulted;           // window, defer (lost/torn/scope/gate) or look fault
@@ -82,7 +86,7 @@ struct Out {
     const char* reason;   // why the current mode (static)
     bool transition;      // the mode changed in this Step
     // Driver requests, in the publication order of docs/native-puppet.md 4.5.
-    bool req_defer_arm;      // active: identity and window are published; arm the deferral last
+    bool req_defer_arm;      // entering from the place step on, and active: identity published; arm the deferral before the native Arm
     bool req_defer_disarm;   // leaving: first
     bool req_disarm;         // leaving: then the input window
     bool req_dmmap_rearm;    // leaving: then dm=map
@@ -98,6 +102,7 @@ struct State {
     std::uint64_t ready_since_ms;
     bool left;                      // a leaving happened this mission (at left_ms)
     std::uint64_t left_ms;
+    const char* left_reason;        // why the last leaving happened (static; kept through cooldown/settling)
     std::uint32_t fallbacks;        // this mission
     std::uint8_t enter_step;        // 0 none, 1 dm_stop, 2 dm_revert, 3 place, 4 armed
     std::uint64_t step_since_ms;
@@ -187,7 +192,21 @@ struct RingEntry {
     std::uint8_t mode, remote_stance, body_stance;
     std::int32_t remote_mmps, body_mmps, err_mm, steer_mdeg;
     std::uint32_t held, gun3c0;
+    // Locomotion evidence: the body's act (anim array), instance 1's base
+    // action record after the last windowed drain (act, requested next act,
+    // sampled move magnitude x1000; kNull when unread), phase-1 calls forced
+    // local since the previous entry, and the reconciliation step of the
+    // previous driver tick (the one err_mm/body_mmps come from): its mode and
+    // action (kReconOff when the reconciliation was off) and whether that
+    // tick's reply placed the body by Warp.
+    std::uint16_t act;
+    std::uint8_t rec_act, rec_next;
+    std::int32_t rec_mag;
+    std::uint16_t p1_forced;
+    std::uint8_t recon_mode, recon_action;
+    bool warp;
 };
+inline constexpr std::uint8_t kReconOff = 0xFF;
 inline constexpr std::size_t kRing = 48;
 struct Ring {
     RingEntry entries[kRing]{};
@@ -210,9 +229,21 @@ struct Telemetry {
     bool configured;
     Mode mode;
     char reason[32];
+    // The reason of the last leaving ("" before any): "cooldown"/"settling"
+    // replace `reason` in fallback, this keeps the cause.
+    char left_reason[32];
     std::uint64_t since_ms;
     std::uint32_t fallbacks;
     bool latched;
+    // Phase-1 detour (per second, per_s_valid) and the last windowed drain
+    // (partner_input_hook::NativeStats).
+    bool p1_installed, p1_live;
+    std::uint32_t p1_forced, p1_refused, p1_windows;
+    std::uint32_t drain_held, drain_view, drain_local_pre, drain_mask28, drain_mask2c, drain_mask30;
+    std::int32_t drain_mag;
+    bool rec_ok;
+    std::uint32_t rec_act, rec_next;
+    std::int32_t rec_mag, rec_heading_mrad;
     // Deferral.
     PartnerDefer setting;
     bool h0, h1, h2, wrap, thread_ok, armed;

@@ -66,14 +66,46 @@ is generated from it.
     written into instance 1's own PS slot (`*(PS1+0x290)`, look angles are
     computed in phase 0 by `0xFF28D0` -> `0xFFAC00`), unless the game skipped
     its own computation (record bit 1); aim stage only (`partner_native_aim`).
+- **Drain locality**: every drain window sets instance 1's isLocal bit
+  (`rec+0x2AC` bit 0) for the deferred job, whatever `partner_input_local`
+  says (that key now only affects the walk windows), and restores it after.
+- **P1, the phase-1 local detour** (`native/partner_local_detour.cpp`): the base
+  action plugin's update (`0x23B5090`+0x18 -> `0x109F0E0`, phases 0..6) runs
+  phase 1 at `0x109E130`. There `0x109E17C` `cmp edx,[rax+0x218]; setne bpl`
+  picks the local branch (event 4: the act handlers' move-intent sampler
+  `0x10BCD90` reads PP+0x10/+0x14 into rec+0x2C0/+0x2C4, which starts
+  locomotion) or the remote branch (event 5, network follow) by id == P+0x218,
+  not by isLocal. Instance 1 therefore never sampled the injected pad: run
+  27c64c8d had live input (held 0x200000, stick 1000) and the body stayed in
+  act 1. P1 forces the local branch for exactly (P, id 1, the hook thread) while
+  a drain window runs block 1's job, and nowhere else:
+  - a near stub (`setne bpl` on the original flags; if the forced id, P and the
+    TEB thread id all match, `bpl = 0` and `hits++`, else if only the id matched
+    `refused++`; `jmp 0x109E186`; rax and rcx preserved, flags recomputed there);
+  - `jmp rel32` to the stub in the int3 padding `0x109E123..0x109E12F` at
+    `0x109E128` (outside every function, never a branch target);
+  - the 4 bytes of `setne bpl` at `0x109E182` become `eb a4 cc cc` (jmp to the
+    padding) in one locked dword exchange inside one cache line.
+  The contract checker verifies the bytes, the single jump into `0x109E130`,
+  the phase-1 jump-table entry, the padding and the cache line. It installs
+  with `defer=on` only, once per process, never removed; the arbiter requires it
+  (`not_installed`, `hook_lost`). P+0x218 itself is never written (91 compare
+  sites in block 1's update and its pairing with P+0x214 / P+0x58 make that
+  unsafe). Telemetry: `p1` (hits, refusals, windows per second) and the 1 Hz
+  `partner_native_drain` line (injection, isLocal before, private PP masks,
+  instance 1's record after its update: act, next act, sampled magnitude).
 - **Arbiter** (`native/partner_native.cpp`, pure): off / fallback / entering /
   active / leaving / latched. Fallback -> entering after every precondition held
   2 s (and 5 s after a leaving). Entering applies the native effective settings
   (apply=input, input=net, dm off, wrap=window, hold own, words hpr, cam sandbox,
   recon track with the native preset, slot body, p218 off, gun/fire-limited
   mask); the existing DM release/revert and the reconciliation's
-  place/verify/arm sequence carry the switch; the deferral is armed last
-  (identity -> Arm -> defer). Hard reasons (fault, hook loss, thread, unrealized,
+  place/verify/arm sequence carry the switch; the deferral is armed from the
+  place step on, before the native Arm is published (identity -> defer -> Arm;
+  `TickInput` refuses with `native_defer` until then). Run 27c64c8d showed why:
+  with the Arm first, one frame ran block 1's job inline in a batch and left
+  with `wrap_in_batch`; three such entries latched the mission. The cause of the
+  last leaving is kept as `left_reason` through cooldown and settling. Hard reasons (fault, hook loss, thread, unrealized,
   range, stage, lost, wrap_in_batch, drain_block, terminating) leave at once;
   soft reasons after holds (input stale 1 s, link 0.5 s, health over 1 s
   windows, cost 3 × 4 ms, diverging, runaway). Leaving: defer off -> window off

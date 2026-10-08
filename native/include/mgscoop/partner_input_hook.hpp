@@ -76,9 +76,11 @@ struct WrapStats {
     std::uint32_t windows[kWrapEntries];      // wrap=window windows run
     std::uint32_t phase_mask[kWrapEntries];   // phases seen for block 1 (bit = phase & 31)
     std::uint32_t other_calls;                // calls for any other root (all entries)
-    // Native puppet: windows refused because a hook-thread batch was in flight
-    // (a job running inline during the join), and svc entries that would have
-    // windowed under a native Arm (block 1's job runs only inside drains).
+    // Native puppet: windows refused because a batch was in flight (a walk or
+    // a legacy svc window inline during the join; main windows and drains
+    // count here too), and svc entries of block 1 on the hook thread outside
+    // a window under a native Arm (block 1's job runs only inside drains: one
+    // arriving here ran outside a drain, in a batch or not; never a refusal).
     std::uint32_t wrap_in_batch;
     std::uint32_t svc_native_skips;
 };
@@ -105,6 +107,22 @@ struct NativeStats {
     // RunJobWindow refusals: the job's block is not instance 1's (the Arm's
     // pool1, never the live pool of instance 0), or a batch was in flight.
     std::uint32_t drain_block_refused, drain_in_batch;
+    // Phase-1 detour (partner_local_detour, process totals): phase-1 calls
+    // switched to the local branch, id matches refused (P or thread), drain
+    // windows that armed it.
+    bool p1_installed;
+    std::uint32_t p1_forced, p1_refused, p1_windows;
+    // The last windowed drain: the injection it got (held word, stick
+    // magnitude x1000, consumer view 0 full / 1 level / 2 neutral), rec+0x2AC
+    // before the window set isLocal, instance 1's private PP masks after it
+    // (+0x28 buttons, +0x2C sticks: bit 0 zeroes the sampled move magnitude,
+    // +0x30 triggers) and instance 1's base action record after its update
+    // (rec_ok false when the read faulted).
+    std::uint32_t drain_held, drain_view, drain_local_pre, drain_mask28, drain_mask2c, drain_mask30;
+    std::int32_t drain_mag;
+    bool rec_ok;
+    std::uint32_t rec_act, rec_next;       // rec+0x2A0 current act, rec+0x2A1 requested next act
+    std::int32_t rec_mag, rec_heading_mrad;  // rec+0x2C0 move magnitude x1000, rec+0x2C4 heading
 };
 
 // Drained by the driver. Counters are process-lifetime totals (the driver
@@ -128,7 +146,8 @@ void PublishWrapRoots(std::uintptr_t root0, std::uintptr_t root1, bool census) n
 // Runs block 1's deferred job once on the hook thread inside a native window
 // (Validate with root1, GO == P - 0x20 checks, `block` == the Arm's pool1 and
 // never instance 0's live pool, no batch in flight anywhere, the frame
-// injection's view for `consumer`, PRE incl. HOLD latch, the job, POST).
+// injection's view for `consumer`, PRE incl. HOLD latch and isLocal, the
+// phase-1 detour armed for (P, id 1, this thread), the job, POST).
 // Returns true when the job ran windowed; when the Arm, validation, the block,
 // a batch in flight or PRE refuses, the job still runs exactly once without a
 // window (false): instance 0's job never sees instance 1's pad.

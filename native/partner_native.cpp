@@ -28,8 +28,8 @@ const char* EnterBlocker(const State& s, const In& in, const Params& p) noexcept
     if (s.dm_latch) return "dm_revert_failed";
     if (!in.defer_on) return "defer_census";
     if (in.install_refusal) return InstallReason(in.install_refusal);
-    if (!in.installed_h0 || !in.installed_wrap || !in.installed_h2 || !in.installed_h1) return "not_installed";
-    if (!in.live_h0 || !in.live_h1 || !in.live_h2) return "hook_lost";
+    if (!in.installed_h0 || !in.installed_wrap || !in.installed_h2 || !in.installed_h1 || !in.installed_p1) return "not_installed";
+    if (!in.live_h0 || !in.live_h1 || !in.live_h2 || !in.live_p1) return "hook_lost";
     if (!in.thread_ok) return "thread";
     if (in.faulted) return "faulted";
     if (in.dm_revert_failed) return "dm_revert_failed";
@@ -50,7 +50,7 @@ const char* HardLeave(const In& in) noexcept {
     if (!in.defer_on) return "defer_off";
     if (in.terminating) return "terminating";
     if (in.faulted) return "faulted";
-    if (!in.live_h0 || !in.live_h1 || !in.live_h2) return "hook_lost";
+    if (!in.live_h0 || !in.live_h1 || !in.live_h2 || !in.live_p1) return "hook_lost";
     if (!in.thread_ok) return "thread";
     if (!in.realized) return "unrealized";
     if (in.range_hidden) return "range_hidden";
@@ -117,6 +117,7 @@ Out Step(State& s, const In& in, const Params& p) noexcept {
         o.req_defer_disarm = o.req_disarm = o.req_dmmap_rearm = o.req_epoch = true;
         s.left = true;
         s.left_ms = now;
+        s.left_reason = why;
         ++s.fallbacks;
         s.ready = false;
         s.enter_step = 0;
@@ -178,6 +179,10 @@ Out Step(State& s, const In& in, const Params& p) noexcept {
         }
         if (step <= 2 && now - s.since_ms >= p.dm_timeout_ms) leave("enter_timeout_dm");
         else if (step == 3 && now - s.step_since_ms >= p.place_timeout_ms) leave("enter_timeout_place");
+        // The deferral before the native Arm: the driver publishes the Arm only
+        // once the deferral is armed, so block 1's job never runs inline in a
+        // batch under a native Arm (the wrap_in_batch race of the arming frame).
+        else if (step == 3) o.req_defer_arm = true;
         break;
     }
     case Mode::active: {

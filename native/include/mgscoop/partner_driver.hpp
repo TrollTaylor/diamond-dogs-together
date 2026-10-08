@@ -132,10 +132,12 @@ inline constexpr unsigned kNativeLineCap = 3600;   // partner_defer / partner_na
 inline constexpr unsigned kNativeEventCap = 64;    // transitions, enter steps, gun changes, manifests
 inline constexpr std::uint64_t kNativeMatchWindowMs = 10000;
 inline constexpr std::uint64_t kAimMatchMs = 300;
-// What the observer reports about the native installs (H0 input hook, wraps, H2, H1).
+// What the observer reports about the native installs (H0 input hook, wraps,
+// H2, H1, and the phase-1 local detour P1, installed with defer=on).
 struct NativeInstall {
     bool h0, wrap, h1, h2;
     bool live_h0, live_h1, live_h2;
+    bool p1, live_p1;
 };
 
 enum class TriggerRead : std::uint8_t { none, read, unreadable };
@@ -561,13 +563,16 @@ struct Mission {
     std::uint64_t native_line_ms;
     unsigned native_lines;
     bool native_lines_capped;
+    unsigned native_drain_lines;         // 1 Hz partner_native_drain lines (own cap)
+    bool native_drain_lines_capped;
+    std::uint32_t ring_p1_last;          // p1_forced total at the previous ring entry
     unsigned native_gun_lines;
     std::uint64_t native_gun_line_ms;
     std::uint32_t native_gun_last;       // gun3c0 | active << 31 at the last change line
     partner_native::SteerState steer;
     double steer_rad, mag_scale;
     std::int32_t steer_mdeg;
-    std::uint64_t runaway_since_ms;      // recon pin (runaway) held since (0 = not)
+    std::uint64_t runaway_since_ms;      // recon runaway pin (report.runaway_active) held since (0 = not)
     // Parity windows (10 s) and aim match.
     std::uint64_t match_window_ms;
     std::uint32_t match_ticks, stance_hits, move_hits, stance_pct, move_pct;

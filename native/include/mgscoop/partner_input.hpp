@@ -350,7 +350,8 @@ struct Arm {
     std::uint64_t press_until_ms;
     // Native puppet (docs/native-puppet.md 5): native windows (frame injection
     // per consumer, HOLD latch, svc entries never window, look write), isLocal
-    // in drains/walks (local=all), the look override, the GO identity and
+    // in walk windows (local=all; the main window and drains always set it),
+    // the look override, the GO identity and
     // instance 1's look slot (validated on the driver tick, re-checked in the
     // hook), and the steering applied to the composed stick.
     bool native;

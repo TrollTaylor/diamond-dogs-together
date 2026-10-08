@@ -6,6 +6,7 @@
 #include <cstring>
 #include "mgscoop/lab_config.hpp"
 #include "mgscoop/partner_native.hpp"
+#include "mgscoop/partner_recon.hpp"
 
 namespace mgscoop::worker_debug {
 bool Parse(const char* text, std::size_t size, const char* run, const char* role, Request& out) noexcept {
@@ -70,7 +71,16 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
     const auto i32=[&](std::int32_t v) noexcept { if(v==partner_native::kNull) j.Add("null"); else j.Add("%d",v); };
     j.Add(",\"native\":{\"drive\":\"%s\",\"mode\":\"%s\",\"reason\":",n.configured?"native":"legacy",partner_native::ModeName(n.mode));
     j.String(n.reason,sizeof(n.reason));
+    j.Add(",\"left_reason\":");j.String(n.left_reason,sizeof(n.left_reason));
     j.Add(",\"since_ms\":%llu,\"fallbacks\":%u,\"latched\":%s",static_cast<unsigned long long>(n.since_ms),n.fallbacks,Bool(n.latched));
+    // Phase-1 detour (rates per second) and the last windowed drain.
+    j.Add(",\"p1\":{\"installed\":%s,\"live\":%s,\"per_s\":",Bool(n.p1_installed),Bool(n.p1_live));
+    if(!n.per_s_valid) j.Add("null");
+    else j.Add("{\"forced\":%u,\"refused\":%u,\"windows\":%u}",n.p1_forced,n.p1_refused,n.p1_windows);
+    j.Add("},\"drain\":{\"held\":%u,\"mag\":%d,\"view\":%u,\"local_pre\":%u,\"mask28\":%u,\"mask2c\":%u,\"mask30\":%u,",
+        n.drain_held,n.drain_mag,n.drain_view,n.drain_local_pre,n.drain_mask28,n.drain_mask2c,n.drain_mask30);
+    j.Add("\"rec_ok\":%s,\"rec_act\":%u,\"rec_next\":%u,\"rec_mag\":",Bool(n.rec_ok),n.rec_act,n.rec_next);i32(n.rec_mag);
+    j.Add(",\"rec_heading_mrad\":");i32(n.rec_heading_mrad);j.Add("}");
     j.Add(",\"defer\":{\"setting\":\"%s\",\"h0\":%s,\"h1\":%s,\"h2\":%s,\"wrap\":%s,\"thread_ok\":%s,\"armed\":%s,",
         PartnerDeferName(n.setting),Bool(n.h0),Bool(n.h1),Bool(n.h2),Bool(n.wrap),Bool(n.thread_ok),Bool(n.armed));
     j.Add("\"batch_thread\":%u,\"hook_thread\":%u,\"lua_thread\":%u,\"batch_threads_seen\":%u,\"per_s\":",
@@ -111,12 +121,18 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
     j.Add("\"remote_flags\":%u,\"remote_equip\":%u,\"body_equip\":",n.remote_flags,n.remote_equip);i32(n.body_equip);
     j.Add(",\"aim_match\":%s,\"aim_err_mdeg\":",Bool(n.aim_match));i32(n.aim_err_mdeg);
     j.Add(",\"manifest_rev\":%u,\"ammo_experiment\":%s}",n.manifest_rev,Bool(n.ammo_experiment));
-    j.Add(",\"ring_fields\":[\"ms\",\"mode\",\"remote_stance\",\"body_stance\",\"remote_mmps\",\"body_mmps\",\"err_mm\",\"steer_mdeg\",\"held\",\"gun3c0\"],\"ring\":[");
+    j.Add(",\"ring_fields\":[\"ms\",\"mode\",\"remote_stance\",\"body_stance\",\"remote_mmps\",\"body_mmps\",\"err_mm\",\"steer_mdeg\",\"held\",\"gun3c0\","
+          "\"act\",\"rec_act\",\"rec_next\",\"rec_mag\",\"p1_forced\",\"recon_mode\",\"recon_action\",\"warp\"],\"ring\":[");
     for(std::size_t i=0;i<n.ring.count;++i){
         const auto& e=partner_native::At(n.ring,i);if(i)j.Add(",");
         j.Add("[%u,\"%s\",%u,%u,%d,%d,",e.ms,partner_native::ModeName(static_cast<partner_native::Mode>(e.mode)),unsigned(e.remote_stance),
             unsigned(e.body_stance),e.remote_mmps,e.body_mmps);
-        i32(e.err_mm);j.Add(",%d,%u,%u]",e.steer_mdeg,e.held,e.gun3c0);
+        i32(e.err_mm);j.Add(",%d,%u,%u,%u,%u,%u,",e.steer_mdeg,e.held,e.gun3c0,unsigned(e.act),unsigned(e.rec_act),unsigned(e.rec_next));
+        i32(e.rec_mag);
+        const bool recon=e.recon_mode!=partner_native::kReconOff;
+        j.Add(",%u,\"%s\",\"%s\",%s]",unsigned(e.p1_forced),
+            recon?partner_recon::ModeName(static_cast<partner_recon::Mode>(e.recon_mode)):"off",
+            recon?partner_recon::ActionName(static_cast<partner_recon::Action>(e.recon_action)):"off",Bool(e.warp));
     }
     j.Add("]}");
 }

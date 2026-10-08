@@ -40,6 +40,7 @@
 #include "mgscoop/partner_driver.hpp"
 #include "mgscoop/partner_input_hook.hpp"
 #include "mgscoop/partner_defer.hpp"
+#include "mgscoop/partner_local_detour.hpp"
 #include "mgscoop/partner_dm_patch.hpp"
 #include "mgscoop/partner_upper_probe.hpp"
 #include "mgscoop/partner_upper_end_observer.hpp"
@@ -570,6 +571,9 @@ const char* PartnerInstallDefer(void*, mgscoop::PartnerDefer mode) noexcept {
     if (mgscoop::partner_input_hook::Install(game_base, Log, &PartnerSampleInput)) return "hook";
     if (mgscoop::partner_input_hook::InstallWrap()) return "wrap";
     if (const char* why = mgscoop::partner_defer::Install(game_base, DeferMode(mode), Log)) return why;
+    // The phase-1 local detour only where a drain can arm it (defer=on).
+    if (mode == mgscoop::PartnerDefer::on)
+        if (const char* why = mgscoop::partner_local_detour::Install(game_base, Log)) return why;
     return nullptr;
 }
 void PartnerNativeInstall(void*, pd::NativeInstall& out) noexcept {
@@ -580,6 +584,8 @@ void PartnerNativeInstall(void*, pd::NativeInstall& out) noexcept {
     out.live_h0 = out.h0 && mgscoop::partner_input_hook::PatchLive(game_base);
     const bool live = out.h1 && out.h2 && mgscoop::partner_defer::PatchLive(game_base);
     out.live_h1 = out.live_h2 = live;
+    out.p1 = mgscoop::partner_local_detour::Installed();
+    out.live_p1 = out.p1 && mgscoop::partner_local_detour::PatchLive(game_base);
 }
 void PartnerDrainDeferStats(void*, mgscoop::partner_defer::Stats& out) noexcept { mgscoop::partner_defer::DrainStats(out); }
 void PartnerSetDefer(void*, bool armed, mgscoop::PartnerDefer mode) noexcept {

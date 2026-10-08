@@ -326,6 +326,27 @@ SITES = [
     (0x12072A6, '488b06488bceff5030c1e80333867c020000', 'HOLD latch writer: PP vt+0x30() >> 3 ...'),
     (0x12072C0, '83e00131867c020000', '... bit 0 only into PP+0x27C'),
     (0x10C68AF, '498b88b0000000f6412c010f85bd000000f30f107110', 'idle-to-move gate: PP+0x2C bit 0, PP+0x10'),
+    # --- Phase-1 local decision (docs/native-puppet.md "Phase-1 detour"). The base
+    # action plugin's per-id handler 0x109F0E0 (node vtable 0x23B5090 +0x18, phases
+    # 0..6) sends phase 1 to 0x109E130, which picks local (event 4: the act handlers
+    # sample the pad's move intent through 0x10BCD90) or remote (event 5, then the
+    # network follow 0x109CFE0) by id == P+0x218, never by isLocal (rec+0x2AC bit 0).
+    (0x109F0E0, '83fa06776a', 'base plugin per-id handler: phases 0..6 (cmp edx,6; ja)'),
+    (0x109F0E5, '4c8d0d140ff6fe', 'per-id handler: r9 = image base (the jump table holds RVAs)'),
+    (0x109F107, '4883c1d0418bd0e91df0ffff', 'phase 1: rcx = node - 0x30 (the plugin), edx = id; jmp 0x109E130'),
+    (0x109E14A, '488b4138448bc28bf2442b4024488b4108488bf9488b8038010000418bd841be010000004869db90030000480399a0010000',
+     'phase 1: rec = *(plugin+0x1A0) + (id - node base)*0x390; rax = P = *(*(plugin+8)+0x138)'),
+    (0x109E17C, '3b9018020000400f95c5', 'phase 1: cmp edx,[P+0x218]; setne bpl (remote = id != the local id): the detour site'),
+    (0x109E186, '4883bb90020000000f84ca0000004084ed0f8597000000488b80b0000000',
+     'phase 1: flags recomputed, bpl selects the branch; 0x109E19D reads PP = [rax+0xB0] (rax = P must survive)'),
+    (0x109E1C5, '458d4104', 'phase 1 local: the act state callback gets event 4'),
+    (0x109E244, '458d4105', 'phase 1 remote: event 5'),
+    (0x109E2DE, '440fb68ba10200004585c9741a0fb683a0020000443bc8740e448bc6488bd7488bcb',
+     'phase 1: next act rec+0x2A1 != current act rec+0x2A0 -> act transition 0x109EFA0'),
+    (0x109E11D, '4883c4205bc3cccccccccccccccccccccccccc', 'end of 0x109E060 (ret at 0x109E122), then int3 padding up to 0x109E130'),
+    (0x10A5BAA, '4c8bc38bd7e8dc710100', 'act handler 0x10A5950 event 4: the move-intent sampler 0x10BCD90'),
+    (0x10BCEF3, 'f30f11bbc0020000', 'move-intent sampler: rec+0x2C0 = move magnitude (PP+0x10 unless PP+0x2C bit 0)'),
+    (0x10BCF08, 'f30f107714f30f11b3c4020000', 'move-intent sampler: rec+0x2C4 = PP+0x14 heading'),
 ]
 # The H1 slot itself (value checked as a slot below) and the patched sites:
 # the code gate runs once per process before any lazy install.
@@ -417,6 +438,7 @@ SLOTS = [
     (0x2306660, 0x20, 0xBF6450, 'UpdateTree service vtable +0x20'),
     (0x23B8250, 0x40, 0x1112D50, 'CAM vt+0x40 (aim init: forwards to *(CAM+0x360) vt+0x50)'),
     (0x23B8250, 0x1A0, 0x1115400, 'CAM vt+0x1A0 (aim init: sub-controller lookup by hash)'),
+    (0x23B5090, 0x18, 0x109F0E0, 'base plugin +0x30 vtable slot +0x18 = per-id phase handler (phases 0..6)'),
 ]
 
 
@@ -467,6 +489,35 @@ def lea_rip_refs(target):
     return sorted(hits)
 
 
+def branch_refs(lo, hi):
+    """Every E8/E9 rel32 and 0F 80..8F rel32 in .xtext whose destination is in [lo, hi)."""
+    hits = []
+    for s in pe.sections:
+        if s.Name.rstrip(b'\0').decode() != '.xtext':
+            continue
+        data = s.get_data()
+        va = s.VirtualAddress
+        for op in (0xE8, 0xE9):
+            i = data.find(bytes([op]))
+            while 0 <= i <= len(data) - 5:
+                if lo <= va + i + 5 + struct.unpack_from('<i', data, i + 1)[0] < hi:
+                    hits.append(va + i)
+                i = data.find(bytes([op]), i + 1)
+        i = data.find(b'\x0f')
+        while 0 <= i <= len(data) - 6:
+            if 0x80 <= data[i + 1] <= 0x8F and lo <= va + i + 6 + struct.unpack_from('<i', data, i + 2)[0] < hi:
+                hits.append(va + i)
+            i = data.find(b'\x0f', i + 1)
+    return sorted(hits)
+
+
+def runtime_functions():
+    """The exception directory's RUNTIME_FUNCTION ranges [begin, end)."""
+    entry = pe.OPTIONAL_HEADER.DATA_DIRECTORY[3]
+    data = pe.get_data(entry.VirtualAddress, entry.Size)
+    return {struct.unpack_from('<II', data, i) for i in range(0, len(data) - 11, 12)}
+
+
 # Reference and containment facts the native puppet relies on (docs/native-puppet.md).
 def native_assertions():
     out = []
@@ -502,6 +553,20 @@ def native_assertions():
          'the job body has exactly one ff 50 50 call, returning to 0xBF4CEE')
     need(rel_refs(0x34470) and len(rel_refs(0x34470)) >= 100 and len(rel_refs(0x34550)) >= 100,
          'the scope ctor/dtor pair is a common game idiom')
+    # Phase-1 detour: 0x109E130 is reached only through the phase-1 jump; the
+    # jump table entry 1 is that jump; the padding the detour's rel32 jump lives
+    # in is outside every function and never a branch target; the replaced
+    # setne and the padding jump each lie inside one cache line.
+    need(rel_refs(0x109E130) == [0x109F10E], f'0x109E130 reached only from 0x109F10E: {[hex(x) for x in rel_refs(0x109E130)]}')
+    table = [struct.unpack('<I', rd(0x109F154 + 4 * k, 4))[0] for k in range(7)]
+    need(table[1] == 0x109F107 and len(set(table)) == 7, f'per-id handler jump table: phase 1 -> 0x109F107 ({[hex(x) for x in table]})')
+    funcs = runtime_functions()
+    need((0x109E060, 0x109E123) in funcs and (0x109E130, 0x109E435) in funcs, '0x109E060 ends at 0x109E123, 0x109E130 spans to 0x109E435')
+    need(not any(b < 0x109E130 and e > 0x109E123 for b, e in funcs), 'the padding 0x109E123..0x109E130 belongs to no function')
+    into = branch_refs(0x109E123, 0x109E130) + branch_refs(0x109E17D, 0x109E186)
+    need(into == [], f'no rel32 call/jmp/jcc into the padding or the replaced span: {[hex(x) for x in into]}')
+    need((0x109E182 & 63) + 4 <= 64 and (0x109E128 & 63) + 5 <= 64, 'setne dword and padding jmp each inside one cache line')
+    need(-128 <= 0x109E128 - 0x109E184 <= 127, 'jmp rel8 from 0x109E182 reaches the padding jump')
     return out
 
 failures = []
@@ -714,6 +779,18 @@ w('inline constexpr std::size_t blk_gun_node=0x378, blk_gun_iface=0x5a0, gun_ifa
 w('inline constexpr std::size_t gun_flags=0x3c0, gun_mode=0x2c1, gun_rec_size=0x610, gun_node_body=0x24, gun_node_row=0x2c, gun_node_bitmap=0x8;')
 w('inline constexpr std::uintptr_t gun_node_vtable_rva=0x2306628, gun_prim_vt_rva=0x23b3e80, gun_iface_vt_rva=0x23b3fa0;')
 w('inline constexpr std::uint32_t gun_flag_in_hand=0x4, gun_flag_hold=0x40000;')
+w('// Phase-1 local decision: the base action plugin\'s per-id handler 0x109f0e0 (node vtable 0x23b5090 +0x18)')
+w('// sends phase 1 to 0x109e130: cmp edx,[P+0x218] / setne bpl at 0x109e17c (edx = id, rax = P); bpl = 0 is the')
+w('// local branch (event 4: the act handlers sample the pad move intent into rec+0x2c0/+0x2c4), 1 the remote one')
+w('// (event 5). The detour: the setne dword at 0x109e182 becomes jmp rel8 to a jmp rel32 written into the int3')
+w('// padding 0x109e128 (outside every function), whose stub runs setne, forces bpl = 0 for the drain\'s id/P/thread')
+w('// and jumps back to 0x109e186 (flags recomputed there; rax preserved).')
+w('inline constexpr std::uintptr_t p1_handler_rva=0x109f0e0, p1_fn_rva=0x109e130, p1_cmp_rva=0x109e17c, p1_setne_rva=0x109e182;')
+w('inline constexpr std::uintptr_t p1_back_rva=0x109e186, p1_pad_rva=0x109e128, p1_pad_begin_rva=0x109e123, p1_pad_end_rva=0x109e130;')
+w('inline constexpr std::uint32_t p1_setne_orig=0xc5950f40;  // 40 0f 95 c5 (setne bpl)')
+w('inline constexpr std::uint32_t p1_setne_new=0xcccca4eb;   // eb a4 (jmp 0x109e128) cc cc')
+w('// Instance 1\'s base action record (rec1): current act, next act, sampled move magnitude and heading.')
+w('inline constexpr std::size_t rec_act=0x2a0, rec_act_next=0x2a1, rec_move_mag=0x2c0, rec_move_heading=0x2c4;')
 w('struct Site { std::uintptr_t rva; std::size_t size; unsigned char bytes[80]; };')
 w('inline constexpr Site code_sites[]={')
 for rva, expected, what in SITES:

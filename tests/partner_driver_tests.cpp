@@ -2974,7 +2974,7 @@ void TestDmMapCaps() {
 // --- Native puppet (docs/native-puppet.md 7) ------------------------------------
 // A healthy deferral: installed, live, one batch thread == hook thread, enough batches.
 void NativeHealthy(Fake& f) {
-    f.native_install = pd::NativeInstall{true, true, true, true, true, true, true};
+    f.native_install = pd::NativeInstall{true, true, true, true, true, true, true, true, true};
     f.defer.h1 = f.defer.h2 = true;
     f.defer.batches = 1000;
     f.defer.batch_threads_seen = 1;
@@ -3062,9 +3062,11 @@ void TestNativeEnterAndLeave() {
     Check(arm.enabled && arm.native && arm.config.mode == mgscoop::PartnerInput::net && arm.config.mask == 0x2200006u &&
           arm.wrap == mgscoop::PartnerWrap::window && arm.hold == mgscoop::PartnerInputHold::own && arm.go == 0x1000 - 0x20 &&
           !arm.local_all && arm.naim == mgscoop::PartnerNativeAim::off && !arm.p218, "the native Arm (effective settings)");
-    // Publication order: identity -> enabled Arm -> deferral armed last.
+    // Publication order: identity -> deferral armed -> enabled native Arm (run
+    // 27c64c8d: an Arm before the deferral let block 1's job run inline in a
+    // batch for one frame, which left with wrap_in_batch).
     const int id = s.OrderIndex("identity"), arm1 = s.OrderIndex("arm:1"), def1 = s.OrderIndex("defer:1");
-    Check(id >= 0 && arm1 > id && def1 > arm1, "publication order on entering: identity, Arm, defer");
+    Check(id >= 0 && def1 > id && arm1 > def1, "publication order on entering: identity, defer, Arm");
     Check(s.driver.mission.native_defer_armed, "deferral armed");
     // Steady active: no xform (apply=input), no dm play.
     const std::size_t xforms = s.fake.Calls("xform:");

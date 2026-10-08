@@ -19,7 +19,10 @@
 // is in flight (a job run inline during the join would race block 0 on a
 // worker); after phase 0 inside a drain the remote look angles are written
 // into instance 1's own PS slot (naim=look|lookcam). RunJobWindow is the
-// drain window partner_defer runs the deferred job in.
+// drain window partner_defer runs the deferred job in: it always sets
+// isLocal (block 1's update phases 0/5/6 read the pad only then) and arms the
+// phase-1 detour (partner_local_detour: phase 1 picks the pad-sampling local
+// branch by id == P+0x218, not by isLocal) for exactly that job.
 //
 // Exceptions. Our own reads and writes (validation, PRE, POST) handle an
 // access fault themselves: what PRE had saved is restored field by field and
@@ -36,6 +39,7 @@
 #include "mgscoop/partner_input_hook.hpp"
 #include "mgscoop/near_code.hpp"
 #include "mgscoop/partner_defer.hpp"
+#include "mgscoop/partner_local_detour.hpp"
 #include "mgscoop/partner_native.hpp"
 #include "partner_player_contract.hpp"
 
@@ -111,6 +115,12 @@ volatile LONG g_n_latch_other = 0, g_n_latch_last = 0, g_n_look_writes = 0, g_n_
 volatile LONG g_n_look_last = 0, g_n_look_faulted = 0, g_n_camsub_dirty = 0, g_n_lookcam = 0;
 volatile LONG g_n_drain_block = 0, g_n_drain_in_batch = 0;
 volatile LONG g_w_in_batch = 0, g_w_svc_native = 0;
+// The last windowed drain (diagnostics): the injection it got, instance 1's
+// private PP masks after it, isLocal before the window set it, and instance
+// 1's base action record after its update (act, next act, sampled move
+// magnitude x1000 and heading in mrad; rec_ok 0 when the read faulted).
+volatile LONG g_d_held = 0, g_d_mag = 0, g_d_view = 0, g_d_mask28 = 0, g_d_mask2c = 0, g_d_mask30 = 0, g_d_local_pre = 0;
+volatile LONG g_d_rec_ok = 0, g_d_rec_act = 0, g_d_rec_next = 0, g_d_rec_mag = 0, g_d_rec_heading = 0;
 // What the stubs answer during the current window (set before each call).
 struct Current {
     std::uint32_t held, press, release, w54, long12, tap12;
@@ -528,11 +538,13 @@ void CallOriginal(const Call& k) noexcept {
 
 // The original call with the window's fields swapped in. A fatal game
 // exception is recorded and passed on; if an outer handler unwinds through
-// here, the swapped fields are restored and the window closed first.
-void GuardedCall(const pi::Arm& a, const Save& save, const Call& k) noexcept {
+// here, the swapped fields are restored and the window closed first. A drain
+// (`detour`) releases the phase-1 detour on every exit, unwinding included.
+void GuardedCall(const pi::Arm& a, const Save& save, const Call& k, bool detour = false) noexcept {
     __try {
         __try { CallOriginal(k); }
         __finally {
+            if (detour) partner_local_detour::Release();
             if (AbnormalTermination()) {
                 g_in_drain = false;
                 SafePost(a, save, false);
@@ -793,16 +805,21 @@ void WrapEnter(const Call& k) noexcept {
     if (same) InterlockedIncrement(&g_w_same[k.entry]);
     if (nested) InterlockedIncrement(&g_w_nested[k.entry]);
     if (mode == static_cast<LONG>(PartnerWrap::window) && same && !nested) {
-        // A job run inline during a hook-thread batch's join: block 0's job may
-        // be running on a worker, the shared PP must not be swapped now.
-        if (partner_defer::InBatch()) {
-            InterlockedIncrement(&g_w_in_batch);
+        // Native: svc entries never open a window (block 1's job runs only in
+        // drains). One arriving here is block 1's job outside a drain (the
+        // frame before the deferral is armed, or a job the deferral passed;
+        // the arbiter's health counts that). Nothing is swapped, so it is
+        // never an in-batch refusal: checked before InBatch.
+        if (g_wrap_native && k.entry <= 2) {
+            InterlockedIncrement(&g_w_svc_native);
             CallOriginal(k);
             return;
         }
-        // Native: block 1's job runs only in drains (already windows).
-        if (g_wrap_native && k.entry <= 2) {
-            InterlockedIncrement(&g_w_svc_native);
+        // A walk run inline during a hook-thread batch's join (or a legacy svc
+        // window): block 0's job may be running on a worker, the shared PP
+        // must not be swapped now.
+        if (partner_defer::InBatch()) {
+            InterlockedIncrement(&g_w_in_batch);
             CallOriginal(k);
             return;
         }
@@ -816,6 +833,29 @@ void WrapEnter(const Call& k) noexcept {
         return;
     }
     CallOriginal(k);
+}
+
+// Diagnostics after a drain's job (inside the window, before POST): instance
+// 1's base action record (current act, next act, the move magnitude and
+// heading the act handlers sampled from the pad). Read-only; a fault only
+// marks the probe unread (never the window's fault state).
+int ProbeFilter(DWORD code) noexcept { return IsAccessFault(code) ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH; }
+void ProbeRecord(std::uintptr_t rec) noexcept {
+    std::uint8_t act = 0, next = 0;
+    float mag = 0.0f, heading = 0.0f;
+    bool ok = false;
+    __try {
+        act = Load<std::uint8_t>(rec + c::rec_act);
+        next = Load<std::uint8_t>(rec + c::rec_act_next);
+        mag = Load<float>(rec + c::rec_move_mag);
+        heading = Load<float>(rec + c::rec_move_heading);
+        ok = true;
+    } __except (ProbeFilter(GetExceptionCode())) {}
+    InterlockedExchange(&g_d_rec_ok, ok ? 1 : 0);
+    InterlockedExchange(&g_d_rec_act, static_cast<LONG>(act));
+    InterlockedExchange(&g_d_rec_next, static_cast<LONG>(next));
+    InterlockedExchange(&g_d_rec_mag, ok ? pi::Milli(mag) : 0);
+    InterlockedExchange(&g_d_rec_heading, ok ? pi::Milli(heading) : 0);
 }
 
 // A deferred job without a window: a fatal game code is recorded and passed on.
@@ -1165,7 +1205,9 @@ bool RunJobWindow(void* go, const void* param, std::uint32_t block, JobCallFn jo
     const std::uint64_t t0 = NowUs();
     Save save{};
     BeginWindow();
-    if (!SafePre(a, j, save, WindowOpts{a.local_all, true})) {
+    // isLocal always: block 1's whole update runs here (phases 0/5/6 read the
+    // pad only for a local record; local=all only adds the walk windows).
+    if (!SafePre(a, j, save, WindowOpts{true, true})) {
         EndWindow();
         InterlockedIncrement(&g_n_drain_refused);
         GuardedJobCall(job, go, param);
@@ -1175,10 +1217,24 @@ bool RunJobWindow(void* go, const void* param, std::uint32_t block, JobCallFn jo
     g_drain_arm = a;
     g_drain_inj = j;
     g_in_drain = true;
-    GuardedCall(a, save, Call{kJobEntry, go, const_cast<void*>(param), 0, 0});
+    InterlockedExchange(&g_d_held, static_cast<LONG>(j.held));
+    InterlockedExchange(&g_d_mag, pi::Milli(j.mag));
+    InterlockedExchange(&g_d_view, static_cast<LONG>(view));
+    InterlockedExchange(&g_d_local_pre, static_cast<LONG>(save.rec_2ac));
+    // Phase 1 picks its pad-sampling branch by id == P+0x218: instance 1 (id 1,
+    // validated: ids[1] == 1) takes it for this job only, on this thread.
+    const bool detour = partner_local_detour::Installed();
+    if (detour) partner_local_detour::Force(a.P, 1);
+    GuardedCall(a, save, Call{kJobEntry, go, const_cast<void*>(param), 0, 0}, detour);
     g_in_drain = false;
+    ProbeRecord(a.rec1);
     SafePost(a, save, true);
     EndWindow();
+    std::uint32_t masks[3]{};
+    std::memcpy(masks, g_priv_masks, sizeof(masks));
+    InterlockedExchange(&g_d_mask28, static_cast<LONG>(masks[0]));
+    InterlockedExchange(&g_d_mask2c, static_cast<LONG>(masks[1]));
+    InterlockedExchange(&g_d_mask30, static_cast<LONG>(masks[2]));
     InterlockedIncrement(&g_n_drain_windows);
     Max(g_us_max, static_cast<LONG>(NowUs() - t0));
     return true;
@@ -1342,6 +1398,24 @@ void DrainStats(Stats& out) noexcept {
     n.lookcam_writes = static_cast<std::uint32_t>(g_n_lookcam);
     n.drain_block_refused = static_cast<std::uint32_t>(g_n_drain_block);
     n.drain_in_batch = static_cast<std::uint32_t>(g_n_drain_in_batch);
+    partner_local_detour::Stats p1{};
+    partner_local_detour::ReadStats(p1);
+    n.p1_installed = p1.installed;
+    n.p1_forced = p1.forced;
+    n.p1_refused = p1.refused;
+    n.p1_windows = p1.windows;
+    n.drain_held = static_cast<std::uint32_t>(g_d_held);
+    n.drain_mag = g_d_mag;
+    n.drain_view = static_cast<std::uint32_t>(g_d_view);
+    n.drain_local_pre = static_cast<std::uint32_t>(g_d_local_pre);
+    n.drain_mask28 = static_cast<std::uint32_t>(g_d_mask28);
+    n.drain_mask2c = static_cast<std::uint32_t>(g_d_mask2c);
+    n.drain_mask30 = static_cast<std::uint32_t>(g_d_mask30);
+    n.rec_ok = g_d_rec_ok != 0;
+    n.rec_act = static_cast<std::uint32_t>(g_d_rec_act);
+    n.rec_next = static_cast<std::uint32_t>(g_d_rec_next);
+    n.rec_mag = g_d_rec_mag;
+    n.rec_heading_mrad = g_d_rec_heading;
 }
 
 bool PatchLive(const void* base) noexcept {

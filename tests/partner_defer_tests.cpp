@@ -18,6 +18,7 @@
 #include <vector>
 #include "mgscoop/partner_defer.hpp"
 #include "mgscoop/partner_input_hook.hpp"
+#include "mgscoop/partner_local_detour.hpp"
 #include "mgscoop/partner_player.hpp"
 #include "partner_player_contract.hpp"
 
@@ -122,7 +123,7 @@ World g_world;
 // With the input hook installed (TestJobWindow) the jobs also record what the
 // shared pad looks like when they run: src+0x48 (held), PP+0x27C (HOLD latch)
 // and the PP vtable pointer (the window installs a copy).
-std::uintptr_t g_watch_src = 0, g_watch_pp = 0;
+std::uintptr_t g_watch_src = 0, g_watch_pp = 0, g_watch_rec = 0;
 struct JobCall {
     std::uint32_t tid, block, sub, mode, nbits;
     int scope_depth;
@@ -130,6 +131,10 @@ struct JobCall {
     bool in_batch;
     std::uint32_t held, latch;
     std::uintptr_t pp_vt;
+    // Instance 1's isLocal word (rec1+0x2AC) and the phase-1 detour's force
+    // state while the job runs.
+    std::uint32_t rec_local;
+    mgscoop::partner_local_detour::detail::ForceState p1;
 };
 std::mutex g_calls_lock;
 std::vector<JobCall> g_calls;
@@ -171,6 +176,8 @@ void FakeJob(void* go, const pd::JobParam* p) noexcept {
         call.latch = Get<std::uint32_t>(g_watch_pp + c::pp_hold_latch);
         call.pp_vt = Get<std::uintptr_t>(g_watch_pp);
     }
+    if (g_watch_rec) call.rec_local = Get<std::uint32_t>(g_watch_rec + c::rec_local);
+    call.p1 = mgscoop::partner_local_detour::detail::ReadForceForTest();
     (void)go;
     {
         std::lock_guard<std::mutex> guard(g_calls_lock);
@@ -192,6 +199,7 @@ struct Scenario {
     bool drop_entry = false, close_gate = false, change_nbits = false, hold_lock = false;
     bool ret_other = false;       // also call W50 directly (another return address)
     bool wrap_probe = false;      // call the walk7 wrapper on the batch thread during the batch
+    bool svc_probe = false;       // call the svc28 wrapper for root1 on the batch thread during the batch (block 1's job inline)
     bool nest = false;            // after the join, a nested hook-thread batch (pass nest_mode) inside this one
     std::uint32_t nest_mode = 0;
     bool raise_after_join = false;  // an access violation escapes the batch after its join
@@ -233,6 +241,7 @@ void FakeBatch(void* group, std::uint32_t mode) noexcept {
         reinterpret_cast<pd::detail::JobFn>(pd::detail::W50Entry())(g_world.go, &param);
     }
     if (g_sc.wrap_probe) hk::detail::CallWrapForTest(3, nullptr, reinterpret_cast<void*>(0x5000), 7, 0);
+    if (g_sc.svc_probe) hk::detail::CallWrapForTest(0, nullptr, reinterpret_cast<void*>(0x5000), 3, 0);
     if (g_sc.window_probe) {
         pd::JobParam param{1, 0, mode, 8, g_world.bits};
         g_probe_windowed = hk::RunJobWindow(JobGo(), &param, 1, &ProbeJob, pi::Consumer::drain1);
@@ -368,6 +377,33 @@ void TestPureSeams() {
     Check(std::strcmp(pd::ModeName(pd::Mode::census), "census") == 0 && std::strcmp(pd::FaultPhaseName(7), "job") == 0, "names");
 }
 
+// The phase-1 detour's hand-assembled stub and its jumps (pure; the install
+// and the forced branch run in TestJobWindow on the contract image).
+void TestDetourPure() {
+    namespace p1 = mgscoop::partner_local_detour;
+    unsigned char s[p1::detail::kStubSize]{};
+    p1::detail::BuildStub(s, 0x1122334455667788ull, 0x0000000140A9E186ull);
+    const unsigned char setne[] = {0x40, 0x0F, 0x95, 0xC5};
+    Check(std::memcmp(s, setne, 4) == 0, "stub: the displaced setne bpl runs first, on the original flags");
+    Check(s[0x05] == 0x48 && s[0x06] == 0xB9 && Get<std::uint64_t>(Addr(s) + p1::detail::kStubStateAt) == 0x1122334455667788ull,
+          "stub: mov rcx, state carries the state address");
+    Check(s[0x0F] == 0x3B && s[0x10] == 0x11 && s[0x11] == 0x75 && 0x13 + s[0x12] == 0x35, "stub: an id mismatch skips to pop rcx");
+    Check(s[0x13] == 0x48 && s[0x14] == 0x3B && s[0x15] == 0x41 && s[0x16] == 0x10 && 0x19 + s[0x18] == 0x31,
+          "stub: a P mismatch counts a refusal");
+    Check(s[0x1A] == 0x65 && s[0x1D] == 0x25 && Get<std::uint32_t>(Addr(s) + 0x1E) == 0x48 && 0x28 + s[0x27] == 0x31,
+          "stub: the thread check reads TEB+0x48 (ClientId.UniqueThread)");
+    Check(s[0x28] == 0x40 && s[0x29] == 0xB5 && s[0x2A] == 0x00, "stub: the forced local branch is mov bpl, 0");
+    Check(s[0x35] == 0x59 && s[0x36] == 0xFF && s[0x37] == 0x25 && Get<std::uint32_t>(Addr(s) + 0x38) == 0 &&
+          Get<std::uint64_t>(Addr(s) + p1::detail::kStubBackAt) == 0x0000000140A9E186ull, "stub: pop rcx; jmp [rip] back");
+    unsigned char j[5]{};
+    Check(p1::detail::BuildJump(j, 0x1000, 0x2000) && j[0] == 0xE9 && Get<std::int32_t>(Addr(j) + 1) == 0x2000 - 0x1005,
+          "rel32 jump forward");
+    Check(p1::detail::BuildJump(j, 0x2000, 0x1000) && Get<std::int32_t>(Addr(j) + 1) == 0x1000 - 0x2005, "rel32 jump backward");
+    Check(!p1::detail::BuildJump(j, 0x1000, 0x1000 + 0x100000000ull), "out of rel32 reach refused");
+    const auto rel8 = static_cast<std::int8_t>((c::p1_setne_new >> 8) & 0xFF);
+    Check((c::p1_setne_new & 0xFF) == 0xEB && c::p1_setne_rva + 2 + rel8 == c::p1_pad_rva && c::p1_back_rva == c::p1_setne_rva + 4,
+          "the 2-byte jmp replacing setne lands on the padding; the stub returns after the 4 replaced bytes");
+}
 void TestInstall() {
     Image img;
     pd::detail::ResetForTest();
@@ -719,6 +755,34 @@ void TestWrapRules() {
     hk::detail::CallWrapForTest(2, nullptr, root1, 2, 1);
     hk::DrainStats(st);
     Check(st.wrap.svc_native_skips == skips + 3 && st.wrap.windows[0] == base.windows[0], "native: svc28/30/40 never open a window");
+    // Run 27c64c8d (latch wrap_in_batch=7 at re-entry): in the frame between
+    // the native Arm and the deferral, block 1's job ran inline in a batch on
+    // the hook thread and each of its 7 svc28 calls counted as an in-batch
+    // refusal (a hard leave). An svc entry never windows under a native Arm,
+    // so nothing is swapped: it is a native skip, never wrap_in_batch.
+    {
+        pd::SetArmed(false);
+        g_sc = Scenario{};
+        g_sc.svc_probe = true;
+        hk::DrainStats(st);
+        const std::uint32_t in_batch0 = st.wrap.wrap_in_batch, skips0 = st.wrap.svc_native_skips;
+        const int svc28_0 = g_wrap.svc28;
+        RunBatch(0);
+        TakeCalls();
+        hk::DrainStats(st);
+        Check(st.wrap.wrap_in_batch == in_batch0 && st.wrap.svc_native_skips == skips0 + 1 && g_wrap.svc28 == svc28_0 + 1,
+              "native svc28 of block 1 inline in a batch: a native skip, not wrap_in_batch");
+        // A walk inline in a batch would window: still refused and counted.
+        g_sc = Scenario{};
+        g_sc.wrap_probe = true;
+        const int walk7_0 = g_wrap.walk7;
+        RunBatch(0);
+        TakeCalls();
+        hk::DrainStats(st);
+        Check(st.wrap.wrap_in_batch == in_batch0 + 1 && g_wrap.walk7 == walk7_0 + 1, "native walk7 inline in a batch: wrap_in_batch");
+        g_sc = Scenario{};
+        pd::SetArmed(true);
+    }
     // The look write after svc28(root1, phase 0) nested in a drain.
     alignas(16) unsigned char ps[0x400]{};
     alignas(16) std::uint32_t rec[16]{};
@@ -916,12 +980,23 @@ void TestJobWindow() {
     // Host sentinels: the local player's pad and the HOLD latch.
     Put<std::uint32_t>(Addr(w->src) + 0x48, kHostHeld);
     Put<std::uint32_t>(Addr(w->pp) + c::pp_hold_latch, 0xA0u);
+    Put<std::uint32_t>(Addr(w->pp) + c::pp_masks + 4, 0x100u);  // the host's stick mask PP+0x2C
+    // Instance 1's base action record as run 27c64c8d's census showed it
+    // (rec1_2ac=0x4: not local), with an act and a sampled move intent.
+    Put<std::uint32_t>(rec1 + c::rec_local, 0x4u);
+    Put<std::uint8_t>(rec1 + c::rec_act, 2);
+    Put<std::uint8_t>(rec1 + c::rec_act_next, 3);
+    Put<float>(rec1 + c::rec_move_mag, 0.75f);
+    Put<float>(rec1 + c::rec_move_heading, 1.5f);
     // Install the input hook and the deferral on the same image.
     g_log.clear();
     Check(hk::Install(reinterpret_cast<void*>(base), &Log, &FakeSample) == nullptr && hk::Installed(), "input hook on the image");
     hk::detail::BindDispatchForTest(&FakeDispatch);
     pd::detail::ResetForTest();
     Check(pd::Install(reinterpret_cast<void*>(base), pd::Mode::on, &Log) == nullptr && pd::H1Installed(), "deferral on the same image");
+    namespace p1 = mgscoop::partner_local_detour;
+    Check(p1::Install(reinterpret_cast<void*>(base), &Log) == nullptr && p1::Installed() && p1::PatchLive(reinterpret_cast<void*>(base)) &&
+          p1::detail::ReadForceForTest().id == -1, "phase-1 detour on the same image (contract bytes), not forced");
     pd::detail::Bindings b{};
     b.batch = &FakeBatch; b.job = &FakeJob; b.scope_ctor = &FakeScopeCtor; b.scope_dtor = &FakeScopeDtor;
     b.scope_read = &FakeScopeRead; b.job_return = g_thunk_return; b.hook_thread = &MainTid;
@@ -933,6 +1008,7 @@ void TestJobWindow() {
     TakeCalls();
     g_watch_src = Addr(w->src);
     g_watch_pp = Addr(w->pp);
+    g_watch_rec = rec1;
     pd::PublishIdentity(pd::Identity{Addr(w->go), 0, 1});
     pd::SetArmed(true);
     // The native Arm (as the driver builds it).
@@ -990,6 +1066,20 @@ void TestJobWindow() {
           "one windowed drain");
     Check(Get<std::uint32_t>(Addr(w->src) + 0x48) == kHostHeld && Get<std::uintptr_t>(Addr(w->pp)) == pp_vt &&
           Get<std::uint32_t>(Addr(w->pp) + c::pp_hold_latch) == 0xA0u, "after the drain: the host's pad and latch are back");
+    // Run 27c64c8d (no movement): the drain must make instance 1 local for its
+    // update (isLocal, whatever partner_input_local says) and force phase 1's
+    // pad-sampling branch for exactly (P, id 1, the hook thread); block 0's
+    // job never sees either.
+    Check((b1->rec_local & 1u) == 1u && (b1->rec_local & ~1u) == 0x4u && (b0->rec_local & 1u) == 0u,
+          "drain: isLocal set for instance 1's job (local=main), never for instance 0's");
+    Check(b1->p1.id == 1 && b1->p1.p == P && b1->p1.tid == g_main_tid && b0->p1.id == -1,
+          "drain: the phase-1 detour forced for (P, id 1, hook thread) during block 1's job only");
+    Check(Get<std::uint32_t>(rec1 + c::rec_local) == 0x4u && p1::detail::ReadForceForTest().id == -1,
+          "after the drain: isLocal restored, the detour released");
+    Check(hs.native.p1_installed && hs.native.p1_windows == 1 && hs.native.drain_held == kRemoteHeld && hs.native.drain_view == 0 &&
+          hs.native.drain_local_pre == 0x4u && hs.native.rec_ok && hs.native.rec_act == 2 && hs.native.rec_next == 3 &&
+          hs.native.rec_mag == 750 && hs.native.rec_heading_mrad == 1500,
+          "drain telemetry: detour windows, the injection, isLocal before, instance 1's record after its update");
     // A job whose block is not instance 1's never gets a window, even with a
     // valid Arm: instance 0's block (pool 0), or anything else.
     {
@@ -1051,9 +1141,25 @@ void TestJobWindow() {
               "replaced sub-controller: flagged (bit 2), neither object written back");
         Put<std::uintptr_t>(Addr(w->cam) + c::cam_aim_sub, 0);
     }
+    // Instance 1's private stick mask (PP+0x2C bit 0 zeroes the sampled move
+    // magnitude) is reported after the drain; the host's mask comes back.
+    {
+        struct Mask {
+            static void Job(void* go, const void*) noexcept {
+                const std::uintptr_t pp = Get<std::uintptr_t>(reinterpret_cast<std::uintptr_t>(go) + c::go_to_p + c::p_pad);
+                Put<std::uint32_t>(pp + c::pp_masks + 4, Get<std::uint32_t>(pp + c::pp_masks + 4) | 1u);
+            }
+        };
+        dispatch(w->root1, 8);
+        pd::JobParam param{1, 0, 0, 8, g_world.bits};
+        Check(hk::RunJobWindow(w->go, &param, 1, &Mask::Job, pi::Consumer::drain0), "mask window ran");
+        hk::DrainStats(hs);
+        Check(hs.native.drain_mask2c == 1u && hs.native.drain_mask28 == 0u && Get<std::uint32_t>(Addr(w->pp) + c::pp_masks + 4) == 0x100u,
+              "drain telemetry: instance 1's private stick mask; the host's PP+0x2C restored");
+    }
     hk::DrainStats(hs);
     Check(hs.window.faults == 0, "no window fault in the fixture");
-    g_watch_src = g_watch_pp = 0;
+    g_watch_src = g_watch_pp = g_watch_rec = 0;
     g_job_go = nullptr;
     hk::PublishArm(pi::Arm{});
 }
@@ -1064,6 +1170,7 @@ int main() {
     g_main_tid = GetCurrentThreadId();
     BuildThunk();
     TestPureSeams();
+    TestDetourPure();
     TestInstall();
     TestRefusals();
     TestEndToEnd();
@@ -1075,8 +1182,9 @@ int main() {
                 "image (H2 stub, H1 slot, live check, idempotent), byte/scope/slot refusals, end-to-end deferral on real threads "
                 "(scope + read lock, sub-0 counters, census, disarm), dup, ret_other, inline jobs, MissionStart mid-batch, lost, "
                 "gate closed, live nbits, write-lock spin, exception unwind order, foreign-thread batch, identity, nested batch, "
-                "foreign batch in flight, unwound batch; hook: census counting, no window in a batch, native svc rule, "
-                "post-phase-0 look write; drain window with the real hook (instance 0 never sees the remote pad, instance 1's "
-                "job windowed, block refusals, no window in a batch, replaced aim sub-controller)\n", checks);
+                "foreign batch in flight, unwound batch; hook: census counting, no window in a batch, native svc rule (an svc "
+                "entry inline in a batch is a native skip, never wrap_in_batch), post-phase-0 look write; drain window with the "
+                "real hook (instance 0 never sees the remote pad, instance 1's job windowed with isLocal and the phase-1 detour "
+                "forced, drain telemetry, block refusals, no window in a batch, replaced aim sub-controller, private masks)\n", checks);
     return 0;
 }

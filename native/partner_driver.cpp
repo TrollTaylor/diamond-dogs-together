@@ -1341,6 +1341,10 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
     if (set.anim != PartnerAnim::off) fail("anim");
     if (set.dm == PartnerDm::on || set.dm == PartnerDm::map || d.mission.dmmap.phase != pdm::Phase::idle) fail("dm");
     if (set.stage < 3) fail("stage");
+    // Native: the deferral is armed before the native Arm is published (the
+    // arbiter requests it from the place step on), so no frame runs block 1's
+    // job inline in a batch under a native Arm.
+    if (set.native_active && !m.native_defer_armed) fail("native_defer");
     resolve();
     // "busy": a window was open across every read attempt (hook thread !=
     // Lua thread). An armed window keeps its published Arm for this tick.
@@ -1711,6 +1715,8 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     in.live_h0 = ni.live_h0;
     in.live_h1 = ni.live_h1;
     in.live_h2 = ni.live_h2;
+    in.installed_p1 = ni.p1;
+    in.live_p1 = ni.live_p1;
     in.install_refusal = install_refusal;
     in.thread_ok = ds.batch_threads_seen == 1 && ds.batch_thread != 0 && ds.batch_thread == ds.hook_thread && ds.batches >= 120;
     in.faulted = m.input_faulted || ds.faulted || is.window.fault_phase != 0;
@@ -1729,7 +1735,9 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     in.window_armed = m.input_armed;
     in.recon_placed = m.input_armed && m.recon_active;
     in.snaps_10s = m.recon_active && m.recon_have_out ? m.recon_out.report.snaps_window : 0;
-    if (m.recon_active && m.recon_have_out && m.recon_out.mode == pr::Mode::pin) {
+    // Only a true runaway pin feeds the runaway timer (a diverge or input pin
+    // has its own reason: diverging snaps, input_stale).
+    if (m.recon_active && m.recon_have_out && m.recon_out.report.runaway_active) {
         if (!m.runaway_since_ms) m.runaway_since_ms = now ? now : 1;
         in.runaway_ms = Clamp32(now - m.runaway_since_ms);
     } else {
@@ -1739,7 +1747,9 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     const pnat::Out out = pnat::Step(m.native, in);
     m.native_out = out;
     // Requests in publication order: leaving disarms the deferral first, then
-    // the window, then rearms dm=map; entering arms the deferral last.
+    // the window, then rearms dm=map; entering arms the deferral from the
+    // place step on, before TickInput may publish the native Arm (it refuses
+    // with native_defer until then).
     if (out.req_defer_disarm || (!out.active && m.native_defer_armed)) {
         if (h.set_defer) h.set_defer(h.context, false, defer);
         m.native_defer_armed = false;
@@ -1747,7 +1757,7 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     if (out.req_disarm) DisarmInput(d, h, "native_leave");
     if (out.req_dmmap_rearm) d.dmmap_rearm = true;
     if (out.req_epoch) ++m.body_epoch;
-    if (out.req_defer_arm) {
+    if (out.req_defer_arm && !m.native_defer_armed) {
         if (h.set_defer) h.set_defer(h.context, true, defer);
         m.native_defer_armed = true;
     }
@@ -1840,9 +1850,25 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     t.configured = configured;
     t.mode = out.mode;
     CopyText(t.reason, sizeof(t.reason), out.reason);
+    CopyText(t.left_reason, sizeof(t.left_reason), m.native.left_reason);
     t.since_ms = m.native.since_ms;
     t.fallbacks = m.native.fallbacks;
     t.latched = out.mode == pnat::Mode::latched;
+    // Phase-1 detour and the last windowed drain (the rates below).
+    t.p1_installed = ni.p1;
+    t.p1_live = ni.live_p1;
+    t.drain_held = is.native.drain_held;
+    t.drain_mag = is.native.drain_mag;
+    t.drain_view = is.native.drain_view;
+    t.drain_local_pre = is.native.drain_local_pre;
+    t.drain_mask28 = is.native.drain_mask28;
+    t.drain_mask2c = is.native.drain_mask2c;
+    t.drain_mask30 = is.native.drain_mask30;
+    t.rec_ok = is.native.rec_ok;
+    t.rec_act = is.native.rec_act;
+    t.rec_next = is.native.rec_next;
+    t.rec_mag = is.native.rec_ok ? is.native.rec_mag : pnat::kNull;
+    t.rec_heading_mrad = is.native.rec_ok ? is.native.rec_heading_mrad : pnat::kNull;
     t.setting = defer;
     t.h0 = ni.h0; t.h1 = ni.h1; t.h2 = ni.h2; t.wrap = ni.wrap;
     t.thread_ok = in.thread_ok;
@@ -1949,6 +1975,9 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         t.unwound = Rate(ds.unwound, r.unwound, dt);
         t.drain_block = Rate(is.native.drain_block_refused, m.rate_hook.drain_block_refused, dt);
         t.drain_in_batch = Rate(is.native.drain_in_batch, m.rate_hook.drain_in_batch, dt);
+        t.p1_forced = Rate(is.native.p1_forced, m.rate_hook.p1_forced, dt);
+        t.p1_refused = Rate(is.native.p1_refused, m.rate_hook.p1_refused, dt);
+        t.p1_windows = Rate(is.native.p1_windows, m.rate_hook.p1_windows, dt);
         t.drain_us_max = m.native_drain_us_acc;
         // The 1 Hz partner_defer line (installed deferral only) and partner_native line.
         if (ni.h2 && m.defer_lines < kNativeLineCap) {
@@ -1982,12 +2011,34 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
             };
             num(e1, t.err_mm); num(e2, t.along_mm); num(e3, t.cross_mm); num(e4, t.heading_err_mrad);
             EmitFormat(h, "partner_native; mode=%s; err_mm=%s; along=%s; cross=%s; steer_mdeg=%d; mag_pct=%d; stance=%u,%u; speed_mmps=%u,%u; "
-                          "heading_err_mrad=%s; match=%u,%u; latch=%u; look_writes=%u\r\n",
+                          "heading_err_mrad=%s; match=%u,%u; latch=%u; look_writes=%u; left=%s\r\n",
                        pnat::ModeName(out.mode), e1, e2, e3, t.steer_mdeg, t.mag_scale_pct, t.stance, t.remote_stance, t.speed_mmps,
-                       t.remote_speed_mmps, e4, t.stance_match_pct, t.move_match_pct, t.latch27c, t.look_writes);
+                       t.remote_speed_mmps, e4, t.stance_match_pct, t.move_match_pct, t.latch27c, t.look_writes,
+                       t.left_reason[0] ? t.left_reason : "none");
         } else if (!m.native_lines_capped) {
             m.native_lines_capped = true;
             Emit(h, "partner_native=capped; limit=3600\r\n");
+        }
+        // What block 1's update did with the pad in the last windowed drain:
+        // phase-1 detour calls forced/refused and drain windows (per second),
+        // the injection the drain got, isLocal before the window, instance 1's
+        // private PP masks, its base action record (act, next act, sampled
+        // move magnitude/heading) and the body's act.
+        if (m.native_drain_lines < kNativeLineCap) {
+            ++m.native_drain_lines;
+            char r1[16]{}, r2[16]{};
+            const auto num = [](char (&o)[16], std::int32_t v) noexcept {
+                if (v == pnat::kNull) StringCchCopyA(o, sizeof(o), "na");
+                else StringCchPrintfA(o, sizeof(o), "%d", v);
+            };
+            num(r1, t.rec_mag); num(r2, t.rec_heading_mrad);
+            EmitFormat(h, "partner_native_drain; p1=%u,%u,%u; p1_installed=%u; p1_live=%u; held=0x%x; mag=%d; view=%u; local_pre=0x%x; "
+                          "masks=0x%x,0x%x,0x%x; rec_act=%u; rec_next=%u; rec_mag=%s; rec_heading_mrad=%s; body_act=%u\r\n",
+                       t.p1_forced, t.p1_refused, t.p1_windows, t.p1_installed ? 1u : 0u, t.p1_live ? 1u : 0u, t.drain_held, t.drain_mag,
+                       t.drain_view, t.drain_local_pre, t.drain_mask28, t.drain_mask2c, t.drain_mask30, t.rec_act, t.rec_next, r1, r2, t.act);
+        } else if (!m.native_drain_lines_capped) {
+            m.native_drain_lines_capped = true;
+            Emit(h, "partner_native_drain=capped; limit=3600\r\n");
         }
         m.native_drain_us_acc = 0;
         t.spin_max = 0;
@@ -2007,6 +2058,18 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     e.steer_mdeg = t.steer_mdeg;
     e.held = t.held;
     e.gun3c0 = gun.gun3c0;
+    e.act = static_cast<std::uint16_t>(t.act);
+    e.rec_act = static_cast<std::uint8_t>(t.rec_act);
+    e.rec_next = static_cast<std::uint8_t>(t.rec_next);
+    e.rec_mag = t.rec_mag;
+    const std::uint32_t p1_delta = t.ring.count ? is.native.p1_forced - m.ring_p1_last : 0u;  // totals are process-wide
+    m.ring_p1_last = is.native.p1_forced;
+    e.p1_forced = static_cast<std::uint16_t>(p1_delta > 0xFFFFu ? 0xFFFFu : p1_delta);
+    // The reconciliation's step of the previous tick (TickInput runs after this).
+    const bool recon_on = m.recon_active && m.recon_have_out;
+    e.recon_mode = recon_on ? static_cast<std::uint8_t>(m.recon_out.mode) : pnat::kReconOff;
+    e.recon_action = recon_on ? static_cast<std::uint8_t>(m.recon_out.action) : pnat::kReconOff;
+    e.warp = m.dmmap_prev_warp;
     pnat::Push(t.ring, e);
 }
 } // namespace

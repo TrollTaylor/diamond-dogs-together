@@ -29,8 +29,8 @@ pn::In Ready(std::uint64_t now) {
     pn::In in{};
     in.now_ms = now;
     in.configured = in.defer_on = true;
-    in.installed_h0 = in.installed_h2 = in.installed_h1 = in.installed_wrap = true;
-    in.live_h0 = in.live_h1 = in.live_h2 = true;
+    in.installed_h0 = in.installed_h2 = in.installed_h1 = in.installed_wrap = in.installed_p1 = true;
+    in.live_h0 = in.live_h1 = in.live_h2 = in.live_p1 = true;
     in.thread_ok = true;
     in.realized = in.parts_loaded = true;
     in.stage = 3;
@@ -108,16 +108,18 @@ void TestEnterSequence() {
     in.dm_idle = true; in.dm_patched = true; in.now_ms = 4300;
     o = pn::Step(s, in);
     Check(Is(o.enter_step, "dm_revert") && o.mode == pn::Mode::entering, "dm_revert while still patched");
+    Check(!o.req_defer_arm, "no deferral while the DM clip stops or the patch reverts");
     in.dm_patched = false; in.now_ms = 4400;
     o = pn::Step(s, in);
-    Check(Is(o.enter_step, "place") && o.mode == pn::Mode::entering, "place once dm idle and unpatched");
+    Check(Is(o.enter_step, "place") && o.mode == pn::Mode::entering && o.req_defer_arm && !o.req_defer_disarm,
+          "place once dm idle and unpatched; the deferral is requested before any native Arm (identity -> defer -> Arm)");
     in.window_armed = true; in.now_ms = 4500;
     o = pn::Step(s, in);
-    Check(o.mode == pn::Mode::entering, "armed window without placement is not enough");
+    Check(o.mode == pn::Mode::entering && o.req_defer_arm, "armed window without placement is not enough (the deferral stays requested)");
     in.recon_placed = true; in.now_ms = 4600;
     o = pn::Step(s, in);
     Check(o.mode == pn::Mode::active && o.active && o.req_defer_arm && !o.req_disarm && !o.req_defer_disarm &&
-          Is(o.enter_step, "armed"), "active when armed and placed; the deferral is armed last (identity -> arm -> defer)");
+          Is(o.enter_step, "armed"), "active when armed and placed (the deferral request repeats; the driver arms once)");
     o = pn::Step(s, Healthy(4700));
     Check(o.mode == pn::Mode::active && NoRequests(o), "steady active");
 }
@@ -177,6 +179,7 @@ void TestHardReasons() {
         {"hook_lost", [](pn::In& in) { in.live_h1 = false; }},
         {"hook_lost", [](pn::In& in) { in.live_h2 = false; }},
         {"hook_lost", [](pn::In& in) { in.live_h0 = false; }},
+        {"hook_lost", [](pn::In& in) { in.live_p1 = false; }},
         {"thread", [](pn::In& in) { in.thread_ok = false; }},
         {"terminating", [](pn::In& in) { in.terminating = true; }},
         {"unrealized", [](pn::In& in) { in.realized = false; }},
@@ -339,6 +342,37 @@ void TestCooldownAndLatch() {
     Check(s.mode == pn::Mode::fallback && s.fallbacks == 0 && !s.left, "MissionStart resets the counters");
 }
 
+// Run 27c64c8d: every capture in the 5 s after a leaving read "cooldown"
+// (the fallback blocker replaces the reason), hiding the runaway that caused
+// it. left_reason keeps the cause until the next leaving or MissionStart.
+void TestLeftReason() {
+    pn::State s{};
+    pn::Reset(s, true);
+    Check(s.left_reason == nullptr, "no leaving yet");
+    const std::uint64_t t = Activate(s, 0);
+    pn::In in = Healthy(t + 16);
+    in.runaway_ms = 2001;
+    pn::Out o = pn::Step(s, in);
+    Check(LeaveRequests(o) && Is(o.reason, "runaway") && Is(s.left_reason, "runaway"), "runaway leaves; left_reason runaway");
+    o = pn::Step(s, Ready(t + 32));
+    Check(o.mode == pn::Mode::fallback && Is(o.reason, "runaway"), "the leaving step hands the reason to fallback");
+    o = pn::Step(s, Ready(t + 1000));
+    Check(o.mode == pn::Mode::fallback && Is(o.reason, "cooldown") && Is(s.left_reason, "runaway"),
+          "cooldown replaces the reason, left_reason keeps the cause");
+    o = pn::Step(s, Ready(t + 5100));
+    Check(Is(o.reason, "settling") && Is(s.left_reason, "runaway"), "settling: still the cause");
+    pn::In e = Ready(t + 7100);
+    e.window_armed = e.recon_placed = true;
+    o = pn::Step(s, e);
+    Check(o.mode == pn::Mode::active && Is(s.left_reason, "runaway"), "re-entered: the last leaving's cause stays visible");
+    in = Healthy(t + 7200);
+    in.wrap_in_batch = 7;
+    o = pn::Step(s, in);
+    Check(LeaveRequests(o) && Is(s.left_reason, "wrap_in_batch"), "the next leaving replaces it");
+    pn::Reset(s, true);
+    Check(s.left_reason == nullptr, "MissionStart clears it");
+}
+
 void TestFallbackReasons() {
     struct Case { const char* reason; void (*apply)(pn::In&); };
     const Case cases[] = {
@@ -347,6 +381,8 @@ void TestFallbackReasons() {
         {"install_hook_disabled", [](pn::In& in) { in.install_refusal = "hook_disabled"; }},
         {"install_other", [](pn::In& in) { in.install_refusal = "weird"; }},
         {"not_installed", [](pn::In& in) { in.installed_h1 = false; }},
+        {"not_installed", [](pn::In& in) { in.installed_p1 = false; }},
+        {"hook_lost", [](pn::In& in) { in.live_p1 = false; }},
         {"thread", [](pn::In& in) { in.thread_ok = false; }},
         {"faulted", [](pn::In& in) { in.faulted = true; }},
         {"dm_revert_failed", [](pn::In& in) { in.dm_revert_failed = true; }},
@@ -542,6 +578,7 @@ int main() {
     TestHardReasons();
     TestSoftReasons();
     TestCooldownAndLatch();
+    TestLeftReason();
     TestFallbackReasons();
     TestEffective();
     TestLatch();
@@ -550,7 +587,8 @@ int main() {
     TestRing();
     std::printf("%u partner native checks passed: arbiter (off, settling hold, entering steps dm_stop/dm_revert/place/armed, "
                 "timeouts, DM revert latch, hard and soft reasons, health warm-up and windows, cost, cooldown, 3-fallback latch, "
-                "unlatch, MissionStart reset, fallback reasons, publication order), effective settings and mask, HOLD latch, "
+                "unlatch, MissionStart reset, fallback reasons, publication order defer before Arm, left_reason through "
+                "cooldown, phase-1 detour precondition), effective settings and mask, HOLD latch, "
                 "steering and trim, per-consumer frame injection, telemetry ring\n", checks);
     return 0;
 }
