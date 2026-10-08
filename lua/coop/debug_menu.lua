@@ -181,6 +181,11 @@ do
       D.weatherTouched = true
       call(TppWeather, "ForceRequestWeather", t, 1)
       return true, "submitted_weather_" .. a[2] .. ";" .. sync("env")
+    elseif (cmd == "world_status" or cmd == "spawn_sync") and #a == 1 then
+      -- Read-only world link and spawn sync reports (lua/coop/world_place.lua).
+      local P = get(get(e, "MgsCoopWorld"), "place")
+      if type(get(P, "report")) ~= "function" then return false, "world_unavailable" end
+      return P.report(cmd, D)
     elseif cmd:match("^enemy_") or cmd == "clear_enemies" or cmd == "goto_spawn" or cmd == "goto_camp" then
       if not D.enemy then return false, "enemy_unavailable" end
       return D.enemy.run(a, id)

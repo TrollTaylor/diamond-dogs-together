@@ -34,9 +34,10 @@ do
             if v == 0 then return 0 end
             return W.lifeWire[v]
         end
-        function E.active(cp)
-            local act = W.activeCp
-            return act == nil or act[cp] == true
+        -- A guard placed by spawn sync (W.pinned) is kept in area on this PC.
+        function E.active(cp, h)
+            local act, pin = W.activeCp, W.pinned
+            return act == nil or act[cp] == true or (h ~= nil and pin ~= nil and pin[h] == true)
         end
         function E.pos(id)
             local p = W.api.send(id, {id = "GetPosition"})
@@ -143,7 +144,7 @@ do
             if not e then return E.hold(h, st, ver, src, "unknown") end
             if not W.w1 then return end
             if s.rb[h] then return "defer" end
-            if not E.active(e.cp) then return E.hold(h, st, ver, src, "out_of_area") end
+            if not E.active(e.cp, h) then return E.hold(h, st, ver, src, "out_of_area") end
             local cur = E.localState(e)
             if cur == nil then return E.hold(h, st, ver, src, "unreadable") end
             local result = "noop"
@@ -271,7 +272,7 @@ do
                         s.sweep, scans = s.sweep % n + 1, scans + 1
                         local h = list[s.sweep]
                         local e = W.ent[h]
-                        if e.reached and e.committed ~= 0 and not TERMINAL[e.committed] and E.active(e.cp) then
+                        if e.reached and e.committed ~= 0 and not TERMINAL[e.committed] and E.active(e.cp, h) then
                             reads = reads + 1
                             E.check(h, 9, true)
                         end

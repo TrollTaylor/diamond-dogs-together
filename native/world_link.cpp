@@ -278,6 +278,28 @@ const char* HandleLog(const char* source, std::size_t size) noexcept {
     return yes;
 }
 
+WarpGrant FindGrant(std::uint16_t seq) noexcept {
+    WarpGrant out{};
+    if (!Configured()) return out;
+    const std::uint64_t now = partner_net::NowMs();
+    world::Grant grant{};
+    {
+        Locked lock;
+        if (!g_core.FindGrant(seq, now, grant)) return out;
+    }
+    out.found = true;
+    out.seq = grant.seq;
+    out.epoch = grant.epoch;
+    out.kind = grant.kind;
+    out.flags = grant.flags;
+    out.ent = grant.ent;
+    for (unsigned i = 0; i < 3; ++i) out.pos[i] = static_cast<float>(grant.pos_mm[i]) * 0.001f;
+    out.yaw = static_cast<float>(grant.yaw_mrad) * 0.001f;
+    out.age_ms = now - grant.rx_ms;
+    out.serial = grant.serial;
+    return out;
+}
+
 void MissionRuntime(std::uint32_t) noexcept {
     // The CFG start receipt carries the mission state; nothing else to do yet
     // (extension point for W3 mission following).

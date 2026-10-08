@@ -60,6 +60,32 @@ assertion (every other shot request builder stamps a typed owner). Open: the sho
 visual shots (census pins its interface), projectile weapons, a generalized
 writer. Hidden scenario: `tools/worker/scenarios/partner-native-weapons.txt`.
 
+## October 8, 2026: spawn sync (fixture-tested, runtime unverified)
+
+Guards placed with the F9 menu and the host's per-soldier debug actions now reach
+the guest's copy of the same soldier ([debug-menu.md](debug-menu.md) "Spawn sync").
+The host announces `ENEMY_DEBUG` (0x22) on the world link at level 2+ with a
+matching roster (not W1); the guest applies it and answers `ENEMY_DEBUG_ACK`
+(0x23). A native placement is repeated on the guest through the same verified
+`Warp()`: its target is a grant `world::Core` records when the guest's Lua pops the
+message, never a Lua value, checked within 20 m (60 m for corrections) of the
+guest's view of the host and behind the existing lab key, contract, per-grant
+budget and latch (`generate_soldier_warp_contract.py --check` now also pins the two
+callers). Route placements and come / ignore / notice / disable / enable replicate
+as plain script calls, so they also work in play mode. Placed guards stay in an
+active area on both PCs, a 60 s settle window corrects a guard that drifts more
+than 6 m, and both menus get history rows plus the read-only `world_status` and
+`spawn_sync` commands.
+
+Kill / sleep / faint / Fulton / clear reported `sync=none` because outcome sync (W1)
+never turned on when the host had not crossed a free-roam area trap: the
+start-of-mission snapshot then had no readable soldier and the guest refused it
+forever. The host now infers its area from the nearest readable soldier's command
+post (bookkeeping only, no game call). Evidence is fixture-only (`world_wire_tests`,
+`world_receipt_tests`, `soldier_warp_tests`, `debug_menu_tests`, the world-align and
+debug-menu Lua checks); the hidden scenario `tools/worker/scenarios/spawn-sync.txt`
+and the extended `debug-menu.txt` hold the guest-side proof lines.
+
 ## October 8, 2026: native puppet (fixture-tested, default off, never run)
 
 The partner body can now be driven by the remote player's real pad through the

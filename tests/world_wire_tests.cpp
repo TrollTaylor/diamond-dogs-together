@@ -113,7 +113,7 @@ void Pair(std::uint32_t mission, std::uint64_t now, std::uint32_t host_roster = 
 void Table() {
     std::size_t count = 0;
     const world::OpSpec* ops = world::OpTable(count);
-    Check(count == 39, "39 ops (W0-W4 wire ops and the local ops)");
+    Check(count == 41, "41 ops (W0-W4 wire ops, spawn sync and the local ops)");
     for (std::size_t i = 0; i < count; ++i) {
         for (std::size_t j = i + 1; j < count; ++j) Check(ops[i].code != ops[j].code, "codes unique");
         const unsigned fields = ops[i].lua + ops[i].native + ops[i].rx;
@@ -136,10 +136,11 @@ void Table() {
     const Size sizes[] = {{op::hello, 24}, {op::ready, 14}, {op::received, 3}, {op::reject, 11}, {op::resync, 3}, {op::resync_end, 7},
                           {op::mission_end, 6}, {op::probe_sync, 14}, {op::enemy_outcome, 25}, {op::req_outcome, 28}, {op::phase, 11},
                           {op::req_phase, 24}, {op::player_area, 5}, {op::digest, 22}, {op::guest_digest, 22}, {op::phase_vec, 53},
-                          {op::clock, 11}, {op::weather, 7}, {op::checkpoint, 22}};
+                          {op::clock, 11}, {op::weather, 7}, {op::checkpoint, 22},
+                          {op::enemy_debug, 30}, {op::enemy_debug_ack, 12}};
     for (const auto& s : sizes) Check(world::FindOp(s.code) && world::FindOp(s.code)->body == s.body, "documented body size");
     for (unsigned code = 0x1D; code <= 0x1F; ++code) Check(!world::FindOp(static_cast<std::uint8_t>(code)), "reserved world codes");
-    Check(!world::FindOp(0) && !world::FindOp(0x22) && !world::FindOp(0x79) && !world::FindOp(0xFF), "unknown codes");
+    Check(!world::FindOp(0) && !world::FindOp(0x24) && !world::FindOp(0x79) && !world::FindOp(0xFF), "unknown codes");
     Check(world::FindOp(op::phase_vec)->lua == 15 && world::FindOp(op::digest)->rx == 1 && world::FindOp(op::clock)->rx == 1,
           "PHASE_VEC 15 fields, DIGEST/CLOCK receiver latency");
     Check(world::FindOp(op::req_outcome)->request && world::FindOp(op::req_phase)->request && world::FindOp(op::resync)->request &&
@@ -1084,6 +1085,104 @@ void Alignment() {
     Check(Tx(g_host, op::align_begin, {5, 30010, 77, 1, 1}, 210) == world::TxStatus::disabled,
           "level two remains W0-W2 only");
 }
+
+// Spawn sync (docs/debug-menu.md): ENEMY_DEBUG host -> guest on the world queue,
+// the guest's placement grant (recorded only when its Lua pops a warp/correct),
+// ENEMY_DEBUG_ACK guest -> host, and every grant reset.
+void SpawnSync() {
+    Setup();
+    Pair(30010, 100);
+    Drain(g_host, 3, 101);
+    Drain(g_guest, 3, 101);
+    world::Grant grant{};
+    const std::int64_t ent = 0xF5A4F001LL;
+    Check(Tx(g_guest, op::enemy_debug, {1, ent, 1, 0, 0, 0, 0, 2, 0, 1116}, 102) == world::TxStatus::wrong_role, "only the host announces");
+    Check(Tx(g_host, op::enemy_debug_ack, {1, ent, 0, 0, 0, 0}, 102) == world::TxStatus::wrong_role, "only the guest answers");
+    Check(Tx(g_host, op::enemy_debug, {1, ent, 1, -748011, 329852, 1668605, -3141, 2, 0, 1116}, 103) == world::TxStatus::ok,
+          "warp announce with signed mm and yaw");
+    Check(Tx(g_host, op::enemy_debug, {2, ent, 5, 0, 0, 0, 0, 0, 0, 1116}, 103) == world::TxStatus::ok, "ignore announce");
+    Check(Tx(g_host, op::enemy_debug, {3, 9, 9, 0, 0, 0, 0, 0, 0, 0}, 103) == world::TxStatus::bad_args, "kind 9 refused");
+    Check(Tx(g_host, op::enemy_debug, {3, 9, 0, 0, 0, 0, 0, 0, 0, 0}, 103) == world::TxStatus::bad_args, "kind 0 refused");
+    Check(Tx(g_host, op::enemy_debug, {0, 9, 1, 0, 0, 0, 0, 0, 0, 0}, 103) == world::TxStatus::bad_args, "seq 0 refused");
+    Check(Tx(g_host, op::enemy_debug, {3, 9, 1, 100000001, 0, 0, 0, 0, 0, 0}, 103) == world::TxStatus::bad_args, "position bound");
+    Check(Tx(g_host, op::enemy_debug, {3, 9, 1, 0, 0, 0, 8001, 0, 0, 0}, 103) == world::TxStatus::bad_args, "yaw bound");
+    Check(Tx(g_host, op::enemy_debug, {3, 9, 1, 0, 0, 0, 0, 4, 0, 0}, 103) == world::TxStatus::bad_args, "flags bound");
+    Exchange(104);
+    Check(!g_guest.FindGrant(1, 104, grant) && g_guest.grant_count() == 0, "no grant before the guest's Lua pops the message");
+    Check(Drain(g_guest, 1, 104).empty(), "ENEMY_DEBUG never rides the control queue");
+    const auto rx = Drain(g_guest, 3, 105);
+    Check(rx.size() == 2 && rx[0].op == op::enemy_debug && rx[0].count == 10 && rx[0].v[1] == ent && rx[0].v[3] == -748011 &&
+              rx[0].v[6] == -3141 && rx[0].v[9] == 1116 && rx[1].op == op::enemy_debug && rx[1].v[2] == 5,
+          "world queue order and exact fields");
+    Check(g_guest.FindGrant(1, 105, grant) && grant.valid && grant.kind == 1 && grant.ent == 0xF5A4F001u && grant.pos_mm[0] == -748011 &&
+              grant.pos_mm[1] == 329852 && grant.pos_mm[2] == 1668605 && grant.yaw_mrad == -3141 && grant.flags == 2 &&
+              grant.epoch == g_guest.epoch() && grant.rx_ms == 105,
+          "the popped warp is the guest's grant");
+    const std::uint32_t first_serial = grant.serial;
+    const std::uint16_t first_epoch = grant.epoch;
+    Check(first_serial >= 1 && first_serial <= 0x7FFFFFFFu, "a grant serial is 1..2^31-1 (the gate id sets bit 31)");
+    Check(!g_guest.FindGrant(2, 105, grant) && !grant.valid, "an ignore is not a placement grant");
+    Check(!g_host.FindGrant(1, 105, grant), "the host never holds grants");
+    Check(g_guest.FindGrant(1, 105 + world::kGrantLifeMs, grant) && !g_guest.FindGrant(1, 106 + world::kGrantLifeMs, grant),
+          "a grant lives 15 s from the pop");
+    Check(!g_guest.FindGrant(1, 50, grant), "a clock before the pop refuses");
+    Check(Tx(g_guest, op::enemy_debug_ack, {1, ent, 0, 0, 12, 34}, 106) == world::TxStatus::ok &&
+              Tx(g_guest, op::enemy_debug_ack, {2, ent, 1, 32, 0, 0}, 106) == world::TxStatus::bad_args,
+          "guest ACK, reason bound");
+    Exchange(107);
+    const auto acks = Drain(g_host, 3, 108);
+    Check(acks.size() == 1 && acks[0].op == op::enemy_debug_ack && acks[0].v[1] == ent && acks[0].v[4] == 12 && acks[0].v[5] == 34,
+          "ACK reaches the host world queue");
+    // Twenty corrections: the pending warp grant survives, the oldest corrections go.
+    Check(world::kGrants == 16, "16 grant slots");
+    for (std::int64_t seq = 10; seq < 30; ++seq)
+        Check(Tx(g_host, op::enemy_debug, {seq, 9, 3, 1000, 0, 1000, 0, 0, 0, 7}, 110) == world::TxStatus::ok, "correction");
+    Exchange(111);
+    std::uint64_t at = 112;
+    for (int i = 0; i < 20; ++i) {
+        world::RxReply r{};
+        g_guest.Rx(3, 40, at++, r);
+        Check(!r.empty && r.op == op::enemy_debug && r.v[2] == 3, "correction popped");
+    }
+    Check(g_guest.grant_count() == world::kGrants && g_guest.FindGrant(1, at, grant) && grant.kind == 1 && grant.serial == first_serial,
+          "the warp grant is kept with its serial");
+    Check(g_guest.FindGrant(29, at, grant) && grant.kind == 3 && grant.serial == first_serial + 20 && g_guest.FindGrant(15, at, grant) &&
+              grant.serial == first_serial + 6 && !g_guest.FindGrant(14, at, grant) && !g_guest.FindGrant(10, at, grant),
+          "the oldest corrections are replaced; every recorded grant gets the next serial");
+    // Resets: unpair (link session), local mission start/end, a new host epoch.
+    g_guest.OnLinkState(true, 2, 200);
+    Check(g_guest.grant_count() == 0 && !g_guest.FindGrant(19, 200, grant), "a link session change clears the grants");
+    Pair(30010, 300);
+    Drain(g_guest, 3, 301);
+    Check(Tx(g_host, op::enemy_debug, {1, ent, 3, 0, 0, 0, 0, 0, 0, 0}, 302) == world::TxStatus::ok, "new epoch correction");
+    Exchange(303);
+    Drain(g_guest, 3, 304);
+    Check(g_guest.FindGrant(1, 304, grant) && grant.epoch == g_guest.epoch(), "grant of the new epoch");
+    g_guest.LocalMissionEnd(305);
+    Check(g_guest.grant_count() == 0, "a local mission end clears the grants");
+    Pair(30010, 400);
+    Drain(g_guest, 3, 401);
+    Check(Tx(g_host, op::enemy_debug, {1, ent, 1, 0, 0, 0, 0, 0, 0, 0}, 402) == world::TxStatus::ok, "warp");
+    Exchange(403);
+    Drain(g_guest, 3, 404);
+    Check(g_guest.grant_count() == 1, "one grant");
+    g_guest.Cfg(30020, true, 30020, 405);
+    Check(g_guest.grant_count() == 0, "a local mission start clears the grants");
+    g_host.LocalMissionEnd(406);
+    Check(Tx(g_host, op::enemy_debug, {2, ent, 1, 0, 0, 0, 0, 0, 0, 0}, 407) == world::TxStatus::not_paired, "nothing unpaired");
+    // A restarted host (fresh Configure) reuses epoch and seq; the serial never repeats.
+    Setup();
+    Pair(30010, 450);
+    Drain(g_guest, 3, 451);
+    Check(Tx(g_host, op::enemy_debug, {1, ent, 1, 0, 0, 0, 0, 0, 0, 0}, 452) == world::TxStatus::ok, "warp after a restart");
+    Exchange(453);
+    Drain(g_guest, 3, 454);
+    Check(g_guest.FindGrant(1, 454, grant) && grant.epoch == first_epoch && grant.seq == 1 && grant.serial > first_serial + 20,
+          "same epoch and seq as the first grant, a new serial (Configure never resets it)");
+    Setup(1, 3);
+    Pair(30010, 500);
+    Check(Tx(g_host, op::enemy_debug, {1, ent, 1, 0, 0, 0, 0, 0, 0, 0}, 501) == world::TxStatus::disabled, "level 1 carries no spawn sync");
+}
 } // namespace
 
 int main() {
@@ -1099,6 +1198,7 @@ int main() {
     ConfigSession();
     WorldDisable();
     Alignment();
+    SpawnSync();
     std::printf("world_wire_tests: %u checks passed\n", checks);
     return 0;
 }

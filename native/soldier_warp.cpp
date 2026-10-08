@@ -170,8 +170,9 @@ Result Warp(std::uintptr_t base, std::size_t span, const Request& request) noexc
         const float delta = request.pos[i] - request.player[i];
         squared += delta * delta;
     }
-    if (!std::isfinite(request.yaw) || std::fabs(request.yaw) > 8.0f) { result.refusal = "input"; return result; }
-    if (!(squared <= kMaxRangeM * kMaxRangeM)) { result.refusal = "range"; return result; }
+    if (!std::isfinite(request.yaw) || std::fabs(request.yaw) > 8.0f || !(request.max_range > 0.0f) ||
+        !(request.max_range <= kMaxRangeLimitM)) { result.refusal = "input"; return result; }
+    if (!(squared <= request.max_range * request.max_range)) { result.refusal = "range"; return result; }
     // The static manager (0xbf3920 returns base+0x2c38008 once bit 0 of the guard is set).
     std::uint32_t guard = 0;
     std::uintptr_t manager_vt = 0, send = 0;

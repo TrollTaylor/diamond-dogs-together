@@ -197,6 +197,25 @@ int main() {
     Check(rs.receipts[15].id != 0 && rs.receipts[0].id == command.id, "receipt ring is bounded and newest first");
     debug::ClearHistory();
     Check(debug::GetSnapshot().receipts[0].id == 0 && debug::GetSnapshot().completed == rs.completed, "ClearHistory empties only the log");
+    // Spawn sync history rows (REMOTE_V1): id 0, "remote spawn_enemy", never a command or a counter.
+    const auto remote = [](const char* text) { return debug::RemoteReceipt(text, std::strlen(text)); };
+    const auto completed_before = debug::GetSnapshot().completed;
+    Check(remote("1 remote_spawn;seq=1;ent=4121274369;state=landed;mode=warp;come=0;err_m=0.03"), "applied row accepted");
+    rs = debug::GetSnapshot();
+    Check(rs.receipts[0].id == 0 && rs.receipts[0].status == 0 && std::strcmp(rs.receipts[0].command, "remote spawn_enemy") == 0 &&
+          std::strcmp(rs.receipts[0].result, "remote_spawn;seq=1;ent=4121274369;state=landed;mode=warp;come=0;err_m=0.03") == 0 &&
+          rs.completed == completed_before, "remote row is an OK receipt with id 0");
+    Check(remote("0 guest_spawn;seq=2;why=native_off") && debug::GetSnapshot().receipts[0].status == 1, "refused row");
+    for (const auto* bad : {"", "1", "1 ", "2 x", "1x y", "1 a b", "1 a\"b", "1 a\nb", "0 a'b"})
+        Check(!remote(bad), "malformed remote row rejected");
+    char long_row[200]{};
+    std::memset(long_row, 'a', 163);
+    long_row[0] = '1'; long_row[1] = ' ';
+    Check(!remote(long_row), "remote row above 160 characters rejected");
+    long_row[162] = 0;
+    Check(remote(long_row), "160 characters accepted");
+    Check(!debug::RemoteReceipt(nullptr, 3), "null remote row");
+    debug::ClearHistory();
 
     // STATE_V1: exactly 2 (legacy) or 12 bounded fields.
     debug::LuaFlags flags{};

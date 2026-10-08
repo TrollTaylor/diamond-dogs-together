@@ -174,6 +174,20 @@ int main() {
     Check(std::strcmp(sw::Warp(base, span, bad).refusal, "type") == 0, "ids above u16 refused");
     bad = request; bad.pos[0] = request.player[0] + 20.5f;
     Check(std::strcmp(sw::Warp(base, span, bad).refusal, "range") == 0, "more than 20 m from the player refused");
+    // Guest spawn-sync corrections: the range is the request's, at most 60 m (kMaxRangeLimitM).
+    bad.max_range = sw::kMaxRangeLimitM;
+    const unsigned calls = seen.calls;
+    r = sw::Warp(base, span, bad);
+    Check(r.refusal == nullptr && r.sent && seen.calls == calls + 1, "a 60 m correction range admits 20.5 m");
+    bad.pos[0] = request.player[0] + 60.5f;
+    Check(std::strcmp(sw::Warp(base, span, bad).refusal, "range") == 0 && seen.calls == calls + 1, "more than 60 m refused");
+    const float limits[] = {0.0f, -1.0f, 60.01f, NAN, INFINITY};
+    for (const float limit : limits) {
+        bad = request; bad.max_range = limit;
+        Check(std::strcmp(sw::Warp(base, span, bad).refusal, "input") == 0 && seen.calls == calls + 1, "range outside (0, 60] refused");
+    }
+    Check(sw::Request{}.max_range == sw::kMaxRangeM && sw::kMaxRangeM == 20.0f, "the host default stays 20 m");
+    seen.calls = calls;  // the checks below count handler calls from here
     bad = request; bad.pos[1] = NAN;
     Check(std::strcmp(sw::Warp(base, span, bad).refusal, "input") == 0, "non-finite position refused");
     bad = request; bad.yaw = 9.0f;

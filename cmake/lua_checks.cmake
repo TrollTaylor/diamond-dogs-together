@@ -115,7 +115,8 @@ set(_mgs_world_chunks "${_mgs_coop}/world_sync.lua" "${_mgs_coop}/world_enemy.lu
 mgs_add_lua_check(world_sync_lua_check ${_mgs_world_chunks})
 mgs_add_lua_check(world_follow_lua_check "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_follow_seed.lua")
 mgs_add_lua_check(world_align_lua_check "${_mgs_coop}/world_align.lua" "${_mgs_coop}/world_enemy.lua"
-  "${_mgs_coop}/world_outcome.lua" "${_mgs_coop}/world_phase.lua" "${_mgs_coop}/world_recovery.lua" "${_mgs_coop}/world_probe.lua")
+  "${_mgs_coop}/world_outcome.lua" "${_mgs_coop}/world_phase.lua" "${_mgs_coop}/world_recovery.lua" "${_mgs_coop}/world_probe.lua"
+  "${_mgs_coop}/world_place.lua" "${_mgs_coop}/world_place_guest.lua")
 
 # --- Extracted game inputs ----------------------------------------------------
 # Finds <relative> (or an alternative relative path given after <sha256>)
@@ -252,7 +253,8 @@ mgs_add_game_lua_check(partner_sync_composed_lua_check partner_sync_lua_check "$
   "${_mgs_coop}/partner_sync.lua" "${_mgs_out}/TppMain-host-trial.lua")
 # The world chunks inside that composition: spliced once, in order, inert with a literal CFG.
 mgs_add_game_lua_check(world_sync_composed_lua_check world_sync_lua_check "${_mgs_tpp_main}" host_trial_patch_check
-  ${_mgs_world_chunks} "${_mgs_out}/TppMain-host-trial.lua" "${_mgs_coop}/world_follow_seed.lua" "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_align.lua" "${_mgs_coop}/world_recovery.lua")
+  ${_mgs_world_chunks} "${_mgs_out}/TppMain-host-trial.lua" "${_mgs_coop}/world_follow_seed.lua" "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_align.lua" "${_mgs_coop}/world_recovery.lua"
+  "${_mgs_coop}/world_place.lua" "${_mgs_coop}/world_place_guest.lua")
 mgs_add_patch_check(mission_trace_patch_check "${_mgs_tpp_main}" "${_mgs_out}/TppMain-trace.lua")
 # The documented two-argument form runs the fragment; the optional third
 # argument also executes the composed TppMain-trace.lua when it is built.

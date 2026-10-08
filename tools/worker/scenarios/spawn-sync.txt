@@ -1,0 +1,64 @@
+# Spawn sync guest-side proof (docs/debug-menu.md "Spawn sync"): a host placement and the
+# host's debug actions on that guard must show up on the guest's screen.
+# Needs free roam with authored guards (30010/30020) and world=3 on both copies (worker default).
+# Evidence:
+#  - world_status: paired, eff 3, roster match and outcome sync (w1=1) on both, including
+#    before any free-roam area trap (host log world_lua=event=area; inferred=<n>).
+#  - host spawn: mode=warp, sync=world;seq=1; guest spawn_sync: state=landed, the guard
+#    within 10 m of the host's body on the guest's screen (partner_m), same soldier (ent).
+#  - guest log: world_place=warp; seq=1; ...; r=0; h=1; refused=none and world_lua=event=place;
+#    ...; result=applied; host log: event=place_ack; ...; result=applied.
+#  - sleep (state 2), come and Clear nearby (state 5) read back on the guest's copy.
+#  - captures spawn-sync-landed-*: the guard in front of the host on both screens.
+labsetting debug_soldier_warp=1
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+wait 5000
+host run godmode 1
+host expect ^godmode_1
+guest run godmode 1
+guest expect ^godmode_1
+host run world_status
+host expect ^world;paired=1;eff=3;w1=1;roster=match;
+guest run world_status
+guest expect ^world;paired=1;eff=3;w1=1;roster=match;
+placebehind guest host 3
+host run spawn_enemy here
+host expect ^guard_here;ent=\d+;d=(\d\.\d|10\.0);moved=\d+\.\d;far=0;mode=warp;come=0;sync=world;seq=1;frames=\d+;leaf=(pinned|engine)$
+wait 3000
+guest run spawn_sync
+guest expect ^remote_spawn;seq=1;ent=\d+;state=landed;mode=warp;come=0;err_m=[01]\.\d+;partner_m=(\d|10)\.\d+;player_m=\d+\.\d+;goid_match=[01]$
+guest run enemy info nearest
+guest expect ^enemy_info;ent=\d+;name=[^;]+;cp=[^;]+;state=0;distance_m=\d\.\d$
+both capture spawn-sync-landed
+host run world_status
+host expect ;acked=1;
+wait 4000
+guest run spawn_sync
+guest expect ;partner_m=(\d|1[0-4])\.\d+;
+host run enemy sleep nearest
+host expect ^enemy_sleep;ent=\d+;life_readback=[02];sync=world$
+wait 2500
+guest run enemy info nearest
+guest expect ;state=2;distance_m=
+both capture spawn-sync-asleep
+host run spawn_enemy here come
+host expect ;mode=warp;come=1;sync=world;seq=\d+;
+wait 3000
+guest run spawn_sync
+guest expect ^remote_spawn;seq=\d+;ent=\d+;state=landed;mode=warp;come=1;
+both capture spawn-sync-come
+host run clear_enemies 25
+host expect ^submitted=[1-9]\d*;dead_readback=\d+;sync=world;max=16$
+wait 3000
+guest run enemy info nearest
+guest expect ;state=5;
+guest run world_status
+guest expect ;applied=[2-9]\d*;failed=\d+$
+guest run spawn_enemy here
+guest expect ^host_only
+host run godmode 0
+guest run godmode 0
+state

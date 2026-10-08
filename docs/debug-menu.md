@@ -87,18 +87,18 @@ is local to the PC that sends it.
 
 | Button | Command |
 |---|---|
-| **Spawn enemy here** (H) | `spawn_enemy here` (`spawn_enemy here come` with "He comes at me") |
-| Spawn at closest camp (H) | `spawn_enemy closest` |
+| **Spawn enemy here** (H, S) | `spawn_enemy here` (`spawn_enemy here come` with "He comes at me") |
+| Spawn at closest camp (H, S) | `spawn_enemy closest` |
 | Go to spawned guard | `goto_spawn` |
 
 Nearby table: radius 10..300 m, **List nearby** = `enemy_list r`. Click a row to
 select a soldier (Name, distance, state, flags M marked / I ignoring / P placed). The
 row of buttons below acts on the selection: `enemy <op> <hash>` with op kill (H, S),
 sleep (H, S), faint (H, S, U), fulton (H, S, asks to confirm), come (H, S, U),
-ignore / notice (H), disable / enable (H), mark / unmark (H, U), info.
+ignore / notice (H, S), disable / enable (H, S), mark / unmark (H, U), info.
 
 Nearest (within 150 m): `enemy kill nearest`, `enemy sleep nearest`,
-`enemy come nearest`, `enemy disable nearest`, `enemy mark nearest` (all H).
+`enemy come nearest`, `enemy disable nearest` (H, S), `enemy mark nearest` (H).
 
 Area: **Clear nearby** `clear_enemies r` (H, S, asks to confirm, 1..100 m, at most 16),
 **Unmark all** `enemy_unmark` (H), **Phase** `cp_phase nearest sneak|caution|alert`
@@ -106,9 +106,10 @@ Area: **Clear nearby** `clear_enemies r` (H, S, asks to confirm, 1..100 m, at mo
 
 **Camps & routes** (closed by default): Refresh camps `enemy_camps`, the camp list,
 Load routes `enemy_routes <camp>`, Go to camp `goto_camp <camp>`, the route list and
-Spawn on selected route `spawn_enemy <camp> <1..64>` (H).
+Spawn on selected route `spawn_enemy <camp> <1..64>` (H, S).
 
-The guest can list, read info and travel; everything that changes a soldier is host only.
+The guest can list, read info and travel; everything that changes a soldier is host only,
+and the host's changes reach the guest's copy of that soldier (see **Spawn sync**).
 
 ### Partner / Co-op
 
@@ -168,11 +169,11 @@ existing one:
 Results:
 
 - Native: `submitted_guard_here;ent=<id>;scope=local;mode=warp`, then
-  `guard_here;ent=<id>;d=<m>;moved=<m>;far=0|1;mode=warp;come=0|1;sync=none;frames=<n>;leaf=pinned|engine`.
+  `guard_here;ent=<id>;d=<m>;moved=<m>;far=0|1;mode=warp;come=0|1;<sync>;frames=<n>;leaf=pinned|engine`.
   `far=1` means more than 10 m away; `frames` is the number of updates until the
   engine handled the message.
 - Fallback: `submitted_guard_here;ent=<id>;scope=local;mode=route;why=<reason>`, then
-  `guard_here;ent=<id>;d=..;moved=..;far=0|1;mode=route;why=<reason>;come=0|1;sync=none;route=<route>`
+  `guard_here;ent=<id>;d=..;moved=..;far=0|1;mode=route;why=<reason>;come=0|1;<sync>;route=<route>`
   (`far=1` above 60 m). `why` is `disabled` (key off), `native_unavailable` (no
   native answer), `realize_timeout`, or a native refusal: `contract`, `host`, `pose`,
   `type`, `range` (target over 20 m from you), `input`, `manager`, `registry`, `chain`,
@@ -186,11 +187,13 @@ Results:
   (`action_context_changed`) releases its force-realize only while the same mission is
   still in gameplay.
 
-At most 8 guards per mission (native and route together). Placement is local to the
-host: the guest's copy of that soldier does not move. Sleep, kill, Fulton and the
-command-post phase do reach the guest when the world link is paired. The guard is
-armed: turn on Auto-heal or keep Kill / Sleep ready. His patrol AI may walk him back
-to his route afterwards.
+`<sync>` is `sync=world;seq=<n>` when the placement was announced to the guest
+(see **Spawn sync**) or `sync=none;why=<reason>` (`not_paired`, `roster`,
+`world_off` without a world link, `tx_<n>` a refused send).
+
+At most 8 guards per mission (native and route together). The guard is armed: turn
+on Auto-heal or keep Kill / Sleep ready. His patrol AI may walk him back to his route
+afterwards.
 
 ### Native placement: what is verified
 
@@ -229,6 +232,108 @@ The hidden-worker scenario `tools/worker/scenarios/debug-menu.txt` turns the key
 with `labsetting debug_soldier_warp=1` and expects `mode=warp` with `d` of 10 m or
 less.
 
+## Spawn sync (the guest's copy)
+
+Each PC runs its own copy of every authored soldier, so a placement or a debug action
+on the host has to be repeated on the guest's copy of the same soldier. The host
+announces it on the world link (`ENEMY_DEBUG`, [world-sync-protocol.md](world-sync-protocol.md));
+the guest applies it and answers (`ENEMY_DEBUG_ACK`). Code:
+`lua/coop/world_place.lua` (host, reports) and `lua/coop/world_place_guest.lua` (guest).
+
+It needs the world link paired at an effective level of 2 or more and matching
+rosters (`world_status` shows `roster=match`). It does not need outcome sync (W1),
+so a placement works while the start-of-mission enemy snapshot is still pending.
+Soldiers are named by `ent=`, the unsigned StrCode32 of the soldier name, which is
+the same on both PCs (the guest's own GameObjectId is used locally; the host's is
+only compared, `goid_match`).
+
+| Host action | Kind | The guest's copy |
+|---|---|---|
+| Spawn enemy here (native) | 1 warp | The same engine set-transform message to the host's exact target and yaw (gates below). Restrict-notice unless "He comes at me"; with it, `SetDiscoveryPlayer` once landed. |
+| Route snap, closest camp, camp route | 2 route | The retail route sequence on the same route (the guest resolves the hash from its own route sets). |
+| Settle window (automatic) | 3 correct | Re-warp only after two samples more than 6 m off. |
+| `enemy come` | 4 | `SetDiscoveryPlayer`: he hunts the guest's own player. |
+| `enemy ignore` / `notice` | 5 / 6 | `SetEnable/DisableRestrictNotice` (the I flag). |
+| `enemy disable` / `enable` | 7 / 8 | `TppEnemy.SetDisable` / `SetEnable`. |
+
+Kill, sleep, faint, Fulton, Clear nearby and the command-post phase are not spawn
+sync: they use the world outcome ledger and report `sync=world` once outcome sync is
+on. A placed guard is kept in an active area on both PCs (`SetOutOfArea` false, again
+after every area change), so a later kill is never held as out of area. Mark stays
+local.
+
+**Guest native placement.** The guest sends `return 'MGS_COOP_WORLD_WARP_V1' -- <seq> <goId>`
+every update until the guard lands (force-realize once on `r=-1`, at most 150 updates
+or 10 s, force-realize always released). The native handler
+(`game_script_observer.cpp` `GuestWarpReceipt`) uses the already verified `Warp()` and
+adds no game address. It refuses unless all of these hold: guest role in lab mode,
+lab.ini `debug_soldier_warp=1`, `soldier_warp=ready` at startup, the mission gates,
+the grant `world::Core` recorded when the guest's Lua popped that `ENEMY_DEBUG`
+(kind warp or correct, same epoch, at most 15 s old, 16 slots; cleared at unpair, link
+session, host epoch and local mission changes), and a live remote pose of the host at
+most 1 s old. The target always comes from the grant. The range is checked against the
+guest's view of the host: 20 m for kind 1, 60 m for corrections. One GameObjectId per
+grant, at most 160 sends, nothing after landing, and the process-wide `fault` /
+`anomaly` latch of the host path. The per-grant gate id is the grant's process-unique
+serial (bit 31 set), so a restarted host that reuses an epoch and seq is a new grant,
+never a spent one. `tools/generate_soldier_warp_contract.py --check`
+asserts that `Warp()` has exactly these two callers and their gates. Play mode
+forces the key off, so there only route placements (kind 2) move the guest's copy.
+
+**Settle window.** For 60 s after a native landing the host samples its guard once a
+second while he is NORMAL and sends a correction when he moved 1 m or every 5 s. The
+guest logs every sample (`event=place_div`) and re-warps only when he is more than
+6 m off on two samples in a row, NORMAL, below ALERT and not a "come" guard; at most
+one correction per 5 s and 10 per guard. A guard whose placement is still pending
+on the guest is not sampled, and a queued correction is refreshed in place by a newer
+one (newest target and grant). "Come" guards chase each PC's own player,
+so they are never corrected. A re-pair in the same epoch re-sends the tracked
+guards at once.
+
+**Lifecycle.** Unpairing drops the guest's queue. A world-link stop (mission end,
+level 0) also forgets the pins and tracked guards. A pending force-realize is released
+only while the mission is still in gameplay (as the menu's own cancel), never during
+teardown. Outcome sync (W1) turning off changes nothing here.
+
+**Results.**
+
+- Host spawn and action results end in `sync=world;seq=<n>` or `sync=none;why=<reason>`.
+- When the guest answers, the host's receipt log gets a row `remote spawn_enemy ->
+  guest_spawn;seq=<n>;ent=<id>;kind=<kind>;result=applied|refused;why=<reason>;err_m=<m>;frames=<n>`
+  (corrections only when refused).
+- The guest's receipt log gets `remote spawn_enemy -> remote_spawn;seq=<n>;ent=<id>;state=landed;mode=<kind>;come=0|1;err_m=<m>`
+  or `...;state=refused;...;why=<reason>;native=<native refusal>`.
+- `world_status` (both roles): `world;paired=;eff=;w1=;roster=match|mismatch|unknown;level=;area=<n>|inferred<n>|none;sent=;acked=;corrected=;refused=;applied=;failed=`.
+- `spawn_sync` on the guest: the last row plus `partner_m` (guard to the host's body on
+  this screen), `player_m` (guard to this player) and `goid_match`; on the host: the
+  last guest answer.
+
+| Guest `why` | Cause |
+|---|---|
+| `not_ready`, `roster` | not paired or not in gameplay, roster mismatch |
+| `unknown_entity`, `unmapped` | hash not in this roster, GameObjectId NULL |
+| `terminal_local`, `unreadable_local`, `vehicle_local`, `disabled_local` | this copy is dead/Fultoned (never revived), unreadable, riding or disabled (the last two for native placements only: a route placement re-enables him, as on the host) |
+| `native_off` | key off, play mode, contract refused, latched, or an older loader |
+| `grant`, `pose`, `range`, `stance` | native gates above |
+| `realize_timeout`, `position_timeout` | no landing within 150 updates / 10 s, no readback |
+| `route_unknown`, `context`, `busy` | route not in the guest's route sets, entry older than 15 s, FIFO of 8 full |
+| `native_other` | type, chain, leaf, index, fault, anomaly or a failed call (exact text in `native=`) |
+
+**Outcome sync before an area trap.** At level 3 outcome sync waits for the host's
+start-of-mission enemy snapshot, which counts only soldiers of the active free-roam
+area. When the host has not crossed a `trap_FreePlay_areaNN` yet, the host now takes
+the area that holds the command post of the nearest soldier with a readable
+position (`event=area;inferred=<n>`) and reads the snapshot for that area. This is
+bookkeeping only: no game call, no `SetOutOfArea`, and the area used to apply
+outcomes is unchanged; a real trap replaces it. Without any such soldier nothing is
+inferred and the snapshot stays refused as before.
+
+**Logs.** Host: `world_lua=event=place_tx; ...`, `event=place_ack; ...`,
+`event=area; inferred=..`. Guest: `event=place; seq=..; kind=..; result=..; why=..;
+native=..; err_m=..; frames=..`, `event=place_div; ...` and
+`world_place=warp; seq=..; kind=..; ent=..; go=..; age_ms=..; r=..; h=..; leaf=..; refused=..`
+(on every change). Both: `debug_menu=remote; message=..`.
+
 ## Results
 
 - Interim results (amber, `PENDING`) mean the command was accepted and a readback
@@ -241,7 +346,10 @@ less.
   `spawn_pool_limit_8`, `no_readable_soldier`, `enemy_not_authored`,
   `partner_pose_unavailable`, `life_vars_unreadable`, `missing_<api>` (the game
   function is absent in this build).
-- `sync=world` / `sync=none` says whether the result reaches the other player.
+- `sync=world` / `sync=none` says whether the result reaches the other player:
+  kill, sleep, faint, Fulton, Clear nearby and the phase use the world outcome
+  ledger (`sync=world` once outcome sync is on); placements and come / ignore /
+  notice / disable / enable add `;seq=<n>` (spawn sync) or `;why=<reason>`.
 
 ## Text grammar
 
@@ -258,7 +366,8 @@ the worker's `debug` / `run` steps):
 `enemy_list [r]`, `enemy <op> nearest|hash`, `enemy_unmark`,
 `cp_phase camp|nearest sneak|caution|evasion|alert`, `enemy_nearest`,
 `enemy_kill_nearest`, `enemy_enable_nearest`, `enemy_disable_nearest`,
-`enemy_enable hash`, `enemy_disable hash`, `clear_enemies r`, `status`.
+`enemy_enable hash`, `enemy_disable hash`, `clear_enemies r`, `status`,
+`world_status`, `spawn_sync` (both read-only, both roles).
 
 Worker builds only: `menu open [category] | close | toggle | category <name> | search [text] | press <action_id> | confirm | cancel | footer 0|1 | select <hash>`.
 
@@ -276,15 +385,21 @@ In the hidden worker the menu is never opened with F9. Scenario steps:
 - `tools/worker/scenarios/debug-menu.txt` opens every page, searches, presses,
   confirms and runs the spawn, partner and world commands. It enables the native
   placement and expects `spawn_enemy here` to report `mode=warp` with `d` of 10 m or
-  less, then checks that the nearest soldier is still close a few seconds later.
+  less and `sync=world;seq=<n>`, then checks that the nearest soldier is still close a
+  few seconds later and that the guest's copy landed (`guest run spawn_sync`).
   Mother Base has no authored camp soldiers, so the scenario needs 30010 or 30020.
+- `tools/worker/scenarios/spawn-sync.txt` is the focused guest-side proof: outcome
+  sync on (`w1=1` on both), the guest 3 m behind the host, the guard landed within
+  10 m of the host's body on the guest's screen, then sleep, come and Clear nearby
+  readbacks on the guest's copy.
 
 ## Not available
 
 Mission travel, restart and checkpoint saves; freezing the clock; waking or holding
 up soldiers; gamepad navigation; actions outside on-foot gameplay; creating new
-soldiers or placing one at typed coordinates; replicating guard placement to the
-guest; a free camera.
+soldiers or placing one at typed coordinates; replicating each guard's AI movement
+frame by frame (each PC runs its own copy; see the settle window below); marker
+sync; a free camera.
 
 ## Files
 

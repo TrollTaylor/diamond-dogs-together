@@ -400,7 +400,7 @@ check(sp:send('spawn_enemy afgh_test_cp 2')[3] == 'submitted_patrol_guard;ent=42
 check(sp:count('disable') == 1 and sp:count('SetSneakRoute') == 1 and sp:count('SetCautionRoute') == 1 and sp:count('SetAlertRoute') == 1 and sp:count('enable') == 1 and sp:count('SetForceRealize') == 1, 'exact retail disable/routes/enable then force-realize calls')
 for _, entry in ipairs(sp.calls) do if entry[1] == 'SetSneakRoute' then check(entry[3].route == 'rt_first' and entry[3].point == 0, 'only resident chosen route point0') end end
 sp:tick(); check(sp.D.pending ~= nil, 'actor enable is not immediate placement proof')
-sp:tick(); check(sp.logs[#sp.logs][3]:find('guard_position_readback', 1, true) and sp.logs[#sp.logs][3]:find(';far=0;borrowed=0;come=0;sync=none;route=rt_first', 1, true) and sp.logs[#sp.logs][2] == 1, 'actual guard position final receipt')
+sp:tick(); check(sp.logs[#sp.logs][3]:find('guard_position_readback', 1, true) and sp.logs[#sp.logs][3]:find(';far=0;borrowed=0;come=0;sync=none;why=world_off;route=rt_first', 1, true) and sp.logs[#sp.logs][2] == 1, 'actual guard position final receipt')
 check(sp.menu[#sp.menu][2] == 'spawned 20000 20000 40000 4294967295', 'actual spawn location metadata unsigned ID')
 check(sp:send('goto_spawn')[3] == 'submitted_warp' and sp.calls[#sp.calls][2].pos[1] == 23 and sp.calls[#sp.calls][2].pos[2] == 20.5, 'go to confirmed spawn uses owner-thread player Warp nearby')
 sp.env.vars.playerPosX, sp.env.vars.playerPosY, sp.env.vars.playerPosZ = 23, 20.5, 40; sp:tick()
@@ -594,7 +594,7 @@ for _, entry in ipairs(sp.calls) do if entry[1] == 'SetSneakRoute' then check(en
 check(sp.state[4] == 'spawn', 'spawn pending kind')
 sp:tick(); sp:tick()
 local final = sp.logs[#sp.logs][3]
-check(final == 'guard_here;ent=4294967295;d=14.1;moved=31.6;far=0;mode=route;why=disabled;come=0;sync=none;route=rt_second' and sp.logs[#sp.logs][2] == 1,
+check(final == 'guard_here;ent=4294967295;d=14.1;moved=31.6;far=0;mode=route;why=disabled;come=0;sync=none;why=world_off;route=rt_second' and sp.logs[#sp.logs][2] == 1,
     'spawn here final readback: ' .. final)
 check(sp.D.enemy.routePos.rt_second ~= nil and sp.D.enemy.last ~= nil, 'route position cached')
 sp.routeError = true
@@ -648,7 +648,7 @@ check(sp:count('SetSneakRoute') == 0 and sp:count('disable') == 0 and forced(sp,
 check(sp:count('restrict') == 1 and sp.D.enemy.ignored.sol_a, 'not hostile without come')
 sp:tick(); sp:tick()
 final = sp.logs[#sp.logs][3]
-check(final == 'guard_here;ent=4294967295;d=5.0;moved=44.4;far=0;mode=warp;come=0;sync=none;frames=0;leaf=pinned' and sp.logs[#sp.logs][2] == 1,
+check(final == 'guard_here;ent=4294967295;d=5.0;moved=44.4;far=0;mode=warp;come=0;sync=none;why=world_off;frames=0;leaf=pinned' and sp.logs[#sp.logs][2] == 1,
     'warp final readback: ' .. final)
 check(sp.menu[#sp.menu][2] == 'spawned 5670 20200 32500 4294967295' and sp:count('SetDiscoveryPlayer') == 0, 'spawn metadata at the warped position')
 check(sp:send('goto_spawn')[3] == 'submitted_warp', 'go to spawned guard after a warp')
@@ -658,7 +658,7 @@ check(sp:count('restrict') == 0, 'come keeps noticing')
 sp:tick(); sp:tick(); check(#sp.warps == 3 and sp.D.pending ~= nil, 'retries each update until handled')
 sp:tick(); sp:tick()
 final = sp.logs[#sp.logs][3]
-check(final:find('guard_here;ent=4294967295;d=5.0;', 1, true) == 1 and final:find(';mode=warp;come=1;sync=none;frames=2;leaf=engine', 1, true),
+check(final:find('guard_here;ent=4294967295;d=5.0;', 1, true) == 1 and final:find(';mode=warp;come=1;sync=none;why=world_off;frames=2;leaf=engine', 1, true),
     'come warp final: ' .. final)
 check(forced(sp, false) == 1 and sp:count('SetDiscoveryPlayer') == 1, 'force realize released, then discovery')
 sp = warpFixture({{r = -1, h = 0}, {refused = 'dispatch'}})
@@ -723,10 +723,10 @@ check(f:send('enemy kill nearest')[3] == 'enemy_kill;ent=4294967295;life_readbac
 check(f:send('enemy faint 2147483648')[3] == 'enemy_faint;ent=2147483648;life_readback=3;unverified;sync=world', 'faint by hash')
 check(f:send('enemy fulton 2147483648')[3] == 'enemy_fulton;ent=2147483648;sync=world' and f:count('RequestForceFulton') == 1, 'fulton')
 f = fixture()
-check(f:send('enemy come nearest')[3] == 'enemy_come;ent=4294967295;hostile;unverified;sync=none' and f:count('SetDiscoveryPlayer') == 1, 'come')
+check(f:send('enemy come nearest')[3] == 'enemy_come;ent=4294967295;hostile;unverified;sync=none;why=world_off' and f:count('SetDiscoveryPlayer') == 1, 'come')
 f.env.TppEnemy.SetEnableRestrictNotice = function(id) f.calls[#f.calls + 1] = {'restrict', id, true} end
 f.env.TppEnemy.SetDisableRestrictNotice = function(id) f.calls[#f.calls + 1] = {'restrict', id, false} end
-check(f:send('enemy ignore nearest')[3] == 'enemy_ignore;ent=4294967295;sync=none' and f.calls[#f.calls][2] == 5, 'ignore uses the game object id')
+check(f:send('enemy ignore nearest')[3] == 'enemy_ignore;ent=4294967295;sync=none;why=world_off' and f.calls[#f.calls][2] == 5, 'ignore uses the game object id')
 check(f:send('enemy mark 2147483648')[3] == 'enemy_mark;ent=2147483648;sync=none;unverified' and f:count('mark') == 1, 'mark')
 local mark = f.calls[#f.calls]
 check(mark[2] == 6 and mark[3] == 0 and mark[4] == 'moving' and mark[5] == 'map_and_world_only_icon' and mark[7] == false, 'retail marker form')
@@ -749,4 +749,63 @@ check(f:send('cp_phase cp_x alert')[3] == 'cp_unknown' and f:send('cp_phase cp_a
 sp = spawnFixture(); sp.cpIds = {afgh_test_cp = 301}
 check(sp:send('cp_phase nearest sneak')[3] == 'submitted_phase;cp=afgh_test_cp;phase=sneak;sync=none', 'nearest command post')
 check(fixture({host = false}):send('cp_phase cp_a alert')[3] == 'host_only', 'guest phase refused')
+-- Spawn sync (lua/coop/world_place.lua): the host announces through MgsCoopWorld.place.share.
+local function shareStub(s, answer)
+    s.shares = {}
+    s.env.e.MgsCoopWorld = {place = {share = function(...)
+        s.shares[#s.shares + 1] = {...}
+        if answer == 'error' then error('boom') end
+        return answer or ('sync=world;seq=' .. #s.shares)
+    end}}
+end
+sp = warpFixture({{r = 0, h = 1, leaf = 'pinned'}}); shareStub(sp)
+sp:send('spawn_enemy here'); sp:tick(); sp:tick()
+w = sp.warps[1]
+local sh = sp.shares[1]
+check(sh and sh[1] == 1 and sh[2] == 4294967295 and sh[3] == w[3] and sh[4] == w[4] and sh[5] == w[5] and sh[6] == w[6] and
+    sh[7] == 2 and sh[8] == nil and sh[9] == 0, 'warp announce: the exact native request, restrict-notice flag, body offset 0')
+check(sp.logs[#sp.logs][3] == 'guard_here;ent=4294967295;d=5.0;moved=44.4;far=0;mode=warp;come=0;sync=world;seq=1;frames=0;leaf=pinned',
+    'warp result carries sync=world;seq')
+sp = warpFixture({{r = 0, h = 1, leaf = 'engine'}}); shareStub(sp)
+sp:send('spawn_enemy here come'); sp:tick(); sp:tick()
+check(sp.shares[1][7] == 1 and sp.logs[#sp.logs][3]:find(';mode=warp;come=1;sync=world;seq=1;frames=0;', 1, true), 'come flag announced')
+sp = guardsFixture(); shareStub(sp)
+sp:send('spawn_enemy here'); sp:tick(); sp:tick()
+sh = sp.shares[1]
+check(#sp.shares == 1 and sh[1] == 2 and sh[2] == 4294967295 and sh[7] == (sp.D.enemy.ignored.sol_a and 2 or 0) and sh[8] == 'rt_caution' and sh[3] == 20000,
+    'route fallback announces kind 2 with the readback, flags and route name')
+check(sp.logs[#sp.logs][3]:find(';mode=route;why=disabled;come=0;sync=world;seq=1;route=rt_caution', 1, true), 'route result tag')
+sp = spawnFixture(); shareStub(sp)
+sp:send('spawn_enemy afgh_test_cp 2'); sp:tick(); sp:tick()
+check(sp.shares[1] and sp.shares[1][1] == 2 and sp.shares[1][7] == 0 and
+    sp.logs[#sp.logs][3]:find(';come=0;sync=world;seq=1;route=' .. tostring(sp.shares[1][8]), 1, true), 'camp route placement announced')
+sp = warpFixture({{r = 0, h = 1}}); shareStub(sp, 'error')
+sp:send('spawn_enemy here'); sp:tick(); sp:tick()
+check(sp.logs[#sp.logs][3]:find(';come=0;sync=none;why=world_error;frames=0;', 1, true) and sp.logs[#sp.logs][2] == 1,
+    'a failing announce never fails the placement')
+f = fixture(); shareStub(f)
+f.env.TppEnemy.SetEnableRestrictNotice = function() end
+f.env.TppEnemy.SetDisableRestrictNotice = function() end
+check(f:send('enemy come nearest')[3] == 'enemy_come;ent=4294967295;hostile;unverified;sync=world;seq=1', 'come announced (kind 4)')
+check(f:send('enemy ignore 2147483648')[3] == 'enemy_ignore;ent=2147483648;sync=world;seq=2', 'ignore announced (kind 5)')
+check(f:send('enemy notice 2147483648')[3] == 'enemy_notice;ent=2147483648;sync=world;seq=3', 'notice announced (kind 6)')
+check(f:send('enemy disable 2147483648')[3] == 'enemy_disable;ent=2147483648;sync=world;seq=4', 'disable announced (kind 7)')
+check(f:send('enemy enable 2147483648')[3] == 'enemy_enable;ent=2147483648;sync=world;seq=5', 'enable announced (kind 8)')
+local kinds = {}
+for i, s in ipairs(f.shares) do kinds[i] = s[1] .. ':' .. string.format('%.0f', s[2]) end
+check(table.concat(kinds, ',') == '4:4294967295,5:2147483648,6:2147483648,7:2147483648,8:2147483648', 'kinds and hashes')
+check(f:send('enemy mark 2147483648')[3] == 'enemy_mark;ent=2147483648;sync=none;unverified' and #f.shares == 5, 'mark stays local')
+check(f:send('enemy sleep nearest')[3]:find(';sync=none$') and #f.shares == 5, 'outcomes use the W1 ledger, not spawn sync')
+check(f:send('enemy_disable 2147483648')[3] == 'submitted_local;ent=2147483648;sync=world;seq=6' and f.shares[6][1] == 7 and
+    f:send('enemy_enable_nearest')[3]:find(';sync=world;seq=7$') and f.shares[7][1] == 8, 'legacy enable/disable commands announce too')
+-- world_status / spawn_sync: read-only reports on both roles.
+for _, host in ipairs({true, false}) do
+    f = fixture({host = host})
+    check(f:send('world_status')[3] == 'world_unavailable' and f:send('spawn_sync')[3] == 'world_unavailable', 'no world link')
+    local seen
+    f.env.e.MgsCoopWorld = {place = {report = function(cmd, D) seen = {cmd, D}; return true, cmd == 'world_status' and 'world;paired=1' or 'remote_spawn;seq=1' end}}
+    check(f:send('world_status')[3] == 'world;paired=1' and seen[1] == 'world_status' and seen[2] == f.D, 'world_status report')
+    check(f:send('spawn_sync')[3] == 'remote_spawn;seq=1' and seen[1] == 'spawn_sync', 'spawn_sync report')
+    check(f:send('spawn_sync now')[3] == 'command_args' and f:send('world_status 1')[3] == 'command_args', 'no arguments')
+end
 print('debug_menu_lua_check: PASS ' .. checks .. ' checks')

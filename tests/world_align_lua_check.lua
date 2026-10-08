@@ -1,12 +1,15 @@
 -- W4 alignment against the real outcome/phase apply rules, recording APIs.
 -- Usage: lua51 this.lua world_align.lua world_enemy.lua world_outcome.lua world_phase.lua world_recovery.lua world_probe.lua
+--        [world_place.lua world_place_guest.lua] (spawn sync, docs/debug-menu.md)
 local checks = 0
 local function check(ok, why) checks = checks + 1; if not ok then error(checks .. ': ' .. why, 2) end end
 local OP = {RESYNC = 5, RESYNC_END = 6, OUTCOME = 16, REQ_OUTCOME = 17, PHASE = 18, REQ_PHASE = 19,
     AREA = 20, PVEC = 23, ALIGN_BEGIN = 14, ALIGN_END = 15, ALIGN_RECORD = 24, ALIGN_ACK = 25, REJECT = 4, RECEIVED = 3,
-    GAME_OVER = 26, REQ_GAME_OVER = 27, CHECKPOINT = 28, PROBE = 116, PROBE_FIRE = 117, PROBE_SYNC = 8}
+    GAME_OVER = 26, REQ_GAME_OVER = 27, CHECKPOINT = 28, PROBE = 116, PROBE_FIRE = 117, PROBE_SYNC = 8,
+    PAIRED = 113, UNPAIRED = 114}
 local function fixture(host, level)
-    local c = {now = 1000, tx = {}, logs = {}, commands = {}, life = {}, action = {}, phase = {cp_a = 10, cp_b = 10}}
+    local c = {now = 1000, tx = {}, logs = {}, commands = {}, life = {}, action = {}, phase = {cp_a = 10, cp_b = 10},
+        positions = {}, receipts = {}, warp = {}, enemyCalls = {}, setOut = {}}
     local env = setmetatable({e = {}, vars = {playerPosX = 12.25, playerPosY = 30.1, playerPosZ = -8.5, playerRotY = -45.125},
         mvars = {mis_checkPointList = {cp_start = 1}}, svars = {}, gvars = {mis_checkPoint = 444},
         TppDefine = {GAME_OVER_TYPE = {PLAYER_DEAD = 1, PLAYER_FALL_DEAD = 2}, GAME_OVER_RADIO = {PLAYER_DEAD = 1}},
@@ -32,9 +35,14 @@ local function fixture(host, level)
     W.api = {null = 65535, fultonRecovered = 10, isStart = function() return c.continued ~= true end, life = function(id) return c.life[id] end,
         recovered = function() return false end, action = function(id) return c.action[id] end,
         getPhase = function(name) return c.phase[name] end,
+        setOut = function(list, out) c.setOut[#c.setOut + 1] = {list[1], out} end,
         send = function(id, command)
-            if command.id == 'GetPosition' then return {GetX = function() return 0 end, GetY = function() return 0 end, GetZ = function() return 0 end} end
-            c.commands[#c.commands + 1] = {id, command.id, command.state or command.phase}
+            if command.id == 'GetPosition' then
+                local p = c.positions[id] or {0, 0, 0}
+                return {GetX = function() return p[1] end, GetY = function() return p[2] end, GetZ = function() return p[3] end}
+            end
+            if command.id == 'GetStatus' and c.status then return c.status[id] end
+            c.commands[#c.commands + 1] = {id, command.id, command.state or command.phase, command.forceRealize, command.route}
             if command.id == 'ChangeLifeState' then c.life[id] = command.state
             elseif command.id == 'RequestForceFulton' then c.action[id] = 10
             elseif command.id == 'SetPhase' then c.phase[id == 11 and 'cp_a' or 'cp_b'] = command.phase end
@@ -49,6 +57,23 @@ local function fixture(host, level)
         return true
     end
     W.w1off = function() W.w1 = false end
+    W.inGame = function() return c.inGame ~= false end
+    -- Spawn sync receipts: WORLD_WARP_V1 answers from c.warp (FIFO, the last one repeats), REMOTE_V1 rows.
+    W.receipt = function(source)
+        c.receipts[#c.receipts + 1] = source
+        if source:find("'MGS_COOP_WORLD_WARP_V1'", 1, true) then
+            local r = #c.warp > 1 and table.remove(c.warp, 1) or c.warp[1]
+            if r == 'literal' then return source:match("^return '([^']+)'") end
+            return r
+        end
+        if source:find("'MGS_COOP_DEBUG_REMOTE_V1'", 1, true) then return true end
+        return nil
+    end
+    env.TppEnemy = {}
+    for _, k in ipairs({'SetEnableRestrictNotice', 'SetDisableRestrictNotice', 'SetDisable', 'SetEnable'}) do
+        env.TppEnemy[k] = function(id) c.enemyCalls[#c.enemyCalls + 1] = k .. ':' .. tostring(id) end
+    end
+    env.e.MgsCoopDebug = {enemy = {used = {}, ignored = {}, marked = {}}}
     W.h = function(name) return name == 'cp_start' and 444 or 555 end
     env.TppMission.ReserveGameOver = function(kind, radio)
         c.reserved = (c.reserved or 0) + 1
@@ -87,7 +112,7 @@ local function fixture(host, level)
         W.follow.token = false
         return unpack(result)
     end
-    for _, path in ipairs({arg[2], arg[3], arg[4], arg[6], arg[1], arg[5]}) do
+    for _, path in ipairs({arg[2], arg[3], arg[4], arg[6], arg[1], arg[5], arg[7], arg[8]}) do
         local chunk = assert(loadfile(path)); setfenv(chunk, env); chunk()
     end
     W.align.install({level or 3})
@@ -410,4 +435,298 @@ check(probeHost.R.out and logged(probeHost, 'id=shared_checkpoint;step=done;resu
 probe(probeHost, 16, 'shared_death'); probe(probeHost, 17, 'host_continue')
 check(probeHost.R.dead and probeHost.continueCalls == 1 and probeHost.continueOptions.isNoFade == true,
     'host lab death then Continue use exact vanilla entrypoints')
-print(checks .. ' W4 alignment/recovery checks passed; real apply rules, no game')
+-- Spawn sync (lua/coop/world_place.lua, world_place_guest.lua; docs/debug-menu.md).
+if arg[7] and arg[8] then
+    local HASH = {cp_a = 100, cp_b = 200, quest_cp = 300, rt_a = 7001, rt_b = 7002}
+    local function placeFixture(host)
+        local c = fixture(host)
+        c.env.vars.missionCode = 30010
+        c.W.h = function(name) return HASH[name] or #name * 1000 + name:byte(-1) end
+        c.P, c.E = c.W.place, c.W.enemy
+        c.W.handlers[OP.PAIRED]({7, 30010, c.W.roster, 5, 1, 3})
+        return c
+    end
+    local function placeTx(c, op)
+        local out = {}
+        for _, p in ipairs(c.tx) do if p.op == op then out[#out + 1] = p end end
+        return out
+    end
+    local function deliver(from, to, op)
+        for _, p in ipairs(placeTx(from, op)) do
+            local v = {}
+            for i, n in ipairs(p.v) do v[i] = n end
+            to.W.handlers[op](v, to.now)
+        end
+        local kept = {}
+        for _, p in ipairs(from.tx) do if p.op ~= op then kept[#kept + 1] = p end end
+        from.tx = kept
+    end
+    local function run(c, frames)
+        for _ = 1, frames do c.now = c.now + 33; c.P.tick(c.now) end
+    end
+    local function receipt(c, text)
+        for _, r in ipairs(c.receipts) do if r:find(text, 1, true) then return r end end
+    end
+    local function receiptCount(c, text)
+        local n = 0
+        for _, r in ipairs(c.receipts) do if r:find(text, 1, true) then n = n + 1 end end
+        return n
+    end
+    local function sent(c, id, name, extra)
+        local n = 0
+        for _, a in ipairs(c.commands) do
+            if a[1] == id and a[2] == name and (extra == nil or a[4] == extra) then n = n + 1 end
+        end
+        return n
+    end
+    local ENT1 = 3000000001
+    -- Host: pairing and a matching roster are required, W1 is not.
+    local h, g = placeFixture(true), placeFixture(false)
+    check(h.P and g.P and h.P.share and g.P.guestTick, 'spawn sync chunks loaded')
+    h.W.w1 = false
+    h.W.handlers[OP.PAIRED]({7, 30010, h.W.roster, 5, 0, 3})
+    check(h.P.share(1, ENT1, 5000, 1200, 6000, -3141, 2, nil, 900) == 'sync=none;why=roster' and #placeTx(h, 34) == 0,
+        'a roster mismatch never announces')
+    h.W.handlers[OP.PAIRED]({7, 30010, h.W.roster, 5, 1, 3})
+    h.W.paired = false
+    check(h.P.share(1, ENT1, 5000, 1200, 6000, -3141, 2) == 'sync=none;why=not_paired', 'unpaired host announces nothing')
+    h.W.paired = true
+    check(g.P.share(1, ENT1, 0, 0, 0, 0, 2) == 'sync=none;why=guest' and #placeTx(g, 34) == 0, 'the guest never announces')
+    check(h.P.share(1, 999, 0, 0, 0, 0, 2) == 'sync=none;why=unknown_entity', 'unknown soldier refused')
+    h.W.activeCp = {[200] = true}
+    check(not h.E.active(100, ENT1), 'out-of-area soldier before placement')
+    check(h.P.share(1, ENT1, 5000, 1200, 6000, -3141, 2, nil, 900) == 'sync=world;seq=1', 'warp announced while W1 is off')
+    local warpTx = placeTx(h, 34)[1]
+    check(warpTx and table.concat(warpTx.v, ' ') == '1 3000000001 1 5000 1200 6000 -3141 2 0 1',
+        'ENEMY_DEBUG carries seq, hash, kind, the exact request, flags and the host GameObjectId')
+    check(h.W.pinned[ENT1] and h.E.active(100, ENT1) and h.setOut[1][1] == 'sol_1' and h.setOut[1][2] == false,
+        'the placed guard is kept in area on the host')
+    local outs = #h.setOut
+    h.W.area.update({cpList = {[1] = {cp_b = true}}}, 1, true, nil)
+    check(#h.setOut == outs + 1 and h.setOut[#h.setOut][1] == 'sol_1', 'every area update re-pins the placed guard')
+    -- Guest: unrealized first (force-realize once), then landed; readback, release, ACK, history row.
+    g.warp = {{r = -1, h = 0}, {r = -1, h = 0}, {r = 0, h = 1, leaf = 'pinned'}}
+    g.positions[1] = {5.0, 1.3, 6.0}
+    deliver(h, g, 34)
+    check(#g.P.q == 1 and g.P.cur == nil, 'the entry waits in the FIFO')
+    run(g, 1)
+    check(receipt(g, "return 'MGS_COOP_WORLD_WARP_V1' -- 1 1") and sent(g, 1, 'SetForceRealize') == 1,
+        'WARP_V1 names only seq and GameObjectId; an unrealized guard is force-realized once')
+    check(g.enemyCalls[1] == 'SetEnableRestrictNotice:1' and g.env.e.MgsCoopDebug.enemy.ignored.sol_1 and g.W.pinned[ENT1],
+        'restrict notice (I flag) and area pin on the guest copy')
+    run(g, 2)
+    check(#placeTx(g, 35) == 0 and receiptCount(g, 'WORLD_WARP_V1') == 3, 'no ACK before the 2-frame readback; no send after landing')
+    run(g, 2)
+    local ack = placeTx(g, 35)[1]
+    check(ack and ack.v[1] == 1 and ack.v[2] == ENT1 and ack.v[3] == 0 and ack.v[4] == 0 and ack.v[5] == 0,
+        'ACK: applied, horizontal error 0 cm')
+    check(sent(g, 1, 'SetForceRealize', false) == 1 and g.P.cur == nil and receiptCount(g, 'WORLD_WARP_V1') == 3,
+        'force-realize released after the readback')
+    check(receipt(g, "-- 1 remote_spawn;seq=1;ent=3000000001;state=landed;mode=warp;come=0;err_m=0.00"), 'guest menu history row')
+    local menuEnemy = g.env.e.MgsCoopDebug.enemy
+    check(menuEnemy.used.sol_1 and menuEnemy.last and menuEnemy.last.position[1] == 5 and menuEnemy.last.mission == 30010,
+        'P flag and goto_spawn on the guest')
+    g.env.vars.playerPosX, g.env.vars.playerPosY, g.env.vars.playerPosZ = 5, 1.3, 9
+    local ok, text = g.P.report('spawn_sync', {partnerPose = {5000, 1300, 1000, 40}})
+    check(ok and text == 'remote_spawn;seq=1;ent=3000000001;state=landed;mode=warp;come=0;err_m=0.00;partner_m=5.00;player_m=3.00;goid_match=1',
+        'spawn_sync: landing, distance to the partner body and to the guest player: ' .. tostring(text))
+    ok, text = g.P.report('spawn_sync', {})
+    check(ok and text:find(';partner_m=unknown;player_m=3.00;', 1, true), 'no partner pose: unknown')
+    deliver(g, h, 35)
+    check(h.P.n.acked == 1 and h.P.n.refused == 0 and
+        receipt(h, "-- 1 guest_spawn;seq=1;ent=3000000001;kind=warp;result=applied;why=none;err_m=0.00"),
+        'host counts the applied ACK and adds the history row')
+    ok, text = h.P.report('world_status')
+    check(ok and text:find('^world;paired=1;eff=3;w1=0;roster=match;level=3;') and
+        text:find(';sent=1;acked=1;corrected=0;refused=0;', 1, true), 'world_status on the host: ' .. text)
+    ok, text = h.P.report('spawn_sync')
+    check(ok and text:find('^guest_spawn;seq=1;'), 'spawn_sync on the host reports the last guest answer')
+    -- Settle window: moved >= 1 m -> a correction; the guest re-warps only after two samples over 6 m.
+    h.positions[1] = {5.0, 1.3, 6.0}
+    h.now = h.now + 1000; h.P.tick(h.now)
+    check(#placeTx(h, 34) == 0, 'no correction while the guard stays put (under 5 s)')
+    h.positions[1] = {7.0, 1.3, 6.0}
+    h.now = h.now + 1000; h.P.tick(h.now)
+    local corr = placeTx(h, 34)[1]
+    check(corr and corr.v[3] == 3 and corr.v[4] == 7000 and corr.v[5] == 400 and corr.v[6] == 6000 and corr.v[7] == 1571,
+        'correction: current position, y minus the body offset, heading as yaw')
+    deliver(h, g, 34)
+    check(#g.P.q == 0 and g.logs[#g.logs]:find('event=place_div;seq=2;ent=3000000001;div_m=2.0;n=0;fix=0', 1, true),
+        'divergence under 6 m is only logged')
+    for i = 1, 2 do
+        h.positions[1] = {7.0 + 8 * i, 1.3, 6.0}
+        h.now = h.now + 1000; h.P.tick(h.now)
+        deliver(h, g, 34)
+    end
+    check(#g.P.q == 1 and g.P.q[1].kind == 3 and g.logs[#g.logs]:find(';n=2;fix=1', 1, true), 'two samples over 6 m queue one correction')
+    g.warp = {{r = 0, h = 1, leaf = 'engine'}}
+    g.positions[1] = {23.0, 1.3, 6.0}
+    run(g, 4)
+    ack = placeTx(g, 35)[1]
+    check(ack and ack.v[3] == 0 and #g.P.q == 0 and not receipt(g, 'remote_spawn;seq=4'), 'correction applied without a history row')
+    deliver(g, h, 35)
+    check(h.P.n.corrected == 1 and h.P.n.acked == 1, 'corrections are counted apart from placements')
+    -- A same-epoch re-pair re-sends the tracked guard at once.
+    local before = #placeTx(h, 34)
+    for _, f in ipairs(h.W.pairedHooks) do f(false) end
+    h.now = h.now + 10; h.P.tick(h.now)
+    check(#placeTx(h, 34) == before + 1, 're-pair re-announces the tracked guard as a correction')
+    h.life[1] = 4
+    h.now = h.now + 5000; h.P.tick(h.now)
+    check(next(h.P.live) == nil, 'tracking ends when the guard is no longer NORMAL')
+    -- Route mode (kind 2): the hash resolves through the guest's route sets; retail sequence; readback error.
+    h.tx, g.tx = {}, {}
+    g.env.mvars.ene_routeSetsDefine = {cp_a = {sneak_day = {{'rt_x', 'rt_a'}}, caution = {{'rt_b'}}}, broken = 7}
+    local seq = h.P.seq + 1
+    check(h.P.share(2, 3000000002, 40000, 2000, 50000, 0, 1, 'rt_a') == 'sync=world;seq=' .. seq, 'route announce')
+    check(placeTx(h, 34)[1].v[9] == 7001, 'route hash on the wire')
+    g.positions[2] = {40.5, 2, 50}
+    deliver(h, g, 34)
+    run(g, 4)
+    check(sent(g, 2, 'SetSneakRoute') == 1 and sent(g, 2, 'SetCautionRoute') == 1 and sent(g, 2, 'SetAlertRoute') == 1 and
+        g.enemyCalls[#g.enemyCalls] == 'SetEnable:2' and sent(g, 2, 'SetForceRealize') == 1, 'retail route sequence on the guest copy')
+    ack = placeTx(g, 35)[1]
+    check(ack and ack.v[3] == 0 and ack.v[5] == 50 and sent(g, 2, 'SetDiscoveryPlayer') == 1 and g.P.come[3000000002],
+        'route landing: 0.5 m from the host readback; come applied')
+    check(receipt(g, 'remote_spawn;seq=' .. seq .. ';ent=3000000002;state=landed;mode=route;come=1;err_m=0.50'), 'route history row')
+    g.tx, h.tx = {}, {}
+    check(h.P.share(2, 3000000002, 0, 0, 0, 0, 0, 'rt_unknown') == 'sync=world;seq=' .. (seq + 1), 'unknown route announced')
+    deliver(h, g, 34); run(g, 2)
+    ack = placeTx(g, 35)[1]
+    check(ack and ack.v[3] == 1 and g.P.WHY[ack.v[4]] == 'route_unknown', 'unknown route refused')
+    -- Per-soldier actions (kinds 4-8): one call each on the guest copy.
+    g.tx, h.tx = {}, {}
+    g.enemyCalls = {}
+    for _, k in ipairs({4, 5, 6, 7, 8}) do h.P.share(k, 3000000003) end
+    deliver(h, g, 34); run(g, 5)
+    check(sent(g, 3, 'SetDiscoveryPlayer') == 1 and table.concat(g.enemyCalls, ',') ==
+        'SetEnableRestrictNotice:3,SetDisableRestrictNotice:3,SetDisable:3,SetEnable:3', 'come, ignore, notice, disable, enable')
+    check(#placeTx(g, 35) == 5 and receipt(g, ';ent=3000000003;state=landed;mode=enable;'), 'each action answered')
+    -- Refusals: terminal copy, native refusals, an old loader, realize timeout, unknown soldier, busy FIFO.
+    local function refusal(setup, expectWhy, frames)
+        local hh, gg = placeFixture(true), placeFixture(false)
+        if setup then setup(gg) end
+        hh.P.share(1, ENT1, 1000, 0, 1000, 0, 2)
+        deliver(hh, gg, 34); run(gg, frames or 3)
+        local a = placeTx(gg, 35)[1]
+        return a and a.v[3] == 1 and gg.P.WHY[a.v[4]] == expectWhy, gg
+    end
+    check(refusal(function(gg) gg.life[1] = 1 end, 'terminal_local'), 'a dead copy is never revived or moved')
+    check(refusal(function(gg) gg.warp = {{refused = 'contract'}} end, 'native_off'), 'contract refusal')
+    check(refusal(function(gg) gg.warp = {{refused = 'grant'}} end, 'grant'), 'no grant')
+    check(refusal(function(gg) gg.warp = {{refused = 'range'}} end, 'range'), 'range')
+    check(refusal(function(gg) gg.warp = {{refused = 'anomaly'}} end, 'native_other'), 'other native refusals')
+    check(refusal(function(gg) gg.warp = {'literal'} end, 'native_off'), 'an old loader leaves the receipt literal')
+    local okTimeout, timed = refusal(function(gg) gg.warp = {{r = -1, h = 0}} end, 'realize_timeout', 160)
+    check(okTimeout and receiptCount(timed, 'WORLD_WARP_V1') == 150 and sent(timed, 1, 'SetForceRealize', false) == 1,
+        'realize timeout after 150 updates releases force-realize')
+    check(receipt(timed, '-- 0 remote_spawn;seq=1;ent=3000000001;state=refused;mode=warp;come=0;why=realize_timeout;native=none'),
+        'refusal history row')
+    check(refusal(function(gg) gg.W.ent[ENT1].id = 65535 end, 'unmapped'), 'NULL GameObjectId refused')
+    check(refusal(function(gg) gg.W.rosterMatch = false end, 'roster'), 'guest roster mismatch refused')
+    check(refusal(function(gg) gg.inGame = false end, 'not_ready'), 'not in game refused')
+    local hb, gb = placeFixture(true), placeFixture(false)
+    for _ = 1, 9 do hb.P.share(5, ENT1) end
+    deliver(hb, gb, 34)
+    local busy = placeTx(gb, 35)[1]
+    check(#gb.P.q == 8 and busy and busy.v[1] == 9 and gb.P.WHY[busy.v[4]] == 'busy', 'a full FIFO refuses busy')
+    -- Unpair: queue dropped, force-realize released, nothing answered.
+    local hu, gu = placeFixture(true), placeFixture(false)
+    gu.warp = {{r = -1, h = 0}}
+    hu.P.share(1, ENT1, 1000, 0, 1000, 0, 2); hu.P.share(5, ENT1)
+    deliver(hu, gu, 34); run(gu, 2)
+    for _, f in ipairs(gu.W.unpairedHooks) do f(1) end
+    check(gu.P.cur == nil and #gu.P.q == 0 and sent(gu, 1, 'SetForceRealize', false) == 1 and #placeTx(gu, 35) == 0 and
+        not gu.W.rosterMatch, 'unpair drops the queue and releases force-realize')
+    -- W1 off keeps spawn sync; a stop releases the pending force-realize and forgets everything.
+    local hs, gs = placeFixture(true), placeFixture(false)
+    gs.warp = {{r = -1, h = 0}}
+    hs.P.share(1, ENT1, 1000, 0, 1000, 0, 2); hs.P.share(5, ENT1)
+    deliver(hs, gs, 34); run(gs, 2)
+    local placeStop = gs.W.stopHooks[#gs.W.stopHooks]
+    placeStop(false)
+    check(gs.P.cur and #gs.P.q == 1 and gs.W.pinned[ENT1] and sent(gs, 1, 'SetForceRealize', false) == 0,
+        'W1 off (stop hook false) keeps the pending placement, queue and pins')
+    placeStop(true)
+    check(gs.P.cur == nil and #gs.P.q == 0 and next(gs.W.pinned) == nil and sent(gs, 1, 'SetForceRealize', false) == 1,
+        'a stop releases force-realize and clears the queue and pins')
+    local ht, gt = placeFixture(true), placeFixture(false)
+    gt.warp = {{r = -1, h = 0}}
+    ht.P.share(1, ENT1, 1000, 0, 1000, 0, 2)
+    deliver(ht, gt, 34); run(gt, 2)
+    gt.inGame = false
+    gt.W.stopHooks[#gt.W.stopHooks](true)
+    check(gt.P.cur == nil and sent(gt, 1, 'SetForceRealize', false) == 0, 'teardown (not in gameplay): no game call, state forgotten')
+    hs.W.active = false
+    check(hs.P.share(5, ENT1) == 'sync=none;why=world_off', 'an inactive world link reports world_off, not guest')
+    -- Corrections are not sampled while the guard's placement is pending; a queued one takes the newest target.
+    local hp, gp = placeFixture(true), placeFixture(false)
+    gp.warp = {{r = -1, h = 0}}
+    hp.positions[1] = {1.0, 0, 1.0}
+    hp.P.share(1, ENT1, 1000, 0, 1000, 0, 2)
+    deliver(hp, gp, 34); run(gp, 1)
+    gp.positions[1] = {90.0, 0, 90.0}
+    for i = 1, 3 do
+        hp.positions[1] = {1.0 + 2 * i, 0, 1.0}
+        hp.now = hp.now + 1000; hp.P.tick(hp.now)
+        deliver(hp, gp, 34)
+    end
+    check(gp.P.cur and gp.P.cur.kind == 1 and #gp.P.q == 0 and gp.P.div[ENT1] == nil, 'no divergence samples while the warp is pending')
+    gp.P.cur, gp.P.q = {h = 3000000002, kind = 5, seq = 99, flags = 0, at = gp.now, frames = 0}, {}
+    gp.P.div[ENT1] = {n = 1, fixes = 0, at = -1e9}
+    hp.positions[1] = {12.0, 0, 1.0}; hp.now = hp.now + 1000; hp.P.tick(hp.now); deliver(hp, gp, 34)
+    local queued = gp.P.q[1]
+    check(#gp.P.q == 1 and queued.kind == 3 and queued.x == 12000, 'two samples over 6 m queue a correction behind another entry')
+    hp.positions[1] = {14.0, 0, 1.0}; hp.now = hp.now + 1000; hp.P.tick(hp.now); deliver(hp, gp, 34)
+    check(#gp.P.q == 1 and gp.P.q[1] == queued and queued.x == 14000 and queued.seq == hp.P.seq and queued.at == gp.now,
+        'a later correction refreshes the queued one in place (newest seq, target and grant)')
+    -- Disabled copies: a warp refuses, a route placement re-enables him (the host's own sequence).
+    check(refusal(function(gg) gg.env.TppGameObject = {NPC_STATE_DISABLE = 9}; gg.status = {[1] = 9} end, 'disabled_local'),
+        'a disabled copy is never warped')
+    local hr, gr = placeFixture(true), placeFixture(false)
+    gr.env.TppGameObject = {NPC_STATE_DISABLE = 9}; gr.status = {[1] = 9}
+    gr.env.mvars.ene_routeSetsDefine = {cp_a = {sneak_day = {{'rt_a'}}}}
+    hr.P.share(2, ENT1, 0, 0, 0, 0, 0, 'rt_a')
+    deliver(hr, gr, 34); run(gr, 4)
+    local routeAck = placeTx(gr, 35)[1]
+    check(routeAck and routeAck.v[3] == 0 and gr.enemyCalls[1] == 'SetDisable:1' and gr.enemyCalls[2] == 'SetEnable:1',
+        'a route placement of a disabled copy runs the retail sequence (re-enabled), as on the host')
+    -- A "come" warp of a guard the guest ignores turns noticing back on, as on the host.
+    local hc, gc = placeFixture(true), placeFixture(false)
+    gc.warp = {{r = 0, h = 1}}
+    gc.env.e.MgsCoopDebug.enemy.ignored.sol_1 = true
+    hc.P.share(1, ENT1, 1000, 0, 1000, 0, 1)
+    deliver(hc, gc, 34); run(gc, 4)
+    check(gc.enemyCalls[1] == 'SetDisableRestrictNotice:1' and not gc.env.e.MgsCoopDebug.enemy.ignored.sol_1 and
+        sent(gc, 1, 'SetDiscoveryPlayer') == 1, 'come warp: restrict notice off, then discovery')
+    -- Host area inference (W4): no trap yet -> the area of the nearest readable soldier's CP.
+    local ih, ig = placeFixture(true), placeFixture(false)
+    ih.W.activeCp, ih.A.tx, ih.A.pairEpoch, ih.tx, ih.W.w1 = nil, nil, nil, {}, false
+    ih.A.areaEnemy = {cpList = {{cp_b = true}, {cp_a = true}}}
+    ih.env.vars.playerPosX, ih.env.vars.playerPosZ = 0, 0
+    for i = 1, 4 do ih.positions[i] = {3 + i, 0, 0} end
+    ih.positions[5] = {400, 0, 0}
+    ih.life[1] = 1
+    ih.A.start()
+    check(ih.W.inferredArea == 2 and ih.W.inferredCp[100] and ih.W.inferredCp[300] and not ih.W.inferredCp[200] and
+        logged(ih, 'event=area;inferred=2;nearest_m=4'), 'inferred area from the nearest soldier (bookkeeping only)')
+    check(#ih.setOut == 0 and ih.W.activeCp == nil and ih.E.active(200, 3000000005),
+        'inference never calls SetOutOfArea and leaves outcome application permissive')
+    capture(ih); transfer(ih, ig)
+    check(ig.W.w1 and logged(ig, 'step=accepted') and logged(ig, 'unknown=1'), 'the inferred area makes the snapshot acceptable')
+    ok, text = ih.P.report('world_status')
+    check(text:find(';area=inferred2;', 1, true), 'world_status names the inferred area')
+    local none = placeFixture(true)
+    none.W.activeCp, none.A.tx, none.A.pairEpoch = nil, nil, nil
+    none.A.areaEnemy = {cpList = {{cp_z = true}}}
+    none.A.start()
+    check(none.W.inferredCp == nil and none.W.inferredArea == nil and logged(none, 'step=area;inferred=none'),
+        'no soldier of a listed CP: nothing inferred, the NORMAL fallback stays unproven')
+    local trapped = placeFixture(true)
+    trapped.W.activeCp, trapped.A.tx, trapped.A.pairEpoch = nil, nil, nil
+    trapped.W.areaState.localArea = 3
+    trapped.A.areaEnemy = {cpList = {{cp_a = true}}}
+    trapped.A.start()
+    check(trapped.W.inferredArea == nil and trapped.W.inferredCp == nil, 'a real trap area is never overridden')
+end
+print(checks .. ' W4 alignment/recovery and spawn sync checks passed; real apply rules, no game')

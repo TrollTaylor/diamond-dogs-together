@@ -10,7 +10,10 @@
 // debug_soldier_warp=1); the caller owns the thread, mission, role and
 // command gates and calls this only on the Lua owner thread.
 namespace mgscoop::soldier_warp {
-inline constexpr float kMaxRangeM = 20.0f;  // target to local player
+inline constexpr float kMaxRangeM = 20.0f;  // target to local player (default Request::max_range)
+// Upper bound of Request::max_range: a guest spawn-sync correction (world_place
+// kind 3) may move a guard up to 60 m from the guest's view of the host.
+inline constexpr float kMaxRangeLimitM = 60.0f;
 
 // Exact bytes of every contract site and data qword in the running image.
 // nullptr when all match, else a reason; `mismatch` gets the first RVA.
@@ -20,7 +23,8 @@ struct Request {
     std::uint32_t go_id{};
     float pos[3]{};     // ground position, metres (the handler adds the body offset T+0x160 to y)
     float yaw{};        // radians; quaternion {0, sin(yaw/2), 0, cos(yaw/2)}
-    float player[3]{};  // local player position, metres
+    float player[3]{};  // reference position, metres (host: the local player; guest: its view of the host)
+    float max_range{kMaxRangeM};  // metres, (0, kMaxRangeLimitM]; anything else refuses `input`
 };
 
 // WARP_V1 receipt text from lua/coop/debug_spawn.lua:
@@ -57,8 +61,9 @@ struct Result {
 Result Warp(std::uintptr_t base, std::size_t span, const Request& request) noexcept;
 
 // Per-command bound, owned by the single caller thread. One "spawn_enemy here"
-// command moves one guard: a fixed GameObjectId, at most kMaxAttempts calls
-// (the menu retries 151 times at most) and none after the engine handled it.
+// command (or one guest spawn-sync grant, id 0x80000000|epoch<<16|seq) moves one
+// guard: a fixed GameObjectId, at most kMaxAttempts calls (the menu retries 151
+// times at most) and none after the engine handled it.
 // A fault or anomaly latches the feature off for the rest of the process.
 inline constexpr unsigned kMaxAttempts = 160;
 struct Gate {

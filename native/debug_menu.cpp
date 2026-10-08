@@ -522,6 +522,21 @@ bool EnemyReceipt(const char* text, std::size_t size) noexcept {
     ReleaseSRWLockExclusive(&lock);
     return accepted;
 }
+bool RemoteReceipt(const char* text, std::size_t size) noexcept {
+    if (!text || size < 3 || size > 162 || (text[0] != '0' && text[0] != '1') || text[1] != ' ') return false;
+    char message[161]{};
+    for (std::size_t i = 2; i < size; ++i) {
+        const char c = text[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '=' || c == ',' ||
+              c == '.' || c == ';' || c == ':' || c == '-')) return false;
+        message[i - 2] = c;
+    }
+    AcquireSRWLockExclusive(&lock);
+    const bool accepted = state.enabled && state.gameplay_ready && !state.terminating;
+    if (accepted) AddReceipt(0, text[0] == '1' ? 0 : 1, "remote spawn_enemy", message);
+    ReleaseSRWLockExclusive(&lock);
+    return accepted;
+}
 bool DispatchedCommand(std::uint32_t id, const char* prefix) noexcept {
     if (!id || !prefix || !*prefix) return false;
     AcquireSRWLockShared(&lock);

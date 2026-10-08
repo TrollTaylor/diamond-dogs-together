@@ -129,6 +129,11 @@ bool ParseLuaState(const char* text, std::size_t size, LuaFlags& out) noexcept;
 bool LuaStateReceipt(const char* text, std::size_t size) noexcept;
 // Called only by the owner-thread observer after its offline/save/context gate.
 bool EnemyReceipt(const char* text, std::size_t size) noexcept;
+// Spawn sync history (lua/coop/world_place.lua MGS_COOP_DEBUG_REMOTE_V1): "<1|0> <message>"
+// adds an OK/REFUSED receipt with id 0 and command "remote spawn_enemy" (the other PC's
+// result for a host guard placement or debug action). Message: 1..160 characters of
+// [A-Za-z0-9_=,.;:-]. Never authorizes anything.
+bool RemoteReceipt(const char* text, std::size_t size) noexcept;
 // True while `id` is the most recently popped host command of the current
 // generation and its text is `prefix` or starts with `prefix` and a space
 // (soldier_warp authorization). Gameplay must be ready and not terminating.

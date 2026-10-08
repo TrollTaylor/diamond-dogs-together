@@ -39,6 +39,8 @@ void Classification() {
     Check(Kind("return 'MGS_COOP_WORLD_TX_V1' -- 1 30050 1 2 3 4") == world::Receipt::tx, "tx");
     Check(Kind("return 'MGS_COOP_WORLD_RX_V1' -- 3") == world::Receipt::rx, "rx");
     Check(Kind("return 'MGS_COOP_WORLD_LOG_V1' -- event=started") == world::Receipt::log, "log");
+    Check(Kind("return 'MGS_COOP_WORLD_WARP_V1' -- 1 1116") == world::Receipt::warp, "warp");
+    Check(Kind("return 'MGS_COOP_DEBUG_WARP_V1' -- 1 1116 0 0 0 0") == world::Receipt::none, "the host menu warp is not a world receipt");
     Check(Kind("return 'MGS_COOP_WORLD_CFG_V1'") == world::Receipt::none, "a prefix without args");
     Check(Kind("return 'MGS_COOP_WORLD_XX_V1' -- 1") == world::Receipt::none, "unknown receipt");
     Check(Kind("return 'MGS_COOP_PARTNER_V1' -- 1") == world::Receipt::none, "partner receipts are not world");
@@ -199,6 +201,25 @@ void Triggers() {
               "probe names round trip");
     }
 }
+// Guest spawn sync: "<seq> <goId>", strict integers, nothing else.
+void Warp() {
+    std::uint16_t seq = 0;
+    std::uint32_t go = 0;
+    const auto parse = [&](const char* tail) {
+        const std::string s = std::string(world::warp_prefix) + tail;
+        return world::ParseWarp(s.data(), s.size(), seq, go);
+    };
+    Check(parse("1 1116") && seq == 1 && go == 1116, "seq and GameObjectId");
+    Check(parse("65535 0") && seq == 65535 && go == 0 && parse("7 65535") && go == 65535, "bounds");
+    seq = 9; go = 9;
+    Check(!parse("0 1116") && !parse("65536 1") && !parse("1 65536") && !parse("-1 1") && !parse("1 -1"), "out of range");
+    Check(!parse("1") && !parse("1 2 3") && !parse("1  2") && !parse("01 2") && !parse("1 02") && !parse("1 2 ") && !parse("1.0 2") &&
+              !parse("+1 2") && !parse(""),
+          "strict grammar");
+    Check(seq == 9 && go == 9, "outputs untouched on failure");
+    const std::string other = "return 'MGS_COOP_WORLD_TX_V1' -- 1 2";
+    Check(!world::ParseWarp(other.data(), other.size(), seq, go) && !world::ParseWarp(nullptr, 3, seq, go), "other receipts");
+}
 } // namespace
 
 int main() {
@@ -208,6 +229,7 @@ int main() {
     Rx();
     Log();
     Triggers();
+    Warp();
     std::printf("world_receipt_tests: %u checks passed\n", checks);
     return 0;
 }

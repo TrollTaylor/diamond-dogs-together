@@ -54,6 +54,9 @@ inline constexpr std::uint8_t align_begin = 0x0E, align_end = 0x0F, align_record
 // World (queue 1).
 inline constexpr std::uint8_t enemy_outcome = 0x10, req_outcome = 0x11, phase = 0x12, req_phase = 0x13, player_area = 0x14,
                               digest = 0x15, guest_digest = 0x16, phase_vec = 0x17, clock = 0x20, weather = 0x21;
+// Debug enemy placement and per-soldier debug actions (docs/debug-menu.md
+// "Spawn sync"): the host announces, the guest applies and answers.
+inline constexpr std::uint8_t enemy_debug = 0x22, enemy_debug_ack = 0x23;
 // Local (never on the wire).
 inline constexpr std::uint8_t link = 0x70, paired = 0x71, unpaired = 0x72, go_to = 0x73, probe = 0x74, probe_fire = 0x75,
                               resync_needed = 0x76, level = 0x77, goto_ack = 0x78;
@@ -65,6 +68,30 @@ namespace reject {
 inline constexpr std::uint8_t unknown_entity = 1, terminal = 2, not_forward = 3, epoch = 5, not_paired = 6, roster_mismatch = 7,
                               bad_state = 8, busy = 9, level = 10, inactive = 11;
 }
+// ENEMY_DEBUG kinds and flags (lua/coop/world_place.lua).
+namespace place {
+inline constexpr std::uint8_t warp = 1, route = 2, correct = 3, come = 4, ignore = 5, notice = 6, disable = 7, enable = 8;
+inline constexpr std::uint8_t flag_come = 1, flag_restrict_notice = 2;
+}
+// Guest warp grants: a warp/correct ENEMY_DEBUG popped by the guest's Lua is
+// the only source of a guest native placement target (never a Lua value).
+// 16 slots: up to 8 tracked guards send 1 Hz corrections while one placement
+// may wait up to 15 s.
+inline constexpr unsigned kGrants = 16;
+inline constexpr std::uint64_t kGrantLifeMs = 15000;
+struct Grant {
+    bool valid;
+    std::uint16_t seq, epoch;
+    std::uint8_t kind, flags;
+    std::uint32_t ent;
+    std::int32_t pos_mm[3];
+    std::int32_t yaw_mrad;
+    std::uint64_t rx_ms;
+    // 1..0x7FFFFFFF, unique per recorded grant for the life of the process (never
+    // reset by Configure, a session or an epoch), so a restarted host that reuses an
+    // epoch and seq can never alias a spent soldier_warp::Gate command.
+    std::uint32_t serial;
+};
 // UNPAIRED reasons.
 namespace unpair {
 inline constexpr std::uint8_t link_session = 1, remote_mission = 2, epoch = 3, remote_end = 4, level0 = 5, local_end = 6;
@@ -208,6 +235,11 @@ public:
     void Tick(std::uint64_t now_ms) noexcept;
     // Formatted log lines without the "; t_ms=..." suffix and line end.
     bool TakeLine(char* out, std::size_t capacity) noexcept;
+    // Guest: the warp/correct grant recorded when Rx popped ENEMY_DEBUG `seq`
+    // in the current paired epoch, at most kGrantLifeMs ago. Cleared at unpair,
+    // local mission start/end, link session and host epoch changes.
+    bool FindGrant(std::uint16_t seq, std::uint64_t now_ms, Grant& out) const noexcept;
+    unsigned grant_count() const noexcept;
 
     // Observers (tests and status).
     bool paired() const noexcept { return paired_; }
@@ -285,6 +317,8 @@ private:
     void GotoTx(std::int64_t step, std::int64_t result, std::uint64_t now_ms) noexcept;
     void Stats10s(std::uint64_t now_ms) noexcept;
     std::uint16_t TxEpoch() const noexcept;
+    void RecordGrant(const Entry& entry, std::uint64_t now_ms) noexcept;
+    void ClearGrants() noexcept;
 
     Config config_{};
     std::uint8_t level_ = 0, pending_level_ = 0, remote_level_ = 0, remote_saves_ = 0, remote_role_ = 0, eff_ = 0;
@@ -317,6 +351,8 @@ private:
     Entry world_[kWorldQueue]{};
     unsigned world_head_ = 0, world_size_ = 0;
     Slot digest_{}, guest_digest_{}, phase_vec_{};
+    Grant grants_[kGrants]{};
+    std::uint32_t grant_serial_ = 0;  // process lifetime; see Grant::serial
     OutEntry out_[kOutboundQueue]{};
     unsigned out_head_ = 0, out_size_ = 0, peeked_ = 0;
     std::uint32_t generation_ = 0;
