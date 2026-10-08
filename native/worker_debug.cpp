@@ -86,6 +86,18 @@ void Publish(const worker_scenario::RunContext& c) noexcept {
     j.Add("\"dm_speed_valid\":%s,\"dm_speed_mmps\":%u,",Bool(s.dm_speed_valid),s.dm_speed_mmps);
     j.Add("\"player_pos\":");j.Position(s.player_pos);j.Add(",\"remote_pos\":");j.Position(s.remote_pos);j.Add(",\"body_pos\":");j.Position(s.body_pos);
     j.Add(",\"heading_error_deg\":");j.Float(s.heading_error_deg);j.Add(",\"position_error_m\":");j.Float(s.position_error_m);
+    // Receiver facing evidence: per owner tick, oldest first (degrees, null unread; clip/move 255 none).
+    j.Add(",\"facing\":{\"active\":%s,\"limit_dps\":%u,\"snaps\":%u,\"last_snap\":",Bool(s.facing_active),s.facing_limit_dps,s.facing_snaps);
+    j.String(s.facing_last_snap,sizeof(s.facing_last_snap));
+    j.Add(",\"target_yaw\":");j.Float(s.facing_target_yaw);j.Add(",\"applied_yaw\":");j.Float(s.facing_applied_yaw);
+    j.Add(",\"rate_dps\":");j.Float(s.facing_rate_dps);
+    j.Add(",\"ring_fields\":[\"ms\",\"source_yaw\",\"source_body_yaw\",\"target_yaw\",\"applied_yaw\",\"body_yaw\",\"clip\",\"move\",\"snap\"],\"ring\":[");
+    for(std::size_t i=0;i<s.facing_ring.count;++i){
+        const auto& f=partner_facing::At(s.facing_ring,i);if(i)j.Add(",");
+        j.Add("[%u,",f.ms);j.Float(f.source_yaw);j.Add(",");j.Float(f.source_body_yaw);j.Add(",");j.Float(f.target_yaw);j.Add(",");
+        j.Float(f.applied_yaw);j.Add(",");j.Float(f.body_yaw);j.Add(",%u,%u,\"%s\"]",unsigned(f.clip),unsigned(f.move),partner_facing::SnapName(f.snap));
+    }
+    j.Add("]}");
     j.Add(",\"queue_depth\":%u,\"last_id\":%u,\"completed\":%u,\"rejected\":%u,\"last_command\":",s.queue_depth,s.last_id,s.completed,s.rejected);
     j.String(s.last_command,sizeof(s.last_command));j.Add(",\"last_result\":");j.String(s.last_result,sizeof(s.last_result));j.Add(",\"refusal\":");j.String(s.refusal,sizeof(s.refusal));
     j.Add(",\"history\":[");for(unsigned i=0;i<8;++i){if(i)j.Add(",");j.String(s.history[i],sizeof(s.history[i]));}

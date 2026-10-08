@@ -468,6 +468,11 @@ const char* PartnerApplyTransform(void*, bool terminating, const float (&pos)[4]
 bool PartnerReadBody(void*, const pp::State& state, float (&pos)[4], float (&quat)[4]) noexcept {
     return pp::ReadBody(partner_addresses, state, partner::partner_index, pos, quat);
 }
+// Read-only: the local instance 0 body transform through the same validated
+// block resolution as the census (facing telemetry only).
+bool PartnerReadLocalBody(void*, const pp::State& state, float (&pos)[4], float (&quat)[4]) noexcept {
+    return pp::ReadBody(partner_addresses, state, 0, pos, quat);
+}
 const char* PartnerCensus(void*, const pp::State& state, pp::Census& out) noexcept {
     return pp::ResolveCensus(partner_addresses, state, out);
 }
@@ -612,7 +617,7 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerInstallInputHook, PartnerPublishArm, PartnerDrainInputStats, PartnerInputHookLive, PartnerDmTargets, PartnerReadDm,
     PartnerFormatDmCensus, PartnerFormatDmProbe, PartnerDmPatch, PartnerDmClearPending, PartnerResetInputFault,
     PartnerApplyPosition, PartnerReadVelocity, PartnerLatestInput, PartnerInstallWrap, PartnerInterpMs, PartnerDmMotionCount,
-    PartnerSampleRemoteWithTurns};
+    PartnerSampleRemoteWithTurns, PartnerReadLocalBody};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
@@ -1150,6 +1155,17 @@ void PublishDebugSnapshot() noexcept {
     snapshot.dm_speed_valid = mgscoop::partner_dmmap::SpeedMmps(mission.dmmap_speed, snapshot.dm_speed_mmps);
     StringCchCopyA(snapshot.dm_phase, ARRAYSIZE(snapshot.dm_phase), mgscoop::partner_dmmap::PhaseName(mission.dmmap.phase));
     snapshot.motion_count = MountedPlayerMotionCount();
+    snapshot.facing_active = mission.facing_active;
+    snapshot.facing_limit_dps = config.partner_facing_dps;
+    snapshot.facing_snaps = mission.facing.snaps;
+    StringCchCopyA(snapshot.facing_last_snap, ARRAYSIZE(snapshot.facing_last_snap),
+                   mgscoop::partner_facing::SnapName(mission.facing.last_snap));
+    if (mission.facing_active) {
+        snapshot.facing_target_yaw = mission.facing_target_yaw * mgscoop::partner_facing::kDegPerRad;
+        snapshot.facing_applied_yaw = mission.facing_applied_yaw * mgscoop::partner_facing::kDegPerRad;
+        snapshot.facing_rate_dps = mission.facing.rate * mgscoop::partner_facing::kDegPerRad;
+    }
+    snapshot.facing_ring = mission.facing_ring;
     // Change-only action receipts expose actual received gun intent during
     // copied-save gameplay, including when the overlay closes on focus loss.
     // The display's intent bits do not establish accepted weapon behavior.

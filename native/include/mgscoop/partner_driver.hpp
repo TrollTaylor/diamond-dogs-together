@@ -32,6 +32,7 @@
 #include <cstdint>
 #include "mgscoop/lab_config.hpp"
 #include "mgscoop/partner_dmmap.hpp"
+#include "mgscoop/partner_facing.hpp"
 #include "mgscoop/partner_source_turns.hpp"
 #include "mgscoop/partner_input.hpp"
 #include "mgscoop/partner_input_hook.hpp"
@@ -208,6 +209,8 @@ struct Hooks {
     unsigned (*dm_motion_count)(void* context) noexcept = nullptr;
     pose::RemoteFrame (*sample_remote_with_turns)(void* context, std::uint32_t delay_ms,
                                                 const pose::HistoryCursor& cursor) noexcept = nullptr;
+    // Read-only local body transform (instance 0) for facing telemetry; null: unread.
+    bool (*read_local_body)(void* context, const partner_player::State& state, float (&pos)[4], float (&quat)[4]) noexcept = nullptr;
 };
 
 // Times passed in by the caller: QPC milliseconds (cadence, poses, net) and
@@ -441,6 +444,12 @@ struct Mission {
     partner_dmmap::TurnState dmmap_turn;
     partner_source_turns::State dmmap_source_turns;
     pose::RemoteFrame dmmap_source_frame;
+    // Receiver facing (partner_facing): the applied yaw for xform/hybrid on the
+    // net source, and per-tick runtime evidence for the worker capture.
+    partner_facing::State facing;
+    partner_facing::Ring facing_ring;
+    bool facing_active;
+    float facing_target_yaw, facing_applied_yaw;  // radians, valid while facing_active
     PartnerSource dmmap_speed_source;
     bool dmmap_table_logged;
     LogCap dmmap_cap[7];  // deferred, lost, stop_timeout, unconsumed, adopted, abandoned, bad_gani

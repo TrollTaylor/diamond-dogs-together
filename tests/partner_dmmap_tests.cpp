@@ -11,6 +11,7 @@
 #include <cstring>
 #include <vector>
 #include "mgscoop/partner_dmmap.hpp"
+#include "mgscoop/partner_facing.hpp"
 #include "mgscoop/pose_interp.hpp"
 
 namespace {
@@ -856,8 +857,9 @@ void TestPivotTimelines() {
             for (const bool large : {false, true}) {
                 for (const bool right : {false, true}) {
                     pdm::TurnState state{};
-                    const float initial = right ? 3.0f : -3.0f;  // both cross the +/-pi boundary
-                    const float angle = (right ? 1.0f : -1.0f) * (large ? pi : pi / 2);
+                    // Right turns decrease yaw (right-handed Fox); both cross the +/-pi boundary.
+                    const float initial = right ? -3.0f : 3.0f;
+                    const float angle = (right ? -1.0f : 1.0f) * (large ? pi : pi / 2);
                     const auto expected = static_cast<std::uint8_t>(13 + stance * 4 + (large ? 2 : 0) + (right ? 1 : 0));
                     const std::uint64_t base = 10000, end = base + 500;
                     Check(pdm::ObserveTurn(state, base, true, initial, stance, false) == pdm::kNoGani,
@@ -913,13 +915,13 @@ void TestPivotTimelines() {
     pdm::TurnState queued{};
     pdm::ObserveTurn(queued, 1000, true, 0, 0, false);
     Check(pdm::ObserveTurn(queued, 1100, true, 1.3f, 0, false) == pdm::kNoGani &&
-          pdm::ObserveTurn(queued, 1170, true, 1.3f, 0, false) == 14, "queued fixture starts a settled90degree pivot");
+          pdm::ObserveTurn(queued, 1170, true, 1.3f, 0, false) == 13, "queued fixture starts a settled90degree pivot");
     const auto first_token = queued.event_token;
-    Check(pdm::ObserveTurn(queued, 1300, true, -1.2f, 0, false) == 14 &&
-          pdm::ObserveTurn(queued, 1400, true, -1.2f, 0, false) == 15 && queued.event_token != first_token,
+    Check(pdm::ObserveTurn(queued, 1300, true, -1.2f, 0, false) == 13 &&
+          pdm::ObserveTurn(queued, 1400, true, -1.2f, 0, false) == 16 && queued.event_token != first_token,
           "a settled new pivot emits a distinct request before the active turn hold ends");
     const auto second_token = queued.event_token;
-    Check(pdm::ObserveTurn(queued, 2070, true, -1.2f, 0, false) == 15 && queued.event_token == second_token &&
+    Check(pdm::ObserveTurn(queued, 2070, true, -1.2f, 0, false) == 16 && queued.event_token == second_token &&
           pdm::ObserveTurn(queued, 2600, true, -1.2f, 0, false) == pdm::kNoGani,
           "a held pivot keeps its event identity until its request expires");
     Check(pdm::ObserveTurn(queued, 2599, true, -1.2f, 0, false) == pdm::kNoGani && queued.valid && queued.gani == pdm::kNoGani,
@@ -1054,7 +1056,7 @@ void TestFiniteRequestIdentity() {
             if (out.action == pdm::Action::play) {
                 native_dm = true;
                 if (pdm::OneShot(out.gani)) {
-                    Check(out.gani == 14, "real collector repeats the identical signed90degree turn");
+                    Check(out.gani == 13, "real collector repeats the identical signed90degree turn");
                     ++finite_plays;
                     natural_end = in.now_ms + 1500;
                 }
@@ -1062,14 +1064,14 @@ void TestFiniteRequestIdentity() {
             if (out.event == pdm::Event::finished) ++finite_ends;
             Check(state.finite_count <= pdm::State::finite_capacity, "collector replay queue stays bounded throughout native timing");
         }
-        Check(finite_plays == 2 && finite_ends == 2 && stops == 0 && state.strikes[14] == 0,
+        Check(finite_plays == 2 && finite_ends == 2 && stops == 0 && state.strikes[13] == 0,
               "two identical turns replay exactly twice after natural completion without idle hacks or strikes");
     }
     pdm::TurnState wrap{};
     pdm::ObserveTurn(wrap, 1000, true, 0, 0, false);
     wrap.event_token = 0xFFFFFFFFu;
     pdm::ObserveTurn(wrap, 1100, true, 1.3f, 0, false);
-    Check(pdm::ObserveTurn(wrap, 1170, true, 1.3f, 0, false) == 14 && wrap.event_token == 1,
+    Check(pdm::ObserveTurn(wrap, 1170, true, 1.3f, 0, false) == 13 && wrap.event_token == 1,
           "collector token wrap skips the reserved zero identity");
 }
 
@@ -1079,15 +1081,15 @@ void TestTransitionsAndResponsiveness() {
     Check(pdm::ObserveTurn(turn, 1100, true, -3.10f, 0, false) == pdm::kNoGani, "wrap across pi is a small turn");
     Check(pdm::ObserveTurn(turn, 1200, true, -1.85f, 0, false) == pdm::kNoGani, "positive idle pivot first collects its angle");
     Check(pdm::ObserveTurn(turn, 1250, true, -1.80f, 0, false) == pdm::kNoGani &&
-          pdm::ObserveTurn(turn, 1320, true, -1.80f, 0, false) == 14, "settled positive idle turn selects resident stand right90");
+          pdm::ObserveTurn(turn, 1320, true, -1.80f, 0, false) == 13, "settled positive (left) idle turn selects resident stand left90");
     Check(pdm::ObserveTurn(turn, 1330, true, -1.70f, 0, true) == pdm::kNoGani, "movement interrupts turn");
     Check(pdm::ObserveTurn(turn, 1400, true, 0, 1, false) == pdm::kNoGani &&
           pdm::ObserveTurn(turn, 1500, true, -2.5f, 1, false) == pdm::kNoGani &&
-          pdm::ObserveTurn(turn, 1570, true, -2.5f, 1, false) == 19, "settled large squat turn selects left180");
+          pdm::ObserveTurn(turn, 1570, true, -2.5f, 1, false) == 20, "settled large negative (right) squat turn selects right180");
     Check(pdm::ObserveTurn(turn, 1580, false, -2.5f, 1, false) == pdm::kNoGani && !turn.valid, "lost peer clears turn intent");
     pdm::ObserveTurn(turn, 1600, true, 0, 0, false);
     Check(pdm::ObserveTurn(turn, 1700, true, 1.3f, 0, false) == pdm::kNoGani &&
-          pdm::ObserveTurn(turn, 1770, true, 1.3f, 0, false) == 14 &&
+          pdm::ObserveTurn(turn, 1770, true, 1.3f, 0, false) == 13 &&
           pdm::ObserveTurn(turn, 1780, true, 1.3f, 1, false) == pdm::kNoGani, "stance change cancels stand turn");
     Check(pdm::OneShot(13) && pdm::OneShot(20) && !pdm::OneShot(12), "transition metadata separates one-shots and loops");
 
@@ -1141,6 +1143,162 @@ void TestTransitionsAndResponsiveness() {
     Check(pdm::Step(state, in).action == pdm::Action::none, "measured idle does not truncate a finite turn merely to shorten dwell");
 }
 
+// Turn clip direction: increasing yaw is a left (counter-clockwise from
+// above) turn with forward = (sin, cos) on (x, z) in right-handed Fox space.
+void TestTurnDirection() {
+    constexpr float pi = 3.14159265358979323846f;
+    // Geometry: facing +z (yaw 0), +x lies to the LEFT in a right-handed y-up
+    // frame (x = y cross z), so a yaw increase toward +x turns left.
+    const float up[3] = {0, 1, 0}, forward[3] = {0, 0, 1};
+    const float left[3] = {up[1] * forward[2] - up[2] * forward[1], up[2] * forward[0] - up[0] * forward[2],
+                           up[0] * forward[1] - up[1] * forward[0]};
+    Check(left[0] == 1.0f && left[2] == 0.0f, "right-handed: up x forward (the left hand) is +x");
+    Check(std::sin(pi / 2) > 0.99f, "yaw +90 degrees faces +x, the left side");
+    for (const std::uint8_t stance : {std::uint8_t{0}, std::uint8_t{1}}) {
+        const std::uint8_t base = static_cast<std::uint8_t>(13 + stance * 4);
+        Check(pdm::TurnGani(stance, false, 1.4f) == base && pdm::TurnGani(stance, false, -1.4f) == base + 1 &&
+              pdm::TurnGani(stance, true, 3.0f) == base + 2 && pdm::TurnGani(stance, true, -3.0f) == base + 3,
+              "positive yaw selects tn_l90/tn_l180, negative tn_r90/tn_r180");
+        pdm::TurnState right{};
+        pdm::ObserveTurn(right, 1000, true, -60.0f / 57.2957795f, stance, false);
+        pdm::ObserveTurn(right, 1100, true, -147.12f / 57.2957795f, stance, false);
+        Check(pdm::ObserveTurn(right, 1170, true, -147.12f / 57.2957795f, stance, false) == base + 1,
+              "recorded mouse-right aimed pivot (-60 -> -147 degrees) selects the right90 clip");
+        pdm::TurnState left_turn{};
+        pdm::ObserveTurn(left_turn, 1000, true, 0, stance, false);
+        pdm::ObserveTurn(left_turn, 1100, true, 75.2f / 57.2957795f, stance, false);
+        Check(pdm::ObserveTurn(left_turn, 1170, true, 75.2f / 57.2957795f, stance, false) == base,
+              "recorded mouse-left aimed pivot (+75 degrees) selects the left90 clip");
+    }
+}
+
+namespace pf = mgscoop::partner_facing;
+float Deg(float radians) { return radians * 57.2957795f; }
+float Rad(float degrees) { return degrees / 57.2957795f; }
+
+// Runs a fixed-cadence timeline toward `target` and returns the ms until the
+// applied yaw lands on it (or 0), checking rate/acceleration limits each tick.
+std::uint64_t Converge(pf::State& s, float target, std::uint64_t& now, unsigned step_ms, const pf::Params& p, float& peak_dps) {
+    peak_dps = 0;
+    float previous_rate = s.rate;
+    const std::uint64_t start = now;
+    for (unsigned tick = 0; tick < 200; ++tick) {
+        now += step_ms;
+        const float before = s.yaw;
+        const float applied = pf::Step(s, target, now, p, pf::Snap::none);
+        const float moved = std::fabs(pf::Wrap(applied - before));
+        const float dps = Deg(moved) * 1000.0f / static_cast<float>(step_ms);
+        if (dps > peak_dps) peak_dps = dps;
+        Check(Deg(moved) <= Deg(p.max_rate) * static_cast<float>(step_ms) / 1000.0f + 0.01f, "facing never exceeds the rate limit");
+        Check(std::fabs(s.rate - previous_rate) <= p.accel * static_cast<float>(step_ms) / 1000.0f + 1e-3f ||
+              std::fabs(s.rate) < std::fabs(previous_rate), "facing eases in: acceleration bounded");
+        previous_rate = s.rate;
+        if (std::fabs(pf::Wrap(applied - pf::Wrap(target))) < 1e-5f) return now - start;
+    }
+    return 0;
+}
+
+void TestFacing() {
+    constexpr float pi = 3.14159265358979323846f;
+    const pf::Params p = pf::ParamsForDps(pf::kDefaultRateDps);
+    Check(std::fabs(Deg(p.max_rate) - 540.0f) < 0.01f && std::fabs(Deg(p.accel) - 5400.0f) < 0.1f,
+          "default limits: 540 deg/s, full rate after 100 ms");
+    Check(pf::ParamsForDps(5000).max_rate == pf::ParamsForDps(pf::kMaxRateDps).max_rate, "rate clamps to 1440 deg/s");
+    for (const unsigned step : {8u, 16u, 33u}) {
+        // W -> W+A (45), W -> A (90), W -> S reversal (180, crossing +-pi).
+        struct Case { float from, to; std::uint64_t min_ms, max_ms; };
+        // Ideal continuous profile: 183 / 267 / 433 / 211 ms; 30 Hz ticks land a little sooner.
+        for (const Case c : {Case{-60.0f, -15.0f, 120, 230}, Case{0.0f, 90.0f, 200, 310}, Case{120.0f, -60.0f, 370, 480},
+                             Case{-150.0f, 150.0f, 150, 230}}) {
+            pf::State s{};
+            std::uint64_t now = 5000;
+            Check(pf::Step(s, Rad(c.from), now, p, pf::Snap::none) == pf::Wrap(Rad(c.from)) && s.last_snap == pf::Snap::first,
+                  "first sample snaps exactly");
+            float peak = 0;
+            const auto took = Converge(s, Rad(c.to), now, step, p, peak);
+            Check(took >= c.min_ms && took <= c.max_ms + step, "a direction step turns over a bounded, eased interval");
+            Check(peak > 300.0f && peak <= 540.5f, "the turn reaches a run-turn rate but never exceeds the limit");
+            Check(s.rate == 0.0f || std::fabs(Deg(s.rate)) < 540.5f, "landing keeps a bounded rate");
+            // Held target: stays exactly on it without drift.
+            for (unsigned i = 0; i < 5; ++i) { now += step; pf::Step(s, Rad(c.to), now, p, pf::Snap::none); }
+            Check(s.yaw == pf::Wrap(Rad(c.to)) && s.rate == 0.0f, "settled facing holds the target exactly");
+        }
+        // The shortest arc: -150 -> 150 turns through +-180 (60 degrees), never through 0.
+        pf::State arc{};
+        std::uint64_t now = 1000;
+        pf::Step(arc, Rad(-150.0f), now, p, pf::Snap::none);
+        now += step;
+        const float first = Deg(pf::Step(arc, Rad(150.0f), now, p, pf::Snap::none));
+        Check(first < -150.0f || first > 150.0f, "facing turns along the shortest arc across +-pi");
+        // A smooth native turn (stationary pivot, 180 deg/s) is followed with
+        // at most a few degrees of lag and lands exactly.
+        pf::State smooth{};
+        now = 1000;
+        pf::Step(smooth, 0, now, p, pf::Snap::none);
+        float worst = 0;
+        for (unsigned t = step; t <= 500; t += step) {
+            now += step;
+            const float target = Rad(180.0f * static_cast<float>(t) / 1000.0f);
+            const float applied = pf::Step(smooth, target, now, p, pf::Snap::none);
+            const float lag = std::fabs(Deg(pf::Wrap(target - applied)));
+            if (lag > worst) worst = lag;
+        }
+        Check(worst <= 3.5f, "a smooth 180 deg/s source turn is followed within 3.5 degrees");
+        for (unsigned i = 0; i < 6; ++i) { now += step; pf::Step(smooth, Rad(90.0f), now, p, pf::Snap::none); }
+        Check(smooth.yaw == pf::Wrap(Rad(90.0f)), "a smooth pivot settles exactly on the source heading");
+    }
+    // Lifecycle snaps are exact, counted and named.
+    pf::State s{};
+    std::uint64_t now = 1000;
+    pf::Step(s, 0, now, p, pf::Snap::none);
+    for (const pf::Snap snap : {pf::Snap::teleport, pf::Snap::relink, pf::Snap::warp, pf::Snap::unrealized, pf::Snap::stale}) {
+        const auto snaps = s.snaps;
+        now += 16;
+        const float target = s.yaw + pi * 0.75f;
+        Check(pf::Step(s, target, now, p, snap) == pf::Wrap(target) && s.rate == 0.0f && s.snaps == snaps + 1 && s.last_snap == snap,
+              "teleport/relink/warp/unrealized/stale snap to the exact target");
+    }
+    Check(std::strcmp(pf::SnapName(pf::Snap::teleport), "teleport") == 0 && std::strcmp(pf::SnapName(pf::Snap::none), "none") == 0,
+          "snap names");
+    now += pf::kMaxStepMs + 1;
+    Check(pf::Step(s, 1.0f, now, p, pf::Snap::none) == 1.0f && s.last_snap == pf::Snap::gap, "an owner gap snaps");
+    now -= 5;
+    Check(pf::Step(s, -1.0f, now, p, pf::Snap::none) == -1.0f && s.last_snap == pf::Snap::clock, "a backwards clock snaps");
+    const float held = s.yaw;
+    Check(pf::Step(s, 2.0f, now, p, pf::Snap::none) == held, "a repeated tick time holds the applied yaw");
+    // 0 = off: exact remote yaw every tick (the previous behaviour).
+    const pf::Params off = pf::ParamsForDps(0);
+    pf::State exact{};
+    now = 1000;
+    pf::Step(exact, 0, now, off, pf::Snap::none);
+    const auto snaps = exact.snaps;
+    for (unsigned i = 1; i <= 4; ++i) {
+        now += 16;
+        Check(pf::Step(exact, Rad(45.0f * static_cast<float>(i)), now, off, pf::Snap::none) == pf::Wrap(Rad(45.0f * static_cast<float>(i))),
+              "partner_facing_dps=0 applies the exact remote yaw");
+    }
+    Check(exact.snaps == snaps + 1 && exact.last_snap == pf::Snap::off, "off is one counted state, not a snap per tick");
+    // A reversal mid-turn decelerates through zero rather than jumping.
+    pf::State back{};
+    now = 1000;
+    pf::Step(back, 0, now, p, pf::Snap::none);
+    for (unsigned i = 0; i < 6; ++i) { now += 16; pf::Step(back, Rad(90.0f), now, p, pf::Snap::none); }
+    const float mid = back.yaw, rate = back.rate;
+    now += 16;
+    pf::Step(back, Rad(-90.0f), now, p, pf::Snap::none);
+    Check(rate > 0 && back.rate < rate && back.rate >= rate - p.accel * 0.016f - 1e-3f && back.yaw > mid,
+          "a reversed target brakes at the acceleration bound, never an instant flip");
+    // Evidence ring: bounded, oldest first.
+    pf::Ring ring{};
+    for (std::uint32_t i = 0; i < pf::kRing + 5; ++i) {
+        pf::Sample sample{};
+        sample.ms = i;
+        pf::Push(ring, sample);
+    }
+    Check(ring.count == pf::kRing && pf::At(ring, 0).ms == 5 && pf::At(ring, pf::kRing - 1).ms == pf::kRing + 4,
+          "facing ring keeps the newest 48 samples in order");
+}
+
 } // namespace
 
 int main() {
@@ -1164,10 +1322,12 @@ int main() {
     TestPivotTimelines();
     TestFiniteRequestIdentity();
     TestTransitionsAndResponsiveness();
+    TestTurnDirection();
+    TestFacing();
     std::printf("%u partner dmmap checks passed: reset/hold, speed bands and hysteresis, classify (flags/speed/anim/lost), table and "
                 "bad fallback, speed ring, stop-then-play switch, hold/dwell, natural end strikes, loss attribution, unconsumed backoff/"
                 "failed/rearm, late clip, dm_read and stop timeouts, play/stop gates, stale freeze, adopt, blocks, release (map again "
-                "from play_sent, late stop), Forget keeps failed/backoff\n",
+                "from play_sent, late stop), Forget keeps failed/backoff, turn clip direction, eased rate-limited facing with lifecycle snaps\n",
                 checks);
     return 0;
 }

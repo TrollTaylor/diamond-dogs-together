@@ -1,6 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include "mgscoop/partner_facing.hpp"
 
 // UI exchanges copied data only. The natural Lua runtime thread owns actions.
 namespace mgscoop::debug_menu {
@@ -43,6 +44,13 @@ struct Snapshot {
     std::uint64_t tick_ms{};
     float player_pos[3]{}, remote_pos[3]{}, body_pos[3]{};
     float player_yaw{}, remote_yaw{}, body_yaw{}, heading_error_deg{}, position_error_m{};
+    // Receiver facing (partner_facing.hpp): remote_yaw above is the applied
+    // yaw; target is the interpolated remote yaw. Degrees; ring oldest first.
+    bool facing_active{};
+    std::uint32_t facing_limit_dps{}, facing_snaps{};
+    char facing_last_snap[16]{};
+    float facing_target_yaw{}, facing_applied_yaw{}, facing_rate_dps{};
+    partner_facing::Ring facing_ring{};
     char role[16]{}, link_state[24]{}, source[16]{}, apply[16]{}, anim[16]{}, dm[16]{}, look[16]{};
     char last_command[kCommandCapacity]{}, last_result[192]{}, refusal[80]{};
     char history[8][240]{};

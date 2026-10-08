@@ -88,6 +88,14 @@ bool OneShot(std::uint8_t gani) noexcept;
 inline bool IncompatibleTurnStance(std::uint8_t gani, std::uint8_t stance) noexcept {
     return OneShot(gani) && static_cast<std::uint8_t>((gani - 13) / 4) != stance;
 }
+// The resident turn clip for a signed source yaw change (13 + 4 * stance:
+// tn_l90, tn_r90, tn_l180, tn_r180). Yaw is radians with forward =
+// (sin, cos) on (x, z) and Fox is right-handed (y up), so increasing yaw is a
+// LEFT (counter-clockwise from above) turn: the hidden worker's mouse-right
+// aimed pivots measured -75/-82 degrees (testing-2026-10-07 run 1a2de304...).
+inline std::uint8_t TurnGani(std::uint8_t stance, bool large, float delta) noexcept {
+    return static_cast<std::uint8_t>(13 + stance * 4 + (large ? 2 : 0) + (delta < 0 ? 1 : 0));
+}
 inline constexpr std::uint64_t kTurnSettleMs = 70;
 inline constexpr std::uint64_t kTurnCollectMs = 600;
 struct TurnState {

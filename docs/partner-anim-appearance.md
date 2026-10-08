@@ -999,6 +999,7 @@ mission, emitted outside TickInput's early returns):
 | `partner_input_slot` | `slot=` | remote, body, none (body) |
 | `partner_recon_runaway` | `runaway=` | pin, disarm, off (pin) |
 | `partner_input_wrap` | `wrap=` | off, census, window (off) |
+| `partner_facing_dps` | (lab.ini only) | 0..1440 (540; 0 = exact remote yaw). xform/hybrid net facing rate limit, eased (full rate after 100 ms); teleport/relink/warp/realize/stale snap |
 | (none) | `place=1` | one-shot: a new placement |
 
 ### Log lines

@@ -1,0 +1,80 @@
+# Partner facing while moving (normal animated profile: dm=map + xform, lab saves, noon).
+# The guest films the host's body (its partner) from behind-right while the
+# host changes direction mid-run. Every capture row carries both roles'
+# state.json, including "facing": per owner tick {ms, source_yaw,
+# source_body_yaw, target_yaw, applied_yaw, body_yaw, clip, move, snap} for
+# the last 48 ticks. Evidence: on the guest, applied_yaw approaches a stepped
+# target_yaw at <= facing.limit_dps with snap "none" (no one-tick jump), and
+# body_yaw follows applied_yaw; on the host, source_yaw vs source_body_yaw
+# shows whether the published yaw is the visual body facing.
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+stance host stand
+stance guest stand
+host debug time 43200
+host debug weather sunny
+wait 2500
+resetpose host
+stance host stand
+placebehind guest host 5 4
+both capture start
+# Run (W), then W+A: a 45-degree left step while running.
+host hold w 1500 nowait
+wait 700
+host hold w+a 1500 nowait
+guest burst run-wa 4 150
+host release
+wait 900
+guest burst run-wa-stop 2 300
+# Run (W), then W+D: a 45-degree right step while running.
+resetpose host
+stance host stand
+placebehind guest host 5 4
+host hold w 1500 nowait
+wait 700
+host hold w+d 1500 nowait
+guest burst run-wd 4 150
+host release
+wait 900
+guest burst run-wd-stop 2 300
+# Run (W), then S: a 180-degree reversal while running.
+resetpose host
+stance host stand
+placebehind guest host 5 4
+host hold w 1500 nowait
+wait 700
+host hold s 1500 nowait
+guest burst run-ws 4 150
+host release
+wait 900
+guest burst run-ws-stop 2 300
+# Walk (Ctrl+W), then Ctrl+A: a 90-degree left turn while walking.
+resetpose host
+stance host stand
+placebehind guest host 5 4
+host hold ctrl+w 1500 nowait
+wait 900
+host hold ctrl+a 1500 nowait
+guest burst walk-a 4 150
+host release
+wait 900
+guest burst walk-a-stop 2 300
+# Stop and pivot: run, stop, then a measured aimed pivot right (expects the
+# stand right90 clip 14) and a short A tap from standstill.
+resetpose host
+stance host stand
+placebehind guest host 5 4
+host hold w 1000
+host release
+wait 700
+guest burst stop 2 300
+aimturn host guest 1500 stop-turn-right
+resetpose host
+stance host stand
+placebehind guest host 5 4
+host hold a 250
+guest burst stop-tap-a 4 150
+wait 900
+state

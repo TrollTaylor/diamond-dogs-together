@@ -287,6 +287,7 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
         else if (Equals(key, "partner_input_slot")) ok = ParsePartnerSlot(value.data, value.size, result.partner_input_slot);
         else if (Equals(key, "partner_recon_runaway")) ok = ParsePartnerRunaway(value.data, value.size, result.partner_recon_runaway);
         else if (Equals(key, "partner_input_wrap")) ok = ParsePartnerWrap(value.data, value.size, result.partner_input_wrap);
+        else if (Equals(key, "partner_facing_dps")) ok = ParseRange(value, 0, 1440, result.partner_facing_dps);
         else if (Equals(key, "crash_probe")) ok = ParseBool(value, result.crash_probe);
         else if (Equals(key, "world")) ok = ParseRange(value, 0, kWorldLevelMax, result.world);
         else if (Equals(key, "world_probe")) ok = ParseWorldProbe(value.data, value.size, result.world_probe);

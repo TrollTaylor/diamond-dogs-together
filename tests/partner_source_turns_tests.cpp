@@ -147,7 +147,7 @@ void Timelines() {
             }
             if (scenario == 3) Check(s.emitted.empty(), "wrapped stationary noise never emits a pivot");
             else {
-                const std::uint8_t wanted = scenario == 1 ? 15 : 14;
+                const std::uint8_t wanted = scenario == 1 ? 16 : 13; // +yaw left, -yaw right
                 Check(s.emitted.size() == 1 && s.emitted[0].gani == wanted, "full raw90/180/wrap/reversal angle classified once");
                 Check(raw_commit >= 670 && raw_commit <= 670 + 1000u / hz + 1000u / owner + 2,
                       "new source samples span70ms settling and bounded packet/owner quantization");
@@ -168,7 +168,7 @@ void Timelines() {
             }
             two.Tick(20000 + elapsed, 1);
         }
-        Check(two.emitted.size() == 2 && two.emitted[0].gani == 17 && two.emitted[1].gani == 17 &&
+        Check(two.emitted.size() == 2 && two.emitted[0].gani == 18 && two.emitted[1].gani == 18 &&
               two.emitted[0].token != two.emitted[1].token, "two physical settled pivots retain distinct identical-clip tokens");
         Check(two.played.size() == 2 && two.identities[0] != two.identities[1] && two.finished == 2 &&
               two.mapper.bad == 0 && two.mapper.timeouts == 0 && two.mapper.unconsumed == 0,
@@ -252,7 +252,7 @@ void VisualReadiness() {
         Check(s.source.count == 1 && s.emitted.empty() && s.played.empty(),
               "visual move/stance lag retains the complete fresh raw pivot without playing it");
         const auto pending = s.source.pending[0];
-        Check(pending.gani == (stance_change ? 17 : 13) && pending.stance == source_stance,
+        Check(pending.gani == (stance_change ? 18 : 14) && pending.stance == source_stance,
               "retained pivot keeps its raw stance and full signed90degree clip");
         if (stance_change) {
             s.Push(1300, -1.55f, source_stance);
@@ -291,10 +291,10 @@ void BoundedHistoryAndDeadline() {
         history.Push(10000 + t, i < 7 ? 1.55f : 3.1f);
     }
     const auto first = history.Tick(10250);
-    Check(first.event.gani == 14 && first.event.token != 0 && history.source.count == 1,
+    Check(first.event.gani == 13 && first.event.token != 0 && history.source.count == 1,
           "two settled pivots in one complete history retain a bounded ordered outbox");
     const auto second = history.Tick(10251);
-    Check(second.event.gani == 14 && second.event.token != first.event.token && history.source.count == 0 &&
+    Check(second.event.gani == 13 && second.event.token != first.event.token && history.source.count == 0 &&
           first.event.receive_ms < second.event.receive_ms && first.event.sender_ms < second.event.sender_ms,
           "one delivery per owner tick preserves both source identities and original ages");
     Check(history.mapper.finite_count == 2 && history.mapper.finite_events[0].id != history.mapper.finite_events[1].id,
@@ -310,7 +310,7 @@ void BoundedHistoryAndDeadline() {
         const auto out = deadline.Tick(20000 + t);
         if (out.event.token && !committed) committed = t;
     }
-    Check(committed == 650 && deadline.emitted.size() == 1 && deadline.emitted[0].gani == 16,
+    Check(committed == 650 && deadline.emitted.size() == 1 && deadline.emitted[0].gani == 15,
           "unsettled raw pivot retains exact600ms collection bound and180 classification");
     auto frame = deadline.ring.ReadFrame(20750, 100, deadline.source.cursor);
     frame.visual.status = pose::Status::lost;
@@ -370,7 +370,7 @@ void DriverStanceConfirmation() {
             if (result.event.token) {
                 delivered = true;
                 delivered_at = 1000 + elapsed;
-                Check(visual_changed && result.event.gani == 17 && s.mapper.finite_count == 1,
+                Check(visual_changed && result.event.gani == 18 && s.mapper.finite_count == 1,
                       "delayed crouch pivot queues on old-stance native reconciliation tick");
             }
             if (was_delivered && !checked_next) {
@@ -384,7 +384,7 @@ void DriverStanceConfirmation() {
         }
         Check(delivered && checked_next && s.emitted.size() == 1,
               "stand-to-crouch source pivot is delivered once at delayed visual readiness");
-        Check(s.played.size() == 1 && s.played[0] == 17 && s.confirmed == (confirming_turn ? 2u : 1u) &&
+        Check(s.played.size() == 1 && s.played[0] == 18 && s.confirmed == (confirming_turn ? 2u : 1u) &&
               s.finished == (completing ? 2u : 1u),
               "retained crouch turn plays once, confirms and finishes naturally");
         Check(!confirming_turn || (!s.stopped_at.empty() && s.stopped_at[0] <= delivered_at + 17),
@@ -421,7 +421,7 @@ void AnimationStanceReseeding() {
     for (const unsigned t : {1300u, 1350u, 1400u}) {
         push(t, 0, 1); s.Tick(t, 0);
     }
-    Check(s.emitted.size() == 1 && s.emitted[0].gani == 14 && s.emitted[0].stance == 0,
+    Check(s.emitted.size() == 1 && s.emitted[0].gani == 13 && s.emitted[0].stance == 0,
           "a fresh stand pivot after animation-stance reseeding retains its own full angle");
 }
 } // namespace

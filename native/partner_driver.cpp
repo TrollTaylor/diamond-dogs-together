@@ -1039,6 +1039,31 @@ void WrapLine(Mission& m, const Hooks& h, const Settings& set, const partner_inp
 // and Warps start a new epoch); own_mmps is the reconciliation's estimate of
 // the game's own motion (readback minus our writes); vel_mmps the game's
 // PS+0x268 per-id velocity (diagnostic).
+// One facing evidence sample per net tick (worker state.json "facing"):
+// the local published and body-transform yaw (the sender side of this game),
+// the interpolated remote target, the applied yaw, the partner body readback
+// and the mapped clip. Degrees; NaN when unread.
+void RecordFacing(Mission& m, const Hooks& h, const pp::State& st, const partner::Tick& tick, std::uint64_t now,
+                  bool pose_valid, const partner::Pose& pose, partner_facing::Snap snap) noexcept {
+    namespace pf = partner_facing;
+    pf::Sample s{};
+    s.ms = static_cast<std::uint32_t>(now);
+    s.source_yaw = static_cast<float>(tick.yaw_cdeg) * 0.01f;
+    s.source_body_yaw = s.target_yaw = s.applied_yaw = s.body_yaw = NAN;
+    float pos[4]{}, quat[4]{};
+    if (h.read_local_body && st.local == 0 && h.read_local_body(h.context, st, pos, quat))
+        s.source_body_yaw = partner::QuatToYaw(quat) * pf::kDegPerRad;
+    if (pose_valid) {
+        s.target_yaw = static_cast<float>(pose.yaw_mrad) * 0.001f * pf::kDegPerRad;
+        s.applied_yaw = m.facing_active ? m.facing_applied_yaw * pf::kDegPerRad : s.target_yaw;
+    }
+    if (m.body_ok) s.body_yaw = partner::QuatToYaw(m.body_quat) * pf::kDegPerRad;
+    s.clip = m.dmmap.cur;
+    s.move = m.dmmap.cand == pdm::kNoGani ? pdm::kMoveUnknown : m.dmmap.cand_cls.move;
+    s.snap = snap;
+    pf::Push(m.facing_ring, s);
+}
+
 void BodyLine(Driver& d, const Hooks& h, const pp::State& st, const Settings& set, const partner::Tick& tick, const Clock& clock,
               bool parts_loaded) noexcept {
     Mission& m = d.mission;
@@ -1803,6 +1828,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     std::uint32_t age_ms = 0;
     sync::AnimState remote_anim{};
     pose::Status sample_status = pose::Status::none;
+    bool sample_snapped = false;  // a snap-sized remote jump held, never lerped
     // dm=map: the remote (net) or the local player (orbit/fixed) as observed.
     partner_dmmap::Observation dmobs{};
     dmobs.flag_move = partner_dmmap::kMoveUnknown;
@@ -1814,6 +1840,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             sample = m.dmmap_source_frame.visual;
         } else sample = h.sample_remote ? h.sample_remote(h.context, delay) : pose::Sample{};
         sample_status = sample.status;
+        sample_snapped = sample.snapped;
         status = sample.status == pose::Status::live ? partner::Status::live
                : sample.status == pose::Status::stale ? partner::Status::stale : partner::Status::lost;
         if (sample.valid) {
@@ -1934,7 +1961,8 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         m.dmmap_turn = {};
         m.dmmap_source_turns = {};
     }
-    if (pose_valid && partner_dmmap::SpeedPush(m.dmmap_speed, now, pose.x_mm, pose.z_mm)) {
+    const bool pose_jump = pose_valid && partner_dmmap::SpeedPush(m.dmmap_speed, now, pose.x_mm, pose.z_mm);
+    if (pose_jump) {
         m.dmmap_turn = {};
         m.dmmap_source_turns = {};
         partner_dmmap::CancelFiniteEvents(m.dmmap);
@@ -2011,10 +2039,35 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     } else {
         m.body_ok = false;
     }
+    // lost -> live on the net source this tick (hybrid and apply=input relink).
+    const bool relink = set.source == PartnerSource::net && m.last_status == pose::Status::lost && sample_status == pose::Status::live;
+    // Receiver facing (partner_facing.hpp): xform/hybrid on the net source turn
+    // the body toward the interpolated remote yaw at a bounded, eased rate, so
+    // a 30 Hz direction step (W -> W+A) is not a one-packet snap. Position and
+    // the reply/Warp pose stay exact; every lifecycle discontinuity snaps.
+    partner::Pose body_pose = pose;
+    auto facing_snap = partner_facing::Snap::none;
+    m.facing_active = transform && set.source == PartnerSource::net && pose_valid && parts_loaded;
+    if (m.facing_active) {
+        facing_snap = sample_status != pose::Status::live ? partner_facing::Snap::stale
+                    : pose_jump || sample_snapped        ? partner_facing::Snap::teleport
+                    : relink                             ? partner_facing::Snap::relink
+                    : m.facing.valid && m.facing.epoch != m.body_epoch ? partner_facing::Snap::warp
+                                                         : partner_facing::Snap::none;
+        m.facing_target_yaw = static_cast<float>(pose.yaw_mrad) * 0.001f;
+        const std::uint32_t snaps = m.facing.snaps;
+        m.facing_applied_yaw = partner_facing::Step(m.facing, m.facing_target_yaw, now,
+                                                    partner_facing::ParamsForDps(lab.partner_facing_dps), facing_snap);
+        facing_snap = m.facing.snaps != snaps ? m.facing.last_snap : partner_facing::Snap::none;
+        m.facing.epoch = m.body_epoch;
+        body_pose.yaw_mrad = pp::ToMrad(m.facing_applied_yaw);
+    } else if (m.facing.valid) {
+        m.facing.valid = false;  // the next applied tick snaps (first)
+    }
     const bool slot = partner::WritesSlot(set.stage, set.apply, pose_valid);
     if (slot) {
         float xyzw[4] = {static_cast<float>(pose.x_mm / 1000.0), static_cast<float>(pose.y_mm / 1000.0),
-                         static_cast<float>(pose.z_mm / 1000.0), static_cast<float>(pose.yaw_mrad / 1000.0)};
+                         static_cast<float>(pose.z_mm / 1000.0), static_cast<float>(body_pose.yaw_mrad / 1000.0)};
         bool write = true;
         // Round 4, apply=input: S+0x20[1] carries the body (what the game
         // publishes for a local player), so pos1/rec1 are real readbacks;
@@ -2033,8 +2086,6 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     // Movement drivers xform / hybrid (the slot write above keeps S+0x20 as
     // Warp would). The body readback compares the previous command.
     bool transform_warp = false;
-    // lost -> live on the net source this tick (hybrid and apply=input relink).
-    const bool relink = set.source == PartnerSource::net && m.last_status == pose::Status::lost && sample_status == pose::Status::live;
     if (relink) partner_upper_probe::Clear("relink");
     if (transform && m.body_ok && m.have_cmd && now - m.xform_check_ms >= 1000) {
         m.xform_check_ms = now;
@@ -2066,7 +2117,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             alignas(16) float p[4] = {static_cast<float>(pose.x_mm / 1000.0), static_cast<float>(pose.y_mm / 1000.0),
                                       static_cast<float>(pose.z_mm / 1000.0), 0.0f};
             alignas(16) float q[4]{};
-            partner::YawToQuat(static_cast<float>(pose.yaw_mrad / 1000.0), q);
+            partner::YawToQuat(static_cast<float>(body_pose.yaw_mrad / 1000.0), q);
             const char* refused = m.native_disabled ? "native_disabled"
                                 : !h.apply_transform ? "unavailable"
                                 : h.apply_transform(h.context, terminating, p, q, set.reset);
@@ -2091,6 +2142,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         }
     }
     m.last_status = sample_status;
+    if (set.source == PartnerSource::net) RecordFacing(m, h, st, tick, now, pose_valid, pose, facing_snap);
     // Animation application (instance 1 only, stage 3 with parts loaded). Not
     // while a dm=map clip is ours: aset=q|qs would overwrite Q+0x18[1] before
     // the mapper reads it, so its stop could never be confirmed.
@@ -2445,7 +2497,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         }
     }
     if (applying || (transform && pose_valid && set.stage >= 1)) {
-        m.cmd = pose;
+        m.cmd = body_pose;
         m.have_cmd = true;
         m.pose_applied = true;
     }

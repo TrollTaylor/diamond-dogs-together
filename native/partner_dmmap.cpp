@@ -312,7 +312,7 @@ std::uint8_t ObserveTurn(TurnState& s, std::uint64_t now, bool fresh, float yaw,
         return kNoGani;
     }
     const bool large = std::fabs(s.accumulated) >= 2.35f;
-    s.gani = static_cast<std::uint8_t>(13 + stance * 4 + (large ? 2 : 0) + (s.accumulated > 0 ? 1 : 0));
+    s.gani = TurnGani(stance, large, s.accumulated);
     s.until_ms = now + (large ? 1200 : 900);
     s.accumulated = 0;
     s.began_ms = now;

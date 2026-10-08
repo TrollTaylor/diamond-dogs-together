@@ -943,6 +943,75 @@ void Loaded(Session& s) {
     s.fake.Realize(true);
     s.fake.state.parts[1] = 3;
 }
+// Receiver facing on the default animated profile (xform, net): a one-packet
+// direction step turns at the bounded eased rate; position stays exact; every
+// lifecycle discontinuity snaps; partner_facing_dps=0 restores the exact yaw.
+void TestFacingSmoothing() {
+    namespace pf = mgscoop::partner_facing;
+    Session s(3, mgscoop::PartnerApply::xform, mgscoop::PartnerSource::net);
+    Loaded(s);
+    auto& sm = s.fake.sample;
+    sm.valid = true; sm.status = mgscoop::pose::Status::live;
+    sm.x = 1.0f; sm.y = 2.0f; sm.z = 3.0f; sm.yaw = -1.047f;  // -60 degrees
+    const auto yaw = [&] { return partner::QuatToYaw(s.fake.xform_quat); };
+    const auto exact_position = [&] {
+        return s.fake.xform_pos[0] == 1.0f && s.fake.xform_pos[1] == 2.0f && s.fake.xform_pos[2] == 3.0f;
+    };
+    Check(s.Tick(1, 16) && s.fake.Calls("xform:") == 1 && std::fabs(yaw() + 1.047f) < 2e-3f &&
+          s.driver.mission.facing.last_snap == pf::Snap::first, "facing: first applied tick snaps to the remote yaw");
+    // W -> W+A: the sender's yaw steps 45 degrees (left) between two packets.
+    sm.yaw = -0.262f;
+    float previous = yaw();
+    unsigned ticks = 0;
+    while (std::fabs(yaw() - sm.yaw) > 2e-3f && ticks < 40) {
+        Check(s.Tick(1, 16), "facing: tick accepted");
+        ++ticks;
+        const float moved = yaw() - previous;
+        Check(moved >= -1e-3f && moved <= 9.4248f * 0.016f + 2e-3f, "facing: turns left no faster than 540 deg/s");
+        Check(exact_position(), "facing: position stays the exact interpolated remote position");
+        Check(std::abs(s.driver.mission.cmd.yaw_mrad - static_cast<std::int32_t>(std::lround(yaw() * 1000.0f))) <= 2,
+              "facing: the commanded/telemetry yaw is the applied yaw");
+        previous = yaw();
+    }
+    Check(ticks >= 9 && ticks <= 15, "facing: a 45-degree packet step turns over about 150-240 ms, not one packet");
+    Check(s.reply.yaw_mrad == -262, "facing: the reply (Lua Warp fallback) keeps the exact remote yaw");
+    const auto& ring = s.driver.mission.facing_ring;
+    const auto& last = pf::At(ring, ring.count - 1);
+    Check(ring.count == ticks + 1 && std::fabs(last.target_yaw + 15.01f) < 0.2f && std::fabs(last.applied_yaw + 15.01f) < 0.2f &&
+          last.snap == pf::Snap::none,
+          "facing: the evidence ring records target and applied yaw every tick");
+    Check(std::fabs(pf::At(ring, 1).target_yaw - pf::At(ring, 1).applied_yaw) > 5.0f,
+          "facing: the ring shows the applied yaw lagging a stepped target");
+    // Teleport: a snap-sized position jump snaps the facing exactly.
+    sm.x = 60.0f; sm.yaw = 2.0f;
+    Check(s.Tick(1, 16) && std::fabs(yaw() - 2.0f) < 2e-3f && s.driver.mission.facing.last_snap == pf::Snap::teleport,
+          "facing: teleport snaps exactly");
+    // Loss holds; the relink snaps exactly.
+    sm.status = mgscoop::pose::Status::lost; sm.yaw = 0.0f;
+    Check(s.Tick(1, 16) && s.driver.mission.facing.last_snap == pf::Snap::stale, "facing: a lost pose holds without easing");
+    sm.status = mgscoop::pose::Status::live; sm.yaw = -2.0f;
+    Check(s.Tick(1, 16) && std::fabs(yaw() + 2.0f) < 2e-3f && s.driver.mission.facing.last_snap == pf::Snap::relink,
+          "facing: relink snaps exactly");
+    // Unrealize then realize: the first applied tick snaps.
+    s.fake.Realize(false);
+    s.Tick(1, 16);
+    Loaded(s);
+    sm.yaw = 1.0f;
+    Check(s.Tick(1, 16) && std::fabs(yaw() - 1.0f) < 2e-3f &&
+          (s.driver.mission.facing.last_snap == pf::Snap::first || s.driver.mission.facing.last_snap == pf::Snap::warp),
+          "facing: realization snaps exactly");
+    // partner_facing_dps=0: the exact remote yaw (previous behaviour).
+    s.lab.partner_facing_dps = 0;
+    sm.yaw = -1.0f;
+    Check(s.Tick(1, 16) && std::fabs(yaw() + 1.0f) < 2e-3f && s.driver.mission.facing.last_snap == pf::Snap::off,
+          "facing: partner_facing_dps=0 applies the exact yaw");
+    // apply=warp never smooths.
+    Session w(3, mgscoop::PartnerApply::warp, mgscoop::PartnerSource::net);
+    Loaded(w);
+    w.fake.sample = sm;
+    w.Tick(1, 16);
+    Check(!w.driver.mission.facing_active && !w.driver.mission.facing.valid, "facing: inactive outside xform/hybrid");
+}
 // Round 4, apply=input: the reconciliation places the body with a disarmed
 // Warp to the remote pose, the fake Warp lands it there, the next tick
 // verifies and arms. The remote pose is (1, 2, 3) m, live; the body starts far.
@@ -2161,7 +2230,7 @@ struct AimPivotSession : MapSession {
         std::uint64_t elapsed = 0;
         while (elapsed < duration) {
             elapsed = elapsed + step < duration ? elapsed + step : duration;
-            fake.sample.yaw = std::remainder(start - 1.55f * static_cast<float>(elapsed) / duration, 6.28318530718f);
+            fake.sample.yaw = std::remainder(start + 1.55f * static_cast<float>(elapsed) / duration, 6.28318530718f);  // left
             Check(T(step), "aim pivot: live pose tick accepted");
         }
         Run(70 + step, step);
@@ -2209,7 +2278,7 @@ void TestDmMapRawTurnFeed() {
                 const float b = t <= 850 ? 0 : t >= 1050 ? 1 : static_cast<float>(t - 850) / 200;
                 pose::Snapshot p{};
                 p.sender_ms = static_cast<std::uint32_t>(base + t);
-                p.x = 1; p.y = 2; p.z = 3; p.yaw = pose::WrapAngle(-1.55f * (a + b));
+                p.x = 1; p.y = 2; p.z = 3; p.yaw = pose::WrapAngle(1.55f * (a + b));  // left turns
                 p.stance = 1; p.equip_id = 873; p.flags = sync::ActionFlag::Aiming;
                 if (interruption && interruption <= 8 && t >= 1250 && t <= 1450)
                     p.flags |= static_cast<std::uint8_t>(interruption);
@@ -2244,9 +2313,13 @@ void TestDmMapRawTurnFeed() {
             if (s.driver.mission.dmmap.cur_event && !first) first = s.driver.mission.dmmap.cur_event;
             had_queue = had_queue || (s.driver.mission.dmmap.finite_count == 2 && s.driver.mission.dmmap.cur_event == first);
             const auto visual = s.fake.raw_ring.SampleAt(s.fake.raw_now, 100);
-            Check(s.driver.mission.dmmap_source_frame.visual.yaw == visual.yaw &&
-                  s.driver.mission.cmd.yaw_mrad == mgscoop::partner_player::ToMrad(visual.yaw),
-                  "raw driver: visual command keeps original100ms interpolated yaw");
+            // The facing target is the original interpolated yaw; the command is
+            // the eased applied yaw toward it (partner_facing).
+            const auto& fm = s.driver.mission;
+            Check(fm.dmmap_source_frame.visual.yaw == visual.yaw && fm.facing_active &&
+                  static_cast<std::int32_t>(std::lround(fm.facing_target_yaw * 1000.0f)) == mgscoop::partner_player::ToMrad(visual.yaw) &&
+                  fm.cmd.yaw_mrad == mgscoop::partner_player::ToMrad(fm.facing_applied_yaw),
+                  "raw driver: visual command keeps original100ms interpolated yaw as the facing target");
         }
         std::size_t turns = 0;
         for (const int g : s.played) if (g == 17) ++turns;
@@ -2278,7 +2351,7 @@ void TestDmMapRawVisualLag() {
                 pose::Snapshot p{};
                 p.sender_ms = static_cast<std::uint32_t>(base + t);
                 p.x = 1 + (stance_change ? 0 : 4.0f * static_cast<float>(t < 400 ? t : 400) / 1000);
-                p.y = 2; p.z = 3; p.yaw = t <= 400 ? 0 : -1.55f;
+                p.y = 2; p.z = 3; p.yaw = t <= 400 ? 0 : 1.55f;  // left turn
                 p.stance = stance_change && t >= 400 ? 1 : 0;
                 p.equip_id = 873;
                 p.flags = !stance_change && t < 400 ? sync::ActionFlag::Running : sync::ActionFlag::Aiming;
@@ -2774,6 +2847,7 @@ int main() {
     TestAnimationApply();
     TestAnimationGuards();
     TestTransformDrivers();
+    TestFacingSmoothing();
     TestLooks();
     TestCensusAndProbes();
     TestLookFix();
