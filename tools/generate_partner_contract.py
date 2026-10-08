@@ -271,7 +271,64 @@ SITES = [
     (0xBF62F8, '488b471844850401750e498b06448bc38bd6498bceff5018', 'active walker: node vt+0x18(phase, id) for ids active and not paused'),
     (0x9C1D9B, 'ba07000000488bcfe888462300', 'player stage 0x9C1CD0: active walk of each block root, phase 7 (call 0x9C1DA3)'),
     (0x9C1AF4, '448bc6ba0b000000498bcfe8ec462300', 'player stage 0x9C1A30: per-id walk, phase 11 (call 0x9C1AFF)'),
+    # --- Native puppet (docs/native-puppet.md): block 1's per-block job deferred
+    # out of the parallel batch (H1, slot 0x2295420) and drained on the main
+    # thread after the batch is joined (H2, call 0xBF4D55).
+    (0xBF4D20, '40574883ec20488bb988000000', 'ticker vt+0x10: rdi = groups *(ticker+0x88)'),
+    (0xBF4D40, '0fb7d6488bcfe8e5030000', 'ticker: 0xBF5130(group, index) (GO vt+0x48 / vt+0x60) before the batches'),
+    (0xBF4D50, '8bd3488bcfe8c6010000ffc383fb0272ef', 'ticker: call 0xBF4F20(group, mode) at 0xBF4D55 for modes 0 and 1 (H2)'),
+    (0xBF4D61, '488bcfe8a7000000', 'ticker: 0xBF4E10(group) (GO vt+0x58) after both batches'),
+    (0xBF4F20, '8954241048894c2408535556574154415541564157 4883ec78'.replace(' ', ''), 'batch 0xBF4F20 prologue'),
+    (0xBF4F53, '488b394c8b51084c2bd749c1fa03', 'batch: the group vector [*(group), *(group+8)) holds entry pointers'),
+    (0xBF4FB4, '488d4c2430e8b2f443ff', 'batch: scratch scope ctor 0x34470(&[rsp+0x30]) before the jobs are built'),
+    (0xBF4FD0, '488d4c2430488b442430ff5010', 'batch: the job array comes from the scope allocator (scope vt+0x10)'),
+    (0xBF4FF0, '4c8d05e9147101', 'batch: job vtable 0x23064E0 (its only reference)'),
+    (0xBF508C, '4d8970284189583041897834', 'batch: job+0x28 = entry, +0x30 = mode, +0x34 = block'),
+    (0xBF50E0, '458bc6442bc341ffc84d6bc0384d03c5488d9424c0000000498bcce880dd56ffffc3413bde72d9',
+     'batch: join every job in reverse (0x162E80)'),
+    (0xBF5107, '488d4c2430e83ff443ff', 'batch: scope dtor 0x34550(&[rsp+0x30]) after the join'),
+    (0x34204, '488bcfff10', 'join: a still-queued job runs inline on the waiter (job vt[0], no extra context)'),
+    (0xBF4C64, '488b6928448b7930448b6134448b7514', 'job body: entry, mode, block, sub count entry+0x14'),
+    (0xBF4C90, '488b452844897c24284489642420488944243 08b450c897424248944242c'.replace(' ', ''),
+     'job body: param {block, sub, mode, nbits entry+0xC, bits entry+0x28} on the stack'),
+    (0xBF4CB0, '8b5d1c83fbff74f8448d4301488d4d1c8bd3e8a9d142ff3bc375e5', 'job body: entry read lock (spin while -1, cmpxchg +1) per sub'),
+    (0xBF4CCB, '488b4d204885c9741a488b41088b5038c1ea04f6c201740b', 'job body: GO = entry+0x20, gate [[GO+8]+0x38] bit 4'),
+    (0xBF4CE3, '488b01488d542420ff5050', 'job body: GO vt+0x50(GO, &param); returns to 0xBF4CEE'),
+    (0xBF4CEE, '488d4d1ce8a9d142ff', 'job body: entry read unlock 0x21EA0'),
+    (0x21E70, '8bc2f0440fb101c3', 'read-lock helper: mov eax,edx; lock cmpxchg [rcx],r8d; ret'),
+    (0x21EA0, '83c8fff00fc101c3', 'unlock helper: or eax,-1; lock xadd [rcx],eax; ret'),
+    (0x34470, '48894c2408534883ec3048c7442420feffffff488bd9e865feffff', 'scope ctor 0x34470 -> 0x342F0 (push)'),
+    (0x34550, '48894c24084883ec3848c7442420feffffff4883c438e945ffffff', 'scope dtor 0x34550 -> 0x344B0 (pop)'),
+    (0x3432B, '8b153f77c30265488b042558000000b918000000488b3cd04803f9', 'scope push: slot = TLS[*(u32*)(0x2C6BA70)] + 0x18'),
+    (0x34349, '48894310', 'scope push: this+0x10 = the previous scope'),
+    (0x3450C, '8b0d5e75c30265488b042558000000ba18000000488b0cc8488b46104889040a', 'scope pop: slot = this+0x10'),
+    (0x9C1B90, '4c8bdc564883ec40f6812402000001', 'per-block job 0x9C1B90: GO+0x224 = P+0x204 bit 0'),
+    (0x9C1BA8, '837a04004d8963f0448b62080f850a010000', 'per-block job: sub != 0 returns; r12 = mode'),
+    (0x9C1BC2, '8b3a4d896be84d8973e04d897bd84869ffa80600004803b998030000', 'per-block job: blk = *(GO+0x398) + block*0x6A8'),
+    (0x9C1C15, '3b5e0c731c488b4610488bcd48c1e9030fb614010fb6cb83e107d3ea83e201eb05ba01000000413bd4',
+     'per-block job: bit = id < nbits ? bits[id>>3]>>(id&7)&1 : 1, compared with mode'),
+    (0x9C1C9C, '488b4f70458bc5418bd4488b01ff10', 'per-block job: driver *(blk+0x70) vt[0](mode, count)'),
+    (0x9BB130, '488d0599a28d01488901488d054fa38d0148894120', 'P dtor: GO+0 = 0x22953D0, GO+0x20 = 0x2295490 (P = GO+0x20)'),
+    (0x9BA754, '488d0575ac8d01488906', 'P ctor: GO+0 = 0x22953D0'),
+    # Look angles (computed in PS phase 0, not phase 2) and the aim inputs.
+    (0xFF2B40, '83fa060f87a7000000', 'PS comp vt+0x18 (comp = PS+0x3E8): phases 0..6'),
+    (0xFF2B67, '4881c118fcffff8bd74883c4205fe956fdffff', 'PS phase 0: PS = comp-0x3E8; jmp 0xFF28D0'),
+    (0xFF28C9, '4883c4205fc3cc', '0xFF2780 (phase 2) ends with ret at 0xFF28CE'),
+    (0xFF28D0, '48896c2418564883ec208bf22b5108', 'PS phase-0 handler prologue (id - PS+8)'),
+    (0xFF292A, '8b1401d1eaf6c2017432', 'PS phase 0: per-id record bit 1 skips the look computation'),
+    (0xFF29F7, '8bd6488bcde8ff810000', 'PS phase 0: 0xFFAC00(PS, id), its only call'),
+    (0xFFAD38, '2b5f08488b8f90020000', 'look store: index id - PS+8 into *(PS+0x290)'),
+    (0xFFAD57, '488904d9', 'look store: {f32 pitch, f32 yaw} at stride 8'),
+    (0xFEDF70, '488d05592c3c01488983e8030000', 'base PS ctor: [PS+0x3E8] = 0x23B0BD0 (vtable + 0x1E0)'),
+    (0xFF2112, '488d0537ed3b01488983e8030000', 'player PS ctor: [PS+0x3E8] = 0x23B0E50 (vtable + 0x1E0)'),
+    (0x1054210, '488b81b00000004532fff6402808740433c0eb090fb6807c0200002401',
+     'gun eligibility: PP+0x28 & 8 ? 0 : PP+0x27C & 1'),
+    (0x12072A6, '488b06488bceff5030c1e80333867c020000', 'HOLD latch writer: PP vt+0x30() >> 3 ...'),
+    (0x12072C0, '83e00131867c020000', '... bit 0 only into PP+0x27C'),
+    (0x10C68AF, '498b88b0000000f6412c010f85bd000000f30f107110', 'idle-to-move gate: PP+0x2C bit 0, PP+0x10'),
 ]
+# The H1 slot itself (value checked as a slot below) and the patched sites:
+# the code gate runs once per process before any lazy install.
 
 # (vtable rva, slot offset, expected target rva).
 SLOTS = [
@@ -342,7 +399,110 @@ SLOTS = [
     (0x2306660, 0x28, 0xBF6420, 'UpdateTree service vtable +0x28 = active walk (wrap)'),
     (0x2306660, 0x30, 0xBF61C0, 'UpdateTree service vtable +0x30 = all-ids walk (wrap)'),
     (0x2306660, 0x40, 0xBF61E0, 'UpdateTree service vtable +0x40 = per-id walk (wrap)'),
+    # --- Native puppet.
+    (0x22953D0, 0x48, 0x9C1F00, 'GO (P primary view) vt+0x48 = player update'),
+    (0x22953D0, 0x50, 0x9C1B90, 'GO vt+0x50 = per-block job (H1 slot 0x2295420)'),
+    (0x22953D0, 0x58, 0x9C1CD0, 'GO vt+0x58 = player stage (walk7)'),
+    (0x22953D0, 0x60, 0x9C1A30, 'GO vt+0x60 = gate-closed update (walk11)'),
+    (0x23064E0, 0x00, 0xBF4C50, 'batch job vtable slot 0 = job body'),
+    (0x2306480, 0x10, 0xBF4D20, 'ticker vtable +0x10 = ticker'),
+    (0x23B09F0, 0x1F8, 0xFF2B40, 'PS vtable +0x1F8 (comp +0x18) = per-id phase handler'),
+    (0x23B0C70, 0x1F8, 0xFF2B40, 'player PS vtable +0x1F8 (comp +0x18) = per-id phase handler'),
+    (0x23B3FA0, 0x00, 0x1053360, 'gun node callbacks [0] (activation -> eligibility 0x1054210)'),
+    (0x23B3FA0, 0x08, 0x1099AB0, 'gun node callbacks [8]'),
+    (0x23B3FA0, 0x10, 0x1061F50, 'gun node callbacks [0x10]'),
+    (0x23B3FA0, 0x18, 0x1041000, 'gun node callbacks [0x18]'),
+    (0x23B3FA0, 0x20, 0x10410A0, 'gun node callbacks [0x20]'),
+    (0x2306660, 0x18, 0xBF6470, 'UpdateTree service vtable +0x18 = activation'),
+    (0x2306660, 0x20, 0xBF6450, 'UpdateTree service vtable +0x20'),
+    (0x23B8250, 0x40, 0x1112D50, 'CAM vt+0x40 (aim init: forwards to *(CAM+0x360) vt+0x50)'),
+    (0x23B8250, 0x1A0, 0x1115400, 'CAM vt+0x1A0 (aim init: sub-controller lookup by hash)'),
 ]
+
+
+def rel_refs(target, opcodes=(0xE8, 0xE9)):
+    """Every E8/E9 rel32 in .xtext whose destination is target (rva)."""
+    hits = []
+    for s in pe.sections:
+        if s.Name.rstrip(b'\0').decode() != '.xtext':
+            continue
+        data = s.get_data()
+        va = s.VirtualAddress
+        for op in opcodes:
+            i = data.find(bytes([op]))
+            while 0 <= i <= len(data) - 5:
+                if va + i + 5 + struct.unpack_from('<i', data, i + 1)[0] == target:
+                    hits.append(va + i)
+                i = data.find(bytes([op]), i + 1)
+    return sorted(hits)
+
+
+def qword_hits(value):
+    """Every occurrence of the absolute (image-based) qword in any section."""
+    needle = struct.pack('<Q', IB + value)
+    hits = []
+    for s in pe.sections:
+        data = s.get_data()
+        i = data.find(needle)
+        while i >= 0:
+            hits.append(s.VirtualAddress + i)
+            i = data.find(needle, i + 1)
+    return sorted(hits)
+
+
+def lea_rip_refs(target):
+    """7-byte REX.W lea r64, [rip+disp32] in .xtext resolving to target (rva)."""
+    hits = []
+    for s in pe.sections:
+        if s.Name.rstrip(b'\0').decode() != '.xtext':
+            continue
+        data = s.get_data()
+        va = s.VirtualAddress
+        i = data.find(b'\x8d')
+        while 0 < i <= len(data) - 6:
+            if data[i - 1] in (0x48, 0x4C) and (data[i + 1] & 0xC7) == 0x05:
+                if va + (i - 1) + 7 + struct.unpack_from('<i', data, i + 2)[0] == target:
+                    hits.append(va + i - 1)
+            i = data.find(b'\x8d', i + 1)
+    return sorted(hits)
+
+
+# Reference and containment facts the native puppet relies on (docs/native-puppet.md).
+def native_assertions():
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+    need(rel_refs(0xBF4F20) == [0xBF4D55], f'0xBF4F20 single caller 0xBF4D55: {[hex(x) for x in rel_refs(0xBF4F20)]}')
+    need(qword_hits(0x9C1B90) == [0x2295420], f'0x1409C1B90 occurs only at the H1 slot: {[hex(x) for x in qword_hits(0x9C1B90)]}')
+    need(rel_refs(0x9C1B90, (0xE8, 0xE9)) == [], 'no direct call/jmp to 0x9C1B90')
+    need(lea_rip_refs(0x22953D0) == [0x9BA754, 0x9BB130], f'two stores of 0x22953D0: {[hex(x) for x in lea_rip_refs(0x22953D0)]}')
+    need(0x2295420 % 8 == 0, 'H1 slot 8-aligned')
+    need((0xBF4D56 & 63) + 4 <= 64, 'H2 rel32 0xBF4D56 within one cache line')
+    callers = rel_refs(0xFFAC00)
+    need(callers == [0xFF29FC], f'0xFFAC00 single caller 0xFF29FC: {[hex(x) for x in callers]}')
+    # Phase 2 (0xFF2780) ends at 0xFF28CE; 0xFF28D0 is the phase-0 handler and
+    # contains the look call (no ret+int3 function padding before it).
+    need(rd(0xFF28CE, 2) == b'\xc3\xcc', '0xFF28CE: ret; int3 (end of 0xFF2780)')
+    body = rd(0xFF28D0, 0xFF29FC - 0xFF28D0)
+    need(b'\xc3\xcc' not in body, 'no function boundary between 0xFF28D0 and 0xFF29FC')
+    need(0xFF28D0 < 0xFF29FC < 0xFF2B40, 'the look call lies inside 0xFF28D0')
+    need(rel_refs(0xFF28D0) == [0xFF2B75], f'0xFF28D0 reached only from the phase-0 jump 0xFF2B75: {[hex(x) for x in rel_refs(0xFF28D0)]}')
+    jt = [struct.unpack('<i', rd(0xFF2BF4 + 4 * k, 4))[0] for k in range(7)]
+    need(jt[0] == 0xFF2B67 and jt[2] == 0xFF2B7A, f'phase jump table: 0 -> 0xFF2B67, 2 -> 0xFF2B7A ({[hex(x) for x in jt]})')
+    # The scope pair lies inside 0xBF4F20 (prologue at 0xBF4F20, ret at 0xBF5121).
+    need(rd(0xBF5121, 1) == b'\xc3', '0xBF4F20 returns at 0xBF5121')
+    need(0x34470 in [0xBF4FB9 + 5 + struct.unpack('<i', rd(0xBF4FBA, 4))[0]], 'scope ctor call target 0x34470')
+    need(0x34550 in [0xBF510C + 5 + struct.unpack('<i', rd(0xBF510D, 4))[0]], 'scope dtor call target 0x34550')
+    need(0xBF4F20 < 0xBF4FB9 < 0xBF510C < 0xBF5121, 'scope ctor/dtor pair inside 0xBF4F20')
+    # 0xBF4CEE is the instruction after the job body's only vt+0x50 call.
+    job = rd(0xBF4C50, 0xBF4D10 - 0xBF4C50)
+    need(job.count(b'\xff\x50\x50') == 1 and 0xBF4C50 + job.find(b'\xff\x50\x50') + 3 == 0xBF4CEE,
+         'the job body has exactly one ff 50 50 call, returning to 0xBF4CEE')
+    need(rel_refs(0x34470) and len(rel_refs(0x34470)) >= 100 and len(rel_refs(0x34550)) >= 100,
+         'the scope ctor/dtor pair is a common game idiom')
+    return out
 
 failures = []
 for rva, expected, what in SITES:
@@ -358,11 +518,12 @@ for vtable, offset, target, what in SLOTS:
         failures.append(f'{vtable:#x}+{offset:#x} {what}: expected {IB + target:#x}, found {value:#x}')
     if section_of(target) != '.xtext':
         failures.append(f'slot target {target:#x} not in .xtext')
+failures += native_assertions()
 if failures:
     print('\n'.join(failures))
     raise SystemExit(1)
 if '--check' in sys.argv:
-    print(f'{len(SITES)} code sites and {len(SLOTS)} vtable slots match {GAME_SHA256}')
+    print(f'{len(SITES)} code sites, {len(SLOTS)} vtable slots and the native reference/containment assertions match {GAME_SHA256}')
     raise SystemExit(0)
 
 
@@ -517,7 +678,42 @@ w('inline constexpr std::uintptr_t walk7_site=0x9c1da3, walk7_next_ip=0x9c1da8, 
 w('inline constexpr std::uint32_t walk7_rel32_orig=0x00234688;')
 w('inline constexpr std::uintptr_t walk11_site=0x9c1aff, walk11_next_ip=0x9c1b04, walk11_target=0xbf61f0;')
 w('inline constexpr std::uint32_t walk11_rel32_orig=0x002346ec;')
-w('// --- Code gate: exact bytes in .xtext ---------------------------------------')
+w('// --- Native puppet (docs/native-puppet.md) --------------------------------')
+w('// H2: the only call of the batch 0xbf4f20(group, mode) at 0xbf4d55 (ticker 0xbf4d20, modes 0 then 1).')
+w('inline constexpr std::uintptr_t ticker_vtable_rva=0x2306480;              // +0x10 = 0xbf4d20')
+w('inline constexpr std::uintptr_t batch_block_rva=0xbf4d50, batch_site=0xbf4d55, batch_next_ip=0xbf4d5a;')
+w('inline constexpr std::uint32_t batch_rel32_orig=0x000001c6;               // -> 0xbf4f20')
+w('inline constexpr std::uintptr_t batch_target_rva=0xbf4f20, batch_join_rva=0xbf50e0;')
+w('inline constexpr std::uintptr_t batch_scope_ctor_site=0xbf4fb4, batch_scope_dtor_site=0xbf5107;')
+w('// H1: the per-block job slot (GO primary vtable +0x50; GO = P - 0x20).')
+w('inline constexpr std::uintptr_t go_vtable_rva=0x22953d0, job_slot_rva=0x2295420, job_rva=0x9c1b90;')
+w('inline constexpr std::uintptr_t job_vtable_rva=0x23064e0, job_body_rva=0xbf4c50, job_call_return_rva=0xbf4cee;')
+w('inline constexpr std::uintptr_t job_entry_rva=0xbf4c64, job_param_rva=0xbf4c90, job_lock_rva=0xbf4cb0, job_gate_rva=0xbf4ccb;')
+w('inline constexpr std::uintptr_t job_call_rva=0xbf4ce3, job_unlock_rva=0xbf4cee, lock_helper_rva=0x21e70, unlock_helper_rva=0x21ea0;')
+w('inline constexpr std::uintptr_t job_prologue_rva=0x9c1b90, job_sub_rva=0x9c1ba8, job_blk_rva=0x9c1bc2, job_bit_rva=0x9c1c15;')
+w('inline constexpr std::uintptr_t job_driver_rva=0x9c1c9c, inline_run_rva=0x34204;')
+w('// The game\'s TLS scratch scope (0xbf4f20 pushes it around its batch; LIFO per thread).')
+w('inline constexpr std::uintptr_t scope_ctor_rva=0x34470, scope_dtor_rva=0x34550, scope_tls_index_rva=0x2c6ba70;')
+w('inline constexpr std::uintptr_t scope_push_rva=0x3432b, scope_pop_rva=0x3450c;')
+w('inline constexpr std::size_t scope_size=0x38, scope_buffer=0x40, scope_tls_slot=0x18, scope_prev=0x10;  // buffer alignas(16)')
+w('inline constexpr std::size_t go_to_p=0x20, go_flags_ptr=0x8, go_flags=0x38;')
+w('inline constexpr std::uint32_t go_flags_bit=0x10;                         // [[GO+8]+0x38] & 0x10')
+w('inline constexpr std::size_t entry_nbits=0xc, entry_jobs=0x10, entry_subs=0x14, entry_lock=0x1c, entry_go=0x20, entry_bits=0x28;')
+w('inline constexpr std::size_t job_param_size=0x18;')
+w('// HOLD latch (bit 0 only; gun eligibility 0x1054210 reads it).')
+w('inline constexpr std::size_t pp_hold_latch=0x27c;')
+w('// Look angles {f32 pitch, f32 yaw} computed in PS phase 0 (0xff28d0 -> 0xffac00); per-id record bit 1 = skipped.')
+w('inline constexpr std::size_t ps_look=0x290, ps_look_stride=8, ps_rec=0x280, ps_rec_stride=0x20, ps_phase_comp=0x3e8, ps_phase_comp_vt_delta=0x1e0;')
+w('inline constexpr std::uint32_t ps_rec_skip_bit=0x2;')
+w('inline constexpr std::uintptr_t ps_phase_rva=0xff2b40;  // comp vt+0x18 (PS vtable +0x1f8)')
+w('// Camera fields (semantics of 0x270/0x274 unverified: names neutral) and the aim sub-controller.')
+w('inline constexpr std::size_t cam270=0x270, cam274=0x274, cam_aim_sub=0x360;')
+w('inline constexpr std::size_t cam_sub_begin=0x3c, cam_sub_end=0x48, cam_sub_b8=0xb8, cam_sub_bc=0xbc;')
+w('// Gun node identity (telemetry reads only; builder row 0x3d).')
+w('inline constexpr std::size_t blk_gun_node=0x378, blk_gun_iface=0x5a0, gun_iface_prim=0x30, prim_gun_rec=0x58, prim_blk=0x8, prim_node=0x38;')
+w('inline constexpr std::size_t gun_flags=0x3c0, gun_mode=0x2c1, gun_rec_size=0x610, gun_node_body=0x24, gun_node_row=0x2c, gun_node_bitmap=0x8;')
+w('inline constexpr std::uintptr_t gun_node_vtable_rva=0x2306628, gun_prim_vt_rva=0x23b3e80, gun_iface_vt_rva=0x23b3fa0;')
+w('inline constexpr std::uint32_t gun_flag_in_hand=0x4, gun_flag_hold=0x40000;')
 w('struct Site { std::uintptr_t rva; std::size_t size; unsigned char bytes[80]; };')
 w('inline constexpr Site code_sites[]={')
 for rva, expected, what in SITES:

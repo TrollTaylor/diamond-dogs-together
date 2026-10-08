@@ -96,6 +96,13 @@ namespace detail {
 bool BlockMatches(const unsigned char* block) noexcept;
 void BuildStub(unsigned char out[14], const void* target) noexcept;
 std::size_t BlockSize() noexcept;
+// A 14-byte near stub (BuildStub) within rel32 reach of next_ip, then the
+// rel32 of the E8 call at `site` (expected orig_rel) retargeted to it with a
+// locked dword exchange (near_code::PatchDword). nullptr on success, else
+// bytes | allocate_near | range | protect | exchange | cache_line |
+// protect_restore; on protect_restore the patch IS live and stub_out is set.
+const char* RetargetCall(std::uintptr_t site, std::uintptr_t next_ip, std::uint32_t orig_rel, const void* target,
+                         void*& stub_out) noexcept;
 // Which injected word a PP key-manager slot answers from (pure): +0xE8/+0x110/
 // +0x118 pressed, +0xF0/+0x120/+0x128 released, +0x100/+0x108/+0x130/+0x138
 // held, +0xF8 (km vt+0x148, not decoded) nothing.

@@ -120,6 +120,33 @@ void TestPatchQword() {
     VirtualFree(page, 0, MEM_RELEASE);
 }
 
+// detail::RetargetCall (shared with partner_defer's H2): near stub + rel32 swap.
+void TestRetargetCall() {
+    void* page = VirtualAlloc(nullptr, 0x1000, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+    Check(page != nullptr, "code page allocated");
+    auto* site = static_cast<unsigned char*>(page) + 0x40;
+    const std::uint32_t orig = 0x000001C6u;
+    site[0] = 0xE8;
+    std::memcpy(site + 1, &orig, 4);
+    const auto site_va = reinterpret_cast<std::uintptr_t>(site);
+    const void* target = reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x1122334455667788ull));
+    void* stub = nullptr;
+    Check(std::strcmp(hk::detail::RetargetCall(site_va, site_va + 5, orig + 1, target, stub), "bytes") == 0 && !stub,
+          "unexpected rel32 refused before any allocation");
+    Check(hk::detail::RetargetCall(site_va, site_va + 5, orig, target, stub) == nullptr && stub, "retarget succeeds");
+    std::int32_t rel = 0;
+    std::memcpy(&rel, site + 1, 4);
+    Check(site[0] == 0xE8 && site_va + 5 + static_cast<std::intptr_t>(rel) == reinterpret_cast<std::uintptr_t>(stub),
+          "rel32 now reaches the stub");
+    const auto* s = static_cast<const unsigned char*>(stub);
+    std::uintptr_t abs = 0;
+    std::memcpy(&abs, s + 6, 8);
+    Check(s[0] == 0xFF && s[1] == 0x25 && abs == reinterpret_cast<std::uintptr_t>(target), "stub jumps to the target");
+    void* again = nullptr;
+    Check(std::strcmp(hk::detail::RetargetCall(site_va, site_va + 5, orig, target, again), "bytes") == 0, "second retarget refused");
+    VirtualFree(page, 0, MEM_RELEASE);
+}
+
 } // namespace
 
 int main() {
@@ -129,6 +156,7 @@ int main() {
     TestPatchDword();
     TestKmSlots();
     TestPatchQword();
+    TestRetargetCall();
     std::printf("%u partner input hook checks passed: stub bytes, rel32 reach/cache-line, dispatch-block gate "
                 "(mismatch + retargeted rel32), locked dword CAS (success/refusal/split), key-manager slot map, "
                 "data qword swap\n", checks);

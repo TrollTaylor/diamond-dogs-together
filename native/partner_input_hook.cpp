@@ -748,30 +748,6 @@ bool BuildCopies() noexcept {
     return true;
 }
 
-// A near stub at a rel32 call site retargeted to `target` (Install's pattern).
-const char* RetargetCall(std::uintptr_t site, std::uintptr_t next_ip, std::uint32_t orig_rel, const void* target, void*& stub_out) noexcept {
-    const unsigned char* code = reinterpret_cast<const unsigned char*>(site);
-    std::uint32_t live = 0;
-    std::memcpy(&live, code + 1, 4);
-    if (code[0] != 0xE8 || live != orig_rel) return "bytes";
-    void* stub = near_code::AllocateNear(next_ip, 0x20);
-    if (!stub) return "allocate_near";
-    std::int32_t rel = 0;
-    if (!near_code::Rel32(next_ip, reinterpret_cast<std::uintptr_t>(stub), rel)) { VirtualFree(stub, 0, MEM_RELEASE); return "range"; }
-    unsigned char s[14]{};
-    detail::BuildStub(s, target);
-    std::memcpy(stub, s, sizeof(s));
-    DWORD old = 0;
-    if (!VirtualProtect(stub, 0x20, PAGE_EXECUTE_READ, &old)) { VirtualFree(stub, 0, MEM_RELEASE); return "protect"; }
-    FlushInstructionCache(GetCurrentProcess(), stub, 0x20);
-    stub_out = stub;
-    std::uint32_t new_rel = 0;
-    std::memcpy(&new_rel, &rel, 4);
-    if (const char* why = near_code::PatchDword(reinterpret_cast<void*>(site + 1), orig_rel, new_rel))
-        return std::strcmp(why, "changed") == 0 ? "exchange" : why;
-    return nullptr;
-}
-
 } // namespace
 
 namespace detail {
@@ -795,6 +771,31 @@ void BuildStub(unsigned char out[14], const void* target) noexcept {
     std::memcpy(out + 6, &t, 8);
 }
 std::size_t BlockSize() noexcept { return kBlockSize; }
+// A near stub at a rel32 call site retargeted to `target` (Install's pattern;
+// also used by partner_defer for H2). nullptr on success, else a reason; on
+// "protect_restore" the patch IS live (stub_out set).
+const char* RetargetCall(std::uintptr_t site, std::uintptr_t next_ip, std::uint32_t orig_rel, const void* target, void*& stub_out) noexcept {
+    const unsigned char* code = reinterpret_cast<const unsigned char*>(site);
+    std::uint32_t live = 0;
+    std::memcpy(&live, code + 1, 4);
+    if (code[0] != 0xE8 || live != orig_rel) return "bytes";
+    void* stub = near_code::AllocateNear(next_ip, 0x20);
+    if (!stub) return "allocate_near";
+    std::int32_t rel = 0;
+    if (!near_code::Rel32(next_ip, reinterpret_cast<std::uintptr_t>(stub), rel)) { VirtualFree(stub, 0, MEM_RELEASE); return "range"; }
+    unsigned char s[14]{};
+    BuildStub(s, target);
+    std::memcpy(stub, s, sizeof(s));
+    DWORD old = 0;
+    if (!VirtualProtect(stub, 0x20, PAGE_EXECUTE_READ, &old)) { VirtualFree(stub, 0, MEM_RELEASE); return "protect"; }
+    FlushInstructionCache(GetCurrentProcess(), stub, 0x20);
+    stub_out = stub;
+    std::uint32_t new_rel = 0;
+    std::memcpy(&new_rel, &rel, 4);
+    if (const char* why = near_code::PatchDword(reinterpret_cast<void*>(site + 1), orig_rel, new_rel))
+        return std::strcmp(why, "changed") == 0 ? "exchange" : why;
+    return nullptr;
+}
 KmWord KmSlotWord(std::size_t slot) noexcept {
     switch (slot) {
     case c::pp_vt_km_press_idx: case c::pp_vt_km_press2_idx: case c::pp_vt_km_press2_h: return KmWord::press;
@@ -889,11 +890,11 @@ const char* InstallWrap() noexcept {
         }
     }
     if (!result) {
-        if (const char* why = RetargetCall(g_base + c::walk7_site, g_base + c::walk7_next_ip, c::walk7_rel32_orig,
+        if (const char* why = detail::RetargetCall(g_base + c::walk7_site, g_base + c::walk7_next_ip, c::walk7_rel32_orig,
                                            reinterpret_cast<const void*>(&WrapWalk7), g_walk7_stub)) { result = why; where = "walk7"; }
     }
     if (!result) {
-        if (const char* why = RetargetCall(g_base + c::walk11_site, g_base + c::walk11_next_ip, c::walk11_rel32_orig,
+        if (const char* why = detail::RetargetCall(g_base + c::walk11_site, g_base + c::walk11_next_ip, c::walk11_rel32_orig,
                                            reinterpret_cast<const void*>(&WrapWalk11), g_walk11_stub)) { result = why; where = "walk11"; }
     }
     if (!result) g_wrap_ready = true;
