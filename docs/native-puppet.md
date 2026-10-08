@@ -19,15 +19,22 @@ is generated from it.
 
 - **H2** (`native/partner_defer.cpp`): the only call of the batch function
   `0xBF4F20(group, mode)` at `0xBF4D55` (ticker `0xBF4D20`, modes 0 then 1) is
-  retargeted through a near stub to `WrapBatch`. On the hook (main) thread it
-  marks the pass active, calls the batch, clears the flag (also on unwind), then
-  drains a published deferred record.
+  retargeted through a near stub to `WrapBatch`. Batches in flight are counted
+  (per pass and in total on the hook thread, and separately on any other
+  thread), never flagged, so a nested or concurrent batch cannot clear another
+  one's state. On the hook (main) thread the outermost batch drains a published
+  deferred record after its join; a batch nested inside another hook-thread
+  batch never drains, and a batch on another thread only counts. A batch that
+  unwinds (an exception through the join) drops its record (`unwound`, also
+  `torn`, the deferral faults), so a stale record is never drained in a later
+  frame.
 - **H1**: the player GameObject's job slot (primary vtable `0x22953D0` + 0x50,
   qword `0x2295420` -> `0x9C1B90`) holds `W50`. W50 uses atomics only. It defers
   sub 0 of block 1 (the published identity: GO = P − 0x20, pool1) only when it
   was called by the job body (return address `0xBF4CEE`) inside an active
-  hook-thread pass, claiming the per-pass record 0 -> 2, writing it and
-  publishing 1. Everything else passes through and is counted.
+  hook-thread pass with no nested hook-thread batch (`nested`) and no batch on
+  another thread (`foreign`) in flight, claiming the per-pass record 0 -> 2,
+  writing it and publishing 1. Everything else passes through and is counted.
 - **Drain**: on the main thread after the join, the game's TLS scratch scope is
   pushed (`0x34470`/`0x34550`, exactly as `0xBF4F20` does around its batch), the
   entry read lock is taken as the job body takes it (spin while −1, +1), the gate
@@ -35,16 +42,25 @@ is generated from it.
   and the job runs inside the input hook's drain window
   (`partner_input_hook::RunJobWindow`). Unlock, then scope pop, also on unwind.
   A missing entry (`lost`), a closed gate, a torn record or an unbalanced scope
-  faults the deferral for the mission.
+  faults the deferral for the mission. The drain window opens only for
+  instance 1's block: the job's block must equal the Arm's `pool1` (whose live
+  value Validate re-reads) and must not be instance 0's live pool; otherwise,
+  or while any batch is in flight, the job runs once without a window
+  (`drain_block`, `drain_in_batch`; the arbiter leaves on either), so instance
+  0's job never sees the remote pad.
 - **Windows** (`native/partner_input_hook.cpp`), under a native Arm only:
   - the main window (phase 8, `0x9C2B51`) composes one frame injection (with
     steering); each consumer (drain0, drain1, walk7, walk11) gets the edges once
     and the level afterwards; older than 100 ms it gets a neutral pad;
   - every native window swaps the HOLD latch `PP+0x27C` bit 0 to the remote's
     (gun eligibility `0x1054210` reads it) and restores bit 0 only;
-  - no window opens while a hook-thread batch is in flight (`wrap_in_batch`:
-    a job run inline during the join would race block 0 on a worker; this closes
-    a pre-existing round-4 `wrap=window` hazard);
+  - no window (main, walk or drain) opens while any batch is in flight, on the
+    hook thread or another thread (`wrap_in_batch`: a job run inline during the
+    join, or a concurrent batch, would race block 0 on a worker; this closes a
+    pre-existing round-4 `wrap=window` hazard);
+  - the aim stage saves the sub-controller ranges of `*(CAM+0x360)`; if aim
+    init replaces that pointer inside the window, the old object is neither
+    compared nor restored (`camsub_dirty_or` bit 2);
   - svc28/30/40 never open windows (block 1's job runs only in drains);
   - after `svc28(root1, phase 0)` inside a drain the remote look angles are
     written into instance 1's own PS slot (`*(PS1+0x290)`, look angles are
@@ -58,10 +74,13 @@ is generated from it.
   mask); the existing DM release/revert and the reconciliation's
   place/verify/arm sequence carry the switch; the deferral is armed last
   (identity -> Arm -> defer). Hard reasons (fault, hook loss, thread, unrealized,
-  range, stage, lost, wrap_in_batch, terminating) leave at once; soft reasons
-  after holds (input stale 1 s, link 0.5 s, health over 1 s windows, cost
-  3 × 4 ms, diverging, runaway). Leaving: defer off -> window off -> dm=map
-  rearm, body epoch ++. Three fallbacks or a failed DM revert latch the mission.
+  range, stage, lost, wrap_in_batch, drain_block, terminating) leave at once;
+  soft reasons after holds (input stale 1 s, link 0.5 s, health over 1 s
+  windows, cost 3 × 4 ms, diverging, runaway). Leaving: defer off -> window off
+  -> dm=map rearm, body epoch ++. Three fallbacks or a failed DM revert latch
+  the mission. The GO identity and the census wrap roots name per-mission
+  objects: they are withdrawn at MissionEnd/MissionStart (after the deferral is
+  disarmed) and once `partner_drive` is no longer native.
 
 ## Configuration
 
@@ -78,7 +97,9 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_steer_deg` | 15 (0..30, 0 = no steering) |
 | `partner_native_trim_pct` | 0 (0..10) |
 
-Play mode forces legacy/off and sets `kPlayRefusedNativeDrive` (0x10000).
+Play mode forces legacy/off and sets `kPlayRefusedNativeDrive` (0x10000); in
+play mode a partner.trigger `drive=native` or `defer=census|on` is refused too
+(`partner_native=trigger_refused; reason=play`), the trigger's other keys apply.
 partner.trigger: `drive= defer= local= naim= ngun= nfire= steer=`.
 
 To enable (lab only), on both copies: the animated partner settings plus
@@ -104,8 +125,11 @@ partner_input_triggers=1 partner_input_rstick=1`). `Get-WorkerPartnerSettings`
 ## Telemetry
 
 Worker `state.json` gains `"native"` (mode, reason, deferral with per-second
-rates, wrap census and look write, input, body parity, reconciliation, gun, a
-48-entry ring). Log lines (`mgs-coop/script-observer.log`): `partner_defer=installed|refused|warn|fault`,
+rates including `nested`, `foreign`, `unwound`, `drain_block` and
+`drain_in_batch`, wrap census and look write, input, body parity,
+reconciliation, gun, a 48-entry ring); `worker_debug_tests` checks the member
+is valid JSON in every shape (no rates yet, a full ring, nulls, escaped text).
+Log lines (`mgs-coop/script-observer.log`): `partner_defer=installed|refused|warn|fault`,
 the 1 Hz `partner_defer; ...` and `partner_native; ...` lines, transitions
 `partner_native=<mode>; reason=..`, `partner_native=enter; step=..`,
 `partner_native_gun; ...`, `partner_equip=manifest; ...`.
@@ -117,8 +141,8 @@ evidence per stage).
 
 | Stage | Command | Pass criteria |
 |---|---|---|
-| S0 | `pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-native.txt -PartnerProfile native -NativeStage census` | mode fallback (defer_census); h0/h1/h2/wrap true; per_s batches ≈ 8/frame, w50_b1_s0 ≈ w50_b0_s0 ≈ 2/frame, ret_other 0, deferred 0, w50_subs 0; batch_threads_seen 1 and thread_ok; svc28_b1 ≈ 7/frame; faults 0; the partner still animates via dm=map; both games close, saves match |
-| S1 | same with `-NativeStage loco` (first run short) | mode active within ~6 s of gameplay; deferred == w50_b1_s0; windowed/drains ≥ 0.99; lost/torn/scope_unbalanced/wrap_in_batch 0; drain_us_max < 4000; body stance follows the remote; speed within 20 % while moving; recon snaps 0; fallbacks 0; leak captures clean |
+| S0 | `pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-native.txt -PartnerProfile native -NativeStage census` | mode fallback (defer_census); h0/h1/h2/wrap true; per_s batches ≈ 8/frame, w50_b1_s0 ≈ w50_b0_s0 ≈ 2/frame, ret_other 0, deferred 0, w50_subs 0; nested 0, foreign 0; batch_threads_seen 1 and thread_ok; svc28_b1 ≈ 7/frame; faults 0; the partner still animates via dm=map; both games close, saves match |
+| S1 | same with `-NativeStage loco` (first run short) | mode active within ~6 s of gameplay; deferred == w50_b1_s0; windowed/drains ≥ 0.99; lost/torn/unwound/scope_unbalanced/wrap_in_batch/drain_block/drain_in_batch/nested/foreign 0; drain_us_max < 4000; body stance follows the remote; speed within 20 % while moving; recon snaps 0; fallbacks 0; leak captures clean |
 | S2 | loco + `partner_input_local=all` (gate change) | only if S1 stance/actions fail |
 | S3a | `-NativeStage gun -BuildProfile research` | gun bit18 and node active within 300 ms of aiming, aim_match; leak-aim clean; CamSub/dirty bits recorded; no host camera/zoom/HUD disturbance |
 | S3a-r | as S3a with `-AmmoExperiment` (after its own qualification) | reload visible, no fallback |
@@ -139,3 +163,10 @@ evidence per stage).
 - No test asserts mechanically that no CodeGate caller runs after a lazy
   install; today CodeGate runs once at configure and `partner_upper_probe::Install`
   calls it there too, before any partner install.
+- Fixture coverage of the windows themselves: `partner_defer_tests` installs
+  the real input hook and the deferral on one synthetic image with a fake
+  P/PP/src/CAM world and checks that block 0's job (on its worker) sees the
+  host pad while block 1's deferred job sees the remote's (held word, HOLD
+  latch, vtable copy) and everything is restored afterwards, plus the block,
+  in-batch and replaced-sub-controller refusals. The game's real consumers
+  of those fields are still only runtime-testable.

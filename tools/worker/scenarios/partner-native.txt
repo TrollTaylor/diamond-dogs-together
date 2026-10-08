@@ -6,7 +6,8 @@
 #  census: native.mode "fallback"; defer.h1/h2/wrap true; per_s w50_b1_s0 ~2/frame, ret_other 0, deferred 0;
 #          batch_threads_seen 1; thread_ok; faults 0; wrap.svc28_b1 ~7/frame; the partner still animates via dm=map.
 #  loco:   native.mode "active" before the first motion capture; deferred == w50_b1_s0; windowed/drains >= 0.99;
-#          lost/torn/scope_unbalanced/wrap_in_batch 0; body.stance follows remote_stance; body.speed_mmps within 20%
+#          lost/torn/unwound/scope_unbalanced/wrap_in_batch/drain_block/drain_in_batch/nested/foreign 0;
+#          body.stance follows remote_stance; body.speed_mmps within 20%
 #          of remote while moving; recon.snaps 0; err_mm p95 < 500 moving, < 200 idle; fallbacks 0;
 #          leak-* captures: the capturing role's partner speed_mmps < 100 and stance unchanged while the other role idles.
 #          Gun section: negative control only if body 1 carries a weapon (normal build: vacuous, record only).
