@@ -613,7 +613,7 @@ std::uint32_t PartnerWindowSeq(void*) noexcept { return mgscoop::partner_input_h
 bool PartnerReadRates(void*, const pp::State& state, std::uint32_t index, pp::RateRead& out) noexcept {
     return pp::ReadRates(partner_addresses, state, index, out);
 }
-void PartnerForgetRates(void*) noexcept { mgscoop::partner_input_hook::ForgetRates(); }
+void PartnerForgetRates(void*, std::uint32_t epoch) noexcept { mgscoop::partner_input_hook::ForgetRates(epoch); }
 bool PartnerLinkLive(void*) noexcept {
     const auto info = mgscoop::partner_net::GetLinkInfo();
     return info.state == mgscoop::link::LinkState::connected ||

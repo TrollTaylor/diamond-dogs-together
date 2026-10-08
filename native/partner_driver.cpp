@@ -884,11 +884,11 @@ struct InputTick {
 
 // Reconciliation event families (one 64-line cap each).
 enum ReconFamily : unsigned { kRcPlace, kRcPlaced, kRcSnap, kRcRunaway, kRcFrozen, kRcStance, kRcYaw, kRcStop, kRcDiverge, kRcRefused,
-                             kRcFix, kRcInputPin, kRcFamilies };
+                             kRcFix, kRcInputPin, kRcLag, kRcFamilies };
 static_assert(kRcFamilies == sizeof(Mission::recon_cap) / sizeof(LogCap), "one cap per recon family");
 const char* ReconFamilyName(unsigned family) noexcept {
     static const char* const names[] = {"place", "placed", "snap", "runaway", "frozen", "stance", "yaw", "stop_check", "diverging", "refused",
-                                        "stance_fix", "input_pin"};
+                                        "stance_fix", "input_pin", "lag"};
     return family < kRcFamilies ? names[family] : "other";
 }
 void EmitRecon(Mission& m, const Hooks& h, unsigned family, const char* format, ...) noexcept {
@@ -1040,9 +1040,9 @@ void LogReconEvents(Driver& d, const Hooks& h, const Settings& set, const pr::Ou
         EmitRecon(m, h, kRcRunaway, "partner_recon=runaway_end; ms=%u; reason=%s\r\n", r.runaway_ms,
                   r.remote_moving ? "remote_moving" : "stopped");
     if (ev & pr::Event::lag)
-        EmitRecon(m, h, kRcRunaway, "partner_recon=lag; v_free_mmps=%d; v_remote_mmps=%d; dv_along_mmps=%d; err_mm=%d; action=nudge_along\r\n",
+        EmitRecon(m, h, kRcLag, "partner_recon=lag; v_free_mmps=%d; v_remote_mmps=%d; dv_along_mmps=%d; err_mm=%d; action=nudge_along\r\n",
                   Mm(r.v_free_mmps), Mm(r.v_remote_mmps), Mm(r.dv_along_mmps), Mm(r.err_mm));
-    if (ev & pr::Event::lag_end) EmitRecon(m, h, kRcRunaway, "partner_recon=lag_end; err_mm=%d\r\n", Mm(r.err_mm));
+    if (ev & pr::Event::lag_end) EmitRecon(m, h, kRcLag, "partner_recon=lag_end; err_mm=%d\r\n", Mm(r.err_mm));
     if (ev & pr::Event::pin_end) EmitRecon(m, h, kRcDiverge, "partner_recon=pin_end\r\n");
     if (ev & pr::Event::frozen) EmitRecon(m, h, kRcFrozen, "partner_recon=frozen; reason=%s\r\n", pr::FrozenName(r.frozen));
     if (ev & pr::Event::unfrozen) EmitRecon(m, h, kRcFrozen, "partner_recon=unfrozen\r\n");
@@ -2275,8 +2275,9 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
         h.set_defer(h.context, false, EffectivePartnerDefer(d.settings.drive, d.settings.defer));
     WithdrawNativeTargets(d.mission, h);
     // Native rates: the old mission's record is never written again (before
-    // the disarmed Arm, so the hook drops instead of restoring); a new epoch.
-    if (h.forget_rates) h.forget_rates(h.context);
+    // the disarmed Arm, so the hook drops instead of restoring, and an Arm of
+    // the old epoch never applies again); a new epoch.
+    if (h.forget_rates) h.forget_rates(h.context, d.rates_epoch);
     if (!++d.rates_epoch) d.rates_epoch = 1;
     DisarmInput(d, h, "mission_start");
     if (d.mission.dm_patched) RevertDm(d, h, "mission_start");
@@ -2312,7 +2313,9 @@ void MissionEnd(Driver& d, const Hooks& h) noexcept {
         h.set_defer(h.context, false, EffectivePartnerDefer(d.settings.drive, d.settings.defer));
     d.mission.native_defer_armed = false;
     WithdrawNativeTargets(d.mission, h);
-    if (h.forget_rates) h.forget_rates(h.context);
+    // Native rates: dropped without writing; the ending mission's Arm (still
+    // published until the disarm below lands) never applies the mirror again.
+    if (h.forget_rates) h.forget_rates(h.context, d.rates_epoch);
     DisarmInput(d, h, "mission_end");
     if (d.mission.dm_patched) RevertDm(d, h, "mission_end");
     d.mission.cfg_ready = false;

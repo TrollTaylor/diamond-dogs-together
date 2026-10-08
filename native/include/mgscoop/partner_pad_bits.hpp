@@ -35,7 +35,12 @@ inline constexpr std::uint32_t kVehicleFire = 0x80000u;
 inline constexpr std::uint32_t kVehicleCall = 0x100000u;
 inline constexpr std::uint32_t kPlaceMarker = 0x400000u;
 
-// Bits whose every consumer only moves or poses the pad owner's own body.
+// Bits passed as movement: their consumers move or pose the pad owner's own
+// body. EVADE has nine pad readers (tools/generate_partner_contract.py
+// EVADE_CONSUMERS census): the three act-27 sites and six state-specific ones
+// writing per-id player state; one of those (0x11D8FDD) also messages the
+// object id held in its per-id record through a global service. Which states
+// reach the six is not verified (docs/native-puppet.md "Actions", open item).
 inline constexpr std::uint32_t kMovementOnlyBits = kStance | kDash | kEvade | kKbDash | kKbWalk;
 // The native drive's movement base (lab_config kPartnerNativeBaseMask).
 inline constexpr std::uint32_t kNativeBase = kStance | kDash | kEvade | kKbDash | kKbWalk;

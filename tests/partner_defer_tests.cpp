@@ -1166,21 +1166,38 @@ void TestJobWindow() {
     // Native rates (docs/native-puppet.md "Rates"): instance 1's rate record
     // gets the remote's rates before its job runs; a game rewrite is
     // reapplied; a disarmed Arm restores at the next main dispatch; a record
-    // whose vtable changed is never written; forget drops without writing.
+    // whose vtable changed is never written; forget drops without writing and
+    // the forgotten epoch's Arm never applies again; a legacy (non-native)
+    // Arm restores too; only instance 1's own record of its own block PS is
+    // ever written (instance 0's record never changes).
     {
-        alignas(16) static unsigned char sp_obj[0x40], rate_recs[2 * c::rate_rec_stride];
+        alignas(16) static unsigned char sp_obj[0x40], sp_other[0x40], rate_recs[2 * c::rate_rec_stride], ps1_obj[0x500];
         std::memset(sp_obj, 0, sizeof(sp_obj));
+        std::memset(sp_other, 0, sizeof(sp_other));
         std::memset(rate_recs, 0, sizeof(rate_recs));
+        std::memset(ps1_obj, 0, sizeof(ps1_obj));
         const std::uintptr_t sp = Addr(sp_obj);
         Put<std::uintptr_t>(sp, base + c::rate_sp_vtable_rva);
         Put<std::uint32_t>(sp + c::sp_base_id, 0);
         Put<std::uint32_t>(sp + c::sp_count, 2);
         Put<std::uintptr_t>(sp + c::sp_records, Addr(rate_recs));
+        std::memcpy(sp_other, sp_obj, sizeof(sp_other));  // a second rate service over the same records
+        // Instance 1's block PS: blk1+0x78 -> PS1 (player PS vtable, PS1+0x408 == blk1), PS1+0x260 -> sp.
+        const std::uintptr_t ps1 = Addr(ps1_obj);
+        Put<std::uintptr_t>(ps1, base + c::ps_vtable_alt_rva);
+        Put<std::uintptr_t>(ps1 + c::ps_blk, blk1);
+        Put<std::uintptr_t>(ps1 + c::ps_rates, sp);
+        Put<std::uintptr_t>(blk1 + c::blk_ps, ps1);
+        const std::uintptr_t r0 = Addr(rate_recs);                        // id 0 (the local player)
         const std::uintptr_t rr = Addr(rate_recs) + c::rate_rec_stride;  // id 1
+        Put<std::uintptr_t>(r0, base + c::rate_rec_vtable_rva);
         Put<std::uintptr_t>(rr, base + c::rate_rec_vtable_rva);
         const float game[6] = {1.0f, 1.0f, 1.0f, 1.0f, 0.5f, 0.5f};  // crawl, crawl factor, crawl rate, dash, dash factor, dash rate
+        const float own0[6] = {1.2f, 1.0f, 1.2f, 1.2f, 1.0f, 1.2f};   // instance 0's own record (sentinel)
         std::memcpy(reinterpret_cast<void*>(rr + c::rate_first), game, sizeof(game));
+        std::memcpy(reinterpret_cast<void*>(r0 + c::rate_first), own0, sizeof(own0));
         const auto rate = [&](std::size_t off) { return Get<float>(rr + off); };
+        const auto id0_untouched = [&]() { return std::memcmp(reinterpret_cast<const void*>(r0 + c::rate_first), own0, sizeof(own0)) == 0; };
         g_rates_probe_rec = rr;
         a.naim = mgscoop::PartnerNativeAim::off;
         a.ps1 = 0;
@@ -1198,8 +1215,8 @@ void TestJobWindow() {
         Check(std::fabs(g_rates_probe_dash - 1.2f) < 1e-6f && std::fabs(rate(0x48) - 1.2f) < 1e-6f && std::fabs(rate(0x50) - 0.6f) < 1e-6f &&
               rate(0x3C) == 1.0f && std::fabs(rate(0x40) - 1.2f) < 1e-6f && std::fabs(rate(0x44) - 1.2f) < 1e-6f && rate(0x4C) == 0.5f,
               "rates: the job already sees the remote's dash rate; +0x50/+0x44 by the game's formulas; +0x4C untouched");
-        Check(hs.native.rates_applied && !hs.native.rates_latched && hs.native.rates_writes == 1 && hs.native.rates_written[0] == 1200,
-              "rates: applied, one write");
+        Check(hs.native.rates_applied && !hs.native.rates_latched && hs.native.rates_writes == 1 && hs.native.rates_written[0] == 1200 &&
+              id0_untouched(), "rates: applied, one write, instance 0's record untouched");
         Check(hk::RunJobWindow(w->go, &param, 1, &RatesProbeJob, pi::Consumer::drain0), "rates: second drain");
         hk::DrainStats(hs);
         Check(hs.native.rates_writes == 1 && hs.native.rates_reapplied == 0, "rates: steady, no write");
@@ -1216,8 +1233,24 @@ void TestJobWindow() {
         Check(!hs.native.rates_applied && hs.native.rates_restores == 1 && std::fabs(rate(0x48) - 1.1f) < 1e-6f &&
               std::fabs(rate(0x50) - 0.55f) < 1e-6f && rate(0x40) == 1.0f && rate(0x44) == 1.0f && rate(0x3C) == 1.0f,
               "rates: disarmed -> restored at the main dispatch (the rewrite's value kept)");
-        // A record whose vtable changed (destroyed) is never written: latched.
+        // A legacy (non-native) Arm after leaving the native drive: no drain
+        // runs any more, so the main dispatch restores too.
         a.gen = 2;
+        hk::PublishArm(a);
+        dispatch(w->root1, 8);
+        Check(hk::RunJobWindow(w->go, &param, 1, &RatesProbeJob, pi::Consumer::drain0) && std::fabs(rate(0x48) - 1.2f) < 1e-6f,
+              "rates: applied before the legacy Arm");
+        pi::Arm legacy = a;
+        legacy.gen = 3;
+        legacy.native = false;
+        legacy.rates_mirror = false;
+        hk::PublishArm(legacy);
+        dispatch(w->root0, 8);
+        hk::DrainStats(hs);
+        Check(!hs.native.rates_applied && hs.native.rates_restores == 2 && std::fabs(rate(0x48) - 1.1f) < 1e-6f && id0_untouched(),
+              "rates: an enabled legacy Arm restores at the main dispatch");
+        // A record whose vtable changed (destroyed) is never written: latched.
+        a.gen = 4;
         hk::PublishArm(a);
         dispatch(w->root1, 8);
         Check(hk::RunJobWindow(w->go, &param, 1, &RatesProbeJob, pi::Consumer::drain0), "rates: re-applied");
@@ -1229,25 +1262,81 @@ void TestJobWindow() {
         hk::DrainStats(hs);
         Check(hs.native.rates_latched && !hs.native.rates_applied && hs.native.rates_reason == 4u /* rec_vtable */ &&
               hs.native.rates_drops == 1 && rate(0x48) == 7.0f, "rates: a changed record vtable latches, nothing written, dropped");
-        // Forget (MissionEnd) then a new epoch: the mirror starts afresh.
-        hk::ForgetRates();
+        // Forget (MissionEnd of epoch 1): the epoch-1 Arm still published
+        // (the driver's disarm not landed yet) never applies again ...
+        hk::ForgetRates(1);
         Put<std::uintptr_t>(rr, base + c::rate_rec_vtable_rva);
         Put<float>(rr + 0x48, 1.0f);
+        const unsigned writes = hs.native.rates_writes;
+        Check(hk::RunJobWindow(w->go, &param, 1, &RatesProbeJob, pi::Consumer::drain0), "rates: drain with the forgotten epoch's Arm");
+        hk::DrainStats(hs);
+        Check(!hs.native.rates_applied && !hs.native.rates_latched && rate(0x48) == 1.0f && hs.native.rates_writes == writes,
+              "rates: the forgotten epoch's Arm never writes");
+        // ... and a new epoch applies again.
         a.rates_epoch = 2;
+        a.gen = 5;
         hk::PublishArm(a);
         dispatch(w->root1, 8);
         Check(hk::RunJobWindow(w->go, &param, 1, &RatesProbeJob, pi::Consumer::drain0), "rates: drain in a new epoch");
         hk::DrainStats(hs);
         Check(hs.native.rates_applied && !hs.native.rates_latched && std::fabs(rate(0x48) - 1.2f) < 1e-6f, "rates: a new epoch applies again");
-        // Forget while applied: dropped, never written back.
-        hk::ForgetRates();
+        // Forget while applied: dropped, never written back; the stale Arm stays refused.
+        hk::ForgetRates(2);
         hk::PublishArm(pi::Arm{});
         dispatch(w->root0, 8);
         hk::DrainStats(hs);
         Check(!hs.native.rates_applied && hs.native.rates_drops == 2 && std::fabs(rate(0x48) - 1.2f) < 1e-6f,
               "rates: forget drops the state without writing");
+        Put<float>(rr + 0x48, 1.0f);
+        a.gen = 6;
+        hk::PublishArm(a);
+        dispatch(w->root1, 8);
+        Check(hk::RunJobWindow(w->go, &param, 1, &RatesProbeJob, pi::Consumer::drain0), "rates: drain with the stale epoch-2 Arm");
+        hk::DrainStats(hs);
+        Check(!hs.native.rates_applied && rate(0x48) == 1.0f, "rates: a republished forgotten epoch never applies");
+        // Instance 0's record (id 0) is never written, even when the Arm names it.
+        a.rates_epoch = 3;
+        a.rates_rec = r0;
+        a.rates_id = 0;
+        a.gen = 7;
+        hk::PublishArm(a);
+        dispatch(w->root1, 8);
+        Check(hk::RunJobWindow(w->go, &param, 1, &RatesProbeJob, pi::Consumer::drain0), "rates: drain with an id-0 Arm");
+        hk::DrainStats(hs);
+        Check(hs.native.rates_latched && !hs.native.rates_applied && hs.native.rates_reason == 9u /* owner */ && id0_untouched(),
+              "rates: an id other than 1 latches (owner), instance 0's record untouched");
+        // A rate service that is not instance 1's block PS's is refused too.
+        a.rates_epoch = 4;
+        a.rates_rec = rr;
+        a.rates_id = 1;
+        a.rates_sp = Addr(sp_other);
+        a.gen = 8;
+        hk::PublishArm(a);
+        dispatch(w->root1, 8);
+        Check(hk::RunJobWindow(w->go, &param, 1, &RatesProbeJob, pi::Consumer::drain0), "rates: drain with a foreign rate service");
+        hk::DrainStats(hs);
+        Check(hs.native.rates_latched && hs.native.rates_reason == 9u && rate(0x48) == 1.0f, "rates: a foreign rate service latches (owner)");
+        // A restore whose chain no longer holds (instance 1's pool changed) drops without writing.
+        a.rates_epoch = 5;
+        a.rates_sp = sp;
+        a.gen = 9;
+        hk::PublishArm(a);
+        dispatch(w->root1, 8);
+        Check(hk::RunJobWindow(w->go, &param, 1, &RatesProbeJob, pi::Consumer::drain0), "rates: applied in epoch 5");
+        hk::DrainStats(hs);
+        Check(hs.native.rates_applied && std::fabs(rate(0x48) - 1.2f) < 1e-6f, "rates: applied (epoch 5)");
+        const unsigned drops = hs.native.rates_drops, restores = hs.native.rates_restores;
+        w->pool[1] = 0;  // instance 1 now in instance 0's pool
+        hk::PublishArm(pi::Arm{});
+        dispatch(w->root0, 8);
+        hk::DrainStats(hs);
+        Check(!hs.native.rates_applied && hs.native.rates_drops == drops + 1 && hs.native.rates_restores == restores &&
+              std::fabs(rate(0x48) - 1.2f) < 1e-6f && id0_untouched(), "rates: a broken chain drops without writing");
+        w->pool[1] = 1;
+        Put<std::uintptr_t>(blk1 + c::blk_ps, 0);
         a.rates_mirror = false;
         a.rates_sp = a.rates_rec = 0;
+        a.rates_id = 0;
     }
     hk::DrainStats(hs);
     Check(hs.window.faults == 0, "no window fault in the fixture");
@@ -1278,6 +1367,7 @@ int main() {
                 "entry inline in a batch is a native skip, never wrap_in_batch), post-phase-0 look write; drain window with the "
                 "real hook (instance 0 never sees the remote pad, instance 1's job windowed with isLocal and the phase-1 detour "
                 "forced, drain telemetry, block refusals, no window in a batch, replaced aim sub-controller, private masks, rates "
-                "mirror before the job, reapply, restore at the main dispatch, record-vtable latch, forget)\n", checks);
+                "mirror before the job, reapply, restore at the main dispatch (disarmed or legacy Arm), record-vtable latch, forget "
+                "with the forgotten epoch refused, owner refusals, instance 0's record untouched, broken restore chain)\n", checks);
     return 0;
 }

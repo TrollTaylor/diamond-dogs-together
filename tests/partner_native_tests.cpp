@@ -648,6 +648,8 @@ void TestRates() {
     pr::Latch(l, pr::Reason::rec_vtable);
     Check(l.latched && pr::Apply(l, rec, pr::Wire{1200, 1000, 1000}).mask == 0 && std::strcmp(pr::ReasonName(l.reason), "rec_vtable") == 0 &&
           std::strcmp(pr::MirrorName(pr::Mirror::ok), "ok") == 0, "caller refusals latch; names");
+    Check(std::strcmp(pr::ReasonName(pr::Reason::owner), "owner") == 0 && static_cast<unsigned>(pr::Reason::owner) == 9u,
+          "owner (not instance 1's own record) keeps its wire value 9");
     pr::Reset(l);
     Check(!l.latched && !l.applied && l.writes == 0, "Reset clears the mission state");
 }

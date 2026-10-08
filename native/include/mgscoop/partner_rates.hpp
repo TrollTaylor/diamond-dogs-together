@@ -47,8 +47,10 @@ float FromMilli(std::uint16_t milli) noexcept;
 
 enum class Mirror : std::uint8_t { off, wait, ok, latched };
 const char* MirrorName(Mirror mirror) noexcept;
-// Why the mirror waits (no_remote, no_record) or latched (the rest).
-enum class Reason : std::uint8_t { none, no_remote, no_record, sp_vtable, rec_vtable, bounds, nonfinite, range, fault };
+// Why the mirror waits (no_remote, no_record) or latched (the rest). owner:
+// the record is not instance 1's own (the id is not 1, or the rate service is
+// not the one of instance 1's live block PS).
+enum class Reason : std::uint8_t { none, no_remote, no_record, sp_vtable, rec_vtable, bounds, nonfinite, range, fault, owner };
 const char* ReasonName(Reason reason) noexcept;
 
 struct MirrorState {

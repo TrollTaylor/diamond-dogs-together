@@ -292,7 +292,7 @@ struct Telemetry {
     PartnerNativeRates rates_setting;
     bool rates_id0_ok, rates_id1_ok;
     std::int32_t rates_id0[6], rates_id1[6];
-    char rates_id1_refusal[12];
+    char rates_id1_refusal[16];
     bool rates_remote_ok;
     std::uint32_t rates_remote_age_ms;
     std::uint32_t rates_remote[3];

@@ -134,6 +134,7 @@ struct Fake {
     pp::RateRead rates[2]{};
     bool rates_ok[2] = {false, false};
     unsigned rates_forgets = 0;
+    std::uint32_t rates_forget_epoch = 0xFFFFFFFFu;
     bool link_live = true;
     std::uint32_t link_session = 7;
     std::vector<std::vector<std::uint8_t>> channel2;
@@ -462,8 +463,9 @@ bool HookReadRates(void* context, const pp::State&, std::uint32_t index, pp::Rat
     out = index < 2 ? F(context).rates[index] : pp::RateRead{};
     return index < 2 && F(context).rates_ok[index];
 }
-void HookForgetRates(void* context) noexcept {
+void HookForgetRates(void* context, std::uint32_t epoch) noexcept {
     ++F(context).rates_forgets;
+    F(context).rates_forget_epoch = epoch;
     F(context).native_order.push_back("rates_forget");
 }
 bool HookLinkLive(void* context) noexcept { return F(context).link_live; }
@@ -3318,10 +3320,12 @@ void TestNativeRates() {
     const unsigned forgets = s.fake.rates_forgets;
     s.fake.native_order.clear();
     pd::MissionEnd(s.driver, s.hooks);
-    Check(s.fake.rates_forgets == forgets + 1 && s.OrderIndex("rates_forget") >= 0 && s.OrderIndex("arm:0") > s.OrderIndex("rates_forget"),
-          "MissionEnd: forget before the disarmed Arm");
+    Check(s.fake.rates_forgets == forgets + 1 && s.OrderIndex("rates_forget") >= 0 && s.OrderIndex("arm:0") > s.OrderIndex("rates_forget") &&
+              s.fake.rates_forget_epoch == epoch && epoch != 0,
+          "MissionEnd: forget (the ending mission's epoch) before the disarmed Arm");
     pd::MissionStart(s.driver, s.hooks, 30010);
-    Check(s.fake.rates_forgets == forgets + 2 && s.driver.rates_epoch == epoch + 1, "MissionStart: forget and a new epoch");
+    Check(s.fake.rates_forgets == forgets + 2 && s.fake.rates_forget_epoch == epoch && s.driver.rates_epoch == epoch + 1,
+          "MissionStart: forget the old epoch, then a new epoch");
 }
 
 // Review fixes: play mode never takes the native drive from the trigger file;

@@ -72,6 +72,7 @@ const char* ReasonName(Reason reason) noexcept {
     case Reason::nonfinite: return "nonfinite";
     case Reason::range: return "range";
     case Reason::fault: return "fault";
+    case Reason::owner: return "owner";
     default: return "none";
     }
 }

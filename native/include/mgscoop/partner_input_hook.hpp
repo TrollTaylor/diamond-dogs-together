@@ -167,8 +167,10 @@ bool RunJobWindow(void* go, const void* param, std::uint32_t block, JobCallFn jo
 bool PatchLive(const void* base) noexcept;
 // Native rates: drop the mirror state without writing anything (MissionEnd /
 // MissionStart: the record dies with the mission). Any thread; the hook
-// thread applies it before its next rates step.
-void ForgetRates() noexcept;
+// thread applies it before its next rates step. `epoch` is the forgotten
+// mission's rates epoch: an Arm still carrying it (published before the
+// driver's disarm lands) never applies the mirror again.
+void ForgetRates(std::uint32_t epoch) noexcept;
 
 
 namespace detail {

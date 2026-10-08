@@ -250,10 +250,11 @@ struct Hooks {
     // Reliable channel 2 (equipment manifest): drained every tick in every drive mode.
     bool (*drain_reliable)(void* context, std::uint8_t channel, std::uint8_t* out, std::size_t capacity, std::size_t& size) noexcept = nullptr;
     // Native rates (docs/native-puppet.md "Rates"): instance `index`'s rate
-    // record (partner_player::ReadRates), and the hook's forget (MissionStart/End).
+    // record (partner_player::ReadRates), and the hook's forget (MissionStart/End)
+    // of the ending mission's rates epoch (its Arm never applies again).
     bool (*read_rates)(void* context, const partner_player::State& state, std::uint32_t index, partner_player::RateRead& out) noexcept =
         nullptr;
-    void (*forget_rates)(void* context) noexcept = nullptr;
+    void (*forget_rates)(void* context, std::uint32_t epoch) noexcept = nullptr;
     // Whether the build carries the ammo experiment (MGS_LOCAL_STOCK46_AMMO_TEST); telemetry only.
     bool ammo_experiment = false;
 };
@@ -464,7 +465,7 @@ struct Mission {
     std::uint64_t recon_line_ms;
     unsigned recon_lines;
     bool recon_lines_capped;
-    LogCap recon_cap[12];          // event families (place, placed, snap, runaway, frozen, stance, yaw, stop, diverging, refused, stance_fix, input_pin)
+    LogCap recon_cap[13];          // event families (place, placed, snap, runaway, frozen, stance, yaw, stop, diverging, refused, stance_fix, input_pin, lag)
     const char* recon_refused;     // last refusal logged (change-only)
     std::uint32_t recon_snaps_total;
     std::uint32_t recon_fixes;     // corrective stance inputs this mission (StanceFix)
