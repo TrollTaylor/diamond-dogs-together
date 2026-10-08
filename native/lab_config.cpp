@@ -288,6 +288,16 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
         else if (Equals(key, "partner_recon_runaway")) ok = ParsePartnerRunaway(value.data, value.size, result.partner_recon_runaway);
         else if (Equals(key, "partner_input_wrap")) ok = ParsePartnerWrap(value.data, value.size, result.partner_input_wrap);
         else if (Equals(key, "partner_facing_dps")) ok = ParseRange(value, 0, 1440, result.partner_facing_dps);
+        else if (Equals(key, "partner_drive")) ok = ParsePartnerDrive(value.data, value.size, result.partner_drive);
+        else if (Equals(key, "partner_input_defer")) ok = ParsePartnerDefer(value.data, value.size, result.partner_input_defer);
+        else if (Equals(key, "partner_input_local")) ok = ParsePartnerLocal(value.data, value.size, result.partner_input_local);
+        else if (Equals(key, "partner_native_aim")) ok = ParsePartnerNativeAim(value.data, value.size, result.partner_native_aim);
+        else if (Equals(key, "partner_native_gun")) ok = ParseBool(value, result.partner_native_gun);
+        else if (Equals(key, "partner_native_fire")) ok = ParseBool(value, result.partner_native_fire);
+        else if (Equals(key, "partner_native_steer_deg"))
+            ok = ParseRange(value, 0, kPartnerNativeSteerMaxDeg, result.partner_native_steer_deg);
+        else if (Equals(key, "partner_native_trim_pct"))
+            ok = ParseRange(value, 0, kPartnerNativeTrimMaxPct, result.partner_native_trim_pct);
         else if (Equals(key, "crash_probe")) ok = ParseBool(value, result.crash_probe);
         else if (Equals(key, "world")) ok = ParseRange(value, 0, kWorldLevelMax, result.world);
         else if (Equals(key, "world_probe")) ok = ParseWorldProbe(value.data, value.size, result.world_probe);
@@ -367,6 +377,12 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
             if (refuse(*value != 0, kPlayRefusedImpairment)) *value = 0;
         // World-sync probes are lab experiments; world itself is allowed in play.
         if (refuse(result.world_probe != WorldProbe::none, kPlayRefusedWorldProbe)) result.world_probe = WorldProbe::none;
+        // The native puppet stays a lab experiment until its runtime qualification.
+        if (refuse(result.partner_drive != PartnerDrive::legacy || result.partner_input_defer != PartnerDefer::off,
+                   kPlayRefusedNativeDrive)) {
+            result.partner_drive = PartnerDrive::legacy;
+            result.partner_input_defer = PartnerDefer::off;
+        }
     }
     // A loopback bind talks to 127.0.0.1 only.
     if (result.net_bind_loopback && peer_addr_valid && !IsLoopbackAddress(result.net_peer_address)) {
@@ -724,6 +740,64 @@ bool ParsePartnerWrap(const char* text, std::size_t size, PartnerWrap& out) noex
     if (Equals(s, "off")) out = PartnerWrap::off;
     else if (Equals(s, "census")) out = PartnerWrap::census;
     else if (Equals(s, "window")) out = PartnerWrap::window;
+    else return false;
+    return true;
+}
+
+const char* PartnerDriveName(PartnerDrive value) noexcept { return value == PartnerDrive::native ? "native" : "legacy"; }
+
+const char* PartnerDeferName(PartnerDefer value) noexcept {
+    switch (value) {
+    case PartnerDefer::census: return "census";
+    case PartnerDefer::on: return "on";
+    default: return "off";
+    }
+}
+
+const char* PartnerLocalName(PartnerLocal value) noexcept { return value == PartnerLocal::all ? "all" : "main"; }
+
+const char* PartnerNativeAimName(PartnerNativeAim value) noexcept {
+    switch (value) {
+    case PartnerNativeAim::look: return "look";
+    case PartnerNativeAim::lookcam: return "lookcam";
+    default: return "off";
+    }
+}
+
+bool ParsePartnerDrive(const char* text, std::size_t size, PartnerDrive& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "legacy")) out = PartnerDrive::legacy;
+    else if (Equals(s, "native")) out = PartnerDrive::native;
+    else return false;
+    return true;
+}
+
+bool ParsePartnerDefer(const char* text, std::size_t size, PartnerDefer& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "off")) out = PartnerDefer::off;
+    else if (Equals(s, "census")) out = PartnerDefer::census;
+    else if (Equals(s, "on")) out = PartnerDefer::on;
+    else return false;
+    return true;
+}
+
+bool ParsePartnerLocal(const char* text, std::size_t size, PartnerLocal& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "main")) out = PartnerLocal::main;
+    else if (Equals(s, "all")) out = PartnerLocal::all;
+    else return false;
+    return true;
+}
+
+bool ParsePartnerNativeAim(const char* text, std::size_t size, PartnerNativeAim& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "off")) out = PartnerNativeAim::off;
+    else if (Equals(s, "look")) out = PartnerNativeAim::look;
+    else if (Equals(s, "lookcam")) out = PartnerNativeAim::lookcam;
     else return false;
     return true;
 }

@@ -249,6 +249,21 @@ struct Trigger {
     bool has_wrap;
     PartnerWrap wrap;
     bool place;
+    // Native puppet (docs/native-puppet.md). defer=on requests deferral but
+    // never installs patches by itself; drive=native after a mission latch
+    // clears the latch.
+    bool has_drive;
+    PartnerDrive drive;
+    bool has_defer;
+    PartnerDefer defer;
+    bool has_local;
+    PartnerLocal local;
+    bool has_naim;
+    PartnerNativeAim naim;
+    bool has_ngun, ngun;
+    bool has_nfire, nfire;
+    bool has_steer;
+    std::uint32_t steer_deg;
 };
 bool ParseTrigger(const char* text, std::size_t size, Trigger& out) noexcept;
 

@@ -617,6 +617,16 @@ try {
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_recon_align_ms -Value '-0' } '-50..150' 'align -0 refused'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_recon -Value on } 'off|track|pin' 'recon values'
     Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_input_wrap -Value census)/$(ConvertTo-LabPartnerValue -Key partner_recon_runaway -Value disarm)/$(ConvertTo-LabPartnerValue -Key partner_recon_nudge_mmps -Value 900)" 'census/disarm/900' 'round 4 enums and ints'
+    # Native puppet lab.ini keys (docs/native-puppet.md).
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_drive -Value native)/$(ConvertTo-LabPartnerValue -Key partner_input_defer -Value census)/$(ConvertTo-LabPartnerValue -Key partner_input_local -Value all)/$(ConvertTo-LabPartnerValue -Key partner_native_aim -Value lookcam)" 'native/census/all/lookcam' 'native enums'
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_native_gun -Value $true)/$(ConvertTo-LabPartnerValue -Key partner_native_fire -Value 0)/$(ConvertTo-LabPartnerValue -Key partner_native_steer_deg -Value 30)/$(ConvertTo-LabPartnerValue -Key partner_native_trim_pct -Value 0)" '1/0/30/0' 'native bools and ints'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_drive -Value puppet } 'legacy|native' 'drive values'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_input_defer -Value yes } 'off|census|on' 'defer values'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_steer_deg -Value 31 } '0..30' 'steer range'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_trim_pct -Value 11 } '0..10' 'trim range'
+    $ovNative = ConvertFrom-LabPartnerSettingArgs -Items @('partner_drive=native', 'partner_input_defer=on', 'partner_native_aim=look',
+        'partner_native_gun=1', 'partner_input_mask=0x220004E') -Role guest
+    Assert-Equal "$($ovNative['partner_drive'])/$($ovNative['partner_input_defer'])/$($ovNative['partner_native_aim'])/$($ovNative['partner_native_gun'])/$($ovNative['partner_input_mask'])" 'native/on/look/1/0x220004e' '-PartnerSetting: the native gun-stage settings'
     # Round 3 lab.ini value kinds.
     Assert-Equal (ConvertTo-LabPartnerValue -Key partner_input -Value net) 'net' 'partner_input enum'
     Assert-Equal (ConvertTo-LabPartnerValue -Key partner_input_words -Value rp0) 'rp0' 'partner_input_words'

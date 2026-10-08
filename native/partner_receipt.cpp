@@ -377,6 +377,28 @@ bool ParseTrigger(const char* text, std::size_t size, Trigger& out) noexcept {
         } else if (EqualsToken(token, length, "place=1")) {
             if (result.place) return false;
             result.place = true;
+        } else if (StartsToken(token, length, "drive=", value_at)) {
+            if (result.has_drive || !ParsePartnerDrive(token + value_at, length - value_at, result.drive)) return false;
+            result.has_drive = true;
+        } else if (StartsToken(token, length, "defer=", value_at)) {
+            if (result.has_defer || !ParsePartnerDefer(token + value_at, length - value_at, result.defer)) return false;
+            result.has_defer = true;
+        } else if (StartsToken(token, length, "local=", value_at)) {
+            if (result.has_local || !ParsePartnerLocal(token + value_at, length - value_at, result.local)) return false;
+            result.has_local = true;
+        } else if (StartsToken(token, length, "naim=", value_at)) {
+            if (result.has_naim || !ParsePartnerNativeAim(token + value_at, length - value_at, result.naim)) return false;
+            result.has_naim = true;
+        } else if (StartsToken(token, length, "ngun=", value_at)) {
+            if (result.has_ngun || !ParseFlag(token + value_at, length - value_at, result.ngun)) return false;
+            result.has_ngun = true;
+        } else if (StartsToken(token, length, "nfire=", value_at)) {
+            if (result.has_nfire || !ParseFlag(token + value_at, length - value_at, result.nfire)) return false;
+            result.has_nfire = true;
+        } else if (StartsToken(token, length, "steer=", value_at)) {
+            if (result.has_steer || !ParseDec(token + value_at, length - value_at, 0, kPartnerNativeSteerMaxDeg, result.steer_deg))
+                return false;
+            result.has_steer = true;
         } else {
             return false;
         }

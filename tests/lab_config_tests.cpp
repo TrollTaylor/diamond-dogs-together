@@ -533,5 +533,55 @@ int main() {
           "play refuses world_probe");
     Check(kPlayRefusedWorldProbe == 0x8000, "world_probe refusal bit");
 
+    // Native puppet keys (docs/native-puppet.md): defaults keep today's behaviour.
+    {
+        const auto def = Lab("enabled=1\nrole=host\n");
+        Check(def.partner_drive == PartnerDrive::legacy && def.partner_input_defer == PartnerDefer::off &&
+              def.partner_input_local == PartnerLocal::main && def.partner_native_aim == PartnerNativeAim::off &&
+              !def.partner_native_gun && !def.partner_native_fire && def.partner_native_steer_deg == 15 &&
+              def.partner_native_trim_pct == 0, "native defaults (legacy, defer off, local main, aim off, steer 15, trim 0)");
+        const auto nat = Lab("enabled=1\nrole=host\npartner_drive=native\npartner_input_defer=census\npartner_input_local=all\n"
+                             "partner_native_aim=lookcam\npartner_native_gun=1\npartner_native_fire=1\npartner_native_steer_deg=30\n"
+                             "partner_native_trim_pct=10\n");
+        Check(nat.partner_drive == PartnerDrive::native && nat.partner_input_defer == PartnerDefer::census &&
+              nat.partner_input_local == PartnerLocal::all && nat.partner_native_aim == PartnerNativeAim::lookcam &&
+              nat.partner_native_gun && nat.partner_native_fire && nat.partner_native_steer_deg == 30 &&
+              nat.partner_native_trim_pct == 10 && nat.invalid_values == 0 && nat.unknown_keys == 0, "native keys parse");
+        const auto on = Lab("enabled=1\nrole=guest\npartner_drive=native\npartner_input_defer=on\npartner_native_aim=look\n"
+                            "partner_native_steer_deg=0\n");
+        Check(on.partner_input_defer == PartnerDefer::on && on.partner_native_aim == PartnerNativeAim::look &&
+              on.partner_native_steer_deg == 0 && on.invalid_values == 0, "defer=on, aim=look, steering off");
+        const auto badNative = Lab("enabled=1\nrole=host\npartner_drive=puppet\npartner_input_defer=yes\npartner_input_local=none\n"
+                             "partner_native_aim=cam\npartner_native_gun=2\npartner_native_steer_deg=31\npartner_native_trim_pct=11\n");
+        Check(badNative.invalid_values == 7 && badNative.partner_drive == PartnerDrive::legacy && badNative.partner_input_defer == PartnerDefer::off &&
+              badNative.partner_input_local == PartnerLocal::main && badNative.partner_native_aim == PartnerNativeAim::off &&
+              !badNative.partner_native_gun && badNative.partner_native_steer_deg == 15 && badNative.partner_native_trim_pct == 0,
+              "native range/enum refusals keep the defaults");
+        // defer takes effect only with drive=native.
+        const auto deferOnly = Lab("enabled=1\nrole=host\npartner_input_defer=on\n");
+        Check(deferOnly.partner_input_defer == PartnerDefer::on &&
+              EffectivePartnerDefer(deferOnly.partner_drive, deferOnly.partner_input_defer) == PartnerDefer::off &&
+              EffectivePartnerDefer(PartnerDrive::native, PartnerDefer::census) == PartnerDefer::census,
+              "defer is ignored without drive=native");
+        // The effective-mask allowance: FIRE never without gun.
+        Check(PartnerNativeAllowed(false, false) == 0x2200006u && PartnerNativeAllowed(true, false) == 0x220004Eu &&
+              PartnerNativeAllowed(true, true) == 0x220005Eu && PartnerNativeAllowed(false, true) == 0x2200006u,
+              "native allowance: base, +HOLD/RELOAD, +FIRE only with gun");
+        Check(std::strcmp(PartnerDriveName(PartnerDrive::native), "native") == 0 && std::strcmp(PartnerDeferName(PartnerDefer::census), "census") == 0 &&
+              std::strcmp(PartnerLocalName(PartnerLocal::all), "all") == 0 &&
+              std::strcmp(PartnerNativeAimName(PartnerNativeAim::lookcam), "lookcam") == 0 &&
+              std::strcmp(PartnerDeferName(PartnerDefer::off), "off") == 0, "native names");
+        // Play mode forces the legacy drive and sets kPlayRefusedNativeDrive.
+        const auto playNative = Lab("enabled=1\nmode=play\nrole=host\n" + saves + "net=1\npartner_drive=native\npartner_input_defer=on\n");
+        Check(playNative.partner_drive == PartnerDrive::legacy && playNative.partner_input_defer == PartnerDefer::off &&
+              playNative.play_refused == kPlayRefusedNativeDrive && playNative.invalid_values == 1, "play refuses the native drive");
+        const auto playDefer = Lab("enabled=1\nmode=play\nrole=host\n" + saves + "net=1\npartner_input_defer=census\n");
+        Check(playDefer.partner_input_defer == PartnerDefer::off && playDefer.play_refused == kPlayRefusedNativeDrive,
+              "play refuses a lone defer key too");
+        const auto playLegacy = Lab("enabled=1\nmode=play\nrole=host\n" + saves + "net=1\npartner_drive=legacy\npartner_native_gun=1\n");
+        Check(playLegacy.play_refused == 0 && playLegacy.invalid_values == 0, "play keeps an explicit legacy drive");
+        Check(kPlayRefusedNativeDrive == 0x10000 && kPlayRefusedNativeDrive == (kPlayRefusedWorldProbe << 1), "native refusal bit");
+    }
+
     std::printf("%u lab/coop configuration checks passed; pure parser, no game calls\n", checks);
 }
