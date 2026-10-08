@@ -115,7 +115,9 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
     j.Add(",\"recon\":{\"mode\":");j.String(n.recon_mode,sizeof(n.recon_mode));
     j.Add(",\"err_mm\":");i32(n.err_mm);j.Add(",\"along_mm\":");i32(n.along_mm);j.Add(",\"cross_mm\":");i32(n.cross_mm);
     j.Add(",\"dy_mm\":");i32(n.dy_mm);
-    j.Add(",\"nudges\":%u,\"snaps\":%u,\"places\":%u,\"runaway\":%s}",n.nudges,n.snaps,n.places,Bool(n.runaway));
+    j.Add(",\"nudges\":%u,\"snaps\":%u,\"places\":%u,\"runaway\":%s,\"runaway_idle\":%s,\"lag\":%s,\"stop_grace\":%s,\"dv_along_mmps\":",
+        n.nudges,n.snaps,n.places,Bool(n.runaway),Bool(n.runaway_idle),Bool(n.lag),Bool(n.stop_grace));
+    i32(n.dv_along_mmps);j.Add(",\"dv_cross_mmps\":");i32(n.dv_cross_mmps);j.Add("}");
     j.Add(",\"gun\":{\"enabled\":%s,\"read_ok\":%s,\"node_active\":%s,\"gun3c0\":%u,\"bit2\":%u,\"bit18\":%u,\"mode2c1\":%u,",
         Bool(n.gun_enabled),Bool(n.gun_read_ok),Bool(n.node_active),n.gun3c0,(n.gun3c0>>2)&1u,(n.gun3c0>>18)&1u,n.mode2c1);
     j.Add("\"remote_flags\":%u,\"remote_equip\":%u,\"body_equip\":",n.remote_flags,n.remote_equip);i32(n.body_equip);

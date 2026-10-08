@@ -57,7 +57,12 @@ void ResetMotionFilters(State& st) noexcept {
     st.runaway_since = st.runaway_exit_since = 0;
     st.runaway_latched = false;
     st.still_since = 0;
+    st.lag_since = 0;
+    st.lag = false;
+    st.grace_since = 0;
+    st.grace_speed = 0.0;
 }
+double Clamp(double v, double lo, double hi) noexcept { return v < lo ? lo : v > hi ? hi : v; }
 } // namespace
 
 const char* ActionName(Action action) noexcept {
@@ -167,6 +172,14 @@ Params NativeParams(const Params& base) noexcept {
     p.input_pin_ms = 60000;
     p.diverge_snaps = 3;
     p.diverge_window_ms = 10000;
+    p.runaway_split = true;
+    p.runaway_rel_pct = 20;
+    p.cap_along_pct = 15;
+    p.cap_along_min_mmps = 300;
+    p.cap_along_max_mmps = 1500;
+    p.cap_along_prone_min_mmps = 150;
+    p.cap_along_prone_max_mmps = 400;
+    p.stop_grace_ms = 1200;
     return p;
 }
 
@@ -256,8 +269,16 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
     const bool remote_idle = Held(st.idle_since, now, P.idle_hold_ms);
     const bool remote_moving = speed_remote >= P.moving_mmps || r >= P.moving_r;
     if (speed_free < P.yaw_still_mmps) { if (!st.still_since) st.still_since = now ? now : 1; } else { st.still_since = 0; }
-    // The body's own velocity against the remote's (runaway with a moving remote).
+    // The body's own velocity against the remote's (runaway with a moving remote),
+    // also split along and across the remote's direction of motion.
     const double dv = Len2(st.v_free[0] - st.v_remote[0], st.v_free[1] - st.v_remote[1]);
+    double dv_along = 0.0, dv_cross = dv;
+    if (speed_remote >= P.moving_mmps) {
+        const double ux = st.v_remote[0] / speed_remote, uz = st.v_remote[1] / speed_remote;
+        const double dvx = st.v_free[0] - st.v_remote[0], dvz = st.v_free[1] - st.v_remote[1];
+        dv_along = dvx * ux + dvz * uz;
+        dv_cross = std::fabs(dvx * uz - dvz * ux);
+    }
     // Net input staleness (the window injects a neutral pad while stale).
     const bool input_stale = in.input_net && (!in.in_valid || in.in_age_ms > P.input_stale_ms);
     if (input_stale) { if (!st.input_stale_since) st.input_stale_since = now ? now : 1; } else { st.input_stale_since = 0; }
@@ -307,6 +328,17 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
     if (st.started && st.prev_r >= P.stop_from_r && r < P.stop_to_r) {
         st.stop_pending = true;
         st.stop_since = now;
+        if (P.stop_grace_ms) {
+            st.grace_since = now ? now : 1;
+            st.grace_speed = speed_free;
+        }
+    }
+    // Stop grace: the release's slide may keep the body moving for a while; it
+    // ends at the deadline, when the body speeds up again or the stick moves.
+    bool grace = false;
+    if (st.grace_since) {
+        if (now - st.grace_since < P.stop_grace_ms && speed_free <= st.grace_speed + 100.0 && r < P.moving_r) grace = true;
+        else st.grace_since = 0;
     }
     if (st.stop_pending && st.mode != Mode::verify && st.mode != Mode::place) {
         stop_ms = Ms(st.stop_since, now);
@@ -357,7 +389,12 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
         rp.stop_ms = stop_ms;
         rp.runaway_active = st.runaway_active;
         rp.runaway_moving = st.runaway_moving;
+        rp.runaway_idle = st.runaway_active && remote_idle;
+        rp.lag = st.lag;
+        rp.stop_grace = grace;
         rp.dv_mmps = dv;
+        rp.dv_along_mmps = dv_along;
+        rp.dv_cross_mmps = dv_cross;
         rp.input_pin = st.input_pin;
         if (rp.place_reason == PlaceReason::none) rp.place_reason = st.place_reason;
         return o;
@@ -382,6 +419,8 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
         }
         st.armable_prev = false;
         if (st.runaway_active) { st.runaway_active = false; }
+        st.lag = false;
+        st.lag_since = 0;
         st.input_pin = false;
         st.frozen = Frozen::none;
         o.arm = false;
@@ -525,10 +564,31 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
     // Runaway: the body moves on its own. Idle remote: the body moves. Moving
     // remote: its own velocity differs from the remote's while the error is
     // large and growing (a turn or a start lags but does not keep diverging).
+    // runaway_split: an overrun or a sideways drift only; a slower body is lag.
     std::uint32_t runaway_ms = 0;
+    const double thr = P.runaway_split ? (P.runaway_rel_pct * speed_remote / 100.0 > P.runaway_mmps
+                                              ? P.runaway_rel_pct * speed_remote / 100.0 : static_cast<double>(P.runaway_mmps))
+                                       : static_cast<double>(P.runaway_mmps);
+    if (P.runaway_split) {
+        const bool lag_now = in.body_ok && speed_remote >= P.moving_mmps && dv_along < -thr && d_f >= P.dead_moving_mm;
+        if (lag_now) {
+            if (!st.lag_since) st.lag_since = now ? now : 1;
+            if (!st.lag && Held(st.lag_since, now, P.runaway_hold_ms)) {
+                st.lag = true;
+                o.events |= Event::lag;
+            }
+        } else {
+            st.lag_since = 0;
+            if (st.lag) {
+                st.lag = false;
+                o.events |= Event::lag_end;
+            }
+        }
+    }
     if (!st.runaway_active) {
-        const bool idle_case = remote_idle && speed_free > P.runaway_mmps;
-        const bool moving_case = !idle_case && remote_moving && dv > P.runaway_mmps;
+        const bool idle_case = remote_idle && speed_free > P.runaway_mmps && !grace;
+        const bool moving_case = !idle_case && remote_moving &&
+                                 (P.runaway_split ? (dv_along > thr || dv_cross > thr) : dv > P.runaway_mmps);
         if ((idle_case || moving_case) && in.body_ok) {
             if (!st.runaway_since) st.runaway_since = now ? now : 1;
             bool fire = Held(st.runaway_since, now, P.runaway_hold_ms);
@@ -670,8 +730,24 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
         const double cap = (prone ? P.cap_prone_mmps : remote_moving ? P.cap_moving_mmps : P.cap_idle_mmps) * dtn / 1000.0;
         const double k = Alpha(dtn, tau);
         double dx = st.e_f[0] * k, dz = st.e_f[1] * k;
-        const double len = Len2(dx, dz);
-        if (len > cap && len > 0.0) { dx *= cap / len; dz *= cap / len; }
+        if (P.cap_along_pct && remote_moving && speed_remote >= P.moving_mmps) {
+            // Along the remote's motion up to clamp(pct |v_remote|, min, max);
+            // across it the moving cap as before.
+            const double ux = st.v_remote[0] / speed_remote, uz = st.v_remote[1] / speed_remote;
+            const double lo = prone ? P.cap_along_prone_min_mmps : P.cap_along_min_mmps;
+            const double hi = prone ? P.cap_along_prone_max_mmps : P.cap_along_max_mmps;
+            const double cap_along = Clamp(P.cap_along_pct * speed_remote / 100.0, lo, hi) * dtn / 1000.0;
+            const double along = Clamp(dx * ux + dz * uz, -cap_along, cap_along);
+            double cx = dx - (dx * ux + dz * uz) * ux, cz = dz - (dx * ux + dz * uz) * uz;
+            const double clen = Len2(cx, cz);
+            if (clen > cap && clen > 0.0) { cx *= cap / clen; cz *= cap / clen; }
+            dx = along * ux + cx;
+            dz = along * uz + cz;
+        } else {
+            const double len = Len2(dx, dz);
+            if (len > cap && len > 0.0) { dx *= cap / len; dz *= cap / len; }
+        }
+
         const double pos[3] = {in.body[0] + dx, in.body[1], in.body[2] + dz};
         write(Action::nudge, pos, in.body_yaw);
         st.last_nudge_ms = now;

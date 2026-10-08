@@ -718,6 +718,121 @@ void TestStopCheck() {
     Check(s.out.report.stop_ok == 0, "the body keeps running: stop_ok=0");
 }
 
+// Native actions (NativeParams): the split moving runaway, lag, the
+// along-track nudge cap and the stop grace (hidden runs a7823/63199: the body
+// sprinted at 0.835 of the remote's speed, the old moving runaway pinned it
+// and the arbiter left with "runaway").
+void TestNativeActions() {
+    const pr::Params native = pr::NativeParams(pr::Params{});
+    Check(native.runaway_split && native.runaway_rel_pct == 20 && native.cap_along_pct == 15 && native.cap_along_min_mmps == 300 &&
+          native.cap_along_max_mmps == 1500 && native.cap_along_prone_min_mmps == 150 && native.cap_along_prone_max_mmps == 400 &&
+          native.stop_grace_ms == 1200, "native preset: split runaway, along cap, stop grace");
+    Check(!pr::Params{}.runaway_split && pr::Params{}.cap_along_pct == 0 && pr::Params{}.stop_grace_ms == 0, "round-4 defaults unchanged");
+    // Sprint at 0.835 of the remote's 10 m/s: the old rule pins (runaway),
+    // the split rule only nudges along the track.
+    const auto sprint = [&](bool split) {
+        World w;
+        w.params = native;
+        if (!split) { w.params.runaway_split = false; w.params.cap_along_pct = 0; }
+        w.Place();
+        w.remote_v[2] = 10000.0;
+        w.r = 1.0;
+        w.follow = false;
+        w.body_v[2] = 8350.0;
+        double worst = 0;
+        w.Run(5000, [&](World& v) { if (v.Err() > worst) worst = v.Err(); });
+        return std::make_pair(w, worst);
+    };
+    {
+        auto [w, worst] = sprint(false);
+        Check(w.runaways == 1 && w.out.report.runaway_moving, "old rule: a slower sprinting body is a moving runaway (the run's leave)");
+    }
+    {
+        auto [w, worst] = sprint(true);
+        Check(w.runaways == 0 && w.pins == 0 && w.snaps == 0 && w.places == 0, "split: a slower body never pins or snaps");
+        Check(worst < 3000.0 && w.nudges > 0, "split: along-track nudges keep the error under the snap threshold");
+        Check(w.max_nudge_step > 300.0 * 0.066 && w.max_nudge_step <= 1500.0 * 0.2 + 1.0, "along nudges exceed the 300 mm/s moving cap, <= 1500 mm/s");
+        Check(w.out.report.dv_along_mmps < -1000.0 && w.out.report.dv_cross_mmps < 200.0 && !w.out.report.lag,
+              "dv split: along -1.65 m/s (inside thr 2 m/s: no lag), across ~0");
+    }
+    // A much slower body: lag (no pin), lag_end once the speeds match.
+    {
+        World w;
+        w.params = native;
+        w.Place();
+        w.remote_v[2] = 10000.0;
+        w.r = 1.0;
+        w.follow = false;
+        w.body_v[2] = 7000.0;
+        w.Run(1500);
+        Check((w.events & pr::Event::lag) && w.out.report.lag && w.runaways == 0 && w.pins == 0, "lag: raised, never pinned");
+        w.ResetCounters();
+        w.body_v[2] = 10000.0;
+        w.Run(1500);
+        Check((w.events & pr::Event::lag_end) && !w.out.report.lag, "lag ends when the body keeps up");
+    }
+    // An overrun (faster than the remote along its motion) still pins, as a moving runaway.
+    {
+        World w;
+        w.params = native;
+        w.Place();
+        w.remote_v[2] = 3200.0;
+        w.r = 1.0;
+        w.follow = false;
+        w.body_v[2] = 6400.0;
+        w.Run(4000);
+        Check(w.runaways == 1 && w.out.report.runaway_active && w.out.report.runaway_moving && !w.out.report.runaway_idle,
+              "overrun: moving runaway pin, not the idle kind the arbiter times");
+    }
+    // Stop grace: the remote releases the stick after a sprint; the body's
+    // dash-stop slide decelerates over 1.8 s. Without the grace the idle
+    // runaway fires (and the arbiter would time it); with it, nothing.
+    const auto slide = [&](std::uint32_t grace_ms) {
+        World w;
+        w.params = native;
+        w.params.stop_grace_ms = grace_ms;
+        w.Place();
+        w.remote_v[2] = 6000.0;
+        w.r = 1.0;
+        w.Run(1500);
+        w.ResetCounters();
+        w.remote_v[2] = 0.0;
+        w.r = 0.0;
+        w.follow = false;
+        w.body_v[2] = 6000.0;
+        const std::uint64_t start = w.now;
+        bool idle_pin = false;
+        w.Run(3000, [&](World& v) {
+            const double t = static_cast<double>(v.now - start);
+            v.body_v[2] = t >= 1800.0 ? 0.0 : 6000.0 * (1.0 - t / 1800.0);
+            if (v.out.report.runaway_idle) idle_pin = true;
+        });
+        return std::make_pair(w.runaways, idle_pin);
+    };
+    const auto no_grace = slide(0);
+    const auto with_grace = slide(1200);
+    Check(no_grace.first == 1 && no_grace.second, "no grace: the slide is an idle runaway (runaway_idle)");
+    Check(with_grace.first == 0 && !with_grace.second, "stop grace: the decelerating slide is not a runaway");
+    // The grace never hides a body that speeds up again after the release.
+    {
+        World w;
+        w.params = native;
+        w.Place();
+        w.remote_v[2] = 6000.0;
+        w.r = 1.0;
+        w.Run(1500);
+        w.remote_v[2] = 0.0;
+        w.r = 0.0;
+        w.follow = false;
+        w.body_v[2] = 3000.0;
+        w.Run(200);
+        w.ResetCounters();
+        w.body_v[2] = 6000.0;  // accelerates on its own
+        w.Run(2000);
+        Check(w.runaways == 1 && w.out.report.runaway_idle, "a body accelerating after the release is still an idle runaway");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -742,9 +857,11 @@ int main() {
     TestRearm();
     TestModes();
     TestStopCheck();
+    TestNativeActions();
     std::printf("%u partner recon checks passed: placement/verify/retry, I6 runaway replay (pin, no sawtooth), moving runaway, "
                 "lag model (walk/run/turn/sprint/stops), non-sticking nudges, input pin, stance fix, aligned run and turn, "
                 "lateral nudges, one moving snap, diverging, teleport/far, stance suspend/prone/mismatch, frozen acts, loss/relink, "
-                "idle yaw and snap, rearm/manual, recon pin/off, stop check\n", checks);
+                "idle yaw and snap, rearm/manual, recon pin/off, stop check, native actions (split runaway, lag, along cap, "
+                "stop grace)\n", checks);
     return 0;
 }

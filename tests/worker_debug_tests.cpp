@@ -115,7 +115,8 @@ int main() {
         std::size_t n=0;
         const auto doc=NativeDocument(t,&n);
         if(!check(n>0 && ValidJson(doc) && doc.find(",\"native\":{\"drive\":\"legacy\",\"mode\":\"off\"")!=std::string::npos &&
-                  doc.find("\"per_s\":null")!=std::string::npos && doc.find("\"ring\":[]")!=std::string::npos))return 1;
+                  doc.find("\"per_s\":null")!=std::string::npos && doc.find("\"ring\":[]")!=std::string::npos &&
+                  doc.find("\"runaway\":false,\"runaway_idle\":false,\"lag\":false,\"stop_grace\":false,\"dv_along_mmps\":0")!=std::string::npos))return 1;
     }
     {
         pn::Telemetry t{};

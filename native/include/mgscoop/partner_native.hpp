@@ -272,7 +272,13 @@ struct Telemetry {
     char recon_mode[12];
     std::int32_t err_mm, along_mm, cross_mm, dy_mm;
     std::uint32_t nudges, snaps, places;
-    bool runaway;
+    // runaway: a runaway pin is active (moving overrun or idle); runaway_idle:
+    // the idle-remote runaway the arbiter times; lag: the body is behind a
+    // moving remote (no pin); stop_grace: the idle runaway is suppressed after
+    // a stick release; dv along/across the remote's motion (kNull unread).
+    bool runaway, runaway_idle, lag, stop_grace;
+    std::int32_t dv_along_mmps, dv_cross_mmps;
+
     // Gun.
     bool gun_enabled, gun_read_ok, node_active, aim_match, ammo_experiment;
     std::uint32_t gun3c0, mode2c1, remote_flags, remote_equip, manifest_rev;

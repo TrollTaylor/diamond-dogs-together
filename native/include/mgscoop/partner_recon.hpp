@@ -64,6 +64,8 @@ inline constexpr std::uint32_t pin_end = 1u << 13;
 inline constexpr std::uint32_t stance_fix = 1u << 14;     // Out::stance_fix set this step
 inline constexpr std::uint32_t input_pin = 1u << 15;      // net input stale with a live pose: pinned
 inline constexpr std::uint32_t input_pin_end = 1u << 16;  // input live again: tracking resumes (settle)
+inline constexpr std::uint32_t lag = 1u << 17;            // the body falls behind the moving remote (no pin; along nudges)
+inline constexpr std::uint32_t lag_end = 1u << 18;
 }
 
 // A corrective stance input the driver injects through the tap/press overlay.
@@ -101,6 +103,23 @@ struct Params {
     // exit speed (idle / moving remote) for runaway_exit_ms.
     std::uint32_t runaway_mmps = 800, runaway_hold_ms = 300, runaway_exit_mmps = 200, runaway_exit_ms = 500;
     std::uint32_t runaway_moving_mm = 1000, runaway_grow_mm = 50, runaway_exit_moving_mmps = 400;
+    // Native actions (0 = off, the round-4 rule above). runaway_split: the
+    // moving runaway compares the body's own velocity with the remote's along
+    // and across the remote's direction of motion and fires only on an overrun
+    // (dv_along > thr) or a sideways drift (|dv_cross| > thr), thr =
+    // max(runaway_mmps, runaway_rel_pct % of |v_remote|); a body that is only
+    // slower (dv_along < -thr, error growing) raises `lag` instead, which never
+    // pins (the along-track nudges pull it). Nudges along the remote's motion
+    // are capped by clamp(cap_along_pct % of |v_remote|, cap_along_min_mmps,
+    // cap_along_max_mmps) (prone: the _prone_ bounds) instead of the moving cap.
+    bool runaway_split = false;
+    std::uint32_t runaway_rel_pct = 20;
+    std::uint32_t cap_along_pct = 0, cap_along_min_mmps = 300, cap_along_max_mmps = 1500;
+    std::uint32_t cap_along_prone_min_mmps = 150, cap_along_prone_max_mmps = 400;
+    // Stop grace: after the stick is released (stop check start) the idle
+    // runaway is suppressed this long while the body's own speed does not
+    // rise above its speed at release (a dash-stop slide decelerates).
+    std::uint32_t stop_grace_ms = 0;
     // Net input stale this long while the pose is live: pin to the pose until
     // the input is live again (no far/vertical Warps while the pad is neutral).
     std::uint32_t input_pin_ms = 500;
@@ -160,6 +179,9 @@ struct In {
 struct Report {
     double err_mm, dy_mm, along_mm, cross_mm;
     double v_free_mmps, v_remote_mmps;
+    // The body's own velocity minus the remote's, along and across the
+    // remote's direction of motion (cross = |dv| below moving_mmps).
+    double dv_along_mmps, dv_cross_mmps;
     double yaw_err_mrad;
     double d_filtered_mm;
     bool remote_idle, remote_moving, prone;
@@ -182,6 +204,11 @@ struct Report {
     PlaceReason place_reason;
     bool runaway_active;
     bool runaway_moving;        // the runaway was detected with a moving remote
+    // The active runaway pin while the remote is idle (the only kind the
+    // native arbiter's runaway timer counts; a moving overrun pin recovers).
+    bool runaway_idle;
+    bool lag;                   // runaway_split: the body is behind a moving remote
+    bool stop_grace;            // the idle runaway is suppressed after a stick release
     double dv_mmps;             // |v_free - v_remote|
     bool input_pin;             // pinned because the net input is stale
     std::uint32_t input_pin_ms; // how long the input pin lasted (input_pin_end)
@@ -233,6 +260,11 @@ struct State {
     bool runaway_active;
     bool runaway_moving;
     bool runaway_latched;  // runaway=off: one event per episode
+    // Lag (runaway_split) and the stop grace.
+    std::uint64_t lag_since;
+    bool lag;
+    std::uint64_t grace_since;
+    double grace_speed;
     // Net input staleness and the input pin.
     std::uint64_t input_stale_since, input_pin_start;
     bool input_pin;
@@ -269,7 +301,12 @@ Out Step(State& state, const In& in, const Params& params) noexcept;
 // corrector, nudges are capped low (moving/idle 300 mm/s, prone 150), snaps
 // only at 3 m held 300 ms moving / 2 m held 1 s idle, the runaway pin is a
 // safety net (1500 mm/s, 2 m), and stale input never pins (the arbiter leaves
-// after 1000 ms of stale input). Everything else stays `base`.
+// after 1000 ms of stale input). Native actions: the split moving runaway
+// (overrun or sideways only, thr = max(1500, 20 % of |v_remote|); a slower
+// body is `lag`), along-track nudges up to clamp(15 % of |v_remote|, 300,
+// 1500) mm/s (prone 150..400) and a 1200 ms stop grace for the idle runaway.
+// Everything else stays `base`.
+
 Params NativeParams(const Params& base) noexcept;
 
 // Helpers (also used by tests): wrap radians to (-pi, pi]; the exponential

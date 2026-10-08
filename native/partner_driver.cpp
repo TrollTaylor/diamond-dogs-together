@@ -1003,14 +1003,19 @@ void LogReconEvents(Driver& d, const Hooks& h, const Settings& set, const pr::Ou
         EmitRecon(m, h, kRcDiverge, "partner_recon=diverging; snaps_10s=3; next=place,pin\r\n");
     if (ev & pr::Event::runaway)
         EmitRecon(m, h, kRcRunaway,
-                  "partner_recon=runaway; remote=%s; v_free_mmps=%d; v_remote_mmps=%d; dv_mmps=%d; err_mm=%d; remote_idle_ms=%u; act=%u; "
-                  "s=%u; v=%u; action=%s\r\n",
-                  r.runaway_moving ? "moving" : "idle", Mm(r.v_free_mmps), Mm(r.v_remote_mmps), Mm(r.dv_mmps), Mm(r.err_mm), r.idle_ms,
+                  "partner_recon=runaway; remote=%s; v_free_mmps=%d; v_remote_mmps=%d; dv_mmps=%d; dv_along_mmps=%d; dv_cross_mmps=%d; "
+                  "err_mm=%d; remote_idle_ms=%u; act=%u; s=%u; v=%u; action=%s\r\n",
+                  r.runaway_moving ? "moving" : "idle", Mm(r.v_free_mmps), Mm(r.v_remote_mmps), Mm(r.dv_mmps), Mm(r.dv_along_mmps),
+                  Mm(r.dv_cross_mmps), Mm(r.err_mm), r.idle_ms,
                   anim_ok ? unsigned(anim.act[1]) : 0u, anim_ok ? unsigned(anim.stance[1]) : 0u, anim_ok ? unsigned(anim.speed[1]) : 0u,
                   PartnerRunawayName(set.runaway));
     if (ev & pr::Event::runaway_end)
         EmitRecon(m, h, kRcRunaway, "partner_recon=runaway_end; ms=%u; reason=%s\r\n", r.runaway_ms,
                   r.remote_moving ? "remote_moving" : "stopped");
+    if (ev & pr::Event::lag)
+        EmitRecon(m, h, kRcRunaway, "partner_recon=lag; v_free_mmps=%d; v_remote_mmps=%d; dv_along_mmps=%d; err_mm=%d; action=nudge_along\r\n",
+                  Mm(r.v_free_mmps), Mm(r.v_remote_mmps), Mm(r.dv_along_mmps), Mm(r.err_mm));
+    if (ev & pr::Event::lag_end) EmitRecon(m, h, kRcRunaway, "partner_recon=lag_end; err_mm=%d\r\n", Mm(r.err_mm));
     if (ev & pr::Event::pin_end) EmitRecon(m, h, kRcDiverge, "partner_recon=pin_end\r\n");
     if (ev & pr::Event::frozen) EmitRecon(m, h, kRcFrozen, "partner_recon=frozen; reason=%s\r\n", pr::FrozenName(r.frozen));
     if (ev & pr::Event::unfrozen) EmitRecon(m, h, kRcFrozen, "partner_recon=unfrozen\r\n");
@@ -1735,9 +1740,10 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     in.window_armed = m.input_armed;
     in.recon_placed = m.input_armed && m.recon_active;
     in.snaps_10s = m.recon_active && m.recon_have_out ? m.recon_out.report.snaps_window : 0;
-    // Only a true runaway pin feeds the runaway timer (a diverge or input pin
-    // has its own reason: diverging snaps, input_stale).
-    if (m.recon_active && m.recon_have_out && m.recon_out.report.runaway_active) {
+    // Only a true runaway pin with an idle remote feeds the runaway timer (a
+    // diverge or input pin has its own reason: diverging snaps, input_stale;
+    // a moving overrun pin recovers on its own once the speeds match).
+    if (m.recon_active && m.recon_have_out && m.recon_out.report.runaway_idle) {
         if (!m.runaway_since_ms) m.runaway_since_ms = now ? now : 1;
         in.runaway_ms = Clamp32(now - m.runaway_since_ms);
     } else {
@@ -1925,7 +1931,13 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     t.nudges = m.recon_have_out ? m.recon_out.report.nudges : 0u;
     t.snaps = m.recon_snaps_total;
     t.places = m.recon_have_out ? m.recon_out.report.places : 0u;
-    t.runaway = m.runaway_since_ms != 0;
+    t.runaway = m.recon_active && m.recon_have_out && m.recon_out.report.runaway_active;
+    t.runaway_idle = m.runaway_since_ms != 0;
+    t.lag = m.recon_active && m.recon_have_out && m.recon_out.report.lag;
+    t.stop_grace = m.recon_active && m.recon_have_out && m.recon_out.report.stop_grace;
+    t.dv_along_mmps = m.recon_have_out ? Mm(m.recon_out.report.dv_along_mmps) : pnat::kNull;
+    t.dv_cross_mmps = m.recon_have_out ? Mm(m.recon_out.report.dv_cross_mmps) : pnat::kNull;
+
     t.gun_enabled = set.ngun;
     t.gun_read_ok = gun_ok;
     t.node_active = gun_ok && gun.node_active;
