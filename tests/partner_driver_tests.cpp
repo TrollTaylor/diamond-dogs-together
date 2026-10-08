@@ -3629,6 +3629,61 @@ void TestNativePlayAndWithdraw() {
     }
 }
 
+// Native actions and weapons together (the integrated gun stage of
+// Get-WorkerPartnerSettings: mask 0x224005E, visual fire, rates mirror): one
+// v4 carries the local rates and magazine; one remote v4 with both groups
+// gives one native Arm with EVADE, HOLD, RELOAD and FIRE, the rates mirror and
+// the magazine mirror, and both telemetry groups.
+void TestNativeActionsWithWeapons() {
+    namespace pn = mgscoop::partner_native;
+    namespace pi = mgscoop::partner_input;
+    NativeSession s;
+    SetVisualFire(s);
+    s.driver.settings.nrates = mgscoop::PartnerNativeRates::mirror;
+    const auto record = [](std::uintptr_t sp, std::uintptr_t rec, std::uint32_t id, float dash, float crawl, float factor) {
+        pp::RateRead r{};
+        r.sp = sp; r.rec = rec; r.id = id;
+        r.f[0] = crawl; r.f[1] = factor; r.f[2] = crawl * factor; r.f[3] = dash; r.f[4] = 1.0f; r.f[5] = dash;
+        return r;
+    };
+    s.fake.rates[0] = record(0xA000, 0xA100, 0, 1.2f, 1.0f, 1.2f);
+    s.fake.rates[1] = record(0xA000, 0xA188, 1, 1.0f, 1.0f, 1.0f);
+    s.fake.rates_ok[0] = s.fake.rates_ok[1] = true;
+    s.fake.gun0_ok = true;
+    s.fake.gun0.fields_ok = true;
+    s.fake.gun0.fields.flags27c = 1u << 6;
+    s.fake.gun0.fields.equip = 46;
+    s.fake.gun0.fields.cap = 5;
+    s.fake.gun0.fields.mag = 3;
+    s.fake.inputs.clear();
+    s.N();
+    {
+        const pi::InputPacket& p = s.fake.inputs.back();
+        Check(!s.fake.inputs.empty() && p.version == 4 && (p.xflags & pi::XFlag::Rates) && (p.xflags & pi::XFlag::Mag) &&
+                  p.rate_dash == 1200 && p.rate_crawl == 1000 && p.rate_crawl_factor == 1200 && p.mag == 3 && p.mag_cap == 5 &&
+                  pi::ValidPacket(p),
+              "together: one v4 carries the local rates and magazine");
+    }
+    Check(s.Until(pn::Mode::active, 9000) && s.driver.settings.fire_live, "together: active with visual fire live");
+    s.fake.latest.packet.version = 4;
+    s.fake.latest.packet.xflags = static_cast<std::uint8_t>(pi::XFlag::Rates | pi::XFlag::Mag);
+    s.fake.latest.packet.rate_dash = 1100;
+    s.fake.latest.packet.rate_crawl = 900;
+    s.fake.latest.packet.rate_crawl_factor = 1500;
+    s.fake.latest.packet.mag = 20;
+    s.fake.latest.packet.mag_cap = 30;
+    s.N();
+    const pi::Arm& arm = s.fake.arms.back();
+    Check(arm.enabled && arm.native && arm.config.mask == 0x224005Eu, "together: the native Arm's mask is EVADE | HOLD | RELOAD | FIRE (0x224005E)");
+    Check(arm.rates_mirror && arm.rates_rec == 0xA188 && arm.rates_id == 1 && arm.rates_remote[0] == 1100 && arm.rates_remote[1] == 900 &&
+              arm.rates_remote[2] == 1500 && arm.mag_mirror && arm.gun_rec == 0x9100 && arm.gun_prim == 0x9000,
+          "together: one Arm requests the rates mirror and the magazine mirror");
+    const pn::Telemetry& t = s.driver.mission.tele;
+    Check(t.rates_remote_ok && t.rates_remote[0] == 1100 && t.rates_id0_ok && t.rates_id1_ok && t.remote_mag == 20 && t.remote_mag_cap == 30 &&
+              t.local_mag == 3 && t.local_mag_cap == 5 && t.fire_effective && std::strcmp(t.fire_mode, "visual") == 0,
+          "together: telemetry carries both remote groups, the local magazine and visual fire");
+}
+
 int main() {
     TestCfgAndMissionBoundaries();
     TestStageThreeTimeline();
@@ -3673,6 +3728,7 @@ int main() {
     TestNativeRates();
     TestNativePlayAndWithdraw();
     TestNativeWeapons();
+    TestNativeActionsWithWeapons();
     std::printf("%u partner driver checks passed: CFG/boundaries, stage-3 timeline, trigger stop/stage, STOP while terminating, "
                 "teardown keep, refusal caps, realize thrash cap, all-active re-assert, flags, mirror lifecycle, one-shots, "
                 "force_exists, policy, net source, interp hook, lost freeze/hide, cadence, Lua notes, quiet pairing, probes, anim mirror/net (q/s/r, debounce, "
@@ -3680,6 +3736,6 @@ int main() {
                 "ps probe, dm=map (patch, table, sources, aim pivots, gates, failures, release, teardown, caps), native puppet "
                 "(enter sequence, publication order, leave on fault, dm=map rearm, census, install refusals, thread, revert latch, "
                 "unlatch, channel 2 in legacy, v3 sender, play-mode trigger refusal, identity/roots withdrawal, rates: v4 sender, "
-                "mirror request, telemetry, forget/epoch); no game\n", checks);
+                "mirror request, telemetry, forget/epoch; weapons: fire gate, magazine mirror, loadout; both packages in one v4 and one Arm); no game\n", checks);
     return 0;
 }

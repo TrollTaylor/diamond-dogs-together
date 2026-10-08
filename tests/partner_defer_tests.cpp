@@ -1482,6 +1482,112 @@ void TestJobWindow() {
         g_hook_sample.packet.version = 3;
         g_hook_sample.packet.held = kRemoteHeld;
     }
+    // Native actions and weapons together (the integrated gun stage): one Arm
+    // requests both mirrors and one remote v4 sample carries both groups; in
+    // block 1's drain window the rates mirror writes instance 1's rate record,
+    // then the magazine mirror its gun record, both before the job reads them;
+    // neither write is a shoot-count or ammo-vars leak; a disarm restores the
+    // rates at the next main dispatch and leaves the magazine alone.
+    {
+        alignas(16) static unsigned char sp_obj[0x40], rate_recs[2 * c::rate_rec_stride], ps1_obj[0x500];
+        alignas(16) static unsigned char gun_prim[0x100], gun_rec[c::gun_rec_size], vars[c::vars_ammo_end + 0x10];
+        std::memset(sp_obj, 0, sizeof(sp_obj));
+        std::memset(rate_recs, 0, sizeof(rate_recs));
+        std::memset(ps1_obj, 0, sizeof(ps1_obj));
+        std::memset(gun_prim, 0, sizeof(gun_prim));
+        std::memset(gun_rec, 0, sizeof(gun_rec));
+        std::memset(vars, 0, sizeof(vars));
+        const std::uintptr_t sp = Addr(sp_obj), ps1 = Addr(ps1_obj);
+        Put<std::uintptr_t>(sp, base + c::rate_sp_vtable_rva);
+        Put<std::uint32_t>(sp + c::sp_base_id, 0);
+        Put<std::uint32_t>(sp + c::sp_count, 2);
+        Put<std::uintptr_t>(sp + c::sp_records, Addr(rate_recs));
+        Put<std::uintptr_t>(ps1, base + c::ps_vtable_alt_rva);
+        Put<std::uintptr_t>(ps1 + c::ps_blk, blk1);
+        Put<std::uintptr_t>(ps1 + c::ps_rates, sp);
+        Put<std::uintptr_t>(blk1 + c::blk_ps, ps1);
+        const std::uintptr_t r0 = Addr(rate_recs), rr = Addr(rate_recs) + c::rate_rec_stride;
+        Put<std::uintptr_t>(r0, base + c::rate_rec_vtable_rva);
+        Put<std::uintptr_t>(rr, base + c::rate_rec_vtable_rva);
+        const float game[6] = {1.0f, 1.0f, 1.0f, 1.0f, 0.5f, 0.5f};  // crawl, crawl factor, crawl rate, dash, dash factor, dash rate
+        const float own0[6] = {1.2f, 1.0f, 1.2f, 1.2f, 1.0f, 1.2f};
+        std::memcpy(reinterpret_cast<void*>(rr + c::rate_first), game, sizeof(game));
+        std::memcpy(reinterpret_cast<void*>(r0 + c::rate_first), own0, sizeof(own0));
+        Put<std::uintptr_t>(Addr(gun_prim), base + c::gun_prim_vt_rva);
+        Put<std::uintptr_t>(Addr(gun_prim) + c::prim_blk, blk1);
+        Put<std::uintptr_t>(Addr(gun_prim) + c::prim_gun_rec, Addr(gun_rec));
+        Put<std::uint32_t>(Addr(gun_rec) + c::gun_flags27c, 1u << 6);  // class 1
+        Put<std::uint16_t>(Addr(gun_rec) + c::gun_cap, 5);
+        Put<std::uintptr_t>(base + c::vars_slot_rva, Addr(vars));
+        Put<std::uint32_t>(Addr(vars) + c::vars_shoot_count, 7);
+        static std::uintptr_t s_rate_rec = 0, s_gun_rec = 0;
+        static float s_dash = 0.0f;
+        static std::uint16_t s_mag = 0;
+        s_rate_rec = rr;
+        s_gun_rec = Addr(gun_rec);
+        struct BothJob {
+            static void Job(void*, const void*) noexcept {
+                s_dash = Get<float>(s_rate_rec + 0x48);
+                s_mag = Get<std::uint16_t>(s_gun_rec + c::gun_mag);
+            }
+        };
+        a.naim = mgscoop::PartnerNativeAim::off;
+        a.ps1 = 0;
+        a.gen = 10;
+        a.rates_mirror = true;
+        a.rates_sp = sp;
+        a.rates_rec = rr;
+        a.rates_id = 1;
+        a.rates_epoch = 6;
+        a.rates_remote[0] = 1200; a.rates_remote[1] = 1000; a.rates_remote[2] = 1200;
+        a.mag_mirror = true;
+        a.gun_prim = Addr(gun_prim);
+        a.gun_rec = Addr(gun_rec);
+        hk::PublishArm(a);
+        g_hook_sample.packet = pi::InputPacket{};
+        g_hook_sample.packet.version = 4;
+        g_hook_sample.packet.flags = pi::Flag::Valid;
+        g_hook_sample.packet.xflags = static_cast<std::uint8_t>(pi::XFlag::Rates | pi::XFlag::Mag);
+        g_hook_sample.packet.rate_dash = 1200;
+        g_hook_sample.packet.rate_crawl = 1000;
+        g_hook_sample.packet.rate_crawl_factor = 1200;
+        g_hook_sample.packet.mag = 20;
+        g_hook_sample.packet.mag_cap = 30;
+        g_hook_sample.packet.held = kRemoteHeld;
+        Check(pi::ValidPacket(g_hook_sample.packet), "both: the remote's v4 sample (rates and magazine) is valid");
+        hk::DrainStats(hs);
+        const std::uint32_t rates_writes = hs.native.rates_writes, rates_restores = hs.native.rates_restores;
+        const std::uint32_t mag_writes = hs.native.mag_writes, shot_leaks = hs.native.shot_leaks, ammo_leaks = hs.native.ammo_leaks;
+        dispatch(w->root1, 8);
+        pd::JobParam param{1, 0, 0, 8, g_world.bits};
+        Check(hk::RunJobWindow(w->go, &param, 1, &BothJob::Job, pi::Consumer::drain0), "both: drain window ran");
+        hk::DrainStats(hs);
+        Check(std::fabs(s_dash - 1.2f) < 1e-6f && s_mag == 4 && Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag) == 4 &&
+                  std::fabs(Get<float>(rr + 0x50) - 0.6f) < 1e-6f &&
+                  std::memcmp(reinterpret_cast<const void*>(r0 + c::rate_first), own0, sizeof(own0)) == 0,
+              "both: the job sees the remote's dash rate and the mapped magazine (20/30 -> 4 of 5); instance 0's record untouched");
+        Check(hs.native.rates_applied && !hs.native.rates_latched && hs.native.rates_writes == rates_writes + 1 &&
+                  hs.native.mag_writes == mag_writes + 1 && hs.native.mag_last == hk::MagRefusal::none && !hs.native.mag_leak_off,
+              "both: one rates write and one magazine write in the same window");
+        Check(hs.native.shot_leaks == shot_leaks && hs.native.ammo_leaks == ammo_leaks && hs.native.shot_count == 7,
+              "both: neither mirror is a shoot-count or ammo-vars leak");
+        hk::PublishArm(pi::Arm{});
+        dispatch(w->root0, 8);
+        hk::DrainStats(hs);
+        Check(!hs.native.rates_applied && hs.native.rates_restores == rates_restores + 1 && Get<float>(rr + 0x48) == 1.0f &&
+                  Get<float>(rr + 0x50) == 0.5f && Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag) == 4 && hs.native.mag_writes == mag_writes + 1,
+              "both: the disarm restores the rates at the main dispatch, the magazine stays");
+        Put<std::uintptr_t>(blk1 + c::blk_ps, 0);
+        Put<std::uintptr_t>(base + c::vars_slot_rva, 0);
+        a.rates_mirror = false;
+        a.rates_sp = a.rates_rec = 0;
+        a.rates_id = 0;
+        a.mag_mirror = false;
+        a.gun_prim = a.gun_rec = 0;
+        g_hook_sample.packet = pi::InputPacket{};
+        g_hook_sample.packet.version = 3;
+        g_hook_sample.packet.held = kRemoteHeld;
+    }
     hk::DrainStats(hs);
     Check(hs.window.faults == 0, "no window fault in the fixture");
     g_watch_src = g_watch_pp = g_watch_rec = 0;
@@ -1513,6 +1619,6 @@ int main() {
                 "forced, drain telemetry, block refusals, no window in a batch, replaced aim sub-controller, private masks, rates "
                 "mirror before the job, reapply, restore at the main dispatch (disarmed or legacy Arm), record-vtable latch, forget "
                 "with the forgotten epoch refused, owner refusals, instance 0's record untouched, broken restore chain, magazine "
-                "mirror with edges/refusals/dry fire, the shoot-count and ammo-vars leak checks, mirror off after an ammo leak)\n", checks);
+                "mirror with edges/refusals/dry fire, the shoot-count and ammo-vars leak checks, mirror off after an ammo leak, both mirrors in one window without a leak)\n", checks);
     return 0;
 }
