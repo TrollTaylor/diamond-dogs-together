@@ -265,7 +265,9 @@ function Get-WorkerPartnerSettings([string]$PartnerProfile,[string]$NativeStage=
             $extra=switch -CaseSensitive ($stage) {
                 'census' {@('partner_input_defer=census','partner_input_mask=0x2200006','partner_native_aim=off')}
                 'loco' {@('partner_input_defer=on','partner_input_mask=0x2200006','partner_native_aim=off')}
-                'gun' {@('partner_input_defer=on','partner_input_mask=0x220004E','partner_native_gun=1','partner_native_fire=0',
+                # Visual fire (docs/native-puppet.md "Weapons"): FIRE reaches body 1 only
+                # while the RequestBullet owner filter is live; its shots never hit.
+                'gun' {@('partner_input_defer=on','partner_input_mask=0x220005E','partner_native_gun=1','partner_native_fire=visual',
                     'partner_native_aim=look','partner_input_triggers=1','partner_input_rstick=1')}
                 default {throw "Unknown native stage: $stage"}
             }

@@ -620,6 +620,8 @@ try {
     # Native puppet lab.ini keys (docs/native-puppet.md).
     Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_drive -Value native)/$(ConvertTo-LabPartnerValue -Key partner_input_defer -Value census)/$(ConvertTo-LabPartnerValue -Key partner_input_local -Value all)/$(ConvertTo-LabPartnerValue -Key partner_native_aim -Value lookcam)" 'native/census/all/lookcam' 'native enums'
     Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_native_gun -Value $true)/$(ConvertTo-LabPartnerValue -Key partner_native_fire -Value 0)/$(ConvertTo-LabPartnerValue -Key partner_native_steer_deg -Value 30)/$(ConvertTo-LabPartnerValue -Key partner_native_trim_pct -Value 0)" '1/0/30/0' 'native bools and ints'
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_native_fire -Value visual)/$(ConvertTo-LabPartnerValue -Key partner_native_fire -Value $true)/$(ConvertTo-LabPartnerValue -Key partner_native_fire -Value 1)/$(ConvertTo-LabPartnerValue -Key partner_native_fire -Value off)" 'visual/visual/visual/0' 'native fire: 0 or visual'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_fire -Value raw } '0|visual' 'native fire values'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_drive -Value puppet } 'legacy|native' 'drive values'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_input_defer -Value yes } 'off|census|on' 'defer values'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_steer_deg -Value 31 } '0..30' 'steer range'

@@ -188,6 +188,9 @@ Addresses AddressesFor(const void* base) noexcept {
     a.gun_node_vtable = b + c::gun_node_vtable_rva;
     a.gun_prim_vtable = b + c::gun_prim_vt_rva;
     a.gun_iface_vtable = b + c::gun_iface_vt_rva;
+    a.equip_types = b + c::equip_types_rva;
+    a.equip_types_vtable = b + c::equip_types_vt_rva;
+    a.gun_basic = b + c::gun_basic_rva;
     return a;
 }
 
@@ -1007,12 +1010,16 @@ bool ReadLookSource(const Addresses& a, const State& s, LookSource& out) noexcep
     return out.look_ok || out.cam_ok || out.heading_ok;
 }
 
-bool ReadGun1(const Addresses& a, const State& s, Gun1& out) noexcept {
+bool ReadGun1(const Addresses& a, const State& s, Gun1& out) noexcept { return ReadGun(a, s, 1, out); }
+
+bool ReadGun(const Addresses& a, const State& s, std::uint32_t k, Gun1& out) noexcept {
     const Preserve preserve;
     out = Gun1{};
+    if (k > 1) { out.refusal = "instance"; return false; }
     if (const char* why = CheckWrite(Refusal::none, s, 1, false, WriteKind::restore)) { out.refusal = why; return false; }
+    if (k == 0 && !Realized(s, 0)) { out.refusal = "unrealized0"; return false; }
     Block b{};
-    if (const char* why = ResolveCore(a, s, 1, b)) { out.refusal = why; return false; }
+    if (const char* why = ResolveCore(a, s, k, b)) { out.refusal = why; return false; }
     std::uintptr_t node = 0, node_vt = 0, iface = 0, iface_vt = 0, prim_vt = 0, prim_blk = 0, prim_node = 0, rec = 0, bitmap = 0;
     std::uint32_t one = 0, id = 0, row = 0, bits = 0;
     if (!ReadValue(b.blk + c::blk_gun_node, node) || !node || !ReadValue(node, node_vt) || node_vt != a.gun_node_vtable ||
@@ -1028,6 +1035,58 @@ bool ReadGun1(const Addresses& a, const State& s, Gun1& out) noexcept {
     if (!ReadValue(prim + c::prim_gun_rec, rec) || !rec || !ReadValue(rec + c::gun_flags, out.gun3c0) ||
         !ReadValue(rec + c::gun_mode, out.mode)) { out.refusal = "gun_rec"; return false; }
     if (ReadValue(node + c::gun_node_bitmap, bitmap) && bitmap && ReadValue(bitmap, bits)) out.node_active = (bits & 1u) != 0;
+    out.prim = prim;
+    out.rec = rec;
+    partner_native::GunFields& g = out.fields;
+    out.fields_ok = ReadValue(rec + c::gun_flags27c, g.flags27c) && ReadValue(rec + c::gun_flags280, g.flags280) &&
+                    ReadValue(rec + c::gun_equip, g.equip) && ReadValue(rec + c::gun_cap, g.cap) &&
+                    ReadValue(rec + c::gun_cap_sub, g.cap_sub) && ReadValue(rec + c::gun_mag, g.mag) &&
+                    ReadValue(rec + c::gun_mag_sub, g.mag_sub) && ReadValue(rec + c::gun_stock, g.stock) &&
+                    ReadValue(rec + c::gun_stock_sub, g.stock_sub) && ReadValue(rec + 0x23A, g.w23a) &&
+                    ReadValue(rec + c::gun_b3d5, out.b3d5) && ReadValue(rec + c::gun_slot, out.slot);
+    g.gun3c0 = out.gun3c0;
+    return true;
+}
+
+bool ReadLoadout(const Addresses& a, const State& s, Loadout& out) noexcept {
+    const Preserve preserve;
+    out = Loadout{};
+    if (CheckWrite(Refusal::none, s, 1, false, WriteKind::restore)) return false;
+    std::uintptr_t vars = 0;
+    if (!ReadValue(a.vars_slot, vars) || !vars || !ReadBlock(vars + c::vars_weapons, out.weapons, sizeof(out.weapons)) ||
+        !ReadBlock(vars + c::vars_customized, out.customized, sizeof(out.customized)) ||
+        !ReadBlock(vars + c::vars_chimera, out.chimera, sizeof(out.chimera))) return false;
+    out.ok = true;
+    // The base-id tables, admitted only on the stock46 sanity checks.
+    std::uintptr_t types_vt = 0;
+    std::uint16_t packed46 = 0;
+    unsigned char row393[c::gun_basic_row]{};
+    out.tables_ok = a.equip_types && a.gun_basic && ReadValue(a.equip_types, types_vt) && types_vt == a.equip_types_vtable &&
+                    ReadValue(a.equip_types + c::equip_types_packed + 46 * 2, packed46) && packed46 == c::stock46_packed &&
+                    ReadBlock(a.gun_basic + (393 - 1) * c::gun_basic_row, row393, sizeof(row393)) &&
+                    std::memcmp(row393, c::stock46_recipe, sizeof(row393)) == 0;
+    // Module storage, not the caller's stack (the driver tick is serialized).
+    static std::uint16_t packed[c::stock_ids];
+    static unsigned char receivers[c::gun_basic_rows];
+    static unsigned char basic[c::gun_basic_rows * c::gun_basic_row];
+    std::memset(packed, 0, sizeof(packed));
+    std::memset(receivers, 0, sizeof(receivers));
+    if (out.tables_ok) {
+        out.tables_ok = ReadBlock(a.equip_types + c::equip_types_packed, packed, sizeof(packed)) &&
+                        ReadBlock(a.gun_basic, basic, sizeof(basic));
+        for (std::size_t r = 0; r < c::gun_basic_rows; ++r) receivers[r] = basic[r * c::gun_basic_row];
+    }
+    for (unsigned i = 0; i < 3; ++i) {
+        const std::uint16_t alias = out.weapons[i];
+        if (alias && alias < c::stock_ids) { out.base[i] = alias; continue; }
+        if (!alias || !out.tables_ok) continue;
+        const std::uint8_t receiver = out.chimera[i * 12];
+        if (!receiver) continue;
+        for (std::uint16_t e = 1; e < c::stock_ids; ++e) {
+            const std::uint32_t row = packed[e] >> 6;
+            if (row >= 1 && row <= c::gun_basic_rows && receivers[row - 1] == receiver) { out.base[i] = e; break; }
+        }
+    }
     return true;
 }
 

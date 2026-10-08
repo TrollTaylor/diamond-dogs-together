@@ -32,6 +32,7 @@
 #include <cstdint>
 #include "mgscoop/lab_config.hpp"
 #include "mgscoop/partner_input.hpp"
+#include "mgscoop/partner_native.hpp"
 #include "mgscoop/partner_receipt.hpp"
 
 namespace mgscoop::partner_player {
@@ -73,6 +74,8 @@ struct Addresses {
     std::uintptr_t gun_node_vtable;     // 0x2306628
     std::uintptr_t gun_prim_vtable;     // 0x23B3E80
     std::uintptr_t gun_iface_vtable;    // 0x23B3FA0 (prim+0x30)
+    // Native weapons: the loadout base-id tables (runtime-filled image data).
+    std::uintptr_t equip_types, equip_types_vtable, gun_basic;
 };
 Addresses AddressesFor(const void* base) noexcept;
 
@@ -304,18 +307,44 @@ struct LookSource {
     float pitch, yaw, cam270, cam274, heading;
 };
 bool ReadLookSource(const Addresses& addresses, const State& state, LookSource& out) noexcept;
-// Instance 1's gun node (builder row 0x3D) for telemetry: node = *(blk1+0x378)
+// Instance k's gun node (builder row 0x3D) for telemetry: node = *(blk_k+0x378)
 // (vtable 0x2306628, +0x20 == 1, +0x24 == id, +0x2C == 0x3D), iface =
-// *(blk1+0x5A0) (vtable 0x23B3FA0), prim = iface - 0x30 (vtable 0x23B3E80,
-// prim+8 == blk1, prim+0x38 == node), rec = *(prim+0x58): Gun3C0 = rec+0x3C0,
-// mode = rec+0x2C1, active = *(u32*)*(node+8) bit 0.
+// *(blk_k+0x5A0) (vtable 0x23B3FA0), prim = iface - 0x30 (vtable 0x23B3E80,
+// prim+8 == blk_k, prim+0x38 == node), rec = *(prim+0x58): Gun3C0 = rec+0x3C0,
+// mode = rec+0x2C1, active = *(u32*)*(node+8) bit 0. Weapons (docs/native-puppet.md
+// "Weapons"): the record's magazine/reload fields (pure reads; fields_ok when
+// all of them were readable), and prim/rec for the magazine mirror's Arm (the
+// hook re-validates prim's vtable, prim+8 and prim+0x58 before any write).
 struct Gun1 {
     const char* refusal;
     bool node_active;
     std::uint32_t gun3c0;
     std::uint8_t mode;
+    bool fields_ok;
+    partner_native::GunFields fields;
+    std::uint8_t b3d5, slot;
+    std::uintptr_t prim, rec;
 };
 bool ReadGun1(const Addresses& addresses, const State& state, Gun1& out) noexcept;
+// The same for instance k (0 = the local player: the input sender's magazine).
+bool ReadGun(const Addresses& addresses, const State& state, std::uint32_t k, Gun1& out) noexcept;
+
+// The local loadout (pure reads of vars = *(0x2C16920); registrations pinned):
+// vars.weapons[0..2] (u16 at +0x548: PRIMARY_HIP, PRIMARY_BACK, SECONDARY),
+// customizedWeapon[0..2] (u16 at +0xB06), chimeraParts (u8[36] at +0xB30,
+// 12 per slot, byte 0 = receiver). base[i] is the stock id the slot shows: the
+// equip id itself below 649, else (a customized alias) the lowest stock id
+// whose GunBasic recipe has the slot's receiver; 0 when unknown. The tables
+// count only after the stock46 sanity checks (type table vtable, packed 46 ==
+// 0x6244, GunBasic row 393 == the stock46 recipe): tables_ok.
+struct Loadout {
+    bool ok, tables_ok;
+    std::uint16_t weapons[3];
+    std::uint16_t customized[3];
+    std::uint8_t chimera[36];
+    std::uint16_t base[3];
+};
+bool ReadLoadout(const Addresses& addresses, const State& state, Loadout& out) noexcept;
 
 // --- Round 3: direct motion (pure reads plus one restoration write) ---------
 // g = *(P+0x48) == 0x2C1BF20 (g); block 1 as ResolveBlock checks it; iface =

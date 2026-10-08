@@ -121,6 +121,13 @@ volatile LONG g_w_in_batch = 0, g_w_svc_native = 0;
 // magnitude x1000 and heading in mrad; rec_ok 0 when the read faulted).
 volatile LONG g_d_held = 0, g_d_mag = 0, g_d_view = 0, g_d_mask28 = 0, g_d_mask2c = 0, g_d_mask30 = 0, g_d_local_pre = 0;
 volatile LONG g_d_rec_ok = 0, g_d_rec_act = 0, g_d_rec_next = 0, g_d_rec_mag = 0, g_d_rec_heading = 0;
+// Native weapons: the magazine mirror (hook thread writes; atomics for the
+// driver) and the shoot-count leak check of drain windows.
+volatile LONG g_m_writes = 0, g_m_refused = 0, g_m_fire = 0, g_m_reload = 0, g_m_last = 0, g_m_faulted = 0;
+volatile LONG g_m_remote = 0xFFFF, g_m_remote_cap = 0xFFFF, g_m_cap = 0xFFFF, g_m_written = 0xFFFF;
+volatile LONG g_shot_leaks = 0, g_shot_count = -1, g_reload_drains = 0;
+bool g_m_seen = false;  // hook thread only: the last remote (mag, cap) acted on
+std::uint16_t g_m_seen_mag = 0, g_m_seen_cap = 0;
 // What the stubs answer during the current window (set before each call).
 struct Current {
     std::uint32_t held, press, release, w54, long12, tap12;
@@ -676,6 +683,7 @@ void __stdcall InputDispatchHook(void* root, std::uint32_t phase) noexcept {
     if (InterlockedExchange(&g_reset_hist, 0)) {
         g_hist = pi::HoldHistory{};
         g_inj_valid = false;
+        g_m_seen = false;
     }
     if (a.gen != g_gen) {
         // Only instance 1's private masks and shadows start afresh with a new gen.
@@ -856,6 +864,104 @@ void ProbeRecord(std::uintptr_t rec) noexcept {
     InterlockedExchange(&g_d_rec_next, static_cast<LONG>(next));
     InterlockedExchange(&g_d_rec_mag, ok ? pi::Milli(mag) : 0);
     InterlockedExchange(&g_d_rec_heading, ok ? pi::Milli(heading) : 0);
+}
+
+// --- Native weapons (docs/native-puppet.md "Weapons") ---------------------------
+static_assert(c::gun_mag == 0x25C && c::gun_mag_sub == 0x25E && c::gun27c_sub == 0x200 && c::gun3c0_full_mag == 0x10000000u &&
+                  c::gun_cap == 0x210 && c::gun_cap_sub == 0x212 && c::gun27c_double == 0x100000u && c::gun27c_half == 0x80000u &&
+                  c::gun_double_equip_lo == 0x42B && c::gun_class_shift == 6 && c::gun_class_mask == 7 && c::gun_class_gun == 1,
+              "the pure gun rules of partner_native match the contract");
+int MagFilter(DWORD code) noexcept {
+    if (!IsAccessFault(code)) return EXCEPTION_CONTINUE_SEARCH;
+    if (InterlockedExchange(&g_m_faulted, 1) == 0 && g_log) {
+        char line[128]{};
+        if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "partner_input=fault; phase=mag; code=0x%08x; mag_mirror=disabled\r\n", code)))
+            g_log(line);
+    }
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+void MagRefused(MagRefusal why, bool count) noexcept {
+    if (count) InterlockedIncrement(&g_m_refused);
+    InterlockedExchange(&g_m_last, static_cast<LONG>(why));
+}
+// The magazine mirror (drain window, before block 1's job, on the thread that
+// runs instance 1's gun update): on a FIRE or RELOAD press edge of this
+// consumer's view, or when the remote's (mag, cap) changed, instance 1's live
+// magazine field becomes partner_native::MirrorMagazine (only when it
+// differs). Its non-local shots never spend it (0x1041650 is local-only).
+void MirrorMag(const pi::Arm& a, const pi::Injection& j) noexcept {
+    if (g_m_faulted) { MagRefused(MagRefusal::fault, false); return; }
+    if (!a.mag_mirror || !a.gun_prim || !a.gun_rec) { MagRefused(MagRefusal::off, false); return; }
+    if (!j.ammo_valid) { MagRefused(MagRefusal::no_v4, false); return; }
+    const bool fire = (j.edge_press & partner_native::kPadFire) != 0;
+    const bool reload = (j.edge_press & partner_native::kPadReload) != 0;
+    const bool changed = !g_m_seen || j.ammo != g_m_seen_mag || j.ammo_cap != g_m_seen_cap;
+    if (!fire && !reload && !changed) return;
+    g_m_seen = true;
+    g_m_seen_mag = j.ammo;
+    g_m_seen_cap = j.ammo_cap;
+    InterlockedExchange(&g_m_remote, j.ammo);
+    InterlockedExchange(&g_m_remote_cap, j.ammo_cap);
+    MagRefusal why = MagRefusal::none;
+    std::uint32_t cap = 0, target = 0;
+    bool wrote = false;
+    __try {
+        if (Load<std::uintptr_t>(a.gun_prim) != g_base + c::gun_prim_vt_rva || Load<std::uintptr_t>(a.gun_prim + c::prim_blk) != a.blk1 ||
+            Load<std::uintptr_t>(a.gun_prim + c::prim_gun_rec) != a.gun_rec) {
+            why = MagRefusal::prim;
+        } else {
+            partner_native::GunFields g{};
+            g.flags27c = Load<std::uint32_t>(a.gun_rec + c::gun_flags27c);
+            g.gun3c0 = Load<std::uint32_t>(a.gun_rec + c::gun_flags);
+            g.equip = Load<std::uint32_t>(a.gun_rec + c::gun_equip);
+            g.cap = Load<std::uint16_t>(a.gun_rec + c::gun_cap);
+            g.cap_sub = Load<std::uint16_t>(a.gun_rec + c::gun_cap_sub);
+            cap = partner_native::GunCapacity(g);
+            if (g.gun3c0 & c::gun3c0_full_mag) why = MagRefusal::full;
+            else if (partner_native::GunClass(g.flags27c) != c::gun_class_gun) why = MagRefusal::cls;
+            else if (cap == 0 || cap > partner_native::kMaxMagCap) why = MagRefusal::cap;
+            else {
+                target = partner_native::MirrorMagazine(partner_native::MagIn{j.ammo, j.ammo_cap, cap, fire});
+                const std::uintptr_t field = a.gun_rec + partner_native::GunMagazineOffset(g.flags27c);
+                if (Load<std::uint16_t>(field) != target) {
+                    Store<std::uint16_t>(field, static_cast<std::uint16_t>(target));
+                    wrote = true;
+                }
+            }
+        }
+    } __except (MagFilter(GetExceptionCode())) {
+        why = MagRefusal::fault;
+    }
+    InterlockedExchange(&g_m_cap, static_cast<LONG>(cap));
+    if (why != MagRefusal::none) { MagRefused(why, true); return; }
+    InterlockedExchange(&g_m_last, static_cast<LONG>(MagRefusal::none));
+    InterlockedExchange(&g_m_written, static_cast<LONG>(target));
+    if (!wrote) return;
+    InterlockedIncrement(&g_m_writes);
+    if (fire) InterlockedIncrement(&g_m_fire);
+    if (reload) InterlockedIncrement(&g_m_reload);
+}
+// vars.playerShootCountInMission (read-only leak evidence; 0xFFFFFFFF unread).
+std::uint32_t ReadShotCount() noexcept {
+    std::uint32_t value = 0xFFFFFFFFu;
+    __try {
+        const std::uintptr_t vars = Load<std::uintptr_t>(g_base + c::vars_slot_rva);
+        if (vars) value = Load<std::uint32_t>(vars + c::vars_shoot_count);
+    } __except (ProbeFilter(GetExceptionCode())) {}
+    return value;
+}
+// After the job: the leak verdict and whether instance 1's reload request is set.
+void AfterJob(const pi::Arm& a, std::uint32_t shots_before) noexcept {
+    const std::uint32_t shots = ReadShotCount();
+    if (shots_before != 0xFFFFFFFFu && shots != 0xFFFFFFFFu && shots != shots_before) InterlockedIncrement(&g_shot_leaks);
+    InterlockedExchange(&g_shot_count, static_cast<LONG>(shots));
+    if (!a.gun_rec || !a.gun_prim) return;
+    bool reload = false;
+    __try {
+        reload = Load<std::uintptr_t>(a.gun_prim + c::prim_gun_rec) == a.gun_rec &&
+                 (Load<std::uint32_t>(a.gun_rec + c::gun_flags) & c::gun3c0_reload) != 0;
+    } __except (ProbeFilter(GetExceptionCode())) {}
+    if (reload) InterlockedIncrement(&g_reload_drains);
 }
 
 // A deferred job without a window: a fatal game code is recorded and passed on.
@@ -1136,6 +1242,19 @@ bool Installed() noexcept { return g_ready; }
 
 std::uint32_t HookThread() noexcept { return static_cast<std::uint32_t>(g_hook_thread); }
 
+const char* MagRefusalName(MagRefusal refusal) noexcept {
+    switch (refusal) {
+    case MagRefusal::off: return "off";
+    case MagRefusal::no_v4: return "no_v4";
+    case MagRefusal::prim: return "prim";
+    case MagRefusal::full: return "full";
+    case MagRefusal::cls: return "cls";
+    case MagRefusal::cap: return "cap";
+    case MagRefusal::fault: return "fault";
+    default: return "none";
+    }
+}
+
 const char* LookRefusalName(LookRefusal refusal) noexcept {
     switch (refusal) {
     case LookRefusal::off: return "off";
@@ -1223,11 +1342,16 @@ bool RunJobWindow(void* go, const void* param, std::uint32_t block, JobCallFn jo
     InterlockedExchange(&g_d_local_pre, static_cast<LONG>(save.rec_2ac));
     // Phase 1 picks its pad-sampling branch by id == P+0x218: instance 1 (id 1,
     // validated: ids[1] == 1) takes it for this job only, on this thread.
+    // Native weapons: the magazine mirror on this thread, before the gun
+    // update reads it, and the viewer's shoot count around the job.
+    MirrorMag(a, j);
+    const std::uint32_t shots_before = ReadShotCount();
     const bool detour = partner_local_detour::Installed();
     if (detour) partner_local_detour::Force(a.P, 1);
     GuardedCall(a, save, Call{kJobEntry, go, const_cast<void*>(param), 0, 0}, detour);
     g_in_drain = false;
     ProbeRecord(a.rec1);
+    AfterJob(a, shots_before);
     SafePost(a, save, true);
     EndWindow();
     std::uint32_t masks[3]{};
@@ -1315,6 +1439,7 @@ void ResetFault() noexcept {
     // mission: the hook thread clears them before its next window.
     InterlockedExchange(&g_reset_hist, 1);
     InterlockedExchange(&g_n_look_faulted, 0);
+    InterlockedExchange(&g_m_faulted, 0);
 }
 
 void PublishArm(const pi::Arm& arm) noexcept {
@@ -1416,6 +1541,19 @@ void DrainStats(Stats& out) noexcept {
     n.rec_next = static_cast<std::uint32_t>(g_d_rec_next);
     n.rec_mag = g_d_rec_mag;
     n.rec_heading_mrad = g_d_rec_heading;
+    n.mag_writes = static_cast<std::uint32_t>(g_m_writes);
+    n.mag_refused = static_cast<std::uint32_t>(g_m_refused);
+    n.mag_fire_edges = static_cast<std::uint32_t>(g_m_fire);
+    n.mag_reload_edges = static_cast<std::uint32_t>(g_m_reload);
+    n.mag_last = static_cast<MagRefusal>(g_m_last);
+    n.mag_remote = static_cast<std::uint32_t>(g_m_remote);
+    n.mag_remote_cap = static_cast<std::uint32_t>(g_m_remote_cap);
+    n.mag_cap = static_cast<std::uint32_t>(g_m_cap);
+    n.mag_written = static_cast<std::uint32_t>(g_m_written);
+    n.mag_faulted = g_m_faulted != 0;
+    n.shot_leaks = static_cast<std::uint32_t>(g_shot_leaks);
+    n.shot_count = static_cast<std::uint32_t>(g_shot_count);
+    n.reload_drains = static_cast<std::uint32_t>(g_reload_drains);
 }
 
 bool PatchLive(const void* base) noexcept {

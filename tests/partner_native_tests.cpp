@@ -571,7 +571,88 @@ void TestRing() {
 
 } // namespace
 
+// Native weapons (docs/native-puppet.md "Weapons"): the gun record rules of
+// the magazine getter 0x10435D0, CanReload 0x1051F30 and the reload gate, and
+// the magazine mirror.
+void TestWeapons() {
+    pn::GunFields g{};
+    g.flags27c = 1u << 6;  // class 1
+    g.equip = 46;
+    g.cap = 5;
+    g.cap_sub = 9;
+    g.mag = 3;
+    g.mag_sub = 1;
+    g.stock = 0xFFFF;
+    Check(pn::GunClass(g.flags27c) == 1 && pn::GunCapacity(g) == 5 && pn::GunMagazine(g) == 3, "capacity rec+0x210, magazine rec+0x25C");
+    Check(pn::GunMagazineOffset(g.flags27c) == 0x25C && pn::GunMagazineOffset(g.flags27c | 0x200u) == 0x25E, "the live magazine field");
+    pn::GunFields sub = g;
+    sub.flags27c |= 0x200u;
+    Check(pn::GunCapacity(sub) == 9 && pn::GunMagazine(sub) == 1, "flags bit 9: the sub magazine and capacity");
+    pn::GunFields dbl = g;
+    dbl.flags27c |= 0x100000u;
+    Check(pn::GunCapacity(dbl) == 5, "bit 20 doubles only equip 0x42B..0x42E");
+    dbl.equip = 0x42B;
+    Check(pn::GunCapacity(dbl) == 10, "bit 20 doubles equip 0x42B");
+    dbl.equip = 0x42E;
+    Check(pn::GunCapacity(dbl) == 10, "... and 0x42E");
+    dbl.equip = 0x42F;
+    Check(pn::GunCapacity(dbl) == 5, "... not 0x42F");
+    pn::GunFields half = g;
+    half.flags27c |= 0x80000u;
+    Check(pn::GunCapacity(half) == 2, "bit 19 halves");
+    pn::GunFields full = g;
+    full.gun3c0 = 0x10000000u;
+    Check(pn::GunMagazine(full) == 5, "rec+0x3C0 bit 28: the getter returns the capacity");
+    // CanReload.
+    Check(pn::GunCanReload(g), "3/5 with stock: reload allowed");
+    pn::GunFields r = g;
+    r.mag = 5;
+    Check(!pn::GunCanReload(r), "a full magazine refuses");
+    r = g; r.flags280 = 0x80000u;
+    Check(!pn::GunCanReload(r), "the no-reload bit refuses");
+    r = g; r.stock = 3;
+    Check(!pn::GunCanReload(r), "stock - magazine == 0 refuses");
+    r = g; r.gun3c0 = 0x20000000u;
+    Check(pn::GunCanReload(r), "bit 29: the capacity-based stock check");
+    r.cap = 0;
+    Check(!pn::GunCanReload(r), "bit 29 with capacity 0 refuses");
+    Check(!pn::GunCanReload(full), "a full-magazine gun never reloads");
+    // The reload gate.
+    Check(pn::GunReloadGate(g, 0), "gate: class 1, equip, 0x3D5 != 4");
+    Check(!pn::GunReloadGate(g, 4), "gate: rec+0x3D5 == 4 refuses");
+    r = g; r.equip = 0;
+    Check(!pn::GunReloadGate(r, 0), "gate: no equip refuses");
+    r = g; r.flags27c = (2u << 6);
+    Check(!pn::GunReloadGate(r, 0), "gate: class 2 refuses");
+    r = g; r.flags27c |= 0x800u;
+    Check(!pn::GunReloadGate(r, 0), "gate: (flags & 0x1800) == 0x800 refuses");
+    r.flags27c |= 0x1000u;
+    Check(pn::GunReloadGate(r, 0), "gate: 0x1800 passes");
+    // The magazine mirror.
+    using M = pn::MagIn;
+    Check(pn::MirrorMagazine(M{30, 30, 5, false}) == 5, "a full remote stays full (no reload)");
+    Check(pn::MirrorMagazine(M{0, 30, 5, false}) == 0, "an empty remote stays empty");
+    Check(pn::MirrorMagazine(M{29, 30, 5, false}) == 4, "almost full maps below the capacity (reloadable)");
+    Check(pn::MirrorMagazine(M{1, 30, 5, false}) == 1, "one round maps to at least 1");
+    Check(pn::MirrorMagazine(M{15, 30, 5, false}) == 3, "half rounds up");
+    Check(pn::MirrorMagazine(M{3, 5, 5, false}) == 3, "same capacity: the same count");
+    Check(pn::MirrorMagazine(M{0, 30, 5, true}) == 1, "a FIRE edge never leaves 0");
+    Check(pn::MirrorMagazine(M{4, 5, 30, false}) == 24, "a larger partner capacity scales up");
+    Check(pn::MirrorMagazine(M{1, 2, 1, false}) == 0 && pn::MirrorMagazine(M{2, 2, 1, false}) == 1, "capacity 1: not full is empty");
+    Check(pn::MirrorMagazine(M{1, 2, 1, true}) == 1, "capacity 1: a FIRE edge loads it");
+    Check(pn::MirrorMagazine(M{1, 0, 5, true}) == 0 && pn::MirrorMagazine(M{1, 5, 0, true}) == 0, "zero capacities write nothing useful");
+    for (std::uint32_t cap = 1; cap <= 50; ++cap)
+        for (std::uint16_t rc = 1; rc <= 40; ++rc)
+            for (std::uint16_t rm = 0; rm <= rc; ++rm) {
+                const std::uint32_t out = pn::MirrorMagazine(M{rm, rc, cap, false});
+                const bool ok = out <= cap && ((rm == rc) == (out == cap)) && (rm == 0 ? out == 0 : (cap == 1 || out >= 1));
+                if (!ok) Check(false, "mirror invariants: <= cap, full iff remote full, empty iff remote empty");
+            }
+    Check(true, "mirror invariants hold for capacities 1..50 x 1..40");
+}
+
 int main() {
+    TestWeapons();
     TestOffAndLegacy();
     TestEnterSequence();
     TestEnterTimeoutsAndRevertLatch();
@@ -589,6 +670,7 @@ int main() {
                 "timeouts, DM revert latch, hard and soft reasons, health warm-up and windows, cost, cooldown, 3-fallback latch, "
                 "unlatch, MissionStart reset, fallback reasons, publication order defer before Arm, left_reason through "
                 "cooldown, phase-1 detour precondition), effective settings and mask, HOLD latch, "
-                "steering and trim, per-consumer frame injection, telemetry ring\n", checks);
+                "steering and trim, per-consumer frame injection, telemetry ring, weapons (capacity, magazine, CanReload, "
+                "reload gate, magazine mirror)\n", checks);
     return 0;
 }

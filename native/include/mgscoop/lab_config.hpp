@@ -121,6 +121,12 @@ enum class PartnerLocal : std::uint8_t { main, all };
 // slot after phase 0 inside a drain); lookcam (also CAM+0x270/+0x274 inside
 // block-1 windows, sandboxed).
 enum class PartnerNativeAim : std::uint8_t { off, look, lookcam };
+// Native fire (docs/native-puppet.md "Weapons"): off (FIRE masked) or visual
+// (FIRE reaches instance 1 only while the RequestBullet owner filter is
+// installed, live and armed: the partner's shots are animation, sound and
+// effects on this machine, never bullets). lab.ini/trigger spellings: 0|off,
+// 1|visual. There is no mode with real partner bullets.
+enum class PartnerNativeFire : std::uint8_t { off, visual };
 // Native puppet ranges and the effective-mask base (STANCE 2, DASH 4,
 // keyboard dash bit 21, keyboard walk bit 25); HOLD 0x8 + RELOAD 0x40 with
 // partner_native_gun, FIRE 0x10 with partner_native_gun and _fire.
@@ -264,7 +270,7 @@ struct LabConfig {
     PartnerLocal partner_input_local = PartnerLocal::main;
     PartnerNativeAim partner_native_aim = PartnerNativeAim::off;
     bool partner_native_gun = false;                // HOLD 0x8 + RELOAD 0x40 allowed through the mask
-    bool partner_native_fire = false;               // FIRE 0x10 (only with partner_native_gun)
+    PartnerNativeFire partner_native_fire = PartnerNativeFire::off;  // FIRE 0x10 (only with partner_native_gun, visual only)
     std::uint32_t partner_native_steer_deg = 15;    // 0..30 (0 disables steering)
     std::uint32_t partner_native_trim_pct = 0;      // 0..10
     bool crash_probe = true;
@@ -316,6 +322,7 @@ const char* PartnerDriveName(PartnerDrive value) noexcept;
 const char* PartnerDeferName(PartnerDefer value) noexcept;
 const char* PartnerLocalName(PartnerLocal value) noexcept;
 const char* PartnerNativeAimName(PartnerNativeAim value) noexcept;
+const char* PartnerNativeFireName(PartnerNativeFire value) noexcept;
 const char* LabModeName(LabMode value) noexcept;
 const char* NetLinkName(NetLink value) noexcept;
 const char* PartnerInterpName(PartnerInterp value) noexcept;
@@ -336,6 +343,7 @@ bool ParsePartnerDrive(const char* text, std::size_t size, PartnerDrive& out) no
 bool ParsePartnerDefer(const char* text, std::size_t size, PartnerDefer& out) noexcept;
 bool ParsePartnerLocal(const char* text, std::size_t size, PartnerLocal& out) noexcept;
 bool ParsePartnerNativeAim(const char* text, std::size_t size, PartnerNativeAim& out) noexcept;
+bool ParsePartnerNativeFire(const char* text, std::size_t size, PartnerNativeFire& out) noexcept;
 // partner_input_defer as it takes effect: off unless partner_drive=native.
 inline PartnerDefer EffectivePartnerDefer(PartnerDrive drive, PartnerDefer defer) noexcept {
     return drive == PartnerDrive::native ? defer : PartnerDefer::off;

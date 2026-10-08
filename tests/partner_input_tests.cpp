@@ -498,7 +498,20 @@ void TestAccumulate() {
     bad.edge_rep = 0; bad.version = 3;
     Check(pi::ValidPacket(bad), "version 3 (native) with no v3 fields is valid");
     bad.version = 4;
+    Check(pi::ValidPacket(bad), "version 4 (native weapons) with no v3/v4 fields is valid");
+    bad.version = 5;
     Check(!pi::ValidPacket(bad), "unknown version refused");
+    bad.version = 4; bad.mag = 2; bad.mag_cap = 5;
+    Check(!pi::ValidPacket(bad), "a magazine without xflags Mag refused");
+    bad.xflags = pi::XFlag::Mag;
+    Check(pi::ValidPacket(bad), "v4 with a magazine");
+    bad.mag = 6;
+    Check(!pi::ValidPacket(bad), "magazine above capacity refused");
+    bad.mag = 0; bad.mag_cap = 0;
+    Check(!pi::ValidPacket(bad), "xflags Mag with capacity 0 refused");
+    bad.version = 3; bad.mag = 1; bad.mag_cap = 1;
+    Check(!pi::ValidPacket(bad), "the magazine in a v3 packet refused");
+    bad = pi::InputPacket{};
     bad.version = 1; bad.long12 = 1;
     Check(!pi::ValidPacket(bad), "v1 with v2 fields refused");
 }
@@ -552,6 +565,21 @@ void TestComposeSteer() {
           look.cam274 == 4.0f, "v3 look fields copied into the injection");
     Check(pi::LevelOnly(look, c).look_valid && !pi::Neutral(look).look_valid, "level-only keeps the look; neutral drops it");
     Check(!base.look_valid && !base.cam_valid, "a v2 sample carries no look");
+    Check(!look.ammo_valid, "a v3 sample carries no magazine");
+    // v4: the live sample's magazine reaches the injection; level-only keeps it, neutral drops it.
+    pi::Sample v4 = live;
+    pi::V4Source src4{};
+    src4.v3 = src;
+    src4.mag_valid = true; src4.mag = 2; src4.mag_cap = 7;
+    pi::Fill4(v4.packet, src4);
+    edge = pi::EdgeState{};
+    const pi::Injection ammo = pi::Compose(c, v4, 0, pi::Overlay{}, edge);
+    Check(ammo.ammo_valid && ammo.ammo == 2 && ammo.ammo_cap == 7 && ammo.look_valid, "v4 magazine copied into the injection");
+    Check(pi::LevelOnly(ammo, c).ammo_valid && !pi::Neutral(ammo).ammo_valid, "level-only keeps the magazine; neutral drops it");
+    pi::Sample stale4 = v4;
+    stale4.age_ms = 5000;
+    edge = pi::EdgeState{};
+    Check(!pi::Compose(c, stale4, 0, pi::Overlay{}, edge).ammo_valid, "a stale sample carries no magazine");
 }
 
 } // namespace

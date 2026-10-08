@@ -393,7 +393,7 @@ bool ParseTrigger(const char* text, std::size_t size, Trigger& out) noexcept {
             if (result.has_ngun || !ParseFlag(token + value_at, length - value_at, result.ngun)) return false;
             result.has_ngun = true;
         } else if (StartsToken(token, length, "nfire=", value_at)) {
-            if (result.has_nfire || !ParseFlag(token + value_at, length - value_at, result.nfire)) return false;
+            if (result.has_nfire || !ParsePartnerNativeFire(token + value_at, length - value_at, result.nfire)) return false;
             result.has_nfire = true;
         } else if (StartsToken(token, length, "steer=", value_at)) {
             if (result.has_steer || !ParseDec(token + value_at, length - value_at, 0, kPartnerNativeSteerMaxDeg, result.steer_deg))

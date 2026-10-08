@@ -293,7 +293,7 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
         else if (Equals(key, "partner_input_local")) ok = ParsePartnerLocal(value.data, value.size, result.partner_input_local);
         else if (Equals(key, "partner_native_aim")) ok = ParsePartnerNativeAim(value.data, value.size, result.partner_native_aim);
         else if (Equals(key, "partner_native_gun")) ok = ParseBool(value, result.partner_native_gun);
-        else if (Equals(key, "partner_native_fire")) ok = ParseBool(value, result.partner_native_fire);
+        else if (Equals(key, "partner_native_fire")) ok = ParsePartnerNativeFire(value.data, value.size, result.partner_native_fire);
         else if (Equals(key, "partner_native_steer_deg"))
             ok = ParseRange(value, 0, kPartnerNativeSteerMaxDeg, result.partner_native_steer_deg);
         else if (Equals(key, "partner_native_trim_pct"))
@@ -791,6 +791,19 @@ bool ParsePartnerLocal(const char* text, std::size_t size, PartnerLocal& out) no
     const Slice s{text, size};
     if (Equals(s, "main")) out = PartnerLocal::main;
     else if (Equals(s, "all")) out = PartnerLocal::all;
+    else return false;
+    return true;
+}
+
+const char* PartnerNativeFireName(PartnerNativeFire value) noexcept {
+    return value == PartnerNativeFire::visual ? "visual" : "off";
+}
+
+bool ParsePartnerNativeFire(const char* text, std::size_t size, PartnerNativeFire& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "0") || Equals(s, "off")) out = PartnerNativeFire::off;
+    else if (Equals(s, "1") || Equals(s, "visual")) out = PartnerNativeFire::visual;
     else return false;
     return true;
 }

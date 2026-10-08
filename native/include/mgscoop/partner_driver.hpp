@@ -38,6 +38,7 @@
 #include "mgscoop/partner_input_hook.hpp"
 #include "mgscoop/partner_defer.hpp"
 #include "mgscoop/partner_equip_wire.hpp"
+#include "mgscoop/partner_fire_filter.hpp"
 #include "mgscoop/partner_native.hpp"
 #include "mgscoop/partner_player.hpp"
 #include "mgscoop/partner_recon.hpp"
@@ -251,7 +252,23 @@ struct Hooks {
     bool (*drain_reliable)(void* context, std::uint8_t channel, std::uint8_t* out, std::size_t capacity, std::size_t& size) noexcept = nullptr;
     // Whether the build carries the ammo experiment (MGS_LOCAL_STOCK46_AMMO_TEST); telemetry only.
     bool ammo_experiment = false;
+    // --- Native weapons (docs/native-puppet.md "Weapons"; any may be null:
+    // FIRE then stays masked with fire_refused=unavailable, the sender sends
+    // no magazine and no manifest).
+    // Lazy install of the RequestBullet owner filter (once per process), armed
+    // for `owner` (instance 1's GameObjectId): nullptr ok, else a static reason.
+    const char* (*install_fire)(void* context, std::uint16_t owner) noexcept = nullptr;
+    void (*fire_stats)(void* context, partner_fire_filter::Stats& out) noexcept = nullptr;
+    void (*fire_census)(void* context, partner_fire_filter::Census& out) noexcept = nullptr;
+    // Instance k's gun record (0: the local player, the v4 magazine sender).
+    bool (*read_gun)(void* context, const partner_player::State& state, std::uint32_t k, partner_player::Gun1& out) noexcept = nullptr;
+    bool (*read_loadout)(void* context, const partner_player::State& state, partner_player::Loadout& out) noexcept = nullptr;
+    // Reliable channel `channel` (latest mode): true when queued.
+    bool (*send_reliable)(void* context, std::uint8_t channel, const std::uint8_t* bytes, std::size_t size) noexcept = nullptr;
 };
+// Native weapons cadences and caps.
+inline constexpr std::uint64_t kEquipReadMs = 1000;    // loadout read / manifest send at most this often
+inline constexpr unsigned kWeaponEventCap = 64;        // fire gate transitions, manifests sent, apply verdicts
 
 // Times passed in by the caller: QPC milliseconds (cadence, poses, net) and
 // GetTickCount64 (the probe's t_ms, comparable with the other log lines).
@@ -303,7 +320,12 @@ struct Settings {
     PartnerDefer defer;      // effective: off unless drive=native
     PartnerLocal local;
     PartnerNativeAim naim;
-    bool ngun, nfire;
+    bool ngun;
+    PartnerNativeFire nfire;
+    // Runtime gate, set by the native tick (never from lab.ini): the fire
+    // filter is installed, live and armed for instance 1 and its gun is a gun
+    // class. EffectiveSettings passes FIRE only with nfire=visual and this.
+    bool fire_live;
     std::uint32_t steer_deg, trim_pct;
     // Set only in the effective copy: the native settings apply this tick.
     bool native_active;
@@ -589,6 +611,32 @@ struct Mission {
     // Equipment manifest (channel 2): store and counters.
     partner_equip_wire::Store equip;
     std::uint32_t equip_logged_rev;
+    // --- Native weapons (docs/native-puppet.md "Weapons").
+    const char* fire_refusal;          // why FIRE is masked this tick (static; nullptr: live)
+    const char* fire_logged;           // the verdict of the last partner_fire= transition line
+    bool fire_logged_once;
+    bool weapon_ok, weapon_known;      // instance 1 showed a gun class this mission (latched; see TickWeapons)
+    std::uintptr_t gun1_prim, gun1_rec;  // the mirror's gun record (last readable one; 0 = none)
+    // The local instance's gun record, read once per native tick (TickNative,
+    // before TickInput's v4 sender uses it in the same tick).
+    partner_player::Gun1 gun0;
+    bool gun0_ok;
+    partner_fire_filter::Stats fire_rate;  // at the previous ~1 s rate window (started at fire_rate_ms)
+    std::uint64_t fire_rate_ms;
+    bool fire_rate_ok;
+    std::uint32_t fire_suppressed_s;
+    unsigned fire_lines;
+    bool fire_census_logged;
+    LogCap weapon_cap;
+    // Loadout sender (this copy's manifest) and the receiver's apply verdict.
+    partner_equip_wire::Manifest equip_tx;
+    bool equip_tx_have, equip_tx_dirty, equip_tables_ok;
+    std::uint32_t equip_tx_epoch;
+    std::uint64_t equip_read_ms;
+    std::uint16_t equip_apply_rev;
+    std::uint32_t equip_apply_loaded;
+    char equip_apply[12];
+    LogCap equip_apply_cap;
 };
 
 struct Driver {

@@ -319,7 +319,9 @@ Settings EffectiveSettings(const Settings& base, bool active) noexcept {
     ds.slot = base.slot;
     ds.p218 = false;
     ds.mask = base.input_mask;
-    const pnat::DriveSettings x = pnat::Effective(ds, true, pnat::NativeConfig{base.ngun, base.nfire, base.naim});
+    // FIRE only as visual fire with the owner filter live (fire_live, set by TickWeapons).
+    const bool fire = base.nfire == PartnerNativeFire::visual && base.fire_live;
+    const pnat::DriveSettings x = pnat::Effective(ds, true, pnat::NativeConfig{base.ngun, fire, base.naim});
     e.apply = x.apply;
     e.input = x.input;
     e.dm = x.dm;
@@ -356,6 +358,23 @@ pin::V3Source SenderV3(const Driver& d, const Hooks& h, const pp::State& st, con
     v.cam274 = src.cam274;
     v.heading_valid = src.heading_ok && quiet;
     v.heading_rad = src.heading;
+    return v;
+}
+
+// The sender's v4 magazine: the local instance's gun record (a gun class with
+// an equip id), the magazine as its getter reads it and the capacity.
+pin::V4Source SenderV4(const Driver& d, const Hooks& h, const pp::State& st, const pin::PadSnapshot& snap) noexcept {
+    pin::V4Source v{};
+    v.v3 = SenderV3(d, h, st, snap);
+    if (d.mission.equip_tx_have) v.v3.equip_rev = d.mission.equip_tx.revision;
+    // The local gun record TickNative read this tick (drive=native: it always runs first).
+    (void)st;
+    const pp::Gun1& g = d.mission.gun0;
+    if (d.mission.gun0_ok && g.fields_ok && pnat::GunClass(g.fields.flags27c) == pnat::kGunClassGun && g.fields.equip != 0) {
+        v.mag_cap = pnat::GunCapacity(g.fields);
+        v.mag = pnat::GunMagazine(g.fields);
+        v.mag_valid = v.mag_cap >= 1 && v.mag_cap <= pin::kMaxMagCap && v.mag <= v.mag_cap;
+    }
     return v;
 }
 
@@ -413,6 +432,11 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
     if (!look_slot) a.naim = PartnerNativeAim::off;
     a.steer_rad = set.native_active ? m.steer_rad : 0.0;
     a.mag_scale = set.native_active && m.mag_scale > 0.0 ? m.mag_scale : 1.0;
+    // Native weapons: the magazine mirror on instance 1's gun record (gun
+    // stage only; the hook re-validates the prim chain before a write).
+    a.mag_mirror = set.native_active && set.ngun && m.gun1_rec != 0 && m.gun1_prim != 0;
+    a.gun_prim = a.mag_mirror ? m.gun1_prim : 0;
+    a.gun_rec = a.mag_mirror ? m.gun1_rec : 0;
     (void)st;
     (void)now;
     return a;
@@ -1283,7 +1307,8 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
             pin::SenderFill(m.sender, pkt);
             // Native puppet: v3 (look, camera, heading) only when this copy runs
             // the native drive; the peer refuses aim with no_v3 otherwise.
-            if (d.settings.drive == PartnerDrive::native) pin::Fill3(pkt, SenderV3(d, h, st, snap));
+            // Native weapons: v4 adds the sender's magazine (the partner's reload/fire mirror).
+            if (d.settings.drive == PartnerDrive::native) pin::Fill4(pkt, SenderV4(d, h, st, snap));
             if (h.submit_input(h.context, pkt)) pin::SenderSent(m.sender);
         }
     }
@@ -1628,6 +1653,155 @@ void CopyText(char* out, std::size_t capacity, const char* text) noexcept {
     StringCchCopyA(out, capacity, text ? text : "");
 }
 
+// --- Native weapons (docs/native-puppet.md "Weapons") ---------------------------
+// The fire gate (visual fire only while the owner filter is live), the
+// mirror's gun record, the 1 Hz partner_fire line, the read-only census, the
+// loadout manifest this copy sends and the apply verdict of the received one.
+// `ready`: the lazy-install preconditions of the native drive hold.
+void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, bool gun_ok, const pp::Gun1& gun,
+                 const partner_input_hook::NativeStats& ns, std::uint64_t now) noexcept {
+    Mission& m = d.mission;
+    Settings& set = d.settings;
+    // Instance 1's gun class and the mirror's record. The verdict latches once
+    // a gun class was seen this mission (body 1 only ever carries stock46): a
+    // holster/draw or an unreadable tick never toggles the effective mask (a
+    // mask change bumps the Arm gen and resets instance 1's private pad
+    // masks). The record is the last readable gun-class one; the hook
+    // re-validates it and refuses a non-gun class at write time.
+    if (gun_ok && gun.fields_ok) {
+        m.weapon_known = true;
+        if (pnat::GunClass(gun.fields.flags27c) == pnat::kGunClassGun) {
+            m.weapon_ok = true;
+            m.gun1_prim = gun.prim;
+            m.gun1_rec = gun.rec;
+        }
+    }
+    const char* why = nullptr;
+    partner_fire_filter::Stats fs{};
+    const bool have_stats = h.fire_stats != nullptr;
+    if (have_stats) h.fire_stats(h.context, fs);
+    const std::uint16_t owner = st.ids[1];
+    if (set.nfire != PartnerNativeFire::visual) why = "off";
+    else if (!set.ngun) why = "gun_off";
+    else if (!h.install_fire || !have_stats) why = "unavailable";
+    else if (!fs.installed && !ready) why = "not_ready";
+    else if (owner == 0xFFFFu || (owner & 0xFE00u) != 0) why = "owner";
+    else if (const char* refused = h.install_fire(h.context, owner)) why = refused;
+    else {
+        h.fire_stats(h.context, fs);
+        if (!fs.live) why = "hook_lost";
+        else if (!fs.armed || fs.owner != owner) why = "disarmed";
+        else if (!m.weapon_known) why = "gun_read";
+        else if (!m.weapon_ok) why = "weapon";
+    }
+    set.fire_live = why == nullptr;
+    m.fire_refusal = why;
+    const bool same_verdict = m.fire_logged_once && (m.fire_logged == why || (m.fire_logged && why && std::strcmp(m.fire_logged, why) == 0));
+    if (set.nfire == PartnerNativeFire::visual && !same_verdict) {
+        m.fire_logged_once = true;
+        m.fire_logged = why;
+        EmitNative(m, h, m.weapon_cap, "partner_weapon", "partner_fire=%s; reason=%s; owner=%u; installed=%u; live=%u; armed=%u\r\n",
+                   why ? "masked" : "live", why ? why : "ok", unsigned(owner), fs.installed ? 1u : 0u, fs.live ? 1u : 0u,
+                   fs.armed ? 1u : 0u);
+    }
+    // Suppressed per second and the 1 Hz partner_fire line while anything changed.
+    if (have_stats && fs.installed) {
+        if (!m.fire_rate_ok) {
+            m.fire_rate_ok = true;
+            m.fire_rate = fs;
+            m.fire_rate_ms = now;
+        } else if (now - m.fire_rate_ms >= kNativeLineMs) {
+            const std::uint64_t dt = now - m.fire_rate_ms;
+            m.fire_suppressed_s = Rate(fs.suppressed, m.fire_rate.suppressed, dt);
+            if ((fs.suppressed != m.fire_rate.suppressed || fs.owner_disarmed != m.fire_rate.owner_disarmed) &&
+                m.fire_lines < kNativeLineCap) {
+                ++m.fire_lines;
+                EmitFormat(h, "partner_fire; suppressed=%u; passed=%u; passed_player=%u; owner_disarmed=%u; per_s=%u; owner=%u; "
+                              "last_owner=%u; thread=%u; mag_writes=%u; shot_leaks=%u\r\n",
+                           fs.suppressed - m.fire_rate.suppressed, fs.passed - m.fire_rate.passed, fs.passed_player - m.fire_rate.passed_player,
+                           fs.owner_disarmed - m.fire_rate.owner_disarmed, m.fire_suppressed_s, unsigned(fs.owner), unsigned(fs.last_owner),
+                           fs.last_thread, ns.mag_writes, ns.shot_leaks);
+            }
+            m.fire_rate = fs;
+            m.fire_rate_ms = now;
+        }
+    }
+    // The read-only census of the bullet and shot noise interfaces, once per mission.
+    if (fs.installed && !m.fire_census_logged && h.fire_census) {
+        partner_fire_filter::Census cs{};
+        h.fire_census(h.context, cs);
+        if (cs.ok) {
+            m.fire_census_logged = true;
+            m.tele.census_ok = true;
+            m.tele.census_bullets_ok = cs.bullets_ok;
+            m.tele.census_noise_vt = cs.noise_vt_in_image ? static_cast<std::int64_t>(cs.noise_vt) : pnat::kNull;
+            m.tele.census_noise_fn = cs.noise_fn0_in_image ? static_cast<std::int64_t>(cs.noise_fn0) : pnat::kNull;
+            EmitFormat(h, "partner_fire_census; bullets_vt=0x%llx; bullets_ok=%u; noise_vt=0x%llx; noise_vt_rva=%u; noise_fn0=0x%llx; "
+                          "noise_fn0_rva=%u; native_calls=0\r\n",
+                       static_cast<unsigned long long>(cs.bullets_vt), cs.bullets_ok ? 1u : 0u,
+                       static_cast<unsigned long long>(cs.noise_vt), cs.noise_vt_in_image ? 1u : 0u,
+                       static_cast<unsigned long long>(cs.noise_fn0), cs.noise_fn0_in_image ? 1u : 0u);
+        }
+    }
+    // Loadout sender: this copy's manifest (pure reads, at most once per
+    // kEquipReadMs), a new revision on change, resent after a new link session.
+    if (h.read_loadout && h.send_reliable && (!m.equip_read_ms || now - m.equip_read_ms >= kEquipReadMs)) {
+        m.equip_read_ms = now ? now : 1;
+        pp::Loadout lo{};
+        if (h.read_loadout(h.context, st, lo) && lo.ok) {
+            partner_equip_wire::Manifest mf{};
+            mf.inv_slot = partner_equip_wire::kInvSlotUnknown;
+            for (unsigned i = 0; i < partner_equip_wire::kSlots; ++i) {
+                mf.slots[i].base_id = lo.base[i];
+                mf.slots[i].alias = lo.weapons[i];
+                std::memcpy(mf.slots[i].recipe, lo.chimera + i * partner_equip_wire::kRecipe, partner_equip_wire::kRecipe);
+            }
+            m.equip_tables_ok = lo.tables_ok;
+            const bool same = m.equip_tx_have && std::memcmp(mf.slots, m.equip_tx.slots, sizeof(mf.slots)) == 0;
+            if (!same) {
+                mf.revision = static_cast<std::uint16_t>(m.equip_tx_have && m.equip_tx.revision != 0xFFFFu ? m.equip_tx.revision + 1 : 1);
+                m.equip_tx = mf;
+                m.equip_tx_have = true;
+                m.equip_tx_dirty = true;
+            }
+            const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
+            if (epoch && epoch != m.equip_tx_epoch) m.equip_tx_dirty = true;
+            if (m.equip_tx_dirty && epoch) {
+                partner_equip_wire::Manifest out = m.equip_tx;
+                out.epoch = epoch;
+                std::uint8_t bytes[partner_equip_wire::kSize]{};
+                if (partner_equip_wire::Encode(out, bytes) && h.send_reliable(h.context, partner_equip_wire::kChannel, bytes, sizeof(bytes))) {
+                    m.equip_tx_dirty = false;
+                    m.equip_tx_epoch = epoch;
+                    const auto& s = m.equip_tx.slots;
+                    EmitNative(m, h, m.weapon_cap, "partner_weapon",
+                               "partner_equip=sent; rev=%u; epoch=%u; base=%u,%u,%u; alias=%u,%u,%u; receiver=%u,%u,%u; tables=%u\r\n",
+                               unsigned(m.equip_tx.revision), epoch, unsigned(s[0].base_id), unsigned(s[1].base_id), unsigned(s[2].base_id),
+                               unsigned(s[0].alias), unsigned(s[1].alias), unsigned(s[2].alias), unsigned(s[0].recipe[0]),
+                               unsigned(s[1].recipe[0]), unsigned(s[2].recipe[0]), m.equip_tables_ok ? 1u : 0u);
+                }
+            }
+        }
+    }
+    // Apply verdict of the received manifest for the back slot (where the
+    // qualified stock46 writer puts instance 1's weapon): already when the
+    // partner's loaded equip is that slot's base id; unsupported otherwise
+    // (only stock46 is qualified to load; a generalized writer is open).
+    // Re-judged when the revision or the loaded equip changes (logged, capped).
+    if (m.equip.have && gun_ok && gun.fields_ok &&
+        (m.equip.manifest.revision != m.equip_apply_rev || gun.fields.equip != m.equip_apply_loaded)) {
+        m.equip_apply_rev = m.equip.manifest.revision;
+        m.equip_apply_loaded = gun.fields.equip;
+        const std::uint16_t want = m.equip.manifest.slots[1].base_id;
+        const std::uint32_t loaded = gun.fields.equip;
+        const char* result = want == 0 ? "unknown" : loaded == want ? "already" : loaded == 0 ? "no_weapon" : "unsupported";
+        CopyText(m.equip_apply, sizeof(m.equip_apply), result);
+        EmitNative(m, h, m.equip_apply_cap, "partner_equip_apply",
+                   "partner_equip=apply; rev=%u; slot=1; want=%u; loaded=%u; result=%s; writer=stock46\r\n",
+                   unsigned(m.equip.manifest.revision), unsigned(want), loaded, result);
+    }
+}
+
 // Arbiter step, identity/wrap-root publication, lazy install, deferral arming,
 // steering for the next Arm, telemetry and the native log lines.
 void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State& st, const partner::Tick& tick, const Clock& clock,
@@ -1805,6 +1979,9 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     // Gun (telemetry reads only).
     pp::Gun1 gun{};
     const bool gun_ok = h.read_gun1 && h.read_gun1(h.context, st, gun);
+    // The local gun record (v4 magazine sender and telemetry), once per tick.
+    m.gun0 = pp::Gun1{};
+    m.gun0_ok = h.read_gun && h.read_gun(h.context, st, 0, m.gun0);
     const bool remote_aiming = (latest_ok && (latest.packet.xflags & pin::XFlag::Aiming)) || (remote_flags & sync::ActionFlag::Aiming);
     const bool body_aiming = gun_ok && gun.node_active && (gun.gun3c0 & c::gun_flag_hold);
     if (remote_aiming == body_aiming) {
@@ -1814,17 +1991,30 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         m.aim_since_ms = 0;
         m.aim_match = false;
     }
+    // Native weapons: the fire gate, the mirror's record, the census and the loadout manifest.
+    {
+        const bool ready = configured && defer == PartnerDefer::on && set.stage >= 3 && realized && parts_loaded && !terminating;
+        TickWeapons(d, h, st, ready, gun_ok, gun, is.native, now);
+    }
     const std::uint32_t gun_key = gun_ok ? (gun.gun3c0 | (gun.node_active ? 0x80000000u : 0u)) : 0xFFFFFFFFu;
     if (gun_key != m.native_gun_last || (set.ngun && now - m.native_gun_line_ms >= kNativeLineMs && m.native_gun_lines < kNativeLineCap)) {
         const bool change = gun_key != m.native_gun_last;
         m.native_gun_last = gun_key;
         if (!change) { m.native_gun_line_ms = now; ++m.native_gun_lines; }
-        char line[256]{};
+        char line[512]{};
+        const bool f = gun_ok && gun.fields_ok;
         if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
-                "partner_native_gun; node=%u; gun3c0=0x%x; b2=%u; b18=%u; mode=%u; remote_flags=0x%x; equip=%u,na; aim_match=%u; aim_err_mdeg=na; read=%s\r\n",
+                "partner_native_gun; node=%u; gun3c0=0x%x; b2=%u; b18=%u; b20=%u; mode=%u; remote_flags=0x%x; equip=%u,%u; cap=%u; mag=%u; "
+                "stock=%u; cls=%u; noreload=%u; b3d5=%u; slot=%u; can_reload=%u; gate=%u; aim_match=%u; aim_err_mdeg=na; fire=%s; read=%s\r\n",
                 gun_ok && gun.node_active ? 1u : 0u, gun.gun3c0, (gun.gun3c0 & c::gun_flag_in_hand) ? 1u : 0u,
-                (gun.gun3c0 & c::gun_flag_hold) ? 1u : 0u, unsigned(gun.mode), remote_flags, remote_equip, m.aim_match ? 1u : 0u,
-                gun_ok ? "ok" : (gun.refusal ? gun.refusal : "unavailable")))) {
+                (gun.gun3c0 & c::gun_flag_hold) ? 1u : 0u, (gun.gun3c0 & c::gun3c0_reload) ? 1u : 0u, unsigned(gun.mode), remote_flags,
+                remote_equip, f ? gun.fields.equip : 0u, f ? pnat::GunCapacity(gun.fields) : 0u, f ? pnat::GunMagazine(gun.fields) : 0u,
+                f ? unsigned((gun.fields.flags27c & 0x200u) ? gun.fields.stock_sub : gun.fields.stock) : 0u,
+                f ? pnat::GunClass(gun.fields.flags27c) : 0u, f && (gun.fields.flags280 & c::gun280_noreload) ? 1u : 0u,
+                f ? unsigned(gun.b3d5) : 0u, f ? unsigned(gun.slot) : 0u, f && pnat::GunCanReload(gun.fields) ? 1u : 0u,
+                f && pnat::GunReloadGate(gun.fields, gun.b3d5) ? 1u : 0u, m.aim_match ? 1u : 0u,
+                set.nfire != PartnerNativeFire::visual ? "off" : m.fire_refusal ? m.fire_refusal : "live",
+                gun_ok ? (gun.fields_ok ? "ok" : "fields") : (gun.refusal ? gun.refusal : "unavailable")))) {
             if (change) EmitNative(m, h, m.native_gun_cap, "partner_native_gun", "%s", line);
             else Emit(h, line);
         }
@@ -1938,6 +2128,63 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     t.aim_err_mdeg = pnat::kNull;
     t.manifest_rev = m.equip.have ? m.equip.manifest.revision : 0u;
     t.ammo_experiment = h.ammo_experiment;
+    // Weapons.
+    {
+        const bool f = gun_ok && gun.fields_ok;
+        t.gun_fields_ok = f;
+        t.body_equip = f ? static_cast<std::int32_t>(gun.fields.equip) : pnat::kNull;
+        t.gun_cap = f ? static_cast<std::int32_t>(pnat::GunCapacity(gun.fields)) : pnat::kNull;
+        t.gun_mag = f ? static_cast<std::int32_t>(pnat::GunMagazine(gun.fields)) : pnat::kNull;
+        t.gun_stock = f ? static_cast<std::int32_t>((gun.fields.flags27c & 0x200u) ? gun.fields.stock_sub : gun.fields.stock) : pnat::kNull;
+        t.gun_class = f ? static_cast<std::int32_t>(pnat::GunClass(gun.fields.flags27c)) : pnat::kNull;
+        t.gun_b3d5 = f ? static_cast<std::int32_t>(gun.b3d5) : pnat::kNull;
+        t.gun_slot = f ? static_cast<std::int32_t>(gun.slot) : pnat::kNull;
+        t.gun_noreload = f && (gun.fields.flags280 & c::gun280_noreload) ? 1u : 0u;
+        t.gun_b20 = gun_ok && (gun.gun3c0 & c::gun3c0_reload) ? 1u : 0u;
+        t.gun_can_reload = f && pnat::GunCanReload(gun.fields) ? 1u : 0u;
+        t.gun_gate = f && pnat::GunReloadGate(gun.fields, gun.b3d5) ? 1u : 0u;
+        CopyText(t.fire_mode, sizeof(t.fire_mode), PartnerNativeFireName(set.nfire));
+        partner_fire_filter::Stats fs{};
+        if (h.fire_stats) h.fire_stats(h.context, fs);
+        t.fire_installed = fs.installed;
+        t.fire_live = fs.live;
+        t.fire_armed = fs.armed;
+        t.fire_effective = (EffectiveSettings(set, true).input_mask & kPartnerNativeFireBit) != 0;
+        CopyText(t.fire_refused, sizeof(t.fire_refused), set.nfire != PartnerNativeFire::visual ? "off" : m.fire_refusal ? m.fire_refusal : "none");
+        t.fire_suppressed = fs.suppressed;
+        t.fire_passed = fs.passed;
+        t.fire_passed_player = fs.passed_player;
+        t.fire_owner_disarmed = fs.owner_disarmed;
+        t.fire_suppressed_s = m.fire_suppressed_s;
+        if (!t.census_ok) t.census_noise_vt = t.census_noise_fn = pnat::kNull;
+        const bool mag_live = latest_ok && latest.packet.version >= 4 && (latest.packet.xflags & pin::XFlag::Mag);
+        t.remote_mag = mag_live ? latest.packet.mag : pnat::kNull;
+        t.remote_mag_cap = mag_live ? latest.packet.mag_cap : pnat::kNull;
+        const bool local = m.gun0_ok && m.gun0.fields_ok;
+        t.local_mag = local ? static_cast<std::int32_t>(pnat::GunMagazine(m.gun0.fields)) : pnat::kNull;
+        t.local_mag_cap = local ? static_cast<std::int32_t>(pnat::GunCapacity(m.gun0.fields)) : pnat::kNull;
+        const partner_input_hook::NativeStats& n = is.native;
+        t.mag_writes = n.mag_writes;
+        t.mag_refused = n.mag_refused;
+        t.mag_fire_edges = n.mag_fire_edges;
+        t.mag_reload_edges = n.mag_reload_edges;
+        t.mag_cap = n.mag_cap;
+        t.mag_written = n.mag_written;
+        CopyText(t.mag_last, sizeof(t.mag_last), partner_input_hook::MagRefusalName(n.mag_last));
+        t.mag_faulted = n.mag_faulted;
+        t.shot_leaks = n.shot_leaks;
+        t.reload_drains = n.reload_drains;
+        t.shot_count = n.shot_count == 0xFFFFFFFFu ? pnat::kNull : static_cast<std::int64_t>(n.shot_count);
+        t.equip_tx_rev = m.equip_tx_have ? m.equip_tx.revision : 0u;
+        for (unsigned i = 0; i < 3; ++i) {
+            t.equip_tx_base[i] = m.equip_tx_have ? m.equip_tx.slots[i].base_id : 0u;
+            t.equip_tx_alias[i] = m.equip_tx_have ? m.equip_tx.slots[i].alias : 0u;
+            t.equip_rx_base[i] = m.equip.have ? m.equip.manifest.slots[i].base_id : 0u;
+            t.equip_rx_alias[i] = m.equip.have ? m.equip.manifest.slots[i].alias : 0u;
+        }
+        t.equip_tables_ok = m.equip_tables_ok;
+        CopyText(t.equip_apply, sizeof(t.equip_apply), m.equip_apply[0] ? m.equip_apply : "none");
+    }
     if (!m.rate_ok) {
         m.rate_ok = true;
         m.rate_ms_native = now;
@@ -2062,6 +2309,7 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     e.rec_act = static_cast<std::uint8_t>(t.rec_act);
     e.rec_next = static_cast<std::uint8_t>(t.rec_next);
     e.rec_mag = t.rec_mag;
+    e.mag = t.gun_mag == pnat::kNull ? static_cast<std::uint16_t>(0xFFFF) : static_cast<std::uint16_t>(t.gun_mag);
     const std::uint32_t p1_delta = t.ring.count ? is.native.p1_forced - m.ring_p1_last : 0u;  // totals are process-wide
     m.ring_p1_last = is.native.p1_forced;
     e.p1_forced = static_cast<std::uint16_t>(p1_delta > 0xFFFFu ? 0xFFFFu : p1_delta);
@@ -2119,6 +2367,7 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.naim = lab.partner_native_aim;
     d.settings.ngun = lab.partner_native_gun;
     d.settings.nfire = lab.partner_native_fire;
+    d.settings.fire_live = false;
     d.settings.steer_deg = lab.partner_native_steer_deg;
     d.settings.trim_pct = lab.partner_native_trim_pct;
     d.settings.play_mode = lab.mode == LabMode::play;
@@ -2145,6 +2394,7 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
     PublishDisarmed(d, h);
     if (h.reset_input_fault) h.reset_input_fault(h.context);
     d.mission = Mission{};
+    d.settings.fire_live = false;  // the native tick re-derives it (filter live, gun class)
     partner_native::Reset(d.mission.native, d.settings.drive == PartnerDrive::native);
     d.mission.mag_scale = 1.0;
     d.mission.mission_code = mission_code;
@@ -2332,11 +2582,11 @@ void ApplyTrigger(Driver& d, const Hooks& h, const partner::Trigger& trigger, bo
     if (trigger.has_nfire) d.settings.nfire = trigger.nfire;
     if (trigger.has_steer) d.settings.steer_deg = trigger.steer_deg;
     if (native_keys)
-        EmitFormat(h, "partner_native=trigger; drive=%s; defer=%s; local=%s; naim=%s; ngun=%u; nfire=%u; steer=%u; mask=0x%x\r\n",
+        EmitFormat(h, "partner_native=trigger; drive=%s; defer=%s; local=%s; naim=%s; ngun=%u; nfire=%s; steer=%u; mask=0x%x\r\n",
                    PartnerDriveName(d.settings.drive), PartnerDeferName(EffectivePartnerDefer(d.settings.drive, d.settings.defer)),
                    PartnerLocalName(d.settings.local), PartnerNativeAimName(d.settings.naim), d.settings.ngun ? 1u : 0u,
-                   d.settings.nfire ? 1u : 0u, d.settings.steer_deg,
-                   partner_native::NativeMask(d.settings.input_mask, d.settings.ngun, d.settings.nfire));
+                   PartnerNativeFireName(d.settings.nfire), d.settings.steer_deg,
+                   partner_native::NativeMask(d.settings.input_mask, d.settings.ngun, d.settings.nfire == PartnerNativeFire::visual));
     // correct=0 keeps the round 3 meaning (no corrections) and overrides
     // recon=track|pin: say so, so a later recon= is never silently ignored.
     if ((trigger.has_recon || trigger.has_correct) && d.settings.correct_mm == 0 && d.settings.recon != PartnerRecon::off)

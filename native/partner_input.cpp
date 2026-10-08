@@ -121,9 +121,14 @@ InputPacket Quantize(const PadSnapshot& s, std::int32_t cam_cdeg) noexcept {
 }
 
 namespace {
+bool NoV4(const InputPacket& p) noexcept { return p.mag == 0 && p.mag_cap == 0 && !(p.xflags & XFlag::Mag); }
 bool NoV3(const InputPacket& p) noexcept {
     return p.look_pitch == 0.0f && p.look_yaw == 0.0f && p.cam270 == 0.0f && p.cam274 == 0.0f && p.heading_mrad == 0 &&
-           p.xflags == 0 && p.inv_slot == 0 && p.equip_rev == 0;
+           p.xflags == 0 && p.inv_slot == 0 && p.equip_rev == 0 && NoV4(p);
+}
+bool ValidMag(const InputPacket& p) noexcept {
+    if (!(p.xflags & XFlag::Mag)) return p.mag == 0 && p.mag_cap == 0;
+    return p.mag_cap >= 1 && p.mag_cap <= kMaxMagCap && p.mag <= p.mag_cap;
 }
 bool In(float v, float limit) noexcept { return std::isfinite(v) && v >= -limit && v <= limit; }
 bool ValidV3(const InputPacket& p) noexcept {
@@ -162,14 +167,27 @@ void Fill3(InputPacket& p, const V3Source& v) noexcept {
     if (v.aiming) p.xflags |= XFlag::Aiming;
     p.inv_slot = v.inv_slot <= kInvSlotMax ? v.inv_slot : kInvSlotUnknown;
     p.equip_rev = v.equip_rev;
+    p.mag = p.mag_cap = 0;
+}
+
+void Fill4(InputPacket& p, const V4Source& v) noexcept {
+    Fill3(p, v.v3);
+    p.version = 4;
+    if (v.mag_valid && v.mag_cap >= 1 && v.mag_cap <= kMaxMagCap && v.mag <= v.mag_cap) {
+        p.xflags |= XFlag::Mag;
+        p.mag = static_cast<std::uint16_t>(v.mag);
+        p.mag_cap = static_cast<std::uint16_t>(v.mag_cap);
+    }
 }
 
 bool ValidPacket(const InputPacket& p) noexcept {
     if ((p.flags & ~Flag::Known) != 0 || p.lx == -32768 || p.ly == -32768 || p.rx == -32768 || p.ry == -32768 ||
         p.ldir < -kMaxDir || p.ldir > kMaxDir || p.cam_cdeg < kCamMin || p.cam_cdeg > kCamMax) return false;
     if (p.version == 1) return p.edge_seq == 0 && p.edge_rep == 0 && p.long12 == 0 && p.tap12 == 0 && NoV3(p);
-    if ((p.version != 2 && p.version != 3) || p.edge_rep > kEdgeRepeats) return false;
+    if ((p.version < 2 || p.version > 4) || p.edge_rep > kEdgeRepeats) return false;
     if (p.version == 2 ? !NoV3(p) : !ValidV3(p)) return false;
+    // xflags Mag and the magazine fields are v4 only.
+    if (p.version == 3 ? !NoV4(p) : p.version == 4 ? !ValidMag(p) : false) return false;
     // No edge set: no edge words.
     if (p.edge_seq == 0) return p.edge_rep == 0 && p.w50 == 0 && p.w54 == 0 && p.tap12 == 0;
     return true;
@@ -232,6 +250,11 @@ Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_c
             j.look_yaw = p.look_yaw;
             j.cam270 = p.cam270;
             j.cam274 = p.cam274;
+        }
+        if (p.version >= 4 && (p.xflags & XFlag::Mag)) {
+            j.ammo_valid = true;
+            j.ammo = p.mag;
+            j.ammo_cap = p.mag_cap;
         }
     }
     held &= c.mask;

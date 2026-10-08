@@ -88,6 +88,13 @@ struct WrapStats {
 // Native puppet window statistics (process-lifetime totals).
 enum class LookRefusal : std::uint8_t { none, off, no_v3, stale, ps, rec_read, fault };
 const char* LookRefusalName(LookRefusal refusal) noexcept;
+// Magazine mirror verdicts: off (Arm without mirror or gun record), no_v4
+// (the live sample carries no magazine), prim (the gun prim chain changed),
+// full (rec+0x3C0 bit 28: the getter ignores the field), cls (not a gun
+// class), cap (capacity outside 1..999), fault (a read/write faulted: the
+// mirror is off until MissionStart).
+enum class MagRefusal : std::uint8_t { none, off, no_v4, prim, full, cls, cap, fault };
+const char* MagRefusalName(MagRefusal refusal) noexcept;
 struct NativeStats {
     std::uint32_t frames;          // frame injections composed (main windows under a native Arm)
     std::uint32_t views[3];        // consumer views: full, level, neutral
@@ -123,6 +130,20 @@ struct NativeStats {
     bool rec_ok;
     std::uint32_t rec_act, rec_next;       // rec+0x2A0 current act, rec+0x2A1 requested next act
     std::int32_t rec_mag, rec_heading_mrad;  // rec+0x2C0 move magnitude x1000, rec+0x2C4 heading
+    // Native weapons (docs/native-puppet.md "Weapons"). The magazine mirror
+    // (drain windows, before block 1's job): writes, refusals and the last
+    // refusal reason, the last values (remote mag/cap, partner capacity and
+    // the value written, 0xFFFF before any), writes caused by a FIRE or a
+    // RELOAD press edge, and whether a fault disabled it for the mission.
+    std::uint32_t mag_writes, mag_refused, mag_fire_edges, mag_reload_edges;
+    MagRefusal mag_last;
+    std::uint32_t mag_remote, mag_remote_cap, mag_cap, mag_written;
+    bool mag_faulted;
+    // Leak check: drain windows whose job changed the viewer's
+    // vars.playerShootCountInMission (vars+0x144; never written by us), its
+    // value after the last drain (0xFFFFFFFF unread), and drains after which
+    // instance 1's reload request (rec+0x3C0 bit 20) was set.
+    std::uint32_t shot_leaks, shot_count, reload_drains;
 };
 
 // Drained by the driver. Counters are process-lifetime totals (the driver

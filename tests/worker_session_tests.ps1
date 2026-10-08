@@ -56,7 +56,7 @@ $nativeBase=$animatedSettings+@('partner_drive=native','partner_input_send=1','p
 $stages=@{
     census=@('partner_input_defer=census','partner_input_mask=0x2200006','partner_native_aim=off')
     loco=@('partner_input_defer=on','partner_input_mask=0x2200006','partner_native_aim=off')
-    gun=@('partner_input_defer=on','partner_input_mask=0x220004E','partner_native_gun=1','partner_native_fire=0','partner_native_aim=look',
+    gun=@('partner_input_defer=on','partner_input_mask=0x220005E','partner_native_gun=1','partner_native_fire=visual','partner_native_aim=look',
         'partner_input_triggers=1','partner_input_rstick=1')
 }
 foreach($stage in @('census','loco','gun')){

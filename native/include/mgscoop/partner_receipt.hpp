@@ -261,7 +261,8 @@ struct Trigger {
     bool has_naim;
     PartnerNativeAim naim;
     bool has_ngun, ngun;
-    bool has_nfire, nfire;
+    bool has_nfire;
+    PartnerNativeFire nfire;  // nfire=0|off|1|visual
     bool has_steer;
     std::uint32_t steer_deg;
 };

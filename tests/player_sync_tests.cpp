@@ -437,18 +437,18 @@ int main() {
         pi::Fill3(v3, src);
         Check(v3.version == 3 && v3.xflags == 0x0F && v3.heading_mrad == static_cast<std::int16_t>(std::lround((3.5 - 2 * 3.14159265358979323846) * 1000)) &&
               v3.inv_slot == 2 && v3.equip_rev == 9 && pi::ValidPacket(v3), "Fill3 builds a valid v3 packet");
-        std::uint8_t frame[input_frame_size_v3]{};
+        std::uint8_t frame[input_frame_size_v4]{};
         Check(input_frame_size_v3 == 100 && encode_input_frame_any(0x55, 7, 42, v3, frame) == 100, "v3 encodes 100 bytes");
         Check(frame[wire::header_size + 1] == 3 && frame[24] == 72 && frame[wire::header_size + 66] == 0x0F &&
               frame[wire::header_size + 67] == 2 && frame[wire::header_size + 68] == 9, "v3 version, payload length, xflags, inv, rev");
         std::uint64_t s = 0; std::uint32_t e = 0, seq = 0;
         pi::InputPacket got{};
-        Check(decode_input_frame(frame, sizeof(frame), s, e, seq, got) && got.version == 3 && got.look_pitch == -0.25f &&
+        Check(decode_input_frame(frame, input_frame_size_v3, s, e, seq, got) && got.version == 3 && got.look_pitch == -0.25f &&
               got.look_yaw == 2.5f && got.cam270 == 1.5f && got.cam274 == -0.75f && got.heading_mrad == v3.heading_mrad &&
               got.xflags == 0x0F && got.inv_slot == 2 && got.equip_rev == 9 && got.held == 0x8u && got.ly == -32767 && seq == 42,
               "v3 round trip");
         // v2 via the generic encoder; a legacy sender still encodes v2.
-        std::uint8_t any[input_frame_size_v3]{};
+        std::uint8_t any[input_frame_size_v4]{};
         Check(encode_input_frame_any(0x55, 7, 43, pkt, any) == input_frame_size && decode_input_frame(any, input_frame_size, s, e, seq, got) &&
               got.version == 2 && got.xflags == 0 && got.look_pitch == 0.0f, "legacy sender still encodes v2");
         std::uint8_t v2frame[input_frame_size]{};
@@ -465,7 +465,8 @@ int main() {
         Check(refused([](pi::InputPacket& b) { b.cam270 = 65.0f; }), "|cam270| > 64 refused");
         Check(refused([](pi::InputPacket& b) { b.cam274 = std::numeric_limits<float>::infinity(); }), "infinite cam274 refused");
         Check(refused([](pi::InputPacket& b) { b.heading_mrad = 3143; }), "heading > 3142 refused");
-        Check(refused([](pi::InputPacket& b) { b.xflags = 0x10; }), "unknown xflags refused");
+        Check(refused([](pi::InputPacket& b) { b.xflags = 0x20; }), "unknown xflags refused");
+        Check(refused([](pi::InputPacket& b) { b.xflags |= pi::XFlag::Mag; b.mag = 1; b.mag_cap = 5; }), "the v4 magazine in a v3 packet refused");
         Check(refused([](pi::InputPacket& b) { b.xflags &= static_cast<std::uint8_t>(~pi::XFlag::Look); }), "look fields without their xflag refused");
         Check(refused([](pi::InputPacket& b) { b.inv_slot = 16; }), "inv_slot 16 refused");
         Check(refused([](pi::InputPacket& b) { b.version = 2; }), "v3 fields in a v2 packet refused");
@@ -491,6 +492,59 @@ int main() {
         pi::Fill3(f, badsrc);
         Check(pi::ValidPacket(f) && !(f.xflags & pi::XFlag::Look) && !(f.xflags & pi::XFlag::Cam) && f.look_pitch == 0.0f &&
               f.inv_slot == 0xFF, "Fill3 clears invalid groups");
+    }
+
+    // 11. Input frame v4 (native weapons): 104 bytes, v3 plus the sender's magazine.
+    {
+        namespace pi = mgscoop::partner_input;
+        pi::InputPacket pkt{};
+        pkt.version = 2;
+        pkt.flags = pi::Flag::Valid;
+        pkt.held = 0x18u; pkt.w4c = 0x18u; pkt.lmag = 100; pkt.cam_cdeg = -18000;
+        pi::V4Source src{};
+        src.v3.look_valid = true; src.v3.look_pitch = 0.5f; src.v3.look_yaw = -1.0f;
+        src.v3.aiming = true; src.v3.inv_slot = 0xFF; src.v3.equip_rev = 3;
+        src.mag_valid = true; src.mag = 4; src.mag_cap = 5;
+        pi::InputPacket v4 = pkt;
+        pi::Fill4(v4, src);
+        Check(v4.version == 4 && (v4.xflags & pi::XFlag::Mag) && (v4.xflags & pi::XFlag::Look) && v4.mag == 4 && v4.mag_cap == 5 &&
+              v4.equip_rev == 3 && pi::ValidPacket(v4), "Fill4 builds a valid v4 packet");
+        std::uint8_t frame[input_frame_size_v4]{};
+        Check(input_frame_size_v4 == 104 && encode_input_frame_any(0x55, 7, 50, v4, frame) == 104, "v4 encodes 104 bytes");
+        Check(frame[wire::header_size + 1] == 4 && frame[24] == 76 && frame[wire::header_size + 72] == 4 && frame[wire::header_size + 74] == 5,
+              "v4 version, payload length 76, mag at 72, cap at 74");
+        std::uint64_t s = 0; std::uint32_t e = 0, seq = 0;
+        pi::InputPacket got{};
+        Check(decode_input_frame(frame, sizeof(frame), s, e, seq, got) && got.version == 4 && got.mag == 4 && got.mag_cap == 5 &&
+              (got.xflags & pi::XFlag::Mag) && got.look_pitch == 0.5f && got.equip_rev == 3 && got.held == 0x18u && seq == 50,
+              "v4 round trip");
+        Check(!decode_input_frame(frame, input_frame_size_v3, s, e, seq, got), "a v4 frame cut to 100 bytes is refused");
+        std::uint8_t tweak[input_frame_size_v4];
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 72] = 6;
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "mag > cap refused on decode");
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 74] = 0; tweak[wire::header_size + 72] = 0;
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "Mag with capacity 0 refused");
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 66] &= static_cast<std::uint8_t>(~pi::XFlag::Mag);
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "magazine fields without xflags Mag refused");
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 1] = 3;
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "104-byte frame with version 3 refused");
+        // An invalid magazine is not sent (Mag clear, both fields 0), and capacity 999 is the limit.
+        pi::V4Source bad = src;
+        bad.mag = 6;
+        pi::InputPacket f = pkt;
+        pi::Fill4(f, bad);
+        Check(pi::ValidPacket(f) && f.version == 4 && !(f.xflags & pi::XFlag::Mag) && f.mag == 0 && f.mag_cap == 0, "Fill4 drops mag > cap");
+        bad = src; bad.mag_cap = 1000; bad.mag = 1;
+        f = pkt; pi::Fill4(f, bad);
+        Check(!(f.xflags & pi::XFlag::Mag), "Fill4 drops capacity > 999");
+        bad = src; bad.mag_valid = false;
+        f = pkt; pi::Fill4(f, bad);
+        Check(pi::ValidPacket(f) && !(f.xflags & pi::XFlag::Mag) && encode_input_frame_any(0x55, 7, 51, f, frame) == 104 &&
+              decode_input_frame(frame, sizeof(frame), s, e, seq, got) && got.version == 4 && got.mag == 0 && !(got.xflags & pi::XFlag::Mag),
+              "a v4 frame without a magazine round-trips");
+        pi::InputPacket v2 = pkt;
+        v2.mag = 1;
+        Check(!pi::ValidPacket(v2), "magazine fields in a v2 packet refused");
     }
 
     std::printf("%u checks passed; player_sync transform codec, fixed-buffer frames, v2 anim extension, look and input frames verified\n", checks);

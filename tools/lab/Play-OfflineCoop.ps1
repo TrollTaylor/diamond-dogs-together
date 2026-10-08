@@ -220,13 +220,15 @@ try {
     if ($Native -and $experiment.Move -ne 'map') { throw '-Native runs on the animated partner (dm=map); drop -InputDrive/-ProvenWarp/-Experimental.' }
     if ($experiment.Move -eq 'map' -and !$NoNative) {
         # The worker's native gun stage (tools/worker/WorkerSessionCommon.psm1
-        # Get-WorkerPartnerSettings): aim/hold with the stock46 rifle on body 1
-        # (needs a loader built with the stock46 experiments); native firing stays
-        # off so the partner never fires real shots into the receiver's world.
+        # Get-WorkerPartnerSettings): aim/hold/reload with the stock46 rifle on
+        # body 1 (needs a loader built with the stock46 experiments) and visual
+        # fire: the partner's shots are animation, sound and effects on this
+        # machine, never bullets (the RequestBullet owner filter; FIRE stays
+        # masked whenever the filter is not live). docs/native-puppet.md "Weapons".
         $partnerSettings += @('partner_drive=native', 'partner_input_send=1', 'partner_input_hook=1', 'partner_input_hold=own',
             'partner_input_words=hpr', 'partner_input_wrap=window', 'partner_input_cam=sandbox', 'partner_input_local=main',
-            'partner_recon=track', 'partner_input_slot=body', 'partner_input_defer=on', 'partner_input_mask=0x220004E',
-            'partner_native_gun=1', 'partner_native_fire=0', 'partner_native_aim=look', 'partner_input_triggers=1', 'partner_input_rstick=1')
+            'partner_recon=track', 'partner_input_slot=body', 'partner_input_defer=on', 'partner_input_mask=0x220005E',
+            'partner_native_gun=1', 'partner_native_fire=visual', 'partner_native_aim=look', 'partner_input_triggers=1', 'partner_input_rstick=1')
         Write-Note 'NATIVE PARTNER: the other player''s body runs the game''s own movement and aiming; dm=map clips are the automatic fallback (-NoNative turns this off).'
     }
     if ($experiment.Move -eq 'input') {

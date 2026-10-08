@@ -9,7 +9,10 @@ namespace mgsworker {
 // partner of Play-OfflineCoop (xform movement, no input window, dm=map clips),
 // and the native puppet (docs/native-puppet.md 13.2; dm=map + xform as its
 // fallback, the native drive armed by the arbiter) in exactly three stages.
-// Later stages (fire, lookcam, local=all) need an explicit gate change.
+// The gun stage admits visual fire (docs/native-puppet.md "Weapons": FIRE in
+// the mask only together with partner_native_fire=visual, whose owner filter
+// keeps the partner's shots visual) or none. Later stages (lookcam,
+// local=all) need an explicit gate change.
 inline bool LegacyDrive(const mgscoop::LabConfig& lab) {
     return lab.partner_drive == mgscoop::PartnerDrive::legacy && lab.partner_input_defer == mgscoop::PartnerDefer::off;
 }
@@ -28,12 +31,15 @@ inline bool NativeProfile(const mgscoop::LabConfig& lab) {
         lab.partner_input_hold == mgscoop::PartnerInputHold::own && lab.partner_input_wrap == mgscoop::PartnerWrap::window &&
         lab.partner_input_cam == mgscoop::PartnerInputCam::sandbox && lab.partner_input_local == mgscoop::PartnerLocal::main &&
         lab.partner_input_slot == mgscoop::PartnerSlot::body;
+    const bool no_fire = lab.partner_native_fire == mgscoop::PartnerNativeFire::off;
     const bool census = lab.partner_input_defer == mgscoop::PartnerDefer::census && lab.partner_input_mask == 0x2200006u &&
-        !lab.partner_native_gun && !lab.partner_native_fire && lab.partner_native_aim == mgscoop::PartnerNativeAim::off;
+        !lab.partner_native_gun && no_fire && lab.partner_native_aim == mgscoop::PartnerNativeAim::off;
     const bool loco = lab.partner_input_defer == mgscoop::PartnerDefer::on && lab.partner_input_mask == 0x2200006u &&
-        !lab.partner_native_gun && !lab.partner_native_fire && lab.partner_native_aim == mgscoop::PartnerNativeAim::off;
-    const bool gun = lab.partner_input_defer == mgscoop::PartnerDefer::on && lab.partner_input_mask == 0x220004Eu &&
-        lab.partner_native_gun && !lab.partner_native_fire && lab.partner_native_aim == mgscoop::PartnerNativeAim::look;
+        !lab.partner_native_gun && no_fire && lab.partner_native_aim == mgscoop::PartnerNativeAim::off;
+    const bool gun_mask = (lab.partner_input_mask == 0x220004Eu && no_fire) ||
+        (lab.partner_input_mask == 0x220005Eu && lab.partner_native_fire == mgscoop::PartnerNativeFire::visual);
+    const bool gun = lab.partner_input_defer == mgscoop::PartnerDefer::on && gun_mask &&
+        lab.partner_native_gun && lab.partner_native_aim == mgscoop::PartnerNativeAim::look;
     return base && (census || loco || gun);
 }
 inline bool OfflineLab(const mgscoop::LabConfig& lab, const std::string& role, const std::string& save) {

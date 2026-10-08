@@ -271,6 +271,51 @@ std::uint32_t Latch27c(std::uint32_t old, std::uint32_t w4c, std::uint32_t mask2
     return (old & ~1u) | (((w4c & ~mask28) >> 3) & 1u);
 }
 
+std::uint32_t GunCapacity(const GunFields& g) noexcept {
+    std::uint32_t cap = (g.flags27c & 0x200u) ? g.cap_sub : g.cap;
+    if (g.equip - 0x42Bu <= 3u && (g.flags27c & 0x100000u)) cap += cap;
+    if (g.flags27c & 0x80000u) cap >>= 1;
+    return cap;
+}
+
+std::uint32_t GunMagazine(const GunFields& g) noexcept {
+    if (g.gun3c0 & 0x10000000u) return GunCapacity(g);
+    return (g.flags27c & 0x200u) ? g.mag_sub : g.mag;
+}
+
+bool GunCanReload(const GunFields& g) noexcept {
+    if (g.flags280 & 0x80000u) return false;
+    const std::uint32_t cap = GunCapacity(g);
+    const std::uint32_t mag = GunMagazine(g);
+    std::uint32_t spare = 0;
+    if (g.gun3c0 & 0x20000000u) {
+        // 0x104F1C0: capacity + (flags27c >> 31) - (rec+0x23A bit 5 with flags bit 9, else bit 4).
+        spare = cap + (g.flags27c >> 31) - (((g.flags27c & 0x200u) ? (g.w23a >> 5) : (g.w23a >> 4)) & 1u);
+    } else {
+        spare = static_cast<std::uint32_t>((g.flags27c & 0x200u) ? g.stock_sub : g.stock) - mag;
+    }
+    return spare != 0 && mag < cap;
+}
+
+bool GunReloadGate(const GunFields& g, std::uint8_t b3d5) noexcept {
+    return GunClass(g.flags27c) == kGunClassGun && (g.flags27c & 0x1800u) != 0x800u && g.equip != 0 && b3d5 != 4;
+}
+
+std::uint32_t MirrorMagazine(const MagIn& in) noexcept {
+    if (!in.cap || !in.remote_cap) return 0;
+    std::uint32_t out = 0;
+    if (in.remote_mag >= in.remote_cap) {
+        out = in.cap;
+    } else if (in.remote_mag > 0) {
+        const std::uint64_t scaled = (static_cast<std::uint64_t>(in.remote_mag) * in.cap + in.remote_cap - 1) / in.remote_cap;
+        out = static_cast<std::uint32_t>(scaled);
+        if (out >= in.cap) out = in.cap - 1;  // not full stays reloadable (0 for a capacity of 1)
+        if (out == 0 && in.cap > 1) out = 1;
+    }
+    if (in.fire_edge && out == 0) out = 1;
+    return out;
+}
+
 SteerOut Steer(SteerState& st, const SteerIn& in, const SteerParams& p) noexcept {
     SteerOut o{};
     o.mag_scale = 1.0;

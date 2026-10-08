@@ -7,8 +7,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include "mgscoop/near_code.hpp"
+#include "mgscoop/partner_fire_filter.hpp"
 #include "mgscoop/partner_input_hook.hpp"
+#include "partner_player_contract.hpp"
 
 namespace {
 namespace nc = mgscoop::near_code;
@@ -147,9 +150,135 @@ void TestRetargetCall() {
     VirtualFree(page, 0, MEM_RELEASE);
 }
 
+// Native weapons (docs/native-puppet.md "Weapons"): the RequestBullet owner
+// filter on a synthetic image holding the contract bytes and both vtable
+// slots. The game calls slot 0 with (iface, record); record+0x2A is the owner.
+namespace ff = mgscoop::partner_fire_filter;
+namespace pc = mgscoop::partner_player_contract;
+unsigned g_forwarded = 0;
+const void* g_forwarded_record = nullptr;
+void* FakeRequestBullet(void* iface, const void* record) noexcept {
+    ++g_forwarded;
+    g_forwarded_record = record;
+    return iface;
+}
+std::string g_fire_log;
+void FireLog(const char* line) noexcept { g_fire_log += line; }
+struct FireImage {
+    unsigned char* mem = nullptr;
+    std::uintptr_t base = 0;
+    std::size_t span = (pc::service_root_rva > pc::fire_slot_live_rva ? pc::service_root_rva : pc::fire_slot_live_rva) + 0x1000;
+    FireImage() {
+        mem = static_cast<unsigned char*>(VirtualAlloc(nullptr, span, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        if (!mem) { std::fprintf(stderr, "fire image allocation failed\n"); std::exit(2); }
+        base = reinterpret_cast<std::uintptr_t>(mem);
+        for (const auto& s : pc::code_sites)
+            if (s.rva == pc::fire_request_rva) std::memcpy(mem + s.rva, s.bytes, s.size);
+        const std::uintptr_t target = base + pc::fire_request_rva;
+        std::memcpy(mem + pc::fire_slot_live_rva, &target, 8);
+        std::memcpy(mem + pc::fire_slot_dying_rva, &target, 8);
+    }
+    ~FireImage() { VirtualFree(mem, 0, MEM_RELEASE); }
+    std::uintptr_t Slot(std::uintptr_t rva) const { std::uintptr_t v = 0; std::memcpy(&v, mem + rva, 8); return v; }
+    // What the game does at 0x13031BB: rax = *(iface); call [rax] (slot 0).
+    void* Call(std::uintptr_t slot_rva, std::uint16_t owner) const {
+        alignas(16) unsigned char record[0x60]{};
+        std::memcpy(record + pc::shot_owner, &owner, 2);
+        const auto fn = reinterpret_cast<ff::detail::RequestFn>(Slot(slot_rva));
+        return fn(reinterpret_cast<void*>(0x1234), record);
+    }
+};
+void TestFireFilter() {
+    Check(ff::detail::Drops(1, 1) && !ff::detail::Drops(1, 0) && !ff::detail::Drops(1, 0x401) && !ff::detail::Drops(0xFFFF, 1) &&
+          !ff::detail::Drops(0x201, 0x201), "Drops: only the armed player id");
+    {
+        // A changed RequestBullet prologue refuses; nothing is swapped.
+        FireImage img;
+        ff::detail::ResetForTest();
+        img.mem[pc::fire_request_rva + 5] ^= 1;
+        g_fire_log.clear();
+        const char* why = ff::Install(reinterpret_cast<void*>(img.base), &FireLog);
+        Check(why && std::strcmp(why, "bytes") == 0 && !ff::Installed() && img.Slot(pc::fire_slot_live_rva) == img.base + pc::fire_request_rva &&
+              g_fire_log.find("partner_fire=refused; reason=bytes; site=0xd32c60; fire=masked") != std::string::npos,
+              "prologue mismatch: refused, slots untouched, logged");
+        Check(std::strcmp(ff::Install(reinterpret_cast<void*>(img.base), &FireLog), "disabled") == 0, "a failed install stays refused");
+    }
+    {
+        // A slot that does not hold RequestBullet refuses.
+        FireImage img;
+        ff::detail::ResetForTest();
+        const std::uintptr_t other = img.base + 0x1000;
+        std::memcpy(img.mem + pc::fire_slot_dying_rva, &other, 8);
+        const char* why = ff::Install(reinterpret_cast<void*>(img.base), &FireLog);
+        Check(why && std::strcmp(why, "slot") == 0 && img.Slot(pc::fire_slot_live_rva) == img.base + pc::fire_request_rva,
+              "slot mismatch: refused, the live slot untouched");
+    }
+    {
+        FireImage img;
+        ff::detail::ResetForTest();
+        ff::detail::SetOriginalForTest(&FakeRequestBullet);
+        g_fire_log.clear();
+        Check(ff::Install(reinterpret_cast<void*>(img.base), &FireLog) == nullptr && ff::Installed() &&
+              ff::PatchLive(reinterpret_cast<void*>(img.base)), "install on the contract bytes");
+        const auto hook = reinterpret_cast<std::uintptr_t>(ff::detail::HookEntry());
+        Check(img.Slot(pc::fire_slot_live_rva) == hook && img.Slot(pc::fire_slot_dying_rva) == hook &&
+              g_fire_log.find("partner_fire=installed; slots=0x2337de8,0x2337d18; target=0xd32c60") != std::string::npos,
+              "both slots hold the filter");
+        Check(ff::Install(reinterpret_cast<void*>(img.base), &FireLog) == nullptr, "a second install is idempotent");
+        // Disarmed: everything is forwarded (owner 1 counted).
+        g_forwarded = 0;
+        Check(img.Call(pc::fire_slot_live_rva, 1) == reinterpret_cast<void*>(0x1234) && g_forwarded == 1, "disarmed: forwarded");
+        Check(!ff::Arm(0x401) && !ff::Armed(), "a non-player owner cannot be armed");
+        Check(ff::Arm(1) && ff::Armed(), "armed for instance 1");
+        Check(img.Call(pc::fire_slot_live_rva, 1) == nullptr && g_forwarded == 1, "owner 1: dropped, returns 0, never forwarded");
+        Check(img.Call(pc::fire_slot_dying_rva, 1) == nullptr && g_forwarded == 1, "owner 1 through the destruction vtable: dropped");
+        Check(img.Call(pc::fire_slot_live_rva, 0) == reinterpret_cast<void*>(0x1234) && g_forwarded == 2, "owner 0 (the local player): forwarded");
+        Check(img.Call(pc::fire_slot_live_rva, 0x401) == reinterpret_cast<void*>(0x1234) && g_forwarded == 3 && g_forwarded_record,
+              "owner 0x401 (a soldier with index 1): forwarded with the same record");
+        ff::Stats st{};
+        ff::ReadStats(reinterpret_cast<void*>(img.base), st);
+        Check(st.installed && st.live && st.armed && st.owner == 1 && st.suppressed == 2 && st.passed == 3 && st.passed_player == 2 &&
+              st.owner_disarmed == 0 && st.last_owner == 0x401 && st.last_thread == GetCurrentThreadId(),
+              "stats: suppressed 2, passed 3 (2 player-owned), last owner and thread");
+        ff::Disarm();
+        Check(img.Call(pc::fire_slot_live_rva, 1) == reinterpret_cast<void*>(0x1234), "disarmed again: owner 1 forwarded");
+        ff::ReadStats(reinterpret_cast<void*>(img.base), st);
+        Check(!st.armed && st.owner_disarmed == 1, "owner 1 forwarded while disarmed is counted");
+        // A slot restored behind our back is not live.
+        const std::uintptr_t target = img.base + pc::fire_request_rva;
+        std::memcpy(img.mem + pc::fire_slot_dying_rva, &target, 8);
+        Check(!ff::PatchLive(reinterpret_cast<void*>(img.base)), "a restored slot: not live");
+        // The census reads the service chain only (no call): root -> svc -> bullets / noise.
+        alignas(16) static unsigned char svc[0x300], gm[0x300], bullets[0x40], noise_owner[0x40], noise[0x40], root[0x40];
+        alignas(16) static std::uintptr_t noise_vt[4];
+        std::memset(svc, 0, sizeof(svc));
+        const auto put = [](void* at, std::uintptr_t v) { std::memcpy(at, &v, 8); };
+        put(img.mem + pc::service_root_rva, reinterpret_cast<std::uintptr_t>(root));
+        put(root + pc::root_service, reinterpret_cast<std::uintptr_t>(svc));
+        put(svc + pc::svc_gm, reinterpret_cast<std::uintptr_t>(gm));
+        put(gm + pc::gm_bullets, reinterpret_cast<std::uintptr_t>(bullets));
+        put(bullets, img.base + pc::fire_slot_live_rva);
+        put(svc + pc::svc_noise_owner, reinterpret_cast<std::uintptr_t>(noise_owner));
+        put(noise_owner + pc::noise_owner_iface, reinterpret_cast<std::uintptr_t>(noise));
+        noise_vt[0] = img.base + 0x500;
+        put(noise, reinterpret_cast<std::uintptr_t>(noise_vt));
+        ff::Census cs{};
+        ff::ReadCensus(reinterpret_cast<void*>(img.base), img.span, cs);
+        Check(cs.ok && cs.bullets_ok && cs.bullets_vt == pc::fire_slot_live_rva && !cs.noise_vt_in_image && cs.noise_fn0_in_image &&
+              cs.noise_fn0 == 0x500 && cs.noise_vt == reinterpret_cast<std::uintptr_t>(noise_vt), "census: bullets vtable verified, noise vtable reported");
+        put(img.mem + pc::service_root_rva, 0);
+        ff::ReadCensus(reinterpret_cast<void*>(img.base), img.span, cs);
+        Check(!cs.ok, "census without a service root: not ok");
+        ff::Disarm();
+        ff::detail::SetOriginalForTest(nullptr);
+        ff::detail::ResetForTest();
+    }
+}
+
 } // namespace
 
 int main() {
+    TestFireFilter();
     TestStubBytes();
     TestRel32();
     TestBlockGate();
@@ -159,6 +288,6 @@ int main() {
     TestRetargetCall();
     std::printf("%u partner input hook checks passed: stub bytes, rel32 reach/cache-line, dispatch-block gate "
                 "(mismatch + retargeted rel32), locked dword CAS (success/refusal/split), key-manager slot map, "
-                "data qword swap\n", checks);
+                "data qword swap, fire filter (prologue/slot refusals, install, owner filter, stats, live check, census)\n", checks);
     return 0;
 }

@@ -1041,7 +1041,7 @@ bool SubmitInput(const partner_input::InputPacket& packet) noexcept {
     if (g_input_tx_ms && now - g_input_tx_ms < kInputMinGapMs) { SetLastError(error); return false; }
     const std::uint32_t seq = g_input_tx_seq + 1;
     // v2, or v3 when the sender runs the native drive (packet.version 3).
-    std::uint8_t frame[sync::input_frame_size_v3];
+    std::uint8_t frame[sync::input_frame_size_v4];
     bool sent = false;
     if (const std::size_t n = sync::encode_input_frame_any(kSession, static_cast<std::uint32_t>(epoch), seq, packet, frame))
         sent = Transmit(frame, n);

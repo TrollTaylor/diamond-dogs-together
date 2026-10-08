@@ -547,14 +547,14 @@ int main() {
         const auto def = Lab("enabled=1\nrole=host\n");
         Check(def.partner_drive == PartnerDrive::legacy && def.partner_input_defer == PartnerDefer::off &&
               def.partner_input_local == PartnerLocal::main && def.partner_native_aim == PartnerNativeAim::off &&
-              !def.partner_native_gun && !def.partner_native_fire && def.partner_native_steer_deg == 15 &&
+              !def.partner_native_gun && def.partner_native_fire == mgscoop::PartnerNativeFire::off && def.partner_native_steer_deg == 15 &&
               def.partner_native_trim_pct == 0, "native defaults (legacy, defer off, local main, aim off, steer 15, trim 0)");
         const auto nat = Lab("enabled=1\nrole=host\npartner_drive=native\npartner_input_defer=census\npartner_input_local=all\n"
                              "partner_native_aim=lookcam\npartner_native_gun=1\npartner_native_fire=1\npartner_native_steer_deg=30\n"
                              "partner_native_trim_pct=10\n");
         Check(nat.partner_drive == PartnerDrive::native && nat.partner_input_defer == PartnerDefer::census &&
               nat.partner_input_local == PartnerLocal::all && nat.partner_native_aim == PartnerNativeAim::lookcam &&
-              nat.partner_native_gun && nat.partner_native_fire && nat.partner_native_steer_deg == 30 &&
+              nat.partner_native_gun && nat.partner_native_fire == mgscoop::PartnerNativeFire::visual && nat.partner_native_steer_deg == 30 &&
               nat.partner_native_trim_pct == 10 && nat.invalid_values == 0 && nat.unknown_keys == 0, "native keys parse");
         const auto on = Lab("enabled=1\nrole=guest\npartner_drive=native\npartner_input_defer=on\npartner_native_aim=look\n"
                             "partner_native_steer_deg=0\n");

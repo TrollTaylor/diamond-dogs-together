@@ -41,6 +41,7 @@
 #include "mgscoop/partner_input_hook.hpp"
 #include "mgscoop/partner_defer.hpp"
 #include "mgscoop/partner_local_detour.hpp"
+#include "mgscoop/partner_fire_filter.hpp"
 #include "mgscoop/partner_dm_patch.hpp"
 #include "mgscoop/partner_upper_probe.hpp"
 #include "mgscoop/partner_upper_end_observer.hpp"
@@ -619,6 +620,29 @@ std::uint32_t PartnerLinkSession(void*) noexcept { return mgscoop::partner_net::
 bool PartnerDrainReliable(void*, std::uint8_t channel, std::uint8_t* out, std::size_t capacity, std::size_t& size) noexcept {
     return mgscoop::partner_net::DrainReliable(channel, out, capacity, size);
 }
+// --- Native weapons (docs/native-puppet.md "Weapons"). The fire filter
+// installs lazily from the driver tick (after the code gate passed, like the
+// deferral) and is armed for instance 1's id; reads are pure.
+const char* PartnerInstallFire(void*, std::uint16_t owner) noexcept {
+    if (const char* why = mgscoop::partner_fire_filter::Install(game_base, Log)) return why;
+    return mgscoop::partner_fire_filter::Arm(owner) ? nullptr : "owner";
+}
+void PartnerFireStats(void*, mgscoop::partner_fire_filter::Stats& out) noexcept {
+    mgscoop::partner_fire_filter::ReadStats(game_base, out);
+}
+void PartnerFireCensus(void*, mgscoop::partner_fire_filter::Census& out) noexcept {
+    mgscoop::partner_fire_filter::ReadCensus(game_base, partner_addresses.image_end - partner_addresses.image_begin, out);
+}
+bool PartnerReadGun(void*, const pp::State& state, std::uint32_t k, pp::Gun1& out) noexcept {
+    return pp::ReadGun(partner_addresses, state, k, out);
+}
+bool PartnerReadLoadout(void*, const pp::State& state, pp::Loadout& out) noexcept {
+    return pp::ReadLoadout(partner_addresses, state, out);
+}
+bool PartnerSendReliable(void*, std::uint8_t channel, const std::uint8_t* bytes, std::size_t size) noexcept {
+    const auto result = mgscoop::partner_net::SendReliable(channel, bytes, size, mgscoop::link::ReliableMode::latest);
+    return result == mgscoop::link::ReliableResult::queued || result == mgscoop::link::ReliableResult::replaced;
+}
 #if defined(MGS_LOCAL_STOCK46_AMMO_TEST) && MGS_LOCAL_STOCK46_AMMO_TEST
 constexpr bool kAmmoExperiment = true;
 #else
@@ -693,7 +717,8 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerApplyPosition, PartnerReadVelocity, PartnerLatestInput, PartnerInstallWrap, PartnerInterpMs, PartnerDmMotionCount,
     PartnerSampleRemoteWithTurns, PartnerReadLocalBody, PartnerInstallDefer, PartnerNativeInstall, PartnerDrainDeferStats,
     PartnerSetDefer, PartnerPublishIdentity, PartnerPublishWrapRoots, PartnerNativeTargets, PartnerReadGun1, PartnerReadLookSource,
-    PartnerWindowSeq, PartnerLinkLive, PartnerLinkSession, PartnerDrainReliable, kAmmoExperiment};
+    PartnerWindowSeq, PartnerLinkLive, PartnerLinkSession, PartnerDrainReliable, kAmmoExperiment, PartnerInstallFire,
+    PartnerFireStats, PartnerFireCensus, PartnerReadGun, PartnerReadLoadout, PartnerSendReliable};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with

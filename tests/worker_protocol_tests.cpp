@@ -144,7 +144,19 @@ int main() {
     changed = loco; changed.partner_input_p218_allow = true; Check(!OfflineLab(changed, "host", save), "native_refuses_p218");
     changed = loco; changed.partner_input_mask = 0x2200007u; Check(!OfflineLab(changed, "host", save), "native_loco_exact_mask");
     changed = gun; changed.partner_input_mask = 0x220005Eu; Check(!OfflineLab(changed, "host", save), "native_gun_mask_without_fire");
-    changed = gun; changed.partner_native_fire = true; Check(!OfflineLab(changed, "host", save), "native_fire_needs_a_gate_change");
+    // Native weapons: visual fire is admitted only with FIRE in the mask, and never without the gun stage.
+    changed = gun; changed.partner_native_fire = mgscoop::PartnerNativeFire::visual;
+    Check(!OfflineLab(changed, "host", save), "native_visual_fire_needs_the_fire_mask");
+    changed.partner_input_mask = 0x220005Eu; Check(OfflineLab(changed, "host", save) && NativeProfile(changed), "native_gun_stage_visual_fire");
+    mgscoop::LabConfig visual{};
+    const std::string visual_text = native_lab + "partner_input_defer=on\npartner_input_mask=0x220005E\npartner_native_gun=1\n"
+        "partner_native_fire=visual\npartner_native_aim=look\npartner_input_triggers=1\npartner_input_rstick=1\n";
+    Check(mgscoop::ParseLabConfig(visual_text.data(), visual_text.size(), visual) && OfflineLab(visual, "host", save) &&
+          visual.partner_native_fire == mgscoop::PartnerNativeFire::visual, "native_gun_stage_visual_fire_from_lab_ini");
+    changed = loco; changed.partner_native_fire = mgscoop::PartnerNativeFire::visual;
+    Check(!OfflineLab(changed, "host", save), "native_loco_without_fire");
+    changed = census; changed.partner_native_fire = mgscoop::PartnerNativeFire::visual;
+    Check(!OfflineLab(changed, "host", save), "native_census_without_fire");
     changed = gun; changed.partner_native_aim = mgscoop::PartnerNativeAim::lookcam; Check(!OfflineLab(changed, "host", save), "native_lookcam_needs_a_gate_change");
     changed = gun; changed.partner_native_aim = mgscoop::PartnerNativeAim::off; Check(!OfflineLab(changed, "host", save), "native_gun_needs_look");
     changed = census; changed.partner_native_aim = mgscoop::PartnerNativeAim::look; Check(!OfflineLab(changed, "host", save), "native_census_without_aim");

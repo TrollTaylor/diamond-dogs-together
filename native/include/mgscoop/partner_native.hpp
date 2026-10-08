@@ -186,6 +186,52 @@ struct SteerOut {
 SteerOut Steer(SteerState& state, const SteerIn& in, const SteerParams& params) noexcept;
 inline constexpr double kTrimFloor = 0.42;  // start threshold 0.4 (0x2104860) plus margin
 
+// --- Weapons (docs/native-puppet.md "Weapons"), pure --------------------------
+// The gun record fields (rec = *(prim+0x58) + (id - node base)*0x610) the
+// magazine getter 0x10435D0, CanReload 0x1051F30 and the reload gate in
+// 0x103E2D0 read (offsets in partner_player_contract.hpp; the hook
+// static_asserts they match these rules).
+struct GunFields {
+    std::uint32_t flags27c;   // rec+0x27C: bit 9 sub magazine, bit 19 half, bit 20 double, class (>>6)&7
+    std::uint32_t flags280;   // rec+0x280: bit 19 no reload
+    std::uint32_t gun3c0;     // rec+0x3C0: bit 28 full magazine, bit 29 capacity-based stock check, bit 20 reload request
+    std::uint32_t equip;      // rec+0x24C
+    std::uint16_t cap, cap_sub, mag, mag_sub, stock, stock_sub;  // rec+0x210/0x212, 0x25C/0x25E, 0x260/0x262
+    std::uint16_t w23a;       // rec+0x23A (bits 4/5 lower the capacity-based stock check, 0x104F1C0)
+};
+inline constexpr std::uint32_t kGunClassGun = 1;
+// PlayerPad bits (lab_config kPartnerNativeFireBit / kPartnerNativeGunBits): FIRE and RELOAD.
+inline constexpr std::uint32_t kPadFire = 0x10, kPadReload = 0x40;
+inline std::uint32_t GunClass(std::uint32_t flags27c) noexcept { return (flags27c >> 6) & 7u; }
+// (flags27c bit 9 ? cap_sub : cap), doubled for equip 0x42B..0x42E with bit
+// 20, halved with bit 19 (0x10435FD, 0x1051FA0).
+std::uint32_t GunCapacity(const GunFields& gun) noexcept;
+// The getter: capacity with gun3c0 bit 28, else mag_sub (bit 9) or mag.
+std::uint32_t GunMagazine(const GunFields& gun) noexcept;
+// The live magazine field: 0x25E with flags27c bit 9, else 0x25C (0x1058ABF).
+inline std::size_t GunMagazineOffset(std::uint32_t flags27c) noexcept { return (flags27c & 0x200u) ? 0x25Eu : 0x25Cu; }
+// CanReload replica (telemetry): no-reload bit clear, stock check (capacity
+// based with gun3c0 bit 29, else stock - magazine != 0) and magazine < capacity.
+bool GunCanReload(const GunFields& gun) noexcept;
+// The reload gate before 0x1094770 (0x103E3A4): class 1, (flags27c & 0x1800)
+// != 0x800, equip != 0 and rec+0x3D5 != 4.
+bool GunReloadGate(const GunFields& gun, std::uint8_t b3d5) noexcept;
+
+// Magazine mirror. Instance 1's non-local shots never spend its magazine
+// (the ammo call 0x1041650 is local-only), so the remote's count decides
+// whether the partner can fire (magazine > 0) and reload (magazine <
+// capacity): the remote's (mag, cap) mapped onto the partner's capacity.
+// Full stays full, empty stays empty, anything between maps into
+// 1..cap-1 (rounded up); a FIRE press edge never leaves 0 (the remote fired a
+// round, so the partner shows it).
+struct MagIn {
+    std::uint16_t remote_mag, remote_cap;  // the sender's v4 fields (remote_cap 1..kMaxMagCap, mag <= cap)
+    std::uint32_t cap;                     // the partner's GunCapacity (1..kMaxMagCap)
+    bool fire_edge;
+};
+inline constexpr std::uint16_t kMaxMagCap = 999;
+std::uint32_t MirrorMagazine(const MagIn& in) noexcept;
+
 // --- Telemetry ring (one entry per owner tick, oldest first) -------------------
 struct RingEntry {
     std::uint32_t ms;
@@ -205,6 +251,9 @@ struct RingEntry {
     std::uint16_t p1_forced;
     std::uint8_t recon_mode, recon_action;
     bool warp;
+    // Weapons: instance 1's magazine (getter rule; 0xFFFF unread) and its
+    // reload request (rec+0x3C0 bit 20, also in gun3c0).
+    std::uint16_t mag;
 };
 inline constexpr std::uint8_t kReconOff = 0xFF;
 inline constexpr std::size_t kRing = 48;
@@ -277,6 +326,43 @@ struct Telemetry {
     bool gun_enabled, gun_read_ok, node_active, aim_match, ammo_experiment;
     std::uint32_t gun3c0, mode2c1, remote_flags, remote_equip, manifest_rev;
     std::int32_t body_equip, aim_err_mdeg;
+    // Weapons (docs/native-puppet.md "Weapons"). Instance 1's gun record
+    // (fields_ok false: the values below are kNull/0): capacity, magazine
+    // (getter rule), stock, equip, class, the no-reload bit, rec+0x3D5, the
+    // slot, the reload request bit 20, the CanReload replica and the reload gate.
+    bool gun_fields_ok;
+    std::int32_t gun_cap, gun_mag, gun_stock, gun_class, gun_b3d5, gun_slot;
+    std::uint32_t gun_noreload, gun_b20, gun_can_reload, gun_gate;
+    // Fire visuals: setting, the filter (installed, live, armed), whether FIRE
+    // passes the effective mask and why not, the filter's process totals and
+    // suppressed per second; the read-only census of the bullet and noise
+    // interfaces (RVAs, kNull when unread).
+    char fire_mode[8];
+    bool fire_installed, fire_live, fire_armed, fire_effective;
+    char fire_refused[16];
+    std::uint32_t fire_suppressed, fire_passed, fire_passed_player, fire_owner_disarmed, fire_suppressed_s;
+    bool census_ok, census_bullets_ok;
+    std::int64_t census_noise_vt, census_noise_fn;
+    // Magazine mirror (drain windows) and the leak checks: the remote's
+    // latest v4 magazine (kNull without), writes/refusals, the last values and
+    // verdict, the viewer's shoot count (kNull unread) and the drain windows
+    // that changed it, and drains that left instance 1's reload request set.
+    std::int32_t remote_mag, remote_mag_cap;
+    // The viewer's own magazine and capacity (instance 0, getter rule; kNull
+    // unread): unchanged while only the remote fires (leak evidence).
+    std::int32_t local_mag, local_mag_cap;
+    std::uint32_t mag_writes, mag_refused, mag_fire_edges, mag_reload_edges, mag_cap, mag_written;
+    char mag_last[8];
+    bool mag_faulted;
+    std::uint32_t shot_leaks, reload_drains;
+    std::int64_t shot_count;
+    // Loadout: what this copy sends (manifest revision, base ids, aliases,
+    // tables verified) and the apply verdict of the received manifest.
+    std::uint32_t equip_tx_rev;
+    std::uint32_t equip_tx_base[3], equip_tx_alias[3];
+    bool equip_tables_ok;
+    std::uint32_t equip_rx_base[3], equip_rx_alias[3];
+    char equip_apply[12];
     Ring ring;
 };
 
