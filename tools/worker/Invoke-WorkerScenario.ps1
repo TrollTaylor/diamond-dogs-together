@@ -48,6 +48,8 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                      teleport viewer behind (and to the right of) target, facing it,
                                      with a 3 m upward margin; require fresh position to settle within 3 s
   state                            print both roles' mission / gameplay-ready state
+  labsetting <key>=<value>         before the session starts: add an allow-listed lab.ini key to
+                                   both copies (only debug_soldier_warp=0|1)
 
 The session has a hard 600 s limit (supervisor). The result object lists the
 run folder, the frames (renamed with labels) and whether everything closed.
@@ -63,7 +65,8 @@ param(
     [ValidateRange(60,600)][int]$TimeoutSec=600,
     [ValidateRange(10,180)][int]$ReadyTimeoutSec=180,
     [ValidateSet('animated','input')][string]$PartnerProfile='animated',
-    [ValidateSet('real','lab')][string]$SaveSeed='lab'
+    [ValidateSet('real','lab')][string]$SaveSeed='lab',
+    [ValidatePattern('^debug_soldier_warp=[01]$')][string[]]$LabSetting=@()
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -75,6 +78,12 @@ $lines=@()
 if($ScenarioPath){$lines+=[IO.File]::ReadAllLines([IO.Path]::GetFullPath($ScenarioPath))}
 $lines+=$Step
 $steps=@($lines|ForEach-Object{$_.Trim()}|Where-Object{$_ -and !$_.StartsWith('#')})
+# labsetting lines configure the session; they are not steps.
+foreach($line in @($steps|Where-Object{$_ -cmatch '^labsetting(\s|$)'})) {
+    if($line -cnotmatch '^labsetting\s+(debug_soldier_warp=[01])$'){throw "Invalid scenario step: '$line'"}
+    $LabSetting=@($LabSetting)+@($Matches[1])
+}
+$steps=@($steps|Where-Object{$_ -cnotmatch '^labsetting(\s|$)'})
 if(!$steps.Count){throw 'No scenario steps.'}
 # Validate every step before anything starts.
 $roleNames=@('host','guest','both')
@@ -125,7 +134,7 @@ if(!$CheckReceipt){
 $receipt=Get-Content -LiteralPath $CheckReceipt -Raw|ConvertFrom-Json
 if($receipt.status -cne 'passed'){throw "Worker checks did not pass: $($receipt.failure)"}
 
-$session=& (Join-Path $worker 'Start-WorkerSession.ps1') -BuildDirectory $build -CheckReceipt $CheckReceipt -BaselineLoaderSha256 $BaselineLoaderSha256 -TimeoutSec $TimeoutSec -ReadyTimeoutSec $ReadyTimeoutSec -PartnerProfile $PartnerProfile -SaveSeed $SaveSeed
+$session=& (Join-Path $worker 'Start-WorkerSession.ps1') -BuildDirectory $build -CheckReceipt $CheckReceipt -BaselineLoaderSha256 $BaselineLoaderSha256 -TimeoutSec $TimeoutSec -ReadyTimeoutSec $ReadyTimeoutSec -PartnerProfile $PartnerProfile -SaveSeed $SaveSeed -LabSetting $LabSetting
 $session=@($session|Where-Object{$_ -isnot [string]})[-1]
 $run=[string]$session.RunDirectory
 $runId=[string]$session.RunId

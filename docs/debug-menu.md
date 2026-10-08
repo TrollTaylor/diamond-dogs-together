@@ -144,22 +144,73 @@ reference, the 16-entry receipt log with an All / OK / Refused / Pending filter 
 
 ## Spawning near you: what it really does
 
-The game cannot create soldiers at runtime, and scripts cannot place a soldier at
-coordinates. **Spawn enemy here** therefore:
+The game cannot create new soldiers at runtime, so **Spawn enemy here** reuses an
+existing one:
 
-1. scores the patrol routes of the four nearest command posts by how close their
-   soldiers (or the remembered position of an earlier placement) are to you;
-2. takes a living, unused guard of that route's command post, 30 to 500 m away
-   (otherwise the nearest other guard, reported as `borrowed=1`);
-3. disables him, puts him on that route at point 0, re-enables and force-realizes
-   him (the retail TppDebug sequence), then reads back where he is.
+1. It takes the nearest unused guard that is alive (NORMAL), enabled, on foot (no
+   vehicle) and 15 to 500 m away, among the guards of the command posts with patrol
+   routes.
+2. Without "He comes at me" he gets `TppEnemy.SetEnableRestrictNotice` (he ignores
+   you; the Nearby table shows I). With it he gets `SetDiscoveryPlayer` once he has
+   landed (he attacks).
+3. **Native placement** (lab.ini `debug_soldier_warp=1`, lab only; play forces it
+   off): the menu sends the engine's own set-transform message `0x287158b07327` to
+   his GameObjectId through the GameObject manager's SendCommand, the same call the
+   player carry code makes. The target is 5 m along your heading at your height, and
+   he faces you. A guard that is not realized yet answers `r=-1`: he is
+   force-realized and the message is resent every update for up to 150 updates, and
+   force-realize is released after the readback.
+4. **Route snap fallback** when the key is off, the native side refuses, the loader is
+   older or he never lands: he is disabled, put on the best-scored patrol route of the
+   four nearest command posts at point 0, re-enabled and force-realized (the retail
+   TppDebug sequence). Expect him 5-60 m away.
 
-The final result is `guard_here;ent=<id>;d=<distance m>;moved=..;far=0|1;borrowed=0|1;come=0|1;sync=none;route=<route>`.
-`far=1` means he is more than 60 m away. Expect him 5-60 m from you, not on top of
-you. At most 8 guards per mission. Placement is local to the host: the guest's copy
-of that soldier does not move. Sleep, kill, Fulton and the command-post phase do
-reach the guest when the world link is paired. The guard is armed: turn on
-Auto-heal or keep Kill / Sleep ready.
+Results:
+
+- Native: `submitted_guard_here;ent=<id>;scope=local;mode=warp`, then
+  `guard_here;ent=<id>;d=<m>;moved=<m>;far=0|1;mode=warp;come=0|1;sync=none;frames=<n>;leaf=pinned|engine`.
+  `far=1` means more than 10 m away; `frames` is the number of updates until the
+  engine handled the message.
+- Fallback: `submitted_guard_here;ent=<id>;scope=local;mode=route;why=<reason>`, then
+  `guard_here;ent=<id>;d=..;moved=..;far=0|1;mode=route;come=0|1;sync=none;route=<route>`
+  (`far=1` above 60 m). `why` is `disabled` (key off), `native_unavailable` (no
+  native answer), `realize_timeout`, or a native refusal: `contract`, `host`,
+  `mission`, `command`, `pose`, `type`, `range` (target over 20 m from you), `input`,
+  `manager`, `registry`, `chain`, `index`, `stance` (crouched/prone guards are not
+  moved) or `fault`.
+
+At most 8 guards per mission (native and route together). Placement is local to the
+host: the guest's copy of that soldier does not move. Sleep, kill, Fulton and the
+command-post phase do reach the guest when the world link is paired. The guard is
+armed: turn on Auto-heal or keep Kill / Sleep ready. His patrol AI may walk him back
+to his route afterwards.
+
+### Native placement: what is verified
+
+`tools/generate_soldier_warp_contract.py` checks the exact executable
+(`085c2f82...bb45`) instruction by instruction and writes
+`native/soldier_warp_contract.hpp`: the manager getter and its static object, the
+SendCommand / GetHandle / registry / dispatch bytes, the soldier handler `0x1360f90`
+(its hash branch, realized test, stance branches and `T->SetPose`/`SetRot` tail),
+the vtable slots and the carry-code precedent. With the key on, the loader compares
+every site at startup (`soldier_warp=ready` or `soldier_warp=refused; reason=...;
+rva=...`) and nothing is called before a host `spawn_enemy here`.
+
+One hop cannot be pinned statically: the per-type handle object and its vtable +0x10
+are built by protected code. Each attempt resolves the chain read-only; outcome changes log
+`soldier_warp_census; ...` lines, at most 24 per process, with the vtable and hop
+RVAs and the hop's first bytes.
+`leaf=pinned` means the hop is an argument-preserving forwarder to a soldier
+subobject whose vtable +0xa8 is the verified handler; the loader then mirrors the
+handler's own checks first (index, realized bit, stance 1-4) without sending.
+`leaf=engine` means the engine's own dispatch was used without that proof; pin it
+from the census before relying on it. Every change of outcome (the menu retries each
+update while the guard realizes) logs
+`debug_menu=soldier_warp; id=; go=; r=; h=; leaf=; refused=`.
+
+The hidden-worker scenario `tools/worker/scenarios/debug-menu.txt` turns the key on
+with `labsetting debug_soldier_warp=1` and expects `mode=warp` with `d` of 10 m or
+less.
 
 ## Results
 
@@ -168,7 +219,8 @@ Auto-heal or keep Kill / Sleep ready.
 - Final results are `OK` (green) or `REFUSED` (red). `QUEUE` means the queue refused
   it before the game saw it (not in gameplay, queue full, invalid text).
 - Common refusals: `host_only`, `gameplay`, `demo`, `on_foot`, `helicopter`,
-  `position_args`, `empty_bookmark`, `spawn_no_route`, `spawn_no_guard`,
+  `position_args`, `empty_bookmark`, `spawn_no_route`, `spawn_no_guard` (no eligible
+  guard: dead, disabled, riding, closer than 15 m or farther than 500 m),
   `spawn_pool_limit_8`, `no_readable_soldier`, `enemy_not_authored`,
   `partner_pose_unavailable`, `life_vars_unreadable`, `missing_<api>` (the game
   function is absent in this build).
@@ -202,15 +254,20 @@ In the hidden worker the menu is never opened with F9. Scenario steps:
 - `<role> capture <label>` saves the next frame; with the menu open it contains the
   menu (the overlay draws before the capture in the same frame, without a mouse
   cursor or hover).
+- `labsetting <key>=<value>` (scenario header, allow-listed: only
+  `debug_soldier_warp=0|1`) adds a lab.ini key to both worker copies for that run.
 - `tools/worker/scenarios/debug-menu.txt` opens every page, searches, presses,
-  confirms and runs the spawn, partner and world commands. Mother Base has no
-  authored camp soldiers, so spawn refusals are expected there.
+  confirms and runs the spawn, partner and world commands. It enables the native
+  placement and expects `spawn_enemy here` to report `mode=warp` with `d` of 10 m or
+  less, then checks that the nearest soldier is still close a few seconds later.
+  Mother Base has no authored camp soldiers, so spawn refusals are expected there.
 
 ## Not available
 
 Mission travel, restart and checkpoint saves; freezing the clock; waking or holding
-up soldiers; gamepad navigation; actions outside on-foot gameplay; placing a soldier
-at exact coordinates; replicating guard placement to the guest; a free camera.
+up soldiers; gamepad navigation; actions outside on-foot gameplay; creating new
+soldiers or placing one at typed coordinates; replicating guard placement to the
+guest; a free camera.
 
 ## Files
 

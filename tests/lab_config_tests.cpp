@@ -436,6 +436,7 @@ int main() {
         {"net_jitter_ms=5\n", kPlayRefusedImpairment},
         {"net_dup_permille=5\n", kPlayRefusedImpairment},
         {"net_reorder_permille=5\n", kPlayRefusedImpairment},
+        {"debug_soldier_warp=1\n", kPlayRefusedDebugSoldierWarp},
     };
     for (const auto& r : refusals) {
         const auto c = Lab(playBase + r.line);
@@ -444,7 +445,8 @@ int main() {
         Check(!c.loopback && c.self_steamid == 0 && c.peer_steamid == 0 && !c.self_name[0] && !c.mutex_suffix[0] &&
               c.xinput == kXInputPassthrough && !c.join_trigger && c.auto_join_delay_s == 0 && !c.net_bind_loopback &&
               c.net_link == NetLink::v2 && c.net_latency_ms == 0 && c.net_loss_permille == 0 && c.net_jitter_ms == 0 &&
-              c.net_dup_permille == 0 && c.net_reorder_permille == 0 && c.net_peer_address == 0x7F000001u && c.net,
+              c.net_dup_permille == 0 && c.net_reorder_permille == 0 && c.net_peer_address == 0x7F000001u && c.net &&
+              !c.debug_soldier_warp,
               "refused keys forced off");
     }
     const auto noSaves = Lab("enabled=1\nmode=play\nrole=host\nnet=1\n");
@@ -532,6 +534,13 @@ int main() {
               playProbe.invalid_values == 1,
           "play refuses world_probe");
     Check(kPlayRefusedWorldProbe == 0x8000, "world_probe refusal bit");
+    // Debug "Spawn enemy here" native placement: lab-only, default off.
+    Check(!Lab("enabled=1\nrole=host\n").debug_soldier_warp, "debug_soldier_warp defaults off");
+    const auto warpOn = Lab("enabled=1\nrole=host\ndebug_soldier_warp=1\n");
+    Check(warpOn.debug_soldier_warp && warpOn.invalid_values == 0 && warpOn.unknown_keys == 0, "debug_soldier_warp=1 parsed");
+    const auto warpBad = Lab("enabled=1\nrole=host\ndebug_soldier_warp=2\n");
+    Check(!warpBad.debug_soldier_warp && warpBad.invalid_values == 1, "debug_soldier_warp is boolean");
+    Check(kPlayRefusedDebugSoldierWarp == 0x10000, "debug_soldier_warp refusal bit");
 
     std::printf("%u lab/coop configuration checks passed; pure parser, no game calls\n", checks);
 }

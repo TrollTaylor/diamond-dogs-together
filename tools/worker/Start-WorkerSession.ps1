@@ -20,7 +20,10 @@ param(
     # partner's two-player pack in Mother Base). lab: copies of each folder's
     # existing Play-OfflineCoop lab saves (read only), the state earlier live
     # runs used. The real saves are backed up and re-checked either way.
-    [ValidateSet('real','lab')][string]$SaveSeed='real'
+    [ValidateSet('real','lab')][string]$SaveSeed='real',
+    # Extra lab.ini keys for both copies of this run: allow-listed lab
+    # experiments only (Invoke-WorkerScenario "labsetting" lines).
+    [ValidatePattern('^debug_soldier_warp=[01]$')][string[]]$LabSetting=@()
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -150,6 +153,7 @@ try {
         'partner_input_hold=own','partner_input_words=hpr','partner_recon=track','partner_stage=3','world=3')}
         else{@('partner=1','net=1','partner_stage=3','partner_source=net','partner_look=net','partner_apply=xform','partner_anim=off',
         'partner_reset=n','partner_input=off','partner_dm=map','world=3')}
+    $settings=@($settings)+@($LabSetting)
     & (Join-Path $repo 'tools\lab\Prepare-LabInstance.ps1') -ConfigPath $copyConfig -Role both -Offline -Loader $loader -RuntimeArchive $archive -PartnerSetting $settings -SkipSaves -SkipGraphics | ForEach-Object {Write-Host $_}
     $session.prepare_completed=$true
     foreach($role in @('host','guest')) {

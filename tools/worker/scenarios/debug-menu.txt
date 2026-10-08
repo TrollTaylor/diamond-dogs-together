@@ -2,6 +2,10 @@
 # spawn near player, partner and world tools. Scene captures are taken with the menu closed.
 # The worker opens the menu by text ("menu open"), never by an F9 key press.
 # Mother Base (30050) has no authored camp soldiers: spawn/enemy refusals are expected there.
+# Native "Spawn enemy here" placement (docs/debug-menu.md): the guard must land within
+# 10 m (mode=warp), still be within 10 m 5 s later, and "come" must also land.
+# The soldier_warp_census lines in script-observer.log pin the dispatch hop.
+labsetting debug_soldier_warp=1
 title 200
 wait 4000
 waitgameplay host 120
@@ -34,19 +38,27 @@ host run enemy_list 120
 host expect ^nearby=\d+;radius=120
 host capture menu-enemies
 host run spawn_enemy here
-host expect ^guard_here;ent=\d+|^spawn_no_(route|guard)|^spawn_pool_limit_8
+host expect ^guard_here;ent=\d+;d=(\d\.\d|10\.0);moved=\d+\.\d;far=0;mode=warp;come=0;sync=none;frames=\d+;leaf=(pinned|engine)$
 host run enemy_list 120
 host expect ^nearby=\d+;radius=120
 host capture spawn-here-menu
 host run menu close
 host expect ^menu_closed
 host capture spawn-here-world
+wait 5000
 host run enemy info nearest
-host expect ^enemy_info;|^no_readable_soldier
+host expect ^enemy_info;ent=\d+;name=[^;]+;cp=[^;]+;state=0;distance_m=(\d|10)\.\d$
+host capture spawn-here-stay
 host run enemy sleep nearest
 host expect ^enemy_sleep;ent=\d+;life_readback=2;sync=|^no_readable_soldier
 host run goto_spawn
 host expect ^warp_position_readback|^spawn_position_unavailable
+host run spawn_enemy here come
+host expect ^guard_here;ent=\d+;d=(\d\.\d|10\.0);moved=\d+\.\d;far=0;mode=warp;come=1;sync=none;frames=\d+;leaf=(pinned|engine)$
+wait 1500
+host capture spawn-come-world
+host run clear_enemies 25
+host expect ^submitted=[1-9]\d*;dead_readback=[1-9]
 guest run spawn_enemy here
 guest expect ^host_only
 guest run goto_partner

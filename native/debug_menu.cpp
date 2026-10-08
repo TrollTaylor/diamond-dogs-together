@@ -522,4 +522,13 @@ bool EnemyReceipt(const char* text, std::size_t size) noexcept {
     ReleaseSRWLockExclusive(&lock);
     return accepted;
 }
+bool DispatchedCommand(std::uint32_t id, const char* prefix) noexcept {
+    if (!id || !prefix || !*prefix) return false;
+    AcquireSRWLockShared(&lock);
+    const auto n = std::strlen(prefix);
+    const char* text = state.enabled && state.gameplay_ready && !state.terminating && state.host ? DispatchedText(id) : "";
+    const bool found = std::strncmp(text, prefix, n) == 0 && (text[n] == 0 || text[n] == ' ');
+    ReleaseSRWLockShared(&lock);
+    return found;
+}
 } // namespace mgscoop::debug_menu

@@ -1,6 +1,7 @@
 -- Original host guard placement and per-soldier debug actions on the owner update.
--- Scripts cannot create soldiers or place them at coordinates: placement reuses a
--- loaded living guard on an authored patrol route (retail TppDebug sequence).
+-- Placement reuses a living guard: "here" moves him 5 m in front of the player by
+-- the native set-transform message (lab.ini debug_soldier_warp=1); else, and for
+-- camp/route modes, an authored patrol route snap (retail TppDebug sequence).
 do
   local D, A = e.MgsCoopDebug, e.MgsCoopDebug.api
   local E = D.enemy
@@ -100,12 +101,89 @@ do
         if o.come then pcall(send, s.id, {id = "SetDiscoveryPlayer"}) end
         E.last, E.routePos[route] = {position = v, mission = D.mission}, v
         R.menu(id, fmt("spawned %.0f %.0f %.0f %.0f", mm(v[1]), mm(v[2]), mm(v[3]), s.hash))
-        A.note(id, true, fmt("%s;ent=%.0f;d=%.1f;moved=%.1f;far=%d;borrowed=%d;come=%d;sync=none;route=%s", o.prefix, s.hash, d,
-          dist(v, s.position), d > 60 and 1 or 0, o.borrowed, o.come and 1 or 0, route))
+        A.note(id, true, fmt("%s;ent=%.0f;d=%.1f;moved=%.1f;far=%d;%s;come=%d;sync=none;route=%s", o.prefix, s.hash, d,
+          dist(v, s.position), d > 60 and 1 or 0, o.tag, o.come and 1 or 0, route))
       elseif q.frames >= 120 then D.pending = nil; A.note(id, false, "spawn_position_timeout") end
     end
     D.pending = q
     return true, fmt("%s;ent=%.0f;scope=local", o.submitted, s.hash)
+  end
+  -- WARP_V1: {r=,h=,leaf=} from the native engine message, else nil and why.
+  local function warp(s, id)
+    local c = pose()
+    local y = math.rad(c[4])
+    local r = A.receipt(fmt("return 'MGS_COOP_DEBUG_WARP_V1' -- %.0f %.0f %.0f %.0f %.0f %.0f", id, s.id, mm(c[1] + 5 * math.sin(y)),
+      mm(c[2] + .2), mm(c[3] + 5 * math.cos(y)), mm(math.atan2(-math.sin(y), -math.cos(y)))))
+    if type(r) ~= "table" then return nil, "native_unavailable" end
+    local why = get(r, "refused")
+    if why ~= nil then return nil, R.name(why) and why or "refused" end
+    return r
+  end
+  -- Nearest unused NORMAL, enabled, on-foot guard 15-500 m away.
+  local function nearest(list, normal)
+    local null, off, best = get(GameObject, "NULL_ID"), get(TppGameObject, "NPC_STATE_DISABLE")
+    for _, c in ipairs(list) do
+      for _, s in ipairs(c.guards) do
+        if not E.used[s.name] and s.distance > 225 and s.distance <= 250000 and (not best or s.distance < best.distance)
+          and send(s.id, {id = "GetLifeStatus"}) == normal and (off == nil or send(s.id, {id = "GetStatus"}) ~= off) then
+          local v = send(s.id, {id = "GetVehicleGameObjectId"})
+          if type(v) ~= "number" or v == null then best = s end
+        end
+      end
+    end
+    return best
+  end
+  local function here(s, list, id, come)
+    E.used[s.name] = true
+    local notice = come and "SetDisableRestrictNotice" or "SetEnableRestrictNotice"
+    if (not come or E.ignored[s.name]) and pcall(call, TppEnemy, notice, s.id) then E.ignored[s.name] = not come or nil end
+    local q, forced = {kind = "spawn", id = id, mission = D.mission, frames = 0}
+    local function release() if forced then forced = nil; pcall(send, s.id, {id = "SetForceRealize", forceRealize = false}) end end
+    -- Route snap fallback when the native placement refuses or never lands.
+    local function route(why)
+      release()
+      local best, br, budget, p = nil, nil, {n = 0}, pose()
+      for i = 1, min(4, #list) do
+        for _, r in ipairs(list[i].routes) do
+          local value = score(list[i], r, p, budget)
+          if not best or value < best then best, br = value, r end
+        end
+      end
+      if not br then return false, "spawn_no_route;why=" .. why end
+      local ok, msg = place(s, br, id, {prefix = "guard_here", submitted = "submitted_guard_here", come = come, tag = "mode=route"})
+      return ok, msg .. ";mode=route;why=" .. why
+    end
+    local r, why = warp(s, id)
+    if not r then return route(why) end
+    local function landed() if get(r, "h") == 1 then q.done = q.frames end end
+    landed()
+    if not q.done then forced = true; pcall(send, s.id, {id = "SetForceRealize"}) end
+    q.poll = function()
+      if not q.done then
+        if not R.usable(s) then release(); D.pending = nil; A.note(id, false, "spawn_terminal_unknown"); return end
+        r, why = warp(s, id)
+        if r then landed() end
+        if not r or (not q.done and q.frames >= 150) then
+          D.pending = nil
+          local ok, msg = route(why or "realize_timeout")
+          A.note(id, ok, msg, ok)
+        end
+        return
+      end
+      if q.frames < q.done + 2 then return end
+      local v = R.position(s)
+      if not v then if q.frames > q.done + 60 then release(); D.pending = nil; A.note(id, false, "spawn_position_timeout") end; return end
+      D.pending = nil
+      release()
+      if come then pcall(send, s.id, {id = "SetDiscoveryPlayer"}) end
+      local d = dist(v, pose())
+      E.last = {position = v, mission = D.mission}
+      R.menu(id, fmt("spawned %.0f %.0f %.0f %.0f", mm(v[1]), mm(v[2]), mm(v[3]), s.hash))
+      A.note(id, true, fmt("guard_here;ent=%.0f;d=%.1f;moved=%.1f;far=%d;mode=warp;come=%d;sync=none;frames=%d;leaf=%s", s.hash, d,
+        dist(v, s.position), d > 10 and 1 or 0, come and 1 or 0, q.done, R.name(get(r, "leaf")) and r.leaf or "unknown"))
+    end
+    D.pending = q
+    return true, fmt("submitted_guard_here;ent=%.0f;scope=local;mode=warp", s.hash)
   end
   local function spawn(a, id)
     if not A.hostOnly() then return false, "host_only" end
@@ -122,34 +200,26 @@ do
     if not integer(normal, 0, 4) then return false, "missing_normal_enum" end
     local p, readback = pose(), {prefix = "guard_position_readback", submitted = "submitted_patrol_guard"}
     if mode == "here" then
-      local best, bc, br, budget = nil, nil, nil, {n = 0}
-      for i = 1, min(4, #list) do
-        for _, r in ipairs(list[i].routes) do
-          local value = score(list[i], r, p, budget)
-          if not best or value < best then best, bc, br = value, list[i], r end
-        end
-      end
-      if not bc then return false, "spawn_no_route" end
-      local s, borrowed = pick(bc, list, normal)
+      local s = nearest(list, normal)
       if not s then return false, "spawn_no_guard" end
-      return place(s, br, id, {prefix = "guard_here", submitted = "submitted_guard_here", come = come, borrowed = borrowed})
+      return here(s, list, id, come)
     elseif mode == "closest" then
       for i = 1, min(6, #list) do
         for _, s in ipairs(list[i].guards) do
-          if eligible(s, normal) then readback.borrowed = 0; return place(s, cachedRoute(list[i], p), id, readback) end
+          if eligible(s, normal) then readback.tag = "borrowed=0"; return place(s, cachedRoute(list[i], p), id, readback) end
         end
       end
       if not list[1] then return false, "spawn_no_route" end
       local s, borrowed = pick(list[1], list, normal)
       if not s then return false, "spawn_no_guard" end
-      readback.borrowed = borrowed
+      readback.tag = "borrowed=" .. borrowed
       return place(s, cachedRoute(list[1], p), id, readback)
     end
     local index, c = number(a[3], 1, 64, true), byName[mode]
     if not c or not index or not c.routes[index] then return false, "spawn_camp_route" end
     local s, borrowed = pick(c, list, normal)
     if not s then return false, "spawn_no_guard" end
-    readback.borrowed = borrowed
+    readback.tag = "borrowed=" .. borrowed
     return place(s, c.routes[index], id, readback)
   end
   local function nearbyList(a, id)

@@ -143,6 +143,7 @@ inline constexpr std::uint32_t kPlayRefusedNoSaveDir = 0x1000;
 inline constexpr std::uint32_t kPlayRefusedGuestNoPeer = 0x2000;
 inline constexpr std::uint32_t kPlayRefusedImpairment = 0x4000;
 inline constexpr std::uint32_t kPlayRefusedWorldProbe = 0x8000;
+inline constexpr std::uint32_t kPlayRefusedDebugSoldierWarp = 0x10000;
 // World sync lab probes (docs/world-sync-protocol.md "Probes"): lab.ini
 // world_probe and the world.trigger key. The ids are the wire probeId of
 // PROBE_SYNC and the Lua probe number, in this order.
@@ -250,6 +251,10 @@ struct LabConfig {
     // only (play forces none and sets kPlayRefusedWorldProbe).
     std::uint32_t world = 0;
     WorldProbe world_probe = WorldProbe::none;
+    // Debug "Spawn enemy here" native placement (native/soldier_warp.cpp): the
+    // engine set-transform message to one soldier. Lab qualification only; play
+    // forces it off (kPlayRefusedDebugSoldierWarp).
+    bool debug_soldier_warp = false;
     unsigned unknown_keys = 0;
     unsigned invalid_values = 0;
 };

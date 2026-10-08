@@ -89,6 +89,8 @@ local function fixture(options)
             return c.routeIds and c.routeIds[a.route]
         end
         if a.id == 'GetLifeStatus' then return life[id] end
+        if a.id == 'GetStatus' then return c.status and c.status[id] end
+        if a.id == 'GetVehicleGameObjectId' then return c.vehicle and c.vehicle[id] end
         if a.id == 'GetPosition' then
             if c.positionUnknown then return nil end
             local p = positions[id]
@@ -130,6 +132,16 @@ local function fixture(options)
         request, payload = s:match("^return 'MGS_COOP_DEBUG_ENEMY_V1' %-%- (%d+) (.+)$")
         if request then c.menu[#c.menu + 1] = {tonumber(request), payload}; return function() return not c.menuRefuse end end
         if s == "return 'MGS_COOP_DEBUG_POLL_V1'" then c.polls = (c.polls or 0) + 1; return function() end end
+        -- Native set-transform receipt (native/soldier_warp.cpp); default: lab key off.
+        local w = {s:match("^return 'MGS_COOP_DEBUG_WARP_V1' %-%- (%d+) (%d+) (%-?%d+) (%-?%d+) (%-?%d+) (%-?%d+)$")}
+        if #w == 6 then
+            for i = 1, 6 do w[i] = tonumber(w[i]) end
+            c.warps = c.warps or {}; c.warps[#c.warps + 1] = w
+            local answer = c.warp and c.warp(w) or {refused = 'disabled'}
+            if answer.h == 1 then positions[w[2]] = {w[3] / 1000, w[4] / 1000, w[5] / 1000} end
+            return function() return answer end
+        end
+        check(not s:find('MGS_COOP_DEBUG_WARP_V1', 1, true), 'strict warp receipt grammar: ' .. s)
         local id, ok, msg = s:match("^return 'MGS_COOP_DEBUG_LOG_V1' %-%- (%d+) ([012]) ([%w_=,.;:%-]+)$")
         if id then c.logs[#c.logs + 1] = {tonumber(id), tonumber(ok), msg}; return function() end end
         local text = s:match("^return 'MGS_COOP_DEBUG_STATE_V1' %-%- (.+)$")
@@ -575,21 +587,23 @@ local function guardsFixture(options)
     return s
 end
 sp = guardsFixture(); sp.routeIds = {rt_second = {6}}
-check(sp:send('spawn_enemy here')[3] == 'submitted_guard_here;ent=4294967295;scope=local' and sp.logs[#sp.logs][2] == 2, 'spawn here interim')
+check(sp:send('spawn_enemy here')[3] == 'submitted_guard_here;ent=4294967295;scope=local;mode=route;why=disabled' and sp.logs[#sp.logs][2] == 2,
+    'spawn here falls back to the route snap while the native key is off')
+check(#sp.warps == 1 and sp.warps[1][2] == 5, 'one native attempt for the nearest guard')
 for _, entry in ipairs(sp.calls) do if entry[1] == 'SetSneakRoute' then check(entry[3].route == 'rt_second' and entry[3].point == 0, 'nearest scored route') end end
 check(sp.state[4] == 'spawn', 'spawn pending kind')
 sp:tick(); sp:tick()
 local final = sp.logs[#sp.logs][3]
-check(final == 'guard_here;ent=4294967295;d=14.1;moved=31.6;far=0;borrowed=0;come=0;sync=none;route=rt_second' and sp.logs[#sp.logs][2] == 1,
+check(final == 'guard_here;ent=4294967295;d=14.1;moved=31.6;far=0;mode=route;come=0;sync=none;route=rt_second' and sp.logs[#sp.logs][2] == 1,
     'spawn here final readback: ' .. final)
 check(sp.D.enemy.routePos.rt_second ~= nil and sp.D.enemy.last ~= nil, 'route position cached')
 sp.routeError = true
 local queries = sp:count('GetGameObjectIdUsingRoute')
-check(sp:send('spawn_enemy here')[3] == 'submitted_guard_here;ent=2147483648;scope=local', 'cached route reused with a failing route query')
+check(sp:send('spawn_enemy here')[3] == 'submitted_guard_here;ent=2147483648;scope=local;mode=route;why=disabled', 'cached route reused with a failing route query')
 check(sp:count('GetGameObjectIdUsingRoute') == queries + 3, 'cached route is not queried again')
 for _, entry in ipairs(sp.calls) do if entry[1] == 'SetSneakRoute' then check(entry[3].route == 'rt_second', 'cache wins') end end
 sp = guardsFixture(); sp.positions[5] = {12, 20, 30}
-check(sp:send('spawn_enemy here')[3]:find('ent=2147483648', 1, true), 'guards within 30 m are skipped')
+check(sp:send('spawn_enemy here')[3]:find('ent=2147483648', 1, true), 'guards within 15 m are skipped')
 sp = guardsFixture(); sp.life[5], sp.life[6] = 3, 3
 check(sp:send('spawn_enemy afgh_test_cp 1')[3] == 'submitted_patrol_guard;ent=99;scope=local', 'own camp dead: nearest other guard borrowed')
 sp:tick(); sp:tick(); check(sp.logs[#sp.logs][3]:find(';borrowed=1;', 1, true), 'borrowed flag in the final result')
@@ -604,12 +618,80 @@ final = sp.logs[#sp.logs][3]
 check(#final <= 160 and final:find('guard_position_readback;', 1, true) == 1 and final:find(';route=rrrr', 1, true), '64-character route stays within 160')
 sp = guardsFixture(); for i = 1, 8 do sp.D.enemy.used['old_' .. i] = true end
 check(sp:send('spawn_enemy here')[3] == 'spawn_pool_limit_8' and sp:count('disable') == 0, 'pool cap applies to spawn here')
-sp = fixture(); check(sp:send('spawn_enemy here')[3] == 'spawn_no_route', 'no camp routes refuse spawn here')
+sp = fixture(); check(sp:send('spawn_enemy here')[3] == 'spawn_no_guard', 'no camp guard pool refuses spawn here')
 sp = guardsFixture(); sp.positions[5], sp.positions[6] = {11, 20, 30}, {12, 20, 30}
 check(sp:send('spawn_enemy closest')[3] == 'submitted_patrol_guard;ent=99;scope=local', 'closest falls through to the next camp')
 for _, entry in ipairs(sp.calls) do if entry[1] == 'SetSneakRoute' then check(entry[3].route == 'rt_other', 'closest uses the camp route') end end
 sp:tick(); sp:tick(); check(sp.logs[#sp.logs][3]:find(';borrowed=0;', 1, true), 'fall-through guard is the camp own guard')
 sp = guardsFixture({host = false}); check(sp:send('spawn_enemy here')[3] == 'host_only' and sp:count('disable') == 0, 'guest spawn refused')
+check(sp.warps == nil, 'guest never asks for the native placement')
+-- Native placement (lab.ini debug_soldier_warp=1): 5 m ahead, facing the player.
+local function warpFixture(answers, options)
+    local s = guardsFixture(options)
+    s.env.TppEnemy.SetEnableRestrictNotice = function(id) s.calls[#s.calls + 1] = {'restrict', id, true} end
+    s.env.TppEnemy.SetDisableRestrictNotice = function(id) s.calls[#s.calls + 1] = {'restrict', id, false} end
+    local n = 0
+    s.warp = function() n = n + 1; return answers[math.min(n, #answers)] end
+    return s
+end
+local function forced(s, value)
+    local n = 0
+    for _, v in ipairs(s.calls) do if v[1] == 'SetForceRealize' and v[3].forceRealize == value then n = n + 1 end end
+    return n
+end
+sp = warpFixture({{r = 0, h = 1, leaf = 'pinned'}})
+check(sp:send('spawn_enemy here')[3] == 'submitted_guard_here;ent=4294967295;scope=local;mode=warp' and sp.logs[#sp.logs][2] == 2, 'warp interim')
+local w = sp.warps[1]
+check(w[1] == sp.id - 1 and w[2] == 5 and w[3] == 5670 and w[4] == 20200 and w[5] == 32500 and w[6] == 2094,
+    'receipt: command id, soldier id, 5 m along the -60 degree heading, yaw turned to face the player')
+check(sp:count('SetSneakRoute') == 0 and sp:count('disable') == 0 and forced(sp, nil) == 0, 'landed at once: no route snap, no force realize')
+check(sp:count('restrict') == 1 and sp.D.enemy.ignored.sol_a, 'not hostile without come')
+sp:tick(); sp:tick()
+final = sp.logs[#sp.logs][3]
+check(final == 'guard_here;ent=4294967295;d=5.0;moved=44.4;far=0;mode=warp;come=0;sync=none;frames=0;leaf=pinned' and sp.logs[#sp.logs][2] == 1,
+    'warp final readback: ' .. final)
+check(sp.menu[#sp.menu][2] == 'spawned 5670 20200 32500 4294967295' and sp:count('SetDiscoveryPlayer') == 0, 'spawn metadata at the warped position')
+check(sp:send('goto_spawn')[3] == 'submitted_warp', 'go to spawned guard after a warp')
+sp = warpFixture({{r = -1, h = 0, leaf = 'pinned'}, {r = -1, h = 0, leaf = 'pinned'}, {r = 0, h = 1, leaf = 'engine'}})
+check(sp:send('spawn_enemy here come')[3]:find(';mode=warp', 1, true) and forced(sp, nil) == 1, 'unrealized guard is force-realized once')
+check(sp:count('restrict') == 0, 'come keeps noticing')
+sp:tick(); sp:tick(); check(#sp.warps == 3 and sp.D.pending ~= nil, 'retries each update until handled')
+sp:tick(); sp:tick()
+final = sp.logs[#sp.logs][3]
+check(final:find('guard_here;ent=4294967295;d=5.0;', 1, true) == 1 and final:find(';mode=warp;come=1;sync=none;frames=2;leaf=engine', 1, true),
+    'come warp final: ' .. final)
+check(forced(sp, false) == 1 and sp:count('SetDiscoveryPlayer') == 1, 'force realize released, then discovery')
+sp = warpFixture({{r = -1, h = 0}, {refused = 'dispatch'}})
+sp:send('spawn_enemy here'); sp:tick()
+check(sp.logs[#sp.logs][3] == 'submitted_guard_here;ent=4294967295;scope=local;mode=route;why=dispatch' and sp.logs[#sp.logs][2] == 2,
+    'native refusal mid-retry falls back to the route snap')
+check(forced(sp, false) == 1 and sp:count('SetSneakRoute') == 1, 'warp force realize released before the route snap')
+sp:tick(); sp:tick(); check(sp.logs[#sp.logs][3]:find(';mode=route;come=0;', 1, true), 'route fallback final')
+sp = warpFixture({{r = -1, h = 0}})
+sp:send('spawn_enemy here')
+for _ = 1, 149 do sp:tick() end
+check(sp:count('SetSneakRoute') == 0, 'retry budget not yet spent')
+sp:tick(); check(sp.logs[#sp.logs][3]:find(';mode=route;why=realize_timeout', 1, true) and #sp.warps == 151, '150-update realize budget')
+sp = warpFixture({{r = 0, h = 1}}); sp.vehicle = {[5] = 42}
+check(sp:send('spawn_enemy here')[3]:find('ent=2147483648', 1, true) and sp.warps[1][2] == 6, 'riding guard skipped')
+sp = warpFixture({{r = 0, h = 1}}); sp.vehicle = {[5] = 65535}
+check(sp:send('spawn_enemy here')[3]:find('ent=4294967295', 1, true), 'NULL_ID vehicle means on foot')
+sp = warpFixture({{r = 0, h = 1}}); sp.env.TppGameObject.NPC_STATE_DISABLE = 9; sp.status = {[5] = 9}
+check(sp:send('spawn_enemy here')[3]:find('ent=2147483648', 1, true), 'disabled guard skipped')
+sp = warpFixture({{r = 0, h = 1}}); sp.positions[5] = {26, 20, 30}
+check(sp:send('spawn_enemy here')[3]:find('ent=4294967295', 1, true), 'a guard 16 m away is eligible')
+sp = warpFixture({{r = 0, h = 1}})
+local rawLoad = sp.env.loadstring
+sp.env.loadstring = function(text)
+    if text:find('MGS_COOP_DEBUG_WARP_V1', 1, true) then return function() return 'MGS_COOP_DEBUG_WARP_V1' end end
+    return rawLoad(text)
+end
+check(sp:send('spawn_enemy here')[3]:find(';mode=route;why=native_unavailable', 1, true), 'old loader (literal receipt) falls back')
+sp = warpFixture({{r = -1, h = 0}}); sp:send('spawn_enemy here'); sp.life[5] = 3; sp:tick()
+check(sp.logs[#sp.logs][3] == 'spawn_terminal_unknown' and forced(sp, false) == 1 and sp.D.pending == nil, 'guard died while waiting')
+sp = warpFixture({{r = 0, h = 1}}); for i = 1, 7 do sp.D.enemy.used['old_' .. i] = true end
+sp:send('spawn_enemy here'); sp:tick(); sp:tick()
+check(sp:send('spawn_enemy here')[3] == 'spawn_pool_limit_8' and #sp.warps == 1, 'eight per mission includes warped guards')
 -- enemy_list and enemy <op>
 f = fixture(); f.life[6] = 1
 check(f:send('enemy_list 50')[3] == 'nearby=2;radius=50', 'nearby list result')

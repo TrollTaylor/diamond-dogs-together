@@ -542,10 +542,11 @@ void Enemies(const Snapshot& s) noexcept {
         ImGui::TextColored(kGreen, "Spawn near you");
         Row("spawn_enemy_here", s, {"Spawn enemy here", 260.0f, ImGui::GetFrameHeight() * 1.8f, true});
         ImGui::SameLine();
-        ImGui::Checkbox("He comes at me (hostile, unverified)", &ui.spawn_come);
-        Wrapped("Moves an existing living guard onto the nearest authored patrol route (point 0). Scripts cannot place soldiers at "
-                "coordinates, so he may appear 5-60 m away. Host only: the guest's copy does not move. At most 8 per mission. "
-                "He is armed: enable Auto-heal or keep Kill/Sleep ready.");
+        ImGui::Checkbox("He comes at me (hostile)", &ui.spawn_come);
+        Wrapped("Moves the nearest living guard 5 m in front of you, facing you (lab.ini debug_soldier_warp=1, engine "
+                "set-transform message). Unchecked he ignores you; checked he attacks. If the native placement is off or "
+                "refused he is snapped to the nearest patrol route instead (5-60 m). Host only: the guest's copy does not "
+                "move. At most 8 per mission. He is armed: enable Auto-heal or keep Kill/Sleep ready.");
         Rows({"spawn_enemy_closest", "enemy_goto_spawn"}, s);
         if (s.enemy_spawn_valid) ImGui::Text("Last guard %u at X %.1f Y %.1f Z %.1f m", s.enemy_spawn_hash,
             s.enemy_spawn_pos_mm[0] * 0.001, s.enemy_spawn_pos_mm[1] * 0.001, s.enemy_spawn_pos_mm[2] * 0.001);

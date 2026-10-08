@@ -144,7 +144,23 @@ int main() {
     char oversized[300]{}; std::memset(oversized, 'a', sizeof(oversized));
     Check(!debug::EnemyReceipt(oversized, sizeof(oversized)), "oversize receipt rejected before parsing");
     Check(!debug::EnemyReceipt(nullptr, 0), "null receipt rejected");
+    // soldier_warp authorization: only a popped host "spawn_enemy here" of this generation.
+    debug::Configure(true, true, true); debug::BeginMission(30010);
+    const auto here_queued = debug::QueueCommandId("spawn_enemy here come");
+    Check(here_queued && !debug::DispatchedCommand(here_queued, "spawn_enemy here"), "queued (unpopped) spawn cannot authorize a warp");
+    Check(debug::Pop(command) && command.id == here_queued, "spawn here dispatched");
+    Check(debug::DispatchedCommand(command.id, "spawn_enemy here"), "dispatched spawn here authorizes the warp receipt");
+    Check(!debug::DispatchedCommand(command.id, "spawn_enemy here co") && !debug::DispatchedCommand(command.id + 1, "spawn_enemy here") &&
+          !debug::DispatchedCommand(0, "spawn_enemy here") && !debug::DispatchedCommand(command.id, "") &&
+          !debug::DispatchedCommand(command.id, nullptr), "prefix is a whole word and the id is exact");
+    const auto here_id = command.id;
+    Check(debug::QueueCommand("spawn_enemy closest") && debug::Pop(command), "closest dispatched");
+    Check(!debug::DispatchedCommand(command.id, "spawn_enemy here"), "other spawn modes cannot warp");
+    debug::BeginMission(30020);
+    Check(!debug::DispatchedCommand(here_id, "spawn_enemy here"), "travel invalidates the warp authorization");
     debug::Configure(true, false, true); debug::BeginMission(30010);
+    Check(debug::QueueCommand("spawn_enemy here") && debug::Pop(command), "guest spawn here dispatched for its Lua refusal");
+    Check(!debug::DispatchedCommand(command.id, "spawn_enemy here"), "guest cannot authorize a warp");
     Check(debug::QueueCommand("spawn_enemy closest") && debug::Pop(command), "guest queues action for explicit Lua refusal");
     Check(!receipt(command.id, "spawned 1 2 3 1"), "guest cannot publish local guard mutation");
     debug::EndMission(); Check(!receipt(command.id, "clear 30010"), "termination rejects all metadata");

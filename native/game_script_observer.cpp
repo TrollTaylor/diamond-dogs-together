@@ -49,6 +49,7 @@
 #include "mgscoop/world_link.hpp"
 #include "mgscoop/world_receipt.hpp"
 #include "mgscoop/debug_menu.hpp"
+#include "mgscoop/soldier_warp.hpp"
 #include "mgscoop/worker_debug.hpp"
 #include <charconv>
 #include <cmath>
@@ -627,6 +628,10 @@ bool world_on = false;
 thread_local bool world_quiet = false;
 thread_local bool debug_quiet = false;
 thread_local char debug_reply[400]{};
+// Debug "Spawn enemy here" native placement (soldier_warp.cpp, lab.ini
+// debug_soldier_warp=1): the contract is verified once at startup.
+bool soldier_warp_ready = false;
+unsigned soldier_warp_census = 0;  // census lines logged by this process (bounded)
 // Crash-probe context flags: bit0 input window armed, bit1 DM patch applied.
 std::uint32_t PartnerCtxFlags() noexcept {
     return (partner_driver.mission.input_armed ? 1u : 0u) | (partner_driver.mission.dm_patched ? 2u : 0u);
@@ -1192,6 +1197,72 @@ void PublishDebugSnapshot() noexcept {
     debug::Publish(snapshot);
 }
 
+// WARP_V1 "<cmd> <goId> <x_mm> <y_mm> <z_mm> <yaw_mrad>" from lua/coop/debug_spawn.lua.
+// Reply: {r=<out>,h=<0|1>,leaf="pinned|engine"} or {refused="<reason>"}.
+const char* SoldierWarpReceipt(const char* text, std::size_t size) noexcept {
+    namespace debug = mgscoop::debug_menu;
+    namespace sw = mgscoop::soldier_warp;
+    const auto refuse = [](const char* why) noexcept {
+        StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {refused=\"%s\"}", why);
+        return static_cast<const char*>(debug_reply);
+    };
+    std::int64_t field[6]{};
+    const char* cursor = text;
+    const char* const end = text + size;
+    for (unsigned i = 0; i < 6; ++i) {
+        if (i && (cursor >= end || *cursor++ != ' ')) return refuse("args");
+        const auto parsed = std::from_chars(cursor, end, field[i]);
+        if (parsed.ec != std::errc{} || parsed.ptr == cursor) return refuse("args");
+        cursor = parsed.ptr;
+    }
+    if (cursor != end || field[0] <= 0 || field[0] > 0xffffffffll || field[1] < 0 || field[1] > 0xffff ||
+        field[5] < -8000 || field[5] > 8000) return refuse("args");
+    for (unsigned i = 2; i < 5; ++i) if (field[i] < -100000000 || field[i] > 100000000) return refuse("args");
+    const auto& labc = mgscoop::GetLabConfig();
+    if (!labc.debug_soldier_warp) return refuse("disabled");
+    if (!soldier_warp_ready || !game_base) return refuse("contract");
+    unsigned short mission = 0;
+    if (labc.role == mgscoop::LabRole::guest || labc.mode != mgscoop::LabMode::lab) return refuse("host");
+    if (mission_terminating || !ReadMission(mission) || mission != partner_mission || !mgscoop::SupportsPartnerBody(mission))
+        return refuse("mission");
+    const auto id = static_cast<std::uint32_t>(field[0]);
+    if (!debug::DispatchedCommand(id, "spawn_enemy here")) return refuse("command");
+    const auto snapshot = debug::GetSnapshot();
+    if (!snapshot.host || !snapshot.pose_valid) return refuse("pose");
+    sw::Request request{};
+    request.go_id = static_cast<std::uint32_t>(field[1]);
+    for (unsigned i = 0; i < 3; ++i) {
+        request.pos[i] = static_cast<float>(field[2 + i]) * 0.001f;
+        request.player[i] = snapshot.player_pos[i];
+    }
+    request.yaw = static_cast<float>(field[5]) * 0.001f;
+    const auto base = reinterpret_cast<std::uintptr_t>(game_base);
+    const auto result = sw::Warp(base, game_span, request);
+    // The Lua side retries every update while the guard realizes: log changes only.
+    static std::uint32_t last_id = 0, last_go = 0;
+    static std::int32_t last_out = 0;
+    static unsigned last_handled = 0;
+    static const char* last_refusal = nullptr;  // string literals from soldier_warp
+    static bool last_pinned = false;
+    if (id != last_id || request.go_id != last_go || result.out != last_out || result.handled != last_handled ||
+        result.refusal != last_refusal || result.chain.pinned != last_pinned) {
+        last_id = id; last_go = request.go_id; last_out = result.out; last_handled = result.handled;
+        last_refusal = result.refusal; last_pinned = result.chain.pinned;
+        if (soldier_warp_census < 24) {
+            ++soldier_warp_census;
+            char line[512]{};
+            if (sw::FormatCensus(base, game_span, request.go_id, result, line, sizeof(line))) Log(line);
+        }
+        LogFormat("debug_menu=soldier_warp; id=%u; go=%u; r=%d; h=%u; leaf=%s; refused=%s\r\n", id, request.go_id, result.out,
+                  unsigned(result.handled), result.chain.pinned ? "pinned" : "engine", result.refusal ? result.refusal : "none");
+    }
+    const bool unrealized = result.refusal && std::strcmp(result.refusal, "unrealized") == 0;
+    if (result.refusal && !unrealized) return refuse(result.refusal);
+    StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {r=%d,h=%u,leaf=\"%s\"}", unrealized ? -1 : result.out,
+                     unsigned(result.handled), result.chain.pinned ? "pinned" : "engine");
+    return debug_reply;
+}
+
 bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                         mgscoop::script_bridge::Replacement& replacement) noexcept {
     namespace debug = mgscoop::debug_menu;
@@ -1203,6 +1274,7 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
     constexpr char state[] = "return 'MGS_COOP_DEBUG_STATE_V1' -- ";
     constexpr char partner_control[] = "return 'MGS_COOP_DEBUG_PARTNER_V1' -- ";
     constexpr char enemy[] = "return 'MGS_COOP_DEBUG_ENEMY_V1' -- ";
+    constexpr char warp[] = "return 'MGS_COOP_DEBUG_WARP_V1' -- ";
     const bool is_command = size == sizeof(command) - 1 && std::memcmp(buffer, command, size) == 0;
     // While Lua has a pending action it polls: telemetry and the worker
     // stay live, but nothing is popped; commands wait in the bounded queue.
@@ -1211,7 +1283,8 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
     const bool is_state = size >= sizeof(state) - 1 && std::memcmp(buffer, state, sizeof(state) - 1) == 0;
     const bool is_partner = size >= sizeof(partner_control) - 1 && std::memcmp(buffer, partner_control, sizeof(partner_control) - 1) == 0;
     const bool is_enemy = size >= sizeof(enemy) - 1 && std::memcmp(buffer, enemy, sizeof(enemy) - 1) == 0;
-    if (!is_command && !is_poll && !is_log && !is_state && !is_partner && !is_enemy) return false;
+    const bool is_warp = size >= sizeof(warp) - 1 && std::memcmp(buffer, warp, sizeof(warp) - 1) == 0;
+    if (!is_command && !is_poll && !is_log && !is_state && !is_partner && !is_enemy && !is_warp) return false;
     if (!OnRuntimeThread() && !(is_log || is_state ? OnTerminationThread() : false)) return false;
     const char* reply = "return nil";
     if (is_poll) {
@@ -1237,6 +1310,9 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             reply = debug_reply;
             LogFormat("debug_menu=dispatch; id=%u; text=%s; generation=%u\r\n", pending.id, pending.text, pending.generation);
         }
+    } else if (is_warp) {
+        // Lua owner thread only (checked above); every other gate is in the handler.
+        reply = SoldierWarpReceipt(buffer + sizeof(warp) - 1, size - (sizeof(warp) - 1));
     } else if (is_enemy) {
         unsigned short mission = 0;
         const bool accepted = !mission_terminating && ReadMission(mission) && mission == partner_mission &&
@@ -2435,6 +2511,14 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         mgscoop::PartnerAsetName(partner_driver.settings.aset), mgscoop::PartnerResetName(partner_driver.settings.reset),
                         mgscoop::PartnerLookName(partner_driver.settings.look), partner_addresses.t_vtable ? 1u : 0u);
                     if (labc.crash_probe) mgscoop::crash_probe::Install(base, span, Log);
+                    if (labc.debug_soldier_warp) {
+                        // Read-only byte gate; nothing is called until a host "spawn_enemy here".
+                        std::uintptr_t warp_mismatch = 0;
+                        const char* warp_reason = mgscoop::soldier_warp::Verify(reinterpret_cast<std::uintptr_t>(base), span, warp_mismatch);
+                        soldier_warp_ready = warp_reason == nullptr;
+                        if (soldier_warp_ready) Log("soldier_warp=ready; key=debug_soldier_warp; call=manager_vt38_send; hop=runtime_census\r\n");
+                        else LogFormat("soldier_warp=refused; reason=%s; rva=0x%llx\r\n", warp_reason, static_cast<unsigned long long>(warp_mismatch));
+                    }
                     if (labc.net) {
                         ConfigureWorld(labc, directory);
                         mgscoop::partner_net::Config net{labc.net_listen_port, labc.net_peer_port, labc.partner_rate_hz,

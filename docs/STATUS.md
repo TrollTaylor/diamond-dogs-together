@@ -1,5 +1,37 @@
 # Development status
 
+## October 8, 2026: native "Spawn enemy here" (fixture-tested, runtime unverified)
+
+**Spawn enemy here** now moves the nearest unused living, enabled, on-foot guard
+(15-500 m) 5 m in front of the host, facing him. It sends the engine's own
+set-transform message `0x287158b07327` to the soldier's GameObjectId through the
+GameObject manager's SendCommand (`[0x2305e70+0x38]` = `0xbf3a80` on the static
+object `0x2c38008`), the same call the player carry code makes at `0x1055b7a`.
+The soldier handler `0x1360f90` then calls `T->SetPose`/`SetRot`, the slots the
+partner transform already uses. The feature is default off behind lab.ini
+`debug_soldier_warp=1`, lab only (play forces it off, bit `0x10000`).
+`tools/generate_soldier_warp_contract.py` pins 19 sites, 10 vtable slots and the
+unwind entries of the call path, and the loader refuses on any byte difference.
+Without "He comes at me" the guard gets `SetEnableRestrictNotice` (not hostile);
+with it he gets `SetDiscoveryPlayer` after landing. An unrealized guard is
+force-realized and the message is retried for up to 150 updates. Any native
+refusal, an older loader or a timeout falls back to the previous route snap
+(`mode=route;why=..`). The 8-per-mission cap covers both modes; the guest is
+unaffected beyond the existing world sync.
+
+One dispatch hop cannot be pinned statically: the per-type handle object and its
+vtable +0x10 are built by protected code. Each attempt resolves the chain
+read-only, logs `soldier_warp_census` lines and reports `leaf=pinned` only for an
+argument-preserving forwarder to a soldier subobject whose +0xa8 slot is the
+verified handler. In that case it first mirrors the handler's own index, realized
+and stance checks. Otherwise it uses the engine's dispatch (`leaf=engine`). The
+fixture `soldier_warp_tests` executes the real SendCommand, GetHandle, registry
+and dispatch bytes against recorders. The hidden scenario
+`tools/worker/scenarios/debug-menu.txt` (new header `labsetting
+debug_soldier_warp=1`) expects `mode=warp` with `d` of 10 m or less. Nothing has
+run in the game yet. Open: realize latency of far guards, patrol AI or navmesh
+correction moving the guard afterwards, and host-local positions.
+
 ## October 7, 2026: partner facing while moving (fixture-tested, runtime unverified)
 
 The sender published `vars.playerRotY`, which is the control direction. Hidden run

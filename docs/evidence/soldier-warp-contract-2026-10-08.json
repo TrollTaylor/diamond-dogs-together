@@ -1,0 +1,207 @@
+{
+  "executable": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgsvtpp.exe",
+  "executable_sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+  "generated_by": "tools/generate_soldier_warp_contract.py",
+  "sites": [
+    {
+      "rva": "0xbf3920",
+      "size": 85,
+      "sha256": "625bec102294dc6c8793f2d9f3bc2dc1863810f5ff6dcd0a10cc08d7202af51b",
+      "description": "GameObject manager getter: static object 0x2c38008, guard 0x2c38010 bit 0, vtable 0x2305e70"
+    },
+    {
+      "rva": "0xbf3a80",
+      "size": 88,
+      "sha256": "a6c64cef13a0bc9cc9f4b224646c382c4e17deac181b4c2ad20f226797b9155e",
+      "description": "manager vtable +0x38 SendCommand(this, int* out, u16 id, msg*): missing handle -> *out = -1"
+    },
+    {
+      "rva": "0xbf4200",
+      "size": 106,
+      "sha256": "4ecdacae3cc941965ab52d3ed514e3db7ffb601cbe76b7c64edb4ec8ca49ebf2",
+      "description": "GetHandle(out, id): registry vt+0x20 type object, then idx = id & 0x1ff"
+    },
+    {
+      "rva": "0xbf4270",
+      "size": 109,
+      "sha256": "6049a9bbd147f90c6b6cf7d1d45516fc23e7467decb7fb2e68460f42137fca92",
+      "description": "handle = {*(*(type+8)+0x28), idx} when idx < type->vt[0x40]()->count"
+    },
+    {
+      "rva": "0xbf39d0",
+      "size": 45,
+      "sha256": "9db2278d71969537d5d6f6e3299d5a564c6d7e379108820ba6c4f9f07bcd4928",
+      "description": "handle dispatch: handle.obj->vt[0x10](obj, out, idx, msg)"
+    },
+    {
+      "rva": "0xbf9a10",
+      "size": 8,
+      "sha256": "0eb5b43389c356e1e8636cc907f5864472bb505c38fe604a3c8681722dfadf2f",
+      "description": "registry getter: *(0x2c389a0)"
+    },
+    {
+      "rva": "0xbf99e0",
+      "size": 34,
+      "sha256": "76eadda6f658a477094e637c28f73db48a3b809cac9bd09e310af883f76c0a13",
+      "description": "registry vt+0x20: type object = *(*(reg[0x30 + 8*(id>>9)]+8)+0x20)"
+    },
+    {
+      "rva": "0xbf8a69",
+      "size": 10,
+      "sha256": "f20f4cf2c5238b740ca20c5c300dd15503686524d1e9dba184bbae33d9026ca3",
+      "description": "registry constructor stores its final vtable 0x23073c0"
+    },
+    {
+      "rva": "0xbf9095",
+      "size": 7,
+      "sha256": "8704a644cd263ff8909952b48f64068420f2c9800cf801462247404324419c0f",
+      "description": "registry creation publishes *(0x2c389a0)"
+    },
+    {
+      "rva": "0xc15500",
+      "size": 14,
+      "sha256": "89824ec3857ecc23b6a6161d1b578eebdb8ce6257c2ca8acd398782492e3eb8f",
+      "description": "argument-preserving forwarder to inner->vt[0xa8] (the shape soldier_warp accepts for a pinned hop)"
+    },
+    {
+      "rva": "0x1360f90",
+      "size": 251,
+      "sha256": "e78af979376f5d81ab376d7bdd93f1a36d052686ffd7e7c2d0cc52924632c434",
+      "description": "soldier native message handler (this, int* out, u32 idx, msg*): idx < this+8, hash 0x287158b07327 -> 0x13615f5"
+    },
+    {
+      "rva": "0x13615f5",
+      "size": 261,
+      "sha256": "87ec6dbf2c40e15a8ccb748ec1f5f7c05706d7e4280fa70564e07543c7c0eca2",
+      "description": "set-transform branch: realized bit idx of *(*(this+0x18)+8), T = CS->vt[0x388], pos.y += T[+0x160], stance nibble rec[+0x34]&0xf (1-2 extra 0xa6 message, 3-4 rotated pose)"
+    },
+    {
+      "rva": "0x13619be",
+      "size": 52,
+      "sha256": "1c61655679168df49030c16f74efbfb7e35b624f2b66411f8f907f1e833d04b7",
+      "description": "set-transform tail: T->vt[0x68](pos, quat), T->vt[0x70](quat), msg+0x33 = 1, *out = 0"
+    },
+    {
+      "rva": "0x1364e5b",
+      "size": 7,
+      "sha256": "ed0f91d585b0bf58775a3bcc36bc4e422fdcd002b517d52c66760da7874d692c",
+      "description": "handler refusal: *out = -1 (unrealized or no character)"
+    },
+    {
+      "rva": "0x105577d",
+      "size": 23,
+      "sha256": "fdf548d12242802d29b278aeb0d1cfaa37962e5b5c495ab6daa64e0f461590ff",
+      "description": "precedent: player carry code takes the manager from context+0x60"
+    },
+    {
+      "rva": "0xbf37da",
+      "size": 9,
+      "sha256": "ab63f2e00958149a8995269d50f1135f18762ecd0874862649f7815008fb5be8",
+      "description": "precedent: context+0x60 is the static manager returned by 0xbf3920"
+    },
+    {
+      "rva": "0x10557a8",
+      "size": 10,
+      "sha256": "0437d4c09589c6c1dbcb7a529a641c2b90b0e265d7fa791a82d63874f22af892",
+      "description": "precedent: player carry code builds message 0x287158b07327"
+    },
+    {
+      "rva": "0x1055b66",
+      "size": 23,
+      "sha256": "387c60448d30dd5b87104f6b7c132c35ae5e3179abeb1deb71a4702f60faca7a",
+      "description": "precedent: the carry code sends it through manager vtable +0x38"
+    },
+    {
+      "rva": "0x1055b84",
+      "size": 4,
+      "sha256": "4a5c01df4d372abe13f958dfd9caa879d6ffa8e246eb55cb354f48c34a3f5120",
+      "description": "precedent: the carry code reads the handled flag msg+0x33 back"
+    }
+  ],
+  "slots": [
+    {
+      "rva": "0x2305e70",
+      "target": "0xbf3800",
+      "description": "manager vtable +0x00"
+    },
+    {
+      "rva": "0x2305e78",
+      "target": "0xbf38c0",
+      "description": "manager vtable +0x08 = GetHandle wrapper (0xbf4200)"
+    },
+    {
+      "rva": "0x2305ea8",
+      "target": "0xbf3a80",
+      "description": "manager vtable +0x38 = SendCommand"
+    },
+    {
+      "rva": "0x23073e0",
+      "target": "0xbf99e0",
+      "description": "registry vtable +0x20 = type-object lookup"
+    },
+    {
+      "rva": "0x23e7998",
+      "target": "0x1360f90",
+      "description": "soldier subobject vtable A +0xa8 = native message handler"
+    },
+    {
+      "rva": "0x23e8108",
+      "target": "0x1360f90",
+      "description": "soldier subobject vtable B +0xa8 = native message handler"
+    },
+    {
+      "rva": "0x23e79c0",
+      "target": "0x1356170",
+      "description": "soldier subobject vtable A +0xd0 = Lua command dispatcher"
+    },
+    {
+      "rva": "0x23e8130",
+      "target": "0x1356170",
+      "description": "soldier subobject vtable B +0xd0 = Lua command dispatcher"
+    },
+    {
+      "rva": "0x230c0e0",
+      "target": "0xc15500",
+      "description": "wrapper interface vtable +0xa0 = 0xc15500 (static shape reference only)"
+    },
+    {
+      "rva": "0x230c1e0",
+      "target": "0xc15500",
+      "description": "wrapper interface vtable +0xa0 = 0xc15500 (static shape reference only)"
+    }
+  ],
+  "unwind_entries": [
+    {
+      "begin": "0xbf3a80",
+      "end": "0xbf3ad8"
+    },
+    {
+      "begin": "0xbf4200",
+      "end": "0xbf426a"
+    },
+    {
+      "begin": "0xbf4270",
+      "end": "0xbf42dd"
+    },
+    {
+      "begin": "0xbf39d0",
+      "end": "0xbf3a0c"
+    },
+    {
+      "begin": "0x1360f90",
+      "end": "0x1364efc"
+    }
+  ],
+  "call": {
+    "target": "0xbf3a80 via [0x2305e70+0x38] on the static object 0x2c38008",
+    "arguments": "rcx=manager, rdx=int out[4], r8=u16 GameObjectId, r9=0x40-byte 16-aligned message",
+    "precedent": "0x1055730 (player carry) builds the same hash and calls [mgr]+0x38 at 0x1055b7a, then reads msg+0x33"
+  },
+  "open_hop": "The per-type handle object *(*(type+8)+0x28) and its vtable +0x10 are created by protected code and cannot be pinned statically. soldier_warp resolves the chain read-only at runtime, logs a census line and reports leaf=pinned only when the hop is the handler itself or an argument-preserving forwarder to a soldier subobject whose vtable +0xa8 is 0x1360f90.",
+  "limitations": [
+    "Static analysis only; no game code was executed.",
+    "The open hop above is proven only by a runtime census and handled=1.",
+    "Positions are host-local; guards may walk back to their route or be moved by navmesh correction.",
+    "Thread: the engine sends this message from player update; this mod sends it from the Lua owner thread (the same thread that already moves the partner body through the same transform slots)."
+  ]
+}

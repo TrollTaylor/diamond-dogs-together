@@ -291,6 +291,7 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
         else if (Equals(key, "crash_probe")) ok = ParseBool(value, result.crash_probe);
         else if (Equals(key, "world")) ok = ParseRange(value, 0, kWorldLevelMax, result.world);
         else if (Equals(key, "world_probe")) ok = ParseWorldProbe(value.data, value.size, result.world_probe);
+        else if (Equals(key, "debug_soldier_warp")) ok = ParseBool(value, result.debug_soldier_warp);
         else { ++result.unknown_keys; return; }
         if (!ok) ++result.invalid_values;
     });
@@ -367,6 +368,8 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
             if (refuse(*value != 0, kPlayRefusedImpairment)) *value = 0;
         // World-sync probes are lab experiments; world itself is allowed in play.
         if (refuse(result.world_probe != WorldProbe::none, kPlayRefusedWorldProbe)) result.world_probe = WorldProbe::none;
+        // The native debug soldier placement stays a lab experiment until qualified.
+        if (refuse(result.debug_soldier_warp, kPlayRefusedDebugSoldierWarp)) result.debug_soldier_warp = false;
     }
     // A loopback bind talks to 127.0.0.1 only.
     if (result.net_bind_loopback && peer_addr_valid && !IsLoopbackAddress(result.net_peer_address)) {

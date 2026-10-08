@@ -275,6 +275,9 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_recon_runaway'; Json = 'recon_runaway'; Kind = 'enum'; Values = @('pin', 'disarm', 'off') },
     @{ Key = 'partner_input_wrap'; Json = 'input_wrap'; Kind = 'enum'; Values = @('off', 'census', 'window') },
     @{ Key = 'crash_probe'; Json = 'crash_probe'; Kind = 'bool' },
+    # Debug "Spawn enemy here" native placement (docs/debug-menu.md): lab only,
+    # default off and written only when set.
+    @{ Key = 'debug_soldier_warp'; Json = 'debug_soldier_warp'; Kind = 'bool' },
     @{ Key = 'net_latency_ms'; Json = 'net_latency_ms'; Kind = 'int'; Min = 0; Max = 2000 },
     @{ Key = 'net_jitter_ms'; Json = 'net_jitter_ms'; Kind = 'int'; Min = 0; Max = 1000 },
     @{ Key = 'net_loss_permille'; Json = 'net_loss_permille'; Kind = 'int'; Min = 0; Max = 1000 },
