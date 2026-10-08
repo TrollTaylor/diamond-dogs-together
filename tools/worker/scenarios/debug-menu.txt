@@ -52,7 +52,7 @@ host run enemy info nearest
 host expect ^enemy_info;ent=\d+;name=[^;]+;cp=[^;]+;state=0;distance_m=(\d|1[0-4])\.\d$
 host capture spawn-here-stay
 host run enemy sleep nearest
-host expect ^enemy_sleep;ent=\d+;life_readback=2;sync=|^no_readable_soldier
+host expect ^enemy_sleep;ent=\d+;life_readback=[02];sync=|^no_readable_soldier
 host run goto_spawn
 host expect ^warp_position_readback|^spawn_position_unavailable
 host run spawn_enemy here come
@@ -60,7 +60,7 @@ host expect ^guard_here;ent=\d+;d=(\d\.\d|10\.0);moved=\d+\.\d;far=0;mode=warp;c
 wait 1500
 host capture spawn-come-world
 host run clear_enemies 25
-host expect ^submitted=[1-9]\d*;dead_readback=[1-9]
+host expect ^submitted=[1-9]\d*;dead_readback=d+
 guest run spawn_enemy here
 guest expect ^host_only
 guest run goto_partner

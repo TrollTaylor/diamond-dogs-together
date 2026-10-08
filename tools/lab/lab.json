@@ -52,6 +52,7 @@
     "policy_relax": 0,
     "anim_probe": 0,
     "crash_probe": 1,
+    "debug_soldier_warp": 1,
     "net": 1
   },
   "wanSim": {
