@@ -118,8 +118,9 @@ is generated from it.
 
 Status (2026-10-08, branch `wp/native-weapons`): implemented, fixture-tested,
 **not yet run in the game**. Static analysis of `mgsvtpp.exe` 1.0.15.4 only;
-`tools/generate_partner_contract.py --check` pins every site below (315 code
-sites, 87 vtable slots, plus the reachability and reference assertions).
+`tools/generate_partner_contract.py --check` pins every site below (323 code
+sites, 87 vtable slots, plus the reachability, owner-stamp and reference
+assertions).
 
 ### Fire visuals (`partner_native_fire=visual`)
 
@@ -149,7 +150,20 @@ sites, 87 vtable slots, plus the reachability and reference assertions).
   `ids[1]`) and returns 0, the value RequestBullet itself returns when its slot
   allocator yields nothing (`0xD32CB4`); every other request goes to
   `0xD32C60` unchanged. Any thread (atomics only). Installed lazily by the
-  driver tick once per process, never removed.
+  driver tick once per process, never removed, and never disarmed once armed
+  (a shot request of instance 1 queued while FIRE was allowed can reach
+  RequestBullet after FIRE is masked again; instance 1 fires only under the
+  native drive). The driver refuses an owner equal to the local instance's id
+  (`ids[0]`), so the local player's shots are never dropped. Verified callers:
+  RequestBullet uses only `rcx`/`rdx`, the instruction after each of the
+  three call sites in `0x1302F50` does not read `rax`, and 0 is a value
+  RequestBullet itself returns. The checker asserts that the shot queue
+  (`call [rax+0x138]` with a request in `r8`) has exactly four owner stamps:
+  the player shoot (`0x1041225`, `id & 0x1FF`) and three typed builders,
+  the soldier ones `0x13A190E` and `0x1453385` (`0x400 | index`, type 2) and
+  `0xEDAC19` (`type << 9 | index`, the type word of its system at
+  `[this+0x70]+0x168`). Only a player-type shooter with index 1, that is
+  instance 1, carries owner 1; no soldier shot is ever dropped.
 - **Kept on the viewer's machine:** fire animation, recoil, muzzle and "Shoot"
   effects, gunshot audio, casings, the prone ground-dust effect. **Removed:**
   projectile, hit-scan, damage, impacts and tracers.
@@ -161,7 +175,12 @@ sites, 87 vtable slots, plus the reachability and reference assertions).
   an unreadable tick must not toggle the mask, whose change bumps the Arm gen
   and resets instance 1's private pad masks).
   Otherwise FIRE is masked and the reason is logged once per change
-  (`partner_fire=masked; reason=off|gun_off|unavailable|not_ready|owner|bytes|slot|changed|protect|alignment|disabled|hook_lost|disarmed|gun_read|weapon`).
+  (`partner_fire=masked; reason=off|gun_off|unavailable|not_ready|owner|gun_read|weapon|bytes|slot|changed|protect|alignment|disabled|hook_lost|disarmed`).
+  The filter installs only after body 1 has shown a gun class (a body that
+  cannot fire never gets the patch). With `partner_drive=native` FIRE is also
+  stripped from the mask whenever the native drive is not active (the
+  fallback, or a legacy input lever a trigger armed), so the gun stage's mask
+  never reaches instance 1 outside this gate.
 - **Not covered (open risks):** projectile weapons (row type 3 go through
   `gm+0x210`, not filtered; body 1 only ever carries stock46, a bullet weapon)
   and the **unsuppressed shot noise** `{pos, 0x145, owner}` that `0x1302F50`
@@ -195,7 +214,15 @@ sites, 87 vtable slots, plus the reachability and reference assertions).
   into the live magazine field (`0x25E` or `0x25C`, as the ammo setter
   `0x1058ABF` does) only when it differs: full stays full (no reload), empty
   stays empty, anything between maps into 1..cap-1 (rounded up), and a FIRE
-  edge never leaves 0. A fault disables it until MissionStart.
+  edge leaves 1 instead of 0 only when the remote fired a round (its
+  previous magazine was loaded: the press spent the last round in the same
+  sample); a FIRE press on an already empty remote is a dry fire and shows no
+  shot. A fault disables it until MissionStart, and so does an ammo leak (a
+  drain whose job changed the viewer's weapon/ammo vars, see `leak` below:
+  `partner_input=ammo_leak; mag_mirror=disabled`, `mag.leak_off`). Known limit: after that last
+  round the partner keeps 1 round until the remote's magazine changes, so an
+  automatic partner weapon held down keeps firing visual rounds until the
+  release (the scenario's firehold section records stock46's behaviour).
 - The ammo experiment (`MGS_LOCAL_STOCK46_AMMO_TEST`) is superseded by the
   mirror; it stays research-only and is not used by the weapons scenario.
 
@@ -229,9 +256,14 @@ state.json `native` gains: `gun` (`fields_ok`, `cap`, `mag`, `stock`,
 `refused`, `suppressed`, `passed`, `passed_player`, `owner_disarmed`,
 `suppressed_per_s`, `census`), `mag` (`remote`, `remote_cap`, `local`,
 `local_cap`, `writes`, `refused`, `fire_edges`, `reload_edges`, `cap`,
-`written`, `last`, `faulted`), `leak` (`shot_count` = the viewer's
+`written`, `last`, `faulted`, `leak_off`), `leak` (`shot_count` = the viewer's
 `vars.playerShootCountInMission`, `shot_leaks` = drains whose job changed it,
-`reload_drains`) and `equip` (`tx_rev`, `tx_base`, `tx_alias`, `tables_ok`,
+`reload_drains`, `ammo_vars` = a digest of the viewer's weapon/ammo vars block
+`vars+0x548..+0x670` (14 contiguous registrations, asserted by the checker),
+`ammo_leaks` = drains whose job changed that block: instance 1's reload
+completion runs the ammo setter `0x10589E0`, whose inventory component calls
+are not statically attributed to an instance, so this is the runtime proof
+that the partner's reload never touches the viewer's inventory) and `equip` (`tx_rev`, `tx_base`, `tx_alias`, `tables_ok`,
 `rx_base`, `rx_alias`, `apply`); the ring gains `mag`. Log lines:
 `partner_fire=installed|refused`, `partner_fire=live|masked; reason=..`, the
 1 Hz `partner_fire; suppressed=..; ...` while counts change,

@@ -6,7 +6,8 @@
 # captures record the capturing role's state.json "native" in captures.jsonl.
 # Evidence (receiver's "native" unless noted):
 #  static:  python tools/generate_partner_contract.py --check passes; both logs: partner_code_gate=ok, then
-#           partner_fire=installed; slots=0x2337de8,0x2337d18; target=0xd32c60 and partner_fire=live; reason=ok; owner=1.
+#           partner_fire=installed; slots=0x2337de8,0x2337d18; target=0xd32c60 and partner_fire=live; reason=ok; owner=1
+#           (both once body 1 shows a gun class; before that partner_fire=masked; reason=weapon or gun_read).
 #  aim:     gun.bit18 1 and node_active within 300 ms, aim_match; fire.live/armed/effective true, fire.refused "none".
 #  fire1, firehold, crouch-fire, g-fire*: fire.suppressed grows by >= 1 per remote shot (fire.suppressed_per_s > 0 while
 #           held), fire.owner_disarmed 0; ring gun3c0 shows the fire bits; frames show muzzle flash and recoil on body 1 and
@@ -14,7 +15,10 @@
 #           input.cam_cdeg_host steady (no camera kick); the 1 Hz partner_fire lines in the receiver's log.
 #  mirror:  mag.remote/remote_cap follow the shooter's magazine; mag.writes grows with mag.fire_edges and remote changes;
 #           gun.mag <= gun.cap; mag.last "none"; mag.faulted false.
-#  aim-reload: gun.b20 1 within 300 ms of the R edge (mag.reload_edges and leak.reload_drains grow); a reload act in the
+#  aim-reload: leak.ammo_leaks stays 0 through the partner's reload (the ammo setter 0x10589E0 it runs must not touch the
+#           receiver's weapon/ammo vars; a non-zero count is a duplicate inventory effect: the mirror then turns itself off,
+#           mag.leak_off true and partner_input=ammo_leak; mag_mirror=disabled in the log; report it).
+#           gun.b20 1 within 300 ms of the R edge (mag.reload_edges and leak.reload_drains grow); a reload act in the
 #           ring; gun.mag == gun.cap afterwards (gun.can_reload 0); frames show the reload.
 #  holster-reload: record only (gun.gate / gun.equip / gun.class tell why a holstered reload does or does not start).
 #  switch1, switch2: record gun.equip, gun.slot, gun.class (body 1 only carries stock46: equip 46 or 0); no fault.
@@ -40,7 +44,7 @@ resetpose host
 stance host stand
 placebehind guest host 4 3
 both capture start
-# Arbiter entry, the fire filter install and the manifest exchange happen while idle.
+# Arbiter entry and the manifest exchange happen while idle (the fire filter installs once body 1 shows a gun class).
 wait 6000
 both capture weapons-idle
 # --- Host shoots, guest films its partner -----------------------------------
