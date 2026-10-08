@@ -1334,6 +1334,77 @@ const char* SoldierWarpReceipt(const char* text, std::size_t size) noexcept {
     return debug_reply;
 }
 
+// WORLD_WARP_V1 "<seq> <goId>" from lua/coop/world_place.lua on the guest (spawn sync,
+// docs/debug-menu.md). The target and kind come from the grant world::Core recorded
+// when it popped the host's ENEMY_DEBUG; Lua names only the seq and its own copy's
+// GameObjectId. The range is checked against the guest's view of the host (the
+// remote pose, at most 1 s old). Same Warp(), contract, budget and latch as the host.
+// Reply: {r=<out>,h=<0|1>,leaf="pinned|engine"} or {refused="<reason>"}.
+const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
+    namespace debug = mgscoop::debug_menu;
+    namespace sw = mgscoop::soldier_warp;
+    const auto refuse = [](const char* why) noexcept {
+        StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {refused=\"%s\"}", why);
+        return static_cast<const char*>(debug_reply);
+    };
+    std::uint16_t seq = 0;
+    sw::Request request{};
+    if (!mgscoop::world::ParseWarp(text, size, seq, request.go_id)) return refuse("args");
+    const auto& labc = mgscoop::GetLabConfig();
+    if (labc.role != mgscoop::LabRole::guest || labc.mode != mgscoop::LabMode::lab) return refuse("role");
+    if (!labc.debug_soldier_warp) return refuse("disabled");
+    if (!soldier_warp_ready || !game_base) return refuse("contract");
+    unsigned short mission = 0;
+    if (mission_terminating || !ReadMission(mission) || mission != partner_mission || !mgscoop::SupportsPartnerBody(mission))
+        return refuse("mission");
+    const auto grant = mgscoop::world_link::FindGrant(seq);
+    if (!grant.found) return refuse("grant");
+    PublishDebugSnapshot();
+    const auto snapshot = debug::GetSnapshot();
+    const auto now = mgscoop::partner_net::NowMs();
+    if (snapshot.host || !snapshot.remote_valid || !snapshot.world_paired || std::strcmp(snapshot.link_state, "connected") != 0 ||
+        snapshot.remote_age_ms > 1000 || now < snapshot.tick_ms || now - snapshot.tick_ms > 1000)
+        return refuse("pose");
+    for (unsigned i = 0; i < 3; ++i) {
+        request.pos[i] = grant.pos[i];
+        request.player[i] = snapshot.remote_pos[i];
+    }
+    request.yaw = grant.yaw;
+    request.max_range = grant.kind == mgscoop::world::place::correct ? sw::kMaxRangeLimitM : sw::kMaxRangeM;
+    const auto base = reinterpret_cast<std::uintptr_t>(game_base);
+    // One grant, one guard, bounded attempts; ids never collide with menu command ids (< 2^31).
+    const std::uint32_t id = 0x80000000u | (static_cast<std::uint32_t>(grant.epoch & 0x7fffu) << 16) | grant.seq;
+    sw::Result result{};
+    if (const char* gate = soldier_warp_gate.Admit(id, request.go_id)) result.refusal = gate;
+    else {
+        result = sw::Warp(base, game_span, request);
+        if (const char* latched = soldier_warp_gate.Record(result))
+            LogFormat("soldier_warp=disabled; reason=%s; id=%u; go=%u; r=%d; h=%u; until=process_exit\r\n", latched, id,
+                      request.go_id, result.out, unsigned(result.handled));
+    }
+    static std::uint32_t last_id = 0, last_go = 0;
+    static std::int32_t last_out = 0;
+    static unsigned last_handled = 0;
+    static const char* last_refusal = nullptr;  // string literals from soldier_warp
+    if (id != last_id || request.go_id != last_go || result.out != last_out || result.handled != last_handled ||
+        result.refusal != last_refusal) {
+        last_id = id; last_go = request.go_id; last_out = result.out; last_handled = result.handled; last_refusal = result.refusal;
+        if (soldier_warp_census < 24 && result.chain.type_object) {
+            ++soldier_warp_census;
+            char line[512]{};
+            if (sw::FormatCensus(base, game_span, request.go_id, result, line, sizeof(line))) Log(line);
+        }
+        LogFormat("world_place=warp; seq=%u; kind=%u; ent=%u; go=%u; age_ms=%llu; r=%d; h=%u; leaf=%s; refused=%s\r\n", unsigned(seq),
+                  unsigned(grant.kind), grant.ent, request.go_id, static_cast<unsigned long long>(grant.age_ms), result.out,
+                  unsigned(result.handled), result.chain.pinned ? "pinned" : "engine", result.refusal ? result.refusal : "none");
+    }
+    const bool unrealized = result.refusal && std::strcmp(result.refusal, "unrealized") == 0;
+    if (result.refusal && !unrealized) return refuse(result.refusal);
+    StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {r=%d,h=%u,leaf=\"%s\"}", unrealized ? -1 : result.out,
+                     unsigned(result.handled), result.chain.pinned ? "pinned" : "engine");
+    return debug_reply;
+}
+
 bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                         mgscoop::script_bridge::Replacement& replacement) noexcept {
     namespace debug = mgscoop::debug_menu;
@@ -1346,6 +1417,7 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
     constexpr char partner_control[] = "return 'MGS_COOP_DEBUG_PARTNER_V1' -- ";
     constexpr char enemy[] = "return 'MGS_COOP_DEBUG_ENEMY_V1' -- ";
     constexpr char warp[] = "return 'MGS_COOP_DEBUG_WARP_V1' -- ";
+    constexpr char remote[] = "return 'MGS_COOP_DEBUG_REMOTE_V1' -- ";
     const bool is_command = size == sizeof(command) - 1 && std::memcmp(buffer, command, size) == 0;
     // While Lua has a pending action it polls: telemetry and the worker
     // stay live, but nothing is popped; commands wait in the bounded queue.
@@ -1355,7 +1427,8 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
     const bool is_partner = size >= sizeof(partner_control) - 1 && std::memcmp(buffer, partner_control, sizeof(partner_control) - 1) == 0;
     const bool is_enemy = size >= sizeof(enemy) - 1 && std::memcmp(buffer, enemy, sizeof(enemy) - 1) == 0;
     const bool is_warp = size >= sizeof(warp) - 1 && std::memcmp(buffer, warp, sizeof(warp) - 1) == 0;
-    if (!is_command && !is_poll && !is_log && !is_state && !is_partner && !is_enemy && !is_warp) return false;
+    const bool is_remote = size >= sizeof(remote) - 1 && std::memcmp(buffer, remote, sizeof(remote) - 1) == 0;
+    if (!is_command && !is_poll && !is_log && !is_state && !is_partner && !is_enemy && !is_warp && !is_remote) return false;
     if (!OnRuntimeThread() && !(is_log || is_state ? OnTerminationThread() : false)) return false;
     const char* reply = "return nil";
     if (is_poll) {
@@ -1369,10 +1442,10 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
         if (!mission_terminating && ReadMission(read_mission) && read_mission == partner_mission &&
             mgscoop::SupportsPartnerBody(read_mission) && debug::Pop(pending)) {
             const auto snapshot = debug::GetSnapshot();
-            // goto_partner gets the partner pose from the snapshot just published,
-            // only for a live, paired, recent network pose (read-only data).
+            // goto_partner and spawn_sync get the partner pose from the snapshot just
+            // published, only for a live, paired, recent network pose (read-only data).
             char pose[96]{};
-            if (std::strcmp(pending.text, "goto_partner") == 0 && snapshot.remote_valid && snapshot.world_paired &&
+            if ((std::strcmp(pending.text, "goto_partner") == 0 || std::strcmp(pending.text, "spawn_sync") == 0) && snapshot.remote_valid && snapshot.world_paired &&
                 std::strcmp(snapshot.link_state, "connected") == 0 && snapshot.remote_age_ms <= 1000)
                 StringCchPrintfA(pose, ARRAYSIZE(pose), ",pp={%ld,%ld,%ld,%u}", std::lround(snapshot.remote_pos[0] * 1000.0f),
                     std::lround(snapshot.remote_pos[1] * 1000.0f), std::lround(snapshot.remote_pos[2] * 1000.0f), snapshot.remote_age_ms);
@@ -1384,6 +1457,13 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
     } else if (is_warp) {
         // Lua owner thread only (checked above); every other gate is in the handler.
         reply = SoldierWarpReceipt(buffer + sizeof(warp) - 1, size - (sizeof(warp) - 1));
+    } else if (is_remote) {
+        // Spawn sync history row (lua/coop/world_place.lua): "<0|1> <message>", never a command.
+        unsigned short mission = 0;
+        const bool accepted = !mission_terminating && ReadMission(mission) && mission == partner_mission &&
+            mgscoop::SupportsPartnerBody(mission) && debug::RemoteReceipt(buffer + sizeof(remote) - 1, size - (sizeof(remote) - 1));
+        if (accepted) LogFormat("debug_menu=remote; message=%.*s\r\n", static_cast<int>(size - (sizeof(remote) - 1)), buffer + sizeof(remote) - 1);
+        reply = accepted ? "return true" : "return false";
     } else if (is_enemy) {
         unsigned short mission = 0;
         const bool accepted = !mission_terminating && ReadMission(mission) && mission == partner_mission &&
@@ -1968,8 +2048,9 @@ bool SelectPartnerReceipt(partner::Receipt kind, const char* buffer, std::size_t
 // World sync receipts (world_on only; called under receipt_lock). CFG query
 // runs on any thread, CFG start on the runtime thread before termination,
 // TX on the runtime thread (MISSION_END also on the termination thread), RX
-// on the runtime thread, LOG on the runtime or termination thread. A refused
-// receipt stays literal (Lua treats it as inactive or not sent).
+// on the runtime thread, LOG on the runtime or termination thread, WARP (guest
+// spawn sync) on the runtime thread. A refused receipt stays literal (Lua
+// treats it as inactive or not sent).
 bool SelectWorldReceipt(mgscoop::world::Receipt kind, const char* buffer, std::size_t size, const char* name, LONG64 count,
                         mgscoop::script_bridge::Replacement& replacement) noexcept {
     namespace world=mgscoop::world;
@@ -1989,6 +2070,9 @@ bool SelectWorldReceipt(mgscoop::world::Receipt kind, const char* buffer, std::s
         if(OnRuntimeThread()) { ReadMission(mission); reply=mgscoop::world_link::HandleRx(buffer,size,mission,mission_terminating); }
     } else if(kind==world::Receipt::log) {
         if(OnRuntimeThread() || OnTerminationThread()) reply=mgscoop::world_link::HandleLog(buffer,size);
+    } else if(kind==world::Receipt::warp) {
+        // Lua owner thread only; every other gate is in the handler.
+        if(OnRuntimeThread()) reply=GuestWarpReceipt(buffer+sizeof(world::warp_prefix)-1,size-(sizeof(world::warp_prefix)-1));
     }
     if(reply) replacement={reply,std::strlen(reply)};
     world_quiet=kind!=world::Receipt::cfg;

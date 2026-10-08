@@ -16,6 +16,7 @@ Usage: python tools/generate_soldier_warp_contract.py [--check]
 """
 import hashlib
 import json
+import re
 import struct
 import sys
 from pathlib import Path
@@ -272,11 +273,43 @@ for begin, end in ((0xBF3A80, 0xBF3AD8), (0xBF4200, 0xBF426A), (0xBF4270, 0xBF42
     if UNWIND.get(begin) != end:
         failures.append(f'{begin:#x}: unwind entry {UNWIND.get(begin)} != {end:#x}')
 
+# Source contract: soldier_warp::Warp has exactly two callers, each on the Lua
+# owner thread behind the lab key, the startup Verify() result and the
+# per-command gate (docs/debug-menu.md): the host menu receipt (DEBUG_WARP_V1)
+# and the guest spawn-sync grant receipt (WORLD_WARP_V1, target from the
+# world::Core grant, never from Lua).
+EXPECTED_CALLERS = {('game_script_observer.cpp', 'SoldierWarpReceipt'), ('game_script_observer.cpp', 'GuestWarpReceipt')}
+CALLER_GATES = ('debug_soldier_warp', 'soldier_warp_ready', 'LabMode::lab', 'soldier_warp_gate.Admit(', 'mission_terminating')
+callers = []
+for path in sorted((ROOT / 'native').glob('*.cpp')):
+    if path.name == 'soldier_warp.cpp':
+        continue
+    text = path.read_text(encoding='utf-8', errors='replace')
+    for match in re.finditer(r'\b(?:sw|soldier_warp)::Warp\s*\(', text):
+        heads = list(re.finditer(r'^[A-Za-z_][\w:*&<> ]*?\b(\w+)\([^;{}]*\)\s*noexcept\s*\{', text[:match.start()], re.M))
+        name = heads[-1].group(1) if heads else '?'
+        body = text[heads[-1].start():match.start()] if heads else ''
+        callers.append((path.name, name))
+        for gate in CALLER_GATES:
+            if gate not in body:
+                failures.append(f'{path.name} {name}: calls soldier_warp::Warp without {gate!r} before the call')
+if len(callers) != len(EXPECTED_CALLERS) or set(callers) != EXPECTED_CALLERS:
+    failures.append(f'soldier_warp::Warp callers {sorted(callers)} != {sorted(EXPECTED_CALLERS)}')
+if 'GuestWarpReceipt' in {name for _, name in callers}:
+    guest = (ROOT / 'native' / 'game_script_observer.cpp').read_text(encoding='utf-8', errors='replace')
+    start = guest.find('const char* GuestWarpReceipt(')
+    body = guest[start:guest.find('\n}\n', start)] if start >= 0 else ''
+    for needle in ('world_link::FindGrant(seq)', 'request.pos[i] = grant.pos[i]', 'request.player[i] = snapshot.remote_pos[i]',
+                   'snapshot.remote_age_ms > 1000', 'LabRole::guest'):
+        if needle not in body.replace('\r\n', '\n'):
+            failures.append(f'GuestWarpReceipt: missing {needle!r} (target from the grant, range from the remote pose)')
+
 if failures:
     print('\n'.join(failures))
     raise SystemExit(1)
 if '--check' in sys.argv:
-    print(f'soldier warp contract: {len(SITES)} sites and {len(SLOTS)} slots match {GAME_SHA256[:8]}...{GAME_SHA256[-4:]}')
+    print(f'soldier warp contract: {len(SITES)} sites and {len(SLOTS)} slots match {GAME_SHA256[:8]}...{GAME_SHA256[-4:]}; '
+          f'Warp callers: {", ".join(name for _, name in sorted(callers))}')
     raise SystemExit(0)
 
 lines = [

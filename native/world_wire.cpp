@@ -79,6 +79,13 @@ constexpr OpSpec kOps[] = {
      {U32(0, 86399), U16(), U8(1, 4), U32(), U16()}},
     {op::weather, "WEATHER", 1, Dir::host_to_guest, Wire::reliable, 3, false, false, 5, 0, 0, 7,
      {Weather(), U16(0, 600), U16(kU16, kU16), U8(255, 255), U8(1, 3)}},
+    // Spawn sync (docs/debug-menu.md): seq, ent, kind, x/y/z mm, yaw mrad, flags, route hash, host GameObjectId.
+    {op::enemy_debug, "ENEMY_DEBUG", 1, Dir::host_to_guest, Wire::reliable, 2, false, false, 10, 0, 0, 30,
+     {U16(1, kU16), U32(), U8(1, 8), I32(-100000000, 100000000), I32(-100000000, 100000000), I32(-100000000, 100000000),
+      I32(-8000, 8000), U8(0, 3), U32(), U16()}},
+    // seq, ent, result (0 applied, 1 refused), reason (world_place.lua WHY), error cm, frames.
+    {op::enemy_debug_ack, "ENEMY_DEBUG_ACK", 1, Dir::guest_to_host, Wire::reliable, 2, false, false, 6, 0, 0, 12,
+     {U16(1, kU16), U32(), U8(0, 1), U8(0, 31), U16(), U16()}},
     {op::link, "LINK", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 2, 0, 0, {U8(0, 1), U32()}},
     {op::paired, "PAIRED", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 6, 0, 0,
      {U16(), Mission(), U32(), U16(), U8(0, 1), U8(0, 3)}},
@@ -265,6 +272,7 @@ void Core::Configure(const Config& config, std::uint64_t now_ms) noexcept {
     ctrl_head_ = ctrl_size_ = 0;
     world_head_ = world_size_ = 0;
     digest_.valid = guest_digest_.valid = phase_vec_.valid = false;
+    ClearGrants();
     out_head_ = out_size_ = peeked_ = 0;
     generation_ = 0;
     stats_ = Stats{};
@@ -605,6 +613,7 @@ void Core::OnReady(const Op& op, std::uint64_t now_ms) noexcept {
 void Core::AdoptHostEpoch(std::uint16_t epoch) noexcept {
     if (!epoch || epoch == known_host_epoch_) return;
     known_host_epoch_ = epoch;
+    ClearGrants();
     PurgeOtherEpochs(epoch);
     if (paired_ && epoch_ != epoch) Unpair(unpair::epoch);
 }
@@ -633,6 +642,7 @@ void Core::TryPair(std::uint64_t now_ms) noexcept {
 }
 
 void Core::Unpair(std::uint8_t reason) noexcept {
+    ClearGrants();
     if (!paired_) return;
     paired_ = false;
     eff_ = 0;
@@ -672,6 +682,7 @@ void Core::PurgeOtherEpochs(std::uint16_t keep) noexcept {
 void Core::ClearWire() noexcept {
     world_head_ = world_size_ = 0;
     digest_.valid = guest_digest_.valid = phase_vec_.valid = false;
+    ClearGrants();
     out_head_ = out_size_ = peeked_ = 0;
     ++generation_;
     // Keep the local ops (GOTO, PROBE, LINK ...); drop what came from the old session.
@@ -921,6 +932,7 @@ void Core::Rx(std::uint8_t mask, std::uint32_t rtt_ms, std::uint64_t now_ms, RxR
             --world_size_;
             if (e.epoch != epoch_) { ++stats_.purged; continue; }
             fill(e, 1);
+            if (e.op == op::enemy_debug) RecordGrant(e, now_ms);
             return;
         }
         for (Slot* slot : {&digest_, &guest_digest_, &phase_vec_}) {
@@ -935,6 +947,48 @@ void Core::Rx(std::uint8_t mask, std::uint32_t rtt_ms, std::uint64_t now_ms, RxR
     out.qctrl = static_cast<std::uint16_t>(ctrl_size_);
     out.qworld = static_cast<std::uint16_t>(world_size_ > 65535 ? 65535 : world_size_);
     out.epoch = TxEpoch();
+}
+
+// Guest only: a warp or correct ENEMY_DEBUG handed to Lua becomes the one
+// native placement target for that seq. Slot: the same seq, a free or expired
+// one, the oldest correction (a pending warp outlives 1 Hz corrections), else
+// the oldest grant.
+void Core::RecordGrant(const Entry& e, std::uint64_t now_ms) noexcept {
+    if (config_.role != kRoleGuest || e.count < 10 || (e.v[2] != place::warp && e.v[2] != place::correct)) return;
+    Grant* slot = nullptr;
+    Grant* oldest = nullptr;
+    Grant* oldest_correct = nullptr;
+    for (Grant& g : grants_) {
+        if (g.valid && g.seq == e.v[0] && g.epoch == e.epoch) { slot = &g; break; }
+        if (!g.valid || now_ms < g.rx_ms || now_ms - g.rx_ms > kGrantLifeMs) { if (!slot) slot = &g; continue; }
+        if (!oldest || g.rx_ms < oldest->rx_ms) oldest = &g;
+        if (g.kind == place::correct && (!oldest_correct || g.rx_ms < oldest_correct->rx_ms)) oldest_correct = &g;
+    }
+    if (!slot) slot = oldest_correct ? oldest_correct : oldest;
+    *slot = Grant{true, static_cast<std::uint16_t>(e.v[0]), e.epoch, static_cast<std::uint8_t>(e.v[2]), static_cast<std::uint8_t>(e.v[7]),
+                  U(e.v[1]), {static_cast<std::int32_t>(e.v[3]), static_cast<std::int32_t>(e.v[4]), static_cast<std::int32_t>(e.v[5])},
+                  static_cast<std::int32_t>(e.v[6]), now_ms};
+}
+
+void Core::ClearGrants() noexcept {
+    for (Grant& g : grants_) g = Grant{};
+}
+
+bool Core::FindGrant(std::uint16_t seq, std::uint64_t now_ms, Grant& out) const noexcept {
+    out = Grant{};
+    if (config_.role != kRoleGuest || !paired_ || !level_ || !seq) return false;
+    for (const Grant& g : grants_) {
+        if (!g.valid || g.seq != seq || g.epoch != epoch_ || now_ms < g.rx_ms || now_ms - g.rx_ms > kGrantLifeMs) continue;
+        out = g;
+        return true;
+    }
+    return false;
+}
+
+unsigned Core::grant_count() const noexcept {
+    unsigned n = 0;
+    for (const Grant& g : grants_) n += g.valid ? 1u : 0u;
+    return n;
 }
 
 void Core::RejectTrigger(const char* reason) noexcept { Line("world_trigger=rejected; reason=%s", reason ? reason : "token"); }

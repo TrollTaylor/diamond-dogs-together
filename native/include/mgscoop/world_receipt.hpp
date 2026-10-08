@@ -13,6 +13,9 @@
 //   return 'MGS_COOP_WORLD_RX_V1' -- <mask>                  1 control, 3 control+world+U
 //        -> return <queue>,<op>,<v...>  or  return 0,0,<flags>,<qctrl>,<qworld>,<epoch>
 //   return 'MGS_COOP_WORLD_LOG_V1' -- <payload>              1..160 bytes -> logs world_lua=...
+//   return 'MGS_COOP_WORLD_WARP_V1' -- <seq> <goId>          guest spawn sync: one native placement of
+//        the grant recorded for <seq> (world_wire.hpp Grant) on GameObjectId <goId>
+//        -> return {r=,h=,leaf=} | return {refused="<reason>"} (game_script_observer)
 // Integers only: an optional '-' (i32 fields only), no '+', no leading zeros,
 // no "-0", no '.', single spaces, nothing trailing; u32 up to 4294967295.
 #include <cstddef>
@@ -21,12 +24,13 @@
 
 namespace mgscoop::world {
 
-enum class Receipt : unsigned char { none, cfg, tx, rx, log };
+enum class Receipt : unsigned char { none, cfg, tx, rx, log, warp };
 
 inline constexpr char cfg_prefix[] = "return 'MGS_COOP_WORLD_CFG_V1' -- ";
 inline constexpr char tx_prefix[] = "return 'MGS_COOP_WORLD_TX_V1' -- ";
 inline constexpr char rx_prefix[] = "return 'MGS_COOP_WORLD_RX_V1' -- ";
 inline constexpr char log_prefix[] = "return 'MGS_COOP_WORLD_LOG_V1' -- ";
+inline constexpr char warp_prefix[] = "return 'MGS_COOP_WORLD_WARP_V1' -- ";
 inline constexpr std::size_t max_receipt = 240;
 inline constexpr std::size_t max_log_payload = 160;
 // The longest reply: "return " and 17 values (queue, op, 15 fields) of at
@@ -46,6 +50,8 @@ TxStatus ParseTx(const char* source, std::size_t size, std::uint8_t& code, std::
                  unsigned& count) noexcept;
 // mask 1 or 3 only.
 bool ParseRx(const char* source, std::size_t size, std::uint8_t& mask) noexcept;
+// WARP_V1: seq 1..65535, goId 0..65535 (strict integers). Outputs only on success.
+bool ParseWarp(const char* source, std::size_t size, std::uint16_t& seq, std::uint32_t& go_id) noexcept;
 
 // NUL-terminated replies; 0 when they do not fit.
 std::size_t FormatCfgReply(const CfgReply& reply, char* out, std::size_t capacity) noexcept;

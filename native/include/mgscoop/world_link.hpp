@@ -48,6 +48,19 @@ const char* HandleTx(const char* source, std::size_t size) noexcept;
 const char* HandleRx(const char* source, std::size_t size, std::uint32_t read_mission, bool terminating) noexcept;
 const char* HandleLog(const char* source, std::size_t size) noexcept;
 
+// Guest spawn sync: the grant world::Core recorded for ENEMY_DEBUG `seq` in the
+// current paired epoch (copied under the world leaf lock; found=false otherwise).
+struct WarpGrant {
+    bool found{};
+    std::uint16_t seq{}, epoch{};
+    std::uint8_t kind{}, flags{};
+    std::uint32_t ent{};
+    float pos[3]{};      // metres
+    float yaw{};         // radians
+    std::uint64_t age_ms{};
+};
+WarpGrant FindGrant(std::uint16_t seq) noexcept;
+
 // Observer boundaries: the runtime entry (next to PartnerMissionStart) and the
 // returned termination (next to PartnerMissionEnd).
 void MissionRuntime(std::uint32_t mission) noexcept;
