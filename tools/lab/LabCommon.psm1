@@ -283,6 +283,7 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_native_fire'; Json = 'native_fire'; Kind = 'bool' },
     @{ Key = 'partner_native_steer_deg'; Json = 'native_steer_deg'; Kind = 'int'; Min = 0; Max = 30 },
     @{ Key = 'partner_native_trim_pct'; Json = 'native_trim_pct'; Kind = 'int'; Min = 0; Max = 10 },
+    @{ Key = 'partner_native_rates'; Json = 'native_rates'; Kind = 'enum'; Values = @('off', 'log', 'mirror') },
     @{ Key = 'crash_probe'; Json = 'crash_probe'; Kind = 'bool' },
     # Debug "Spawn enemy here" native placement (docs/debug-menu.md): lab only,
     # default off and written only when set.

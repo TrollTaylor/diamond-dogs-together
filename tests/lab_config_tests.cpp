@@ -205,7 +205,7 @@ int main() {
         const auto def = Lab("enabled=1\nrole=host\n");
         Check(def.partner_input == PartnerInput::off && def.partner_input_cam == PartnerInputCam::sandbox &&
               def.partner_input_hold == PartnerInputHold::own && def.partner_input_yaw == PartnerInputYaw::rot &&
-              def.partner_input_mask == 0x2200006 && def.partner_input_stick_deg == 180 && def.partner_input_stick_pct == 100 &&
+              def.partner_input_mask == 0x2240006 && def.partner_input_stick_deg == 180 && def.partner_input_stick_pct == 100 &&
               def.partner_input_correct_mm == 3000 && def.partner_input_stale_ms == 250 && def.partner_input_hook &&
               def.partner_look_gate && def.partner_look_recover && def.partner_dm == PartnerDm::off, "round 3/4 defaults");
         Check(def.partner_input_words[0] == kPartnerWordHeld && def.partner_input_words[1] == kPartnerWordPress &&
@@ -241,7 +241,7 @@ int main() {
               std::strcmp(PartnerWrapName(PartnerWrap::window), "window") == 0, "round 4 names");
         const auto badr3 = Lab("enabled=1\nrole=host\npartner_input=walk\npartner_input_cam=on\npartner_input_mask=0xZ\n"
                              "partner_input_words=xyz\npartner_input_stick=360:0\npartner_input_correct_mm=10001\npartner_dm=maybe\n");
-        Check(badr3.invalid_values == 7 && badr3.partner_input == PartnerInput::off && badr3.partner_input_mask == 0x2200006 &&
+        Check(badr3.invalid_values == 7 && badr3.partner_input == PartnerInput::off && badr3.partner_input_mask == 0x2240006 &&
               badr3.partner_dm == PartnerDm::off, "round 3 bad values counted, defaults kept");
         std::uint32_t mask = 0; std::uint8_t words[3]{}; std::uint32_t deg = 0, pct = 0;
         Check(ParsePartnerMask("6", 1, mask) && mask == 6 && ParsePartnerMask("0x6", 3, mask) && mask == 6 &&
@@ -548,14 +548,23 @@ int main() {
         Check(def.partner_drive == PartnerDrive::legacy && def.partner_input_defer == PartnerDefer::off &&
               def.partner_input_local == PartnerLocal::main && def.partner_native_aim == PartnerNativeAim::off &&
               !def.partner_native_gun && !def.partner_native_fire && def.partner_native_steer_deg == 15 &&
-              def.partner_native_trim_pct == 0, "native defaults (legacy, defer off, local main, aim off, steer 15, trim 0)");
+              def.partner_native_trim_pct == 0 && def.partner_native_rates == PartnerNativeRates::log,
+              "native defaults (legacy, defer off, local main, aim off, steer 15, trim 0, rates log)");
         const auto nat = Lab("enabled=1\nrole=host\npartner_drive=native\npartner_input_defer=census\npartner_input_local=all\n"
                              "partner_native_aim=lookcam\npartner_native_gun=1\npartner_native_fire=1\npartner_native_steer_deg=30\n"
-                             "partner_native_trim_pct=10\n");
+                             "partner_native_trim_pct=10\npartner_native_rates=mirror\n");
         Check(nat.partner_drive == PartnerDrive::native && nat.partner_input_defer == PartnerDefer::census &&
               nat.partner_input_local == PartnerLocal::all && nat.partner_native_aim == PartnerNativeAim::lookcam &&
               nat.partner_native_gun && nat.partner_native_fire && nat.partner_native_steer_deg == 30 &&
-              nat.partner_native_trim_pct == 10 && nat.invalid_values == 0 && nat.unknown_keys == 0, "native keys parse");
+              nat.partner_native_trim_pct == 10 && nat.partner_native_rates == PartnerNativeRates::mirror && nat.invalid_values == 0 &&
+              nat.unknown_keys == 0, "native keys parse");
+        const auto ratesOff = Lab("enabled=1\nrole=host\npartner_native_rates=off\n");
+        const auto ratesBad = Lab("enabled=1\nrole=host\npartner_native_rates=copy\n");
+        Check(ratesOff.partner_native_rates == PartnerNativeRates::off && ratesOff.invalid_values == 0 &&
+              ratesBad.partner_native_rates == PartnerNativeRates::log && ratesBad.invalid_values == 1 &&
+              std::strcmp(PartnerNativeRatesName(PartnerNativeRates::mirror), "mirror") == 0 &&
+              std::strcmp(PartnerNativeRatesName(PartnerNativeRates::log), "log") == 0 &&
+              std::strcmp(PartnerNativeRatesName(PartnerNativeRates::off), "off") == 0, "partner_native_rates off|log|mirror");
         const auto on = Lab("enabled=1\nrole=guest\npartner_drive=native\npartner_input_defer=on\npartner_native_aim=look\n"
                             "partner_native_steer_deg=0\n");
         Check(on.partner_input_defer == PartnerDefer::on && on.partner_native_aim == PartnerNativeAim::look &&
@@ -573,9 +582,12 @@ int main() {
               EffectivePartnerDefer(PartnerDrive::native, PartnerDefer::census) == PartnerDefer::census,
               "defer is ignored without drive=native");
         // The effective-mask allowance: FIRE never without gun.
-        Check(PartnerNativeAllowed(false, false) == 0x2200006u && PartnerNativeAllowed(true, false) == 0x220004Eu &&
-              PartnerNativeAllowed(true, true) == 0x220005Eu && PartnerNativeAllowed(false, true) == 0x2200006u,
-              "native allowance: base, +HOLD/RELOAD, +FIRE only with gun");
+        Check(PartnerNativeAllowed(false, false) == 0x2240006u && PartnerNativeAllowed(true, false) == 0x224004Eu &&
+              PartnerNativeAllowed(true, true) == 0x224005Eu && PartnerNativeAllowed(false, true) == 0x2240006u,
+              "native allowance: base (with EVADE), +HOLD/RELOAD, +FIRE only with gun");
+        Check((PartnerNativeAllowed(true, true) & (partner_pad::kAction | partner_pad::kCqc | partner_pad::kCall | partner_pad::kSubject)) == 0u &&
+              (kPartnerNativeBaseMask & partner_pad::kEvade) != 0u, "ACTION/CQC/CALL/SUBJECT never allowed; EVADE in the base");
+
         Check(std::strcmp(PartnerDriveName(PartnerDrive::native), "native") == 0 && std::strcmp(PartnerDeferName(PartnerDefer::census), "census") == 0 &&
               std::strcmp(PartnerLocalName(PartnerLocal::all), "all") == 0 &&
               std::strcmp(PartnerNativeAimName(PartnerNativeAim::lookcam), "lookcam") == 0 &&

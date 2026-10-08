@@ -434,12 +434,16 @@ void TestEffective() {
           e.anim == mgscoop::PartnerAnim::off && e.wrap == mgscoop::PartnerWrap::window && e.hold == mgscoop::PartnerInputHold::own &&
           e.words[0] == mgscoop::kPartnerWordHeld && e.words[1] == mgscoop::kPartnerWordPress &&
           e.words[2] == mgscoop::kPartnerWordRelease && e.cam == mgscoop::PartnerInputCam::sandbox &&
-          e.recon == mgscoop::PartnerRecon::track && e.slot == mgscoop::PartnerSlot::body && !e.p218 && e.mask == 0x2200006u,
-          "active: the exact native settings (p218 never on)");
-    Check(pn::Effective(base, true, pn::NativeConfig{true, false, mgscoop::PartnerNativeAim::look}).mask == 0x220004Eu,
+          e.recon == mgscoop::PartnerRecon::track && e.slot == mgscoop::PartnerSlot::body && !e.p218 && e.mask == 0x2240006u,
+          "active: the exact native settings (p218 never on; EVADE passes)");
+    Check(pn::Effective(base, true, pn::NativeConfig{true, false, mgscoop::PartnerNativeAim::look}).mask == 0x224004Eu,
           "gun stage mask");
-    Check(pn::Effective(base, true, pn::NativeConfig{true, true, mgscoop::PartnerNativeAim::look}).mask == 0x220005Eu,
+    Check(pn::Effective(base, true, pn::NativeConfig{true, true, mgscoop::PartnerNativeAim::look}).mask == 0x224005Eu,
           "fire stage mask");
+    Check((pn::NativeMask(0xFFFFFFFFu, true, true) & 0x20u) == 0u && (pn::NativeMask(0xFFFFFFFFu, false, false) & 0x40000u) != 0u,
+          "ACTION 0x20 never passes, EVADE 0x40000 always may");
+    Check(pn::NativeMask(0x224005Eu, true, false) == 0x224004Eu, "configured 0x224005E with fire=0 yields no FIRE 0x10");
+
     // NativeMask: the configured mask is ANDed with the allowance.
     Check(pn::NativeMask(0x220005Eu, true, false) == 0x220004Eu, "configured 0x220005E with fire=0 yields no FIRE 0x10");
     Check(pn::NativeMask(0x220005Eu, false, true) == 0x2200006u, "fire without gun refused (no 0x10, no 0x48)");

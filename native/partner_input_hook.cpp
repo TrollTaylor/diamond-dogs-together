@@ -47,6 +47,12 @@ namespace mgscoop::partner_input_hook {
 namespace {
 namespace c = mgscoop::partner_player_contract;
 namespace pi = mgscoop::partner_input;
+namespace pad = mgscoop::partner_pad;
+// The named pad bits (partner_pad_bits.hpp, the masks) are the pinned PlayerPad enum values.
+static_assert(c::pad_stance == pad::kStance && c::pad_dash == pad::kDash && c::pad_evade == pad::kEvade &&
+                  c::pad_vehicle_dash == pad::kKbDash && c::pad_hold == pad::kHold && c::pad_fire == pad::kFire &&
+                  c::pad_action == pad::kAction && c::pad_reload == pad::kReload && c::pad_side_roll == pad::kSideRoll,
+              "partner_pad_bits.hpp matches the pinned PlayerPad enum");
 
 // Process-level state (the DLL is pinned; nothing here is ever torn down).
 volatile LONG g_installed = 0;

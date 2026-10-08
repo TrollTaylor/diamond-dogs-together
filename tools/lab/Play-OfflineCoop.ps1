@@ -184,7 +184,7 @@ $experiment = [ordered]@{ Move = $startMove; Anim = $(if ($Experimental) { 'net'
 # locomotion; hold own (prone), words hpr (stance taps), keyboard dash and walk.
 # correct=3000 runaway=pin are explicit: a correct=0 left by an earlier
 # diagnostic (R0, I3) would otherwise turn the reconciliation off silently.
-$script:InputTrigger = 'stage=3 source=net apply=input anim=off input=net cam=sandbox hold=own words=hpr bits=0x2200006 isend=1 recon={0} correct=3000 runaway=pin slot=body dm=off look=net'
+$script:InputTrigger = 'stage=3 source=net apply=input anim=off input=net cam=sandbox hold=own words=hpr bits=0x2240006 isend=1 recon={0} correct=3000 runaway=pin slot=body dm=off look=net'
 # dm=map (the animated partner): xform movement, no anim arrays, no input
 # window; every other line turns dm off (the mapper releases its clip first).
 function Get-SyncTrigger {
@@ -225,13 +225,14 @@ try {
         # off so the partner never fires real shots into the receiver's world.
         $partnerSettings += @('partner_drive=native', 'partner_input_send=1', 'partner_input_hook=1', 'partner_input_hold=own',
             'partner_input_words=hpr', 'partner_input_wrap=window', 'partner_input_cam=sandbox', 'partner_input_local=main',
-            'partner_recon=track', 'partner_input_slot=body', 'partner_input_defer=on', 'partner_input_mask=0x220004E',
-            'partner_native_gun=1', 'partner_native_fire=0', 'partner_native_aim=look', 'partner_input_triggers=1', 'partner_input_rstick=1')
+            'partner_recon=track', 'partner_input_slot=body', 'partner_input_defer=on', 'partner_input_mask=0x224004E',
+            'partner_native_gun=1', 'partner_native_fire=0', 'partner_native_aim=look', 'partner_input_triggers=1', 'partner_input_rstick=1',
+            'partner_native_rates=mirror')
         Write-Note 'NATIVE PARTNER: the other player''s body runs the game''s own movement and aiming; dm=map clips are the automatic fallback (-NoNative turns this off).'
     }
     if ($experiment.Move -eq 'input') {
         $partnerSettings += @('partner_input=net', 'partner_input_send=1', 'partner_input_cam=sandbox', 'partner_input_hold=own',
-            'partner_input_words=hpr', 'partner_input_mask=0x2200006', 'partner_recon=track', 'partner_input_correct_mm=3000',
+            'partner_input_words=hpr', 'partner_input_mask=0x2240006', 'partner_recon=track', 'partner_input_correct_mm=3000',
             'partner_recon_runaway=pin', 'partner_input_slot=body')
     }
     # Shared world by default; the explicit level 0 opt-out writes no world key.

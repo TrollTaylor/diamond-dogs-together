@@ -263,10 +263,10 @@ function Get-WorkerPartnerSettings([string]$PartnerProfile,[string]$NativeStage=
                 'partner_recon=track','partner_input_slot=body')
             $stage=if($NativeStage){$NativeStage}else{'loco'}
             $extra=switch -CaseSensitive ($stage) {
-                'census' {@('partner_input_defer=census','partner_input_mask=0x2200006','partner_native_aim=off')}
-                'loco' {@('partner_input_defer=on','partner_input_mask=0x2200006','partner_native_aim=off')}
-                'gun' {@('partner_input_defer=on','partner_input_mask=0x220004E','partner_native_gun=1','partner_native_fire=0',
-                    'partner_native_aim=look','partner_input_triggers=1','partner_input_rstick=1')}
+                'census' {@('partner_input_defer=census','partner_input_mask=0x2240006','partner_native_aim=off')}
+                'loco' {@('partner_input_defer=on','partner_input_mask=0x2240006','partner_native_aim=off','partner_native_rates=mirror')}
+                'gun' {@('partner_input_defer=on','partner_input_mask=0x224004E','partner_native_gun=1','partner_native_fire=0',
+                    'partner_native_aim=look','partner_input_triggers=1','partner_input_rstick=1','partner_native_rates=mirror')}
                 default {throw "Unknown native stage: $stage"}
             }
             return @($native+$extra)

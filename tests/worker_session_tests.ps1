@@ -54,16 +54,24 @@ Assert-True ((Get-WorkerPartnerSettings 'input') -ccontains 'partner_apply=input
 $nativeBase=$animatedSettings+@('partner_drive=native','partner_input_send=1','partner_input_hook=1','partner_input_hold=own','partner_input_words=hpr',
     'partner_input_wrap=window','partner_input_cam=sandbox','partner_input_local=main','partner_recon=track','partner_input_slot=body')
 $stages=@{
-    census=@('partner_input_defer=census','partner_input_mask=0x2200006','partner_native_aim=off')
-    loco=@('partner_input_defer=on','partner_input_mask=0x2200006','partner_native_aim=off')
-    gun=@('partner_input_defer=on','partner_input_mask=0x220004E','partner_native_gun=1','partner_native_fire=0','partner_native_aim=look',
-        'partner_input_triggers=1','partner_input_rstick=1')
+    census=@('partner_input_defer=census','partner_input_mask=0x2240006','partner_native_aim=off')
+    loco=@('partner_input_defer=on','partner_input_mask=0x2240006','partner_native_aim=off','partner_native_rates=mirror')
+    gun=@('partner_input_defer=on','partner_input_mask=0x224004E','partner_native_gun=1','partner_native_fire=0','partner_native_aim=look',
+        'partner_input_triggers=1','partner_input_rstick=1','partner_native_rates=mirror')
+}
+# EVADE 0x40000 (dive/evade/roll) is in every native mask; ACTION 0x20 (ride, knife kill, pickup) and FIRE 0x10 never.
+foreach($stage in @('census','loco','gun')){
+    $maskSetting=@((Get-WorkerPartnerSettings 'native' $stage)|Where-Object{$_ -clike 'partner_input_mask=*'})
+    Assert-True ($maskSetting.Count -eq 1) ('one mask in native stage '+$stage)
+    $maskValue=[Convert]::ToUInt32($maskSetting[0].Substring('partner_input_mask=0x'.Length),16)
+    Assert-True ((($maskValue -band 0x40000) -ne 0) -and (($maskValue -band 0x30) -eq 0)) ('native stage '+$stage+' passes EVADE, never ACTION/FIRE')
 }
 foreach($stage in @('census','loco','gun')){
     Assert-True (((Get-WorkerPartnerSettings 'native' $stage) -join ' ') -ceq (($nativeBase+$stages[$stage]) -join ' ')) ('native stage settings '+$stage)
 }
 Assert-True (((Get-WorkerPartnerSettings 'native') -join ' ') -ceq (($nativeBase+$stages.loco) -join ' ')) 'native default stage is loco'
-foreach($setting in (Get-WorkerPartnerSettings 'native' 'gun')){$kv=$setting.Split('=',2);$null=ConvertTo-LabPartnerValue -Key $kv[0] -Value $kv[1]}
+foreach($setting in (Get-WorkerPartnerSettings 'native' 'gun')+(Get-WorkerPartnerSettings 'native' 'loco')){$kv=$setting.Split('=',2);$null=ConvertTo-LabPartnerValue -Key $kv[0] -Value $kv[1]}
+
 Assert-True $true 'every native setting is a known LabCommon key with a valid value'
 Assert-Throws {Get-WorkerPartnerSettings 'native' 'fire'} 'unknown native stage throws'
 Assert-Throws {Get-WorkerPartnerSettings 'animated' 'loco'} 'NativeStage needs the native profile'

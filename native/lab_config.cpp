@@ -292,6 +292,7 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
         else if (Equals(key, "partner_input_defer")) ok = ParsePartnerDefer(value.data, value.size, result.partner_input_defer);
         else if (Equals(key, "partner_input_local")) ok = ParsePartnerLocal(value.data, value.size, result.partner_input_local);
         else if (Equals(key, "partner_native_aim")) ok = ParsePartnerNativeAim(value.data, value.size, result.partner_native_aim);
+        else if (Equals(key, "partner_native_rates")) ok = ParsePartnerNativeRates(value.data, value.size, result.partner_native_rates);
         else if (Equals(key, "partner_native_gun")) ok = ParseBool(value, result.partner_native_gun);
         else if (Equals(key, "partner_native_fire")) ok = ParseBool(value, result.partner_native_fire);
         else if (Equals(key, "partner_native_steer_deg"))
@@ -801,6 +802,24 @@ bool ParsePartnerNativeAim(const char* text, std::size_t size, PartnerNativeAim&
     if (Equals(s, "off")) out = PartnerNativeAim::off;
     else if (Equals(s, "look")) out = PartnerNativeAim::look;
     else if (Equals(s, "lookcam")) out = PartnerNativeAim::lookcam;
+    else return false;
+    return true;
+}
+
+const char* PartnerNativeRatesName(PartnerNativeRates value) noexcept {
+    switch (value) {
+    case PartnerNativeRates::off: return "off";
+    case PartnerNativeRates::mirror: return "mirror";
+    default: return "log";
+    }
+}
+
+bool ParsePartnerNativeRates(const char* text, std::size_t size, PartnerNativeRates& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "off")) out = PartnerNativeRates::off;
+    else if (Equals(s, "log")) out = PartnerNativeRates::log;
+    else if (Equals(s, "mirror")) out = PartnerNativeRates::mirror;
     else return false;
     return true;
 }

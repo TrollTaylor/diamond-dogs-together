@@ -347,6 +347,77 @@ SITES = [
     (0x10A5BAA, '4c8bc38bd7e8dc710100', 'act handler 0x10A5950 event 4: the move-intent sampler 0x10BCD90'),
     (0x10BCEF3, 'f30f11bbc0020000', 'move-intent sampler: rec+0x2C0 = move magnitude (PP+0x10 unless PP+0x2C bit 0)'),
     (0x10BCF08, 'f30f107714f30f11b3c4020000', 'move-intent sampler: rec+0x2C4 = PP+0x14 heading'),
+    # --- Native actions (docs/native-puppet.md "Actions"): the PlayerPad enum
+    # pairs the masks use (0x1A156E0(table, name, value): mov r9d,1; r8d = value;
+    # lea rdx,[name]; PAD_ENUM below re-decodes name and value), the three EVADE
+    # (0x40000) press consumers that set act 27 (Q+0x18[id] = 0x1B) and their
+    # network-remote gates (true only with S_IS_ONLINE, P+0x204 bit 8).
+    (0x9D3A90, '41b901000000458d4101488d15bb598c01', 'PlayerPad.STANCE = 0x2'),
+    (0x9D3AA9, '41b901000000458d4103488d158e277c01', 'PlayerPad.DASH = 0x4'),
+    (0x9D3AC2, '41b901000000458d4107488d152d658301', 'PlayerPad.HOLD = 0x8'),
+    (0x9D3ADB, '41b901000000458d410f488d151c658301', 'PlayerPad.FIRE = 0x10'),
+    (0x9D3AF4, '41b901000000458d411f488d155f598c01', 'PlayerPad.ACTION = 0x20 (never passed)'),
+    (0x9D3B0D, '41b901000000458d413f488d154e598c01', 'PlayerPad.RELOAD = 0x40'),
+    (0x9D3C17, '41b90100000041b800000100488d1586588c01', 'PlayerPad.SIDE_ROLL = 0x10000 (no player consumer)'),
+    (0x9D3C66, '41b90100000041b800000400488d1567588c01', 'PlayerPad.EVADE = 0x40000'),
+    (0x9D3CB7, '41b90100000041b800002000488d153e588c01', 'PlayerPad.VEHICLE_DASH = 0x200000 (keyboard binding 21)'),
+    (0x9D3D23, '41b901000000458d413f488d15ec267c01', 'PlayerPad.CARRY = 0x40 (RELOAD alias)'),
+    (0x9D3D3C, '41b901000000458d411f488d1503588c01', 'PlayerPad.RIDE_ON = 0x20 (ACTION alias)'),
+    (0x9D3DBD, '41b901000000458d411f488d15b2887b01', 'PlayerPad.CQC_KNIFE_KILL = 0x20 (ACTION alias)'),
+    (0x1148C4E, 'e8cd4e000084c075b4488b4608488b8838010000488b89b0000000488b01ff5040c1e812a8017495488b4608418bd6488b8838010000'
+     '488b4160488b4818b81b0000006642890471',
+     'EVADE A: remote gate 0x114DB20; PP vt+0x40 (press) >> 18 & 1; Q+0x18[id] = 0x1B'),
+    (0x12997FC, '488bcfe8ccc8010084c00f85d7060000488b4740488b8838010000488b89b0000000488b01ff5040c1e812a8010f84b4060000'
+     '488b4740488b8838010000488b4160488b4818b81b00000066890459',
+     'EVADE B: remote gate 0x12B60D0; press bit 18; Q+0x18[id] = 0x1B'),
+    (0x129B7B4, '8bd3488bcfe812a9010084c00f85a8060000488b4740488b8838010000488b89b0000000488b01ff5040c1e812a801488b4740741d'
+     '488b8838010000488b4160488b4818b81b00000066890459',
+     'EVADE C: remote gate 0x12B60D0; press bit 18; Q+0x18[id] = 0x1B'),
+    (0x114DB20, '48895c2408574883ec20488b41088bfa488bd94c8b8038010000418b8004020000c1e808a8017437e80315abff488b8888000000'
+     '488b01ff504883f8027413488b4308488b8838010000',
+     'remote gate A: P+0x204 bit 8 (S_IS_ONLINE) clear -> 0 (offline instance 1 passes)'),
+    (0x114DB6A, '3bb918020000740db001488b5c24304883c4205fc332c0488b5c24304883c4205fc3', 'remote gate A: id != P+0x218 -> 1 only online'),
+    (0x12B60D0, '48895c2408574883ec20488b41408bfa488bd94c8b8038010000418b8004020000c1e808a8017437e8538f94ff488b8888000000'
+     '488b01ff504883f8027413488b4340488b8838010000',
+     'remote gate B: P+0x204 bit 8 (S_IS_ONLINE) clear -> 0'),
+    (0x12B611A, '3bb918020000740db001488b5c24304883c4205fc332c0488b5c24304883c4205fc3', 'remote gate B: id != P+0x218 -> 1 only online'),
+    # --- Native rates (docs/native-puppet.md "Rates"): the per-id movement rate
+    # records of *(PS+0x260) (sp: interface vtable 0x23AD380 at object+0x20;
+    # rec = *(sp+0x10) + (id - *(u32)(sp+8))*0x88, count *(u32)(sp+0xC);
+    # record vtable 0x23AD2B0) and every site that reads or writes the rates.
+    (0xFDD610, '2b51088bc24869c08800000048034110c3', 'sp vt[0]: rec = *(sp+0x10) + (id - *(u32)(sp+8))*0x88'),
+    (0xFDD4ED, '488d0d5cfe3c01488908488d0d82fe3c0148894820', 'sp factory: object+0 = 0x23AD350, object+0x20 (sp) = 0x23AD380'),
+    (0xFDD5E0, '48b8fed112748aba0000483bd075134885c9740e488d41204885c074054883c008c333c0c3',
+     'sp object QI(0xBA8A7412D1FE) = object+0x28 (= sp+8)'),
+    (0xFFF31D, '488b89280400004885c97404488b4910488b0148bafed112748aba0000ff50184885c074044883c0f848898760020000',
+     'PS setup: PS+0x260 = QI(0xBA8A7412D1FE) - 8 = sp'),
+    (0xFDD630, '488b02488941388b420889412c8b420c894128e908000000', 'sp init: count sp+0xC = [rdx+8], base sp+8 = [rdx+0xC]'),
+    (0xFDD66C, '8b712c8bde8bce4869c988000000ba0400000041b848001b00e8561ac2ff48894730',
+     'sp init: records sp+0x10 = alloc(count * 0x88)'),
+    (0xFDD69C, '4c8d0dbdfb3c014c8d1506fc3c01660f1f440000488b4f304803ca48894c244048894c244874764c89094c8941084c8941104c894118'
+     '4c8941204c8941284c89413044894138',
+     'record init: base vtable 0x23AD260, final 0x23AD2B0'),
+    (0xFDD6E2, '48c741540000803fc7415c0000003f48c741600000003f4c894168448941704c8941784c898180000000', 'record init: +0x54..+0x80'),
+    (0xFDD70C, 'c7413c0000803fc741400000803fc741440000803fc741480000803fc7414c0000803fc741500000803f4c8911',
+     'record init: rates +0x3C..+0x50 = 1.0, then the final vtable'),
+    (0xFDD30D, '488d05e4ff3c01488901488d050a003d0148894120', 'sp dtor: base vtables 0x23AD2F8 / 0x23AD328 (refused)'),
+    (0xFDD416, '488d0593fe3c01488901488d0539fe3c01488901', 'record dtor: 0x23AD2B0 then base 0x23AD260 (refused)'),
+    (0x9CB7A5, '488b8638010000488bb830010000488b4678488b8860020000488b01418bd6ff10488bd84c8b0f41b801000000418bd6488bcf41ff5128',
+     'instance setup: provider *(P+0x130) vt+0x28(id, 1) ...'),
+    (0x9CB7DC, 'f30f114348f30f59434cf30f1143504c8b0f41b802000000418bd6488bcf41ff5128f30f11433cf30f594340f30f114344',
+     '... +0x48 = dash rate, +0x50 = +0x48 * +0x4C; vt+0x28(id, 2): +0x3C = crawl rate, +0x44 = +0x3C * +0x40'),
+    (0x109F690, '4883ec284183f902751e488b4108488b4878488b8960020000488b01ff10f30f1040444883c428c3',
+     'rate getter 0x109F690(plugin, id, class, stance): stance 2 (crawl) -> rec+0x44'),
+    (0x109F6B8, '4183f803751e488b4108488b4878488b8960020000488b01ff10f30f1040504883c428c3f30f1005e87b00014883c428c3',
+     'rate getter: class 3 (dash) -> rec+0x50, else 1.0'),
+    (0x10B9DB5, '448bcf458bc6418bd4498bcfe8ca58fefff6437240f3440f59e0', 'locomotion speed A: base 0x109F7E0 * rate 0x109F690'),
+    (0x10BA6AA, '448bcf418bd4498bcf440f28e0e8d44ffeff4d8b4708498b4078f3440f59e0', 'locomotion speed B: base * rate'),
+    (0x10BD1C3, 'f30f11774cf30f597748f30f117750', 'per-frame dash factor: +0x4C, +0x50 = +0x4C * +0x48'),
+    (0x10A4C6B, '488b4878488b8960020000488b01ff10448970688b4848c7404c0000803f894850', 'dash reset: +0x4C = 1, +0x50 = +0x48'),
+    (0x11403C9, '41b817000000488b88380100008bd6488b8930010000488b01ff5028488b8b600200008bd6488b010f28f0ff108bd6f30f117040'
+     'f30f59703cf30f117044',
+     'crawl factor: +0x40 = provider vt+0x28(id, 0x17), +0x44 = +0x40 * +0x3C'),
+    (0x11313ED, '488b4878488b8960020000488b01ff108b483cc740400000803f894844', 'crawl reset: +0x40 = 1, +0x44 = +0x3C'),
 ]
 # The H1 slot itself (value checked as a slot below) and the patched sites:
 # the code gate runs once per process before any lazy install.
@@ -439,6 +510,11 @@ SLOTS = [
     (0x23B8250, 0x40, 0x1112D50, 'CAM vt+0x40 (aim init: forwards to *(CAM+0x360) vt+0x50)'),
     (0x23B8250, 0x1A0, 0x1115400, 'CAM vt+0x1A0 (aim init: sub-controller lookup by hash)'),
     (0x23B5090, 0x18, 0x109F0E0, 'base plugin +0x30 vtable slot +0x18 = per-id phase handler (phases 0..6)'),
+    # --- Native rates.
+    (0x23AD380, 0x00, 0xFDD610, 'sp interface vtable slot 0 = record getter'),
+    (0x23AD328, 0x00, 0xFDD610, 'sp base interface vtable (destruction, refused) slot 0 = record getter'),
+    (0x23AD350, 0x18, 0xFDD5E0, 'sp object primary vtable +0x18 = QI'),
+    (0x23AD2B0, 0x00, 0xFDD440, 'rate record vtable slot 0'),
 ]
 
 
@@ -584,6 +660,65 @@ for vtable, offset, target, what in SLOTS:
     if section_of(target) != '.xtext':
         failures.append(f'slot target {target:#x} not in .xtext')
 failures += native_assertions()
+
+
+# Pad enum pairs (string RVA and value) and the reference facts of the
+# native actions and rates (docs/native-puppet.md "Actions", "Rates").
+PAD_ENUM = [  # (site of mov r9d,1; name; value)
+    (0x9D3A90, 'STANCE', 0x2), (0x9D3AA9, 'DASH', 0x4), (0x9D3AC2, 'HOLD', 0x8), (0x9D3ADB, 'FIRE', 0x10),
+    (0x9D3AF4, 'ACTION', 0x20), (0x9D3B0D, 'RELOAD', 0x40), (0x9D3C17, 'SIDE_ROLL', 0x10000), (0x9D3C66, 'EVADE', 0x40000),
+    (0x9D3CB7, 'VEHICLE_DASH', 0x200000), (0x9D3D23, 'CARRY', 0x40), (0x9D3D3C, 'RIDE_ON', 0x20), (0x9D3DBD, 'CQC_KNIFE_KILL', 0x20),
+]
+
+
+def actions_assertions():
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+    for site, name, value in PAD_ENUM:
+        b = rd(site, 19)
+        if b[:6] != bytes.fromhex('41b901000000'):
+            out.append(f'{site:#x}: not mov r9d,1')
+            continue
+        if b[6:9] == bytes.fromhex('458d41'):
+            r8, lea = 1 + b[9], site + 10
+        elif b[6:8] == bytes.fromhex('41b8'):
+            r8, lea = struct.unpack_from('<I', b, 8)[0], site + 12
+        else:
+            out.append(f'{site:#x}: no r8d value')
+            continue
+        lb = rd(lea, 7)
+        need(lb[:3] == bytes.fromhex('488d15'), f'{lea:#x}: lea rdx,[rip+x]')
+        string = lea + 7 + struct.unpack_from('<i', lb, 3)[0]
+        text = rd(string, len(name) + 1)
+        need(text == name.encode() + b'\0', f'{site:#x}: string at {string:#x} is {text!r}, not {name}')
+        need(r8 == value, f'{site:#x}: {name} = {r8:#x}, expected {value:#x}')
+        call = rd(lea + 7, 8)
+        need(call[3] == 0xE8 and lea + 7 + 8 + struct.unpack_from('<i', call, 4)[0] == 0x1A156E0,
+             f'{site:#x}: the pair is registered by 0x1A156E0')
+    need(0x9D3A78 <= min(s for s, _, _ in PAD_ENUM) and max(s for s, _, _ in PAD_ENUM) < 0x9D3EE5, 'enum sites inside 0x9D3A78..0x9D3EE5')
+    gate_a, gate_b = rel_refs(0x114DB20), rel_refs(0x12B60D0)
+    need(0x1148C4E in gate_a, f'EVADE A calls gate 0x114DB20: {[hex(x) for x in gate_a]}')
+    need(0x12997FF in gate_b and 0x129B7B9 in gate_b, f'EVADE B/C call gate 0x12B60D0: {[hex(x) for x in gate_b]}')
+    funcs = runtime_functions()
+    need(any(b == 0x114DB20 for b, e in funcs) and any(b == 0x12B60D0 for b, e in funcs), 'both gates are function starts')
+    # Rates: the only stores of the sp interface and record vtables, the getter's
+    # only image references (final and destruction vtables), the two callers.
+    need(lea_rip_refs(0x23AD380) == [0xFDD4F7], f'sp vtable 0x23AD380 stored once: {[hex(x) for x in lea_rip_refs(0x23AD380)]}')
+    need(lea_rip_refs(0x23AD2B0) == [0xFDD416, 0xFDD6A3], f'record vtable 0x23AD2B0: {[hex(x) for x in lea_rip_refs(0x23AD2B0)]}')
+    need(qword_hits(0xFDD610) == [0x23AD328, 0x23AD380], f'getter 0xFDD610 slots: {[hex(x) for x in qword_hits(0xFDD610)]}')
+    need(rel_refs(0xFDD610) == [], 'the record getter is only called virtually')
+    need(rel_refs(0x109F690) == [0x10B9DC1, 0x10BA6B7], f'rate getter callers: {[hex(x) for x in rel_refs(0x109F690)]}')
+    need(0xFDD6AA + struct.unpack('<i', rd(0xFDD6A6, 4))[0] == 0x23AD2B0 and 0xFDD6A3 + 7 - 7 == 0xFDD6A3,
+         'record init r10 = 0x23AD2B0 (stored last at 0xFDD736)')
+    need(rd(0xFDD736, 3) == bytes.fromhex('4c8911'), 'record init: mov [rcx], r10 (final vtable) after the rates')
+    need(struct.unpack('<f', rd(0xFDD70C + 3, 4))[0] == 1.0, 'rates start at 1.0')
+    return out
+
+
+failures += actions_assertions()
 if failures:
     print('\n'.join(failures))
     raise SystemExit(1)
@@ -791,6 +926,20 @@ w('inline constexpr std::uint32_t p1_setne_orig=0xc5950f40;  // 40 0f 95 c5 (set
 w('inline constexpr std::uint32_t p1_setne_new=0xcccca4eb;   // eb a4 (jmp 0x109e128) cc cc')
 w('// Instance 1\'s base action record (rec1): current act, next act, sampled move magnitude and heading.')
 w('inline constexpr std::size_t rec_act=0x2a0, rec_act_next=0x2a1, rec_move_mag=0x2c0, rec_move_heading=0x2c4;')
+w('// --- Native actions: PlayerPad enum values (0x9d3a78..0x9d3ee5, pinned with their names) ---------')
+w('inline constexpr std::uint32_t pad_stance=0x2, pad_dash=0x4, pad_hold=0x8, pad_fire=0x10, pad_action=0x20, pad_reload=0x40;')
+w('inline constexpr std::uint32_t pad_side_roll=0x10000, pad_evade=0x40000, pad_vehicle_dash=0x200000;')
+w('// EVADE press consumers (act 27 = 0x1b into Q+0x18[id]); their remote gates are true only with S_IS_ONLINE.')
+w('inline constexpr std::uintptr_t evade_site_a=0x1148c6c, evade_site_b=0x1299821, evade_site_c=0x129b7db;')
+w('inline constexpr std::uint16_t act_evade=0x1b;')
+w('// --- Native rates: the per-id movement rate records of *(PS+0x260) ------------------------------')
+w('// sp = *(PS+0x260) (interface vtable 0x23ad380 at object+0x20; 0x23ad328 while destroyed: refused);')
+w('// rec = *(sp+0x10) + (id - *(u32)(sp+8))*0x88 with id - base < *(u32)(sp+0xc), record vtable 0x23ad2b0')
+w('// (0x23ad260 while constructed/destroyed: refused). Crawl rate = +0x44 = +0x3c * +0x40; dash = +0x50 = +0x48 * +0x4c.')
+w('inline constexpr std::uintptr_t rate_sp_vtable_rva=0x23ad380, rate_rec_vtable_rva=0x23ad2b0;')
+w('inline constexpr std::size_t ps_rates=0x260, sp_base_id=0x8, sp_count=0xc, sp_records=0x10, rate_rec_stride=0x88;')
+w('inline constexpr std::size_t rate_first=0x3c, rate_count=6;  // +0x3c crawl, +0x40 crawl factor, +0x44, +0x48 dash, +0x4c dash factor, +0x50')
+
 w('struct Site { std::uintptr_t rva; std::size_t size; unsigned char bytes[80]; };')
 w('inline constexpr Site code_sites[]={')
 for rva, expected, what in SITES:

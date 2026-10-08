@@ -14,6 +14,7 @@
 // DllMain (kernel32 file I/O only, no heap, no LoadLibrary).
 #include <cstddef>
 #include <cstdint>
+#include "mgscoop/partner_pad_bits.hpp"
 
 namespace mgscoop {
 
@@ -121,14 +122,24 @@ enum class PartnerLocal : std::uint8_t { main, all };
 // slot after phase 0 inside a drain); lookcam (also CAM+0x270/+0x274 inside
 // block-1 windows, sandboxed).
 enum class PartnerNativeAim : std::uint8_t { off, look, lookcam };
-// Native puppet ranges and the effective-mask base (STANCE 2, DASH 4,
-// keyboard dash bit 21, keyboard walk bit 25); HOLD 0x8 + RELOAD 0x40 with
-// partner_native_gun, FIRE 0x10 with partner_native_gun and _fire.
+// Instance 1's per-id movement rates (base action record of *(PS1+0x260):
+// dash +0x48/+0x50, crawl +0x3C/+0x40/+0x44; docs/native-puppet.md "Rates"):
+// off (not read), log (read both instances and the remote's, telemetry only)
+// or mirror (also write the remote's rates into instance 1's own record inside
+// the drain window, restored on leave). Inert unless partner_drive=native.
+enum class PartnerNativeRates : std::uint8_t { off, log, mirror };
+// Native puppet ranges and the effective-mask base (partner_pad_bits.hpp:
+// STANCE 2, DASH 4, EVADE 0x40000, keyboard dash bit 21, keyboard walk bit
+// 25); HOLD 0x8 + RELOAD 0x40 with partner_native_gun, FIRE 0x10 with
+// partner_native_gun and _fire. ACTION 0x20 (ride, knife kill, pickup) never.
 inline constexpr std::uint32_t kPartnerNativeSteerMaxDeg = 30;
 inline constexpr std::uint32_t kPartnerNativeTrimMaxPct = 10;
-inline constexpr std::uint32_t kPartnerNativeBaseMask = 0x2200006u;
-inline constexpr std::uint32_t kPartnerNativeGunBits = 0x48u;
-inline constexpr std::uint32_t kPartnerNativeFireBit = 0x10u;
+inline constexpr std::uint32_t kPartnerNativeBaseMask = partner_pad::kNativeBase;
+inline constexpr std::uint32_t kPartnerNativeGunBits = partner_pad::kNativeGun;
+inline constexpr std::uint32_t kPartnerNativeFireBit = partner_pad::kFire;
+static_assert(kPartnerNativeBaseMask == 0x2240006u && kPartnerNativeGunBits == 0x48u && kPartnerNativeFireBit == 0x10u, "native masks");
+static_assert((kPartnerNativeBaseMask & ~partner_pad::kMovementOnlyBits) == 0u, "the base passes movement-only bits");
+static_assert(((kPartnerNativeGunBits | kPartnerNativeFireBit) & partner_pad::kMovementOnlyBits) == 0u, "gun/fire bits disjoint from movement");
 // Sources of the three pad edge words src+0x4C/+0x50/+0x54 inside the window
 // (partner_input::Word): '0' zero, 'p' press, 'r' release, 'h' held, 'n' the
 // partner's own word (once per received frame).
@@ -229,8 +240,8 @@ struct LabConfig {
     // Round 4: "hpr" (w4c held, w50 press edge, w54 release edge; the stance
     // toggle fires on w50 or w54 bit 1, 0x10CE317..0x10CE344).
     std::uint8_t partner_input_words[3] = {kPartnerWordHeld, kPartnerWordPress, kPartnerWordRelease};
-    // STANCE 0x2 | DASH 0x4 | keyboard dash 0x200000 | keyboard walk 0x2000000 (binding 0x19).
-    std::uint32_t partner_input_mask = 0x2200006;
+    // STANCE 0x2 | DASH 0x4 | EVADE 0x40000 | keyboard dash 0x200000 | keyboard walk 0x2000000 (binding 0x19).
+    std::uint32_t partner_input_mask = 0x2240006;
     bool partner_input_rstick = false;
     bool partner_input_triggers = false;
     std::uint32_t partner_input_stick_deg = 180;  // 0..359
@@ -267,6 +278,7 @@ struct LabConfig {
     bool partner_native_fire = false;               // FIRE 0x10 (only with partner_native_gun)
     std::uint32_t partner_native_steer_deg = 15;    // 0..30 (0 disables steering)
     std::uint32_t partner_native_trim_pct = 0;      // 0..10
+    PartnerNativeRates partner_native_rates = PartnerNativeRates::log;
     bool crash_probe = true;
     // Two-PC link (docs/link-protocol.md). `mode` is parsed independently of
     // `present`; the play save gate is lab::SavesRedirected() in the observer.
@@ -316,6 +328,7 @@ const char* PartnerDriveName(PartnerDrive value) noexcept;
 const char* PartnerDeferName(PartnerDefer value) noexcept;
 const char* PartnerLocalName(PartnerLocal value) noexcept;
 const char* PartnerNativeAimName(PartnerNativeAim value) noexcept;
+const char* PartnerNativeRatesName(PartnerNativeRates value) noexcept;
 const char* LabModeName(LabMode value) noexcept;
 const char* NetLinkName(NetLink value) noexcept;
 const char* PartnerInterpName(PartnerInterp value) noexcept;
@@ -336,6 +349,7 @@ bool ParsePartnerDrive(const char* text, std::size_t size, PartnerDrive& out) no
 bool ParsePartnerDefer(const char* text, std::size_t size, PartnerDefer& out) noexcept;
 bool ParsePartnerLocal(const char* text, std::size_t size, PartnerLocal& out) noexcept;
 bool ParsePartnerNativeAim(const char* text, std::size_t size, PartnerNativeAim& out) noexcept;
+bool ParsePartnerNativeRates(const char* text, std::size_t size, PartnerNativeRates& out) noexcept;
 // partner_input_defer as it takes effect: off unless partner_drive=native.
 inline PartnerDefer EffectivePartnerDefer(PartnerDrive drive, PartnerDefer defer) noexcept {
     return drive == PartnerDrive::native ? defer : PartnerDefer::off;

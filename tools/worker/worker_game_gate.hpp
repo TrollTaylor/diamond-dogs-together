@@ -28,12 +28,18 @@ inline bool NativeProfile(const mgscoop::LabConfig& lab) {
         lab.partner_input_hold == mgscoop::PartnerInputHold::own && lab.partner_input_wrap == mgscoop::PartnerWrap::window &&
         lab.partner_input_cam == mgscoop::PartnerInputCam::sandbox && lab.partner_input_local == mgscoop::PartnerLocal::main &&
         lab.partner_input_slot == mgscoop::PartnerSlot::body;
-    const bool census = lab.partner_input_defer == mgscoop::PartnerDefer::census && lab.partner_input_mask == 0x2200006u &&
-        !lab.partner_native_gun && !lab.partner_native_fire && lab.partner_native_aim == mgscoop::PartnerNativeAim::off;
-    const bool loco = lab.partner_input_defer == mgscoop::PartnerDefer::on && lab.partner_input_mask == 0x2200006u &&
-        !lab.partner_native_gun && !lab.partner_native_fire && lab.partner_native_aim == mgscoop::PartnerNativeAim::off;
-    const bool gun = lab.partner_input_defer == mgscoop::PartnerDefer::on && lab.partner_input_mask == 0x220004Eu &&
-        lab.partner_native_gun && !lab.partner_native_fire && lab.partner_native_aim == mgscoop::PartnerNativeAim::look;
+    // Masks: the movement base 0x2240006 (STANCE, DASH, EVADE, keyboard dash and
+    // walk), plus HOLD + RELOAD in the gun stage; census never writes rates,
+    // loco and gun mirror the remote's movement rates into instance 1.
+    const bool census = lab.partner_input_defer == mgscoop::PartnerDefer::census && lab.partner_input_mask == 0x2240006u &&
+        !lab.partner_native_gun && !lab.partner_native_fire && lab.partner_native_aim == mgscoop::PartnerNativeAim::off &&
+        lab.partner_native_rates != mgscoop::PartnerNativeRates::mirror;
+    const bool loco = lab.partner_input_defer == mgscoop::PartnerDefer::on && lab.partner_input_mask == 0x2240006u &&
+        !lab.partner_native_gun && !lab.partner_native_fire && lab.partner_native_aim == mgscoop::PartnerNativeAim::off &&
+        lab.partner_native_rates == mgscoop::PartnerNativeRates::mirror;
+    const bool gun = lab.partner_input_defer == mgscoop::PartnerDefer::on && lab.partner_input_mask == 0x224004Eu &&
+        lab.partner_native_gun && !lab.partner_native_fire && lab.partner_native_aim == mgscoop::PartnerNativeAim::look &&
+        lab.partner_native_rates == mgscoop::PartnerNativeRates::mirror;
     return base && (census || loco || gun);
 }
 inline bool OfflineLab(const mgscoop::LabConfig& lab, const std::string& role, const std::string& save) {

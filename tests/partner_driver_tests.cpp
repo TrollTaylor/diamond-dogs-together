@@ -653,7 +653,7 @@ void TestTriggerStopAndTeardown() {
     Check(s.fake.trigger_present && s.driver.settings.stage == 3, "not polled before tick 30");
     Check(s.Tick(1), "tick 30");
     Check(!s.fake.trigger_present && s.driver.settings.stage == 0, "stop applied at tick 30");
-    Check(s.fake.Has("partner_stage=changed; stage=0; source=fixed; apply=warp; anim=off; aset=qs; reset=n; look=copy; probe=off; lookgate=1; lookrecover=1; input=off; cam=sandbox; hold=own; yaw=rot; words=hpr; mask=0x2200006; correct=3000; isend=0; dm=off; recon=track; align=0; slot=body; runaway=pin; wrap=off; via=trigger\r\n") &&
+    Check(s.fake.Has("partner_stage=changed; stage=0; source=fixed; apply=warp; anim=off; aset=qs; reset=n; look=copy; probe=off; lookgate=1; lookrecover=1; input=off; cam=sandbox; hold=own; yaw=rot; words=hpr; mask=0x2240006; correct=3000; isend=0; dm=off; recon=track; align=0; slot=body; runaway=pin; wrap=off; via=trigger\r\n") &&
           s.fake.Has("partner_bits=cleared; reason=trigger\r\n") && s.fake.Has("partner_policy=restored\r\n") &&
           s.fake.Writes("clear") == 1 && s.fake.Writes("restore") == 1 && s.fake.policy_byte == 0, "stop clears bits, restores policy");
     Check(s.reply.op == op::clear_all_active, "stage 0 with Lua all-active: CLEAR only");
@@ -1345,7 +1345,7 @@ void TestAnimationGuards() {
           "summary counters (the refused crawl was retried and applied)");
     // A trigger that changes anim/aset re-arms the change-only lines.
     c.Trigger("aset=s");
-    Check(c.fake.Has("partner_stage=changed; stage=3; source=fixed; apply=warp; anim=mirror; aset=s; reset=n; look=copy; probe=off; lookgate=1; lookrecover=1; input=off; cam=sandbox; hold=own; yaw=rot; words=hpr; mask=0x2200006; correct=3000; isend=0; dm=off; recon=track; align=0; slot=body; runaway=pin; wrap=off; via=trigger\r\n"),
+    Check(c.fake.Has("partner_stage=changed; stage=3; source=fixed; apply=warp; anim=mirror; aset=s; reset=n; look=copy; probe=off; lookgate=1; lookrecover=1; input=off; cam=sandbox; hold=own; yaw=rot; words=hpr; mask=0x2240006; correct=3000; isend=0; dm=off; recon=track; align=0; slot=body; runaway=pin; wrap=off; via=trigger\r\n"),
           "trigger accepted");
 }
 
@@ -1509,7 +1509,7 @@ void TestLooks() {
 void TestCensusAndProbes() {
     Session s(3);
     s.Trigger("census=1");
-    Check(s.fake.Has("partner_stage=changed; stage=3; source=fixed; apply=warp; anim=off; aset=qs; reset=n; look=copy; probe=off; lookgate=1; lookrecover=1; input=off; cam=sandbox; hold=own; yaw=rot; words=hpr; mask=0x2200006; correct=3000; isend=0; dm=off; recon=track; align=0; slot=body; runaway=pin; wrap=off; via=trigger\r\n"),
+    Check(s.fake.Has("partner_stage=changed; stage=3; source=fixed; apply=warp; anim=off; aset=qs; reset=n; look=copy; probe=off; lookgate=1; lookrecover=1; input=off; cam=sandbox; hold=own; yaw=rot; words=hpr; mask=0x2240006; correct=3000; isend=0; dm=off; recon=track; align=0; slot=body; runaway=pin; wrap=off; via=trigger\r\n"),
           "trigger line with the new fields");
     Check(s.Tick(0) && s.fake.Count("partner_census; k=0; verdict=ok") == 1 && s.fake.Count("partner_census; k=1; verdict=ok") == 1,
           "census=1 logs both blocks");
@@ -1528,7 +1528,7 @@ void TestCensusAndProbes() {
     Check(s.driver.settings.apply == mgscoop::PartnerApply::hybrid && s.driver.settings.anim == mgscoop::PartnerAnim::net &&
           s.driver.settings.aset == mgscoop::PartnerAset::r && s.driver.settings.reset == mgscoop::PartnerReset::c &&
           s.driver.settings.look == mgscoop::PartnerLook::snake &&
-          s.fake.Has("partner_stage=changed; stage=3; source=fixed; apply=hybrid; anim=net; aset=r; reset=c; look=snake; probe=off; lookgate=1; lookrecover=1; input=off; cam=sandbox; hold=own; yaw=rot; words=hpr; mask=0x2200006; correct=3000; isend=0; dm=off; recon=track; align=0; slot=body; runaway=pin; wrap=off; via=trigger\r\n"),
+          s.fake.Has("partner_stage=changed; stage=3; source=fixed; apply=hybrid; anim=net; aset=r; reset=c; look=snake; probe=off; lookgate=1; lookrecover=1; input=off; cam=sandbox; hold=own; yaw=rot; words=hpr; mask=0x2240006; correct=3000; isend=0; dm=off; recon=track; align=0; slot=body; runaway=pin; wrap=off; via=trigger\r\n"),
           "settings via trigger");
     // Configure takes the lab.ini values.
     mgscoop::LabConfig lab{};
@@ -3059,7 +3059,7 @@ void TestNativeEnterAndLeave() {
     Check(s.fake.Containing("partner_native=enter; step=place") == 1 && s.fake.Containing("partner_native=enter; step=armed") == 1,
           "every enter step logged once");
     const auto& arm = s.fake.arms.back();
-    Check(arm.enabled && arm.native && arm.config.mode == mgscoop::PartnerInput::net && arm.config.mask == 0x2200006u &&
+    Check(arm.enabled && arm.native && arm.config.mode == mgscoop::PartnerInput::net && arm.config.mask == 0x2240006u &&
           arm.wrap == mgscoop::PartnerWrap::window && arm.hold == mgscoop::PartnerInputHold::own && arm.go == 0x1000 - 0x20 &&
           !arm.local_all && arm.naim == mgscoop::PartnerNativeAim::off && !arm.p218, "the native Arm (effective settings)");
     // Publication order: identity -> deferral armed -> enabled native Arm (run
