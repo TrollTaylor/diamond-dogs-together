@@ -2075,7 +2075,7 @@ bool SelectWorldReceipt(mgscoop::world::Receipt kind, const char* buffer, std::s
         if(OnRuntimeThread() || OnTerminationThread()) reply=mgscoop::world_link::HandleLog(buffer,size);
     } else if(kind==world::Receipt::warp) {
         // Lua owner thread only; every other gate is in the handler.
-        if(OnRuntimeThread()) reply=GuestWarpReceipt(buffer+sizeof(world::warp_prefix)-1,size-(sizeof(world::warp_prefix)-1));
+        if(OnRuntimeThread()) reply=GuestWarpReceipt(buffer,size);  // ParseWarp checks the prefix itself
     }
     if(reply) replacement={reply,std::strlen(reply)};
     world_quiet=kind!=world::Receipt::cfg;
