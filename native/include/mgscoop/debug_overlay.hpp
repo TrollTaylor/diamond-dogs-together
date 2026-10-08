@@ -66,7 +66,6 @@ bool HookInputFixtureForTest(void* state, void* data) noexcept;
 bool HookPadFixtureForTest(void* function) noexcept;
 void RawKeyForTest(unsigned key) noexcept;
 TestStats StatsForTest() noexcept;
-const char* FooterStatusForTest() noexcept;
 void ShutdownForTest() noexcept;
 #endif
 }

@@ -1,0 +1,4 @@
+#pragma once
+constexpr char debug_player_source[] = R"MGS_DEBUG_PLAYER(
+@MGS_DEBUG_PLAYER_SOURCE@
+)MGS_DEBUG_PLAYER";

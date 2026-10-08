@@ -626,7 +626,7 @@ std::uint32_t partner_mission = 0;
 bool world_on = false;
 thread_local bool world_quiet = false;
 thread_local bool debug_quiet = false;
-thread_local char debug_reply[320]{};
+thread_local char debug_reply[400]{};
 // Crash-probe context flags: bit0 input window armed, bit1 DM patch applied.
 std::uint32_t PartnerCtxFlags() noexcept {
     return (partner_driver.mission.input_armed ? 1u : 0u) | (partner_driver.mission.dm_patched ? 2u : 0u);
@@ -1103,6 +1103,7 @@ void PublishDebugSnapshot() noexcept {
     StringCchCopyA(snapshot.source, ARRAYSIZE(snapshot.source), mgscoop::PartnerSourceName(settings.source));
     StringCchCopyA(snapshot.apply, ARRAYSIZE(snapshot.apply), mgscoop::PartnerApplyName(settings.apply));
     StringCchCopyA(snapshot.anim, ARRAYSIZE(snapshot.anim), mgscoop::PartnerAnimName(settings.anim));
+    StringCchCopyA(snapshot.aset, ARRAYSIZE(snapshot.aset), mgscoop::PartnerAsetName(settings.aset));
     StringCchCopyA(snapshot.dm, ARRAYSIZE(snapshot.dm), mgscoop::PartnerDmName(settings.dm));
     StringCchCopyA(snapshot.look, ARRAYSIZE(snapshot.look), mgscoop::PartnerLookName(settings.look));
     if (mission.refusal) StringCchCopyA(snapshot.refusal, ARRAYSIZE(snapshot.refusal), mission.refusal);
@@ -1122,6 +1123,7 @@ void PublishDebugSnapshot() noexcept {
             snapshot.local_anim_speed = animation.speed[0];
         }
     }
+    snapshot.remote_valid = mission.have_cmd;
     if (mission.have_cmd) {
         snapshot.remote_pos[0] = static_cast<float>(mission.cmd.x_mm) * 0.001f;
         snapshot.remote_pos[1] = static_cast<float>(mission.cmd.y_mm) * 0.001f;
@@ -1134,7 +1136,8 @@ void PublishDebugSnapshot() noexcept {
         const float delta = snapshot.body_pos[i] - snapshot.remote_pos[i];
         error += delta * delta;
     }
-    snapshot.position_error_m = std::sqrt(error);
+    // Errors against the remote pose only mean something once one has arrived.
+    snapshot.position_error_m = snapshot.remote_valid ? std::sqrt(error) : 0.0f;
     if (mission.body_ok) {
         const auto& q = mission.body_quat;
         snapshot.body_yaw = std::atan2(2.0f * (q[3] * q[1] + q[0] * q[2]), 1.0f - 2.0f * (q[1] * q[1] + q[2] * q[2])) * 57.2957795f;
@@ -1195,19 +1198,26 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
     if (!debug::Enabled() || !buffer || !name || size >= 256 || std::strlen(name) != size ||
         std::memcmp(buffer, name, size) != 0) return false;
     constexpr char command[] = "return 'MGS_COOP_DEBUG_CMD_V1'";
+    constexpr char poll[] = "return 'MGS_COOP_DEBUG_POLL_V1'";
     constexpr char log[] = "return 'MGS_COOP_DEBUG_LOG_V1' -- ";
     constexpr char state[] = "return 'MGS_COOP_DEBUG_STATE_V1' -- ";
     constexpr char partner_control[] = "return 'MGS_COOP_DEBUG_PARTNER_V1' -- ";
     constexpr char enemy[] = "return 'MGS_COOP_DEBUG_ENEMY_V1' -- ";
     const bool is_command = size == sizeof(command) - 1 && std::memcmp(buffer, command, size) == 0;
+    // While Lua has a pending action it polls: telemetry and the worker
+    // stay live, but nothing is popped; commands wait in the bounded queue.
+    const bool is_poll = size == sizeof(poll) - 1 && std::memcmp(buffer, poll, size) == 0;
     const bool is_log = size >= sizeof(log) - 1 && std::memcmp(buffer, log, sizeof(log) - 1) == 0;
     const bool is_state = size >= sizeof(state) - 1 && std::memcmp(buffer, state, sizeof(state) - 1) == 0;
     const bool is_partner = size >= sizeof(partner_control) - 1 && std::memcmp(buffer, partner_control, sizeof(partner_control) - 1) == 0;
     const bool is_enemy = size >= sizeof(enemy) - 1 && std::memcmp(buffer, enemy, sizeof(enemy) - 1) == 0;
-    if (!is_command && !is_log && !is_state && !is_partner && !is_enemy) return false;
+    if (!is_command && !is_poll && !is_log && !is_state && !is_partner && !is_enemy) return false;
     if (!OnRuntimeThread() && !(is_log || is_state ? OnTerminationThread() : false)) return false;
     const char* reply = "return nil";
-    if (is_command) {
+    if (is_poll) {
+        PublishDebugSnapshot();
+        mgscoop::worker_debug::PollOwner();
+    } else if (is_command) {
         PublishDebugSnapshot();
         mgscoop::worker_debug::PollOwner();
         unsigned short read_mission = 0;
@@ -1215,8 +1225,15 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
         if (!mission_terminating && ReadMission(read_mission) && read_mission == partner_mission &&
             mgscoop::SupportsPartnerBody(read_mission) && debug::Pop(pending)) {
             const auto snapshot = debug::GetSnapshot();
-            StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {id=%u,text=\"%s\",host=%s,paired=%s,mission=%u}", pending.id, pending.text,
-                snapshot.host ? "true" : "false", snapshot.world_paired ? "true" : "false", partner_mission);
+            // goto_partner gets the partner pose from the snapshot just published,
+            // only for a live, paired, recent network pose (read-only data).
+            char pose[96]{};
+            if (std::strcmp(pending.text, "goto_partner") == 0 && snapshot.remote_valid && snapshot.world_paired &&
+                std::strcmp(snapshot.link_state, "connected") == 0 && snapshot.remote_age_ms <= 1000)
+                StringCchPrintfA(pose, ARRAYSIZE(pose), ",pp={%ld,%ld,%ld,%u}", std::lround(snapshot.remote_pos[0] * 1000.0f),
+                    std::lround(snapshot.remote_pos[1] * 1000.0f), std::lround(snapshot.remote_pos[2] * 1000.0f), snapshot.remote_age_ms);
+            StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {id=%u,text=\"%s\",host=%s,paired=%s,mission=%u%s}", pending.id, pending.text,
+                snapshot.host ? "true" : "false", snapshot.world_paired ? "true" : "false", partner_mission, pose);
             reply = debug_reply;
             LogFormat("debug_menu=dispatch; id=%u; text=%s; generation=%u\r\n", pending.id, pending.text, pending.generation);
         }
@@ -1246,21 +1263,25 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             reply = accepted ? "return true" : "return false";
             LogFormat("debug_menu=partner; id=%u; accepted=%u; text=%s\r\n", id, unsigned(accepted), text);
         }
+    } else if (is_state) {
+        // Exactly 2 (legacy) or 12 bounded fields; anything else is ignored.
+        debug::LuaStateReceipt(buffer + sizeof(state) - 1, size - (sizeof(state) - 1));
+        reply = "return true";
     } else {
-        const char* cursor = buffer + (is_log ? sizeof(log) - 1 : sizeof(state) - 1);
+        const char* cursor = buffer + sizeof(log) - 1;
         const char* end = buffer + size;
         std::uint32_t first = 0, second = 0;
         const auto a = std::from_chars(cursor, end, first);
         if (a.ec == std::errc{} && a.ptr < end && *a.ptr == ' ') {
             const auto b = std::from_chars(a.ptr + 1, end, second);
             if (b.ec == std::errc{}) {
-                if (is_state && b.ptr == end && first <= 1 && second <= 255) debug::LuaState(first == 1, second);
-                else if (is_log && b.ptr < end && *b.ptr == ' ' && second <= 1) {
+                // 0 refused (final), 1 ok (final), 2 ok (interim).
+                if (b.ptr < end && *b.ptr == ' ' && second <= 2) {
                     char message[192]{};
                     const auto n = static_cast<std::size_t>(end - b.ptr - 1);
                     if (n < sizeof(message)) {
                         std::memcpy(message, b.ptr + 1, n);
-                        debug::Result(first, second == 1, message);
+                        debug::Result(first, second, message);
                         LogFormat("debug_menu=result; id=%u; ok=%u; message=%s\r\n", first, second, message);
                     }
                 }

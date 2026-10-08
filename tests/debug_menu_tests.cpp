@@ -1,4 +1,5 @@
 #include "mgscoop/debug_menu.hpp"
+#include "mgscoop/debug_actions.hpp"
 #include <cstdio>
 #include <cstring>
 #include <atomic>
@@ -149,6 +150,214 @@ int main() {
     debug::EndMission(); Check(!receipt(command.id, "clear 30010"), "termination rejects all metadata");
     debug::Configure(true, true, true); debug::BeginMission(30050);
 
+    // Receipts: LOG codes 0 refused, 1 ok, 2 interim; queue refusals are status 3 with id 0.
+    debug::Configure(true, true, true); debug::BeginMission(30010);
+    const auto first_id = debug::QueueCommandId("teleport 1 2 3 0");
+    Check(first_id != 0 && debug::QueueCommandId("position") == first_id + 1, "QueueCommandId returns increasing ids");
+    Check(debug::Pop(command) && command.id == first_id, "id popped in order");
+    debug::Result(first_id, 2, "submitted_warp");
+    auto rs = debug::GetSnapshot();
+    Check(rs.interim == 1 && rs.completed == 0 && rs.receipts[0].id == first_id && rs.receipts[0].status == 2,
+          "interim result is a status-2 receipt and not completed");
+    Check(std::strcmp(rs.receipts[0].command, "teleport 1 2 3 0") == 0, "receipt carries the dispatched command text");
+    debug::Result(first_id, 1, "warp_position_readback;error_m=0.100");
+    rs = debug::GetSnapshot();
+    Check(rs.completed == 1 && rs.receipts[0].id == first_id && rs.receipts[0].status == 0 && rs.receipts[1].id == 0,
+          "final result replaces its interim receipt");
+    Check(debug::Pop(command), "second command dispatched");
+    debug::Result(command.id, 0, "position_unreadable");
+    rs = debug::GetSnapshot();
+    Check(rs.completed == 2 && rs.rejected == 1 && rs.receipts[0].status == 1 && std::strcmp(rs.receipts[0].command, "position") == 0,
+          "refused final result counted and paired by id");
+    Check(debug::QueueCommandId("bad;text") == 0, "invalid text returns id 0");
+    rs = debug::GetSnapshot();
+    Check(rs.receipts[0].id == 0 && rs.receipts[0].status == 3 && rs.rejected == 2 && rs.receipts[0].command[0] == 0,
+          "queue refusal is a status-3 receipt with id 0 and no unsafe text");
+    debug::Result(99999, 3, "bad code");
+    Check(debug::GetSnapshot().receipts[0].status == 3, "unknown result code ignored");
+    for (unsigned i = 0; i < 20; ++i) { Check(debug::QueueCommand("position") && debug::Pop(command), "receipt fill"); debug::Result(command.id, 1, "position=1,2,3;yaw=0"); }
+    rs = debug::GetSnapshot();
+    Check(rs.receipts[15].id != 0 && rs.receipts[0].id == command.id, "receipt ring is bounded and newest first");
+    debug::ClearHistory();
+    Check(debug::GetSnapshot().receipts[0].id == 0 && debug::GetSnapshot().completed == rs.completed, "ClearHistory empties only the log");
+
+    // STATE_V1: exactly 2 (legacy) or 12 bounded fields.
+    debug::LuaFlags flags{};
+    const auto parse = [&](const char* text) { return debug::ParseLuaState(text, std::strlen(text), flags); };
+    Check(parse("1 129") && flags.infinite_ammo && flags.bookmark_mask == 129, "legacy two-field state accepted");
+    Check(parse("1 3 4294967295 warp 34 1 0 1 43200 3000 6000 ok") && flags.pending_id == 4294967295u && std::strcmp(flags.pending_kind, "warp") == 0 &&
+          flags.pending_frames == 34 && flags.god_mode && !flags.fulton_infinite && flags.slowmo_active && flags.game_clock_s == 43200 &&
+          flags.player_life == 3000 && flags.player_life_max == 6000 && std::strcmp(flags.guard_reason, "ok") == 0, "twelve-field state parsed");
+    Check(parse("0 0 0 none 0 0 0 0 0 -1 -1 on_foot") && flags.player_life == -1 && std::strcmp(flags.guard_reason, "on_foot") == 0, "unreadable life is -1");
+    for (const auto* bad : {"1", "1 2 3", "0 0 0 none 0 0 0 0 0 -1 -1", "0 0 0 none 0 0 0 0 0 -1 -1 ok extra", "2 0", "1 256",
+         "0 0 0 teleport 0 0 0 0 0 -1 -1 ok", "0 0 0 none 0 2 0 0 0 -1 -1 ok", "0 0 0 none 0 0 0 0 86400 -1 -1 ok",
+         "0 0 0 none 0 0 0 0 0 -2 -1 ok", "0 0 0 none 0 0 0 0 0 -1 -1 OK", "0  0", " 0 0", "0 0 ", "0 0 0 none 0 0 0 0 0 -1 -1 ok;x",
+         "0 0 0 none 100001 0 0 0 0 -1 -1 ok", "0 0 0 none 0 0 0 0 0 -1 -1 aaaaaaaaaaaaaaaaaaaaaaaa"})
+        Check(!parse(bad), "malformed or out-of-range state rejected");
+    const char twelve[] = "1 5 7 spawn 12 1 1 0 3600 10 20 ok";
+    Check(debug::LuaStateReceipt(twelve, sizeof(twelve) - 1), "state receipt applied");
+    rs = debug::GetSnapshot();
+    Check(rs.infinite_ammo && rs.bookmark_mask == 5 && rs.pending_id == 7 && std::strcmp(rs.pending_kind, "spawn") == 0 && rs.god_mode &&
+          rs.fulton_infinite && rs.game_clock_s == 3600 && rs.player_life == 10 && rs.player_life_max == 20, "Lua-owned flags visible");
+    debug::Snapshot over{}; over.god_mode = false; over.player_life = 1; over.pending_id = 0; over.overlay_open = true; over.receipts[0].id = 77;
+    over.enemy_nearby_count = 5; over.enemy_camps_loaded = true; over.interim = 9;
+    debug::Publish(over);
+    rs = debug::GetSnapshot();
+    Check(rs.god_mode && rs.player_life == 10 && rs.pending_id == 7 && !rs.overlay_open && rs.receipts[0].id != 77 &&
+          rs.enemy_nearby_count == 0 && !rs.enemy_camps_loaded && rs.interim == 1 && rs.published_tick64 != 0,
+          "Publish preserves Lua-, receipt-, enemy- and overlay-owned fields");
+    debug::OverlayStatus overlay{}; overlay.open = true; overlay.frames = 4; strcpy_s(overlay.category, "enemies");
+    const auto before_overlay = debug::GetSnapshot();
+    const auto serial = debug::RequestMenu("menu open enemies", before_overlay.mission, before_overlay.generation);
+    std::uint32_t taken = 0; char menu_text[debug::kCommandCapacity]{};
+    Check(serial && debug::TakeMenuRequest(taken, menu_text) && taken == serial && !std::strcmp(menu_text, "menu open enemies") &&
+          !debug::TakeMenuRequest(taken, menu_text), "menu request taken once");
+    const auto busy = debug::RequestMenu("menu close", before_overlay.mission, before_overlay.generation);
+    Check(busy == serial + 1 && !std::strcmp(debug::GetSnapshot().overlay_result, "menu_busy") && debug::GetSnapshot().overlay_result_serial == busy,
+          "single menu slot refuses a second request until the first resolves");
+    debug::ReportMenuResult(serial, "menu_open;category=enemies;frames=4");
+    const auto stale = debug::RequestMenu("menu close", before_overlay.mission, before_overlay.generation + 1);
+    Check(!std::strcmp(debug::GetSnapshot().overlay_result, "menu_stale") && debug::GetSnapshot().overlay_result_serial == stale, "stale menu request refused");
+    const auto malformed = debug::RequestMenu("menu press nothing", before_overlay.mission, before_overlay.generation);
+    Check(!std::strcmp(debug::GetSnapshot().overlay_result, "menu_args") && debug::GetSnapshot().overlay_result_serial == malformed &&
+          !debug::TakeMenuRequest(taken, menu_text), "malformed menu request refused without a slot");
+    const auto ok = debug::RequestMenu("menu close", before_overlay.mission, before_overlay.generation);
+    Check(debug::TakeMenuRequest(taken, menu_text) && taken == ok, "slot free after the result");
+    debug::ReportMenuResult(ok, "menu_open;category=enemies;frames=4");
+    debug::SetOverlayStatus(overlay); debug::SetLastUiAction("spawn_enemy_here");
+    debug::Publish(over);
+    rs = debug::GetSnapshot();
+    Check(rs.overlay_open && rs.overlay_frames == 4 && rs.overlay_result_serial == ok && !std::strcmp(rs.overlay_result, "menu_open;category=enemies;frames=4") && std::strcmp(rs.overlay_category, "enemies") == 0 &&
+          std::strcmp(rs.last_ui_action, "spawn_enemy_here") == 0, "overlay status survives telemetry");
+    Check(std::strcmp(rs.last_command, before_overlay.last_command) == 0 && std::strcmp(rs.last_result, before_overlay.last_result) == 0 &&
+          rs.receipts[0].id == before_overlay.receipts[0].id, "overlay status never touches last_command/last_result/receipts");
+    debug::BeginMission(30020);
+    rs = debug::GetSnapshot();
+    Check(!rs.god_mode && rs.player_life == -1 && std::strcmp(rs.pending_kind, "none") == 0, "mission change resets Lua-owned state");
+
+    // Nearby soldier transaction.
+    Check(debug::QueueCommand("enemy_list 120") && debug::Pop(command), "nearby list dispatched");
+    const auto list_id = command.id;
+    Check(!receipt(list_id, "nearby 30010 120"), "nearby bound to the current mission");
+    Check(!receipt(list_id, "nearby 30020 9") && !receipt(list_id, "nearby 30020 301"), "nearby radius bounded");
+    Check(!receipt(list_id, "soldier 1 5 1000 0 0 sol_a"), "soldier requires an open list");
+    Check(receipt(list_id, "nearby 30020 120"), "nearby list opened");
+    Check(!receipt(list_id, "soldier 2 5 1000 0 0 sol_a"), "soldier indices ordered from 1");
+    Check(receipt(list_id, "soldier 1 4294967295 1500 5 7 sol_a"), "dead marked placed soldier accepted");
+    for (const auto* bad : {"soldier 2 6 1000 1 0 sol_b", "soldier 2 6 1000 6 0 sol_b", "soldier 2 6 1000 9 0 sol_b",
+         "soldier 2 6 -1 0 0 sol_b", "soldier 2 6 1000 0 8 sol_b", "soldier 2 6 1000 0 0 bad/name", "soldier 2 6 1000 0 0 sol_b extra"})
+        Check(!receipt(list_id, bad), "soldier code/flags/name bounded to Lua wire values");
+    char soldier[96]{};
+    const unsigned codes[] = {0, 2, 3, 4, 8};
+    for (unsigned i = 2; i <= debug::kNearbyCount; ++i) {
+        std::snprintf(soldier, sizeof(soldier), "soldier %u %u %u %u 0 sol_%u", i, 100 + i, i * 1000, codes[i % 5], i);
+        Check(receipt(list_id, soldier), "nearby list accepts 12 ordered soldiers");
+    }
+    Check(!receipt(list_id, "soldier 13 1 1 0 0 sol_x"), "nearby capacity never overflows");
+    Check(receipt(list_id, "done") && !receipt(list_id, "done"), "nearby list closes once");
+    rs = debug::GetSnapshot();
+    Check(rs.enemy_nearby_count == 12 && rs.enemy_nearby_radius == 120 && rs.enemy_nearby[0].hash == 4294967295u &&
+          rs.enemy_nearby[0].state == 5 && rs.enemy_nearby[0].flags == 7 && std::strcmp(rs.enemy_nearby[0].name, "sol_a") == 0, "nearby copied");
+    Check(debug::QueueCommand("position") && debug::Pop(command) && !receipt(command.id, "nearby 30020 80"), "nearby author must be enemy_list");
+    Check(debug::QueueCommand("enemy_camps") && debug::Pop(command), "camps dispatched");
+    Check(receipt(command.id, "clear 30020") && receipt(command.id, "camp mafr_a_cp 1000 2"), "camps listed");
+    Check(!debug::GetSnapshot().enemy_camps_loaded, "camps not loaded before done");
+    Check(receipt(command.id, "done") && debug::GetSnapshot().enemy_camps_loaded, "camps done sets enemy_camps_loaded");
+    Check(debug::GetSnapshot().enemy_nearby_count == 12, "camp refresh keeps the nearby table");
+    debug::BeginMission(30020);
+    Check(!debug::GetSnapshot().enemy_camps_loaded && debug::GetSnapshot().enemy_nearby_count == 0, "mission change clears enemy metadata");
+
+    // Registry, search, availability and formatters.
+    namespace act = mgscoop::debug_actions;
+    std::size_t action_count = 0;
+    const auto* actions = act::Actions(action_count);
+    bool ids_unique = action_count > 60, fixed_valid = true;
+    unsigned per_category[act::kCategoryCount]{};
+    for (std::size_t i = 0; i < action_count; ++i) {
+        for (std::size_t j = i + 1; j < action_count; ++j) if (std::strcmp(actions[i].id, actions[j].id) == 0) ids_unique = false;
+        ++per_category[static_cast<unsigned>(actions[i].category)];
+        if (actions[i].command && !(actions[i].flags & act::kParam))
+            fixed_valid = fixed_valid && debug::ValidText(actions[i].command) && std::strlen(actions[i].command) <= 200;
+        Check(act::FindAction(actions[i].id) == &actions[i], "every action is findable");
+    }
+    Check(ids_unique, "action ids unique"); Check(fixed_valid, "fixed commands pass the queue charset and size");
+    for (unsigned c = 0; c < act::kCategoryCount; ++c) Check(per_category[c] > 0, "every category has actions");
+    const char* expected_quick[] = {"player_position", "spawn_enemy_here", "enemy_kill_nearest", "enemy_sleep_nearest", "player_heal",
+        "bookmark_save", "bookmark_return", "partner_goto", "world_time_noon", "enemy_clear", "cp_phase_alert", "mission_status"};
+    for (const auto* id : expected_quick) Check(act::FindAction(id) != nullptr, "spec action id present");
+    Check(std::strcmp(act::FindAction("enemy_kill_nearest")->command, "enemy kill nearest") == 0 &&
+          std::strcmp(act::FindAction("enemy_unmark_all")->command, "enemy_unmark") == 0 &&
+          std::strcmp(act::FindAction("mission_status")->command, "status") == 0 &&
+          std::strcmp(act::FindAction("world_time_noon")->command, "time 43200") == 0, "registry command texts");
+    const act::ActionDef* found[32]{};
+    auto has = [&](std::size_t n, const char* id) { for (std::size_t i = 0; i < n && i < 32; ++i) if (!std::strcmp(found[i]->id, id)) return true; return false; };
+    auto n = act::SearchActions("spawn", found, 32);
+    Check(n >= 3 && has(n, "spawn_enemy_here") && has(n, "spawn_enemy_closest") && has(n, "spawn_enemy_route"), "search spawn lists the three spawn rows");
+    n = act::SearchActions("NOON", found, 32); Check(n == 1 && has(n, "world_time_noon"), "search is case-insensitive");
+    n = act::SearchActions("kill near", found, 32); Check(n == 1 && has(n, "enemy_kill_nearest"), "every word must match");
+    Check(act::SearchActions("", found, 32) == 0 && act::SearchActions("   ", found, 32) == 0 && act::SearchActions(nullptr, found, 32) == 0, "empty search matches nothing");
+    Check(act::SearchActions("zzzz", found, 32) == 0, "unknown word matches nothing");
+    debug::Snapshot avail{}; avail.enabled = avail.gameplay_ready = avail.host = true;
+    const auto& teleport = *act::FindAction("player_teleport");
+    const auto reason = [&](const char* id, bool selection = false) { const char* r = act::DisabledReason(*act::FindAction(id), avail, selection); return r ? r : "ok"; };
+    Check(!std::strcmp(reason("player_position"), "ok") && !act::DisabledReason(teleport, avail, false), "gameplay host can act");
+    avail.gameplay_ready = false;
+    Check(!std::strcmp(reason("player_position"), "gameplay") && !std::strcmp(reason("tools_clear_log"), "ok"), "UI-only rows work outside gameplay");
+    avail.gameplay_ready = true; avail.host = false;
+    Check(!std::strcmp(reason("spawn_enemy_here"), "host_only") && !std::strcmp(reason("enemy_list"), "ok") &&
+          !std::strcmp(reason("enemy_selected_info", true), "ok") && !std::strcmp(reason("enemy_refresh_camps"), "ok") &&
+          !std::strcmp(reason("world_time_noon"), "host_only") && !std::strcmp(reason("partner_show"), "ok"), "guest host-only rule");
+    avail.host = true;
+    Check(!std::strcmp(reason("player_use_current"), "position") && !std::strcmp(reason("enemy_goto_spawn"), "no_spawn") &&
+          !std::strcmp(reason("enemy_goto_camp"), "no_camp") && !std::strcmp(reason("spawn_enemy_route"), "no_routes") &&
+          !std::strcmp(reason("partner_goto"), "partner_pose") && !std::strcmp(reason("bookmark_return"), "bookmark_empty") &&
+          !std::strcmp(reason("partner_clip_play"), "clip_unavailable") && !std::strcmp(reason("enemy_selected_kill"), "selection"), "missing prerequisites named");
+    avail.remote_valid = avail.world_paired = true; strcpy_s(avail.link_state, "connected"); avail.remote_age_ms = 1000;
+    Check(!std::strcmp(reason("partner_goto"), "ok"), "partner pose ready");
+    avail.remote_age_ms = 1001; Check(!std::strcmp(reason("partner_goto"), "partner_pose"), "stale partner pose refused");
+    avail.remote_age_ms = 10; strcpy_s(avail.link_state, "lost"); Check(!std::strcmp(reason("partner_goto"), "partner_pose"), "link down refused");
+    act::Category cat{};
+    Check(act::ParseCategory("enemies", cat) && cat == act::Category::enemies && act::ParseCategory("coop", cat) && cat == act::Category::partner &&
+          act::ParseCategory("diag", cat) && cat == act::Category::tools && act::ParseCategory("mission", cat) && cat == act::Category::tools &&
+          !act::ParseCategory("Enemies", cat) && !act::ParseCategory("", cat), "category names and aliases");
+    char text[220]{};
+    Check(act::FormatTeleport(text, sizeof(text), -123.5f, 4, 100000, -180) && !std::strcmp(text, "teleport -123.500 4.000 100000.000 -180.000"), "teleport format");
+    Check(!act::FormatTeleport(text, sizeof(text), 100001, 0, 0, 0) && !act::FormatTeleport(text, sizeof(text), 0, 0, 0, 181) &&
+          !act::FormatTeleport(text, 8, 0, 0, 0, 0), "teleport clamps and buffer");
+    Check(act::FormatStep(text, sizeof(text), 0, 3, -100) && !std::strcmp(text, "step 0.000 3.000 -100.000") && !act::FormatStep(text, sizeof(text), 100.5f, 0, 0), "step format");
+    Check(act::FormatClock(text, sizeof(text), 45296) && !std::strcmp(text, "12:34:56") && !act::FormatClock(text, sizeof(text), 86400), "clock format");
+    Check(act::FormatTimeSet(text, sizeof(text), 23, 59) && !std::strcmp(text, "time 86340") && !act::FormatTimeSet(text, sizeof(text), 24, 0), "time set format");
+    Check(act::FormatSlowmo(text, sizeof(text), 0.25f, 3) && !std::strcmp(text, "slowmo 0.25 3.0") && !act::FormatSlowmo(text, sizeof(text), 0.01f, 3) &&
+          !act::FormatSlowmo(text, sizeof(text), 0.5f, 31), "slowmo format");
+    Check(act::FormatPartnerModes(text, sizeof(text), "xform", "off", "net", "qs", "map", "net", "ac") &&
+          !std::strcmp(text, "partner stage=3 source=net apply=xform input=off anim=net aset=qs dm=map look=net reset=ac"), "partner modes with reset");
+    Check(act::FormatPartnerModes(text, sizeof(text), "input", "net", "off", "q", "on", "copy", nullptr) && !std::strstr(text, "reset") &&
+          !act::FormatPartnerModes(text, sizeof(text), "xform", "off", "net", "qs", "map", "net", "none"), "partner reset values n|a|c|ac only");
+    Check(act::FormatEnemyOp(text, sizeof(text), "sleep", 4294967295u) && !std::strcmp(text, "enemy sleep 4294967295") &&
+          !act::FormatEnemyOp(text, sizeof(text), "wake", 1), "enemy op format");
+    Check(act::FormatClear(text, sizeof(text), 25) && !std::strcmp(text, "clear_enemies 25") && !act::FormatClear(text, sizeof(text), 0) &&
+          !act::FormatClear(text, sizeof(text), 101), "clear format");
+    act::OverlayRequest request{};
+    const struct { const char* text; act::OverlayOp op; const char* arg; } overlay_ok[] = {
+        {"menu open", act::OverlayOp::open, ""}, {"menu open enemies", act::OverlayOp::open, "enemies"}, {"menu close", act::OverlayOp::close, ""},
+        {"menu toggle", act::OverlayOp::toggle, ""}, {"menu category coop", act::OverlayOp::category, "coop"},
+        {"menu search", act::OverlayOp::search, ""}, {"menu search kill near", act::OverlayOp::search, "kill near"},
+        {"menu press spawn_enemy_here", act::OverlayOp::press, "spawn_enemy_here"}, {"menu confirm", act::OverlayOp::confirm, ""},
+        {"menu cancel", act::OverlayOp::cancel, ""}, {"menu footer 1", act::OverlayOp::footer, "1"}, {"menu select 4294967295", act::OverlayOp::select, "4294967295"}};
+    for (const auto& item : overlay_ok)
+        Check(act::ParseOverlayRequest(item.text, request) && request.op == item.op && !std::strcmp(request.arg, item.arg), "overlay request grammar");
+    for (const auto* bad : {"menu", "menu ", "menu open nowhere", "menu open player extra", "menu close now", "menu category", "menu press",
+         "menu press no_such_action", "menu footer 2", "menu select 4294967296", "menu select -1", "menu select 01", "menu bogus",
+         "menu search ", "menu  open", "position", "menu search aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "menu search a;b"})
+        Check(!act::ParseOverlayRequest(bad, request), "overlay request rejects");
+    char long_search[80] = "menu search ";
+    std::memset(long_search + 12, 'a', 48);
+    Check(act::ParseOverlayRequest(long_search, request) && std::strlen(request.arg) == 48, "48-character search accepted");
+    long_search[60] = 'a';
+    Check(!act::ParseOverlayRequest(long_search, request), "49-character search refused");
+    Check(act::IsMenuText("menu open") && !act::IsMenuText("menuopen") && !act::IsMenuText("position"), "menu text routing");
+
+    debug::Configure(true, true, true); debug::BeginMission(30050);
     // Real producer/consumer interleaving checks the UI/runtime exchange.
     std::atomic<bool> done{false};
     std::atomic<unsigned> accepted{0};

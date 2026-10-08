@@ -2,7 +2,7 @@
 -- Public game contracts are exercised by debug_menu_game_lua_check.lua.
 do
   local update, terminate = e.OnUpdate, e.OnTerminate
-  local D = {bookmarks = {}, infinite = false}
+  local D = {bookmarks = {}, infinite = false, tick = 0}
   e.MgsCoopDebug = D
   local fmt, floor, abs = string.format, math.floor, math.abs
   local function get(t, k)
@@ -21,31 +21,19 @@ do
     local f = loadstring(text)
     if type(f) == "function" then return f() end
   end
-  local function note(id, ok, msg)
+  -- LOG_V1 codes: 0 refused (final), 1 ok (final), 2 ok (interim, a readback follows).
+  local function note(id, ok, msg, interim)
     msg = tostring(msg):gsub("[^%w_=,.;:%-]", "_"):sub(1, 160)
-    receipt("return 'MGS_COOP_DEBUG_LOG_V1' -- " .. fmt("%.0f %d %s", id, ok and 1 or 0, msg))
+    receipt("return 'MGS_COOP_DEBUG_LOG_V1' -- " .. fmt("%.0f %d %s", id, ok and (interim and 2 or 1) or 0, msg))
   end
   local function bindingError(prefix, failure)
     if type(failure) ~= "string" then return prefix end
     return prefix .. ";detail=" .. failure:gsub("^.-:%d+: ", ""):sub(1, 120)
   end
-  local function state()
-    local mask = 0
-    for i = 0, 7 do if D.bookmarks[i] then mask = mask + 2 ^ i end end
-    receipt("return 'MGS_COOP_DEBUG_STATE_V1' -- " .. fmt("%d %d", D.infinite and 1 or 0, mask))
-  end
-  function D.stop()
-    if D.ammoTouched then pcall(call, Player, "SetInfiniteAmmoFromScript", false) end
-    if D.weatherTouched then pcall(call, TppWeather, "CancelForceRequestWeather") end
-    if D.enemy then pcall(D.enemy.stop) end
-    D.bookmarks, D.infinite, D.ammoTouched, D.weatherTouched, D.pending, D.mission = {}, false, nil, nil, nil, nil
-    D.equipmentObservationMission = nil
-    D.equipmentObservationFrames, D.equipmentObservationAttempts = nil, nil
-    pcall(state)
-  end
+  local function supported(m) return m == 30010 or m == 30020 or m == 30050 end
   local function guard()
     local mission = get(vars, "missionCode")
-    if mission ~= 30010 and mission ~= 30020 and mission ~= 30050 then return false, "mission" end
+    if not supported(mission) then return false, "mission" end
     if call(TppMission, "CheckMissionState") ~= true then
       return false, "gameplay"
     end
@@ -57,8 +45,55 @@ do
     if call(PlayerInfo, "OrCheckStatus", statuses) ~= true then return false, "on_foot" end
     return true, mission
   end
+  local function reason()
+    local ok, good, why = pcall(guard)
+    if not ok then return "binding" end
+    if good then return "ok" end
+    return type(why) == "string" and #why < 24 and why:match("^[a-z_]+$") and why or "binding"
+  end
+  local function life()
+    local a, b = get(vars, "playerLife"), get(vars, "playerLifeMax")
+    if not integer(a, 0, 100000000) or not integer(b, 1, 100000000) then return -1, -1 end
+    return a, b
+  end
+  local function clock()
+    local c = get(vars, "clock")
+    return integer(c, 0, 86399) and c or 0
+  end
+  -- STATE_V1, 12 fields: on change at most every 5 updates, forced every 30.
+  local function state(force)
+    D.tick = D.tick + 1
+    if force or not D.reason or D.tick % 30 == 1 then D.reason = reason() end
+    local mask = 0
+    for i = 0, 7 do if D.bookmarks[i] then mask = mask + 2 ^ i end end
+    local q, l, m = D.pending, life()
+    local text = fmt("%d %d %.0f %s %d %d %d %d %d %d %d %s", D.infinite and 1 or 0, mask, q and q.id or 0, q and q.kind or "none",
+      q and q.frames or 0, D.god and 1 or 0, D.fulton and 1 or 0, D.slowmo and 1 or 0, clock(), l, m, D.reason)
+    local since = D.tick - (D.sent or -100)
+    if force or since >= 30 or (text ~= D.last and since >= 5) then
+      D.last, D.sent = text, D.tick
+      receipt("return 'MGS_COOP_DEBUG_STATE_V1' -- " .. text)
+    end
+  end
+  function D.stop()
+    if D.ammoTouched then pcall(call, Player, "SetInfiniteAmmoFromScript", false) end
+    if D.weatherTouched then pcall(call, TppWeather, "CancelForceRequestWeather") end
+    for _, k in ipairs({"enemy", "player", "spawn"}) do if D[k] then pcall(D[k].stop) end end
+    D.bookmarks, D.infinite, D.ammoTouched, D.weatherTouched, D.pending, D.mission = {}, false, nil, nil, nil, nil
+    D.equipmentObservationMission = nil
+    D.equipmentObservationFrames, D.equipmentObservationAttempts = nil, nil
+    pcall(state, true)
+  end
   local function hostOnly()
     return D.host == true
+  end
+  -- Sync tag: read-only view of the world link. Enemy outcomes need W1;
+  -- clock/weather follow at an active world level of 3.
+  local function sync(kind)
+    local W = get(e, "MgsCoopWorld")
+    local eff = tonumber(get(W, "eff")) or 0
+    local on = get(W, "paired") == true and (kind == "env" and eff >= 3 or kind ~= "env" and get(W, "w1") == true)
+    return on and "sync=world" or "sync=none"
   end
   local function pose()
     local p = {get(vars, "playerPosX"), get(vars, "playerPosY"), get(vars, "playerPosZ"), get(vars, "playerRotY")}
@@ -77,8 +112,12 @@ do
     for s in text:gmatch("%S+") do a[#a + 1] = s; if #a > 16 then return nil end end
     return a
   end
+  local function setClock(t)
+    call(TppClock, "SetTime", fmt("%02d:%02d:%02d", floor(t / 3600), floor(t / 60) % 60, t % 60))
+    return get(vars, "clock") == t, "time_readback;" .. sync("env")
+  end
   D.api = {get = get, call = call, number = number, integer = integer, pose = pose, note = note,
-    finite = finite, hostOnly = hostOnly, receipt = receipt}
+    finite = finite, hostOnly = hostOnly, receipt = receipt, sync = sync, life = life, setClock = setClock}
   local function warp(p, id)
     call(TppPlayer, "Warp", {pos = {p[1], p[2], p[3]}, rotY = p[4]})
     D.pending = {kind = "warp", id = id, pose = p, mission = D.mission, frames = 0}
@@ -88,6 +127,9 @@ do
   local WEATHER = {sunny = "SUNNY", cloudy = "CLOUDY", rainy = "RAINY", sandstorm = "SANDSTORM", foggy = "FOGGY"}
   local function run(a, id)
     local cmd = a[1]
+    for _, m in ipairs({D.player, D.spawn}) do
+      if m and m.handles[cmd] then return m.run(a, id) end
+    end
     if cmd == "position" and #a == 1 then
       local p = pose()
       return true, fmt("position=%.3f,%.3f,%.3f;yaw=%.3f", p[1], p[2], p[3], p[4])
@@ -125,22 +167,21 @@ do
       if not hostOnly() then return false, "host_only" end
       local t = number(a[2], 0, 86399, true)
       if not t then return false, "time_args" end
-      call(TppClock, "SetTime", fmt("%02d:%02d:%02d", floor(t / 3600), floor(t / 60) % 60, t % 60))
-      return get(vars, "clock") == t, "time_readback"
+      return setClock(t)
     elseif cmd == "weather" and #a == 2 then
       if not hostOnly() then return false, "host_only" end
       if a[2] == "auto" then
         call(TppWeather, "CancelForceRequestWeather")
         D.weatherTouched = nil
-        return true, "submitted_weather_auto"
+        return true, "submitted_weather_auto;" .. sync("env")
       end
       local t = get(get(TppDefine, "WEATHER"), WEATHER[a[2]])
       if not integer(t, 0, 5) then return false, "weather_args" end
       if D.mission == 30020 and a[2] == "foggy" then return false, "africa_fog_unsupported" end
       D.weatherTouched = true
       call(TppWeather, "ForceRequestWeather", t, 1)
-      return true, "submitted_weather_" .. a[2]
-    elseif cmd:match("^enemy_") or cmd == "clear_enemies" or cmd == "spawn_enemy" or cmd == "goto_spawn" or cmd == "goto_camp" then
+      return true, "submitted_weather_" .. a[2] .. ";" .. sync("env")
+    elseif cmd:match("^enemy_") or cmd == "clear_enemies" or cmd == "goto_spawn" or cmd == "goto_camp" then
       if not D.enemy then return false, "enemy_unavailable" end
       return D.enemy.run(a, id)
     elseif cmd == "partner" and #a >= 2 then
@@ -158,10 +199,16 @@ do
       if #payload > 160 then return false, "partner_args" end
       local ok = receipt("return 'MGS_COOP_DEBUG_PARTNER_V1' -- " .. fmt("%.0f %s", id, payload)) == true
       return ok, ok and "partner_applied" or "partner_refused"
-    elseif cmd == "heal" or cmd == "godmode" then
-      return false, "unsupported_public_api"
     end
     return false, "command_args"
+  end
+  -- Read-only report; needs only a supported mission, so it also answers while seated.
+  local function status()
+    if not supported(D.mission) then return false, "mission" end
+    local q, l, m = D.pending, life()
+    return true, fmt("status;mission=%d;guard=%s;host=%d;pending=%s;god=%d;ammo=%d;fulton=%d;slowmo=%d;clock=%d;life=%d,%d",
+      D.mission, reason(), D.host and 1 or 0, q and q.kind or "none", D.god and 1 or 0, D.infinite and 1 or 0,
+      D.fulton and 1 or 0, D.slowmo and 1 or 0, clock(), l, m)
   end
   local function pending()
     local q = D.pending
@@ -181,10 +228,13 @@ do
     local mission = get(vars, "missionCode")
     if D.mission and D.mission ~= mission then D.stop() end
     D.mission = mission
+    local q = D.pending
     local ok, failure = pcall(pending)
-    if not ok then D.pending = nil; pcall(note, 0, false, bindingError("pending_binding_error", failure)) end
+    if not ok then D.pending = nil; pcall(note, q and q.id or 0, false, bindingError("pending_binding_error", failure)) end
+    -- A pending action polls: telemetry stays live and commands wait in the native queue.
+    if D.pending then receipt("return 'MGS_COOP_DEBUG_POLL_V1'"); pcall(state); return end
     local command = receipt("return 'MGS_COOP_DEBUG_CMD_V1'")
-    if type(command) ~= "table" then return end
+    if type(command) ~= "table" then pcall(state); return end
     local id = get(command, "id")
     if not integer(id, 1, 4294967295) then return end
     if D.lastId then
@@ -193,14 +243,15 @@ do
     end
     D.lastId = id
     D.host = get(command, "host") == true
+    D.partnerPose = get(command, "pp")
     local a = tokens(get(command, "text"))
     if not a then note(id, false, "command_text"); return end
     if get(command, "mission") ~= nil and get(command, "mission") ~= mission then
       note(id, false, "stale_mission"); return
     end
-    if D.pending then note(id, false, "busy_action"); return end
     local good, why
     ok, failure = pcall(function()
+      if a[1] == "status" and #a == 1 then good, why = status(); return end
       good, why = guard()
       if good then good, why = run(a, id) end
     end)
@@ -208,8 +259,8 @@ do
       good = false
       why = type(failure) == "string" and failure:match("^missing_%w+$") and failure or bindingError("binding_error", failure)
     end
-    note(id, good, why)
-    state()
+    note(id, good, why, good and D.pending ~= nil and D.pending.id == id)
+    pcall(state, true)
   end
   local function updated(...)
     pcall(D.update)

@@ -15,6 +15,8 @@
 #include "debug_menu_source.hpp"
 #include "debug_equipment_source.hpp"
 #include "debug_enemy_source.hpp"
+#include "debug_player_source.hpp"
+#include "debug_spawn_source.hpp"
 #include "marker_loading_source.hpp"
 int main(int argc, char** argv) {
     if (argc != 3) return 2;
@@ -97,7 +99,7 @@ int main(int argc, char** argv) {
             world_at+=chunk.size();
         }
         const auto world_end=world_at;
-        const std::string debug_chunks[]={debug_menu_source,debug_equipment_source,debug_enemy_source};
+        const std::string debug_chunks[]={debug_menu_source,debug_equipment_source,debug_enemy_source,debug_player_source,debug_spawn_source};
         for(const auto& chunk : debug_chunks) {
             check(chunk.size()>64 && output.compare(world_at,chunk.size(),chunk)==0);
             check(output.find(chunk)==world_at && output.find(chunk,world_at+1)==std::string::npos);

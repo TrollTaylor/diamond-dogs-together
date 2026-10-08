@@ -158,6 +158,24 @@ CreateDesktop denial before creating its graphics window. It never invokes
 SwitchDesktop to test a restriction whose failure could expose the desktop.
 `switch_block_basis` labels the documented inference honestly.
 
+### Debug commands and the worker-drawn F9 menu
+
+`<role> debug <command>` stays fire-and-forget. `<role> run <command>` waits for
+the command's own final receipt: `state.json` (schema 2) records `queued_kind`
+(`command` or `menu`) and `queued_ref` (the command id or overlay serial) for the
+accepted sequence, so interim results such as `submitted_warp` are never taken as
+the answer. Queue refusals return `QUEUE_REFUSED: ...`, send failures
+`SEND_REFUSED: ...`. `<role> expect <regex>` checks the role's last `run` result;
+mismatches are listed in `ExpectFailures` and the run continues.
+
+Text starting with `menu ` never reaches the game queue. In worker builds it drives
+the overlay drawn into the captured frames: `menu open [category]`, `close`,
+`toggle`, `category <player|enemies|partner|world|tools>`, `search [text]`,
+`press <action_id>`, `confirm`, `cancel`, `footer 0|1`, `select <hash>`. The
+overlay is drawn without the Win32 backend, never takes mouse or keyboard input
+and draws before the capture of the same Present. No F9 key is ever sent.
+`scenarios/debug-menu.txt` exercises every category; see `docs/debug-menu.md`.
+
 ## Primary API contracts and acceptance limits
 
 - [Desktop connection precedence](https://learn.microsoft.com/en-us/windows/win32/winstation/thread-connection-to-a-desktop): inherited desktop handles take precedence over `lpDesktop`; the worker inherits none.

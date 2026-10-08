@@ -148,48 +148,10 @@ do
   local function menu(id, text)
     return A.receipt("return 'MGS_COOP_DEBUG_ENEMY_V1' -- " .. fmt("%.0f %s", id, text)) == true
   end
-  function E.stop() E.used, E.last = {}, nil end
-  local function spawn(c, route, id)
-    if not c or not route then return false, "spawn_camp_route" end
-    local count = 0
-    for _ in pairs(E.used) do count = count + 1 end
-    if count >= 8 then return false, "spawn_pool_limit_8" end
-    local s
-    local normal = get(get(TppEnemy, "LIFE_STATUS"), "NORMAL")
-    if not integer(normal, 0, 4) then return false, "missing_normal_enum" end
-    for _, candidate in ipairs(c.guards) do
-      if not E.used[candidate.name] and candidate.distance <= 150 * 150
-        and call(GameObject, "SendCommand", candidate.id, {id = "GetLifeStatus"}) == normal then s = candidate; break end
-    end
-    if not s then return false, "spawn_no_loaded_living_guard" end
-    E.used[s.name] = true
-    -- Retail TppDebug's route placement, never an unknown XYZ Warp/Spawn.
-    local ok = pcall(function()
-      call(TppEnemy, "SetDisable", s.id)
-      call(GameObject, "SendCommand", s.id, {id = "SetSneakRoute", route = route, point = 0})
-      call(GameObject, "SendCommand", s.id, {id = "SetCautionRoute", route = route, point = 0})
-      call(GameObject, "SendCommand", s.id, {id = "SetAlertRoute", enabled = false, route = "", point = 0})
-      call(TppEnemy, "SetEnable", s.id)
-      call(GameObject, "SendCommand", s.id, {id = "SetForceRealize"})
-    end)
-    if not ok then pcall(call, TppEnemy, "SetEnable", s.id); return false, "spawn_binding_error" end
-    local q = {kind = "enemy", id = id, mission = D.mission, frames = 0}
-    q.poll = function()
-      if q.frames < 2 then return end
-      if not usable(s) then D.pending = nil; A.note(id, false, "spawn_terminal_unknown"); return end
-      local v = position(s)
-      if v then
-        local p, before = pose(), s.position
-        local distance = math.sqrt((v[1] - p[1]) ^ 2 + (v[2] - p[2]) ^ 2 + (v[3] - p[3]) ^ 2)
-        local moved = math.sqrt((v[1] - before[1]) ^ 2 + (v[2] - before[2]) ^ 2 + (v[3] - before[3]) ^ 2)
-        E.last, D.pending = {position = v, mission = D.mission}, nil
-        menu(id, fmt("spawned %.0f %.0f %.0f %.0f", math.floor(v[1] * 1000 + .5), math.floor(v[2] * 1000 + .5), math.floor(v[3] * 1000 + .5), s.hash))
-        A.note(id, true, fmt("guard_position_readback;ent=%.0f;reuse=1;distance_m=%.3f;moved_m=%.3f;visible_unverified", s.hash, distance, moved))
-      elseif q.frames >= 120 then D.pending = nil; A.note(id, false, "spawn_position_timeout") end
-    end
-    D.pending = q
-    return true, fmt("submitted_patrol_guard;ent=%.0f;reuse=1;scope=local", s.hash)
-  end
+  -- Spawn/list/op commands live in debug_spawn.lua and reuse these readers.
+  E.api = {soldiers = soldiers, nearby = nearby, usable = usable, position = position, camps = camps, name = name, menu = menu}
+  function E.stop() E.used, E.last, E.routePos, E.marked, E.ignored = {}, nil, {}, {}, {} end
+  E.stop()
   function E.run(a, id)
     local cmd = a[1]
     if cmd == "enemy_camps" and #a == 1 then
@@ -213,17 +175,6 @@ do
       for i, route in ipairs(c.routes) do menu(id, fmt("route %d %s", i, route)) end
       menu(id, "done")
       return true, fmt("routes=%d;point=0", #c.routes)
-    elseif cmd == "spawn_enemy" then
-      if not hostOnly() then return false, "host_only" end
-      local list, byName, err = camps()
-      if err then return false, err end
-      if #a == 2 and a[2] == "closest" then
-        return spawn(list[1], list[1] and list[1].routes[1], id)
-      elseif #a == 3 and name(a[2]) then
-        local index, c = number(a[3], 1, 64, true), byName[a[2]]
-        return spawn(c, c and index and c.routes[index], id)
-      end
-      return false, "spawn_args"
     elseif cmd == "goto_camp" and #a == 2 and name(a[2]) then
       local _, byName, err = camps()
       if err then return false, err end
@@ -281,7 +232,7 @@ do
         call(GameObject, "SendCommand", list[i].id, {id = "ChangeLifeState", state = dead})
         if call(GameObject, "SendCommand", list[i].id, {id = "GetLifeStatus"}) == dead then readback = readback + 1 end
       end
-      return true, fmt("submitted=%d;dead_readback=%d;scope=local;max=16", n, readback)
+      return true, fmt("submitted=%d;dead_readback=%d;%s;max=16", n, readback, A.sync("enemy"))
     end
     return false, "command_args"
   end
