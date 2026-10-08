@@ -485,8 +485,8 @@ try {
     $go = ConvertFrom-IniText $guestOffIni
     $partnerOrder = @('net', 'net_listen_port', 'net_peer_port', 'partner', 'partner_stage', 'partner_source', 'partner_apply', 'partner_anim',
         'partner_aset', 'partner_reset', 'partner_look', 'partner_rate_hz', 'partner_interp_ms', 'partner_offset_cm', 'partner_teardown',
-        'partner_force_exists', 'partner_policy_relax', 'partner_anim_probe', 'crash_probe')
-    Assert-Equal ((@($ho.Keys) | Select-Object -Last 19) -join ',') ($partnerOrder -join ',') 'offline lab.ini: the spec 2.1 key names (plus anim/aset/reset/look), in table order'
+        'partner_force_exists', 'partner_policy_relax', 'partner_anim_probe', 'crash_probe', 'debug_soldier_warp')
+    Assert-Equal ((@($ho.Keys) | Select-Object -Last 20) -join ',') ($partnerOrder -join ',') 'offline lab.ini: the spec 2.1 key names (plus anim/aset/reset/look and the lab spawn placement), in table order'
     Assert-Equal "$($ho['partner_anim'])/$($ho['partner_aset'])/$($ho['partner_reset'])/$($ho['partner_look'])" 'off/qs/n/copy' 'anim/look defaults written'
     Assert-Equal "$($ho['net'])/$($ho['net_listen_port'])/$($ho['net_peer_port'])/$($ho['partner'])" '1/47820/47821/1' 'host: net=1, 47820/47821, partner=1'
     Assert-Equal "$($go['net'])/$($go['net_listen_port'])/$($go['net_peer_port'])/$($go['partner'])" '1/47821/47820/1' 'guest: net ports swapped'
@@ -790,7 +790,7 @@ try {
         $before = Get-LabInstanceSettings -Role $r -Config $config -GameDirectory $dir -HostSteamId64 $hostId -Offline -PartnerOverrides (ConvertFrom-LabPartnerSettingArgs -Items $mapOverridesBefore -Role $r)
         $now = Get-LabInstanceSettings -Role $r -Config $config -GameDirectory $dir -HostSteamId64 $hostId -Offline -PartnerOverrides (ConvertFrom-LabPartnerSettingArgs -Items $playDefaultItems -Role $r)
         Assert-Equal (New-LabIniFromSettings -Settings $now) (New-LabIniFromSettings -Settings $before) "[$r] Play-OfflineCoop dm=map lab.ini is byte-identical with Get-PlayPartnerDefaults"
-        $effective = @($before.Partner.Keys | Where-Object { $_ -notin @('net', 'net_listen_port', 'net_peer_port') } | ForEach-Object { "$_=$($before.Partner[$_])" }) -join ' '
+        $effective = @($before.Partner.Keys | Where-Object { $_ -notin @('net', 'net_listen_port', 'net_peer_port', 'debug_soldier_warp') } | ForEach-Object { "$_=$($before.Partner[$_])" }) -join ' '
         Assert-Equal $effective ($playDefaultItems -join ' ') "[$r] Get-PlayPartnerDefaults equals Play-OfflineCoop's effective dm=map keys (order and values)"
     }
     # A tuned lab.json "partner" still reaches the default dm=map run (only the 7 keys override it).
