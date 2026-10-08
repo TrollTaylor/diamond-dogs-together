@@ -27,8 +27,39 @@ LONG CALLBACK Handler(PEXCEPTION_POINTERS info) noexcept {
     char line[224]{};
     if (detail::Describe(record.ExceptionCode, reinterpret_cast<std::uintptr_t>(record.ExceptionAddress), access, target,
                          g_base, g_span, GetCurrentThreadId(), static_cast<std::uint32_t>(g_stage),
-                         static_cast<std::uint32_t>(g_realized), static_cast<std::uint32_t>(g_flags), g_seen, line, sizeof(line)))
+                         static_cast<std::uint32_t>(g_realized), static_cast<std::uint32_t>(g_flags), g_seen, line, sizeof(line))) {
         g_log(line);
+        // Caller evidence for a first-seen RVA: return-address candidates on the
+        // faulting thread's own stack (bounded by the TEB stack base), as RVAs of
+        // the game image and of this module.
+        if (info->ContextRecord) {
+            const auto* teb = reinterpret_cast<const NT_TIB*>(NtCurrentTeb());
+            const std::uintptr_t rsp = info->ContextRecord->Rsp, top = reinterpret_cast<std::uintptr_t>(teb->StackBase);
+            HMODULE self = nullptr;
+            GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               reinterpret_cast<LPCWSTR>(&Handler), &self);
+            const auto mod = reinterpret_cast<std::uintptr_t>(self);
+            const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(mod);
+            const std::size_t mod_span = mod ? reinterpret_cast<const IMAGE_NT_HEADERS*>(mod + dos->e_lfanew)->OptionalHeader.SizeOfImage : 0;
+            char stack[480]{};
+            std::size_t used = 0;
+            unsigned found = 0;
+            StringCchPrintfA(stack, ARRAYSIZE(stack), "crash_probe=stack; rsp_slots=");
+            used = std::strlen(stack);
+            for (std::uintptr_t at = rsp; at + 8 <= top && at < rsp + 0x800 && found < 10; at += 8) {
+                const std::uintptr_t v = *reinterpret_cast<const std::uintptr_t*>(at);
+                const char* where = v >= g_base && v - g_base < g_span ? "exe" : mod && v >= mod && v - mod < mod_span ? "mod" : nullptr;
+                if (!where) continue;
+                const std::uintptr_t r = v - (where[0] == 'e' ? g_base : mod);
+                if (FAILED(StringCchPrintfA(stack + used, ARRAYSIZE(stack) - used, "%s%s+0x%llx", found ? "," : "", where,
+                                            static_cast<unsigned long long>(r)))) break;
+                used = std::strlen(stack);
+                ++found;
+            }
+            StringCchCatA(stack, ARRAYSIZE(stack), "\r\n");
+            g_log(stack);
+        }
+    }
     SetLastError(error);
     return EXCEPTION_CONTINUE_SEARCH;
 }
