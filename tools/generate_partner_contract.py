@@ -9,7 +9,8 @@ executable. The native code gate (partner_player.cpp CodeGate) checks the same
 bytes and slots in the running image before any read or write is attempted.
 
 Usage: python tools/generate_partner_contract.py [--check]
-  --check  verify only; exit 1 on any mismatch, do not write the header.
+  --check  verify only; exit 1 on any mismatch (including a committed header
+           that differs from the generator output), do not write the header.
 """
 import hashlib
 import struct
@@ -994,9 +995,7 @@ failures += actions_assertions()
 if failures:
     print('\n'.join(failures))
     raise SystemExit(1)
-if '--check' in sys.argv:
-    print(f'{len(SITES)} code sites, {len(SLOTS)} vtable slots and the native reference/containment assertions match {GAME_SHA256}')
-    raise SystemExit(0)
+CHECK = '--check' in sys.argv
 
 
 def cbytes(hexstr):
@@ -1256,5 +1255,16 @@ for vtable, offset, target, what in SLOTS:
     w(f'    {{0x{vtable:x},0x{offset:x},0x{target:x}}}, // {what}')
 w('};')
 w('}')
-OUT.write_text('\n'.join(lines) + '\n', newline='\n')
+text = '\n'.join(lines) + '\n'
+if CHECK:
+    # The committed header must be exactly what this generator writes (a
+    # hand-merged or stale header fails here, not only at the code gate).
+    committed = OUT.read_text(encoding='utf-8').replace('\r\n', '\n') if OUT.exists() else ''
+    if committed != text:
+        print(f'{OUT.relative_to(ROOT)} differs from the generator output: regenerate it (python tools/generate_partner_contract.py)')
+        raise SystemExit(1)
+    print(f'{len(SITES)} code sites, {len(SLOTS)} vtable slots and the native reference/containment assertions match {GAME_SHA256}; '
+          f'{OUT.relative_to(ROOT)} is the generator output')
+    raise SystemExit(0)
+OUT.write_text(text, newline='\n')
 print(f'wrote {OUT.relative_to(ROOT)}: {len(SITES)} code sites, {len(SLOTS)} vtable slots')
