@@ -271,6 +271,13 @@ struct Hooks {
     bool (*read_loadout)(void* context, const partner_player::State& state, partner_player::Loadout& out) noexcept = nullptr;
     // Reliable channel `channel` (latest mode): true when queued.
     bool (*send_reliable)(void* context, std::uint8_t channel, const std::uint8_t* bytes, std::size_t size) noexcept = nullptr;
+    // Native polish (docs/native-puppet.md "Facing", "Weapons"): whether any
+    // batch is in flight (partner_defer::InBatch: facing governor writes and
+    // the look source install wait), the look source hook (D3, naim=looksrc;
+    // nullptr or a static refusal) and the shot noise filter (F3).
+    bool (*in_batch)(void* context) noexcept = nullptr;
+    const char* (*install_look_source)(void* context) noexcept = nullptr;
+    const char* (*install_noise)(void* context) noexcept = nullptr;
 };
 // Native weapons cadences and caps.
 inline constexpr std::uint64_t kEquipReadMs = 1000;    // loadout read / manifest send at most this often
@@ -334,6 +341,10 @@ struct Settings {
     bool fire_live;
     std::uint32_t steer_deg, trim_pct;
     PartnerNativeRates nrates;
+    // The facing governor mode (partner_recon FaceMode while native) and the
+    // partner's shot noise (filter: FIRE only while the noise filter is live).
+    PartnerNativeFace nface;
+    PartnerNativeNoise nnoise;
     // Set only in the effective copy: the native settings apply this tick.
     bool native_active;
     // lab.ini mode=play (Configure): the trigger file never enables the native
@@ -655,6 +666,21 @@ struct Mission {
     std::uint32_t equip_apply_loaded;
     char equip_apply[12];
     LogCap equip_apply_cap;
+    // --- Native polish (docs/native-puppet.md "Facing", "Weapons").
+    // The published Arm injects a neutral pad (placement, verify, retry).
+    bool input_neutral;
+    // The weapon gate (F4): the remote's gun equip differs from body 1's
+    // (FIRE and RELOAD stripped in every native window, the mirror frozen).
+    bool weapon_mismatch, weapon_logged_once;
+    bool weapon_logged;                 // the verdict of the last gate line
+    std::uint32_t weapon_strip;
+    std::int32_t remote_gun_equip;      // kNull without a v4 Equip
+    // The look source hook (D3): the last install verdict (static; nullptr ok).
+    const char* look_src_refusal;
+    bool look_src_tried;
+    // The 1 Hz partner_native_face line and the last placement's yaw verdict.
+    unsigned face_lines;
+    std::int32_t place_yaw_err_mdeg;
 };
 
 struct Driver {

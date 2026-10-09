@@ -3,13 +3,16 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <utility>
 #include "mgscoop/near_code.hpp"
 #include "mgscoop/partner_fire_filter.hpp"
+#include "mgscoop/partner_look_source.hpp"
 #include "mgscoop/partner_input_hook.hpp"
 #include "partner_player_contract.hpp"
 
@@ -275,10 +278,230 @@ void TestFireFilter() {
     }
 }
 
+// Native polish F3: the shot noise filter (AddNoise 0x515270 through slot 0 of
+// the noise iface vtable 0x21876A8; the record keeps its owner at +0x12).
+unsigned g_noise_forwarded = 0;
+void FakeAddNoise(void*, const void*) noexcept { ++g_noise_forwarded; }
+void TestNoiseFilter() {
+    {
+        FireImage img;
+        ff::detail::ResetForTest();
+        for (const auto& s : pc::code_sites)
+            if (s.rva == pc::noise_fn_rva) std::memcpy(img.mem + s.rva, s.bytes, s.size);
+        const std::uintptr_t target = img.base + pc::noise_fn_rva;
+        std::memcpy(img.mem + pc::noise_vtable_rva, &target, 8);
+        img.mem[pc::noise_fn_rva + 3] ^= 1;
+        g_fire_log.clear();
+        const char* why = ff::InstallNoise(reinterpret_cast<void*>(img.base), &FireLog);
+        Check(why && std::strcmp(why, "bytes") == 0 && !ff::NoiseInstalled() && img.Slot(pc::noise_vtable_rva) == target &&
+                  g_fire_log.find("partner_noise=refused; reason=bytes; fire=masked") != std::string::npos,
+              "noise: a changed AddNoise prologue refuses, the slot untouched");
+        Check(std::strcmp(ff::InstallNoise(reinterpret_cast<void*>(img.base), &FireLog), "disabled") == 0, "noise: a failed install stays refused");
+    }
+    {
+        FireImage img;
+        ff::detail::ResetForTest();
+        for (const auto& s : pc::code_sites)
+            if (s.rva == pc::noise_fn_rva) std::memcpy(img.mem + s.rva, s.bytes, s.size);
+        const std::uintptr_t other = img.base + 0x2000;
+        std::memcpy(img.mem + pc::noise_vtable_rva, &other, 8);
+        Check(std::strcmp(ff::InstallNoise(reinterpret_cast<void*>(img.base), &FireLog), "slot") == 0 && img.Slot(pc::noise_vtable_rva) == other,
+              "noise: a slot that does not hold AddNoise refuses");
+    }
+    {
+        FireImage img;
+        ff::detail::ResetForTest();
+        for (const auto& s : pc::code_sites)
+            if (s.rva == pc::noise_fn_rva) std::memcpy(img.mem + s.rva, s.bytes, s.size);
+        const std::uintptr_t target = img.base + pc::noise_fn_rva;
+        std::memcpy(img.mem + pc::noise_vtable_rva, &target, 8);
+        ff::detail::SetNoiseOriginalForTest(&FakeAddNoise);
+        g_fire_log.clear();
+        Check(ff::InstallNoise(reinterpret_cast<void*>(img.base), &FireLog) == nullptr && ff::NoiseInstalled() &&
+                  ff::NoisePatchLive(reinterpret_cast<void*>(img.base)) &&
+                  img.Slot(pc::noise_vtable_rva) == reinterpret_cast<std::uintptr_t>(ff::detail::NoiseHookEntry()) &&
+                  g_fire_log.find("partner_noise=installed; slot=0x21876a8; target=0x515270; owner_field=0x12") != std::string::npos,
+              "noise: installed into slot 0");
+        const auto call = [&](std::uint16_t owner) {
+            alignas(16) unsigned char record[0x20]{};
+            record[0x10] = 0x45; record[0x11] = 1;
+            std::memcpy(record + pc::noise_owner, &owner, 2);
+            reinterpret_cast<ff::detail::NoiseFn>(img.Slot(pc::noise_vtable_rva))(reinterpret_cast<void*>(0x5678), record);
+        };
+        g_noise_forwarded = 0;
+        call(1);
+        Check(g_noise_forwarded == 1, "noise: disarmed, owner 1 forwarded");
+        Check(ff::Arm(1), "armed for instance 1 (bullets and noise)");
+        call(1);
+        call(0);
+        call(0x401);
+        ff::Stats st{};
+        ff::ReadStats(reinterpret_cast<void*>(img.base), st);
+        Check(g_noise_forwarded == 3 && st.noise_installed && st.noise_live && st.noise_dropped == 1 && st.noise_passed == 3 &&
+                  st.noise_last_owner == 0x401, "noise: owner 1 dropped, the local player and soldiers forwarded");
+        std::memcpy(img.mem + pc::noise_vtable_rva, &target, 8);
+        Check(!ff::NoisePatchLive(reinterpret_cast<void*>(img.base)), "noise: a restored slot is not live");
+        ff::Disarm();
+        ff::detail::SetNoiseOriginalForTest(nullptr);
+        ff::detail::ResetForTest();
+    }
+}
+
+// Native polish D3: the look source hook on a synthetic executable image
+// holding the contract bytes of PS phase 0's look call. After the install the
+// padding jump runs the near stub: the "game" look computation (a fake at
+// 0xFFAC00 writing the viewer's look), then the remote's look for instance 1
+// only while published on this thread. The stub's unwind data lets an
+// exception raised inside 0xFFAC00 reach a handler above it.
+namespace ls = mgscoop::partner_look_source;
+std::string g_look_log;
+void LookLog(const char* line) noexcept { g_look_log += line; }
+struct LookImage {
+    unsigned char* mem = nullptr;
+    std::uintptr_t base = 0;
+    std::size_t span = pc::look_pad_end_rva + 0x1000;
+    LookImage() {
+        mem = static_cast<unsigned char*>(VirtualAlloc(nullptr, span, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
+        if (!mem) { std::fprintf(stderr, "look image allocation failed\n"); std::exit(2); }
+        base = reinterpret_cast<std::uintptr_t>(mem);
+        for (const auto& s : pc::code_sites)
+            if (s.rva >= pc::look_src_call_block_rva && s.rva < pc::look_pad_end_rva) std::memcpy(mem + s.rva, s.bytes, s.size);
+        std::memset(mem + pc::look_pad_rva, 0xCC, pc::look_pad_end_rva - pc::look_pad_rva);
+    }
+    ~LookImage() { VirtualFree(mem, 0, MEM_RELEASE); }
+    std::uint64_t Qword() const { std::uint64_t v = 0; std::memcpy(&v, mem + pc::look_src_qword_rva, 8); return v; }
+};
+struct FakePs {
+    std::uintptr_t vt;
+    std::uint32_t base_id;
+    unsigned char pad[0x280 - 0xC];
+    std::uintptr_t rec;      // +0x280
+    unsigned char pad2[8];
+    std::uintptr_t look;     // +0x290
+};
+static_assert(offsetof(FakePs, rec) == 0x280 && offsetof(FakePs, look) == 0x290, "fake PS layout");
+float g_look_pairs[2][2]{};
+std::uint32_t g_look_recs[2][8]{};
+// mov rax, &g_look_pairs[1]; mov dword [rax], viewer pitch; mov dword [rax+4], viewer yaw; ret
+void WriteFakeLook(unsigned char* at) {
+    const auto slot = reinterpret_cast<std::uintptr_t>(&g_look_pairs[1][0]);
+    const float pitch = 0.25f, yaw = -1.5f;
+    unsigned char code[24] = {0x48, 0xB8};
+    std::memcpy(code + 2, &slot, 8);
+    code[10] = 0xC7; code[11] = 0x00; std::memcpy(code + 12, &pitch, 4);
+    code[16] = 0xC7; code[17] = 0x40; code[18] = 0x04; std::memcpy(code + 19, &yaw, 4);
+    code[23] = 0xC3;
+    std::memcpy(at, code, sizeof(code));
+    FlushInstructionCache(GetCurrentProcess(), at, sizeof(code));
+}
+using LookCall = void (*)(void* ps, std::uint32_t id);
+DWORD WINAPI LookOtherThread(LPVOID arg) {
+    auto* p = static_cast<std::pair<LookCall, void*>*>(arg);
+    p->first(p->second, 1);
+    return 0;
+}
+bool CallCaught(LookCall fn, void* ps) {
+    __try { fn(ps, 1); return false; }
+    __except (GetExceptionCode() == EXCEPTION_ILLEGAL_INSTRUCTION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) { return true; }
+}
+void TestLookSource() {
+    unsigned char stub[ls::detail::kStubSize]{};
+    ls::detail::BuildStub(stub, 0x1122334455667788ull, 0x99AABBCCDDEEFF00ull);
+    std::uint64_t t = 0, after = 0;
+    std::memcpy(&t, stub + ls::detail::kStubTargetAt, 8);
+    std::memcpy(&after, stub + ls::detail::kStubAfterAt, 8);
+    Check(stub[0] == 0x53 && stub[1] == 0x56 && stub[2] == 0x48 && stub[5] == 0x28 && t == 0x1122334455667788ull &&
+              after == 0x99AABBCCDDEEFF00ull && stub[0x2E] == 0xC3 && stub[0x2C] == 0x5E && stub[0x2D] == 0x5B,
+          "stub: push rbx/rsi, sub rsp 0x28, the two absolute calls, pop, ret");
+    unsigned char unwind[ls::detail::kUnwindSize]{};
+    ls::detail::BuildUnwind(unwind);
+    Check(unwind[0] == 1 && unwind[1] == 6 && unwind[2] == 3 && unwind[4] == 6 && unwind[5] == 0x42 && unwind[6] == 2 &&
+              unwind[7] == 0x60 && unwind[8] == 1 && unwind[9] == 0x30, "unwind: prolog 6, alloc 0x28, push rsi, push rbx");
+    Check(ls::detail::RetargetQword(pc::look_src_qword_orig) == pc::look_src_qword_new && ls::detail::RetargetQword(0) == 0 &&
+              ((pc::look_src_qword_orig ^ pc::look_src_qword_new) & ~0x00FFFF0000000000ull) == 0,
+          "retarget: only the rel32 low word changes");
+    {
+        LookImage img;
+        ls::detail::ResetForTest();
+        img.mem[pc::look_fn_store_rva + 3] ^= 1;
+        g_look_log.clear();
+        Check(std::strcmp(ls::Install(reinterpret_cast<void*>(img.base), &LookLog), "bytes") == 0 && !ls::Installed() &&
+                  img.Qword() == pc::look_src_qword_orig && g_look_log.find("look_src=refused; reason=bytes") != std::string::npos,
+              "a changed store tail refuses; the call is untouched");
+    }
+    {
+        LookImage img;
+        ls::detail::ResetForTest();
+        img.mem[pc::look_pad_rva + 7] = 0x90;
+        Check(std::strcmp(ls::Install(reinterpret_cast<void*>(img.base), &LookLog), "padding") == 0 && img.Qword() == pc::look_src_qword_orig,
+              "a non-int3 padding byte refuses");
+    }
+    {
+        LookImage img;
+        ls::detail::ResetForTest();
+        std::memcpy(img.mem + pc::look_src_qword_rva, &pc::look_src_qword_new, 8);
+        Check(std::strcmp(ls::Install(reinterpret_cast<void*>(img.base), &LookLog), "bytes") == 0, "an already retargeted call refuses (bytes)");
+    }
+    {
+        LookImage img;
+        ls::detail::ResetForTest();
+        g_look_log.clear();
+        Check(ls::Install(reinterpret_cast<void*>(img.base), &LookLog) == nullptr && ls::Installed() &&
+                  ls::PatchLive(reinterpret_cast<void*>(img.base)) && img.Qword() == pc::look_src_qword_new &&
+                  img.mem[pc::look_pad_rva] == 0xE9 && g_look_log.find("look_src=installed; site=0xff29fc") != std::string::npos,
+              "install: the call retargeted to the padding jump");
+        std::int32_t rel = 0;
+        std::memcpy(&rel, img.mem + pc::look_src_call_rva + 1, 4);
+        Check(pc::look_src_next_ip + rel == pc::look_pad_rva, "the call now reaches the padding");
+        WriteFakeLook(img.mem + pc::look_fn_rva);
+        static FakePs ps{};
+        ps.vt = img.base + pc::ps_vtable_alt_rva;
+        ps.base_id = 0;
+        ps.rec = reinterpret_cast<std::uintptr_t>(g_look_recs);
+        ps.look = reinterpret_cast<std::uintptr_t>(g_look_pairs);
+        const auto call = reinterpret_cast<LookCall>(img.base + pc::look_pad_rva);
+        call(&ps, 1);
+        Check(g_look_pairs[1][0] == 0.25f && g_look_pairs[1][1] == -1.5f, "nothing published: the game's (viewer) look stays");
+        ls::Publish(reinterpret_cast<std::uintptr_t>(&ps), 1, 1, 0.1f, 2.0f);
+        call(&ps, 1);
+        Check(g_look_pairs[1][0] == 0.1f && g_look_pairs[1][1] == 2.0f, "published: the remote's look follows the game's write");
+        call(&ps, 0);
+        ls::Stats st{};
+        ls::ReadStats(st);
+        Check(st.installed && st.hits == 1 && st.refused == 1 && st.calls == 3, "another id is refused (counted), never written");
+        g_look_recs[1][0] = 2;  // the game skipped the computation for id 1
+        call(&ps, 1);
+        Check(g_look_pairs[1][0] == 0.25f, "record bit 1: skipped, the game's value stays");
+        g_look_recs[1][0] = 0;
+        std::pair<LookCall, void*> arg{call, &ps};
+        HANDLE th = CreateThread(nullptr, 0, &LookOtherThread, &arg, 0, nullptr);
+        WaitForSingleObject(th, INFINITE);
+        CloseHandle(th);
+        Check(g_look_pairs[1][0] == 0.25f, "another thread (block 0's worker) is never served");
+        ps.vt = img.base + 0x10;
+        call(&ps, 1);
+        Check(g_look_pairs[1][0] == 0.25f, "a PS with another vtable is refused");
+        ps.vt = img.base + pc::ps_vtable_alt_rva;
+        ls::Withdraw();
+        call(&ps, 1);
+        Check(g_look_pairs[1][0] == 0.25f, "withdrawn: the game's value stays");
+        ls::ReadStats(st);
+        Check(st.skipped == 1 && st.refused == 2 && !st.faulted, "stats: skipped and refused");
+        // An exception inside 0xFFAC00 unwinds through the stub to the caller's handler.
+        img.mem[pc::look_fn_rva] = 0x0F;
+        img.mem[pc::look_fn_rva + 1] = 0x0B;  // ud2
+        FlushInstructionCache(GetCurrentProcess(), img.mem + pc::look_fn_rva, 2);
+        Check(CallCaught(call, &ps), "the stub's unwind data carries an exception to the handler above it");
+        ls::detail::ResetForTest();
+    }
+}
+
 } // namespace
 
 int main() {
     TestFireFilter();
+    TestNoiseFilter();
+    TestLookSource();
     TestStubBytes();
     TestRel32();
     TestBlockGate();
@@ -288,6 +511,7 @@ int main() {
     TestRetargetCall();
     std::printf("%u partner input hook checks passed: stub bytes, rel32 reach/cache-line, dispatch-block gate "
                 "(mismatch + retargeted rel32), locked dword CAS (success/refusal/split), key-manager slot map, "
-                "data qword swap, fire filter (prologue/slot refusals, install, owner filter, stats, live check, census)\n", checks);
+                "data qword swap, fire filter (prologue/slot refusals, install, owner filter, stats, live check, census), noise filter, "
+                "look source (stub/unwind bytes, refusals, install, publish/skip/thread/vtable/withdraw, unwind through the stub)\n", checks);
     return 0;
 }

@@ -10,6 +10,7 @@
 #include <array>
 #include <deque>
 #include <functional>
+#include <string>
 #include "mgscoop/partner_recon.hpp"
 
 namespace {
@@ -59,7 +60,9 @@ struct World {
     bool last_ok = false;
     pr::Out out{};
     // Counters over the run.
-    unsigned places = 0, snaps = 0, nudges = 0, pins = 0, yaws = 0, ticks = 0, runaways = 0, fixes = 0, input_pins = 0;
+    unsigned places = 0, snaps = 0, nudges = 0, pins = 0, yaws = 0, ticks = 0, runaways = 0, fixes = 0, input_pins = 0, faces = 0;
+    bool face_sticks = true;         // false: the game rotates the body back after a governor write (contest)
+    double face_back_yaw = 0;        // where the game puts it back
     std::uint32_t events = 0;
     double max_nudge_step = 0;
     unsigned place_reason[16]{};
@@ -164,6 +167,12 @@ struct World {
             body_yaw = out.yaw;
             last_ok = true;
             break;
+        case pr::Action::face:
+            ++faces;
+            for (int i = 0; i < 3; ++i) body[i] = out.pos[i];
+            body_yaw = face_sticks ? out.yaw : face_back_yaw;
+            last_ok = true;
+            break;
         default:
             break;
         }
@@ -183,13 +192,14 @@ struct World {
     // Placement then settle: placed and tracking.
     void Place() {
         Tick();
-        Check(out.action == pr::Action::place && !out.arm, "first tick places (window disarmed)");
+        Check(out.action == pr::Action::place && out.arm == params.neutral_place && out.neutral == params.neutral_place,
+              "first tick places (window disarmed, or neutral with native placements)");
         Tick();
-        Check(out.mode == pr::Mode::track && out.arm && (out.events & pr::Event::placed_ok), "verified: armed and tracking");
+        Check(out.mode == pr::Mode::track && out.arm && !out.neutral && (out.events & pr::Event::placed_ok), "verified: armed and tracking");
         ResetCounters();
     }
     void ResetCounters() {
-        places = snaps = nudges = pins = yaws = runaways = fixes = input_pins = 0;
+        places = snaps = nudges = pins = yaws = runaways = fixes = input_pins = faces = 0;
         events = 0;
         max_nudge_step = 0;
         for (auto& c : place_reason) c = 0;
@@ -833,6 +843,199 @@ void TestNativeActions() {
     }
 }
 
+// Facing governor (docs/native-puppet.md "Facing"; hidden runs a7823, 63199,
+// bec857fb, d91fc, b9528): idle turns of a quiet body at a bounded eased
+// rate, hysteresis, the stick abort, the contest backoff and latch, the
+// settle snap, aim turns (FaceMode::aim only), the placement yaw check and
+// the windowed teleport.
+double Deg(double rad) { return rad * 180.0 / kPi; }
+void TestFacingGovernor() {
+    const pr::Params native = pr::NativeParams(pr::Params{});
+    Check(native.face == pr::FaceMode::idle && native.neutral_place && native.place_yaw_cdeg == 1000 &&
+              native.teleport_window_mm == 3000 && native.teleport_window_ms == 200,
+          "native preset: governor idle, neutral placements, 10 degree placement yaw, 3 m / 200 ms teleport");
+    Check(pr::Params{}.face == pr::FaceMode::legacy && !pr::Params{}.neutral_place && pr::Params{}.place_yaw_cdeg == 0 &&
+              pr::Params{}.teleport_window_mm == 0, "round-4 defaults unchanged (legacy yaw rule)");
+    Check(pr::NativeParams(pr::Params{}, pr::FaceMode::aim).face == pr::FaceMode::aim, "native preset takes the configured face mode");
+    // Idle turn: the remote turned 40 degrees in place (a debug placement).
+    {
+        World w;
+        w.params = native;
+        w.Place();
+        w.Run(2000);  // past the placement's settle window
+        w.ResetCounters();
+        w.remote_yaw = 40.0 * kPi / 180.0;
+        double prev = w.body_yaw, max_step = 0;
+        unsigned epochs = 0, writes = 0;
+        w.Run(1500, [&](World& v) {
+            if (v.out.action == pr::Action::face) {
+                ++writes;
+                if (v.out.face_epoch) ++epochs;
+                const double step = std::fabs(pr::WrapRad(v.body_yaw - prev));
+                if (step > max_step) max_step = step;
+            }
+            prev = v.body_yaw;
+        });
+        Check((w.events & pr::Event::face_start) && (w.events & pr::Event::face_end), "idle: one turn started and ended");
+        Check(std::fabs(Deg(pr::WrapRad(w.remote_yaw - w.body_yaw))) < 1.0, "idle: the body ends within 1 degree of the remote's yaw");
+        Check(Deg(max_step) <= 180.0 * 0.016 + 0.01, "idle: no step faster than 180 deg/s at 16 ms ticks");
+        Check(writes >= 10 && epochs == 2, "idle: a gradual turn whose start and end alone bump the body epoch");
+        Check(w.snaps == 0 && w.places == 0 && w.yaws == 0, "idle: no snaps, placements or legacy yaw writes");
+        Check(w.out.report.face_turns == 1 && w.out.report.face_contests == 0, "idle: report counts one turn, no contest");
+    }
+    // Hysteresis: 4 degrees never starts a turn; 6 degrees held 100 ms neither.
+    {
+        World w;
+        w.params = native;
+        w.Place();
+        w.Run(2000);  // past the placement's settle window
+        w.ResetCounters();
+        w.remote_yaw = 4.0 * kPi / 180.0;
+        w.Run(2000);
+        Check(w.faces == 0 && std::string(w.out.report.face_reason) == "small", "4 degrees: below the 5 degree entry");
+        w.remote_yaw = 6.0 * kPi / 180.0;
+        w.Run(100);
+        w.remote_yaw = 0.0;
+        w.Run(1000);
+        Check(w.faces == 0, "6 degrees for 100 ms: under the 200 ms hold");
+    }
+    // Any stick input aborts in the same tick; locomotion is never fought.
+    {
+        World w;
+        w.params = native;
+        w.Place();
+        w.Run(2000);  // past the placement's settle window
+        w.ResetCounters();
+        w.remote_yaw = 90.0 * kPi / 180.0;
+        w.Run(260);
+        Check((w.events & pr::Event::face_start) && w.faces > 0, "a 90 degree turn is under way");
+        const unsigned faces = w.faces;
+        w.r = 0.5;
+        w.Tick();
+        Check(w.out.action != pr::Action::face && (w.out.events & pr::Event::face_end) &&
+                  std::string(w.out.report.face_reason) == "stick", "the stick aborts the turn in the same tick");
+        w.remote_v[2] = 3000.0;
+        w.Run(1000);
+        Check(w.faces == faces, "no governor write while the remote moves");
+    }
+    // Contest: the game rotates the body back after each write.
+    {
+        World w;
+        w.params = native;
+        w.Place();
+        w.Run(2000);  // past the placement's settle window
+        w.ResetCounters();
+        w.face_sticks = false;
+        w.face_back_yaw = 0.0;
+        w.remote_yaw = 30.0 * kPi / 180.0;
+        std::uint64_t first_contest = 0, latched_at = 0;
+        w.Run(6000, [&](World& v) {
+            if ((v.out.events & pr::Event::face_contest) && !first_contest) first_contest = v.now;
+            if ((v.out.events & pr::Event::face_latched) && !latched_at) latched_at = v.now;
+        });
+        Check(first_contest != 0 && w.out.report.face_contests == 3 && latched_at != 0, "three contests latch the governor");
+        Check(w.out.report.face_state == pr::FaceState::contested, "latched: face=contested");
+        const unsigned faces = w.faces;
+        w.Run(5000);
+        Check(w.faces == faces && w.out.report.face_state == pr::FaceState::contested, "no writes while latched (10 s)");
+        w.face_sticks = true;
+        w.Run(2500);
+        Check(w.faces > faces && std::fabs(Deg(pr::WrapRad(w.remote_yaw - w.body_yaw))) < 1.0, "after the latch the turn completes");
+    }
+    // Settle: a body in fall/land (act 25/26) with a large error gets one snap.
+    {
+        World w;
+        w.params = native;
+        w.Place();
+        w.Run(2000);
+        w.ResetCounters();
+        w.body_act = 26;
+        w.remote_yaw = 60.0 * kPi / 180.0;
+        w.Run(1500);
+        Check(w.faces == 1 && (w.events & pr::Event::face_snap) && std::fabs(Deg(pr::WrapRad(w.remote_yaw - w.body_yaw))) < 0.01,
+              "fall/land: exactly one settle snap onto the target");
+        w.remote_yaw = 100.0 * kPi / 180.0;
+        w.Run(1500);
+        Check(w.faces == 1, "fall/land: one snap per settle window");
+        w.body_act = 1;
+        w.Run(1500);
+        Check(w.faces > 1 && std::fabs(Deg(pr::WrapRad(w.remote_yaw - w.body_yaw))) < 1.0, "back in an idle act: an idle turn finishes it");
+    }
+    // Aim: only with FaceMode::aim, and only while the body's own turning is slow.
+    {
+        for (const pr::FaceMode mode : {pr::FaceMode::idle, pr::FaceMode::aim}) {
+            World w;
+            w.params = pr::NativeParams(pr::Params{}, mode);
+            w.Place();
+            w.Run(2000);
+            w.ResetCounters();
+            w.body_act = 12;
+            w.remote_act = 11;
+            w.remote_yaw = 30.0 * kPi / 180.0;
+            w.Run(3000);
+            if (mode == pr::FaceMode::idle) Check(w.faces == 0, "face=idle: no aim turn");
+            else Check(w.faces > 5 && (w.events & pr::Event::face_start) && std::fabs(Deg(pr::WrapRad(w.remote_yaw - w.body_yaw))) < 1.0,
+                       "face=aim: a quiet aim turn reaches the remote's yaw");
+        }
+    }
+    // Placement yaw: a Warp whose yaw does not hold is fixed by one xform, then verified.
+    {
+        World w;
+        w.params = native;
+        w.remote_yaw = -60.0 * kPi / 180.0;
+        w.Tick();
+        Check(w.out.action == pr::Action::place && w.out.neutral && w.out.arm, "native placement keeps a neutral window");
+        w.body_yaw = -97.0 * kPi / 180.0;  // the held aim kept turning the body
+        w.Tick();
+        Check(w.out.action == pr::Action::face && w.out.face_epoch && (w.out.events & pr::Event::place_yaw_fix) &&
+                  w.out.mode == pr::Mode::verify && w.out.neutral, "verify: one xform at the placed yaw, still neutral");
+        w.Tick();
+        Check(w.out.mode == pr::Mode::track && (w.out.events & pr::Event::placed_ok) && w.out.arm && !w.out.neutral &&
+                  std::fabs(w.out.report.place_yaw_err_mrad) < 1.0, "verified with the yaw: armed and tracking");
+    }
+    // Windowed teleport: 8 m over four ticks (each below the 5 m jump) is placed at once.
+    {
+        World w;
+        w.params = native;
+        w.Place();
+        w.Run(1000);
+        w.ResetCounters();
+        for (int i = 0; i < 4; ++i) {
+            w.remote[0] += 2000.0;
+            w.Tick(33);
+            if (w.places) break;
+        }
+        Check(w.places == 1 && w.place_reason[static_cast<unsigned>(pr::PlaceReason::teleport)] == 1,
+              "3 m within 200 ms without locomotion: place(teleport)");
+        World r;
+        r.params = pr::Params{};
+        r.Place();
+        r.Run(1000);
+        r.ResetCounters();
+        for (int i = 0; i < 4; ++i) { r.remote[0] += 2000.0; r.Tick(33); }
+        Check(r.places == 0, "round-4 params: the windowed teleport is off");
+        // A sprint (10 m/s) never trips it.
+        World s;
+        s.params = native;
+        s.Place();
+        s.remote_v[2] = 10000.0;
+        s.r = 1.0;
+        s.Run(3000);
+        Check(s.place_reason[static_cast<unsigned>(pr::PlaceReason::teleport)] == 0, "a sprint is not a teleport");
+    }
+    // FaceMode::off: no facing correction at all (and no legacy rule).
+    {
+        World w;
+        w.params = pr::NativeParams(pr::Params{}, pr::FaceMode::off);
+        w.Place();
+        w.Run(1000);
+        w.ResetCounters();
+        w.remote_yaw = 60.0 * kPi / 180.0;
+        w.Run(4000);
+        Check(w.faces == 0 && w.yaws == 0, "face=off: no correction");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -858,10 +1061,12 @@ int main() {
     TestModes();
     TestStopCheck();
     TestNativeActions();
+    TestFacingGovernor();
     std::printf("%u partner recon checks passed: placement/verify/retry, I6 runaway replay (pin, no sawtooth), moving runaway, "
                 "lag model (walk/run/turn/sprint/stops), non-sticking nudges, input pin, stance fix, aligned run and turn, "
                 "lateral nudges, one moving snap, diverging, teleport/far, stance suspend/prone/mismatch, frozen acts, loss/relink, "
                 "idle yaw and snap, rearm/manual, recon pin/off, stop check, native actions (split runaway, lag, along cap, "
-                "stop grace)\n", checks);
+                "stop grace), facing governor (idle turn, hysteresis, stick abort, contest/latch, settle, aim, placement yaw, windowed "
+                "teleport, off)\n", checks);
     return 0;
 }

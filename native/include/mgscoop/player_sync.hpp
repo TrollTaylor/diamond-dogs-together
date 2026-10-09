@@ -176,7 +176,9 @@ bool decode_look_frame(const std::uint8_t* data, std::size_t size, std::uint64_t
 //   [0..71] as version 3 (version byte 4)  [72..73] rate_dash u16  [74..75] rate_crawl u16
 //   [76..77] rate_crawl_factor u16 (milli, 500..2000 each with xflags Rates 0x10, else all 0;
 //   sent unless partner_native_rates=off)  [78..79] mag u16  [80..81] mag_cap u16 (both 0
-//   unless xflags Mag 0x20: 1 <= mag_cap <= 999, mag <= mag_cap)  [82..83] 0
+//   unless xflags Mag 0x20: 1 <= mag_cap <= 999, mag <= mag_cap)  [82..83] gun_equip u16
+//   (the sender's gun record equip, 1..65535 with xflags Equip 0x80, else 0). xflags
+//   Gamepad 0x40: the sender's PlayerPad is in gamepad mode (PP+0x488 bit 6 clear).
 // Non-finite or out-of-range floats, unknown xflags, a non-zero field whose
 // xflag is clear and non-zero reserved bytes are refused. The earlier
 // single-feature v4 drafts (104 bytes: magazine only; 108 bytes: rates only)

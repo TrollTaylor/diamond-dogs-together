@@ -155,30 +155,60 @@ int main() {
         }
         std::size_t n=0;
         const auto doc=NativeDocument(t,&n);
-        if(!check(n>0 && n<8192 && ValidJson(doc)))return 1;
+        if(!check(n>0 && n<12288 && ValidJson(doc)))return 1;
         if(!check(doc.find("\"reason\":\"q\\\"b\\\\c\\u0001\"")!=std::string::npos && doc.find("\"age_ms\":null")!=std::string::npos &&
-                  doc.find("\"nested\":1,\"foreign\":2,\"unwound\":3,\"drain_block\":4,\"drain_in_batch\":5}")!=std::string::npos &&
+                  doc.find("\"nested\":1,\"foreign\":2,\"unwound\":3,\"drain_block\":4,\"drain_in_batch\":5,\"unwindowed_native\":0}")!=std::string::npos &&
                   doc.find("\"err_mm\":null")!=std::string::npos && doc.find(",\"off\",")!=std::string::npos))return 1;
         // Native weapons members (docs/native-puppet.md "Weapons"): nulls for unread values.
         if(!check(doc.find("\"fields_ok\":false,\"cap\":0,")!=std::string::npos && doc.find("\"fire\":{\"mode\":\"\",")!=std::string::npos &&
                   doc.find("\"mag\":{\"remote\":0,")!=std::string::npos && doc.find("\"leak\":{\"shot_count\":0,")!=std::string::npos &&
                   doc.find("\"equip\":{\"tx_rev\":0,\"tx_base\":[0,0,0]")!=std::string::npos &&
-                  doc.find("\"warp\",\"mag\"],\"ring\":[")!=std::string::npos && doc.find("false,0]")!=std::string::npos))return 1;
+                  doc.find("\"warp\",\"mag\",\"body_yaw_cdeg\",\"face_err_cdeg\"],\"ring\":[")!=std::string::npos &&
+                  doc.find("false,0,0,0]")!=std::string::npos))return 1;
+        // Native polish members (docs/native-puppet.md "Facing", "Weapons"): present in every shape.
+        if(!check(doc.find("\"steer_err_mrad\":0,\"cam_diff_cdeg\":0")!=std::string::npos &&
+                  doc.find("\"rings\":{\"on\":false,\"windows\":0,\"refused\":0,\"changed\":0,\"last\":\"\"}")!=std::string::npos &&
+                  doc.find("\"noise\":{\"mode\":\"\",\"installed\":false,\"live\":false,\"dropped\":0,\"passed\":0}")!=std::string::npos &&
+                  doc.find("\"weapon\":{\"kb_remote\":false,\"remote_gun_equip\":0,\"mismatch\":false,\"strip\":0}")!=std::string::npos &&
+                  doc.find("\"trigger\":{\"requested\":0,\"shot_drains\":0,\"fire_modes\":0}")!=std::string::npos &&
+                  doc.find("\"store\":{\"writes\":0,\"refused\":0,\"last\":\"\"}}")!=std::string::npos &&
+                  doc.find("\"facing\":{\"setting\":\"\",\"mode\":\"\",\"err_cdeg\":0,")!=std::string::npos &&
+                  doc.find("\"look\":{\"src\":\"\",\"src_hits_s\":0,")!=std::string::npos))return 1;
+        t.face_err_cdeg=t.face_target_cdeg=t.face_body_cdeg=t.face_rate_dps=pn::kNull;t.place_yaw_err_mdeg=pn::kNull;
+        t.look_remote_cdeg[0]=t.look_remote_cdeg[1]=t.look_slot_cdeg[0]=t.look_slot_cdeg[1]=t.look_err_mdeg=pn::kNull;
+        t.steer_err_mrad=t.cam_diff_cdeg=pn::kNull;t.mag_inj=t.mag_inj_cap=t.remote_gun_equip=pn::kNull;
+        strcpy_s(t.face_setting,"idle");strcpy_s(t.face_mode,"contested");strcpy_s(t.face_reason,"lat\"ched");strcpy_s(t.look_src,"refused");
+        strcpy_s(t.ring_last,"cap");strcpy_s(t.store_last,"y_vt");strcpy_s(t.noise_mode,"filter");
+        t.face_writes=7;t.face_contests=3;t.look_src_hits_s=120;t.kb_remote=true;t.weapon_mismatch=true;t.strip_bits=0x50;
+        for(unsigned i=0;i<pn::kRing;++i){pn::RingEntry e{};e.body_yaw_cdeg=(i%2)?pn::kNull:-17999;e.face_err_cdeg=pn::kNull;pn::Push(t.ring,e);}
+        const auto polish=NativeDocument(t,&n);
+        if(!check(n>0 && n<12288 && ValidJson(polish)))return 1;
+        if(!check(polish.find("\"facing\":{\"setting\":\"idle\",\"mode\":\"contested\",\"err_cdeg\":null,\"target_cdeg\":null,\"body_cdeg\":null,"
+                              "\"rate_dps\":null,\"writes\":7,\"snaps\":0,\"contests\":3,\"turns\":0,\"reason\":\"lat\\\"ched\",\"place_yaw_err_mdeg\":null,")!=std::string::npos &&
+                  polish.find("\"look\":{\"src\":\"refused\",\"src_hits_s\":120,")!=std::string::npos &&
+                  polish.find("\"remote_cdeg\":[null,null],\"slot_cdeg\":[null,null],\"err_mdeg\":null}")!=std::string::npos &&
+                  polish.find("\"steer_err_mrad\":null,\"cam_diff_cdeg\":null")!=std::string::npos &&
+                  polish.find("\"inj\":null,\"inj_cap\":null,\"store\":{\"writes\":0,\"refused\":0,\"last\":\"y_vt\"}}")!=std::string::npos &&
+                  polish.find("\"weapon\":{\"kb_remote\":true,\"remote_gun_equip\":null,\"mismatch\":true,\"strip\":80}")!=std::string::npos &&
+                  polish.find(",-17999,null]")!=std::string::npos && polish.find(",null,null]")!=std::string::npos))return 1;
+        t.face_err_cdeg=t.face_target_cdeg=t.face_body_cdeg=t.face_rate_dps=0;t.place_yaw_err_mdeg=0;
+        t.look_remote_cdeg[0]=t.look_remote_cdeg[1]=t.look_slot_cdeg[0]=t.look_slot_cdeg[1]=t.look_err_mdeg=0;
+        t.steer_err_mrad=t.cam_diff_cdeg=0;t.mag_inj=t.mag_inj_cap=t.remote_gun_equip=0;
         t.gun_cap=t.gun_mag=t.gun_stock=t.gun_class=t.gun_b3d5=t.gun_slot=pn::kNull;t.remote_mag=t.remote_mag_cap=pn::kNull;
         t.shot_count=pn::kNull;t.ammo_digest=pn::kNull;t.ammo_leaks=3;t.census_noise_vt=pn::kNull;t.census_noise_fn=0x2337de8;
         strcpy_s(t.fire_mode,"visual");strcpy_s(t.fire_refused,"by\"tes");strcpy_s(t.mag_last,"no_v4");strcpy_s(t.equip_apply,"already");
         t.fire_suppressed=0xFFFFFFFFu;t.mag_written=0xFFFFu;t.equip_tx_base[1]=46;t.equip_rx_alias[1]=873;
         for(unsigned i=0;i<pn::kRing;++i){pn::RingEntry e{};e.mag=(i%2)?0xFFFF:5;pn::Push(t.ring,e);}
         const auto weapons=NativeDocument(t,&n);
-        if(!check(n>0 && n<8192 && ValidJson(weapons)))return 1;
+        if(!check(n>0 && n<12288 && ValidJson(weapons)))return 1;
         if(!check(weapons.find("\"cap\":null,\"mag\":null,\"stock\":null,\"class\":null,\"b3d5\":null,\"slot\":null")!=std::string::npos &&
                   weapons.find("\"fire\":{\"mode\":\"visual\"")!=std::string::npos && weapons.find("\"refused\":\"by\\\"tes\"")!=std::string::npos &&
                   weapons.find("\"suppressed\":4294967295,")!=std::string::npos && weapons.find("\"noise_vt\":null,\"noise_fn\":36929000")!=std::string::npos &&
                   weapons.find("\"remote\":null,\"remote_cap\":null,\"local\":0,\"local_cap\":0")!=std::string::npos && weapons.find("\"shot_count\":null")!=std::string::npos &&
                   weapons.find("\"ammo_leaks\":3,\"ammo_vars\":null}")!=std::string::npos &&
                   weapons.find("\"tx_base\":[0,46,0]")!=std::string::npos && weapons.find("\"rx_alias\":[0,873,0]")!=std::string::npos &&
-                  weapons.find("\"apply\":\"already\"")!=std::string::npos && weapons.find(",null]")!=std::string::npos &&
-                  weapons.find(",5]")!=std::string::npos))return 1;
+                  weapons.find("\"apply\":\"already\"")!=std::string::npos && weapons.find(",null,0,0]")!=std::string::npos &&
+                  weapons.find(",5,0,0]")!=std::string::npos))return 1;
         // Too small a buffer: nothing (never a truncated member).
         char small[64];
         if(!check(mgscoop::worker_debug::FormatNativeJson(t,small,sizeof(small))==0 && small[0]==0))return 1;

@@ -295,6 +295,8 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
         else if (Equals(key, "partner_native_rates")) ok = ParsePartnerNativeRates(value.data, value.size, result.partner_native_rates);
         else if (Equals(key, "partner_native_gun")) ok = ParseBool(value, result.partner_native_gun);
         else if (Equals(key, "partner_native_fire")) ok = ParsePartnerNativeFire(value.data, value.size, result.partner_native_fire);
+        else if (Equals(key, "partner_native_face")) ok = ParsePartnerNativeFace(value.data, value.size, result.partner_native_face);
+        else if (Equals(key, "partner_native_noise")) ok = ParsePartnerNativeNoise(value.data, value.size, result.partner_native_noise);
         else if (Equals(key, "partner_native_steer_deg"))
             ok = ParseRange(value, 0, kPartnerNativeSteerMaxDeg, result.partner_native_steer_deg);
         else if (Equals(key, "partner_native_trim_pct"))
@@ -764,6 +766,7 @@ const char* PartnerNativeAimName(PartnerNativeAim value) noexcept {
     switch (value) {
     case PartnerNativeAim::look: return "look";
     case PartnerNativeAim::lookcam: return "lookcam";
+    case PartnerNativeAim::looksrc: return "looksrc";
     default: return "off";
     }
 }
@@ -815,6 +818,38 @@ bool ParsePartnerNativeAim(const char* text, std::size_t size, PartnerNativeAim&
     if (Equals(s, "off")) out = PartnerNativeAim::off;
     else if (Equals(s, "look")) out = PartnerNativeAim::look;
     else if (Equals(s, "lookcam")) out = PartnerNativeAim::lookcam;
+    else if (Equals(s, "looksrc")) out = PartnerNativeAim::looksrc;
+    else return false;
+    return true;
+}
+
+const char* PartnerNativeFaceName(PartnerNativeFace value) noexcept {
+    switch (value) {
+    case PartnerNativeFace::off: return "off";
+    case PartnerNativeFace::aim: return "aim";
+    default: return "idle";
+    }
+}
+
+bool ParsePartnerNativeFace(const char* text, std::size_t size, PartnerNativeFace& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "off")) out = PartnerNativeFace::off;
+    else if (Equals(s, "idle")) out = PartnerNativeFace::idle;
+    else if (Equals(s, "aim")) out = PartnerNativeFace::aim;
+    else return false;
+    return true;
+}
+
+const char* PartnerNativeNoiseName(PartnerNativeNoise value) noexcept {
+    return value == PartnerNativeNoise::keep ? "keep" : "filter";
+}
+
+bool ParsePartnerNativeNoise(const char* text, std::size_t size, PartnerNativeNoise& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "filter")) out = PartnerNativeNoise::filter;
+    else if (Equals(s, "keep")) out = PartnerNativeNoise::keep;
     else return false;
     return true;
 }

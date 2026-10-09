@@ -25,10 +25,17 @@
 // the local-only side effects (ammo, camera kick, shot origin, shoot count,
 // suppressor life): asserted by the contract checker.
 //
-// Not covered (documented risks): projectile weapons (row type 3, gm+0x210)
-// and the unsuppressed shot noise {pos, 0x145, owner} through group+0xA0
-// (0x1303D06): ReadCensus reports that interface's vtable read-only so it can
-// be pinned.
+// Not covered (documented risk): projectile weapons (row type 3, gm+0x210).
+//
+// Noise (InstallNoise, partner_native_noise=filter): the unsuppressed shot
+// noise {pos, u8 0x45, u8 1, u16 owner = record+0x2A} the model group sends
+// through group+0xA0 vt+0 (0x1303D06, rax ignored) is AddNoise 0x515270
+// (slot 0 of the noise iface vtable 0x21876A8, stored by its ctor 0x51517F,
+// dtor 0x515246 and the static initializer 0x2074C5C; no direct caller);
+// AddNoise copies the record's +0x12 owner into its ring (0x5152F9). The
+// slot is swapped the same way as the bullet slots; a record whose owner is
+// the armed id is dropped (the world-sync rule: each PC perceives for its
+// own player; the remote's real shot made the real noise on its machine).
 //
 // Installed once per process, never removed; once armed, the driver never
 // disarms it (it re-arms the same id every tick): a shot request of instance 1
@@ -55,6 +62,12 @@ const char* Install(const void* base, LogFn log) noexcept;
 bool Installed() noexcept;
 // True while both slots still hold Hook.
 bool PatchLive(const void* base) noexcept;
+// The noise slot (0x21876A8 +0, AddNoise 0x515270): nullptr on success, else
+// bytes | slot | changed | protect | alignment | protect_restore | disabled.
+// Uses the same armed owner as the bullet filter.
+const char* InstallNoise(const void* base, LogFn log) noexcept;
+bool NoiseInstalled() noexcept;
+bool NoisePatchLive(const void* base) noexcept;
 
 // The instance GameObjectId whose bullets are dropped (type bits must be 0:
 // a player instance); Disarm (tests only) forwards every request again.
@@ -72,6 +85,11 @@ struct Stats {
     std::uint32_t owner_disarmed;   // requests of the armed owner id forwarded while disarmed
     std::uint32_t last_thread;      // thread of the last request
     std::uint16_t last_owner;
+    // The noise filter: installed, its slot still holds the hook, records
+    // dropped (owner == armed owner) and forwarded, the last record's owner.
+    bool noise_installed, noise_live;
+    std::uint32_t noise_dropped, noise_passed;
+    std::uint16_t noise_last_owner;
 };
 void ReadStats(const void* base, Stats& out) noexcept;
 
@@ -96,6 +114,10 @@ RequestFn HookEntry() noexcept;
 // redirect the forwarded call (the synthetic image holds no code).
 void ResetForTest() noexcept;
 void SetOriginalForTest(RequestFn original) noexcept;
+// The noise hook entry (vtable ABI: rcx = the noise manager, rdx = the record).
+using NoiseFn = void (*)(void* self, const void* record) noexcept;
+NoiseFn NoiseHookEntry() noexcept;
+void SetNoiseOriginalForTest(NoiseFn original) noexcept;
 // Pure: whether a request with this owner is dropped for the armed owner
 // (0xFFFF = disarmed).
 inline bool Drops(std::uint16_t armed_owner, std::uint16_t owner) noexcept {

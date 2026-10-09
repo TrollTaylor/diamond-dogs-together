@@ -547,21 +547,34 @@ int main() {
         Check(refused4([](pi::InputPacket& b) { b.rate_crawl_factor = 2001; }), "rate above 2.0 refused");
         Check(refused4([](pi::InputPacket& b) { b.xflags &= static_cast<std::uint8_t>(~pi::XFlag::Rates); }), "rates without their xflag refused");
         Check(refused4([](pi::InputPacket& b) { b.version = 3; }), "rates in a v3 packet refused");
-        Check(refused4([](pi::InputPacket& b) { b.xflags |= 0x40; }), "unknown v4 xflags refused");
+        Check(refused4([](pi::InputPacket& b) { b.xflags |= pi::XFlag::Equip; }), "xflags Equip without an equip id refused");
+        Check(refused4([](pi::InputPacket& b) { b.gun_equip = 46; }), "a gun equip without xflags Equip refused");
         Check(refused4([](pi::InputPacket& b) { b.xflags |= pi::XFlag::Mag; }), "xflags Mag without a capacity refused");
         std::uint8_t tweak[input_frame_size_v4];
         Check(encode_input_frame_any(0x55, 7, 50, v4, frame) == 112, "re-encode v4");
         std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 82] = 1;
-        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "v4 reserved byte 82 refused");
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "v4 gun equip (byte 82) without xflags Equip refused");
         std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 83] = 1;
-        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "v4 reserved byte 83 refused");
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "v4 gun equip (byte 83) without xflags Equip refused");
         std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 1] = 3;
         Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "112-byte frame with version 3 refused");
         std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 72] = 0xF3; tweak[wire::header_size + 73] = 0x01;
         Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "rate 499 refused on decode");
         std::memcpy(tweak, frame, sizeof(tweak));
-        tweak[wire::header_size + 66] = static_cast<std::uint8_t>(0x40 | pi::XFlag::Rates | pi::XFlag::Heading);
-        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "unknown v4 xflags refused on decode");
+        tweak[wire::header_size + 66] = static_cast<std::uint8_t>(pi::XFlag::Equip | pi::XFlag::Rates | pi::XFlag::Heading);
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "xflags Equip without an equip id refused on decode");
+        // The gamepad flag and the sender's gun equip round-trip (bytes 82..83).
+        {
+            pi::InputPacket g = v4;
+            g.xflags = static_cast<std::uint8_t>(g.xflags | pi::XFlag::Gamepad | pi::XFlag::Equip);
+            g.gun_equip = 0x1234;
+            std::uint8_t gf[input_frame_size_v4]{};
+            pi::InputPacket gg{};
+            Check(pi::ValidPacket(g) && encode_input_frame_any(0x55, 7, 53, g, gf) == 112 && gf[wire::header_size + 82] == 0x34 &&
+                      gf[wire::header_size + 83] == 0x12 && decode_input_frame(gf, sizeof(gf), s, e, seq, gg) && gg.gun_equip == 0x1234 &&
+                      (gg.xflags & pi::XFlag::Gamepad) && (gg.xflags & pi::XFlag::Equip),
+                  "v4 gamepad flag and gun equip round trip");
+        }
         Check(!decode_input_frame(frame, input_frame_size_v3, s, e, seq, got), "a v4 frame cut to 100 bytes is refused");
         // The single-feature v4 drafts (104: magazine only, 108: rates only) never decode.
         Check(!decode_input_frame(frame, 104, s, e, seq, got) && !decode_input_frame(frame, 108, s, e, seq, got),

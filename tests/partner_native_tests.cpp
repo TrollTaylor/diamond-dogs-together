@@ -192,6 +192,7 @@ void TestHardReasons() {
         {"lost", [](pn::In& in) { in.lost = 1; }},
         {"wrap_in_batch", [](pn::In& in) { in.wrap_in_batch = 1; }},
         {"drain_block", [](pn::In& in) { in.drain_block = 1; }},
+        {"unwindowed", [](pn::In& in) { in.drain_disarmed = 1; }},
         {"diverging", [](pn::In& in) { in.snaps_10s = 3; }},
         {"runaway", [](pn::In& in) { in.runaway_ms = 2001; }},
     };
@@ -212,6 +213,15 @@ void TestHardReasons() {
     in.runaway_ms = 2000;
     in.snaps_10s = 2;
     Check(pn::Step(s, in).mode == pn::Mode::active, "runaway 2000 ms and 2 snaps stay active");
+    // A disarmed drain (block 1's job without a window under a disabled Arm)
+    // leaves active only: while entering it is the arming frame's race.
+    pn::State e{};
+    pn::Reset(e, true);
+    pn::Step(e, Ready(0));
+    pn::In entering = Ready(2000);
+    entering.drain_disarmed = 2;
+    const pn::Out eo = pn::Step(e, entering);
+    Check(eo.mode == pn::Mode::entering && Is(eo.enter_step, "place"), "a disarmed drain while entering (place) does not leave");
 }
 
 void TestSoftReasons() {

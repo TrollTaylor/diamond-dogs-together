@@ -635,6 +635,9 @@ try {
         'partner_native_gun=1', 'partner_native_fire=visual', 'partner_input_mask=0x224005E', 'partner_native_rates=mirror') -Role guest
     Assert-Equal "$($ovNative['partner_drive'])/$($ovNative['partner_input_defer'])/$($ovNative['partner_native_aim'])/$($ovNative['partner_native_gun'])/$($ovNative['partner_native_fire'])/$($ovNative['partner_input_mask'])/$($ovNative['partner_native_rates'])" 'native/on/look/1/visual/0x224005e/mirror' '-PartnerSetting: the native gun-stage settings'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_rates -Value copy } 'off|log|mirror' 'rates values'
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_native_aim -Value looksrc)/$(ConvertTo-LabPartnerValue -Key partner_native_face -Value aim)/$(ConvertTo-LabPartnerValue -Key partner_native_noise -Value keep)" 'looksrc/aim/keep' 'native polish enums (look source, facing governor, noise)'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_face -Value always } 'off|idle|aim' 'face values'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_noise -Value loud } 'filter|keep' 'noise values'
 
     # Round 3 lab.ini value kinds.
     Assert-Equal (ConvertTo-LabPartnerValue -Key partner_input -Value net) 'net' 'partner_input enum'

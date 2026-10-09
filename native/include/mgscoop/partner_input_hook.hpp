@@ -97,8 +97,24 @@ const char* LookRefusalName(LookRefusal refusal) noexcept;
 // class), cap (capacity outside 1..999), fault (a read/write faulted: the
 // mirror is off until MissionStart), leak (a drain's job changed the viewer's
 // weapon/ammo vars: the mirror is off until MissionStart).
-enum class MagRefusal : std::uint8_t { none, off, no_v4, prim, full, cls, cap, fault, leak };
+// weapon: the weapon gate strips FIRE/RELOAD (the remote's gun is not body
+// 1's): the mirror is frozen. store: the store row refused (StoreRefusal).
+enum class MagRefusal : std::uint8_t { none, off, no_v4, prim, full, cls, cap, fault, leak, weapon, store };
 const char* MagRefusalName(MagRefusal refusal) noexcept;
+// The magazine's per-instance store row (docs/native-puppet.md "Weapons" F2;
+// gun phase 0 copies it into rec+0x25C/+0x25E every frame): y_vt (the store
+// iface is not the pinned class or its +0x20 is not the setter), slot (stride
+// outside 1..16 or the slot beyond it), type (the row's type outside 1..9, or
+// type 9 with a sub magazine), owner (instance 1 is the local id), online
+// (S_IS_ONLINE or P+0x204 bit 18), tamper (rec+0x3D0 bit 27), cap (the value
+// above the capacity).
+enum class StoreRefusal : std::uint8_t { none, y_vt, slot, type, owner, online, tamper, cap };
+const char* StoreRefusalName(StoreRefusal refusal) noexcept;
+// The pad's sample rings in drain windows (F1): src (no src), cap (src+0x40
+// outside 2..kRingEntries), fault.
+enum class RingRefusal : std::uint8_t { none, src, cap, fault };
+const char* RingRefusalName(RingRefusal refusal) noexcept;
+inline constexpr std::uint32_t kRingEntries = 128;
 struct NativeStats {
     std::uint32_t frames;          // frame injections composed (main windows under a native Arm)
     std::uint32_t views[3];        // consumer views: full, level, neutral
@@ -162,6 +178,34 @@ struct NativeStats {
     // drain windows whose job changed it, and its FNV-1a digest after the
     // last drain (0 unread).
     std::uint32_t ammo_leaks, ammo_digest;
+    // F2: store row writes and refusals (the last reason), and the last
+    // drain's injected remote magazine (0xFFFF without a v4 magazine).
+    std::uint32_t store_writes, store_refused;
+    StoreRefusal store_last;
+    std::uint32_t mag_inj, mag_inj_cap;
+    // F1: drain windows that isolated the sample rings, refusals (the last
+    // reason; ring_on false after a refusal until the next isolated window),
+    // and windows whose job left foreign ring pointers (restored anyway).
+    bool ring_on;
+    std::uint32_t ring_windows, ring_refused, ring_changed;
+    RingRefusal ring_last;
+    // Placement and the weapon gate: native windows that injected Neutral()
+    // (Arm.neutral) and windows that stripped bits (Arm.strip, last bits).
+    std::uint32_t neutral_windows, strip_windows, strip_bits;
+    // Drains whose job ran without a window because the published Arm was
+    // not an enabled native Arm (a disarm under the native drive).
+    std::uint32_t drain_disarmed;
+    // The partner's trigger after each windowed drain: shots requested
+    // (rec+0x3C0 bit 24, summed over rec+0x3DF), drains with a shot, drains
+    // that left the gun in a fire mode (rec+0x2C0 9 or 10).
+    std::uint32_t fire_requested, fire_shot_drains, fire_modes;
+    // D3: the look of the last windowed drain (the remote's, injected) and
+    // instance 1's slot read back after its job (centidegrees {pitch, yaw};
+    // look_ok false when either was unread), and the look source hook.
+    bool look_ok;
+    std::int32_t look_remote_cdeg[2], look_slot_cdeg[2];
+    bool look_src_installed, look_src_faulted;
+    std::uint32_t look_src_hits, look_src_skipped, look_src_refused, look_src_calls;
 };
 
 // Drained by the driver. Counters are process-lifetime totals (the driver

@@ -278,7 +278,8 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_drive'; Json = 'drive'; Kind = 'enum'; Values = @('legacy', 'native') },
     @{ Key = 'partner_input_defer'; Json = 'input_defer'; Kind = 'enum'; Values = @('off', 'census', 'on') },
     @{ Key = 'partner_input_local'; Json = 'input_local'; Kind = 'enum'; Values = @('main', 'all') },
-    @{ Key = 'partner_native_aim'; Json = 'native_aim'; Kind = 'enum'; Values = @('off', 'look', 'lookcam') },
+    # looksrc: look plus the look source hook (docs/native-puppet.md "Facing").
+    @{ Key = 'partner_native_aim'; Json = 'native_aim'; Kind = 'enum'; Values = @('off', 'look', 'lookcam', 'looksrc') },
     @{ Key = 'partner_native_gun'; Json = 'native_gun'; Kind = 'bool' },
     # Native fire (docs/native-puppet.md "Weapons"): 0 (FIRE masked) or visual
     # (the partner's shots are animation, sound and effects only; FIRE passes
@@ -287,6 +288,10 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_native_steer_deg'; Json = 'native_steer_deg'; Kind = 'int'; Min = 0; Max = 30 },
     @{ Key = 'partner_native_trim_pct'; Json = 'native_trim_pct'; Kind = 'int'; Min = 0; Max = 10 },
     @{ Key = 'partner_native_rates'; Json = 'native_rates'; Kind = 'enum'; Values = @('off', 'log', 'mirror') },
+    # Native polish (docs/native-puppet.md "Facing", "Weapons"): the facing
+    # governor (idle by default) and the partner's shot noise (filter by default).
+    @{ Key = 'partner_native_face'; Json = 'native_face'; Kind = 'enum'; Values = @('off', 'idle', 'aim') },
+    @{ Key = 'partner_native_noise'; Json = 'native_noise'; Kind = 'enum'; Values = @('filter', 'keep') },
     @{ Key = 'crash_probe'; Json = 'crash_probe'; Kind = 'bool' },
     # Debug "Spawn enemy here" native placement (docs/debug-menu.md): lab only,
     # default off and written only when set.

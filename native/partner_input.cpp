@@ -127,7 +127,8 @@ bool NoRates(const InputPacket& p) noexcept {
     return p.rate_dash == 0 && p.rate_crawl == 0 && p.rate_crawl_factor == 0 && !(p.xflags & XFlag::Rates);
 }
 bool NoMag(const InputPacket& p) noexcept { return p.mag == 0 && p.mag_cap == 0 && !(p.xflags & XFlag::Mag); }
-bool NoV4(const InputPacket& p) noexcept { return NoRates(p) && NoMag(p); }
+bool NoEquip(const InputPacket& p) noexcept { return p.gun_equip == 0 && !(p.xflags & (XFlag::Equip | XFlag::Gamepad)); }
+bool NoV4(const InputPacket& p) noexcept { return NoRates(p) && NoMag(p) && NoEquip(p); }
 bool NoV3(const InputPacket& p) noexcept {
     return p.look_pitch == 0.0f && p.look_yaw == 0.0f && p.cam270 == 0.0f && p.cam274 == 0.0f && p.heading_mrad == 0 &&
            p.xflags == 0 && p.inv_slot == 0 && p.equip_rev == 0 && NoV4(p);
@@ -138,7 +139,8 @@ bool ValidV4(const InputPacket& p) noexcept {
                                                  : p.rate_dash == 0 && p.rate_crawl == 0 && p.rate_crawl_factor == 0;
     const bool mag = (p.xflags & XFlag::Mag) ? p.mag_cap >= 1 && p.mag_cap <= kMaxMagCap && p.mag <= p.mag_cap
                                              : p.mag == 0 && p.mag_cap == 0;
-    return rates && mag;
+    const bool equip = (p.xflags & XFlag::Equip) ? p.gun_equip != 0 : p.gun_equip == 0;
+    return rates && mag && equip;
 }
 bool In(float v, float limit) noexcept { return std::isfinite(v) && v >= -limit && v <= limit; }
 bool ValidV3(const InputPacket& p) noexcept {
@@ -181,6 +183,7 @@ void Fill3(InputPacket& p, const V3Source& v) noexcept {
     // No v4 group in a v3 packet.
     p.rate_dash = p.rate_crawl = p.rate_crawl_factor = 0;
     p.mag = p.mag_cap = 0;
+    p.gun_equip = 0;
 }
 
 void Fill4(InputPacket& p, const V4Source& v) noexcept {
@@ -196,6 +199,11 @@ void Fill4(InputPacket& p, const V4Source& v) noexcept {
         p.xflags = static_cast<std::uint8_t>(p.xflags | XFlag::Mag);
         p.mag = static_cast<std::uint16_t>(v.mag);
         p.mag_cap = static_cast<std::uint16_t>(v.mag_cap);
+    }
+    if (v.gamepad) p.xflags = static_cast<std::uint8_t>(p.xflags | XFlag::Gamepad);
+    if (v.equip_valid && v.equip >= 1 && v.equip <= 0xFFFFu) {
+        p.xflags = static_cast<std::uint8_t>(p.xflags | XFlag::Equip);
+        p.gun_equip = static_cast<std::uint16_t>(v.equip);
     }
 }
 
@@ -274,6 +282,11 @@ Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_c
             j.ammo = p.mag;
             j.ammo_cap = p.mag_cap;
         }
+        if (p.version >= 4) {
+            j.gamepad = (p.xflags & XFlag::Gamepad) != 0;
+            j.equip_valid = (p.xflags & XFlag::Equip) != 0;
+            j.equip = p.gun_equip;
+        }
     }
     held &= c.mask;
     const bool resync = edge.resync;
@@ -341,6 +354,19 @@ Injection Neutral(const Injection& frame) noexcept {
     j.write = frame.write;
     j.heading = frame.heading;
     j.stale = true;
+    return j;
+}
+
+Injection Strip(const Injection& injection, std::uint32_t bits) noexcept {
+    Injection j = injection;
+    if (!bits) return j;
+    j.held &= ~bits;
+    for (unsigned i = 0; i < 3; ++i) j.w[i] &= ~bits;
+    j.edge_press &= ~bits;
+    j.edge_release &= ~bits;
+    j.long12 &= ~bits;
+    j.tap12 &= ~bits;
+    j.synth &= ~bits;
     return j;
 }
 

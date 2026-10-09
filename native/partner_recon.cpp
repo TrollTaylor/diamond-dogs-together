@@ -13,6 +13,12 @@ double Len3(const double (&a)[3], const double (&b)[3]) noexcept {
     return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 bool Loco(std::uint16_t act) noexcept { return act >= 1 && act <= 6; }
+// Facing governor act classes (hidden runs a7823/63199/bec857fb/b9528: idle
+// loco 1/3/5, aim idle 11/12 standing and 14/15 crouched, fall/land 25/26).
+bool IdleAct(std::uint16_t act) noexcept { return act == 1 || act == 3 || act == 5; }
+bool AimAct(std::uint16_t act) noexcept { return act == 11 || act == 12 || act == 14 || act == 15; }
+bool FallAct(std::uint16_t act) noexcept { return act == 25 || act == 26; }
+constexpr double kRadPerCdeg = 3.14159265358979323846 / 18000.0;
 bool Held(std::uint64_t since, std::uint64_t now, std::uint32_t ms) noexcept { return since && now >= since && now - since >= ms; }
 std::uint32_t Ms(std::uint64_t from, std::uint64_t now) noexcept {
     if (!from || now < from) return 0;
@@ -48,6 +54,7 @@ void ResetArmCounters(State& st) noexcept {
     st.nudge_mm = 0.0;
 }
 void ResetMotionFilters(State& st) noexcept {
+    st.tp_count = 0;
     st.v_free[0] = st.v_free[1] = 0.0;
     st.v_remote[0] = st.v_remote[1] = 0.0;
     st.have_ef = false;
@@ -72,7 +79,27 @@ const char* ActionName(Action action) noexcept {
     case Action::snap: return "snap";
     case Action::pin: return "pin";
     case Action::yaw: return "yaw";
+    case Action::face: return "face";
     default: return "none";
+    }
+}
+
+const char* FaceModeName(FaceMode mode) noexcept {
+    switch (mode) {
+    case FaceMode::off: return "off";
+    case FaceMode::idle: return "idle";
+    case FaceMode::aim: return "aim";
+    default: return "legacy";
+    }
+}
+
+const char* FaceStateName(FaceState state) noexcept {
+    switch (state) {
+    case FaceState::idle: return "idle";
+    case FaceState::settle: return "settle";
+    case FaceState::aim: return "aim";
+    case FaceState::contested: return "contested";
+    default: return "off";
     }
 }
 
@@ -152,10 +179,16 @@ void Reset(State& st) noexcept {
     st.need_place = true;
     st.place_reason = PlaceReason::first;
     st.stop_ok = -1;
+    st.face_reason = "none";
 }
 
-Params NativeParams(const Params& base) noexcept {
+Params NativeParams(const Params& base, FaceMode face) noexcept {
     Params p = base;
+    p.face = face;
+    p.neutral_place = true;
+    p.place_yaw_cdeg = 1000;
+    p.teleport_window_mm = 3000;
+    p.teleport_window_ms = 200;
     p.cap_moving_mmps = 300;
     p.cap_idle_mmps = 300;
     p.cap_prone_mmps = 150;
@@ -206,6 +239,25 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
                 st.v_remote[1] += a * (vz - st.v_remote[1]);
             }
         }
+        // Windowed teleport: the interpolated pose spreads a teleport over a
+        // few ticks (each below teleport_jump_mm); no locomotion covers
+        // teleport_window_mm horizontally within teleport_window_ms.
+        if (P.teleport_window_mm && !teleport) {
+            for (std::uint32_t i = 0; i < st.tp_count; ++i) {
+                const std::uint32_t at = (st.tp_head + 16 - i) % 16;
+                if (now < st.tp_ms[at] || now - st.tp_ms[at] > P.teleport_window_ms) break;
+                if (Len2(in.target[0] - st.tp_pos[at][0], in.target[2] - st.tp_pos[at][2]) > P.teleport_window_mm) {
+                    teleport = true;
+                    st.v_remote[0] = st.v_remote[1] = 0.0;
+                    break;
+                }
+            }
+        }
+        if (teleport) st.tp_count = 0;
+        st.tp_head = (st.tp_head + 1) % 16;
+        Copy3(st.tp_pos[st.tp_head], in.target);
+        st.tp_ms[st.tp_head] = now;
+        if (st.tp_count < 16) ++st.tp_count;
         Copy3(st.prev_target, in.target);
         st.have_target = true;
     }
@@ -240,8 +292,26 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
     } else {
         st.have_body = false;
     }
+    // The previous step's writes (the body's own yaw rate, the contest guard).
+    const bool prev_face = st.face_wrote && in.last_ok;
+    const bool prev_yaw_write = st.wrote_yaw && in.last_ok;
+    const double prev_write_yaw = st.last_write_yaw;
     st.wrote = false;
     st.last_action = Action::none;
+    st.wrote_yaw = false;
+    st.face_wrote = false;
+    if (in.body_ok && std::isfinite(in.body_yaw)) {
+        if (st.face_have_prev && dt > 0.0) {
+            const double from = prev_yaw_write ? prev_write_yaw : st.face_prev_yaw;
+            const double rate = WrapRad(in.body_yaw - from) * 1000.0 / dt;
+            st.face_own_rate += Alpha(dt, P.ema_ms) * (rate - st.face_own_rate);
+        }
+        st.face_prev_yaw = in.body_yaw;
+        st.face_have_prev = true;
+    } else {
+        st.face_have_prev = false;
+        st.face_own_rate = 0.0;
+    }
     // ---- Errors --------------------------------------------------------------
     double ex = 0.0, ez = 0.0, err = 0.0, dy = 0.0;
     const bool have_err = in.body_ok && in.target_ok;
@@ -397,6 +467,16 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
         rp.dv_cross_mmps = dv_cross;
         rp.input_pin = st.input_pin;
         if (rp.place_reason == PlaceReason::none) rp.place_reason = st.place_reason;
+        rp.face_state = st.face_state;
+        rp.face_reason = st.face_reason ? st.face_reason : "none";
+        rp.face_target_mrad = in.target_ok ? WrapRad(in.target_yaw) * 1000.0 : 0.0;
+        rp.face_body_mrad = in.body_ok ? WrapRad(in.body_yaw) * 1000.0 : 0.0;
+        rp.face_err_mrad = (in.target_ok && in.body_ok) ? WrapRad(in.target_yaw - in.body_yaw) * 1000.0 : 0.0;
+        rp.face_rate_dps = st.face_own_rate * 57.29577951308232;
+        rp.face_writes = st.face_writes;
+        rp.face_snaps = st.face_snaps;
+        rp.face_contests = st.face_contests;
+        rp.face_turns = st.face_turns;
         return o;
     };
     const auto write = [&](Action action, const double (&pos)[3], double yaw) noexcept {
@@ -406,7 +486,47 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
         st.wrote = true;
         st.last_action = action;
         Copy3(st.last_write, pos);
+        if (action != Action::nudge) {
+            st.wrote_yaw = true;
+            st.last_write_yaw = yaw;
+        }
     };
+    // A turn ends (on target or aborted): the event once, with its reason.
+    const auto face_stop = [&](const char* why) noexcept {
+        if (st.face_turning) {
+            st.face_turning = false;
+            o.events |= Event::face_end;
+        }
+        if (st.face_state != FaceState::contested) st.face_state = FaceState::off;
+        st.face_reason = why;
+    };
+    const auto face_write = [&](double yaw, bool epoch) noexcept {
+        write(Action::face, in.body, yaw);
+        o.face_epoch = epoch;
+        st.face_wrote = true;
+        st.face_last_write = yaw;
+        ++st.face_writes;
+    };
+    const bool governor = P.face == FaceMode::idle || P.face == FaceMode::aim;
+    // Contest guard: the previous governor write did not hold.
+    if (governor && prev_face && in.body_ok && std::fabs(WrapRad(in.body_yaw - st.face_last_write)) > P.face_contest_cdeg * kRadPerCdeg) {
+        o.events |= Event::face_contest;
+        ++st.face_contests;
+        face_stop("contest");
+        st.face_backoff_until = now + P.face_backoff_ms;
+        std::uint32_t kept = 0;
+        for (std::uint32_t i = 0; i < st.face_contest_count && i < 4; ++i)
+            if (now - st.face_contest_ms[i] < P.face_contest_window_ms) st.face_contest_ms[kept++] = st.face_contest_ms[i];
+        if (kept < 4) st.face_contest_ms[kept++] = now;
+        st.face_contest_count = kept;
+        if (kept >= P.face_contests) {
+            st.face_latch_until = now + P.face_latch_ms;
+            st.face_contest_count = 0;
+            st.face_state = FaceState::contested;
+            st.face_reason = "latched";
+            o.events |= Event::face_latched;
+        }
+    }
     const auto request_place = [&](PlaceReason reason) noexcept {
         if (!st.need_place) { st.need_place = true; st.place_reason = reason; }
     };
@@ -424,6 +544,7 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
         st.input_pin = false;
         st.frozen = Frozen::none;
         o.arm = false;
+        if (governor) face_stop("unarmed");
         return finish(Mode::fallback);
     }
     if (!st.armable_prev && st.started && !st.need_place) request_place(st.placed_once ? PlaceReason::rearm : PlaceReason::first);
@@ -457,8 +578,9 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
 
     // ---- Placement: disarmed Warp to the aligned target, then verify ----------
     if (st.need_place) {
-        o.arm = false;
+        o.arm = o.neutral = P.neutral_place;
         st.frozen = Frozen::none;
+        if (governor) face_stop("place");
         // A live target is enough: stale input only freezes the corrections.
         if (in.target_ok && in.target_live) {
             const PlaceReason reason = st.place_reason == PlaceReason::none ? PlaceReason::manual : st.place_reason;
@@ -470,6 +592,10 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
             st.need_place = false;
             st.place_reason = reason;
             Copy3(st.placed_target, in.target);
+            st.placed_yaw = in.target_yaw;
+            st.place_yaw_fixed = false;
+            st.face_settle_until = now + P.face_settle_ms;
+            st.face_settle_done = false;
             st.place_ms = now;
             st.tries = retry_same ? st.tries + 1 : 1;
             st.last_hard_ms = now;
@@ -489,16 +615,30 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
         return finish(Mode::place);
     }
     if (st.mode == Mode::verify) {
-        o.arm = false;
+        o.arm = o.neutral = P.neutral_place;
         const double place_err = in.body_ok ? Len3(in.body, st.placed_target) : -1.0;
         o.report.place_err_mm = place_err;
         o.report.place_ms = Ms(st.place_ms, now);
+        const double place_yaw_err = in.body_ok ? WrapRad(st.placed_yaw - in.body_yaw) : 0.0;
+        o.report.place_yaw_err_mrad = place_yaw_err * 1000.0;
+        // The placed body's facing: one xform at the placed yaw when it is
+        // off (a Warp under a held aim kept turning toward the viewer's look),
+        // then verify again; a second miss is accepted (logged).
+        if (in.body_ok && place_err <= P.place_ok_mm && P.place_yaw_cdeg && !st.place_yaw_fixed &&
+            std::fabs(place_yaw_err) > P.place_yaw_cdeg * kRadPerCdeg) {
+            st.place_yaw_fixed = true;
+            write(Action::face, in.body, st.placed_yaw);
+            o.face_epoch = true;
+            o.events |= Event::place_yaw_fix;
+            return finish(Mode::verify);
+        }
         if (in.body_ok && place_err <= P.place_ok_mm) {
             o.events |= Event::placed_ok;
             st.placed_once = true;
             st.settle_until = now + P.settle_ms;
             st.snap_count = 0;
             o.arm = true;
+            o.neutral = false;
             return finish(Mode::track);
         }
         if (now - st.place_ms >= P.place_retry_ms) {
@@ -516,7 +656,7 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
     if (st.mode == Mode::fallback || st.mode == Mode::idle || st.mode == Mode::place) {
         // A failed placement: the driver's per-tick Warp fallback keeps the
         // partner following; try again later.
-        o.arm = false;
+        o.arm = o.neutral = P.neutral_place;
         if (now >= st.retry_at) request_place(PlaceReason::retry);
         return finish(Mode::fallback);
     }
@@ -657,6 +797,7 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
         o.events |= Event::pin_end;
     }
     if (P.recon == PartnerRecon::pin || st.runaway_active || diverge_pin || st.input_pin) {
+        if (governor) face_stop("pin");
         if (st.runaway_active && P.runaway == PartnerRunaway::disarm) o.arm = false;
         if (in.target_ok) {
             write(Action::pin, in.target, in.target_yaw);
@@ -671,9 +812,124 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
         ++st.snaps;
         st.have_ef = false;
         o.events |= Event::snap;
+        if (governor) {
+            face_stop("snap");
+            st.face_settle_until = now + P.face_settle_ms;
+            st.face_settle_done = false;
+        }
         return finish(Mode::track);
     }
-    if (frozen != Frozen::none) return finish(Mode::frozen);
+    // ---- Facing governor (FaceMode idle|aim) ---------------------------------
+    // Decided here (settle and aim act while the corrections are frozen by a
+    // non-locomotion act); an idle step waits for the hard snap below.
+    bool face_idle_step = false;
+    double face_idle_yaw = 0.0;
+    bool face_idle_epoch = false;
+    if (governor) {
+        const double r_now = std::isfinite(in.in_r) ? in.in_r : 0.0;
+        const bool stick_quiet = r_now < P.face_stick_r;
+        const bool quiet_now = stick_quiet && speed_remote < P.face_remote_mmps && speed_free < P.face_body_mmps;
+        if (quiet_now) { if (!st.face_quiet_since) st.face_quiet_since = now ? now : 1; } else { st.face_quiet_since = 0; }
+        const bool quiet = Held(st.face_quiet_since, now, P.face_quiet_ms);
+        const bool data = in.body_ok && in.target_ok && in.target_live && std::isfinite(in.body_yaw) && std::isfinite(in.target_yaw) &&
+                          frozen != Frozen::pose_stale && frozen != Frozen::input_stale && frozen != Frozen::body;
+        const double ferr = data ? WrapRad(in.target_yaw - in.body_yaw) : 0.0;
+        const double aerr = std::fabs(ferr);
+        const bool body_act = in.body_anim_ok;
+        const bool settle_window = now < st.face_settle_until || (body_act && FallAct(in.body_act));
+        const bool idle_class = body_act && IdleAct(in.body_act) &&
+                                (!in.remote_anim_valid || in.remote_act == in.body_act);
+        const bool aim_class = P.face == FaceMode::aim && body_act && AimAct(in.body_act) && in.remote_anim_valid && AimAct(in.remote_act);
+        const auto turn_params = [&](FaceState kind) noexcept {
+            const double dps = kind == FaceState::aim ? P.face_aim_dps : P.face_dps;
+            const double acc = kind == FaceState::aim ? P.face_aim_accel_dps2 : P.face_accel_dps2;
+            return partner_facing::Params{static_cast<float>(dps * kRadPerCdeg * 100.0), static_cast<float>(acc * kRadPerCdeg * 100.0)};
+        };
+        if (!settle_window) st.face_settle_done = false;
+        if (st.face_state == FaceState::contested && now >= st.face_latch_until) {
+            st.face_state = FaceState::off;
+            st.face_reason = "unlatched";
+        }
+        if (now < st.face_latch_until) {
+            if (st.face_turning) face_stop("latched");
+            st.face_state = FaceState::contested;
+            st.face_reason = "latched";
+        } else if (!data) {
+            face_stop("no_data");
+        } else if (!stick_quiet) {
+            face_stop("stick");  // any stick input aborts in the same tick
+        } else if (now < st.face_backoff_until) {
+            face_stop("backoff");
+        } else if (!quiet) {
+            face_stop("moving");
+        } else if (settle_window && !st.face_settle_done && aerr > P.face_settle_cdeg * kRadPerCdeg) {
+            // One snap per settle window (a placement, snap or teleport is a
+            // discontinuity already; fall/land acts are not locomotion).
+            if (st.face_turning) face_stop("settle");
+            st.face_settle_done = true;
+            st.face_state = FaceState::settle;
+            st.face_reason = "snap";
+            ++st.face_snaps;
+            o.events |= Event::face_snap;
+            face_write(in.target_yaw, true);
+            return finish(frozen != Frozen::none ? Mode::frozen : Mode::track);
+        } else {
+            const FaceState kind = aim_class ? FaceState::aim : idle_class ? FaceState::idle : FaceState::off;
+            if (st.face_turning && kind != st.face_turn_kind) face_stop("act");
+            if (kind == FaceState::off) {
+                face_stop(settle_window ? "settle" : "act");
+                if (settle_window) st.face_state = FaceState::settle;
+            } else if (!st.face_turning) {
+                // Enter: the error held (aim: and the body's own turning is slow).
+                const std::uint32_t enter = kind == FaceState::aim ? P.face_aim_cdeg : P.face_enter_cdeg;
+                const std::uint32_t hold = kind == FaceState::aim ? P.face_aim_hold_ms : P.face_enter_ms;
+                if (aerr > enter * kRadPerCdeg) { if (!st.face_err_since) st.face_err_since = now ? now : 1; } else { st.face_err_since = 0; }
+                const bool slow = kind != FaceState::aim || std::fabs(st.face_own_rate) * 57.29577951308232 < P.face_aim_rate_dps;
+                if (Held(st.face_err_since, now, hold) && slow) {
+                    st.face_turning = true;
+                    st.face_turn_kind = kind;
+                    st.face_turn = partner_facing::State{};
+                    st.face_turn.valid = true;
+                    st.face_turn.yaw = static_cast<float>(WrapRad(in.body_yaw));
+                    st.face_turn.ms = now;
+                    st.face_err_since = 0;
+                    st.face_state = kind;
+                    st.face_reason = "turn";
+                    ++st.face_turns;
+                    o.events |= Event::face_start;
+                } else {
+                    st.face_state = FaceState::off;
+                    st.face_reason = aerr > enter * kRadPerCdeg ? (slow ? "hold" : "rate") : "small";
+                }
+            }
+            if (st.face_turning) {
+                // Below the exit error the last write lands exactly on the
+                // target (the turn's end bumps the epoch like its start).
+                double applied = WrapRad(in.target_yaw);
+                bool landed = aerr < P.face_exit_cdeg * kRadPerCdeg;
+                if (!landed) {
+                    applied = static_cast<double>(partner_facing::Step(st.face_turn, static_cast<float>(applied), now,
+                                                                       turn_params(st.face_turn_kind), partner_facing::Snap::none));
+                    landed = std::fabs(WrapRad(in.target_yaw - applied)) < 1e-4;
+                    if (landed) applied = WrapRad(in.target_yaw);
+                }
+                const bool first = (o.events & Event::face_start) != 0;
+                if (st.face_turn_kind == FaceState::aim || frozen != Frozen::none) {
+                    // Aim acts are frozen for the corrections: write now.
+                    face_write(applied, first || landed);
+                    if (landed) face_stop("done");
+                    return finish(frozen != Frozen::none ? Mode::frozen : Mode::track);
+                }
+                face_idle_step = true;
+                face_idle_yaw = applied;
+                face_idle_epoch = first || landed;
+            }
+        }
+    }
+    if (frozen != Frozen::none) {
+        if (face_idle_step) face_stop("frozen");
+        return finish(Mode::frozen);
+    }
 
     // Hard snap: a large sustained error.
     const std::uint32_t thresh = remote_moving ? P.snap_moving_mm : P.snap_idle_mm;
@@ -689,6 +945,11 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
             st.have_ef = false;
             ++st.snaps;
             o.events |= Event::snap;
+            if (governor) {
+                face_stop("snap");
+                st.face_settle_until = now + P.face_settle_ms;
+                st.face_settle_done = false;
+            }
             // Diverging: diverge_snaps hard snaps within the window.
             std::uint32_t kept = 0;
             for (std::uint32_t i = 0; i < st.snap_count && i < 8; ++i)
@@ -705,9 +966,15 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
     } else {
         st.over_since = 0;
     }
-    // Idle facing: both still, the facing differs for a while.
+    // The governor's idle turn step (one xform at the body's own position).
+    if (face_idle_step) {
+        face_write(face_idle_yaw, face_idle_epoch);
+        if (face_idle_epoch && std::fabs(WrapRad(in.target_yaw - face_idle_yaw)) < 1e-4) face_stop("done");
+        return finish(Mode::track);
+    }
+    // Idle facing (legacy): both still, the facing differs for a while.
     const double yaw_err = WrapRad(in.target_yaw - in.body_yaw);
-    if (remote_idle && Held(st.still_since, now, P.yaw_still_ms) && std::fabs(yaw_err) * 1000.0 > P.yaw_mrad) {
+    if (P.face == FaceMode::legacy && remote_idle && Held(st.still_since, now, P.yaw_still_ms) && std::fabs(yaw_err) * 1000.0 > P.yaw_mrad) {
         if (!st.yaw_since) st.yaw_since = now ? now : 1;
         if (Held(st.yaw_since, now, P.yaw_hold_ms) && (!st.last_yaw_ms || now - st.last_yaw_ms >= P.yaw_gap_ms)) {
             write(Action::yaw, in.body, in.target_yaw);

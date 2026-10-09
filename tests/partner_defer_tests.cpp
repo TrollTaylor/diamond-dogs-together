@@ -936,7 +936,13 @@ struct PadWorld {
     alignas(16) unsigned char node[0x40];
     alignas(16) unsigned char recs[2 * c::plugin_rec_stride];
     alignas(16) unsigned char root0[0x40], root1[0x40];
+    // The magazine store (F2): X = *(P+0xC8), Y = *(X+8) with the store iface vtable.
+    alignas(16) unsigned char store_x[0x20], store_y[0x80];
+    alignas(16) std::uint32_t store_types[8];
+    alignas(16) std::uint16_t store_rows[8 * 3];
 };
+// The store row of instance 1's slot 0 (stride 2: idx 2).
+std::uint16_t StoreWord(const PadWorld* w, unsigned word) { return w->store_rows[2 * 3 + word]; }
 inline constexpr std::uint32_t kHostHeld = 0x11111111u;  // the local player's held word in src+0x48
 inline constexpr std::uint32_t kRemoteHeld = 0x48u;      // HOLD + RELOAD from the remote
 constexpr std::uint32_t partner_native_fire_bit() { return mgscoop::partner_native::kPadFire; }
@@ -1376,6 +1382,15 @@ void TestJobWindow() {
         a.gun_prim = Addr(gun_prim);
         a.gun_rec = Addr(gun_rec);
         hk::PublishArm(a);
+        // F2: the store row gun phase 0 copies into the record every frame.
+        Put<std::uintptr_t>(P + c::p_equip, Addr(w->store_x));
+        Put<std::uintptr_t>(Addr(w->store_x) + c::store_y, Addr(w->store_y));
+        Put<std::uintptr_t>(Addr(w->store_y), base + c::store_vt_rva);
+        Put<std::uintptr_t>(base + c::store_vt_rva + c::store_vt_set, base + c::store_set_rva);
+        Put<std::uint32_t>(Addr(w->store_y) + c::store_stride, 2);
+        Put<std::uintptr_t>(Addr(w->store_y) + c::store_types, Addr(w->store_types));
+        Put<std::uintptr_t>(Addr(w->store_y) + c::store_rows, Addr(w->store_rows));
+        w->store_types[2] = 1;  // id 1, slot 0: a magazine row (type 1)
         g_hook_sample.packet.version = 4;
         g_hook_sample.packet.xflags = pi::XFlag::Mag;
         g_hook_sample.packet.mag = 20;
@@ -1391,6 +1406,9 @@ void TestJobWindow() {
         Check(run() && s_seen == 4 && Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag) == 4 && hs.native.mag_writes == 1 &&
               hs.native.mag_written == 4 && hs.native.mag_cap == 5 && hs.native.mag_remote == 20 && hs.native.mag_remote_cap == 30 &&
               hs.native.mag_last == hk::MagRefusal::none, "first v4 sample: 20/30 mapped onto capacity 5 -> 4, written before the job");
+        Check(StoreWord(w, 0) == 4 && StoreWord(w, 1) == 0 && hs.native.store_writes == 1 && hs.native.store_last == hk::StoreRefusal::none &&
+                  hs.native.mag_inj == 20 && hs.native.mag_inj_cap == 30,
+              "F2: the store row word 0 carries the mirror (the game copies it every frame), the injected magazine reported");
         Put<std::uint16_t>(Addr(gun_rec) + c::gun_mag, 2);  // the game changed it; the remote did not
         Check(run() && s_seen == 2 && hs.native.mag_writes == 1, "no edge and no remote change: no write");
         g_hook_sample.packet.held = kRemoteHeld | partner_native_fire_bit();
@@ -1421,8 +1439,9 @@ void TestJobWindow() {
         Put<std::uint32_t>(Addr(gun_rec) + c::gun_flags27c, (1u << 6) | c::gun27c_sub);
         Put<std::uint16_t>(Addr(gun_rec) + c::gun_cap_sub, 3);
         g_hook_sample.packet.mag = 10;
-        Check(run() && Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag_sub) == 1 && Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag) == 5,
-              "flags bit 9: the sub magazine rec+0x25E (capacity 3) is written, rec+0x25C untouched");
+        Check(run() && Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag_sub) == 1 && Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag) == 5 &&
+                  StoreWord(w, 1) == 1 && StoreWord(w, 0) == 5,
+              "flags bit 9: the sub magazine rec+0x25E (capacity 3) and store word 1 are written, word 0 untouched");
         Put<std::uint32_t>(Addr(gun_rec) + c::gun_flags27c, 1u << 6);
         // Refusals: a changed prim chain, a full-magazine gun, a non-gun class.
         const std::uint32_t writes = hs.native.mag_writes;
@@ -1439,11 +1458,58 @@ void TestJobWindow() {
         g_hook_sample.packet.mag = 13;
         Check(run() && hs.native.mag_writes == writes && hs.native.mag_last == hk::MagRefusal::cls, "class 2: refused");
         Put<std::uint32_t>(Addr(gun_rec) + c::gun_flags27c, 1u << 6);
+        // F2 refusals: each check of the store row refuses the whole write (the record alone would be overwritten).
+        {
+            const std::uint16_t before = StoreWord(w, 0), rec_before = Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag);
+            const auto refused = [&](std::uint16_t mag, hk::StoreRefusal want) {
+                g_hook_sample.packet.mag = mag;
+                return run() && hs.native.mag_writes == writes && hs.native.mag_last == hk::MagRefusal::store && hs.native.store_last == want &&
+                       StoreWord(w, 0) == before && Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag) == rec_before;
+            };
+            Put<std::uintptr_t>(Addr(w->store_y), base + 0x40);
+            Check(refused(21, hk::StoreRefusal::y_vt), "F2: another store class refuses (y_vt)");
+            Put<std::uintptr_t>(Addr(w->store_y), base + c::store_vt_derived_rva);
+            Put<std::uintptr_t>(base + c::store_vt_derived_rva + c::store_vt_set, base + 0x50);
+            Check(refused(22, hk::StoreRefusal::y_vt), "F2: a derived class whose +0x20 is not the setter refuses");
+            Put<std::uintptr_t>(base + c::store_vt_derived_rva + c::store_vt_set, base + c::store_set_rva);
+            Put<std::uint8_t>(Addr(gun_rec) + c::gun_slot, 2);
+            Check(refused(23, hk::StoreRefusal::slot), "F2: a slot beyond the stride refuses");
+            Put<std::uint8_t>(Addr(gun_rec) + c::gun_slot, 0);
+            w->store_types[2] = 0;
+            Check(refused(24, hk::StoreRefusal::type), "F2: a row of type 0 refuses");
+            w->store_types[2] = 1;
+            Put<std::uint32_t>(Addr(gun_rec) + c::gun_tamper, c::gun3d0_tamper_check);
+            Check(refused(25, hk::StoreRefusal::tamper), "F2: rec+0x3D0 bit 27 (the tamper check) refuses");
+            Put<std::uint32_t>(Addr(gun_rec) + c::gun_tamper, 0);
+            Put<std::uint32_t>(P + c::p_local_id, 1);
+            Check(refused(26, hk::StoreRefusal::owner), "F2: instance 1 as the local id refuses");
+            Put<std::uint32_t>(P + c::p_local_id, 0);
+            Check(hs.native.store_refused >= 6, "F2: refusals counted");
+            g_hook_sample.packet.mag = 30;
+            Check(run() && StoreWord(w, 0) == 5 && hs.native.mag_last == hk::MagRefusal::none, "F2: the derived store class writes");
+            // F4: the weapon gate freezes the mirror and strips FIRE/RELOAD from the injection.
+            static std::uint32_t s_held_seen = 0;
+            struct HeldJob { static void Job(void*, const void*) noexcept { s_held_seen = Get<std::uint32_t>(g_watch_src + 0x48); } };
+            a.strip = mgscoop::partner_native::kPadFire | mgscoop::partner_native::kPadReload;
+            hk::PublishArm(a);
+            g_hook_sample.packet.mag = 2;
+            g_hook_sample.packet.held = kRemoteHeld | partner_native_fire_bit();
+            dispatch(w->root1, 8);
+            Check(hk::RunJobWindow(w->go, &param, 1, &HeldJob::Job, pi::Consumer::drain0), "F4: windowed");
+            hk::DrainStats(hs);
+            Check(s_held_seen == (kRemoteHeld & ~0x50u) && hs.native.mag_last == hk::MagRefusal::weapon && StoreWord(w, 0) == 5 &&
+                      hs.native.strip_windows >= 1 && hs.native.strip_bits == 0x50u,
+                  "F4: FIRE and RELOAD stripped, the mirror frozen (nothing written)");
+            a.strip = 0;
+            hk::PublishArm(a);
+            g_hook_sample.packet.held = kRemoteHeld;
+        }
+        const std::uint32_t writes_after_store = hs.native.mag_writes;
         // A v3 sample carries no magazine: nothing happens.
         g_hook_sample.packet.version = 3;
         g_hook_sample.packet.xflags = 0;
         g_hook_sample.packet.mag = g_hook_sample.packet.mag_cap = 0;
-        Check(run() && hs.native.mag_writes == writes && hs.native.mag_last == hk::MagRefusal::no_v4, "v3: no_v4, no write");
+        Check(run() && hs.native.mag_writes == writes_after_store && hs.native.mag_last == hk::MagRefusal::no_v4, "v3: no_v4, no write");
         // Leak and reload evidence around the job.
         const std::uint32_t leaks = hs.native.shot_leaks, reloads = hs.native.reload_drains;
         const std::uint32_t ammo_leaks = hs.native.ammo_leaks;
@@ -1464,11 +1530,12 @@ void TestJobWindow() {
         g_hook_sample.packet.xflags = pi::XFlag::Mag;
         g_hook_sample.packet.mag = 14;
         g_hook_sample.packet.mag_cap = 30;
-        Check(run() && hs.native.mag_leak_off && hs.native.mag_writes == writes && hs.native.mag_last == hk::MagRefusal::leak &&
+        Check(run() && hs.native.mag_leak_off && hs.native.mag_writes == writes_after_store && hs.native.mag_last == hk::MagRefusal::leak &&
                   Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag) == 5,
               "after an ammo leak the mirror refuses (leak), nothing written");
         hk::ResetFault();  // MissionStart
-        Check(run() && !hs.native.mag_leak_off && hs.native.mag_writes == writes + 1 && Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag) == 3,
+        Check(run() && !hs.native.mag_leak_off && hs.native.mag_writes == writes_after_store + 1 &&
+                  Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag) == 3 && StoreWord(w, 0) == 3,
               "MissionStart re-enables the mirror (14/30 -> 3 of 5)");
         const std::uint32_t writes2 = hs.native.mag_writes;
         // The mirror is off in an Arm without it.
@@ -1478,6 +1545,67 @@ void TestJobWindow() {
         g_hook_sample.packet.mag = 1;
         Check(run() && hs.native.mag_writes == writes2 && hs.native.mag_last == hk::MagRefusal::off, "mirror off: no write");
         Put<std::uintptr_t>(base + c::vars_slot_rva, 0);
+        g_hook_sample.packet = pi::InputPacket{};
+        g_hook_sample.packet.version = 3;
+        g_hook_sample.packet.held = kRemoteHeld;
+    }
+    // F1 (docs/native-puppet.md "Weapons"): a drain window points the src
+    // sample rings (the trigger's history path, the right-stick history) at
+    // instance 1's own: count 1, entry 0 the injected held word, the older
+    // entries 0 for a keyboard remote or the previous drain's held word for a
+    // gamepad remote; everything restored after the job.
+    {
+        alignas(16) static std::uint32_t host_held[120];
+        alignas(16) static float host_f[6][120];
+        for (auto& v : host_held) v = 0x10u;  // the host's FIRE in every sample (a gamepad host)
+        for (auto& r : host_f) for (auto& v : r) v = 0.5f;
+        const std::uintptr_t src = Addr(w->src);
+        Put<std::uintptr_t>(src + c::src_rings, Addr(host_held));
+        for (unsigned r = 0; r < 6; ++r) Put<std::uintptr_t>(src + c::src_rings + 8 + 8 * r, Addr(host_f[r]));
+        Put<std::uint32_t>(src + c::src_ring_cap, 120);
+        Put<std::uint32_t>(src + c::src_ring_new, 3);
+        static std::uintptr_t s_ring = 0;
+        static std::uint32_t s_count = 0, s_e0 = 0, s_e1 = 0;
+        static float s_x1 = -1.0f;
+        struct RingJob {
+            static void Job(void*, const void*) noexcept {
+                s_ring = Get<std::uintptr_t>(g_watch_src + c::src_rings);
+                s_count = Get<std::uint32_t>(g_watch_src + c::src_ring_new);
+                s_e0 = Get<std::uint32_t>(s_ring);
+                s_e1 = Get<std::uint32_t>(s_ring + 4);
+                s_x1 = Get<float>(Get<std::uintptr_t>(g_watch_src + c::src_rings + 16));
+            }
+        };
+        a.mag_mirror = false;
+        a.gun_prim = a.gun_rec = 0;
+        hk::PublishArm(a);
+        g_hook_sample.packet = pi::InputPacket{};
+        g_hook_sample.packet.version = 4;
+        g_hook_sample.packet.held = kRemoteHeld;
+        pd::JobParam param{1, 0, 0, 8, g_world.bits};
+        const auto drain = [&](pi::Consumer consumer) {
+            dispatch(w->root1, 8);
+            const bool windowed = hk::RunJobWindow(w->go, &param, 1, &RingJob::Job, consumer);
+            hk::DrainStats(hs);
+            return windowed;
+        };
+        const std::uint32_t ring_windows = hs.native.ring_windows;
+        Check(drain(pi::Consumer::drain0) && s_ring != Addr(host_held) && s_count == 1 && s_e0 == kRemoteHeld && s_e1 == 0 && s_x1 == 0.0f &&
+                  hs.native.ring_on && hs.native.ring_windows == ring_windows + 1,
+              "F1: the job reads instance 1's own rings (count 1, the injected level, keyboard: older entry 0)");
+        Check(Get<std::uintptr_t>(src + c::src_rings) == Addr(host_held) && Get<std::uint32_t>(src + c::src_ring_new) == 3 &&
+                  Get<std::uintptr_t>(src + c::src_rings + 48) == Addr(host_f[5]), "F1: the host's rings and count restored after the job");
+        g_hook_sample.packet.xflags = pi::XFlag::Gamepad;
+        Check(drain(pi::Consumer::drain0) && s_e0 == kRemoteHeld && s_e1 == kRemoteHeld,
+              "F1: a gamepad remote's older entry is this consumer's previous drain (a held FIRE never re-fires a semi-auto)");
+        Check(drain(pi::Consumer::drain1) && s_e1 == 0, "F1: per consumer (drain1 has no previous held yet)");
+        Put<std::uint32_t>(src + c::src_ring_cap, 200);
+        Check(drain(pi::Consumer::drain0) && s_ring == Addr(host_held) && s_count == 3 && !hs.native.ring_on &&
+                  hs.native.ring_last == hk::RingRefusal::cap, "F1: a capacity outside 2..128 refuses (nothing swapped)");
+        Put<std::uintptr_t>(src + c::src_rings, 0);
+        for (unsigned r = 0; r < 6; ++r) Put<std::uintptr_t>(src + c::src_rings + 8 + 8 * r, 0);
+        Put<std::uint32_t>(src + c::src_ring_cap, 0);
+        Put<std::uint32_t>(src + c::src_ring_new, 0);
         g_hook_sample.packet = pi::InputPacket{};
         g_hook_sample.packet.version = 3;
         g_hook_sample.packet.held = kRemoteHeld;

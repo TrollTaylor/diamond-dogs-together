@@ -62,6 +62,7 @@ struct Fake {
     std::uint8_t stance_psw = 0;             // psw reported back by set_stance (0 = s|s<<4)
     const char* request_result = nullptr;
     const char* xform_result = nullptr;
+    bool xform_applies = false;  // the body takes the written rotation (facing governor tests)
     float xform_pos[4]{}, xform_quat[4]{};
     bool body_ok = false;
     float body_pos[4]{}, body_quat[4] = {0, 0, 0, 1};
@@ -142,6 +143,12 @@ struct Fake {
     // Native weapons fakes (docs/native-puppet.md "Weapons").
     const char* fire_install_result = nullptr;
     unsigned fire_installs = 0;
+    // Native polish fakes: the noise filter, a batch in flight, the look source.
+    const char* noise_install_result = nullptr;
+    unsigned noise_installs = 0;
+    bool in_batch = false;
+    const char* look_src_result = nullptr;
+    unsigned look_src_installs = 0;
     std::uint16_t fire_owner = 0xFFFF;
     mgscoop::partner_fire_filter::Stats fire{};
     mgscoop::partner_fire_filter::Census fire_census{};
@@ -378,6 +385,7 @@ const char* HookApplyTransform(void* context, bool, const float (&pos)[4], const
     f.calls.push_back(std::string("xform:") + mgscoop::PartnerResetName(reset));
     std::memcpy(f.xform_pos, pos, sizeof(pos));
     std::memcpy(f.xform_quat, quat, sizeof(quat));
+    if (f.xform_applies) std::memcpy(f.body_quat, quat, sizeof(quat));
     return nullptr;
 }
 bool HookReadBody(void* context, const pp::State&, float (&pos)[4], float (&quat)[4]) noexcept {
@@ -503,6 +511,19 @@ const char* HookInstallFire(void* context, std::uint16_t owner) noexcept {
     return nullptr;
 }
 void HookFireStats(void* context, mgscoop::partner_fire_filter::Stats& out) noexcept { out = F(context).fire; }
+const char* HookInstallNoise(void* context) noexcept {
+    Fake& f = F(context);
+    ++f.noise_installs;
+    if (f.noise_install_result) return f.noise_install_result;
+    if (!f.fire.noise_installed) f.fire.noise_installed = f.fire.noise_live = true;
+    return nullptr;
+}
+bool HookInBatch(void* context) noexcept { return F(context).in_batch; }
+const char* HookInstallLookSource(void* context) noexcept {
+    Fake& f = F(context);
+    ++f.look_src_installs;
+    return f.look_src_result;
+}
 void HookFireCensus(void* context, mgscoop::partner_fire_filter::Census& out) noexcept { out = F(context).fire_census; }
 bool HookReadGun(void* context, const pp::State&, std::uint32_t k, pp::Gun1& out) noexcept {
     Fake& f = F(context);
@@ -526,6 +547,9 @@ void AddWeaponHooks(pd::Hooks& h) {
     h.read_gun = HookReadGun;
     h.read_loadout = HookReadLoadout;
     h.send_reliable = HookSendReliable;
+    h.install_noise = HookInstallNoise;
+    h.in_batch = HookInBatch;
+    h.install_look_source = HookInstallLookSource;
 }
 void AddNativeHooks(pd::Hooks& h) {
     h.install_defer = HookInstallDefer;
@@ -3394,6 +3418,158 @@ void SetVisualFire(NativeSession& s) {
     s.fake.gun.prim = 0x9000;
     s.fake.gun.rec = 0x9100;
 }
+// Native polish (docs/native-puppet.md "Facing", "Weapons").
+void TestNativePolish() {
+    namespace pn = mgscoop::partner_native;
+    {
+        // Placement keeps an enabled native window with a neutral pad; the
+        // arbiter is active only once the body is placed (neutral off).
+        NativeSession s;
+        Check(s.Until(pn::Mode::active, 9000), "active");
+        bool neutral_seen = false;
+        for (const auto& a : s.fake.arms) if (a.enabled && a.native && a.neutral) neutral_seen = true;
+        Check(neutral_seen && !s.fake.arms.back().neutral && s.fake.arms.back().enabled && !s.driver.mission.input_neutral &&
+                  s.fake.Containing("partner_input=neutral; on=1;") == 1 && s.fake.Containing("partner_input=neutral; on=0;") == 1 &&
+                  s.fake.Containing("partner_input=disarmed; reason=place") == 0, "placement: a neutral native Arm, never a disarm");
+        Check(s.fake.Containing("partner_recon=placed; ok=1;") >= 1 && s.fake.Containing("yaw_err_mdeg=") >= 1, "placed line with the yaw verdict");
+        // A drain under a disabled Arm in active: leave (unwindowed).
+        s.fake.stats.native.drain_disarmed += 1;
+        s.N();
+        Check(s.driver.mission.native_out.mode == pn::Mode::leaving && s.fake.Count("partner_native=leaving; reason=unwindowed;") == 1,
+              "a disarmed drain while active leaves (unwindowed)");
+    }
+    {
+        // The facing governor turns a quiet body toward the remote's yaw (xform at
+        // its own position), backs off on contests and latches; never in a batch.
+        NativeSession s;
+        s.fake.anim_ok = true;
+        s.fake.anim.act[1] = 1;
+        s.fake.sample.anim_valid = true;
+        s.fake.sample.act = 1;
+        s.fake.xform_applies = true;
+        Check(s.Until(pn::Mode::active, 9000), "facing: active");
+        for (int i = 0; i < 70; ++i) s.N();
+        const std::size_t xforms = s.fake.Calls("xform:");
+        s.fake.sample.yaw = 0.7f;
+        for (int i = 0; i < 50; ++i) s.N();
+        const float yaw = mgscoop::partner::QuatToYaw(s.fake.body_quat);
+        Check(s.fake.Containing("partner_recon=face_start; mode=idle;") == 1 && s.fake.Containing("partner_recon=face_end; reason=done;") == 1 &&
+                  s.fake.Calls("xform:") > xforms + 3 && std::fabs(yaw - 0.7f) < 0.02f && s.driver.mission.tele.face_writes > 3 &&
+                  s.driver.mission.native_out.mode == pn::Mode::active, "facing: an idle turn reaches the remote's yaw");
+        // The game rotates the body back after every write: contests, then the latch.
+        s.fake.xform_applies = false;
+        s.fake.sample.yaw = 0.0f;
+        for (int i = 0; i < 200; ++i) s.N();
+        Check(s.fake.Containing("partner_recon=face_contest;") >= 3 && s.fake.Containing("partner_recon=face_latched;") == 1 &&
+                  std::strcmp(s.driver.mission.tele.face_mode, "contested") == 0 && s.driver.mission.native_out.mode == pn::Mode::active,
+              "facing: repeated contests latch the governor (still active)");
+        Check(s.fake.Containing("partner_native_face; mode=") >= 1, "facing: the 1 Hz line");
+    }
+    {
+        // A batch in flight: the governor's write is refused (no placement follows).
+        NativeSession s;
+        s.hooks.in_batch = HookInBatch;
+        s.fake.anim_ok = true;
+        s.fake.anim.act[1] = 1;
+        s.fake.sample.anim_valid = true;
+        s.fake.sample.act = 1;
+        Check(s.Until(pn::Mode::active, 9000), "in batch: active");
+        for (int i = 0; i < 70; ++i) s.N();
+        s.fake.in_batch = true;
+        const std::size_t places = s.fake.Containing("partner_recon=place;");
+        s.fake.sample.yaw = 0.7f;
+        for (int i = 0; i < 30; ++i) s.N();
+        Check(s.fake.Containing("partner_recon=refused; action=face; reason=in_batch; fallback=none") == 1 &&
+                  s.fake.Containing("partner_recon=place;") == places, "in batch: the face write refused, no placement");
+    }
+    {
+        // The noise filter: FIRE only while it is live.
+        NativeSession s;
+        SetVisualFire(s);
+        s.fake.noise_install_result = "bytes";
+        Check(s.Until(pn::Mode::active, 9000), "noise refused: active");
+        Check(!s.driver.settings.fire_live && !(s.fake.arms.back().config.mask & 0x10u) &&
+                  s.fake.Containing("partner_fire=masked; reason=noise_bytes;") == 1 &&
+                  std::strcmp(s.driver.mission.tele.fire_refused, "noise_bytes") == 0, "noise refused: FIRE masked");
+        NativeSession t;
+        SetVisualFire(t);
+        Check(t.Until(pn::Mode::active, 9000) && t.driver.settings.fire_live && t.fake.noise_installs >= 1 &&
+                  t.driver.mission.tele.noise_installed && t.driver.mission.tele.noise_live, "noise installed: FIRE live");
+        t.fake.fire.noise_live = false;
+        t.N();
+        Check(!t.driver.settings.fire_live && t.fake.Containing("partner_fire=masked; reason=noise_lost;") == 1, "noise lost: FIRE masked");
+        t.driver.settings.nnoise = mgscoop::PartnerNativeNoise::keep;
+        t.N();
+        Check(t.driver.settings.fire_live && (t.fake.arms.back().config.mask & 0x10u), "noise=keep: FIRE without the noise filter");
+    }
+    {
+        // The weapon gate: the remote's gun equip (v4 xflags Equip) against body 1's.
+        NativeSession s;
+        SetVisualFire(s);
+        s.fake.gun.fields.equip = 46;
+        Check(s.Until(pn::Mode::active, 9000) && s.driver.settings.fire_live, "weapon gate: active, fire live");
+        const std::uint32_t gen = s.fake.arms.back().gen;
+        s.fake.latest.packet.version = 4;
+        s.fake.latest.packet.xflags = static_cast<std::uint8_t>(s.fake.latest.packet.xflags | mgscoop::partner_input::XFlag::Equip);
+        s.fake.latest.packet.gun_equip = 46;
+        s.N();
+        Check(s.fake.arms.back().strip == 0 && s.fake.Containing("partner_weapon=match;") == 1 && s.fake.Containing("weapon_match") == 0,
+              "the same gun: no strip, the match logged once (no fire line for a first match)");
+        s.fake.latest.packet.gun_equip = 100;
+        s.N();
+        Check(s.fake.arms.back().strip == 0x50u && s.fake.arms.back().gen == gen && s.driver.settings.fire_live &&
+                  s.fake.Containing("partner_fire=masked; reason=weapon_mismatch; remote_equip=100; body_equip=46") == 1 &&
+                  s.driver.mission.tele.weapon_mismatch && std::strcmp(s.driver.mission.tele.fire_refused, "weapon_mismatch") == 0,
+              "another gun: FIRE and RELOAD stripped in the windows (no gen bump), logged");
+        s.fake.latest.packet.gun_equip = 46;
+        s.N();
+        Check(s.fake.arms.back().strip == 0 && s.fake.Containing("partner_fire=live; reason=weapon_match;") == 1, "back to body 1's gun");
+        s.fake.gun_ok = false;
+        s.fake.latest.packet.gun_equip = 100;
+        s.N();
+        Check(s.fake.arms.back().strip == 0, "an unread body gun keeps the verdict");
+    }
+    {
+        // The look source (naim=looksrc): installed lazily once, never inside a batch.
+        NativeSession s;
+        AddWeaponHooks(s.hooks);
+        s.driver.settings.naim = mgscoop::PartnerNativeAim::looksrc;
+        s.fake.Realize(true);
+        s.fake.in_batch = true;
+        for (int i = 0; i < 20; ++i) s.N();
+        Check(s.fake.look_src_installs == 0, "looksrc: no install while a batch is in flight");
+        s.fake.in_batch = false;
+        s.N();
+        Check(s.fake.look_src_installs >= 1, "looksrc: installed lazily");
+        Check(s.Until(pn::Mode::active, 9000) && s.fake.arms.back().naim == mgscoop::PartnerNativeAim::looksrc,
+              "looksrc: the Arm carries the aim mode");
+        NativeSession o;
+        AddWeaponHooks(o.hooks);
+        o.fake.Realize(true);
+        for (int i = 0; i < 60; ++i) o.N();
+        Check(o.fake.look_src_installs == 0 && std::strcmp(o.driver.mission.tele.look_src, "off") == 0, "naim off: never installed");
+    }
+    {
+        // The v4 sender: the pad mode (gamepad unless PP+0x488 bit 6) and the local gun equip.
+        NativeSession s;
+        AddWeaponHooks(s.hooks);
+        s.fake.gun0_ok = true;
+        s.fake.gun0.fields_ok = true;
+        s.fake.gun0.fields.flags27c = 1u << 6;
+        s.fake.gun0.fields.equip = 46;
+        s.fake.gun0.fields.cap = 9;
+        s.fake.gun0.fields.mag = 5;
+        for (int i = 0; i < 5; ++i) s.N();
+        Check(!s.fake.inputs.empty(), "v4 sent");
+        const auto& p = s.fake.inputs.back();
+        Check(p.version == 4 && (p.xflags & mgscoop::partner_input::XFlag::Equip) && p.gun_equip == 46 &&
+                  (p.xflags & mgscoop::partner_input::XFlag::Gamepad), "the sender's equip and gamepad mode (bit 6 clear)");
+        s.fake.pad.kb_flags = 0x40;
+        s.N();
+        Check(!(s.fake.inputs.back().xflags & mgscoop::partner_input::XFlag::Gamepad), "keyboard mode: no gamepad flag");
+    }
+}
+
 void TestNativeWeapons() {
     namespace pn = mgscoop::partner_native;
     namespace ew = mgscoop::partner_equip_wire;
@@ -3729,6 +3905,7 @@ int main() {
     TestNativePlayAndWithdraw();
     TestNativeWeapons();
     TestNativeActionsWithWeapons();
+    TestNativePolish();
     std::printf("%u partner driver checks passed: CFG/boundaries, stage-3 timeline, trigger stop/stage, STOP while terminating, "
                 "teardown keep, refusal caps, realize thrash cap, all-active re-assert, flags, mirror lifecycle, one-shots, "
                 "force_exists, policy, net source, interp hook, lost freeze/hide, cadence, Lua notes, quiet pairing, probes, anim mirror/net (q/s/r, debounce, "
@@ -3736,6 +3913,8 @@ int main() {
                 "ps probe, dm=map (patch, table, sources, aim pivots, gates, failures, release, teardown, caps), native puppet "
                 "(enter sequence, publication order, leave on fault, dm=map rearm, census, install refusals, thread, revert latch, "
                 "unlatch, channel 2 in legacy, v3 sender, play-mode trigger refusal, identity/roots withdrawal, rates: v4 sender, "
-                "mirror request, telemetry, forget/epoch; weapons: fire gate, magazine mirror, loadout; both packages in one v4 and one Arm); no game\n", checks);
+                "mirror request, telemetry, forget/epoch; weapons: fire gate, magazine mirror, loadout; both packages in one v4 and one Arm; "
+                "polish: neutral placement, unwindowed leave, facing governor (turn, contest/latch, in-batch), noise gate, weapon gate, "
+                "look source install, v4 pad mode and equip); no game\n", checks);
     return 0;
 }

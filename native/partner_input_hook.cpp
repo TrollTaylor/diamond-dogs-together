@@ -40,6 +40,7 @@
 #include "mgscoop/near_code.hpp"
 #include "mgscoop/partner_defer.hpp"
 #include "mgscoop/partner_local_detour.hpp"
+#include "mgscoop/partner_look_source.hpp"
 #include "mgscoop/partner_native.hpp"
 #include "mgscoop/partner_rates.hpp"
 #include "partner_player_contract.hpp"
@@ -157,6 +158,21 @@ volatile LONG g_shot_leaks = 0, g_shot_count = -1, g_reload_drains = 0;
 volatile LONG g_ammo_leaks = 0, g_ammo_digest = 0, g_m_leak = 0;
 bool g_m_seen = false;  // hook thread only: the last remote (mag, cap) acted on
 std::uint16_t g_m_seen_mag = 0, g_m_seen_cap = 0;
+// F2: the store row (atomics for the driver) and the last drain's injected magazine.
+volatile LONG g_s_writes = 0, g_s_refused = 0, g_s_last = 0, g_m_inj = 0xFFFF, g_m_inj_cap = 0xFFFF;
+// F1: the private sample rings of drain windows (hook thread only) and the
+// previous held word each drain consumer injected (the semi-auto trigger's
+// older entry of a gamepad remote).
+std::uint32_t g_ring_held[kRingEntries]{};
+float g_ring_f[6][kRingEntries]{};
+std::uint32_t g_ring_prev[pi::kConsumers]{};
+volatile LONG g_r_on = 0, g_r_windows = 0, g_r_refused = 0, g_r_changed = 0, g_r_last = 0;
+// Placement and the weapon gate.
+volatile LONG g_n_neutral = 0, g_n_strip = 0, g_n_strip_bits = 0, g_n_drain_disarmed = 0;
+// The partner's trigger after each windowed drain (shots requested, drains with one, drains in a fire mode).
+volatile LONG g_f_requested = 0, g_f_shot_drains = 0, g_f_modes = 0;
+// D3: the last windowed drain's look (centidegrees; INT32_MIN unread).
+volatile LONG g_l_ok = 0, g_l_remote[2] = {INT32_MIN, INT32_MIN}, g_l_slot[2] = {INT32_MIN, INT32_MIN};
 // What the stubs answer during the current window (set before each call).
 struct Current {
     std::uint32_t held, press, release, w54, long12, tap12;
@@ -345,12 +361,34 @@ struct Save {
     bool camsub_saved;
     unsigned char cam6_after[0x20];
     bool lookcam_written;
+    // F1 (drain windows): the src ring pointers src+0x08..+0x3F and the count src+0x44.
+    std::uintptr_t ring_ptr[7];
+    std::uint32_t ring_count;
+    bool rings_saved;
 };
 // What a window does beyond the round-3/4 swap.
 struct WindowOpts {
     bool set_local;  // isLocal (rec+0x2AC bit 0)
     bool native;     // HOLD latch, CamSub (aim stage), lookcam
+    bool rings;      // F1: the private sample rings (drain windows)
+    std::uint8_t consumer;
 };
+// What a native window injects: the composed view, or Neutral() while the
+// body is placed (Arm.neutral), without the weapon gate's bits (Arm.strip).
+pi::Injection NativeView(const pi::Arm& a, const pi::Injection& j) noexcept {
+    if (!a.native) return j;
+    if (a.neutral) {
+        InterlockedIncrement(&g_n_neutral);
+        return pi::Neutral(j);
+    }
+    if (a.strip) {
+        InterlockedIncrement(&g_n_strip);
+        InterlockedExchange(&g_n_strip_bits, static_cast<LONG>(a.strip));
+        return pi::Strip(j, a.strip);
+    }
+    return j;
+}
+float FloatOr0(float v) noexcept { return v == v ? v : 0.0f; }
 inline constexpr std::size_t kCam6 = 6;  // kCamRanges[6] = {0x270, 0x290}
 
 // The vtable copy a window installs for a hold mode.
@@ -455,12 +493,49 @@ void ApplyPre(const pi::Arm& a, const pi::Injection& j, Save& save, const Window
         save.p218_saved = true;
         Store<std::uint32_t>(a.P + c::p_local_id, 1u);
     }
+    // F1: the trigger's history path (0x1096171) and the right-stick history
+    // (0x112344F) read the src sample rings and the samples-of-this-update
+    // count, not the injected words: point them at instance 1's own rings
+    // (count 1: entry 0 the injected level, the older entries the previous
+    // drain's held word of a gamepad remote, else 0 = keyboard semantics).
+    if (o.rings) {
+        const std::uint32_t cap = Load<std::uint32_t>(a.src + c::src_ring_cap);
+        if (cap < 2 || cap > kRingEntries) {
+            InterlockedIncrement(&g_r_refused);
+            InterlockedExchange(&g_r_last, static_cast<LONG>(RingRefusal::cap));
+            InterlockedExchange(&g_r_on, 0);
+        } else {
+            std::memcpy(save.ring_ptr, reinterpret_cast<const void*>(a.src + c::src_rings), sizeof(save.ring_ptr));
+            save.ring_count = Load<std::uint32_t>(a.src + c::src_ring_new);
+            save.rings_saved = true;
+            const std::uint32_t older = j.gamepad && o.consumer < pi::kConsumers ? g_ring_prev[o.consumer] : 0u;
+            g_ring_held[0] = j.held;
+            const float level[6] = {FloatOr0(j.lx), FloatOr0(j.rx), FloatOr0(j.ly), FloatOr0(j.ry), FloatOr0(j.lt), FloatOr0(j.rt)};
+            for (std::uint32_t i = 1; i < kRingEntries; ++i) g_ring_held[i] = older;
+            for (unsigned r = 0; r < 6; ++r)
+                for (std::uint32_t i = 0; i < kRingEntries; ++i) g_ring_f[r][i] = level[r];
+            std::uintptr_t ptr[7] = {reinterpret_cast<std::uintptr_t>(g_ring_held)};
+            for (unsigned r = 0; r < 6; ++r) ptr[1 + r] = reinterpret_cast<std::uintptr_t>(g_ring_f[r]);
+            std::memcpy(reinterpret_cast<void*>(a.src + c::src_rings), ptr, sizeof(ptr));
+            Store<std::uint32_t>(a.src + c::src_ring_new, 1u);
+            InterlockedIncrement(&g_r_windows);
+            InterlockedExchange(&g_r_on, 1);
+            InterlockedExchange(&g_r_last, static_cast<LONG>(RingRefusal::none));
+        }
+    }
 }
 
 // Exact reverse of ApplyPre for the saved fields. capture_private keeps the
 // masks and shadows instance 1's update left as its private copy (only after
 // a real call).
 void ApplyPost(const pi::Arm& a, const Save& save, bool capture_private) noexcept {
+    if (save.rings_saved) {
+        std::uintptr_t live[7]{};
+        std::memcpy(live, reinterpret_cast<const void*>(a.src + c::src_rings), sizeof(live));
+        if (live[0] != reinterpret_cast<std::uintptr_t>(g_ring_held)) InterlockedIncrement(&g_r_changed);
+        std::memcpy(reinterpret_cast<void*>(a.src + c::src_rings), save.ring_ptr, sizeof(save.ring_ptr));
+        Store<std::uint32_t>(a.src + c::src_ring_new, save.ring_count);
+    }
     if (save.p218_saved) Store<std::uint32_t>(a.P + c::p_local_id, save.p218);
     if (save.rec_saved) {
         const std::uint32_t now = Load<std::uint32_t>(a.rec1 + c::rec_local);
@@ -582,7 +657,10 @@ void GuardedCall(const pi::Arm& a, const Save& save, const Call& k, bool detour 
     __try {
         __try { CallOriginal(k); }
         __finally {
-            if (detour) partner_local_detour::Release();
+            if (detour) {
+                partner_local_detour::Release();
+                partner_look_source::Withdraw();
+            }
             if (AbnormalTermination()) {
                 g_in_drain = false;
                 SafePost(a, save, false);
@@ -837,15 +915,16 @@ void RunWindow(const pi::Arm& a, void* root, std::uint32_t phase) noexcept {
     InterlockedExchange(&g_last_mag, pi::Milli(j.mag));
     InterlockedExchange(&g_last_age, static_cast<LONG>(s.valid ? s.age_ms : pi::kNoSample));
     const std::uint64_t t0 = NowUs();
+    const pi::Injection jw = NativeView(a, j);
     Save save{};
     BeginWindow();
-    if (!SafePre(a, j, save, WindowOpts{true, a.native})) {
+    if (!SafePre(a, jw, save, WindowOpts{true, a.native, false, 0})) {
         // The prefix was restored; block 1 still updates once this frame.
         EndWindow();
         g_original(root, phase);
         return;
     }
-    SetCurrent(j, a.hold);
+    SetCurrent(jw, a.hold);
     GuardedCall(a, save, Call{kMainEntry, nullptr, root, phase, 0});
     SafePost(a, save, true);
     EndWindow();
@@ -907,9 +986,10 @@ void RunWrapWindow(const Call& k) noexcept {
     } else {
         j = pi::LevelOnly(g_last_inj, a.config);
     }
+    j = NativeView(a, j);
     Save save{};
     BeginWindow();
-    if (!SafePre(a, j, save, WindowOpts{a.native ? a.local_all : true, a.native})) {
+    if (!SafePre(a, j, save, WindowOpts{a.native ? a.local_all : true, a.native, false, 0})) {
         EndWindow();
         CallOriginal(k);
         return;
@@ -1046,6 +1126,33 @@ void ProbeRecord(std::uintptr_t rec) noexcept {
     InterlockedExchange(&g_d_rec_heading, ok ? pi::Milli(heading) : 0);
 }
 
+// D3 telemetry: the remote's look the drain injected and instance 1's slot
+// after its job (centidegrees), read-only.
+std::int32_t Cdeg(float rad) noexcept {
+    if (!(rad == rad) || rad > 10.0f || rad < -10.0f) return INT32_MIN;
+    return static_cast<std::int32_t>(rad * 5729.5779513f + (rad >= 0.0f ? 0.5f : -0.5f));
+}
+void LookProbe(const pi::Arm& a, const pi::Injection& j) noexcept {
+    if (a.naim == PartnerNativeAim::off || !a.ps1 || !j.look_valid) {
+        InterlockedExchange(&g_l_ok, 0);
+        return;
+    }
+    float pair[2] = {0.0f, 0.0f};
+    bool ok = false;
+    __try {
+        const std::uintptr_t look = Load<std::uintptr_t>(a.ps1 + c::ps_look);
+        if (look) {
+            std::memcpy(pair, reinterpret_cast<const void*>(look + static_cast<std::uintptr_t>(a.ps1_idx) * c::ps_look_stride), sizeof(pair));
+            ok = true;
+        }
+    } __except (ProbeFilter(GetExceptionCode())) {}
+    InterlockedExchange(&g_l_remote[0], Cdeg(j.look_pitch));
+    InterlockedExchange(&g_l_remote[1], Cdeg(j.look_yaw));
+    InterlockedExchange(&g_l_slot[0], ok ? Cdeg(pair[0]) : INT32_MIN);
+    InterlockedExchange(&g_l_slot[1], ok ? Cdeg(pair[1]) : INT32_MIN);
+    InterlockedExchange(&g_l_ok, ok ? 1 : 0);
+}
+
 // --- Native weapons (docs/native-puppet.md "Weapons") ---------------------------
 static_assert(c::gun_mag == 0x25C && c::gun_mag_sub == 0x25E && c::gun27c_sub == 0x200 && c::gun3c0_full_mag == 0x10000000u &&
                   c::gun_cap == 0x210 && c::gun_cap_sub == 0x212 && c::gun27c_double == 0x100000u && c::gun27c_half == 0x80000u &&
@@ -1064,15 +1171,52 @@ void MagRefused(MagRefusal why, bool count) noexcept {
     if (count) InterlockedIncrement(&g_m_refused);
     InterlockedExchange(&g_m_last, static_cast<LONG>(why));
 }
+// F2: the magazine's per-instance store row, which gun phase 0 (0x108C8C0)
+// copies into rec+0x25C/+0x25E every frame before the trigger and the reload
+// gate read them (a write to the record alone is overwritten). Written
+// directly, never through the setter 0xEE96C0 (its notifier [Y+0x58] vt+0x100
+// takes no id). Inside the caller's __try.
+StoreRefusal StoreRow(const pi::Arm& a, std::uint32_t flags27c, std::uint32_t target, std::uint32_t cap, bool& wrote) noexcept {
+    if (Load<std::uint32_t>(a.P + c::p_flags) & (c::flag_online | c::flag_alt_dispatch)) return StoreRefusal::online;
+    if (Load<std::uint32_t>(a.gun_rec + c::gun_tamper) & c::gun3d0_tamper_check) return StoreRefusal::tamper;
+    if (Load<std::uint32_t>(a.P + c::p_local_id) == 1u) return StoreRefusal::owner;
+    const std::uintptr_t x = Load<std::uintptr_t>(a.P + c::p_equip);
+    const std::uintptr_t y = x ? Load<std::uintptr_t>(x + c::store_y) : 0;
+    const std::uintptr_t vt = y ? Load<std::uintptr_t>(y) : 0;
+    if (!vt || (vt != g_base + c::store_vt_rva && vt != g_base + c::store_vt_derived_rva) ||
+        Load<std::uintptr_t>(vt + c::store_vt_set) != g_base + c::store_set_rva)
+        return StoreRefusal::y_vt;
+    const std::uint32_t stride = Load<std::uint32_t>(y + c::store_stride);
+    const std::uint32_t slot = Load<std::uint8_t>(a.gun_rec + c::gun_slot);
+    if (stride < 1 || stride > 16 || slot >= stride) return StoreRefusal::slot;
+    const std::uintptr_t types = Load<std::uintptr_t>(y + c::store_types), rows = Load<std::uintptr_t>(y + c::store_rows);
+    if (!types || !rows) return StoreRefusal::y_vt;
+    const std::uintptr_t idx = static_cast<std::uintptr_t>(stride) + slot;  // id 1 (Validate: ids[1] == 1)
+    const std::uint32_t type = Load<std::uint32_t>(types + idx * 4) & c::store_type_mask;
+    const bool sub = (flags27c & c::gun27c_sub) != 0;
+    if (type < 1 || type > c::store_type_word0_only || (sub && type == c::store_type_word0_only)) return StoreRefusal::type;
+    if (target > cap) return StoreRefusal::cap;
+    const std::uintptr_t word = rows + idx * c::store_row_size + (sub ? 2u : 0u);
+    if (Load<std::uint16_t>(word) != target) {
+        Store<std::uint16_t>(word, static_cast<std::uint16_t>(target));
+        wrote = true;
+    }
+    return StoreRefusal::none;
+}
 // The magazine mirror (drain window, before block 1's job, on the thread that
 // runs instance 1's gun update): on a FIRE or RELOAD press edge of this
-// consumer's view, or when the remote's (mag, cap) changed, instance 1's live
-// magazine field becomes partner_native::MirrorMagazine (only when it
-// differs). Its non-local shots never spend it (0x1041650 is local-only).
+// consumer's view, or when the remote's (mag, cap) changed, instance 1's
+// magazine store row (StoreRow) and live magazine field become
+// partner_native::MirrorMagazine (only when they differ). Its non-local shots
+// never spend it (0x1041650 is local-only). Frozen by the weapon gate.
 void MirrorMag(const pi::Arm& a, const pi::Injection& j) noexcept {
     if (g_m_faulted) { MagRefused(MagRefusal::fault, false); return; }
     if (!a.mag_mirror || !a.gun_prim || !a.gun_rec) { MagRefused(MagRefusal::off, false); return; }
     if (g_m_leak) { MagRefused(MagRefusal::leak, false); return; }
+    // The weapon gate: the remote's gun is not body 1's; the mirror is frozen.
+    if (a.strip & (partner_native::kPadFire | partner_native::kPadReload)) { MagRefused(MagRefusal::weapon, false); return; }
+    InterlockedExchange(&g_m_inj, j.ammo_valid ? static_cast<LONG>(j.ammo) : 0xFFFF);
+    InterlockedExchange(&g_m_inj_cap, j.ammo_valid ? static_cast<LONG>(j.ammo_cap) : 0xFFFF);
     if (!j.ammo_valid) { MagRefused(MagRefusal::no_v4, false); return; }
     const bool fire = (j.edge_press & partner_native::kPadFire) != 0;
     const bool reload = (j.edge_press & partner_native::kPadReload) != 0;
@@ -1086,6 +1230,7 @@ void MirrorMag(const pi::Arm& a, const pi::Injection& j) noexcept {
     InterlockedExchange(&g_m_remote, j.ammo);
     InterlockedExchange(&g_m_remote_cap, j.ammo_cap);
     MagRefusal why = MagRefusal::none;
+    StoreRefusal store = StoreRefusal::none;
     std::uint32_t cap = 0, target = 0;
     bool wrote = false;
     __try {
@@ -1105,10 +1250,16 @@ void MirrorMag(const pi::Arm& a, const pi::Injection& j) noexcept {
             else if (cap == 0 || cap > partner_native::kMaxMagCap) why = MagRefusal::cap;
             else {
                 target = partner_native::MirrorMagazine(partner_native::MagIn{j.ammo, j.ammo_cap, cap, fire, was_loaded});
-                const std::uintptr_t field = a.gun_rec + partner_native::GunMagazineOffset(g.flags27c);
-                if (Load<std::uint16_t>(field) != target) {
-                    Store<std::uint16_t>(field, static_cast<std::uint16_t>(target));
-                    wrote = true;
+                store = StoreRow(a, g.flags27c, target, cap, wrote);
+                if (store != StoreRefusal::none) {
+                    why = MagRefusal::store;
+                } else {
+                    // The record too, so this frame's readers before the copy see it.
+                    const std::uintptr_t field = a.gun_rec + partner_native::GunMagazineOffset(g.flags27c);
+                    if (Load<std::uint16_t>(field) != target) {
+                        Store<std::uint16_t>(field, static_cast<std::uint16_t>(target));
+                        wrote = true;
+                    }
                 }
             }
         }
@@ -1116,11 +1267,17 @@ void MirrorMag(const pi::Arm& a, const pi::Injection& j) noexcept {
         why = MagRefusal::fault;
     }
     InterlockedExchange(&g_m_cap, static_cast<LONG>(cap));
+    if (why == MagRefusal::store) {
+        InterlockedIncrement(&g_s_refused);
+        InterlockedExchange(&g_s_last, static_cast<LONG>(store));
+    }
     if (why != MagRefusal::none) { MagRefused(why, true); return; }
     InterlockedExchange(&g_m_last, static_cast<LONG>(MagRefusal::none));
+    InterlockedExchange(&g_s_last, static_cast<LONG>(StoreRefusal::none));
     InterlockedExchange(&g_m_written, static_cast<LONG>(target));
     if (!wrote) return;
     InterlockedIncrement(&g_m_writes);
+    InterlockedIncrement(&g_s_writes);
     if (fire) InterlockedIncrement(&g_m_fire);
     if (reload) InterlockedIncrement(&g_m_reload);
 }
@@ -1167,12 +1324,25 @@ void AfterJob(const pi::Arm& a, std::uint32_t shots_before, std::uint32_t ammo_b
     }
     InterlockedExchange(&g_ammo_digest, static_cast<LONG>(ammo));
     if (!a.gun_rec || !a.gun_prim) return;
-    bool reload = false;
+    bool reload = false, shot = false, fire_mode = false;
+    std::uint32_t requested = 0;
     __try {
-        reload = Load<std::uintptr_t>(a.gun_prim + c::prim_gun_rec) == a.gun_rec &&
-                 (Load<std::uint32_t>(a.gun_rec + c::gun_flags) & c::gun3c0_reload) != 0;
+        if (Load<std::uintptr_t>(a.gun_prim + c::prim_gun_rec) == a.gun_rec) {
+            const std::uint32_t f = Load<std::uint32_t>(a.gun_rec + c::gun_flags);
+            const std::uint8_t mode = Load<std::uint8_t>(a.gun_rec + c::gun_mode_cur);
+            reload = (f & c::gun3c0_reload) != 0;
+            // The trigger 0x1095DF0 sets bit 24 and the shot count for this update (0x10964F7).
+            shot = (f & c::gun3c0_shot) != 0;
+            requested = Load<std::uint8_t>(a.gun_rec + c::gun_shots);
+            fire_mode = mode == c::gun_mode_fire || mode == c::gun_mode_fire2;
+        }
     } __except (ProbeFilter(GetExceptionCode())) {}
     if (reload) InterlockedIncrement(&g_reload_drains);
+    if (shot) {
+        InterlockedIncrement(&g_f_shot_drains);
+        InterlockedAdd(&g_f_requested, static_cast<LONG>(requested ? requested : 1u));
+    }
+    if (fire_mode) InterlockedIncrement(&g_f_modes);
 }
 
 // A deferred job without a window: a fatal game code is recorded and passed on.
@@ -1463,6 +1633,30 @@ const char* MagRefusalName(MagRefusal refusal) noexcept {
     case MagRefusal::cap: return "cap";
     case MagRefusal::fault: return "fault";
     case MagRefusal::leak: return "leak";
+    case MagRefusal::weapon: return "weapon";
+    case MagRefusal::store: return "store";
+    default: return "none";
+    }
+}
+
+const char* StoreRefusalName(StoreRefusal refusal) noexcept {
+    switch (refusal) {
+    case StoreRefusal::y_vt: return "y_vt";
+    case StoreRefusal::slot: return "slot";
+    case StoreRefusal::type: return "type";
+    case StoreRefusal::owner: return "owner";
+    case StoreRefusal::online: return "online";
+    case StoreRefusal::tamper: return "tamper";
+    case StoreRefusal::cap: return "cap";
+    default: return "none";
+    }
+}
+
+const char* RingRefusalName(RingRefusal refusal) noexcept {
+    switch (refusal) {
+    case RingRefusal::src: return "src";
+    case RingRefusal::cap: return "cap";
+    case RingRefusal::fault: return "fault";
     default: return "none";
     }
 }
@@ -1482,9 +1676,12 @@ const char* LookRefusalName(LookRefusal refusal) noexcept {
 bool RunJobWindow(void* go, const void* param, std::uint32_t block, JobCallFn job, pi::Consumer consumer) noexcept {
     g_job_fn = job;
     pi::Arm a{};
-    const bool armed = g_ready && !g_faulted && g_inj_valid && ReadArm(a) && a.enabled && a.native &&
-                       a.config.mode == PartnerInput::net && a.gen == g_gen;
+    const bool have = g_ready && !g_faulted && ReadArm(a);
+    const bool armed = have && g_inj_valid && a.enabled && a.native && a.config.mode == PartnerInput::net && a.gen == g_gen;
     if (!armed) {
+        // No enabled native Arm at all: block 1's job reads the viewer's pad
+        // (the arbiter leaves active on this; a gen change in flight is not it).
+        if (have && (!a.enabled || !a.native)) InterlockedIncrement(&g_n_drain_disarmed);
         InterlockedIncrement(&g_n_drain_refused);
         GuardedJobCall(job, go, param);
         return false;
@@ -1530,15 +1727,20 @@ bool RunJobWindow(void* go, const void* param, std::uint32_t block, JobCallFn jo
         return false;
     }
     pi::ConsumerView view{};
-    const pi::Injection j = pi::ForConsumer(g_last_inj, g_frame_id, g_consumer_last[static_cast<std::size_t>(consumer)],
-                                            NowMs() - g_frame_ms, a.config, &view);
+    const pi::Injection j = NativeView(a, pi::ForConsumer(g_last_inj, g_frame_id, g_consumer_last[static_cast<std::size_t>(consumer)],
+                                                          NowMs() - g_frame_ms, a.config, &view));
     InterlockedIncrement(&g_n_views[static_cast<std::size_t>(view)]);
     const std::uint64_t t0 = NowUs();
     Save save{};
     BeginWindow();
     // isLocal always: block 1's whole update runs here (phases 0/5/6 read the
     // pad only for a local record; local=all only adds the walk windows).
-    if (!SafePre(a, j, save, WindowOpts{true, true})) {
+    if (!a.src) {
+        InterlockedIncrement(&g_r_refused);
+        InterlockedExchange(&g_r_last, static_cast<LONG>(RingRefusal::src));
+        InterlockedExchange(&g_r_on, 0);
+    }
+    if (!SafePre(a, j, save, WindowOpts{true, true, a.src != 0, static_cast<std::uint8_t>(consumer)})) {
         EndWindow();
         InterlockedIncrement(&g_n_drain_refused);
         GuardedJobCall(job, go, param);
@@ -1564,9 +1766,17 @@ bool RunJobWindow(void* go, const void* param, std::uint32_t block, JobCallFn jo
     // validated: ids[1] == 1) takes it for this job only, on this thread.
     const bool detour = partner_local_detour::Installed();
     if (detour) partner_local_detour::Force(a.P, 1);
-    GuardedCall(a, save, Call{kJobEntry, go, const_cast<void*>(param), 0, 0}, detour);
+    // D3 (naim=looksrc): the remote's look follows the game's own look call
+    // for instance 1's PS on this thread during this job only (withdrawn by
+    // GuardedCall on every exit).
+    if (a.naim == PartnerNativeAim::looksrc && j.look_valid && a.ps1 && partner_look_source::Installed())
+        partner_look_source::Publish(a.ps1, 1, a.ps1_idx, j.look_pitch, j.look_yaw);
+    // Always released (the detour and the published look) on every exit.
+    GuardedCall(a, save, Call{kJobEntry, go, const_cast<void*>(param), 0, 0}, true);
     g_in_drain = false;
+    if (save.rings_saved) g_ring_prev[static_cast<std::size_t>(consumer)] = j.held;
     ProbeRecord(a.rec1);
+    LookProbe(a, j);
     AfterJob(a, shots_before, ammo_before);
     SafePost(a, save, true);
     EndWindow();
@@ -1784,6 +1994,36 @@ void DrainStats(Stats& out) noexcept {
     n.rates_restores = static_cast<std::uint32_t>(g_n_rates_restores);
     n.rates_drops = static_cast<std::uint32_t>(g_n_rates_drops);
     for (unsigned i = 0; i < 3; ++i) n.rates_written[i] = static_cast<std::uint32_t>(g_n_rates_w[i]);
+    n.store_writes = static_cast<std::uint32_t>(g_s_writes);
+    n.store_refused = static_cast<std::uint32_t>(g_s_refused);
+    n.store_last = static_cast<StoreRefusal>(g_s_last);
+    n.mag_inj = static_cast<std::uint32_t>(g_m_inj);
+    n.mag_inj_cap = static_cast<std::uint32_t>(g_m_inj_cap);
+    n.ring_on = g_r_on != 0;
+    n.ring_windows = static_cast<std::uint32_t>(g_r_windows);
+    n.ring_refused = static_cast<std::uint32_t>(g_r_refused);
+    n.ring_changed = static_cast<std::uint32_t>(g_r_changed);
+    n.ring_last = static_cast<RingRefusal>(g_r_last);
+    n.neutral_windows = static_cast<std::uint32_t>(g_n_neutral);
+    n.strip_windows = static_cast<std::uint32_t>(g_n_strip);
+    n.strip_bits = static_cast<std::uint32_t>(g_n_strip_bits);
+    n.drain_disarmed = static_cast<std::uint32_t>(g_n_drain_disarmed);
+    n.fire_requested = static_cast<std::uint32_t>(g_f_requested);
+    n.fire_shot_drains = static_cast<std::uint32_t>(g_f_shot_drains);
+    n.fire_modes = static_cast<std::uint32_t>(g_f_modes);
+    n.look_ok = g_l_ok != 0;
+    for (unsigned i = 0; i < 2; ++i) {
+        n.look_remote_cdeg[i] = static_cast<std::int32_t>(g_l_remote[i]);
+        n.look_slot_cdeg[i] = static_cast<std::int32_t>(g_l_slot[i]);
+    }
+    partner_look_source::Stats ls{};
+    partner_look_source::ReadStats(ls);
+    n.look_src_installed = ls.installed;
+    n.look_src_faulted = ls.faulted;
+    n.look_src_hits = ls.hits;
+    n.look_src_skipped = ls.skipped;
+    n.look_src_refused = ls.refused;
+    n.look_src_calls = ls.calls;
 }
 
 void ForgetRates(std::uint32_t epoch) noexcept {

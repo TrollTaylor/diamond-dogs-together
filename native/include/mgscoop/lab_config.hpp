@@ -120,8 +120,20 @@ enum class PartnerDefer : std::uint8_t { off, census, on };
 enum class PartnerLocal : std::uint8_t { main, all };
 // Native aim: off; look (the remote look angles written into instance 1's PS
 // slot after phase 0 inside a drain); lookcam (also CAM+0x270/+0x274 inside
-// block-1 windows, sandboxed).
-enum class PartnerNativeAim : std::uint8_t { off, look, lookcam };
+// block-1 windows, sandboxed); looksrc (look plus the look source hook
+// partner_look_source: PS phase 0's own look call 0xFFAC00 is followed by the
+// remote's look for instance 1, so every phase-0 consumer sees it; the post
+// phase-0 write stays the fallback; docs/native-puppet.md "Facing").
+enum class PartnerNativeAim : std::uint8_t { off, look, lookcam, looksrc };
+// The native facing governor (partner_recon FaceMode; docs/native-puppet.md
+// "Facing"): off, idle (quiet idle turns and the settle snap; default) or aim
+// (also quiet aim turns). Inert unless the native drive is active.
+enum class PartnerNativeFace : std::uint8_t { off, idle, aim };
+// The partner's shot noise on this machine (docs/native-puppet.md "Weapons"):
+// filter (default: the noise vtable filter drops instance 1's records; FIRE
+// is masked unless it is live) or keep (lab experiment: the receiver's guards
+// hear the partner's visual shots).
+enum class PartnerNativeNoise : std::uint8_t { filter, keep };
 // Instance 1's per-id movement rates (base action record of *(PS1+0x260):
 // dash +0x48/+0x50, crawl +0x3C/+0x40/+0x44; docs/native-puppet.md "Rates"):
 // off (not read), log (read both instances and the remote's, telemetry only)
@@ -286,6 +298,8 @@ struct LabConfig {
     std::uint32_t partner_native_steer_deg = 15;    // 0..30 (0 disables steering)
     std::uint32_t partner_native_trim_pct = 0;      // 0..10
     PartnerNativeRates partner_native_rates = PartnerNativeRates::log;
+    PartnerNativeFace partner_native_face = PartnerNativeFace::idle;
+    PartnerNativeNoise partner_native_noise = PartnerNativeNoise::filter;
     bool crash_probe = true;
     // Two-PC link (docs/link-protocol.md). `mode` is parsed independently of
     // `present`; the play save gate is lab::SavesRedirected() in the observer.
@@ -337,6 +351,8 @@ const char* PartnerLocalName(PartnerLocal value) noexcept;
 const char* PartnerNativeAimName(PartnerNativeAim value) noexcept;
 const char* PartnerNativeRatesName(PartnerNativeRates value) noexcept;
 const char* PartnerNativeFireName(PartnerNativeFire value) noexcept;
+const char* PartnerNativeFaceName(PartnerNativeFace value) noexcept;
+const char* PartnerNativeNoiseName(PartnerNativeNoise value) noexcept;
 const char* LabModeName(LabMode value) noexcept;
 const char* NetLinkName(NetLink value) noexcept;
 const char* PartnerInterpName(PartnerInterp value) noexcept;
@@ -359,6 +375,8 @@ bool ParsePartnerLocal(const char* text, std::size_t size, PartnerLocal& out) no
 bool ParsePartnerNativeAim(const char* text, std::size_t size, PartnerNativeAim& out) noexcept;
 bool ParsePartnerNativeRates(const char* text, std::size_t size, PartnerNativeRates& out) noexcept;
 bool ParsePartnerNativeFire(const char* text, std::size_t size, PartnerNativeFire& out) noexcept;
+bool ParsePartnerNativeFace(const char* text, std::size_t size, PartnerNativeFace& out) noexcept;
+bool ParsePartnerNativeNoise(const char* text, std::size_t size, PartnerNativeNoise& out) noexcept;
 // partner_input_defer as it takes effect: off unless partner_drive=native.
 inline PartnerDefer EffectivePartnerDefer(PartnerDrive drive, PartnerDefer defer) noexcept {
     return drive == PartnerDrive::native ? defer : PartnerDefer::off;
