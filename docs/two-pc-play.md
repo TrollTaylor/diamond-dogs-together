@@ -306,14 +306,23 @@ proven dm=map + xform clip partner as the automatic fallback.
   sends input frames). link-status.json carries `partner_drive`,
   `partner_reason`, `remote_drive` and `remote_reason`; Play-Coop's status line
   shows `partner=... native; you on the other PC: native`, or `clips (<sentence>)`.
-- **Gun pieces**: the release loader carries the stock46 gun pieces (offline
-  equipment groups, the stock46 preload and writer) and runs them only for a
-  configured native gun profile (lab.ini `partner_drive=native` with
+- **Gun pieces**: the release loader carries the gun pieces (offline
+  equipment groups, the stock46 preload and writer and, compiled with them,
+  the generalized preload and writer) and runs them only for a configured
+  native gun profile (lab.ini `partner_drive=native` with
   `partner_native_gun=1` after the profile expansion): a `-Partner clips`
-  game never touches the equipment. They act in Afghanistan free roam (30010)
-  only; elsewhere body 1 has no gun and the gun profile strips HOLD, RELOAD and
-  FIRE (`partner_weapon=absent; body_gun=absent`), so the partner never aims
-  empty-handed. Safety argument as in the lab: play takes the same
+  game never touches the equipment. The profile resolves
+  `partner_native_equip=substitute`, so the generalized pieces give body 1
+  the other player's three slots (or resident same-type substitutes) in any
+  partner-body mission, admitted in play only with link v2 `connected`
+  ([native-puppet.md](native-puppet.md) "Release gating and play mode");
+  `partner_native_equip=stock46` keeps the stock46 pieces (Afghanistan free
+  roam 30010 only). While body 1 shows no gun class the gun profile strips
+  HOLD, RELOAD and FIRE (`partner_weapon=absent; body_gun=absent`), so the
+  partner never aims empty-handed; the partner's own reload
+  (`partner_native_reload=event`) and the slot follower
+  (`partner_native_slot=write`; play never calls SetCurrentSlot) follow the
+  other player's reloads and weapon switches. Safety argument as in the lab: play takes the same
   offline-v1 branch with redirected saves (it refuses to run otherwise), the
   pieces write only instance 1's runtime equipment and the mission block
   cache, and the writer's readback asserts instance 0 unchanged. Play's
@@ -321,9 +330,8 @@ proven dm=map + xform clip partner as the automatic fallback.
   vars (`leak.shot_leaks`, `leak.ammo_leaks`, `mag.leak_off`) strips FIRE and
   RELOAD for the rest of the process
   (`partner_weapon=fire_reload_off; reason=shot_leak|ammo_leak`,
-  state.json `native.weapon.leak_strip` 80). The
-  weapons track's generalized writer is not on this branch; when it lands its
-  runtime gate follows the same rule.
+  state.json `native.weapon.leak_strip` 80); the generalized writer digests
+  the viewer's ammo/weapon vars around each dispatch and stops on a change.
 
 ## Release build
 
