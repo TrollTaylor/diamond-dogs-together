@@ -1,0 +1,94 @@
+# Native partner facing (docs/native-puppet.md "Facing"): the facing governor (idle turns, settle snap, contest guard),
+# neutral placements (no unwindowed drain), the placement yaw check, the windowed teleport, and the look at its source (D3).
+# Run (coordinator only, hidden worker), twice for the look-source A/B (hypothesis O7):
+#   A: pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-native-facing.txt -PartnerProfile native -NativeStage gun -BuildProfile research
+#   B: the same with -LabSetting partner_native_aim=looksrc
+# Optional C (only if B still shows the act-12 cycle): -LabSetting partner_native_face=aim (the governor's aim mode).
+# Lab saves, noon, 30010. "Viewer" = the role filming its partner (body 1); captures.jsonl holds the viewer's state.json.
+# Pass criteria (mechanical, on the viewer role):
+#  every face-* (host films) and g-face-* (guest films) capture: |heading_error_deg| < 10.
+#  aim captures (face-aim*, face-crouch-aim, g-face-aim) after their first 600 ms: < 5 % of ring ticks with
+#    |face_err_cdeg| > 1000; ring act 12 never unless the remote shows it (body.remote_act); native.look.err_mdeg < 1000
+#    while native.look.remote_cdeg is not null. Run B: native.look.src "installed", src_hits_s > 0 while the viewer's
+#    partner aims; the log has look_src=installed; site=0xff29fc. Run A: look.src "off".
+#  face-place-viewer-aims: no body act 11 in the capture ring (the placement ran with a neutral pad: the viewer's held
+#    RMB never reached block 1's job), native.defer.per_s.unwindowed_native 0, the log has partner_input=neutral; on=1
+#    and never partner_input=disarmed; reason=place under the native drive; partner_recon=placed; ok=1; yaw_err_mdeg
+#    within 10000 (or a partner_recon=place_yaw_fix line before it).
+#  native.facing.contests <= 2 per run, native.fallbacks 0, native.facing.mode never "contested" in face-* captures.
+#  no ring act 25/26 caused by a governor write (25/26 only within 1.5 s after a partner_recon=place / snap line).
+#  native.recon.snaps 0 outside placements; partner_recon=face_start / face_end lines for face-pivot-*, face-reposed.
+#  both games close and the saves match (the worker's own checks).
+# Evidence lines: the 1 Hz partner_native_face; mode=..; err_mdeg=..; act=..,..; writes=..; contests=..; look_err_mdeg=..;
+# look_src=.. line and the partner_recon=face_* events in both logs.
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+stance host stand
+stance guest stand
+host debug time 43200
+host debug weather sunny
+wait 3000
+resetpose host
+stance host stand
+placebehind guest host 5 4
+wait 4000
+both capture face-idle
+# Run, then a run-turn, then stop: the partner ends where its own locomotion leaves it.
+host hold w 1500 nowait
+wait 700
+host hold w+a 700 nowait
+wait 900
+host release
+wait 1500
+guest burst face-stop 3 300
+# Stationary pivots (a tap turns the remote in place).
+host press a 150
+wait 1500
+guest burst face-pivot-l 2 300
+host press d 150
+wait 1500
+guest burst face-pivot-r 2 300
+host press s 150
+wait 1500
+guest burst face-pivot-back 2 300
+# The remote turned without locomotion (a debug placement): the governor turns the idle partner.
+resetpose host
+wait 2000
+guest burst face-reposed 3 300
+host press c
+wait 1500
+guest burst face-crouch 2 300
+stance host prone
+wait 2000
+guest burst face-prone 2 300
+stance host stand
+wait 1500
+# Aim: standing aim, an aim turn, held aim, release.
+heldcapture host guest rmb face-aim 5
+aimturn host guest 900 face-aimturn
+heldcapture host guest rmb face-aim-held 3
+wait 1500
+guest burst face-aim-release 3 300
+stance host crouch
+heldcapture host guest rmb face-crouch-aim 4
+stance host stand
+# The viewer holds RMB while its partner is placed (run 63199: 57 degrees for 1.5 s).
+guest hold rmb 1500 nowait
+placebehind host guest 6 4
+host burst face-place-viewer-aims 4 300
+guest release
+wait 1500
+# --- The other direction: the guest moves, the host films ---------------------
+heldcapture guest host w g-face-run 2
+wait 1500
+host burst g-face-stop 3 300
+guest press a 150
+wait 1500
+host burst g-face-pivot 2 300
+heldcapture guest host rmb g-face-aim 4
+wait 1500
+host burst g-face-aim-release 3 300
+both capture end
+state

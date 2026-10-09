@@ -30,7 +30,7 @@ param(
     [ValidateSet('real','lab')][string]$SaveSeed='real',
     # Extra lab.ini keys for both copies of this run: allow-listed lab
     # experiments only (Invoke-WorkerScenario "labsetting" lines).
-    [ValidatePattern('^debug_soldier_warp=[01]$')][string[]]$LabSetting=@()
+    [ValidatePattern('^(debug_soldier_warp=[01]|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc)$')][string[]]$LabSetting=@()
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -50,6 +50,9 @@ if($loaderHash -ieq $BaselineLoaderSha256){throw 'Worker loader must differ from
 if($PartnerProfile -cne 'native' -and $NativeStage){throw '-NativeStage needs -PartnerProfile native.'}
 if($BuildProfile -ceq 'research' -and !($PartnerProfile -ceq 'native' -and $NativeStage -ceq 'gun')){throw '-BuildProfile research is only for -NativeStage gun.'}
 if($PartnerProfile -ceq 'native' -and $NativeStage -ceq 'gun' -and $BuildProfile -cne 'research'){throw '-NativeStage gun needs -BuildProfile research (a weapon on body 1).'}
+# Native polish lab settings: the facing governor only with the native profile, the look source A/B run only in the gun stage.
+if(@($LabSetting|Where-Object{$_ -clike 'partner_native_*'}).Count -and $PartnerProfile -cne 'native'){throw '-LabSetting partner_native_* needs -PartnerProfile native.'}
+if($LabSetting -ccontains 'partner_native_aim=looksrc' -and $NativeStage -cne 'gun'){throw '-LabSetting partner_native_aim=looksrc needs -NativeStage gun.'}
 if($AmmoExperiment -and $BuildProfile -cne 'research'){throw '-AmmoExperiment needs -BuildProfile research.'}
 $checks=Read-WorkerSessionJson ([IO.Path]::GetFullPath($CheckReceipt,$repo))
 if($BuildProfile -ceq 'research'){

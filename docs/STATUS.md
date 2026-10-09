@@ -1,5 +1,24 @@
 # Development status
 
+## October 9, 2026: native facing and the partner's own fire/reload (fixture-tested, hidden runs pending)
+
+`wp/native-polish`. Facing ([details](native-puppet.md#facing)): the facing
+governor (`partner_native_face=idle` by default under the native drive: quiet
+idle turns at 180 deg/s, one settle snap after a placement/snap/teleport or in
+fall/land acts, a contest guard), native placements with a neutral window
+instead of a disarm (a disarmed drain while active now leaves: `unwindowed`),
+the placement yaw check, a windowed teleport (3 m in 200 ms) and the look
+source hook (`partner_native_aim=looksrc`, opt-in, the O7 A/B run).
+Weapons ([details](native-puppet.md#weapons)): drain windows isolate the pad's
+sample rings (the partner's trigger read the viewer's), the magazine mirror
+writes the per-instance store row (the record alone was overwritten every
+frame), the shot noise filter (`partner_native_noise=filter`; FIRE needs it
+live) and the weapon gate (input frame v4 xflags Equip 0x80 / Gamepad 0x40,
+bytes 82..83). Contract checker: 401 code sites, 94 vtable slots. New hidden
+scenario `tools/worker/scenarios/partner-native-facing.txt`; the weapons
+scenario gains the switch-fire and trigger/noise/store proof lines. Play keeps
+visual fire off by default (`-VisualFire`). Fixture evidence only.
+
 ## October 8, 2026: native actions and weapons integrated (fixture-tested, never run together)
 
 `integ/finish` carries both native work packages below. One input frame v4

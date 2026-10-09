@@ -16,6 +16,12 @@ masks), the partner body runs at the remote's own movement rates (the rates
 mirror) and the reconciliation no longer pins a body that is only slower. See
 "Actions" and "Rates" below.
 
+Native polish (2026-10-09, `wp/native-polish`, fixture-tested; hidden runs
+pending): facing parity (the facing governor, neutral placements, the
+placement yaw check, the windowed teleport and the look at its source) and the
+partner's own trigger, reload and shot noise (the sample rings, the magazine
+store row, the noise filter, the weapon gate). See "Facing" and "Weapons".
+
 ## Mechanism
 
 Executable: `mgsvtpp.exe` 1.0.15.4 (SHA-256 `085c2f82...bb45`). All addresses are
@@ -224,6 +230,91 @@ inferred; `native.rates` records the real values.
 Only instance 1's own record is written; instance 0, the provider and
 S_IS_ONLINE are never touched.
 
+## Facing
+
+Static analysis of `mgsvtpp.exe` 1.0.15.4 plus the captures of hidden runs
+a7823dbe, 63199c7a, bec857fb, d91fc20e and b9528e4d (the facing error is
+wrap(body_yaw - remote_yaw) of the capturing role; `input.heading_err_mrad`
+was not a facing metric: with a neutral stick it is the two cameras' yaw
+difference, now `cam_diff_cdeg`, and `steer_err_mrad` is null below |stick|
+0.1). Stops, pivots, crouch, prone and crawl already matched (|err| <= 0.3
+degrees). The failures and their fixes:
+
+- **The remote turned without locomotion** (debug placements, aim release):
+  the round-4 idle rule (25 degrees, 800 ms, 2 s gap, acts 1..6 only) left
+  2.5..7.9 degrees for whole sections. **The facing governor** (pure,
+  `partner_recon` FaceMode, `partner_native_face=idle` by default, replaces
+  `Action::yaw` under the native drive) turns a quiet body toward the
+  time-aligned remote pose yaw with `partner_facing::Step` (180 deg/s, accel
+  3600 deg/s^2): only while the remote stick r < 0.1, the remote's speed < 150
+  mm/s and the body's own speed < 100 mm/s have each held 200 ms (any stick
+  aborts a turn in the same tick), body act 1/3/5 with the remote in the same
+  idle act, |err| > 5 degrees held 200 ms, exit below 1 degree (the last write
+  lands exactly). Writes are the verified xform (T.vt+0x70, T.vt+0x68) at the
+  body's own readback position on the driver tick (`Action::face`), refused
+  while `partner_defer::InBatch()` (never a placement on refusal); the start
+  and end of a turn bump the body epoch, small steps do not.
+- **Placed or teleported bodies** (fall/land acts 25/26, 77 degrees for 1.5 s
+  after an 8 m teleport): the settle mode snaps once when |err| > 10 degrees
+  within 1.5 s of a placement, snap or teleport, or while the body is in act
+  25/26; a target that moved more than 3 m horizontally within 200 ms (no
+  locomotion is that fast; the interpolated pose spreads a teleport below the
+  per-tick 5 m test) is placed at once (`teleport_window_mm`).
+- **Contest guard**: a readback more than 3 degrees from our last write (no
+  write in between) means the game rotated the body: stop, back off 1 s;
+  three contests within 5 s latch the governor off for 10 s
+  (`face=contested`).
+- **Placing while the viewer holds RMB** (57 degrees for 1.5 s): place and
+  verify disarmed the window, so block 1's deferred job ran without one and
+  read the viewer's live pad (act 11, the viewer's HOLD latch). Native
+  placements now keep an enabled native Arm with `neutral` (every native
+  window injects `Neutral()`: no held bit, no stick, HOLD latch bit 0
+  cleared); verify also needs |yaw err| <= 10 degrees, else one xform at the
+  placed yaw (`partner_recon=place_yaw_fix`) and verify again. A drain under a
+  disabled Arm while the drive is active is now a hard arbiter reason
+  (`unwindowed`; `defer.per_s.unwindowed_native`).
+- **Standing aim oscillates about 30 degrees** (body act 12 the remote never
+  shows; crouched aim converges toward the viewer's camera). Leading
+  hypothesis O7: PS phase 0 (`0xFF28D0`) computes every player's look with its
+  only call `0xFF29FC -> 0xFFAC00(PS, id)`, which offline rotates a constant by
+  the VIEWER's camera quaternion `*(*(P+0x138)+0xB8)+0x90`; the aim states read
+  it in the same phase-0 walk (`0x109F170`), before the post-phase-0 look write
+  lands. **The look source hook** (`partner_native_aim=looksrc`,
+  `native/partner_look_source.cpp`): a near stub (unwind data registered with
+  `RtlAddFunctionTable`) runs `0xFFAC00` and then writes the remote's look into
+  instance 1's slot, only while the drain window published it (the hook
+  thread, instance 1's PS, ids[1] == 1, a live sample, the per-id record's
+  skip bit clear); `jmp rel32` to it from the int3 padding `0xFFAD66..0xFFAD6F`
+  (after `0xFFAC00`'s ret, outside every function, never a branch target);
+  the call's rel32 low word changes from `ff 81` to `65 83` with one locked
+  compare-exchange of the aligned qword `0xFF29F8` (the rel32 straddles the
+  cache line at `0xFF2A00`; its high word stays `00 00`). Installed with
+  defer=on and naim=looksrc only, never inside a batch, once per process,
+  never removed; a refusal (`look_src=refused; reason=bytes|padding|caller|
+  align|cache_line|...`) keeps the post-phase-0 write as the fallback. The
+  facing A/B run (`partner-native-facing.txt` with and without
+  `-LabSetting partner_native_aim=looksrc`) decides O7; if act 12 survives,
+  `partner_native_face=aim` adds the governor's aim mode (body 11/12/14/15,
+  the remote in an aim idle act, |err| > 10 degrees for 400 ms, the body's own
+  yaw rate < 20 deg/s, 90 deg/s).
+
+The contract checker pins the call and the instruction after it (rax unused),
+`0xFFAC00`'s prologue, its S_IS_ONLINE gate, the camera chain and the store
+tail, and asserts the single caller, no table entry for `0xFFAC00`, the padding
+(ret at `0xFFAD65`, ten int3, no function, no rel32 or short branch and no table
+entry into it), the qword's alignment and cache line and its exact bytes.
+
+Telemetry: `native.facing` (setting, mode off|idle|settle|aim|contested,
+err/target/body centidegrees, the body's own yaw rate, writes, snaps,
+contests, turns, reason, place_yaw_err_mdeg, neutral_windows), `native.look`
+(src off|pending|installed|refused, src_hits_s, src_hits/refused/skipped,
+remote_cdeg and slot_cdeg {pitch, yaw}, err_mdeg = wrap(slot - remote) yaw,
+also `gun.aim_err_mdeg`), the ring's `body_yaw_cdeg` and `face_err_cdeg`, the
+1 Hz `partner_native_face; mode=..; setting=..; err_mdeg=..; act=..,..;
+writes=..; snaps=..; contests=..; reason=..; look_err_mdeg=..; look_src=..;
+src_hits_s=..; neutral=..` line and the `partner_recon=face_start|face_end|
+face_snap|face_contest|face_latched|place_yaw_fix` events.
+
 ## Weapons
 
 Status (2026-10-08, branch `wp/native-weapons`, merged into `integ/finish`
@@ -292,14 +383,76 @@ reachability, owner-stamp, EVADE census and reference assertions).
   stripped from the mask whenever the native drive is not active (the
   fallback, or a legacy input lever a trigger armed), so the gun stage's mask
   never reaches instance 1 outside this gate.
-- **Not covered (open risks):** projectile weapons (row type 3 go through
-  `gm+0x210`, not filtered; body 1 only ever carries stock46, a bullet weapon)
-  and the **unsuppressed shot noise** `{pos, 0x145, owner}` that `0x1302F50`
-  sends through `group+0xA0` vt+0 at `0x1303D06` (skipped only for suppressed
-  weapons). Its interface `*(*(svc+0xA8)+8)` is not statically classifiable,
-  so the filter logs a read-only census once per mission
-  (`partner_fire_census; ...; noise_vt=...; noise_fn0=...`) to pin it; the
-  scenario's noise section records whether the receiver's guards react.
+- **Not covered (open risk):** projectile weapons (row type 3 go through
+  `gm+0x210`, not filtered; body 1 only ever carries stock46, a bullet weapon).
+  The **unsuppressed shot noise** `{pos, 0x145, owner}` that `0x1302F50` sends
+  through `group+0xA0` vt+0 at `0x1303D06` is now filtered (F3 below: AddNoise
+  `0x515270`, slot 0 of `0x21876A8`, the census's `noise_vt`); the read-only
+  census (`partner_fire_census; ...; noise_vt=...; noise_fn0=...`) stays.
+
+### Why the partner never fired or reloaded (run b9528e4d) and the fixes
+
+- **The trigger read the viewer's sample rings (F1).** The gun update's
+  trigger `0x1095DF0` (its only call `0x103E485`) chooses by `rec+0x27C` bit
+  24 (`0x1096137`); weapon 46 (the semi-auto RC_40204 shotgun, inferred from
+  its capacity 9 and carry 42) takes the history path: the ring `[[PP+8]+8]`
+  with the samples of this update `[[PP+8]+0x44]` (`0x1096171`), or the
+  single held word when PP vt+0x98 (keyboard mode, `PP+0x488` bit 6) is set.
+  Every window clears `PP+0x488 & 0x5F`, so instance 1's trigger read the
+  viewer's gamepad history (no FIRE: the ring's gun3c0 never showed bit 24;
+  with a gamepad on the viewer it would have fired on the viewer's trigger).
+  Drain windows now point the src rings (held at `src+8`, sticks X/Y at
+  `src+0x10+8i`/`+0x20+8i`, triggers at `src+0x30+8i`; the src update
+  `0x435260` = src vt+0x38, called by the PP update) and the count `src+0x44`
+  at instance 1's own rings: count 1, entry 0 the injected level, the older
+  entries 0 for a keyboard remote (re-fire at the weapon's rate while held,
+  exactly the remote's own behaviour) or this drain consumer's previous held
+  word for a gamepad remote (input frame v4 xflags `Gamepad` 0x40, the
+  sender's `PP+0x488` bit 6 clear); restored exactly after the job (also on
+  unwind). Refusals: no src, capacity `src+0x40` outside 2..128 (the game's is
+  120), a fault. The keyboard-mode bit itself is never flipped (eleven
+  readers, including the move sampler `0x10BCD90`).
+- **The mirrored magazine was overwritten every frame (F2).** Gun phase 0
+  (`0x1040100 -> 0x103E010 -> 0x108C8C0`, call `0x103E08C`) copies the
+  per-instance ammo store into `rec+0x25C/+0x25E` every frame
+  (`Y = *(*(P+0xC8)+8)`, row `*(Y+0x50) + (id * u32[Y+0xC] + u8 rec+0x3DA) * 6`,
+  word 0 / word 1). The mirror now writes that store row (word 1 with the sub
+  magazine), then the record, never through the setter `0xEE96C0` (its
+  notifier `[Y+0x58]` vt+0x100 takes no id). Refusals (`mag.store.last`): the
+  store iface vtable not `0x23894B0`/`0x23895D0` or its +0x20 not the setter
+  (`y_vt`), stride outside 1..16 or the slot beyond it (`slot`), the row type
+  outside 1..9 or type 9 with a sub magazine (`type`), instance 1 as the local
+  id (`owner`), S_IS_ONLINE or `P+0x204` bit 18 (`online`), `rec+0x3D0` bit 27
+  (`tamper`: the obfuscated tamper counters at `*(P+0x48)+0x2F8`; bit 27 is set
+  only by three `P+0x204` bit-18 gated sites, never offline; the checker's
+  census fails on a fourth), a value above the capacity (`cap`). Completing a
+  reload is safe for a non-local body (`0x1054A97`: the local branch runs the
+  ammo setter; instance 1's writes `rec+0x3E8` and its own store row through
+  `Y vt+0x20`); `leak.ammo_leaks` still watches the viewer's ammo vars.
+- **The shot noise is dropped on this machine too (F3).** `0x1303CD4` sends
+  `{pos, u8 0x45, u8 1, u16 owner = record+0x2A}` through `group+0xA0` vt+0,
+  which is AddNoise `0x515270` (slot 0 of the noise iface vtable `0x21876A8`,
+  the census's `noise_vt`; stored only by its ctor `0x51517F`, dtor `0x515246`
+  and the static initializer `0x2074C5C`; no direct caller; the call site
+  ignores rax; AddNoise keeps the record's `+0x12` owner, `0x5152F9`). The
+  noise filter swaps that slot like the bullet slots and drops a record whose
+  owner is the armed id (instance 1); everything else passes. FIRE needs it
+  live (`partner_fire=masked; reason=noise_<why>`), unless the lab key
+  `partner_native_noise=keep` (the worker's gun stage requires `filter`).
+- **The weapon gate (F4).** Body 1 carries one gun (stock46). Input frame v4
+  carries the sender's gun record equip (xflags `Equip` 0x80, bytes 82..83);
+  while it differs from body 1's equip every native window strips FIRE and
+  RELOAD from its injection (`Arm.strip`, not compared by SameArm: no gen
+  bump) and the magazine mirror freezes (`mag.last=weapon`); logged as
+  `partner_weapon=mismatch|match; remote_equip=..; body_equip=..; strip=..`
+  and, with visual fire, `partner_fire=masked; reason=weapon_mismatch` /
+  `partner_fire=live; reason=weapon_match`. A real weapon switch on body 1
+  (the generalized writer, slot-select bits) stays open.
+- **Trigger evidence.** After each windowed drain the hook reads instance 1's
+  gun record: shots the trigger requested (`rec+0x3C0` bit 24 with the count
+  `rec+0x3DF`, `0x10964F7`) and drains that left the gun in a fire mode
+  (`rec+0x2C0` 9 or 10, `0x103E53A`): `native.trigger.requested`,
+  `shot_drains`, `fire_modes`.
 
 ### Reload: the magazine mirror
 
@@ -398,7 +551,9 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_drive` | legacy, native |
 | `partner_input_defer` | off, census, on (ignored unless drive=native) |
 | `partner_input_local` | main, all |
-| `partner_native_aim` | off, look, lookcam |
+| `partner_native_aim` | off, look, lookcam, looksrc (look plus the look source hook) |
+| `partner_native_face` | idle, off, aim (the facing governor under the native drive) |
+| `partner_native_noise` | filter, keep (the partner's shot noise on this machine; FIRE needs `filter` live) |
 | `partner_native_gun` | 0, 1 (HOLD 0x8 + RELOAD 0x40) |
 | `partner_native_fire` | 0 (off), visual (= 1: FIRE 0x10 only with gun and a live owner filter; never real partner bullets) |
 | `partner_native_steer_deg` | 15 (0..30, 0 = no steering) |
@@ -419,7 +574,10 @@ partner_input_defer=census|on partner_input_mask=0x2240006 partner_native_aim=of
 `partner_native_gun=1 partner_native_fire=visual partner_native_aim=look
 partner_input_triggers=1 partner_input_rstick=1 partner_native_rates=mirror`;
 the worker gate admits exactly these three stages, so a gun stage without fire
-needs a gate change). `Get-WorkerPartnerSettings`
+needs a gate change; the gun stage also admits `partner_native_aim=looksrc`,
+which the coordinator selects with `-LabSetting partner_native_aim=looksrc`
+(gun stage only; `-LabSetting partner_native_face=off|idle|aim` with any native
+stage), and requires `partner_native_noise=filter`). `Get-WorkerPartnerSettings`
 (tools/worker/WorkerSessionCommon.psm1) is the source of truth;
 `Play-OfflineCoop.ps1` runs the same gun-stage settings on the animated
 partner by default (`-NoNative` turns the native drive off).
@@ -431,7 +589,9 @@ partner by default (`-NoNative` turns the native drive off).
   rates (milli 500..2000 each, xflags `Rates` 0x10; zero without, always with
   `partner_native_rates=off`), `[78..81]` its magazine and capacity (xflags
   `Mag` 0x20; 1 <= cap <= 999, mag <= cap; zero without a readable gun) and
-  `[82..83]` zero. Sent whenever the sender runs `partner_drive=native`; v1..v3
+  `[82..83]` the sender's gun record equip (xflags `Equip` 0x80, 1..65535;
+  zero without). xflags `Gamepad` 0x40: the sender's PlayerPad is in gamepad
+  mode (`PP+0x488` bit 6 clear); absent means keyboard semantics. Sent whenever the sender runs `partner_drive=native`; v1..v3
   still decode, while the 104- and 108-byte single-feature drafts are refused
   (both copies must run the same build).
 - Input frame v3 (100 bytes): v2 plus the sender's look angles, `CAM+0x270/+0x274`,
@@ -475,6 +635,7 @@ evidence per stage).
 | S3a | `-NativeStage gun -BuildProfile research` | gun bit18 and node active within 300 ms of aiming, aim_match; leak-aim clean; CamSub/dirty bits recorded; no host camera/zoom/HUD disturbance |
 | S3a-r | as S3a with `-AmmoExperiment` (after its own qualification) | reload visible, no fallback |
 | S3b | `partner-native-weapons.txt` with `-NativeStage gun -BuildProfile research` (gun stage = visual fire) | see "Weapons": suppressed shots, mirror writes, reload bit, no leaks, manifest/apply lines |
+| F1 | `pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-native-facing.txt -PartnerProfile native -NativeStage gun -BuildProfile research`, then the same with `-LabSetting partner_native_aim=looksrc` | the scenario header: every face-* capture under 10 degrees; aim captures < 5 % of ring ticks over 10 degrees and no act 12 the remote does not show; look.err_mdeg < 1000 (looksrc: look.src installed, src_hits_s > 0); face-place-viewer-aims without act 11 and unwindowed_native 0; facing.contests <= 2; no fallback |
 | A1 | `pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-native-actions.txt -PartnerProfile native -NativeStage gun -BuildProfile research` (or `-NativeStage loco`) | the scenario header: sprint/crawl speed ratio 0.95..1.05 with `rates.mirror` ok and `rates.id1.dash == rates.remote.dash`; no runaway pin and no leaving through the sprint stop; the dive/evade/rolls: EVADE in the ring's held, body.act follows remote_act (27) within 2 captures, settles within 500 mm; leak-evade-host clean; ACTION never reaches the body |
 
 ## Known risks and open items
@@ -500,12 +661,26 @@ evidence per stage).
 - The ammo experiment (`MGS_LOCAL_STOCK46_AMMO_TEST`, research only) changes a
   qualified native call's arguments (stock 210 / ammo 30); the magazine mirror
   supersedes it (never combine them in a weapons run).
-- Weapons (untested at runtime): the shot noise of body 1's visual shots is
-  not filtered (census only); projectile weapons are not filtered (body 1 only
-  carries stock46); the magazine mirror writes instance 1's own record (a
-  wrong rule shows as a refused or faulted mirror, never a write elsewhere);
-  only stock46 can be loaded on body 1 (the manifest's other weapons log
-  `result=unsupported`).
+- Weapons (untested at runtime): projectile weapons are not filtered (body 1
+  only carries stock46); the magazine mirror writes instance 1's own store row
+  and record (a wrong rule shows as a refused or faulted mirror, never a write
+  elsewhere); only stock46 can be loaded on body 1 (the manifest's other
+  weapons log `result=unsupported`; the weapon gate masks FIRE/RELOAD then).
+  Inferred, not proven: weapon 46 takes the trigger's history path (the ring
+  fix is moot otherwise: `gun.f27c` bit 24 decides), the store row's type of
+  instance 1's slot (a type outside 1..9 refuses the mirror), and that no
+  thread other than the batch runs the src update while a drain holds the
+  private rings (the existing window swaps src+0x48.. the same way). The noise
+  filter drops every AddNoise record with owner 1 (also footsteps or other
+  noise body 1 might make on this machine), which matches "each PC perceives
+  for its own player". Instance 1's own completed reload runs the store
+  setter with its notifier (game code, not ours): `leak.ammo_leaks` watches it.
+- Facing (untested at runtime): whether the game keeps the governor's xform in
+  idle acts (the old one-shot yaw rule did) and in aim acts (the contest guard
+  latches if not); whether looksrc removes the act-12 cycle (O7 is a
+  hypothesis: the A/B run decides); the look source patch is cross-modifying
+  code installed only with no batch in flight (block 0's phase 0 runs on a
+  worker inside a batch).
 - No test asserts mechanically that no CodeGate caller runs after a lazy
   install; today CodeGate runs once at configure and `partner_upper_probe::Install`
   calls it there too, before any partner install.
