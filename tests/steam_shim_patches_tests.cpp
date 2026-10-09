@@ -4,6 +4,9 @@
 #include "mgscoop/lab_config.hpp"
 #include "mgscoop/save_redirect.hpp"
 #include "mgscoop/udp_transport.hpp"
+#include "mgscoop/steam_net_abi.hpp"
+#include "steam_shim_contract.hpp"
+#include <vector>
 
 #include <cstdio>
 #include <cstdlib>
@@ -253,6 +256,70 @@ void TestEndpointFilter() {
     Check(!is_expected_peer(0x08080808u, 47810, 47810), "non-loopback rejected");
     Check(!is_expected_peer(0x7F000001u, 47810, 0), "zero peer port rejects");
 }
+// Steam online (docs/steam-online.md 6.1): the SteamAPI_Init IAT wrapper.
+int g_init_calls = 0, g_register_calls = 0, g_register_id = 0;
+void* g_register_object = nullptr;
+bool g_init_result = true;
+bool FakeInit() { ++g_init_calls; return g_init_result; }
+void FakeRegister(void* object, int id) {
+    ++g_register_calls;
+    g_register_object = object;
+    g_register_id = id;
+}
+void TestInitWrapper() {
+    using namespace mgscoop::lab;
+    // Only mode=play, net=1, net_transport=steam (and lab.ini present).
+    Check(WantInitWrapper({true, true, true, true, true, true}) && WantInitWrapper({true, true, true, true, false, true}), "play + net + steam");
+    Check(!WantInitWrapper({true, false, true, true, true, true}), "lab: never");
+    Check(!WantInitWrapper({true, true, false, true, true, true}), "net=0: never");
+    Check(!WantInitWrapper({true, true, true, false, true, true}), "udp: never");
+    Check(!WantInitWrapper({false, true, true, true, true, true}), "no lab.ini: never");
+    Check(!WantInitWrapper({true, true, true, true, true, false}), "saves not redirected (play refused): never");
+    // Registers once, only on a true result; returns Init's result unchanged.
+    int object = 0;
+    InitWrapperState state{};
+    Check(RunInitWrapper(&FakeInit, &FakeRegister, &object, 1251, state) && g_init_calls == 1 && g_register_calls == 1 &&
+              g_register_id == 1251 && g_register_object == &object && state.registered,
+          "true: Init once, then RegisterCallback(object, 1251)");
+    Check(RunInitWrapper(&FakeInit, &FakeRegister, &object, 1251, state) && g_init_calls == 2 && g_register_calls == 1, "never twice");
+    g_init_result = false;
+    InitWrapperState failed{};
+    Check(!RunInitWrapper(&FakeInit, &FakeRegister, &object, 337, failed) && g_register_calls == 1 && !failed.registered && failed.called,
+          "false: no registration, false returned");
+    g_init_result = true;
+    // The pins (a synthetic steam_api64 image with the contract bytes).
+    namespace sc = mgscoop::steam_shim_contract;
+    std::vector<std::uint8_t> image(sc::kSteamSizeOfImage, 0);
+    image[0] = 'M';
+    image[1] = 'Z';
+    const std::uint32_t pe = 0x100;
+    std::memcpy(&image[0x3C], &pe, 4);
+    image[pe] = 'P';
+    image[pe + 1] = 'E';
+    std::memcpy(&image[pe + 8], &sc::kSteamTimeDateStamp, 4);
+    std::memcpy(&image[pe + 24 + 56], &sc::kSteamSizeOfImage, 4);
+    for (const sc::ByteGate* gate : {&sc::steam_init_export, &sc::steam_register_export, &sc::steam_register_body, &sc::steam_dispatch})
+        std::memcpy(&image[gate->rva], gate->bytes, gate->size);
+    Check(InitWrapperRefusal(image.data(), image.size()) == nullptr, "pins match");
+    Check(sc::steam_init_export.rva == 0x5420 && sc::steam_init_export.size == 7 && sc::steam_init_export.bytes[0] == 0x33 &&
+              sc::steam_init_export.bytes[1] == 0xC9 && sc::steam_init_export.bytes[2] == 0xE9,
+          "SteamAPI_Init 0x5420: xor ecx,ecx; jmp");
+    image[sc::steam_init_export.rva + 3] ^= 1;
+    Check(std::strcmp(InitWrapperRefusal(image.data(), image.size()), "pin_mismatch") == 0, "an export byte mismatch refuses");
+    image[sc::steam_init_export.rva + 3] ^= 1;
+    image[sc::steam_dispatch.rva + 4] ^= 1;
+    Check(std::strcmp(InitWrapperRefusal(image.data(), image.size()), "pin_mismatch") == 0, "a dispatch byte mismatch refuses");
+    image[sc::steam_dispatch.rva + 4] ^= 1;
+    image[pe + 8] ^= 1;
+    Check(std::strcmp(InitWrapperRefusal(image.data(), image.size()), "steam_api64_mismatch") == 0, "another steam_api64 build refuses");
+    Check(std::strcmp(InitWrapperRefusal(nullptr, 0), "steam_api64_not_mapped") == 0, "not mapped");
+    // The flat exports the owner context resolves are all pinned by name.
+    bool names = true;
+    for (const auto& named : sc::kOnlineExports) names = names && named.gate->size >= 7 && named.gate->rva < sc::kSteamSizeOfImage;
+    Check(names && sizeof(sc::kOnlineExports) / sizeof(sc::kOnlineExports[0]) == 16, "16 pinned flat exports");
+    Check(sc::kGameRegisterCallbackSites == 9, "the game's 9 RegisterCallback sites (none of ours)");
+    Check(!InitWrapperInstalled(), "never installed outside the game");
+}
 }  // namespace
 
 int main() {
@@ -265,6 +332,7 @@ int main() {
     TestMasterUrl();
     TestMutexBlocker();
     TestSaveDirFits();
+    TestInitWrapper();
     std::printf("steam_shim_patches_tests: %u checks passed\n", g_checks);
     return 0;
 }

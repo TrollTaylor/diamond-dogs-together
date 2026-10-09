@@ -159,6 +159,7 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
     bool bind_given = false, listen_given = false, listen_zero = false, peer_port_given = false;
     Slice peer_addr{nullptr, 0};
     bool peer_addr_given = false;
+    bool peer_steam_given = false;
     std::uint32_t interp_max = 0;
     bool interp_max_given = false;
     const bool usable = ForEachPair(text, length, [&](Slice key, Slice value, bool has_value) {
@@ -321,6 +322,24 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
         else if (Equals(key, "nametag_name"))
             ok = value.size && value.data[0] != ' ' && value.data[value.size - 1] != ' ' && CopyText(value, result.nametag_name, NametagNameChar);
         else if (Equals(key, "nametag_max_m")) ok = ParseRange(value, kNametagMaxMMin, kNametagMaxMMax, result.nametag_max_m);
+        else if (Equals(key, "net_transport")) {
+            if (Equals(value, "udp")) result.net_transport = NetTransport::udp;
+            else if (Equals(value, "steam")) result.net_transport = NetTransport::steam;
+            else ok = false;
+        } else if (Equals(key, "net_steam_self")) {
+            std::uint64_t id = 0;
+            ok = ParseU64(value, id) && IsIndividualSteamId(id);
+            if (ok) result.net_steam_self = id;
+        } else if (Equals(key, "net_peer_steam")) {
+            std::uint64_t id = 0;
+            ok = ParseU64(value, id) && IsIndividualSteamId(id);
+            if (ok) { result.net_peer_steam = id; peer_steam_given = true; }
+        } else if (Equals(key, "net_steam_wait")) ok = ParseBool(value, result.net_steam_wait);
+        else if (Equals(key, "net_steam_accept")) {
+            if (Equals(value, "on")) result.net_steam_accept = true;
+            else if (Equals(value, "off")) result.net_steam_accept = false;
+            else ok = false;
+        } else if (Equals(key, "steam_selftest")) ok = ParseRange(value, 0, 2, result.steam_selftest);
         else { ++result.unknown_keys; return; }
         if (!ok) ++result.invalid_values;
     });
@@ -338,6 +357,31 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
         if (!drive && !unc) { result.save_dir[0] = 0; ++result.invalid_values; }
     }
     const bool play = result.mode == LabMode::play;
+    // Steam is play only: the lab never uses Steam networking (its Steam
+    // exercise is the self-test).
+    if (!play && result.net_transport == NetTransport::steam) {
+        result.net_transport = NetTransport::udp;
+        result.net_transport_refused = true;
+        ++result.invalid_values;
+    }
+    const bool steam = result.net_transport == NetTransport::steam;
+    // A guest's host is never this account.
+    if (result.net_peer_steam && result.net_peer_steam == result.net_steam_self) {
+        result.net_peer_steam = 0;
+        peer_steam_given = false;
+        ++result.invalid_values;
+    }
+    // Steam ignores the UDP endpoint keys (play: refused with a bit below).
+    const bool udp_keys_with_steam = steam && (peer_addr_given || bind_given || listen_given || listen_zero);
+    if (steam) {
+        peer_addr_given = false;
+        peer_addr = Slice{nullptr, 0};
+        bind_given = listen_given = listen_zero = peer_port_given = false;
+        result.net_listen_port = result.net_peer_port = 0;
+        result.net_bind_loopback = false;
+        result.net_bind_address = 0;
+        result.net_peer_address = 0x7F000001;
+    }
     // net_peer_addr: a dotted IPv4 only (127/8 only in lab mode).
     bool peer_addr_valid = false;
     if (peer_addr_given) {
@@ -356,7 +400,8 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
     }
     // 1. Mode-dependent defaults: play binds every address, the host listens
     // on kNetPlayPort, the guest on an ephemeral port, and both target kNetPlayPort.
-    if (play) {
+    // With steam no UDP default is applied.
+    if (play && !steam) {
         if (!bind_given) { result.net_bind_loopback = false; result.net_bind_address = 0; }
         if (!listen_given && !listen_zero) {
             if (result.role == LabRole::host) { result.net_listen_port = kNetPlayPort; listen_given = true; }
@@ -390,7 +435,7 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
         }
         if (refuse(result.net_link == NetLink::legacy, kPlayRefusedLegacyLink)) result.net_link = NetLink::v2;
         refuse(result.save_dir[0] == 0, kPlayRefusedNoSaveDir);
-        if (refuse(result.role == LabRole::guest && !peer_addr_valid, kPlayRefusedGuestNoPeer)) result.net = false;
+        if (refuse(!steam && result.role == LabRole::guest && !peer_addr_valid, kPlayRefusedGuestNoPeer)) result.net = false;
         std::uint32_t* const impairments[] = {&result.net_latency_ms, &result.net_loss_permille, &result.net_jitter_ms,
                                               &result.net_dup_permille, &result.net_reorder_permille};
         for (std::uint32_t* value : impairments)
@@ -405,6 +450,19 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
             result.partner_drive = PartnerDrive::legacy;
             result.partner_input_defer = PartnerDefer::off;
         }
+        // Steam online.
+        if (refuse(result.steam_selftest != 0, kPlayRefusedSteamSelftest)) result.steam_selftest = 0;
+        if (refuse(steam && result.role == LabRole::host && peer_steam_given, kPlayRefusedHostPeerSteam)) result.net_peer_steam = 0;
+        if (refuse(steam && result.role == LabRole::guest && !result.net_peer_steam && !result.net_steam_wait, kPlayRefusedNoPeerSteam))
+            result.net = false;
+        refuse(udp_keys_with_steam, kPlayRefusedUdpKeysWithSteam);
+    }
+    if (!steam) {
+        // The Steam keys mean nothing on the UDP link.
+        result.net_peer_steam = 0;
+        result.net_steam_wait = false;
+    } else if (result.net_peer_steam) {
+        result.net_steam_wait = false;  // a configured host wins over waiting
     }
     // A loopback bind talks to 127.0.0.1 only.
     if (result.net_bind_loopback && peer_addr_valid && !IsLoopbackAddress(result.net_peer_address)) {
@@ -418,8 +476,8 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
         ++result.invalid_values;
         listen_zero = false;
     }
-    // 3. partner_net ports.
-    if (result.net) {
+    // 3. partner_net ports (none with steam: the transport has no port).
+    if (result.net && !steam) {
         const auto collides = [&](std::uint16_t port) noexcept {
             return port && (port == result.listen_port || port == result.peer_port);
         };
@@ -568,6 +626,7 @@ const char* PartnerTeardownName(PartnerTeardown value) noexcept {
 }
 
 const char* LabModeName(LabMode value) noexcept { return value == LabMode::play ? "play" : "lab"; }
+const char* NetTransportName(NetTransport value) noexcept { return value == NetTransport::steam ? "steam" : "udp"; }
 const char* NetLinkName(NetLink value) noexcept { return value == NetLink::legacy ? "legacy" : "v2"; }
 const char* PartnerInterpName(PartnerInterp value) noexcept { return value == PartnerInterp::auto_ ? "auto" : "fixed"; }
 const char* PartnerLostName(PartnerLost value) noexcept { return value == PartnerLost::hide ? "hide" : "freeze"; }

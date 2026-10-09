@@ -3,6 +3,7 @@
 #include <cstdint>
 
 namespace mgscoop::partner_native { struct Telemetry; }
+namespace mgscoop::steam_state { struct SelftestReport; }
 
 namespace mgscoop::worker_debug {
 struct Request { std::uint64_t sequence{}, expires{}; std::uint32_t mission{}, generation{}; char text[201]{}; };
@@ -15,6 +16,9 @@ bool Timely(const Request&, std::uint64_t now, std::uint64_t previous) noexcept;
 // leading comma, then "native":{...}); its length, or 0 (out[0] = 0) when it
 // does not fit in `capacity` bytes including the terminator.
 std::size_t FormatNativeJson(const partner_native::Telemetry& telemetry, char* out, std::size_t capacity) noexcept;
+// The worker state.json "steam" member (docs/steam-online.md 14), the same
+// way: a leading comma, then "steam":{...} ("lpair":null unless stage L ran).
+std::size_t FormatSteamJson(const steam_state::SelftestReport& report, char* out, std::size_t capacity) noexcept;
 // Called exclusively from the existing natural Lua command receipt owner.
 void PollOwner() noexcept;
 }

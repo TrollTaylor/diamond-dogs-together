@@ -155,12 +155,16 @@ $watchdogs = New-Object Collections.Generic.List[int]
 try {
     # ------------------------------------------------------------ native link keys (merge gate)
     $linkKeys = $false
+    $steamKeys = $false
     if ($IniCheck) {
         $probeIni = Join-Path $fixture 'probe-lab.ini'
         [IO.File]::WriteAllText($probeIni, "enabled=1`nrole=host`n")
-        $linkKeys = (Invoke-IniCheck lab $probeIni)['link_keys'] -eq '1'
+        $probeMap = Invoke-IniCheck lab $probeIni
+        $linkKeys = $probeMap['link_keys'] -eq '1'
+        $steamKeys = $probeMap.ContainsKey('net_transport')
     }
     if (!$linkKeys) { Write-Output 'link_keys missing: native link cross-checks skipped' }
+    if (!$steamKeys) { Write-Output 'net_transport missing: native Steam online cross-checks skipped' }
 
     # ------------------------------------------------------------ small pure helpers
     foreach ($id in '76561198012345678', '76561197960265729', '76561197960265728', '76561202255233008', '7656119801234567', '76561200000000005', '76561202255233024') {
@@ -348,6 +352,83 @@ try {
         Assert-Equal "$($n['master_url'])|$($n['character'])|$($n['unknown_keys'])/$($n['invalid_values'])" 'http://127.0.0.1:47899/tppstm/gate|quiet|0/0' 'native: play coop.ini'
     }
 
+    # ------------------------------------------------------------ Steam online: MGS2 codes and lab.ini (docs/steam-online.md 9)
+    # Shared vectors (computed independently; tests/steam_transport_tests.cpp checks the same).
+    $steamVectors = @(@('ABCDE12345FGHJK67890', '76561198058195100', '6Z'), @('C00PC00PC00PC00PC00P', '76561197960265729', 'D1'),
+        @('ZZZZZYYYYYXXXXXWWWWW', '76561202255233023', '5D'), @('0123456789ABCDEFGHJK', '76561198057664236', '2R'))
+    foreach ($v in $steamVectors) {
+        $c = New-CoopSteamJoinCode -Secret $v[0] -SteamId $v[1]
+        Assert-Equal $c ('MGS2-' + $v[0].Substring(0, 5) + '-' + $v[0].Substring(5, 5) + '-' + $v[0].Substring(10, 5) + '-' + $v[0].Substring(15, 5) + '-' + $v[2] + '@' + $v[1]) "MGS2 vector $($v[1])"
+        $rt = ConvertFrom-CoopSteamJoinCode $c
+        Assert-Equal "$($rt.Status)|$($rt.Secret)|$($rt.SteamId)" "ok|$($v[0])|$($v[1])" "MGS2 round trip $($v[1])"
+        if ($steamKeys) {
+            $n = Invoke-IniCheck steamcode $c
+            Assert-Equal "$($n['steamcode_status'])|$($n['host'])" "ok|$($v[1])" "native: MGS2 vector $($v[1])"
+            Assert-True (!(($n.Values -join ' ').Contains($v[0]))) 'native: the MGS2 check never prints the secret'
+        }
+    }
+    Assert-Equal (ConvertFrom-CoopSteamJoinCode ' mgs2 abcde i2345 fghjk 67890 6z @ 76561198058195100').Status 'ok' 'MGS2: blanks, case and I -> 1'
+    # The native IsBlank set: space, tab, CR, LF, VT and FF (a pasted code may carry a line break).
+    Assert-Equal (ConvertFrom-CoopSteamJoinCode ("`tMGS2-ABCDE-12345-`r`nFGHJK-67890-6Z@76561198058195100`v`f`n")).Status 'ok' 'MGS2: tab, CR, LF, VT and FF are blanks'
+    $steamBad = @(@('', 'empty'), @('MGS1-ABCDE-12345-FGHJK-67890-6Z@203.0.113.7', 'bad_prefix'), @('MGS2-ABCDE-12345-FGHJK-67890-6Z', 'bad_steamid'),
+        @('MGS2-ABCDU-12345-FGHJK-67890-6Z@76561198058195100', 'bad_char'), @('MGS2-ABCDE-12345-FGHJK-6789-6Z@76561198058195100', 'bad_length'),
+        @('MGS2-ABCDE-12345-FGHJK-67890-6Y@76561198058195100', 'bad_check'), @('MGS2-ABCDE-12345-FGHJK-67890-6Z@76561198058195101', 'bad_check'),
+        @('MGS2-ABCDE-12345-FGHJK-67890-6Z@076561198058195100', 'bad_steamid'), @('MGS2-ABCDE-12345-FGHJK-67890-6Z@103582791429521408', 'bad_steamid'),
+        @('MGS2-ABCDE-12345-FGHJK-67890-6Z@76561197960265728', 'bad_steamid'))
+    foreach ($b in $steamBad) {
+        Assert-Equal (ConvertFrom-CoopSteamJoinCode $b[0]).Status $b[1] "MGS2 '$($b[0])' -> $($b[1])"
+        if ($steamKeys -and $b[0]) { Assert-Equal (Invoke-IniCheck steamcode $b[0])['steamcode_status'] $b[1] "native: MGS2 '$($b[0])' -> $($b[1])" }
+        Assert-True ([bool](Get-CoopSteamCodeProblem -Status $b[1])) "sentence for $($b[1])"
+    }
+    Assert-Equal (Get-CoopSteamId64 -ActiveUser 0) '' 'no Steam account: no id'
+    Assert-Equal (Get-CoopSteamId64 -ActiveUser 1) '76561197960265729' 'SteamID64 of account 1'
+    Assert-Equal (Get-CoopSteamId64 -ActiveUser 4294967295) '76561202255233023' 'SteamID64 of the last account'
+    Assert-True (!(Test-CoopSteamId64 '76561197960265728') -and (Test-CoopSteamId64 '76561197960265729') -and !(Test-CoopSteamId64 '7656119796026572')) 'individual SteamID64 rule'
+    $steamHostIni = New-CoopPlayLabIniText -Role host -SaveDir $saveDir -Transport steam -SteamSelf '76561198058195100'
+    Assert-Equal $steamHostIni ("$header`nenabled=1`nmode=play`nrole=host`nsave_dir=$saveDir`nnet=1`nnet_transport=steam`nnet_steam_self=76561198058195100`npartner_interp=auto`n$defaultsText`nworld=3`n") 'online host lab.ini: no UDP key'
+    $steamGuestIni = New-CoopPlayLabIniText -Role guest -SaveDir $saveDir -Transport steam -SteamSelf '76561198057664236' -SteamPeer '76561198058195100'
+    Assert-True ($steamGuestIni.Contains("net_transport=steam`nnet_steam_self=76561198057664236`nnet_peer_steam=76561198058195100`n") -and !$steamGuestIni.Contains('net_bind') -and !$steamGuestIni.Contains('net_peer_addr')) 'online guest lab.ini'
+    $steamWaitIni = New-CoopPlayLabIniText -Role guest -SaveDir $saveDir -Transport steam -SteamSelf '76561198057664236' -SteamWait
+    Assert-True ($steamWaitIni.Contains("net_steam_wait=1`n") -and !$steamWaitIni.Contains('net_peer_steam')) 'waiting guest lab.ini'
+    Assert-Throws { New-CoopPlayLabIniText -Role guest -SaveDir $saveDir -Transport steam -SteamSelf '76561198057664236' -SteamPeer '76561198057664236' } 'own code' 'own code refused'
+    Assert-Throws { New-CoopPlayLabIniText -Role host -SaveDir $saveDir -Transport steam -SteamSelf '76561198058195100' -SteamPeer '76561198057664236' } 'no Steam peer' 'a host has no Steam peer'
+    Assert-Throws { New-CoopPlayLabIniText -Role host -SaveDir $saveDir -SteamSelf '76561198058195100' } 'Transport steam' 'Steam keys need -Transport steam'
+    Assert-Throws { New-CoopPlayLabIniText -Role host -SaveDir $saveDir -Transport steam -SteamSelf '1' } 'SteamID64' 'own SteamID64 validated'
+    if ($steamKeys) {
+        foreach ($case in @(@('host', $steamHostIni, 'steam|0|0|0'), @('guest', $steamGuestIni, 'steam|0|76561198058195100|0'), @('guest', $steamWaitIni, 'steam|1|0|0'))) {
+            $file = Join-Path $fixture "steam-$($case[0])-lab.ini"; [IO.File]::WriteAllText($file, $case[1], $utf8)
+            $n = Invoke-IniCheck lab $file
+            Assert-Equal "$($n['present'])|$($n['mode'])|$($n['role'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])|$($n['net'])" "1|play|$($case[0])|0x0|0/0|1" "native: online $($case[0]) lab.ini clean"
+            Assert-Equal "$($n['net_transport'])|$($n['net_steam_wait'])|$($n['net_peer_steam'])|$($n['steam_selftest'])" $case[2] "native: online $($case[0]) Steam keys"
+        }
+    }
+    # The Steam reasons and the status line.
+    foreach ($reason in 'no_peer_steam', 'steam_offline', 'steam_self_mismatch', 'steam_peer_is_self', 'steam_api', 'steam_not_initialized', 'steam_client_module',
+            'steam_client_iface', 'steam_iface_missing', 'steam_iface_module', 'steam_iface_rtti', 'steam_iface_shape', 'steam_owner_unavailable', 'steam_fault',
+            'steam_acquire_timeout', 'steam_transport', 'steam_something_new') {
+        $sentence = Get-CoopLinkReasonText -Reason $reason
+        Assert-True ([bool]$sentence -and !$sentence.StartsWith('The connection was refused')) "Steam sentence for $reason"
+    }
+    Assert-True ((Get-CoopLinkReasonText -Reason steam_iface_shape).Contains('LAN/VPN')) 'a Steam networking change points to the LAN/VPN code'
+    $steamStatus = '{"v":1,"pid":4242,"mode":"play","role":"host","state":"connected","reason":"","verified":1,"session":1,"peer":"steam:...5100","local_port":0,"rtt_ms":61,"jitter_ms":3,"loss_permille":0,"resend":0,"tx_Bps":3900,"rx_Bps":3800,"interp_ms":80,"remote_build":"0.11.1","partner":"live","partner_shown":1,"look":1,"mission":30050,"saves":"redirected","transport":"steam","route":"relay","accepting":1,"steam":"ok","time_utc":"2026-10-05T12:00:00Z"}'
+    $sst = ConvertFrom-CoopStatusText -Text $steamStatus -ExpectedPid 4242
+    $snow = [DateTime]::Parse('2026-10-05T12:00:03Z').ToUniversalTime()
+    Assert-Equal (Format-CoopStatusLine -Status $sst -Role host -NowUtc $snow) '[HOST] link=connected via Steam (relay) rtt=61ms jitter=3ms loss=0.0% interp=80ms | partner=live shown look | mission 30050' 'online status line'
+    $waitStatus = ConvertFrom-CoopStatusText -Text ($steamStatus.Replace('"role":"host","state":"connected"', '"role":"guest","state":"waiting"').Replace('"route":"relay"', '"route":"none"'))
+    Assert-True ((Format-CoopStatusLine -Status $waitStatus -Role guest -NowUtc $snow).StartsWith('[JOIN] link=waiting via Steam - waiting for an invite or a code')) 'waiting guest status line'
+    $offStatus = ConvertFrom-CoopStatusText -Text ($steamStatus.Replace('"state":"connected","reason":""', '"state":"disabled","reason":"steam_offline"').Replace('"steam":"ok"', '"steam":"offline"'))
+    Assert-True ((Format-CoopStatusLine -Status $offStatus -Role host -NowUtc $snow.AddSeconds(600)).Contains('Steam is offline or not logged in')) 'disabled online status explains the reason'
+    # Launch evidence for an online start.
+    $okEarly = "saves=redirected; dir=$saveDir`r`nplay=1; loopback=0; mutex=unchanged; refused=0x0; saves=redirected`r`n"
+    $okSteam = "master_server=redirected; method=test; url=http://127.0.0.1:47899/tppstm/gate`r`n"
+    $okObserver = "play=active; role=host; partner=1; refused=0x0`r`nlink=config; mode=play; role=host; proto=2; bind=steam; port=0; peer=learned; auth=code; interp=auto`r`n"
+    Assert-Equal (Get-CoopLaunchEvidence -EarlyLog $okEarly -SteamLog $okSteam -ObserverLog $okObserver -SaveDir $saveDir -Transport steam).State 'ok' 'online launch evidence ok'
+    $ev = Get-CoopLaunchEvidence -EarlyLog $okEarly -SteamLog $okSteam -ObserverLog "play=active; role=host; partner=1; refused=0x0`r`n" -SaveDir $saveDir -Transport steam
+    Assert-True ($ev.State -eq 'pending' -and (@($ev.Missing) -join ' ').Contains('bind=steam')) 'online launch evidence waits for the Steam link line'
+    $ev = Get-CoopLaunchEvidence -EarlyLog $okEarly -SteamLog $okSteam -ObserverLog ($okObserver + "link=disabled; reason=steam_offline`r`n") -SaveDir $saveDir -Transport steam
+    Assert-True ($ev.State -eq 'incomplete' -and $ev.LinkReason -eq 'steam_offline' -and (@($ev.Problems) -join ' ').Contains('Steam is offline')) 'a Steam refusal is reported with its sentence'
+    Assert-Equal (Get-CoopLaunchEvidence -EarlyLog $okEarly -SteamLog $okSteam -ObserverLog "play=active; role=host; partner=1; refused=0x0`r`n" -SaveDir $saveDir).State 'ok' 'UDP launch evidence unchanged'
+
     # ------------------------------------------------------------ addresses and redaction (spec 7.1, C30)
     Assert-Equal (Get-CoopMaskedAddress '203.0.113.7:51234') '203.0.x.x:51234' 'public address masked'
     foreach ($a in '127.0.0.1', '10.1.2.3', '172.16.0.9', '172.31.255.1', '192.168.1.20:47830', '100.64.0.1', '100.127.255.255', '26.1.2.3') { Assert-Equal (Get-CoopMaskedAddress $a) $a "shown in full: $a" }
@@ -362,6 +443,12 @@ try {
     Assert-Equal ([regex]::Matches($clean, 'MGS1-<redacted>').Count) 3 'each join code replaced'
     Assert-True ($clean.Contains('peer=203.0.x.x:51234') -and $clean.Contains('net_peer_addr=198.51.x.x') -and $clean.Contains('"peer":"203.0.x.x:47830"') -and $clean.Contains('host=8.8.x.x')) 'public addresses masked in address contexts'
     Assert-True ($clean.Contains('1.0.15.4') -and $clean.Contains('10.0.19045.1') -and $clean.Contains('at 203.0.113.50') -and $clean.Contains('peer=192.168.1.20:47830')) 'versions, other text and private addresses kept'
+    $steamCodeText = New-CoopSteamJoinCode -Secret $s7 -SteamId '76561198058195100'
+    $steamLeaky = "code $steamCodeText`nlower " + $steamCodeText.ToLowerInvariant() + "`nconnect +mgscoop_join $steamCodeText`nsteam=join; via=invite; host=steam:...5100`n"
+    $steamClean = Hide-CoopNetworkText $steamLeaky
+    Assert-True (!$steamClean.ToUpperInvariant().Contains('7K3QZ') -and !$steamClean.Contains('76561198058195100')) 'MGS2 codes and invite strings redacted'
+    Assert-Equal ([regex]::Matches($steamClean, 'MGS2-<redacted>').Count) 2 'each MGS2 code replaced'
+    Assert-True ($steamClean.Contains('+mgscoop_join <redacted>') -and $steamClean.Contains('host=steam:...5100')) 'the invite string replaced; masked SteamIDs kept'
 
     # ------------------------------------------------------------ status, log delta, launch evidence, status line
     $statusText = '{"v":1,"pid":4242,"mode":"play","role":"host","state":"connected","reason":"","verified":1,"session":1,"peer":"203.0.x.x:51234","local_port":47830,"rtt_ms":42,"jitter_ms":3,"loss_permille":4,"resend":0,"tx_Bps":3900,"rx_Bps":3800,"interp_ms":80,"remote_build":"0.12.0","partner":"live","partner_shown":1,"look":1,"mission":30050,"saves":"redirected","time_utc":"2026-10-05T12:00:00Z"}'
@@ -890,6 +977,75 @@ try {
     Assert-True ($r.Exit -ne 0 -and ((Has $r 'cannot be used') -or (Has $r 'no IPv4 address'))) "a name resolving to this PC is refused: $($r.Text)"
     Assert-PassThrough $jp 'refused join'
     Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'real saves untouched by Play-Coop'
+
+    # ------------------------------------------------------------ Play-Coop online (Steam; docs/steam-online.md 10.1)
+    try {
+        # Steam not running / not logged in: refused, nothing written.
+        $env:MGS_COOP_TEST_STEAM_ACTIVE_USER = '0'
+        $r = Invoke-Play $play @('-GameDirectory', $hostGame, '-Role', 'Host', '-Transport', 'steam') -NoWatchdog
+        Assert-Refused $r 'Steam is not running or not logged in' 'online host needs Steam logged in'
+        Assert-PassThrough $hp 'refused online host'
+        # Host online: an MGS2 code for this Steam account; no UDP, UPnP or firewall steps.
+        $env:MGS_COOP_TEST_STEAM_ACTIVE_USER = '97000001'
+        $hostSteam = Get-CoopSteamId64 -ActiveUser 97000001
+        $r = Invoke-Play $play @('-GameDirectory', $hostGame, '-Role', 'Host', '-Transport', 'steam') -NoWatchdog
+        Assert-True ($r.Exit -eq 0 -and (Has $r 'TEST: leaving after the activation.')) "online host activates: $($r.Raw)"
+        $steamMatch = [regex]::Match($r.Raw, 'MGS2-[0-9A-Z]{5}-[0-9A-Z]{5}-[0-9A-Z]{5}-[0-9A-Z]{5}-[0-9A-Z]{2}@[0-9]{17}')
+        Assert-True $steamMatch.Success "the online host shows an MGS2 code: $($r.Raw)"
+        $steamParsed = ConvertFrom-CoopSteamJoinCode $steamMatch.Value
+        Assert-Equal "$($steamParsed.Status)|$($steamParsed.SteamId)" "ok|$hostSteam" 'the code names this Steam account'
+        Assert-Equal ([regex]::Matches($r.Raw, [regex]::Escape($steamMatch.Value)).Count) 1 'the online code is shown once'
+        Assert-True ((Has $r 'F9 -> Partner / Co-op -> Online -> Invite') -and !(Has $r 'Tailscale') -and !(Has $r 'api.ipify.org') -and !(Has $r 'UPnP') -and !(Has $r 'Firewall rule')) 'online host: invite hint; no VPN, public IP, UPnP or firewall steps'
+        Assert-Equal ([IO.File]::ReadAllText($hp.LabIni, [Text.Encoding]::UTF8)) (New-CoopPlayLabIniText -Role host -SaveDir $hostSaveDir -Transport steam -SteamSelf $hostSteam) 'online host lab.ini'
+        Assert-Equal ([IO.File]::ReadAllText($hp.LinkSecret)) "$($steamParsed.Secret)`r`n" 'online host link secret = the code''s secret'
+        $session = Get-SessionJson $hp
+        Assert-Equal "$($session.role)|$($session.transport)|$(@($session.files | ForEach-Object { $_.name }) -join ',')" 'host|steam|lab.ini,link-secret.txt,coop.ini,script-observe.enabled' 'online host session'
+        Assert-True (![IO.File]::ReadAllText($hp.PlaySession).Contains($steamParsed.Secret)) 'play-session.json holds no secret'
+        $r = Invoke-Friend $play @('-GameDirectory', $hostGame, '-Cleanup', '-NonInteractive')
+        Assert-PassThrough $hp 'online host cleanup'
+        # Join online with the code (blanks and lower case).
+        $env:MGS_COOP_TEST_STEAM_ACTIVE_USER = '97000002'
+        $guestSteam = Get-CoopSteamId64 -ActiveUser 97000002
+        $jSaveDirOnline = Join-Path $jp.Mod 'coop-saves'
+        $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join', '-Transport', 'steam') @(' ' + $steamMatch.Value.ToLowerInvariant() + ' ') -NoWatchdog
+        Assert-True ($r.Exit -eq 0 -and (Has $r ('Code OK: host Steam account ...' + $hostSteam.Substring(13)))) "online join with a code: $($r.Raw)"
+        Assert-Equal ([IO.File]::ReadAllText($jp.LabIni, [Text.Encoding]::UTF8)) (New-CoopPlayLabIniText -Role guest -SaveDir $jSaveDirOnline -Transport steam -SteamSelf $guestSteam -SteamPeer $hostSteam) 'online guest lab.ini'
+        Assert-Equal ([IO.File]::ReadAllText($jp.LinkSecret)) "$($steamParsed.Secret)`r`n" 'online guest secret from the code'
+        $r = Invoke-Friend $play @('-GameDirectory', $joinGame, '-Cleanup', '-NonInteractive')
+        Assert-PassThrough $jp 'online join cleanup'
+        # Wait for an invite (Enter): no secret is written.
+        $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join', '-Transport', 'steam') @('') -NoWatchdog
+        Assert-True ($r.Exit -eq 0 -and (Has $r 'Waiting for an invite')) "online join waits for an invite: $($r.Raw)"
+        Assert-Equal ([IO.File]::ReadAllText($jp.LabIni, [Text.Encoding]::UTF8)) (New-CoopPlayLabIniText -Role guest -SaveDir $jSaveDirOnline -Transport steam -SteamSelf $guestSteam -SteamWait) 'waiting guest lab.ini'
+        Assert-True (!(Test-Path -LiteralPath $jp.LinkSecret)) 'a waiting guest has no link secret'
+        Assert-Equal (@((Get-SessionJson $jp).files | ForEach-Object { $_.name }) -join ',') 'lab.ini,coop.ini,script-observe.enabled' 'waiting guest session files'
+        $r = Invoke-Friend $play @('-GameDirectory', $joinGame, '-Cleanup', '-NonInteractive')
+        Assert-PassThrough $jp 'waiting join cleanup'
+        # One's own code is refused (then wait).
+        $ownCode = New-CoopSteamJoinCode -Secret $s7 -SteamId $guestSteam
+        $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join', '-Transport', 'steam') @($ownCode, '') -NoWatchdog
+        Assert-True ($r.Exit -eq 0 -and (Has $r 'That is your own code') -and !(Test-Path -LiteralPath $jp.LinkSecret)) "own code refused: $($r.Raw)"
+        $r = Invoke-Friend $play @('-GameDirectory', $joinGame, '-Cleanup', '-NonInteractive')
+        # An MGS1 code in Join online joins over LAN/VPN.
+        $r = Invoke-Play $play @('-GameDirectory', $joinGame, '-Role', 'Join', '-Transport', 'steam') @($joinCode) -NoWatchdog
+        Assert-True ($r.Exit -eq 0 -and (Has $r 'joining over the LAN/VPN link')) "MGS1 falls through to LAN/VPN: $($r.Raw)"
+        Assert-Equal ([IO.File]::ReadAllText($jp.LabIni, [Text.Encoding]::UTF8)) (New-CoopPlayLabIniText -Role guest -SaveDir $jSaveDirOnline -Port 47831 -PeerAddress '192.0.2.44') 'MGS1 in Join online: the UDP lab.ini'
+        $r = Invoke-Friend $play @('-GameDirectory', $joinGame, '-Cleanup', '-NonInteractive')
+        # The menu: O hosts online; L then H is the LAN/VPN host; Q changes nothing.
+        $env:MGS_COOP_TEST_STEAM_ACTIVE_USER = '97000001'
+        $r = Invoke-Play $play @('-GameDirectory', $hostGame) @('O') -NoWatchdog
+        Assert-True ($r.Exit -eq 0 -and (Has $r '[O] Host online (Steam, recommended)') -and [regex]::IsMatch($r.Raw, 'MGS2-[0-9A-Z]{5}-')) "menu O: $($r.Raw)"
+        $r = Invoke-Friend $play @('-GameDirectory', $hostGame, '-Cleanup', '-NonInteractive')
+        $r = Invoke-Play $play @('-GameDirectory', $hostGame, '-HostAddress', '192.0.2.10') @('L', 'H') -NoWatchdog
+        Assert-True ($r.Exit -eq 0 -and (Has $r 'Host or Join?') -and [regex]::IsMatch($r.Raw, 'MGS1-[0-9A-Z]{5}-')) "menu L, H: the LAN/VPN host: $($r.Raw)"
+        Assert-Equal ([IO.File]::ReadAllText($hp.LabIni, [Text.Encoding]::UTF8)) (New-CoopPlayLabIniText -Role host -SaveDir $hostSaveDir -Port 47830) 'menu L, H: UDP lab.ini unchanged'
+        $r = Invoke-Friend $play @('-GameDirectory', $hostGame, '-Cleanup', '-NonInteractive')
+        Assert-PassThrough $hp 'menu cleanup'
+        $r = Invoke-Play $play @('-GameDirectory', $hostGame) @('Q') -NoWatchdog
+        Assert-True ($r.Exit -eq 0 -and (Has $r 'Nothing was changed.')) 'menu Q'
+        Assert-PassThrough $hp 'menu Q writes nothing'
+    } finally { Remove-Item Env:MGS_COOP_TEST_STEAM_ACTIVE_USER -ErrorAction SilentlyContinue }
+    Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'real saves untouched by Play-Coop online'
 
     # The helper waits for the game: a stand-in mgsvtpp.exe runs from the folder.
     if ($FakeProcess) {

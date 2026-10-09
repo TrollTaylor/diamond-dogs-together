@@ -302,6 +302,9 @@ $script:LabPartnerKeys = @(
     @{ Key = 'nametag_crosshair'; Json = 'nametag_crosshair'; Kind = 'enum'; Values = @('aim', 'always', 'off') },
     @{ Key = 'nametag_name'; Json = 'nametag_name'; Kind = 'nametag' },
     @{ Key = 'nametag_max_m'; Json = 'nametag_max_m'; Kind = 'int'; Min = 50; Max = 1000 },
+    # Steam online self-test (docs/steam-online.md 14): lab only (play refuses
+    # it), default 0 and written only when set; 2 adds the network-loopback pair.
+    @{ Key = 'steam_selftest'; Json = 'steam_selftest'; Kind = 'int'; Min = 0; Max = 2 },
     @{ Key = 'net_latency_ms'; Json = 'net_latency_ms'; Kind = 'int'; Min = 0; Max = 2000 },
     @{ Key = 'net_jitter_ms'; Json = 'net_jitter_ms'; Kind = 'int'; Min = 0; Max = 1000 },
     @{ Key = 'net_loss_permille'; Json = 'net_loss_permille'; Kind = 'int'; Min = 0; Max = 1000 },

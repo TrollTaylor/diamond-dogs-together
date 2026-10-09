@@ -59,6 +59,8 @@
 #include "mgscoop/nametag.hpp"
 #include "mgscoop/nametag_game.hpp"
 #include "mgscoop/steam_observer.hpp"
+#include "mgscoop/steam_net_callbacks.hpp"
+#include "mgscoop/steam_online.hpp"
 #include <charconv>
 #include <cmath>
 #include <cstdarg>
@@ -978,6 +980,11 @@ void PartnerMissionEnd() noexcept {
 // had the native drive still armed.
 void PartnerShutdown() noexcept {
     mgscoop::nametag::Shutdown();  // thread-safe flag: the overlay stops drawing the tag
+    // Steam online exit hygiene (docs/steam-online.md C11): flags only. The
+    // transport thread sends one CLOSE, closes the peer session and parks;
+    // the owner context clears the guest beacon once and stops calling Steam.
+    mgscoop::partner_net::Shutdown();
+    mgscoop::steam_online::Shutdown();
     if (!partner_on || !partner_mission) return;
     // Thread-safe first: no deferral, no window, no mirror write from here on.
     mgscoop::partner_defer::Shutdown();
@@ -1543,6 +1550,14 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                 debug_quiet = true;
                 return true;
             }
+        }
+        if (pending.id && std::strcmp(pending.text, "steam_status") == 0) {
+            // Read-only (docs/steam-online.md 14), like world_status: the self-test line.
+            char status[161]{};
+            mgscoop::steam_online::StatusLine(status, sizeof(status));
+            debug::Result(pending.id, 1, status);
+            LogFormat("debug_menu=dispatch; id=%u; text=steam_status; generation=%u; native=1\r\n", pending.id, pending.generation);
+        } else if (pending.id) {
             const auto snapshot = debug::GetSnapshot();
             // goto_partner and spawn_sync get the partner pose from the snapshot just
             // published, only for a live, paired, recent network pose (read-only data).
@@ -2778,6 +2793,23 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         if (soldier_warp_ready) Log("soldier_warp=ready; key=debug_soldier_warp; call=manager_vt38_send; hop=runtime_census\r\n");
                         else LogFormat("soldier_warp=refused; reason=%s; rva=0x%llx\r\n", warp_reason, static_cast<unsigned long long>(warp_mismatch));
                     }
+                    // Steam online (docs/steam-online.md): play + steam, or the lab self-test.
+                    const bool play_steam = labc.mode == mgscoop::LabMode::play && labc.net &&
+                                            labc.net_transport == mgscoop::NetTransport::steam && lab::SavesRedirected();
+                    if (labc.net_transport_refused) Log("net_transport=udp; reason=steam_play_only\r\n");
+                    if (play_steam || (labc.mode == mgscoop::LabMode::lab && labc.steam_selftest)) {
+                        mgscoop::steam_online::Config steam{};
+                        steam.play_steam = play_steam;
+                        steam.host = labc.role == mgscoop::LabRole::host;
+                        steam.expected_self = labc.net_steam_self;
+                        steam.host_id = labc.net_peer_steam;
+                        steam.selftest = labc.mode == mgscoop::LabMode::lab ? labc.steam_selftest : 0;
+                        steam.fake_identity = labc.self_steamid != 0;
+                        steam.log = Log;
+                        mgscoop::steam_online::Configure(steam);
+                        if (steam.selftest)
+                            LogFormat("steam_selftest=configured; level=%u; identity=%s\r\n", steam.selftest, steam.fake_identity ? "fake" : "real");
+                    }
                     if (labc.net) {
                         ConfigureWorld(labc, directory);
                         mgscoop::partner_net::Config net{labc.net_listen_port, labc.net_peer_port, labc.partner_rate_hz,
@@ -2802,9 +2834,19 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         net.saves_redirected = lab::SavesRedirected();
                         net.directory = directory;
                         net.build = lab::ProbeVersion();
+                        if (play_steam) {
+                            net.transport = mgscoop::partner_net::Transport::steam;
+                            net.steam_self = labc.net_steam_self;
+                            net.steam_peer = labc.net_peer_steam;
+                            net.steam_wait = labc.net_steam_wait;
+                            net.accepting = labc.net_steam_accept;
+                            net.steam_resolve = &mgscoop::steam_online::Resolve;
+                            net.steam_requests = &mgscoop::steam_cb::PopSessionRequest;
+                        }
                         mgscoop::partner_net::Start(net);
                     } else {
                         if (labc.play_refused & mgscoop::kPlayRefusedGuestNoPeer) Log("link=disabled; reason=no_peer_addr\r\n");
+                        if (labc.play_refused & mgscoop::kPlayRefusedNoPeerSteam) Log("link=disabled; reason=no_peer_steam\r\n");
                         Log("partner_net=disabled; reason=transport_bad_config\r\n");
                         if (labc.world) LogFormat("world=disabled; reason=net_off; t_ms=%llu\r\n", static_cast<unsigned long long>(QpcMicros() / 1000));
                     }

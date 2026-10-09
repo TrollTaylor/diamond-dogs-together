@@ -31,6 +31,14 @@ One player HOSTS, the other JOINS. Both use this same package (the same
 version on both PCs). Konami's servers are never contacted: the game plays
 offline, and the message "Failed to log in" at the start is expected.
 
+Two ways to connect:
+- ONLINE through Steam (recommended): no port forwarding, no VPN and no extra
+  program. Steam connects the two games directly or through Valve's relay
+  servers. Send a code, or invite a Steam friend from the game. New in this
+  version and not yet tested between two real PCs.
+- LAN/VPN: the two games talk over UDP on the same network or through a VPN
+  such as Tailscale (sections 4 and 5).
+
 
 1. WHAT YOU BOTH NEED
 ---------------------
@@ -43,10 +51,11 @@ offline, and the message "Failed to log in" at the start is expected.
 - Steam running and logged in with your own account.
 - The file mgs-coop-player-runtime.dat. It is not in this ZIP; read
   RUNTIME-ARCHIVE.txt to see where it comes from.
-- A way for the joining PC to reach the host's PC (section 4). A VPN such as
+- Online play: nothing else (both PCs online in Steam). LAN/VPN play: a way
+  for the joining PC to reach the host's PC (section 4); a VPN such as
   Tailscale is the easiest.
 - Voice or text chat with each other (Discord, Steam chat...) to send the
-  join code.
+  join code (online play can also use a Steam invite between friends).
 - Windows 10 or 11. Nothing else needs to be installed.
 
 
@@ -80,8 +89,41 @@ are renamed *.online-old-<time> and not used again).
 
 3. PLAY (every time)
 --------------------
-HOST:
- 1. Double-click Play-Coop.bat and press H.
+Play-Coop.bat asks how you want to play:
+    [O] Host online (Steam, recommended)
+    [J] Join online
+    [L] LAN/VPN (UDP code)
+    [Q] Quit
+
+HOST ONLINE:
+ 1. Double-click Play-Coop.bat and press O. Steam must be running and logged
+    in (online).
+ 2. It shows your JOIN CODE, for example
+        MGS2-XXXXX-XXXXX-XXXXX-XXXXX-XX@<your Steam account number>
+    and copies it to the clipboard. Send it to your friend over chat, or
+    invite your friend from the game (step 4). Keep the code private: anyone
+    with it can connect while your game runs. A new code is made every time.
+ 3. Play-Coop starts MGSV through Steam. There are no router, VPN or
+    firewall questions.
+ 4. To invite a Steam friend instead: in the game press F9 > Partner / Co-op
+    > Online > "Invite a friend" > Invite. Friends who play MGSV are listed
+    first. "Accept joins" there switches new joins on and off.
+JOIN ONLINE:
+ 1. Start Play-Coop FIRST: double-click Play-Coop.bat and press J.
+ 2. Paste the host's MGS2 code and press Enter ("Code OK" means it is fine),
+    OR press Enter without a code to wait for the host's Steam invite.
+ 3. Play-Coop starts MGSV through Steam. If you are waiting: when the host's
+    invite arrives, accept it in the Steam overlay (Shift+Tab) or in the
+    Steam chat WHILE the co-op game runs. You can also paste a code later in
+    F9 > Partner / Co-op > Online.
+    IMPORTANT: do not accept an invite while MGSV is not running from
+    Play-Coop. Steam would then start plain MGSV on your REAL saves (the mod
+    stays inactive). Quit that game and start Play-Coop first.
+ - Invites work between Steam friends; a code works between anyone.
+ - An MGS1 code pasted here joins over LAN/VPN instead.
+
+HOST (LAN/VPN):
+ 1. Double-click Play-Coop.bat, press L, then H.
  2. It shows one JOIN CODE per network address of your PC, for example:
         same network (LAN)        MGS1-XXXXX-XXXXX-XXXXX-XXXXX-XX@192.168.1.20:47830
         Tailscale VPN             MGS1-XXXXX-XXXXX-XXXXX-XXXXX-XX@100.x.y.z:47830
@@ -93,8 +135,8 @@ HOST:
       [U] ask your router to forward UDP 47830 to your PC (UPnP),
       [F] add a Windows Firewall rule for MGSV (administrator prompt).
  4. Play-Coop starts MGSV through Steam. Answer any Steam dialog.
-JOINER:
- 1. Double-click Play-Coop.bat and press J.
+JOINER (LAN/VPN):
+ 1. Double-click Play-Coop.bat, press L, then J.
  2. Paste the host's code (right-click pastes in the window) and press Enter.
     "Code OK: host ...:47830" means it is fine. A typo is reported, for
     example "The code has a typo; copy it again."
@@ -107,7 +149,8 @@ BOTH:
  - Leave the Play-Coop window open. Every second it shows a status line:
         [HOST] link=connected rtt=42ms jitter=3ms loss=0.4% interp=80ms | partner=live shown look | mission 30050
    link=connected means the two PCs talk to each other; partner=live shown
-   means your partner is on screen.
+   means your partner is on screen. Online games add "via Steam (relay)" or
+   "via Steam (direct)"; a joiner waiting for an invite shows link=waiting.
  - Quit MGSV normally when you are done. Co-op switches itself off when the
    game exits, even if the Play-Coop window was closed: the next normal start
    from Steam is plain MGSV on your real saves again.
@@ -116,7 +159,7 @@ EXPERIMENTAL SHARED WORLD (enabled by default):
  - A normal double-click enables World 3. To choose the level explicitly,
    open Command Prompt in the extracted package folder on BOTH PCs:
         Play-Coop.bat -World 3
-   Then choose H on the host and J on the joining PC as above.
+   Then choose O (or L, H) on the host and J (or L, J) on the joining PC.
  - Both games must first enter the same supported scene to pair. Different
    saved scenes do not bootstrap automatically. Once paired, the host chooses
    travel, Continue/restart and abort; the guest follows. Press Space on each
@@ -130,8 +173,14 @@ EXPERIMENTAL SHARED WORLD (enabled by default):
 
 4. HOW THE JOINER REACHES THE HOST
 ----------------------------------
-The joiner's game sends small UDP packets to the host's PC, port UDP 47830.
-Pick ONE way:
+ONLINE: nothing to set up. Steam finds a direct path between the two PCs or
+carries the traffic through Valve's relay servers (no port forwarding, VPN or
+router setting; Konami's servers are not involved). Steam's own setting
+"Allow direct connections (IP sharing)" decides whether a direct path may be
+used; with it off, everything goes through the relays.
+
+LAN/VPN: the joiner's game sends small UDP packets to the host's PC, port
+UDP 47830. Pick ONE way:
  a) A VPN on both PCs (recommended, no router settings): Tailscale
     (tailscale.com), ZeroTier or Radmin VPN. Both join the same VPN network;
     the host sends the code labelled with the VPN.
@@ -145,7 +194,11 @@ The joiner's own router needs no settings.
 
 5. WINDOWS FIREWALL
 -------------------
-The first time MGSV opens the co-op port, Windows asks whether MGSV may use
+ONLINE: Windows may ask once whether MGSV may use the network. Allow is
+better (a direct connection becomes possible); Cancel still connects through
+Steam's relays.
+
+LAN/VPN: the first time MGSV opens the co-op port, Windows asks whether MGSV may use
 the network. Choose ALLOW, and tick "Public networks" too if your network is
 set to Public (Install-Coop and Play-Coop show your network type). The
 "Allow" button alone covers Private networks only.
@@ -158,9 +211,14 @@ Block rules, offers to remove them and adds an Allow rule for UDP 47830
 6. IF IT DOES NOT WORK
 ----------------------
 The Play-Coop status line explains most problems:
-- link=connecting for a long time: the joiner cannot reach the host. Check
-  section 4 (VPN connected on both PCs? port forwarded? right code?) and the
-  host's firewall (section 5).
+- link=connecting for a long time: the joiner cannot reach the host. Online:
+  are both PCs online in Steam, is the host's game running and "Accept joins"
+  on, is it the right code? LAN/VPN: check section 4 (VPN connected on both
+  PCs? port forwarded? right code?) and the host's firewall (section 5).
+- "Steam is offline or not logged in": start Steam, log in, start Play-Coop
+  again.
+- "Steam networking changed": a Steam update changed what the mod checks.
+  Use LAN/VPN ([L]) for now and send the logs (section 8).
 - "Possibly a wrong code": copy the code again; the host may have started
   Play-Coop again (new code).
 - "The host is already connected to someone": only one joiner at a time.
@@ -196,8 +254,9 @@ The Play-Coop status line explains most problems:
  3. It saves mgs-coop-logs-host-<time>.zip (or -join-) on your Desktop.
     Send that file to the person who gave you this package.
 The ZIP contains only the mod's own log and settings files from the
-"mgs-coop" folder plus a summary of file versions. Join codes, the link key
-and public IP addresses are not in it (they are removed or masked), SteamIDs
+"mgs-coop" folder plus a summary of file versions. Join codes (MGS1 and
+MGS2), invite strings, the link key and public IP addresses are not in it
+(they are removed or masked), SteamIDs
 are masked except their last 4 digits, and your Windows user name is removed
 from paths. You can open the ZIP to check what is in it.
 
@@ -224,8 +283,13 @@ stay in <game folder>\mgs-coop; you can delete that folder yourself later.
   story missions, items and full campaign progression are not supported.
   Actual two-PC play has not been validated; recorded live tests used two
   game instances on one PC.
-- The two PCs talk directly over UDP. No relay server exists: if neither a
-  VPN nor port forwarding works for you, co-op cannot connect.
+- Online play uses Steam's networking and Valve's relays: it needs both PCs
+  online in Steam, and it has not been tested between two real PCs yet. If
+  it does not connect, use LAN/VPN.
+- LAN/VPN play talks directly over UDP without a relay: if neither a VPN nor
+  port forwarding works for you, use online play.
+- A Steam invite carries the join code; Steam keeps it in your chat history.
+  Each code works only for the game session it was made for.
 - The join code is a key: whoever has it can connect while the host's game
   runs. Send it only to your friend. Windows clipboard history (Win+V) may
   keep a copy; Play-Coop clears the clipboard when the game exits, but not

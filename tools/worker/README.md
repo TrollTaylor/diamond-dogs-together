@@ -202,6 +202,18 @@ RequestBullet owner filter is not live) and the magazine mirror;
 reload aiming and holstered, weapon switch, crouched fire, both directions,
 leak and noise records).
 
+`scenarios/steam-selftest.txt` (header `labsetting steam_selftest=1`; the
+runner also allows `steam_selftest=2`, which adds a network-loopback socket
+pair that binds UDP sockets) is the Steam online self-test
+(`docs/steam-online.md` section 14). The host (real identity) runs the
+loader's gates and an in-process Steam socket pair carrying two link v2
+sessions, then inert Messages calls; it never sends to a peer. The guest
+(the lab's fake identity) must refuse. `host run steam_status` /
+`guest run steam_status` read the verdict and state.json gains a `steam`
+member. Before it: `python tools/generate_steam_shim_contract.py --check`
+and `--steamclient "<Steam folder>/steamclient64.dll"`, then the worker
+checks.
+
 ## Primary API contracts and acceptance limits
 
 - [Desktop connection precedence](https://learn.microsoft.com/en-us/windows/win32/winstation/thread-connection-to-a-desktop): inherited desktop handles take precedence over `lpDesktop`; the worker inherits none.

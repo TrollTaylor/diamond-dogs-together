@@ -201,6 +201,18 @@ inline constexpr std::uint32_t kPlayRefusedWorldProbe = 0x8000;
 inline constexpr std::uint32_t kPlayRefusedDebugSoldierWarp = 0x10000;
 // partner_drive=native / partner_input_defer != off are lab-only until qualified.
 inline constexpr std::uint32_t kPlayRefusedNativeDrive = 0x20000;
+// Steam online (docs/steam-online.md 9.1): steam_selftest is lab only;
+// net_peer_steam on a host is ignored; a steam guest needs net_peer_steam or
+// net_steam_wait=1 (else net=0, link=disabled; reason=no_peer_steam); the UDP
+// endpoint keys (net_peer_addr, net_listen_port, net_bind) are ignored with steam.
+inline constexpr std::uint32_t kPlayRefusedSteamSelftest = 0x40000;
+inline constexpr std::uint32_t kPlayRefusedHostPeerSteam = 0x80000;
+inline constexpr std::uint32_t kPlayRefusedNoPeerSteam = 0x100000;
+inline constexpr std::uint32_t kPlayRefusedUdpKeysWithSteam = 0x200000;
+// Partner link transport: udp (our own UDP socket; the one-PC lab and the
+// LAN/VPN code) or steam (ISteamNetworkingMessages002 over Steam's relays;
+// play only, the lab refuses it and keeps udp).
+enum class NetTransport : std::uint8_t { udp, steam };
 // World sync lab probes (docs/world-sync-protocol.md "Probes"): lab.ini
 // world_probe and the world.trigger key. The ids are the wire probeId of
 // PROBE_SYNC and the Lua probe number, in this order.
@@ -339,6 +351,20 @@ struct LabConfig {
     NametagCrosshair nametag_crosshair = NametagCrosshair::unset;
     char nametag_name[kNametagNameChars + 1]{};
     std::uint32_t nametag_max_m = 300;
+    // Steam online (docs/steam-online.md 9.1). net_transport=steam is play
+    // only: in the lab it is forced back to udp (+1 invalid,
+    // net_transport_refused). net_steam_self is the account Play-Coop saw
+    // (checked against GetSteamID at gate 5); net_peer_steam the guest's host;
+    // net_steam_wait=1 a guest waiting for an invite or a pasted code.
+    NetTransport net_transport = NetTransport::udp;
+    bool net_transport_refused = false;
+    std::uint64_t net_steam_self = 0;
+    std::uint64_t net_peer_steam = 0;
+    bool net_steam_wait = false;
+    bool net_steam_accept = true;
+    // Lab only: the hidden-worker Steam self-test (1 = in-process pair, 2 adds
+    // the network-loopback pair). Play forces 0 (kPlayRefusedSteamSelftest).
+    std::uint32_t steam_selftest = 0;
     unsigned unknown_keys = 0;
     unsigned invalid_values = 0;
 };
@@ -373,6 +399,7 @@ const char* LabModeName(LabMode value) noexcept;
 const char* NametagCrosshairName(NametagCrosshair value) noexcept;
 bool ParseNametagCrosshair(const char* text, std::size_t size, NametagCrosshair& out) noexcept;
 const char* NetLinkName(NetLink value) noexcept;
+const char* NetTransportName(NetTransport value) noexcept;
 const char* PartnerInterpName(PartnerInterp value) noexcept;
 const char* PartnerLostName(PartnerLost value) noexcept;
 const char* NetLossModelName(NetLossModel value) noexcept;

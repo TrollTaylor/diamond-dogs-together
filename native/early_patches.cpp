@@ -117,6 +117,20 @@ bool format_play_line(std::uint32_t refused, bool loopback, bool mutex_renamed, 
     return true;
 }
 
+bool WantInitWrapper(const LabConfigView& lab) noexcept { return lab.present && lab.play && lab.net && lab.steam && lab.saves; }
+
+bool RunInitWrapper(SteamInitFn init, SteamRegisterFn reg, void* object, int id, InitWrapperState& state) {
+    ++state.calls;
+    const bool result = init();
+    state.called = true;
+    state.result = result;
+    if (result && !state.registered && reg && object) {
+        reg(object, id);
+        state.registered = true;
+    }
+    return result;
+}
+
 bool is_local_master_url(const char* url) noexcept {
     if (!url) return false;
     const char* rest = skip_prefix(url, "http://");
@@ -155,6 +169,8 @@ bool is_local_master_url(const char* url) noexcept {
 #include "mgscoop/save_redirect.hpp"
 #include "mgscoop/steam_loopback.hpp"
 #include "mgscoop/steam_abi.hpp"
+#include "mgscoop/steam_net_abi.hpp"
+#include "mgscoop/steam_net_callbacks.hpp"
 #include "steam_shim_contract.hpp"
 
 #ifndef MGS_COOP_PROBE_VERSION
@@ -170,6 +186,7 @@ constexpr std::uint32_t kSlotSteamUser = 0x208E128;
 constexpr std::uint32_t kSlotSteamFriends = 0x208E110;
 constexpr std::uint32_t kSlotSteamRemoteStorage = 0x208E118;
 constexpr std::uint32_t kSlotXInputGetState = 0x208E070;
+constexpr std::uint32_t kSlotSteamInit = 0x208E130;
 HANDLE g_log = INVALID_HANDLE_VALUE;
 
 using CreateMutexWFn = HANDLE(WINAPI*)(LPSECURITY_ATTRIBUTES, BOOL, LPCWSTR);
@@ -190,10 +207,17 @@ struct InstalledSlot {
     std::uint32_t rva;
     const void* wrapper;
 };
-constexpr unsigned kMaxInstalled = 6;
+constexpr unsigned kMaxInstalled = 7;
 InstalledSlot g_installed[kMaxInstalled]{};
 unsigned g_installed_count = 0;
 bool g_gate_installed = false;
+// Steam online Init wrapper (written in DllMain, read on the main thread).
+SteamInitFn g_real_init = nullptr;
+SteamRegisterFn g_register = nullptr;
+steam_net::CallbackObject* g_init_object = nullptr;
+int g_init_id = 0;
+bool g_init_installed = false;
+InitWrapperState g_init_state{};
 
 void log_line(const char* text) noexcept {
     if (g_log == INVALID_HANDLE_VALUE) return;
@@ -260,6 +284,14 @@ bool steam_bytes_ok(const std::uint8_t* base) noexcept {
     }
     return true;
 }
+// The Init wrapper pins (pure byte compare inside the mapped image).
+bool init_pins_ok(const std::uint8_t* base, std::size_t span) noexcept {
+    const steam_shim_contract::ByteGate* gates[] = {&steam_shim_contract::steam_init_export, &steam_shim_contract::steam_register_export,
+                                                    &steam_shim_contract::steam_register_body, &steam_shim_contract::steam_dispatch};
+    for (const auto* gate : gates)
+        if (gate->rva > span || gate->size > span - gate->rva || !gate_matches(base, *gate)) return false;
+    return true;
+}
 bool steam_fingerprint_ok(HMODULE steam) noexcept {
     if (!steam) return false;
     const auto* base = reinterpret_cast<const std::uint8_t*>(steam);
@@ -317,6 +349,21 @@ void* MGSCOOP_STEAM_CALL Storage_Getter() noexcept {
     return wrapped;
 }
 
+// ----- SteamAPI_Init wrapper (steam online callbacks) -----
+// Not noexcept: an exception of the original Init passes through unchanged.
+bool MGSCOOP_STEAM_CALL Init_Wrapper() {
+    const bool result = RunInitWrapper(g_real_init, g_register, g_init_object, g_init_id, g_init_state);
+    const DWORD error = GetLastError();
+    char line[96]{};
+    if (g_init_state.registered && g_init_state.calls == 1) {
+        if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "steam_callbacks=registered; ids=%d\r\n", g_init_id))) log_line(line);
+    } else if (!result && g_init_state.calls == 1) {
+        log_line("steam_callbacks=not_registered; reason=init_false\r\n");
+    }
+    SetLastError(error);
+    return result;
+}
+
 // Patch an IAT data slot located by import name; require the expected RVA and
 // the expected current pointer (the resolved export). Returns true on success.
 bool patch_named_slot(void* base, std::size_t span, const char* dll, const char* symbol,
@@ -341,6 +388,18 @@ void log_reason(const char* prefix, const char* reason) noexcept {
     if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "%s; reason=%s\r\n", prefix, reason))) log_line(line);
 }
 }  // namespace
+
+const char* InitWrapperRefusal(const std::uint8_t* steam_base, std::size_t span) noexcept {
+    if (!steam_base || span < 0x1000) return "steam_api64_not_mapped";
+    __try {
+        if (!pe_identity(steam_base, steam_shim_contract::kSteamTimeDateStamp, steam_shim_contract::kSteamSizeOfImage))
+            return "steam_api64_mismatch";
+        if (!init_pins_ok(steam_base, span)) return "pin_mismatch";
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return "pin_fault";
+    }
+    return nullptr;
+}
 
 void InstallEarlyLabPatches() noexcept {
     const LabConfig& lab = GetLabConfig();
@@ -494,6 +553,42 @@ void InstallEarlyLabPatches() noexcept {
             log_line(line);
     }
 
+    // ---- 2b. Steam online callbacks: the SteamAPI_Init wrapper ----
+    if (WantInitWrapper(LabConfigView{lab.present, lab.mode == LabMode::play, lab.net, lab.net_transport == NetTransport::steam,
+                                      lab.role == LabRole::host, iso.saves_ok})) {
+        MODULEINFO steam_info{};
+        const char* reason = nullptr;
+        if (!steam) reason = "steam_api64_not_mapped";
+        else if (!K32GetModuleInformation(GetCurrentProcess(), steam, &steam_info, sizeof(steam_info))) reason = "module_info_unavailable";
+        else if (!steam_bytes_ok(reinterpret_cast<const std::uint8_t*>(steam))) reason = "steam_api64_mismatch";
+        else reason = InitWrapperRefusal(reinterpret_cast<const std::uint8_t*>(steam), steam_info.SizeOfImage);
+        void* init = steam_export(steam, "SteamAPI_Init");
+        void* reg = steam_export(steam, "SteamAPI_RegisterCallback");
+        const auto* steam_base = reinterpret_cast<const std::uint8_t*>(steam);
+        if (!reason && (init != steam_base + steam_shim_contract::steam_init_export.rva ||
+                        reg != steam_base + steam_shim_contract::steam_register_export.rva))
+            reason = "export_mismatch";
+        if (!reason) {
+            g_real_init = reinterpret_cast<SteamInitFn>(init);
+            g_register = reinterpret_cast<SteamRegisterFn>(reg);
+            const bool host = lab.role == LabRole::host;
+            g_init_object = host ? steam_cb::SessionRequestObject() : steam_cb::JoinRequestObject();
+            g_init_id = host ? steam_net::kCallbackSessionRequest : steam_net::kCallbackJoinRequested;
+            if (patch_named_slot(base, span, "steam_api64.dll", "SteamAPI_Init", kSlotSteamInit, init,
+                                 reinterpret_cast<void*>(&Init_Wrapper))) {
+                g_init_installed = true;
+                char line[96]{};
+                if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "steam_callbacks=wrapper; slot=0x208e130; id=%d\r\n", g_init_id)))
+                    log_line(line);
+            } else {
+                g_real_init = nullptr;
+                g_register = nullptr;
+                reason = "slot_or_export_mismatch";
+            }
+        }
+        if (reason) log_reason("steam_callbacks=refused", reason);
+    }
+
     // ---- 3. CreateMutexW rename (second instance), only when isolated ----
     if (iso.second_instance) {
         if (const char* blocker = mutex_rename_blocker(iso)) {
@@ -549,6 +644,9 @@ void InstallEarlyLabPatches() noexcept {
 }
 
 bool networking_gate_installed() noexcept { return g_gate_installed; }
+
+bool InitWrapperInstalled() noexcept { return g_init_installed; }
+InitWrapperState InitWrapperResult() noexcept { return g_init_state; }
 
 const char* ProbeVersion() noexcept { return MGS_COOP_PROBE_VERSION; }
 

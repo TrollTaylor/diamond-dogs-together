@@ -10,7 +10,10 @@ loaders, and the files and log lines the launchers read. The player tooling
 What it is not: no Konami server is contacted (the offline-v1 marker and the
 dead-port `coop.ini` `master_url` stay exactly as in the lab), and nothing
 touches S_IS_ONLINE, the game's synchronizer, sessions, the master server,
-fuse or Steam P2P (ISteamNetworking). The link is our own UDP socket.
+fuse or the game's own Steam P2P (ISteamNetworking005). The link is our own
+UDP socket, or, with `net_transport=steam` in play, our own
+ISteamNetworkingMessages002 session on channel 0x4D47 over Steam's relays
+(section 2b, [steam-online.md](steam-online.md)).
 
 Sources: `native/lab_config.cpp` (keys), `native/early_patches.cpp` (save
 result, early.log), `native/game_script_observer.cpp` (gate, wiring),
@@ -48,6 +51,12 @@ before (tested). "(play)" marks the defaults that differ in play.
 | `partner_interp_min_ms` | 20..500 | 60 | |
 | `partner_interp_max_ms` | min..1000 | 350 | below min: invalid, keeps 350 |
 | `partner_lost` | `freeze` \| `hide` | `freeze` | `hide` is lab-tested only |
+| `net_transport` | `udp` \| `steam` | `udp` | `steam` is play only: the lab forces `udp` (+1 invalid, `net_transport=udp; reason=steam_play_only`). With `steam` no UDP default is applied and the UDP endpoint keys are ignored. |
+| `net_steam_self` | SteamID64 | - | Written by Play-Coop (Steam ActiveUser); individual; gate 5 compares it with `GetSteamID`. |
+| `net_peer_steam` | SteamID64 | - | Guest: the host's account; individual and not `net_steam_self` (else +1 invalid, cleared). |
+| `net_steam_wait` | `0` \| `1` | `0` | Guest without a host (invite / F9 paste); ignored when `net_peer_steam` is set. |
+| `net_steam_accept` | `on` \| `off` | `on` | Host: the initial F9 "Accept joins". |
+| `steam_selftest` | `0` \| `1` \| `2` | `0` | Lab only (the hidden-worker self-test; 2 adds the network-loopback pair). |
 
 `net_latency_ms` (0..2000), `net_loss_permille` (0..1000) and
 `partner_interp_ms` (0..500, default 100) keep their parsing.
@@ -76,7 +85,16 @@ before (tested). "(play)" marks the defaults that differ in play.
    | empty `save_dir` | | 0x1000 |
    | guest without a valid `net_peer_addr` | `net=0` | 0x2000 |
    | each nonzero of `net_latency_ms`, `net_loss_permille`, `net_jitter_ms`, `net_dup_permille`, `net_reorder_permille` | 0 | 0x4000 |
-3. **Ports, when `net=1`.** Loopback bind: the lab rule, unchanged (role
+   | `world_probe` set | `none` | 0x8000 |
+   | `debug_soldier_warp=1` | 0 | 0x10000 |
+   | `partner_drive=native` or `partner_input_defer` not off | legacy / off | 0x20000 |
+   | `steam_selftest` set | 0 | 0x40000 |
+   | `net_peer_steam` on a host (steam) | ignored | 0x80000 |
+   | steam guest without `net_peer_steam` and without `net_steam_wait=1` | `net=0` (`link=disabled; reason=no_peer_steam`) | 0x100000 |
+   | `net_peer_addr`, `net_listen_port` or `net_bind` with steam | ignored | 0x200000 |
+
+   The UDP guest refusal 0x2000 does not apply with steam.
+3. **Ports, when `net=1` and the transport is udp.** Loopback bind: the lab rule, unchanged (role
    defaults when neither port is named; both nonzero, different, and not
    `listen_port`/`peer_port`). Host off loopback: `net_listen_port` (default
    47820 lab / 47830 play), the peer port is unused. Guest off loopback:
@@ -149,6 +167,43 @@ acceptance is separate from the verified field-body tests.
   FIFO. Heap overflow counts as `dropped`; `duplicated` is counted. Only the
   impaired path copies a datagram; nothing else allocates per datagram.
 
+## 2b. Transport (`lab::SteamTransport`)
+
+Play with `net_transport=steam` replaces the UDP socket by
+`native/steam_transport.cpp` through a small ops table in partner_net
+(`transmit_to`, `stats`, `local_port`); everything above it is unchanged
+(sessions, handshake, HMAC, reliable channels, DATAGRAM world sync, mission
+follow, `LinkIdle` at 20 ms). Details, gates and the verification record:
+[steam-online.md](steam-online.md).
+
+- Endpoints are `{account, 0x5354}` (SteamID64 = `0x0110000100000000 |
+  account`); the per-address HELLO table, `wrong_endpoint`, `rebound` and
+  `TrustedPeer` work unchanged. `local_port()` is 0.
+- Messages leg: `SendMessageToUser(identity, data, n, 0x21, 0x4D47)`
+  (UnreliableNoNagle | AutoRestartBrokenSession) and
+  `ReceiveMessagesOnChannel(0x4D47, msgs, 32)` up to 4 times per pass; each
+  message is bounds-checked (1..1200 bytes, SteamID identity) and released
+  exactly once. The guest delivers only its configured host (the session runs
+  `exact_filter=true`); another identity's third message within 10 s closes
+  that Steam session (`steam_foreign`).
+- Send ring: the game thread copies a datagram into a 64 x 1200-byte ring
+  under `g_tx_lock`; only the transport thread calls steamclient. A full ring
+  loses the datagram (`ring_full`; link v2 recovers).
+- Host accept policy: the 1251 queue (registered by the SteamAPI_Init IAT
+  wrapper in DllMain, play + steam only), at most 4 new identities per
+  second and 8 non-peer identities; a 4 Hz poll-accept of the current/last
+  peer, invited friends and beacon hits; a non-peer without a link v2 header
+  for 15 s is closed and denied for 60 s. HMAC still decides who joins.
+- Waiting guest (`net_steam_wait=1`): no session and no secret until a 337
+  invite or an F9 paste arms it on the transport thread (`ArmSteamGuest`:
+  the same receive/reliable reset as a new session, world queues cleared).
+- Route at 1 Hz from `GetSessionConnectionInfo` (state cross-checked with
+  info+0xB0 and the identity): `relay`, `direct` or `unknown`.
+- Exit: the window-close shutdown flag makes the thread send one link CLOSE,
+  call `CloseSessionWithUser(peer)` and park; no further Steam call.
+- Every interface call runs in a C-style `__try` thunk: a fault latches
+  `steam=disabled; reason=fault` and `link=disabled; reason=steam_fault`.
+
 ## 3. Pairing and keys
 
 **Secret.** 20 Crockford base32 characters (100 bits). Play reads
@@ -160,7 +215,15 @@ reason=secret_<status>` and starts no transport. The lab uses the lab secret
 the file is required. Buffers that held the secret are cleared; the secret,
 the code, keys, nonces and tags are never logged.
 
-**Join code** (tooling; the DLL never parses it; `tests/link_join_code.hpp` is
+**Steam online code** (the DLL parses this one, for the F9 paste and the 337
+invite; `native/steam_join_code.cpp`, mirrored by `ConvertFrom-CoopSteamJoinCode`):
+`MGS2-SSSSS-SSSSS-SSSSS-SSSSS-CC@<SteamID64>`, check `SHA256("MGS2|" + S +
+"|" + <id64 decimal>)` with the same c1/c2 rule; the invite connect string is
+`+mgscoop_join <code>`. A Steam guest with a code gets `link-secret.txt` as
+today; a waiting guest has none until armed. See
+[steam-online.md](steam-online.md) section 9.
+
+**Join code** (tooling; the DLL never parses MGS1; `tests/link_join_code.hpp` is
 the test-only native mirror): `MGS1-SSSSS-SSSSS-SSSSS-SSSSS-CC@<host>:<port>`,
 check `SHA256("MGS1|" + S + "|" + host + "|" + port)`: `c1 =
 alphabet[d[0] >> 3]`, `c2 = alphabet[((d[0] & 7) << 2) | (d[1] >> 6)]` over the
@@ -348,6 +411,33 @@ link=stats; state=%s; session=%u; rtt_ms=%u; rttvar_ms=%u; jitter_ms=%u; loss_pc
 link=close; reason=peer
 ```
 
+Steam online (play, `net_transport=steam`; SteamIDs masked as `steam:...1234`):
+
+```
+link=config; mode=play; role=host|guest; proto=2; bind=steam; port=0; peer=learned|waiting|steam:...1234; auth=code|pending; interp=auto
+partner_net=listening; port=0; peer_port=0
+steam=acquire; logged_on=1; self=steam:...1234; messages=ok; rtti=ok; shape=forwarder; utils=ok|missing
+steam=disabled; reason=api|not_initialized|client_module|client_iface|offline|self_mismatch|peer_is_self|iface_missing|iface_module|iface_rtti|iface_shape|owner_unavailable|fault
+link=disabled; reason=steam_<reason>|steam_acquire_timeout|steam_transport|no_peer_steam
+steam=transport; leg=messages; role=host|guest; channel=0x4D47; accepting=0|1
+steam=relay; warm=started|fresh
+steam=accept; peer=steam:...5678; via=callback|poll|beacon
+steam=session; peer=steam:...5678; state=connected; route=relay|direct|unknown
+steam=invite; to=steam:...5678; ok=0|1
+steam=join; via=invite|code; host=steam:...1234          (or steam=join_refused; reason=<status>; via=..., steam=join_ignored; reason=busy)
+steam=beacon; set=0|1; ok=0|1
+steam=accepting; on=0|1
+steam=send_fail; result=<EResult>; count=%llu             (at most every 10 s)
+steam=stats; tx=..; rx=..; ring_full=..; send_fail=..; foreign=..; bad_identity=..; accepted=..; closed_idle=..; release=..; received=..; denied=..
+steam=parked; reason=shutdown
+net_transport=udp; reason=steam_play_only                (lab)
+```
+
+`early.log` (play + steam): `steam_callbacks=wrapper; slot=0x208e130; id=1251|337`,
+then `steam_callbacks=registered; ids=1251|337` after a true SteamAPI_Init, or
+`steam_callbacks=refused; reason=<r>`; `steam-observer.log`:
+`symbol=SteamAPI_Init status=early_wrapper`.
+
 `link=drop` and `link=stats` come at most every 10 s and only when they
 changed (`dup` counts replayed packets). Masking: 127/8, 10/8, 172.16/12,
 192.168/16, 100.64/10 and 26/8 in full, any other address `a.b.x.x`.
@@ -369,7 +459,13 @@ this order:
 {"v":1,"pid":1234,"mode":"play","role":"host","state":"connected","reason":"","verified":1,"session":1,"peer":"203.0.x.x:51234","local_port":47830,"rtt_ms":42,"jitter_ms":3,"loss_permille":4,"resend":0,"tx_Bps":3900,"rx_Bps":3800,"interp_ms":80,"remote_build":"0.12.0","partner":"live","partner_shown":1,"look":1,"mission":30050,"saves":"redirected","time_utc":"2026-10-05T12:00:00Z"}
 ```
 
-`state`: `off|disabled|listening|connecting|handshake|connected|reconnecting|lost|rejected`;
+Since the Steam transport, four keys come before `time_utc` (also on UDP):
+`"transport":"udp|steam","route":"relay|direct|unknown|none","accepting":0|1,"steam":"ok|acquiring|off|<reason>"`.
+With steam, `peer` is `"steam:...1234"` and `local_port` is 0. The buffer is
+768 bytes.
+
+`state`: `off|disabled|listening|connecting|handshake|connected|reconnecting|lost|rejected|waiting`
+(`waiting`: a Steam guest without a host);
 `reason`: a REJECT reason or a `link=disabled` reason; `verified` is 0 only for
 an unauthenticated hint; `partner`: `none|live|stale|lost`; `partner_shown`,
 `look` and `mission` come from `partner_net::PublishPartnerState` (game
@@ -386,7 +482,11 @@ thread); `saves` from `lab::SavesRedirected()`.
 `partner_interp_max_ms`, `partner_lost`, `link_keys=1`. New modes:
 `lab_ini_check secret <file>` prints `secret_status=ok|missing|bad_length|bad_char`;
 `lab_ini_check code <text>` prints `code_status=<status>` and, when ok,
-`host=` and `port=` (never the secret).
+`host=` and `port=` (never the secret). After `world_probe` it prints the
+Steam keys `net_transport`, `net_steam_self`, `net_peer_steam`,
+`net_steam_wait`, `net_steam_accept`, `steam_selftest`;
+`lab_ini_check steamcode <text>` prints `steamcode_status=<status>` and, when
+ok, `host=<SteamID64>` (the native MGS2 parser; never the secret).
 
 ## 8. Constants
 

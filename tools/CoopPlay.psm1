@@ -11,7 +11,8 @@
 # Contents:
 #  - folder layout, Steam account, hashes, save backup/seed and process helpers
 #    (moved here from LabCommon.psm1 unchanged; the friend scripts need them);
-#  - the join code and link secret of the play mode (spec section 3.1);
+#  - the join code and link secret of the play mode (spec section 3.1), and the
+#    Steam online code MGS2 (docs/steam-online.md 9.2);
 #  - play lab.ini / coop.ini text and the frozen partner defaults;
 #  - readers of link-status.json and the logs, launch evidence, status line;
 #  - the partner-details reader shared with Play-OfflineCoop.ps1.
@@ -531,6 +532,95 @@ function Get-CoopCodeProblem {
     }
 }
 
+# ---------------------------------------------------------------------------
+# Steam online join code (docs/steam-online.md 9.2): MGS2-SSSSS-SSSSS-SSSSS-SSSSS-CC@<SteamID64>
+# The native loader parses the same format (native/steam_join_code.cpp; shared
+# vectors in tests/friend_package_tests.ps1 and tests/steam_transport_tests.cpp).
+# ---------------------------------------------------------------------------
+
+function Test-CoopSteamId64 {
+    # Pure: 17 decimal digits, no leading zero, an individual public account.
+    param([AllowNull()][AllowEmptyString()][string]$Value)
+    if (!$Value -or $Value -cnotmatch '^[1-9][0-9]{16}$') { return $false }
+    [UInt64]$id = 0
+    if (![UInt64]::TryParse($Value, [ref]$id)) { return $false }
+    # (0xFFFFFFFF is an Int32 -1 in PowerShell: the account part uses a modulo.)
+    return (($id -shr 32) -eq 0x01100001) -and (($id % [UInt64]4294967296) -ne 0)
+}
+
+function Get-CoopSteamId64 {
+    # Pure: the SteamID64 of a Steam ActiveUser account number ('' for 0).
+    param([UInt32]$ActiveUser = 0)
+    if ($ActiveUser -eq 0) { return '' }
+    return ([UInt64]76561197960265728 + [UInt64]$ActiveUser).ToString([Globalization.CultureInfo]::InvariantCulture)
+}
+
+function Get-CoopSteamCodeCheck {
+    # Pure: d = SHA256("MGS2|" + S + "|" + <id64 decimal>), c1/c2 as MGS1.
+    param([Parameter(Mandatory)][string]$Secret, [Parameter(Mandatory)][string]$SteamId)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $d = $sha.ComputeHash([Text.Encoding]::ASCII.GetBytes('MGS2|' + $Secret + '|' + $SteamId)) } finally { $sha.Dispose() }
+    $c1 = $script:CoopAlphabet[[int]($d[0] -shr 3)]
+    $c2 = $script:CoopAlphabet[[int]((($d[0] -band 7) -shl 2) -bor ($d[1] -shr 6))]
+    return ([string]$c1 + [string]$c2)
+}
+
+function New-CoopSteamJoinCode {
+    # Pure: MGS2-SSSSS-SSSSS-SSSSS-SSSSS-CC@<SteamID64>.
+    param([Parameter(Mandatory)][string]$Secret, [Parameter(Mandatory)][string]$SteamId)
+    if (!(Test-CoopSecret $Secret)) { throw 'Invalid link secret (20 canonical base32 characters).' }
+    if (!(Test-CoopSteamId64 $SteamId)) { throw "Not an individual SteamID64: $SteamId" }
+    $check = Get-CoopSteamCodeCheck -Secret $Secret -SteamId $SteamId
+    return ('MGS2-' + $Secret.Substring(0, 5) + '-' + $Secret.Substring(5, 5) + '-' + $Secret.Substring(10, 5) + '-' +
+        $Secret.Substring(15, 5) + '-' + $check + '@' + $SteamId)
+}
+
+function ConvertFrom-CoopSteamJoinCode {
+    # Pure, never throws. Status: ok, empty, bad_prefix, bad_char, bad_length,
+    # bad_check, bad_steamid; Secret and SteamId are set for ok. Tolerant as
+    # MGS1: blanks, case, dashes, O->0 and I/L->1.
+    param([AllowNull()][AllowEmptyString()][string]$Text)
+    $result = [pscustomobject]@{ Status = 'empty'; Secret = ''; SteamId = '' }
+    if ($null -eq $Text) { $Text = '' }
+    $t = [regex]::Replace($Text, '[ \t\r\n\v\f]', '')
+    if (!$t) { return $result }
+    $at = $t.LastIndexOf('@')
+    if ($at -lt 0) { $result.Status = 'bad_steamid'; return $result }
+    $left = $t.Substring(0, $at).ToUpperInvariant().Replace('-', '')
+    $right = $t.Substring($at + 1)
+    if (!$left.StartsWith('MGS2', [StringComparison]::Ordinal)) { $result.Status = 'bad_prefix'; return $result }
+    $sb = New-Object Text.StringBuilder
+    foreach ($ch in $left.Substring(4).ToCharArray()) {
+        $c = $ch
+        if ($c -ceq [char]'O') { $c = [char]'0' } elseif ($c -ceq [char]'I' -or $c -ceq [char]'L') { $c = [char]'1' }
+        if ($script:CoopAlphabet.IndexOf($c) -lt 0) { $result.Status = 'bad_char'; return $result }
+        $null = $sb.Append($c)
+    }
+    $body = $sb.ToString()
+    if ($body.Length -ne 22) { $result.Status = 'bad_length'; return $result }
+    if (!(Test-CoopSteamId64 $right)) { $result.Status = 'bad_steamid'; return $result }
+    $secret = $body.Substring(0, 20)
+    if ((Get-CoopSteamCodeCheck -Secret $secret -SteamId $right) -cne $body.Substring(20)) { $result.Status = 'bad_check'; return $result }
+    $result.Status = 'ok'
+    $result.Secret = $secret
+    $result.SteamId = $right
+    return $result
+}
+
+function Get-CoopSteamCodeProblem {
+    # Pure: a sentence for the player per ConvertFrom-CoopSteamJoinCode status.
+    param([Parameter(Mandatory)][string]$Status)
+    switch ($Status) {
+        'empty' { return 'No code was entered.' }
+        'bad_prefix' { return 'That is not an online join code (an online code starts with MGS2-; a LAN/VPN code starts with MGS1-).' }
+        'bad_char' { return 'The code contains a character that cannot be in a join code; copy it again.' }
+        'bad_length' { return 'The code is too short or too long; copy all of it again, including the part after @.' }
+        'bad_check' { return 'The code has a typo; copy it again.' }
+        'bad_steamid' { return 'The Steam account after @ is not valid; copy the whole code again or ask the host for a new one.' }
+        default { return "The code was not accepted ($Status)." }
+    }
+}
+
 function Get-CoopSecretFileStatus {
     # Pure: spec 3.2 validation of link-secret.txt bytes ($null = missing):
     # ok (20 canonical characters + LF or CRLF), missing, bad_length, bad_char.
@@ -676,7 +766,10 @@ function Get-CoopPlayHeader { return $script:CoopPlayHeader }
 
 function New-CoopPlayLabIniText {
     # lab.ini of the two-PC play mode (spec 9.2 step 4). UTF-8 text with LF;
-    # never the lab identity keys or an impairment key.
+    # never the lab identity keys or an impairment key. -Transport steam
+    # (docs/steam-online.md 9.1) writes net_transport=steam, net_steam_self and
+    # the guest's net_peer_steam or net_steam_wait=1 instead of every UDP key;
+    # the UDP text is byte-identical when -Transport is not given.
     param(
         [Parameter(Mandatory)][ValidateSet('host', 'guest')][string]$Role,
         [Parameter(Mandatory)][string]$SaveDir,
@@ -684,13 +777,31 @@ function New-CoopPlayLabIniText {
         # Guest only: the host's dotted IPv4 (the launcher resolves names).
         [string]$PeerAddress = '',
         # Shared world by default; explicit 0 retains partner-only configuration.
-        [ValidateRange(0, 3)][int]$World = 3
+        [ValidateRange(0, 3)][int]$World = 3,
+        [ValidateSet('udp', 'steam')][string]$Transport = 'udp',
+        # Steam: this PC's SteamID64 (Steam ActiveUser), the guest's host, or a waiting guest.
+        [string]$SteamSelf = '',
+        [string]$SteamPeer = '',
+        [switch]$SteamWait
     )
     if ($SaveDir -cnotmatch '^[A-Za-z]:\\' -and !$SaveDir.StartsWith('\\')) { throw "save_dir must be an absolute path: $SaveDir" }
     if ($SaveDir -match '[\x00-\x1f\x7f]' -or $SaveDir -ne $SaveDir.Trim() -or $script:CoopUtf8NoBom.GetByteCount($SaveDir) -gt 259) { throw "Invalid save_dir: $SaveDir" }
-    if ($Port -lt 1024 -or $Port -gt 65535) { throw "Invalid port: $Port" }
-    if ($Role -eq 'host' -and $PeerAddress) { throw 'The host has no peer address.' }
-    if ($Role -eq 'guest' -and !(Test-CoopPlayPeerAddress $PeerAddress)) { throw "Invalid host address: $PeerAddress" }
+    $steam = $Transport -eq 'steam'
+    if ($steam) {
+        if ($PeerAddress) { throw 'Steam play has no peer address.' }
+        if (!(Test-CoopSteamId64 $SteamSelf)) { throw "Invalid own SteamID64: $SteamSelf" }
+        if ($Role -eq 'host' -and ($SteamPeer -or $SteamWait)) { throw 'The host has no Steam peer.' }
+        if ($Role -eq 'guest') {
+            if ($SteamWait -and $SteamPeer) { throw 'A waiting guest has no host yet.' }
+            if (!$SteamWait -and !(Test-CoopSteamId64 $SteamPeer)) { throw "Invalid host SteamID64: $SteamPeer" }
+            if ($SteamPeer -and $SteamPeer -ceq $SteamSelf) { throw 'That is your own code.' }
+        }
+    } else {
+        if ($SteamSelf -or $SteamPeer -or $SteamWait) { throw 'The Steam keys need -Transport steam.' }
+        if ($Port -lt 1024 -or $Port -gt 65535) { throw "Invalid port: $Port" }
+        if ($Role -eq 'host' -and $PeerAddress) { throw 'The host has no peer address.' }
+        if ($Role -eq 'guest' -and !(Test-CoopPlayPeerAddress $PeerAddress)) { throw "Invalid host address: $PeerAddress" }
+    }
     $lines = New-Object Collections.Generic.List[string]
     $lines.Add($script:CoopPlayHeader)
     $lines.Add('enabled=1')
@@ -698,13 +809,21 @@ function New-CoopPlayLabIniText {
     $lines.Add('role=' + $Role)
     $lines.Add('save_dir=' + $SaveDir)
     $lines.Add('net=1')
-    $lines.Add('net_bind=any')
-    if ($Role -eq 'host') {
-        $lines.Add('net_listen_port=' + $Port)
+    if ($steam) {
+        $lines.Add('net_transport=steam')
+        $lines.Add('net_steam_self=' + $SteamSelf)
+        if ($Role -eq 'guest') {
+            if ($SteamWait) { $lines.Add('net_steam_wait=1') } else { $lines.Add('net_peer_steam=' + $SteamPeer) }
+        }
     } else {
-        $lines.Add('net_listen_port=0')
-        $lines.Add('net_peer_addr=' + $PeerAddress)
-        $lines.Add('net_peer_port=' + $Port)
+        $lines.Add('net_bind=any')
+        if ($Role -eq 'host') {
+            $lines.Add('net_listen_port=' + $Port)
+        } else {
+            $lines.Add('net_listen_port=0')
+            $lines.Add('net_peer_addr=' + $PeerAddress)
+            $lines.Add('net_peer_port=' + $Port)
+        }
     }
     $lines.Add('partner_interp=auto')
     $defaults = Get-PlayPartnerDefaults
@@ -780,7 +899,10 @@ function Get-CoopLaunchEvidence {
         [Parameter(Mandatory)][string]$SaveDir,
         [string]$MasterUrl = $script:CoopMasterUrl,
         # The 90 s deadline has passed.
-        [switch]$Final
+        [switch]$Final,
+        # steam: also require "link=config; mode=play; ...; bind=steam; port=0"
+        # and report a "link=disabled; reason=steam_*" line (docs/steam-online.md 10.1).
+        [ValidateSet('udp', 'steam')][string]$Transport = 'udp'
     )
     if (!$EarlyLog) { $EarlyLog = '' }
     if (!$SteamLog) { $SteamLog = '' }
@@ -824,15 +946,28 @@ function Get-CoopLaunchEvidence {
     if ($refusedPlay) { $unsafe = $true; $problems.Add('script-observer.log: play=refused; reason=saves_not_redirected.') }
     $active = [regex]::IsMatch($ObserverLog, '(?m)^play=active(?=[ ;\r\n]|$)')
     if (!$active -and !$refusedPlay) { $missing.Add('script-observer.log play=active') }
+    $link = 'ok'
+    $linkReason = ''
+    if ($Transport -eq 'steam') {
+        $link = 'missing'
+        if ([regex]::IsMatch($ObserverLog, '(?m)^link=config; mode=play; role=(host|guest); proto=2; bind=steam; port=0;')) { $link = 'ok' }
+        $disabled = [regex]::Match($ObserverLog, '(?m)^link=disabled; reason=([a-z0-9_]+)')
+        if ($disabled.Success) {
+            $link = 'disabled'
+            $linkReason = $disabled.Groups[1].Value
+            $problems.Add('script-observer.log: link=disabled; reason=' + $linkReason + ' - ' + (Get-CoopLinkReasonText -Reason $linkReason))
+        }
+        if ($link -eq 'missing') { $missing.Add('script-observer.log link=config; ...; bind=steam; port=0') }
+    }
     $state = 'pending'
     if ($unsafe) { $state = 'unsafe' }
-    elseif ($saves -eq 'ok' -and $play -eq 'ok' -and $master -eq 'ok' -and $active) { $state = 'ok' }
+    elseif ($saves -eq 'ok' -and $play -eq 'ok' -and $master -eq 'ok' -and $active -and $link -eq 'ok') { $state = 'ok' }
     elseif ($Final) {
         if ($saves -ne 'ok') { $state = 'unsafe' }
         elseif ($play -eq 'missing') { $state = 'old_loader' }
         else { $state = 'incomplete' }
-    } elseif ($play -eq 'bad' -or $master -eq 'bad') { $state = 'incomplete' }
-    return [pscustomobject]@{ State = $state; Missing = $missing.ToArray(); Problems = $problems.ToArray(); Saves = $saves; Play = $play; Master = $master; Active = $active }
+    } elseif ($play -eq 'bad' -or $master -eq 'bad' -or $link -eq 'disabled') { $state = 'incomplete' }
+    return [pscustomobject]@{ State = $state; Missing = $missing.ToArray(); Problems = $problems.ToArray(); Saves = $saves; Play = $play; Master = $master; Active = $active; Link = $link; LinkReason = $linkReason }
 }
 
 function Get-CoopLinkReasonText {
@@ -851,6 +986,17 @@ function Get-CoopLinkReasonText {
         '^secret_' { return 'The link secret file is missing or damaged. Quit MGSV and start Play-Coop again.' }
         '^crypto$' { return 'Windows could not provide random numbers for the link. Restart the PC and try again.' }
         '^no_peer_addr$' { return 'The host address is missing. Quit MGSV and run Join again.' }
+        '^no_peer_steam$' { return "The host's Steam account is missing. Quit MGSV and run Join online again (paste the code or wait for an invite)." }
+        '^steam_offline$' { return 'Steam is offline or not logged in. Quit MGSV, start Steam and log in (online), then start Play-Coop again.' }
+        '^steam_self_mismatch$' { return 'Steam is logged in to another account than when Play-Coop started. Quit MGSV and start Play-Coop again.' }
+        '^steam_peer_is_self$' { return 'That join code is your own. Ask your friend for theirs.' }
+        '^steam_api$' { return 'steam_api64.dll is not the expected file. Verify the game files in Steam, then run Install-Coop.bat again.' }
+        '^steam_not_initialized$' { return 'Steam did not start for MGSV. Quit the game and start Play-Coop again (it starts MGSV through Steam).' }
+        '^steam_(client_module|client_iface|iface_missing|iface_module|iface_rtti|iface_shape)$' { return 'Steam networking changed (probably a Steam update). Use a LAN/VPN code ([L] in Play-Coop) and run Collect-Logs.bat for the developer.' }
+        '^steam_owner_unavailable$' { return 'The co-op loader could not attach to Steam. Use a LAN/VPN code ([L] in Play-Coop) and run Collect-Logs.bat.' }
+        '^steam_fault$' { return 'Steam networking failed inside Steam: restart the game. If it happens again, use a LAN/VPN code ([L]) and run Collect-Logs.bat.' }
+        '^steam_acquire_timeout$' { return 'Steam networking did not start within two minutes. Check that Steam is online, then restart the game.' }
+        '^steam_' { return "The Steam link could not start ($Reason). Restart the game; if it repeats, use a LAN/VPN code ([L]) and run Collect-Logs.bat." }
         '^transport_bind$' { return 'The UDP port is already in use by another program on this PC (or a second MGSV). Close it, or use another port.' }
         '^transport_' { return "The network link could not start ($Reason). Restart the PC and try again; if it repeats, run Collect-Logs.bat." }
         default {
@@ -886,6 +1032,16 @@ function Format-CoopStatusLine {
         if ($age -gt 15) { return "$tag game not responding (no status for $([int]$age) s)" }
     }
     $text = "$tag link=$state"
+    if ([string](Get-CoopValue $Status 'transport' 'udp') -eq 'steam') {
+        # Steam online (docs/steam-online.md 11): the route and the waiting guest.
+        $route = [string](Get-CoopValue $Status 'route' 'none')
+        $text += ' via Steam'
+        if ($route -in @('relay', 'direct')) { $text += " ($route)" }
+        $steamState = [string](Get-CoopValue $Status 'steam' 'ok')
+        if ($steamState -eq 'acquiring') { $text += ' - connecting to Steam...' }
+        if ($state -eq 'waiting') { $text += ' - waiting for an invite or a code (F9 -> Partner / Co-op -> Online)' }
+        if ($state -eq 'listening' -and [int](Get-CoopValue $Status 'accepting' 1) -eq 0) { $text += ' - not accepting joins (F9 -> Online -> Accept joins)' }
+    }
     if ($state -in @('connected', 'reconnecting', 'lost')) {
         $lp = [int](Get-CoopValue $Status 'loss_permille' 0)
         $text += (' rtt={0}ms jitter={1}ms loss={2}.{3}% interp={4}ms' -f [int](Get-CoopValue $Status 'rtt_ms' 0), [int](Get-CoopValue $Status 'jitter_ms' 0),

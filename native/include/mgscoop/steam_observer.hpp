@@ -8,4 +8,9 @@ void InstallSteamCallbackObserver() noexcept;
 // matched at install (one local GetPersonaName query per call; the partner
 // name tag calls it once at install); false (out empty) when unavailable.
 bool SteamLocalPersonaName(char* out, std::size_t capacity) noexcept;
+// Steam self-test stage T (docs/steam-online.md 14): the wrapped RunCallbacks
+// call count, and the game's networking-getter calls forwarded to the real
+// SteamNetworking (0 while the lab gate hands out the emulator).
+unsigned long long SteamObserverCallbackCount() noexcept;
+unsigned long long SteamObserverGetterForwards() noexcept;
 #endif

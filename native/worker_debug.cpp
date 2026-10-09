@@ -7,6 +7,7 @@
 #include "mgscoop/lab_config.hpp"
 #include "mgscoop/partner_native.hpp"
 #include "mgscoop/partner_recon.hpp"
+#include "mgscoop/steam_online_state.hpp"
 
 namespace mgscoop::worker_debug {
 bool Parse(const char* text, std::size_t size, const char* run, const char* role, Request& out) noexcept {
@@ -210,7 +211,35 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
     }
     j.Add("]}");
 }
+// Steam self-test object (docs/steam-online.md 14).
+void SteamJson(Json& j,const steam_state::SelftestReport& r) noexcept {
+    const auto flag=[](bool v) noexcept { return v?1u:0u; };
+    j.Add(",\"steam\":{\"selftest\":");
+    j.String(!r.configured?"off":r.verdict[0]?r.verdict:"pending",16);
+    j.Add(",\"stage\":");j.String(r.stage,sizeof(r.stage));
+    j.Add(",\"api\":%u,\"client\":%u,\"logged_on\":%u,\"messages\":%u,\"sockets\":%u,\"utils\":%u,\"rtti\":%u,\"shape\":%u,\"relay\":%d",
+        flag(r.api),flag(r.client),flag(r.logged_on),flag(r.messages),flag(r.sockets),flag(r.utils),flag(r.rtti),flag(r.shape),r.relay);
+    const auto pair=[&](const char* key,const steam_state::PairResult& p) noexcept {
+        j.Add(",\"%s\":",key);
+        if(!p.ran){j.Add("null");return;}
+        const unsigned long long leak=p.received>=p.release?p.received-p.release:0ull;
+        j.Add("{\"hs_ms\":%u,\"frames\":%u,\"frames_rx\":%u,\"rel\":%u,\"rel_rx\":%u,\"rtt_ms\":%u,\"release\":%llu,\"leak\":%llu,\"bad_identity\":%u}",
+            p.hs_ms,p.frames,p.frames_rx,p.rel,p.rel_rx,p.rtt_ms,static_cast<unsigned long long>(p.release),leak,p.bad_identity);
+    };
+    pair("pair",r.pair);pair("lpair",r.lpair);
+    j.Add(",\"inert\":{\"recv\":%d,\"state\":%d,\"accept\":%u},\"trip\":{\"getter_delta\":%lld},\"reason\":",
+        r.inert_recv,r.inert_state,flag(r.inert_accept),static_cast<long long>(r.getter_delta));
+    j.String(r.reason,sizeof(r.reason));
+    j.Add("}");
+}
 } // namespace
+std::size_t FormatSteamJson(const steam_state::SelftestReport& report, char* out, std::size_t capacity) noexcept {
+    if(!out || !capacity) return 0;
+    Json j{out,capacity};
+    SteamJson(j,report);
+    if(!j.ok){out[0]=0;return 0;}
+    return j.used;
+}
 std::size_t FormatNativeJson(const partner_native::Telemetry& telemetry, char* out, std::size_t capacity) noexcept {
     if(!out || !capacity) return 0;
     Json j{out,capacity};
@@ -268,6 +297,7 @@ void Publish(const worker_scenario::RunContext& c) noexcept {
     NativeJson(j,s.native);
     // Partner name tag (docs/partner-nametag.md): game-thread telemetry plus the Present counters.
     if(nametag::FormatJson(nametag::GetTelemetry(),nametag::GetRenderStats(),nametag_json,sizeof(nametag_json)))j.Add("%s",nametag_json);
+    SteamJson(j,steam_state::GetReport());
     j.Add(",\"queue_depth\":%u,\"last_id\":%u,\"completed\":%u,\"rejected\":%u,\"last_command\":",s.queue_depth,s.last_id,s.completed,s.rejected);
     j.String(s.last_command,sizeof(s.last_command));j.Add(",\"last_result\":");j.String(s.last_result,sizeof(s.last_result));j.Add(",\"refusal\":");j.String(s.refusal,sizeof(s.refusal));
     j.Add(",\"history\":[");

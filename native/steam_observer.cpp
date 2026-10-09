@@ -18,6 +18,7 @@
 #include "mgscoop/steam_callbacks.hpp"
 #include "mgscoop/steam_identity.hpp"
 #include "mgscoop/early_patches.hpp"
+#include "mgscoop/steam_online.hpp"
 
 namespace {
 constexpr DWORD path_capacity = 32768;
@@ -45,6 +46,7 @@ volatile LONG networking_multiple_threads = 0;
 // runs while an observed Steam call might still be using its tracker.
 mgscoop::SteamLifecycleTracker* init_tracker = nullptr;
 volatile LONG64 calls = 0;
+volatile LONG64 getter_forwards = 0;
 volatile LONG first_thread = 0;
 volatile LONG multiple_threads = 0;
 void* game_base = nullptr;
@@ -163,6 +165,7 @@ __declspec(noinline) ISteamNetworking* __cdecl observed_networking() {
         return reinterpret_cast<ISteamNetworking*>(object);
     }
     InitCaller caller{_ReturnAddress()};
+    InterlockedIncrement64(&getter_forwards);
     return mgscoop::forward_observed_networking_getter(original_networking,
         {incoming_error, read_error, write_error, log_networking_result, &caller});
 }
@@ -325,6 +328,9 @@ __declspec(noinline) void __cdecl observed_callbacks() {
     // real callbacks ran, so the packet manager observes them as native events.
     if (loopback_active) mgscoop::lab::callbacks::drain();
     const DWORD outgoing_error = GetLastError();
+    // Steam online owner context (docs/steam-online.md 10.3): a try-lock and
+    // at most 4 Steam calls per pass; inert unless configured.
+    mgscoop::steam_online::OwnerPass();
     const auto count = InterlockedIncrement64(&calls);
     const auto thread = static_cast<LONG>(GetCurrentThreadId());
     const auto previous_thread = InterlockedCompareExchange(&first_thread, thread, 0);
@@ -390,9 +396,10 @@ BOOL CALLBACK install(PINIT_ONCE, PVOID, PVOID*) noexcept {
     const auto networking_slot = mgscoop::find_import_slot(static_cast<const std::uint8_t*>(game_base), game_span, "steam_api64.dll", "SteamNetworking", mgscoop::readable_image_range, &mapped);
     MODULEINFO steam_info{};
     bool networking_export_verified = false;
-    const bool steam_fingerprint = fingerprint_matches(steam_path, accepted_steam_sha256);
-    if (steam_fingerprint) verified_steam = steam;
-    if (networking_function && steam_fingerprint &&
+    // The full SHA-256 of steam_api64 at the game folder (gate 1 of the Steam online path).
+    const bool steam_sha_ok = fingerprint_matches(steam_path, accepted_steam_sha256);
+    if (steam_sha_ok) verified_steam = steam;
+    if (networking_function && steam_sha_ok &&
         K32GetModuleInformation(GetCurrentProcess(), steam, &steam_info, sizeof(steam_info))) {
         const mgscoop::MappedImageSpan steam_span{steam_info.lpBaseOfDll, steam_info.SizeOfImage};
         constexpr unsigned char getter_bytes[]{0x48,0x8b,0x05,0x71,0xb0,0x02,0x00,0xc3};
@@ -416,7 +423,11 @@ BOOL CALLBACK install(PINIT_ONCE, PVOID, PVOID*) noexcept {
     }
     try { init_tracker = new(std::nothrow) mgscoop::SteamLifecycleTracker; }
     catch (...) { init_tracker = nullptr; }
-    if (can_observe_init && init_tracker) {
+    if (can_observe_init && mgscoop::lab::InitWrapperInstalled()) {
+        // DllMain put the Steam online Init wrapper (1251/337 registration) in
+        // the slot; the observer leaves it (it would have missed Init anyway).
+        log_line("symbol=SteamAPI_Init status=early_wrapper slot_rva=0x208e130\r\n");
+    } else if (can_observe_init && init_tracker) {
         original_init = reinterpret_cast<mgscoop::SteamInitCall>(init_function);
         const auto result = mgscoop::exchange_import(game_base, game_span, init_slot.offset, reinterpret_cast<void*>(init_function), reinterpret_cast<void*>(&observed_init));
         char line[280]{};
@@ -426,9 +437,11 @@ BOOL CALLBACK install(PINIT_ONCE, PVOID, PVOID*) noexcept {
     } else {
         log_line("symbol=SteamAPI_Init status=disabled reason=unique_import_export_or_tracker_unavailable\r\n");
     }
+    bool callbacks_wrapped = false;
     if (can_observe_callbacks) {
         original_callbacks = reinterpret_cast<void(__cdecl*)()>(callback_function);
         const auto result = mgscoop::exchange_import(game_base, game_span, callback_slot.offset, reinterpret_cast<void*>(callback_function), reinterpret_cast<void*>(&observed_callbacks));
+        callbacks_wrapped = result.status == mgscoop::PatchStatus::installed && result.replacement_installed;
         char line[280]{};
         if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "symbol=SteamAPI_RunCallbacks status=%d replacement_installed=%d protection_restored=%d slot_rva=0x%llx\r\n",
             static_cast<int>(result.status), result.replacement_installed ? 1 : 0, result.protection_restored ? 1 : 0,
@@ -436,6 +449,8 @@ BOOL CALLBACK install(PINIT_ONCE, PVOID, PVOID*) noexcept {
     } else {
         log_line("symbol=SteamAPI_RunCallbacks status=disabled reason=unique_import_or_export_unavailable\r\n");
     }
+    mgscoop::steam_online::NoteApiModule(steam, steam_sha_ok);
+    mgscoop::steam_online::NoteOwnerHook(callbacks_wrapped);
     const mgscoop::LabConfig& lab = mgscoop::GetLabConfig();
     lab_networking_gated = lab.present && (lab.loopback || lab.self_steamid != 0);
     if (lab.present) mgscoop::lab::VerifyEarlyLabPatches(log_line);
@@ -498,6 +513,10 @@ bool SteamLocalPersonaName(char* out, std::size_t capacity) noexcept {
     for (; name[i] && i + 1 < capacity; ++i) out[i] = name[i];
     out[i] = 0;
     return i != 0;
+}
+unsigned long long SteamObserverCallbackCount() noexcept { return static_cast<unsigned long long>(InterlockedCompareExchange64(&calls, 0, 0)); }
+unsigned long long SteamObserverGetterForwards() noexcept {
+    return static_cast<unsigned long long>(InterlockedCompareExchange64(&getter_forwards, 0, 0));
 }
 void InstallSteamCallbackObserver() noexcept {
     const DWORD error = GetLastError();
