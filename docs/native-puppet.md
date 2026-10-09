@@ -879,7 +879,8 @@ runtime before acting (`full_body_gate`).
   last (flags 4 leaves body 1 on the last dispatched slot), one at a time:
   - plan: tier A1 the manifest's base id itself (its own protected,
     unreferenced cache entry, of the manifest's type of the slot:
-    `type_mismatch` otherwise); after ANY A1 refusal (`no_base` with a known
+    `type_mismatch` otherwise; never one of the viewer's own `vars.weapons`:
+    `viewer_weapon`, `local_vars_unread` when they cannot be read); after ANY A1 refusal (`no_base` with a known
     type or alias, `type_mismatch`, `no_cache_entry`, `cache_shared`, ...;
     logged as `equip_writer=a1_refused; ...; next=c`) tier C (`substitute`
     only): the type is the manifest's type of the slot, else the base's table
@@ -891,7 +892,9 @@ runtime before acting (`full_body_gate`).
     id's first used entry, an id below 0x230 (never an alias such as the
     viewer's 871..876), not the want, not one of the viewer's own
     `vars.weapons`, not an equip this allocation already dispatched, and a
-    full `Derive` + `Capture` pass (its packages loaded in this mission).
+    full `Derive` + `Capture` pass (its packages loaded in this mission)
+    whose fresh refs are still 0 (`stock_cache_in_use`: the census is the
+    allocation's first snapshot; an entry referenced since is never picked).
     Each candidate logs `equip_writer=candidate; slot=..; want=..; equip=..;
     tier=c; pass=type_receiver|type|slot_class; type=..; receiver=..;
     flags=..; refs=..; reason=ok|<why>; shape=<w0..w5>|none` (at most 24 lines

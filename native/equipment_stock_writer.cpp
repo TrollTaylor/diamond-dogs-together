@@ -315,6 +315,12 @@ template<class View> void Plan(const GeneralContext& c,View& v,std::uintptr_t en
     }
     // The remote carries nothing in this slot (no alias, no base): nothing to follow.
     if(!s.want && !c.alias[slot]) {s.tier=Tier::d;Advance(log,slot,SlotState::refused,"refused","no_base");return;}
+    // The viewer's own weapons (vars.weapons u16[6] at the start of the ammo block) are never a target of
+    // either tier: never an entry the viewer's own player uses, whatever its census refs say.
+    LocalVars viewer{};
+    const bool viewer_ok=ReadLocalVars(c.base,viewer);
+    std::array<std::uint16_t,6> viewer_weapons{};
+    if(viewer_ok) for(unsigned i=0;i<viewer_weapons.size();++i) viewer_weapons[i]=contract::Word16(viewer.ammo.data()+i*2);
     contract::Target t{};
     const char* why=nullptr;
     if(!s.want) why="no_base";
@@ -326,6 +332,8 @@ template<class View> void Plan(const GeneralContext& c,View& v,std::uintptr_t en
         if(!why && !contract::ResidentProtected(general.census[t.cache_index]))
             why=general.census[t.cache_index].refs ? "cache_shared" : "cache_unprotected";
         if(!why && general.census[t.cache_index].type!=t.type) why="cache_type";
+        if(!why && !viewer_ok) why="local_vars_unread";
+        if(!why) for(auto id:viewer_weapons) if(id && id==s.want) why="viewer_weapon";
     }
     Tier tier=why ? Tier::d : Tier::a1;
     if(why && c.substitute) {
@@ -350,10 +358,7 @@ template<class View> void Plan(const GeneralContext& c,View& v,std::uintptr_t en
         q.type=contract::SubstituteType(c.type[slot],want_type,slot);
         q.receiver=c.receiver[slot] ? c.receiver[slot] : want_receiver;
         for(unsigned i=0;i<kSlots;++i) if(i!=slot) q.dispatched[i]=general.dispatched_equips[i];
-        // The viewer's own weapons (vars.weapons u16[6] at the start of the ammo block) are never substitutes.
-        LocalVars viewer{};
-        const bool viewer_ok=ReadLocalVars(c.base,viewer);
-        if(viewer_ok) for(unsigned i=0;i<q.viewer.size();++i) q.viewer[i]=contract::Word16(viewer.ammo.data()+i*2);
+        q.viewer=viewer_weapons;
         const char* last_why=viewer_ok ? nullptr : "local_vars_unread";
         bool picked=false;
         std::array<bool,contract::kCacheEntries> tried{};
@@ -376,6 +381,10 @@ template<class View> void Plan(const GeneralContext& c,View& v,std::uintptr_t en
                     auto reader=Read;
                     reason=contract::Capture(c.base,c.image_span,reader,c.player,c.remote_block,general_scratch,candidate);
                 }
+                // The census is the allocation's first snapshot: an entry referenced since (an earlier
+                // slot's dispatch, the local player) is never picked (the fresh refs of the Capture;
+                // Preflight refuses the same, but only after the slot's tier was spent).
+                if(!reason && general_scratch.cache_refs) reason="stock_cache_in_use";
                 CandidateReceipt(log,slot,e.equip,pass,e,reason,general_scratch);
                 if(!reason) {picked=true;t=candidate;break;}
                 last_why=reason;
