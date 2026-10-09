@@ -189,6 +189,8 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
     j.Add("\"completed_late\":%u,\"queued_taps\":%u,\"reconcile\":%s,\"len_ms\":%u,\"len_max_ms\":%u,\"remote_len_ms\":%u,"
           "\"refill_ms\":%u,",n.reload_completed_late,n.reload_queued_taps,Bool(n.reload_reconcile),n.reload_len_ms,n.reload_len_max_ms,
         n.reload_remote_len_ms,n.reload_refill_ms);
+    // A lost exit (release_ms): released now and how often this mission.
+    j.Add("\"release\":%s,\"releases\":%u,",Bool(n.reload_release),n.reload_releases);
     j.Add("\"probe1\":{\"b20\":%u,\"b24\":%u,\"shots\":%u,\"mode_changes\":%u,\"mode\":%u}}",
         n.probe1_b20,n.probe1_b24,n.probe1_shots,n.probe1_mode_changes,n.probe1_mode);
     // The weapon switch (W4/W6): body 1's slots, the plan and the follower.

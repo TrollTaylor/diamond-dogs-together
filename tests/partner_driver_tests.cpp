@@ -4282,6 +4282,33 @@ void TestNativeReloadSwitch() {
     Check(s.fake.Has("partner_reload=rtap; queued=1\r\n") && s.fake.arms.back().tap_seq == taps + 2, "rtap=1: a test tap");
     for (int i = 0; i < 30; ++i) s.N();  // its retries run out (no reload mode)
     Check(s.fake.Containing("partner_reload=fallback;") >= 1 && !s.fake.arms.back().reload_hold, "rtap without a reload: timeout fallback");
+    // F1: a lost exit (body 1 enters 11 and its exit never arrives): the hold lasts through the stuck report until
+    // release_ms; then the Arm carries the release (the hook stops waiting for body 1's mode), the machine leaves
+    // entered without a completion, and body 1's later exit clears the latch.
+    s.fake.latest.packet.reload_seq = 6;
+    s.fake.latest.packet.gun_mode = 11;
+    s.fake.latest.packet.gun_flags = pi::GunFlag::Valid | pi::GunFlag::InHand | pi::GunFlag::Aiming | pi::GunFlag::Reloading;
+    s.N();
+    s.fake.gun.mode_cur = 11;
+    s.N();
+    Check(s.fake.arms.back().reload_hold && !s.fake.arms.back().reload_release && std::strcmp(s.driver.mission.tele.reload_state, "entered") == 0,
+          "lost exit: entered and held");
+    s.fake.latest.packet.gun_mode = 7;
+    s.fake.latest.packet.gun_flags = pi::GunFlag::Valid | pi::GunFlag::InHand | pi::GunFlag::Aiming;
+    {
+        const std::uint32_t completed = s.driver.mission.tele.reload_completed;
+        int steps = 0;
+        for (; steps < 600 && !s.fake.arms.back().reload_release; ++steps) s.N(50);
+        Check(steps > 300 && s.fake.arms.back().reload_release && !s.fake.arms.back().reload_hold &&
+                  s.fake.Containing("partner_reload=stuck;") == 1 && s.fake.Containing("partner_reload=release; setting=event; state=idle;") == 1 &&
+                  s.driver.mission.tele.reload_release && s.driver.mission.tele.reload_releases == 1 &&
+                  s.driver.mission.tele.reload_completed == completed,
+              "lost exit: held past the stuck report, released after release_ms (no completion counted)");
+        s.fake.gun.mode_cur = 7;
+        s.N();
+        Check(!s.fake.arms.back().reload_release && !s.driver.mission.tele.reload_release && s.driver.mission.tele.reload_completed == completed,
+              "body 1's late exit clears the release");
+    }
     // The generalized gate: mid-switch strips FIRE and RELOAD (no gate line), an unqualified type FIRE only.
     s.fake.gun.gun3c0 |= 0x80u;
     s.N();

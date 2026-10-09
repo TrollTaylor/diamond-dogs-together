@@ -60,7 +60,7 @@ Out Step(Machine& m, const In& in, const Params& p) noexcept {
             m.refill_ms = now - m.body_since_ms > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<std::uint32_t>(now - m.body_since_ms);
         }
     }
-    if (!body_reload) m.stuck_latched = false;
+    if (!body_reload) m.stuck_latched = m.released = false;
     m.body_reload = body_reload;
     const bool freezing = in.setting != PartnerNativeReload::mirror;
     if (freezing && body_reload && !m.stuck_latched && now - m.body_since_ms >= p.stuck_ms) {
@@ -69,6 +69,16 @@ Out Step(Machine& m, const In& in, const Params& p) noexcept {
         o.event = "stuck";
     }
     o.stuck = m.stuck_latched;
+    // A lost exit (body 1 unread or wedged in 11/12 past release_ms): released,
+    // so neither the hold nor the hook's body-mode freeze outlives it.
+    bool release_now = false;
+    if (freezing && body_reload && !m.released && now - m.body_since_ms >= p.release_ms) {
+        m.released = true;
+        release_now = true;
+        ++m.releases;
+        o.event = "release";
+    }
+    o.release = m.released;
     // The remote's reload span (its mode 11/12; telemetry).
     const bool remote_in = in.remote_valid && ReloadMode(in.remote_mode);
     if (remote_in && !m.remote_in_reload) m.remote_since_ms = now;
@@ -108,6 +118,8 @@ Out Step(Machine& m, const In& in, const Params& p) noexcept {
             if (why) return Fallback(m, o, why);
             m.since_ms = now;
             if (body_reload) {
+                // A released (lost) body reload is never entered again.
+                if (m.released) return Fallback(m, o, "released");
                 // The raw press (a raw remote, or before the strip) already started it.
                 m.state = State::entered;
                 m.queued = false;
@@ -126,6 +138,7 @@ Out Step(Machine& m, const In& in, const Params& p) noexcept {
         break;
     case State::pending:
         if (body_reload) {
+            if (m.released) return Fallback(m, o, "released");
             m.state = State::entered;
             m.queued = false;
             m.queued_reconcile = false;
@@ -146,6 +159,13 @@ Out Step(Machine& m, const In& in, const Params& p) noexcept {
         }
         break;
     case State::entered:
+        // The exit never came within release_ms: leave entered (no completion counted).
+        if (release_now || m.released) {
+            m.state = State::idle;
+            m.taps_this = 0;
+            m.queued = false;
+            break;
+        }
         // A remote reload started while body 1 still reloads: queued for its exit.
         if (start) m.queued = true;
         if (body_exit) {

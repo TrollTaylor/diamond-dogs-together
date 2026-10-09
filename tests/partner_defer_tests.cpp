@@ -1859,6 +1859,26 @@ void TestJobWindow() {
                   "F1: without the reconcile the remote's reload freezes again");
             g_hook_sample.packet.gun_flags = pi::GunFlag::Valid;
             g_hook_sample.packet.gun_mode = c::gun_mode_aim;
+            // A lost exit: body 1 wedged in 12 freezes until the driver's release (release_ms); then the mirror
+            // writes again, the first write being the reconcile (rec+0x3E8 too). The release never overrides the
+            // remote's own reload.
+            Put<std::uint8_t>(Addr(gun_rec) + c::gun_mode_cur, c::gun_mode_reload2);
+            Check(run() && hs.native.mag_last == hk::MagRefusal::reload && Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag) == 4,
+                  "F1: body 1 wedged in its reload mode: frozen");
+            a.reload_release = true;
+            hk::PublishArm(a);
+            g_hook_sample.packet.gun_flags = pi::GunFlag::Valid | pi::GunFlag::Reloading;
+            Check(run() && hs.native.mag_last == hk::MagRefusal::reload && Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag) == 4,
+                  "F1: the release never overrides the remote's reload");
+            g_hook_sample.packet.gun_flags = pi::GunFlag::Valid;
+            {
+                const hk::NativeStats r0 = hs.native;
+                Check(run() && hs.native.mag_last == hk::MagRefusal::none && Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag) == 2 &&
+                          Get<std::uint16_t>(Addr(gun_rec) + c::gun_m3e8) == 2 && hs.native.mag_reconciles == r0.mag_reconciles + 1,
+                      "F1: released: the mirror reconciles although body 1 still shows 12 (never frozen forever)");
+            }
+            a.reload_release = false;
+            hk::PublishArm(a);
             a.reload_hold = true;
             Put<std::uint8_t>(Addr(gun_rec) + c::gun_mode_cur, c::gun_mode_aim);
             hk::PublishArm(a);

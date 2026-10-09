@@ -183,7 +183,7 @@ int main() {
                            "\"tier\":\"\",\"family\":\"\",\"state\":\"\",\"reason\":\"\",\"handle\":0,\"want_type\":0,\"candidates\":0,"
                            "\"candidate\":0},")!=std::string::npos &&
                   doc.find("\"completed_late\":0,\"queued_taps\":0,\"reconcile\":false,\"len_ms\":0,\"len_max_ms\":0,\"remote_len_ms\":0,"
-                           "\"refill_ms\":0,\"probe1\":")!=std::string::npos &&
+                           "\"refill_ms\":0,\"release\":false,\"releases\":0,\"probe1\":")!=std::string::npos &&
                   doc.find("\"tx_type\":[0,0,0],\"rx_type\":[0,0,0],\"rx_version\":0,\"apply\":")!=std::string::npos &&
                   doc.find("\"setting\":\"\",\"resident_fields\":[\"index\",\"id\",\"type\",\"receiver\",\"flags\",\"refs\"],"
                            "\"resident\":null,\"preload\":{\"ids\":[],\"verdict\":\"\",\"reason\":\"\",\"new_hashes\":0}}")!=std::string::npos))return 1;
@@ -275,7 +275,7 @@ int main() {
         t.reload_starts=2;t.reload_taps=3;t.reload_entered=2;t.reload_completed=1;t.reload_fallbacks=1;t.reload_sample_strip=0x40;
         t.mag_reload_seen=4;t.mag_frozen=90;t.mag_reconciles=2;t.mag_m3e8_writes=1;t.probe1_b20=5;t.probe1_mode=11;
         t.reload_completed_late=1;t.reload_queued_taps=2;t.reload_reconcile=true;t.reload_len_ms=3020;t.reload_len_max_ms=8300;
-        t.reload_remote_len_ms=2015;t.reload_refill_ms=1560;
+        t.reload_remote_len_ms=2015;t.reload_refill_ms=1560;t.reload_release=true;t.reload_releases=0xFFFFFFFFu;
         strcpy_s(t.slot_setting,"write");strcpy_s(t.slot_last,"empty");strcpy_s(t.weapon_gate,"switching");
         t.slot_remote=2;t.slot_remote_seq=pn::kNull;t.slot_body=1;t.slot_target=pn::kNull;t.slots_ok=true;t.slot_filled[1]=true;
         t.slot_equip[1]=46;t.slot_type[1]=4;strcpy_s(t.slot_tier[0],"empty");strcpy_s(t.slot_tier[1],"same");strcpy_s(t.slot_tier[2],"empty");
@@ -287,7 +287,7 @@ int main() {
                   rs.find("\"reload\":{\"setting\":\"event\",\"state\":\"entered\",\"last\":\"time\\\"out\",\"remote_valid\":true,"
                           "\"remote_reloading\":true,\"remote_mode\":11,\"remote_seq\":null,\"hold\":true,\"stuck\":false,\"starts\":2,\"taps\":3,")!=std::string::npos &&
                   rs.find("\"sample_strip\":64,\"completed_late\":1,\"queued_taps\":2,\"reconcile\":true,\"len_ms\":3020,\"len_max_ms\":8300,"
-                          "\"remote_len_ms\":2015,\"refill_ms\":1560,\"probe1\":{\"b20\":5,\"b24\":0,\"shots\":0,\"mode_changes\":0,"
+                          "\"remote_len_ms\":2015,\"refill_ms\":1560,\"release\":true,\"releases\":4294967295,\"probe1\":{\"b20\":5,\"b24\":0,\"shots\":0,\"mode_changes\":0,"
                           "\"mode\":11}}")!=std::string::npos &&
                   rs.find("\"reload_seen\":4,\"frozen\":90,\"reconciles\":2,\"m3e8_writes\":1}")!=std::string::npos &&
                   rs.find("\"slots\":{\"setting\":\"write\",\"remote_slot\":2,\"remote_seq\":null,\"body_slot\":1,\"hand_slot\":1,\"target\":null,"

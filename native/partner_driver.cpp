@@ -544,6 +544,7 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
     a.reload = gun_stage ? set.nreload : PartnerNativeReload::mirror;
     a.reload_hold = gun_stage && m.reload_out.hold;
     a.reload_reconcile = gun_stage && m.reload_out.reconcile;
+    a.reload_release = gun_stage && m.reload_out.release;
     a.config.sample_strip = gun_stage && set.nreload == PartnerNativeReload::event && m.remote_v5 ? pnat::kPadReload : 0u;
     a.slot_follow = !gun_stage ? PartnerNativeSlot::off
                     : (set.play_mode && set.nslot == PartnerNativeSlot::call) ? PartnerNativeSlot::write
@@ -3187,6 +3188,8 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         t.reload_completed_late = m.reload.completed_late;
         t.reload_queued_taps = m.reload.queued_taps;
         t.reload_reconcile = m.reload_out.reconcile;
+        t.reload_release = m.reload_out.release;
+        t.reload_releases = m.reload.releases;
         t.reload_len_ms = m.reload.len_ms;
         t.reload_len_max_ms = m.reload.len_max_ms;
         t.reload_remote_len_ms = m.reload.remote_len_ms;

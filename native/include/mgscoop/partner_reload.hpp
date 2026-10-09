@@ -38,6 +38,14 @@ struct Params {
     // 1.0 offline: 3.02 s for stock46, run 53e36944); shell-by-shell weapons
     // take several seconds.
     std::uint32_t stuck_ms = 8000;
+    // A body reload mode older than this (an exit that never arrives: body 1
+    // unread for that long or wedged in 11/12) is released: the machine leaves
+    // entered without counting a completion (event release) and the hook's
+    // freeze rule stops waiting for body 1's mode (Out::release) until it
+    // leaves the reload mode. Far above any native reload (3.02 s stock46,
+    // shell-by-shell weapons several seconds), so the mirror can never stay
+    // frozen forever.
+    std::uint32_t release_ms = 20000;
 };
 
 // One driver tick.
@@ -86,6 +94,9 @@ struct Out {
     // remote's magazine although the remote reloads (body 1's own completion
     // filled its magazine; its next reload request needs it below capacity).
     bool reconcile;
+    // Body 1's reload mode passed release_ms (latched until it leaves the
+    // reload mode): no hold, and the hook no longer freezes on body 1's mode.
+    bool release;
 };
 // Per mission (Reset at MissionStart). Counters are mission totals.
 struct Machine {
@@ -94,11 +105,11 @@ struct Machine {
     std::uint8_t last_seq;
     std::uint64_t since_ms, tap_ms, body_since_ms;
     std::uint32_t taps_this;
-    bool body_reload, stuck_latched;
+    bool body_reload, stuck_latched, released;
     // A remote reload start seen while entered (queued for body 1's exit) and
     // the pending tap it caused (the reconcile instead of the hold).
     bool queued, queued_reconcile;
-    std::uint32_t starts, taps, entered, completed, completed_late, stuck, fallbacks, body_entries, queued_taps;
+    std::uint32_t starts, taps, entered, completed, completed_late, stuck, fallbacks, body_entries, queued_taps, releases;
     const char* last_reason;
     // Telemetry (milliseconds; 0 until measured): the last and longest native
     // reload (body_exit - body_enter), the remote's last mode-11/12 span and
@@ -113,19 +124,23 @@ void Reset(Machine& machine) noexcept;
 // gate strips RELOAD), body (body 1's gun record unread), cls (not a gun
 // class), gate (the reload gate), no_reload (the CanReload replica: full,
 // no stock or the no-reload bit), timeout (max_taps taps without a reload
-// mode), remote_done (the remote left its reload before body 1 entered).
+// mode), remote_done (the remote left its reload before body 1 entered),
+// released (body 1 has sat in its reload mode past release_ms).
 // entered lasts until body 1's own exit (every exit counts: complete, or
-// complete_late after stuck_ms); a stuck latch never releases it.
+// complete_late after stuck_ms); a stuck latch never releases it, release_ms
+// does (event release, no completion counted: a lost exit).
 Out Step(Machine& machine, const In& in, const Params& params = Params{}) noexcept;
 
 // The hook's freeze rule for the magazine mirror: mirror never freezes; raw and
 // event freeze while the remote reloads (v5 flag; not while the driver's queued
 // tap asks for the reconcile), while the driver holds, or while body 1 sits in
-// a reload mode, however long (the reconcile runs once, after body 1's native
-// exit, never at a stuck latch).
+// a reload mode (the reconcile runs once, after body 1's native exit, never at
+// a stuck latch) until the driver's release (release_ms: a lost exit never
+// freezes the mirror forever).
 inline constexpr bool MirrorFrozen(PartnerNativeReload setting, bool remote_reloading, std::uint8_t body_mode, bool hold,
-                                   bool reconcile) noexcept {
-    return setting != PartnerNativeReload::mirror && ((remote_reloading && !reconcile) || hold || ReloadMode(body_mode));
+                                   bool reconcile, bool release) noexcept {
+    return setting != PartnerNativeReload::mirror &&
+           ((remote_reloading && !reconcile) || hold || (ReloadMode(body_mode) && !release));
 }
 
 // Sender side (input frame v5): reload_seq advances on each entry into a

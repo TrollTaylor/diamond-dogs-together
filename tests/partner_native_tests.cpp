@@ -1283,16 +1283,82 @@ void TestReload() {
     gone.remote_valid = false;
     pr::Step(n, gone);
     Check(!pr::Step(n, ReloadReady(300, 9, 11, 7)).tap && n.starts == 0, "after an invalid frame the counter is only recorded");
-    // The freeze rule: body 1's reload mode freezes however long it lasts (the reconcile only after the exit).
+    // A lost exit never freezes forever: entered, then body 1 unread for good (its last mode stays 11). The
+    // stuck report at 8 s keeps the hold; release_ms (20 s) leaves entered without a completion and the hook
+    // stops waiting for body 1's mode (Out::release) until a readable tick shows it left the reload mode.
     using mgscoop::PartnerNativeReload;
-    Check(!pr::MirrorFrozen(PartnerNativeReload::mirror, true, 11, true, false), "mirror never freezes");
-    Check(pr::MirrorFrozen(PartnerNativeReload::raw, true, 7, false, false), "raw: the remote reloading freezes");
-    Check(pr::MirrorFrozen(PartnerNativeReload::raw, false, 12, false, false), "raw: body 1 reloading freezes");
-    Check(pr::MirrorFrozen(PartnerNativeReload::raw, false, 12, false, true), "raw: body 1 reloading freezes even with the reconcile");
-    Check(pr::MirrorFrozen(PartnerNativeReload::event, false, 7, true, false), "event: the driver's hold freezes");
-    Check(!pr::MirrorFrozen(PartnerNativeReload::event, false, 7, false, false), "event: nothing reloading, no freeze");
-    Check(!pr::MirrorFrozen(PartnerNativeReload::event, true, 7, false, true), "event: the queued tap's reconcile despite the remote reload");
-    Check(pr::Params{}.stuck_ms == 8000, "stuck_ms 8000 (a 3.02 s native reload is never stuck)");
+    {
+        pr::Machine r{};
+        pr::Reset(r);
+        pr::Step(r, ReloadReady(1000, 1, 7, 7));
+        o = pr::Step(r, ReloadReady(2000, 2, 11, 7));
+        Check(o.tap && r.state == pr::State::pending, "lost exit: tap");
+        o = pr::Step(r, ReloadReady(2100, 2, 11, 11));
+        Check(Is(o.event, "entered") && o.hold && !o.release, "lost exit: entered");
+        pr::In lost = ReloadReady(2200, 2, 7, 0);
+        lost.body_ok = false;
+        o = pr::Step(r, lost);
+        Check(o.hold && !o.release && r.state == pr::State::entered, "lost exit: unread, still held");
+        lost.now_ms = 10200;
+        o = pr::Step(r, lost);
+        Check(o.hold && o.stuck && Is(o.event, "stuck") && !o.release && r.state == pr::State::entered, "lost exit: stuck at 8 s, still held");
+        lost.now_ms = 22099;
+        o = pr::Step(r, lost);
+        Check(o.hold && !o.release, "lost exit: held until release_ms");
+        lost.now_ms = 22100;
+        o = pr::Step(r, lost);
+        Check(!o.hold && o.release && Is(o.event, "release") && r.state == pr::State::idle && r.releases == 1 && r.completed == 0 &&
+                  !pr::MirrorFrozen(PartnerNativeReload::event, false, 11, o.hold, o.reconcile, o.release),
+              "lost exit: released after 20 s (no hold, the hook no longer freezes on body 1's mode, no completion)");
+        lost.now_ms = 30000;
+        o = pr::Step(r, lost);
+        Check(!o.hold && o.release && !o.event && r.releases == 1, "released stays latched while the mode is unread");
+        // A new remote reload while the released body still shows 11/12: no entered, a fallback.
+        pr::In again = ReloadReady(30100, 3, 11, 11);
+        o = pr::Step(r, again);
+        Check(Is(o.event, "fallback") && Is(o.reason, "released") && !o.hold && o.release && r.state == pr::State::idle,
+              "released body reload: a new remote reload falls back (the plain mirror)");
+        // The body leaves its reload mode: the latch clears, no completion is counted for the lost one.
+        o = pr::Step(r, ReloadReady(30200, 3, 7, 7));
+        Check(!o.release && !o.hold && Is(o.body_event, "body_exit") && r.completed == 0 && !r.released, "the latch clears at the exit");
+        // The next reload enters and completes normally.
+        o = pr::Step(r, ReloadReady(31000, 4, 11, 7));
+        Check(o.tap, "after a release: the next reload taps");
+        o = pr::Step(r, ReloadReady(31100, 4, 11, 11));
+        Check(Is(o.event, "entered") && o.hold && !o.release, "after a release: entered");
+        o = pr::Step(r, ReloadReady(34100, 4, 7, 7));
+        Check(Is(o.event, "complete") && r.completed == 1 && o.len_ms == 3000, "after a release: complete");
+        // raw (no machine): a body wedged in 11 is released too (the hook's own body-mode freeze).
+        pr::In wedged = ReloadReady(40000, 4, 7, 12);
+        wedged.setting = PartnerNativeReload::raw;
+        o = pr::Step(r, wedged);
+        Check(Is(o.body_event, "body_enter") && !o.release, "raw: body 1 enters 12");
+        wedged.now_ms = 60000;
+        o = pr::Step(r, wedged);
+        Check(o.release && Is(o.event, "release") && r.releases == 2 && !pr::MirrorFrozen(PartnerNativeReload::raw, false, 12, false, false, o.release),
+              "raw: a body wedged in 12 past release_ms no longer freezes the mirror");
+        // mirror never freezes: no release either.
+        pr::Machine q{};
+        pr::Reset(q);
+        pr::In mir = ReloadReady(1000, 1, 7, 11);
+        mir.setting = PartnerNativeReload::mirror;
+        pr::Step(q, mir);
+        mir.now_ms = 50000;
+        o = pr::Step(q, mir);
+        Check(!o.release && !o.stuck && q.releases == 0, "mirror: no stuck report, no release");
+    }
+    // The freeze rule: body 1's reload mode freezes until the exit or the release (the reconcile only after the exit).
+    Check(!pr::MirrorFrozen(PartnerNativeReload::mirror, true, 11, true, false, false), "mirror never freezes");
+    Check(pr::MirrorFrozen(PartnerNativeReload::raw, true, 7, false, false, false), "raw: the remote reloading freezes");
+    Check(pr::MirrorFrozen(PartnerNativeReload::raw, false, 12, false, false, false), "raw: body 1 reloading freezes");
+    Check(pr::MirrorFrozen(PartnerNativeReload::raw, false, 12, false, true, false), "raw: body 1 reloading freezes even with the reconcile");
+    Check(!pr::MirrorFrozen(PartnerNativeReload::raw, false, 12, false, false, true), "raw: a released body reload no longer freezes");
+    Check(pr::MirrorFrozen(PartnerNativeReload::raw, true, 12, false, false, true), "raw: the release never overrides the remote's reload");
+    Check(pr::MirrorFrozen(PartnerNativeReload::event, false, 7, true, false, false), "event: the driver's hold freezes");
+    Check(!pr::MirrorFrozen(PartnerNativeReload::event, false, 7, false, false, false), "event: nothing reloading, no freeze");
+    Check(!pr::MirrorFrozen(PartnerNativeReload::event, true, 7, false, true, false), "event: the queued tap's reconcile despite the remote reload");
+    Check(pr::Params{}.stuck_ms == 8000 && pr::Params{}.release_ms == 20000 && pr::Params{}.release_ms > pr::Params{}.stuck_ms,
+          "stuck_ms 8000 (a 3.02 s native reload is never stuck), release_ms 20000");
     // Sender counters.
     pr::SenderState s{};
     pr::SenderStep(s, true, 11, 1);

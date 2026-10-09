@@ -12,8 +12,10 @@ patch, every new read pinned:
   every exit counts (`complete`, `complete_late`), the mirror reconciles once
   after it, and a remote reload started meanwhile gets one queued tap (with
   the reconcile, so body 1's magazine is below capacity). Telemetry
-  `reload.len_ms`, `remote_len_ms`, `refill_ms`. The reload keeps its native
-  length (the rate work F2 is out of scope).
+  `reload.len_ms`, `remote_len_ms`, `refill_ms`. A lost exit (body 1 unread
+  or wedged in 11/12) is released after 20 s (`partner_reload=release`, Arm
+  `reload_release`): the mirror is never frozen forever. The reload keeps its
+  native length (the rate work F2 is out of scope).
 - **Sender base ids**: a slot's base id is never a non-gun id (343 was a
   type-11 id). Customized aliases get their own type from the game's alias
   path of `A2A3E0` (`0x2C934A0`, `0x2A711F0`; five new sites, the partner

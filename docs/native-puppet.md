@@ -699,15 +699,16 @@ slots) and in the runtime code gate.
   press word while aiming, the hold classifier's tap when holstered), retried
   every 250 ms up to 3 taps until body 1 shows 11/12; `entered` ->
   `complete` when the mode leaves (every native exit counts, see F1 below),
-  `stuck` after 8 s (a report only). Fallbacks (the plain
+  `stuck` after 8 s (a report only), `release` after 20 s (a lost exit).
+  Fallbacks (the plain
   mirror, no animation): `inactive|weapon|body|cls|gate|no_reload|timeout|
-  remote_done`. Holstered and empty-magazine automatic reloads arrive the
+  remote_done|released`. Holstered and empty-magazine automatic reloads arrive the
   same way (the sender's mode, not its pad). `partner.trigger rtap=1` (worker
   `run partner rtap=1`) forces one test tap.
 - **R4 freeze and reconcile** (`MirrorMag`): with `raw|event` the mirror
   writes nothing while the remote reloads (v5 flag), while body 1 is in 11/12
-  (however long: never released at a stuck report) or while the machine
-  holds; the first write afterwards (the
+  (never released at a stuck report; only the 20 s release of a lost exit
+  ends it) or while the machine holds; the first write afterwards (the
   reconcile) also writes `rec+0x3E8` (the completion's base) so a later
   completion starts from the mirrored magazine. An R edge no longer
   re-asserts the remote's magazine (only with `mirror`). A change of body 1's
@@ -732,7 +733,15 @@ slots) and in the runtime code gate.
   `complete_late` after 8 s, `reload.completed_late`); the mirror reconciles
   once after the exit (the remote's magazine and `rec+0x3E8`, only when they
   differ), never at a stuck report; an unread tick neither exits nor
-  re-enters. **Queued reload:** a remote reload start (counter moved, mode
+  re-enters. **Lost exit (review):** an exit that never arrives (body 1
+  unread for good, or wedged in 11/12) must not freeze the mirror forever:
+  after `release_ms` 20000 (far above any native reload) the machine logs
+  `partner_reload=release`, leaves `entered` without counting a completion
+  (`reload.release`, `reload.releases`), and the Arm's `reload_release` lets
+  the hook stop waiting for body 1's mode (the first write is the
+  reconcile; the remote's own reload still freezes); the latch clears when a
+  readable tick shows body 1 out of 11/12, and a remote reload while it is
+  latched falls back (`released`). **Queued reload:** a remote reload start (counter moved, mode
   11/12) while body 1 is still entered is queued; if the remote is still
   reloading at body 1's exit the machine taps once more
   (`partner_reload=queued_tap; ...; reconcile=1`, `reload.queued_taps`) and,
@@ -1059,11 +1068,12 @@ ok=..`, `partner_slot=write|refused; reason=..; target=..; ...`,
 (the follower off until MissionStart).
 
 Weapons3: `reload` adds `completed_late`, `queued_taps`, `reconcile`,
-`len_ms`, `len_max_ms`, `remote_len_ms`, `refill_ms`; `equip` adds `tx_type`,
+`len_ms`, `len_max_ms`, `remote_len_ms`, `refill_ms`, `release`, `releases`; `equip` adds `tx_type`,
 `rx_type`, `rx_version`; `slots.writer.slots[s]` adds `want_type`,
 `candidates`, `candidate`. Log lines: `partner_reload=complete|complete_late;
 ... len_ms=..; remote_len_ms=..; refill_ms=..; ...; queued_tap=..`,
-`partner_reload=queued_tap; ...; reconcile=1`, `partner_equip_base; ...`,
+`partner_reload=queued_tap; ...; reconcile=1`, `partner_reload=release; ...`
+(a lost exit after 20 s), `partner_equip_base; ...`,
 `equip_writer=a1_refused; ...; next=c`, `equip_writer=candidate; ...`, and
 every `equip_writer=` line carries `want_type`, `candidates`, `candidate`.
 

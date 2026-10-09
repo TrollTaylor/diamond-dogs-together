@@ -763,7 +763,7 @@ struct Mission {
     std::uint64_t tap_bump_ms;
     bool tap_bumped;
     // The receiver's event machine (partner_reload) and its last output (the
-    // Arm's reload_hold/reload_stuck); the sender's v5 counters.
+    // Arm's reload_hold/reload_reconcile/reload_release); the sender's v5 counters.
     partner_reload::Machine reload;
     partner_reload::Out reload_out;
     partner_reload::SenderState sender_gun;

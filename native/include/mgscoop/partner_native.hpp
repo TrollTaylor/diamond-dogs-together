@@ -499,6 +499,10 @@ struct Telemetry {
     // until measured).
     std::uint32_t reload_completed_late, reload_queued_taps;
     bool reload_reconcile;
+    // A body reload mode past release_ms (a lost exit): released now, and how
+    // often this mission (the mirror stops waiting for the exit).
+    bool reload_release;
+    std::uint32_t reload_releases;
     std::uint32_t reload_len_ms, reload_len_max_ms, reload_remote_len_ms, reload_refill_ms;
     // The magazine mirror's freeze (hook process totals): RELOAD edges seen
     // (written or not), drains frozen, reconcile writes and rec+0x3E8 writes.

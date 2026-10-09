@@ -78,7 +78,8 @@
 #           (weapons3, run 53e36944: body 1 exits natively after ~3.02 s at its own playback rate): the burst (18 x 200 ms)
 #           covers the exit: partner_reload=body_enter, then partner_reload=complete; setting=event; len_ms=2950..3100;
 #           remote_len_ms=..; refill_ms=~1560 (body 1's own refill); ...; completed=N; entered=N; late=0 for EVERY reload
-#           (reload.completed == reload.entered, reload.stuck_n 0, never partner_reload=stuck within 8 s); the ring's gmode
+#           (reload.completed == reload.entered, reload.stuck_n 0, reload.releases 0, never partner_reload=stuck within
+#           8 s nor partner_reload=release, the 20 s lost-exit release: report it); the ring's gmode
 #           11 -> 8 with b26 0 and upper_req 2; between body_enter and the exit mag.frozen grows and mag.writes does not;
 #           mag.reconciles +1 at most, AFTER the exit (gun.mag == gun.cap, gun.m3e8 == gun.mag); mag.reload_seen counts
 #           the R edges; leak.ammo_leaks 0 (else mag.leak_off and partner_input=ammo_leak; mag_mirror=disabled: report it).

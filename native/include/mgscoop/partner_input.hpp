@@ -489,11 +489,13 @@ struct Arm {
     // The partner's own reload (docs/native-puppet.md "Weapons" R4; not
     // compared by SameArm): the setting (mirror never freezes the magazine
     // mirror), the driver's event machine holding it (pending/entered; a stuck
-    // body reload stays held until its native exit) and the queued tap's
+    // body reload stays held until its native exit), the queued tap's
     // reconcile (the mirror writes the remote's magazine although the remote
-    // reloads: body 1's next reload needs its magazine below capacity).
+    // reloads: body 1's next reload needs its magazine below capacity) and the
+    // release (body 1's reload mode passed partner_reload release_ms: a lost
+    // exit no longer freezes the mirror).
     PartnerNativeReload reload;
-    bool reload_hold, reload_reconcile;
+    bool reload_hold, reload_reconcile, reload_release;
     // The weapon switch (W4; not compared by SameArm): the slot follower
     // (off|write|call), the slots the driver's plan admits (bit s) and the
     // body's equip in each (the follower re-checks the handle against it).
