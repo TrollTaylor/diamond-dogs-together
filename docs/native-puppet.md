@@ -249,11 +249,16 @@ degrees). The failures and their fixes:
   3600 deg/s^2): only while the remote stick r < 0.1, the remote's speed < 150
   mm/s and the body's own speed < 100 mm/s have each held 200 ms (any stick
   aborts a turn in the same tick), body act 1/3/5 with the remote in the same
-  idle act, |err| > 5 degrees held 200 ms, exit below 1 degree (the last write
-  lands exactly). Writes are the verified xform (T.vt+0x70, T.vt+0x68) at the
-  body's own readback position on the driver tick (`Action::face`), refused
-  while `partner_defer::InBatch()` (never a placement on refusal); the start
-  and end of a turn bump the body epoch, small steps do not.
+  idle act, |err| > 5 degrees held 200 ms and the body's own yaw rate
+  (readback minus our writes) below 30 deg/s (a pivot or turn animation the
+  game still plays is waited out: reason `rate`), exit below 1 degree (the
+  last write lands exactly; a driver tick gap over 250 ms restarts the eased
+  turn from the readback, never a snap). Writes are the verified xform
+  (T.vt+0x70, T.vt+0x68) at the body's own readback position on the driver
+  tick (`Action::face`), refused while `partner_defer::InBatch()` or after
+  the window-close shutdown (`partner_defer::ShuttingDown()`; never a
+  placement on refusal); the start and end of a turn bump the body epoch,
+  small steps do not.
 - **Placed or teleported bodies** (fall/land acts 25/26, 77 degrees for 1.5 s
   after an 8 m teleport): the settle mode snaps once when |err| > 10 degrees
   within 1.5 s of a placement, snap or teleport, or while the body is in act
@@ -420,7 +425,9 @@ reachability, owner-stamp, EVADE census and reference assertions).
   magazine), then the record, never through the setter `0xEE96C0` (its
   notifier `[Y+0x58]` vt+0x100 takes no id). Refusals (`mag.store.last`): the
   store iface vtable not `0x23894B0`/`0x23895D0` or its +0x20 not the setter
-  (`y_vt`), stride outside 1..16 or the slot beyond it (`slot`), the row type
+  (`y_vt`), stride outside 1..16, the slot beyond it or id 1's row at or past
+  the store's row count `Y+0x10` (the store init `0xEE92F0`, object vt+8 of
+  both classes, sizes the types and rows by ids * stride: `slot`), the row type
   outside 1..9 or type 9 with a sub magazine (`type`), instance 1 as the local
   id (`owner`), S_IS_ONLINE or `P+0x204` bit 18 (`online`), `rec+0x3D0` bit 27
   (`tamper`: the obfuscated tamper counters at `*(P+0x48)+0x2F8`; bit 27 is set
@@ -440,12 +447,17 @@ reachability, owner-stamp, EVADE census and reference assertions).
   live (`partner_fire=masked; reason=noise_<why>`), unless the lab key
   `partner_native_noise=keep` (the worker's gun stage requires `filter`).
 - **The weapon gate (F4).** Body 1 carries one gun (stock46). Input frame v4
-  carries the sender's gun record equip (xflags `Equip` 0x80, bytes 82..83);
-  while it differs from body 1's equip every native window strips FIRE and
-  RELOAD from its injection (`Arm.strip`, not compared by SameArm: no gen
+  carries the sender's gun record equip (xflags `Equip` 0x80, bytes 82..83).
+  A customized weapon's record holds its alias (the lab save's back slot:
+  alias 873 of base 46, hidden run b9528e4d: `remote_equip` 873, `body_equip`
+  46), so the receiver compares it as the stock id of the received loadout
+  manifest slot whose alias it is (`weapon.remote_gun_base`; a stock id, an
+  alias no slot names or no manifest yet stays itself). While neither the
+  raw equip nor that base is body 1's equip every native window strips FIRE
+  and RELOAD from its injection (`Arm.strip`, not compared by SameArm: no gen
   bump) and the magazine mirror freezes (`mag.last=weapon`); logged as
-  `partner_weapon=mismatch|match; remote_equip=..; body_equip=..; strip=..`
-  and, with visual fire, `partner_fire=masked; reason=weapon_mismatch` /
+  `partner_weapon=mismatch|match; remote_equip=..; remote_base=..;
+  body_equip=..; strip=..` and, with visual fire, `partner_fire=masked; reason=weapon_mismatch` /
   `partner_fire=live; reason=weapon_match`. A real weapon switch on body 1
   (the generalized writer, slot-select bits) stays open.
 - **Trigger evidence.** After each windowed drain the hook reads instance 1's
@@ -677,7 +689,12 @@ evidence per stage).
   setter with its notifier (game code, not ours): `leak.ammo_leaks` watches it.
 - Facing (untested at runtime): whether the game keeps the governor's xform in
   idle acts (the old one-shot yaw rule did) and in aim acts (the contest guard
-  latches if not); whether looksrc removes the act-12 cycle (O7 is a
+  latches if not); an idle turn starts only while the body's own yaw rate
+  (readback minus our writes) is below 30 deg/s, so a pivot or turn animation
+  the game still plays is waited out, never fought; a driver tick gap over
+  250 ms restarts a turn from the readback instead of snapping onto the
+  target; after the window-close shutdown (`partner_defer::ShuttingDown`) the
+  governor's writes and the look source install are refused like in a batch; whether looksrc removes the act-12 cycle (O7 is a
   hypothesis: the A/B run decides); the look source patch is cross-modifying
   code installed only with no batch in flight (block 0's phase 0 runs on a
   worker inside a batch).

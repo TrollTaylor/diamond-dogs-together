@@ -5,15 +5,18 @@
 #   B: the same with -LabSetting partner_native_aim=looksrc
 # Optional C (only if B still shows the act-12 cycle): -LabSetting partner_native_face=aim (the governor's aim mode).
 # Lab saves, noon, 30010. "Viewer" = the role filming its partner (body 1); captures.jsonl holds the viewer's state.json.
+# First part: the host moves and the guest films (face-*); second part: the guest moves and the host films (g-face-*).
 # Pass criteria (mechanical, on the viewer role):
-#  every face-* (host films) and g-face-* (guest films) capture: |heading_error_deg| < 10.
+#  every face-* (the guest films the host's partner) and g-face-* (the host films the guest's) capture: |heading_error_deg| < 10.
 #  aim captures (face-aim*, face-crouch-aim, g-face-aim) after their first 600 ms: < 5 % of ring ticks with
 #    |face_err_cdeg| > 1000; ring act 12 never unless the remote shows it (body.remote_act); native.look.err_mdeg < 1000
 #    while native.look.remote_cdeg is not null. Run B: native.look.src "installed", src_hits_s > 0 while the viewer's
 #    partner aims; the log has look_src=installed; site=0xff29fc. Run A: look.src "off".
-#  face-place-viewer-aims: no body act 11 in the capture ring (the placement ran with a neutral pad: the viewer's held
-#    RMB never reached block 1's job), native.defer.per_s.unwindowed_native 0, the log has partner_input=neutral; on=1
-#    and never partner_input=disarmed; reason=place under the native drive; partner_recon=placed; ok=1; yaw_err_mdeg
+#  face-place-viewer-aims (the guest holds RMB and films its partner while the host teleports: that partner is placed):
+#    no body act 11 in the guest's capture ring (the placement ran with a neutral pad: the viewer's held RMB never
+#    reached block 1's job; the ring holds ~1 s, so also check native.facing.neutral_windows growth and the log lines),
+#    native.defer.per_s.unwindowed_native 0, the guest's log has partner_input=neutral; on=1 and never
+#    partner_input=disarmed; reason=place under the native drive; partner_recon=placed; ok=1; yaw_err_mdeg
 #    within 10000 (or a partner_recon=place_yaw_fix line before it).
 #  native.facing.contests <= 2 per run, native.fallbacks 0, native.facing.mode never "contested" in face-* captures.
 #  no ring act 25/26 caused by a governor write (25/26 only within 1.5 s after a partner_recon=place / snap line).
@@ -77,7 +80,7 @@ stance host stand
 # The viewer holds RMB while its partner is placed (run 63199: 57 degrees for 1.5 s).
 guest hold rmb 1500 nowait
 placebehind host guest 6 4
-host burst face-place-viewer-aims 4 300
+guest burst face-place-viewer-aims 4 300
 guest release
 wait 1500
 # --- The other direction: the guest moves, the host films ---------------------

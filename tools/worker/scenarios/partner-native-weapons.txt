@@ -12,7 +12,8 @@
 #           partner_fire=masked; reason=weapon or gun_read; a noise refusal masks FIRE: reason=noise_<why>).
 #  aim:     gun.bit18 1 and node_active within 300 ms, aim_match; fire.live/armed/effective true, fire.refused "none";
 #           noise.installed/live true; rings.on true and rings.windows growing (the drains isolate the sample rings);
-#           weapon.kb_remote true for a keyboard shooter, weapon.remote_gun_equip == gun.body_equip (46), weapon.mismatch false.
+#           weapon.kb_remote true for a keyboard shooter, weapon.remote_gun_base == gun.body_equip (46; remote_gun_equip is the
+#           shooter's record equip, the alias 873 of base 46 with the lab save), weapon.mismatch false.
 #  fire1:   trigger.requested +1 (>= 1 per FIRE press; the pellets of 46 are one shot) and trigger.fire_modes +1 within
 #           2 captures; fire.suppressed grows by the pellet count (>= 1); noise.dropped +1; frames show the muzzle flash.
 #  firehold: trigger.requested grows by the shooter's magazine drop (mag.remote before minus after) +-1;
@@ -28,7 +29,7 @@
 #           afterwards; leak.ammo_leaks 0 (else mag.leak_off and partner_input=ammo_leak; mag_mirror=disabled: report it).
 #  holster-reload: record (the classifier path; gun.gate / gun.class / gun.b20 tell whether it starts).
 #  crouch-fire: as fire1 with body act 14/15 (fired with the original weapon 46: before the switch section).
-#  switch1, switch2, switch-fire: partner_weapon=mismatch; remote_equip=..; body_equip=46 and partner_fire=masked;
+#  switch1, switch2, switch-fire: partner_weapon=mismatch; remote_equip=..; remote_base=..; body_equip=46 and partner_fire=masked;
 #           reason=weapon_mismatch in the receiver's log; weapon.mismatch true, weapon.strip 80 (FIRE|RELOAD);
 #           trigger.requested unchanged and fire.suppressed unchanged through switch-fire; mag.last "weapon" (frozen).
 #  equip:   both logs partner_equip=sent; rev=1; ... within 5 s of link-up; the peer partner_equip=manifest; rev=1 and
