@@ -251,6 +251,7 @@ int main() {
         if(!check(n>0 && ValidJson(doc)))return 1;
         char small[64];
         if(!check(tag::FormatJson(t,r,small,sizeof(small))==0 && small[0]==0))return 1;
+    }
     // The Steam self-test member (docs/steam-online.md 14).
     {
         mgscoop::steam_state::SelftestReport r{};
