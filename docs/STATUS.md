@@ -40,6 +40,16 @@ patch, every new read pinned:
   `aim-hold-reload` section (instance 1's aiming exit), F1, writer (all three
   slots a1 or c), early manifest and switching evidence. Both PCs must run
   this build (a 0.12.0 peer refuses the version 2 manifest).
+- **Review fixes**: a lost reload exit releases the mirror after 20 s (above);
+  a same-revision manifest with new content replaces the seeded store (a
+  0.12.0 sender restarts at revision 1 every mission and was dropped as a
+  duplicate for the rest of the session); A1 never targets the viewer's own
+  `vars.weapons` and a tier C candidate whose fresh Capture refs are not 0 is
+  refused (the census is the allocation's first snapshot); the early manifest
+  stops at window close in any mission (`partner_defer::ShuttingDown` is set
+  in partner missions only); the sender has its own line budget (a spent
+  mission weapon cap hid the title's `partner_equip=sent`); the slot plan's
+  class is cross-checked against the writer's `TypeSlot`.
 
 Evidence: fixture only (CTest, the Normal, Research and Release worker-check
 profiles, every contract generator `--check`). Hidden runs: the coordinator.
