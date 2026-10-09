@@ -4197,6 +4197,16 @@ void TestEquipEarlyManifest() {
     fake.link_session = 10;
     pd::MissionStart(d, hooks, 30010);
     Check(!d.mission.equip.have, "another link session's manifest is not seeded");
+    // The sender has its own line budget: a title after a long mission (its weapon lines spent) still logs.
+    d.mission.weapon_cap.lines = pd::kNativeEventCap;
+    fake.loadout.weapons[2] = 11;
+    {
+        const std::size_t before = fake.reliable_sent.size();
+        pd::TickEquipLink(d, hooks, 7000);
+        Check(fake.reliable_sent.size() == before + 1 && fake.Containing("partner_equip=sent; rev=3; epoch=10;") == 1 &&
+                  fake.Containing("partner_equip_base; rev=3;") == 3 && fake.Containing("partner_weapon=capped") == 0,
+              "a spent mission weapon cap never hides the sender's lines");
+    }
     // A copy that neither drives natively nor sends input frames sends nothing.
     pd::Driver quiet{};
     mgscoop::LabConfig off{};

@@ -858,6 +858,10 @@ struct Driver {
     std::uint32_t equip_tx_epoch;
     std::uint64_t equip_read_ms;
     partner_player::Loadout equip_loadout;
+    // The sender's own line budget (partner_equip_base / partner_equip=sent),
+    // reset at MissionStart: the title or ACC after a long mission still logs
+    // its sends (the mission's weapon_cap may be spent by then).
+    LogCap equip_tx_cap;
     equipment_stock_writer::Status equip_status;
     std::uint16_t preload_ids[3];
     std::uint8_t preload_count;

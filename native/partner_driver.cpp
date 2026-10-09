@@ -1899,7 +1899,7 @@ void SendEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
                 // How each carried slot's base id came about (once per revision).
                 for (unsigned i = 0; i < ew::kSlots; ++i)
                     if (lo.weapons[i])
-                        EmitNative(m, h, m.weapon_cap, "partner_weapon",
+                        EmitNative(m, h, d.equip_tx_cap, "partner_weapon",
                                    "partner_equip_base; rev=%u; slot=%u; alias=%u; type=%u; receiver=%u; alias_receiver=%u; base=%u; "
                                    "scan=%s; tables=%u\r\n",
                                    unsigned(mf.revision), i, unsigned(lo.weapons[i]), unsigned(mf.slots[i].type),
@@ -1917,7 +1917,7 @@ void SendEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
     d.equip_tx_dirty = false;
     d.equip_tx_epoch = epoch;
     const auto& s = d.equip_tx.slots;
-    EmitNative(m, h, m.weapon_cap, "partner_weapon",
+    EmitNative(m, h, d.equip_tx_cap, "partner_weapon",
                "partner_equip=sent; rev=%u; epoch=%u; base=%u,%u,%u; alias=%u,%u,%u; receiver=%u,%u,%u; type=%u,%u,%u; tables=%u; "
                "mission=%u\r\n",
                unsigned(d.equip_tx.revision), epoch, unsigned(s[0].base_id), unsigned(s[1].base_id), unsigned(s[2].base_id),
@@ -3558,6 +3558,7 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
     // The remote's manifest of this link session (received in any earlier
     // mission, the title or the ACC): the slot plan and the weapon gate start
     // with it; a new revision replaces it as before.
+    d.equip_tx_cap = LogCap{};
     const std::uint32_t session = h.link_session ? h.link_session(h.context) : 0;
     if (d.equip_cache_have && session && d.equip_cache_epoch == session) {
         d.mission.equip.have = true;
