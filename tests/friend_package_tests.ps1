@@ -460,7 +460,7 @@ try {
         Assert-True ([bool]$sentence -and !$sentence.StartsWith('The connection was refused')) "Steam sentence for $reason"
     }
     Assert-True ((Get-CoopLinkReasonText -Reason steam_iface_shape).Contains('LAN/VPN')) 'a Steam networking change points to the LAN/VPN code'
-    $steamStatus = '{"v":1,"pid":4242,"mode":"play","role":"host","state":"connected","reason":"","verified":1,"session":1,"peer":"steam:...5100","local_port":0,"rtt_ms":61,"jitter_ms":3,"loss_permille":0,"resend":0,"tx_Bps":3900,"rx_Bps":3800,"interp_ms":80,"remote_build":"0.11.1","partner":"live","partner_shown":1,"look":1,"mission":30050,"saves":"redirected","transport":"steam","route":"relay","accepting":1,"steam":"ok","time_utc":"2026-10-05T12:00:00Z"}'
+    $steamStatus = '{"v":1,"pid":4242,"mode":"play","role":"host","state":"connected","reason":"","verified":1,"session":1,"peer":"steam:...5100","local_port":0,"rtt_ms":61,"jitter_ms":3,"loss_permille":0,"resend":0,"tx_Bps":3900,"rx_Bps":3800,"interp_ms":80,"remote_build":"0.12.0","partner":"live","partner_shown":1,"look":1,"mission":30050,"saves":"redirected","transport":"steam","route":"relay","accepting":1,"steam":"ok","time_utc":"2026-10-05T12:00:00Z"}'
     $sst = ConvertFrom-CoopStatusText -Text $steamStatus -ExpectedPid 4242
     $snow = [DateTime]::Parse('2026-10-05T12:00:03Z').ToUniversalTime()
     Assert-Equal (Format-CoopStatusLine -Status $sst -Role host -NowUtc $snow) '[HOST] link=connected via Steam (relay) rtt=61ms jitter=3ms loss=0.0% interp=80ms | partner=live shown look | mission 30050' 'online status line'
@@ -607,7 +607,7 @@ try {
     Assert-Equal (Get-MgsvInstallDir '') 'MGS_TPP' 'default installdir'
     $tail = Limit-TextTail -Text (("line`n") * 100) -MaxChars 50
     Assert-True ($tail.StartsWith('[... ') -and $tail.Length -lt 100) 'tail limited with a note'
-    Assert-Equal (Get-TextFromLastMarker -Text "x`nMGS Co-op script adapter 0.11.1; b`ny`n" -Marker 'MGS Co-op script adapter') "MGS Co-op script adapter 0.11.1; b`ny`n" 'from the last adapter start'
+    Assert-Equal (Get-TextFromLastMarker -Text "x`nMGS Co-op script adapter 0.12.0; b`ny`n" -Marker 'MGS Co-op script adapter') "MGS Co-op script adapter 0.12.0; b`ny`n" 'from the last adapter start'
 
     # ------------------------------------------------------------ firewall report and elevated command (pure)
     $report = Format-CoopFirewallReport -Rules @(
@@ -648,7 +648,7 @@ try {
     $packages = @(Get-ChildItem -LiteralPath $distFx -Directory)
     Assert-Equal $packages.Count 1 'one friend package staged'
     $pkg = $packages[0].FullName
-    Assert-True ($packages[0].Name -cmatch '^mgs-coop-friend-0\.11\.1-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$') 'package folder name'
+    Assert-True ($packages[0].Name -cmatch '^mgs-coop-friend-0\.12\.0-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$') 'package folder name'
     Assert-True (Test-Path -LiteralPath ($pkg + '.zip') -PathType Leaf) 'package zip written'
     $required = @('Install-Coop.bat', 'Play-Coop.bat', 'Uninstall-Coop.bat', 'Collect-Logs.bat', 'FRIEND-GUIDE.txt', 'RUNTIME-ARCHIVE.txt', 'package.json', 'source-files.json',
         'payload/dinput8.dll', 'payload/DYNAMITE-LICENSE', 'payload/MinHook-LICENSE.txt', 'payload/ImGui-LICENSE.txt', 'payload/tpp-mod-LICENSE', 'payload/THIRD_PARTY_NOTICES.md',
@@ -660,7 +660,7 @@ try {
     Assert-Equal ((@(Get-ChildItem -LiteralPath (Join-Path $pkg 'scripts') -File | ForEach-Object { $_.Name } | Sort-Object)) -join ',') ($wantScripts -join ',') 'scripts: exactly the play package pieces (no LabCommon.psm1, no set-session-mode.ps1)'
     Assert-Equal ((@(Get-ChildItem -LiteralPath $pkg -File -Filter '*.bat' | ForEach-Object { $_.Name } | Sort-Object)) -join ',') 'Collect-Logs.bat,Install-Coop.bat,Play-Coop.bat,Uninstall-Coop.bat' 'the four double-click entry points'
     $manifest = Get-Content -LiteralPath (Join-Path $pkg 'package.json') -Raw | ConvertFrom-Json
-    Assert-Equal "$($manifest.product)|$($manifest.version)|$($manifest.flavor)" 'mgs-coop-local-package|0.11.1|friend-play' 'package manifest identity'
+    Assert-Equal "$($manifest.product)|$($manifest.version)|$($manifest.flavor)" 'mgs-coop-local-package|0.12.0|friend-play' 'package manifest identity'
     # Provenance (docs/two-pc-play.md "Release build"): a supplied loader is reported as such, never as checked.
     Assert-Equal "$($manifest.build.source)|$($manifest.build.profile)|$($manifest.build.receipt)" 'supplied|unknown|' 'package.json build: a supplied loader'
     Assert-Equal $manifest.build.loader_sha256 (Get-Sha256 $fakeLoader) 'package.json build: the packaged loader hash'
@@ -700,7 +700,7 @@ try {
         Assert-True ($text.Contains("powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%~dp0scripts\$b.ps1`" %*") -and $text.Contains("`r`n") -and $text.Contains('pause') -and $text.Contains('set "PSModulePath="')) "$b.bat runs its script with Windows PowerShell (own module path)"
     }
     $guide = [IO.File]::ReadAllText((Join-Path $pkg 'FRIEND-GUIDE.txt'))
-    foreach ($needle in 'Play-Coop.bat', 'UDP 47830', 'Tailscale', 'Mother Base', 'Install-Coop.bat', 'Uninstall-Coop.bat', 'Collect-Logs.bat', 'RUNTIME-ARCHIVE.txt', 'Version 0.11.1', 'Failed to log in', 'Public networks', 'Block rules win over Allow rules', 'REAL saves') {
+    foreach ($needle in 'Play-Coop.bat', 'UDP 47830', 'Tailscale', 'Mother Base', 'Install-Coop.bat', 'Uninstall-Coop.bat', 'Collect-Logs.bat', 'RUNTIME-ARCHIVE.txt', 'Version 0.12.0', 'Failed to log in', 'Public networks', 'Block rules win over Allow rules', 'REAL saves') {
         Assert-True $guide.Contains($needle) "guide mentions $needle"
     }
     foreach ($needle in 'Ctrl+F8', 'Ctrl+F9', '7656119', 'SteamID64', 'normal online service', 'Account details') { Assert-True (!$guide.Contains($needle)) "guide no longer mentions $needle" }
@@ -730,7 +730,7 @@ try {
     $loader1 = Join-Path $fixture 'loader1.dll'; [IO.File]::WriteAllText($loader1, 'INERT friend loader')
     $loaderPrev = Join-Path $fixture 'loader-prev.dll'; [IO.File]::WriteAllText($loaderPrev, 'INERT earlier loader')
     $stage = Join-Path $fixture 'stage'
-    $null = New-LabPackage -RepoRoot $projectRoot -Destination $stage -LoaderPath $loader1 -Version '0.11.1' -ExecutableSha256 $exeHash -SteamDllSha256 $steamHash -ArchiveSha256 (Get-Sha256 $archiveFx)
+    $null = New-LabPackage -RepoRoot $projectRoot -Destination $stage -LoaderPath $loader1 -Version '0.12.0' -ExecutableSha256 $exeHash -SteamDllSha256 $steamHash -ArchiveSha256 (Get-Sha256 $archiveFx)
     Copy-Item -LiteralPath (Join-Path $pkg 'scripts') -Destination (Join-Path $stage 'scripts') -Recurse
     foreach ($b in 'Install-Coop.bat', 'Play-Coop.bat', 'Uninstall-Coop.bat', 'Collect-Logs.bat') { Copy-Item -LiteralPath (Join-Path $pkg $b) -Destination $stage }
     $install = Join-Path $stage 'scripts/Install-Coop.ps1'
@@ -1179,12 +1179,12 @@ try {
                 [IO.File]::WriteAllBytes($hp.Exe, $realExe)
             }
         }
-        $liveStatus = '{"v":1,"pid":@PID@,"mode":"play","role":"host","state":"connected","reason":"","verified":1,"session":1,"peer":"192.0.2.44:51234","local_port":47830,"rtt_ms":42,"jitter_ms":3,"loss_permille":4,"resend":0,"tx_Bps":3900,"rx_Bps":3800,"interp_ms":80,"remote_build":"0.11.1","partner":"live","partner_shown":1,"look":1,"mission":30050,"saves":"redirected","time_utc":"@NOW@"}'
-        $out = Invoke-PlayLaunch 'launch-ok' @('early=start; version=0.11.1', "saves=redirected; dir=$hostSaveDir", 'play=1; loopback=0; mutex=unchanged; refused=0x0; saves=redirected') `
+        $liveStatus = '{"v":1,"pid":@PID@,"mode":"play","role":"host","state":"connected","reason":"","verified":1,"session":1,"peer":"192.0.2.44:51234","local_port":47830,"rtt_ms":42,"jitter_ms":3,"loss_permille":4,"resend":0,"tx_Bps":3900,"rx_Bps":3800,"interp_ms":80,"remote_build":"0.12.0","partner":"live","partner_shown":1,"look":1,"mission":30050,"saves":"redirected","time_utc":"@NOW@"}'
+        $out = Invoke-PlayLaunch 'launch-ok' @('early=start; version=0.12.0', "saves=redirected; dir=$hostSaveDir", 'play=1; loopback=0; mutex=unchanged; refused=0x0; saves=redirected') `
             @('master_server=redirected; method=test; url=http://127.0.0.1:47899/tppstm/gate') @('play=active; role=host; partner=1; refused=0x0') $liveStatus '[HOST] link=connected rtt=42ms'
         Assert-True ($out.Contains('Co-op is active and the game plays from the save COPY.') -and $out.Contains('| partner=live shown look | mission 30050') -and $out.Contains('MGSV exited.') -and !$out.Contains('NOT active')) 'launcher: evidence ok, status line, game exit'
         Assert-True ((Get-PlayFilesPresent $hp) -eq 0 -and (Get-SessionJson $hp).state -eq 'off') 'launcher: co-op switched off at game exit'
-        $out = Invoke-PlayLaunch 'launch-refused' @('early=start; version=0.11.1', 'saves=unchanged') @('master_server=redirected; method=test; url=http://127.0.0.1:47899/tppstm/gate') `
+        $out = Invoke-PlayLaunch 'launch-refused' @('early=start; version=0.12.0', 'saves=unchanged') @('master_server=redirected; method=test; url=http://127.0.0.1:47899/tppstm/gate') `
             @('play=refused; reason=saves_not_redirected; refused=0x0') ($liveStatus.Replace('"state":"connected"', '"state":"off"')) 'save protection is NOT active'
         Assert-True ($out.Contains('Co-op did NOT start and save protection is NOT active: this game is normal offline play on your REAL saves. Quit MGSV now if you do not want that.')) 'launcher: the red banner when the saves are not redirected'
         Assert-True ((Get-PlayFilesPresent $hp) -eq 0) 'launcher: cleanup after the refused start as well'
@@ -1194,9 +1194,9 @@ try {
     $secretOnDisk = 'ZZZZZZZZZZZZZZZZZZZZ'
     [IO.File]::WriteAllText($hp.LinkSecret, "$secretOnDisk`r`n")
     $hostCode = New-CoopJoinCode -Secret $s7 -HostName '203.0.113.7'
-    [IO.File]::WriteAllText((Join-Path $hp.Mod 'script-observer.log'), "`r`nMGS Co-op script adapter 0.11.1; first run`r`nfirst_session_secret_line`r`n`r`nMGS Co-op script adapter 0.11.1; executable_fingerprint=accepted`r`nmode=offline_v1; x`r`nplay=active; role=host; partner=1; refused=0x0`r`nlink=connected; session=1; peer=203.0.113.7:51234; rtt_ms=40; remote_build=0.11.1`r`npasted $hostCode and " + $hostCode.ToLowerInvariant() + "`r`nlobby=76561198012345678 path=C:\Users\Alice\AppData\x exe 1.0.15.4`r`n")
+    [IO.File]::WriteAllText((Join-Path $hp.Mod 'script-observer.log'), "`r`nMGS Co-op script adapter 0.12.0; first run`r`nfirst_session_secret_line`r`n`r`nMGS Co-op script adapter 0.12.0; executable_fingerprint=accepted`r`nmode=offline_v1; x`r`nplay=active; role=host; partner=1; refused=0x0`r`nlink=connected; session=1; peer=203.0.113.7:51234; rtt_ms=40; remote_build=0.12.0`r`npasted $hostCode and " + $hostCode.ToLowerInvariant() + "`r`nlobby=76561198012345678 path=C:\Users\Alice\AppData\x exe 1.0.15.4`r`n")
     [IO.File]::WriteAllText((Join-Path $hp.Mod 'probe.log'), ((1..40000 | ForEach-Object { "probe line $_ steam=76561197960265735" }) -join "`r`n") + "`r`n")
-    [IO.File]::WriteAllText((Join-Path $hp.Mod 'early.log'), "early=start; version=0.11.1; lab=1; role=host`r`nsaves=redirected; dir=$hostSaveDir`r`n")
+    [IO.File]::WriteAllText((Join-Path $hp.Mod 'early.log'), "early=start; version=0.12.0; lab=1; role=host`r`nsaves=redirected; dir=$hostSaveDir`r`n")
     [IO.File]::WriteAllText((Join-Path $hp.Mod 'link-status.json'), '{"v":1,"pid":1,"state":"connected","peer":"203.0.113.7:51234","mission":30050}')
     $outDir = Join-Path $fixture 'desktop'
     $null = New-Item -ItemType Directory -Path $outDir
@@ -1217,7 +1217,7 @@ try {
     Assert-True ($everything.Contains('MGS1-<redacted>') -and $everything.Contains('peer=203.0.x.x:51234') -and $everything.Contains('"peer":"203.0.x.x:51234"') -and $everything.Contains('1.0.15.4')) 'codes redacted, public peers masked, versions kept'
     Assert-True ($everything -notmatch '(?<![0-9])7656119[0-9]{10}(?![0-9])' -and !$everything.Contains('Alice')) 'no complete SteamID or user name'
     $observer = [IO.File]::ReadAllText((Join-Path $collected 'script-observer.log'))
-    Assert-True ($observer.StartsWith('MGS Co-op script adapter 0.11.1; executable_fingerprint') -and !$observer.Contains('first_session_secret_line')) 'script-observer.log from the last adapter start'
+    Assert-True ($observer.StartsWith('MGS Co-op script adapter 0.12.0; executable_fingerprint') -and !$observer.Contains('first_session_secret_line')) 'script-observer.log from the last adapter start'
     $summary = [IO.File]::ReadAllText((Join-Path $collected 'summary.txt'))
     Assert-True ($summary.Contains('real_saves=UNCHANGED') -and $summary.Contains('mgsvtpp.exe sha256=' + $exeHash) -and $summary.Contains('matches_install_record=True') -and $summary.Contains('play_session=off; role=host') -and $summary.Contains('link_secret_present=True (never collected)')) 'summary: save check, hashes, play session, link secret not collected'
     Remove-Item -LiteralPath $hp.LinkSecret
@@ -1327,7 +1327,7 @@ try {
     $prevGame = New-GameFixture 'previous'
     $pp = Get-InstancePaths -GameDirectory $prevGame
     $stagePrev = Join-Path $fixture 'stage-prev'
-    $null = New-LabPackage -RepoRoot $projectRoot -Destination $stagePrev -LoaderPath $loaderPrev -Version '0.11.1' -ExecutableSha256 $exeHash -SteamDllSha256 $steamHash -ArchiveSha256 (Get-Sha256 $archiveFx)
+    $null = New-LabPackage -RepoRoot $projectRoot -Destination $stagePrev -LoaderPath $loaderPrev -Version '0.12.0' -ExecutableSha256 $exeHash -SteamDllSha256 $steamHash -ArchiveSha256 (Get-Sha256 $archiveFx)
     $null = & (Join-Path $projectRoot 'tools/package-install.ps1') -Action Install -GameDirectory $prevGame -PackageDirectory $stagePrev -RuntimeArchive $archiveFx -NoPrompt
     [IO.File]::WriteAllText($pp.Marker, "host-v3`n")
     $earlierLab = "# my own lab.ini`nenabled=1`nrole=host`nsave_dir=C:\lab\saves`n"

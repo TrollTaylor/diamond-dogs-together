@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(mgs_coop VERSION 0.11.1 LANGUAGES CXX)
+project(mgs_coop VERSION 0.12.0 LANGUAGES CXX)
 option(MGS_BACKGROUND_WORKER "Permit an explicitly admitted private-desktop offline scenario worker; no visible desktop input" OFF)
 option(MGS_LOCAL_GUN_PRELOAD_TEST "Permit the exact local receiver MTAR experiment in copied-save offline lab runs" OFF)
 option(MGS_LOCAL_OFFLINE_EQUIPMENT_TEST "Permit one public ghost equipment allocation on the copied-save offline allocation owner" OFF)
@@ -40,7 +40,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 enable_testing()
 # The build id both players' link compares (docs/two-pc-play.md "Versions"):
-# the version plus the 7-character commit, e.g. 0.11.1+f64a8e9 (14 of the 16
+# the version plus the 7-character commit, e.g. 0.12.0+f64a8e9 (14 of the 16
 # bytes of the HELLO build field). Without git it stays the plain version.
 set(MGS_COOP_BUILD_ID "${PROJECT_VERSION}")
 find_package(Git QUIET)

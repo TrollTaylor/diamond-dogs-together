@@ -1,5 +1,41 @@
 # Development status
 
+## October 9, 2026: 0.12.0, the four October 9 tracks in one build (fixture-tested, hidden runs pending)
+
+`integ/final` merges `wp/online-native`, `wp/steam-join`, `wp/aim-parity` and
+`wp/weapons2` (at `cbecb6a`) and versions the source, the loader probe, the
+script adapter line, the package/friend tooling (`SupportedLoaderVersions`,
+`package-install.ps1`, `set-session-mode.ps1`) and the link build id as
+**0.12.0**. Two copies must run the same package; 0.11.1 receivers are still
+considered on the wire (the edge_rep saturation at 2, the v5 negotiation).
+Merge semantics worth knowing:
+
+- Input frames: every copy with `partner_input_send=1` sends v4 whatever its
+  own drive (online), and v5 (the reload/switch gun group) once the peer sent
+  v5, with a v5 probe every 2 s (weapons2). A copy that shows clips now also
+  reads its slot and steps the reload/switch counters, so the other PC's
+  native reload and slot follower work against it. The stall hold and the
+  reload `sample_strip` compose.
+- The weapon gate strips by `partner_slots` (mismatch, switching,
+  projectile), then the online gun-absent strip and the play leak strip.
+- lab.ini: `partner_native_profile=gun` (play and lab) yields
+  `partner_native_reload=event`, `partner_native_slot=write`,
+  `partner_native_equip=substitute` and `partner_native_aimpt=look`
+  (`ResolveWeaponDefaults` stays the last step of `ParseLabConfig`); the
+  play refusals are unchanged and play runs `nslot=call` as write.
+- The generalized preload and writer admit play with a connected link v2
+  and redirected saves; the stock46 pieces run for the native gun profile
+  with `partner_native_equip=stock46` only.
+- The worker gun stage (and Play-OfflineCoop) is aimpt look + reload event +
+  slot write + equip substitute; one `-LabSetting` allow-list carries every
+  track's A/B keys.
+- Contract: `tools/generate_partner_contract.py --check` covers 490 code
+  sites and 103 vtable slots (the union of the aim and weapons sites).
+
+Evidence: fixture only (118/118 CTest, the Normal, Research and Release
+worker-check profiles, every contract generator `--check`). The hidden runs
+of each track on the merged build are the coordinator's next step.
+
 ## October 9, 2026: aim parity, the partner's gun aims where the remote aims (fixture-tested, hidden runs pending)
 
 `wp/aim-parity` ([details](native-puppet.md#the-aim-target-mirror-aim-parity-partner_native_aimpt)).

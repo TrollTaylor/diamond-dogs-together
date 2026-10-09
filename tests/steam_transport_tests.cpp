@@ -1285,8 +1285,8 @@ void TestEndToEnd() {
     char secret[link::kSecretChars];
     std::memcpy(secret, "ABCDE12345FGHJK67890", 20);
     const std::uint64_t t0 = Now();
-    g_host_end.link.Start(link::Role::host, true, lab::Endpoint{}, secret, "0.11.1", &EndSend, &g_host_end, t0);
-    g_guest_end.link.Start(link::Role::guest, true, lab::SteamEndpoint(kHost), secret, "0.11.1", &EndSend, &g_guest_end, t0);
+    g_host_end.link.Start(link::Role::host, true, lab::Endpoint{}, secret, "0.12.0", &EndSend, &g_host_end, t0);
+    g_guest_end.link.Start(link::Role::guest, true, lab::SteamEndpoint(kHost), secret, "0.12.0", &EndSend, &g_guest_end, t0);
     lab::SteamTransportConfig ch{}, cg{};
     ch.role = lab::SteamRole::host;
     ch.self_id = kHost;
@@ -1343,7 +1343,7 @@ void TestEndToEnd() {
     Check(net.Restarts() == restarts + 1, "AutoRestartBrokenSession restarted the session");
     Check(WaitFor([&] { return g_host_end.link.Connected() && g_guest_end.link.Connected(); }, 3000), "the link is up after the restart");
     // Another SteamID replaying the guest's traffic is never rebound to.
-    g_other_end.link.Start(link::Role::guest, true, lab::SteamEndpoint(kHost), secret, "0.11.1", &EndSend, &g_other_end, Now());
+    g_other_end.link.Start(link::Role::guest, true, lab::SteamEndpoint(kHost), secret, "0.12.0", &EndSend, &g_other_end, Now());
     lab::SteamTransportConfig cx{};
     cx.role = lab::SteamRole::guest;
     cx.self_id = kStranger;
@@ -1360,7 +1360,7 @@ void TestEndToEnd() {
     char wrong[link::kSecretChars];
     std::memcpy(wrong, "ZZZZZYYYYYXXXXXWWWWW", 20);
     static End wrong_end;
-    wrong_end.link.Start(link::Role::guest, true, lab::SteamEndpoint(kHost), wrong, "0.11.1", &EndSend, &wrong_end, Now());
+    wrong_end.link.Start(link::Role::guest, true, lab::SteamEndpoint(kHost), wrong, "0.12.0", &EndSend, &wrong_end, Now());
     Check(wrong_end.transport.start(cx, EndSink(wrong_end)), "wrong-code transport");
     Check(WaitFor([&] { return wrong_end.link.GetCounters().rejects >= 1; }, 5000) && !wrong_end.link.GetCounters().reject_verified &&
               !wrong_end.link.Connected(),
@@ -2116,7 +2116,7 @@ void TestHud() {
     v.play = true;
     v.route = static_cast<std::uint8_t>(sn::Route::relay);
     v.rtt_ms = 61;
-    std::snprintf(v.own_build, sizeof(v.own_build), "0.11.1+f64a8e9");
+    std::snprintf(v.own_build, sizeof(v.own_build), "0.12.0+f64a8e9");
     hud::Line line{};
     Check(hud::FormatLine(v, "Snake_Fan", hud::Mode::compact, 0, line) && std::strcmp(line.text, "CO-OP [connected] Snake_Fan - Steam relay 61 ms") == 0 &&
               line.tone == hud::Tone::good && line.detail[0] == 0,
@@ -2146,7 +2146,7 @@ void TestHud() {
     v.steam_end = 5003;
     v.down_ms = 0;
     Check(hud::FormatLine(v, "", hud::Mode::full, 1000, line) && std::strcmp(line.text, "CO-OP [joining 0 s] host not answering") == 0 &&
-              std::strncmp(line.detail, "rtt 61 ms | jitter 0 ms | loss 0.0% | 0.11.1+f64a8e9", 50) == 0,
+              std::strncmp(line.detail, "rtt 61 ms | jitter 0 ms | loss 0.0% | 0.12.0+f64a8e9", 50) == 0,
           "joining with a Steam end reason; full detail line");
     v.state = static_cast<std::uint8_t>(link::LinkState::off);
     Check(!hud::FormatLine(v, "", hud::Mode::compact, 0, line), "link off: nothing");
@@ -2169,7 +2169,7 @@ void TestHud() {
     for (const hud::Toast* t : toasts) {
         connected = connected || std::strcmp(t->text, "Connected to Snake_Fan (Steam relay).") == 0;
         ended = ended || std::strncmp(t->text, "The host's game did not answer.", 31) == 0;
-        version = version || std::strcmp(t->text, "Your friend runs mgs-coop 0.11.0+1234567; you run 0.11.1+f64a8e9. Both must install the same package.") == 0;
+        version = version || std::strcmp(t->text, "Your friend runs mgs-coop 0.11.0+1234567; you run 0.12.0+f64a8e9. Both must install the same package.") == 0;
     }
     Check(connected && ended && version, "toast sentences (coop_text)");
     model.Add("Connected to Snake_Fan (Steam relay).", hud::Tone::good, 12000);

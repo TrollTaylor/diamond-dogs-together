@@ -109,7 +109,7 @@ bool StartNode(UdpNode& node, link::Role role, std::uint16_t listen, Endpoint pe
     config.play = true;
     config.exact_filter = false;
     config.peer = peer;
-    std::memcpy(config.build, "0.11.1", 6);
+    std::memcpy(config.build, "0.12.0", 6);
     config.psk = Psk(secret);
     AcquireSRWLockExclusive(&node.lock);
     node.session.Start(config, link::SessionIo{&node, &NodeSend, &NodeRandom}, NowMs());
@@ -455,7 +455,7 @@ void PartnerNetV2() {
     config.host = true;
     config.interp_auto = true;
     config.directory = dir.c_str();
-    config.build = "0.11.1";
+    config.build = "0.12.0";
     Check(net::Start(config), "partner_net v2 starts");
     Check(Logged("link=config; mode=lab; role=host; proto=2; bind=loopback; port=48260; peer=learned; auth=lab; interp=auto\r\n"),
           "link=config line");
@@ -468,7 +468,7 @@ void PartnerNetV2() {
     sc.play = false;
     sc.exact_filter = true;
     sc.peer = Endpoint{kLoopback, 48260};
-    std::memcpy(sc.build, "0.11.1", 6);
+    std::memcpy(sc.build, "0.12.0", 6);
     sc.psk = Psk(link::kLabSecret);
     AcquireSRWLockExclusive(&g_guest.lock);
     g_guest.session.Start(sc, link::SessionIo{nullptr, &GuestSend, &NodeRandom}, NowMs());
@@ -521,7 +521,7 @@ void PartnerNetV2() {
     const std::string json = ReadText(status);
     Check(json.rfind("{\"v\":1,\"pid\":", 0) == 0 && json.find("\"mode\":\"lab\",\"role\":\"host\"") != std::string::npos &&
           json.find("\"peer\":\"127.0.0.1:48261\",\"local_port\":48260") != std::string::npos &&
-          json.find("\"remote_build\":\"0.11.1\"") != std::string::npos && json.find("\"saves\":\"unchanged\"") != std::string::npos &&
+          json.find("\"remote_build\":\"0.12.0\"") != std::string::npos && json.find("\"saves\":\"unchanged\"") != std::string::npos &&
           json.find("\"time_utc\":\"20") != std::string::npos && json.back() == '\n', "status file fields");
     net::PublishPartnerState(true, true, 30050);
     Check(WaitFor([&] { const auto t = ReadText(status); return t.find("\"partner_shown\":1,\"look\":1,\"mission\":30050") != std::string::npos; },

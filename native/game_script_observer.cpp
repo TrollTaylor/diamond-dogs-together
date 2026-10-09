@@ -3010,7 +3010,7 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                 lab_status.local_index=-1;
                 SyncLabStatus();
             }
-            Log("\r\nMGS Co-op script adapter 0.11.1; executable_fingerprint=accepted; install_after_DirectInput=true; earlier_loads_may_be_missed=true\r\n");
+            Log("\r\nMGS Co-op script adapter 0.12.0; executable_fingerprint=accepted; install_after_DirectInput=true; earlier_loads_may_be_missed=true\r\n");
             if(client_check_enabled) Log("mode=client_check_v1; online_player_setup=1 native_join_calls=0 host_identity=none\r\n");
             if(client_enabled && !client_check_enabled) {
                 wchar_t host_path[32768]{};

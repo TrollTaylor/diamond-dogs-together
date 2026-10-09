@@ -80,7 +80,7 @@ struct SessionConfig {
     // Guest: the host endpoint (sends go only here; WELCOME / REJECT must come
     // from its port). Host: unused.
     Endpoint peer{};
-    char build[kBuildSize]{};  // NUL-padded, e.g. "0.11.1"
+    char build[kBuildSize]{};  // NUL-padded, e.g. "0.12.0"
     HmacKey psk{};             // K_psk
 };
 

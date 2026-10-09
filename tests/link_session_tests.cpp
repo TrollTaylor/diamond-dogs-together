@@ -162,8 +162,8 @@ std::vector<std::uint8_t> MakeHello(const link::HmacKey& hs, std::uint16_t proto
 }
 
 void HandshakeAndData() {
-    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 1000, 1);
-    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", 1000, 2);
+    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.12.0", 1000, 1);
+    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.12.0", 1000, 2);
     Check(host->session.state() == link::LinkState::listening && host->Saw(link::EventKind::listening), "host listening");
     Check(guest->session.state() == link::LinkState::connecting, "guest connecting");
     guest->session.OnTimer(1000);
@@ -174,7 +174,7 @@ void HandshakeAndData() {
     Check(host->session.state() == link::LinkState::connected && guest->session.state() == link::LinkState::connected, "both connected");
     Check(host->session.session_number() == 1 && guest->session.session_number() == 1, "session 1");
     Check(host->Saw(link::EventKind::connected) && guest->Saw(link::EventKind::connected), "connected events");
-    Check(std::strcmp(host->session.remote_build(), "0.11.1") == 0 && std::strcmp(guest->session.remote_build(), "0.11.1") == 0,
+    Check(std::strcmp(host->session.remote_build(), "0.12.0") == 0 && std::strcmp(guest->session.remote_build(), "0.12.0") == 0,
           "remote builds");
     Check(mgscoop::lab::SameEndpoint(host->session.peer(), kGuestEp), "host locked onto the guest endpoint");
     Check(guest->session.rtt().have(), "guest RTT sampled from the CONFIRM ack");
@@ -236,8 +236,8 @@ Datagram HandshakeToConfirm(Node& host, Node& guest, std::uint64_t now) {
 }
 
 void ConfirmReplay() {
-    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 0, 1);
-    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", 0, 2);
+    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.12.0", 0, 1);
+    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.12.0", 0, 2);
     const Datagram confirm = HandshakeToConfirm(*host, *guest, 0);
     host->session.OnDatagram(confirm.bytes.data(), confirm.bytes.size(), kGuestEp, 10);
     host->Collect();
@@ -273,8 +273,8 @@ void ConfirmReplay() {
           host->Count(link::EventKind::connected) == connected_before && host->Drops(link::DropReason::replay) == 6,
           "CONFIRM replayed while lost: dropped, no state change, nothing sent");
     // (c) Without any guest DATA, a CONFIRM after the resend phase is a replay too.
-    auto host2 = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 0, 1);
-    auto guest2 = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", 0, 2);
+    auto host2 = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.12.0", 0, 1);
+    auto guest2 = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.12.0", 0, 2);
     const Datagram confirm2 = HandshakeToConfirm(*host2, *guest2, 0);
     host2->session.OnDatagram(confirm2.bytes.data(), confirm2.bytes.size(), kGuestEp, 10);
     host2->outbox.clear();
@@ -284,8 +284,8 @@ void ConfirmReplay() {
 
 void KeepaliveLoss() {
     // Idle connected session (no game frames): exactly one host keepalive is lost.
-    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 0, 1);
-    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", 0, 2);
+    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.12.0", 0, 1);
+    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.12.0", 0, 2);
     std::uint64_t now = Connect(*host, *guest, 0);
     bool dropped = false, stayed = true;
     for (const std::uint64_t end = now + 10000; now < end; now += 20) {
@@ -303,8 +303,8 @@ void KeepaliveLoss() {
 
 void RebindBusy() {
     // The guest's NAT mapping moves to another port mid-session.
-    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 0, 1);
-    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", 0, 2);
+    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.12.0", 0, 1);
+    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.12.0", 0, 2);
     std::uint64_t now = Connect(*host, *guest, 0);
     for (const std::uint64_t end = now + 1000; now < end; now += 20) {
         Timers({host.get(), guest.get()}, now);
@@ -326,8 +326,8 @@ void RebindBusy() {
 }
 
 void ReplayedHello() {
-    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 0, 1);
-    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", 0, 2);
+    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.12.0", 0, 1);
+    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.12.0", 0, 2);
     guest->session.OnTimer(0);
     const auto hello = guest->outbox[0];
     const std::uint64_t now = Connect(*host, *guest, 0);
@@ -337,8 +337,8 @@ void ReplayedHello() {
 }
 
 void WrongCode() {
-    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 0, 1);
-    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kOther, true, "0.11.1", 0, 2);
+    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.12.0", 0, 1);
+    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kOther, true, "0.12.0", 0, 2);
     guest->session.OnTimer(0);
     auto hello = guest->outbox[0];
     guest->outbox.clear();
@@ -362,8 +362,8 @@ void WrongCode() {
 }
 
 void UnauthRejectWhileConnected() {
-    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 0, 1);
-    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", 0, 2);
+    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.12.0", 0, 1);
+    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.12.0", 0, 2);
     const std::uint64_t now = Connect(*host, *guest, 0);
     std::vector<std::uint8_t> reject(88, 0);
     link::Header h{};
@@ -384,14 +384,14 @@ void RejectReasons() {
     link::DeriveHandshakeKey(Psk(kSecret), hs);
     struct Case { const char* what; std::uint16_t proto; std::uint8_t mode; std::uint8_t role; const char* build; link::RejectReason reason; };
     const Case cases[] = {
-        {"proto", 3, link::kModePlay, link::kRoleGuest, "0.11.1", link::RejectReason::proto_mismatch},
-        {"mode", 2, link::kModeLab, link::kRoleGuest, "0.11.1", link::RejectReason::mode_mismatch},
-        {"role", 2, link::kModePlay, link::kRoleHost, "0.11.1", link::RejectReason::role_mismatch},
-        {"build", 2, link::kModePlay, link::kRoleGuest, "0.12.0", link::RejectReason::build_mismatch},
+        {"proto", 3, link::kModePlay, link::kRoleGuest, "0.12.0", link::RejectReason::proto_mismatch},
+        {"mode", 2, link::kModeLab, link::kRoleGuest, "0.12.0", link::RejectReason::mode_mismatch},
+        {"role", 2, link::kModePlay, link::kRoleHost, "0.12.0", link::RejectReason::role_mismatch},
+        {"build", 2, link::kModePlay, link::kRoleGuest, "0.13.0", link::RejectReason::build_mismatch},
     };
     std::uint8_t nonce = 1;
     for (const auto& c : cases) {
-        auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 0, 1);
+        auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.12.0", 0, 1);
         const auto hello = MakeHello(hs, c.proto, c.mode, c.role, nonce++, c.build);
         FeedUnauth(*host, hello, kGuestEp, 0, "REJECT smaller than the HELLO");
         Check(host->outbox.size() == 1 && host->outbox[0].bytes.size() == 88, c.what);
@@ -404,12 +404,12 @@ void RejectReasons() {
         Check(host->session.state() == link::LinkState::listening, "no state from a rejected HELLO");
     }
     // The guest side: another build in play is rejected (verified).
-    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.12.0", 0, 1);
-    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", 0, 2);
+    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.13.0", 0, 1);
+    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.12.0", 0, 2);
     Timers({host.get(), guest.get()}, 0);
     Pump({host.get(), guest.get()}, 0);
     Check(guest->session.state() == link::LinkState::rejected && guest->session.reject_reason() == link::RejectReason::build_mismatch &&
-          guest->session.reject_verified() && std::strcmp(guest->session.remote_build(), "0.12.0") == 0,
+          guest->session.reject_verified() && std::strcmp(guest->session.remote_build(), "0.13.0") == 0,
           "guest rejected: build_mismatch, verified");
     // Retry with a fresh nonce every 5 s.
     guest->session.OnTimer(4999);
@@ -417,14 +417,14 @@ void RejectReasons() {
     guest->session.OnTimer(5000);
     Check(guest->outbox.size() == 1, "retry at 5 s");
     // Lab: a build mismatch only warns.
-    auto lab_host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, false, "0.12.0", 0, 1);
-    auto lab_guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, false, "0.11.1", 0, 2);
+    auto lab_host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, false, "0.13.0", 0, 1);
+    auto lab_guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, false, "0.12.0", 0, 2);
     Connect(*lab_host, *lab_guest, 0);
     Check(lab_guest->session.state() == link::LinkState::connected && lab_host->Saw(link::EventKind::warn_build) &&
           lab_guest->Saw(link::EventKind::warn_build), "lab build mismatch: warn and connect");
     // Lab against play: mode_mismatch at the guest.
-    auto play_host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 0, 1);
-    auto lab_guest2 = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, false, "0.11.1", 0, 2);
+    auto play_host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.12.0", 0, 1);
+    auto lab_guest2 = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, false, "0.12.0", 0, 2);
     Timers({play_host.get(), lab_guest2.get()}, 0);
     Pump({play_host.get(), lab_guest2.get()}, 0);
     Check(lab_guest2->session.reject_reason() == link::RejectReason::mode_mismatch && lab_guest2->session.reject_verified(),
@@ -433,8 +433,8 @@ void RejectReasons() {
 
 void StaleReject() {
     // A K_hs REJECT counts only while it echoes a pending nonce.
-    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.12.0", 0, 1);
-    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", 0, 2);
+    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.13.0", 0, 1);
+    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.12.0", 0, 2);
     guest->session.OnTimer(0);
     host->session.OnDatagram(guest->outbox[0].bytes.data(), guest->outbox[0].bytes.size(), kGuestEp, 0);
     guest->outbox.clear();
@@ -447,19 +447,19 @@ void StaleReject() {
     Check(guest->session.state() == link::LinkState::connecting && guest->session.stats().reject_ignored == 1,
           "replayed K_hs REJECT (stale echo) ignored");
     // A K_hs REJECT does nothing to a connected guest either.
-    auto host2 = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 0, 1);
-    auto guest2 = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", 0, 2);
+    auto host2 = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.12.0", 0, 1);
+    auto guest2 = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.12.0", 0, 2);
     const std::uint64_t now = Connect(*host2, *guest2, 0);
     guest2->session.OnDatagram(stale.bytes.data(), stale.bytes.size(), kHostEp, now);
     Check(guest2->session.state() == link::LinkState::connected, "K_hs REJECT ignored while connected");
 }
 
 void BusyAndTakeover() {
-    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 0, 1);
-    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", 0, 2);
+    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.12.0", 0, 1);
+    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.12.0", 0, 2);
     std::uint64_t now = Connect(*host, *guest, 0);
     const Endpoint otherEp{0x0A000009u, 50001};
-    auto other = MakeNode(link::Role::guest, otherEp, kHostEp, kSecret, true, "0.11.1", now, 3);
+    auto other = MakeNode(link::Role::guest, otherEp, kHostEp, kSecret, true, "0.12.0", now, 3);
     // While the first guest is live, the second is told busy (verified).
     for (std::uint64_t t = now; t < now + 2000; t += 20) {
         Timers({host.get(), guest.get(), other.get()}, t);
@@ -493,11 +493,11 @@ void BusyAndTakeover() {
 }
 
 void ReconnectSameEndpoint() {
-    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 0, 1);
-    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", 0, 2);
+    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.12.0", 0, 1);
+    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.12.0", 0, 2);
     const std::uint64_t now = Connect(*host, *guest, 0);
     // The guest restarts at once from the same endpoint: the commit waits for the 2 s limit.
-    auto restarted = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", now, 7);
+    auto restarted = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.12.0", now, 7);
     bool committed_early = false;
     for (std::uint64_t t = now; t < now + 4000 && restarted->session.state() != link::LinkState::connected; t += 20) {
         Timers({host.get(), restarted.get()}, t);
@@ -519,8 +519,8 @@ link::PacketType TypeOf(const Datagram& d) {
     return link::DecodeHeader(d.bytes.data(), d.bytes.size(), h) == link::DecodeResult::ok ? h.type : link::PacketType::reject;
 }
 void PeerClose() {
-    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 0, 1);
-    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", 0, 2);
+    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.12.0", 0, 1);
+    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.12.0", 0, 2);
     std::uint64_t now = Connect(*host, *guest, 0);
     // One DATA each way, sent before the CLOSE and delivered after it.
     const std::uint8_t body[4] = {1, 2, 3, 4};
@@ -559,7 +559,7 @@ void PeerClose() {
     Check(hello_only && hellos >= 1, "guest: only HELLOs after the CLOSE");
     // A guest on another endpoint (told busy while the first was live) is accepted at once.
     const Endpoint otherEp{0x0A000009u, 50001};
-    auto other = MakeNode(link::Role::guest, otherEp, kHostEp, kSecret, true, "0.11.1", now + 2100, 9);
+    auto other = MakeNode(link::Role::guest, otherEp, kHostEp, kSecret, true, "0.12.0", now + 2100, 9);
     for (std::uint64_t t = now + 2100; t < now + 2600 && other->session.state() != link::LinkState::connected; t += 20) {
         Timers({host.get(), other.get()}, t);
         Pump({host.get(), other.get()}, t);
@@ -567,13 +567,13 @@ void PeerClose() {
     Check(other->session.state() == link::LinkState::connected && host->session.state() == link::LinkState::connected &&
               host->session.session_number() == 2 && mgscoop::lab::SameEndpoint(host->session.peer(), otherEp),
           "after a CLOSE the host accepts the next join (another endpoint) within 0.5 s");
-    auto idle = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 0, 3);
+    auto idle = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.12.0", 0, 3);
     Check(!idle->session.OnPeerClose(10) && idle->session.state() == link::LinkState::listening, "no session: ignored");
     // Without a CLOSE the same second guest is busy while the first is live (the CLOSE is what freed the host).
-    auto host2 = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 0, 11);
-    auto guest2 = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", 0, 12);
+    auto host2 = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.12.0", 0, 11);
+    auto guest2 = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.12.0", 0, 12);
     std::uint64_t t2 = Connect(*host2, *guest2, 0);
-    auto other2 = MakeNode(link::Role::guest, otherEp, kHostEp, kSecret, true, "0.11.1", t2, 13);
+    auto other2 = MakeNode(link::Role::guest, otherEp, kHostEp, kSecret, true, "0.12.0", t2, 13);
     for (std::uint64_t t = t2; t < t2 + 500; t += 20) {
         Timers({host2.get(), guest2.get(), other2.get()}, t);
         Pump({host2.get(), guest2.get(), other2.get()}, t);
@@ -583,8 +583,8 @@ void PeerClose() {
 }
 
 void GuestReconnecting() {
-    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 0, 1);
-    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", 0, 2);
+    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.12.0", 0, 1);
+    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.12.0", 0, 2);
     std::uint64_t now = Connect(*host, *guest, 0);
     // Nothing from the host for 2 s: reconnecting (the old session is kept).
     for (std::uint64_t t = now; t <= now + 2000; t += 20) {
@@ -602,11 +602,11 @@ void GuestReconnecting() {
 }
 
 void RateLimits() {
-    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 0, 1);
+    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.12.0", 0, 1);
     link::HmacKey wrong{};
     link::DeriveHandshakeKey(Psk(kOther), wrong);
     // A spoofed flood from a few sources: each source gets its burst of 16, then 8/s.
-    const auto junk = MakeHello(wrong, 2, link::kModePlay, link::kRoleGuest, 9, "0.11.1");
+    const auto junk = MakeHello(wrong, 2, link::kModePlay, link::kRoleGuest, 9, "0.12.0");
     for (int i = 0; i < 4000; ++i) {
         const Endpoint spoof{0xC6336400u + static_cast<std::uint32_t>(i % 4), static_cast<std::uint16_t>(40000 + i % 4)};
         FeedUnauth(*host, junk, spoof, static_cast<std::uint64_t>(i / 20), "flood answers are small");
@@ -615,11 +615,11 @@ void RateLimits() {
           "per-source buckets limit each spoofed source");
     host->outbox.clear();
     // The real guest is still admitted.
-    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", 200, 2);
+    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.12.0", 200, 2);
     Connect(*host, *guest, 200);
     Check(guest->session.state() == link::LinkState::connected, "the real guest connects during the flood");
     // The global MAC budget: 500 per second across sources.
-    auto host2 = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 0, 1);
+    auto host2 = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.12.0", 0, 1);
     for (int i = 0; i < 2000; ++i) {
         const Endpoint spoof{0xC6336400u + static_cast<std::uint32_t>(i), 40000};
         host2->session.OnDatagram(junk.data(), junk.size(), spoof, 0);
@@ -627,7 +627,7 @@ void RateLimits() {
     Check(host2->Drops(link::DropReason::bad_mac) == 500 && host2->Drops(link::DropReason::rate) == 1500, "global MAC budget 500/s");
     // One machine cycling 200 source ports at 1000/s shares one bucket (keyed on
     // the address): the MAC budget stays available to the real guest.
-    auto host3 = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 0, 1);
+    auto host3 = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.12.0", 0, 1);
     const std::uint32_t attacker = 0xC6336401u;
     for (int i = 0; i < 1000; ++i) {
         const Endpoint port{attacker, static_cast<std::uint16_t>(40000 + i % 200)};
@@ -636,7 +636,7 @@ void RateLimits() {
     Check(host3->Drops(link::DropReason::bad_mac) <= 16 + 8 + 1 && host3->Drops(link::DropReason::rate) >= 970,
           "port cycling: one bucket per address");
     host3->outbox.clear();
-    auto guest3 = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", 1000, 2);
+    auto guest3 = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.12.0", 1000, 2);
     std::uint64_t t = 1000;
     for (int i = 0; i < 40 && guest3->session.state() != link::LinkState::connected; ++i, t += 20) {
         for (int k = 0; k < 20; ++k) {  // the flood goes on at 1000/s
@@ -650,8 +650,8 @@ void RateLimits() {
     Check(guest3->session.state() == link::LinkState::connected, "the real guest gets a WELCOME during a port-cycling flood");
     // A spoofed flood from many addresses drains the global budget, but the
     // lost guest's address has its own: its reconnect still gets through.
-    auto host4 = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 0, 1);
-    auto guest4 = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", 0, 2);
+    auto host4 = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.12.0", 0, 1);
+    auto guest4 = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.12.0", 0, 2);
     t = Connect(*host4, *guest4, 0);
     for (const std::uint64_t end = t + 3100; t < end; t += 20) {
         host4->session.OnTimer(t);
@@ -668,7 +668,7 @@ void RateLimits() {
     for (const std::uint64_t end = t + 1000; t < end; t += 20) flood(t);
     const std::uint64_t rate_before = host4->Drops(link::DropReason::rate);
     Check(rate_before > 0, "the spoofed flood drains the global budget");
-    auto back = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", t, 9);
+    auto back = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.12.0", t, 9);
     for (const std::uint64_t end = t + 3000; t < end && back->session.state() != link::LinkState::connected; t += 20) {
         flood(t);
         Timers({host4.get(), back.get()}, t);
@@ -680,8 +680,8 @@ void RateLimits() {
 }
 
 void Malformed() {
-    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 0, 1);
-    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", 0, 2);
+    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.12.0", 0, 1);
+    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.12.0", 0, 2);
     std::vector<std::uint8_t> junk(60, 0x41);
     FeedUnauth(*host, junk, kGuestEp, 0, "junk");
     Check(host->Drops(link::DropReason::malformed) == 1 && host->outbox.empty(), "junk is malformed, unanswered");
@@ -728,8 +728,8 @@ void Malformed() {
 
 void SourceChanged() {
     // A multi-homed host answering from another address: accepted, counted, never re-targeted.
-    auto host = MakeNode(link::Role::host, Endpoint{0x0A000005u, 47830}, Endpoint{}, kSecret, true, "0.11.1", 0, 1);
-    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", 0, 2);
+    auto host = MakeNode(link::Role::host, Endpoint{0x0A000005u, 47830}, Endpoint{}, kSecret, true, "0.12.0", 0, 1);
+    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.12.0", 0, 2);
     guest->session.OnTimer(0);
     for (auto& d : guest->outbox) host->session.OnDatagram(d.bytes.data(), d.bytes.size(), kGuestEp, 0);
     guest->outbox.clear();
@@ -746,7 +746,7 @@ void SourceChanged() {
 }
 
 void GuestBackoff() {
-    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", 0, 2);
+    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.12.0", 0, 2);
     unsigned first10 = 0, until10min = 0, after = 0;
     for (std::uint64_t t = 0; t < 1200000; t += 100) {
         guest->session.OnTimer(t);
@@ -764,8 +764,8 @@ void GuestBackoff() {
 }
 
 void SeqExhaustion() {
-    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 0, 1);
-    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", 0, 2);
+    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.12.0", 0, 1);
+    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.12.0", 0, 2);
     const std::uint64_t now = Connect(*host, *guest, 0);
     guest->session.set_tx_seq_for_test(link::kSeqLimit - 2);
     Check(guest->session.SendData(nullptr, 0, now), "the last sequence below the limit");
@@ -784,7 +784,7 @@ void SeqExhaustion() {
 
 void ExactFilter() {
     // Lab loopback: the transport filters 127.0.0.1:peer; the session does not check ports.
-    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, false, "0.11.1", 0, 1);
+    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, false, "0.12.0", 0, 1);
     auto guest = std::make_unique<Node>();
     guest->self = kGuestEp;
     guest->rng = 5;
@@ -792,7 +792,7 @@ void ExactFilter() {
     config.role = link::Role::guest;
     config.exact_filter = true;
     config.peer = Endpoint{kHostEp.address, 1};  // another configured port
-    CopyBuild(config.build, "0.11.1");
+    CopyBuild(config.build, "0.12.0");
     config.psk = Psk(kSecret);
     guest->session.Start(config, link::SessionIo{guest.get(), &NodeSend, &NodeRandom}, 0);
     guest->session.OnTimer(0);
