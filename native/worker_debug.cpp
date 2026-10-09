@@ -6,6 +6,7 @@
 #include <cstring>
 #include "mgscoop/lab_config.hpp"
 #include "mgscoop/partner_native.hpp"
+#include "mgscoop/partner_native_net.hpp"
 #include "mgscoop/partner_recon.hpp"
 #include "mgscoop/steam_online_state.hpp"
 
@@ -74,6 +75,12 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
     j.String(n.reason,sizeof(n.reason));
     j.Add(",\"left_reason\":");j.String(n.left_reason,sizeof(n.left_reason));
     j.Add(",\"since_ms\":%llu,\"fallbacks\":%u,\"latched\":%s",static_cast<unsigned long long>(n.since_ms),n.fallbacks,Bool(n.latched));
+    // Online play (docs/native-puppet.md "Online"): policy, link quality, leaves and the capability exchange.
+    {
+        char net[1024]{};
+        if(partner_native_net::FormatNetJson(n.net,net,sizeof(net))) j.Add(",\"net\":%s",net);
+        else j.Add(",\"net\":null");
+    }
     // Phase-1 detour (rates per second) and the last windowed drain.
     j.Add(",\"p1\":{\"installed\":%s,\"live\":%s,\"per_s\":",Bool(n.p1_installed),Bool(n.p1_live));
     if(!n.per_s_valid) j.Add("null");

@@ -118,6 +118,22 @@ bool EndsWith(Slice s, const char* literal) noexcept {
 
 bool IsLoopbackAddress(std::uint32_t address) noexcept { return (address >> 24) == 127; }
 
+// The lab.ini keys partner_native_profile writes (ApplyNativeProfile), as
+// their kProfileKey* bit: a key named explicitly keeps its own value.
+std::uint32_t ProfileKeyBit(Slice key) noexcept {
+    struct Entry { const char* name; std::uint32_t bit; };
+    static constexpr Entry entries[] = {
+        {"partner_drive", kProfileKeyDrive}, {"partner_input_defer", kProfileKeyDefer}, {"partner_input_send", kProfileKeySend},
+        {"partner_input_hook", kProfileKeyHook}, {"partner_input_hold", kProfileKeyHold}, {"partner_input_words", kProfileKeyWords},
+        {"partner_input_wrap", kProfileKeyWrap}, {"partner_input_cam", kProfileKeyCam}, {"partner_input_local", kProfileKeyLocal},
+        {"partner_recon", kProfileKeyRecon}, {"partner_input_slot", kProfileKeySlot}, {"partner_native_rates", kProfileKeyRates},
+        {"partner_native_noise", kProfileKeyNoise}, {"partner_input_p218_allow", kProfileKeyP218}, {"partner_input_mask", kProfileKeyMask},
+        {"partner_native_aim", kProfileKeyAim}, {"partner_native_gun", kProfileKeyGun}, {"partner_native_fire", kProfileKeyFire},
+        {"partner_input_triggers", kProfileKeyTriggers}, {"partner_input_rstick", kProfileKeyRstick}};
+    for (const auto& entry : entries) if (Equals(key, entry.name)) return entry.bit;
+    return 0;
+}
+
 bool ParseCharacter(Slice s, PlayerCharacter& out) noexcept {
     struct Entry { const char* name; PlayerCharacter value; };
     static constexpr Entry entries[] = {
@@ -153,8 +169,17 @@ bool ForEachPair(const char* text, std::size_t length, Visit visit) noexcept {
 } // namespace
 
 bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexcept {
+    return ParseLabConfig(text, length, out, LabParseOptions{});
+}
+
+bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const LabParseOptions& options) noexcept {
     LabConfig result{};
     bool enabled = false;
+    // Online play: the profile expands after the loop (keys named explicitly
+    // keep their value: `given`); the play defaults apply to keys not named.
+    PartnerNativeProfile profile = PartnerNativeProfile::off;
+    std::uint32_t given = 0;
+    bool native_net_given = false, stall_given = false, repeats_given = false;
     // Keys whose validity depends on mode or role are resolved after the loop.
     bool bind_given = false, listen_given = false, listen_zero = false, peer_port_given = false;
     Slice peer_addr{nullptr, 0};
@@ -340,8 +365,23 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
             else if (Equals(value, "off")) result.net_steam_accept = false;
             else ok = false;
         } else if (Equals(key, "steam_selftest")) ok = ParseRange(value, 0, 2, result.steam_selftest);
+        else if (Equals(key, "partner_native_profile")) ok = ParsePartnerNativeProfile(value.data, value.size, profile);
+        else if (Equals(key, "partner_native_net")) {
+            ok = ParsePartnerNativeNet(value.data, value.size, result.partner_native_net);
+            if (ok) native_net_given = true;
+        } else if (Equals(key, "partner_native_stall")) {
+            ok = ParsePartnerNativeStall(value.data, value.size, result.partner_native_stall);
+            if (ok) stall_given = true;
+        } else if (Equals(key, "partner_native_stall_ms"))
+            ok = ParseRange(value, kPartnerStallMsMin, kPartnerStallMsMax, result.partner_native_stall_ms);
+        else if (Equals(key, "partner_native_hold")) ok = ParsePartnerNativeHold(value.data, value.size, result.partner_native_hold);
+        else if (Equals(key, "partner_input_edge_repeats")) {
+            ok = ParseRange(value, kPartnerEdgeRepeatsMin, kPartnerEdgeRepeatsMax, result.partner_input_edge_repeats);
+            if (ok) repeats_given = true;
+        } else if (Equals(key, "play_rehearsal")) ok = ParseBool(value, result.play_rehearsal);
         else { ++result.unknown_keys; return; }
         if (!ok) ++result.invalid_values;
+        else given |= ProfileKeyBit(key);
     });
     if (!usable) return false;
     // A loopback instance needs both ports and a distinct identity source.
@@ -365,6 +405,13 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
         ++result.invalid_values;
     }
     const bool steam = result.net_transport == NetTransport::steam;
+    // The hidden worker's one-PC play rehearsal (UDP on 127.0.0.1): only with
+    // the worker build's option; otherwise a play refusal (below) and never in the lab.
+    const bool rehearsal = play && !steam && result.play_rehearsal && options.allow_play_rehearsal;
+    if (!play && result.play_rehearsal) {
+        result.play_rehearsal = false;
+        ++result.invalid_values;
+    }
     // A guest's host is never this account.
     if (result.net_peer_steam && result.net_peer_steam == result.net_steam_self) {
         result.net_peer_steam = 0;
@@ -382,11 +429,11 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
         result.net_bind_address = 0;
         result.net_peer_address = 0x7F000001;
     }
-    // net_peer_addr: a dotted IPv4 only (127/8 only in lab mode).
+    // net_peer_addr: a dotted IPv4 only (127/8 only in lab mode and the rehearsal).
     bool peer_addr_valid = false;
     if (peer_addr_given) {
         std::uint32_t address = 0;
-        if (ParseIpv4(peer_addr.data, peer_addr.size, !play, address)) {
+        if (ParseIpv4(peer_addr.data, peer_addr.size, !play || rehearsal, address)) {
             result.net_peer_address = address;
             peer_addr_valid = true;
         } else {
@@ -421,15 +468,18 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
         if (refuse(result.self_steamid != 0, kPlayRefusedSelfSteamId)) result.self_steamid = 0;
         if (refuse(result.peer_steamid != 0, kPlayRefusedPeerSteamId)) result.peer_steamid = 0;
         if (refuse(result.self_name[0] != 0, kPlayRefusedSelfName)) result.self_name[0] = 0;
-        if (refuse(result.mutex_suffix[0] != 0, kPlayRefusedMutexSuffix)) result.mutex_suffix[0] = 0;
-        if (refuse(result.xinput != kXInputPassthrough, kPlayRefusedXInput)) result.xinput = kXInputPassthrough;
+        // The rehearsal keeps its second instance's mutex suffix and hides the pads (xinput=none only).
+        if (refuse(result.play_rehearsal && !rehearsal, kPlayRefusedRehearsal)) result.play_rehearsal = false;
+        if (refuse(result.mutex_suffix[0] != 0 && !rehearsal, kPlayRefusedMutexSuffix)) result.mutex_suffix[0] = 0;
+        if (refuse(result.xinput != kXInputPassthrough && !(rehearsal && result.xinput == kXInputNone), kPlayRefusedXInput))
+            result.xinput = kXInputPassthrough;
         if (refuse(result.join_trigger, kPlayRefusedJoinTrigger)) result.join_trigger = false;
         if (refuse(result.auto_join_delay_s != 0, kPlayRefusedAutoJoin)) result.auto_join_delay_s = 0;
         if (refuse(result.role == LabRole::host && peer_addr_given, kPlayRefusedHostPeerAddr)) {
             peer_addr_valid = false;
             result.net_peer_address = 0x7F000001;
         }
-        if (refuse(result.net_bind_loopback, kPlayRefusedBindLoopback)) {
+        if (refuse(result.net_bind_loopback && !rehearsal, kPlayRefusedBindLoopback)) {
             result.net_bind_loopback = false;
             result.net_bind_address = 0;
         }
@@ -439,17 +489,38 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
         std::uint32_t* const impairments[] = {&result.net_latency_ms, &result.net_loss_permille, &result.net_jitter_ms,
                                               &result.net_dup_permille, &result.net_reorder_permille};
         for (std::uint32_t* value : impairments)
-            if (refuse(*value != 0, kPlayRefusedImpairment)) *value = 0;
+            if (refuse(*value != 0 && !rehearsal, kPlayRefusedImpairment)) *value = 0;
         // World-sync probes are lab experiments; world itself is allowed in play.
         if (refuse(result.world_probe != WorldProbe::none, kPlayRefusedWorldProbe)) result.world_probe = WorldProbe::none;
         // The native debug soldier placement stays a lab experiment until qualified.
         if (refuse(result.debug_soldier_warp, kPlayRefusedDebugSoldierWarp)) result.debug_soldier_warp = false;
-        // The native puppet stays a lab experiment until its runtime qualification.
-        if (refuse(result.partner_drive != PartnerDrive::legacy || result.partner_input_defer != PartnerDefer::off,
+        // The native puppet: only through partner_native_profile (the qualified
+        // stage). The raw drive and deferral keys and the lab-only native
+        // experiments (lookcam, local=all, the P+0x218 window, noise=keep) stay refused.
+        if (refuse(result.partner_drive != PartnerDrive::legacy || result.partner_input_defer != PartnerDefer::off ||
+                       result.partner_native_aim == PartnerNativeAim::lookcam || result.partner_input_local == PartnerLocal::all ||
+                       result.partner_input_p218_allow || result.partner_native_noise == PartnerNativeNoise::keep,
                    kPlayRefusedNativeDrive)) {
             result.partner_drive = PartnerDrive::legacy;
             result.partner_input_defer = PartnerDefer::off;
+            if (result.partner_native_aim == PartnerNativeAim::lookcam) result.partner_native_aim = PartnerNativeAim::off;
+            result.partner_input_local = PartnerLocal::main;
+            result.partner_input_p218_allow = false;
+            result.partner_native_noise = PartnerNativeNoise::filter;
+            given &= ~(kProfileKeyDrive | kProfileKeyDefer | kProfileKeyLocal | kProfileKeyP218 | kProfileKeyNoise);
+            if (result.partner_native_aim == PartnerNativeAim::off) given &= ~kProfileKeyAim;
         }
+        // The profile needs the clip partner it falls back to (Play-Coop's play defaults).
+        if (refuse(profile != PartnerNativeProfile::off &&
+                       !(result.partner && result.partner_source == PartnerSource::net && result.partner_apply == PartnerApply::xform &&
+                         result.partner_input == PartnerInput::off && result.partner_dm == PartnerDm::map &&
+                         result.partner_anim == PartnerAnim::off),
+                   kPlayRefusedNativeProfile))
+            profile = PartnerNativeProfile::off;
+        // Online defaults (keys not named keep them).
+        if (!native_net_given) result.partner_native_net = PartnerNativeNet::online;
+        if (!stall_given) result.partner_native_stall = PartnerNativeStall::hold;
+        if (!repeats_given) result.partner_input_edge_repeats = kPlayEdgeRepeats;
         // Steam online.
         if (refuse(result.steam_selftest != 0, kPlayRefusedSteamSelftest)) result.steam_selftest = 0;
         if (refuse(steam && result.role == LabRole::host && peer_steam_given, kPlayRefusedHostPeerSteam)) result.net_peer_steam = 0;
@@ -457,6 +528,9 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
             result.net = false;
         refuse(udp_keys_with_steam, kPlayRefusedUdpKeysWithSteam);
     }
+    // The native profile (lab and play): the qualified stage's settings.
+    ApplyNativeProfile(result, profile, given);
+    result.partner_native_profile = profile;
     if (!steam) {
         // The Steam keys mean nothing on the UDP link.
         result.net_peer_steam = 0;
@@ -949,6 +1023,83 @@ bool ParsePartnerNativeNoise(const char* text, std::size_t size, PartnerNativeNo
     return true;
 }
 
+const char* PartnerNativeProfileName(PartnerNativeProfile value) noexcept {
+    switch (value) {
+    case PartnerNativeProfile::loco: return "loco";
+    case PartnerNativeProfile::gun: return "gun";
+    default: return "off";
+    }
+}
+const char* PartnerNativeNetName(PartnerNativeNet value) noexcept { return value == PartnerNativeNet::online ? "online" : "lab"; }
+const char* PartnerNativeStallName(PartnerNativeStall value) noexcept { return value == PartnerNativeStall::hold ? "hold" : "neutral"; }
+const char* PartnerNativeHoldName(PartnerNativeHold value) noexcept { return value == PartnerNativeHold::net ? "net" : "own"; }
+
+bool ParsePartnerNativeProfile(const char* text, std::size_t size, PartnerNativeProfile& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "off")) out = PartnerNativeProfile::off;
+    else if (Equals(s, "loco")) out = PartnerNativeProfile::loco;
+    else if (Equals(s, "gun")) out = PartnerNativeProfile::gun;
+    else return false;
+    return true;
+}
+bool ParsePartnerNativeNet(const char* text, std::size_t size, PartnerNativeNet& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "lab")) out = PartnerNativeNet::lab;
+    else if (Equals(s, "online")) out = PartnerNativeNet::online;
+    else return false;
+    return true;
+}
+bool ParsePartnerNativeStall(const char* text, std::size_t size, PartnerNativeStall& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "neutral")) out = PartnerNativeStall::neutral;
+    else if (Equals(s, "hold")) out = PartnerNativeStall::hold;
+    else return false;
+    return true;
+}
+bool ParsePartnerNativeHold(const char* text, std::size_t size, PartnerNativeHold& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "own")) out = PartnerNativeHold::own;
+    else if (Equals(s, "net")) out = PartnerNativeHold::net;
+    else return false;
+    return true;
+}
+
+// The worker's admitted native stages (tools/worker/WorkerSessionCommon.psm1
+// Get-WorkerPartnerSettings; tools/worker/worker_game_gate.hpp NativeProfile).
+void ApplyNativeProfile(LabConfig& c, PartnerNativeProfile profile, std::uint32_t keep) noexcept {
+    if (profile == PartnerNativeProfile::off) return;
+    const bool gun = profile == PartnerNativeProfile::gun;
+    const auto set = [keep](std::uint32_t bit) noexcept { return (keep & bit) == 0; };
+    if (set(kProfileKeyDrive)) c.partner_drive = PartnerDrive::native;
+    if (set(kProfileKeyDefer)) c.partner_input_defer = PartnerDefer::on;
+    if (set(kProfileKeySend)) c.partner_input_send = true;
+    if (set(kProfileKeyHook)) c.partner_input_hook = true;
+    if (set(kProfileKeyHold)) c.partner_input_hold = PartnerInputHold::own;
+    if (set(kProfileKeyWords)) {
+        c.partner_input_words[0] = kPartnerWordHeld;
+        c.partner_input_words[1] = kPartnerWordPress;
+        c.partner_input_words[2] = kPartnerWordRelease;
+    }
+    if (set(kProfileKeyWrap)) c.partner_input_wrap = PartnerWrap::window;
+    if (set(kProfileKeyCam)) c.partner_input_cam = PartnerInputCam::sandbox;
+    if (set(kProfileKeyLocal)) c.partner_input_local = PartnerLocal::main;
+    if (set(kProfileKeyRecon)) c.partner_recon = PartnerRecon::track;
+    if (set(kProfileKeySlot)) c.partner_input_slot = PartnerSlot::body;
+    if (set(kProfileKeyRates)) c.partner_native_rates = PartnerNativeRates::mirror;
+    if (set(kProfileKeyNoise)) c.partner_native_noise = PartnerNativeNoise::filter;
+    if (set(kProfileKeyP218)) c.partner_input_p218_allow = false;
+    if (set(kProfileKeyMask)) c.partner_input_mask = gun ? (kPartnerNativeBaseMask | kPartnerNativeGunBits | kPartnerNativeFireBit) : kPartnerNativeBaseMask;
+    if (set(kProfileKeyAim)) c.partner_native_aim = gun ? PartnerNativeAim::look : PartnerNativeAim::off;
+    if (set(kProfileKeyGun)) c.partner_native_gun = gun;
+    if (set(kProfileKeyFire)) c.partner_native_fire = gun ? PartnerNativeFire::visual : PartnerNativeFire::off;
+    if (set(kProfileKeyTriggers)) c.partner_input_triggers = gun;
+    if (set(kProfileKeyRstick)) c.partner_input_rstick = gun;
+}
+
 const char* PartnerNativeRatesName(PartnerNativeRates value) noexcept {
     switch (value) {
     case PartnerNativeRates::off: return "off";
@@ -1252,7 +1403,13 @@ long ReadConfigFile(const wchar_t* name) noexcept {
 BOOL CALLBACK LoadLab(PINIT_ONCE, PVOID, PVOID*) noexcept {
     AcquireSRWLockExclusive(&buffer_lock);
     const long size = ReadConfigFile(L"lab.ini");
-    if (size >= 0) ParseLabConfig(file_buffer, static_cast<std::size_t>(size), lab_config);
+    LabParseOptions options{};
+#if defined(MGS_PLAY_REHEARSAL) && MGS_PLAY_REHEARSAL
+    // Background-worker builds only (CMake MGS_BACKGROUND_WORKER): the hidden
+    // one-PC play rehearsal. Friend and release builds never define it.
+    options.allow_play_rehearsal = true;
+#endif
+    if (size >= 0) ParseLabConfig(file_buffer, static_cast<std::size_t>(size), lab_config, options);
     ReleaseSRWLockExclusive(&buffer_lock);
     return TRUE;
 }

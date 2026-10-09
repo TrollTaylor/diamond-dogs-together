@@ -631,9 +631,67 @@ void TestComposeSteer() {
     Check(pi::Strip(s, 0).held == 0x58, "Strip with no bits is the identity");
 }
 
+// Online play (docs/native-puppet.md "Online"): the stall hold keeps the last
+// live stick (never new edges or analog triggers) up to stall_ms, and the
+// sender's edge repeats are configurable up to kEdgeRepeatsMax.
+void TestOnline() {
+    pi::Config c = Cfg(pi::Word::held, pi::Word::press, pi::Word::release);
+    c.triggers = true;
+    pi::Sample s{};
+    s.valid = true; s.age_ms = 10; s.seq = 1;
+    s.packet.flags = pi::Flag::Valid;
+    s.packet.ly = -32767; s.packet.lmag = 65535; s.packet.held = 0x4; s.packet.rt = 255;
+    s.packet.ldir = static_cast<std::int16_t>(std::lround(kPi * 10000));  // stick back: dir pi
+    s.packet.version = 3; s.packet.xflags = pi::XFlag::Look; s.packet.look_yaw = 1.0f;
+    pi::EdgeState edge{};
+    pi::Injection j = pi::Compose(c, s, 0, pi::Overlay{}, edge);
+    Check(j.live && Near(j.ly, -1.0) && j.held == 0x4 && j.rt > 0.99f, "live sample");
+    s.age_ms = 300;
+    j = pi::Compose(c, s, 0, pi::Overlay{}, edge);
+    Check(!j.live && j.ly == 0.0f && j.held == 0x4 && j.rt == 0.0f, "neutral stall (default): sticks zero, held by the grace");
+    c.stall_ms = 400;
+    j = pi::Compose(c, s, 0, pi::Overlay{}, edge);
+    Check(!j.live && j.stale && Near(j.ly, -1.0) && j.held == 0x4 && j.rt == 0.0f && j.look_valid && j.look_yaw == 1.0f &&
+              j.edge_press == 0 && j.edge_release == 0, "stall hold: the last stick and look, no triggers, no edges");
+    s.age_ms = 401;
+    j = pi::Compose(c, s, 0, pi::Overlay{}, edge);
+    Check(j.ly == 0.0f && !j.look_valid, "beyond stall_ms: neutral");
+    c.stall_ms = 200;  // not above stale_ms: off
+    s.age_ms = 260;
+    j = pi::Compose(c, s, 0, pi::Overlay{}, edge);
+    Check(j.ly == 0.0f, "stall_ms <= stale_ms is off");
+    // Edge repeats.
+    pi::SenderEdges st{};
+    Check(pi::SenderRepeats(st) == pi::kEdgeRepeats, "0 repeats means the default 2");
+    st.repeats = 5;
+    pi::PadSnapshot snap{};
+    pi::InputPacket pkt{};
+    snap.held = 0x2;
+    pi::SenderObserve(st, snap);
+    pi::SenderFill(st, pkt);
+    pi::SenderSent(st);
+    std::uint32_t reps = 0;
+    for (int i = 0; i < 10; ++i) {
+        pi::SenderObserve(st, snap);
+        pi::SenderFill(st, pkt);
+        if (pkt.edge_seq == 1) {
+            ++reps;
+            pkt.version = 2;
+            Check(pkt.edge_rep == reps && pi::ValidPacket(pkt), "repeat numbers 1..5 are valid frames");
+        }
+        pi::SenderSent(st);
+    }
+    Check(reps == 5, "five repeats");
+    st.repeats = 200;
+    Check(pi::SenderRepeats(st) == pi::kEdgeRepeatsMax, "clamped to kEdgeRepeatsMax");
+    pkt.edge_seq = 1; pkt.edge_rep = pi::kEdgeRepeatsMax + 1;
+    Check(!pi::ValidPacket(pkt), "a receiver refuses more than kEdgeRepeatsMax repeats");
+}
+
 } // namespace
 
 int main() {
+    TestOnline();
     TestEffective();
     TestDirCheck();
     TestQuantize();

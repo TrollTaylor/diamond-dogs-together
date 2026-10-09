@@ -37,9 +37,11 @@
 #include "mgscoop/partner_input.hpp"
 #include "mgscoop/partner_input_hook.hpp"
 #include "mgscoop/partner_defer.hpp"
+#include "mgscoop/partner_caps_wire.hpp"
 #include "mgscoop/partner_equip_wire.hpp"
 #include "mgscoop/partner_fire_filter.hpp"
 #include "mgscoop/partner_native.hpp"
+#include "mgscoop/partner_native_net.hpp"
 #include "mgscoop/partner_player.hpp"
 #include "mgscoop/partner_recon.hpp"
 #include "mgscoop/partner_receipt.hpp"
@@ -269,7 +271,9 @@ struct Hooks {
     // Instance k's gun record (0: the local player, the v4 magazine sender).
     bool (*read_gun)(void* context, const partner_player::State& state, std::uint32_t k, partner_player::Gun1& out) noexcept = nullptr;
     bool (*read_loadout)(void* context, const partner_player::State& state, partner_player::Loadout& out) noexcept = nullptr;
-    // Reliable channel `channel` (latest mode): true when queued.
+    // Reliable channel `channel` (append mode since the capability message
+    // shares channel 2: latest would replace the other's unsent message):
+    // true when queued.
     bool (*send_reliable)(void* context, std::uint8_t channel, const std::uint8_t* bytes, std::size_t size) noexcept = nullptr;
     // Native polish (docs/native-puppet.md "Facing", "Weapons"): whether any
     // batch is in flight or the game window is closing (partner_defer::InBatch
@@ -278,6 +282,10 @@ struct Hooks {
     bool (*in_batch)(void* context) noexcept = nullptr;
     const char* (*install_look_source)(void* context) noexcept = nullptr;
     const char* (*install_noise)(void* context) noexcept = nullptr;
+    // Online play (docs/native-puppet.md "Online"): reliable channel `channel`
+    // in append mode (the capability message shares channel 2 with the
+    // manifest; true when queued). Null: no capabilities are sent.
+    bool (*send_reliable_append)(void* context, std::uint8_t channel, const std::uint8_t* bytes, std::size_t size) noexcept = nullptr;
 };
 // Native weapons cadences and caps.
 inline constexpr std::uint64_t kEquipReadMs = 1000;    // loadout read / manifest send at most this often
@@ -347,9 +355,19 @@ struct Settings {
     PartnerNativeNoise nnoise;
     // Set only in the effective copy: the native settings apply this tick.
     bool native_active;
-    // lab.ini mode=play (Configure): the trigger file never enables the native
-    // drive there (lab.ini already refuses it, kPlayRefusedNativeDrive).
+    // lab.ini mode=play (Configure): the trigger file enables the native drive
+    // there only inside the profile lab.ini admitted (nprofile != off); the
+    // raw keys stay refused (kPlayRefusedNativeDrive).
     bool play_mode;
+    // Online play (docs/native-puppet.md "Online"): the native profile lab.ini
+    // expanded, the arbiter's network policy, the stall hold (stall_ms while
+    // native), the native hold classifier and the sender's edge repeats.
+    PartnerNativeProfile nprofile;
+    PartnerNativeNet nnet;
+    PartnerNativeStall nstall;
+    std::uint32_t stall_ms;
+    PartnerNativeHold nhold;
+    std::uint32_t edge_repeats;
 };
 
 // A capped change-only log family (one per experiment head).
@@ -684,6 +702,17 @@ struct Mission {
     // The 1 Hz partner_native_face line and the last placement's yaw verdict.
     unsigned face_lines;
     std::int32_t place_yaw_err_mdeg;
+    // --- Online play (docs/native-puppet.md "Online").
+    // The receiver's link quality (re-entry gate) and the online log lines.
+    partner_native_net::Quality net_quality;
+    std::uint64_t net_line_ms;
+    unsigned net_lines;
+    std::uint64_t net_line_key;
+    bool net_quiet_logged;
+    LogCap net_cap;
+    // Body 1 never showed a gun class this mission (the gun profile strips
+    // HOLD, RELOAD and FIRE: no empty-handed aiming), logged on change.
+    bool weapon_absent, weapon_absent_logged, weapon_logged_absent;
 };
 
 struct Driver {
@@ -718,6 +747,16 @@ struct Driver {
     // Native rates: the mirror's epoch (bumped at every MissionStart, never 0
     // once a mission ran), published with the Arm.
     std::uint32_t rates_epoch;
+    // Online play: the capability exchange outlives missions (it is link
+    // session scoped): this copy's sender pacing, the remote's last message
+    // and the revision last logged; an ammo leak in play strips RELOAD for the
+    // rest of the process (reload_leak_strip).
+    partner_caps_wire::Sender caps_tx;
+    partner_caps_wire::Store caps_rx;
+    std::uint16_t caps_logged_rev;
+    std::uint32_t caps_logged_epoch;
+    std::uint8_t caps_logged_drive, caps_logged_reason;
+    bool reload_leak_strip, reload_leak_logged;
     Mission mission;
 };
 

@@ -3128,6 +3128,104 @@ struct NativeSession : MapSession {
     }
 };
 
+// Online play (docs/native-puppet.md "Online"): the online policy, the stall
+// hold in the Arm, the sender's edge repeats, the capability exchange both
+// ways, remote_caps, a quiet remote, the weapon-absent strip and native.net.
+std::vector<std::uint8_t> CapsBytes(std::uint16_t revision, std::uint32_t epoch, std::uint8_t features, mgscoop::partner_native_net::Drive drive,
+                                    const char* reason) {
+    mgscoop::partner_caps_wire::Caps c{};
+    c.revision = revision; c.epoch = epoch; c.features = features; c.drive = static_cast<std::uint8_t>(drive);
+    c.reason = mgscoop::partner_native_net::ReasonCode(reason); c.mode = 1; c.policy = 1;
+    std::uint8_t b[mgscoop::partner_caps_wire::kSize]{};
+    Check(mgscoop::partner_caps_wire::Encode(c, b) == sizeof(b), "caps fixture encodes");
+    return std::vector<std::uint8_t>(b, b + sizeof(b));
+}
+void TestNativeOnline() {
+    namespace pn = mgscoop::partner_native;
+    namespace pnn = mgscoop::partner_native_net;
+    namespace pcw = mgscoop::partner_caps_wire;
+    namespace pi = mgscoop::partner_input;
+    {
+        NativeSession s;
+        s.hooks.send_reliable_append = HookSendReliable;
+        s.driver.settings.nnet = mgscoop::PartnerNativeNet::online;
+        s.driver.settings.nstall = mgscoop::PartnerNativeStall::hold;
+        s.driver.settings.stall_ms = 400;
+        s.driver.settings.edge_repeats = 5;
+        s.driver.settings.nprofile = mgscoop::PartnerNativeProfile::loco;
+        Check(s.Until(pn::Mode::active, 9000), "online: active");
+        Check(s.fake.arms.back().native && s.fake.arms.back().config.stall_ms == 400, "the stall hold reaches the native Arm");
+        Check(pi::SenderRepeats(s.driver.mission.sender) == 5, "the sender repeats each edge set 5 times");
+        // The capability message went out (append, channel 2) and says native.
+        for (int i = 0; i < 40; ++i) s.N();
+        bool native_caps = false;
+        for (const auto& m : s.fake.reliable_sent) {
+            pcw::Caps c{};
+            if (pcw::Decode(m.data(), m.size(), 7, c) == pcw::Result::ok && c.drive == static_cast<std::uint8_t>(pnn::Drive::native) &&
+                (c.features & pcw::Feature::InputSender) && (c.features & pcw::Feature::NativeDrive) && c.profile == 1 && c.policy == 1)
+                native_caps = true;
+        }
+        Check(native_caps && s.driver.caps_tx.sent >= 2, "caps sent: native, input sender, loco profile, online");
+        // The remote's capabilities: it shows our body as clips because of its thread census.
+        s.fake.channel2.push_back(CapsBytes(4, 7, pcw::Feature::InputSender | pcw::Feature::NativeDrive, pnn::Drive::clips, "thread"));
+        s.N();
+        const auto& net = s.driver.mission.tele.net;
+        Check(net.caps_rx && net.remote_drive == pnn::Drive::clips && std::strcmp(net.remote_reason, "thread") == 0 && net.remote_v4 &&
+              s.fake.Containing("partner_caps=rx; drive=clips; reason=thread;") == 1, "remote caps stored, logged once");
+        Check(net.local_drive == pnn::Drive::native && std::strcmp(net.local_reason, "ok") == 0 && std::strcmp(net.policy, "online") == 0 &&
+              net.edge_repeats == 5 && net.quality_good, "native.net: local view, policy, repeats, quality");
+        // A quiet remote (link up, input and pose stale): native holds, then a network leave (no latch).
+        s.fake.latest.age_ms = 3000;
+        s.fake.sample.status = mgscoop::pose::Status::stale;
+        for (int i = 0; i < 30; ++i) s.N();
+        Check(s.driver.mission.native_out.mode == pn::Mode::active && pn::ModeName(s.driver.mission.native_out.mode) &&
+                  std::strcmp(s.driver.mission.native_out.reason, "remote_quiet") == 0 && s.fake.Containing("partner_native_net=quiet") == 1,
+              "a quiet remote keeps the native drive (neutral in place)");
+        Check(s.Until(pn::Mode::fallback, 12000) && s.driver.mission.native.fallbacks == 0 && s.driver.mission.native.net_leaves == 1 &&
+              std::strcmp(s.driver.mission.native.left_reason, "net_quiet") == 0, "10 s quiet: net_quiet, never counted");
+    }
+    {
+        // The remote sends no input frames (capabilities without the sender): remote_caps.
+        NativeSession s;
+        s.driver.settings.nnet = mgscoop::PartnerNativeNet::online;
+        s.fake.channel2.push_back(CapsBytes(1, 7, pcw::Feature::NativeDrive, pnn::Drive::off, "legacy"));
+        for (int i = 0; i < 100; ++i) s.N();
+        Check(s.driver.mission.native_out.mode == pn::Mode::fallback && std::strcmp(s.driver.mission.native_out.reason, "remote_caps") == 0 &&
+              s.driver.mission.tele.net.remote_caps_refused, "remote_caps keeps the clips");
+        // Another link session's caps do not count.
+        s.fake.link_session = 8;
+        for (int i = 0; i < 100; ++i) s.N();
+        Check(s.driver.mission.native_out.mode != pn::Mode::fallback || std::strcmp(s.driver.mission.native_out.reason, "remote_caps") != 0,
+              "caps of an older session are ignored");
+    }
+    {
+        // The gun profile: body 1 without a gun class strips HOLD, RELOAD and FIRE.
+        NativeSession s;
+        AddWeaponHooks(s.hooks);
+        s.driver.settings.ngun = true;
+        s.driver.settings.input_mask = 0x224005E;
+        s.fake.gun_ok = false;
+        Check(s.Until(pn::Mode::active, 9000), "active (gun profile, no gun on body 1)");
+        Check((s.fake.arms.back().strip & 0x58u) == 0x58u && s.driver.mission.weapon_absent &&
+              s.fake.Containing("partner_weapon=absent; body_gun=absent;") == 1, "weapon absent: HOLD/RELOAD/FIRE stripped, logged once");
+    }
+    {
+        // A copy that shows clips (drive=legacy) still sends its capabilities: off, legacy.
+        MapSession s(mgscoop::PartnerSource::net);
+        AddNativeHooks(s.hooks);
+        s.hooks.send_reliable_append = HookSendReliable;
+        s.driver.settings.isend = true;
+        s.driver.settings.play_mode = true;
+        s.Run(300);
+        pcw::Caps c{};
+        Check(!s.fake.reliable_sent.empty() && pcw::Decode(s.fake.reliable_sent.back().data(), s.fake.reliable_sent.back().size(), 7, c) ==
+                  pcw::Result::ok && c.drive == static_cast<std::uint8_t>(pnn::Drive::off) &&
+                  std::strcmp(pnn::ReasonName(c.reason), "legacy") == 0 && (c.features & pcw::Feature::InputSender),
+              "clips copy: caps off/legacy with the input sender");
+        Check(s.driver.mission.tele.net.local_drive == pnn::Drive::off, "native.net local_drive off");
+    }
+}
+
 void TestNativeEnterAndLeave() {
     namespace pn = mgscoop::partner_native;
     NativeSession s;
@@ -3305,12 +3403,18 @@ void TestNativeChannel2AndSender() {
                   s.fake.inputs.back().rate_dash == 0 && s.fake.inputs.back().rate_crawl == 0,
               "partner_native_rates=off: still v4 (the magazine group), never rates");
 
+        // Online play: the sender no longer depends on its own drive. A copy
+        // that shows clips (drive=legacy) still sends v4, so the peer's native
+        // drive gets the look, rates and magazine (docs/native-puppet.md "Online").
         Session l(3, mgscoop::PartnerApply::xform, mgscoop::PartnerSource::net);
         l.driver.settings.isend = true;
         AddNativeHooks(l.hooks);
         l.fake.look_source_ok = true;
+        l.fake.look_source = pp::LookSource{true, true, true, 0.25f, -1.5f, 2.0f, 3.0f, 0.5f};
         l.Tick(1);
-        Check(!l.fake.inputs.empty() && l.fake.inputs.back().version == 2, "legacy sender still sends v2");
+        Check(!l.fake.inputs.empty() && l.fake.inputs.back().version == 4 && (l.fake.inputs.back().xflags & 0x01) &&
+                  l.fake.inputs.back().look_pitch == 0.25f,
+              "legacy sender sends v4 with the look (decoupled from its own drive)");
     }
 }
 
@@ -3795,15 +3899,41 @@ void TestNativePlayAndWithdraw() {
         s.Trigger("drive=native defer=on steer=10");
         Check(s.driver.settings.drive == mgscoop::PartnerDrive::legacy && s.driver.settings.defer == mgscoop::PartnerDefer::off &&
               s.driver.settings.steer_deg == 10 &&
-              s.fake.Has("partner_native=trigger_refused; reason=play; drive=legacy; defer=off\r\n"),
-              "play mode: drive=native / defer=on refused, other keys applied");
+              s.fake.Has("partner_native=trigger_refused; reason=play_profile; drive=legacy\r\n") &&
+              s.fake.Has("partner_native=trigger_refused; reason=play; key=defer\r\n"),
+              "play mode without a profile: drive=native / defer=on refused, other keys applied");
         s.Run(3000);
         Check(s.fake.defer_installs == 0 && !s.fake.identity_valid && s.fake.roots_published == 0 &&
               s.driver.mission.native_out.mode == pn::Mode::off, "play mode: nothing native installed or published");
+        // Online play: inside the profile lab.ini admitted the trigger toggles the drive (never the deferral).
+        s.driver.settings.nprofile = mgscoop::PartnerNativeProfile::gun;
+        s.driver.settings.defer = mgscoop::PartnerDefer::on;
+        s.fake.lines.clear();
+        s.Trigger("drive=native");
+        Check(s.driver.settings.drive == mgscoop::PartnerDrive::native && !s.fake.Containing("trigger_refused"),
+              "play with a profile: drive=native applies");
+        s.Trigger("drive=legacy defer=census");
+        Check(s.driver.settings.drive == mgscoop::PartnerDrive::legacy && s.driver.settings.defer == mgscoop::PartnerDefer::on &&
+              s.fake.Has("partner_native=trigger_refused; reason=play; key=defer\r\n"), "play: clips by trigger, the deferral untouched");
         s.driver.settings.play_mode = false;
         s.Trigger("drive=native defer=census");
         Check(s.driver.settings.drive == mgscoop::PartnerDrive::native && s.driver.settings.defer == mgscoop::PartnerDefer::census,
               "lab mode: the same trigger applies");
+    }
+    {
+        // Configure copies the online keys.
+        pd::Driver d{};
+        mgscoop::LabConfig lab{};
+        lab.partner_native_profile = mgscoop::PartnerNativeProfile::gun;
+        lab.partner_native_net = mgscoop::PartnerNativeNet::online;
+        lab.partner_native_stall = mgscoop::PartnerNativeStall::hold;
+        lab.partner_native_stall_ms = 350;
+        lab.partner_native_hold = mgscoop::PartnerNativeHold::net;
+        lab.partner_input_edge_repeats = 5;
+        pd::Configure(d, lab);
+        Check(d.settings.nprofile == mgscoop::PartnerNativeProfile::gun && d.settings.nnet == mgscoop::PartnerNativeNet::online &&
+              d.settings.nstall == mgscoop::PartnerNativeStall::hold && d.settings.stall_ms == 350 &&
+              d.settings.nhold == mgscoop::PartnerNativeHold::net && d.settings.edge_repeats == 5, "Configure: online keys");
     }
     {
         NativeSession s(mgscoop::PartnerDefer::census);
@@ -3928,6 +4058,7 @@ int main() {
     TestDmMapInteractions();
     TestDmMapCaps();
     TestNativeEnterAndLeave();
+    TestNativeOnline();
     TestNativeRefusalsAndCensus();
     TestNativeChannel2AndSender();
     TestNativeRates();

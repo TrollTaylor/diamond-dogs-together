@@ -548,6 +548,35 @@ void TestDiverging() {
     Check(w.out.report.snaps >= 3 && w.out.report.places >= 2, "cumulative counters: the snaps and the re-placement stay counted");
 }
 
+// Online play (docs/native-puppet.md "Online"): the first snap after an input
+// gap of at least 300 ms is catch-up (counted as a gap snap), never diverging.
+void TestGapSnaps() {
+    for (const bool gaps_on : {true, false}) {
+        World w;
+        if (!gaps_on) w.params.gap_snap_ms = 0;
+        w.Place();
+        w.remote_v[2] = 3200.0;
+        w.r = 1.0;
+        w.Run(1000);
+        w.ResetCounters();
+        for (int i = 0; i < 5; ++i) {
+            w.in_age = 600;  // the input stalled (packets late): frozen, no snap during the gap
+            w.Run(100);
+            w.in_age = 5;
+            w.body[0] += 2000.0;
+            w.Run(100);
+            w.body[0] += 2000.0;
+            w.Run(1700);
+        }
+        if (gaps_on) {
+            Check(!(w.events & pr::Event::diverging) && w.out.report.gap_snaps == 5 && w.out.report.snaps_window == 0 && w.snaps == 5,
+                  "gap snaps: five catch-up snaps, never diverging");
+        } else {
+            Check((w.events & pr::Event::diverging) != 0 && w.out.report.gap_snaps == 0, "gap_snap_ms=0: the same snaps diverge");
+        }
+    }
+}
+
 // A teleport of the remote: a new placement.
 void TestTeleport() {
     World w;
@@ -1097,6 +1126,7 @@ int main() {
     TestLateralNudge();
     TestMovingSnap();
     TestDiverging();
+    TestGapSnaps();
     TestTeleport();
     TestStance();
     TestFrozenActs();

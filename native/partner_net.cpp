@@ -11,6 +11,7 @@
 #include "mgscoop/early_patches.hpp"
 #include "mgscoop/lab_status.hpp"
 #include "mgscoop/link_crypto.hpp"
+#include "mgscoop/partner_native_net.hpp"
 #include "mgscoop/player_sync.hpp"
 #include "mgscoop/session.hpp"
 #include "mgscoop/steam_join_code.hpp"
@@ -96,6 +97,8 @@ volatile LONG g_tx_not_connected = 0;
 volatile LONG g_link_state = static_cast<LONG>(link::LinkState::off);
 volatile LONG g_applied_interp = 100;
 volatile LONG g_partner_shown = 0, g_partner_look = 0, g_partner_mission = 0;
+// Online play: drive | reason << 8 | remote drive << 16 | remote reason << 24 (PublishNativeState).
+volatile LONG g_native_state = 0;
 // LinkInfo seqlock (single writer: the receive thread, or Start before it runs).
 volatile LONG g_info_seq = 0;
 volatile LONG g_info_state = 0, g_info_session = 0, g_info_rtt = 0, g_info_jitter = 0, g_info_interp = 0, g_info_loss = 0;
@@ -565,16 +568,23 @@ bool FormatStatus(const LinkSnapshot& s, link::LinkState state, char* out, std::
     if (!lab::AppendLinkTransportJson(transport, sizeof(transport), transport_length, g_use_steam ? "steam" : "udp", route,
                                       g_use_steam && g_config.host && g_steam.accepting(), steam_status))
         transport[0] = 0;
+    // Online play (docs/native-puppet.md "Online"): how each PC shows the partner body.
+    const std::uint32_t native = static_cast<std::uint32_t>(g_native_state);
     return SUCCEEDED(StringCchPrintfA(out, capacity,
         "{\"v\":1,\"pid\":%lu,\"mode\":\"%s\",\"role\":\"%s\",\"state\":\"%s\",\"reason\":\"%s\",\"verified\":%u,\"session\":%u,"
         "\"peer\":\"%s\",\"local_port\":%u,\"rtt_ms\":%u,\"jitter_ms\":%u,\"loss_permille\":%u,\"resend\":%u,"
         "\"tx_Bps\":%u,\"rx_Bps\":%u,\"interp_ms\":%u,\"remote_build\":%s,\"partner\":\"%s\",\"partner_shown\":%u,"
-        "\"look\":%u,\"mission\":%u,\"saves\":\"%s\",%s\"time_utc\":%s}\n",
+        "\"look\":%u,\"mission\":%u,\"saves\":\"%s\",\"partner_drive\":\"%s\",\"partner_reason\":\"%s\",\"remote_drive\":\"%s\","
+        "\"remote_reason\":\"%s\",%s\"time_utc\":%s}\n",
         GetCurrentProcessId(), g_config.play ? "play" : "lab", g_config.host ? "host" : "guest", link::LinkStateName(state), reason,
         verified ? 1u : 0u, s.session, peer, static_cast<unsigned>(g_ops->local_port()), s.rtt_ms, s.jitter_ms,
         s.loss_permille, s.resend, g_tx_bps, g_rx_bps, static_cast<unsigned>(EffectiveInterpMs(g_config.interp_ms)), build, PartnerStatusName(),
         g_partner_shown ? 1u : 0u, g_partner_look ? 1u : 0u, static_cast<unsigned>(g_partner_mission),
-        g_config.saves_redirected ? "redirected" : "unchanged", transport, time_utc));
+        g_config.saves_redirected ? "redirected" : "unchanged",
+        partner_native_net::DriveName(static_cast<partner_native_net::Drive>(native & 0xFFu)),
+        partner_native_net::ReasonName(static_cast<std::uint8_t>(native >> 8)),
+        partner_native_net::DriveName(static_cast<partner_native_net::Drive>((native >> 16) & 0xFFu)),
+        partner_native_net::ReasonName(static_cast<std::uint8_t>(native >> 24)), transport, time_utc));
 }
 
 void WriteStatus(const LinkSnapshot& s, link::LinkState state, std::uint64_t now_ms) noexcept {
@@ -1468,6 +1478,12 @@ void PublishPartnerState(bool shown, bool look_loaded, std::uint32_t mission) no
     InterlockedExchange(&g_partner_shown, shown ? 1 : 0);
     InterlockedExchange(&g_partner_look, look_loaded ? 1 : 0);
     InterlockedExchange(&g_partner_mission, static_cast<LONG>(mission));
+}
+
+void PublishNativeState(std::uint8_t drive, std::uint8_t reason, std::uint8_t remote_drive, std::uint8_t remote_reason) noexcept {
+    const std::uint32_t packed = static_cast<std::uint32_t>(drive) | (static_cast<std::uint32_t>(reason) << 8) |
+                                 (static_cast<std::uint32_t>(remote_drive) << 16) | (static_cast<std::uint32_t>(remote_reason) << 24);
+    InterlockedExchange(&g_native_state, static_cast<LONG>(packed));
 }
 
 link::ReliableResult SendReliable(std::uint8_t channel, const void* bytes, std::size_t size, link::ReliableMode mode) noexcept {

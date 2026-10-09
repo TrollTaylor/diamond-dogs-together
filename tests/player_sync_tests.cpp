@@ -371,8 +371,13 @@ int main() {
         Check(encode_input_frame(0x55, 7, 42, noset, frame) == 0, "edge words without edge_seq refused");
         noset.w50 = noset.w54 = noset.tap12 = 0;
         Check(encode_input_frame(0x55, 7, 42, noset, frame) == input_frame_size, "no edge set, zero edge words: ok");
+        // Online play: up to kEdgeRepeatsMax (8) repeats per edge set (partner_input_edge_repeats).
         pi::InputPacket rep3 = pkt; rep3.edge_rep = 3;
-        Check(encode_input_frame(0x55, 7, 42, rep3, frame) == 0, "edge_rep > 2 refused");
+        Check(encode_input_frame(0x55, 7, 42, rep3, frame) == input_frame_size, "edge_rep 3 accepted (online repeats)");
+        rep3.edge_rep = pi::kEdgeRepeatsMax;
+        Check(encode_input_frame(0x55, 7, 42, rep3, frame) == input_frame_size, "edge_rep 8 accepted");
+        rep3.edge_rep = pi::kEdgeRepeatsMax + 1;
+        Check(encode_input_frame(0x55, 7, 42, rep3, frame) == 0, "edge_rep > 8 refused");
         // Strict decode: size, magic, version, kind, length, flag bits, reserved, ranges.
         Check(encode_input_frame(0x55, 7, 42, pkt, frame) == input_frame_size, "re-encode");
         Check(!decode_input_frame(frame, sizeof(frame) - 1, s, e, seq, got), "input size");
@@ -392,7 +397,9 @@ int main() {
         std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 39] = 1;
         Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "input reserved byte");
         std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 38] = 3;
-        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "edge_rep 3 refused on decode");
+        Check(decode_input_frame(tweak, sizeof(tweak), s, e, seq, got) && got.edge_rep == 3, "edge_rep 3 decodes (online repeats)");
+        std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 38] = 9;
+        Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "edge_rep 9 refused on decode");
         // -32768 axis refused.
         std::memcpy(tweak, frame, sizeof(tweak)); tweak[wire::header_size + 20] = 0x00; tweak[wire::header_size + 21] = 0x80;
         Check(!decode_input_frame(tweak, sizeof(tweak), s, e, seq, got), "axis -32768 refused");

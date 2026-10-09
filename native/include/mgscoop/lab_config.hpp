@@ -209,6 +209,12 @@ inline constexpr std::uint32_t kPlayRefusedSteamSelftest = 0x40000;
 inline constexpr std::uint32_t kPlayRefusedHostPeerSteam = 0x80000;
 inline constexpr std::uint32_t kPlayRefusedNoPeerSteam = 0x100000;
 inline constexpr std::uint32_t kPlayRefusedUdpKeysWithSteam = 0x200000;
+// play_rehearsal=1 outside a background-worker build (LabParseOptions):
+// forced off, so a friend DLL can never be relaxed.
+inline constexpr std::uint32_t kPlayRefusedRehearsal = 0x400000;
+// partner_native_profile without the dm=map + xform fallback base (Play-Coop
+// always writes it; a hand-edited lab.ini): the profile is forced off.
+inline constexpr std::uint32_t kPlayRefusedNativeProfile = 0x800000;
 // Partner link transport: udp (our own UDP socket; the one-PC lab and the
 // LAN/VPN code) or steam (ISteamNetworkingMessages002 over Steam's relays;
 // play only, the lab refuses it and keeps udp).
@@ -222,6 +228,33 @@ enum class WorldProbe : std::uint8_t {
 };
 inline constexpr std::uint8_t kWorldProbeMax = 18;
 inline constexpr std::uint32_t kWorldLevelMax = 3;
+
+// Two-PC play's native partner (docs/two-pc-play.md "Native partner",
+// docs/native-puppet.md "Configuration"): one key the loader expands into
+// exactly the native stage the hidden worker qualified (loco or gun; the
+// fields Get-WorkerPartnerSettings writes) on top of the dm=map + xform
+// partner, which stays the automatic fallback. off keeps the clip partner.
+// Allowed in lab and play; in play it is the only way to the native drive
+// (the raw native keys stay refused, kPlayRefusedNativeDrive). A key named
+// explicitly in the same lab.ini keeps its value (the variants below).
+enum class PartnerNativeProfile : std::uint8_t { off, loco, gun };
+// The native arbiter's network policy (partner_native Params;
+// docs/native-puppet.md "Online"): lab (the thresholds the hidden runs
+// qualified; every fallback counts toward the per-mission latch) or online
+// (input stalls, link drops, a paused remote and range hiding fall back
+// without counting, re-entry waits for link quality; the play default).
+enum class PartnerNativeNet : std::uint8_t { lab, online };
+// A gap in the remote's input stream: neutral (sticks zero once older than
+// partner_input_stale_ms; lab default) or hold (the last live stick for up to
+// partner_native_stall_ms; play default).
+enum class PartnerNativeStall : std::uint8_t { neutral, hold };
+// The 12-frame hold classifier under the native drive: own (the receiver's
+// frames; lab default) or net (the sender's 12-frame words, frame-rate free).
+enum class PartnerNativeHold : std::uint8_t { own, net };
+inline constexpr std::uint32_t kPartnerStallMsMin = 100, kPartnerStallMsMax = 1000;
+inline constexpr std::uint32_t kPartnerEdgeRepeatsMin = 2, kPartnerEdgeRepeatsMax = 8;
+// Play defaults applied when the key is not named (lab keeps the qualified ones).
+inline constexpr std::uint32_t kPlayEdgeRepeats = 5;
 
 // Partner name tag and friendly crosshair (docs/partner-nametag.md): a
 // read-only overlay, allowed in play. unset leaves the decision to coop.ini
@@ -320,6 +353,17 @@ struct LabConfig {
     PartnerNativeRates partner_native_rates = PartnerNativeRates::log;
     PartnerNativeFace partner_native_face = PartnerNativeFace::idle;
     PartnerNativeNoise partner_native_noise = PartnerNativeNoise::filter;
+    // Online play (docs/native-puppet.md "Online"; play defaults online / hold / 5).
+    PartnerNativeProfile partner_native_profile = PartnerNativeProfile::off;
+    PartnerNativeNet partner_native_net = PartnerNativeNet::lab;
+    PartnerNativeStall partner_native_stall = PartnerNativeStall::neutral;
+    std::uint32_t partner_native_stall_ms = 400;      // kPartnerStallMsMin..kPartnerStallMsMax
+    PartnerNativeHold partner_native_hold = PartnerNativeHold::own;
+    std::uint32_t partner_input_edge_repeats = 2;     // kPartnerEdgeRepeatsMin..kPartnerEdgeRepeatsMax
+    // The hidden worker's one-PC play rehearsal (mode=play, worker builds only):
+    // relaxes exactly the loopback bind and 127/8 peer, mutex_suffix,
+    // xinput=none and the impairment keys.
+    bool play_rehearsal = false;
     bool crash_probe = true;
     // Two-PC link (docs/link-protocol.md). `mode` is parsed independently of
     // `present`; the play save gate is lab::SavesRedirected() in the observer.
@@ -422,6 +466,26 @@ bool ParsePartnerNativeRates(const char* text, std::size_t size, PartnerNativeRa
 bool ParsePartnerNativeFire(const char* text, std::size_t size, PartnerNativeFire& out) noexcept;
 bool ParsePartnerNativeFace(const char* text, std::size_t size, PartnerNativeFace& out) noexcept;
 bool ParsePartnerNativeNoise(const char* text, std::size_t size, PartnerNativeNoise& out) noexcept;
+const char* PartnerNativeProfileName(PartnerNativeProfile value) noexcept;
+const char* PartnerNativeNetName(PartnerNativeNet value) noexcept;
+const char* PartnerNativeStallName(PartnerNativeStall value) noexcept;
+const char* PartnerNativeHoldName(PartnerNativeHold value) noexcept;
+bool ParsePartnerNativeProfile(const char* text, std::size_t size, PartnerNativeProfile& out) noexcept;
+bool ParsePartnerNativeNet(const char* text, std::size_t size, PartnerNativeNet& out) noexcept;
+bool ParsePartnerNativeStall(const char* text, std::size_t size, PartnerNativeStall& out) noexcept;
+bool ParsePartnerNativeHold(const char* text, std::size_t size, PartnerNativeHold& out) noexcept;
+// The profile's stage settings (docs/native-puppet.md "Configuration"; equal
+// to Get-WorkerPartnerSettings -NativeStage loco|gun): written into `config`
+// except the keys whose bit is set in `keep` (kProfileKey* below: named
+// explicitly in the same lab.ini). off writes nothing.
+inline constexpr std::uint32_t kProfileKeyDrive = 1u << 0, kProfileKeyDefer = 1u << 1, kProfileKeySend = 1u << 2,
+                               kProfileKeyHook = 1u << 3, kProfileKeyHold = 1u << 4, kProfileKeyWords = 1u << 5,
+                               kProfileKeyWrap = 1u << 6, kProfileKeyCam = 1u << 7, kProfileKeyLocal = 1u << 8,
+                               kProfileKeyRecon = 1u << 9, kProfileKeySlot = 1u << 10, kProfileKeyRates = 1u << 11,
+                               kProfileKeyNoise = 1u << 12, kProfileKeyP218 = 1u << 13, kProfileKeyMask = 1u << 14,
+                               kProfileKeyAim = 1u << 15, kProfileKeyGun = 1u << 16, kProfileKeyFire = 1u << 17,
+                               kProfileKeyTriggers = 1u << 18, kProfileKeyRstick = 1u << 19;
+void ApplyNativeProfile(LabConfig& config, PartnerNativeProfile profile, std::uint32_t keep = 0) noexcept;
 // partner_input_defer as it takes effect: off unless partner_drive=native.
 inline PartnerDefer EffectivePartnerDefer(PartnerDrive drive, PartnerDefer defer) noexcept {
     return drive == PartnerDrive::native ? defer : PartnerDefer::off;
@@ -489,7 +553,14 @@ struct CoopConfig {
 
 // Pure parsers. `text` need not be NUL-terminated. Return false only when the
 // input is unusable (null with nonzero length, or longer than 64 KiB).
+// allow_play_rehearsal: only the background-worker build's loader and its
+// supervisor gate pass true (GetLabConfig with MGS_PLAY_REHEARSAL); everywhere
+// else play_rehearsal=1 is a play refusal (kPlayRefusedRehearsal).
+struct LabParseOptions {
+    bool allow_play_rehearsal = false;
+};
 bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexcept;
+bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const LabParseOptions& options) noexcept;
 bool ParseCoopConfig(const char* text, std::size_t length, CoopConfig& out) noexcept;
 
 // Lua/log spelling of a character ("quiet", "dd_male", ...; "" for game_default).

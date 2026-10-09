@@ -650,9 +650,15 @@ bool PartnerReadGun(void*, const pp::State& state, std::uint32_t k, pp::Gun1& ou
 bool PartnerReadLoadout(void*, const pp::State& state, pp::Loadout& out) noexcept {
     return pp::ReadLoadout(partner_addresses, state, out);
 }
+// Channel 2 carries the equipment manifest and the capability message
+// (docs/native-puppet.md "Online"): both append, so neither replaces the
+// other's unsent message (latest mode would).
 bool PartnerSendReliable(void*, std::uint8_t channel, const std::uint8_t* bytes, std::size_t size) noexcept {
-    const auto result = mgscoop::partner_net::SendReliable(channel, bytes, size, mgscoop::link::ReliableMode::latest);
+    const auto result = mgscoop::partner_net::SendReliable(channel, bytes, size, mgscoop::link::ReliableMode::append);
     return result == mgscoop::link::ReliableResult::queued || result == mgscoop::link::ReliableResult::replaced;
+}
+bool PartnerSendReliableAppend(void* context, std::uint8_t channel, const std::uint8_t* bytes, std::size_t size) noexcept {
+    return PartnerSendReliable(context, channel, bytes, size);
 }
 // --- Native polish (docs/native-puppet.md "Facing", "Weapons"): lazily from
 // the driver tick after the code gate passed, like the deferral.
@@ -740,7 +746,7 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerSetDefer, PartnerPublishIdentity, PartnerPublishWrapRoots, PartnerNativeTargets, PartnerReadGun1, PartnerReadLookSource,
     PartnerWindowSeq, PartnerLinkLive, PartnerLinkSession, PartnerDrainReliable, PartnerReadRates, PartnerForgetRates, kAmmoExperiment,
     PartnerInstallFire, PartnerFireStats, PartnerFireCensus, PartnerReadGun, PartnerReadLoadout, PartnerSendReliable, PartnerInBatch,
-    PartnerInstallLookSource, PartnerInstallNoise};
+    PartnerInstallLookSource, PartnerInstallNoise, PartnerSendReliableAppend};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
@@ -1153,9 +1159,27 @@ const char* HandlePartnerTick(const char* buffer, std::size_t size) noexcept {
     }
     mgscoop::crash_probe::SetContext(partner_driver.settings.stage, partner_driver.mission.realized ? 1u : 0u, PartnerCtxFlags());
     mgscoop::partner_net::PublishPartnerState(partner_driver.mission.realized, partner_driver.mission.parts_loaded, partner_mission);
+    {
+        // Online play: how each PC shows the partner body (link-status.json).
+        const auto& net = partner_driver.mission.tele.net;
+        mgscoop::partner_net::PublishNativeState(static_cast<std::uint8_t>(net.local_drive),
+            mgscoop::partner_native_net::ReasonCode(net.local_reason), static_cast<std::uint8_t>(net.remote_drive),
+            mgscoop::partner_native_net::ReasonCode(net.remote_reason));
+    }
     const std::uint64_t ended_us = QpcMicros();
     mgscoop::partner_net::RecordNativeMicros(Clamp32(ended_us >= started_us ? ended_us - started_us : 0));
     return partner_reply;
+}
+
+// The gun pieces (offline equipment groups, the stock46 preload and writer;
+// compiled into research and friend builds) act only for a configured native
+// gun profile: lab.ini partner_drive=native with partner_native_gun=1 (the
+// worker's gun stage, Play-OfflineCoop's default, play's
+// partner_native_profile=gun). A clip partner (-NoNative, Play-Coop -Partner
+// clips) leaves the game's equipment untouched; docs/two-pc-play.md "Native partner".
+[[maybe_unused]] bool PartnerGunPiecesWanted() noexcept {
+    const auto& lab = mgscoop::GetLabConfig();
+    return lab.partner_drive == mgscoop::PartnerDrive::native && lab.partner_native_gun;
 }
 
 void ObserveEquipmentVtables() noexcept {
@@ -1217,7 +1241,7 @@ void ObserveStock46Writer() noexcept {
 #ifdef MGS_LOCAL_STOCK46_WRITER_TEST
     mgscoop::equipment_stock_writer::Context context{};
     const auto& mission=partner_driver.mission;
-    context.enabled=true;context.owner=OnRuntimeThread();
+    context.enabled=PartnerGunPiecesWanted();context.owner=OnRuntimeThread();
     context.mission=partner_mission;context.body_epoch=mission.body_epoch;
     context.base=reinterpret_cast<std::uintptr_t>(game_base);context.image_span=game_span;
     context.preload_queued=stock46_authorization.QueuedFor(partner_mission);
@@ -1648,7 +1672,7 @@ bool SelectOfflineEquipmentAllocationReceipt(const char* buffer,std::size_t size
        std::strcmp(name,query)!=0) return false;
     mgscoop::equipment_allocation_probe::Context context{};
 #ifdef MGS_LOCAL_OFFLINE_EQUIPMENT_TEST
-    context.enabled=true;
+    context.enabled=PartnerGunPiecesWanted();
 #endif
     context.offline=offline_enabled; context.lab=lab_active;
     context.allocation=allocation_enabled; context.archive=archive_mounted;
@@ -1735,7 +1759,7 @@ bool SelectStock46PreloadReceipt(const char* buffer,std::size_t size,const char*
     if(!is_query && !is_returned && !equals(failed,sizeof(failed)-1)) return false;
     bool enabled=false;
 #ifdef MGS_LOCAL_STOCK46_PRELOAD_TEST
-    enabled=true;
+    enabled=PartnerGunPiecesWanted();
 #endif
     unsigned short mission=0;
     const bool owner=enabled && Stock46AllocationOwner(mission);

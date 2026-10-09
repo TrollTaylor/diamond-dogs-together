@@ -127,7 +127,11 @@ inline constexpr float kMaxCamField = 64.0f;
 inline constexpr std::int16_t kMaxHeadingMrad = 3142;
 inline constexpr std::uint8_t kInvSlotUnknown = 0xFF;
 inline constexpr std::uint8_t kInvSlotMax = 15;
+// Repeats of an edge set after its first send: kEdgeRepeats by default,
+// SenderEdges::repeats (lab.ini partner_input_edge_repeats, play 5) up to
+// kEdgeRepeatsMax, which every receiver accepts.
 inline constexpr std::uint8_t kEdgeRepeats = 2;
+inline constexpr std::uint8_t kEdgeRepeatsMax = 8;
 inline constexpr std::uint32_t kHoldFrames = 12;  // classify(btn, 12) at every stance/subject/action site
 inline constexpr std::int16_t kMaxDir = 31416;
 inline constexpr std::int32_t kCamMin = -18000, kCamMax = 17999;
@@ -182,6 +186,10 @@ struct Config {
     std::uint16_t stick_deg;   // stick mode
     std::uint8_t stick_pct;
     std::uint32_t stale_ms;    // net: older input is treated as neutral
+    // net: a stall hold (partner_native_stall=hold): a sample older than
+    // stale_ms but at most stall_ms keeps its sticks, look and gun fields (no
+    // new edges; held bits follow the stale grace). 0 or <= stale_ms: off.
+    std::uint32_t stall_ms;
 };
 // The newest received input (partner_net::LatestInput / ConsumeInput). The
 // edge fields are the edge sets accumulated since the last ConsumeInput (by
@@ -355,8 +363,11 @@ struct SenderEdges {
     std::uint8_t reps_left;               // repeats still due for `seq`
     std::uint32_t cur_press, cur_release, cur_tap12;  // the set being sent/repeated
     bool filled_new;                      // the last SenderFill() opened a new set
+    std::uint8_t repeats;                 // repeats per set (0: kEdgeRepeats; at most kEdgeRepeatsMax)
 };
 void SenderObserve(SenderEdges& state, const PadSnapshot& snapshot) noexcept;
+// The effective repeats per set (state.repeats clamped; 0 means kEdgeRepeats).
+std::uint8_t SenderRepeats(const SenderEdges& state) noexcept;
 void SenderFill(SenderEdges& state, InputPacket& packet) noexcept;
 void SenderSent(SenderEdges& state) noexcept;
 
