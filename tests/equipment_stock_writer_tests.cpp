@@ -1,5 +1,6 @@
 #include "mgscoop/equipment_stock_writer.hpp"
 #include "mgscoop/equipment_stock_writer_contract.hpp"
+#include "mgscoop/partner_slots.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <map>
@@ -644,6 +645,15 @@ int main() {
         Check(c::SubstituteType(1,0,0)==1 && c::SubstituteType(0,1,0)==1 && c::SubstituteType(4,1,0)==1 && c::SubstituteType(4,0,1)==4 &&
               c::SubstituteType(0,11,0)==0 && c::SubstituteType(2,0,2)==2 && c::SubstituteType(9,0,1)==0);
         Check(std::strcmp(c::SubstitutePassName(c::SubstitutePass::slot_class),"slot_class")==0);
+        // The slot plan's class (partner_slots, the fire gate's substitute) is the writer's ChangeEquip class.
+        for(unsigned type=0;type<256;++type)
+            Check(mgscoop::partner_slots::TypeSlot(static_cast<std::uint8_t>(type))==c::TypeSlot(static_cast<std::uint8_t>(type)));
+        // A census entry referenced since the snapshot is refused after Capture (Plan: stock_cache_in_use); the
+        // census filter alone already never offers a referenced, unprotected or non-first entry.
+        std::array<c::CacheEntry,48> shared{};
+        shared[0]={27,1,69,3,1};shared[1]={36,1,70,1,0};shared[2]={36,1,70,3,0};
+        std::array<bool,48> fresh{};
+        Check(c::NextCandidate(shared,q,c::SubstitutePass::type_receiver,fresh)==48 && c::NextCandidate(shared,q,c::SubstitutePass::type,fresh)==48);
     }
     std::printf("equipment_stock_writer_tests: %u checks passed; native_calls=0 game_reads=0\n",checks);
 }
