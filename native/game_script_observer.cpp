@@ -41,6 +41,7 @@
 #include "mgscoop/partner_input_hook.hpp"
 #include "mgscoop/partner_defer.hpp"
 #include "mgscoop/partner_local_detour.hpp"
+#include "mgscoop/partner_look_source.hpp"
 #include "mgscoop/partner_fire_filter.hpp"
 #include "mgscoop/partner_dm_patch.hpp"
 #include "mgscoop/partner_upper_probe.hpp"
@@ -651,6 +652,16 @@ bool PartnerSendReliable(void*, std::uint8_t channel, const std::uint8_t* bytes,
     const auto result = mgscoop::partner_net::SendReliable(channel, bytes, size, mgscoop::link::ReliableMode::latest);
     return result == mgscoop::link::ReliableResult::queued || result == mgscoop::link::ReliableResult::replaced;
 }
+// --- Native polish (docs/native-puppet.md "Facing", "Weapons"): lazily from
+// the driver tick after the code gate passed, like the deferral.
+// Also true once the game window is closing (PartnerShutdown): the facing
+// governor's xform writes and the look source install stop with the windows
+// (MissionEnd may only follow later, on the mission thread).
+bool PartnerInBatch(void*) noexcept {
+    return mgscoop::partner_defer::InBatch() || mgscoop::partner_defer::ShuttingDown();
+}
+const char* PartnerInstallLookSource(void*) noexcept { return mgscoop::partner_look_source::Install(game_base, Log); }
+const char* PartnerInstallNoise(void*) noexcept { return mgscoop::partner_fire_filter::InstallNoise(game_base, Log); }
 #if defined(MGS_LOCAL_STOCK46_AMMO_TEST) && MGS_LOCAL_STOCK46_AMMO_TEST
 constexpr bool kAmmoExperiment = true;
 #else
@@ -726,7 +737,8 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerSampleRemoteWithTurns, PartnerReadLocalBody, PartnerInstallDefer, PartnerNativeInstall, PartnerDrainDeferStats,
     PartnerSetDefer, PartnerPublishIdentity, PartnerPublishWrapRoots, PartnerNativeTargets, PartnerReadGun1, PartnerReadLookSource,
     PartnerWindowSeq, PartnerLinkLive, PartnerLinkSession, PartnerDrainReliable, PartnerReadRates, PartnerForgetRates, kAmmoExperiment,
-    PartnerInstallFire, PartnerFireStats, PartnerFireCensus, PartnerReadGun, PartnerReadLoadout, PartnerSendReliable};
+    PartnerInstallFire, PartnerFireStats, PartnerFireCensus, PartnerReadGun, PartnerReadLoadout, PartnerSendReliable, PartnerInBatch,
+    PartnerInstallLookSource, PartnerInstallNoise};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with

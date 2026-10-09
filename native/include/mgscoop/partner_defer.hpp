@@ -72,6 +72,10 @@ void ClearIdentity() noexcept;
 void SetArmed(bool armed) noexcept;
 // Process shutdown (the game window is closing): disarms for good, from any thread.
 void Shutdown() noexcept;
+// True once Shutdown ran (never cleared): the driver's facing writes and the
+// look source install stop with the windows, before the mission thread's
+// MissionEnd teardown.
+bool ShuttingDown() noexcept;
 bool Armed() noexcept;
 // Disarms and clears the deferral fault (never touches pending or the batch counts).
 void MissionStart() noexcept;

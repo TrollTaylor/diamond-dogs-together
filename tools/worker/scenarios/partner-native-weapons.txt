@@ -1,35 +1,44 @@
-# Native partner weapons (docs/native-puppet.md "Weapons"): visual fire, the magazine mirror (reload), loadout manifest.
+# Native partner weapons (docs/native-puppet.md "Weapons"): visual fire through the partner's own trigger (F1 sample
+# rings), the magazine store row (F2, reload), the shot noise filter (F3), the weapon gate (F4), loadout manifest.
 # Run (coordinator only, hidden worker):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-native-weapons.txt -PartnerProfile native -NativeStage gun -BuildProfile research
-# The gun stage carries partner_input_mask=0x224005E and partner_native_fire=visual (WorkerSessionCommon); never -AmmoExperiment
-# (the magazine mirror replaces it). Lab saves, noon, 30010. "Receiver" = the role filming the shooter's puppet (its body 1);
-# captures record the capturing role's state.json "native" in captures.jsonl.
+# The gun stage carries partner_input_mask=0x224005E, partner_native_fire=visual and the default partner_native_noise=filter
+# (WorkerSessionCommon); never -AmmoExperiment (the magazine mirror replaces it). Lab saves, noon, 30010. "Receiver" = the
+# role filming the shooter's puppet (its body 1); captures record the capturing role's state.json "native" in captures.jsonl.
 # Evidence (receiver's "native" unless noted):
 #  static:  python tools/generate_partner_contract.py --check passes; both logs: partner_code_gate=ok, then
-#           partner_fire=installed; slots=0x2337de8,0x2337d18; target=0xd32c60 and partner_fire=live; reason=ok; owner=1
-#           (both once body 1 shows a gun class; before that partner_fire=masked; reason=weapon or gun_read).
-#  aim:     gun.bit18 1 and node_active within 300 ms, aim_match; fire.live/armed/effective true, fire.refused "none".
-#  fire1, firehold, crouch-fire, g-fire*: fire.suppressed grows by >= 1 per remote shot (fire.suppressed_per_s > 0 while
-#           held), fire.owner_disarmed 0; ring gun3c0 shows the fire bits; frames show muzzle flash and recoil on body 1 and
-#           no impacts; leak.shot_leaks 0 and leak.shot_count unchanged; mag.local (the receiver's own magazine) unchanged;
-#           input.cam_cdeg_host steady (no camera kick); the 1 Hz partner_fire lines in the receiver's log.
-#  mirror:  mag.remote/remote_cap follow the shooter's magazine; mag.writes grows with mag.fire_edges and remote changes;
-#           gun.mag <= gun.cap; mag.last "none"; mag.faulted false.
-#  aim-reload: leak.ammo_leaks stays 0 through the partner's reload (the ammo setter 0x10589E0 it runs must not touch the
-#           receiver's weapon/ammo vars; a non-zero count is a duplicate inventory effect: the mirror then turns itself off,
-#           mag.leak_off true and partner_input=ammo_leak; mag_mirror=disabled in the log; report it).
-#           gun.b20 1 within 300 ms of the R edge (mag.reload_edges and leak.reload_drains grow); a reload act in the
-#           ring; gun.mag == gun.cap afterwards (gun.can_reload 0); frames show the reload.
-#  holster-reload: record only (gun.gate / gun.equip / gun.class tell why a holstered reload does or does not start).
-#  switch1, switch2: record gun.equip, gun.slot, gun.class (body 1 only carries stock46: equip 46 or 0); no fault.
+#           partner_fire=installed; slots=0x2337de8,0x2337d18; target=0xd32c60, partner_noise=installed; slot=0x21876a8;
+#           target=0x515270 and partner_fire=live; reason=ok; owner=1 (once body 1 shows a gun class; before that
+#           partner_fire=masked; reason=weapon or gun_read; a noise refusal masks FIRE: reason=noise_<why>).
+#  aim:     gun.bit18 1 and node_active within 300 ms, aim_match; fire.live/armed/effective true, fire.refused "none";
+#           noise.installed/live true; rings.on true and rings.windows growing (the drains isolate the sample rings);
+#           weapon.kb_remote true for a keyboard shooter, weapon.remote_gun_base == gun.body_equip (46; remote_gun_equip is the
+#           shooter's record equip, the alias 873 of base 46 with the lab save), weapon.mismatch false.
+#  fire1:   trigger.requested +1 (>= 1 per FIRE press; the pellets of 46 are one shot) and trigger.fire_modes +1 within
+#           2 captures; fire.suppressed grows by the pellet count (>= 1); noise.dropped +1; frames show the muzzle flash.
+#  firehold: trigger.requested grows by the shooter's magazine drop (mag.remote before minus after) +-1;
+#           fire.suppressed_per_s > 0 while held.
+#  always (fire captures): fire.owner_disarmed 0; leak.shot_leaks 0 and leak.shot_count unchanged; mag.local (the
+#           receiver's own magazine) unchanged; input.cam_cdeg_host steady (no camera kick); noise.dropped grows only with
+#           body 1's shots (every other noise record passes); frames show no impacts; the 1 Hz partner_fire lines in the receiver's log.
+#  mirror:  mag.inj follows mag.remote (the drain's injected magazine is the shooter's); mag.store.writes grows with
+#           mag.writes; gun.mag (the getter, i.e. the copied store row) == the mapped value; mag.store.last "none";
+#           mag.last "none"; mag.faulted false.
+#  aim-reload: gun.mag < gun.cap before the R edge (the store row survives the per-frame copy), gun.b20 1 within 300 ms
+#           (mag.reload_edges and leak.reload_drains grow), a reload mode in the ring (gun3c0), gun.mag == gun.cap
+#           afterwards; leak.ammo_leaks 0 (else mag.leak_off and partner_input=ammo_leak; mag_mirror=disabled: report it).
+#  holster-reload: record (the classifier path; gun.gate / gun.class / gun.b20 tell whether it starts).
+#  crouch-fire: as fire1 with body act 14/15 (fired with the original weapon 46: before the switch section).
+#  switch1, switch2, switch-fire: partner_weapon=mismatch; remote_equip=..; remote_base=..; body_equip=46 and partner_fire=masked;
+#           reason=weapon_mismatch in the receiver's log; weapon.mismatch true, weapon.strip 80 (FIRE|RELOAD);
+#           trigger.requested unchanged and fire.suppressed unchanged through switch-fire; mag.last "weapon" (frozen).
 #  equip:   both logs partner_equip=sent; rev=1; ... within 5 s of link-up; the peer partner_equip=manifest; rev=1 and
 #           partner_equip=apply; rev=1; slot=1; ... result=already (stock46) or unsupported (needs the generalized writer).
-#  census:  partner_fire_census; bullets_ok=1; noise_vt=0x...; noise_vt_rva=1 (pins the shot-noise interface).
-#  noise (record): the host's guard (host-local, spawned next to the host) near body 1 while only the guest fires: the host's
-#           log shows whether that guard reacts to the visual shots (event=phase ...;src=local with no host shot, or a guard
-#           state change in enemy_list): the shot noise {pos, 0x145, owner} at 0x1303D06 is not filtered (open risk). The
-#           guard's life never drops on the host (no partner bullet).
-#  always:  native.mode active, fallbacks 0, faults 0, mag.faulted false; no partner_input=fault line.
+#  census:  partner_fire_census; bullets_ok=1; noise_vt=0x21876a8 (noise_vt_rva=1).
+#  noise:   the host's guard (host-local, spawned next to the host) near body 1 while only the guest fires: on the host
+#           noise.dropped > 0, no guard reaction (no event=phase ...;src=local without a host shot, no state change in
+#           enemy_list); the guard's life never drops on the host (no partner bullet).
+#  always:  native.mode active, fallbacks 0, faults 0, mag.faulted false, rings.last none; no partner_input=fault line.
 labsetting debug_soldier_warp=1
 title 200
 wait 4000
@@ -78,16 +87,7 @@ wait 1200
 host press r
 guest burst holster-reload 6 200
 wait 1500
-# Weapon switch (record: body 1 only carries stock46).
-host press 1
-wait 900
-guest burst switch1 3 250
-host press 2
-wait 900
-guest burst switch2 3 250
-host press 1
-wait 900
-# Crouched fire.
+# Crouched fire, still with the original weapon (46).
 stance host crouch
 wait 600
 host hold rmb 1500 nowait
@@ -97,6 +97,19 @@ guest burst crouch-fire 5 120
 host release
 wait 600
 stance host stand
+wait 600
+# Weapon switch: the remote's gun is no longer body 1's (the weapon gate).
+host press 1
+wait 900
+guest burst switch1 3 250
+host press 2
+wait 900
+guest burst switch2 3 250
+host hold rmb 1500 nowait
+wait 500
+host hold rmb+lmb 120 nowait
+guest burst switch-fire 4 120
+host release
 wait 600
 # --- Guest shoots, host films (the other direction) ---------------------------
 resetpose guest
@@ -122,7 +135,7 @@ guest hold rmb 1400 nowait
 host burst g-aim-reload 6 200
 guest release
 wait 1500
-# --- Noise (record): a host-local guard next to the host; only the guest fires ---
+# --- Noise: a host-local guard next to the host; only the guest fires ---------
 resetpose host
 stance host stand
 host run spawn_enemy here

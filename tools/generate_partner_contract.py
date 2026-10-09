@@ -505,6 +505,65 @@ SITES = [
     # Service root (read-only census of the noise interface).
     (0xBFEFAD, '488b05ecb80302', 'service root: *(0x2C3A8A0)'),
     (0xBFF050, '4883ec28e847ffffff488b40084883c428c3', 'service locator 0xBFF050 = *(root+8)'),
+    # --- Native polish: facing D3, the look source hook (docs/native-puppet.md "Facing"; partner_look_source.cpp).
+    # The call 0xFF29FC (pinned with 0xFF29F7 above) is followed by edx/rcx reloads: rax is never read.
+    (0xFF2A01, '8bd6488bcde8a5b40000', 'PS phase 0 after the look call: mov edx,esi; mov rcx,rbp; call 0xFFDEB0 (rax unused)'),
+    (0xFFAC00, '48895c2408574883ec40', 'look computation 0xFFAC00(PS, id) prologue'),
+    (0xFFAC19, 'e8528effff84c0488b87080400000f8598000000', '0xFFAC00: 0xFF3A70(PS, id) (S_IS_ONLINE gate); offline -> camera path'),
+    (0xFFAC34, '4c8b80380100000f28ef0f28cf498b80b80000000fc6cfc90fc6efd20f289890000000',
+     'offline look: the viewer camera quaternion *(*(*(PS+0x408)+0x138)+0xB8)+0x90'),
+    (0xFFAD42, '0f287424300f287c2420f30f11442464488b442460488904d9488b5c24504883c4405fc3',
+     'look store tail: the pair at 0xFFAD57, ret at 0xFFAD65 (int3 padding follows)'),
+    # --- Native polish: weapons F1 (the pad's sample rings in drain windows).
+    (0x1096137, '41c1ee1841f6c6010f844c020000', 'trigger 0x1095DF0: rec+0x27C bit 24 selects the history path'),
+    (0x1096171, '488b4708410f28f5f30f5ef0488b48088b7044488b0748894c2450488bcfff5020488bcf89442444488b07ff909800000041bf01000000'
+     '84c0740f488d542444418bf74889542450eb05488b542450',
+     'trigger history: ring = [[PP+8]+8], count = [[PP+8]+0x44]; keyboard mode (PP vt+0x98) uses the held word'),
+    (0x1096289, 'a81074d2f644ba041075cb', 'trigger (semi-auto): an entry with FIRE whose older entry lacks FIRE fires'),
+    (0x10964F7, '81a3c0030000fffffffe84c98883df030000400f95c583e501c1e51809abc0030000',
+     'trigger: rec+0x3C0 bit 24 = a shot this update, rec+0x3DF = the shot count'),
+    (0x103E485, 'e866790500', 'gun update: the trigger 0x1095DF0 (its only call)'),
+    (0x103E53A, '0fb683c00200002c093c01760a', 'gun update: rec+0x2C0 is the current mode (9/10 fire), rec+0x2C1 the next'),
+    (0x4353C3, '488b45708b88a80100008b4540', 'src update (src vt+0x38 0x435260): n = min(device samples, cap src+0x40)'),
+    (0x435435, '488b54c510488b5cc520', 'src update: stick i history X at src+0x10+8i, Y at src+0x20+8i'),
+    (0x435485, '488b54c530', 'src update: trigger i history at src+0x30+8i'),
+    (0x43550C, '488b45084533ff45891406', 'src update: the held history at src+8 (u32 entries, newest first)'),
+    (0x4355B3, '894544', 'src update: src+0x44 = the samples of this update'),
+    (0x1206BC3, '4c8b7e08498bcf498b07ff5038', 'PP update: the src update src vt+0x38 (PP+8)'),
+    (0x112344F, '488b4608488bce4c8b78184c8b60288b6844448b7040', 'right-stick history consumer: src+0x18/+0x28 rings, src+0x44, cap src+0x40'),
+    (0x12063F0, '0fb68188040000c1e80683e001c3', 'PP vt+0x98 keyboard mode = PP+0x488 bit 6'),
+    # --- Native polish: weapons F2 (the magazine's per-instance store row).
+    (0x103E083, '448bc7488bd3488bcee82fe80400', 'gun phase 0 (0x103E010): the ammo copy 0x108C8C0(prim, rec, id) every frame'),
+    (0x104032B, '8bd6488bcde8dbdcffff', 'gun iface phase 0 (0x1040100): 0x103E010'),
+    (0x108C8DE, '488daab0010000418b8104020000c1e808a8017427', 'ammo copy: rbp = rec+0x1B0; S_IS_ONLINE gate'),
+    (0x108C94B, '498b81c80000004c8b60080fb682da030000458b44240c498b542450450fafc54403c0',
+     'ammo copy: Y = *(*(P+0xC8)+8); idx = id * [Y+0xC] + rec+0x3DA; rows [Y+0x50]'),
+    (0x108C96E, 'f786d0030000000000084b8d0c40440fb73c4a4b8d0c40440fb7744a020f8418010000',
+     'ammo copy: rec+0x3D0 bit 27 gates the tamper check; word0/word1 of the 6-byte row'),
+    (0x108CAAE, '664489bdac000000664489b5ae000000', 'ammo copy: rec+0x25C = word0, rec+0x25E = word1'),
+    (0x1041660, '8b8104020000b9c83f0000c1e812a801742c', 'shoot: rec+0x3D0 bit 27 only with P+0x204 bit 18'),
+    (0x107CB59, '8b8104020000c1e812a801741c', 'bit 27 setter 2: only with P+0x204 bit 18'),
+    (0x1087D01, '8b8104020000c1e812a801741d', 'bit 27 setter 3: only with P+0x204 bit 18'),
+    (0xEE96C0, '4c8bd18b490c458bd9498b42400fafca4103c88b14888bc283e01f83f809750e498b4250488d0c496644890c48c3',
+     'store setter (Y vt+0x20): type = [Y+0x40][idx] & 0x1F; type 9: word0 only, no notifier'),
+    (0xEE96EE, 'ffc883f8077731440fb64c2428498b4250488d0c494584c974086644895c4802eb056644891c48498b4a58458bc3488b0148ffa000010000',
+     'store setter: types 1..8 word0 or word1 (sub flag), then the notifier [Y+0x58] vt+0x100 (never called by us)'),
+    (0xEE8C23, '488d0556084a01488901488d057c084a0148894120', 'store ctor: vtables 0x2389480 / 0x23894B0 (iface +0x20)'),
+    (0xEE9026, '488d056b054a01488903488d0599054a0148894320', 'derived store ctor: vtables 0x2389598 / 0x23895D0 (iface +0x20)'),
+    # The store init (object vt+8, both classes): ids at object+0x28 (Y+0x8), the stride at +0x2C (Y+0xC) and the
+    # total ids * stride at +0x30 (Y+0x10); the types (+0x60 = Y+0x40) get total * 4 bytes and the rows (+0x70 =
+    # Y+0x50) total * 6: the mirror's row index must stay below Y+0x10.
+    (0xEE930C, '44894928448b42044489412c8b4208450fafc18981a80000008b420c44894130',
+     'store init: object+0x28 = ids, +0x2C = stride, +0x30 = ids * stride (Y+0x10, the row count)'),
+    (0xEE9331, '8b573048c1e202', 'store init: the types array is the row count * 4 bytes'),
+    (0xEE9384, '488947608b4730488d14404803d2', 'store init: types at object+0x60 (Y+0x40); the rows are the row count * 6 bytes'),
+    (0xEE93EA, '48894770', 'store init: rows at object+0x70 (Y+0x50)'),
+    (0x1054A97, '4585d2741d', 'reload completion: the local branch runs the ammo setter; non-local -> 0x1054AB9'),
+    (0x1054AB9, '440fb687da0300006644898fe8030000498b4508488b8838010000418bd4488b81c8000000488b48088b877c0200004c8b11c1e809240188442420'
+     '41ff5220', 'reload completion (non-local): rec+0x3E8 and the store row through Y vt+0x20'),
+    # --- Native polish: weapons F3 (the shot noise filter).
+    (0x515270, '48895c240848896c2410488974241857', 'AddNoise 0x515270 (noise iface vt+0) prologue'),
+    (0x5152F9, '0fb74512668984be10480000', 'AddNoise keeps the record +0x12 owner'),
 ]
 # The H1 slot itself (value checked as a slot below) and the patched sites:
 # the code gate runs once per process before any lazy install.
@@ -608,6 +667,12 @@ SLOTS = [
     (0x2337DE8, 0x08, 0xD33350, 'bullet iface vtable slot 1 (shot origin; untouched)'),
     # Loadout base ids: the equip type table object (the stock46 writer contract checks the same method).
     (0x22AD180, 0x00, 0xA2A3E0, 'equip type table object 0x2A70920 vtable slot 0'),
+    # --- Native polish: the noise filter slot and the store setter slots (never called by us).
+    (0x21876A8, 0x00, 0x515270, 'noise iface vtable slot 0 = AddNoise (noise filter slot)'),
+    (0x23894B0, 0x20, 0xEE96C0, 'store iface vtable +0x20 = store setter'),
+    (0x23895D0, 0x20, 0xEE96C0, 'derived store iface vtable +0x20 = store setter'),
+    (0x2389480, 0x08, 0xEE92F0, 'store object vtable +8 = the store init (row count Y+0x10)'),
+    (0x2389598, 0x08, 0xEE92F0, 'derived store object vtable +8 = the same store init'),
 ]
 
 
@@ -737,6 +802,7 @@ def native_assertions():
     need((0x109E182 & 63) + 4 <= 64 and (0x109E128 & 63) + 5 <= 64, 'setne dword and padding jmp each inside one cache line')
     need(-128 <= 0x109E128 - 0x109E184 <= 127, 'jmp rel8 from 0x109E182 reaches the padding jump')
     out += weapon_assertions()
+    out += polish_assertions()
     return out
 
 
@@ -884,6 +950,82 @@ def weapon_assertions():
     need(stamps == [0xEDAC19, 0x1041225, 0x13A190E, 0x1453385],
          f'the shot request owner stamps are the player shoot plus the three typed builders: {[hex(x) for x in stamps]}')
     return out
+
+# Native polish (docs/native-puppet.md "Facing" D3 and "Weapons" F1..F3).
+def linear_branch_targets(start, end):
+    """Branch targets of a linear capstone sweep of [start, end) (contiguous code)."""
+    import capstone
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
+    out = []
+    for i in md.disasm(rd(start, end - start), IB + start):
+        if (i.mnemonic == 'jmp' or i.mnemonic.startswith('j') or i.mnemonic == 'call') and i.op_str.startswith('0x'):
+            out.append(int(i.op_str, 16) - IB)
+    return out
+
+
+def bit27_setters():
+    """Every `or dword [r64+0x3D0], 0x8000000` / `bts dword [r64+0x3D0], 27` in code."""
+    import re
+    pats = [re.compile(rb'(?:\x41)?\x81[\x88-\x8f]\xd0\x03\x00\x00\x00\x00\x00\x08'),
+            re.compile(rb'(?:\x41)?\x0f\xba[\xa8-\xaf]\xd0\x03\x00\x00\x1b')]
+    hits = []
+    for s in pe.sections:
+        if s.Name.rstrip(b'\0').decode() not in ('.text', '.xtext'):
+            continue
+        data = s.get_data()
+        for p in pats:
+            for m in p.finditer(data):
+                at = m.start() + (1 if data[m.start()] == 0x41 else 0)
+                hits.append(s.VirtualAddress + at)
+    return sorted(hits)
+
+
+def polish_assertions():
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+    funcs = runtime_functions()
+    # D3: the look call 0xFF29FC is 0xFFAC00's only reference; the padding after
+    # its ret belongs to no function and nothing branches into it; the qword
+    # the retarget exchanges is aligned, inside one cache line, and only its
+    # rel32 low word changes (0xFFAC00 -> 0xFFAD66).
+    need(qword_hits(0xFFAC00) == [], f'0xFFAC00 is in no table: {[hex(x) for x in qword_hits(0xFFAC00)]}')
+    need(rd(0xFFAD65, 1) == b'\xc3' and rd(0xFFAD66, 10) == b'\xcc' * 10, 'ret at 0xFFAD65, int3 padding 0xFFAD66..0xFFAD6F')
+    need((0xFFAC00, 0xFFAD66) in funcs and any(b == 0xFFAD70 for b, e in funcs), '0xFFAC00 ends at 0xFFAD66, a function starts at 0xFFAD70')
+    need(not any(b < 0xFFAD70 and e > 0xFFAD66 for b, e in funcs), 'the padding 0xFFAD66..0xFFAD70 belongs to no function')
+    need(branch_refs(0xFFAD66, 0xFFAD70) == [], f'no rel32 branch into the padding: {[hex(x) for x in branch_refs(0xFFAD66, 0xFFAD70)]}')
+    end70 = min(e for b, e in funcs if b == 0xFFAD70)
+    near = [t for t in linear_branch_targets(0xFFAC00, 0xFFAD66) + linear_branch_targets(0xFFAD70, end70) if 0xFFAD66 <= t < 0xFFAD70]
+    need(near == [], f'no short branch of the neighbours into the padding: {[hex(x) for x in near]}')
+    need(all(qword_hits(a) == [] for a in range(0xFFAD66, 0xFFAD70)), 'no table entry points into the padding')
+    need(0xFF29F8 % 8 == 0 and (0xFF29F8 & 63) + 8 <= 64, 'the retarget qword 0xFF29F8 is aligned, inside one cache line')
+    need(rd(0xFF29F8, 8) == bytes.fromhex('d6488bcde8ff8100'), 'the qword 0xFF29F8 holds the call (rel32 0x81FF -> 0xFFAC00)')
+    need(struct.unpack('<Q', rd(0xFF29F8, 8))[0] == 0x0081FFE8CD8B48D6, 'look_src_qword_orig')
+    need(0xFF2A01 + 0x81FF == 0xFFAC00 and 0xFF2A01 + 0x8365 == 0xFFAD66 and rd(0xFF29FF, 2) == b'\x00\x00',
+         'the new rel32 0x8365 reaches the padding; its high word stays 0')
+    need((0xFFAD66 & 63) + 5 <= 64, 'the padding jump lies inside one cache line')
+    # F1: the trigger is called once; the ring and count readers are pinned above.
+    need(rel_refs(0x1095DF0) == [0x103E485], f'the trigger 0x1095DF0 has one caller: {[hex(x) for x in rel_refs(0x1095DF0)]}')
+    need(qword_hits(0x435260) == [0x2153518], f'src update 0x435260 is src vt+0x38 only: {[hex(x) for x in qword_hits(0x435260)]}')
+    # F2: the ammo copy and its callers; the store setter only through its two iface vtables;
+    # rec+0x3D0 bit 27 (the tamper check) is set only by the three P+0x204 bit-18 gated sites.
+    need(rel_refs(0x108C8C0) == [0x103E08C], f'the ammo copy has one caller: {[hex(x) for x in rel_refs(0x108C8C0)]}')
+    need(rel_refs(0x103E010) == [0x1040330, 0x10542F0], f'gun phase 0 callers: {[hex(x) for x in rel_refs(0x103E010)]}')
+    need(rel_refs(0xEE96C0) == [] and qword_hits(0xEE96C0) == [0x23894D0, 0x23895F0],
+         f'the store setter is only called through its two iface vtables: {[hex(x) for x in qword_hits(0xEE96C0)]}')
+    need(lea_rip_refs(0x23894B0) == [0xEE8C2D, 0xEE8CBB, 0xEE8D20, 0xEE8DB0] and lea_rip_refs(0x23895D0) == [0xEE9030],
+         f'store iface vtables stored by the ctors/dtors only: {[hex(x) for x in lea_rip_refs(0x23894B0)]} {[hex(x) for x in lea_rip_refs(0x23895D0)]}')
+    need(bit27_setters() == [0x1041679, 0x107CB66, 0x1087D0E], f'rec+0x3D0 bit 27 setters: {[hex(x) for x in bit27_setters()]}')
+    # F3: AddNoise is reached only through slot 0 of the noise iface vtable (read-only data, aligned).
+    need(rel_refs(0x515270) == [] and qword_hits(0x515270) == [0x21876A8],
+         f'AddNoise only in the noise iface vtable: {[hex(x) for x in qword_hits(0x515270)]}')
+    need(lea_rip_refs(0x21876A8) == [0x51517F, 0x515246, 0x2074C5C],
+         f'the noise iface vtable is stored by its ctor, dtor and static init: {[hex(x) for x in lea_rip_refs(0x21876A8)]}')
+    need(0x21876A8 % 8 == 0 and section_of(0x21876A8) == '.edata', 'the noise slot is aligned read-only data')
+    return out
+
 
 failures = []
 for rva, expected, what in SITES:
@@ -1241,6 +1383,35 @@ w('inline constexpr std::uintptr_t equip_types_rva=0x2a70920, equip_types_vt_rva
 w('inline constexpr std::size_t equip_types_packed=0x8, gun_basic_row=12, gun_basic_rows=0x1818 / 12, stock_ids=649;')
 w('inline constexpr std::uint16_t stock46_packed=0x6244;')
 w('inline constexpr unsigned char stock46_recipe[12]={157,85,110,36,0,0,17,0,0,8,0,4};')
+w('// --- Native polish: facing D3, the look source hook (partner_look_source.cpp) ----------------')
+w('// PS phase 0 calls 0xffac00(PS, id) only at 0xff29fc; the qword 0xff29f8 (aligned, one cache line) holds that call;')
+w('// only its rel32 low word changes (0xffac00 -> the int3 padding 0xffad66, after the ret at 0xffad65).')
+w('inline constexpr std::uintptr_t look_src_call_block_rva=0xff29f7, look_src_call_rva=0xff29fc, look_src_qword_rva=0xff29f8;')
+w('inline constexpr std::uintptr_t look_src_next_ip=0xff2a01, look_fn_rva=0xffac00, look_fn_offline_rva=0xffac19;')
+w('inline constexpr std::uintptr_t look_fn_cam_rva=0xffac34, look_fn_store_rva=0xffad42, look_pad_rva=0xffad66, look_pad_end_rva=0xffad70;')
+w('inline constexpr std::uint64_t look_src_qword_orig=0x0081ffe8cd8b48d6ull;  // d6 48 8b cd e8 ff 81 00')
+w('inline constexpr std::uint64_t look_src_qword_new=0x008365e8cd8b48d6ull;   // d6 48 8b cd e8 65 83 00')
+w('// --- Native polish: weapons F1 (src rings), F2 (the magazine store row), F3 (shot noise) ----------')
+w('// src = *(PP+8): u32 held history at +8, stick i X/Y at +0x10+8i/+0x20+8i, trigger i at +0x30+8i (newest first),')
+w('// capacity +0x40, samples of this update +0x44 (src update 0x435260 = src vt+0x38, called by the PP update).')
+w('inline constexpr std::size_t src_rings=0x8, src_ring_count=7, src_ring_cap=0x40, src_ring_new=0x44;')
+w('// The ammo copy 0x108c8c0 (gun phase 0, every frame): Y = *(*(P+0xc8)+8) (iface vtable 0x23894b0 or 0x23895d0, setter')
+w('// +0x20 = 0xee96c0), idx = id * u32[Y+0xc] + u8 rec+0x3da, type = u32[Y+0x40][idx] & 0x1f, row = [Y+0x50] + idx*6:')
+w('// rec+0x25c = word0, rec+0x25e = word1 (sub magazine). rec+0x3d0 bit 27 (never set offline) gates a tamper check.')
+w('inline constexpr std::size_t store_y=0x8, store_stride=0xc, store_types=0x40, store_rows=0x50, store_row_size=6;')
+w('inline constexpr std::uint32_t store_type_mask=0x1f, store_type_word0_only=9;')
+w('inline constexpr std::uintptr_t store_vt_rva=0x23894b0, store_vt_derived_rva=0x23895d0, store_set_rva=0xee96c0;')
+w('inline constexpr std::size_t store_vt_set=0x20, gun_tamper=0x3d0;')
+w('// The store init 0xee92f0 (object vt+8 of both classes) sizes types and rows by Y+0x10 = ids * stride.')
+w('inline constexpr std::size_t store_total=0x10;')
+w('inline constexpr std::uint32_t gun3d0_tamper_check=0x8000000;')
+w('// The trigger (0x10964F7): rec+0x3C0 bit 24 = a shot this update, u8 rec+0x3DF = its count; rec+0x2C0 = the current mode.')
+w('inline constexpr std::size_t gun_mode_cur=0x2c0, gun_shots=0x3df;')
+w('inline constexpr std::uint32_t gun3c0_shot=0x1000000;')
+w('inline constexpr std::uint8_t gun_mode_fire=9, gun_mode_fire2=10;')
+w('// AddNoise 0x515270 = slot 0 of the noise iface vtable 0x21876a8; the record keeps its owner at +0x12.')
+w('inline constexpr std::uintptr_t noise_fn_rva=0x515270, noise_vtable_rva=0x21876a8;')
+w('inline constexpr std::size_t noise_owner=0x12;')
 w('struct Site { std::uintptr_t rva; std::size_t size; unsigned char bytes[80]; };')
 w('inline constexpr Site code_sites[]={')
 for rva, expected, what in SITES:

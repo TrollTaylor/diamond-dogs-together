@@ -391,8 +391,11 @@ std::int32_t RateMilli(float value) noexcept {
 // mirrors them; none with partner_native_rates=off) and its magazine (the
 // local instance's gun record: a gun class with an equip id, the magazine as
 // its getter reads it and the capacity).
-pin::V4Source SenderV4(const Driver& d, const Hooks& h, const pp::State& st, const pin::PadSnapshot& snap) noexcept {
+pin::V4Source SenderV4(const Driver& d, const Hooks& h, const pp::State& st, const pin::PadSnapshot& snap, std::uint8_t kb_flags) noexcept {
     pin::V4Source v{};
+    // The pad mode the peer's trigger needs (PP+0x488 bit 6 = keyboard mode,
+    // PP vt+0x98; read outside windows like the rest of the pad).
+    v.gamepad = (kb_flags & 0x40u) == 0;
     v.v3 = SenderV3(d, h, st, snap);
     if (d.mission.equip_tx_have) v.v3.equip_rev = d.mission.equip_tx.revision;
     if (d.settings.nrates != PartnerNativeRates::off) {
@@ -409,6 +412,11 @@ pin::V4Source SenderV4(const Driver& d, const Hooks& h, const pp::State& st, con
         v.mag_cap = pnat::GunCapacity(g.fields);
         v.mag = pnat::GunMagazine(g.fields);
         v.mag_valid = v.mag_cap >= 1 && v.mag_cap <= pin::kMaxMagCap && v.mag <= v.mag_cap;
+    }
+    // The gun the local player holds (the peer's weapon gate).
+    if (d.mission.gun0_ok && g.fields_ok && g.fields.equip >= 1 && g.fields.equip <= 0xFFFFu) {
+        v.equip_valid = true;
+        v.equip = g.fields.equip;
     }
     return v;
 }
@@ -481,6 +489,8 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
     a.mag_mirror = set.native_active && set.ngun && m.gun1_rec != 0 && m.gun1_prim != 0;
     a.gun_prim = a.mag_mirror ? m.gun1_prim : 0;
     a.gun_rec = a.mag_mirror ? m.gun1_rec : 0;
+    // The weapon gate (F4): FIRE and RELOAD stripped while the remote's gun is not body 1's.
+    a.strip = set.native_active ? m.weapon_strip : 0u;
     (void)st;
     return a;
 }
@@ -494,6 +504,7 @@ void DisarmInput(Driver& d, const Hooks& h, const char* reason) noexcept {
         a.gen = m.input_gen;
         if (h.publish_arm) h.publish_arm(h.context, a);
         m.input_armed = false;
+        m.input_neutral = false;
         m.have_arm = false;
         unsigned windows = 0;
         if (h.drain_input_stats) {
@@ -944,6 +955,16 @@ std::int32_t Mm(double value) noexcept {
     return static_cast<std::int32_t>(std::llround(value));
 }
 
+pr::FaceMode FaceModeFor(PartnerNativeFace face) noexcept {
+    switch (face) {
+    case PartnerNativeFace::off: return pr::FaceMode::off;
+    case PartnerNativeFace::aim: return pr::FaceMode::aim;
+    default: return pr::FaceMode::idle;
+    }
+}
+// Milliradians to millidegrees.
+std::int32_t Mdeg(double mrad) noexcept { return Mm(mrad * 57.29577951308232); }
+
 pr::Params ReconParams(const Settings& set) noexcept {
     pr::Params p{};
     // correct=0 keeps the round 3 meaning "never correct": placement only.
@@ -957,7 +978,7 @@ pr::Params ReconParams(const Settings& set) noexcept {
     p.input_stale_ms = set.stale_ms;
     // Native puppet: steering corrects; nudges, snaps and pins are safety nets.
     if (set.native_active) {
-        p = pr::NativeParams(p);
+        p = pr::NativeParams(p, FaceModeFor(set.nface));
         p.recon = PartnerRecon::track;
     }
     return p;
@@ -1053,9 +1074,29 @@ void LogReconEvents(Driver& d, const Hooks& h, const Settings& set, const pr::Ou
                   pr::PlaceReasonName(o.place_reason), Mm(o.pos[0]), Mm(o.pos[1]), Mm(o.pos[2]), Mm(o.yaw * 1000.0), body,
                   m.body_ok ? Mm(r.err_mm) : -1, m.recon_delay_ms, m.recon_pose_age_ms, age, m.recon.tries);
     }
-    if (ev & pr::Event::placed_ok)
-        EmitRecon(m, h, kRcPlaced, "partner_recon=placed; ok=1; err_mm=%d; tries=%u; ms=%u\r\n", Mm(r.place_err_mm), r.place_tries,
-                  r.place_ms);
+    if (ev & pr::Event::placed_ok) {
+        m.place_yaw_err_mdeg = Mdeg(r.place_yaw_err_mrad);
+        EmitRecon(m, h, kRcPlaced, "partner_recon=placed; ok=1; err_mm=%d; yaw_err_mdeg=%d; tries=%u; ms=%u\r\n", Mm(r.place_err_mm),
+                  m.place_yaw_err_mdeg, r.place_tries, r.place_ms);
+    }
+    if (ev & pr::Event::place_yaw_fix)
+        EmitRecon(m, h, kRcPlaced, "partner_recon=place_yaw_fix; yaw_err_mdeg=%d; err_mm=%d; via=xform\r\n", Mdeg(r.place_yaw_err_mrad),
+                  Mm(r.place_err_mm));
+    // The facing governor (one cap with the legacy yaw line).
+    if (ev & pr::Event::face_start)
+        EmitRecon(m, h, kRcYaw, "partner_recon=face_start; mode=%s; err_mdeg=%d; rate_dps=%d; act=%u\r\n",
+                  pr::FaceStateName(r.face_state), Mdeg(r.face_err_mrad), Mm(r.face_rate_dps), anim_ok ? unsigned(anim.act[1]) : 0u);
+    if (ev & pr::Event::face_end)
+        EmitRecon(m, h, kRcYaw, "partner_recon=face_end; reason=%s; err_mdeg=%d; writes=%u\r\n", r.face_reason ? r.face_reason : "none",
+                  Mdeg(r.face_err_mrad), r.face_writes);
+    if (ev & pr::Event::face_snap)
+        EmitRecon(m, h, kRcYaw, "partner_recon=face_snap; err_mdeg=%d; act=%u; snaps=%u\r\n", Mdeg(r.face_err_mrad),
+                  anim_ok ? unsigned(anim.act[1]) : 0u, r.face_snaps);
+    if (ev & pr::Event::face_contest)
+        EmitRecon(m, h, kRcYaw, "partner_recon=face_contest; err_mdeg=%d; contests=%u; backoff_ms=1000\r\n", Mdeg(r.face_err_mrad),
+                  r.face_contests);
+    if (ev & pr::Event::face_latched)
+        EmitRecon(m, h, kRcYaw, "partner_recon=face_latched; contests=%u; off_ms=10000\r\n", r.face_contests);
     if (ev & pr::Event::placed_fail)
         EmitRecon(m, h, kRcPlaced, "partner_recon=placed; ok=0; err_mm=%d; tries=%u; ms=%u; next=fallback_warp,retry_ms=5000\r\n",
                   Mm(r.place_err_mm), r.place_tries, r.place_ms);
@@ -1110,29 +1151,36 @@ bool ExecuteRecon(Driver& d, const Hooks& h, const pr::Out& o, bool terminating)
     alignas(16) float pos[4] = {static_cast<float>(o.pos[0] / 1000.0), static_cast<float>(o.pos[1] / 1000.0),
                                 static_cast<float>(o.pos[2] / 1000.0), 0.0f};
     const bool nudge = o.action == pr::Action::nudge;
+    // A facing write (governor step/snap, placement yaw fix): never while a
+    // batch is in flight, and a refusal only skips it (no placement).
+    const bool face = o.action == pr::Action::face;
     const char* refused = nullptr;
     if (m.native_disabled) {
         refused = "native_disabled";
     } else if (nudge) {
         refused = h.apply_position ? h.apply_position(h.context, terminating, pos) : "unavailable";
+    } else if (face && h.in_batch && h.in_batch(h.context)) {
+        refused = "in_batch";
     } else {
         alignas(16) float q[4]{};
         partner::YawToQuat(static_cast<float>(o.yaw), q);
         refused = h.apply_transform ? h.apply_transform(h.context, terminating, pos, q, PartnerReset::none) : "unavailable";
     }
-    if (IsFault(refused)) NoteFault(m, h, nudge ? "recon_nudge" : "recon_xform");
+    if (IsFault(refused)) NoteFault(m, h, nudge ? "recon_nudge" : face ? "recon_face" : "recon_xform");
     if (refused) {
         if (m.recon_refused != refused) {
             m.recon_refused = refused;
             EmitRecon(m, h, kRcRefused, "partner_recon=refused; action=%s; reason=%s; fallback=%s\r\n", pr::ActionName(o.action),
-                      refused, nudge ? "none" : "place");
+                      refused, nudge || face ? "none" : "place");
         }
         // A refused xform places the body with a Warp on the next tick.
-        if (!nudge) d.recon_place_request = pr::PlaceReason::rearm;
+        if (!nudge && !face) d.recon_place_request = pr::PlaceReason::rearm;
         return false;
     }
     m.recon_refused = nullptr;
-    if (!nudge) ++m.body_epoch;
+    // Small facing steps keep the body epoch (same position); the start and
+    // end of a turn, a snap and a placement yaw fix bump it.
+    if (!nudge && (!face || o.face_epoch)) ++m.body_epoch;
     return true;
 }
 
@@ -1356,7 +1404,7 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
             // Native puppet: v4 (look, camera, heading, the sender's own movement
             // rates and its magazine) only when this copy runs the native drive;
             // the peer refuses aim with no_v3 otherwise.
-            if (d.settings.drive == PartnerDrive::native) pin::Fill4(pkt, SenderV4(d, h, st, snap));
+            if (d.settings.drive == PartnerDrive::native) pin::Fill4(pkt, SenderV4(d, h, st, snap, raw.kb_flags));
             if (h.submit_input(h.context, pkt)) pin::SenderSent(m.sender);
         }
     }
@@ -1553,14 +1601,22 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
     }
     // Build and publish the Arm (gen bumps only when a tracked field changes).
     // A busy tick keeps the Arm already published (its targets are unread).
+    // Native placements keep an enabled window with a neutral pad (block 1's
+    // deferred job never runs unwindowed while the body is placed/verified).
+    const bool neutral = recon_used && ro.neutral && set.native_active;
     if (!keep_arm) {
         pin::Arm arm = BuildArm(d, set, targets, st, tick, now, true);
         arm.holdlog = lab.partner_input_holdlog && set.holdlog;
+        arm.neutral = neutral;
         if (!m.have_arm || !pin::SameArm(arm, m.last_arm)) ++m.input_gen;
         arm.gen = m.input_gen;
         if (h.publish_arm) h.publish_arm(h.context, arm);
         m.last_arm = arm;
         m.have_arm = true;
+    }
+    if (!keep_arm && neutral != m.input_neutral) {
+        EmitInput(m, h, "partner_input=neutral; on=%u; recon=%s\r\n", neutral ? 1u : 0u, pr::ModeName(ro.mode));
+        m.input_neutral = neutral;
     }
     if (!m.input_armed) {
         m.input_armed = true;
@@ -1701,6 +1757,27 @@ void CopyText(char* out, std::size_t capacity, const char* text) noexcept {
     StringCchCopyA(out, capacity, text ? text : "");
 }
 
+// The static "noise_<why>" reason for a noise filter refusal.
+const char* NoiseReason(const char* why) noexcept {
+    if (!why) return nullptr;
+    if (std::strcmp(why, "bytes") == 0) return "noise_bytes";
+    if (std::strcmp(why, "slot") == 0) return "noise_slot";
+    if (std::strcmp(why, "disabled") == 0) return "noise_disabled";
+    if (std::strcmp(why, "changed") == 0) return "noise_changed";
+    return "noise";
+}
+
+// The weapon gate's view of the remote's gun record equip: a customized
+// weapon's alias maps to the base id of the received manifest slot that
+// carries it (the sender's own loadout); a stock id, an alias no slot names
+// or no manifest yet stays itself (then compared raw: a mismatch masks).
+std::uint32_t RemoteGunBase(const Mission& m, std::uint32_t equip) noexcept {
+    if (m.equip.have)
+        for (const partner_equip_wire::Slot& s : m.equip.manifest.slots)
+            if (s.alias == equip && s.base_id != 0) return s.base_id;
+    return equip;
+}
+
 // --- Native weapons (docs/native-puppet.md "Weapons") ---------------------------
 // The fire gate (visual fire only while the owner filter is live), the
 // mirror's gun record, the 1 Hz partner_fire line, the read-only census, the
@@ -1744,8 +1821,46 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
         h.fire_stats(h.context, fs);
         if (!fs.live) why = "hook_lost";
         else if (!fs.armed || fs.owner != owner) why = "disarmed";
+        // F3: the partner's shot noise is dropped on this machine too (FIRE
+        // stays masked unless the noise filter is live; noise=keep is a lab key).
+        else if (set.nnoise == PartnerNativeNoise::filter) {
+            if (!h.install_noise) why = "noise_unavailable";
+            else if (const char* noise = h.install_noise(h.context)) why = NoiseReason(noise);
+            else {
+                h.fire_stats(h.context, fs);
+                if (!fs.noise_live) why = "noise_lost";
+            }
+        }
     }
     set.fire_live = why == nullptr;
+    // F4: the weapon gate. Body 1 carries one gun (stock46); while the
+    // remote's gun record holds another weapon, FIRE and RELOAD are stripped
+    // in every native window and the magazine mirror is frozen. A customized
+    // weapon's record holds its alias (the lab save's back slot: alias 873 of
+    // base 46), so the remote's equip is compared as the stock id of the
+    // received manifest slot carrying it. Kept while either side is unread.
+    bool weapon_judged = false;
+    m.remote_gun_base = m.remote_gun_equip == pnat::kNull
+                            ? pnat::kNull : static_cast<std::int32_t>(RemoteGunBase(m, static_cast<std::uint32_t>(m.remote_gun_equip)));
+    if (gun_ok && gun.fields_ok && gun.fields.equip != 0 && m.remote_gun_equip != pnat::kNull) {
+        m.weapon_mismatch = set.ngun && static_cast<std::uint32_t>(m.remote_gun_equip) != gun.fields.equip &&
+                            static_cast<std::uint32_t>(m.remote_gun_base) != gun.fields.equip;
+        weapon_judged = true;
+    }
+    if (!set.ngun) m.weapon_mismatch = false;
+    m.weapon_strip = m.weapon_mismatch ? (pnat::kPadFire | pnat::kPadReload) : 0u;
+    if (set.ngun && weapon_judged && (!m.weapon_logged_once || m.weapon_logged != m.weapon_mismatch)) {
+        const bool first = !m.weapon_logged_once;
+        m.weapon_logged_once = true;
+        m.weapon_logged = m.weapon_mismatch;
+        EmitNative(m, h, m.weapon_cap, "partner_weapon", "partner_weapon=%s; remote_equip=%d; remote_base=%d; body_equip=%u; strip=0x%x\r\n",
+                   m.weapon_mismatch ? "mismatch" : "match", m.remote_gun_equip, m.remote_gun_base, gun.fields.equip, m.weapon_strip);
+        // The fire verdict line of a visual-fire run (a first match is not a change).
+        if (set.nfire == PartnerNativeFire::visual && (m.weapon_mismatch || !first))
+            EmitNative(m, h, m.weapon_cap, "partner_weapon", "partner_fire=%s; reason=%s; remote_equip=%d; body_equip=%u\r\n",
+                       m.weapon_mismatch ? "masked" : "live", m.weapon_mismatch ? "weapon_mismatch" : "weapon_match", m.remote_gun_equip,
+                       gun.fields.equip);
+    }
     m.fire_refusal = why;
     const bool same_verdict = m.fire_logged_once && (m.fire_logged == why || (m.fire_logged && why && std::strcmp(m.fire_logged, why) == 0));
     if (set.nfire == PartnerNativeFire::visual && !same_verdict) {
@@ -1882,6 +1997,7 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     in.wrap_in_batch = is.wrap.wrap_in_batch - wb.wrap_in_batch;
     in.frames = is.native.frames - nb.frames;
     in.drain_block = is.native.drain_block_refused - nb.drain_block_refused;
+    in.drain_disarmed = is.native.drain_disarmed - nb.drain_disarmed;
     in.drain_us_max = ds.drain_us_max;
     if (ds.drain_us_max > m.native_drain_us_acc) m.native_drain_us_acc = ds.drain_us_max;
     m.defer_last = ds;
@@ -1964,8 +2080,9 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     in.dm_idle = m.dmmap.phase == pdm::Phase::idle && !m.dmmap.owned;
     in.dm_patched = m.dm_patched;
     in.dm_revert_failed = m.dm_revert_failed;
-    in.window_armed = m.input_armed;
-    in.recon_placed = m.input_armed && m.recon_active;
+    // A neutral window (placement) is armed but not yet placed.
+    in.window_armed = m.input_armed && !m.input_neutral;
+    in.recon_placed = m.input_armed && !m.input_neutral && m.recon_active;
     in.snaps_10s = m.recon_active && m.recon_have_out ? m.recon_out.report.snaps_window : 0;
     // Only a true runaway pin with an idle remote feeds the runaway timer (a
     // diverge or input pin has its own reason: diverging snaps, input_stale;
@@ -2035,9 +2152,19 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     }
     m.steer_mdeg = static_cast<std::int32_t>(std::lround(m.steer_rad * 180000.0 / 3.14159265358979323846));
     if (!configured) return;
+    // D3 (naim=looksrc): the look source hook, lazily once per process with
+    // defer=on, never while a batch is in flight (retried next tick).
+    if (set.naim == PartnerNativeAim::looksrc && defer == PartnerDefer::on && set.stage >= 3 && realized && parts_loaded && !terminating &&
+        h.install_look_source && !(h.in_batch && h.in_batch(h.context))) {
+        m.look_src_refusal = h.install_look_source(h.context);
+        m.look_src_tried = true;
+    }
     // Gun (telemetry reads only).
     pp::Gun1 gun{};
     const bool gun_ok = h.read_gun1 && h.read_gun1(h.context, st, gun);
+    // F4: the remote's gun equip (input frame v4 xflags Equip) against body 1's.
+    m.remote_gun_equip = latest_ok && latest.packet.version >= 4 && (latest.packet.xflags & pin::XFlag::Equip)
+                             ? static_cast<std::int32_t>(latest.packet.gun_equip) : pnat::kNull;
     // The local gun record (v4 magazine sender and telemetry), once per tick.
     m.gun0 = pp::Gun1{};
     m.gun0_ok = h.read_gun && h.read_gun(h.context, st, 0, m.gun0);
@@ -2207,11 +2334,17 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     t.cam_cdeg_remote = latest_ok ? latest.packet.cam_cdeg : pnat::kNull;
     t.cam_cdeg_host = tick.cam_cdeg;
     t.heading_err_mrad = pnat::kNull;
-    if (latest_ok && (latest.packet.xflags & pin::XFlag::Heading) && is.window.last_dir != INT32_MIN) {
+    t.steer_err_mrad = pnat::kNull;
+    t.cam_diff_cdeg = latest_ok ? pin::NormalizeCdeg(static_cast<std::int64_t>(latest.packet.cam_cdeg) - tick.cam_cdeg) : pnat::kNull;
+    // The camera-relative stick rotation check, only with a live stick (with a
+    // neutral stick it was the two cameras' yaw difference: cam_diff_cdeg).
+    const double stick_r = latest_ok ? std::sqrt(static_cast<double>(latest.packet.lx) * latest.packet.lx +
+                                                 static_cast<double>(latest.packet.ly) * latest.packet.ly) / 32767.0 : 0.0;
+    if (latest_ok && stick_r >= 0.1 && (latest.packet.xflags & pin::XFlag::Heading) && is.window.last_dir != INT32_MIN) {
         const double composed = pin::Heading(static_cast<double>(tick.cam_cdeg) * 3.14159265358979323846 / 18000.0,
                                              static_cast<float>(is.window.last_lx) / 1000.0f, static_cast<float>(is.window.last_ly) / 1000.0f);
         const double err = pin::NormalizeRadians(latest.packet.heading_mrad / 1000.0 - composed);
-        t.heading_err_mrad = static_cast<std::int32_t>(std::lround(err * 1000.0));
+        t.heading_err_mrad = t.steer_err_mrad = static_cast<std::int32_t>(std::lround(err * 1000.0));
     }
     t.steer_mdeg = m.steer_mdeg;
     t.mag_scale_pct = static_cast<std::int32_t>(std::lround(m.mag_scale * 100.0));
@@ -2250,7 +2383,21 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     t.remote_equip = remote_equip;
     t.body_equip = pnat::kNull;
     t.aim_match = m.aim_match;
-    t.aim_err_mdeg = pnat::kNull;
+    // D3: the remote's look and instance 1's slot after the last windowed drain.
+    t.look_remote_cdeg[0] = is.native.look_ok ? is.native.look_remote_cdeg[0] : pnat::kNull;
+    t.look_remote_cdeg[1] = is.native.look_ok ? is.native.look_remote_cdeg[1] : pnat::kNull;
+    t.look_slot_cdeg[0] = is.native.look_ok ? is.native.look_slot_cdeg[0] : pnat::kNull;
+    t.look_slot_cdeg[1] = is.native.look_ok ? is.native.look_slot_cdeg[1] : pnat::kNull;
+    t.look_err_mdeg = pnat::kNull;
+    if (is.native.look_ok && t.look_slot_cdeg[1] != pnat::kNull && t.look_remote_cdeg[1] != pnat::kNull)
+        t.look_err_mdeg = pin::NormalizeCdeg(static_cast<std::int64_t>(t.look_slot_cdeg[1]) - t.look_remote_cdeg[1]) * 10;
+    t.aim_err_mdeg = t.look_err_mdeg;
+    CopyText(t.look_src, sizeof(t.look_src), set.naim != PartnerNativeAim::looksrc ? "off"
+                                             : is.native.look_src_installed ? "installed"
+                                             : !m.look_src_tried ? "pending" : "refused");
+    t.look_src_hits = is.native.look_src_hits;
+    t.look_src_refused = is.native.look_src_refused;
+    t.look_src_skipped = is.native.look_src_skipped;
     t.manifest_rev = m.equip.have ? m.equip.manifest.revision : 0u;
     t.ammo_experiment = h.ammo_experiment;
     t.rates_setting = set.nrates;
@@ -2321,6 +2468,31 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         t.shot_count = n.shot_count == 0xFFFFFFFFu ? pnat::kNull : static_cast<std::int64_t>(n.shot_count);
         t.ammo_leaks = n.ammo_leaks;
         t.ammo_digest = n.ammo_digest ? static_cast<std::int64_t>(n.ammo_digest) : pnat::kNull;
+        t.ring_on = n.ring_on;
+        t.ring_windows = n.ring_windows;
+        t.ring_refused = n.ring_refused;
+        t.ring_changed = n.ring_changed;
+        CopyText(t.ring_last, sizeof(t.ring_last), partner_input_hook::RingRefusalName(n.ring_last));
+        t.store_writes = n.store_writes;
+        t.store_refused = n.store_refused;
+        CopyText(t.store_last, sizeof(t.store_last), partner_input_hook::StoreRefusalName(n.store_last));
+        t.mag_inj = n.mag_inj == 0xFFFFu ? pnat::kNull : static_cast<std::int32_t>(n.mag_inj);
+        t.mag_inj_cap = n.mag_inj_cap == 0xFFFFu ? pnat::kNull : static_cast<std::int32_t>(n.mag_inj_cap);
+        CopyText(t.noise_mode, sizeof(t.noise_mode), PartnerNativeNoiseName(set.nnoise));
+        t.noise_installed = fs.noise_installed;
+        t.noise_live = fs.noise_live;
+        t.noise_dropped = fs.noise_dropped;
+        t.noise_passed = fs.noise_passed;
+        t.kb_remote = !(latest_ok && latest.packet.version >= 4 && (latest.packet.xflags & pin::XFlag::Gamepad));
+        t.remote_gun_equip = m.remote_gun_equip;
+        t.remote_gun_base = m.remote_gun_base;
+        t.weapon_mismatch = m.weapon_mismatch;
+        t.strip_bits = m.weapon_strip;
+        t.fire_requested = n.fire_requested;
+        t.fire_shot_drains = n.fire_shot_drains;
+        t.fire_modes = n.fire_modes;
+        if (set.nfire == PartnerNativeFire::visual && !m.fire_refusal && m.weapon_mismatch)
+            CopyText(t.fire_refused, sizeof(t.fire_refused), "weapon_mismatch");
         t.equip_tx_rev = m.equip_tx_have ? m.equip_tx.revision : 0u;
         for (unsigned i = 0; i < 3; ++i) {
             t.equip_tx_base[i] = m.equip_tx_have ? m.equip_tx.slots[i].base_id : 0u;
@@ -2330,6 +2502,25 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         }
         t.equip_tables_ok = m.equip_tables_ok;
         CopyText(t.equip_apply, sizeof(t.equip_apply), m.equip_apply[0] ? m.equip_apply : "none");
+    }
+    // The facing governor (partner_recon) and the placement verdicts.
+    {
+        const bool fr = m.recon_active && m.recon_have_out;
+        const pr::Report& r = m.recon_out.report;
+        CopyText(t.face_setting, sizeof(t.face_setting), PartnerNativeFaceName(set.nface));
+        CopyText(t.face_mode, sizeof(t.face_mode), fr ? pr::FaceStateName(r.face_state) : "off");
+        CopyText(t.face_reason, sizeof(t.face_reason), fr && r.face_reason ? r.face_reason : "none");
+        const auto cdeg = [](double mrad) noexcept { return Mm(mrad * 5.729577951308232); };
+        t.face_err_cdeg = fr && m.body_ok && m.recon_target_ok ? cdeg(r.face_err_mrad) : pnat::kNull;
+        t.face_target_cdeg = fr && m.recon_target_ok ? cdeg(r.face_target_mrad) : pnat::kNull;
+        t.face_body_cdeg = m.body_ok ? cdeg(static_cast<double>(partner::QuatToYaw(m.body_quat)) * 1000.0) : pnat::kNull;
+        t.face_rate_dps = fr ? Mm(r.face_rate_dps) : pnat::kNull;
+        t.face_writes = fr ? r.face_writes : 0u;
+        t.face_snaps = fr ? r.face_snaps : 0u;
+        t.face_contests = fr ? r.face_contests : 0u;
+        t.face_turns = fr ? r.face_turns : 0u;
+        t.place_yaw_err_mdeg = m.recon_have_out ? m.place_yaw_err_mdeg : pnat::kNull;
+        t.neutral_windows = is.native.neutral_windows;
     }
     if (!m.rate_ok) {
         m.rate_ok = true;
@@ -2368,6 +2559,8 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         t.unwound = Rate(ds.unwound, r.unwound, dt);
         t.drain_block = Rate(is.native.drain_block_refused, m.rate_hook.drain_block_refused, dt);
         t.drain_in_batch = Rate(is.native.drain_in_batch, m.rate_hook.drain_in_batch, dt);
+        t.unwindowed_native = Rate(is.native.drain_disarmed, m.rate_hook.drain_disarmed, dt);
+        t.look_src_hits_s = Rate(is.native.look_src_hits, m.rate_hook.look_src_hits, dt);
         t.p1_forced = Rate(is.native.p1_forced, m.rate_hook.p1_forced, dt);
         t.p1_refused = Rate(is.native.p1_refused, m.rate_hook.p1_refused, dt);
         t.p1_windows = Rate(is.native.p1_windows, m.rate_hook.p1_windows, dt);
@@ -2433,6 +2626,21 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
             m.native_drain_lines_capped = true;
             Emit(h, "partner_native_drain=capped; limit=3600\r\n");
         }
+        // The 1 Hz facing line (own cap): the governor, both acts, the look.
+        if (m.face_lines < kNativeLineCap && (set.nface != PartnerNativeFace::off || set.naim != PartnerNativeAim::off)) {
+            ++m.face_lines;
+            char e1[16]{}, e2[16]{};
+            const auto num = [](char (&o)[16], std::int32_t v) noexcept {
+                if (v == pnat::kNull) StringCchCopyA(o, sizeof(o), "na");
+                else StringCchPrintfA(o, sizeof(o), "%d", v);
+            };
+            num(e1, t.face_err_cdeg == pnat::kNull ? pnat::kNull : t.face_err_cdeg * 10);
+            num(e2, t.look_err_mdeg);
+            EmitFormat(h, "partner_native_face; mode=%s; setting=%s; err_mdeg=%s; act=%u,%u; writes=%u; snaps=%u; contests=%u; reason=%s; "
+                          "look_err_mdeg=%s; look_src=%s; src_hits_s=%u; neutral=%u\r\n",
+                       t.face_mode, t.face_setting, e1, t.act, t.remote_act, t.face_writes, t.face_snaps, t.face_contests, t.face_reason, e2,
+                       t.look_src, t.look_src_hits_s, m.input_neutral ? 1u : 0u);
+        }
         m.native_drain_us_acc = 0;
         t.spin_max = 0;
         m.rate_ms_native = now;
@@ -2456,6 +2664,8 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     e.rec_next = static_cast<std::uint8_t>(t.rec_next);
     e.rec_mag = t.rec_mag;
     e.mag = t.gun_mag == pnat::kNull ? static_cast<std::uint16_t>(0xFFFF) : static_cast<std::uint16_t>(t.gun_mag);
+    e.body_yaw_cdeg = t.face_body_cdeg;
+    e.face_err_cdeg = t.face_err_cdeg;
     const std::uint32_t p1_delta = t.ring.count ? is.native.p1_forced - m.ring_p1_last : 0u;  // totals are process-wide
     m.ring_p1_last = is.native.p1_forced;
     e.p1_forced = static_cast<std::uint16_t>(p1_delta > 0xFFFFu ? 0xFFFFu : p1_delta);
@@ -2517,6 +2727,8 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.steer_deg = lab.partner_native_steer_deg;
     d.settings.trim_pct = lab.partner_native_trim_pct;
     d.settings.nrates = lab.partner_native_rates;
+    d.settings.nface = lab.partner_native_face;
+    d.settings.nnoise = lab.partner_native_noise;
 
     d.settings.play_mode = lab.mode == LabMode::play;
     d.look_forced_rev = 1;
@@ -3606,7 +3818,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     // every tick (refused, faulted, install refused, input=off, stage < 3),
     // except while the reconciliation places/verifies the body itself.
     const partner::Pose reply_pose = itick.pose_override ? itick.pose : pose;
-    if (set_levers.apply == PartnerApply::input && !m.input_armed && pose_valid && set.stage >= 1 && !itick.suppress_fallback &&
+    if (set_levers.apply == PartnerApply::input && (!m.input_armed || m.input_neutral) && pose_valid && set.stage >= 1 && !itick.suppress_fallback &&
         (!free_roam_net || parts_loaded)) {
         if (!(extra_ops & partner::op::warp)) {
             extra_ops |= partner::op::warp;
@@ -3616,7 +3828,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                 EmitInput(m, h, "partner_input_place; reason=fallback; err_mm=0; via=warp\r\n");
             }
         }
-    } else if (m.input_armed) {
+    } else if (m.input_armed && !m.input_neutral) {
         m.input_fallback = false;
     }
     BodyLine(d, h, st, set_levers, tick, clock, parts_loaded);

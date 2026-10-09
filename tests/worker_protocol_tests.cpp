@@ -164,6 +164,12 @@ int main() {
     changed = gun; changed.partner_native_rates = mgscoop::PartnerNativeRates::off; Check(!OfflineLab(changed, "host", save), "native_gun_mirrors_rates");
     changed = gun; changed.partner_native_aim = mgscoop::PartnerNativeAim::lookcam; Check(!OfflineLab(changed, "host", save), "native_lookcam_needs_a_gate_change");
     changed = gun; changed.partner_native_aim = mgscoop::PartnerNativeAim::off; Check(!OfflineLab(changed, "host", save), "native_gun_needs_look");
+    // Native polish: the look source A/B run (looksrc) is a gun stage; the noise filter is not optional there.
+    changed = gun; changed.partner_native_aim = mgscoop::PartnerNativeAim::looksrc; Check(OfflineLab(changed, "host", save), "native_gun_looksrc_admitted");
+    changed = loco; changed.partner_native_aim = mgscoop::PartnerNativeAim::looksrc; Check(!OfflineLab(changed, "host", save), "native_loco_without_looksrc");
+    changed = gun; changed.partner_native_noise = mgscoop::PartnerNativeNoise::keep; Check(!OfflineLab(changed, "host", save), "native_gun_keeps_the_noise_filter");
+    changed = gun; changed.partner_native_face = mgscoop::PartnerNativeFace::aim; Check(OfflineLab(changed, "host", save), "native_face_is_free");
+    changed = loco; changed.partner_native_face = mgscoop::PartnerNativeFace::off; Check(OfflineLab(changed, "host", save), "native_face_off_admitted");
     changed = census; changed.partner_native_aim = mgscoop::PartnerNativeAim::look; Check(!OfflineLab(changed, "host", save), "native_census_without_aim");
     changed = loco; changed.partner_native_gun = true; Check(!OfflineLab(changed, "host", save), "native_loco_without_gun");
     changed = loco; changed.partner_input_local = mgscoop::PartnerLocal::all; Check(!OfflineLab(changed, "host", save), "native_local_all_needs_a_gate_change");

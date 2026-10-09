@@ -51,7 +51,8 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
   labsetting [host|guest] <key>=<value>
                                    before the session starts: add an allow-listed lab.ini key to both
                                    copies or to one (debug_soldier_warp=0|1, nametag=0|1,
-                                   nametag_crosshair=aim|always|off, nametag_name=[A-Za-z0-9_]{1,16})
+                                   nametag_crosshair=aim|always|off, nametag_name=[A-Za-z0-9_]{1,16};
+                                   partner_native_face=off|idle|aim; partner_native_aim=looksrc, native gun stage only)
 
 The session has a hard 600 s limit (supervisor). The result object lists the
 run folder, the frames (renamed with labels) and whether everything closed.
@@ -74,7 +75,7 @@ param(
     [switch]$AmmoExperiment,
     [ValidateSet('real','lab')][string]$SaveSeed='lab',
     # key=value for both copies or host:key=value / guest:key=value for one (scenario "labsetting" lines).
-    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16})$')][string[]]$LabSetting=@()
+    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc)$')][string[]]$LabSetting=@()
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -97,12 +98,14 @@ $lines+=$Step
 $steps=@($lines|ForEach-Object{$_.Trim()}|Where-Object{$_ -and !$_.StartsWith('#')})
 # labsetting lines configure the session; they are not steps.
 foreach($line in @($steps|Where-Object{$_ -cmatch '^labsetting(\s|$)'})) {
-    if($line -cnotmatch '^labsetting\s+(?:(host|guest)\s+)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(?:aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16})$'){
+    if($line -cnotmatch '^labsetting\s+(?:(host|guest)\s+)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(?:aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(?:off|idle|aim)|partner_native_aim=looksrc)$'){
         throw "Invalid scenario step: '$line'"
     }
     $LabSetting=@($LabSetting)+@($(if($Matches[1]){$Matches[1]+':'+$Matches[2]}else{$Matches[2]}))
 }
 $steps=@($steps|Where-Object{$_ -cnotmatch '^labsetting(\s|$)'})
+if(@($LabSetting|Where-Object{$_ -clike 'partner_native_*'}).Count -and $PartnerProfile -cne 'native'){throw '-LabSetting partner_native_* needs -PartnerProfile native.'}
+if($LabSetting -ccontains 'partner_native_aim=looksrc' -and $NativeStage -cne 'gun'){throw '-LabSetting partner_native_aim=looksrc needs -NativeStage gun.'}
 if(!$steps.Count){throw 'No scenario steps.'}
 # Validate every step before anything starts.
 $roleNames=@('host','guest','both')

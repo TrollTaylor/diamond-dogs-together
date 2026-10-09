@@ -1,5 +1,34 @@
 # Development status
 
+## October 9, 2026: native facing and the partner's own fire/reload (fixture-tested, hidden runs pending)
+
+`wp/native-polish`. Facing ([details](native-puppet.md#facing)): the facing
+governor (`partner_native_face=idle` by default under the native drive: quiet
+idle turns at 180 deg/s, one settle snap after a placement/snap/teleport or in
+fall/land acts, a contest guard), native placements with a neutral window
+instead of a disarm (a disarmed drain while active now leaves: `unwindowed`),
+the placement yaw check, a windowed teleport (3 m in 200 ms) and the look
+source hook (`partner_native_aim=looksrc`, opt-in, the O7 A/B run).
+Weapons ([details](native-puppet.md#weapons)): drain windows isolate the pad's
+sample rings (the partner's trigger read the viewer's), the magazine mirror
+writes the per-instance store row (the record alone was overwritten every
+frame), the shot noise filter (`partner_native_noise=filter`; FIRE needs it
+live) and the weapon gate (input frame v4 xflags Equip 0x80 / Gamepad 0x40,
+bytes 82..83). Contract checker: 405 code sites, 96 vtable slots. New hidden
+scenario `tools/worker/scenarios/partner-native-facing.txt`; the weapons
+scenario gains the switch-fire and trigger/noise/store proof lines. Play keeps
+visual fire off by default (`-VisualFire`). Fixture evidence only.
+
+Review fixes on the same branch: the weapon gate compares a customized
+weapon's alias as its manifest base id (the lab save's 873 is base 46; the
+raw compare would have masked FIRE/RELOAD for the whole weapons run), the
+store row write is bounded by the store's row count `Y+0x10` (pinned: the
+store init `0xEE92F0`), an idle facing turn never starts while the body is
+still turning on its own (< 30 deg/s) and restarts after a tick gap instead
+of snapping, the facing writes and the look source install stop at the
+window-close shutdown (`partner_defer::ShuttingDown`), the drain consumers'
+previous held words reset per mission, and the facing scenario's
+`face-place-viewer-aims` is captured by the guest (the viewer holding RMB).
 ## October 8, 2026: partner name tag and friendly crosshair (fixture-tested, never run)
 
 A name tag now floats above the co-op partner's head and a green ring appears at the

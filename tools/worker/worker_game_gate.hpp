@@ -11,9 +11,12 @@ namespace mgsworker {
 // fallback, the native drive armed by the arbiter) in exactly three stages.
 // The gun stage admits only visual fire (docs/native-puppet.md "Weapons": FIRE
 // in the mask only together with partner_native_fire=visual, whose owner
-// filter keeps the partner's shots visual), as the worker profile emits it.
-// Later stages (lookcam, local=all, a gun stage without fire) need an
-// explicit gate change.
+// filter keeps the partner's shots visual, and the shot noise filter:
+// partner_native_noise=filter), as the worker profile emits it, with the
+// look written after phase 0 (look) or also at its source (looksrc, the
+// facing A/B run: -LabSetting partner_native_aim=looksrc). Later stages
+// (lookcam, local=all, a gun stage without fire, noise=keep) need an explicit
+// gate change. partner_native_face (the facing governor) is free.
 inline bool LegacyDrive(const mgscoop::LabConfig& lab) {
     return lab.partner_drive == mgscoop::PartnerDrive::legacy && lab.partner_input_defer == mgscoop::PartnerDefer::off;
 }
@@ -47,7 +50,8 @@ inline bool NativeProfile(const mgscoop::LabConfig& lab) {
         lab.partner_native_rates == mgscoop::PartnerNativeRates::mirror;
     const bool gun = lab.partner_input_defer == mgscoop::PartnerDefer::on && lab.partner_input_mask == 0x224005Eu &&
         lab.partner_native_gun && lab.partner_native_fire == mgscoop::PartnerNativeFire::visual &&
-        lab.partner_native_aim == mgscoop::PartnerNativeAim::look && lab.partner_native_rates == mgscoop::PartnerNativeRates::mirror;
+        (lab.partner_native_aim == mgscoop::PartnerNativeAim::look || lab.partner_native_aim == mgscoop::PartnerNativeAim::looksrc) &&
+        lab.partner_native_noise == mgscoop::PartnerNativeNoise::filter && lab.partner_native_rates == mgscoop::PartnerNativeRates::mirror;
     return base && (census || loco || gun);
 }
 inline bool OfflineLab(const mgscoop::LabConfig& lab, const std::string& role, const std::string& save) {

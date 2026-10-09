@@ -75,6 +75,10 @@ struct In {
     std::uint32_t w50_b1_s0, deferred, drains, windowed, unwindowed, lost, wrap_in_batch, frames;
     // Drains refused because the deferred job's block was not instance 1's.
     std::uint32_t drain_block;
+    // Drains whose job ran without a window because no enabled native Arm was
+    // published (a disarm under the native drive: the job read the viewer's
+    // pad). A hard reason in active (placements keep a neutral window).
+    std::uint32_t drain_disarmed;
     std::uint32_t drain_us_max;   // max since the previous Step
     std::uint32_t snaps_10s;      // reconciliation snaps in the last 10 s
     std::uint32_t runaway_ms;     // how long the runaway condition has held (0 = not)
@@ -257,6 +261,9 @@ struct RingEntry {
     // Weapons: instance 1's magazine (getter rule; 0xFFFF unread) and its
     // reload request (rec+0x3C0 bit 20, also in gun3c0).
     std::uint16_t mag;
+    // Facing: the body's yaw and the facing error target - body (centidegrees,
+    // kNull unread).
+    std::int32_t body_yaw_cdeg, face_err_cdeg;
 };
 inline constexpr std::uint8_t kReconOff = 0xFF;
 inline constexpr std::size_t kRing = 48;
@@ -307,6 +314,8 @@ struct Telemetry {
     // by an unwound batch, drains refused for a block that is not instance 1's
     // and drains refused because a batch was in flight (per second).
     std::uint32_t nested, foreign, unwound, drain_block, drain_in_batch;
+    // Drains without a window under a disabled Arm while the drive was active (per second).
+    std::uint32_t unwindowed_native;
     std::uint32_t id1_pass, scope_unbalanced, drain_us_max, spin_max, faults, fault_code;
     char fault_phase[12];
     // Wrap census of block 1 (per second) and the look write.
@@ -316,6 +325,10 @@ struct Telemetry {
     bool input_live;
     std::uint32_t input_age_ms, input_version, held, mask, latch27c;
     std::int32_t lx, ly, cam_cdeg_remote, cam_cdeg_host, heading_err_mrad, steer_mdeg, mag_scale_pct;
+    // The camera-relative stick rotation check (kNull while |stick| < 0.1:
+    // with a neutral stick heading_err_mrad was the two cameras' difference)
+    // and that difference itself (remote - host camera yaw).
+    std::int32_t steer_err_mrad, cam_diff_cdeg;
     // Body vs remote (animation arrays of instance 1 and the remote's anim state).
     bool body_valid;
     std::uint32_t act, stance, speed, speed_mmps, remote_act, remote_stance, remote_speed, remote_speed_mmps;
@@ -386,6 +399,28 @@ struct Telemetry {
     // inventory) and its digest after the last drain (kNull unread).
     std::uint32_t ammo_leaks;
     std::int64_t ammo_digest;
+    // F1/F2/F3/F4 (docs/native-puppet.md "Weapons"): the sample rings of the
+    // drain windows, the magazine store row, the injected remote magazine,
+    // the noise filter and the weapon gate (the remote's gun equip vs body 1's).
+    bool ring_on;
+    std::uint32_t ring_windows, ring_refused, ring_changed;
+    char ring_last[8];
+    std::uint32_t store_writes, store_refused;
+    char store_last[8];
+    std::int32_t mag_inj, mag_inj_cap;
+    char noise_mode[8];
+    bool noise_installed, noise_live;
+    std::uint32_t noise_dropped, noise_passed;
+    bool kb_remote;                   // the remote's pad is in keyboard mode (no xflags Gamepad)
+    std::int32_t remote_gun_equip;    // kNull without xflags Equip
+    std::int32_t remote_gun_base;     // as a stock id (the received manifest maps an alias); kNull without
+    bool weapon_mismatch;
+    std::uint32_t strip_bits;
+    // The partner's trigger after each windowed drain (process totals):
+    // shots it requested (rec+0x3C0 bit 24, summed over rec+0x3DF), drains
+    // that requested one, and drains that left the gun in a fire mode
+    // (rec+0x2C0 9 or 10).
+    std::uint32_t fire_requested, fire_shot_drains, fire_modes;
     // Loadout: what this copy sends (manifest revision, base ids, aliases,
     // tables verified) and the apply verdict of the received manifest.
     std::uint32_t equip_tx_rev;
@@ -393,6 +428,24 @@ struct Telemetry {
     bool equip_tables_ok;
     std::uint32_t equip_rx_base[3], equip_rx_alias[3];
     char equip_apply[12];
+    // Facing governor (partner_recon; docs/native-puppet.md "Facing"): its
+    // mode off|idle|settle|aim|contested, the error, target and body yaw
+    // (centidegrees, kNull unread), the body's own yaw rate (deg/s), the
+    // counters since the mission start and why it is not acting.
+    char face_setting[8];
+    char face_mode[12];
+    std::int32_t face_err_cdeg, face_target_cdeg, face_body_cdeg, face_rate_dps;
+    std::uint32_t face_writes, face_snaps, face_contests, face_turns;
+    char face_reason[12];
+    // Placement verdicts: the last placement's yaw error at verify (mdeg).
+    std::int32_t place_yaw_err_mdeg;
+    std::uint32_t neutral_windows;
+    // The look (D3): the source hook, its writes per second, the remote's
+    // look and instance 1's slot after the last windowed drain (centidegrees
+    // {pitch, yaw}, kNull unread) and the yaw error slot - remote (mdeg).
+    char look_src[12];
+    std::uint32_t look_src_hits_s, look_src_hits, look_src_refused, look_src_skipped;
+    std::int32_t look_remote_cdeg[2], look_slot_cdeg[2], look_err_mdeg;
     Ring ring;
 };
 

@@ -575,6 +575,25 @@ int main() {
               badNative.partner_input_local == PartnerLocal::main && badNative.partner_native_aim == PartnerNativeAim::off &&
               !badNative.partner_native_gun && badNative.partner_native_steer_deg == 15 && badNative.partner_native_trim_pct == 0,
               "native range/enum refusals keep the defaults");
+        // Native polish keys: the facing governor (idle) and the noise filter (filter) by default; looksrc.
+        Check(def.partner_native_face == mgscoop::PartnerNativeFace::idle && def.partner_native_noise == mgscoop::PartnerNativeNoise::filter,
+              "polish defaults: face idle, noise filter");
+        const auto polish = Lab("enabled=1\nrole=host\npartner_native_aim=looksrc\npartner_native_face=aim\npartner_native_noise=keep\n");
+        Check(polish.partner_native_aim == PartnerNativeAim::looksrc && polish.partner_native_face == mgscoop::PartnerNativeFace::aim &&
+              polish.partner_native_noise == mgscoop::PartnerNativeNoise::keep && polish.invalid_values == 0 && polish.unknown_keys == 0,
+              "looksrc, face=aim, noise=keep parse");
+        const auto polishOff = Lab("enabled=1\nrole=host\npartner_native_face=off\npartner_native_noise=filter\n");
+        const auto polishBad = Lab("enabled=1\nrole=host\npartner_native_face=always\npartner_native_noise=loud\npartner_native_aim=src\n");
+        Check(polishOff.partner_native_face == mgscoop::PartnerNativeFace::off && polishOff.invalid_values == 0 &&
+              polishBad.invalid_values == 3 && polishBad.partner_native_face == mgscoop::PartnerNativeFace::idle &&
+              polishBad.partner_native_noise == mgscoop::PartnerNativeNoise::filter && polishBad.partner_native_aim == PartnerNativeAim::off,
+              "polish enum refusals keep the defaults");
+        Check(std::strcmp(PartnerNativeAimName(PartnerNativeAim::looksrc), "looksrc") == 0 &&
+              std::strcmp(mgscoop::PartnerNativeFaceName(mgscoop::PartnerNativeFace::aim), "aim") == 0 &&
+              std::strcmp(mgscoop::PartnerNativeFaceName(mgscoop::PartnerNativeFace::idle), "idle") == 0 &&
+              std::strcmp(mgscoop::PartnerNativeFaceName(mgscoop::PartnerNativeFace::off), "off") == 0 &&
+              std::strcmp(mgscoop::PartnerNativeNoiseName(mgscoop::PartnerNativeNoise::keep), "keep") == 0 &&
+              std::strcmp(mgscoop::PartnerNativeNoiseName(mgscoop::PartnerNativeNoise::filter), "filter") == 0, "polish names");
         // defer takes effect only with drive=native.
         const auto deferOnly = Lab("enabled=1\nrole=host\npartner_input_defer=on\n");
         Check(deferOnly.partner_input_defer == PartnerDefer::on &&

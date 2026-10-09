@@ -22,6 +22,12 @@ volatile LONG g_owner = 0xFFFF;   // the armed owner id (0xFFFF = disarmed)
 volatile LONG g_owner_id = 0xFFFF;  // the last armed id (owner_disarmed counts it while disarmed)
 volatile LONG g_suppressed = 0, g_passed = 0, g_passed_player = 0, g_owner_disarmed = 0;
 volatile LONG g_last_thread = 0, g_last_owner = 0xFFFF;
+// The noise filter (same armed owner).
+volatile LONG g_noise_installed = 0;
+bool g_noise_ready = false;
+detail::NoiseFn g_noise_original = nullptr;
+detail::NoiseFn g_noise_test_original = nullptr;
+volatile LONG g_noise_dropped = 0, g_noise_passed = 0, g_noise_last_owner = 0xFFFF;
 
 const c::Site* RequestSite() noexcept {
     for (const c::Site& s : c::code_sites)
@@ -54,6 +60,27 @@ void* Hook(void* iface, const void* record) noexcept {
 }
 
 std::uintptr_t HookAddress() noexcept { return reinterpret_cast<std::uintptr_t>(&Hook); }
+
+const c::Site* NoiseSite() noexcept {
+    for (const c::Site& s : c::code_sites)
+        if (s.rva == c::noise_fn_rva) return &s;
+    return nullptr;
+}
+// The record is {pos[4], u8 kind, u8 flags, u16 owner} (0x1303CF0..0x1303CFB);
+// AddNoise keeps the owner (0x5152F9). Any thread: atomics only.
+void NoiseHook(void* self, const void* record) noexcept {
+    std::uint16_t owner = 0xFFFF;
+    if (record) std::memcpy(&owner, static_cast<const unsigned char*>(record) + c::noise_owner, sizeof(owner));
+    InterlockedExchange(&g_noise_last_owner, static_cast<LONG>(owner));
+    if (detail::Drops(static_cast<std::uint16_t>(g_owner), owner)) {
+        InterlockedIncrement(&g_noise_dropped);
+        return;
+    }
+    InterlockedIncrement(&g_noise_passed);
+    const detail::NoiseFn original = g_noise_test_original ? g_noise_test_original : g_noise_original;
+    if (original) original(self, record);
+}
+std::uintptr_t NoiseHookAddress() noexcept { return reinterpret_cast<std::uintptr_t>(&NoiseHook); }
 } // namespace
 
 namespace detail {
@@ -70,8 +97,16 @@ void ResetForTest() noexcept {
     InterlockedExchange(&g_passed_player, 0);
     InterlockedExchange(&g_owner_disarmed, 0);
     InterlockedExchange(&g_last_owner, 0xFFFF);
+    InterlockedExchange(&g_noise_installed, 0);
+    g_noise_ready = false;
+    g_noise_original = nullptr;
+    InterlockedExchange(&g_noise_dropped, 0);
+    InterlockedExchange(&g_noise_passed, 0);
+    InterlockedExchange(&g_noise_last_owner, 0xFFFF);
 }
 void SetOriginalForTest(RequestFn original) noexcept { g_test_original = original; }
+NoiseFn NoiseHookEntry() noexcept { return &NoiseHook; }
+void SetNoiseOriginalForTest(NoiseFn original) noexcept { g_noise_test_original = original; }
 } // namespace detail
 
 const char* Install(const void* base_ptr, LogFn log) noexcept {
@@ -129,6 +164,46 @@ const char* Install(const void* base_ptr, LogFn log) noexcept {
 
 bool Installed() noexcept { return g_ready; }
 
+const char* InstallNoise(const void* base_ptr, LogFn log) noexcept {
+    if (InterlockedCompareExchange(&g_noise_installed, 1, 0) != 0) return g_noise_ready ? nullptr : "disabled";
+    const DWORD error = GetLastError();
+    const auto base = reinterpret_cast<std::uintptr_t>(base_ptr);
+    const std::uintptr_t target = base + c::noise_fn_rva;
+    const std::uintptr_t slot = base + c::noise_vtable_rva;
+    const char* result = nullptr;
+    const c::Site* site = NoiseSite();
+    unsigned char prologue[sizeof(c::Site::bytes)]{};
+    std::uintptr_t value = 0;
+    if (!base || !site || !Read(target, prologue, site->size) || std::memcmp(prologue, site->bytes, site->size) != 0) {
+        result = "bytes";
+    } else if (!ReadValue(slot, value) || value != target) {
+        result = "slot";
+    } else {
+        g_noise_original = reinterpret_cast<detail::NoiseFn>(target);
+        if (const char* why = near_code::PatchQword(reinterpret_cast<void*>(slot), target, NoiseHookAddress()))
+            if (std::strcmp(why, "protect_restore") != 0) result = why;  // protect_restore: the slot holds the hook
+    }
+    if (!result) g_noise_ready = true;
+    if (log) {
+        char line[192]{};
+        if (g_noise_ready)
+            StringCchPrintfA(line, ARRAYSIZE(line), "partner_noise=installed; slot=0x21876a8; target=0x515270; owner_field=0x12\r\n");
+        else
+            StringCchPrintfA(line, ARRAYSIZE(line), "partner_noise=refused; reason=%s; fire=masked\r\n", result);
+        log(line);
+    }
+    SetLastError(error);
+    return g_noise_ready ? nullptr : result;
+}
+
+bool NoiseInstalled() noexcept { return g_noise_ready; }
+
+bool NoisePatchLive(const void* base_ptr) noexcept {
+    if (!g_noise_ready) return false;
+    std::uintptr_t value = 0;
+    return ReadValue(reinterpret_cast<std::uintptr_t>(base_ptr) + c::noise_vtable_rva, value) && value == NoiseHookAddress();
+}
+
 bool PatchLive(const void* base_ptr) noexcept {
     if (!g_ready) return false;
     const auto base = reinterpret_cast<std::uintptr_t>(base_ptr);
@@ -160,6 +235,11 @@ void ReadStats(const void* base, Stats& out) noexcept {
     out.owner_disarmed = static_cast<std::uint32_t>(g_owner_disarmed);
     out.last_thread = static_cast<std::uint32_t>(g_last_thread);
     out.last_owner = static_cast<std::uint16_t>(g_last_owner);
+    out.noise_installed = g_noise_ready;
+    out.noise_live = NoisePatchLive(base);
+    out.noise_dropped = static_cast<std::uint32_t>(g_noise_dropped);
+    out.noise_passed = static_cast<std::uint32_t>(g_noise_passed);
+    out.noise_last_owner = static_cast<std::uint16_t>(g_noise_last_owner);
 }
 
 void ReadCensus(const void* base_ptr, std::size_t image_span, Census& out) noexcept {

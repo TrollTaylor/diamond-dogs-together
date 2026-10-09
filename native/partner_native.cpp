@@ -60,6 +60,12 @@ const char* HardLeave(const In& in) noexcept {
     if (in.drain_block) return "drain_block";
     return nullptr;
 }
+// Active only: block 1's job ran without a window under a disabled Arm (it
+// read the viewer's pad). Entering may see the arming frame's race.
+const char* ActiveLeave(const In& in) noexcept {
+    if (in.drain_disarmed) return "unwindowed";
+    return nullptr;
+}
 
 void ResetWindows(State& s, std::uint64_t now) noexcept {
     s.window_start_ms = now;
@@ -187,6 +193,7 @@ Out Step(State& s, const In& in, const Params& p) noexcept {
     }
     case Mode::active: {
         if (const char* why = HardLeave(in)) { leave(why); break; }
+        if (const char* why = ActiveLeave(in)) { leave(why); break; }
         if (in.snaps_10s >= p.diverging_snaps) { leave("diverging"); break; }
         if (in.runaway_ms > p.runaway_ms) { leave("runaway"); break; }
         const bool stale = !in.input_valid || in.input_age_ms > p.input_age_ms;

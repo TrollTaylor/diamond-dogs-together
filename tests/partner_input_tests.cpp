@@ -521,11 +521,21 @@ void TestAccumulate() {
     Check(pi::ValidPacket(bad), "v4 with rates and a magazine");
     bad.rate_crawl = 499;
     Check(!pi::ValidPacket(bad), "a rate below 500 refused (the magazine is valid)");
-    bad.rate_crawl = 1000; bad.xflags = static_cast<std::uint8_t>(bad.xflags | 0x40);
-    Check(!pi::ValidPacket(bad), "an unknown v4 xflag refused");
+    bad.rate_crawl = 1000; bad.xflags = static_cast<std::uint8_t>(bad.xflags | pi::XFlag::Equip);
+    Check(!pi::ValidPacket(bad), "xflags Equip without an equip id refused");
+    bad.gun_equip = 46;
+    Check(pi::ValidPacket(bad), "v4 with the sender's gun equip");
+    bad.xflags = static_cast<std::uint8_t>(bad.xflags & ~pi::XFlag::Equip);
+    Check(!pi::ValidPacket(bad), "a gun equip without xflags Equip refused");
+    bad.gun_equip = 0; bad.xflags = static_cast<std::uint8_t>(bad.xflags | pi::XFlag::Gamepad);
+    Check(pi::ValidPacket(bad), "v4 with the gamepad flag");
+    bad.version = 3;
+    Check(!pi::ValidPacket(bad), "the gamepad flag in a v3 packet refused");
+    bad.version = 4; bad.xflags = static_cast<std::uint8_t>(bad.xflags & ~pi::XFlag::Gamepad);
     bad.xflags = static_cast<std::uint8_t>(pi::XFlag::Rates | pi::XFlag::Mag); bad.version = 3;
     Check(!pi::ValidPacket(bad), "rates and a magazine in a v3 packet refused");
-    Check(pi::XFlag::Rates == 0x10 && pi::XFlag::Mag == 0x20 && pi::XFlag::KnownV4 == 0x3F && pi::XFlag::Known == 0x0F,
+    Check(pi::XFlag::Rates == 0x10 && pi::XFlag::Mag == 0x20 && pi::XFlag::Gamepad == 0x40 && pi::XFlag::Equip == 0x80 &&
+              pi::XFlag::KnownV4 == 0xFF && pi::XFlag::Known == 0x0F,
           "v4 xflags: Rates 0x10, Mag 0x20 (distinct), v3 set 0x0F");
     bad = pi::InputPacket{};
     bad.version = 1; bad.long12 = 1;
@@ -596,6 +606,29 @@ void TestComposeSteer() {
     stale4.age_ms = 5000;
     edge = pi::EdgeState{};
     Check(!pi::Compose(c, stale4, 0, pi::Overlay{}, edge).ammo_valid, "a stale sample carries no magazine");
+    Check(!ammo.gamepad && !ammo.equip_valid, "no gamepad flag: keyboard semantics; no equip");
+    // Native weapons F1/F4: the pad mode and the sender's gun equip.
+    src4.gamepad = true; src4.equip_valid = true; src4.equip = 46;
+    pi::Fill4(v4.packet, src4);
+    Check(pi::ValidPacket(v4.packet) && (v4.packet.xflags & pi::XFlag::Gamepad) && (v4.packet.xflags & pi::XFlag::Equip) &&
+              v4.packet.gun_equip == 46, "Fill4: gamepad and equip");
+    edge = pi::EdgeState{};
+    const pi::Injection gun = pi::Compose(c, v4, 0, pi::Overlay{}, edge);
+    Check(gun.gamepad && gun.equip_valid && gun.equip == 46 && pi::LevelOnly(gun, c).equip_valid && !pi::Neutral(gun).gamepad,
+          "the injection carries the pad mode and the equip; neutral drops them");
+    src4.equip = 0;
+    pi::Fill4(v4.packet, src4);
+    Check(!(v4.packet.xflags & pi::XFlag::Equip) && v4.packet.gun_equip == 0, "Fill4 drops equip 0");
+    pi::Fill3(v4.packet, src);
+    Check(v4.packet.gun_equip == 0 && !(v4.packet.xflags & (pi::XFlag::Gamepad | pi::XFlag::Equip)), "Fill3 clears the v4 groups");
+    // Strip: the weapon gate removes FIRE|RELOAD everywhere, nothing else.
+    pi::Injection s{};
+    s.held = 0x58; s.w[0] = 0x18; s.w[1] = 0x50; s.w[2] = 0x40; s.edge_press = 0x10; s.edge_release = 0x40; s.long12 = 0x48;
+    s.tap12 = 0x10; s.synth = 0x40; s.lx = 0.5f;
+    const pi::Injection st = pi::Strip(s, 0x50);
+    Check(st.held == 0x08 && st.w[0] == 0x08 && st.w[1] == 0 && st.w[2] == 0 && st.edge_press == 0 && st.edge_release == 0 &&
+              st.long12 == 0x08 && st.tap12 == 0 && st.synth == 0 && st.lx == 0.5f, "Strip removes the bits from levels, words and edges");
+    Check(pi::Strip(s, 0).held == 0x58, "Strip with no bits is the identity");
 }
 
 } // namespace

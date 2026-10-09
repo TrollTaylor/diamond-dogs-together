@@ -97,6 +97,10 @@ struct InputPacket {
     // Weapons: the sender's magazine as its getter reads it and its capacity,
     // with xflags Mag (then 1 <= mag_cap <= kMaxMagCap and mag <= mag_cap).
     std::uint16_t mag, mag_cap;
+    // Weapons: the sender's gun record equip id (rec+0x24C), with xflags
+    // Equip (then 1..65535; 0 without). The receiver compares it with the
+    // equip body 1 carries (the weapon gate).
+    std::uint16_t gun_equip;
 };
 namespace XFlag {
 inline constexpr std::uint8_t Look = 1 << 0;
@@ -106,8 +110,14 @@ inline constexpr std::uint8_t Aiming = 1 << 3;  // HOLD level
 inline constexpr std::uint8_t Known = 0x0F;      // v3
 inline constexpr std::uint8_t Rates = 1 << 4;    // v4 only: rate_dash / rate_crawl / rate_crawl_factor
 inline constexpr std::uint8_t Mag = 1 << 5;      // v4 only: mag / mag_cap
-inline constexpr std::uint8_t KnownV4 = 0x3F;
-static_assert((Rates & Known) == 0 && (Mag & Known) == 0 && (Rates & Mag) == 0 && KnownV4 == (Known | Rates | Mag),
+// v4 only: the sender's PlayerPad is in gamepad mode (PP+0x488 bit 6 clear,
+// PP vt+0x98 false). Absent: keyboard semantics (the trigger's history path
+// then uses the single held word, 0x1096192).
+inline constexpr std::uint8_t Gamepad = 1 << 6;
+inline constexpr std::uint8_t Equip = 1 << 7;    // v4 only: gun_equip
+inline constexpr std::uint8_t KnownV4 = 0xFF;
+static_assert((Rates & Known) == 0 && (Mag & Known) == 0 && (Rates & Mag) == 0 && (Gamepad & (Known | Rates | Mag)) == 0 &&
+                  (Equip & (Known | Rates | Mag | Gamepad)) == 0 && KnownV4 == (Known | Rates | Mag | Gamepad | Equip),
               "v4 xflags are distinct and outside the v3 set");
 }
 inline constexpr std::uint16_t kMaxMagCap = 999;
@@ -153,6 +163,9 @@ struct V4Source {
     std::uint16_t rate_dash, rate_crawl, rate_crawl_factor;
     bool mag_valid;
     std::uint32_t mag, mag_cap;
+    bool gamepad;         // xflags Gamepad
+    bool equip_valid;     // xflags Equip when equip is 1..65535
+    std::uint32_t equip;
 };
 void Fill4(InputPacket& packet, const V4Source& source) noexcept;
 
@@ -240,6 +253,11 @@ struct Injection {
     // Native weapons: the live v4 sample's magazine and capacity (xflags Mag); absent otherwise.
     bool ammo_valid;
     std::uint16_t ammo, ammo_cap;
+    // Native weapons: the live v4 sample's pad mode (xflags Gamepad; false =
+    // keyboard semantics) and the sender's gun equip (xflags Equip).
+    bool gamepad;
+    bool equip_valid;
+    std::uint16_t equip;
 };
 // One window's injected pad (rules in partner_input.cpp). Updates `edge`.
 // Held bits: overlay | (live net held); a bit that was pressed and released
@@ -273,6 +291,9 @@ inline constexpr std::uint64_t kFrameMaxAgeMs = 100;
 enum class ConsumerView : std::uint8_t { full, level, neutral };
 // write stays, every level, stick, edge and word is zero (stale set).
 Injection Neutral(const Injection& frame) noexcept;
+// The injection without `bits` anywhere (held, the three words, the edges,
+// long12, tap12 and the synthesized taps): the weapon gate's FIRE | RELOAD.
+Injection Strip(const Injection& injection, std::uint32_t bits) noexcept;
 // age_ms > kFrameMaxAgeMs: Neutral; frame_id != last_used: the full frame
 // (last_used = frame_id); otherwise LevelOnly. `view` (optional) tells which.
 Injection ForConsumer(const Injection& frame, std::uint32_t frame_id, std::uint32_t& last_used, std::uint64_t age_ms,
@@ -408,9 +429,18 @@ struct Arm {
     // shoot-count leak check (always, read-only).
     bool mag_mirror;
     std::uintptr_t gun_prim, gun_rec;
+    // Native placement (partner_recon neutral_place; not compared by SameArm):
+    // every native window of this Arm injects Neutral() (no held bit, no
+    // stick, the HOLD latch bit 0 cleared), so block 1's deferred job never
+    // runs without a window while the body is placed and verified.
+    bool neutral;
+    // Native weapons (not compared by SameArm): bits every native window
+    // strips from its injection (FIRE | RELOAD while the remote's gun is not
+    // the one body 1 carries: the weapon gate; the magazine mirror freezes).
+    std::uint32_t strip;
 };
 
-// Every field except gen, host_cam_cdeg, steer/mag, the rates and gun fields and the one-shots.
+// Every field except gen, host_cam_cdeg, steer/mag, the rates and gun fields, neutral, strip and the one-shots.
 bool SameArm(const Arm& a, const Arm& b) noexcept;
 
 // Hook statistics drained by the driver (the hook keeps atomics).

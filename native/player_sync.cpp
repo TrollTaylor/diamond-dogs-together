@@ -306,6 +306,7 @@ std::size_t encode_input_frame_any(std::uint64_t session, std::uint32_t epoch, s
     as2.equip_rev = 0;
     as2.rate_dash = as2.rate_crawl = as2.rate_crawl_factor = 0;
     as2.mag = as2.mag_cap = 0;
+    as2.gun_equip = 0;
     std::uint8_t v2[input_frame_size]{};
     if (!encode_input_frame(session, epoch, sequence, as2, v2)) return 0;
     std::memcpy(out, v2, sizeof(v2));
@@ -329,7 +330,7 @@ std::size_t encode_input_frame_any(std::uint64_t session, std::uint32_t epoch, s
     put(b + 76, packet.rate_crawl_factor, 2);
     put(b + 78, packet.mag, 2);
     put(b + 80, packet.mag_cap, 2);
-    b[82] = b[83] = 0;
+    put(b + 82, packet.gun_equip, 2);
     return input_frame_size_v4;
 }
 
@@ -353,7 +354,7 @@ bool decode_input_frame(const std::uint8_t* data, std::size_t size, std::uint64_
     partner_input::InputPacket p{};
     p.version = v4 ? 4 : v3 ? 3 : v2 ? 2 : 1;
     if (v4) {
-        if (b[82] != 0 || b[83] != 0) return false;
+        p.gun_equip = static_cast<std::uint16_t>(get(b + 82, 2));
         p.rate_dash = static_cast<std::uint16_t>(get(b + 72, 2));
         p.rate_crawl = static_cast<std::uint16_t>(get(b + 74, 2));
         p.rate_crawl_factor = static_cast<std::uint16_t>(get(b + 76, 2));
