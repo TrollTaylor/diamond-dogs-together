@@ -1,5 +1,28 @@
 # Development status
 
+## October 9, 2026: aim parity, the partner's gun aims where the remote aims (fixture-tested, hidden runs pending)
+
+`wp/aim-parity` ([details](native-puppet.md#the-aim-target-mirror-aim-parity-partner_native_aimpt)).
+The standing/crouched aim cycle (body act 12/15 swinging +-30 degrees every
+~0.5 s while the remote holds act 11) is not the look (O7 refuted by runs
+1bffe18a/14ab2e00/8919e533) but instance 1's network aim target `Q+0x10[1]`,
+which only the online synchronizer feeds: offline the partner's gun aimed at
+the world origin and the aim-turn predicate `0x10A0AB0` (> 80 degrees) kept
+firing. The aim-target mirror (`partner_native_aimpt=look`, on in the worker
+gun stage and Play-OfflineCoop; debug `aimpt off|look|point|lab|status`)
+writes a point 100 m along the remote's look into that slot and its sample
+record inside block 1's drain window, so the game's own gun pipeline computes
+the remote's aim point, aim pose and turn decisions; refusals, restore,
+forget and fault latch as the rates mirror. Contract checker: 449 code sites,
+98 vtable slots (`tools/partner_aim_sites.py`: the predicate, the aim
+parameters, the aim point builder, the Q methods and allocator, the handler
+table, a census of `Q+0x10` writers). Telemetry `native.aim` plus the ring's
+`r60_1`/`pred1` and the 1 Hz `partner_native_aim` line. New hidden scenario
+`tools/worker/scenarios/partner-native-aim.txt`; the facing scenario gains
+aim sections (baseline off, the qualified +-1500 aim turns, camera-rotated,
+strafe, walk, crouched) and `aimturn` takes the proven +-1500 stimulus only
+(dx 900 never turned a settled aimed body). Fixture evidence only.
+
 ## October 8, 2026: Steam online transport (fixture-tested, never run)
 
 Two-PC play can now connect **online through Steam** with no port

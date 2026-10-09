@@ -647,6 +647,10 @@ try {
     Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_native_aim -Value looksrc)/$(ConvertTo-LabPartnerValue -Key partner_native_face -Value aim)/$(ConvertTo-LabPartnerValue -Key partner_native_noise -Value keep)" 'looksrc/aim/keep' 'native polish enums (look source, facing governor, noise)'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_face -Value always } 'off|idle|aim' 'face values'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_noise -Value loud } 'filter|keep' 'noise values'
+    # The aim-target mirror (docs/native-puppet.md "Facing"): off|look|point; Play-OfflineCoop's native gun settings use look.
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_native_aimpt -Value look)/$(ConvertTo-LabPartnerValue -Key partner_native_aimpt -Value point)/$(ConvertTo-LabPartnerValue -Key partner_native_aimpt -Value off)" 'look/point/off' 'aim-target mirror values'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_aimpt -Value on } 'off|look|point' 'aimpt values'
+    Assert-True ($playText.Contains("'partner_native_rates=mirror',") -and $playText.Contains("'partner_native_aimpt=look')")) 'Play-OfflineCoop: the native partner aims where the remote aims (partner_native_aimpt=look)'
 
     # Round 3 lab.ini value kinds.
     Assert-Equal (ConvertTo-LabPartnerValue -Key partner_input -Value net) 'net' 'partner_input enum'

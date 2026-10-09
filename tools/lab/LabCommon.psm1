@@ -292,6 +292,8 @@ $script:LabPartnerKeys = @(
     # governor (idle by default) and the partner's shot noise (filter by default).
     @{ Key = 'partner_native_face'; Json = 'native_face'; Kind = 'enum'; Values = @('off', 'idle', 'aim') },
     @{ Key = 'partner_native_noise'; Json = 'native_noise'; Kind = 'enum'; Values = @('filter', 'keep') },
+    # The aim-target mirror (docs/native-puppet.md "Facing"): off, look, point.
+    @{ Key = 'partner_native_aimpt'; Json = 'native_aimpt'; Kind = 'enum'; Values = @('off', 'look', 'point') },
     @{ Key = 'crash_probe'; Json = 'crash_probe'; Kind = 'bool' },
     # Debug "Spawn enemy here" native placement (docs/debug-menu.md): lab only,
     # default off and written only when set.

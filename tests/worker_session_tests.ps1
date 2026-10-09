@@ -57,7 +57,7 @@ $stages=@{
     census=@('partner_input_defer=census','partner_input_mask=0x2240006','partner_native_aim=off')
     loco=@('partner_input_defer=on','partner_input_mask=0x2240006','partner_native_aim=off','partner_native_rates=mirror')
     gun=@('partner_input_defer=on','partner_input_mask=0x224005E','partner_native_gun=1','partner_native_fire=visual','partner_native_aim=look',
-        'partner_input_triggers=1','partner_input_rstick=1','partner_native_rates=mirror')
+        'partner_input_triggers=1','partner_input_rstick=1','partner_native_rates=mirror','partner_native_aimpt=look')
 }
 # EVADE 0x40000 (dive/evade/roll) is in every native mask; ACTION 0x20 (ride, knife kill, pickup) never; FIRE 0x10
 # only in the gun stage and only together with partner_native_fire=visual (the RequestBullet owner filter).
@@ -217,6 +217,53 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
         'host hold shift+d 600 nowait','host hold space+a 300 nowait','guest burst action-census 4 150','guest burst vault-probe 6 150')) {
         Assert-True ($actions.Contains($label)) ('partner-native-actions covers: '+$label)
     }
+}
+# The aimturn stimulus is the qualified +-1500 only (dx 700/900 never turned a settled aimed body).
+& {
+    $parts=@()
+    foreach($name in @('Test-ScenarioKeys','Test-ScenarioLabel')) {
+        $parts+=@($scenarioAst.FindAll({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true))[0].Extent.Text
+    }
+    foreach($variable in @('roleNames','keyNames')) {
+        $parts+=@($scenarioAst.FindAll({param($node)$node -is [Management.Automation.Language.AssignmentStatementAst] -and
+            $node.Left.Extent.Text -ceq ('$'+$variable)},$false))[0].Extent.Text
+    }
+    $loop=@($scenarioAst.FindAll({param($node)$node -is [Management.Automation.Language.ForEachStatementAst] -and
+        $node.Condition.Extent.Text -ceq '$steps' -and $node.Body.Extent.Text.Contains('switch -Regex')},$false))[0]
+    $validator=[scriptblock]::Create(($parts -join "`n")+"`n"+$loop.Extent.Text)
+    foreach($case in @(@('aimturn host guest 1500 a',$true),@('aimturn guest host -1500 b',$true),@('aimturn host guest 900 c',$false),
+                       @('aimturn host guest -700 d',$false),@('aimturn host guest 1501 e',$false))) {
+        $steps=@($case[0]);$failure=$null
+        try { & $validator } catch { $failure=$_.Exception.Message }
+        Assert-True ([bool]!$failure -eq $case[1]) ('aimturn stimulus '+$case[0])
+    }
+    $facing=[IO.File]::ReadAllText((Join-Path $RepoRoot 'tools\worker\scenarios\partner-native-facing.txt'))
+    foreach($line in @('aimturn host guest 1500 face-aimturn','aimturn host guest -1500 face-aimturn-l','heldcapture host guest rmb+d face-aim-strafe 4',
+        'heldcapture host guest rmb face-crouch-aim 4','guest debug aimpt off','guest debug aimpt look')) {
+        Assert-True ($facing.Contains($line)) ('partner-native-facing covers: '+$line)
+    }
+}
+# The -LabSetting allow-list: Invoke-WorkerScenario and Start-WorkerSession carry the identical pattern; the
+# scenario's labsetting line takes the same keys; the aim-target mirror's off|look|point (gun stage only).
+& {
+    $patterns=@(foreach($path in @((Join-Path $RepoRoot 'tools\worker\Invoke-WorkerScenario.ps1'),(Join-Path $SourceDirectory 'Start-WorkerSession.ps1'))){
+        $tokens=$null;$errors=$null
+        $ast=[Management.Automation.Language.Parser]::ParseFile($path,[ref]$tokens,[ref]$errors)
+        $param=@($ast.ParamBlock.Parameters|Where-Object{$_.Name.VariablePath.UserPath -ceq 'LabSetting'})[0]
+        @($param.Attributes|Where-Object{$_.TypeName.Name -ceq 'ValidatePattern'})[0].PositionalArguments[0].Value
+    })
+    Assert-True ($patterns.Count -eq 2 -and $patterns[0] -ceq $patterns[1]) 'the two -LabSetting allow-lists are identical'
+    foreach($value in @('partner_native_aimpt=off','partner_native_aimpt=look','partner_native_aimpt=point','guest:partner_native_aimpt=look',
+        'partner_native_aim=looksrc','partner_native_face=aim')){Assert-True ($value -cmatch $patterns[0]) ('-LabSetting admits '+$value)}
+    foreach($value in @('partner_native_aimpt=on','partner_native_aimpt=','partner_native_aimpt=LOOK','partner_native_aimpt=look ')){
+        Assert-True ($value -cnotmatch $patterns[0]) ('-LabSetting refuses '+$value)
+    }
+    $scenarioText=[IO.File]::ReadAllText((Join-Path $RepoRoot 'tools\worker\Invoke-WorkerScenario.ps1'))
+    Assert-True ($scenarioText.Contains('partner_native_aimpt=(?:off|look|point)|steam_selftest=[012])$') -and
+        $scenarioText.Contains("throw '-LabSetting partner_native_aimpt needs -NativeStage gun.'")) 'the scenario labsetting line takes partner_native_aimpt (gun stage)'
+    Assert-True ($startText.Contains("throw '-LabSetting partner_native_aimpt needs -NativeStage gun.'")) 'Start-WorkerSession: partner_native_aimpt in the gun stage only'
+    Assert-True ((ConvertTo-LabPartnerValue -Key partner_native_aimpt -Value point) -ceq 'point') 'partner_native_aimpt is a LabCommon key'
+    Assert-Throws {ConvertTo-LabPartnerValue -Key partner_native_aimpt -Value on} 'partner_native_aimpt values'
 }
 $receiptReader=@($scenarioAst.FindAll({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Read-NativeReceipt'},$true))
 Assert-True ($receiptReader.Count -eq 1) 'one actual native receipt reader boundary'

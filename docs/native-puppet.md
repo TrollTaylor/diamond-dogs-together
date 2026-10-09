@@ -22,6 +22,11 @@ placement yaw check, the windowed teleport and the look at its source) and the
 partner's own trigger, reload and shot noise (the sample rings, the magazine
 store row, the noise filter, the weapon gate). See "Facing" and "Weapons".
 
+Aim parity (2026-10-09, `wp/aim-parity`, fixture-tested; hidden runs
+pending): the partner's gun aims where the remote aims and the standing and
+crouched aim no longer cycle act 12/15 (the aim-target mirror,
+`partner_native_aimpt`). See "Facing".
+
 ## Mechanism
 
 Executable: `mgsvtpp.exe` 1.0.15.4 (SHA-256 `085c2f82...bb45`). All addresses are
@@ -301,7 +306,10 @@ degrees). The failures and their fixes:
   `-LabSetting partner_native_aim=looksrc`) decides O7; if act 12 survives,
   `partner_native_face=aim` adds the governor's aim mode (body 11/12/14/15,
   the remote in an aim idle act, |err| > 10 degrees for 400 ms, the body's own
-  yaw rate < 20 deg/s, 90 deg/s).
+  yaw rate < 20 deg/s, 90 deg/s). **Outcome:** runs 1bffe18a (baseline),
+  14ab2e00 (looksrc) and 8919e533 (face=aim) show the identical act-12 cycle
+  with the look slot correct: O7 is refuted; the cause is instance 1's
+  never-fed network aim target, fixed by the aim-target mirror below.
 
 The contract checker pins the call and the instruction after it (rax unused),
 `0xFFAC00`'s prologue, its S_IS_ONLINE gate, the camera chain and the store
@@ -319,6 +327,136 @@ also `gun.aim_err_mdeg`), the ring's `body_yaw_cdeg` and `face_err_cdeg`, the
 writes=..; snaps=..; contests=..; reason=..; look_err_mdeg=..; look_src=..;
 src_hits_s=..; neutral=..` line and the `partner_recon=face_start|face_end|
 face_snap|face_contest|face_latched|place_yaw_fix` events.
+
+### The aim-target mirror (aim parity, `partner_native_aimpt`)
+
+Status (2026-10-09, branch `wp/aim-parity`): implemented, fixture-tested,
+**not yet run in the game**. Static analysis of `mgsvtpp.exe` 1.0.15.4 and the
+captures of the facing runs 1bffe18a, 14ab2e00 (looksrc), 8919e533
+(face=aim) and the weapons runs 24d3f9fb and f8ddb3f9.
+
+**Why the standing aim wobbled.** O7 is refuted: the look slot matched the
+remote in every capture (`look.err_mdeg` 0) and looksrc and face=aim produced
+the identical trajectory. Act 12 is the standing aim turn (action states
+11/12, handler `0x10B2720`), act 15 the crouched one (26/27, `0x10B0E60`).
+The stand and crouch aim idles (`0x10B2699`, `0x10B0DE2`) start it when the
+aim-turn predicate `0x10A0AB0` holds: `|(0.5 - r60) * pi| > 80 degrees`, with
+`r60` the per-id aim yaw parameter (rate record `+0x60`, `r5c` `+0x5C` is the
+pitch). Every gun state's update (`0x108E7D0`) recomputes both from the gun's
+aim point `gunRec+0x150` (`0x1042F80`: the aim point's yaw/pitch relative to
+the body, clamped to 90/75 degrees and smoothed), and gun phase 5
+(`0x10407A0` -> `0x1096F90`) rebuilds that aim point every frame as a ray from
+the viewer's camera `*(P+0xB8)+0xE0` through `Q+0x10[id]`, the per-player
+network aim target (16-byte stride). Only the synchronizer writes it (Q
+vt+0x18 `0xFE0080` push, vt+0x20 `0xFE02F0` interpolate, vt+0x28
+`0xFDEDD0` snap, all under S_IS_ONLINE), so offline instance 1's gun aimed at
+a fixed far point (the world origin in every capture). On the guest the
+origin lay 94 degrees off the partner: the predicate fired, the 90-degree
+pivot clip and the steering toward the (correct) look cancelled into a 30
+degree swing, and two ticks after it ended the still-saturated predicate
+fired again (period about 547 ms). On the host the origin lay 57..64 degrees
+off: no turn, but the gun twisted that far.
+
+**The fix.** The driver tick publishes a target (`partner_aim::Target`):
+`look` = the partner's eyes (instance 1's `T+0x20` + 1.6 m up) plus 100 m along
+the remote's live v3 look `(sin yaw cos pitch, -sin pitch, cos yaw cos pitch)`
+(the convention of `0xFFAC00` and `0x1042F80`); `point` uses the sender's own
+aim direction once input frame v5 carries it (until then it falls back to the
+look and says `src=look`). Inside block 1's drain window, right after the
+magazine mirror and before the job, `partner_aim_point::Step` writes it where
+the synchronizer would: `Q+0x10[1].xyz` (w kept) and record 1 of
+`*(Q+0x1F0)` (stride 0x30: current and previous sample = the target, timers
+`+0x24/+0x28/+0x2C` = 0, which is vt+0x18 twice plus vt+0x28; the
+interpolation, if anything ran it, yields the target: duration 0 -> fraction
+1.0 in `0xFDECB0`). The game's own pipeline then computes the remote's aim
+point, aim pose (`r5c`/`r60`) and turn decisions. Instance 0's slot and
+record are never touched; S_IS_ONLINE is never touched.
+
+- Refusals (counted, logged once per change as `partner_aim=refused;
+  reason=..`): `online` (P+0x204 bit 8 or the alternate dispatch), `owner`
+  (P+0x214 or P+0x218 is 1), `q_vtable` (Q = `*(P+0x60)` not `0x23AD970`),
+  `slots` (Q vt+0x18/+0x20/+0x28 not `0xFE0080`/`0xFE02F0`/`0xFDEDD0`, re-read
+  live), `count` (id 1 not below `*(u32)(*(Q+0x1E8)+0x40)`), `array` /
+  `record` (null or not 16-aligned), `range` (non-finite, a coordinate at or
+  beyond 65536 m, or not 20..200 m from the body), `epoch` (a forgotten
+  mission). `stale` (a publication older than 250 ms) and a wanted target
+  without a body or look hold the slot (the last target stays). An access
+  fault latches the mirror off until the next mission epoch
+  (`partner_aim=fault`).
+- `overwritten`: a drain that finds `Q+0x10[1]` changed since our last write
+  (the census below says nothing should) counts it and logs it once per
+  mission (`partner_aim=overwritten; q10_mm=..`).
+- Restore: the originals (`Q+0x10[1]` and record 1) are saved at the first
+  write of an epoch (`partner_aim=installed`) and written back when the
+  publication no longer wants a target (the setting or the debug override
+  off, the drive inactive, no gun) at the next drain, or at the next main
+  dispatch once no enabled native Arm is published (the rates mirror's rule),
+  after re-validating the chain (player slot, P vtable, Q, its array and
+  record); a field the game rewrote since our last write keeps the game's
+  value (`partner_aim=restored`). MissionStart/End forget without writing
+  (`PartnerForgetRates` passes the ending epoch to both mirrors). After the
+  window-close shutdown nothing is written or restored.
+- Setting: lab.ini `partner_native_aimpt=off|look|point` (default off; inert
+  unless the native drive is active with `partner_native_gun=1`). The worker
+  gun stage (`Get-WorkerPartnerSettings`) and Play-OfflineCoop set `look`;
+  the worker gate admits off/look/point in the gun stage only
+  (`-LabSetting partner_native_aimpt=off|look|point`). The natively handled
+  debug command `aimpt off|look|point|lab|status` overrides it live for a
+  one-session A/B (`lab` returns to lab.ini).
+- Not covered (open): a sighted remote weapon turns its owner at about 27
+  degrees of camera swing while body 1's stock rifle needs 80 (the predicate
+  on body 1's own gun), so a remote turn of 27..80 degrees twists the partner
+  instead of turning it (`partner_native_face=aim` covers it; real parity
+  needs the weapons track's body-1 weapon switch); the bone path (`gunRec+0x3D0`
+  bit 9 with `+0x3D5 != 1`, `0x1097710`) ignores `Q+0x10` (`aim.path1` says
+  `bone`); `look` carries the remote camera's parallax (about atan(0.6 m /
+  distance of the remote's own aim point)); other readers of `Q+0x10[1]`
+  (`0x108D270`, `0x1099AB0`, `0x10CBF50`, `0x10D8DC0`, `0x1221920`,
+  `0x124BD30`, `0x125AEB0`, `0x126C570`, `0x126F0F0`) now see a real target
+  instead of the origin: whether a guard on the viewer's machine reacts to the
+  partner aiming at it is unverified.
+
+The contract (`tools/partner_aim_sites.py`, appended by
+`tools/generate_partner_contract.py`; `--check`: 449 code sites, 98 vtable
+slots) pins the predicate and its two callers, the r5c/r60 update and its rate
+record, the aim point builder (the `Q+0x10[id]` read, the S_IS_ONLINE/local
+gate, the camera origin, both stores) and the path selector, the three Q
+methods (reached only through the live Q vtable `0x23AD970`, stored once at
+`0xFDEDB4`, and its sibling `0x23AD8A0`), the fraction helper, the Q
+allocator (array n*16 and records n*0x30, 16-aligned, records initialized
+cur = prev = 0 with duration -1.0), the act-12 entry, the local-only camera
+aim writer, the range globals and their initializer order, the constants,
+the static handler table (simulated: states 10/11/12/25/26/27), and a census
+of every 16-byte indexed store through an `[object+0x10]` array: exactly four
+write `Q+0x10` (vt+0x28 `0xFDEDFC`, vt+0x20 `0xFE03B6`, and the
+state-specific `0x12755AA` and `0x1200FC2`, which the partner does not use
+while aiming a gun; `overwritten` catches it if it does).
+
+Telemetry: `native.aim` (`setting`, `override`, `state`
+off|wait|ok|hold|refused|latched, `reason`, `src`, the hook's `writes`,
+`refused`, `holds`, `overwritten`, `restores`, `drops`; `target_mm`,
+`q10_1_mm`/`q10_0_mm` (the slots), `aimpt1_mm`/`aimpt0_mm` (the gun aim
+points), `aimpt_err_mm` = |aim point 1 - target|; `aim_yaw1_cdeg`/
+`aim_pitch1_cdeg`/`aim_yaw0_cdeg`/`aim_pitch0_cdeg` = the world direction of
+each gun's aim point from its body's eyes; `rel_yaw1_cdeg`/`rel_yaw0_cdeg` =
+(0.5 - r60) * 18000, what the predicate tests (beyond +-8000 turns);
+`r5c_1`, `r60_1`, `r5c_0`, `r60_0` x1000; `pred1`/`pred0`; `gun_state`
+(rec+0x2C0), `b3d5`, `path1`/`path0` cam|bone|na), the ring's `r60_1` and
+`pred1`, the 1 Hz `partner_native_aim; setting=..; override=..; state=..;
+reason=..; src=..; writes=..; refused=..; holds=..; overwritten=..;
+restores=..; q10=..; target=..; err_mm=..; yaw1=..; yaw0=..; rel1=..;
+r60_1=..; pred1=..; gun1=..; path1=..` line (own cap, while its key changes)
+and the `partner_aim=installed|refused|overwritten|restored|fault` events.
+
+Runs (coordinator, hidden worker): `tools/worker/scenarios/partner-native-aim.txt`
+(a one-session A/B: `guest debug aimpt off` for aim-a, `look` from aim-b on;
+camera-rotated aims, pitch, crouch, prone, aim-walk, aim-strafe, a remote aim
+turn, both directions) and the aim sections of `partner-native-facing.txt`
+(face-aim-off, the qualified +-1500 aim turns, aim-cam, aim-strafe, aim-walk,
+crouched aim and crouched strafe); the pass criteria are in each header. The
+facing scenario's old `aimturn host guest 900` could not pass: dx 700 and 900
+never turned a settled aimed body (runs fca0d6dc, 1bffe18a, 14ab2e00,
+8919e533), dx 1500 did in four runs; `aimturn` now takes +-1500 only.
 
 ## Weapons
 
@@ -571,6 +709,7 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_steer_deg` | 15 (0..30, 0 = no steering) |
 | `partner_native_trim_pct` | 0 (0..10) |
 | `partner_native_rates` | log, off, mirror (rates telemetry; mirror writes instance 1's rate record) |
+| `partner_native_aimpt` | off, look, point (the aim-target mirror: instance 1's network aim slot gets the remote's aim; gun stage and Play: look; the debug command `aimpt` with off, look, point, lab or status) |
 
 Play mode forces legacy/off and sets `kPlayRefusedNativeDrive` (0x20000); in
 play mode a partner.trigger `drive=native` or `defer=census|on` is refused too
@@ -648,6 +787,7 @@ evidence per stage).
 | S3a-r | as S3a with `-AmmoExperiment` (after its own qualification) | reload visible, no fallback |
 | S3b | `partner-native-weapons.txt` with `-NativeStage gun -BuildProfile research` (gun stage = visual fire) | see "Weapons": suppressed shots, mirror writes, reload bit, no leaks, manifest/apply lines |
 | F1 | `pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-native-facing.txt -PartnerProfile native -NativeStage gun -BuildProfile research`, then the same with `-LabSetting partner_native_aim=looksrc` | the scenario header: every face-* capture under 10 degrees; aim captures < 5 % of ring ticks over 10 degrees and no act 12 the remote does not show; look.err_mdeg < 1000 (looksrc: look.src installed, src_hits_s > 0); face-place-viewer-aims without act 11 and unwindowed_native 0; facing.contests <= 2; no fallback |
+| AIM1 | `pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-native-aim.txt -PartnerProfile native -NativeStage gun -BuildProfile research` (one-session A/B through `guest debug aimpt off`, then `look`); then the same with `-LabSetting partner_native_aimpt=point` | the scenario header: aim-a reproduces the act-12 cycle with `aim.state` off, `pred1` 1 and `rel_yaw1_cdeg` beyond +-8000 at each act-12 start; every later aim capture after 300 ms: `aim.state` ok, refused 0, overwritten 0, `aimpt_err_mm` < 500, the wrapped difference of `aim_yaw1_cdeg` to the source role's `aim_yaw0_cdeg` within 500 and the pitch within 500 on >= 95 %, no act 12/15 the remote does not show, `face_err_cdeg` within 500 on >= 95 % of ring ticks after 600 ms |
 | A1 | `pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-native-actions.txt -PartnerProfile native -NativeStage gun -BuildProfile research` (or `-NativeStage loco`) | the scenario header: sprint/crawl speed ratio 0.95..1.05 with `rates.mirror` ok and `rates.id1.dash == rates.remote.dash`; no runaway pin and no leaving through the sprint stop; the dive/evade/rolls: EVADE in the ring's held, body.act follows remote_act (27) within 2 captures, settles within 500 mm; leak-evade-host clean; ACTION never reaches the body |
 
 ## Known risks and open items
@@ -698,6 +838,13 @@ evidence per stage).
   hypothesis: the A/B run decides); the look source patch is cross-modifying
   code installed only with no batch in flight (block 0's phase 0 runs on a
   worker inside a batch).
+- Aim parity (untested at runtime): whether anything offline rewrites
+  `Q+0x10[1]` inside the frame (`aim.overwritten` decides; the census says
+  only two state-specific writers outside the Q methods); the sighted-remote
+  turn threshold (27 vs 80 degrees) until body 1 can carry the remote's
+  weapon; the bone path (`aim.path1`); `look` parallax for near aim points
+  (`point` with input frame v5 removes it); guards on the viewer's machine
+  reacting to the partner aiming at them.
 - No test asserts mechanically that no CodeGate caller runs after a lazy
   install; today CodeGate runs once at configure and `partner_upper_probe::Install`
   calls it there too, before any partner install.
