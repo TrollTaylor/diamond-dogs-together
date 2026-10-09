@@ -11,12 +11,14 @@
 #include <cstdarg>
 #include <initializer_list>
 
+#include "mgscoop/coop_hud.hpp"
 #include "mgscoop/early_patches.hpp"
 #include "mgscoop/link_crypto.hpp"
 #include "mgscoop/partner_net.hpp"
 #include "mgscoop/steam_join_code.hpp"
 #include "mgscoop/steam_link_harness.hpp"
 #include "mgscoop/steam_net_abi.hpp"
+#include "mgscoop/steam_net_dispatch.hpp"
 #include "mgscoop/steam_net_gates.hpp"
 #include "mgscoop/steam_observer.hpp"
 #include "mgscoop/steam_online_state.hpp"
@@ -198,6 +200,21 @@ const char* GuardedCheckInterface(std::uintptr_t object, const steam_gate::Inter
         return "fault";
     }
 }
+const char* GuardedForwardedSlot(std::uintptr_t object, unsigned slot, const char* inner_rtti) noexcept {
+    __try {
+        return steam_gate::CheckForwardedSlot(g_view, object, slot, inner_rtti, &SafeRead, nullptr);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return "gate_fault";
+    }
+}
+const char* GuardedMessagesOwner(std::uintptr_t messages, std::uintptr_t sockets) noexcept {
+    __try {
+        return steam_gate::CheckMessagesOwner(g_view, messages, sockets, sn::kRttiMessagesImpl, sn::kMessagesSubobjectOffset,
+                                              sn::kMessagesOwnerSockets, &SafeRead, nullptr);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return "gate_fault";
+    }
+}
 const char* GuardedCheckClient(std::uintptr_t object) noexcept {
     __try {
         return steam_gate::CheckClient(g_view, object, sn::kRttiClient, sn::kClientGenericInterfaceSlot, &SafeRead, nullptr);
@@ -313,6 +330,28 @@ const char* Interface(const char* version, void*& out, const steam_gate::Interfa
 }
 
 bool SelftestMode() noexcept { return !g_config.play_steam && g_config.selftest != 0; }
+// Play needs Sockets012 only for the function-pointer dispatch (section 20).
+bool WantDispatch() noexcept { return SelftestMode() ? g_config.selftest_fn : steam_dispatch::UsesFnptr(g_config.dispatch); }
+
+// Section 20's call-free gate on the cached interfaces (static strings).
+const char* DispatchGate() noexcept {
+    if (!g_api.sockets) return "sockets_missing";
+    if (!g_api.utils) return "utils_missing";
+    const auto sockets = reinterpret_cast<std::uintptr_t>(g_api.sockets), utils = reinterpret_cast<std::uintptr_t>(g_api.utils);
+    if (const char* r = GuardedForwardedSlot(sockets, sn::kSocketsRunCallbacks, sn::kRttiSocketsInner)) {
+        LogF("steam=dispatch_gate; check=sockets_slot41; reason=%s\r\n", r);
+        return "sockets_slot41";
+    }
+    if (const char* r = GuardedForwardedSlot(utils, sn::kUtilsSetConfigValue, sn::kRttiUtilsInner)) {
+        LogF("steam=dispatch_gate; check=utils_slot16; reason=%s\r\n", r);
+        return "utils_slot16";
+    }
+    if (const char* r = GuardedMessagesOwner(reinterpret_cast<std::uintptr_t>(g_api.messages), sockets)) {
+        LogF("steam=dispatch_gate; check=messages_owner; reason=%s\r\n", r);
+        return r;
+    }
+    return nullptr;
+}
 
 // One acquisition step per pass (<= 4 Steam calls). Returns the calls spent.
 unsigned AcquireStep() noexcept {
@@ -369,13 +408,20 @@ unsigned AcquireStep() noexcept {
         if (SelftestMode() && r) reason = r;
         break;
     }
-    case 6: {  // Sockets012 (self-test only)
-        if (!SelftestMode()) break;
+    case 6: {  // Sockets012 (self-test; play only for the function-pointer dispatch, never refusing play)
+        if (!SelftestMode() && !WantDispatch()) break;
         void* sockets = nullptr;
-        reason = Interface(sn::kSocketsVersion, sockets, steam_gate::InterfaceRule{sn::kRttiSockets, sn::kSocketsDeclared, false}, fault);
+        const char* r = Interface(sn::kSocketsVersion, sockets, steam_gate::InterfaceRule{sn::kRttiSockets, sn::kSocketsDeclared, false}, fault);
         calls = 1;
-        g_report.sockets = reason == nullptr;
-        if (!reason) g_api.sockets = static_cast<sn::ISteamNetworkingSockets012Abi*>(sockets);
+        g_report.sockets = r == nullptr;
+        if (!r) g_api.sockets = static_cast<sn::ISteamNetworkingSockets012Abi*>(sockets);
+        if (fault) break;
+        if (SelftestMode()) reason = r;
+        else if (r) LogF("steam=dispatch_gate; check=sockets; reason=%s\r\n", r);
+        break;
+    }
+    case 7: {  // the dispatch gate (call-free; refuses only the function pointer)
+        g_api.dispatch_refused = WantDispatch() ? DispatchGate() : "off";
         break;
     }
     default: {
@@ -383,8 +429,9 @@ unsigned AcquireStep() noexcept {
         g_api.halt = &g_halt;
         char self[24]{};
         steam_code::FormatPeer(g_self, self);
-        LogF("steam=acquire; logged_on=%u; self=%s; messages=ok; rtti=ok; shape=forwarder; utils=%s%s\r\n", g_logged_on ? 1u : 0u, self,
-             g_api.utils ? "ok" : "missing", SelftestMode() ? (g_api.sockets ? "; sockets=ok" : "; sockets=missing") : "");
+        LogF("steam=acquire; logged_on=%u; self=%s; messages=ok; rtti=ok; shape=forwarder; utils=%s; sockets=%s; dispatch=%s; variant=%s\r\n",
+             g_logged_on ? 1u : 0u, self, g_api.utils ? "ok" : "missing", g_api.sockets ? "ok" : "off",
+             g_api.dispatch_refused ? g_api.dispatch_refused : "ok", SelftestMode() ? "selftest" : steam_dispatch::VariantName(g_config.dispatch));
         InterlockedExchange(&g_phase, kReady);
         return 0;
     }
@@ -492,6 +539,7 @@ unsigned HandleInvite(std::uint64_t now) noexcept {
     g_invites[g_invite_next] = InviteSent{id, now};
     g_invite_next = (g_invite_next + 1) % 16;
     if (ok) partner_net::AddSteamKnown(id, lab::KnownKind::invited);
+    if (ok) coop_hud::Post(coop_hud::EventKind::invite_sent, 0, peer);  // a toast once the F9 menu closes
     LogF("steam=invite; to=%s; ok=%u\r\n", peer, ok ? 1u : 0u);
     StringCchPrintfA(g_last_result, ARRAYSIZE(g_last_result), ok ? "Invite sent to %s." : "Steam refused the invite to %s.", peer);
     return 1;
@@ -665,6 +713,91 @@ bool TryInertAccept(sn::ISteamNetworkingMessages002Abi* m, const sn::Identity* i
     __try { return m->AcceptSessionWithUser(*id); } __except (EXCEPTION_EXECUTE_HANDLER) { *fault = true; return true; }
 }
 
+// Stage F (docs/steam-online.md 20.6): proves the function-pointer mechanism
+// with one account. F1 sets and resets 204 (Global); F2 sets 201 on both ends
+// of an in-process pair, closes b, and expects ConnectionStatusFn for a
+// (Connected -> ClosedByPeer) only from our own RunCallbacks on this thread;
+// D runs the play path's Install(204+205) / 2 s of Pump / Uninstall.
+const char* RunDispatchStages(std::uint64_t deadline, steam_state::FnResult& r) noexcept {
+    namespace sd = steam_dispatch;
+    r.ran = true;
+    Copy(r.gate, g_test_api.dispatch_refused ? g_test_api.dispatch_refused : "");
+    if (g_test_api.dispatch_refused) return "dispatch_gate";
+    bool fault = false;
+    // F1: the global value, set and reset (no pump: nothing can be dispatched).
+    r.set204 = sd::TrySetConfigPtr(g_test_api.utils, sn::kConfigMessagesSessionRequest, sn::kConfigScopeGlobal, 0, &sd::SessionRequestFn, &fault);
+    if (!fault) r.reset204 = sd::TrySetConfigPtr(g_test_api.utils, sn::kConfigMessagesSessionRequest, sn::kConfigScopeGlobal, 0, nullptr, &fault);
+    if (fault) return "fault";
+    if (!r.set204 || !r.reset204) return "f1_set_config";
+    // F2: the queue-then-RunCallbacks path, with 201 on a connection pair.
+    std::uint32_t a = 0, b = 0;
+    if (!TryCreatePair(g_test_api.sockets, &a, &b, false, &fault) || fault || !a || !b) return fault ? "fault" : "f2_pair";
+    const bool set_a = sd::TrySetConfigPtr(g_test_api.utils, sn::kConfigConnectionStatusChanged, sn::kConfigScopeConnection,
+                                           static_cast<std::intptr_t>(a), &sd::ConnectionStatusFn, &fault);
+    const bool set_b = !fault && sd::TrySetConfigPtr(g_test_api.utils, sn::kConfigConnectionStatusChanged, sn::kConfigScopeConnection,
+                                                     static_cast<std::intptr_t>(b), &sd::ConnectionStatusFn, &fault);
+    const char* reason = nullptr;
+    if (fault) reason = "fault";
+    else if (!set_a || !set_b) reason = "f2_set_config";
+    sd::ResetStatusRecord();
+    // b is closed on every path without a fault (also after a refused set).
+    if (!fault) TryCloseConnection(g_test_api.sockets, b, &fault);
+    if (!reason && fault) reason = "fault";
+    if (!reason) {
+        Sleep(20);  // let steamclient queue the close (a pump must still be needed)
+        r.pre_pump = sd::GetStatusRecord().calls;
+        const DWORD self = GetCurrentThreadId();
+        const std::uint64_t until = Ms() + 1000;
+        while (!fault && Ms() < until && Ms() < deadline) {
+            sd::TryRunCallbacks(g_test_api.sockets, &fault);
+            const sd::StatusRecord record = sd::GetStatusRecord();
+            for (unsigned i = 0; i < record.calls && i < sd::kStatusEntries; ++i) {
+                const sd::StatusEntry& e = record.entries[i];
+                if (e.conn != a || (e.new_state != sn::kConnClosedByPeer && e.new_state != sn::kConnProblemDetectedLocally)) continue;
+                r.conn_ok = true;
+                r.old_state = e.old_state;
+                r.new_state = e.new_state;
+                r.thread_ok = e.thread == self;
+                break;
+            }
+            if (r.conn_ok) break;
+            Sleep(5);
+        }
+        if (fault) reason = "fault";
+        else if (!r.conn_ok) reason = "f2_no_callback";
+    }
+    const std::uint32_t matched = sd::GetStatusRecord().calls;
+    if (!fault) TryCloseConnection(g_test_api.sockets, a, &fault);
+    if (!fault) sd::TryRunCallbacks(g_test_api.sockets, &fault);
+    const sd::StatusRecord after = sd::GetStatusRecord();
+    r.status_cb = after.calls;
+    r.extra = after.calls >= matched ? after.calls - matched : 0;
+    if (fault) return "fault";
+    if (reason) return reason;
+    // D: the play code path (Install 204+205, pump 2 s, Uninstall).
+    const sd::Stats before = sd::GetStats();
+    const sd::Api api{g_test_api.utils, g_test_api.sockets};
+    const char* install_reason = nullptr;
+    r.d_install = sd::Install(api, static_cast<std::uint8_t>(sd::kRequest | sd::kFailed), install_reason, fault);
+    if (fault) return "fault";
+    if (!r.d_install) return "d_install";
+    const std::uint64_t d_until = Ms() + 2000;
+    while (!fault && Ms() < d_until && Ms() < deadline) {
+        sd::Pump(api, fault);
+        ++r.d_pumps;
+        Sleep(10);
+    }
+    if (!fault) sd::Uninstall(api, fault);
+    if (fault) return "fault";
+    r.d_uninstall = sd::Installed() == 0;
+    const sd::Stats end = sd::GetStats();
+    r.d_dispatched = end.dispatched - before.dispatched;
+    r.faults = end.faults;
+    if (!r.d_uninstall) return "d_uninstall";
+    if (r.faults) return "fn_fault";
+    return nullptr;
+}
+
 void Stage(const char* stage) noexcept {
     Copy(g_report.stage, stage);
     steam_state::PublishReport(g_report);
@@ -783,6 +916,31 @@ DWORD WINAPI SelftestThread(void*) {
     if (g_config.selftest >= 2) {
         Stage("L");
         if (const char* reason = RunPair(true, deadline, g_report.lpair)) { Verdict("fail", reason); return 0; }
+    }
+    // Stage F/D: the function-pointer dispatch (section 20).
+    if (g_config.selftest_fn) {
+        Stage("F");
+        const char* reason = RunDispatchStages(deadline, g_report.fn);
+        LogF("steam_dispatch=selftest; gate=%s; set204=%u; reset204=%u; pre_pump=%u; status_cb=%u; conn_ok=%u; old=%d; new=%d; "
+             "thread_ok=%u; extra=%u; d_install=%u; d_pumps=%u; d_dispatched=%u; d_uninstall=%u; faults=%u; reason=%s\r\n",
+             g_report.fn.gate[0] ? g_report.fn.gate : "ok", g_report.fn.set204 ? 1u : 0u, g_report.fn.reset204 ? 1u : 0u,
+             g_report.fn.pre_pump, g_report.fn.status_cb, g_report.fn.conn_ok ? 1u : 0u, g_report.fn.old_state, g_report.fn.new_state,
+             g_report.fn.thread_ok ? 1u : 0u, g_report.fn.extra, g_report.fn.d_install ? 1u : 0u, g_report.fn.d_pumps,
+             g_report.fn.d_dispatched, g_report.fn.d_uninstall ? 1u : 0u, g_report.fn.faults, reason ? reason : "");
+        if (reason) {
+            Copy(g_report.fn.reason, reason);
+            if (lstrcmpA(reason, "fault") == 0) LatchFault("selftest_dispatch");
+            Verdict("fail", reason);
+            return 0;
+        }
+        if (lstrcmpA(steam_state::FnVerdict(g_report.fn), "ok") != 0) {
+            Copy(g_report.fn.reason, "fn_check");
+            Verdict("fail", "fn_check");
+            return 0;
+        }
+    } else {
+        g_report.fn.skipped = true;
+        Log("steam_dispatch=selftest; skipped=1; key=steam_selftest_fn\r\n");
     }
     // Stage M: Messages stays inert (no peer, nothing pending).
     Stage("M");

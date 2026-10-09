@@ -8,6 +8,8 @@
 
 #include "mgscoop/link_protocol.hpp"
 #include "mgscoop/steam_join_code.hpp"
+#include "mgscoop/steam_net_callbacks.hpp"
+#include "mgscoop/steam_net_dispatch.hpp"
 
 #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
 #define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
@@ -176,7 +178,16 @@ const char* AcceptViaName(AcceptVia via) noexcept {
     switch (via) {
     case AcceptVia::poll: return "poll";
     case AcceptVia::beacon: return "beacon";
+    case AcceptVia::fnptr: return "fnptr";
     default: return "callback";
+    }
+}
+
+const char* DispatchStateName(DispatchState state) noexcept {
+    switch (state) {
+    case DispatchState::on: return "on";
+    case DispatchState::refused: return "refused";
+    default: return "off";
     }
 }
 
@@ -401,6 +412,10 @@ bool SteamTransport::start(const SteamTransportConfig& config, const SteamSink& 
     known_count_ = 0;
     for (auto& id : live_) id = 0;
     live_next_ = 0;
+    dispatch_state_ = static_cast<long>(DispatchState::off);
+    dispatch_reason_ = "";
+    next_pump_ms_ = 0;
+    last_accept_id_ = last_accept_ms_ = 0;
     stop_event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     if (!stop_event_) { error_ = TransportError::thread; return false; }
     timer_ = config_.high_res_timer ? CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS)
@@ -494,6 +509,9 @@ SteamTransportStats SteamTransport::steam_stats() const noexcept {
     s.faults = Load64(self.faults_);
     s.non_peer = static_cast<std::uint32_t>(self.non_peer_);
     s.ring_depth = ring_.Depth();
+    s.accept_dup = Load64(self.accept_dup_);
+    s.pumps = Load64(self.pumps_);
+    s.dispatch = static_cast<std::uint8_t>(self.dispatch_state_);
     return s;
 }
 
@@ -725,9 +743,11 @@ void SteamTransport::accept_work(std::uint64_t now) noexcept {
 
     const bool accepting = accepting_ != 0;
     char line[128]{}, peer[24]{};
-    // 1. The 1251 queue (via=callback).
+    // 1. The session-request queue: 1251 through the Init wrapper (via=callback)
+    // and/or the function pointer (via=fnptr), coalesced while both are queued.
     std::uint64_t id = 0;
-    for (unsigned budget = 0; config_.pop_request && budget < 16 && !faulted_ && config_.pop_request(id); ++budget) {
+    std::uint8_t sources = 0;
+    for (unsigned budget = 0; config_.pop_request && budget < 16 && !faulted_ && config_.pop_request(id, sources); ++budget) {
         const auto decision = policy_.OnRequest(id, accepting, now);
         if (decision != SteamAcceptPolicy::Decision::accept && decision != SteamAcceptPolicy::Decision::known_peer) {
             InterlockedIncrement64(&accept_refused_);
@@ -735,10 +755,18 @@ void SteamTransport::accept_work(std::uint64_t now) noexcept {
         }
         if (!accept_session(id)) continue;
         policy_.OnAccepted(id, now);
-        mark_live(id, true);  // a 1251 is a pending session: always a real accept
+        mark_live(id, true);  // a request is a pending session: a real accept...
+        // ...unless it is the other source reporting the one just accepted.
+        if (id == last_accept_id_ && now - last_accept_ms_ < kDupWindowMs) {
+            InterlockedIncrement64(&accept_dup_);
+            continue;
+        }
+        last_accept_id_ = id;
+        last_accept_ms_ = now;
         InterlockedIncrement64(&accepted_);
         steam_code::FormatPeer(id, peer);
-        if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "steam=accept; peer=%s; via=callback\r\n", peer))) log_line(line);
+        if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "steam=accept; peer=%s; via=%s\r\n", peer, steam_cb::SourceName(sources))))
+            log_line(line);
     }
     // 2. Poll-accept known ids at 4 Hz (false = no session). These are ids the
     // host chose (peer, last peer, invited friends, beacon hits): no rate token.
@@ -755,6 +783,8 @@ void SteamTransport::accept_work(std::uint64_t now) noexcept {
         if (!ok) continue;
         if (decision != SteamAcceptPolicy::Decision::known_peer) policy_.OnAccepted(ids[i], now);
         if (was_live) continue;
+        last_accept_id_ = ids[i];
+        last_accept_ms_ = now;
         InterlockedIncrement64(&accepted_);
         steam_code::FormatPeer(ids[i], peer);
         const AcceptVia via = kinds[i] == KnownKind::beacon ? AcceptVia::beacon : AcceptVia::poll;
@@ -811,15 +841,22 @@ void SteamTransport::log_stats(std::uint64_t now, bool force) noexcept {
     if (!changed && !force) return;
     stats_logged_ = true;
     for (unsigned i = 0; i < 8; ++i) logged_[i] = current[i];
-    char line[320]{};
+    // Section 20: which source reported each session request (req_cb: the
+    // 2015 steam_api 1251; req_fn: the function pointer), 1252s and pumps.
+    const steam_cb::Stats cb = steam_cb::GetStats();
+    const steam_dispatch::Stats d = steam_dispatch::GetStats();
+    char line[448]{};
     if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
             "steam=stats; tx=%llu; rx=%llu; ring_full=%llu; send_fail=%llu; foreign=%llu; bad_identity=%llu; accepted=%llu; "
-            "closed_idle=%llu; release=%llu; received=%llu; denied=%llu\r\n",
+            "closed_idle=%llu; release=%llu; received=%llu; denied=%llu; req_cb=%u; req_fn=%u; dup=%llu; failed=%u; pumps=%llu; "
+            "dispatch=%s\r\n",
             static_cast<unsigned long long>(s.tx), static_cast<unsigned long long>(s.rx), static_cast<unsigned long long>(s.ring_full),
             static_cast<unsigned long long>(s.send_fail + s.send_invalid), static_cast<unsigned long long>(s.foreign),
             static_cast<unsigned long long>(s.bad_identity), static_cast<unsigned long long>(s.accepted),
             static_cast<unsigned long long>(s.closed_idle), static_cast<unsigned long long>(s.release),
-            static_cast<unsigned long long>(s.received), static_cast<unsigned long long>(s.denied))))
+            static_cast<unsigned long long>(s.received), static_cast<unsigned long long>(s.denied), cb.req_cb, cb.req_fn,
+            static_cast<unsigned long long>(s.accept_dup), d.failed_fn, static_cast<unsigned long long>(s.pumps),
+            DispatchStateName(static_cast<DispatchState>(s.dispatch)))))
         log_line(line);
 }
 
@@ -841,6 +878,8 @@ void SteamTransport::shutdown_sequence() noexcept {
     // CloseSessionWithUser for the peer, then no further Steam call.
     if (sink_.on_shutdown) sink_.on_shutdown(sink_.ctx);
     drain_ring();
+    // Section 20: the pointers are reset before the session closes.
+    uninstall_dispatch();
     const std::uint64_t peer = Load64(peer_id_);
     if (!faulted_ && config_.leg == SteamLeg::messages && peer) {
         // CloseSessionWithUser closes without linger: give Steam's service
@@ -851,6 +890,55 @@ void SteamTransport::shutdown_sequence() noexcept {
     }
     log_stats(NowMs(), true);
     log_line("steam=parked; reason=shutdown\r\n");
+}
+
+void SteamTransport::install_dispatch() noexcept {
+    if (config_.leg != SteamLeg::messages || !config_.dispatch) return;
+    char line[160]{};
+    const char* reason = api_.dispatch_refused;
+    if (!reason && (!api_.utils || !api_.sockets)) reason = "no_interface";
+    bool f = false;
+    if (!reason) {
+        const steam_dispatch::Api api{api_.utils, api_.sockets};
+        steam_dispatch::Install(api, config_.dispatch, reason, f);
+        if (f) {
+            fault("dispatch_install");
+            return;
+        }
+    }
+    if (reason) {
+        dispatch_reason_ = reason;
+        InterlockedExchange(&dispatch_state_, static_cast<long>(DispatchState::refused));
+        if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "steam=dispatch; fnptr=refused; reason=%s; fallback=callback+poll\r\n", reason)))
+            log_line(line);
+        return;
+    }
+    InterlockedExchange(&dispatch_state_, static_cast<long>(DispatchState::on));
+    const bool request = (config_.dispatch & steam_dispatch::kRequest) != 0, failed = (config_.dispatch & steam_dispatch::kFailed) != 0;
+    if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "steam=dispatch; fnptr=on; ids=%s; pump_ms=%u\r\n",
+                                   request && failed ? "1251+1252" : request ? "1251" : "1252", static_cast<unsigned>(kPumpMs))))
+        log_line(line);
+}
+
+void SteamTransport::pump_dispatch(std::uint64_t now) noexcept {
+    if (dispatch_state_ != static_cast<long>(DispatchState::on) || now < next_pump_ms_) return;
+    next_pump_ms_ = now + kPumpMs;
+    bool f = false;
+    steam_dispatch::Pump(steam_dispatch::Api{api_.utils, api_.sockets}, f);
+    InterlockedIncrement64(&pumps_);
+    if (f) fault("dispatch_pump");
+}
+
+void SteamTransport::uninstall_dispatch() noexcept {
+    if (faulted_ || dispatch_state_ != static_cast<long>(DispatchState::on)) return;
+    bool f = false;
+    steam_dispatch::Uninstall(steam_dispatch::Api{api_.utils, api_.sockets}, f);
+    InterlockedExchange(&dispatch_state_, static_cast<long>(DispatchState::off));
+    if (f) {
+        fault("dispatch_uninstall");
+        return;
+    }
+    log_line("steam=dispatch; fnptr=off; reason=stopping\r\n");
 }
 
 void SteamTransport::run() noexcept {
@@ -871,6 +959,7 @@ void SteamTransport::run() noexcept {
             log_line(fresh ? "steam=relay; warm=fresh\r\n" : "steam=relay; warm=started\r\n");
         }
     }
+    if (!faulted_) install_dispatch();
     std::uint64_t now = NowMs();
     next_idle_ms_ = now + config_.idle_interval_ms;
     next_route_ms_ = now + kRouteMs;
@@ -890,6 +979,10 @@ void SteamTransport::run() noexcept {
         const unsigned received = faulted_ ? 0 : receive();
         if (faulted_) continue;
         now = NowMs();
+        // Section 20: our RunCallbacks between receive and accept work, so a
+        // function-pointer request is accepted in this same pass.
+        pump_dispatch(now);
+        if (faulted_) continue;
         if (config_.leg == SteamLeg::messages && config_.role == SteamRole::host) {
             accept_work(now);
             if (!faulted_) hygiene(now);
@@ -904,6 +997,8 @@ void SteamTransport::run() noexcept {
         log_stats(now, false);
         if (!received && !stop_ && !shutdown_ && ring_.Depth() == 0) wait_idle();
     }
+    // stop() (tests, the self-test): reset the pointers on this thread.
+    uninstall_dispatch();
 }
 
 }  // namespace mgscoop::lab

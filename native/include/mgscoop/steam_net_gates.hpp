@@ -8,8 +8,13 @@
 //   - every used slot points into an executable section, and
 //   - (Messages002) each slot is the adapter forwarder
 //       48 8B 49 08  +  48 8B 01 48 FF 60 xx | 4C 8B 11 49 FF 22 (N=0) | 4C 8B 11 49 FF 62 xx
-//     with xx == 8N, and the inner object's vptr/slots pass the same
-//     section checks.
+//     with xx == 8N (disp8, N < 16), or from N = 16 the disp32 forms
+//       48 8B 01 48 FF A0 <imm32> | 4C 8B 11 49 FF A2 <imm32>  with imm32 == 8N,
+//     and the inner object's vptr/slots pass the same section checks.
+// The function-pointer dispatch (docs/steam-online.md section 20) checks one
+// forwarded slot each of Sockets012 (41, RunCallbacks) and Utils004 (16,
+// SetConfigValue) down to the inner object's RTTI, and that the Messages
+// implementation and the Sockets inner object are one per-user object.
 // Pure: every read is bounded to the module view (the object itself and the
 // inner object are read through the caller's accessor, which the loader wraps
 // in __try). Unit tested with synthetic images.
@@ -43,10 +48,13 @@ enum class Region : std::uint8_t { outside, code, rdata, other };
 // The section kind holding [address, address + length).
 Region Classify(const ModuleView& view, std::uintptr_t address, std::size_t length) noexcept;
 
-// RTTI class name check of an object whose vptr is `vptr`.
+// RTTI class name check of an object whose vptr is `vptr` (complete object,
+// COL offset 0), or of a subobject at `this_offset` (the COL's offset field).
 bool RttiNameIs(const ModuleView& view, std::uintptr_t vptr, const char* expected) noexcept;
+bool RttiNameAt(const ModuleView& view, std::uintptr_t vptr, const char* expected, std::uint32_t this_offset) noexcept;
 
-// The adapter forwarder for slot `slot` (see above).
+// The adapter forwarder for slot `slot` (see above); disp32 forms need 14 bytes.
+inline constexpr unsigned kMaxForwarderSlot = 255;
 bool IsForwarder(const std::uint8_t* code, std::size_t available, unsigned slot) noexcept;
 
 // Reads 8 bytes of an object outside the module (the loader's accessor
@@ -66,6 +74,20 @@ const char* CheckInterface(const ModuleView& view, std::uintptr_t object, const 
 // RTTI name, and `slot` (12) in code.
 const char* CheckClient(const ModuleView& view, std::uintptr_t object, const char* rtti, unsigned slot, ReadQword read,
                         void* context) noexcept;
+
+// Dispatch gate (section 20): adapter slot `slot` of `object` is a forwarder
+// (disp8 or disp32) in code, the inner object (adapter +8) has its vptr in
+// rdata, the RTTI name `inner_rtti` and slot `slot` in code. Reasons:
+// slot_object, slot_shape, inner_object, inner_rtti, inner_slot.
+const char* CheckForwardedSlot(const ModuleView& view, std::uintptr_t object, unsigned slot, const char* inner_rtti, ReadQword read,
+                               void* context) noexcept;
+// Dispatch gate: the Messages002 adapter's inner object is the subobject at
+// `subobject` (COL offset) of `impl_rtti`, and that implementation's owning
+// sockets pointer (impl + owner_field) is the Sockets012 adapter's inner
+// object, so RunCallbacks drains the queue Messages posts 1251/1252 to.
+// Reasons: owner_object, owner_rtti, owner_mismatch.
+const char* CheckMessagesOwner(const ModuleView& view, std::uintptr_t messages, std::uintptr_t sockets, const char* impl_rtti,
+                               std::uint32_t subobject, std::uint32_t owner_field, ReadQword read, void* context) noexcept;
 
 // Gate 2 (reason not_initialized): SteamClient(), GetHSteamUser(),
 // GetHSteamPipe() and SteamUser() are all non-zero.

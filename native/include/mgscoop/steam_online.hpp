@@ -11,7 +11,11 @@
 //   - the peer's persona name, the friend list (only while the F9 Invite page
 //     is open, at most every 5 s), InviteUserToGame, the rich-presence beacon
 //     (key mgscoop_join only; ClearRichPresence is never called),
-//   - starting the lab self-test thread (steam_selftest=1|2).
+//   - starting the lab self-test thread (steam_selftest=1|2),
+//   - the function-pointer dispatch gate (section 20; call-free, after the
+//     interfaces): Sockets012 slot 41 and Utils004 slot 16 forward to the
+//     expected inner classes, and the Messages implementation owns the same
+//     sockets object. A refusal only refuses the dispatch.
 // The interfaces are cached forever (every GetISteamGenericInterface call
 // allocates an adapter). Messages, Sockets and Utils are called only from the
 // transport and self-test threads. Every failure latches
@@ -19,6 +23,7 @@
 // "link=disabled; reason=steam_<r>".
 #include <cstddef>
 #include <cstdint>
+#include "mgscoop/steam_net_dispatch.hpp"
 #include "mgscoop/steam_transport.hpp"
 
 namespace mgscoop::steam_online {
@@ -33,6 +38,11 @@ struct Config {
     std::uint32_t selftest = 0;       // lab steam_selftest (0 off, 1 pair, 2 + network loopback)
     bool fake_identity = false;       // lab self_steamid set: the self-test refuses
     LogFn log = nullptr;              // script-observer.log
+    // Section 20: play acquires Sockets012 too when the variant uses the
+    // function pointer (never refuses play); the lab self-test runs stage F/D
+    // unless steam_selftest_fn=0.
+    steam_dispatch::Variant dispatch = steam_dispatch::Variant::both;
+    bool selftest_fn = true;
 };
 
 #ifdef _WIN32

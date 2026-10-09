@@ -6,6 +6,12 @@
 # sessions (no network; steam_selftest=2 would add the network-loopback pair),
 # the inert Messages calls and the game-networking trip check. The guest has the
 # lab's fake identity and must refuse. No message is ever sent to a peer.
+# Stage F/D (docs/steam-online.md 20.6) proves the function-pointer dispatch on
+# this one account: state.json steam.fn.verdict "ok" (set204/reset204,
+# pre_pump 0, conn_ok with old 3 -> new 4|5 on this thread, d_install,
+# d_uninstall, faults 0) and the steam_status line ends ;fn=ok. The A/B run
+# without it (-LabSetting steam_selftest_fn=0) answers fn=skip: there only the
+# host expectation fails, by design.
 labsetting steam_selftest=1
 title 200
 wait 4000
@@ -13,6 +19,6 @@ waitgameplay host 120
 wait 20000
 state
 host run steam_status
-host expect ^steam_selftest;verdict=pass;
+host expect ^steam_selftest;verdict=pass;.*;fn=ok$
 guest run steam_status
 guest expect ^steam_selftest;verdict=refused;reason=fake_identity

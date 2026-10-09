@@ -236,6 +236,39 @@ route (relay/direct) and RTT and the partner's persona name. The host has
 once per friend per 10 s); the guest has a code box and "Join". The UI only
 posts requests; the loader's owner context makes the Steam calls.
 
+## In game
+
+The co-op status line (`coop_hud`, [steam-online.md](steam-online.md)
+section 20.9) is drawn top-right while F9 is closed and hidden during demos:
+`CO-OP [connected] <partner> - Steam relay 61 ms` (`LAN/VPN` on UDP),
+`CO-OP [waiting] code ready - F9 to copy/invite`, `CO-OP [joining 12 s] host
+not answering`, `CO-OP [<partner> left] waiting for them to come back`,
+`CO-OP [refused] wrong code?` or `CO-OP [off] Steam offline`. Toasts (4 s)
+announce connected, reconnected, lost, left, refused, version mismatch and
+Steam failures in the same plain words as Play-Coop. coop.ini `hud=compact`
+(the default in play), `hud=full` (adds rtt/jitter/loss/build) or `hud=off`
+(Play-Coop writes coop.ini for each session: `-Hud compact|full|off`); a
+lab.ini `coop_hud` wins. The one-PC lab keeps it off unless `coop_hud` is
+set.
+
+## Versions
+
+Both players must install the same package. The link compares the loader's
+build id, the version plus the 7-character commit (for example
+`0.11.1+2459c8c`); a different one is refused with "Your friend runs mgs-coop
+X; you run Y. Both must install the same package."
+
+## When it does not connect
+
+Every `link=disabled`/REJECT reason and every Steam end reason has one
+sentence, the same in Play-Coop's status line, the in-game line and toasts
+(`Get-CoopLinkReasonText`, `Get-CoopSteamEndText`, `native/coop_reason_text.cpp`;
+shared vectors in `tests/fixtures/link-reasons.json`). Online, the guest also
+gets Steam's own reason for a failed join (`"steam_end"` in link-status, for
+example 5003: "The host's game did not answer. Is it running from Play-Coop
+(Host online), with Accept joins on, and is your code current?"). When the
+partner quits, the other side shows "left" at once (`"left":1`) instead of a
+lost connection after a timeout.
 ## Native partner
 
 Play runs the native partner by default on both PCs ([native-puppet.md](native-puppet.md)

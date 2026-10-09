@@ -42,15 +42,25 @@ SelftestReport GetReport() noexcept {
     return report;
 }
 
+const char* FnVerdict(const FnResult& fn) noexcept {
+    if (fn.skipped) return "skip";
+    if (!fn.ran) return "none";
+    const bool ok = !fn.gate[0] && !fn.reason[0] && fn.set204 && fn.reset204 && fn.pre_pump == 0 && fn.status_cb >= 1 && fn.conn_ok &&
+                    fn.old_state == 3 && (fn.new_state == 4 || fn.new_state == 5) && fn.thread_ok && fn.d_install && fn.d_uninstall &&
+                    fn.faults == 0;
+    return ok ? "ok" : "fail";
+}
+
 bool FormatStatusLine(const SelftestReport& r, char* out, std::size_t capacity) noexcept {
     if (!out || !capacity) return false;
     int n = 0;
     if (!r.configured) n = std::snprintf(out, capacity, "steam_selftest;verdict=off");
     else if (!r.verdict[0]) n = std::snprintf(out, capacity, "steam_selftest;verdict=pending;stage=%s", r.stage[0] ? r.stage : "wait");
     else
-        n = std::snprintf(out, capacity, "steam_selftest;verdict=%s;reason=%s;stage=%s;pair=%u/%u;rel=%u/%u;release=%llu/%llu;relay=%d",
+        n = std::snprintf(out, capacity, "steam_selftest;verdict=%s;reason=%s;stage=%s;pair=%u/%u;rel=%u/%u;release=%llu/%llu;relay=%d;fn=%s",
                           r.verdict, r.reason, r.stage, r.pair.frames_rx, r.pair.frames, r.pair.rel_rx, r.pair.rel,
-                          static_cast<unsigned long long>(r.pair.release), static_cast<unsigned long long>(r.pair.received), r.relay);
+                          static_cast<unsigned long long>(r.pair.release), static_cast<unsigned long long>(r.pair.received), r.relay,
+                          FnVerdict(r.fn));
     if (n < 0 || static_cast<std::size_t>(n) >= capacity) {
         out[0] = 0;
         return false;

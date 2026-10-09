@@ -8,6 +8,7 @@
 #include <windows.h>
 #include <bcrypt.h>
 #include <strsafe.h>
+#include "mgscoop/coop_hud.hpp"
 #include "mgscoop/early_patches.hpp"
 #include "mgscoop/lab_status.hpp"
 #include "mgscoop/link_crypto.hpp"
@@ -16,6 +17,7 @@
 #include "mgscoop/session.hpp"
 #include "mgscoop/steam_join_code.hpp"
 #include "mgscoop/steam_net_callbacks.hpp"
+#include "mgscoop/steam_net_dispatch.hpp"
 #include "mgscoop/steam_transport.hpp"
 #include "mgscoop/udp_transport.hpp"
 
@@ -208,6 +210,14 @@ bool g_paste_pending = false;
 std::uint64_t g_connecting_since_ms = 0;  // transport thread: guest connecting without WELCOME
 volatile LONG g_steam_failed = 0;       // g_steam_reason is complete
 void SteamGuestIdle(std::uint64_t now) noexcept;
+void SteamFailedIdle() noexcept;
+// Section 20 / UX: the guest's last Steam end reason (1252, 0 none; cleared
+// when connected), the partner's goodbye (CLOSE) and the in-game status line.
+volatile LONG g_steam_end = 0;
+volatile LONG g_peer_left = 0;
+std::uint64_t g_down_since_ms = 0;        // transport thread: the link left connected
+link::LinkState g_hud_state = link::LinkState::off;
+std::uint64_t g_hud_publish_ms = 0;
 
 // ---- Link v2 send path (g_tx_lock held by every caller).
 bool LinkTransmit(void*, const lab::Endpoint& to, const std::uint8_t* data, std::size_t size) noexcept {
@@ -485,6 +495,74 @@ void LogEvent(const link::Event& e, std::uint64_t now_ms) noexcept {
         break;
     }
     if (SUCCEEDED(hr)) Log(line);
+    // The in-game toasts (coop_hud; transport thread, no lock held).
+    switch (e.kind) {
+    case link::EventKind::connected:
+        InterlockedExchange(&g_peer_left, 0);
+        InterlockedExchange(&g_steam_end, 0);
+        coop_hud::Post(coop_hud::EventKind::connected, static_cast<std::int32_t>(e.session), peer);
+        break;
+    case link::EventKind::reconnected:
+        InterlockedExchange(&g_peer_left, 0);
+        InterlockedExchange(&g_steam_end, 0);
+        coop_hud::Post(coop_hud::EventKind::reconnected, static_cast<std::int32_t>(e.gap_ms), peer);
+        break;
+    case link::EventKind::lost:
+        if (!g_peer_left) coop_hud::Post(coop_hud::EventKind::lost, static_cast<std::int32_t>(e.after_ms), "");
+        break;
+    case link::EventKind::reconnecting:
+        if (!g_peer_left) coop_hud::Post(coop_hud::EventKind::lost, 0, "");
+        break;
+    case link::EventKind::rejected:
+        if (e.reason == link::RejectReason::build_mismatch) coop_hud::Post(coop_hud::EventKind::version, 0, e.remote_build);
+        else coop_hud::Post(coop_hud::EventKind::refused, e.verified ? 1 : 0, link::RejectReasonName(e.reason));
+        break;
+    case link::EventKind::warn_build:
+        coop_hud::Post(coop_hud::EventKind::version, 0, e.remote_build);
+        break;
+    default:
+        break;
+    }
+}
+
+// The in-game status line's view of the link (transport thread; at most
+// every 100 ms or on a state change).
+void PublishHud(const LinkSnapshot& s, link::LinkState state, std::uint64_t now) noexcept {
+    if (!coop_hud::Enabled()) return;
+    if (state != link::LinkState::connected && g_hud_state == link::LinkState::connected) g_down_since_ms = now;
+    if (state == link::LinkState::connected) g_down_since_ms = 0;
+    if (state == g_hud_state && now - g_hud_publish_ms < 100) return;
+    if (state != link::LinkState::connected && !g_down_since_ms) g_down_since_ms = now;
+    g_hud_state = state;
+    g_hud_publish_ms = now;
+    coop_hud::LinkView v{};
+    v.state = static_cast<std::uint8_t>(state);
+    v.host = g_config.host;
+    v.steam = g_use_steam;
+    v.play = g_config.play;
+    v.accepting = g_use_steam && g_config.host && g_steam.accepting();
+    v.waiting = g_steam_waiting != 0;
+    v.left = g_peer_left != 0;
+    v.verified = s.verified;
+    v.route = static_cast<std::uint8_t>(g_use_steam ? g_steam.route() : steam_net::Route::none);
+    v.rtt_ms = s.rtt_ms;
+    v.jitter_ms = s.jitter_ms;
+    v.loss_permille = s.loss_permille;
+    v.down_ms = g_down_since_ms && now >= g_down_since_ms ? static_cast<std::uint32_t>(now - g_down_since_ms) : 0;
+    v.steam_end = g_steam_end;
+    if (state == link::LinkState::disabled && g_disabled_reason) StringCchCopyA(v.reason, ARRAYSIZE(v.reason), g_disabled_reason);
+    else if (s.reason != link::RejectReason::none) StringCchCopyA(v.reason, ARRAYSIZE(v.reason), link::RejectReasonName(s.reason));
+    if (s.has_peer && s.peer.port) FormatPeer(s.peer, v.peer);
+    else if (g_use_steam && !g_config.host && g_steam_host) steam_code::FormatPeer(static_cast<std::uint64_t>(g_steam_host), v.peer);
+    StringCchCopyA(v.remote_build, ARRAYSIZE(v.remote_build), s.remote_build);
+    StringCchCopyNA(v.own_build, ARRAYSIZE(v.own_build), g_build, link::kBuildSize);
+    if (g_use_steam && g_config.host) {
+        AcquireSRWLockShared(&g_secret_lock);
+        v.code_ready = g_host_secret_valid && g_steam.ready() && !g_shutdown;
+        ReleaseSRWLockShared(&g_secret_lock);
+    }
+    v.publish_ms = GetTickCount64();
+    coop_hud::PublishLink(v);
 }
 
 void TakeSnapshot(LinkSnapshot& s) noexcept {  // g_tx_lock held
@@ -567,6 +645,10 @@ bool FormatStatus(const LinkSnapshot& s, link::LinkState state, char* out, std::
     const char* route = g_use_steam ? steam_net::RouteName(g_steam.route()) : "none";
     if (!lab::AppendLinkTransportJson(transport, sizeof(transport), transport_length, g_use_steam ? "steam" : "udp", route,
                                       g_use_steam && g_config.host && g_steam.accepting(), steam_status))
+        transport[0] = 0;
+    // Section 20 / UX: the guest's Steam end reason (1252) and the goodbye.
+    else if (FAILED(StringCchPrintfA(transport + transport_length, ARRAYSIZE(transport) - transport_length, "\"steam_end\":%ld,\"left\":%u,",
+                                     static_cast<long>(g_steam_end), g_peer_left ? 1u : 0u)))
         transport[0] = 0;
     // Online play (docs/native-puppet.md "Online"): how each PC shows the partner body.
     const std::uint32_t native = static_cast<std::uint32_t>(g_native_state);
@@ -703,6 +785,9 @@ void LinkDatagram(const std::uint8_t* data, std::size_t size, const lab::Endpoin
                     g_rel_tx[a.channel].OnRelAck(a.next_expected, a.bits, a.free_slots, now);
             } else if (m.type == static_cast<std::uint8_t>(link::MsgType::close)) {
                 close_seen = true;
+                // An authenticated goodbye: the host is free for a new join at
+                // once, the guest starts reconnecting (no 3 s / 10 s timeout).
+                g_session.OnPeerClose(now);
             } else if (m.type == static_cast<std::uint8_t>(link::MsgType::datagram)) {
                 link::DatagramMsg d{};
                 if (!link::DecodeDatagram(m, d)) continue;
@@ -731,8 +816,14 @@ void LinkDatagram(const std::uint8_t* data, std::size_t size, const lab::Endpoin
         ReleaseSRWLockExclusive(&g_lock);
     }
     for (unsigned i = 0; i < frame_count; ++i) OnFrame(frames[i].data, frames[i].size, action_peer);
+    // The goodbye first: the lost / reconnecting events the CLOSE caused in
+    // this same packet are "left", not a "lost the connection" toast.
+    if (close_seen) InterlockedExchange(&g_peer_left, 1);
     for (unsigned i = 0; i < event_count; ++i) LogEvent(events[i], now);
-    if (close_seen) Log("link=close; reason=peer\r\n");
+    if (close_seen) {
+        Log(g_config.host ? "link=peer_left; role=host; next=accepting\r\n" : "link=peer_left; role=guest; next=reconnecting\r\n");
+        coop_hud::Post(coop_hud::EventKind::peer_left, 0, "");
+    }
 }
 
 void OnDatagram(void*, const std::uint8_t* data, std::size_t size, const lab::Endpoint& from) noexcept {
@@ -754,6 +845,7 @@ void LinkIdle() noexcept {
     unsigned event_count = 0;
     LinkSnapshot snapshot{};
     const std::uint64_t now = NowMs();
+    if (g_use_steam) SteamFailedIdle();
     if (g_use_steam && !g_config.host) SteamGuestIdle(now);
     AcquireSRWLockExclusive(&g_tx_lock);
     if (g_session.CanSendData()) {
@@ -800,6 +892,7 @@ void LinkIdle() noexcept {
     PublishInfo(snapshot, EffectiveInterpMs(g_config.interp_ms));
     LinkStats(snapshot, state, now);
     WriteStatus(snapshot, state, now);
+    PublishHud(snapshot, state, now);
     if (g_world.on_idle) g_world.on_idle(now);
 }
 
@@ -881,6 +974,7 @@ void LogDisabled(const char* reason) noexcept {
     snapshot.state = link::LinkState::disabled;
     PublishInfo(snapshot, EffectiveInterpMs(g_config.interp_ms));
     WriteStatus(snapshot, link::LinkState::disabled, kStatusCheckMs + NowMs());
+    PublishHud(snapshot, link::LinkState::disabled, NowMs());
 }
 
 void StartSteamLink() noexcept;
@@ -1018,10 +1112,31 @@ void ArmSteamGuest(std::uint64_t host, const char (&secret)[link::kSecretChars],
     InterlockedExchange64(&g_steam_host, static_cast<LONG64>(host));
     InterlockedExchange(&g_steam_waiting, 0);
     InterlockedExchange(&g_look_resend, 1);
+    InterlockedExchange(&g_steam_end, 0);
+    InterlockedExchange(&g_peer_left, 0);
     g_connecting_since_ms = 0;
     if (g_world.on_session) g_world.on_session(session_number);
     steam_code::FormatPeer(host, peer);
     if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "steam=join; via=%s; host=%s\r\n", via, peer))) Log(line);
+    coop_hud::Post(coop_hud::EventKind::joining, lstrcmpA(via, "invite") == 0 ? 1 : 0, peer);
+}
+
+// Transport thread, every LinkIdle (both roles): a 1252 the function pointer
+// stored (docs/steam-online.md 20). Logged; for the guest, a failure of the
+// session with its configured host becomes link-status "steam_end" and the
+// in-game sentence until the link connects.
+void SteamFailedIdle() noexcept {
+    steam_dispatch::SessionFailed f{};
+    if (!steam_dispatch::TakeSessionFailed(f)) return;
+    char line[224]{}, peer[24]{};
+    steam_code::FormatPeer(f.peer, peer);
+    if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "steam=session_failed; peer=%s; end=%ld; state=%s; debug=\"%s\"\r\n", peer,
+                                   static_cast<long>(f.end_reason), steam_net::ConnectionStateName(f.state), f.debug)))
+        Log(line);
+    const auto host = static_cast<std::uint64_t>(InterlockedCompareExchange64(&g_steam_host, 0, 0));
+    if (g_config.host || !f.peer || f.peer != host) return;
+    if (static_cast<link::LinkState>(g_link_state) == link::LinkState::connected) return;
+    if (InterlockedExchange(&g_steam_end, f.end_reason) != f.end_reason) coop_hud::Post(coop_hud::EventKind::steam_end, f.end_reason, peer);
 }
 
 // Transport thread, every LinkIdle (guest): the 337 mailbox and the F9 paste.
@@ -1042,6 +1157,7 @@ void SteamGuestIdle(std::uint64_t now) noexcept {
             if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "steam=join_refused; reason=%s; via=invite\r\n",
                                            steam_code::JoinReason(result))))
                 Log(line);
+            coop_hud::Post(coop_hud::EventKind::join_refused, 1, steam_code::JoinReason(result));
         }
         link::SecureZero(&code, sizeof(code));
     }
@@ -1070,6 +1186,7 @@ void SteamGuestIdle(std::uint64_t now) noexcept {
         char line[96]{};
         if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "steam=join_refused; reason=%s; via=code\r\n", steam_code::StatusName(status))))
             Log(line);
+        coop_hud::Post(coop_hud::EventKind::join_refused, 0, steam_code::StatusName(status));
     }
     link::SecureZero(&code, sizeof(code));
 }
@@ -1081,10 +1198,12 @@ void SteamOnReady(void*) noexcept {
     // Without the SteamAPI_Init wrapper (refused in DllMain) no 1251/337 is
     // registered: the host accepts only by polling known ids (6.1).
     const char* callbacks = lab::InitWrapperInstalled() ? (g_config.host ? "callback" : "invite") : "poll_only";
-    char line[160]{};
-    if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "steam=transport; leg=messages; role=%s; channel=0x%X; accepting=%u; callbacks=%s\r\n",
+    char line[192]{};
+    if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
+                                   "steam=transport; leg=messages; role=%s; channel=0x%X; accepting=%u; callbacks=%s; dispatch=%s\r\n",
                                    g_config.host ? "host" : "guest", static_cast<unsigned>(steam_net::kLinkChannel),
-                                   g_config.host && g_steam.accepting() ? 1u : 0u, callbacks)))
+                                   g_config.host && g_steam.accepting() ? 1u : 0u, callbacks,
+                                   SteamDispatchName(static_cast<SteamDispatch>(g_config.steam_dispatch)))))
         Log(line);
 }
 void SteamOnFailed(void*, const char* reason) noexcept {
@@ -1093,6 +1212,7 @@ void SteamOnFailed(void*, const char* reason) noexcept {
     StringCchPrintfA(g_steam_disabled, ARRAYSIZE(g_steam_disabled), "steam_%s", g_steam_reason);
     InterlockedExchange(&g_steam_failed, 1);  // full barrier: the strings are complete
     LogDisabled(g_steam_disabled);
+    coop_hud::Post(coop_hud::EventKind::steam_off, 0, g_steam_disabled);
 }
 // Shutdown hand-off (transport thread): one link CLOSE while connected.
 void SteamOnShutdown(void*) noexcept {
@@ -1180,6 +1300,7 @@ void StartSteamLink() noexcept {
     transport.resolve = g_config.steam_resolve;
     transport.resolve_ctx = g_config.steam_resolve_ctx;
     transport.pop_request = g_config.host ? g_config.steam_requests : nullptr;
+    transport.dispatch = steam_dispatch::InstallBits(static_cast<SteamDispatch>(g_config.steam_dispatch), g_config.host);
     transport.log = g_config.log;
     lab::SteamSink sink{};
     sink.on_datagram = &SteamOnDatagram;
@@ -1210,6 +1331,8 @@ void StartSteamLink() noexcept {
 
 BOOL CALLBACK StartOnce(PINIT_ONCE, PVOID parameter, PVOID*) noexcept {
     g_config = *static_cast<const Config*>(parameter);
+    // The in-game status line exists with a link v2 session only.
+    coop_hud::Configure(g_config.hud, g_config.link_v2);
     if (g_config.rate_hz < 1) g_config.rate_hz = 1;
     if (g_config.rate_hz > 60) g_config.rate_hz = 60;
     if (g_config.directory &&
@@ -1559,6 +1682,10 @@ SteamInfo GetSteamInfo() noexcept {
     info.self = g_config.steam_self;
     if (g_steam_failed) StringCchCopyA(info.reason, ARRAYSIZE(info.reason), g_steam_reason);
     else if (g_steam.faulted()) StringCchCopyA(info.reason, ARRAYSIZE(info.reason), "fault");
+    info.dispatch = g_steam.dispatch_state();
+    StringCchCopyA(info.dispatch_reason, ARRAYSIZE(info.dispatch_reason), g_steam.dispatch_reason());
+    info.steam_end = g_steam_end;
+    info.left = g_peer_left != 0;
     AcquireSRWLockShared(&g_secret_lock);
     info.code_ready = g_config.host && g_host_secret_valid && info.ready && !g_shutdown;
     ReleaseSRWLockShared(&g_secret_lock);

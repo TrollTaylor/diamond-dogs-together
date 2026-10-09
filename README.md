@@ -2,7 +2,7 @@
 
 An in-development campaign co-op mod for **Metal Gear Solid V: The Phantom Pain**. The immediate target is fully playable **two-player co-op**, using direct, attributed Dynamite adaptations. Four-player expansion is deferred. The full-campaign target includes the hospital, both chapters, endings, side ops, travel and Mother Base.
 
-**Current development version: 0.11.1.** This prototype uses our own offline link (UDP for LAN/VPN, or online through Steam's networking with no port forwarding: [Steam online](docs/steam-online.md), fixture-tested, not yet run between two PCs) and separate co-op save copies. Normal Afghanistan, Africa and Mother Base packs support a second player body.
+**Current development version: 0.11.1.** This prototype uses our own offline link (UDP for LAN/VPN, or online through Steam's networking with no port forwarding: [Steam online](docs/steam-online.md), fixture-tested, not yet run between two PCs; code joins also work between players who are not Steam friends, and an in-game status line explains the link) and separate co-op save copies. Normal Afghanistan, Africa and Mother Base packs support a second player body.
 
 The debug-menu build was tested with both players on foot in Afghanistan after host-only title Continue. Live checks cover F9 input capture and restored movement, teleports and bookmark return, a visible equipped-weapon pickup, inventory refill feedback, daylight and rain. The earlier world-sync build also verified Africa, checkpoint copying, injected shared death, host-only Continue recovery and Africa–ACC–Afghanistan travel. Each build's receipts and limitations are recorded separately. [Build-specific live evidence](docs/testing-2026-10-05-world-sync.md), [current status](docs/STATUS.md).
 

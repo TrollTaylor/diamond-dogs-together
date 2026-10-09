@@ -32,7 +32,7 @@ param(
     # A/B keys, the name tag keys, the Steam self-test and the online-play A/B
     # keys (Invoke-WorkerScenario "labsetting" lines); key=value for both
     # copies, host:key=value / guest:key=value for one.
-    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|steam_selftest=[012]|partner_native_net=(lab|online)|partner_native_stall=(neutral|hold)|partner_native_hold=(own|net)|partner_input_edge_repeats=[2-8])$')][string[]]$LabSetting=@(),
+    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(compact|full|off)|partner_native_net=(lab|online)|partner_native_stall=(neutral|hold)|partner_native_hold=(own|net)|partner_input_edge_repeats=[2-8])$')][string[]]$LabSetting=@(),
     # lab: the one-PC lab (OfflineLab). play: the play rehearsal: both copies
     # run mode=play exactly as Play-Coop writes it, moved onto 127.0.0.1 with
     # the worker-only play_rehearsal=1, the real identity and a fresh link

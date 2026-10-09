@@ -42,7 +42,7 @@ the end), a Windows Firewall rule (administrator prompt). Nothing else
 contacts the network, and nothing changes firewall or router settings
 without a "y". The online flow has none of these steps.
 
-  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Play-Coop.ps1 [-GameDirectory <MGSV folder>] [-Role Host|Join] [-Transport steam|udp] [-Code <MGS2 code>] [-Port 47830] [-HostAddress <ip or name>] [-World 0..3] [-Partner native|clips]
+  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Play-Coop.ps1 [-GameDirectory <MGSV folder>] [-Role Host|Join] [-Transport steam|udp] [-Code <MGS2 code>] [-Port 47830] [-HostAddress <ip or name>] [-World 0..3] [-Partner native|clips] [-SteamDispatch both|fnptr|callback|poll] [-Hud compact|full|off]
   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Play-Coop.ps1 -Cleanup
 #>
 [CmdletBinding()]
@@ -66,6 +66,13 @@ param(
     # systems driven by the other player's controls, clips as the automatic
     # fallback) or clips (the animation clips only).
     [ValidateSet('native', 'clips')][string]$Partner = 'native',
+    # Steam online, for the developer's two-PC tests (docs/steam-online.md 20.5):
+    # how the host finds a code join (both = function pointer + callback, the
+    # default; fnptr; callback; poll). The menu never asks for it.
+    [ValidateSet('', 'both', 'fnptr', 'callback', 'poll')][string]$SteamDispatch = '',
+    # The in-game co-op status line (docs/two-pc-play.md "In game"): compact
+    # (the default), full (more detail) or off.
+    [ValidateSet('', 'compact', 'full', 'off')][string]$Hud = '',
     # Remove the files of an earlier session that did not end cleanly, then exit.
     [switch]$Cleanup,
     # Internal: the hidden watchdog started by this script (value: the session id).
@@ -487,11 +494,11 @@ try {
         Write-Host 'Partner: animation clips only (-Partner clips).'
     }
     if ($Transport -eq 'steam') {
-        $labText = New-CoopPlayLabIniText -Role $labRole -SaveDir $saveDir -World $World -Transport steam -SteamSelf $steamSelf -SteamPeer $steamPeer -SteamWait:$steamWait -Partner $Partner
+        $labText = New-CoopPlayLabIniText -Role $labRole -SaveDir $saveDir -World $World -Transport steam -SteamSelf $steamSelf -SteamPeer $steamPeer -SteamWait:$steamWait -SteamDispatch $SteamDispatch -Partner $Partner
     } else {
         $labText = New-CoopPlayLabIniText -Role $labRole -SaveDir $saveDir -Port $Port -PeerAddress $peerAddress -World $World -Partner $Partner
     }
-    $coopText = New-CoopPlayCoopIniText -Character $character
+    $coopText = New-CoopPlayCoopIniText -Character $character -Hud $Hud
     $utf8 = New-Object Text.UTF8Encoding $false
     $writes = @(@{ Name = 'lab.ini'; Path = $paths.LabIni; Bytes = $utf8.GetBytes($labText) })
     # A guest waiting for an invite has no secret yet (the invite or F9 brings the code).

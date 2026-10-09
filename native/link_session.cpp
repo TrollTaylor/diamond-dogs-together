@@ -83,6 +83,7 @@ void Session::Start(const SessionConfig& config, const SessionIo& io, std::uint6
     current_ = Live{};
     next_ = Live{};
     stats_ = SessionStats{};
+    peer_closed_ = false;
     mac_milli_tokens_ = kMacBudgetPerSec * 1000;
     mac_last_ms_ = now_ms;
     guest_mac_milli_tokens_ = kGuestMacPerSec * 1000;
@@ -431,6 +432,7 @@ void Session::Commit(Pending& slot, const Endpoint& from, std::uint64_t now_ms) 
     slot = Pending{};
     for (auto& other : pending_) other = Pending{};  // older attempts are superseded
     committed_ = true;
+    peer_closed_ = false;
     last_commit_ms_ = now_ms;
     ++session_number_;
     state_ = LinkState::connected;
@@ -470,7 +472,8 @@ Delivery Session::HostDatagram(const Header& h, const std::uint8_t* data, std::s
         if (!current_.window.Fresh(h.seq)) { Drop(DropReason::replay); return Delivery{}; }
         if (!VerifyTag(current_.rx, data, size)) { Drop(DropReason::bad_mac); return Delivery{}; }
         Delivery d = Accept(current_, h, data, now_ms);
-        if (state_ == LinkState::lost) {
+        // A session the peer closed stays lost: only a new handshake revives it.
+        if (state_ == LinkState::lost && !peer_closed_) {
             state_ = LinkState::connected;
             Push(MakeEvent(EventKind::connected));
         }
@@ -781,6 +784,23 @@ void Session::GuestTimer(std::uint64_t now_ms) noexcept {
     // The current session (also the old one while reconnecting) keeps its
     // keepalives and acknowledgements.
     if (current_.valid && (state_ == LinkState::connected || state_ == LinkState::reconnecting)) TimerLive(current_, now_ms);
+}
+
+bool Session::OnPeerClose(std::uint64_t now_ms) noexcept {
+    if (state_ != LinkState::connected || !current_.valid) return false;
+    if (config_.role == Role::host) {
+        state_ = LinkState::lost;
+        peer_closed_ = true;
+        Event e = MakeEvent(EventKind::lost);
+        e.after_ms = static_cast<std::uint32_t>(now_ms - current_.last_rx_ms);
+        Push(e);
+    } else {
+        // As after sequence exhaustion: the closed session is gone (no
+        // keepalives into it; a late DATA of it is wrong_session).
+        current_.valid = false;
+        BeginConnecting(now_ms, true);
+    }
+    return true;
 }
 
 void Session::OnTimer(std::uint64_t now_ms) noexcept {

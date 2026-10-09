@@ -18,7 +18,15 @@ sockets/messages/utils interface string.
 pinned: Valve updates it). By RTTI names, name strings and instruction shapes,
 never by RVA, it asserts what the loader's runtime gates (docs/steam-online.md
 section 5) and the transport rely on, prints the file's SHA-256 and writes
-nothing. The coordinator runs it before any hidden or live Steam run.
+nothing. The coordinator runs it before any hidden or live Steam run. It also
+asserts the function-pointer dispatch of docs/steam-online.md section 20:
+Sockets012 slot 41 RunCallbacks (lock, swap, unlock, then call [entry+8] with
+rcx = the payload for exactly 1221/1222/1223/1251/1252/1281), Utils004 slot 16
+SetConfigValue (Ptr: *(void**)pArg, null resets to the default), the 201/204/
+205 config entries, the single readers of the 204/205 values (queue 1251/1252
+through InternalQueueCallback on the Messages object's own sockets object),
+InternalQueueCallback (queues only a non-null function, then always posts to
+the pipe), the 1221 payload and the connection-info end reason/debug offsets.
 
 Usage:
   python tools/generate_steam_shim_contract.py [--game DIR] [--output PATH] [--check]
@@ -535,6 +543,251 @@ def lea_strings(img, rva, size=0x200):
     return names
 
 
+# ---- Section 20: function-pointer dispatch (config 204/205 + Sockets012::RunCallbacks).
+# (id, config name, data type Ptr = 5, scope: 1 Global, 4 Connection), as steam_net_abi.hpp kConfig*.
+CONFIG_CALLBACKS = ((201, "Callback_ConnectionStatusChanged", 5, 4),
+                    (204, "Callback_MessagesSessionRequest", 5, 1),
+                    (205, "Callback_MessagesSessionFailed", 5, 1))
+# steam_net_abi.hpp kRunCallbacksIds: the ids RunCallbacks dispatches (anything else asserts).
+RUN_CALLBACKS_IDS = {1221, 1222, 1223, 1251, 1252, 1281}
+QUEUE_SLOT = 0x220 // 8  # InternalQueueCallback(id, cb, pv, fn): call [vtbl+0x220]
+
+
+def gate_forwarder(code, slot):
+    """The runtime gate's IsForwarder (steam_net_gates.cpp): disp8 below slot 16, disp32 from slot 16."""
+    if code[:4] != b"\x48\x8b\x49\x08":
+        return False
+    p = code[4:]
+    off = 8 * slot
+    small = off < 0x80
+    if p[:5] == b"\x48\x8b\x01\x48\xff":
+        if p[5] == 0x60:
+            return small and p[6] == off
+        return p[5] == 0xa0 and not small and struct.unpack_from("<I", p, 6)[0] == off
+    if p[:5] == b"\x4c\x8b\x11\x49\xff":
+        if p[5] == 0x22:
+            return slot == 0
+        if p[5] == 0x62:
+            return small and p[6] == off
+        return p[5] == 0xa2 and not small and struct.unpack_from("<I", p, 6)[0] == off
+    return False
+
+
+RIP_REX = re.compile(rb"[\x48\x4c][\x8b\x89\x8d\x39\x3b\x85\xc7\x83\x81\xff][\x05\x0d\x15\x1d\x25\x2d\x35\x3d]", re.S)
+RIP_PLAIN = re.compile(rb"[\x8b\x89\x8d\x39\x3b\x85\xc7\x83\x81\xff][\x05\x0d\x15\x1d\x25\x2d\x35\x3d]", re.S)
+
+
+def rip_refs(img, target):
+    """Every rip-relative instruction in code that addresses `target`: [(rva, mnemonic, op_str)]."""
+    out = {}
+    for _, va, _, raw, rsize, chars in img.section_info:
+        if not chars & 0x20000000:
+            continue
+        buf = img.data[raw:raw + rsize]
+        for pattern, opcode_at in ((RIP_REX, 1), (RIP_PLAIN, 0)):
+            for m in pattern.finditer(buf):
+                off = m.start()
+                if opcode_at == 0 and off and 0x40 <= buf[off - 1] <= 0x4f:
+                    continue  # the opcode of a REX instruction (decoded by RIP_REX)
+                if off + opcode_at + 6 > len(buf):
+                    continue
+                disp = struct.unpack_from("<i", buf, off + opcode_at + 2)[0]
+                end = va + off + opcode_at + 6
+                if not any(end + extra + disp == target for extra in (0, 1, 4)):
+                    continue
+                ins = next(MD.disasm(buf[off:off + 16], va + off), None)
+                mem = [o for o in ins.operands if o.type == capstone.x86.X86_OP_MEM] if ins is not None else []
+                if mem and mem[0].mem.base == capstone.x86.X86_REG_RIP and ins.address + ins.size + mem[0].mem.disp == target:
+                    out[ins.address] = (ins.address, ins.mnemonic, ins.op_str)
+    return sorted(out.values())
+
+
+def string_rva(img, data, text):
+    at = data.find(text.encode() + b"\0")
+    expect(at >= 0 and data.find(text.encode() + b"\0", at + 1) < 0, f"string {text!r} exactly once")
+    return img.rva_of_offset(at)
+
+
+def run_to(img, start, stop, limit=0x600):
+    """Linear disassembly from `start` that reaches the instruction at `stop` (one instruction stream)."""
+    out = []
+    for i in MD.disasm(img.read(start, limit), start):
+        out.append(i)
+        if i.address >= stop:
+            break
+    expect(out and out[-1].address == stop, f"linear disassembly 0x{start:x} reaches 0x{stop:x}")
+    return out
+
+
+def config_entry(img, data, value_id, name, data_type, scope):
+    """The static config table entry {i32 id; char* name; i32 type; i32 scope; ...} in .data; value m_data at +0x40."""
+    name_rva = string_rva(img, data, name)
+    ptr = struct.pack("<Q", img.image_base + name_rva)
+    refs = [img.rva_of_offset(m.start()) for m in re.finditer(re.escape(ptr), data)]
+    refs = [r for r in refs if r is not None and img.section_of(r)[0] == b".data"]
+    expect(len(refs) == 1, f"config {value_id} {name}: one .data entry ({len(refs)})")
+    entry = refs[0] - 8
+    got = struct.unpack("<i4xQii", img.read(entry, 24))
+    expect(got[0] == value_id and got[2] == data_type and got[3] == scope,
+           f"config entry {name}: id {value_id}, type {data_type} (Ptr), scope {scope} ({got[0]}, {got[2]}, {got[3]})")
+    return entry
+
+
+def check_value_reader(img, data, entry, anchor, callback_id, size, what):
+    """The value (entry+0x40, SetConfigValue's Global m_data) has one 64-bit load: the queue call of `callback_id`."""
+    value = entry + 0x40
+    refs = rip_refs(img, value)
+    loads = [r for r in refs if r[1] == "mov" and re.fullmatch(r"r\w+, qword ptr \[rip \+ 0x[0-9a-f]+\]", r[2])]
+    stores = [r for r in refs if r[1] == "mov" and re.fullmatch(r"qword ptr \[rip \+ 0x[0-9a-f]+\], r\w+", r[2])]
+    expect(len(loads) == 1 and len(stores) + len(loads) == len(refs),
+           f"{what}: exactly one load of the config value, the rest initializer stores ({[hex(r[0]) for r in refs]})")
+    load = loads[0][0]
+    # The function's own name string precedes the load in one instruction stream.
+    anchor_rva = string_rva(img, data, anchor)
+    leas = [r[0] for r in rip_refs(img, anchor_rva) if r[1] == "lea" and r[0] < load and load - r[0] < 0x700]
+    expect(len(leas) >= 1, f"{what}: the load follows the {anchor.strip()!r} reference")
+    stream = run_to(img, leas[-1], load, 0x700)
+    # Up to the first call after the load: that call is InternalQueueCallback with the value as its 5th argument.
+    tail = []
+    for i in MD.disasm(img.read(load, 0x100), load):
+        tail.append(i)
+        if i.mnemonic == "call":
+            break
+    text = [f"{i.mnemonic} {i.op_str}" for i in stream[:-1] + tail]
+    expect(text[-1] == f"call qword ptr [r10 + 0x{QUEUE_SLOT * 8:x}]", f"{what}: the next call is InternalQueueCallback [r10+0x220]")
+    expect(not any(s.startswith("call ") for s in text[len(stream) - 1:-1]), f"{what}: no call between the load and the queue call")
+
+    def last_write(pattern):
+        # The last instruction before the call whose destination (first operand) matches `pattern`.
+        return next((s for s in reversed(text[:-1]) if not s.startswith(("cmp ", "test ", "push ")) and
+                     re.match(r"\w+ (?:" + pattern + r")(?:,|$)", s)), None)
+    load_at = len(stream) - 1
+    expect(text[load_at].startswith("mov rax, qword ptr [rip") and
+           last_write(r"qword ptr \[rsp \+ 0x20\]") == "mov qword ptr [rsp + 0x20], rax" and
+           not any(re.match(r"\w+ (rax|eax|ax|al),", s) for s in text[load_at + 1:text.index("mov qword ptr [rsp + 0x20], rax", load_at)]),
+           f"{what}: the loaded value is the 5th argument")
+    expect(last_write(r"edx|rdx|dx|dl") == f"mov edx, 0x{callback_id:x}" and last_write(r"r8d|r8|r8w|r8b") == f"mov r8d, 0x{size:x}",
+           f"{what}: queues id {callback_id} with size 0x{size:x}")
+    return stream
+
+
+def check_steamclient_dispatch(img, data, found, s_inner, u_inner):
+    # Adapters: the runtime gate's forwarder shapes (disp32) for Sockets012 41 and Utils004 16.
+    _, s_slots = found[".?AVCAdapterSteamNetworkingSockets012@@"]
+    _, u_slots = found[".?AVCAdapterSteamNetworkingUtils004@@"]
+    expect(gate_forwarder(img.read(s_slots[41], 14), 41) and forwarder_slot(img.read(s_slots[41], 20)) == 41,
+           "Sockets012 slot 41: the gate's disp32 forwarder to inner slot 41")
+    expect(gate_forwarder(img.read(u_slots[16], 14), 16) and forwarder_slot(img.read(u_slots[16], 20)) == 16,
+           "Utils004 slot 16: the gate's disp32 forwarder to inner slot 16")
+    base = vtables_by_rtti(img, ".?AVCSteamNetworkingSockets@SteamNetworkingSocketsLib@@", 0)
+    expect(len(base) == 1 and len(base[0][2]) > QUEUE_SLOT, "CSteamNetworkingSockets base vtable")
+    inner = s_inner[0][2]
+    expect(len(inner) > QUEUE_SLOT and inner[41] == base[0][2][41], "RunCallbacks: the steamclient class keeps the base slot 41")
+
+    # RunCallbacks (inner slot 41): lock, swap the queue vector, unlock, then dispatch outside the lock.
+    rc = inner[41]
+    expect("Unknown callback type %d!" in lea_strings(img, rc, 0x300), "inner Sockets slot 41 is RunCallbacks (its assert string)")
+    ins = list(MD.disasm(img.read(rc, 0x1b0), rc))
+    text = [f"{i.mnemonic} {i.op_str}" for i in ins]
+    first = {}
+    for n, s in enumerate(text):
+        first.setdefault(s, n)
+    lock, swap = first.get("lea rsi, [rcx + 0x878]"), first.get("lea rax, [rdi + 0x860]")
+    entry_data, dispatch = first.get("lea rsi, [rdi + 0x10]"), first.get("call qword ptr [rbx + 8]")
+    expect(None not in (lock, swap, entry_data, dispatch) and lock < swap < entry_data < dispatch,
+           "RunCallbacks: lock (this+0x878), swap of the queue (this+0x860), then the dispatch loop")
+    between = [i for i in ins[swap:entry_data] if i.mnemonic == "call"]
+    expect(len(between) == 2 and all(i.op_str.startswith("0x") for i in between),
+           "RunCallbacks: exactly the two unlock calls between the swap and the loop (no lock held while dispatching)")
+    expect(text[dispatch - 1] == "mov rcx, rsi" and "add rbx, 0x2d8" in text[dispatch:] and "add rsi, 0x2d8" in text[dispatch:],
+           "RunCallbacks: call [entry+8] with rcx = entry+0x10 (the payload), 0x2D8-byte entries")
+    # The jump table: id - 1221 <= 60 (r15 = the image base); only the six ids reach the call.
+    base_reg = next((i for i in ins if i.mnemonic == "lea" and "rip" in i.op_str and
+                     i.address + i.size + i.operands[1].mem.disp == 0), None)
+    idx = next((n for n, s in enumerate(text) if s == "lea eax, [r9 - 0x4c5]"), None)
+    expect(base_reg is not None and idx is not None and text[idx + 1] == "cmp eax, 0x3c", "RunCallbacks: switch on id - 1221 (<= 60)")
+    expect(ins[idx + 4].mnemonic == "movzx" and ins[idx + 5].mnemonic == "mov", "RunCallbacks: two-level jump table")
+    byte_table = ins[idx + 4].operands[1].mem.disp
+    dword_table = ins[idx + 5].operands[1].mem.disp
+    call_block = ins[dispatch - 1].address
+    reached = set()
+    for cid in range(1221, 1282):
+        k = img.read(byte_table + cid - 1221, 1)[0]
+        if struct.unpack("<I", img.read(dword_table + 4 * k, 4))[0] == call_block:
+            reached.add(cid)
+    expect(reached == RUN_CALLBACKS_IDS, f"RunCallbacks dispatches exactly {sorted(RUN_CALLBACKS_IDS)} ({sorted(reached)})")
+
+    # InternalQueueCallback (base slot 68): queues only a non-null function, into the vector RunCallbacks swaps.
+    q = base[0][2][QUEUE_SLOT]
+    expect("Callback doesn't fit!" in lea_strings(img, q, 0x200), "base slot 68 is InternalQueueCallback (its assert string)")
+    qtext = [f"{i.mnemonic} {i.op_str}" for i in MD.disasm(img.read(q, 0x120), q)]
+    fn = next((n for n, s in enumerate(qtext) if re.fullmatch(r"mov r\w+, qword ptr \[rsp \+ 0x70\]", s)), None)
+    reg = qtext[fn].split()[1].rstrip(",") if fn is not None else ""
+    expect(fn is not None and qtext[fn + 1] == f"test {reg}, {reg}" and qtext[fn + 2].startswith("je "),
+           "InternalQueueCallback: a null function (5th argument) queues nothing")
+    expect(any(re.fullmatch(r"cmp r\w+, 0x2c8", s) for s in qtext) and any(re.fullmatch(r"lea r\w+, \[rdi \+ 0x878\]", s) for s in qtext)
+           and any(re.fullmatch(r"lea r\w+, \[rdi \+ 0x860\]", s) for s in qtext),
+           "InternalQueueCallback: payload <= 0x2C8, the RunCallbacks lock (+0x878) and vector (+0x860)")
+    d = inner[QUEUE_SLOT]
+    dins = list(MD.disasm(img.read(d, 0x80), d))
+    end = next((n for n, i in enumerate(dins) if i.mnemonic == "ret"), len(dins))
+    calls = [i for i in dins[:end] if i.mnemonic == "call"]
+    first_base = next((n for n, i in enumerate(calls) if i.op_str == f"0x{q:x}"), None)
+    branches = [i for i in dins[:end] if i.mnemonic.startswith("j")]
+    expect(first_base is not None and len(calls) - first_base >= 2 and not branches,
+           "the steamclient InternalQueueCallback calls the base, then always posts to the pipe (no branch)")
+
+    # SetConfigValue (Utils inner slot 16): Ptr stores *(void**)pArg; pArg null resets to the default.
+    sc = u_inner[0][2][16]
+    expect("SetConfigValue" in lea_strings(img, sc, 0x200), "inner Utils slot 16 is SetConfigValue (name string)")
+    stext = "\n".join(f"{i.mnemonic} {i.op_str}" for i in MD.disasm(img.read(sc, 0x420), sc))
+    for pattern, what in ((r"cmp dword ptr \[rsp \+ 0x70\], 5\n.*\n.*\nmov rax, qword ptr \[rax\]\nmov qword ptr \[rbx \+ 0x10\], rax\n"
+                           r"mov dword ptr \[rbx \+ 8\], 1", "Ptr: type 5 (5th argument), m_data = *(void**)pArg (6th), set"),
+                          (r"mov rax, qword ptr \[rsp \+ 0x78\]\ntest rax, rax", "pArg is the 6th argument; null takes the reset path"),
+                          (r"mov rax, qword ptr \[rbx \+ 0x18\]\nmov rcx, qword ptr \[rsp \+ 0x30\]\nmov qword ptr \[rbx \+ 0x10\], rax",
+                           "Global reset: m_data = the default")):
+        expect(re.search(pattern, stext) is not None, f"SetConfigValue: {what}")
+
+    # The config entries and the single readers of 204 / 205.
+    entries = {cid: config_entry(img, data, cid, name, t, s) for cid, name, t, s in CONFIG_CALLBACKS}
+    stream = check_value_reader(img, data, entries[204], "CSteamNetworkingMessages::BHandleNewIncomingConnection", 1251, 0x88, "204")
+    # rcx = [this+8]: the sockets object owning the Messages object (kMessagesOwnerSockets); this = rbp from entry.
+    prologue = next(MD.disasm(img.read(stream[0].address - 3, 3), stream[0].address - 3), None)
+    expect(prologue is not None and f"{prologue.mnemonic} {prologue.op_str}" == "mov rbp, rcx" and
+           any(f"{i.mnemonic} {i.op_str}" == "mov rcx, qword ptr [rbp + 8]" for i in stream[-8:]) and
+           not any(i.op_str.startswith("rbp,") for i in stream[1:] if i.mnemonic not in ("cmp", "test")),
+           "204: queued on [this+8], the sockets object owning the Messages object")
+    check_value_reader(img, data, entries[205], "[%s] Posting SteamNetworkingMessagesSessionFailed_t\n", 1252, 0x2B8, "205")
+
+    # 1221: {hConn @0; SteamNetConnectionInfo_t @8; old state @0x2C0}, 0x2C8 bytes; the info filler.
+    sites = [img.rva_of_offset(m.start()) for m in re.finditer(re.escape(b"\xba\xc5\x04\x00\x00\x41\xb8\xc8\x02\x00\x00"), data)]
+    sites = [s for s in sites if s is not None and img.is_code(s)]
+    expect(len(sites) >= 1, "1221 posts (mov edx,0x4C5; mov r8d,0x2C8)")
+    filler = None
+    for site in sites:
+        window = list(MD.disasm(img.read(site - 0x80, 0xa0), site - 0x80))
+        aligned = [i for i in window if i.address == site]
+        expect(len(aligned) == 1, f"1221 post 0x{site:x}: decodes in one stream with its setup")
+        wtext = [f"{i.mnemonic} {i.op_str}" for i in window]
+        expect(any(re.fullmatch(r"mov dword ptr \[rsp \+ 0x2f0\], e\w+", s) for s in wtext) and "lea r9, [rsp + 0x30]" in wtext and
+               "call qword ptr [r10 + 0x220]" in wtext and "mov dword ptr [rsp + 0x30], eax" in wtext,
+               f"1221 post 0x{site:x}: payload rsp+0x30 (hConn), old state at +0x2C0")
+        fill = [window[n + 1] if window[n + 1].mnemonic == "call" else window[n + 2] for n, i in enumerate(window[:-2])
+                if f"{i.mnemonic} {i.op_str}" == "lea rdx, [rsp + 0x38]"]
+        expect(fill and fill[0].mnemonic == "call", f"1221 post 0x{site:x}: the info is filled at payload+8")
+        target = int(fill[0].op_str, 16)
+        expect(filler in (None, target), "both 1221 posts use one connection-info filler")
+        filler = target
+    ftext = "\n".join(f"{i.mnemonic} {i.op_str}" for i in MD.disasm(img.read(filler, 0x160), filler))
+    for pattern, what in ((r"mov r8d, 0x2b8\nmov rcx, rbx\ncall", "memset(info, 0, 0x2B8)"),
+                          (r"mov dword ptr \[rbx \+ 0xb0\], eax", "state +0xB0"),
+                          (r"mov dword ptr \[rbx \+ 0xb4\], eax", "end reason +0xB4"),
+                          (r"lea rcx, \[rbx \+ 0xb8\]\n(?:.*\n){0,2}mov r8d, 0x80", "end debug +0xB8, 0x80 bytes")):
+        expect(re.search(pattern, ftext) is not None, f"connection-info filler: {what}")
+    return ("dispatch: RunCallbacks ids 1221/1222/1223/1251/1252/1281 outside the lock, SetConfigValue Ptr, config 201/204/205, "
+            "one reader each of 204/205, InternalQueueCallback null check + pipe post, 1221 payload, info end reason/debug")
+
+
 def check_steamclient(path):
     data = path.read_bytes()
     digest = hashlib.sha256(data).hexdigest()
@@ -615,8 +868,9 @@ def check_steamclient(path):
     expect(len(c_slots) > 12 and img.is_code(c_slots[12]), "SteamClient017 slot 12 in code")
     for needle in (b"k_nVirtualPort_Messages", b"Callback_MessagesSessionRequest"):
         expect(needle in data, f"string {needle.decode()}")
+    dispatch = check_steamclient_dispatch(img, data, found, s_inner, u_inner)
     print(f"steamclient64.dll SHA-256 {digest}: Messages002 6 forwarders, Sockets012 47, Utils004 25, Client017 37, "
-          f"inner names, GetSessionConnectionInfo 0x2B8/0x78/+0xB0, AllocateMessage stores, CreateSocketPair, factory: ok")
+          f"inner names, GetSessionConnectionInfo 0x2B8/0x78/+0xB0, AllocateMessage stores, CreateSocketPair, factory; {dispatch}: ok")
     return 0
 
 

@@ -9,24 +9,38 @@ namespace mgscoop::steam_cb {
 namespace {
 SRWLOCK g_lock = SRWLOCK_INIT;
 std::uint64_t g_queue[kQueueSize]{};
+std::uint8_t g_sources[kQueueSize]{};
 unsigned g_head = 0, g_count = 0;
 bool g_join_full = false;
 steam_net::JoinRequested g_join{};
 std::uint64_t g_join_ms = 0;
 bool g_join_seen = false;
 volatile LONG g_requests = 0, g_coalesced = 0, g_dropped = 0, g_bad_identity = 0, g_joins = 0, g_join_throttled = 0, g_faults = 0;
+volatile LONG g_req_cb = 0, g_req_fn = 0;
 
-void Push(std::uint64_t id) noexcept {
+void Push(std::uint64_t id, std::uint8_t source) noexcept {
     bool coalesced = false, dropped = false;
     AcquireSRWLockExclusive(&g_lock);
-    for (unsigned i = 0; i < g_count; ++i)
-        if (g_queue[(g_head + i) % kQueueSize] == id) { coalesced = true; break; }
+    for (unsigned i = 0; i < g_count; ++i) {
+        const unsigned at = (g_head + i) % kQueueSize;
+        if (g_queue[at] == id) {
+            g_sources[at] = static_cast<std::uint8_t>(g_sources[at] | source);
+            coalesced = true;
+            break;
+        }
+    }
     if (!coalesced) {
-        if (g_count == kQueueSize) dropped = true;
-        else g_queue[(g_head + g_count++) % kQueueSize] = id;
+        if (g_count == kQueueSize) {
+            dropped = true;
+        } else {
+            const unsigned at = (g_head + g_count++) % kQueueSize;
+            g_queue[at] = id;
+            g_sources[at] = source;
+        }
     }
     ReleaseSRWLockExclusive(&g_lock);
     InterlockedIncrement(coalesced ? &g_coalesced : dropped ? &g_dropped : &g_requests);
+    InterlockedIncrement(source == kSourceFnptr ? &g_req_fn : &g_req_cb);
 }
 
 // C-style SEH frames: no object with a destructor lives here.
@@ -64,15 +78,26 @@ steam_net::CallbackObject* JoinRequestObject() noexcept { return &g_cb337; }
 const void* const* SessionRequestVtable() noexcept { return g_vt1251; }
 const void* const* JoinRequestVtable() noexcept { return g_vt337; }
 
-void OnSessionRequest(const void* payload) noexcept {
+const char* SourceName(std::uint8_t sources) noexcept {
+    switch (sources & (kSourceCallback | kSourceFnptr)) {
+    case kSourceCallback: return "callback";
+    case kSourceFnptr: return "fnptr";
+    case kSourceCallback | kSourceFnptr: return "fnptr+callback";
+    default: return "none";
+    }
+}
+
+void OnSessionRequestFrom(const void* payload, std::uint8_t source) noexcept {
     if (!payload) return;
     std::uint64_t id = 0;
     if (!steam_net::IdentitySteamId(*static_cast<const steam_net::Identity*>(payload), id)) {
         InterlockedIncrement(&g_bad_identity);
         return;
     }
-    Push(id);
+    Push(id, source == kSourceFnptr ? kSourceFnptr : kSourceCallback);
 }
+
+void OnSessionRequest(const void* payload) noexcept { OnSessionRequestFrom(payload, kSourceCallback); }
 
 void OnJoinRequested(const void* payload, std::uint64_t now_ms) noexcept {
     if (!payload) return;
@@ -99,12 +124,14 @@ void OnJoinRequested(const void* payload, std::uint64_t now_ms) noexcept {
     InterlockedIncrement(throttled ? &g_join_throttled : &g_joins);
 }
 
-bool PopSessionRequest(std::uint64_t& id) noexcept {
+bool PopSessionRequest(std::uint64_t& id, std::uint8_t& sources) noexcept {
     id = 0;
+    sources = 0;
     AcquireSRWLockExclusive(&g_lock);
     const bool any = g_count != 0;
     if (any) {
         id = g_queue[g_head];
+        sources = g_sources[g_head];
         g_head = (g_head + 1) % kQueueSize;
         --g_count;
     }
@@ -127,7 +154,8 @@ bool TakeJoinRequest(steam_net::JoinRequested& out) noexcept {
 Stats GetStats() noexcept {
     return Stats{static_cast<std::uint32_t>(g_requests), static_cast<std::uint32_t>(g_coalesced), static_cast<std::uint32_t>(g_dropped),
                  static_cast<std::uint32_t>(g_bad_identity), static_cast<std::uint32_t>(g_joins),
-                 static_cast<std::uint32_t>(g_join_throttled), static_cast<std::uint32_t>(g_faults)};
+                 static_cast<std::uint32_t>(g_join_throttled), static_cast<std::uint32_t>(g_faults), static_cast<std::uint32_t>(g_req_cb),
+                 static_cast<std::uint32_t>(g_req_fn)};
 }
 
 void ResetForTest() noexcept {
@@ -138,6 +166,7 @@ void ResetForTest() noexcept {
     SecureZeroMemory(&g_join, sizeof(g_join));
     ReleaseSRWLockExclusive(&g_lock);
     g_requests = g_coalesced = g_dropped = g_bad_identity = g_joins = g_join_throttled = g_faults = 0;
+    g_req_cb = g_req_fn = 0;
 }
 
 }  // namespace mgscoop::steam_cb

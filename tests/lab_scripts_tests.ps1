@@ -550,6 +550,16 @@ try {
     Assert-Throws { ConvertTo-LabPartnerValue -Key nametag_max_m -Value 1001 } 'allowed: 50..1000' 'range limit'
     $ovTag = ConvertFrom-LabPartnerSettingArgs -Items @('nametag_crosshair=always', 'host:nametag_name=HostTag', 'guest:nametag_name=GuestTag') -Role guest
     Assert-Equal "$($ovTag['nametag_crosshair'])/$($ovTag['nametag_name'])" 'always/GuestTag' 'role-scoped name tag settings'
+    # The worker -LabSetting keys of docs/steam-online.md 20 (self-test stage F/D, in-game HUD): as the native parser.
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key steam_selftest_fn -Value 0)/$(ConvertTo-LabPartnerValue -Key coop_hud -Value full)/$(ConvertTo-LabPartnerValue -Key coop_hud -Value off)" '0/full/off' 'self-test fn and HUD values'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key coop_hud -Value big } 'compact|full|off' 'HUD values'
+    if ($IniCheck) {
+        $hudIni = New-LabIniFromSettings -Settings $hostOff
+        $hudIni += "steam_selftest_fn=$(ConvertTo-LabPartnerValue -Key steam_selftest_fn -Value 0)`ncoop_hud=$(ConvertTo-LabPartnerValue -Key coop_hud -Value compact)`n"
+        $file = Join-Path $fixture 'hud-lab.ini'; [IO.File]::WriteAllText($file, $hudIni)
+        $n = Invoke-IniCheck lab $file
+        Assert-Equal "$($n['steam_selftest_fn'])/$($n['coop_hud'])/$($n['unknown_keys'])/$($n['invalid_values'])" '0/compact/0/0' 'native: self-test fn and HUD keys clean'
+    }
     # Play-OfflineCoop: the animated partner (dm=map) by default, the proven
     # Warp movement on [W] / -ProvenWarp, the input drive on [I] / -InputDrive,
     # the round 2 experiments on [M]/[A] or -Experimental; every sent line is valid.

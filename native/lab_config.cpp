@@ -379,6 +379,9 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
             ok = ParseRange(value, kPartnerEdgeRepeatsMin, kPartnerEdgeRepeatsMax, result.partner_input_edge_repeats);
             if (ok) repeats_given = true;
         } else if (Equals(key, "play_rehearsal")) ok = ParseBool(value, result.play_rehearsal);
+        else if (Equals(key, "net_steam_dispatch")) ok = ParseSteamDispatch(value.data, value.size, result.net_steam_dispatch);
+        else if (Equals(key, "steam_selftest_fn")) ok = ParseBool(value, result.steam_selftest_fn);
+        else if (Equals(key, "coop_hud")) ok = ParseCoopHud(value.data, value.size, result.coop_hud);
         else { ++result.unknown_keys; return; }
         if (!ok) ++result.invalid_values;
         else given |= ProfileKeyBit(key);
@@ -615,6 +618,7 @@ bool ParseCoopConfig(const char* text, std::size_t length, CoopConfig& out) noex
         } else if (Equals(key, "name")) ok = CopyText(value, result.name, NameByte);
         else if (Equals(key, "nametag")) ok = ParseNametagSetting(value, result.nametag);
         else if (Equals(key, "friendly_crosshair")) ok = ParseNametagCrosshair(value.data, value.size, result.friendly_crosshair);
+        else if (Equals(key, "hud")) ok = ParseCoopHud(value.data, value.size, result.hud);
         else { ++result.unknown_keys; return; }
         if (!ok) ++result.invalid_values;
     });
@@ -701,6 +705,40 @@ const char* PartnerTeardownName(PartnerTeardown value) noexcept {
 
 const char* LabModeName(LabMode value) noexcept { return value == LabMode::play ? "play" : "lab"; }
 const char* NetTransportName(NetTransport value) noexcept { return value == NetTransport::steam ? "steam" : "udp"; }
+
+const char* SteamDispatchName(SteamDispatch value) noexcept {
+    switch (value) {
+    case SteamDispatch::fnptr: return "fnptr";
+    case SteamDispatch::callback: return "callback";
+    case SteamDispatch::poll: return "poll";
+    default: return "both";
+    }
+}
+bool ParseSteamDispatch(const char* text, std::size_t size, SteamDispatch& out) noexcept {
+    const Slice s{text, text ? size : 0};
+    if (Equals(s, "both")) out = SteamDispatch::both;
+    else if (Equals(s, "fnptr")) out = SteamDispatch::fnptr;
+    else if (Equals(s, "callback")) out = SteamDispatch::callback;
+    else if (Equals(s, "poll")) out = SteamDispatch::poll;
+    else return false;
+    return true;
+}
+const char* CoopHudName(CoopHud value) noexcept {
+    switch (value) {
+    case CoopHud::compact: return "compact";
+    case CoopHud::full: return "full";
+    case CoopHud::off: return "off";
+    default: return "";
+    }
+}
+bool ParseCoopHud(const char* text, std::size_t size, CoopHud& out) noexcept {
+    const Slice s{text, text ? size : 0};
+    if (Equals(s, "compact")) out = CoopHud::compact;
+    else if (Equals(s, "full")) out = CoopHud::full;
+    else if (Equals(s, "off") || Equals(s, "0")) out = CoopHud::off;
+    else return false;
+    return true;
+}
 const char* NetLinkName(NetLink value) noexcept { return value == NetLink::legacy ? "legacy" : "v2"; }
 const char* PartnerInterpName(PartnerInterp value) noexcept { return value == PartnerInterp::auto_ ? "auto" : "fixed"; }
 const char* PartnerLostName(PartnerLost value) noexcept { return value == PartnerLost::hide ? "hide" : "freeze"; }

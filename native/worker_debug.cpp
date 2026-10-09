@@ -8,6 +8,7 @@
 #include "mgscoop/partner_native.hpp"
 #include "mgscoop/partner_native_net.hpp"
 #include "mgscoop/partner_recon.hpp"
+#include "mgscoop/coop_hud.hpp"
 #include "mgscoop/steam_online_state.hpp"
 
 namespace mgscoop::worker_debug {
@@ -239,6 +240,20 @@ void SteamJson(Json& j,const steam_state::SelftestReport& r) noexcept {
     j.Add(",\"inert\":{\"recv\":%d,\"state\":%d,\"accept\":%u},\"trip\":{\"getter_delta\":%lld},\"reason\":",
         r.inert_recv,r.inert_state,flag(r.inert_accept),static_cast<long long>(r.getter_delta));
     j.String(r.reason,sizeof(r.reason));
+    // Stage F/D (docs/steam-online.md 20.6): the function-pointer dispatch.
+    const steam_state::FnResult& f=r.fn;
+    j.Add(",\"fn\":");
+    if(!f.ran && !f.skipped){j.Add("null");}
+    else{
+        j.Add("{\"verdict\":\"%s\",\"ran\":%u,\"skipped\":%u,\"gate\":",steam_state::FnVerdict(f),flag(f.ran),flag(f.skipped));
+        j.String(f.gate,sizeof(f.gate));
+        j.Add(",\"set204\":%u,\"reset204\":%u,\"pre_pump\":%u,\"status_cb\":%u,\"conn_ok\":%u,\"old\":%d,\"new\":%d,\"thread_ok\":%u,"
+              "\"extra\":%u,\"d_install\":%u,\"d_pumps\":%u,\"d_dispatched\":%u,\"d_uninstall\":%u,\"faults\":%u,\"reason\":",
+            flag(f.set204),flag(f.reset204),f.pre_pump,f.status_cb,flag(f.conn_ok),f.old_state,f.new_state,flag(f.thread_ok),f.extra,
+            flag(f.d_install),f.d_pumps,f.d_dispatched,flag(f.d_uninstall),f.faults);
+        j.String(f.reason,sizeof(f.reason));
+        j.Add("}");
+    }
     j.Add("}");
 }
 } // namespace
@@ -307,6 +322,9 @@ void Publish(const worker_scenario::RunContext& c) noexcept {
     // Partner name tag (docs/partner-nametag.md): game-thread telemetry plus the Present counters.
     if(nametag::FormatJson(nametag::GetTelemetry(),nametag::GetRenderStats(),nametag_json,sizeof(nametag_json)))j.Add("%s",nametag_json);
     SteamJson(j,steam_state::GetReport());
+    // The in-game status line and toasts (coop_hud; Present side).
+    char hud_json[512]{};
+    if(coop_hud::FormatJson(coop_hud::GetTelemetry(),hud_json,sizeof(hud_json)))j.Add("%s",hud_json);
     j.Add(",\"queue_depth\":%u,\"last_id\":%u,\"completed\":%u,\"rejected\":%u,\"last_command\":",s.queue_depth,s.last_id,s.completed,s.rejected);
     j.String(s.last_command,sizeof(s.last_command));j.Add(",\"last_result\":");j.String(s.last_result,sizeof(s.last_result));j.Add(",\"refusal\":");j.String(s.refusal,sizeof(s.refusal));
     j.Add(",\"history\":[");

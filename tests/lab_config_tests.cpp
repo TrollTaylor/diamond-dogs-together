@@ -511,6 +511,25 @@ int main() {
               "UDP play ignores the Steam keys");
         Check(std::strcmp(NetTransportName(NetTransport::steam), "steam") == 0 && std::strcmp(NetTransportName(NetTransport::udp), "udp") == 0,
               "transport names");
+        // Section 20: the code-join sources (default both), the self-test's stage F switch.
+        Check(sHost.net_steam_dispatch == SteamDispatch::both && sHost.steam_selftest_fn, "net_steam_dispatch default both; steam_selftest_fn 1");
+        for (const char* v : {"both", "fnptr", "callback", "poll"}) {
+            const auto d = Lab(steamHost + "net_steam_dispatch=" + v + "\n");
+            Check(std::strcmp(SteamDispatchName(d.net_steam_dispatch), v) == 0 && d.invalid_values == 0 && d.play_refused == 0, "net_steam_dispatch values");
+        }
+        const auto badDispatch = Lab(steamHost + "net_steam_dispatch=fn\n");
+        Check(badDispatch.net_steam_dispatch == SteamDispatch::both && badDispatch.invalid_values == 1, "net_steam_dispatch invalid keeps both");
+        const auto noFn = Lab("enabled=1\nrole=host\nsteam_selftest=1\nsteam_selftest_fn=0\n");
+        Check(noFn.steam_selftest == 1 && !noFn.steam_selftest_fn && noFn.invalid_values == 0, "steam_selftest_fn=0");
+        Check(Lab("enabled=1\nrole=host\nsteam_selftest_fn=2\n").invalid_values == 1, "steam_selftest_fn 0|1");
+        // The in-game status line: lab.ini coop_hud, coop.ini hud (allowed in play).
+        const auto hudLab = Lab(steamHost + "coop_hud=full\n");
+        Check(hudLab.coop_hud == CoopHud::full && hudLab.invalid_values == 0 && hudLab.play_refused == 0, "coop_hud=full in play");
+        Check(Lab("enabled=1\nrole=host\n").coop_hud == CoopHud::unset && Lab("enabled=1\nrole=host\ncoop_hud=off\n").coop_hud == CoopHud::off,
+              "coop_hud default unset; off");
+        Check(Lab("enabled=1\nrole=host\ncoop_hud=big\n").invalid_values == 1, "coop_hud invalid");
+        Check(Coop("hud=compact\n").hud == CoopHud::compact && Coop("").hud == CoopHud::unset && Coop("hud=x\n").invalid_values == 1, "coop.ini hud");
+        Check(std::strcmp(CoopHudName(CoopHud::full), "full") == 0 && CoopHudName(CoopHud::unset)[0] == 0, "hud names");
     }
     // The new keys and their ranges (lab).
     const auto linkKeys = Lab("enabled=1\nrole=host\nnet_jitter_ms=1000\nnet_loss_model=burst\nnet_burst=16\nnet_dup_permille=1000\n"

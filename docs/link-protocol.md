@@ -57,6 +57,9 @@ before (tested). "(play)" marks the defaults that differ in play.
 | `net_steam_wait` | `0` \| `1` | `0` | Guest without a host (invite / F9 paste); ignored when `net_peer_steam` is set. |
 | `net_steam_accept` | `on` \| `off` | `on` | Host: the initial F9 "Accept joins". |
 | `steam_selftest` | `0` \| `1` \| `2` | `0` | Lab only (the hidden-worker self-test; 2 adds the network-loopback pair). |
+| `steam_selftest_fn` | `0` \| `1` | `1` | Lab: the self-test's function-pointer stage F/D ([steam-online.md](steam-online.md) 20.6); 0 skips it (`fn=skip`). |
+| `net_steam_dispatch` | `both` \| `fnptr` \| `callback` \| `poll` | `both` | Play + steam: the code-join sources (steam-online.md 20.5); another value is +1 invalid and keeps `both`. |
+| `coop_hud` | `compact` \| `full` \| `off` | unset | The in-game status line (steam-online.md 20.9); wins over coop.ini `hud`; unset = compact in play, off in the lab. |
 
 `net_latency_ms` (0..2000), `net_loss_permille` (0..1000) and
 `partner_interp_ms` (0..500, default 100) keep their parsing.
@@ -462,7 +465,9 @@ this order:
 Since the Steam transport, four keys come before `time_utc` (also on UDP):
 `"transport":"udp|steam","route":"relay|direct|unknown|none","accepting":0|1,"steam":"ok|acquiring|off|<reason>"`.
 With steam, `peer` is `"steam:...1234"` and `local_port` is 0. The buffer is
-768 bytes.
+768 bytes. Two more keys follow them (steam-online.md 20.7/20.8):
+`"steam_end":<ESteamNetConnectionEnd, 0 none>,"left":0|1` (the guest's last
+Steam session failure while not connected; the partner's CLOSE).
 
 `state`: `off|disabled|listening|connecting|handshake|connected|reconnecting|lost|rejected|waiting`
 (`waiting`: a Steam guest without a host);
@@ -484,7 +489,9 @@ thread); `saves` from `lab::SavesRedirected()`.
 `lab_ini_check code <text>` prints `code_status=<status>` and, when ok,
 `host=` and `port=` (never the secret). After `world_probe` it prints the
 Steam keys `net_transport`, `net_steam_self`, `net_peer_steam`,
-`net_steam_wait`, `net_steam_accept`, `steam_selftest`;
+`net_steam_wait`, `net_steam_accept`, `steam_selftest`, then
+`net_steam_dispatch`, `steam_selftest_fn` and `coop_hud` (`lab_ini_check coop`
+adds `hud`);
 `lab_ini_check steamcode <text>` prints `steamcode_status=<status>` and, when
 ok, `host=<SteamID64>` (the native MGS2 parser; never the secret).
 

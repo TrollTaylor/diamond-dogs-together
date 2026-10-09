@@ -2,6 +2,7 @@
 #include "mgscoop/debug_menu.hpp"
 #include "mgscoop/partner_native.hpp"
 #include "mgscoop/nametag_core.hpp"
+#include "mgscoop/coop_hud.hpp"
 #include "mgscoop/steam_online_state.hpp"
 #include <cctype>
 #include <cmath>
@@ -294,9 +295,36 @@ int main() {
                   "\"messages\":1,\"sockets\":1,\"utils\":1,\"rtti\":1,\"shape\":1,\"relay\":100,\"pair\":{\"hs_ms\":4,\"frames\":500,"
                   "\"frames_rx\":500,\"rel\":64,\"rel_rx\":64,\"rtt_ms\":1,\"release\":564,\"leak\":0")!=std::string::npos &&
                   pass.find("\"lpair\":null,\"inert\":{\"recv\":0,\"state\":0,\"accept\":0},\"trip\":{\"getter_delta\":0}")!=std::string::npos &&
-                  pass.find("\"reason\":\"q\\\"x\"}")!=std::string::npos))return 1;
+                  pass.find("\"reason\":\"q\\\"x\",\"fn\":null}")!=std::string::npos))return 1;
         char small[32];
         if(!check(mgscoop::worker_debug::FormatSteamJson(r,small,sizeof(small))==0 && small[0]==0))return 1;
+        // Stage F/D (docs/steam-online.md 20.6).
+        r.fn.ran=true;r.fn.set204=r.fn.reset204=r.fn.conn_ok=r.fn.thread_ok=r.fn.d_install=r.fn.d_uninstall=true;
+        r.fn.status_cb=2;r.fn.old_state=3;r.fn.new_state=4;r.fn.d_pumps=190;r.fn.extra=1;
+        n = mgscoop::worker_debug::FormatSteamJson(r, buffer, sizeof(buffer));
+        const std::string fn = std::string("{\"schema\":2") + std::string(buffer, n) + "}";
+        if(!check(ValidJson(fn) && fn.find("\"fn\":{\"verdict\":\"ok\",\"ran\":1,\"skipped\":0,\"gate\":\"\",\"set204\":1,\"reset204\":1,"
+                  "\"pre_pump\":0,\"status_cb\":2,\"conn_ok\":1,\"old\":3,\"new\":4,\"thread_ok\":1,\"extra\":1,\"d_install\":1,"
+                  "\"d_pumps\":190,\"d_dispatched\":0,\"d_uninstall\":1,\"faults\":0,\"reason\":\"\"}")!=std::string::npos))return 1;
+        r.fn=mgscoop::steam_state::FnResult{};r.fn.skipped=true;
+        n = mgscoop::worker_debug::FormatSteamJson(r, buffer, sizeof(buffer));
+        if(!check(ValidJson(std::string("{\"schema\":2") + std::string(buffer, n) + "}") &&
+                  std::string(buffer,n).find("\"fn\":{\"verdict\":\"skip\"")!=std::string::npos))return 1;
+    }
+    // The in-game status line member (coop_hud).
+    {
+        namespace hud=mgscoop::coop_hud;
+        hud::ResetForTest();
+        hud::Configure(hud::Mode::compact,true);
+        hud::Line line{};std::snprintf(line.text,sizeof(line.text),"CO-OP [connected] \"Snake\" - Steam relay 61 ms");
+        hud::NoteFrame(&line,"Connected to \\Snake",false,1,1,1234);
+        char out[512]{};
+        const std::size_t n=hud::FormatJson(hud::GetTelemetry(),out,sizeof(out));
+        const std::string doc=std::string("{\"schema\":2")+std::string(out,n)+"}";
+        if(!check(n>0 && ValidJson(doc) && doc.find(",\"hud\":{\"enabled\":true,\"mode\":\"compact\",\"frames\":1,\"hidden\":0,")!=std::string::npos))return 1;
+        char small[16];
+        if(!check(hud::FormatJson(hud::GetTelemetry(),small,sizeof(small))==0 && small[0]==0))return 1;
+        hud::ResetForTest();
     }
     // The checker itself rejects the classic writer slips.
     for(const char* bad:{"{\"a\":1,}","{\"a\":1","{\"a\":[1,2}","{\"a\":01}","{\"a\":\"x\ny\"}","{\"a\":1}}","{\"a\":nul}",

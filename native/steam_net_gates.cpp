@@ -63,12 +63,16 @@ Region Classify(const ModuleView& view, std::uintptr_t address, std::size_t leng
 }
 
 bool RttiNameIs(const ModuleView& view, std::uintptr_t vptr, const char* expected) noexcept {
+    return RttiNameAt(view, vptr, expected, 0);
+}
+
+bool RttiNameAt(const ModuleView& view, std::uintptr_t vptr, const char* expected, std::uint32_t this_offset) noexcept {
     if (!expected || vptr < 8 || Classify(view, vptr - 8, 8) != Region::rdata) return false;
     const std::uint64_t col = U64(At(vptr - 8));
     // _RTTICompleteObjectLocator (x64): signature 1, offset, cdOffset, TD rva, CHD rva, self rva.
     if (Classify(view, static_cast<std::uintptr_t>(col), 24) != Region::rdata) return false;
     const std::uint8_t* c = At(static_cast<std::uintptr_t>(col));
-    if (U32(c) != 1 || U32(c + 4) != 0) return false;
+    if (U32(c) != 1 || U32(c + 4) != this_offset) return false;
     if (U32(c + 20) != static_cast<std::uint32_t>(static_cast<std::uintptr_t>(col) - view.base)) return false;
     const std::uintptr_t td = view.base + U32(c + 12);
     std::size_t length = 0;
@@ -82,18 +86,25 @@ bool RttiNameIs(const ModuleView& view, std::uintptr_t vptr, const char* expecte
 }
 
 bool IsForwarder(const std::uint8_t* code, std::size_t available, unsigned slot) noexcept {
-    if (!code || available < 10 || slot > 31) return false;
+    if (!code || available < 10 || slot > kMaxForwarderSlot) return false;
     // mov rcx,[rcx+8]
     if (code[0] != 0x48 || code[1] != 0x8B || code[2] != 0x49 || code[3] != 0x08) return false;
-    const std::uint8_t disp = static_cast<std::uint8_t>(8 * slot);
+    const std::uint32_t offset = 8u * slot;
+    // A signed disp8 reaches +0x78 at most (slot 15); from slot 16 the
+    // compiler emits disp32 (+0x80 as a disp8 would be -0x80).
+    const bool small = offset < 0x80;
     const std::uint8_t* p = code + 4;
-    // mov rax,[rcx] ; jmp [rax+disp8]
-    if (available >= 11 && p[0] == 0x48 && p[1] == 0x8B && p[2] == 0x01 && p[3] == 0x48 && p[4] == 0xFF && p[5] == 0x60)
-        return p[6] == disp;
-    // mov r10,[rcx] ; jmp [r10] (slot 0) | jmp [r10+disp8]
+    // mov rax,[rcx] ; jmp [rax+disp8] | jmp [rax+disp32]
+    if (available >= 11 && p[0] == 0x48 && p[1] == 0x8B && p[2] == 0x01 && p[3] == 0x48 && p[4] == 0xFF) {
+        if (p[5] == 0x60) return small && static_cast<std::uint32_t>(p[6]) == offset;
+        if (p[5] == 0xA0) return !small && available >= 14 && U32(p + 6) == offset;
+        return false;
+    }
+    // mov r10,[rcx] ; jmp [r10] (slot 0) | jmp [r10+disp8] | jmp [r10+disp32]
     if (p[0] == 0x4C && p[1] == 0x8B && p[2] == 0x11 && p[3] == 0x49 && p[4] == 0xFF) {
         if (p[5] == 0x22) return slot == 0;
-        if (available >= 11 && p[5] == 0x62) return p[6] == disp;
+        if (available >= 11 && p[5] == 0x62) return small && static_cast<std::uint32_t>(p[6]) == offset;
+        if (p[5] == 0xA2) return !small && available >= 14 && U32(p + 6) == offset;
     }
     return false;
 }
@@ -132,6 +143,39 @@ const char* CheckClient(const ModuleView& view, std::uintptr_t object, const cha
     const std::uint64_t target = U64(At(static_cast<std::uintptr_t>(vptr) + 8u * slot));
     if (Classify(view, static_cast<std::uintptr_t>(target), 1) != Region::code) return "client_iface";
     return nullptr;
+}
+
+const char* CheckForwardedSlot(const ModuleView& view, std::uintptr_t object, unsigned slot, const char* inner_rtti, ReadQword read,
+                               void* context) noexcept {
+    std::uint64_t vptr = 0;
+    if (!object || !read || !read(context, object, vptr)) return "slot_object";
+    if (Classify(view, static_cast<std::uintptr_t>(vptr), 8u * (slot + 1)) != Region::rdata) return "slot_object";
+    const std::uint64_t stub = U64(At(static_cast<std::uintptr_t>(vptr) + 8u * slot));
+    if (Classify(view, static_cast<std::uintptr_t>(stub), 14) != Region::code) return "slot_shape";
+    if (!IsForwarder(At(static_cast<std::uintptr_t>(stub)), 14, slot)) return "slot_shape";
+    // The forwarder jumps to the inner object's slot `slot`.
+    std::uint64_t inner = 0, inner_vptr = 0;
+    if (!read(context, object + 8, inner) || !inner || !read(context, static_cast<std::uintptr_t>(inner), inner_vptr)) return "inner_object";
+    if (Classify(view, static_cast<std::uintptr_t>(inner_vptr), 8u * (slot + 1)) != Region::rdata) return "inner_object";
+    if (!RttiNameIs(view, static_cast<std::uintptr_t>(inner_vptr), inner_rtti)) return "inner_rtti";
+    const std::uint64_t target = U64(At(static_cast<std::uintptr_t>(inner_vptr) + 8u * slot));
+    if (Classify(view, static_cast<std::uintptr_t>(target), 1) != Region::code) return "inner_slot";
+    return nullptr;
+}
+
+const char* CheckMessagesOwner(const ModuleView& view, std::uintptr_t messages, std::uintptr_t sockets, const char* impl_rtti,
+                               std::uint32_t subobject, std::uint32_t owner_field, ReadQword read, void* context) noexcept {
+    std::uint64_t m_inner = 0, m_vptr = 0, s_inner = 0, owner_sockets = 0;
+    if (!messages || !sockets || !read) return "owner_object";
+    if (!read(context, messages + 8, m_inner) || !m_inner || !read(context, static_cast<std::uintptr_t>(m_inner), m_vptr))
+        return "owner_object";
+    // The subobject's COL names the implementation class at this offset.
+    if (!RttiNameAt(view, static_cast<std::uintptr_t>(m_vptr), impl_rtti, subobject)) return "owner_rtti";
+    if (m_inner < subobject) return "owner_object";
+    const std::uintptr_t owner = static_cast<std::uintptr_t>(m_inner) - subobject;
+    if (!read(context, owner + owner_field, owner_sockets) || !read(context, sockets + 8, s_inner) || !s_inner)
+        return "owner_object";
+    return owner_sockets == s_inner ? nullptr : "owner_mismatch";
 }
 
 const char* InitializedGate(const void* client, std::int32_t user, std::int32_t pipe, const void* steam_user) noexcept {

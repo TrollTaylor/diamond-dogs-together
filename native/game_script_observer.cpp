@@ -60,6 +60,7 @@
 #include "mgscoop/nametag_game.hpp"
 #include "mgscoop/steam_observer.hpp"
 #include "mgscoop/steam_net_callbacks.hpp"
+#include "mgscoop/coop_hud.hpp"
 #include "mgscoop/steam_online.hpp"
 #include <charconv>
 #include <cmath>
@@ -1581,6 +1582,12 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             mgscoop::steam_online::StatusLine(status, sizeof(status));
             debug::Result(pending.id, 1, status);
             LogFormat("debug_menu=dispatch; id=%u; text=steam_status; generation=%u; native=1\r\n", pending.id, pending.generation);
+        } else if (pending.id && std::strcmp(pending.text, "hud_status") == 0) {
+            // Read-only: the in-game status line as the overlay last drew it.
+            char status[161]{};
+            mgscoop::coop_hud::FormatStatus(mgscoop::coop_hud::GetTelemetry(), status, sizeof(status));
+            debug::Result(pending.id, 1, status);
+            LogFormat("debug_menu=dispatch; id=%u; text=hud_status; generation=%u; native=1\r\n", pending.id, pending.generation);
         } else if (pending.id) {
             const auto snapshot = debug::GetSnapshot();
             // goto_partner and spawn_sync get the partner pose from the snapshot just
@@ -2830,6 +2837,8 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         steam.selftest = labc.mode == mgscoop::LabMode::lab ? labc.steam_selftest : 0;
                         steam.fake_identity = labc.self_steamid != 0;
                         steam.log = Log;
+                        steam.dispatch = labc.net_steam_dispatch;
+                        steam.selftest_fn = labc.steam_selftest_fn;
                         mgscoop::steam_online::Configure(steam);
                         if (steam.selftest)
                             LogFormat("steam_selftest=configured; level=%u; identity=%s\r\n", steam.selftest, steam.fake_identity ? "fake" : "real");
@@ -2858,6 +2867,7 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                         net.saves_redirected = lab::SavesRedirected();
                         net.directory = directory;
                         net.build = lab::ProbeVersion();
+                        net.hud = mgscoop::coop_hud::ModeFor(labc.coop_hud, mgscoop::GetCoopConfig().hud, net.play);
                         if (play_steam) {
                             net.transport = mgscoop::partner_net::Transport::steam;
                             net.steam_self = labc.net_steam_self;
@@ -2866,6 +2876,7 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                             net.accepting = labc.net_steam_accept;
                             net.steam_resolve = &mgscoop::steam_online::Resolve;
                             net.steam_requests = &mgscoop::steam_cb::PopSessionRequest;
+                            net.steam_dispatch = static_cast<std::uint8_t>(labc.net_steam_dispatch);
                         }
                         mgscoop::partner_net::Start(net);
                     } else {

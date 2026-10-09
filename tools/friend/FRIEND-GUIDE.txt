@@ -230,6 +230,11 @@ Block rules, offers to remove them and adds an Allow rule for UDP 47830
 
 6. IF IT DOES NOT WORK
 ----------------------
+In the game, a "CO-OP [...]" line at the top right shows the link (for
+example "CO-OP [connected] <friend> - Steam relay 61 ms") and short messages
+appear below it when something changes. To hide it, start Play-Coop.bat
+from a command prompt in this folder as: Play-Coop.bat -Hud off
+(-Hud full shows more detail).
 The Play-Coop status line explains most problems:
 - link=connecting for a long time: the joiner cannot reach the host. Online:
   are both PCs online in Steam, is the host's game running and "Accept joins"
@@ -242,6 +247,10 @@ The Play-Coop status line explains most problems:
 - "Possibly a wrong code": copy the code again; the host may have started
   Play-Coop again (new code).
 - "The host is already connected to someone": only one joiner at a time.
+- "The host's game did not answer": the host's game is not running from
+  Play-Coop (Host online), "Accept joins" is off, or the code is old.
+- "your friend left" / "the host left": the other player quit the game;
+  they can join again with the same code while your game keeps running.
 - "Your friend runs mgs-coop X; you run Y": both must install the same
   package version.
 - "Partner body unavailable in this mission": meet in Mother Base or free roam.

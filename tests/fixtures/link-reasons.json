@@ -1,0 +1,294 @@
+{
+  "comment": "Shared vectors: tools/CoopPlay.psm1 Get-CoopLinkReasonText / Get-CoopSteamEndText and native/coop_reason_text.cpp must produce these exact sentences (tests/friend_package_tests.ps1, tests/steam_transport_tests.cpp).",
+  "link_reasons": [
+    {
+      "reason": "",
+      "remote": "",
+      "own": "0.11.1+f64a8e9",
+      "verified": 1,
+      "text": ""
+    },
+    {
+      "reason": "build_mismatch",
+      "remote": "0.11.0+1234567",
+      "own": "0.11.1+f64a8e9",
+      "verified": 1,
+      "text": "Your friend runs mgs-coop 0.11.0+1234567; you run 0.11.1+f64a8e9. Both must install the same package."
+    },
+    {
+      "reason": "build_mismatch",
+      "remote": "",
+      "own": "0.11.1+f64a8e9",
+      "verified": 1,
+      "text": "Your friend runs mgs-coop another version; you run 0.11.1+f64a8e9. Both must install the same package."
+    },
+    {
+      "reason": "proto_mismatch",
+      "remote": "0.10.2",
+      "own": "0.11.1+f64a8e9",
+      "verified": 1,
+      "text": "Your friend's mgs-coop (0.10.2) speaks another link version. Both must install the same package."
+    },
+    {
+      "reason": "mode_mismatch",
+      "remote": "",
+      "own": "0.11.1+f64a8e9",
+      "verified": 1,
+      "text": "One side is in the single-PC lab mode. Both players must start the game with Play-Coop.bat."
+    },
+    {
+      "reason": "role_mismatch",
+      "remote": "",
+      "own": "0.11.1+f64a8e9",
+      "verified": 1,
+      "text": "Both players chose the same role: one must Host, the other Join."
+    },
+    {
+      "reason": "busy",
+      "remote": "",
+      "own": "0.11.1+f64a8e9",
+      "verified": 1,
+      "text": "The host is already connected to someone."
+    },
+    {
+      "reason": "bad_code",
+      "remote": "",
+      "own": "0.11.1+f64a8e9",
+      "verified": 0,
+      "text": "The host did not accept the connection. Possibly a wrong code: copy it again (or the host restarted Play-Coop: ask for the new code)."
+    },
+    {
+      "reason": "secret_missing",
+      "remote": "",
+      "own": "0.11.1+f64a8e9",
+      "verified": 1,
+      "text": "The link secret file is missing or damaged. Quit MGSV and start Play-Coop again."
+    },
+    {
+      "reason": "secret_bad_char",
+      "remote": "",
+      "own": "0.11.1+f64a8e9",
+      "verified": 1,
+      "text": "The link secret file is missing or damaged. Quit MGSV and start Play-Coop again."
+    },
+    {
+      "reason": "crypto",
+      "remote": "",
+      "own": "0.11.1+f64a8e9",
+      "verified": 1,
+      "text": "Windows could not provide random numbers for the link. Restart the PC and try again."
+    },
+    {
+      "reason": "no_peer_addr",
+      "remote": "",
+      "own": "0.11.1+f64a8e9",
+      "verified": 1,
+      "text": "The host address is missing. Quit MGSV and run Join again."
+    },
+    {
+      "reason": "no_peer_steam",
+      "remote": "",
+      "own": "0.11.1+f64a8e9",
+      "verified": 1,
+      "text": "The host's Steam account is missing. Quit MGSV and run Join online again (paste the code or wait for an invite)."
+    },
+    {
+      "reason": "steam_offline",
+      "remote": "",
+      "own": "0.11.1+f64a8e9",
+      "verified": 1,
+      "text": "Steam is offline or not logged in. Quit MGSV, start Steam and log in (online), then start Play-Coop again."
+    },
+    {
+      "reason": "steam_self_mismatch",
+      "remote": "",
+      "own": "0.11.1+f64a8e9",
+      "verified": 1,
+      "text": "Steam is logged in to another account than when Play-Coop started. Quit MGSV and start Play-Coop again."
+    },
+    {
+      "reason": "steam_peer_is_self",
+      "remote": "",
+      "own": "0.11.1+f64a8e9",
+      "verified": 1,
+      "text": "That join code is your own. Ask your friend for theirs."
+    },
+    {
+      "reason": "steam_api",
+      "remote": "",
+      "own": "0.11.1+f64a8e9",
+      "verified": 1,
+      "text": "steam_api64.dll is not the expected file. Verify the game files in Steam, then run Install-Coop.bat again."
+    },
+    {
+      "reason": "steam_not_initialized",
+      "remote": "",
+      "own": "0.11.1+f64a8e9",
+      "verified": 1,
+      "text": "Steam did not start for MGSV. Quit the game and start Play-Coop again (it starts MGSV through Steam)."
+    },
+    {
+      "reason": "steam_client_module",
+      "remote": "",
+      "own": "0.11.1+f64a8e9",
+      "verified": 1,
+      "text": "Steam networking changed (probably a Steam update). Use a LAN/VPN code ([L] in Play-Coop) and run Collect-Logs.bat for the developer."
+    },
+    {
+      "reason": "steam_iface_shape",
+      "remote": "",
+      "own": "0.11.1+f64a8e9",
+      "verified": 1,
+      "text": "Steam networking changed (probably a Steam update). Use a LAN/VPN code ([L] in Play-Coop) and run Collect-Logs.bat for the developer."
+    },
+    {
+      "reason": "steam_iface_rtti",
+      "remote": "",
+      "own": "0.11.1+f64a8e9",
+      "verified": 1,
+      "text": "Steam networking changed (probably a Steam update). Use a LAN/VPN code ([L] in Play-Coop) and run Collect-Logs.bat for the developer."
+    },
+    {
+      "reason": "steam_owner_unavailable",
+      "remote": "",
+      "own": "0.11.1+f64a8e9",
+      "verified": 1,
+      "text": "The co-op loader could not attach to Steam. Use a LAN/VPN code ([L] in Play-Coop) and run Collect-Logs.bat."
+    },
+    {
+      "reason": "steam_fault",
+      "remote": "",
+      "own": "0.11.1+f64a8e9",
+      "verified": 1,
+      "text": "Steam networking failed inside Steam: restart the game. If it happens again, use a LAN/VPN code ([L]) and run Collect-Logs.bat."
+    },
+    {
+      "reason": "steam_acquire_timeout",
+      "remote": "",
+      "own": "0.11.1+f64a8e9",
+      "verified": 1,
+      "text": "Steam networking did not start within two minutes. Check that Steam is online, then restart the game."
+    },
+    {
+      "reason": "steam_transport",
+      "remote": "",
+      "own": "0.11.1+f64a8e9",
+      "verified": 1,
+      "text": "The Steam link could not start (steam_transport). Restart the game; if it repeats, use a LAN/VPN code ([L]) and run Collect-Logs.bat."
+    },
+    {
+      "reason": "transport_bind",
+      "remote": "",
+      "own": "0.11.1+f64a8e9",
+      "verified": 1,
+      "text": "The UDP port is already in use by another program on this PC (or a second MGSV). Close it, or use another port."
+    },
+    {
+      "reason": "transport_winsock",
+      "remote": "",
+      "own": "0.11.1+f64a8e9",
+      "verified": 1,
+      "text": "The network link could not start (transport_winsock). Restart the PC and try again; if it repeats, run Collect-Logs.bat."
+    },
+    {
+      "reason": "replay",
+      "remote": "",
+      "own": "0.11.1+f64a8e9",
+      "verified": 1,
+      "text": "The connection was refused (replay)."
+    },
+    {
+      "reason": "weird_reason",
+      "remote": "",
+      "own": "0.11.1+f64a8e9",
+      "verified": 0,
+      "text": "The connection was refused (weird_reason). Possibly a wrong code."
+    }
+  ],
+  "steam_end": [
+    {
+      "end": 0,
+      "text": ""
+    },
+    {
+      "end": 5003,
+      "text": "The host's game did not answer. Is it running from Play-Coop (Host online), with Accept joins on, and is your code current?"
+    },
+    {
+      "end": 4001,
+      "text": "The host's game did not answer. Is it running from Play-Coop (Host online), with Accept joins on, and is your code current?"
+    },
+    {
+      "end": 5008,
+      "text": "Steam could not connect the two PCs. Both must be online in Steam; try again, or use a LAN/VPN code [L]."
+    },
+    {
+      "end": 5009,
+      "text": "Steam could not connect the two PCs. Both must be online in Steam; try again, or use a LAN/VPN code [L]."
+    },
+    {
+      "end": 5005,
+      "text": "This PC cannot reach Steam's network. Check the internet connection and that Steam is not in Offline Mode."
+    },
+    {
+      "end": 3001,
+      "text": "This PC cannot reach Steam's network. Check the internet connection and that Steam is not in Offline Mode."
+    },
+    {
+      "end": 3002,
+      "text": "This PC cannot reach Steam's network. Check the internet connection and that Steam is not in Offline Mode."
+    },
+    {
+      "end": 3004,
+      "text": "Steam networking is not available here right now; restart Steam."
+    },
+    {
+      "end": 3005,
+      "text": "Steam networking is not available here right now; restart Steam."
+    },
+    {
+      "end": 4002,
+      "text": "Steam's secure handshake failed; restart Steam on both PCs."
+    },
+    {
+      "end": 4003,
+      "text": "Steam's secure handshake failed; restart Steam on both PCs."
+    },
+    {
+      "end": 4006,
+      "text": "Your friend's Steam is a different version; update Steam on both PCs."
+    },
+    {
+      "end": 1000,
+      "text": "The host closed the connection (left, restarted, or refused the join)."
+    },
+    {
+      "end": 1500,
+      "text": "The host closed the connection (left, restarted, or refused the join)."
+    },
+    {
+      "end": 1999,
+      "text": "The host closed the connection (left, restarted, or refused the join)."
+    },
+    {
+      "end": 5010,
+      "text": "The host closed the connection (left, restarted, or refused the join)."
+    },
+    {
+      "end": 2000,
+      "text": "The Steam connection failed (code 2000)."
+    },
+    {
+      "end": 5001,
+      "text": "The Steam connection failed (code 5001)."
+    },
+    {
+      "end": 3006,
+      "text": "The Steam connection failed (code 3006)."
+    },
+    {
+      "end": 4007,
+      "text": "The Steam connection failed (code 4007)."
+    }
+  ]
+}

@@ -23,6 +23,12 @@
 // transport's own thread is the only one that calls into steamclient (C9).
 // Every interface call goes through a C-style __try/__except thunk: a fault
 // latches the transport (no further Steam call) and reports reason=fault.
+// Function-pointer dispatch (docs/steam-online.md section 20): with
+// config.dispatch set, the thread sets config 204/205 once ready, calls
+// Sockets012::RunCallbacks at least every kPumpMs between receive and accept
+// work (a code join is accepted in the same pass) and resets them before it
+// stops (stop() and the shutdown flag). A refused install leaves the link on
+// the 1251 callback and polling.
 // Constant-initializable and trivially destructible; nothing allocates after
 // start(). The game thread never enters steamclient for networking.
 #include <cstddef>
@@ -46,6 +52,10 @@ struct SteamNetApi {
     // The process-wide fault latch (another of our threads faulted inside
     // steamclient): when set, the transport parks without another call.
     const volatile long* halt = nullptr;
+    // Section 20: the owner context's dispatch gate (Sockets012 slot 41 and
+    // Utils004 slot 16 forwarders down to the inner RTTI, one per-user
+    // object): nullptr = checked; otherwise why the function pointer is refused.
+    const char* dispatch_refused = "not_checked";
 };
 
 // The API is acquired in the owner context, possibly after start(): the
@@ -86,7 +96,7 @@ private:
 };
 
 // ---- Host accept policy (6.3). Pure; the transport calls it on its thread.
-enum class AcceptVia : std::uint8_t { callback, poll, beacon };
+enum class AcceptVia : std::uint8_t { callback, poll, beacon, fnptr };
 const char* AcceptViaName(AcceptVia via) noexcept;
 enum class KnownKind : std::uint8_t { guest, invited, beacon };
 class SteamAcceptPolicy {
@@ -185,8 +195,13 @@ struct SteamTransportConfig {
     bool warm_relay = false;
     SteamResolveFn resolve = nullptr;
     void* resolve_ctx = nullptr;
-    // Host: the 1251 queue (steam_cb::PopSessionRequest); null = poll only.
-    bool (*pop_request)(std::uint64_t& id) noexcept = nullptr;
+    // Host: the session-request queue (steam_cb::PopSessionRequest: 1251 from
+    // the Init wrapper and/or the function pointer, with the source mask);
+    // null = poll only.
+    bool (*pop_request)(std::uint64_t& id, std::uint8_t& sources) noexcept = nullptr;
+    // Messages leg: steam_dispatch install bits (1 = 204 session request, 2 =
+    // 205 session failed); 0 = no function pointer (section 20).
+    std::uint8_t dispatch = 0;
     SteamLogFn log = nullptr;    // steam= lines (transport thread, no lock held)
 };
 
@@ -204,7 +219,14 @@ struct SteamTransportStats {
     std::uint64_t tx, rx, ring_full, send_fail, send_invalid, too_large, foreign, bad_identity, bad_size, denied, accepted,
         accept_refused, closed_idle, closed_foreign, release, received, faults;
     std::uint32_t non_peer, ring_depth;
+    // Section 20: the second report of an accepted request (the other source
+    // within kDupWindowMs), and the dispatch state.
+    std::uint64_t accept_dup, pumps;
+    std::uint8_t dispatch;        // DispatchState
 };
+// The function-pointer dispatch as the transport reports it.
+enum class DispatchState : std::uint8_t { off, on, refused };
+const char* DispatchStateName(DispatchState state) noexcept;
 
 class SteamTransport {
 public:
@@ -216,6 +238,8 @@ public:
     static constexpr std::uint64_t kSendFailLogMs = 10000;
     static constexpr std::uint32_t kResolvePollMs = 50;
     static constexpr std::uint32_t kCloseGraceMs = 30;  // shutdown: the CLOSE goes out before CloseSessionWithUser
+    static constexpr std::uint64_t kPumpMs = 10;        // RunCallbacks cadence while a pointer is set (<= 50 ms required)
+    static constexpr std::uint64_t kDupWindowMs = 5000; // a second source's report of an accept is not a new accept
 
     bool start(const SteamTransportConfig& config, const SteamSink& sink) noexcept;
     // Copies one datagram (<= 4 chunks, 1..1200 bytes) into the send ring.
@@ -249,6 +273,8 @@ public:
     steam_net::Route route() const noexcept { return static_cast<steam_net::Route>(route_); }
     std::int32_t steam_state() const noexcept { return steam_state_; }
     std::uint64_t peer_id() const noexcept { return static_cast<std::uint64_t>(peer_id_); }
+    DispatchState dispatch_state() const noexcept { return static_cast<DispatchState>(dispatch_state_); }
+    const char* dispatch_reason() const noexcept { return dispatch_reason_; }
 
 private:
     static unsigned long __stdcall thread_entry(void* self) noexcept;
@@ -261,6 +287,9 @@ private:
     void route_poll(std::uint64_t now) noexcept;
     void hygiene(std::uint64_t now) noexcept;
     void shutdown_sequence() noexcept;
+    void install_dispatch() noexcept;
+    void pump_dispatch(std::uint64_t now) noexcept;
+    void uninstall_dispatch() noexcept;
     void park() noexcept;
     void wait_idle() noexcept;
     void fault(const char* where) noexcept;
@@ -295,14 +324,17 @@ private:
     std::uint64_t live_[kLiveEntries]{};
     unsigned live_next_ = 0;
     volatile long running_ = 0, ready_ = 0, faulted_ = 0, stop_ = 0, shutdown_ = 0, accepting_ = 1, parked_ = 0;
-    volatile long route_ = 0, steam_state_ = 0, non_peer_ = 0;
+    volatile long route_ = 0, steam_state_ = 0, non_peer_ = 0, dispatch_state_ = 0;
+    const char* dispatch_reason_ = "";  // static strings only
+    std::uint64_t next_pump_ms_ = 0;
+    std::uint64_t last_accept_id_ = 0, last_accept_ms_ = 0;
     volatile long long peer_id_ = 0;
     std::uint64_t host_id_ = 0;
     TransportError error_ = TransportError::none;
     // Counters: written by the transport thread (ring_full also by producers).
     volatile long long tx_ = 0, rx_ = 0, ring_full_ = 0, send_fail_ = 0, send_invalid_ = 0, too_large_ = 0, foreign_ = 0,
                        bad_identity_ = 0, bad_size_ = 0, denied_ = 0, accepted_ = 0, accept_refused_ = 0, closed_idle_ = 0,
-                       closed_foreign_ = 0, release_ = 0, received_ = 0, faults_ = 0;
+                       closed_foreign_ = 0, release_ = 0, received_ = 0, faults_ = 0, accept_dup_ = 0, pumps_ = 0;
     std::uint64_t next_idle_ms_ = 0, next_route_ms_ = 0, next_stats_ms_ = 0, send_fail_log_ms_ = 0;
     std::uint64_t logged_[8]{};
     bool stats_logged_ = false;

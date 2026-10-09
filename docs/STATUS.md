@@ -1,5 +1,25 @@
 # Development status
 
+## October 9, 2026: Steam code joins and the online UX (fixture-tested, hidden runs pending)
+
+`wp/steam-join` ([steam-online.md](steam-online.md) section 20). Code joins
+between players who are not Steam friends no longer depend on the 2015
+steam_api's callback manager alone: the host sets the GNS function pointers
+204/205 (`ISteamNetworkingUtils004::SetConfigValue`) and pumps
+`ISteamNetworkingSockets012::RunCallbacks` on its own transport thread, with
+the old 1251 callback and polling kept (`net_steam_dispatch=both|fnptr|
+callback|poll`, Play-Coop `-SteamDispatch`, for the two-PC A/B). Every
+steamclient property this relies on is asserted by `--steamclient` (RTTI,
+strings and shapes; ten binary mutations fail it) and gated again at run
+time; a refusal only falls back to callback + poll. The guest learns why a
+join failed (1252, plain sentences shared by the native side and Play-Coop),
+a partner who quits shows as "left" at once, and an in-game status line with
+toasts (`coop_hud`, compact in play, off in the one-PC lab) shows the link,
+route, round trip and reasons. The link build id is the version plus the
+commit. New hidden scenario `coop-hud.txt`; the self-test gains stage F/D
+(`fn=ok`). Evidence is fixture only: `steam_transport_tests` (573 checks),
+`link_session_tests` (134), `lab_config_tests`, `steam_shim_patches_tests`,
+`worker_debug_tests`, the friend-package and worker-session tests.
 ## October 9, 2026: native partner online (fixture-tested, hidden runs pending)
 
 `wp/online-native` ([two-pc-play.md](two-pc-play.md) "Native partner",

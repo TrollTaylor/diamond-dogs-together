@@ -136,14 +136,17 @@ int main(int argc, char** argv) {
                     mgscoop::PartnerNativeNetName(c.partner_native_net), mgscoop::PartnerNativeStallName(c.partner_native_stall),
                     c.partner_native_stall_ms, mgscoop::PartnerNativeHoldName(c.partner_native_hold), c.partner_input_edge_repeats,
                     c.play_rehearsal ? 1 : 0);
+        // Section 20 and the in-game status line.
+        std::printf("net_steam_dispatch=%s\nsteam_selftest_fn=%d\ncoop_hud=%s\n", mgscoop::SteamDispatchName(c.net_steam_dispatch),
+                    c.steam_selftest_fn ? 1 : 0, mgscoop::CoopHudName(c.coop_hud));
         return 0;
     }
     if (std::strcmp(argv[1], "coop") == 0) {
         mgscoop::CoopConfig c{};
         if (!mgscoop::ParseCoopConfig(text.data(), text.size(), c)) return 3;
-        std::printf("present=%d\nmaster_url=%s\ncharacter=%s\ncharacter_fallback=%s\nunknown_keys=%u\ninvalid_values=%u\n",
+        std::printf("present=%d\nmaster_url=%s\ncharacter=%s\ncharacter_fallback=%s\nunknown_keys=%u\ninvalid_values=%u\nhud=%s\n",
                     c.present ? 1 : 0, c.master_url, CharacterName(c.character), CharacterName(c.character_fallback), c.unknown_keys,
-                    c.invalid_values);
+                    c.invalid_values, mgscoop::CoopHudName(c.hud));
         return 0;
     }
     std::fprintf(stderr, "unknown mode %s\n", argv[1]);

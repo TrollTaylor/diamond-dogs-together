@@ -314,6 +314,12 @@ $script:LabPartnerKeys = @(
     # Steam online self-test (docs/steam-online.md 14): lab only (play refuses
     # it), default 0 and written only when set; 2 adds the network-loopback pair.
     @{ Key = 'steam_selftest'; Json = 'steam_selftest'; Kind = 'int'; Min = 0; Max = 2 },
+    # Its function-pointer stage F/D (docs/steam-online.md 20.6): on natively;
+    # 0 skips it (fn=skip). Written only when set.
+    @{ Key = 'steam_selftest_fn'; Json = 'steam_selftest_fn'; Kind = 'bool' },
+    # The in-game co-op status line and toasts (docs/two-pc-play.md "In game"):
+    # off in the one-PC lab unless set (play shows it compact). Written only when set.
+    @{ Key = 'coop_hud'; Json = 'coop_hud'; Kind = 'enum'; Values = @('compact', 'full', 'off') },
     @{ Key = 'net_latency_ms'; Json = 'net_latency_ms'; Kind = 'int'; Min = 0; Max = 2000 },
     @{ Key = 'net_jitter_ms'; Json = 'net_jitter_ms'; Kind = 'int'; Min = 0; Max = 1000 },
     @{ Key = 'net_loss_permille'; Json = 'net_loss_permille'; Kind = 'int'; Min = 0; Max = 1000 },
