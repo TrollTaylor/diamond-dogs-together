@@ -83,8 +83,10 @@ void Observe(const Context& context,void (*log)(const char*) noexcept) noexcept;
 // Per remote slot (0 hip, 1 back, 2 secondary) one dispatch per allocation of
 // the same qualified ChangeEquip call stock46 uses, for the target a tier
 // picked: A1 the manifest's base id itself (its existing protected cache
-// entry), C a resident protected stock gun of the same type (same receiver
-// first, then the lowest id), D refuse and keep the slot empty. A filled slot
+// entry, of the manifest's type), C after ANY A1 refusal a resident
+// protected unreferenced stock gun (the same type and receiver first, then
+// the same type, then the slot class; equipment_stock_writer_contract
+// NextCandidate), D refuse and keep the slot empty. A filled slot
 // is never replaced; a cache entry is never built or evicted here. One
 // dispatch in flight at a time, each behind the full stock46-shape preflight
 // with the target's own derived data and its own readback.
@@ -113,7 +115,10 @@ inline const char* SlotStateName(SlotState state) noexcept {
 inline constexpr unsigned kSlots=3;
 struct SlotStatus {
     std::uint16_t want=0;       // the manifest's base id of this slot (0 unknown)
+    std::uint8_t want_type=0;   // the manifest's gun type of this slot (version 2; 0 unknown)
     std::uint16_t equip=0;      // the planned equip (A1 want, C the substitute)
+    std::uint32_t candidates=0; // tier C candidates tried (each logged as equip_writer=candidate)
+    std::uint16_t candidate=0;  // the last one (a final refusal names it)
     Tier tier=Tier::none;
     SlotState state=SlotState::idle;
     bool optional=false;        // the target's main FPK carries the optional asset (family O) or not (N)
@@ -140,6 +145,9 @@ struct GeneralContext {
     std::uintptr_t base=0,player=0,remote_block=0;
     std::size_t image_span=0;
     std::uint16_t want[kSlots]{};   // the received manifest's base ids
+    std::uint16_t alias[kSlots]{};  // its aliases (0: the remote carries nothing in that slot)
+    std::uint8_t type[kSlots]{};    // its gun types (version 2; 0 unknown)
+    std::uint8_t receiver[kSlots]{};  // its receivers (recipe byte 0; 0 unknown)
     std::uint8_t remote_slot=0xFF;  // the remote's current slot (dispatched last), 0xFF unknown
     // Why `gates` is false (a static string: the first failing admission or owner gate).
     const char* gate_reason=nullptr;

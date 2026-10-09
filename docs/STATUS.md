@@ -1,5 +1,47 @@
 # Development status
 
+## October 9, 2026: weapons3, reload exit, gun-type base ids, tier C writer, early manifest (fixture-tested, hidden runs pending)
+
+`wp/weapons3` (off `integ/final` 0.12.0) fixes what hidden run 53e36944
+showed ([native-puppet.md](native-puppet.md) "Weapons"); no new game code
+patch, every new read pinned:
+
+- **Reload (F1)**: body 1's reload was never stuck; it exits natively after
+  3.02 s (its own playback rate). `partner_reload` now reports stuck only
+  after 8 s and stays `entered` with the mirror frozen until the native exit;
+  every exit counts (`complete`, `complete_late`), the mirror reconciles once
+  after it, and a remote reload started meanwhile gets one queued tap (with
+  the reconcile, so body 1's magazine is below capacity). Telemetry
+  `reload.len_ms`, `remote_len_ms`, `refill_ms`. The reload keeps its native
+  length (the rate work F2 is out of scope).
+- **Sender base ids**: a slot's base id is never a non-gun id (343 was a
+  type-11 id). Customized aliases get their own type from the game's alias
+  path of `A2A3E0` (`0x2C934A0`, `0x2A711F0`; five new sites, the partner
+  contract is at 495 code sites and 103 vtable slots) and the base is the
+  first table index of that gun type with the slot's receiver, mapped to its
+  id (ids 0x400../0x600..), else 0. The manifest is version 2 (64 bytes,
+  `type[3]`); version 1 still decodes; one message type on channel 2.
+- **Writer**: A1 needs the manifest's type; any A1 refusal goes to tier C
+  (same type and receiver, same type, then the slot class; flags 3 and refs
+  0 only, never the viewer's weapons or an already dispatched equip; a
+  candidate line each; a tier d refusal names its last candidate).
+  `OptionalReady` admits the exe's own constructor shapes n1..8 / m(n)
+  (`kOptionalShapes`, asserted by `generate_equip_writer_pins.py --check`).
+  The slot plan and the fire gate use the manifest's type and tier `sub`
+  (a substitute in the remote's current slot is a match).
+- **Early manifest**: the loadout sender and the channel 2 drain run from the
+  observer's ~100 ms path in every mission (the title and the ACC too, no
+  partner state read), the preload query drains once more and each
+  MissionStart seeds the store from the session cache: the first mission
+  after connecting preloads the remote's weapons.
+- Scenario `partner-native-weapons.txt`: 18 x 200 ms reload bursts, a new
+  `aim-hold-reload` section (instance 1's aiming exit), F1, writer (all three
+  slots a1 or c), early manifest and switching evidence. Both PCs must run
+  this build (a 0.12.0 peer refuses the version 2 manifest).
+
+Evidence: fixture only (CTest, the Normal, Research and Release worker-check
+profiles, every contract generator `--check`). Hidden runs: the coordinator.
+
 ## October 9, 2026: 0.12.0, the four October 9 tracks in one build (fixture-tested, hidden runs pending)
 
 `integ/final` merges `wp/online-native`, `wp/steam-join`, `wp/aim-parity` and

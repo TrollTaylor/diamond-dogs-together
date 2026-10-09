@@ -447,6 +447,24 @@ int main() {
     Refuse([](Memory& q){q.Set(0x16200012,std::uint16_t(0x1000));},"stock_optional_shape");
     Refuse([](Memory& q){q.Set(0x1620000C,std::uint16_t(1));},"stock_optional_shape");
     Refuse([](Memory& q){q.Set(0x16200010,std::uint16_t(1));},"stock_optional_shape");
+    // The generalized shape: word0 = n in 1..8, word1 = m(n) of the exe's per-parameter table (1A95470 mode 0).
+    Refuse([](Memory& q){q.Set(0x1620000A,std::uint16_t(5));},"stock_optional_shape");
+    Refuse([](Memory& q){q.Set(0x16200008,std::uint16_t(0));q.Set(0x1620000A,std::uint16_t(0));},"stock_optional_shape");
+    Refuse([](Memory& q){q.Set(0x16200008,std::uint16_t(9));q.Set(0x1620000A,std::uint16_t(11));},"stock_optional_shape");
+    Refuse([](Memory& q){q.Set(0x16200008,std::uint16_t(3));q.Set(0x1620000A,std::uint16_t(6));},"stock_optional_shape");
+    Check(c::kOptionalShapes[3].n==4 && c::kOptionalShapes[3].m==6 && c::kOptionalShapes[3].size==544 &&
+          c::OptionalShapeOf(4,6)==&c::kOptionalShapes[3] && !c::OptionalShapeOf(4,7) && !c::OptionalShapeOf(0,2) && !c::OptionalShapeOf(9,11));
+    for(std::uint16_t n=1;n<=8;++n) {
+        const auto& shape=c::kOptionalShapes[n-1];
+        auto q=Ready();q.Set(0x16200008,n);q.Set(0x1620000A,shape.m);
+        Check(shape.n==n && c::Preflight(base,0xA01D000,q,P,fixture_buffer+0x6A8,before)==nullptr &&
+              before.optional.render_bytes==512+shape.size+128);
+    }
+    {
+        // n8 (832 bytes) at g 113: 512 + 832 + 992 > 2048.
+        auto q=Ready();q.Set(0x16200008,std::uint16_t(8));q.Set(0x1620000A,std::uint16_t(10));q.Set(base+0x2C71680,std::uint32_t(113));
+        Check(std::strcmp(c::Preflight(base,0xA01D000,q,P,fixture_buffer+0x6A8,before),"stock_optional_render_size")==0);
+    }
     Refuse([](Memory& q){q.Set(base+0x2C71680,std::uint32_t(154));},"stock_optional_global");
     Refuse([](Memory& q){q.Set(base+0x2C71680,std::uint32_t(114));},"stock_optional_render_size");
     m=Ready();m.Set(base+0x2C71680,std::uint32_t(113));
@@ -585,6 +603,47 @@ int main() {
         Check(std::strcmp(c::Derive(gv,engine,300,census,t),"dependency_hash")==0);
         m=Ready();Plain300(m);m.Set(engine+8,std::uintptr_t(0x1234));
         Check(std::strcmp(c::Derive(gv,engine,300,census,t),"type_table")==0);
+    }
+    {
+        // Tier C (the substitute search): run 53e36944's census shape. 6 t2 r18; 36 t1 r70; 39 t1 r69 with three
+        // references (the soldiers' rifle: never shared); the viewer's alias 871 (f1/n1); 46 t4; 27 t1 r69; a later
+        // second entry of 36 (not the id's first); 16 t2 r40; 40 t5 (the hip class).
+        std::array<c::CacheEntry,48> census{};
+        census[0]={6,2,18,3,0};census[1]={36,1,70,3,0};census[2]={39,1,69,3,3};census[3]={871,1,69,1,1};census[4]={46,4,157,3,0};
+        census[5]={27,1,69,3,0};census[6]={36,1,70,3,0};census[7]={16,2,40,3,0};census[8]={40,5,77,3,0};census[9]={50,1,69,1,0};
+        c::SubstituteQuery q{};q.slot=0;q.type=1;q.receiver=69;q.want=0;
+        std::array<bool,48> tried{};
+        Check(c::NextCandidate(census,q,c::SubstitutePass::type_receiver,tried)==5);  // 27: 39 (n3), 871 (alias), 50 (f1) never
+        tried[5]=true;
+        Check(c::NextCandidate(census,q,c::SubstitutePass::type_receiver,tried)==48);
+        Check(c::NextCandidate(census,q,c::SubstitutePass::type,tried)==1);  // 36, its first entry
+        tried[1]=true;
+        Check(c::NextCandidate(census,q,c::SubstitutePass::type,tried)==48);  // index 6 is not 36's first entry
+        Check(c::NextCandidate(census,q,c::SubstitutePass::slot_class,tried)==8);  // 40 (type 5, the hip class)
+        tried[8]=true;
+        Check(c::NextCandidate(census,q,c::SubstitutePass::slot_class,tried)==48);
+        // Without a type only the slot class; without a receiver no first pass.
+        c::SubstituteQuery any=q;any.type=0;std::array<bool,48> none{};
+        Check(c::NextCandidate(census,any,c::SubstitutePass::type_receiver,none)==48 && c::NextCandidate(census,any,c::SubstitutePass::type,none)==48 &&
+              c::NextCandidate(census,any,c::SubstitutePass::slot_class,none)==5);
+        c::SubstituteQuery norecv=q;norecv.receiver=0;
+        Check(c::NextCandidate(census,norecv,c::SubstitutePass::type_receiver,none)==48 && c::NextCandidate(census,norecv,c::SubstitutePass::type,none)==5);
+        // The secondary slot: 6 (t2) then 16 (t2); slot 1: 46 (t4).
+        c::SubstituteQuery sec{};sec.slot=2;sec.type=2;sec.receiver=11;
+        Check(c::NextCandidate(census,sec,c::SubstitutePass::type_receiver,none)==48 && c::NextCandidate(census,sec,c::SubstitutePass::type,none)==0);
+        c::SubstituteQuery back{};back.slot=1;back.type=0;
+        Check(c::NextCandidate(census,back,c::SubstitutePass::slot_class,none)==4);
+        // Explicit exclusions: the want, the viewer's own weapon, an equip already dispatched this allocation.
+        c::SubstituteQuery ex=q;ex.want=27;
+        Check(std::strcmp(c::CandidateExcluded(census[5],ex),"want")==0);
+        ex=q;ex.viewer[1]=27;
+        Check(std::strcmp(c::CandidateExcluded(census[5],ex),"viewer_weapon")==0);
+        ex=q;ex.dispatched[2]=27;
+        Check(std::strcmp(c::CandidateExcluded(census[5],ex),"dispatched")==0 && c::CandidateExcluded(census[1],ex)==nullptr);
+        // The substitute's type: the manifest's (of this slot), else the want's table type (of this slot), else the class.
+        Check(c::SubstituteType(1,0,0)==1 && c::SubstituteType(0,1,0)==1 && c::SubstituteType(4,1,0)==1 && c::SubstituteType(4,0,1)==4 &&
+              c::SubstituteType(0,11,0)==0 && c::SubstituteType(2,0,2)==2 && c::SubstituteType(9,0,1)==0);
+        Check(std::strcmp(c::SubstitutePassName(c::SubstitutePass::slot_class),"slot_class")==0);
     }
     std::printf("equipment_stock_writer_tests: %u checks passed; native_calls=0 game_reads=0\n",checks);
 }

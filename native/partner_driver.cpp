@@ -399,7 +399,7 @@ pin::V4Source SenderV4(const Driver& d, const Hooks& h, const pp::State& st, con
     // PP vt+0x98; read outside windows like the rest of the pad).
     v.gamepad = (kb_flags & 0x40u) == 0;
     v.v3 = SenderV3(d, h, st, snap);
-    if (d.mission.equip_tx_have) v.v3.equip_rev = d.mission.equip_tx.revision;
+    if (d.equip_tx_have) v.v3.equip_rev = d.equip_tx.revision;
     if (d.settings.nrates != PartnerNativeRates::off) {
         partner_rates::Wire w{};
         v.rates_valid = d.mission.rates_id0_ok && partner_rates::ToWire(RatesRecord(d.mission.rates_id0), w);
@@ -543,7 +543,7 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
     const bool gun_stage = set.native_active && set.ngun;
     a.reload = gun_stage ? set.nreload : PartnerNativeReload::mirror;
     a.reload_hold = gun_stage && m.reload_out.hold;
-    a.reload_stuck = gun_stage && m.reload_out.stuck;
+    a.reload_reconcile = gun_stage && m.reload_out.reconcile;
     a.config.sample_strip = gun_stage && set.nreload == PartnerNativeReload::event && m.remote_v5 ? pnat::kPadReload : 0u;
     a.slot_follow = !gun_stage ? PartnerNativeSlot::off
                     : (set.play_mode && set.nslot == PartnerNativeSlot::call) ? PartnerNativeSlot::write
@@ -1847,11 +1847,77 @@ void DrainEquip(Driver& d, const Hooks& h) noexcept {
             m.equip_logged_rev = m.equip.manifest.revision;
             const auto& e = m.equip.manifest;
             EmitNative(m, h, m.native_equip_cap, "partner_equip",
-                       "partner_equip=manifest; rev=%u; inv=%u; slots=%u:%u,%u:%u,%u:%u\r\n", unsigned(e.revision), unsigned(e.inv_slot),
-                       unsigned(e.slots[0].base_id), unsigned(e.slots[0].alias), unsigned(e.slots[1].base_id), unsigned(e.slots[1].alias),
-                       unsigned(e.slots[2].base_id), unsigned(e.slots[2].alias));
+                       "partner_equip=manifest; rev=%u; inv=%u; slots=%u:%u,%u:%u,%u:%u; type=%u,%u,%u; v=%u; mission=%u\r\n",
+                       unsigned(e.revision), unsigned(e.inv_slot), unsigned(e.slots[0].base_id), unsigned(e.slots[0].alias),
+                       unsigned(e.slots[1].base_id), unsigned(e.slots[1].alias), unsigned(e.slots[2].base_id), unsigned(e.slots[2].alias),
+                       unsigned(e.slots[0].type), unsigned(e.slots[1].type), unsigned(e.slots[2].type), unsigned(e.version),
+                       m.mission_code);
         }
     }
+}
+
+// The loadout sender (docs/native-puppet.md "Loadout mirroring"): this copy's
+// manifest (pure reads, at most once per kEquipReadMs), a new revision on
+// change, resent after a new link session. Driver-level: it outlives missions
+// and also runs outside them (the title and the ACC, from the observer's
+// ~100 ms path), so the receiver has it before its first allocation. Nothing
+// without a link session, for a copy that neither drives natively nor sends
+// input frames, or for a loadout without any weapon (vars not loaded yet).
+// Reads vars and the type tables only (never partner state).
+void SendEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
+    namespace ew = partner_equip_wire;
+    Mission& m = d.mission;
+    const Settings& set = d.settings;
+    if ((set.drive != PartnerDrive::native && !set.isend) || !h.read_loadout || !h.send_reliable) return;
+    const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
+    if (!epoch) return;
+    if (!d.equip_read_ms || now - d.equip_read_ms >= kEquipReadMs) {
+        d.equip_read_ms = now ? now : 1;
+        pp::Loadout lo{};
+        if (h.read_loadout(h.context, lo) && lo.ok && (lo.weapons[0] || lo.weapons[1] || lo.weapons[2])) {
+            ew::Manifest mf{};
+            mf.inv_slot = ew::kInvSlotUnknown;
+            for (unsigned i = 0; i < ew::kSlots; ++i) {
+                mf.slots[i].base_id = lo.base[i];
+                mf.slots[i].alias = lo.weapons[i];
+                mf.slots[i].type = ew::GunType(lo.type[i]) ? lo.type[i] : static_cast<std::uint8_t>(0);
+                std::memcpy(mf.slots[i].recipe, lo.chimera + i * ew::kRecipe, ew::kRecipe);
+            }
+            d.equip_tables_ok = lo.tables_ok;
+            if (!d.equip_tx_have || !ew::SameSlots(mf, d.equip_tx)) {
+                mf.revision = static_cast<std::uint16_t>(d.equip_tx_have && d.equip_tx.revision != 0xFFFFu ? d.equip_tx.revision + 1 : 1);
+                d.equip_tx = mf;
+                d.equip_tx_have = true;
+                d.equip_tx_dirty = true;
+                d.equip_loadout = lo;
+                // How each carried slot's base id came about (once per revision).
+                for (unsigned i = 0; i < ew::kSlots; ++i)
+                    if (lo.weapons[i])
+                        EmitNative(m, h, m.weapon_cap, "partner_weapon",
+                                   "partner_equip_base; rev=%u; slot=%u; alias=%u; type=%u; receiver=%u; alias_receiver=%u; base=%u; "
+                                   "scan=%s; tables=%u\r\n",
+                                   unsigned(mf.revision), i, unsigned(lo.weapons[i]), unsigned(mf.slots[i].type),
+                                   unsigned(lo.chimera[i * ew::kRecipe]), unsigned(lo.alias_receiver[i]), unsigned(lo.base[i]),
+                                   lo.scan[i] ? lo.scan[i] : "none", lo.tables_ok ? 1u : 0u);
+            }
+        }
+    }
+    if (d.equip_tx_have && epoch != d.equip_tx_epoch) d.equip_tx_dirty = true;
+    if (!d.equip_tx_have || !d.equip_tx_dirty) return;
+    ew::Manifest out = d.equip_tx;
+    out.epoch = epoch;
+    std::uint8_t bytes[ew::kSize]{};
+    if (!ew::Encode(out, bytes) || !h.send_reliable(h.context, ew::kChannel, bytes, sizeof(bytes))) return;
+    d.equip_tx_dirty = false;
+    d.equip_tx_epoch = epoch;
+    const auto& s = d.equip_tx.slots;
+    EmitNative(m, h, m.weapon_cap, "partner_weapon",
+               "partner_equip=sent; rev=%u; epoch=%u; base=%u,%u,%u; alias=%u,%u,%u; receiver=%u,%u,%u; type=%u,%u,%u; tables=%u; "
+               "mission=%u\r\n",
+               unsigned(d.equip_tx.revision), epoch, unsigned(s[0].base_id), unsigned(s[1].base_id), unsigned(s[2].base_id),
+               unsigned(s[0].alias), unsigned(s[1].alias), unsigned(s[2].alias), unsigned(s[0].recipe[0]), unsigned(s[1].recipe[0]),
+               unsigned(s[2].recipe[0]), unsigned(s[0].type), unsigned(s[1].type), unsigned(s[2].type), d.equip_tables_ok ? 1u : 0u,
+               m.mission_code);
 }
 
 std::uint32_t Rate(std::uint32_t now, std::uint32_t before, std::uint64_t dt_ms) noexcept {
@@ -1881,6 +1947,15 @@ std::uint32_t RemoteGunBase(const Mission& m, std::uint32_t equip) noexcept {
         for (const partner_equip_wire::Slot& s : m.equip.manifest.slots)
             if (s.alias == equip && s.base_id != 0) return s.base_id;
     return equip;
+}
+// The remote's current slot (0..2; 3 unknown): its live v5 slot, else the
+// received manifest's slot whose alias (or base id) is its in-hand equip.
+std::uint8_t RemoteCurrentSlot(const Mission& m, std::uint32_t equip) noexcept {
+    if (m.remote_v5 && m.remote_slot < 3) return m.remote_slot;
+    if (m.equip.have && equip != 0)
+        for (std::uint8_t s = 0; s < 3; ++s)
+            if (m.equip.manifest.slots[s].alias == equip || m.equip.manifest.slots[s].base_id == equip) return s;
+    return 3;
 }
 
 // --- Native weapons (docs/native-puppet.md "Weapons") ---------------------------
@@ -1960,12 +2035,12 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
         gi.remote_equip = static_cast<std::uint32_t>(m.remote_gun_equip);
         gi.remote_base = static_cast<std::uint32_t>(m.remote_gun_base);
         gi.body_equip = gun.fields.equip;
-        // W5: the tier C substitute of the slot carrying the remote's in-hand base counts as its weapon.
-        if (m.slot_plan_ok && m.equip.have)
-            for (unsigned s = 0; s < 3; ++s)
-                gi.substitute = gi.substitute || (m.slot_plan.tier[s] == partner_slots::Tier::sub &&
-                                                  m.slot_plan.equip[s] == gun.fields.equip && m.equip.manifest.slots[s].base_id != 0 &&
-                                                  m.equip.manifest.slots[s].base_id == static_cast<std::uint32_t>(m.remote_gun_base));
+        // W5: the plan's substitute (tier sub) in the remote's current slot counts as its weapon:
+        // the live v5 slot, else the manifest slot carrying the remote's in-hand equip (alias or base).
+        if (m.slot_plan_ok && m.equip.have) {
+            const std::uint8_t r = RemoteCurrentSlot(m, static_cast<std::uint32_t>(m.remote_gun_equip));
+            gi.substitute = r < 3 && m.slot_plan.tier[r] == partner_slots::Tier::sub && m.slot_plan.equip[r] == gun.fields.equip;
+        }
         gi.switching = m.body_switching;
         gi.type_ok = m.body_type != pnat::kNull;
         gi.body_type = gi.type_ok ? static_cast<std::uint8_t>(m.body_type) : static_cast<std::uint8_t>(0);
@@ -2068,46 +2143,6 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
                        static_cast<unsigned long long>(cs.noise_fn0), cs.noise_fn0_in_image ? 1u : 0u);
         }
     }
-    // Loadout sender: this copy's manifest (pure reads, at most once per
-    // kEquipReadMs), a new revision on change, resent after a new link session.
-    if (h.read_loadout && h.send_reliable && (!m.equip_read_ms || now - m.equip_read_ms >= kEquipReadMs)) {
-        m.equip_read_ms = now ? now : 1;
-        pp::Loadout lo{};
-        if (h.read_loadout(h.context, st, lo) && lo.ok) {
-            partner_equip_wire::Manifest mf{};
-            mf.inv_slot = partner_equip_wire::kInvSlotUnknown;
-            for (unsigned i = 0; i < partner_equip_wire::kSlots; ++i) {
-                mf.slots[i].base_id = lo.base[i];
-                mf.slots[i].alias = lo.weapons[i];
-                std::memcpy(mf.slots[i].recipe, lo.chimera + i * partner_equip_wire::kRecipe, partner_equip_wire::kRecipe);
-            }
-            m.equip_tables_ok = lo.tables_ok;
-            const bool same = m.equip_tx_have && std::memcmp(mf.slots, m.equip_tx.slots, sizeof(mf.slots)) == 0;
-            if (!same) {
-                mf.revision = static_cast<std::uint16_t>(m.equip_tx_have && m.equip_tx.revision != 0xFFFFu ? m.equip_tx.revision + 1 : 1);
-                m.equip_tx = mf;
-                m.equip_tx_have = true;
-                m.equip_tx_dirty = true;
-            }
-            const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
-            if (epoch && epoch != m.equip_tx_epoch) m.equip_tx_dirty = true;
-            if (m.equip_tx_dirty && epoch) {
-                partner_equip_wire::Manifest out = m.equip_tx;
-                out.epoch = epoch;
-                std::uint8_t bytes[partner_equip_wire::kSize]{};
-                if (partner_equip_wire::Encode(out, bytes) && h.send_reliable(h.context, partner_equip_wire::kChannel, bytes, sizeof(bytes))) {
-                    m.equip_tx_dirty = false;
-                    m.equip_tx_epoch = epoch;
-                    const auto& s = m.equip_tx.slots;
-                    EmitNative(m, h, m.weapon_cap, "partner_weapon",
-                               "partner_equip=sent; rev=%u; epoch=%u; base=%u,%u,%u; alias=%u,%u,%u; receiver=%u,%u,%u; tables=%u\r\n",
-                               unsigned(m.equip_tx.revision), epoch, unsigned(s[0].base_id), unsigned(s[1].base_id), unsigned(s[2].base_id),
-                               unsigned(s[0].alias), unsigned(s[1].alias), unsigned(s[2].alias), unsigned(s[0].recipe[0]),
-                               unsigned(s[1].recipe[0]), unsigned(s[2].recipe[0]), m.equip_tables_ok ? 1u : 0u);
-                }
-            }
-        }
-    }
     // Apply verdict of the received manifest for the back slot (where the
     // qualified stock46 writer puts instance 1's weapon): already when the
     // partner's loaded equip is that slot's base id; unsupported otherwise
@@ -2150,6 +2185,8 @@ void TickReload(Driver& d, const Hooks& h, const pnat::Out& out, bool gun_ok, co
     ri.gate = f && pnat::GunReloadGate(gun.fields, gun.b3d5);
     ri.can_reload = f && pnat::GunCanReload(gun.fields);
     ri.weapon_match = (m.weapon_strip & pnat::kPadReload) == 0;
+    ri.body_mag_ok = f;
+    ri.body_mag = f ? static_cast<std::uint16_t>(pnat::GunMagazine(gun.fields)) : static_cast<std::uint16_t>(0);
     ri.force_tap = d.rtap_pending;
     d.rtap_pending = false;
     m.reload_out = partner_reload::Step(m.reload, ri);
@@ -2166,13 +2203,31 @@ void TickReload(Driver& d, const Hooks& h, const pnat::Out& out, bool gun_ok, co
                    f ? pnat::GunMagazine(gun.fields) : 0u, f ? pnat::GunCapacity(gun.fields) : 0u, f ? unsigned(gun.m3e8) : 0u,
                    (gun.gun3c0 & c::gun3c0_reload_mode) ? 1u : 0u, gun.upper_ok ? unsigned(gun.upper_req) : 0xFFu,
                    Clamp32(now - m.reload.body_since_ms));
-    if (m.reload_out.event || tap_refused)
+    // Every native exit of an entered reload (also after a stuck report): its
+    // length against the remote's mode-11/12 span. gun.rate (instance 1's
+    // rec+0x310) is not read: that read is not contract-pinned.
+    const bool completed = m.reload_out.event && (std::strcmp(m.reload_out.event, "complete") == 0 ||
+                                                  std::strcmp(m.reload_out.event, "complete_late") == 0);
+    if (completed)
+        EmitNative(m, h, m.reload_cap, "partner_reload",
+                   "partner_reload=%s; setting=%s; len_ms=%u; remote_len_ms=%u; refill_ms=%u; mag=%u; m3e8=%u; completed=%u; "
+                   "entered=%u; late=%u; queued_tap=%u\r\n",
+                   m.reload_out.event, PartnerNativeReloadName(set.nreload), m.reload_out.len_ms, m.reload.remote_len_ms,
+                   m.reload.refill_ms, f ? pnat::GunMagazine(gun.fields) : 0u, f ? unsigned(gun.m3e8) : 0u, m.reload.completed,
+                   m.reload.entered, m.reload.completed_late, m.reload_out.queued_tap ? 1u : 0u);
+    else if (m.reload_out.event || tap_refused)
         EmitNative(m, h, m.reload_cap, "partner_reload",
                    "partner_reload=%s; setting=%s; state=%s; body_mode=%u; remote_mode=%u; seq=%u; mag=%u; m3e8=%u; taps=%u; reason=%s\r\n",
                    tap_refused ? "tap_refused" : m.reload_out.event, PartnerNativeReloadName(set.nreload),
                    partner_reload::StateName(m.reload.state), unsigned(ri.body_mode), unsigned(ri.remote_mode), unsigned(ri.remote_seq),
                    f ? pnat::GunMagazine(gun.fields) : 0u, f ? unsigned(gun.m3e8) : 0u, m.reload.taps,
                    tap_refused ? tap_refused : m.reload_out.reason ? m.reload_out.reason : "none");
+    // The remote's next reload queued while body 1 still reloaded: one tap at its exit.
+    if (m.reload_out.queued_tap)
+        EmitNative(m, h, m.reload_cap, "partner_reload",
+                   "partner_reload=queued_tap; setting=%s; state=%s; remote_mode=%u; seq=%u; mag=%u; taps=%u; reconcile=1; reason=%s\r\n",
+                   PartnerNativeReloadName(set.nreload), partner_reload::StateName(m.reload.state), unsigned(ri.remote_mode),
+                   unsigned(ri.remote_seq), f ? pnat::GunMagazine(gun.fields) : 0u, m.reload.taps, tap_refused ? tap_refused : "none");
 }
 
 // The weapon switch (docs/native-puppet.md "Weapons" W4/W6): body 1's slots,
@@ -2184,7 +2239,9 @@ void TickSlots(Driver& d, const Hooks& h, const pp::State& st, bool realized, bo
     const Settings& set = d.settings;
     m.slots1 = pp::Slots{};
     m.slots1_ok = set.ngun && realized && h.read_slots && h.read_slots(h.context, st, 1, m.slots1);
-    // The remote's base ids' types: once per manifest revision, retried while one is unread.
+    // The remote's slot types: the manifest's own (version 2: the slot's gun
+    // type, also when no base id matched), else the equip type table of its
+    // base id (a version 1 sender): once per manifest revision, retried while one is unread.
     bool types_missing = false;
     for (unsigned s = 0; s < 3; ++s)
         types_missing = types_missing || (m.equip.have && m.equip.manifest.slots[s].base_id != 0 && !m.slot_types_ok[s]);
@@ -2192,8 +2249,13 @@ void TickSlots(Driver& d, const Hooks& h, const pp::State& st, bool realized, bo
         m.slot_types_rev = m.equip.manifest.revision;
         for (unsigned s = 0; s < 3; ++s) {
             m.slot_types[s] = 0;
-            const std::uint16_t base = m.equip.manifest.slots[s].base_id;
-            m.slot_types_ok[s] = base != 0 && h.equip_type && h.equip_type(h.context, base, m.slot_types[s]);
+            const partner_equip_wire::Slot& ms = m.equip.manifest.slots[s];
+            if (partner_equip_wire::GunType(ms.type)) {
+                m.slot_types[s] = ms.type;
+                m.slot_types_ok[s] = true;
+                continue;
+            }
+            m.slot_types_ok[s] = ms.base_id != 0 && h.equip_type && h.equip_type(h.context, ms.base_id, m.slot_types[s]);
         }
     }
     partner_slots::PlanIn pin_{};
@@ -3122,6 +3184,13 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         t.reload_entered = m.reload.entered;
         t.reload_completed = m.reload.completed;
         t.reload_stuck_n = m.reload.stuck;
+        t.reload_completed_late = m.reload.completed_late;
+        t.reload_queued_taps = m.reload.queued_taps;
+        t.reload_reconcile = m.reload_out.reconcile;
+        t.reload_len_ms = m.reload.len_ms;
+        t.reload_len_max_ms = m.reload.len_max_ms;
+        t.reload_remote_len_ms = m.reload.remote_len_ms;
+        t.reload_refill_ms = m.reload.refill_ms;
         t.reload_fallbacks = m.reload.fallbacks;
         t.reload_body_entries = m.reload.body_entries;
         t.reload_sample_strip = m.have_arm ? m.last_arm.config.sample_strip : 0u;
@@ -3153,14 +3222,17 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         t.slot_writes = n.slot_writes;
         t.slot_refused = n.slot_refused;
         t.slot_faulted = n.slot_faulted;
-        t.equip_tx_rev = m.equip_tx_have ? m.equip_tx.revision : 0u;
+        t.equip_tx_rev = d.equip_tx_have ? d.equip_tx.revision : 0u;
         for (unsigned i = 0; i < 3; ++i) {
-            t.equip_tx_base[i] = m.equip_tx_have ? m.equip_tx.slots[i].base_id : 0u;
-            t.equip_tx_alias[i] = m.equip_tx_have ? m.equip_tx.slots[i].alias : 0u;
+            t.equip_tx_base[i] = d.equip_tx_have ? d.equip_tx.slots[i].base_id : 0u;
+            t.equip_tx_alias[i] = d.equip_tx_have ? d.equip_tx.slots[i].alias : 0u;
+            t.equip_tx_type[i] = d.equip_tx_have ? d.equip_tx.slots[i].type : 0u;
+            t.equip_rx_type[i] = m.equip.have ? m.equip.manifest.slots[i].type : 0u;
             t.equip_rx_base[i] = m.equip.have ? m.equip.manifest.slots[i].base_id : 0u;
             t.equip_rx_alias[i] = m.equip.have ? m.equip.manifest.slots[i].alias : 0u;
         }
-        t.equip_tables_ok = m.equip_tables_ok;
+        t.equip_tables_ok = d.equip_tables_ok;
+        t.equip_rx_version = m.equip.have ? m.equip.manifest.version : 0u;
         CopyText(t.equip_apply, sizeof(t.equip_apply), m.equip_apply[0] ? m.equip_apply : "none");
         // The generalized writer and preload (the observer's last report).
         const equipment_stock_writer::Status& ws = d.equip_status;
@@ -3175,6 +3247,9 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
             CopyText(t.writer_state[i], sizeof(t.writer_state[i]), equipment_stock_writer::SlotStateName(ss.state));
             CopyText(t.writer_reason[i], sizeof(t.writer_reason[i]), ss.reason[0] ? ss.reason : "none");
             t.writer_handle[i] = ss.handle;
+            t.writer_want_type[i] = ss.want_type;
+            t.writer_candidates[i] = ss.candidates;
+            t.writer_candidate[i] = ss.candidate;
         }
         t.writer_dispatches = ws.dispatches;
         t.writer_bound = ws.bound;
@@ -3371,6 +3446,13 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
 }
 } // namespace
 
+void TickEquipLink(Driver& d, const Hooks& h, std::uint64_t now_ms) noexcept {
+    DrainEquip(d, h);
+    SendEquip(d, h, now_ms);
+}
+
+void DrainEquipLink(Driver& d, const Hooks& h) noexcept { DrainEquip(d, h); }
+
 void Configure(Driver& d, const LabConfig& lab) noexcept {
     partner_upper_probe::Clear("configure");
     d = Driver{};
@@ -3465,6 +3547,15 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
     PublishDisarmed(d, h);
     if (h.reset_input_fault) h.reset_input_fault(h.context);
     d.mission = Mission{};
+    // The remote's manifest of this link session (received in any earlier
+    // mission, the title or the ACC): the slot plan and the weapon gate start
+    // with it; a new revision replaces it as before.
+    const std::uint32_t session = h.link_session ? h.link_session(h.context) : 0;
+    if (d.equip_cache_have && session && d.equip_cache_epoch == session) {
+        d.mission.equip.have = true;
+        d.mission.equip.manifest = d.equip_cache;
+        d.mission.equip_logged_rev = d.equip_cache.revision;
+    }
     d.settings.fire_live = false;  // the native tick re-derives it (filter live, gun class)
     partner_native::Reset(d.mission.native, d.settings.drive == PartnerDrive::native);
     d.mission.mag_scale = 1.0;
@@ -3760,7 +3851,7 @@ void PollTrigger(Driver& d, const Hooks& h, bool terminating) noexcept {
 bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, std::size_t size, const Clock& clock,
           bool terminating, partner::Reply& reply) noexcept {
     Mission& m = d.mission;
-    DrainEquip(d, h);  // reliable channel 2, every tick in every drive mode
+    TickEquipLink(d, h, clock.now_ms);  // reliable channel 2 and the loadout sender, every tick in every drive mode
     if (!m.cfg_ready || m.stopped || terminating) { partner_upper_probe::Clear("tick_inactive"); return false; }
     partner::Tick tick{};
     if (!partner::ParseTick(source, size, tick)) {

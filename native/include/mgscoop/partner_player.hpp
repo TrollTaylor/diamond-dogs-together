@@ -76,8 +76,11 @@ struct Addresses {
     std::uintptr_t gun_iface_vtable;    // 0x23B3FA0 (prim+0x30)
     // Native rates: the PS+0x260 interface (0x23AD380) and the per-id rate record (0x23AD2B0).
     std::uintptr_t rate_sp_vtable, rate_rec_vtable;
-    // Native weapons: the loadout base-id tables (runtime-filled image data).
+    // Native weapons: the loadout base-id tables (runtime-filled image data),
+    // the customized aliases' table (0x2C934A0) and the equipment resource
+    // (0x2A711F0) of the type getter A2A3E0's alias path.
     std::uintptr_t equip_types, equip_types_vtable, gun_basic;
+    std::uintptr_t alias_table, equip_resource;
     // Native weapons (switch): the equip controller vtable and the inventory (store) vtables.
     std::uintptr_t equip_ctl_vtable, store_vtable, store_vtable_alt;
 };
@@ -382,19 +385,31 @@ bool ReadAim(const Addresses& addresses, const State& state, AimRead& out) noexc
 // The local loadout (pure reads of vars = *(0x2C16920); registrations pinned):
 // vars.weapons[0..2] (u16 at +0x548: PRIMARY_HIP, PRIMARY_BACK, SECONDARY),
 // customizedWeapon[0..2] (u16 at +0xB06), chimeraParts (u8[36] at +0xB30,
-// 12 per slot, byte 0 = receiver). base[i] is the stock id the slot shows: the
-// equip id itself below 649, else (a customized alias) the lowest stock id
-// whose GunBasic recipe has the slot's receiver; 0 when unknown. The tables
+// 12 per slot, byte 0 = receiver). No partner-state gate: it runs in any
+// mission (the title and the ACC too) whenever vars are readable.
+// type[i] is the slot's own gun type 1..8 (0 unknown): a stock id's packed
+// type (ids below 0x230), a customized alias's (0x367..0x36C) from the game's
+// alias path (A2A3E0: the alias table's receiver, the equipment resource's
+// part and kind records; contract-pinned). base[i] is the stock id the slot
+// shows, never a non-gun id: the id itself for a stock gun; for an alias the
+// first type table index whose packed type equals the alias's type and whose
+// GunBasic recipe has the slot's receiver (chimera[i*12]), mapped index -> id
+// (partner_equip_wire::TableIndexToId); 0 when nothing matches. The tables
 // count only after the stock46 sanity checks (type table vtable, packed 46 ==
-// 0x6244, GunBasic row 393 == the stock46 recipe): tables_ok.
+// 0x6244, GunBasic row 393 == the stock46 recipe): tables_ok. scan[i] (static)
+// says how: none (empty slot) | stock | non_gun | gun_types | no_match |
+// alias_type (the alias's type unread) | tables | range (another id range).
 struct Loadout {
     bool ok, tables_ok;
     std::uint16_t weapons[3];
     std::uint16_t customized[3];
     std::uint8_t chimera[36];
     std::uint16_t base[3];
+    std::uint8_t type[3];
+    std::uint8_t alias_receiver[3];  // a customized alias's receiver from the alias table (0 none)
+    const char* scan[3];
 };
-bool ReadLoadout(const Addresses& addresses, const State& state, Loadout& out) noexcept;
+bool ReadLoadout(const Addresses& addresses, Loadout& out) noexcept;
 
 // Instance k's weapon slots (docs/native-puppet.md "Weapons" W4/W6; pure
 // reads): ctl = *(P+0xC8) with the equip controller vtable 0x23C1720 and

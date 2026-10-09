@@ -492,6 +492,14 @@ struct Telemetry {
     std::int32_t reload_remote_mode, reload_remote_seq;
     std::uint32_t reload_starts, reload_taps, reload_entered, reload_completed, reload_stuck_n, reload_fallbacks, reload_body_entries;
     std::uint32_t reload_sample_strip;
+    // F1 (run 53e36944): exits after stuck_ms (counted as completed too), the
+    // queued taps and whether one asks for the reconcile now; the last and
+    // longest native reload length, the remote's last mode-11/12 span and
+    // body_enter -> body 1's own first magazine change (milliseconds, 0
+    // until measured).
+    std::uint32_t reload_completed_late, reload_queued_taps;
+    bool reload_reconcile;
+    std::uint32_t reload_len_ms, reload_len_max_ms, reload_remote_len_ms, reload_refill_ms;
     // The magazine mirror's freeze (hook process totals): RELOAD edges seen
     // (written or not), drains frozen, reconcile writes and rec+0x3E8 writes.
     std::uint32_t mag_reload_seen, mag_frozen, mag_reconciles, mag_m3e8_writes;
@@ -522,6 +530,10 @@ struct Telemetry {
     std::uint32_t equip_tx_base[3], equip_tx_alias[3];
     bool equip_tables_ok;
     std::uint32_t equip_rx_base[3], equip_rx_alias[3];
+    // Manifest version 2: each slot's own gun type (0 unknown) sent and
+    // received, and the received manifest's version (0 none).
+    std::uint8_t equip_tx_type[3], equip_rx_type[3];
+    std::uint32_t equip_rx_version;
     char equip_apply[12];
     // The generalized writer and preload (W2/W3/W6; docs/native-puppet.md
     // "Generalized writer"): the setting (stock46|manifest|substitute), per
@@ -534,6 +546,11 @@ struct Telemetry {
     std::uint16_t writer_want[3], writer_equip[3];
     char writer_tier[3][6], writer_family[3][10], writer_state[3][12], writer_reason[3][32];
     std::uint32_t writer_handle[3];
+    // Per slot: the manifest's type of the slot (0 unknown), the tier C
+    // candidates tried and the last one (0 none).
+    std::uint8_t writer_want_type[3];
+    std::uint32_t writer_candidates[3];
+    std::uint16_t writer_candidate[3];
     std::uint32_t writer_dispatches, writer_bound, writer_refused;
     bool resident_ok;
     std::uint8_t resident_count;

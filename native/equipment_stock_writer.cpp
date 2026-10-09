@@ -199,6 +199,8 @@ struct General {
     Readiness readiness;
     contract::Target target{};
     std::uint32_t dispatched_handles[kSlots]{};
+    std::uint16_t dispatched_equips[kSlots]{};  // never a tier C candidate of another slot
+    unsigned candidate_lines=0;
     std::array<contract::CacheEntry,contract::kCacheEntries> census{};
 };
 General general;
@@ -215,10 +217,10 @@ void GeneralReceipt(void (*log)(const char*) noexcept,const char* phase,unsigned
     const auto& s=status.slots[slot];
     char line[640]{};
     StringCchPrintfA(line,sizeof(line),
-        "equip_writer=%s; reason=%s; mission=%u; slot=%u; want=%u; equip=%u; tier=%s; family=%s; type=%u; cache=%u; epoch=%u; expected_handle=%x; result=%d; mismatch_rva=%llx; dispatches=%u; instance=1; retry=0; alias_call=0; rollback_calls=0; replace_filled=0; evict=0\r\n",
-        phase,reason ? reason : "ok",general.mission,slot,unsigned(s.want),unsigned(s.equip),TierName(s.tier),
-        s.equip ? (s.optional ? "optional" : "plain") : "none",unsigned(s.type),unsigned(s.cache_index),general.observed_epoch,s.handle,result,
-        static_cast<unsigned long long>(mismatch),status.dispatches);
+        "equip_writer=%s; reason=%s; mission=%u; slot=%u; want=%u; want_type=%u; equip=%u; tier=%s; family=%s; type=%u; cache=%u; candidates=%u; candidate=%u; epoch=%u; expected_handle=%x; result=%d; mismatch_rva=%llx; dispatches=%u; instance=1; retry=0; alias_call=0; rollback_calls=0; replace_filled=0; evict=0\r\n",
+        phase,reason ? reason : "ok",general.mission,slot,unsigned(s.want),unsigned(s.want_type),unsigned(s.equip),TierName(s.tier),
+        s.equip ? (s.optional ? "optional" : "plain") : "none",unsigned(s.type),unsigned(s.cache_index),s.candidates,unsigned(s.candidate),
+        general.observed_epoch,s.handle,result,static_cast<unsigned long long>(mismatch),status.dispatches);
     log(line);
 }
 void CensusReceipt(void (*log)(const char*) noexcept) noexcept {
@@ -275,70 +277,113 @@ void Waiting(void (*log)(const char*) noexcept,unsigned slot,const char* reason)
         reason ? reason : "none",general.mission,slot);
     log(line);
 }
-// Picks slot `slot`'s target: A1 the manifest's base id, C a resident
-// protected stock gun of the same type (substitute only), D refuse.
+// One line per tier C candidate that passed the census filters (capped per
+// allocation): its pass, type, receiver, the reason (ok or the first failing
+// check of Derive/Capture) and the optional header shape words it showed.
+constexpr unsigned kCandidateLines=24;
+// Candidates (each a full Capture on the mission owner) per slot and allocation.
+constexpr unsigned kCandidatesPerSlot=16;
+void CandidateReceipt(void (*log)(const char*) noexcept,unsigned slot,std::uint16_t equip,contract::SubstitutePass pass,
+                      const contract::CacheEntry& e,const char* reason,const contract::Snapshot& candidate_scratch) noexcept {
+    if(!log || general.candidate_lines>=kCandidateLines) return;
+    ++general.candidate_lines;
+    char shape[48]="none";
+    const auto* h=candidate_scratch.optional.header_bytes.data();
+    if(contract::Word32(h)==0x0C012B72)
+        StringCchPrintfA(shape,sizeof(shape),"%u.%u.%u.%u.%u.%u",unsigned(contract::Word16(h+8)),unsigned(contract::Word16(h+10)),
+            unsigned(contract::Word16(h+12)),unsigned(contract::Word16(h+14)),unsigned(contract::Word16(h+16)),unsigned(contract::Word16(h+18)));
+    char line[384]{};
+    StringCchPrintfA(line,sizeof(line),
+        "equip_writer=candidate; mission=%u; slot=%u; want=%u; equip=%u; tier=c; pass=%s; type=%u; receiver=%u; flags=%u; refs=%u; reason=%s; shape=%s; native_calls=0\r\n",
+        general.mission,slot,unsigned(status.slots[slot].want),unsigned(equip),contract::SubstitutePassName(pass),unsigned(e.type),
+        unsigned(e.receiver),unsigned(e.flags),e.refs,reason ? reason : "ok",shape);
+    log(line);
+}
+// Picks slot `slot`'s target: A1 the manifest's base id (of the manifest's
+// type), C after ANY A1 refusal (substitute only) a resident protected
+// unreferenced stock gun (the same type and receiver, the same type, then the
+// slot class), D refuse.
 template<class View> void Plan(const GeneralContext& c,View& v,std::uintptr_t engine,unsigned slot,
                                void (*log)(const char*) noexcept) noexcept {
     auto& s=status.slots[slot];
     s.want=c.want[slot];
+    s.want_type=c.type[slot];
     if(!c.manifest) {
         s.state=SlotState::plan_wait;SetReason(s,"no_manifest");
         if(++general.plan_waits>=kPlanWaitLimit) {s.tier=Tier::d;Advance(log,slot,SlotState::refused,"refused","no_manifest");}
         return;
     }
-    // The remote carries nothing in this slot: nothing to follow.
-    if(!s.want) {s.tier=Tier::d;Advance(log,slot,SlotState::refused,"refused","no_base");return;}
+    // The remote carries nothing in this slot (no alias, no base): nothing to follow.
+    if(!s.want && !c.alias[slot]) {s.tier=Tier::d;Advance(log,slot,SlotState::refused,"refused","no_base");return;}
     contract::Target t{};
-    const char* why=contract::Derive(v,engine,s.want,general.census,t);
-    if(!why && t.slot!=slot) why="type_slot";
-    if(!why && !contract::ResidentProtected(general.census[t.cache_index]))
-        why=general.census[t.cache_index].refs ? "cache_shared" : "cache_unprotected";
-    if(!why && general.census[t.cache_index].type!=t.type) why="cache_type";
+    const char* why=nullptr;
+    if(!s.want) why="no_base";
+    else {
+        why=contract::Derive(v,engine,s.want,general.census,t);
+        if(!why && t.slot!=slot) why="type_slot";
+        // A1 needs the manifest's own type of the slot (version 2; 0 unknown).
+        if(!why && c.type[slot] && t.type!=c.type[slot]) why="type_mismatch";
+        if(!why && !contract::ResidentProtected(general.census[t.cache_index]))
+            why=general.census[t.cache_index].refs ? "cache_shared" : "cache_unprotected";
+        if(!why && general.census[t.cache_index].type!=t.type) why="cache_type";
+    }
     Tier tier=why ? Tier::d : Tier::a1;
     if(why && c.substitute) {
-        // The remote base's type (and receiver) from the same tables Derive reads.
+        if(log) {
+            char line[192]{};
+            StringCchPrintfA(line,sizeof(line),"equip_writer=a1_refused; mission=%u; slot=%u; want=%u; type=%u; reason=%s; next=c; native_calls=0\r\n",
+                general.mission,slot,unsigned(s.want),unsigned(c.type[slot]),why);
+            log(line);
+        }
+        // The want's table type and GunBasic receiver (the fallbacks of a version 1 manifest).
+        std::uint8_t want_type=0,want_receiver=0;
         std::uintptr_t types=0,resource=0,basic=0;std::uint16_t packed=0;std::array<std::uint8_t,12> recipe{};
-        std::uint8_t type=0,receiver=0;
-        if(s.want<0x230 && v.At(engine,8,types) && types==v.base+0x2A70920 && v.Method(types,0x22AD180,0,0xA2A3E0) &&
+        if(s.want && s.want<0x230 && v.At(engine,8,types) && types==v.base+0x2A70920 && v.Method(types,0x22AD180,0,0xA2A3E0) &&
            v.At(types,8+std::size_t(s.want)*2,packed)) {
-            type=static_cast<std::uint8_t>(packed&0x3F);
+            want_type=static_cast<std::uint8_t>(packed&0x3F);
             const std::size_t row=packed>>6;
             if(row && row<=0x1818/12 && v.At(engine,0x10,resource) && resource==v.base+0x2A711F0 && v.At(resource,8,basic) &&
-               basic==v.base+0x2C25C50 && v.At(basic,(row-1)*12,recipe)) receiver=recipe[0];
+               basic==v.base+0x2C25C50 && v.At(basic,(row-1)*12,recipe)) want_receiver=recipe[0];
         }
-        if(!type || contract::TypeSlot(type)!=slot) why=type ? "type_slot" : "no_type";
-        else {
-            // Candidates: resident protected first entries of the same type,
-            // the same receiver first, then the lowest id.
-            unsigned picked=contract::kCacheEntries;const char* first_why=nullptr;
-            for(unsigned pass=0;pass<2 && picked==contract::kCacheEntries;++pass) {
-                std::array<bool,contract::kCacheEntries> tried{};
-                for(;;) {
-                    unsigned best=contract::kCacheEntries;
-                    for(unsigned i=0;i<contract::kCacheEntries;++i) {
-                        const auto& e=general.census[i];
-                        if(tried[i] || !contract::ResidentProtected(e) || !e.equip || e.equip>=0x230 || e.equip==s.want ||
-                           e.type!=type || contract::FirstEntry(general.census,e.equip)!=i) continue;
-                        if((pass==0)!=(receiver!=0 && e.receiver==receiver)) continue;
-                        if(best==contract::kCacheEntries || e.equip<general.census[best].equip) best=i;
-                    }
-                    if(best==contract::kCacheEntries) break;
-                    tried[best]=true;
-                    contract::Target candidate{};
-                    const char* reason=contract::Derive(v,engine,general.census[best].equip,general.census,candidate);
-                    if(!reason && (candidate.slot!=slot || candidate.cache_index!=best || candidate.type!=type)) reason="candidate_shape";
-                    if(!reason) {
-                        // Its packages must be loaded in this mission (the whole Capture holds).
-                        auto reader=Read;
-                        reason=contract::Capture(c.base,c.image_span,reader,c.player,c.remote_block,general_scratch,candidate);
-                    }
-                    if(!reason) {picked=best;t=candidate;break;}
-                    if(!first_why) first_why=reason;
+        contract::SubstituteQuery q{};
+        q.slot=slot;q.want=s.want;
+        q.type=contract::SubstituteType(c.type[slot],want_type,slot);
+        q.receiver=c.receiver[slot] ? c.receiver[slot] : want_receiver;
+        for(unsigned i=0;i<kSlots;++i) if(i!=slot) q.dispatched[i]=general.dispatched_equips[i];
+        // The viewer's own weapons (vars.weapons u16[6] at the start of the ammo block) are never substitutes.
+        LocalVars viewer{};
+        const bool viewer_ok=ReadLocalVars(c.base,viewer);
+        if(viewer_ok) for(unsigned i=0;i<q.viewer.size();++i) q.viewer[i]=contract::Word16(viewer.ammo.data()+i*2);
+        const char* last_why=viewer_ok ? nullptr : "local_vars_unread";
+        bool picked=false;
+        std::array<bool,contract::kCacheEntries> tried{};
+        for(unsigned p=0;viewer_ok && !picked && p<3;++p) {
+            const auto pass=static_cast<contract::SubstitutePass>(p);
+            for(;;) {
+                const unsigned i=contract::NextCandidate(general.census,q,pass,tried);
+                if(i>=contract::kCacheEntries) break;
+                if(s.candidates>=kCandidatesPerSlot) {last_why="candidate_limit";p=3;break;}
+                tried[i]=true;
+                const auto& e=general.census[i];
+                ++s.candidates;s.candidate=e.equip;
+                general_scratch={};
+                contract::Target candidate{};
+                const char* reason=contract::CandidateExcluded(e,q);
+                if(!reason) reason=contract::Derive(v,engine,e.equip,general.census,candidate);
+                if(!reason && (candidate.slot!=slot || candidate.cache_index!=i || candidate.type!=e.type)) reason="candidate_shape";
+                if(!reason) {
+                    // Its packages must be loaded in this mission (the whole Capture holds).
+                    auto reader=Read;
+                    reason=contract::Capture(c.base,c.image_span,reader,c.player,c.remote_block,general_scratch,candidate);
                 }
+                CandidateReceipt(log,slot,e.equip,pass,e,reason,general_scratch);
+                if(!reason) {picked=true;t=candidate;break;}
+                last_why=reason;
             }
-            if(picked!=contract::kCacheEntries) {why=nullptr;tier=Tier::c;}
-            else why=first_why ? first_why : "no_resident";
         }
+        // A final refusal names the last candidate (s.candidate) and its reason.
+        if(picked) {why=nullptr;tier=Tier::c;}
+        else why=last_why ? last_why : "no_resident";
     }
     if(why) {
         s.tier=Tier::d;s.equip=0;
@@ -555,7 +600,8 @@ void ObserveGeneral(const GeneralContext& c,void (*log)(const char*) noexcept) n
         Readback(c.base,c.image_span,c.player,c.remote_block,g.target,g.expected,general_before,general_scratch,bound);
     if(!called || returned!=reinterpret_cast<std::uintptr_t>(&result) || result!=0 || readback) {
         // A confirmed handle still occupies the slot: later slots expect it.
-        if(called && readback==nullptr) g.dispatched_handles[slot]=g.expected;
+        if(called && readback==nullptr) {g.dispatched_handles[slot]=g.expected;g.dispatched_equips[slot]=g.target.equip;}
+        else if(called) g.dispatched_equips[slot]=g.target.equip;
         Advance(log,slot,SlotState::unverified,"call_unverified",readback ? readback : !called ? "seh_fault" : "dispatch_result",result);
         // The viewer's vars moved (or became unreadable) across our call: no further dispatch this allocation.
         while(vars_changed && g.cursor<kSlots) {
@@ -566,6 +612,7 @@ void ObserveGeneral(const GeneralContext& c,void (*log)(const char*) noexcept) n
         return;
     }
     g.dispatched_handles[slot]=g.expected;
+    g.dispatched_equips[slot]=g.target.equip;
     if(bound) {Advance(log,slot,SlotState::bound,"handle_bound",nullptr,result);return;}
     s.state=SlotState::tracking;SetReason(s,"queued");
     GeneralReceipt(log,"handle_queued",slot,nullptr,result);

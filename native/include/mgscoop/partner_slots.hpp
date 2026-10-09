@@ -37,10 +37,17 @@ inline constexpr Handle Decode(std::uint32_t handle) noexcept {
 }
 
 // same: the body's slot holds the remote's base id of that slot (the tier A1
-// shape); sub: another weapon of the same type (tier C); empty: nothing in the
-// body's slot; other: a different type; unknown: no manifest, no base id or no
-// type for it.
+// shape); sub: another weapon of the same type, or of the same slot class when
+// both types belong to this slot (the writer's tier C); empty: nothing in the
+// body's slot; other: a different type; unknown: no manifest or no type for
+// the remote's weapon (the manifest's own type, version 2, counts also when
+// no base id matched).
 enum class Tier : std::uint8_t { unknown, same, sub, empty, other };
+// ChangeEquip's slot of a gun type (equipment_stock_writer_contract::TypeSlot,
+// same mapping): 1/5/7 hip (0), 4/6/8 back (1), 2/3 secondary (2), else 0xFF.
+constexpr std::uint8_t TypeSlot(std::uint8_t type) noexcept {
+    return (type == 1 || type == 5 || type == 7) ? 0u : (type == 4 || type == 6 || type == 8) ? 1u : (type == 2 || type == 3) ? 2u : 0xFFu;
+}
 const char* TierName(Tier tier) noexcept;
 struct PlanIn {
     Handle body[kSlots];             // body 1's inventory handles (filled false when unread)
@@ -73,8 +80,9 @@ struct GateIn {
     bool switching;    // body 1: rec+0x3C0 bit 7 or rec+0x2C0 == 8
     bool type_ok;      // body_type was read
     std::uint8_t body_type;
-    // The body holds the tier C substitute the plan admitted for the slot
-    // whose manifest base is the remote's in-hand weapon (same type).
+    // The body holds the substitute the plan admitted (tier sub) for the
+    // remote's current slot (its live v5 slot, else the manifest slot carrying
+    // its in-hand equip): a substitute in that slot is a match.
     bool substitute;
 };
 Gate Judge(const GateIn& in) noexcept;

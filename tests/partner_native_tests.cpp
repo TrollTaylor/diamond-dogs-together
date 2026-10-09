@@ -1159,6 +1159,8 @@ pr::In ReloadReady(std::uint64_t now, std::uint8_t seq, std::uint8_t remote_mode
     in.body_ok = true;
     in.body_mode = body_mode;
     in.gun_class = in.gate = in.can_reload = in.weapon_match = true;
+    in.body_mag_ok = true;
+    in.body_mag = 3;
     return in;
 }
 void TestReload() {
@@ -1176,11 +1178,18 @@ void TestReload() {
     o = pr::Step(m, ReloadReady(1150, 5, 11, 12));
     Check(o.hold && Is(o.event, "entered") && m.entered == 1 && m.body_entries == 1 && m.state == pr::State::entered &&
               Is(o.body_event, "body_enter"), "entered");
+    // Body 1's own refill (its magazine changes inside the reload): refill_ms.
+    pr::In refill = ReloadReady(1500, 5, 11, 12);
+    refill.body_mag = 8;
+    o = pr::Step(m, refill);
+    Check(o.hold && !o.event && m.refill_ms == 350, "refill_ms: body_enter -> the body's own first magazine change");
     o = pr::Step(m, ReloadReady(1800, 5, 7, 12));
-    Check(o.hold && !o.event, "entered: still reloading after the remote finished (held)");
+    Check(o.hold && !o.event && m.remote_len_ms == 800, "entered: still reloading after the remote finished (held)");
     o = pr::Step(m, ReloadReady(2100, 5, 7, 7));
-    Check(!o.hold && Is(o.event, "complete") && m.completed == 1 && m.state == pr::State::idle && Is(o.body_event, "body_exit"),
-          "complete: the mirror reconciles");
+    Check(!o.hold && Is(o.event, "complete") && m.completed == 1 && m.state == pr::State::idle && Is(o.body_event, "body_exit") &&
+              o.len_ms == 950 && m.len_ms == 950 && m.len_max_ms == 950 && !o.queued_tap && !o.reconcile,
+          "complete: the mirror reconciles; len_ms = body_exit - body_enter");
+    Check(m.remote_len_ms == 800, "remote_len_ms: the remote's mode-11/12 span (1000 .. 1800)");
     // Retries, then the timeout.
     o = pr::Step(m, ReloadReady(3000, 6, 11, 7));
     Check(o.tap && m.taps == 2, "second reload: tap");
@@ -1211,18 +1220,58 @@ void TestReload() {
     // A raw press already started body 1's reload: entered without a tap.
     o = pr::Step(m, ReloadReady(6000, 14, 11, 11));
     Check(!o.tap && o.hold && Is(o.event, "entered"), "already reloading: entered, no tap");
-    // Stuck: the body's reload mode no longer freezes the mirror after stuck_ms.
+    const std::uint32_t completed = m.completed;
+    // A native reload of 3.02 s (instance 1's own playback rate, run 53e36944) is no stuck reload.
     o = pr::Step(m, ReloadReady(8600, 14, 7, 11));
-    Check(o.stuck && !o.hold && Is(o.event, "stuck") && m.stuck == 1 && m.state == pr::State::idle, "stuck: released");
-    Check(pr::Step(m, ReloadReady(8700, 14, 7, 11)).stuck, "stuck latched while the body stays");
-    Check(!pr::Step(m, ReloadReady(8800, 14, 7, 7)).stuck, "the latch clears when the body leaves");
+    Check(!o.stuck && o.hold && !o.event && m.stuck == 0 && m.state == pr::State::entered, "2.6 s: still entered, held, not stuck");
+    // Stuck after 8 s: a report only; entered and the hold stay (the mirror waits for the native exit).
+    o = pr::Step(m, ReloadReady(14000, 14, 7, 11));
+    Check(o.stuck && o.hold && Is(o.event, "stuck") && m.stuck == 1 && m.state == pr::State::entered, "stuck: reported, still held");
+    o = pr::Step(m, ReloadReady(14100, 14, 7, 11));
+    Check(o.stuck && o.hold && !o.event, "stuck latched while the body stays (held)");
+    // An unread tick neither exits nor re-enters.
+    pr::In unread = ReloadReady(14200, 14, 7, 0);
+    unread.body_ok = false;
+    o = pr::Step(m, unread);
+    Check(o.hold && !o.body_event && m.state == pr::State::entered, "an unread tick keeps the state");
+    // The native exit after stuck_ms still counts: complete_late.
+    o = pr::Step(m, ReloadReady(14300, 14, 7, 7));
+    Check(!o.stuck && !o.hold && Is(o.event, "complete_late") && m.completed == completed + 1 && m.completed_late == 1 &&
+              o.len_ms == 8300 && m.len_max_ms == 8300 && m.state == pr::State::idle && Is(o.body_event, "body_exit"),
+          "the late native exit counts (complete_late) and releases");
+    // A queued reload: the remote starts its next reload while body 1 still reloads; at body 1's exit the remote is
+    // still reloading: one tap, the reconcile instead of the hold (body 1's magazine is full after its completion).
+    o = pr::Step(m, ReloadReady(15000, 20, 11, 7));
+    Check(o.tap && Is(o.event, "tap"), "queued: the first reload taps");
+    o = pr::Step(m, ReloadReady(15100, 20, 11, 11));
+    Check(Is(o.event, "entered") && o.hold, "queued: entered");
+    o = pr::Step(m, ReloadReady(16000, 20, 7, 11));
+    o = pr::Step(m, ReloadReady(16500, 21, 11, 11));
+    Check(o.hold && !o.tap && m.queued && m.starts >= 1, "queued: a remote start while entered waits for the exit");
+    const std::uint32_t taps_before = m.taps;
+    o = pr::Step(m, ReloadReady(18100, 21, 11, 7));
+    Check(Is(o.event, "complete") && o.queued_tap && o.tap && !o.hold && o.reconcile && m.state == pr::State::pending &&
+              m.taps == taps_before + 1 && m.queued_taps == 1, "queued: complete, then one tap with the reconcile");
+    o = pr::Step(m, ReloadReady(18200, 21, 11, 7));
+    Check(!o.hold && o.reconcile && !o.tap, "queued: pending with the reconcile");
+    o = pr::Step(m, ReloadReady(18300, 21, 11, 12));
+    Check(Is(o.event, "entered") && o.hold && !o.reconcile && !m.queued_reconcile, "queued: body 1 enters its next reload");
+    o = pr::Step(m, ReloadReady(21300, 21, 7, 7));
+    Check(Is(o.event, "complete") && !o.queued_tap && !o.hold, "queued: its exit completes");
+    // A start while entered whose remote reload is over at the exit: no tap.
+    o = pr::Step(m, ReloadReady(22000, 22, 11, 7));
+    o = pr::Step(m, ReloadReady(22100, 22, 11, 11));
+    o = pr::Step(m, ReloadReady(22500, 23, 11, 11));
+    o = pr::Step(m, ReloadReady(23000, 23, 7, 11));
+    o = pr::Step(m, ReloadReady(25100, 23, 7, 7));
+    Check(Is(o.event, "complete") && !o.queued_tap && !o.tap && m.state == pr::State::idle, "queued: the remote finished, no tap");
     // raw/mirror never tap; the counter still counts starts.
-    pr::In raw = ReloadReady(9000, 15, 11, 7);
+    pr::In raw = ReloadReady(29000, 15, 11, 7);
     raw.setting = mgscoop::PartnerNativeReload::raw;
     o = pr::Step(m, raw);
     Check(!o.tap && !o.hold && Is(o.event, "start") && m.starts >= 2, "raw: start counted, no tap");
     // A test tap (rtap=1) without a remote reload.
-    pr::In forced = ReloadReady(9500, 15, 7, 7);
+    pr::In forced = ReloadReady(29500, 15, 7, 7);
     forced.force_tap = true;
     o = pr::Step(m, forced);
     Check(o.tap && o.hold, "force_tap: one tap");
@@ -1234,14 +1283,16 @@ void TestReload() {
     gone.remote_valid = false;
     pr::Step(n, gone);
     Check(!pr::Step(n, ReloadReady(300, 9, 11, 7)).tap && n.starts == 0, "after an invalid frame the counter is only recorded");
-    // The freeze rule.
+    // The freeze rule: body 1's reload mode freezes however long it lasts (the reconcile only after the exit).
     using mgscoop::PartnerNativeReload;
     Check(!pr::MirrorFrozen(PartnerNativeReload::mirror, true, 11, true, false), "mirror never freezes");
     Check(pr::MirrorFrozen(PartnerNativeReload::raw, true, 7, false, false), "raw: the remote reloading freezes");
     Check(pr::MirrorFrozen(PartnerNativeReload::raw, false, 12, false, false), "raw: body 1 reloading freezes");
-    Check(!pr::MirrorFrozen(PartnerNativeReload::raw, false, 12, false, true), "raw: a stuck body reload does not");
+    Check(pr::MirrorFrozen(PartnerNativeReload::raw, false, 12, false, true), "raw: body 1 reloading freezes even with the reconcile");
     Check(pr::MirrorFrozen(PartnerNativeReload::event, false, 7, true, false), "event: the driver's hold freezes");
     Check(!pr::MirrorFrozen(PartnerNativeReload::event, false, 7, false, false), "event: nothing reloading, no freeze");
+    Check(!pr::MirrorFrozen(PartnerNativeReload::event, true, 7, false, true), "event: the queued tap's reconcile despite the remote reload");
+    Check(pr::Params{}.stuck_ms == 8000, "stuck_ms 8000 (a 3.02 s native reload is never stuck)");
     // Sender counters.
     pr::SenderState s{};
     pr::SenderStep(s, true, 11, 1);
@@ -1289,7 +1340,28 @@ void TestSlots() {
     in.remote_type_ok[1] = false;
     Check(ps::MakePlan(in).tier[1] == ps::Tier::unknown, "no type for the remote's weapon: unknown");
     in.remote_base[1] = 0;
-    Check(ps::MakePlan(in).tier[1] == ps::Tier::unknown && ps::MakePlan(in).ok_mask == 0, "no manifest: unknown, refused");
+    Check(ps::MakePlan(in).tier[1] == ps::Tier::unknown && ps::MakePlan(in).ok_mask == 0, "no base and no type: unknown, refused");
+    // Version 2: the manifest's own type counts without a base id (the alias's base matched nothing).
+    in.remote_type_ok[1] = true;
+    in.remote_type[1] = 4;
+    p = ps::MakePlan(in);
+    Check(p.tier[1] == ps::Tier::sub && p.ok_mask == 0x2 && p.equip[1] == 46, "base 0, type 4: the type-4 body weapon is the substitute");
+    // The slot class: a type-6 remote weapon in the back slot, body 1's type-4 gun there (the writer's tier C class).
+    in.remote_type[1] = 6;
+    Check(ps::MakePlan(in).tier[1] == ps::Tier::sub, "the same slot class (4/6/8): sub");
+    in.remote_type[1] = 2;
+    Check(ps::MakePlan(in).tier[1] == ps::Tier::other, "a type of another slot class: other");
+    in.remote_type[1] = 0;
+    Check(ps::MakePlan(in).tier[1] == ps::Tier::unknown, "type 0: unknown");
+    // A hip substitute for run 53e36944's slot 0: alias 871 of type 1, no base; body 1 holds 36 (type 1).
+    in.body[0] = ps::Decode((5u << 16) | (36u << 5) | 1u);
+    in.remote_base[0] = 0; in.remote_type[0] = 1; in.remote_type_ok[0] = true;
+    p = ps::MakePlan(in);
+    Check(p.tier[0] == ps::Tier::sub && p.equip[0] == 36 && (p.ok_mask & 1u), "slot 0: 36 substitutes the remote's 871 (type 1)");
+    for (unsigned t = 0; t < 32; ++t)
+        Check(ps::TypeSlot(static_cast<std::uint8_t>(t)) == ((t == 1 || t == 5 || t == 7) ? 0u : (t == 4 || t == 6 || t == 8) ? 1u
+                                                              : (t == 2 || t == 3) ? 2u : 0xFFu), "TypeSlot");
+    in.body[0] = ps::Decode(0u);
     in.body_ok = false;
     Check(ps::MakePlan(in).ok_mask == 0, "unread handles: nothing admitted");
     Check(Is(ps::TierName(ps::Tier::sub), "sub") && Is(ps::TierName(ps::Tier::empty), "empty"), "tier names");

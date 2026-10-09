@@ -162,6 +162,9 @@ struct Fake {
     bool gun0_ok = false;
     pp::Loadout loadout{};
     bool loadout_ok = false;
+    unsigned loadout_reads = 0;
+    // read_state calls (the early manifest never reads partner state).
+    unsigned state_reads = 0;
     std::vector<std::vector<std::uint8_t>> reliable_sent;
     bool reliable_ok = true;
     // The partner's own reload and weapon switch: instance k's slots and the equip types.
@@ -224,6 +227,7 @@ Fake& F(void* context) { return *static_cast<Fake*>(context); }
 
 void HookLog(void* context, const char* line) noexcept { F(context).lines.emplace_back(line); }
 pp::Refusal HookRead(void* context, pp::State& out) noexcept {
+    ++F(context).state_reads;
     out = F(context).state;
     return F(context).refusal;
 }
@@ -542,7 +546,8 @@ bool HookReadGun(void* context, const pp::State&, std::uint32_t k, pp::Gun1& out
     out = k ? f.gun : f.gun0;
     return k ? f.gun_ok : f.gun0_ok;
 }
-bool HookReadLoadout(void* context, const pp::State&, pp::Loadout& out) noexcept {
+bool HookReadLoadout(void* context, pp::Loadout& out) noexcept {
+    ++F(context).loadout_reads;
     out = F(context).loadout;
     return F(context).loadout_ok;
 }
@@ -3449,7 +3454,8 @@ void TestNativeChannel2AndSender() {
         s.fake.channel2.emplace_back(std::vector<std::uint8_t>{1, 2, 3});
         s.T();
         Check(s.fake.channel2.empty() && s.driver.mission.equip.have && s.driver.mission.equip.manifest.revision == 3 &&
-              s.driver.mission.equip.invalid == 1 && s.fake.Has("partner_equip=manifest; rev=3; inv=1; slots=0:0,46:46,0:0\r\n"),
+              s.driver.mission.equip.invalid == 1 &&
+              s.fake.Has("partner_equip=manifest; rev=3; inv=1; slots=0:0,46:46,0:0; type=0,0,0; v=2; mission=30050\r\n"),
               "channel 2 drained in legacy: stored, invalid counted, logged");
         const unsigned drains = s.fake.channel2_drains;
         s.T();
@@ -4025,14 +4031,21 @@ void TestNativeWeapons() {
         s.fake.loadout.ok = s.fake.loadout.tables_ok = true;
         s.fake.loadout.weapons[1] = 873;
         s.fake.loadout.base[1] = 46;
+        s.fake.loadout.type[1] = 4;
         s.fake.loadout.chimera[12] = 157;
+        s.fake.loadout.scan[1] = "gun_types";
         s.N();
         ew::Manifest m{};
-        Check(s.fake.reliable_sent.size() == 1 &&
+        Check(s.fake.reliable_sent.size() == 1 && s.fake.reliable_sent[0].size() == ew::kSize &&
               ew::Decode(s.fake.reliable_sent[0].data(), s.fake.reliable_sent[0].size(), 7, m) == ew::Result::ok && m.revision == 1 &&
-              m.epoch == 7 && m.slots[1].base_id == 46 && m.slots[1].alias == 873 && m.slots[1].recipe[0] == 157 && m.inv_slot == 0xFF,
-              "manifest rev 1 sent on channel 2");
-        Check(s.fake.Has("partner_equip=sent; rev=1; epoch=7; base=0,46,0; alias=0,873,0; receiver=0,157,0; tables=1\r\n"), "sent line");
+              m.epoch == 7 && m.slots[1].base_id == 46 && m.slots[1].alias == 873 && m.slots[1].recipe[0] == 157 && m.inv_slot == 0xFF &&
+              m.version == 2 && m.slots[1].type == 4 && m.slots[0].type == 0,
+              "manifest rev 1 (version 2, the slot's type) sent on channel 2");
+        Check(s.fake.Has("partner_equip=sent; rev=1; epoch=7; base=0,46,0; alias=0,873,0; receiver=0,157,0; type=0,4,0; tables=1; "
+                         "mission=30050\r\n") &&
+                  s.fake.Has("partner_equip_base; rev=1; slot=1; alias=873; type=4; receiver=157; alias_receiver=0; base=46; scan=gun_types; "
+                             "tables=1\r\n"),
+              "sent line and the base-id scan line");
         s.N(1100);
         Check(s.fake.reliable_sent.size() == 1, "unchanged loadout: not resent");
         s.fake.link_session = 8;
@@ -4069,6 +4082,104 @@ void TestNativeWeapons() {
         Check(s.fake.Has("partner_equip=apply; rev=5; slot=1; want=40; loaded=0; result=no_weapon; writer=stock46\r\n"),
               "apply: re-judged when the loaded equip changes");
     }
+}
+
+// The early manifest (docs/native-puppet.md "Loadout mirroring"): the loadout
+// sender and the channel 2 drain run outside partner missions (the observer's
+// ~100 ms path in the title and the ACC), never read partner state, resend on
+// a change or a new link session, and the first mission after connecting
+// starts with the remote's manifest (MissionStart seeds the store from the
+// session cache; the preload's DrainEquipLink drains only).
+void TestEquipEarlyManifest() {
+    namespace ew = mgscoop::partner_equip_wire;
+    Fake fake;
+    pd::Hooks hooks = HooksFor(fake);
+    AddWeaponHooks(hooks);
+    hooks.link_session = HookLinkSession;
+    hooks.drain_reliable = HookDrainReliable;
+    pd::Driver d{};
+    mgscoop::LabConfig lab{};
+    lab.partner = true;
+    lab.partner_input_send = true;
+    pd::Configure(d, lab);
+    pd::MissionStart(d, hooks, 40010);  // the title (heli space): no partner body, no CFG
+    fake.lines.clear();
+    const unsigned state_reads = fake.state_reads;
+    fake.loadout_ok = true;
+    fake.loadout.ok = true;
+    pd::TickEquipLink(d, hooks, 1000);
+    Check(fake.reliable_sent.empty() && fake.loadout_reads == 1, "vars without a weapon (not loaded yet): nothing sent");
+    fake.loadout.tables_ok = true;
+    fake.loadout.weapons[0] = 871; fake.loadout.type[0] = 1; fake.loadout.chimera[0] = 69; fake.loadout.alias_receiver[0] = 69;
+    fake.loadout.scan[0] = "no_match";
+    fake.loadout.weapons[1] = 873; fake.loadout.base[1] = 46; fake.loadout.type[1] = 4; fake.loadout.chimera[12] = 157;
+    fake.loadout.alias_receiver[1] = 157; fake.loadout.scan[1] = "gun_types";
+    fake.loadout.weapons[2] = 9; fake.loadout.base[2] = 9; fake.loadout.type[2] = 2; fake.loadout.scan[2] = "stock";
+    pd::TickEquipLink(d, hooks, 1500);
+    Check(fake.reliable_sent.empty() && fake.loadout_reads == 1, "the loadout is read at most every kEquipReadMs");
+    pd::TickEquipLink(d, hooks, 2100);
+    ew::Manifest got{};
+    Check(fake.reliable_sent.size() == 1 &&
+              ew::Decode(fake.reliable_sent[0].data(), fake.reliable_sent[0].size(), 7, got) == ew::Result::ok && got.version == 2 &&
+              got.slots[0].base_id == 0 && got.slots[0].alias == 871 && got.slots[0].type == 1 && got.slots[1].base_id == 46 &&
+              got.slots[1].type == 4 && got.slots[2].base_id == 9 && got.slots[2].type == 2,
+          "the title sends the manifest: base 0 with the alias's type 1 for 871 (never a non-gun base)");
+    Check(fake.Has("partner_equip=sent; rev=1; epoch=7; base=0,46,9; alias=871,873,9; receiver=69,157,0; type=1,4,2; tables=1; "
+                   "mission=40010\r\n") &&
+              fake.Has("partner_equip_base; rev=1; slot=0; alias=871; type=1; receiver=69; alias_receiver=69; base=0; scan=no_match; "
+                       "tables=1\r\n") &&
+              fake.Containing("partner_equip_base;") == 3,
+          "the sent line names the title; one base line per carried slot");
+    pd::TickEquipLink(d, hooks, 3200);
+    Check(fake.reliable_sent.size() == 1, "unchanged: not resent");
+    fake.link_session = 9;
+    pd::TickEquipLink(d, hooks, 3300);
+    Check(fake.reliable_sent.size() == 2 &&
+              ew::Decode(fake.reliable_sent[1].data(), fake.reliable_sent[1].size(), 9, got) == ew::Result::ok && got.revision == 1,
+          "a new link session resends at once (same revision)");
+    fake.link_session = 0;
+    fake.loadout.weapons[2] = 10;
+    pd::TickEquipLink(d, hooks, 4400);
+    Check(fake.reliable_sent.size() == 2, "no link session: nothing read or sent");
+    fake.link_session = 9;
+    pd::TickEquipLink(d, hooks, 4500);
+    Check(fake.reliable_sent.size() == 3 &&
+              ew::Decode(fake.reliable_sent[2].data(), fake.reliable_sent[2].size(), 9, got) == ew::Result::ok && got.revision == 2 &&
+              got.slots[2].alias == 10, "a changed loadout: revision 2");
+    // The receiver side in the title: the peer's manifest is drained and cached.
+    ew::Manifest rx{};
+    rx.revision = 3; rx.epoch = 9; rx.inv_slot = 0xFF;
+    rx.slots[0].alias = 871; rx.slots[0].type = 1; rx.slots[0].recipe[0] = 69;
+    rx.slots[1].base_id = 46; rx.slots[1].alias = 873; rx.slots[1].type = 4;
+    std::uint8_t bytes[ew::kSize]{};
+    Check(ew::Encode(rx, bytes) == sizeof(bytes), "rx manifest encodes");
+    fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+    pd::DrainEquipLink(d, hooks);
+    Check(fake.channel2.empty() && d.equip_cache_have && d.equip_cache_epoch == 9 && d.equip_cache.revision == 3 &&
+              d.mission.equip.have && fake.reliable_sent.size() == 3 &&
+              fake.Has("partner_equip=manifest; rev=3; inv=255; slots=0:871,46:873,0:0; type=1,4,0; v=2; mission=40010\r\n"),
+          "DrainEquipLink: drained in the title, cached, nothing sent");
+    Check(fake.state_reads == state_reads, "the early manifest never reads partner state");
+    // The first partner mission after connecting starts with it (no resend needed).
+    pd::MissionEnd(d, hooks);
+    pd::MissionStart(d, hooks, 30010);
+    Check(d.mission.equip.have && d.mission.equip.manifest.revision == 3 && d.mission.equip.manifest.slots[0].type == 1 &&
+              d.mission.equip_logged_rev == 3, "MissionStart seeds the store from the session cache");
+    fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+    pd::TickEquipLink(d, hooks, 5600);
+    Check(d.mission.equip.duplicates == 1 && fake.Containing("partner_equip=manifest; rev=3;") == 1, "the same revision again: a duplicate");
+    // Another link session: never seeded.
+    fake.link_session = 10;
+    pd::MissionStart(d, hooks, 30010);
+    Check(!d.mission.equip.have, "another link session's manifest is not seeded");
+    // A copy that neither drives natively nor sends input frames sends nothing.
+    pd::Driver quiet{};
+    mgscoop::LabConfig off{};
+    off.partner = true;
+    pd::Configure(quiet, off);
+    const std::size_t sent = fake.reliable_sent.size();
+    pd::TickEquipLink(quiet, hooks, 9000);
+    Check(fake.reliable_sent.size() == sent, "no native drive and no input sender: no manifest");
 }
 
 // Review fixes: play mode never takes the native drive from the trigger file;
@@ -4161,6 +4272,10 @@ void TestNativeReloadSwitch() {
     s.N();
     Check(s.fake.Containing("partner_reload=complete;") == 1 && !s.fake.arms.back().reload_hold && s.driver.mission.tele.reload_completed == 1,
           "complete: the hold released (the hook reconciles)");
+    Check(s.fake.Containing("partner_reload=complete; setting=event; len_ms=") == 1 &&
+              s.fake.Containing("; completed=1; entered=1; late=0; queued_tap=0\r\n") == 1 && s.driver.mission.tele.reload_len_ms > 0 &&
+              s.driver.mission.tele.reload_len_max_ms == s.driver.mission.tele.reload_len_ms && !s.fake.arms.back().reload_reconcile,
+          "complete line: len_ms, remote_len_ms, refill_ms, counters");
     // rtap=1: one test tap; refused when the weapon gate strips RELOAD.
     s.Trigger("rtap=1");
     s.N();
@@ -4212,6 +4327,35 @@ void TestNativeReloadSwitch() {
     s.fake.stats.native.slot_last = mgscoop::partner_input_hook::SlotRefusal::none;
     s.N();
     Check(s.fake.Containing("partner_slot=write; reason=none;") == 1 && s.driver.mission.tele.slot_writes == 1, "a follower write is logged");
+    // W5 with a version 2 manifest (run 53e36944's hip slot): the remote holds alias 871 (type 1, no stock base) in its
+    // hip slot; body 1's hip slot holds the tier C substitute 36 (type 1), in hand: a substitute in the remote's current
+    // slot is a match (the old base_id == remote base rule masked it as a mismatch).
+    rx.revision = 2; rx.inv_slot = 0;
+    rx.slots[0].base_id = 0; rx.slots[0].alias = 871; rx.slots[0].type = 1;
+    rx.slots[1].type = 4;
+    Check(ew::Encode(rx, bytes) == sizeof(bytes), "the remote's manifest 2 encodes");
+    s.fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+    s.fake.slots[1].handles[0] = (5u << 16) | (36u << 5) | 1u;
+    s.fake.equip_types[36] = 1;
+    s.fake.gun.fields.equip = 36;
+    s.fake.latest.packet.gun_equip = 871;
+    s.fake.latest.packet.inv_slot = 0;
+    s.N();
+    s.N();
+    Check(s.driver.mission.slot_plan.tier[0] == mgscoop::partner_slots::Tier::sub && s.driver.mission.slot_plan.equip[0] == 36 &&
+              s.driver.mission.slot_types[0] == 1 && std::strcmp(s.driver.mission.tele.weapon_gate, "match") == 0 &&
+              (s.fake.arms.back().strip & 0x50u) == 0 && s.fake.arms.back().slot_ok == 0x3u,
+          "version 2: base 0 with type 1, the substitute 36 in the remote's current slot: sub and match");
+    // The same body weapon while the remote holds its back slot (alias 873): mismatch.
+    s.fake.latest.packet.gun_equip = 873;
+    s.fake.latest.packet.inv_slot = 1;
+    s.N();
+    Check(std::strcmp(s.driver.mission.tele.weapon_gate, "mismatch") == 0 && (s.fake.arms.back().strip & 0x50u) == 0x50u,
+          "a substitute of another slot is no match");
+    s.fake.slots[1].handles[0] = 0xFFFF0000u;
+    s.fake.gun.fields.equip = 46;
+    s.fake.latest.packet.gun_equip = 46;
+    s.N();
     // Play runs call as write; mirror never holds and never strips the sample.
     s.driver.settings.nslot = mgscoop::PartnerNativeSlot::call;
     s.driver.settings.play_mode = true;
@@ -4457,6 +4601,7 @@ int main() {
     TestNativeOnline();
     TestNativeRefusalsAndCensus();
     TestNativeChannel2AndSender();
+    TestEquipEarlyManifest();
     TestNativeRates();
     TestNativeAim();
     TestNativePlayAndWithdraw();

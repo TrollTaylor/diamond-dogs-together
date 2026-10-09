@@ -20,7 +20,11 @@ uses are asserted from the exact retail bytes here (assert_static):
 - DC3700's first-used-entry selection, protect bit, unused-entry build and
   eviction path (the preload refuses the last);
 - the NULL-optional render path (ADE358..ADE3D6) and its size
-  512 + align16(8g+88) (1AB7940, 1E19200, 1A7DA20, 1AA49E0).
+  512 + align16(8g+88) (1AB7940, 1E19200, 1A7DA20, 1AA49E0);
+- the optional asset's constructor shapes: 1A95470(n, mode 0) over the
+  per-parameter table 1A953D0(0) returns (0x2B4A078), emulated for n = 1..8,
+  equal to kOptionalShapes in equipment_stock_writer_contract.hpp (header word0
+  n, word1 m(n), the request size; stock46 is n4/m6/544).
 
 Read-only static analysis of mgsvtpp.exe 1.0.15.4; never runs the game.
 
@@ -42,6 +46,7 @@ from analyze_network_bindings import Analysis  # noqa: E402
 EXPECTED = "085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45"
 DEFAULT_EXE = Path("D:/Games/steamapps/common/MGS_TPP/mgsvtpp.exe")
 HEADER = ROOT / "native/equipment_stock_writer_pins.hpp"
+CONTRACT = ROOT / "native/include/mgscoop/equipment_stock_writer_contract.hpp"
 
 # The stock46 writer's declared ranges (work/remote-equipment-static-pins.py,
 # unchanged): (name, start, end exclusive, last instruction end).
@@ -441,6 +446,49 @@ def assert_static(analysis):
     expect(analysis, 0x1AB79C4, "f6 07 08 48 8d 83 50 01 00 00", "1AB7940 +0x150")
     expect(analysis, 0x1E18D7F, "48 85 d2 0f 84 9f 01 00 00", "1E18CF0 NULL asset")
     facts.append("NULL optional render 512 + align16(8g+88) <= 1824 for g <= 153")
+    # The optional asset's constructor shapes (OptionalReady): 1A95470(n, mode)
+    # takes the per-parameter records 1A953D0(mode) returns (16 bytes: count,
+    # kinds[3]; parameter i uses record min(i, 2)), sums the counts (m) and the
+    # kind bytes (0 -> 0x40, 1..6 -> 0x60, else 0) and returns
+    # align16(8*m + 0x1F) + kinds. Mode 0 is the jump table's first entry.
+    expect(analysis, 0x1A953D0, "83 f9 05 77 46 48 8d 15 24 ac 56 fe 48 63 c1 8b 8c 82 20 54 a9 01 48 03 ca ff e1",
+           "1A953D0 mode jump table")
+    if struct.unpack("<I", analysis.pe.rva_read(0x1A95420, 4))[0] != 0x1A953EB:
+        raise SystemExit("1A953D0 mode 0 target moved")
+    expect(analysis, 0x1A953EB, "48 8d 05 86 4c 0b 01 c3", "1A953D0 mode 0")
+    if rip_target(analysis, 0x1A953EB, 3, 7) != 0x2B4A078:
+        raise SystemExit("mode 0 table moved")
+    expect(analysis, 0x1A95470, "40 53 48 83 ec 20 44 8b d1 8b ca e8 50 ff ff ff 45 33 db 45 33 c0 45 33 c9 48 8b d8 45 85 d2 7e 62 "
+           "b9 02 00 00 00 44 3b c9 41 0f 4c c9 48 63 c9 48 c1 e1 04 48 03 cb 48 63 01 44 03 d8 48 8b d0 85 c0 7e 37 48 83 c1 04 "
+           "8b 01 85 c0 74 1c 7e 16 83 f8 04 7e 0a 83 f8 05 74 05 83 f8 06 75 07 b8 60 00 00 00 eb 09 33 c0 eb 05 b8 40 00 00 00 "
+           "44 03 c0 48 83 c1 04 48 ff ca 75 cd 41 ff c1 45 3b ca 7c 9e 41 8d 03 41 8b c8 48 8d 04 c5 1f 00 00 00 48 83 e0 f0 "
+           "48 03 c1 48 83 c4 20 5b c3", "1A95470 size loop")
+    records = [struct.unpack("<4i", analysis.pe.rva_read(0x2B4A078 + 16 * i, 16)) for i in range(3)]
+
+    def kind_bytes(kind):
+        return 0x40 if kind == 0 else 0x60 if 1 <= kind <= 6 else 0
+    shapes = []
+    for n in range(1, 9):
+        m = size = 0
+        for i in range(n):
+            count, *kinds = records[min(i, 2)]
+            if count > 3:
+                raise SystemExit(f"mode 0 record {min(i, 2)} count {count}")
+            m += count
+            size += sum(kind_bytes(k) for k in kinds[:max(count, 0)])
+        shapes.append((n, m, ((8 * m + 0x1F) & ~0xF) + size))
+    if shapes[3] != (4, 6, 544):
+        raise SystemExit(f"stock46 shape n4: {shapes[3]}")
+    import re
+    text = CONTRACT.read_text(encoding="utf-8")
+    found = re.search(r"kOptionalShapes\{\{((?:\{\d+,\d+,\d+\},?)+)\}\}", text)
+    if not found:
+        raise SystemExit("kOptionalShapes not found in the writer contract")
+    committed = [tuple(int(x) for x in item.split(",")) for item in re.findall(r"\{(\d+,\d+,\d+)\}", found.group(1))]
+    if committed != shapes:
+        raise SystemExit(f"kOptionalShapes {committed} differs from the exe's 1A95470 mode 0 {shapes}")
+    facts.append("optional shapes n1..8 -> m " + ",".join(str(m) for _, m, _ in shapes) + " size " +
+                 ",".join(str(s) for _, _, s in shapes) + " (kOptionalShapes)")
     return facts
 
 

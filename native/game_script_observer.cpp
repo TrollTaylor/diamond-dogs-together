@@ -667,8 +667,8 @@ bool PartnerReadSlots(void*, const pp::State& state, std::uint32_t k, pp::Slots&
 bool PartnerEquipType(void*, std::uint32_t equip, std::uint8_t& type) noexcept {
     return pp::EquipType(partner_addresses, equip, type);
 }
-bool PartnerReadLoadout(void*, const pp::State& state, pp::Loadout& out) noexcept {
-    return pp::ReadLoadout(partner_addresses, state, out);
+bool PartnerReadLoadout(void*, pp::Loadout& out) noexcept {
+    return pp::ReadLoadout(partner_addresses, out);
 }
 // Channel 2 carries the equipment manifest and the capability message
 // (docs/native-puppet.md "Online"): both append, so neither replaces the
@@ -1239,18 +1239,29 @@ const char* EquipAdmissionReason() noexcept {
     return labc.mode == mgscoop::LabMode::lab ? nullptr : "mode";
 }
 bool EquipPiecesAdmitted() noexcept { return EquipAdmissionReason() == nullptr; }
-// The manifest the generalized pieces plan from: this mission's (each copy
-// resends its own at every mission start) or, until it arrives, the last one
-// accepted in the same link session (the preload runs before the mission).
+// The manifest the generalized pieces plan from: the mission store's (seeded
+// at MissionStart from the session cache, replaced by any newer revision) or
+// the last one accepted in the same link session (the preload runs at the
+// allocation, before the mission; the sender sends from the title and the ACC
+// too, so the first mission after connecting has it). Never another session's.
 bool EquipManifest(mgscoop::partner_equip_wire::Manifest& out) noexcept {
     const auto& m = partner_driver.mission;
-    if (m.equip.have) { out = m.equip.manifest; return true; }
     const auto session = mgscoop::partner_net::GetLinkInfo().session;
+    if (m.equip.have && (!session || m.equip.manifest.epoch == session)) { out = m.equip.manifest; return true; }
     if (partner_driver.equip_cache_have && session && partner_driver.equip_cache_epoch == session) {
         out = partner_driver.equip_cache;
         return true;
     }
     return false;
+}
+// The early manifest (docs/native-puppet.md "Loadout mirroring"): on the
+// observer's ~100 ms path of ANY mission (the title and the ACC included),
+// drain channel 2 and run this copy's loadout sender. Reads vars and the
+// type tables only (no partner state); the partner code gate passed at
+// configure time. Runtime thread, under receipt_lock.
+void ObserveEquipLink() noexcept {
+    if (!partner_on || !partner_gate_ok || mgscoop::partner_defer::ShuttingDown()) return;
+    pd::TickEquipLink(partner_driver, partner_hooks, mgscoop::partner_net::NowMs());
 }
 
 void ObserveEquipmentVtables() noexcept {
@@ -1375,7 +1386,12 @@ void ObserveEquipWriter() noexcept {
     }
     mgscoop::partner_equip_wire::Manifest manifest{};
     context.manifest=EquipManifest(manifest);
-    for(unsigned s=0;s<w::kSlots;++s) context.want[s]=context.manifest ? manifest.slots[s].base_id : std::uint16_t(0);
+    for(unsigned s=0;s<w::kSlots;++s) {
+        context.want[s]=context.manifest ? manifest.slots[s].base_id : std::uint16_t(0);
+        context.alias[s]=context.manifest ? manifest.slots[s].alias : std::uint16_t(0);
+        context.type[s]=context.manifest && mgscoop::partner_equip_wire::GunType(manifest.slots[s].type) ? manifest.slots[s].type : std::uint8_t(0);
+        context.receiver[s]=context.manifest ? manifest.slots[s].recipe[0] : std::uint8_t(0);
+    }
     // The remote's current slot: the live v5 slot, else the manifest's (never a zeroed manifest's 0).
     context.remote_slot=mission.remote_v5 && mission.remote_slot<w::kSlots ? mission.remote_slot
         : context.manifest && manifest.inv_slot<w::kSlots ? manifest.inv_slot : std::uint8_t(0xFF);
@@ -1391,6 +1407,7 @@ void PublishDebugSnapshot() noexcept {
     static std::uint64_t published_ms = 0;
     if (now >= published_ms && now - published_ms < 100) return;
     published_ms = now;
+    ObserveEquipLink();
     ObserveEquipmentVtables();
     ObserveStock46Writer();
     ObserveEquipWriter();
@@ -1984,6 +2001,9 @@ bool SelectEquipPreloadReceipt(const char* buffer,std::size_t size,const char* n
     static constexpr char yes[]="return true",no[]="return false";
     static char reply[64]{};
     if(is_query) {
+        // The remote's manifest may have arrived just now (it is sent from the title
+        // and the ACC too): drain channel 2 once before planning (nothing is sent here).
+        if(partner_on && partner_gate_ok) pd::DrainEquipLink(partner_driver,partner_hooks);
         mgscoop::equipment_stock_probe::GeneralContext context{};
         context.enabled=enabled; context.allocation_owner=OnAllocationThread();
         context.mission_read=mission_read; context.mission=mission; context.supported=mgscoop::SupportsPartnerBody(mission);
@@ -2012,6 +2032,8 @@ bool SelectEquipPreloadReceipt(const char* buffer,std::size_t size,const char* n
                 pc::Item item{};
                 if(!why) why=pc::Hashes(v,engine,id,item);
                 if(!why && mgscoop::equipment_stock_writer_contract::TypeSlot(item.type)!=slot) why="type_slot";
+                // Version 2: the slot's own type (never preload a base of another type).
+                if(!why && manifest.slots[slot].type && item.type!=manifest.slots[slot].type) why="type_mismatch";
                 // Alone it must not evict or touch a referenced entry.
                 if(!why && owner) {const std::uint16_t one[1]{id};why=pc::Capture(base,game_span,read,one,1,candidate);}
                 if(why) {

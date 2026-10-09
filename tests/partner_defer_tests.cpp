@@ -1837,14 +1837,28 @@ void TestJobWindow() {
                       Get<std::uint16_t>(Addr(gun_rec) + c::gun_m3e8) == 5 && hs.native.mag_m3e8_writes == f0.mag_m3e8_writes + 1 &&
                       hs.native.mag_last == hk::MagRefusal::none, "R4: the reconcile writes the magazine and rec+0x3E8");
             Check(run() && hs.native.mag_reconciles == f0.mag_reconciles + 1, "R4: one reconcile only");
-            // A stuck body reload no longer freezes; the driver's hold does.
+            // F1: body 1's reload mode freezes however long it lasts (a stuck report never releases it;
+            // the reconcile only follows the native exit), also with the queued tap's reconcile.
             Put<std::uint8_t>(Addr(gun_rec) + c::gun_mode_cur, c::gun_mode_reload2);
-            a.reload_stuck = true;
+            a.reload_reconcile = true;
             hk::PublishArm(a);
             g_hook_sample.packet.mag = 4;
+            Check(run() && hs.native.mag_last == hk::MagRefusal::reload && Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag) == 5,
+                  "F1: body 1 still reloading: frozen (never a reconcile at stuck)");
+            // The queued tap's reconcile: the remote reloads again, body 1 left its reload with a full magazine;
+            // the mirror writes the remote's magazine (body 1's next reload needs it below capacity).
+            Put<std::uint8_t>(Addr(gun_rec) + c::gun_mode_cur, c::gun_mode_aim);
+            g_hook_sample.packet.gun_flags = pi::GunFlag::Valid | pi::GunFlag::Reloading;
+            g_hook_sample.packet.gun_mode = c::gun_mode_reload;
             Check(run() && hs.native.mag_last == hk::MagRefusal::none && Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag) == 4,
-                  "R4: a stuck body reload is not frozen");
-            a.reload_stuck = false;
+                  "F1: the reconcile writes the remote's magazine although the remote reloads");
+            a.reload_reconcile = false;
+            hk::PublishArm(a);
+            g_hook_sample.packet.mag = 2;
+            Check(run() && hs.native.mag_last == hk::MagRefusal::reload && Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag) == 4,
+                  "F1: without the reconcile the remote's reload freezes again");
+            g_hook_sample.packet.gun_flags = pi::GunFlag::Valid;
+            g_hook_sample.packet.gun_mode = c::gun_mode_aim;
             a.reload_hold = true;
             Put<std::uint8_t>(Addr(gun_rec) + c::gun_mode_cur, c::gun_mode_aim);
             hk::PublishArm(a);

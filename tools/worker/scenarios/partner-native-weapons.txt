@@ -30,17 +30,33 @@
 #           2 captures; fire.suppressed grows by the pellet count (>= 1); noise.dropped +1; frames show the muzzle flash.
 #  firehold: trigger.requested grows by the shooter's magazine drop (mag.remote before minus after) +-1;
 #           fire.suppressed_per_s > 0 while held.
+#  early manifest (weapons3): both logs partner_equip_base; rev=1; slot=s; alias=..; type=1..8; ...; base=<a stock gun
+#           id or 0>; scan=stock|gun_types|no_match (never a non-gun base such as 343: base 0 when no gun of the alias's
+#           type has its receiver) and partner_equip=sent; rev=1; ...; type=t0,t1,t2; ...; mission=40010 (sent from the
+#           title, before allocation_enter mission=30010); the peer partner_equip=manifest; rev=1; ...; type=..; v=2;
+#           mission=40010 at a lower line than its equip_preload=authorized of 30010. The FIRST mission after connecting
+#           preloads: equip_preload=authorized; ...; manifest=1; want=<base ids> then equip_preload=queued_verified in
+#           30010 (no equip_preload=refused; reason=no_manifest). The grammar has no mission reload/goto step: a
+#           second-mission check needs a separate run (each mission start seeds the store from the session's cache).
 #  writer (W2/W3; both logs and captures "writer" / "weapons-idle"):
 #           equip_preload=authorized; ...; ids=<the remote's base ids>; actions=<id>:none|protect|build@<entry>; evict=0,
-#           then equip_preload=queued_verified at each allocation after the first (the first mission of a session has no
-#           manifest yet: equip_preload=refused; reason=no_manifest is expected once); equip_resident; mission=..; used=..
+#           then equip_preload=queued_verified (a base id of another type than the manifest's: dropped=<id>:type_mismatch);
+#           equip_resident; mission=..; used=..
 #           (the stock cache census once per allocation; native.equip.resident [[index,id,type,receiver,flags,refs],..]);
 #           per slot, the two other slots first and the shooter's current slot last: equip_writer=plan; slot=s; want=<base>;
-#           equip=<target>; tier=a1|c; family=optional|plain, then equip_writer=handle_bound (or handle_queued then
-#           observation_stopped; reason=model_wait_limit) for that slot, or equip_writer=refused; reason=.. (tier d: the
-#           slot stays empty; report the reason). native.slots.writer.slots[s] {want, equip, tier, family, state
-#           bound|queued, handle}; native.slots.handles[s] == {equip, type} of each bound target; native.slots.plan[s]
-#           "same" (a1) or "sub" (c). Never: replace_filled=1, evict=1, two plan lines for one slot in one allocation,
+#           want_type=<manifest type>; equip=<target>; tier=a1|c; family=optional|plain, then equip_writer=handle_bound (or
+#           handle_queued then observation_stopped; reason=model_wait_limit) for that slot. ALL THREE slots bound a1 or c
+#           (run 53e36944 bound only slot 1): an A1 refusal of any kind (no_base, type_mismatch, no_cache_entry, ...) logs
+#           equip_writer=a1_refused; ...; next=c, then one equip_writer=candidate; slot=s; ...; pass=type_receiver|type|
+#           slot_class; type=..; receiver=..; flags=3; refs=0; reason=ok|<why>; shape=<w0..w5>|none line per candidate (never
+#           an n3 entry such as 39, never 871/873/875, never the viewer's own weapon, never a candidate already dispatched);
+#           the expected hip pick is 36 (39 is n3), the secondary 9 (a1) or 6/16 (c) with an optional shape n.m(n) such as
+#           4.6.0.0.0.0 or 1.2.0.0.0.0 (never stock_optional_shape for an exe shape). A tier d slot names its last
+#           candidate (equip_writer=refused; ...; candidates=n; candidate=<id>; reason=<its reason>): report it.
+#           native.slots.writer.slots[s] {want, equip, tier, family, state bound|queued, handle, want_type, candidates,
+#           candidate}; native.slots.handles[s] == {equip, type} of each bound target; native.slots.plan[s] "same" (a1) or
+#           "sub" (c, the same type or the slot class) and partner_slot=plan; ...; tiers=sub|same,..; ok=0x7.
+#           Never: replace_filled=1, evict=1, two plan lines for one slot in one allocation,
 #           equip_writer=call_unverified (the dispatch ran and the readback refused, local_ammo_changed included:
 #           report it), a refused stock46_writer line (the stock46 writer stays off with substitute). Before the
 #           first plan, equip_writer=waiting; reason=<the first failing gate> lines may appear (at most 8 per
@@ -58,11 +74,20 @@
 #           6 entries of the shooter's reload (rmode 11/12; event: reload.taps +1 and reload.entered +1, the log
 #           partner_reload=tap then entered; raw: entered by the raw R, reload.starts +1, no tap); reload.probe1.b20 +1
 #           (bit 20 seen right after phase 1 inside the drain); gun.b26 1 and gun.upper_req 5 while it reloads; mag.frozen
-#           grows and mag.writes does NOT while gmode is 11/12 (mirror: mag.writes +1 during it, the old fight); gmode
-#           leaves 11/12 within 2.5 s (partner_reload=complete; reload.completed +1; no partner_reload=stuck), then
-#           gun.mag == gun.cap with at most one mag.reconciles write and gun.m3e8 == gun.mag; mag.reload_seen counts
+#           grows and mag.writes does NOT while gmode is 11/12 (mirror: mag.writes +1 during it, the old fight). F1
+#           (weapons3, run 53e36944: body 1 exits natively after ~3.02 s at its own playback rate): the burst (18 x 200 ms)
+#           covers the exit: partner_reload=body_enter, then partner_reload=complete; setting=event; len_ms=2950..3100;
+#           remote_len_ms=..; refill_ms=~1560 (body 1's own refill); ...; completed=N; entered=N; late=0 for EVERY reload
+#           (reload.completed == reload.entered, reload.stuck_n 0, never partner_reload=stuck within 8 s); the ring's gmode
+#           11 -> 8 with b26 0 and upper_req 2; between body_enter and the exit mag.frozen grows and mag.writes does not;
+#           mag.reconciles +1 at most, AFTER the exit (gun.mag == gun.cap, gun.m3e8 == gun.mag); mag.reload_seen counts
 #           the R edges; leak.ammo_leaks 0 (else mag.leak_off and partner_input=ammo_leak; mag_mirror=disabled: report it).
+#           A remote reload started while body 1 still reloads (the 2.0 s shooter reloading twice): at the exit
+#           partner_reload=complete; ...; queued_tap=1 and partner_reload=queued_tap; ...; reconcile=1, then entered again.
 #           Frames 200..1000 ms after R: the reload pose (rifle lowered / magazine), not the aim pose.
+#  aim-hold-reload: the shooter keeps aiming through the whole reload (holds re-issued every 1500 ms): instance 1's
+#           aiming exit (never exercised before): gmode 11 -> 7/15/14 within 3.1 s with b26 0, partner_reload=complete
+#           (len_ms ~3020), FIRE live afterwards.
 #  holster-reload: as aim-reload (the classifier path: event taps RELOAD for 4 windows, class 2 on the release).
 #  auto-reload: the shooter empties its magazine and fires once more: its own automatic reload (no R press) reaches
 #           the receiver as reload_seq (+1) and gmode 11/12 follows (event: a tap; raw/mirror: only if body 1's own dry
@@ -74,7 +99,9 @@
 #           slots.remote_slot follows the shooter (0, then 2; slots.remote_seq +1 per switch); partner_slot=write;
 #           target=0 (then 2) once per switch; slots.body_slot == slots.remote_slot within one capture and gun.hand_slot
 #           follows (the native activation; ring gmode 8 only while aiming); gun.body_equip == slots.writer.slots[s].equip;
-#           weapon.gate "match" (a1: the remote's base; c: the plan's same-type substitute) and no partner_weapon=mismatch;
+#           weapon.gate "match" (a1: the remote's base; c: the plan's substitute in the shooter's current slot, also with
+#           a manifest base 0 such as the hip alias 871: the plan's tier "sub" from the manifest's type) and no
+#           partner_weapon=mismatch (weapons3: all three slots switch; switch1 binds the hip substitute, e.g. 36);
 #           *-fire: FIRE live for bullet types 1..6 (trigger.requested +1, fire.suppressed grows, the muzzle flash),
 #           weapon.gate "projectile" and FIRE stripped for a grenade launcher (7) or missile (8); switch2-reload: as
 #           aim-reload with the secondary (gmode 11/12, partner_reload=entered then complete, gun.mag == gun.cap).
@@ -134,7 +161,29 @@ wait 400
 host hold rmb+r 120 nowait
 wait 150
 host hold rmb 1400 nowait
-guest burst aim-reload 8 200
+guest burst aim-reload 18 200
+host release
+wait 1500
+# Reload while the shooter keeps aiming through the whole reload (instance 1's aiming exit). A hold lasts at most
+# 1500 ms (the bridge's limit): the aim is re-held between short bursts.
+host hold rmb 1500 nowait
+wait 400
+host hold rmb+lmb 120 nowait
+wait 300
+host hold rmb 1500 nowait
+wait 400
+host hold rmb+r 120 nowait
+wait 150
+host hold rmb 1500 nowait
+guest burst aim-hold-reload-a 3 150
+host hold rmb 1500 nowait
+guest burst aim-hold-reload-b 3 150
+host hold rmb 1500 nowait
+guest burst aim-hold-reload-c 3 150
+host hold rmb 1500 nowait
+guest burst aim-hold-reload-d 3 150
+host hold rmb 1500 nowait
+guest burst aim-hold-reload-e 3 150
 host release
 wait 1500
 # Reload while holstered (record).
@@ -143,7 +192,7 @@ wait 300
 host hold rmb+lmb 120 nowait
 wait 1200
 host press r
-guest burst holster-reload 6 200
+guest burst holster-reload 18 200
 wait 1500
 # Empty-magazine auto reload: the shooter spends its magazine (single presses while aiming), then one more
 # FIRE press on the empty magazine (its own automatic reload, no R press).
@@ -190,7 +239,7 @@ wait 120
 host hold rmb 1500 nowait
 wait 220
 host hold rmb+lmb 120 nowait
-guest burst auto-reload 8 200
+guest burst auto-reload 18 200
 host release
 wait 1500
 # The receiver's test tap (partner rtap=1) while the shooter aims with a spent round.
@@ -236,7 +285,7 @@ wait 400
 host hold rmb+r 120 nowait
 wait 150
 host hold rmb 1400 nowait
-guest burst switch2-reload 6 200
+guest burst switch2-reload 18 200
 host release
 wait 1500
 # Back to the back slot (the primary key twice: hip, then back) and fire with the original weapon again.
@@ -285,11 +334,11 @@ wait 400
 guest hold rmb+r 120 nowait
 wait 150
 guest hold rmb 1400 nowait
-host burst g-aim-reload 6 200
+host burst g-aim-reload 18 200
 guest release
 wait 1500
 guest press r
-host burst g-holster-reload 6 200
+host burst g-holster-reload 18 200
 wait 1500
 guest press 2
 wait 900

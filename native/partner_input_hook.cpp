@@ -1308,7 +1308,7 @@ void MirrorMag(const pi::Arm& a, const pi::Injection& j) noexcept {
     } __except (MagFilter(GetExceptionCode())) {}
     if (!body_read) { MagRefused(MagRefusal::fault, true); return; }
     const bool remote_reloading = j.gun_valid && (j.gun_flags & pi::GunFlag::Reloading) != 0;
-    if (partner_reload::MirrorFrozen(a.reload, remote_reloading, body_mode, a.reload_hold, a.reload_stuck)) {
+    if (partner_reload::MirrorFrozen(a.reload, remote_reloading, body_mode, a.reload_hold, a.reload_reconcile)) {
         g_m_freeze_pending = true;
         InterlockedIncrement(&g_m_frozen);
         MagRefused(MagRefusal::reload, false);

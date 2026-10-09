@@ -16,6 +16,8 @@ namespace {
 Out Fallback(Machine& m, Out o, const char* reason) noexcept {
     m.state = State::idle;
     m.taps_this = 0;
+    m.queued = false;
+    m.queued_reconcile = false;
     ++m.fallbacks;
     m.last_reason = reason;
     o.event = "fallback";
@@ -27,24 +29,53 @@ Out Fallback(Machine& m, Out o, const char* reason) noexcept {
 Out Step(Machine& m, const In& in, const Params& p) noexcept {
     Out o{};
     const std::uint64_t now = in.now_ms;
-    const bool freezing = in.setting != PartnerNativeReload::mirror;
-    // Body 1's own reload mode (every setting: telemetry, and the stuck rule).
-    const bool body_reload = in.body_ok && ReloadMode(in.body_mode);
+    // Body 1's own reload mode (every setting: telemetry, and the stuck report).
+    // An unread tick keeps the last state: only readable ticks enter or exit.
+    const bool body_reload = in.body_ok ? ReloadMode(in.body_mode) : m.body_reload;
+    bool body_exit = false;
     if (body_reload && !m.body_reload) {
         m.body_since_ms = now;
         ++m.body_entries;
         m.stuck_latched = false;
+        m.refill_seen = false;
+        m.enter_mag_ok = in.body_mag_ok;
+        m.enter_mag = in.body_mag;
         o.body_event = "body_enter";
     }
-    if (!body_reload && m.body_reload && in.body_ok) o.body_event = "body_exit";
+    if (!body_reload && m.body_reload) {
+        body_exit = true;
+        o.body_event = "body_exit";
+        o.len_ms = now - m.body_since_ms > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<std::uint32_t>(now - m.body_since_ms);
+        m.len_ms = o.len_ms;
+        if (o.len_ms > m.len_max_ms) m.len_max_ms = o.len_ms;
+    }
+    // refill_ms: the first magazine change body 1 makes itself inside its reload
+    // (the mirror writes nothing while body 1 is in a reload mode).
+    if (body_reload && !m.refill_seen && in.body_mag_ok) {
+        if (!m.enter_mag_ok) {
+            m.enter_mag_ok = true;
+            m.enter_mag = in.body_mag;
+        } else if (in.body_mag != m.enter_mag) {
+            m.refill_seen = true;
+            m.refill_ms = now - m.body_since_ms > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<std::uint32_t>(now - m.body_since_ms);
+        }
+    }
     if (!body_reload) m.stuck_latched = false;
     m.body_reload = body_reload;
+    const bool freezing = in.setting != PartnerNativeReload::mirror;
     if (freezing && body_reload && !m.stuck_latched && now - m.body_since_ms >= p.stuck_ms) {
         m.stuck_latched = true;
         ++m.stuck;
         o.event = "stuck";
     }
     o.stuck = m.stuck_latched;
+    // The remote's reload span (its mode 11/12; telemetry).
+    const bool remote_in = in.remote_valid && ReloadMode(in.remote_mode);
+    if (remote_in && !m.remote_in_reload) m.remote_since_ms = now;
+    if (!remote_in && m.remote_in_reload && in.remote_valid)
+        m.remote_len_ms = now - m.remote_since_ms > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<std::uint32_t>(now - m.remote_since_ms);
+    if (in.remote_valid) m.remote_in_reload = remote_in;
+    const bool remote_reloading = in.remote_valid && (in.remote_reloading || ReloadMode(in.remote_mode));
     // The remote's reload start: its counter moved while its mode is a reload mode.
     bool start = false;
     if (in.remote_valid) {
@@ -61,6 +92,8 @@ Out Step(Machine& m, const In& in, const Params& p) noexcept {
     if (in.setting != PartnerNativeReload::event) {
         m.state = State::idle;
         m.taps_this = 0;
+        m.queued = false;
+        m.queued_reconcile = false;
         return o;
     }
     switch (m.state) {
@@ -77,6 +110,7 @@ Out Step(Machine& m, const In& in, const Params& p) noexcept {
             if (body_reload) {
                 // The raw press (a raw remote, or before the strip) already started it.
                 m.state = State::entered;
+                m.queued = false;
                 ++m.entered;
                 o.event = "entered";
                 break;
@@ -93,6 +127,8 @@ Out Step(Machine& m, const In& in, const Params& p) noexcept {
     case State::pending:
         if (body_reload) {
             m.state = State::entered;
+            m.queued = false;
+            m.queued_reconcile = false;
             m.since_ms = now;
             ++m.entered;
             o.event = "entered";
@@ -110,19 +146,40 @@ Out Step(Machine& m, const In& in, const Params& p) noexcept {
         }
         break;
     case State::entered:
-        if (!body_reload) {
-            m.state = State::idle;
-            m.taps_this = 0;
+        // A remote reload started while body 1 still reloads: queued for its exit.
+        if (start) m.queued = true;
+        if (body_exit) {
+            // Every native exit counts, also after a stuck report (complete_late).
+            const bool late = m.len_ms >= p.stuck_ms;
             ++m.completed;
-            o.event = "complete";
-        } else if (m.stuck_latched) {
-            // Stuck: stop holding; the mirror reconciles (o.stuck).
+            if (late) ++m.completed_late;
+            o.event = late ? "complete_late" : "complete";
             m.state = State::idle;
             m.taps_this = 0;
+            // The remote is still in that next reload: one tap now (body 1 can
+            // only start it after its own exit). Body 1's own completion just
+            // filled its magazine (CanReload needs it below the capacity), so the
+            // mirror reconciles to the remote's current magazine first, in the
+            // same drain window before the job, although the remote reloads.
+            const bool again = m.queued && remote_reloading && in.active && in.weapon_match && in.gun_class && in.gate;
+            m.queued = false;
+            if (again) {
+                m.state = State::pending;
+                m.queued_reconcile = true;
+                m.since_ms = now;
+                m.tap_ms = now;
+                m.taps_this = 1;
+                ++m.taps;
+                ++m.queued_taps;
+                o.tap = true;
+                o.queued_tap = true;
+            }
         }
+        // A stuck latch keeps entered (and the hold): the mirror waits for the native exit.
         break;
     }
-    o.hold = m.state == State::pending || m.state == State::entered;
+    o.reconcile = m.state == State::pending && m.queued_reconcile;
+    o.hold = (m.state == State::pending && !m.queued_reconcile) || m.state == State::entered;
     return o;
 }
 

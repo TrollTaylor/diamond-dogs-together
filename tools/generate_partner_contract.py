@@ -622,6 +622,19 @@ SITES = [
     (0x105FEB4, '488b47408bce0faf4f0c03ca8b1c88b9ffff00008bc3c1e810663bc1751b498bd6498b',
      'activation: handle = inventory+0x40[id*stride+slot]; an empty handle -> 0x10517C0 (no weapon)'),
     (0x13030B7, '410fb65e7feb05410fb65e7e', 'shot handler 0x1302F50: the shot class byte +0x7F (second mode) or +0x7E (class 3 = projectile, not filtered)'),
+    # --- Weapons 3: the sender's base ids (docs/native-puppet.md "Loadout mirroring"). The type getter A2A3E0 for the
+    # customized aliases 0x367..0x36C: receiver r = u8 [alias table + (id - 0x367)*0xE + 0x12], then the equipment
+    # resource's part record r (6 bytes, 1-based: [+0x10] + r*6 - 2) names a kind whose 3-byte record ([+0x68]) holds the
+    # type (& 0x1F); and the equip id -> type table index mapping (ids 0x400.. sub 0x1D0, ids 0x600.. sub 0x380).
+    (0xA2A3E6, '8d8299fcffff8bda83f8057740e898933d018d9399fcffff486bd20e0fb65c1012e8a421010085db7458488b4810488d145b0fb65451fe'
+     '488d0c524803486874410fb60183e01f4883c4205bc3',
+     'type getter 0xA2A3E0 aliases 0x367..0x36C: r = [0x2C934A0 + k*0xE + 0x12], type = [[R+0x68] + [[R+0x10] + r*6 - 2]*3] & 0x1F'),
+    (0xA2A44B, '8d82d0fdffff3dcf010000761081fa500400007c1081fa000600007d1033c04883c4205bc381fa000600007c17',
+     'type getter: ids 0x230..0x3FF and 0x450..0x5FF have no table index (type 0)'),
+    (0xA2A478, '81eb800300004863c30fb744410883e03f4883c4205bc381fa000400007c0681ebd00100004863c30fb744410883e03f4883c4205bc3',
+     'type getter: index = id - 0x380 (ids 0x600..), id - 0x1D0 (ids 0x400..0x44F) or id; type = u16 [table + 8 + index*2] & 0x3F'),
+    (0x1E03790, '488d0509fde800c3', 'alias table getter: lea rax, 0x2C934A0; ret'),
+    (0xA3C5B0, '488d05394c0302c3', 'equipment resource getter: lea rax, 0x2A711F0; ret'),
 ]
 SITES += partner_aim_sites.SITES
 # The H1 slot itself (value checked as a slot below) and the patched sites:
@@ -1342,6 +1355,29 @@ def weapons2_assertions():
 
 
 failures += weapons2_assertions()
+
+
+def weapons3_assertions():
+    """The sender's base ids: the alias type path of A2A3E0 (pure reads of runtime-filled image data)."""
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+    need(0xA2A3F3 + 5 + struct.unpack('<i', rd(0xA2A3F4, 4))[0] == 0x1E03790, 'A2A3E0 calls the alias table getter 0x1E03790')
+    need(0xA2A407 + 5 + struct.unpack('<i', rd(0xA2A408, 4))[0] == 0xA3C5B0, 'A2A3E0 calls the equipment resource getter 0xA3C5B0')
+    need(0xA2A4AE + 5 + struct.unpack('<i', rd(0xA2A4AF, 4))[0] == 0xA3C5B0, 'the blueprint branch uses the same resource getter')
+    need(rip_target(0x1E03790, 7) == 0x2C934A0, 'the alias table is 0x2C934A0')
+    need(rip_target(0xA3C5B0, 7) == 0x2A711F0, 'the equipment resource is 0x2A711F0')
+    need(rd(0xA2A4CE, 4) == bytes.fromhex('488b4808'), 'the resource holds GunBasic at +8 (the blueprint branch)')
+    # Both are writable image data (zero-initialized or runtime-filled): bounded pure reads.
+    need(section_of(0x2C934A0) == '.data2' and section_of(0x2C934A0 + 5 * 0xE + 0x12) == '.data2', 'the alias table lies in .data2')
+    need(section_of(0x2A711F0) == '.data2' and section_of(0x2A711F0 + 0x6F) == '.data2', 'the equipment resource lies in .data2')
+    need(len(lea_rip_refs(0x2C934A0)) >= 1, 'the alias table is code-referenced')
+    return out
+
+
+failures += weapons3_assertions()
 if failures:
     print('\n'.join(failures))
     raise SystemExit(1)
@@ -1591,6 +1627,17 @@ w('inline constexpr std::uintptr_t equip_types_rva=0x2a70920, equip_types_vt_rva
 w('inline constexpr std::size_t equip_types_packed=0x8, gun_basic_row=12, gun_basic_rows=0x1818 / 12, stock_ids=649;')
 w('inline constexpr std::uint16_t stock46_packed=0x6244;')
 w('inline constexpr unsigned char stock46_recipe[12]={157,85,110,36,0,0,17,0,0,8,0,4};')
+w('// The type table index of an equip id (A2A3E0 0xa2a478..0xa2a4a5): ids below 0x230 index themselves, ids 0x400..0x44f')
+w('// index 0x230..0x27f (sub 0x1d0) and ids 0x600.. index 0x280.. (sub 0x380); the table holds stock_ids indices.')
+w('inline constexpr std::uint32_t types_index_mid=0x230, types_index_hi=0x280, types_bias_mid=0x1d0, types_bias_hi=0x380;')
+w('// A customized alias\'s own type (A2A3E0 0xa2a3e6..0xa2a432, aliases 0x367..0x36c): r = u8 [alias table 0x2c934a0 +')
+w('// (id - 0x367)*0xe + 0x12] (getter 0x1e03790), R = the equipment resource 0x2a711f0 (getter 0xa3c5b0; R+8 = GunBasic):')
+w('// k = u8 [*(R+0x10) + r*6 - 2], type = u8 [*(R+0x68) + k*3] & 0x1f; r == 0 or a null record: no type. Runtime-filled .data2.')
+w('inline constexpr std::uintptr_t alias_table_rva=0x2c934a0, equip_resource_rva=0x2a711f0;')
+w('inline constexpr std::uint16_t alias_first=0x367, alias_count=6;')
+w('inline constexpr std::size_t alias_stride=0xe, alias_receiver=0x12, res_basic=0x8, res_parts=0x10, res_kinds=0x68;')
+w('inline constexpr std::size_t part_stride=6, part_kind_back=2, kind_stride=3;')
+w('inline constexpr std::uint32_t alias_type_mask=0x1f;')
 w('// --- Native polish: facing D3, the look source hook (partner_look_source.cpp) ----------------')
 w('// PS phase 0 calls 0xffac00(PS, id) only at 0xff29fc; the qword 0xff29f8 (aligned, one cache line) holds that call;')
 w('// only its rel32 low word changes (0xffac00 -> the int3 padding 0xffad66, after the ret at 0xffad65).')

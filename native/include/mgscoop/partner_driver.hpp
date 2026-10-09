@@ -275,7 +275,9 @@ struct Hooks {
     void (*fire_census)(void* context, partner_fire_filter::Census& out) noexcept = nullptr;
     // Instance k's gun record (0: the local player, the v4 magazine sender).
     bool (*read_gun)(void* context, const partner_player::State& state, std::uint32_t k, partner_player::Gun1& out) noexcept = nullptr;
-    bool (*read_loadout)(void* context, const partner_player::State& state, partner_player::Loadout& out) noexcept = nullptr;
+    // The local loadout (partner_player::ReadLoadout): vars and the type
+    // tables only, no partner-state gate (the early manifest runs in any mission).
+    bool (*read_loadout)(void* context, partner_player::Loadout& out) noexcept = nullptr;
     // Reliable channel `channel` (append mode since the capability message
     // shares channel 2: latest would replace the other's unsent message):
     // true when queued.
@@ -709,11 +711,7 @@ struct Mission {
     unsigned fire_lines;
     bool fire_census_logged;
     LogCap weapon_cap;
-    // Loadout sender (this copy's manifest) and the receiver's apply verdict.
-    partner_equip_wire::Manifest equip_tx;
-    bool equip_tx_have, equip_tx_dirty, equip_tables_ok;
-    std::uint32_t equip_tx_epoch;
-    std::uint64_t equip_read_ms;
+    // The receiver's apply verdict (the sender lives on the Driver).
     std::uint16_t equip_apply_rev;
     std::uint32_t equip_apply_loaded;
     char equip_apply[12];
@@ -849,6 +847,17 @@ struct Driver {
     partner_equip_wire::Manifest equip_cache;
     bool equip_cache_have;
     std::uint32_t equip_cache_epoch;
+    // The loadout sender (docs/native-puppet.md "Loadout mirroring"),
+    // process-lifetime: this copy's manifest (a new revision on change), whether
+    // it still has to go out (a change or a new link session), the session it
+    // went out in, the last loadout read (at most every kEquipReadMs, from the
+    // driver tick in partner missions and the observer's ~100 ms path in every
+    // other mission: the title and the ACC too) and its base-id scan.
+    partner_equip_wire::Manifest equip_tx;
+    bool equip_tx_have, equip_tx_dirty, equip_tables_ok;
+    std::uint32_t equip_tx_epoch;
+    std::uint64_t equip_read_ms;
+    partner_player::Loadout equip_loadout;
     equipment_stock_writer::Status equip_status;
     std::uint16_t preload_ids[3];
     std::uint8_t preload_count;
@@ -881,6 +890,18 @@ void Stop(Driver& driver, const Hooks& hooks, PartnerTeardown teardown, bool ter
 void ApplyTrigger(Driver& driver, const Hooks& hooks, const partner::Trigger& trigger, bool terminating) noexcept;
 // Reads, deletes, parses and applies partner.trigger (if present).
 void PollTrigger(Driver& driver, const Hooks& hooks, bool terminating) noexcept;
+// The equipment manifest link (docs/native-puppet.md "Loadout mirroring"):
+// drains reliable channel 2 (the received manifest goes to the mission store
+// and the session cache) and runs this copy's loadout sender (read at most
+// every kEquipReadMs; sent on change and on a new link session; nothing
+// without a link session or without partner_drive=native /
+// partner_input_send=1). Never reads partner state: the observer calls it on
+// its ~100 ms path in any mission (the title and the ACC too), the tick in
+// partner missions. now_ms: the driver clock.
+void TickEquipLink(Driver& driver, const Hooks& hooks, std::uint64_t now_ms) noexcept;
+// Only the drain (the preload query at the natural allocation owner: the
+// first mission after connecting plans from a manifest received just before).
+void DrainEquipLink(Driver& driver, const Hooks& hooks) noexcept;
 // The per-frame tick (2.3 item 9 outline). False leaves the receipt literal
 // (Lua then does nothing); true fills `reply`.
 bool Tick(Driver& driver, const Hooks& hooks, const LabConfig& lab, const char* source, std::size_t size,

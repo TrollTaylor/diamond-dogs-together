@@ -20,10 +20,11 @@ Plan MakePlan(const PlanIn& in) noexcept {
         Tier t = Tier::unknown;
         if (!in.body_ok) t = Tier::unknown;
         else if (!h.filled) t = Tier::empty;
-        else if (in.remote_base[s] == 0) t = Tier::unknown;
-        else if (h.equip == in.remote_base[s]) t = Tier::same;
-        else if (!in.remote_type_ok[s]) t = Tier::unknown;
+        else if (in.remote_base[s] != 0 && h.equip == in.remote_base[s]) t = Tier::same;
+        else if (!in.remote_type_ok[s] || in.remote_type[s] == 0) t = Tier::unknown;
         else if (h.type == in.remote_type[s]) t = Tier::sub;
+        // The writer's slot class: both types belong to this slot.
+        else if (TypeSlot(h.type) == s && TypeSlot(in.remote_type[s]) == s) t = Tier::sub;
         else t = Tier::other;
         p.tier[s] = t;
         if (t == Tier::same || t == Tier::sub) {

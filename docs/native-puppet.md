@@ -698,14 +698,16 @@ slots) and in the runtime code gate.
   taps RELOAD through the existing input overlay (`kTapFrames` windows: the
   press word while aiming, the hold classifier's tap when holstered), retried
   every 250 ms up to 3 taps until body 1 shows 11/12; `entered` ->
-  `complete` when the mode leaves, `stuck` after 2.5 s. Fallbacks (the plain
+  `complete` when the mode leaves (every native exit counts, see F1 below),
+  `stuck` after 8 s (a report only). Fallbacks (the plain
   mirror, no animation): `inactive|weapon|body|cls|gate|no_reload|timeout|
   remote_done`. Holstered and empty-magazine automatic reloads arrive the
   same way (the sender's mode, not its pad). `partner.trigger rtap=1` (worker
   `run partner rtap=1`) forces one test tap.
 - **R4 freeze and reconcile** (`MirrorMag`): with `raw|event` the mirror
   writes nothing while the remote reloads (v5 flag), while body 1 is in 11/12
-  (unless stuck) or while the machine holds; the first write afterwards (the
+  (however long: never released at a stuck report) or while the machine
+  holds; the first write afterwards (the
   reconcile) also writes `rec+0x3E8` (the completion's base) so a later
   completion starts from the mirrored magazine. An R edge no longer
   re-asserts the remote's magazine (only with `mirror`). A change of body 1's
@@ -717,6 +719,34 @@ slots) and in the runtime code gate.
 - Settings: `mirror` (today's behaviour, the lab.ini default), `raw` (freeze
   and reconcile only; isolates "the mirror broke it"), `event` (R2..R6; the
   worker gun stage and Play-OfflineCoop).
+- **F1 (weapons3; hidden run 53e36944, read-only diagnosis).** Body 1's
+  reload was never stuck: it exits natively (`partner_reload=body_exit`,
+  mode 11 -> 8, bit 26 cleared, `upper` 2) after 3.02 s, because the reload
+  playback rate `rec+0x310` is per player (instance 1 about 1.0 offline; the
+  host's own player about 1.5: its reload lasts 2.0 s). The old 2.5 s stuck
+  rule dropped `entered` before that exit (so `completed` never counted) and
+  unfroze the mirror mid-reload. Now (`native/partner_reload.cpp`, pure):
+  `stuck_ms` 8000 and a report only (`partner_reload=stuck`, `reload.stuck`):
+  the machine stays `entered` and holds the mirror until the native exit;
+  every native exit of an entered reload counts (`complete`, or
+  `complete_late` after 8 s, `reload.completed_late`); the mirror reconciles
+  once after the exit (the remote's magazine and `rec+0x3E8`, only when they
+  differ), never at a stuck report; an unread tick neither exits nor
+  re-enters. **Queued reload:** a remote reload start (counter moved, mode
+  11/12) while body 1 is still entered is queued; if the remote is still
+  reloading at body 1's exit the machine taps once more
+  (`partner_reload=queued_tap; ...; reconcile=1`, `reload.queued_taps`) and,
+  while that tap is pending, asks the mirror to reconcile although the remote
+  reloads (Arm `reload_reconcile`; body 1's own completion just filled its
+  magazine and its next reload request needs it below capacity), then holds
+  again from `entered`. Telemetry: `reload.len_ms`/`len_max_ms` (body_exit -
+  body_enter), `remote_len_ms` (the remote's mode-11/12 span), `refill_ms`
+  (body_enter -> the first magazine change body 1 makes itself); the log line
+  `partner_reload=complete|complete_late; setting=..; len_ms=..;
+  remote_len_ms=..; refill_ms=..; mag=..; m3e8=..; completed=..; entered=..;
+  late=..; queued_tap=..`. `gun.rate` (instance 1's `rec+0x310`) is not read:
+  that read is not contract-pinned. The reload keeps body 1's own native
+  length (no rate change, no patch: F2 is out of scope).
 
 ### Weapon switching (W1..W6, `partner_native_slot`)
 
@@ -741,8 +771,12 @@ slots) and in the runtime code gate.
   reason=..`): `same|wait|plan|chain|online|owner|mode|empty|mismatch|
   readback|fault|other|no_v5`; refusals count once per (slot, switch_seq).
 - **Plan** (`native/partner_slots.cpp`): per slot `same` (body 1 holds the
-  remote's base id), `sub` (another weapon of the same type, the tier C
-  substitute), `empty`, `other`, `unknown`; only `same|sub` are admitted.
+  remote's base id), `sub` (another weapon of the same type, or of the same
+  slot class when both types belong to this slot: the writer's tier C),
+  `empty`, `other`, `unknown`; only `same|sub` are admitted. The remote's
+  type of a slot is the manifest's own (version 2, also with base 0: the
+  alias's type), else the type table's type of its base id (a version 1
+  sender).
   Body 1 carries what the writers gave it: the stock46 writer only the back
   slot (plan `empty,same,empty`: the hip or the secondary refuses with
   `empty` and body 1 keeps its gun), the generalized writer below each slot's
@@ -755,9 +789,11 @@ slots) and in the runtime code gate.
   the bullet categories 1 Assault, 2 Handgun, 3 Submachinegun, 4 Sniper,
   5 Shotgun, 6 Machinegun (the EquipIdTable `EQP_TYPE_*` names joined with the
   H2 capture of the runtime type table); 7 GrenadeLauncher, 8 Missile and
-  anything else keep FIRE masked. The plan's tier C substitute of the slot
-  carrying the remote's in-hand base counts as the remote's weapon
-  (`GateIn.substitute`).
+  anything else keep FIRE masked. A substitute (plan tier `sub`) in the remote's current slot
+  (its live v5 slot, else the manifest slot whose alias or base is its
+  in-hand equip) counts as the remote's weapon (`GateIn.substitute`); the
+  old rule (the slot whose manifest base equals the remote's base) masked a
+  base-0 slot as a mismatch.
 
 ### Generalized preload and writer (W2/W3, `partner_native_equip`)
 
@@ -793,8 +829,15 @@ runtime before acting (`full_body_gate`).
     a larger id or a zero descriptor takes the NULL optional (family `plain`):
     `ADE358` still renders on the main bank with no asset, `1E1921F` skips
     every asset branch, size `512 + align16(8g+88)` (640 at g 5; at most 1824
-    for g <= 153, within the 2048 stride). Family `optional` admits only the
-    qualified stock46 header shape (n4/a6, parameters 3: 1184 bytes at g 5);
+    for g <= 153, within the 2048 stride). Family `optional` admits the
+    constructor shapes of the exe's own per-parameter table (weapons3):
+    header word0 = n parameters 1..8, word1 = m(n) and words 2..5 zero, the
+    magic and parameters 3 kept; `1A95470(n, mode 0)` over the records
+    `1A953D0(0)` returns (`0x2B4A078`) gives m(n) = 2,4,5,6,7,8,9,10 and the
+    request size 224,400,480,544,624,688,768,832 (`kOptionalShapes`,
+    asserted by `generate_equip_writer_pins.py --check`); render bytes
+    `512 + size(n) + align16(8g+88)` <= 2048 (stock46 is n4/m6: 1184 bytes
+    at g 5);
   - the cache entry: the first used entry of the id (`DC3755..DC376A`),
     identity type/receiver, flags 3 (protected) and refs 0 for A1/C (never an
     entry the viewer references).
@@ -805,10 +848,14 @@ runtime before acting (`full_body_gate`).
   one in `lua/coop/equipment_stock_preload.lua`): at the natural allocation
   owner of any partner-body mission (30010, 30020, 30050), after the ghost
   equipment groups returned, one public `TppEquip.RequestLoadToEquipMissionBlock`
-  with the received manifest's base ids (this mission's manifest, else the
-  last one of the same link session; the first mission of a session has none:
-  `no_manifest`, nothing spent). Per id: a stock gun of its slot's type with
-  a package row; then the joint preflight (`equipment_preload_contract.hpp`)
+  with the received manifest's base ids (this mission's store or the last one
+  of the same link session; the query drains channel 2 once first). The
+  sender sends from the title and the ACC too (early manifest, weapons3), so
+  the first mission after connecting preloads; `no_manifest` (nothing spent)
+  now means the peer sent none. Per id: a stock gun of its slot's type with
+  a package row, of the manifest's own type of the slot (version 2:
+  `dropped=<id>:type_mismatch` otherwise); base 0 is skipped; then the joint
+  preflight (`equipment_preload_contract.hpp`)
   predicts `A03C40`/`A02290`/`DC3700` exactly: the hashes it appends, the
   queue room (no growth at `A03D2D`), and per id the cache path: the existing
   used entry gains only the protect bit, or the first unused entry is built;
@@ -822,11 +869,27 @@ runtime before acting (`full_body_gate`).
   slot, the two slots the remote does not hold first and its current slot
   last (flags 4 leaves body 1 on the last dispatched slot), one at a time:
   - plan: tier A1 the manifest's base id itself (its own protected,
-    unreferenced cache entry); tier C (`substitute` only) a resident
-    protected unreferenced stock gun of the same type, the same receiver
-    first, then the lowest id, whose packages are loaded in this mission (its
-    whole `Capture` holds); tier D refuse (the reason is logged; the slot
-    stays empty);
+    unreferenced cache entry, of the manifest's type of the slot:
+    `type_mismatch` otherwise); after ANY A1 refusal (`no_base` with a known
+    type or alias, `type_mismatch`, `no_cache_entry`, `cache_shared`, ...;
+    logged as `equip_writer=a1_refused; ...; next=c`) tier C (`substitute`
+    only): the type is the manifest's type of the slot, else the base's table
+    type, when it belongs to the slot, else only the slot class ({1,5,7},
+    {4,6,8}, {2,3}); the search goes same type with the manifest's receiver
+    (`recipe[0]`), then same type, then the rest of the slot class, the lowest
+    id first (`NextCandidate`), and admits a candidate only with census flags
+    3 and refs 0 (never an n3 entry such as the soldiers' rifle 39), as the
+    id's first used entry, an id below 0x230 (never an alias such as the
+    viewer's 871..876), not the want, not one of the viewer's own
+    `vars.weapons`, not an equip this allocation already dispatched, and a
+    full `Derive` + `Capture` pass (its packages loaded in this mission).
+    Each candidate logs `equip_writer=candidate; slot=..; want=..; equip=..;
+    tier=c; pass=type_receiver|type|slot_class; type=..; receiver=..;
+    flags=..; refs=..; reason=ok|<why>; shape=<w0..w5>|none` (at most 24 lines
+    per allocation; at most 16 candidates per slot, then `candidate_limit`);
+    tier D refuses with the LAST candidate's reason and names it
+    (`candidates=n; candidate=<id>`; `no_resident` when none qualified); the
+    slot stays empty;
   - readiness: the target's full preflight (the stock46 checks with its own
     data: packages ready in the mission entry, parts/optional assets, cache
     identity and refs 0, the new handle ring slot, the delayed resource map,
@@ -905,16 +968,49 @@ runtime before acting (`full_body_gate`).
 - **Sender** (pure reads, at most once per second): `vars.weapons[0..2]`
   (u16 at vars+0x548, registration `0x99B0BA`, `0x8070006` = u16[6]),
   `customizedWeapon[0..2]` (vars+0xB06) and `chimeraParts` (u8[36] at
-  vars+0xB30). A slot's base id is the equip id itself below 649, else the
-  lowest stock id whose GunBasic recipe (`0x2C25C50 + (row-1)*12`, row =
-  packed>>6 of the type table `0x2A70920+8+id*2`) has the slot's receiver
-  (`chimeraParts[i*12]`); the tables count only after the stock46 sanity
-  checks (type table vtable `0x22AD180`, packed 46 == `0x6244`, row 393 == the
-  stock46 recipe). The manifest (`partner_equip_wire`, channel 2, latest
-  mode) gets a new revision on change and is resent after a new link session
-  (`partner_equip=sent; rev=..; base=..; alias=..; receiver=..; tables=..`);
-  the v4 frame names the revision (`equip_rev`).
-- **Receiver**: stores it (`partner_equip=manifest; ...`) and logs the apply
+  vars+0xB30), plus the type tables; the tables count only after the stock46
+  sanity checks (type table vtable `0x22AD180`, packed 46 == `0x6244`, row
+  393 == the stock46 recipe). Each slot carries its own gun type (1..8, 0
+  unknown) and a base id that is never a non-gun id (weapons3; run 53e36944
+  sent 343, a type-11 id whose row happened to hold receiver 69):
+  - a stock id (below 0x230): itself when its packed type is a gun type
+    (`scan=stock`, else `non_gun`, base 0);
+  - a customized alias (0x367..0x36C): its type from the game's own alias
+    path of the type getter `A2A3E0` (contract-pinned `0xA2A3E6..0xA2A432`,
+    the getters `0x1E03790` and `0xA3C5B0`): the receiver r = u8 [alias table
+    `0x2C934A0` + (id-0x367)*0xE + 0x12], then k = u8 [*(R+0x10) + r*6 - 2]
+    and type = u8 [*(R+0x68) + k*3] & 0x1F of the equipment resource R =
+    `0x2A711F0` (R+8 must be GunBasic); then the first type table index
+    whose packed type is a gun type equal to the alias's and whose GunBasic
+    row has the slot's receiver (`chimeraParts[i*12]`), mapped index -> id
+    as `e < 0x230 ? e : e < 0x280 ? e + 0x1D0 : e + 0x380` (`A2A478`/`A2A48F`;
+    `scan=gun_types`), else base 0 (`no_match`; the receiver's writer then
+    substitutes by type). An id >= 0x400 is a valid base on the wire; the
+    receiver's A1 refuses it (`equip_range`) and falls to tier C.
+  The manifest (`partner_equip_wire`, channel 2, version 2: 64 bytes with
+  `type[3]`; version 1 still decodes) gets a new revision on change and is
+  resent after a new link session; one line per carried slot
+  `partner_equip_base; rev=..; slot=..; alias=..; type=..; receiver=..;
+  alias_receiver=..; base=..; scan=..; tables=..` and `partner_equip=sent;
+  rev=..; epoch=..; base=..; alias=..; receiver=..; type=..; tables=..;
+  mission=..`; the v4 frame names the revision (`equip_rev`).
+- **Early manifest** (weapons3): the sender is driver-level
+  (`partner_driver::TickEquipLink`): the driver tick in partner missions and
+  the observer's ~100 ms path (`ObserveEquipLink`, from the debug snapshot,
+  runtime thread, under the receipt lock) in every other mission, the title
+  (40010) and the ACC included, whenever the link has a session and the copy
+  drives natively or sends input frames (`partner_input_send=1`); a loadout
+  without any weapon (vars not loaded yet) is not sent. Neither the sender
+  nor the drain reads partner state (`ReadLoadout` has no partner-state
+  gate). The same path drains channel 2 outside missions; the preload query
+  drains it once more (`DrainEquipLink`), and every MissionStart seeds the
+  mission's store from the session's cache (a manifest of another link
+  session never), so the first mission after connecting preloads and plans
+  from the remote's manifest without a resend. A 0.12.0 peer (manifest
+  version 1 only) refuses the 64-byte version 2: both PCs must run the same
+  package.
+- **Receiver**: stores it (`partner_equip=manifest; ...; type=..; v=..;
+  mission=..`) and logs the apply
   verdict for the back slot against instance 1's loaded equip
   (`partner_equip=apply; ...; result=already|unsupported|no_weapon|unknown;
   writer=stock46`). What body 1 can load is the generalized writer's business
@@ -962,6 +1058,15 @@ ok=..`, `partner_slot=write|refused; reason=..; target=..; ...`,
 `partner_weapon=projectile|type_ok; ...`, `partner_input=fault; phase=slot`
 (the follower off until MissionStart).
 
+Weapons3: `reload` adds `completed_late`, `queued_taps`, `reconcile`,
+`len_ms`, `len_max_ms`, `remote_len_ms`, `refill_ms`; `equip` adds `tx_type`,
+`rx_type`, `rx_version`; `slots.writer.slots[s]` adds `want_type`,
+`candidates`, `candidate`. Log lines: `partner_reload=complete|complete_late;
+... len_ms=..; remote_len_ms=..; refill_ms=..; ...; queued_tap=..`,
+`partner_reload=queued_tap; ...; reconcile=1`, `partner_equip_base; ...`,
+`equip_writer=a1_refused; ...; next=c`, `equip_writer=candidate; ...`, and
+every `equip_writer=` line carries `want_type`, `candidates`, `candidate`.
+
 Generalized writer and preload: `slots.writer` (`active`, `dispatches`,
 `bound`, `refused`, `slots` x3 {`want` the manifest's base id, `equip` the
 target, `tier` a1|c|d|none, `family` optional|plain|none, `state`
@@ -992,17 +1097,24 @@ leak captures, loadout, census, noise record).
 - **RA (reload A/B)**: the command above with `-LabSetting
   partner_native_reload=mirror`, then `=raw`, then the default (`event`).
   Pass (raw/event): the ring's `gmode` 11/12 near the shooter's reload, `mag.writes`
-  flat while it is 11/12 (`mag.frozen` grows), `gmode` back to 7/6 within
-  2.5 s (`partner_reload=complete`, never `stuck`), `gun.mag == gun.cap`
-  afterwards with at most one `mag.reconciles`, `leak.ammo_leaks` 0; event
+  flat while it is 11/12 (`mag.frozen` grows), `gmode` back to 8 (7/15/14
+  when the shooter keeps aiming: `aim-hold-reload`) after body 1's own
+  length (`partner_reload=complete; ...; len_ms=2950..3100`, `refill_ms`
+  about 1560, `reload.completed == reload.entered`, `stuck_n` 0),
+  `gun.mag == gun.cap` afterwards with at most one `mag.reconciles` (after
+  the exit), `leak.ammo_leaks` 0; event
   also `reload.taps`/`reload.entered` per remote reload, `fallbacks` 0 and
   `auto-reload` entering 11/12 without an R press. mirror should reproduce the
   old fight (a write during 11/12, `partner_reload=stuck` or 8 of 9).
 - **SB (generalized writer and native switch)**: the default run
   (`substitute`, `write`). Pass: per slot `equip_writer=plan` then
   `handle_bound` with its tier (a1 or c) and `slots.writer.slots[s].state`
-  bound; `slots.handles` filled for 0, 1 and 2 (or a logged tier d reason);
-  `equip_preload=queued_verified` from the second mission of a session; in
+  bound for ALL THREE slots (the `equip_writer=candidate` lines show the
+  tier C choice; a tier d slot names its last candidate); `slots.handles`
+  filled for 0, 1 and 2; `partner_equip=sent; ...; mission=40010` before
+  the peer's `allocation_enter mission=30010` and
+  `equip_preload=queued_verified` in the FIRST mission (the scenario grammar
+  has no mission reload: a second-mission check needs another run); in
   `switch1`/`switch2` `partner_slot=write`, `slots.body_slot` ==
   `remote_slot` and `gun.hand_slot` following within one capture (ring `gmode`
   8 when it happens while aiming), `gun.body_equip` == the plan's equip,
@@ -1194,9 +1306,13 @@ stall hold are pure; the gun strip reads the already pinned gun record
 - Input frame v3 (100 bytes): v2 plus the sender's look angles, `CAM+0x270/+0x274`,
   the `PP+0x14` heading, xflags, inv slot and manifest revision. A receiver
   without v3 look refuses the look write with `look_refused=no_v3`.
-- Equipment manifest (`partner_equip_wire`, reliable channel 2): the sender
-  is native pure reads of vars (see "Loadout mirroring"); the receiver stores
-  it and logs the apply verdict.
+- Equipment manifest (`partner_equip_wire`, reliable channel 2, one message
+  type there besides the capability message): version 2 (weapons3, 64
+  bytes) = version 1's 60 bytes plus `[60..62]` each slot's own gun type
+  (0 unknown, else 1..8) and `[63]` 0; version 1 (60 bytes, types unknown)
+  still decodes, any other size/version pairing is refused. The sender is
+  native pure reads of vars and the type tables (see "Loadout mirroring");
+  the receiver stores it, plans from it and logs the apply verdict.
 
 ## Telemetry
 
@@ -1282,9 +1398,10 @@ evidence per stage).
   per-slot attachment/effect records never ran for instance 1 (pinned bytes,
   the same ChangeEquip ABI and request as stock46). Derived targets accept
   any parsed package count from 1 to the named count (stock46 keeps its
-  measured [2,1,1,1]). The optional family admits only stock46's header
-  shape (n4/a6, 3 parameters); other optional shapes refuse
-  (`stock_optional_shape`) and fall to a substitute. The preload may build a
+  measured [2,1,1,1]). The optional family admits the exe's constructor
+  shapes n1..8 with m(n) (weapons3; only stock46's n4/m6 was observed: the
+  other sizes are emulated from the table, never rendered by us). The
+  preload may build a
   cache entry (`DC3470`, the path `TppRevenge` uses for mission weapons) but
   never evicts; a built entry is protected (flags 3) and stays for the
   mission. Tier C depends on what the mission's soldiers carry (per area,
@@ -1297,6 +1414,22 @@ evidence per stage).
   slot; a dispatch whose readback refuses (`call_unverified`) leaves whatever
   the game did (SEH-contained, no rollback), and the later slots then refuse
   (`other_slot_unexpected`).
+- Weapons3 (fixture-tested only): the alias type path reads runtime-filled
+  data (`0x2C934A0`, `*(0x2A711F0+0x10/+0x68)`); an unfilled table gives
+  `scan=alias_type` (type 0, base 0: the receiver substitutes by slot class).
+  A customized base id >= 0x400 is sent but never loaded (the receiver's A1
+  refuses `equip_range`; tier C picks a resident gun of the type).
+  Tier C can only use what the mission keeps resident with flags 3 and no
+  reference (the soldiers' own rifle, n3, never qualifies): a mission
+  without such a gun of the slot's class leaves the slot empty (tier d,
+  the candidate named). The partner's reload keeps its own native length
+  (about 3.02 s for stock46 at instance 1's rate 1.0, against the host
+  shooter's 2.0 s): the reload-rate parity (F2) is not part of this build. A
+  queued reload's reconcile writes the remote's magazine while the remote
+  reloads (only while that tap is pending); a remote refill inside those
+  250 ms can fill body 1 before its request (the retries then run out:
+  `timeout`). The early manifest depends on the debug snapshot path
+  (`debug_menu` enabled, as for the writer itself) for the title and the ACC.
 - Facing (untested at runtime): whether the game keeps the governor's xform in
   idle acts (the old one-shot yaw rule did) and in aim acts (the contest guard
   latches if not); an idle turn starts only while the body's own yaw rate

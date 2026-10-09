@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstring>
 #include "mgscoop/partner_player.hpp"
+#include "mgscoop/partner_equip_wire.hpp"
 #include "partner_player_contract.hpp"
 
 namespace mgscoop::partner_player {
@@ -193,6 +194,8 @@ Addresses AddressesFor(const void* base) noexcept {
     a.equip_types = b + c::equip_types_rva;
     a.equip_types_vtable = b + c::equip_types_vt_rva;
     a.gun_basic = b + c::gun_basic_rva;
+    a.alias_table = b + c::alias_table_rva;
+    a.equip_resource = b + c::equip_resource_rva;
     a.equip_ctl_vtable = b + c::equip_ctl_vt_rva;
     a.store_vtable = b + c::store_vt_rva;
     a.store_vtable_alt = b + c::store_vt_derived_rva;
@@ -1106,10 +1109,31 @@ bool EquipType(const Addresses& a, std::uint32_t equip, std::uint8_t& type) noex
     return type != 0;
 }
 
-bool ReadLoadout(const Addresses& a, const State& s, Loadout& out) noexcept {
+namespace {
+// A2A3E0's alias path (contract-pinned, 0xA2A3E6..0xA2A432): the alias's
+// receiver from the alias table, then the equipment resource's part record
+// (1-based, 6 bytes, the kind at +4) and kind record (3 bytes, type & 0x1F).
+// The resource must hold GunBasic at +8 (the writer contract's identity).
+bool AliasType(const Addresses& a, std::uint16_t alias, std::uint8_t& receiver, std::uint8_t& type) noexcept {
+    receiver = type = 0;
+    if (!a.alias_table || !a.equip_resource || alias < c::alias_first || alias - c::alias_first >= c::alias_count) return false;
+    std::uintptr_t basic = 0, parts = 0, kinds = 0;
+    std::uint8_t kind = 0, value = 0;
+    if (!ReadValue(a.alias_table + static_cast<std::uintptr_t>(alias - c::alias_first) * c::alias_stride + c::alias_receiver, receiver) ||
+        !receiver || !ReadValue(a.equip_resource + c::res_basic, basic) || basic != a.gun_basic ||
+        !ReadValue(a.equip_resource + c::res_parts, parts) || !parts || !ReadValue(a.equip_resource + c::res_kinds, kinds) || !kinds ||
+        !ReadValue(parts + static_cast<std::uintptr_t>(receiver) * c::part_stride - c::part_kind_back, kind) ||
+        !ReadValue(kinds + static_cast<std::uintptr_t>(kind) * c::kind_stride, value))
+        return false;
+    type = static_cast<std::uint8_t>(value & c::alias_type_mask);
+    return true;
+}
+} // namespace
+
+bool ReadLoadout(const Addresses& a, Loadout& out) noexcept {
     const Preserve preserve;
     out = Loadout{};
-    if (CheckWrite(Refusal::none, s, 1, false, WriteKind::restore)) return false;
+    for (const char*& scan : out.scan) scan = "none";
     std::uintptr_t vars = 0;
     if (!ReadValue(a.vars_slot, vars) || !vars || !ReadBlock(vars + c::vars_weapons, out.weapons, sizeof(out.weapons)) ||
         !ReadBlock(vars + c::vars_customized, out.customized, sizeof(out.customized)) ||
@@ -1134,16 +1158,28 @@ bool ReadLoadout(const Addresses& a, const State& s, Loadout& out) noexcept {
                         ReadBlock(a.gun_basic, basic, sizeof(basic));
         for (std::size_t r = 0; r < c::gun_basic_rows; ++r) receivers[r] = basic[r * c::gun_basic_row];
     }
+    namespace ew = partner_equip_wire;
     for (unsigned i = 0; i < 3; ++i) {
         const std::uint16_t alias = out.weapons[i];
-        if (alias && alias < c::stock_ids) { out.base[i] = alias; continue; }
-        if (!alias || !out.tables_ok) continue;
-        const std::uint8_t receiver = out.chimera[i * 12];
-        if (!receiver) continue;
-        for (std::uint16_t e = 1; e < c::stock_ids; ++e) {
-            const std::uint32_t row = packed[e] >> 6;
-            if (row >= 1 && row <= c::gun_basic_rows && receivers[row - 1] == receiver) { out.base[i] = e; break; }
+        if (!alias) continue;
+        if (alias < c::types_index_mid) {
+            // A stock id: itself, only when its packed type is a gun type.
+            if (!out.tables_ok) { out.scan[i] = "tables"; continue; }
+            const std::uint8_t type = static_cast<std::uint8_t>(packed[alias] & 0x3Fu);
+            if (!ew::GunType(type)) { out.scan[i] = "non_gun"; continue; }
+            out.base[i] = alias;
+            out.type[i] = type;
+            out.scan[i] = "stock";
+            continue;
         }
+        if (alias < c::alias_first || alias - c::alias_first >= c::alias_count) { out.scan[i] = "range"; continue; }
+        // A customized alias: its own type, then the first stock gun of that type with the slot's receiver.
+        std::uint8_t type = 0;
+        if (!AliasType(a, alias, out.alias_receiver[i], type) || !ew::GunType(type)) { out.scan[i] = "alias_type"; continue; }
+        out.type[i] = type;
+        if (!out.tables_ok) { out.scan[i] = "tables"; continue; }
+        out.base[i] = ew::BaseFromTables(packed, c::stock_ids, receivers, c::gun_basic_rows, type, out.chimera[i * 12]);
+        out.scan[i] = out.base[i] ? "gun_types" : "no_match";
     }
     return true;
 }

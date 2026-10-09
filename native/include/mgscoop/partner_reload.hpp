@@ -32,7 +32,12 @@ const char* StateName(State state) noexcept;
 struct Params {
     std::uint32_t verify_ms = 250;   // a tap body 1 did not answer with a reload mode within this is retried
     std::uint32_t max_taps = 3;      // taps per remote reload before the fallback (timeout)
-    std::uint32_t stuck_ms = 2500;   // a body reload mode older than this no longer freezes the mirror
+    // A body reload mode older than this is reported stuck (telemetry only:
+    // the machine stays entered and the mirror frozen until the native exit).
+    // Body 1 reloads at its own playback rate (rec+0x310 of instance 1, about
+    // 1.0 offline: 3.02 s for stock46, run 53e36944); shell-by-shell weapons
+    // take several seconds.
+    std::uint32_t stuck_ms = 8000;
 };
 
 // One driver tick.
@@ -53,6 +58,10 @@ struct In {
     bool body_ok;
     std::uint8_t body_mode;
     bool gun_class, gate, can_reload, weapon_match;
+    // Body 1's magazine as its getter reads it (refill_ms telemetry: the first
+    // change the body itself makes after body_enter; the mirror is frozen then).
+    bool body_mag_ok;
+    std::uint16_t body_mag;
     // A one-shot test request (partner.trigger rtap=1, the worker's
     // "partner rtap=1"): one tap now when the preconditions hold (event only).
     bool force_tap;
@@ -60,12 +69,23 @@ struct In {
 struct Out {
     bool tap;            // bump the overlay tap with RELOAD now
     bool hold;           // the mirror freezes (pending or entered)
-    bool stuck;          // body 1's reload mode passed stuck_ms: it no longer freezes the mirror
-    const char* event;   // static: start | tap | retry | entered | complete | stuck | fallback, or nullptr
+    bool stuck;          // body 1's reload mode passed stuck_ms (telemetry; the mirror stays frozen until the exit)
+    // static: start | tap | retry | entered | complete | complete_late | stuck | fallback, or nullptr
+    const char* event;
     const char* reason;  // static fallback reason, or nullptr
     // Body 1's own reload mode this tick, every setting (the RA evidence of
     // mirror and raw too): "body_enter" | "body_exit", or nullptr.
     const char* body_event;
+    // With body_exit: the native reload's length (body_exit - body_enter).
+    std::uint32_t len_ms;
+    // The remote started another reload while body 1 was still entered and is
+    // still reloading at body 1's exit: one tap now (tap is set, the state is
+    // pending again).
+    bool queued_tap;
+    // While that queued tap is pending: no hold, and the mirror writes the
+    // remote's magazine although the remote reloads (body 1's own completion
+    // filled its magazine; its next reload request needs it below capacity).
+    bool reconcile;
 };
 // Per mission (Reset at MissionStart). Counters are mission totals.
 struct Machine {
@@ -75,8 +95,18 @@ struct Machine {
     std::uint64_t since_ms, tap_ms, body_since_ms;
     std::uint32_t taps_this;
     bool body_reload, stuck_latched;
-    std::uint32_t starts, taps, entered, completed, stuck, fallbacks, body_entries;
+    // A remote reload start seen while entered (queued for body 1's exit) and
+    // the pending tap it caused (the reconcile instead of the hold).
+    bool queued, queued_reconcile;
+    std::uint32_t starts, taps, entered, completed, completed_late, stuck, fallbacks, body_entries, queued_taps;
     const char* last_reason;
+    // Telemetry (milliseconds; 0 until measured): the last and longest native
+    // reload (body_exit - body_enter), the remote's last mode-11/12 span and
+    // body_enter -> the first magazine change body 1 made itself.
+    std::uint32_t len_ms, len_max_ms, remote_len_ms, refill_ms;
+    bool remote_in_reload, refill_seen, enter_mag_ok;
+    std::uint64_t remote_since_ms;
+    std::uint16_t enter_mag;
 };
 void Reset(Machine& machine) noexcept;
 // Fallback reasons: inactive (no armed native gun window), weapon (the weapon
@@ -84,14 +114,18 @@ void Reset(Machine& machine) noexcept;
 // class), gate (the reload gate), no_reload (the CanReload replica: full,
 // no stock or the no-reload bit), timeout (max_taps taps without a reload
 // mode), remote_done (the remote left its reload before body 1 entered).
+// entered lasts until body 1's own exit (every exit counts: complete, or
+// complete_late after stuck_ms); a stuck latch never releases it.
 Out Step(Machine& machine, const In& in, const Params& params = Params{}) noexcept;
 
 // The hook's freeze rule for the magazine mirror: mirror never freezes; raw and
-// event freeze while the remote reloads (v5 flag), while the driver holds, or
-// while body 1 sits in a reload mode that is not stuck.
+// event freeze while the remote reloads (v5 flag; not while the driver's queued
+// tap asks for the reconcile), while the driver holds, or while body 1 sits in
+// a reload mode, however long (the reconcile runs once, after body 1's native
+// exit, never at a stuck latch).
 inline constexpr bool MirrorFrozen(PartnerNativeReload setting, bool remote_reloading, std::uint8_t body_mode, bool hold,
-                                   bool stuck) noexcept {
-    return setting != PartnerNativeReload::mirror && (remote_reloading || hold || (ReloadMode(body_mode) && !stuck));
+                                   bool reconcile) noexcept {
+    return setting != PartnerNativeReload::mirror && ((remote_reloading && !reconcile) || hold || ReloadMode(body_mode));
 }
 
 // Sender side (input frame v5): reload_seq advances on each entry into a

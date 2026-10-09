@@ -184,8 +184,13 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
     j.Add(",\"hold\":%s,\"stuck\":%s,\"starts\":%u,\"taps\":%u,\"entered\":%u,\"completed\":%u,\"stuck_n\":%u,\"fallbacks\":%u,",
         Bool(n.reload_hold),Bool(n.reload_stuck),n.reload_starts,n.reload_taps,n.reload_entered,n.reload_completed,n.reload_stuck_n,
         n.reload_fallbacks);
-    j.Add("\"body_entries\":%u,\"sample_strip\":%u,\"probe1\":{\"b20\":%u,\"b24\":%u,\"shots\":%u,\"mode_changes\":%u,\"mode\":%u}}",
-        n.reload_body_entries,n.reload_sample_strip,n.probe1_b20,n.probe1_b24,n.probe1_shots,n.probe1_mode_changes,n.probe1_mode);
+    j.Add("\"body_entries\":%u,\"sample_strip\":%u,",n.reload_body_entries,n.reload_sample_strip);
+    // F1: every native exit counts (complete_late after stuck_ms), the queued taps, and the lengths (ms, 0 unmeasured).
+    j.Add("\"completed_late\":%u,\"queued_taps\":%u,\"reconcile\":%s,\"len_ms\":%u,\"len_max_ms\":%u,\"remote_len_ms\":%u,"
+          "\"refill_ms\":%u,",n.reload_completed_late,n.reload_queued_taps,Bool(n.reload_reconcile),n.reload_len_ms,n.reload_len_max_ms,
+        n.reload_remote_len_ms,n.reload_refill_ms);
+    j.Add("\"probe1\":{\"b20\":%u,\"b24\":%u,\"shots\":%u,\"mode_changes\":%u,\"mode\":%u}}",
+        n.probe1_b20,n.probe1_b24,n.probe1_shots,n.probe1_mode_changes,n.probe1_mode);
     // The weapon switch (W4/W6): body 1's slots, the plan and the follower.
     j.Add(",\"slots\":{\"setting\":");j.String(n.slot_setting,sizeof(n.slot_setting));
     j.Add(",\"remote_slot\":");i32(n.slot_remote);j.Add(",\"remote_seq\":");i32(n.slot_remote_seq);
@@ -210,7 +215,8 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
         j.String(n.writer_tier[s],sizeof(n.writer_tier[s]));j.Add(",\"family\":");j.String(n.writer_family[s],sizeof(n.writer_family[s]));
         j.Add(",\"state\":");j.String(n.writer_state[s],sizeof(n.writer_state[s]));
         j.Add(",\"reason\":");j.String(n.writer_reason[s],sizeof(n.writer_reason[s]));
-        j.Add(",\"handle\":%u}",n.writer_handle[s]);
+        j.Add(",\"handle\":%u,\"want_type\":%u,\"candidates\":%u,\"candidate\":%u}",n.writer_handle[s],unsigned(n.writer_want_type[s]),
+            n.writer_candidates[s],unsigned(n.writer_candidate[s]));
     }
     j.Add("]}}");
     // Facing (partner_recon governor) and the look (D3).
@@ -253,8 +259,11 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
     j.Add(",\"equip\":{\"tx_rev\":%u,\"tx_base\":[%u,%u,%u],\"tx_alias\":[%u,%u,%u],\"tables_ok\":%s,",
         n.equip_tx_rev,n.equip_tx_base[0],n.equip_tx_base[1],n.equip_tx_base[2],n.equip_tx_alias[0],n.equip_tx_alias[1],n.equip_tx_alias[2],
         Bool(n.equip_tables_ok));
-    j.Add("\"rx_base\":[%u,%u,%u],\"rx_alias\":[%u,%u,%u],\"apply\":",n.equip_rx_base[0],n.equip_rx_base[1],n.equip_rx_base[2],
+    j.Add("\"rx_base\":[%u,%u,%u],\"rx_alias\":[%u,%u,%u],",n.equip_rx_base[0],n.equip_rx_base[1],n.equip_rx_base[2],
         n.equip_rx_alias[0],n.equip_rx_alias[1],n.equip_rx_alias[2]);
+    j.Add("\"tx_type\":[%u,%u,%u],\"rx_type\":[%u,%u,%u],\"rx_version\":%u,\"apply\":",unsigned(n.equip_tx_type[0]),
+        unsigned(n.equip_tx_type[1]),unsigned(n.equip_tx_type[2]),unsigned(n.equip_rx_type[0]),unsigned(n.equip_rx_type[1]),
+        unsigned(n.equip_rx_type[2]),n.equip_rx_version);
     j.String(n.equip_apply,sizeof(n.equip_apply));
     // The generalized writer's setting, the stock cache census and the preload (W2).
     j.Add(",\"setting\":");j.String(n.equip_setting,sizeof(n.equip_setting));

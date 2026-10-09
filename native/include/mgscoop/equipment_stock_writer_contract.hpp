@@ -203,6 +203,18 @@ template<class Reader> struct View {
     }
 };
 
+// The optional asset's constructor shapes: 1A95470(n, mode 0) sums, over n
+// parameters, the static per-parameter records 1A953D0(0) returns (0x2B4A078:
+// parameter 0, 1, then 2 for every later one; {count, kinds[3]}; kind 0 ->
+// 0x40 bytes, 1..6 -> 0x60): m(n) = the summed counts (header word1) and the
+// request size align16(8*m+31) + the kind bytes. Emulated from the exe and
+// asserted by tools/generate_equip_writer_pins.py --check (which also pins
+// 1A953D0, 1A95470, the jump table and the mode-0 table).
+struct OptionalShape {std::uint16_t n,m;std::uint32_t size;};
+inline constexpr std::array<OptionalShape,8> kOptionalShapes{{{1,2,224},{2,4,400},{3,5,480},{4,6,544},{5,7,624},{6,8,688},{7,9,768},{8,10,832}}};
+constexpr const OptionalShape* OptionalShapeOf(std::uint16_t n,std::uint16_t m) noexcept {
+    return n>=1 && n<=kOptionalShapes.size() && kOptionalShapes[n-1].n==n && kOptionalShapes[n-1].m==m ? &kOptionalShapes[n-1] : nullptr;
+}
 template<class Reader> const char* OptionalReady(View<Reader>& v,OptionalLease& o,const Target& t=kStock46) noexcept {
     std::uint8_t state=0;std::uint32_t result=0,flags=0;std::uint64_t hash=0;
     // The canonical loaded resource factory declares a 0xA0 object; loader
@@ -219,21 +231,24 @@ template<class Reader> const char* OptionalReady(View<Reader>& v,OptionalLease& 
     if(Word32(o.header_bytes.data())!=0x0C012B72 || !v.At(o.asset,0x84,o.parameters) ||
        o.parameters!=3 || Word32(o.header_bytes.data()+4)!=o.parameters ||
        0x20ull+std::uint64_t(o.parameters)*0x10>o.bytes) return "stock_optional_header";
-    // Admit only the independently observed stock46 constructor shape. Its
-    // flags1000-clear fallback mode0 skips all dictionary/secondary/typed-size
+    // Admit only the constructor shapes of the exe's own per-parameter table:
+    // word0 = n parameters (1..8), word1 = m(n) (the summed counts of
+    // 1A95470 mode 0, kOptionalShapes), words 2..5 zero. Its flags1000-clear
+    // fallback mode0 skips all dictionary/secondary/typed-size
     // branches. Natural1307EE2/EE6 zero the optional descriptor's count+8
     // and flags+C;1307F2D writes only its asset+0, and1307F35..F4C passes
     // that descriptor via R8+10. ADDE317/396/3A3 therefore produce request
     // flags208/count1/extra18NULL and skip AB0460. This
     // proves the ordinary arena read/write extents, not the protected binder's
     // absence of failures; that exact retail body remains pinned and SEH-bound.
-    constexpr std::array<std::uint16_t,6> shape{4,6,0,0,0,0};
-    for(unsigned i=0;i<shape.size();++i) if(Word16(o.header_bytes.data()+8+i*2)!=shape[i])
-        return "stock_optional_shape";
+    // stock46 is n4/m6 (544 bytes, as measured).
+    const auto* shape=OptionalShapeOf(Word16(o.header_bytes.data()+8),Word16(o.header_bytes.data()+10));
+    if(!shape) return "stock_optional_shape";
+    for(unsigned i=2;i<6;++i) if(Word16(o.header_bytes.data()+8+i*2)) return "stock_optional_shape";
     if(!v.At(v.base,0x2C71680,o.global) || o.global>153) return "stock_optional_global";
-    // 1A95470 mode0(n4)=64*4+224+floor16(8*(4+2)+31)=544.
+    // 1A95470 mode0(n) = size(n) (kOptionalShapes; stock46 n4: 544).
     // 1AA49E0 contributes align16(8*g+88). All arithmetic is bounded here.
-    o.render_bytes=512+544+((8*o.global+88+15)&~15u);
+    o.render_bytes=512+shape->size+((8*o.global+88+15)&~15u);
     return o.render_bytes<=2048 ? nullptr : "stock_optional_render_size";
 }
 // The NULL optional (an id above 0x7C or a zero descriptor): 1307F31 passes
@@ -943,6 +958,55 @@ inline unsigned FirstEntry(const std::array<CacheEntry,kCacheEntries>& census,st
 // Tier A1/C admission of a resident entry: used and protected (flags 3, the
 // stock46 pattern), no reference (never shared with the local player).
 inline bool ResidentProtected(const CacheEntry& e) noexcept {return e.flags==3 && e.refs==0;}
+// --- Tier C: the substitute search (docs/native-puppet.md "Generalized writer").
+// The type a slot's substitute must have: the manifest's own type of the slot
+// (version 2), else the want's table type, when it is a gun type of this slot;
+// 0 = only the slot class (ChangeEquip's TypeSlot: 0 {1,5,7}, 1 {4,6,8}, 2 {2,3}).
+constexpr std::uint8_t SubstituteType(std::uint8_t manifest_type,std::uint8_t want_type,unsigned slot) noexcept {
+    return manifest_type>=1 && manifest_type<=8 && TypeSlot(manifest_type)==slot ? manifest_type :
+           want_type>=1 && want_type<=8 && TypeSlot(want_type)==slot ? want_type : std::uint8_t(0);
+}
+// Search order: the same type with the manifest's receiver, the same type, the
+// rest of the slot class (the first two need a type).
+enum class SubstitutePass : std::uint8_t {type_receiver,type,slot_class};
+inline const char* SubstitutePassName(SubstitutePass pass) noexcept {
+    return pass==SubstitutePass::type_receiver ? "type_receiver" : pass==SubstitutePass::type ? "type" : "slot_class";
+}
+struct SubstituteQuery {
+    unsigned slot=0;
+    std::uint8_t type=0,receiver=0;           // SubstituteType (0: slot class only), the manifest's receiver (0 unknown)
+    std::uint16_t want=0;                     // the manifest's base id (never its own substitute)
+    std::array<std::uint16_t,6> viewer{};     // the viewer's own vars.weapons (never shared with the local player)
+    std::array<std::uint16_t,3> dispatched{}; // what this allocation already dispatched to other slots
+};
+// The next census entry of a pass, the lowest id first, not yet tried: used,
+// protected and unreferenced (flags 3, refs 0: an n3 entry such as the
+// soldiers' rifle never qualifies), the id's first used entry (DC3755), a stock
+// id below 0x230 (never an alias or blueprint, never the viewer's 871..876),
+// of the pass's type. kCacheEntries when none.
+inline unsigned NextCandidate(const std::array<CacheEntry,kCacheEntries>& census,const SubstituteQuery& q,SubstitutePass pass,
+                              const std::array<bool,kCacheEntries>& tried) noexcept {
+    if(pass!=SubstitutePass::slot_class && !q.type) return kCacheEntries;
+    if(pass==SubstitutePass::type_receiver && !q.receiver) return kCacheEntries;
+    unsigned best=kCacheEntries;
+    for(unsigned i=0;i<kCacheEntries;++i) {
+        const auto& e=census[i];
+        if(tried[i] || !ResidentProtected(e) || !e.equip || e.equip>=0x230 || FirstEntry(census,e.equip)!=i) continue;
+        const bool type_ok=pass==SubstitutePass::slot_class ? TypeSlot(e.type)==q.slot && e.type!=q.type : e.type==q.type;
+        if(!type_ok || (pass==SubstitutePass::type_receiver && e.receiver!=q.receiver)) continue;
+        if(best==kCacheEntries || e.equip<census[best].equip) best=i;
+    }
+    return best;
+}
+// The explicit exclusions of an otherwise admitted entry (logged as candidate
+// lines): the want itself, the viewer's own weapon, an equip this allocation
+// already dispatched. nullptr: on to Derive and the full Capture.
+inline const char* CandidateExcluded(const CacheEntry& e,const SubstituteQuery& q) noexcept {
+    if(e.equip==q.want) return "want";
+    for(auto id:q.viewer) if(id && id==e.equip) return "viewer_weapon";
+    for(auto id:q.dispatched) if(id && id==e.equip) return "dispatched";
+    return nullptr;
+}
 // A stock gun's target from the type table (A2A3E0/A2A520: packed & 0x3F /
 // packed >> 6 for ids below 0x230), GunBasic, the package row, the dependency
 // LUTs, the optional descriptor and the cache census. Pure reads; refuses

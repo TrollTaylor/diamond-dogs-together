@@ -19,9 +19,20 @@ std::uint32_t Get32(const std::uint8_t* in) noexcept {
 bool ValidInv(std::uint8_t inv) noexcept { return inv <= kInvSlotMax || inv == kInvSlotUnknown; }
 } // namespace
 
+bool SameSlots(const Manifest& a, const Manifest& b) noexcept {
+    for (std::size_t i = 0; i < kSlots; ++i) {
+        const Slot& x = a.slots[i];
+        const Slot& y = b.slots[i];
+        if (x.base_id != y.base_id || x.alias != y.alias || x.type != y.type || std::memcmp(x.recipe, y.recipe, kRecipe) != 0) return false;
+    }
+    return true;
+}
+
 std::size_t Encode(const Manifest& m, std::uint8_t (&out)[kSize]) noexcept {
     std::memset(out, 0, sizeof(out));
     if (m.revision == 0 || m.epoch == 0 || !ValidInv(m.inv_slot)) return 0;
+    for (const Slot& s : m.slots)
+        if (s.type > kMaxGunType) return 0;
     out[0] = kMagic;
     out[1] = kVersion;
     Put16(out + 2, m.revision);
@@ -33,6 +44,7 @@ std::size_t Encode(const Manifest& m, std::uint8_t (&out)[kSize]) noexcept {
         Put16(s, m.slots[i].base_id);
         Put16(s + 2, m.slots[i].alias);
         std::memcpy(s + 4, m.slots[i].recipe, kRecipe);
+        out[kTypes + i] = m.slots[i].type;
     }
     return kSize;
 }
@@ -48,15 +60,19 @@ const char* ResultName(Result r) noexcept {
     case Result::stale_epoch: return "stale_epoch";
     case Result::inv_slot: return "inv_slot";
     case Result::slot_count: return "slot_count";
+    case Result::type: return "type";
     default: return "reserved";
     }
 }
 
 Result Decode(const std::uint8_t* data, std::size_t size, std::uint32_t current_epoch, Manifest& out) noexcept {
-    if (!data || size != kSize) return Result::size;
+    if (!data || (size != kSizeV1 && size != kSize)) return Result::size;
     if (data[0] != kMagic) return Result::magic;
-    if (data[1] != kVersion) return Result::version;
+    if (data[1] != kVersion1 && data[1] != kVersion) return Result::version;
+    // Each version has exactly one layout.
+    if ((data[1] == kVersion1) != (size == kSizeV1)) return Result::size;
     Manifest m{};
+    m.version = data[1];
     m.revision = Get16(data + 2);
     if (m.revision == 0) return Result::revision;
     m.epoch = Get32(data + 4);
@@ -72,6 +88,13 @@ Result Decode(const std::uint8_t* data, std::size_t size, std::uint32_t current_
         m.slots[i].alias = Get16(s + 2);
         std::memcpy(m.slots[i].recipe, s + 4, kRecipe);
     }
+    if (m.version == kVersion) {
+        if (data[kTypes + kSlots]) return Result::reserved;
+        for (std::size_t i = 0; i < kSlots; ++i) {
+            if (data[kTypes + i] > kMaxGunType) return Result::type;
+            m.slots[i].type = data[kTypes + i];
+        }
+    }
     out = m;
     return Result::ok;
 }
@@ -86,6 +109,18 @@ bool Accept(Store& store, const std::uint8_t* data, std::size_t size, std::uint3
     store.manifest = m;
     ++store.received;
     return true;
+}
+
+std::uint16_t BaseFromTables(const std::uint16_t* packed, std::size_t count, const std::uint8_t* receivers, std::size_t rows,
+                             std::uint8_t type, std::uint8_t receiver) noexcept {
+    if (!packed || !receivers || !GunType(type) || !receiver) return 0;
+    for (std::size_t e = 1; e < count; ++e) {
+        const std::uint16_t p = packed[e];
+        if ((p & 0x3Fu) != type) continue;
+        const std::size_t row = p >> 6;
+        if (row >= 1 && row <= rows && receivers[row - 1] == receiver) return TableIndexToId(static_cast<std::uint32_t>(e));
+    }
+    return 0;
 }
 
 } // namespace mgscoop::partner_equip_wire
