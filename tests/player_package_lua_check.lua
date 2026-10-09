@@ -18,7 +18,11 @@ local function module(path, mounted)
         MgsCoop = newCoop(mounted),
     }, receipts = {}, gvars = {pck_missionPackLabelName=0},
        Fox = {StrCode32=function() return 1 end} }
-    env.loadstring = function(s) env.receipts[#env.receipts+1]=s; return loadstring(s) end
+    env.diag = {}
+    env.loadstring = function(s)
+        if s:find("MGS_COOP_PACK_SELECTED_V1", 1, true) then env.receipts[#env.receipts+1]=s else env.diag[#env.diag+1]=s end
+        return loadstring(s)
+    end
     setmetatable(env, {__index=_G})
     local chunk=assert(loadfile(path)); setfenv(chunk,env)
     local mod=chunk()

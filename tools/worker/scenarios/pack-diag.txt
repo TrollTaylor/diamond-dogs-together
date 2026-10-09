@@ -1,0 +1,8 @@
+# Pack selection diagnostics: continue from the save and record which partner mission packs were selected or refused.
+title 200
+wait 4000
+waitgameplay host 150
+waitgameplay guest 240
+wait 3000
+state
+both capture start

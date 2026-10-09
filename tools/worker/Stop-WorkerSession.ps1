@@ -61,16 +61,18 @@ function Invoke-WorkerRestoreOwnedSession($Session,[string]$Run,[string]$Repo,$P
         $package=Assert-WorkerPlainPath $row.baseline_package -MustExist
         if(!(Test-WorkerDescendant $package $Run)){throw 'Baseline package escaped the run.'}
         Assert-WorkerHash (Join-Path $package 'package.json') $row.baseline_package_sha256
-        Assert-WorkerHash (Join-Path $package 'payload\dinput8.dll') $Session.baseline_sha256
+        # Per-role baseline (newer sessions); older sessions carry one for both.
+        $roleBaseline=if($row.Contains('baseline_sha256') -and [string]$row.baseline_sha256 -cmatch '^[0-9A-Fa-f]{64}$'){[string]$row.baseline_sha256}else{[string]$Session.baseline_sha256}
+        Assert-WorkerHash (Join-Path $package 'payload\dinput8.dll') $roleBaseline
         $current=Get-WorkerHash $p.Loader
-        if($current -ine $Session.baseline_sha256) {
+        if($current -ine $roleBaseline) {
             if($current -ine $Session.candidate_sha256){throw "[$role] installed DLL is neither this worker nor its normal baseline."}
             $record=Read-WorkerSessionJson $p.Record
             if($record.product -cne 'mgs-coop-original-loader-probe' -or $record.game_directory -ine $p.Game -or $record.dll_sha256 -ine $Session.candidate_sha256){throw 'Worker install ownership changed; restoration is blocked.'}
             Invoke-WorkerPackageRestore $Repo $p.Game $package $role
         }
-        Assert-WorkerHash $p.Loader $Session.baseline_sha256;Assert-WorkerHash $p.Record $row.baseline_record_sha256;Assert-WorkerHash $p.Archive $Pins.Archive
-        $Report.roles[$role]=[ordered]@{loader_restored=$true;configuration_restored=$false;baseline_sha256=$Session.baseline_sha256}
+        Assert-WorkerHash $p.Loader $roleBaseline;Assert-WorkerHash $p.Record $row.baseline_record_sha256;Assert-WorkerHash $p.Archive $Pins.Archive
+        $Report.roles[$role]=[ordered]@{loader_restored=$true;configuration_restored=$false;baseline_sha256=$roleBaseline}
     }
     foreach($role in $Session.roles.Keys) {
         foreach($snapshot in @($Session.roles[$role].configs)){Restore-WorkerConfigSnapshot $snapshot}

@@ -107,17 +107,24 @@ $lockOwned=$false;$session=$null;$process=$null;$runDirectory=$null
 try {
     try{$lockOwned=$mutex.WaitOne([TimeSpan]::FromSeconds(30))}catch [Threading.AbandonedMutexException]{$mutex.ReleaseMutex();throw 'Previous worker coordinator abandoned its lock; inspect its session before restarting.'}
     if(!$lockOwned){throw 'Another background session controller is active.'}
-    $instances=[ordered]@{}
+    $instances=[ordered]@{};$roleBaselines=@{}
     foreach($role in @('host','guest')) {
         $directory=if($role -ceq 'host'){$config.Paths.hostDir}else{$config.Paths.guestDir}
         $p=Get-InstancePaths -GameDirectory (Assert-WorkerPlainPath $directory -MustExist)
         if(@(Get-GameProcessInDirectory -Directory $p.Game).Count){throw "MGSV is already running in $($p.Game); refusing adoption."}
         foreach($path in @($p.Exe,$p.SteamApi,$p.Loader,$p.Record,$p.Archive)){$null=Assert-WorkerPlainPath $path -MustExist}
         Assert-WorkerHash $p.Exe $pins.Exe;Assert-WorkerHash $p.SteamApi $pins.Steam
-        Assert-WorkerHash $p.Loader $BaselineLoaderSha256;Assert-WorkerHash $p.Archive $pins.Archive
-        if((Get-Item -LiteralPath $p.Archive).Length -ne 16333824){throw 'Baseline21 archive size differs.'}
+        # Each copy's normal baseline is the loader its own ownership record names
+        # (the host may hold the friend-package install, the guest the one-PC lab
+        # install); the host's must equal -BaselineLoaderSha256.
         $record=Read-WorkerSessionJson $p.Record
-        if($record.product -cne 'mgs-coop-original-loader-probe' -or $record.game_directory -ine $p.Game -or $record.dll_sha256 -ine $BaselineLoaderSha256){throw 'Baseline loader is not owned by this exact game folder.'}
+        $roleBaseline=[string]$record.dll_sha256
+        if($roleBaseline -cnotmatch '^[A-Fa-f0-9]{64}$' -or ($role -ceq 'host' -and $roleBaseline -ine $BaselineLoaderSha256)){throw 'Baseline loader is not owned by this exact game folder.'}
+        if($roleBaseline -ieq $loaderHash){throw 'Worker loader must differ from the saved normal baseline.'}
+        Assert-WorkerHash $p.Loader $roleBaseline;Assert-WorkerHash $p.Archive $pins.Archive
+        if((Get-Item -LiteralPath $p.Archive).Length -ne 16333824){throw 'Baseline21 archive size differs.'}
+        if($record.product -cne 'mgs-coop-original-loader-probe' -or $record.game_directory -ine $p.Game){throw 'Baseline loader is not owned by this exact game folder.'}
+        $roleBaselines[$role]=$roleBaseline.ToUpperInvariant()
         if(Test-Path -LiteralPath $p.Marker){throw 'Disable the existing lab/session marker before starting a private worker.'}
         if((Test-Path -LiteralPath $p.LabIni) -and (ConvertFrom-IniText (Read-WorkerBoundedText $p.LabIni))['enabled'] -eq '1'){throw 'Disable the current lab before starting a private worker.'}
         $instances[$role]=$p
@@ -163,7 +170,7 @@ try {
         foreach($key in @('LabIni','CoopIni','Marker','ClientHost','LinkSecret')){$snapshots+=@(Get-WorkerConfigSnapshot $p.$key $backup $key)}
         $recordCopy=Join-Path $backup 'probe-install.json';[IO.File]::Copy($p.Record,$recordCopy,$false)
         $session.roles[$role]=[ordered]@{game=$p.Game;baseline_package=$package;baseline_package_sha256=Get-WorkerHash (Join-Path $package 'package.json');
-            baseline_record_sha256=Get-WorkerHash $p.Record;baseline_record=$recordCopy;configs=$snapshots;
+            baseline_sha256=$roleBaselines[$role];baseline_record_sha256=Get-WorkerHash $p.Record;baseline_record=$recordCopy;configs=$snapshots;
             worker_save_dir=$null;mutex_suffix=$null;lab_sha256=$null;coop_sha256=$null;marker_sha256=$null;record_sha256=$null;log_offsets=@{};safety=$null}
     }
     Write-WorkerSessionJson $statePath $session
