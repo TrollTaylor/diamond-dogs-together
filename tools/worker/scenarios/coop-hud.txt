@@ -1,0 +1,31 @@
+# In-game co-op status line and toasts (coop_hud; docs/two-pc-play.md "In game").
+# Run (coordinator only, hidden worker; lab saves, the default animated partner):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-hud.txt
+# The one-PC lab keeps the HUD off unless coop_hud is set; play shows it (compact) by default.
+# Evidence (state.json / captures.jsonl roles.<role>.hud; script-observer.log overlay=hud_drawn):
+#  on:     hud.enabled true, hud.mode "full", hud.frames > 0, hud.line "CO-OP [connected] ... - lab link <n> ms",
+#          hud.events >= 1 and hud.toast "Connected to ..." (the first session's toast; it may already have expired).
+#  frames: hud-connected-<role>.bmp shows the line (and the rtt/build detail line) top-right.
+#  menu:   while F9 is open the HUD is hidden: hud.hidden grows and hud-menu-open has no line; after closing it
+#          draws again (hud.frames grows).
+#  off:    the same run with -LabSetting coop_hud=off: hud.enabled false, hud_status on=0, no overlay=hud_drawn line.
+labsetting coop_hud=full
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+wait 3000
+host run hud_status
+host expect ^hud;mode=full;on=1;frames=[1-9]\d*;line=CO-OP \[connected\]
+guest run hud_status
+guest expect ^hud;mode=full;on=1;frames=[1-9]\d*;line=CO-OP \[connected\]
+both capture hud-connected
+host run menu open partner
+host expect ^menu_open;category=partner
+wait 500
+host capture hud-menu-open
+host run menu close
+wait 1000
+host run hud_status
+host expect ^hud;mode=full;on=1;frames=[1-9]\d*;line=CO-OP \[connected\]
+host capture hud-after-menu

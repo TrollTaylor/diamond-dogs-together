@@ -53,7 +53,9 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    copies or to one (debug_soldier_warp=0|1, nametag=0|1,
                                    nametag_crosshair=aim|always|off, nametag_name=[A-Za-z0-9_]{1,16};
                                    partner_native_face=off|idle|aim; partner_native_aim=looksrc, native gun stage only;
-                                   steam_selftest=0|1|2, lab only, never sends to a peer)
+                                   steam_selftest=0|1|2, lab only, never sends to a peer;
+                                   steam_selftest_fn=0|1, the self-test's function-pointer stage F/D;
+                                   coop_hud=compact|full|off, the in-game co-op status line and toasts)
 
 The session has a hard 600 s limit (supervisor). The result object lists the
 run folder, the frames (renamed with labels) and whether everything closed.
@@ -76,7 +78,7 @@ param(
     [switch]$AmmoExperiment,
     [ValidateSet('real','lab')][string]$SaveSeed='lab',
     # key=value for both copies or host:key=value / guest:key=value for one (scenario "labsetting" lines).
-    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|steam_selftest=[012])$')][string[]]$LabSetting=@()
+    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(compact|full|off))$')][string[]]$LabSetting=@()
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -99,7 +101,7 @@ $lines+=$Step
 $steps=@($lines|ForEach-Object{$_.Trim()}|Where-Object{$_ -and !$_.StartsWith('#')})
 # labsetting lines configure the session; they are not steps.
 foreach($line in @($steps|Where-Object{$_ -cmatch '^labsetting(\s|$)'})) {
-    if($line -cnotmatch '^labsetting\s+(?:(host|guest)\s+)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(?:aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(?:off|idle|aim)|partner_native_aim=looksrc|steam_selftest=[012])$'){
+    if($line -cnotmatch '^labsetting\s+(?:(host|guest)\s+)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(?:aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(?:off|idle|aim)|partner_native_aim=looksrc|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(?:compact|full|off))$'){
         throw "Invalid scenario step: '$line'"
     }
     $LabSetting=@($LabSetting)+@($(if($Matches[1]){$Matches[1]+':'+$Matches[2]}else{$Matches[2]}))

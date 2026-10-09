@@ -218,6 +218,30 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
         Assert-True ($actions.Contains($label)) ('partner-native-actions covers: '+$label)
     }
 }
+# -LabSetting: one allow-list in Start-WorkerSession.ps1 and Invoke-WorkerScenario.ps1,
+# and the scenario labsetting step admits exactly the same keys.
+& {
+    $patterns=foreach($ast in @($startAst,$scenarioAst)){
+        $param=@($ast.FindAll({param($node)$node -is [Management.Automation.Language.ParameterAst] -and $node.Name.VariablePath.UserPath -ceq 'LabSetting'},$false))
+        Assert-True ($param.Count -eq 1) 'one -LabSetting parameter'
+        $validate=@($param[0].Attributes|Where-Object{$_ -is [Management.Automation.Language.AttributeAst] -and $_.TypeName.Name -ceq 'ValidatePattern'})
+        Assert-True ($validate.Count -eq 1) '-LabSetting ValidatePattern'
+        [string]$validate[0].PositionalArguments[0].Value
+    }
+    Assert-True (@($patterns).Count -eq 2 -and $patterns[0] -ceq $patterns[1]) 'Start-WorkerSession and Invoke-WorkerScenario share one -LabSetting allow-list'
+    $scenarioText=[IO.File]::ReadAllText((Join-Path $RepoRoot 'tools\worker\Invoke-WorkerScenario.ps1'))
+    $step=[regex]::Match($scenarioText,'if\(\$line -cnotmatch ''(\^labsetting[^'']+)''\)')
+    Assert-True $step.Success 'the scenario labsetting step regex'
+    foreach($ok in @('steam_selftest=1','steam_selftest_fn=0','steam_selftest_fn=1','coop_hud=compact','coop_hud=full','coop_hud=off','host:coop_hud=full','guest:nametag=0')){
+        Assert-True ($ok -cmatch $patterns[0]) ('-LabSetting admits '+$ok)
+        $line='labsetting '+($ok -creplace '^(host|guest):','$1 ')
+        Assert-True ($line -cmatch $step.Groups[1].Value) ('labsetting step admits '+$line)
+    }
+    foreach($bad in @('coop_hud=big','coop_hud=','steam_selftest_fn=2','net_steam_dispatch=both','net_transport=steam','coop_hud=full;x=1','steam_selftest=3')){
+        Assert-True ($bad -cnotmatch $patterns[0]) ('-LabSetting refuses '+$bad)
+        Assert-True (('labsetting '+$bad) -cnotmatch $step.Groups[1].Value) ('labsetting step refuses '+$bad)
+    }
+}
 $receiptReader=@($scenarioAst.FindAll({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Read-NativeReceipt'},$true))
 Assert-True ($receiptReader.Count -eq 1) 'one actual native receipt reader boundary'
 . ([scriptblock]::Create($receiptReader[0].Extent.Text))
