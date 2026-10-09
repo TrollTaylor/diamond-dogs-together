@@ -612,9 +612,10 @@ try {
         'partner_input_hold=own', 'partner_input_words=hpr', 'partner_input_mask=0x2240006', 'partner_recon=track', 'partner_input_correct_mm=3000', 'partner_recon_runaway=pin', 'partner_input_slot=body') -Role host
     Assert-Equal "$($ovInput['partner_apply'])/$($ovInput['partner_input_hold'])/$($ovInput['partner_recon'])/$($ovInput['partner_input_slot'])/$($ovInput['partner_input_mask'])/$($ovInput['partner_input_correct_mm'])/$($ovInput['partner_recon_runaway'])" 'input/own/track/body/0x2240006/3000/pin' '-PartnerSetting: the Play-OfflineCoop input-drive settings'
     Assert-True ($playText.Contains("'partner_input_words=hpr', 'partner_input_mask=0x2240006'") -and
-        $playText.Contains("'partner_input_defer=on', 'partner_input_mask=0x224005E'") -and $playText.Contains("'partner_native_fire=visual'") -and
+        $playText.Contains("{ 'partner_input_mask=0x224005E' } else { 'partner_input_mask=0x224004E' }") -and
+        $playText.Contains("{ 'partner_native_fire=visual' } else { 'partner_native_fire=0' }") -and
         $playText.Contains("'partner_native_rates=mirror'") -and !$playText.Contains('0x2200006') -and !$playText.Contains('0x220004E') -and
-        !$playText.Contains('0x220005E') -and !$playText.Contains('0x224004E')) 'Play-OfflineCoop passes EVADE (0x40000) in every mask, visual fire in the native gun stage (0x224005E) and mirrors the movement rates (native)'
+        !$playText.Contains('0x220005E')) 'Play-OfflineCoop passes EVADE (0x40000) in every mask, fire off by default (0x224004E) or visual with -VisualFire (0x224005E), and mirrors the movement rates (native)'
     # Round 4 lab.ini value kinds.
     Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_recon_align_ms -Value -16)/$(ConvertTo-LabPartnerValue -Key partner_recon_align_ms -Value 150)" '-16/150' 'partner_recon_align_ms (signed)'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_recon_align_ms -Value -51 } '-50..150' 'align range'
