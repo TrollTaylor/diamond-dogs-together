@@ -292,6 +292,15 @@ $script:LabPartnerKeys = @(
     # governor (idle by default) and the partner's shot noise (filter by default).
     @{ Key = 'partner_native_face'; Json = 'native_face'; Kind = 'enum'; Values = @('off', 'idle', 'aim') },
     @{ Key = 'partner_native_noise'; Json = 'native_noise'; Kind = 'enum'; Values = @('filter', 'keep') },
+    # Online play (docs/native-puppet.md "Online"): the native profile (play's
+    # way to the native drive; the lab may use it too), the arbiter's network
+    # policy and its A/B variants; written only when set.
+    @{ Key = 'partner_native_profile'; Json = 'native_profile'; Kind = 'enum'; Values = @('off', 'loco', 'gun') },
+    @{ Key = 'partner_native_net'; Json = 'native_net'; Kind = 'enum'; Values = @('lab', 'online') },
+    @{ Key = 'partner_native_stall'; Json = 'native_stall'; Kind = 'enum'; Values = @('neutral', 'hold') },
+    @{ Key = 'partner_native_stall_ms'; Json = 'native_stall_ms'; Kind = 'int'; Min = 100; Max = 1000 },
+    @{ Key = 'partner_native_hold'; Json = 'native_hold'; Kind = 'enum'; Values = @('own', 'net') },
+    @{ Key = 'partner_input_edge_repeats'; Json = 'input_edge_repeats'; Kind = 'int'; Min = 2; Max = 8 },
     @{ Key = 'crash_probe'; Json = 'crash_probe'; Kind = 'bool' },
     # Debug "Spawn enemy here" native placement (docs/debug-menu.md): lab only,
     # default off and written only when set.

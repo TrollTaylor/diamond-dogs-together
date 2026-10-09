@@ -1,0 +1,90 @@
+# The play rehearsal of the native partner (docs/two-pc-play.md "Hidden play rehearsal", docs/native-puppet.md "Online"):
+# both copies run mode=play exactly as Play-Coop writes it (the clip base, partner_input_send=1,
+# partner_native_profile=gun, world=3), moved onto 127.0.0.1 with the worker-only play_rehearsal=1, the real
+# identity in both copies, a fresh link secret and the online policy (play defaults: partner_native_net=online,
+# partner_native_stall=hold, partner_input_edge_repeats=5). Lab saves, noon, 30010.
+# Run (coordinator only, hidden worker; take the verify lock first):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -ScenarioPath tools/worker/scenarios/play-native.txt
+#   then the same with -WanSim bad (and -WanSim awful): an impaired link must not latch the native partner off.
+#   A/B (the lab policy inside play): add -LabSetting partner_native_net=lab -LabSetting partner_native_stall=neutral.
+# Evidence (state.json "native" of the capturing role in captures.jsonl, the logs of both copies):
+#  start:   early.log of both copies: play=1; loopback=0; mutex=renamed; refused=0x0; saves=redirected; rehearsal=1 and
+#           identity=real (Start-WorkerSession's play safety verdict admitted it); script-observer.log: play=active and
+#           link=config; mode=play; role=host|guest; proto=2; bind=loopback; ...; link=connected (mode_mismatch never).
+#  native:  native-on (both): native.mode active, native.net.policy "online", native.net.local_drive "native",
+#           native.net.caps.rx true, caps.remote_drive "native", caps.remote_v4 true, caps.remote_policy "online";
+#           native.net.quality_good true, ia_p95_ms < 120; link-status.json partner_drive/remote_drive "native"
+#           (partner_native_net; policy=online; drive=native; ... remote=native/ok in both logs).
+#  move:    walk/sprint: body.act follows remote_act, recon.err_mm < 1500 after the stop, recon.snaps unchanged.
+#  gun:     aim (gun.bit18 1, look.err_mdeg small), fire (fire.suppressed grows, leak.shot_leaks 0), reload (mag.reload_edges
+#           or gun.b20; else record), weapon.body_gun present (no partner_weapon=absent line once stock46 is on body 1).
+#  pause:   paused (host films, the guest in its pause menu): native.mode active with native.reason "remote_quiet",
+#           native.net.remote_quiet true, native.net.quiet_episodes +1, the host log partner_native_net=quiet; resumed:
+#           native.reason "ok" again, partner_native_net=resume, net_leaves unchanged, hard_leaves 0.
+#  long:    quiet-left (12 s pause): native.mode fallback, native.left_reason "net_quiet", native.fallbacks 0,
+#           native.net.net_leaves +1; reentered (8 s after the resume): native.mode active, net.net_reentries +1, latched false.
+#  WanSim:  native.mode active at native-on and walk captures; native.net.hard_leaves 0, native.latched false;
+#           net.gaps_250 and net.gap_snaps recorded; partner_native_net lines show the leaves and re-entries.
+#  trip:    the game's own networking getter receipts (steam-observer.log, 0x1A5F74F / 0x1A5F75E) do not move during the
+#           run; no S_IS_ONLINE, session or FOB line; the real saves are unchanged (Stop-WorkerSession's receipt).
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+stance host stand
+stance guest stand
+host debug time 43200
+host debug weather sunny
+wait 3000
+resetpose host
+stance host stand
+placebehind guest host 4 3
+both capture start
+# Entry: settle 2 s, then the native partner on both copies (the caps exchange happens at link-up).
+wait 8000
+both capture native-on
+# --- Host moves, guest films its partner ----------------------------------------
+heldcapture host guest w walk 2
+heldcapture host guest shift+w sprint 3
+host release
+wait 1200
+guest capture stopped
+# --- Host aims, fires and reloads (visual fire, stock46 on body 1) --------------
+heldcapture host guest rmb aim 2
+host hold rmb 1500 nowait
+wait 500
+host hold rmb+lmb 120 nowait
+guest burst fire 5 120
+host hold rmb 1500 nowait
+wait 400
+host hold rmb+r 120 nowait
+wait 150
+host hold rmb 1400 nowait
+guest burst reload 6 200
+host release
+wait 1500
+# --- The guest pauses (its pause menu stops its frames; the link stays up) ------
+resetpose host
+stance host stand
+placebehind host guest 4 3
+guest press escape
+wait 3000
+host capture paused
+guest press escape
+waitgameplay guest 30
+wait 6000
+host capture resumed
+# --- A long pause: a network leave after 10 s, never counted, then re-entry -------
+guest press escape
+wait 12000
+host capture quiet-left
+guest press escape
+waitgameplay guest 30
+wait 8000
+host capture reentered
+# --- The guest moves, the host films (both directions native) ------------------
+heldcapture guest host w g-walk 2
+heldcapture guest host rmb g-aim 2
+guest release
+wait 1000
+both capture end

@@ -59,9 +59,10 @@ bool is_local_master_url(const char* url) noexcept;
 
 // The early.log play line, printed only with lab.ini mode=play right after the
 // saves= line: "play=1; loopback=%u; mutex=renamed|unchanged; refused=0x%X;
-// saves=redirected|unchanged\r\n". Returns false when it does not fit. Pure.
+// saves=redirected|unchanged\r\n" (the hidden worker's play rehearsal appends
+// "; rehearsal=1" before the line end). Returns false when it does not fit. Pure.
 bool format_play_line(std::uint32_t refused, bool loopback, bool mutex_renamed, bool saves_redirected, char* out,
-                      std::size_t capacity) noexcept;
+                      std::size_t capacity, bool rehearsal = false) noexcept;
 
 // Save-redirect result of InstallEarlyLabPatches (DllMain): true only when the
 // SteamRemoteStorage/SteamUser wrappers for lab.ini save_dir verifiably

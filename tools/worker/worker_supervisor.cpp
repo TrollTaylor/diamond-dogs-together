@@ -181,9 +181,16 @@ void GateGames(Worker& worker) {
         const auto graphics = worker.AddPin(graphics_path, m.At((prefix + "_graphics_sha256").c_str()));
         const auto lab_text = Read(worker.pins[lab].file.value, 65536); const auto coop_text = Read(worker.pins[coop].file.value, 65536);
         mgscoop::LabConfig lc{}; mgscoop::CoopConfig cc{};
-        Require(mgscoop::ParseLabConfig(lab_text.data(), lab_text.size(), lc) && OfflineLab(lc, prefix, m.At((prefix + "_save_dir").c_str())) &&
-                SameWide(Wide(lc.save_dir), Wide(m.At((prefix + "_save_dir").c_str()))), "copied_save_lab_configuration");
-        if (prefix == "host") host_mutex = lc.mutex_suffix; else Require(host_mutex != lc.mutex_suffix && lc.self_steamid != 0, "guest_identity_or_mutex");
+        // lab_mode=play: the play rehearsal, parsed as the worker build's loader parses it.
+        const bool play = m.lab_mode == "play";
+        mgscoop::LabParseOptions options{}; options.allow_play_rehearsal = play;
+        const auto& save = m.At((prefix + "_save_dir").c_str());
+        Require(mgscoop::ParseLabConfig(lab_text.data(), lab_text.size(), lc, options) &&
+                (play ? PlayRehearsal(lc, prefix, save) : OfflineLab(lc, prefix, save)) && SameWide(Wide(lc.save_dir), Wide(save)),
+                play ? "play_rehearsal_lab_configuration" : "copied_save_lab_configuration");
+        // Two instances need two mutex names; the lab guest also its fake identity (play keeps the real one).
+        if (prefix == "host") host_mutex = lc.mutex_suffix;
+        else Require(host_mutex != lc.mutex_suffix && (play || lc.self_steamid != 0), "guest_identity_or_mutex");
         const std::string url = "http://127.0.0.1:" + std::to_string(m.offline_port) + "/tppstm/gate";
         Require(mgscoop::ParseCoopConfig(coop_text.data(), coop_text.size(), cc) && cc.present && cc.invalid_values == 0 && cc.master_url == url, "offline_master_configuration");
         const auto marker_path = root + "\\mgs-coop\\script-observe.enabled"; worker.LockPath(marker_path, false);

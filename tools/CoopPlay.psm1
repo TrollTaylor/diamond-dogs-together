@@ -782,7 +782,14 @@ function New-CoopPlayLabIniText {
         # Steam: this PC's SteamID64 (Steam ActiveUser), the guest's host, or a waiting guest.
         [string]$SteamSelf = '',
         [string]$SteamPeer = '',
-        [switch]$SteamWait
+        [switch]$SteamWait,
+        # The partner body (docs/two-pc-play.md "Native partner"): native (the
+        # default: partner_native_profile=gun, the game's own movement, aim,
+        # reload and visual fire from the other player's pad, with the clips
+        # as the automatic fallback) or clips (the dm=map partner only). Both
+        # send this player's input frames (partner_input_send=1), so the other
+        # PC can run its native partner whatever this one shows.
+        [ValidateSet('native', 'clips')][string]$Partner = 'native'
     )
     if ($SaveDir -cnotmatch '^[A-Za-z]:\\' -and !$SaveDir.StartsWith('\\')) { throw "save_dir must be an absolute path: $SaveDir" }
     if ($SaveDir -match '[\x00-\x1f\x7f]' -or $SaveDir -ne $SaveDir.Trim() -or $script:CoopUtf8NoBom.GetByteCount($SaveDir) -gt 259) { throw "Invalid save_dir: $SaveDir" }
@@ -828,6 +835,9 @@ function New-CoopPlayLabIniText {
     $lines.Add('partner_interp=auto')
     $defaults = Get-PlayPartnerDefaults
     foreach ($key in $defaults.Keys) { $lines.Add($key + '=' + $defaults[$key]) }
+    $lines.Add('partner_input_send=1')
+    # The only native key play accepts; the loader expands it to the qualified gun stage.
+    if ($Partner -eq 'native') { $lines.Add('partner_native_profile=gun') }
     # Never world_probe: the probes are lab-only (native refuses them in play).
     if ($World -gt 0) { $lines.Add('world=' + $World) }
     return ($lines.ToArray() -join "`n") + "`n"
@@ -1006,6 +1016,33 @@ function Get-CoopLinkReasonText {
     }
 }
 
+function Get-CoopPartnerReasonText {
+    # Pure: a short sentence for a native-partner reason of link-status.json
+    # (partner_reason / remote_reason; docs/two-pc-play.md "Native partner").
+    param([AllowNull()][AllowEmptyString()][string]$Reason)
+    switch -Regex ([string]$Reason) {
+        '^$' { return 'no reason reported' }
+        '^legacy$' { return 'clip partner chosen (Play-Coop -Partner clips)' }
+        '^(mission_start|configured|unlatched|cooldown|settling|ok|not_installed)$' { return 'starting the native partner' }
+        '^thread$' { return 'this PC runs the game''s update threads differently than the native partner needs; please send Collect-Logs' }
+        '^cost$' { return 'the native partner was too slow on this PC; please send Collect-Logs' }
+        '^install_' { return 'the game code differs from the verified build, so the native partner stays off; please send Collect-Logs' }
+        '^hook_lost$' { return 'another program replaced a native hook (an overlay or mod?)' }
+        '^(faulted|dm_revert_failed)$' { return 'the native partner hit an error; clips for this mission' }
+        '^(net_input|input_stale|no_input)$' { return 'the other player''s input stalled (network)' }
+        '^(net_link|link)$' { return 'the connection dropped' }
+        '^(net_quiet|remote_quiet)$' { return 'the other player is paused or loading' }
+        '^net_quality$' { return 'waiting for a steadier connection' }
+        '^net_flap$' { return 'the connection keeps dropping; clips until it is steady for 30 s' }
+        '^remote_caps$' { return 'the other game sends no input frames (different mgs-coop version?)' }
+        '^(range_hidden|unrealized|parts|stage)$' { return 'the partner is far away or still loading' }
+        '^terminating$' { return 'the mission is ending' }
+        '^(diverging|runaway)$' { return 'the partner body drifted; back to native shortly' }
+        '^(health|unwindowed|lost|wrap_in_batch|drain_block|enter_timeout_dm|enter_timeout_place|defer_off|defer_census)$' { return "the native partner left ($Reason)" }
+        default { return $Reason }
+    }
+}
+
 function Get-CoopValue {
     # StrictMode-safe optional property read.
     param($Object, [Parameter(Mandatory)][string]$Name, $Default = $null)
@@ -1054,6 +1091,19 @@ function Format-CoopStatusLine {
     $partner = 'partner=' + [string](Get-CoopValue $Status 'partner' 'none')
     if ([int](Get-CoopValue $Status 'partner_shown' 0)) { $partner += ' shown' }
     if ([int](Get-CoopValue $Status 'look' 0)) { $partner += ' look' }
+    # Online play (docs/two-pc-play.md "Native partner"): how this PC shows the
+    # partner body (native or the clip fallback with its reason) and how the
+    # other PC shows yours (the capability exchange).
+    $drive = [string](Get-CoopValue $Status 'partner_drive' '')
+    if ($drive -eq 'native') { $partner += ' native' }
+    elseif ($drive -eq 'clips' -or $drive -eq 'off') {
+        $partner += ' clips (' + (Get-CoopPartnerReasonText -Reason ([string](Get-CoopValue $Status 'partner_reason' ''))) + ')'
+    }
+    $remoteDrive = [string](Get-CoopValue $Status 'remote_drive' '')
+    if ($remoteDrive -eq 'native') { $partner += '; you on the other PC: native' }
+    elseif ($remoteDrive -eq 'clips' -or $remoteDrive -eq 'off') {
+        $partner += '; you on the other PC: clips (' + (Get-CoopPartnerReasonText -Reason ([string](Get-CoopValue $Status 'remote_reason' ''))) + ')'
+    }
     $mission = [UInt32](Get-CoopValue $Status 'mission' 0)
     $missionText = 'mission ' + $mission
     if ($mission -notin $script:CoopPartnerMissions) { $missionText += ' - Partner body unavailable in this mission; use Mother Base or free roam.' }

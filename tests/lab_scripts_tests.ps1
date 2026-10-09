@@ -647,6 +647,13 @@ try {
     Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_native_aim -Value looksrc)/$(ConvertTo-LabPartnerValue -Key partner_native_face -Value aim)/$(ConvertTo-LabPartnerValue -Key partner_native_noise -Value keep)" 'looksrc/aim/keep' 'native polish enums (look source, facing governor, noise)'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_face -Value always } 'off|idle|aim' 'face values'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_noise -Value loud } 'filter|keep' 'noise values'
+    # Online play keys (docs/native-puppet.md "Online"): the native profile and the network A/B variants.
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_native_profile -Value gun)/$(ConvertTo-LabPartnerValue -Key partner_native_net -Value online)/$(ConvertTo-LabPartnerValue -Key partner_native_stall -Value hold)/$(ConvertTo-LabPartnerValue -Key partner_native_stall_ms -Value 400)/$(ConvertTo-LabPartnerValue -Key partner_native_hold -Value net)/$(ConvertTo-LabPartnerValue -Key partner_input_edge_repeats -Value 5)" 'gun/online/hold/400/net/5' 'online play keys'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_profile -Value native } 'off|loco|gun' 'profile values'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_net -Value wan } 'lab|online' 'network policy values'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_stall_ms -Value 99 } '100..1000' 'stall range'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_input_edge_repeats -Value 9 } '2..8' 'edge repeats range'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key play_rehearsal -Value 1 } 'Unknown partner lab.ini key' 'play_rehearsal is never a lab key (the worker writes it in play only)'
 
     # Round 3 lab.ini value kinds.
     Assert-Equal (ConvertTo-LabPartnerValue -Key partner_input -Value net) 'net' 'partner_input enum'

@@ -85,6 +85,9 @@ inline std::string Name(const std::string& path) { const auto p = path.find_last
 struct Manifest {
     std::map<std::string, std::string> values;
     std::string mode, run, directory, desktop;
+    // mgsv only: lab (the one-PC lab, OfflineLab; the default when absent) or
+    // play (the play rehearsal, PlayRehearsal; manifest key lab_mode).
+    std::string lab_mode = "lab";
     std::uint32_t timeout_ms = 0, ready_timeout_ms = 0, offline_port = 0;
     const std::string& At(const char* key) const { return values.at(key); }
 };
@@ -139,6 +142,11 @@ inline bool ParseManifest(const std::string& text, Manifest& out, std::string& r
         if (EqualFold(host, guest) || Inside(host, guest) || Inside(guest, host) || Inside(m.directory, host) || Inside(m.directory, guest)) return fail("manifest_game_roots_overlap");
         const auto hs = get("host_save_dir"), gs = get("guest_save_dir");
         if (EqualFold(hs, gs) || Inside(hs, gs) || Inside(gs, hs)) return fail("manifest_save_roots_overlap");
+        if (m.values.count("lab_mode")) {
+            m.lab_mode = get("lab_mode");
+            if (m.lab_mode != "lab" && m.lab_mode != "play") return fail("manifest_lab_mode");
+            keys.emplace_back("lab_mode");
+        }
     }
     for (const auto& pair : m.values) if (std::find(keys.begin(), keys.end(), pair.first) == keys.end()) return fail("manifest_unknown_key");
     if (m.values.size() != keys.size()) return fail("manifest_missing_key");

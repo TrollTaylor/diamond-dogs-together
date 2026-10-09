@@ -53,7 +53,9 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    copies or to one (debug_soldier_warp=0|1, nametag=0|1,
                                    nametag_crosshair=aim|always|off, nametag_name=[A-Za-z0-9_]{1,16};
                                    partner_native_face=off|idle|aim; partner_native_aim=looksrc, native gun stage only;
-                                   steam_selftest=0|1|2, lab only, never sends to a peer)
+                                   steam_selftest=0|1|2, lab only, never sends to a peer;
+                                   online play A/B: partner_native_net=lab|online, partner_native_stall=neutral|hold,
+                                   partner_native_hold=own|net, partner_input_edge_repeats=2..8)
 
 The session has a hard 600 s limit (supervisor). The result object lists the
 run folder, the frames (renamed with labels) and whether everything closed.
@@ -76,7 +78,12 @@ param(
     [switch]$AmmoExperiment,
     [ValidateSet('real','lab')][string]$SaveSeed='lab',
     # key=value for both copies or host:key=value / guest:key=value for one (scenario "labsetting" lines).
-    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|steam_selftest=[012])$')][string[]]$LabSetting=@()
+    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|steam_selftest=[012]|partner_native_net=(lab|online)|partner_native_stall=(neutral|hold)|partner_native_hold=(own|net)|partner_input_edge_repeats=[2-8])$')][string[]]$LabSetting=@(),
+    # lab (default) or play: the play rehearsal (docs/two-pc-play.md "Hidden play rehearsal"):
+    # both copies in mode=play as Play-Coop writes it, on 127.0.0.1, real identity.
+    [ValidateSet('lab','play')][string]$Mode='lab',
+    # A lab.json wanSim preset on both copies (docs/native-puppet.md "Online").
+    [ValidateSet('off','good','bad','awful')][string]$WanSim='off'
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -99,7 +106,7 @@ $lines+=$Step
 $steps=@($lines|ForEach-Object{$_.Trim()}|Where-Object{$_ -and !$_.StartsWith('#')})
 # labsetting lines configure the session; they are not steps.
 foreach($line in @($steps|Where-Object{$_ -cmatch '^labsetting(\s|$)'})) {
-    if($line -cnotmatch '^labsetting\s+(?:(host|guest)\s+)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(?:aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(?:off|idle|aim)|partner_native_aim=looksrc|steam_selftest=[012])$'){
+    if($line -cnotmatch '^labsetting\s+(?:(host|guest)\s+)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(?:aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(?:off|idle|aim)|partner_native_aim=looksrc|steam_selftest=[012]|partner_native_net=(?:lab|online)|partner_native_stall=(?:neutral|hold)|partner_native_hold=(?:own|net)|partner_input_edge_repeats=[2-8])$'){
         throw "Invalid scenario step: '$line'"
     }
     $LabSetting=@($LabSetting)+@($(if($Matches[1]){$Matches[1]+':'+$Matches[2]}else{$Matches[2]}))
@@ -158,7 +165,7 @@ if(!$CheckReceipt){
 $receipt=Get-Content -LiteralPath $CheckReceipt -Raw|ConvertFrom-Json
 if($receipt.status -cne 'passed'){throw "Worker checks did not pass: $($receipt.failure)"}
 
-$session=& (Join-Path $worker 'Start-WorkerSession.ps1') -BuildDirectory $build -CheckReceipt $CheckReceipt -BaselineLoaderSha256 $BaselineLoaderSha256 -TimeoutSec $TimeoutSec -ReadyTimeoutSec $ReadyTimeoutSec -PartnerProfile $PartnerProfile -NativeStage $NativeStage -BuildProfile $BuildProfile -AmmoExperiment:$AmmoExperiment -SaveSeed $SaveSeed -LabSetting $LabSetting
+$session=& (Join-Path $worker 'Start-WorkerSession.ps1') -BuildDirectory $build -CheckReceipt $CheckReceipt -BaselineLoaderSha256 $BaselineLoaderSha256 -TimeoutSec $TimeoutSec -ReadyTimeoutSec $ReadyTimeoutSec -PartnerProfile $PartnerProfile -NativeStage $NativeStage -BuildProfile $BuildProfile -AmmoExperiment:$AmmoExperiment -SaveSeed $SaveSeed -LabSetting $LabSetting -Mode $Mode -WanSim $WanSim
 $session=@($session|Where-Object{$_ -isnot [string]})[-1]
 $run=[string]$session.RunDirectory
 $runId=[string]$session.RunId

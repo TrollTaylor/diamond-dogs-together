@@ -202,8 +202,11 @@ extern "C" HRESULT WINAPI DirectInput8Create(HINSTANCE instance, DWORD version, 
         InstallSteamCallbackObserver();
         const auto& config = mgscoop::GetLabConfig();
         const bool verified_offline = OfflineScriptObserverEnabled();
+        // The scenario bridge runs in the one-PC lab and in the hidden worker's
+        // play rehearsal (play_rehearsal survives the parser only in worker
+        // builds, LabParseOptions; docs/two-pc-play.md "Hidden play rehearsal").
         mgscoop::worker_scenario::Initialize({verified_offline,
-            config.present && config.mode == mgscoop::LabMode::lab,
+            config.present && (config.mode == mgscoop::LabMode::lab || config.play_rehearsal),
             mgscoop::lab::SavesRedirected(), verified_offline && MountedPlayerMotionCount() == 21});
         mgscoop::debug_overlay::Install();
     }

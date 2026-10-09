@@ -244,6 +244,10 @@ void TestEndpointFilter() {
         Check(format_play_line(0x4A01, false, false, false, line, sizeof(line)) &&
               std::strcmp(line, "play=1; loopback=0; mutex=unchanged; refused=0x4A01; saves=unchanged\r\n") == 0, "play line refused");
         Check(!format_play_line(0, false, false, true, line, 20) && line[0] == 0, "play line does not fit");
+        // The hidden worker's one-PC play rehearsal marks its line.
+        Check(format_play_line(0, false, true, true, line, sizeof(line), true) &&
+              std::strcmp(line, "play=1; loopback=0; mutex=renamed; refused=0x0; saves=redirected; rehearsal=1\r\n") == 0,
+              "play rehearsal line");
         Check(!SavesRedirected(), "saves not redirected before the DllMain patches");
         set_saves_redirected_for_test(true);
         Check(SavesRedirected(), "saves redirected");

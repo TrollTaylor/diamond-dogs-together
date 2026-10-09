@@ -1,0 +1,82 @@
+# The native partner's network policy in the lab (docs/native-puppet.md "Online"): movement under impairment, three
+# pauses of the other player and a long one, with the lab policy (today's behaviour) or the online policy (play's).
+# Run (coordinator only, hidden worker; take the verify lock first), as A/B pairs:
+#   A (lab policy): pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -PartnerProfile native -NativeStage loco -SaveSeed lab -ScenarioPath tools/worker/scenarios/partner-native-online.txt
+#   B (online):     the same plus -LabSetting partner_native_net=online -LabSetting partner_native_stall=hold -LabSetting partner_input_edge_repeats=5
+#   then both again with -WanSim bad, and both with -WanSim awful (one-way impairment per copy, partner_interp=auto).
+#   Optional C (frame-rate free taps): B plus -LabSetting partner_native_hold=net.
+# Evidence (the host films the guest's body; state.json "native" in captures.jsonl, script-observer.log of the host):
+#  native-on:  native.mode active; native.net.policy lab (A) / online (B); native.net.caps.rx true, remote_v4 true.
+#  sprint/stop (WanSim): body speed within 5 % of the remote while moving (body.speed_mmps vs remote_speed_mmps), recon.err_mm
+#           < 500 within 1 s after the stop; native.net.gap_snaps counts catch-up snaps; recon.snaps - gap_snaps small.
+#  pause-1..3 (3 s each): A: native.reason input_stale then a leave (native.fallbacks +1 per pause), the third pause ends
+#           in latched (partner_native=latched; reason=input_stale): today's defect. B: native.mode active with
+#           native.reason remote_quiet during each pause, native.net.quiet_episodes +1 each, fallbacks 0, never latched,
+#           partner_native_net=quiet / resume lines.
+#  long (12 s): B: native.left_reason net_quiet, native.net.net_leaves +1, fallbacks 0; back to active in ~6 s
+#           (net_reentries +1; native.net.quality_good_ms >= 2000 before the entry). A: latched already.
+#  WanSim B: hard_leaves 0, latched false through the whole run; the 1 Hz partner_native_net lines show p95 and gaps.
+#  crouch taps (A/B/C): the body's stance follows each C tap (body.stance == remote_stance in crouch-1/crouch-2).
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+stance host stand
+stance guest stand
+host debug time 43200
+wait 2000
+resetpose guest
+stance guest stand
+placebehind host guest 4 3
+both capture start
+wait 8000
+host capture native-on
+# --- The guest moves; the host films its partner ---------------------------------
+heldcapture guest host shift+w sprint 3
+guest release
+host burst stop 4 250
+heldcapture guest host w walk 2
+guest release
+wait 800
+host capture walk-stop
+# --- Crouch taps (edge sets under loss) --------------------------------------------
+guest press c
+wait 900
+host capture crouch-1
+guest press c
+wait 900
+host capture crouch-2
+# --- Three pauses of the guest (its frames stop, the link stays up) -----------------
+guest press escape
+wait 3000
+host capture pause-1
+guest press escape
+waitgameplay guest 30
+wait 7000
+host capture resume-1
+guest press escape
+wait 3000
+host capture pause-2
+guest press escape
+waitgameplay guest 30
+wait 7000
+host capture resume-2
+guest press escape
+wait 3000
+host capture pause-3
+guest press escape
+waitgameplay guest 30
+wait 7000
+host capture resume-3
+# --- A long pause: the online policy leaves without counting, then re-enters -------
+guest press escape
+wait 12000
+host capture long
+guest press escape
+waitgameplay guest 30
+wait 8000
+host capture long-resumed
+heldcapture guest host w after 2
+guest release
+wait 800
+both capture end
