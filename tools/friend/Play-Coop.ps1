@@ -2,11 +2,20 @@
 MGS Co-op two-PC launcher: Host or Join, then MGSV starts through Steam with
 co-op active for this one game session (docs/two-pc-play.md).
 
-Double-click Play-Coop.bat and choose [H] Host or [J] Join:
-  Host  shows a join code for each address of this PC (and copies the one you
-        choose to the clipboard). Send it to your friend over chat.
-  Join  asks for the host's code (paste it; it is never a command-line
-        parameter, so it does not end up in process lists or shell history).
+Double-click Play-Coop.bat and choose:
+  [O] Host online (Steam, recommended): no port forwarding, VPN or extra
+        program. Steam connects the two games directly or through Valve's
+        relays (docs/steam-online.md). You get an MGS2 code for your friend
+        (copied to the clipboard), or invite them in game: F9 -> Partner /
+        Co-op -> Online -> Invite.
+  [J] Join online: paste the host's MGS2 code, or press Enter and wait for
+        the host's Steam invite (accept it in the Steam overlay or chat while
+        MGSV runs). An MGS1 code here joins over LAN/VPN instead.
+  [L] LAN/VPN (UDP code): the MGS1 flow below, for the same network or a VPN.
+        Host  shows a join code for each address of this PC (and copies the one
+              you choose to the clipboard). Send it to your friend over chat.
+        Join  asks for the host's code (paste it; it is never a command-line
+              parameter, so it does not end up in process lists or shell history).
 
 What it changes, only while the game runs (all in <game>\mgs-coop):
   lab.ini, link-secret.txt, coop.ini and script-observe.enabled (offline-v1)
@@ -21,20 +30,24 @@ While co-op is active the game uses the save COPY in mgs-coop\coop-saves and
 plays offline ("Failed to log in" is expected; Konami's servers are never
 contacted). The partner body supports Mother Base and Afghanistan/Africa free roam.
 
-Optional steps, each asked with default No: look up the public IP
+LAN/VPN only, each asked with default No: look up the public IP
 (contacts api.ipify.org), a UPnP port mapping on the router (removed again at
 the end), a Windows Firewall rule (administrator prompt). Nothing else
 contacts the network, and nothing changes firewall or router settings
-without a "y".
+without a "y". The online flow has none of these steps.
 
-  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Play-Coop.ps1 [-GameDirectory <MGSV folder>] [-Role Host|Join] [-Port 47830] [-HostAddress <ip or name>] [-World 0..3]
+  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Play-Coop.ps1 [-GameDirectory <MGSV folder>] [-Role Host|Join] [-Transport steam|udp] [-Code <MGS2 code>] [-Port 47830] [-HostAddress <ip or name>] [-World 0..3]
   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Play-Coop.ps1 -Cleanup
 #>
 [CmdletBinding()]
 param(
     [string]$GameDirectory,
-    # Skip the menu.
+    # Skip the menu. -Role without -Transport keeps the LAN/VPN (UDP) flow.
     [ValidateSet('Host', 'Join')][string]$Role,
+    # steam: Steam online (docs/steam-online.md); udp: the LAN/VPN code.
+    [ValidateSet('steam', 'udp')][string]$Transport,
+    # Online join: the host's MGS2 code (pasting it at the prompt keeps it out of process lists).
+    [string]$Code,
     # UDP port of the host (the join code carries it).
     [ValidateRange(1024, 65535)][int]$Port = 47830,
     # Host: the address to put in the join code (default: this PC's addresses).
@@ -206,18 +219,44 @@ Write-Host "Install OK. Your character: $character (Install-Coop.bat changes it)
 
 # ---------------------------------------------------------------- 2: menu
 if (!$Role) {
-    Section 'Host or Join?'
-    Write-Host '  [H] Host - your friend joins you (you send them a code)'
-    Write-Host '  [J] Join - you join your friend (you need their code)'
+    Section 'How do you want to play?'
+    Write-Host '  [O] Host online (Steam, recommended) - no port forwarding, VPN or extra program'
+    Write-Host "  [J] Join online - paste the host's code, or wait for their Steam invite"
+    Write-Host '  [L] LAN/VPN (UDP code) - the same network, or a VPN such as Tailscale'
     Write-Host '  [Q] Quit'
-    switch -Regex (Ask 'Choose H, J or Q') {
-        '^[Hh]' { $Role = 'Host' }
-        '^[Jj]' { $Role = 'Join' }
+    switch -Regex (Ask 'Choose O, J, L or Q') {
+        '^[Oo]' { $Role = 'Host'; $Transport = 'steam' }
+        '^[Jj]' { $Role = 'Join'; $Transport = 'steam' }
+        '^[Ll]' {
+            $Transport = 'udp'
+            Section 'Host or Join?'
+            Write-Host '  [H] Host - your friend joins you (you send them a code)'
+            Write-Host '  [J] Join - you join your friend (you need their code)'
+            Write-Host '  [Q] Quit'
+            switch -Regex (Ask 'Choose H, J or Q') {
+                '^[Hh]' { $Role = 'Host' }
+                '^[Jj]' { $Role = 'Join' }
+                default { Write-Host 'Nothing was changed.'; exit 0 }
+            }
+        }
         default { Write-Host 'Nothing was changed.'; exit 0 }
     }
 }
+if (!$Transport) { $Transport = 'udp' }
 $labRole = 'guest'
 if ($Role -eq 'Host') { $labRole = 'host' }
+# Steam online needs Steam running and logged in: its account is this PC's
+# identity in the code (docs/steam-online.md 10.1).
+$steamSelf = ''
+$steamPeer = ''
+$steamWait = $false
+if ($Transport -eq 'steam') {
+    $activeUser = Get-SteamActiveUser
+    # (tests/friend_package_tests.ps1 only: a stand-in Steam account.)
+    if ($env:MGS_COOP_TEST_STEAM_ACTIVE_USER) { $activeUser = [UInt32]$env:MGS_COOP_TEST_STEAM_ACTIVE_USER }
+    $steamSelf = Get-CoopSteamId64 -ActiveUser $activeUser
+    if (!$steamSelf) { throw 'Steam is not running or not logged in. Start Steam and log in (online), then start Play-Coop again. Nothing was changed.' }
+}
 
 $session = $null
 $clipSha = ''
@@ -229,6 +268,7 @@ function New-Session {
     $script:session = [ordered]@{
         v = 2; state = 'active'; role = $labRole; port = $Port; started_utc = [DateTime]::UtcNow.ToString('o')
         launcher_pid = $PID; launcher_start_utc = $start; watchdog_pid = 0; watchdog_start_utc = ''; session_id = [Guid]::NewGuid().ToString('N')
+        transport = $Transport
         files = @(); upnp = [ordered]@{ added = $false; port = 0 }; clip_sha256 = ''
         note = 'Written by Play-Coop.ps1; no secrets. The listed files are deleted when the game exits, only while their SHA-256 matches.'
     }
@@ -238,8 +278,30 @@ $activated = $false
 $gamePid = 0
 $skipCleanup = $false
 try {
-    if ($Role -eq 'Host') {
-        # ------------------------------------------------------------ 3a: host
+    if ($Role -eq 'Host' -and $Transport -eq 'steam') {
+        # ------------------------------------------------------------ 3a: host online
+        Section 'Host online (Steam)'
+        $secret = New-CoopSecret
+        $steamCode = New-CoopSteamJoinCode -Secret $secret -SteamId $steamSelf
+        Section 'Your join code (send it to your friend; keep it private)'
+        Write-Host ("     $steamCode") -ForegroundColor Green
+        # (Not in the scripted tests: they must not touch the test machine's clipboard.)
+        if ($interactive -and $env:MGS_COOP_TEST_INTERACTIVE -ne '1') {
+            try {
+                Set-Clipboard -Value $steamCode
+                $clipSha = Get-CoopTextSha256 -Bytes ([Text.Encoding]::UTF8.GetBytes($steamCode))
+                Write-Host 'The code is copied to the clipboard. Windows clipboard history (Win+V) may keep it; it is cleared from the clipboard when the game exits.'
+            } catch { Write-Host 'Could not copy to the clipboard; select the code above and copy it.' -ForegroundColor Yellow }
+        }
+        Write-Host ''
+        Write-Host 'Send this code to your friend, or invite them in game: F9 -> Partner / Co-op -> Online -> Invite.'
+        Write-Host 'No port forwarding, VPN or firewall rule is needed: Steam connects the two games, directly or through Valve''s relays.'
+        Write-Host 'Your friend starts Play-Coop, chooses [J] Join online, and pastes the code (or waits for your invite).'
+        Write-Host 'Both players must have installed the same package version. Partner bodies support Mother Base, Afghanistan and Africa free roam.'
+        Write-Host 'A new code is made every time you host; an old code stops working.'
+        $peerAddress = ''
+    } elseif ($Role -eq 'Host') {
+        # ------------------------------------------------------------ 3a: host (LAN/VPN)
         Section "Host on UDP port $Port"
         $secret = New-CoopSecret
         $candidates = New-Object Collections.Generic.List[object]
@@ -340,17 +402,53 @@ try {
         }
         $peerAddress = ''
     } else {
-        # ------------------------------------------------------------ 3b: join
-        Section 'Join'
         $parsed = $null
-        for ($attempt = 1; $attempt -le 5; $attempt++) {
-            $text = Ask "Paste the host's join code (MGS1-...@...)"
-            $parsed = ConvertFrom-CoopJoinCode $text
-            if ($parsed.Status -eq 'ok') { break }
-            Write-Host (Get-CoopCodeProblem -Status $parsed.Status) -ForegroundColor Yellow
-            if ($parsed.Status -eq 'empty') { Write-Host 'Nothing was changed.'; exit 0 }
+        if ($Transport -eq 'steam') {
+            # ------------------------------------------------------------ 3b: join online
+            Section 'Join online (Steam)'
+            $steamParsed = $null
+            for ($attempt = 1; $attempt -le 5; $attempt++) {
+                $text = $Code
+                if (!$text -or $attempt -gt 1) { $text = Ask "Paste the host's code (MGS2-...), or press Enter to wait for the host's Steam invite" }
+                if (![string]$text -or !([string]$text).Trim()) { $steamWait = $true; break }
+                # An MGS1 code is a LAN/VPN code: that join continues below.
+                $udpParsed = ConvertFrom-CoopJoinCode $text
+                if ($udpParsed.Status -eq 'ok') { $parsed = $udpParsed; $Transport = 'udp'; break }
+                $steamParsed = ConvertFrom-CoopSteamJoinCode $text
+                if ($steamParsed.Status -eq 'ok') {
+                    if ($steamParsed.SteamId -ceq $steamSelf) { Write-Host 'That is your own code: ask your friend for theirs.' -ForegroundColor Yellow; $steamParsed = $null; continue }
+                    break
+                }
+                Write-Host (Get-CoopSteamCodeProblem -Status $steamParsed.Status) -ForegroundColor Yellow
+                $steamParsed = $null
+            }
+            if ($Transport -eq 'steam') {
+                $peerAddress = ''
+                if ($steamWait) {
+                    $secret = ''
+                    Write-Host 'Waiting for an invite: when MGSV runs, accept the host''s invite in the Steam overlay (Shift+Tab) or the Steam chat,' -ForegroundColor Green
+                    Write-Host 'or paste a code in F9 -> Partner / Co-op -> Online.'
+                } elseif ($steamParsed) {
+                    $secret = $steamParsed.Secret
+                    $steamPeer = $steamParsed.SteamId
+                    Write-Host ('Code OK: host Steam account ...' + $steamPeer.Substring($steamPeer.Length - 4)) -ForegroundColor Green
+                } else { throw 'No valid join code. Nothing was changed.' }
+            } else {
+                Write-Host 'That is a LAN/VPN code (MGS1): joining over the LAN/VPN link instead of Steam.' -ForegroundColor Yellow
+            }
         }
-        if ($parsed.Status -ne 'ok') { throw 'No valid join code. Nothing was changed.' }
+    }
+    if ($Role -eq 'Join' -and $Transport -eq 'udp') {
+        # ------------------------------------------------------------ 3b: join (LAN/VPN)
+        Section 'Join'
+        for ($attempt = 1; !$parsed -and $attempt -le 5; $attempt++) {
+            $text = Ask "Paste the host's join code (MGS1-...@...)"
+            $candidate = ConvertFrom-CoopJoinCode $text
+            if ($candidate.Status -eq 'ok') { $parsed = $candidate; break }
+            Write-Host (Get-CoopCodeProblem -Status $candidate.Status) -ForegroundColor Yellow
+            if ($candidate.Status -eq 'empty') { Write-Host 'Nothing was changed.'; exit 0 }
+        }
+        if (!$parsed -or $parsed.Status -ne 'ok') { throw 'No valid join code. Nothing was changed.' }
         $secret = $parsed.Secret
         $Port = $parsed.Port
         Write-Host "Code OK: host $($parsed.HostName):$($parsed.Port)" -ForegroundColor Green
@@ -373,12 +471,17 @@ try {
         Write-Host "World sync level $World (experimental): shared enemies/alert in free roam (2+), clock and weather (3)."
         Write-Host 'Shared world is on by default; -World 0 opts out. The lower level applies. Co-op save copies only.'
     }
-    $labText = New-CoopPlayLabIniText -Role $labRole -SaveDir $saveDir -Port $Port -PeerAddress $peerAddress -World $World
+    if ($Transport -eq 'steam') {
+        $labText = New-CoopPlayLabIniText -Role $labRole -SaveDir $saveDir -World $World -Transport steam -SteamSelf $steamSelf -SteamPeer $steamPeer -SteamWait:$steamWait
+    } else {
+        $labText = New-CoopPlayLabIniText -Role $labRole -SaveDir $saveDir -Port $Port -PeerAddress $peerAddress -World $World
+    }
     $coopText = New-CoopPlayCoopIniText -Character $character
     $utf8 = New-Object Text.UTF8Encoding $false
-    $writes = @(
-        @{ Name = 'lab.ini'; Path = $paths.LabIni; Bytes = $utf8.GetBytes($labText) },
-        @{ Name = 'link-secret.txt'; Path = $paths.LinkSecret; Bytes = [Text.Encoding]::ASCII.GetBytes($secret + "`r`n") },
+    $writes = @(@{ Name = 'lab.ini'; Path = $paths.LabIni; Bytes = $utf8.GetBytes($labText) })
+    # A guest waiting for an invite has no secret yet (the invite or F9 brings the code).
+    if (!$steamWait) { $writes += @(@{ Name = 'link-secret.txt'; Path = $paths.LinkSecret; Bytes = [Text.Encoding]::ASCII.GetBytes($secret + "`r`n") }) }
+    $writes += @(
         @{ Name = 'coop.ini'; Path = $paths.CoopIni; Bytes = $utf8.GetBytes($coopText) },
         @{ Name = 'script-observe.enabled'; Path = $paths.Marker; Bytes = [Text.Encoding]::ASCII.GetBytes("offline-v1`n") }
     )
@@ -386,6 +489,7 @@ try {
         if (!$script:session) { New-Session }
         $script:session.role = $labRole
         $script:session.port = $Port
+        $script:session.transport = $Transport
         $script:session.clip_sha256 = $clipSha
         foreach ($w in $writes) {
             if (Test-Path -LiteralPath $w.Path) { throw "mgs-coop\$($w.Name) appeared while Play-Coop was preparing; nothing more was written." }
@@ -449,7 +553,7 @@ try {
             $offsets[$n] = $d.NewOffset
         }
         $final = [DateTime]::UtcNow -ge $deadline
-        $evidence = Get-CoopLaunchEvidence -EarlyLog $texts['early.log'] -SteamLog $texts['steam-observer.log'] -ObserverLog $texts['script-observer.log'] -SaveDir $saveDir -Final:$final
+        $evidence = Get-CoopLaunchEvidence -EarlyLog $texts['early.log'] -SteamLog $texts['steam-observer.log'] -ObserverLog $texts['script-observer.log'] -SaveDir $saveDir -Final:$final -Transport $Transport
         if ($evidence.State -ne 'pending') { break }
         if (!(Test-CoopProcessAlive -Id $gamePid)) { break }
         Start-Sleep -Seconds 1

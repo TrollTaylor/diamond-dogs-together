@@ -11,9 +11,10 @@ Included (bounded, read-only, the game may still be running):
   script-observe.enabled, probe-install.json, client-host.txt,
   host-steamid.txt and friend-install.json, plus summary.txt with versions,
   file hashes and the real save check. Never included: link-secret.txt (the
-  link key). SteamIDs are masked except their last 4 digits; Steam account
-  folder numbers and the Windows user name in paths are removed; join codes
-  (MGS1-...) are replaced and public IPv4 addresses after peer=,
+  link key) and steam-join.ini. SteamIDs are masked except their last 4
+  digits; Steam account folder numbers and the Windows user name in paths are
+  removed; join codes (MGS1-... and MGS2-...) and invite strings
+  (+mgscoop_join ...) are replaced and public IPv4 addresses after peer=,
   net_peer_addr=, "peer": and host= are shown as a.b.x.x.
 #>
 [CmdletBinding()]
@@ -103,7 +104,7 @@ try {
         $text = Read-FriendFileTail -Path (Join-Path $paths.Mod $row[0]) -MaxBytes ([Math]::Min($MaxLogBytes, [int]$row[1]))
         if ($text) { Save $row[0] $text; $included.Add($row[0]) } else { $missing.Add($row[0]) }
     }
-    # Allow-list. link-secret.txt (the link key) is never collected.
+    # Allow-list. link-secret.txt (the link key) and steam-join.ini are never collected.
     foreach ($name in @('lab-status.json', 'link-status.json', 'play-session.json', 'lab.ini', 'coop.ini', 'script-observe.enabled', 'probe-install.json', 'client-host.txt', 'host-steamid.txt', 'friend-install.json')) {
         $text = Read-FriendFileTail -Path (Join-Path $paths.Mod $name) -MaxBytes 65536
         if ($text) { Save $name $text; $included.Add($name) } else { $missing.Add($name) }

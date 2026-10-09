@@ -1,5 +1,34 @@
 # Development status
 
+## October 8, 2026: Steam online transport (fixture-tested, never run)
+
+Two-PC play can now connect **online through Steam** with no port
+forwarding, VPN or extra program ([design and record](steam-online.md)).
+Link v2 runs unchanged on `ISteamNetworkingMessages002` (channel 0x4D47,
+flags 0x21) from `ISteamClient017::GetISteamGenericInterface`, acquired once
+in the post-RunCallbacks owner context behind hash, export-byte, module-path,
+RTTI and forwarder-shape gates; Steam signals, traverses NAT and falls back to
+Valve's relays. The game's own ISteamNetworking005, callbacks 1202/1203,
+lobbies, sessions, S_IS_ONLINE, the FOB synchronizer and the Konami servers
+are untouched. Players find each other with an `MGS2-...@<SteamID64>` code
+(S1) or a Steam invite from the new F9 Partner / Co-op > Online panel (S2;
+callback 337, registered by a SteamAPI_Init IAT wrapper in DllMain together
+with the host's 1251, play + steam only), with a rich-presence beacon and a
+4 Hz poll-accept as callback-free fallbacks. Play-Coop has a new menu
+(`[O]` Host online, `[J]` Join online, `[L]` the unchanged LAN/VPN flow);
+the lab stays UDP and refuses `net_transport=steam`. Evidence is fixture
+only: `steam_transport_tests` (365 checks, two link v2 sessions end to end
+over fake Steam interfaces with loss/reorder/duplication, a broken session
+restarted by AutoRestartBrokenSession, busy REJECT, wrong-code hint, Release
+exactly once, gates on synthetic PE images, fault latch, shutdown), the
+extended config/status/shim/worker tests, the friend-package tests (online
+host/join/wait flows) and the contract generator (`--check`, and
+`--steamclient` for Valve's unpinned steamclient64). Next: the coordinator's
+hidden self-test (`tools/worker/scenarios/steam-selftest.txt`), then the
+two-PC acceptance list of [steam-online.md](steam-online.md) section 15 with
+a friend. S3 (accepting an invite starts MGSV straight into co-op) awaits a
+user decision.
+
 ## October 8, 2026: native actions and weapons integrated (fixture-tested, never run together)
 
 `integ/finish` carries both native work packages below. One input frame v4

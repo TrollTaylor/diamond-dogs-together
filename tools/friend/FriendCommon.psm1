@@ -192,12 +192,15 @@ function Hide-FriendSensitiveText {
 }
 
 function Hide-CoopNetworkText {
-    # Masks join codes (any case, with blanks or dashes, with the @host part)
-    # and public IPv4 addresses in address contexts only (peer=, net_peer_addr=,
-    # "peer":", host=), so version numbers such as 1.0.15.4 stay readable.
+    # Masks join codes (MGS1 LAN/VPN and MGS2 Steam online; any case, with
+    # blanks or dashes, with the @host / @SteamID part), invite connect strings
+    # (+mgscoop_join <code>) and public IPv4 addresses in address contexts only
+    # (peer=, net_peer_addr=, "peer":", host=), so version numbers such as
+    # 1.0.15.4 stay readable. Masked SteamIDs (steam:...1234) stay as they are.
     param([AllowNull()][AllowEmptyString()][string]$Text)
     if (!$Text) { return $Text }
-    $out = [regex]::Replace($Text, '(?i)MGS1[\s-]*(?:[0-9A-Z][\s-]*){22}(?:@\S+)?', 'MGS1-<redacted>')
+    $out = [regex]::Replace($Text, '(?i)MGS([12])[\s-]*(?:[0-9A-Z][\s-]*){22}(?:@\S+)?', { param($m) 'MGS' + $m.Groups[1].Value + '-<redacted>' })
+    $out = [regex]::Replace($out, '\+mgscoop_join\s+\S+', '+mgscoop_join <redacted>')
     $out = [regex]::Replace($out, '(?<pre>\bpeer=|\bnet_peer_addr=|"peer"\s*:\s*"|\bhost=)(?<ip>[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})(?![0-9.])', {
             param($m)
             return $m.Groups['pre'].Value + (Get-CoopMaskedAddress $m.Groups['ip'].Value)
