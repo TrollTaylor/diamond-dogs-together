@@ -677,7 +677,9 @@ void TestOnline() {
         if (pkt.edge_seq == 1) {
             ++reps;
             pkt.version = 2;
-            Check(pkt.edge_rep == reps && pi::ValidPacket(pkt), "repeat numbers 1..5 are valid frames");
+            // The wire counter saturates at kEdgeRepeats (a 0.11.1 receiver refuses more).
+            Check(pkt.edge_rep == (reps > pi::kEdgeRepeats ? pi::kEdgeRepeats : reps) && pi::ValidPacket(pkt),
+                  "repeats 1..5 go out as edge_rep 1, 2, 2, 2, 2 (valid for every receiver)");
         }
         pi::SenderSent(st);
     }

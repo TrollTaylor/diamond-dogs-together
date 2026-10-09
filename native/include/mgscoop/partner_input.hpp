@@ -78,7 +78,7 @@ struct InputPacket {
     std::int16_t cam_cdeg;        // sender camera yaw in centidegrees, [-18000, 17999]
     // v2 only (0 in a decoded v1 frame).
     std::uint8_t edge_seq;     // 0: no edge set in this frame (w50 = w54 = tap12 = 0); else 1..255
-    std::uint8_t edge_rep;     // 0 first send of edge_seq, 1..2 repeats (loss tolerance)
+    std::uint8_t edge_rep;     // 0 first send of edge_seq, 1..2 repeats (loss tolerance; saturates at 2 for more repeats)
     std::uint32_t long12;      // level: bits the sender has held for >= 12 frames
     std::uint32_t tap12;       // edge set: bits released after a run of 1..11 frames
     // v3 only (native puppet, docs/native-puppet.md 6.1; 0 otherwise). Each
@@ -129,7 +129,8 @@ inline constexpr std::uint8_t kInvSlotUnknown = 0xFF;
 inline constexpr std::uint8_t kInvSlotMax = 15;
 // Repeats of an edge set after its first send: kEdgeRepeats by default,
 // SenderEdges::repeats (lab.ini partner_input_edge_repeats, play 5) up to
-// kEdgeRepeatsMax, which every receiver accepts.
+// kEdgeRepeatsMax. The wire edge_rep saturates at kEdgeRepeats (what a
+// 0.11.1 receiver accepts); receivers tolerate up to kEdgeRepeatsMax.
 inline constexpr std::uint8_t kEdgeRepeats = 2;
 inline constexpr std::uint8_t kEdgeRepeatsMax = 8;
 inline constexpr std::uint32_t kHoldFrames = 12;  // classify(btn, 12) at every stance/subject/action site

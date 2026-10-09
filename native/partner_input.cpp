@@ -490,7 +490,11 @@ void SenderFill(SenderEdges& st, InputPacket& p) noexcept {
         st.filled_new = true;
     } else if (st.reps_left && st.seq) {
         p.edge_seq = st.seq;
-        p.edge_rep = static_cast<std::uint8_t>(SenderRepeats(st) - st.reps_left + 1);
+        // The wire counter saturates at kEdgeRepeats (1, 2, 2, ...): a 0.11.1
+        // receiver refuses edge_rep > 2, so more repeats never drop its frames
+        // (receivers dedupe by edge_seq; edge_rep is informational).
+        const unsigned rep = static_cast<unsigned>(SenderRepeats(st)) - st.reps_left + 1u;
+        p.edge_rep = static_cast<std::uint8_t>(rep > kEdgeRepeats ? kEdgeRepeats : rep);
         p.w50 = st.cur_press;
         p.w54 = st.cur_release;
         p.tap12 = st.cur_tap12;
