@@ -284,8 +284,11 @@ proven dm=map + xform clip partner as the automatic fallback.
   offline-v1 branch with redirected saves (it refuses to run otherwise), the
   pieces write only instance 1's runtime equipment and the mission block
   cache, and the writer's readback asserts instance 0 unchanged. Play's
-  co-op saves persist, so an ammo leak (`mag.leak_off`) strips RELOAD for the
-  rest of the process (`partner_weapon=reload_off; reason=ammo_leak`). The
+  co-op saves persist, so any leak of instance 1's job into the viewer's
+  vars (`leak.shot_leaks`, `leak.ammo_leaks`, `mag.leak_off`) strips FIRE and
+  RELOAD for the rest of the process
+  (`partner_weapon=fire_reload_off; reason=shot_leak|ammo_leak`,
+  state.json `native.weapon.leak_strip` 80). The
   weapons track's generalized writer is not on this branch; when it lands its
   runtime gate follows the same rule.
 

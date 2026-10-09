@@ -1888,17 +1888,17 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
         EmitNative(m, h, m.weapon_cap, "partner_weapon", "partner_weapon=%s; body_gun=%s; strip=0x%x\r\n",
                    m.weapon_absent ? "absent" : "present", m.weapon_absent ? "absent" : "present", m.weapon_strip);
     }
-    // Play: an ammo leak (the mirror turned itself off: mag.leak_off) strips
-    // RELOAD for the rest of the process, so the partner's reload never runs
-    // again against a co-op save that persists.
-    if (set.play_mode && ns.mag_leak_off && !d.reload_leak_strip) {
-        d.reload_leak_strip = true;
-        if (!d.reload_leak_logged) {
-            d.reload_leak_logged = true;
-            Emit(h, "partner_weapon=reload_off; reason=ammo_leak; scope=process\r\n");
-        }
+    // Play: any leak of instance 1's job into the viewer's save-backed vars (a
+    // shot leak: vars shoot count; an ammo leak: the weapon/ammo vars block,
+    // with or without the mirror, which also turns itself off: mag.leak_off;
+    // process totals) strips FIRE and RELOAD for the rest of the process, so
+    // neither runs again against a co-op save that persists.
+    if (set.play_mode && !d.leak_strip && (ns.shot_leaks || ns.ammo_leaks || ns.mag_leak_off)) {
+        d.leak_strip = pnat::kPadFire | pnat::kPadReload;
+        EmitFormat(h, "partner_weapon=fire_reload_off; reason=%s; shot_leaks=%u; ammo_leaks=%u; strip=0x%x; scope=process\r\n",
+                   ns.shot_leaks ? "shot_leak" : "ammo_leak", ns.shot_leaks, ns.ammo_leaks, d.leak_strip);
     }
-    if (d.reload_leak_strip) m.weapon_strip |= pnat::kPadReload;
+    m.weapon_strip |= d.leak_strip;
     if (set.ngun && weapon_judged && (!m.weapon_logged_once || m.weapon_logged != m.weapon_mismatch)) {
         const bool first = !m.weapon_logged_once;
         m.weapon_logged_once = true;
@@ -2667,6 +2667,8 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         t.remote_gun_base = m.remote_gun_base;
         t.weapon_mismatch = m.weapon_mismatch;
         t.strip_bits = m.weapon_strip;
+        t.weapon_absent = m.weapon_absent;
+        t.leak_strip = d.leak_strip;
         t.fire_requested = n.fire_requested;
         t.fire_shot_drains = n.fire_shot_drains;
         t.fire_modes = n.fire_modes;
@@ -3127,15 +3129,27 @@ void ApplyTrigger(Driver& d, const Hooks& h, const partner::Trigger& trigger, bo
     const bool defer_refused = d.settings.play_mode && trigger.has_defer;
     if (drive_refused) Emit(h, "partner_native=trigger_refused; reason=play_profile; drive=legacy\r\n");
     if (defer_refused) Emit(h, "partner_native=trigger_refused; reason=play; key=defer\r\n");
+    // The lab-only native experiments lab.ini refuses in play (local=all,
+    // naim=lookcam) stay refused through the trigger too, and the gun keys only
+    // narrow what the profile admitted (ngun=1 / nfire=visual need the gun profile).
+    const bool gun_profile = d.settings.nprofile == PartnerNativeProfile::gun;
+    const bool local_refused = d.settings.play_mode && trigger.has_local && trigger.local != PartnerLocal::main;
+    const bool naim_refused = d.settings.play_mode && trigger.has_naim && trigger.naim == PartnerNativeAim::lookcam;
+    const bool ngun_refused = d.settings.play_mode && trigger.has_ngun && trigger.ngun && !gun_profile;
+    const bool nfire_refused = d.settings.play_mode && trigger.has_nfire && trigger.nfire != PartnerNativeFire::off && !gun_profile;
+    if (local_refused) Emit(h, "partner_native=trigger_refused; reason=play; key=local\r\n");
+    if (naim_refused) Emit(h, "partner_native=trigger_refused; reason=play; key=naim\r\n");
+    if (ngun_refused) Emit(h, "partner_native=trigger_refused; reason=play_profile; key=ngun\r\n");
+    if (nfire_refused) Emit(h, "partner_native=trigger_refused; reason=play_profile; key=nfire\r\n");
     if (trigger.has_drive && !drive_refused) {
         d.settings.drive = trigger.drive;
         if (trigger.drive == PartnerDrive::native) partner_native::Unlatch(m.native, m.native.since_ms);
     }
     if (trigger.has_defer && !defer_refused) d.settings.defer = trigger.defer;
-    if (trigger.has_local) d.settings.local = trigger.local;
-    if (trigger.has_naim) d.settings.naim = trigger.naim;
-    if (trigger.has_ngun) d.settings.ngun = trigger.ngun;
-    if (trigger.has_nfire) d.settings.nfire = trigger.nfire;
+    if (trigger.has_local && !local_refused) d.settings.local = trigger.local;
+    if (trigger.has_naim && !naim_refused) d.settings.naim = trigger.naim;
+    if (trigger.has_ngun && !ngun_refused) d.settings.ngun = trigger.ngun;
+    if (trigger.has_nfire && !nfire_refused) d.settings.nfire = trigger.nfire;
     if (trigger.has_steer) d.settings.steer_deg = trigger.steer_deg;
     if (native_keys)
         EmitFormat(h, "partner_native=trigger; drive=%s; defer=%s; local=%s; naim=%s; ngun=%u; nfire=%s; steer=%u; mask=0x%x\r\n",

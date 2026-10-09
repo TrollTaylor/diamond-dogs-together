@@ -459,6 +459,11 @@ struct Telemetry {
     std::int32_t remote_gun_base;     // as a stock id (the received manifest maps an alias); kNull without
     bool weapon_mismatch;
     std::uint32_t strip_bits;
+    // Online play (docs/native-puppet.md "Online"): body 1 never showed a gun
+    // class this mission under the gun profile (HOLD, RELOAD, FIRE stripped),
+    // and the process-wide play leak strip (FIRE | RELOAD after a shot or ammo leak; 0 none).
+    bool weapon_absent;
+    std::uint32_t leak_strip;
     // The partner's trigger after each windowed drain (process totals):
     // shots it requested (rec+0x3C0 bit 24, summed over rec+0x3DF), drains
     // that requested one, and drains that left the gun in a fire mode

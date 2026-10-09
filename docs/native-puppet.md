@@ -594,8 +594,11 @@ the profile's value) and a profile without the dm=map + xform base is refused
 (0x800000). In play a partner.trigger `drive=native|legacy` toggles the drive
 inside an admitted profile (`partner_native=trigger_refused; reason=play_profile`
 without one); `defer=` is always refused there
-(`partner_native=trigger_refused; reason=play; key=defer`); the trigger's other
-keys apply.
+(`partner_native=trigger_refused; reason=play; key=defer`), and so are the
+lab-only experiments lab.ini refuses there (`local=all`, `naim=lookcam`:
+`reason=play; key=local|naim`); `ngun=1` and `nfire=visual` need the gun
+profile (`reason=play_profile; key=ngun|nfire`), so the trigger only narrows
+the profile. The trigger's other keys apply.
 partner.trigger: `drive= defer= local= naim= ngun= nfire=0|off|1|visual steer=`.
 
 To enable (lab only), on both copies: the animated partner settings plus
@@ -624,7 +627,9 @@ adds:
 - **Sender**: input frames v4 go out whenever `partner_input_send=1`,
   whatever this copy's own drive (TickOnline reads instance 0's gun record and
   rate record for a copy that shows clips; pure reads). Edge sets repeat
-  `partner_input_edge_repeats` times (default 2, play 5).
+  `partner_input_edge_repeats` times (default 2, play 5); the wire `edge_rep`
+  counter saturates at 2 (1, 2, 2, ...), so a 0.11.1 receiver, which refuses
+  edge_rep > 2, still accepts every repeat (receivers dedupe by edge_seq).
 - **Network policy** (`partner_native_net=online`, partner_native
   `OnlineParams`): input stale 1.5 s (`net_input`), link down 1.5 s
   (`net_link`), range hiding and unrealize leave as *network* reasons that
@@ -658,7 +663,12 @@ adds:
   heartbeat. Logged `partner_caps=rx; drive=..; reason=..` on change.
 - **Gun profile without a gun**: until body 1 shows a gun class this mission,
   HOLD, RELOAD and FIRE are stripped (`partner_weapon=absent; body_gun=absent`,
-  `native.weapon.strip`).
+  `native.weapon.absent`, `native.weapon.strip`).
+- **Play leak guard**: a shot or ammo leak of instance 1's job into the
+  viewer's vars (`leak.shot_leaks`, `leak.ammo_leaks`, `mag.leak_off`;
+  process totals) strips FIRE and RELOAD for the rest of the process in
+  play (`partner_weapon=fire_reload_off; reason=shot_leak|ammo_leak`,
+  `native.weapon.leak_strip` 80); the lab only counts.
 
 Telemetry: state.json `native.net` (policy, stall, stall_ms, hold,
 edge_repeats, quality_good, quality_good_ms, gaps_100/_250/_1000,

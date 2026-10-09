@@ -3140,6 +3140,7 @@ std::vector<std::uint8_t> CapsBytes(std::uint16_t revision, std::uint32_t epoch,
     Check(mgscoop::partner_caps_wire::Encode(c, b) == sizeof(b), "caps fixture encodes");
     return std::vector<std::uint8_t>(b, b + sizeof(b));
 }
+void SetVisualFire(NativeSession& s);
 void TestNativeOnline() {
     namespace pn = mgscoop::partner_native;
     namespace pnn = mgscoop::partner_native_net;
@@ -3208,6 +3209,47 @@ void TestNativeOnline() {
         Check(s.Until(pn::Mode::active, 9000), "active (gun profile, no gun on body 1)");
         Check((s.fake.arms.back().strip & 0x58u) == 0x58u && s.driver.mission.weapon_absent &&
               s.fake.Containing("partner_weapon=absent; body_gun=absent;") == 1, "weapon absent: HOLD/RELOAD/FIRE stripped, logged once");
+        Check(s.driver.mission.tele.weapon_absent && s.driver.mission.tele.leak_strip == 0, "telemetry: weapon.absent, no leak strip");
+    }
+    for (const bool play : {true, false}) {
+        // Play: a shot or ammo leak into the viewer's vars strips FIRE and RELOAD
+        // for the rest of the process (every later mission too); the lab only counts.
+        NativeSession s;
+        SetVisualFire(s);
+        s.driver.settings.play_mode = play;
+        Check(s.Until(pn::Mode::active, 9000), "active (gun, leak guard)");
+        for (int i = 0; i < 5; ++i) s.N();
+        Check((s.fake.arms.back().strip & 0x50u) == 0, "no leak: FIRE and RELOAD pass");
+        s.fake.stats.native.shot_leaks = 1;
+        for (int i = 0; i < 5; ++i) s.N();
+        if (play) {
+            Check((s.fake.arms.back().strip & 0x50u) == 0x50u && (s.fake.arms.back().strip & 0x8u) == 0 && s.driver.leak_strip == 0x50u &&
+                      s.fake.Containing("partner_weapon=fire_reload_off; reason=shot_leak; shot_leaks=1; ammo_leaks=0;") == 1 &&
+                      s.driver.mission.tele.leak_strip == 0x50u,
+                  "play: a shot leak strips FIRE and RELOAD (HOLD stays), logged once");
+            s.fake.stats.native.shot_leaks = 0;
+            pd::MissionEnd(s.driver, s.hooks);
+            pd::MissionStart(s.driver, s.hooks);
+            Check(pd::Cfg(s.driver, s.hooks, nullptr, s.now), "leak guard: next mission cfg");
+            Loaded(s);
+            Check(s.Until(pn::Mode::active, 9000) && (s.fake.arms.back().strip & 0x50u) == 0x50u &&
+                      s.fake.Containing("fire_reload_off") == 1, "the play leak strip outlives the mission");
+        } else {
+            Check((s.fake.arms.back().strip & 0x50u) == 0 && s.driver.leak_strip == 0 && !s.fake.Containing("fire_reload_off"),
+                  "lab: a leak is telemetry only");
+        }
+    }
+    {
+        // An ammo leak without the magazine mirror strips too (play).
+        NativeSession s;
+        SetVisualFire(s);
+        s.driver.settings.play_mode = true;
+        Check(s.Until(pn::Mode::active, 9000), "active (gun, ammo leak)");
+        s.fake.stats.native.ammo_leaks = 2;
+        for (int i = 0; i < 5; ++i) s.N();
+        Check((s.fake.arms.back().strip & 0x50u) == 0x50u &&
+                  s.fake.Containing("partner_weapon=fire_reload_off; reason=ammo_leak; shot_leaks=0; ammo_leaks=2;") == 1,
+              "play: an ammo leak strips FIRE and RELOAD");
     }
     {
         // A copy that shows clips (drive=legacy) still sends its capabilities: off, legacy.
@@ -3915,6 +3957,27 @@ void TestNativePlayAndWithdraw() {
         s.Trigger("drive=legacy defer=census");
         Check(s.driver.settings.drive == mgscoop::PartnerDrive::legacy && s.driver.settings.defer == mgscoop::PartnerDefer::on &&
               s.fake.Has("partner_native=trigger_refused; reason=play; key=defer\r\n"), "play: clips by trigger, the deferral untouched");
+        // The lab-only native experiments lab.ini refuses in play stay refused by trigger.
+        s.driver.settings.local = mgscoop::PartnerLocal::main;
+        s.driver.settings.naim = mgscoop::PartnerNativeAim::look;
+        s.fake.lines.clear();
+        s.Trigger("local=all naim=lookcam");
+        Check(s.driver.settings.local == mgscoop::PartnerLocal::main && s.driver.settings.naim == mgscoop::PartnerNativeAim::look &&
+                  s.fake.Has("partner_native=trigger_refused; reason=play; key=local\r\n") &&
+                  s.fake.Has("partner_native=trigger_refused; reason=play; key=naim\r\n"),
+              "play: local=all / naim=lookcam refused by trigger");
+        s.Trigger("naim=off nfire=off ngun=0");
+        Check(s.driver.settings.naim == mgscoop::PartnerNativeAim::off && s.driver.settings.nfire == mgscoop::PartnerNativeFire::off &&
+                  !s.driver.settings.ngun && !s.fake.Containing("key=ngun") && !s.fake.Containing("key=nfire"),
+              "play: the trigger may narrow the gun profile");
+        // A loco profile: the gun keys never widen it.
+        s.driver.settings.nprofile = mgscoop::PartnerNativeProfile::loco;
+        s.Trigger("ngun=1 nfire=visual");
+        Check(!s.driver.settings.ngun && s.driver.settings.nfire == mgscoop::PartnerNativeFire::off &&
+                  s.fake.Has("partner_native=trigger_refused; reason=play_profile; key=ngun\r\n") &&
+                  s.fake.Has("partner_native=trigger_refused; reason=play_profile; key=nfire\r\n"),
+              "play loco profile: ngun=1 / nfire=visual refused by trigger");
+        s.driver.settings.nprofile = mgscoop::PartnerNativeProfile::gun;
         s.driver.settings.play_mode = false;
         s.Trigger("drive=native defer=census");
         Check(s.driver.settings.drive == mgscoop::PartnerDrive::native && s.driver.settings.defer == mgscoop::PartnerDefer::census,

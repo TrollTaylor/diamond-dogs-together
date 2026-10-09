@@ -749,14 +749,14 @@ struct Driver {
     std::uint32_t rates_epoch;
     // Online play: the capability exchange outlives missions (it is link
     // session scoped): this copy's sender pacing, the remote's last message
-    // and the revision last logged; an ammo leak in play strips RELOAD for the
-    // rest of the process (reload_leak_strip).
+    // and the revision last logged; a shot or ammo leak in play strips FIRE and
+    // RELOAD for the rest of the process (leak_strip: the pad bits, 0 before).
     partner_caps_wire::Sender caps_tx;
     partner_caps_wire::Store caps_rx;
     std::uint16_t caps_logged_rev;
     std::uint32_t caps_logged_epoch;
     std::uint8_t caps_logged_drive, caps_logged_reason;
-    bool reload_leak_strip, reload_leak_logged;
+    std::uint32_t leak_strip;
     Mission mission;
 };
 

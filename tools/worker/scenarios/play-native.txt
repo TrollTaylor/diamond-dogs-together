@@ -17,7 +17,8 @@
 #           (partner_native_net; policy=online; drive=native; ... remote=native/ok in both logs).
 #  move:    walk/sprint: body.act follows remote_act, recon.err_mm < 1500 after the stop, recon.snaps unchanged.
 #  gun:     aim (gun.bit18 1, look.err_mdeg small), fire (fire.suppressed grows, leak.shot_leaks 0), reload (mag.reload_edges
-#           or gun.b20; else record), weapon.body_gun present (no partner_weapon=absent line once stock46 is on body 1).
+#           or gun.b20; else record), native.weapon.absent false once stock46 is on body 1 (partner_weapon=present), weapon.leak_strip 0
+#           (a shot or ammo leak in play strips FIRE|RELOAD for the process: partner_weapon=fire_reload_off, leak_strip 80).
 #  pause:   paused (host films, the guest in its pause menu): native.mode active with native.reason "remote_quiet",
 #           native.net.remote_quiet true, native.net.quiet_episodes +1, the host log partner_native_net=quiet; resumed:
 #           native.reason "ok" again, partner_native_net=resume, net_leaves unchanged, hard_leaves 0.
