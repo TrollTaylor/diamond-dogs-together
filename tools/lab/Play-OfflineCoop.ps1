@@ -97,10 +97,13 @@ param(
     # kept for compatibility; -NoNative plays the clip-driven animated partner.
     [switch]$Native,
     [switch]$NoNative,
-    # Native partner firing as visual-only shots (the RequestBullet owner filter).
-    # Off by default until a hidden run proves the partner's shots are filtered;
-    # without it the partner aims and holds the gun but never fires.
+    # Native partner firing is visual-only (the RequestBullet owner filter drops
+    # the partner's bullets on this machine; hidden runs 24d3f9fb and the merged
+    # regression showed suppressed shots, a muzzle flash and no leaks). On by
+    # default; -NoVisualFire makes the partner aim and hold the gun without firing.
+    # -VisualFire is kept for compatibility.
     [switch]$VisualFire,
+    [switch]$NoVisualFire,
     # One-PC LAN rehearsal of the two-PC play mode (net_bind=any, LAN address, link secret).
     [switch]$Lan,
     # -Lan: this PC's LAN IPv4 (default: the first IPv4 of an Up adapter with a gateway).
@@ -232,8 +235,8 @@ try {
         $partnerSettings += @('partner_drive=native', 'partner_input_send=1', 'partner_input_hook=1', 'partner_input_hold=own',
             'partner_input_words=hpr', 'partner_input_wrap=window', 'partner_input_cam=sandbox', 'partner_input_local=main',
             'partner_recon=track', 'partner_input_slot=body', 'partner_input_defer=on',
-            $(if ($VisualFire) { 'partner_input_mask=0x224005E' } else { 'partner_input_mask=0x224004E' }),
-            'partner_native_gun=1', $(if ($VisualFire) { 'partner_native_fire=visual' } else { 'partner_native_fire=0' }),
+            $(if (!$NoVisualFire) { 'partner_input_mask=0x224005E' } else { 'partner_input_mask=0x224004E' }),
+            'partner_native_gun=1', $(if (!$NoVisualFire) { 'partner_native_fire=visual' } else { 'partner_native_fire=0' }),
             'partner_native_aim=look', 'partner_input_triggers=1', 'partner_input_rstick=1', 'partner_native_rates=mirror')
         Write-Note 'NATIVE PARTNER: the other player''s body runs the game''s own movement and aiming; dm=map clips are the automatic fallback (-NoNative turns this off).'
     }
