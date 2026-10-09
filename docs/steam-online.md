@@ -17,7 +17,10 @@ selection and status, Play-Coop online host/join, Collect-Logs, docs) and WP-C
 `ArmSteamGuest`, the rich-presence beacon) are in. WP-D (S3, command-line
 join) needs a user decision: only its pure extractor exists, unwired. The
 coordinator's hidden self-test (section 14) and the two-PC acceptance
-(section 15) are pending.
+(section 15) are pending. Section 20 (2026-10-09) adds the function-pointer
+dispatch for code joins between non-friends, the guest's "why it failed"
+(1252), plain-language reasons, "partner left", the in-game status line and a
+commit build id.
 
 ## 0. Decision
 
@@ -247,7 +250,8 @@ All other ABI claims in the research were verified as stated:
     0x1A5F4xx–0x1A5FCxx paths;
   - callback 333, lobbies, `+connect_lobby`, `ActivateGameOverlayInviteDialog`, `InviteUserToLobby`;
   - `SteamAPI_Init`, `Shutdown` and `RunCallbacks` are never *called* by us; the game's callbacks are
-    never unregistered or replaced;
+    never unregistered or replaced (the GNS `ISteamNetworkingSockets012::RunCallbacks` of section 20
+    is a different function: it drains only the queue our own function pointers fill);
   - `GetAuthSessionTicket` / `BeginAuthSession`;
   - `ClearRichPresence`, and any rich-presence key that is not `mgscoop_*`;
   - S_IS_ONLINE, the FOB synchronizer, game sessions, the Konami master/login/version checks, and fuse;
@@ -1040,3 +1044,211 @@ Verification of this implementation (fixture only):
 - `generate_steam_shim_contract.py --check` and `--steamclient` pass on
   `mgsvtpp.exe 085c2f82...`, `steam_api64.dll 08bd0152...` and
   `steamclient64.dll caba4826...`.
+
+## 20. Code joins without the 2015 callback manager, and the online UX
+
+**Status (2026-10-09, `wp/steam-join`): implemented, fixture-tested and
+statically contracted (`--steamclient`); never run in the game.** The user's
+request: "code joining ... make everything nice and neat for online".
+
+### 20.1 Problem
+
+The host learns of a joiner it does not already know only from callback
+1251, registered through the 2015 steam_api's `RegisterCallback` by the Init
+wrapper (6.1). Whether that dispatcher delivers it is unproven (R1). Polling
+covers only ids the host already knows (the peer, invited friends, beacon
+hits), so a code join between players who are not Steam friends depended on
+that one path.
+
+### 20.2 Mechanism (steamclient64 `caba4826...`, asserted by `--steamclient`)
+
+GNS function-pointer callbacks: a config value of type Ptr names a function
+that steamclient queues the callback for; `ISteamNetworkingSockets012::
+RunCallbacks()` then calls it on the calling thread. Every row is asserted by
+`tools/generate_steam_shim_contract.py --steamclient` by RTTI, name strings
+and instruction shapes, never by RVA (ten binary mutations each fail it):
+
+| Fact | Asserted |
+|---|---|
+| Sockets012 slot 41 is `RunCallbacks` | the gate's disp32 forwarder to inner slot 41 (the steamclient class keeps the base slot); assert string `Unknown callback type %d!`; lock `this+0x878`, swap of the queue vector `this+0x860`, exactly two unlock calls, then the loop: `call [entry+8]` with `rcx = entry+0x10` (the payload), 0x2D8-byte entries; the jump table reaches that call for exactly 1221, 1222, 1223, 1251, 1252 and 1281 (`kRunCallbacksIds`) |
+| Utils004 slot 16 is `SetConfigValue(value, scope, obj, type, pArg)` | the gate's disp32 forwarder; name string; Ptr: type 5 (5th argument) stores `*(void**)pArg` (6th) and marks it set; `pArg == nullptr` resets the Global value to its default |
+| The config entries | 201 `Callback_ConnectionStatusChanged` (Ptr, Connection scope); 204 `Callback_MessagesSessionRequest` and 205 `Callback_MessagesSessionFailed` (Ptr, Global) |
+| Their readers | exactly one load each: 204 in `CSteamNetworkingMessages::BHandleNewIncomingConnection` queues 1251 (the 0x88-byte identity) on `[this+8]`, the sockets object that owns the Messages object; 205 queues 1252 (the 0x2B8-byte connection info) |
+| InternalQueueCallback (base slot 68, `call [vtbl+0x220]`) | a null function queues nothing; payload <= 0x2C8; the same lock and vector as RunCallbacks; the steamclient override then always posts to the game's pipe (no branch) |
+| Payloads | 1221 `{hConn @0; info @8; old state @0x2C0}` (0x2C8); the info filler writes state +0xB0, end reason +0xB4, end debug +0xB8 (0x80) |
+
+Consequences:
+- The game is unaffected: the pipe post of 1251/1252 still happens and the
+  game registers neither id (generator census); the game's
+  ISteamNetworking005 and 1202/1203 never read these values.
+- Our functions run only inside our own `RunCallbacks` call, on our thread,
+  outside every Steam lock. Nothing else in the process calls this
+  `RunCallbacks` (mgsvtpp, steam_api64 2015 and the overlay hold no GNS
+  interface string).
+- The Init wrapper's 1251 object stays a second source. Section 2's "never
+  call `RunCallbacks`" is about `SteamAPI_RunCallbacks`; the GNS
+  `RunCallbacks` drains only the queue our function pointers fill.
+
+### 20.3 Implementation
+
+- `native/steam_net_dispatch.{hpp,cpp}`: `Install` (204 + 205 on the host, 205
+  on the guest; all or nothing), `Pump` and `Uninstall` through C-style SEH
+  thunks. The functions copy the payload first, then only enqueue (1251: the
+  `steam_cb` queue with a source mask; 1252: a newest-wins mailbox; 1221: the
+  self-test record). They never block on a game lock, log or call Steam.
+- `SteamTransport`: installs once ready, pumps every 10 ms between the
+  receive and the accept work (a code join is accepted in the same pass),
+  resets the values on `stop()` and on the window-close shutdown before
+  `CloseSessionWithUser`. After a fault no Steam call follows, so the values
+  may stay set; only incoming session requests then fill an undrained queue.
+- Logs: `steam=dispatch; fnptr=on; ids=1251+1252; pump_ms=10` or
+  `fnptr=refused; reason=...; fallback=callback+poll`;
+  `steam=accept; peer=...; via=fnptr|callback|fnptr+callback|poll|beacon` (the
+  other source reporting the same accept within 5 s counts `dup`);
+  `steam=stats` gains `req_cb`, `req_fn`, `dup`, `failed`, `pumps` and
+  `dispatch`.
+
+### 20.4 Runtime gate and refusals
+
+The owner context acquires Sockets012 in play too when the variant uses the
+function pointer, then runs a call-free gate (`DispatchGate`): Sockets012
+slot 41 and Utils004 slot 16 forward to the expected inner classes
+(`.?AVCSteamNetworkingSocketsSteamClient@...`,
+`.?AVCSteamNetworkingUtilsSteamClient@...`, slot in `.text`), and the
+Messages implementation's owning sockets object (`[subobject - 0xD0 + 8]`) is
+the Sockets012 adapter's inner object. Any failure refuses only the function
+pointer (`steam=dispatch_gate; check=...; reason=...`); play continues on the
+1251 callback and polling. Nothing here ever refuses play.
+
+### 20.5 Variants (the two-PC A/B)
+
+lab.ini `net_steam_dispatch` (play; written by Play-Coop `-SteamDispatch`, a
+hidden developer parameter; no key = `both`):
+
+| Value | Function pointer | Init wrapper (1251 host / 337 guest) | Poll / beacon |
+|---|---|---|---|
+| `both` (default) | host 204+205, guest 205 | yes | yes |
+| `fnptr` | host 204+205, guest 205 | guest 337 only (invites need it) | yes |
+| `callback` | no (the behaviour before this section) | yes | yes |
+| `poll` | no | no | yes |
+
+early.log says `steam_callbacks=skipped; reason=dispatch_fnptr|dispatch_poll`
+when the wrapper is not wanted.
+
+### 20.6 Self-test stage F/D (lab; `steam_selftest_fn`, default 1)
+
+After P/L and before M, within the 20 s cap, on the self-test thread:
+- **F1**: `SetConfigValue(204, Global, Ptr, &fn)`, then the reset: both true.
+- **F2**: `CreateSocketPair`, 201 on both ends (Connection scope), close b;
+  our 1221 calls before our first pump must be 0; pump up to 1 s until a call
+  for hConn a with old 3 (Connected) and new 4|5, on this thread; close a,
+  one more pump.
+- **D**: the play path: `Install(204+205)`, `Pump` every 10 ms for 2 s,
+  `Uninstall`, and nothing installed afterwards.
+
+Pass: state.json `steam.fn.verdict` `"ok"`, and the `steam_status` line ends
+`;fn=ok` (`fn=skip` with `steam_selftest_fn=0`). This proves the queue ->
+RunCallbacks -> our function path on one account; the 204 -> 1251 delivery
+itself needs two accounts (section 15 item 1, `req_fn`).
+
+### 20.7 Why a join failed (1252) and plain-language reasons
+
+The 205 function gives the guest Steam's end reason:
+`steam=session_failed; peer=...; end=<ESteamNetConnectionEnd>; state=...;
+debug="..."` (printable ASCII, dotted IPv4 masked `a.b.x.x`). For the guest's
+configured host while not connected it becomes link-status `"steam_end":<n>`,
+the in-game line and a toast; a connect clears it. `native/coop_reason_text.cpp`
+and `tools/CoopPlay.psm1` (`Get-CoopLinkReasonText`, `Get-CoopSteamEndText`)
+produce the same sentences; `tests/fixtures/link-reasons.json` holds the
+shared vectors that `steam_transport_tests` and `friend_package_tests` both
+check. The end-reason table uses the public SDK values (their names are not
+in the binary): 5003/4001 "the host's game did not answer", 5008/5009 "Steam
+could not connect the two PCs", 5005/3001/3002 "this PC cannot reach Steam's
+network", 3004/3005 "restart Steam", 4002/4003 "secure handshake failed",
+4006 "different Steam version", 1000-1999 and 5010 "the host closed the
+connection", otherwise "the Steam connection failed (code N)".
+
+### 20.8 Partner left
+
+A Steam transport sends one link CLOSE at the window-close shutdown (7.6; UDP
+never sends one). An authenticated CLOSE makes the host `lost` at once
+(`link=peer_left; role=host; next=accepting`): a late, reordered DATA of the
+closed session no longer revives it, and the next join (even from another
+SteamID) is accepted at once instead of after 3 s. The guest drops the closed
+session (no keepalives into it) and starts reconnecting. link-status
+`"left":1` until the next session; Play-Coop's status line adds "your friend
+left" / "the host left" while not connected.
+
+### 20.9 In-game status line and toasts (`coop_hud`)
+
+The overlay draws one line top-right while F9 is closed (hidden during
+demos), for example `CO-OP [connected] Snake_Fan - Steam relay 61 ms`,
+`CO-OP [waiting] code ready - F9 to copy/invite`, `CO-OP [joining 12 s] host
+not answering` or `CO-OP [refused] wrong code?`; `full` adds a detail line
+(rtt, jitter, loss, build, peer). Modes `compact|full|off`: lab.ini
+`coop_hud` wins, then coop.ini `hud` (play only); default compact in play and
+off in the one-PC lab. Toasts (4 s, at most 3): connected, reconnected, lost,
+partner left, refused (the plain reason), version mismatch, Steam
+unavailable, the 1252 end reason, joining, invalid join code, invite sent and
+code copied (those two show for what is left of their 4 s once F9 closes).
+Nothing reads game memory or calls Steam. Worker evidence: state.json `hud`
+(`enabled, mode, frames, hidden, events, toasts, line, toast, tick_ms`) and
+the read-only debug command `hud_status`
+(`hud;mode=...;on=...;frames=...;line=...;toast=...`).
+
+### 20.10 Build id
+
+CMake makes the link build (HELLO/WELCOME, early.log and probe.log version)
+the version plus the 7-character commit at configure time, for example
+`0.11.1+2459c8c`: two packages built from different commits refuse each other
+with `build_mismatch` and the "both must install the same package" sentence.
+Play-Coop's own version text stays the package version.
+
+### 20.11 Runs and evidence (coordinator)
+
+Static first: `python tools/generate_steam_shim_contract.py --check` and
+`--steamclient "C:/Program Files (x86)/Steam/steamclient64.dll"` (its line
+must end with the `dispatch: ...: ok` part), then the worker checks.
+
+1. `pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/steam-selftest.txt`:
+   host `steam_status` `verdict=pass;...;fn=ok`; `roles.host.steam.fn`:
+   `verdict "ok"`, `set204 1`, `reset204 1`, `pre_pump 0`, `conn_ok 1`,
+   `old 3`, `new 4|5`, `thread_ok 1`, `d_install 1`, `d_uninstall 1`,
+   `faults 0`; script-observer.log `steam_dispatch=selftest; gate=ok; ...`.
+2. The same with `-LabSetting steam_selftest_fn=0`: `fn=skip`, verdict pass
+   (only the host expectation of the scenario fails, by design).
+3. `pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/coop-hud.txt`:
+   both `hud_status` `on=1;frames=<n>;line=CO-OP [connected]...`,
+   `roles.<role>.hud.enabled true`, `hud.hidden` grows while F9 is open and
+   `hud.frames` again after it closes; the captures show the line. With
+   `-LabSetting coop_hud=off`: `on=0`, no `overlay=hud_drawn` line.
+4. Lab regression: any existing scenario without these keys draws no HUD
+   (`hud.enabled false`) and logs no `steam_dispatch` or `steam=dispatch` line.
+
+Two-PC (the user and a friend, section 15): an S1 code join between
+non-friends with the default `both`: host `steam=accept; ...; via=fnptr` or
+`fnptr+callback` and `steam=stats` `req_fn >= 1`. R1 is settled by
+`req_cb`: 0 means the 2015 dispatcher never delivered 1251. Separate the
+sources with `-SteamDispatch callback` and `-SteamDispatch fnptr`. A guest
+whose host is not running sees `steam=session_failed; end=5003` and the
+sentence; the host quitting shows "the host left" at once on the guest.
+
+### 20.12 Review fixes (2026-10-09)
+
+- `--steamclient` now asserts every steamclient property section 20 relies on
+  (20.2); before, only the runtime RTTI/forwarder gate covered slots 41/16.
+- A late DATA after a CLOSE revived the host (`lost -> connected`, clearing
+  "left") or the guest; the guest kept sending keepalives into the closed
+  session. Fixed in `link::Session::OnPeerClose`; the fixture delivers held
+  DATA after the CLOSE.
+- The CLOSE packet's own lost/reconnecting events were toasted as "Lost the
+  connection" before "left": the goodbye flag is now set first.
+- The 1252 debug text is logged and collected: IPv4 addresses are masked.
+- `steam_transport_tests` took the vector file as a command argument, which
+  the audited worker checks refuse; the path is a compile definition now.
+- The new lab keys were neither in the worker `-LabSetting` allow-lists nor in
+  LabCommon's lab.ini allow-list (a hidden run with them would have failed);
+  both are added and `worker_session_tests` asserts the two allow-lists stay
+  identical.
+- The invite-sent and code-copied toasts were never posted; the self-test's
+  pair end b is closed on every non-fault path.
