@@ -139,7 +139,7 @@ function Write-CrlfAscii([string]$Path,[string]$Text) {
     [IO.File]::WriteAllText($Path,$Text.Replace("`r`n","`n").Replace("`n","`r`n"),[Text.Encoding]::ASCII)
 }
 if($Friend) {
-    # Friend layout: four double-click entry points at the top, the scripts in scripts\.
+    # Friend layout: five double-click entry points at the top, the scripts in scripts\.
     $scripts=Join-Path $packageRoot 'scripts'
     $null=New-Item -ItemType Directory -Path $scripts
     $pieces=[ordered]@{
@@ -147,12 +147,13 @@ if($Friend) {
         'Play-Coop.ps1'=(Join-Path $PSScriptRoot 'friend/Play-Coop.ps1')
         'Uninstall-Coop.ps1'=(Join-Path $PSScriptRoot 'friend/Uninstall-Coop.ps1')
         'Collect-Logs.ps1'=(Join-Path $PSScriptRoot 'friend/Collect-Logs.ps1')
+        'Share-Save.ps1'=(Join-Path $PSScriptRoot 'friend/Share-Save.ps1')
         'FriendCommon.psm1'=(Join-Path $PSScriptRoot 'friend/FriendCommon.psm1')
         'CoopPlay.psm1'=(Join-Path $PSScriptRoot 'CoopPlay.psm1')
         'install.ps1'=(Join-Path $PSScriptRoot 'package-install.ps1')
     }
     foreach($name in $pieces.Keys) { Write-CrlfAscii (Join-Path $scripts $name) ([IO.File]::ReadAllText($pieces[$name])) }
-    foreach($entry in @('Install-Coop','Play-Coop','Uninstall-Coop','Collect-Logs')) {
+    foreach($entry in @('Install-Coop','Play-Coop','Uninstall-Coop','Collect-Logs','Share-Save')) {
         # PSModulePath is cleared so that Windows PowerShell uses its own module
         # path even when started from a PowerShell 7 window.
         $batch="@echo off`r`nsetlocal`r`nrem MGS Co-op two-PC play: runs scripts\$entry.ps1 with Windows PowerShell.`r`nset `"PSModulePath=`"`r`n"+
