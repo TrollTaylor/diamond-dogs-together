@@ -856,7 +856,7 @@ waitgameplay host 120
 wait 20000
 state
 host run steam_status
-host expect ^steam_selftest;verdict=pass;
+host expect ^steam_selftest;verdict=pass;.*;fn=ok$
 guest run steam_status
 guest expect ^steam_selftest;verdict=refused;reason=fake_identity
 ```
