@@ -131,10 +131,18 @@ thread (`thread`), the chain (`selector`, `handle`, `viewport`), the viewport vt
 (`sub_viewport` for mirrors/photos 0x21e9e68, `vp_vtable` for anything but
 0x20f1c08), the camera (`camera`, `cam_vtable` for anything but 0x20f08c8, `ortho`),
 the pixel size 64..16384 (`size`), the rect (`rect`), finite values (`nonfinite`), the
-projection shape (`proj_form`) and View x Proj == VP within 1e-3 per row (`torn`: the
-last good camera is reused for up to two ticks, then the tag hides). A census line
+projection shape (`proj_form`: |P00| and P11 between 0.05 and 1000, so the binocular
+and scope zooms, which narrow the main camera to a few degrees, still pass) and
+View x Proj == VP within 1e-3 per row (`torn`: the last good camera is reused for up to
+two consecutive torn ticks directly after it, then the tag hides; any other refusal or
+a tick without reads forgets it). A census line
 `nametag_census; mission=..; refusal=..; vp_vt=..; cam_vt=..; w=..; h=..; ...` is
-logged once per mission.
+logged on the first tick of a mission that read the viewport's vtable (a null
+selector, handle or viewport while the mission loads waits), and once more if that
+one refused and a later tick passes.
+
+While nothing can be shown (`off`, `terminating`, `hud`, or the partner body hidden)
+the tick reads neither the camera nor the body nor the gun; only the names flow.
 
 ### Partner body, stance and aim
 
@@ -157,15 +165,19 @@ logged once per mission.
    aim, names, projection; then one `Frame` (about 100 bytes) is copied under a lock.
 2. **Present**: takes the newest frame, maps NDC to pixels and draws on ImGui's
    background list (under the F9 menu). It never reads game memory. A frame older
-   than 250 ms is not drawn (pause, loading and the title stop the Lua tick). With the
-   menu closed one ImGui unit is one backbuffer pixel. Hidden-worker builds draw the
-   tag before the frame capture, so captures contain it.
+   than 250 ms is not drawn (loading and the title stop the Lua tick; that the pause
+   menu stops it too is expected but unverified: the scenario's `nametag-paused`
+   capture decides). The DX11 backend maps one ImGui unit to one backbuffer pixel, and
+   the tag maps NDC over the backbuffer size also under an open menu (whose display is
+   the client rect). Hidden-worker builds draw the tag before the frame capture, so
+   captures contain it.
 3. **Window close** (`WM_CLOSE`/`WM_DESTROY`): a thread-safe flag hides the tag at once.
 
 Cutscene/demo and iDroid state come from `debug_menu.lua`: STATE_V1 now has a 13th
 field (bit 0 `DemoDaemon.IsDemoPlaying`, bit 1 `TppUiCommand.IsMbDvcTerminalOpened`, a
 pure query registered at 0x8dad90 that reads one byte; absent or failing: 0), sent
-within 5 updates of a change.
+within 5 updates of a change. The loader takes this receipt for the name tag even when
+the debug menu itself is off (only STATE_V1 then; every other debug receipt stays off).
 
 ## Telemetry
 
@@ -181,7 +193,7 @@ Worker `state.json` (and `captures.jsonl` `roles.<role>`) gets a `"nametag"` obj
 `crosshair_frames`, `ring`, `bb`, `display`, `alpha`, `present_thread`, `age_ms`}.
 
 `script-observer.log`: `nametag=ready; ...` / `nametag=refused; reason=..; rva=..`,
-`nametag_census; ...` (once per mission), `nametag=visible; ...` / `nametag=hidden;
+`nametag_census; ...` (at most twice per mission, above), `nametag=visible; ...` / `nametag=hidden;
 reason=..; refusal=..` (on each change, at most 256 lines per process),
 `nametag=name_tx; ...`, `nametag=name_rx; ...`, `nametag=name_rx_refused; ...`,
 `nametag=setting; ...` and `debug_menu=nametag; id=..; ok=..; result=..`.
@@ -220,3 +232,7 @@ game-thread source), `native/nametag_contract.hpp` (generated), the overlay laye
 - The iDroid binding is `TppUiCommand.IsMbDvcTerminalOpened` (registration table and
   the query body checked statically; the table name is inferred from neighbouring
   `TppUiCommand` entries).
+- The pause menu is covered only by the stale-frame rule (the Lua tick is expected to
+  stop there; the `TppUiCommand` table has no pause query). Screens during which the
+  Lua tick keeps running without a demo or the iDroid (the game-over screen, script
+  fades to black) still show the tag.

@@ -24,6 +24,17 @@ holds the runtime proof (the worker's `labsetting` now takes a `host`/`guest`
 prefix). Fixture evidence only: `debug_menu_tests` (projection, refusals, capsule,
 sanitizer, wire, commands), `debug_overlay_tests` (DX11 pixel readback of the label
 and the ring), `worker_debug_tests`, `lab_config_tests`, `debug_menu_lua_check`.
+Review fixes: the projection shape check accepted only P11 < 20 (a vertical FOV
+above ~5.7 deg), so a binocular or scope zoom would have hidden the tag and the
+friendly ring exactly while sniping; it now accepts 0.05..1000. The census waited
+for nothing and could log a null-selector line at mission load and never the
+vtables; it now logs the first tick that read the viewport vtable (and once more
+when that one refused and a later one passes). A torn read no longer reuses a
+camera from before another refusal or a hidden stretch. While off, terminating, in
+a demo or the iDroid, or with the partner hidden the tick reads nothing (names
+only). STATE_V1's HUD bits reach the tag also when the debug menu is off. The
+overlay reads the clock after taking the frame (no false stale frame at a tick
+boundary) and maps NDC over the backbuffer under an open menu too.
 
 ## October 8, 2026: native actions and weapons integrated (fixture-tested, never run together)
 

@@ -288,7 +288,12 @@ filter (`net_bind=loopback`); `net_link=legacy` keeps the raw frames.
   every channel on both sides. `partner_net::SendReliable` / `DrainReliable`;
   look stays a FRAME with its 2 s heartbeat. Channel 1 carries the world sync
   bundles when `lab.ini` `world>=1` ([world-sync-protocol.md](world-sync-protocol.md));
-  channels 2..3 stay unused. A peer at `world=0` never drains channel 1: its
+  channel 2 carries the equipment manifest (`partner_equip_wire`) and channel 3
+  the partner name tag's display name ([partner-nametag.md](partner-nametag.md):
+  one `latest` message per side and link session; a peer without the name tag
+  stores and acknowledges it without draining (one slot of its window) and
+  sends none, so this side shows its fallback name). A peer at `world=0` never
+  drains channel 1: its
   32-message window fills and our sender reports `full` (tolerated; HELLO and
   READY are sent only at a mission start and on link up, and native logs
   `world=remote_silent` once when no HELLO arrives within 30 s).

@@ -3,9 +3,10 @@
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-nametag.txt
 # Static first: python tools/generate_nametag_contract.py --check
 # Evidence (state.json / captures.jsonl roles.<role>.nametag; "render" is the Present side):
-#  ready:   both script-observer.log: nametag=ready; on=1; crosshair=aim; ...; local_src=lab, then once per mission
-#           nametag_census; ...; refusal=none; vp_vt=0x20f1c08; cam_vt=0x20f08c8 (a different vp_vt is a static-inference
-#           miss: the tag refuses with camera.refusal vp_vt; pin it from the census, see the doc).
+#  ready:   both script-observer.log: nametag=ready; on=1; crosshair=aim; ...; local_src=lab, then per mission
+#           nametag_census; ...; refusal=none; vp_vt=0x20f1c08; cam_vt=0x20f08c8 (a refused census such as torn may come
+#           first; a different vp_vt is a static-inference miss: the tag refuses with camera.refusal vp_vt; pin it from
+#           the census, see the doc).
 #  names:   nametag=name_tx and nametag=name_rx on both logs; nametag.name_src remote, name_tx/name_rx >= 1, name_invalid 0.
 #  idle:    host status st=visible;why=ok;name=GuestTag;src=remote; host-nametag-idle.bmp: render.label_box holds >= 30
 #           pixels with R,G,B >= 200; render.last_px within 3 px of the anchor from nametag.ndc and render.bb
