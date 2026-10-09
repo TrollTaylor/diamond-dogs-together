@@ -1843,8 +1843,13 @@ void DrainEquip(Driver& d, const Hooks& h) noexcept {
             d.equip_cache = m.equip.manifest;
             d.equip_cache_have = true;
             d.equip_cache_epoch = epoch;
+            // New content (also under the stored revision number: a 0.12.0 sender
+            // restarts at 1 every mission): the per-revision slot types and apply
+            // verdict are recomputed (revisions are never 0).
+            m.slot_types_rev = 0;
+            m.equip_apply_rev = 0;
         }
-        if (accepted && m.equip.manifest.revision != m.equip_logged_rev) {
+        if (accepted) {
             m.equip_logged_rev = m.equip.manifest.revision;
             const auto& e = m.equip.manifest;
             EmitNative(m, h, m.native_equip_cap, "partner_equip",

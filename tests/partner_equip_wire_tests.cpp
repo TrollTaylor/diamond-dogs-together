@@ -105,6 +105,28 @@ int main() {
     next.revision = 8;
     ew::Encode(next, buf);
     Check(ew::Accept(st, buf, sizeof(buf), m.epoch) && st.manifest.revision == 8 && st.received == 2, "next revision stored");
+    // The same revision and epoch with other content replaces it (a 0.12.0 sender restarts at revision 1 every
+    // mission while the receiver keeps the session's manifest); only an exact repeat is a duplicate.
+    {
+        ew::Store old{};
+        ew::Manifest first = m;
+        first.revision = 1;
+        std::uint8_t v1[ew::kSizeV1]{};
+        ew::Encode(first, buf);
+        std::memcpy(v1, buf, sizeof(v1));
+        v1[1] = 1;
+        Check(ew::Accept(old, v1, sizeof(v1), m.epoch) && old.manifest.revision == 1 && old.manifest.slots[2].alias == 0x30,
+              "a 0.12.0 sender's mission 1 manifest (version 1, revision 1)");
+        v1[12 + 2 * 16 + 2] = 0x31;  // its next mission: another secondary alias, revision 1 again
+        Check(ew::Accept(old, v1, sizeof(v1), m.epoch) && old.manifest.slots[2].alias == 0x31 && old.received == 2 && old.duplicates == 0,
+              "revision 1 again with a new loadout: replaced, not a duplicate");
+        Check(!ew::Accept(old, v1, sizeof(v1), m.epoch) && old.duplicates == 1 && old.received == 2, "an exact repeat: duplicate");
+        v1[8] = 2;  // only the inventory slot moved
+        Check(ew::Accept(old, v1, sizeof(v1), m.epoch) && old.manifest.inv_slot == 2 && old.received == 3, "inv_slot change: replaced");
+        Check(ew::Accept(old, buf, sizeof(buf), m.epoch) && old.manifest.version == 2 && old.manifest.slots[2].type == 2 && old.received == 4,
+              "the same revision as version 2 (types): replaced");
+        Check(!ew::Accept(old, buf, sizeof(buf), m.epoch) && old.duplicates == 2, "and its repeat is a duplicate");
+    }
     Check(std::strcmp(ew::ResultName(ew::Result::stale_epoch), "stale_epoch") == 0 && std::strcmp(ew::ResultName(ew::Result::type), "type") == 0,
           "result names");
     // SameSlots compares every field (the type too).

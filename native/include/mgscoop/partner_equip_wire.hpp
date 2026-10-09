@@ -71,8 +71,10 @@ struct Store {
     Manifest manifest;
     std::uint32_t received, invalid, stale, duplicates;
 };
-// Applies one drained message: ok + new revision stores it (true), anything
-// else only counts. A revision equal to the stored one is a duplicate.
+// Applies one drained message: ok + a new revision or new content stores it
+// (true), anything else only counts. A duplicate repeats the stored revision,
+// epoch, version, inv_slot and slots; the same revision with other content
+// (a 0.12.0 sender restarts at revision 1 every mission) replaces it.
 bool Accept(Store& store, const std::uint8_t* data, std::size_t size, std::uint32_t current_epoch) noexcept;
 
 // --- The sender's base ids (docs/native-puppet.md "Loadout mirroring"), pure.

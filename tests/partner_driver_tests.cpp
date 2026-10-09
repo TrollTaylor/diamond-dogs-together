@@ -4168,6 +4168,31 @@ void TestEquipEarlyManifest() {
     fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
     pd::TickEquipLink(d, hooks, 5600);
     Check(d.mission.equip.duplicates == 1 && fake.Containing("partner_equip=manifest; rev=3;") == 1, "the same revision again: a duplicate");
+    // A 0.12.0 sender restarts at revision 1 every mission (version 1, 60 bytes): the seeded store must take its
+    // next mission's loadout under the same revision number (the slot types are recomputed), never drop it.
+    {
+        ew::Manifest old = rx;
+        old.revision = 1;
+        old.slots[0].type = old.slots[1].type = 0;
+        std::uint8_t v2[ew::kSize]{};
+        Check(ew::Encode(old, v2) == sizeof(v2), "old manifest encodes");
+        std::vector<std::uint8_t> v1(v2, v2 + ew::kSizeV1);
+        v1[1] = 1;
+        fake.channel2.push_back(v1);
+        pd::TickEquipLink(d, hooks, 5700);
+        Check(d.mission.equip.manifest.revision == 1 && d.mission.equip.manifest.version == 1 && d.equip_cache.revision == 1,
+              "a 0.12.0 sender's revision 1: stored and cached");
+        d.mission.slot_types_rev = 1;  // as if TickSlots had typed revision 1
+        v1[12 + 16] = 47;              // its next mission: another back-slot base id, revision 1 again
+        fake.channel2.push_back(v1);
+        pd::TickEquipLink(d, hooks, 5800);
+        Check(d.mission.equip.manifest.slots[1].base_id == 47 && d.equip_cache.slots[1].base_id == 47 && d.mission.slot_types_rev == 0 &&
+                  fake.Containing("partner_equip=manifest; rev=1; inv=255; slots=0:871,47:873,0:0; type=0,0,0; v=1;") == 1,
+              "revision 1 again with another loadout: replaced, logged, slot types recomputed");
+        fake.channel2.push_back(v1);
+        pd::TickEquipLink(d, hooks, 5900);
+        Check(d.mission.equip.duplicates == 2 && fake.Containing("partner_equip=manifest; rev=1;") == 2, "its exact repeat: a duplicate");
+    }
     // Another link session: never seeded.
     fake.link_session = 10;
     pd::MissionStart(d, hooks, 30010);

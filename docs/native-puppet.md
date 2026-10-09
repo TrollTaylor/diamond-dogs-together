@@ -1016,8 +1016,12 @@ runtime before acting (`full_body_gate`).
   mission's store from the session's cache (a manifest of another link
   session never), so the first mission after connecting preloads and plans
   from the remote's manifest without a resend. A 0.12.0 peer (manifest
-  version 1 only) refuses the 64-byte version 2: both PCs must run the same
-  package.
+  version 1 only) refuses the 64-byte version 2 (`size`, counted, nothing
+  misread): both PCs must run the same package. A 0.12.0 sender's version 1
+  still decodes; it restarts at revision 1 every mission, so the store
+  counts only an exact repeat (revision, epoch and content) as a duplicate
+  and the same revision with another loadout replaces the seeded manifest
+  (review).
 - **Receiver**: stores it (`partner_equip=manifest; ...; type=..; v=..;
   mission=..`) and logs the apply
   verdict for the back slot against instance 1's loaded equip

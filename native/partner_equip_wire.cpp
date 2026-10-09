@@ -104,7 +104,15 @@ bool Accept(Store& store, const std::uint8_t* data, std::size_t size, std::uint3
     const Result r = Decode(data, size, current_epoch, m);
     if (r == Result::stale_epoch) { ++store.stale; return false; }
     if (r != Result::ok) { ++store.invalid; return false; }
-    if (store.have && store.manifest.revision == m.revision && store.manifest.epoch == m.epoch) { ++store.duplicates; return false; }
+    // A duplicate repeats the stored message: the same revision and epoch AND the same content. A
+    // 0.12.0 sender restarts at revision 1 every mission (its sender was per mission) while this
+    // receiver keeps the session's manifest across missions (MissionStart seeds it): its new
+    // loadout under the old revision number must replace the stored one, never be dropped.
+    if (store.have && store.manifest.revision == m.revision && store.manifest.epoch == m.epoch &&
+        store.manifest.version == m.version && store.manifest.inv_slot == m.inv_slot && SameSlots(store.manifest, m)) {
+        ++store.duplicates;
+        return false;
+    }
     store.have = true;
     store.manifest = m;
     ++store.received;
