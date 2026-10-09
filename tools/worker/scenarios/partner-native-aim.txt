@@ -2,11 +2,13 @@
 # network aim slot Q+0x10[1] (offline never fed: the partner's gun aimed at the world origin and the aim-turn predicate
 # 0x10A0AB0 cycled act 12/15) gets a point 100 m along the remote's look from the partner's eyes, inside block 1's drain
 # window, so the game's own gun pipeline computes the remote's aim point, aim pose (r5c/r60) and turn decisions.
-# Run (coordinator only, hidden worker; one session is its own A/B: the guest's mirror off for aim-a, then look):
+# Run (coordinator only, hidden worker; one session is its own A/B: the guest's mirror off for aim-a, then lab.ini's):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-native-aim.txt -PartnerProfile native -NativeStage gun -BuildProfile research
-# (the gun stage emits partner_native_aimpt=look; "guest debug aimpt off|look" switch the guest's mirror live). A second
-# run with -LabSetting partner_native_aimpt=point checks the point variant (until input frame v5 carries the sender's own
-# aim point it falls back to the look: native.aim.src "look").
+# (the gun stage emits partner_native_aimpt=look; "guest debug aimpt off" switches the guest's mirror off live and
+# "guest debug aimpt lab" returns it to lab.ini, so -LabSetting keeps deciding aim-b onwards). A second run with
+# -LabSetting partner_native_aimpt=point checks the point variant (until input frame v5 carries the sender's own aim point
+# it falls back to the look: native.aim.setting "point", src "look"); -LabSetting partner_native_aimpt=off makes the
+# whole run the old-behaviour baseline (aim.state "off" in every section).
 # Lab saves, noon, 30010. "Viewer" = the role filming its partner (body 1); every capture line in captures.jsonl holds both
 # roles' state.json, so the viewer's native.aim pairs with the source role's own native.aim (aim_yaw0_cdeg/aim_pitch0_cdeg).
 # Pass criteria (mechanical):
@@ -15,16 +17,19 @@
 #    gun aim more than 80 degrees off the body; |wrap(aim_yaw1_cdeg - the host's aim_yaw0_cdeg)| large (5700..9400).
 #  aim-b, aim-cam1, aim-cam2, aim-crouch, aim-prone, aim-walk, aim-strafe, aim-pitch-up, g-aim, g-aim-strafe after their
 #    first 300 ms: native.aim.state "ok", refused 0, overwritten 0 (else report: something writes the slot offline),
-#    src "look", path1 "cam"; q10_1_mm == target_mm (+-1); aimpt_err_mm < 500; |wrap(aim_yaw1_cdeg - aim_yaw0_cdeg of the
+#    src "look", path1 "cam"; slot "ours" (q10_1_mm == written_mm +-1 mm: the slot holds the hook's last write; target_mm
+#    leads written_mm by one tick while the aim or the body moves); aimpt_err_mm (aim point 1 - written_mm) < 500;
+#    |wrap(aim_yaw1_cdeg - aim_yaw0_cdeg of the
 #    source role)| <= 500 and |aim_pitch1_cdeg - aim_pitch0_cdeg| <= 500 on >= 95 % of captures; pred1 0 unless the
 #    remote's act (body.remote_act) is 12/15; ring act 12/15 only where the remote shows it; |face_err_cdeg| <= 500 on
 #    >= 95 % of ring ticks after 600 ms; aim-walk/aim-strafe: body act = the remote's aim-walk class (13/14).
 #  aim-swing (the qualified +-1500 mouse stimulus while aiming: the remote turns, act 12): the partner shows act 12
 #    within 2 captures and the -settled frame is within 5 degrees of the remote.
-#  always: native.mode active, fallbacks 0; no partner_aim=fault line; partner_aim=installed once per mission in the
-#    viewer's log; the debug results "aimpt=off; override=set; ..." and "aimpt=look; override=set; ...".
+#  always: native.mode active, fallbacks 0; no partner_aim=fault, refused or restore_dropped line; in the viewer's log
+#    partner_aim=installed at native entry, partner_aim=restored at aim-a and installed again at aim-b (the A/B), never
+#    more often; the debug results "aimpt=off; override=set; ..." and "aimpt=lab; override=none; ...".
 # Evidence lines: the 1 Hz partner_native_aim; setting=..; state=..; reason=..; src=..; writes=..; overwritten=..;
-# q10=..; target=..; err_mm=..; yaw1=..; yaw0=..; rel1=..; r60_1=..; pred1=..; gun1=..; path1=.. line and the
+# q10=..; slot=..; target=..; err_mm=..; yaw1=..; yaw0=..; rel1=..; r60_1=..; pred1=..; gun1=..; path1=.. line and the
 # partner_aim=installed|refused|overwritten|restored events (both logs).
 title 200
 wait 4000
@@ -45,8 +50,8 @@ guest debug aimpt off
 wait 1000
 heldcapture host guest rmb aim-a 5
 wait 1500
-# B: the mirror on (look), the same standing aim.
-guest debug aimpt look
+# B: the mirror back to lab.ini (look at the gun stage default), the same standing aim.
+guest debug aimpt lab
 wait 1000
 heldcapture host guest rmb aim-b 5
 wait 1500

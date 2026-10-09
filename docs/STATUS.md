@@ -23,6 +23,20 @@ aim sections (baseline off, the qualified +-1500 aim turns, camera-rotated,
 strafe, walk, crouched) and `aimturn` takes the proven +-1500 stimulus only
 (dx 900 never turned a settled aimed body). Fixture evidence only.
 
+Review fixes on the same branch: the scenarios' in-session A/B returns the
+guest with `aimpt lab` (back to lab.ini) instead of forcing `look`, so
+`-LabSetting partner_native_aimpt=off|point` really decides the rest of the
+run; a restore through a changed chain is logged
+(`partner_aim=restore_dropped`) instead of dropped silently; the mirror's
+event lines share a budget of 64 per mission epoch (a chain flipping every
+frame cannot flood the log); `native.aim` gains `written_mm` and the verdict
+`slot` ours|other|na (the old criterion q10 == target could not hold while
+the aim or the body moved: the target leads the hook's write by one tick) and
+`aimpt_err_mm` is measured against the write; the mirror is bound before the
+hook reports ready; Play-OfflineCoop gains `-NoAimMirror`; new fixture checks
+cover the restore drop, the line budget and the window-close shutdown
+(nothing written or restored after it).
+
 ## October 8, 2026: Steam online transport (fixture-tested, never run)
 
 Two-PC play can now connect **online through Steam** with no port

@@ -239,7 +239,7 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
     }
     $facing=[IO.File]::ReadAllText((Join-Path $RepoRoot 'tools\worker\scenarios\partner-native-facing.txt'))
     foreach($line in @('aimturn host guest 1500 face-aimturn','aimturn host guest -1500 face-aimturn-l','heldcapture host guest rmb+d face-aim-strafe 4',
-        'heldcapture host guest rmb face-crouch-aim 4','guest debug aimpt off','guest debug aimpt look')) {
+        'heldcapture host guest rmb face-crouch-aim 4','guest debug aimpt off','guest debug aimpt lab')) {
         Assert-True ($facing.Contains($line)) ('partner-native-facing covers: '+$line)
     }
 }

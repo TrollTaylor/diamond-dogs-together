@@ -382,7 +382,10 @@ record are never touched; S_IS_ONLINE is never touched.
   mission). `stale` (a publication older than 250 ms) and a wanted target
   without a body or look hold the slot (the last target stays). An access
   fault latches the mirror off until the next mission epoch
-  (`partner_aim=fault`).
+  (`partner_aim=fault`). The event lines (`installed`, `refused`, `restored`,
+  `restore_dropped`) share a budget of 64 per mission epoch, the last one
+  ending `; further=suppressed` (a chain flipping every frame cannot flood
+  the log); the counters keep counting.
 - `overwritten`: a drain that finds `Q+0x10[1]` changed since our last write
   (the census below says nothing should) counts it and logs it once per
   mission (`partner_aim=overwritten; q10_mm=..`).
@@ -393,12 +396,15 @@ record are never touched; S_IS_ONLINE is never touched.
   dispatch once no enabled native Arm is published (the rates mirror's rule),
   after re-validating the chain (player slot, P vtable, Q, its array and
   record); a field the game rewrote since our last write keeps the game's
-  value (`partner_aim=restored`). MissionStart/End forget without writing
+  value (`partner_aim=restored`); a chain that changed drops the state
+  without writing (`partner_aim=restore_dropped; reason=chain;
+  changed=player|object|<reason>; written=0`). MissionStart/End forget without writing
   (`PartnerForgetRates` passes the ending epoch to both mirrors). After the
   window-close shutdown nothing is written or restored.
 - Setting: lab.ini `partner_native_aimpt=off|look|point` (default off; inert
   unless the native drive is active with `partner_native_gun=1`). The worker
-  gun stage (`Get-WorkerPartnerSettings`) and Play-OfflineCoop set `look`;
+  gun stage (`Get-WorkerPartnerSettings`) and Play-OfflineCoop set `look`
+  (Play-OfflineCoop `-NoAimMirror`: off);
   the worker gate admits off/look/point in the gun stage only
   (`-LabSetting partner_native_aimpt=off|look|point`). The natively handled
   debug command `aimpt off|look|point|lab|status` overrides it live for a
@@ -434,9 +440,14 @@ while aiming a gun; `overwritten` catches it if it does).
 
 Telemetry: `native.aim` (`setting`, `override`, `state`
 off|wait|ok|hold|refused|latched, `reason`, `src`, the hook's `writes`,
-`refused`, `holds`, `overwritten`, `restores`, `drops`; `target_mm`,
-`q10_1_mm`/`q10_0_mm` (the slots), `aimpt1_mm`/`aimpt0_mm` (the gun aim
-points), `aimpt_err_mm` = |aim point 1 - target|; `aim_yaw1_cdeg`/
+`refused`, `holds`, `overwritten`, `restores`, `drops`; `target_mm` (this
+tick's target), `written_mm` (the hook's last write; the driver tick and the
+drain share the game's main thread, so the target leads it by one tick while
+the aim or the body moves), `slot` ours|other|na (`q10_1_mm` within 1 mm of
+`written_mm` on every axis: the slot holds our write; other: restored or
+written by something else), `q10_1_mm`/`q10_0_mm` (the slots),
+`aimpt1_mm`/`aimpt0_mm` (the gun aim points), `aimpt_err_mm` = |aim point 1 -
+`written_mm`| while the slot is ours (else against the target); `aim_yaw1_cdeg`/
 `aim_pitch1_cdeg`/`aim_yaw0_cdeg`/`aim_pitch0_cdeg` = the world direction of
 each gun's aim point from its body's eyes; `rel_yaw1_cdeg`/`rel_yaw0_cdeg` =
 (0.5 - r60) * 18000, what the predicate tests (beyond +-8000 turns);
@@ -444,12 +455,13 @@ each gun's aim point from its body's eyes; `rel_yaw1_cdeg`/`rel_yaw0_cdeg` =
 (rec+0x2C0), `b3d5`, `path1`/`path0` cam|bone|na), the ring's `r60_1` and
 `pred1`, the 1 Hz `partner_native_aim; setting=..; override=..; state=..;
 reason=..; src=..; writes=..; refused=..; holds=..; overwritten=..;
-restores=..; q10=..; target=..; err_mm=..; yaw1=..; yaw0=..; rel1=..;
+restores=..; q10=..; slot=..; target=..; err_mm=..; yaw1=..; yaw0=..; rel1=..;
 r60_1=..; pred1=..; gun1=..; path1=..` line (own cap, while its key changes)
 and the `partner_aim=installed|refused|overwritten|restored|fault` events.
 
 Runs (coordinator, hidden worker): `tools/worker/scenarios/partner-native-aim.txt`
-(a one-session A/B: `guest debug aimpt off` for aim-a, `look` from aim-b on;
+(a one-session A/B: `guest debug aimpt off` for aim-a, `guest debug aimpt lab` (back
+to lab.ini, so `-LabSetting` keeps deciding) from aim-b on;
 camera-rotated aims, pitch, crouch, prone, aim-walk, aim-strafe, a remote aim
 turn, both directions) and the aim sections of `partner-native-facing.txt`
 (face-aim-off, the qualified +-1500 aim turns, aim-cam, aim-strafe, aim-walk,
@@ -787,7 +799,7 @@ evidence per stage).
 | S3a-r | as S3a with `-AmmoExperiment` (after its own qualification) | reload visible, no fallback |
 | S3b | `partner-native-weapons.txt` with `-NativeStage gun -BuildProfile research` (gun stage = visual fire) | see "Weapons": suppressed shots, mirror writes, reload bit, no leaks, manifest/apply lines |
 | F1 | `pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-native-facing.txt -PartnerProfile native -NativeStage gun -BuildProfile research`, then the same with `-LabSetting partner_native_aim=looksrc` | the scenario header: every face-* capture under 10 degrees; aim captures < 5 % of ring ticks over 10 degrees and no act 12 the remote does not show; look.err_mdeg < 1000 (looksrc: look.src installed, src_hits_s > 0); face-place-viewer-aims without act 11 and unwindowed_native 0; facing.contests <= 2; no fallback |
-| AIM1 | `pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-native-aim.txt -PartnerProfile native -NativeStage gun -BuildProfile research` (one-session A/B through `guest debug aimpt off`, then `look`); then the same with `-LabSetting partner_native_aimpt=point` | the scenario header: aim-a reproduces the act-12 cycle with `aim.state` off, `pred1` 1 and `rel_yaw1_cdeg` beyond +-8000 at each act-12 start; every later aim capture after 300 ms: `aim.state` ok, refused 0, overwritten 0, `aimpt_err_mm` < 500, the wrapped difference of `aim_yaw1_cdeg` to the source role's `aim_yaw0_cdeg` within 500 and the pitch within 500 on >= 95 %, no act 12/15 the remote does not show, `face_err_cdeg` within 500 on >= 95 % of ring ticks after 600 ms |
+| AIM1 | `pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-native-aim.txt -PartnerProfile native -NativeStage gun -BuildProfile research` (one-session A/B through `guest debug aimpt off`, then `lab`); then the same with `-LabSetting partner_native_aimpt=point` | the scenario header: aim-a reproduces the act-12 cycle with `aim.state` off, `pred1` 1 and `rel_yaw1_cdeg` beyond +-8000 at each act-12 start; every later aim capture after 300 ms: `aim.state` ok, `aim.slot` ours, refused 0, overwritten 0, `aimpt_err_mm` < 500, the wrapped difference of `aim_yaw1_cdeg` to the source role's `aim_yaw0_cdeg` within 500 and the pitch within 500 on >= 95 %, no act 12/15 the remote does not show, `face_err_cdeg` within 500 on >= 95 % of ring ticks after 600 ms |
 | A1 | `pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-native-actions.txt -PartnerProfile native -NativeStage gun -BuildProfile research` (or `-NativeStage loco`) | the scenario header: sprint/crawl speed ratio 0.95..1.05 with `rates.mirror` ok and `rates.id1.dash == rates.remote.dash`; no runaway pin and no leaving through the sprint stop; the dive/evade/rolls: EVADE in the ring's held, body.act follows remote_act (27) within 2 captures, settles within 500 mm; leak-evade-host clean; ACTION never reaches the body |
 
 ## Known risks and open items

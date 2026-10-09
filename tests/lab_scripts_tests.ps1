@@ -650,7 +650,9 @@ try {
     # The aim-target mirror (docs/native-puppet.md "Facing"): off|look|point; Play-OfflineCoop's native gun settings use look.
     Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_native_aimpt -Value look)/$(ConvertTo-LabPartnerValue -Key partner_native_aimpt -Value point)/$(ConvertTo-LabPartnerValue -Key partner_native_aimpt -Value off)" 'look/point/off' 'aim-target mirror values'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_aimpt -Value on } 'off|look|point' 'aimpt values'
-    Assert-True ($playText.Contains("'partner_native_rates=mirror',") -and $playText.Contains("'partner_native_aimpt=look')")) 'Play-OfflineCoop: the native partner aims where the remote aims (partner_native_aimpt=look)'
+    Assert-True ($playText.Contains("'partner_native_rates=mirror',") -and
+        $playText.Contains("`$(if (!`$NoAimMirror) { 'partner_native_aimpt=look' } else { 'partner_native_aimpt=off' }))") -and
+        $playText.Contains('[switch]$NoAimMirror')) 'Play-OfflineCoop: the native partner aims where the remote aims (partner_native_aimpt=look; -NoAimMirror off)'
 
     # Round 3 lab.ini value kinds.
     Assert-Equal (ConvertTo-LabPartnerValue -Key partner_input -Value net) 'net' 'partner_input enum'
