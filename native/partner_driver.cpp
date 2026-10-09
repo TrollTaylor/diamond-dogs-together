@@ -9,6 +9,7 @@
 #include <cstdarg>
 #include <cstring>
 #include "mgscoop/partner_driver.hpp"
+#include "mgscoop/partner_aim.hpp"
 #include "mgscoop/partner_rates.hpp"
 #include "mgscoop/partner_upper_probe.hpp"
 #include "partner_player_contract.hpp"
@@ -1970,6 +1971,158 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
 
 // Arbiter step, identity/wrap-root publication, lazy install, deferral arming,
 // steering for the next Arm, telemetry and the native log lines.
+// --- Aim parity (docs/native-puppet.md "Facing", the aim-target mirror) ------
+// The target 100 m along the remote's aim from the partner's eyes, published
+// every native tick for the drain window (partner_aim_point), and the
+// read-only aim telemetry of both instances.
+namespace pam = mgscoop::partner_aim;
+std::int32_t AimMm(float metres) noexcept {
+    if (!std::isfinite(metres) || std::fabs(metres) > 2.0e6f) return pnat::kNull;
+    return static_cast<std::int32_t>(std::llround(static_cast<double>(metres) * 1000.0));
+}
+std::int32_t AimCdeg(double radians) noexcept {
+    if (!std::isfinite(radians)) return pnat::kNull;
+    return static_cast<std::int32_t>(std::llround(radians * 18000.0 / 3.14159265358979323846));
+}
+void TickAim(Driver& d, const Hooks& h, const pp::State& st, bool configured, bool realized, bool latest_ok, const pin::Sample& latest,
+             bool aiming, std::uint64_t now) noexcept {
+    Mission& m = d.mission;
+    const Settings& set = d.settings;
+    pnat::Telemetry& t = m.tele;
+    partner_aim_point::Stats as{};
+    as.override_value = -1;
+    if (h.aim_stats) h.aim_stats(h.context, as);
+    const bool override_on = as.override_value >= 0 && as.override_value <= static_cast<int>(PartnerNativeAimPt::point);
+    const PartnerNativeAimPt setting = override_on ? static_cast<PartnerNativeAimPt>(as.override_value) : set.naimpt;
+    pam::TargetIn in{};
+    in.setting = setting;
+    in.active = configured && m.native_out.active && set.ngun;
+    in.body_ok = m.body_ok;
+    for (unsigned i = 0; i < 3; ++i) in.body[i] = m.body_pos[i];
+    in.look_ok = latest_ok && latest.packet.version >= 3 && (latest.packet.xflags & pin::XFlag::Look) && latest.age_ms <= set.stale_ms;
+    in.look_pitch = latest.packet.look_pitch;
+    in.look_yaw = latest.packet.look_yaw;
+    // point: the sender's own aim point needs input frame v5 (not on the wire
+    // yet): the look stands in (src says which).
+    in.point_ok = false;
+    const pam::TargetOut to = pam::Target(in);
+    if (h.publish_aim) {
+        partner_aim_point::Publication pub{};
+        pub.want = to.want;
+        pub.valid = to.valid;
+        for (unsigned i = 0; i < 3; ++i) pub.p[i] = to.p[i];
+        pub.src = static_cast<std::uint8_t>(to.src);
+        pub.reason = static_cast<std::uint8_t>(to.reason);
+        pub.ms = now;
+        pub.epoch = d.rates_epoch;
+        h.publish_aim(h.context, pub);
+    }
+    // Telemetry reads: every tick while the native drive is active and either
+    // side aims, else at kAimReadMs.
+    if (!configured || !realized || !h.read_aim) {
+        m.aim_read_ok = false;
+    } else if ((m.native_out.active && aiming) || !m.aim_read_ms || now - m.aim_read_ms >= kAimReadMs) {
+        m.aim_read_ms = now ? now : 1;
+        m.aim_read = pp::AimRead{};
+        m.aim_read_ok = h.read_aim(h.context, st, m.aim_read);
+    }
+    const pp::AimRead& r = m.aim_read;
+    const bool rok = m.aim_read_ok;
+    CopyText(t.aim_setting, sizeof(t.aim_setting), PartnerNativeAimPtName(setting));
+    t.aim_override = override_on;
+    const auto state = static_cast<partner_aim_point::State>(as.state);
+    if (!h.publish_aim) {
+        CopyText(t.aim_state, sizeof(t.aim_state), "off");
+        CopyText(t.aim_reason, sizeof(t.aim_reason), "unavailable");
+    } else if (!to.want) {
+        CopyText(t.aim_state, sizeof(t.aim_state), state == partner_aim_point::State::latched ? "latched" : "off");
+        CopyText(t.aim_reason, sizeof(t.aim_reason), pam::ReasonName(to.reason));
+    } else {
+        CopyText(t.aim_state, sizeof(t.aim_state), partner_aim_point::StateName(state));
+        CopyText(t.aim_reason, sizeof(t.aim_reason), pam::ReasonName(to.valid ? static_cast<pam::Reason>(as.reason) : to.reason));
+    }
+    CopyText(t.aim_src, sizeof(t.aim_src), pam::SourceName(to.src));
+    t.aim_writes = as.writes;
+    t.aim_refused = as.refused;
+    t.aim_holds = as.holds;
+    t.aim_overwritten = as.overwritten;
+    t.aim_restores = as.restores;
+    t.aim_drops = as.drops;
+    for (unsigned i = 0; i < 3; ++i) t.aim_target_mm[i] = to.valid ? AimMm(to.p[i]) : pnat::kNull;
+    for (unsigned k = 0; k < 2; ++k) {
+        const bool gun = rok && r.gun_ok[k];
+        for (unsigned i = 0; i < 3; ++i) {
+            t.aim_q10_mm[k][i] = rok && r.q_ok ? AimMm(r.q10[k][i]) : pnat::kNull;
+            t.aim_point_mm[k][i] = gun ? AimMm(r.aimpt[k][i]) : pnat::kNull;
+        }
+        // The world aim direction: the aim point seen from the body's eyes.
+        double pitch = 0.0, yaw = 0.0;
+        bool dir_ok = false;
+        if (gun && r.body_ok[k]) {
+            const double dv[3] = {static_cast<double>(r.aimpt[k][0]) - r.body[k][0],
+                                  static_cast<double>(r.aimpt[k][1]) - (r.body[k][1] + pam::kEyeHeightM),
+                                  static_cast<double>(r.aimpt[k][2]) - r.body[k][2]};
+            dir_ok = pam::DirAngles(dv, pitch, yaw);
+        }
+        t.aim_yaw_cdeg[k] = dir_ok ? AimCdeg(yaw) : pnat::kNull;
+        t.aim_pitch_cdeg[k] = dir_ok ? AimCdeg(pitch) : pnat::kNull;
+        const bool rate = rok && r.rate_ok[k];
+        const std::int32_t rel = rate ? pam::RelYawCdeg(r.r60[k]) : pnat::kNull;
+        t.aim_rel_yaw_cdeg[k] = rel == INT32_MIN ? pnat::kNull : rel;
+        t.aim_r5c[k] = rate ? AimMm(r.r5c[k]) : pnat::kNull;
+        t.aim_r60[k] = rate ? AimMm(r.r60[k]) : pnat::kNull;
+        t.aim_pred[k] = rate ? (pam::TurnPredicate(r.r60[k]) ? 1 : 0) : pnat::kNull;
+        t.aim_gun_state[k] = gun ? static_cast<std::int32_t>(r.gun_state[k]) : pnat::kNull;
+        t.aim_b3d5[k] = gun ? static_cast<std::int32_t>(r.b3d5[k]) : pnat::kNull;
+        CopyText(t.aim_path[k], sizeof(t.aim_path[k]),
+                 !gun ? "na" : ((r.path_flags[k] & c::gun3d0_bone_path) && r.b3d5[k] != c::gun_b3d5_sight) ? "bone" : "cam");
+    }
+    t.aim_point_err_mm = pnat::kNull;
+    if (to.valid && rok && r.gun_ok[1]) {
+        double e2 = 0.0;
+        for (unsigned i = 0; i < 3; ++i) {
+            const double dd = static_cast<double>(r.aimpt[1][i]) - to.p[i];
+            e2 += dd * dd;
+        }
+        t.aim_point_err_mm = Mm(std::sqrt(e2) * 1000.0);
+    }
+    // The 1 Hz partner_native_aim line (own cap) while its key changes.
+    if (!configured || m.aim_lines >= kNativeLineCap || (m.aim_line_ms && now - m.aim_line_ms < kNativeLineMs)) return;
+    std::uint64_t key = 1469598103934665603ull;
+    const auto mix = [&key](std::uint64_t v) noexcept { key = (key ^ v) * 1099511628211ull; };
+    mix(static_cast<std::uint64_t>(setting));
+    mix(as.state);
+    mix(as.reason);
+    mix(as.writes ? 1u : 0u);
+    mix(as.refused);
+    mix(as.overwritten);
+    mix(static_cast<std::uint32_t>(t.aim_pred[1]));
+    mix(static_cast<std::uint32_t>(t.aim_gun_state[1]));
+    mix(t.aim_rel_yaw_cdeg[1] == pnat::kNull ? 0xFFFFFFFFu : static_cast<std::uint32_t>(t.aim_rel_yaw_cdeg[1] / 500));
+    mix(t.aim_point_err_mm == pnat::kNull ? 0xFFFFFFFFu : static_cast<std::uint32_t>(t.aim_point_err_mm / 500));
+    if (key == m.aim_line_key) return;
+    m.aim_line_key = key;
+    m.aim_line_ms = now ? now : 1;
+    ++m.aim_lines;
+    char v[12][16]{};
+    const auto num = [](char (&o)[16], std::int32_t value) noexcept {
+        if (value == pnat::kNull) StringCchCopyA(o, sizeof(o), "na");
+        else StringCchPrintfA(o, sizeof(o), "%d", value);
+    };
+    num(v[0], t.aim_q10_mm[1][0]); num(v[1], t.aim_q10_mm[1][1]); num(v[2], t.aim_q10_mm[1][2]);
+    num(v[3], t.aim_target_mm[0]); num(v[4], t.aim_target_mm[1]); num(v[5], t.aim_target_mm[2]);
+    num(v[6], t.aim_point_err_mm); num(v[7], t.aim_yaw_cdeg[1]); num(v[8], t.aim_yaw_cdeg[0]); num(v[9], t.aim_rel_yaw_cdeg[1]);
+    num(v[10], t.aim_r60[1]); num(v[11], t.aim_pred[1]);
+    char line[512]{};
+    if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
+            "partner_native_aim; setting=%s; override=%u; state=%s; reason=%s; src=%s; writes=%u; refused=%u; holds=%u; overwritten=%u; "
+            "restores=%u; q10=%s,%s,%s; target=%s,%s,%s; err_mm=%s; yaw1=%s; yaw0=%s; rel1=%s; r60_1=%s; pred1=%s; gun1=%d; path1=%s\r\n",
+            t.aim_setting, override_on ? 1u : 0u, t.aim_state, t.aim_reason, t.aim_src, t.aim_writes, t.aim_refused, t.aim_holds,
+            t.aim_overwritten, t.aim_restores, v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10], v[11],
+            t.aim_gun_state[1] == pnat::kNull ? -1 : t.aim_gun_state[1], t.aim_path[1])))
+        Emit(h, line);
+}
+
 void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State& st, const partner::Tick& tick, const Clock& clock,
                 bool terminating, bool realized, bool parts_loaded, bool anim_ok, const pp::Anim& anim,
                 const sync::AnimState& remote_anim, std::uint32_t remote_flags, std::uint32_t remote_equip) noexcept {
@@ -2182,6 +2335,8 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         const bool ready = configured && defer == PartnerDefer::on && set.stage >= 3 && realized && parts_loaded && !terminating;
         TickWeapons(d, h, st, ready, gun_ok, gun, is.native, now);
     }
+    // Aim parity: the target for the drain window and the aim telemetry.
+    TickAim(d, h, st, configured, realized, latest_ok, latest, remote_aiming || body_aiming, now);
     const std::uint32_t gun_key = gun_ok ? (gun.gun3c0 | (gun.node_active ? 0x80000000u : 0u)) : 0xFFFFFFFFu;
     if (gun_key != m.native_gun_last || (set.ngun && now - m.native_gun_line_ms >= kNativeLineMs && m.native_gun_lines < kNativeLineCap)) {
         const bool change = gun_key != m.native_gun_last;
@@ -2666,6 +2821,8 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     e.mag = t.gun_mag == pnat::kNull ? static_cast<std::uint16_t>(0xFFFF) : static_cast<std::uint16_t>(t.gun_mag);
     e.body_yaw_cdeg = t.face_body_cdeg;
     e.face_err_cdeg = t.face_err_cdeg;
+    e.r60_1 = t.aim_r60[1];
+    e.pred1 = static_cast<std::int8_t>(t.aim_pred[1] == pnat::kNull ? -1 : t.aim_pred[1]);
     const std::uint32_t p1_delta = t.ring.count ? is.native.p1_forced - m.ring_p1_last : 0u;  // totals are process-wide
     m.ring_p1_last = is.native.p1_forced;
     e.p1_forced = static_cast<std::uint16_t>(p1_delta > 0xFFFFu ? 0xFFFFu : p1_delta);
@@ -2729,6 +2886,7 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.nrates = lab.partner_native_rates;
     d.settings.nface = lab.partner_native_face;
     d.settings.nnoise = lab.partner_native_noise;
+    d.settings.naimpt = lab.partner_native_aimpt;
 
     d.settings.play_mode = lab.mode == LabMode::play;
     d.look_forced_rev = 1;

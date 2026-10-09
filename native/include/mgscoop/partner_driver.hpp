@@ -36,6 +36,7 @@
 #include "mgscoop/partner_source_turns.hpp"
 #include "mgscoop/partner_input.hpp"
 #include "mgscoop/partner_input_hook.hpp"
+#include "mgscoop/partner_aim_point.hpp"
 #include "mgscoop/partner_defer.hpp"
 #include "mgscoop/partner_equip_wire.hpp"
 #include "mgscoop/partner_fire_filter.hpp"
@@ -133,6 +134,7 @@ inline constexpr unsigned kNativeLineCap = 3600;   // partner_defer / partner_na
 inline constexpr unsigned kNativeEventCap = 64;    // transitions, enter steps, gun changes, manifests
 inline constexpr std::uint64_t kNativeMatchWindowMs = 10000;
 inline constexpr std::uint64_t kAimMatchMs = 300;
+inline constexpr std::uint64_t kAimReadMs = 250;
 // What the observer reports about the native installs (H0 input hook, wraps,
 // H2, H1, and the phase-1 local detour P1, installed with defer=on).
 struct NativeInstall {
@@ -278,6 +280,13 @@ struct Hooks {
     bool (*in_batch)(void* context) noexcept = nullptr;
     const char* (*install_look_source)(void* context) noexcept = nullptr;
     const char* (*install_noise)(void* context) noexcept = nullptr;
+    // Aim parity (docs/native-puppet.md "Facing", the aim-target mirror; any
+    // may be null: the mirror then stays off and the telemetry unread): the
+    // target publication the drain window writes, the mirror's statistics
+    // (with the debug override) and the read-only aim telemetry.
+    void (*publish_aim)(void* context, const partner_aim_point::Publication& publication) noexcept = nullptr;
+    void (*aim_stats)(void* context, partner_aim_point::Stats& out) noexcept = nullptr;
+    bool (*read_aim)(void* context, const partner_player::State& state, partner_player::AimRead& out) noexcept = nullptr;
 };
 // Native weapons cadences and caps.
 inline constexpr std::uint64_t kEquipReadMs = 1000;    // loadout read / manifest send at most this often
@@ -345,6 +354,8 @@ struct Settings {
     // partner's shot noise (filter: FIRE only while the noise filter is live).
     PartnerNativeFace nface;
     PartnerNativeNoise nnoise;
+    // The aim-target mirror (lab.ini; the debug command "aimpt" overrides it).
+    PartnerNativeAimPt naimpt;
     // Set only in the effective copy: the native settings apply this tick.
     bool native_active;
     // lab.ini mode=play (Configure): the trigger file never enables the native
@@ -684,6 +695,14 @@ struct Mission {
     // The 1 Hz partner_native_face line and the last placement's yaw verdict.
     unsigned face_lines;
     std::int32_t place_yaw_err_mdeg;
+    // Aim parity: the last aim telemetry read (every tick while the native
+    // drive is active and either side aims, else every kAimReadMs) and the 1 Hz partner_native_aim
+    // line (own cap, logged while its key changes).
+    std::uint64_t aim_read_ms;
+    bool aim_read_ok;
+    partner_player::AimRead aim_read;
+    unsigned aim_lines;
+    std::uint64_t aim_line_ms, aim_line_key;
 };
 
 struct Driver {

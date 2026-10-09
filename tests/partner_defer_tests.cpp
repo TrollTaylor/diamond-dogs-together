@@ -17,6 +17,8 @@
 #include <mutex>
 #include <thread>
 #include <vector>
+#include "mgscoop/partner_aim.hpp"
+#include "mgscoop/partner_aim_point.hpp"
 #include "mgscoop/partner_defer.hpp"
 #include "mgscoop/partner_input_hook.hpp"
 #include "mgscoop/partner_local_detour.hpp"
@@ -1345,6 +1347,180 @@ void TestJobWindow() {
         a.rates_sp = a.rates_rec = 0;
         a.rates_id = 0;
     }
+    // Aim parity (docs/native-puppet.md "Facing", the aim-target mirror): the
+    // published target reaches instance 1's network aim slot Q+0x10[1] and its
+    // sample record (current = previous = target, timers 0) before block 1's
+    // job runs; instance 0's slot and record are never touched; a stale target
+    // holds, a target no longer wanted restores the originals, as does a
+    // disarm at the main dispatch; a slot the game rewrote is counted
+    // (overwritten); every chain refusal (owner, slots, count, alignment)
+    // writes nothing; forget drops without writing and its epoch never writes
+    // again; an access fault latches until the next forget.
+    {
+        namespace pap = mgscoop::partner_aim_point;
+        namespace pam = mgscoop::partner_aim;
+        pap::detail::ResetForTest();
+        alignas(16) static unsigned char q_obj[0x200], s_obj[0x80], aim_arr[2 * c::q_aim_stride], aim_recs[2 * c::q_aim_rec_stride];
+        std::memset(q_obj, 0, sizeof(q_obj));
+        std::memset(s_obj, 0, sizeof(s_obj));
+        const std::uintptr_t q = Addr(q_obj), arr = Addr(aim_arr), recs = Addr(aim_recs);
+        Put<std::uintptr_t>(q, base + c::q_vtable_rva);
+        Put<std::uintptr_t>(q + c::q_s, Addr(s_obj));
+        Put<std::uint32_t>(Addr(s_obj) + c::s_count, 2);
+        Put<std::uintptr_t>(q + c::q_aim, arr);
+        Put<std::uintptr_t>(q + c::q_aim_rec, recs);
+        const float slot0[4] = {7.0f, 8.0f, 9.0f, 1.0f}, slot1[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+        const auto reset_slots = [&]() {
+            std::memcpy(aim_arr, slot0, sizeof(slot0));
+            std::memcpy(aim_arr + c::q_aim_stride, slot1, sizeof(slot1));
+            std::memset(aim_recs, 0, sizeof(aim_recs));
+            for (unsigned k = 0; k < 2; ++k) Put<float>(recs + k * c::q_aim_rec_stride + 0x24, -1.0f);  // the allocator's initial duration
+            std::memset(aim_recs, 0x5A, 0x20);  // instance 0's record: a sentinel
+        };
+        reset_slots();
+        unsigned char rec0_before[0x30];
+        std::memcpy(rec0_before, aim_recs, sizeof(rec0_before));
+        const auto inst0_untouched = [&]() {
+            return std::memcmp(aim_arr, slot0, sizeof(slot0)) == 0 && std::memcmp(aim_recs, rec0_before, sizeof(rec0_before)) == 0;
+        };
+        const std::uintptr_t q_before = Get<std::uintptr_t>(P + c::p_q);
+        Put<std::uintptr_t>(P + c::p_q, q);  // ValidatePad checks only Q's class
+        static std::uintptr_t s_arr = 0;
+        static float s_job_x = 0.0f;
+        s_arr = arr;
+        struct AimJob { static void Job(void*, const void*) noexcept { s_job_x = Get<float>(s_arr + c::q_aim_stride); } };
+        const float target[3] = {12.5f, 3.25f, -88.0f};
+        std::uint32_t epoch = 1;
+        const auto publish = [&](bool want, bool valid, const float (&p)[3], std::uint64_t age_ms) {
+            pap::Publication pub{};
+            pub.want = want;
+            pub.valid = valid;
+            std::memcpy(pub.p, p, sizeof(pub.p));
+            pub.src = static_cast<std::uint8_t>(pam::Source::look);
+            pub.reason = static_cast<std::uint8_t>(valid ? pam::Reason::none : want ? pam::Reason::no_look : pam::Reason::off);
+            pub.ms = pap::detail::NowMs() - age_ms;
+            pub.epoch = epoch;
+            pap::Publish(pub);
+        };
+        pd::JobParam param{1, 0, 0, 8, g_world.bits};
+        pap::Stats as{};
+        const auto drain = [&]() {
+            dispatch(w->root1, 8);
+            const bool windowed = hk::RunJobWindow(w->go, &param, 1, &AimJob::Job, pi::Consumer::drain0);
+            pap::ReadStats(as);
+            return windowed;
+        };
+        const auto slot1_is = [&](const float (&p)[3]) {
+            float v[4]{};
+            std::memcpy(v, aim_arr + c::q_aim_stride, sizeof(v));
+            return v[0] == p[0] && v[1] == p[1] && v[2] == p[2] && v[3] == 1.0f;
+        };
+        const auto rec1_is = [&](const float (&p)[3]) {
+            const std::uintptr_t r = recs + c::q_aim_rec_stride;
+            for (unsigned i = 0; i < 3; ++i)
+                if (Get<float>(r + 4 * i) != p[i] || Get<float>(r + c::q_aim_rec_prev + 4 * i) != p[i]) return false;
+            return Get<float>(r + 0x24) == 0.0f && Get<float>(r + 0x28) == 0.0f && Get<float>(r + 0x2C) == 0.0f;
+        };
+        const float origin[3] = {0.0f, 0.0f, 0.0f};
+        a.gen = 10;
+        hk::PublishArm(a);
+        // Nothing published wanted yet: nothing written.
+        publish(false, false, origin, 0);
+        Check(drain() && slot1_is(origin) && as.writes == 0 && !as.applied, "aim: off -> the slot untouched");
+        publish(true, true, target, 0);
+        Check(drain() && s_job_x == target[0] && slot1_is(target) && rec1_is(target) && inst0_untouched() && as.writes == 1 && as.applied &&
+                  as.state == static_cast<std::uint8_t>(pap::State::ok) && Logged("partner_aim=installed"),
+              "aim: the target is in Q+0x10[1] and record 1 (cur = prev, timers 0) before the job; instance 0 untouched");
+        Check(drain() && as.writes == 2 && as.overwritten == 0, "aim: a second drain writes again, nothing overwritten");
+        Put<float>(arr + c::q_aim_stride, 99.0f);  // something else wrote the slot
+        Check(drain() && as.overwritten == 1 && slot1_is(target) && Logged("partner_aim=overwritten"), "aim: a foreign write is counted and replaced");
+        // A wanted target without a look keeps the slot; a stale publication too.
+        const float moved[3] = {13.5f, 3.25f, -88.0f};
+        publish(true, false, moved, 0);
+        Check(drain() && slot1_is(target) && as.state == static_cast<std::uint8_t>(pap::State::hold), "aim: no look -> hold (the last target stays)");
+        publish(true, true, moved, 5000);
+        Check(drain() && slot1_is(target) && as.reason == static_cast<std::uint8_t>(pam::Reason::stale), "aim: a stale publication holds");
+        const float wild[3] = {70000.0f, 0.0f, 0.0f};
+        publish(true, true, wild, 0);
+        Check(drain() && slot1_is(target) && as.reason == static_cast<std::uint8_t>(pam::Reason::range), "aim: an out-of-range target refuses");
+        // Off again: the originals come back (fields the game did not rewrite).
+        publish(false, false, origin, 0);
+        Check(drain() && slot1_is(origin) && Get<float>(recs + c::q_aim_rec_stride + 0x24) == -1.0f && as.restores == 1 && !as.applied &&
+                  inst0_untouched() && Logged("partner_aim=restored"),
+              "aim: a target no longer wanted restores Q+0x10[1] and record 1 (duration -1.0 back)");
+        // A disarm restores at the next main dispatch (no drain runs any more).
+        publish(true, true, target, 0);
+        Check(drain() && slot1_is(target) && as.applied, "aim: applied again");
+        hk::PublishArm(pi::Arm{});
+        dispatch(w->root0, 8);
+        pap::ReadStats(as);
+        Check(slot1_is(origin) && as.restores == 2 && !as.applied && inst0_untouched(), "aim: the disarmed Arm restores at the main dispatch");
+        a.gen = 11;
+        hk::PublishArm(a);
+        // Chain refusals write nothing.
+        const auto refused = [&](pam::Reason why) {
+            reset_slots();
+            publish(true, true, target, 0);
+            const bool windowed = drain();
+            return windowed && slot1_is(origin) && as.reason == static_cast<std::uint8_t>(why) && !as.applied;
+        };
+        Put<std::uint32_t>(P + c::p_local_id, 1);
+        Check(refused(pam::Reason::owner), "aim: instance 1 as the local id refuses (owner)");
+        Put<std::uint32_t>(P + c::p_local_id, 0);
+        Put<std::uintptr_t>(base + c::q_vtable_rva + c::q_vt_aim_lerp, base + 0x40);
+        Check(refused(pam::Reason::slots), "aim: a Q vtable whose synchronizer slot changed refuses (slots)");
+        Put<std::uintptr_t>(base + c::q_vtable_rva + c::q_vt_aim_lerp, base + c::q_aim_lerp_rva);
+        Put<std::uint32_t>(Addr(s_obj) + c::s_count, 1);
+        Check(refused(pam::Reason::count), "aim: a Q without id 1 refuses (count)");
+        Put<std::uint32_t>(Addr(s_obj) + c::s_count, 2);
+        Put<std::uintptr_t>(q + c::q_aim, arr + 8);
+        Check(refused(pam::Reason::array), "aim: a misaligned array refuses");
+        Put<std::uintptr_t>(q + c::q_aim, arr);
+        Put<std::uintptr_t>(q + c::q_aim_rec, 0);
+        Check(refused(pam::Reason::record), "aim: no record array refuses");
+        Put<std::uintptr_t>(q + c::q_aim_rec, recs);
+        Check(as.refused >= 5 && Logged("partner_aim=refused; reason=owner"), "aim: refusals counted and logged");
+        // Forget (MissionStart/End): dropped without writing; that epoch never writes again; a new one does.
+        reset_slots();
+        publish(true, true, target, 0);
+        Check(drain() && slot1_is(target), "aim: applied before the forget");
+        pap::Forget(epoch);
+        Check(drain() && slot1_is(target) && !as.applied && as.drops >= 1, "aim: forget drops the state without writing (the slot keeps the target)");
+        reset_slots();
+        Check(drain() && slot1_is(origin) && as.writes > 0, "aim: the forgotten epoch never writes again");
+        epoch = 2;
+        publish(true, true, target, 0);
+        Check(drain() && slot1_is(target) && as.applied, "aim: a new epoch writes");
+        // An access fault latches the mirror (until the next forget); the job still runs.
+        Put<std::uintptr_t>(q + c::q_aim_rec, 0x8000);  // 16-aligned, inside the never-mapped first 64 KB
+        s_job_x = -1.0f;
+        Check(drain() && s_job_x == target[0] && as.latched && as.state == static_cast<std::uint8_t>(pap::State::latched) &&
+                  Logged("partner_aim=fault"),
+              "aim: an access fault latches (the job still ran)");
+        Put<std::uintptr_t>(q + c::q_aim_rec, recs);
+        reset_slots();
+        Check(drain() && slot1_is(origin) && as.latched, "aim: latched: nothing written");
+        pap::Forget(epoch);
+        epoch = 3;
+        publish(true, true, target, 0);
+        Check(drain() && !as.latched && slot1_is(target), "aim: the next epoch clears the latch");
+        // The debug override and its command.
+        char result[192]{};
+        bool ok = false;
+        Check(pap::HandleCommand("aimpt off", result, sizeof(result), ok) && ok && pap::Override() == 0 &&
+                  std::strncmp(result, "aimpt=off; override=set", 23) == 0, "aim: 'aimpt off' sets the override");
+        Check(pap::HandleCommand("aimpt point", result, sizeof(result), ok) && ok && pap::Override() == 2, "aim: 'aimpt point'");
+        Check(pap::HandleCommand("aimpt lab", result, sizeof(result), ok) && ok && pap::Override() == -1 &&
+                  std::strncmp(result, "aimpt=lab; override=none", 24) == 0, "aim: 'aimpt lab' clears the override");
+        Check(pap::HandleCommand("aimpt bogus", result, sizeof(result), ok) && !ok && pap::Override() == -1, "aim: a bad argument refuses");
+        Check(!pap::HandleCommand("aimptx", result, sizeof(result), ok) && !pap::HandleCommand("nametag on", result, sizeof(result), ok),
+              "aim: other commands are not aimpt");
+        // Leave: restored, Q back.
+        publish(false, false, origin, 0);
+        Check(drain() && slot1_is(origin), "aim: restored at the end");
+        Put<std::uintptr_t>(P + c::p_q, q_before);
+        pap::Forget(epoch);
+    }
     // Native weapons (docs/native-puppet.md "Weapons"): the magazine mirror
     // writes instance 1's live magazine before its job (on a FIRE or RELOAD
     // press edge or a changed remote magazine), never through a changed prim
@@ -1787,6 +1963,8 @@ int main() {
                 "forced, drain telemetry, block refusals, no window in a batch, replaced aim sub-controller, private masks, rates "
                 "mirror before the job, reapply, restore at the main dispatch (disarmed or legacy Arm), record-vtable latch, forget "
                 "with the forgotten epoch refused, owner refusals, instance 0's record untouched, broken restore chain, magazine "
-                "mirror with edges/refusals/dry fire, the shoot-count and ammo-vars leak checks, mirror off after an ammo leak, both mirrors in one window without a leak; window-close shutdown flags)\n", checks);
+                "mirror with edges/refusals/dry fire, the shoot-count and ammo-vars leak checks, mirror off after an ammo leak, both mirrors in one window without a leak; the aim-target mirror (Q+0x10[1] and record 1 before the job, instance 0 untouched, "
+                "hold, stale, range, restore when unwanted or disarmed, overwritten, chain refusals, forget/epoch, fault latch, the aimpt command); "
+                "window-close shutdown flags)\n", checks);
     return 0;
 }

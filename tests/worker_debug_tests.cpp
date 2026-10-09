@@ -166,8 +166,12 @@ int main() {
         if(!check(doc.find("\"fields_ok\":false,\"cap\":0,")!=std::string::npos && doc.find("\"fire\":{\"mode\":\"\",")!=std::string::npos &&
                   doc.find("\"mag\":{\"remote\":0,")!=std::string::npos && doc.find("\"leak\":{\"shot_count\":0,")!=std::string::npos &&
                   doc.find("\"equip\":{\"tx_rev\":0,\"tx_base\":[0,0,0]")!=std::string::npos &&
-                  doc.find("\"warp\",\"mag\",\"body_yaw_cdeg\",\"face_err_cdeg\"],\"ring\":[")!=std::string::npos &&
-                  doc.find("false,0,0,0]")!=std::string::npos))return 1;
+                  doc.find("\"warp\",\"mag\",\"body_yaw_cdeg\",\"face_err_cdeg\",\"r60_1\",\"pred1\"],\"ring\":[")!=std::string::npos &&
+                  doc.find("false,0,0,0,0,0]")!=std::string::npos))return 1;
+        // Aim parity member (docs/native-puppet.md "Facing", the aim-target mirror): present in every shape.
+        if(!check(doc.find("\"aim\":{\"setting\":\"\",\"override\":false,\"state\":\"\",\"reason\":\"\",\"src\":\"\",\"writes\":0,")!=std::string::npos &&
+                  doc.find("\"target_mm\":[0,0,0],\"q10_1_mm\":[0,0,0],\"q10_0_mm\":[0,0,0],\"aimpt1_mm\":[0,0,0],\"aimpt0_mm\":[0,0,0],")!=std::string::npos &&
+                  doc.find("\"pred1\":0,\"pred0\":0,\"gun_state\":[0,0],\"b3d5\":[0,0],\"path1\":\"\",\"path0\":\"\"}")!=std::string::npos))return 1;
         // Native polish members (docs/native-puppet.md "Facing", "Weapons"): present in every shape.
         if(!check(doc.find("\"steer_err_mrad\":0,\"cam_diff_cdeg\":0")!=std::string::npos &&
                   doc.find("\"rings\":{\"on\":false,\"windows\":0,\"refused\":0,\"changed\":0,\"last\":\"\"}")!=std::string::npos &&
@@ -193,7 +197,39 @@ int main() {
                   polish.find("\"steer_err_mrad\":null,\"cam_diff_cdeg\":null")!=std::string::npos &&
                   polish.find("\"inj\":null,\"inj_cap\":null,\"store\":{\"writes\":0,\"refused\":0,\"last\":\"y_vt\"}}")!=std::string::npos &&
                   polish.find("\"weapon\":{\"kb_remote\":true,\"remote_gun_equip\":null,\"remote_gun_base\":null,\"mismatch\":true,\"strip\":80}")!=std::string::npos &&
-                  polish.find(",-17999,null]")!=std::string::npos && polish.find(",null,null]")!=std::string::npos))return 1;
+                  polish.find(",-17999,null,0,0]")!=std::string::npos && polish.find(",null,null,0,0]")!=std::string::npos))return 1;
+        // The aim member with every value unread (nulls) and hostile text; the ring's r60_1/pred1 unread.
+        t.aim_point_err_mm=pn::kNull;t.aim_override=true;
+        for(unsigned i=0;i<3;++i){t.aim_target_mm[i]=pn::kNull;for(unsigned k=0;k<2;++k){t.aim_q10_mm[k][i]=t.aim_point_mm[k][i]=pn::kNull;}}
+        for(unsigned k=0;k<2;++k){
+            t.aim_yaw_cdeg[k]=t.aim_pitch_cdeg[k]=t.aim_rel_yaw_cdeg[k]=t.aim_r5c[k]=t.aim_r60[k]=t.aim_pred[k]=pn::kNull;
+            t.aim_gun_state[k]=t.aim_b3d5[k]=pn::kNull;strcpy_s(t.aim_path[k],"na");
+        }
+        strcpy_s(t.aim_setting,"look");strcpy_s(t.aim_state,"refused");strcpy_s(t.aim_reason,"q_\"vt");strcpy_s(t.aim_src,"none");
+        t.aim_writes=0xFFFFFFFFu;t.aim_overwritten=2;
+        for(unsigned i=0;i<pn::kRing;++i){pn::RingEntry e{};e.r60_1=(i%2)?pn::kNull:953;e.pred1=static_cast<std::int8_t>((i%2)?-1:1);pn::Push(t.ring,e);}
+        const auto aim=NativeDocument(t,&n);
+        if(!check(n>0 && n<16384 && ValidJson(aim)))return 1;
+        if(!check(aim.find("\"aim\":{\"setting\":\"look\",\"override\":true,\"state\":\"refused\",\"reason\":\"q_\\\"vt\",\"src\":\"none\",\"writes\":4294967295,")!=std::string::npos &&
+                  aim.find("\"overwritten\":2,")!=std::string::npos &&
+                  aim.find("\"target_mm\":[null,null,null],\"q10_1_mm\":[null,null,null],")!=std::string::npos &&
+                  aim.find("\"aimpt_err_mm\":null,\"aim_yaw1_cdeg\":null,\"aim_pitch1_cdeg\":null,")!=std::string::npos &&
+                  aim.find("\"r60_1\":null,")!=std::string::npos && aim.find("\"pred1\":null,\"pred0\":null,\"gun_state\":[null,null],")!=std::string::npos &&
+                  aim.find("\"path1\":\"na\",\"path0\":\"na\"}")!=std::string::npos &&
+                  aim.find(",953,1]")!=std::string::npos && aim.find(",null,null]")!=std::string::npos))return 1;
+        // Read values.
+        t.aim_r60[1]=953;t.aim_pred[1]=1;t.aim_rel_yaw_cdeg[1]=-8154;t.aim_yaw_cdeg[1]=-15400;t.aim_target_mm[0]=-12500;t.aim_point_err_mm=31;
+        strcpy_s(t.aim_path[1],"cam");t.aim_gun_state[1]=7;
+        const auto aim2=NativeDocument(t,&n);
+        if(!check(ValidJson(aim2) && aim2.find("\"target_mm\":[-12500,null,null],")!=std::string::npos &&
+                  aim2.find("\"aimpt_err_mm\":31,\"aim_yaw1_cdeg\":-15400,")!=std::string::npos &&
+                  aim2.find("\"rel_yaw1_cdeg\":-8154,")!=std::string::npos && aim2.find("\"r60_1\":953,")!=std::string::npos &&
+                  aim2.find("\"pred1\":1,")!=std::string::npos && aim2.find("\"gun_state\":[null,7],")!=std::string::npos &&
+                  aim2.find("\"path1\":\"cam\"")!=std::string::npos))return 1;
+        for(unsigned k=0;k<2;++k){t.aim_r60[k]=t.aim_pred[k]=t.aim_rel_yaw_cdeg[k]=t.aim_yaw_cdeg[k]=t.aim_pitch_cdeg[k]=t.aim_r5c[k]=0;
+            t.aim_gun_state[k]=t.aim_b3d5[k]=0;}
+        t.aim_point_err_mm=0;
+        for(unsigned i=0;i<3;++i){t.aim_target_mm[i]=0;for(unsigned k=0;k<2;++k){t.aim_q10_mm[k][i]=t.aim_point_mm[k][i]=0;}}
         t.face_err_cdeg=t.face_target_cdeg=t.face_body_cdeg=t.face_rate_dps=0;t.place_yaw_err_mdeg=0;
         t.look_remote_cdeg[0]=t.look_remote_cdeg[1]=t.look_slot_cdeg[0]=t.look_slot_cdeg[1]=t.look_err_mdeg=0;
         t.steer_err_mrad=t.cam_diff_cdeg=0;t.mag_inj=t.mag_inj_cap=t.remote_gun_equip=t.remote_gun_base=0;
@@ -210,8 +246,8 @@ int main() {
                   weapons.find("\"remote\":null,\"remote_cap\":null,\"local\":0,\"local_cap\":0")!=std::string::npos && weapons.find("\"shot_count\":null")!=std::string::npos &&
                   weapons.find("\"ammo_leaks\":3,\"ammo_vars\":null}")!=std::string::npos &&
                   weapons.find("\"tx_base\":[0,46,0]")!=std::string::npos && weapons.find("\"rx_alias\":[0,873,0]")!=std::string::npos &&
-                  weapons.find("\"apply\":\"already\"")!=std::string::npos && weapons.find(",null,0,0]")!=std::string::npos &&
-                  weapons.find(",5,0,0]")!=std::string::npos))return 1;
+                  weapons.find("\"apply\":\"already\"")!=std::string::npos && weapons.find(",null,0,0,0,0]")!=std::string::npos &&
+                  weapons.find(",5,0,0,0,0]")!=std::string::npos))return 1;
         // Too small a buffer: nothing (never a truncated member).
         char small[64];
         if(!check(mgscoop::worker_debug::FormatNativeJson(t,small,sizeof(small))==0 && small[0]==0))return 1;

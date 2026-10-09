@@ -38,6 +38,7 @@
 #include <cstring>
 #include "mgscoop/partner_input_hook.hpp"
 #include "mgscoop/near_code.hpp"
+#include "mgscoop/partner_aim_point.hpp"
 #include "mgscoop/partner_defer.hpp"
 #include "mgscoop/partner_local_detour.hpp"
 #include "mgscoop/partner_look_source.hpp"
@@ -935,6 +936,9 @@ void __stdcall InputDispatchHook(void* root, std::uint32_t phase) noexcept {
     if (InterlockedCompareExchange(&g_hook_thread, static_cast<LONG>(GetCurrentThreadId()), 0) == 0) {}
     if (g_shutdown) { g_original(root, phase); return; }
     if ((g_rates.applied && !g_wrap_native) || g_rates_forget) RatesIdle();
+    // The aim-target mirror (partner_aim_point): restored like the rates once
+    // no enabled native Arm (or no wanted target) is published.
+    if (partner_aim_point::IdleDue(g_wrap_native != 0) && !partner_defer::InBatch()) partner_aim_point::Idle();
     if (!g_arm_enabled && !g_holdlog) { g_need_resync = true; g_original(root, phase); return; }
     pi::Arm a{};
     if (!ReadArm(a)) { g_original(root, phase); return; }
@@ -1612,7 +1616,10 @@ const char* Install(const void* base, LogFn log, SampleFn sample) noexcept {
             }
         }
     }
-    if (!result) g_ready = true;
+    if (!result) {
+        g_ready = true;
+        partner_aim_point::Bind(base, log);
+    }
     if (g_log) {
         char line[160]{};
         if (result) StringCchPrintfA(line, ARRAYSIZE(line), "partner_input_hook=refused; reason=%s\r\n", result);
@@ -1766,6 +1773,9 @@ bool RunJobWindow(void* go, const void* param, std::uint32_t block, JobCallFn jo
     // Native weapons: the magazine mirror on this thread, before the gun
     // update reads it, and the viewer's shoot count around the job.
     MirrorMag(a, j);
+    // Aim parity: instance 1's network aim slot Q+0x10[1] gets the remote's
+    // aim target before its gun update builds the aim point from it.
+    partner_aim_point::Step(a.P, NowMs());
     const std::uint32_t shots_before = ReadShotCount();
     const std::uint32_t ammo_before = ReadAmmoDigest();
     // Phase 1 picks its pad-sampling branch by id == P+0x218: instance 1 (id 1,

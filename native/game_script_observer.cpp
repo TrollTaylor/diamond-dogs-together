@@ -42,6 +42,7 @@
 #include "mgscoop/partner_defer.hpp"
 #include "mgscoop/partner_local_detour.hpp"
 #include "mgscoop/partner_look_source.hpp"
+#include "mgscoop/partner_aim_point.hpp"
 #include "mgscoop/partner_fire_filter.hpp"
 #include "mgscoop/partner_dm_patch.hpp"
 #include "mgscoop/partner_upper_probe.hpp"
@@ -621,7 +622,13 @@ std::uint32_t PartnerWindowSeq(void*) noexcept { return mgscoop::partner_input_h
 bool PartnerReadRates(void*, const pp::State& state, std::uint32_t index, pp::RateRead& out) noexcept {
     return pp::ReadRates(partner_addresses, state, index, out);
 }
-void PartnerForgetRates(void*, std::uint32_t epoch) noexcept { mgscoop::partner_input_hook::ForgetRates(epoch); }
+// The ending mission's epoch (MissionStart/End): the rates mirror and the
+// aim-target mirror drop their state without writing; that epoch never
+// writes again.
+void PartnerForgetRates(void*, std::uint32_t epoch) noexcept {
+    mgscoop::partner_input_hook::ForgetRates(epoch);
+    mgscoop::partner_aim_point::Forget(epoch);
+}
 bool PartnerLinkLive(void*) noexcept {
     const auto info = mgscoop::partner_net::GetLinkInfo();
     return info.state == mgscoop::link::LinkState::connected ||
@@ -664,6 +671,13 @@ bool PartnerInBatch(void*) noexcept {
 }
 const char* PartnerInstallLookSource(void*) noexcept { return mgscoop::partner_look_source::Install(game_base, Log); }
 const char* PartnerInstallNoise(void*) noexcept { return mgscoop::partner_fire_filter::InstallNoise(game_base, Log); }
+// --- Aim parity (docs/native-puppet.md "Facing", the aim-target mirror): the
+// driver publishes the target; the drain window writes it (partner_input_hook).
+void PartnerPublishAim(void*, const mgscoop::partner_aim_point::Publication& publication) noexcept {
+    mgscoop::partner_aim_point::Publish(publication);
+}
+void PartnerAimStats(void*, mgscoop::partner_aim_point::Stats& out) noexcept { mgscoop::partner_aim_point::ReadStats(out); }
+bool PartnerReadAim(void*, const pp::State& state, pp::AimRead& out) noexcept { return pp::ReadAim(partner_addresses, state, out); }
 #if defined(MGS_LOCAL_STOCK46_AMMO_TEST) && MGS_LOCAL_STOCK46_AMMO_TEST
 constexpr bool kAmmoExperiment = true;
 #else
@@ -740,7 +754,7 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerSetDefer, PartnerPublishIdentity, PartnerPublishWrapRoots, PartnerNativeTargets, PartnerReadGun1, PartnerReadLookSource,
     PartnerWindowSeq, PartnerLinkLive, PartnerLinkSession, PartnerDrainReliable, PartnerReadRates, PartnerForgetRates, kAmmoExperiment,
     PartnerInstallFire, PartnerFireStats, PartnerFireCensus, PartnerReadGun, PartnerReadLoadout, PartnerSendReliable, PartnerInBatch,
-    PartnerInstallLookSource, PartnerInstallNoise};
+    PartnerInstallLookSource, PartnerInstallNoise, PartnerPublishAim, PartnerAimStats, PartnerReadAim};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
@@ -989,6 +1003,7 @@ void PartnerShutdown() noexcept {
     // Thread-safe first: no deferral, no window, no mirror write from here on.
     mgscoop::partner_defer::Shutdown();
     mgscoop::partner_input_hook::Shutdown();
+    mgscoop::partner_aim_point::Shutdown();
     if (mission_thread && mission_thread != GetCurrentThreadId()) {
         LogFormat("partner_shutdown=hooks_off; teardown=other_thread; thread=%lu; mission_thread=%lu\r\n", GetCurrentThreadId(), mission_thread);
         return;
@@ -1546,6 +1561,15 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             if (mgscoop::nametag_game::HandleCommand(pending.text, tag_result, sizeof(tag_result), tag_ok)) {
                 debug::Result(pending.id, tag_ok ? 1u : 0u, tag_result);
                 LogFormat("debug_menu=nametag; id=%u; ok=%u; result=%s\r\n", pending.id, tag_ok ? 1u : 0u, tag_result);
+                replacement = {reply, std::strlen(reply)};
+                debug_quiet = true;
+                return true;
+            }
+            // "aimpt off|look|point|lab|status" (the aim-target mirror's live A/B
+            // switch; docs/native-puppet.md "Facing") is handled natively too.
+            if (mgscoop::partner_aim_point::HandleCommand(pending.text, tag_result, sizeof(tag_result), tag_ok)) {
+                debug::Result(pending.id, tag_ok ? 1u : 0u, tag_result);
+                LogFormat("debug_menu=aimpt; id=%u; ok=%u; result=%s\r\n", pending.id, tag_ok ? 1u : 0u, tag_result);
                 replacement = {reply, std::strlen(reply)};
                 debug_quiet = true;
                 return true;

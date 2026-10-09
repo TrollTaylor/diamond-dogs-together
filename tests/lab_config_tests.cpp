@@ -633,6 +633,18 @@ int main() {
               "looksrc, face=aim, noise=keep parse");
         const auto polishOff = Lab("enabled=1\nrole=host\npartner_native_face=off\npartner_native_noise=filter\n");
         const auto polishBad = Lab("enabled=1\nrole=host\npartner_native_face=always\npartner_native_noise=loud\npartner_native_aim=src\n");
+        // The aim-target mirror (docs/native-puppet.md "Facing"): off by default; off|look|point.
+        Check(def.partner_native_aimpt == mgscoop::PartnerNativeAimPt::off, "aimpt default off");
+        const auto aimpt = Lab("enabled=1\nrole=host\npartner_native_aimpt=look\n");
+        const auto aimptPoint = Lab("enabled=1\nrole=host\npartner_native_aimpt=point\n");
+        const auto aimptBad = Lab("enabled=1\nrole=host\npartner_native_aimpt=on\n");
+        Check(aimpt.partner_native_aimpt == mgscoop::PartnerNativeAimPt::look && aimpt.invalid_values == 0 && aimpt.unknown_keys == 0 &&
+                  aimptPoint.partner_native_aimpt == mgscoop::PartnerNativeAimPt::point && aimptBad.invalid_values == 1 &&
+                  aimptBad.partner_native_aimpt == mgscoop::PartnerNativeAimPt::off &&
+                  std::strcmp(mgscoop::PartnerNativeAimPtName(mgscoop::PartnerNativeAimPt::look), "look") == 0 &&
+                  std::strcmp(mgscoop::PartnerNativeAimPtName(mgscoop::PartnerNativeAimPt::point), "point") == 0 &&
+                  std::strcmp(mgscoop::PartnerNativeAimPtName(mgscoop::PartnerNativeAimPt::off), "off") == 0,
+              "partner_native_aimpt parses off|look|point");
         Check(polishOff.partner_native_face == mgscoop::PartnerNativeFace::off && polishOff.invalid_values == 0 &&
               polishBad.invalid_values == 3 && polishBad.partner_native_face == mgscoop::PartnerNativeFace::idle &&
               polishBad.partner_native_noise == mgscoop::PartnerNativeNoise::filter && polishBad.partner_native_aim == PartnerNativeAim::off,
