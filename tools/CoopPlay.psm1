@@ -839,12 +839,16 @@ function New-CoopPlayLabIniText {
 
 function New-CoopPlayCoopIniText {
     # coop.ini of the play mode: the closed-port master URL (offline, no server)
-    # and the player's character.
-    param([Parameter(Mandatory)][string]$Character, [string]$CharacterFallback = 'dd_male')
+    # and the player's character; -Hud adds the in-game status line mode
+    # (docs/two-pc-play.md "In game"; no key = compact).
+    param([Parameter(Mandatory)][string]$Character, [string]$CharacterFallback = 'dd_male',
+        [ValidateSet('', 'compact', 'full', 'off')][string]$Hud = '')
     if ($script:CoopCharacters -cnotcontains $Character) { throw "Invalid character: $Character" }
     if ($script:CoopFallbacks -cnotcontains $CharacterFallback) { throw "Invalid character_fallback: $CharacterFallback" }
-    return (@($script:CoopPlayHeader, ('master_url=' + $script:CoopMasterUrl), ('character=' + $Character),
-            ('character_fallback=' + $CharacterFallback)) -join "`n") + "`n"
+    $lines = @($script:CoopPlayHeader, ('master_url=' + $script:CoopMasterUrl), ('character=' + $Character),
+        ('character_fallback=' + $CharacterFallback))
+    if ($Hud) { $lines += ('hud=' + $Hud.ToLowerInvariant()) }
+    return ($lines -join "`n") + "`n"
 }
 
 function Get-CoopTextSha256 {

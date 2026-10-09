@@ -329,6 +329,15 @@ try {
     Assert-Equal $coopIni "$header`nmaster_url=http://127.0.0.1:47899/tppstm/gate`ncharacter=quiet`ncharacter_fallback=dd_male`n" 'play coop.ini text (closed-port master URL)'
     Assert-True (Test-LabUrl (ConvertFrom-IniText $coopIni)['master_url']) 'play master URL passes the redirect validator'
     Assert-Throws { New-CoopPlayCoopIniText -Character dog } 'Invalid character' 'play coop.ini character validated'
+    # The in-game status line mode (docs/two-pc-play.md "In game"): only with -Hud.
+    $hudCoop = New-CoopPlayCoopIniText -Character quiet -Hud Off
+    Assert-Equal $hudCoop ($coopIni + "hud=off`n") 'play coop.ini: -Hud appends hud= (lower case)'
+    Assert-Throws { New-CoopPlayCoopIniText -Character quiet -Hud big } 'Hud' 'play coop.ini hud validated'
+    if ($IniCheck) {
+        $file = Join-Path $fixture 'hud-coop.ini'; [IO.File]::WriteAllText($file, $hudCoop, [Text.UTF8Encoding]::new($false))
+        $n = Invoke-IniCheck coop $file
+        if ($n.ContainsKey('hud')) { Assert-Equal "$($n['hud'])|$($n['unknown_keys'])/$($n['invalid_values'])" 'off|0/0' 'native: coop.ini hud' }
+    }
     # Non-ASCII save_dir: UTF-8 bytes, never '?'.
     $uniSave = 'D:\Jeux Vid' + [char]0x00E9 + 'o\MGS_TPP\mgs-coop\coop-saves'
     $uniBytes = $utf8.GetBytes((New-CoopPlayLabIniText -Role host -SaveDir $uniSave))

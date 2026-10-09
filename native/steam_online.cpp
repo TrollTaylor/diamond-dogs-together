@@ -740,7 +740,8 @@ const char* RunDispatchStages(std::uint64_t deadline, steam_state::FnResult& r) 
     if (fault) reason = "fault";
     else if (!set_a || !set_b) reason = "f2_set_config";
     sd::ResetStatusRecord();
-    if (!reason) TryCloseConnection(g_test_api.sockets, b, &fault);
+    // b is closed on every path without a fault (also after a refused set).
+    if (!fault) TryCloseConnection(g_test_api.sockets, b, &fault);
     if (!reason && fault) reason = "fault";
     if (!reason) {
         Sleep(20);  // let steamclient queue the close (a pump must still be needed)
