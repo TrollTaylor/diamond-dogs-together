@@ -190,6 +190,12 @@ std::uint32_t EffectiveInterpMs(std::uint32_t configured) noexcept;
 // Game thread, atomics only: what link-status.json reports as partner_shown,
 // look and mission.
 void PublishPartnerState(bool shown, bool look_loaded, std::uint32_t mission) noexcept;
+// Game thread, atomics only (online play, docs/native-puppet.md "Online"):
+// link-status.json partner_drive / partner_reason (how this copy shows the
+// partner body) and remote_drive / remote_reason (how the other PC shows
+// ours, from the capability exchange), as partner_native_net::Drive values
+// and partner_native_net reason codes.
+void PublishNativeState(std::uint8_t drive, std::uint8_t reason, std::uint8_t remote_drive, std::uint8_t remote_reason) noexcept;
 // Reliable ordered channels 1..3 (1 = world, reserved; 2..3 = game). Session
 // scoped: a new handshake clears them on both sides (LinkInfo.session bumps)
 // and callers send their state again. On `full` the caller keeps its dirty

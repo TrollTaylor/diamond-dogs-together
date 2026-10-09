@@ -329,7 +329,8 @@ Settings EffectiveSettings(const Settings& base, bool active) noexcept {
     ds.mask = base.input_mask;
     // FIRE only as visual fire with the owner filter live (fire_live, set by TickWeapons).
     const bool fire = base.nfire == PartnerNativeFire::visual && base.fire_live;
-    const pnat::DriveSettings x = pnat::Effective(ds, true, pnat::NativeConfig{base.ngun, fire, base.naim});
+    const pnat::DriveSettings x =
+        pnat::Effective(ds, true, pnat::NativeConfig{base.ngun, fire, base.naim, base.nhold == PartnerNativeHold::net});
     e.apply = x.apply;
     e.input = x.input;
     e.dm = x.dm;
@@ -458,6 +459,8 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
     a.config.stick_deg = set.stick_deg;
     a.config.stick_pct = set.stick_pct;
     a.config.stale_ms = set.stale_ms;
+    // Online play: the stall hold only under the native drive.
+    a.config.stall_ms = set.native_active && set.nstall == PartnerNativeStall::hold ? set.stall_ms : 0u;
     a.host_cam_cdeg = tick.cam_cdeg;
     a.tap_seq = d.tap_seq;
     a.tap_bits = m.tap_bits;
@@ -1399,12 +1402,15 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
         if (h.read_pad(h.context, st, raw)) {
             const pin::PadSnapshot snap = pin::Effective(raw);
             pin::SenderObserve(m.sender, snap);
+            m.sender.repeats = static_cast<std::uint8_t>(d.settings.edge_repeats > pin::kEdgeRepeatsMax ? pin::kEdgeRepeatsMax
+                                                                                                     : d.settings.edge_repeats);
             pin::InputPacket pkt = pin::Quantize(snap, tick.cam_cdeg);
             pin::SenderFill(m.sender, pkt);
             // Native puppet: v4 (look, camera, heading, the sender's own movement
-            // rates and its magazine) only when this copy runs the native drive;
-            // the peer refuses aim with no_v3 otherwise.
-            if (d.settings.drive == PartnerDrive::native) pin::Fill4(pkt, SenderV4(d, h, st, snap, raw.kb_flags));
+            // rates, its magazine and gun) whatever this copy's own drive is: the
+            // peer's native drive needs it even when this copy shows clips
+            // (online play; all reads are pure, see TickNative's sender sources).
+            pin::Fill4(pkt, SenderV4(d, h, st, snap, raw.kb_flags));
             if (h.submit_input(h.context, pkt)) pin::SenderSent(m.sender);
         }
     }
@@ -1738,6 +1744,27 @@ void DrainEquip(Driver& d, const Hooks& h) noexcept {
         std::uint8_t message[128]{};
         std::size_t size = 0;
         if (!h.drain_reliable(h.context, partner_equip_wire::kChannel, message, sizeof(message), size)) break;
+        // Online play: the capability message shares channel 2 (first byte 0x43).
+        if (partner_caps_wire::IsCaps(message, size)) {
+            if (partner_caps_wire::Accept(d.caps_rx, message, size, epoch) &&
+                (d.caps_rx.caps.epoch != d.caps_logged_epoch || d.caps_rx.caps.revision != d.caps_logged_rev)) {
+                const partner_caps_wire::Caps& c = d.caps_rx.caps;
+                const bool changed_view = !d.caps_logged_epoch || c.drive != d.caps_logged_drive || c.reason != d.caps_logged_reason;
+                d.caps_logged_epoch = c.epoch;
+                d.caps_logged_rev = c.revision;
+                if (changed_view) {
+                    d.caps_logged_drive = c.drive;
+                    d.caps_logged_reason = c.reason;
+                    EmitNative(m, h, m.net_cap, "partner_caps",
+                               "partner_caps=rx; drive=%s; reason=%s; profile=%u; policy=%s; features=0x%02x; v4=%u; epoch=%u; rev=%u\r\n",
+                               partner_native_net::DriveName(static_cast<partner_native_net::Drive>(c.drive)),
+                               partner_native_net::ReasonName(c.reason), unsigned(c.profile), c.policy ? "online" : "lab",
+                               unsigned(c.features), (c.features & partner_caps_wire::Feature::InputSender) ? 1u : 0u, c.epoch,
+                               unsigned(c.revision));
+                }
+            }
+            continue;
+        }
         if (partner_equip_wire::Accept(m.equip, message, size, epoch) && m.equip.manifest.revision != m.equip_logged_rev) {
             m.equip_logged_rev = m.equip.manifest.revision;
             const auto& e = m.equip.manifest;
@@ -1849,6 +1876,29 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
     }
     if (!set.ngun) m.weapon_mismatch = false;
     m.weapon_strip = m.weapon_mismatch ? (pnat::kPadFire | pnat::kPadReload) : 0u;
+    // Gun profile (online play, docs/native-puppet.md "Online"): until body 1
+    // shows a gun class this mission (no stock46 on it: another mission, a
+    // build without the gun pieces, the writer still waiting), HOLD, RELOAD and
+    // FIRE are stripped too, so the partner never aims empty-handed.
+    m.weapon_absent = set.ngun && !m.weapon_ok;
+    if (m.weapon_absent) m.weapon_strip |= kPartnerNativeGunBits | kPartnerNativeFireBit;
+    if (set.ngun && (!m.weapon_absent_logged || m.weapon_absent != m.weapon_logged_absent)) {
+        m.weapon_absent_logged = true;
+        m.weapon_logged_absent = m.weapon_absent;
+        EmitNative(m, h, m.weapon_cap, "partner_weapon", "partner_weapon=%s; body_gun=%s; strip=0x%x\r\n",
+                   m.weapon_absent ? "absent" : "present", m.weapon_absent ? "absent" : "present", m.weapon_strip);
+    }
+    // Play: any leak of instance 1's job into the viewer's save-backed vars (a
+    // shot leak: vars shoot count; an ammo leak: the weapon/ammo vars block,
+    // with or without the mirror, which also turns itself off: mag.leak_off;
+    // process totals) strips FIRE and RELOAD for the rest of the process, so
+    // neither runs again against a co-op save that persists.
+    if (set.play_mode && !d.leak_strip && (ns.shot_leaks || ns.ammo_leaks || ns.mag_leak_off)) {
+        d.leak_strip = pnat::kPadFire | pnat::kPadReload;
+        EmitFormat(h, "partner_weapon=fire_reload_off; reason=%s; shot_leaks=%u; ammo_leaks=%u; strip=0x%x; scope=process\r\n",
+                   ns.shot_leaks ? "shot_leak" : "ammo_leak", ns.shot_leaks, ns.ammo_leaks, d.leak_strip);
+    }
+    m.weapon_strip |= d.leak_strip;
     if (set.ngun && weapon_judged && (!m.weapon_logged_once || m.weapon_logged != m.weapon_mismatch)) {
         const bool first = !m.weapon_logged_once;
         m.weapon_logged_once = true;
@@ -1968,11 +2018,125 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
     }
 }
 
+// --- Online play (docs/native-puppet.md "Online") -------------------------------
+// What this copy shows for the partner body (native, clips or off, with the
+// reason), the sender's v4 sources when the native tick does not read them (a
+// copy that shows clips still sends what the peer's native drive needs), the
+// capability message, the native.net telemetry and its log lines. Every drive mode.
+void TickOnline(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t now, const pnat::Out& out, const pnat::In& in,
+                bool caps_live, bool configured) noexcept {
+    Mission& m = d.mission;
+    const Settings& set = d.settings;
+    namespace pnn = partner_native_net;
+    namespace caps = partner_caps_wire;
+    // The sender's sources (pure reads; TickNative reads them itself when configured).
+    if (!configured && set.isend) {
+        m.gun0 = pp::Gun1{};
+        m.gun0_ok = h.read_gun && h.read_gun(h.context, st, 0, m.gun0);
+        if (set.nrates != PartnerNativeRates::off && h.read_rates && (!m.rates_read_ms || now - m.rates_read_ms >= kRatesReadMs)) {
+            m.rates_read_ms = now ? now : 1;
+            m.rates_id0_ok = h.read_rates(h.context, st, 0, m.rates_id0);
+        }
+    }
+    // The shown drive and why: after a leaving, cooldown and settling show its cause.
+    const pnn::Drive drive = !configured ? pnn::Drive::off : out.active ? pnn::Drive::native : pnn::Drive::clips;
+    const char* reason = !configured ? "legacy" : out.reason ? out.reason : "none";
+    if (configured && !out.active && m.native.left_reason &&
+        (std::strcmp(reason, "cooldown") == 0 || std::strcmp(reason, "settling") == 0))
+        reason = m.native.left_reason;
+    // The capability message (append mode on channel 2; pacing in partner_caps_wire).
+    caps::Caps next{};
+    next.features = static_cast<std::uint8_t>((set.isend ? caps::Feature::InputSender : 0) | (configured ? caps::Feature::NativeDrive : 0) |
+                                              (set.ngun ? caps::Feature::NativeGun : 0) |
+                                              (set.nnet == PartnerNativeNet::online ? caps::Feature::Online : 0) |
+                                              (set.nhold == PartnerNativeHold::net ? caps::Feature::HoldNet : 0) |
+                                              (set.nstall == PartnerNativeStall::hold ? caps::Feature::StallHold : 0));
+    next.profile = static_cast<std::uint8_t>(set.nprofile);
+    next.drive = static_cast<std::uint8_t>(drive);
+    next.reason = pnn::ReasonCode(reason);
+    next.mode = static_cast<std::uint8_t>(out.mode);
+    next.policy = set.nnet == PartnerNativeNet::online ? 1 : 0;
+    const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
+    if (h.send_reliable_append && caps::Due(d.caps_tx, next, epoch, now)) {
+        std::uint8_t bytes[caps::kSize]{};
+        if (caps::Encode(next, bytes) && h.send_reliable_append(h.context, caps::kChannel, bytes, sizeof(bytes))) caps::Sent(d.caps_tx, next, now);
+    }
+    // native.net.
+    pnn::NetTelemetry& n = m.tele.net;
+    CopyText(n.policy, sizeof(n.policy), PartnerNativeNetName(set.nnet));
+    CopyText(n.stall, sizeof(n.stall), PartnerNativeStallName(set.nstall));
+    CopyText(n.hold, sizeof(n.hold), PartnerNativeHoldName(set.nhold));
+    n.stall_ms = set.stall_ms;
+    n.edge_repeats = pin::SenderRepeats(m.sender);
+    n.quality_good = m.net_quality.good;
+    n.quality_good_ms = in.quality_good_ms;
+    n.gaps_100 = m.net_quality.gaps_100;
+    n.gaps_250 = m.net_quality.gaps_250;
+    n.gaps_1000 = m.net_quality.gaps_1000;
+    n.max_gap_ms = m.net_quality.max_gap_ms;
+    n.ia_p50_ms = m.net_quality.p50_ms;
+    n.ia_p95_ms = m.net_quality.p95_ms;
+    n.net_leaves = m.native.net_leaves;
+    n.hard_leaves = m.native.hard_leaves;
+    n.net_reentries = m.native.net_reentries;
+    n.quiet_episodes = m.native.quiet_episodes;
+    n.gap_snaps = m.recon_have_out ? m.recon_out.report.gap_snaps : 0u;
+    n.remote_quiet = in.remote_quiet;
+    n.flap = m.native.flap;
+    CopyText(n.last_net_reason, sizeof(n.last_net_reason), m.native.last_net_reason ? m.native.last_net_reason : "");
+    n.local_drive = drive;
+    CopyText(n.local_reason, sizeof(n.local_reason), reason);
+    n.caps_rx = caps_live;
+    n.caps_sent = d.caps_tx.sent;
+    n.caps_received = d.caps_rx.received;
+    n.caps_invalid = d.caps_rx.invalid;
+    const caps::Caps& rc = d.caps_rx.caps;
+    n.remote_drive = caps_live ? static_cast<pnn::Drive>(rc.drive) : pnn::Drive::unknown;
+    CopyText(n.remote_reason, sizeof(n.remote_reason), caps_live ? pnn::ReasonName(rc.reason) : "");
+    CopyText(n.remote_profile, sizeof(n.remote_profile),
+             caps_live ? PartnerNativeProfileName(static_cast<PartnerNativeProfile>(rc.profile)) : "");
+    CopyText(n.remote_policy, sizeof(n.remote_policy), caps_live ? (rc.policy ? "online" : "lab") : "");
+    n.remote_v4 = caps_live && (rc.features & caps::Feature::InputSender) != 0;
+    n.remote_caps_refused = in.remote_caps_refused;
+    // Log lines (play, or a configured native drive): the quiet episodes and a
+    // 1 Hz summary while anything in it changed.
+    if (!configured && !set.play_mode) return;
+    if (m.native.quiet != m.net_quiet_logged) {
+        m.net_quiet_logged = m.native.quiet;
+        EmitNative(m, h, m.net_cap, "partner_native_net", "partner_native_net=%s; episodes=%u; input_age_ms=%u\r\n",
+                   m.native.quiet ? "quiet" : "resume", m.native.quiet_episodes, in.input_age_ms);
+    }
+    if (m.net_line_ms && now - m.net_line_ms < kNativeLineMs) return;
+    m.net_line_ms = now ? now : 1;
+    std::uint64_t key = 1469598103934665603ull;
+    const auto mix = [&key](std::uint64_t v) noexcept { key = (key ^ v) * 1099511628211ull; };
+    mix(static_cast<std::uint64_t>(drive));
+    mix(pnn::ReasonCode(reason));
+    mix(n.quality_good ? 1u : 0u);
+    mix(n.gaps_250);
+    mix(n.net_leaves);
+    mix(n.hard_leaves);
+    mix(n.net_reentries);
+    mix(n.quiet_episodes);
+    mix(n.gap_snaps);
+    mix(static_cast<std::uint64_t>(n.remote_drive));
+    mix(caps_live ? rc.reason : 0u);
+    if (key == m.net_line_key) return;
+    m.net_line_key = key;
+    if (m.net_lines >= kNativeLineCap) return;
+    ++m.net_lines;
+    EmitFormat(h, "partner_native_net; policy=%s; drive=%s; reason=%s; quality=%u; good_ms=%u; p50=%u; p95=%u; max_gap=%u; gaps=%u,%u,%u; "
+                  "net_leaves=%u; hard_leaves=%u; reentries=%u; quiet=%u; gap_snaps=%u; flap=%u; remote=%s/%s\r\n",
+               n.policy, pnn::DriveName(drive), reason, n.quality_good ? 1u : 0u, n.quality_good_ms, n.ia_p50_ms, n.ia_p95_ms,
+               n.max_gap_ms, n.gaps_100, n.gaps_250, n.gaps_1000, n.net_leaves, n.hard_leaves, n.net_reentries, n.quiet_episodes,
+               n.gap_snaps, n.flap ? 1u : 0u, pnn::DriveName(n.remote_drive), caps_live ? pnn::ReasonName(rc.reason) : "none");
+}
+
 // Arbiter step, identity/wrap-root publication, lazy install, deferral arming,
 // steering for the next Arm, telemetry and the native log lines.
 void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State& st, const partner::Tick& tick, const Clock& clock,
                 bool terminating, bool realized, bool parts_loaded, bool anim_ok, const pp::Anim& anim,
-                const sync::AnimState& remote_anim, std::uint32_t remote_flags, std::uint32_t remote_equip) noexcept {
+                const sync::AnimState& remote_anim, std::uint32_t remote_flags, std::uint32_t remote_equip, bool pose_live) noexcept {
     Mission& m = d.mission;
     const Settings& set = d.settings;
     const std::uint64_t now = clock.now_ms;
@@ -2077,6 +2241,18 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     }
     in.input_valid = latest_ok;
     in.input_age_ms = latest_ok ? latest.age_ms : 0xFFFFFFFFu;
+    // Online play (docs/native-puppet.md "Online"): the link quality (the
+    // re-entry gate after a network fallback), a quiet remote (the link is up
+    // but its input and poses are stale: paused or loading) and the remote's
+    // capabilities of this link session (no input frames: remote_caps).
+    const pnat::Params params = set.nnet == PartnerNativeNet::online ? pnat::OnlineParams() : pnat::Params{};
+    partner_native_net::Observe(m.net_quality, partner_native_net::QualityIn{now, in.link_live, latest_ok, latest_ok ? latest.seq : 0u,
+                                                                             latest_ok ? latest.age_ms : 0u});
+    in.quality_good_ms = partner_native_net::GoodMs(m.net_quality, now);
+    in.remote_quiet = in.link_live && (!latest_ok || latest.age_ms > params.input_age_ms) && !pose_live;
+    const std::uint32_t caps_session = h.link_session ? h.link_session(h.context) : 0;
+    const bool caps_live = d.caps_rx.have && caps_session && d.caps_rx.caps.epoch == caps_session;
+    in.remote_caps_refused = caps_live && !(d.caps_rx.caps.features & partner_caps_wire::Feature::InputSender);
     in.dm_idle = m.dmmap.phase == pdm::Phase::idle && !m.dmmap.owned;
     in.dm_patched = m.dm_patched;
     in.dm_revert_failed = m.dm_revert_failed;
@@ -2094,7 +2270,7 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         m.runaway_since_ms = 0;
     }
     const pnat::Mode before = m.native.mode;
-    const pnat::Out out = pnat::Step(m.native, in);
+    const pnat::Out out = pnat::Step(m.native, in, params);
     m.native_out = out;
     // Requests in publication order: leaving disarms the deferral first, then
     // the window, then rearms dm=map; entering arms the deferral from the
@@ -2151,6 +2327,9 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         m.mag_scale = 1.0;
     }
     m.steer_mdeg = static_cast<std::int32_t>(std::lround(m.steer_rad * 180000.0 / 3.14159265358979323846));
+    // Online play: the sender's v4 sources for a copy that shows clips, the
+    // capability exchange and the native.net telemetry (every drive mode).
+    TickOnline(d, h, st, now, out, in, caps_live, configured);
     if (!configured) return;
     // D3 (naim=looksrc): the look source hook, lazily once per process with
     // defer=on, never while a batch is in flight (retried next tick).
@@ -2488,6 +2667,8 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         t.remote_gun_base = m.remote_gun_base;
         t.weapon_mismatch = m.weapon_mismatch;
         t.strip_bits = m.weapon_strip;
+        t.weapon_absent = m.weapon_absent;
+        t.leak_strip = d.leak_strip;
         t.fire_requested = n.fire_requested;
         t.fire_shot_drains = n.fire_shot_drains;
         t.fire_modes = n.fire_modes;
@@ -2731,6 +2912,12 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.nnoise = lab.partner_native_noise;
 
     d.settings.play_mode = lab.mode == LabMode::play;
+    d.settings.nprofile = lab.partner_native_profile;
+    d.settings.nnet = lab.partner_native_net;
+    d.settings.nstall = lab.partner_native_stall;
+    d.settings.stall_ms = lab.partner_native_stall_ms;
+    d.settings.nhold = lab.partner_native_hold;
+    d.settings.edge_repeats = lab.partner_input_edge_repeats;
     d.look_forced_rev = 1;
     partner_recon::Reset(d.mission.recon);
     partner_dmmap::Reset(d.mission.dmmap);
@@ -2933,21 +3120,36 @@ void ApplyTrigger(Driver& d, const Hooks& h, const partner::Trigger& trigger, bo
     // drive=native after a mission latch clears the latch.
     const bool native_keys = trigger.has_drive || trigger.has_defer || trigger.has_local || trigger.has_naim || trigger.has_ngun ||
                              trigger.has_nfire || trigger.has_steer;
-    // Play mode refuses the native drive in lab.ini (kPlayRefusedNativeDrive);
-    // the trigger file can never turn it on either.
-    const bool native_refused = d.settings.play_mode &&
-                                ((trigger.has_drive && trigger.drive != PartnerDrive::legacy) ||
-                                 (trigger.has_defer && trigger.defer != PartnerDefer::off));
-    if (native_refused) Emit(h, "partner_native=trigger_refused; reason=play; drive=legacy; defer=off\r\n");
-    if (trigger.has_drive && !native_refused) {
+    // Play mode refuses the raw native keys in lab.ini (kPlayRefusedNativeDrive):
+    // the trigger toggles drive=native|legacy only inside the native profile
+    // lab.ini admitted (partner_native_profile, which also fixed the deferral)
+    // and never changes the deferral.
+    const bool drive_refused = d.settings.play_mode && trigger.has_drive && trigger.drive == PartnerDrive::native &&
+                               d.settings.nprofile == PartnerNativeProfile::off;
+    const bool defer_refused = d.settings.play_mode && trigger.has_defer;
+    if (drive_refused) Emit(h, "partner_native=trigger_refused; reason=play_profile; drive=legacy\r\n");
+    if (defer_refused) Emit(h, "partner_native=trigger_refused; reason=play; key=defer\r\n");
+    // The lab-only native experiments lab.ini refuses in play (local=all,
+    // naim=lookcam) stay refused through the trigger too, and the gun keys only
+    // narrow what the profile admitted (ngun=1 / nfire=visual need the gun profile).
+    const bool gun_profile = d.settings.nprofile == PartnerNativeProfile::gun;
+    const bool local_refused = d.settings.play_mode && trigger.has_local && trigger.local != PartnerLocal::main;
+    const bool naim_refused = d.settings.play_mode && trigger.has_naim && trigger.naim == PartnerNativeAim::lookcam;
+    const bool ngun_refused = d.settings.play_mode && trigger.has_ngun && trigger.ngun && !gun_profile;
+    const bool nfire_refused = d.settings.play_mode && trigger.has_nfire && trigger.nfire != PartnerNativeFire::off && !gun_profile;
+    if (local_refused) Emit(h, "partner_native=trigger_refused; reason=play; key=local\r\n");
+    if (naim_refused) Emit(h, "partner_native=trigger_refused; reason=play; key=naim\r\n");
+    if (ngun_refused) Emit(h, "partner_native=trigger_refused; reason=play_profile; key=ngun\r\n");
+    if (nfire_refused) Emit(h, "partner_native=trigger_refused; reason=play_profile; key=nfire\r\n");
+    if (trigger.has_drive && !drive_refused) {
         d.settings.drive = trigger.drive;
         if (trigger.drive == PartnerDrive::native) partner_native::Unlatch(m.native, m.native.since_ms);
     }
-    if (trigger.has_defer && !native_refused) d.settings.defer = trigger.defer;
-    if (trigger.has_local) d.settings.local = trigger.local;
-    if (trigger.has_naim) d.settings.naim = trigger.naim;
-    if (trigger.has_ngun) d.settings.ngun = trigger.ngun;
-    if (trigger.has_nfire) d.settings.nfire = trigger.nfire;
+    if (trigger.has_defer && !defer_refused) d.settings.defer = trigger.defer;
+    if (trigger.has_local && !local_refused) d.settings.local = trigger.local;
+    if (trigger.has_naim && !naim_refused) d.settings.naim = trigger.naim;
+    if (trigger.has_ngun && !ngun_refused) d.settings.ngun = trigger.ngun;
+    if (trigger.has_nfire && !nfire_refused) d.settings.nfire = trigger.nfire;
     if (trigger.has_steer) d.settings.steer_deg = trigger.steer_deg;
     if (native_keys)
         EmitFormat(h, "partner_native=trigger; drive=%s; defer=%s; local=%s; naim=%s; ngun=%u; nfire=%s; steer=%u; mask=0x%x\r\n",
@@ -3809,7 +4011,8 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     InputTick itick{};
     // Native puppet: the arbiter steps first; its requests (disarm on leaving,
     // dm=map rearm) and settings take effect for the input and DM levers now.
-    TickNative(d, h, lab, st, tick, clock, terminating, realized, parts_loaded, anim_ok, anim, remote_anim, remote_flags, remote_equip);
+    TickNative(d, h, lab, st, tick, clock, terminating, realized, parts_loaded, anim_ok, anim, remote_anim, remote_flags, remote_equip,
+               set.source == PartnerSource::net && sample_status == pose::Status::live);
     const Settings set_levers = EffectiveSettings(d.settings, m.native_out.active);
     TickInput(d, h, lab, st, set_levers, tick, clock, terminating, parts_loaded, pose_valid, pose, relink, anim_ok, anim, remote_anim,
               extra_ops, itick);

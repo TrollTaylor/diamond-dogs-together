@@ -39,8 +39,11 @@ const char* EnterBlocker(const State& s, const In& in, const Params& p) noexcept
     if (!in.realized) return "unrealized";
     if (!in.parts_loaded) return "parts";
     if (!in.link_live) return "link";
-    if (!in.input_valid) return "no_input";
-    if (in.input_age_ms > p.input_age_ms) return "input_stale";
+    // Online: a paused or loading remote is quiet, not missing; a remote that
+    // sends no input frames at all says so in its capabilities.
+    if (p.online && in.remote_caps_refused) return "remote_caps";
+    if (!in.input_valid) return p.online && in.remote_quiet ? "remote_quiet" : "no_input";
+    if (in.input_age_ms > p.input_age_ms) return p.online && in.remote_quiet ? "remote_quiet" : "input_stale";
     return nullptr;
 }
 
@@ -79,7 +82,31 @@ double Clamp(double v, double lo, double hi) noexcept {
     if (v > hi) return hi;
     return v;
 }
+
+// The online flap guard: network leaves within the window.
+std::uint32_t RecentNetLeaves(const State& s, std::uint64_t now, std::uint32_t window_ms) noexcept {
+    std::uint32_t n = 0;
+    for (std::uint32_t i = 0; i < s.net_count && i < 8; ++i)
+        if (now >= s.net_times[i] && now - s.net_times[i] <= window_ms) ++n;
+    return n;
+}
 } // namespace
+
+Params OnlineParams() noexcept {
+    Params p{};
+    p.online = true;
+    p.stale_hold_ms = 1500;
+    p.link_hold_ms = 1500;
+    return p;
+}
+
+bool NetReason(const char* reason) noexcept {
+    if (!reason) return false;
+    static const char* const kNet[] = {"net_input", "net_link", "net_quiet", "range_hidden", "unrealized"};
+    for (const char* n : kNet)
+        if (std::strcmp(reason, n) == 0) return true;
+    return false;
+}
 
 const char* ModeName(Mode mode) noexcept {
     switch (mode) {
@@ -124,7 +151,23 @@ Out Step(State& s, const In& in, const Params& p) noexcept {
         s.left = true;
         s.left_ms = now;
         s.left_reason = why;
-        ++s.fallbacks;
+        s.quiet = false;
+        // Online: a network reason never counts toward the mission latch.
+        s.left_net = p.online && NetReason(why);
+        if (s.left_net) {
+            ++s.net_leaves;
+            s.last_net_reason = why;
+            // The flap guard keeps the 8 newest network leaves.
+            if (s.net_count < 8) s.net_times[s.net_count++] = now;
+            else {
+                for (unsigned i = 1; i < 8; ++i) s.net_times[i - 1] = s.net_times[i];
+                s.net_times[7] = now;
+            }
+            if (RecentNetLeaves(s, now, p.flap_window_ms) > p.flap_leaves) s.flap = true;
+        } else {
+            ++s.fallbacks;
+            ++s.hard_leaves;
+        }
         s.ready = false;
         s.enter_step = 0;
     };
@@ -142,7 +185,19 @@ Out Step(State& s, const In& in, const Params& p) noexcept {
             break;
         }
         const char* blocker = EnterBlocker(s, in, p);
-        if (!blocker && s.left && now - s.left_ms < p.cooldown_ms) blocker = "cooldown";
+        const std::uint32_t cooldown = p.online && s.left_net ? p.net_cooldown_ms : p.cooldown_ms;
+        if (!blocker && s.left && now - s.left_ms < cooldown) blocker = "cooldown";
+        // Online: after a network leave the link quality must hold first; a
+        // flapping link keeps the clips until it held much longer.
+        if (!blocker && p.online && s.flap) {
+            if (in.quality_good_ms >= p.flap_good_ms) {
+                s.flap = false;
+                s.net_count = 0;
+            } else {
+                blocker = "net_flap";
+            }
+        }
+        if (!blocker && p.online && s.left_net && in.quality_good_ms < p.quality_ms) blocker = "net_quality";
         if (blocker) {
             s.ready = false;
             s.reason = blocker;
@@ -157,6 +212,7 @@ Out Step(State& s, const In& in, const Params& p) noexcept {
             break;
         }
         go(Mode::entering, "ok");
+        if (s.left_net) ++s.net_reentries;
         s.enter_step = 0;
         s.step_since_ms = now;
         [[fallthrough]];
@@ -197,17 +253,34 @@ Out Step(State& s, const In& in, const Params& p) noexcept {
         if (in.snaps_10s >= p.diverging_snaps) { leave("diverging"); break; }
         if (in.runaway_ms > p.runaway_ms) { leave("runaway"); break; }
         const bool stale = !in.input_valid || in.input_age_ms > p.input_age_ms;
-        if (stale) {
-            if (!s.stale) { s.stale = true; s.stale_since_ms = now; }
-            if (now - s.stale_since_ms >= p.stale_hold_ms) { leave("input_stale"); break; }
+        // Online: a quiet remote (paused, loading) holds the body neutral in
+        // place (the window injects a neutral pad) for up to quiet_hold_ms.
+        if (p.online && stale && in.remote_quiet && in.link_live) {
+            if (!s.quiet) {
+                s.quiet = true;
+                s.quiet_since_ms = now;
+                ++s.quiet_episodes;
+            }
+            s.reason = "remote_quiet";
+            s.stale = s.link_down = false;
+            if (now - s.quiet_since_ms >= p.quiet_hold_ms) { leave("net_quiet"); break; }
         } else {
-            s.stale = false;
-        }
-        if (!in.link_live) {
-            if (!s.link_down) { s.link_down = true; s.link_since_ms = now; }
-            if (now - s.link_since_ms >= p.link_hold_ms) { leave("link"); break; }
-        } else {
-            s.link_down = false;
+            if (s.quiet) {
+                s.quiet = false;
+                s.reason = "ok";
+            }
+            if (stale) {
+                if (!s.stale) { s.stale = true; s.stale_since_ms = now; }
+                if (now - s.stale_since_ms >= p.stale_hold_ms) { leave(p.online ? "net_input" : "input_stale"); break; }
+            } else {
+                s.stale = false;
+            }
+            if (!in.link_live) {
+                if (!s.link_down) { s.link_down = true; s.link_since_ms = now; }
+                if (now - s.link_since_ms >= p.link_hold_ms) { leave(p.online ? "net_link" : "link"); break; }
+            } else {
+                s.link_down = false;
+            }
         }
         s.win_w50 += in.w50_b1_s0;
         s.win_deferred += in.deferred;
@@ -262,7 +335,7 @@ DriveSettings Effective(const DriveSettings& base, bool active, const NativeConf
     e.dm = PartnerDm::off;
     e.anim = PartnerAnim::off;
     e.wrap = PartnerWrap::window;
-    e.hold = PartnerInputHold::own;
+    e.hold = config.hold_net ? PartnerInputHold::net : PartnerInputHold::own;
     e.words[0] = kPartnerWordHeld;
     e.words[1] = kPartnerWordPress;
     e.words[2] = kPartnerWordRelease;

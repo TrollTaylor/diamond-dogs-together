@@ -84,7 +84,7 @@ bool SavesRedirected() noexcept { return g_saves_redirected != 0; }
 void set_saves_redirected_for_test(bool value) noexcept { g_saves_redirected = value ? 1 : 0; }
 
 bool format_play_line(std::uint32_t refused, bool loopback, bool mutex_renamed, bool saves_redirected, char* out,
-                      std::size_t capacity) noexcept {
+                      std::size_t capacity, bool rehearsal) noexcept {
     if (!out || !capacity) return false;
     // "play=1; loopback=0; mutex=unchanged; refused=0x" + up to 8 hex digits + "; saves=redirected\r\n".
     const char* parts[] = {"play=1; loopback=", loopback ? "1" : "0", "; mutex=", mutex_renamed ? "renamed" : "unchanged",
@@ -109,7 +109,8 @@ bool format_play_line(std::uint32_t refused, bool loopback, bool mutex_renamed, 
     } while (value && digits < 8);
     char ordered[9]{};
     for (std::size_t i = 0; i < digits; ++i) ordered[i] = hex[digits - 1 - i];
-    if (!put(ordered) || !put("; saves=") || !put(saves_redirected ? "redirected" : "unchanged") || !put("\r\n")) {
+    if (!put(ordered) || !put("; saves=") || !put(saves_redirected ? "redirected" : "unchanged") ||
+        (rehearsal && !put("; rehearsal=1")) || !put("\r\n")) {
         out[0] = 0;
         return false;
     }
@@ -549,7 +550,8 @@ void InstallEarlyLabPatches() noexcept {
         // Two-PC play (lab.ini mode=play): the refusals and the save result
         // the launcher checks before trusting the session.
         if (lab.mode == LabMode::play &&
-            format_play_line(lab.play_refused, lab.loopback, iso.second_instance, iso.saves_ok, line, ARRAYSIZE(line)))
+            format_play_line(lab.play_refused, lab.loopback, iso.second_instance, iso.saves_ok, line, ARRAYSIZE(line),
+                             lab.play_rehearsal))
             log_line(line);
     }
 

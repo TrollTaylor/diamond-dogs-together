@@ -26,6 +26,12 @@ What it changes, only while the game runs (all in <game>\mgs-coop):
   cleans up when MGSV exits (or right away when the game never started).
   The next Play-Coop, Install-Coop and Uninstall-Coop also clean up leftovers.
 
+The other player's body (docs/two-pc-play.md "Native partner"): -Partner native
+(the default) moves it with the game's own movement, aiming, reloading and
+(visual-only) firing from the other player's controls, and falls back to
+animation clips by itself when the network or this PC cannot keep up;
+-Partner clips always uses the clips. The status line shows which one runs.
+
 While co-op is active the game uses the save COPY in mgs-coop\coop-saves and
 plays offline ("Failed to log in" is expected; Konami's servers are never
 contacted). The partner body supports Mother Base and Afghanistan/Africa free roam.
@@ -36,7 +42,7 @@ the end), a Windows Firewall rule (administrator prompt). Nothing else
 contacts the network, and nothing changes firewall or router settings
 without a "y". The online flow has none of these steps.
 
-  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Play-Coop.ps1 [-GameDirectory <MGSV folder>] [-Role Host|Join] [-Transport steam|udp] [-Code <MGS2 code>] [-Port 47830] [-HostAddress <ip or name>] [-World 0..3]
+  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Play-Coop.ps1 [-GameDirectory <MGSV folder>] [-Role Host|Join] [-Transport steam|udp] [-Code <MGS2 code>] [-Port 47830] [-HostAddress <ip or name>] [-World 0..3] [-Partner native|clips]
   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Play-Coop.ps1 -Cleanup
 #>
 [CmdletBinding()]
@@ -56,6 +62,10 @@ param(
     # 1 plumbing, 2 shared enemies and alert in free roam, 3 also clock and
     # weather and host travel/recovery. The effective level is the lower one.
     [ValidateRange(0, 3)][int]$World = 3,
+    # The partner body: native (default; the game's own movement and gun
+    # systems driven by the other player's controls, clips as the automatic
+    # fallback) or clips (the animation clips only).
+    [ValidateSet('native', 'clips')][string]$Partner = 'native',
     # Remove the files of an earlier session that did not end cleanly, then exit.
     [switch]$Cleanup,
     # Internal: the hidden watchdog started by this script (value: the session id).
@@ -471,10 +481,15 @@ try {
         Write-Host "World sync level $World (experimental): shared enemies/alert in free roam (2+), clock and weather (3)."
         Write-Host 'Shared world is on by default; -World 0 opts out. The lower level applies. Co-op save copies only.'
     }
-    if ($Transport -eq 'steam') {
-        $labText = New-CoopPlayLabIniText -Role $labRole -SaveDir $saveDir -World $World -Transport steam -SteamSelf $steamSelf -SteamPeer $steamPeer -SteamWait:$steamWait
+    if ($Partner -eq 'native') {
+        Write-Host 'Partner: native (the other player''s own movement, aiming and reloading; clips are the automatic fallback). -Partner clips turns it off.'
     } else {
-        $labText = New-CoopPlayLabIniText -Role $labRole -SaveDir $saveDir -Port $Port -PeerAddress $peerAddress -World $World
+        Write-Host 'Partner: animation clips only (-Partner clips).'
+    }
+    if ($Transport -eq 'steam') {
+        $labText = New-CoopPlayLabIniText -Role $labRole -SaveDir $saveDir -World $World -Transport steam -SteamSelf $steamSelf -SteamPeer $steamPeer -SteamWait:$steamWait -Partner $Partner
+    } else {
+        $labText = New-CoopPlayLabIniText -Role $labRole -SaveDir $saveDir -Port $Port -PeerAddress $peerAddress -World $World -Partner $Partner
     }
     $coopText = New-CoopPlayCoopIniText -Character $character
     $utf8 = New-Object Text.UTF8Encoding $false

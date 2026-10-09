@@ -6,6 +6,7 @@
 #include <cstring>
 #include "mgscoop/lab_config.hpp"
 #include "mgscoop/partner_native.hpp"
+#include "mgscoop/partner_native_net.hpp"
 #include "mgscoop/partner_recon.hpp"
 #include "mgscoop/steam_online_state.hpp"
 
@@ -74,6 +75,13 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
     j.String(n.reason,sizeof(n.reason));
     j.Add(",\"left_reason\":");j.String(n.left_reason,sizeof(n.left_reason));
     j.Add(",\"since_ms\":%llu,\"fallbacks\":%u,\"latched\":%s",static_cast<unsigned long long>(n.since_ms),n.fallbacks,Bool(n.latched));
+    // Online play (docs/native-puppet.md "Online"): policy, link quality, leaves and the capability exchange.
+    // Written in place (no stack copy): null only when the document is full.
+    j.Add(",\"net\":");
+    if(j.ok) {
+        const std::size_t size=partner_native_net::FormatNetJson(n.net,j.bytes+j.used,j.limit-j.used);
+        if(size) j.used+=size; else j.Add("null");
+    }
     // Phase-1 detour (rates per second) and the last windowed drain.
     j.Add(",\"p1\":{\"installed\":%s,\"live\":%s,\"per_s\":",Bool(n.p1_installed),Bool(n.p1_live));
     if(!n.per_s_valid) j.Add("null");
@@ -155,7 +163,8 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
         n.noise_passed);
     j.Add(",\"weapon\":{\"kb_remote\":%s,\"remote_gun_equip\":",Bool(n.kb_remote));i32(n.remote_gun_equip);
     j.Add(",\"remote_gun_base\":");i32(n.remote_gun_base);
-    j.Add(",\"mismatch\":%s,\"strip\":%u}",Bool(n.weapon_mismatch),n.strip_bits);
+    j.Add(",\"mismatch\":%s,\"strip\":%u,\"absent\":%s,\"leak_strip\":%u}",Bool(n.weapon_mismatch),n.strip_bits,Bool(n.weapon_absent),
+        n.leak_strip);
     j.Add(",\"trigger\":{\"requested\":%u,\"shot_drains\":%u,\"fire_modes\":%u}",n.fire_requested,n.fire_shot_drains,n.fire_modes);
     // Facing (partner_recon governor) and the look (D3).
     j.Add(",\"facing\":{\"setting\":");j.String(n.face_setting,sizeof(n.face_setting));

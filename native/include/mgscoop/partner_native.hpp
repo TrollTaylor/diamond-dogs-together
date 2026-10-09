@@ -25,6 +25,7 @@
 #include <climits>
 #include <cstdint>
 #include "mgscoop/lab_config.hpp"
+#include "mgscoop/partner_native_net.hpp"
 
 namespace mgscoop::partner_native {
 
@@ -49,7 +50,27 @@ struct Params {
     std::uint32_t cost_windows = 3;         // consecutive windows over cost_us
     std::uint32_t latch_fallbacks = 3;      // per mission
     std::uint32_t min_batches = 120;        // thread_ok needs this many observed batches
+    // Online policy (partner_native_net=online; docs/native-puppet.md
+    // "Online"). Network reasons (net_input, net_link, net_quiet, and
+    // range_hidden / unrealized: the partner streamed out) leave without
+    // counting toward the latch; re-entry after one waits net_cooldown_ms and
+    // then for the link quality to hold quality_ms. A quiet remote (link up,
+    // its input and poses stale: paused or loading) keeps the body neutral in
+    // place for up to quiet_hold_ms. More than flap_leaves network leaves in
+    // flap_window_ms keep the clips until the quality held flap_good_ms.
+    bool online = false;
+    std::uint32_t net_cooldown_ms = 2000;
+    std::uint32_t quality_ms = 2000;
+    std::uint32_t quiet_hold_ms = 10000;
+    std::uint32_t flap_leaves = 6;
+    std::uint32_t flap_window_ms = 300000;
+    std::uint32_t flap_good_ms = 30000;
 };
+// The online policy's thresholds: Params{} plus online, and the input-stale
+// and link-down holds at 1500 ms.
+Params OnlineParams() noexcept;
+// Whether `reason` is a network reason under the online policy (no latch).
+bool NetReason(const char* reason) noexcept;
 
 // One driver tick. Counters are deltas since the previous Step.
 struct In {
@@ -82,6 +103,13 @@ struct In {
     std::uint32_t drain_us_max;   // max since the previous Step
     std::uint32_t snaps_10s;      // reconciliation snaps in the last 10 s
     std::uint32_t runaway_ms;     // how long the runaway condition has held (0 = not)
+    // Online policy: the link is up but the remote's input and poses are
+    // stale; how long the link quality has been good
+    // (partner_native_net::GoodMs); the remote's capabilities say it sends
+    // no input frames (never entering: remote_caps).
+    bool remote_quiet;
+    std::uint32_t quality_good_ms;
+    bool remote_caps_refused;
 };
 
 struct Out {
@@ -117,6 +145,15 @@ struct State {
     std::uint32_t win_w50, win_deferred, win_drains, win_windowed, win_us_max;
     std::uint32_t windows_done, health_bad, cost_bad;
     bool dm_latch;                  // a failed DM revert latched native off for the mission
+    // Online policy (Params::online).
+    bool left_net;                  // the last leaving was a network reason
+    bool quiet;                     // active: the remote is quiet since quiet_since_ms
+    std::uint64_t quiet_since_ms;
+    bool flap;                      // too many network leaves: clips until the quality holds
+    std::uint64_t net_times[8];     // the most recent network leaves (flap guard)
+    std::uint8_t net_count;
+    std::uint32_t net_leaves, hard_leaves, net_reentries, quiet_episodes;
+    const char* last_net_reason;    // static; nullptr before any
 };
 
 // MissionStart: fallback (configured) or off; per-mission counters cleared.
@@ -143,10 +180,13 @@ struct DriveSettings {
 struct NativeConfig {
     bool gun, fire;
     PartnerNativeAim aim;
+    // partner_native_hold=net: the hold classifier answers from the sender's
+    // 12-frame words (frame-rate free) instead of the receiver's own history.
+    bool hold_net = false;
 };
-// active: apply=input, input=net, dm=off, anim=off, wrap=window, hold=own,
-// words=hpr, cam=sandbox, recon=track, slot=body, p218 off, mask =
-// NativeMask(base.mask); otherwise base unchanged.
+// active: apply=input, input=net, dm=off, anim=off, wrap=window, hold=own
+// (net with config.hold_net), words=hpr, cam=sandbox, recon=track,
+// slot=body, p218 off, mask = NativeMask(base.mask); otherwise base unchanged.
 DriveSettings Effective(const DriveSettings& base, bool active, const NativeConfig& config) noexcept;
 // configured & PartnerNativeAllowed(gun, fire): FIRE never without gun.
 std::uint32_t NativeMask(std::uint32_t configured, bool gun, bool fire) noexcept;
@@ -294,6 +334,9 @@ struct Telemetry {
     std::uint64_t since_ms;
     std::uint32_t fallbacks;
     bool latched;
+    // Online play (docs/native-puppet.md "Online"): the network policy, link
+    // quality, network/hard leaves and the capability exchange ("native.net").
+    partner_native_net::NetTelemetry net;
     // Phase-1 detour (per second, per_s_valid) and the last windowed drain
     // (partner_input_hook::NativeStats).
     bool p1_installed, p1_live;
@@ -416,6 +459,11 @@ struct Telemetry {
     std::int32_t remote_gun_base;     // as a stock id (the received manifest maps an alias); kNull without
     bool weapon_mismatch;
     std::uint32_t strip_bits;
+    // Online play (docs/native-puppet.md "Online"): body 1 never showed a gun
+    // class this mission under the gun profile (HOLD, RELOAD, FIRE stripped),
+    // and the process-wide play leak strip (FIRE | RELOAD after a shot or ammo leak; 0 none).
+    bool weapon_absent;
+    std::uint32_t leak_strip;
     // The partner's trigger after each windowed drain (process totals):
     // shots it requested (rec+0x3C0 bit 24, summed over rec+0x3DF), drains
     // that requested one, and drains that left the gun in a fire mode

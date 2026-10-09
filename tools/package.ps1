@@ -18,9 +18,16 @@ param(
     # Stage the two-PC play package (friend package).
     [switch]$Friend,
     # Package this loader instead of building one (tests). Default: the
-    # tools/build.ps1 -BuildOnly -DisableLocalExperiments output build/native/dinput8.dll.
-    # A supplied loader is packaged as-is; its experiment settings are not inferred.
+    # local package builds tools/build.ps1 -BuildOnly -DisableLocalExperiments
+    # into build/package-loader (never build/native, the lab's research loader);
+    # -Friend packages the loader of a passing Invoke-WorkerChecks -Profile
+    # Release receipt (the stock46 gun pieces, worker OFF; docs/two-pc-play.md
+    # "Release build"). A supplied loader is packaged as-is; its experiment
+    # settings are not inferred.
     [string]$LoaderPath,
+    # -Friend: an existing passing Release receipt (build\worker-runs\<run>\receipt.json);
+    # default: run the Release checks now.
+    [string]$CheckReceipt,
     # Output folder (default: <repo>/dist). Tests use a fixture folder.
     [string]$OutputRoot
 )
@@ -28,7 +35,16 @@ $ErrorActionPreference='Stop'
 $projectRoot=Split-Path -Parent $PSScriptRoot
 $version='0.11.1'
 $archiveSha256='87BBE82BB1E907CF405200155DA2794BF7E1F5A3D45BF66426A38CDD31A91F96'
-$dll=Join-Path $projectRoot 'build/native/dinput8.dll'
+$dll=Join-Path $projectRoot 'build/package-loader/dinput8.dll'
+# Provenance (package.json "build"): how the loader was made.
+$buildInfo=[ordered]@{source='package_build';profile='Normal';flags=$null;receipt=$null;receipt_sha256=$null;audited_tests=$null}
+$releaseFlags=[ordered]@{}
+foreach($name in @('MGS_LOCAL_GUN_PRELOAD_TEST','MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST',
+        'MGS_LOCAL_STOCK46_AMMO_TEST','MGS_LOCAL_ACTION_EVENTS','MGS_LOCAL_UPPER_END_OBSERVE','MGS_LOCAL_UPPER_PHASE_OBSERVE',
+        'MGS_LOCAL_UPPER_MANUAL_IDLE','MGS_LOCAL_UPPER_PROBE','MGS_LOCAL_UPPER_CHANNEL2','MGS_LOCAL_UPPER_FIRE_ZERO_BLEND')) {
+    $releaseFlags[$name]=if($name -in @('MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST')){'ON'}else{'OFF'}
+}
+$releaseFlags['MGS_BACKGROUND_WORKER']='OFF'
 if($RuntimeArchive) {
     $archive=(Resolve-Path -LiteralPath $RuntimeArchive).Path
     if(!(Test-Path -LiteralPath $archive -PathType Leaf)) { throw "Local runtime archive not found: $archive" }
@@ -38,8 +54,37 @@ if($RuntimeArchive) {
 if($LoaderPath) {
     $dll=(Resolve-Path -LiteralPath $LoaderPath).Path
     Write-Output "Packaging the existing loader $dll (no build)."
+    $loaderSource='supplied'
+} elseif($Friend) {
+    # The friend loader: a passing Release receipt for exactly this loader hash.
+    if(!$CheckReceipt) {
+        $checkOutput=@(& (Join-Path $PSScriptRoot 'worker\Invoke-WorkerChecks.ps1') -Profile Release 2>&1 | ForEach-Object { [string]$_ })
+        $CheckReceipt=@($checkOutput | Select-String -Pattern 'Worker check receipt: (.+receipt\.json)' | ForEach-Object { $_.Matches[0].Groups[1].Value })[-1]
+        if(!$CheckReceipt) { throw "The Release checks produced no receipt:`n$($checkOutput -join "`n")" }
+    }
+    $receiptPath=(Resolve-Path -LiteralPath $CheckReceipt).Path
+    $receipt=Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json -AsHashtable
+    if($receipt.schema -ne 1 -or $receipt.status -cne 'passed' -or $receipt.plan.profile -cne 'Release') { throw "Not a passing Release receipt: $receiptPath" }
+    foreach($name in $releaseFlags.Keys) {
+        if([string]$receipt.plan.flags[$name] -cne $releaseFlags[$name]) { throw "The Release receipt's $name is not $($releaseFlags[$name])." }
+    }
+    if($receipt.plan.flags.Count -ne $releaseFlags.Count) { throw 'The Release receipt names other build options.' }
+    # The receipt's immutable copy of the checked loader.
+    $dll=Join-Path (Split-Path -Parent $receiptPath) 'dinput8.dll'
+    if((Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash -ine [string]$receipt.artifacts.loader_sha256) { throw 'The receipt loader changed since its checks.' }
+    $loaderSource='release_receipt'
+    Write-Output "Packaging the Release loader of $receiptPath."
 } else {
-    & (Join-Path $PSScriptRoot 'build.ps1') -Configuration Release -BuildOnly -DisableLocalExperiments
+    & (Join-Path $PSScriptRoot 'build.ps1') -Configuration Release -BuildOnly -DisableLocalExperiments -BuildDirectory 'build\package-loader'
+    $loaderSource='package_build'
+}
+# Provenance (package.json "build"): how the loader was made.
+$buildInfo.source=$loaderSource
+if($loaderSource -ceq 'supplied') { $buildInfo.profile='unknown' }
+if($loaderSource -ceq 'release_receipt') {
+    $buildInfo.profile='Release';$buildInfo.flags=$receipt.plan.flags
+    $buildInfo.receipt=[IO.Path]::GetRelativePath($projectRoot,$receiptPath);$buildInfo.receipt_sha256=(Get-FileHash -LiteralPath $receiptPath -Algorithm SHA256).Hash
+    $buildInfo.audited_tests=@($receipt.plan.tests).Count
 }
 $stamp=[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')+'-'+[Guid]::NewGuid().ToString('N').Substring(0,8)
 $distRoot=if($OutputRoot) { [IO.Path]::GetFullPath($OutputRoot) } else { Join-Path $projectRoot 'dist' }
@@ -67,6 +112,16 @@ $scope=if($Friend) {
 } else {
     'Local development package. Contains no game-derived files; the runtime archive is generated or copied locally. Two-player gameplay remains unverified.'
 }
+# Provenance: the source commit and whether the working tree differed from it.
+$buildInfo.loader_sha256=(Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash
+$buildInfo.source_commit=$null;$buildInfo.source_dirty=$null
+try {
+    $commit=@(& git -C $projectRoot rev-parse HEAD 2>$null)
+    if($LASTEXITCODE -eq 0 -and $commit.Count -eq 1 -and $commit[0] -match '^[0-9a-f]{40}$') {
+        $buildInfo.source_commit=$commit[0]
+        $buildInfo.source_dirty=@(& git -C $projectRoot status --porcelain --untracked-files=no 2>$null).Count -gt 0
+    }
+} catch { $buildInfo.source_commit=$null }
 $manifest=[ordered]@{
     product='mgs-coop-local-package';version=$version;prepared_utc=[DateTime]::UtcNow.ToString('o')
     executable_sha256='085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45'
@@ -74,6 +129,7 @@ $manifest=[ordered]@{
     files=$files
     runtime_archive=[ordered]@{target='mgs-coop/mgs-coop-player-runtime.dat';sha256=$archiveSha256}
     scope=$scope
+    build=$buildInfo
 }
 if($Friend) { $manifest['flavor']='friend-play' }
 [IO.File]::WriteAllText((Join-Path $packageRoot 'package.json'),($manifest | ConvertTo-Json -Depth 5)+"`n",[Text.UTF8Encoding]::new($false))

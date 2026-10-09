@@ -136,6 +136,9 @@ net_bind=any
 net_listen_port=47830
 partner_interp=auto
 <Get-PlayPartnerDefaults: Play-OfflineCoop's effective dm=map partner keys under the shipped lab.json>
+partner_input_send=1
+partner_native_profile=gun          (Play-Coop -Partner native, the default; absent with -Partner clips)
+world=3
 ```
 
 Never written in play: `loopback`, `self_steamid`, `peer_steamid`,
@@ -221,6 +224,8 @@ net_transport=steam
 net_steam_self=<this PC's SteamID64>
 partner_interp=auto
 <Get-PlayPartnerDefaults>
+partner_input_send=1
+partner_native_profile=gun
 world=3
 ```
 
@@ -230,6 +235,106 @@ route (relay/direct) and RTT and the partner's persona name. The host has
 "Invite a friend" list (friends playing MGSV first; `InviteUserToGame` at most
 once per friend per 10 s); the guest has a code box and "Join". The UI only
 posts requests; the loader's owner context makes the Steam calls.
+
+## Native partner
+
+Play runs the native partner by default on both PCs ([native-puppet.md](native-puppet.md)
+"Online"): the other player's body is moved by the game's own locomotion,
+action and gun systems from that player's pad (input frames v4), with the
+proven dm=map + xform clip partner as the automatic fallback.
+
+- **lab.ini**: Play-Coop writes `partner_input_send=1` (every copy sends its
+  input frames, so the other PC can run its native partner whatever this one
+  shows) and, with `-Partner native` (default), `partner_native_profile=gun`.
+  The loader expands the profile to exactly the gun stage the hidden worker
+  qualified (`Get-WorkerPartnerSettings -NativeStage gun`: native drive,
+  deferral on, mask 0x224005E, visual fire, look, rates mirror, ...); the raw
+  native keys stay play refusals (0x20000, also lookcam, local=all, the P+0x218
+  window and noise=keep), and a profile without the dm=map + xform base is
+  refused (0x800000). `-Partner clips` writes no profile.
+- **Play defaults** (keys not named): `partner_native_net=online`,
+  `partner_native_stall=hold` (400 ms), `partner_input_edge_repeats=5`. Allowed
+  variants in play: `partner_native_net`, `partner_native_stall`,
+  `partner_native_stall_ms`, `partner_native_hold`, `partner_input_edge_repeats`,
+  `partner_native_face`, `partner_native_aim=looksrc`.
+- **Automatic fallback** (logged as `partner_native=<mode>; reason=..`,
+  `partner_native_net; ...` at 1 Hz, `partner_native_net=quiet|resume`):
+
+  | Cause | Behaviour |
+  |---|---|
+  | Lazy-install mismatch (`install_*`) | clips for the process |
+  | `thread`, `hook_lost`, `faulted`, `drain_block`, `wrap_in_batch`, `unwindowed`, `health`, `cost`, `runaway`, `diverging` | hard fallback; 3 per mission latch the mission |
+  | Input stalled (`net_input`), link down (`net_link`), range hidden, unrealized | network fallback: never counted, re-entry after 2 s and 2 s of good link quality |
+  | The other player paused or loading (`remote_quiet`) | the body waits neutral in place up to 10 s, then `net_quiet` (not counted) |
+  | More than 6 network fallbacks in 5 min | `net_flap`: clips until the link was good for 30 s |
+  | The other game sends no input frames | `remote_caps`: clips |
+- **Capability exchange**: each copy sends a 16-byte message on reliable
+  channel 2 (how it shows the partner, its profile and policy, whether it
+  sends input frames). link-status.json carries `partner_drive`,
+  `partner_reason`, `remote_drive` and `remote_reason`; Play-Coop's status line
+  shows `partner=... native; you on the other PC: native`, or `clips (<sentence>)`.
+- **Gun pieces**: the release loader carries the stock46 gun pieces (offline
+  equipment groups, the stock46 preload and writer) and runs them only for a
+  configured native gun profile (lab.ini `partner_drive=native` with
+  `partner_native_gun=1` after the profile expansion): a `-Partner clips`
+  game never touches the equipment. They act in Afghanistan free roam (30010)
+  only; elsewhere body 1 has no gun and the gun profile strips HOLD, RELOAD and
+  FIRE (`partner_weapon=absent; body_gun=absent`), so the partner never aims
+  empty-handed. Safety argument as in the lab: play takes the same
+  offline-v1 branch with redirected saves (it refuses to run otherwise), the
+  pieces write only instance 1's runtime equipment and the mission block
+  cache, and the writer's readback asserts instance 0 unchanged. Play's
+  co-op saves persist, so any leak of instance 1's job into the viewer's
+  vars (`leak.shot_leaks`, `leak.ammo_leaks`, `mag.leak_off`) strips FIRE and
+  RELOAD for the rest of the process
+  (`partner_weapon=fire_reload_off; reason=shot_leak|ammo_leak`,
+  state.json `native.weapon.leak_strip` 80). The
+  weapons track's generalized writer is not on this branch; when it lands its
+  runtime gate follows the same rule.
+
+## Release build
+
+`tools/build.ps1 -ReleaseGun` configures every local experiment OFF except
+the three stock46 gun pieces and the background worker OFF;
+`tools/worker/Invoke-WorkerChecks.ps1 -Profile Release` builds and checks that
+loader in its own cache (`build\worker-checks\release-worker-off-release`).
+`tools/package.ps1 -Friend` packages only the loader of a passing Release
+receipt (`-CheckReceipt <receipt.json>`, or it runs the Release checks): the
+receipt's flags must be exactly that set and the receipt's loader copy must
+still have the checked hash. package.json `build` records the source (the
+receipt, its SHA-256, the profile, the flags, the audited test count), the
+loader SHA-256 and the source commit with a dirty flag. The local
+(non-friend) package builds into `build\package-loader`, never `build\native`
+(the lab's research loader).
+
+## Hidden play rehearsal
+
+The coordinator can run real `mode=play` on both copies of one PC in the
+hidden worker (UDP on 127.0.0.1; Steam itself cannot be tested between two
+processes of one account):
+
+    pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -ScenarioPath tools/worker/scenarios/play-native.txt
+
+- Start-WorkerSession writes Play-Coop's own UDP play lab.ini
+  (`New-CoopPlayLabIniText -Partner clips` plus the worker profile line)
+  moved onto 127.0.0.1 (host listens on 47830, guest on 47831) with
+  `play_rehearsal=1`, `xinput=none`, the worker's `mutex_suffix` and save
+  copy, the `-WanSim` preset and allow-listed `-LabSetting` keys, a fresh
+  random `link-secret.txt` in both copies, no `client-host.txt`, the real
+  identity in both copies and no networking gate.
+- `play_rehearsal=1` relaxes exactly the loopback bind and 127/8 peer, the
+  mutex suffix, `xinput=none` and the impairment keys, and only in a
+  background-worker build (`LabParseOptions`, `MGS_PLAY_REHEARSAL` on the core
+  library); every other build refuses it (0x400000), so a friend DLL is never
+  relaxed. The early.log play line gains `; rehearsal=1`.
+- The launch manifest carries `lab_mode=play`; the supervisor admits it with
+  `PlayRehearsal` (tools/worker/worker_game_gate.hpp: nothing refused or
+  invalid, no loopback emulator, no fake identity, UDP on 127.0.0.1, the
+  copied save, the clip partner or an admitted native stage through the
+  profile). The startup verdict is `Get-WorkerPlaySafetyVerdict`.
+- `-WanSim off|good|bad|awful` works in both modes; `-LabSetting` adds
+  `partner_native_net`, `partner_native_stall`, `partner_native_hold` and
+  `partner_input_edge_repeats` (identical allow-list in both scripts).
 
 ## Join code
 
@@ -273,6 +378,12 @@ user name.
   `-PartnerSetting net_link=legacy` selects the raw-frame link for bisecting.
 
 ## Open points for the live tests
+
+Native partner (two PCs): native active on both PCs within ~6 s of meeting;
+three ESC pauses and a Wi-Fi drop without a latch; prone/crouch taps at
+different frame rates (A/B `partner_native_hold=own|net` through lab.ini);
+a gamepad on each side (never used at runtime so far); each friend's
+`thread` and `cost` census through Collect-Logs.
 
 Online (Steam): every item of [steam-online.md](steam-online.md) section 15
 (code join between non-friends through the 2015 steam_api dispatcher, the

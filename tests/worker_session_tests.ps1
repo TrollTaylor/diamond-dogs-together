@@ -124,6 +124,87 @@ Assert-True (Test-WorkerPreparedConfigText 'script-observe.enabled' "offline-v1`
 Assert-True (!(Test-WorkerPreparedConfigText 'script-observe.enabled' "offline-v1`r`n" 'host' $steam $url @())) 'CRLF marker refused'
 Assert-True (Test-WorkerPreparedConfigText 'client-host.txt' ($steam+"`n") 'guest' $steam $url @()) 'owned guest client identity'
 Assert-True (!(Test-WorkerPreparedConfigText 'client-host.txt' ($steam+"`n") 'host' $steam $url @())) 'host client identity not adopted'
+# The -LabSetting allow-list (docs/native-puppet.md "Online"): one regex, identical in
+# Start-WorkerSession and Invoke-WorkerScenario, and the scenario "labsetting" line form.
+$labSettingPatterns=@(foreach($script in @((Join-Path $SourceDirectory 'Start-WorkerSession.ps1'),(Join-Path $RepoRoot 'tools\worker\Invoke-WorkerScenario.ps1'))){
+    $tokens=$null;$errors=$null
+    $scriptAst=[Management.Automation.Language.Parser]::ParseFile($script,[ref]$tokens,[ref]$errors)
+    $param=@($scriptAst.ParamBlock.Parameters|Where-Object{$_.Name.VariablePath.UserPath -ceq 'LabSetting'})
+    Assert-True ($param.Count -eq 1) ('one -LabSetting parameter in '+[IO.Path]::GetFileName($script))
+    $attribute=@($param[0].Attributes|Where-Object{$_.TypeName.Name -ceq 'ValidatePattern'})
+    Assert-True ($attribute.Count -eq 1) ('-LabSetting is pattern-validated in '+[IO.Path]::GetFileName($script))
+    $attribute[0].PositionalArguments[0].Value
+})
+Assert-True ($labSettingPatterns.Count -eq 2 -and $labSettingPatterns[0] -ceq $labSettingPatterns[1]) 'the -LabSetting allow-list is identical in both scripts'
+foreach($ok in @('partner_native_net=online','partner_native_net=lab','host:partner_native_stall=hold','partner_native_stall=neutral','guest:partner_native_hold=net',
+        'partner_native_hold=own','partner_input_edge_repeats=2','partner_input_edge_repeats=8','partner_native_aim=looksrc','steam_selftest=2','nametag=1')){
+    Assert-True ($ok -cmatch $labSettingPatterns[0]) ('allow-listed: '+$ok)
+}
+foreach($bad in @('partner_native_net=wan','partner_native_stall=keep','partner_native_hold=both','partner_input_edge_repeats=9','partner_input_edge_repeats=1',
+        'partner_native_profile=gun','play_rehearsal=1','partner_drive=native','net_latency_ms=100','other:partner_native_net=lab')){
+    Assert-True ($bad -cnotmatch $labSettingPatterns[0]) ('not allow-listed: '+$bad)
+}
+$scenarioSource=[IO.File]::ReadAllText((Join-Path $RepoRoot 'tools\worker\Invoke-WorkerScenario.ps1'))
+$scenarioLine=[regex]::Match($scenarioSource,"if\(\`$line -cnotmatch '(\^labsetting[^']+)'\)").Groups[1].Value
+Assert-True ([bool]$scenarioLine) 'the scenario labsetting line regex'
+foreach($ok in @('labsetting partner_native_net=online','labsetting host partner_native_stall=hold','labsetting guest partner_input_edge_repeats=5','labsetting partner_native_hold=net')){
+    Assert-True ($ok -cmatch $scenarioLine) ('scenario labsetting accepts: '+$ok)
+}
+Assert-True ('labsetting partner_native_net=wan' -cnotmatch $scenarioLine -and 'labsetting play_rehearsal=1' -cnotmatch $scenarioLine) 'scenario labsetting refuses other values'
+# The keys of the scenario form equal the parameter form (the same alternatives, ?: groups aside).
+$normalize={param($t) ($t -replace '\(\?:','(' -replace '^\^labsetting\\s\+\(\(host\|guest\)\\s\+\)\?','' -replace '^\^\(\(host\|guest\):\)\?','')}
+Assert-True ((& $normalize $scenarioLine) -ceq (& $normalize $labSettingPatterns[0])) 'scenario labsetting keys = -LabSetting keys'
+
+# The play rehearsal (docs/two-pc-play.md "Hidden play rehearsal").
+Assert-True (@(Get-WorkerPlayPartnerSettings 'animated').Count -eq 0) 'play rehearsal clips: no partner line (Play-Coop -Partner clips)'
+Assert-True ((@(Get-WorkerPlayPartnerSettings 'native' 'gun') -join ',') -ceq 'partner_native_profile=gun' -and
+    (@(Get-WorkerPlayPartnerSettings 'native') -join ',') -ceq 'partner_native_profile=loco') 'play rehearsal native: the profile key only'
+Assert-Throws {Get-WorkerPlayPartnerSettings 'native' 'census'} 'play rehearsal has no census stage'
+Assert-Throws {Get-WorkerPlayPartnerSettings 'input'} 'play rehearsal refuses the input profile'
+$playSave='C:\repo\build\worker-runtime\'+$id+'\host-saves'
+$playHostBase=New-CoopPlayLabIniText -Role host -SaveDir 'C:\Games\MGS_TPP\mgs-coop\coop-saves' -Partner clips
+$playGuestBase=New-CoopPlayLabIniText -Role guest -SaveDir 'C:\Games\MGS_TPP\mgs-coop\coop-saves' -PeerAddress '192.0.2.1' -Partner clips
+$playHost=ConvertTo-WorkerPlayLabIniText $playHostBase 'host' @('partner_native_profile=gun','net_latency_ms=60','partner_interp=auto','net_seed=1','partner_native_net=lab')
+$playGuest=ConvertTo-WorkerPlayLabIniText $playGuestBase 'guest' @('partner_native_profile=gun')
+$hostKeys=ConvertFrom-IniText $playHost;$guestKeys=ConvertFrom-IniText $playGuest
+Assert-True ((Test-CoopPlayGeneratedText $playHost) -and $hostKeys['mode'] -ceq 'play' -and $hostKeys['net_bind'] -ceq 'loopback' -and $hostKeys['net_listen_port'] -ceq '47830' -and
+    $hostKeys['net_peer_port'] -ceq '47831' -and $hostKeys['play_rehearsal'] -ceq '1' -and $hostKeys['xinput'] -ceq 'none' -and $hostKeys['partner_native_profile'] -ceq 'gun' -and
+    $hostKeys['net_latency_ms'] -ceq '60' -and $hostKeys['partner_native_net'] -ceq 'lab' -and $hostKeys['partner_input_send'] -ceq '1' -and
+    !$hostKeys.Contains('net_peer_addr') -and !$hostKeys.Contains('loopback') -and !$hostKeys.Contains('self_steamid')) 'play rehearsal host lab.ini'
+Assert-True ([regex]::Matches($playHost,'(?m)^partner_interp=').Count -eq 1) 'a key already in the play text is replaced, never duplicated'
+Assert-True ($guestKeys['net_bind'] -ceq 'loopback' -and $guestKeys['net_listen_port'] -ceq '47831' -and $guestKeys['net_peer_addr'] -ceq '127.0.0.1' -and
+    $guestKeys['net_peer_port'] -ceq '47830' -and $guestKeys['role'] -ceq 'guest' -and !$guestKeys.Contains('self_steamid')) 'play rehearsal guest lab.ini: 127.0.0.1, fixed ports, real identity'
+Assert-Throws {ConvertTo-WorkerPlayLabIniText $playHostBase 'host' @('self_steamid=76561202255233008')} 'the rehearsal never sets an identity key'
+Assert-Throws {ConvertTo-WorkerPlayLabIniText $playHostBase 'host' @('loopback=1')} 'the rehearsal never enables the loopback emulator'
+Assert-Throws {ConvertTo-WorkerPlayLabIniText ($ini) 'host' @()} 'the rehearsal starts only from the play text'
+Assert-Throws {ConvertTo-WorkerPlayLabIniText (New-CoopPlayLabIniText -Role host -SaveDir 'C:\x\saves' -Transport steam -SteamSelf $steam) 'host' @()} 'the rehearsal is UDP only'
+$owned=(Set-WorkerIniValue $playHost 'save_dir' $playSave)
+Assert-True (Test-WorkerPreparedConfigText 'lab.ini' $owned 'host' $steam $url @($playSave) 'play') 'partial owned play rehearsal output'
+Assert-True (!(Test-WorkerPreparedConfigText 'lab.ini' $owned 'host' $steam $url @($playSave))) 'the lab check never adopts a play lab.ini'
+Assert-True (!(Test-WorkerPreparedConfigText 'lab.ini' $owned 'guest' $steam $url @($playSave) 'play')) 'play rehearsal: foreign role'
+Assert-True (Test-WorkerPreparedConfigText 'link-secret.txt' ("7K3QZ9M2XWD4HT8RVN6B`r`n") 'host' $steam $url @() 'play') 'the rehearsal secret is owned output in play'
+Assert-True (!(Test-WorkerPreparedConfigText 'link-secret.txt' ("7K3QZ9M2XWD4HT8RVN6B`r`n") 'host' $steam $url @())) 'never a lab secret'
+Assert-True (!(Test-WorkerPreparedConfigText 'client-host.txt' ($steam+"`n") 'guest' $steam $url @() 'play')) 'play has no client-host.txt'
+# The play safety verdict from early.log / steam-observer.log.
+$playEarly="early=start; lab=1; role=guest`nsaves=redirected; dir=$playSave`nplay=1; loopback=0; mutex=renamed; refused=0x0; saves=redirected; rehearsal=1`nmutex=renamed; suffix=worker_guest_01234567`nidentity=real`n"
+$playSteam="master_server=redirected; reason=offline; url=$url`n"
+$verdict=Get-WorkerPlaySafetyVerdict -Role guest -EarlyLog $playEarly -SteamLog $playSteam -ExpectedSaveDir $playSave -ExpectedUrl $url -ExpectedMutexSuffix 'worker_guest_01234567'
+Assert-True ($verdict.State -ceq 'ok') ('play safety ok: '+$verdict.State+' '+$verdict.Reason+' '+($verdict.Missing -join ','))
+foreach($case in @(@('refused=0x0','refused=0x20000','play_refused'),@('; rehearsal=1','','not_a_rehearsal_build'),@('identity=real','identity=fake; steamid=1','identity_fake'),
+        @("saves=redirected; dir=$playSave","saves=redirected; dir=C:\Steam\userdata\7",'saves_wrong_dir'),@('loopback=0','loopback=1','loopback_emulator'),
+        @('suffix=worker_guest_01234567','suffix=other','mutex_wrong_suffix'),@('role=guest','role=host','role_mismatch'))){
+    $v=Get-WorkerPlaySafetyVerdict -Role guest -EarlyLog ($playEarly.Replace($case[0],$case[1])) -SteamLog $playSteam -ExpectedSaveDir $playSave -ExpectedUrl $url -ExpectedMutexSuffix 'worker_guest_01234567'
+    Assert-True ($v.State -ceq 'unsafe' -and $v.Reason -ceq $case[2]) ('play safety refuses '+$case[2]+' (got '+$v.State+' '+$v.Reason+')')
+}
+$v=Get-WorkerPlaySafetyVerdict -Role guest -EarlyLog "early=start; lab=1; role=guest`n" -SteamLog '' -ExpectedSaveDir $playSave -ExpectedUrl $url -ExpectedMutexSuffix 'x'
+Assert-True ($v.State -ceq 'pending' -and ($v.Missing -join ',') -ceq 'saves,play,mutex,master_server') 'play safety pending until every line arrived'
+$v=Get-WorkerPlaySafetyVerdict -Role guest -EarlyLog $playEarly -SteamLog "master_server=redirected; url=http://other/tppstm/gate`n" -ExpectedSaveDir $playSave -ExpectedUrl $url -ExpectedMutexSuffix 'worker_guest_01234567'
+Assert-True ($v.State -ceq 'unsafe' -and $v.Reason -ceq 'master_server_wrong_url') 'play safety: the closed-port master URL'
+$startPlay=[IO.File]::ReadAllText((Join-Path $SourceDirectory 'Start-WorkerSession.ps1'))
+Assert-True ($startPlay.Contains("if(`$Mode -ceq 'play'){`$manifest['lab_mode']='play'}") -and $startPlay.Contains('Get-WorkerPlaySafetyVerdict') -and
+    $startPlay.Contains('ConvertTo-WorkerPlayLabIniText') -and $startPlay.Contains("[ValidateSet('lab','play')][string]`$Mode='lab'") -and
+    $startPlay.Contains("[ValidateSet('off','good','bad','awful')][string]`$WanSim='off'")) 'Start-WorkerSession: -Mode play (PlayRehearsal manifest, play safety) and -WanSim'
+
 foreach($name in @('Start-WorkerSession.ps1','Stop-WorkerSession.ps1','WorkerSessionCommon.psm1')) {
     $path=Join-Path $SourceDirectory $name;$tokens=$null;$errors=$null
     $ast=[Management.Automation.Language.Parser]::ParseFile($path,[ref]$tokens,[ref]$errors)

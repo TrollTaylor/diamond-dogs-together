@@ -172,7 +172,7 @@ int main() {
         if(!check(doc.find("\"steer_err_mrad\":0,\"cam_diff_cdeg\":0")!=std::string::npos &&
                   doc.find("\"rings\":{\"on\":false,\"windows\":0,\"refused\":0,\"changed\":0,\"last\":\"\"}")!=std::string::npos &&
                   doc.find("\"noise\":{\"mode\":\"\",\"installed\":false,\"live\":false,\"dropped\":0,\"passed\":0}")!=std::string::npos &&
-                  doc.find("\"weapon\":{\"kb_remote\":false,\"remote_gun_equip\":0,\"remote_gun_base\":0,\"mismatch\":false,\"strip\":0}")!=std::string::npos &&
+                  doc.find("\"weapon\":{\"kb_remote\":false,\"remote_gun_equip\":0,\"remote_gun_base\":0,\"mismatch\":false,\"strip\":0,\"absent\":false,\"leak_strip\":0}")!=std::string::npos &&
                   doc.find("\"trigger\":{\"requested\":0,\"shot_drains\":0,\"fire_modes\":0}")!=std::string::npos &&
                   doc.find("\"store\":{\"writes\":0,\"refused\":0,\"last\":\"\"}}")!=std::string::npos &&
                   doc.find("\"facing\":{\"setting\":\"\",\"mode\":\"\",\"err_cdeg\":0,")!=std::string::npos &&
@@ -182,7 +182,7 @@ int main() {
         t.steer_err_mrad=t.cam_diff_cdeg=pn::kNull;t.mag_inj=t.mag_inj_cap=t.remote_gun_equip=t.remote_gun_base=pn::kNull;
         strcpy_s(t.face_setting,"idle");strcpy_s(t.face_mode,"contested");strcpy_s(t.face_reason,"lat\"ched");strcpy_s(t.look_src,"refused");
         strcpy_s(t.ring_last,"cap");strcpy_s(t.store_last,"y_vt");strcpy_s(t.noise_mode,"filter");
-        t.face_writes=7;t.face_contests=3;t.look_src_hits_s=120;t.kb_remote=true;t.weapon_mismatch=true;t.strip_bits=0x50;
+        t.face_writes=7;t.face_contests=3;t.look_src_hits_s=120;t.kb_remote=true;t.weapon_mismatch=true;t.strip_bits=0x50;t.weapon_absent=true;t.leak_strip=0x50;
         for(unsigned i=0;i<pn::kRing;++i){pn::RingEntry e{};e.body_yaw_cdeg=(i%2)?pn::kNull:-17999;e.face_err_cdeg=pn::kNull;pn::Push(t.ring,e);}
         const auto polish=NativeDocument(t,&n);
         if(!check(n>0 && n<12288 && ValidJson(polish)))return 1;
@@ -192,7 +192,7 @@ int main() {
                   polish.find("\"remote_cdeg\":[null,null],\"slot_cdeg\":[null,null],\"err_mdeg\":null}")!=std::string::npos &&
                   polish.find("\"steer_err_mrad\":null,\"cam_diff_cdeg\":null")!=std::string::npos &&
                   polish.find("\"inj\":null,\"inj_cap\":null,\"store\":{\"writes\":0,\"refused\":0,\"last\":\"y_vt\"}}")!=std::string::npos &&
-                  polish.find("\"weapon\":{\"kb_remote\":true,\"remote_gun_equip\":null,\"remote_gun_base\":null,\"mismatch\":true,\"strip\":80}")!=std::string::npos &&
+                  polish.find("\"weapon\":{\"kb_remote\":true,\"remote_gun_equip\":null,\"remote_gun_base\":null,\"mismatch\":true,\"strip\":80,\"absent\":true,\"leak_strip\":80}")!=std::string::npos &&
                   polish.find(",-17999,null]")!=std::string::npos && polish.find(",null,null]")!=std::string::npos))return 1;
         t.face_err_cdeg=t.face_target_cdeg=t.face_body_cdeg=t.face_rate_dps=0;t.place_yaw_err_mdeg=0;
         t.look_remote_cdeg[0]=t.look_remote_cdeg[1]=t.look_slot_cdeg[0]=t.look_slot_cdeg[1]=t.look_err_mdeg=0;
@@ -215,6 +215,30 @@ int main() {
         // Too small a buffer: nothing (never a truncated member).
         char small[64];
         if(!check(mgscoop::worker_debug::FormatNativeJson(t,small,sizeof(small))==0 && small[0]==0))return 1;
+    }
+    // Online play member native.net (docs/native-puppet.md "Online"): present and valid by default,
+    // and complete (never null) with every string at capacity and every counter at its maximum.
+    {
+        pn::Telemetry t{};
+        std::size_t n=0;
+        const auto doc=NativeDocument(t,&n);
+        if(!check(n>0 && ValidJson(doc) && doc.find(",\"net\":{\"policy\":\"\",\"stall\":\"\",\"stall_ms\":0,")!=std::string::npos &&
+                  doc.find("\"caps\":{\"rx\":false,\"sent\":0,")!=std::string::npos && doc.find("\"net\":null")==std::string::npos))return 1;
+        auto& net=t.net;
+        const auto fill=[](char* text,std::size_t capacity,char c){for(std::size_t i=0;i+1<capacity;++i)text[i]=c;text[capacity-1]=0;};
+        fill(net.policy,sizeof(net.policy),'p');fill(net.stall,sizeof(net.stall),'s');fill(net.hold,sizeof(net.hold),'h');
+        fill(net.last_net_reason,sizeof(net.last_net_reason),'r');fill(net.local_reason,sizeof(net.local_reason),'l');
+        fill(net.remote_reason,sizeof(net.remote_reason),'q');fill(net.remote_profile,sizeof(net.remote_profile),'f');
+        fill(net.remote_policy,sizeof(net.remote_policy),'o');
+        net.stall_ms=net.edge_repeats=net.quality_good_ms=net.gaps_100=net.gaps_250=net.gaps_1000=net.max_gap_ms=0xFFFFFFFFu;
+        net.ia_p50_ms=net.ia_p95_ms=net.net_leaves=net.hard_leaves=net.net_reentries=net.quiet_episodes=net.gap_snaps=0xFFFFFFFFu;
+        net.caps_sent=net.caps_received=net.caps_invalid=0xFFFFFFFFu;net.quality_good=net.remote_quiet=net.flap=net.caps_rx=true;
+        net.remote_v4=net.remote_caps_refused=true;net.local_drive=mgscoop::partner_native_net::Drive::native;
+        net.remote_drive=mgscoop::partner_native_net::Drive::clips;
+        const auto full=NativeDocument(t,&n);
+        if(!check(n>0 && ValidJson(full) && full.find("\"net\":null")==std::string::npos &&
+                  full.find("\"local_drive\":\"native\",\"local_reason\":\"lllllllllllllllllllllll\"")!=std::string::npos &&
+                  full.find("\"remote_v4\":true,\"refused\":true}}")!=std::string::npos))return 1;
     }
     // Partner name tag member (docs/partner-nametag.md): valid JSON in every shape
     // (defaults, Latin-1 and hostile names, nulls for non-finite values).

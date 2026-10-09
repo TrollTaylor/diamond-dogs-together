@@ -27,7 +27,7 @@ function Assert-Cache([string]$Expected, [string]$Directory = (Join-Path $fixtur
         Assert-True ($cache -match "(?m)^${name}:BOOL=$Expected`r?$") "$name is $Expected in the real fixture cache"
     }
 }
-function Invoke-FixtureBuild([switch]$Disable, [switch]$AllTargets, [switch]$FailConfigure, [string]$Directory) {
+function Invoke-FixtureBuild([switch]$Disable, [switch]$AllTargets, [switch]$FailConfigure, [string]$Directory, [switch]$Gun) {
     $calls = [Collections.Generic.List[object]]::new()
     function cmake {
         $nativeArguments = @($args)
@@ -45,6 +45,7 @@ function Invoke-FixtureBuild([switch]$Disable, [switch]$AllTargets, [switch]$Fai
         $global:LASTEXITCODE = 0
     }
     $parameters = @{ Configuration = 'Release'; BuildOnly = !$AllTargets; DisableLocalExperiments = $Disable.IsPresent }
+    if ($Gun) { $parameters.ReleaseGun = $true }
     if ($Directory) { $parameters.BuildDirectory = $Directory }
     $failure = $null
     try { & (Join-Path $fixture 'tools\build.ps1') @parameters | Out-Null } catch { $failure = $_ }
@@ -118,6 +119,21 @@ try {
     Assert-True (@($disabled.Calls[0].Arguments | Where-Object { $_ -ceq '-DMGS_BACKGROUND_WORKER=OFF' }).Count -eq 1) 'normal packaging explicitly disables the separate runtime worker option'
     Assert-True (@($disabled.Calls[0].Arguments | Where-Object { $_ -like '-DCMAKE_MAKE_PROGRAM=*ninja.exe' }).Count -eq 1) 'the existing selected Ninja toolset is preserved'
 
+    # The friend/release loader (-ReleaseGun): exactly the stock46 gun pieces ON, everything else and the worker OFF.
+    $gunDirectory = 'build\release-friend'
+    $gun = Invoke-FixtureBuild -Gun -Directory $gunDirectory
+    Assert-True ($null -eq $gun.Failure) 'the release-gun configure succeeds'
+    $gunSent = @($gun.Calls[0].Arguments | Where-Object { $_ -like '-DMGS_LOCAL_*' })
+    $gunOn = @('MGS_LOCAL_OFFLINE_EQUIPMENT_TEST', 'MGS_LOCAL_STOCK46_PRELOAD_TEST', 'MGS_LOCAL_STOCK46_WRITER_TEST')
+    Assert-True ($gunSent.Count -eq $experimentNames.Count) 'release-gun: every research option receives exactly one override'
+    foreach ($name in $experimentNames) {
+        $want = if ($gunOn -contains $name) { 'ON' } else { 'OFF' }
+        Assert-True (@($gunSent | Where-Object { $_ -ceq "-D$name=$want" }).Count -eq 1) "release-gun: $name is $want"
+    }
+    Assert-True (@($gun.Calls[0].Arguments | Where-Object { $_ -ceq '-DMGS_BACKGROUND_WORKER=OFF' }).Count -eq 1) 'release-gun never enables the background worker'
+    Assert-True ($gun.Calls[0].Arguments[3] -ceq (Join-Path $fixture $gunDirectory)) 'release-gun builds into its own directory'
+    $both = Invoke-FixtureBuild -Gun -Disable
+    Assert-True ($null -ne $both.Failure -and $both.Failure.Exception.Message -match 'either' -and $both.Calls.Count -eq 0) '-ReleaseGun and -DisableLocalExperiments are exclusive'
     $all = Invoke-FixtureBuild -Disable -AllTargets
     Assert-True ($null -eq $all.Failure -and $all.Calls.Count -eq 3 -and $all.Calls[2].Tool -eq 'ctest') 'the full build path still schedules its required checks'
     $failed = Invoke-FixtureBuild -Disable -FailConfigure
@@ -140,17 +156,19 @@ try {
     # package script's enumeration, archive, installation or cleanup flow.
     $buildReceipt = Join-Path $fixture 'tools\build-invocation.json'
     $mockBuild = @'
-param([string]$Configuration, [switch]$BuildOnly, [switch]$DisableLocalExperiments)
+param([string]$Configuration, [switch]$BuildOnly, [switch]$DisableLocalExperiments, [string]$BuildDirectory)
 [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'build-invocation.json'), (
-    [ordered]@{ configuration = $Configuration; build_only = $BuildOnly.IsPresent; disable_local_experiments = $DisableLocalExperiments.IsPresent } | ConvertTo-Json
+    [ordered]@{ configuration = $Configuration; build_only = $BuildOnly.IsPresent; disable_local_experiments = $DisableLocalExperiments.IsPresent; build_directory = $BuildDirectory } | ConvertTo-Json
 ), [Text.UTF8Encoding]::new($false))
 '@
     [IO.File]::WriteAllText((Join-Path $fixture 'tools\build.ps1'), $mockBuild, $utf8)
     $branchScript = Join-Path $fixture 'tools\package-build-branch.ps1'
-    [IO.File]::WriteAllText($branchScript, "param([string]`$LoaderPath)`n`$ErrorActionPreference = 'Stop'`n" + $branch.Extent.Text + "`n", $utf8)
+    # The branch also holds the -Friend Release-receipt clause (not taken here: no -Friend).
+    [IO.File]::WriteAllText($branchScript, "param([string]`$LoaderPath, [switch]`$Friend)`n`$ErrorActionPreference = 'Stop'`n" + $branch.Extent.Text + "`n", $utf8)
     & $branchScript | Out-Null
     $receipt = [IO.File]::ReadAllText($buildReceipt) | ConvertFrom-Json
     Assert-True ($receipt.configuration -ceq 'Release' -and $receipt.build_only -and $receipt.disable_local_experiments) 'the exact normal package branch binds all three typed build parameters'
+    Assert-True ($receipt.build_directory -ceq 'build\package-loader') 'the local package builds its own loader directory (never build/native, the lab research loader)'
     Remove-Item -LiteralPath $buildReceipt
     $suppliedLoader = Join-Path $fixture 'supplied-loader.dll'
     [IO.File]::WriteAllText($suppliedLoader, 'INERT supplied loader; settings unknown', $utf8)

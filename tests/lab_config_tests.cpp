@@ -676,14 +676,135 @@ int main() {
                                           kPlayRefusedHostPeerAddr, kPlayRefusedBindLoopback, kPlayRefusedLegacyLink, kPlayRefusedPeerAddr,
                                           kPlayRefusedNoSaveDir, kPlayRefusedGuestNoPeer, kPlayRefusedImpairment, kPlayRefusedWorldProbe,
                                           kPlayRefusedDebugSoldierWarp, kPlayRefusedNativeDrive, kPlayRefusedSteamSelftest,
-                                          kPlayRefusedHostPeerSteam, kPlayRefusedNoPeerSteam, kPlayRefusedUdpKeysWithSteam};
+                                          kPlayRefusedHostPeerSteam, kPlayRefusedNoPeerSteam, kPlayRefusedUdpKeysWithSteam,
+                                          kPlayRefusedRehearsal, kPlayRefusedNativeProfile};
         std::uint32_t refusal_union = 0;
         bool refusal_distinct = true;
         for (const std::uint32_t bit : play_refusal_bits) {
             refusal_distinct = refusal_distinct && bit != 0 && (bit & (bit - 1)) == 0 && (refusal_union & bit) == 0;
             refusal_union |= bit;
         }
-        Check(refusal_distinct && refusal_union == 0x3FFFFFu, "kPlayRefused* are 22 distinct single bits");
+        Check(refusal_distinct && refusal_union == 0xFFFFFFu, "kPlayRefused* are 24 distinct single bits");
+    }
+    // Online play (docs/native-puppet.md "Online"): partner_native_profile, the
+    // play defaults of the network policy, the raw native keys still refused,
+    // and the worker-only play rehearsal.
+    {
+        const std::string play_saves = "save_dir=C:\\coop\\play_saves\n";
+        // Play-Coop's dm=map partner keys (tools/CoopPlay.psm1 Get-PlayPartnerDefaults) plus the send key.
+        const std::string clips = "partner=1\npartner_stage=3\npartner_source=net\npartner_apply=xform\npartner_anim=off\npartner_aset=qs\n"
+                                  "partner_reset=n\npartner_look=net\npartner_dm=map\npartner_input_send=1\n";
+        const std::string play = "enabled=1\nmode=play\nrole=host\n" + play_saves + "net=1\nnet_bind=any\nnet_listen_port=47830\n" + clips;
+        // The worker's gun stage, raw (tools/worker/WorkerSessionCommon.psm1 Get-WorkerPartnerSettings native gun).
+        const std::string gun_raw =
+            "partner_drive=native\npartner_input_send=1\npartner_input_hook=1\npartner_input_hold=own\npartner_input_words=hpr\n"
+            "partner_input_wrap=window\npartner_input_cam=sandbox\npartner_input_local=main\npartner_recon=track\npartner_input_slot=body\n"
+            "partner_input_defer=on\npartner_input_mask=0x224005E\npartner_native_gun=1\npartner_native_fire=visual\npartner_native_aim=look\n"
+            "partner_input_triggers=1\npartner_input_rstick=1\npartner_native_rates=mirror\n";
+        const std::string loco_raw =
+            "partner_drive=native\npartner_input_send=1\npartner_input_hook=1\npartner_input_hold=own\npartner_input_words=hpr\n"
+            "partner_input_wrap=window\npartner_input_cam=sandbox\npartner_input_local=main\npartner_recon=track\npartner_input_slot=body\n"
+            "partner_input_defer=on\npartner_input_mask=0x2240006\npartner_native_aim=off\npartner_native_rates=mirror\n";
+        const auto same_stage = [](const LabConfig& a, const LabConfig& b) {
+            return a.partner_drive == b.partner_drive && a.partner_input_defer == b.partner_input_defer &&
+                   a.partner_input_send == b.partner_input_send && a.partner_input_hook == b.partner_input_hook &&
+                   a.partner_input_hold == b.partner_input_hold && std::memcmp(a.partner_input_words, b.partner_input_words, 3) == 0 &&
+                   a.partner_input_wrap == b.partner_input_wrap && a.partner_input_cam == b.partner_input_cam &&
+                   a.partner_input_local == b.partner_input_local && a.partner_recon == b.partner_recon &&
+                   a.partner_input_slot == b.partner_input_slot && a.partner_input_mask == b.partner_input_mask &&
+                   a.partner_native_gun == b.partner_native_gun && a.partner_native_fire == b.partner_native_fire &&
+                   a.partner_native_aim == b.partner_native_aim && a.partner_input_triggers == b.partner_input_triggers &&
+                   a.partner_input_rstick == b.partner_input_rstick && a.partner_native_rates == b.partner_native_rates &&
+                   a.partner_native_noise == b.partner_native_noise && a.partner_input_p218_allow == b.partner_input_p218_allow;
+        };
+        // The profile is exactly the stage the worker qualified (lab and play).
+        const auto labGunRaw = Lab("enabled=1\nrole=host\n" + clips + gun_raw);
+        const auto labGun = Lab("enabled=1\nrole=host\n" + clips + "partner_native_profile=gun\n");
+        Check(labGun.partner_native_profile == PartnerNativeProfile::gun && labGun.invalid_values == 0 && same_stage(labGun, labGunRaw),
+              "profile=gun equals the worker's raw gun stage");
+        const auto labLocoRaw = Lab("enabled=1\nrole=host\n" + clips + loco_raw);
+        const auto labLoco = Lab("enabled=1\nrole=host\n" + clips + "partner_native_profile=loco\n");
+        Check(labLoco.partner_native_profile == PartnerNativeProfile::loco && same_stage(labLoco, labLocoRaw) &&
+              labLoco.partner_input_mask == 0x2240006u && !labLoco.partner_native_gun, "profile=loco equals the worker's raw loco stage");
+        Check(labGun.partner_native_net == PartnerNativeNet::lab && labGun.partner_native_stall == PartnerNativeStall::neutral &&
+              labGun.partner_input_edge_repeats == 2 && labGun.partner_native_hold == PartnerNativeHold::own,
+              "the lab keeps the qualified network behaviour");
+        // A key named in the same lab.ini keeps its value (the looksrc A/B run).
+        const auto labSrc = Lab("enabled=1\nrole=host\n" + clips + "partner_native_aim=looksrc\npartner_native_profile=gun\n");
+        Check(labSrc.partner_native_aim == PartnerNativeAim::looksrc && labSrc.partner_drive == PartnerDrive::native, "named keys win");
+        Check(Lab("enabled=1\nrole=host\npartner_native_profile=off\n").partner_drive == PartnerDrive::legacy &&
+              Lab("enabled=1\nrole=host\npartner_native_profile=native\n").invalid_values == 1, "profile off / badOnline value");
+        // Play: the profile is the way to the native drive, with the online defaults.
+        const auto playGun = Lab(play + "partner_native_profile=gun\nworld=3\n");
+        Check(playGun.mode == LabMode::play && playGun.play_refused == 0 && playGun.invalid_values == 0 && same_stage(playGun, labGunRaw) &&
+              playGun.partner_drive == PartnerDrive::native && playGun.partner_input_defer == PartnerDefer::on,
+              "play: profile=gun gives the qualified gun stage, nothing refused");
+        Check(playGun.partner_native_net == PartnerNativeNet::online && playGun.partner_native_stall == PartnerNativeStall::hold &&
+              playGun.partner_native_stall_ms == 400 && playGun.partner_input_edge_repeats == kPlayEdgeRepeats &&
+              playGun.partner_native_hold == PartnerNativeHold::own, "play defaults: online, stall hold 400 ms, 5 edge repeats, hold own");
+        const auto playClips = Lab(play);
+        Check(playClips.play_refused == 0 && playClips.partner_drive == PartnerDrive::legacy && playClips.partner_input_send &&
+              playClips.partner_native_profile == PartnerNativeProfile::off, "play without a profile: the clip partner, sending input");
+        const auto playVariants = Lab(play + "partner_native_profile=gun\npartner_native_net=lab\npartner_native_stall=neutral\n"
+                                             "partner_native_stall_ms=250\npartner_native_hold=net\npartner_input_edge_repeats=8\n"
+                                             "partner_native_aim=looksrc\npartner_native_face=aim\n");
+        Check(playVariants.play_refused == 0 && playVariants.invalid_values == 0 && playVariants.partner_native_net == PartnerNativeNet::lab &&
+              playVariants.partner_native_stall == PartnerNativeStall::neutral && playVariants.partner_native_stall_ms == 250 &&
+              playVariants.partner_native_hold == PartnerNativeHold::net && playVariants.partner_input_edge_repeats == 8 &&
+              playVariants.partner_native_aim == PartnerNativeAim::looksrc && playVariants.partner_native_face == PartnerNativeFace::aim,
+              "play keeps the variant keys");
+        // The raw native keys stay refused in play; the profile still applies.
+        const auto playRaw = Lab(play + "partner_native_profile=gun\npartner_drive=native\npartner_input_defer=census\n");
+        Check(playRaw.play_refused == kPlayRefusedNativeDrive && playRaw.partner_drive == PartnerDrive::native &&
+              playRaw.partner_input_defer == PartnerDefer::on, "raw drive/defer refused, the profile sets them");
+        const auto playExp = Lab(play + "partner_native_profile=gun\npartner_native_aim=lookcam\npartner_input_local=all\n"
+                                        "partner_input_p218_allow=1\npartner_native_noise=keep\n");
+        Check(playExp.play_refused == kPlayRefusedNativeDrive && playExp.invalid_values == 1 &&
+              playExp.partner_native_aim == PartnerNativeAim::look && playExp.partner_input_local == PartnerLocal::main &&
+              !playExp.partner_input_p218_allow && playExp.partner_native_noise == PartnerNativeNoise::filter,
+              "lab-only native experiments refused in play, the profile's values instead");
+        const auto playNoBase = Lab("enabled=1\nmode=play\nrole=host\n" + play_saves + "net=1\npartner=1\npartner_source=net\npartner_dm=off\n"
+                                    "partner_native_profile=gun\n");
+        Check(playNoBase.play_refused == kPlayRefusedNativeProfile && playNoBase.partner_native_profile == PartnerNativeProfile::off &&
+              playNoBase.partner_drive == PartnerDrive::legacy, "play: the profile needs the dm=map + xform fallback");
+        // Ranges.
+        const auto badOnline = Lab("enabled=1\nrole=host\npartner_native_stall_ms=99\npartner_native_stall_ms=1001\npartner_input_edge_repeats=1\n"
+                             "partner_input_edge_repeats=9\npartner_native_net=wan\npartner_native_stall=keep\npartner_native_hold=both\n");
+        Check(badOnline.invalid_values == 7 && badOnline.partner_native_stall_ms == 400 && badOnline.partner_input_edge_repeats == 2 &&
+              badOnline.partner_native_net == PartnerNativeNet::lab, "online keys: invalid values keep the defaults");
+        Check(std::strcmp(PartnerNativeProfileName(PartnerNativeProfile::gun), "gun") == 0 &&
+              std::strcmp(PartnerNativeNetName(PartnerNativeNet::online), "online") == 0 &&
+              std::strcmp(PartnerNativeStallName(PartnerNativeStall::hold), "hold") == 0 &&
+              std::strcmp(PartnerNativeHoldName(PartnerNativeHold::net), "net") == 0, "online names");
+        // The play rehearsal (the hidden worker's one-PC play): only with the worker build's option.
+        const std::string rehearsal = "enabled=1\nmode=play\nrole=guest\n" + play_saves + "net=1\nnet_bind=loopback\nnet_listen_port=47831\n"
+                                      "net_peer_addr=127.0.0.1\nnet_peer_port=47830\nmutex_suffix=worker_guest_0123abcd\nxinput=none\n"
+                                      "net_latency_ms=40\nplay_rehearsal=1\n" + clips + "partner_native_profile=gun\n";
+        LabConfig friendView{};
+        Check(ParseLabConfig(rehearsal.data(), rehearsal.size(), friendView), "rehearsal parse");
+        Check((friendView.play_refused & kPlayRefusedRehearsal) && (friendView.play_refused & kPlayRefusedMutexSuffix) &&
+              (friendView.play_refused & kPlayRefusedXInput) && (friendView.play_refused & kPlayRefusedBindLoopback) &&
+              (friendView.play_refused & kPlayRefusedImpairment) && (friendView.play_refused & kPlayRefusedPeerAddr) &&
+              !friendView.play_rehearsal && !friendView.mutex_suffix[0] && friendView.net_latency_ms == 0,
+              "without the worker option the rehearsal keys are play refusals");
+        LabConfig workerView{};
+        LabParseOptions options{};
+        options.allow_play_rehearsal = true;
+        Check(ParseLabConfig(rehearsal.data(), rehearsal.size(), workerView, options), "rehearsal parse (worker)");
+        Check(workerView.play_refused == 0 && workerView.invalid_values == 0 && workerView.play_rehearsal && workerView.net &&
+              workerView.net_bind_loopback && workerView.net_peer_address == 0x7F000001u && workerView.net_listen_port == 47831 &&
+              workerView.net_peer_port == 47830 && std::strcmp(workerView.mutex_suffix, "worker_guest_0123abcd") == 0 &&
+              workerView.xinput == kXInputNone && workerView.net_latency_ms == 40 && workerView.partner_drive == PartnerDrive::native,
+              "the worker build relaxes exactly loopback, mutex, xinput=none and impairment");
+        const std::string identity =
+            rehearsal + "loopback=1\nlisten_port=47810\npeer_port=47811\nself_steamid=76561202255233008\nxinput=0\njoin_trigger=1\n";
+        LabConfig stillRefused{};
+        Check(ParseLabConfig(identity.data(), identity.size(), stillRefused, options), "rehearsal identity parse");
+        Check((stillRefused.play_refused & kPlayRefusedLoopback) && (stillRefused.play_refused & kPlayRefusedSelfSteamId) &&
+              (stillRefused.play_refused & kPlayRefusedXInput) && (stillRefused.play_refused & kPlayRefusedJoinTrigger),
+              "the rehearsal never relaxes the identity hacks or a real pad index");
+        Check(Lab("enabled=1\nrole=host\nplay_rehearsal=1\n").invalid_values == 1 && !Lab("enabled=1\nrole=host\nplay_rehearsal=1\n").play_rehearsal,
+              "play_rehearsal is meaningless in the lab");
     }
     // Partner name tag (docs/partner-nametag.md): lab.ini and coop.ini keys.
     {

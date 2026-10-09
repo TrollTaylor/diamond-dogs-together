@@ -225,16 +225,26 @@ function Restore-WorkerConfigSnapshot($Snapshot) {
         [IO.File]::Copy($Snapshot.backup,$path,$true);Assert-WorkerHash $path $Snapshot.sha256
     }elseif($present){Remove-Item -LiteralPath $path}
 }
-function Test-WorkerPreparedConfigText([string]$Name,[string]$Text,[string]$Role,[string]$HostSteamId,[string]$MasterUrl,[string[]]$AllowedSaveDirs) {
+function Test-WorkerPreparedConfigText([string]$Name,[string]$Text,[string]$Role,[string]$HostSteamId,[string]$MasterUrl,[string[]]$AllowedSaveDirs,[string]$Mode='lab') {
     switch -CaseSensitive ($Name) {
         'script-observe.enabled' {return $Text -ceq "offline-v1`n"}
-        'client-host.txt' {return $Role -ceq 'guest' -and $Text -ceq ($HostSteamId+"`n")}
+        'client-host.txt' {return $Mode -ceq 'lab' -and $Role -ceq 'guest' -and $Text -ceq ($HostSteamId+"`n")}
         'lab.ini' {
+            if($Mode -ceq 'play') {
+                # The play rehearsal's lab.ini (ConvertTo-WorkerPlayLabIniText).
+                if(!(Test-CoopPlayGeneratedText $Text)){return $false}
+                $ini=ConvertFrom-IniText $Text
+                return $ini['enabled'] -ceq '1' -and $ini['mode'] -ceq 'play' -and $ini['play_rehearsal'] -ceq '1' -and $ini['role'] -ceq $Role -and
+                    $ini['xinput'] -ceq 'none' -and $ini['net_bind'] -ceq 'loopback' -and !$ini.Contains('loopback') -and
+                    @($AllowedSaveDirs|Where-Object {$_ -and $_ -ieq $ini['save_dir']}).Count -eq 1
+            }
             if(!(Test-LabGeneratedText $Text)){return $false}
             $ini=ConvertFrom-IniText $Text
             return $ini['enabled'] -ceq '1' -and $ini['role'] -ceq $Role -and $ini['loopback'] -ceq '1' -and
                 $ini['xinput'] -ceq 'none' -and @($AllowedSaveDirs|Where-Object {$_ -and $_ -ieq $ini['save_dir']}).Count -eq 1
         }
+        # The play rehearsal's fresh random link secret (20 Crockford characters + CRLF).
+        'link-secret.txt' {return $Mode -ceq 'play' -and $Text -cmatch '\A[0-9A-HJKMNP-TV-Z]{20}\r\n\z'}
         'coop.ini' {
             if(!(Test-LabGeneratedText $Text)){return $false}
             $ini=ConvertFrom-IniText $Text
@@ -297,6 +307,106 @@ function Test-WorkerResearchReceipt($Receipt,[string]$BuildDirectory,[string]$Re
     }
     foreach($name in $Experiments){if(!$Receipt.plan.flags.Contains($name) -or $name -clike 'MGS_LOCAL_UPPER_*'){return $false}}
     return $true
+}
+# --- The one-PC play rehearsal (docs/two-pc-play.md "Hidden play rehearsal") ---
+# The partner lines a play lab.ini gets for a worker profile: nothing for the
+# clip partner (Play-Coop -Partner clips), partner_native_profile for the native
+# loco or gun stage (Play-Coop -Partner native writes gun). Pure.
+function Get-WorkerPlayPartnerSettings([string]$PartnerProfile,[string]$NativeStage='') {
+    if($PartnerProfile -cne 'native' -and $NativeStage){throw '-NativeStage needs -PartnerProfile native.'}
+    switch -CaseSensitive ($PartnerProfile) {
+        'animated' {return @()}
+        'native' {
+            $stage=if($NativeStage){$NativeStage}else{'loco'}
+            if($stage -cnotin @('loco','gun')){throw "-Mode play runs the native profile loco or gun (got $stage)."}
+            return @('partner_native_profile='+$stage)
+        }
+        default {throw "-Mode play runs the animated (clips) or native profile (got $PartnerProfile)."}
+    }
+}
+# The rehearsal's lab.ini from Play-Coop's own UDP play text
+# (New-CoopPlayLabIniText; the guest made with a placeholder host address):
+# moved onto 127.0.0.1 (host listens on 47830 and targets 47831, the guest
+# listens on 47831 and targets 47830), plus play_rehearsal=1, xinput=none and
+# the extra key=value lines (partner profile, -WanSim preset, -LabSetting). A
+# key already in the text is replaced, never duplicated. The worker's
+# save_dir and mutex_suffix are set afterwards like in the lab. Pure.
+function ConvertTo-WorkerPlayLabIniText([string]$BaseText,[string]$Role,[string[]]$Extra=@()) {
+    if($Role -cnotin @('host','guest')){throw "Invalid role: $Role"}
+    if(!(Test-CoopPlayGeneratedText $BaseText) -or $BaseText -cnotmatch '(?m)^mode=play$' -or $BaseText -cmatch '(?m)^net_transport=steam$'){
+        throw 'The play rehearsal starts from Play-Coop''s UDP play lab.ini.'
+    }
+    $text=Set-WorkerIniValue $BaseText 'net_bind' 'loopback'
+    $lines=[Collections.Generic.List[string]]::new()
+    if($Role -ceq 'host'){$lines.Add('net_peer_port=47831')}
+    else{
+        $text=Set-WorkerIniValue $text 'net_listen_port' '47831'
+        $text=Set-WorkerIniValue $text 'net_peer_addr' '127.0.0.1'
+    }
+    foreach($line in @('play_rehearsal=1','xinput=none')+@($Extra)){$lines.Add($line)}
+    foreach($line in $lines){
+        $kv=$line.Split('=',2)
+        if($kv.Count -ne 2 -or $kv[0] -cnotmatch '^[a-z_0-9]+$' -or $kv[1] -match '[\r\n\x00]'){throw "Invalid play rehearsal key: $line"}
+        if($kv[0] -cin @('mode','role','enabled','loopback','self_steamid','peer_steamid','self_name','join_trigger','auto_join_delay_s','net_transport')){
+            throw "The play rehearsal never sets $($kv[0])."
+        }
+        if([regex]::Matches($text,'(?m)^'+[regex]::Escape($kv[0])+'=').Count){$text=Set-WorkerIniValue $text $kv[0] $kv[1]}
+        else{$text=$text.TrimEnd([char]10)+"`n"+$line+"`n"}
+    }
+    return $text
+}
+# Pure: the play rehearsal's startup safety from this run's early.log and
+# steam-observer.log (the lab verdict expects the fake guest identity, which a
+# play copy never has). ok: saves=redirected to the copy, the play line with
+# refused=0x0, saves=redirected and rehearsal=1, the renamed mutex, the real
+# identity and the closed-port master server; unsafe on any contrary line.
+function Get-WorkerPlaySafetyVerdict {
+    param([Parameter(Mandatory)][ValidateSet('host','guest')][string]$Role,[AllowNull()][AllowEmptyString()][string]$EarlyLog='',
+        [AllowNull()][AllowEmptyString()][string]$SteamLog='',[Parameter(Mandatory)][string]$ExpectedSaveDir,
+        [Parameter(Mandatory)][string]$ExpectedUrl,[Parameter(Mandatory)][string]$ExpectedMutexSuffix)
+    if(!$EarlyLog){$EarlyLog=''};if(!$SteamLog){$SteamLog=''}
+    $missing=[Collections.Generic.List[string]]::new()
+    $unsafe={param($reason)[pscustomobject]@{State='unsafe';Reason=$reason;Missing=@()}}
+    foreach($m in [regex]::Matches($EarlyLog,'(?m)^early=start(?=[ ;\r\n]|$)[^\r\n]*')){
+        if($m.Value -match '[ ;]lab=0(?=[ ;]|$)'){return & $unsafe 'lab_disabled'}
+        if($m.Value -match '[ ;]role=([A-Za-z_]+)' -and $Matches[1] -cne $Role){return & $unsafe 'role_mismatch'}
+    }
+    if([regex]::IsMatch($EarlyLog,'(?m)^saves=unchanged(?=[ ;\r\n]|$)')){return & $unsafe 'saves_unchanged'}
+    $saveLines=[regex]::Matches($EarlyLog,'(?m)^saves=redirected(?=[ ;\r\n]|$)[^\r\n]*')
+    if(!$saveLines.Count){$missing.Add('saves')}
+    $wantDir=ConvertTo-LabComparablePath $ExpectedSaveDir
+    foreach($line in $saveLines){
+        $dir=[regex]::Match($line.Value,'; dir=(.*)$')
+        if(!$dir.Success -or (ConvertTo-LabComparablePath $dir.Groups[1].Value.TrimEnd([char]13)) -cne $wantDir){return & $unsafe 'saves_wrong_dir'}
+    }
+    $playLines=[regex]::Matches($EarlyLog,'(?m)^play=1;[^\r\n]*')
+    if(!$playLines.Count){$missing.Add('play')}
+    foreach($line in $playLines){
+        if($line.Value -cnotmatch '; refused=0x0;'){return & $unsafe 'play_refused'}
+        if($line.Value -cnotmatch '; saves=redirected(?=[ ;\r]|$)'){return & $unsafe 'play_saves_unchanged'}
+        if($line.Value -cnotmatch '; rehearsal=1(?=[ ;\r]|$)'){return & $unsafe 'not_a_rehearsal_build'}
+        if($line.Value -cnotmatch '; loopback=0;'){return & $unsafe 'loopback_emulator'}
+    }
+    if([regex]::IsMatch($EarlyLog,'(?m)^mutex=unchanged(?=[ ;\r\n]|$)')){return & $unsafe 'mutex_unchanged'}
+    $mutexLines=[regex]::Matches($EarlyLog,'(?m)^mutex=renamed(?=[ ;\r\n]|$)[^\r\n]*')
+    if(!$mutexLines.Count){$missing.Add('mutex')}
+    foreach($line in $mutexLines){
+        $suffix=[regex]::Match($line.Value,'; suffix=([^ ;\r]*)')
+        if(!$suffix.Success -or $suffix.Groups[1].Value -cne $ExpectedMutexSuffix){return & $unsafe 'mutex_wrong_suffix'}
+    }
+    if([regex]::IsMatch($EarlyLog,'(?m)^identity=fake(?=[ ;\r\n]|$)')){return & $unsafe 'identity_fake'}
+    foreach($line in [regex]::Matches($SteamLog,'(?m)^master_server=(refused|failed)(?=[ ;\r\n]|$)[^\r\n]*')){
+        if($line.Value -cmatch '; reason=already_redirected(?=[ ;]|$)'){continue}
+        return & $unsafe ('master_server_'+$line.Groups[1].Value)
+    }
+    $masterLines=[regex]::Matches($SteamLog,'(?m)^master_server=redirected(?=[ ;\r\n]|$)[^\r\n]*')
+    if(!$masterLines.Count){$missing.Add('master_server')}
+    foreach($line in $masterLines){
+        $url=[regex]::Match($line.Value,'[ ;]url=(\S+)')
+        if(!$url.Success -or $url.Groups[1].Value -cne $ExpectedUrl){return & $unsafe 'master_server_wrong_url'}
+    }
+    $state=if($missing.Count){'pending'}else{'ok'}
+    return [pscustomobject]@{State=$state;Reason='';Missing=$missing.ToArray()}
 }
 # The Invoke-WorkerChecks cache directory of a Research worker build with
 # exactly these experiments (its Get-WorkerPlan profile key).

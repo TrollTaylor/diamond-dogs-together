@@ -83,9 +83,12 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "cannot read %s\n", argv[2]);
         return 2;
     }
-    if (std::strcmp(argv[1], "lab") == 0) {
+    // labr: as a background-worker build's loader parses it (the play rehearsal allowed).
+    if (std::strcmp(argv[1], "lab") == 0 || std::strcmp(argv[1], "labr") == 0) {
         mgscoop::LabConfig c{};
-        if (!mgscoop::ParseLabConfig(text.data(), text.size(), c)) return 3;
+        mgscoop::LabParseOptions options{};
+        options.allow_play_rehearsal = std::strcmp(argv[1], "labr") == 0;
+        if (!mgscoop::ParseLabConfig(text.data(), text.size(), c, options)) return 3;
         std::printf("present=%d\nrole=%s\nloopback=%d\nself_steamid=%llu\nself_name=%s\npeer_steamid=%llu\n", c.present ? 1 : 0,
                     RoleName(c.role), c.loopback ? 1 : 0, static_cast<unsigned long long>(c.self_steamid), c.self_name,
                     static_cast<unsigned long long>(c.peer_steamid));
@@ -119,6 +122,20 @@ int main(int argc, char** argv) {
                     mgscoop::NetTransportName(c.net_transport), static_cast<unsigned long long>(c.net_steam_self),
                     static_cast<unsigned long long>(c.net_peer_steam), c.net_steam_wait ? 1 : 0, c.net_steam_accept ? "on" : "off",
                     c.steam_selftest);
+        // Online play (docs/native-puppet.md "Online"), after the Steam keys.
+        char words[4]{};
+        mgscoop::FormatPartnerWords(c.partner_input_words, words);
+        std::printf("partner_native_profile=%s\npartner_drive=%s\npartner_input_defer=%s\npartner_input_send=%d\npartner_input_mask=0x%X\n"
+                    "partner_native_gun=%d\npartner_native_fire=%s\npartner_native_aim=%s\npartner_native_rates=%s\npartner_input_words=%s\n"
+                    "partner_native_net=%s\npartner_native_stall=%s\npartner_native_stall_ms=%u\npartner_native_hold=%s\n"
+                    "partner_input_edge_repeats=%u\nplay_rehearsal=%d\n",
+                    mgscoop::PartnerNativeProfileName(c.partner_native_profile), mgscoop::PartnerDriveName(c.partner_drive),
+                    mgscoop::PartnerDeferName(c.partner_input_defer), c.partner_input_send ? 1 : 0, c.partner_input_mask,
+                    c.partner_native_gun ? 1 : 0, mgscoop::PartnerNativeFireName(c.partner_native_fire),
+                    mgscoop::PartnerNativeAimName(c.partner_native_aim), mgscoop::PartnerNativeRatesName(c.partner_native_rates), words,
+                    mgscoop::PartnerNativeNetName(c.partner_native_net), mgscoop::PartnerNativeStallName(c.partner_native_stall),
+                    c.partner_native_stall_ms, mgscoop::PartnerNativeHoldName(c.partner_native_hold), c.partner_input_edge_repeats,
+                    c.play_rehearsal ? 1 : 0);
         return 0;
     }
     if (std::strcmp(argv[1], "coop") == 0) {

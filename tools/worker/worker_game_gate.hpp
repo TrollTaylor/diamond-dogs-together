@@ -62,4 +62,27 @@ inline bool OfflineLab(const mgscoop::LabConfig& lab, const std::string& role, c
         lab.net_bind_address == 0x7f000001 && lab.net_peer_address == 0x7f000001 &&
         lab.partner_source == mgscoop::PartnerSource::net && (InputProfile(lab) || AnimatedProfile(lab) || NativeProfile(lab));
 }
+// The one-PC play rehearsal (docs/two-pc-play.md "Hidden play rehearsal"):
+// both copies run mode=play exactly as Play-Coop writes it, parsed with the
+// worker build's LabParseOptions, which relax only the loopback bind and
+// 127/8 peer, the mutex suffix, xinput=none and the impairment keys
+// (play_rehearsal=1). Nothing refused or invalid; the real identity (no
+// loopback emulator, no fake or pinned SteamID, no persona override, no join
+// trigger); our link on UDP 127.0.0.1; the copied save; and either the clip
+// partner (no profile) or partner_native_profile, which expanded into exactly
+// an admitted native stage (NativeProfile).
+inline bool PlayRehearsal(const mgscoop::LabConfig& lab, const std::string& role, const std::string& save) {
+    const auto expected = role == "host" ? mgscoop::LabRole::host : mgscoop::LabRole::guest;
+    const bool identity = !lab.loopback && lab.self_steamid == 0 && lab.peer_steamid == 0 && !lab.self_name[0] && !lab.join_trigger &&
+        lab.auto_join_delay_s == 0;
+    const bool link = lab.net && lab.net_transport == mgscoop::NetTransport::udp && lab.net_link == mgscoop::NetLink::v2 &&
+        lab.net_bind_loopback && lab.net_bind_address == 0x7f000001 && lab.net_peer_address == 0x7f000001 && lab.net_listen_port >= 1024 &&
+        lab.net_peer_port >= 1024 && lab.net_listen_port != lab.net_peer_port;
+    const bool partner = lab.partner && lab.partner_source == mgscoop::PartnerSource::net &&
+        (lab.partner_native_profile == mgscoop::PartnerNativeProfile::off ? AnimatedProfile(lab) : NativeProfile(lab));
+    return (role == "host" || role == "guest") && lab.present && lab.role == expected && lab.mode == mgscoop::LabMode::play &&
+        lab.play_rehearsal && lab.play_refused == 0 && lab.invalid_values == 0 && lab.xinput == mgscoop::kXInputNone && lab.mutex_suffix[0] &&
+        identity && link && AbsolutePath(lab.save_dir) && EqualFold(lab.save_dir, save) && partner &&
+        lab.world_probe == mgscoop::WorldProbe::none && !lab.debug_soldier_warp && lab.steam_selftest == 0;
+}
 } // namespace mgsworker

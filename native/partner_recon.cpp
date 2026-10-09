@@ -352,6 +352,17 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
     // Net input staleness (the window injects a neutral pad while stale).
     const bool input_stale = in.input_net && (!in.in_valid || in.in_age_ms > P.input_stale_ms);
     if (input_stale) { if (!st.input_stale_since) st.input_stale_since = now ? now : 1; } else { st.input_stale_since = 0; }
+    // Input gaps for the gap-snap allowance (one snap per gap).
+    if (P.gap_snap_ms && in.input_net) {
+        if (in.in_valid && in.in_age_ms >= P.gap_snap_ms) {
+            if (!st.in_gap) st.gap_pending = true;
+            st.in_gap = true;
+        } else if (st.in_gap && in.in_valid) {
+            st.in_gap = false;
+            st.gap_end_ms = now;
+        }
+    }
+    if (st.gap_pending && !st.in_gap && now - st.gap_end_ms > P.gap_snap_window_ms) st.gap_pending = false;
 
     // ---- Stance (debounced remote stance) ------------------------------------
     std::uint8_t stance_from = 0, stance_to = 0;
@@ -450,6 +461,7 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
         rp.nudges = st.nudges; rp.snaps = st.snaps; rp.places = st.places; rp.pins = st.pins; rp.yaws = st.yaws;
         rp.nudge_mm = st.nudge_mm;
         rp.snaps_window = st.snap_count;
+        rp.gap_snaps = st.gap_snaps;
         rp.place_tries = st.tries;
         rp.idle_ms = Ms(st.idle_since, now);
         rp.stance_from = stance_from;
@@ -960,11 +972,17 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
                 st.face_settle_until = now + P.face_settle_ms;
                 st.face_settle_done = false;
             }
-            // Diverging: diverge_snaps hard snaps within the window.
+            // Diverging: diverge_snaps hard snaps within the window. The first
+            // snap of an input gap is catch-up, not divergence.
+            const bool gap_snap = st.gap_pending;
+            if (gap_snap) {
+                st.gap_pending = false;
+                ++st.gap_snaps;
+            }
             std::uint32_t kept = 0;
             for (std::uint32_t i = 0; i < st.snap_count && i < 8; ++i)
                 if (now - st.snap_times[i] < P.diverge_window_ms) st.snap_times[kept++] = st.snap_times[i];
-            if (kept < 8) st.snap_times[kept++] = now;
+            if (kept < 8 && !gap_snap) st.snap_times[kept++] = now;
             st.snap_count = kept;
             if (st.snap_count >= P.diverge_snaps) {
                 o.events |= Event::diverging;

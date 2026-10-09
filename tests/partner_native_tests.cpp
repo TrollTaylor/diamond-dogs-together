@@ -7,8 +7,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include "mgscoop/partner_caps_wire.hpp"
 #include "mgscoop/partner_input.hpp"
 #include "mgscoop/partner_native.hpp"
+#include "mgscoop/partner_native_net.hpp"
 #include "mgscoop/partner_rates.hpp"
 #include <limits>
 
@@ -748,7 +750,299 @@ void TestWeapons() {
     Check(true, "mirror invariants hold for capacities 1..50 x 1..40");
 }
 
+// Online play (docs/native-puppet.md "Online"): network leaves never latch,
+// quality-gated re-entry, the quiet remote, the flap guard, remote_caps,
+// hold=net, the link-quality tracker, reason codes, native.net JSON and the
+// capability message.
+namespace pnn = mgscoop::partner_native_net;
+namespace pcw = mgscoop::partner_caps_wire;
+std::uint64_t ActivateOnline(pn::State& s, std::uint64_t t, const pn::Params& p) {
+    for (; t < 1000000; t += 100) {
+        pn::In in = Ready(t);
+        in.window_armed = in.recon_placed = true;
+        in.quality_good_ms = 60000;
+        if (pn::Step(s, in, p).mode == pn::Mode::active) return t;
+    }
+    Check(false, "online activation");
+    return t;
+}
+void TestOnline() {
+    const pn::Params p = pn::OnlineParams();
+    Check(p.online && p.stale_hold_ms == 1500 && p.link_hold_ms == 1500 && p.cooldown_ms == 5000 && p.latch_fallbacks == 3,
+          "online params: 1.5 s stale/link holds, the hard latch unchanged");
+    Check(pn::NetReason("net_input") && pn::NetReason("net_link") && pn::NetReason("net_quiet") && pn::NetReason("range_hidden") &&
+              pn::NetReason("unrealized") && !pn::NetReason("thread") && !pn::NetReason("cost") && !pn::NetReason("input_stale") &&
+              !pn::NetReason(nullptr), "network reasons");
+    // Network leaves never latch; each re-entry waits the quality gate.
+    {
+        pn::State s{};
+        pn::Reset(s, true);
+        std::uint64_t t = ActivateOnline(s, 0, p);
+        for (int round = 0; round < 5; ++round) {
+            pn::In in = Healthy(t + 100);
+            in.input_age_ms = 400;
+            in.quality_good_ms = 0;
+            pn::Step(s, in, p);
+            in.now_ms = t + 1599;
+            Check(pn::Step(s, in, p).mode == pn::Mode::active, "online: 1499 ms of stale input stays");
+            in.now_ms = t + 1600;
+            const pn::Out o = pn::Step(s, in, p);
+            Check(LeaveRequests(o) && Is(o.reason, "net_input"), "online: 1500 ms of stale input leaves with net_input");
+            Check(s.fallbacks == 0 && s.net_leaves == static_cast<std::uint32_t>(round + 1) && s.left_net, "a network leave never counts");
+            in.now_ms = t + 1700;
+            Check(pn::Step(s, in, p).mode == pn::Mode::fallback, "leaving -> fallback (never latched)");
+            // Cooldown 2 s, then the quality gate, then the settle hold.
+            pn::In ready = Ready(t + 3000);
+            ready.window_armed = ready.recon_placed = true;
+            ready.quality_good_ms = 0;
+            Check(Is(pn::Step(s, ready, p).reason, "cooldown"), "network cooldown");
+            ready.now_ms = t + 3700;
+            Check(Is(pn::Step(s, ready, p).reason, "net_quality"), "the link quality must hold first");
+            ready.quality_good_ms = 2000;
+            ready.now_ms = t + 3800;
+            Check(Is(pn::Step(s, ready, p).reason, "settling"), "quality held 2 s: settling");
+            t = ActivateOnline(s, t + 3900, p);
+            Check(s.net_reentries == static_cast<std::uint32_t>(round + 1), "re-entries counted");
+        }
+        Check(s.mode == pn::Mode::active && s.fallbacks == 0 && s.hard_leaves == 0, "five network leaves: still native");
+        // A hard reason keeps the latch.
+        for (int i = 0; i < 3; ++i) {
+            pn::In in = Healthy(t + 100);
+            in.thread_ok = false;
+            const pn::Out o = pn::Step(s, in, p);
+            Check(LeaveRequests(o) && Is(o.reason, "thread") && !s.left_net, "hard reasons still leave at once");
+            in.now_ms = t + 200;
+            pn::Step(s, in, p);
+            t = i < 2 ? ActivateOnline(s, t + 6000, p) : t + 300;
+        }
+        Check(s.mode == pn::Mode::latched && s.hard_leaves == 3, "three hard leaves latch the mission");
+    }
+    // Link drops: net_link after 1.5 s.
+    {
+        pn::State s{};
+        pn::Reset(s, true);
+        const std::uint64_t t = ActivateOnline(s, 0, p);
+        pn::In in = Healthy(t + 100);
+        in.link_live = false;
+        pn::Step(s, in, p);
+        in.now_ms = t + 1599;
+        Check(pn::Step(s, in, p).mode == pn::Mode::active, "online: link hold 1499 ms");
+        in.now_ms = t + 1600;
+        Check(Is(pn::Step(s, in, p).reason, "net_link") && s.fallbacks == 0, "online: link down 1.5 s leaves with net_link, no count");
+    }
+    // The quiet remote: neutral in place up to 10 s, then net_quiet.
+    {
+        pn::State s{};
+        pn::Reset(s, true);
+        const std::uint64_t t = ActivateOnline(s, 0, p);
+        pn::In in = Healthy(t + 100);
+        in.input_age_ms = 3000;
+        in.remote_quiet = true;
+        pn::Out o = pn::Step(s, in, p);
+        Check(o.mode == pn::Mode::active && Is(o.reason, "remote_quiet") && s.quiet_episodes == 1, "a quiet remote holds the body");
+        in.now_ms = t + 9000;
+        Check(pn::Step(s, in, p).mode == pn::Mode::active, "quiet 8.9 s: still native (no stale leave)");
+        in.now_ms = t + 9500;
+        in.input_age_ms = 20;
+        in.remote_quiet = false;
+        o = pn::Step(s, in, p);
+        Check(o.mode == pn::Mode::active && Is(o.reason, "ok"), "the remote resumes: native continues, reason ok");
+        in.now_ms = t + 9600;
+        in.input_age_ms = 3000;
+        in.remote_quiet = true;
+        pn::Step(s, in, p);
+        Check(s.quiet_episodes == 2, "a second episode");
+        in.now_ms = t + 19599;
+        Check(pn::Step(s, in, p).mode == pn::Mode::active, "9.999 s quiet stays");
+        in.now_ms = t + 19600;
+        o = pn::Step(s, in, p);
+        Check(LeaveRequests(o) && Is(o.reason, "net_quiet") && s.fallbacks == 0, "10 s quiet: net_quiet, no count");
+        in.now_ms = t + 19700;
+        pn::Step(s, in, p);
+        pn::In fb = Ready(t + 25000);
+        fb.input_age_ms = 3000;
+        fb.remote_quiet = true;
+        fb.quality_good_ms = 60000;
+        Check(Is(pn::Step(s, fb, p).reason, "remote_quiet"), "fallback names the quiet remote");
+        // The lab policy treats the same as input_stale (unchanged).
+        pn::State l{};
+        pn::Reset(l, true);
+        const std::uint64_t u = Activate(l, 0);
+        pn::In li = Healthy(u + 100);
+        li.input_age_ms = 3000;
+        li.remote_quiet = true;
+        pn::Step(l, li);
+        li.now_ms = u + 1100;
+        Check(Is(pn::Step(l, li).reason, "input_stale") && l.fallbacks == 1, "lab policy: the qualified input_stale leave");
+    }
+    // range_hidden and unrealized (the partner streamed out) do not count online.
+    {
+        pn::State s{};
+        pn::Reset(s, true);
+        std::uint64_t t = ActivateOnline(s, 0, p);
+        for (int i = 0; i < 4; ++i) {
+            pn::In in = Healthy(t + 100);
+            in.range_hidden = true;
+            Check(Is(pn::Step(s, in, p).reason, "range_hidden"), "range_hidden leaves at once");
+            in.now_ms = t + 200;
+            pn::Step(s, in, p);
+            t = ActivateOnline(s, t + 5000, p);
+        }
+        Check(s.fallbacks == 0 && s.mode == pn::Mode::active, "four range leaves online: never latched");
+    }
+    // The flap guard: more than 6 network leaves in 5 minutes keep the clips until the quality held 30 s.
+    {
+        pn::State s{};
+        pn::Reset(s, true);
+        std::uint64_t t = ActivateOnline(s, 0, p);
+        for (int i = 0; i < 7; ++i) {
+            pn::In in = Healthy(t + 100);
+            in.link_live = false;
+            pn::Step(s, in, p);
+            in.now_ms = t + 1600;
+            pn::Step(s, in, p);
+            in.now_ms = t + 1700;
+            pn::Step(s, in, p);
+            if (i < 6) t = ActivateOnline(s, t + 4000, p);
+        }
+        Check(s.flap && s.net_leaves == 7, "seven network leaves: flapping");
+        pn::In ready = Ready(t + 10000);
+        ready.window_armed = ready.recon_placed = true;
+        ready.quality_good_ms = 20000;
+        Check(Is(pn::Step(s, ready, p).reason, "net_flap"), "flapping: clips until the quality holds 30 s");
+        ready.quality_good_ms = 30000;
+        ready.now_ms = t + 10100;
+        Check(Is(pn::Step(s, ready, p).reason, "settling") && !s.flap, "30 s of good quality clears the flap");
+    }
+    // A remote that sends no input frames: remote_caps (online only).
+    {
+        pn::State s{};
+        pn::Reset(s, true);
+        pn::In in = Ready(0);
+        in.remote_caps_refused = true;
+        Check(Is(pn::Step(s, in, p).reason, "remote_caps"), "online: remote_caps blocks the entry");
+        pn::State l{};
+        pn::Reset(l, true);
+        Check(Is(pn::Step(l, in).reason, "settling"), "lab: the capability flag is ignored");
+    }
+    // hold=net under the native drive.
+    {
+        pn::DriveSettings base{};
+        base.hold = mgscoop::PartnerInputHold::pass;
+        base.mask = 0x224005E;
+        Check(pn::Effective(base, true, pn::NativeConfig{true, true, mgscoop::PartnerNativeAim::look, true}).hold ==
+                  mgscoop::PartnerInputHold::net &&
+                  pn::Effective(base, true, pn::NativeConfig{true, true, mgscoop::PartnerNativeAim::look}).hold == mgscoop::PartnerInputHold::own,
+              "partner_native_hold=net: the sender's 12-frame words; default own");
+    }
+    // Link quality.
+    {
+        pnn::Quality q{};
+        pnn::Reset(q);
+        std::uint64_t now = 1000;
+        std::uint32_t seq = 1;
+        for (int i = 0; i < 200; ++i, now += 16) {
+            pnn::Observe(q, pnn::QualityIn{now, true, true, seq++, 3});
+        }
+        Check(q.good && pnn::GoodMs(q, now) >= 3000 && q.p95_ms <= 17 && q.p50_ms >= 15 && q.gaps_100 == 0,
+              "60 Hz frames: good, p95 16 ms");
+        // A 400 ms gap: bad while it lasts and when it ends.
+        for (int i = 0; i < 25; ++i, now += 16)
+            pnn::Observe(q, pnn::QualityIn{now, true, true, seq - 1, static_cast<std::uint32_t>(16 * i + 19)});
+        Check(!q.good && pnn::GoodMs(q, now) == 0, "a frame older than 250 ms is bad");
+        pnn::Observe(q, pnn::QualityIn{now, true, true, seq++, 3});
+        Check(!q.good && q.gaps_250 == 1 && q.max_gap_ms >= 400, "the gap that just ended is bad and counted");
+        const std::uint64_t gap_end = now;
+        for (int i = 0; i < 200; ++i) {
+            now += 16;
+            pnn::Observe(q, pnn::QualityIn{now, true, true, seq++, 3});
+        }
+        Check(q.good && pnn::GoodMs(q, now) < now - gap_end && pnn::GoodMs(q, now) + 2100 >= now - gap_end,
+              "good again once the gap left the 2 s window");
+        pnn::Observe(q, pnn::QualityIn{now + 16, false, true, seq++, 3});
+        Check(!q.good, "link down is bad");
+        // Jitter: every 4th frame 130 ms late: p95 above 120 ms is bad.
+        pnn::Quality j{};
+        now = 0;
+        for (int i = 0; i < 200; ++i) {
+            now += (i % 4 == 3) ? 130 : 10;
+            pnn::Observe(j, pnn::QualityIn{now, true, true, static_cast<std::uint32_t>(i + 1), 0});
+        }
+        Check(!j.good && j.p95_ms >= 120, "p95 >= 120 ms is bad");
+    }
+    // Reason codes and the native.net JSON.
+    {
+        Check(pnn::ReasonCode("ok") == 1 && pnn::ReasonCode(nullptr) == pnn::kReasonNone && pnn::ReasonCode("") == pnn::kReasonNone &&
+              pnn::ReasonCode("no_such_reason") == pnn::kReasonUnknown && Is(pnn::ReasonName(pnn::kReasonUnknown), "other") &&
+              Is(pnn::ReasonName(pnn::kReasonNone), ""), "reason code edges");
+        for (const char* r : {"ok", "thread", "cost", "install_bytes", "net_input", "net_quiet", "remote_quiet", "net_flap", "remote_caps",
+                              "settling", "legacy", "range_hidden", "input_stale", "diverging", "unwindowed", "health"})
+            Check(Is(pnn::ReasonName(pnn::ReasonCode(r)), r), "reason codes round-trip");
+        Check(Is(pnn::DriveName(pnn::Drive::native), "native") && Is(pnn::DriveName(pnn::Drive::clips), "clips") &&
+              Is(pnn::DriveName(pnn::Drive::off), "off") && Is(pnn::DriveName(static_cast<pnn::Drive>(9)), "unknown"), "drive names");
+        pnn::NetTelemetry n{};
+        std::memcpy(n.policy, "online", sizeof("online"));
+        std::memcpy(n.local_reason, "q\"uote", sizeof("q\"uote"));
+        n.local_drive = pnn::Drive::native;
+        char json[1024]{};
+        const std::size_t size = pnn::FormatNetJson(n, json, sizeof(json));
+        Check(size > 0 && json[0] == '{' && json[size - 1] == '}' && std::strstr(json, "\"policy\":\"online\"") &&
+              std::strstr(json, "\"local_reason\":\"q\\\"uote\"") && std::strstr(json, "\"local_drive\":\"native\"") &&
+              std::strstr(json, "\"caps\":{"), "native.net JSON");
+        char small[32]{};
+        Check(pnn::FormatNetJson(n, small, sizeof(small)) == 0 && small[0] == 0, "too small: nothing");
+    }
+    // The capability message.
+    {
+        pcw::Caps c{};
+        c.revision = 3; c.epoch = 7; c.features = pcw::Feature::InputSender | pcw::Feature::NativeDrive; c.profile = 2;
+        c.drive = 3; c.reason = pnn::ReasonCode("ok"); c.mode = 3; c.policy = 1;
+        std::uint8_t b[pcw::kSize]{};
+        Check(pcw::Encode(c, b) == pcw::kSize && b[0] == 0x43 && pcw::IsCaps(b, sizeof(b)), "caps encode");
+        pcw::Caps d{};
+        Check(pcw::Decode(b, sizeof(b), 7, d) == pcw::Result::ok && d.profile == 2 && d.drive == 3 && d.policy == 1 && d.revision == 3,
+              "caps decode");
+        Check(pcw::Decode(b, sizeof(b), 8, d) == pcw::Result::stale_epoch && pcw::Decode(b, 15, 7, d) == pcw::Result::size,
+              "stale epoch, size");
+        std::uint8_t bad[pcw::kSize]{};
+        std::memcpy(bad, b, sizeof(b)); bad[9] = 3;
+        Check(pcw::Decode(bad, sizeof(bad), 7, d) == pcw::Result::field, "profile out of range");
+        std::memcpy(bad, b, sizeof(b)); bad[15] = 1;
+        Check(pcw::Decode(bad, sizeof(bad), 7, d) == pcw::Result::reserved, "reserved bytes");
+        std::memcpy(bad, b, sizeof(b)); bad[8] = 0x80;
+        Check(pcw::Decode(bad, sizeof(bad), 7, d) == pcw::Result::field, "unknown feature bit");
+        c.revision = 0;
+        Check(pcw::Encode(c, b) == 0, "revision 0 is never encoded");
+        // The store: newer revisions replace, older ones of the same session do not.
+        pcw::Store st{};
+        c.revision = 5;
+        pcw::Encode(c, b);
+        Check(pcw::Accept(st, b, sizeof(b), 7) && st.have && st.caps.revision == 5, "store");
+        c.revision = 4;
+        pcw::Encode(c, b);
+        Check(!pcw::Accept(st, b, sizeof(b), 7) && st.caps.revision == 5 && st.stale == 1, "an older revision is stale");
+        // Sender pacing: at once per session, on change >= 1 s, heartbeat 5 s.
+        pcw::Sender sd{};
+        pcw::Caps next{};
+        next.drive = 2;
+        Check(!pcw::Due(sd, next, 0, 100), "no session: nothing");
+        Check(pcw::Due(sd, next, 9, 100) && next.epoch == 9 && next.revision == 1, "first send at once");
+        pcw::Sent(sd, next, 100);
+        pcw::Caps same = next;
+        Check(!pcw::Due(sd, same, 9, 600), "unchanged: wait for the heartbeat");
+        same.drive = 3;
+        Check(!pcw::Due(sd, same, 9, 600), "a change within 1 s waits");
+        Check(pcw::Due(sd, same, 9, 1100) && same.revision == 2, "a change after 1 s goes out");
+        pcw::Sent(sd, same, 1100);
+        pcw::Caps hb = same;
+        Check(!pcw::Due(sd, hb, 9, 6000) && pcw::Due(sd, hb, 9, 6100), "the 5 s heartbeat");
+        pcw::Caps fresh = same;
+        Check(pcw::Due(sd, fresh, 10, 1200), "a new session sends at once");
+    }
+}
+
 int main() {
+    TestOnline();
     TestWeapons();
     TestOffAndLegacy();
     TestEnterSequence();
@@ -769,6 +1063,8 @@ int main() {
                 "unlatch, MissionStart reset, fallback reasons, publication order defer before Arm, left_reason through "
                 "cooldown, phase-1 detour precondition), effective settings and mask, HOLD latch, "
                 "steering and trim, per-consumer frame injection, telemetry ring, rates mirror (apply, reapply, restore, "
-                "refusals), weapons (capacity, magazine, CanReload, reload gate, magazine mirror)\n", checks);
+                "refusals), weapons (capacity, magazine, CanReload, reload gate, magazine mirror), online play (network leaves "
+                "without latch, quality-gated re-entry, quiet remote, flap guard, remote_caps, hold=net, link quality, reason "
+                "codes, native.net JSON, capability message)\n", checks);
     return 0;
 }

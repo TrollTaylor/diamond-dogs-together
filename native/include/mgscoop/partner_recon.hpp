@@ -204,6 +204,12 @@ struct Params {
     std::uint32_t place_ok_mm = 500, place_tries = 3, place_retry_ms = 250, place_fail_retry_ms = 5000, settle_ms = 700;
     // Input staleness (net input).
     std::uint32_t input_stale_ms = 250;
+    // Catch-up after an input gap (docs/native-puppet.md "Online"): the first
+    // hard snap during a net input gap of at least gap_snap_ms, or within
+    // gap_snap_window_ms after it ended, is counted as a gap snap and never
+    // toward diverging (the body is behind because packets were missing, not
+    // because it diverges). gap_snap_ms 0 = off.
+    std::uint32_t gap_snap_ms = 300, gap_snap_window_ms = 2000;
     // Stop check (diagnostic): the stick released after a push.
     double stop_from_r = 0.3, stop_to_r = 0.1;
     std::uint32_t stop_window_ms = 800, stop_mmps = 200;
@@ -259,6 +265,7 @@ struct Report {
     std::uint32_t nudges, snaps, places, pins, yaws;
     double nudge_mm;      // total nudge distance since the last placement
     std::uint32_t snaps_window;  // snaps within the diverging window
+    std::uint32_t gap_snaps;     // snaps after an input gap since Reset (never in snaps_window)
     std::uint32_t place_tries;
     double place_err_mm;  // verify: |body - placed target|
     std::uint32_t place_ms;
@@ -401,6 +408,11 @@ struct State {
     // Placement: the placed yaw and whether verify already fixed it once.
     double placed_yaw;
     bool place_yaw_fixed;
+    // Input gaps (gap snaps): a gap of at least gap_snap_ms is open or ended
+    // at gap_end_ms and its snap allowance is unused.
+    bool in_gap, gap_pending;
+    std::uint64_t gap_end_ms;
+    std::uint32_t gap_snaps;
 };
 void Reset(State& state) noexcept;
 

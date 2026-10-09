@@ -3,6 +3,10 @@ param(
     [switch]$BuildOnly,
     # Package builds must override any ON values retained in the lab cache.
     [switch]$DisableLocalExperiments,
+    # The friend/release loader (docs/two-pc-play.md "Release build"): every
+    # local experiment OFF except the stock46 gun pieces (offline equipment,
+    # preload, writer; runtime-gated on the native gun profile), worker OFF.
+    [switch]$ReleaseGun,
     # Relative paths are resolved against the checkout, never the caller's cwd.
     [ValidateNotNullOrEmpty()][string]$BuildDirectory
 )
@@ -24,7 +28,9 @@ $env:INCLUDE = "$compilerRoot/include;$sdkRoot/Include/$sdkVersion/ucrt;$sdkRoot
 $env:LIB = "$compilerRoot/lib/x64;$sdkRoot/Lib/$sdkVersion/ucrt/x64;$sdkRoot/Lib/$sdkVersion/um/x64"
 $ninja = Join-Path $vsRoot 'Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja/ninja.exe'
 $configureArguments = @('-S', $projectRoot, '-B', $nativeBuildDirectory, '-G', 'Ninja', "-DCMAKE_MAKE_PROGRAM=$ninja", "-DCMAKE_BUILD_TYPE=$Configuration")
-if ($DisableLocalExperiments) {
+if ($DisableLocalExperiments -and $ReleaseGun) { throw 'Use either -DisableLocalExperiments or -ReleaseGun.' }
+$releaseGunExperiments = @('MGS_LOCAL_OFFLINE_EQUIPMENT_TEST', 'MGS_LOCAL_STOCK46_PRELOAD_TEST', 'MGS_LOCAL_STOCK46_WRITER_TEST')
+if ($DisableLocalExperiments -or $ReleaseGun) {
     $localExperiments = @(
         'MGS_LOCAL_GUN_PRELOAD_TEST',
         'MGS_LOCAL_OFFLINE_EQUIPMENT_TEST',
@@ -39,7 +45,7 @@ if ($DisableLocalExperiments) {
         'MGS_LOCAL_UPPER_CHANNEL2',
         'MGS_LOCAL_UPPER_FIRE_ZERO_BLEND'
     )
-    $configureArguments += $localExperiments | ForEach-Object { "-D$_=OFF" }
+    $configureArguments += $localExperiments | ForEach-Object { if ($ReleaseGun -and $releaseGunExperiments -contains $_) { "-D$_=ON" } else { "-D$_=OFF" } }
     # Runtime automation is a separate opt-in, outside the local experiment list.
     $configureArguments += '-DMGS_BACKGROUND_WORKER=OFF'
 }

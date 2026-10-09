@@ -29,9 +29,19 @@ param(
     # runs used. The real saves are backed up and re-checked either way.
     [ValidateSet('real','lab')][string]$SaveSeed='real',
     # Extra lab.ini keys for this run: allow-listed lab experiments, the facing
-    # A/B keys, the name tag keys and the Steam self-test (Invoke-WorkerScenario
-    # "labsetting" lines); key=value for both copies, host:key=value / guest:key=value for one.
-    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|steam_selftest=[012])$')][string[]]$LabSetting=@()
+    # A/B keys, the name tag keys, the Steam self-test and the online-play A/B
+    # keys (Invoke-WorkerScenario "labsetting" lines); key=value for both
+    # copies, host:key=value / guest:key=value for one.
+    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|steam_selftest=[012]|partner_native_net=(lab|online)|partner_native_stall=(neutral|hold)|partner_native_hold=(own|net)|partner_input_edge_repeats=[2-8])$')][string[]]$LabSetting=@(),
+    # lab: the one-PC lab (OfflineLab). play: the play rehearsal: both copies
+    # run mode=play exactly as Play-Coop writes it, moved onto 127.0.0.1 with
+    # the worker-only play_rehearsal=1, the real identity and a fresh link
+    # secret (the supervisor admits it with PlayRehearsal; docs/two-pc-play.md
+    # "Hidden play rehearsal"). Profiles: animated (clips) or native loco|gun.
+    [ValidateSet('lab','play')][string]$Mode='lab',
+    # A lab.json wanSim preset on both copies (one-way impairment each,
+    # net_seed 1/2, partner_interp=auto), in either mode.
+    [ValidateSet('off','good','bad','awful')][string]$WanSim='off'
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -56,6 +66,8 @@ $labKeys=@($LabSetting|ForEach-Object{$_ -creplace '^(host|guest):',''})
 if(@($labKeys|Where-Object{$_ -clike 'partner_native_*'}).Count -and $PartnerProfile -cne 'native'){throw '-LabSetting partner_native_* needs -PartnerProfile native.'}
 if($labKeys -ccontains 'partner_native_aim=looksrc' -and $NativeStage -cne 'gun'){throw '-LabSetting partner_native_aim=looksrc needs -NativeStage gun.'}
 if($AmmoExperiment -and $BuildProfile -cne 'research'){throw '-AmmoExperiment needs -BuildProfile research.'}
+# The play rehearsal runs what Play-Coop can write: the clip partner or the native loco/gun profile.
+if($Mode -ceq 'play'){$null=Get-WorkerPlayPartnerSettings $PartnerProfile $NativeStage}
 $checks=Read-WorkerSessionJson ([IO.Path]::GetFullPath($CheckReceipt,$repo))
 if($BuildProfile -ceq 'research'){
     if(!(Test-WorkerResearchReceipt $checks $build $repo $loaderHash (Get-WorkerResearchExperiments -Ammo:$AmmoExperiment))){
@@ -126,7 +138,7 @@ try {
     if(!$beforeSaves.Count){throw 'No real save manifest; refusing worker preparation.'}
     $session=[ordered]@{schema=1;run_id=$runId;run_dir=$runDirectory;repo=$repo;build_directory=$build;status='staging';
         started_utc=[DateTime]::UtcNow.ToString('o');failure=$null;supervisor=$null;owned_processes=@();
-        candidate_sha256=$loaderHash;baseline_sha256=$BaselineLoaderSha256;archive_sha256=$pins.Archive;lab_settings=@($LabSetting);
+        candidate_sha256=$loaderHash;baseline_sha256=$BaselineLoaderSha256;archive_sha256=$pins.Archive;lab_settings=@($LabSetting);mode=$Mode;wan_sim=$WanSim;
         check_receipt=[IO.Path]::GetFullPath($CheckReceipt,$repo);check_receipt_sha256=Get-WorkerHash ([IO.Path]::GetFullPath($CheckReceipt,$repo));
         qualification=$qualification.QualificationPath;qualification_sha256=Get-WorkerHash $qualification.QualificationPath;
         prepare_started=$false;prepare_completed=$false;configuration=$null;real_saves=[ordered]@{root=$identity.UserData;before=$beforeSaves};
@@ -172,7 +184,35 @@ try {
     # puppet stage (docs/native-puppet.md 13.1) on the animated fallback base.
     $settings=Get-WorkerPartnerSettings $PartnerProfile $NativeStage
     $settings=@($settings)+@($LabSetting)
-    & (Join-Path $repo 'tools\lab\Prepare-LabInstance.ps1') -ConfigPath $copyConfig -Role both -Offline -Loader $loader -RuntimeArchive $archive -PartnerSetting $settings -SkipSaves -SkipGraphics | ForEach-Object {Write-Host $_}
+    # -Mode play: Prepare installs the loader, archive, marker and coop.ini as
+    # for the lab (the clip base); the play lab.ini replaces its lab.ini below.
+    if($Mode -ceq 'play'){$settings=@(Get-WorkerPartnerSettings 'animated')}
+    $prepareWanSim=if($Mode -ceq 'lab'){$WanSim}else{'off'}
+    & (Join-Path $repo 'tools\lab\Prepare-LabInstance.ps1') -ConfigPath $copyConfig -Role both -Offline -Loader $loader -RuntimeArchive $archive -PartnerSetting $settings -WanSim $prepareWanSim -SkipSaves -SkipGraphics | ForEach-Object {Write-Host $_}
+    if($Mode -ceq 'play') {
+        # The play rehearsal (docs/two-pc-play.md "Hidden play rehearsal"):
+        # Play-Coop's own play lab.ini moved onto 127.0.0.1, a fresh random
+        # link secret in both copies, no client-host.txt (play has none).
+        $wanLines=@()
+        if($WanSim -cne 'off'){
+            $preset=Get-LabWanSimPreset -WanSim $config.WanSim -Name $WanSim
+            foreach($key in $preset.Keys){$wanLines+=($key+'='+$preset[$key])}
+        }
+        $secret=New-CoopSecret
+        foreach($role in @('host','guest')) {
+            $p=$instances[$role]
+            $base=if($role -ceq 'host'){New-CoopPlayLabIniText -Role host -SaveDir $p.SaveDir -Partner clips}
+                else{New-CoopPlayLabIniText -Role guest -SaveDir $p.SaveDir -PeerAddress '192.0.2.1' -Partner clips}
+            $roleSettings=@($LabSetting|Where-Object{$_ -cnotmatch '^(host|guest):' -or $_.StartsWith($role+':')}|ForEach-Object{$_ -creplace '^(host|guest):',''})
+            $extra=@(Get-WorkerPlayPartnerSettings $PartnerProfile $NativeStage)+$wanLines
+            if($WanSim -cne 'off'){$extra+=@('net_seed='+$(if($role -ceq 'host'){'1'}else{'2'}))}
+            $extra+=$roleSettings
+            Write-WorkerAtomicText $p.LabIni (ConvertTo-WorkerPlayLabIniText $base $role $extra)
+            Write-WorkerAtomicText $p.LinkSecret ($secret+"`r`n")
+            if(Test-Path -LiteralPath $p.ClientHost -PathType Leaf){Remove-Item -LiteralPath $p.ClientHost}
+        }
+        $secret=$null
+    }
     $session.prepare_completed=$true
     foreach($role in @('host','guest')) {
         $p=$instances[$role];$row=$session.roles[$role]
@@ -201,7 +241,8 @@ try {
         else{$text=$text.TrimEnd([char]13,[char]10)+"`nmutex_suffix="+$row.mutex_suffix+"`n"}
         Write-WorkerAtomicText $p.LabIni $text
         $ini=ConvertFrom-IniText $text
-        $row.expected_steamid=if($role -ceq 'guest'){[string]$ini['self_steamid']}else{[string]$identity.SteamId64}
+        # The play rehearsal keeps the real identity in both copies.
+        $row.expected_steamid=if($role -ceq 'guest' -and $Mode -ceq 'lab'){[string]$ini['self_steamid']}else{[string]$identity.SteamId64}
         $row.expected_peer=[string]$ini['peer_steamid'];$row.expected_url='http://127.0.0.1:'+([string]$raw.offline.masterPort)+'/tppstm/gate'
         $graphics=Join-Path $saveRoot '287700\local\TPP_GRAPHICS_CONFIG'
         $info=Get-GraphicsConfigInfo (Read-WorkerBoundedText $graphics)
@@ -226,6 +267,8 @@ try {
         timeout_ms=[string]($TimeoutSec*1000);ready_timeout_ms=[string]($ReadyTimeoutSec*1000);
         exe_sha256=$pins.Exe;steam_sha256=$pins.Steam;loader_sha256=$loaderHash;runtime_archive_sha256=$pins.Archive;runtime_motion_count='21';
         probe_receipt=$qualification.QualificationPath;probe_receipt_sha256=$session.qualification_sha256;offline_master_port=[string]$raw.offline.masterPort}
+    # The supervisor's gate: OfflineLab, or PlayRehearsal for the play rehearsal.
+    if($Mode -ceq 'play'){$manifest['lab_mode']='play'}
     foreach($role in @('host','guest')){
         $manifest[$role+'_exe']=$instances[$role].Exe;$manifest[$role+'_save_dir']=$session.roles[$role].worker_save_dir
         foreach($kind in @('lab','coop','graphics')){$manifest[$role+'_'+$kind+'_sha256']=$session.roles[$role][$kind+'_sha256']}
@@ -264,18 +307,24 @@ try {
             if(!(Test-WorkerContextText (Read-WorkerBoundedText (Join-Path $runDirectory ($role+'.context')) 1024) $runId $role $owned[0])){throw 'Actual native context ownership differs.'}
             $row=$session.roles[$role];$early=$row.log_offsets['early.log'];$steam=$row.log_offsets['steam-observer.log']
             $limit=[datetime]::Parse($session.process_started_utc).ToUniversalTime()
-            $safety=Get-LabSafetyVerdict -Role $role -EarlyLog (Read-WorkerFreshLog $early.path $early.offset $limit) -SteamLog (Read-WorkerFreshLog $steam.path $steam.offset $limit) -ExpectedSaveDir $row.worker_save_dir -ExpectedUrl $row.expected_url -ExpectedSteamId $row.expected_steamid -ExpectedMutexSuffix $row.mutex_suffix
+            $earlyText=Read-WorkerFreshLog $early.path $early.offset $limit;$steamText=Read-WorkerFreshLog $steam.path $steam.offset $limit
+            $safety=if($Mode -ceq 'play'){Get-WorkerPlaySafetyVerdict -Role $role -EarlyLog $earlyText -SteamLog $steamText -ExpectedSaveDir $row.worker_save_dir -ExpectedUrl $row.expected_url -ExpectedMutexSuffix $row.mutex_suffix}
+                else{Get-LabSafetyVerdict -Role $role -EarlyLog $earlyText -SteamLog $steamText -ExpectedSaveDir $row.worker_save_dir -ExpectedUrl $row.expected_url -ExpectedSteamId $row.expected_steamid -ExpectedMutexSuffix $row.mutex_suffix}
             $row.safety=@{state=$safety.State;reason=$safety.Reason;missing=@($safety.Missing)}
             if($safety.State -ceq 'unsafe'){throw "Actual $role startup safety refused: $($safety.Reason)"}
             if($safety.State -cne 'ok'){$allSafe=$false}
         }
-        $hostId=Read-WorkerFreshLog $instances.host.HostId 0 ([datetime]::Parse($session.process_started_utc).ToUniversalTime()) 1024
-        $idCheck=Get-HostIdCheck -HostIdText $hostId -ClientHostText (Read-WorkerBoundedText $instances.guest.ClientHost 1024) -PeerSteamId $session.roles.guest.expected_peer
-        if($idCheck -ceq 'mismatch'){throw 'Actual fresh host identity differs from guest configuration.'}
-        # Offline, host-steamid.txt is only written once an online host session
-        # exists, so 'not_written' is the normal offline state (as in Start-Lab);
-        # only an actual mismatch refuses.
-        if($idCheck -cne 'ok' -and $idCheck -cne 'not_written'){$allSafe=$false}
+        # The play rehearsal has no client-host.txt (both copies keep the real identity).
+        $idCheck='not_applicable'
+        if($Mode -ceq 'lab') {
+            $hostId=Read-WorkerFreshLog $instances.host.HostId 0 ([datetime]::Parse($session.process_started_utc).ToUniversalTime()) 1024
+            $idCheck=Get-HostIdCheck -HostIdText $hostId -ClientHostText (Read-WorkerBoundedText $instances.guest.ClientHost 1024) -PeerSteamId $session.roles.guest.expected_peer
+            if($idCheck -ceq 'mismatch'){throw 'Actual fresh host identity differs from guest configuration.'}
+            # Offline, host-steamid.txt is only written once an online host session
+            # exists, so 'not_written' is the normal offline state (as in Start-Lab);
+            # only an actual mismatch refuses.
+            if($idCheck -cne 'ok' -and $idCheck -cne 'not_written'){$allSafe=$false}
+        }
         $session.host_identity_check=$idCheck;Write-WorkerSessionJson $statePath $session
         if($allSafe){$session.status='ready';$session.ready_utc=[DateTime]::UtcNow.ToString('o');Write-WorkerSessionJson $statePath $session
             Write-Host "Private worker context and startup safety admitted: $runDirectory"
@@ -302,7 +351,7 @@ try {
                         try {
                             $text=Read-WorkerBoundedText $snapshot.path
                             $url='http://127.0.0.1:'+([string]$raw.offline.masterPort)+'/tppstm/gate'
-                            if(Test-WorkerPreparedConfigText ([IO.Path]::GetFileName($snapshot.path)) $text $role ([string]$identity.SteamId64) $url @($p.SaveDir,$row.worker_save_dir)){$snapshot.worker_sha256=Get-WorkerHash $snapshot.path}
+                            if(Test-WorkerPreparedConfigText ([IO.Path]::GetFileName($snapshot.path)) $text $role ([string]$identity.SteamId64) $url @($p.SaveDir,$row.worker_save_dir) $Mode){$snapshot.worker_sha256=Get-WorkerHash $snapshot.path}
                         }catch{Write-Warning "Could not qualify a partial generated configuration for cleanup: $($snapshot.path)"}
                     }
                 }

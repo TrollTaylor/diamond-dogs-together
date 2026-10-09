@@ -211,7 +211,7 @@ bool ValidPacket(const InputPacket& p) noexcept {
     if ((p.flags & ~Flag::Known) != 0 || p.lx == -32768 || p.ly == -32768 || p.rx == -32768 || p.ry == -32768 ||
         p.ldir < -kMaxDir || p.ldir > kMaxDir || p.cam_cdeg < kCamMin || p.cam_cdeg > kCamMax) return false;
     if (p.version == 1) return p.edge_seq == 0 && p.edge_rep == 0 && p.long12 == 0 && p.tap12 == 0 && NoV3(p);
-    if ((p.version < 2 || p.version > 4) || p.edge_rep > kEdgeRepeats) return false;
+    if ((p.version < 2 || p.version > 4) || p.edge_rep > kEdgeRepeatsMax) return false;
     // v2: no v3/v4 field; v3: no v4 field (ValidV3); v4: both groups checked (ValidV4).
     if (p.version == 2 ? !NoV3(p) : !ValidV3(p)) return false;
     // No edge set: no edge words.
@@ -234,6 +234,9 @@ Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_c
     const bool live = net && sample.valid && sample.age_ms <= c.stale_ms;
     // A stall: the newest frame is stale but younger than the grace.
     const bool grace = net && sample.valid && !live && sample.age_ms <= kStaleGraceMs;
+    // The stall hold (online play): its sticks, look and gun fields carry on
+    // for up to stall_ms, so one late packet does not stop the body.
+    const bool stall = net && sample.valid && !live && c.stall_ms > c.stale_ms && sample.age_ms <= c.stall_ms;
     j.stale = net && !live;
     j.live = live;
     std::uint32_t held = overlay.bits;
@@ -243,9 +246,9 @@ Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_c
         j.lx = static_cast<float>(m * std::sin(theta));
         j.ly = static_cast<float>(m * std::cos(theta));
         j.mag = static_cast<float>(m);
-    } else if (live) {
+    } else if (live || stall) {
         const InputPacket& p = sample.packet;
-        held |= p.held;
+        if (live) held |= p.held;
         const double lx = p.lx / 32767.0, ly = p.ly / 32767.0;
         const double scale = std::isfinite(mag_scale) ? mag_scale : 1.0;
         const double r = Clamp(Clamp(std::sqrt(lx * lx + ly * ly), 0.0, 1.0) * scale, 0.0, 1.0);
@@ -255,7 +258,7 @@ Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_c
         j.lx = static_cast<float>(r * std::sin(theta));
         j.ly = static_cast<float>(r * std::cos(theta));
         j.mag = static_cast<float>(Clamp(p.lmag / 65535.0 * scale, 0.0, 1.0));
-        j.long12 = p.long12;
+        if (live) j.long12 = p.long12;
         if (c.rstick) {
             const double rx = p.rx / 32767.0, ry = p.ry / 32767.0;
             const double rr = Clamp(std::sqrt(rx * rx + ry * ry), 0.0, 1.0);
@@ -264,7 +267,8 @@ Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_c
             j.rmag = j.rforce = static_cast<float>(rr);
             j.rdir = static_cast<float>((rx != 0.0 || ry != 0.0) ? std::atan2(rx, ry) : 0.0);
         }
-        if (c.triggers) {
+        // Analog triggers (aim/fire on a pad) only from a live sample, never held through a stall.
+        if (c.triggers && live) {
             j.lt = static_cast<float>(p.lt / 255.0);
             j.rt = static_cast<float>(p.rt / 255.0);
         }
@@ -470,6 +474,11 @@ void SenderObserve(SenderEdges& st, const PadSnapshot& snap) noexcept {
     st.have_last = true;
 }
 
+std::uint8_t SenderRepeats(const SenderEdges& st) noexcept {
+    if (!st.repeats) return kEdgeRepeats;
+    return st.repeats > kEdgeRepeatsMax ? kEdgeRepeatsMax : st.repeats;
+}
+
 void SenderFill(SenderEdges& st, InputPacket& p) noexcept {
     p.long12 = st.long12;
     if (st.press | st.release | st.tap12) {
@@ -481,7 +490,11 @@ void SenderFill(SenderEdges& st, InputPacket& p) noexcept {
         st.filled_new = true;
     } else if (st.reps_left && st.seq) {
         p.edge_seq = st.seq;
-        p.edge_rep = static_cast<std::uint8_t>(kEdgeRepeats - st.reps_left + 1);
+        // The wire counter saturates at kEdgeRepeats (1, 2, 2, ...): a 0.11.1
+        // receiver refuses edge_rep > 2, so more repeats never drop its frames
+        // (receivers dedupe by edge_seq; edge_rep is informational).
+        const unsigned rep = static_cast<unsigned>(SenderRepeats(st)) - st.reps_left + 1u;
+        p.edge_rep = static_cast<std::uint8_t>(rep > kEdgeRepeats ? kEdgeRepeats : rep);
         p.w50 = st.cur_press;
         p.w54 = st.cur_release;
         p.tap12 = st.cur_tap12;
@@ -501,7 +514,7 @@ void SenderSent(SenderEdges& st) noexcept {
         st.cur_release = st.release;
         st.cur_tap12 = st.tap12;
         st.press = st.release = st.tap12 = 0;
-        st.reps_left = kEdgeRepeats;
+        st.reps_left = SenderRepeats(st);
         st.filled_new = false;
     } else if (st.reps_left) {
         --st.reps_left;
@@ -543,7 +556,8 @@ bool SameArm(const Arm& a, const Arm& b) noexcept {
            std::memcmp(a.config.words, b.config.words, sizeof(a.config.words)) == 0 && a.config.yaw_sign == b.config.yaw_sign &&
            a.config.rstick == b.config.rstick && a.config.triggers == b.config.triggers &&
            a.config.stick_deg == b.config.stick_deg && a.config.stick_pct == b.config.stick_pct &&
-           a.config.stale_ms == b.config.stale_ms && a.native == b.native && a.local_all == b.local_all && a.naim == b.naim &&
+           a.config.stale_ms == b.config.stale_ms && a.config.stall_ms == b.config.stall_ms && a.native == b.native &&
+           a.local_all == b.local_all && a.naim == b.naim &&
            a.go == b.go && a.ps1 == b.ps1 && a.ps1_idx == b.ps1_idx;
 }
 

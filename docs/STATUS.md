@@ -1,5 +1,33 @@
 # Development status
 
+## October 9, 2026: native partner online (fixture-tested, hidden runs pending)
+
+`wp/online-native` ([two-pc-play.md](two-pc-play.md) "Native partner",
+[native-puppet.md](native-puppet.md) "Online"). Two-PC play now runs the
+native partner by default on both PCs: Play-Coop writes `partner_input_send=1`
+and `partner_native_profile=gun` (`-Partner clips` opts out), which the loader
+expands into exactly the gun stage the hidden worker qualified; the raw native
+keys stay play refusals. An online network policy (play default) keeps
+stalls, link drops, a paused remote and range hiding from latching the native
+partner off: they fall back as network reasons, re-entry waits 2 s of good
+link quality, a paused remote is held neutral for 10 s, a flapping link keeps
+the clips; the first catch-up snap after an input gap never counts as
+diverging; a stall keeps the last stick 400 ms; edge sets repeat 5 times. The
+sender sends v4 whatever its own drive, and a capability message (channel 2)
+tells each PC how the other shows its body (link-status.json and the
+Play-Coop status line: `partner=... native; you on the other PC: native` or
+`clips (<reason>)`). The gun profile strips HOLD/RELOAD/FIRE while body 1 has
+no gun (outside 30010); the stock46 gun pieces run only for a configured
+native gun profile, and the friend loader comes from
+`Invoke-WorkerChecks -Profile Release` (`build.ps1 -ReleaseGun`), packaged by
+`package.ps1 -Friend` with provenance. The hidden worker gains `-WanSim` and
+`-Mode play` (a play rehearsal on 127.0.0.1 with the worker-only
+`play_rehearsal=1`, admitted by `PlayRehearsal`), scenarios `play-native.txt`
+and `partner-native-online.txt`. Fixture evidence only (lab_config,
+partner_native, partner_input, partner_recon, partner_driver, player_sync,
+worker_protocol, steam_shim_patches, worker_session, worker_checks,
+build_profile, lab_scripts and friend_package tests).
+
 ## October 8, 2026: Steam online transport (fixture-tested, never run)
 
 Two-PC play can now connect **online through Steam** with no port
