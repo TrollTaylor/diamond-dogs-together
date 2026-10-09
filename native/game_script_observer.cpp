@@ -961,11 +961,14 @@ void PartnerMissionEnd() noexcept {
 // had the native drive still armed.
 void PartnerShutdown() noexcept {
     if (!partner_on || !partner_mission) return;
+    // Thread-safe first: no deferral, no window, no mirror write from here on.
+    mgscoop::partner_defer::Shutdown();
+    mgscoop::partner_input_hook::Shutdown();
     if (mission_thread && mission_thread != GetCurrentThreadId()) {
-        LogFormat("partner_shutdown=skipped; reason=thread; thread=%lu; mission_thread=%lu\r\n", GetCurrentThreadId(), mission_thread);
+        LogFormat("partner_shutdown=hooks_off; teardown=other_thread; thread=%lu; mission_thread=%lu\r\n", GetCurrentThreadId(), mission_thread);
         return;
     }
-    Log("partner_shutdown=disarm; reason=window_close\r\n");
+    Log("partner_shutdown=hooks_off; teardown=mission_end\r\n");
     PartnerMissionEnd();
 }
 

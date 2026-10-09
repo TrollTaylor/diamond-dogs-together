@@ -218,7 +218,9 @@ void Max(volatile LONG& slot, LONG value) noexcept {
     }
 }
 
+volatile LONG g_shutdown = 0;  // set once at window close; never cleared
 bool ReadArm(pi::Arm& out) noexcept {
+    if (g_shutdown) return false;
     for (int tries = 0; tries < 2; ++tries) {
         const LONG s1 = g_seq;
         if (s1 & 1) continue;
@@ -852,6 +854,7 @@ void RunWindow(const pi::Arm& a, void* root, std::uint32_t phase) noexcept {
 
 void __stdcall InputDispatchHook(void* root, std::uint32_t phase) noexcept {
     if (InterlockedCompareExchange(&g_hook_thread, static_cast<LONG>(GetCurrentThreadId()), 0) == 0) {}
+    if (g_shutdown) { g_original(root, phase); return; }
     if ((g_rates.applied && !g_wrap_native) || g_rates_forget) RatesIdle();
     if (!g_arm_enabled && !g_holdlog) { g_need_resync = true; g_original(root, phase); return; }
     pi::Arm a{};
@@ -1655,6 +1658,8 @@ void ResetFault() noexcept {
     InterlockedExchange(&g_m_faulted, 0);
     InterlockedExchange(&g_m_leak, 0);
 }
+
+void Shutdown() noexcept { InterlockedExchange(&g_shutdown, 1); }
 
 void PublishArm(const pi::Arm& arm) noexcept {
     InterlockedIncrement(&g_seq);  // odd

@@ -70,6 +70,8 @@ void ClearIdentity() noexcept;
 // Publication order: identity, then the enabled Arm, then SetArmed(true);
 // leaving: SetArmed(false) first.
 void SetArmed(bool armed) noexcept;
+// Process shutdown (the game window is closing): disarms for good, from any thread.
+void Shutdown() noexcept;
 bool Armed() noexcept;
 // Disarms and clears the deferral fault (never touches pending or the batch counts).
 void MissionStart() noexcept;

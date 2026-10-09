@@ -45,6 +45,7 @@ std::uintptr_t g_job_return = 0;
 
 volatile LONG g_mode = 0;          // Mode
 volatile LONG g_armed = 0;
+volatile LONG g_shutdown = 0;  // set once at window close; never cleared
 volatile LONG g_faulted = 0;
 volatile LONG g_fault_phase = 0, g_fault_code = 0;
 // Identity: go (64-bit) plus pools | valid << 16, written identity-first.
@@ -240,7 +241,7 @@ void DrainCall(std::uintptr_t entry, const Rec& rec, std::uint32_t mode) noexcep
     if (param.nbits != rec.nbits || param.bits != rec.bits) InterlockedIncrement(&g_entry_changed);
     if (bit1 == mode) InterlockedOr(&g_id1_pass, static_cast<LONG>(1u << mode));
     else InterlockedAnd(&g_id1_pass, static_cast<LONG>(~(1u << mode)));
-    const bool windowable = static_cast<std::uint32_t>(GetCurrentThreadId()) == HookThread() && g_armed && hk::Installed();
+    const bool windowable = static_cast<std::uint32_t>(GetCurrentThreadId()) == HookThread() && g_armed && !g_shutdown && hk::Installed();
     const auto consumer = mode == 0 ? partner_input::Consumer::drain0 : partner_input::Consumer::drain1;
     if (windowable && hk::RunJobWindow(go, &param, param.block, &HookJob, consumer)) InterlockedIncrement(&g_windowed);
     else {
@@ -369,7 +370,7 @@ void W50(void* go, const JobParam* p) noexcept {
     else InterlockedIncrement(&g_other);
     detail::DecisionIn in{};
     in.mode = static_cast<Mode>(g_mode);
-    in.armed = g_armed != 0;
+    in.armed = g_armed != 0 && !g_shutdown;
     in.faulted = g_faulted != 0;
     in.h2_ready = g_h2 != 0;
     in.ret = ret;
@@ -520,7 +521,11 @@ void ClearIdentity() noexcept {
     InterlockedExchange(&g_id_pools, 0);
     InterlockedExchange64(&g_id_go, 0);
 }
-void SetArmed(bool armed) noexcept { InterlockedExchange(&g_armed, armed ? 1 : 0); }
+void SetArmed(bool armed) noexcept { InterlockedExchange(&g_armed, armed && !g_shutdown ? 1 : 0); }
+void Shutdown() noexcept {
+    InterlockedExchange(&g_shutdown, 1);
+    InterlockedExchange(&g_armed, 0);
+}
 bool Armed() noexcept { return g_armed != 0; }
 
 void MissionStart() noexcept {

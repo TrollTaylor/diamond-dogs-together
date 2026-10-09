@@ -62,6 +62,9 @@ void ResetFault() noexcept;
 // The driver publishes this each tick (seqlock: odd, copy, even). Copied by
 // value; pointers are read inside the hook under SEH and re-validated.
 void PublishArm(const partner_input::Arm& arm) noexcept;
+// Process shutdown (the game window is closing), from any thread: every wrapper
+// forwards from now on (no windows, no rate/magazine restore writes).
+void Shutdown() noexcept;
 
 // Wrap census counters (process-lifetime totals; the driver logs deltas).
 // Entry e: 0 svc+0x28 (active walk), 1 svc+0x30 (all ids), 2 svc+0x40 (per
