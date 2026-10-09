@@ -16,6 +16,39 @@ The player-facing guide is `tools/friend/FRIEND-GUIDE.txt` (shipped in the
 friend ZIP). This page describes the tooling (PART T) and the files it relies
 on.
 
+## Quick start (online, the user and a friend)
+
+The flow both players follow (FRIEND-GUIDE.txt section 3 says the same in
+player words):
+
+1. **Both, once**: extract the same friend ZIP (same version on both PCs) and
+   run `Install-Coop.bat`. Afterwards a normal start from Steam is plain MGSV
+   on the real saves (pass-through).
+2. **Host**: `Play-Coop.bat`, `[O] Host online`. Steam must be running and
+   logged in. Play-Coop shows an `MGS2-...@<SteamID64>` code (copied to the
+   clipboard) and starts MGSV. Send the code over chat, or invite a Steam
+   friend in the game: F9 > Partner / Co-op > Online > Invite a friend >
+   Invite ("Accept joins" there switches new joins on and off).
+3. **Friend**: start `Play-Coop.bat` *first*, `[J] Join online`, then paste
+   the code, or press Enter to wait for the invite and accept it in the Steam
+   overlay or chat while the co-op game runs (an invite accepted without
+   Play-Coop starts plain MGSV on the real saves). A code can also be pasted
+   later in F9 > Partner / Co-op > Online.
+4. **Both**: Continue into the same supported scene (Mother Base, Afghanistan
+   or Africa free roam). The in-game line shows `CO-OP [connected] <partner>
+   - Steam relay 61 ms`; Play-Coop's status line shows `link=connected via
+   Steam (relay|direct) ... | partner=... native; you on the other PC: native`.
+5. **Partner body**: native by default on both PCs (the game's own
+   movement, aim, reload, weapon switch and visual-only fire, driven by the
+   other player's input); the clips take over by themselves while the network
+   or the PC cannot keep up and the status line names why. `Play-Coop.bat
+   -Partner clips` (from a Command Prompt in the package folder) always uses
+   the clips on this PC; the other PC can still show this player natively.
+6. **Fallback transport**: `[L] LAN/VPN` with an MGS1 code (Host `[H]`, Join
+   `[J]`), for when Steam networking does not connect.
+7. **Done**: quit MGSV normally; co-op switches itself off at game exit, even
+   with the Play-Coop window closed.
+
 F9 opens the in-game debug menu during an offline copied-save session. The
 new source Enemy controls select an authored camp and patrol route, teleport
 to a readable guard or validated player checkpoint, and let the host reuse
@@ -255,7 +288,7 @@ set.
 
 Both players must install the same package. The link compares the loader's
 build id, the version plus the 7-character commit (for example
-`0.11.1+2459c8c`); a different one is refused with "Your friend runs mgs-coop
+`0.12.0+6bdf926`); a different one is refused with "Your friend runs mgs-coop
 X; you run Y. Both must install the same package."
 
 ## When it does not connect
@@ -273,23 +306,29 @@ lost connection after a timeout.
 
 Play runs the native partner by default on both PCs ([native-puppet.md](native-puppet.md)
 "Online"): the other player's body is moved by the game's own locomotion,
-action and gun systems from that player's pad (input frames v4), with the
-proven dm=map + xform clip partner as the automatic fallback.
+action and gun systems from that player's pad (input frames v4, and v5 with
+the reload/switch gun group once the peer sends v5), with the proven dm=map +
+xform clip partner as the automatic fallback.
 
 - **lab.ini**: Play-Coop writes `partner_input_send=1` (every copy sends its
   input frames, so the other PC can run its native partner whatever this one
   shows) and, with `-Partner native` (default), `partner_native_profile=gun`.
   The loader expands the profile to exactly the gun stage the hidden worker
   qualified (`Get-WorkerPartnerSettings -NativeStage gun`: native drive,
-  deferral on, mask 0x224005E, visual fire, look, rates mirror, ...); the raw
-  native keys stay play refusals (0x20000, also lookcam, local=all, the P+0x218
-  window and noise=keep), and a profile without the dm=map + xform base is
-  refused (0x800000). `-Partner clips` writes no profile.
+  deferral on, mask 0x224005E, visual fire, look, rates mirror, the aim-target
+  mirror `partner_native_aimpt=look`, ...) and then resolves the weapons keys
+  (`partner_native_reload=event`, `partner_native_slot=write`,
+  `partner_native_equip=substitute`); the raw native keys stay play refusals
+  (0x20000, also lookcam, local=all, the P+0x218 window and noise=keep), and a
+  profile without the dm=map + xform base is refused (0x800000). `-Partner
+  clips` writes no profile.
 - **Play defaults** (keys not named): `partner_native_net=online`,
   `partner_native_stall=hold` (400 ms), `partner_input_edge_repeats=5`. Allowed
   variants in play: `partner_native_net`, `partner_native_stall`,
   `partner_native_stall_ms`, `partner_native_hold`, `partner_input_edge_repeats`,
-  `partner_native_face`, `partner_native_aim=looksrc`.
+  `partner_native_face`, `partner_native_aim=looksrc`, `partner_native_aimpt`,
+  `partner_native_reload`, `partner_native_slot` (`call` runs as `write`) and
+  `partner_native_equip` (a named key keeps its value).
 - **Automatic fallback** (logged as `partner_native=<mode>; reason=..`,
   `partner_native_net; ...` at 1 Hz, `partner_native_net=quiet|resume`):
 
@@ -424,7 +463,11 @@ Native partner (two PCs): native active on both PCs within ~6 s of meeting;
 three ESC pauses and a Wi-Fi drop without a latch; prone/crouch taps at
 different frame rates (A/B `partner_native_hold=own|net` through lab.ini);
 a gamepad on each side (never used at runtime so far); each friend's
-`thread` and `cost` census through Collect-Logs.
+`thread` and `cost` census through Collect-Logs; aim, reload and weapon
+switches in both directions (the logs' `partner_aim=installed`,
+`partner_reload=entered` then `complete`, `partner_slot=write` and one
+`equip_writer=handle_bound` per filled slot; a `refused` line names the slot
+that stayed empty).
 
 Online (Steam): every item of [steam-online.md](steam-online.md) section 15
 (code join between non-friends through the 2015 steam_api dispatcher, the

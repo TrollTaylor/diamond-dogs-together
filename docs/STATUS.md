@@ -8,6 +8,41 @@ script adapter line, the package/friend tooling (`SupportedLoaderVersions`,
 `package-install.ps1`, `set-session-mode.ps1`) and the link build id as
 **0.12.0**. Two copies must run the same package; 0.11.1 receivers are still
 considered on the wire (the edge_rep saturation at 2, the v5 negotiation).
+What the release brings (details in the track entries below):
+
+- **Native partner online**: two-PC play shows the other player with the
+  native partner by default on both PCs (Play-Coop writes
+  `partner_input_send=1` and `partner_native_profile=gun`; `-Partner clips`
+  opts out). Stalls, link drops, a paused remote and range hiding fall back
+  to the clips and return by themselves; each PC reports how the other one
+  shows it (`partner=... native; you on the other PC: native`).
+- **Aim parity**: the aim-target mirror (`partner_native_aimpt=look`, part of
+  the gun profile) feeds instance 1's network aim slot, so the partner's gun
+  points where the other player aims (the fix for the act-12 aim wobble).
+- **Reload**: body 1 runs its own native reload from the other player's
+  reloads (input frame v5 `reload_seq`, `partner_native_reload=event`, the
+  magazine mirror freezes during it and reconciles afterwards).
+- **Weapon switching**: the generalized preload and writer put the other
+  player's three slots (or resident same-type substitutes) on body 1 in every
+  partner-body mission and the slot follower switches natively
+  (`partner_native_equip=substitute`, `partner_native_slot=write`).
+- **Steam code joins**: joins between players who are not Steam friends no
+  longer depend on the 2015 callback dispatcher (`net_steam_dispatch=both`);
+  the guest learns why a join failed, and a partner who quits shows as "left".
+- **Co-op HUD**: an in-game `CO-OP [...]` status line with toasts (`coop_hud`,
+  compact in play, `-Hud compact|full|off`).
+- **Friend flow**: Play-Coop `[O] Host online` (MGS2 code or the F9 invite) /
+  `[J] Join online` (start Play-Coop first, then paste the code or wait for
+  the invite), `[L]` LAN/VPN as before; [two-pc-play.md](two-pc-play.md)
+  "Quick start" and `tools/friend/FRIEND-GUIDE.txt` describe the same steps.
+
+Known open points: run 53e36944 (one PC, before the merge) showed the writer
+binding only slot 1 and the reload not leaving 11/12; the reload length/exit
+and reload-speed work (F2, a receiver-side patch at `0x10778F0`) is not in
+this build (that track stopped before any code). Play inherits both through
+the gun profile; the gate strips FIRE/RELOAD for a slot that could not be
+filled.
+
 Merge semantics worth knowing:
 
 - Input frames: every copy with `partner_input_send=1` sends v4 whatever its
@@ -33,8 +68,11 @@ Merge semantics worth knowing:
   sites and 103 vtable slots (the union of the aim and weapons sites).
 
 Evidence: fixture only (118/118 CTest, the Normal, Research and Release
-worker-check profiles, every contract generator `--check`). The hidden runs
-of each track on the merged build are the coordinator's next step.
+worker-check profiles, every contract generator `--check` including
+`--steamclient`). The hidden runs on the merged build are the coordinator's
+next step: the weapons scenario, the native play rehearsal (`-Mode play`,
+then `-WanSim bad`), the aim scenario and the Steam self-test (with
+`coop-hud.txt`); then the two-PC acceptance with a friend.
 
 ## October 9, 2026: aim parity, the partner's gun aims where the remote aims (fixture-tested, hidden runs pending)
 

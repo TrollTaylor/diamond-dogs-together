@@ -706,6 +706,17 @@ try {
     foreach ($needle in 'Ctrl+F8', 'Ctrl+F9', '7656119', 'SteamID64', 'normal online service', 'Account details') { Assert-True (!$guide.Contains($needle)) "guide no longer mentions $needle" }
     $statusExample = [regex]::Match($guide, '\[HOST\] link=connected[^\r\n]+').Value
     Assert-Equal $statusExample (Format-CoopStatusLine -Status $st -Role host -NowUtc $now) 'the guide quotes the launcher status line exactly'
+    # The online example (Steam relay, the native partner on both PCs; docs/two-pc-play.md "Quick start").
+    $onlineExample = [regex]::Match($guide, '\[JOIN\] link=connected via Steam[^\r\n]+').Value
+    $onlineText = $statusText.Replace('"role":"host"', '"role":"guest"').Replace('"rtt_ms":42,"jitter_ms":3,"loss_permille":4', '"rtt_ms":61,"jitter_ms":4,"loss_permille":0')
+    $onlineText = $onlineText.Replace('"interp_ms":80', '"interp_ms":100').Replace('"mission":30050', '"mission":30010')
+    $onlineText = $onlineText.Replace('"saves":"redirected"', '"saves":"redirected","transport":"steam","route":"relay","partner_drive":"native","partner_reason":"ok","remote_drive":"native","remote_reason":"ok"')
+    $onlineSt = ConvertFrom-CoopStatusText -Text $onlineText
+    Assert-True ([bool]$onlineExample) 'the guide shows an online status line'
+    Assert-Equal $onlineExample (Format-CoopStatusLine -Status $onlineSt -Role guest -NowUtc $now) 'the guide quotes the online status line exactly'
+    foreach ($needle in 'Host online', 'Join online', 'Invite a friend', 'start Play-Coop.bat FIRST', 'Play-Coop.bat -Partner clips', 'native partner') {
+        Assert-True $guide.Contains($needle) "guide describes the online flow: $needle"
+    }
     $archiveNote = [IO.File]::ReadAllText((Join-Path $pkg 'RUNTIME-ARCHIVE.txt'))
     Assert-True ($archiveNote.Contains('87BBE82BB1E907CF405200155DA2794BF7E1F5A3D45BF66426A38CDD31A91F96') -and $archiveNote.Contains('16,333,824') -and !$archiveNote.Contains('Ctrl+F8') -and !$archiveNote.Contains('SteamID')) 'archive note names hash and size, nothing of the online route'
 

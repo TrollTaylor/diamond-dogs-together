@@ -21,15 +21,19 @@ What works today:
   Actions require supported on-foot gameplay. Guard actions use authored
   mission soldiers; arbitrary new soldiers and unloaded guns are unsupported.
 - The NATIVE PARTNER (default): your partner's body is moved by the game's
-  own movement, aiming, reloading and turning, driven by the other player's
-  controls, so it moves and aims like a player. Its shots are visual only
-  (muzzle flash and sound, never bullets: each PC counts its own player's
-  hits). When the network or a PC cannot keep up it switches to animation
-  clips by itself and back again (section 3, "PARTNER BODY").
+  own movement, aiming, reloading, weapon switching and turning, driven by
+  the other player's controls, so it moves like a player and its gun points
+  where the other player aims. It carries the other player's three weapons
+  (or a gun of the same kind that your game already has loaded). Its shots
+  are visual only (muzzle flash and sound, never bullets: each PC counts its
+  own player's hits). When the network or a PC cannot keep up it switches to
+  animation clips by itself and back again (section 3, "PARTNER BODY").
 What is NOT fully shared yet:
-- Weapon switching on the partner body: only the assault rifle of the
-  Afghanistan free roam (30010) is on it; in Mother Base and Africa the
-  partner moves natively but does not aim. Debug pickups are local.
+- Aiming, reloading and weapon switching on the partner body are new in this
+  version. If your game cannot put one of your partner's weapons on the
+  partner body, the partner keeps the weapon it holds and does not fire or
+  reload until your partner switches back. Grenade and rocket launchers are
+  never shown firing. Debug pickups are local.
 - Story missions, items and full campaign progression. This is a development
   build; live verification used two game instances on one PC. Actual two-PC
   play has not been validated yet.
@@ -96,6 +100,16 @@ are renamed *.online-old-<time> and not used again).
 
 3. PLAY (every time)
 --------------------
+IN SHORT (online):
+ - Host: Play-Coop.bat, press O, send the code it shows (or invite your
+   friend in the game: F9 > Partner / Co-op > Online > Invite a friend).
+ - Friend: start Play-Coop.bat FIRST, press J, paste the code (or press
+   Enter and accept the host's Steam invite once the game runs).
+ - Both: Continue into the same scene (Mother Base or free roam). Your
+   partner is shown with the native partner; "Play-Coop.bat -Partner clips"
+   uses the animation clips instead (see PARTNER BODY below).
+ - Steam does not connect? Use [L] LAN/VPN instead (below).
+
 Play-Coop.bat asks how you want to play:
     [O] Host online (Steam, recommended)
     [J] Join online
@@ -158,11 +172,17 @@ BOTH:
    link=connected means the two PCs talk to each other; partner=live shown
    means your partner is on screen. Online games add "via Steam (relay)" or
    "via Steam (direct)"; a joiner waiting for an invite shows link=waiting.
+   An online game with the native partner on both PCs looks like this:
+        [JOIN] link=connected via Steam (relay) rtt=61ms jitter=4ms loss=0.0% interp=100ms | partner=live shown look native; you on the other PC: native | mission 30010
+ - In the game, a "CO-OP [...]" line at the top right shows the same link
+   (section 6).
  - Quit MGSV normally when you are done. Co-op switches itself off when the
    game exits, even if the Play-Coop window was closed: the next normal start
    from Steam is plain MGSV on your real saves again.
 
 PARTNER BODY (native by default):
+ - Both PCs use the native partner unless a player chooses the clips. It
+   follows the other player's movement, aim, reloads and weapon switches.
  - The status line shows how YOUR game shows your partner and how the other
    game shows you, for example
         partner=live shown look native; you on the other PC: native
@@ -171,9 +191,11 @@ PARTNER BODY (native by default):
    goes back to native by itself. "this PC runs the game's update threads
    differently" or "too slow on this PC" stay on clips: send the logs
    (section 8).
- - To always use the clips (for example on a slow PC), start Play-Coop with
+ - To always use the clips (for example on a slow PC), open Command Prompt
+   in the extracted package folder and start Play-Coop with
         Play-Coop.bat -Partner clips
-   The other player can still use the native partner for your body.
+   then choose O, J or L as usual. Only your game switches to the clips; the
+   other player can still use the native partner for your body.
 
 EXPERIMENTAL SHARED WORLD (enabled by default):
  - A normal double-click enables World 3. To choose the level explicitly,
