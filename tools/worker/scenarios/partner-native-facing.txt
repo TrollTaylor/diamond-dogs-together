@@ -1,9 +1,17 @@
 # Native partner facing (docs/native-puppet.md "Facing"): the facing governor (idle turns, settle snap, contest guard),
-# neutral placements (no unwindowed drain), the placement yaw check, the windowed teleport, and the look at its source (D3).
-# Run (coordinator only, hidden worker), twice for the look-source A/B (hypothesis O7):
+# neutral placements (no unwindowed drain), the placement yaw check, the windowed teleport, the look at its source (D3)
+# and aim parity (the aim-target mirror, partner_native_aimpt: instance 1's network aim slot Q+0x10[1] gets a point
+# 100 m along the remote's look, so the partner's gun aims where the remote aims and the aim-turn predicate 0x10A0AB0
+# stops cycling act 12/15).
+# Run (coordinator only, hidden worker):
 #   A: pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-native-facing.txt -PartnerProfile native -NativeStage gun -BuildProfile research
-#   B: the same with -LabSetting partner_native_aim=looksrc
-# Optional C (only if B still shows the act-12 cycle): -LabSetting partner_native_face=aim (the governor's aim mode).
+#      (the gun stage emits partner_native_aimpt=look; face-aim-off is the in-session baseline: "guest debug aimpt off",
+#      then "guest debug aimpt lab" returns the guest to lab.ini before face-aim)
+#   B (the mirror off for the whole run, the old behaviour): the same with -LabSetting partner_native_aimpt=off ("aimpt
+#      lab" then returns to off: aim.state "off" in every section, the act 12/15 cycle in every aim section)
+# Optional: -LabSetting partner_native_aim=looksrc (the look source A/B; runs 1bffe18a/14ab2e00 showed it changes nothing
+# for the act-12 cycle) or -LabSetting partner_native_face=aim (the governor's aim mode, for remote turns of 27..80 degrees
+# a sighted remote makes and body 1's stock rifle does not).
 # Lab saves, noon, 30010. "Viewer" = the role filming its partner (body 1); captures.jsonl holds the viewer's state.json.
 # First part: the host moves and the guest films (face-*); second part: the guest moves and the host films (g-face-*).
 # Pass criteria (mechanical, on the viewer role):
@@ -22,8 +30,29 @@
 #  no ring act 25/26 caused by a governor write (25/26 only within 1.5 s after a partner_recon=place / snap line).
 #  native.recon.snaps 0 outside placements; partner_recon=face_start / face_end lines for face-pivot-*, face-reposed.
 #  both games close and the saves match (the worker's own checks).
+# Aim parity (the viewer's native.aim; the source role's own aim in the same captures.jsonl line: roles.<source>.native.aim
+#   aim_yaw0_cdeg / aim_pitch0_cdeg; the act-12 rule: the predicate tests rel_yaw1_cdeg = (0.5 - r60_1) * 18000, > 8000 turns):
+#  face-aim-off (the mirror off, the old behaviour): aim.state "off", q10_1_mm constant (the world origin), pred1 1 and
+#    rel_yaw1_cdeg beyond +-8000 at every ring act 12 start (r60_1 in the ring), the act 12/15 cycle the remote never shows.
+#  face-aim, face-aim-held, face-aim-cam, face-aimturn*-settled, face-aim-strafe, face-aim-walk, face-crouch-aim*, g-face-aim*
+#    after their first 300 ms: aim.state "ok", aim.refused 0, aim.writes growing, aim.overwritten 0 (else report it:
+#    something else writes the slot offline), aim.src "look", aim.path1 "cam"; aim.slot "ours" (q10_1_mm == written_mm
+#    +-1 mm; target_mm leads written_mm by one tick while moving); aimpt_err_mm (aim point 1 - written_mm) < 500; |wrap(aim_yaw1_cdeg - source aim_yaw0_cdeg)| <= 500 and |aim_pitch1_cdeg - aim_pitch0_cdeg| <= 500
+#    on >= 95 % of captures (the remote's camera parallax: about atan(0.6 m / distance of its own aim point));
+#    pred1 0 unless the remote's act is 12/15 (body.remote_act); ring act 12/15 only where the remote shows it;
+#    |face_err_cdeg| <= 500 on >= 95 % of ring ticks after 600 ms (stand and crouch).
+#  face-aimturn-pivot / face-aimturn-l-pivot (the qualified +-1500 mouse stimulus while aiming): the remote turns (act
+#    12, its body 72..87 degrees); the partner shows act 12 within 2 captures and settles within 5 degrees of the remote
+#    (the -settled frames); body 1's stock rifle turns only beyond 80 degrees of aim (a sighted remote at 27): a
+#    turn of 27..80 degrees twists the partner instead (an open item, -LabSetting partner_native_face=aim covers it).
+#  face-aim-strafe / face-aim-walk: body act = the remote's aim-walk class (13/14), yaw error <= 5 degrees.
+#  the restore: aim.restores is 1 after face-aim-off (the A/B) and grows afterwards only when the native drive left; the
+#    log has partner_aim=installed at native entry and once more after face-aim-off, and never partner_aim=fault,
+#    refused or restore_dropped.
 # Evidence lines: the 1 Hz partner_native_face; mode=..; err_mdeg=..; act=..,..; writes=..; contests=..; look_err_mdeg=..;
-# look_src=.. line and the partner_recon=face_* events in both logs.
+# look_src=.. line, the partner_native_aim; setting=..; state=..; q10=..; slot=..; target=..; err_mm=..; yaw1=..; yaw0=..; rel1=..;
+# r60_1=..; pred1=..; gun1=..; path1=.. line, the partner_aim=installed|refused|overwritten|restored events and the
+# partner_recon=face_* events in both logs.
 title 200
 wait 4000
 waitgameplay host 120
@@ -68,15 +97,36 @@ wait 2000
 guest burst face-prone 2 300
 stance host stand
 wait 1500
-# Aim: standing aim, an aim turn, held aim, release.
+# Aim parity. The baseline: the guest's aim-target mirror off (the old act 12/15 cycle), then on (look).
+guest debug aimpt off
+wait 1000
+heldcapture host guest rmb face-aim-off 5
+wait 1500
+guest debug aimpt lab
+wait 1000
+# Aim: standing aim, aim turns with the mouse (the qualified +-1500 stimulus), held aim, release.
 heldcapture host guest rmb face-aim 5
-aimturn host guest 900 face-aimturn
+aimturn host guest 1500 face-aimturn
+aimturn host guest -1500 face-aimturn-l
 heldcapture host guest rmb face-aim-held 3
 wait 1500
 guest burst face-aim-release 3 300
+# A camera turned before the aim: the body turns to the camera on aim entry.
+host mouse 900 0
+wait 800
+heldcapture host guest rmb face-aim-cam 3
+wait 1000
+# Aim while moving: strafe and walk.
+heldcapture host guest rmb+d face-aim-strafe 4
+wait 1000
+heldcapture host guest rmb+w face-aim-walk 3
+wait 1000
+# Crouched aim (acts 14/15) and crouched aim + strafe.
 stance host crouch
 heldcapture host guest rmb face-crouch-aim 4
+heldcapture host guest rmb+a face-crouch-aim-strafe 3
 stance host stand
+wait 1000
 # The viewer holds RMB while its partner is placed (run 63199: 57 degrees for 1.5 s).
 guest hold rmb 1500 nowait
 placebehind host guest 6 4
@@ -91,6 +141,7 @@ guest press a 150
 wait 1500
 host burst g-face-pivot 2 300
 heldcapture guest host rmb g-face-aim 4
+heldcapture guest host rmb+d g-face-aim-strafe 3
 wait 1500
 host burst g-face-aim-release 3 300
 both capture end

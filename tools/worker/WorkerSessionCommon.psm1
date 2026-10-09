@@ -277,8 +277,11 @@ function Get-WorkerPartnerSettings([string]$PartnerProfile,[string]$NativeStage=
                 'loco' {@('partner_input_defer=on','partner_input_mask=0x2240006','partner_native_aim=off','partner_native_rates=mirror')}
                 # Visual fire (docs/native-puppet.md "Weapons"): FIRE reaches body 1 only
                 # while the RequestBullet owner filter is live; its shots never hit.
+                # The aim-target mirror (docs/native-puppet.md "Facing"): the partner's gun aims where
+                # the remote aims (-LabSetting partner_native_aimpt=off|point for the A/B).
                 'gun' {@('partner_input_defer=on','partner_input_mask=0x224005E','partner_native_gun=1','partner_native_fire=visual',
-                    'partner_native_aim=look','partner_input_triggers=1','partner_input_rstick=1','partner_native_rates=mirror')}
+                    'partner_native_aim=look','partner_input_triggers=1','partner_input_rstick=1','partner_native_rates=mirror',
+                    'partner_native_aimpt=look')}
                 default {throw "Unknown native stage: $stage"}
             }
             return @($native+$extra)

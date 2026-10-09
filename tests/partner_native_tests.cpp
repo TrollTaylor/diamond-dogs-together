@@ -8,6 +8,7 @@
 #include <cstring>
 #include <initializer_list>
 #include "mgscoop/partner_caps_wire.hpp"
+#include "mgscoop/partner_aim.hpp"
 #include "mgscoop/partner_input.hpp"
 #include "mgscoop/partner_native.hpp"
 #include "mgscoop/partner_native_net.hpp"
@@ -1041,8 +1042,109 @@ void TestOnline() {
     }
 }
 
+// Aim parity (docs/native-puppet.md "Facing", the aim-target mirror): the
+// look direction convention of 0xFFAC00 / 0x1042F80, the target, the
+// aim-turn predicate 0x10A0AB0 and the debug command.
+void TestAim() {
+    namespace pa = mgscoop::partner_aim;
+    using mgscoop::PartnerNativeAimPt;
+    // The convention: yaw 0 looks along +z, yaw +90 deg along +x, pitch > 0 looks down (-y).
+    double d[3]{};
+    pa::LookDir(0.0, 0.0, d);
+    Check(std::fabs(d[0]) < 1e-12 && std::fabs(d[1]) < 1e-12 && std::fabs(d[2] - 1.0) < 1e-12, "aim: yaw 0 = +z");
+    pa::LookDir(0.0, kPi / 2, d);
+    Check(std::fabs(d[0] - 1.0) < 1e-12 && std::fabs(d[2]) < 1e-12, "aim: yaw +90 = +x");
+    pa::LookDir(0.3, 0.0, d);
+    Check(d[1] < 0.0 && std::fabs(d[1] + std::sin(0.3)) < 1e-12, "aim: pitch > 0 looks down");
+    for (double pitch : {-1.5, -0.4, 0.0, 0.25, 1.2})
+        for (double yaw : {-3.1, -1.0, 0.0, 0.7, 2.9}) {
+            pa::LookDir(pitch, yaw, d);
+            double p2 = 0.0, y2 = 0.0;
+            if (!pa::DirAngles(d, p2, y2) || std::fabs(p2 - pitch) > 1e-9 || std::fabs(y2 - yaw) > 1e-9) Check(false, "aim: LookDir/DirAngles round trip");
+        }
+    Check(true, "aim: LookDir and DirAngles invert each other (the 0xFFAC00 atan2 pair)");
+    const double zero[3] = {0.0, 0.0, 0.0}, nan3[3] = {std::nan(""), 0.0, 1.0};
+    double p0 = 1.0, y0 = 1.0;
+    Check(!pa::DirAngles(zero, p0, y0) && !pa::DirAngles(nan3, p0, y0), "aim: no angles for a zero or non-finite direction");
+    // The target.
+    pa::TargetIn in{};
+    in.setting = PartnerNativeAimPt::look;
+    in.active = true;
+    in.body_ok = true;
+    in.body[0] = 100.0f; in.body[1] = 340.0f; in.body[2] = -50.0f;
+    in.look_ok = true;
+    in.look_pitch = 0.1f; in.look_yaw = -1.0f;
+    pa::TargetOut o = pa::Target(in);
+    pa::LookDir(0.1f, -1.0f, d);
+    Check(o.want && o.valid && o.src == pa::Source::look && o.reason == pa::Reason::none &&
+              std::fabs(o.p[0] - (100.0 + 100.0 * d[0])) < 1e-3 && std::fabs(o.p[1] - (341.6 + 100.0 * d[1])) < 1e-3 &&
+              std::fabs(o.p[2] - (-50.0 + 100.0 * d[2])) < 1e-3,
+          "aim: look target = body + 1.6 m up + 100 m along the remote's look");
+    const double dist = std::sqrt(std::pow(o.p[0] - 100.0, 2) + std::pow(o.p[1] - 340.0, 2) + std::pow(o.p[2] + 50.0, 2));
+    Check(dist > pa::kMinRangeM && dist < pa::kMaxRangeM && std::fabs(dist - 100.0) < 2.0, "aim: about 100 m from the body");
+    in.setting = PartnerNativeAimPt::off;
+    o = pa::Target(in);
+    Check(!o.want && !o.valid && o.reason == pa::Reason::off, "aim: off wants nothing (the hook restores)");
+    in.setting = PartnerNativeAimPt::look;
+    in.active = false;
+    o = pa::Target(in);
+    Check(!o.want && o.reason == pa::Reason::inactive, "aim: inactive (no native drive or no gun) wants nothing");
+    in.active = true;
+    in.body_ok = false;
+    o = pa::Target(in);
+    Check(o.want && !o.valid && o.reason == pa::Reason::no_body, "aim: no body: wanted, not valid (the hook holds)");
+    in.body_ok = true;
+    in.look_ok = false;
+    o = pa::Target(in);
+    Check(o.want && !o.valid && o.reason == pa::Reason::no_look, "aim: no live look: wanted, not valid");
+    in.look_ok = true;
+    in.look_yaw = std::nanf("");
+    o = pa::Target(in);
+    Check(o.want && !o.valid && o.reason == pa::Reason::no_look, "aim: a non-finite look is no look");
+    in.look_yaw = -1.0f;
+    in.body[0] = 70000.0f;
+    o = pa::Target(in);
+    Check(o.want && !o.valid && o.reason == pa::Reason::range, "aim: a target beyond the coordinate bound refuses (range)");
+    in.body[0] = 100.0f;
+    // point: the sender's own aim direction when present, else the look.
+    in.setting = PartnerNativeAimPt::point;
+    o = pa::Target(in);
+    Check(o.valid && o.src == pa::Source::look, "aim: point without a v5 aim point falls back to the look");
+    in.point_ok = true;
+    in.point_dir[0] = 0.0f; in.point_dir[1] = 0.0f; in.point_dir[2] = 5.0f;
+    o = pa::Target(in);
+    Check(o.valid && o.src == pa::Source::point && std::fabs(o.p[2] - 50.0f) < 1e-3f && std::fabs(o.p[1] - 341.6f) < 1e-3f,
+          "aim: point uses the normalized sender direction");
+    in.point_dir[2] = 0.0f;
+    o = pa::Target(in);
+    Check(!o.valid && o.reason == pa::Reason::range, "aim: a zero point direction refuses");
+    const float big[3] = {65536.0f, 0.0f, 0.0f}, ok3[3] = {-65535.0f, 1.0f, 2.0f}, nanp[3] = {0.0f, std::nanf(""), 0.0f};
+    Check(!pa::CoordOk(big) && pa::CoordOk(ok3) && !pa::CoordOk(nanp), "aim: the hook's coordinate bound");
+    // The aim-turn predicate: |(0.5 - r60) * pi| > 80 degrees (r60 = 0.5 - yaw / 180 deg).
+    Check(!pa::TurnPredicate(0.5f) && !pa::TurnPredicate(0.94f) && pa::TurnPredicate(0.95f) && pa::TurnPredicate(0.05f) &&
+              !pa::TurnPredicate(0.06f) && !pa::TurnPredicate(std::nanf("")),
+          "aim: the predicate turns beyond 80 degrees of aim (r60 0.944 / 0.056)");
+    Check(pa::RelYawCdeg(0.5f) == 0 && pa::RelYawCdeg(0.95f) == -8100 && pa::RelYawCdeg(0.0f) == 9000 && pa::RelYawCdeg(std::nanf("")) == INT32_MIN,
+          "aim: the tested yaw in centidegrees");
+    // The debug command.
+    pa::ParsedCommand cmd{};
+    Check(pa::ParseCommand("aimpt look", cmd) && cmd.kind == pa::Command::set && cmd.value == PartnerNativeAimPt::look, "aim: aimpt look");
+    Check(pa::ParseCommand("aimpt  point", cmd) && cmd.kind == pa::Command::set && cmd.value == PartnerNativeAimPt::point, "aim: aimpt point");
+    Check(pa::ParseCommand("aimpt off", cmd) && cmd.value == PartnerNativeAimPt::off, "aim: aimpt off");
+    Check(pa::ParseCommand("aimpt lab", cmd) && cmd.kind == pa::Command::clear, "aim: aimpt lab clears the override");
+    Check(pa::ParseCommand("aimpt", cmd) && cmd.kind == pa::Command::status && pa::ParseCommand("aimpt status", cmd) && cmd.kind == pa::Command::status,
+          "aim: aimpt / aimpt status");
+    Check(!pa::ParseCommand("aimpt on", cmd) && pa::IsCommand("aimpt on") && !pa::IsCommand("aimptx") && !pa::IsCommand("nametag on") &&
+              !pa::IsCommand(nullptr),
+          "aim: refusals");
+    Check(std::strcmp(pa::ReasonName(pa::Reason::q_vtable), "q_vtable") == 0 && std::strcmp(pa::ReasonName(pa::Reason::torn), "torn") == 0 &&
+              std::strcmp(pa::SourceName(pa::Source::point), "point") == 0,
+          "aim: names");
+}
+
 int main() {
     TestOnline();
+    TestAim();
     TestWeapons();
     TestOffAndLegacy();
     TestEnterSequence();
@@ -1066,5 +1168,7 @@ int main() {
                 "refusals), weapons (capacity, magazine, CanReload, reload gate, magazine mirror), online play (network leaves "
                 "without latch, quality-gated re-entry, quiet remote, flap guard, remote_caps, hold=net, link quality, reason "
                 "codes, native.net JSON, capability message)\n", checks);
+                "target, predicate, command)
+", checks);
     return 0;
 }

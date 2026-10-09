@@ -9,6 +9,7 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include "mgscoop/partner_aim.hpp"
 #include "mgscoop/partner_driver.hpp"
 #include "mgscoop/partner_net.hpp"
 #include "mgscoop/partner_rates.hpp"
@@ -138,6 +139,11 @@ struct Fake {
     std::uint32_t rates_forget_epoch = 0xFFFFFFFFu;
     bool link_live = true;
     std::uint32_t link_session = 7;
+    // Aim parity: the publications, the hook's statistics and the aim read.
+    std::vector<mgscoop::partner_aim_point::Publication> aim_pubs;
+    mgscoop::partner_aim_point::Stats aim_stats{};
+    pp::AimRead aim_read{};
+    bool aim_read_ok = false;
     std::vector<std::vector<std::uint8_t>> channel2;
     unsigned channel2_drains = 0;
     // Native weapons fakes (docs/native-puppet.md "Weapons").
@@ -539,6 +545,14 @@ bool HookSendReliable(void* context, std::uint8_t channel, const std::uint8_t* b
     if (!f.reliable_ok || channel != 2) return false;
     f.reliable_sent.emplace_back(bytes, bytes + size);
     return true;
+}
+void HookPublishAim(void* context, const mgscoop::partner_aim_point::Publication& publication) noexcept {
+    F(context).aim_pubs.push_back(publication);
+}
+void HookAimStats(void* context, mgscoop::partner_aim_point::Stats& out) noexcept { out = F(context).aim_stats; }
+bool HookReadAim(void* context, const pp::State&, pp::AimRead& out) noexcept {
+    out = F(context).aim_read;
+    return F(context).aim_read_ok;
 }
 void AddWeaponHooks(pd::Hooks& h) {
     h.install_fire = HookInstallFire;
@@ -3550,6 +3564,109 @@ void TestNativeRates() {
           "MissionStart: forget the old epoch, then a new epoch");
 }
 
+// Aim parity (docs/native-puppet.md "Facing", the aim-target mirror): the
+// driver publishes a target 100 m along the remote's live look from the
+// partner's eyes while the native drive is active with a gun; nothing wanted
+// while off or inactive; wanted but invalid without a look; the debug
+// override wins over lab.ini; the telemetry and the 1 Hz line.
+void TestNativeAim() {
+    namespace pn = mgscoop::partner_native;
+    namespace pi = mgscoop::partner_input;
+    namespace pam = mgscoop::partner_aim;
+    NativeSession s;
+    s.hooks.publish_aim = HookPublishAim;
+    s.hooks.aim_stats = HookAimStats;
+    s.hooks.read_aim = HookReadAim;
+    s.driver.settings.ngun = true;
+    s.driver.settings.naimpt = mgscoop::PartnerNativeAimPt::look;
+    s.fake.latest.packet.xflags = pi::XFlag::Look;
+    s.fake.latest.packet.look_pitch = 0.0f;
+    s.fake.latest.packet.look_yaw = 0.0f;
+    s.N();
+    Check(!s.fake.aim_pubs.empty() && !s.fake.aim_pubs.back().want &&
+              s.fake.aim_pubs.back().reason == static_cast<std::uint8_t>(pam::Reason::inactive),
+          "aim: before the native drive is active nothing is wanted (inactive)");
+    Check(s.Until(pn::Mode::active, 9000), "aim: active");
+    s.N();
+    const mgscoop::partner_aim_point::Publication& pub = s.fake.aim_pubs.back();
+    Check(pub.want && pub.valid && pub.src == static_cast<std::uint8_t>(pam::Source::look) && pub.epoch == s.driver.rates_epoch &&
+              std::fabs(pub.p[0] - 1.0f) < 1e-3f && std::fabs(pub.p[1] - 3.6f) < 1e-3f && std::fabs(pub.p[2] - 103.0f) < 1e-3f &&
+              pub.ms == s.now,
+          "aim: active with a gun: the target 100 m along the remote's look (yaw 0 = +z) from the body's eyes");
+    // No live look: wanted, invalid (the hook keeps its last write).
+    s.fake.latest.packet.xflags = 0;
+    s.N();
+    Check(s.fake.aim_pubs.back().want && !s.fake.aim_pubs.back().valid &&
+              s.fake.aim_pubs.back().reason == static_cast<std::uint8_t>(pam::Reason::no_look) &&
+              std::strcmp(s.driver.mission.tele.aim_reason, "no_look") == 0,
+          "aim: no v3 look: wanted, not valid (no_look)");
+    s.fake.latest.packet.xflags = pi::XFlag::Look;
+    // The debug override wins over lab.ini; -1 returns to it.
+    s.fake.aim_stats.override_value = 0;
+    s.N();
+    Check(!s.fake.aim_pubs.back().want && s.driver.mission.tele.aim_override && std::strcmp(s.driver.mission.tele.aim_setting, "off") == 0,
+          "aim: the override off wants nothing (the hook restores)");
+    s.fake.aim_stats.override_value = -1;
+    s.N();
+    Check(s.fake.aim_pubs.back().want && !s.driver.mission.tele.aim_override && std::strcmp(s.driver.mission.tele.aim_setting, "look") == 0,
+          "aim: back to lab.ini");
+    // Without partner_native_gun the mirror is inactive.
+    s.driver.settings.ngun = false;
+    s.N();
+    Check(!s.fake.aim_pubs.back().want, "aim: no gun stage: nothing wanted");
+    s.driver.settings.ngun = true;
+    // Telemetry from the read and the hook's statistics.
+    s.fake.aim_stats.state = static_cast<std::uint8_t>(mgscoop::partner_aim_point::State::ok);
+    s.fake.aim_stats.writes = 42;
+    s.fake.aim_stats.overwritten = 1;
+    pp::AimRead& r = s.fake.aim_read;
+    r.q_ok = true;
+    r.q10[1][0] = 1.0f; r.q10[1][1] = 3.6f; r.q10[1][2] = 103.0f;
+    for (unsigned k = 0; k < 2; ++k) {
+        r.gun_ok[k] = r.rate_ok[k] = r.body_ok[k] = true;
+        r.body[k][0] = 1.0f; r.body[k][1] = 2.0f; r.body[k][2] = 3.0f;
+        r.gun_state[k] = 7;
+    }
+    r.aimpt[1][0] = 1.0f; r.aimpt[1][1] = 3.6f; r.aimpt[1][2] = 103.2f;   // straight ahead (+z), 0.2 m beyond the target
+    r.aimpt[0][0] = 101.0f; r.aimpt[0][1] = 3.6f; r.aimpt[0][2] = 3.0f;   // instance 0 aims along +x
+    r.r60[1] = 0.95f; r.r5c[1] = 0.5f; r.r60[0] = 0.5f;
+    r.path_flags[1] = c::gun3d0_bone_path; r.b3d5[1] = 0;  // the bone path
+    s.fake.aim_read_ok = true;
+    for (int i = 0; i < 35; ++i) s.N();  // past the 1 Hz line's cadence
+    const pn::Telemetry& t = s.driver.mission.tele;
+    Check(std::strcmp(t.aim_state, "ok") == 0 && t.aim_writes == 42 && t.aim_overwritten == 1 && std::strcmp(t.aim_src, "look") == 0 &&
+              t.aim_target_mm[2] == 103000 && t.aim_q10_mm[1][2] == 103000 && t.aim_point_mm[1][2] == 103200 && t.aim_point_err_mm == 200,
+          "aim telemetry: state, counters, target, slot, aim point and its error");
+    Check(t.aim_yaw_cdeg[1] == 0 && t.aim_pitch_cdeg[1] == 0 && t.aim_yaw_cdeg[0] == 9000 && t.aim_rel_yaw_cdeg[1] == -8100 &&
+              t.aim_r60[1] == 950 && t.aim_pred[1] == 1 && t.aim_pred[0] == 0 && t.aim_gun_state[1] == 7 &&
+              std::strcmp(t.aim_path[1], "bone") == 0 && std::strcmp(t.aim_path[0], "cam") == 0,
+          "aim telemetry: world aim directions, the predicate's yaw, r60, the predicate, the gun state and the path");
+    Check(t.ring.count && pn::At(t.ring, t.ring.count - 1).r60_1 == 950 && pn::At(t.ring, t.ring.count - 1).pred1 == 1,
+          "aim: the ring carries r60_1 and pred1");
+    Check(s.fake.Containing("partner_native_aim; setting=look; override=0; state=ok; reason=none; src=look; writes=42;") >= 1 &&
+              s.fake.Containing("pred1=1; gun1=7; path1=bone") >= 1,
+          "aim: the 1 Hz partner_native_aim line");
+    Check(std::strcmp(t.aim_slot, "na") == 0 && t.aim_written_mm[0] == pn::kNull && s.fake.Containing("; slot=na; ") >= 1,
+          "aim: no hook write yet: the slot verdict is na");
+    // The hook's last write: the slot holds it (ours) and the aim point error is
+    // measured against it (the target leads the write by a tick while moving).
+    s.fake.aim_stats.written_ok = true;
+    s.fake.aim_stats.written[0] = 1.0f; s.fake.aim_stats.written[1] = 3.6f; s.fake.aim_stats.written[2] = 102.9f;
+    r.q10[1][2] = 102.9f;
+    for (int i = 0; i < 35; ++i) s.N();
+    Check(std::strcmp(t.aim_slot, "ours") == 0 && t.aim_written_mm[2] == 102900 && t.aim_target_mm[2] == 103000 &&
+              t.aim_point_err_mm == 300 && s.fake.Containing("; slot=ours; ") >= 1,
+          "aim: slot ours (the slot holds the hook's write), the aim point error against the write");
+    r.q10[1][2] = 50.0f;  // restored, or something else wrote the slot
+    for (int i = 0; i < 35; ++i) s.N();
+    Check(std::strcmp(t.aim_slot, "other") == 0 && t.aim_point_err_mm == 200 && s.fake.Containing("; slot=other; ") >= 1,
+          "aim: slot other (the error falls back to this tick's target)");
+    // Off in lab.ini: nothing wanted, state off.
+    s.driver.settings.naimpt = mgscoop::PartnerNativeAimPt::off;
+    s.N();
+    Check(!s.fake.aim_pubs.back().want && std::strcmp(t.aim_state, "off") == 0 && std::strcmp(t.aim_reason, "off") == 0, "aim: lab.ini off");
+}
+
 // Native weapons (docs/native-puppet.md "Weapons"): the fire gate, the
 // mirror's Arm fields, the v4 magazine, the loadout manifest and its verdict.
 void SetVisualFire(NativeSession& s) {
@@ -4125,6 +4242,7 @@ int main() {
     TestNativeRefusalsAndCensus();
     TestNativeChannel2AndSender();
     TestNativeRates();
+    TestNativeAim();
     TestNativePlayAndWithdraw();
     TestNativeWeapons();
     TestNativeActionsWithWeapons();
@@ -4138,6 +4256,7 @@ int main() {
                 "unlatch, channel 2 in legacy, v3 sender, play-mode trigger refusal, identity/roots withdrawal, rates: v4 sender, "
                 "mirror request, telemetry, forget/epoch; weapons: fire gate, magazine mirror, loadout; both packages in one v4 and one Arm; "
                 "polish: neutral placement, unwindowed leave, facing governor (turn, contest/latch, in-batch), noise gate, weapon gate, "
-                "look source install, v4 pad mode and equip); no game\n", checks);
+                "look source install, v4 pad mode and equip; aim parity: target publication, override, telemetry, ring, 1 Hz line); "
+                "no game\n", checks);
     return 0;
 }

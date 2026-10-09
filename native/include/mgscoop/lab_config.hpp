@@ -134,6 +134,15 @@ enum class PartnerNativeFace : std::uint8_t { off, idle, aim };
 // is masked unless it is live) or keep (lab experiment: the receiver's guards
 // hear the partner's visual shots).
 enum class PartnerNativeNoise : std::uint8_t { filter, keep };
+// The aim-target mirror (docs/native-puppet.md "Facing", aim parity): instance
+// 1's network aim target Q+0x10[1] (never fed offline: its gun aimed at the
+// world origin and the aim-turn predicate 0x10A0AB0 cycled act 12/15) gets a
+// point along the remote's aim inside block 1's drain window. off (default),
+// look (100 m along the remote's v3 look from the partner's eyes; no wire
+// change) or point (the sender's own gun aim point, input frame v5; falls
+// back to look until v5 exists). Inert unless the native drive is active
+// with partner_native_gun=1. The worker gun stage and Play-OfflineCoop set look.
+enum class PartnerNativeAimPt : std::uint8_t { off, look, point };
 // Instance 1's per-id movement rates (base action record of *(PS1+0x260):
 // dash +0x48/+0x50, crawl +0x3C/+0x40/+0x44; docs/native-puppet.md "Rates"):
 // off (not read), log (read both instances and the remote's, telemetry only)
@@ -376,6 +385,7 @@ struct LabConfig {
     // relaxes exactly the loopback bind and 127/8 peer, mutex_suffix,
     // xinput=none and the impairment keys.
     bool play_rehearsal = false;
+    PartnerNativeAimPt partner_native_aimpt = PartnerNativeAimPt::off;
     bool crash_probe = true;
     // Two-PC link (docs/link-protocol.md). `mode` is parsed independently of
     // `present`; the play save gate is lab::SavesRedirected() in the observer.
@@ -456,6 +466,7 @@ const char* PartnerNativeRatesName(PartnerNativeRates value) noexcept;
 const char* PartnerNativeFireName(PartnerNativeFire value) noexcept;
 const char* PartnerNativeFaceName(PartnerNativeFace value) noexcept;
 const char* PartnerNativeNoiseName(PartnerNativeNoise value) noexcept;
+const char* PartnerNativeAimPtName(PartnerNativeAimPt value) noexcept;
 const char* LabModeName(LabMode value) noexcept;
 // aim|always|off ("" for unset); parse refuses "unset".
 const char* NametagCrosshairName(NametagCrosshair value) noexcept;
@@ -502,8 +513,10 @@ inline constexpr std::uint32_t kProfileKeyDrive = 1u << 0, kProfileKeyDefer = 1u
                                kProfileKeyRecon = 1u << 9, kProfileKeySlot = 1u << 10, kProfileKeyRates = 1u << 11,
                                kProfileKeyNoise = 1u << 12, kProfileKeyP218 = 1u << 13, kProfileKeyMask = 1u << 14,
                                kProfileKeyAim = 1u << 15, kProfileKeyGun = 1u << 16, kProfileKeyFire = 1u << 17,
-                               kProfileKeyTriggers = 1u << 18, kProfileKeyRstick = 1u << 19;
+                               kProfileKeyTriggers = 1u << 18, kProfileKeyRstick = 1u << 19,
+                               kProfileKeyAimPt = 1u << 20;
 void ApplyNativeProfile(LabConfig& config, PartnerNativeProfile profile, std::uint32_t keep = 0) noexcept;
+bool ParsePartnerNativeAimPt(const char* text, std::size_t size, PartnerNativeAimPt& out) noexcept;
 // partner_input_defer as it takes effect: off unless partner_drive=native.
 inline PartnerDefer EffectivePartnerDefer(PartnerDrive drive, PartnerDefer defer) noexcept {
     return drive == PartnerDrive::native ? defer : PartnerDefer::off;

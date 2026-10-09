@@ -134,7 +134,8 @@ int main() {
         "partner_native_rates=mirror\n";
     // The stage settings of Get-WorkerPartnerSettings (WorkerSessionCommon.psm1), in its order.
     const std::string gun_text = native_lab + "partner_input_defer=on\npartner_input_mask=0x224005E\npartner_native_gun=1\n"
-        "partner_native_fire=visual\npartner_native_aim=look\npartner_input_triggers=1\npartner_input_rstick=1\npartner_native_rates=mirror\n";
+        "partner_native_fire=visual\npartner_native_aim=look\npartner_input_triggers=1\npartner_input_rstick=1\npartner_native_rates=mirror\n"
+        "partner_native_aimpt=look\n";
     Check(mgscoop::ParseLabConfig(census_text.data(), census_text.size(), census) && OfflineLab(census, "host", save) && NativeProfile(census),
           "native_census_stage");
     Check(mgscoop::ParseLabConfig(loco_text.data(), loco_text.size(), loco) && OfflineLab(loco, "host", save) && NativeProfile(loco),
@@ -171,6 +172,12 @@ int main() {
     changed = gun; changed.partner_native_face = mgscoop::PartnerNativeFace::aim; Check(OfflineLab(changed, "host", save), "native_face_is_free");
     changed = loco; changed.partner_native_face = mgscoop::PartnerNativeFace::off; Check(OfflineLab(changed, "host", save), "native_face_off_admitted");
     changed = census; changed.partner_native_aim = mgscoop::PartnerNativeAim::look; Check(!OfflineLab(changed, "host", save), "native_census_without_aim");
+    // The aim-target mirror: the gun stage emits look; off and point are its A/B (-LabSetting); never outside the gun stage.
+    Check(gun.partner_native_aimpt == mgscoop::PartnerNativeAimPt::look, "native_gun_stage_aimpt_look");
+    changed = gun; changed.partner_native_aimpt = mgscoop::PartnerNativeAimPt::off; Check(OfflineLab(changed, "host", save), "native_gun_aimpt_off_admitted");
+    changed = gun; changed.partner_native_aimpt = mgscoop::PartnerNativeAimPt::point; Check(OfflineLab(changed, "host", save), "native_gun_aimpt_point_admitted");
+    changed = loco; changed.partner_native_aimpt = mgscoop::PartnerNativeAimPt::look; Check(!OfflineLab(changed, "host", save), "native_loco_without_aimpt");
+    changed = census; changed.partner_native_aimpt = mgscoop::PartnerNativeAimPt::look; Check(!OfflineLab(changed, "host", save), "native_census_without_aimpt");
     changed = loco; changed.partner_native_gun = true; Check(!OfflineLab(changed, "host", save), "native_loco_without_gun");
     changed = loco; changed.partner_input_local = mgscoop::PartnerLocal::all; Check(!OfflineLab(changed, "host", save), "native_local_all_needs_a_gate_change");
     changed = loco; changed.partner_input_hook = false; Check(!OfflineLab(changed, "host", save), "native_needs_the_hook");

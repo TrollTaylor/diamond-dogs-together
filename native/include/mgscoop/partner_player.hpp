@@ -347,6 +347,26 @@ bool ReadRates(const Addresses& addresses, const State& state, std::uint32_t ind
 // The same for instance k (0 = the local player: the input sender's magazine).
 bool ReadGun(const Addresses& addresses, const State& state, std::uint32_t k, Gun1& out) noexcept;
 
+// Aim parity telemetry (docs/native-puppet.md "Facing", the aim-target mirror;
+// read-only): the network aim slots Q+0x10[0..1] (Q = state.Q, its class
+// checked), and per instance k its gun record (ReadGun: the aim point
+// +0x150, the gun state +0x2C0, the path flags +0x3D0 and +0x3D5), its rate
+// record (ReadRates: the aim parameters r5c +0x5C and r60 +0x60) and its body
+// position (ReadBody). Each part has its own validity flag.
+struct AimRead {
+    bool q_ok;
+    float q10[2][3];
+    bool gun_ok[2];
+    float aimpt[2][3];
+    std::uint8_t gun_state[2], b3d5[2];
+    std::uint32_t path_flags[2];
+    bool rate_ok[2];
+    float r5c[2], r60[2];
+    bool body_ok[2];
+    float body[2][3];
+};
+bool ReadAim(const Addresses& addresses, const State& state, AimRead& out) noexcept;
+
 // The local loadout (pure reads of vars = *(0x2C16920); registrations pinned):
 // vars.weapons[0..2] (u16 at +0x548: PRIMARY_HIP, PRIMARY_BACK, SECONDARY),
 // customizedWeapon[0..2] (u16 at +0xB06), chimeraParts (u8[36] at +0xB30,

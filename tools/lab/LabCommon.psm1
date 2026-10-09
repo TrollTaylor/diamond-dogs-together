@@ -301,6 +301,8 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_native_stall_ms'; Json = 'native_stall_ms'; Kind = 'int'; Min = 100; Max = 1000 },
     @{ Key = 'partner_native_hold'; Json = 'native_hold'; Kind = 'enum'; Values = @('own', 'net') },
     @{ Key = 'partner_input_edge_repeats'; Json = 'input_edge_repeats'; Kind = 'int'; Min = 2; Max = 8 },
+    # The aim-target mirror (docs/native-puppet.md "Facing"): off, look, point.
+    @{ Key = 'partner_native_aimpt'; Json = 'native_aimpt'; Kind = 'enum'; Values = @('off', 'look', 'point') },
     @{ Key = 'crash_probe'; Json = 'crash_probe'; Kind = 'bool' },
     # Debug "Spawn enemy here" native placement (docs/debug-menu.md): lab only,
     # default off and written only when set.

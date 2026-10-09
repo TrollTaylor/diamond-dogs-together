@@ -16,7 +16,9 @@ namespace mgsworker {
 // look written after phase 0 (look) or also at its source (looksrc, the
 // facing A/B run: -LabSetting partner_native_aim=looksrc). Later stages
 // (lookcam, local=all, a gun stage without fire, noise=keep) need an explicit
-// gate change. partner_native_face (the facing governor) is free.
+// gate change. partner_native_face (the facing governor) is free; the
+// aim-target mirror partner_native_aimpt (off|look|point; the gun stage emits
+// look, -LabSetting selects the A/B) only in the gun stage (off elsewhere).
 inline bool LegacyDrive(const mgscoop::LabConfig& lab) {
     return lab.partner_drive == mgscoop::PartnerDrive::legacy && lab.partner_input_defer == mgscoop::PartnerDefer::off;
 }
@@ -42,12 +44,13 @@ inline bool NativeProfile(const mgscoop::LabConfig& lab) {
     // census never writes rates, loco and gun mirror the remote's movement
     // rates into instance 1.
     const bool no_fire = lab.partner_native_fire == mgscoop::PartnerNativeFire::off;
+    const bool no_aimpt = lab.partner_native_aimpt == mgscoop::PartnerNativeAimPt::off;
     const bool census = lab.partner_input_defer == mgscoop::PartnerDefer::census && lab.partner_input_mask == 0x2240006u &&
         !lab.partner_native_gun && no_fire && lab.partner_native_aim == mgscoop::PartnerNativeAim::off &&
-        lab.partner_native_rates != mgscoop::PartnerNativeRates::mirror;
+        lab.partner_native_rates != mgscoop::PartnerNativeRates::mirror && no_aimpt;
     const bool loco = lab.partner_input_defer == mgscoop::PartnerDefer::on && lab.partner_input_mask == 0x2240006u &&
         !lab.partner_native_gun && no_fire && lab.partner_native_aim == mgscoop::PartnerNativeAim::off &&
-        lab.partner_native_rates == mgscoop::PartnerNativeRates::mirror;
+        lab.partner_native_rates == mgscoop::PartnerNativeRates::mirror && no_aimpt;
     const bool gun = lab.partner_input_defer == mgscoop::PartnerDefer::on && lab.partner_input_mask == 0x224005Eu &&
         lab.partner_native_gun && lab.partner_native_fire == mgscoop::PartnerNativeFire::visual &&
         (lab.partner_native_aim == mgscoop::PartnerNativeAim::look || lab.partner_native_aim == mgscoop::PartnerNativeAim::looksrc) &&

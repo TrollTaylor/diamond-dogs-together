@@ -29,7 +29,10 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    renew a 1500 ms hold before each of 1..5 captures; always release
   aimturn <source> <viewer> <dx> <label>
                                    aim, move the mouse, require a body-heading change of at least 70 degrees,
-                                   capture the pivot and its later idle state
+                                   capture the pivot and its later idle state; dx is +-1500, the only
+                                   qualified stimulus (dx 700 and 900 never turned a settled aimed body:
+                                   runs fca0d6dc, 1bffe18a, 14ab2e00, 8919e533; dx 1500 turned 72..87 degrees
+                                   in runs 4b91a2f5, fac92b9b, d3e07ce6, 1a2de304)
   resetpose <role>                 record the first fresh position/yaw, then return to that benchmark
                                    through the existing debug teleport and verify arrival/settling
   <role> debug <command>           one F9 debug-menu command through the game's own queue;
@@ -52,7 +55,9 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    before the session starts: add an allow-listed lab.ini key to both
                                    copies or to one (debug_soldier_warp=0|1, nametag=0|1,
                                    nametag_crosshair=aim|always|off, nametag_name=[A-Za-z0-9_]{1,16};
-                                   partner_native_face=off|idle|aim; partner_native_aim=looksrc, native gun stage only;
+                                   partner_native_face=off|idle|aim; partner_native_aim=looksrc and
+                                   partner_native_aimpt=off|look|point (the aim-target mirror; the gun stage
+                                   emits look), native gun stage only;
                                    steam_selftest=0|1|2, lab only, never sends to a peer;
                                    online play A/B: partner_native_net=lab|online, partner_native_stall=neutral|hold,
                                    partner_native_hold=own|net, partner_input_edge_repeats=2..8;
@@ -80,7 +85,7 @@ param(
     [switch]$AmmoExperiment,
     [ValidateSet('real','lab')][string]$SaveSeed='lab',
     # key=value for both copies or host:key=value / guest:key=value for one (scenario "labsetting" lines).
-    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(compact|full|off)|partner_native_net=(lab|online)|partner_native_stall=(neutral|hold)|partner_native_hold=(own|net)|partner_input_edge_repeats=[2-8])$')][string[]]$LabSetting=@(),
+    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|partner_native_aimpt=(off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(compact|full|off)|partner_native_net=(lab|online)|partner_native_stall=(neutral|hold)|partner_native_hold=(own|net)|partner_input_edge_repeats=[2-8])$')][string[]]$LabSetting=@(),
     # lab (default) or play: the play rehearsal (docs/two-pc-play.md "Hidden play rehearsal"):
     # both copies in mode=play as Play-Coop writes it, on 127.0.0.1, real identity.
     [ValidateSet('lab','play')][string]$Mode='lab',
@@ -108,7 +113,7 @@ $lines+=$Step
 $steps=@($lines|ForEach-Object{$_.Trim()}|Where-Object{$_ -and !$_.StartsWith('#')})
 # labsetting lines configure the session; they are not steps.
 foreach($line in @($steps|Where-Object{$_ -cmatch '^labsetting(\s|$)'})) {
-    if($line -cnotmatch '^labsetting\s+(?:(host|guest)\s+)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(?:aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(?:off|idle|aim)|partner_native_aim=looksrc|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(?:compact|full|off)|partner_native_net=(?:lab|online)|partner_native_stall=(?:neutral|hold)|partner_native_hold=(?:own|net)|partner_input_edge_repeats=[2-8])$'){
+    if($line -cnotmatch '^labsetting\s+(?:(host|guest)\s+)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(?:aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(?:off|idle|aim)|partner_native_aim=looksrc|partner_native_aimpt=(?:off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(?:compact|full|off)|partner_native_net=(?:lab|online)|partner_native_stall=(?:neutral|hold)|partner_native_hold=(?:own|net)|partner_input_edge_repeats=[2-8])$'){
         throw "Invalid scenario step: '$line'"
     }
     $LabSetting=@($LabSetting)+@($(if($Matches[1]){$Matches[1]+':'+$Matches[2]}else{$Matches[2]}))
@@ -116,6 +121,7 @@ foreach($line in @($steps|Where-Object{$_ -cmatch '^labsetting(\s|$)'})) {
 $steps=@($steps|Where-Object{$_ -cnotmatch '^labsetting(\s|$)'})
 if(@($LabSetting|Where-Object{$_ -clike 'partner_native_*'}).Count -and $PartnerProfile -cne 'native'){throw '-LabSetting partner_native_* needs -PartnerProfile native.'}
 if($LabSetting -ccontains 'partner_native_aim=looksrc' -and $NativeStage -cne 'gun'){throw '-LabSetting partner_native_aim=looksrc needs -NativeStage gun.'}
+if(@($LabSetting|Where-Object{$_ -cmatch '^((host|guest):)?partner_native_aimpt='}).Count -and $NativeStage -cne 'gun'){throw '-LabSetting partner_native_aimpt needs -NativeStage gun.'}
 if(!$steps.Count){throw 'No scenario steps.'}
 # Validate every step before anything starts.
 $roleNames=@('host','guest','both')
@@ -138,7 +144,7 @@ foreach($line in $steps){
         '^heldcapture$' {$t.Count -eq 6 -and $t[1] -cin 'host','guest' -and $t[2] -cin 'host','guest' -and
             (Test-ScenarioKeys $t[3]) -and (Test-ScenarioLabel $t[4]) -and [int]$t[5] -ge 1 -and [int]$t[5] -le 5}
         '^aimturn$' {$t.Count -eq 5 -and $t[1] -cin 'host','guest' -and $t[2] -cin 'host','guest' -and
-            [int]$t[3] -ne 0 -and [int]$t[3] -ge -1500 -and [int]$t[3] -le 1500 -and (Test-ScenarioLabel $t[4])}
+            [Math]::Abs([int]$t[3]) -eq 1500 -and (Test-ScenarioLabel $t[4])}
         '^resetpose$' {$t.Count -eq 2 -and $t[1] -cin 'host','guest'}
         default {
             $roleNames -ccontains $t[0] -and $t.Count -ge 2 -and $(switch($t[1]){
@@ -502,7 +508,7 @@ function Invoke-AimTurn([string]$Source,[string]$Viewer,[int]$Dx,[string]$Label)
                 if([Math]::Abs($excursion) -ge 70.0){break}
             }
         }
-        if([Math]::Abs($excursion) -lt 70.0){throw "[$Source] post-mouse pivot moved body heading only $excursion degrees; no qualifying turn stimulus."}
+        if([Math]::Abs($excursion) -lt 70.0){throw "[$Source] post-mouse pivot (dx $Dx) moved body heading only $excursion degrees; no qualifying turn stimulus."}
         Write-Host "  $Source body pivot=$excursion degrees after received aim/settled heading"
         Start-Sleep -Milliseconds 150
         if((Get-ScenarioTick) -ge $held.accepted_tick_ms+400){

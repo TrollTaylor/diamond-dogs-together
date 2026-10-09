@@ -92,7 +92,7 @@ if(MSVC)
   target_compile_options(heap_trial_tests PRIVATE /W4 /WX)
 endif()
 add_test(NAME heap_trial_tests COMMAND heap_trial_tests)
-add_library(mgs_coop_core native/session.cpp native/protocol.cpp native/import_table.cpp native/steam_runtime.cpp native/steam_lifecycle.cpp native/typed_payload.cpp native/input_receiver.cpp native/steam_packets.cpp native/player_sync.cpp native/lab_config.cpp native/lab_status.cpp native/partner_receipt.cpp native/partner_input.cpp native/partner_native.cpp native/partner_rates.cpp native/partner_equip_wire.cpp native/partner_caps_wire.cpp native/partner_native_net.cpp native/partner_recon.cpp native/partner_dmmap.cpp native/pose_interp.cpp native/link_crypto.cpp native/link_protocol.cpp native/link_session.cpp native/world_wire.cpp native/world_receipt.cpp native/steam_join_code.cpp native/steam_net_gates.cpp native/coop_reason_text.cpp native/coop_hud.cpp)
+add_library(mgs_coop_core native/session.cpp native/protocol.cpp native/import_table.cpp native/steam_runtime.cpp native/steam_lifecycle.cpp native/typed_payload.cpp native/input_receiver.cpp native/steam_packets.cpp native/player_sync.cpp native/lab_config.cpp native/lab_status.cpp native/partner_receipt.cpp native/partner_input.cpp native/partner_native.cpp native/partner_rates.cpp native/partner_equip_wire.cpp native/partner_caps_wire.cpp native/partner_native_net.cpp native/partner_recon.cpp native/partner_dmmap.cpp native/pose_interp.cpp native/link_crypto.cpp native/link_protocol.cpp native/link_session.cpp native/world_wire.cpp native/world_receipt.cpp native/steam_join_code.cpp native/steam_net_gates.cpp native/coop_reason_text.cpp native/coop_hud.cpp native/partner_aim.cpp)
 target_include_directories(mgs_coop_core PUBLIC native/include)
 # The hidden worker's one-PC play rehearsal (lab_config LabParseOptions):
 # only background-worker builds let GetLabConfig accept play_rehearsal=1.
@@ -403,7 +403,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
   target_compile_options(steam_identity_tests PRIVATE /W4 /WX)
   add_test(NAME steam_identity_tests COMMAND steam_identity_tests)
   # Offline partner spike: guarded player-instance access and the log-only crash probe.
-  add_library(mgs_partner_player STATIC native/partner_player.cpp native/crash_probe.cpp native/partner_driver.cpp native/near_code.cpp native/partner_input_hook.cpp native/partner_defer.cpp native/partner_local_detour.cpp native/partner_look_source.cpp native/partner_fire_filter.cpp native/partner_dm_patch.cpp native/partner_upper_probe.cpp native/partner_upper_end_observer.cpp native/partner_upper_phase_observer.cpp native/partner_upper_manual_idle.cpp)
+  add_library(mgs_partner_player STATIC native/partner_player.cpp native/crash_probe.cpp native/partner_driver.cpp native/near_code.cpp native/partner_input_hook.cpp native/partner_defer.cpp native/partner_local_detour.cpp native/partner_look_source.cpp native/partner_aim_point.cpp native/partner_fire_filter.cpp native/partner_dm_patch.cpp native/partner_upper_probe.cpp native/partner_upper_end_observer.cpp native/partner_upper_phase_observer.cpp native/partner_upper_manual_idle.cpp)
   target_include_directories(mgs_partner_player PUBLIC native/include PRIVATE native)
   target_compile_options(mgs_partner_player PRIVATE /W4 /WX)
   if(MGS_LOCAL_UPPER_PROBE)

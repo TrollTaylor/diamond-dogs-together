@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pefile
 
+import partner_aim_sites
+
 ROOT = Path(__file__).resolve().parent.parent
 EXE = Path('D:/Games/steamapps/common/MGS_TPP/mgsvtpp.exe')
 GAME_SHA256 = '085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45'
@@ -565,6 +567,7 @@ SITES = [
     (0x515270, '48895c240848896c2410488974241857', 'AddNoise 0x515270 (noise iface vt+0) prologue'),
     (0x5152F9, '0fb74512668984be10480000', 'AddNoise keeps the record +0x12 owner'),
 ]
+SITES += partner_aim_sites.SITES
 # The H1 slot itself (value checked as a slot below) and the patched sites:
 # the code gate runs once per process before any lazy install.
 
@@ -674,6 +677,7 @@ SLOTS = [
     (0x2389480, 0x08, 0xEE92F0, 'store object vtable +8 = the store init (row count Y+0x10)'),
     (0x2389598, 0x08, 0xEE92F0, 'derived store object vtable +8 = the same store init'),
 ]
+SLOTS += partner_aim_sites.SLOTS
 
 
 def rel_refs(target, opcodes=(0xE8, 0xE9)):
@@ -1134,6 +1138,27 @@ def actions_assertions():
 
 
 failures += actions_assertions()
+
+
+class _AimContext:
+    """The helpers tools/partner_aim_sites.py's assertions use."""
+    IB = IB
+    pe = pe
+    rd = staticmethod(rd)
+    rel_refs = staticmethod(rel_refs)
+    qword_hits = staticmethod(qword_hits)
+    lea_rip_refs = staticmethod(lea_rip_refs)
+    rip_target = staticmethod(rip_target)
+    section_of = staticmethod(section_of)
+
+    @staticmethod
+    def runtime_function_entries():
+        entry = pe.OPTIONAL_HEADER.DATA_DIRECTORY[3]
+        data = pe.get_data(entry.VirtualAddress, entry.Size)
+        return sorted({struct.unpack_from('<III', data, i) for i in range(0, len(data) - 11, 12)})
+
+
+failures += partner_aim_sites.assertions(_AimContext)
 if failures:
     print('\n'.join(failures))
     raise SystemExit(1)
@@ -1412,6 +1437,8 @@ w('inline constexpr std::uint8_t gun_mode_fire=9, gun_mode_fire2=10;')
 w('// AddNoise 0x515270 = slot 0 of the noise iface vtable 0x21876a8; the record keeps its owner at +0x12.')
 w('inline constexpr std::uintptr_t noise_fn_rva=0x515270, noise_vtable_rva=0x21876a8;')
 w('inline constexpr std::size_t noise_owner=0x12;')
+for line in partner_aim_sites.HEADER:
+    w(line)
 w('struct Site { std::uintptr_t rva; std::size_t size; unsigned char bytes[80]; };')
 w('inline constexpr Site code_sites[]={')
 for rva, expected, what in SITES:

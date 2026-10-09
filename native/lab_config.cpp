@@ -129,7 +129,8 @@ std::uint32_t ProfileKeyBit(Slice key) noexcept {
         {"partner_recon", kProfileKeyRecon}, {"partner_input_slot", kProfileKeySlot}, {"partner_native_rates", kProfileKeyRates},
         {"partner_native_noise", kProfileKeyNoise}, {"partner_input_p218_allow", kProfileKeyP218}, {"partner_input_mask", kProfileKeyMask},
         {"partner_native_aim", kProfileKeyAim}, {"partner_native_gun", kProfileKeyGun}, {"partner_native_fire", kProfileKeyFire},
-        {"partner_input_triggers", kProfileKeyTriggers}, {"partner_input_rstick", kProfileKeyRstick}};
+        {"partner_input_triggers", kProfileKeyTriggers}, {"partner_input_rstick", kProfileKeyRstick},
+        {"partner_native_aimpt", kProfileKeyAimPt}};
     for (const auto& entry : entries) if (Equals(key, entry.name)) return entry.bit;
     return 0;
 }
@@ -334,6 +335,7 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
         else if (Equals(key, "partner_native_fire")) ok = ParsePartnerNativeFire(value.data, value.size, result.partner_native_fire);
         else if (Equals(key, "partner_native_face")) ok = ParsePartnerNativeFace(value.data, value.size, result.partner_native_face);
         else if (Equals(key, "partner_native_noise")) ok = ParsePartnerNativeNoise(value.data, value.size, result.partner_native_noise);
+        else if (Equals(key, "partner_native_aimpt")) ok = ParsePartnerNativeAimPt(value.data, value.size, result.partner_native_aimpt);
         else if (Equals(key, "partner_native_steer_deg"))
             ok = ParseRange(value, 0, kPartnerNativeSteerMaxDeg, result.partner_native_steer_deg);
         else if (Equals(key, "partner_native_trim_pct"))
@@ -1106,6 +1108,24 @@ bool ParsePartnerNativeHold(const char* text, std::size_t size, PartnerNativeHol
     return true;
 }
 
+const char* PartnerNativeAimPtName(PartnerNativeAimPt value) noexcept {
+    switch (value) {
+    case PartnerNativeAimPt::look: return "look";
+    case PartnerNativeAimPt::point: return "point";
+    default: return "off";
+    }
+}
+
+bool ParsePartnerNativeAimPt(const char* text, std::size_t size, PartnerNativeAimPt& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "off")) out = PartnerNativeAimPt::off;
+    else if (Equals(s, "look")) out = PartnerNativeAimPt::look;
+    else if (Equals(s, "point")) out = PartnerNativeAimPt::point;
+    else return false;
+    return true;
+}
+
 // The worker's admitted native stages (tools/worker/WorkerSessionCommon.psm1
 // Get-WorkerPartnerSettings; tools/worker/worker_game_gate.hpp NativeProfile).
 void ApplyNativeProfile(LabConfig& c, PartnerNativeProfile profile, std::uint32_t keep) noexcept {
@@ -1136,6 +1156,7 @@ void ApplyNativeProfile(LabConfig& c, PartnerNativeProfile profile, std::uint32_
     if (set(kProfileKeyFire)) c.partner_native_fire = gun ? PartnerNativeFire::visual : PartnerNativeFire::off;
     if (set(kProfileKeyTriggers)) c.partner_input_triggers = gun;
     if (set(kProfileKeyRstick)) c.partner_input_rstick = gun;
+    if (set(kProfileKeyAimPt)) c.partner_native_aimpt = gun ? PartnerNativeAimPt::look : PartnerNativeAimPt::off;
 }
 
 const char* PartnerNativeRatesName(PartnerNativeRates value) noexcept {

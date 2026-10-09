@@ -1227,4 +1227,34 @@ const char* ClearDmPending(const Addresses& a, bool terminating, bool& cleared) 
     return nullptr;
 }
 
+bool ReadAim(const Addresses& a, const State& s, AimRead& out) noexcept {
+    const Preserve preserve;
+    out = AimRead{};
+    std::uintptr_t q_vt = 0, arr = 0;
+    if (s.Q && ReadValue(s.Q, q_vt) && q_vt == a.q_vtable && ReadValue(s.Q + c::q_aim, arr) && arr) {
+        float v[2][4]{};
+        out.q_ok = ReadBlock(arr, v, sizeof(v));
+        for (unsigned k = 0; out.q_ok && k < 2; ++k)
+            for (unsigned i = 0; i < 3; ++i) out.q10[k][i] = v[k][i];
+    }
+    for (std::uint32_t k = 0; k < 2; ++k) {
+        Gun1 g{};
+        if (ReadGun(a, s, k, g) && g.rec) {
+            float p[4]{};
+            out.gun_ok[k] = ReadBlock(g.rec + c::gun_aim_point, p, sizeof(p)) && ReadValue(g.rec + c::gun_mode_cur, out.gun_state[k]) &&
+                            ReadValue(g.rec + c::gun_path_flags, out.path_flags[k]) && ReadValue(g.rec + c::gun_b3d5, out.b3d5[k]);
+            for (unsigned i = 0; out.gun_ok[k] && i < 3; ++i) out.aimpt[k][i] = p[i];
+        }
+        RateRead r{};
+        if (ReadRates(a, s, k, r) && r.rec)
+            out.rate_ok[k] = ReadValue(r.rec + c::rate_aim_pitch, out.r5c[k]) && ReadValue(r.rec + c::rate_aim_yaw, out.r60[k]);
+        float pos[4]{}, quat[4]{};
+        if (Realized(s, k) && ReadBody(a, s, k, pos, quat)) {
+            out.body_ok[k] = true;
+            for (unsigned i = 0; i < 3; ++i) out.body[k][i] = pos[i];
+        }
+    }
+    return out.q_ok || out.gun_ok[0] || out.gun_ok[1] || out.rate_ok[0] || out.rate_ok[1];
+}
+
 } // namespace mgscoop::partner_player

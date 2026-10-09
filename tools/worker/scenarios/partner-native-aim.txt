@@ -1,0 +1,97 @@
+# Native partner aim parity (docs/native-puppet.md "Facing", the aim-target mirror partner_native_aimpt): instance 1's
+# network aim slot Q+0x10[1] (offline never fed: the partner's gun aimed at the world origin and the aim-turn predicate
+# 0x10A0AB0 cycled act 12/15) gets a point 100 m along the remote's look from the partner's eyes, inside block 1's drain
+# window, so the game's own gun pipeline computes the remote's aim point, aim pose (r5c/r60) and turn decisions.
+# Run (coordinator only, hidden worker; one session is its own A/B: the guest's mirror off for aim-a, then lab.ini's):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-native-aim.txt -PartnerProfile native -NativeStage gun -BuildProfile research
+# (the gun stage emits partner_native_aimpt=look; "guest debug aimpt off" switches the guest's mirror off live and
+# "guest debug aimpt lab" returns it to lab.ini, so -LabSetting keeps deciding aim-b onwards). A second run with
+# -LabSetting partner_native_aimpt=point checks the point variant (until input frame v5 carries the sender's own aim point
+# it falls back to the look: native.aim.setting "point", src "look"); -LabSetting partner_native_aimpt=off makes the
+# whole run the old-behaviour baseline (aim.state "off" in every section).
+# Lab saves, noon, 30010. "Viewer" = the role filming its partner (body 1); every capture line in captures.jsonl holds both
+# roles' state.json, so the viewer's native.aim pairs with the source role's own native.aim (aim_yaw0_cdeg/aim_pitch0_cdeg).
+# Pass criteria (mechanical):
+#  aim-a (the mirror off): native.aim.setting "off", state "off"; q10_1_mm constant (expected near [0,0,0]); the act-12
+#    cycle the remote never shows; at every ring act-12 start pred1 1 and r60_1 >= 950 (or <= 50): the predicate saw the
+#    gun aim more than 80 degrees off the body; |wrap(aim_yaw1_cdeg - the host's aim_yaw0_cdeg)| large (5700..9400).
+#  aim-b, aim-cam1, aim-cam2, aim-crouch, aim-prone, aim-walk, aim-strafe, aim-pitch-up, g-aim, g-aim-strafe after their
+#    first 300 ms: native.aim.state "ok", refused 0, overwritten 0 (else report: something writes the slot offline),
+#    src "look", path1 "cam"; slot "ours" (q10_1_mm == written_mm +-1 mm: the slot holds the hook's last write; target_mm
+#    leads written_mm by one tick while the aim or the body moves); aimpt_err_mm (aim point 1 - written_mm) < 500;
+#    |wrap(aim_yaw1_cdeg - aim_yaw0_cdeg of the
+#    source role)| <= 500 and |aim_pitch1_cdeg - aim_pitch0_cdeg| <= 500 on >= 95 % of captures; pred1 0 unless the
+#    remote's act (body.remote_act) is 12/15; ring act 12/15 only where the remote shows it; |face_err_cdeg| <= 500 on
+#    >= 95 % of ring ticks after 600 ms; aim-walk/aim-strafe: body act = the remote's aim-walk class (13/14).
+#  aim-swing (the qualified +-1500 mouse stimulus while aiming: the remote turns, act 12): the partner shows act 12
+#    within 2 captures and the -settled frame is within 5 degrees of the remote.
+#  always: native.mode active, fallbacks 0; no partner_aim=fault, refused or restore_dropped line; in the viewer's log
+#    partner_aim=installed at native entry, partner_aim=restored at aim-a and installed again at aim-b (the A/B), never
+#    more often; the debug results "aimpt=off; override=set; ..." and "aimpt=lab; override=none; ...".
+# Evidence lines: the 1 Hz partner_native_aim; setting=..; state=..; reason=..; src=..; writes=..; overwritten=..;
+# q10=..; slot=..; target=..; err_mm=..; yaw1=..; yaw0=..; rel1=..; r60_1=..; pred1=..; gun1=..; path1=.. line and the
+# partner_aim=installed|refused|overwritten|restored events (both logs).
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+stance host stand
+stance guest stand
+host debug time 43200
+host debug weather sunny
+wait 3000
+resetpose host
+stance host stand
+placebehind guest host 5 4
+wait 4000
+both capture aim-idle
+# A: the guest's mirror off (the old behaviour), standing aim.
+guest debug aimpt off
+wait 1000
+heldcapture host guest rmb aim-a 5
+wait 1500
+# B: the mirror back to lab.ini (look at the gun stage default), the same standing aim.
+guest debug aimpt lab
+wait 1000
+heldcapture host guest rmb aim-b 5
+wait 1500
+# Camera-rotated aims (the body turns to the camera on aim entry).
+host mouse 900 0
+wait 800
+heldcapture host guest rmb aim-cam1 3
+wait 1000
+host mouse -1500 0
+wait 800
+heldcapture host guest rmb aim-cam2 3
+wait 1000
+# Pitch: aim, then look up.
+host hold rmb 1500 nowait
+wait 600
+host mouse 0 -400
+guest burst aim-pitch-up 3 250
+host release
+wait 1000
+host mouse 0 400
+wait 800
+# Stances.
+stance host crouch
+heldcapture host guest rmb aim-crouch 4
+stance host prone
+wait 1500
+heldcapture host guest rmb aim-prone 4
+stance host stand
+wait 1500
+# Aim while moving.
+heldcapture host guest rmb+w aim-walk 4
+wait 1000
+heldcapture host guest rmb+a aim-strafe 4
+wait 1000
+# A remote aim turn (the mouse while aiming).
+aimturn host guest 1500 aim-swing
+wait 1500
+# The other direction: the guest aims, the host films (the host's mirror at the gun stage default, look).
+heldcapture guest host rmb g-aim 4
+heldcapture guest host rmb+d g-aim-strafe 3
+wait 1000
+both capture end
+state
