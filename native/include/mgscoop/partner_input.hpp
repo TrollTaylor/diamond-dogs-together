@@ -101,7 +101,22 @@ struct InputPacket {
     // Equip (then 1..65535; 0 without). The receiver compares it with the
     // equip body 1 carries (the weapon gate).
     std::uint16_t gun_equip;
+    // v5 only (docs/native-puppet.md "Weapons", R2/W1; 0 otherwise): the
+    // sender's gun state. gun_flags (GunFlag bits; without GunFlag::Valid the
+    // other three are 0), its current gun mode rec+0x2C0 (11/12 reload, 8 weapon
+    // change, 7 aim), and two counters its tick advances (mod 256): reload_seq
+    // on each entry into a reload mode, switch_seq on each change of its
+    // current slot. A v5 sender also fills the v3 inv_slot with its current slot.
+    std::uint8_t gun_flags, gun_mode, reload_seq, switch_seq;
 };
+namespace GunFlag {
+inline constexpr std::uint8_t Valid = 1 << 0;      // the group is valid (the sender's gun record was read)
+inline constexpr std::uint8_t InHand = 1 << 1;     // rec+0x3C0 bit 2
+inline constexpr std::uint8_t Aiming = 1 << 2;     // rec+0x3C0 bit 18
+inline constexpr std::uint8_t Reloading = 1 << 3;  // rec+0x2C0 is 11 or 12
+inline constexpr std::uint8_t Changing = 1 << 4;   // rec+0x2C0 is 8 or rec+0x3C0 bit 7 (a weapon change)
+inline constexpr std::uint8_t Known = 0x1F;
+}
 namespace XFlag {
 inline constexpr std::uint8_t Look = 1 << 0;
 inline constexpr std::uint8_t Cam = 1 << 1;
@@ -168,6 +183,15 @@ struct V4Source {
     std::uint32_t equip;
 };
 void Fill4(InputPacket& packet, const V4Source& source) noexcept;
+// Version 5 (the partner's own reload and weapon switch): Fill4's fields plus
+// the sender's gun group (GunFlag::Valid only when gun_valid; flags outside
+// GunFlag::Known are dropped). The sender's current slot goes into v4.v3.inv_slot.
+struct V5Source {
+    V4Source v4;
+    bool gun_valid;
+    std::uint8_t gun_flags, gun_mode, reload_seq, switch_seq;
+};
+void Fill5(InputPacket& packet, const V5Source& source) noexcept;
 
 // Sources of the three edge words src+0x4C/+0x50/+0x54 inside the window.
 enum class Word : std::uint8_t { zero = kPartnerWordZero, press = kPartnerWordPress, release = kPartnerWordRelease,
@@ -182,6 +206,11 @@ struct Config {
     std::uint16_t stick_deg;   // stick mode
     std::uint8_t stick_pct;
     std::uint32_t stale_ms;    // net: older input is treated as neutral
+    // Bits removed from the remote's sample only (its held level, words,
+    // edges, long12 and tap12), never from the overlay: RELOAD with
+    // partner_native_reload=event, whose reloads arrive as overlay taps. Not
+    // compared by SameArm (a change never resets instance 1's private masks).
+    std::uint32_t sample_strip;
 };
 // The newest received input (partner_net::LatestInput / ConsumeInput). The
 // edge fields are the edge sets accumulated since the last ConsumeInput (by
@@ -258,6 +287,12 @@ struct Injection {
     bool gamepad;
     bool equip_valid;
     std::uint16_t equip;
+    // Native weapons (v5): the live sample's gun group (gun_valid: GunFlag::Valid)
+    // and the sender's current slot (slot_valid: a v5 frame with inv_slot <= 15).
+    bool gun_valid;
+    std::uint8_t gun_flags, gun_mode, reload_seq, switch_seq;
+    bool slot_valid;
+    std::uint8_t inv_slot;
 };
 // One window's injected pad (rules in partner_input.cpp). Updates `edge`.
 // Held bits: overlay | (live net held); a bit that was pressed and released
@@ -436,8 +471,21 @@ struct Arm {
     bool neutral;
     // Native weapons (not compared by SameArm): bits every native window
     // strips from its injection (FIRE | RELOAD while the remote's gun is not
-    // the one body 1 carries: the weapon gate; the magazine mirror freezes).
+    // the one body 1 carries or body 1 is mid-switch: the weapon gate, the
+    // magazine mirror freezes; FIRE alone for an unqualified weapon type).
     std::uint32_t strip;
+    // The partner's own reload (docs/native-puppet.md "Weapons" R4; not
+    // compared by SameArm): the setting (mirror never freezes the magazine
+    // mirror), the driver's event machine holding it (pending/entered) and
+    // body 1's reload mode having passed the stuck time (no longer freezing).
+    PartnerNativeReload reload;
+    bool reload_hold, reload_stuck;
+    // The weapon switch (W4; not compared by SameArm): the slot follower
+    // (off|write|call), the slots the driver's plan admits (bit s) and the
+    // body's equip in each (the follower re-checks the handle against it).
+    PartnerNativeSlot slot_follow;
+    std::uint8_t slot_ok;
+    std::uint16_t slot_equip[3];
 };
 
 // Every field except gen, host_cam_cdeg, steer/mag, the rates and gun fields, neutral, strip and the one-shots.

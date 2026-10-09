@@ -643,6 +643,28 @@ int main() {
               std::strcmp(mgscoop::PartnerNativeFaceName(mgscoop::PartnerNativeFace::off), "off") == 0 &&
               std::strcmp(mgscoop::PartnerNativeNoiseName(mgscoop::PartnerNativeNoise::keep), "keep") == 0 &&
               std::strcmp(mgscoop::PartnerNativeNoiseName(mgscoop::PartnerNativeNoise::filter), "filter") == 0, "polish names");
+        // The partner's own reload and weapon switch (docs/native-puppet.md "Weapons"): mirror / off by default
+        // (today's behaviour); the native gun stage and Play-OfflineCoop set event / write.
+        Check(def.partner_native_reload == mgscoop::PartnerNativeReload::mirror && def.partner_native_slot == mgscoop::PartnerNativeSlot::off,
+              "weapons defaults: reload mirror, slot off");
+        const auto weapons = Lab("enabled=1\nrole=host\npartner_native_reload=event\npartner_native_slot=write\n");
+        const auto weaponsRaw = Lab("enabled=1\nrole=host\npartner_native_reload=raw\npartner_native_slot=call\n");
+        const auto weaponsBad = Lab("enabled=1\nrole=host\npartner_native_reload=tap\npartner_native_slot=on\n");
+        Check(weapons.partner_native_reload == mgscoop::PartnerNativeReload::event &&
+                  weapons.partner_native_slot == mgscoop::PartnerNativeSlot::write && weapons.invalid_values == 0 && weapons.unknown_keys == 0 &&
+                  weaponsRaw.partner_native_reload == mgscoop::PartnerNativeReload::raw &&
+                  weaponsRaw.partner_native_slot == mgscoop::PartnerNativeSlot::call && weaponsRaw.invalid_values == 0,
+              "reload event|raw, slot write|call parse");
+        Check(weaponsBad.invalid_values == 2 && weaponsBad.partner_native_reload == mgscoop::PartnerNativeReload::mirror &&
+                  weaponsBad.partner_native_slot == mgscoop::PartnerNativeSlot::off,
+              "weapons enum refusals keep the defaults");
+        Check(std::strcmp(mgscoop::PartnerNativeReloadName(mgscoop::PartnerNativeReload::mirror), "mirror") == 0 &&
+                  std::strcmp(mgscoop::PartnerNativeReloadName(mgscoop::PartnerNativeReload::raw), "raw") == 0 &&
+                  std::strcmp(mgscoop::PartnerNativeReloadName(mgscoop::PartnerNativeReload::event), "event") == 0 &&
+                  std::strcmp(mgscoop::PartnerNativeSlotName(mgscoop::PartnerNativeSlot::off), "off") == 0 &&
+                  std::strcmp(mgscoop::PartnerNativeSlotName(mgscoop::PartnerNativeSlot::write), "write") == 0 &&
+                  std::strcmp(mgscoop::PartnerNativeSlotName(mgscoop::PartnerNativeSlot::call), "call") == 0,
+              "weapons names");
         // defer takes effect only with drive=native.
         const auto deferOnly = Lab("enabled=1\nrole=host\npartner_input_defer=on\n");
         Check(deferOnly.partner_input_defer == PartnerDefer::on &&

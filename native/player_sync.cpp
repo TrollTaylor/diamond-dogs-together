@@ -286,7 +286,7 @@ std::size_t encode_input_frame(std::uint64_t session, std::uint32_t epoch, std::
 }
 
 std::size_t encode_input_frame_any(std::uint64_t session, std::uint32_t epoch, std::uint32_t sequence,
-                                   const partner_input::InputPacket& packet, std::uint8_t (&out)[input_frame_size_v4]) noexcept {
+                                   const partner_input::InputPacket& packet, std::uint8_t (&out)[input_frame_size_v5]) noexcept {
     std::memset(out, 0, sizeof(out));
     if (packet.version == input_version) {
         std::uint8_t v2[input_frame_size]{};
@@ -294,7 +294,8 @@ std::size_t encode_input_frame_any(std::uint64_t session, std::uint32_t epoch, s
         std::memcpy(out, v2, n);
         return n;
     }
-    const bool v4 = packet.version == input_version_v4;
+    const bool v5 = packet.version == input_version_v5;
+    const bool v4 = packet.version == input_version_v4 || v5;
     if ((packet.version != input_version_v3 && !v4) || session == 0 || epoch == 0 || sequence == 0 ||
         !partner_input::ValidPacket(packet))
         return 0;
@@ -307,13 +308,14 @@ std::size_t encode_input_frame_any(std::uint64_t session, std::uint32_t epoch, s
     as2.rate_dash = as2.rate_crawl = as2.rate_crawl_factor = 0;
     as2.mag = as2.mag_cap = 0;
     as2.gun_equip = 0;
+    as2.gun_flags = as2.gun_mode = as2.reload_seq = as2.switch_seq = 0;
     std::uint8_t v2[input_frame_size]{};
     if (!encode_input_frame(session, epoch, sequence, as2, v2)) return 0;
     std::memcpy(out, v2, sizeof(v2));
     put_header(out, wire::Kind::event, session, epoch, sequence,
-               static_cast<std::uint32_t>(v4 ? input_packet_size_v4 : input_packet_size_v3));
+               static_cast<std::uint32_t>(v5 ? input_packet_size_v5 : v4 ? input_packet_size_v4 : input_packet_size_v3));
     auto* b = out + wire::header_size;
-    b[1] = v4 ? input_version_v4 : input_version_v3;
+    b[1] = v5 ? input_version_v5 : v4 ? input_version_v4 : input_version_v3;
     std::uint32_t f = 0;
     std::memcpy(&f, &packet.look_pitch, 4); put(b + 48, f);
     std::memcpy(&f, &packet.look_yaw, 4); put(b + 52, f);
@@ -331,28 +333,45 @@ std::size_t encode_input_frame_any(std::uint64_t session, std::uint32_t epoch, s
     put(b + 78, packet.mag, 2);
     put(b + 80, packet.mag_cap, 2);
     put(b + 82, packet.gun_equip, 2);
-    return input_frame_size_v4;
+    if (!v5) return input_frame_size_v4;
+    b[84] = packet.gun_flags;
+    b[85] = packet.gun_mode;
+    b[86] = packet.reload_seq;
+    b[87] = packet.switch_seq;
+    return input_frame_size_v5;
 }
 
 bool decode_input_frame(const std::uint8_t* data, std::size_t size, std::uint64_t& session, std::uint32_t& epoch,
                         std::uint32_t& sequence, partner_input::InputPacket& out) noexcept {
     if (!data) return false;
-    const bool v4 = size == input_frame_size_v4;
+    const bool v5 = size == input_frame_size_v5;
+    const bool v4 = size == input_frame_size_v4 || v5;
     const bool v3 = size == input_frame_size_v3 || v4;
     const bool v2 = size == input_frame_size || v3;
     if (!v2 && size != input_frame_size_v1) return false;
-    const std::size_t payload = v4 ? input_packet_size_v4 : v3 ? input_packet_size_v3 : v2 ? input_packet_size : input_packet_size_v1;
+    const std::size_t payload = v5   ? input_packet_size_v5
+                                : v4 ? input_packet_size_v4
+                                : v3 ? input_packet_size_v3
+                                : v2 ? input_packet_size
+                                     : input_packet_size_v1;
     if (!header_matches(data, wire::Kind::event, static_cast<std::uint32_t>(payload))) return false;
     const std::uint64_t frame_session = get64(data + 8);
     const std::uint32_t frame_epoch = get(data + 16);
     const std::uint32_t frame_sequence = get(data + 20);
     if (frame_session == 0 || frame_epoch == 0 || frame_sequence == 0) return false;
     const auto* b = data + wire::header_size;
-    if (b[0] != input_magic || b[1] != (v4 ? input_version_v4 : v3 ? input_version_v3 : v2 ? input_version : 1) || b[39] != 0)
+    if (b[0] != input_magic ||
+        b[1] != (v5 ? input_version_v5 : v4 ? input_version_v4 : v3 ? input_version_v3 : v2 ? input_version : 1) || b[39] != 0)
         return false;
     if (!v2 && (b[3] != 0 || b[38] != 0)) return false;
     partner_input::InputPacket p{};
-    p.version = v4 ? 4 : v3 ? 3 : v2 ? 2 : 1;
+    p.version = v5 ? 5 : v4 ? 4 : v3 ? 3 : v2 ? 2 : 1;
+    if (v5) {
+        p.gun_flags = b[84];
+        p.gun_mode = b[85];
+        p.reload_seq = b[86];
+        p.switch_seq = b[87];
+    }
     if (v4) {
         p.gun_equip = static_cast<std::uint16_t>(get(b + 82, 2));
         p.rate_dash = static_cast<std::uint16_t>(get(b + 72, 2));

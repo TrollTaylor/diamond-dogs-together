@@ -166,15 +166,23 @@ int main() {
         if(!check(doc.find("\"fields_ok\":false,\"cap\":0,")!=std::string::npos && doc.find("\"fire\":{\"mode\":\"\",")!=std::string::npos &&
                   doc.find("\"mag\":{\"remote\":0,")!=std::string::npos && doc.find("\"leak\":{\"shot_count\":0,")!=std::string::npos &&
                   doc.find("\"equip\":{\"tx_rev\":0,\"tx_base\":[0,0,0]")!=std::string::npos &&
-                  doc.find("\"warp\",\"mag\",\"body_yaw_cdeg\",\"face_err_cdeg\"],\"ring\":[")!=std::string::npos &&
-                  doc.find("false,0,0,0]")!=std::string::npos))return 1;
+                  doc.find("\"warp\",\"mag\",\"body_yaw_cdeg\",\"face_err_cdeg\",\"gmode\",\"rmode\",\"hslot\"],\"ring\":[")!=std::string::npos &&
+                  doc.find("false,0,0,0,0,0,0]")!=std::string::npos))return 1;
+        // The partner's own reload and weapon switch (docs/native-puppet.md "Weapons"): present in every shape.
+        if(!check(doc.find("\"reload\":{\"setting\":\"\",\"state\":\"\",\"last\":\"\",\"remote_valid\":false,")!=std::string::npos &&
+                  doc.find("\"probe1\":{\"b20\":0,\"b24\":0,\"shots\":0,\"mode_changes\":0,\"mode\":0}}")!=std::string::npos &&
+                  doc.find("\"slots\":{\"setting\":\"\",\"remote_slot\":0,")!=std::string::npos &&
+                  doc.find("\"read_ok\":false,\"handles\":[null,null,null],\"plan\":[\"\",\"\",\"\"],\"ok_mask\":0,")!=std::string::npos &&
+                  doc.find("\"hand_slot\":0,\"slot_src\":0}")!=std::string::npos))return 1;
         // Native polish members (docs/native-puppet.md "Facing", "Weapons"): present in every shape.
         if(!check(doc.find("\"steer_err_mrad\":0,\"cam_diff_cdeg\":0")!=std::string::npos &&
                   doc.find("\"rings\":{\"on\":false,\"windows\":0,\"refused\":0,\"changed\":0,\"last\":\"\"}")!=std::string::npos &&
                   doc.find("\"noise\":{\"mode\":\"\",\"installed\":false,\"live\":false,\"dropped\":0,\"passed\":0}")!=std::string::npos &&
-                  doc.find("\"weapon\":{\"kb_remote\":false,\"remote_gun_equip\":0,\"remote_gun_base\":0,\"mismatch\":false,\"strip\":0}")!=std::string::npos &&
+                  doc.find("\"weapon\":{\"kb_remote\":false,\"remote_gun_equip\":0,\"remote_gun_base\":0,\"mismatch\":false,\"strip\":0,"
+                           "\"gate\":\"\",\"body_type\":0,\"switching\":false}")!=std::string::npos &&
                   doc.find("\"trigger\":{\"requested\":0,\"shot_drains\":0,\"fire_modes\":0}")!=std::string::npos &&
-                  doc.find("\"store\":{\"writes\":0,\"refused\":0,\"last\":\"\"}}")!=std::string::npos &&
+                  doc.find("\"store\":{\"writes\":0,\"refused\":0,\"last\":\"\"},\"reload_seen\":0,\"frozen\":0,\"reconciles\":0,"
+                           "\"m3e8_writes\":0}")!=std::string::npos &&
                   doc.find("\"facing\":{\"setting\":\"\",\"mode\":\"\",\"err_cdeg\":0,")!=std::string::npos &&
                   doc.find("\"look\":{\"src\":\"\",\"src_hits_s\":0,")!=std::string::npos))return 1;
         t.face_err_cdeg=t.face_target_cdeg=t.face_body_cdeg=t.face_rate_dps=pn::kNull;t.place_yaw_err_mdeg=pn::kNull;
@@ -191,9 +199,9 @@ int main() {
                   polish.find("\"look\":{\"src\":\"refused\",\"src_hits_s\":120,")!=std::string::npos &&
                   polish.find("\"remote_cdeg\":[null,null],\"slot_cdeg\":[null,null],\"err_mdeg\":null}")!=std::string::npos &&
                   polish.find("\"steer_err_mrad\":null,\"cam_diff_cdeg\":null")!=std::string::npos &&
-                  polish.find("\"inj\":null,\"inj_cap\":null,\"store\":{\"writes\":0,\"refused\":0,\"last\":\"y_vt\"}}")!=std::string::npos &&
-                  polish.find("\"weapon\":{\"kb_remote\":true,\"remote_gun_equip\":null,\"remote_gun_base\":null,\"mismatch\":true,\"strip\":80}")!=std::string::npos &&
-                  polish.find(",-17999,null]")!=std::string::npos && polish.find(",null,null]")!=std::string::npos))return 1;
+                  polish.find("\"inj\":null,\"inj_cap\":null,\"store\":{\"writes\":0,\"refused\":0,\"last\":\"y_vt\"},\"reload_seen\":0,")!=std::string::npos &&
+                  polish.find("\"weapon\":{\"kb_remote\":true,\"remote_gun_equip\":null,\"remote_gun_base\":null,\"mismatch\":true,\"strip\":80,")!=std::string::npos &&
+                  polish.find(",-17999,null,0,0,0]")!=std::string::npos && polish.find(",null,null,0,0,0]")!=std::string::npos))return 1;
         t.face_err_cdeg=t.face_target_cdeg=t.face_body_cdeg=t.face_rate_dps=0;t.place_yaw_err_mdeg=0;
         t.look_remote_cdeg[0]=t.look_remote_cdeg[1]=t.look_slot_cdeg[0]=t.look_slot_cdeg[1]=t.look_err_mdeg=0;
         t.steer_err_mrad=t.cam_diff_cdeg=0;t.mag_inj=t.mag_inj_cap=t.remote_gun_equip=t.remote_gun_base=0;
@@ -210,8 +218,31 @@ int main() {
                   weapons.find("\"remote\":null,\"remote_cap\":null,\"local\":0,\"local_cap\":0")!=std::string::npos && weapons.find("\"shot_count\":null")!=std::string::npos &&
                   weapons.find("\"ammo_leaks\":3,\"ammo_vars\":null}")!=std::string::npos &&
                   weapons.find("\"tx_base\":[0,46,0]")!=std::string::npos && weapons.find("\"rx_alias\":[0,873,0]")!=std::string::npos &&
-                  weapons.find("\"apply\":\"already\"")!=std::string::npos && weapons.find(",null,0,0]")!=std::string::npos &&
-                  weapons.find(",5,0,0]")!=std::string::npos))return 1;
+                  weapons.find("\"apply\":\"already\"")!=std::string::npos && weapons.find(",null,0,0,0,0,0]")!=std::string::npos &&
+                  weapons.find(",5,0,0,0,0,0]")!=std::string::npos))return 1;
+        // Reload and switch members with values, nulls and hostile text (the ring's 0xFF bytes are null).
+        t.gun_mode_cur=12;t.gun_b26=1;t.gun_upper_req=pn::kNull;t.gun_m3e4=1;t.gun_m3e6=pn::kNull;t.gun_m3e8=8;t.gun_hand_slot=1;t.gun_slot_src=7;
+        strcpy_s(t.reload_setting,"event");strcpy_s(t.reload_state,"entered");strcpy_s(t.reload_last,"time\"out");
+        t.reload_remote_valid=t.reload_remote_reloading=t.reload_hold=true;t.reload_remote_mode=11;t.reload_remote_seq=pn::kNull;
+        t.reload_starts=2;t.reload_taps=3;t.reload_entered=2;t.reload_completed=1;t.reload_fallbacks=1;t.reload_sample_strip=0x40;
+        t.mag_reload_seen=4;t.mag_frozen=90;t.mag_reconciles=2;t.mag_m3e8_writes=1;t.probe1_b20=5;t.probe1_mode=11;
+        strcpy_s(t.slot_setting,"write");strcpy_s(t.slot_last,"empty");strcpy_s(t.weapon_gate,"switching");
+        t.slot_remote=2;t.slot_remote_seq=pn::kNull;t.slot_body=1;t.slot_target=pn::kNull;t.slots_ok=true;t.slot_filled[1]=true;
+        t.slot_equip[1]=46;t.slot_type[1]=4;strcpy_s(t.slot_tier[0],"empty");strcpy_s(t.slot_tier[1],"same");strcpy_s(t.slot_tier[2],"empty");
+        t.slot_ok_mask=2;t.slot_refused=1;t.body_type=pn::kNull;t.body_switching=true;
+        for(unsigned i=0;i<pn::kRing;++i){pn::RingEntry e{};e.gmode=(i%2)?0xFF:11;e.rmode=12;e.hslot=0xFF;pn::Push(t.ring,e);}
+        const auto rs=NativeDocument(t,&n);
+        if(!check(n>0 && n<16384 && ValidJson(rs)))return 1;
+        if(!check(rs.find("\"mode\":12,\"b26\":1,\"upper_req\":null,\"m3e4\":1,\"m3e6\":null,\"m3e8\":8,\"hand_slot\":1,\"slot_src\":7}")!=std::string::npos &&
+                  rs.find("\"reload\":{\"setting\":\"event\",\"state\":\"entered\",\"last\":\"time\\\"out\",\"remote_valid\":true,"
+                          "\"remote_reloading\":true,\"remote_mode\":11,\"remote_seq\":null,\"hold\":true,\"stuck\":false,\"starts\":2,\"taps\":3,")!=std::string::npos &&
+                  rs.find("\"sample_strip\":64,\"probe1\":{\"b20\":5,\"b24\":0,\"shots\":0,\"mode_changes\":0,\"mode\":11}}")!=std::string::npos &&
+                  rs.find("\"reload_seen\":4,\"frozen\":90,\"reconciles\":2,\"m3e8_writes\":1}")!=std::string::npos &&
+                  rs.find("\"slots\":{\"setting\":\"write\",\"remote_slot\":2,\"remote_seq\":null,\"body_slot\":1,\"hand_slot\":1,\"target\":null,"
+                          "\"read_ok\":true,\"handles\":[null,{\"equip\":46,\"type\":4},null],\"plan\":[\"empty\",\"same\",\"empty\"],\"ok_mask\":2,"
+                          "\"writes\":0,\"refused\":1,\"last\":\"empty\",\"faulted\":false,\"switching\":true}")!=std::string::npos &&
+                  rs.find("\"gate\":\"switching\",\"body_type\":null,\"switching\":true}")!=std::string::npos &&
+                  rs.find(",11,12,null]")!=std::string::npos && rs.find(",null,12,null]")!=std::string::npos))return 1;
         // Too small a buffer: nothing (never a truncated member).
         char small[64];
         if(!check(mgscoop::worker_debug::FormatNativeJson(t,small,sizeof(small))==0 && small[0]==0))return 1;

@@ -10,6 +10,8 @@
 #include "mgscoop/partner_input.hpp"
 #include "mgscoop/partner_native.hpp"
 #include "mgscoop/partner_rates.hpp"
+#include "mgscoop/partner_reload.hpp"
+#include "mgscoop/partner_slots.hpp"
 #include <limits>
 
 namespace {
@@ -748,8 +750,169 @@ void TestWeapons() {
     Check(true, "mirror invariants hold for capacities 1..50 x 1..40");
 }
 
+// The partner's own reload (docs/native-puppet.md "Weapons", R3/R4): the
+// event machine, the freeze rule and the sender counters.
+namespace pr = mgscoop::partner_reload;
+pr::In ReloadReady(std::uint64_t now, std::uint8_t seq, std::uint8_t remote_mode, std::uint8_t body_mode) {
+    pr::In in{};
+    in.now_ms = now;
+    in.setting = mgscoop::PartnerNativeReload::event;
+    in.active = true;
+    in.remote_valid = true;
+    in.remote_seq = seq;
+    in.remote_mode = remote_mode;
+    in.remote_reloading = pr::ReloadMode(remote_mode);
+    in.body_ok = true;
+    in.body_mode = body_mode;
+    in.gun_class = in.gate = in.can_reload = in.weapon_match = true;
+    return in;
+}
+void TestReload() {
+    pr::Machine m{};
+    pr::Reset(m);
+    // The first valid frame only records the counter (no start without a change).
+    pr::Out o = pr::Step(m, ReloadReady(1000, 4, 11, 7));
+    Check(!o.tap && !o.hold && !o.event && m.starts == 0 && m.state == pr::State::idle, "first v5 frame: no start");
+    // The remote enters its reload (counter +1, mode 11): one RELOAD tap, the mirror held.
+    o = pr::Step(m, ReloadReady(1020, 5, 11, 7));
+    Check(o.tap && o.hold && Is(o.event, "tap") && m.starts == 1 && m.taps == 1 && m.state == pr::State::pending, "remote start: tap");
+    o = pr::Step(m, ReloadReady(1100, 5, 11, 7));
+    Check(!o.tap && o.hold && !o.event, "pending: waiting within verify_ms");
+    // Body 1 answers with its own reload mode (12 = mode 11 + rec+0x27C bit 28).
+    o = pr::Step(m, ReloadReady(1150, 5, 11, 12));
+    Check(o.hold && Is(o.event, "entered") && m.entered == 1 && m.body_entries == 1 && m.state == pr::State::entered &&
+              Is(o.body_event, "body_enter"), "entered");
+    o = pr::Step(m, ReloadReady(1800, 5, 7, 12));
+    Check(o.hold && !o.event, "entered: still reloading after the remote finished (held)");
+    o = pr::Step(m, ReloadReady(2100, 5, 7, 7));
+    Check(!o.hold && Is(o.event, "complete") && m.completed == 1 && m.state == pr::State::idle && Is(o.body_event, "body_exit"),
+          "complete: the mirror reconciles");
+    // Retries, then the timeout.
+    o = pr::Step(m, ReloadReady(3000, 6, 11, 7));
+    Check(o.tap && m.taps == 2, "second reload: tap");
+    o = pr::Step(m, ReloadReady(3250, 6, 11, 7));
+    Check(o.tap && Is(o.event, "retry") && m.taps == 3, "no reload mode within verify_ms: retry");
+    o = pr::Step(m, ReloadReady(3500, 6, 11, 7));
+    Check(o.tap && Is(o.event, "retry") && m.taps == 4, "retry 3");
+    o = pr::Step(m, ReloadReady(3750, 6, 11, 7));
+    Check(!o.tap && !o.hold && Is(o.event, "fallback") && Is(o.reason, "timeout") && m.fallbacks == 1, "max taps: timeout fallback");
+    // The remote finished before body 1 entered: no late reload.
+    o = pr::Step(m, ReloadReady(4000, 7, 11, 7));
+    Check(o.tap, "third reload: tap");
+    o = pr::Step(m, ReloadReady(4300, 7, 7, 7));
+    Check(Is(o.event, "fallback") && Is(o.reason, "remote_done") && !o.hold, "remote done before the body entered");
+    // Refusals before any tap.
+    const auto refused = [&](std::uint64_t now, std::uint8_t seq, void (*tweak)(pr::In&), const char* why) {
+        pr::In in = ReloadReady(now, seq, 11, 7);
+        tweak(in);
+        const pr::Out r = pr::Step(m, in);
+        return !r.tap && !r.hold && Is(r.event, "fallback") && Is(r.reason, why);
+    };
+    Check(refused(5000, 8, [](pr::In& in) { in.active = false; }, "inactive"), "inactive");
+    Check(refused(5100, 9, [](pr::In& in) { in.weapon_match = false; }, "weapon"), "weapon gate");
+    Check(refused(5200, 10, [](pr::In& in) { in.gun_class = false; }, "cls"), "class");
+    Check(refused(5300, 11, [](pr::In& in) { in.gate = false; }, "gate"), "reload gate");
+    Check(refused(5400, 12, [](pr::In& in) { in.can_reload = false; }, "no_reload"), "can reload");
+    Check(refused(5500, 13, [](pr::In& in) { in.body_ok = false; }, "body"), "body unread");
+    // A raw press already started body 1's reload: entered without a tap.
+    o = pr::Step(m, ReloadReady(6000, 14, 11, 11));
+    Check(!o.tap && o.hold && Is(o.event, "entered"), "already reloading: entered, no tap");
+    // Stuck: the body's reload mode no longer freezes the mirror after stuck_ms.
+    o = pr::Step(m, ReloadReady(8600, 14, 7, 11));
+    Check(o.stuck && !o.hold && Is(o.event, "stuck") && m.stuck == 1 && m.state == pr::State::idle, "stuck: released");
+    Check(pr::Step(m, ReloadReady(8700, 14, 7, 11)).stuck, "stuck latched while the body stays");
+    Check(!pr::Step(m, ReloadReady(8800, 14, 7, 7)).stuck, "the latch clears when the body leaves");
+    // raw/mirror never tap; the counter still counts starts.
+    pr::In raw = ReloadReady(9000, 15, 11, 7);
+    raw.setting = mgscoop::PartnerNativeReload::raw;
+    o = pr::Step(m, raw);
+    Check(!o.tap && !o.hold && Is(o.event, "start") && m.starts >= 2, "raw: start counted, no tap");
+    // A test tap (rtap=1) without a remote reload.
+    pr::In forced = ReloadReady(9500, 15, 7, 7);
+    forced.force_tap = true;
+    o = pr::Step(m, forced);
+    Check(o.tap && o.hold, "force_tap: one tap");
+    // Invalid v5 resets the counter memory: a reappearing counter is no start.
+    pr::Machine n{};
+    pr::Reset(n);
+    pr::Step(n, ReloadReady(100, 1, 7, 7));
+    pr::In gone = ReloadReady(200, 1, 7, 7);
+    gone.remote_valid = false;
+    pr::Step(n, gone);
+    Check(!pr::Step(n, ReloadReady(300, 9, 11, 7)).tap && n.starts == 0, "after an invalid frame the counter is only recorded");
+    // The freeze rule.
+    using mgscoop::PartnerNativeReload;
+    Check(!pr::MirrorFrozen(PartnerNativeReload::mirror, true, 11, true, false), "mirror never freezes");
+    Check(pr::MirrorFrozen(PartnerNativeReload::raw, true, 7, false, false), "raw: the remote reloading freezes");
+    Check(pr::MirrorFrozen(PartnerNativeReload::raw, false, 12, false, false), "raw: body 1 reloading freezes");
+    Check(!pr::MirrorFrozen(PartnerNativeReload::raw, false, 12, false, true), "raw: a stuck body reload does not");
+    Check(pr::MirrorFrozen(PartnerNativeReload::event, false, 7, true, false), "event: the driver's hold freezes");
+    Check(!pr::MirrorFrozen(PartnerNativeReload::event, false, 7, false, false), "event: nothing reloading, no freeze");
+    // Sender counters.
+    pr::SenderState s{};
+    pr::SenderStep(s, true, 11, 1);
+    Check(s.reload_seq == 0 && s.switch_seq == 0, "the first read only records");
+    pr::SenderStep(s, true, 7, 1);
+    pr::SenderStep(s, true, 11, 1);
+    Check(s.reload_seq == 1, "entering 11 counts");
+    pr::SenderStep(s, true, 12, 1);
+    Check(s.reload_seq == 1, "11 -> 12 is the same reload");
+    pr::SenderStep(s, true, 7, 0);
+    Check(s.switch_seq == 1, "a slot change counts");
+    pr::SenderStep(s, false, 11, 2);
+    pr::SenderStep(s, true, 11, 2);
+    Check(s.reload_seq == 1 && s.switch_seq == 1, "an unreadable tick never counts");
+    for (unsigned i = 0; i < 300; ++i) { pr::SenderStep(s, true, 7, 2); pr::SenderStep(s, true, 11, 2); }
+    Check(s.reload_seq == static_cast<std::uint8_t>(1 + 300), "mod 256");
+}
+
+// The weapon switch plan and the generalized gate (W4/W5).
+namespace ps = mgscoop::partner_slots;
+void TestSlots() {
+    Check(!ps::Decode(0xFFFF0000u).filled, "handle >> 16 == 0xFFFF: empty");
+    const ps::Handle h46 = ps::Decode((3u << 16) | (46u << 5) | 4u);
+    Check(h46.filled && h46.equip == 46 && h46.type == 4, "decode (idx << 16) | (46 << 5) | 4");
+    ps::PlanIn in{};
+    in.body_ok = true;
+    in.body[1] = h46;  // stock46 in the back slot, nothing else
+    in.remote_base[0] = 343; in.remote_base[1] = 46; in.remote_base[2] = 9;
+    in.remote_type[0] = 1; in.remote_type[1] = 4; in.remote_type[2] = 2;
+    in.remote_type_ok[0] = in.remote_type_ok[1] = in.remote_type_ok[2] = true;
+    ps::Plan p = ps::MakePlan(in);
+    Check(p.tier[0] == ps::Tier::empty && p.tier[1] == ps::Tier::same && p.tier[2] == ps::Tier::empty && p.ok_mask == 0x2 &&
+              p.equip[1] == 46 && p.equip[0] == 0, "stock46 only: back slot same, the others empty");
+    in.remote_base[1] = 47;  // another weapon of type 4 on the remote's back
+    p = ps::MakePlan(in);
+    Check(p.tier[1] == ps::Tier::sub && p.ok_mask == 0x2, "same type: the substitute is admitted");
+    in.remote_type[1] = 3;
+    p = ps::MakePlan(in);
+    Check(p.tier[1] == ps::Tier::other && p.ok_mask == 0, "a different type: refused");
+    in.remote_type_ok[1] = false;
+    Check(ps::MakePlan(in).tier[1] == ps::Tier::unknown, "no type for the remote's weapon: unknown");
+    in.remote_base[1] = 0;
+    Check(ps::MakePlan(in).tier[1] == ps::Tier::unknown && ps::MakePlan(in).ok_mask == 0, "no manifest: unknown, refused");
+    in.body_ok = false;
+    Check(ps::MakePlan(in).ok_mask == 0, "unread handles: nothing admitted");
+    Check(Is(ps::TierName(ps::Tier::sub), "sub") && Is(ps::TierName(ps::Tier::empty), "empty"), "tier names");
+    // Gate: the remote's raw equip or its base must be body 1's; not mid-switch; FIRE needs a bullet type.
+    ps::GateIn g{873, 46, 46, false, true, 4};
+    Check(ps::Judge(g) == ps::Gate::match && ps::StripBits(ps::Judge(g)) == 0, "alias 873 of base 46: match");
+    g.remote_equip = 875; g.remote_base = 9;
+    Check(ps::Judge(g) == ps::Gate::mismatch && ps::StripBits(ps::Gate::mismatch) == 0x50u, "another weapon: FIRE|RELOAD stripped");
+    g.remote_equip = 46; g.switching = true;
+    Check(ps::Judge(g) == ps::Gate::switching && ps::StripBits(ps::Gate::switching) == 0x50u, "mid-switch: stripped");
+    g.switching = false; g.body_type = 9;
+    Check(ps::Judge(g) == ps::Gate::projectile && ps::StripBits(ps::Gate::projectile) == 0x10u, "unqualified type: FIRE only stripped");
+    g.type_ok = false; g.body_type = 4;
+    Check(ps::Judge(g) == ps::Gate::projectile, "an unread type is not qualified");
+    Check(ps::BulletType(4) && !ps::BulletType(3), "the bullet allow-list");
+    Check(Is(ps::GateName(ps::Gate::switching), "switching"), "gate names");
+}
+
 int main() {
     TestWeapons();
+    TestReload();
+    TestSlots();
     TestOffAndLegacy();
     TestEnterSequence();
     TestEnterTimeoutsAndRevertLatch();

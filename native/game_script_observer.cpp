@@ -647,6 +647,12 @@ void PartnerFireCensus(void*, mgscoop::partner_fire_filter::Census& out) noexcep
 bool PartnerReadGun(void*, const pp::State& state, std::uint32_t k, pp::Gun1& out) noexcept {
     return pp::ReadGun(partner_addresses, state, k, out);
 }
+bool PartnerReadSlots(void*, const pp::State& state, std::uint32_t k, pp::Slots& out) noexcept {
+    return pp::ReadSlots(partner_addresses, state, k, out);
+}
+bool PartnerEquipType(void*, std::uint32_t equip, std::uint8_t& type) noexcept {
+    return pp::EquipType(partner_addresses, equip, type);
+}
 bool PartnerReadLoadout(void*, const pp::State& state, pp::Loadout& out) noexcept {
     return pp::ReadLoadout(partner_addresses, state, out);
 }
@@ -740,7 +746,7 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerSetDefer, PartnerPublishIdentity, PartnerPublishWrapRoots, PartnerNativeTargets, PartnerReadGun1, PartnerReadLookSource,
     PartnerWindowSeq, PartnerLinkLive, PartnerLinkSession, PartnerDrainReliable, PartnerReadRates, PartnerForgetRates, kAmmoExperiment,
     PartnerInstallFire, PartnerFireStats, PartnerFireCensus, PartnerReadGun, PartnerReadLoadout, PartnerSendReliable, PartnerInBatch,
-    PartnerInstallLookSource, PartnerInstallNoise};
+    PartnerInstallLookSource, PartnerInstallNoise, PartnerReadSlots, PartnerEquipType};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with

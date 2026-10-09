@@ -16,7 +16,10 @@ namespace mgsworker {
 // look written after phase 0 (look) or also at its source (looksrc, the
 // facing A/B run: -LabSetting partner_native_aim=looksrc). Later stages
 // (lookcam, local=all, a gun stage without fire, noise=keep) need an explicit
-// gate change. partner_native_face (the facing governor) is free.
+// gate change. partner_native_face (the facing governor) is free; the
+// partner's own reload (partner_native_reload) and the slot follower
+// (partner_native_slot) are free in the gun stage (their A/B variants) and
+// stay at their defaults (mirror, off) in census and loco.
 inline bool LegacyDrive(const mgscoop::LabConfig& lab) {
     return lab.partner_drive == mgscoop::PartnerDrive::legacy && lab.partner_input_defer == mgscoop::PartnerDefer::off;
 }
@@ -42,12 +45,14 @@ inline bool NativeProfile(const mgscoop::LabConfig& lab) {
     // census never writes rates, loco and gun mirror the remote's movement
     // rates into instance 1.
     const bool no_fire = lab.partner_native_fire == mgscoop::PartnerNativeFire::off;
+    const bool weapons_default = lab.partner_native_reload == mgscoop::PartnerNativeReload::mirror &&
+        lab.partner_native_slot == mgscoop::PartnerNativeSlot::off;
     const bool census = lab.partner_input_defer == mgscoop::PartnerDefer::census && lab.partner_input_mask == 0x2240006u &&
         !lab.partner_native_gun && no_fire && lab.partner_native_aim == mgscoop::PartnerNativeAim::off &&
-        lab.partner_native_rates != mgscoop::PartnerNativeRates::mirror;
+        lab.partner_native_rates != mgscoop::PartnerNativeRates::mirror && weapons_default;
     const bool loco = lab.partner_input_defer == mgscoop::PartnerDefer::on && lab.partner_input_mask == 0x2240006u &&
         !lab.partner_native_gun && no_fire && lab.partner_native_aim == mgscoop::PartnerNativeAim::off &&
-        lab.partner_native_rates == mgscoop::PartnerNativeRates::mirror;
+        lab.partner_native_rates == mgscoop::PartnerNativeRates::mirror && weapons_default;
     const bool gun = lab.partner_input_defer == mgscoop::PartnerDefer::on && lab.partner_input_mask == 0x224005Eu &&
         lab.partner_native_gun && lab.partner_native_fire == mgscoop::PartnerNativeFire::visual &&
         (lab.partner_native_aim == mgscoop::PartnerNativeAim::look || lab.partner_native_aim == mgscoop::PartnerNativeAim::looksrc) &&

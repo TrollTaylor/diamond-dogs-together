@@ -625,6 +625,7 @@ try {
         $playText.Contains("if (!`$NoVisualFire) { 'partner_native_fire=visual' } else { 'partner_native_fire=0' }") -and
         $playText.Contains("'partner_native_rates=mirror'") -and !$playText.Contains('0x2200006') -and !$playText.Contains('0x220004E') -and
         !$playText.Contains('0x220005E')) 'Play-OfflineCoop passes EVADE (0x40000) in every mask, visual fire by default (0x224005E) or off with -NoVisualFire (0x224004E), and mirrors the movement rates (native)'
+    Assert-True ($playText.Contains("'partner_native_reload=event', 'partner_native_slot=write'")) 'Play-OfflineCoop: the partner''s own reload (event) and the slot follower (write)'
     # Round 4 lab.ini value kinds.
     Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_recon_align_ms -Value -16)/$(ConvertTo-LabPartnerValue -Key partner_recon_align_ms -Value 150)" '-16/150' 'partner_recon_align_ms (signed)'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_recon_align_ms -Value -51 } '-50..150' 'align range'
@@ -647,6 +648,9 @@ try {
     Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_native_aim -Value looksrc)/$(ConvertTo-LabPartnerValue -Key partner_native_face -Value aim)/$(ConvertTo-LabPartnerValue -Key partner_native_noise -Value keep)" 'looksrc/aim/keep' 'native polish enums (look source, facing governor, noise)'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_face -Value always } 'off|idle|aim' 'face values'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_noise -Value loud } 'filter|keep' 'noise values'
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_native_reload -Value raw)/$(ConvertTo-LabPartnerValue -Key partner_native_slot -Value call)" 'raw/call' 'reload and slot enums'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_reload -Value tap } 'mirror|raw|event' 'reload values'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_slot -Value on } 'off|write|call' 'slot values'
 
     # Round 3 lab.ini value kinds.
     Assert-Equal (ConvertTo-LabPartnerValue -Key partner_input -Value net) 'net' 'partner_input enum'

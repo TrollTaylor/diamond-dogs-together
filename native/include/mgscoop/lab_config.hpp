@@ -134,6 +134,21 @@ enum class PartnerNativeFace : std::uint8_t { off, idle, aim };
 // is masked unless it is live) or keep (lab experiment: the receiver's guards
 // hear the partner's visual shots).
 enum class PartnerNativeNoise : std::uint8_t { filter, keep };
+// The partner's own reload (docs/native-puppet.md "Weapons", R1..R6): mirror
+// (the magazine mirror writes the remote's magazine whenever it changes, also
+// during body 1's reload: today's behaviour), raw (the mirror freezes while
+// either side reloads and reconciles once afterwards; the remote's raw R still
+// reaches body 1) or event (raw plus the explicit reload event: input frame v5
+// tells when the remote enters its reload mode, the driver taps RELOAD through
+// the overlay until body 1 enters its own, and the raw R/CARRY bit is stripped
+// from the remote's sample). Inert unless the native drive runs the gun stage.
+enum class PartnerNativeReload : std::uint8_t { mirror, raw, event };
+// The partner's weapon switch (W4): off, write (the slot follower writes the
+// non-local data effect of SetCurrentSlot 0x11AFA80 into instance 1's
+// equipment row inside the drain window; the game then switches natively) or
+// call (calls 0x11AFA80 itself, lab only: play uses write). Only to a filled
+// slot whose weapon matches the plan; inert unless the native gun stage runs.
+enum class PartnerNativeSlot : std::uint8_t { off, write, call };
 // Instance 1's per-id movement rates (base action record of *(PS1+0x260):
 // dash +0x48/+0x50, crawl +0x3C/+0x40/+0x44; docs/native-puppet.md "Rates"):
 // off (not read), log (read both instances and the remote's, telemetry only)
@@ -320,6 +335,8 @@ struct LabConfig {
     PartnerNativeRates partner_native_rates = PartnerNativeRates::log;
     PartnerNativeFace partner_native_face = PartnerNativeFace::idle;
     PartnerNativeNoise partner_native_noise = PartnerNativeNoise::filter;
+    PartnerNativeReload partner_native_reload = PartnerNativeReload::mirror;
+    PartnerNativeSlot partner_native_slot = PartnerNativeSlot::off;
     bool crash_probe = true;
     // Two-PC link (docs/link-protocol.md). `mode` is parsed independently of
     // `present`; the play save gate is lab::SavesRedirected() in the observer.
@@ -394,6 +411,8 @@ const char* PartnerNativeRatesName(PartnerNativeRates value) noexcept;
 const char* PartnerNativeFireName(PartnerNativeFire value) noexcept;
 const char* PartnerNativeFaceName(PartnerNativeFace value) noexcept;
 const char* PartnerNativeNoiseName(PartnerNativeNoise value) noexcept;
+const char* PartnerNativeReloadName(PartnerNativeReload value) noexcept;
+const char* PartnerNativeSlotName(PartnerNativeSlot value) noexcept;
 const char* LabModeName(LabMode value) noexcept;
 // aim|always|off ("" for unset); parse refuses "unset".
 const char* NametagCrosshairName(NametagCrosshair value) noexcept;
@@ -422,6 +441,8 @@ bool ParsePartnerNativeRates(const char* text, std::size_t size, PartnerNativeRa
 bool ParsePartnerNativeFire(const char* text, std::size_t size, PartnerNativeFire& out) noexcept;
 bool ParsePartnerNativeFace(const char* text, std::size_t size, PartnerNativeFace& out) noexcept;
 bool ParsePartnerNativeNoise(const char* text, std::size_t size, PartnerNativeNoise& out) noexcept;
+bool ParsePartnerNativeReload(const char* text, std::size_t size, PartnerNativeReload& out) noexcept;
+bool ParsePartnerNativeSlot(const char* text, std::size_t size, PartnerNativeSlot& out) noexcept;
 // partner_input_defer as it takes effect: off unless partner_drive=native.
 inline PartnerDefer EffectivePartnerDefer(PartnerDrive drive, PartnerDefer defer) noexcept {
     return drive == PartnerDrive::native ? defer : PartnerDefer::off;

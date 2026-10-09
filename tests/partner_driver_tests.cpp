@@ -158,6 +158,10 @@ struct Fake {
     bool loadout_ok = false;
     std::vector<std::vector<std::uint8_t>> reliable_sent;
     bool reliable_ok = true;
+    // The partner's own reload and weapon switch: instance k's slots and the equip types.
+    pp::Slots slots[2]{};
+    bool slots_ok[2] = {false, false};
+    std::uint8_t equip_types[700]{};
 
     Fake() {
         Ready();
@@ -540,7 +544,19 @@ bool HookSendReliable(void* context, std::uint8_t channel, const std::uint8_t* b
     f.reliable_sent.emplace_back(bytes, bytes + size);
     return true;
 }
+bool HookReadSlots(void* context, const pp::State&, std::uint32_t k, pp::Slots& out) noexcept {
+    Fake& f = F(context);
+    out = k < 2 ? f.slots[k] : pp::Slots{};
+    return k < 2 && f.slots_ok[k];
+}
+bool HookEquipType(void* context, std::uint32_t equip, std::uint8_t& type) noexcept {
+    Fake& f = F(context);
+    type = equip < 700 ? f.equip_types[equip] : 0;
+    return type != 0;
+}
 void AddWeaponHooks(pd::Hooks& h) {
+    h.read_slots = HookReadSlots;
+    h.equip_type = HookEquipType;
     h.install_fire = HookInstallFire;
     h.fire_stats = HookFireStats;
     h.fire_census = HookFireCensus;
@@ -3290,18 +3306,18 @@ void TestNativeChannel2AndSender() {
         s.fake.inputs.clear();
         s.N();
         // partner_native_rates=log (default): v4, no rates while the local record is unread; no gun hook: no magazine.
-        Check(!s.fake.inputs.empty() && s.fake.inputs.back().version == 4 && (s.fake.inputs.back().xflags & 0x0F) == 0x0F &&
+        Check(!s.fake.inputs.empty() && s.fake.inputs.back().version == 5 && (s.fake.inputs.back().xflags & 0x0F) == 0x0F &&
               !(s.fake.inputs.back().xflags & mgscoop::partner_input::XFlag::Rates) && s.fake.inputs.back().rate_dash == 0 &&
               !(s.fake.inputs.back().xflags & mgscoop::partner_input::XFlag::Mag) && s.fake.inputs.back().mag == 0 &&
               s.fake.inputs.back().look_pitch == 0.25f && s.fake.inputs.back().heading_mrad == 500,
               "native sender: v4 with every v3 group (no rates, no magazine)");
         s.fake.window_seq = 3;  // a window open: camera and heading not quiet
         s.N();
-        Check(s.fake.inputs.back().version == 4 && (s.fake.inputs.back().xflags & 0x06) == 0 && (s.fake.inputs.back().xflags & 0x01),
+        Check(s.fake.inputs.back().version == 5 && (s.fake.inputs.back().xflags & 0x06) == 0 && (s.fake.inputs.back().xflags & 0x01),
               "odd WindowSeq: camera/heading dropped, look kept");
         s.driver.settings.nrates = mgscoop::PartnerNativeRates::off;
         s.N();
-        Check(s.fake.inputs.back().version == 4 && !(s.fake.inputs.back().xflags & mgscoop::partner_input::XFlag::Rates) &&
+        Check(s.fake.inputs.back().version == 5 && !(s.fake.inputs.back().xflags & mgscoop::partner_input::XFlag::Rates) &&
                   s.fake.inputs.back().rate_dash == 0 && s.fake.inputs.back().rate_crawl == 0,
               "partner_native_rates=off: still v4 (the magazine group), never rates");
 
@@ -3332,7 +3348,7 @@ void TestNativeRates() {
     s.fake.rates_ok[0] = s.fake.rates_ok[1] = true;
     s.fake.inputs.clear();
     s.N();
-    Check(!s.fake.inputs.empty() && s.fake.inputs.back().version == 4 && (s.fake.inputs.back().xflags & pi::XFlag::Rates) &&
+    Check(!s.fake.inputs.empty() && s.fake.inputs.back().version == 5 && (s.fake.inputs.back().xflags & pi::XFlag::Rates) &&
           s.fake.inputs.back().rate_dash == 1200 && s.fake.inputs.back().rate_crawl == 1000 && s.fake.inputs.back().rate_crawl_factor == 1200,
           "sender: the local record's dash/crawl/crawl factor in v4");
     // Before the remote's rates arrive: the mirror waits (no_remote), never requested.
@@ -3591,7 +3607,7 @@ void TestNativePolish() {
         for (int i = 0; i < 5; ++i) s.N();
         Check(!s.fake.inputs.empty(), "v4 sent");
         const auto& p = s.fake.inputs.back();
-        Check(p.version == 4 && (p.xflags & mgscoop::partner_input::XFlag::Equip) && p.gun_equip == 46 &&
+        Check(p.version == 5 && (p.xflags & mgscoop::partner_input::XFlag::Equip) && p.gun_equip == 46 &&
                   (p.xflags & mgscoop::partner_input::XFlag::Gamepad), "the sender's equip and gamepad mode (bit 6 clear)");
         s.fake.pad.kb_flags = 0x40;
         s.N();
@@ -3710,7 +3726,7 @@ void TestNativeWeapons() {
         s.fake.inputs.clear();
         s.N();
         const auto& p = s.fake.inputs.back();
-        Check(!s.fake.inputs.empty() && p.version == 4 && (p.xflags & mgscoop::partner_input::XFlag::Mag) && p.mag == 3 && p.mag_cap == 5,
+        Check(!s.fake.inputs.empty() && p.version == 5 && (p.xflags & mgscoop::partner_input::XFlag::Mag) && p.mag == 3 && p.mag_cap == 5,
               "v4 carries the local magazine 3/5");
         s.fake.gun0.fields.gun3c0 = 0x10000000u;
         s.N();
@@ -3776,6 +3792,170 @@ void TestNativeWeapons() {
 
 // Review fixes: play mode never takes the native drive from the trigger file;
 // the GO identity and census wrap roots never outlive a mission or the drive.
+// The partner's own reload and weapon switch (docs/native-puppet.md "Weapons"):
+// the v5 sender, the event machine's taps and the Arm's freeze inputs, the
+// generalized gate (switching, projectile), the slot plan and follower lines.
+void TestNativeReloadSwitch() {
+    namespace pn = mgscoop::partner_native;
+    namespace pi = mgscoop::partner_input;
+    namespace ew = mgscoop::partner_equip_wire;
+    NativeSession s;
+    SetVisualFire(s);
+    s.driver.settings.nreload = mgscoop::PartnerNativeReload::event;
+    s.driver.settings.nslot = mgscoop::PartnerNativeSlot::write;
+    s.fake.gun.fields.equip = 46;
+    s.fake.gun.fields.cap = 9;
+    s.fake.gun.fields.mag = 3;
+    s.fake.gun.fields.stock = 36;
+    s.fake.gun.mode_cur = 7;
+    s.fake.gun.hand_slot = 1;
+    s.fake.gun.slot_src = 7;
+    s.fake.equip_types[46] = 4;
+    // The local player (the v5 sender): stock46 aimed in the back slot.
+    s.fake.gun0_ok = true;
+    s.fake.gun0.fields_ok = true;
+    s.fake.gun0.fields.flags27c = 1u << 6;
+    s.fake.gun0.fields.equip = 46;
+    s.fake.gun0.fields.cap = 9;
+    s.fake.gun0.fields.mag = 9;
+    s.fake.gun0.gun3c0 = 0x40004u;  // in hand, aiming
+    s.fake.gun0.mode_cur = 7;
+    s.fake.slots_ok[0] = true;
+    s.fake.slots[0].nibble = 1;
+    // Body 1: stock46 in the back slot, nothing else.
+    s.fake.slots_ok[1] = true;
+    s.fake.slots[1].nibble = 1;
+    s.fake.slots[1].handles[0] = 0xFFFF0000u;
+    s.fake.slots[1].handles[1] = (4u << 16) | (46u << 5) | 4u;
+    s.fake.slots[1].handles[2] = 0xFFFF0000u;
+    s.fake.latest.packet.version = 5;
+    s.fake.latest.packet.xflags = pi::XFlag::Equip;
+    s.fake.latest.packet.gun_equip = 46;
+    s.fake.latest.packet.gun_flags = pi::GunFlag::Valid | pi::GunFlag::InHand | pi::GunFlag::Aiming;
+    s.fake.latest.packet.gun_mode = 7;
+    s.fake.latest.packet.reload_seq = 4;
+    s.fake.latest.packet.inv_slot = 1;
+    Check(s.Until(pn::Mode::active, 9000) && s.driver.settings.fire_live, "reload/switch: active with visual fire");
+    s.N();
+    // The v5 sender: the gun group and the current slot.
+    s.fake.inputs.clear();
+    s.N();
+    Check(!s.fake.inputs.empty() && s.fake.inputs.back().version == 5 &&
+              s.fake.inputs.back().gun_flags == (pi::GunFlag::Valid | pi::GunFlag::InHand | pi::GunFlag::Aiming) &&
+              s.fake.inputs.back().gun_mode == 7 && s.fake.inputs.back().reload_seq == 0 && s.fake.inputs.back().inv_slot == 1,
+          "v5 sender: in hand, aiming, mode 7, slot 1");
+    s.fake.gun0.mode_cur = 11;
+    s.N();
+    Check(s.fake.inputs.back().reload_seq == 1 && (s.fake.inputs.back().gun_flags & pi::GunFlag::Reloading) && s.fake.inputs.back().gun_mode == 11,
+          "v5 sender: entering 11 advances reload_seq");
+    s.fake.gun0.mode_cur = 7;
+    s.fake.slots[0].nibble = 2;
+    s.N();
+    Check(s.fake.inputs.back().switch_seq == 1 && s.fake.inputs.back().inv_slot == 2, "v5 sender: a slot change advances switch_seq");
+    // The Arm: event mode, the remote's raw RELOAD stripped from its sample (live v5), the plan's slots.
+    const pi::Arm& a0 = s.fake.arms.back();
+    Check(a0.reload == mgscoop::PartnerNativeReload::event && !a0.reload_hold && a0.config.sample_strip == 0x40u &&
+              a0.slot_follow == mgscoop::PartnerNativeSlot::write && a0.slot_ok == 0 && a0.strip == 0,
+          "Arm: reload event, sample strip RELOAD, follower write (no manifest yet: no admitted slot)");
+    // The receiver: the remote enters its reload (counter 4 -> 5, mode 11): one RELOAD tap.
+    const std::uint32_t taps = s.fake.arms.back().tap_seq;
+    s.fake.latest.packet.reload_seq = 5;
+    s.fake.latest.packet.gun_mode = 11;
+    s.fake.latest.packet.gun_flags = pi::GunFlag::Valid | pi::GunFlag::InHand | pi::GunFlag::Aiming | pi::GunFlag::Reloading;
+    s.N();
+    Check(s.fake.arms.back().tap_seq == taps + 1 && s.fake.arms.back().tap_bits == 0x40u && s.fake.arms.back().reload_hold &&
+              s.fake.Containing("partner_reload=tap; setting=event; state=pending; body_mode=7; remote_mode=11; seq=5; mag=3;") == 1 &&
+              s.driver.mission.tele.reload_taps == 1 && std::strcmp(s.driver.mission.tele.reload_state, "pending") == 0,
+          "remote reload start: one tap, the mirror held");
+    s.fake.gun.mode_cur = 12;
+    s.N();
+    Check(s.fake.Containing("partner_reload=body_enter; setting=event; body_mode=12; mag=3; cap=9;") == 1 &&
+              s.fake.Containing("partner_reload=entered;") == 1 && s.fake.arms.back().reload_hold && s.fake.arms.back().tap_seq == taps + 1 &&
+              s.driver.mission.tele.reload_entered == 1 && s.driver.mission.tele.gun_mode_cur == 12,
+          "body 1 enters its own reload mode: no retry");
+    s.fake.latest.packet.gun_mode = 7;
+    s.fake.latest.packet.gun_flags = pi::GunFlag::Valid | pi::GunFlag::InHand | pi::GunFlag::Aiming;
+    s.N();
+    s.fake.gun.mode_cur = 7;
+    s.N();
+    Check(s.fake.Containing("partner_reload=complete;") == 1 && !s.fake.arms.back().reload_hold && s.driver.mission.tele.reload_completed == 1,
+          "complete: the hold released (the hook reconciles)");
+    // rtap=1: one test tap; refused when the weapon gate strips RELOAD.
+    s.Trigger("rtap=1");
+    s.N();
+    Check(s.fake.Has("partner_reload=rtap; queued=1\r\n") && s.fake.arms.back().tap_seq == taps + 2, "rtap=1: a test tap");
+    for (int i = 0; i < 30; ++i) s.N();  // its retries run out (no reload mode)
+    Check(s.fake.Containing("partner_reload=fallback;") >= 1 && !s.fake.arms.back().reload_hold, "rtap without a reload: timeout fallback");
+    // The generalized gate: mid-switch strips FIRE and RELOAD (no gate line), an unqualified type FIRE only.
+    s.fake.gun.gun3c0 |= 0x80u;
+    s.N();
+    Check(s.fake.arms.back().strip == 0x50u && std::strcmp(s.driver.mission.tele.weapon_gate, "switching") == 0 &&
+              s.driver.mission.tele.body_switching && s.fake.Containing("partner_weapon=switching") == 0,
+          "mid-switch: FIRE|RELOAD stripped, not logged");
+    s.fake.gun.gun3c0 &= ~0x80u;
+    s.fake.gun.fields.equip = 100;
+    s.fake.latest.packet.gun_equip = 100;
+    s.fake.equip_types[100] = 9;
+    s.N();
+    Check(s.fake.arms.back().strip == 0x10u && std::strcmp(s.driver.mission.tele.weapon_gate, "projectile") == 0 &&
+              s.fake.Has("partner_weapon=projectile; body_equip=100; body_type=9; strip=0x10\r\n") &&
+              std::strcmp(s.driver.mission.tele.fire_refused, "weapon_type") == 0,
+          "unqualified type: FIRE stripped, RELOAD kept");
+    s.fake.gun.fields.equip = 46;
+    s.fake.latest.packet.gun_equip = 46;
+    s.N();
+    Check(s.fake.arms.back().strip == 0 && s.fake.Containing("partner_weapon=type_ok;") == 1, "back to stock46: nothing stripped");
+    // The slot plan from the received manifest: back slot same, the others empty.
+    ew::Manifest rx{};
+    rx.revision = 1; rx.epoch = 7; rx.inv_slot = 0xFF;
+    rx.slots[0].base_id = 343; rx.slots[1].base_id = 46; rx.slots[2].base_id = 9;
+    std::uint8_t bytes[ew::kSize]{};
+    Check(ew::Encode(rx, bytes) == sizeof(bytes), "the remote's manifest encodes");
+    s.fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+    s.N();
+    s.N();
+    Check(s.fake.arms.back().slot_ok == 0x2u && s.fake.arms.back().slot_equip[1] == 46 && s.fake.arms.back().slot_equip[0] == 0 &&
+              s.fake.Containing("partner_slot=plan; follow=write; body_slot=1; tiers=empty,same,empty; body=0:0,46:4,0:0; "
+                                "remote_base=343,46,9; ok=0x2") == 1 &&
+              std::strcmp(s.driver.mission.tele.slot_tier[1], "same") == 0 && s.driver.mission.tele.slot_ok_mask == 2,
+          "plan: stock46 in the back slot is admitted, the empty slots are not");
+    // The follower's verdicts come from the hook's totals.
+    s.fake.stats.native.slot_refused = 1;
+    s.fake.stats.native.slot_last = mgscoop::partner_input_hook::SlotRefusal::empty;
+    s.fake.stats.native.slot_target = 2;
+    s.N();
+    Check(s.fake.Containing("partner_slot=refused; reason=empty; target=2;") == 1 &&
+              std::strcmp(s.driver.mission.tele.slot_last, "empty") == 0 && s.driver.mission.tele.slot_refused == 1,
+          "a follower refusal is logged once");
+    s.fake.stats.native.slot_writes = 1;
+    s.fake.stats.native.slot_last = mgscoop::partner_input_hook::SlotRefusal::none;
+    s.N();
+    Check(s.fake.Containing("partner_slot=write; reason=none;") == 1 && s.driver.mission.tele.slot_writes == 1, "a follower write is logged");
+    // Play runs call as write; mirror never holds and never strips the sample.
+    s.driver.settings.nslot = mgscoop::PartnerNativeSlot::call;
+    s.driver.settings.play_mode = true;
+    s.driver.settings.nreload = mgscoop::PartnerNativeReload::mirror;
+    s.N();
+    Check(s.fake.arms.back().slot_follow == mgscoop::PartnerNativeSlot::write && s.fake.arms.back().reload == mgscoop::PartnerNativeReload::mirror &&
+              s.fake.arms.back().config.sample_strip == 0, "play: call runs as write; mirror: no sample strip");
+    s.driver.settings.play_mode = false;
+    s.N();
+    Check(s.fake.arms.back().slot_follow == mgscoop::PartnerNativeSlot::call, "lab: the call variant reaches the Arm");
+    // A v4 remote (no gun group): no sample strip even with event.
+    s.driver.settings.nreload = mgscoop::PartnerNativeReload::event;
+    s.fake.latest.packet.version = 4;
+    s.fake.latest.packet.gun_flags = 0;
+    s.fake.latest.packet.gun_mode = 0;
+    s.fake.latest.packet.reload_seq = 0;
+    s.fake.latest.packet.inv_slot = 0xFF;
+    s.N();
+    Check(s.fake.arms.back().config.sample_strip == 0 && !s.driver.mission.tele.reload_remote_valid,
+          "a v4 remote: its raw R still reaches body 1");
+    // The ring carries body 1's gun mode and hand slot.
+    const auto& e = pn::At(s.driver.mission.tele.ring, s.driver.mission.tele.ring.count - 1);
+    Check(e.gmode == 7 && e.hslot == 1 && e.rmode == 0xFF, "ring: gmode, rmode (no v5: unread), hslot");
+}
+
 void TestNativePlayAndWithdraw() {
     namespace pn = mgscoop::partner_native;
     {
@@ -3864,7 +4044,7 @@ void TestNativeActionsWithWeapons() {
     s.N();
     {
         const pi::InputPacket& p = s.fake.inputs.back();
-        Check(!s.fake.inputs.empty() && p.version == 4 && (p.xflags & pi::XFlag::Rates) && (p.xflags & pi::XFlag::Mag) &&
+        Check(!s.fake.inputs.empty() && p.version == 5 && (p.xflags & pi::XFlag::Rates) && (p.xflags & pi::XFlag::Mag) &&
                   p.rate_dash == 1200 && p.rate_crawl == 1000 && p.rate_crawl_factor == 1200 && p.mag == 3 && p.mag_cap == 5 &&
                   pi::ValidPacket(p),
               "together: one v4 carries the local rates and magazine");
@@ -3935,6 +4115,7 @@ int main() {
     TestNativeWeapons();
     TestNativeActionsWithWeapons();
     TestNativePolish();
+    TestNativeReloadSwitch();
     std::printf("%u partner driver checks passed: CFG/boundaries, stage-3 timeline, trigger stop/stage, STOP while terminating, "
                 "teardown keep, refusal caps, realize thrash cap, all-active re-assert, flags, mirror lifecycle, one-shots, "
                 "force_exists, policy, net source, interp hook, lost freeze/hide, cadence, Lua notes, quiet pairing, probes, anim mirror/net (q/s/r, debounce, "

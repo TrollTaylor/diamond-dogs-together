@@ -127,7 +127,11 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
     j.Add(",\"manifest_rev\":%u,\"ammo_experiment\":%s,\"fields_ok\":%s,\"cap\":",n.manifest_rev,Bool(n.ammo_experiment),Bool(n.gun_fields_ok));
     i32(n.gun_cap);j.Add(",\"mag\":");i32(n.gun_mag);j.Add(",\"stock\":");i32(n.gun_stock);j.Add(",\"class\":");i32(n.gun_class);
     j.Add(",\"b3d5\":");i32(n.gun_b3d5);j.Add(",\"slot\":");i32(n.gun_slot);
-    j.Add(",\"noreload\":%u,\"b20\":%u,\"can_reload\":%u,\"gate\":%u}",n.gun_noreload,n.gun_b20,n.gun_can_reload,n.gun_gate);
+    j.Add(",\"noreload\":%u,\"b20\":%u,\"can_reload\":%u,\"gate\":%u",n.gun_noreload,n.gun_b20,n.gun_can_reload,n.gun_gate);
+    // The partner's own reload: rec+0x2C0, bit 26, *(Q+0x20)[1], the shadows, the slot in hand and its source.
+    j.Add(",\"mode\":");i32(n.gun_mode_cur);j.Add(",\"b26\":%u,\"upper_req\":",n.gun_b26);i32(n.gun_upper_req);
+    j.Add(",\"m3e4\":");i32(n.gun_m3e4);j.Add(",\"m3e6\":");i32(n.gun_m3e6);j.Add(",\"m3e8\":");i32(n.gun_m3e8);
+    j.Add(",\"hand_slot\":");i32(n.gun_hand_slot);j.Add(",\"slot_src\":");i32(n.gun_slot_src);j.Add("}");
     // Native weapons (docs/native-puppet.md "Weapons").
     const auto i64=[&](std::int64_t v) noexcept { if(v==partner_native::kNull) j.Add("null"); else j.Add("%lld",static_cast<long long>(v)); };
     j.Add(",\"fire\":{\"mode\":");j.String(n.fire_mode,sizeof(n.fire_mode));
@@ -145,7 +149,9 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
     j.String(n.mag_last,sizeof(n.mag_last));j.Add(",\"faulted\":%s,\"leak_off\":%s,\"inj\":",Bool(n.mag_faulted),Bool(n.mag_leak_off));
     i32(n.mag_inj);j.Add(",\"inj_cap\":");i32(n.mag_inj_cap);
     j.Add(",\"store\":{\"writes\":%u,\"refused\":%u,\"last\":",n.store_writes,n.store_refused);j.String(n.store_last,sizeof(n.store_last));
-    j.Add("}}");
+    // The freeze of the partner's own reload (R4): RELOAD edges seen, frozen drains, reconciles, rec+0x3E8 writes.
+    j.Add("},\"reload_seen\":%u,\"frozen\":%u,\"reconciles\":%u,\"m3e8_writes\":%u}",n.mag_reload_seen,n.mag_frozen,n.mag_reconciles,
+        n.mag_m3e8_writes);
     // Weapons F1 (the drain windows' sample rings), F3 (noise), F4 (the weapon gate) and the trigger.
     j.Add(",\"rings\":{\"on\":%s,\"windows\":%u,\"refused\":%u,\"changed\":%u,\"last\":",Bool(n.ring_on),n.ring_windows,n.ring_refused,
         n.ring_changed);
@@ -155,8 +161,36 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
         n.noise_passed);
     j.Add(",\"weapon\":{\"kb_remote\":%s,\"remote_gun_equip\":",Bool(n.kb_remote));i32(n.remote_gun_equip);
     j.Add(",\"remote_gun_base\":");i32(n.remote_gun_base);
-    j.Add(",\"mismatch\":%s,\"strip\":%u}",Bool(n.weapon_mismatch),n.strip_bits);
+    j.Add(",\"mismatch\":%s,\"strip\":%u,\"gate\":",Bool(n.weapon_mismatch),n.strip_bits);j.String(n.weapon_gate,sizeof(n.weapon_gate));
+    j.Add(",\"body_type\":");i32(n.body_type);j.Add(",\"switching\":%s}",Bool(n.body_switching));
     j.Add(",\"trigger\":{\"requested\":%u,\"shot_drains\":%u,\"fire_modes\":%u}",n.fire_requested,n.fire_shot_drains,n.fire_modes);
+    // The partner's own reload (docs/native-puppet.md "Weapons" R1..R6): the event machine, the remote's v5
+    // group and the post-phase-1 probe (bit 20 / bit 24 exist only inside the drain).
+    j.Add(",\"reload\":{\"setting\":");j.String(n.reload_setting,sizeof(n.reload_setting));
+    j.Add(",\"state\":");j.String(n.reload_state,sizeof(n.reload_state));
+    j.Add(",\"last\":");j.String(n.reload_last,sizeof(n.reload_last));
+    j.Add(",\"remote_valid\":%s,\"remote_reloading\":%s,\"remote_mode\":",Bool(n.reload_remote_valid),Bool(n.reload_remote_reloading));
+    i32(n.reload_remote_mode);j.Add(",\"remote_seq\":");i32(n.reload_remote_seq);
+    j.Add(",\"hold\":%s,\"stuck\":%s,\"starts\":%u,\"taps\":%u,\"entered\":%u,\"completed\":%u,\"stuck_n\":%u,\"fallbacks\":%u,",
+        Bool(n.reload_hold),Bool(n.reload_stuck),n.reload_starts,n.reload_taps,n.reload_entered,n.reload_completed,n.reload_stuck_n,
+        n.reload_fallbacks);
+    j.Add("\"body_entries\":%u,\"sample_strip\":%u,\"probe1\":{\"b20\":%u,\"b24\":%u,\"shots\":%u,\"mode_changes\":%u,\"mode\":%u}}",
+        n.reload_body_entries,n.reload_sample_strip,n.probe1_b20,n.probe1_b24,n.probe1_shots,n.probe1_mode_changes,n.probe1_mode);
+    // The weapon switch (W4/W6): body 1's slots, the plan and the follower.
+    j.Add(",\"slots\":{\"setting\":");j.String(n.slot_setting,sizeof(n.slot_setting));
+    j.Add(",\"remote_slot\":");i32(n.slot_remote);j.Add(",\"remote_seq\":");i32(n.slot_remote_seq);
+    j.Add(",\"body_slot\":");i32(n.slot_body);j.Add(",\"hand_slot\":");i32(n.gun_hand_slot);
+    j.Add(",\"target\":");i32(n.slot_target);j.Add(",\"read_ok\":%s,\"handles\":[",Bool(n.slots_ok));
+    for(unsigned s=0;s<3;++s){
+        if(s)j.Add(",");
+        if(!n.slots_ok || !n.slot_filled[s]) j.Add("null");
+        else j.Add("{\"equip\":%u,\"type\":%u}",unsigned(n.slot_equip[s]),unsigned(n.slot_type[s]));
+    }
+    j.Add("],\"plan\":[");
+    for(unsigned s=0;s<3;++s){if(s)j.Add(",");j.String(n.slot_tier[s],sizeof(n.slot_tier[s]));}
+    j.Add("],\"ok_mask\":%u,\"writes\":%u,\"refused\":%u,\"last\":",unsigned(n.slot_ok_mask),n.slot_writes,n.slot_refused);
+    j.String(n.slot_last,sizeof(n.slot_last));
+    j.Add(",\"faulted\":%s,\"switching\":%s}",Bool(n.slot_faulted),Bool(n.body_switching));
     // Facing (partner_recon governor) and the look (D3).
     j.Add(",\"facing\":{\"setting\":");j.String(n.face_setting,sizeof(n.face_setting));
     j.Add(",\"mode\":");j.String(n.face_mode,sizeof(n.face_mode));
@@ -195,7 +229,7 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
     j.Add(",\"writes\":%u,\"reapplied\":%u,\"restores\":%u,\"drops\":%u}",n.rates_writes,n.rates_reapplied,n.rates_restores,n.rates_drops);
     j.Add(",\"ring_fields\":[\"ms\",\"mode\",\"remote_stance\",\"body_stance\",\"remote_mmps\",\"body_mmps\",\"err_mm\",\"steer_mdeg\",\"held\",\"gun3c0\","
           "\"act\",\"rec_act\",\"rec_next\",\"rec_mag\",\"p1_forced\",\"recon_mode\",\"recon_action\",\"warp\",\"mag\",\"body_yaw_cdeg\","
-          "\"face_err_cdeg\"],\"ring\":[");
+          "\"face_err_cdeg\",\"gmode\",\"rmode\",\"hslot\"],\"ring\":[");
     for(std::size_t i=0;i<n.ring.count;++i){
         const auto& e=partner_native::At(n.ring,i);if(i)j.Add(",");
         j.Add("[%u,\"%s\",%u,%u,%d,%d,",e.ms,partner_native::ModeName(static_cast<partner_native::Mode>(e.mode)),unsigned(e.remote_stance),
@@ -207,7 +241,9 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
             recon?partner_recon::ModeName(static_cast<partner_recon::Mode>(e.recon_mode)):"off",
             recon?partner_recon::ActionName(static_cast<partner_recon::Action>(e.recon_action)):"off",Bool(e.warp));
         if(e.mag==0xFFFFu) j.Add("null,"); else j.Add("%u,",unsigned(e.mag));
-        i32(e.body_yaw_cdeg);j.Add(",");i32(e.face_err_cdeg);j.Add("]");
+        i32(e.body_yaw_cdeg);j.Add(",");i32(e.face_err_cdeg);
+        const auto byte=[&](std::uint8_t v) noexcept { if(v==0xFFu) j.Add(",null"); else j.Add(",%u",unsigned(v)); };
+        byte(e.gmode);byte(e.rmode);byte(e.hslot);j.Add("]");
     }
     j.Add("]}");
 }

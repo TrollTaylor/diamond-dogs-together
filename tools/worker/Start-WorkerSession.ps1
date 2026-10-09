@@ -31,7 +31,7 @@ param(
     # Extra lab.ini keys for this run: allow-listed lab experiments, the facing
     # A/B keys, the name tag keys and the Steam self-test (Invoke-WorkerScenario
     # "labsetting" lines); key=value for both copies, host:key=value / guest:key=value for one.
-    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|steam_selftest=[012])$')][string[]]$LabSetting=@()
+    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(mirror|raw|event)|partner_native_slot=(off|write|call)|steam_selftest=[012])$')][string[]]$LabSetting=@()
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -55,6 +55,9 @@ if($PartnerProfile -ceq 'native' -and $NativeStage -ceq 'gun' -and $BuildProfile
 $labKeys=@($LabSetting|ForEach-Object{$_ -creplace '^(host|guest):',''})
 if(@($labKeys|Where-Object{$_ -clike 'partner_native_*'}).Count -and $PartnerProfile -cne 'native'){throw '-LabSetting partner_native_* needs -PartnerProfile native.'}
 if($labKeys -ccontains 'partner_native_aim=looksrc' -and $NativeStage -cne 'gun'){throw '-LabSetting partner_native_aim=looksrc needs -NativeStage gun.'}
+if(@($labKeys|Where-Object{$_ -cmatch '^partner_native_(reload|slot)='}).Count -and $NativeStage -cne 'gun'){
+    throw '-LabSetting partner_native_reload / partner_native_slot need -NativeStage gun.'
+}
 if($AmmoExperiment -and $BuildProfile -cne 'research'){throw '-AmmoExperiment needs -BuildProfile research.'}
 $checks=Read-WorkerSessionJson ([IO.Path]::GetFullPath($CheckReceipt,$repo))
 if($BuildProfile -ceq 'research'){

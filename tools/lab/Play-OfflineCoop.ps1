@@ -237,7 +237,8 @@ try {
             'partner_recon=track', 'partner_input_slot=body', 'partner_input_defer=on',
             $(if (!$NoVisualFire) { 'partner_input_mask=0x224005E' } else { 'partner_input_mask=0x224004E' }),
             'partner_native_gun=1', $(if (!$NoVisualFire) { 'partner_native_fire=visual' } else { 'partner_native_fire=0' }),
-            'partner_native_aim=look', 'partner_input_triggers=1', 'partner_input_rstick=1', 'partner_native_rates=mirror')
+            'partner_native_aim=look', 'partner_input_triggers=1', 'partner_input_rstick=1', 'partner_native_rates=mirror',
+            'partner_native_reload=event', 'partner_native_slot=write')
         Write-Note 'NATIVE PARTNER: the other player''s body runs the game''s own movement and aiming; dm=map clips are the automatic fallback (-NoNative turns this off).'
     }
     if ($experiment.Move -eq 'input') {

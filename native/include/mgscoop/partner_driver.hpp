@@ -39,6 +39,8 @@
 #include "mgscoop/partner_defer.hpp"
 #include "mgscoop/partner_equip_wire.hpp"
 #include "mgscoop/partner_fire_filter.hpp"
+#include "mgscoop/partner_reload.hpp"
+#include "mgscoop/partner_slots.hpp"
 #include "mgscoop/partner_native.hpp"
 #include "mgscoop/partner_player.hpp"
 #include "mgscoop/partner_recon.hpp"
@@ -278,6 +280,12 @@ struct Hooks {
     bool (*in_batch)(void* context) noexcept = nullptr;
     const char* (*install_look_source)(void* context) noexcept = nullptr;
     const char* (*install_noise)(void* context) noexcept = nullptr;
+    // The partner's weapon switch (docs/native-puppet.md "Weapons" W4/W6; may
+    // be null: the follower then has no plan and refuses): instance k's slots
+    // (partner_player::ReadSlots; 0 = the local player, the v5 sender's slot)
+    // and the equip type of a stock id (partner_player::EquipType).
+    bool (*read_slots)(void* context, const partner_player::State& state, std::uint32_t k, partner_player::Slots& out) noexcept = nullptr;
+    bool (*equip_type)(void* context, std::uint32_t equip, std::uint8_t& type) noexcept = nullptr;
 };
 // Native weapons cadences and caps.
 inline constexpr std::uint64_t kEquipReadMs = 1000;    // loadout read / manifest send at most this often
@@ -345,6 +353,11 @@ struct Settings {
     // partner's shot noise (filter: FIRE only while the noise filter is live).
     PartnerNativeFace nface;
     PartnerNativeNoise nnoise;
+    // The partner's own reload and weapon switch (docs/native-puppet.md
+    // "Weapons"): partner_native_reload and partner_native_slot (nreload=,
+    // nslot= triggers; play runs nslot=call as write).
+    PartnerNativeReload nreload;
+    PartnerNativeSlot nslot;
     // Set only in the effective copy: the native settings apply this tick.
     bool native_active;
     // lab.ini mode=play (Configure): the trigger file never enables the native
@@ -684,6 +697,41 @@ struct Mission {
     // The 1 Hz partner_native_face line and the last placement's yaw verdict.
     unsigned face_lines;
     std::int32_t place_yaw_err_mdeg;
+    // --- The partner's own reload and weapon switch (docs/native-puppet.md "Weapons").
+    // The overlay tap bumped this tick (a second tap in the same tick ORs its bits).
+    std::uint64_t tap_bump_ms;
+    bool tap_bumped;
+    // The receiver's event machine (partner_reload) and its last output (the
+    // Arm's reload_hold/reload_stuck); the sender's v5 counters.
+    partner_reload::Machine reload;
+    partner_reload::Out reload_out;
+    partner_reload::SenderState sender_gun;
+    LogCap reload_cap;
+    // The remote's latest live v5 gun group (remote_v5: GunFlag::Valid) and slot.
+    bool remote_v5;
+    std::uint8_t remote_gun_flags, remote_gun_mode, remote_reload_seq, remote_switch_seq, remote_slot;
+    // The local player's slots (the v5 sender's inv_slot) and body 1's (the
+    // follower's plan and telemetry), read once per native tick.
+    partner_player::Slots slots0, slots1;
+    bool slots0_ok, slots1_ok;
+    // The plan for body 1's slots (partner_slots) from the received manifest
+    // (types per manifest revision) and body 1's handles; the last logged key.
+    partner_slots::Plan slot_plan;
+    bool slot_plan_ok;
+    std::uint16_t slot_types_rev;
+    std::uint8_t slot_types[3];
+    bool slot_types_ok[3];
+    std::uint64_t slot_plan_key;
+    LogCap slot_cap;
+    // The follower's last logged verdict (hook totals: writes, refusals).
+    std::uint32_t slot_logged_writes, slot_logged_refused, slot_logged_last;
+    // The generalized weapon gate (W5): the verdict, body 1's in-hand type
+    // (kNull unread) and whether it is mid-switch.
+    partner_slots::Gate weapon_gate;
+    std::int32_t body_type;
+    bool body_switching;
+    // The last logged type verdict (partner_weapon=projectile|type_ok lines).
+    bool weapon_type_logged, weapon_type_logged_once;
 };
 
 struct Driver {
@@ -709,6 +757,8 @@ struct Driver {
     // tap= sequence: process-lifetime (the hook keeps its last seen value
     // across gens and missions, so a value is never reused).
     std::uint32_t tap_seq;
+    // rtap=1: one test reload tap through the event machine on the next native tick.
+    bool rtap_pending;
     // Round 4: a placement requested by a trigger (place=1, or a change of
     // apply/input/source), consumed by the next reconciliation step.
     partner_recon::PlaceReason recon_place_request;

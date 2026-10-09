@@ -264,6 +264,9 @@ struct RingEntry {
     // Facing: the body's yaw and the facing error target - body (centidegrees,
     // kNull unread).
     std::int32_t body_yaw_cdeg, face_err_cdeg;
+    // Reload and weapon switch: body 1's gun mode rec+0x2C0, the remote's v5
+    // gun mode and body 1's slot in hand rec+0x3D9 (0xFF unread).
+    std::uint8_t gmode, rmode, hslot;
 };
 inline constexpr std::uint8_t kReconOff = 0xFF;
 inline constexpr std::size_t kRing = 48;
@@ -421,6 +424,46 @@ struct Telemetry {
     // that requested one, and drains that left the gun in a fire mode
     // (rec+0x2C0 9 or 10).
     std::uint32_t fire_requested, fire_shot_drains, fire_modes;
+    // The partner's own reload (docs/native-puppet.md "Weapons" R1..R6). Body
+    // 1's gun record: the current mode rec+0x2C0, the upper-body request
+    // *(Q+0x20)[1] (5 = reload), the reload shadows rec+0x3E4/+0x3E6/+0x3E8,
+    // the slot in hand rec+0x3D9 and the slot source rec+0x3DE (kNull unread),
+    // rec+0x3C0 bit 26 (a reload mode is active).
+    std::int32_t gun_mode_cur, gun_upper_req, gun_m3e4, gun_m3e6, gun_m3e8, gun_hand_slot, gun_slot_src;
+    std::uint32_t gun_b26;
+    // The event machine (partner_reload): the setting, its state, the last
+    // fallback reason, the remote's v5 gun group (mode and counter kNull
+    // without), whether it holds or released a stuck body reload, the mission
+    // counters and the sample strip of the published Arm.
+    char reload_setting[8], reload_state[8], reload_last[12];
+    bool reload_remote_valid, reload_remote_reloading, reload_hold, reload_stuck;
+    std::int32_t reload_remote_mode, reload_remote_seq;
+    std::uint32_t reload_starts, reload_taps, reload_entered, reload_completed, reload_stuck_n, reload_fallbacks, reload_body_entries;
+    std::uint32_t reload_sample_strip;
+    // The magazine mirror's freeze (hook process totals): RELOAD edges seen
+    // (written or not), drains frozen, reconcile writes and rec+0x3E8 writes.
+    std::uint32_t mag_reload_seen, mag_frozen, mag_reconciles, mag_m3e8_writes;
+    // The post-phase-1 probe (hook process totals): phase-1 calls that left
+    // the reload request bit 20 / the trigger's bit 24 set, shots, rec+0x2C0
+    // changes across phase 1 and the last mode seen there.
+    std::uint32_t probe1_b20, probe1_b24, probe1_shots, probe1_mode_changes, probe1_mode;
+    // The weapon switch (W4/W6): the follower setting, the remote's v5 slot
+    // and switch counter (kNull without), body 1's current slot (row+0x36;
+    // kNull unread), the follower's last acted-on slot (kNull none), body 1's
+    // handles per slot (filled: a weapon; equip/type then), the plan's tiers
+    // and admitted mask, the follower's totals, last verdict and fault latch,
+    // the generalized gate's verdict, body 1's in-hand type (kNull unread) and
+    // whether it is mid-switch.
+    char slot_setting[8], slot_last[12], weapon_gate[12];
+    std::int32_t slot_remote, slot_remote_seq, slot_body, slot_target, body_type;
+    bool slots_ok;
+    bool slot_filled[3];
+    std::uint16_t slot_equip[3];
+    std::uint8_t slot_type[3];
+    char slot_tier[3][8];
+    std::uint8_t slot_ok_mask;
+    std::uint32_t slot_writes, slot_refused;
+    bool slot_faulted, body_switching;
     // Loadout: what this copy sends (manifest revision, base ids, aliases,
     // tables verified) and the apply verdict of the received manifest.
     std::uint32_t equip_tx_rev;

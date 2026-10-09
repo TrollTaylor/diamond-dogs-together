@@ -204,7 +204,10 @@ do
       return D.enemy.run(a, id)
     elseif cmd == "partner" and #a >= 2 then
       local keys = {stage = true, source = true, apply = true, anim = true, aset = true, reset = true,
-        look = true, dm = true, input = true, dmplay = true, dmstop = true}
+        look = true, dm = true, input = true, dmplay = true, dmstop = true,
+        -- The partner's own reload and weapon switch (docs/native-puppet.md "Weapons"): rtap=1 is the
+        -- receiver's one-shot test tap; nreload/nslot select the A/B variants (the native side re-checks).
+        rtap = true, nreload = true, nslot = true}
       local seen = {}
       local fields = {}
       for i = 2, #a do

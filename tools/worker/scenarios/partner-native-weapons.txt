@@ -1,7 +1,12 @@
 # Native partner weapons (docs/native-puppet.md "Weapons"): visual fire through the partner's own trigger (F1 sample
-# rings), the magazine store row (F2, reload), the shot noise filter (F3), the weapon gate (F4), loadout manifest.
-# Run (coordinator only, hidden worker):
+# rings), the magazine store row (F2), the shot noise filter (F3), the weapon gate (F4/W5), loadout manifest, the
+# partner's own reload (R1..R6: input frame v5, the event machine, the mirror's freeze and reconcile) and the
+# weapon switch's slot follower (W4/W6).
+# Run (coordinator only, hidden worker; the gun stage defaults to partner_native_reload=event, partner_native_slot=write):
 #   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-native-weapons.txt -PartnerProfile native -NativeStage gun -BuildProfile research
+# Reload A/B (RA): the same with -LabSetting partner_native_reload=mirror, then =raw, then =event (the default).
+# Slot follower (SA): the default run (write), then -LabSetting partner_native_slot=call; -LabSetting partner_native_slot=off
+# is the control.
 # The gun stage carries partner_input_mask=0x224005E, partner_native_fire=visual and the default partner_native_noise=filter
 # (WorkerSessionCommon); never -AmmoExperiment (the magazine mirror replaces it). Lab saves, noon, 30010. "Receiver" = the
 # role filming the shooter's puppet (its body 1); captures record the capturing role's state.json "native" in captures.jsonl.
@@ -24,14 +29,34 @@
 #  mirror:  mag.inj follows mag.remote (the drain's injected magazine is the shooter's); mag.store.writes grows with
 #           mag.writes; gun.mag (the getter, i.e. the copied store row) == the mapped value; mag.store.last "none";
 #           mag.last "none"; mag.faulted false.
-#  aim-reload: gun.mag < gun.cap before the R edge (the store row survives the per-frame copy), gun.b20 1 within 300 ms
-#           (mag.reload_edges and leak.reload_drains grow), a reload mode in the ring (gun3c0), gun.mag == gun.cap
-#           afterwards; leak.ammo_leaks 0 (else mag.leak_off and partner_input=ammo_leak; mag_mirror=disabled: report it).
-#  holster-reload: record (the classifier path; gun.gate / gun.class / gun.b20 tell whether it starts).
+#  aim-reload (R1..R4; mirror is the RA baseline): gun.mag < gun.cap before the R edge; the ring's gmode 11/12 within
+#           6 entries of the shooter's reload (rmode 11/12; event: reload.taps +1 and reload.entered +1, the log
+#           partner_reload=tap then entered; raw: entered by the raw R, reload.starts +1, no tap); reload.probe1.b20 +1
+#           (bit 20 seen right after phase 1 inside the drain); gun.b26 1 and gun.upper_req 5 while it reloads; mag.frozen
+#           grows and mag.writes does NOT while gmode is 11/12 (mirror: mag.writes +1 during it, the old fight); gmode
+#           leaves 11/12 within 2.5 s (partner_reload=complete; reload.completed +1; no partner_reload=stuck), then
+#           gun.mag == gun.cap with at most one mag.reconciles write and gun.m3e8 == gun.mag; mag.reload_seen counts
+#           the R edges; leak.ammo_leaks 0 (else mag.leak_off and partner_input=ammo_leak; mag_mirror=disabled: report it).
+#           Frames 200..1000 ms after R: the reload pose (rifle lowered / magazine), not the aim pose.
+#  holster-reload: as aim-reload (the classifier path: event taps RELOAD for 4 windows, class 2 on the release).
+#  auto-reload: the shooter empties its magazine and fires once more: its own automatic reload (no R press) reaches
+#           the receiver as reload_seq (+1) and gmode 11/12 follows (event: a tap; raw/mirror: only if body 1's own dry
+#           fire on its mirrored empty magazine starts one, partner_reload=body_enter without a tap).
+#  rtap:    the receiver's partner rtap=1 test tap: partner_reload=rtap; queued=1, then tap and entered (or a
+#           fallback with its reason) in the receiver's log; reload.taps +1.
 #  crouch-fire: as fire1 with body act 14/15 (fired with the original weapon 46: before the switch section).
 #  switch1, switch2, switch-fire: partner_weapon=mismatch; remote_equip=..; remote_base=..; body_equip=46 and partner_fire=masked;
 #           reason=weapon_mismatch in the receiver's log; weapon.mismatch true, weapon.strip 80 (FIRE|RELOAD);
 #           trigger.requested unchanged and fire.suppressed unchanged through switch-fire; mag.last "weapon" (frozen).
+#           W4/W6: slots.remote_slot follows the shooter (0 hip, 2 secondary; slots.remote_seq +1 per switch),
+#           slots.handles [null,{46,4},null] (body 1 carries stock46 only), slots.plan ["empty","same","empty"]
+#           once the manifest arrived, partner_slot=refused; reason=empty (once per switch) or plan, slots.body_slot
+#           stays 1 and gun.hand_slot 1 (no unarmed body); a write would show partner_slot=write and body_slot ==
+#           remote_slot within one capture (only with a filled slot: the generalized writer).
+#  switch3, switch-back-fire: back in the back slot (remote_slot 1): no write (same), weapon.gate "match", FIRE live
+#           again: trigger.requested +1 and fire.suppressed grows (the gun follows the remote's switch back).
+#  aim-switch: switching while aiming: the shooter's gun_mode 8 (reload.remote_mode 8 / ring rmode 8),
+#           weapon.gate "switching" or "mismatch" on the receiver while it lasts (FIRE|RELOAD stripped).
 #  equip:   both logs partner_equip=sent; rev=1; ... within 5 s of link-up; the peer partner_equip=manifest; rev=1 and
 #           partner_equip=apply; rev=1; slot=1; ... result=already (stock46) or unsupported (needs the generalized writer).
 #  census:  partner_fire_census; bullets_ok=1; noise_vt=0x21876a8 (noise_vt_rva=1).
@@ -87,6 +112,64 @@ wait 1200
 host press r
 guest burst holster-reload 6 200
 wait 1500
+# Empty-magazine auto reload: the shooter spends its magazine (single presses while aiming), then one more
+# FIRE press on the empty magazine (its own automatic reload, no R press).
+host hold rmb 1500 nowait
+wait 400
+host hold rmb+lmb 100 nowait
+wait 120
+host hold rmb 1500 nowait
+wait 220
+host hold rmb+lmb 100 nowait
+wait 120
+host hold rmb 1500 nowait
+wait 220
+host hold rmb+lmb 100 nowait
+wait 120
+host hold rmb 1500 nowait
+wait 220
+host hold rmb+lmb 100 nowait
+wait 120
+host hold rmb 1500 nowait
+wait 220
+host hold rmb+lmb 100 nowait
+wait 120
+host hold rmb 1500 nowait
+wait 220
+host hold rmb+lmb 100 nowait
+wait 120
+host hold rmb 1500 nowait
+wait 220
+host hold rmb+lmb 100 nowait
+wait 120
+host hold rmb 1500 nowait
+wait 220
+host hold rmb+lmb 100 nowait
+wait 120
+host hold rmb 1500 nowait
+wait 220
+host hold rmb+lmb 100 nowait
+wait 120
+host hold rmb 1500 nowait
+wait 220
+host hold rmb+lmb 100 nowait
+wait 120
+host hold rmb 1500 nowait
+wait 220
+host hold rmb+lmb 120 nowait
+guest burst auto-reload 8 200
+host release
+wait 1500
+# The receiver's test tap (partner rtap=1) while the shooter aims with a spent round.
+host hold rmb 1500 nowait
+wait 300
+host hold rmb+lmb 120 nowait
+wait 400
+host hold rmb 1500 nowait
+guest run partner rtap=1
+guest burst rtap 5 200
+host release
+wait 1500
 # Crouched fire, still with the original weapon (46).
 stance host crouch
 wait 600
@@ -111,6 +194,31 @@ host hold rmb+lmb 120 nowait
 guest burst switch-fire 4 120
 host release
 wait 600
+# Back to the back slot (the primary key twice: hip, then back) and fire with the original weapon again.
+host press 1
+wait 900
+guest capture switch3a
+host press 1
+wait 900
+guest burst switch3 3 250
+host hold rmb 1500 nowait
+wait 500
+host hold rmb+lmb 120 nowait
+guest burst switch-back-fire 4 120
+host release
+wait 600
+# A switch while aiming (the native weapon-change mode 8), then back.
+host hold rmb 1500 nowait
+wait 400
+host press 2
+guest burst aim-switch 5 150
+host release
+wait 600
+host press 1
+wait 900
+host press 1
+wait 900
+guest capture aim-switch-back
 # --- Guest shoots, host films (the other direction) ---------------------------
 resetpose guest
 stance guest stand
@@ -135,6 +243,17 @@ guest hold rmb 1400 nowait
 host burst g-aim-reload 6 200
 guest release
 wait 1500
+guest press r
+host burst g-holster-reload 6 200
+wait 1500
+guest press 2
+wait 900
+host burst g-switch2 3 250
+guest press 1
+wait 900
+guest press 1
+wait 900
+host burst g-switch-back 3 250
 # --- Noise: a host-local guard next to the host; only the guest fires ---------
 resetpose host
 stance host stand

@@ -502,6 +502,135 @@ reachability, owner-stamp, EVADE census and reference assertions).
 - The ammo experiment (`MGS_LOCAL_STOCK46_AMMO_TEST`) is superseded by the
   mirror; it stays research-only and is not used by the weapons scenario.
 
+### The partner's own reload (R1..R6, `partner_native_reload`)
+
+Status (2026-10-09, branch `wp/weapons2`): implemented, fixture-tested, not
+yet run. Static analysis of `mgsvtpp.exe` 1.0.15.4; every site below is in
+`tools/generate_partner_contract.py --check` (446 code sites, 101 vtable
+slots) and in the runtime code gate.
+
+- **What the hidden runs showed.** Body 1 already enters its own native
+  reload when the remote's R reaches it: at the R tick the ring's gun3c0 goes
+  `0x40060 -> 0x4040062` (aiming) or to `0x4000040` (holstered), exactly the
+  reload enter `0x1077A36..0x1077AA6` (`rec+0x3C0 = ((aim | 0x200002) << 5) |
+  (old & 0xFFBFFFDF)`) plus the transition bit 1 (`0x1040A78`). About 1 s
+  later the magazine mirror wrote the remote's refilled magazine into body 1
+  while it was still reloading; body 1's own completion `0x1054900` (the only
+  caller is the reload event handler `0x1079B6E`; its non-local branch
+  `0x1054A97` builds the new magazine from the shadow `rec+0x3E8`, written at
+  the enter `0x107833C`) then wrote 8 of 9 and the reload mode (bit 26, cleared
+  only by the exit `0x10790AA`) did not leave for 1..3 s.
+- **Why the old counters stayed 0.** Gun phase 6 (`0x103EB70`, jump-table
+  entry 6 of the gun iface dispatcher `0x1041000`) clears `rec+0x3DF` and
+  `rec+0x3C0` bits 12/20/24/25 (`0x103F99C`); all seven phases run inside the
+  drain, so a read after the job never sees bit 20 or 24. `mag.reload_edges`
+  only counted R edges on which the mirror wrote.
+- **R1 telemetry.** `gun.mode` (the current mode `rec+0x2C0`, written by the
+  transition `0x1040A88` from the mode table `0x2C556A0`: 7 aim, 8 weapon
+  change, 11/12 reload `0x1077840`; the checker emulates the table's static
+  initializer `0x20252F0`), `gun.b26`, `gun.upper_req` (`*(Q+0x20)[1]`, 5 =
+  reload, `0x1077A0A`), `gun.m3e4/m3e6/m3e8`, ring fields `gmode`/`rmode`. The
+  **post-phase-1 probe** reads instance 1's record right after
+  `svc28(root1, 1)` inside a drain (the same nesting the look write uses after
+  phase 0): `reload.probe1.b20/b24/shots/mode_changes/mode`.
+- **R2 wire.** Input frame v5 (116 bytes, payload 88): `[84]` gun flags
+  (valid, in hand, aiming, reloading, changing), `[85]` the sender's
+  `rec+0x2C0`, `[86]` `reload_seq` (+1 per entry into 11/12 its tick sees),
+  `[87]` `switch_seq` (+1 per change of its current slot); the v3 `inv_slot`
+  byte carries the sender's current slot. v1..v4 still decode; both copies
+  must run this build (a v4 receiver refuses 116-byte frames).
+- **R3 event machine** (`native/partner_reload.cpp`, pure, driver tick): a
+  remote reload start (counter moved, mode 11/12) with the native gun window
+  armed, the weapon gate passing, a gun class, the reload gate and CanReload
+  taps RELOAD through the existing input overlay (`kTapFrames` windows: the
+  press word while aiming, the hold classifier's tap when holstered), retried
+  every 250 ms up to 3 taps until body 1 shows 11/12; `entered` ->
+  `complete` when the mode leaves, `stuck` after 2.5 s. Fallbacks (the plain
+  mirror, no animation): `inactive|weapon|body|cls|gate|no_reload|timeout|
+  remote_done`. Holstered and empty-magazine automatic reloads arrive the
+  same way (the sender's mode, not its pad). `partner.trigger rtap=1` (worker
+  `run partner rtap=1`) forces one test tap.
+- **R4 freeze and reconcile** (`MirrorMag`): with `raw|event` the mirror
+  writes nothing while the remote reloads (v5 flag), while body 1 is in 11/12
+  (unless stuck) or while the machine holds; the first write afterwards (the
+  reconcile) also writes `rec+0x3E8` (the completion's base) so a later
+  completion starts from the mirrored magazine. An R edge no longer
+  re-asserts the remote's magazine (only with `mirror`). A change of body 1's
+  slot `rec+0x3DA` rewrites the magazine of the new weapon.
+- **R5.** With `event` and a live v5 group the remote's raw RELOAD (also
+  CARRY, the same bit) is stripped from its sample (`Config.sample_strip`,
+  not compared by SameArm); the overlay tap still delivers it. A v4 remote
+  keeps the raw R.
+- Settings: `mirror` (today's behaviour, the lab.ini default), `raw` (freeze
+  and reconcile only; isolates "the mirror broke it"), `event` (R2..R6; the
+  worker gun stage and Play-OfflineCoop).
+
+### Weapon switching (W1..W6, `partner_native_slot`)
+
+- **How an instance switches** (exe, contract-pinned): each instance has an
+  equipment row `*(Q+0xC0) + id*0x3A` (`0x11AD240`); the low nibble of
+  `+0x36` is its current slot. Gun phase 0 (`0x103AED0`, its only caller
+  `0x103E044`) compares it with the slot in hand `rec+0x3D9` (with
+  `rec+0x3DE == 7`) and sets `rec+0x3C0` bit 7; with no gun mode active the
+  same phase activates the slot's weapon at once (`0x103E049 -> 0x105FDB0`),
+  while aiming the aim decider goes to mode 8 (`0x1072D12`, the native
+  weapon-change sequence `0x1074070`). An empty handle (`>> 16 == 0xFFFF`)
+  un-equips (`0x105FED2`). The pad's weapon bits only reach UI code: they stay
+  masked.
+- **W4 slot follower** (hook, drain window before block 1's job): instance
+  1's nibble gets the remote's v5 slot (0..2) the way SetCurrentSlot
+  `0x11AFA80` writes it for a non-local id (`Q+0x17C |= 2`, the nibble,
+  `row+0 = (row+2+2*slot) & 0x7FF`; the checker proves the non-local exit
+  `0x11AFE4B` is reached before any call for types 0/1/2), only to a slot the
+  driver's plan admits and whose handle holds the planned equip. `call`
+  (lab only; play runs `write`) calls `0x11AFA80(ctl, 1, slot, 0, 0, 0)`
+  through the pinned controller slot. Verdicts (`partner_slot=write|refused;
+  reason=..`): `same|wait|plan|chain|online|owner|mode|empty|mismatch|
+  readback|fault|other|no_v5`; refusals count once per (slot, switch_seq).
+- **Plan** (`native/partner_slots.cpp`): per slot `same` (body 1 holds the
+  remote's base id), `sub` (another weapon of the same type, the tier C
+  substitute), `empty`, `other`, `unknown`; only `same|sub` are admitted.
+  Body 1 carries only what the qualified writer gave it (stock46 in the back
+  slot), so today the plan is `empty,same,empty`: switching to the hip or the
+  secondary refuses with `empty` and body 1 keeps its gun.
+- **W5 gate.** FIRE and RELOAD pass only while body 1's weapon is the
+  remote's (raw equip or its manifest base) and body 1 is not mid-switch
+  (`rec+0x3C0` bit 7 or mode 8: `weapon.gate=switching`); FIRE additionally
+  needs a qualified bullet type (`weapon.gate=projectile` otherwise: shot
+  class 3 at `0x13030B7` goes to `gm+0x210`, not filtered). The allow-list is
+  type 4 (stock46; its type is pinned by the writer contract when the type
+  table is unread).
+- **Not done: the generalized writer and preload (W2/W3).** Filling body 1's
+  other slots needs a native ChangeEquip per weapon with that weapon's own
+  qualification: the stock46 writer's preflight checks stock46's four package
+  hashes, its parts and optional assets, its cache entry and its delayed
+  resources, all derived from paired frozen read-only captures of runtime
+  data. No such capture exists for any other weapon, so no other weapon is
+  dispatched; the plan, the follower and the gate above are ready for it.
+  The next step is a read-only capture run of a resident candidate's package
+  row, recipe, optional descriptor and cache entry (the H2 basis of stock46).
+
+### Release gating and play mode
+
+- New runtime keys only (`partner_native_reload`, `partner_native_slot`; no
+  new CMake option). Both are inert unless the native drive runs the gun
+  stage (`partner_drive=native`, `partner_native_gun=1`, the arbiter active,
+  an armed non-neutral window). Today play mode forces `partner_drive=legacy`
+  (`kPlayRefusedNativeDrive`); once the online track admits the native drive
+  in play, `event`/`write` work unchanged, and `call` is downgraded to
+  `write` in play (`Settings.play_mode`).
+- The follower and the mirror refuse with S_IS_ONLINE or `P+0x204` bit 18
+  set, instance 1 as the local id, or any identity check failing; they never
+  touch the viewer's own inventory (`leak.ammo_leaks` watches it).
+- Body 1 still needs a weapon: only the research build's stock46 writer
+  (`MGS_LOCAL_STOCK46_WRITER_TEST` with the preload and the offline equipment
+  allocation) gives it one, gated to lab mode, mission 30010, redirected
+  copied saves and the natural owner thread (`ObserveStock46Writer`). Making
+  that pipeline a play-mode feature needs the online track's play admission
+  in place of `lab_active` (with the redirected co-op saves still required),
+  `SupportsPartnerBody` missions instead of 30010, and the ghost block
+  allocation as a runtime-gated release feature with the same receipt.
+
 ### Loadout mirroring
 
 - **Sender** (pure reads, at most once per second): `vars.weapons[0..2]`
@@ -546,13 +675,50 @@ that the partner's reload never touches the viewer's inventory) and `equip` (`tx
 `partner_fire_census; ...`, `partner_native_gun; ...` with the record fields,
 `partner_equip=sent|manifest|apply`.
 
+Reload and switch (2026-10-09): `gun` also carries `mode` (rec+0x2C0), `b26`,
+`upper_req`, `m3e4`/`m3e6`/`m3e8`, `hand_slot` (rec+0x3D9) and `slot_src`
+(rec+0x3DE); `mag` adds `reload_seen`, `frozen`, `reconciles`, `m3e8_writes`;
+`weapon` adds `gate` (match|mismatch|switching|projectile), `body_type` and
+`switching`; new objects `reload` (`setting`, `state`, `last`, the remote's
+v5 `remote_valid`/`remote_reloading`/`remote_mode`/`remote_seq`, `hold`,
+`stuck`, `starts`, `taps`, `entered`, `completed`, `stuck_n`, `fallbacks`,
+`body_entries`, `sample_strip`, `probe1` {`b20`, `b24`, `shots`,
+`mode_changes`, `mode`}) and `slots` (`setting`, `remote_slot`, `remote_seq`,
+`body_slot`, `hand_slot`, `target`, `read_ok`, `handles` [{equip, type} or
+null] x3, `plan` x3, `ok_mask`, `writes`, `refused`, `last`, `faulted`,
+`switching`); the ring adds `gmode`, `rmode`, `hslot` (null unread). Log
+lines: `partner_reload=start|tap|retry|entered|complete|stuck|fallback|
+tap_refused; setting=..; state=..; body_mode=..; remote_mode=..; seq=..;
+mag=..; m3e8=..; taps=..; reason=..`, `partner_reload=rtap; queued=1`,
+`partner_slot=plan; follow=..; body_slot=..; tiers=..; body=..; remote_base=..;
+ok=..`, `partner_slot=write|refused; reason=..; target=..; ...`,
+`partner_weapon=projectile|type_ok; ...`, `partner_input=fault; phase=slot`
+(the follower off until MissionStart).
+
 ### Proof (hidden worker; coordinator only)
 
 `pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-native-weapons.txt -PartnerProfile native -NativeStage gun -BuildProfile research`
 
 The scenario header lists the evidence per section (aim, single shot, held
-fire, reload aiming/holstered, weapon switch 1/2, crouched fire, both
-directions, leak captures, loadout, census, noise record).
+fire, reload aiming/holstered/automatic, the test tap, weapon switch 1/2/back
+and while aiming, fire after each switch, crouched fire, both directions,
+leak captures, loadout, census, noise record).
+
+- **RA (reload A/B)**: the command above with `-LabSetting
+  partner_native_reload=mirror`, then `=raw`, then the default (`event`).
+  Pass (raw/event): the ring's `gmode` 11/12 near the shooter's reload, `mag.writes`
+  flat while it is 11/12 (`mag.frozen` grows), `gmode` back to 7/6 within
+  2.5 s (`partner_reload=complete`, never `stuck`), `gun.mag == gun.cap`
+  afterwards with at most one `mag.reconciles`, `leak.ammo_leaks` 0; event
+  also `reload.taps`/`reload.entered` per remote reload, `fallbacks` 0 and
+  `auto-reload` entering 11/12 without an R press. mirror should reproduce the
+  old fight (a write during 11/12, `partner_reload=stuck` or 8 of 9).
+- **SA (slot follower, stock46 only)**: the default run (`write`), then
+  `-LabSetting partner_native_slot=call`. Pass: `switch1`/`switch2` give
+  `partner_slot=refused; reason=empty` (or `plan`), `slots.body_slot` stays 1,
+  `gun.hand_slot` 1, no unarmed body, FIRE stripped (`weapon.gate=mismatch`);
+  `switch3` -> `remote_slot` 1, no write (`same`), `weapon.gate=match`, and
+  `switch-back-fire` shows suppressed shots.
 
 ## Configuration
 
@@ -571,11 +737,15 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_steer_deg` | 15 (0..30, 0 = no steering) |
 | `partner_native_trim_pct` | 0 (0..10) |
 | `partner_native_rates` | log, off, mirror (rates telemetry; mirror writes instance 1's rate record) |
+| `partner_native_reload` | mirror, raw, event (the partner's own reload: see "Weapons"; the gun stage and Play-OfflineCoop run event) |
+| `partner_native_slot` | off, write, call (the slot follower; the gun stage and Play-OfflineCoop run write; play runs call as write) |
 
 Play mode forces legacy/off and sets `kPlayRefusedNativeDrive` (0x20000); in
 play mode a partner.trigger `drive=native` or `defer=census|on` is refused too
 (`partner_native=trigger_refused; reason=play`), the trigger's other keys apply.
-partner.trigger: `drive= defer= local= naim= ngun= nfire=0|off|1|visual steer=`.
+partner.trigger: `drive= defer= local= naim= ngun= nfire=0|off|1|visual steer=
+nreload=mirror|raw|event nslot=off|write|call rtap=1` (the last also as the
+worker debug command `partner rtap=1`).
 
 To enable (lab only), on both copies: the animated partner settings plus
 `partner_drive=native partner_input_send=1 partner_input_hook=1 partner_input_hold=own
@@ -584,7 +754,8 @@ partner_input_local=main partner_recon=track partner_input_slot=body
 partner_input_defer=census|on partner_input_mask=0x2240006 partner_native_aim=off`
 (loco stage also `partner_native_rates=mirror`; gun stage: mask `0x224005E`,
 `partner_native_gun=1 partner_native_fire=visual partner_native_aim=look
-partner_input_triggers=1 partner_input_rstick=1 partner_native_rates=mirror`;
+partner_input_triggers=1 partner_input_rstick=1 partner_native_rates=mirror
+partner_native_reload=event partner_native_slot=write`;
 the worker gate admits exactly these three stages, so a gun stage without fire
 needs a gate change; the gun stage also admits `partner_native_aim=looksrc`,
 which the coordinator selects with `-LabSetting partner_native_aim=looksrc`
@@ -596,6 +767,12 @@ partner by default (`-NoNative` turns the native drive off).
 
 ## Wire
 
+- Input frame v5 (116 bytes, payload 88): v4 plus `[84]` gun flags
+  (`GunFlag` valid 1, in hand 2, aiming 4, reloading 8, changing 0x10; without
+  valid the next three bytes are 0), `[85]` the sender's gun mode `rec+0x2C0`,
+  `[86]` `reload_seq`, `[87]` `switch_seq`; a v5 sender fills the v3 `inv_slot`
+  byte with its current slot. Every native sender sends v5; a v4 receiver
+  refuses it (both copies run one build).
 - Input frame v4 (112 bytes, payload 84; one version for both native work
   packages): v3 plus `[72..77]` the sender's dash, crawl and crawl factor
   rates (milli 500..2000 each, xflags `Rates` 0x10; zero without, always with

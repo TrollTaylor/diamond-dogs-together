@@ -450,6 +450,17 @@ int main() {
               !TriggerOk("ngun=2") && !TriggerOk("nfire=yes") && !TriggerOk("nfire=raw") && !TriggerOk("steer=31") && !TriggerOk("steer=-1") &&
               !TriggerOk("drive=native drive=legacy") && !TriggerOk("steer=1 steer=2") && !TriggerOk("defer=on defer=off"),
               "bad native values and repeats");
+        // The partner's own reload and weapon switch: nreload=, nslot= and the one-shot rtap=1.
+        Check(TriggerText("nreload=event nslot=write rtap=1", tg) && tg.has_nreload && tg.nreload == mgscoop::PartnerNativeReload::event &&
+                  tg.has_nslot && tg.nslot == mgscoop::PartnerNativeSlot::write && tg.rtap,
+              "nreload, nslot, rtap");
+        Check(TriggerText("nreload=raw", tg) && tg.nreload == mgscoop::PartnerNativeReload::raw && !tg.has_nslot && !tg.rtap &&
+                  TriggerText("nreload=mirror nslot=call", tg) && tg.nreload == mgscoop::PartnerNativeReload::mirror &&
+                  tg.nslot == mgscoop::PartnerNativeSlot::call && TriggerText("nslot=off", tg) && tg.nslot == mgscoop::PartnerNativeSlot::off,
+              "reload and slot values");
+        Check(!TriggerOk("nreload=tap") && !TriggerOk("nslot=on") && !TriggerOk("rtap=0") && !TriggerOk("rtap=2") &&
+                  !TriggerOk("rtap=1 rtap=1") && !TriggerOk("nreload=raw nreload=event"),
+              "bad reload/slot values and repeats");
         // A long trigger within the 255-byte limit (not every token at once).
         const std::string longest =
             "stage=3 source=net apply=input anim=off aset=qs reset=ac look=net input=net stick=359:100 cam=sandbox "

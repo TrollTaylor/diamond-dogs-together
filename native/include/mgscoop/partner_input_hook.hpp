@@ -99,7 +99,9 @@ const char* LookRefusalName(LookRefusal refusal) noexcept;
 // weapon/ammo vars: the mirror is off until MissionStart).
 // weapon: the weapon gate strips FIRE/RELOAD (the remote's gun is not body
 // 1's): the mirror is frozen. store: the store row refused (StoreRefusal).
-enum class MagRefusal : std::uint8_t { none, off, no_v4, prim, full, cls, cap, fault, leak, weapon, store };
+// reload: frozen while the remote or body 1 reloads (partner_native_reload
+// raw|event, partner_reload::MirrorFrozen); the next write reconciles.
+enum class MagRefusal : std::uint8_t { none, off, no_v4, prim, full, cls, cap, fault, leak, weapon, store, reload };
 const char* MagRefusalName(MagRefusal refusal) noexcept;
 // The magazine's per-instance store row (docs/native-puppet.md "Weapons" F2;
 // gun phase 0 copies it into rec+0x25C/+0x25E every frame): y_vt (the store
@@ -115,6 +117,18 @@ const char* StoreRefusalName(StoreRefusal refusal) noexcept;
 // outside 2..kRingEntries), fault.
 enum class RingRefusal : std::uint8_t { none, src, cap, fault };
 const char* RingRefusalName(RingRefusal refusal) noexcept;
+// The slot follower (W4) verdicts: off (the Arm has no follower or no gun
+// record), no_v5 (the live sample carries no slot), other (the remote's slot
+// is not 0..2: support, items, hand), same (body 1 is already there), wait
+// (body 1 is mid-switch, or this episode's writes are spent), plan (the
+// driver's plan does not admit the slot), chain (P/Q/ctl/inventory identity),
+// online (S_IS_ONLINE or P+0x204 bit 18), owner (instance 1 is local), mode
+// (rec+0x3DE != 7: phase 0 does not follow the equip controller), empty (no
+// weapon in that slot), mismatch (the handle's equip is not the row's or the
+// plan's), readback (the row did not keep the write), fault (a read, write or
+// the call faulted: the follower is off until MissionStart).
+enum class SlotRefusal : std::uint8_t { none, off, no_v5, other, same, wait, plan, chain, online, owner, mode, empty, mismatch, readback, fault };
+const char* SlotRefusalName(SlotRefusal refusal) noexcept;
 inline constexpr std::uint32_t kRingEntries = 128;
 struct NativeStats {
     std::uint32_t frames;          // frame injections composed (main windows under a native Arm)
@@ -200,6 +214,21 @@ struct NativeStats {
     // (rec+0x3C0 bit 24, summed over rec+0x3DF), drains with a shot, drains
     // that left the gun in a fire mode (rec+0x2C0 9 or 10).
     std::uint32_t fire_requested, fire_shot_drains, fire_modes;
+    // The partner's own reload (R1/R4): RELOAD press edges the mirror saw
+    // (written or not), drain windows the freeze held the mirror, reconcile
+    // writes after a freeze and the rec+0x3E8 writes among them; the post-
+    // phase-1 probe (inside the drain, right after the gun update: the reload
+    // request bit 20 and the trigger's bit 24 live only there, phase 6 clears
+    // them): phase-1 calls that left bit 20 / bit 24 set, the shots (sum of
+    // rec+0x3DF), rec+0x2C0 changes across phase 1 and the last mode seen.
+    std::uint32_t mag_reload_seen, mag_frozen, mag_reconciles, mag_m3e8_writes;
+    std::uint32_t p1_b20, p1_b24, p1_shots, p1_mode_changes, p1_mode;
+    // The slot follower (W4): writes (each switched instance 1's current
+    // slot), refusals (once per episode and reason), the last verdict, the
+    // last remote slot it acted on and whether a fault turned it off.
+    std::uint32_t slot_writes, slot_refused, slot_target;
+    SlotRefusal slot_last;
+    bool slot_faulted;
     // D3: the look of the last windowed drain (the remote's, injected) and
     // instance 1's slot read back after its job (centidegrees {pitch, yaw};
     // look_ok false when either was unread), and the look source hook.

@@ -839,6 +839,52 @@ void TestWrapRules() {
     hk::detail::SetDrainForTest(da, inj, true);
     hk::detail::CallWrapForTest(0, nullptr, root1, 0, 0);
     Check(look[0] == 9.0f, "naim=off: no look write");
+    // R1: instance 1's gun record right after svc28(root1, phase 1) in a drain:
+    // the reload request bit 20, the trigger's bit 24 and its count exist only
+    // there (phase 6 clears them before the job returns).
+    {
+        alignas(16) static unsigned char p1_prim[0x100], p1_rec[c::gun_rec_size];
+        static std::uintptr_t s_p1_rec = 0;
+        s_p1_rec = Addr(p1_rec);
+        struct P1 {
+            static void Svc(void*, void*, std::uint32_t phase) noexcept {
+                ++g_wrap.svc28;
+                g_wrap.last_phase = phase;
+                if (phase != 1) return;
+                Put<std::uint32_t>(s_p1_rec + c::gun_flags, c::gun3c0_reload | c::gun3c0_shot);
+                Put<std::uint8_t>(s_p1_rec + c::gun_shots, 2);
+                Put<std::uint8_t>(s_p1_rec + c::gun_mode_cur, c::gun_mode_reload);
+            }
+        };
+        hk::detail::BindWrapForTest(&P1::Svc, &FakeSvc30, &FakeSvc40, &FakeWalk7, &FakeWalk11, g_main_tid);
+        Put<std::uintptr_t>(Addr(p1_prim) + c::prim_gun_rec, Addr(p1_rec));
+        Put<std::uint8_t>(Addr(p1_rec) + c::gun_mode_cur, c::gun_mode_aim);
+        pi::Arm pa = da;
+        pa.gun_prim = Addr(p1_prim);
+        pa.gun_rec = Addr(p1_rec);
+        hk::detail::SetDrainForTest(pa, inj, true);
+        hk::DrainStats(st);
+        const hk::NativeStats b = st.native;
+        hk::detail::CallWrapForTest(0, nullptr, root1, 1, 0);
+        hk::DrainStats(st);
+        Check(st.native.p1_b20 == b.p1_b20 + 1 && st.native.p1_b24 == b.p1_b24 + 1 && st.native.p1_shots == b.p1_shots + 2 &&
+                  st.native.p1_mode_changes == b.p1_mode_changes + 1 && st.native.p1_mode == c::gun_mode_reload && g_wrap.last_phase == 1,
+              "R1: after phase 1 in a drain: bit 20, bit 24, the shot count and the mode change seen");
+        Put<std::uint32_t>(Addr(p1_rec) + c::gun_flags, 0);
+        hk::detail::CallWrapForTest(0, nullptr, root1, 2, 0);
+        hk::detail::SetDrainForTest(pa, inj, false);
+        hk::detail::CallWrapForTest(0, nullptr, root1, 1, 0);
+        hk::DrainStats(st);
+        Check(st.native.p1_b20 == b.p1_b20 + 1 && st.native.p1_mode_changes == b.p1_mode_changes + 1,
+              "R1: no probe after another phase or outside a drain");
+        Put<std::uintptr_t>(Addr(p1_prim) + c::prim_gun_rec, Addr(p1_rec) + 0x10);
+        hk::detail::SetDrainForTest(pa, inj, true);
+        hk::detail::CallWrapForTest(0, nullptr, root1, 1, 0);
+        hk::DrainStats(st);
+        Check(st.native.p1_b20 == b.p1_b20 + 1, "R1: a changed prim chain is never read");
+        hk::detail::SetDrainForTest(pa, inj, false);
+        hk::detail::BindWrapForTest(&FakeSvc28, &FakeSvc30, &FakeSvc40, &FakeWalk7, &FakeWalk11, g_main_tid);
+    }
     hk::detail::SetDrainForTest(da, inj, false);
     hk::PublishArm(pi::Arm{});
     hk::PublishWrapRoots(0, 0, false);
@@ -940,6 +986,12 @@ struct PadWorld {
     alignas(16) unsigned char store_x[0x20], store_y[0x80];
     alignas(16) std::uint32_t store_types[8];
     alignas(16) std::uint16_t store_rows[8 * 3];
+    // The weapon switch (W4): a Q with the equipment rows (Q+0xC0) and the
+    // dirty mask (Q+0x17C), the rows of ids 0/1, an inventory of stride 7.
+    alignas(16) unsigned char q2[0x200];
+    alignas(16) unsigned char equip_rows[0x80];  // 2 rows of 0x3A
+    alignas(16) std::uint32_t inv_handles[16];
+    alignas(16) std::uint16_t inv_rows[16 * 3];
 };
 // The store row of instance 1's slot 0 (stride 2: idx 2).
 std::uint16_t StoreWord(const PadWorld* w, unsigned word) { return w->store_rows[2 * 3 + word]; }
@@ -1507,6 +1559,166 @@ void TestJobWindow() {
             a.strip = 0;
             hk::PublishArm(a);
             g_hook_sample.packet.held = kRemoteHeld;
+        }
+        // R4: the freeze while either side reloads and the reconcile with rec+0x3E8 (reload=raw|event).
+        {
+            g_hook_sample.packet.version = 5;
+            g_hook_sample.packet.xflags = pi::XFlag::Mag;
+            g_hook_sample.packet.mag = 3;
+            g_hook_sample.packet.mag_cap = 5;
+            g_hook_sample.packet.held = 0x08u;
+            g_hook_sample.packet.gun_flags = pi::GunFlag::Valid;
+            g_hook_sample.packet.gun_mode = c::gun_mode_aim;
+            a.reload = mgscoop::PartnerNativeReload::raw;
+            hk::PublishArm(a);
+            Put<std::uint8_t>(Addr(gun_rec) + c::gun_mode_cur, c::gun_mode_aim);
+            Check(run() && Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag) == 3 && hs.native.mag_last == hk::MagRefusal::none,
+                  "R4: nothing reloading: the mirror writes (3/5)");
+            const hk::NativeStats f0 = hs.native;
+            // The remote enters its reload (v5 Reloading) and presses R: frozen, the R edge counted but never written.
+            g_hook_sample.packet.gun_flags = pi::GunFlag::Valid | pi::GunFlag::Reloading;
+            g_hook_sample.packet.gun_mode = c::gun_mode_reload;
+            g_hook_sample.packet.held = 0x48u;
+            Check(run() && hs.native.mag_last == hk::MagRefusal::reload && hs.native.mag_frozen == f0.mag_frozen + 1 &&
+                      hs.native.mag_reload_seen == f0.mag_reload_seen + 1 && hs.native.mag_writes == f0.mag_writes,
+                  "R4: the remote reloading freezes the mirror");
+            // Body 1 enters its own reload (rec+0x2C0 = 11); the remote's refill arrives meanwhile: still frozen.
+            Put<std::uint8_t>(Addr(gun_rec) + c::gun_mode_cur, c::gun_mode_reload);
+            g_hook_sample.packet.gun_flags = pi::GunFlag::Valid;
+            g_hook_sample.packet.gun_mode = c::gun_mode_aim;
+            g_hook_sample.packet.mag = 5;
+            Put<std::uint16_t>(Addr(gun_rec) + c::gun_mag, 2);  // the partner's own reload in progress
+            Check(run() && hs.native.mag_last == hk::MagRefusal::reload && Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag) == 2 &&
+                      hs.native.mag_writes == f0.mag_writes, "R4: body 1 reloading: frozen (the remote's refill is not written)");
+            // Body 1's completion fills it and the mode leaves: one reconcile write with rec+0x3E8.
+            Put<std::uint8_t>(Addr(gun_rec) + c::gun_mode_cur, c::gun_mode_aim);
+            Put<std::uint16_t>(Addr(gun_rec) + c::gun_m3e8, 1);
+            Check(run() && hs.native.mag_reconciles == f0.mag_reconciles + 1 && Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag) == 5 &&
+                      Get<std::uint16_t>(Addr(gun_rec) + c::gun_m3e8) == 5 && hs.native.mag_m3e8_writes == f0.mag_m3e8_writes + 1 &&
+                      hs.native.mag_last == hk::MagRefusal::none, "R4: the reconcile writes the magazine and rec+0x3E8");
+            Check(run() && hs.native.mag_reconciles == f0.mag_reconciles + 1, "R4: one reconcile only");
+            // A stuck body reload no longer freezes; the driver's hold does.
+            Put<std::uint8_t>(Addr(gun_rec) + c::gun_mode_cur, c::gun_mode_reload2);
+            a.reload_stuck = true;
+            hk::PublishArm(a);
+            g_hook_sample.packet.mag = 4;
+            Check(run() && hs.native.mag_last == hk::MagRefusal::none && Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag) == 4,
+                  "R4: a stuck body reload is not frozen");
+            a.reload_stuck = false;
+            a.reload_hold = true;
+            Put<std::uint8_t>(Addr(gun_rec) + c::gun_mode_cur, c::gun_mode_aim);
+            hk::PublishArm(a);
+            g_hook_sample.packet.mag = 3;
+            Check(run() && hs.native.mag_last == hk::MagRefusal::reload, "R4: the driver's hold freezes");
+            // mirror: never frozen, and the R edge re-asserts as before.
+            a.reload_hold = false;
+            a.reload = mgscoop::PartnerNativeReload::mirror;
+            hk::PublishArm(a);
+            g_hook_sample.packet.gun_flags = pi::GunFlag::Valid | pi::GunFlag::Reloading;
+            Check(run() && hs.native.mag_last == hk::MagRefusal::none && Get<std::uint16_t>(Addr(gun_rec) + c::gun_mag) == 3,
+                  "R4: reload=mirror never freezes");
+            g_hook_sample.packet.gun_flags = 0;
+            g_hook_sample.packet.gun_mode = 0;
+            g_hook_sample.packet.held = kRemoteHeld;
+        }
+        // W4: the slot follower (Q+0xC0 rows, the inventory handles, the equip controller).
+        {
+            std::memset(w->q2, 0, sizeof(w->q2));
+            Put<std::uintptr_t>(Addr(w->q2), base + c::q_vtable_rva);
+            Put<std::uintptr_t>(P + c::p_q, Addr(w->q2));
+            Put<std::uintptr_t>(Addr(w->q2) + c::q_equip_rows, Addr(w->equip_rows));
+            Put<std::uintptr_t>(Addr(w->store_x), base + c::equip_ctl_vt_rva);
+            Put<std::uintptr_t>(Addr(w->store_x) + c::ctl_player, P);
+            Put<std::uint32_t>(Addr(w->store_y) + c::store_stride, 7);
+            Put<std::uint32_t>(Addr(w->store_y) + c::store_total, 14);
+            Put<std::uintptr_t>(Addr(w->store_y) + c::inv_handles, Addr(w->inv_handles));
+            Put<std::uintptr_t>(Addr(w->store_y) + c::store_rows, Addr(w->inv_rows));
+            for (auto& h : w->inv_handles) h = 0xFFFF0000u;
+            const std::uintptr_t row1 = Addr(w->equip_rows) + c::equip_row_stride;
+            // Body 1: 46 in the back slot (current), 9 in the secondary.
+            w->inv_handles[7 + 1] = (4u << 16) | (46u << 5) | 4u;
+            w->inv_handles[7 + 2] = (5u << 16) | (9u << 5) | 2u;
+            Put<std::uint16_t>(row1 + c::equip_row_slots + 2, 46);
+            Put<std::uint16_t>(row1 + c::equip_row_slots + 4, 9);
+            Put<std::uint16_t>(row1 + c::equip_row_current, 46);
+            Put<std::uint8_t>(row1 + c::equip_row_nibble, 0x51);  // high nibble kept, slot 1
+            Put<std::uint8_t>(Addr(gun_rec) + c::gun_slot_src, c::gun_slot_follow);
+            Put<std::uint8_t>(Addr(gun_rec) + c::gun_slot, 1);
+            Put<std::uint8_t>(Addr(gun_rec) + c::gun_mode_cur, c::gun_mode_aim);
+            Put<std::uint32_t>(Addr(gun_rec) + c::gun_flags, 0);
+            a.slot_follow = mgscoop::PartnerNativeSlot::write;
+            a.slot_ok = 0x6;
+            a.slot_equip[1] = 46;
+            a.slot_equip[2] = 9;
+            hk::PublishArm(a);
+            g_hook_sample.packet.version = 5;
+            g_hook_sample.packet.gun_flags = pi::GunFlag::Valid;
+            g_hook_sample.packet.inv_slot = 1;
+            g_hook_sample.packet.switch_seq = 1;
+            const auto slot_run = [&](std::uint8_t target, std::uint8_t seq) {
+                g_hook_sample.packet.inv_slot = target;
+                g_hook_sample.packet.switch_seq = seq;
+                return run();
+            };
+            Check(slot_run(1, 1) && hs.native.slot_last == hk::SlotRefusal::same && hs.native.slot_writes == 0,
+                  "W4: already in the remote's slot: nothing written");
+            Check(slot_run(2, 2) && hs.native.slot_writes == 1 && hs.native.slot_last == hk::SlotRefusal::none &&
+                      (Get<std::uint8_t>(row1 + c::equip_row_nibble) & 0xFu) == 2 && (Get<std::uint8_t>(row1 + c::equip_row_nibble) & 0xF0u) == 0x50 &&
+                      Get<std::uint16_t>(row1 + c::equip_row_current) == 9 && (Get<std::uint32_t>(Addr(w->q2) + c::q_equip_dirty) & 2u) &&
+                      hs.native.slot_target == 2,
+                  "W4: the secondary: the nibble, row+0 and Q+0x17C bit 1 written like SetCurrentSlot (non-local)");
+            Check(slot_run(2, 2) && hs.native.slot_writes == 1 && hs.native.slot_last == hk::SlotRefusal::same, "W4: then the same slot");
+            const std::uint32_t refused0 = hs.native.slot_refused;
+            Check(slot_run(0, 3) && hs.native.slot_last == hk::SlotRefusal::plan && hs.native.slot_refused == refused0 + 1 &&
+                      (Get<std::uint8_t>(row1 + c::equip_row_nibble) & 0xFu) == 2, "W4: a slot the plan does not admit: refused");
+            Check(slot_run(0, 3) && hs.native.slot_refused == refused0 + 1, "W4: a refusal counts once per episode");
+            a.slot_ok = 0x7;
+            hk::PublishArm(a);
+            Check(slot_run(0, 4) && hs.native.slot_last == hk::SlotRefusal::empty && hs.native.slot_writes == 1, "W4: an empty slot: refused");
+            Put<std::uint32_t>(Addr(gun_rec) + c::gun_flags, c::gun3c0_switch);
+            Check(slot_run(1, 5) && hs.native.slot_last == hk::SlotRefusal::wait && hs.native.slot_writes == 1, "W4: mid-switch: waits");
+            Put<std::uint32_t>(Addr(gun_rec) + c::gun_flags, 0);
+            a.slot_equip[1] = 47;
+            hk::PublishArm(a);
+            Check(slot_run(1, 6) && hs.native.slot_last == hk::SlotRefusal::mismatch, "W4: the handle is not the plan's weapon: refused");
+            a.slot_equip[1] = 46;
+            hk::PublishArm(a);
+            Put<std::uint8_t>(Addr(gun_rec) + c::gun_slot_src, 3);
+            Check(slot_run(1, 7) && hs.native.slot_last == hk::SlotRefusal::mode, "W4: rec+0x3DE != 7: refused");
+            Put<std::uint8_t>(Addr(gun_rec) + c::gun_slot_src, c::gun_slot_follow);
+            Put<std::uintptr_t>(Addr(w->store_x), base + 0x40);
+            Check(slot_run(1, 8) && hs.native.slot_last == hk::SlotRefusal::chain, "W4: another controller class: refused");
+            Put<std::uintptr_t>(Addr(w->store_x), base + c::equip_ctl_vt_rva);
+            // The call variant refuses while the controller's slot +0x10 is not SetCurrentSlot (never called
+            // here: the fixture image holds no executable code at 0x11AFA80).
+            a.slot_follow = mgscoop::PartnerNativeSlot::call;
+            hk::PublishArm(a);
+            Put<std::uintptr_t>(base + c::equip_ctl_vt_rva + 0x10, base + 0x50);
+            Check(slot_run(1, 9) && hs.native.slot_last == hk::SlotRefusal::chain && hs.native.slot_writes == 1 &&
+                      (Get<std::uint8_t>(row1 + c::equip_row_nibble) & 0xFu) == 2, "W4: call without the pinned slot: refused, nothing called");
+            Put<std::uintptr_t>(base + c::equip_ctl_vt_rva + 0x10, base + c::set_current_slot_rva);
+            a.slot_follow = mgscoop::PartnerNativeSlot::write;
+            hk::PublishArm(a);
+            Check(slot_run(1, 10) && hs.native.slot_writes == 2 && (Get<std::uint8_t>(row1 + c::equip_row_nibble) & 0xFu) == 1 &&
+                      Get<std::uint16_t>(row1 + c::equip_row_current) == 46, "W4: back to the back slot");
+            g_hook_sample.packet.version = 4;
+            Check(slot_run(2, 11) && hs.native.slot_last == hk::SlotRefusal::no_v5 && hs.native.slot_writes == 2, "W4: no v5: nothing");
+            a.slot_follow = mgscoop::PartnerNativeSlot::off;
+            a.slot_ok = 0;
+            hk::PublishArm(a);
+            // Restore the mirror's store (stride 2) and Q.
+            Put<std::uintptr_t>(P + c::p_q, Addr(w->q));
+            Put<std::uint32_t>(Addr(w->store_y) + c::store_stride, 2);
+            Put<std::uint32_t>(Addr(w->store_y) + c::store_total, 4);
+            Put<std::uintptr_t>(Addr(w->store_y) + c::store_types, Addr(w->store_types));
+            Put<std::uintptr_t>(Addr(w->store_y) + c::store_rows, Addr(w->store_rows));
+            Put<std::uint8_t>(Addr(gun_rec) + c::gun_slot, 0);
+            g_hook_sample.packet.gun_flags = 0;
+            g_hook_sample.packet.inv_slot = 0;
+            g_hook_sample.packet.switch_seq = 0;
+            // The state the leak checks below start from (the F2 block left a full magazine of 5).
+            Put<std::uint16_t>(Addr(gun_rec) + c::gun_mag, 5);
+            w->store_rows[2 * 3] = 5;
         }
         const std::uint32_t writes_after_store = hs.native.mag_writes;
         // A v3 sample carries no magazine: nothing happens.

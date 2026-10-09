@@ -134,7 +134,8 @@ int main() {
         "partner_native_rates=mirror\n";
     // The stage settings of Get-WorkerPartnerSettings (WorkerSessionCommon.psm1), in its order.
     const std::string gun_text = native_lab + "partner_input_defer=on\npartner_input_mask=0x224005E\npartner_native_gun=1\n"
-        "partner_native_fire=visual\npartner_native_aim=look\npartner_input_triggers=1\npartner_input_rstick=1\npartner_native_rates=mirror\n";
+        "partner_native_fire=visual\npartner_native_aim=look\npartner_input_triggers=1\npartner_input_rstick=1\npartner_native_rates=mirror\n"
+        "partner_native_reload=event\npartner_native_slot=write\n";
     Check(mgscoop::ParseLabConfig(census_text.data(), census_text.size(), census) && OfflineLab(census, "host", save) && NativeProfile(census),
           "native_census_stage");
     Check(mgscoop::ParseLabConfig(loco_text.data(), loco_text.size(), loco) && OfflineLab(loco, "host", save) && NativeProfile(loco),
@@ -178,6 +179,17 @@ int main() {
     changed = loco; changed.partner_dm = mgscoop::PartnerDm::off; Check(!OfflineLab(changed, "host", save), "native_needs_dm_map_fallback");
     changed = loco; changed.partner_input_send = false; Check(!OfflineLab(changed, "host", save), "native_needs_the_sender");
     changed = loco; changed.partner_input_slot = mgscoop::PartnerSlot::remote; Check(!OfflineLab(changed, "host", save), "native_slot_body");
+    // The partner's own reload and the slot follower: free in the gun stage (the A/B variants), defaults elsewhere.
+    Check(gun.partner_native_reload == mgscoop::PartnerNativeReload::event && gun.partner_native_slot == mgscoop::PartnerNativeSlot::write,
+          "native_gun_stage_reload_event_slot_write");
+    for (const auto r : {mgscoop::PartnerNativeReload::mirror, mgscoop::PartnerNativeReload::raw, mgscoop::PartnerNativeReload::event})
+        for (const auto sl : {mgscoop::PartnerNativeSlot::off, mgscoop::PartnerNativeSlot::write, mgscoop::PartnerNativeSlot::call}) {
+            changed = gun; changed.partner_native_reload = r; changed.partner_native_slot = sl;
+            Check(OfflineLab(changed, "host", save), "native_gun_reload_slot_variants_admitted");
+        }
+    changed = loco; changed.partner_native_reload = mgscoop::PartnerNativeReload::event; Check(!OfflineLab(changed, "host", save), "native_loco_reload_default");
+    changed = loco; changed.partner_native_slot = mgscoop::PartnerNativeSlot::write; Check(!OfflineLab(changed, "host", save), "native_loco_slot_default");
+    changed = census; changed.partner_native_slot = mgscoop::PartnerNativeSlot::call; Check(!OfflineLab(changed, "host", save), "native_census_slot_default");
     std::cout << "worker_protocol_tests: " << checks << " checks passed; OS calls=0, processes=0, windows=0\n";
     return 0;
 }

@@ -267,8 +267,12 @@ function Get-WorkerPartnerSettings([string]$PartnerProfile,[string]$NativeStage=
                 'loco' {@('partner_input_defer=on','partner_input_mask=0x2240006','partner_native_aim=off','partner_native_rates=mirror')}
                 # Visual fire (docs/native-puppet.md "Weapons"): FIRE reaches body 1 only
                 # while the RequestBullet owner filter is live; its shots never hit.
+                # The partner's own reload (the event machine, docs/native-puppet.md "Weapons" R1..R6) and the
+                # weapon switch's slot follower (W4); -LabSetting partner_native_reload=mirror|raw|event /
+                # partner_native_slot=off|write|call select the A/B variants.
                 'gun' {@('partner_input_defer=on','partner_input_mask=0x224005E','partner_native_gun=1','partner_native_fire=visual',
-                    'partner_native_aim=look','partner_input_triggers=1','partner_input_rstick=1','partner_native_rates=mirror')}
+                    'partner_native_aim=look','partner_input_triggers=1','partner_input_rstick=1','partner_native_rates=mirror',
+                    'partner_native_reload=event','partner_native_slot=write')}
                 default {throw "Unknown native stage: $stage"}
             }
             return @($native+$extra)

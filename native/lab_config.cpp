@@ -309,6 +309,8 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
         else if (Equals(key, "partner_native_fire")) ok = ParsePartnerNativeFire(value.data, value.size, result.partner_native_fire);
         else if (Equals(key, "partner_native_face")) ok = ParsePartnerNativeFace(value.data, value.size, result.partner_native_face);
         else if (Equals(key, "partner_native_noise")) ok = ParsePartnerNativeNoise(value.data, value.size, result.partner_native_noise);
+        else if (Equals(key, "partner_native_reload")) ok = ParsePartnerNativeReload(value.data, value.size, result.partner_native_reload);
+        else if (Equals(key, "partner_native_slot")) ok = ParsePartnerNativeSlot(value.data, value.size, result.partner_native_slot);
         else if (Equals(key, "partner_native_steer_deg"))
             ok = ParseRange(value, 0, kPartnerNativeSteerMaxDeg, result.partner_native_steer_deg);
         else if (Equals(key, "partner_native_trim_pct"))
@@ -945,6 +947,42 @@ bool ParsePartnerNativeNoise(const char* text, std::size_t size, PartnerNativeNo
     const Slice s{text, size};
     if (Equals(s, "filter")) out = PartnerNativeNoise::filter;
     else if (Equals(s, "keep")) out = PartnerNativeNoise::keep;
+    else return false;
+    return true;
+}
+
+const char* PartnerNativeReloadName(PartnerNativeReload value) noexcept {
+    switch (value) {
+    case PartnerNativeReload::raw: return "raw";
+    case PartnerNativeReload::event: return "event";
+    default: return "mirror";
+    }
+}
+
+bool ParsePartnerNativeReload(const char* text, std::size_t size, PartnerNativeReload& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "mirror")) out = PartnerNativeReload::mirror;
+    else if (Equals(s, "raw")) out = PartnerNativeReload::raw;
+    else if (Equals(s, "event")) out = PartnerNativeReload::event;
+    else return false;
+    return true;
+}
+
+const char* PartnerNativeSlotName(PartnerNativeSlot value) noexcept {
+    switch (value) {
+    case PartnerNativeSlot::write: return "write";
+    case PartnerNativeSlot::call: return "call";
+    default: return "off";
+    }
+}
+
+bool ParsePartnerNativeSlot(const char* text, std::size_t size, PartnerNativeSlot& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "off")) out = PartnerNativeSlot::off;
+    else if (Equals(s, "write")) out = PartnerNativeSlot::write;
+    else if (Equals(s, "call")) out = PartnerNativeSlot::call;
     else return false;
     return true;
 }

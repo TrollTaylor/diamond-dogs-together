@@ -193,6 +193,9 @@ Addresses AddressesFor(const void* base) noexcept {
     a.equip_types = b + c::equip_types_rva;
     a.equip_types_vtable = b + c::equip_types_vt_rva;
     a.gun_basic = b + c::gun_basic_rva;
+    a.equip_ctl_vtable = b + c::equip_ctl_vt_rva;
+    a.store_vtable = b + c::store_vt_rva;
+    a.store_vtable_alt = b + c::store_vt_derived_rva;
     return a;
 }
 
@@ -1045,9 +1048,62 @@ bool ReadGun(const Addresses& a, const State& s, std::uint32_t k, Gun1& out) noe
                     ReadValue(rec + c::gun_cap_sub, g.cap_sub) && ReadValue(rec + c::gun_mag, g.mag) &&
                     ReadValue(rec + c::gun_mag_sub, g.mag_sub) && ReadValue(rec + c::gun_stock, g.stock) &&
                     ReadValue(rec + c::gun_stock_sub, g.stock_sub) && ReadValue(rec + 0x23A, g.w23a) &&
-                    ReadValue(rec + c::gun_b3d5, out.b3d5) && ReadValue(rec + c::gun_slot, out.slot);
+                    ReadValue(rec + c::gun_b3d5, out.b3d5) && ReadValue(rec + c::gun_slot, out.slot) &&
+                    ReadValue(rec + c::gun_mode_cur, out.mode_cur) && ReadValue(rec + c::gun_slot_hand, out.hand_slot) &&
+                    ReadValue(rec + c::gun_slot_src, out.slot_src) && ReadValue(rec + c::gun_m3e4, out.m3e4) &&
+                    ReadValue(rec + c::gun_m3e6, out.m3e6) && ReadValue(rec + c::gun_m3e8, out.m3e8);
     g.gun3c0 = out.gun3c0;
+    // The upper-body request byte of this id (Q+0x20 is a per-id u8 array; 5 = reload).
+    std::uintptr_t upper = 0;
+    out.upper_ok = b.id < 2 && ReadValue(s.Q + c::q_upper, upper) && upper && ReadValue(upper + b.id, out.upper_req);
     return true;
+}
+
+bool ReadSlots(const Addresses& a, const State& s, std::uint32_t k, Slots& out) noexcept {
+    const Preserve preserve;
+    out = Slots{};
+    if (k > 1) { out.refusal = "instance"; return false; }
+    if (const char* why = CheckWrite(Refusal::none, s, 1, false, WriteKind::restore)) { out.refusal = why; return false; }
+    if (s.ids[k] != k) { out.refusal = "ids"; return false; }
+    std::uintptr_t ctl = 0, ctl_vt = 0, player = 0, inv = 0, inv_vt = 0, handles = 0, rows = 0;
+    if (!ReadValue(s.P + c::p_equip, ctl) || !ctl) { out.refusal = "ctl"; return false; }
+    if (!ReadValue(ctl, ctl_vt) || ctl_vt != a.equip_ctl_vtable || !ReadValue(ctl + c::ctl_player, player) || player != s.P) {
+        out.refusal = "ctl_vtable";
+        return false;
+    }
+    if (!ReadValue(ctl + c::ctl_inventory, inv) || !inv || !ReadValue(inv, inv_vt) ||
+        (inv_vt != a.store_vtable && inv_vt != a.store_vtable_alt)) { out.refusal = "inventory"; return false; }
+    std::uint32_t stride = 0, total = 0;
+    if (!ReadValue(inv + c::store_stride, stride) || stride < 3 || stride > 16 || !ReadValue(inv + c::store_total, total) ||
+        static_cast<std::uint64_t>(k) * stride + 3 > total || !ReadValue(inv + c::inv_handles, handles) || !handles ||
+        !ReadBlock(handles + (static_cast<std::uintptr_t>(k) * stride) * 4, out.handles, sizeof(out.handles))) {
+        out.refusal = "stride";
+        return false;
+    }
+    unsigned char row[c::equip_row_stride]{};
+    if (!ReadValue(s.Q + c::q_equip_rows, rows) || !rows ||
+        !ReadBlock(rows + static_cast<std::uintptr_t>(k) * c::equip_row_stride, row, sizeof(row))) { out.refusal = "rows"; return false; }
+    out.ctl = ctl;
+    out.inventory = inv;
+    out.row = rows + static_cast<std::uintptr_t>(k) * c::equip_row_stride;
+    out.stride = stride;
+    std::memcpy(&out.row_current, row + c::equip_row_current, 2);
+    std::memcpy(out.row_slots, row + c::equip_row_slots, sizeof(out.row_slots));
+    out.nibble = static_cast<std::uint8_t>(row[c::equip_row_nibble] & 0xF);
+    return true;
+}
+
+bool EquipType(const Addresses& a, std::uint32_t equip, std::uint8_t& type) noexcept {
+    const Preserve preserve;
+    type = 0;
+    std::uintptr_t vt = 0;
+    std::uint16_t packed46 = 0, packed = 0;
+    if (!a.equip_types || equip == 0 || equip >= c::stock_ids || !ReadValue(a.equip_types, vt) || vt != a.equip_types_vtable ||
+        !ReadValue(a.equip_types + c::equip_types_packed + 46 * 2, packed46) || packed46 != c::stock46_packed ||
+        !ReadValue(a.equip_types + c::equip_types_packed + equip * 2, packed) || !packed)
+        return false;
+    type = static_cast<std::uint8_t>(packed & 0x3Fu);
+    return type != 0;
 }
 
 bool ReadLoadout(const Addresses& a, const State& s, Loadout& out) noexcept {

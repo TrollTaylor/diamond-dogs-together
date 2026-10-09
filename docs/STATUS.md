@@ -1,5 +1,27 @@
 # Development status
 
+## October 9, 2026: the partner's own reload and weapon switch (fixture-tested, hidden runs pending)
+
+`wp/weapons2` ([details](native-puppet.md#the-partners-own-reload-r1r6-partner_native_reload)).
+The hidden weapons runs showed body 1 already starting its own native reload
+from the remote's R; the magazine mirror then wrote the refilled magazine in
+the middle of it and the reload mode never left. New: input frame v5 (the
+sender's gun mode, a reload counter, a switch counter and its current slot),
+the event machine (`partner_native_reload=event`: overlay RELOAD taps until
+body 1 enters 11/12, holstered and automatic reloads included, the raw R/CARRY
+stripped from the remote's sample), the mirror's freeze and reconcile with
+`rec+0x3E8` (`raw|event`), the post-phase-1 probe (bit 20/24 are only visible
+inside the drain), the slot follower (`partner_native_slot=write|call`: instance
+1's equipment row gets the remote's slot the way SetCurrentSlot writes it for a
+non-local id; the game then switches natively), the slot plan and the
+generalized weapon gate (mid-switch and unqualified-type strips). Defaults:
+lab.ini `mirror`/`off`; the worker gun stage and Play-OfflineCoop run
+`event`/`write`. Contract checker: 446 code sites, 101 vtable slots (the mode
+table emulation, the reload op table, SetCurrentSlot's non-local data path).
+Not done: the generalized writer/preload (other weapons on body 1 need their
+own runtime qualification captures); until then switching to the hip or
+secondary slot refuses (`empty`) and body 1 keeps stock46. Fixture evidence only.
+
 ## October 8, 2026: Steam online transport (fixture-tested, never run)
 
 Two-PC play can now connect **online through Steam** with no port

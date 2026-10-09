@@ -292,6 +292,10 @@ $script:LabPartnerKeys = @(
     # governor (idle by default) and the partner's shot noise (filter by default).
     @{ Key = 'partner_native_face'; Json = 'native_face'; Kind = 'enum'; Values = @('off', 'idle', 'aim') },
     @{ Key = 'partner_native_noise'; Json = 'native_noise'; Kind = 'enum'; Values = @('filter', 'keep') },
+    # The partner's own reload and weapon switch (docs/native-puppet.md "Weapons"): mirror / off by default;
+    # the native gun stage and Play-OfflineCoop run event / write.
+    @{ Key = 'partner_native_reload'; Json = 'native_reload'; Kind = 'enum'; Values = @('mirror', 'raw', 'event') },
+    @{ Key = 'partner_native_slot'; Json = 'native_slot'; Kind = 'enum'; Values = @('off', 'write', 'call') },
     @{ Key = 'crash_probe'; Json = 'crash_probe'; Kind = 'bool' },
     # Debug "Spawn enemy here" native placement (docs/debug-menu.md): lab only,
     # default off and written only when set.
