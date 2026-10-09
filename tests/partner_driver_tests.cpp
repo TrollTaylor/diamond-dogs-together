@@ -3528,6 +3528,35 @@ void TestNativePolish() {
         s.fake.latest.packet.gun_equip = 100;
         s.N();
         Check(s.fake.arms.back().strip == 0, "an unread body gun keeps the verdict");
+        // A customized weapon's gun record holds its alias (the lab save's
+        // back slot: 873 of base 46): the received manifest maps it to the
+        // stock id body 1 carries; without a manifest it is compared raw.
+        s.fake.gun_ok = true;
+        s.fake.latest.packet.gun_equip = 873;
+        s.N();
+        Check(s.fake.arms.back().strip == 0x50u && s.driver.mission.remote_gun_base == 873 && s.driver.mission.weapon_mismatch,
+              "an alias without a manifest: compared raw (masked)");
+        namespace ew = mgscoop::partner_equip_wire;
+        ew::Manifest rx{};
+        rx.revision = 1; rx.epoch = 7; rx.inv_slot = 0xFF;
+        rx.slots[0].base_id = 343; rx.slots[0].alias = 871;
+        rx.slots[1].base_id = 46; rx.slots[1].alias = 873;
+        std::uint8_t bytes[ew::kSize]{};
+        Check(ew::Encode(rx, bytes) == sizeof(bytes), "weapon gate: the remote's manifest encodes");
+        s.fake.channel2.emplace_back(bytes, bytes + sizeof(bytes));
+        s.N();
+        Check(s.fake.arms.back().strip == 0 && s.driver.mission.remote_gun_base == 46 && !s.driver.mission.weapon_mismatch &&
+                  s.fake.Has("partner_weapon=match; remote_equip=873; remote_base=46; body_equip=46; strip=0x0\r\n") &&
+                  s.driver.mission.tele.remote_gun_equip == 873 && s.driver.mission.tele.remote_gun_base == 46,
+              "the alias 873 of base 46 is body 1's gun (FIRE and RELOAD pass)");
+        s.fake.latest.packet.gun_equip = 871;
+        s.N();
+        Check(s.fake.arms.back().strip == 0x50u && s.driver.mission.remote_gun_base == 343 &&
+                  s.fake.Has("partner_weapon=mismatch; remote_equip=871; remote_base=343; body_equip=46; strip=0x50\r\n"),
+              "the alias 871 of base 343 is another gun (masked)");
+        s.fake.latest.packet.gun_equip = 46;
+        s.N();
+        Check(s.fake.arms.back().strip == 0 && s.driver.mission.remote_gun_base == 46, "the stock id itself still matches");
     }
     {
         // The look source (naim=looksrc): installed lazily once, never inside a batch.

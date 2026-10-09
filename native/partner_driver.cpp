@@ -1767,6 +1767,17 @@ const char* NoiseReason(const char* why) noexcept {
     return "noise";
 }
 
+// The weapon gate's view of the remote's gun record equip: a customized
+// weapon's alias maps to the base id of the received manifest slot that
+// carries it (the sender's own loadout); a stock id, an alias no slot names
+// or no manifest yet stays itself (then compared raw: a mismatch masks).
+std::uint32_t RemoteGunBase(const Mission& m, std::uint32_t equip) noexcept {
+    if (m.equip.have)
+        for (const partner_equip_wire::Slot& s : m.equip.manifest.slots)
+            if (s.alias == equip && s.base_id != 0) return s.base_id;
+    return equip;
+}
+
 // --- Native weapons (docs/native-puppet.md "Weapons") ---------------------------
 // The fire gate (visual fire only while the owner filter is live), the
 // mirror's gun record, the 1 Hz partner_fire line, the read-only census, the
@@ -1823,12 +1834,17 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
     }
     set.fire_live = why == nullptr;
     // F4: the weapon gate. Body 1 carries one gun (stock46); while the
-    // remote's gun record holds another equip, FIRE and RELOAD are stripped
-    // in every native window and the magazine mirror is frozen. Kept while
-    // either side is unread.
+    // remote's gun record holds another weapon, FIRE and RELOAD are stripped
+    // in every native window and the magazine mirror is frozen. A customized
+    // weapon's record holds its alias (the lab save's back slot: alias 873 of
+    // base 46), so the remote's equip is compared as the stock id of the
+    // received manifest slot carrying it. Kept while either side is unread.
     bool weapon_judged = false;
+    m.remote_gun_base = m.remote_gun_equip == pnat::kNull
+                            ? pnat::kNull : static_cast<std::int32_t>(RemoteGunBase(m, static_cast<std::uint32_t>(m.remote_gun_equip)));
     if (gun_ok && gun.fields_ok && gun.fields.equip != 0 && m.remote_gun_equip != pnat::kNull) {
-        m.weapon_mismatch = set.ngun && static_cast<std::uint32_t>(m.remote_gun_equip) != gun.fields.equip;
+        m.weapon_mismatch = set.ngun && static_cast<std::uint32_t>(m.remote_gun_equip) != gun.fields.equip &&
+                            static_cast<std::uint32_t>(m.remote_gun_base) != gun.fields.equip;
         weapon_judged = true;
     }
     if (!set.ngun) m.weapon_mismatch = false;
@@ -1837,8 +1853,8 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
         const bool first = !m.weapon_logged_once;
         m.weapon_logged_once = true;
         m.weapon_logged = m.weapon_mismatch;
-        EmitNative(m, h, m.weapon_cap, "partner_weapon", "partner_weapon=%s; remote_equip=%d; body_equip=%u; strip=0x%x\r\n",
-                   m.weapon_mismatch ? "mismatch" : "match", m.remote_gun_equip, gun.fields.equip, m.weapon_strip);
+        EmitNative(m, h, m.weapon_cap, "partner_weapon", "partner_weapon=%s; remote_equip=%d; remote_base=%d; body_equip=%u; strip=0x%x\r\n",
+                   m.weapon_mismatch ? "mismatch" : "match", m.remote_gun_equip, m.remote_gun_base, gun.fields.equip, m.weapon_strip);
         // The fire verdict line of a visual-fire run (a first match is not a change).
         if (set.nfire == PartnerNativeFire::visual && (m.weapon_mismatch || !first))
             EmitNative(m, h, m.weapon_cap, "partner_weapon", "partner_fire=%s; reason=%s; remote_equip=%d; body_equip=%u\r\n",
@@ -2469,6 +2485,7 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         t.noise_passed = fs.noise_passed;
         t.kb_remote = !(latest_ok && latest.packet.version >= 4 && (latest.packet.xflags & pin::XFlag::Gamepad));
         t.remote_gun_equip = m.remote_gun_equip;
+        t.remote_gun_base = m.remote_gun_base;
         t.weapon_mismatch = m.weapon_mismatch;
         t.strip_bits = m.weapon_strip;
         t.fire_requested = n.fire_requested;

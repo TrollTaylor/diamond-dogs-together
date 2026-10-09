@@ -413,6 +413,7 @@ struct Telemetry {
     std::uint32_t noise_dropped, noise_passed;
     bool kb_remote;                   // the remote's pad is in keyboard mode (no xflags Gamepad)
     std::int32_t remote_gun_equip;    // kNull without xflags Equip
+    std::int32_t remote_gun_base;     // as a stock id (the received manifest maps an alias); kNull without
     bool weapon_mismatch;
     std::uint32_t strip_bits;
     // The partner's trigger after each windowed drain (process totals):

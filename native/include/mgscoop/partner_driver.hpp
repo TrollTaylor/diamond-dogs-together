@@ -272,8 +272,8 @@ struct Hooks {
     // Reliable channel `channel` (latest mode): true when queued.
     bool (*send_reliable)(void* context, std::uint8_t channel, const std::uint8_t* bytes, std::size_t size) noexcept = nullptr;
     // Native polish (docs/native-puppet.md "Facing", "Weapons"): whether any
-    // batch is in flight (partner_defer::InBatch: facing governor writes and
-    // the look source install wait), the look source hook (D3, naim=looksrc;
+    // batch is in flight or the game window is closing (partner_defer::InBatch
+    // or ShuttingDown: facing governor writes and the look source install wait), the look source hook (D3, naim=looksrc;
     // nullptr or a static refusal) and the shot noise filter (F3).
     bool (*in_batch)(void* context) noexcept = nullptr;
     const char* (*install_look_source)(void* context) noexcept = nullptr;
@@ -675,6 +675,9 @@ struct Mission {
     bool weapon_logged;                 // the verdict of the last gate line
     std::uint32_t weapon_strip;
     std::int32_t remote_gun_equip;      // kNull without a v4 Equip
+    // remote_gun_equip as a stock id (a customized alias of the received
+    // manifest maps to its slot's base id; kNull without a v4 Equip).
+    std::int32_t remote_gun_base;
     // The look source hook (D3): the last install verdict (static; nullptr ok).
     const char* look_src_refusal;
     bool look_src_tried;

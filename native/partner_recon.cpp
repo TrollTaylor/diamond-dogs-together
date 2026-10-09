@@ -880,11 +880,14 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
                 face_stop(settle_window ? "settle" : "act");
                 if (settle_window) st.face_state = FaceState::settle;
             } else if (!st.face_turning) {
-                // Enter: the error held (aim: and the body's own turning is slow).
+                // Enter: the error held and the body's own turning slow.
                 const std::uint32_t enter = kind == FaceState::aim ? P.face_aim_cdeg : P.face_enter_cdeg;
                 const std::uint32_t hold = kind == FaceState::aim ? P.face_aim_hold_ms : P.face_enter_ms;
                 if (aerr > enter * kRadPerCdeg) { if (!st.face_err_since) st.face_err_since = now ? now : 1; } else { st.face_err_since = 0; }
-                const bool slow = kind != FaceState::aim || std::fabs(st.face_own_rate) * 57.29577951308232 < P.face_aim_rate_dps;
+                // Never against the body's own turning (aim: the game's aim twist;
+                // idle: a pivot or turn animation still rotating the body).
+                const double own_dps = std::fabs(st.face_own_rate) * 57.29577951308232;
+                const bool slow = own_dps < (kind == FaceState::aim ? P.face_aim_rate_dps : P.face_idle_rate_dps);
                 if (Held(st.face_err_since, now, hold) && slow) {
                     st.face_turning = true;
                     st.face_turn_kind = kind;
@@ -908,6 +911,13 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
                 double applied = WrapRad(in.target_yaw);
                 bool landed = aerr < P.face_exit_cdeg * kRadPerCdeg;
                 if (!landed) {
+                    // A long tick gap (a hitch): restart the eased turn from the
+                    // body's readback (the smoother would snap onto the target).
+                    if (now < st.face_turn.ms || now - st.face_turn.ms > partner_facing::kMaxStepMs) {
+                        st.face_turn.yaw = static_cast<float>(WrapRad(in.body_yaw));
+                        st.face_turn.rate = 0.0f;
+                        st.face_turn.ms = now;
+                    }
                     applied = static_cast<double>(partner_facing::Step(st.face_turn, static_cast<float>(applied), now,
                                                                        turn_params(st.face_turn_kind), partner_facing::Snap::none));
                     landed = std::fabs(WrapRad(in.target_yaw - applied)) < 1e-4;

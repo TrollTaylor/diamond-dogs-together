@@ -651,7 +651,12 @@ bool PartnerSendReliable(void*, std::uint8_t channel, const std::uint8_t* bytes,
 }
 // --- Native polish (docs/native-puppet.md "Facing", "Weapons"): lazily from
 // the driver tick after the code gate passed, like the deferral.
-bool PartnerInBatch(void*) noexcept { return mgscoop::partner_defer::InBatch(); }
+// Also true once the game window is closing (PartnerShutdown): the facing
+// governor's xform writes and the look source install stop with the windows
+// (MissionEnd may only follow later, on the mission thread).
+bool PartnerInBatch(void*) noexcept {
+    return mgscoop::partner_defer::InBatch() || mgscoop::partner_defer::ShuttingDown();
+}
 const char* PartnerInstallLookSource(void*) noexcept { return mgscoop::partner_look_source::Install(game_base, Log); }
 const char* PartnerInstallNoise(void*) noexcept { return mgscoop::partner_fire_filter::InstallNoise(game_base, Log); }
 #if defined(MGS_LOCAL_STOCK46_AMMO_TEST) && MGS_LOCAL_STOCK46_AMMO_TEST

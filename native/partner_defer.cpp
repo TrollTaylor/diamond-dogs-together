@@ -526,6 +526,7 @@ void Shutdown() noexcept {
     InterlockedExchange(&g_shutdown, 1);
     InterlockedExchange(&g_armed, 0);
 }
+bool ShuttingDown() noexcept { return g_shutdown != 0; }
 bool Armed() noexcept { return g_armed != 0; }
 
 void MissionStart() noexcept {

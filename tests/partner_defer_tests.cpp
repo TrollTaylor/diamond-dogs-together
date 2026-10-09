@@ -1388,6 +1388,7 @@ void TestJobWindow() {
         Put<std::uintptr_t>(Addr(w->store_y), base + c::store_vt_rva);
         Put<std::uintptr_t>(base + c::store_vt_rva + c::store_vt_set, base + c::store_set_rva);
         Put<std::uint32_t>(Addr(w->store_y) + c::store_stride, 2);
+        Put<std::uint32_t>(Addr(w->store_y) + c::store_total, 4);  // two ids * stride 2 (the init's row count)
         Put<std::uintptr_t>(Addr(w->store_y) + c::store_types, Addr(w->store_types));
         Put<std::uintptr_t>(Addr(w->store_y) + c::store_rows, Addr(w->store_rows));
         w->store_types[2] = 1;  // id 1, slot 0: a magazine row (type 1)
@@ -1475,6 +1476,9 @@ void TestJobWindow() {
             Put<std::uint8_t>(Addr(gun_rec) + c::gun_slot, 2);
             Check(refused(23, hk::StoreRefusal::slot), "F2: a slot beyond the stride refuses");
             Put<std::uint8_t>(Addr(gun_rec) + c::gun_slot, 0);
+            Put<std::uint32_t>(Addr(w->store_y) + c::store_total, 2);  // a store sized for one id only
+            Check(refused(28, hk::StoreRefusal::slot), "F2: a store without id 1's row (row count Y+0x10) refuses");
+            Put<std::uint32_t>(Addr(w->store_y) + c::store_total, 4);
             w->store_types[2] = 0;
             Check(refused(24, hk::StoreRefusal::type), "F2: a row of type 0 refuses");
             w->store_types[2] = 1;
@@ -1716,6 +1720,42 @@ void TestJobWindow() {
         g_hook_sample.packet.version = 3;
         g_hook_sample.packet.held = kRemoteHeld;
     }
+    // The game window closes (debug_overlay WM_CLOSE -> PartnerShutdown on
+    // the window thread): the thread-safe flags end every window for good
+    // (last in this program: they are never cleared). Block 1's job still
+    // runs once per drain, on the viewer's untouched pad, and the drain is
+    // not an unwindowed native drain (no arbiter reason from a shutdown).
+    {
+        static std::uint32_t s_seen = 0;
+        static unsigned s_runs = 0;
+        struct SeenJob {
+            static void Job(void*, const void*) noexcept {
+                ++s_runs;
+                s_seen = Get<std::uint32_t>(g_watch_src + 0x48);
+            }
+        };
+        hk::PublishArm(a);
+        g_hook_sample.packet.held = kRemoteHeld;
+        dispatch(w->root1, 8);
+        pd::JobParam param{1, 0, 0, 8, g_world.bits};
+        Check(!pd::ShuttingDown() && hk::RunJobWindow(w->go, &param, 1, &SeenJob::Job, pi::Consumer::drain0) && s_seen == kRemoteHeld,
+              "shutdown: before the window closes block 1's job runs windowed");
+        hk::DrainStats(hs);
+        const std::uint32_t disarmed = hs.native.drain_disarmed, refused = hs.native.drain_refused;
+        pd::Shutdown();
+        hk::Shutdown();
+        pd::SetArmed(true);
+        Check(pd::ShuttingDown() && !pd::Armed(), "shutdown: the deferral stays disarmed for good");
+        s_runs = 0;
+        s_seen = 0;
+        dispatch(w->root1, 8);
+        Check(!hk::RunJobWindow(w->go, &param, 1, &SeenJob::Job, pi::Consumer::drain0) && s_runs == 1 && s_seen == kHostHeld &&
+                  Get<std::uint32_t>(Addr(w->src) + 0x48) == kHostHeld,
+              "shutdown: the job runs once without a window (the viewer's pad untouched)");
+        hk::DrainStats(hs);
+        Check(hs.native.drain_disarmed == disarmed && hs.native.drain_refused == refused + 1,
+              "shutdown: refused, never counted as an unwindowed native drain");
+    }
     hk::DrainStats(hs);
     Check(hs.window.faults == 0, "no window fault in the fixture");
     g_watch_src = g_watch_pp = g_watch_rec = 0;
@@ -1747,6 +1787,6 @@ int main() {
                 "forced, drain telemetry, block refusals, no window in a batch, replaced aim sub-controller, private masks, rates "
                 "mirror before the job, reapply, restore at the main dispatch (disarmed or legacy Arm), record-vtable latch, forget "
                 "with the forgotten epoch refused, owner refusals, instance 0's record untouched, broken restore chain, magazine "
-                "mirror with edges/refusals/dry fire, the shoot-count and ammo-vars leak checks, mirror off after an ammo leak, both mirrors in one window without a leak)\n", checks);
+                "mirror with edges/refusals/dry fire, the shoot-count and ammo-vars leak checks, mirror off after an ammo leak, both mirrors in one window without a leak; window-close shutdown flags)\n", checks);
     return 0;
 }

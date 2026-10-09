@@ -943,6 +943,9 @@ void __stdcall InputDispatchHook(void* root, std::uint32_t phase) noexcept {
         g_hist = pi::HoldHistory{};
         g_inj_valid = false;
         g_m_seen = false;
+        // F1: no drain consumer's previous held word carries into a new
+        // mission (a stale FIRE would hide the first press edge).
+        std::memset(g_ring_prev, 0, sizeof(g_ring_prev));
     }
     if (a.gen != g_gen) {
         // Only instance 1's private masks and shadows start afresh with a new gen.
@@ -1192,6 +1195,9 @@ StoreRefusal StoreRow(const pi::Arm& a, std::uint32_t flags27c, std::uint32_t ta
     const std::uintptr_t types = Load<std::uintptr_t>(y + c::store_types), rows = Load<std::uintptr_t>(y + c::store_rows);
     if (!types || !rows) return StoreRefusal::y_vt;
     const std::uintptr_t idx = static_cast<std::uintptr_t>(stride) + slot;  // id 1 (Validate: ids[1] == 1)
+    // The store init (0xEE92F0) sized the types and rows by Y+0x10 = ids *
+    // stride: a store without a row for id 1 is never written past its end.
+    if (idx >= Load<std::uint32_t>(y + c::store_total)) return StoreRefusal::slot;
     const std::uint32_t type = Load<std::uint32_t>(types + idx * 4) & c::store_type_mask;
     const bool sub = (flags27c & c::gun27c_sub) != 0;
     if (type < 1 || type > c::store_type_word0_only || (sub && type == c::store_type_word0_only)) return StoreRefusal::type;

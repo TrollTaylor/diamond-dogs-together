@@ -104,7 +104,8 @@ const char* MagRefusalName(MagRefusal refusal) noexcept;
 // The magazine's per-instance store row (docs/native-puppet.md "Weapons" F2;
 // gun phase 0 copies it into rec+0x25C/+0x25E every frame): y_vt (the store
 // iface is not the pinned class or its +0x20 is not the setter), slot (stride
-// outside 1..16 or the slot beyond it), type (the row's type outside 1..9, or
+// outside 1..16, the slot beyond it, or id 1's row at or past the store's row
+// count Y+0x10, which sized its arrays), type (the row's type outside 1..9, or
 // type 9 with a sub magazine), owner (instance 1 is the local id), online
 // (S_IS_ONLINE or P+0x204 bit 18), tamper (rec+0x3D0 bit 27), cap (the value
 // above the capacity).

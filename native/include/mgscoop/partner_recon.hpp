@@ -155,8 +155,12 @@ struct Params {
     // face_remote_mmps and the body's own speed < face_body_mmps have each
     // held face_quiet_ms; any stick input aborts a turn in the same tick.
     //   idle: body act 1/3/5 (the remote in the same idle act when known);
-    //     enter when |err| > face_enter_cdeg held face_enter_ms, turn at
-    //     face_dps (accel face_accel_dps2) until |err| < face_exit_cdeg.
+    //     enter when |err| > face_enter_cdeg held face_enter_ms and the
+    //     body's own yaw rate (readback minus our writes) < face_idle_rate_dps
+    //     (a pivot or turn animation the game still plays is never fought),
+    //     turn at face_dps (accel face_accel_dps2) until |err| < face_exit_cdeg.
+    //     A tick gap longer than partner_facing::kMaxStepMs restarts the eased
+    //     turn from the body's readback (never a snap onto the target).
     //   settle: within face_settle_ms of a placement, snap or teleport, or
     //     while the body is in act 25/26: one snap to the target when |err| >
     //     face_settle_cdeg (fall/land and aim acts allowed).
@@ -172,7 +176,7 @@ struct Params {
     double face_stick_r = 0.1;
     std::uint32_t face_remote_mmps = 150, face_body_mmps = 100, face_quiet_ms = 200;
     std::uint32_t face_enter_cdeg = 500, face_exit_cdeg = 100, face_enter_ms = 200;
-    std::uint32_t face_dps = 180, face_accel_dps2 = 3600;
+    std::uint32_t face_dps = 180, face_accel_dps2 = 3600, face_idle_rate_dps = 30;
     std::uint32_t face_settle_ms = 1500, face_settle_cdeg = 1000;
     std::uint32_t face_aim_cdeg = 1000, face_aim_hold_ms = 400, face_aim_rate_dps = 20, face_aim_dps = 90, face_aim_accel_dps2 = 1800;
     std::uint32_t face_contest_cdeg = 300, face_backoff_ms = 1000, face_contests = 3, face_contest_window_ms = 5000;

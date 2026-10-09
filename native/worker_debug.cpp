@@ -153,6 +153,7 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
     j.Add(",\"installed\":%s,\"live\":%s,\"dropped\":%u,\"passed\":%u}",Bool(n.noise_installed),Bool(n.noise_live),n.noise_dropped,
         n.noise_passed);
     j.Add(",\"weapon\":{\"kb_remote\":%s,\"remote_gun_equip\":",Bool(n.kb_remote));i32(n.remote_gun_equip);
+    j.Add(",\"remote_gun_base\":");i32(n.remote_gun_base);
     j.Add(",\"mismatch\":%s,\"strip\":%u}",Bool(n.weapon_mismatch),n.strip_bits);
     j.Add(",\"trigger\":{\"requested\":%u,\"shot_drains\":%u,\"fire_modes\":%u}",n.fire_requested,n.fire_shot_drains,n.fire_modes);
     // Facing (partner_recon governor) and the look (D3).

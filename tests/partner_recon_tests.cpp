@@ -63,6 +63,7 @@ struct World {
     unsigned places = 0, snaps = 0, nudges = 0, pins = 0, yaws = 0, ticks = 0, runaways = 0, fixes = 0, input_pins = 0, faces = 0;
     bool face_sticks = true;         // false: the game rotates the body back after a governor write (contest)
     double face_back_yaw = 0;        // where the game puts it back
+    double body_turn_dps = 0;        // the game's own turning of the body (a pivot or turn animation), deg/s
     std::uint32_t events = 0;
     double max_nudge_step = 0;
     unsigned place_reason[16]{};
@@ -99,6 +100,7 @@ struct World {
         } else {
             for (int i = 0; i < 3; ++i) body[i] += (follow ? rv[i] : body_v[i]) * dt_ms / 1000.0;
         }
+        if (body_turn_dps != 0.0) body_yaw = pr::WrapRad(body_yaw + body_turn_dps * kPi / 180.0 * dt_ms / 1000.0);
         pr::In in{};
         in.now_ms = now;
         in.armable = armable;
@@ -1022,6 +1024,49 @@ void TestFacingGovernor() {
         s.r = 1.0;
         s.Run(3000);
         Check(s.place_reason[static_cast<unsigned>(pr::PlaceReason::teleport)] == 0, "a sprint is not a teleport");
+    }
+    // The body still turning on its own (a pivot animation the game plays
+    // after a stick tap): no idle turn starts until that turning stopped,
+    // then the governor finishes the residual.
+    {
+        World w;
+        w.params = native;
+        w.Place();
+        w.Run(2000);
+        w.ResetCounters();
+        w.remote_yaw = 60.0 * kPi / 180.0;
+        w.body_turn_dps = 120.0;
+        w.Run(400);
+        Check(w.faces == 0 && !(w.events & pr::Event::face_start) && std::string(w.out.report.face_reason) == "rate",
+              "idle: no turn against the body's own turning (reason rate)");
+        w.body_turn_dps = 0.0;
+        w.Run(1500);
+        Check(w.faces > 0 && (w.events & pr::Event::face_start) && std::fabs(Deg(pr::WrapRad(w.remote_yaw - w.body_yaw))) < 1.0,
+              "idle: the residual is turned once the body's own turning stopped");
+    }
+    // A long tick gap mid-turn (a hitch) restarts the eased turn from the
+    // body's readback: never a snap onto the target.
+    {
+        World w;
+        w.params = native;
+        w.Place();
+        w.Run(2000);
+        w.ResetCounters();
+        w.remote_yaw = 150.0 * kPi / 180.0;
+        w.Run(500);
+        Check((w.events & pr::Event::face_start) && std::fabs(Deg(pr::WrapRad(w.remote_yaw - w.body_yaw))) > 60.0, "a 150 degree turn is under way");
+        const double before = w.body_yaw;
+        w.Tick(400);
+        Check(w.out.action == pr::Action::face && std::fabs(Deg(pr::WrapRad(w.body_yaw - before))) < 0.5,
+              "a 400 ms gap: the turn restarts from the readback (no snap)");
+        double prev = w.body_yaw, max_step = 0;
+        w.Run(1500, [&](World& v) {
+            const double step = std::fabs(pr::WrapRad(v.body_yaw - prev));
+            if (step > max_step) max_step = step;
+            prev = v.body_yaw;
+        });
+        Check(Deg(max_step) <= 180.0 * 0.016 + 0.01 && std::fabs(Deg(pr::WrapRad(w.remote_yaw - w.body_yaw))) < 1.0,
+              "after the gap: bounded steps onto the target");
     }
     // FaceMode::off: no facing correction at all (and no legacy rule).
     {

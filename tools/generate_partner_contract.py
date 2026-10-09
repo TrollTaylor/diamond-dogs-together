@@ -550,6 +550,14 @@ SITES = [
      'store setter: types 1..8 word0 or word1 (sub flag), then the notifier [Y+0x58] vt+0x100 (never called by us)'),
     (0xEE8C23, '488d0556084a01488901488d057c084a0148894120', 'store ctor: vtables 0x2389480 / 0x23894B0 (iface +0x20)'),
     (0xEE9026, '488d056b054a01488903488d0599054a0148894320', 'derived store ctor: vtables 0x2389598 / 0x23895D0 (iface +0x20)'),
+    # The store init (object vt+8, both classes): ids at object+0x28 (Y+0x8), the stride at +0x2C (Y+0xC) and the
+    # total ids * stride at +0x30 (Y+0x10); the types (+0x60 = Y+0x40) get total * 4 bytes and the rows (+0x70 =
+    # Y+0x50) total * 6: the mirror's row index must stay below Y+0x10.
+    (0xEE930C, '44894928448b42044489412c8b4208450fafc18981a80000008b420c44894130',
+     'store init: object+0x28 = ids, +0x2C = stride, +0x30 = ids * stride (Y+0x10, the row count)'),
+    (0xEE9331, '8b573048c1e202', 'store init: the types array is the row count * 4 bytes'),
+    (0xEE9384, '488947608b4730488d14404803d2', 'store init: types at object+0x60 (Y+0x40); the rows are the row count * 6 bytes'),
+    (0xEE93EA, '48894770', 'store init: rows at object+0x70 (Y+0x50)'),
     (0x1054A97, '4585d2741d', 'reload completion: the local branch runs the ammo setter; non-local -> 0x1054AB9'),
     (0x1054AB9, '440fb687da0300006644898fe8030000498b4508488b8838010000418bd4488b81c8000000488b48088b877c0200004c8b11c1e809240188442420'
      '41ff5220', 'reload completion (non-local): rec+0x3E8 and the store row through Y vt+0x20'),
@@ -663,6 +671,8 @@ SLOTS = [
     (0x21876A8, 0x00, 0x515270, 'noise iface vtable slot 0 = AddNoise (noise filter slot)'),
     (0x23894B0, 0x20, 0xEE96C0, 'store iface vtable +0x20 = store setter'),
     (0x23895D0, 0x20, 0xEE96C0, 'derived store iface vtable +0x20 = store setter'),
+    (0x2389480, 0x08, 0xEE92F0, 'store object vtable +8 = the store init (row count Y+0x10)'),
+    (0x2389598, 0x08, 0xEE92F0, 'derived store object vtable +8 = the same store init'),
 ]
 
 
@@ -1392,6 +1402,8 @@ w('inline constexpr std::size_t store_y=0x8, store_stride=0xc, store_types=0x40,
 w('inline constexpr std::uint32_t store_type_mask=0x1f, store_type_word0_only=9;')
 w('inline constexpr std::uintptr_t store_vt_rva=0x23894b0, store_vt_derived_rva=0x23895d0, store_set_rva=0xee96c0;')
 w('inline constexpr std::size_t store_vt_set=0x20, gun_tamper=0x3d0;')
+w('// The store init 0xee92f0 (object vt+8 of both classes) sizes types and rows by Y+0x10 = ids * stride.')
+w('inline constexpr std::size_t store_total=0x10;')
 w('inline constexpr std::uint32_t gun3d0_tamper_check=0x8000000;')
 w('// The trigger (0x10964F7): rec+0x3C0 bit 24 = a shot this update, u8 rec+0x3DF = its count; rec+0x2C0 = the current mode.')
 w('inline constexpr std::size_t gun_mode_cur=0x2c0, gun_shots=0x3df;')
