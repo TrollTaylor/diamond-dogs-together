@@ -38,6 +38,11 @@ std::uint32_t g_epoch = 0;
 bool g_over_logged = false;
 pa::Reason g_logged_reason = pa::Reason::none;
 bool g_logged_any = false;
+// Event lines (installed, refused, restored, restore_dropped) per mission
+// epoch: a chain that flips between refused and ok every frame must not flood
+// the log at frame rate. The last line says the rest are suppressed.
+constexpr unsigned kLineCap = 64;
+unsigned g_lines = 0;
 
 // Any thread.
 volatile LONG g_forget = 0, g_forget_epoch = 0, g_blocked = 0, g_shutdown = 0, g_override = -1;
@@ -80,14 +85,22 @@ void SetState(State state, pa::Reason reason) noexcept {
     InterlockedExchange(&g_state, static_cast<LONG>(state));
     InterlockedExchange(&g_reason, static_cast<LONG>(reason));
 }
-// A refusal (counted; logged once per change of reason).
+// One event line of this epoch's budget: false once spent; `note` marks the last.
+bool TakeLine(const char*& note) noexcept {
+    note = "";
+    if (g_lines >= kLineCap) return false;
+    if (++g_lines == kLineCap) note = "; further=suppressed";
+    return true;
+}
+// A refusal (counted; logged once per change of reason, within the budget).
 void Refuse(pa::Reason reason) noexcept {
     InterlockedIncrement(&g_refused);
     SetState(State::refused, reason);
     if (!g_logged_any || g_logged_reason != reason) {
         g_logged_any = true;
         g_logged_reason = reason;
-        LogLine("partner_aim=refused; reason=%s; applied=%u\r\n", pa::ReasonName(reason), g_applied ? 1u : 0u);
+        const char* note = "";
+        if (TakeLine(note)) LogLine("partner_aim=refused; reason=%s; applied=%u%s\r\n", pa::ReasonName(reason), g_applied ? 1u : 0u, note);
     }
 }
 void Hold(pa::Reason reason) noexcept {
@@ -105,6 +118,7 @@ void ForgetPending() noexcept {
     Drop();
     g_over_logged = false;
     g_logged_any = false;
+    g_lines = 0;
     InterlockedExchange(&g_latched, 0);
     InterlockedExchange(&g_blocked, InterlockedCompareExchange(&g_forget_epoch, 0, 0));
 }
@@ -161,11 +175,13 @@ void Seen(std::uintptr_t q10) noexcept {
 }
 
 // Restore what the mirror wrote (hook thread, no batch in flight). Fields
-// the game rewrote since our last write keep the game's value.
+// the game rewrote since our last write keep the game's value. A chain that
+// no longer holds drops the state without writing and says why (capped).
 void Restore() noexcept {
     if (!g_applied) return;
     if (g_shutdown) { Drop(); return; }
     bool restored = false;
+    const char* dropped = nullptr;
     __try {
         const std::uintptr_t base = Base();
         std::uintptr_t q = 0, arr = 0, rec = 0;
@@ -173,6 +189,7 @@ void Restore() noexcept {
         const pa::Reason why = slot_ok ? Chain(g_p, q, arr, rec) : pa::Reason::chain;
         if (why != pa::Reason::none || q != g_q || arr != g_arr || rec != g_rec) {
             SetState(State::refused, pa::Reason::chain);
+            dropped = !slot_ok ? "player" : why != pa::Reason::none ? pa::ReasonName(why) : "object";
         } else {
             const std::uintptr_t q10 = arr + c::q_aim_stride;  // id 1
             const std::uintptr_t r = rec + c::q_aim_rec_stride;
@@ -195,9 +212,13 @@ void Restore() noexcept {
         g_applied = false;
         InterlockedExchange(&g_applied_pub, 0);
         SetState(State::off, pa::Reason::off);
-        LogLine("partner_aim=restored; restores=%ld\r\n", static_cast<long>(g_restores));
+        const char* note = "";
+        if (TakeLine(note)) LogLine("partner_aim=restored; restores=%ld%s\r\n", static_cast<long>(g_restores), note);
     } else {
         Drop();
+        const char* note = "";
+        if (dropped && TakeLine(note))
+            LogLine("partner_aim=restore_dropped; reason=chain; changed=%s; written=0%s\r\n", dropped, note);
     }
 }
 } // namespace
@@ -237,6 +258,7 @@ void Step(std::uintptr_t P, std::uint64_t now_ms) noexcept {
         Drop();
         g_epoch = pub.epoch;
         g_over_logged = false;
+        g_lines = 0;
     }
     const LONG blocked = g_blocked;
     if (blocked && pub.epoch == static_cast<std::uint32_t>(blocked)) { Restore(); SetState(State::off, pa::Reason::epoch); return; }
@@ -276,9 +298,11 @@ void Step(std::uintptr_t P, std::uint64_t now_ms) noexcept {
                 g_arr = arr;
                 g_rec = rec;
                 InterlockedExchange(&g_applied_pub, 1);
-                LogLine("partner_aim=installed; q10_orig_mm=%d,%d,%d; target_mm=%d,%d,%d; src=%s\r\n",
-                        Milli(Load<float>(q10)), Milli(Load<float>(q10 + 4)), Milli(Load<float>(q10 + 8)), Milli(pub.p[0]),
-                        Milli(pub.p[1]), Milli(pub.p[2]), pa::SourceName(static_cast<pa::Source>(pub.src)));
+                const char* note = "";
+                if (TakeLine(note))
+                    LogLine("partner_aim=installed; q10_orig_mm=%d,%d,%d; target_mm=%d,%d,%d; src=%s%s\r\n",
+                            Milli(Load<float>(q10)), Milli(Load<float>(q10 + 4)), Milli(Load<float>(q10 + 8)), Milli(pub.p[0]),
+                            Milli(pub.p[1]), Milli(pub.p[2]), pa::SourceName(static_cast<pa::Source>(pub.src)), note);
             } else if (!SameXyz(q10, g_last)) {
                 overwritten = true;
                 std::memcpy(before, g_last, sizeof(before));
@@ -390,6 +414,7 @@ void ResetForTest() noexcept {
     g_p = g_p_vt = g_q = g_arr = g_rec = 0;
     g_epoch = 0;
     g_over_logged = g_logged_any = false;
+    g_lines = 0;
     g_pub = Publication{};
     g_seq = 0;
     g_forget = g_forget_epoch = g_blocked = g_shutdown = g_latched = g_applied_pub = g_want_pub = 0;

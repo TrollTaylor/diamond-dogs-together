@@ -74,6 +74,13 @@ bool Logged(const char* part) {
     const std::string text(g_log.begin(), g_log.end());
     return text.find(part) != std::string::npos;
 }
+std::size_t LogCount(const char* part) {
+    std::lock_guard<std::mutex> guard(g_log_lock);
+    const std::string text(g_log.begin(), g_log.end());
+    std::size_t n = 0;
+    for (std::size_t at = text.find(part); at != std::string::npos; at = text.find(part, at + 1)) ++n;
+    return n;
+}
 
 // --- The job body's call (48 8B 01 / FF 50 50): rcx = GO, rdx = &param --------
 using Thunk = void (*)(void* go, const pd::JobParam* param);
@@ -1515,11 +1522,68 @@ void TestJobWindow() {
         Check(pap::HandleCommand("aimpt bogus", result, sizeof(result), ok) && !ok && pap::Override() == -1, "aim: a bad argument refuses");
         Check(!pap::HandleCommand("aimptx", result, sizeof(result), ok) && !pap::HandleCommand("nametag on", result, sizeof(result), ok),
               "aim: other commands are not aimpt");
+        // A restore whose chain changed (Q now names another aim array) drops
+        // the state without writing either array and logs why.
+        reset_slots();
+        publish(true, true, target, 0);
+        Check(drain() && slot1_is(target) && as.applied, "aim: applied before the chain changes");
+        alignas(16) static unsigned char aim_arr2[2 * c::q_aim_stride];
+        std::memset(aim_arr2, 0x33, sizeof(aim_arr2));
+        unsigned char arr2_before[sizeof(aim_arr2)];
+        std::memcpy(arr2_before, aim_arr2, sizeof(arr2_before));
+        Put<std::uintptr_t>(q + c::q_aim, Addr(aim_arr2));
+        const std::uint32_t drops_before = as.drops, restores_before = as.restores;
+        publish(false, false, origin, 0);
+        Check(drain() && slot1_is(target) && std::memcmp(aim_arr2, arr2_before, sizeof(arr2_before)) == 0 && !as.applied &&
+                  as.drops == drops_before + 1 && as.restores == restores_before && inst0_untouched() &&
+                  Logged("partner_aim=restore_dropped; reason=chain; changed=object; written=0"),
+              "aim: a restore through a changed chain drops without writing and logs why");
+        Put<std::uintptr_t>(q + c::q_aim, arr);
+        // A chain flipping between refused and ok every frame: the event lines
+        // (installed, refused, ...) stop at the per-epoch budget.
+        reset_slots();
+        const std::size_t lines_before = LogCount("partner_aim=");
+        for (int i = 0; i < 60; ++i) {
+            publish(true, true, target, 0);
+            Put<std::uint32_t>(P + c::p_local_id, 1);
+            drain();
+            Put<std::uint32_t>(P + c::p_local_id, 0);
+            drain();
+        }
+        Check(LogCount("partner_aim=") - lines_before <= 64 && LogCount("further=suppressed") == 1 && as.applied && slot1_is(target) &&
+                  as.refused >= 60 + 5,
+              "aim: refusals stay counted, their lines stop at the per-epoch budget");
+        pap::Forget(epoch);
+        epoch = 4;
+        reset_slots();
+        const std::size_t installed_before = LogCount("partner_aim=installed");
+        publish(true, true, target, 0);
+        Check(drain() && as.applied && LogCount("partner_aim=installed") == installed_before + 1,
+              "aim: a new epoch has a new line budget");
         // Leave: restored, Q back.
         publish(false, false, origin, 0);
         Check(drain() && slot1_is(origin), "aim: restored at the end");
+        // The game window closes (PartnerShutdown sets the flag on the window
+        // thread): no write and no restore from then on; block 1's job still runs.
+        publish(true, true, target, 0);
+        Check(drain() && slot1_is(target) && as.applied, "aim: applied before the window closes");
+        pap::Shutdown();
+        const float moved2[3] = {14.5f, 3.25f, -88.0f};
+        publish(true, true, moved2, 0);
+        s_job_x = -1.0f;
+        Check(drain() && s_job_x == target[0] && slot1_is(target) && as.reason == static_cast<std::uint8_t>(pam::Reason::shutdown),
+              "aim: after the window closes nothing is written (the job still ran)");
+        const std::uint32_t restores_at_close = as.restores;
+        publish(false, false, origin, 0);
+        Check(drain() && slot1_is(target), "aim: after the window closes an unwanted target is not restored in the window");
+        hk::PublishArm(pi::Arm{});
+        dispatch(w->root0, 8);
+        pap::ReadStats(as);
+        Check(slot1_is(target) && !as.applied && as.restores == restores_at_close && inst0_untouched(),
+              "aim: after the window closes the main dispatch drops without restoring");
+        pap::detail::ResetForTest();
+        hk::PublishArm(a);
         Put<std::uintptr_t>(P + c::p_q, q_before);
-        pap::Forget(epoch);
     }
     // Native weapons (docs/native-puppet.md "Weapons"): the magazine mirror
     // writes instance 1's live magazine before its job (on a FIRE or RELOAD
@@ -1964,7 +2028,8 @@ int main() {
                 "mirror before the job, reapply, restore at the main dispatch (disarmed or legacy Arm), record-vtable latch, forget "
                 "with the forgotten epoch refused, owner refusals, instance 0's record untouched, broken restore chain, magazine "
                 "mirror with edges/refusals/dry fire, the shoot-count and ammo-vars leak checks, mirror off after an ammo leak, both mirrors in one window without a leak; the aim-target mirror (Q+0x10[1] and record 1 before the job, instance 0 untouched, "
-                "hold, stale, range, restore when unwanted or disarmed, overwritten, chain refusals, forget/epoch, fault latch, the aimpt command); "
+                "hold, stale, range, restore when unwanted or disarmed, overwritten, chain refusals, forget/epoch, fault latch, the aimpt command, "
+                "a restore through a changed chain dropped and logged, the per-epoch line budget, nothing written or restored after the window closes); "
                 "window-close shutdown flags)\n", checks);
     return 0;
 }

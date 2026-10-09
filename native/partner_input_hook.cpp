@@ -1617,8 +1617,10 @@ const char* Install(const void* base, LogFn log, SampleFn sample) noexcept {
         }
     }
     if (!result) {
-        g_ready = true;
+        // The aim-target mirror's base and log before g_ready: no drain
+        // window ever runs its Step unbound.
         partner_aim_point::Bind(base, log);
+        g_ready = true;
     }
     if (g_log) {
         char line[160]{};
