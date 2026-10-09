@@ -128,7 +128,13 @@ bool NoRates(const InputPacket& p) noexcept {
 }
 bool NoMag(const InputPacket& p) noexcept { return p.mag == 0 && p.mag_cap == 0 && !(p.xflags & XFlag::Mag); }
 bool NoEquip(const InputPacket& p) noexcept { return p.gun_equip == 0 && !(p.xflags & (XFlag::Equip | XFlag::Gamepad)); }
-bool NoV4(const InputPacket& p) noexcept { return NoRates(p) && NoMag(p) && NoEquip(p); }
+bool NoV5(const InputPacket& p) noexcept { return p.gun_flags == 0 && p.gun_mode == 0 && p.reload_seq == 0 && p.switch_seq == 0; }
+bool NoV4(const InputPacket& p) noexcept { return NoRates(p) && NoMag(p) && NoEquip(p) && NoV5(p); }
+// The v5 gun group: known flags only; without GunFlag::Valid every byte is 0.
+bool ValidV5(const InputPacket& p) noexcept {
+    if (p.gun_flags & ~GunFlag::Known) return false;
+    return (p.gun_flags & GunFlag::Valid) != 0 || NoV5(p);
+}
 bool NoV3(const InputPacket& p) noexcept {
     return p.look_pitch == 0.0f && p.look_yaw == 0.0f && p.cam270 == 0.0f && p.cam274 == 0.0f && p.heading_mrad == 0 &&
            p.xflags == 0 && p.inv_slot == 0 && p.equip_rev == 0 && NoV4(p);
@@ -140,7 +146,7 @@ bool ValidV4(const InputPacket& p) noexcept {
     const bool mag = (p.xflags & XFlag::Mag) ? p.mag_cap >= 1 && p.mag_cap <= kMaxMagCap && p.mag <= p.mag_cap
                                              : p.mag == 0 && p.mag_cap == 0;
     const bool equip = (p.xflags & XFlag::Equip) ? p.gun_equip != 0 : p.gun_equip == 0;
-    return rates && mag && equip;
+    return rates && mag && equip && (p.version >= 5 ? ValidV5(p) : NoV5(p));
 }
 bool In(float v, float limit) noexcept { return std::isfinite(v) && v >= -limit && v <= limit; }
 bool ValidV3(const InputPacket& p) noexcept {
@@ -184,11 +190,13 @@ void Fill3(InputPacket& p, const V3Source& v) noexcept {
     p.rate_dash = p.rate_crawl = p.rate_crawl_factor = 0;
     p.mag = p.mag_cap = 0;
     p.gun_equip = 0;
+    p.gun_flags = p.gun_mode = p.reload_seq = p.switch_seq = 0;
 }
 
 void Fill4(InputPacket& p, const V4Source& v) noexcept {
     Fill3(p, v.v3);
     p.version = 4;
+    p.gun_flags = p.gun_mode = p.reload_seq = p.switch_seq = 0;
     if (v.rates_valid && RateIn(v.rate_dash) && RateIn(v.rate_crawl) && RateIn(v.rate_crawl_factor)) {
         p.xflags = static_cast<std::uint8_t>(p.xflags | XFlag::Rates);
         p.rate_dash = v.rate_dash;
@@ -207,12 +215,23 @@ void Fill4(InputPacket& p, const V4Source& v) noexcept {
     }
 }
 
+void Fill5(InputPacket& p, const V5Source& v) noexcept {
+    Fill4(p, v.v4);
+    p.version = 5;
+    if (v.gun_valid) {
+        p.gun_flags = static_cast<std::uint8_t>((v.gun_flags & GunFlag::Known) | GunFlag::Valid);
+        p.gun_mode = v.gun_mode;
+        p.reload_seq = v.reload_seq;
+        p.switch_seq = v.switch_seq;
+    }
+}
+
 bool ValidPacket(const InputPacket& p) noexcept {
     if ((p.flags & ~Flag::Known) != 0 || p.lx == -32768 || p.ly == -32768 || p.rx == -32768 || p.ry == -32768 ||
         p.ldir < -kMaxDir || p.ldir > kMaxDir || p.cam_cdeg < kCamMin || p.cam_cdeg > kCamMax) return false;
     if (p.version == 1) return p.edge_seq == 0 && p.edge_rep == 0 && p.long12 == 0 && p.tap12 == 0 && NoV3(p);
-    if ((p.version < 2 || p.version > 4) || p.edge_rep > kEdgeRepeatsMax) return false;
-    // v2: no v3/v4 field; v3: no v4 field (ValidV3); v4: both groups checked (ValidV4).
+    if ((p.version < 2 || p.version > 5) || p.edge_rep > kEdgeRepeatsMax) return false;
+    // v2: no v3/v4/v5 field; v3: no v4 field (ValidV3); v4: both groups checked (ValidV4); v5: the gun group too.
     if (p.version == 2 ? !NoV3(p) : !ValidV3(p)) return false;
     // No edge set: no edge words.
     if (p.edge_seq == 0) return p.edge_rep == 0 && p.w50 == 0 && p.w54 == 0 && p.tap12 == 0;
@@ -232,6 +251,8 @@ Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_c
     j.write = true;
     const bool net = c.mode == PartnerInput::net;
     const bool live = net && sample.valid && sample.age_ms <= c.stale_ms;
+    // The remote's own bits that never reach instance 1 from the sample (the overlay keeps them).
+    const std::uint32_t keep = ~c.sample_strip;
     // A stall: the newest frame is stale but younger than the grace.
     const bool grace = net && sample.valid && !live && sample.age_ms <= kStaleGraceMs;
     // The stall hold (online play): its sticks, look and gun fields carry on
@@ -248,7 +269,7 @@ Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_c
         j.mag = static_cast<float>(m);
     } else if (live || stall) {
         const InputPacket& p = sample.packet;
-        if (live) held |= p.held;
+        if (live) held |= p.held & keep;
         const double lx = p.lx / 32767.0, ly = p.ly / 32767.0;
         const double scale = std::isfinite(mag_scale) ? mag_scale : 1.0;
         const double r = Clamp(Clamp(std::sqrt(lx * lx + ly * ly), 0.0, 1.0) * scale, 0.0, 1.0);
@@ -258,7 +279,7 @@ Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_c
         j.lx = static_cast<float>(r * std::sin(theta));
         j.ly = static_cast<float>(r * std::cos(theta));
         j.mag = static_cast<float>(Clamp(p.lmag / 65535.0 * scale, 0.0, 1.0));
-        if (live) j.long12 = p.long12;
+        if (live) j.long12 = p.long12 & keep;
         if (c.rstick) {
             const double rx = p.rx / 32767.0, ry = p.ry / 32767.0;
             const double rr = Clamp(std::sqrt(rx * rx + ry * ry), 0.0, 1.0);
@@ -291,6 +312,15 @@ Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_c
             j.equip_valid = (p.xflags & XFlag::Equip) != 0;
             j.equip = p.gun_equip;
         }
+        if (p.version >= 5) {
+            j.gun_valid = (p.gun_flags & GunFlag::Valid) != 0;
+            j.gun_flags = p.gun_flags;
+            j.gun_mode = p.gun_mode;
+            j.reload_seq = p.reload_seq;
+            j.switch_seq = p.switch_seq;
+            j.slot_valid = p.inv_slot <= kInvSlotMax;
+            j.inv_slot = p.inv_slot;
+        }
     }
     held &= c.mask;
     const bool resync = edge.resync;
@@ -300,7 +330,7 @@ Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_c
     if (!net || (resync && !live)) edge.net_held = 0;
     if (net) {
         if (live) {
-            edge.net_held = sample.packet.held & c.mask;
+            edge.net_held = sample.packet.held & c.mask & keep;
         } else if (grace) {
             // Keep the last live level, no new edges, the run does not grow.
             held |= edge.net_held;
@@ -315,8 +345,9 @@ Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_c
     // A tap the window never saw as held (pressed and released between two
     // samples): one window of held, so the press edge is this window and the
     // release edge the next one. Never on a resync (stale edge sets).
-    const std::uint32_t taps =
-        (live && !resync) ? (((sample.edge_press & sample.edge_release) | sample.edge_tap12) & c.mask & ~held & ~edge.prev_held) : 0u;
+    const std::uint32_t taps = (live && !resync)
+                                   ? (((sample.edge_press & sample.edge_release) | sample.edge_tap12) & c.mask & keep & ~held & ~edge.prev_held)
+                                   : 0u;
     held |= taps;
     j.synth = taps;
     if (resync) {
@@ -327,13 +358,14 @@ Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_c
     const std::uint32_t press = held & ~edge.prev_held;
     const std::uint32_t release = edge.prev_held & ~held;
     const bool fresh = live && !resync && sample.seq != edge.last_seq;
-    const std::uint32_t net_words[3] = {fresh ? sample.packet.w4c : 0u, fresh ? sample.packet.w50 : 0u, fresh ? sample.packet.w54 : 0u};
+    const std::uint32_t net_words[3] = {fresh ? sample.packet.w4c & keep : 0u, fresh ? sample.packet.w50 & keep : 0u,
+                                        fresh ? sample.packet.w54 & keep : 0u};
     j.held = held;
     for (unsigned i = 0; i < 3; ++i) j.w[i] = WordValue(c.words[i], press, release, held, net_words[i]) & c.mask;
     j.edge_press = press;
     j.edge_release = release;
     j.long12 &= c.mask;
-    j.tap12 = (live && !resync) ? (sample.edge_tap12 & c.mask) : 0u;
+    j.tap12 = (live && !resync) ? (sample.edge_tap12 & c.mask & keep) : 0u;
     // PP+0x18 = atan2f(LX, LY) and PP+0x14 = the world heading, exactly as the
     // PP update derives them from the stick it reads (0x12070CC..0x12070FE).
     j.dir = static_cast<float>((j.lx != 0.0f || j.ly != 0.0f) ? std::atan2(static_cast<double>(j.lx), static_cast<double>(j.ly)) : 0.0);

@@ -1,4 +1,5 @@
 #include "mgscoop/equipment_stock_contract.hpp"
+#include "mgscoop/equipment_preload_contract.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <map>
@@ -65,6 +66,34 @@ Memory Ready() {
     m.Set(queueData,std::uint64_t(100)); m.Set(queueData+8,std::uint64_t(200));
     return m;
 }
+// The generalized preload (W2): the whole cache readable, stock46's
+// dependency tables (recipe lanes -> [35,38,9,0,0] -> ids [36,55,64]) and a
+// second gun, id 9 (type 2, the secondary slot), with its own main FPK.
+constexpr std::uint64_t package9=0x5228AAAA0000BEEFull;
+void General(Memory& m) {
+    for(unsigned i=0;i<48;++i) {
+        if(i>=5) {m.Set(info+i*0x90,std::array<std::uint8_t,0x90>{});m.Set(cache+i*0x38,std::array<std::uint8_t,0x38>{});}
+        else if(i<4) {m.Set(info+i*0x90,std::array<std::uint8_t,0x5E>{});m.Set(info+i*0x90+0x60,std::array<std::uint8_t,0x30>{});
+                      m.Set(cache+i*0x38,std::array<std::uint8_t,0x34>{});m.Set(cache+i*0x38+0x35,std::array<std::uint8_t,3>{});}
+        if(i!=4) m.Set(refs+i*4,std::uint32_t(0));
+    }
+    m.Set(base+0x2349A90+157,std::uint8_t(35));m.Set(base+0x2349B80+85,std::uint8_t(38));m.Set(base+0x2349C00+110,std::uint8_t(9));
+    m.Set(base+0x2349CC0+36,std::uint8_t(0));m.Set(base+0x2349A78+0,std::uint8_t(0));
+    m.Set(base+0x2349980+35*2,std::array<std::uint8_t,2>{36,0});m.Set(base+0x23499E0+38,std::uint8_t(55));
+    m.Set(base+0x2349A10+9*2,std::array<std::uint8_t,2>{64,0});m.Set(base+0x2349A08+0,std::uint8_t(0));m.Set(base+0x2349A68+0,std::uint8_t(0));
+    m.Set(base+0x2A70920+8+9*2,std::uint16_t((393<<6)|2));
+    m.Set(base+mgscoop::equipment_stock_writer_contract::PackageRowRva(9),std::array<std::uint64_t,3>{parts,package9,2});
+}
+// The public call's effect: the new hashes appended in order.
+void AppendPreload(Memory& m,const mgscoop::equipment_preload_contract::Snapshot& before) {
+    std::uint32_t count=before.queue_count;
+    for(unsigned j=0;j<before.expected_count;++j) {
+        bool queued=false;
+        for(std::uint32_t i=0;i<before.queue_count;++i) {std::uint64_t v=0;m(queueData+i*8,&v,8);queued=queued || v==before.expected[j];}
+        if(!queued) m.Set(queueData+std::size_t(count++)*8,before.expected[j]);
+    }
+    m.Set(queue,count);
+}
 template<class Edit> void Refuse(Edit edit,const char* reason) {
     auto m=Ready(); edit(m); Snapshot s;
     const auto* actual=Capture(base,0x3000000,m,s);
@@ -112,5 +141,69 @@ int main() {
     m=Ready(); Check(Capture(base,0x3000000,m,before)==nullptr); m.Append();
     m.Set(queue+4,std::uint32_t(17));
     Check(std::strcmp(Verify(base,0x3000000,m,before,after),"owner_or_queue_changed")==0);
+    // --- The generalized preload contract (W2) ---------------------------------
+    {
+        namespace pc=mgscoop::equipment_preload_contract;
+        pc::Snapshot pb,pa;
+        const std::uint16_t one46[]{46},one9[]{9},both[]{46,9},dup[]{46,46};
+        m=Ready();General(m);
+        Check(pc::Capture(base,0x3000000,m,one46,1,pb)==nullptr && pb.item_count==1 && pb.items[0].action==pc::Action::none &&
+              pb.items[0].entry==4 && pb.items[0].hash_count==4 && pb.expected_count==4 && pb.new_hashes==4 &&
+              pb.expected[0]==package && pb.expected[3]==hashes[3]);
+        Check(std::strcmp(pc::Verify(base,0x3000000,m,pb,pa),"queue_growth")==0);
+        AppendPreload(m,pb);Check(pc::Verify(base,0x3000000,m,pb,pa)==nullptr && pa.queue_count==6);
+        // A gun without an entry is built into the first unused entry; nothing is evicted.
+        m=Ready();General(m);
+        Check(pc::Capture(base,0x3000000,m,one9,1,pb)==nullptr && pb.items[0].action==pc::Action::build && pb.items[0].entry==5 &&
+              pb.items[0].type==2 && pb.expected[0]==package9 && pb.new_hashes==4);
+        AppendPreload(m,pb);
+        Check(std::strcmp(pc::Verify(base,0x3000000,m,pb,pa),"built_entry_identity")==0);
+        m.Set(cache+5*0x38+0x34,std::uint8_t(3));m.Set(info+5*0x90+0x5E,std::uint16_t(9));m.Set(info+5*0x90+0x78,std::uint8_t(2));
+        Check(pc::Verify(base,0x3000000,m,pb,pa)==nullptr);
+        m.Set(info+2*0x90+0x10,std::uint8_t(1));
+        Check(std::strcmp(pc::Verify(base,0x3000000,m,pb,pa),"cache_entry_changed")==0);
+        // Two ids: shared dependency hashes are appended once.
+        m=Ready();General(m);
+        Check(pc::Capture(base,0x3000000,m,both,2,pb)==nullptr && pb.expected_count==5 && pb.new_hashes==5 &&
+              pb.items[1].action==pc::Action::build);
+        // An unprotected entry of the id gains only the protect bit.
+        m=Ready();General(m);m.Set(cache+4*0x38+0x34,std::uint8_t(1));
+        Check(pc::Capture(base,0x3000000,m,one46,1,pb)==nullptr && pb.items[0].action==pc::Action::protect);
+        AppendPreload(m,pb);Check(std::strcmp(pc::Verify(base,0x3000000,m,pb,pa),"cache_entry_changed")==0);
+        m.Set(cache+4*0x38+0x34,std::uint8_t(3));Check(pc::Verify(base,0x3000000,m,pb,pa)==nullptr);
+        // Refusals before the call.
+        m=Ready();General(m);m.Set(refs+4*4,std::uint32_t(1));
+        Check(std::strcmp(pc::Capture(base,0x3000000,m,one46,1,pb),"cache_shared")==0);
+        m=Ready();General(m);for(unsigned i=5;i<48;++i) m.Set(cache+i*0x38+0x34,std::uint8_t(1));
+        Check(std::strcmp(pc::Capture(base,0x3000000,m,one9,1,pb),"cache_evict")==0);
+        Check(pc::Capture(base,0x3000000,m,one46,1,pb)==nullptr);
+        m=Ready();General(m);m.Set(queue+4,std::uint32_t(5));
+        Check(std::strcmp(pc::Capture(base,0x3000000,m,one9,1,pb),"queue_room")==0);
+        m=Ready();General(m);
+        Check(std::strcmp(pc::Capture(base,0x3000000,m,dup,2,pb),"duplicate_id")==0);
+        Check(std::strcmp(pc::Capture(base,0x3000000,m,one9,0,pb),"ids")==0);
+        const std::uint16_t alias[]{873},type9[]{301},nopkg[]{302};
+        Check(std::strcmp(pc::Capture(base,0x3000000,m,alias,1,pb),"equip_range")==0);
+        m.Set(base+0x2A70920+8+301*2,std::uint16_t((393<<6)|9));
+        Check(std::strcmp(pc::Capture(base,0x3000000,m,type9,1,pb),"type")==0);
+        m.Set(base+0x2A70920+8+302*2,std::uint16_t((393<<6)|1));
+        m.Set(base+mgscoop::equipment_stock_writer_contract::PackageRowRva(302),std::array<std::uint64_t,3>{parts,package9,3});
+        Check(std::strcmp(pc::Capture(base,0x3000000,m,nopkg,1,pb),"package_row")==0);
+        m=Ready();General(m);m.Set(base+0x2349348+64*16,std::uint64_t(0));
+        Check(std::strcmp(pc::Capture(base,0x3000000,m,one46,1,pb),"dependency_hash")==0);
+        m=Ready();General(m);m.Set(base+0x2A82C30,std::uintptr_t(1));
+        Check(std::strcmp(pc::Capture(base,0x3000000,m,one46,1,pb),"player_not_null")==0);
+        // Readback refusals: another hash, an old entry rewritten, moved storage.
+        m=Ready();General(m);Check(pc::Capture(base,0x3000000,m,one46,1,pb)==nullptr);AppendPreload(m,pb);
+        m.Set(queueData+5*8,std::uint64_t(77));
+        Check(std::strcmp(pc::Verify(base,0x3000000,m,pb,pa),"expected_hash_not_queued")==0);
+        m=Ready();General(m);Check(pc::Capture(base,0x3000000,m,one46,1,pb)==nullptr);AppendPreload(m,pb);
+        m.Set(queueData,std::uint64_t(101));
+        Check(std::strcmp(pc::Verify(base,0x3000000,m,pb,pa),"old_queue_prefix_changed")==0);
+        m=Ready();General(m);Check(pc::Capture(base,0x3000000,m,one46,1,pb)==nullptr);AppendPreload(m,pb);
+        m.Set(queue+4,std::uint32_t(32));
+        Check(std::strcmp(pc::Verify(base,0x3000000,m,pb,pa),"owner_or_queue_changed")==0);
+        Check(std::strcmp(pc::ActionName(pc::Action::build),"build")==0 && std::strcmp(pc::ActionName(pc::Action::protect),"protect")==0);
+    }
     std::printf("equipment_stock_contract_tests: %u checks passed; game_reads=0 native_calls=0\n",checks);
 }

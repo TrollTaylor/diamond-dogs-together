@@ -361,7 +361,8 @@ off: no turn, but the gun twisted that far.
 `look` = the partner's eyes (instance 1's `T+0x20` + 1.6 m up) plus 100 m along
 the remote's live v3 look `(sin yaw cos pitch, -sin pitch, cos yaw cos pitch)`
 (the convention of `0xFFAC00` and `0x1042F80`); `point` uses the sender's own
-aim direction once input frame v5 carries it (until then it falls back to the
+aim direction once a later input frame carries it (input frame v5 is the
+reload/switch gun group, without an aim point; until then it falls back to the
 look and says `src=look`). Inside block 1's drain window, right after the
 magazine mirror and before the job, `partner_aim_point::Step` writes it where
 the synchronizer would: `Q+0x10[1].xyz` (w kept) and record 1 of
@@ -653,6 +654,252 @@ reachability, owner-stamp, EVADE census and reference assertions).
 - The ammo experiment (`MGS_LOCAL_STOCK46_AMMO_TEST`) is superseded by the
   mirror; it stays research-only and is not used by the weapons scenario.
 
+### The partner's own reload (R1..R6, `partner_native_reload`)
+
+Status (2026-10-09, branch `wp/weapons2`): implemented, fixture-tested, not
+yet run. Static analysis of `mgsvtpp.exe` 1.0.15.4; every site below is in
+`tools/generate_partner_contract.py --check` (446 code sites, 101 vtable
+slots) and in the runtime code gate.
+
+- **What the hidden runs showed.** Body 1 already enters its own native
+  reload when the remote's R reaches it: at the R tick the ring's gun3c0 goes
+  `0x40060 -> 0x4040062` (aiming) or to `0x4000040` (holstered), exactly the
+  reload enter `0x1077A36..0x1077AA6` (`rec+0x3C0 = ((aim | 0x200002) << 5) |
+  (old & 0xFFBFFFDF)`) plus the transition bit 1 (`0x1040A78`). About 1 s
+  later the magazine mirror wrote the remote's refilled magazine into body 1
+  while it was still reloading; body 1's own completion `0x1054900` (the only
+  caller is the reload event handler `0x1079B6E`; its non-local branch
+  `0x1054A97` builds the new magazine from the shadow `rec+0x3E8`, written at
+  the enter `0x107833C`) then wrote 8 of 9 and the reload mode (bit 26, cleared
+  only by the exit `0x10790AA`) did not leave for 1..3 s.
+- **Why the old counters stayed 0.** Gun phase 6 (`0x103EB70`, jump-table
+  entry 6 of the gun iface dispatcher `0x1041000`) clears `rec+0x3DF` and
+  `rec+0x3C0` bits 12/20/24/25 (`0x103F99C`); all seven phases run inside the
+  drain, so a read after the job never sees bit 20 or 24. `mag.reload_edges`
+  only counted R edges on which the mirror wrote.
+- **R1 telemetry.** `gun.mode` (the current mode `rec+0x2C0`, written by the
+  transition `0x1040A88` from the mode table `0x2C556A0`: 7 aim, 8 weapon
+  change, 11/12 reload `0x1077840`; the checker emulates the table's static
+  initializer `0x20252F0`), `gun.b26`, `gun.upper_req` (`*(Q+0x20)[1]`, 5 =
+  reload, `0x1077A0A`), `gun.m3e4/m3e6/m3e8`, ring fields `gmode`/`rmode`. The
+  **post-phase-1 probe** reads instance 1's record right after
+  `svc28(root1, 1)` inside a drain (the same nesting the look write uses after
+  phase 0): `reload.probe1.b20/b24/shots/mode_changes/mode`.
+- **R2 wire.** Input frame v5 (116 bytes, payload 88): `[84]` gun flags
+  (valid, in hand, aiming, reloading, changing), `[85]` the sender's
+  `rec+0x2C0`, `[86]` `reload_seq` (+1 per entry into 11/12 its tick sees),
+  `[87]` `switch_seq` (+1 per change of its current slot); the v3 `inv_slot`
+  byte carries the sender's current slot. v1..v4 still decode; a v4-only
+  build refuses 116-byte frames, so v5 goes out only after the peer's own v5
+  (or as a probe every 2 s; "Wire").
+- **R3 event machine** (`native/partner_reload.cpp`, pure, driver tick): a
+  remote reload start (counter moved, mode 11/12) with the native gun window
+  armed, the weapon gate passing, a gun class, the reload gate and CanReload
+  taps RELOAD through the existing input overlay (`kTapFrames` windows: the
+  press word while aiming, the hold classifier's tap when holstered), retried
+  every 250 ms up to 3 taps until body 1 shows 11/12; `entered` ->
+  `complete` when the mode leaves, `stuck` after 2.5 s. Fallbacks (the plain
+  mirror, no animation): `inactive|weapon|body|cls|gate|no_reload|timeout|
+  remote_done`. Holstered and empty-magazine automatic reloads arrive the
+  same way (the sender's mode, not its pad). `partner.trigger rtap=1` (worker
+  `run partner rtap=1`) forces one test tap.
+- **R4 freeze and reconcile** (`MirrorMag`): with `raw|event` the mirror
+  writes nothing while the remote reloads (v5 flag), while body 1 is in 11/12
+  (unless stuck) or while the machine holds; the first write afterwards (the
+  reconcile) also writes `rec+0x3E8` (the completion's base) so a later
+  completion starts from the mirrored magazine. An R edge no longer
+  re-asserts the remote's magazine (only with `mirror`). A change of body 1's
+  slot `rec+0x3DA` rewrites the magazine of the new weapon.
+- **R5.** With `event` and a live v5 group the remote's raw RELOAD (also
+  CARRY, the same bit) is stripped from its sample (`Config.sample_strip`,
+  not compared by SameArm); the overlay tap still delivers it. A v4 remote
+  keeps the raw R.
+- Settings: `mirror` (today's behaviour, the lab.ini default), `raw` (freeze
+  and reconcile only; isolates "the mirror broke it"), `event` (R2..R6; the
+  worker gun stage and Play-OfflineCoop).
+
+### Weapon switching (W1..W6, `partner_native_slot`)
+
+- **How an instance switches** (exe, contract-pinned): each instance has an
+  equipment row `*(Q+0xC0) + id*0x3A` (`0x11AD240`); the low nibble of
+  `+0x36` is its current slot. Gun phase 0 (`0x103AED0`, its only caller
+  `0x103E044`) compares it with the slot in hand `rec+0x3D9` (with
+  `rec+0x3DE == 7`) and sets `rec+0x3C0` bit 7; with no gun mode active the
+  same phase activates the slot's weapon at once (`0x103E049 -> 0x105FDB0`),
+  while aiming the aim decider goes to mode 8 (`0x1072D12`, the native
+  weapon-change sequence `0x1074070`). An empty handle (`>> 16 == 0xFFFF`)
+  un-equips (`0x105FED2`). The pad's weapon bits only reach UI code: they stay
+  masked.
+- **W4 slot follower** (hook, drain window before block 1's job): instance
+  1's nibble gets the remote's v5 slot (0..2) the way SetCurrentSlot
+  `0x11AFA80` writes it for a non-local id (`Q+0x17C |= 2`, the nibble,
+  `row+0 = (row+2+2*slot) & 0x7FF`; the checker proves the non-local exit
+  `0x11AFE4B` is reached before any call for types 0/1/2), only to a slot the
+  driver's plan admits and whose handle holds the planned equip. `call`
+  (lab only; play runs `write`) calls `0x11AFA80(ctl, 1, slot, 0, 0, 0)`
+  through the pinned controller slot. Verdicts (`partner_slot=write|refused;
+  reason=..`): `same|wait|plan|chain|online|owner|mode|empty|mismatch|
+  readback|fault|other|no_v5`; refusals count once per (slot, switch_seq).
+- **Plan** (`native/partner_slots.cpp`): per slot `same` (body 1 holds the
+  remote's base id), `sub` (another weapon of the same type, the tier C
+  substitute), `empty`, `other`, `unknown`; only `same|sub` are admitted.
+  Body 1 carries what the writers gave it: the stock46 writer only the back
+  slot (plan `empty,same,empty`: the hip or the secondary refuses with
+  `empty` and body 1 keeps its gun), the generalized writer below each slot's
+  tier A1 (`same`) or tier C (`sub`) target.
+- **W5 gate.** FIRE and RELOAD pass only while body 1's weapon is the
+  remote's (raw equip or its manifest base) and body 1 is not mid-switch
+  (`rec+0x3C0` bit 7 or mode 8: `weapon.gate=switching`); FIRE additionally
+  needs a qualified bullet type (`weapon.gate=projectile` otherwise: shot
+  class 3 at `0x13030B7` goes to `gm+0x210`, not filtered). The allow-list is
+  the bullet categories 1 Assault, 2 Handgun, 3 Submachinegun, 4 Sniper,
+  5 Shotgun, 6 Machinegun (the EquipIdTable `EQP_TYPE_*` names joined with the
+  H2 capture of the runtime type table); 7 GrenadeLauncher, 8 Missile and
+  anything else keep FIRE masked. The plan's tier C substitute of the slot
+  carrying the remote's in-hand base counts as the remote's weapon
+  (`GateIn.substitute`).
+
+### Generalized preload and writer (W2/W3, `partner_native_equip`)
+
+Status (2026-10-09, branch `wp/weapons2`): implemented, fixture-tested, not
+yet run. Static analysis of `mgsvtpp.exe` 1.0.15.4;
+`python tools/generate_equip_writer_pins.py --check` asserts every static fact
+below from the retail bytes and regenerates `native/equipment_stock_writer_pins.hpp`
+(106 SHA-256 gates: the 92 stock46 gates unchanged plus 14 for the
+generalized pieces), which both writers and the preload receipt check at
+runtime before acting (`full_body_gate`).
+
+- **The stock46 contract, parameterized.** The writer contract
+  (`equipment_stock_writer_contract.hpp`) takes a `Target`; `kStock46` is
+  the qualified stock46 contract constant for constant (the existing fixture
+  tests run unchanged against it). `Derive` builds a target for any stock gun
+  id 1..0x22F from the executable tables and the runtime banks, pure reads:
+  - type/row: `packed = u16[types+8+id*2]` (`A2A3E0`/`A2A520` for ids below
+    0x230: `packed & 0x3F`, `packed >> 6`); types 1..8 only (`DB6AC0` and
+    `DC3700` serve no others; aliases 871..876 and blueprints 0x230+ refused);
+  - slot: ChangeEquip `11AC4AA` and the lower writer `120A5D2` agree (the
+    generator emulates both): types 1/5/7 hip (0), 4/6/8 back (1), 2/3
+    secondary (2); with the qualified request flags 4 ChangeEquip also calls
+    SetCurrentSlot for the new slot (`11AC4A0..11AC57B`);
+  - GunBasic recipe (`0x2C25C50 + (row-1)*12`, row 1..514), the package row
+    `0x2C20FD0 + id*24` (`A03C40`: parts hash, main FPK, flags 2), the parts
+    class not `0x1094` (the ordinary `ADDEEB` branch);
+  - the dependency packages exactly as `DB6AC0` selects them: recipe lanes
+    0/1/2/3/10 through the LUT getters (`2349A90`, `2349B80`, `2349C00`,
+    `2349CC0`, `2349A78`), the id tables `2349980` (two), `23499E0`,
+    `2349A10` (two), `2349A08`, `2349A68`, hashes `2349348 + id*16`
+    (`DB69E0`); stock46 derives `[36,55,64]`;
+  - the optional asset: `[2A6B400+8+id*8]` for ids up to 0x7C (`1307EF2`);
+    a larger id or a zero descriptor takes the NULL optional (family `plain`):
+    `ADE358` still renders on the main bank with no asset, `1E1921F` skips
+    every asset branch, size `512 + align16(8g+88)` (640 at g 5; at most 1824
+    for g <= 153, within the 2048 stride). Family `optional` admits only the
+    qualified stock46 header shape (n4/a6, parameters 3: 1184 bytes at g 5);
+  - the cache entry: the first used entry of the id (`DC3755..DC376A`),
+    identity type/receiver, flags 3 (protected) and refs 0 for A1/C (never an
+    entry the viewer references).
+  Per-slot layout (the generator asserts it): the binder record
+  `binder30 + slot*12` (`B0C720`), the effect record `body628 + slot*0x50`
+  (`9C5980`), the attachment items `13*slot .. 13*slot+12` (`B0CF80`).
+- **W2 preload** (`SelectEquipPreloadReceipt`, the Lua chunk after the stock46
+  one in `lua/coop/equipment_stock_preload.lua`): at the natural allocation
+  owner of any partner-body mission (30010, 30020, 30050), after the ghost
+  equipment groups returned, one public `TppEquip.RequestLoadToEquipMissionBlock`
+  with the received manifest's base ids (this mission's manifest, else the
+  last one of the same link session; the first mission of a session has none:
+  `no_manifest`, nothing spent). Per id: a stock gun of its slot's type with
+  a package row; then the joint preflight (`equipment_preload_contract.hpp`)
+  predicts `A03C40`/`A02290`/`DC3700` exactly: the hashes it appends, the
+  queue room (no growth at `A03D2D`), and per id the cache path: the existing
+  used entry gains only the protect bit, or the first unused entry is built;
+  an id whose entry the viewer references (`cache_shared`) is dropped, and
+  an eviction (`cache_evict`: no unused entry) drops ids from the end. The
+  readback after the call requires the same owners and queue storage, the
+  old prefix, exactly the new hashes, the built entries now used by their ids
+  and every other entry byte-identical (nothing evicted).
+- **W3 writer** (`equipment_stock_writer::ObserveGeneral`, the observer's
+  `ObserveEquipWriter` on the natural mission owner, every ~100 ms): per
+  slot, the two slots the remote does not hold first and its current slot
+  last (flags 4 leaves body 1 on the last dispatched slot), one at a time:
+  - plan: tier A1 the manifest's base id itself (its own protected,
+    unreferenced cache entry); tier C (`substitute` only) a resident
+    protected unreferenced stock gun of the same type, the same receiver
+    first, then the lowest id, whose packages are loaded in this mission (its
+    whole `Capture` holds); tier D refuse (the reason is logged; the slot
+    stays empty);
+  - readiness: the target's full preflight (the stock46 checks with its own
+    data: packages ready in the mission entry, parts/optional assets, cache
+    identity and refs 0, the new handle ring slot, the delayed resource map,
+    all 64 banks, the render arena), the target slot's handle, metadata,
+    binder record, effect record and attachments empty (a filled slot is
+    never replaced), the other remote slots exactly what this allocation
+    dispatched, at most 50 observations;
+  - dispatch: the pins, a second preflight compared lease for lease, then
+    the same SEH-contained ChangeEquip request as stock46 (instance 1,
+    flags 4, stock/ammo 0) with the target's id;
+  - readback: only the target slot's handle changed, to
+    `(idx<<16)|(id<<5)|type`; the entry's refs +1; the new metadata row
+    names the id and its cache entry; the slot's binder record has it current
+    or pending; local equipment and every occupied cache entry unchanged; a
+    bound handle maps an initially qualified resource with the target's
+    render size. One attempt per slot per allocation; a re-realized body
+    (epoch) ends the remaining slots. The viewer's weapon/ammo vars block
+    (`vars+0x548..+0x670`) and shoot count (`vars+0x144`) are read directly
+    before and after the call (`leak.ammo_leaks` only covers block 1's job):
+    any change (or an unreadable read) is `call_unverified;
+    reason=local_ammo_changed|local_vars_unread` and every remaining slot of
+    the allocation refuses (`prior_local_change`);
+  - nothing is spent while a gate is down: the pending slot's `reason` names
+    the first failing gate (`gun_profile|setting_stock46|offline_branch|
+    lab_inactive|saves_not_redirected|partner_off|code_gate|shutting_down|
+    link_not_connected|mode|allocation_source|ghost_groups|terminating|
+    dynamite_session|mission|mission_owner|body|engine_chain|census`), logged
+    on change as `equip_writer=waiting; reason=..` (at most 8 lines per
+    allocation). The dispatch order is fixed once a manifest is known (the
+    remote's live v5 slot, else the manifest's `inv_slot`), never from a
+    zeroed manifest.
+
+### Release gating and play mode
+
+- Runtime keys only (`partner_native_reload`, `partner_native_slot`,
+  `partner_native_equip`). Not named in lab.ini, they follow the native gun
+  profile (`ResolveWeaponDefaults`, the last step of `ParseLabConfig`, after
+  any profile expansion): `event`/`write`/`substitute` with
+  `partner_drive=native` and `partner_native_gun=1` (the worker gun stage,
+  Play-OfflineCoop, play's `partner_native_profile=gun`), else
+  `mirror`/`off`/`stock46`. Reload and slot are inert unless the native drive
+  runs the gun stage (the arbiter active, an armed non-neutral window); `call`
+  is downgraded to `write` in play (`Settings.play_mode`).
+- No new CMake option: the generalized preload compiles with
+  `MGS_LOCAL_STOCK46_PRELOAD_TEST` and the generalized writer with
+  `MGS_LOCAL_STOCK46_WRITER_TEST`, so `tools/build.ps1 -ReleaseGun` (the three
+  stock46 gun pieces ON) ships them unchanged. With `partner_native_equip`
+  other than `stock46` the stock46 preload and writer stay off and the
+  generalized pieces answer; with `stock46` it is the reverse.
+- The follower and the mirror refuse with S_IS_ONLINE or `P+0x204` bit 18
+  set, instance 1 as the local id, or any identity check failing; they never
+  touch the viewer's own inventory (`leak.ammo_leaks` watches it). The
+  follower reads the slot's live handle before the plan: a slot body 1 never
+  had holds 0 (the stock46 preflight requires all seven zero), which, like
+  `>> 16 == 0xFFFF`, is equip 0 and refuses `empty` (also the plan's tier).
+- The game window closing (`PartnerShutdown`, `partner_defer::ShuttingDown`)
+  ends the generalized preload and writer and the stock46 preload and writer
+  (admission `shutting_down`), like the deferral and the drain windows.
+- Play runs `partner_native_slot=call` as `write` from `Configure` and the
+  trigger on (the telemetry shows what runs; `BuildArm` downgrades again).
+- The generalized pieces' admission (`EquipPiecesAdmitted`): the native gun
+  profile with `manifest|substitute`, the offline-v1 branch on the redirected
+  saves (`lab::SavesRedirected()`; play refuses to run without them), the
+  partner and the code gate, and either the one-PC lab (`mode=lab`, lab.ini
+  present) or two-PC play (`mode=play` with link v2 `connected`). Then the
+  natural allocation/mission owner, any `SupportsPartnerBody` mission equal
+  to the allocation and partner mission, this allocation's ghost-group
+  receipt (authorized and returned), no termination or restore pending, no
+  Dynamite session, the exact-build pins and every native preflight. The
+  stock46 pieces keep their own gates (lab or play on the copied saves,
+  30010 only). The preload's log line names the first failing admission
+  (`equip_preload=refused; reason=disabled; admission=..`).
+
 ### Loadout mirroring
 
 - **Sender** (pure reads, at most once per second): `vars.weapons[0..2]`
@@ -670,10 +917,8 @@ reachability, owner-stamp, EVADE census and reference assertions).
 - **Receiver**: stores it (`partner_equip=manifest; ...`) and logs the apply
   verdict for the back slot against instance 1's loaded equip
   (`partner_equip=apply; ...; result=already|unsupported|no_weapon|unknown;
-  writer=stock46`). Only stock46 is qualified to load on body 1; the
-  generalized writer (any equip id) and a generalized preload remain open
-  (each needs its own native qualification; replacing a filled slot was never
-  qualified).
+  writer=stock46`). What body 1 can load is the generalized writer's business
+  (above); replacing a filled slot is never done.
 
 ### Telemetry and logs
 
@@ -697,13 +942,81 @@ that the partner's reload never touches the viewer's inventory) and `equip` (`tx
 `partner_fire_census; ...`, `partner_native_gun; ...` with the record fields,
 `partner_equip=sent|manifest|apply`.
 
+Reload and switch (2026-10-09): `gun` also carries `mode` (rec+0x2C0), `b26`,
+`upper_req`, `m3e4`/`m3e6`/`m3e8`, `hand_slot` (rec+0x3D9) and `slot_src`
+(rec+0x3DE); `mag` adds `reload_seen`, `frozen`, `reconciles`, `m3e8_writes`;
+`weapon` adds `gate` (match|mismatch|switching|projectile), `body_type` and
+`switching`; new objects `reload` (`setting`, `state`, `last`, the remote's
+v5 `remote_valid`/`remote_reloading`/`remote_mode`/`remote_seq`, `hold`,
+`stuck`, `starts`, `taps`, `entered`, `completed`, `stuck_n`, `fallbacks`,
+`body_entries`, `sample_strip`, `probe1` {`b20`, `b24`, `shots`,
+`mode_changes`, `mode`}) and `slots` (`setting`, `remote_slot`, `remote_seq`,
+`body_slot`, `hand_slot`, `target`, `read_ok`, `handles` [{equip, type} or
+null] x3, `plan` x3, `ok_mask`, `writes`, `refused`, `last`, `faulted`,
+`switching`); the ring adds `gmode`, `rmode`, `hslot` (null unread). Log
+lines: `partner_reload=start|tap|retry|entered|complete|stuck|fallback|
+tap_refused; setting=..; state=..; body_mode=..; remote_mode=..; seq=..;
+mag=..; m3e8=..; taps=..; reason=..`, `partner_reload=rtap; queued=1`,
+`partner_slot=plan; follow=..; body_slot=..; tiers=..; body=..; remote_base=..;
+ok=..`, `partner_slot=write|refused; reason=..; target=..; ...`,
+`partner_weapon=projectile|type_ok; ...`, `partner_input=fault; phase=slot`
+(the follower off until MissionStart).
+
+Generalized writer and preload: `slots.writer` (`active`, `dispatches`,
+`bound`, `refused`, `slots` x3 {`want` the manifest's base id, `equip` the
+target, `tier` a1|c|d|none, `family` optional|plain|none, `state`
+idle|plan_wait|readiness|tracking|bound|queued|refused|unverified, `reason`,
+`handle`}); `equip` adds `setting`, `resident_fields` and `resident` (the used
+stock cache entries `[index, id, type, receiver, flags, refs]`, null before
+the census) and `preload` {`ids`, `verdict`
+authorized|refused|queued_verified|receipt_refused, `reason`, `new_hashes`}.
+Log lines: `equip_preload=authorized|refused; reason=..; preflight=..;
+mission=..; want=..; ids=..; dropped=<id>:<why>; actions=<id>:none|protect|build@<entry>;
+new_hashes=..; queue=..; evict=0`, `equip_preload=queued_verified|receipt_refused;
+readback=..`, `equip_resident; mission=..; used=..; entries=<index>:<id>/t<type>/r<receiver>/f<flags>/n<refs>,..`,
+`equip_writer=plan|readiness_wait|handle_bound|handle_queued|observation_stopped|refused|call_unverified;
+reason=..; mission=..; slot=..; want=..; equip=..; tier=..; family=..; type=..; cache=..;
+expected_handle=..; result=..; mismatch_rva=..; dispatches=..; replace_filled=0; evict=0`,
+`equip_writer_package=read_only; ...` and `equip_writer_optional=read_only; present=..; ...`
+(once per slot's readiness).
+
 ### Proof (hidden worker; coordinator only)
 
 `pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-native-weapons.txt -PartnerProfile native -NativeStage gun -BuildProfile research`
 
 The scenario header lists the evidence per section (aim, single shot, held
-fire, reload aiming/holstered, weapon switch 1/2, crouched fire, both
-directions, leak captures, loadout, census, noise record).
+fire, reload aiming/holstered/automatic, the test tap, weapon switch 1/2/back
+and while aiming, fire after each switch, crouched fire, both directions,
+leak captures, loadout, census, noise record).
+
+- **RA (reload A/B)**: the command above with `-LabSetting
+  partner_native_reload=mirror`, then `=raw`, then the default (`event`).
+  Pass (raw/event): the ring's `gmode` 11/12 near the shooter's reload, `mag.writes`
+  flat while it is 11/12 (`mag.frozen` grows), `gmode` back to 7/6 within
+  2.5 s (`partner_reload=complete`, never `stuck`), `gun.mag == gun.cap`
+  afterwards with at most one `mag.reconciles`, `leak.ammo_leaks` 0; event
+  also `reload.taps`/`reload.entered` per remote reload, `fallbacks` 0 and
+  `auto-reload` entering 11/12 without an R press. mirror should reproduce the
+  old fight (a write during 11/12, `partner_reload=stuck` or 8 of 9).
+- **SB (generalized writer and native switch)**: the default run
+  (`substitute`, `write`). Pass: per slot `equip_writer=plan` then
+  `handle_bound` with its tier (a1 or c) and `slots.writer.slots[s].state`
+  bound; `slots.handles` filled for 0, 1 and 2 (or a logged tier d reason);
+  `equip_preload=queued_verified` from the second mission of a session; in
+  `switch1`/`switch2` `partner_slot=write`, `slots.body_slot` ==
+  `remote_slot` and `gun.hand_slot` following within one capture (ring `gmode`
+  8 when it happens while aiming), `gun.body_equip` == the plan's equip,
+  `weapon.gate=match`; `switch1-fire`/`switch2-fire`/`switch-back-fire`
+  suppressed shots for bullet types; `switch2-reload` a reload with the
+  secondary; the guest direction the same; `leak.ammo_leaks` 0 and the
+  viewer's own slots unchanged. Variants: `-LabSetting partner_native_equip=manifest`
+  (A1 only), `=stock46` (the SA control below).
+- **SA (slot follower, stock46 only)**: `-LabSetting partner_native_equip=stock46`,
+  then also `-LabSetting partner_native_slot=call`. Pass: `switch1`/`switch2` give
+  `partner_slot=refused; reason=empty` (or `plan`), `slots.body_slot` stays 1,
+  `gun.hand_slot` 1, no unarmed body, FIRE stripped (`weapon.gate=mismatch`);
+  `switch3` -> `remote_slot` 1, no write (`same`), `weapon.gate=match`, and
+  `switch-back-fire` shows suppressed shots.
 
 ## Configuration
 
@@ -729,6 +1042,14 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_hold` | own, net (the sender's 12-frame words under the native drive) |
 | `partner_input_edge_repeats` | 2 (2..8; play default 5; receivers accept up to 8) |
 | `partner_native_aimpt` | off, look, point (the aim-target mirror: instance 1's network aim slot gets the remote's aim; gun stage and Play: look; the debug command `aimpt` with off, look, point, lab or status) |
+| `partner_native_reload` | mirror, raw, event (the partner's own reload: see "Weapons"; the gun stage and Play-OfflineCoop run event) |
+| `partner_native_slot` | off, write, call (the slot follower; the gun stage and Play-OfflineCoop run write; play runs call as write) |
+| `partner_native_equip` | stock46, manifest, substitute (what body 1 carries: see "Generalized preload and writer"; the gun stage and Play-OfflineCoop run substitute) |
+
+`partner_native_reload`, `partner_native_slot` and `partner_native_equip` not
+named in lab.ini follow the native gun profile: `event`, `write` and
+`substitute` with `partner_drive=native` and `partner_native_gun=1` (so play's
+`partner_native_profile=gun` gets them), otherwise the first value listed.
 
 `partner_native_profile=loco|gun` expands, after the other keys, into exactly
 the stage `Get-WorkerPartnerSettings` emits (lab_config `ApplyNativeProfile`;
@@ -737,7 +1058,10 @@ deferral on, send, hook, hold own, words hpr, wrap window, cam sandbox, local
 main, recon track, slot body, rates mirror, noise filter, no P+0x218 window,
 and mask 0x2240006 (loco) or 0x224005E with gun, visual fire, look, triggers
 and right stick (gun). A key named in the same lab.ini keeps its value (the
-`partner_native_aim=looksrc` A/B run). In play the raw native keys stay
+`partner_native_aim=looksrc` A/B run). The weapons keys resolve last
+(`ResolveWeaponDefaults`, after the expansion), so the gun profile, in play
+too, runs `partner_native_reload=event`, `partner_native_slot=write` and
+`partner_native_equip=substitute`. In play the raw native keys stay
 refused (`kPlayRefusedNativeDrive` 0x20000: `partner_drive`,
 `partner_input_defer`, `partner_native_aim=lookcam`, `partner_input_local=all`,
 `partner_input_p218_allow`, `partner_native_noise=keep`; a refused key gets
@@ -749,8 +1073,10 @@ without one); `defer=` is always refused there
 lab-only experiments lab.ini refuses there (`local=all`, `naim=lookcam`:
 `reason=play; key=local|naim`); `ngun=1` and `nfire=visual` need the gun
 profile (`reason=play_profile; key=ngun|nfire`), so the trigger only narrows
-the profile. The trigger's other keys apply.
-partner.trigger: `drive= defer= local= naim= ngun= nfire=0|off|1|visual steer=`.
+the profile; `nslot=call` runs as `write` in play. The trigger's other keys apply.
+partner.trigger: `drive= defer= local= naim= ngun= nfire=0|off|1|visual steer=
+nreload=mirror|raw|event nslot=off|write|call rtap=1` (the last also as the
+worker debug command `partner rtap=1`).
 
 To enable (lab only), on both copies: the animated partner settings plus
 `partner_drive=native partner_input_send=1 partner_input_hook=1 partner_input_hold=own
@@ -759,7 +1085,8 @@ partner_input_local=main partner_recon=track partner_input_slot=body
 partner_input_defer=census|on partner_input_mask=0x2240006 partner_native_aim=off`
 (loco stage also `partner_native_rates=mirror`; gun stage: mask `0x224005E`,
 `partner_native_gun=1 partner_native_fire=visual partner_native_aim=look
-partner_input_triggers=1 partner_input_rstick=1 partner_native_rates=mirror`;
+partner_input_triggers=1 partner_input_rstick=1 partner_native_rates=mirror
+partner_native_reload=event partner_native_slot=write`;
 the worker gate admits exactly these three stages, so a gun stage without fire
 needs a gate change; the gun stage also admits `partner_native_aim=looksrc`,
 which the coordinator selects with `-LabSetting partner_native_aim=looksrc`
@@ -775,9 +1102,10 @@ Online play (2026-10-09, `wp/online-native`, fixture-tested; hidden runs
 pending). Everything above runs unchanged in `mode=play`; what a real link
 adds:
 
-- **Sender**: input frames v4 go out whenever `partner_input_send=1`,
-  whatever this copy's own drive (TickOnline reads instance 0's gun record and
-  rate record for a copy that shows clips; pure reads). Edge sets repeat
+- **Sender**: input frames v4 (v5 once the peer sent v5, see "Wire") go out
+  whenever `partner_input_send=1`, whatever this copy's own drive (TickOnline
+  reads instance 0's gun record, rate record and slot and steps the reload/switch
+  counters for a copy that shows clips; pure reads). Edge sets repeat
   `partner_input_edge_repeats` times (default 2, play 5); the wire `edge_rep`
   counter saturates at 2 (1, 2, 2, ...), so a 0.11.1 receiver, which refuses
   edge_rep > 2, still accepts every repeat (receivers dedupe by edge_seq).
@@ -838,6 +1166,21 @@ stall hold are pure; the gun strip reads the already pinned gun record
 
 ## Wire
 
+- Input frame v5 (116 bytes, payload 88): v4 plus `[84]` gun flags
+  (`GunFlag` valid 1, in hand 2, aiming 4, reloading 8, changing 0x10; without
+  valid the next three bytes are 0), `[85]` the sender's gun mode `rec+0x2C0`,
+  `[86]` `reload_seq`, `[87]` `switch_seq`; a v5 sender fills the v3 `inv_slot`
+  byte with its current slot. A build without v5 refuses every 116-byte
+  frame (all its input, not just the gun group), so the native sender
+  negotiates: v4 frames until the peer was seen sending v5 in this link
+  session (`partner_net::PeerSendsInputV5`, sticky until the receive reset of
+  a new session or `ResetRemote`; like v4, whatever the sender's own drive, so
+  a copy showing clips still feeds the peer's native reload and slot
+  follower), plus one v5 probe every
+  `kInputV5ProbeMs` (2 s) that lets a v5 peer learn ours (an older peer drops
+  only the probe; the edge sets repeat in the next frames). Log
+  `partner_input=v5_peer; probes=N` once per mission when the peer's v5
+  arrived.
 - Input frame v4 (112 bytes, payload 84; one version for both native work
   packages): v3 plus `[72..77]` the sender's dash, crawl and crawl factor
   rates (milli 500..2000 each, xflags `Rates` 0x10; zero without, always with
@@ -932,6 +1275,28 @@ evidence per stage).
   noise body 1 might make on this machine), which matches "each PC perceives
   for its own player". Instance 1's own completed reload runs the store
   setter with its notifier (game code, not ours): `leak.ammo_leaks` watches it.
+- Generalized preload and writer (untested at runtime): the plain family
+  (the NULL optional of ids above 0x7C) was never dispatched by us; its
+  render size is derived from the bytes (`512 + align16(8g+88)`), not observed.
+  The lower writer's slot-0 and slot-2 branches (`120A945` onwards) and the
+  per-slot attachment/effect records never ran for instance 1 (pinned bytes,
+  the same ChangeEquip ABI and request as stock46). Derived targets accept
+  any parsed package count from 1 to the named count (stock46 keeps its
+  measured [2,1,1,1]). The optional family admits only stock46's header
+  shape (n4/a6, 3 parameters); other optional shapes refuse
+  (`stock_optional_shape`) and fall to a substitute. The preload may build a
+  cache entry (`DC3470`, the path `TppRevenge` uses for mission weapons) but
+  never evicts; a built entry is protected (flags 3) and stays for the
+  mission. Tier C depends on what the mission's soldiers carry (per area,
+  per mission); a substitute looks and handles like another gun of the same
+  type. The bullet allow-list (types 1..6) comes from the EquipIdTable
+  categories, not from the shot-class read (`0x13030B7` through the group's
+  `+0x68` service, not pinned): an assault rifle's second mode (an underbarrel
+  launcher, `[r14+0x7F]`) would be a projectile; its toggle is not in the
+  native mask. Each allocation's dispatches take one ChangeEquip call per
+  slot; a dispatch whose readback refuses (`call_unverified`) leaves whatever
+  the game did (SEH-contained, no rollback), and the later slots then refuse
+  (`other_slot_unexpected`).
 - Facing (untested at runtime): whether the game keeps the governor's xform in
   idle acts (the old one-shot yaw rule did) and in aim acts (the contest guard
   latches if not); an idle turn starts only while the body's own yaw rate
@@ -948,7 +1313,7 @@ evidence per stage).
   only two state-specific writers outside the Q methods); the sighted-remote
   turn threshold (27 vs 80 degrees) until body 1 can carry the remote's
   weapon; the bone path (`aim.path1`); `look` parallax for near aim points
-  (`point` with input frame v5 removes it); guards on the viewer's machine
+  (`point` with an aim point on the wire would remove it); guards on the viewer's machine
   reacting to the partner aiming at them.
 - No test asserts mechanically that no CodeGate caller runs after a lazy
   install; today CodeGate runs once at configure and `partner_upper_probe::Install`

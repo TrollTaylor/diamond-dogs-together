@@ -29,10 +29,11 @@ param(
     # runs used. The real saves are backed up and re-checked either way.
     [ValidateSet('real','lab')][string]$SaveSeed='real',
     # Extra lab.ini keys for this run: allow-listed lab experiments, the facing
-    # A/B keys, the name tag keys, the Steam self-test and the online-play A/B
-    # keys (Invoke-WorkerScenario "labsetting" lines); key=value for both
-    # copies, host:key=value / guest:key=value for one.
-    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|partner_native_aimpt=(off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(compact|full|off)|partner_native_net=(lab|online)|partner_native_stall=(neutral|hold)|partner_native_hold=(own|net)|partner_input_edge_repeats=[2-8])$')][string[]]$LabSetting=@(),
+    # A/B keys, the name tag keys, the Steam self-test, the online-play A/B
+    # keys and the reload/switch/writer A/B keys (Invoke-WorkerScenario
+    # "labsetting" lines); key=value for both copies, host:key=value /
+    # guest:key=value for one.
+    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(mirror|raw|event)|partner_native_slot=(off|write|call)|partner_native_equip=(stock46|manifest|substitute)|partner_native_aimpt=(off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(compact|full|off)|partner_native_net=(lab|online)|partner_native_stall=(neutral|hold)|partner_native_hold=(own|net)|partner_input_edge_repeats=[2-8])$')][string[]]$LabSetting=@(),
     # lab: the one-PC lab (OfflineLab). play: the play rehearsal: both copies
     # run mode=play exactly as Play-Coop writes it, moved onto 127.0.0.1 with
     # the worker-only play_rehearsal=1, the real identity and a fresh link
@@ -66,6 +67,9 @@ $labKeys=@($LabSetting|ForEach-Object{$_ -creplace '^(host|guest):',''})
 if(@($labKeys|Where-Object{$_ -clike 'partner_native_*'}).Count -and $PartnerProfile -cne 'native'){throw '-LabSetting partner_native_* needs -PartnerProfile native.'}
 if($labKeys -ccontains 'partner_native_aim=looksrc' -and $NativeStage -cne 'gun'){throw '-LabSetting partner_native_aim=looksrc needs -NativeStage gun.'}
 if(@($labKeys|Where-Object{$_ -clike 'partner_native_aimpt=*'}).Count -and $NativeStage -cne 'gun'){throw '-LabSetting partner_native_aimpt needs -NativeStage gun.'}
+if(@($labKeys|Where-Object{$_ -cmatch '^partner_native_(reload|slot|equip)='}).Count -and $NativeStage -cne 'gun'){
+    throw '-LabSetting partner_native_reload / partner_native_slot / partner_native_equip need -NativeStage gun.'
+}
 if($AmmoExperiment -and $BuildProfile -cne 'research'){throw '-AmmoExperiment needs -BuildProfile research.'}
 # The play rehearsal runs what Play-Coop can write: the clip partner or the native loco/gun profile.
 if($Mode -ceq 'play'){$null=Get-WorkerPlayPartnerSettings $PartnerProfile $NativeStage}

@@ -444,7 +444,7 @@ int main() {
         pi::Fill3(v3, src);
         Check(v3.version == 3 && v3.xflags == 0x0F && v3.heading_mrad == static_cast<std::int16_t>(std::lround((3.5 - 2 * 3.14159265358979323846) * 1000)) &&
               v3.inv_slot == 2 && v3.equip_rev == 9 && pi::ValidPacket(v3), "Fill3 builds a valid v3 packet");
-        std::uint8_t frame[input_frame_size_v4]{};
+        std::uint8_t frame[input_frame_size_v5]{};
         Check(input_frame_size_v3 == 100 && encode_input_frame_any(0x55, 7, 42, v3, frame) == 100, "v3 encodes 100 bytes");
         Check(frame[wire::header_size + 1] == 3 && frame[24] == 72 && frame[wire::header_size + 66] == 0x0F &&
               frame[wire::header_size + 67] == 2 && frame[wire::header_size + 68] == 9, "v3 version, payload length, xflags, inv, rev");
@@ -455,7 +455,7 @@ int main() {
               got.xflags == 0x0F && got.inv_slot == 2 && got.equip_rev == 9 && got.held == 0x8u && got.ly == -32767 && seq == 42,
               "v3 round trip");
         // v2 via the generic encoder; a legacy sender still encodes v2.
-        std::uint8_t any[input_frame_size_v4]{};
+        std::uint8_t any[input_frame_size_v5]{};
         Check(encode_input_frame_any(0x55, 7, 43, pkt, any) == input_frame_size && decode_input_frame(any, input_frame_size, s, e, seq, got) &&
               got.version == 2 && got.xflags == 0 && got.look_pitch == 0.0f, "legacy sender still encodes v2");
         std::uint8_t v2frame[input_frame_size]{};
@@ -517,7 +517,7 @@ int main() {
         Check(v4.version == 4 && (v4.xflags & pi::XFlag::Rates) && (v4.xflags & pi::XFlag::Heading) && !(v4.xflags & pi::XFlag::Mag) &&
               v4.rate_dash == 1200 && v4.rate_crawl == 1000 && v4.rate_crawl_factor == 1200 && v4.mag == 0 && v4.mag_cap == 0 &&
               pi::ValidPacket(v4), "Fill4 builds a valid v4 packet (rates, no magazine)");
-        std::uint8_t frame[input_frame_size_v4]{};
+        std::uint8_t frame[input_frame_size_v5]{};
         Check(input_frame_size_v4 == 112 && encode_input_frame_any(0x55, 7, 50, v4, frame) == 112, "v4 encodes 112 bytes");
         Check(frame[wire::header_size + 1] == 4 && frame[24] == 84 && frame[wire::header_size + 66] == (pi::XFlag::Rates | pi::XFlag::Heading) &&
               frame[wire::header_size + 72] == 0xB0 && frame[wire::header_size + 73] == 0x04 && frame[wire::header_size + 74] == 0xE8 &&
@@ -547,7 +547,7 @@ int main() {
         auto refused4 = [&](void (*edit)(pi::InputPacket&)) {
             pi::InputPacket b = v4;
             edit(b);
-            std::uint8_t f4[input_frame_size_v4]{};
+            std::uint8_t f4[input_frame_size_v5]{};
             return !pi::ValidPacket(b) && encode_input_frame_any(0x55, 7, 52, b, f4) == 0;
         };
         Check(refused4([](pi::InputPacket& b) { b.rate_dash = 499; }), "rate below 0.5 refused");
@@ -575,10 +575,10 @@ int main() {
             pi::InputPacket g = v4;
             g.xflags = static_cast<std::uint8_t>(g.xflags | pi::XFlag::Gamepad | pi::XFlag::Equip);
             g.gun_equip = 0x1234;
-            std::uint8_t gf[input_frame_size_v4]{};
+            std::uint8_t gf[input_frame_size_v5]{};
             pi::InputPacket gg{};
             Check(pi::ValidPacket(g) && encode_input_frame_any(0x55, 7, 53, g, gf) == 112 && gf[wire::header_size + 82] == 0x34 &&
-                      gf[wire::header_size + 83] == 0x12 && decode_input_frame(gf, sizeof(gf), s, e, seq, gg) && gg.gun_equip == 0x1234 &&
+                      gf[wire::header_size + 83] == 0x12 && decode_input_frame(gf, input_frame_size_v4, s, e, seq, gg) && gg.gun_equip == 0x1234 &&
                       (gg.xflags & pi::XFlag::Gamepad) && (gg.xflags & pi::XFlag::Equip),
                   "v4 gamepad flag and gun equip round trip");
         }
@@ -586,6 +586,45 @@ int main() {
         // The single-feature v4 drafts (104: magazine only, 108: rates only) never decode.
         Check(!decode_input_frame(frame, 104, s, e, seq, got) && !decode_input_frame(frame, 108, s, e, seq, got),
               "104- and 108-byte frames are refused");
+        // Input frame v5 (the partner's own reload and weapon switch): v4 plus the gun group at 84..87 and the
+        // sender's current slot in the v3 inv_slot byte 67.
+        {
+            pi::V5Source src5{};
+            src5.v4 = src;
+            src5.v4.v3.inv_slot = 1;
+            src5.gun_valid = true;
+            src5.gun_flags = static_cast<std::uint8_t>(pi::GunFlag::InHand | pi::GunFlag::Aiming | pi::GunFlag::Reloading);
+            src5.gun_mode = 11; src5.reload_seq = 0x81; src5.switch_seq = 0x42;
+            pi::InputPacket v5 = pkt;
+            pi::Fill5(v5, src5);
+            std::uint8_t f5[input_frame_size_v5]{};
+            pi::InputPacket g5{};
+            Check(input_frame_size_v5 == 116 && input_packet_size_v5 == 88 && pi::ValidPacket(v5) &&
+                      encode_input_frame_any(0x55, 7, 54, v5, f5) == 116, "v5 encodes 116 bytes");
+            Check(f5[wire::header_size + 1] == 5 && f5[24] == 88 && f5[wire::header_size + 67] == 1 &&
+                      f5[wire::header_size + 84] == (pi::GunFlag::Valid | pi::GunFlag::InHand | pi::GunFlag::Aiming | pi::GunFlag::Reloading) &&
+                      f5[wire::header_size + 85] == 11 && f5[wire::header_size + 86] == 0x81 && f5[wire::header_size + 87] == 0x42 &&
+                      f5[wire::header_size + 72] == 0xB0,
+                  "v5 version, payload length 88, slot at 67, flags/mode/reload_seq/switch_seq at 84..87, the v4 rates kept");
+            Check(decode_input_frame(f5, sizeof(f5), s, e, seq, g5) && g5.version == 5 && g5.gun_flags == v5.gun_flags &&
+                      g5.gun_mode == 11 && g5.reload_seq == 0x81 && g5.switch_seq == 0x42 && g5.inv_slot == 1 && g5.rate_dash == 1200 &&
+                      seq == 54, "v5 round trip");
+            std::uint8_t t5[input_frame_size_v5];
+            std::memcpy(t5, f5, sizeof(t5)); t5[wire::header_size + 84] = 0x20 | pi::GunFlag::Valid;
+            Check(!decode_input_frame(t5, sizeof(t5), s, e, seq, g5), "unknown gun flags refused on decode");
+            std::memcpy(t5, f5, sizeof(t5)); t5[wire::header_size + 84] = 0;
+            Check(!decode_input_frame(t5, sizeof(t5), s, e, seq, g5), "a gun mode without the valid flag refused on decode");
+            std::memcpy(t5, f5, sizeof(t5)); t5[wire::header_size + 1] = 4;
+            Check(!decode_input_frame(t5, sizeof(t5), s, e, seq, g5), "116-byte frame with version 4 refused");
+            Check(!decode_input_frame(f5, input_frame_size_v4, s, e, seq, g5), "a v5 frame cut to 112 bytes is refused");
+            src5.gun_valid = false;
+            pi::Fill5(v5, src5);
+            Check(encode_input_frame_any(0x55, 7, 55, v5, f5) == 116 && f5[wire::header_size + 84] == 0 && f5[wire::header_size + 85] == 0 &&
+                      decode_input_frame(f5, sizeof(f5), s, e, seq, g5) && g5.gun_flags == 0, "v5 without the gun group");
+            pi::InputPacket v4b = v5;
+            v4b.version = 4;
+            Check(encode_input_frame_any(0x55, 7, 56, v4b, f5) == 112, "a v4 packet still encodes 112 bytes");
+        }
     }
     // 12. Input frame v4 (native weapons): the sender's magazine (xflags Mag, mag at 78, cap at 80).
     {
@@ -603,13 +642,13 @@ int main() {
         Check(v4.version == 4 && (v4.xflags & pi::XFlag::Mag) && (v4.xflags & pi::XFlag::Look) && !(v4.xflags & pi::XFlag::Rates) &&
               v4.mag == 4 && v4.mag_cap == 5 && v4.rate_dash == 0 && v4.equip_rev == 3 && pi::ValidPacket(v4),
               "Fill4 builds a valid v4 packet (magazine, no rates)");
-        std::uint8_t frame[input_frame_size_v4]{};
+        std::uint8_t frame[input_frame_size_v5]{};
         Check(encode_input_frame_any(0x55, 7, 50, v4, frame) == 112, "v4 with a magazine encodes 112 bytes");
         Check(frame[wire::header_size + 1] == 4 && frame[24] == 84 && frame[wire::header_size + 72] == 0 && frame[wire::header_size + 76] == 0 &&
               frame[wire::header_size + 78] == 4 && frame[wire::header_size + 80] == 5, "v4 version, payload length 84, mag at 78, cap at 80");
         std::uint64_t s = 0; std::uint32_t e = 0, seq = 0;
         pi::InputPacket got{};
-        Check(decode_input_frame(frame, sizeof(frame), s, e, seq, got) && got.version == 4 && got.mag == 4 && got.mag_cap == 5 &&
+        Check(decode_input_frame(frame, input_frame_size_v4, s, e, seq, got) && got.version == 4 && got.mag == 4 && got.mag_cap == 5 &&
               (got.xflags & pi::XFlag::Mag) && got.look_pitch == 0.5f && got.equip_rev == 3 && got.held == 0x18u && seq == 50,
               "v4 round trip (magazine)");
         Check(!decode_input_frame(frame, input_frame_size_v3, s, e, seq, got), "a v4 frame cut to 100 bytes is refused");
@@ -634,7 +673,7 @@ int main() {
         bad = src; bad.mag_valid = false;
         f = pkt; pi::Fill4(f, bad);
         Check(pi::ValidPacket(f) && !(f.xflags & pi::XFlag::Mag) && encode_input_frame_any(0x55, 7, 51, f, frame) == 112 &&
-              decode_input_frame(frame, sizeof(frame), s, e, seq, got) && got.version == 4 && got.mag == 0 && !(got.xflags & pi::XFlag::Mag),
+              decode_input_frame(frame, input_frame_size_v4, s, e, seq, got) && got.version == 4 && got.mag == 0 && !(got.xflags & pi::XFlag::Mag),
               "a v4 frame without a magazine round-trips");
         pi::InputPacket v2 = pkt;
         v2.mag = 1;
@@ -649,7 +688,7 @@ int main() {
         pi::Fill4(b4, both);
         Check(pi::ValidPacket(b4) && (b4.xflags & pi::XFlag::Rates) && (b4.xflags & pi::XFlag::Mag) &&
               encode_input_frame_any(0x55, 7, 53, b4, frame) == 112 && frame[wire::header_size + 66] == b4.xflags &&
-              decode_input_frame(frame, sizeof(frame), s, e, seq, got) && got.rate_dash == 1100 && got.rate_crawl == 900 &&
+              decode_input_frame(frame, input_frame_size_v4, s, e, seq, got) && got.rate_dash == 1100 && got.rate_crawl == 900 &&
               got.rate_crawl_factor == 1500 && got.mag == 4 && got.mag_cap == 5 && got.look_yaw == -1.0f && got.equip_rev == 3,
               "v4 carries the rates and the magazine together");
         // Fill3 (a v3 sender) clears both v4 groups.

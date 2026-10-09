@@ -303,6 +303,12 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_input_edge_repeats'; Json = 'input_edge_repeats'; Kind = 'int'; Min = 2; Max = 8 },
     # The aim-target mirror (docs/native-puppet.md "Facing"): off, look, point.
     @{ Key = 'partner_native_aimpt'; Json = 'native_aimpt'; Kind = 'enum'; Values = @('off', 'look', 'point') },
+    # The partner's own reload and weapon switch (docs/native-puppet.md "Weapons"): mirror / off by default;
+    # the native gun stage and Play-OfflineCoop run event / write.
+    @{ Key = 'partner_native_reload'; Json = 'native_reload'; Kind = 'enum'; Values = @('mirror', 'raw', 'event') },
+    @{ Key = 'partner_native_slot'; Json = 'native_slot'; Kind = 'enum'; Values = @('off', 'write', 'call') },
+    # What body 1 carries (the generalized writer, W2/W3): stock46 by default; the gun stage and Play-OfflineCoop run substitute.
+    @{ Key = 'partner_native_equip'; Json = 'native_equip'; Kind = 'enum'; Values = @('stock46', 'manifest', 'substitute') },
     @{ Key = 'crash_probe'; Json = 'crash_probe'; Kind = 'bool' },
     # Debug "Spawn enemy here" native placement (docs/debug-menu.md): lab only,
     # default off and written only when set.

@@ -57,7 +57,9 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    nametag_crosshair=aim|always|off, nametag_name=[A-Za-z0-9_]{1,16};
                                    partner_native_face=off|idle|aim; partner_native_aim=looksrc and
                                    partner_native_aimpt=off|look|point (the aim-target mirror; the gun stage
-                                   emits look), native gun stage only;
+                                   emits look), partner_native_reload=mirror|raw|event,
+                                   partner_native_slot=off|write|call, partner_native_equip=stock46|manifest|substitute
+                                   (the reload/switch/writer A/B runs), native gun stage only;
                                    steam_selftest=0|1|2, lab only, never sends to a peer;
                                    online play A/B: partner_native_net=lab|online, partner_native_stall=neutral|hold,
                                    partner_native_hold=own|net, partner_input_edge_repeats=2..8;
@@ -85,7 +87,7 @@ param(
     [switch]$AmmoExperiment,
     [ValidateSet('real','lab')][string]$SaveSeed='lab',
     # key=value for both copies or host:key=value / guest:key=value for one (scenario "labsetting" lines).
-    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|partner_native_aimpt=(off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(compact|full|off)|partner_native_net=(lab|online)|partner_native_stall=(neutral|hold)|partner_native_hold=(own|net)|partner_input_edge_repeats=[2-8])$')][string[]]$LabSetting=@(),
+    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(mirror|raw|event)|partner_native_slot=(off|write|call)|partner_native_equip=(stock46|manifest|substitute)|partner_native_aimpt=(off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(compact|full|off)|partner_native_net=(lab|online)|partner_native_stall=(neutral|hold)|partner_native_hold=(own|net)|partner_input_edge_repeats=[2-8])$')][string[]]$LabSetting=@(),
     # lab (default) or play: the play rehearsal (docs/two-pc-play.md "Hidden play rehearsal"):
     # both copies in mode=play as Play-Coop writes it, on 127.0.0.1, real identity.
     [ValidateSet('lab','play')][string]$Mode='lab',
@@ -113,7 +115,7 @@ $lines+=$Step
 $steps=@($lines|ForEach-Object{$_.Trim()}|Where-Object{$_ -and !$_.StartsWith('#')})
 # labsetting lines configure the session; they are not steps.
 foreach($line in @($steps|Where-Object{$_ -cmatch '^labsetting(\s|$)'})) {
-    if($line -cnotmatch '^labsetting\s+(?:(host|guest)\s+)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(?:aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(?:off|idle|aim)|partner_native_aim=looksrc|partner_native_aimpt=(?:off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(?:compact|full|off)|partner_native_net=(?:lab|online)|partner_native_stall=(?:neutral|hold)|partner_native_hold=(?:own|net)|partner_input_edge_repeats=[2-8])$'){
+    if($line -cnotmatch '^labsetting\s+(?:(host|guest)\s+)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(?:aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(?:off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(?:mirror|raw|event)|partner_native_slot=(?:off|write|call)|partner_native_equip=(?:stock46|manifest|substitute)|partner_native_aimpt=(?:off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(?:compact|full|off)|partner_native_net=(?:lab|online)|partner_native_stall=(?:neutral|hold)|partner_native_hold=(?:own|net)|partner_input_edge_repeats=[2-8])$'){
         throw "Invalid scenario step: '$line'"
     }
     $LabSetting=@($LabSetting)+@($(if($Matches[1]){$Matches[1]+':'+$Matches[2]}else{$Matches[2]}))
@@ -122,6 +124,10 @@ $steps=@($steps|Where-Object{$_ -cnotmatch '^labsetting(\s|$)'})
 if(@($LabSetting|Where-Object{$_ -clike 'partner_native_*'}).Count -and $PartnerProfile -cne 'native'){throw '-LabSetting partner_native_* needs -PartnerProfile native.'}
 if($LabSetting -ccontains 'partner_native_aim=looksrc' -and $NativeStage -cne 'gun'){throw '-LabSetting partner_native_aim=looksrc needs -NativeStage gun.'}
 if(@($LabSetting|Where-Object{$_ -cmatch '^((host|guest):)?partner_native_aimpt='}).Count -and $NativeStage -cne 'gun'){throw '-LabSetting partner_native_aimpt needs -NativeStage gun.'}
+# The partner's own reload and weapon switch A/B keys (docs/native-puppet.md "Weapons"): gun stage only.
+if(@($LabSetting|Where-Object{($_ -creplace '^(host|guest):','') -cmatch '^partner_native_(reload|slot|equip)='}).Count -and $NativeStage -cne 'gun'){
+    throw '-LabSetting partner_native_reload / partner_native_slot / partner_native_equip need -NativeStage gun.'
+}
 if(!$steps.Count){throw 'No scenario steps.'}
 # Validate every step before anything starts.
 $roleNames=@('host','guest','both')

@@ -78,6 +78,8 @@ struct Addresses {
     std::uintptr_t rate_sp_vtable, rate_rec_vtable;
     // Native weapons: the loadout base-id tables (runtime-filled image data).
     std::uintptr_t equip_types, equip_types_vtable, gun_basic;
+    // Native weapons (switch): the equip controller vtable and the inventory (store) vtables.
+    std::uintptr_t equip_ctl_vtable, store_vtable, store_vtable_alt;
 };
 Addresses AddressesFor(const void* base) noexcept;
 
@@ -326,6 +328,16 @@ struct Gun1 {
     partner_native::GunFields fields;
     std::uint8_t b3d5, slot;
     std::uintptr_t prim, rec;
+    // Reload and weapon switch (docs/native-puppet.md "Weapons"; with fields_ok):
+    // the current gun mode rec+0x2C0 (7 aim, 8 weapon change, 11/12 reload), the
+    // slot in hand rec+0x3D9, the slot source rec+0x3DE (7: the equip
+    // controller's current slot), the reload shadows rec+0x3E4/+0x3E6/+0x3E8 (the
+    // completion base) and the upper-body request *(Q+0x20)[id] (5 = reload;
+    // upper_ok false when unread).
+    std::uint8_t mode_cur, hand_slot, slot_src;
+    std::uint16_t m3e4, m3e6, m3e8;
+    bool upper_ok;
+    std::uint8_t upper_req;
 };
 bool ReadGun1(const Addresses& addresses, const State& state, Gun1& out) noexcept;
 // Instance `index`'s movement rate record (docs/native-puppet.md "Rates";
@@ -383,6 +395,28 @@ struct Loadout {
     std::uint16_t base[3];
 };
 bool ReadLoadout(const Addresses& addresses, const State& state, Loadout& out) noexcept;
+
+// Instance k's weapon slots (docs/native-puppet.md "Weapons" W4/W6; pure
+// reads): ctl = *(P+0xC8) with the equip controller vtable 0x23C1720 and
+// ctl+0x18 == P; the inventory Y = *(ctl+8) with the store vtable 0x23894B0 or
+// 0x23895D0, stride u32 Y+0xC (1..16, >= 3), the row count u32 Y+0x10 and the
+// handles u32 [Y+0x40][id*stride + slot] (id = ids[k] == k); the equipment row
+// *(Q+0xC0) + id*0x3A: u16 +0 the current equip, +2/+4/+6 slots 0/1/2 and the
+// current slot (+0x36 & 0xF). Refusals: instance | ids | ctl | ctl_vtable |
+// inventory | stride | rows.
+struct Slots {
+    const char* refusal;
+    std::uintptr_t ctl, inventory, row;
+    std::uint32_t stride;
+    std::uint32_t handles[3];
+    std::uint16_t row_current, row_slots[3];
+    std::uint8_t nibble;  // row+0x36 & 0xF
+};
+bool ReadSlots(const Addresses& addresses, const State& state, std::uint32_t k, Slots& out) noexcept;
+// The equip type of stock id `equip` (< 649) from the equip type table
+// (packed & 0x3F), admitted only on the stock46 sanity checks ReadLoadout uses
+// (vtable, packed 46 == 0x6244); false when unread or 0.
+bool EquipType(const Addresses& addresses, std::uint32_t equip, std::uint8_t& type) noexcept;
 
 // --- Round 3: direct motion (pure reads plus one restoration write) ---------
 // g = *(P+0x48) == 0x2C1BF20 (g); block 1 as ResolveBlock checks it; iface =

@@ -84,6 +84,66 @@ partner_native, partner_input, partner_recon, partner_driver, player_sync,
 worker_protocol, steam_shim_patches, worker_session, worker_checks,
 build_profile, lab_scripts and friend_package tests).
 
+## October 9, 2026: weapons2 review fixes (fixture-tested, hidden runs pending)
+
+`wp/weapons2` review. Input frame v5 is negotiated (v4 plus a v5 probe every
+2 s until the peer's own v5 arrives), so a peer build without v5 keeps its
+whole native input stream instead of refusing every 116-byte frame. Body 1's
+never-filled slots hold handle 0: the plan, the follower (`reason=empty`) and
+`slots.handles` now treat equip 0 as empty. The generalized writer digests the
+viewer's ammo/weapon vars and shoot count around each dispatch
+(`call_unverified; reason=local_ammo_changed` stops the allocation), reports
+why it waits (`equip_writer=waiting; reason=..`), orders the slots only once a
+manifest is known, and, like the preload and both stock46 pieces, stops when
+the game window closes (`shutting_down`). Play runs `partner_native_slot=call`
+as `write` from Configure. The preload line names the failing admission.
+Residual (documented): the bullet allow-list rests on the weapon categories;
+the scenario now checks every `probe1.shots` increase against
+`fire.suppressed`.
+
+## October 9, 2026: the generalized preload and writer (fixture-tested, hidden runs pending)
+
+`wp/weapons2` ([details](native-puppet.md#generalized-preload-and-writer-w2w3-partner_native_equip)).
+Body 1 can now carry the other player's three loadout slots or same-type
+substitutes in every partner-body mission (30010, 30020, 30050), so the slot
+follower switches natively and the gate keeps FIRE/RELOAD live after a switch.
+The stock46 writer contract is parameterized (`kStock46` unchanged); `Derive`
+builds any stock gun's target from the executable tables and runtime banks
+(type -> slot, package row, `DB6AC0` dependency packages, optional or NULL
+optional, cache entry). W2: one public `RequestLoadToEquipMissionBlock` of the
+manifest's base ids per allocation, refused before the call unless nothing is
+evicted, the queue has room and no viewer-referenced entry is touched; exact
+readback. W3: per slot one dispatch per allocation (tier A1 the base id, tier C
+a resident protected stock gun of the same type, tier D refuse), never a filled
+slot, full preflight and readback per slot. FIRE: the bullet categories 1..6;
+grenade launchers and missiles stay masked. `partner_native_equip=stock46|manifest|substitute`;
+the weapons keys follow the native gun profile when not named (play gets
+event/write/substitute). No new CMake option (`-ReleaseGun` ships it).
+`tools/generate_equip_writer_pins.py --check`: 106 gates (stock46's 92
+unchanged) and the static facts. Fixture evidence only.
+
+## October 9, 2026: the partner's own reload and weapon switch (fixture-tested, hidden runs pending)
+
+`wp/weapons2` ([details](native-puppet.md#the-partners-own-reload-r1r6-partner_native_reload)).
+The hidden weapons runs showed body 1 already starting its own native reload
+from the remote's R; the magazine mirror then wrote the refilled magazine in
+the middle of it and the reload mode never left. New: input frame v5 (the
+sender's gun mode, a reload counter, a switch counter and its current slot),
+the event machine (`partner_native_reload=event`: overlay RELOAD taps until
+body 1 enters 11/12, holstered and automatic reloads included, the raw R/CARRY
+stripped from the remote's sample), the mirror's freeze and reconcile with
+`rec+0x3E8` (`raw|event`), the post-phase-1 probe (bit 20/24 are only visible
+inside the drain), the slot follower (`partner_native_slot=write|call`: instance
+1's equipment row gets the remote's slot the way SetCurrentSlot writes it for a
+non-local id; the game then switches natively), the slot plan and the
+generalized weapon gate (mid-switch and unqualified-type strips). Defaults:
+lab.ini `mirror`/`off`; the worker gun stage and Play-OfflineCoop run
+`event`/`write`. Contract checker: 446 code sites, 101 vtable slots (the mode
+table emulation, the reload op table, SetCurrentSlot's non-local data path).
+Not done: the generalized writer/preload (other weapons on body 1 need their
+own runtime qualification captures); until then switching to the hip or
+secondary slot refuses (`empty`) and body 1 keeps stock46. Fixture evidence only.
+
 ## October 8, 2026: Steam online transport (fixture-tested, never run)
 
 Two-PC play can now connect **online through Steam** with no port

@@ -40,7 +40,10 @@
 #include "mgscoop/partner_defer.hpp"
 #include "mgscoop/partner_caps_wire.hpp"
 #include "mgscoop/partner_equip_wire.hpp"
+#include "mgscoop/equipment_stock_writer.hpp"
 #include "mgscoop/partner_fire_filter.hpp"
+#include "mgscoop/partner_reload.hpp"
+#include "mgscoop/partner_slots.hpp"
 #include "mgscoop/partner_native.hpp"
 #include "mgscoop/partner_native_net.hpp"
 #include "mgscoop/partner_player.hpp"
@@ -295,7 +298,20 @@ struct Hooks {
     void (*publish_aim)(void* context, const partner_aim_point::Publication& publication) noexcept = nullptr;
     void (*aim_stats)(void* context, partner_aim_point::Stats& out) noexcept = nullptr;
     bool (*read_aim)(void* context, const partner_player::State& state, partner_player::AimRead& out) noexcept = nullptr;
+    // The partner's weapon switch (docs/native-puppet.md "Weapons" W4/W6; may
+    // be null: the follower then has no plan and refuses): instance k's slots
+    // (partner_player::ReadSlots; 0 = the local player, the v5 sender's slot)
+    // and the equip type of a stock id (partner_player::EquipType).
+    bool (*read_slots)(void* context, const partner_player::State& state, std::uint32_t k, partner_player::Slots& out) noexcept = nullptr;
+    bool (*equip_type)(void* context, std::uint32_t equip, std::uint8_t& type) noexcept = nullptr;
+    // Input frame v5 negotiation (docs/native-puppet.md "Wire"; may be null:
+    // v5 always, both copies one build): whether the peer was seen sending v5
+    // (partner_net::PeerSendsInputV5).
+    bool (*peer_input_v5)(void* context) noexcept = nullptr;
 };
+// A native sender whose peer never sent v5 sends v4 frames plus one v5 probe
+// this often (an older build drops only the probe; the edge sets repeat).
+inline constexpr std::uint64_t kInputV5ProbeMs = 2000;
 // Native weapons cadences and caps.
 inline constexpr std::uint64_t kEquipReadMs = 1000;    // loadout read / manifest send at most this often
 inline constexpr unsigned kWeaponEventCap = 64;        // fire gate transitions, manifests sent, apply verdicts
@@ -364,6 +380,13 @@ struct Settings {
     PartnerNativeNoise nnoise;
     // The aim-target mirror (lab.ini; the debug command "aimpt" overrides it).
     PartnerNativeAimPt naimpt;
+    // The partner's own reload and weapon switch (docs/native-puppet.md
+    // "Weapons"): partner_native_reload and partner_native_slot (nreload=,
+    // nslot= triggers; play runs nslot=call as write).
+    PartnerNativeReload nreload;
+    PartnerNativeSlot nslot;
+    // What body 1 carries (lab.ini partner_native_equip; the observer runs the writers).
+    PartnerNativeEquip nequip;
     // Set only in the effective copy: the native settings apply this tick.
     bool native_active;
     // lab.ini mode=play (Configure): the trigger file enables the native drive
@@ -712,6 +735,11 @@ struct Mission {
     bool look_src_tried;
     // The 1 Hz partner_native_face line and the last placement's yaw verdict.
     unsigned face_lines;
+    // Input frame v5 negotiation: the last v5 probe, the probes sent and
+    // whether the peer's v5 was logged this mission.
+    std::uint64_t v5_probe_ms;
+    std::uint32_t v5_probes;
+    bool v5_peer_logged;
     std::int32_t place_yaw_err_mdeg;
     // --- Online play (docs/native-puppet.md "Online").
     // The receiver's link quality (re-entry gate) and the online log lines.
@@ -732,6 +760,41 @@ struct Mission {
     partner_player::AimRead aim_read;
     unsigned aim_lines;
     std::uint64_t aim_line_ms, aim_line_key;
+    // --- The partner's own reload and weapon switch (docs/native-puppet.md "Weapons").
+    // The overlay tap bumped this tick (a second tap in the same tick ORs its bits).
+    std::uint64_t tap_bump_ms;
+    bool tap_bumped;
+    // The receiver's event machine (partner_reload) and its last output (the
+    // Arm's reload_hold/reload_stuck); the sender's v5 counters.
+    partner_reload::Machine reload;
+    partner_reload::Out reload_out;
+    partner_reload::SenderState sender_gun;
+    LogCap reload_cap;
+    // The remote's latest live v5 gun group (remote_v5: GunFlag::Valid) and slot.
+    bool remote_v5;
+    std::uint8_t remote_gun_flags, remote_gun_mode, remote_reload_seq, remote_switch_seq, remote_slot;
+    // The local player's slots (the v5 sender's inv_slot) and body 1's (the
+    // follower's plan and telemetry), read once per native tick.
+    partner_player::Slots slots0, slots1;
+    bool slots0_ok, slots1_ok;
+    // The plan for body 1's slots (partner_slots) from the received manifest
+    // (types per manifest revision) and body 1's handles; the last logged key.
+    partner_slots::Plan slot_plan;
+    bool slot_plan_ok;
+    std::uint16_t slot_types_rev;
+    std::uint8_t slot_types[3];
+    bool slot_types_ok[3];
+    std::uint64_t slot_plan_key;
+    LogCap slot_cap;
+    // The follower's last logged verdict (hook totals: writes, refusals).
+    std::uint32_t slot_logged_writes, slot_logged_refused, slot_logged_last;
+    // The generalized weapon gate (W5): the verdict, body 1's in-hand type
+    // (kNull unread) and whether it is mid-switch.
+    partner_slots::Gate weapon_gate;
+    std::int32_t body_type;
+    bool body_switching;
+    // The last logged type verdict (partner_weapon=projectile|type_ok lines).
+    bool weapon_type_logged, weapon_type_logged_once;
 };
 
 struct Driver {
@@ -757,6 +820,8 @@ struct Driver {
     // tap= sequence: process-lifetime (the hook keeps its last seen value
     // across gens and missions, so a value is never reused).
     std::uint32_t tap_seq;
+    // rtap=1: one test reload tap through the event machine on the next native tick.
+    bool rtap_pending;
     // Round 4: a placement requested by a trigger (place=1, or a change of
     // apply/input/source), consumed by the next reconciliation step.
     partner_recon::PlaceReason recon_place_request;
@@ -776,6 +841,19 @@ struct Driver {
     std::uint32_t caps_logged_epoch;
     std::uint8_t caps_logged_drive, caps_logged_reason;
     std::uint32_t leak_strip;
+    // The generalized preload and writer (docs/native-puppet.md "Generalized
+    // writer"), process-lifetime: the last accepted manifest of any mission
+    // and its link session (the preload at the next allocation, before that
+    // mission's own manifest arrives), and what the observer (the natural
+    // allocation and mission owner) last reported; telemetry copies it.
+    partner_equip_wire::Manifest equip_cache;
+    bool equip_cache_have;
+    std::uint32_t equip_cache_epoch;
+    equipment_stock_writer::Status equip_status;
+    std::uint16_t preload_ids[3];
+    std::uint8_t preload_count;
+    char preload_verdict[24], preload_reason[32];
+    std::uint32_t preload_mission, preload_new_hashes;
     Mission mission;
 };
 

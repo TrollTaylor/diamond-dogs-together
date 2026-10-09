@@ -231,6 +231,8 @@ for _, move in ipairs({'xform', 'warp', 'hybrid', 'input'}) do
     end
 end
 for clip = 0, 12 do partnerPreset('partner dm=on dmplay=' .. clip) end
+-- The partner's own reload and weapon switch: the test tap and the A/B keys pass the owner guard.
+for _, text in ipairs({'partner rtap=1', 'partner nreload=event nslot=write', 'partner nreload=raw', 'partner nslot=call'}) do partnerPreset(text) end
 for _, text in ipairs({'teleport 1 2 3 nan', 'teleport 100001 2 3 0', 'teleport 1e2 2 3 0', 'step 101 0 0',
     'infinite_ammo 2', 'bookmark -1', 'bookmark 1.5', 'return 8', 'return 1', 'time 86400', 'time -1', 'time 1.1',
     'weapon hip EQP_ITEM_1', 'weapon hip EQP_WP_99999', 'weapon head EQP_WP_30101', 'weather unknown',

@@ -21,6 +21,14 @@ void Check(bool value, const char* label) {
 // the shared handoff.
 namespace tag = mgscoop::nametag;
 bool Near(float a, float b, float eps = 1e-3f) { return std::fabs(a - b) <= eps; }
+// One snapshot copy at a time: main reads many snapshots, and each by-value
+// temporary (about 20 KB with the native telemetry) would get its own stack
+// slot in one frame (stack overflow once the telemetry grows).
+const debug::Snapshot& Snap() {
+    static debug::Snapshot snapshot{};
+    snapshot = debug::GetSnapshot();
+    return snapshot;
+}
 // The game's projection (0x241b00, emulated in tools/generate_nametag_contract.py):
 // P00 = p*b, P11 = p*c, P20/P21 lens shift, P23 = 1, P33 = 0, depth near +1 / far -1.
 tag::Mat4 GameProjection(float p, float b, float c, float sx = 0.0f, float sy = 0.0f) {
@@ -372,16 +380,16 @@ int main() {
     debug::Command command{};
     Check(debug::Pop(command), "owner drains command");
     Check(std::strcmp(command.text, "teleport -123.5 456 789 180") == 0, "text preserved");
-    Check(command.generation == debug::GetSnapshot().generation, "mission generation bound");
+    Check(command.generation == Snap().generation, "mission generation bound");
     debug::Result(command.id, true, "verified_position");
-    Check(std::strcmp(debug::GetSnapshot().last_result, "verified_position") == 0, "accepted result visible");
-    const auto before = debug::GetSnapshot();
+    Check(std::strcmp(Snap().last_result, "verified_position") == 0, "accepted result visible");
+    const auto before = Snap();
     debug::Snapshot telemetry{};
     telemetry.mission = 30010;
     telemetry.stage = 3;
     telemetry.player_pos[0] = 123.5f;
     debug::Publish(telemetry);
-    const auto after = debug::GetSnapshot();
+    const auto after = Snap();
     Check(after.enabled && after.gameplay_ready && after.host && after.saves_redirected, "telemetry cannot disable lifecycle gates");
     Check(after.stage == 3 && after.player_pos[0] == 123.5f, "copied telemetry published");
     Check(after.last_id == before.last_id && after.completed == before.completed, "telemetry keeps action history");
@@ -395,15 +403,15 @@ int main() {
     }
     Check(!debug::Pop(command), "empty queue returns no command");
     Check(debug::QueueCommand("step 0 0 10"), "pre-travel command accepted");
-    const auto old_generation = debug::GetSnapshot().generation;
+    const auto old_generation = Snap().generation;
     debug::BeginMission(30020);
-    Check(debug::GetSnapshot().generation != old_generation && !debug::Pop(command), "travel discards old teleport");
+    Check(Snap().generation != old_generation && !debug::Pop(command), "travel discards old teleport");
     debug::LuaState(true, 255);
-    Check(debug::GetSnapshot().infinite_ammo && debug::GetSnapshot().bookmark_mask == 255, "Lua-owned cheat state copied");
+    Check(Snap().infinite_ammo && Snap().bookmark_mask == 255, "Lua-owned cheat state copied");
     debug::EndMission();
     Check(!debug::QueueCommand("position") && !debug::Pop(command), "termination refuses actions");
     debug::BeginMission(30050);
-    Check(!debug::GetSnapshot().infinite_ammo && debug::GetSnapshot().bookmark_mask == 0, "cheat state resets across scenes");
+    Check(!Snap().infinite_ammo && Snap().bookmark_mask == 0, "cheat state resets across scenes");
 
     debug::Configure(true, true, true);
     debug::BeginMission(30010);
@@ -414,7 +422,7 @@ int main() {
     };
     Check(!receipt(1, "clear 30010"), "undispatched metadata cannot authorize a UI list");
     Check(debug::QueueCommand("enemy_camps"), "camp request queued");
-    const auto queued_id = debug::GetSnapshot().last_id;
+    const auto queued_id = Snap().last_id;
     Check(!receipt(queued_id, "clear 30010"), "queued metadata must wait until owner dispatch");
     Check(debug::Pop(command), "camp owner dispatch");
     const auto camps_id = command.id;
@@ -453,7 +461,7 @@ int main() {
     Check(!receipt(spawn_request, "spawned 1 2 3 4294967296"), "unsigned entity overflow rejected");
     Check(receipt(spawn_request, "spawned -1000000000 0 1000000000 4294967295"), "signed coordinate and unsigned hash boundaries accepted");
     Check(!receipt(spawn_request, "spawned 1 2 3 1"), "same spawn cannot replay metadata");
-    auto enemy_snapshot = debug::GetSnapshot();
+    auto enemy_snapshot = Snap();
     Check(enemy_snapshot.enemy_camp_count == 32 && enemy_snapshot.enemy_route_count == 64 &&
           std::strcmp(enemy_snapshot.enemy_routes_camp, "afgh_test_cp") == 0, "copied camps/routes readable by render thread");
     Check(enemy_snapshot.enemy_spawn_valid && enemy_snapshot.enemy_spawn_hash == 0xffffffffu &&
@@ -461,13 +469,13 @@ int main() {
           "spawn readback remains exact signed mm");
     telemetry = {}; telemetry.mission = 99999; telemetry.world_configured = true; telemetry.world_effective = 3;
     debug::Publish(telemetry);
-    enemy_snapshot = debug::GetSnapshot();
+    enemy_snapshot = Snap();
     Check(enemy_snapshot.mission == 30010 && enemy_snapshot.enemy_camp_count == 32 && enemy_snapshot.enemy_route_count == 64 &&
           enemy_snapshot.enemy_spawn_valid, "telemetry cannot clobber owner mission or Lua enemy metadata");
     Check(enemy_snapshot.world_configured && enemy_snapshot.world_effective == 3, "new world telemetry published independently");
     debug::BeginMission(30020);
-    Check(!receipt(spawn_request, "spawned 1 2 3 1") && !debug::GetSnapshot().enemy_spawn_valid &&
-          debug::GetSnapshot().enemy_camp_count == 0, "travel clears metadata and previous-generation authorization");
+    Check(!receipt(spawn_request, "spawned 1 2 3 1") && !Snap().enemy_spawn_valid &&
+          Snap().enemy_camp_count == 0, "travel clears metadata and previous-generation authorization");
     Check(debug::QueueCommand("position") && debug::Pop(command), "unrelated owner request");
     Check(!receipt(command.id, "clear 30020"), "unrelated command cannot forge camp metadata");
     Check(debug::QueueCommand("enemy_routes absent_cp") && debug::Pop(command), "unknown camp request delivered for guarded refusal");
@@ -508,39 +516,39 @@ int main() {
     Check(first_id != 0 && debug::QueueCommandId("position") == first_id + 1, "QueueCommandId returns increasing ids");
     Check(debug::Pop(command) && command.id == first_id, "id popped in order");
     debug::Result(first_id, 2, "submitted_warp");
-    auto rs = debug::GetSnapshot();
+    auto rs = Snap();
     Check(rs.interim == 1 && rs.completed == 0 && rs.receipts[0].id == first_id && rs.receipts[0].status == 2,
           "interim result is a status-2 receipt and not completed");
     Check(std::strcmp(rs.receipts[0].command, "teleport 1 2 3 0") == 0, "receipt carries the dispatched command text");
     debug::Result(first_id, 1, "warp_position_readback;error_m=0.100");
-    rs = debug::GetSnapshot();
+    rs = Snap();
     Check(rs.completed == 1 && rs.receipts[0].id == first_id && rs.receipts[0].status == 0 && rs.receipts[1].id == 0,
           "final result replaces its interim receipt");
     Check(debug::Pop(command), "second command dispatched");
     debug::Result(command.id, 0, "position_unreadable");
-    rs = debug::GetSnapshot();
+    rs = Snap();
     Check(rs.completed == 2 && rs.rejected == 1 && rs.receipts[0].status == 1 && std::strcmp(rs.receipts[0].command, "position") == 0,
           "refused final result counted and paired by id");
     Check(debug::QueueCommandId("bad;text") == 0, "invalid text returns id 0");
-    rs = debug::GetSnapshot();
+    rs = Snap();
     Check(rs.receipts[0].id == 0 && rs.receipts[0].status == 3 && rs.rejected == 2 && rs.receipts[0].command[0] == 0,
           "queue refusal is a status-3 receipt with id 0 and no unsafe text");
     debug::Result(99999, 3, "bad code");
-    Check(debug::GetSnapshot().receipts[0].status == 3, "unknown result code ignored");
+    Check(Snap().receipts[0].status == 3, "unknown result code ignored");
     for (unsigned i = 0; i < 20; ++i) { Check(debug::QueueCommand("position") && debug::Pop(command), "receipt fill"); debug::Result(command.id, 1, "position=1,2,3;yaw=0"); }
-    rs = debug::GetSnapshot();
+    rs = Snap();
     Check(rs.receipts[15].id != 0 && rs.receipts[0].id == command.id, "receipt ring is bounded and newest first");
     debug::ClearHistory();
-    Check(debug::GetSnapshot().receipts[0].id == 0 && debug::GetSnapshot().completed == rs.completed, "ClearHistory empties only the log");
+    Check(Snap().receipts[0].id == 0 && Snap().completed == rs.completed, "ClearHistory empties only the log");
     // Spawn sync history rows (REMOTE_V1): id 0, "remote spawn_enemy", never a command or a counter.
     const auto remote = [](const char* text) { return debug::RemoteReceipt(text, std::strlen(text)); };
-    const auto completed_before = debug::GetSnapshot().completed;
+    const auto completed_before = Snap().completed;
     Check(remote("1 remote_spawn;seq=1;ent=4121274369;state=landed;mode=warp;come=0;err_m=0.03"), "applied row accepted");
-    rs = debug::GetSnapshot();
+    rs = Snap();
     Check(rs.receipts[0].id == 0 && rs.receipts[0].status == 0 && std::strcmp(rs.receipts[0].command, "remote spawn_enemy") == 0 &&
           std::strcmp(rs.receipts[0].result, "remote_spawn;seq=1;ent=4121274369;state=landed;mode=warp;come=0;err_m=0.03") == 0 &&
           rs.completed == completed_before, "remote row is an OK receipt with id 0");
-    Check(remote("0 guest_spawn;seq=2;why=native_off") && debug::GetSnapshot().receipts[0].status == 1, "refused row");
+    Check(remote("0 guest_spawn;seq=2;why=native_off") && Snap().receipts[0].status == 1, "refused row");
     for (const auto* bad : {"", "1", "1 ", "2 x", "1x y", "1 a b", "1 a\"b", "1 a\nb", "0 a'b"})
         Check(!remote(bad), "malformed remote row rejected");
     char long_row[200]{};
@@ -567,43 +575,43 @@ int main() {
         Check(!parse(bad), "malformed or out-of-range state rejected");
     const char twelve[] = "1 5 7 spawn 12 1 1 0 3600 10 20 ok";
     Check(debug::LuaStateReceipt(twelve, sizeof(twelve) - 1), "state receipt applied");
-    rs = debug::GetSnapshot();
+    rs = Snap();
     Check(rs.infinite_ammo && rs.bookmark_mask == 5 && rs.pending_id == 7 && std::strcmp(rs.pending_kind, "spawn") == 0 && rs.god_mode &&
           rs.fulton_infinite && rs.game_clock_s == 3600 && rs.player_life == 10 && rs.player_life_max == 20, "Lua-owned flags visible");
     debug::Snapshot over{}; over.god_mode = false; over.player_life = 1; over.pending_id = 0; over.overlay_open = true; over.receipts[0].id = 77;
     over.enemy_nearby_count = 5; over.enemy_camps_loaded = true; over.interim = 9;
     debug::Publish(over);
-    rs = debug::GetSnapshot();
+    rs = Snap();
     Check(rs.god_mode && rs.player_life == 10 && rs.pending_id == 7 && !rs.overlay_open && rs.receipts[0].id != 77 &&
           rs.enemy_nearby_count == 0 && !rs.enemy_camps_loaded && rs.interim == 1 && rs.published_tick64 != 0,
           "Publish preserves Lua-, receipt-, enemy- and overlay-owned fields");
     debug::OverlayStatus overlay{}; overlay.open = true; overlay.frames = 4; strcpy_s(overlay.category, "enemies");
-    const auto before_overlay = debug::GetSnapshot();
+    const auto before_overlay = Snap();
     const auto serial = debug::RequestMenu("menu open enemies", before_overlay.mission, before_overlay.generation);
     std::uint32_t taken = 0; char menu_text[debug::kCommandCapacity]{};
     Check(serial && debug::TakeMenuRequest(taken, menu_text) && taken == serial && !std::strcmp(menu_text, "menu open enemies") &&
           !debug::TakeMenuRequest(taken, menu_text), "menu request taken once");
     const auto busy = debug::RequestMenu("menu close", before_overlay.mission, before_overlay.generation);
-    Check(busy == serial + 1 && !std::strcmp(debug::GetSnapshot().overlay_result, "menu_busy") && debug::GetSnapshot().overlay_result_serial == busy,
+    Check(busy == serial + 1 && !std::strcmp(Snap().overlay_result, "menu_busy") && Snap().overlay_result_serial == busy,
           "single menu slot refuses a second request until the first resolves");
     debug::ReportMenuResult(serial, "menu_open;category=enemies;frames=4");
     const auto stale = debug::RequestMenu("menu close", before_overlay.mission, before_overlay.generation + 1);
-    Check(!std::strcmp(debug::GetSnapshot().overlay_result, "menu_stale") && debug::GetSnapshot().overlay_result_serial == stale, "stale menu request refused");
+    Check(!std::strcmp(Snap().overlay_result, "menu_stale") && Snap().overlay_result_serial == stale, "stale menu request refused");
     const auto malformed = debug::RequestMenu("menu press nothing", before_overlay.mission, before_overlay.generation);
-    Check(!std::strcmp(debug::GetSnapshot().overlay_result, "menu_args") && debug::GetSnapshot().overlay_result_serial == malformed &&
+    Check(!std::strcmp(Snap().overlay_result, "menu_args") && Snap().overlay_result_serial == malformed &&
           !debug::TakeMenuRequest(taken, menu_text), "malformed menu request refused without a slot");
     const auto ok = debug::RequestMenu("menu close", before_overlay.mission, before_overlay.generation);
     Check(debug::TakeMenuRequest(taken, menu_text) && taken == ok, "slot free after the result");
     debug::ReportMenuResult(ok, "menu_open;category=enemies;frames=4");
     debug::SetOverlayStatus(overlay); debug::SetLastUiAction("spawn_enemy_here");
     debug::Publish(over);
-    rs = debug::GetSnapshot();
+    rs = Snap();
     Check(rs.overlay_open && rs.overlay_frames == 4 && rs.overlay_result_serial == ok && !std::strcmp(rs.overlay_result, "menu_open;category=enemies;frames=4") && std::strcmp(rs.overlay_category, "enemies") == 0 &&
           std::strcmp(rs.last_ui_action, "spawn_enemy_here") == 0, "overlay status survives telemetry");
     Check(std::strcmp(rs.last_command, before_overlay.last_command) == 0 && std::strcmp(rs.last_result, before_overlay.last_result) == 0 &&
           rs.receipts[0].id == before_overlay.receipts[0].id, "overlay status never touches last_command/last_result/receipts");
     debug::BeginMission(30020);
-    rs = debug::GetSnapshot();
+    rs = Snap();
     Check(!rs.god_mode && rs.player_life == -1 && std::strcmp(rs.pending_kind, "none") == 0, "mission change resets Lua-owned state");
 
     // Nearby soldier transaction.
@@ -626,17 +634,17 @@ int main() {
     }
     Check(!receipt(list_id, "soldier 13 1 1 0 0 sol_x"), "nearby capacity never overflows");
     Check(receipt(list_id, "done") && !receipt(list_id, "done"), "nearby list closes once");
-    rs = debug::GetSnapshot();
+    rs = Snap();
     Check(rs.enemy_nearby_count == 12 && rs.enemy_nearby_radius == 120 && rs.enemy_nearby[0].hash == 4294967295u &&
           rs.enemy_nearby[0].state == 5 && rs.enemy_nearby[0].flags == 7 && std::strcmp(rs.enemy_nearby[0].name, "sol_a") == 0, "nearby copied");
     Check(debug::QueueCommand("position") && debug::Pop(command) && !receipt(command.id, "nearby 30020 80"), "nearby author must be enemy_list");
     Check(debug::QueueCommand("enemy_camps") && debug::Pop(command), "camps dispatched");
     Check(receipt(command.id, "clear 30020") && receipt(command.id, "camp mafr_a_cp 1000 2"), "camps listed");
-    Check(!debug::GetSnapshot().enemy_camps_loaded, "camps not loaded before done");
-    Check(receipt(command.id, "done") && debug::GetSnapshot().enemy_camps_loaded, "camps done sets enemy_camps_loaded");
-    Check(debug::GetSnapshot().enemy_nearby_count == 12, "camp refresh keeps the nearby table");
+    Check(!Snap().enemy_camps_loaded, "camps not loaded before done");
+    Check(receipt(command.id, "done") && Snap().enemy_camps_loaded, "camps done sets enemy_camps_loaded");
+    Check(Snap().enemy_nearby_count == 12, "camp refresh keeps the nearby table");
     debug::BeginMission(30020);
-    Check(!debug::GetSnapshot().enemy_camps_loaded && debug::GetSnapshot().enemy_nearby_count == 0, "mission change clears enemy metadata");
+    Check(!Snap().enemy_camps_loaded && Snap().enemy_nearby_count == 0, "mission change clears enemy metadata");
 
     // Registry, search, availability and formatters.
     namespace act = mgscoop::debug_actions;
@@ -742,14 +750,14 @@ int main() {
     unsigned received = 0;
     previous = 0;
     bool unique = true;
-    while (!done.load() || debug::GetSnapshot().queue_depth) {
+    while (!done.load() || Snap().queue_depth) {
         if (debug::Pop(command)) { unique = unique && command.id > previous; previous = command.id; ++received; }
         else std::this_thread::yield();
     }
     producer.join();
     Check(unique && received == accepted.load(), "concurrent accepted requests delivered once in order");
     debug::Configure(false, false, true);
-    Check(!debug::Enabled() && debug::GetSnapshot().queue_depth == 0, "disable clears all actions");
+    Check(!debug::Enabled() && Snap().queue_depth == 0, "disable clears all actions");
     NametagTests();
     std::printf("debug menu: %u checks, %u failures\n", checks, failures);
     return failures ? 1 : 0;

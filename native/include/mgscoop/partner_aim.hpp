@@ -74,7 +74,7 @@ struct TargetIn {
     float body[3];               // instance 1's T+0x20 (metres)
     bool look_ok;                // a live v3 sample with xflags Look
     float look_pitch, look_yaw;  // the sender's *(PS0+0x290)[local]
-    bool point_ok;               // point: the sender's own aim direction (input frame v5; not on the wire yet)
+    bool point_ok;               // point: the sender's own aim direction (not on the wire yet; v5 is the gun group)
     float point_dir[3];
 };
 struct TargetOut {

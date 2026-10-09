@@ -674,6 +674,57 @@ int main() {
               std::strcmp(mgscoop::PartnerNativeFaceName(mgscoop::PartnerNativeFace::off), "off") == 0 &&
               std::strcmp(mgscoop::PartnerNativeNoiseName(mgscoop::PartnerNativeNoise::keep), "keep") == 0 &&
               std::strcmp(mgscoop::PartnerNativeNoiseName(mgscoop::PartnerNativeNoise::filter), "filter") == 0, "polish names");
+        // The partner's own reload and weapon switch (docs/native-puppet.md "Weapons"): mirror / off by default
+        // (today's behaviour); the native gun stage and Play-OfflineCoop set event / write.
+        Check(def.partner_native_reload == mgscoop::PartnerNativeReload::mirror && def.partner_native_slot == mgscoop::PartnerNativeSlot::off,
+              "weapons defaults: reload mirror, slot off");
+        const auto weapons = Lab("enabled=1\nrole=host\npartner_native_reload=event\npartner_native_slot=write\n");
+        const auto weaponsRaw = Lab("enabled=1\nrole=host\npartner_native_reload=raw\npartner_native_slot=call\n");
+        const auto weaponsBad = Lab("enabled=1\nrole=host\npartner_native_reload=tap\npartner_native_slot=on\n");
+        Check(weapons.partner_native_reload == mgscoop::PartnerNativeReload::event &&
+                  weapons.partner_native_slot == mgscoop::PartnerNativeSlot::write && weapons.invalid_values == 0 && weapons.unknown_keys == 0 &&
+                  weaponsRaw.partner_native_reload == mgscoop::PartnerNativeReload::raw &&
+                  weaponsRaw.partner_native_slot == mgscoop::PartnerNativeSlot::call && weaponsRaw.invalid_values == 0,
+              "reload event|raw, slot write|call parse");
+        Check(weaponsBad.invalid_values == 2 && weaponsBad.partner_native_reload == mgscoop::PartnerNativeReload::mirror &&
+                  weaponsBad.partner_native_slot == mgscoop::PartnerNativeSlot::off,
+              "weapons enum refusals keep the defaults");
+        Check(std::strcmp(mgscoop::PartnerNativeReloadName(mgscoop::PartnerNativeReload::mirror), "mirror") == 0 &&
+                  std::strcmp(mgscoop::PartnerNativeReloadName(mgscoop::PartnerNativeReload::raw), "raw") == 0 &&
+                  std::strcmp(mgscoop::PartnerNativeReloadName(mgscoop::PartnerNativeReload::event), "event") == 0 &&
+                  std::strcmp(mgscoop::PartnerNativeSlotName(mgscoop::PartnerNativeSlot::off), "off") == 0 &&
+                  std::strcmp(mgscoop::PartnerNativeSlotName(mgscoop::PartnerNativeSlot::write), "write") == 0 &&
+                  std::strcmp(mgscoop::PartnerNativeSlotName(mgscoop::PartnerNativeSlot::call), "call") == 0,
+              "weapons names");
+        // What body 1 carries (W2/W3): stock46 by default; the native gun profile defaults the three
+        // weapons keys to event / write / substitute unless lab.ini names them.
+        Check(def.partner_native_equip == mgscoop::PartnerNativeEquip::stock46 && !def.partner_native_equip_given,
+              "equip default: stock46");
+        const auto gunProfile = Lab("enabled=1\nrole=host\npartner_drive=native\npartner_native_gun=1\n");
+        Check(gunProfile.partner_native_reload == mgscoop::PartnerNativeReload::event &&
+                  gunProfile.partner_native_slot == mgscoop::PartnerNativeSlot::write &&
+                  gunProfile.partner_native_equip == mgscoop::PartnerNativeEquip::substitute && gunProfile.invalid_values == 0,
+              "the native gun profile defaults: event / write / substitute");
+        const auto gunNamed = Lab("enabled=1\nrole=host\npartner_drive=native\npartner_native_gun=1\npartner_native_reload=mirror\n"
+                                  "partner_native_slot=off\npartner_native_equip=stock46\n");
+        Check(gunNamed.partner_native_reload == mgscoop::PartnerNativeReload::mirror &&
+                  gunNamed.partner_native_slot == mgscoop::PartnerNativeSlot::off &&
+                  gunNamed.partner_native_equip == mgscoop::PartnerNativeEquip::stock46 && gunNamed.partner_native_equip_given,
+              "named weapons keys keep their values under the gun profile");
+        const auto locoProfile = Lab("enabled=1\nrole=host\npartner_drive=native\npartner_native_gun=0\n");
+        Check(locoProfile.partner_native_reload == mgscoop::PartnerNativeReload::mirror &&
+                  locoProfile.partner_native_slot == mgscoop::PartnerNativeSlot::off &&
+                  locoProfile.partner_native_equip == mgscoop::PartnerNativeEquip::stock46,
+              "without the gun the weapons keys stay off");
+        const auto equipManifest = Lab("enabled=1\nrole=host\npartner_native_equip=manifest\n");
+        const auto equipBad = Lab("enabled=1\nrole=host\npartner_native_equip=all\n");
+        Check(equipManifest.partner_native_equip == mgscoop::PartnerNativeEquip::manifest && equipManifest.invalid_values == 0 &&
+                  equipBad.invalid_values == 1 && equipBad.partner_native_equip == mgscoop::PartnerNativeEquip::stock46,
+              "equip manifest parses; an unknown value refuses and keeps stock46");
+        Check(std::strcmp(mgscoop::PartnerNativeEquipName(mgscoop::PartnerNativeEquip::stock46), "stock46") == 0 &&
+                  std::strcmp(mgscoop::PartnerNativeEquipName(mgscoop::PartnerNativeEquip::manifest), "manifest") == 0 &&
+                  std::strcmp(mgscoop::PartnerNativeEquipName(mgscoop::PartnerNativeEquip::substitute), "substitute") == 0,
+              "equip names");
         // defer takes effect only with drive=native.
         const auto deferOnly = Lab("enabled=1\nrole=host\npartner_input_defer=on\n");
         Check(deferOnly.partner_input_defer == PartnerDefer::on &&
@@ -773,7 +824,17 @@ int main() {
         Check(playGun.partner_native_net == PartnerNativeNet::online && playGun.partner_native_stall == PartnerNativeStall::hold &&
               playGun.partner_native_stall_ms == 400 && playGun.partner_input_edge_repeats == kPlayEdgeRepeats &&
               playGun.partner_native_hold == PartnerNativeHold::own, "play defaults: online, stall hold 400 ms, 5 edge repeats, hold own");
+        // The weapons keys resolve after the profile expansion (ResolveWeaponDefaults, last).
+        Check(playGun.partner_native_reload == PartnerNativeReload::event && playGun.partner_native_slot == PartnerNativeSlot::write &&
+              playGun.partner_native_equip == PartnerNativeEquip::substitute && playGun.partner_native_aimpt == PartnerNativeAimPt::look,
+              "play: profile=gun runs the partner's own reload, the slot follower, the generalized writer and the aim mirror");
+        const auto playNamed = Lab(play + "partner_native_profile=gun\npartner_native_slot=call\npartner_native_equip=stock46\n");
+        Check(playNamed.play_refused == 0 && playNamed.partner_native_slot == PartnerNativeSlot::call &&
+              playNamed.partner_native_equip == PartnerNativeEquip::stock46 && playNamed.partner_native_reload == PartnerNativeReload::event,
+              "play: named weapons keys keep their values (the driver runs call as write)");
         const auto playClips = Lab(play);
+        Check(playClips.partner_native_reload == PartnerNativeReload::mirror && playClips.partner_native_slot == PartnerNativeSlot::off &&
+              playClips.partner_native_equip == PartnerNativeEquip::stock46, "play without a profile: the weapons defaults");
         Check(playClips.play_refused == 0 && playClips.partner_drive == PartnerDrive::legacy && playClips.partner_input_send &&
               playClips.partner_native_profile == PartnerNativeProfile::off, "play without a profile: the clip partner, sending input");
         const auto playVariants = Lab(play + "partner_native_profile=gun\npartner_native_net=lab\npartner_native_stall=neutral\n"

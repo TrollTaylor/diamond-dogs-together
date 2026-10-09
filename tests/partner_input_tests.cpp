@@ -500,7 +500,29 @@ void TestAccumulate() {
     bad.version = 4;
     Check(pi::ValidPacket(bad), "version 4 (native rates and weapons) with no v3/v4 fields is valid");
     bad.version = 5;
+    Check(pi::ValidPacket(bad), "version 5 (reload and weapon switch) with no v3/v4/v5 fields is valid");
+    bad.version = 6;
     Check(!pi::ValidPacket(bad), "unknown version refused");
+    bad.version = 5;
+    // v5 gun group: known flags only; without GunFlag::Valid every byte is 0.
+    bad.gun_mode = 11;
+    Check(!pi::ValidPacket(bad), "a gun mode without the valid flag refused");
+    bad.gun_flags = pi::GunFlag::Valid | pi::GunFlag::Reloading; bad.reload_seq = 3; bad.switch_seq = 9;
+    Check(pi::ValidPacket(bad), "v5 with the gun group");
+    bad.gun_flags = 0x21;
+    Check(!pi::ValidPacket(bad), "unknown gun flags refused");
+    bad.gun_flags = pi::GunFlag::Valid; bad.version = 4;
+    Check(!pi::ValidPacket(bad), "the gun group in a v4 packet refused");
+    bad = pi::InputPacket{};
+    bad.version = 2; bad.switch_seq = 1;
+    Check(!pi::ValidPacket(bad), "the gun group in a v2 packet refused");
+    bad = pi::InputPacket{};
+    bad.version = 5; bad.inv_slot = 16;
+    Check(!pi::ValidPacket(bad), "inv_slot 16 refused");
+    bad.inv_slot = pi::kInvSlotUnknown;
+    Check(pi::ValidPacket(bad), "inv_slot unknown");
+    bad = pi::InputPacket{};
+    bad.edge_rep = 0; bad.version = 5;
     bad.version = 4; bad.mag = 2; bad.mag_cap = 5;
     Check(!pi::ValidPacket(bad), "a magazine without xflags Mag refused");
     bad.xflags = pi::XFlag::Mag;
@@ -621,6 +643,46 @@ void TestComposeSteer() {
     Check(!(v4.packet.xflags & pi::XFlag::Equip) && v4.packet.gun_equip == 0, "Fill4 drops equip 0");
     pi::Fill3(v4.packet, src);
     Check(v4.packet.gun_equip == 0 && !(v4.packet.xflags & (pi::XFlag::Gamepad | pi::XFlag::Equip)), "Fill3 clears the v4 groups");
+    // v5 (the partner's own reload and weapon switch): the gun group and the sender's slot.
+    pi::Sample v5 = live;
+    pi::V5Source src5{};
+    src5.v4 = src4;
+    src5.v4.v3.inv_slot = 2;
+    src5.gun_valid = true;
+    src5.gun_flags = static_cast<std::uint8_t>(pi::GunFlag::InHand | pi::GunFlag::Reloading | 0x80u);
+    src5.gun_mode = 12; src5.reload_seq = 7; src5.switch_seq = 250;
+    pi::Fill5(v5.packet, src5);
+    Check(v5.packet.version == 5 && pi::ValidPacket(v5.packet) &&
+              v5.packet.gun_flags == (pi::GunFlag::Valid | pi::GunFlag::InHand | pi::GunFlag::Reloading) && v5.packet.gun_mode == 12 &&
+              v5.packet.reload_seq == 7 && v5.packet.switch_seq == 250 && v5.packet.inv_slot == 2,
+          "Fill5: the valid flag set, unknown flags dropped, the slot in inv_slot");
+    edge = pi::EdgeState{};
+    const pi::Injection g5 = pi::Compose(c, v5, 0, pi::Overlay{}, edge);
+    Check(g5.gun_valid && g5.gun_mode == 12 && g5.reload_seq == 7 && g5.switch_seq == 250 && (g5.gun_flags & pi::GunFlag::Reloading) &&
+              g5.slot_valid && g5.inv_slot == 2 && pi::LevelOnly(g5, c).gun_valid && !pi::Neutral(g5).gun_valid,
+          "the injection carries the v5 gun group and slot; neutral drops them");
+    Check(!gun.gun_valid && !gun.slot_valid, "a v4 sample carries no gun group and no trusted slot");
+    src5.gun_valid = false;
+    pi::Fill5(v5.packet, src5);
+    Check(pi::ValidPacket(v5.packet) && v5.packet.gun_flags == 0 && v5.packet.gun_mode == 0 && v5.packet.reload_seq == 0,
+          "Fill5 without the group: all four bytes 0");
+    pi::Fill4(v5.packet, src4);
+    Check(v5.packet.version == 4 && v5.packet.gun_flags == 0 && v5.packet.switch_seq == 0, "Fill4 clears the v5 group");
+    // sample_strip: RELOAD (also CARRY) never reaches instance 1 from the sample; the overlay still delivers it.
+    pi::Config cs = Cfg(pi::Word::held, pi::Word::press, pi::Word::release);
+    cs.sample_strip = 0x40u;
+    pi::Sample r = live;
+    r.packet.held = 0x48u; r.packet.long12 = 0x40u; r.edge_press = 0x40u; r.edge_release = 0x40u; r.edge_tap12 = 0x40u;
+    edge = pi::EdgeState{};
+    const pi::Injection stripped = pi::Compose(cs, r, 0, pi::Overlay{}, edge);
+    Check(stripped.held == 0x08u && !(stripped.w[1] & 0x40u) && !(stripped.edge_press & 0x40u) && !(stripped.long12 & 0x40u) &&
+              !(stripped.tap12 & 0x40u) && !(stripped.synth & 0x40u) && !(edge.net_held & 0x40u),
+          "sample_strip: no RELOAD from the remote's held, words, edges, long12, tap12 or synthesized taps");
+    const pi::Injection tapped = pi::Compose(cs, r, 0, pi::Overlay{0x40u}, edge);
+    Check((tapped.held & 0x40u) && (tapped.edge_press & 0x40u), "sample_strip: an overlay tap still presses RELOAD");
+    pi::Arm a1{}, a2{};
+    a2.config.sample_strip = 0x40u;
+    Check(pi::SameArm(a1, a2), "sample_strip is not compared by SameArm (no gen bump)");
     // Strip: the weapon gate removes FIRE|RELOAD everywhere, nothing else.
     pi::Injection s{};
     s.held = 0x58; s.w[0] = 0x18; s.w[1] = 0x50; s.w[2] = 0x40; s.edge_press = 0x10; s.edge_release = 0x40; s.long12 = 0x48;

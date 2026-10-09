@@ -308,6 +308,9 @@ struct RingEntry {
     // the aim-turn predicate on it (1/0, -1 unread).
     std::int32_t r60_1;
     std::int8_t pred1;
+    // Reload and weapon switch: body 1's gun mode rec+0x2C0, the remote's v5
+    // gun mode and body 1's slot in hand rec+0x3D9 (0xFF unread).
+    std::uint8_t gmode, rmode, hslot;
 };
 inline constexpr std::uint8_t kReconOff = 0xFF;
 inline constexpr std::size_t kRing = 48;
@@ -473,6 +476,46 @@ struct Telemetry {
     // that requested one, and drains that left the gun in a fire mode
     // (rec+0x2C0 9 or 10).
     std::uint32_t fire_requested, fire_shot_drains, fire_modes;
+    // The partner's own reload (docs/native-puppet.md "Weapons" R1..R6). Body
+    // 1's gun record: the current mode rec+0x2C0, the upper-body request
+    // *(Q+0x20)[1] (5 = reload), the reload shadows rec+0x3E4/+0x3E6/+0x3E8,
+    // the slot in hand rec+0x3D9 and the slot source rec+0x3DE (kNull unread),
+    // rec+0x3C0 bit 26 (a reload mode is active).
+    std::int32_t gun_mode_cur, gun_upper_req, gun_m3e4, gun_m3e6, gun_m3e8, gun_hand_slot, gun_slot_src;
+    std::uint32_t gun_b26;
+    // The event machine (partner_reload): the setting, its state, the last
+    // fallback reason, the remote's v5 gun group (mode and counter kNull
+    // without), whether it holds or released a stuck body reload, the mission
+    // counters and the sample strip of the published Arm.
+    char reload_setting[8], reload_state[8], reload_last[12];
+    bool reload_remote_valid, reload_remote_reloading, reload_hold, reload_stuck;
+    std::int32_t reload_remote_mode, reload_remote_seq;
+    std::uint32_t reload_starts, reload_taps, reload_entered, reload_completed, reload_stuck_n, reload_fallbacks, reload_body_entries;
+    std::uint32_t reload_sample_strip;
+    // The magazine mirror's freeze (hook process totals): RELOAD edges seen
+    // (written or not), drains frozen, reconcile writes and rec+0x3E8 writes.
+    std::uint32_t mag_reload_seen, mag_frozen, mag_reconciles, mag_m3e8_writes;
+    // The post-phase-1 probe (hook process totals): phase-1 calls that left
+    // the reload request bit 20 / the trigger's bit 24 set, shots, rec+0x2C0
+    // changes across phase 1 and the last mode seen there.
+    std::uint32_t probe1_b20, probe1_b24, probe1_shots, probe1_mode_changes, probe1_mode;
+    // The weapon switch (W4/W6): the follower setting, the remote's v5 slot
+    // and switch counter (kNull without), body 1's current slot (row+0x36;
+    // kNull unread), the follower's last acted-on slot (kNull none), body 1's
+    // handles per slot (filled: a weapon; equip/type then), the plan's tiers
+    // and admitted mask, the follower's totals, last verdict and fault latch,
+    // the generalized gate's verdict, body 1's in-hand type (kNull unread) and
+    // whether it is mid-switch.
+    char slot_setting[8], slot_last[12], weapon_gate[12];
+    std::int32_t slot_remote, slot_remote_seq, slot_body, slot_target, body_type;
+    bool slots_ok;
+    bool slot_filled[3];
+    std::uint16_t slot_equip[3];
+    std::uint8_t slot_type[3];
+    char slot_tier[3][8];
+    std::uint8_t slot_ok_mask;
+    std::uint32_t slot_writes, slot_refused;
+    bool slot_faulted, body_switching;
     // Loadout: what this copy sends (manifest revision, base ids, aliases,
     // tables verified) and the apply verdict of the received manifest.
     std::uint32_t equip_tx_rev;
@@ -480,6 +523,29 @@ struct Telemetry {
     bool equip_tables_ok;
     std::uint32_t equip_rx_base[3], equip_rx_alias[3];
     char equip_apply[12];
+    // The generalized writer and preload (W2/W3/W6; docs/native-puppet.md
+    // "Generalized writer"): the setting (stock46|manifest|substitute), per
+    // slot the manifest's base id, the planned equip, the tier (a1|c|d|none),
+    // the family (optional|plain|none), the state, its reason and the
+    // dispatched handle; the counters; the stock cache census
+    // (native.equip.resident: the used entries of 48) and the preload verdict.
+    char equip_setting[12];
+    bool writer_active;
+    std::uint16_t writer_want[3], writer_equip[3];
+    char writer_tier[3][6], writer_family[3][10], writer_state[3][12], writer_reason[3][32];
+    std::uint32_t writer_handle[3];
+    std::uint32_t writer_dispatches, writer_bound, writer_refused;
+    bool resident_ok;
+    std::uint8_t resident_count;
+    struct Resident {
+        std::uint16_t equip;
+        std::uint8_t type, receiver, flags, index;
+        std::uint32_t refs;
+    } resident[48];
+    std::uint16_t preload_ids[3];
+    std::uint8_t preload_count;
+    char preload_verdict[24], preload_reason[32];
+    std::uint32_t preload_new_hashes;
     // Facing governor (partner_recon; docs/native-puppet.md "Facing"): its
     // mode off|idle|settle|aim|contested, the error, target and body yaw
     // (centidegrees, kNull unread), the body's own yaw rate (deg/s), the

@@ -395,6 +395,16 @@ bool ParseTrigger(const char* text, std::size_t size, Trigger& out) noexcept {
         } else if (StartsToken(token, length, "nfire=", value_at)) {
             if (result.has_nfire || !ParsePartnerNativeFire(token + value_at, length - value_at, result.nfire)) return false;
             result.has_nfire = true;
+        } else if (StartsToken(token, length, "nreload=", value_at)) {
+            if (result.has_nreload || !ParsePartnerNativeReload(token + value_at, length - value_at, result.nreload)) return false;
+            result.has_nreload = true;
+        } else if (StartsToken(token, length, "nslot=", value_at)) {
+            if (result.has_nslot || !ParsePartnerNativeSlot(token + value_at, length - value_at, result.nslot)) return false;
+            result.has_nslot = true;
+        } else if (StartsToken(token, length, "rtap=", value_at)) {
+            bool on = false;
+            if (result.rtap || !ParseFlag(token + value_at, length - value_at, on) || !on) return false;
+            result.rtap = true;
         } else if (StartsToken(token, length, "steer=", value_at)) {
             if (result.has_steer || !ParseDec(token + value_at, length - value_at, 0, kPartnerNativeSteerMaxDeg, result.steer_deg))
                 return false;

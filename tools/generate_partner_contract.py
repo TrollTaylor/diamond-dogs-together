@@ -566,6 +566,62 @@ SITES = [
     # --- Native polish: weapons F3 (the shot noise filter).
     (0x515270, '48895c240848896c2410488974241857', 'AddNoise 0x515270 (noise iface vt+0) prologue'),
     (0x5152F9, '0fb74512668984be10480000', 'AddNoise keeps the record +0x12 owner'),
+    # --- Native weapons: the partner's own reload and weapon switch (docs/native-puppet.md "Weapons", R1..R6, W1..W6).
+    # The gun iface dispatcher (iface vt+0x18) runs phases 0..7 inside block 1's drain (svc28 mask 0x7f).
+    (0x1041000, '83fa0777764c8d0df4effbfe8bc2418b9481801004014903d1ffe2',
+     'gun iface dispatcher 0x1041000: edx = phase 0..7 through the jump table 0x1041080 (r9 = image base)'),
+    (0x1041027, '4883c1d0418bd0e99dd2ffff', 'gun iface phase 1 -> the gun update 0x103E2D0 (prim = iface - 0x30)'),
+    (0x1041063, '4883c1d0418bd0e901dbffff', 'gun iface phase 6 -> 0x103EB70'),
+    (0x103F99C, 'c683df0300000081a3c0030000ffefeffc',
+     'phase 6 (0x103EB70): rec+0x3DF = 0, rec+0x3C0 &= 0xFCEFEFFF (bits 12/20/24/25 never survive the drain)'),
+    (0x103E3E3, '448bc6488bd3488bcfe87f630500', 'gun update (phase 1): the reload request 0x1094770(prim, rec, id)'),
+    (0x1094887, '488b06ba06000000488bce448d4206ff9090000000',
+     'reload request (holstered): the hold classifier PP vt+0x90(6 = RELOAD, 12 frames)'),
+    (0x1040A54, '488d15454cc101', 'mode transition 0x1040A00: lea rdx, the mode table 0x2C556A0 (16-byte entries)'),
+    (0x1040A78, '838bc003000002', 'mode transition: rec+0x3C0 |= 2'),
+    (0x1040A88, '4088abc0020000', 'mode transition: rec+0x2C0 = the new mode (the current mode)'),
+    (0x1040A9A, 'c683c102000000', 'mode transition: rec+0x2C1 = 0 (the request consumed)'),
+    (0x103E515, 'e8e6240000', 'gun update: the mode transition 0x1040A00'),
+    (0x1072D12, '8bbec00300004533e4418bdc4084ff0f8808010000', 'aim decider (mode 7 0x1071D70): rec+0x3C0 bit 7 -> mode 8 (weapon change)'),
+    (0x1072D95, '8b86c00300000fbae01472190fbae015', 'aim decider: rec+0x3C0 bit 20 (or 21) -> reload'),
+    (0x1072DBA, '8b867c020000418bdcc1e81ca8010f95c383c30b', 'aim decider: reload mode = 0xB + (rec+0x27C bit 28), i.e. 11 or 12'),
+    (0x1077A0A, '488b4160498bce488b402041c6040705', 'reload enter (mode 11/12 op 1): Q+0x20[id] = 5 (Q = *(P+0x60))'),
+    (0x1077A36, '8b8fc003000081a7c8030000f2f9fffdc78734030000000080bf8bc18bd181e1dfffbfffc1e812c1ea13',
+     'reload enter: aim = (rec+0x3C0 >> 18 | >> 19) & 1, old & 0xFFBFFFDF'),
+    (0x1077A60, '41b80b0000000bd08b87c4030000253ffefeff4123d50fbae81481ca020020008987c40300008b87cc030000c1e20525ffffffaf0bd10fbae81a8997c00300008987cc030000',
+     'reload enter: rec+0x3C0 = ((aim | 0x200002) << 5) | old (bit 26 set while reloading)'),
+    (0x107833C, '668987e8030000', 'reload (op 1): rec+0x3E8 = the magazine minus rec+0x3E4 (the completion base)'),
+    (0x10790AA, '81a7c00300009fffbffb', 'reload exit (op 2 0x107903C): rec+0x3C0 bits 5, 6, 22 and 26 cleared'),
+    (0x1079B6E, 'e88dadfdff', 'reload events (op 12 0x10796C8): the completion 0x1054900 (its only caller)'),
+    # Weapon switching: the equipment row of instance id is *(Q+0xC0) + id*0x3A; row+0x36 low nibble = the current slot.
+    (0x11AD240, '4883ec48488b41188bd2488b4060486bd23a488b80', 'GetCurrentEquipSlot 0x11AD240 (ctl vt+0x38): row = *(*(*(ctl+0x18)+0x60)+0xC0) + id*0x3A'),
+    (0x11AD2A2, '0fb644243683e00f', 'GetCurrentEquipSlot: row+0x36 & 0xF'),
+    (0x11AFA80, '40555356574154415541564157488d6c', 'SetCurrentSlot 0x11AFA80 (ctl vt+0x10) prologue (the call variant)'),
+    (0x11AFAA7, '488b4118448be2488bf1488b5060b801000000418bccd3e0418bfc4d63f0',
+     'SetCurrentSlot: P = ctl+0x18, Q = P+0x60, eax = 1 << id, r14 = the slot type'),
+    (0x11AFAC5, '09827c010000', 'SetCurrentSlot: Q+0x17C |= 1 << id'),
+    (0x11AFACB, '488b4618410fb6d9486bff3a4803bac0000000', 'SetCurrentSlot: row = *(Q+0xC0) + id*0x3A'),
+    (0x11AFADE, '443ba014020000', 'SetCurrentSlot: local = id == P+0x214'),
+    (0x11AFAED, '4183fe0474194584ed74074489b274060000', 'SetCurrentSlot: slot type 4 skips the nibble; the local side also writes [ctl+0x20]+0x674'),
+    (0x11AFAFF, '806736f0410fb6c6240f084736', 'SetCurrentSlot: row+0x36 low nibble = the slot'),
+    (0x11AFB0C, '4533ff4c8d0dea04e5fe41b8ff0700004183fe067718438b8cb16cfe1a014903c9ffe1',
+     'SetCurrentSlot: types 0..6 through the jump table 0x11AFE6C (r9 = image base), others to 0x11AFB3A'),
+    (0x11AFB2F, '0fb74702664123c0668907', 'SetCurrentSlot type 0: row+0 = row+2 & 0x7FF'),
+    (0x11AFB3A, '4584ed0f8408030000', 'SetCurrentSlot: a non-local id exits to 0x11AFE4B'),
+    (0x11AFC08, '0fb74704e922ffffff0fb74706e919ffffff0fb7470ae910ffffff0fb74708e90bffffff',
+     'SetCurrentSlot types 1/2/5/6: row+0 from row+4/+6/+0xA (& 0x7FF) or row+8'),
+    (0x11AFE4B, '488b4dff4833cce8e95c85004881c498000000415f415e415d415c5f5e5b5dc3', 'SetCurrentSlot epilogue (the cookie check, ret)'),
+    (0x103AF1C, '3c077510488b07418bd0488bcfff5038', 'phase-0 slot compare 0x103AED0: rec+0x3DE == 7 -> the slot from ctl vt+0x38'),
+    (0x103AF6A, '418b4d0c498b4540410fafcf03ce8b04888bc8418bd6c1e91066413bc874078bd0c1ea0523d5',
+     'phase-0 slot compare: handle = inventory+0x40[id*stride+slot]; equip = (handle >> 5) & 0x7FF unless handle >> 16 == 0xFFFF'),
+    (0x103AFA7, '0fb683d90300003bf075043bd1740a818bc003000080000000',
+     'phase-0 slot compare: slot != rec+0x3D9 or the equip differs -> rec+0x3C0 |= 0x80'),
+    (0x103E049, '8b83c003000084c07930a820752ca8407528f7837c02000000000800740e448bc7488bd3488bcee8cbdc0400448bc7488bd3488bcee82d1d0200',
+     'gun phase 0: bit 7 with bits 5/6 clear -> the activation 0x105FDB0 (else the active mode decides: mode 8)'),
+    (0x105FDE9, '0fb682de030000418bf0488b99c8', 'activation 0x105FDB0: rec+0x3DE, ctl = *(P+0xC8)'),
+    (0x105FEB4, '488b47408bce0faf4f0c03ca8b1c88b9ffff00008bc3c1e810663bc1751b498bd6498b',
+     'activation: handle = inventory+0x40[id*stride+slot]; an empty handle -> 0x10517C0 (no weapon)'),
+    (0x13030B7, '410fb65e7feb05410fb65e7e', 'shot handler 0x1302F50: the shot class byte +0x7F (second mode) or +0x7E (class 3 = projectile, not filtered)'),
 ]
 SITES += partner_aim_sites.SITES
 # The H1 slot itself (value checked as a slot below) and the patched sites:
@@ -676,6 +732,12 @@ SLOTS = [
     (0x23895D0, 0x20, 0xEE96C0, 'derived store iface vtable +0x20 = store setter'),
     (0x2389480, 0x08, 0xEE92F0, 'store object vtable +8 = the store init (row count Y+0x10)'),
     (0x2389598, 0x08, 0xEE92F0, 'derived store object vtable +8 = the same store init'),
+    # --- Native weapons: the equip controller (P+0xC8) the slot follower and the activation use.
+    (0x23C1720, 0x10, 0x11AFA80, 'equip ctl vt+0x10 = SetCurrentSlot (the slot follower call variant)'),
+    (0x23C1720, 0x30, 0x11AD390, 'equip ctl vt+0x30 = the current weapon handle (phase 0 with rec+0x3DE == 7)'),
+    (0x23C1720, 0x38, 0x11AD240, 'equip ctl vt+0x38 = GetCurrentEquipSlot (row+0x36 & 0xF)'),
+    (0x23C1720, 0x40, 0x11AD210, 'equip ctl vt+0x40 = the active weapon slot getter'),
+    (0x23C1720, 0x48, 0x11AF930, 'equip ctl vt+0x48 = the active weapon slot setter (activation)'),
 ]
 SLOTS += partner_aim_sites.SLOTS
 
@@ -1159,6 +1221,127 @@ class _AimContext:
 
 
 failures += partner_aim_sites.assertions(_AimContext)
+
+
+# Native weapons: the partner's own reload and weapon switch (docs/native-puppet.md "Weapons").
+def mode_table_emulation(start=0x20252F0, limit=0x1000):
+    """The static initializer of the gun mode table: a linear lea/mov/movups/movaps
+    pipeline whose 16-byte stores go to .data2 (runtime-filled). Every
+    instruction is interpreted; anything else fails the check."""
+    import capstone
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
+    regs, slot, xmm, stores = {}, [None, None], None, {}
+    for i in md.disasm(rd(start, limit), IB + start):
+        m, o = i.mnemonic, i.op_str
+        if (m, o) in (('push', 'rbp'), ('mov', 'rbp, rsp'), ('pop', 'rbp')) or (m in ('sub', 'add') and o.startswith('rsp,')):
+            continue
+        if m == 'ret':
+            return stores
+        if m == 'xor' and o in ('edx, edx', 'ecx, ecx', 'eax, eax'):
+            regs['r' + o[1:3]] = 0
+            continue
+        if m == 'lea' and '[rip' in o:
+            disp = o.split('rip')[1].strip(' ]').replace(' ', '')
+            regs[o.split(',')[0].strip()] = i.address - IB + i.size + (int(disp, 16) if disp else 0)
+            continue
+        if m == 'mov' and o.startswith('qword ptr [rbp - 0x10], ') and o.split(', ')[1] in regs:
+            slot[0] = regs[o.split(', ')[1]]
+            continue
+        if m == 'mov' and o == 'dword ptr [rbp - 8], edx':
+            slot[1] = regs['rdx']
+            continue
+        if m == 'movups' and o == 'xmm0, xmmword ptr [rbp - 0x10]':
+            xmm = tuple(slot)
+            continue
+        if m == 'movaps' and o.startswith('xmmword ptr [rip ') and o.endswith(', xmm0'):
+            disp = o.split('rip')[1].split(']')[0].replace(' ', '')
+            stores[i.address - IB + i.size + int(disp, 16)] = xmm
+            continue
+        raise SystemExit(f'mode table initializer: unexpected {i.address - IB:#x} {m} {o}')
+    raise SystemExit('mode table initializer: no ret')
+
+
+def jump_table(table, count, base=0):
+    return [base + struct.unpack('<I', rd(table + 4 * k, 4))[0] for k in range(count)]
+
+
+def calls_in(start, end):
+    """Every call instruction of a linear capstone sweep of [start, end)."""
+    import capstone
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
+    return [i.address - IB for i in md.disasm(rd(start, end - start), IB + start) if i.mnemonic == 'call']
+
+
+def weapons2_assertions():
+    out = []
+
+    def need(cond, what):
+        if not cond:
+            out.append(what)
+    funcs = runtime_functions()
+    entry_dir = pe.OPTIONAL_HEADER.DATA_DIRECTORY[3]
+    pdata = pe.get_data(entry_dir.VirtualAddress, entry_dir.Size)
+    # Primary function starts: RUNTIME_FUNCTIONs whose unwind info is not chained
+    # (UNW_FLAG_CHAININFO marks the fragments of a function split by the compiler).
+    primary = sorted(b for b, e, u in (struct.unpack_from('<III', pdata, i) for i in range(0, len(pdata) - 11, 12))
+                     if not (rd(u, 1)[0] >> 3) & 4)
+
+    def func_of(rva):
+        import bisect
+        k = bisect.bisect_right(primary, rva) - 1
+        return (primary[k], None) if k >= 0 else None
+    # R1: the gun iface dispatcher's jump table (r9 = the image base); phase 1 is
+    # the gun update, phase 6 the post-update clear (bits 20/24 die in the drain).
+    need(rip_target(0x1041005, 7) == 0, 'the dispatcher r9 = image base')
+    jt = jump_table(0x1041080, 8)
+    need(jt[1] == 0x1041027 and jt[6] == 0x1041063, f'gun iface jump table: {[hex(x) for x in jt]}')
+    need(0x104102E + 5 + struct.unpack('<i', rd(0x104102F, 4))[0] == 0x103E2D0, 'phase 1 jmp -> 0x103E2D0')
+    need(0x104106A + 5 + struct.unpack('<i', rd(0x104106B, 4))[0] == 0x103EB70, 'phase 6 jmp -> 0x103EB70')
+    need(func_of(0x103F99C) is not None and func_of(0x103F99C)[0] == 0x103EB70, 'the phase-6 clear belongs to 0x103EB70')
+    need(func_of(0x103E515) is not None and func_of(0x103E515)[0] == 0x103E2D0, 'the mode transition call is in the gun update')
+    need(0x103E51A + struct.unpack('<i', rd(0x103E516, 4))[0] == 0x1040A00, 'the gun update calls the mode transition 0x1040A00')
+    # The mode table (runtime .data2): the initializer's emulation and the transition's lea.
+    need(rip_target(0x1040A54, 7) == 0x2C556A0 and section_of(0x2C556A0) == '.data2', 'the transition reads the mode table 0x2C556A0')
+    table = mode_table_emulation()
+
+    def entry(k):
+        return table.get(0x2C556A0 + 16 * k) or (None, None)
+    want = {7: 0x1071D70, 8: 0x1074070, 9: 0x106F4E0, 10: 0x106F4E0, 11: 0x1077840, 12: 0x1077840}
+    for k, fn in want.items():
+        need(entry(k) == (fn, 0), f'mode table entry {k}: {entry(k)} (expected {fn:#x})')
+    need(qword_hits(0x20252F0) != [], 'the mode table initializer is registered (static init table)')
+    # The reload handler (modes 11/12): op 1 enter, op 2 exit, op 12 the animation events.
+    need(rip_target(0x10778B2, 7) == 0 and rd(0x10778BC, 7) == bytes.fromhex('8b8481d0a50701'), 'the reload op table 0x107A5D0 (r = image base)')
+    ops = jump_table(0x107A5D0, 13)
+    need(ops[1] == 0x10778C8 and ops[2] == 0x107903C and ops[12] == 0x10796C8, f'reload ops: {[hex(x) for x in ops]}')
+    need(rel_refs(0x1054900) == [0x1079B6E], f'the reload completion 0x1054900 has one caller: {[hex(x) for x in rel_refs(0x1054900)]}')
+    exits = [t for t in linear_branch_targets(0x107903C, 0x10790AA) if not (0x107903C <= t <= 0x10790B4)]
+    need(set(exits) <= {0x1055EA0, 0x108BCA0, 0x10515F0, 0x1051570, 0x1058890},
+         f'the reload exit reaches the bit-26 clear (only calls leave the span): {[hex(x) for x in exits]}')
+    need(func_of(0x1077A36) is not None and func_of(0x1077A36)[0] == 0x1077840, 'the reload enter belongs to 0x1077840')
+    # W4: SetCurrentSlot for a non-local id writes data only (Q+0x17C, the nibble,
+    # row+0) for slot types 0/1/2/5/6 and exits before any call.
+    sjt = jump_table(0x11AFE6C, 7)
+    need(rip_target(0x11AFB0F, 7) == 0, 'SetCurrentSlot r9 = image base')
+    need(sjt[0] == 0x11AFB2F and sjt[1] == 0x11AFC08 and sjt[2] == 0x11AFC11 and sjt[5] == 0x11AFC1A and sjt[6] == 0x11AFC23,
+         f'SetCurrentSlot types 0/1/2/5/6: {[hex(x) for x in sjt]}')
+    for site in (0x11AFC08, 0x11AFC11, 0x11AFC1A):
+        need(site + 9 + struct.unpack('<i', rd(site + 5, 4))[0] == 0x11AFB33, f'{site:#x} joins the row+0 store')
+    need(0x11AFC23 + 9 + struct.unpack('<i', rd(0x11AFC28, 4))[0] == 0x11AFB37, '0x11AFC23 joins the row+0 store')
+    need(0x11AFB43 + struct.unpack('<i', rd(0x11AFB3F, 4))[0] == 0x11AFE4B, 'the non-local exit is 0x11AFE4B')
+    need(calls_in(0x11AFA80, 0x11AFB43) == [], f'no call before the non-local exit: {[hex(x) for x in calls_in(0x11AFA80, 0x11AFB43)]}')
+    need(calls_in(0x11AFC08, 0x11AFC2C) == [], 'no call in the type 1/2/5/6 stores')
+    need(calls_in(0x11AFE4B, 0x11AFE6B) == [0x11AFE52], 'the epilogue only checks the cookie')
+    need(func_of(0x11AFA80) is not None and func_of(0x11AFA80)[0] == 0x11AFA80, 'SetCurrentSlot is a function start')
+    need(calls_in(0x11AD240, 0x11AD2AF) == [] and rd(0x11AD2AE, 1) == b'\xc3', 'GetCurrentEquipSlot reads only')
+    # Phase 0 compares the slot every frame (its only caller) and activates on bit 7.
+    need(rel_refs(0x103AED0) == [0x103E044], f'the slot compare 0x103AED0 has one caller: {[hex(x) for x in rel_refs(0x103AED0)]}')
+    need(0x103E083 + struct.unpack('<i', rd(0x103E07F, 4))[0] == 0x105FDB0, 'gun phase 0 calls the activation 0x105FDB0')
+    need(func_of(0x13030B7) is not None and func_of(0x13030B7)[0] == 0x1302F50, 'the shot class read belongs to the shot handler 0x1302F50')
+    return out
+
+
+failures += weapons2_assertions()
 if failures:
     print('\n'.join(failures))
     raise SystemExit(1)
@@ -1439,6 +1622,25 @@ w('inline constexpr std::uintptr_t noise_fn_rva=0x515270, noise_vtable_rva=0x218
 w('inline constexpr std::size_t noise_owner=0x12;')
 for line in partner_aim_sites.HEADER:
     w(line)
+w('// --- Native weapons: the partner\'s own reload and weapon switch (docs/native-puppet.md "Weapons") ------')
+w('// The gun record modes (rec+0x2C0 current, written by the transition 0x1040a00 from the table 0x2c556a0): 7 aim,')
+w('// 8 weapon change (0x1074070), 11/12 reload (0x1077840: the enter sets rec+0x3C0 bit 26 and Q+0x20[id] = 5 and')
+w('// rec+0x3E8 = the completion base; the exit 0x10790aa clears bit 26; the only completion 0x1054900 is event driven).')
+w('inline constexpr std::uint8_t gun_mode_aim=7, gun_mode_change=8, gun_mode_reload=11, gun_mode_reload2=12;')
+w('inline constexpr std::uint32_t gun3c0_switch=0x80, gun3c0_reload_mode=0x4000000;')
+w('inline constexpr std::size_t gun_slot_hand=0x3d9, gun_slot_src=0x3de, gun_m3e4=0x3e4, gun_m3e6=0x3e6, gun_m3e8=0x3e8;')
+w('inline constexpr std::uint8_t gun_slot_follow=7;  // rec+0x3DE == 7: phase 0 takes the slot from the equip controller')
+w('inline constexpr std::size_t q_upper=0x20;          // u8 *(Q+0x20)[id] (5 = reload, 0x1077a0a)')
+w('inline constexpr std::uint8_t q_upper_reload=5;')
+w('// The equip controller ctl = *(P+0xC8) (vtable 0x23c1720; ctl+0x18 = P); the inventory *(ctl+8) is the store Y with')
+w('// the handles u32 [Y+0x40][id*stride + slot] (empty: handle >> 16 == 0xffff; equip (handle >> 5) & 0x7ff; type & 0x1f).')
+w('// The equipment row of instance id is *(Q+0xC0) + id*0x3a: u16 +0 the current equip, +2/+4/+6 slots 0/1/2, the low')
+w('// nibble of +0x36 the current slot. SetCurrentSlot 0x11afa80 for a non-local id and slot types 0/1/2/5/6 writes')
+w('// Q+0x17C |= 1 << id, the nibble and row+0 = (row+2+2*slot) & 0x7ff, then exits at 0x11afe4b before any call.')
+w('inline constexpr std::uintptr_t equip_ctl_vt_rva=0x23c1720, set_current_slot_rva=0x11afa80;')
+w('inline constexpr std::size_t ctl_player=0x18, ctl_inventory=0x8, q_equip_rows=0xc0, q_equip_dirty=0x17c, equip_row_stride=0x3a;')
+w('inline constexpr std::size_t equip_row_current=0x0, equip_row_slots=0x2, equip_row_nibble=0x36, inv_handles=0x40;')
+w('inline constexpr std::uint32_t equip_id_mask=0x7ff, handle_empty_hi=0xffff, handle_type_mask=0x1f, handle_equip_shift=5;')
 w('struct Site { std::uintptr_t rva; std::size_t size; unsigned char bytes[80]; };')
 w('inline constexpr Site code_sites[]={')
 for rva, expected, what in SITES:

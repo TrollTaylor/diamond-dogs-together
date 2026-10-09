@@ -265,6 +265,15 @@ struct Trigger {
     PartnerNativeFire nfire;  // nfire=0|off|1|visual
     bool has_steer;
     std::uint32_t steer_deg;
+    // The partner's own reload and weapon switch (docs/native-puppet.md
+    // "Weapons"): nreload=mirror|raw|event, nslot=off|write|call (play: call
+    // runs as write) and the one-shot rtap=1 (one RELOAD tap through the
+    // event machine when its preconditions hold; refused otherwise).
+    bool has_nreload;
+    PartnerNativeReload nreload;
+    bool has_nslot;
+    PartnerNativeSlot nslot;
+    bool rtap;
 };
 bool ParseTrigger(const char* text, std::size_t size, Trigger& out) noexcept;
 

@@ -44,5 +44,31 @@ int main() {
     a.Begin(30010); Check(a.Try(c)==nullptr); a.End();
     Check(!a.Receipt(true,30010,true,true) && !a.QueuedFor(30010) && !a.Attempted());
     a.Begin(30020); c.mission=30020; Check(std::strcmp(a.Try(c),"allocation_mission")==0 && !a.Attempted());
+    // The generalized preload's authorization (W2): any supported mission of
+    // the allocation; no manifest or no qualified id spends nothing.
+    GeneralAuthorization g; GeneralContext gc{};
+    const auto general_ready=[]() {
+        GeneralContext x{};
+        x.enabled=x.allocation_owner=x.mission_read=x.supported=x.owner_gates=true;
+        x.groups_authorized=x.groups_returned=x.manifest=x.preflight_ok=true; x.ids=3; x.mission=30020;
+        return x;
+    };
+    gc=general_ready(); Check(std::strcmp(g.Try(gc),"not_allocation_owner")==0);
+    g.Begin(30020);
+    gc=general_ready(); gc.enabled=false; Check(std::strcmp(g.Try(gc),"disabled")==0 && !g.Attempted());
+    gc=general_ready(); gc.supported=false; Check(std::strcmp(g.Try(gc),"allocation_mission")==0 && !g.Attempted());
+    gc=general_ready(); gc.mission=30010; Check(std::strcmp(g.Try(gc),"allocation_mission")==0 && !g.Attempted());
+    gc=general_ready(); gc.manifest=false; Check(std::strcmp(g.Try(gc),"no_manifest")==0 && !g.Attempted());
+    gc=general_ready(); gc.ids=0; Check(std::strcmp(g.Try(gc),"no_ids")==0 && !g.Attempted());
+    for(auto field : {&GeneralContext::owner_gates,&GeneralContext::groups_authorized,&GeneralContext::groups_returned,&GeneralContext::preflight_ok}) {
+        g.Begin(30020); gc=general_ready(); gc.*field=false;
+        Check(g.Try(gc)!=nullptr && g.Attempted() && !g.Receipt(true,30020,true,true) && !g.QueuedFor(30020));
+        gc=general_ready(); Check(std::strcmp(g.Try(gc),"already_attempted")==0);
+    }
+    g.Begin(30050); gc=general_ready(); gc.mission=30050; Check(g.Try(gc)==nullptr && g.Attempted());
+    Check(!g.Receipt(true,30020,true,true) && g.Receipt(true,30050,true,true) && g.QueuedFor(30050) && !g.Receipt(true,30050,true,true));
+    g.SealAllocation(); Check(std::strcmp(g.Try(gc),"not_allocation_owner")==0 && g.QueuedFor(30050));
+    g.Begin(30050); Check(!g.QueuedFor(30050) && g.Try(gc)==nullptr && !g.Receipt(true,30050,true,false) && !g.QueuedFor(30050));
+    g.End(); Check(!g.Attempted() && !g.Receipt(true,30050,true,true));
     std::printf("equipment_stock_probe_tests: %u checks passed; native_calls=0\n",checks);
 }

@@ -336,6 +336,16 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
         else if (Equals(key, "partner_native_face")) ok = ParsePartnerNativeFace(value.data, value.size, result.partner_native_face);
         else if (Equals(key, "partner_native_noise")) ok = ParsePartnerNativeNoise(value.data, value.size, result.partner_native_noise);
         else if (Equals(key, "partner_native_aimpt")) ok = ParsePartnerNativeAimPt(value.data, value.size, result.partner_native_aimpt);
+        else if (Equals(key, "partner_native_reload")) {
+            ok = ParsePartnerNativeReload(value.data, value.size, result.partner_native_reload);
+            if (ok) result.partner_native_reload_given = true;
+        } else if (Equals(key, "partner_native_slot")) {
+            ok = ParsePartnerNativeSlot(value.data, value.size, result.partner_native_slot);
+            if (ok) result.partner_native_slot_given = true;
+        } else if (Equals(key, "partner_native_equip")) {
+            ok = ParsePartnerNativeEquip(value.data, value.size, result.partner_native_equip);
+            if (ok) result.partner_native_equip_given = true;
+        }
         else if (Equals(key, "partner_native_steer_deg"))
             ok = ParseRange(value, 0, kPartnerNativeSteerMaxDeg, result.partner_native_steer_deg);
         else if (Equals(key, "partner_native_trim_pct"))
@@ -597,6 +607,9 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
     }
     // 4. present is unchanged: the play save gate is SavesRedirected() at the observer.
     result.present = enabled && result.role != LabRole::none;
+    // 5. The weapons keys follow the native gun profile unless named (last:
+    // after any expansion that sets partner_drive / partner_native_gun).
+    ResolveWeaponDefaults(result);
     out = result;
     return true;
 }
@@ -1157,6 +1170,70 @@ void ApplyNativeProfile(LabConfig& c, PartnerNativeProfile profile, std::uint32_
     if (set(kProfileKeyTriggers)) c.partner_input_triggers = gun;
     if (set(kProfileKeyRstick)) c.partner_input_rstick = gun;
     if (set(kProfileKeyAimPt)) c.partner_native_aimpt = gun ? PartnerNativeAimPt::look : PartnerNativeAimPt::off;
+}
+
+const char* PartnerNativeReloadName(PartnerNativeReload value) noexcept {
+    switch (value) {
+    case PartnerNativeReload::raw: return "raw";
+    case PartnerNativeReload::event: return "event";
+    default: return "mirror";
+    }
+}
+
+bool ParsePartnerNativeReload(const char* text, std::size_t size, PartnerNativeReload& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "mirror")) out = PartnerNativeReload::mirror;
+    else if (Equals(s, "raw")) out = PartnerNativeReload::raw;
+    else if (Equals(s, "event")) out = PartnerNativeReload::event;
+    else return false;
+    return true;
+}
+
+const char* PartnerNativeSlotName(PartnerNativeSlot value) noexcept {
+    switch (value) {
+    case PartnerNativeSlot::write: return "write";
+    case PartnerNativeSlot::call: return "call";
+    default: return "off";
+    }
+}
+
+bool ParsePartnerNativeSlot(const char* text, std::size_t size, PartnerNativeSlot& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "off")) out = PartnerNativeSlot::off;
+    else if (Equals(s, "write")) out = PartnerNativeSlot::write;
+    else if (Equals(s, "call")) out = PartnerNativeSlot::call;
+    else return false;
+    return true;
+}
+
+const char* PartnerNativeEquipName(PartnerNativeEquip value) noexcept {
+    switch (value) {
+    case PartnerNativeEquip::manifest: return "manifest";
+    case PartnerNativeEquip::substitute: return "substitute";
+    default: return "stock46";
+    }
+}
+
+bool ParsePartnerNativeEquip(const char* text, std::size_t size, PartnerNativeEquip& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "stock46")) out = PartnerNativeEquip::stock46;
+    else if (Equals(s, "manifest")) out = PartnerNativeEquip::manifest;
+    else if (Equals(s, "substitute")) out = PartnerNativeEquip::substitute;
+    else return false;
+    return true;
+}
+
+void ResolveWeaponDefaults(LabConfig& c) noexcept {
+    // The native gun profile (the worker gun stage, Play-OfflineCoop, play's
+    // partner_native_profile=gun) runs the partner's own reload, the slot
+    // follower and the generalized writer; anything else keeps the old defaults.
+    const bool gun = c.partner_drive == PartnerDrive::native && c.partner_native_gun;
+    if (!c.partner_native_reload_given) c.partner_native_reload = gun ? PartnerNativeReload::event : PartnerNativeReload::mirror;
+    if (!c.partner_native_slot_given) c.partner_native_slot = gun ? PartnerNativeSlot::write : PartnerNativeSlot::off;
+    if (!c.partner_native_equip_given) c.partner_native_equip = gun ? PartnerNativeEquip::substitute : PartnerNativeEquip::stock46;
 }
 
 const char* PartnerNativeRatesName(PartnerNativeRates value) noexcept {

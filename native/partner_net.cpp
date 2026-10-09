@@ -55,6 +55,8 @@ std::uint32_t g_input_tx_seq = 0;
 std::uint64_t g_input_tx_ms = 0;
 partner_input::InputEdges g_edges{};
 volatile LONG g_in_tx = 0, g_in_rx = 0, g_in_drop = 0;
+// An accepted input frame v5 arrived since the last receive reset (PeerSendsInputV5).
+volatile LONG g_input_v5_peer = 0;
 // Look send side (game thread only).
 partner::Look g_look_sent{};
 bool g_look_sent_valid = false;
@@ -362,6 +364,7 @@ void OnFrame(const std::uint8_t* data, std::size_t size, std::uint64_t trusted_a
             g_input_valid = true;
             g_input_seq = in_seq;
             g_input_rx_ms = now;
+            if (in.version >= 5) InterlockedExchange(&g_input_v5_peer, 1);
             if (!g_input_first_logged) { g_input_first_logged = true; first = true; }
         }
         ReleaseSRWLockExclusive(&g_lock);
@@ -429,6 +432,7 @@ void ResetReceiveLocked() noexcept {
     g_input_rx_ms = 0;
     g_input_first_logged = false;
     g_edges = partner_input::InputEdges{};
+    InterlockedExchange(&g_input_v5_peer, 0);
 }
 
 // ---- Link v2 logging (receive thread, outside both locks).
@@ -1489,8 +1493,9 @@ bool SubmitInput(const partner_input::InputPacket& packet) noexcept {
     const std::uint64_t now = NowMs();
     if (g_input_tx_ms && now - g_input_tx_ms < kInputMinGapMs) { SetLastError(error); return false; }
     const std::uint32_t seq = g_input_tx_seq + 1;
-    // v2, or v4 when the sender runs the native drive (packet.version 4: rates and magazine).
-    std::uint8_t frame[sync::input_frame_size_v4];
+    // v2..v5: v4 whatever the sender's own drive (rates, magazine, gun), v5 (the
+    // gun group) once the peer sent v5, plus the driver's v5 probe every 2 s.
+    std::uint8_t frame[sync::input_frame_size_v5];
     bool sent = false;
     if (const std::size_t n = sync::encode_input_frame_any(kSession, static_cast<std::uint32_t>(epoch), seq, packet, frame))
         sent = Transmit(frame, n);
@@ -1516,6 +1521,8 @@ bool ConsumeInput(partner_input::Sample& out) noexcept {
     ReleaseSRWLockExclusive(&g_lock);
     return true;
 }
+
+bool PeerSendsInputV5() noexcept { return g_input_v5_peer != 0; }
 
 bool LatestInput(partner_input::Sample& out) noexcept {
     out = partner_input::Sample{};

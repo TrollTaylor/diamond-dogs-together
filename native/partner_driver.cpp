@@ -423,6 +423,45 @@ pin::V4Source SenderV4(const Driver& d, const Hooks& h, const pp::State& st, con
     return v;
 }
 
+// Input frame v5 (docs/native-puppet.md "Weapons" R2/W1): v4 plus the local
+// player's gun group (its record read by TickNative this tick: in hand,
+// aiming, reloading, changing, the mode rec+0x2C0 and the reload/switch
+// counters partner_reload::SenderStep advanced) and its current slot (row+0x36).
+pin::V5Source SenderV5(const Driver& d, const Hooks& h, const pp::State& st, const pin::PadSnapshot& snap, std::uint8_t kb_flags) noexcept {
+    pin::V5Source v{};
+    v.v4 = SenderV4(d, h, st, snap, kb_flags);
+    const Mission& m = d.mission;
+    if (m.slots0_ok && m.slots0.nibble <= pin::kInvSlotMax) v.v4.v3.inv_slot = m.slots0.nibble;
+    const pp::Gun1& g = m.gun0;
+    if (m.gun0_ok && g.fields_ok && m.sender_gun.have) {
+        v.gun_valid = true;
+        std::uint8_t flags = 0;
+        if (g.gun3c0 & c::gun_flag_in_hand) flags |= pin::GunFlag::InHand;
+        if (g.gun3c0 & c::gun_flag_hold) flags |= pin::GunFlag::Aiming;
+        if (partner_reload::ReloadMode(g.mode_cur)) flags |= pin::GunFlag::Reloading;
+        if (g.mode_cur == c::gun_mode_change || (g.gun3c0 & c::gun3c0_switch)) flags |= pin::GunFlag::Changing;
+        v.gun_flags = flags;
+        v.gun_mode = g.mode_cur;
+        v.reload_seq = m.sender_gun.reload_seq;
+        v.switch_seq = m.sender_gun.switch_seq;
+    }
+    return v;
+}
+
+// One overlay tap (the input window injects `bits` for kTapFrames windows):
+// a new tap_seq, or, for a second tap in the same tick (a reload tap and a
+// stance fix), the bits ORed into this tick's tap.
+void BumpTap(Driver& d, Mission& m, std::uint32_t bits, std::uint64_t now) noexcept {
+    if (m.tap_bumped && m.tap_bump_ms == now) {
+        m.tap_bits |= bits;
+        return;
+    }
+    ++d.tap_seq;
+    m.tap_bits = bits;
+    m.tap_bump_ms = now;
+    m.tap_bumped = true;
+}
+
 // Build the Arm from the resolved targets and the current settings.
 pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& t, const pp::State& st, const partner::Tick& tick,
                   std::uint64_t now, bool enabled) noexcept {
@@ -493,8 +532,24 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
     a.mag_mirror = set.native_active && set.ngun && m.gun1_rec != 0 && m.gun1_prim != 0;
     a.gun_prim = a.mag_mirror ? m.gun1_prim : 0;
     a.gun_rec = a.mag_mirror ? m.gun1_rec : 0;
-    // The weapon gate (F4): FIRE and RELOAD stripped while the remote's gun is not body 1's.
+    // The weapon gate (F4/W5): FIRE and RELOAD stripped while the remote's gun
+    // is not body 1's or body 1 is mid-switch, FIRE alone for an unqualified type.
     a.strip = set.native_active ? m.weapon_strip : 0u;
+    // The partner's own reload and weapon switch (docs/native-puppet.md
+    // "Weapons"; not compared by SameArm): the mirror's freeze inputs, the
+    // remote's raw RELOAD/CARRY stripped from its sample with reload=event and a
+    // live v5 group (its reloads then arrive as overlay taps), and the slot
+    // follower with the plan's admitted slots (play runs call as write).
+    const bool gun_stage = set.native_active && set.ngun;
+    a.reload = gun_stage ? set.nreload : PartnerNativeReload::mirror;
+    a.reload_hold = gun_stage && m.reload_out.hold;
+    a.reload_stuck = gun_stage && m.reload_out.stuck;
+    a.config.sample_strip = gun_stage && set.nreload == PartnerNativeReload::event && m.remote_v5 ? pnat::kPadReload : 0u;
+    a.slot_follow = !gun_stage ? PartnerNativeSlot::off
+                    : (set.play_mode && set.nslot == PartnerNativeSlot::call) ? PartnerNativeSlot::write
+                                                                              : set.nslot;
+    a.slot_ok = m.slot_plan_ok ? m.slot_plan.ok_mask : static_cast<std::uint8_t>(0);
+    for (unsigned s = 0; s < 3; ++s) a.slot_equip[s] = m.slot_plan_ok ? m.slot_plan.equip[s] : static_cast<std::uint16_t>(0);
     (void)st;
     return a;
 }
@@ -1411,7 +1466,25 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
             // rates, its magazine and gun) whatever this copy's own drive is: the
             // peer's native drive needs it even when this copy shows clips
             // (online play; all reads are pure, see TickNative's sender sources).
-            pin::Fill4(pkt, SenderV4(d, h, st, snap, raw.kb_flags));
+            // v5 adds the gun group (reload and weapon switch); a peer build
+            // without v5 (0.11.1) refuses the whole 116-byte frame, so v5 goes
+            // out only once the peer sent v5 (plus a probe every kInputV5ProbeMs
+            // so a v5 peer can learn ours).
+            {
+                const pin::V5Source v5 = SenderV5(d, h, st, snap, raw.kb_flags);
+                const bool peer_v5 = !h.peer_input_v5 || h.peer_input_v5(h.context);
+                if (peer_v5 && h.peer_input_v5 && !m.v5_peer_logged) {
+                    m.v5_peer_logged = true;
+                    EmitFormat(h, "partner_input=v5_peer; probes=%u\r\n", m.v5_probes);
+                }
+                const bool probe = !peer_v5 && (!m.v5_probe_ms || now - m.v5_probe_ms >= kInputV5ProbeMs);
+                if (peer_v5 || probe) pin::Fill5(pkt, v5);
+                else pin::Fill4(pkt, v5.v4);
+                if (probe) {
+                    m.v5_probe_ms = now;
+                    ++m.v5_probes;
+                }
+            }
             if (h.submit_input(h.context, pkt)) pin::SenderSent(m.sender);
         }
     }
@@ -1546,8 +1619,7 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
                 m.press_bits = kStanceBit;
                 m.press_until_ms = now + kStanceFixHoldMs;
             } else {
-                ++d.tap_seq;
-                m.tap_bits = kStanceBit;
+                BumpTap(d, m, kStanceBit, now);
             }
             ++m.recon_fixes;
             EmitRecon(m, h, kRcFix, "partner_recon=stance_fix; remote=%u; body=%u; via=%s; ms=%u; fixes=%u\r\n",
@@ -1561,8 +1633,7 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
         if (!arm_now) Emit(h, "partner_input=tap_refused; reason=not_armed\r\n");
         else if (d.tap_bits_pending & ~set.input_mask) Emit(h, "partner_input=tap_refused; reason=mask\r\n");
         else {
-            ++d.tap_seq;
-            m.tap_bits = d.tap_bits_pending;
+            BumpTap(d, m, d.tap_bits_pending, now);
             EmitFormat(h, "partner_input=tap; bits=0x%x; frames=4\r\n", d.tap_bits_pending);
         }
     }
@@ -1766,7 +1837,13 @@ void DrainEquip(Driver& d, const Hooks& h) noexcept {
             }
             continue;
         }
-        if (partner_equip_wire::Accept(m.equip, message, size, epoch) && m.equip.manifest.revision != m.equip_logged_rev) {
+        const bool accepted = partner_equip_wire::Accept(m.equip, message, size, epoch);
+        if (accepted) {
+            d.equip_cache = m.equip.manifest;
+            d.equip_cache_have = true;
+            d.equip_cache_epoch = epoch;
+        }
+        if (accepted && m.equip.manifest.revision != m.equip_logged_rev) {
             m.equip_logged_rev = m.equip.manifest.revision;
             const auto& e = m.equip.manifest;
             EmitNative(m, h, m.native_equip_cap, "partner_equip",
@@ -1870,16 +1947,37 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
     bool weapon_judged = false;
     m.remote_gun_base = m.remote_gun_equip == pnat::kNull
                             ? pnat::kNull : static_cast<std::int32_t>(RemoteGunBase(m, static_cast<std::uint32_t>(m.remote_gun_equip)));
+    // W5: body 1 mid-switch (rec+0x3C0 bit 7 or mode 8) and its in-hand type
+    // (the equip type table; stock46's type 4 is pinned by the writer contract,
+    // descriptor 0x6244, when the table is unread).
+    m.body_switching = gun_ok && ((gun.gun3c0 & c::gun3c0_switch) != 0 || (gun.fields_ok && gun.mode_cur == c::gun_mode_change));
+    std::uint8_t body_type = 0;
+    const bool body_type_ok = gun_ok && gun.fields_ok && gun.fields.equip != 0 && h.equip_type && h.equip_type(h.context, gun.fields.equip, body_type);
+    m.body_type = body_type_ok ? static_cast<std::int32_t>(body_type)
+                  : (gun_ok && gun.fields_ok && gun.fields.equip == 46) ? 4 : pnat::kNull;
     if (gun_ok && gun.fields_ok && gun.fields.equip != 0 && m.remote_gun_equip != pnat::kNull) {
-        m.weapon_mismatch = set.ngun && static_cast<std::uint32_t>(m.remote_gun_equip) != gun.fields.equip &&
-                            static_cast<std::uint32_t>(m.remote_gun_base) != gun.fields.equip;
+        partner_slots::GateIn gi{};
+        gi.remote_equip = static_cast<std::uint32_t>(m.remote_gun_equip);
+        gi.remote_base = static_cast<std::uint32_t>(m.remote_gun_base);
+        gi.body_equip = gun.fields.equip;
+        // W5: the tier C substitute of the slot carrying the remote's in-hand base counts as its weapon.
+        if (m.slot_plan_ok && m.equip.have)
+            for (unsigned s = 0; s < 3; ++s)
+                gi.substitute = gi.substitute || (m.slot_plan.tier[s] == partner_slots::Tier::sub &&
+                                                  m.slot_plan.equip[s] == gun.fields.equip && m.equip.manifest.slots[s].base_id != 0 &&
+                                                  m.equip.manifest.slots[s].base_id == static_cast<std::uint32_t>(m.remote_gun_base));
+        gi.switching = m.body_switching;
+        gi.type_ok = m.body_type != pnat::kNull;
+        gi.body_type = gi.type_ok ? static_cast<std::uint8_t>(m.body_type) : static_cast<std::uint8_t>(0);
+        m.weapon_gate = set.ngun ? partner_slots::Judge(gi) : partner_slots::Gate::match;
         weapon_judged = true;
     }
-    if (!set.ngun) m.weapon_mismatch = false;
-    m.weapon_strip = m.weapon_mismatch ? (pnat::kPadFire | pnat::kPadReload) : 0u;
+    if (!set.ngun) m.weapon_gate = partner_slots::Gate::match;
+    m.weapon_mismatch = m.weapon_gate == partner_slots::Gate::mismatch;
+    m.weapon_strip = partner_slots::StripBits(m.weapon_gate);
     // Gun profile (online play, docs/native-puppet.md "Online"): until body 1
-    // shows a gun class this mission (no stock46 on it: another mission, a
-    // build without the gun pieces, the writer still waiting), HOLD, RELOAD and
+    // shows a gun class this mission (no gun on it: another mission, a build
+    // without the gun pieces, the writer still waiting), HOLD, RELOAD and
     // FIRE are stripped too, so the partner never aims empty-handed.
     m.weapon_absent = set.ngun && !m.weapon_ok;
     if (m.weapon_absent) m.weapon_strip |= kPartnerNativeGunBits | kPartnerNativeFireBit;
@@ -1900,7 +1998,17 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
                    ns.shot_leaks ? "shot_leak" : "ammo_leak", ns.shot_leaks, ns.ammo_leaks, d.leak_strip);
     }
     m.weapon_strip |= d.leak_strip;
-    if (set.ngun && weapon_judged && (!m.weapon_logged_once || m.weapon_logged != m.weapon_mismatch)) {
+    // An unqualified weapon type (FIRE alone stripped): its own capped line on change.
+    const bool type_masked = m.weapon_gate == partner_slots::Gate::projectile;
+    if (set.ngun && weapon_judged && m.weapon_gate != partner_slots::Gate::switching &&
+        (!m.weapon_type_logged_once || m.weapon_type_logged != type_masked) && (type_masked || m.weapon_type_logged_once)) {
+        m.weapon_type_logged_once = true;
+        m.weapon_type_logged = type_masked;
+        EmitNative(m, h, m.weapon_cap, "partner_weapon", "partner_weapon=%s; body_equip=%u; body_type=%d; strip=0x%x\r\n",
+                   type_masked ? "projectile" : "type_ok", gun.fields.equip, m.body_type, m.weapon_strip);
+    }
+    if (set.ngun && weapon_judged && m.weapon_gate != partner_slots::Gate::switching &&
+        (!m.weapon_logged_once || m.weapon_logged != m.weapon_mismatch)) {
         const bool first = !m.weapon_logged_once;
         m.weapon_logged_once = true;
         m.weapon_logged = m.weapon_mismatch;
@@ -2014,8 +2122,122 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
         const char* result = want == 0 ? "unknown" : loaded == want ? "already" : loaded == 0 ? "no_weapon" : "unsupported";
         CopyText(m.equip_apply, sizeof(m.equip_apply), result);
         EmitNative(m, h, m.equip_apply_cap, "partner_equip_apply",
-                   "partner_equip=apply; rev=%u; slot=1; want=%u; loaded=%u; result=%s; writer=stock46\r\n",
-                   unsigned(m.equip.manifest.revision), unsigned(want), loaded, result);
+                   "partner_equip=apply; rev=%u; slot=1; want=%u; loaded=%u; result=%s; writer=%s\r\n",
+                   unsigned(m.equip.manifest.revision), unsigned(want), loaded, result, PartnerNativeEquipName(set.nequip));
+    }
+}
+
+// The partner's own reload (docs/native-puppet.md "Weapons" R3): the event
+// machine on the remote's v5 gun group and body 1's gun record; a tap goes
+// through the input overlay (RELOAD for kTapFrames windows: the press word
+// while aiming, the hold classifier's tap when holstered). Its hold/stuck
+// output reaches the hook with the next Arm (the mirror's freeze).
+void TickReload(Driver& d, const Hooks& h, const pnat::Out& out, bool gun_ok, const pp::Gun1& gun, std::uint64_t now) noexcept {
+    Mission& m = d.mission;
+    const Settings& set = d.settings;
+    partner_reload::In ri{};
+    ri.now_ms = now;
+    ri.setting = set.ngun ? set.nreload : PartnerNativeReload::mirror;
+    ri.active = out.active && set.ngun && m.input_armed && !m.input_neutral;
+    ri.remote_valid = m.remote_v5;
+    ri.remote_mode = m.remote_gun_mode;
+    ri.remote_seq = m.remote_reload_seq;
+    ri.remote_reloading = m.remote_v5 && (m.remote_gun_flags & pin::GunFlag::Reloading) != 0;
+    const bool f = gun_ok && gun.fields_ok;
+    ri.body_ok = f;
+    ri.body_mode = f ? gun.mode_cur : static_cast<std::uint8_t>(0);
+    ri.gun_class = f && pnat::GunClass(gun.fields.flags27c) == pnat::kGunClassGun;
+    ri.gate = f && pnat::GunReloadGate(gun.fields, gun.b3d5);
+    ri.can_reload = f && pnat::GunCanReload(gun.fields);
+    ri.weapon_match = (m.weapon_strip & pnat::kPadReload) == 0;
+    ri.force_tap = d.rtap_pending;
+    d.rtap_pending = false;
+    m.reload_out = partner_reload::Step(m.reload, ri);
+    const char* tap_refused = nullptr;
+    if (m.reload_out.tap) {
+        if (!(EffectiveSettings(set, true).input_mask & pnat::kPadReload)) tap_refused = "mask";
+        else BumpTap(d, m, pnat::kPadReload, now);
+    }
+    // Body 1's own reload mode (every setting: how long it reloaded, its magazine and base after).
+    if (m.reload_out.body_event && set.ngun)
+        EmitNative(m, h, m.reload_cap, "partner_reload",
+                   "partner_reload=%s; setting=%s; body_mode=%u; mag=%u; cap=%u; m3e8=%u; b26=%u; upper=%u; ms=%u\r\n",
+                   m.reload_out.body_event, PartnerNativeReloadName(set.nreload), unsigned(ri.body_mode),
+                   f ? pnat::GunMagazine(gun.fields) : 0u, f ? pnat::GunCapacity(gun.fields) : 0u, f ? unsigned(gun.m3e8) : 0u,
+                   (gun.gun3c0 & c::gun3c0_reload_mode) ? 1u : 0u, gun.upper_ok ? unsigned(gun.upper_req) : 0xFFu,
+                   Clamp32(now - m.reload.body_since_ms));
+    if (m.reload_out.event || tap_refused)
+        EmitNative(m, h, m.reload_cap, "partner_reload",
+                   "partner_reload=%s; setting=%s; state=%s; body_mode=%u; remote_mode=%u; seq=%u; mag=%u; m3e8=%u; taps=%u; reason=%s\r\n",
+                   tap_refused ? "tap_refused" : m.reload_out.event, PartnerNativeReloadName(set.nreload),
+                   partner_reload::StateName(m.reload.state), unsigned(ri.body_mode), unsigned(ri.remote_mode), unsigned(ri.remote_seq),
+                   f ? pnat::GunMagazine(gun.fields) : 0u, f ? unsigned(gun.m3e8) : 0u, m.reload.taps,
+                   tap_refused ? tap_refused : m.reload_out.reason ? m.reload_out.reason : "none");
+}
+
+// The weapon switch (docs/native-puppet.md "Weapons" W4/W6): body 1's slots,
+// the plan from the received manifest (types read once per revision), the
+// plan line on change and the follower's verdict lines (hook totals).
+void TickSlots(Driver& d, const Hooks& h, const pp::State& st, bool realized, bool gun_ok, const pp::Gun1& gun,
+               const partner_input_hook::NativeStats& ns) noexcept {
+    Mission& m = d.mission;
+    const Settings& set = d.settings;
+    m.slots1 = pp::Slots{};
+    m.slots1_ok = set.ngun && realized && h.read_slots && h.read_slots(h.context, st, 1, m.slots1);
+    // The remote's base ids' types: once per manifest revision, retried while one is unread.
+    bool types_missing = false;
+    for (unsigned s = 0; s < 3; ++s)
+        types_missing = types_missing || (m.equip.have && m.equip.manifest.slots[s].base_id != 0 && !m.slot_types_ok[s]);
+    if (m.equip.have && (m.equip.manifest.revision != m.slot_types_rev || types_missing)) {
+        m.slot_types_rev = m.equip.manifest.revision;
+        for (unsigned s = 0; s < 3; ++s) {
+            m.slot_types[s] = 0;
+            const std::uint16_t base = m.equip.manifest.slots[s].base_id;
+            m.slot_types_ok[s] = base != 0 && h.equip_type && h.equip_type(h.context, base, m.slot_types[s]);
+        }
+    }
+    partner_slots::PlanIn pin_{};
+    pin_.body_ok = m.slots1_ok;
+    for (unsigned s = 0; s < 3; ++s) {
+        pin_.body[s] = m.slots1_ok ? partner_slots::Decode(m.slots1.handles[s]) : partner_slots::Handle{};
+        pin_.remote_base[s] = m.equip.have ? m.equip.manifest.slots[s].base_id : static_cast<std::uint16_t>(0);
+        pin_.remote_type[s] = m.slot_types[s];
+        pin_.remote_type_ok[s] = m.equip.have && m.slot_types_ok[s];
+    }
+    m.slot_plan = partner_slots::MakePlan(pin_);
+    m.slot_plan_ok = m.slots1_ok;
+    if (set.ngun && m.slots1_ok) {
+        std::uint64_t key = 1469598103934665603ull;
+        const auto mix = [&key](std::uint64_t v) noexcept { key = (key ^ v) * 1099511628211ull; };
+        for (unsigned s = 0; s < 3; ++s) {
+            mix(static_cast<std::uint64_t>(m.slot_plan.tier[s]));
+            mix(m.slots1.handles[s]);
+            mix(pin_.remote_base[s]);
+        }
+        mix(m.slots1.nibble);
+        if (key != m.slot_plan_key) {
+            m.slot_plan_key = key;
+            const auto& p = m.slot_plan;
+            EmitNative(m, h, m.slot_cap, "partner_slot",
+                       "partner_slot=plan; follow=%s; body_slot=%u; tiers=%s,%s,%s; body=%u:%u,%u:%u,%u:%u; remote_base=%u,%u,%u; ok=0x%x\r\n",
+                       PartnerNativeSlotName(set.nslot), unsigned(m.slots1.nibble), partner_slots::TierName(p.tier[0]),
+                       partner_slots::TierName(p.tier[1]), partner_slots::TierName(p.tier[2]), unsigned(pin_.body[0].equip),
+                       unsigned(pin_.body[0].type), unsigned(pin_.body[1].equip), unsigned(pin_.body[1].type), unsigned(pin_.body[2].equip),
+                       unsigned(pin_.body[2].type), unsigned(pin_.remote_base[0]), unsigned(pin_.remote_base[1]),
+                       unsigned(pin_.remote_base[2]), unsigned(p.ok_mask));
+        }
+    }
+    // The follower's verdicts (process totals of the hook): a write or a new refusal.
+    if (ns.slot_writes != m.slot_logged_writes || ns.slot_refused != m.slot_logged_refused) {
+        const bool wrote = ns.slot_writes != m.slot_logged_writes;
+        m.slot_logged_writes = ns.slot_writes;
+        m.slot_logged_refused = ns.slot_refused;
+        m.slot_logged_last = static_cast<std::uint32_t>(ns.slot_last);
+        EmitNative(m, h, m.slot_cap, "partner_slot",
+                   "partner_slot=%s; reason=%s; target=%u; remote_seq=%u; body_slot=%u; hand_slot=%u; writes=%u; refused=%u\r\n",
+                   wrote ? "write" : "refused", partner_input_hook::SlotRefusalName(ns.slot_last), ns.slot_target,
+                   unsigned(m.remote_switch_seq), m.slots1_ok ? unsigned(m.slots1.nibble) : 0xFFu,
+                   gun_ok && gun.fields_ok ? unsigned(gun.hand_slot) : 0xFFu, ns.slot_writes, ns.slot_refused);
     }
 }
 
@@ -2034,6 +2256,13 @@ void TickOnline(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t no
     if (!configured && set.isend) {
         m.gun0 = pp::Gun1{};
         m.gun0_ok = h.read_gun && h.read_gun(h.context, st, 0, m.gun0);
+        // Input frame v5 (R2/W1): the local player's current slot and the
+        // reload/switch counters, so the peer's native reload and slot
+        // follower work against a copy that shows clips too.
+        m.slots0 = pp::Slots{};
+        m.slots0_ok = h.read_slots && h.read_slots(h.context, st, 0, m.slots0);
+        partner_reload::SenderStep(m.sender_gun, m.gun0_ok && m.gun0.fields_ok, m.gun0.mode_cur,
+                                   m.slots0_ok ? m.slots0.nibble : static_cast<std::uint8_t>(0xFF));
         if (set.nrates != PartnerNativeRates::off && h.read_rates && (!m.rates_read_ms || now - m.rates_read_ms >= kRatesReadMs)) {
             m.rates_read_ms = now ? now : 1;
             m.rates_id0_ok = h.read_rates(h.context, st, 0, m.rates_id0);
@@ -2166,8 +2395,8 @@ void TickAim(Driver& d, const Hooks& h, const pp::State& st, bool configured, bo
     in.look_ok = latest_ok && latest.packet.version >= 3 && (latest.packet.xflags & pin::XFlag::Look) && latest.age_ms <= set.stale_ms;
     in.look_pitch = latest.packet.look_pitch;
     in.look_yaw = latest.packet.look_yaw;
-    // point: the sender's own aim point needs input frame v5 (not on the wire
-    // yet): the look stands in (src says which).
+    // point: the sender's own aim point is not on the wire yet (input frame v5
+    // carries the gun group only): the look stands in (src says which).
     in.point_ok = false;
     const pam::TargetOut to = pam::Target(in);
     if (h.publish_aim) {
@@ -2521,6 +2750,19 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     // The local gun record (v4 magazine sender and telemetry), once per tick.
     m.gun0 = pp::Gun1{};
     m.gun0_ok = h.read_gun && h.read_gun(h.context, st, 0, m.gun0);
+    // Input frame v5 (R2/W1): the local player's current slot and the reload/switch counters.
+    m.slots0 = pp::Slots{};
+    m.slots0_ok = h.read_slots && h.read_slots(h.context, st, 0, m.slots0);
+    partner_reload::SenderStep(m.sender_gun, m.gun0_ok && m.gun0.fields_ok, m.gun0.mode_cur,
+                               m.slots0_ok ? m.slots0.nibble : static_cast<std::uint8_t>(0xFF));
+    // The remote's latest live v5 gun group and slot.
+    m.remote_v5 = latest_ok && latest.age_ms <= set.stale_ms && latest.packet.version >= 5 &&
+                  (latest.packet.gun_flags & pin::GunFlag::Valid) != 0;
+    m.remote_gun_flags = m.remote_v5 ? latest.packet.gun_flags : static_cast<std::uint8_t>(0);
+    m.remote_gun_mode = m.remote_v5 ? latest.packet.gun_mode : static_cast<std::uint8_t>(0);
+    m.remote_reload_seq = m.remote_v5 ? latest.packet.reload_seq : static_cast<std::uint8_t>(0);
+    m.remote_switch_seq = m.remote_v5 ? latest.packet.switch_seq : static_cast<std::uint8_t>(0);
+    m.remote_slot = m.remote_v5 && latest.packet.inv_slot <= pin::kInvSlotMax ? latest.packet.inv_slot : pin::kInvSlotUnknown;
     const bool remote_aiming = (latest_ok && (latest.packet.xflags & pin::XFlag::Aiming)) || (remote_flags & sync::ActionFlag::Aiming);
     const bool body_aiming = gun_ok && gun.node_active && (gun.gun3c0 & c::gun_flag_hold);
     if (remote_aiming == body_aiming) {
@@ -2534,6 +2776,8 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     {
         const bool ready = configured && defer == PartnerDefer::on && set.stage >= 3 && realized && parts_loaded && !terminating;
         TickWeapons(d, h, st, ready, gun_ok, gun, is.native, now);
+        TickReload(d, h, out, gun_ok, gun, now);
+        TickSlots(d, h, st, realized, gun_ok, gun, is.native);
     }
     // Aim parity: the target for the drain window and the aim telemetry.
     TickAim(d, h, st, configured, realized, latest_ok, latest, remote_aiming || body_aiming, now);
@@ -2848,8 +3092,67 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         t.fire_requested = n.fire_requested;
         t.fire_shot_drains = n.fire_shot_drains;
         t.fire_modes = n.fire_modes;
-        if (set.nfire == PartnerNativeFire::visual && !m.fire_refusal && m.weapon_mismatch)
-            CopyText(t.fire_refused, sizeof(t.fire_refused), "weapon_mismatch");
+        if (set.nfire == PartnerNativeFire::visual && !m.fire_refusal && m.weapon_gate != partner_slots::Gate::match)
+            CopyText(t.fire_refused, sizeof(t.fire_refused), m.weapon_gate == partner_slots::Gate::mismatch    ? "weapon_mismatch"
+                                                             : m.weapon_gate == partner_slots::Gate::switching ? "weapon_switch"
+                                                                                                               : "weapon_type");
+        CopyText(t.weapon_gate, sizeof(t.weapon_gate), partner_slots::GateName(m.weapon_gate));
+        t.body_type = m.body_type;
+        t.body_switching = m.body_switching;
+        // The partner's own reload (R1..R6).
+        t.gun_mode_cur = f ? static_cast<std::int32_t>(gun.mode_cur) : pnat::kNull;
+        t.gun_upper_req = gun_ok && gun.upper_ok ? static_cast<std::int32_t>(gun.upper_req) : pnat::kNull;
+        t.gun_m3e4 = f ? static_cast<std::int32_t>(gun.m3e4) : pnat::kNull;
+        t.gun_m3e6 = f ? static_cast<std::int32_t>(gun.m3e6) : pnat::kNull;
+        t.gun_m3e8 = f ? static_cast<std::int32_t>(gun.m3e8) : pnat::kNull;
+        t.gun_hand_slot = f ? static_cast<std::int32_t>(gun.hand_slot) : pnat::kNull;
+        t.gun_slot_src = f ? static_cast<std::int32_t>(gun.slot_src) : pnat::kNull;
+        t.gun_b26 = gun_ok && (gun.gun3c0 & c::gun3c0_reload_mode) ? 1u : 0u;
+        CopyText(t.reload_setting, sizeof(t.reload_setting), PartnerNativeReloadName(set.nreload));
+        CopyText(t.reload_state, sizeof(t.reload_state), partner_reload::StateName(m.reload.state));
+        CopyText(t.reload_last, sizeof(t.reload_last), m.reload.last_reason ? m.reload.last_reason : "none");
+        t.reload_remote_valid = m.remote_v5;
+        t.reload_remote_reloading = m.remote_v5 && (m.remote_gun_flags & pin::GunFlag::Reloading) != 0;
+        t.reload_remote_mode = m.remote_v5 ? static_cast<std::int32_t>(m.remote_gun_mode) : pnat::kNull;
+        t.reload_remote_seq = m.remote_v5 ? static_cast<std::int32_t>(m.remote_reload_seq) : pnat::kNull;
+        t.reload_hold = m.reload_out.hold;
+        t.reload_stuck = m.reload_out.stuck;
+        t.reload_starts = m.reload.starts;
+        t.reload_taps = m.reload.taps;
+        t.reload_entered = m.reload.entered;
+        t.reload_completed = m.reload.completed;
+        t.reload_stuck_n = m.reload.stuck;
+        t.reload_fallbacks = m.reload.fallbacks;
+        t.reload_body_entries = m.reload.body_entries;
+        t.reload_sample_strip = m.have_arm ? m.last_arm.config.sample_strip : 0u;
+        t.mag_reload_seen = n.mag_reload_seen;
+        t.mag_frozen = n.mag_frozen;
+        t.mag_reconciles = n.mag_reconciles;
+        t.mag_m3e8_writes = n.mag_m3e8_writes;
+        t.probe1_b20 = n.p1_b20;
+        t.probe1_b24 = n.p1_b24;
+        t.probe1_shots = n.p1_shots;
+        t.probe1_mode_changes = n.p1_mode_changes;
+        t.probe1_mode = n.p1_mode;
+        // The weapon switch (W4/W6).
+        CopyText(t.slot_setting, sizeof(t.slot_setting), PartnerNativeSlotName(set.nslot));
+        CopyText(t.slot_last, sizeof(t.slot_last), partner_input_hook::SlotRefusalName(n.slot_last));
+        t.slot_remote = m.remote_slot <= pin::kInvSlotMax ? static_cast<std::int32_t>(m.remote_slot) : pnat::kNull;
+        t.slot_remote_seq = m.remote_v5 ? static_cast<std::int32_t>(m.remote_switch_seq) : pnat::kNull;
+        t.slot_body = m.slots1_ok ? static_cast<std::int32_t>(m.slots1.nibble) : pnat::kNull;
+        t.slot_target = n.slot_target <= 15u ? static_cast<std::int32_t>(n.slot_target) : pnat::kNull;
+        t.slots_ok = m.slots1_ok;
+        for (unsigned s = 0; s < 3; ++s) {
+            const partner_slots::Handle hs = m.slots1_ok ? partner_slots::Decode(m.slots1.handles[s]) : partner_slots::Handle{};
+            t.slot_filled[s] = hs.filled;
+            t.slot_equip[s] = hs.equip;
+            t.slot_type[s] = hs.type;
+            CopyText(t.slot_tier[s], sizeof(t.slot_tier[s]), m.slot_plan_ok ? partner_slots::TierName(m.slot_plan.tier[s]) : "unknown");
+        }
+        t.slot_ok_mask = m.slot_plan_ok ? m.slot_plan.ok_mask : static_cast<std::uint8_t>(0);
+        t.slot_writes = n.slot_writes;
+        t.slot_refused = n.slot_refused;
+        t.slot_faulted = n.slot_faulted;
         t.equip_tx_rev = m.equip_tx_have ? m.equip_tx.revision : 0u;
         for (unsigned i = 0; i < 3; ++i) {
             t.equip_tx_base[i] = m.equip_tx_have ? m.equip_tx.slots[i].base_id : 0u;
@@ -2859,6 +3162,34 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         }
         t.equip_tables_ok = m.equip_tables_ok;
         CopyText(t.equip_apply, sizeof(t.equip_apply), m.equip_apply[0] ? m.equip_apply : "none");
+        // The generalized writer and preload (the observer's last report).
+        const equipment_stock_writer::Status& ws = d.equip_status;
+        CopyText(t.equip_setting, sizeof(t.equip_setting), PartnerNativeEquipName(set.nequip));
+        t.writer_active = ws.active;
+        for (unsigned i = 0; i < 3; ++i) {
+            const equipment_stock_writer::SlotStatus& ss = ws.slots[i];
+            t.writer_want[i] = ss.want;
+            t.writer_equip[i] = ss.equip;
+            CopyText(t.writer_tier[i], sizeof(t.writer_tier[i]), equipment_stock_writer::TierName(ss.tier));
+            CopyText(t.writer_family[i], sizeof(t.writer_family[i]), ss.equip ? (ss.optional ? "optional" : "plain") : "none");
+            CopyText(t.writer_state[i], sizeof(t.writer_state[i]), equipment_stock_writer::SlotStateName(ss.state));
+            CopyText(t.writer_reason[i], sizeof(t.writer_reason[i]), ss.reason[0] ? ss.reason : "none");
+            t.writer_handle[i] = ss.handle;
+        }
+        t.writer_dispatches = ws.dispatches;
+        t.writer_bound = ws.bound;
+        t.writer_refused = ws.refused;
+        t.resident_ok = ws.census_ok;
+        t.resident_count = ws.resident_count <= 48 ? ws.resident_count : static_cast<std::uint8_t>(48);
+        for (unsigned i = 0; i < t.resident_count; ++i) {
+            const equipment_stock_writer::ResidentEntry& r = ws.resident[i];
+            t.resident[i] = {r.equip, r.type, r.receiver, r.flags, r.index, r.refs};
+        }
+        t.preload_count = d.preload_count <= 3 ? d.preload_count : static_cast<std::uint8_t>(3);
+        for (unsigned i = 0; i < 3; ++i) t.preload_ids[i] = d.preload_ids[i];
+        CopyText(t.preload_verdict, sizeof(t.preload_verdict), d.preload_verdict[0] ? d.preload_verdict : "none");
+        CopyText(t.preload_reason, sizeof(t.preload_reason), d.preload_reason[0] ? d.preload_reason : "none");
+        t.preload_new_hashes = d.preload_new_hashes;
     }
     // The facing governor (partner_recon) and the placement verdicts.
     {
@@ -3025,6 +3356,9 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     e.face_err_cdeg = t.face_err_cdeg;
     e.r60_1 = t.aim_r60[1];
     e.pred1 = static_cast<std::int8_t>(t.aim_pred[1] == pnat::kNull ? -1 : t.aim_pred[1]);
+    e.gmode = t.gun_mode_cur == pnat::kNull ? static_cast<std::uint8_t>(0xFF) : static_cast<std::uint8_t>(t.gun_mode_cur);
+    e.rmode = m.remote_v5 ? m.remote_gun_mode : static_cast<std::uint8_t>(0xFF);
+    e.hslot = t.gun_hand_slot == pnat::kNull ? static_cast<std::uint8_t>(0xFF) : static_cast<std::uint8_t>(t.gun_hand_slot);
     const std::uint32_t p1_delta = t.ring.count ? is.native.p1_forced - m.ring_p1_last : 0u;  // totals are process-wide
     m.ring_p1_last = is.native.p1_forced;
     e.p1_forced = static_cast<std::uint16_t>(p1_delta > 0xFFFFu ? 0xFFFFu : p1_delta);
@@ -3089,6 +3423,9 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.nface = lab.partner_native_face;
     d.settings.nnoise = lab.partner_native_noise;
     d.settings.naimpt = lab.partner_native_aimpt;
+    d.settings.nreload = lab.partner_native_reload;
+    d.settings.nslot = lab.partner_native_slot;
+    d.settings.nequip = lab.partner_native_equip;
 
     d.settings.play_mode = lab.mode == LabMode::play;
     d.settings.nprofile = lab.partner_native_profile;
@@ -3097,6 +3434,9 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.stall_ms = lab.partner_native_stall_ms;
     d.settings.nhold = lab.partner_native_hold;
     d.settings.edge_repeats = lab.partner_input_edge_repeats;
+    // Play never calls SetCurrentSlot itself (docs/native-puppet.md "Release gating"): the
+    // setting the telemetry reports is the one that runs (BuildArm downgrades it again).
+    if (d.settings.play_mode && d.settings.nslot == PartnerNativeSlot::call) d.settings.nslot = PartnerNativeSlot::write;
     d.look_forced_rev = 1;
     partner_recon::Reset(d.mission.recon);
     partner_dmmap::Reset(d.mission.dmmap);
@@ -3142,6 +3482,7 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
     d.census_pending = false;
     d.tap_pending = d.press_pending = d.dmplay_pending = d.dmstop_pending = d.p218_pending = false;
     d.input_census_pending = d.dm_census_pending = false;
+    d.rtap_pending = false;
     if (!h.take_trigger) return;
     char text[partner::max_trigger + 1]{};
     std::size_t length = 0;
@@ -3330,6 +3671,16 @@ void ApplyTrigger(Driver& d, const Hooks& h, const partner::Trigger& trigger, bo
     if (trigger.has_ngun && !ngun_refused) d.settings.ngun = trigger.ngun;
     if (trigger.has_nfire && !nfire_refused) d.settings.nfire = trigger.nfire;
     if (trigger.has_steer) d.settings.steer_deg = trigger.steer_deg;
+    if (trigger.has_nreload) d.settings.nreload = trigger.nreload;
+    if (trigger.has_nslot)
+        d.settings.nslot = d.settings.play_mode && trigger.nslot == PartnerNativeSlot::call ? PartnerNativeSlot::write : trigger.nslot;
+    if (trigger.has_nreload || trigger.has_nslot)
+        EmitFormat(h, "partner_native=trigger_weapons; nreload=%s; nslot=%s\r\n", PartnerNativeReloadName(d.settings.nreload),
+                   PartnerNativeSlotName(d.settings.nslot));
+    if (trigger.rtap) {
+        d.rtap_pending = true;
+        Emit(h, "partner_reload=rtap; queued=1\r\n");
+    }
     if (native_keys)
         EmitFormat(h, "partner_native=trigger; drive=%s; defer=%s; local=%s; naim=%s; ngun=%u; nfire=%s; steer=%u; mask=0x%x\r\n",
                    PartnerDriveName(d.settings.drive), PartnerDeferName(EffectivePartnerDefer(d.settings.drive, d.settings.defer)),
