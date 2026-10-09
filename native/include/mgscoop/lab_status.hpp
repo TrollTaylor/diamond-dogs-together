@@ -91,6 +91,14 @@ struct PublishTracker {
 // On failure (capacity) returns false and leaves `length` unchanged.
 bool AppendJsonString(char* out, std::size_t capacity, std::size_t& length, const char* text) noexcept;
 
+// link-status.json transport keys (docs/steam-online.md 11), appended before
+// time_utc: "transport":"udp|steam","route":"relay|direct|unknown|none",
+// "accepting":0|1,"steam":"ok|acquiring|off|<reason>", (with the trailing
+// comma). On failure (capacity, or a name outside [a-z0-9_]) returns false
+// and leaves `length` unchanged.
+bool AppendLinkTransportJson(char* out, std::size_t capacity, std::size_t& length, const char* transport, const char* route,
+                             bool accepting, const char* steam) noexcept;
+
 constexpr std::size_t kStatusJsonCapacity = 768;
 // Formats the version-1 document. `length` excludes the terminating NUL.
 bool FormatStatusJson(const Status& status, char* out, std::size_t capacity, std::size_t& length) noexcept;

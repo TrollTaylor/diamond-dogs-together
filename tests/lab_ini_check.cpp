@@ -3,12 +3,13 @@
 // scripts with the native parsers, validates a master URL with the native
 // redirect validator, a link-secret.txt with the native secret reader, or a
 // join code with the test-only parser, and prints key=value lines.
-//   lab_ini_check lab <file> | coop <file> | url <url> | secret <file> | code <text>
-// The code mode never prints the secret.
+//   lab_ini_check lab <file> | coop <file> | url <url> | secret <file> | code <text> | steamcode <text>
+// The code modes never print the secret.
 #include "mgscoop/lab_config.hpp"
 #include "mgscoop/link_crypto.hpp"
 #include "mgscoop/link_protocol.hpp"
 #include "mgscoop/master_server_patch.hpp"
+#include "mgscoop/steam_join_code.hpp"
 #include "link_join_code.hpp"
 #include <cstdio>
 #include <cstring>
@@ -50,6 +51,15 @@ int main(int argc, char** argv) {
         std::size_t length = 0;
         const auto status = mgscoop::master_server::ValidateUrl(argv[2], length);
         std::printf("url_status=%s\nlength=%zu\n", mgscoop::master_server::UrlStatusName(status), length);
+        return 0;
+    }
+    if (std::strcmp(argv[1], "steamcode") == 0) {
+        // The native MGS2 parser (the DLL's own; docs/steam-online.md 9.2).
+        mgscoop::steam_code::Code code{};
+        const auto status = mgscoop::steam_code::Parse(argv[2], std::strlen(argv[2]), code);
+        std::printf("steamcode_status=%s\n", mgscoop::steam_code::StatusName(status));
+        if (status == mgscoop::steam_code::Status::ok) std::printf("host=%llu\n", static_cast<unsigned long long>(code.host));
+        mgscoop::link::SecureZero(&code, sizeof(code));
         return 0;
     }
     if (std::strcmp(argv[1], "code") == 0) {
@@ -104,6 +114,11 @@ int main(int argc, char** argv) {
                     c.partner_interp_max_ms, mgscoop::PartnerLostName(c.partner_lost));
         // World sync keys (docs/world-sync-protocol.md), after link_keys=1.
         std::printf("world=%u\nworld_probe=%s\n", c.world, mgscoop::WorldProbeName(c.world_probe));
+        // Steam online keys (docs/steam-online.md 9.1), after the world keys.
+        std::printf("net_transport=%s\nnet_steam_self=%llu\nnet_peer_steam=%llu\nnet_steam_wait=%d\nnet_steam_accept=%s\nsteam_selftest=%u\n",
+                    mgscoop::NetTransportName(c.net_transport), static_cast<unsigned long long>(c.net_steam_self),
+                    static_cast<unsigned long long>(c.net_peer_steam), c.net_steam_wait ? 1 : 0, c.net_steam_accept ? "on" : "off",
+                    c.steam_selftest);
         return 0;
     }
     if (std::strcmp(argv[1], "coop") == 0) {

@@ -8,10 +8,14 @@
 #include <windows.h>
 #include <bcrypt.h>
 #include <strsafe.h>
+#include "mgscoop/early_patches.hpp"
 #include "mgscoop/lab_status.hpp"
 #include "mgscoop/link_crypto.hpp"
 #include "mgscoop/player_sync.hpp"
 #include "mgscoop/session.hpp"
+#include "mgscoop/steam_join_code.hpp"
+#include "mgscoop/steam_net_callbacks.hpp"
+#include "mgscoop/steam_transport.hpp"
 #include "mgscoop/udp_transport.hpp"
 
 namespace mgscoop::partner_net {
@@ -20,6 +24,10 @@ namespace lab = mgscoop::lab;
 
 // Constant-initialized, trivially destructible process state.
 lab::UdpTransport g_transport;
+// Steam online (docs/steam-online.md 7, 8): chosen once in Start, before any
+// thread runs; the UDP path is unchanged when it is not selected.
+lab::SteamTransport g_steam;
+bool g_use_steam = false;
 INIT_ONCE g_once = INIT_ONCE_STATIC_INIT;
 Config g_config{};
 volatile LONG g_running = 0;
@@ -97,7 +105,7 @@ std::uint64_t g_interp_update_ms = 0;
 const char* g_disabled_reason = nullptr;  // link=disabled reason (state disabled)
 wchar_t g_status_path[lab::kMaxAtomicPath]{};
 std::uint64_t g_status_check_ms = 0, g_status_write_ms = 0;
-char g_status_last[640]{};
+char g_status_last[768]{};
 std::uint32_t g_status_fail = 0, g_status_write_ms_max = 0;
 std::uint64_t g_drop_logged[link::kDropReasons]{};
 std::uint64_t g_drop_logged_ms = 0;
@@ -159,10 +167,49 @@ const char* TransportErrorName(lab::TransportError error) noexcept {
 
 std::uint32_t Clamp32(std::uint64_t value) noexcept { return value > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<std::uint32_t>(value); }
 
+// ---- The transport ops table (UDP or Steam), chosen once in StartLink.
+struct TransportOps {
+    bool (*transmit_to)(lab::Endpoint to, const lab::WireChunk* chunks, unsigned count, bool droppable) noexcept;
+    lab::TransportStats (*stats)() noexcept;
+    std::uint16_t (*local_port)() noexcept;
+};
+bool UdpTransmitTo(lab::Endpoint to, const lab::WireChunk* chunks, unsigned count, bool droppable) noexcept {
+    return g_transport.transmit_to(to, chunks, count, droppable);
+}
+lab::TransportStats UdpStats() noexcept { return g_transport.stats(); }
+std::uint16_t UdpLocalPort() noexcept { return g_transport.local_port(); }
+bool SteamTransmitTo(lab::Endpoint to, const lab::WireChunk* chunks, unsigned count, bool droppable) noexcept {
+    return g_steam.transmit_to(to, chunks, count, droppable);
+}
+lab::TransportStats SteamStats() noexcept { return g_steam.stats(); }
+std::uint16_t SteamLocalPort() noexcept { return 0; }
+const TransportOps kUdpOps{&UdpTransmitTo, &UdpStats, &UdpLocalPort};
+const TransportOps kSteamOps{&SteamTransmitTo, &SteamStats, &SteamLocalPort};
+const TransportOps* g_ops = &kUdpOps;
+
+// ---- Steam online state.
+volatile LONG g_shutdown = 0;
+volatile LONG g_steam_waiting = 0;      // guest without a host (link-status "waiting")
+volatile LONG g_steam_ready = 0;
+volatile LONG g_beacon_wanted = 0;
+volatile LONG64 g_steam_host = 0;       // guest: the armed host
+char g_steam_reason[32]{};              // "" or the steam=disabled reason (set once)
+char g_steam_disabled[40]{};            // "steam_<reason>" for link=disabled
+SRWLOCK g_secret_lock = SRWLOCK_INIT;   // the host's retained secret (code / invites)
+char g_host_secret[link::kSecretChars]{};
+bool g_host_secret_valid = false;
+// The F9 paste mailbox (consumed on the transport thread).
+SRWLOCK g_paste_lock = SRWLOCK_INIT;
+char g_paste[96]{};
+bool g_paste_pending = false;
+std::uint64_t g_connecting_since_ms = 0;  // transport thread: guest connecting without WELCOME
+volatile LONG g_steam_failed = 0;       // g_steam_reason is complete
+void SteamGuestIdle(std::uint64_t now) noexcept;
+
 // ---- Link v2 send path (g_tx_lock held by every caller).
 bool LinkTransmit(void*, const lab::Endpoint& to, const std::uint8_t* data, std::size_t size) noexcept {
     const lab::WireChunk chunk{data, size};
-    return g_transport.transmit_to(to, &chunk, 1, true);
+    return g_ops->transmit_to(to, &chunk, 1, true);
 }
 
 bool LinkRandom(void*, std::uint8_t* out, std::size_t size) noexcept {
@@ -373,6 +420,11 @@ void ResetReceiveLocked() noexcept {
 
 // ---- Link v2 logging (receive thread, outside both locks).
 void FormatPeer(const lab::Endpoint& peer, char (&out)[24]) noexcept {
+    if (g_use_steam) {
+        // Steam endpoints are {account, 0x5354}: a masked SteamID, never an IPv4.
+        steam_code::FormatPeer(peer.address ? lab::SteamIdOf(peer) : 0, out);
+        return;
+    }
     char address[16]{};
     link::MaskAddress(peer.address, address);
     if (FAILED(StringCchPrintfA(out, ARRAYSIZE(out), "%s:%u", address, static_cast<unsigned>(peer.port)))) out[0] = 0;
@@ -384,7 +436,7 @@ void LogEvent(const link::Event& e, std::uint64_t now_ms) noexcept {
     HRESULT hr = E_FAIL;
     switch (e.kind) {
     case link::EventKind::listening:
-        hr = StringCchPrintfA(line, ARRAYSIZE(line), "link=listening; port=%u\r\n", static_cast<unsigned>(g_transport.local_port()));
+        hr = StringCchPrintfA(line, ARRAYSIZE(line), "link=listening; port=%u\r\n", static_cast<unsigned>(g_ops->local_port()));
         break;
     case link::EventKind::connecting:
         hr = StringCchPrintfA(line, ARRAYSIZE(line), "link=connecting; peer=%s; attempt=%u\r\n", peer, e.attempt);
@@ -505,27 +557,35 @@ bool FormatStatus(const LinkSnapshot& s, link::LinkState state, char* out, std::
             StringCchPrintfA(time_utc, ARRAYSIZE(time_utc), "\"%04u-%02u-%02uT%02u:%02u:%02uZ\"", st.wYear, st.wMonth, st.wDay,
                              st.wHour, st.wMinute, st.wSecond);
     }
+    // Transport keys (docs/steam-online.md 11), appended before time_utc.
+    char transport[160]{};
+    std::size_t transport_length = 0;
+    const char* steam_status = !g_use_steam ? "off" : g_steam_failed ? g_steam_reason : g_steam_ready ? "ok" : "acquiring";
+    const char* route = g_use_steam ? steam_net::RouteName(g_steam.route()) : "none";
+    if (!lab::AppendLinkTransportJson(transport, sizeof(transport), transport_length, g_use_steam ? "steam" : "udp", route,
+                                      g_use_steam && g_config.host && g_steam.accepting(), steam_status))
+        transport[0] = 0;
     return SUCCEEDED(StringCchPrintfA(out, capacity,
         "{\"v\":1,\"pid\":%lu,\"mode\":\"%s\",\"role\":\"%s\",\"state\":\"%s\",\"reason\":\"%s\",\"verified\":%u,\"session\":%u,"
         "\"peer\":\"%s\",\"local_port\":%u,\"rtt_ms\":%u,\"jitter_ms\":%u,\"loss_permille\":%u,\"resend\":%u,"
         "\"tx_Bps\":%u,\"rx_Bps\":%u,\"interp_ms\":%u,\"remote_build\":%s,\"partner\":\"%s\",\"partner_shown\":%u,"
-        "\"look\":%u,\"mission\":%u,\"saves\":\"%s\",\"time_utc\":%s}\n",
+        "\"look\":%u,\"mission\":%u,\"saves\":\"%s\",%s\"time_utc\":%s}\n",
         GetCurrentProcessId(), g_config.play ? "play" : "lab", g_config.host ? "host" : "guest", link::LinkStateName(state), reason,
-        verified ? 1u : 0u, s.session, peer, static_cast<unsigned>(g_transport.local_port()), s.rtt_ms, s.jitter_ms,
+        verified ? 1u : 0u, s.session, peer, static_cast<unsigned>(g_ops->local_port()), s.rtt_ms, s.jitter_ms,
         s.loss_permille, s.resend, g_tx_bps, g_rx_bps, static_cast<unsigned>(EffectiveInterpMs(g_config.interp_ms)), build, PartnerStatusName(),
         g_partner_shown ? 1u : 0u, g_partner_look ? 1u : 0u, static_cast<unsigned>(g_partner_mission),
-        g_config.saves_redirected ? "redirected" : "unchanged", time_utc));
+        g_config.saves_redirected ? "redirected" : "unchanged", transport, time_utc));
 }
 
 void WriteStatus(const LinkSnapshot& s, link::LinkState state, std::uint64_t now_ms) noexcept {
     if (!g_status_path[0]) return;
     if (now_ms - g_status_check_ms < kStatusCheckMs) return;
     g_status_check_ms = now_ms;
-    char content[640]{};
+    char content[768]{};
     if (!FormatStatus(s, state, content, sizeof(content), false)) return;
     const bool changed = lstrcmpA(content, g_status_last) != 0;
     if (!changed && now_ms - g_status_write_ms < kStatusRefreshMs) return;
-    char document[640]{};
+    char document[768]{};
     if (!FormatStatus(s, state, document, sizeof(document), true)) return;
     std::size_t length = 0;
     while (document[length]) ++length;
@@ -646,7 +706,10 @@ void LinkDatagram(const std::uint8_t* data, std::size_t size, const lab::Endpoin
     while (event_count < kMaxEvents && g_session.PopEvent(e)) events[event_count++] = e;
     InterlockedExchange(&g_link_state, static_cast<LONG>(g_session.state()));
     const std::uint32_t new_session = delivery.new_session ? g_session.session_number() : 0;
+    const lab::Endpoint committed = g_session.peer();
     ReleaseSRWLockExclusive(&g_tx_lock);
+    // Steam host: the committed guest is the session peer (accept policy, route).
+    if (g_use_steam && delivery.new_session && g_config.host && committed.address) g_steam.set_peer(lab::SteamIdOf(committed));
     // World sync: the session first (it clears the world queues), then the
     // datagrams of this packet; both outside every partner_net lock.
     if (delivery.new_session && g_world.on_session) g_world.on_session(new_session);
@@ -681,6 +744,7 @@ void LinkIdle() noexcept {
     unsigned event_count = 0;
     LinkSnapshot snapshot{};
     const std::uint64_t now = NowMs();
+    if (g_use_steam && !g_config.host) SteamGuestIdle(now);
     AcquireSRWLockExclusive(&g_tx_lock);
     if (g_session.CanSendData()) {
         // Paced reliable traffic (<= kRetransmitBudgetBytes retransmitted per
@@ -712,8 +776,17 @@ void LinkIdle() noexcept {
         }
         InterlockedExchange(&g_applied_interp, static_cast<LONG>(g_interp.Tick()));
     }
-    const link::LinkState state = g_disabled_reason ? link::LinkState::disabled : snapshot.state;
+    const link::LinkState state = g_disabled_reason ? link::LinkState::disabled
+                                : g_steam_waiting ? link::LinkState::waiting
+                                                  : snapshot.state;
     snapshot.state = state;
+    if (g_use_steam && !g_config.host) {
+        // Guest beacon (10.4): connecting for more than 10 s without a WELCOME.
+        const bool connecting = state == link::LinkState::connecting;
+        if (!connecting) g_connecting_since_ms = 0;
+        else if (!g_connecting_since_ms) g_connecting_since_ms = now;
+        InterlockedExchange(&g_beacon_wanted, connecting && now - g_connecting_since_ms > 10000 ? 1 : 0);
+    }
     PublishInfo(snapshot, EffectiveInterpMs(g_config.interp_ms));
     LinkStats(snapshot, state, now);
     WriteStatus(snapshot, state, now);
@@ -736,7 +809,7 @@ void OnIdle(void*) noexcept {
     }
     if (now - g_last_stats_ms < kStatsIntervalMs) { SetLastError(error); return; }
     g_last_stats_ms = now;
-    const lab::TransportStats stats = g_transport.stats();
+    const lab::TransportStats stats = g_ops->stats();
     pose::Status status = pose::Status::none;
     std::uint64_t age = 0;
     AcquireSRWLockShared(&g_lock);
@@ -800,8 +873,14 @@ void LogDisabled(const char* reason) noexcept {
     WriteStatus(snapshot, link::LinkState::disabled, kStatusCheckMs + NowMs());
 }
 
+void StartSteamLink() noexcept;
+
 // Link v2 Start: the secret, then the transport, then the session.
 void StartLink() noexcept {
+    if (g_config.transport == Transport::steam) {
+        StartSteamLink();
+        return;
+    }
     char secret[link::kSecretChars]{};
     const link::SecretStatus secret_status = ReadSecret(g_config.directory, secret);
     bool lab_secret = false;
@@ -880,6 +959,243 @@ void StartLink() noexcept {
                                    static_cast<unsigned>(g_transport.local_port()), static_cast<unsigned>(transport.peer_port))))
         Log(line);
     // Queued events (listening / connecting) are logged by the receive thread.
+}
+
+// ------------------------------------------------------------ Steam online
+// The Steam guest's arm (8.2): on the transport thread, only while waiting or
+// rejected. Derives K_psk, restarts the session for the new host under
+// g_tx_lock with the same receive/reliable reset as a new session, then
+// clears the world queues through on_session.
+void ArmSteamGuest(std::uint64_t host, const char (&secret)[link::kSecretChars], const char* via, std::uint64_t now) noexcept {
+    char line[160]{}, peer[24]{};
+    const link::LinkState current = static_cast<link::LinkState>(g_link_state);
+    AcquireSRWLockShared(&g_tx_lock);
+    const bool bad_code_hint = g_session.reject_reason() == link::RejectReason::bad_code;
+    ReleaseSRWLockShared(&g_tx_lock);
+    // Waiting or rejected; a pasted code may also replace one the host refused
+    // as bad_code (an unauthenticated hint that leaves the guest connecting).
+    const bool armable = g_steam_waiting || current == link::LinkState::rejected ||
+                         (lstrcmpA(via, "code") == 0 && bad_code_hint &&
+                          (current == link::LinkState::connecting || current == link::LinkState::reconnecting));
+    if (!armable) {
+        if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "steam=join_ignored; reason=busy; via=%s\r\n", via))) Log(line);
+        return;
+    }
+    if (host == g_config.steam_self) {
+        Log("steam=join_refused; reason=peer_is_self\r\n");
+        return;
+    }
+    link::SessionConfig session{};
+    session.role = link::Role::guest;
+    session.play = g_config.play;
+    session.exact_filter = true;  // C8: the Messages leg delivers only this host
+    session.peer = lab::SteamEndpoint(host);
+    for (std::size_t i = 0; i < link::kBuildSize; ++i) session.build[i] = g_build[i];
+    link::DerivePsk(secret, session.psk);
+    AcquireSRWLockExclusive(&g_tx_lock);
+    g_session.Start(session, link::SessionIo{nullptr, &LinkTransmit, &LinkRandom}, now);
+    for (auto& tx : g_rel_tx) tx.Reset();
+    AcquireSRWLockExclusive(&g_lock);
+    ResetReceiveLocked();
+    for (auto& rx : g_rel_rx) rx.Reset();
+    InterlockedExchange(&g_relack_dirty, 0);
+    ReleaseSRWLockExclusive(&g_lock);
+    const std::uint32_t session_number = g_session.session_number();
+    InterlockedExchange(&g_link_state, static_cast<LONG>(g_session.state()));
+    ReleaseSRWLockExclusive(&g_tx_lock);
+    link::SecureZero(&session.psk, sizeof(session.psk));
+    g_steam.set_host(host);
+    InterlockedExchange64(&g_steam_host, static_cast<LONG64>(host));
+    InterlockedExchange(&g_steam_waiting, 0);
+    InterlockedExchange(&g_look_resend, 1);
+    g_connecting_since_ms = 0;
+    if (g_world.on_session) g_world.on_session(session_number);
+    steam_code::FormatPeer(host, peer);
+    if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "steam=join; via=%s; host=%s\r\n", via, peer))) Log(line);
+}
+
+// Transport thread, every LinkIdle (guest): the 337 mailbox and the F9 paste.
+void SteamGuestIdle(std::uint64_t now) noexcept {
+    steam_net::JoinRequested request{};
+    if (steam_cb::TakeJoinRequest(request)) {
+        steam_code::Code code{};
+        const steam_code::JoinResult result =
+            steam_code::ParseJoinRequest(request.friend_id, request.connect, sizeof(request.connect), code);
+        link::SecureZero(&request, sizeof(request));
+        if (result.status == steam_code::JoinStatus::ok) {
+            char secret[link::kSecretChars]{};
+            for (std::size_t i = 0; i < link::kSecretChars; ++i) secret[i] = code.secret[i];
+            ArmSteamGuest(code.host, secret, "invite", now);
+            link::SecureZero(secret, sizeof(secret));
+        } else {
+            char line[96]{};
+            if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "steam=join_refused; reason=%s; via=invite\r\n",
+                                           steam_code::JoinReason(result))))
+                Log(line);
+        }
+        link::SecureZero(&code, sizeof(code));
+    }
+    char text[sizeof(g_paste)]{};
+    bool pasted = false;
+    AcquireSRWLockExclusive(&g_paste_lock);
+    if (g_paste_pending) {
+        for (std::size_t i = 0; i < sizeof(text); ++i) text[i] = g_paste[i];
+        link::SecureZero(g_paste, sizeof(g_paste));
+        g_paste_pending = false;
+        pasted = true;
+    }
+    ReleaseSRWLockExclusive(&g_paste_lock);
+    if (!pasted) return;
+    steam_code::Code code{};
+    std::size_t length = 0;
+    while (length < sizeof(text) && text[length]) ++length;
+    const steam_code::Status status = steam_code::Parse(text, length, code);
+    link::SecureZero(text, sizeof(text));
+    if (status == steam_code::Status::ok) {
+        char secret[link::kSecretChars]{};
+        for (std::size_t i = 0; i < link::kSecretChars; ++i) secret[i] = code.secret[i];
+        ArmSteamGuest(code.host, secret, "code", now);
+        link::SecureZero(secret, sizeof(secret));
+    } else {
+        char line[96]{};
+        if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "steam=join_refused; reason=%s; via=code\r\n", steam_code::StatusName(status))))
+            Log(line);
+    }
+    link::SecureZero(&code, sizeof(code));
+}
+
+void SteamOnDatagram(void* ctx, const std::uint8_t* data, std::size_t size, const lab::Endpoint& from) noexcept { OnDatagram(ctx, data, size, from); }
+void SteamOnIdle(void* ctx) noexcept { OnIdle(ctx); }
+void SteamOnReady(void*) noexcept {
+    InterlockedExchange(&g_steam_ready, 1);
+    // Without the SteamAPI_Init wrapper (refused in DllMain) no 1251/337 is
+    // registered: the host accepts only by polling known ids (6.1).
+    const char* callbacks = lab::InitWrapperInstalled() ? (g_config.host ? "callback" : "invite") : "poll_only";
+    char line[160]{};
+    if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "steam=transport; leg=messages; role=%s; channel=0x%X; accepting=%u; callbacks=%s\r\n",
+                                   g_config.host ? "host" : "guest", static_cast<unsigned>(steam_net::kLinkChannel),
+                                   g_config.host && g_steam.accepting() ? 1u : 0u, callbacks)))
+        Log(line);
+}
+void SteamOnFailed(void*, const char* reason) noexcept {
+    if (g_steam_failed) return;
+    StringCchCopyA(g_steam_reason, ARRAYSIZE(g_steam_reason), reason ? reason : "unknown");
+    StringCchPrintfA(g_steam_disabled, ARRAYSIZE(g_steam_disabled), "steam_%s", g_steam_reason);
+    InterlockedExchange(&g_steam_failed, 1);  // full barrier: the strings are complete
+    LogDisabled(g_steam_disabled);
+}
+// Shutdown hand-off (transport thread): one link CLOSE while connected.
+void SteamOnShutdown(void*) noexcept {
+    const std::uint64_t now = NowMs();
+    AcquireSRWLockExclusive(&g_tx_lock);
+    if (g_session.CanSendData()) {
+        link::BodyWriter writer(g_body, sizeof(g_body));
+        if (writer.Add(link::MsgType::close, nullptr, 0)) g_session.SendData(g_body, writer.size(), now);
+    }
+    ReleaseSRWLockExclusive(&g_tx_lock);
+    AcquireSRWLockExclusive(&g_secret_lock);
+    link::SecureZero(g_host_secret, sizeof(g_host_secret));
+    g_host_secret_valid = false;
+    ReleaseSRWLockExclusive(&g_secret_lock);
+}
+
+// Steam Start: the secret (unless a waiting guest), the session, then the
+// transport (its thread waits for the owner context's acquisition).
+void StartSteamLink() noexcept {
+    g_use_steam = true;
+    g_ops = &kSteamOps;
+    const bool waiting = !g_config.host && (g_config.steam_wait || !g_config.steam_peer);
+    char secret[link::kSecretChars]{};
+    if (!waiting) {
+        const link::SecretStatus secret_status = ReadSecret(g_config.directory, secret);
+        if (secret_status != link::SecretStatus::ok) {
+            switch (secret_status) {
+            case link::SecretStatus::bad_length: LogDisabled("secret_bad_length"); break;
+            case link::SecretStatus::bad_char: LogDisabled("secret_bad_char"); break;
+            default: LogDisabled("secret_missing"); break;
+            }
+            link::SecureZero(secret, sizeof(secret));
+            return;
+        }
+    }
+    for (std::size_t i = 0; i < link::kBuildSize && g_config.build && g_config.build[i]; ++i) g_build[i] = g_config.build[i];
+    if (g_config.host) {
+        // 8.3: kept only to build the code for F9 Copy and invites; zeroed on Shutdown.
+        AcquireSRWLockExclusive(&g_secret_lock);
+        for (std::size_t i = 0; i < link::kSecretChars; ++i) g_host_secret[i] = secret[i];
+        g_host_secret_valid = true;
+        ReleaseSRWLockExclusive(&g_secret_lock);
+    }
+    if (g_config.interp_auto) {
+        g_interp.Init(g_config.interp_min_ms, g_config.interp_max_ms);
+        InterlockedExchange(&g_applied_interp, static_cast<LONG>(g_interp.applied()));
+    }
+    char line[256]{}, peer[24]{};
+    if (g_config.host) StringCchCopyA(peer, ARRAYSIZE(peer), "learned");
+    else if (waiting) StringCchCopyA(peer, ARRAYSIZE(peer), "waiting");
+    else steam_code::FormatPeer(g_config.steam_peer, peer);
+    if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
+            "link=config; mode=%s; role=%s; proto=%u; bind=steam; port=0; peer=%s; auth=%s; interp=%s\r\n",
+            g_config.play ? "play" : "lab", g_config.host ? "host" : "guest", static_cast<unsigned>(link::kLinkProto), peer,
+            waiting ? "pending" : "code", g_config.interp_auto ? "auto" : "fixed")))
+        Log(line);
+    const std::uint64_t now = NowMs();
+    g_last_stats_ms = now;
+    InterlockedExchange64(&g_last_send_ms, static_cast<LONG64>(now));
+    if (waiting) {
+        InterlockedExchange(&g_steam_waiting, 1);
+    } else {
+        link::SessionConfig session{};
+        session.role = g_config.host ? link::Role::host : link::Role::guest;
+        session.play = g_config.play;
+        session.exact_filter = true;  // C8 (the guest's leg delivers only its host)
+        session.peer = g_config.host ? lab::Endpoint{} : lab::SteamEndpoint(g_config.steam_peer);
+        for (std::size_t i = 0; i < link::kBuildSize; ++i) session.build[i] = g_build[i];
+        link::DerivePsk(secret, session.psk);
+        AcquireSRWLockExclusive(&g_tx_lock);
+        g_session.Start(session, link::SessionIo{nullptr, &LinkTransmit, &LinkRandom}, now);
+        ReleaseSRWLockExclusive(&g_tx_lock);
+        link::SecureZero(&session.psk, sizeof(session.psk));
+        if (!g_config.host) InterlockedExchange64(&g_steam_host, static_cast<LONG64>(g_config.steam_peer));
+    }
+    link::SecureZero(secret, sizeof(secret));
+    lab::SteamTransportConfig transport{};
+    transport.role = g_config.host ? lab::SteamRole::host : lab::SteamRole::guest;
+    transport.leg = lab::SteamLeg::messages;
+    transport.self_id = g_config.steam_self;
+    transport.host_id = waiting ? 0 : g_config.steam_peer;
+    transport.idle_interval_ms = kLinkIdleMs;
+    transport.accepting = g_config.accepting;
+    transport.warm_relay = true;
+    transport.resolve = g_config.steam_resolve;
+    transport.resolve_ctx = g_config.steam_resolve_ctx;
+    transport.pop_request = g_config.host ? g_config.steam_requests : nullptr;
+    transport.log = g_config.log;
+    lab::SteamSink sink{};
+    sink.on_datagram = &SteamOnDatagram;
+    sink.on_idle = &SteamOnIdle;
+    sink.on_ready = &SteamOnReady;
+    sink.on_failed = &SteamOnFailed;
+    sink.on_shutdown = &SteamOnShutdown;
+    if (!transport.resolve || !g_steam.start(transport, sink)) {
+        if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "partner_net=disabled; reason=transport_%s\r\n",
+                                       transport.resolve ? TransportErrorName(g_steam.error()) : "bad_config")))
+            Log(line);
+        StringCchCopyA(g_steam_reason, ARRAYSIZE(g_steam_reason), "transport");
+        InterlockedExchange(&g_steam_failed, 1);
+        LogDisabled("steam_transport");
+        return;
+    }
+    InterlockedExchange(&g_running, 1);
+    Log("partner_net=listening; port=0; peer_port=0\r\n");
+    // Until the owner context resolves the API: the status file says so.
+    LinkSnapshot snapshot{};
+    AcquireSRWLockExclusive(&g_tx_lock);
+    TakeSnapshot(snapshot);
+    ReleaseSRWLockExclusive(&g_tx_lock);
+    snapshot.state = waiting ? link::LinkState::waiting : snapshot.state;
+    PublishInfo(snapshot, EffectiveInterpMs(g_config.interp_ms));
+    WriteStatus(snapshot, snapshot.state, kStatusCheckMs + NowMs());
 }
 
 BOOL CALLBACK StartOnce(PINIT_ONCE, PVOID parameter, PVOID*) noexcept {
@@ -1200,6 +1516,75 @@ bool DrainReliable(std::uint8_t channel, std::uint8_t* out, std::size_t capacity
     if (drained) InterlockedExchange(&g_relack_dirty, 1);
     ReleaseSRWLockExclusive(&g_lock);
     return drained;
+}
+
+void Shutdown() noexcept {
+    if (InterlockedExchange(&g_shutdown, 1)) return;
+    if (!g_use_steam) return;  // UDP: unchanged
+    g_steam.request_shutdown();
+    AcquireSRWLockExclusive(&g_secret_lock);
+    link::SecureZero(g_host_secret, sizeof(g_host_secret));
+    g_host_secret_valid = false;
+    ReleaseSRWLockExclusive(&g_secret_lock);
+}
+
+SteamInfo GetSteamInfo() noexcept {
+    SteamInfo info{};
+    info.active = g_use_steam && g_running;
+    if (!info.active) return info;
+    info.ready = g_steam_ready != 0 && g_steam.ready() && !g_steam.faulted();
+    info.host = g_config.host;
+    info.waiting = g_steam_waiting != 0;
+    info.accepting = g_config.host && g_steam.accepting();
+    info.beacon_wanted = g_beacon_wanted != 0;
+    info.route = g_steam.route();
+    info.steam_state = g_steam.steam_state();
+    info.peer = g_config.host ? g_steam.peer_id() : static_cast<std::uint64_t>(InterlockedCompareExchange64(&g_steam_host, 0, 0));
+    info.self = g_config.steam_self;
+    if (g_steam_failed) StringCchCopyA(info.reason, ARRAYSIZE(info.reason), g_steam_reason);
+    else if (g_steam.faulted()) StringCchCopyA(info.reason, ARRAYSIZE(info.reason), "fault");
+    AcquireSRWLockShared(&g_secret_lock);
+    info.code_ready = g_config.host && g_host_secret_valid && info.ready && !g_shutdown;
+    ReleaseSRWLockShared(&g_secret_lock);
+    return info;
+}
+
+void SetSteamAccepting(bool accepting) noexcept {
+    if (g_use_steam && g_config.host) g_steam.set_accepting(accepting);
+}
+
+void AddSteamKnown(std::uint64_t id, lab::KnownKind kind) noexcept {
+    if (g_use_steam && g_config.host && g_running) g_steam.add_known(id, kind);
+}
+
+namespace {
+bool BuildCode(char* out, std::size_t capacity, bool invite) noexcept {
+    if (!out || !capacity) return false;
+    out[0] = 0;
+    if (!g_use_steam || !g_config.host || g_shutdown || !g_steam.ready()) return false;
+    bool ok = false;
+    AcquireSRWLockShared(&g_secret_lock);
+    if (g_host_secret_valid)
+        ok = invite ? steam_code::FormatInvite(g_host_secret, g_config.steam_self, out, capacity)
+                    : steam_code::Format(g_host_secret, g_config.steam_self, out, capacity);
+    ReleaseSRWLockShared(&g_secret_lock);
+    return ok;
+}
+} // namespace
+
+bool BuildSteamJoinCode(char* out, std::size_t capacity) noexcept { return BuildCode(out, capacity, false); }
+bool BuildSteamInvite(char* out, std::size_t capacity) noexcept { return BuildCode(out, capacity, true); }
+
+bool PostSteamJoin(const char* text) noexcept {
+    if (!g_use_steam || g_config.host || !g_running || !text) return false;
+    std::size_t n = 0;
+    while (text[n] && n < sizeof(g_paste)) ++n;
+    if (!n || n >= sizeof(g_paste)) return false;
+    AcquireSRWLockExclusive(&g_paste_lock);
+    for (std::size_t i = 0; i < sizeof(g_paste); ++i) g_paste[i] = i < n ? text[i] : 0;
+    g_paste_pending = true;
+    ReleaseSRWLockExclusive(&g_paste_lock);
+    return true;
 }
 
 } // namespace mgscoop::partner_net

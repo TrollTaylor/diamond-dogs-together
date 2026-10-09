@@ -54,6 +54,7 @@ try {
     }
     Check (@($normal.tests | Select-Object -Unique).Count -eq $normal.tests.Count) 'test allowlist contains no duplicates'
     Check ($normal.tests -ccontains 'worker_session_tests') 'audited detached controller fixture is explicitly included'
+    Check ($normal.tests -ccontains 'steam_transport_tests') 'the Steam online fixture (fake Steam interfaces, no Steam call) is audited'
     Refuses { Get-WorkerPlan $fixture 'Normal' 'Release' @('MGS_LOCAL_ACTION_EVENTS') $false '' } 'Normal profile'
     Refuses { Get-WorkerPlan $fixture 'Research' 'Release' @() $false '' } 'requires explicit'
     Refuses { Get-WorkerPlan $fixture 'Research' 'Release' @('MGS_LOCAL_ACTION_EVENTS','MGS_LOCAL_ACTION_EVENTS') $false '' } 'Duplicate'

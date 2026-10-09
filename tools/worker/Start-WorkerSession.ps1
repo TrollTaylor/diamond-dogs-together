@@ -30,7 +30,7 @@ param(
     [ValidateSet('real','lab')][string]$SaveSeed='real',
     # Extra lab.ini keys for both copies of this run: allow-listed lab
     # experiments only (Invoke-WorkerScenario "labsetting" lines).
-    [ValidatePattern('^debug_soldier_warp=[01]$')][string[]]$LabSetting=@()
+    [ValidatePattern('^(debug_soldier_warp=[01]|steam_selftest=[012])$')][string[]]$LabSetting=@()
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'

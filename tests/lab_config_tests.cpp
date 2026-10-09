@@ -463,6 +463,55 @@ int main() {
     Check(guestLoopPeer.play_refused == (kPlayRefusedPeerAddr | kPlayRefusedGuestNoPeer) && !guestLoopPeer.net, "no 127/8 in play");
     const auto guestName = Lab(guestBase + "net_peer_addr=my-pc.ts.net\n");
     Check((guestName.play_refused & kPlayRefusedPeerAddr) && !guestName.net, "no host names in lab.ini");
+    // Steam online (docs/steam-online.md 9.1).
+    {
+        const std::string steamHost = "enabled=1\nmode=play\nrole=host\n" + saves +
+                                      "net=1\nnet_transport=steam\nnet_steam_self=76561198058195100\npartner_interp=auto\npartner=1\n";
+        const auto sHost = Lab(steamHost);
+        Check(sHost.present && sHost.net && sHost.net_transport == NetTransport::steam && sHost.net_steam_self == 76561198058195100ull &&
+              sHost.play_refused == 0 && sHost.invalid_values == 0 && sHost.unknown_keys == 0 && sHost.net_steam_accept &&
+              sHost.net_listen_port == 0 && sHost.net_peer_port == 0 && !sHost.net_bind_loopback,
+              "steam host: no UDP defaults applied");
+        Check(!Lab(steamHost + "net_steam_accept=off\n").net_steam_accept, "net_steam_accept=off");
+        Check(Lab(steamHost + "net_steam_accept=maybe\n").invalid_values == 1, "net_steam_accept invalid");
+        const auto hostPeer = Lab(steamHost + "net_peer_steam=76561198057664236\n");
+        Check(hostPeer.play_refused == kPlayRefusedHostPeerSteam && hostPeer.net_peer_steam == 0 && hostPeer.invalid_values == 1 && hostPeer.net,
+              "net_peer_steam on a host: ignored, 0x80000");
+        const auto udpKeys = Lab(steamHost + "net_listen_port=47830\nnet_bind=any\n");
+        Check(udpKeys.play_refused == kPlayRefusedUdpKeysWithSteam && udpKeys.net && udpKeys.net_listen_port == 0 && udpKeys.invalid_values == 1,
+              "UDP keys with steam: ignored, 0x200000");
+        const auto hostAddr = Lab(steamHost + "net_peer_addr=203.0.113.7\n");
+        Check(hostAddr.play_refused == kPlayRefusedUdpKeysWithSteam && hostAddr.net_peer_address == 0x7F000001u, "net_peer_addr with steam");
+        const std::string steamGuest = "enabled=1\nmode=play\nrole=guest\n" + saves + "net=1\nnet_transport=steam\nnet_steam_self=76561198057664236\n";
+        const auto sGuest = Lab(steamGuest + "net_peer_steam=76561198058195100\n");
+        Check(sGuest.net && sGuest.net_peer_steam == 76561198058195100ull && sGuest.play_refused == 0 && sGuest.invalid_values == 0 && !sGuest.net_steam_wait,
+              "steam guest with a host (no net_peer_addr needed)");
+        const auto waiting = Lab(steamGuest + "net_steam_wait=1\n");
+        Check(waiting.net && waiting.net_steam_wait && waiting.net_peer_steam == 0 && waiting.play_refused == 0, "waiting guest (S2)");
+        const auto both = Lab(steamGuest + "net_steam_wait=1\nnet_peer_steam=76561198058195100\n");
+        Check(both.net && !both.net_steam_wait && both.net_peer_steam, "a configured host wins over waiting");
+        const auto noPeer = Lab(steamGuest);
+        Check(!noPeer.net && noPeer.play_refused == kPlayRefusedNoPeerSteam && noPeer.invalid_values == 1, "steam guest without a host: 0x100000");
+        const auto self = Lab(steamGuest + "net_peer_steam=76561198057664236\n");
+        Check(self.net_peer_steam == 0 && !self.net && (self.play_refused & kPlayRefusedNoPeerSteam) && self.invalid_values == 2,
+              "a guest's host is never itself");
+        Check(Lab(steamGuest + "net_peer_steam=103582791429521408\n").invalid_values >= 1, "a group id is not a peer");
+        Check(Lab(steamGuest + "net_peer_steam=76561198058195100\nnet_transport=bogus\n").invalid_values == 1, "net_transport invalid");
+        const auto selftest = Lab(steamHost + "steam_selftest=1\n");
+        Check(selftest.steam_selftest == 0 && selftest.play_refused == kPlayRefusedSteamSelftest, "steam_selftest in play: 0x40000");
+        // The lab refuses Steam networking (its only Steam exercise is the self-test).
+        const auto lab = Lab("enabled=1\nrole=host\nnet=1\nnet_transport=steam\nsteam_selftest=2\nnet_peer_steam=76561198058195100\n");
+        Check(lab.net_transport == NetTransport::udp && lab.net_transport_refused && lab.invalid_values == 1 && lab.steam_selftest == 2 &&
+              lab.net && lab.net_listen_port == kNetHostPort && lab.net_peer_steam == 0 && lab.play_refused == 0,
+              "lab: steam forced back to udp (+1 invalid), the self-test allowed");
+        Check(Lab("enabled=1\nrole=host\nsteam_selftest=3\n").invalid_values == 1, "steam_selftest 0..2");
+        // UDP play unchanged by the Steam keys.
+        const auto udpPlay = Lab("enabled=1\nmode=play\nrole=guest\n" + saves + "net=1\nnet_peer_addr=203.0.113.7\nnet_steam_wait=1\n");
+        Check(udpPlay.net_transport == NetTransport::udp && udpPlay.net && !udpPlay.net_steam_wait && udpPlay.net_peer_port == 47830,
+              "UDP play ignores the Steam keys");
+        Check(std::strcmp(NetTransportName(NetTransport::steam), "steam") == 0 && std::strcmp(NetTransportName(NetTransport::udp), "udp") == 0,
+              "transport names");
+    }
     // The new keys and their ranges (lab).
     const auto linkKeys = Lab("enabled=1\nrole=host\nnet_jitter_ms=1000\nnet_loss_model=burst\nnet_burst=16\nnet_dup_permille=1000\n"
                               "net_reorder_permille=1000\nnet_reorder_ms=500\nnet_seed=4294967295\npartner_interp=auto\n"
@@ -607,14 +656,15 @@ int main() {
                                           kPlayRefusedMutexSuffix, kPlayRefusedXInput, kPlayRefusedJoinTrigger, kPlayRefusedAutoJoin,
                                           kPlayRefusedHostPeerAddr, kPlayRefusedBindLoopback, kPlayRefusedLegacyLink, kPlayRefusedPeerAddr,
                                           kPlayRefusedNoSaveDir, kPlayRefusedGuestNoPeer, kPlayRefusedImpairment, kPlayRefusedWorldProbe,
-                                          kPlayRefusedDebugSoldierWarp, kPlayRefusedNativeDrive};
+                                          kPlayRefusedDebugSoldierWarp, kPlayRefusedNativeDrive, kPlayRefusedSteamSelftest,
+                                          kPlayRefusedHostPeerSteam, kPlayRefusedNoPeerSteam, kPlayRefusedUdpKeysWithSteam};
         std::uint32_t refusal_union = 0;
         bool refusal_distinct = true;
         for (const std::uint32_t bit : play_refusal_bits) {
             refusal_distinct = refusal_distinct && bit != 0 && (bit & (bit - 1)) == 0 && (refusal_union & bit) == 0;
             refusal_union |= bit;
         }
-        Check(refusal_distinct && refusal_union == 0x3FFFFu, "kPlayRefused* are 18 distinct single bits");
+        Check(refusal_distinct && refusal_union == 0x3FFFFFu, "kPlayRefused* are 22 distinct single bits");
     }
 
     std::printf("%u lab/coop configuration checks passed; pure parser, no game calls\n", checks);

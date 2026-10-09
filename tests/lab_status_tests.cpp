@@ -158,8 +158,29 @@ void Win32AtomicWriteChecks() {
 #endif
 } // namespace
 
+void TestLinkTransportJson() {
+    using mgscoop::lab::AppendLinkTransportJson;
+    char out[200]{};
+    std::size_t length = 0;
+    Check(AppendLinkTransportJson(out, sizeof(out), length, "steam", "relay", true, "ok") &&
+              std::strcmp(out, "\"transport\":\"steam\",\"route\":\"relay\",\"accepting\":1,\"steam\":\"ok\",") == 0 && length == std::strlen(out),
+          "steam transport keys");
+    length = 0;
+    Check(AppendLinkTransportJson(out, sizeof(out), length, "udp", "none", false, "off") &&
+              std::strcmp(out, "\"transport\":\"udp\",\"route\":\"none\",\"accepting\":0,\"steam\":\"off\",") == 0,
+          "udp transport keys");
+    length = 0;
+    Check(AppendLinkTransportJson(out, sizeof(out), length, "steam", "unknown", false, "self_mismatch"), "a reason as the steam value");
+    length = 0;
+    Check(!AppendLinkTransportJson(out, sizeof(out), length, "steam", "re\"lay", false, "ok") && length == 0, "names outside [a-z0-9_] refused");
+    char small[20]{};
+    length = 0;
+    Check(!AppendLinkTransportJson(small, sizeof(small), length, "steam", "relay", true, "ok") && length == 0 && small[0] == 0, "capacity");
+}
+
 int main() {
     using namespace mgscoop::lab;
+    TestLinkTransportJson();
 
     // Enum spellings, including out-of-range values mapping to the first word.
     Check(std::strcmp(RoleName(Role::host), "host") == 0, "role host");

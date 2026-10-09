@@ -23,7 +23,8 @@ namespace mgscoop::link {
 using lab::Endpoint;
 
 enum class Role : std::uint8_t { host, guest };
-enum class LinkState : std::uint8_t { off, disabled, listening, connecting, handshake, connected, reconnecting, lost, rejected };
+// waiting: a Steam guest without a host yet (partner_net only; the session never enters it).
+enum class LinkState : std::uint8_t { off, disabled, listening, connecting, handshake, connected, reconnecting, lost, rejected, waiting };
 const char* LinkStateName(LinkState state) noexcept;
 
 enum class RejectReason : std::uint8_t {

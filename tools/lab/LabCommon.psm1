@@ -291,6 +291,9 @@ $script:LabPartnerKeys = @(
     # Debug "Spawn enemy here" native placement (docs/debug-menu.md): lab only,
     # default off and written only when set.
     @{ Key = 'debug_soldier_warp'; Json = 'debug_soldier_warp'; Kind = 'bool' },
+    # Steam online self-test (docs/steam-online.md 14): lab only (play refuses
+    # it), default 0 and written only when set; 2 adds the network-loopback pair.
+    @{ Key = 'steam_selftest'; Json = 'steam_selftest'; Kind = 'int'; Min = 0; Max = 2 },
     @{ Key = 'net_latency_ms'; Json = 'net_latency_ms'; Kind = 'int'; Min = 0; Max = 2000 },
     @{ Key = 'net_jitter_ms'; Json = 'net_jitter_ms'; Kind = 'int'; Min = 0; Max = 1000 },
     @{ Key = 'net_loss_permille'; Json = 'net_loss_permille'; Kind = 'int'; Min = 0; Max = 1000 },

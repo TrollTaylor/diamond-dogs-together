@@ -1,6 +1,7 @@
 #include "mgscoop/worker_debug.hpp"
 #include "mgscoop/debug_menu.hpp"
 #include "mgscoop/partner_native.hpp"
+#include "mgscoop/steam_online_state.hpp"
 #include <cctype>
 #include <cstdio>
 #include <cstring>
@@ -182,6 +183,28 @@ int main() {
         // Too small a buffer: nothing (never a truncated member).
         char small[64];
         if(!check(mgscoop::worker_debug::FormatNativeJson(t,small,sizeof(small))==0 && small[0]==0))return 1;
+    }
+    // The Steam self-test member (docs/steam-online.md 14).
+    {
+        mgscoop::steam_state::SelftestReport r{};
+        static char buffer[4096];
+        std::size_t n = mgscoop::worker_debug::FormatSteamJson(r, buffer, sizeof(buffer));
+        const std::string off = std::string("{\"schema\":2") + std::string(buffer, n) + "}";
+        if(!check(n>0 && ValidJson(off) && off.find("\"steam\":{\"selftest\":\"off\"")!=std::string::npos &&
+                  off.find("\"pair\":null,\"lpair\":null")!=std::string::npos))return 1;
+        r.configured=true;std::snprintf(r.verdict,sizeof(r.verdict),"pass");std::snprintf(r.stage,sizeof(r.stage),"done");
+        r.api=r.client=r.logged_on=r.messages=r.sockets=r.utils=r.rtti=r.shape=true;r.relay=100;
+        r.pair=mgscoop::steam_state::PairResult{true,4,500,500,64,64,1,564,564,0};
+        std::snprintf(r.reason,sizeof(r.reason),"q\"x");
+        n = mgscoop::worker_debug::FormatSteamJson(r, buffer, sizeof(buffer));
+        const std::string pass = std::string("{\"schema\":2") + std::string(buffer, n) + "}";
+        if(!check(ValidJson(pass) && pass.find("\"selftest\":\"pass\",\"stage\":\"done\",\"api\":1,\"client\":1,\"logged_on\":1,"
+                  "\"messages\":1,\"sockets\":1,\"utils\":1,\"rtti\":1,\"shape\":1,\"relay\":100,\"pair\":{\"hs_ms\":4,\"frames\":500,"
+                  "\"frames_rx\":500,\"rel\":64,\"rel_rx\":64,\"rtt_ms\":1,\"release\":564,\"leak\":0")!=std::string::npos &&
+                  pass.find("\"lpair\":null,\"inert\":{\"recv\":0,\"state\":0,\"accept\":0},\"trip\":{\"getter_delta\":0}")!=std::string::npos &&
+                  pass.find("\"reason\":\"q\\\"x\"}")!=std::string::npos))return 1;
+        char small[32];
+        if(!check(mgscoop::worker_debug::FormatSteamJson(r,small,sizeof(small))==0 && small[0]==0))return 1;
     }
     // The checker itself rejects the classic writer slips.
     for(const char* bad:{"{\"a\":1,}","{\"a\":1","{\"a\":[1,2}","{\"a\":01}","{\"a\":\"x\ny\"}","{\"a\":1}}","{\"a\":nul}",

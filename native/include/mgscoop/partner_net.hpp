@@ -31,6 +31,7 @@
 #include "mgscoop/partner_action_events.hpp"
 #include "mgscoop/partner_receipt.hpp"
 #include "mgscoop/pose_interp.hpp"
+#include "mgscoop/steam_transport.hpp"
 #include "mgscoop/udp_transport.hpp"
 
 namespace mgscoop::partner_net {
@@ -59,6 +60,11 @@ inline constexpr std::uint32_t kStatusRefreshMs = 5000;
 
 using LogFn = void (*)(const char* line) noexcept;
 
+// The link's transport (docs/steam-online.md 8.1): our UDP socket (the
+// one-PC lab and the LAN/VPN code) or lab::SteamTransport (Steam online,
+// play only). Nothing switches transports automatically.
+enum class Transport : std::uint8_t { udp, steam };
+
 struct Config {
     std::uint16_t listen_port;
     std::uint16_t peer_port;
@@ -82,6 +88,16 @@ struct Config {
     bool saves_redirected = false;            // lab::SavesRedirected(), for link-status.json
     const wchar_t* directory = nullptr;       // game folder (link-secret.txt, link-status.json)
     const char* build = nullptr;              // this loader's version (HELLO/WELCOME build field)
+    // Steam online (play only; docs/steam-online.md 8). The session runs with
+    // exact_filter=true; the guest's host is Endpoint{account, 0x5354}.
+    Transport transport = Transport::udp;
+    std::uint64_t steam_self = 0;             // net_steam_self (gate 5 checks it against GetSteamID)
+    std::uint64_t steam_peer = 0;             // guest: the host's SteamID64
+    bool steam_wait = false;                  // guest: no host yet (invite / F9 paste arms it)
+    bool accepting = true;                    // host: net_steam_accept (F9 toggles it)
+    lab::SteamResolveFn steam_resolve = nullptr;              // steam_online::Resolve
+    void* steam_resolve_ctx = nullptr;
+    bool (*steam_requests)(std::uint64_t& id) noexcept = nullptr;  // steam_cb::PopSessionRequest (host)
 };
 
 // Starts once (INIT_ONCE); never call from DllMain. Logs
@@ -192,5 +208,38 @@ void SetWorldHooks(const WorldHooks* hooks) noexcept;     // install time, befor
 // One DATA packet: the datagram first, then due RELACKs and new reliable data.
 // Game or receive thread; not_connected / too_large / bad_channel as SendReliable.
 link::ReliableResult SendDatagram(std::uint8_t channel, const void* bytes, std::size_t size) noexcept;
+
+// --- Steam online (docs/steam-online.md 7.6, 8.2, 8.3, 10). Inert on UDP.
+// Window-close shutdown flag (any thread, flags only): the Steam transport
+// sends one link CLOSE, closes the peer session and makes no further Steam
+// call; the host's retained secret is zeroed.
+void Shutdown() noexcept;
+struct SteamInfo {
+    bool active;            // transport=steam and started
+    bool ready;             // the Steam API resolved; the transport thread runs
+    bool host;
+    bool waiting;           // guest without a host
+    bool accepting;
+    bool beacon_wanted;     // guest: connecting > 10 s without WELCOME (rich-presence beacon)
+    bool code_ready;        // host: a join code can be built
+    steam_net::Route route;
+    std::int32_t steam_state;
+    std::uint64_t peer;     // the session peer (host) or the configured host (guest); 0 none
+    std::uint64_t self;
+    char reason[32];        // "" or the steam=disabled reason
+};
+SteamInfo GetSteamInfo() noexcept;
+// Host: the F9 Accept joins toggle (atomic; the transport reads it).
+void SetSteamAccepting(bool accepting) noexcept;
+// Host: an id to poll-accept (invited friend, beacon hit).
+void AddSteamKnown(std::uint64_t id, lab::KnownKind kind) noexcept;
+// Host: the MGS2 join code / the "+mgscoop_join <code>" invite string from
+// the retained secret (secret-bearing: the caller clears its buffer). False
+// when not hosting on Steam, before the transport is ready or after Shutdown.
+bool BuildSteamJoinCode(char* out, std::size_t capacity) noexcept;
+bool BuildSteamInvite(char* out, std::size_t capacity) noexcept;
+// Guest: a pasted MGS2 code (F9 Join); parsed and armed on the transport
+// thread (ArmSteamGuest) only while waiting or rejected.
+bool PostSteamJoin(const char* text) noexcept;
 
 } // namespace mgscoop::partner_net

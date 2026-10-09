@@ -1,0 +1,18 @@
+# Steam online self-test (docs/steam-online.md 14; lab only, coordinator runs it).
+# Before it: python tools/generate_steam_shim_contract.py --check and
+# --steamclient <the Steam folder>/steamclient64.dll, then the worker checks.
+# The host (real identity) runs gates 1-7 plus Sockets012/Utils004 in the owner
+# context, then on its own thread an in-process socket pair carrying two link v2
+# sessions (no network; steam_selftest=2 would add the network-loopback pair),
+# the inert Messages calls and the game-networking trip check. The guest has the
+# lab's fake identity and must refuse. No message is ever sent to a peer.
+labsetting steam_selftest=1
+title 200
+wait 4000
+waitgameplay host 120
+wait 20000
+state
+host run steam_status
+host expect ^steam_selftest;verdict=pass;
+guest run steam_status
+guest expect ^steam_selftest;verdict=refused;reason=fake_identity

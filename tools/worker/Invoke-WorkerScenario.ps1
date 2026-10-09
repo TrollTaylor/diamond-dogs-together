@@ -49,7 +49,8 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                      with a 3 m upward margin; require fresh position to settle within 3 s
   state                            print both roles' mission / gameplay-ready state
   labsetting <key>=<value>         before the session starts: add an allow-listed lab.ini key to
-                                   both copies (only debug_soldier_warp=0|1)
+                                   both copies (only debug_soldier_warp=0|1 and steam_selftest=0|1|2;
+                                   the Steam self-test is lab only and never sends to a peer)
 
 The session has a hard 600 s limit (supervisor). The result object lists the
 run folder, the frames (renamed with labels) and whether everything closed.
@@ -71,7 +72,7 @@ param(
     [ValidateSet('normal','research')][string]$BuildProfile='normal',
     [switch]$AmmoExperiment,
     [ValidateSet('real','lab')][string]$SaveSeed='lab',
-    [ValidatePattern('^debug_soldier_warp=[01]$')][string[]]$LabSetting=@()
+    [ValidatePattern('^(debug_soldier_warp=[01]|steam_selftest=[012])$')][string[]]$LabSetting=@()
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -94,7 +95,7 @@ $lines+=$Step
 $steps=@($lines|ForEach-Object{$_.Trim()}|Where-Object{$_ -and !$_.StartsWith('#')})
 # labsetting lines configure the session; they are not steps.
 foreach($line in @($steps|Where-Object{$_ -cmatch '^labsetting(\s|$)'})) {
-    if($line -cnotmatch '^labsetting\s+(debug_soldier_warp=[01])$'){throw "Invalid scenario step: '$line'"}
+    if($line -cnotmatch '^labsetting\s+(debug_soldier_warp=[01]|steam_selftest=[012])$'){throw "Invalid scenario step: '$line'"}
     $LabSetting=@($LabSetting)+@($Matches[1])
 }
 $steps=@($steps|Where-Object{$_ -cnotmatch '^labsetting(\s|$)'})

@@ -13,6 +13,7 @@
 #include "mgscoop/debug_menu.hpp"
 #include "mgscoop/debug_actions.hpp"
 #include "mgscoop/debug_menu_ui.hpp"
+#include "mgscoop/steam_online_state.hpp"
 
 namespace mgscoop::debug_menu_ui {
 namespace {
@@ -565,7 +566,98 @@ void Enemies(const Snapshot& s) noexcept {
     if (ImGui::CollapsingHeader("Camps & routes")) Camps(s);
     if (!s.host) Wrapped("Guest: listing, info and travel work here; changing guards needs the host's menu.");
 }
+// The host's join code to the clipboard (secret-bearing buffers are cleared).
+bool CopyJoinCode() noexcept {
+    char code[80]{};
+    if (!steam_state::BuildCode(code, sizeof(code))) return false;
+    const std::size_t n = std::strlen(code) + 1;
+    bool ok = false;
+    if (OpenClipboard(nullptr)) {
+        if (EmptyClipboard()) {
+            if (HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, n)) {
+                if (void* at = GlobalLock(memory)) {
+                    std::memcpy(at, code, n);
+                    GlobalUnlock(memory);
+                    ok = SetClipboardData(CF_TEXT, memory) != nullptr;
+                }
+                if (!ok) GlobalFree(memory);
+            }
+        }
+        CloseClipboard();
+    }
+    SecureZeroMemory(code, sizeof(code));
+    return ok;
+}
+// Partner / Co-op -> Online (play mode with the Steam transport; docs/steam-online.md 10.2).
+// Copied data only: every Steam action is a request the owner context performs.
+void Online() noexcept {
+    const steam_state::OnlineSnapshot o = steam_state::GetOnline();
+    if (!o.available) return;
+    if (!ImGui::CollapsingHeader("Online (Steam)", ImGuiTreeNodeFlags_DefaultOpen)) return;
+    const bool connected = std::strcmp(o.state, "connected") == 0;
+    ImGui::TextColored(connected ? kGreen : std::strcmp(o.steam, "ok") == 0 || std::strcmp(o.steam, "acquiring") == 0 ? kAmber : kRed,
+        "Steam %s   link %s   route %s   RTT %u ms", o.steam, o.state[0] ? o.state : "-", o.route[0] ? o.route : "none", o.rtt_ms);
+    if (o.peer[0]) ImGui::Text("Partner %s  (%s)", o.peer_name[0] ? o.peer_name : "name pending", o.peer);
+    if (o.host) {
+        bool accepting = o.accepting;
+        if (ImGui::Checkbox("Accept joins", &accepting)) {
+            steam_state::RequestAccepting(accepting);
+            debug_menu::SetLastUiAction(accepting ? "steam_accept_on" : "steam_accept_off");
+        }
+        ImGui::BeginDisabled(!o.code_ready);
+        if (ImGui::Button("Copy join code")) debug_menu::SetLastUiAction(CopyJoinCode() ? "steam_code_copied" : "steam_code_failed");
+        ImGui::SameLine();
+        ImGui::Button("Reveal (hold)");
+        const bool reveal = ImGui::IsItemActive();
+        ImGui::EndDisabled();
+        if (reveal) {
+            char code[80]{};
+            if (steam_state::BuildCode(code, sizeof(code))) ImGui::TextUnformatted(code);
+            SecureZeroMemory(code, sizeof(code));
+        } else {
+            ImGui::TextColored(kGrey, o.code_ready ? "MGS2-*****-*****-*****-*****-**@<your SteamID>" : "The code is ready once Steam networking is up.");
+        }
+        if (ImGui::TreeNode("Invite a friend")) {
+            steam_state::NoteInvitePage(GetTickCount64());
+            if (!o.friend_count) ImGui::TextColored(kGrey, o.friends_loading ? "Loading friends..." : "No friends listed yet.");
+            for (std::uint32_t i = 0; i < o.friend_count && i < steam_state::kMaxFriends; ++i) {
+                const steam_state::Friend& f = o.friends[i];
+                ImGui::PushID(static_cast<int>(i));
+                ImGui::BeginDisabled(f.invited);
+                if (ImGui::SmallButton(f.invited ? "Invited" : "Invite")) {
+                    steam_state::RequestInvite(f.id);
+                    debug_menu::SetLastUiAction("steam_invite");
+                }
+                ImGui::EndDisabled();
+                ImGui::SameLine();
+                if (f.in_game) ImGui::TextColored(kGreen, "%s  (in MGSV)", f.name);
+                else ImGui::TextUnformatted(f.name);
+                ImGui::PopID();
+            }
+            ImGui::TreePop();
+        }
+        Wrapped("Send the code to your friend, or invite them here. Only someone with the code can join.");
+    } else {
+        if (o.waiting) ImGui::TextColored(kAmber, "Waiting for an invite or a code.");
+        if (std::strcmp(o.state, "rejected") == 0) ImGui::TextColored(kRed, "The host refused this code; paste a new one.");
+        static char paste[steam_state::kPasteCapacity]{};
+        ImGui::SetNextItemWidth(360);
+        const bool enter = ImGui::InputTextWithHint("##steam_code", "Paste the host's MGS2 code", paste, sizeof(paste),
+            ImGuiInputTextFlags_Password | ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::SameLine();
+        const bool join = ImGui::Button("Join");
+        if ((enter || join) && paste[0]) {
+            steam_state::RequestJoin(paste);
+            SecureZeroMemory(paste, sizeof(paste));
+            debug_menu::SetLastUiAction("steam_join");
+        }
+        Wrapped("Or accept the host's invite (Shift+Tab -> chat).");
+    }
+    if (o.last_result[0]) ImGui::TextWrapped("%s", o.last_result);
+    ImGui::Spacing();
+}
 void Partner(const Snapshot& s) noexcept {
+    Online();
     const bool up = std::strcmp(s.link_state, "connected") == 0;
     ImGui::Text("Link %s   RTT %u ms   jitter %u ms   loss %.1f%%   interpolation %u ms", LinkWord(s), s.rtt_ms, s.jitter_ms,
         s.loss_permille / 10.0f, s.interp_ms);

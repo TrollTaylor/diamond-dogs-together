@@ -125,6 +125,36 @@ void SetRefusal(Status& status, const char* reason) noexcept {
         status.last_refusal[i] = reason[i];
 }
 
+bool AppendLinkTransportJson(char* out, std::size_t capacity, std::size_t& length, const char* transport, const char* route,
+                             bool accepting, const char* steam) noexcept {
+    const std::size_t start = length;
+    const auto word = [](const char* text) noexcept {
+        if (!text || !text[0]) return false;
+        for (std::size_t i = 0; text[i]; ++i) {
+            const char c = text[i];
+            if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) return false;
+        }
+        return true;
+    };
+    if (!out || !word(transport) || !word(route) || !word(steam)) return false;
+    const auto put = [&](const char* text) noexcept {
+        for (std::size_t i = 0; text[i]; ++i) {
+            if (length + 1 >= capacity) return false;
+            out[length++] = text[i];
+        }
+        return true;
+    };
+    const bool ok = put("\"transport\":\"") && put(transport) && put("\",\"route\":\"") && put(route) && put("\",\"accepting\":") &&
+                    put(accepting ? "1" : "0") && put(",\"steam\":\"") && put(steam) && put("\",");
+    if (!ok) {
+        length = start;
+        if (capacity) out[start < capacity ? start : capacity - 1] = 0;
+        return false;
+    }
+    out[length] = 0;
+    return true;
+}
+
 bool AppendJsonString(char* out, std::size_t capacity, std::size_t& length, const char* text) noexcept {
     const std::size_t start = length;
     const auto put = [&](char c) noexcept {

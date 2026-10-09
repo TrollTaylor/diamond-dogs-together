@@ -38,6 +38,7 @@ const char* LinkStateName(LinkState state) noexcept {
     case LinkState::reconnecting: return "reconnecting";
     case LinkState::lost: return "lost";
     case LinkState::rejected: return "rejected";
+    case LinkState::waiting: return "waiting";
     default: return "off";
     }
 }

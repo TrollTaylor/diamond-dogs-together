@@ -73,6 +73,33 @@ void set_saves_redirected_for_test(bool value) noexcept;
 // This loader's version string (MGS_COOP_PROBE_VERSION; the link HELLO build).
 const char* ProbeVersion() noexcept;
 
+// ---- Steam online callbacks (docs/steam-online.md 6.1). The SteamAPI_Init IAT
+// slot (0x208E130) gets a wrapper only for mode=play, net=1 and
+// net_transport=steam: it calls the original Init on the main thread at 0x1428
+// (before the game creates any thread that runs callbacks), returns its result
+// unchanged and, only when that is true, registers our static 1251 (host) or
+// 337 (guest) callback object once. Never unregistered.
+struct LabConfigView {
+    bool present, play, net, steam, host;
+};
+bool WantInitWrapper(const LabConfigView& lab) noexcept;
+// Pins of the shipped steam_api64 image (TimeDateStamp/SizeOfImage,
+// SteamAPI_Init 0x5420, RegisterCallback 0x5530 and its 0x2B10 body, the
+// dispatch bytes 0x2DE0). nullptr when they match, else the early.log reason.
+const char* InitWrapperRefusal(const std::uint8_t* steam_base, std::size_t span) noexcept;
+using SteamInitFn = bool (*)();
+using SteamRegisterFn = void (*)(void* callback, int id);
+struct InitWrapperState {
+    bool called, result, registered;
+    unsigned calls;
+};
+// The wrapper body: calls `init`, registers (object, id) only on a true result
+// and only the first time; returns init's result unchanged.
+bool RunInitWrapper(SteamInitFn init, SteamRegisterFn reg, void* object, int id, InitWrapperState& state);
+// True when DllMain installed the wrapper (steam_observer then leaves the slot).
+bool InitWrapperInstalled() noexcept;
+InitWrapperState InitWrapperResult() noexcept;
+
 #ifdef _WIN32
 // Install the lab's DllMain-early patches against the running mgsvtpp.exe. Gated
 // on the exe TimeDateStamp/SizeOfImage and the exact code bytes at 0x13D6/0x1415
