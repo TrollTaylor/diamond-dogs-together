@@ -414,6 +414,11 @@ namespace pp = mgscoop::partner_player;
 namespace pd = mgscoop::partner_driver;
 bool partner_on = false;
 bool partner_gate_ok = false;
+// Set once when the game window closes (PartnerShutdown), in ANY mission: the
+// title and the ACC too, where partner_defer::Shutdown (partner missions only)
+// never runs. The early manifest stops with it (ObserveEquipLink, and no
+// loadout read for the driver tick's sender either). Never cleared.
+volatile LONG partner_window_closing = 0;
 pp::Addresses partner_addresses{};
 wchar_t partner_trigger_path[lab::kMaxAtomicPath]{};
 // Only an exact standalone trigger creates one request; mapper refreshes cannot.
@@ -668,6 +673,8 @@ bool PartnerEquipType(void*, std::uint32_t equip, std::uint8_t& type) noexcept {
     return pp::EquipType(partner_addresses, equip, type);
 }
 bool PartnerReadLoadout(void*, pp::Loadout& out) noexcept {
+    // Nothing new is sent once the window closes (the sender reads nothing, so no revision changes).
+    if (InterlockedCompareExchange(&partner_window_closing, 0, 0)) return false;
     return pp::ReadLoadout(partner_addresses, out);
 }
 // Channel 2 carries the equipment manifest and the capability message
@@ -1013,6 +1020,7 @@ void PartnerMissionEnd() noexcept {
 // a run that intermittently crashed at close (guest, 0x21E72 write to 0x38)
 // had the native drive still armed.
 void PartnerShutdown() noexcept {
+    InterlockedExchange(&partner_window_closing, 1);  // the early manifest stops in any mission
     mgscoop::nametag::Shutdown();  // thread-safe flag: the overlay stops drawing the tag
     // Steam online exit hygiene (docs/steam-online.md C11): flags only. The
     // transport thread sends one CLOSE, closes the peer session and parks;
@@ -1258,9 +1266,12 @@ bool EquipManifest(mgscoop::partner_equip_wire::Manifest& out) noexcept {
 // observer's ~100 ms path of ANY mission (the title and the ACC included),
 // drain channel 2 and run this copy's loadout sender. Reads vars and the
 // type tables only (no partner state); the partner code gate passed at
-// configure time. Runtime thread, under receipt_lock.
+// configure time. Runtime thread, under receipt_lock. Nothing once the window
+// closes (partner_window_closing: also at the title, where the partner-mission
+// shutdown flag partner_defer::ShuttingDown never gets set).
 void ObserveEquipLink() noexcept {
-    if (!partner_on || !partner_gate_ok || mgscoop::partner_defer::ShuttingDown()) return;
+    if (!partner_on || !partner_gate_ok || InterlockedCompareExchange(&partner_window_closing, 0, 0) ||
+        mgscoop::partner_defer::ShuttingDown()) return;
     pd::TickEquipLink(partner_driver, partner_hooks, mgscoop::partner_net::NowMs());
 }
 

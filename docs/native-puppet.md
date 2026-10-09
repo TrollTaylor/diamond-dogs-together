@@ -1014,7 +1014,11 @@ runtime before acting (`full_body_gate`).
   drives natively or sends input frames (`partner_input_send=1`); a loadout
   without any weapon (vars not loaded yet) is not sent. Neither the sender
   nor the drain reads partner state (`ReadLoadout` has no partner-state
-  gate). The same path drains channel 2 outside missions; the preload query
+  gate). It stops when the game window closes, in any mission
+  (`partner_window_closing`, set first thing by `PartnerShutdown`; the
+  partner-mission flag `partner_defer::ShuttingDown` never gets set at the
+  title): no observer link tick and no loadout read for the driver tick's
+  sender. The same path drains channel 2 outside missions; the preload query
   drains it once more (`DrainEquipLink`), and every MissionStart seeds the
   mission's store from the session's cache (a manifest of another link
   session never), so the first mission after connecting preloads and plans
