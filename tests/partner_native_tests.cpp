@@ -1168,7 +1168,5 @@ int main() {
                 "refusals), weapons (capacity, magazine, CanReload, reload gate, magazine mirror), online play (network leaves "
                 "without latch, quality-gated re-entry, quiet remote, flap guard, remote_caps, hold=net, link quality, reason "
                 "codes, native.net JSON, capability message)\n", checks);
-                "target, predicate, command)
-", checks);
     return 0;
 }
