@@ -3500,6 +3500,21 @@ void TestNativeAim() {
     Check(s.fake.Containing("partner_native_aim; setting=look; override=0; state=ok; reason=none; src=look; writes=42;") >= 1 &&
               s.fake.Containing("pred1=1; gun1=7; path1=bone") >= 1,
           "aim: the 1 Hz partner_native_aim line");
+    Check(std::strcmp(t.aim_slot, "na") == 0 && t.aim_written_mm[0] == pn::kNull && s.fake.Containing("; slot=na; ") >= 1,
+          "aim: no hook write yet: the slot verdict is na");
+    // The hook's last write: the slot holds it (ours) and the aim point error is
+    // measured against it (the target leads the write by a tick while moving).
+    s.fake.aim_stats.written_ok = true;
+    s.fake.aim_stats.written[0] = 1.0f; s.fake.aim_stats.written[1] = 3.6f; s.fake.aim_stats.written[2] = 102.9f;
+    r.q10[1][2] = 102.9f;
+    for (int i = 0; i < 35; ++i) s.N();
+    Check(std::strcmp(t.aim_slot, "ours") == 0 && t.aim_written_mm[2] == 102900 && t.aim_target_mm[2] == 103000 &&
+              t.aim_point_err_mm == 300 && s.fake.Containing("; slot=ours; ") >= 1,
+          "aim: slot ours (the slot holds the hook's write), the aim point error against the write");
+    r.q10[1][2] = 50.0f;  // restored, or something else wrote the slot
+    for (int i = 0; i < 35; ++i) s.N();
+    Check(std::strcmp(t.aim_slot, "other") == 0 && t.aim_point_err_mm == 200 && s.fake.Containing("; slot=other; ") >= 1,
+          "aim: slot other (the error falls back to this tick's target)");
     // Off in lab.ini: nothing wanted, state off.
     s.driver.settings.naimpt = mgscoop::PartnerNativeAimPt::off;
     s.N();

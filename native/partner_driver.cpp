@@ -2048,7 +2048,10 @@ void TickAim(Driver& d, const Hooks& h, const pp::State& st, bool configured, bo
     t.aim_overwritten = as.overwritten;
     t.aim_restores = as.restores;
     t.aim_drops = as.drops;
-    for (unsigned i = 0; i < 3; ++i) t.aim_target_mm[i] = to.valid ? AimMm(to.p[i]) : pnat::kNull;
+    for (unsigned i = 0; i < 3; ++i) {
+        t.aim_target_mm[i] = to.valid ? AimMm(to.p[i]) : pnat::kNull;
+        t.aim_written_mm[i] = as.written_ok ? AimMm(as.written[i]) : pnat::kNull;
+    }
     for (unsigned k = 0; k < 2; ++k) {
         const bool gun = rok && r.gun_ok[k];
         for (unsigned i = 0; i < 3; ++i) {
@@ -2077,11 +2080,27 @@ void TickAim(Driver& d, const Hooks& h, const pp::State& st, bool configured, bo
         CopyText(t.aim_path[k], sizeof(t.aim_path[k]),
                  !gun ? "na" : ((r.path_flags[k] & c::gun3d0_bone_path) && r.b3d5[k] != c::gun_b3d5_sight) ? "bone" : "cam");
     }
+    // The slot against the hook's last write (both read this tick, after the
+    // last drain: the driver tick and the drain share the game's main thread).
+    {
+        bool known = true, same = true;
+        for (unsigned i = 0; i < 3; ++i) {
+            const std::int32_t s = t.aim_q10_mm[1][i], w = t.aim_written_mm[i];
+            const std::int64_t diff = static_cast<std::int64_t>(s) - static_cast<std::int64_t>(w);
+            if (s == pnat::kNull || w == pnat::kNull) known = false;
+            else if (diff > 1 || diff < -1) same = false;
+        }
+        CopyText(t.aim_slot, sizeof(t.aim_slot), !known ? "na" : same ? "ours" : "other");
+    }
+    // The aim point against what the gun pipeline was given: the hook's last
+    // write while the mirror holds the slot (the target leads it by a tick
+    // while the aim or the body moves), else this tick's target.
     t.aim_point_err_mm = pnat::kNull;
-    if (to.valid && rok && r.gun_ok[1]) {
+    const bool ours = std::strcmp(t.aim_slot, "ours") == 0;
+    if ((ours || to.valid) && rok && r.gun_ok[1]) {
         double e2 = 0.0;
         for (unsigned i = 0; i < 3; ++i) {
-            const double dd = static_cast<double>(r.aimpt[1][i]) - to.p[i];
+            const double dd = static_cast<double>(r.aimpt[1][i]) - (ours ? as.written[i] : to.p[i]);
             e2 += dd * dd;
         }
         t.aim_point_err_mm = Mm(std::sqrt(e2) * 1000.0);
@@ -2096,6 +2115,7 @@ void TickAim(Driver& d, const Hooks& h, const pp::State& st, bool configured, bo
     mix(as.writes ? 1u : 0u);
     mix(as.refused);
     mix(as.overwritten);
+    mix(static_cast<std::uint64_t>(static_cast<unsigned char>(t.aim_slot[0])) | (static_cast<std::uint64_t>(static_cast<unsigned char>(t.aim_slot[1])) << 8));
     mix(static_cast<std::uint32_t>(t.aim_pred[1]));
     mix(static_cast<std::uint32_t>(t.aim_gun_state[1]));
     mix(t.aim_rel_yaw_cdeg[1] == pnat::kNull ? 0xFFFFFFFFu : static_cast<std::uint32_t>(t.aim_rel_yaw_cdeg[1] / 500));
@@ -2116,9 +2136,10 @@ void TickAim(Driver& d, const Hooks& h, const pp::State& st, bool configured, bo
     char line[512]{};
     if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line),
             "partner_native_aim; setting=%s; override=%u; state=%s; reason=%s; src=%s; writes=%u; refused=%u; holds=%u; overwritten=%u; "
-            "restores=%u; q10=%s,%s,%s; target=%s,%s,%s; err_mm=%s; yaw1=%s; yaw0=%s; rel1=%s; r60_1=%s; pred1=%s; gun1=%d; path1=%s\r\n",
+            "restores=%u; q10=%s,%s,%s; slot=%s; target=%s,%s,%s; err_mm=%s; yaw1=%s; yaw0=%s; rel1=%s; r60_1=%s; pred1=%s; gun1=%d; "
+            "path1=%s\r\n",
             t.aim_setting, override_on ? 1u : 0u, t.aim_state, t.aim_reason, t.aim_src, t.aim_writes, t.aim_refused, t.aim_holds,
-            t.aim_overwritten, t.aim_restores, v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10], v[11],
+            t.aim_overwritten, t.aim_restores, v[0], v[1], v[2], t.aim_slot, v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10], v[11],
             t.aim_gun_state[1] == pnat::kNull ? -1 : t.aim_gun_state[1], t.aim_path[1])))
         Emit(h, line);
 }

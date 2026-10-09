@@ -170,7 +170,7 @@ int main() {
                   doc.find("false,0,0,0,0,0]")!=std::string::npos))return 1;
         // Aim parity member (docs/native-puppet.md "Facing", the aim-target mirror): present in every shape.
         if(!check(doc.find("\"aim\":{\"setting\":\"\",\"override\":false,\"state\":\"\",\"reason\":\"\",\"src\":\"\",\"writes\":0,")!=std::string::npos &&
-                  doc.find("\"target_mm\":[0,0,0],\"q10_1_mm\":[0,0,0],\"q10_0_mm\":[0,0,0],\"aimpt1_mm\":[0,0,0],\"aimpt0_mm\":[0,0,0],")!=std::string::npos &&
+                  doc.find("\"target_mm\":[0,0,0],\"written_mm\":[0,0,0],\"slot\":\"\",\"q10_1_mm\":[0,0,0],\"q10_0_mm\":[0,0,0],\"aimpt1_mm\":[0,0,0],\"aimpt0_mm\":[0,0,0],")!=std::string::npos &&
                   doc.find("\"pred1\":0,\"pred0\":0,\"gun_state\":[0,0],\"b3d5\":[0,0],\"path1\":\"\",\"path0\":\"\"}")!=std::string::npos))return 1;
         // Native polish members (docs/native-puppet.md "Facing", "Weapons"): present in every shape.
         if(!check(doc.find("\"steer_err_mrad\":0,\"cam_diff_cdeg\":0")!=std::string::npos &&
@@ -200,7 +200,8 @@ int main() {
                   polish.find(",-17999,null,0,0]")!=std::string::npos && polish.find(",null,null,0,0]")!=std::string::npos))return 1;
         // The aim member with every value unread (nulls) and hostile text; the ring's r60_1/pred1 unread.
         t.aim_point_err_mm=pn::kNull;t.aim_override=true;
-        for(unsigned i=0;i<3;++i){t.aim_target_mm[i]=pn::kNull;for(unsigned k=0;k<2;++k){t.aim_q10_mm[k][i]=t.aim_point_mm[k][i]=pn::kNull;}}
+        for(unsigned i=0;i<3;++i){t.aim_target_mm[i]=t.aim_written_mm[i]=pn::kNull;for(unsigned k=0;k<2;++k){t.aim_q10_mm[k][i]=t.aim_point_mm[k][i]=pn::kNull;}}
+        strcpy_s(t.aim_slot,"na");
         for(unsigned k=0;k<2;++k){
             t.aim_yaw_cdeg[k]=t.aim_pitch_cdeg[k]=t.aim_rel_yaw_cdeg[k]=t.aim_r5c[k]=t.aim_r60[k]=t.aim_pred[k]=pn::kNull;
             t.aim_gun_state[k]=t.aim_b3d5[k]=pn::kNull;strcpy_s(t.aim_path[k],"na");
@@ -212,16 +213,17 @@ int main() {
         if(!check(n>0 && n<16384 && ValidJson(aim)))return 1;
         if(!check(aim.find("\"aim\":{\"setting\":\"look\",\"override\":true,\"state\":\"refused\",\"reason\":\"q_\\\"vt\",\"src\":\"none\",\"writes\":4294967295,")!=std::string::npos &&
                   aim.find("\"overwritten\":2,")!=std::string::npos &&
-                  aim.find("\"target_mm\":[null,null,null],\"q10_1_mm\":[null,null,null],")!=std::string::npos &&
+                  aim.find("\"target_mm\":[null,null,null],\"written_mm\":[null,null,null],\"slot\":\"na\",\"q10_1_mm\":[null,null,null],")!=std::string::npos &&
                   aim.find("\"aimpt_err_mm\":null,\"aim_yaw1_cdeg\":null,\"aim_pitch1_cdeg\":null,")!=std::string::npos &&
                   aim.find("\"r60_1\":null,")!=std::string::npos && aim.find("\"pred1\":null,\"pred0\":null,\"gun_state\":[null,null],")!=std::string::npos &&
                   aim.find("\"path1\":\"na\",\"path0\":\"na\"}")!=std::string::npos &&
                   aim.find(",953,1]")!=std::string::npos && aim.find(",null,null]")!=std::string::npos))return 1;
         // Read values.
         t.aim_r60[1]=953;t.aim_pred[1]=1;t.aim_rel_yaw_cdeg[1]=-8154;t.aim_yaw_cdeg[1]=-15400;t.aim_target_mm[0]=-12500;t.aim_point_err_mm=31;
+        t.aim_written_mm[0]=-12499;strcpy_s(t.aim_slot,"ours");
         strcpy_s(t.aim_path[1],"cam");t.aim_gun_state[1]=7;
         const auto aim2=NativeDocument(t,&n);
-        if(!check(ValidJson(aim2) && aim2.find("\"target_mm\":[-12500,null,null],")!=std::string::npos &&
+        if(!check(ValidJson(aim2) && aim2.find("\"target_mm\":[-12500,null,null],\"written_mm\":[-12499,null,null],\"slot\":\"ours\",")!=std::string::npos &&
                   aim2.find("\"aimpt_err_mm\":31,\"aim_yaw1_cdeg\":-15400,")!=std::string::npos &&
                   aim2.find("\"rel_yaw1_cdeg\":-8154,")!=std::string::npos && aim2.find("\"r60_1\":953,")!=std::string::npos &&
                   aim2.find("\"pred1\":1,")!=std::string::npos && aim2.find("\"gun_state\":[null,7],")!=std::string::npos &&
@@ -229,7 +231,7 @@ int main() {
         for(unsigned k=0;k<2;++k){t.aim_r60[k]=t.aim_pred[k]=t.aim_rel_yaw_cdeg[k]=t.aim_yaw_cdeg[k]=t.aim_pitch_cdeg[k]=t.aim_r5c[k]=0;
             t.aim_gun_state[k]=t.aim_b3d5[k]=0;}
         t.aim_point_err_mm=0;
-        for(unsigned i=0;i<3;++i){t.aim_target_mm[i]=0;for(unsigned k=0;k<2;++k){t.aim_q10_mm[k][i]=t.aim_point_mm[k][i]=0;}}
+        for(unsigned i=0;i<3;++i){t.aim_target_mm[i]=t.aim_written_mm[i]=0;for(unsigned k=0;k<2;++k){t.aim_q10_mm[k][i]=t.aim_point_mm[k][i]=0;}}
         t.face_err_cdeg=t.face_target_cdeg=t.face_body_cdeg=t.face_rate_dps=0;t.place_yaw_err_mdeg=0;
         t.look_remote_cdeg[0]=t.look_remote_cdeg[1]=t.look_slot_cdeg[0]=t.look_slot_cdeg[1]=t.look_err_mdeg=0;
         t.steer_err_mrad=t.cam_diff_cdeg=0;t.mag_inj=t.mag_inj_cap=t.remote_gun_equip=t.remote_gun_base=0;

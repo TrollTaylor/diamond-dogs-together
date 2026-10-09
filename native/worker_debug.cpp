@@ -178,7 +178,7 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
     j.Add(",\"reason\":");j.String(n.aim_reason,sizeof(n.aim_reason));j.Add(",\"src\":");j.String(n.aim_src,sizeof(n.aim_src));
     j.Add(",\"writes\":%u,\"refused\":%u,\"holds\":%u,\"overwritten\":%u,\"restores\":%u,\"drops\":%u,\"target_mm\":",
         n.aim_writes,n.aim_refused,n.aim_holds,n.aim_overwritten,n.aim_restores,n.aim_drops);
-    vec(n.aim_target_mm);
+    vec(n.aim_target_mm);j.Add(",\"written_mm\":");vec(n.aim_written_mm);j.Add(",\"slot\":");j.String(n.aim_slot,sizeof(n.aim_slot));
     j.Add(",\"q10_1_mm\":");vec(n.aim_q10_mm[1]);j.Add(",\"q10_0_mm\":");vec(n.aim_q10_mm[0]);
     j.Add(",\"aimpt1_mm\":");vec(n.aim_point_mm[1]);j.Add(",\"aimpt0_mm\":");vec(n.aim_point_mm[0]);
     j.Add(",\"aimpt_err_mm\":");i32(n.aim_point_err_mm);

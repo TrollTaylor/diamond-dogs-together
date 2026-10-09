@@ -453,7 +453,9 @@ struct Telemetry {
     // Aim parity (docs/native-puppet.md "Facing", the aim-target mirror): the
     // effective setting (lab.ini or the debug override), the mirror's state
     // off|wait|ok|hold|refused|latched with its reason, the target source,
-    // the hook's process totals; the target, both network aim slots Q+0x10[k]
+    // the hook's process totals; the target, the hook's last write (the slot
+    // must equal it: the driver tick and the drain share one thread, so the
+    // target leads it by at most one tick), both network aim slots Q+0x10[k]
     // and both gun aim points gunRec[k]+0x150 (mm, kNull unread), the aim
     // point's distance from the target (mm); the world aim direction of each
     // gun (aim point - (body + 1.6 m), centidegrees), the yaw the aim-turn
@@ -466,7 +468,10 @@ struct Telemetry {
     char aim_reason[12];
     char aim_src[8];
     std::uint32_t aim_writes, aim_refused, aim_holds, aim_overwritten, aim_restores, aim_drops;
-    std::int32_t aim_target_mm[3], aim_q10_mm[2][3], aim_point_mm[2][3], aim_point_err_mm;
+    std::int32_t aim_target_mm[3], aim_written_mm[3], aim_q10_mm[2][3], aim_point_mm[2][3], aim_point_err_mm;
+    // Q+0x10[1] against the hook's last write: ours (every axis within 1 mm),
+    // other (restored, or something else wrote it), na (either unread).
+    char aim_slot[8];
     std::int32_t aim_yaw_cdeg[2], aim_pitch_cdeg[2], aim_rel_yaw_cdeg[2];
     std::int32_t aim_r5c[2], aim_r60[2], aim_pred[2];
     std::int32_t aim_gun_state[2], aim_b3d5[2];
