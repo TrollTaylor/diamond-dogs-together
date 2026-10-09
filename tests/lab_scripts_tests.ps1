@@ -541,6 +541,15 @@ try {
     Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_anim -Value net)/$(ConvertTo-LabPartnerValue -Key partner_aset -Value r)/$(ConvertTo-LabPartnerValue -Key partner_reset -Value ac)/$(ConvertTo-LabPartnerValue -Key partner_look -Value quiet)" 'net/r/ac/quiet' 'anim/aset/reset/look values'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_anim -Value on } 'off|mirror|net' 'anim values'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_look -Value ocelot } 'copy|net|quiet|snake' 'look values'
+    # Partner name tag keys (docs/partner-nametag.md): as the native lab.ini parser.
+    Assert-Equal "$(ConvertTo-LabPartnerValue -Key nametag -Value on)/$(ConvertTo-LabPartnerValue -Key nametag_crosshair -Value always)/$(ConvertTo-LabPartnerValue -Key nametag_name -Value 'Host Tag_1.x-y')/$(ConvertTo-LabPartnerValue -Key nametag_max_m -Value 50)" '1/always/Host Tag_1.x-y/50' 'name tag values'
+    foreach ($badName in @('a;b', 'a  ;', 'ABCDEFGHIJKLMNOPQRSTUVWXY', "caf$([char]0xE9)")) {
+        Assert-Throws { ConvertTo-LabPartnerValue -Key nametag_name -Value $badName } '1..24 of' "name tag name refused: $badName"
+    }
+    Assert-Throws { ConvertTo-LabPartnerValue -Key nametag_crosshair -Value sometimes } 'aim|always|off' 'crosshair values'
+    Assert-Throws { ConvertTo-LabPartnerValue -Key nametag_max_m -Value 1001 } 'allowed: 50..1000' 'range limit'
+    $ovTag = ConvertFrom-LabPartnerSettingArgs -Items @('nametag_crosshair=always', 'host:nametag_name=HostTag', 'guest:nametag_name=GuestTag') -Role guest
+    Assert-Equal "$($ovTag['nametag_crosshair'])/$($ovTag['nametag_name'])" 'always/GuestTag' 'role-scoped name tag settings'
     # Play-OfflineCoop: the animated partner (dm=map) by default, the proven
     # Warp movement on [W] / -ProvenWarp, the input drive on [I] / -InputDrive,
     # the round 2 experiments on [M]/[A] or -Experimental; every sent line is valid.

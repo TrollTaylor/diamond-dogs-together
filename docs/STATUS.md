@@ -1,5 +1,30 @@
 # Development status
 
+## October 8, 2026: partner name tag and friendly crosshair (fixture-tested, never run)
+
+A name tag now floats above the co-op partner's head and a green ring appears at the
+screen centre while you aim at him ([partner-nametag.md](partner-nametag.md)). Both
+are drawn by our DX11 overlay (under the F9 menu) from a ~100-byte frame the Lua
+owner thread publishes; Present never reads game memory. The game thread reads the
+game's own render viewport and camera (`*(0x2ba1668)` -> +0x58 -> +0x18: view,
+projection, VP, rect), the same unlocked reads the player update makes on that
+thread, through ReadProcessMemory only; nothing is written and no game function is
+called. `tools/generate_nametag_contract.py --check` pins 24 sites and re-runs the
+projection builder 0x241b00 in an SSE emulator (clip.w = view z, x mirrored,
+16:9 clamp); the loader compares them at startup and every tick checks vtables,
+the projection shape and View x Proj == VP, hiding the tag on any refusal. Names
+travel on reliable link channel 3 (lab.ini `nametag_name`, the lab `self_name`,
+coop.ini `name` or the Steam persona; sanitized on both ends, fallback "Player 2" /
+"Host"). Hidden during demos and the iDroid (STATE_V1 field 13), pause/loading
+(stale frames), mission end and whenever the partner body is hidden. Settings:
+lab.ini/coop.ini keys and the F9 Partner page (`nametag on|off|status`,
+`nametag crosshair aim|always|off`, handled natively). Worker state.json gains a
+`"nametag"` object; the hidden scenario `tools/worker/scenarios/partner-nametag.txt`
+holds the runtime proof (the worker's `labsetting` now takes a `host`/`guest`
+prefix). Fixture evidence only: `debug_menu_tests` (projection, refusals, capsule,
+sanitizer, wire, commands), `debug_overlay_tests` (DX11 pixel readback of the label
+and the ring), `worker_debug_tests`, `lab_config_tests`, `debug_menu_lua_check`.
+
 ## October 8, 2026: native actions and weapons integrated (fixture-tested, never run together)
 
 `integ/finish` carries both native work packages below. One input frame v4

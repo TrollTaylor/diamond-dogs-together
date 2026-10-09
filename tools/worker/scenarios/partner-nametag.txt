@@ -1,0 +1,95 @@
+# Partner name tag and friendly crosshair (docs/partner-nametag.md).
+# Run (coordinator only, hidden worker; the default animated partner profile and lab saves, 30010 at noon):
+#   pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-nametag.txt
+# Static first: python tools/generate_nametag_contract.py --check
+# Evidence (state.json / captures.jsonl roles.<role>.nametag; "render" is the Present side):
+#  ready:   both script-observer.log: nametag=ready; on=1; crosshair=aim; ...; local_src=lab, then once per mission
+#           nametag_census; ...; refusal=none; vp_vt=0x20f1c08; cam_vt=0x20f08c8 (a different vp_vt is a static-inference
+#           miss: the tag refuses with camera.refusal vp_vt; pin it from the census, see the doc).
+#  names:   nametag=name_tx and nametag=name_rx on both logs; nametag.name_src remote, name_tx/name_rx >= 1, name_invalid 0.
+#  idle:    host status st=visible;why=ok;name=GuestTag;src=remote; host-nametag-idle.bmp: render.label_box holds >= 30
+#           pixels with R,G,B >= 200; render.last_px within 3 px of the anchor from nametag.ndc and render.bb
+#           (x = bb.w*(ndc.x+1)/2, y = bb.h*(1-ndc.y)/2 for camera.rect 0,0,1,1); camera.ok true, camera.torn 0.
+#  aim:     aim=1 (aim_src gun) while RMB is held. The aim captures need one with nametag.hover true, crosshair_on true and
+#           a green ring in the BMP (G >= 180, R and B <= 110, >= 20 pixels at radius 9..11 around render.ring) and one
+#           with hover false and no ring. The over-the-shoulder camera puts the partner off the centre ray: tune the
+#           mouse steps below from the first run's nametag.miss_yaw_deg / miss_pitch_deg (+ = right / up).
+#  prone:   nametag.stance 2 and head[1] - foot[1] about 0.8 m (the label drops with the body; eased over 150 ms).
+#  away:    status st=hidden;why=behind or offscreen after turning the camera away.
+#  off/on:  nametag off -> no label in nametag-off, on again; nametag crosshair always -> xh=always.
+#  menu:    nametag-menu shows the Partner page with the Name tag rows; the tag still draws under the menu.
+#  paused:  the pause menu stops the Lua tick: nametag-paused has no label and render.stale_frames grows.
+#  guest:   the guest sees HostTag (src=remote) after placing itself behind the host.
+labsetting host nametag_name=HostTag
+labsetting guest nametag_name=GuestTag
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+wait 4000
+host run godmode 1
+guest run godmode 1
+placebehind host guest 6
+wait 1500
+host run nametag status
+host expect ^nametag;on=1;xh=aim;st=visible;why=ok;name=GuestTag;src=remote;d=([4-9]|1[0-4])\.\d;
+both capture nametag-idle
+host hold rmb 1500 nowait
+wait 700
+host run nametag status
+host expect ;aim=1;
+host capture nametag-aim-0
+host hold rmb 1500 nowait
+host mouse -30 0
+wait 500
+host capture nametag-aim-l30
+host run nametag status
+host hold rmb 1500 nowait
+host mouse 60 0
+wait 500
+host capture nametag-aim-r30
+host run nametag status
+host hold rmb 1500 nowait
+host mouse -30 12
+wait 500
+host capture nametag-aim-d12
+host run nametag status
+host release
+host mouse 0 -12
+stance guest prone
+wait 1500
+host run nametag status
+host expect ;st=visible;why=ok;name=GuestTag;
+host capture nametag-prone
+stance guest stand
+host mouse 1500 0
+wait 800
+host run nametag status
+host expect ;st=hidden;why=(behind|offscreen);
+host mouse -1500 0
+wait 800
+host run nametag off
+host expect ^nametag;on=0;
+host capture nametag-off
+host run nametag on
+host expect ^nametag;on=1;
+host run nametag crosshair always
+host expect ;xh=always;
+host run menu open partner
+host expect ^menu_open;category=partner
+host capture nametag-menu
+host run menu press partner_crosshair_aim
+host expect ^pressed;action=partner_crosshair_aim
+host run menu close
+host press escape
+wait 1000
+host capture nametag-paused
+host press escape
+waitgameplay host 30
+host run nametag status
+host expect ;xh=aim;.*;stale_frames=[1-9]
+placebehind guest host 6
+wait 1500
+guest run nametag status
+guest expect ;st=visible;why=ok;name=HostTag;src=remote;
+guest capture nametag-guest-view

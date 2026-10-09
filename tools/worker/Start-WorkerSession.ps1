@@ -28,9 +28,11 @@ param(
     # existing Play-OfflineCoop lab saves (read only), the state earlier live
     # runs used. The real saves are backed up and re-checked either way.
     [ValidateSet('real','lab')][string]$SaveSeed='real',
-    # Extra lab.ini keys for both copies of this run: allow-listed lab
-    # experiments only (Invoke-WorkerScenario "labsetting" lines).
-    [ValidatePattern('^debug_soldier_warp=[01]$')][string[]]$LabSetting=@()
+    # Extra lab.ini keys for this run: allow-listed lab experiments and the
+    # name tag keys only (Invoke-WorkerScenario "labsetting" lines); key=value
+    # for both copies, host:key=value / guest:key=value for one (Prepare-LabInstance
+    # -PartnerSetting spelling).
+    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16})$')][string[]]$LabSetting=@()
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'

@@ -48,8 +48,10 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                      teleport viewer behind (and to the right of) target, facing it,
                                      with a 3 m upward margin; require fresh position to settle within 3 s
   state                            print both roles' mission / gameplay-ready state
-  labsetting <key>=<value>         before the session starts: add an allow-listed lab.ini key to
-                                   both copies (only debug_soldier_warp=0|1)
+  labsetting [host|guest] <key>=<value>
+                                   before the session starts: add an allow-listed lab.ini key to both
+                                   copies or to one (debug_soldier_warp=0|1, nametag=0|1,
+                                   nametag_crosshair=aim|always|off, nametag_name=[A-Za-z0-9_]{1,16})
 
 The session has a hard 600 s limit (supervisor). The result object lists the
 run folder, the frames (renamed with labels) and whether everything closed.
@@ -71,7 +73,8 @@ param(
     [ValidateSet('normal','research')][string]$BuildProfile='normal',
     [switch]$AmmoExperiment,
     [ValidateSet('real','lab')][string]$SaveSeed='lab',
-    [ValidatePattern('^debug_soldier_warp=[01]$')][string[]]$LabSetting=@()
+    # key=value for both copies or host:key=value / guest:key=value for one (scenario "labsetting" lines).
+    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16})$')][string[]]$LabSetting=@()
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -94,8 +97,10 @@ $lines+=$Step
 $steps=@($lines|ForEach-Object{$_.Trim()}|Where-Object{$_ -and !$_.StartsWith('#')})
 # labsetting lines configure the session; they are not steps.
 foreach($line in @($steps|Where-Object{$_ -cmatch '^labsetting(\s|$)'})) {
-    if($line -cnotmatch '^labsetting\s+(debug_soldier_warp=[01])$'){throw "Invalid scenario step: '$line'"}
-    $LabSetting=@($LabSetting)+@($Matches[1])
+    if($line -cnotmatch '^labsetting\s+(?:(host|guest)\s+)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(?:aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16})$'){
+        throw "Invalid scenario step: '$line'"
+    }
+    $LabSetting=@($LabSetting)+@($(if($Matches[1]){$Matches[1]+':'+$Matches[2]}else{$Matches[2]}))
 }
 $steps=@($steps|Where-Object{$_ -cnotmatch '^labsetting(\s|$)'})
 if(!$steps.Count){throw 'No scenario steps.'}

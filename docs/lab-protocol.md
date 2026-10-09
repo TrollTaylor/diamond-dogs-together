@@ -11,7 +11,7 @@ of the running `mgsvtpp.exe`: `MGS_TPP` for the host, `MGS_TPP_guest` for the gu
 | File | Owner | Purpose |
 |---|---|---|
 | `lab.ini` | lab scripts | Harness only. Parsed by `native/lab_config.cpp` (`mgscoop::GetLabConfig()`). Inert unless `enabled=1` and `role=` are both present. |
-| `coop.ini` | installer / user | Player options: `master_url=`, `character=`, `character_fallback=` (`mgscoop::GetCoopConfig()`). |
+| `coop.ini` | installer / user | Player options: `master_url=`, `character=`, `character_fallback=`, and the name tag's `name=`, `nametag=`, `friendly_crosshair=` ([partner-nametag.md](partner-nametag.md)) (`mgscoop::GetCoopConfig()`). |
 | `script-observe.enabled` | existing | Mode marker: `host-v3`, `client-v1` or `client-check-v1`; `offline-v1` on both folders in the offline lab mode (below). |
 | `client-host.txt` | existing | Guest only: the host's SteamID64 in decimal. |
 
@@ -44,6 +44,7 @@ generated `lab.ini` is byte-for-byte what it was before.
 | `partner_anim_probe` | `0`/`1` (`0`) | |
 | `crash_probe` | `0`/`1` (`1`) | |
 | `debug_soldier_warp` | `0`/`1` (`0`; written only when set) | lab only: play forces it off (`play_refused` bit `0x10000`). F9 **Spawn enemy here** native placement ([debug-menu.md](debug-menu.md)) |
+| `nametag`, `nametag_crosshair`, `nametag_name`, `nametag_max_m` | `0`/`1`, `aim`/`always`/`off`, 1..24 of `[A-Za-z0-9 _.-]`, `50`..`1000` (natively on, `aim`, the name sources, `300`; written only when set) | allowed in play. Partner name tag and friendly crosshair ([partner-nametag.md](partner-nametag.md)); `lab.ini` wins over `coop.ini` `nametag=`/`friendly_crosshair=` |
 | `net_latency_ms`, `net_loss_permille` | existing keys, written only when set (`-PartnerSetting guest:net_latency_ms=100`) | 0..2000, 0..1000 |
 
 The lab defaults come from `lab.json` `"partner"` (short names such as `stage`, or
@@ -307,6 +308,7 @@ realization line is inside the stage 3 segment).
 | `partner_stop; cleared=..; teardown=..` | E8; ends a segment |
 | `crash_probe=installed`, `crash_probe=av; rva=..; ...` | `av` fails any experiment |
 | `soldier_warp=ready; ...` / `soldier_warp=refused; reason=body_contract\|slot_contract\|image; rva=..`, `soldier_warp=disabled; reason=fault\|anomaly; id=..; go=..; r=..; h=..; until=process_exit` (latched off), `soldier_warp_census; go=..; type_vt=..; count_fn=..; handle_vt=..; hop=..; hop_bytes=..; leaf_vt=..; leaf=pinned\|engine; ...`, `debug_menu=soldier_warp; id=..; go=..; r=..; h=..; leaf=..; refused=..` | `debug_soldier_warp=1` only: the contract gate at startup, the read-only dispatch census (at most 24 lines) and each native placement attempt ([debug-menu.md](debug-menu.md)) |
+| `nametag=ready; on=..; crosshair=..; max_m=..; local_src=..; ...` / `nametag=refused; reason=contract\|image; rva=..`, `nametag_census; mission=..; refusal=..; vp_vt=..; cam_vt=..; ...`, `nametag=visible\|hidden; ...`, `nametag=name_tx\|name_rx\|name_rx_refused; ...`, `nametag=setting; ...`, `debug_menu=nametag; id=..; ok=..; result=..` | Partner name tag ([partner-nametag.md](partner-nametag.md)): the startup contract gate, the per-mission camera census and each visibility change (at most 256 lines) |
 | `world_place=warp; seq=..; kind=1\|3; ent=..; go=..; age_ms=..; r=..; h=..; leaf=pinned\|engine; refused=..`, `debug_menu=remote; message=..` | Guest spawn sync ([debug-menu.md](debug-menu.md) "Spawn sync"): each change of a native placement of a host-announced grant (same key, contract, budget and latch as `soldier_warp`), and each debug-menu history row for the other PC's result (both roles) |
 | `partner_census; k=0\|1; id=..; base=..; count=..; blk=ok\|<reason>; blk_vt=..; ps_vt=..; cs_vt=..; t=set\|null; t_vt=..; t68=..; t70=..; a0_vt=..; a080=..; c0_vt=..; c090=..; b70_vt=..; stance=ok\|<reason>; psw=0x..; equip_vt=..; same_t=..; same_a0=..; same_c0=..; verdict=ok\|<reason>` | A0 (RVAs to pin); logged on `census=1` and once per realize when a native feature needs it. `verdict` = identities + transform chain (xform, hybrid, body readback); `stance` = identities + the SetStance prerequisites (`ps_words`: stance words, `ps_sub`: PS+0x260), a note in A0, never blocks xform |
 | `partner_anim; act=a0,a1; s=s0,s1; v=v0,v1; q28=..; qd8=..; psw=..,..; rec1=0x..` | A1 (`lab.ini` `partner_anim_probe=1`; per slot: act u16 hex, stance and speed u8) |

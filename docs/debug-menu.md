@@ -123,6 +123,15 @@ Link, pose and animation readout (remote pose only once the partner has sent one
 | Apply modes | `partner stage=3 source=net apply=.. input=.. anim=.. aset=.. dm=.. look=.. [reset=n|a|c|ac]` |
 | Play clip / Stop clip | `partner dm=on dmplay=n`, `partner dmstop=1` |
 | Slow motion (U) / off | `slowmo rate seconds` (0.05..1, 0.1..30 s), `slowmo off` |
+| Name tag on / off, Name tag status | `nametag on`, `nametag off`, `nametag status` |
+| Crosshair: when aiming / always / off | `nametag crosshair aim`, `nametag crosshair always`, `nametag crosshair off` |
+
+**Name tag & friendly crosshair** ([partner-nametag.md](partner-nametag.md)): a
+readout line (on/off, crosshair mode, shown or the hidden reason, the partner's
+name, distance, "on target") and the rows above. The `nametag ...` commands are
+handled by the loader itself, never by Lua or the game, and are local to this PC
+and kept in memory only. Their result is the status line
+`nametag;on=..;xh=..;st=visible|hidden;why=..;name=..;src=remote|fallback;d=..;stance=..;px=..;hov=..;aim=..;stale_frames=..`.
 
 The mode combos follow the running settings until you edit them ("Sync from game"
 reverts). Slow motion is experimental: it slows this PC's whole world and the other
@@ -361,6 +370,7 @@ the worker's `debug` / `run` steps):
 `fulton_infinite 0|1`, `slowmo rate seconds`, `slowmo off`, `inventory`,
 `weapon hip|back|secondary current`, `drop_item current_hip|current_back|current_secondary n`,
 `time s`, `time_add s`, `weather sunny|cloudy|rainy|sandstorm|foggy|auto`,
+`nametag on|off|status`, `nametag crosshair aim|always|off`,
 `partner k=v ...`, `enemy_camps`, `enemy_routes camp`, `goto_camp camp`, `goto_spawn`,
 `spawn_enemy here [come]`, `spawn_enemy closest`, `spawn_enemy camp n`,
 `enemy_list [r]`, `enemy <op> nearest|hash`, `enemy_unmark`,
@@ -380,14 +390,19 @@ In the hidden worker the menu is never opened with F9. Scenario steps:
 - `<role> capture <label>` saves the next frame; with the menu open it contains the
   menu (the overlay draws before the capture in the same frame, without a mouse
   cursor or hover).
-- `labsetting <key>=<value>` (scenario header, allow-listed: only
-  `debug_soldier_warp=0|1`) adds a lab.ini key to both worker copies for that run.
+- `labsetting [host|guest] <key>=<value>` (scenario header, allow-listed:
+  `debug_soldier_warp=0|1`, `nametag=0|1`, `nametag_crosshair=aim|always|off`,
+  `nametag_name=[A-Za-z0-9_]{1,16}`) adds a lab.ini key to both worker copies, or to
+  one, for that run.
 - `tools/worker/scenarios/debug-menu.txt` opens every page, searches, presses,
   confirms and runs the spawn, partner and world commands. It enables the native
   placement and expects `spawn_enemy here` to report `mode=warp` with `d` of 10 m or
   less and `sync=world;seq=<n>`, then checks that the nearest soldier is still close a
   few seconds later and that the guest's copy landed (`guest run spawn_sync`).
   Mother Base has no authored camp soldiers, so the scenario needs 30010 or 30020.
+- `tools/worker/scenarios/partner-nametag.txt` names the copies `HostTag` and
+  `GuestTag` and proves the name tag and the friendly crosshair on both screens
+  ([partner-nametag.md](partner-nametag.md)).
 - `tools/worker/scenarios/spawn-sync.txt` is the focused guest-side proof: outcome
   sync on (`w1=1` on both), the guest 3 m behind the host, the guard landed within
   10 m of the host's body on the guest's screen, then sleep, come and Clear nearby

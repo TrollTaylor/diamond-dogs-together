@@ -291,6 +291,12 @@ $script:LabPartnerKeys = @(
     # Debug "Spawn enemy here" native placement (docs/debug-menu.md): lab only,
     # default off and written only when set.
     @{ Key = 'debug_soldier_warp'; Json = 'debug_soldier_warp'; Kind = 'bool' },
+    # Partner name tag and friendly crosshair (docs/partner-nametag.md): a read-only
+    # overlay, on by default natively; written only when set.
+    @{ Key = 'nametag'; Json = 'nametag'; Kind = 'bool' },
+    @{ Key = 'nametag_crosshair'; Json = 'nametag_crosshair'; Kind = 'enum'; Values = @('aim', 'always', 'off') },
+    @{ Key = 'nametag_name'; Json = 'nametag_name'; Kind = 'nametag' },
+    @{ Key = 'nametag_max_m'; Json = 'nametag_max_m'; Kind = 'int'; Min = 50; Max = 1000 },
     @{ Key = 'net_latency_ms'; Json = 'net_latency_ms'; Kind = 'int'; Min = 0; Max = 2000 },
     @{ Key = 'net_jitter_ms'; Json = 'net_jitter_ms'; Kind = 'int'; Min = 0; Max = 1000 },
     @{ Key = 'net_loss_permille'; Json = 'net_loss_permille'; Kind = 'int'; Min = 0; Max = 1000 },
@@ -362,6 +368,10 @@ function ConvertTo-LabPartnerValue {
     } elseif ($spec.Kind -eq 'sint') {
         if ($text -cmatch '^(0|-?[1-9][0-9]{0,4})$' -and [int]$text -ge $spec.Min -and [int]$text -le $spec.Max) { return [string][int]$text }
         $allowed = [string]$spec.Min + '..' + [string]$spec.Max
+    } elseif ($spec.Kind -eq 'nametag') {
+        # As the native lab.ini parser: 1..24 of [A-Za-z0-9 _.-], no blank at either end.
+        if ($text -cmatch '^[A-Za-z0-9_.-]([A-Za-z0-9 _.-]{0,22}[A-Za-z0-9_.-])?$') { return $text }
+        $allowed = '1..24 of [A-Za-z0-9 _.-]'
     } elseif ($spec.Kind -eq 'words') {
         if ($text -cmatch '^[0prhn]{3}$') { return $text }
         $allowed = '3 of 0prhn'
