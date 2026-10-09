@@ -198,6 +198,7 @@ std::size_t FormatNativeJson(const partner_native::Telemetry& telemetry, char* o
 #include "mgscoop/debug_menu.hpp"
 #include "mgscoop/debug_overlay.hpp"
 #include "mgscoop/worker_scenario.hpp"
+#include "mgscoop/nametag.hpp"
 namespace mgscoop::worker_debug {
 namespace {
 std::uint64_t last_poll{}, last_sequence{}, accepted_sequence{};
@@ -205,6 +206,7 @@ bool last_queued{}, queued_menu{};
 std::uint32_t queued_ref{};
 // Owner thread only: one static 64 KB buffer instead of a large game-thread stack frame
 char json_bytes[65536]{};
+char nametag_json[4096]{};
 void Publish(const worker_scenario::RunContext& c) noexcept {
     const auto s=debug_menu::GetSnapshot();Json j{json_bytes,sizeof(json_bytes)};
     j.Add("{\"schema\":2,\"queued_kind\":\"%s\",\"queued_ref\":%u,",queued_menu?"menu":"command",queued_ref);
@@ -234,6 +236,8 @@ void Publish(const worker_scenario::RunContext& c) noexcept {
     }
     j.Add("]}");
     NativeJson(j,s.native);
+    // Partner name tag (docs/partner-nametag.md): game-thread telemetry plus the Present counters.
+    if(nametag::FormatJson(nametag::GetTelemetry(),nametag::GetRenderStats(),nametag_json,sizeof(nametag_json)))j.Add("%s",nametag_json);
     j.Add(",\"queue_depth\":%u,\"last_id\":%u,\"completed\":%u,\"rejected\":%u,\"last_command\":",s.queue_depth,s.last_id,s.completed,s.rejected);
     j.String(s.last_command,sizeof(s.last_command));j.Add(",\"last_result\":");j.String(s.last_result,sizeof(s.last_result));j.Add(",\"refusal\":");j.String(s.refusal,sizeof(s.refusal));
     j.Add(",\"history\":[");

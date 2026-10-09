@@ -13,6 +13,7 @@
 #include "mgscoop/debug_menu.hpp"
 #include "mgscoop/debug_actions.hpp"
 #include "mgscoop/debug_menu_ui.hpp"
+#include "mgscoop/nametag.hpp"
 
 namespace mgscoop::debug_menu_ui {
 namespace {
@@ -577,6 +578,17 @@ void Partner(const Snapshot& s) noexcept {
     } else ImGui::TextColored(kGrey, "No partner pose received yet%s.", up ? "" : " (link down)");
     ImGui::Text("Act %u   gun %u   flags 0x%02x   mapped clip %u", s.remote_act, s.remote_equip, s.remote_action_flags, s.mapped_clip);
     Row("partner_goto", s, {nullptr, 0, 0, true});
+    Heading("Name tag & friendly crosshair");
+    {
+        namespace tag = mgscoop::nametag;
+        const auto settings = tag::GetSettings();
+        const auto t = tag::GetTelemetry();
+        if (!tag::Enabled()) ImGui::TextColored(kGrey, "Unavailable here (no partner session, or the camera contract refused).");
+        else ImGui::Text("Name tag %s   crosshair %s   %s (%s)   \"%s\"   %.1f m%s", settings.on ? "on" : "off", tag::CrosshairName(settings.crosshair),
+            t.visible ? "shown" : "hidden", tag::ReasonName(t.reason), t.name, t.dist_m, t.hover ? "   on target" : "");
+        Rows({"partner_nametag_on", "partner_nametag_off", "partner_nametag_status"}, s);
+        Rows({"partner_crosshair_aim", "partner_crosshair_always", "partner_crosshair_off"}, s);
+    }
     Heading("Presets");
     Rows({"partner_show", "partner_hide", "partner_default_net", "partner_warp_mode"}, s);
     Heading("Modes");

@@ -86,6 +86,9 @@ struct Snapshot {
 struct LuaFlags {
     bool infinite_ammo{}, god_mode{}, fulton_infinite{}, slowmo_active{};
     std::uint32_t bookmark_mask{}, pending_id{}, pending_frames{}, game_clock_s{};
+    // Field 13 (optional): HUD bits for the partner name tag, bit 0 a demo
+    // plays, bit 1 the iDroid is open (nametag_core.hpp kHud*).
+    std::uint32_t hud{};
     std::int32_t player_life{-1}, player_life_max{-1};
     char pending_kind[16]{}, guard_reason[24]{};
 };
@@ -124,8 +127,11 @@ bool Pop(Command& value) noexcept;
 void Result(std::uint32_t id, unsigned code, const char* message) noexcept;
 void LuaState(bool infinite_ammo, std::uint32_t bookmark_mask) noexcept;
 void LuaState(const LuaFlags& value) noexcept;
-// Parses the STATE_V1 fields after the prefix: exactly 2 (legacy) or 12 bounded fields.
+// Parses the STATE_V1 fields after the prefix: exactly 2 (legacy), 12 or 13
+// (12 plus the HUD bits 0..7) bounded fields.
 bool ParseLuaState(const char* text, std::size_t size, LuaFlags& out) noexcept;
+// The newest STATE_V1 HUD bits (0 after a mission change or a 12-field state). Any thread.
+std::uint32_t LuaHud() noexcept;
 bool LuaStateReceipt(const char* text, std::size_t size) noexcept;
 // Called only by the owner-thread observer after its offline/save/context gate.
 bool EnemyReceipt(const char* text, std::size_t size) noexcept;

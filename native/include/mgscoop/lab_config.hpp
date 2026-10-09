@@ -199,6 +199,14 @@ enum class WorldProbe : std::uint8_t {
 inline constexpr std::uint8_t kWorldProbeMax = 18;
 inline constexpr std::uint32_t kWorldLevelMax = 3;
 
+// Partner name tag and friendly crosshair (docs/partner-nametag.md): a
+// read-only overlay, allowed in play. unset leaves the decision to coop.ini
+// (nametag=, friendly_crosshair=) and then to the defaults (on, aim).
+enum class NametagSetting : std::uint8_t { unset, off, on };
+enum class NametagCrosshair : std::uint8_t { unset, aim, always, off };
+inline constexpr std::uint32_t kNametagMaxMMin = 50, kNametagMaxMMax = 1000;
+inline constexpr std::size_t kNametagNameChars = 24;
+
 struct LabConfig {
     bool present = false;            // file read and enabled=1
     LabRole role = LabRole::none;
@@ -310,6 +318,13 @@ struct LabConfig {
     // engine set-transform message to one soldier. Lab qualification only; play
     // forces it off (kPlayRefusedDebugSoldierWarp).
     bool debug_soldier_warp = false;
+    // Partner name tag: nametag=0|1, nametag_crosshair=aim|always|off,
+    // nametag_name (1..24 of [A-Za-z0-9 _.-], this PC's label on the other
+    // screen), nametag_max_m (50..1000, hidden farther away).
+    NametagSetting nametag = NametagSetting::unset;
+    NametagCrosshair nametag_crosshair = NametagCrosshair::unset;
+    char nametag_name[kNametagNameChars + 1]{};
+    std::uint32_t nametag_max_m = 300;
     unsigned unknown_keys = 0;
     unsigned invalid_values = 0;
 };
@@ -338,6 +353,9 @@ const char* PartnerNativeAimName(PartnerNativeAim value) noexcept;
 const char* PartnerNativeRatesName(PartnerNativeRates value) noexcept;
 const char* PartnerNativeFireName(PartnerNativeFire value) noexcept;
 const char* LabModeName(LabMode value) noexcept;
+// aim|always|off ("" for unset); parse refuses "unset".
+const char* NametagCrosshairName(NametagCrosshair value) noexcept;
+bool ParseNametagCrosshair(const char* text, std::size_t size, NametagCrosshair& out) noexcept;
 const char* NetLinkName(NetLink value) noexcept;
 const char* PartnerInterpName(PartnerInterp value) noexcept;
 const char* PartnerLostName(PartnerLost value) noexcept;
@@ -414,6 +432,12 @@ struct CoopConfig {
     PlayerCharacter character = PlayerCharacter::game_default;
     // Used where the chosen character conflicts with the mission (e.g. story Quiet).
     PlayerCharacter character_fallback = PlayerCharacter::dd_male;
+    // Partner name tag (docs/partner-nametag.md): name= is this player's label
+    // on the partner's screen (UTF-8, at most 64 bytes, sanitized before use);
+    // nametag= and friendly_crosshair= apply unless lab.ini sets its own keys.
+    char name[65]{};
+    NametagSetting nametag = NametagSetting::unset;
+    NametagCrosshair friendly_crosshair = NametagCrosshair::unset;
     unsigned unknown_keys = 0;
     unsigned invalid_values = 0;
 };

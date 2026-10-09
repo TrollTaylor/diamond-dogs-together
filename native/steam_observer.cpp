@@ -219,6 +219,9 @@ void resolve_real_persona(HMODULE steam, char* out, std::size_t capacity) noexce
     for (; name[i] && i + 1 < capacity; ++i) out[i] = (name[i] >= 0x20 && name[i] <= 0x7e) ? name[i] : '?';
     out[i] = 0;
 }
+// The steam_api64 whose fingerprint matched at install: the only module the
+// partner name tag may ask for the local persona (SteamLocalPersonaName).
+HMODULE verified_steam = nullptr;
 // Wrap the Register/Unregister IATs, configure the callback registry and the
 // loopback emulator, and arm the networking getter. Lab-gated; a no-op when
 // lab.ini is absent or loopback is off.
@@ -387,7 +390,9 @@ BOOL CALLBACK install(PINIT_ONCE, PVOID, PVOID*) noexcept {
     const auto networking_slot = mgscoop::find_import_slot(static_cast<const std::uint8_t*>(game_base), game_span, "steam_api64.dll", "SteamNetworking", mgscoop::readable_image_range, &mapped);
     MODULEINFO steam_info{};
     bool networking_export_verified = false;
-    if (networking_function && fingerprint_matches(steam_path, accepted_steam_sha256) &&
+    const bool steam_fingerprint = fingerprint_matches(steam_path, accepted_steam_sha256);
+    if (steam_fingerprint) verified_steam = steam;
+    if (networking_function && steam_fingerprint &&
         K32GetModuleInformation(GetCurrentProcess(), steam, &steam_info, sizeof(steam_info))) {
         const mgscoop::MappedImageSpan steam_span{steam_info.lpBaseOfDll, steam_info.SizeOfImage};
         constexpr unsigned char getter_bytes[]{0x48,0x8b,0x05,0x71,0xb0,0x02,0x00,0xc3};
@@ -473,6 +478,26 @@ BOOL CALLBACK install(PINIT_ONCE, PVOID, PVOID*) noexcept {
     InstallGameScriptObserver(game_base, game_span, exe);
     return TRUE;
 }
+}
+// The partner name tag (docs/partner-nametag.md) calls this once, at install
+// and only when no configured name exists: the raw UTF-8 bytes of the same
+// local SteamFriends015 GetPersonaName[0] query resolve_real_persona makes
+// (sanitized by the caller). Normal launches never query.
+bool SteamLocalPersonaName(char* out, std::size_t capacity) noexcept {
+    if (!out || !capacity) return false;
+    out[0] = 0;
+    if (!verified_steam) return false;
+    auto getter = reinterpret_cast<void*(MGSCOOP_STEAM_CALL*)()>(GetProcAddress(verified_steam, "SteamFriends"));
+    void* friends = getter ? getter() : nullptr;
+    if (!friends) return false;
+    auto* const* vtable = *static_cast<void* const* const*>(friends);
+    using NameFn = const char*(MGSCOOP_STEAM_CALL*)(void*);
+    const char* name = reinterpret_cast<NameFn>(vtable[mgscoop::steam::friends_slot::GetPersonaName])(friends);
+    if (!name) return false;
+    std::size_t i = 0;
+    for (; name[i] && i + 1 < capacity; ++i) out[i] = name[i];
+    out[i] = 0;
+    return i != 0;
 }
 void InstallSteamCallbackObserver() noexcept {
     const DWORD error = GetLastError();

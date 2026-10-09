@@ -88,6 +88,17 @@ bool PrintableNoControl(char c) noexcept { return static_cast<unsigned char>(c) 
 bool SuffixChar(char c) noexcept {
     return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_';
 }
+bool NametagNameChar(char c) noexcept {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == ' ' || c == '_' || c == '.' || c == '-';
+}
+// coop.ini name=: any UTF-8 byte except controls (sanitized again before display).
+bool NameByte(char c) noexcept { return static_cast<unsigned char>(c) >= 0x20 && c != 0x7f; }
+bool ParseNametagSetting(Slice s, NametagSetting& out) noexcept {
+    bool value = false;
+    if (!ParseBool(s, value)) return false;
+    out = value ? NametagSetting::on : NametagSetting::off;
+    return true;
+}
 bool UrlChar(char c) noexcept {
     return static_cast<unsigned char>(c) > 0x20 && static_cast<unsigned char>(c) < 0x7f && c != '"' && c != '\\';
 }
@@ -303,6 +314,11 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out) noexce
         else if (Equals(key, "world")) ok = ParseRange(value, 0, kWorldLevelMax, result.world);
         else if (Equals(key, "world_probe")) ok = ParseWorldProbe(value.data, value.size, result.world_probe);
         else if (Equals(key, "debug_soldier_warp")) ok = ParseBool(value, result.debug_soldier_warp);
+        else if (Equals(key, "nametag")) ok = ParseNametagSetting(value, result.nametag);
+        else if (Equals(key, "nametag_crosshair")) ok = ParseNametagCrosshair(value.data, value.size, result.nametag_crosshair);
+        else if (Equals(key, "nametag_name"))
+            ok = value.size && value.data[0] != ' ' && value.data[value.size - 1] != ' ' && CopyText(value, result.nametag_name, NametagNameChar);
+        else if (Equals(key, "nametag_max_m")) ok = ParseRange(value, kNametagMaxMMin, kNametagMaxMMax, result.nametag_max_m);
         else { ++result.unknown_keys; return; }
         if (!ok) ++result.invalid_values;
     });
@@ -462,12 +478,32 @@ bool ParseCoopConfig(const char* text, std::size_t length, CoopConfig& out) noex
                  (fallback == PlayerCharacter::dd_male || fallback == PlayerCharacter::dd_female ||
                   fallback == PlayerCharacter::snake || fallback == PlayerCharacter::avatar);
             if (ok) result.character_fallback = fallback;
-        } else { ++result.unknown_keys; return; }
+        } else if (Equals(key, "name")) ok = CopyText(value, result.name, NameByte);
+        else if (Equals(key, "nametag")) ok = ParseNametagSetting(value, result.nametag);
+        else if (Equals(key, "friendly_crosshair")) ok = ParseNametagCrosshair(value.data, value.size, result.friendly_crosshair);
+        else { ++result.unknown_keys; return; }
         if (!ok) ++result.invalid_values;
     });
     if (!usable) return false;
     result.present = true;
     out = result;
+    return true;
+}
+
+const char* NametagCrosshairName(NametagCrosshair value) noexcept {
+    switch (value) {
+    case NametagCrosshair::aim: return "aim";
+    case NametagCrosshair::always: return "always";
+    case NametagCrosshair::off: return "off";
+    default: return "";
+    }
+}
+bool ParseNametagCrosshair(const char* text, std::size_t size, NametagCrosshair& out) noexcept {
+    const Slice s{text, text ? size : 0};
+    if (Equals(s, "aim")) out = NametagCrosshair::aim;
+    else if (Equals(s, "always")) out = NametagCrosshair::always;
+    else if (Equals(s, "off") || Equals(s, "0")) out = NametagCrosshair::off;
+    else return false;
     return true;
 }
 

@@ -71,6 +71,10 @@ bool HookInputFixtureForTest(void* state, void* data) noexcept;
 bool HookPadFixtureForTest(void* function) noexcept;
 void RawKeyForTest(unsigned key) noexcept;
 TestStats StatsForTest() noexcept;
+// Copies the backbuffer (R8G8B8A8 only) right after the next overlay draw,
+// before Present; the pixels stay valid until the next capture.
+void CaptureNextFrameForTest() noexcept;
+bool CapturedFrameForTest(const unsigned char*& rgba, unsigned& width, unsigned& height) noexcept;
 void ShutdownForTest() noexcept;
 #endif
 }

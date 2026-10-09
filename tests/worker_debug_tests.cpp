@@ -1,7 +1,9 @@
 #include "mgscoop/worker_debug.hpp"
 #include "mgscoop/debug_menu.hpp"
 #include "mgscoop/partner_native.hpp"
+#include "mgscoop/nametag_core.hpp"
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -183,6 +185,42 @@ int main() {
         char small[64];
         if(!check(mgscoop::worker_debug::FormatNativeJson(t,small,sizeof(small))==0 && small[0]==0))return 1;
     }
+    // Partner name tag member (docs/partner-nametag.md): valid JSON in every shape
+    // (defaults, Latin-1 and hostile names, nulls for non-finite values).
+    namespace tag=mgscoop::nametag;
+    {
+        static char buffer[8192];
+        const auto document=[&](const tag::Telemetry& t,const tag::RenderStats& r,std::size_t* length=nullptr){
+            const std::size_t n=tag::FormatJson(t,r,buffer,sizeof(buffer));
+            if(length)*length=n;
+            return std::string("{\"schema\":2")+std::string(buffer,n)+"}";
+        };
+        tag::Telemetry t{};tag::RenderStats r{};std::size_t n=0;
+        auto doc=document(t,r,&n);
+        if(!check(n>0 && ValidJson(doc) && doc.find(",\"nametag\":{\"on\":false,\"crosshair\":\"aim\",\"state\":\"hidden\",\"reason\":\"ok\",\"name\":\"\",")!=std::string::npos &&
+                  doc.find("\"camera\":{\"ok\":false,\"refusal\":\"none\",\"vp_vt\":\"0x0\",")!=std::string::npos &&
+                  doc.find("\"render\":{\"frames\":0,")!=std::string::npos))return 1;
+        t.on=t.visible=t.body_ok=t.projected=t.hover=t.aim=t.crosshair_on=true;t.crosshair=tag::Crosshair::always;t.reason=tag::Reason::too_far;
+        strcpy_s(t.name,"Jos\xC3\xA9 \"q\\");strcpy_s(t.local_name,"Host\x01Tag");t.name_src=tag::NameSource::remote;t.local_src=tag::LocalSource::steam;
+        t.name_tx=0xFFFFFFFFu;t.dist_m=NAN;t.w=INFINITY;t.ndc[0]=-0.5f;t.miss_yaw_deg=-11.25f;t.aim_src=tag::AimSource::gun;t.hud=3;
+        t.seq=0xFFFFFFFFFFFFFFFFull;t.camera.ok=true;t.camera.refusal=tag::Refusal::torn;t.camera.vp_vt=0x20f1c08;t.camera.cam_vt=0x20f08c8;
+        t.camera.px[0]=1920;t.camera.px[1]=1080;t.camera.rect[2]=t.camera.rect[3]=1.0f;t.camera.vfov_deg=50.2f;t.camera.far_m=-NAN;
+        r.frames=r.drawn=7;r.crosshair=true;r.label_box[2]=1000.5f;r.ring[2]=10.0f;r.bb[0]=1920;r.display[1]=1080;r.alpha=1.0f;r.age_ms=0xFFFFFFFFu;
+        doc=document(t,r,&n);
+        if(!check(n>0 && n<4096 && ValidJson(doc)))return 1;
+        if(!check(doc.find("\"name\":\"Jos\\u00e9 \\\"q\\\\\"")!=std::string::npos && doc.find("\"local_name\":\"Host\\u0001Tag\"")!=std::string::npos &&
+                  doc.find("\"reason\":\"far\"")!=std::string::npos && doc.find("\"dist_m\":null")!=std::string::npos &&
+                  doc.find("\"w\":null")!=std::string::npos && doc.find("\"far\":null")!=std::string::npos &&
+                  doc.find("\"vp_vt\":\"0x20f1c08\",\"cam_vt\":\"0x20f08c8\",\"vp_px\":[1920,1080]")!=std::string::npos &&
+                  doc.find("\"refusal\":\"torn\"")!=std::string::npos && doc.find("\"aim_src\":\"gun\",\"crosshair_on\":true,\"hud\":3,")!=std::string::npos &&
+                  doc.find("\"snapshot_seq\":18446744073709551615")!=std::string::npos && doc.find("\"age_ms\":4294967295}}")!=std::string::npos))return 1;
+        // Invalid UTF-8 in a name (never produced by the sanitizer) still yields valid JSON.
+        strcpy_s(t.name,"a\xC3(\xFF\xE6\x97\xA5");
+        doc=document(t,r,&n);
+        if(!check(n>0 && ValidJson(doc)))return 1;
+        char small[64];
+        if(!check(tag::FormatJson(t,r,small,sizeof(small))==0 && small[0]==0))return 1;
+    }
     // The checker itself rejects the classic writer slips.
     for(const char* bad:{"{\"a\":1,}","{\"a\":1","{\"a\":[1,2}","{\"a\":01}","{\"a\":\"x\ny\"}","{\"a\":1}}","{\"a\":nul}",
                          "{\"a\":1,\"a\":2}","{\"o\":{\"m\":1,\"b\":2,\"m\":3}}"})
@@ -190,5 +228,5 @@ int main() {
     if(!check(ValidJson("{\"a\":[1,-2.5e3,true,null,{\"b\":\"\\u00e9\"}]}")))return 1;
     // The same member name in different objects is fine (gun.mag, native.mag, drain.mag).
     if(!check(ValidJson("{\"mag\":{\"mag\":1},\"o\":{\"mag\":[{\"mag\":2},{\"mag\":3}]}}")))return 1;
-    std::printf("worker debug policy %u PASS; gameplay command validation remains the existing debug queue; the state.json native member is valid JSON\n",checks);return 0;
+    std::printf("worker debug policy %u PASS; gameplay command validation remains the existing debug queue; the state.json native and nametag members are valid JSON\n",checks);return 0;
 }

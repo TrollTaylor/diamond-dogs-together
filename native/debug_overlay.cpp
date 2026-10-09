@@ -1,5 +1,7 @@
 // Original DX11 debug overlay. No game addresses, native world calls or Lua.
 // Dear ImGui core/backends: MIT, pinned in third_party/imgui/UPSTREAM.txt.
+// Also hosts the partner name tag layer (docs/partner-nametag.md): copied
+// frames from nametag::Publish only, drawn under the menu.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #define DIRECTINPUT_VERSION 0x0800
@@ -15,6 +17,7 @@
 #include <cmath>
 #include <cwchar>
 #include <cstdlib>
+#include <cfloat>
 #include "imgui.h"
 #include "backends/imgui_impl_win32.h"
 #include "backends/imgui_impl_dx11.h"
@@ -24,6 +27,7 @@
 #include "mgscoop/debug_menu_ui.hpp"
 #include "mgscoop/worker_scenario.hpp"
 #include "mgscoop/worker_frames.hpp"
+#include "mgscoop/nametag.hpp"
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
 
@@ -133,7 +137,7 @@ ID3D11Device* device = nullptr;
 ID3D11DeviceContext* context = nullptr;
 ID3D11RenderTargetView* target = nullptr;
 ImGuiContext* gui = nullptr;
-bool initialized = false, clip_saved = false, restore_unclipped = false, was_open = false;
+bool initialized = false, clip_saved = false, restore_unclipped = false, was_open = false, tag_logged = false;
 RECT previous_clip{};
 Message messages[256]{};
 unsigned message_count = 0;
@@ -1025,12 +1029,112 @@ struct ExtraState {
         for (UINT i = 0; i < compute_count; ++i) Release(compute_classes[i]);
     }
 };
+// Partner name tag layer. NametagFrame classifies this Present's newest frame
+// (records stale/hidden/none itself and returns false); DrawNametagLayer draws
+// a returned frame on the background list and records it. Display units are
+// io.DisplaySize (backbuffer pixels while the menu is closed).
+bool NametagFrame(nametag::Frame& frame, nametag::RenderNote& note, UINT bb_w, UINT bb_h) noexcept {
+    note = {};
+    if (!nametag::Enabled()) return false;
+    note.thread = GetCurrentThreadId();
+    note.bb[0] = bb_w; note.bb[1] = bb_h;
+    const ULONGLONG now = GetTickCount64();
+    if (!nametag::Take(frame)) { note.kind = nametag::Drawn::none; nametag::NoteRender(note); return false; }
+    const ULONGLONG age = now >= frame.tick_ms ? now - frame.tick_ms : 0;
+    note.age_ms = age > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<std::uint32_t>(age);
+    if (now < frame.tick_ms || age > nametag::kStaleMs) { note.kind = nametag::Drawn::stale; nametag::NoteRender(note); return false; }
+    if (!frame.visible && !frame.crosshair) { note.kind = nametag::Drawn::hidden; nametag::NoteRender(note); return false; }
+    return true;
+}
+void DrawNametagLayer(const nametag::Frame& frame, nametag::RenderNote& note, const ImVec2& display) noexcept {
+    note.display[0] = static_cast<std::uint32_t>(display.x); note.display[1] = static_cast<std::uint32_t>(display.y);
+    note.kind = nametag::Drawn::hidden;
+    ImDrawList* list = ImGui::GetBackgroundDrawList();
+    if (!list || !(display.x > 0.0f) || !(display.y > 0.0f)) { nametag::NoteRender(note); return; }
+    const float scale = std::fmin(2.0f, std::fmax(0.8f, display.y / 1080.0f));
+    if (frame.visible) {
+        float x = 0, y = 0;
+        nametag::NdcToDisplay(frame.rect, frame.ndc, display.x, display.y, x, y);
+        const float alpha = std::fmin(1.0f, std::fmax(0.0f, frame.alpha));
+        const auto a = static_cast<int>(alpha * 255.0f + 0.5f);
+        const ImU32 text = frame.hover ? IM_COL32(170, 255, 185, a) : IM_COL32(255, 255, 255, a);
+        const ImU32 shadow = IM_COL32(0, 0, 0, a * 7 / 8), plate = IM_COL32(0, 0, 0, a * 3 / 8);
+        ImFont* font = ImGui::GetFont();
+        // Whole multiples of the menu font size (18 px) stay crisp: 18 px up to 1440p, 36 px from 2160p.
+        const float size = font->LegacySize * std::fmax(1.0f, std::floor(scale + 0.25f));
+        const float tri = 6.0f * scale, cap = std::fmax(160.0f * scale, display.x * 0.3f);
+        // The name is sanitized UTF-8 (at most 24 Latin-1 code points); cut whole code points with "...".
+        char label[nametag::kNameBytes + 4]{};
+        std::memcpy(label, frame.name, nametag::kNameBytes);
+        ImVec2 ts = font->CalcTextSizeA(size, FLT_MAX, 0.0f, label);
+        std::size_t length = std::strlen(label);
+        while (ts.x > cap && length > 1) {
+            do { --length; } while (length && (static_cast<unsigned char>(label[length]) & 0xC0) == 0x80);
+            std::memcpy(label + length, "...", 4);
+            ts = font->CalcTextSizeA(size, FLT_MAX, 0.0f, label);
+        }
+        const float bx = std::floor(x - ts.x * 0.5f), by = std::floor(y - tri * 1.4f - 3.0f * scale - ts.y);
+        list->AddRectFilled(ImVec2(bx - 4.0f * scale, by - 2.0f * scale), ImVec2(bx + ts.x + 4.0f * scale, by + ts.y + 2.0f * scale), plate, 3.0f * scale);
+        const ImVec2 offsets[] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
+        for (const auto& o : offsets) list->AddText(font, size, ImVec2(bx + o.x, by + o.y), shadow, label);
+        list->AddText(font, size, ImVec2(bx, by), text, label);
+        list->AddTriangleFilled(ImVec2(x - tri, y - tri * 1.4f), ImVec2(x + tri, y - tri * 1.4f), ImVec2(x, y), text);
+        note.kind = nametag::Drawn::drawn;
+        note.px[0] = x; note.px[1] = y;
+        note.label_box[0] = bx; note.label_box[1] = by; note.label_box[2] = bx + ts.x; note.label_box[3] = by + ts.y;
+        note.alpha = alpha;
+    }
+    if (frame.crosshair) {
+        // Friendly crosshair: a green ring with four ticks at the viewport centre.
+        const float cx = display.x * (frame.rect[0] + frame.rect[2] * 0.5f), cy = display.y * (frame.rect[1] + frame.rect[3] * 0.5f);
+        const float r = 10.0f * std::fmax(1.0f, scale);
+        const ImU32 green = IM_COL32(40, 255, 90, 255);
+        list->AddCircle(ImVec2(cx, cy), r, green, 40, 2.0f);
+        const float in = r + 3.0f, out = r + 8.0f;
+        list->AddLine(ImVec2(cx - out, cy), ImVec2(cx - in, cy), green, 2.0f);
+        list->AddLine(ImVec2(cx + in, cy), ImVec2(cx + out, cy), green, 2.0f);
+        list->AddLine(ImVec2(cx, cy - out), ImVec2(cx, cy - in), green, 2.0f);
+        list->AddLine(ImVec2(cx, cy + in), ImVec2(cx, cy + out), green, 2.0f);
+        note.crosshair = true;
+        note.ring[0] = cx; note.ring[1] = cy; note.ring[2] = r;
+    }
+    nametag::NoteRender(note);
+}
+#ifdef MGS_DEBUG_OVERLAY_TESTING
+// Fixture readback of the backbuffer right after our draw (before Present).
+std::atomic<bool> capture_requested{false};
+unsigned char* captured = nullptr;
+UINT captured_w = 0, captured_h = 0;
+void CaptureForTest(IDXGISwapChain* chain) noexcept {
+    if (!capture_requested.exchange(false) || !device || !context) return;
+    ID3D11Texture2D* back = nullptr; ID3D11Texture2D* staging = nullptr;
+    if (FAILED(chain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&back)))) return;
+    D3D11_TEXTURE2D_DESC desc{}; back->GetDesc(&desc);
+    desc.Usage = D3D11_USAGE_STAGING; desc.BindFlags = 0; desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ; desc.MiscFlags = 0;
+    if (desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM && SUCCEEDED(device->CreateTexture2D(&desc, nullptr, &staging))) {
+        context->CopyResource(staging, back);
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        if (SUCCEEDED(context->Map(staging, 0, D3D11_MAP_READ, 0, &mapped))) {
+            std::free(captured);
+            captured = static_cast<unsigned char*>(std::malloc(static_cast<std::size_t>(desc.Width) * desc.Height * 4));
+            if (captured) {
+                for (UINT y = 0; y < desc.Height; ++y)
+                    std::memcpy(captured + static_cast<std::size_t>(y) * desc.Width * 4, static_cast<const unsigned char*>(mapped.pData) + static_cast<std::size_t>(y) * mapped.RowPitch, desc.Width * 4);
+                captured_w = desc.Width; captured_h = desc.Height;
+            }
+            context->Unmap(staging, 0);
+        }
+    }
+    if (staging) staging->Release();
+    back->Release();
+}
+#endif
 void DrawMenu() noexcept {
     debug_menu_ui::Options options{};
     options.worker = worker_scenario::Requested();
     if (!debug_menu_ui::Draw(options)) ChangeOpen(false);
 }
-void Draw() noexcept {
+void Draw(UINT bb_w, UINT bb_h) noexcept {
     ImGui::SetCurrentContext(gui);
     const bool now_open = open.load(std::memory_order_acquire) && debug_menu::Enabled();
     if (!now_open && open.load(std::memory_order_relaxed)) ChangeOpen(false);
@@ -1046,15 +1150,23 @@ void Draw() noexcept {
     for (unsigned i = 0; i < count; ++i)
         ImGui_ImplWin32_WndProcHandler(window.load(), copy[i].id, copy[i].wparam, copy[i].lparam);
     ImGuiIO& io = ImGui::GetIO(); io.MouseDrawCursor = now_open;
-    ImGui_ImplDX11_NewFrame(); ImGui_ImplWin32_NewFrame(); ImGui::NewFrame();
-    if (!now_open) { ImGui::EndFrame(); return; }
-    DrawMenu();
+    nametag::Frame tag_frame{};
+    nametag::RenderNote tag_note{};
+    const bool tag = NametagFrame(tag_frame, tag_note, bb_w, bb_h);
+    ImGui_ImplDX11_NewFrame(); ImGui_ImplWin32_NewFrame();
+    // Closed menu: one ImGui unit is one backbuffer pixel (the name tag layer only).
+    if (!now_open && bb_w && bb_h) io.DisplaySize = ImVec2(static_cast<float>(bb_w), static_cast<float>(bb_h));
+    ImGui::NewFrame();
+    if (tag) DrawNametagLayer(tag_frame, tag_note, io.DisplaySize);
+    if (!now_open && !tag) { ImGui::EndFrame(); return; }
+    if (now_open) DrawMenu();
     ImGui::Render();
     ExtraState saved(context);
     context->OMSetRenderTargets(1, &target, nullptr);
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
     saved.Restore(context);
-    if (frames.fetch_add(1, std::memory_order_relaxed) == 0) Log("overlay=drawn; frame=1\r\n");
+    if (now_open && frames.fetch_add(1, std::memory_order_relaxed) == 0) Log("overlay=drawn; frame=1\r\n");
+    if (!now_open && tag && !tag_logged) { tag_logged = true; Log("overlay=nametag_drawn; frame=1\r\n"); }
 }
 #if MGS_BACKGROUND_WORKER
 // Worker builds: the menu is drawn without the Win32 backend, never subclasses
@@ -1091,10 +1203,13 @@ bool WorkerInitialize(IDXGISwapChain* chain) noexcept {
     Log("overlay=worker_render_ready; api=dx11; input=none\r\n");
     return true;
 }
-void WorkerDraw(IDXGISwapChain* chain) noexcept {
+void WorkerDraw(IDXGISwapChain* chain, bool menu, const nametag::Frame* tag_frame, nametag::RenderNote& tag_note) noexcept {
     ImGui::SetCurrentContext(gui);
     DXGI_SWAP_CHAIN_DESC desc{};
-    if (FAILED(chain->GetDesc(&desc)) || !desc.BufferDesc.Width || !desc.BufferDesc.Height) return;
+    if (FAILED(chain->GetDesc(&desc)) || !desc.BufferDesc.Width || !desc.BufferDesc.Height) {
+        if (tag_frame) nametag::NoteRender(tag_note);
+        return;
+    }
     ImGuiIO& io = ImGui::GetIO();
     io.DisplaySize = ImVec2(static_cast<float>(desc.BufferDesc.Width), static_cast<float>(desc.BufferDesc.Height));
     LARGE_INTEGER now{}, frequency{};
@@ -1105,13 +1220,15 @@ void WorkerDraw(IDXGISwapChain* chain) noexcept {
     worker_clock = now;
     io.MouseDrawCursor = false;
     ImGui_ImplDX11_NewFrame(); ImGui::NewFrame();
-    DrawMenu();
+    if (tag_frame) DrawNametagLayer(*tag_frame, tag_note, io.DisplaySize);
+    if (menu) DrawMenu();
     ImGui::Render();
     ExtraState saved(context);
     context->OMSetRenderTargets(1, &target, nullptr);
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
     saved.Restore(context);
-    if (frames.fetch_add(1, std::memory_order_relaxed) == 0) Log("overlay=drawn; frame=1; worker=1\r\n");
+    if (menu && frames.fetch_add(1, std::memory_order_relaxed) == 0) Log("overlay=drawn; frame=1; worker=1\r\n");
+    if (!menu && tag_frame && !tag_logged) { tag_logged = true; Log("overlay=nametag_drawn; frame=1; worker=1\r\n"); }
 }
 void WorkerResult(const char* text) noexcept {
     debug_menu::ReportMenuResult(worker_request, text);
@@ -1182,16 +1299,26 @@ void PublishOverlayStatus() noexcept {
     debug_menu::SetOverlayStatus(status);
 }
 // Under render_lock, after the synthetic input pump and before the frame capture,
-// so a capture taken in this Present already contains the menu.
+// so a capture taken in this Present already contains the menu and the name tag.
 void WorkerMenu(IDXGISwapChain* chain) noexcept {
     if (gui) ImGui::SetCurrentContext(gui);
     ApplyOverlayRequest();
     bool drawn = false, failed = false;
-    if (open.load(std::memory_order_acquire) && debug_menu::Enabled()) {
+    const bool menu = open.load(std::memory_order_acquire) && debug_menu::Enabled();
+    DXGI_SWAP_CHAIN_DESC desc{};
+    const bool sized = SUCCEEDED(chain->GetDesc(&desc));
+    nametag::Frame tag_frame{};
+    nametag::RenderNote tag_note{};
+    const bool tag = NametagFrame(tag_frame, tag_note, sized ? desc.BufferDesc.Width : 0, sized ? desc.BufferDesc.Height : 0);
+    if (menu || tag) {
         if (initialized && swapchain != chain) WorkerRelease();
         if (initialized || WorkerInitialize(chain)) {
-            if (target) { WorkerDraw(chain); drawn = true; }
-        } else { failed = true; ChangeOpen(false); }
+            if (target) { WorkerDraw(chain, menu, tag ? &tag_frame : nullptr, tag_note); drawn = menu; }
+            else if (tag) nametag::NoteRender(tag_note);
+        } else {
+            if (tag) nametag::NoteRender(tag_note);
+            if (menu) { failed = true; ChangeOpen(false); }
+        }
     }
     FinishOverlayRequest(drawn, failed);
     PublishOverlayStatus();
@@ -1220,11 +1347,17 @@ HRESULT STDMETHODCALLTYPE Present(IDXGISwapChain* chain, UINT interval, UINT fla
         worker_frames::Capture(chain, worker_scenario::TakeCapture(GetTickCount64()));
         ReleaseSRWLockExclusive(&render_lock);
     }
-    if (!worker_scenario::Requested() && (flags & DXGI_PRESENT_TEST) == 0 && debug_menu::Enabled() && !resizing.load(std::memory_order_acquire)) {
+    if (!worker_scenario::Requested() && (flags & DXGI_PRESENT_TEST) == 0 && (debug_menu::Enabled() || nametag::Enabled()) &&
+        !resizing.load(std::memory_order_acquire)) {
         AcquireSRWLockExclusive(&render_lock);
         if (initialized && swapchain != chain) Cleanup();
         if (initialized || Initialize(chain)) {
-            if (target && !resizing.load(std::memory_order_relaxed)) Draw();
+            DXGI_SWAP_CHAIN_DESC desc{};
+            const bool sized = SUCCEEDED(chain->GetDesc(&desc));
+            if (target && !resizing.load(std::memory_order_relaxed)) Draw(sized ? desc.BufferDesc.Width : 0, sized ? desc.BufferDesc.Height : 0);
+#ifdef MGS_DEBUG_OVERLAY_TESTING
+            CaptureForTest(chain);
+#endif
         }
         ReleaseSRWLockExclusive(&render_lock);
     }
@@ -1265,7 +1398,7 @@ HRESULT STDMETHODCALLTYPE Resize(IDXGISwapChain* chain, UINT buffers, UINT width
     SetLastError(original_error); return result;
 }
 BOOL CALLBACK InstallOnce(PINIT_ONCE, PVOID, PVOID*) noexcept {
-    if (!debug_menu::Enabled() && !worker_scenario::Requested()) return TRUE;
+    if (!debug_menu::Enabled() && !nametag::Enabled() && !worker_scenario::Requested()) return TRUE;
     if (worker_scenario::Requested() && !worker_scenario::GetContext().run_id) return TRUE;
     InitializeLog();
     const MH_STATUS status = MH_Initialize();
@@ -1357,7 +1490,7 @@ WorkerInputStats GetWorkerInputStats() noexcept {
 }
 void Install() noexcept {
     const DWORD error = GetLastError();
-    if (debug_menu::Enabled() || worker_scenario::Requested()) InitOnceExecuteOnce(&install_once, &InstallOnce, nullptr, nullptr);
+    if (debug_menu::Enabled() || nametag::Enabled() || worker_scenario::Requested()) InitOnceExecuteOnce(&install_once, &InstallOnce, nullptr, nullptr);
     SetLastError(error);
 }
 #ifdef MGS_DEBUG_OVERLAY_TESTING
@@ -1377,6 +1510,11 @@ TestStats StatsForTest() noexcept {
     AcquireSRWLockShared(&render_lock);
     const TestStats result{presents.load(), frames.load(), resizes.load(), input_messages.load(), characters.load(), initialized, open.load()};
     ReleaseSRWLockShared(&render_lock); return result;
+}
+void CaptureNextFrameForTest() noexcept { capture_requested.store(true); }
+bool CapturedFrameForTest(const unsigned char*& rgba, unsigned& width, unsigned& height) noexcept {
+    rgba = captured; width = captured_w; height = captured_h;
+    return captured != nullptr;
 }
 void ShutdownForTest() noexcept {
     AcquireSRWLockExclusive(&render_lock); Cleanup(); ReleaseSRWLockExclusive(&render_lock);

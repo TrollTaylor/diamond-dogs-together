@@ -55,6 +55,9 @@
 #include "mgscoop/debug_menu.hpp"
 #include "mgscoop/soldier_warp.hpp"
 #include "mgscoop/worker_debug.hpp"
+#include "mgscoop/nametag.hpp"
+#include "mgscoop/nametag_game.hpp"
+#include "mgscoop/steam_observer.hpp"
 #include <charconv>
 #include <cmath>
 #include <cstdarg>
@@ -940,11 +943,13 @@ void PartnerMissionStart(std::uint32_t mission) noexcept {
     partner_mission = mission;
     mgscoop::partner_net::PublishPartnerState(false, false, mission);
     mgscoop::crash_probe::SetContext(partner_driver.settings.stage, 0, PartnerCtxFlags());
+    mgscoop::nametag_game::MissionStart(mission);
 }
 void PartnerMissionEnd() noexcept {
     ClearUpperEndOwner();
     if (!partner_on) return;
     mgscoop::debug_menu::EndMission();
+    mgscoop::nametag_game::MissionEnd();
     pd::MissionEnd(partner_driver, partner_hooks);
     mgscoop::partner_net::ResetRemote();
     mgscoop::partner_net::SetEpoch(0);
@@ -960,6 +965,7 @@ void PartnerMissionEnd() noexcept {
 // a run that intermittently crashed at close (guest, 0x21E72 write to 0x38)
 // had the native drive still armed.
 void PartnerShutdown() noexcept {
+    mgscoop::nametag::Shutdown();  // thread-safe flag: the overlay stops drawing the tag
     if (!partner_on || !partner_mission) return;
     // Thread-safe first: no deferral, no window, no mirror write from here on.
     mgscoop::partner_defer::Shutdown();
@@ -1054,6 +1060,23 @@ void ObserveRemoteActionEvents() noexcept {
             unsigned(mission),unsigned(generation),unsigned(event.events[i].token),unsigned(event.events[i].tick_ms),unsigned(event.events[i].kind));
 }
 
+// Partner name tag (docs/partner-nametag.md): read-only, after the driver tick
+// on the same owner thread. The partner's visibility comes from the driver.
+void NametagTick(const char* buffer, std::size_t size) noexcept {
+    if (!mgscoop::nametag_game::Ready()) return;
+    namespace nt = mgscoop::nametag;
+    const auto& m = partner_driver.mission;
+    const auto& s = partner_driver.settings;
+    nt::Reason hidden = nt::Reason::ok;
+    if (!m.cfg_ready || m.stopped || s.stage < 3 || !m.realized || !m.parts_loaded) hidden = nt::Reason::no_partner;
+    else if (m.range_hidden || m.range_needs_place) hidden = nt::Reason::range;
+    else if (m.lost_hidden) hidden = nt::Reason::lost;
+    partner::Tick tick{};
+    const bool aim = partner::ParseTick(buffer, size, tick) && (tick.action_flags & mgscoop::sync::ActionFlag::Aiming) != 0;
+    mgscoop::nametag_game::Tick({&partner_addresses, OnRuntimeThread(), mission_terminating, hidden, mgscoop::debug_menu::LuaHud(),
+        mgscoop::partner_net::EffectiveInterpMs(mgscoop::GetLabConfig().partner_interp_ms), aim});
+}
+
 // The per-frame tick. Returns the quiet reply, or nullptr to leave the literal
 // (Lua then does nothing). The guarded native calls of the movement/stance
 // experiments (T.vt+0x70/+0x68, the C0/A0 resets, SetStance, X.vt+0x10) run
@@ -1073,6 +1096,7 @@ const char* HandlePartnerTick(const char* buffer, std::size_t size) noexcept {
         ClearUpperEndOwner(); return nullptr;
     }
     ObserveRemoteActionEvents();
+    NametagTick(buffer, size);
     if (!partner::FormatReply(reply, partner_reply, sizeof(partner_reply))) {
         ClearUpperEndOwner(); mgscoop::partner_upper_probe::Clear("reply_format"); return nullptr;
     }
@@ -1493,6 +1517,16 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
         debug::Command pending{};
         if (!mission_terminating && ReadMission(read_mission) && read_mission == partner_mission &&
             mgscoop::SupportsPartnerBody(read_mission) && debug::Pop(pending)) {
+            // "nametag ..." is handled natively (in-memory overlay settings): Lua never sees it.
+            char tag_result[192]{};
+            bool tag_ok = false;
+            if (mgscoop::nametag_game::HandleCommand(pending.text, tag_result, sizeof(tag_result), tag_ok)) {
+                debug::Result(pending.id, tag_ok ? 1u : 0u, tag_result);
+                LogFormat("debug_menu=nametag; id=%u; ok=%u; result=%s\r\n", pending.id, tag_ok ? 1u : 0u, tag_result);
+                replacement = {reply, std::strlen(reply)};
+                debug_quiet = true;
+                return true;
+            }
             const auto snapshot = debug::GetSnapshot();
             // goto_partner and spawn_sync get the partner pose from the snapshot just
             // published, only for a live, paired, recent network pose (read-only data).
@@ -1543,7 +1577,7 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             LogFormat("debug_menu=partner; id=%u; accepted=%u; text=%s\r\n", id, unsigned(accepted), text);
         }
     } else if (is_state) {
-        // Exactly 2 (legacy) or 12 bounded fields; anything else is ignored.
+        // Exactly 2 (legacy), 12 or 13 (HUD bits) bounded fields; anything else is ignored.
         debug::LuaStateReceipt(buffer + sizeof(state) - 1, size - (sizeof(state) - 1));
         reply = "return true";
     } else {
@@ -2761,6 +2795,10 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                 } else if (labc.world) {
                     LogFormat("world=disabled; reason=partner_off; t_ms=%llu\r\n", static_cast<unsigned long long>(QpcMicros() / 1000));
                 }
+                // Partner name tag (docs/partner-nametag.md): verifies its camera contract and
+                // configures the overlay layer before the overlay installs (nametag=ready|refused).
+                mgscoop::nametag_game::Install({base, span, Log, partner_on && partner_gate_ok, labc.role != mgscoop::LabRole::guest, &labc,
+                    &mgscoop::GetCoopConfig(), SteamLocalPersonaName});
             }
             if (mgscoop::character::ReceiptsActive(host_create_enabled, client_enabled, offline_enabled)) {
                 // coop.ini is read once here (kernel32 file I/O), outside the Lua compile path.

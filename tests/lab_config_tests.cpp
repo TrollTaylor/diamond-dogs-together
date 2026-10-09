@@ -616,6 +616,44 @@ int main() {
         }
         Check(refusal_distinct && refusal_union == 0x3FFFFu, "kPlayRefused* are 18 distinct single bits");
     }
+    // Partner name tag (docs/partner-nametag.md): lab.ini and coop.ini keys.
+    {
+        const auto none = Lab("enabled=1\nrole=host\n");
+        Check(none.nametag == NametagSetting::unset && none.nametag_crosshair == NametagCrosshair::unset && !none.nametag_name[0] &&
+              none.nametag_max_m == 300, "name tag defaults: unset (coop.ini, then on/aim), 300 m");
+        const auto all = Lab("enabled=1\nrole=guest\nnametag=0\nnametag_crosshair=always\nnametag_name=Guest Tag_1.x-y\nnametag_max_m=1000\n");
+        Check(all.nametag == NametagSetting::off && all.nametag_crosshair == NametagCrosshair::always &&
+              std::strcmp(all.nametag_name, "Guest Tag_1.x-y") == 0 && all.nametag_max_m == 1000 && all.invalid_values == 0 && all.unknown_keys == 0,
+              "name tag keys parsed");
+        Check(Lab("enabled=1\nrole=host\nnametag=on\nnametag_crosshair=off\n").nametag == NametagSetting::on &&
+              Lab("enabled=1\nrole=host\nnametag_crosshair=off\n").nametag_crosshair == NametagCrosshair::off &&
+              Lab("enabled=1\nrole=host\nnametag_crosshair=aim\n").nametag_crosshair == NametagCrosshair::aim, "boolean and enum spellings");
+        const auto tagBad = Lab("enabled=1\nrole=host\nnametag=2\nnametag_crosshair=sometimes\nnametag_crosshair=unset\nnametag_name=a;b\n"
+                             "nametag_max_m=49\nnametag_max_m=1001\n");
+        Check(tagBad.nametag == NametagSetting::unset && tagBad.nametag_crosshair == NametagCrosshair::unset && !tagBad.nametag_name[0] &&
+              tagBad.nametag_max_m == 300 && tagBad.invalid_values == 6, "invalid name tag values keep the defaults");
+        Check(!Lab("enabled=1\nrole=host\nnametag_name=ABCDEFGHIJKLMNOPQRSTUVWXY\n").nametag_name[0] &&
+              std::strlen(Lab("enabled=1\nrole=host\nnametag_name=ABCDEFGHIJKLMNOPQRSTUVWX\n").nametag_name) == 24 &&
+              !Lab("enabled=1\nrole=host\nnametag_name=\xC3\xA9t\xC3\xA9\n").nametag_name[0] &&
+              !Lab("enabled=1\nrole=host\nnametag_name=\n").nametag_name[0], "nametag_name: 1..24 of [A-Za-z0-9 _.-]");
+        Check(Lab("enabled=1\nrole=host\nnametag_name= Pad \n").nametag_name[0] == 'P', "surrounding blanks are trimmed like every key");
+        // Play mode allows the read-only overlay keys (no refusal bit).
+        const auto play = Lab("enabled=1\nmode=play\nrole=host\nsave_dir=C:\\coop\\saves\nnet=1\nnametag=1\nnametag_crosshair=always\nnametag_name=Snake\n");
+        Check(play.mode == LabMode::play && play.play_refused == 0 && play.nametag == NametagSetting::on &&
+              play.nametag_crosshair == NametagCrosshair::always && std::strcmp(play.nametag_name, "Snake") == 0, "play keeps the name tag keys");
+        const auto tagCoop = Coop("name=Big Boss \xC3\xA9\nnametag=off\nfriendly_crosshair=always\n");
+        Check(std::strcmp(tagCoop.name, "Big Boss \xC3\xA9") == 0 && tagCoop.nametag == NametagSetting::off &&
+              tagCoop.friendly_crosshair == NametagCrosshair::always && tagCoop.invalid_values == 0 && tagCoop.unknown_keys == 0, "coop.ini name tag keys");
+        const auto coopBad = Coop(std::string("name=a\x01") + "b\nnametag=maybe\nfriendly_crosshair=never\nname=" + std::string(65, 'x') + "\n");
+        Check(!coopBad.name[0] && coopBad.nametag == NametagSetting::unset && coopBad.friendly_crosshair == NametagCrosshair::unset &&
+              coopBad.invalid_values == 4, "coop.ini refuses controls, bad values and names over 64 bytes");
+        Check(std::strlen(Coop("name=" + std::string(64, 'x') + "\n").name) == 64, "a 64-byte coop.ini name");
+        NametagCrosshair parsed{};
+        Check(ParseNametagCrosshair("always", 6, parsed) && parsed == NametagCrosshair::always && ParseNametagCrosshair("0", 1, parsed) &&
+              parsed == NametagCrosshair::off && !ParseNametagCrosshair("", 0, parsed) && !ParseNametagCrosshair(nullptr, 3, parsed) &&
+              std::strcmp(NametagCrosshairName(NametagCrosshair::aim), "aim") == 0 && !NametagCrosshairName(NametagCrosshair::unset)[0],
+              "crosshair spellings");
+    }
 
     std::printf("%u lab/coop configuration checks passed; pure parser, no game calls\n", checks);
 }

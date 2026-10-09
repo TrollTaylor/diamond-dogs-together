@@ -1,0 +1,407 @@
+{
+  "executable": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgsvtpp.exe",
+  "executable_sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+  "generated_by": "tools/generate_nametag_contract.py",
+  "sites": [
+    {
+      "rva": "0x438db0",
+      "size": 16,
+      "sha256": "e0c0b98b3f2a47818f18d362610fa2c1d1a285a13450e387f74320e1be8fea5b",
+      "description": "render viewport getter: vp = *(*(sel+0x58)+0x18), null handle -> null"
+    },
+    {
+      "rva": "0x438a7c",
+      "size": 7,
+      "sha256": "8e2892cbe7a575b7f6c9ee2313888c28afeb7bd664a46b8f0a21ee9e9db54635",
+      "description": "CameraSelector GetMainInstance reads the main instance slot 0x2ba1668"
+    },
+    {
+      "rva": "0x9c236c",
+      "size": 218,
+      "sha256": "b0266aa2232d83aadfd72d537b6fe0a37cc9ac13608941d08fc6f945300aecf3",
+      "description": "player update (same function as the 0x9c2b51 input hook, Lua owner thread): unlocked reads of view, projection, pixel size and aspect"
+    },
+    {
+      "rva": "0x1b9510",
+      "size": 53,
+      "sha256": "2dd9009015d1708e63da36b9d4006a01f87e526d456266b6de1ed2d67f314a4a",
+      "description": "viewport update: camera = vp+0x570; camera+0x100 bit 2 takes the non-perspective path 0x1b8e80"
+    },
+    {
+      "rva": "0x1b9545",
+      "size": 101,
+      "sha256": "5ba452d903d732c6b201d2a719ed875e7a07cb29919e90059c97f88a1697f34c",
+      "description": "viewport update: view vp+0x340..0x37f = camera+0x70..0xaf"
+    },
+    {
+      "rva": "0x1b95aa",
+      "size": 231,
+      "sha256": "d5038fb5c4c99d2f9fba24673fc54818b4a186bcb4d078147faf9b94df08e601",
+      "description": "viewport update: aspect (16:9 clamp) and projection vp+0x300 = 0x241b00(p, b, c, shift, -1, 1, near, far)"
+    },
+    {
+      "rva": "0x1b9691",
+      "size": 147,
+      "sha256": "cc1177d10da9fcd80fe24be34279834d2f77a63604ee4067ebda2ac06dbb1e01",
+      "description": "viewport update: reversed-Z projection vp+0x280 (depth argument 0)"
+    },
+    {
+      "rva": "0x1b9724",
+      "size": 291,
+      "sha256": "15077730cb875a6c474c235357d06d7b7f30b23d73d265ffddb616482fe0d80e",
+      "description": "viewport update: VP rows vp+0x380..0x3bf = view rows x projection (row vectors)"
+    },
+    {
+      "rva": "0x241b00",
+      "size": 562,
+      "sha256": "1f78870ec2ec1a2e65149850650998ca7215463f669283882f2ef7d152a5b82e",
+      "description": "projection builder (leaf, emulated below)"
+    },
+    {
+      "rva": "0x4380af",
+      "size": 10,
+      "sha256": "c78fbd4a9196bbd09354e403a8f3e6299489812de0552f4bd7b082625cd404e4",
+      "description": "CameraSelector update calls the viewport update"
+    },
+    {
+      "rva": "0x437c24",
+      "size": 39,
+      "sha256": "41b3636bfbf3e11666f6dafc78ffd098520e80c184b7a357d035f12e1fdaebe3",
+      "description": "CameraSelector update stores the viewport handle at sel+0x58 and reads its camera"
+    },
+    {
+      "rva": "0x1b7f19",
+      "size": 20,
+      "sha256": "b2f2452c32651563f9b68c508d6509d0c3f05696238c67c31d61bd81ec8211d0",
+      "description": "GrViewport constructor stores vtable 0x20f1c08"
+    },
+    {
+      "rva": "0x1b829a",
+      "size": 10,
+      "sha256": "fc5e734882c0de40b452f1d544d011a9ba6614f0a9b910f7001b8a84e29441c5",
+      "description": "GrViewport constructor: pixel aspect 1.0"
+    },
+    {
+      "rva": "0x1b83a9",
+      "size": 58,
+      "sha256": "3f9f0cea335f07b48565ad69ab37022175b4f13db4914103b39afcba3820516a",
+      "description": "GrViewport constructor: rect x0 +0x584, y0 +0x588, width +0x58c = x1-x0, height +0x590 = y1-y0"
+    },
+    {
+      "rva": "0x1b8459",
+      "size": 46,
+      "sha256": "98cb28f6ccb048e96ee56018418486c8db401b4ca5cd6257184d38f508163ff5",
+      "description": "GrViewport constructor: pixel width +0x5d8 and height +0x5dc"
+    },
+    {
+      "rva": "0x6eef98",
+      "size": 16,
+      "sha256": "721fb5f958604d65f940b61ceb6a91e2003471fcba1ff57ea82da645ed8e2e6e",
+      "description": "TppSubViewport (mirrors, photos) overrides the vtable to 0x21e9e68: refused"
+    },
+    {
+      "rva": "0x1b38c1",
+      "size": 10,
+      "sha256": "a22403ca535950967147fbb7019dd9e3695eeab10ea0569c351b74edf7d4ee5d",
+      "description": "GrCamera constructor (single factory 0x1b3bfa) stores vtable 0x20f08c8"
+    },
+    {
+      "rva": "0x1b392c",
+      "size": 10,
+      "sha256": "7abecf7212688ae4e1c3cf75338d049b1a05ec3461e62a5d158fc53521643310",
+      "description": "GrCamera constructor: flags 0x18 (bit 2 clear: perspective)"
+    },
+    {
+      "rva": "0x1b3a03",
+      "size": 20,
+      "sha256": "d2b4722fdf11c6541a58d060e84ac1fa849aeed1996faa4074bee5ba319011fd",
+      "description": "GrCamera constructor: near +0x168 = 0.05, far +0x16c = 4000"
+    },
+    {
+      "rva": "0x1b3bf7",
+      "size": 8,
+      "sha256": "06cd885efeba1c8761d88213a887a70975cd087fd5a4227b73d38abba0352925",
+      "description": "GrCamera factory"
+    },
+    {
+      "rva": "0x20f1cac",
+      "size": 12,
+      "sha256": "a22b998328cc8adda1dafbf9c4ea770679e1676d3aaa3cd75bf9ddf2eb557cce",
+      "description": "aspect constants 1/9, 9, 16 (0x1b95df, 0x1b9549, 0x1b961e)"
+    },
+    {
+      "rva": "0x20a8080",
+      "size": 4,
+      "sha256": "c68830a25204a09f8e77aada6bc5807f607cccaaa0ebb2a7122d317584478a8b",
+      "description": "b = -1 for aspects up to 16:9; depth argument of vp+0x300"
+    },
+    {
+      "rva": "0x20a72cc",
+      "size": 4,
+      "sha256": "e00e5eb9444182f352323374ef4e08ebcb784725fdd4fd612d7730540b3e0c8c",
+      "description": "constant 1.0 (projection argument)"
+    },
+    {
+      "rva": "0x20a8140",
+      "size": 16,
+      "sha256": "df141773470ba96aff5d6e9264a0bd638c9c6f3bb7ad30881cf4db943b5dd021",
+      "description": "sign mask (b = -(16h)/(9w) above 16:9)"
+    }
+  ],
+  "emulation": [
+    {
+      "aspect": "16:9",
+      "p": 1.2,
+      "b": -1.0,
+      "c": 1.7777777777777777,
+      "shift": [
+        0.0,
+        0.0
+      ],
+      "ok": true,
+      "row0": [
+        -1.2000000476837158,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "row1": [
+        0.0,
+        2.133333444595337,
+        0.0,
+        0.0
+      ],
+      "row2": [
+        0.0,
+        0.0,
+        -1.0000250339508057,
+        1.0
+      ],
+      "row3": [
+        0.0,
+        0.0,
+        0.1000012531876564,
+        0.0
+      ],
+      "depth_near_far": [
+        1.0000000298023222,
+        -1.0000000336375088,
+        1.0000000317204467,
+        5.311449058353901e-13
+      ]
+    },
+    {
+      "aspect": "16:9",
+      "p": 0.9,
+      "b": -1.0,
+      "c": 1.7777777777777777,
+      "shift": [
+        0.03,
+        -0.02
+      ],
+      "ok": true,
+      "row0": [
+        -0.8999999761581421,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "row1": [
+        0.0,
+        1.600000023841858,
+        0.0,
+        0.0
+      ],
+      "row2": [
+        0.029999999329447746,
+        -0.019999999552965164,
+        -1.0000250339508057,
+        1.0
+      ],
+      "row3": [
+        0.0,
+        0.0,
+        0.1000012531876564,
+        0.0
+      ],
+      "depth_near_far": [
+        1.0000000298023222,
+        -1.0000000336375088,
+        1.0000000317204467,
+        5.311449058353901e-13
+      ]
+    },
+    {
+      "aspect": "21:9",
+      "p": 1.2,
+      "b": -0.75,
+      "c": 1.7777777777777777,
+      "shift": [
+        0.0,
+        0.0
+      ],
+      "ok": true,
+      "row0": [
+        -0.9000000357627869,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "row1": [
+        0.0,
+        2.133333444595337,
+        0.0,
+        0.0
+      ],
+      "row2": [
+        0.0,
+        0.0,
+        -1.0000250339508057,
+        1.0
+      ],
+      "row3": [
+        0.0,
+        0.0,
+        0.1000012531876564,
+        0.0
+      ],
+      "depth_near_far": [
+        1.0000000298023222,
+        -1.0000000336375088,
+        1.0000000317204467,
+        5.311449058353901e-13
+      ]
+    },
+    {
+      "aspect": "21:9",
+      "p": 0.9,
+      "b": -0.75,
+      "c": 1.7777777777777777,
+      "shift": [
+        0.03,
+        -0.02
+      ],
+      "ok": true,
+      "row0": [
+        -0.6749999523162842,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "row1": [
+        0.0,
+        1.600000023841858,
+        0.0,
+        0.0
+      ],
+      "row2": [
+        0.029999999329447746,
+        -0.019999999552965164,
+        -1.0000250339508057,
+        1.0
+      ],
+      "row3": [
+        0.0,
+        0.0,
+        0.1000012531876564,
+        0.0
+      ],
+      "depth_near_far": [
+        1.0000000298023222,
+        -1.0000000336375088,
+        1.0000000317204467,
+        5.311449058353901e-13
+      ]
+    },
+    {
+      "aspect": "4:3",
+      "p": 1.2,
+      "b": -1.0,
+      "c": 1.3333333333333333,
+      "shift": [
+        0.0,
+        0.0
+      ],
+      "ok": true,
+      "row0": [
+        -1.2000000476837158,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "row1": [
+        0.0,
+        1.6000001430511475,
+        0.0,
+        0.0
+      ],
+      "row2": [
+        0.0,
+        0.0,
+        -1.0000250339508057,
+        1.0
+      ],
+      "row3": [
+        0.0,
+        0.0,
+        0.1000012531876564,
+        0.0
+      ],
+      "depth_near_far": [
+        1.0000000298023222,
+        -1.0000000336375088,
+        1.0000000317204467,
+        5.311449058353901e-13
+      ]
+    },
+    {
+      "aspect": "4:3",
+      "p": 0.9,
+      "b": -1.0,
+      "c": 1.3333333333333333,
+      "shift": [
+        0.03,
+        -0.02
+      ],
+      "ok": true,
+      "row0": [
+        -0.8999999761581421,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "row1": [
+        0.0,
+        1.2000000476837158,
+        0.0,
+        0.0
+      ],
+      "row2": [
+        0.029999999329447746,
+        -0.019999999552965164,
+        -1.0000250339508057,
+        1.0
+      ],
+      "row3": [
+        0.0,
+        0.0,
+        0.1000012531876564,
+        0.0
+      ],
+      "depth_near_far": [
+        1.0000000298023222,
+        -1.0000000336375088,
+        1.0000000317204467,
+        5.311449058353901e-13
+      ]
+    }
+  ],
+  "chain": "sel=*(0x2ba1668); vp=*(*(sel+0x58)+0x18); cam=*(vp+0x570)",
+  "precedent": "0x9c236c..0x9c2446 (player update, same function as the 0x9c2b51 input hook) reads the same fields without a lock on the Lua owner thread",
+  "limitations": [
+    "Static analysis only; no game code was executed.",
+    "The main viewport is built by protected code (0x3b759ba calls the GrViewport constructor); that it keeps vtable 0x20f1c08 is a static inference: a different runtime vtable refuses (vp_vtable) and is logged in the census line.",
+    "Whether the Lua tick runs before or after the camera update in a frame is unknown: the tag may trail a fast camera turn by one frame.",
+    "No game raycast is verified: tags show through walls."
+  ]
+}

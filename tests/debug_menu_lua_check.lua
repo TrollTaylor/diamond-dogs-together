@@ -147,7 +147,7 @@ local function fixture(options)
         local text = s:match("^return 'MGS_COOP_DEBUG_STATE_V1' %-%- (.+)$")
         local fields = {}
         for v in (text or ''):gmatch('%S+') do fields[#fields + 1] = tonumber(v) or v end
-        check(#fields == 12 and text:match('^[01] %d+ %d+ [a-z]+ %d+ [01] [01] [01] %d+ %-?%d+ %-?%d+ [a-z_]+$'),
+        check(#fields == 13 and text:match('^[01] %d+ %d+ [a-z]+ %d+ [01] [01] [01] %d+ %-?%d+ %-?%d+ [a-z_]+ [0-3]$'),
             'strict result/state receipt: ' .. tostring(text))
         c.state = fields; c.stateCount = (c.stateCount or 0) + 1; return function() end
     end
@@ -525,9 +525,20 @@ f = fixture()
 check(f.D.player and f.D.player.handles.heal and f.D.spawn and f.D.spawn.handles.spawn_enemy and f.D.spawn.handles.enemy,
     'player and spawn modules registered for dispatch')
 for i = 1, 40 do f:tick() end
-check(f.stateCount == 2 and #f.state == 12 and f.state[4] == 'none' and f.state[12] == 'ok', 'idle STATE is 12 fields and rate limited')
+check(f.stateCount == 2 and #f.state == 13 and f.state[4] == 'none' and f.state[12] == 'ok' and f.state[13] == 0,
+    'idle STATE is 13 fields and rate limited')
 f.env.vars.clock = 3600; f:tick()
 check(f.stateCount == 3 and f.state[9] == 3600, 'changed STATE emits after 5 updates')
+-- Name tag HUD bits (field 13): demo 1, iDroid 2 (TppUiCommand query), absent binding 0.
+for i = 1, 5 do f:tick() end
+f.demo = true; for i = 1, 6 do f:tick() end
+check(f.state[13] == 1, 'a playing demo sets HUD bit 1')
+f.demo = nil; f.env.TppUiCommand = {IsMbDvcTerminalOpened = function() return true end}; for i = 1, 6 do f:tick() end
+check(f.state[13] == 2, 'an open iDroid sets HUD bit 2')
+f.env.TppUiCommand = {IsMbDvcTerminalOpened = function() error('ui torn down') end}; for i = 1, 6 do f:tick() end
+check(f.state[13] == 0, 'a failing iDroid query counts as closed')
+f.env.TppUiCommand = nil; for i = 1, 6 do f:tick() end
+check(f.state[13] == 0, 'no TppUiCommand: HUD bits 0')
 f = fixture(); f:send('teleport 1 2 3 0'); local warpId = f.logs[#f.logs][1]
 check(f.state[3] == warpId and f.state[4] == 'warp', 'STATE reports the pending action')
 f.env.vars.playerPosX = nil; f:tick()

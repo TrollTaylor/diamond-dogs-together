@@ -60,15 +60,28 @@ do
     local c = get(vars, "clock")
     return integer(c, 0, 86399) and c or 0
   end
-  -- STATE_V1, 12 fields: on change at most every 5 updates, forced every 30.
+  -- Partner name tag HUD bits (read-only queries, every update): 1 a demo
+  -- plays, 2 the iDroid is open (absent binding: 0).
+  local function hud()
+    local bits = 0
+    local ok, demo = pcall(call, DemoDaemon, "IsDemoPlaying")
+    if ok and demo == true then bits = bits + 1 end
+    local opened = get(TppUiCommand, "IsMbDvcTerminalOpened")
+    if type(opened) == "function" then
+      local okd, open = pcall(opened)
+      if okd and open == true then bits = bits + 2 end
+    end
+    return bits
+  end
+  -- STATE_V1, 13 fields: on change at most every 5 updates, forced every 30.
   local function state(force)
     D.tick = D.tick + 1
     if force or not D.reason or D.tick % 30 == 1 then D.reason = reason() end
     local mask = 0
     for i = 0, 7 do if D.bookmarks[i] then mask = mask + 2 ^ i end end
     local q, l, m = D.pending, life()
-    local text = fmt("%d %d %.0f %s %d %d %d %d %d %d %d %s", D.infinite and 1 or 0, mask, q and q.id or 0, q and q.kind or "none",
-      q and q.frames or 0, D.god and 1 or 0, D.fulton and 1 or 0, D.slowmo and 1 or 0, clock(), l, m, D.reason)
+    local text = fmt("%d %d %.0f %s %d %d %d %d %d %d %d %s %d", D.infinite and 1 or 0, mask, q and q.id or 0, q and q.kind or "none",
+      q and q.frames or 0, D.god and 1 or 0, D.fulton and 1 or 0, D.slowmo and 1 or 0, clock(), l, m, D.reason, hud())
     local since = D.tick - (D.sent or -100)
     if force or since >= 30 or (text ~= D.last and since >= 5) then
       D.last, D.sent = text, D.tick

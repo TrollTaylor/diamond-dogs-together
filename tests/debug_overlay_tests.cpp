@@ -3,6 +3,7 @@
 #include <d3dcompiler.h>
 #include <dxgi.h>
 #include <array>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include "imgui_internal.h"
@@ -10,6 +11,7 @@
 #include "mgscoop/debug_overlay.hpp"
 #include "mgscoop/debug_actions.hpp"
 #include "mgscoop/debug_menu_ui.hpp"
+#include "mgscoop/nametag.hpp"
 
 namespace {
 unsigned checks = 0, failures = 0, window_keys = 0;
@@ -238,6 +240,81 @@ int main() {
     // The guard is time/physical-release based. Wait only 150ms; no user input.
     Sleep(150);
     ui::SetOpenForTest(false);
+    // Partner name tag layer (docs/partner-nametag.md): closed menu, copied frames
+    // only, drawn before Present; the fixture reads the backbuffer back.
+    {
+        namespace tag = mgscoop::nametag;
+        ID3D11Texture2D* bb = nullptr; ID3D11RenderTargetView* bb_rtv = nullptr;
+        Check(SUCCEEDED(chain->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&bb))) &&
+              SUCCEEDED(device->CreateRenderTargetView(bb, nullptr, &bb_rtv)), "fixture backbuffer view");
+        Release(bb);
+        const float dark[4] = {0.08f, 0.08f, 0.08f, 1.0f};
+        const unsigned char* rgba = nullptr; unsigned width = 0, height = 0;
+        const auto shot = [&]() {
+            ctx->ClearRenderTargetView(bb_rtv, dark);
+            ui::CaptureNextFrameForTest();
+            return SUCCEEDED(chain->Present(0, 0)) && ui::CapturedFrameForTest(rgba, width, height) && width && height;
+        };
+        const auto lit = [&](float x0, float y0, float x1, float y1, bool green) {
+            unsigned n = 0;
+            for (int y = static_cast<int>(y0); y <= static_cast<int>(y1); ++y)
+                for (int x = static_cast<int>(x0); x <= static_cast<int>(x1); ++x) {
+                    if (x < 0 || y < 0 || x >= static_cast<int>(width) || y >= static_cast<int>(height)) continue;
+                    const unsigned char* px = rgba + (static_cast<std::size_t>(y) * width + x) * 4;
+                    if (green ? (px[1] >= 180 && px[0] <= 110 && px[2] <= 110) : (px[0] >= 200 && px[1] >= 200 && px[2] >= 200)) ++n;
+                }
+            return n;
+        };
+        const auto ring_pixels = [&](float cx, float cy) {
+            unsigned n = 0;
+            for (int y = static_cast<int>(cy) - 13; y <= static_cast<int>(cy) + 13; ++y)
+                for (int x = static_cast<int>(cx) - 13; x <= static_cast<int>(cx) + 13; ++x) {
+                    const float d = std::sqrt((x + 0.5f - cx) * (x + 0.5f - cx) + (y + 0.5f - cy) * (y + 0.5f - cy));
+                    if (d < 8.5f || d > 11.5f || x < 0 || y < 0 || x >= static_cast<int>(width) || y >= static_cast<int>(height)) continue;
+                    const unsigned char* px = rgba + (static_cast<std::size_t>(y) * width + x) * 4;
+                    if (px[1] >= 180 && px[0] <= 110 && px[2] <= 110) ++n;
+                }
+            return n;
+        };
+        const auto menu_frames = ui::StatsForTest().frames;
+        tag::Configure(true, true, tag::Settings{});
+        tag::Frame frame{};
+        frame.visible = true; frame.ndc[0] = 0.25f; frame.ndc[1] = 0.1f; frame.rect[2] = frame.rect[3] = 1.0f; frame.alpha = 1.0f;
+        strcpy_s(frame.name, "GuestTag"); frame.seq = 1; frame.tick_ms = GetTickCount64();
+        tag::Publish(frame);
+        Check(shot(), "closed-menu frame with a fresh tag renders and reads back");
+        auto stats = tag::GetRenderStats();
+        const float expect_x = width * 0.625f, expect_y = height * 0.45f;
+        Check(stats.drawn == 1 && std::fabs(stats.last_px[0] - expect_x) < 1.0f && std::fabs(stats.last_px[1] - expect_y) < 1.0f &&
+              stats.bb[0] == width && stats.display[0] == width && stats.display[1] == height, "tag anchor at the projected backbuffer pixel");
+        Check(stats.label_box[3] < expect_y && stats.label_box[0] < expect_x && stats.label_box[2] > expect_x, "label centred above the anchor");
+        const unsigned white = lit(stats.label_box[0], stats.label_box[1], stats.label_box[2], stats.label_box[3], false);
+        Check(white >= 30, "the label's white text is in the backbuffer");
+        Check(ring_pixels(width * 0.5f, height * 0.5f) == 0 && !stats.crosshair, "no friendly ring without hover");
+        Check(ui::StatsForTest().frames == menu_frames, "the tag layer does not count as a menu frame");
+        frame.crosshair = frame.hover = true; frame.seq = 2; frame.tick_ms = GetTickCount64();
+        tag::Publish(frame);
+        Check(shot(), "frame with the friendly crosshair");
+        stats = tag::GetRenderStats();
+        Check(stats.crosshair && stats.crosshair_frames == 1 && std::fabs(stats.ring[0] - width * 0.5f) < 0.5f && stats.ring[2] >= 10.0f,
+              "ring recorded at the viewport centre");
+        Check(ring_pixels(stats.ring[0], stats.ring[1]) >= 20, "a green ring of radius ~10 px in the backbuffer");
+        const float box[4] = {stats.label_box[0], stats.label_box[1], stats.label_box[2], stats.label_box[3]};
+        frame.tick_ms = GetTickCount64() - 1000; frame.seq = 3;
+        tag::Publish(frame);
+        Check(shot(), "stale frame presents");
+        stats = tag::GetRenderStats();
+        Check(stats.stale_frames >= 1 && lit(box[0], box[1], box[2], box[3], false) == 0 && ring_pixels(width * 0.5f, height * 0.5f) == 0,
+              "a stale frame (paused game thread) draws nothing");
+        frame.visible = frame.crosshair = false; frame.tick_ms = GetTickCount64(); frame.seq = 4;
+        tag::Publish(frame);
+        Check(shot() && tag::GetRenderStats().hidden_frames >= 1 && lit(box[0], box[1], box[2], box[3], false) == 0, "a hidden frame draws nothing");
+        frame.visible = true; frame.tick_ms = GetTickCount64(); tag::Publish(frame);
+        tag::Shutdown();
+        Check(shot() && lit(box[0], box[1], box[2], box[3], false) == 0, "window shutdown hides the tag at once");
+        tag::Configure(false, true, tag::Settings{});
+        Release(bb_rtv);
+    }
     bridge::Configure(false, true, true);
     Check(!ui::CapturingInput(), "disabled bridge cannot capture");
     const auto old_frames = ui::StatsForTest().frames;

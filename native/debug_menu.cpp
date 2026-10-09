@@ -11,6 +11,7 @@ namespace mgscoop::debug_menu {
 namespace {
 SRWLOCK lock = SRWLOCK_INIT;
 std::atomic<bool> enabled{false};
+std::atomic<std::uint32_t> lua_hud{0};
 Snapshot state{};
 Command queue[kQueueCapacity]{};
 std::size_t head{}, count{};
@@ -253,7 +254,7 @@ bool ParseLuaStateText(const char* text, std::size_t size, LuaFlags& out) noexce
         if (i == 0 || i + 1 == size || text[i + 1] == ' ') return false;
         ++fields;
     }
-    if (fields != 2 && fields != 12) return false;
+    if (fields != 2 && fields != 12 && fields != 13) return false;
     Tokens reader{ text, size };
     std::uint32_t ammo = 0, flag = 0;
     if (!reader.Next().Unsigned(1, ammo) || !reader.Next().Unsigned(255, out.bookmark_mask)) return false;
@@ -276,12 +277,14 @@ bool ParseLuaStateText(const char* text, std::size_t size, LuaFlags& out) noexce
     if (!reason.size || reason.size >= sizeof(out.guard_reason)) return false;
     for (std::size_t i = 0; i < reason.size; ++i) if (!((reason.text[i] >= 'a' && reason.text[i] <= 'z') || reason.text[i] == '_')) return false;
     reason.CopyTo(out.guard_reason);
+    if (fields == 13 && !reader.Next().Unsigned(7, out.hud)) return false;
     return reader.End();
 }
 void ApplyLuaFlags(const LuaFlags& value, bool full) noexcept {
     state.infinite_ammo = value.infinite_ammo;
     state.bookmark_mask = value.bookmark_mask & 255u;
     if (!full) return;
+    lua_hud.store(value.hud & 7u, std::memory_order_release);
     state.god_mode = value.god_mode; state.fulton_infinite = value.fulton_infinite; state.slowmo_active = value.slowmo_active;
     state.pending_id = value.pending_id; state.pending_frames = value.pending_frames; state.game_clock_s = value.game_clock_s;
     state.player_life = value.player_life; state.player_life_max = value.player_life_max;
@@ -506,13 +509,14 @@ void LuaState(const LuaFlags& value) noexcept {
     ReleaseSRWLockExclusive(&lock);
 }
 bool ParseLuaState(const char* text, std::size_t size, LuaFlags& out) noexcept { return ParseLuaStateText(text, size, out); }
+std::uint32_t LuaHud() noexcept { return lua_hud.load(std::memory_order_acquire); }
 bool LuaStateReceipt(const char* text, std::size_t size) noexcept {
     LuaFlags value{};
     if (!ParseLuaStateText(text, size, value)) return false;
     std::size_t fields = 1;
     for (std::size_t i = 0; i < size; ++i) if (text[i] == ' ') ++fields;
     AcquireSRWLockExclusive(&lock);
-    ApplyLuaFlags(value, fields == 12);
+    ApplyLuaFlags(value, fields >= 12);
     ReleaseSRWLockExclusive(&lock);
     return true;
 }

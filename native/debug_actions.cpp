@@ -75,6 +75,16 @@ constexpr ActionDef kActions[] = {
     {"partner_clip_stop", C::partner, "Stop clip", "partner dmstop=1", "animation motion clip", "Stops the manual clip.", 0},
     {"partner_slowmo", C::partner, "Slow motion", "slowmo rate seconds", "slow time camera animation", "Experimental: slows this PC's whole world.", P | U},
     {"partner_slowmo_off", C::partner, "Slow motion off", "slowmo off", "slow time cancel", "Cancels the experimental slow motion.", U},
+    // Name tag and friendly crosshair (docs/partner-nametag.md): handled natively, this PC only, in memory.
+    {"partner_nametag_on", C::partner, "Name tag on", "nametag on", "name tag label overlay player", "Shows the partner's name above his head on this PC.", 0},
+    {"partner_nametag_off", C::partner, "Name tag off", "nametag off", "name tag label overlay hide", "Hides the name tag and the friendly crosshair on this PC.", 0},
+    {"partner_crosshair_aim", C::partner, "Crosshair: when aiming", "nametag crosshair aim", "friendly crosshair green ring aiming",
+     "A green ring at the screen centre while you aim at the partner.", 0},
+    {"partner_crosshair_always", C::partner, "Crosshair: always", "nametag crosshair always", "friendly crosshair green ring",
+     "A green ring whenever the screen centre is on the partner.", 0},
+    {"partner_crosshair_off", C::partner, "Crosshair: off", "nametag crosshair off", "friendly crosshair green ring hide", "No friendly crosshair.", 0},
+    {"partner_nametag_status", C::partner, "Name tag status", "nametag status", "name tag label readout camera",
+     "Reports the name tag state, the partner's name, distance, hover and camera.", 0},
     // World
     {"world_time_dawn", C::world, "Dawn 06:00", "time 21600", "clock morning", "Sets the clock to 06:00.", H | S},
     {"world_time_noon", C::world, "Noon 12:00", "time 43200", "clock day midday", "Sets the clock to 12:00.", H | S},
