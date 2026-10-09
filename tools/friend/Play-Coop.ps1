@@ -36,7 +36,7 @@ the end), a Windows Firewall rule (administrator prompt). Nothing else
 contacts the network, and nothing changes firewall or router settings
 without a "y". The online flow has none of these steps.
 
-  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Play-Coop.ps1 [-GameDirectory <MGSV folder>] [-Role Host|Join] [-Transport steam|udp] [-Code <MGS2 code>] [-Port 47830] [-HostAddress <ip or name>] [-World 0..3]
+  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Play-Coop.ps1 [-GameDirectory <MGSV folder>] [-Role Host|Join] [-Transport steam|udp] [-Code <MGS2 code>] [-Port 47830] [-HostAddress <ip or name>] [-World 0..3] [-SteamDispatch both|fnptr|callback|poll]
   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Play-Coop.ps1 -Cleanup
 #>
 [CmdletBinding()]
@@ -56,6 +56,10 @@ param(
     # 1 plumbing, 2 shared enemies and alert in free roam, 3 also clock and
     # weather and host travel/recovery. The effective level is the lower one.
     [ValidateRange(0, 3)][int]$World = 3,
+    # Steam online, for the developer's two-PC tests (docs/steam-online.md 20.5):
+    # how the host finds a code join (both = function pointer + callback, the
+    # default; fnptr; callback; poll). The menu never asks for it.
+    [ValidateSet('', 'both', 'fnptr', 'callback', 'poll')][string]$SteamDispatch = '',
     # Remove the files of an earlier session that did not end cleanly, then exit.
     [switch]$Cleanup,
     # Internal: the hidden watchdog started by this script (value: the session id).
@@ -472,7 +476,7 @@ try {
         Write-Host 'Shared world is on by default; -World 0 opts out. The lower level applies. Co-op save copies only.'
     }
     if ($Transport -eq 'steam') {
-        $labText = New-CoopPlayLabIniText -Role $labRole -SaveDir $saveDir -World $World -Transport steam -SteamSelf $steamSelf -SteamPeer $steamPeer -SteamWait:$steamWait
+        $labText = New-CoopPlayLabIniText -Role $labRole -SaveDir $saveDir -World $World -Transport steam -SteamSelf $steamSelf -SteamPeer $steamPeer -SteamWait:$steamWait -SteamDispatch $SteamDispatch
     } else {
         $labText = New-CoopPlayLabIniText -Role $labRole -SaveDir $saveDir -Port $Port -PeerAddress $peerAddress -World $World
     }

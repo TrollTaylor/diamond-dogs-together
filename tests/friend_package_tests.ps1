@@ -394,6 +394,31 @@ try {
     Assert-Throws { New-CoopPlayLabIniText -Role host -SaveDir $saveDir -Transport steam -SteamSelf '76561198058195100' -SteamPeer '76561198057664236' } 'no Steam peer' 'a host has no Steam peer'
     Assert-Throws { New-CoopPlayLabIniText -Role host -SaveDir $saveDir -SteamSelf '76561198058195100' } 'Transport steam' 'Steam keys need -Transport steam'
     Assert-Throws { New-CoopPlayLabIniText -Role host -SaveDir $saveDir -Transport steam -SteamSelf '1' } 'SteamID64' 'own SteamID64 validated'
+    # The two-PC A/B variant of the code-join sources (docs/steam-online.md 20.5): only with -SteamDispatch, lower case.
+    $dispatchIni = New-CoopPlayLabIniText -Role host -SaveDir $saveDir -Transport steam -SteamSelf '76561198058195100' -SteamDispatch FnPtr
+    Assert-True ($dispatchIni.Contains("net_steam_self=76561198058195100`nnet_steam_dispatch=fnptr`npartner_interp=auto`n")) 'online A/B variant key'
+    Assert-True (!$steamHostIni.Contains('net_steam_dispatch')) 'no variant key by default'
+    Assert-Throws { New-CoopPlayLabIniText -Role host -SaveDir $saveDir -SteamDispatch poll } 'Transport steam' 'the variant needs -Transport steam'
+    Assert-Throws { New-CoopPlayLabIniText -Role host -SaveDir $saveDir -Transport steam -SteamSelf '76561198058195100' -SteamDispatch fast } 'SteamDispatch' 'unknown variant refused'
+    if ($steamKeys) {
+        $file = Join-Path $fixture 'steam-dispatch-lab.ini'; [IO.File]::WriteAllText($file, $dispatchIni, $utf8)
+        $n = Invoke-IniCheck lab $file
+        if ($n.ContainsKey('net_steam_dispatch')) {
+            Assert-Equal "$($n['net_steam_dispatch'])|$($n['play_refused'])|$($n['unknown_keys'])/$($n['invalid_values'])" 'fnptr|0x0|0/0' 'native: the A/B variant key is clean'
+            $file = Join-Path $fixture 'steam-default-lab.ini'; [IO.File]::WriteAllText($file, $steamHostIni, $utf8)
+            $n = Invoke-IniCheck lab $file
+            Assert-Equal "$($n['net_steam_dispatch'])|$($n['steam_selftest_fn'])|$($n['coop_hud'])" 'both|1|' 'native: online defaults (both; no HUD key: compact in play)'
+        }
+    }
+    # The shared plain-language vectors (native/coop_reason_text.cpp reads the same file in steam_transport_tests).
+    $vectors = Get-Content -LiteralPath (Join-Path $projectRoot 'tests/fixtures/link-reasons.json') -Raw | ConvertFrom-Json
+    Assert-True (@($vectors.link_reasons).Count -ge 25 -and @($vectors.steam_end).Count -ge 15) 'the shared vector file'
+    foreach ($v in @($vectors.link_reasons)) {
+        Assert-Equal (Get-CoopLinkReasonText -Reason ([string]$v.reason) -RemoteBuild ([string]$v.remote) -OwnBuild ([string]$v.own) -Verified ([int]$v.verified)) ([string]$v.text) "shared vector: $($v.reason)/$($v.verified)"
+    }
+    foreach ($v in @($vectors.steam_end)) {
+        Assert-Equal (Get-CoopSteamEndText -End ([int]$v.end)) ([string]$v.text) "shared vector: steam_end $($v.end)"
+    }
     if ($steamKeys) {
         foreach ($case in @(@('host', $steamHostIni, 'steam|0|0|0'), @('guest', $steamGuestIni, 'steam|0|76561198058195100|0'), @('guest', $steamWaitIni, 'steam|1|0|0'))) {
             $file = Join-Path $fixture "steam-$($case[0])-lab.ini"; [IO.File]::WriteAllText($file, $case[1], $utf8)
@@ -418,6 +443,14 @@ try {
     Assert-True ((Format-CoopStatusLine -Status $waitStatus -Role guest -NowUtc $snow).StartsWith('[JOIN] link=waiting via Steam - waiting for an invite or a code')) 'waiting guest status line'
     $offStatus = ConvertFrom-CoopStatusText -Text ($steamStatus.Replace('"state":"connected","reason":""', '"state":"disabled","reason":"steam_offline"').Replace('"steam":"ok"', '"steam":"offline"'))
     Assert-True ((Format-CoopStatusLine -Status $offStatus -Role host -NowUtc $snow.AddSeconds(600)).Contains('Steam is offline or not logged in')) 'disabled online status explains the reason'
+    # The partner's goodbye and the guest's Steam end reason (1252).
+    $leftStatus = ConvertFrom-CoopStatusText -Text ($steamStatus.Replace('"state":"connected"', '"state":"lost"').Replace('"steam":"ok"', '"steam":"ok","steam_end":0,"left":1'))
+    Assert-True ((Format-CoopStatusLine -Status $leftStatus -Role host -NowUtc $snow).Contains(' - your friend left; waiting for them to come back')) 'host: the partner left'
+    $endStatus = ConvertFrom-CoopStatusText -Text ($steamStatus.Replace('"role":"host","state":"connected"', '"role":"guest","state":"connecting"').Replace('"steam":"ok"', '"steam":"ok","steam_end":5003,"left":0'))
+    $endLine = Format-CoopStatusLine -Status $endStatus -Role guest -NowUtc $snow
+    Assert-True ($endLine.Contains("(Steam: The host's game did not answer.") -and !$endLine.Contains('left')) 'guest: the Steam end reason in plain language'
+    $liveStatus = ConvertFrom-CoopStatusText -Text ($steamStatus.Replace('"steam":"ok"', '"steam":"ok","steam_end":5003,"left":1'))
+    Assert-True (!(Format-CoopStatusLine -Status $liveStatus -Role host -NowUtc $snow).Contains('Steam:') -and !(Format-CoopStatusLine -Status $liveStatus -Role host -NowUtc $snow).Contains('left')) 'connected: neither is shown'
     # Launch evidence for an online start.
     $okEarly = "saves=redirected; dir=$saveDir`r`nplay=1; loopback=0; mutex=unchanged; refused=0x0; saves=redirected`r`n"
     $okSteam = "master_server=redirected; method=test; url=http://127.0.0.1:47899/tppstm/gate`r`n"

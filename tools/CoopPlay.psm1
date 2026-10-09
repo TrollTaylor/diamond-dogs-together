@@ -782,7 +782,10 @@ function New-CoopPlayLabIniText {
         # Steam: this PC's SteamID64 (Steam ActiveUser), the guest's host, or a waiting guest.
         [string]$SteamSelf = '',
         [string]$SteamPeer = '',
-        [switch]$SteamWait
+        [switch]$SteamWait,
+        # Steam: which sources find a code join (docs/steam-online.md 20.5,
+        # the two-PC A/B variants); empty writes no key (native default both).
+        [ValidateSet('', 'both', 'fnptr', 'callback', 'poll')][string]$SteamDispatch = ''
     )
     if ($SaveDir -cnotmatch '^[A-Za-z]:\\' -and !$SaveDir.StartsWith('\\')) { throw "save_dir must be an absolute path: $SaveDir" }
     if ($SaveDir -match '[\x00-\x1f\x7f]' -or $SaveDir -ne $SaveDir.Trim() -or $script:CoopUtf8NoBom.GetByteCount($SaveDir) -gt 259) { throw "Invalid save_dir: $SaveDir" }
@@ -797,7 +800,7 @@ function New-CoopPlayLabIniText {
             if ($SteamPeer -and $SteamPeer -ceq $SteamSelf) { throw 'That is your own code.' }
         }
     } else {
-        if ($SteamSelf -or $SteamPeer -or $SteamWait) { throw 'The Steam keys need -Transport steam.' }
+        if ($SteamSelf -or $SteamPeer -or $SteamWait -or $SteamDispatch) { throw 'The Steam keys need -Transport steam.' }
         if ($Port -lt 1024 -or $Port -gt 65535) { throw "Invalid port: $Port" }
         if ($Role -eq 'host' -and $PeerAddress) { throw 'The host has no peer address.' }
         if ($Role -eq 'guest' -and !(Test-CoopPlayPeerAddress $PeerAddress)) { throw "Invalid host address: $PeerAddress" }
@@ -815,6 +818,7 @@ function New-CoopPlayLabIniText {
         if ($Role -eq 'guest') {
             if ($SteamWait) { $lines.Add('net_steam_wait=1') } else { $lines.Add('net_peer_steam=' + $SteamPeer) }
         }
+        if ($SteamDispatch) { $lines.Add('net_steam_dispatch=' + $SteamDispatch.ToLowerInvariant()) }
     } else {
         $lines.Add('net_bind=any')
         if ($Role -eq 'host') {
