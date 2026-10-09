@@ -10,7 +10,7 @@ $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw 'Worker runner parse failed' }
 # Load actual pure boundaries, never the top-level execution pipeline.
-$pure = @('Get-WorkerExperiments','Get-WorkerTests','Get-WorkerHash','Test-WorkerUnder','Assert-WorkerPath',
+$pure = @('Get-WorkerExperiments','Get-WorkerReleaseExperiments','Get-WorkerTests','Get-WorkerHash','Test-WorkerUnder','Assert-WorkerPath',
     'Get-WorkerPlan','Assert-WorkerOptions','Assert-WorkerCache','Assert-WorkerCacheOwnership',
     'Assert-WorkerInventory','Write-WorkerJson','Get-WorkerSourceHashes','Assert-WorkerSourceUnchanged','New-WorkerCmakeOverride')
 foreach ($name in $pure) {
@@ -65,6 +65,14 @@ try {
     Refuses { Get-WorkerPlan $fixture 'Normal' 'Release' @() $false 'build\worker-runs\receipt' } 'immutable run'
     Refuses { Get-WorkerPlan $fixture 'Normal' 'Release' @() $false '..\escape' } 'below'
     Refuses { Get-WorkerPlan $fixture 'Normal' 'Release' @() $false (Join-Path $fixture 'build') } 'below'
+    # The friend/release loader (docs/two-pc-play.md "Release build"): exactly the stock46 gun pieces, never the worker.
+    $release = Get-WorkerPlan $fixture 'Release' 'Release' @() $false ''
+    Check ($release.flags.MGS_BACKGROUND_WORKER -ceq 'OFF' -and
+        ((@($release.flags.Keys | Where-Object { $release.flags[$_] -ceq 'ON' }) | Sort-Object) -join ',') -ceq 'MGS_LOCAL_OFFLINE_EQUIPMENT_TEST,MGS_LOCAL_STOCK46_PRELOAD_TEST,MGS_LOCAL_STOCK46_WRITER_TEST') 'release: the three gun pieces, worker off'
+    Check ($release.profile_key -ceq 'release-worker-off' -and $release.build_directory -ine $research.build_directory -and
+        $release.build_directory -ine $normal.build_directory) 'release: its own cache'
+    Refuses { Get-WorkerPlan $fixture 'Release' 'Release' @() $true '' } 'never enables the background worker'
+    Refuses { Get-WorkerPlan $fixture 'Release' 'Release' @('MGS_LOCAL_ACTION_EVENTS') $false '' } 'fixed experiments'
 
     Assert-WorkerCacheOwnership $normal
     $ownerFile = Join-Path $normal.build_directory '.worker-check-profile.json'

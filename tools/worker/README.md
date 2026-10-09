@@ -202,6 +202,21 @@ RequestBullet owner filter is not live) and the magazine mirror;
 reload aiming and holstered, weapon switch, crouched fire, both directions,
 leak and noise records).
 
+Online play (`docs/native-puppet.md` "Online"): `-WanSim off|good|bad|awful`
+puts a lab.json wanSim preset on both copies in either mode; `-LabSetting`
+also takes `partner_native_net=lab|online`, `partner_native_stall=neutral|hold`,
+`partner_native_hold=own|net` and `partner_input_edge_repeats=2..8` (the
+allow-list is identical in Start-WorkerSession and Invoke-WorkerScenario;
+`worker_session_tests` compares them). `-Mode play` is the play rehearsal
+(`docs/two-pc-play.md` "Hidden play rehearsal"): both copies in `mode=play` as
+Play-Coop writes it, moved onto 127.0.0.1 with the worker-only
+`play_rehearsal=1`, the real identity and a fresh link secret; the manifest's
+`lab_mode=play` makes the supervisor admit it with `PlayRehearsal`, and the
+startup verdict is `Get-WorkerPlaySafetyVerdict`. Profiles there: `animated`
+(clips) or `native` loco|gun (`partner_native_profile`).
+`scenarios/play-native.txt` and `scenarios/partner-native-online.txt` hold
+the evidence.
+
 `scenarios/steam-selftest.txt` (header `labsetting steam_selftest=1`; the
 runner also allows `steam_selftest=2`, which adds a network-loopback socket
 pair that binds UDP sockets) is the Steam online self-test

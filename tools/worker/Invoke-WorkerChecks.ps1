@@ -7,10 +7,14 @@ Uses a separate cache, one checkout coordinator lock and immutable per-run
 receipts. Only explicitly audited CTest commands run. Full lab/friend launch
 fixtures and installer flows are excluded. This is not a runtime game worker.
 -PlanOnly prints the policy without configuring, building or writing files.
+-Profile Release is the friend/release loader (docs/two-pc-play.md "Release
+build"): exactly the stock46 gun pieces (offline equipment, preload, writer;
+runtime-gated on the native gun profile), every other experiment and the
+background worker OFF. tools/package.ps1 -Friend packages its loader.
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Normal', 'Research')][string]$Profile = 'Normal',
+    [ValidateSet('Normal', 'Research', 'Release')][string]$Profile = 'Normal',
     [ValidateSet('Debug', 'Release')][string]$Configuration = 'Release',
     [string[]]$EnableExperiment = @(),
     [switch]$EnableBackgroundWorker,
@@ -32,6 +36,10 @@ function Get-WorkerExperiments {
         'MGS_LOCAL_UPPER_PHASE_OBSERVE', 'MGS_LOCAL_UPPER_MANUAL_IDLE',
         'MGS_LOCAL_UPPER_PROBE', 'MGS_LOCAL_UPPER_CHANNEL2', 'MGS_LOCAL_UPPER_FIRE_ZERO_BLEND'
     )
+}
+# The friend/release loader's experiments: the stock46 gun pieces only.
+function Get-WorkerReleaseExperiments {
+    return @('MGS_LOCAL_OFFLINE_EQUIPMENT_TEST', 'MGS_LOCAL_STOCK46_PRELOAD_TEST', 'MGS_LOCAL_STOCK46_WRITER_TEST')
 }
 function Get-WorkerTests {
     # Fixed names: a newly registered test never silently becomes executable.
@@ -101,6 +109,12 @@ function Get-WorkerPlan {
         [string[]]$Experiments, [bool]$Background, [string]$Directory)
     $Root = [IO.Path]::GetFullPath($Root).TrimEnd([char]92, [char]47)
     $known = @(Get-WorkerExperiments)
+    if ($SelectedProfile -eq 'Release') {
+        # Fixed experiments, never the background worker (a friend DLL can never run the rehearsal).
+        if (@($Experiments).Count) { throw 'Release profile has fixed experiments (the stock46 gun pieces)' }
+        if ($Background) { throw 'Release profile never enables the background worker' }
+        $Experiments = @(Get-WorkerReleaseExperiments)
+    }
     $enabled = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($name in @($Experiments)) {
         if ($known -cnotcontains $name) { throw "Unknown or noncanonical experiment: $name" }
@@ -110,7 +124,7 @@ function Get-WorkerPlan {
     if ($SelectedProfile -eq 'Research' -and !$enabled.Count) { throw 'Research profile requires explicit experiments' }
     $sorted = @($enabled | Sort-Object)
     $profileKey = $SelectedProfile.ToLowerInvariant()
-    if ($enabled.Count) { $profileKey += '-' + (Get-WorkerHash ($sorted -join "`n")).Substring(0, 12) }
+    if ($enabled.Count -and $SelectedProfile -ne 'Release') { $profileKey += '-' + (Get-WorkerHash ($sorted -join "`n")).Substring(0, 12) }
     $profileKey += $(if ($Background) { '-worker-on' } else { '-worker-off' })
     $buildRoot = Join-Path $Root 'build'
     $cache = if ($Directory) { [IO.Path]::GetFullPath($Directory, $Root) }

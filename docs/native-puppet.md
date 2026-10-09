@@ -479,7 +479,8 @@ reachability, owner-stamp, EVADE census and reference assertions).
   reads it (`0x10435D0`: capacity with `rec+0x3C0` bit 28, else `rec+0x25E`
   with `rec+0x27C` bit 9, else `rec+0x25C`) and its capacity (`rec+0x210/212`,
   doubled for equip `0x42B..0x42E` with bit 20, halved with bit 19), xflag
-  `Mag` (0x20, bytes 78..81). Sent whenever the copy runs `partner_drive=native`.
+  `Mag` (0x20, bytes 78..81). Sent whenever the copy sends input frames
+  (`partner_input_send=1`), whatever its own drive (since "Online").
 - **The mirror** (`partner_input_hook.cpp` MirrorMag) runs in block 1's drain
   window before the job, on the thread of the gun update, under a native Arm
   with `partner_native_gun=1` (fire on or off). On a FIRE or RELOAD press
@@ -571,10 +572,30 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_steer_deg` | 15 (0..30, 0 = no steering) |
 | `partner_native_trim_pct` | 0 (0..10) |
 | `partner_native_rates` | log, off, mirror (rates telemetry; mirror writes instance 1's rate record) |
+| `partner_native_profile` | off, loco, gun (the qualified stage in one key; play's only way to the native drive) |
+| `partner_native_net` | lab, online (play default; see "Online") |
+| `partner_native_stall` | neutral, hold (play default; the last live stick up to `partner_native_stall_ms`) |
+| `partner_native_stall_ms` | 400 (100..1000) |
+| `partner_native_hold` | own, net (the sender's 12-frame words under the native drive) |
+| `partner_input_edge_repeats` | 2 (2..8; play default 5; receivers accept up to 8) |
 
-Play mode forces legacy/off and sets `kPlayRefusedNativeDrive` (0x20000); in
-play mode a partner.trigger `drive=native` or `defer=census|on` is refused too
-(`partner_native=trigger_refused; reason=play`), the trigger's other keys apply.
+`partner_native_profile=loco|gun` expands, after the other keys, into exactly
+the stage `Get-WorkerPartnerSettings` emits (lab_config `ApplyNativeProfile`;
+lab_config_tests compares the fields with the raw stage text): drive native,
+deferral on, send, hook, hold own, words hpr, wrap window, cam sandbox, local
+main, recon track, slot body, rates mirror, noise filter, no P+0x218 window,
+and mask 0x2240006 (loco) or 0x224005E with gun, visual fire, look, triggers
+and right stick (gun). A key named in the same lab.ini keeps its value (the
+`partner_native_aim=looksrc` A/B run). In play the raw native keys stay
+refused (`kPlayRefusedNativeDrive` 0x20000: `partner_drive`,
+`partner_input_defer`, `partner_native_aim=lookcam`, `partner_input_local=all`,
+`partner_input_p218_allow`, `partner_native_noise=keep`; a refused key gets
+the profile's value) and a profile without the dm=map + xform base is refused
+(0x800000). In play a partner.trigger `drive=native|legacy` toggles the drive
+inside an admitted profile (`partner_native=trigger_refused; reason=play_profile`
+without one); `defer=` is always refused there
+(`partner_native=trigger_refused; reason=play; key=defer`); the trigger's other
+keys apply.
 partner.trigger: `drive= defer= local= naim= ngun= nfire=0|off|1|visual steer=`.
 
 To enable (lab only), on both copies: the animated partner settings plus
@@ -594,6 +615,66 @@ stage), and requires `partner_native_noise=filter`). `Get-WorkerPartnerSettings`
 `Play-OfflineCoop.ps1` runs the same gun-stage settings on the animated
 partner by default (`-NoNative` turns the native drive off).
 
+## Online
+
+Online play (2026-10-09, `wp/online-native`, fixture-tested; hidden runs
+pending). Everything above runs unchanged in `mode=play`; what a real link
+adds:
+
+- **Sender**: input frames v4 go out whenever `partner_input_send=1`,
+  whatever this copy's own drive (TickOnline reads instance 0's gun record and
+  rate record for a copy that shows clips; pure reads). Edge sets repeat
+  `partner_input_edge_repeats` times (default 2, play 5).
+- **Network policy** (`partner_native_net=online`, partner_native
+  `OnlineParams`): input stale 1.5 s (`net_input`), link down 1.5 s
+  (`net_link`), range hiding and unrealize leave as *network* reasons that
+  never count toward the 3-per-mission latch; hard reasons keep it. A quiet
+  remote (link up, its input and pose both stale: pause menu, loading) keeps
+  the body active with a neutral pad (`reason=remote_quiet`) for up to 10 s,
+  then `net_quiet`. Re-entry after a network leave: 2 s cooldown, then the
+  link quality must hold 2 s (`partner_native_net::Quality`: a frame younger
+  than 250 ms, no inter-arrival gap over 250 ms and a p95 under 120 ms in the
+  last 2 s; `net_quality`), then the 2 s settle. More than 6 network leaves in
+  5 min: `net_flap` until 30 s of good quality. A remote whose capabilities
+  say it sends no input frames: `remote_caps`. The lab policy (default in the
+  lab) is unchanged.
+- **Stall hold** (`partner_native_stall=hold`): the native Arm's
+  `config.stall_ms`; Compose keeps a late sample's stick and look (never
+  analog triggers or edges; held buttons follow the 1 s grace) up to
+  `partner_native_stall_ms`.
+- **Gap snaps** (partner_recon, always on): the first hard snap during an
+  input gap of 300 ms or more, or within 2 s after it, is catch-up
+  (`gap_snaps`) and never counts toward `diverging`.
+- **Hold variant** (`partner_native_hold=net`): the native drive's hold
+  classifier answers from the sender's 12-frame words (NetHoldCode) instead of
+  the receiver's frames, so a prone hold does not turn into a crouch tap at
+  different frame rates. A/B in the two-PC test.
+- **Capability exchange** (`partner_caps_wire`, 16 bytes, magic 0x43, reliable
+  channel 2 in append mode; the manifest now appends too, so neither replaces
+  the other's unsent message): features (input sender, native drive, gun,
+  online, hold net, stall hold), profile, drive (off|clips|native), reason
+  code (`partner_native_net::ReasonCode`, an append-only table), arbiter mode,
+  policy; sent at every link session, on change at most 1/s and as a 5 s
+  heartbeat. Logged `partner_caps=rx; drive=..; reason=..` on change.
+- **Gun profile without a gun**: until body 1 shows a gun class this mission,
+  HOLD, RELOAD and FIRE are stripped (`partner_weapon=absent; body_gun=absent`,
+  `native.weapon.strip`).
+
+Telemetry: state.json `native.net` (policy, stall, stall_ms, hold,
+edge_repeats, quality_good, quality_good_ms, gaps_100/_250/_1000,
+max_gap_ms, ia_p50_ms, ia_p95_ms, net_leaves, hard_leaves, net_reentries,
+quiet_episodes, gap_snaps, remote_quiet, flap, last_net_reason, local_drive,
+local_reason, caps {rx, sent, received, invalid, remote_drive,
+remote_reason, remote_profile, remote_policy, remote_v4, refused});
+link-status.json `partner_drive`, `partner_reason`, `remote_drive`,
+`remote_reason`; log lines `partner_native_net; policy=..; drive=..; reason=..;
+quality=..; ...; remote=<drive>/<reason>` (1 Hz while anything changed, play
+or a configured native drive) and `partner_native_net=quiet|resume`.
+
+No new executable address: the online policy, the capability message and the
+stall hold are pure; the gun strip reads the already pinned gun record
+(`ReadGun1`). `tools/generate_partner_contract.py --check` is unchanged.
+
 ## Wire
 
 - Input frame v4 (112 bytes, payload 84; one version for both native work
@@ -603,7 +684,7 @@ partner by default (`-NoNative` turns the native drive off).
   `Mag` 0x20; 1 <= cap <= 999, mag <= cap; zero without a readable gun) and
   `[82..83]` the sender's gun record equip (xflags `Equip` 0x80, 1..65535;
   zero without). xflags `Gamepad` 0x40: the sender's PlayerPad is in gamepad
-  mode (`PP+0x488` bit 6 clear); absent means keyboard semantics. Sent whenever the sender runs `partner_drive=native`; v1..v3
+  mode (`PP+0x488` bit 6 clear); absent means keyboard semantics. Sent whenever the sender sends input frames (any drive, since "Online"); v1..v3
   still decode, while the 104- and 108-byte single-feature drafts are refused
   (both copies must run the same build).
 - Input frame v3 (100 bytes): v2 plus the sender's look angles, `CAM+0x270/+0x274`,
@@ -648,6 +729,8 @@ evidence per stage).
 | S3a-r | as S3a with `-AmmoExperiment` (after its own qualification) | reload visible, no fallback |
 | S3b | `partner-native-weapons.txt` with `-NativeStage gun -BuildProfile research` (gun stage = visual fire) | see "Weapons": suppressed shots, mirror writes, reload bit, no leaks, manifest/apply lines |
 | F1 | `pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-native-facing.txt -PartnerProfile native -NativeStage gun -BuildProfile research`, then the same with `-LabSetting partner_native_aim=looksrc` | the scenario header: every face-* capture under 10 degrees; aim captures < 5 % of ring ticks over 10 degrees and no act 12 the remote does not show; look.err_mdeg < 1000 (looksrc: look.src installed, src_hits_s > 0); face-place-viewer-aims without act 11 and unwindowed_native 0; facing.contests <= 2; no fallback |
+| O1 | `pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-native-online.txt -PartnerProfile native -NativeStage loco -SaveSeed lab` (A: lab policy), the same with `-LabSetting partner_native_net=online -LabSetting partner_native_stall=hold -LabSetting partner_input_edge_repeats=5` (B), then both with `-WanSim bad` and `-WanSim awful` | the scenario header: A latches after the third pause (today's defect); B never latches, `remote_quiet` during pauses, `net_quiet` after 12 s with `fallbacks` 0 and re-entry in ~6 s; under WanSim `hard_leaves` 0, sprint ratio 0.95..1.05, `err_mm` < 500 after stops |
+| P1 | `pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -Mode play -PartnerProfile native -NativeStage gun -BuildProfile research -SaveSeed lab -ScenarioPath tools/worker/scenarios/play-native.txt`, then with `-WanSim bad` | the scenario header: both early.log play lines with `refused=0x0; saves=redirected; rehearsal=1`, native active on both copies, `native.net.caps.remote_drive` native, pauses never latch, the game's own networking getter receipts unchanged, real saves unchanged |
 | A1 | `pwsh -File tools/worker/Invoke-WorkerScenario.ps1 -ScenarioPath tools/worker/scenarios/partner-native-actions.txt -PartnerProfile native -NativeStage gun -BuildProfile research` (or `-NativeStage loco`) | the scenario header: sprint/crawl speed ratio 0.95..1.05 with `rates.mirror` ok and `rates.id1.dash == rates.remote.dash`; no runaway pin and no leaving through the sprint stop; the dive/evade/rolls: EVADE in the ring's held, body.act follows remote_act (27) within 2 captures, settles within 500 mm; leak-evade-host clean; ACTION never reaches the body |
 
 ## Known risks and open items

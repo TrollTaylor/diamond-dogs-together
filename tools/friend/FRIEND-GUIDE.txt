@@ -20,9 +20,16 @@ What works today:
   and partner movement diagnostics. F9 closes it and restores game controls.
   Actions require supported on-foot gameplay. Guard actions use authored
   mission soldiers; arbitrary new soldiers and unloaded guns are unsupported.
+- The NATIVE PARTNER (default): your partner's body is moved by the game's
+  own movement, aiming, reloading and turning, driven by the other player's
+  controls, so it moves and aims like a player. Its shots are visual only
+  (muzzle flash and sound, never bullets: each PC counts its own player's
+  hits). When the network or a PC cannot keep up it switches to animation
+  clips by itself and back again (section 3, "PARTNER BODY").
 What is NOT fully shared yet:
-- Partner aiming, firing, reload and full turn actions; the animation mapper
-  currently contains 13 movement/stance clips. Debug pickups are local.
+- Weapon switching on the partner body: only the assault rifle of the
+  Afghanistan free roam (30010) is on it; in Mother Base and Africa the
+  partner moves natively but does not aim. Debug pickups are local.
 - Story missions, items and full campaign progression. This is a development
   build; live verification used two game instances on one PC. Actual two-PC
   play has not been validated yet.
@@ -155,6 +162,19 @@ BOTH:
    game exits, even if the Play-Coop window was closed: the next normal start
    from Steam is plain MGSV on your real saves again.
 
+PARTNER BODY (native by default):
+ - The status line shows how YOUR game shows your partner and how the other
+   game shows you, for example
+        partner=live shown look native; you on the other PC: native
+   "clips (...)" names why a game uses the animation clips right now, e.g.
+   "the other player is paused or loading" or "the connection dropped": it
+   goes back to native by itself. "this PC runs the game's update threads
+   differently" or "too slow on this PC" stay on clips: send the logs
+   (section 8).
+ - To always use the clips (for example on a slow PC), start Play-Coop with
+        Play-Coop.bat -Partner clips
+   The other player can still use the native partner for your body.
+
 EXPERIMENTAL SHARED WORLD (enabled by default):
  - A normal double-click enables World 3. To choose the level explicitly,
    open Command Prompt in the extracted package folder on BOTH PCs:
@@ -231,7 +251,8 @@ The Play-Coop status line explains most problems:
   that this game is normal offline play on your REAL saves. Quit MGSV if you
   do not want that, and send the logs (section 8).
 - The partner stands still: the link was lost; it moves again when the link
-  is back.
+  is back. A paused partner (pause menu, loading) also stands still.
+- "partner=... clips (...)": see section 3, PARTNER BODY.
 - Something else, a crash or a freeze: note the time and what you did, and
   send the logs.
 

@@ -619,6 +619,9 @@ try {
     Assert-Equal ((@(Get-ChildItem -LiteralPath $pkg -File -Filter '*.bat' | ForEach-Object { $_.Name } | Sort-Object)) -join ',') 'Collect-Logs.bat,Install-Coop.bat,Play-Coop.bat,Uninstall-Coop.bat' 'the four double-click entry points'
     $manifest = Get-Content -LiteralPath (Join-Path $pkg 'package.json') -Raw | ConvertFrom-Json
     Assert-Equal "$($manifest.product)|$($manifest.version)|$($manifest.flavor)" 'mgs-coop-local-package|0.11.1|friend-play' 'package manifest identity'
+    # Provenance (docs/two-pc-play.md "Release build"): a supplied loader is reported as such, never as checked.
+    Assert-Equal "$($manifest.build.source)|$($manifest.build.profile)|$($manifest.build.receipt)" 'supplied|unknown|' 'package.json build: a supplied loader'
+    Assert-Equal $manifest.build.loader_sha256 (Get-Sha256 $fakeLoader) 'package.json build: the packaged loader hash'
     Assert-Equal @($manifest.files).Count 6 'six payload files (loader + licenses)'
     Assert-Equal ($manifest.files | Where-Object target -eq 'mgs-coop/ImGui-LICENSE.txt').sha256 (Get-Sha256 (Join-Path $projectRoot 'third_party/imgui/LICENSE.txt')) 'overlay MIT license packaged intact'
     Assert-Equal ($manifest.files | Where-Object target -eq 'dinput8.dll').sha256 (Get-Sha256 $fakeLoader) 'payload loader hash'
