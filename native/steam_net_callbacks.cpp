@@ -76,19 +76,26 @@ void OnSessionRequest(const void* payload) noexcept {
 
 void OnJoinRequested(const void* payload, std::uint64_t now_ms) noexcept {
     if (!payload) return;
+    // Copy Steam's buffer before taking the lock: a fault while reading it is
+    // caught by Run337's __except, and must never leave g_lock held (the
+    // 1251 handler on the game's callback thread and the transport thread
+    // would then block forever).
+    steam_net::JoinRequested copy{};
+    const auto* bytes = static_cast<const std::uint8_t*>(payload);
+    auto* to = reinterpret_cast<std::uint8_t*>(&copy);
+    for (std::size_t i = 0; i < sizeof(copy); ++i) to[i] = bytes[i];
     bool throttled = false;
     AcquireSRWLockExclusive(&g_lock);
     if (g_join_seen && now_ms - g_join_ms < kJoinMinGapMs) {
         throttled = true;
     } else {
-        const auto* bytes = static_cast<const std::uint8_t*>(payload);
-        auto* out = reinterpret_cast<std::uint8_t*>(&g_join);
-        for (std::size_t i = 0; i < sizeof(g_join); ++i) out[i] = bytes[i];
+        g_join = copy;
         g_join_full = true;
         g_join_seen = true;
         g_join_ms = now_ms;
     }
     ReleaseSRWLockExclusive(&g_lock);
+    SecureZeroMemory(&copy, sizeof(copy));
     InterlockedIncrement(throttled ? &g_join_throttled : &g_joins);
 }
 

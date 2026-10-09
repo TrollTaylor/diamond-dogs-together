@@ -583,8 +583,14 @@ void PlayPass(std::uint64_t now) noexcept {
     // Pasted code (guest; parsed and armed on the transport thread).
     char pasted[steam_state::kPasteCapacity]{};
     if (steam_state::TakeJoin(pasted)) {
-        const bool posted = !info.host && partner_net::PostSteamJoin(pasted);
-        StringCchCopyA(g_last_result, ARRAYSIZE(g_last_result), posted ? "Code submitted; joining..." : "Join is only for a waiting guest.");
+        // A disabled or faulted Steam path never drains the paste mailbox:
+        // say so instead of "joining".
+        const bool off = g_phase == kDisabled || g_halt || info.reason[0];
+        const bool posted = !info.host && !off && partner_net::PostSteamJoin(pasted);
+        StringCchCopyA(g_last_result, ARRAYSIZE(g_last_result),
+                       posted ? "Code submitted; joining..."
+                       : info.host ? "Join is only for a waiting guest."
+                                   : "Steam networking is off; restart the game or use a LAN/VPN code.");
         link::SecureZero(pasted, sizeof(pasted));
     }
     if (g_phase != kReady || !info.active) {

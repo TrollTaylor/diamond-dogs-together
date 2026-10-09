@@ -269,11 +269,12 @@ void FakeRegister(void* object, int id) {
 void TestInitWrapper() {
     using namespace mgscoop::lab;
     // Only mode=play, net=1, net_transport=steam (and lab.ini present).
-    Check(WantInitWrapper({true, true, true, true, true}) && WantInitWrapper({true, true, true, true, false}), "play + net + steam");
-    Check(!WantInitWrapper({true, false, true, true, true}), "lab: never");
-    Check(!WantInitWrapper({true, true, false, true, true}), "net=0: never");
-    Check(!WantInitWrapper({true, true, true, false, true}), "udp: never");
-    Check(!WantInitWrapper({false, true, true, true, true}), "no lab.ini: never");
+    Check(WantInitWrapper({true, true, true, true, true, true}) && WantInitWrapper({true, true, true, true, false, true}), "play + net + steam");
+    Check(!WantInitWrapper({true, false, true, true, true, true}), "lab: never");
+    Check(!WantInitWrapper({true, true, false, true, true, true}), "net=0: never");
+    Check(!WantInitWrapper({true, true, true, false, true, true}), "udp: never");
+    Check(!WantInitWrapper({false, true, true, true, true, true}), "no lab.ini: never");
+    Check(!WantInitWrapper({true, true, true, true, true, false}), "saves not redirected (play refused): never");
     // Registers once, only on a true result; returns Init's result unchanged.
     int object = 0;
     InitWrapperState state{};

@@ -110,6 +110,12 @@ public:
     // A 1251 request: may it be accepted now? (`known_peer`: the current or
     // last peer, always accepted, never counted in the cap.)
     Decision OnRequest(std::uint64_t id, bool accepting, std::uint64_t now_ms) noexcept;
+    // A poll candidate the host chose itself (DuePolls: the peer, an invited
+    // friend, a beacon hit): the refusals of OnRequest except the rate, which
+    // is for unsolicited 1251 requests. Consumes no rate token, so a 4 Hz poll
+    // of an invited friend who is not joining cannot use up the tokens and
+    // starve the 1251 accept of a player joining with a code.
+    Decision CheckKnown(std::uint64_t id, bool accepting, std::uint64_t now_ms) const noexcept;
     // AcceptSessionWithUser returned true for `id` (callback or poll).
     void OnAccepted(std::uint64_t id, std::uint64_t now_ms) noexcept;
     // A delivered message; `link` = it decodes as a link v2 header.
@@ -209,6 +215,7 @@ public:
     static constexpr std::uint64_t kStatsMs = 10000;
     static constexpr std::uint64_t kSendFailLogMs = 10000;
     static constexpr std::uint32_t kResolvePollMs = 50;
+    static constexpr std::uint32_t kCloseGraceMs = 30;  // shutdown: the CLOSE goes out before CloseSessionWithUser
 
     bool start(const SteamTransportConfig& config, const SteamSink& sink) noexcept;
     // Copies one datagram (<= 4 chunks, 1..1200 bytes) into the send ring.
@@ -261,6 +268,13 @@ private:
     void log_stats(std::uint64_t now, bool force) noexcept;
     bool close_session(std::uint64_t id) noexcept;
     bool accept_session(std::uint64_t id) noexcept;
+    // AcceptSessionWithUser returns true for ANY existing session, not only a
+    // pending one (steamclient CSteamNetworkingMessages::AcceptSessionWithUser
+    // returns 1 whenever the session has a connection and accepts only a
+    // connecting one), so the 4 Hz poll of an established peer answers true
+    // every 250 ms. Only a new session (no live mark yet) is counted and
+    // logged as an accept. Returns the previous mark; transport thread only.
+    bool mark_live(std::uint64_t id, bool live) noexcept;
 
     SteamTransportConfig config_{};
     SteamSink sink_{};
@@ -276,6 +290,10 @@ private:
     PendingKnown known_pending_[16]{};
     unsigned known_count_ = 0;
     std::uint64_t pending_peer_ = 0;  // under known_lock_
+    // Ids whose last accept (callback or poll) returned true (mark_live).
+    static constexpr unsigned kLiveEntries = SteamAcceptPolicy::kKnownEntries + SteamAcceptPolicy::kMaxNonPeer + 2;
+    std::uint64_t live_[kLiveEntries]{};
+    unsigned live_next_ = 0;
     volatile long running_ = 0, ready_ = 0, faulted_ = 0, stop_ = 0, shutdown_ = 0, accepting_ = 1, parked_ = 0;
     volatile long route_ = 0, steam_state_ = 0, non_peer_ = 0;
     volatile long long peer_id_ = 0;

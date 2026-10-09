@@ -242,6 +242,16 @@ SteamAcceptPolicy::Decision SteamAcceptPolicy::OnRequest(std::uint64_t id, bool 
     return Decision::accept;
 }
 
+SteamAcceptPolicy::Decision SteamAcceptPolicy::CheckKnown(std::uint64_t id, bool accepting, std::uint64_t now_ms) const noexcept {
+    if (!id || id == self_) return Decision::self;
+    if (id == peer_ || id == last_peer_) return Decision::known_peer;
+    if (Denied(id, now_ms)) return Decision::denied;
+    if (!accepting) return Decision::not_accepting;
+    if (Find(id)) return Decision::accept;
+    if (non_peer() >= kMaxNonPeer) return Decision::cap;
+    return Decision::accept;
+}
+
 void SteamAcceptPolicy::OnAccepted(std::uint64_t id, std::uint64_t now_ms) noexcept {
     if (!id || id == self_ || id == peer_ || id == last_peer_ || Find(id)) return;
     for (auto& e : entries_)
@@ -389,6 +399,8 @@ bool SteamTransport::start(const SteamTransportConfig& config, const SteamSink& 
     route_ = static_cast<long>(steam_net::Route::none);
     steam_state_ = 0;
     known_count_ = 0;
+    for (auto& id : live_) id = 0;
+    live_next_ = 0;
     stop_event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     if (!stop_event_) { error_ = TransportError::thread; return false; }
     timer_ = config_.high_res_timer ? CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS)
@@ -565,6 +577,24 @@ bool SteamTransport::accept_session(std::uint64_t id) noexcept {
     return ok;
 }
 
+bool SteamTransport::mark_live(std::uint64_t id, bool live) noexcept {
+    if (!id) return false;
+    for (auto& entry : live_)
+        if (entry == id) {
+            if (!live) entry = 0;
+            return true;
+        }
+    if (!live) return false;
+    for (auto& entry : live_)
+        if (!entry) {
+            entry = id;
+            return false;
+        }
+    live_[live_next_] = id;
+    live_next_ = (live_next_ + 1) % kLiveEntries;
+    return false;
+}
+
 bool SteamTransport::close_session(std::uint64_t id) noexcept {
     Identity identity{};
     steam_net::MakeSteamIdentity(id, identity);
@@ -705,22 +735,26 @@ void SteamTransport::accept_work(std::uint64_t now) noexcept {
         }
         if (!accept_session(id)) continue;
         policy_.OnAccepted(id, now);
+        mark_live(id, true);  // a 1251 is a pending session: always a real accept
         InterlockedIncrement64(&accepted_);
         steam_code::FormatPeer(id, peer);
         if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "steam=accept; peer=%s; via=callback\r\n", peer))) log_line(line);
     }
-    // 2. Poll-accept known ids at 4 Hz (false = nothing pending).
+    // 2. Poll-accept known ids at 4 Hz (false = no session). These are ids the
+    // host chose (peer, last peer, invited friends, beacon hits): no rate token.
     std::uint64_t ids[SteamAcceptPolicy::kKnownEntries + 2]{};
     KnownKind kinds[SteamAcceptPolicy::kKnownEntries + 2]{};
     const unsigned n = policy_.DuePolls(now, accepting, ids, kinds, SteamAcceptPolicy::kKnownEntries + 2);
     for (unsigned i = 0; i < n && !faulted_; ++i) {
-        const bool known_peer = ids[i] == policy_.peer() || ids[i] == policy_.last_peer();
-        if (!known_peer && !policy_.Accepted(ids[i])) {
-            const auto decision = policy_.OnRequest(ids[i], accepting, now);
-            if (decision != SteamAcceptPolicy::Decision::accept) continue;
-        }
-        if (!accept_session(ids[i])) continue;
-        if (!known_peer) policy_.OnAccepted(ids[i], now);
+        const auto decision = policy_.CheckKnown(ids[i], accepting, now);
+        if (decision != SteamAcceptPolicy::Decision::accept && decision != SteamAcceptPolicy::Decision::known_peer) continue;
+        const bool ok = accept_session(ids[i]);
+        if (faulted_) break;
+        // True for an established session too: only a new one is an accept.
+        const bool was_live = mark_live(ids[i], ok);
+        if (!ok) continue;
+        if (decision != SteamAcceptPolicy::Decision::known_peer) policy_.OnAccepted(ids[i], now);
+        if (was_live) continue;
         InterlockedIncrement64(&accepted_);
         steam_code::FormatPeer(ids[i], peer);
         const AcceptVia via = kinds[i] == KnownKind::beacon ? AcceptVia::beacon : AcceptVia::poll;
@@ -733,6 +767,7 @@ void SteamTransport::hygiene(std::uint64_t now) noexcept {
     std::uint64_t id = 0;
     for (unsigned i = 0; i < 4 && !faulted_ && policy_.NextExpired(now, id); ++i) {
         close_session(id);
+        mark_live(id, false);
         InterlockedIncrement64(&closed_idle_);
     }
 }
@@ -807,7 +842,13 @@ void SteamTransport::shutdown_sequence() noexcept {
     if (sink_.on_shutdown) sink_.on_shutdown(sink_.ctx);
     drain_ring();
     const std::uint64_t peer = Load64(peer_id_);
-    if (!faulted_ && config_.leg == SteamLeg::messages && peer) close_session(peer);
+    if (!faulted_ && config_.leg == SteamLeg::messages && peer) {
+        // CloseSessionWithUser closes without linger: give Steam's service
+        // thread a moment to put the queued CLOSE on the wire first (no
+        // Steam call of ours meanwhile; stop() ends the wait in tests).
+        if (stop_event_) WaitForSingleObject(stop_event_, kCloseGraceMs);
+        close_session(peer);
+    }
     log_stats(NowMs(), true);
     log_line("steam=parked; reason=shutdown\r\n");
 }

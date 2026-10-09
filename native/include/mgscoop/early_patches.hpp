@@ -79,8 +79,10 @@ const char* ProbeVersion() noexcept;
 // (before the game creates any thread that runs callbacks), returns its result
 // unchanged and, only when that is true, registers our static 1251 (host) or
 // 337 (guest) callback object once. Never unregistered.
+// saves: the save redirect is in place (play refuses everything without it,
+// so no callback is registered then either).
 struct LabConfigView {
-    bool present, play, net, steam, host;
+    bool present, play, net, steam, host, saves;
 };
 bool WantInitWrapper(const LabConfigView& lab) noexcept;
 // Pins of the shipped steam_api64 image (TimeDateStamp/SizeOfImage,

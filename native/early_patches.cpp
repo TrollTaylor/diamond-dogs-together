@@ -117,7 +117,7 @@ bool format_play_line(std::uint32_t refused, bool loopback, bool mutex_renamed, 
     return true;
 }
 
-bool WantInitWrapper(const LabConfigView& lab) noexcept { return lab.present && lab.play && lab.net && lab.steam; }
+bool WantInitWrapper(const LabConfigView& lab) noexcept { return lab.present && lab.play && lab.net && lab.steam && lab.saves; }
 
 bool RunInitWrapper(SteamInitFn init, SteamRegisterFn reg, void* object, int id, InitWrapperState& state) {
     ++state.calls;
@@ -555,7 +555,7 @@ void InstallEarlyLabPatches() noexcept {
 
     // ---- 2b. Steam online callbacks: the SteamAPI_Init wrapper ----
     if (WantInitWrapper(LabConfigView{lab.present, lab.mode == LabMode::play, lab.net, lab.net_transport == NetTransport::steam,
-                                      lab.role == LabRole::host})) {
+                                      lab.role == LabRole::host, iso.saves_ok})) {
         MODULEINFO steam_info{};
         const char* reason = nullptr;
         if (!steam) reason = "steam_api64_not_mapped";

@@ -99,7 +99,7 @@ sn::Identity Id(std::uint64_t id) {
 // it, which needs a new accept.
 class FakeNet {
 public:
-    struct Stats { unsigned sends, bad_flags, bad_channel, accepts_true, accepts_false, closes, infos; };
+    struct Stats { unsigned sends, bad_flags, bad_channel, accepts_true, accepts_false, accepts_existing, closes, infos; };
     std::uint32_t loss_permille = 0, dup_permille = 0, reorder_permille = 0, latency_ms = 0;
     std::int32_t info_state = sn::kConnConnected;
     std::int32_t info_flags = sn::kConnFlagRelayed;
@@ -156,6 +156,13 @@ public:
         Lock l(this);
         User& u = users_[self];
         bool pending = u.request_posted.count(remote) != 0;
+        // As steamclient's CSteamNetworkingMessages::AcceptSessionWithUser
+        // (0xA7AEF0 in caba4826...): true for ANY existing session (it only
+        // accepts a connecting one), false when there is none.
+        if (!pending && u.accepted.count(remote)) {
+            ++stats_.accepts_existing;
+            return true;
+        }
         if (!pending) {
             ++stats_.accepts_false;
             return false;
@@ -411,6 +418,12 @@ void OnFault(void* ctx, const char*) noexcept { InterlockedIncrement(&static_cas
 
 FakeNet* g_net = nullptr;
 bool PopHostRequest(std::uint64_t& id) noexcept { return g_net && g_net->PopRequest(kHost, id); }
+
+// Transport log capture: counts the "steam=accept;" lines.
+volatile LONG g_accept_lines = 0;
+void CountLog(const char* line) noexcept {
+    if (line && std::strncmp(line, "steam=accept;", 13) == 0) InterlockedIncrement(&g_accept_lines);
+}
 
 // A sink that records datagrams.
 struct Recorder {
@@ -751,6 +764,14 @@ void FakeDispatch(void* cb, void* payload, bool game_server) {
     if (server != game_server) return;
     reinterpret_cast<sn::CallbackRunFn>(object->vptr[1])(cb, payload);
 }
+// Another thread takes the 337 mailbox and the 1251 queue (both under the handlers' lock).
+DWORD WINAPI TakeBothProbe(void*) {
+    mgscoop::steam_net::JoinRequested out{};
+    std::uint64_t id = 0;
+    mgscoop::steam_cb::TakeJoinRequest(out);
+    mgscoop::steam_cb::PopSessionRequest(id);
+    return 0;
+}
 void TestCallbacks() {
     namespace cb = mgscoop::steam_cb;
     cb::ResetForTest();
@@ -800,6 +821,23 @@ void TestCallbacks() {
     Check(cb::TakeJoinRequest(out) && out.friend_id == kStranger && cb::GetStats().join_throttled == 1, "337 after 2 s");
     FakeDispatch(join, &a, false);
     Check(cb::TakeJoinRequest(out) && out.friend_id == kHost, "337 through the dispatch");
+    // A 337 payload that cannot be read faults inside the handler: the fault
+    // is counted and no lock is left held (the transport thread's mailbox and
+    // queue, and the 1251 handler on the game's callback thread, must not block).
+    cb::ResetForTest();
+    SYSTEM_INFO si{};
+    GetSystemInfo(&si);
+    auto* pages = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, 2 * si.dwPageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    DWORD old_protect = 0;
+    Check(pages && VirtualProtect(pages + si.dwPageSize, si.dwPageSize, PAGE_NOACCESS, &old_protect), "guard page");
+    FakeDispatch(join, pages + si.dwPageSize - 100, false);  // 100 readable bytes of 264
+    Check(cb::GetStats().faults == 1, "an unreadable 337 payload faults inside the handler (counted)");
+    HANDLE probe = CreateThread(nullptr, 0, &TakeBothProbe, nullptr, 0, nullptr);
+    Check(probe && WaitForSingleObject(probe, 3000) == WAIT_OBJECT_0, "no lock left held after a handler fault");
+    if (probe) CloseHandle(probe);
+    FakeDispatch(req, &g, false);
+    Check(cb::PopSessionRequest(id) && id == kGuest, "1251 still enqueues after the fault");
+    VirtualFree(pages, 0, MEM_RELEASE);
     cb::ResetForTest();
 }
 
@@ -895,6 +933,15 @@ void TestAcceptPolicy() {
     bool former = false;
     for (unsigned i = 0; i < 8 && p.NextExpired(t + 900000, expired); ++i) former = former || expired == 0x0110000100020001ull;
     Check(former && p.last_peer() == 0, "former peer closed after 60 s idle");
+    // Poll candidates (ids the host chose) use no rate token: polling an
+    // invited friend at 4 Hz must not starve a code join's 1251.
+    static P q;
+    q.Reset(kHost);
+    for (unsigned i = 0; i < 12; ++i) Check(q.CheckKnown(0x0110000100030000ull + i, true, 5000) == D::accept, "poll candidate: no rate");
+    Check(q.OnRequest(kGuest, true, 5000) == D::accept, "a 1251 still has its rate token after the polls");
+    Check(q.CheckKnown(kStranger, false, 5000) == D::not_accepting && q.CheckKnown(kHost, true, 5000) == D::self, "poll: accepting off, self");
+    q.SetPeer(kStranger, 5000);
+    Check(q.CheckKnown(kStranger, false, 5000) == D::known_peer, "poll: the peer even when not accepting");
 }
 
 void TestGuestFilter() {
@@ -994,7 +1041,8 @@ void TestFault() {
     c.resolve_ctx = &box;
     m.FaultAfter(5);
     Check(t.start(c, Sink(rec)), "start");
-    Check(WaitFor([&] { return t.faulted(); }, 2000), "an access violation in steamclient latches the transport");
+    // faulted() is set before on_failed runs: wait for both.
+    Check(WaitFor([&] { return t.faulted() && rec.failed[0] != 0; }, 2000), "an access violation in steamclient latches the transport");
     const LONG calls = m.calls();
     Sleep(100);
     Check(m.calls() == calls, "no further Steam call after the fault");
@@ -1011,7 +1059,7 @@ void TestFault() {
     c.resolve_ctx = &box2;
     Check(t2.start(c, Sink(rec2)) && WaitFor([&] { return m2.calls() > 3; }, 2000), "running");
     InterlockedExchange(&halt, 1);
-    Check(WaitFor([&] { return t2.faulted(); }, 2000) && std::strcmp(rec2.failed, "fault") == 0, "the halt latch parks the transport");
+    Check(WaitFor([&] { return t2.faulted() && rec2.failed[0] != 0; }, 2000) && std::strcmp(rec2.failed, "fault") == 0, "the halt latch parks the transport");
     const LONG halted = m2.calls();
     Sleep(100);
     Check(m2.calls() == halted, "no Steam call after the halt");
@@ -1130,6 +1178,8 @@ void TestEndToEnd() {
     ch.resolve_ctx = &bh;
     ch.pop_request = &PopHostRequest;
     ch.warm_relay = true;
+    ch.log = &CountLog;
+    g_accept_lines = 0;
     cg.role = lab::SteamRole::guest;
     cg.self_id = kGuest;
     cg.host_id = kHost;
@@ -1206,6 +1256,9 @@ void TestEndToEnd() {
     g_guest_end.transport.stop();
     Check(hs.release == hs.received && gs.release == gs.received, "release == received on both ends");
     Check(hs.faults == 0 && gs.faults == 0 && hs.bad_identity == 0, "no fault, no bad identity");
+    // Accepts: the guest, its restarted session and the second guest (1251
+    // each); the 4 Hz polls of the live peer (true every time) add none.
+    Check(g_accept_lines >= 2 && g_accept_lines <= 4 && net.GetStats().accepts_existing >= 2, "steam=accept logged per new session, not per poll");
     net.Drain();
     g_net = nullptr;
 }
@@ -1240,6 +1293,44 @@ void TestHostAccept() {
     t.add_known(kStranger, lab::KnownKind::invited);
     Check(WaitFor([&] { return rec.datagrams >= 2; }, 2000), "invited id poll-accepted; the held messages arrive");
     Check(t.steam_stats().accepted >= 1, "accepted counted");
+    t.stop();
+    net.Drain();
+    g_net = nullptr;
+}
+
+// Invited friends who are not joining are polled at 4 Hz without using the
+// 1251 rate tokens, and an established session (AcceptSessionWithUser true
+// on every poll) is accepted, counted and logged once.
+void TestPollKeepsRate() {
+    static FakeNet net;
+    g_net = &net;
+    constexpr std::uint64_t kJoiner = 0x0110000100005005ull;
+    net.Add(kHost);
+    net.Add(kJoiner);
+    static FakeMessages002 mh(&net, kHost), mj(&net, kJoiner);
+    static ApiBox bh;
+    bh.api.messages = &mh;
+    static Recorder rec;
+    static lab::SteamTransport t;
+    lab::SteamTransportConfig c{};
+    c.role = lab::SteamRole::host;
+    c.self_id = kHost;
+    c.resolve = &Resolve;
+    c.resolve_ctx = &bh;
+    c.pop_request = &PopHostRequest;
+    c.log = &CountLog;
+    g_accept_lines = 0;
+    Check(t.start(c, Sink(rec)) && WaitFor([&] { return t.ready(); }, 2000), "host ready (poll rate)");
+    for (std::uint64_t i = 1; i <= 6; ++i) t.add_known(0x0110000100004000ull + i, lab::KnownKind::invited);
+    Sleep(600);  // at least two poll rounds of six invited friends who never connect
+    std::uint8_t hello[64]{};
+    const sn::Identity host = Id(kHost);
+    mj.SendMessageToUser(host, hello, sizeof(hello), sn::kMsgFlags, sn::kLinkChannel);  // one 1251 (the fake posts it once)
+    Check(WaitFor([&] { return rec.datagrams >= 1; }, 2000), "a code join is accepted while invited friends are polled");
+    Check(t.steam_stats().accept_refused == 0, "no rate refusal caused by polls");
+    t.set_peer(kJoiner);
+    Check(WaitFor([&] { return net.GetStats().accepts_existing >= 4; }, 3000), "the live session answers the 4 Hz poll with true");
+    Check(g_accept_lines == 1 && t.steam_stats().accepted == 1, "one accept counted and logged for the live session");
     t.stop();
     net.Drain();
     g_net = nullptr;
@@ -1391,6 +1482,7 @@ int main() {
     TestResolveFailure();
     TestShutdown();
     TestHostAccept();
+    TestPollKeepsRate();
     TestConnectionLeg();
     TestEndToEnd();
     Check(g_allocated == g_released, "every fake message freed exactly once");
