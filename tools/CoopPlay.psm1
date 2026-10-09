@@ -582,9 +582,7 @@ function ConvertFrom-CoopSteamJoinCode {
     param([AllowNull()][AllowEmptyString()][string]$Text)
     $result = [pscustomobject]@{ Status = 'empty'; Secret = ''; SteamId = '' }
     if ($null -eq $Text) { $Text = '' }
-    $t = [regex]::Replace($Text, '[ 	
-
-]', '')
+    $t = [regex]::Replace($Text, '[ \t\r\n\v\f]', '')
     if (!$t) { return $result }
     $at = $t.LastIndexOf('@')
     if ($at -lt 0) { $result.Status = 'bad_steamid'; return $result }

@@ -368,6 +368,8 @@ try {
         }
     }
     Assert-Equal (ConvertFrom-CoopSteamJoinCode ' mgs2 abcde i2345 fghjk 67890 6z @ 76561198058195100').Status 'ok' 'MGS2: blanks, case and I -> 1'
+    # The native IsBlank set: space, tab, CR, LF, VT and FF (a pasted code may carry a line break).
+    Assert-Equal (ConvertFrom-CoopSteamJoinCode ("`tMGS2-ABCDE-12345-`r`nFGHJK-67890-6Z@76561198058195100`v`f`n")).Status 'ok' 'MGS2: tab, CR, LF, VT and FF are blanks'
     $steamBad = @(@('', 'empty'), @('MGS1-ABCDE-12345-FGHJK-67890-6Z@203.0.113.7', 'bad_prefix'), @('MGS2-ABCDE-12345-FGHJK-67890-6Z', 'bad_steamid'),
         @('MGS2-ABCDU-12345-FGHJK-67890-6Z@76561198058195100', 'bad_char'), @('MGS2-ABCDE-12345-FGHJK-6789-6Z@76561198058195100', 'bad_length'),
         @('MGS2-ABCDE-12345-FGHJK-67890-6Y@76561198058195100', 'bad_check'), @('MGS2-ABCDE-12345-FGHJK-67890-6Z@76561198058195101', 'bad_check'),

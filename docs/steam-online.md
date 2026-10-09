@@ -390,7 +390,8 @@ A Steam update that changes adapter generation fails gate 7. That is deliberate.
 ### 6.1 Registration: an Init IAT wrapper installed in DllMain
 
 `InstallEarlyLabPatches` adds the IAT slot 0x208E130 wrapper **only** when lab.ini has `mode=play`,
-`net=1` and `net_transport=steam`. The pins it checks are:
+`net=1` and `net_transport=steam`, and the save redirect is in place (without it play is refused, so no
+callback is registered either). The pins it checks are:
 - the exe `exe_identity_block` (already pinned);
 - `SteamAPI_Init` at 0x5420 (`33 C9 E9 49 F5 FF FF`);
 - `RegisterCallback` at 0x5530 and its 0x2B10 body;
@@ -422,14 +423,21 @@ The handlers never block, log or call Steam. Their `noexcept` bodies run under `
   16-entry MPSC queue (SRW lock held only for the push), coalescing duplicates. The queue drops when full
   (counted).
 - **337:** copy 264 bytes into a single-slot mailbox (newest wins, at most 1 per 2 s). Parsing happens on
-  the transport thread (§9.4).
+  the transport thread (§9.4). The payload is copied to the stack **before** the lock is taken, so a
+  fault while reading Steam's buffer (caught by the handler's `__except`) can never leave the lock held
+  (that would block the 1251 handler on the game's callback thread and the transport thread forever).
 
 ### 6.3 Host accept policy (transport thread)
 
 1. **Queue (`via=callback`):** accept while `accepting` is true. At most 4 new identities per second,
    and at most 8 accepted identities that are not the session peer. Skip denied identities.
 2. **Poll (`via=poll`) at 4 Hz:** `AcceptSessionWithUser(id)` for the current or last guest, invited
-   friends (≤ 16, kept 10 min) and beacon hits (§10.4). A false result is normal.
+   friends (≤ 16, kept 10 min) and beacon hits (§10.4). A false result is normal. These are ids the
+   host chose, so a poll **uses no rate token** (the 4/s limit is for unsolicited 1251 requests; a 4 Hz
+   poll of an invited friend who is not joining would otherwise use up every token and starve a code
+   join). `AcceptSessionWithUser` also returns **true for an established session** (steamclient
+   0xA7AEF0 returns 1 whenever the session has a connection and only accepts a connecting one), so
+   only a session not already marked live is counted and logged as `steam=accept`.
 3. **Hygiene:** a non-peer identity whose messages never decode as a link v2 header for 15 s gets
    `CloseSessionWithUser` and a 60 s deny entry (64 entries). Former peers get closed after 60 s idle.
 4. HMAC (K_hs) still decides who actually joins. The session's busy, rejected and rate logic is unchanged.
@@ -510,8 +518,9 @@ For the current peer only, at 1 Hz:
 ### 7.6 Shutdown and fault
 
 - **Shutdown flag** (set by the existing window-close hook; the window thread only flips the flag): the
-  thread sends one link CLOSE if connected, calls `CloseSessionWithUser(peer)`, then parks in
-  `WaitForSingleObject(INFINITE)`. There are no further Steam calls.
+  thread sends one link CLOSE if connected, waits 30 ms (no Steam call; `CloseSessionWithUser` closes
+  without linger, so the queued CLOSE gets a chance to leave first), calls `CloseSessionWithUser(peer)`,
+  then parks in `WaitForSingleObject(INFINITE)`. There are no further Steam calls.
 - **Fault latch** (§5.9): the thread parks immediately.
 
 ## 8. `partner_net` integration
@@ -995,15 +1004,39 @@ Decisions and deviations:
     `-Code` exists for scripted use; the prompt keeps the code out of process
     lists. A waiting guest gets no `link-secret.txt`.
 
+Review fixes (2026-10-08, after the first implementation):
+
+13. **Poll-accept and the rate limit** (6.3): polls of host-chosen ids
+    (`SteamAcceptPolicy::CheckKnown`) no longer consume the 4/s rate tokens.
+    Before, one invited friend who was not joining used all four tokens every
+    second (and four or more used them at the start of every window), so a
+    code join's single 1251 was refused (`accept_refused`) and, Steam
+    re-posting it only periodically, the joiner could stay unaccepted.
+14. **Established sessions answer the poll with true** (6.3, verified in
+    steamclient `caba4826...` at 0xA7AEF0): the transport marks live ids and
+    counts/logs `steam=accept` only for a new session. Before, the host logged
+    `steam=accept; via=poll` 4 times a second for the whole session. The
+    fixture's fake now has the real semantics.
+15. **337 handler lock** (6.2): the payload is copied before the lock.
+    Before, a fault while reading it left the SRW lock held (the game's
+    callback thread and the transport thread would block forever).
+16. **Init wrapper** (6.1) also requires the save redirect; the F9 paste
+    reports "Steam networking is off" instead of "joining" when the Steam
+    path is disabled; the shutdown waits 30 ms before
+    `CloseSessionWithUser` (7.6); Play-Coop's MGS2 parser uses regex escapes
+    instead of raw line breaks inside a string.
+
 Verification of this implementation (fixture only):
 
-- `steam_transport_tests`: 365 checks, including two link v2 sessions end to
+- `steam_transport_tests`: 393 checks, including two link v2 sessions end to
   end over two `SteamTransport`s on a fake Messages002 hub with latency,
   reordering and duplication (handshake, 500 FRAMEs, 64 reliable messages,
   a DATAGRAM, route, a broken Steam session restarted by 0x21 and
   re-accepted, busy REJECT, wrong-code hint, release == received), the
   connection leg with IP-localhost identities, the gates on synthetic PE
-  images, callback dispatch as at 0x2DF7, and a fault latch.
+  images, callback dispatch as at 0x2DF7, a fault latch, polls that leave
+  the rate tokens to a code join, one `steam=accept` per new session, and a
+  337 payload fault that leaves no lock held.
 - `generate_steam_shim_contract.py --check` and `--steamclient` pass on
   `mgsvtpp.exe 085c2f82...`, `steam_api64.dll 08bd0152...` and
   `steamclient64.dll caba4826...`.

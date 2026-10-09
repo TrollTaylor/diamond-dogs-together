@@ -17,7 +17,7 @@ with the host's 1251, play + steam only), with a rich-presence beacon and a
 4 Hz poll-accept as callback-free fallbacks. Play-Coop has a new menu
 (`[O]` Host online, `[J]` Join online, `[L]` the unchanged LAN/VPN flow);
 the lab stays UDP and refuses `net_transport=steam`. Evidence is fixture
-only: `steam_transport_tests` (365 checks, two link v2 sessions end to end
+only: `steam_transport_tests` (393 checks, two link v2 sessions end to end
 over fake Steam interfaces with loss/reorder/duplication, a broken session
 restarted by AutoRestartBrokenSession, busy REJECT, wrong-code hint, Release
 exactly once, gates on synthetic PE images, fault latch, shutdown), the
@@ -27,7 +27,11 @@ host/join/wait flows) and the contract generator (`--check`, and
 hidden self-test (`tools/worker/scenarios/steam-selftest.txt`), then the
 two-PC acceptance list of [steam-online.md](steam-online.md) section 15 with
 a friend. S3 (accepting an invite starts MGSV straight into co-op) awaits a
-user decision.
+user decision. A review pass fixed three transport defects before any run: polls
+of invited friends no longer use the 1251 rate tokens (one invited friend could
+starve a code join), an established session no longer logs `steam=accept` at
+4 Hz (steamclient's AcceptSessionWithUser answers true for it), and a fault while
+copying a 337 payload can no longer leave the callback lock held.
 
 ## October 8, 2026: native actions and weapons integrated (fixture-tested, never run together)
 
