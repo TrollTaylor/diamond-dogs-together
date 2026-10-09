@@ -806,9 +806,11 @@ void LinkDatagram(const std::uint8_t* data, std::size_t size, const lab::Endpoin
         ReleaseSRWLockExclusive(&g_lock);
     }
     for (unsigned i = 0; i < frame_count; ++i) OnFrame(frames[i].data, frames[i].size, action_peer);
+    // The goodbye first: the lost / reconnecting events the CLOSE caused in
+    // this same packet are "left", not a "lost the connection" toast.
+    if (close_seen) InterlockedExchange(&g_peer_left, 1);
     for (unsigned i = 0; i < event_count; ++i) LogEvent(events[i], now);
     if (close_seen) {
-        InterlockedExchange(&g_peer_left, 1);
         Log(g_config.host ? "link=peer_left; role=host; next=accepting\r\n" : "link=peer_left; role=guest; next=reconnecting\r\n");
         coop_hud::Post(coop_hud::EventKind::peer_left, 0, "");
     }

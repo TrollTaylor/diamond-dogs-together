@@ -30,6 +30,14 @@ std::int32_t I32(const std::uint8_t* p) noexcept {
     return v;
 }
 
+bool Digit(char c) noexcept { return c >= '0' && c <= '9'; }
+// 1..3 digits at p; their count (0 when none or more than 3).
+std::size_t Octet(const char* p) noexcept {
+    std::size_t n = 0;
+    while (n < 4 && Digit(p[n])) ++n;
+    return n >= 1 && n <= 3 ? n : 0;
+}
+
 // The bodies copy Steam's buffer before taking any lock: a fault while
 // reading it is caught by the caller's __except and never leaves a lock held.
 void SessionRequestBody(const void* payload) noexcept {
@@ -64,6 +72,9 @@ void SessionFailedBody(const void* payload) noexcept {
         copy.debug[n] = (c >= 0x20 && c < 0x7F && c != '"' && c != '\\') ? static_cast<char>(c) : '?';
     }
     copy.debug[n] = 0;
+    char masked[kDebugChars + 1]{};
+    MaskAddresses(copy.debug, masked, sizeof(masked));
+    for (std::size_t i = 0; i < sizeof(masked); ++i) copy.debug[i] = masked[i];
     AcquireSRWLockExclusive(&g_failed_lock);
     copy.sequence = ++g_failed_sequence;
     g_failed = copy;
@@ -86,6 +97,38 @@ void StatusBody(const void* payload) noexcept {
     ReleaseSRWLockExclusive(&g_status_lock);
 }
 }  // namespace
+
+void MaskAddresses(const char* in, char* out, std::size_t capacity) noexcept {
+    if (!out || !capacity) return;
+    std::size_t o = 0;
+    const char* p = in ? in : "";
+    const char* const start = p;
+    while (*p && o + 1 < capacity) {
+        // a.b.c.d with 1..3 digits each, not inside a longer dotted number.
+        const bool boundary = p == start || !(Digit(p[-1]) || p[-1] == '.');
+        std::size_t len[4]{}, at = 0, total = 0;
+        bool quad = boundary;
+        for (unsigned k = 0; quad && k < 4; ++k) {
+            len[k] = Octet(p + at);
+            if (!len[k]) quad = false;
+            at += len[k];
+            if (quad && k < 3) {
+                if (p[at] != '.') quad = false;
+                ++at;
+            }
+        }
+        if (quad && (Digit(p[at]) || (p[at] == '.' && Digit(p[at + 1])))) quad = false;
+        if (quad) {
+            total = len[0] + 1 + len[1];  // keep a.b
+            for (std::size_t i = 0; i < total && o + 1 < capacity; ++i) out[o++] = p[i];
+            for (const char* x = ".x.x"; *x && o + 1 < capacity; ++x) out[o++] = *x;
+            p += at;
+            continue;
+        }
+        out[o++] = *p++;
+    }
+    out[o] = 0;
+}
 
 // C-style SEH frames: no object with a destructor lives here.
 void SessionRequestFn(void* payload) {

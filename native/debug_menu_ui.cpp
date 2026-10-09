@@ -15,6 +15,7 @@
 #include "mgscoop/debug_menu_ui.hpp"
 #include "mgscoop/nametag.hpp"
 #include "mgscoop/steam_online_state.hpp"
+#include "mgscoop/coop_hud.hpp"
 
 namespace mgscoop::debug_menu_ui {
 namespace {
@@ -606,7 +607,11 @@ void Online() noexcept {
             debug_menu::SetLastUiAction(accepting ? "steam_accept_on" : "steam_accept_off");
         }
         ImGui::BeginDisabled(!o.code_ready);
-        if (ImGui::Button("Copy join code")) debug_menu::SetLastUiAction(CopyJoinCode() ? "steam_code_copied" : "steam_code_failed");
+        if (ImGui::Button("Copy join code")) {
+            const bool copied = CopyJoinCode();
+            debug_menu::SetLastUiAction(copied ? "steam_code_copied" : "steam_code_failed");
+            if (copied) coop_hud::Post(coop_hud::EventKind::code_copied, 0, "");
+        }
         ImGui::SameLine();
         ImGui::Button("Reveal (hold)");
         const bool reveal = ImGui::IsItemActive();

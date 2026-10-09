@@ -510,28 +510,76 @@ void ReconnectSameEndpoint() {
 }
 
 // A CLOSE (the partner quit the game): the host is free for a new join at
-// once (lost, no 3 s timeout) and the guest starts reconnecting at once.
+// once (lost, no 3 s timeout) and the guest starts reconnecting at once. A
+// late, reordered DATA of the closed session revives neither side, the guest
+// sends nothing more into the closed session, and a guest on another endpoint
+// (busy while the first one was live) is accepted at once.
+link::PacketType TypeOf(const Datagram& d) {
+    link::Header h{};
+    return link::DecodeHeader(d.bytes.data(), d.bytes.size(), h) == link::DecodeResult::ok ? h.type : link::PacketType::reject;
+}
 void PeerClose() {
     auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 0, 1);
     auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", 0, 2);
     std::uint64_t now = Connect(*host, *guest, 0);
+    // One DATA each way, sent before the CLOSE and delivered after it.
+    const std::uint8_t body[4] = {1, 2, 3, 4};
+    Check(guest->session.SendData(body, sizeof(body), now + 1) && host->session.SendData(body, sizeof(body), now + 1), "late DATA queued");
+    std::vector<Datagram> late_to_host = guest->outbox, late_to_guest = host->outbox;
+    guest->outbox.clear();
+    host->outbox.clear();
     Check(host->session.OnPeerClose(now + 5) && host->session.state() == link::LinkState::lost, "host: CLOSE -> lost at once");
     host->Collect();
     Check(host->Saw(link::EventKind::lost) && !host->session.OnPeerClose(now + 6), "host: one lost event; a second CLOSE changes nothing");
+    const unsigned connected_before = host->Count(link::EventKind::connected);
+    for (const auto& d : late_to_host) host->session.OnDatagram(d.bytes.data(), d.bytes.size(), d.from, now + 7);
+    host->Collect();
+    Check(host->session.state() == link::LinkState::lost && host->Count(link::EventKind::connected) == connected_before && !late_to_host.empty(),
+          "host: a late DATA of the closed session does not revive it");
     Check(guest->session.OnPeerClose(now + 5) && guest->session.state() == link::LinkState::reconnecting, "guest: CLOSE -> reconnecting at once");
     guest->Collect();
     Check(guest->Saw(link::EventKind::reconnecting), "guest: reconnecting event");
-    // The same guest (or a restarted one) is accepted again without the 3 s wait.
-    auto again = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", now + 2100, 9);
-    for (std::uint64_t t = now + 2100; t < now + 2600 && again->session.state() != link::LinkState::connected; t += 20) {
-        Timers({host.get(), again.get()}, t);
-        Pump({host.get(), again.get()}, t);
+    const auto wrong_before = guest->Drops(link::DropReason::wrong_session);
+    for (const auto& d : late_to_guest) guest->session.OnDatagram(d.bytes.data(), d.bytes.size(), d.from, now + 7);
+    guest->Collect();
+    Check(guest->session.state() == link::LinkState::reconnecting && guest->Drops(link::DropReason::wrong_session) == wrong_before + 1,
+          "guest: a late DATA of the closed session is wrong_session (no revival)");
+    // The guest keeps trying HELLOs only: no keepalive goes into the closed session.
+    bool hello_only = true;
+    unsigned hellos = 0;
+    for (std::uint64_t t = now + 10; t < now + 2000; t += 20) {
+        guest->session.OnTimer(t);
+        guest->Collect();
+        for (const auto& d : guest->outbox) {
+            hello_only = hello_only && TypeOf(d) == link::PacketType::hello;
+            hellos += TypeOf(d) == link::PacketType::hello ? 1u : 0u;
+        }
+        guest->outbox.clear();
     }
-    Check(again->session.state() == link::LinkState::connected && host->session.state() == link::LinkState::connected &&
-              host->session.session_number() == 2,
-          "after a CLOSE the host accepts the next join");
+    Check(hello_only && hellos >= 1, "guest: only HELLOs after the CLOSE");
+    // A guest on another endpoint (told busy while the first was live) is accepted at once.
+    const Endpoint otherEp{0x0A000009u, 50001};
+    auto other = MakeNode(link::Role::guest, otherEp, kHostEp, kSecret, true, "0.11.1", now + 2100, 9);
+    for (std::uint64_t t = now + 2100; t < now + 2600 && other->session.state() != link::LinkState::connected; t += 20) {
+        Timers({host.get(), other.get()}, t);
+        Pump({host.get(), other.get()}, t);
+    }
+    Check(other->session.state() == link::LinkState::connected && host->session.state() == link::LinkState::connected &&
+              host->session.session_number() == 2 && mgscoop::lab::SameEndpoint(host->session.peer(), otherEp),
+          "after a CLOSE the host accepts the next join (another endpoint) within 0.5 s");
     auto idle = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 0, 3);
     Check(!idle->session.OnPeerClose(10) && idle->session.state() == link::LinkState::listening, "no session: ignored");
+    // Without a CLOSE the same second guest is busy while the first is live (the CLOSE is what freed the host).
+    auto host2 = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 0, 11);
+    auto guest2 = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", 0, 12);
+    std::uint64_t t2 = Connect(*host2, *guest2, 0);
+    auto other2 = MakeNode(link::Role::guest, otherEp, kHostEp, kSecret, true, "0.11.1", t2, 13);
+    for (std::uint64_t t = t2; t < t2 + 500; t += 20) {
+        Timers({host2.get(), guest2.get(), other2.get()}, t);
+        Pump({host2.get(), guest2.get(), other2.get()}, t);
+    }
+    Check(other2->session.state() == link::LinkState::rejected && other2->session.reject_reason() == link::RejectReason::busy,
+          "control: busy without the CLOSE");
 }
 
 void GuestReconnecting() {

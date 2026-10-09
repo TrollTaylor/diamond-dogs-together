@@ -1650,6 +1650,17 @@ void TestDispatchFunctions() {
     Check(sd::TakeSessionFailed(f) && f.peer == kHost && f.end_reason == 5003 && f.state == 5 && std::strcmp(f.debug, "Timed out ?x??") == 0 &&
               f.sequence == 1 && !sd::TakeSessionFailed(f),
           "1252 mailbox: peer, state, end reason, sanitized debug, taken once");
+    // The debug text is logged: IPv4 addresses are masked (a.b.x.x), nothing else changes.
+    std::memset(info + sn::kConnInfoEndDebug, 0, sn::kConnInfoEndDebugSize);
+    std::memcpy(info + sn::kConnInfoEndDebug, "No route to 203.0.113.77:27015 via 10.1.2.3", 44);
+    sd::SessionFailedFn(info);
+    Check(sd::TakeSessionFailed(f) && std::strcmp(f.debug, "No route to 203.0.x.x:27015 via 10.1.x.x") == 0 && f.sequence == 2,
+          "1252 debug: IPv4 masked");
+    char masked[32]{};
+    sd::MaskAddresses("v1.2.3.4.5 9.9.9.9 1234.1.1.1 1.2.3", masked, sizeof(masked));
+    Check(std::strcmp(masked, "v1.2.3.4.5 9.9.x.x 1234.1.1.1 1") == 0, "MaskAddresses: only whole dotted quads, cut to capacity");
+    sd::MaskAddresses(nullptr, masked, sizeof(masked));
+    Check(masked[0] == 0, "MaskAddresses: null input");
     // 1221 (self-test record): conn, new state, old state, the calling thread.
     std::uint8_t status[sn::kStatusChangedSize]{};
     const std::uint32_t conn = 7;
@@ -2177,6 +2188,12 @@ void TestHud() {
 }  // namespace
 
 int main(int argc, char** argv) {
+    // The shared vectors: argv[1], else the path CMake compiles in.
+#ifdef MGS_LINK_REASONS_JSON
+    const char* reasons = argc >= 2 ? argv[1] : MGS_LINK_REASONS_JSON;
+#else
+    const char* reasons = argc >= 2 ? argv[1] : nullptr;
+#endif
     TestIdentity();
     TestJoinCodes();
     TestGates();
@@ -2199,8 +2216,8 @@ int main(int argc, char** argv) {
     TestDispatchGates();
     TestDispatchTransport();
     TestDispatchRefusals();
-    Check(argc >= 2, "usage: steam_transport_tests <tests/fixtures/link-reasons.json>");
-    TestReasonVectors(argv[1]);
+    Check(reasons != nullptr, "usage: steam_transport_tests <tests/fixtures/link-reasons.json>");
+    TestReasonVectors(reasons);
     TestHud();
     Check(g_allocated == g_released, "every fake message freed exactly once");
     std::printf("steam_transport_tests: %u checks passed\n", g_checks);

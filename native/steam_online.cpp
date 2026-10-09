@@ -11,6 +11,7 @@
 #include <cstdarg>
 #include <initializer_list>
 
+#include "mgscoop/coop_hud.hpp"
 #include "mgscoop/early_patches.hpp"
 #include "mgscoop/link_crypto.hpp"
 #include "mgscoop/partner_net.hpp"
@@ -538,6 +539,7 @@ unsigned HandleInvite(std::uint64_t now) noexcept {
     g_invites[g_invite_next] = InviteSent{id, now};
     g_invite_next = (g_invite_next + 1) % 16;
     if (ok) partner_net::AddSteamKnown(id, lab::KnownKind::invited);
+    if (ok) coop_hud::Post(coop_hud::EventKind::invite_sent, 0, peer);  // a toast once the F9 menu closes
     LogF("steam=invite; to=%s; ok=%u\r\n", peer, ok ? 1u : 0u);
     StringCchPrintfA(g_last_result, ARRAYSIZE(g_last_result), ok ? "Invite sent to %s." : "Steam refused the invite to %s.", peer);
     return 1;

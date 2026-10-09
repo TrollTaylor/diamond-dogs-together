@@ -82,9 +82,13 @@ struct SessionFailed {
     std::uint64_t peer;          // SteamID64 (0 when the identity is not a SteamID)
     std::int32_t state;          // info+0xB0
     std::int32_t end_reason;     // info+0xB4 (ESteamNetConnectionEnd)
-    char debug[kDebugChars + 1]; // info+0xB8, printable ASCII only ('?' otherwise)
+    char debug[kDebugChars + 1]; // info+0xB8, printable ASCII only ('?' otherwise), IPv4 masked
     std::uint32_t sequence;      // 1, 2, ... per stored failure
 };
+// The debug text goes to script-observer.log (and Collect-Logs): a dotted
+// IPv4 address a.b.c.d in it becomes a.b.x.x (never longer). Pure; `out`
+// holds `capacity` bytes and is always NUL-terminated.
+void MaskAddresses(const char* in, char* out, std::size_t capacity) noexcept;
 bool TakeSessionFailed(SessionFailed& out) noexcept;
 
 // ---- 1221 record (self-test stage F): the first kStatusEntries calls.

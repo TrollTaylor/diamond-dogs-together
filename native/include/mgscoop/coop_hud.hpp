@@ -5,7 +5,9 @@
 // LinkView (state, route, round trip, reason, the partner's goodbye, the
 // Steam end reason) and posts events (connected, lost, reconnected, partner
 // left, refused, version mismatch, Steam unavailable); the Steam owner pass
-// and the F9 panel post invite/join/copy events. The overlay's Present thread
+// posts invite_sent and the F9 panel code_copied (the HUD is hidden while the
+// menu is open, so those toasts show for what is left of their 4 s after it
+// closes). The overlay's Present thread
 // owns one Model, turns events into 4 s toasts and draws the line top-right
 // (compact: one line; full: plus a detail line) while the F9 menu is closed.
 // Nothing here reads game memory or calls Steam; the sentences are

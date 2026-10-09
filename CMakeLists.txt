@@ -389,7 +389,10 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/native/probe.cpp")
   target_include_directories(steam_transport_tests PRIVATE native)
   target_link_libraries(steam_transport_tests PRIVATE mgs_coop_lab ws2_32 bcrypt)
   target_compile_options(steam_transport_tests PRIVATE /W4 /WX)
-  add_test(NAME steam_transport_tests COMMAND steam_transport_tests "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/link-reasons.json")
+  # The shared reason vectors (tests/fixtures/link-reasons.json) by path: the
+  # audited worker checks run fixture executables without arguments.
+  target_compile_definitions(steam_transport_tests PRIVATE "MGS_LINK_REASONS_JSON=\"${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/link-reasons.json\"")
+  add_test(NAME steam_transport_tests COMMAND steam_transport_tests)
   add_executable(steam_identity_tests tests/steam_identity_tests.cpp)
   target_link_libraries(steam_identity_tests PRIVATE mgs_coop_lab)
   target_compile_options(steam_identity_tests PRIVATE /W4 /WX)
