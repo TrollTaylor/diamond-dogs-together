@@ -28,6 +28,8 @@
 #include "mgscoop/worker_scenario.hpp"
 #include "mgscoop/worker_frames.hpp"
 #include "mgscoop/nametag.hpp"
+#include "mgscoop/coop_hud.hpp"
+#include "mgscoop/steam_online_state.hpp"
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
 
@@ -137,7 +139,7 @@ ID3D11Device* device = nullptr;
 ID3D11DeviceContext* context = nullptr;
 ID3D11RenderTargetView* target = nullptr;
 ImGuiContext* gui = nullptr;
-bool initialized = false, clip_saved = false, restore_unclipped = false, was_open = false, tag_logged = false;
+bool initialized = false, clip_saved = false, restore_unclipped = false, was_open = false, tag_logged = false, hud_logged = false;
 RECT previous_clip{};
 Message messages[256]{};
 unsigned message_count = 0;
@@ -1103,6 +1105,83 @@ void DrawNametagLayer(const nametag::Frame& frame, nametag::RenderNote& note, co
     }
     nametag::NoteRender(note);
 }
+// The in-game co-op status line and toasts (coop_hud; docs/two-pc-play.md
+// "In game"): copied link data and events only, drawn top-right on the
+// background list while the F9 menu is closed (its Online panel says the
+// same), hidden while a demo plays. The model is Present-thread only.
+coop_hud::Model hud_model;
+struct HudFrame {
+    coop_hud::Line line;
+    bool show_line;
+    const coop_hud::Toast* toasts[coop_hud::kMaxToasts];
+    unsigned toast_count;
+};
+bool HudPrepare(HudFrame& f, bool menu_open) noexcept {
+    f = HudFrame{};
+    if (!coop_hud::Enabled()) return false;
+    const ULONGLONG now = GetTickCount64();
+    coop_hud::LinkView view{};
+    coop_hud::GetLink(view);
+    // The partner's name: the Steam persona (online), else the name tag's
+    // received name; masked id otherwise (FormatLine).
+    char name[48]{};
+    const steam_state::OnlineSnapshot online = steam_state::GetOnline();
+    const nametag::Telemetry tag = nametag::GetTelemetry();
+    if (online.peer_name[0]) StringCchCopyA(name, ARRAYSIZE(name), online.peer_name);
+    else if (tag.name_src == nametag::NameSource::remote && tag.name[0]) StringCchCopyA(name, ARRAYSIZE(name), tag.name);
+    std::uint32_t new_toasts = 0;
+    coop_hud::Event events[8]{};
+    const unsigned taken = coop_hud::Take(events, 8, hud_model.cursor());
+    for (unsigned i = 0; i < taken; ++i) {
+        char text[coop_hud::kToastChars]{};
+        coop_hud::Tone tone{};
+        if (!coop_hud::FormatToast(events[i], view, name, text, sizeof(text), tone)) continue;
+        hud_model.Add(text, tone, now);
+        ++new_toasts;
+    }
+    // A demo hides it (the HUD bit of the Lua tick, fresh only while the game
+    // runs; the title and loading screens show it).
+    const bool demo = (tag.hud & nametag::kHudDemo) != 0 && now >= tag.tick_ms && now - tag.tick_ms < 1000;
+    if (menu_open || demo) {
+        coop_hud::NoteFrame(nullptr, nullptr, true, taken, new_toasts, now);
+        return false;
+    }
+    f.show_line = coop_hud::FormatLine(view, name, coop_hud::GetMode(), now, f.line);
+    f.toast_count = hud_model.Active(now, f.toasts, coop_hud::kMaxToasts);
+    coop_hud::NoteFrame(f.show_line ? &f.line : nullptr, f.toast_count ? f.toasts[0]->text : nullptr, false, taken, new_toasts, now);
+    return f.show_line || f.toast_count;
+}
+ImU32 HudColor(coop_hud::Tone tone, int alpha) noexcept {
+    switch (tone) {
+    case coop_hud::Tone::good: return IM_COL32(120, 255, 150, alpha);
+    case coop_hud::Tone::warn: return IM_COL32(255, 214, 100, alpha);
+    case coop_hud::Tone::bad: return IM_COL32(255, 120, 110, alpha);
+    default: return IM_COL32(240, 240, 240, alpha);
+    }
+}
+void DrawHudLayer(const HudFrame& f, const ImVec2& display) noexcept {
+    ImDrawList* list = ImGui::GetBackgroundDrawList();
+    if (!list || !(display.x > 0.0f) || !(display.y > 0.0f)) return;
+    const float scale = std::fmin(2.0f, std::fmax(0.8f, display.y / 1080.0f));
+    ImFont* font = ImGui::GetFont();
+    const float size = font->LegacySize * std::fmax(1.0f, std::floor(scale + 0.25f)) * 0.85f;
+    const float margin = 14.0f * scale, pad = 5.0f * scale;
+    float y = margin;
+    const auto right_text = [&](const char* text, ImU32 color, float wrap) noexcept {
+        const ImVec2 ts = font->CalcTextSizeA(size, FLT_MAX, wrap, text);
+        const float x = std::floor(display.x - margin - ts.x);
+        list->AddRectFilled(ImVec2(x - pad, y - pad * 0.5f), ImVec2(x + ts.x + pad, y + ts.y + pad * 0.5f), IM_COL32(0, 0, 0, 140), 3.0f * scale);
+        list->AddText(font, size, ImVec2(x + 1, y + 1), IM_COL32(0, 0, 0, 200), text, nullptr, wrap);
+        list->AddText(font, size, ImVec2(x, y), color, text, nullptr, wrap);
+        y += ts.y + pad * 2.0f;
+    };
+    if (f.show_line) {
+        right_text(f.line.text, HudColor(f.line.tone, 235), 0.0f);
+        if (f.line.detail[0]) right_text(f.line.detail, IM_COL32(200, 200, 200, 220), 0.0f);
+    }
+    const float wrap = std::fmin(display.x * 0.4f, 620.0f * scale);
+    for (unsigned i = 0; i < f.toast_count; ++i) right_text(f.toasts[i]->text, HudColor(f.toasts[i]->tone, 245), wrap);
+}
 #ifdef MGS_DEBUG_OVERLAY_TESTING
 // Fixture readback of the backbuffer right after our draw (before Present).
 std::atomic<bool> capture_requested{false};
@@ -1156,6 +1235,8 @@ void Draw(UINT bb_w, UINT bb_h) noexcept {
     nametag::Frame tag_frame{};
     nametag::RenderNote tag_note{};
     const bool tag = NametagFrame(tag_frame, tag_note, bb_w, bb_h);
+    HudFrame hud_frame{};
+    const bool hud = HudPrepare(hud_frame, now_open);
     ImGui_ImplDX11_NewFrame(); ImGui_ImplWin32_NewFrame();
     // Closed menu: the display is the backbuffer (the name tag layer only). The
     // DX11 backend maps one ImGui unit to one backbuffer pixel either way, so
@@ -1165,7 +1246,8 @@ void Draw(UINT bb_w, UINT bb_h) noexcept {
     if (!now_open && sized) io.DisplaySize = ImVec2(static_cast<float>(bb_w), static_cast<float>(bb_h));
     ImGui::NewFrame();
     if (tag) DrawNametagLayer(tag_frame, tag_note, sized ? ImVec2(static_cast<float>(bb_w), static_cast<float>(bb_h)) : io.DisplaySize);
-    if (!now_open && !tag) { ImGui::EndFrame(); return; }
+    if (hud) DrawHudLayer(hud_frame, sized ? ImVec2(static_cast<float>(bb_w), static_cast<float>(bb_h)) : io.DisplaySize);
+    if (!now_open && !tag && !hud) { ImGui::EndFrame(); return; }
     if (now_open) DrawMenu();
     ImGui::Render();
     ExtraState saved(context);
@@ -1174,6 +1256,7 @@ void Draw(UINT bb_w, UINT bb_h) noexcept {
     saved.Restore(context);
     if (now_open && frames.fetch_add(1, std::memory_order_relaxed) == 0) Log("overlay=drawn; frame=1\r\n");
     if (!now_open && tag && !tag_logged) { tag_logged = true; Log("overlay=nametag_drawn; frame=1\r\n"); }
+    if (hud && !hud_logged) { hud_logged = true; Log("overlay=hud_drawn; frame=1\r\n"); }
 }
 #if MGS_BACKGROUND_WORKER
 // Worker builds: the menu is drawn without the Win32 backend, never subclasses
@@ -1210,7 +1293,7 @@ bool WorkerInitialize(IDXGISwapChain* chain) noexcept {
     Log("overlay=worker_render_ready; api=dx11; input=none\r\n");
     return true;
 }
-void WorkerDraw(IDXGISwapChain* chain, bool menu, const nametag::Frame* tag_frame, nametag::RenderNote& tag_note) noexcept {
+void WorkerDraw(IDXGISwapChain* chain, bool menu, const nametag::Frame* tag_frame, nametag::RenderNote& tag_note, const HudFrame* hud) noexcept {
     ImGui::SetCurrentContext(gui);
     DXGI_SWAP_CHAIN_DESC desc{};
     if (FAILED(chain->GetDesc(&desc)) || !desc.BufferDesc.Width || !desc.BufferDesc.Height) {
@@ -1228,6 +1311,7 @@ void WorkerDraw(IDXGISwapChain* chain, bool menu, const nametag::Frame* tag_fram
     io.MouseDrawCursor = false;
     ImGui_ImplDX11_NewFrame(); ImGui::NewFrame();
     if (tag_frame) DrawNametagLayer(*tag_frame, tag_note, io.DisplaySize);
+    if (hud) DrawHudLayer(*hud, io.DisplaySize);
     if (menu) DrawMenu();
     ImGui::Render();
     ExtraState saved(context);
@@ -1236,6 +1320,7 @@ void WorkerDraw(IDXGISwapChain* chain, bool menu, const nametag::Frame* tag_fram
     saved.Restore(context);
     if (menu && frames.fetch_add(1, std::memory_order_relaxed) == 0) Log("overlay=drawn; frame=1; worker=1\r\n");
     if (!menu && tag_frame && !tag_logged) { tag_logged = true; Log("overlay=nametag_drawn; frame=1; worker=1\r\n"); }
+    if (hud && !hud_logged) { hud_logged = true; Log("overlay=hud_drawn; frame=1; worker=1\r\n"); }
 }
 void WorkerResult(const char* text) noexcept {
     debug_menu::ReportMenuResult(worker_request, text);
@@ -1317,10 +1402,12 @@ void WorkerMenu(IDXGISwapChain* chain) noexcept {
     nametag::Frame tag_frame{};
     nametag::RenderNote tag_note{};
     const bool tag = NametagFrame(tag_frame, tag_note, sized ? desc.BufferDesc.Width : 0, sized ? desc.BufferDesc.Height : 0);
-    if (menu || tag) {
+    HudFrame hud_frame{};
+    const bool hud = HudPrepare(hud_frame, menu);
+    if (menu || tag || hud) {
         if (initialized && swapchain != chain) WorkerRelease();
         if (initialized || WorkerInitialize(chain)) {
-            if (target) { WorkerDraw(chain, menu, tag ? &tag_frame : nullptr, tag_note); drawn = menu; }
+            if (target) { WorkerDraw(chain, menu, tag ? &tag_frame : nullptr, tag_note, hud ? &hud_frame : nullptr); drawn = menu; }
             else if (tag) nametag::NoteRender(tag_note);
         } else {
             if (tag) nametag::NoteRender(tag_note);
@@ -1354,7 +1441,7 @@ HRESULT STDMETHODCALLTYPE Present(IDXGISwapChain* chain, UINT interval, UINT fla
         worker_frames::Capture(chain, worker_scenario::TakeCapture(GetTickCount64()));
         ReleaseSRWLockExclusive(&render_lock);
     }
-    if (!worker_scenario::Requested() && (flags & DXGI_PRESENT_TEST) == 0 && (debug_menu::Enabled() || nametag::Enabled()) &&
+    if (!worker_scenario::Requested() && (flags & DXGI_PRESENT_TEST) == 0 && (debug_menu::Enabled() || nametag::Enabled() || coop_hud::Enabled()) &&
         !resizing.load(std::memory_order_acquire)) {
         AcquireSRWLockExclusive(&render_lock);
         if (initialized && swapchain != chain) Cleanup();
@@ -1405,7 +1492,7 @@ HRESULT STDMETHODCALLTYPE Resize(IDXGISwapChain* chain, UINT buffers, UINT width
     SetLastError(original_error); return result;
 }
 BOOL CALLBACK InstallOnce(PINIT_ONCE, PVOID, PVOID*) noexcept {
-    if (!debug_menu::Enabled() && !nametag::Enabled() && !worker_scenario::Requested()) return TRUE;
+    if (!debug_menu::Enabled() && !nametag::Enabled() && !coop_hud::Enabled() && !worker_scenario::Requested()) return TRUE;
     if (worker_scenario::Requested() && !worker_scenario::GetContext().run_id) return TRUE;
     InitializeLog();
     const MH_STATUS status = MH_Initialize();
@@ -1497,7 +1584,8 @@ WorkerInputStats GetWorkerInputStats() noexcept {
 }
 void Install() noexcept {
     const DWORD error = GetLastError();
-    if (debug_menu::Enabled() || nametag::Enabled() || worker_scenario::Requested()) InitOnceExecuteOnce(&install_once, &InstallOnce, nullptr, nullptr);
+    if (debug_menu::Enabled() || nametag::Enabled() || coop_hud::Enabled() || worker_scenario::Requested())
+        InitOnceExecuteOnce(&install_once, &InstallOnce, nullptr, nullptr);
     SetLastError(error);
 }
 #ifdef MGS_DEBUG_OVERLAY_TESTING

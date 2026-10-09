@@ -509,6 +509,31 @@ void ReconnectSameEndpoint() {
           host->session.session_number() == 2, "the same endpoint may reconnect: reconnected");
 }
 
+// A CLOSE (the partner quit the game): the host is free for a new join at
+// once (lost, no 3 s timeout) and the guest starts reconnecting at once.
+void PeerClose() {
+    auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 0, 1);
+    auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", 0, 2);
+    std::uint64_t now = Connect(*host, *guest, 0);
+    Check(host->session.OnPeerClose(now + 5) && host->session.state() == link::LinkState::lost, "host: CLOSE -> lost at once");
+    host->Collect();
+    Check(host->Saw(link::EventKind::lost) && !host->session.OnPeerClose(now + 6), "host: one lost event; a second CLOSE changes nothing");
+    Check(guest->session.OnPeerClose(now + 5) && guest->session.state() == link::LinkState::reconnecting, "guest: CLOSE -> reconnecting at once");
+    guest->Collect();
+    Check(guest->Saw(link::EventKind::reconnecting), "guest: reconnecting event");
+    // The same guest (or a restarted one) is accepted again without the 3 s wait.
+    auto again = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", now + 2100, 9);
+    for (std::uint64_t t = now + 2100; t < now + 2600 && again->session.state() != link::LinkState::connected; t += 20) {
+        Timers({host.get(), again.get()}, t);
+        Pump({host.get(), again.get()}, t);
+    }
+    Check(again->session.state() == link::LinkState::connected && host->session.state() == link::LinkState::connected &&
+              host->session.session_number() == 2,
+          "after a CLOSE the host accepts the next join");
+    auto idle = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 0, 3);
+    Check(!idle->session.OnPeerClose(10) && idle->session.state() == link::LinkState::listening, "no session: ignored");
+}
+
 void GuestReconnecting() {
     auto host = MakeNode(link::Role::host, kHostEp, Endpoint{}, kSecret, true, "0.11.1", 0, 1);
     auto guest = MakeNode(link::Role::guest, kGuestEp, kHostEp, kSecret, true, "0.11.1", 0, 2);
@@ -754,6 +779,7 @@ int main() {
     StaleReject();
     BusyAndTakeover();
     ReconnectSameEndpoint();
+    PeerClose();
     GuestReconnecting();
     RateLimits();
     Malformed();

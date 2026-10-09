@@ -783,6 +783,19 @@ void Session::GuestTimer(std::uint64_t now_ms) noexcept {
     if (current_.valid && (state_ == LinkState::connected || state_ == LinkState::reconnecting)) TimerLive(current_, now_ms);
 }
 
+bool Session::OnPeerClose(std::uint64_t now_ms) noexcept {
+    if (state_ != LinkState::connected || !current_.valid) return false;
+    if (config_.role == Role::host) {
+        state_ = LinkState::lost;
+        Event e = MakeEvent(EventKind::lost);
+        e.after_ms = static_cast<std::uint32_t>(now_ms - current_.last_rx_ms);
+        Push(e);
+    } else {
+        BeginConnecting(now_ms, true);
+    }
+    return true;
+}
+
 void Session::OnTimer(std::uint64_t now_ms) noexcept {
     if (state_ == LinkState::off || state_ == LinkState::disabled) return;
     if (config_.role == Role::host) HostTimer(now_ms);

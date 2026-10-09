@@ -9,7 +9,9 @@
 // and only enqueues:
 //   1251: identity type 16 / size 8 / individual SteamID -> a 16-entry queue
 //         (SRW lock held only for the push), duplicates coalesced, full ->
-//         dropped (counted).
+//         dropped (counted). The same queue takes the requests of the
+//         function-pointer dispatch (steam_dispatch, config 204): each entry
+//         carries the mask of the sources that reported it.
 //   337:  the 264-byte payload -> a single-slot mailbox (newest wins, at most
 //         one per 2 s); parsing happens on the transport thread.
 // Constant-initialized static state; nothing allocates.
@@ -29,8 +31,17 @@ steam_net::CallbackObject* JoinRequestObject() noexcept;
 const void* const* SessionRequestVtable() noexcept;
 const void* const* JoinRequestVtable() noexcept;
 
-// Transport thread: the oldest queued request (SteamID64); false when empty.
-bool PopSessionRequest(std::uint64_t& id) noexcept;
+// Where a session request came from (docs/steam-online.md section 20).
+inline constexpr std::uint8_t kSourceCallback = 1;  // 1251 through the 2015 steam_api (Init wrapper)
+inline constexpr std::uint8_t kSourceFnptr = 2;     // config 204 + Sockets012::RunCallbacks
+// "callback", "fnptr", "fnptr+callback" (or "none").
+const char* SourceName(std::uint8_t sources) noexcept;
+// Transport thread: the oldest queued request (SteamID64) and its sources;
+// false when empty.
+bool PopSessionRequest(std::uint64_t& id, std::uint8_t& sources) noexcept;
+// A request from a source other than the registered 1251 object (the
+// function-pointer dispatch): the 136-byte identity, validated as 1251.
+void OnSessionRequestFrom(const void* payload, std::uint8_t source) noexcept;
 // Transport thread: takes the mailbox (copied out, slot cleared).
 bool TakeJoinRequest(steam_net::JoinRequested& out) noexcept;
 
@@ -42,6 +53,8 @@ struct Stats {
     std::uint32_t joins;         // 337 posts stored
     std::uint32_t join_throttled;
     std::uint32_t faults;        // __except in a handler
+    std::uint32_t req_cb;        // valid requests per source (before coalescing)
+    std::uint32_t req_fn;
 };
 Stats GetStats() noexcept;
 

@@ -4,7 +4,11 @@
 // the accept policy and guest filter, route decoding, Release-exactly-once,
 // fault latching, shutdown, and two link v2 sessions end to end over two
 // SteamTransports on fake ISteamNetworkingMessages002 / Sockets012 objects.
-// No Steam call is made and steamclient64 is never loaded.
+// Section 20: the function-pointer dispatch (config 204/205 queued for
+// Sockets012::RunCallbacks, the sources of a session request, 1252, the
+// disp32 forwarder and owner gates), the plain-language reasons against the
+// shared vectors (argv[1] = tests/fixtures/link-reasons.json) and the in-game
+// status line model. No Steam call is made and steamclient64 is never loaded.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -15,14 +19,19 @@
 #include <deque>
 #include <map>
 #include <set>
+#include <string>
 #include <utility>
 #include <vector>
 
+#include "mgscoop/coop_hud.hpp"
+#include "mgscoop/coop_reason_text.hpp"
 #include "mgscoop/link_crypto.hpp"
+#include "mgscoop/link_session.hpp"
 #include "mgscoop/steam_join_code.hpp"
 #include "mgscoop/steam_link_harness.hpp"
 #include "mgscoop/steam_net_abi.hpp"
 #include "mgscoop/steam_net_callbacks.hpp"
+#include "mgscoop/steam_net_dispatch.hpp"
 #include "mgscoop/steam_net_gates.hpp"
 #include "mgscoop/steam_online_state.hpp"
 #include "mgscoop/steam_transport.hpp"
@@ -91,6 +100,64 @@ sn::Identity Id(std::uint64_t id) {
     return identity;
 }
 
+class FakeDispatchHub {
+public:
+    struct SetCall { std::int32_t value, scope; std::intptr_t object; std::int32_t type; sn::ConfigCallbackFn fn; };
+    bool Set(std::int32_t value, std::int32_t scope, std::intptr_t object, std::int32_t type, const void* arg) {
+        if (fault_set) RaiseException(EXCEPTION_ACCESS_VIOLATION, 0, 0, nullptr);
+        AcquireSRWLockExclusive(&lock_);
+        const sn::ConfigCallbackFn fn = arg ? *static_cast<const sn::ConfigCallbackFn*>(arg) : nullptr;
+        calls.push_back(SetCall{value, scope, object, type, fn});
+        bool ok = value != fail_value && (!arg || type == sn::kConfigTypePtr);
+        if (ok) global_[value] = fn;
+        ReleaseSRWLockExclusive(&lock_);
+        return ok;
+    }
+    // steamclient's queue: only when a pointer is set (InternalQueueCallback).
+    bool Queue(std::int32_t value, const void* payload, std::size_t size) {
+        AcquireSRWLockExclusive(&lock_);
+        const sn::ConfigCallbackFn fn = global_.count(value) ? global_[value] : nullptr;
+        if (fn) queue_.push_back(std::make_pair(fn, std::vector<std::uint8_t>(static_cast<const std::uint8_t*>(payload),
+                                                                               static_cast<const std::uint8_t*>(payload) + size)));
+        ReleaseSRWLockExclusive(&lock_);
+        return fn != nullptr;
+    }
+    // RunCallbacks: swap the queue under the lock, dispatch outside it.
+    void Run() {
+        if (fault_run) RaiseException(EXCEPTION_ACCESS_VIOLATION, 0, 0, nullptr);
+        std::deque<std::pair<sn::ConfigCallbackFn, std::vector<std::uint8_t>>> work;
+        AcquireSRWLockExclusive(&lock_);
+        work.swap(queue_);
+        ++runs;
+        run_thread = GetCurrentThreadId();
+        ReleaseSRWLockExclusive(&lock_);
+        for (auto& item : work) item.first(item.second.data());
+    }
+    sn::ConfigCallbackFn Global(std::int32_t value) {
+        AcquireSRWLockExclusive(&lock_);
+        const sn::ConfigCallbackFn fn = global_.count(value) ? global_[value] : nullptr;
+        ReleaseSRWLockExclusive(&lock_);
+        return fn;
+    }
+    bool AnySet() { return Global(sn::kConfigMessagesSessionRequest) || Global(sn::kConfigMessagesSessionFailed); }
+    unsigned Calls() {
+        AcquireSRWLockExclusive(&lock_);
+        const auto n = static_cast<unsigned>(calls.size());
+        ReleaseSRWLockExclusive(&lock_);
+        return n;
+    }
+    std::vector<SetCall> calls;
+    volatile LONG runs = 0;
+    volatile DWORD run_thread = 0;
+    std::int32_t fail_value = 0;
+    bool fault_set = false, fault_run = false;
+
+private:
+    SRWLOCK lock_ = SRWLOCK_INIT;
+    std::map<std::int32_t, sn::ConfigCallbackFn> global_;
+    std::deque<std::pair<sn::ConfigCallbackFn, std::vector<std::uint8_t>>> queue_;
+};
+
 // ------------------------------------------------- FakeNet (Messages002 hub)
 // Steam semantics the transport relies on: the first message to a peer
 // that has not accepted is held and posts a session request (1251); a send
@@ -107,6 +174,31 @@ public:
     void Add(std::uint64_t id) {
         Lock l(this);
         users_[id];
+    }
+    // Section 20: this user's function-pointer queue (config 204/205), and
+    // whether its Init-wrapper 1251 reaches steam_cb directly (both sources).
+    void SetHub(std::uint64_t id, FakeDispatchHub* hub, bool callback_to_queue) {
+        Lock l(this);
+        users_[id].hub = hub;
+        users_[id].callback_to_queue = callback_to_queue;
+    }
+    // A failed session (1252) for `self` with `remote`.
+    void FailSession(std::uint64_t self, std::uint64_t remote, std::int32_t end, const char* debug) {
+        Lock l(this);
+        User& u = users_[self];
+        if (!u.hub) return;
+        std::uint8_t info[sn::kSessionFailedSize]{};
+        const sn::Identity id = Id(remote);
+        std::memcpy(info + sn::kConnInfoIdentity, &id, sizeof(id));
+        const std::int32_t state = sn::kConnProblemDetectedLocally;
+        std::memcpy(info + sn::kConnInfoState, &state, 4);
+        std::memcpy(info + sn::kConnInfoEndReason, &end, 4);
+        std::memcpy(info + sn::kConnInfoEndDebug, debug, std::strlen(debug));
+        u.hub->Queue(sn::kConfigMessagesSessionFailed, info, sizeof(info));
+    }
+    unsigned ClosesWithPointer() {
+        Lock l(this);
+        return closes_with_pointer_;
     }
     std::int32_t Send(std::uint64_t from, std::uint64_t to, const void* data, std::uint32_t size, std::int32_t flags, std::int32_t channel) {
         Lock l(this);
@@ -136,6 +228,9 @@ public:
                 if (!dest.request_posted.count(from)) {
                     dest.request_posted.insert(from);
                     dest.requests.push_back(from);
+                    const sn::Identity who = Id(from);
+                    if (dest.hub) dest.hub->Queue(sn::kConfigMessagesSessionRequest, &who, sizeof(who));
+                    if (dest.callback_to_queue) mgscoop::steam_cb::OnSessionRequest(&who);
                 }
             }
         }
@@ -184,6 +279,7 @@ public:
         Lock l(this);
         ++stats_.closes;
         ++closes_[std::make_pair(self, remote)];
+        if (users_[self].hub && users_[self].hub->AnySet()) ++closes_with_pointer_;
         users_[self].accepted.erase(remote);
         users_[self].request_posted.erase(remote);
         return true;
@@ -251,6 +347,8 @@ private:
         std::set<std::uint64_t> accepted, request_posted;
         std::vector<std::pair<std::uint64_t, FakeMessage*>> held;
         std::deque<std::uint64_t> requests;
+        FakeDispatchHub* hub = nullptr;
+        bool callback_to_queue = false;
     };
     struct Lock {
         explicit Lock(FakeNet* n) : net(n) { AcquireSRWLockExclusive(&net->lock_); }
@@ -274,6 +372,7 @@ private:
     std::map<std::pair<std::uint64_t, std::uint64_t>, unsigned> closes_;
     Stats stats_{};
     unsigned restarts_ = 0;
+    unsigned closes_with_pointer_ = 0;
     std::int32_t last_flags_ = 0;
     unsigned rng_ = 0x12345678u;
 };
@@ -371,6 +470,12 @@ public:
         *b = 12;
         return true;
     }
+    void RunCallbacks() override {
+        InterlockedIncrement(&run_calls_);
+        if (hub) hub->Run();
+    }
+    FakeDispatchHub* hub = nullptr;
+    volatile LONG run_calls_ = 0;
     void Clear() {
         AcquireSRWLockExclusive(&lock_);
         for (auto& [conn, q] : inbox_) {
@@ -397,6 +502,10 @@ public:
         last_age = age;
         return false;
     }
+    bool SetConfigValue(std::int32_t value, std::int32_t scope, std::intptr_t object, std::int32_t type, const void* arg) override {
+        return hub && hub->Set(value, scope, object, type, arg);
+    }
+    FakeDispatchHub* hub = nullptr;
     unsigned pings = 0;
     float last_age = 0;
 };
@@ -417,7 +526,11 @@ int Resolve(void* ctx, lab::SteamNetApi& out, const char*& reason) noexcept {
 void OnFault(void* ctx, const char*) noexcept { InterlockedIncrement(&static_cast<ApiBox*>(ctx)->faults); }
 
 FakeNet* g_net = nullptr;
-bool PopHostRequest(std::uint64_t& id) noexcept { return g_net && g_net->PopRequest(kHost, id); }
+// The Init wrapper's 1251 as steam_api would dispatch it (source callback).
+bool PopHostRequest(std::uint64_t& id, std::uint8_t& sources) noexcept {
+    sources = mgscoop::steam_cb::kSourceCallback;
+    return g_net && g_net->PopRequest(kHost, id);
+}
 
 // Transport log capture: counts the "steam=accept;" lines.
 volatile LONG g_accept_lines = 0;
@@ -768,8 +881,9 @@ void FakeDispatch(void* cb, void* payload, bool game_server) {
 DWORD WINAPI TakeBothProbe(void*) {
     mgscoop::steam_net::JoinRequested out{};
     std::uint64_t id = 0;
+    std::uint8_t src = 0;
     mgscoop::steam_cb::TakeJoinRequest(out);
-    mgscoop::steam_cb::PopSessionRequest(id);
+    mgscoop::steam_cb::PopSessionRequest(id, src);
     return 0;
 }
 void TestCallbacks() {
@@ -787,26 +901,28 @@ void TestCallbacks() {
     sn::Identity g = Id(kGuest);
     FakeDispatch(req, &g, true);
     std::uint64_t id = 0;
-    Check(!cb::PopSessionRequest(id), "a GameServer dispatch is filtered");
+    std::uint8_t src = 0;
+    Check(!cb::PopSessionRequest(id, src), "a GameServer dispatch is filtered");
     FakeDispatch(req, &g, false);
     FakeDispatch(req, &g, false);
-    Check(cb::PopSessionRequest(id) && id == kGuest && !cb::PopSessionRequest(id), "1251 enqueued once (duplicates coalesced)");
+    Check(cb::PopSessionRequest(id, src) && id == kGuest && src == cb::kSourceCallback && !cb::PopSessionRequest(id, src),
+          "1251 enqueued once (duplicates coalesced), source callback");
     Check(cb::GetStats().coalesced == 1, "coalesced counted");
     sn::Identity ip{};
     ip.type = 1;
     ip.size = 18;
     FakeDispatch(req, &ip, false);
-    Check(cb::GetStats().bad_identity == 1 && !cb::PopSessionRequest(id), "a non-SteamID identity is refused");
+    Check(cb::GetStats().bad_identity == 1 && !cb::PopSessionRequest(id, src), "a non-SteamID identity is refused");
     for (std::uint64_t i = 1; i <= 17; ++i) {
         sn::Identity x = Id(0x0110000100010000ull + i);
         FakeDispatch(req, &x, false);
     }
     unsigned popped = 0;
-    while (cb::PopSessionRequest(id)) ++popped;
+    while (cb::PopSessionRequest(id, src)) ++popped;
     Check(popped == 16 && cb::GetStats().dropped == 1, "16-entry queue, the 17th dropped");
     // Slot 0 Run(p, io, call) forwards to Run(p).
     reinterpret_cast<sn::CallbackRunIoFn>(req->vptr[0])(req, &g, false, 0);
-    Check(cb::PopSessionRequest(id) && id == kGuest, "slot 0 overload");
+    Check(cb::PopSessionRequest(id, src) && id == kGuest, "slot 0 overload");
     // 337: newest within the rate, at most 1 per 2 s.
     sn::JoinRequested a{}, b{};
     a.friend_id = kHost;
@@ -836,7 +952,7 @@ void TestCallbacks() {
     Check(probe && WaitForSingleObject(probe, 3000) == WAIT_OBJECT_0, "no lock left held after a handler fault");
     if (probe) CloseHandle(probe);
     FakeDispatch(req, &g, false);
-    Check(cb::PopSessionRequest(id) && id == kGuest, "1251 still enqueues after the fault");
+    Check(cb::PopSessionRequest(id, src) && id == kGuest, "1251 still enqueues after the fault");
     VirtualFree(pages, 0, MEM_RELEASE);
     cb::ResetForTest();
 }
@@ -1439,8 +1555,26 @@ void TestState() {
     r.pair = st::PairResult{true, 4, 500, 500, 64, 64, 1, 564, 564, 0};
     r.relay = 100;
     Check(st::FormatStatusLine(r, line, sizeof(line)) &&
-              std::strcmp(line, "steam_selftest;verdict=pass;reason=;stage=P;pair=500/500;rel=64/64;release=564/564;relay=100") == 0,
+              std::strcmp(line, "steam_selftest;verdict=pass;reason=;stage=P;pair=500/500;rel=64/64;release=564/564;relay=100;fn=none") == 0,
           "pass line");
+    // Stage F/D (section 20): the fn verdict on the status line.
+    r.fn.ran = true;
+    r.fn.set204 = r.fn.reset204 = r.fn.conn_ok = r.fn.thread_ok = r.fn.d_install = r.fn.d_uninstall = true;
+    r.fn.status_cb = 1;
+    r.fn.old_state = 3;
+    r.fn.new_state = 4;
+    Check(std::strcmp(st::FnVerdict(r.fn), "ok") == 0, "fn ok");
+    r.fn.pre_pump = 1;
+    Check(std::strcmp(st::FnVerdict(r.fn), "fail") == 0, "fn: a callback before our pump fails");
+    r.fn.pre_pump = 0;
+    r.fn.thread_ok = false;
+    Check(std::strcmp(st::FnVerdict(r.fn), "fail") == 0, "fn: another thread fails");
+    r.fn.thread_ok = true;
+    Check(st::FormatStatusLine(r, line, sizeof(line)) && std::strstr(line, ";relay=100;fn=ok") && std::strlen(line) <= 160, "fn=ok on the line");
+    r.fn = st::FnResult{};
+    r.fn.skipped = true;
+    Check(st::FormatStatusLine(r, line, sizeof(line)) && std::strstr(line, ";fn=skip"), "fn=skip");
+    r.fn = st::FnResult{};
     st::PublishReport(r);
     Check(st::GetReport().pair.frames_rx == 500, "report published");
     // UI mailboxes.
@@ -1464,9 +1598,585 @@ void TestState() {
     Check(st::InvitePageMs() == 1234, "invite page heartbeat");
     st::ResetForTest();
 }
+// ------------------------------------- 12. function-pointer dispatch (section 20)
+// One fake "process": SetConfigValue stores the pointers, FakeNet queues
+// 1251 / 1252 for them, and only RunCallbacks dispatches (on the caller).
+void TestDispatchFunctions() {
+    namespace sd = mgscoop::steam_dispatch;
+    namespace cb = mgscoop::steam_cb;
+    sd::ResetForTest();
+    cb::ResetForTest();
+    // Variants: who installs what, who keeps the Init wrapper.
+    Check(sd::InstallBits(sd::Variant::both, true) == 3 && sd::InstallBits(sd::Variant::both, false) == 2 &&
+              sd::InstallBits(sd::Variant::fnptr, true) == 3 && sd::InstallBits(sd::Variant::fnptr, false) == 2 &&
+              sd::InstallBits(sd::Variant::callback, true) == 0 && sd::InstallBits(sd::Variant::poll, false) == 0,
+          "host installs 204+205, guest 205, callback/poll none");
+    Check(sd::UsesInitWrapper(sd::Variant::both, true) && sd::UsesInitWrapper(sd::Variant::callback, false) &&
+              !sd::UsesInitWrapper(sd::Variant::fnptr, true) && sd::UsesInitWrapper(sd::Variant::fnptr, false) &&
+              !sd::UsesInitWrapper(sd::Variant::poll, true) && !sd::UsesInitWrapper(sd::Variant::poll, false),
+          "Init wrapper: both/callback, the fnptr guest (337), never poll");
+    Check(std::strcmp(sd::VariantName(sd::Variant::fnptr), "fnptr") == 0, "variant names");
+    // 1251 through the function: steam_cb with source fnptr.
+    sn::Identity g = Id(kGuest);
+    sd::SessionRequestFn(&g);
+    std::uint64_t id = 0;
+    std::uint8_t src = 0;
+    Check(cb::PopSessionRequest(id, src) && id == kGuest && src == cb::kSourceFnptr && sd::GetStats().req_fn == 1 && cb::GetStats().req_fn == 1,
+          "a function-pointer 1251 enqueues with source fnptr");
+    // Both sources while queued: one entry, both bits.
+    cb::OnSessionRequest(&g);
+    sd::SessionRequestFn(&g);
+    Check(cb::PopSessionRequest(id, src) && src == (cb::kSourceCallback | cb::kSourceFnptr) && std::strcmp(cb::SourceName(src), "fnptr+callback") == 0 &&
+              !cb::PopSessionRequest(id, src),
+          "a duplicate from both sources coalesces (fnptr+callback)");
+    Check(cb::GetStats().req_cb == 1 && cb::GetStats().req_fn == 2, "per-source counters");
+    Check(std::strcmp(cb::SourceName(cb::kSourceCallback), "callback") == 0 && std::strcmp(cb::SourceName(0), "none") == 0, "source names");
+    // A bad identity is counted, never queued.
+    sn::Identity ip{};
+    ip.type = sn::kIdentityIp;
+    ip.size = sn::kIdentityIpSize;
+    sd::SessionRequestFn(&ip);
+    Check(sd::GetStats().bad_payload == 1 && cb::GetStats().bad_identity == 1 && !cb::PopSessionRequest(id, src), "bad identity counted");
+    // 1252: the newest failure in a mailbox, the debug text sanitized.
+    std::uint8_t info[sn::kSessionFailedSize]{};
+    const sn::Identity host = Id(kHost);
+    std::memcpy(info + sn::kConnInfoIdentity, &host, sizeof(host));
+    const std::int32_t state = sn::kConnProblemDetectedLocally, end = 5003;
+    std::memcpy(info + sn::kConnInfoState, &state, 4);
+    std::memcpy(info + sn::kConnInfoEndReason, &end, 4);
+    std::memcpy(info + sn::kConnInfoEndDebug, "Timed out \"x\"\x01", 14);
+    sd::SessionFailedFn(info);
+    sd::SessionFailed f{};
+    Check(sd::TakeSessionFailed(f) && f.peer == kHost && f.end_reason == 5003 && f.state == 5 && std::strcmp(f.debug, "Timed out ?x??") == 0 &&
+              f.sequence == 1 && !sd::TakeSessionFailed(f),
+          "1252 mailbox: peer, state, end reason, sanitized debug, taken once");
+    // 1221 (self-test record): conn, new state, old state, the calling thread.
+    std::uint8_t status[sn::kStatusChangedSize]{};
+    const std::uint32_t conn = 7;
+    const std::int32_t closed = sn::kConnClosedByPeer, connected = sn::kConnConnected;
+    std::memcpy(status + sn::kStatusChangedConn, &conn, 4);
+    std::memcpy(status + sn::kStatusChangedInfo + sn::kConnInfoState, &closed, 4);
+    std::memcpy(status + sn::kStatusChangedOldState, &connected, 4);
+    sd::ConnectionStatusFn(status);
+    const sd::StatusRecord record = sd::GetStatusRecord();
+    Check(record.calls == 1 && record.entries[0].conn == 7 && record.entries[0].new_state == 4 && record.entries[0].old_state == 3 &&
+              record.entries[0].thread == GetCurrentThreadId(),
+          "1221 record (conn, 3 -> 4, thread)");
+    // A fault inside one of our functions is caught and counted.
+    sd::SessionRequestFn(reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x10)));
+    Check(sd::GetStats().faults == 1, "a fault inside the function is caught");
+    sd::ResetForTest();
+    cb::ResetForTest();
+}
+
+
+// Transport log capture (section 20): the dispatch and accept lines.
+SRWLOCK g_log_lock = SRWLOCK_INIT;
+std::vector<std::string> g_log_lines;
+void CaptureLog(const char* line) noexcept {
+    AcquireSRWLockExclusive(&g_log_lock);
+    g_log_lines.emplace_back(line ? line : "");
+    ReleaseSRWLockExclusive(&g_log_lock);
+}
+bool Logged(const char* needle) {
+    AcquireSRWLockExclusive(&g_log_lock);
+    bool found = false;
+    for (const auto& l : g_log_lines) found = found || l.find(needle) != std::string::npos;
+    ReleaseSRWLockExclusive(&g_log_lock);
+    return found;
+}
+unsigned LoggedCount(const char* needle) {
+    AcquireSRWLockExclusive(&g_log_lock);
+    unsigned n = 0;
+    for (const auto& l : g_log_lines) n += l.find(needle) != std::string::npos ? 1u : 0u;
+    ReleaseSRWLockExclusive(&g_log_lock);
+    return n;
+}
+void ClearLog() {
+    AcquireSRWLockExclusive(&g_log_lock);
+    g_log_lines.clear();
+    ReleaseSRWLockExclusive(&g_log_lock);
+}
+
+// The play path: the host installs 204+205 once ready, pumps on its thread,
+// accepts a function-pointer request (no Init-wrapper callback in this net),
+// merges a second source into one accept, resets the pointers on stop() and
+// before CloseSessionWithUser at shutdown; the guest installs only 205.
+void TestDispatchTransport() {
+    namespace sd = mgscoop::steam_dispatch;
+    namespace cb = mgscoop::steam_cb;
+    sd::ResetForTest();
+    cb::ResetForTest();
+    ClearLog();
+    static FakeNet net;
+    static FakeDispatchHub hub_h, hub_g;
+    constexpr std::uint64_t kJoiner2 = 0x0110000100006006ull;
+    net.Add(kHost);
+    net.Add(kGuest);
+    net.Add(kStranger);
+    net.Add(kJoiner2);
+    net.SetHub(kHost, &hub_h, false);
+    static FakeMessages002 mh(&net, kHost), mx(&net, kStranger), mj(&net, kJoiner2), mg(&net, kGuest);
+    static FakeSockets012 sh;
+    static FakeUtils004 uh;
+    sh.hub = &hub_h;
+    uh.hub = &hub_h;
+    static ApiBox bh;
+    bh.api.messages = &mh;
+    bh.api.sockets = &sh;
+    bh.api.utils = &uh;
+    bh.api.dispatch_refused = nullptr;
+    static Recorder rec;
+    static lab::SteamTransport t;
+    lab::SteamTransportConfig c{};
+    c.role = lab::SteamRole::host;
+    c.self_id = kHost;
+    c.resolve = &Resolve;
+    c.resolve_ctx = &bh;
+    c.pop_request = &cb::PopSessionRequest;
+    c.dispatch = sd::InstallBits(sd::Variant::both, true);
+    c.log = &CaptureLog;
+    Check(t.start(c, Sink(rec)) && WaitFor([&] { return t.ready() && t.dispatch_state() == lab::DispatchState::on; }, 2000),
+          "host ready, function pointer on");
+    Check(hub_h.Global(sn::kConfigMessagesSessionRequest) == &sd::SessionRequestFn &&
+              hub_h.Global(sn::kConfigMessagesSessionFailed) == &sd::SessionFailedFn && hub_h.calls.size() == 2 &&
+              hub_h.calls[0].scope == sn::kConfigScopeGlobal && hub_h.calls[0].object == 0 && hub_h.calls[0].type == sn::kConfigTypePtr,
+          "the host installs 204 and 205 (Global, Ptr)");
+    Check(Logged("steam=dispatch; fnptr=on; ids=1251+1252"), "fnptr=on logged");
+    std::uint8_t hello[64]{};
+    mx.SendMessageToUser(Id(kHost), hello, sizeof(hello), sn::kMsgFlags, sn::kLinkChannel);
+    Check(WaitFor([&] { return rec.datagrams >= 1; }, 2000), "a function-pointer request is accepted; the held message arrives");
+    Check(hub_h.runs > 0 && hub_h.run_thread != GetCurrentThreadId(), "RunCallbacks runs on the transport thread");
+    char masked[24]{};
+    code::FormatPeer(kStranger, masked);
+    Check(Logged((std::string("steam=accept; peer=") + masked + "; via=fnptr\r\n").c_str()), "accept via=fnptr");
+    // Both sources for one joiner (the Init wrapper's 1251 and the function
+    // pointer): one accept, whichever source the transport pops first (while
+    // both are queued it is one entry, via=fnptr+callback: TestDispatchFunctions).
+    net.SetHub(kHost, &hub_h, true);
+    mj.SendMessageToUser(Id(kHost), hello, sizeof(hello), sn::kMsgFlags, sn::kLinkChannel);
+    Check(WaitFor([&] { return rec.datagrams >= 2; }, 2000), "the second joiner is accepted");
+    Check(WaitFor([&] { return mgscoop::steam_cb::GetStats().req_cb >= 1 && sd::GetStats().req_fn >= 2; }, 2000), "both sources reported it");
+    code::FormatPeer(kJoiner2, masked);
+    const std::string accept_joiner = std::string("steam=accept; peer=") + masked + "; via=";
+    Check(WaitFor([&] { return LoggedCount(accept_joiner.c_str()) == 1; }, 1000) && t.steam_stats().accepted == 2,
+          "a duplicate from both sources gives one accept");
+    // The other source reporting an accepted request later is not a new accept.
+    const std::uint64_t dup = t.steam_stats().accept_dup;
+    const sn::Identity late = Id(kJoiner2);
+    cb::OnSessionRequest(&late);
+    Check(WaitFor([&] { return t.steam_stats().accept_dup > dup; }, 2000) && LoggedCount(accept_joiner.c_str()) == 1 &&
+              t.steam_stats().accepted == 2,
+          "a late second source is a dup, not a new accept");
+    t.stop();
+    Check(!hub_h.AnySet() && sd::Installed() == 0 && Logged("steam=dispatch; fnptr=off; reason=stopping"), "stop() resets 204 and 205");
+    // Guest: 205 only.
+    ClearLog();
+    sd::ResetForTest();
+    net.SetHub(kGuest, &hub_g, false);
+    static FakeSockets012 sg;
+    static FakeUtils004 ug;
+    sg.hub = &hub_g;
+    ug.hub = &hub_g;
+    static ApiBox bg;
+    bg.api.messages = &mg;
+    bg.api.sockets = &sg;
+    bg.api.utils = &ug;
+    bg.api.dispatch_refused = nullptr;
+    static Recorder rg;
+    static lab::SteamTransport tg;
+    lab::SteamTransportConfig cg{};
+    cg.role = lab::SteamRole::guest;
+    cg.self_id = kGuest;
+    cg.host_id = kHost;
+    cg.resolve = &Resolve;
+    cg.resolve_ctx = &bg;
+    cg.dispatch = sd::InstallBits(sd::Variant::both, false);
+    cg.log = &CaptureLog;
+    Check(tg.start(cg, Sink(rg)) && WaitFor([&] { return tg.dispatch_state() == lab::DispatchState::on; }, 2000), "guest fnptr on");
+    Check(!hub_g.Global(sn::kConfigMessagesSessionRequest) && hub_g.Global(sn::kConfigMessagesSessionFailed) == &sd::SessionFailedFn &&
+              Logged("ids=1252"),
+          "the guest installs only 205");
+    // A 1252 for the guest reaches the mailbox through its own pump.
+    net.FailSession(kGuest, kHost, 5003, "timeout");
+    sd::SessionFailed f{};
+    Check(WaitFor([&] { return sd::TakeSessionFailed(f); }, 2000) && f.peer == kHost && f.end_reason == 5003, "1252 delivered by the pump");
+    // Shutdown: the pointers are reset before CloseSessionWithUser.
+    tg.request_shutdown();
+    Check(WaitFor([&] { return Logged("steam=parked; reason=shutdown"); }, 2000), "guest parked");
+    Check(!hub_g.AnySet() && net.ClosesWithPointer() == 0 && net.Closes(kGuest, kHost) == 1, "shutdown: reset, then CloseSessionWithUser");
+    tg.stop();
+    net.Drain();
+}
+
+// Refusals: a gate refusal or a failed SetConfigValue leaves the link on the
+// Init-wrapper callback and polling; a fault in RunCallbacks latches and
+// makes no further call (no reset either).
+void TestDispatchRefusals() {
+    namespace sd = mgscoop::steam_dispatch;
+    namespace cb = mgscoop::steam_cb;
+    sd::ResetForTest();
+    cb::ResetForTest();
+    ClearLog();
+    static FakeNet net;
+    g_net = &net;
+    static FakeDispatchHub hub;
+    net.Add(kHost);
+    net.Add(kStranger);
+    net.SetHub(kHost, &hub, false);
+    static FakeMessages002 mh(&net, kHost), mx(&net, kStranger);
+    static FakeSockets012 sh;
+    static FakeUtils004 uh;
+    sh.hub = &hub;
+    uh.hub = &hub;
+    static ApiBox bh;
+    bh.api.messages = &mh;
+    bh.api.sockets = &sh;
+    bh.api.utils = &uh;
+    bh.api.dispatch_refused = "sockets_slot41";
+    lab::SteamTransportConfig c{};
+    c.role = lab::SteamRole::host;
+    c.self_id = kHost;
+    c.resolve = &Resolve;
+    c.resolve_ctx = &bh;
+    c.pop_request = &PopHostRequest;
+    c.dispatch = sd::InstallBits(sd::Variant::both, true);
+    c.log = &CaptureLog;
+    {
+        static Recorder rec;
+        static lab::SteamTransport t;
+        Check(t.start(c, Sink(rec)) && WaitFor([&] { return t.dispatch_state() == lab::DispatchState::refused; }, 2000), "gate refusal");
+        Check(std::strcmp(t.dispatch_reason(), "sockets_slot41") == 0 && hub.Calls() == 0 &&
+                  Logged("steam=dispatch; fnptr=refused; reason=sockets_slot41; fallback=callback+poll"),
+              "a refused gate makes no SetConfigValue call");
+        std::uint8_t hello[64]{};
+        mx.SendMessageToUser(Id(kHost), hello, sizeof(hello), sn::kMsgFlags, sn::kLinkChannel);
+        Check(WaitFor([&] { return rec.datagrams >= 1; }, 2000) && Logged("via=callback"), "the link still accepts through the callback");
+        t.stop();
+    }
+    // SetConfigValue(205) refused: all or nothing, then the callback path.
+    bh.api.dispatch_refused = nullptr;
+    hub.fail_value = sn::kConfigMessagesSessionFailed;
+    ClearLog();
+    {
+        static Recorder rec;
+        static lab::SteamTransport t;
+        Check(t.start(c, Sink(rec)) && WaitFor([&] { return t.dispatch_state() == lab::DispatchState::refused; }, 2000), "install refused");
+        Check(std::strcmp(t.dispatch_reason(), "set_205") == 0 && !hub.AnySet() && Logged("fnptr=refused; reason=set_205"),
+              "a refused 205 resets 204 (all or nothing)");
+        t.stop();
+    }
+    hub.fail_value = 0;
+    // A fault inside RunCallbacks: the transport latches and makes no further call.
+    hub.fault_run = true;
+    {
+        static Recorder rec;
+        static lab::SteamTransport t;
+        Check(t.start(c, Sink(rec)) && WaitFor([&] { return t.faulted(); }, 2000), "fault in RunCallbacks latches");
+        const unsigned calls = hub.Calls();
+        t.stop();
+        Check(hub.Calls() == calls && hub.AnySet() && std::strcmp(rec.failed, "fault") == 0, "no call after the fault (the pointers stay set)");
+    }
+    hub.fault_run = false;
+    net.Drain();
+    g_net = nullptr;
+    sd::ResetForTest();
+}
+
+// Section 20 gates on a synthetic image: Sockets012 slot 41 / Utils004 slot
+// 16 disp32 forwarders down to the inner RTTI, and the Messages owner check.
+void TestDispatchGates() {
+    // disp32 forwarder shapes (exact bytes of steamclient caba4826...: 0x7166F0 slot 41, 0x716660 slot 16).
+    const std::uint8_t s41[] = {0x48, 0x8B, 0x49, 0x08, 0x48, 0x8B, 0x01, 0x48, 0xFF, 0xA0, 0x48, 0x01, 0x00, 0x00};
+    const std::uint8_t u16[] = {0x48, 0x8B, 0x49, 0x08, 0x4C, 0x8B, 0x11, 0x49, 0xFF, 0xA2, 0x80, 0x00, 0x00, 0x00};
+    const std::uint8_t d8_16[] = {0x48, 0x8B, 0x49, 0x08, 0x48, 0x8B, 0x01, 0x48, 0xFF, 0x60, 0x80, 0xCC, 0xCC, 0xCC};
+    const std::uint8_t d32_5[] = {0x48, 0x8B, 0x49, 0x08, 0x48, 0x8B, 0x01, 0x48, 0xFF, 0xA0, 0x28, 0x00, 0x00, 0x00};
+    Check(gate::IsForwarder(s41, sizeof(s41), 41) && !gate::IsForwarder(s41, sizeof(s41), 40), "rax disp32 forwarder (slot 41)");
+    Check(gate::IsForwarder(u16, sizeof(u16), 16) && !gate::IsForwarder(u16, sizeof(u16), 15), "r10 disp32 forwarder (slot 16)");
+    Check(!gate::IsForwarder(s41, 11, 41), "a disp32 forwarder needs 14 bytes");
+    Check(!gate::IsForwarder(d8_16, sizeof(d8_16), 16), "disp8 0x80 is -0x80, never slot 16");
+    Check(!gate::IsForwarder(d32_5, sizeof(d32_5), 5), "a small slot is disp8 only");
+    // The image: .text stubs, .rdata adapter / inner / Messages subobject vtables with RTTI.
+    Image img;
+    img.bytes.assign(0x9000, 0xCC);
+    std::memset(img.bytes.data(), 0, 0x400);
+    img.bytes[0] = 'M';
+    img.bytes[1] = 'Z';
+    img.Put32(0x3C, 0x80);
+    img.Put32(0x80, 0x00004550);
+    img.bytes[0x84] = 0x64;
+    img.bytes[0x85] = 0x86;
+    img.bytes[0x86] = 3;
+    img.bytes[0x94] = 0xF0;
+    img.bytes[0x98] = 0x0B;
+    img.bytes[0x99] = 0x02;
+    img.Put32(0x98 + 56, 0x9000);
+    const std::size_t table = 0x98 + 0xF0;
+    const struct { const char* name; std::uint32_t va, size, chars; } sections[] = {
+        {".text", 0x1000, 0x2000, 0x60000020}, {".rdata", 0x3000, 0x4000, 0x40000040}, {".data", 0x7000, 0x2000, 0xC0000040}};
+    for (unsigned i = 0; i < 3; ++i) {
+        const std::size_t sct = table + 40 * i;
+        std::memcpy(&img.bytes[sct], sections[i].name, std::strlen(sections[i].name));
+        img.Put32(sct + 8, sections[i].size);
+        img.Put32(sct + 12, sections[i].va);
+        img.Put32(sct + 16, sections[i].size);
+        img.Put32(sct + 36, sections[i].chars);
+    }
+    std::memcpy(&img.bytes[0x1400], s41, sizeof(s41));
+    std::memcpy(&img.bytes[0x1440], u16, sizeof(u16));
+    const auto rtti = [&](std::uint32_t td, std::uint32_t col, std::uint32_t vtable, const char* name, std::uint32_t offset, unsigned slots,
+                          std::uint32_t target) {
+        std::memcpy(&img.bytes[td + 0x10], name, std::strlen(name) + 1);
+        img.Put32(col + 0, 1);
+        img.Put32(col + 4, offset);
+        img.Put32(col + 12, td);
+        img.Put32(col + 20, col);
+        img.Put64(vtable - 8, img.base() + col);
+        for (unsigned n = 0; n < slots; ++n) img.Put64(vtable + 8 * n, img.base() + target);
+    };
+    // Adapters (any RTTI here; acquisition checked theirs): slot 41 / 16 at the stubs.
+    rtti(0x3000, 0x3100, 0x3200, sn::kRttiSockets, 0, 48, 0x1800);
+    img.Put64(0x3200 + 8 * 41, img.base() + 0x1400);
+    rtti(0x3600, 0x3700, 0x3800, sn::kRttiUtils, 0, 25, 0x1800);
+    img.Put64(0x3800 + 8 * 16, img.base() + 0x1440);
+    // Inner objects: CSteamNetworkingSocketsSteamClient / CSteamNetworkingUtilsSteamClient.
+    rtti(0x4000, 0x4100, 0x4200, sn::kRttiSocketsInner, 0, 48, 0x1900);
+    rtti(0x4600, 0x4700, 0x4800, sn::kRttiUtilsInner, 0, 25, 0x1900);
+    // CSteamNetworkingMessages: the IClientNetworkingMessages subobject at +0xD0.
+    rtti(0x5000, 0x5100, 0x5200, sn::kRttiMessagesImpl, sn::kMessagesSubobjectOffset, 6, 0x1A00);
+    rtti(0x5600, 0x5700, 0x5800, sn::kRttiMessagesImpl, 0, 6, 0x1A00);  // the primary vtable (offset 0)
+    gate::ModuleView view{};
+    Check(gate::ReadModuleView(img.bytes.data(), img.bytes.size(), view), "dispatch image");
+    // Heap objects.
+    std::uint64_t sockets_inner[1] = {img.base() + 0x4200};
+    std::uint64_t sockets_adapter[2] = {img.base() + 0x3200, reinterpret_cast<std::uint64_t>(sockets_inner)};
+    std::uint64_t utils_inner[1] = {img.base() + 0x4800};
+    std::uint64_t utils_adapter[2] = {img.base() + 0x3800, reinterpret_cast<std::uint64_t>(utils_inner)};
+    alignas(8) std::uint8_t impl[0xE0]{};
+    const std::uint64_t primary = img.base() + 0x5800, sub = img.base() + 0x5200, owner = reinterpret_cast<std::uint64_t>(sockets_inner);
+    std::memcpy(impl, &primary, 8);
+    std::memcpy(impl + sn::kMessagesOwnerSockets, &owner, 8);
+    std::memcpy(impl + sn::kMessagesSubobjectOffset, &sub, 8);
+    std::uint64_t messages_adapter[2] = {0, reinterpret_cast<std::uint64_t>(impl + sn::kMessagesSubobjectOffset)};
+    const auto at = [](const void* p) { return reinterpret_cast<std::uintptr_t>(p); };
+    Check(gate::CheckForwardedSlot(view, at(sockets_adapter), sn::kSocketsRunCallbacks, sn::kRttiSocketsInner, &ReadPlain, nullptr) == nullptr,
+          "Sockets012 slot 41 forwards to CSteamNetworkingSocketsSteamClient");
+    Check(gate::CheckForwardedSlot(view, at(utils_adapter), sn::kUtilsSetConfigValue, sn::kRttiUtilsInner, &ReadPlain, nullptr) == nullptr,
+          "Utils004 slot 16 forwards to CSteamNetworkingUtilsSteamClient");
+    Check(std::strcmp(gate::CheckForwardedSlot(view, at(sockets_adapter), 40, sn::kRttiSocketsInner, &ReadPlain, nullptr), "slot_shape") == 0,
+          "another slot is not that forwarder");
+    Check(std::strcmp(gate::CheckForwardedSlot(view, at(sockets_adapter), sn::kSocketsRunCallbacks, sn::kRttiUtilsInner, &ReadPlain, nullptr),
+                      "inner_rtti") == 0,
+          "wrong inner class refused");
+    std::uint64_t bad_inner[1] = {img.base() + 0x7010};
+    std::uint64_t bad_adapter[2] = {sockets_adapter[0], reinterpret_cast<std::uint64_t>(bad_inner)};
+    Check(std::strcmp(gate::CheckForwardedSlot(view, at(bad_adapter), sn::kSocketsRunCallbacks, sn::kRttiSocketsInner, &ReadPlain, nullptr),
+                      "inner_object") == 0,
+          "an inner vptr outside rdata is refused");
+    Check(std::strcmp(gate::CheckForwardedSlot(view, 0, 41, sn::kRttiSocketsInner, &ReadPlain, nullptr), "slot_object") == 0, "null object");
+    // One per-user object: the Messages implementation owns the Sockets inner object.
+    Check(gate::CheckMessagesOwner(view, at(messages_adapter), at(sockets_adapter), sn::kRttiMessagesImpl, sn::kMessagesSubobjectOffset,
+                                   sn::kMessagesOwnerSockets, &ReadPlain, nullptr) == nullptr,
+          "Messages and Sockets wrap the same per-user object");
+    std::uint64_t other[1] = {img.base() + 0x4200};
+    std::uint64_t other_adapter[2] = {sockets_adapter[0], reinterpret_cast<std::uint64_t>(other)};
+    Check(std::strcmp(gate::CheckMessagesOwner(view, at(messages_adapter), at(other_adapter), sn::kRttiMessagesImpl, sn::kMessagesSubobjectOffset,
+                                               sn::kMessagesOwnerSockets, &ReadPlain, nullptr),
+                      "owner_mismatch") == 0,
+          "another sockets object: owner_mismatch");
+    std::uint64_t primary_adapter[2] = {0, reinterpret_cast<std::uint64_t>(impl)};  // the primary vtable has COL offset 0
+    Check(std::strcmp(gate::CheckMessagesOwner(view, at(primary_adapter), at(sockets_adapter), sn::kRttiMessagesImpl, sn::kMessagesSubobjectOffset,
+                                               sn::kMessagesOwnerSockets, &ReadPlain, nullptr),
+                      "owner_rtti") == 0,
+          "a subobject at another offset: owner_rtti");
+    Check(gate::RttiNameAt(view, img.base() + 0x5200, sn::kRttiMessagesImpl, 0xD0) && !gate::RttiNameIs(view, img.base() + 0x5200, sn::kRttiMessagesImpl),
+          "RttiNameAt checks the COL offset");
+}
+
+// ---------------------------- 13. plain-language reasons (shared vectors)
+// A minimal reader for tests/fixtures/link-reasons.json (objects of strings
+// and integers in two arrays).
+struct Vector {
+    std::string reason, remote, own, text;
+    int verified = 1, end = 0;
+    bool is_end = false;
+};
+bool ParseString(const std::string& s, std::size_t& i, std::string& out) {
+    out.clear();
+    if (i >= s.size() || s[i] != '"') return false;
+    for (++i; i < s.size(); ++i) {
+        char c = s[i];
+        if (c == '"') { ++i; return true; }
+        if (c == '\\' && i + 1 < s.size()) {
+            c = s[++i];
+            if (c == 'u' && i + 4 < s.size()) {
+                out.push_back(static_cast<char>(std::strtoul(s.substr(i + 1, 4).c_str(), nullptr, 16)));
+                i += 4;
+                continue;
+            }
+            out.push_back(c == 'n' ? '\n' : c == 't' ? '\t' : c);
+            continue;
+        }
+        out.push_back(c);
+    }
+    return false;
+}
+std::vector<Vector> ReadVectors(const char* path) {
+    std::vector<Vector> out;
+    FILE* f = nullptr;
+    if (fopen_s(&f, path, "rb") || !f) return out;
+    std::string s;
+    char buffer[4096];
+    for (std::size_t n; (n = std::fread(buffer, 1, sizeof(buffer), f)) > 0;) s.append(buffer, n);
+    std::fclose(f);
+    bool ends = false;
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        if (s.compare(i, 11, "\"steam_end\"") == 0) ends = true;
+        if (s[i] != '{' || i == s.find('{')) continue;
+        Vector v{};
+        v.is_end = ends;
+        ++i;
+        while (i < s.size() && s[i] != '}') {
+            std::string key, value;
+            while (i < s.size() && s[i] != '"' && s[i] != '}') ++i;
+            if (i >= s.size() || s[i] == '}' || !ParseString(s, i, key)) break;
+            while (i < s.size() && (s[i] == ':' || s[i] == ' ')) ++i;
+            if (s[i] == '"') ParseString(s, i, value);
+            else {
+                const std::size_t start = i;
+                while (i < s.size() && (s[i] == '-' || (s[i] >= '0' && s[i] <= '9'))) ++i;
+                value = s.substr(start, i - start);
+            }
+            if (key == "reason") v.reason = value;
+            else if (key == "remote") v.remote = value;
+            else if (key == "own") v.own = value;
+            else if (key == "text") v.text = value;
+            else if (key == "verified") v.verified = std::atoi(value.c_str());
+            else if (key == "end") v.end = std::atoi(value.c_str());
+        }
+        out.push_back(v);
+    }
+    return out;
+}
+void TestReasonVectors(const char* path) {
+    namespace ct = mgscoop::coop_text;
+    const std::vector<Vector> vectors = ReadVectors(path);
+    unsigned reasons = 0, ends = 0;
+    for (const Vector& v : vectors) {
+        char out[400]{};
+        if (v.is_end) {
+            Check(ct::FormatSteamEnd(v.end, out, sizeof(out)), "FormatSteamEnd fits");
+            if (v.text != out) std::fprintf(stderr, "steam_end %d:\n  want %s\n  got  %s\n", v.end, v.text.c_str(), out);
+            Check(v.text == out, "native FormatSteamEnd == Get-CoopSteamEndText");
+            ++ends;
+        } else {
+            Check(ct::FormatLinkReason(v.reason.c_str(), v.remote.c_str(), v.own.c_str(), v.verified != 0, out, sizeof(out)), "FormatLinkReason fits");
+            if (v.text != out) std::fprintf(stderr, "reason %s:\n  want %s\n  got  %s\n", v.reason.c_str(), v.text.c_str(), out);
+            Check(v.text == out, "native FormatLinkReason == Get-CoopLinkReasonText");
+            ++reasons;
+        }
+    }
+    Check(reasons >= 25 && ends >= 15, "the shared vector file was read (tests/fixtures/link-reasons.json)");
+    char tiny[8]{};
+    Check(!ct::FormatLinkReason("busy", "", "", true, tiny, sizeof(tiny)) && tiny[0] == 0, "too small: false, empty");
+    Check(std::strcmp(ct::ShortReason("bad_code"), "wrong code?") == 0 && std::strcmp(ct::ShortReason("steam_iface_shape"), "Steam unavailable") == 0 &&
+              std::strcmp(ct::ShortSteamEnd(5003), "host not answering") == 0,
+          "short reasons");
+}
+
+// ------------------------------------------- 14. the in-game status line
+void TestHud() {
+    namespace hud = mgscoop::coop_hud;
+    hud::ResetForTest();
+    Check(!hud::Enabled(), "off until configured");
+    Check(hud::ModeFor(mgscoop::CoopHud::unset, mgscoop::CoopHud::unset, false) == hud::Mode::off &&
+              hud::ModeFor(mgscoop::CoopHud::unset, mgscoop::CoopHud::unset, true) == hud::Mode::compact &&
+              hud::ModeFor(mgscoop::CoopHud::unset, mgscoop::CoopHud::full, true) == hud::Mode::full &&
+              hud::ModeFor(mgscoop::CoopHud::unset, mgscoop::CoopHud::full, false) == hud::Mode::off &&
+              hud::ModeFor(mgscoop::CoopHud::compact, mgscoop::CoopHud::off, false) == hud::Mode::compact,
+          "lab default off, play compact, lab.ini wins, coop.ini in play only");
+    hud::Configure(hud::Mode::compact, true);
+    Check(hud::Enabled(), "configured");
+    hud::LinkView v{};
+    v.valid = true;
+    v.state = static_cast<std::uint8_t>(link::LinkState::connected);
+    v.host = true;
+    v.steam = true;
+    v.play = true;
+    v.route = static_cast<std::uint8_t>(sn::Route::relay);
+    v.rtt_ms = 61;
+    std::snprintf(v.own_build, sizeof(v.own_build), "0.11.1+f64a8e9");
+    hud::Line line{};
+    Check(hud::FormatLine(v, "Snake_Fan", hud::Mode::compact, 0, line) && std::strcmp(line.text, "CO-OP [connected] Snake_Fan - Steam relay 61 ms") == 0 &&
+              line.tone == hud::Tone::good && line.detail[0] == 0,
+          "connected line");
+    v.state = static_cast<std::uint8_t>(link::LinkState::listening);
+    v.accepting = true;
+    v.code_ready = true;
+    Check(hud::FormatLine(v, "", hud::Mode::compact, 0, line) && std::strcmp(line.text, "CO-OP [waiting] code ready - F9 to copy/invite") == 0,
+          "host waiting line");
+    v.left = true;
+    Check(hud::FormatLine(v, "Snake_Fan", hud::Mode::compact, 0, line) &&
+              std::strcmp(line.text, "CO-OP [Snake_Fan left] waiting for them to come back") == 0,
+          "partner left line");
+    v.left = false;
+    v.host = false;
+    v.state = static_cast<std::uint8_t>(link::LinkState::reconnecting);
+    v.down_ms = 7600;
+    v.publish_ms = 1000;
+    Check(hud::FormatLine(v, "", hud::Mode::compact, 1500, line) && std::strcmp(line.text, "CO-OP [reconnecting 8 s]") == 0 && line.tone == hud::Tone::warn,
+          "reconnecting seconds");
+    v.state = static_cast<std::uint8_t>(link::LinkState::rejected);
+    std::snprintf(v.reason, sizeof(v.reason), "bad_code");
+    Check(hud::FormatLine(v, "", hud::Mode::compact, 0, line) && std::strcmp(line.text, "CO-OP [refused] wrong code?") == 0 && line.tone == hud::Tone::bad,
+          "refused line");
+    v.state = static_cast<std::uint8_t>(link::LinkState::connecting);
+    v.reason[0] = 0;
+    v.steam_end = 5003;
+    v.down_ms = 0;
+    Check(hud::FormatLine(v, "", hud::Mode::full, 1000, line) && std::strcmp(line.text, "CO-OP [joining 0 s] host not answering") == 0 &&
+              std::strncmp(line.detail, "rtt 61 ms | jitter 0 ms | loss 0.0% | 0.11.1+f64a8e9", 50) == 0,
+          "joining with a Steam end reason; full detail line");
+    v.state = static_cast<std::uint8_t>(link::LinkState::off);
+    Check(!hud::FormatLine(v, "", hud::Mode::compact, 0, line), "link off: nothing");
+    v.state = static_cast<std::uint8_t>(link::LinkState::connected);
+    Check(!hud::FormatLine(v, "", hud::Mode::off, 0, line), "mode off: nothing");
+    // Events -> toasts.
+    hud::Post(hud::EventKind::connected, 1, "steam:...1234");
+    hud::Post(hud::EventKind::steam_end, 5003, "");
+    hud::Post(hud::EventKind::version, 0, "0.11.0+1234567");
+    hud::Model model;
+    hud::Event events[8]{};
+    const unsigned n = hud::Take(events, 8, model.cursor());
+    Check(n == 3 && events[0].kind == hud::EventKind::connected && model.cursor() == 3 && hud::Take(events, 8, model.cursor()) == 0,
+          "events taken once, in order");
+    v.host = true;
+    for (unsigned i = 0; i < n; ++i) model.OnEvent(events[i], v, "Snake_Fan", 10000);
+    const hud::Toast* toasts[hud::kMaxToasts]{};
+    Check(model.Active(10000, toasts, hud::kMaxToasts) == 3, "three toasts");
+    bool connected = false, ended = false, version = false;
+    for (const hud::Toast* t : toasts) {
+        connected = connected || std::strcmp(t->text, "Connected to Snake_Fan (Steam relay).") == 0;
+        ended = ended || std::strncmp(t->text, "The host's game did not answer.", 31) == 0;
+        version = version || std::strcmp(t->text, "Your friend runs mgs-coop 0.11.0+1234567; you run 0.11.1+f64a8e9. Both must install the same package.") == 0;
+    }
+    Check(connected && ended && version, "toast sentences (coop_text)");
+    model.Add("Connected to Snake_Fan (Steam relay).", hud::Tone::good, 12000);
+    Check(model.Active(12000, toasts, hud::kMaxToasts) == 3 && toasts[0]->until_ms == 12000 + hud::kToastMs, "an identical toast is extended");
+    Check(model.Active(10000 + hud::kToastMs, toasts, hud::kMaxToasts) == 1, "toasts expire after 4 s");
+    // Telemetry for state.json and hud_status.
+    hud::NoteFrame(&line, "Connected", false, 3, 3, 500);
+    char json[512]{}, status[161]{};
+    Check(hud::FormatJson(hud::GetTelemetry(), json, sizeof(json)) && std::strstr(json, ",\"hud\":{\"enabled\":true,\"mode\":\"compact\",\"frames\":1") &&
+              std::strstr(json, "\"toast\":\"Connected\""),
+          "state.json hud member");
+    Check(hud::FormatStatus(hud::GetTelemetry(), status, sizeof(status)) && std::strncmp(status, "hud;mode=compact;on=1;frames=1;line=", 36) == 0,
+          "hud_status line");
+    hud::ResetForTest();
+}
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
     TestIdentity();
     TestJoinCodes();
     TestGates();
@@ -1485,6 +2195,13 @@ int main() {
     TestPollKeepsRate();
     TestConnectionLeg();
     TestEndToEnd();
+    TestDispatchFunctions();
+    TestDispatchGates();
+    TestDispatchTransport();
+    TestDispatchRefusals();
+    Check(argc >= 2, "usage: steam_transport_tests <tests/fixtures/link-reasons.json>");
+    TestReasonVectors(argv[1]);
+    TestHud();
     Check(g_allocated == g_released, "every fake message freed exactly once");
     std::printf("steam_transport_tests: %u checks passed\n", g_checks);
     return 0;

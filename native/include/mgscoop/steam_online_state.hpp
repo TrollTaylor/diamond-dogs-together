@@ -16,10 +16,26 @@ struct PairResult {
     std::uint64_t release, received;
     std::uint32_t bad_identity;
 };
+// Stage F/D (docs/steam-online.md 20.6): the function-pointer dispatch.
+struct FnResult {
+    bool ran;                 // stage F started
+    bool skipped;             // steam_selftest_fn=0
+    char gate[24];            // the dispatch gate ("" = ok, else its reason)
+    bool set204, reset204;    // F1: SetConfigValue(204, Global, Ptr) set and reset
+    std::uint32_t pre_pump;   // F2: our 1221 calls before the first RunCallbacks (must be 0)
+    std::uint32_t status_cb;  // F2: ConnectionStatusFn calls in total
+    bool conn_ok;             // F2: a call for the surviving end (hConn a)
+    std::int32_t old_state, new_state;  // that call's old / new state (3 -> 4|5)
+    bool thread_ok;           // that call ran on the self-test thread (inside our RunCallbacks)
+    std::uint32_t extra;      // calls after the first match (closing a, pumped once)
+    bool d_install, d_uninstall;  // D: the play path Install(204+205) / Uninstall
+    std::uint32_t d_pumps, d_dispatched, faults;
+    char reason[24];          // "" or why stage F/D failed
+};
 struct SelftestReport {
     bool configured;          // steam_selftest set in the lab
     char verdict[12];         // "" (running/not started) | pass | fail | refused
-    char stage[8];            // wait | G | P | L | M | T | done
+    char stage[8];            // wait | G | P | L | F | M | T | done
     char reason[48];
     bool api, client, logged_on, messages, sockets, utils, rtti, shape;
     std::int32_t relay;       // GetRelayNetworkStatus(nullptr); -1 unread
@@ -28,11 +44,14 @@ struct SelftestReport {
     std::int32_t inert_recv, inert_state;
     bool inert_accept;
     std::int64_t getter_delta;
+    FnResult fn;              // stage F/D
 };
+// "ok" (stage F/D passed), "fail", "skip" (steam_selftest_fn=0) or "none" (not reached).
+const char* FnVerdict(const FnResult& fn) noexcept;
 void PublishReport(const SelftestReport& report) noexcept;
 SelftestReport GetReport() noexcept;
 // The steam_status reply (<= 160 characters):
-// "steam_selftest;verdict=pass;stage=done;reason=;pair=500/500;rel=64/64;release=564/564;relay=100"
+// "steam_selftest;verdict=pass;reason=;stage=done;pair=500/500;rel=64/64;release=564/564;relay=100;fn=ok"
 // Before a verdict: "steam_selftest;verdict=pending;stage=<s>". Unconfigured:
 // "steam_selftest;verdict=off".
 bool FormatStatusLine(const SelftestReport& report, char* out, std::size_t capacity) noexcept;

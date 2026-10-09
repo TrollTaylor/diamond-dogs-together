@@ -117,7 +117,24 @@ bool format_play_line(std::uint32_t refused, bool loopback, bool mutex_renamed, 
     return true;
 }
 
-bool WantInitWrapper(const LabConfigView& lab) noexcept { return lab.present && lab.play && lab.net && lab.steam && lab.saves; }
+namespace {
+bool InitWrapperByDispatch(const LabConfigView& lab) noexcept {
+    switch (static_cast<SteamDispatch>(lab.dispatch)) {
+    case SteamDispatch::fnptr: return !lab.host;  // the guest keeps 337 (invites)
+    case SteamDispatch::poll: return false;
+    default: return true;                         // both, callback
+    }
+}
+}  // namespace
+
+bool WantInitWrapper(const LabConfigView& lab) noexcept {
+    return lab.present && lab.play && lab.net && lab.steam && lab.saves && InitWrapperByDispatch(lab);
+}
+
+const char* InitWrapperSkipReason(const LabConfigView& lab) noexcept {
+    if (!(lab.present && lab.play && lab.net && lab.steam && lab.saves) || InitWrapperByDispatch(lab)) return nullptr;
+    return static_cast<SteamDispatch>(lab.dispatch) == SteamDispatch::poll ? "dispatch_poll" : "dispatch_fnptr";
+}
 
 bool RunInitWrapper(SteamInitFn init, SteamRegisterFn reg, void* object, int id, InitWrapperState& state) {
     ++state.calls;
@@ -554,8 +571,10 @@ void InstallEarlyLabPatches() noexcept {
     }
 
     // ---- 2b. Steam online callbacks: the SteamAPI_Init wrapper ----
-    if (WantInitWrapper(LabConfigView{lab.present, lab.mode == LabMode::play, lab.net, lab.net_transport == NetTransport::steam,
-                                      lab.role == LabRole::host, iso.saves_ok})) {
+    const LabConfigView wrapper_view{lab.present, lab.mode == LabMode::play, lab.net, lab.net_transport == NetTransport::steam,
+                                     lab.role == LabRole::host, iso.saves_ok, static_cast<std::uint8_t>(lab.net_steam_dispatch)};
+    if (const char* skip = InitWrapperSkipReason(wrapper_view)) log_reason("steam_callbacks=skipped", skip);
+    if (WantInitWrapper(wrapper_view)) {
         MODULEINFO steam_info{};
         const char* reason = nullptr;
         if (!steam) reason = "steam_api64_not_mapped";

@@ -24,6 +24,17 @@ inline constexpr char kRttiMessages[] = ".?AVCAdapterSteamNetworkingMessages002@
 inline constexpr char kRttiSockets[] = ".?AVCAdapterSteamNetworkingSockets012@@";
 inline constexpr char kRttiUtils[] = ".?AVCAdapterSteamNetworkingUtils004@@";
 inline constexpr char kRttiClient[] = ".?AVCAdapterSteamClient017@@";
+// The inner objects the Sockets012 / Utils004 adapters forward to (adapter +8),
+// and the Messages implementation whose IClientNetworkingMessages subobject the
+// Messages002 adapter forwards to (docs/steam-online.md section 20).
+inline constexpr char kRttiSocketsInner[] = ".?AVCSteamNetworkingSocketsSteamClient@SteamNetworkingSocketsLib@@";
+inline constexpr char kRttiUtilsInner[] = ".?AVCSteamNetworkingUtilsSteamClient@SteamNetworkingSocketsLib@@";
+inline constexpr char kRttiMessagesImpl[] = ".?AVCSteamNetworkingMessages@SteamNetworkingSocketsLib@@";
+// CSteamNetworkingMessages: the IClientNetworkingMessages subobject is at
+// this+0xD0 (its COL offset), and this+8 is the owning sockets object
+// (BHandleNewIncomingConnection: mov rcx,[this+8]; call [r10+0x220]).
+inline constexpr std::uint32_t kMessagesSubobjectOffset = 0xD0;
+inline constexpr std::uint32_t kMessagesOwnerSockets = 0x08;
 // Slot counts of the adapters (RTTI census): Messages002 has exactly 6.
 inline constexpr unsigned kMessagesSlots = 6;
 inline constexpr unsigned kSocketsSlots = 47;
@@ -117,6 +128,11 @@ inline constexpr std::size_t kConnInfoRelayPop = 0xAC;
 inline constexpr std::size_t kConnInfoState = 0xB0;  // == the return value (verified)
 inline constexpr std::size_t kConnInfoFlags = 0x1B8;  // SDK layout; used only after the cross-check
 inline constexpr std::int32_t kConnFlagRelayed = 16;
+// End reason and debug text (connection-info filler 0xA9F7C0 in caba4826...:
+// mov [info+0xB4],eax; copy 0x80 bytes to info+0xB8).
+inline constexpr std::size_t kConnInfoEndReason = 0xB4;
+inline constexpr std::size_t kConnInfoEndDebug = 0xB8;
+inline constexpr std::size_t kConnInfoEndDebugSize = 0x80;
 // The quick status the API would fill (0x78 bytes); always passed as null.
 inline constexpr std::size_t kQuickStatusSize = 0x78;
 enum ConnectionState : std::int32_t {
@@ -183,7 +199,7 @@ inline constexpr std::uint32_t kAppId = 287700;
 
 // ---- Callbacks (posted through the game's pipe; we register only 1251 / 337).
 inline constexpr int kCallbackSessionRequest = 1251;  // SteamNetworkingMessagesSessionRequest_t
-inline constexpr int kCallbackSessionFailed = 1252;   // not registered
+inline constexpr int kCallbackSessionFailed = 1252;   // never registered; function pointer 205 only
 inline constexpr int kCallbackJoinRequested = 337;    // GameRichPresenceJoinRequested_t
 inline constexpr int kSessionRequestSize = 136;
 inline constexpr std::size_t kConnectStringMax = 256;  // k_cchMaxRichPresenceValueLength
@@ -195,6 +211,33 @@ static_assert(sizeof(JoinRequested) == 264 && offsetof(JoinRequested, connect) =
 inline constexpr int kJoinRequestedSize = 264;
 // The game registers exactly these ids (generator census); 1251/337 are ours.
 inline constexpr int kGameCallbackIds[] = {152, 163, 331, 333, 1101, 1102, 1103, 1202, 1203};
+
+// ---- Function-pointer dispatch (docs/steam-online.md section 20). A config
+// value of type Ptr names a function steamclient queues the callback for;
+// ISteamNetworkingSockets012::RunCallbacks() then calls it with rcx = the
+// payload, on the calling thread, with no Steam networking lock held.
+// Steamclient still posts the same callback to the game's pipe (unchanged).
+inline constexpr std::int32_t kConfigConnectionStatusChanged = 201;  // Connection / ListenSocket scope
+inline constexpr std::int32_t kConfigMessagesSessionRequest = 204;   // Global only
+inline constexpr std::int32_t kConfigMessagesSessionFailed = 205;    // Global only
+inline constexpr std::int32_t kConfigScopeGlobal = 1;
+inline constexpr std::int32_t kConfigScopeSocketsInterface = 2;
+inline constexpr std::int32_t kConfigScopeListenSocket = 3;
+inline constexpr std::int32_t kConfigScopeConnection = 4;
+inline constexpr std::int32_t kConfigTypePtr = 5;
+using ConfigCallbackFn = void (*)(void* payload);
+// SteamNetConnectionStatusChangedCallback_t (1221): hConn, info, old state.
+inline constexpr int kCallbackConnectionStatusChanged = 1221;
+inline constexpr std::size_t kStatusChangedSize = 0x2C8;
+inline constexpr std::size_t kStatusChangedConn = 0x00;
+inline constexpr std::size_t kStatusChangedInfo = 0x08;
+inline constexpr std::size_t kStatusChangedOldState = 0x2C0;
+// SteamNetworkingMessagesSessionFailed_t (1252): the connection info only.
+inline constexpr std::size_t kSessionFailedSize = 0x2B8;
+static_assert(kStatusChangedInfo + kConnInfoSize <= kStatusChangedOldState, "1221 payload: info before the old state");
+static_assert(kSessionFailedSize == kConnInfoSize, "1252 payload is SteamNetConnectionInfo_t");
+// The ids RunCallbacks dispatches (its jump table; anything else asserts).
+inline constexpr int kRunCallbacksIds[] = {1221, 1222, 1223, 1251, 1252, 1281};
 
 // ---- Hand-built CCallbackBase (no C++ virtuals): {vptr; u8 flags; pad; i32 id}.
 // steam_api64 RegisterCallback 0x2B10 ORs bit 0 into +8 and stores the id at
@@ -252,12 +295,37 @@ public:
     virtual void Unused18() {}
     virtual bool CreateSocketPair(std::uint32_t* out1, std::uint32_t* out2, bool network_loopback, const Identity* identity1,
                                   const Identity* identity2) = 0;  // 19
+    virtual void Unused20() {}
+    virtual void Unused21() {}
+    virtual void Unused22() {}
+    virtual void Unused23() {}
+    virtual void Unused24() {}
+    virtual void Unused25() {}
+    virtual void Unused26() {}
+    virtual void Unused27() {}
+    virtual void Unused28() {}
+    virtual void Unused29() {}
+    virtual void Unused30() {}
+    virtual void Unused31() {}
+    virtual void Unused32() {}
+    virtual void Unused33() {}
+    virtual void Unused34() {}
+    virtual void Unused35() {}
+    virtual void Unused36() {}
+    virtual void Unused37() {}
+    virtual void Unused38() {}
+    virtual void Unused39() {}
+    virtual void Unused40() {}
+    // Dispatches the callbacks queued for function-pointer config values
+    // (1221/1222/1223/1251/1252/1281) on the calling thread (section 20).
+    virtual void RunCallbacks() = 0;  // 41
 
 protected:
     ~ISteamNetworkingSockets012Abi() = default;
 };
 inline constexpr unsigned kSocketsCloseConnection = 5, kSocketsSend = 11, kSocketsReceive = 14, kSocketsCreatePair = 19;
-inline constexpr unsigned kSocketsDeclared = 20;
+inline constexpr unsigned kSocketsRunCallbacks = 41;
+inline constexpr unsigned kSocketsDeclared = 42;
 
 class ISteamNetworkingUtils004Abi {
 public:
@@ -269,11 +337,24 @@ public:
     virtual void Unused5() {}
     virtual void Unused6() {}
     virtual bool CheckPingDataUpToDate(float max_age_seconds) = 0;  // 7
+    virtual void Unused8() {}
+    virtual void Unused9() {}
+    virtual void Unused10() {}
+    virtual void Unused11() {}
+    virtual void Unused12() {}
+    virtual void Unused13() {}
+    virtual void Unused14() {}
+    virtual void Unused15() {}
+    // SetConfigValue(eValue, eScopeType, scopeObj, eDataType, pArg): edx, r8d,
+    // r9, [rsp+28h], [rsp+30h]. A Ptr value stores *(void**)pArg; pArg null
+    // resets to the default (null).
+    virtual bool SetConfigValue(std::int32_t value, std::int32_t scope, std::intptr_t scope_object, std::int32_t type,
+                                const void* arg) = 0;  // 16
 
 protected:
     ~ISteamNetworkingUtils004Abi() = default;
 };
-inline constexpr unsigned kUtilsRelayStatus = 1, kUtilsCheckPing = 7, kUtilsDeclared = 8;
+inline constexpr unsigned kUtilsRelayStatus = 1, kUtilsCheckPing = 7, kUtilsSetConfigValue = 16, kUtilsDeclared = 17;
 // The SDK's inline InitRelayNetworkAccess() is CheckPingDataUpToDate(1e10f).
 inline constexpr float kWarmRelayMaxAge = 1e10f;
 

@@ -1006,6 +1006,22 @@ function Get-CoopLinkReasonText {
     }
 }
 
+function Get-CoopSteamEndText {
+    # Pure: a sentence for a Steam session failure (link-status "steam_end": callback 1252,
+    # info.m_eEndReason, the public SDK ESteamNetConnectionEnd values; docs/steam-online.md 20).
+    # The same table as native/coop_reason_text.cpp (tests/fixtures/link-reasons.json).
+    param([int]$End)
+    if ($End -eq 0) { return '' }
+    if ($End -in @(5003, 4001)) { return "The host's game did not answer. Is it running from Play-Coop (Host online), with Accept joins on, and is your code current?" }
+    if ($End -in @(5008, 5009)) { return 'Steam could not connect the two PCs. Both must be online in Steam; try again, or use a LAN/VPN code [L].' }
+    if ($End -in @(5005, 3001, 3002)) { return "This PC cannot reach Steam's network. Check the internet connection and that Steam is not in Offline Mode." }
+    if ($End -in @(3004, 3005)) { return 'Steam networking is not available here right now; restart Steam.' }
+    if ($End -in @(4002, 4003)) { return "Steam's secure handshake failed; restart Steam on both PCs." }
+    if ($End -eq 4006) { return "Your friend's Steam is a different version; update Steam on both PCs." }
+    if (($End -ge 1000 -and $End -le 1999) -or $End -eq 5010) { return 'The host closed the connection (left, restarted, or refused the join).' }
+    return "The Steam connection failed (code $End)."
+}
+
 function Get-CoopValue {
     # StrictMode-safe optional property read.
     param($Object, [Parameter(Mandatory)][string]$Name, $Default = $null)
@@ -1051,6 +1067,12 @@ function Format-CoopStatusLine {
     if ($reason) {
         $text += ' (' + $reason + ': ' + (Get-CoopLinkReasonText -Reason $reason -RemoteBuild ([string](Get-CoopValue $Status 'remote_build' '')) -OwnBuild $OwnBuild -Verified ([int](Get-CoopValue $Status 'verified' 1))) + ')'
     }
+    # The partner said goodbye (a link CLOSE), and the guest's Steam failure reason (1252).
+    if ([int](Get-CoopValue $Status 'left' 0) -and $state -ne 'connected') {
+        if ($Role -eq 'host') { $text += ' - your friend left; waiting for them to come back' } else { $text += ' - the host left; waiting for them to come back' }
+    }
+    $steamEnd = [int](Get-CoopValue $Status 'steam_end' 0)
+    if ($steamEnd -and $state -ne 'connected') { $text += ' (Steam: ' + (Get-CoopSteamEndText -End $steamEnd) + ')' }
     $partner = 'partner=' + [string](Get-CoopValue $Status 'partner' 'none')
     if ([int](Get-CoopValue $Status 'partner_shown' 0)) { $partner += ' shown' }
     if ([int](Get-CoopValue $Status 'look' 0)) { $partner += ' look' }

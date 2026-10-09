@@ -275,6 +275,18 @@ void TestInitWrapper() {
     Check(!WantInitWrapper({true, true, true, false, true, true}), "udp: never");
     Check(!WantInitWrapper({false, true, true, true, true, true}), "no lab.ini: never");
     Check(!WantInitWrapper({true, true, true, true, true, false}), "saves not redirected (play refused): never");
+    // net_steam_dispatch (docs/steam-online.md 20): 0 both, 1 fnptr, 2 callback, 3 poll.
+    Check(WantInitWrapper({true, true, true, true, true, true, 0}) && WantInitWrapper({true, true, true, true, false, true, 0}), "both: host and guest");
+    Check(WantInitWrapper({true, true, true, true, true, true, 2}) && WantInitWrapper({true, true, true, true, false, true, 2}), "callback: host and guest");
+    Check(!WantInitWrapper({true, true, true, true, true, true, 1}) && WantInitWrapper({true, true, true, true, false, true, 1}),
+          "fnptr: no host 1251, the guest keeps 337");
+    Check(!WantInitWrapper({true, true, true, true, true, true, 3}) && !WantInitWrapper({true, true, true, true, false, true, 3}), "poll: never");
+    Check(InitWrapperSkipReason({true, true, true, true, true, true, 0}) == nullptr &&
+              std::strcmp(InitWrapperSkipReason({true, true, true, true, true, true, 1}), "dispatch_fnptr") == 0 &&
+              InitWrapperSkipReason({true, true, true, true, false, true, 1}) == nullptr &&
+              std::strcmp(InitWrapperSkipReason({true, true, true, true, false, true, 3}), "dispatch_poll") == 0 &&
+              InitWrapperSkipReason({true, false, true, true, true, true, 3}) == nullptr,
+          "skip reasons only for play + steam");
     // Registers once, only on a true result; returns Init's result unchanged.
     int object = 0;
     InitWrapperState state{};

@@ -81,10 +81,17 @@ const char* ProbeVersion() noexcept;
 // 337 (guest) callback object once. Never unregistered.
 // saves: the save redirect is in place (play refuses everything without it,
 // so no callback is registered then either).
+// dispatch (lab.ini net_steam_dispatch, docs/steam-online.md section 20):
+// both|callback keep the wrapper for both roles, fnptr only for the guest's
+// 337 (invites), poll for nobody (InitWrapperSkipReason names why).
 struct LabConfigView {
     bool present, play, net, steam, host, saves;
+    std::uint8_t dispatch = 0;  // SteamDispatch (0 both, 1 fnptr, 2 callback, 3 poll)
 };
 bool WantInitWrapper(const LabConfigView& lab) noexcept;
+// nullptr when the wrapper is wanted or the view is not play + steam; else
+// the early.log reason (dispatch_fnptr, dispatch_poll).
+const char* InitWrapperSkipReason(const LabConfigView& lab) noexcept;
 // Pins of the shipped steam_api64 image (TimeDateStamp/SizeOfImage,
 // SteamAPI_Init 0x5420, RegisterCallback 0x5530 and its 0x2B10 body, the
 // dispatch bytes 0x2DE0). nullptr when they match, else the early.log reason.

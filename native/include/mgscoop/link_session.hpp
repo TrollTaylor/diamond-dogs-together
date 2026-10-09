@@ -130,6 +130,11 @@ public:
     Delivery OnDatagram(const std::uint8_t* data, std::size_t size, const Endpoint& from, std::uint64_t now_ms) noexcept;
     // Handshake timers, keepalives, ack-only packets and lost detection.
     void OnTimer(std::uint64_t now_ms) noexcept;
+    // The peer said goodbye (an authenticated CLOSE in this session's DATA):
+    // the host stops at lost at once (a new HELLO is accepted as after a
+    // timeout, without the kHostLostMs wait); the guest starts reconnecting.
+    // True when the state changed (an event was pushed).
+    bool OnPeerClose(std::uint64_t now_ms) noexcept;
     // One DATA packet on the current session (game data, reliable traffic,
     // ack-only and keepalives). False when not connected or exhausted.
     bool SendData(const std::uint8_t* body, std::size_t size, std::uint64_t now_ms) noexcept;

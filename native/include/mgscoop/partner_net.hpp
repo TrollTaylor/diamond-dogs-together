@@ -31,6 +31,7 @@
 #include "mgscoop/partner_action_events.hpp"
 #include "mgscoop/partner_receipt.hpp"
 #include "mgscoop/pose_interp.hpp"
+#include "mgscoop/coop_hud.hpp"
 #include "mgscoop/steam_transport.hpp"
 #include "mgscoop/udp_transport.hpp"
 
@@ -97,7 +98,15 @@ struct Config {
     bool accepting = true;                    // host: net_steam_accept (F9 toggles it)
     lab::SteamResolveFn steam_resolve = nullptr;              // steam_online::Resolve
     void* steam_resolve_ctx = nullptr;
-    bool (*steam_requests)(std::uint64_t& id) noexcept = nullptr;  // steam_cb::PopSessionRequest (host)
+    // steam_cb::PopSessionRequest (host): 1251 through the Init wrapper and/or
+    // the function pointer, with the source mask (docs/steam-online.md 20).
+    bool (*steam_requests)(std::uint64_t& id, std::uint8_t& sources) noexcept = nullptr;
+    // lab.ini net_steam_dispatch (SteamDispatch: 0 both, 1 fnptr, 2 callback,
+    // 3 poll): the host installs 204+205, the guest 205 when it uses fnptr.
+    std::uint8_t steam_dispatch = 0;
+    // The in-game status line and toasts (coop_hud; lab.ini coop_hud, coop.ini
+    // hud). The one-PC lab keeps it off unless coop_hud is set.
+    coop_hud::Mode hud = coop_hud::Mode::off;
 };
 
 // Starts once (INIT_ONCE); never call from DllMain. Logs
@@ -227,6 +236,12 @@ struct SteamInfo {
     std::uint64_t peer;     // the session peer (host) or the configured host (guest); 0 none
     std::uint64_t self;
     char reason[32];        // "" or the steam=disabled reason
+    // Section 20: the function pointer (off|on|refused) and its reason, the
+    // guest's last 1252 end reason (0 none) and the partner's goodbye.
+    lab::DispatchState dispatch;
+    char dispatch_reason[24];
+    std::int32_t steam_end;
+    bool left;
 };
 SteamInfo GetSteamInfo() noexcept;
 // Host: the F9 Accept joins toggle (atomic; the transport reads it).

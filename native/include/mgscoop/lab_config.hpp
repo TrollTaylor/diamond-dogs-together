@@ -213,6 +213,18 @@ inline constexpr std::uint32_t kPlayRefusedUdpKeysWithSteam = 0x200000;
 // LAN/VPN code) or steam (ISteamNetworkingMessages002 over Steam's relays;
 // play only, the lab refuses it and keeps udp).
 enum class NetTransport : std::uint8_t { udp, steam };
+// Steam code joins (docs/steam-online.md section 20): lab.ini
+// net_steam_dispatch=both|fnptr|callback|poll (play; default both): the
+// function pointer (config 204/205 + Sockets012::RunCallbacks) and/or the Init
+// wrapper's 1251, polling always. Any other value is invalid (+1) and keeps both.
+enum class SteamDispatch : std::uint8_t { both, fnptr, callback, poll };
+const char* SteamDispatchName(SteamDispatch value) noexcept;
+bool ParseSteamDispatch(const char* text, std::size_t size, SteamDispatch& out) noexcept;
+// The in-game connection line and toasts (docs/two-pc-play.md "In game"):
+// lab.ini coop_hud / coop.ini hud = compact|full|off; unset = compact.
+enum class CoopHud : std::uint8_t { unset, compact, full, off };
+const char* CoopHudName(CoopHud value) noexcept;
+bool ParseCoopHud(const char* text, std::size_t size, CoopHud& out) noexcept;
 // World sync lab probes (docs/world-sync-protocol.md "Probes"): lab.ini
 // world_probe and the world.trigger key. The ids are the wire probeId of
 // PROBE_SYNC and the Lua probe number, in this order.
@@ -365,6 +377,12 @@ struct LabConfig {
     // Lab only: the hidden-worker Steam self-test (1 = in-process pair, 2 adds
     // the network-loopback pair). Play forces 0 (kPlayRefusedSteamSelftest).
     std::uint32_t steam_selftest = 0;
+    // Section 20: the code-join sources (play) and the self-test's stage F/D
+    // (steam_selftest_fn=0 skips it: fn=skip).
+    SteamDispatch net_steam_dispatch = SteamDispatch::both;
+    bool steam_selftest_fn = true;
+    // In-game connection line and toasts (allowed in play; wins over coop.ini hud).
+    CoopHud coop_hud = CoopHud::unset;
     unsigned unknown_keys = 0;
     unsigned invalid_values = 0;
 };
@@ -483,6 +501,8 @@ struct CoopConfig {
     char name[65]{};
     NametagSetting nametag = NametagSetting::unset;
     NametagCrosshair friendly_crosshair = NametagCrosshair::unset;
+    // hud=compact|full|off: the in-game connection line and toasts.
+    CoopHud hud = CoopHud::unset;
     unsigned unknown_keys = 0;
     unsigned invalid_values = 0;
 };
