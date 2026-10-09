@@ -1484,7 +1484,10 @@ const char* GuestWarpReceipt(const char* text, std::size_t size) noexcept {
 bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                         mgscoop::script_bridge::Replacement& replacement) noexcept {
     namespace debug = mgscoop::debug_menu;
-    if (!debug::Enabled() || !buffer || !name || size >= 256 || std::strlen(name) != size ||
+    // With the debug menu off only STATE_V1 is taken, and only for the partner
+    // name tag's HUD bits (field 13: demo / iDroid; docs/partner-nametag.md).
+    const bool debug_on = debug::Enabled();
+    if ((!debug_on && !mgscoop::nametag_game::Ready()) || !buffer || !name || size >= 256 || std::strlen(name) != size ||
         std::memcmp(buffer, name, size) != 0) return false;
     constexpr char command[] = "return 'MGS_COOP_DEBUG_CMD_V1'";
     constexpr char poll[] = "return 'MGS_COOP_DEBUG_POLL_V1'";
@@ -1505,6 +1508,7 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
     const bool is_warp = size >= sizeof(warp) - 1 && std::memcmp(buffer, warp, sizeof(warp) - 1) == 0;
     const bool is_remote = size >= sizeof(remote) - 1 && std::memcmp(buffer, remote, sizeof(remote) - 1) == 0;
     if (!is_command && !is_poll && !is_log && !is_state && !is_partner && !is_enemy && !is_warp && !is_remote) return false;
+    if (!debug_on && !is_state) return false;
     if (!OnRuntimeThread() && !(is_log || is_state ? OnTerminationThread() : false)) return false;
     const char* reply = "return nil";
     if (is_poll) {

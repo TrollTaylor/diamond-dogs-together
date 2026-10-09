@@ -33,14 +33,11 @@ bool name_sent = false, local_dirty = true, remote_valid = false;
 std::uint32_t sent_session = 0, name_tx = 0, name_rx = 0, name_invalid = 0, rx_session = 0;
 char remote_name[nt::kNameBytes + 1]{};
 std::uint8_t drain_buffer[link::kMaxReliableMessage]{};
-// Camera.
-nt::Camera last_camera{};
-bool last_camera_ok = false;
-unsigned torn_streak = 0;
-std::uint32_t torn_total = 0;
-// Per mission.
+// Camera (nt::ApplyCameraHistory: torn reads reuse the last good camera twice).
+nt::CameraHistory camera_history{};
+// Per mission (nt::CensusDue: the first tick that read the viewport's vtable).
 std::uint32_t mission = 0;
-bool census_logged = false;
+nt::CensusState census = nt::CensusState::none;
 nt::Ease height{};
 // Logging and the frame stream.
 unsigned log_lines = 0;
@@ -66,6 +63,8 @@ bool Read(std::uintptr_t address, void* out, std::size_t size) noexcept {
 template<class T> bool ReadValue(std::uintptr_t address, T& out) noexcept { return Read(address, &out, sizeof(out)); }
 bool Finite3(const float* v) noexcept { return std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]); }
 std::int32_t Mm(float v) noexcept { return std::isfinite(v) && std::fabs(v) < 2.0e6f ? static_cast<std::int32_t>(std::lround(v * 1000.0f)) : INT32_MIN; }
+// A float as a logged int (-1 when not finite or out of int range: no undefined cast).
+int LogInt(float v) noexcept { return std::isfinite(v) && std::fabs(v) < 2.0e9f ? static_cast<int>(v) : -1; }
 std::uint64_t Rva(std::uintptr_t value) noexcept { return value >= image && value - image < image_span ? value - image : value; }
 
 const char* VerifyContract(std::uintptr_t& mismatch) noexcept {
@@ -193,15 +192,13 @@ Body ReadBody(const pp::Addresses& addresses, const pp::State& state) noexcept {
 }
 
 void Census(nt::Refusal refusal, const nt::CameraRaw& raw, const nt::Camera& camera) noexcept {
-    if (census_logged) return;
-    census_logged = true;
+    if (!nt::CensusDue(census, refusal)) return;
     LogFormat("nametag_census; mission=%u; refusal=%s; vp_vt=0x%llx; cam_vt=0x%llx; w=%u; h=%u; rect_permille=%d,%d,%d,%d; "
               "vfov_mdeg=%d; near_mm=%d; far_m=%d; vp_err_ppm=%d; flags=0x%x; thread=%lu\r\n",
         mission, nt::RefusalName(refusal), static_cast<unsigned long long>(Rva(raw.vp_vtable)),
         static_cast<unsigned long long>(Rva(raw.cam_vtable)), raw.px_w, raw.px_h,
         Mm(raw.rect[0]), Mm(raw.rect[1]), Mm(raw.rect[2]), Mm(raw.rect[3]), Mm(camera.vfov_deg), Mm(raw.near_m),
-        std::isfinite(raw.far_m) ? static_cast<int>(raw.far_m) : -1, static_cast<int>(camera.vp_err * 1.0e6f), raw.cam_flags,
-        GetCurrentThreadId());
+        LogInt(raw.far_m), LogInt(camera.vp_err * 1.0e6f), raw.cam_flags, GetCurrentThreadId());
 }
 
 void PublishFrame(const nt::Frame& frame) noexcept {
@@ -253,14 +250,14 @@ void Install(const InstallConfig& config) noexcept {
 bool Ready() noexcept { return ready && nt::Enabled(); }
 
 void MissionStart(std::uint32_t value) noexcept {
-    mission = value; census_logged = false; height = {};
-    last_camera_ok = false; torn_streak = 0;
+    mission = value; census = nt::CensusState::none; height = {};
+    camera_history.last_ok = false; camera_history.torn_streak = 0;
     logged_any = false;
 }
 
 void MissionEnd() noexcept {
     mission = 0;
-    last_camera_ok = false; torn_streak = 0;
+    camera_history.last_ok = false; camera_history.torn_streak = 0;
     if (!ready) return;
     nt::Frame hidden = last_frame;
     hidden.visible = hidden.crosshair = hidden.hover = false;
@@ -283,32 +280,40 @@ void Tick(const TickInput& in) noexcept {
     t.name_tx = name_tx; t.name_rx = name_rx; t.name_invalid = name_invalid;
     t.link_session = partner_net::GetLinkInfo().session;
 
+    // Nothing can be shown (off, mission end, a demo or the iDroid, the partner
+    // body hidden): no camera, body or gun read this tick (the names still flow).
+    nt::Reason gate = nt::Reason::ok;
+    if (!settings.on) gate = nt::Reason::off;
+    else if (in.terminating) gate = nt::Reason::terminating;
+    else if (in.hud & (nt::kHudDemo | nt::kHudIdroid)) gate = nt::Reason::hud;
+    else if (in.partner_hidden != nt::Reason::ok) gate = in.partner_hidden;
+    const bool reads = gate == nt::Reason::ok;
+
     // Camera (refusals hide the tag; torn reads reuse the last good camera up to twice).
     nt::CameraRaw raw{};
     nt::Camera camera{};
-    nt::Refusal refusal = ReadCamera(in.owner_thread, raw);
-    if (refusal == nt::Refusal::none)
-        refusal = nt::ValidateCamera(raw, {image + c::viewport_vtable_rva, image + c::sub_viewport_vtable_rva, image + c::camera_vtable_rva}, camera);
-    if (refusal != nt::Refusal::thread) Census(refusal, raw, camera);
-    t.camera.vp_err = camera.vp_err;
-    if (refusal == nt::Refusal::torn) {
-        if (torn_total != UINT32_MAX) ++torn_total;
-        if (++torn_streak < 3 && last_camera_ok) { camera = last_camera; refusal = nt::Refusal::none; }
-    } else torn_streak = 0;
-    if (refusal == nt::Refusal::none) { last_camera = camera; last_camera_ok = true; }
+    nt::Refusal refusal = nt::Refusal::none;
+    if (reads) {
+        refusal = ReadCamera(in.owner_thread, raw);
+        if (refusal == nt::Refusal::none)
+            refusal = nt::ValidateCamera(raw, {image + c::viewport_vtable_rva, image + c::sub_viewport_vtable_rva, image + c::camera_vtable_rva}, camera);
+        Census(refusal, raw, camera);
+    }
+    const float vp_err = camera.vp_err;  // of this tick's read, also when a torn read reuses the last camera
+    refusal = nt::ApplyCameraHistory(camera_history, reads, refusal, camera);
     auto& ct = t.camera;
-    ct.ok = refusal == nt::Refusal::none; ct.refusal = refusal;
+    ct.ok = reads && refusal == nt::Refusal::none; ct.refusal = refusal;
     ct.vp_vt = raw.vp_vtable ? Rva(raw.vp_vtable) : 0; ct.cam_vt = raw.cam_vtable ? Rva(raw.cam_vtable) : 0;
     ct.px[0] = raw.px_w; ct.px[1] = raw.px_h;
     std::memcpy(ct.rect, raw.rect, sizeof(ct.rect));
-    ct.vfov_deg = camera.vfov_deg; ct.near_m = raw.near_m; ct.far_m = raw.far_m;
-    ct.torn = torn_total; ct.thread = GetCurrentThreadId();
+    ct.vfov_deg = camera.vfov_deg; ct.near_m = raw.near_m; ct.far_m = raw.far_m; ct.vp_err = vp_err;
+    ct.torn = camera_history.torn_total; ct.thread = GetCurrentThreadId();
 
     // Partner body, stance and the local aim.
     pp::State state{};
-    const bool state_ok = pp::ReadState(*in.addresses, state) == pp::Refusal::none;
+    const bool state_ok = reads && pp::ReadState(*in.addresses, state) == pp::Refusal::none;
     Body body{};
-    if (state_ok && in.partner_hidden == nt::Reason::ok) body = ReadBody(*in.addresses, state);
+    if (state_ok) body = ReadBody(*in.addresses, state);
     std::uint32_t stance = 0;
     const auto sample = partner_net::SampleRemote(in.interp_ms);
     pp::Anim anim{};
@@ -342,18 +347,15 @@ void Tick(const TickInput& in) noexcept {
             t.hover = aim.hit; t.miss_yaw_deg = aim.miss_yaw_deg; t.miss_pitch_deg = aim.miss_pitch_deg;
         }
     }
-    nt::Reason reason = nt::Reason::ok;
-    if (!settings.on) reason = nt::Reason::off;
-    else if (in.terminating) reason = nt::Reason::terminating;
-    else if (in.hud & (nt::kHudDemo | nt::kHudIdroid)) reason = nt::Reason::hud;
-    else if (in.partner_hidden != nt::Reason::ok) reason = in.partner_hidden;
-    else if (!ct.ok) reason = nt::Reason::camera;
-    else if (!body.ok) reason = nt::Reason::no_body;
-    else if (!projected.in_front) reason = nt::Reason::behind;
-    else if (std::fabs(projected.ndc[0]) > nt::kMaxNdc || std::fabs(projected.ndc[1]) > nt::kMaxNdc) reason = nt::Reason::offscreen;
-    else if (dist > static_cast<float>(max_m)) reason = nt::Reason::too_far;
-    const bool shown_context = settings.on && !in.terminating && !(in.hud & (nt::kHudDemo | nt::kHudIdroid)) &&
-        in.partner_hidden == nt::Reason::ok && ct.ok && body.ok;
+    nt::Reason reason = gate;
+    if (reads) {
+        if (!ct.ok) reason = nt::Reason::camera;
+        else if (!body.ok) reason = nt::Reason::no_body;
+        else if (!projected.in_front) reason = nt::Reason::behind;
+        else if (std::fabs(projected.ndc[0]) > nt::kMaxNdc || std::fabs(projected.ndc[1]) > nt::kMaxNdc) reason = nt::Reason::offscreen;
+        else if (dist > static_cast<float>(max_m)) reason = nt::Reason::too_far;
+    }
+    const bool shown_context = reads && ct.ok && body.ok;
     if (!shown_context) t.hover = false;
     t.crosshair_on = t.hover && settings.crosshair != nt::Crosshair::off && (settings.crosshair == nt::Crosshair::always || t.aim);
     t.visible = reason == nt::Reason::ok;

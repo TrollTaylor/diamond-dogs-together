@@ -73,8 +73,8 @@ Refusal ValidateCamera(const CameraRaw& raw, const CameraExpect& expect, Camera&
     const auto& p = raw.proj;
     constexpr float eps = 1e-3f;
     const float off[] = {p[0][1], p[0][2], p[0][3], p[1][0], p[1][2], p[1][3], p[3][0], p[3][1]};
-    bool form = std::fabs(p[2][3] - 1.0f) <= eps && std::fabs(p[3][3]) <= eps && p[0][0] < -0.05f && p[0][0] > -20.0f &&
-        p[1][1] > 0.05f && p[1][1] < 20.0f && std::fabs(p[2][0]) <= 0.05f && std::fabs(p[2][1]) <= 0.05f;
+    bool form = std::fabs(p[2][3] - 1.0f) <= eps && std::fabs(p[3][3]) <= eps && p[0][0] < -kMinProjScale && p[0][0] > -kMaxProjScale &&
+        p[1][1] > kMinProjScale && p[1][1] < kMaxProjScale && std::fabs(p[2][0]) <= 0.05f && std::fabs(p[2][1]) <= 0.05f;
     for (const float v : off) form = form && std::fabs(v) <= eps;
     if (!form) return Refusal::proj_form;
     CopyMatrix(out.proj, raw.proj); CopyMatrix(out.view, raw.view); CopyMatrix(out.viewproj, raw.viewproj);
@@ -92,6 +92,25 @@ Refusal ValidateCamera(const CameraRaw& raw, const CameraExpect& expect, Camera&
     out.near_m = raw.near_m; out.far_m = raw.far_m;
     if (!(worst <= kTornTolerance)) return Refusal::torn;
     return Refusal::none;
+}
+
+Refusal ApplyCameraHistory(CameraHistory& h, bool reads, Refusal refusal, Camera& camera) noexcept {
+    if (!reads) { h.last_ok = false; h.torn_streak = 0; return refusal; }
+    if (refusal == Refusal::torn) {
+        if (h.torn_total != UINT32_MAX) ++h.torn_total;
+        if (h.torn_streak < 3) ++h.torn_streak;
+        if (h.torn_streak < 3 && h.last_ok) { camera = h.last; refusal = Refusal::none; }
+    } else h.torn_streak = 0;
+    if (refusal == Refusal::none) { h.last = camera; h.last_ok = true; }
+    else h.last_ok = false;
+    return refusal;
+}
+
+bool CensusDue(CensusState& state, Refusal refusal) noexcept {
+    if (refusal == Refusal::thread || refusal == Refusal::selector || refusal == Refusal::handle || refusal == Refusal::viewport) return false;
+    if (state == CensusState::ok || (state == CensusState::refused && refusal != Refusal::none)) return false;
+    state = refusal == Refusal::none ? CensusState::ok : CensusState::refused;
+    return true;
 }
 
 Projected Project(const Mat4& viewproj, Vec3 world) noexcept {

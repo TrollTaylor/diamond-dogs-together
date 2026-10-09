@@ -13,8 +13,9 @@ struct Settings {
 };
 // Install time (natural observer thread, before the overlay installs).
 // allowed: an offline co-op partner session whose camera contract verified;
-// the overlay hosts the layer only then. Any later contract refusal calls
-// Refuse(), which hides everything for the rest of the process.
+// the overlay hosts the layer only then. Refuse() hides everything for the
+// rest of the process (no runtime caller today: per-tick camera refusals
+// only hide the tag for that tick).
 void Configure(bool allowed, bool host, const Settings& settings) noexcept;
 bool Enabled() noexcept;
 bool Host() noexcept;
@@ -28,7 +29,8 @@ void SetCrosshair(Crosshair value) noexcept;
 void Publish(const Frame& frame) noexcept;
 // Present: false until a frame was published (or after Shutdown / Refuse).
 bool Take(Frame& frame) noexcept;
-// Present (worker builds): a fresh frame that draws something exists.
+// A fresh frame that draws something exists at now_ms (tests; the overlay
+// classifies frames itself).
 bool RenderPending(std::uint64_t now_ms) noexcept;
 // The window is closing: hide at once (thread-safe flag).
 void Shutdown() noexcept;

@@ -48,10 +48,25 @@ struct Camera {
 };
 inline constexpr std::uint32_t kMinPixels = 64, kMaxPixels = 16384;
 inline constexpr float kTornTolerance = 1e-3f;
+// |P00| and P11 (p*b, p*c) lie in (0.05, 1000): a vertical FOV from about 0.1 deg
+// (the binocular and scope zooms narrow the main camera; the friendly
+// crosshair matters most there) to about 175 deg.
+inline constexpr float kMinProjScale = 0.05f, kMaxProjScale = 1000.0f;
 // Checks vtables, the non-perspective flag, the pixel size, the rect, finite
 // values, the projection shape (0x241b00: P23 = 1, P33 = 0, P00 < 0, P11 > 0,
 // |lens shift| <= 0.05, every other off-diagonal ~0) and View x Proj == VP.
 Refusal ValidateCamera(const CameraRaw& raw, const CameraExpect& expect, Camera& out) noexcept;
+// Per-tick camera bookkeeping (game thread). A torn read reuses the last good
+// camera for up to two consecutive ticks directly after it; any other refusal,
+// or a tick that read nothing (reads false), forgets it. Returns the refusal
+// after the reuse (camera then holds the reused one).
+struct CameraHistory { Camera last; bool last_ok; std::uint32_t torn_streak, torn_total; };
+Refusal ApplyCameraHistory(CameraHistory& history, bool reads, Refusal refusal, Camera& camera) noexcept;
+// The census line: once per mission on the first tick that read the
+// viewport's vtable (thread/selector/handle/viewport refusals wait), and once
+// more when that census refused and a later tick passes.
+enum class CensusState : std::uint8_t { none, refused, ok };
+bool CensusDue(CensusState& state, Refusal refusal) noexcept;
 
 // --- Projection ---------------------------------------------------------------
 inline constexpr float kMinW = 0.1f;          // in front of the camera iff clip.w > 0.1 m

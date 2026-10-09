@@ -110,6 +110,60 @@ void NametagTests() {
     far_vp.m[3][2] += 0.001f;  // float rounding of a large translation row stays within tolerance
     std::memcpy(far_raw.viewproj, far_vp.m, sizeof(far_raw.viewproj));
     Check(tag::ValidateCamera(far_raw, expect, camera) == tag::Refusal::none, "large world coordinates: per-row tolerance");
+    // Binocular / scope zoom narrows the main camera: a ~0.3 deg vertical FOV still passes, beyond 1000 is refused.
+    const auto zoomed = [&](float p) {
+        tag::CameraRaw r = raw;
+        const tag::Mat4 zp = GameProjection(p, -1.0f, 16.0f / 9.0f), zvp = tag::Multiply(view, zp);
+        std::memcpy(r.proj, zp.m, sizeof(r.proj)); std::memcpy(r.viewproj, zvp.m, sizeof(r.viewproj));
+        tag::Camera c{};
+        return tag::ValidateCamera(r, expect, c);
+    };
+    Check(zoomed(30.0f) == tag::Refusal::none && zoomed(225.0f) == tag::Refusal::none, "narrow zoomed FOV (P11 53 and 400) passes");
+    Check(zoomed(600.0f) == tag::Refusal::proj_form && zoomed(0.02f) == tag::Refusal::proj_form, "P11 beyond 1000 or below 0.05 refused");
+
+    // --- Torn-read reuse and the census ------------------------------------------------
+    {
+        tag::CameraHistory history{};
+        tag::Camera good{}, read{};
+        good.vfov_deg = 50.0f; good.px_w = 1920;
+        read = good;
+        Check(tag::ApplyCameraHistory(history, true, tag::Refusal::torn, read) == tag::Refusal::torn && history.torn_total == 1,
+              "a torn read without a good camera before it hides");
+        read = good;
+        Check(tag::ApplyCameraHistory(history, true, tag::Refusal::none, read) == tag::Refusal::none && history.last_ok, "a good read is kept");
+        read = {};
+        Check(tag::ApplyCameraHistory(history, true, tag::Refusal::torn, read) == tag::Refusal::none && Near(read.vfov_deg, 50.0f), "first torn read reuses it");
+        read = {};
+        Check(tag::ApplyCameraHistory(history, true, tag::Refusal::torn, read) == tag::Refusal::none && read.px_w == 1920, "second torn read reuses it");
+        read = {};
+        Check(tag::ApplyCameraHistory(history, true, tag::Refusal::torn, read) == tag::Refusal::torn && !history.last_ok && history.torn_total == 4,
+              "the third consecutive torn read hides");
+        read = good;
+        tag::ApplyCameraHistory(history, true, tag::Refusal::none, read);
+        read = {};
+        Check(tag::ApplyCameraHistory(history, true, tag::Refusal::sub_viewport, read) == tag::Refusal::sub_viewport && !history.last_ok,
+              "another refusal forgets the last camera");
+        read = {};
+        Check(tag::ApplyCameraHistory(history, true, tag::Refusal::torn, read) == tag::Refusal::torn, "so a torn read after it is not papered over");
+        read = good;
+        tag::ApplyCameraHistory(history, true, tag::Refusal::none, read);
+        read = {};
+        Check(tag::ApplyCameraHistory(history, false, tag::Refusal::none, read) == tag::Refusal::none && !history.last_ok && history.torn_streak == 0,
+              "a tick without reads (off, demo, iDroid, hidden partner) forgets it too");
+        read = {};
+        Check(tag::ApplyCameraHistory(history, true, tag::Refusal::torn, read) == tag::Refusal::torn, "no stale camera after the gap");
+
+        tag::CensusState census = tag::CensusState::none;
+        Check(!tag::CensusDue(census, tag::Refusal::selector) && !tag::CensusDue(census, tag::Refusal::handle) &&
+              !tag::CensusDue(census, tag::Refusal::viewport) && !tag::CensusDue(census, tag::Refusal::thread) && census == tag::CensusState::none,
+              "census waits for a read viewport vtable");
+        Check(tag::CensusDue(census, tag::Refusal::vp_vtable) && census == tag::CensusState::refused, "census logs the first vtable read");
+        Check(!tag::CensusDue(census, tag::Refusal::torn) && !tag::CensusDue(census, tag::Refusal::vp_vtable), "one refused census per mission");
+        Check(tag::CensusDue(census, tag::Refusal::none) && census == tag::CensusState::ok, "a later passing tick logs once more");
+        Check(!tag::CensusDue(census, tag::Refusal::none) && !tag::CensusDue(census, tag::Refusal::rect), "then nothing until the next mission");
+        census = tag::CensusState::none;
+        Check(tag::CensusDue(census, tag::Refusal::none) && !tag::CensusDue(census, tag::Refusal::cam_vtable), "a first passing census is the only one");
+    }
     Check(!std::strcmp(tag::RefusalName(tag::Refusal::proj_form), "proj_form") && !std::strcmp(tag::RefusalName(tag::Refusal::sub_viewport), "sub_viewport"),
           "refusal spellings");
 

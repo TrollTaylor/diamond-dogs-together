@@ -1038,11 +1038,14 @@ bool NametagFrame(nametag::Frame& frame, nametag::RenderNote& note, UINT bb_w, U
     if (!nametag::Enabled()) return false;
     note.thread = GetCurrentThreadId();
     note.bb[0] = bb_w; note.bb[1] = bb_h;
-    const ULONGLONG now = GetTickCount64();
     if (!nametag::Take(frame)) { note.kind = nametag::Drawn::none; nametag::NoteRender(note); return false; }
+    // The clock is read after the take: a frame published in between is never
+    // "from the future" (GetTickCount64 is monotonic; a tick boundary there
+    // would otherwise drop one fresh frame as stale).
+    const ULONGLONG now = GetTickCount64();
     const ULONGLONG age = now >= frame.tick_ms ? now - frame.tick_ms : 0;
     note.age_ms = age > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<std::uint32_t>(age);
-    if (now < frame.tick_ms || age > nametag::kStaleMs) { note.kind = nametag::Drawn::stale; nametag::NoteRender(note); return false; }
+    if (age > nametag::kStaleMs) { note.kind = nametag::Drawn::stale; nametag::NoteRender(note); return false; }
     if (!frame.visible && !frame.crosshair) { note.kind = nametag::Drawn::hidden; nametag::NoteRender(note); return false; }
     return true;
 }
@@ -1154,10 +1157,14 @@ void Draw(UINT bb_w, UINT bb_h) noexcept {
     nametag::RenderNote tag_note{};
     const bool tag = NametagFrame(tag_frame, tag_note, bb_w, bb_h);
     ImGui_ImplDX11_NewFrame(); ImGui_ImplWin32_NewFrame();
-    // Closed menu: one ImGui unit is one backbuffer pixel (the name tag layer only).
-    if (!now_open && bb_w && bb_h) io.DisplaySize = ImVec2(static_cast<float>(bb_w), static_cast<float>(bb_h));
+    // Closed menu: the display is the backbuffer (the name tag layer only). The
+    // DX11 backend maps one ImGui unit to one backbuffer pixel either way, so
+    // the tag maps NDC over the backbuffer even under an open menu whose
+    // display is the client rect.
+    const bool sized = bb_w && bb_h;
+    if (!now_open && sized) io.DisplaySize = ImVec2(static_cast<float>(bb_w), static_cast<float>(bb_h));
     ImGui::NewFrame();
-    if (tag) DrawNametagLayer(tag_frame, tag_note, io.DisplaySize);
+    if (tag) DrawNametagLayer(tag_frame, tag_note, sized ? ImVec2(static_cast<float>(bb_w), static_cast<float>(bb_h)) : io.DisplaySize);
     if (!now_open && !tag) { ImGui::EndFrame(); return; }
     if (now_open) DrawMenu();
     ImGui::Render();
