@@ -172,7 +172,8 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
     j.Add(",\"remote_gun_base\":");i32(n.remote_gun_base);
     j.Add(",\"mismatch\":%s,\"strip\":%u,\"absent\":%s,\"leak_strip\":%u,\"gate\":",Bool(n.weapon_mismatch),n.strip_bits,Bool(n.weapon_absent),
         n.leak_strip);j.String(n.weapon_gate,sizeof(n.weapon_gate));
-    j.Add(",\"body_type\":");i32(n.body_type);j.Add(",\"switching\":%s}",Bool(n.body_switching));
+    j.Add(",\"body_type\":");i32(n.body_type);j.Add(",\"switching\":%s,\"standin\":%s,\"standin_ms\":%u,\"absent_ms\":%u}",
+        Bool(n.body_switching),Bool(n.weapon_standin),n.weapon_standin_ms,n.weapon_absent_ms);
     j.Add(",\"trigger\":{\"requested\":%u,\"shot_drains\":%u,\"fire_modes\":%u}",n.fire_requested,n.fire_shot_drains,n.fire_modes);
     // The partner's own reload (docs/native-puppet.md "Weapons" R1..R6): the event machine, the remote's v5
     // group and the post-phase-1 probe (bit 20 / bit 24 exist only inside the drain).
@@ -207,18 +208,23 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
     for(unsigned s=0;s<3;++s){if(s)j.Add(",");j.String(n.slot_tier[s],sizeof(n.slot_tier[s]));}
     j.Add("],\"ok_mask\":%u,\"writes\":%u,\"refused\":%u,\"last\":",unsigned(n.slot_ok_mask),n.slot_writes,n.slot_refused);
     j.String(n.slot_last,sizeof(n.slot_last));
-    j.Add(",\"faulted\":%s,\"switching\":%s",Bool(n.slot_faulted),Bool(n.body_switching));
+    j.Add(",\"faulted\":%s,\"switching\":%s,\"map\":[",Bool(n.slot_faulted),Bool(n.body_switching));
+    for(unsigned s=0;s<3;++s) {if(s)j.Add(",");if(n.slot_map[s]<3)j.Add("%u",unsigned(n.slot_map[s]));else j.Add("null");}
+    j.Add("]");
     // The generalized writer (W3): per slot what it planned and did.
-    j.Add(",\"writer\":{\"active\":%s,\"dispatches\":%u,\"bound\":%u,\"refused\":%u,\"slots\":[",Bool(n.writer_active),
-        n.writer_dispatches,n.writer_bound,n.writer_refused);
+    j.Add(",\"writer\":{\"active\":%s,\"dispatches\":%u,\"bound\":%u,\"refused\":%u,\"shared\":",Bool(n.writer_active),
+        n.writer_dispatches,n.writer_bound,n.writer_refused);j.String(n.writer_shared,sizeof(n.writer_shared));
+    j.Add(",\"gen\":%u,\"resyncs\":%u,\"kept\":%u,\"slots\":[",n.writer_gen,n.writer_resyncs,n.writer_kept);
     for(unsigned s=0;s<3;++s){
         if(s)j.Add(",");
         j.Add("{\"want\":%u,\"equip\":%u,\"tier\":",unsigned(n.writer_want[s]),unsigned(n.writer_equip[s]));
         j.String(n.writer_tier[s],sizeof(n.writer_tier[s]));j.Add(",\"family\":");j.String(n.writer_family[s],sizeof(n.writer_family[s]));
         j.Add(",\"state\":");j.String(n.writer_state[s],sizeof(n.writer_state[s]));
         j.Add(",\"reason\":");j.String(n.writer_reason[s],sizeof(n.writer_reason[s]));
-        j.Add(",\"handle\":%u,\"want_type\":%u,\"candidates\":%u,\"candidate\":%u}",n.writer_handle[s],unsigned(n.writer_want_type[s]),
-            n.writer_candidates[s],unsigned(n.writer_candidate[s]));
+        j.Add(",\"handle\":%u,\"want_type\":%u,\"candidates\":%u,\"candidate\":%u,\"retries\":%u,\"refs_before\":%u,\"refs_after\":%u,\"bank\":",
+            n.writer_handle[s],unsigned(n.writer_want_type[s]),n.writer_candidates[s],unsigned(n.writer_candidate[s]),
+            unsigned(n.writer_retries[s]),n.writer_refs_before[s],n.writer_refs_after[s]);j.String(n.writer_bank[s],sizeof(n.writer_bank[s]));
+        j.Add(",\"binder\":[%u,%u,%u]}",n.writer_binder[s][0],n.writer_binder[s][1],n.writer_binder[s][2]);
     }
     j.Add("]}}");
     // Facing (partner_recon governor) and the look (D3).
@@ -246,6 +252,12 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
     j.Add(",\"q10_1_mm\":");vec(n.aim_q10_mm[1]);j.Add(",\"q10_0_mm\":");vec(n.aim_q10_mm[0]);
     j.Add(",\"aimpt1_mm\":");vec(n.aim_point_mm[1]);j.Add(",\"aimpt0_mm\":");vec(n.aim_point_mm[0]);
     j.Add(",\"aimpt_err_mm\":");i32(n.aim_point_err_mm);
+    j.Add(",\"gun_pitch_cdeg\":");pair(n.gun_pitch_cdeg);
+    j.Add(",\"gun_yaw_cdeg\":");pair(n.gun_yaw_cdeg);
+    j.Add(",\"remote_dir_cdeg\":");pair(n.remote_dir_cdeg);
+    j.Add(",\"dir_err_cdeg\":");pair(n.dir_err_cdeg);
+    j.Add(",\"dir_refused\":");j.String(n.dir_refused,sizeof(n.dir_refused));
+    j.Add(",\"dir_checks\":%u,\"dir_misses\":%u",n.dir_checks,n.dir_misses);
     j.Add(",\"aim_yaw1_cdeg\":");i32(n.aim_yaw_cdeg[1]);j.Add(",\"aim_pitch1_cdeg\":");i32(n.aim_pitch_cdeg[1]);
     j.Add(",\"aim_yaw0_cdeg\":");i32(n.aim_yaw_cdeg[0]);j.Add(",\"aim_pitch0_cdeg\":");i32(n.aim_pitch_cdeg[0]);
     j.Add(",\"rel_yaw1_cdeg\":");i32(n.aim_rel_yaw_cdeg[1]);j.Add(",\"rel_yaw0_cdeg\":");i32(n.aim_rel_yaw_cdeg[0]);
@@ -269,15 +281,15 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
     j.String(n.equip_apply,sizeof(n.equip_apply));
     // The generalized writer's setting, the stock cache census and the preload (W2).
     j.Add(",\"setting\":");j.String(n.equip_setting,sizeof(n.equip_setting));
-    // The used stock cache entries, compact: [index, id, type, receiver, flags, refs].
-    j.Add(",\"resident_fields\":[\"index\",\"id\",\"type\",\"receiver\",\"flags\",\"refs\"],\"resident\":");
+    // The used stock cache entries, compact: [index, id, type, receiver, flags, refs, viewer].
+    j.Add(",\"resident_fields\":[\"index\",\"id\",\"type\",\"receiver\",\"flags\",\"refs\",\"viewer\"],\"resident\":");
     if(!n.resident_ok) j.Add("null");
     else {
         j.Add("[");
         for(unsigned i=0;i<n.resident_count && i<48;++i){
             const auto& r=n.resident[i];
-            j.Add("%s[%u,%u,%u,%u,%u,%u]",i?",":"",unsigned(r.index),unsigned(r.equip),unsigned(r.type),unsigned(r.receiver),
-                unsigned(r.flags),r.refs);
+            j.Add("%s[%u,%u,%u,%u,%u,%u,%u]",i?",":"",unsigned(r.index),unsigned(r.equip),unsigned(r.type),unsigned(r.receiver),
+                unsigned(r.flags),r.refs,unsigned(r.viewer));
         }
         j.Add("]");
     }

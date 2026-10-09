@@ -131,6 +131,16 @@ void TestEnterSequence() {
     Check(o.mode == pn::Mode::active && NoRequests(o), "steady active");
 }
 
+void TestThreadWarmup() {
+    pn::State state{}; pn::Reset(state,true);
+    auto in=Ready(2000); in.thread_ok=false; in.thread_warmup=true;
+    auto out=pn::Step(state,in);
+    Check(Is(out.reason,"warmup") && out.mode==pn::Mode::fallback, "thread warmup is an expected entry wait");
+    in.thread_warmup=false; out=pn::Step(state,in);
+    Check(Is(out.reason,"thread"), "different thread remains a real refusal");
+    Check(Is(mgscoop::partner_native_net::ReasonName(mgscoop::partner_native_net::ReasonCode("warmup")),"warmup"),
+          "warmup append-only capability reason round trips");
+}
 void TestEnterTimeoutsAndRevertLatch() {
     {
         pn::State s{};
@@ -551,6 +561,71 @@ void TestSteer() {
     Check(pn::Steer(st6, in, p).mag_scale == 1.0, "trim 0 never trims");
 }
 
+void TestMovementRecovery() {
+    pn::DashIn in{};
+    in.now_ms = 1000; in.active = in.input_live = in.mask_dash = in.body_ok = in.remote_ok = true;
+    in.body_act = in.remote_act = 2; in.body_stance = in.remote_stance = 1;
+    in.body_speed = 2; in.remote_speed = 3; in.in_r = 1;
+    pn::DashState dash{};
+    Check(!pn::DashRelatch(dash, in), "dash mismatch starts debounce");
+    in.now_ms = 1299;
+    Check(!pn::DashRelatch(dash, in), "dash not replayed before 300ms");
+    in.now_ms = 1300;
+    Check(pn::DashRelatch(dash, in) && dash.attempts == 1, "standing sprint mismatch gets one admitted DASH retry");
+    in.now_ms = 2799;
+    Check(!pn::DashRelatch(dash, in), "dash retry gap is 1500ms");
+    for (int n = 2; n <= 4; ++n) {
+        in.now_ms = 1300 + (n - 1) * 1500;
+        Check(pn::DashRelatch(dash, in) && dash.attempts == static_cast<unsigned>(n), "bounded dash retry admitted");
+    }
+    in.now_ms = 10000;
+    Check(!pn::DashRelatch(dash, in), "no fifth dash retry inside 10s");
+    in.now_ms = 11000;
+    Check(pn::DashRelatch(dash, in) && dash.attempts == 1, "new bounded retry window");
+    const auto refuses = [&](pn::DashIn bad, const char* label) {
+        pn::DashState fresh{}; bad.now_ms = 1000; pn::DashRelatch(fresh, bad); bad.now_ms = 2000;
+        Check(!pn::DashRelatch(fresh, bad) && fresh.attempts == 0, label);
+    };
+    auto bad = in; bad.body_stance = 3; refuses(bad, "prone DASH cannot become roll");
+    bad = in; bad.remote_stance = 2; refuses(bad, "crouch mismatch refuses DASH relatch");
+    bad = in; bad.body_act = 28; refuses(bad, "turn transition holds the sprint request without retrying yet");
+    bad = in; bad.remote_act = 99; refuses(bad, "ride/deploy refuses DASH relatch");
+    bad = in; bad.mask_dash = false; refuses(bad, "DASH mask remains authoritative");
+    bad = in; bad.hold_stripped = true; refuses(bad, "HOLD-stripped parity refuses DASH relatch");
+    bad = in; bad.input_live = false; refuses(bad, "stale input refuses DASH relatch");
+    bad = in; bad.body_speed = 3; refuses(bad, "already sprinting body is not retriggered");
+    bad = in; bad.in_r = 0.59; refuses(bad, "weak stick refuses DASH relatch");
+    dash = pn::DashState{}; in.now_ms = 20000; in.body_act = 28;
+    pn::DashRelatch(dash, in); in.now_ms += 500; in.body_act = 2;
+    Check(!pn::DashRelatch(dash, in), "leaving turn transition starts a fresh dash debounce");
+    in.now_ms += 300;
+    Check(pn::DashRelatch(dash, in), "dash relatches after stable ordinary locomotion");
+
+    pn::SteerState st{}; pn::SteerParams p{}; pn::SteerIn si{};
+    si.now_ms = 1000; si.v_z = 2000; si.body_speed_mmps = 4000; si.in_r = 1;
+    si.e_z = -600; si.hold_stripped = true;
+    auto o = pn::Steer(st, si, p);
+    Check(o.mag_scale == 1, "HOLD-strip parity begins without an instantaneous magnitude jump");
+    si.now_ms += 100; o = pn::Steer(st, si, p);
+    Check(std::fabs(o.mag_scale - 0.9) < 1e-9, "measured overrun trims ten scale points per 100ms");
+    for (int i = 0; i < 10; ++i) { si.now_ms += 100; o = pn::Steer(st, si, p); }
+    Check(o.mag_scale >= pn::kTrimFloor && o.mag_scale <= pn::kTrimFloor + 1e-9, "parity never drops below native start margin");
+    si.body_speed_mmps = 2000; si.now_ms += 100;
+    o = pn::Steer(st, si, p);
+    Check(std::fabs(o.mag_scale - 0.62) < 1e-9, "parity recovers twenty scale points per 100ms");
+    si.hold_stripped = false; si.now_ms += 100;
+    Check(pn::Steer(st, si, p).mag_scale == 1, "admitted combat HOLD receives no parity trimming");
+    si.hold_stripped = true; si.frozen = true; si.body_speed_mmps = 4000; si.now_ms += 100;
+    Check(pn::Steer(st, si, p).mag_scale == 1, "stale/pin/unqualified frozen state refuses parity");
+    si.hold_parity_ready = true; si.now_ms += 100;
+    Check(pn::Steer(st, si, p).mag_scale < 1, "qualified stripped-aim frozen state permits magnitude parity only");
+    si.hold_parity_ready = false; si.frozen = false; si.prone_transition = true; si.now_ms += 100;
+    Check(pn::Steer(st, si, p).mag_scale == 1, "stance transition refuses parity");
+    si.prone_transition = false; si.in_r = 0.6;
+    for (int i = 0; i < 10; ++i) { si.now_ms += 100; o = pn::Steer(st, si, p); }
+    Check(o.mag_scale * si.in_r >= pn::kTrimFloor - 1e-9, "partial stick also retains injected 0.42 floor");
+}
+
 void TestConsumers() {
     pi::Config c{};
     c.mode = PartnerInput::net;
@@ -751,6 +826,62 @@ void TestWeapons() {
                 if (!ok) Check(false, "mirror invariants: <= cap, full iff remote full, empty iff remote empty");
             }
     Check(true, "mirror invariants hold for capacities 1..50 x 1..40");
+}
+
+// A checked store can be unavailable during weapon draw or checkpoint
+// recovery. The exact history used by MirrorMag must retain the observation
+// until accepted, even without another ammo change, FIRE edge or reload tap.
+void TestMagazineHistory() {
+    pn::MagazineHistory mirror_history{};
+    std::uint16_t fake_store_word=0;
+    bool fake_store_ready=false;
+    unsigned fake_store_writes=0;
+    auto offer=[&](std::uint16_t remote_mag, std::uint8_t body_slot, bool fire_edge=false) {
+        const auto attempt=pn::PrepareMagazine(mirror_history,remote_mag,5,body_slot,fire_edge,false);
+        if(!attempt.needed || !fake_store_ready) return false;
+        const auto target=static_cast<std::uint16_t>(pn::MirrorMagazine(
+            pn::MagIn{remote_mag,5,5,fire_edge,attempt.remote_was_loaded}));
+        if(fake_store_word!=target) {fake_store_word=target;++fake_store_writes;}
+        pn::CommitMagazine(mirror_history,remote_mag,5,body_slot);
+        return true;
+    };
+    Check(!offer(3,0) && !mirror_history.seen && !mirror_history.slot_seen,
+          "unavailable initial store does not consume the sample");
+    Check(pn::PrepareMagazine(mirror_history,3,5,0,false,false).needed,
+          "unchanged initial sample retries without an input edge");
+    fake_store_ready=true;
+    Check(offer(3,0) && fake_store_word==3 && mirror_history.seen && fake_store_writes==1,
+          "ready store accepts the unchanged sample");
+    Check(!offer(3,0) && fake_store_writes==1,"accepted stable sample needs no repeat write");
+
+    mirror_history.freeze_pending=true;fake_store_ready=false;
+    Check(!offer(3,0) && mirror_history.freeze_pending && mirror_history.remote_mag==3,
+          "refused reload reconcile remains pending");
+    Check(!offer(3,0) && pn::PrepareMagazine(mirror_history,3,5,0,false,false).reconcile,
+          "same reload sample keeps reconciling until acceptance");
+    fake_store_ready=true;
+    Check(offer(3,0) && !mirror_history.freeze_pending && fake_store_writes==1,
+          "validated no-write acceptance consumes reconcile once");
+    Check(!offer(3,0),"accepted reconcile is not repeated");
+
+    fake_store_ready=false;
+    Check(!offer(3,2) && mirror_history.body_slot==0 &&
+          pn::PrepareMagazine(mirror_history,3,5,2,false,false).needed,
+          "refused slot change retains prior accepted slot and retries stable ammo");
+    fake_store_ready=true;
+    Check(offer(3,2) && mirror_history.body_slot==2 && !offer(3,2),
+          "checked new-slot acceptance consumes the slot change once");
+    fake_store_ready=false;
+    Check(!offer(0,2) && mirror_history.remote_mag==3 &&
+          pn::PrepareMagazine(mirror_history,0,5,2,true,false).remote_was_loaded,
+          "refusal retains the previous loaded sample for a last-round FIRE edge");
+    fake_store_ready=true;
+    Check(offer(0,2,true) && fake_store_word==1 && mirror_history.remote_mag==0 &&
+          !pn::PrepareMagazine(mirror_history,0,5,2,true,false).remote_was_loaded,
+          "accepted last-round sample commits; next empty FIRE cannot reuse it");
+    mirror_history=pn::MagazineHistory{};
+    Check(pn::PrepareMagazine(mirror_history,0,5,2,false,false).needed && !mirror_history.freeze_pending,
+          "mission reset forgets accepted history and pending reconcile");
 }
 
 // Online play (docs/native-puppet.md "Online"): network leaves never latch,
@@ -1079,9 +1210,9 @@ void TestAim() {
     pa::TargetOut o = pa::Target(in);
     pa::LookDir(0.1f, -1.0f, d);
     Check(o.want && o.valid && o.src == pa::Source::look && o.reason == pa::Reason::none &&
-              std::fabs(o.p[0] - (100.0 + 100.0 * d[0])) < 1e-3 && std::fabs(o.p[1] - (341.6 + 100.0 * d[1])) < 1e-3 &&
+              std::fabs(o.p[0] - (100.0 + 100.0 * d[0])) < 1e-3 && std::fabs(o.p[1] - (340.6 + 100.0 * d[1])) < 1e-3 &&
               std::fabs(o.p[2] - (-50.0 + 100.0 * d[2])) < 1e-3,
-          "aim: look target = body + 1.6 m up + 100 m along the remote's look");
+          "aim: look target = body + 0.6 m up + 100 m along the remote's look");
     const double dist = std::sqrt(std::pow(o.p[0] - 100.0, 2) + std::pow(o.p[1] - 340.0, 2) + std::pow(o.p[2] + 50.0, 2));
     Check(dist > pa::kMinRangeM && dist < pa::kMaxRangeM && std::fabs(dist - 100.0) < 2.0, "aim: about 100 m from the body");
     in.setting = PartnerNativeAimPt::off;
@@ -1111,15 +1242,16 @@ void TestAim() {
     // point: the sender's own aim direction when present, else the look.
     in.setting = PartnerNativeAimPt::point;
     o = pa::Target(in);
-    Check(o.valid && o.src == pa::Source::look, "aim: point without a v5 aim point falls back to the look");
+    Check(o.valid && o.src == pa::Source::look, "aim: point without a v6 direction falls back to the look");
     in.point_ok = true;
-    in.point_dir[0] = 0.0f; in.point_dir[1] = 0.0f; in.point_dir[2] = 5.0f;
+    in.point_pitch = in.point_yaw = 0.0f;
     o = pa::Target(in);
-    Check(o.valid && o.src == pa::Source::point && std::fabs(o.p[2] - 50.0f) < 1e-3f && std::fabs(o.p[1] - 341.6f) < 1e-3f,
+    Check(o.valid && o.src == pa::Source::point && std::fabs(o.p[2] - 50.0f) < 1e-3f && std::fabs(o.p[1] - 340.6f) < 1e-3f,
           "aim: point uses the normalized sender direction");
-    in.point_dir[2] = 0.0f;
+    in.point_pitch = std::nanf("");
+    in.look_ok = false;
     o = pa::Target(in);
-    Check(!o.valid && o.reason == pa::Reason::range, "aim: a zero point direction refuses");
+    Check(!o.valid && o.reason == pa::Reason::no_look, "aim: invalid point without a look refuses");
     const float big[3] = {65536.0f, 0.0f, 0.0f}, ok3[3] = {-65535.0f, 1.0f, 2.0f}, nanp[3] = {0.0f, std::nanf(""), 0.0f};
     Check(!pa::CoordOk(big) && pa::CoordOk(ok3) && !pa::CoordOk(nanp), "aim: the hook's coordinate bound");
     // The aim-turn predicate: |(0.5 - r60) * pi| > 80 degrees (r60 = 0.5 - yaw / 180 deg).
@@ -1128,6 +1260,50 @@ void TestAim() {
           "aim: the predicate turns beyond 80 degrees of aim (r60 0.944 / 0.056)");
     Check(pa::RelYawCdeg(0.5f) == 0 && pa::RelYawCdeg(0.95f) == -8100 && pa::RelYawCdeg(0.0f) == 9000 && pa::RelYawCdeg(std::nanf("")) == INT32_MIN,
           "aim: the tested yaw in centidegrees");
+    // The recorded near-hit inverse, range classes, refusal gates and convention latch.
+    pa::GunDirIn gi{};
+    gi.gun_ok = gi.rate_ok = gi.body_ok = true; gi.stance = 2;
+    gi.body_yaw = static_cast<float>(4.8 * pa::kCdegToRad * 100);
+    gi.r5c = .625f; gi.r60 = .517f;
+    auto gd = pa::GunDir(gi);
+    Check(gd.ok && std::abs(pa::PitchCdeg(gd.pitch) - 1875) <= 1 && std::abs(pa::YawCdeg(gd.yaw) - 174) <= 1,
+          "gun direction: crouch near-hit recorded inverse");
+    gi.stance = 3; gi.r5c = .770f; gi.r60 = .541f; gd = pa::GunDir(gi);
+    Check(!gd.ok && gd.reason == pa::DirReason::prone_frame &&
+              std::strcmp(pa::DirReasonName(gd.reason), "prone_frame") == 0,
+          "gun direction: captured prone rates refuse the unqualified orientation");
+    pa::DirCheck prone_check{};
+    const float prone_body[3]{}, prone_aim[3]{0, 0, 100};
+    for (unsigned n = 0; n <= pa::kCheckLatch; ++n)
+        Check(pa::CheckStep(prone_check, gd, gi, prone_body, prone_aim) == pa::CheckResult::skipped,
+              "gun direction: refused prone never qualifies a convention check");
+    Check(prone_check.checks == 0 && prone_check.misses == 0 && !prone_check.latched,
+          "gun direction: refused prone does not consume the standing convention budget");
+    in.setting = PartnerNativeAimPt::point; in.active = in.body_ok = in.look_ok = true;
+    in.point_ok = gd.ok; in.stance = 3; in.look_pitch = in.look_yaw = 0;
+    o = pa::Target(in);
+    Check(o.valid && o.src == pa::Source::look && std::fabs(o.p[1] - in.body[1]) < 1e-3f,
+          "aim: unqualified prone direction uses the existing prone-pivot look fallback");
+    in.point_ok = true; in.point_pitch = .25f; in.point_yaw = 1.0f;
+    o = pa::Target(in);
+    Check(o.valid && o.src == pa::Source::look && std::fabs(o.p[1] - in.body[1]) < 1e-3f,
+          "aim: receiver prone stance rejects a valid point group from a delayed or older experimental sender");
+    gi.stance = 1; gi.gun_class = 2; gi.r5c = 1; gi.r60 = 0; gd = pa::GunDir(gi);
+    Check(pa::PitchCdeg(gd.rel_pitch) == 4500 && pa::YawCdeg(gd.rel_yaw) == 4500, "gun direction: class2 ranges");
+    gi.gun_class = 6; gd = pa::GunDir(gi);
+    Check(pa::PitchCdeg(gd.rel_pitch) == 4000 && pa::YawCdeg(gd.rel_yaw) == 7500, "gun direction: class6 ranges");
+    gi.gun_class = 3; Check(pa::GunDir(gi).reason == pa::DirReason::gun_class, "gun direction: other class path refuses");
+    gi.gun_class = 0; gi.gun3c0 = 0x2000; Check(pa::GunDir(gi).reason == pa::DirReason::camera, "gun direction: camera relative refuses");
+    gi.gun3c0 = 0; gi.b3d5 = 1; Check(pa::GunDir(gi).reason == pa::DirReason::sight, "gun direction: sight mapping refuses");
+    gi.b3d5 = 0; gi.stance = 0; Check(pa::GunDir(gi).reason == pa::DirReason::stance, "gun direction: unread stance refuses");
+    gi.stance = 1; gi.r5c = std::nanf(""); Check(pa::GunDir(gi).reason == pa::DirReason::range, "gun direction: nonfinite rate refuses");
+    gi.r5c = gi.r60 = .5f; gi.body_yaw = 0; gd = pa::GunDir(gi);
+    pa::DirCheck dc{}; const float body[3]{}, aim[3]{0, .6f, 100};
+    pa::CheckStep(dc, gd, gi, body, aim);
+    Check(pa::CheckStep(dc, gd, gi, body, aim) == pa::CheckResult::hit && dc.checks == 1, "gun direction: settled convention hit");
+    gd.yaw = 1.0;
+    for (unsigned n = 0; n < pa::kCheckLatch; ++n) pa::CheckStep(dc, gd, gi, body, aim);
+    Check(dc.latched && dc.streak == pa::kCheckLatch && dc.misses == pa::kCheckLatch, "gun direction: sustained wrong convention latches per mission");
     // The debug command.
     pa::ParsedCommand cmd{};
     Check(pa::ParseCommand("aimpt look", cmd) && cmd.kind == pa::Command::set && cmd.value == PartnerNativeAimPt::look, "aim: aimpt look");
@@ -1452,18 +1628,58 @@ void TestSlots() {
     Check(ps::Judge(sub) == ps::Gate::mismatch, "without the plan's substitute: mismatch");
     sub.substitute = true; sub.body_type = 7;
     Check(ps::Judge(sub) == ps::Gate::projectile && ps::StripBits(ps::Judge(sub)) == 0x10u, "a projectile substitute: FIRE stripped");
+    // Stand-ins: every remote slot and filled pattern, with deterministic
+    // primary-pair then lower-slot selection among bullet weapons.
+    for(unsigned r=0;r<3;++r) for(unsigned mask=0;mask<8;++mask) {
+        ps::PlanIn si{};si.body_ok=true;si.standin=true;
+        for(unsigned s=0;s<3;++s) si.body[s]={(mask&(1u<<s))!=0,std::uint16_t(30+s),std::uint8_t(s==1?4:s==2?2:1)};
+        unsigned expected=3;
+        for(unsigned s=0;s<3;++s) if(s!=r && (mask&(1u<<s)))
+            if(expected==3 || (r<2 && s<2 && expected>=2)) expected=s;
+        Check(ps::StandIn(si,r)==(expected<3?expected:ps::kNoSlot),"stand-in deterministic filled pattern");
+        const auto sp=ps::MakePlan(si);
+        Check(sp.map[r]==(expected<3?expected:ps::kNoSlot),"stand-in plan maps the remote slot");
+        si.standin=false;Check(ps::MakePlan(si).map[r]==ps::kNoSlot,"stand-in off refuses missing match");
+    }
+    ps::PlanIn si{};si.body_ok=si.standin=true;si.body[1]={true,51,8};si.body[2]={true,9,2};
+    Check(ps::StandIn(si,0)==2,"bullet secondary beats a primary projectile");
+    si.body[2]={};Check(ps::StandIn(si,0)==1,"projectile fallback when no bullet exists");
+    si.body_ok=false;Check(ps::StandIn(si,0)==ps::kNoSlot,"unread slots never select a stand-in");
+    ps::GateIn sg{871,343,46,false,true,4,false,true};
+    Check(ps::Judge(sg)==ps::Gate::standin && ps::StripBits(ps::Judge(sg))==0,"qualified stand-in permits HOLD FIRE RELOAD");
+    sg.body_type=8;Check(ps::Judge(sg)==ps::Gate::projectile && ps::StripBits(ps::Judge(sg))==0x10,"projectile stand-in masks FIRE");
+    sg.switching=true;Check(ps::Judge(sg)==ps::Gate::switching,"switching stand-in masks FIRE RELOAD");
     Check(Is(ps::GateName(ps::Gate::switching), "switching"), "gate names");
 }
 
 int main() {
+    for (const char* visibilityWhy : {"ride", "ride_stale", "air", "dead"}) {
+        pn::State visibilityState{}; pn::Reset(visibilityState, true);
+        for (unsigned episode=0; episode<6; ++episode) {
+            const auto at=Activate(visibilityState,episode*10000);
+            auto input=Healthy(at+1); input.visibility_reason=visibilityWhy;
+            auto output=pn::Step(visibilityState,input);
+            Check(LeaveRequests(output) && Is(output.reason,visibilityWhy) && visibilityState.fallbacks==0,
+                  "visibility leave never spends hard fallback latch, including lab policy");
+            input.now_ms+=1; output=pn::Step(visibilityState,input);
+            Check(output.mode==pn::Mode::fallback, "visibility leave reaches recoverable fallback");
+            input.now_ms+=5000; output=pn::Step(visibilityState,input);
+            Check(output.mode==pn::Mode::fallback && Is(output.reason,visibilityWhy), "visibility blocks native re-entry");
+        }
+        const auto code=mgscoop::partner_native_net::ReasonCode(visibilityWhy);
+        Check(code!=mgscoop::partner_native_net::kReasonUnknown &&
+              Is(mgscoop::partner_native_net::ReasonName(code),visibilityWhy), "appended stable visibility reason round trip");
+    }
     TestOnline();
     TestAim();
     TestWeapons();
+    TestMagazineHistory();
     TestReload();
     TestSlots();
     TestOffAndLegacy();
     TestEnterSequence();
     TestEnterTimeoutsAndRevertLatch();
+    TestThreadWarmup();
     TestHardReasons();
     TestSoftReasons();
     TestCooldownAndLatch();
@@ -1472,6 +1688,7 @@ int main() {
     TestEffective();
     TestLatch();
     TestSteer();
+    TestMovementRecovery();
     TestConsumers();
     TestRing();
     TestRates();

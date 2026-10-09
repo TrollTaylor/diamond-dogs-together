@@ -49,6 +49,7 @@ std::string Bitmap(const std::vector<unsigned char>& rgba) {
     Require(out.size() == total, "probe_bitmap_extent"); return out;
 }
 struct Result {
+    bool published = false; // Receipts emitted while the WindowLease and COM resources stay alive.
     bool ready = false, restriction_verified = false, creation_denied = false, hardware = false, pixels = false, present_tested = false, windowed = false;
     DWORD error = 0, denial_error = 0, pid = GetCurrentProcessId(), vendor = 0, device_id = 0, adapter_flags = 0;
     std::uint64_t creation = 0; std::string reason = "not_started", run, directory, desktop, initial_input, final_input, adapter, bmp_sha;
@@ -74,6 +75,9 @@ void Execute(Result& result) {
     result.run = Env(L"MGS_WORKER_RUN_ID"); result.directory = Env(L"MGS_WORKER_RUN_DIR"); result.desktop = Env(L"MGS_WORKER_DESKTOP");
     Require(RunId(result.run) && result.desktop == "MGSWorker_" + result.run && AbsolutePath(result.directory) && Env(L"MGS_WORKER_ROLE") == "probe", "probe_context");
     auto directory_handles = LockAncestors(result.directory, true); (void)directory_handles;
+    const auto acknowledgement = Wide(result.directory + "\\probe.ack");
+    Require(GetFileAttributesW(acknowledgement.c_str()) == INVALID_FILE_ATTRIBUTES && GetLastError() == ERROR_FILE_NOT_FOUND,
+            "probe_ack_preexisting");
     result.creation = CreationTime(GetCurrentProcess()); result.initial_input = InputDesktop(); PrivateThread(result.desktop);
     BOOL member = FALSE; Require(IsProcessInJob(GetCurrentProcess(), nullptr, &member) != FALSE && member, "probe_not_in_job");
     JOBOBJECT_BASIC_UI_RESTRICTIONS ui{}; JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
@@ -123,7 +127,7 @@ void Execute(Result& result) {
     const float red[4] = {1, 0, 0, 1}; std::vector<unsigned char> rgba(64 * 64 * 4);
     for (unsigned frame = 0; frame < 3; ++frame) {
         PrivateThread(result.desktop); MSG message{};
-        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) { Require(message.message != WM_QUIT, "probe_window_closed"); TranslateMessage(&message); DispatchMessageW(&message); }
+        for (unsigned queued = 0; queued < 64 && PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE); ++queued) { Require(message.message != WM_QUIT, "probe_window_closed"); TranslateMessage(&message); DispatchMessageW(&message); }
         context.value->ClearRenderTargetView(target.value, red); context.value->CopyResource(staging.value, back.value);
         D3D11_MAPPED_SUBRESOURCE mapped{}; Require(SUCCEEDED(context.value->Map(staging.value, 0, D3D11_MAP_READ, 0, &mapped)), "probe_staging_readback");
         const bool span_ok = mapped.pData && mapped.RowPitch >= 256 && mapped.RowPitch <= 1048576 / 64;
@@ -137,6 +141,35 @@ void Execute(Result& result) {
     const auto bitmap = Wide(result.directory + "\\probe-backbuffer.bmp"); Atomic(bitmap, Bitmap(rgba), false);
     auto file = OpenRead(bitmap); result.bmp_sha = Hash(file.value); result.final_input = InputDesktop(); PrivateThread(result.desktop);
     Require(result.final_input == result.initial_input, "probe_input_desktop_changed"); result.ready = true; result.reason = "hardware_pixels_private_desktop";
+    // Publish before these local WindowLease and COM objects unwind. The
+    // supervisor inspects a live stable HWND, then explicitly releases us.
+    Atomic(Wide(result.directory + "\\probe.json"), result.JsonText(), false); result.published = true;
+    Atomic(Wide(result.directory + "\\probe.context"), "MGSWORKERPROBE1 " + result.run + " probe " + std::to_string(result.pid) + " " +
+        std::to_string(result.creation) + " " + result.desktop + " admitted\n", false);
+    const auto release_deadline = GetTickCount64() + 10000;
+    for (;;) {
+        if (GetTickCount64() >= release_deadline) throw Failure("probe_ack_timeout", WAIT_TIMEOUT);
+        PrivateThread(result.desktop); result.final_input = InputDesktop();
+        Require(result.final_input == result.initial_input, "probe_input_desktop_changed");
+        DWORD owner_pid = 0;
+        Require(IsWindow(window.hwnd) && GetWindowThreadProcessId(window.hwnd, &owner_pid) == GetCurrentThreadId() &&
+                owner_pid == result.pid, "probe_window_owner_before_release");
+        MSG message{};
+        for (unsigned queued = 0; queued < 64 && PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE); ++queued) {
+            Require(message.message != WM_QUIT, "probe_window_closed"); TranslateMessage(&message); DispatchMessageW(&message);
+        }
+        std::string text;
+        // OpenRead rejects reparse points/final-path mismatches; the existing
+        // directory_handles pins every ancestor until this wait finishes.
+        if (TryText(acknowledgement, 256, text)) {
+            if (GetTickCount64() >= release_deadline) throw Failure("probe_ack_timeout", WAIT_TIMEOUT);
+            Require(IsWindow(window.hwnd) && GetWindowThreadProcessId(window.hwnd, &owner_pid) == GetCurrentThreadId() &&
+                    owner_pid == result.pid, "probe_window_owner_before_release");
+            Require(ProbeRelease(text, result.run, result.pid, result.creation), "probe_ack_ownership_mismatch");
+            return; // Deliberate teardown after the exact supervisor release.
+        }
+        Sleep(10);
+    }
 }
 } // namespace
 
@@ -146,13 +179,13 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     try { int count = 0; auto* args = CommandLineToArgvW(GetCommandLineW(), &count);
         const bool valid = args && count == 2 && std::wstring(args[1]) == L"--probe"; if (args) LocalFree(args);
         Require(valid, "probe_arguments"); Execute(result);
-    } catch (const Failure& e) { result.reason = e.what(); result.error = e.code; }
-      catch (...) { result.reason = "probe_exception"; result.error = ERROR_UNHANDLED_EXCEPTION; }
-    if (AbsolutePath(result.directory) && RunId(result.run)) {
+    } catch (const Failure& e) { result.ready = false; result.reason = e.what(); result.error = e.code; }
+      catch (...) { result.ready = false; result.reason = "probe_exception"; result.error = ERROR_UNHANDLED_EXCEPTION; }
+    if ((!result.published || !result.ready) && AbsolutePath(result.directory) && RunId(result.run)) {
         try { auto held = LockAncestors(result.directory, true); (void)held;
-            Atomic(Wide(result.directory + "\\probe.json"), result.JsonText(), false);
-            if (result.ready) Atomic(Wide(result.directory + "\\probe.context"), "MGSWORKERPROBE1 " + result.run + " probe " + std::to_string(result.pid) + " " +
-                std::to_string(result.creation) + " " + result.desktop + " admitted\n", false);
+            // Failure replaces only this probe's already-published result.
+            // Success never duplicates CREATE_NEW ready/context writes.
+            Atomic(Wide(result.directory + "\\probe.json"), result.JsonText(), result.published);
         } catch (...) { return 3; }
     }
     return result.ready ? 0 : 2;

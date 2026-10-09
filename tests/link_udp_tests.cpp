@@ -526,6 +526,14 @@ void PartnerNetV2() {
     net::PublishPartnerState(true, true, 30050);
     Check(WaitFor([&] { const auto t = ReadText(status); return t.find("\"partner_shown\":1,\"look\":1,\"mission\":30050") != std::string::npos; },
                   3000), "PublishPartnerState reaches the status file");
+    // A refused partner pack for the published mission: no body (docs/player-package-selection.md).
+    net::PublishPackState(30050);
+    Check(WaitFor([&] { const auto t = ReadText(status); return t.find("\"partner_drive\":\"off\",\"partner_reason\":\"no_body_pack\"") != std::string::npos; },
+                  3000), "PublishPackState: partner_reason no_body_pack");
+    net::PublishPackState(30010);
+    Check(WaitFor([&] { const auto t = ReadText(status); return t.find("no_body_pack") == std::string::npos; }, 3000),
+          "a refusal for another mission does not apply");
+    net::PublishPackState(0);
     // The guest goes away: lost at 3 s; a held pose then reads lost (freeze).
     g_guest.transport.stop();
     Check(WaitFor([] { return net::GetLinkInfo().state == link::LinkState::lost; }, 5000), "host lost");

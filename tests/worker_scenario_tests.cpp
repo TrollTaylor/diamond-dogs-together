@@ -71,5 +71,56 @@ int main(){
     Check(released.Events(w::Device::keyboard,events,64,false)==2&&events[0].value==0&&events[0].command==2&&events[1].value==0&&events[1].command==4,"internalreleasecorrelatesholdnotlatestcapturecommand");
     for(int result:{0,1,-1,static_cast<int>(0x8007001eu),static_cast<int>(0x8007000cu)})
         for(unsigned gate=0;gate<4;++gate)Check(w::MayReplaceState(result,(gate&1)!=0,(gate&2)!=0)==(result>=0&&gate==3),"originalfailurecannotbecomesuccess");
+    // Pure loading lifecycle: no Windows input/window/game calls.
+    auto resume=Parse("resume_loading 30020 8 0");
+    Check(resume.operation==w::Operation::resume_loading&&resume.mission==30020&&resume.generation==8&&resume.duration==120,
+          "loadingparserfixesSpace120mswithmissionallocationtoken");
+    for(const char* bad:{"resume_loading 0 8 0","resume_loading 65536 8 0","resume_loading 30020 0 0",
+        "resume_loading 30020 4294967296 0","resume_loading space 120 0","resume_loading 30020 8 1"}) {
+        char text[512]{};std::snprintf(text,sizeof(text),"MGSWORKER1 %s host 1 3000 %s\n",id,bad);
+        Check(!w::ParseCommand(text,std::strlen(text),id,"host",rejected),"loadingparserrefusesunknownzerooversizedorcustominput");
+    }
+    w::Scenario loader;
+    Check(!loader.Accept(resume,1000)&&std::strcmp(loader.ResumeRefusal(resume),"unavailable")==0,"missinglifecyclefailsclosed");
+    for(const auto phase:{w::LoadingPhase::running,w::LoadingPhase::terminating,w::LoadingPhase::unavailable}) {
+        loader.SetLoading({phase,30020,8},1000);
+        Check(!loader.Accept(resume,1000),"runtimeandterminationneverauthorizeSpace");
+    }
+    loader.SetLoading({w::LoadingPhase::initialized,30020,8},1000);
+    auto wrong=resume;wrong.generation=7;Check(!loader.Accept(wrong,1000),"previousallocationtokenrefused");
+    wrong=resume;wrong.mission=40050;Check(!loader.Accept(wrong,1000),"missiontokenrefused");
+    loader.SetLoading({w::LoadingPhase::initialized,10100,8},1000);wrong=resume;wrong.mission=10100;
+    Check(!loader.Accept(wrong,1000),"unsupportedstoryloadingrefused");
+    loader.SetLoading({w::LoadingPhase::initialized,30020,8},1000);
+    Check(loader.Accept(resume,1000),"exactinitializedloadingtokenaccepted");loader.Keyboard(keys);
+    Check(keys[0x39]==0x80&&keys[0x11]==0&&loader.Events(w::Device::keyboard,events,64,true)==1&&events[0].offset==0x39,
+          "guardedresumeisSpaceonly");
+    Check(events[0].loading_mission==30020&&events[0].loading_generation==8&&events[0].expires==1120,
+          "resumeeventpreservesallocationand120msdeliverytoken");
+    Check(loader.LoadingDeliveryAllowed(30020,8,1120,1119)&&!loader.LoadingDeliveryAllowed(30020,8,1120,1120),
+          "queuedrawtokenexpiryrecheckedatconsumption");
+    auto busyResume=resume;busyResume.sequence=2;Check(!loader.Accept(busyResume,1100),"nooverlappingresumepulses");
+    loader.Tick(1119);loader.Keyboard(keys);Check(keys[0x39]==0x80,"resume119msheld");
+    loader.Tick(1120);loader.Keyboard(keys);Check(keys[0x39]==0,"resume120msreleased");
+    Check(loader.Accept(busyResume,1200),"laterboundedsameallocationretry");
+    loader.SetLoading({w::LoadingPhase::running,30020,8},1201);loader.Keyboard(keys);
+    Check(keys[0x39]==0,"runtimeentryrevokesSpacebeforeinputconsumer");
+    Check(!loader.LoadingDeliveryAllowed(30020,8,3000,1201),"postedrawtokenrefusedafterruntimeentry");
+    auto n=loader.Events(w::Device::keyboard,events,64,true);bool onlyReleases=true;
+    for(unsigned i=0;i<n;++i)onlyReleases=onlyReleases&&events[i].value==0;
+    Check(onlyReleases,"runtimeentrywithdrawsbuffereddownincludingpeekpath");
+    loader.SetLoading({w::LoadingPhase::initialized,30020,9},1300);
+    auto nextResume=resume;nextResume.sequence=3;
+    Check(!loader.Accept(nextResume,1300),"sameSceneContinueallocationrejectsoldgeneration");
+    nextResume.generation=9;Check(loader.Accept(nextResume,1300),"newallocationtokenaccepted");
+    loader.SetLoading({w::LoadingPhase::terminating,30020,9},1301);loader.Keyboard(keys);
+    Check(keys[0x39]==0,"terminationrevokesacceptedbutunconsumedSpace");
+    w::Scenario simultaneous;auto walk=Parse("hold w 500 0");Check(simultaneous.Accept(walk,1000),"normalinputstillallowed");
+    simultaneous.SetLoading({w::LoadingPhase::initialized,30020,8},1001);resume.sequence=2;
+    Check(simultaneous.Accept(resume,1001),"loadingresumealongsideordinarytypedkeys");
+    simultaneous.SetLoading({w::LoadingPhase::running,30020,8},1002);simultaneous.Keyboard(keys);
+    Check(keys[0x11]==0x80&&keys[0x39]==0,"loadingrevocationdoesnotclearunrelatedordinaryinput");
+    simultaneous.SetLoading({w::LoadingPhase::initialized,30020,10},1003);
+    Check(!simultaneous.Accept(resume,1003),"oldresumecannotreviveafterallocationchange");
     std::printf("worker_scenario checks=%u failures=%u compiled=%u\n",checks,failures,w::Compiled()?1u:0u);return failures?1:0;
 }

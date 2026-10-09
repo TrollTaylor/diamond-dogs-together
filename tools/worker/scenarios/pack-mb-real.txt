@@ -1,0 +1,37 @@
+# Copies of the real saves; native partner short-range Mother Base acceptance.
+title 200
+wait 4000
+waitgameplay host 150
+waitgameplay guest 240
+# Coordinator inspects the private saved UI frame and dismisses only observed pause layers.
+both capture mb-ui-check
+wait 60000
+wait 4000
+host run status
+host expect ^status;mission=30050;guard=ok;host=1
+guest run status
+guest expect ^status;mission=30050;guard=ok;.*host=0
+host run godmode 1
+guest run godmode 1
+placebehind host guest 6
+wait 3000
+both capture mb-partner
+heldcapture guest host w mb-guest-walk 3
+placebehind guest host 6
+wait 1500
+both capture mb-return
+heldcapture host guest w mb-host-walk 3
+# Host-authoritative environment; source fixtures cover local demo overrides and digest recovery.
+host run weather rainy
+host expect ^submitted_weather_rainy;sync=world$
+wait 25000
+both capture mb-weather-rain
+host run time 64800
+host expect ^time_readback;sync=world$
+wait 10000
+both capture mb-clock-evening
+host run weather sunny
+host expect ^submitted_weather_sunny;sync=world$
+wait 25000
+both capture mb-weather-sunny
+state

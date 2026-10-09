@@ -15,7 +15,7 @@ constexpr const char* kReasons[] = {
     "cost", "enter_timeout_dm", "enter_timeout_place", "install_bytes", "install_slot", "install_changed", "install_protect",
     "install_allocate_near", "install_range", "install_alignment", "install_cache_line", "install_hook", "install_hook_disabled",
     "install_scope", "install_exchange", "install_unavailable", "install_disabled", "install_vt_copy", "install_wrap", "install_gate",
-    "install_other", "net_input", "net_link", "net_quiet", "remote_quiet", "net_quality", "net_flap", "remote_caps"};
+    "install_other", "net_input", "net_link", "net_quiet", "remote_quiet", "net_quality", "net_flap", "remote_caps", "warmup", "ride", "ride_stale", "air", "dead"};
 constexpr std::size_t kReasonCount = sizeof(kReasons) / sizeof(kReasons[0]);
 static_assert(kReasonCount < kReasonUnknown, "reason codes fit one byte");
 

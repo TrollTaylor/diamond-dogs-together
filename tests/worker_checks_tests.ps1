@@ -5,6 +5,7 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
+Import-Module (Join-Path $repo 'tools\worker\WorkerSource.psm1') -Force -DisableNameChecking
 $scriptPath = Join-Path $repo 'tools\worker\Invoke-WorkerChecks.ps1'
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$tokens, [ref]$errors)
@@ -12,7 +13,7 @@ if ($errors.Count) { throw 'Worker runner parse failed' }
 # Load actual pure boundaries, never the top-level execution pipeline.
 $pure = @('Get-WorkerExperiments','Get-WorkerReleaseExperiments','Get-WorkerTests','Get-WorkerHash','Test-WorkerUnder','Assert-WorkerPath',
     'Get-WorkerPlan','Assert-WorkerOptions','Assert-WorkerCache','Assert-WorkerCacheOwnership',
-    'Assert-WorkerInventory','Write-WorkerJson','Get-WorkerSourceHashes','Assert-WorkerSourceUnchanged','New-WorkerCmakeOverride')
+    'Assert-WorkerInventory','Write-WorkerJson','New-WorkerCmakeOverride')
 foreach ($name in $pure) {
     $definitions = @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $true))
     if ($definitions.Count -ne 1) { throw "Missing or duplicate pure boundary: $name" }

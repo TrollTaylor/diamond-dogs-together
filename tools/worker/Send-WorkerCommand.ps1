@@ -10,7 +10,7 @@ command is not proof of gameplay; inspect worker receipts and captured frames.
 param(
     [Parameter(Mandatory)][string]$RunDirectory,
     [Parameter(Mandatory)][ValidateSet('host','guest')][string]$Role,
-    [Parameter(Mandatory)][ValidateSet('press','hold','release','mouse','capture','debug')][string]$Operation,
+    [Parameter(Mandatory)][ValidateSet('press','hold','release','mouse','capture','debug','resume_loading')][string]$Operation,
     [string]$Keys='enter',
     [ValidateRange(1,1500)][int]$DurationMs=100,
     [ValidateRange(-1500,1500)][int]$Dx=0,
@@ -61,6 +61,17 @@ if($Operation -eq 'debug') {
        $state.terminating -or !$state.mission -or !$state.generation -or [uint64]$state.tick_ms -gt [Environment]::TickCount64 -or
        [Environment]::TickCount64-[uint64]$state.tick_ms -gt 2000){throw 'Debug actions require a fresh owned gameplay mission generation.'}
 }
+$loading=$null
+if($Operation -eq 'resume_loading') {
+    $loadingPath=Join-Path $run ($Role+'.loading.json')
+    if((Get-Item -LiteralPath $loadingPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Loading context must be an owned plain file.'}
+    $loading=Get-Content -LiteralPath $loadingPath -Raw|ConvertFrom-Json
+    if($loading.run_id -cne $status.run_id -or $loading.role -cne $Role -or $loading.pid -ne $game.Id -or
+       [string]$loading.process_start_filetime -cne [string]$owned[0].creation_filetime -or $loading.phase -cne 'initialized' -or
+       $loading.mission -notin 30010,30020,30050,40010,40020,40050 -or !$loading.generation -or
+       [uint64]$loading.tick_ms -gt [Environment]::TickCount64 -or
+       [Environment]::TickCount64-[uint64]$loading.tick_ms -gt 400000){throw 'Resume requires the current owned initialized loading token.'}
+}
 $mutex=[Threading.Mutex]::new($false,('Local\MGSWorkerCommand_'+$status.run_id+'_'+$Role));$locked=$false
 try {
     $locked=$mutex.WaitOne(5000);if(!$locked){throw 'Worker role command writer is busy.'}
@@ -72,6 +83,7 @@ try {
     $suffix=if($Operation -eq 'debug'){'debug'}else{'input'}
     $text=if($Operation -eq 'debug'){"MGSWORKERDEBUG1 $($status.run_id) $Role $sequence $expires $($state.mission) $($state.generation) $DebugCommand`n"}
         elseif($Operation -in @('press','hold')){"MGSWORKER1 $($status.run_id) $Role $sequence $expires $Operation $Keys $DurationMs 0`n"}
+        elseif($Operation -eq 'resume_loading'){"MGSWORKER1 $($status.run_id) $Role $sequence $expires resume_loading $($loading.mission) $($loading.generation) 0`n"}
         elseif($Operation -eq 'mouse'){"MGSWORKER1 $($status.run_id) $Role $sequence $expires mouse $Dx $Dy 0`n"}
         else{"MGSWORKER1 $($status.run_id) $Role $sequence $expires $Operation 0 0 0`n"}
     $path=Join-Path $run ($Role+'.'+$suffix);$temp=$path+'.'+[Guid]::NewGuid().ToString('N')+'.tmp'

@@ -24,6 +24,13 @@ void CopyAnim(const Snapshot& from, Sample& to) noexcept {
     to.anim_speed = from.anim_speed;
     to.equip_id = from.equip_id;
 }
+// The pair a -> b moved more than jump_distance_m faster than jump_speed_mps (sender time).
+bool PairJump(const Snapshot& a, std::int64_t a_ms, const Snapshot& b, std::int64_t b_ms) noexcept {
+    const double distance = Distance(a, b);
+    if (!(distance > jump_distance_m)) return false;
+    if (b_ms <= a_ms) return true;
+    return distance * 1000.0 / static_cast<double>(b_ms - a_ms) > jump_speed_mps;
+}
 void Copy(const Snapshot& from, Sample& to) noexcept {
     to.x = from.x; to.y = from.y; to.z = from.z;
     to.yaw = static_cast<float>(WrapDouble(from.yaw));
@@ -108,11 +115,28 @@ Sample SnapshotRing::SampleAt(std::uint64_t now_ms, std::uint32_t delay_ms) cons
     const Entry& newest = at(count_ - 1);
     const std::uint64_t age = now_ms >= newest.receive_ms ? now_ms - newest.receive_ms : 0;
     out.valid = true;
+    out.time_valid = true;
+    out.generation = generation_;
     out.status = StatusForAge(age);
     out.age_ms = age > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<std::uint32_t>(age);
+    out.sender_ms = newest.sender_time;
+    // A destination identity survives newer arrivals until it leaves the ring.
+    // Never publish it before the sampled pose reaches the destination time.
+    const auto finish = [&]() noexcept {
+        for (std::size_t i = 1; i < count_; ++i) {
+            const Entry& a = at(i - 1);
+            const Entry& b = at(i);
+            if (b.sender_time > out.sender_ms) break;
+            if (PairJump(a.snapshot, a.sender_time, b.snapshot, b.sender_time)) {
+                out.jump = true;
+                out.jump_ms = b.sender_time;
+            }
+        }
+        return out;
+    };
     if (delay_ms == 0) {
         Copy(newest.snapshot, out);
-        return out;
+        return finish();
     }
     std::int64_t offset = static_cast<std::int64_t>(at(0).receive_ms) - at(0).sender_time;
     for (std::size_t i = 1; i < count_; ++i) {
@@ -123,13 +147,14 @@ Sample SnapshotRing::SampleAt(std::uint64_t now_ms, std::uint32_t delay_ms) cons
     if (render >= newest.sender_time) {
         Copy(newest.snapshot, out);
         const std::int64_t ahead = render - newest.sender_time;
-        if (ahead == 0) return out;
-        if (count_ < 2) { out.held = true; return out; }
+        if (ahead == 0) return finish();
+        if (count_ < 2) { out.held = true; return finish(); }
         const Entry& previous = at(count_ - 2);
         const double span = static_cast<double>(newest.sender_time - previous.sender_time);
-        if (Distance(previous.snapshot, newest.snapshot) > snap_distance_m || span <= 0) {
+        if (Distance(previous.snapshot, newest.snapshot) > snap_distance_m ||
+            PairJump(previous.snapshot, previous.sender_time, newest.snapshot, newest.sender_time) || span <= 0) {
             out.held = true;
-            return out;
+            return finish();
         }
         const double step = static_cast<double>(ahead < extrapolate_cap_ms ? ahead : extrapolate_cap_ms) / span;
         out.x = static_cast<float>(newest.snapshot.x + (static_cast<double>(newest.snapshot.x) - previous.snapshot.x) * step);
@@ -139,22 +164,25 @@ Sample SnapshotRing::SampleAt(std::uint64_t now_ms, std::uint32_t delay_ms) cons
                                                 WrapDouble(static_cast<double>(newest.snapshot.yaw) - previous.snapshot.yaw) * step));
         out.extrapolated = true;
         out.held = ahead > extrapolate_cap_ms;
-        return out;
+        out.sender_ms = newest.sender_time + (ahead < extrapolate_cap_ms ? ahead : static_cast<std::int64_t>(extrapolate_cap_ms));
+        return finish();
     }
     const Entry& oldest = at(0);
     if (render <= oldest.sender_time) {
         Copy(oldest.snapshot, out);
         out.held = true;
-        return out;
+        out.sender_ms = oldest.sender_time;
+        return finish();
     }
     std::size_t index = 0;
     while (index + 1 < count_ && at(index + 1).sender_time <= render) ++index;
     const Entry& a = at(index);
     const Entry& b = at(index + 1);
-    if (Distance(a.snapshot, b.snapshot) > snap_distance_m) {
+    if (Distance(a.snapshot, b.snapshot) > snap_distance_m || PairJump(a.snapshot, a.sender_time, b.snapshot, b.sender_time)) {
         Copy(a.snapshot, out);
         out.snapped = true;
-        return out;
+        out.sender_ms = a.sender_time;
+        return finish();
     }
     const double f = static_cast<double>(render - a.sender_time) / static_cast<double>(b.sender_time - a.sender_time);
     out.x = static_cast<float>(a.snapshot.x + (static_cast<double>(b.snapshot.x) - a.snapshot.x) * f);
@@ -165,7 +193,8 @@ Sample SnapshotRing::SampleAt(std::uint64_t now_ms, std::uint32_t delay_ms) cons
     out.flags = b.snapshot.flags;
     CopyAnim(b.snapshot, out);
     out.interpolated = true;
-    return out;
+    out.sender_ms = render;
+    return finish();
 }
 
 } // namespace mgscoop::pose

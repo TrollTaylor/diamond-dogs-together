@@ -105,7 +105,7 @@ param(
     [switch]$VisualFire,
     [switch]$NoVisualFire,
     # The aim-target mirror (docs/native-puppet.md "Facing"): the native partner's
-    # gun aims where the other player aims (partner_native_aimpt=look). On by
+    # gun aims where the other player aims (partner_native_aimpt=point). On by
     # default with the native partner; -NoAimMirror restores the old behaviour
     # (the partner's gun aims at a fixed point and its standing aim may swing).
     [switch]$NoAimMirror,
@@ -244,7 +244,7 @@ try {
             'partner_native_gun=1', $(if (!$NoVisualFire) { 'partner_native_fire=visual' } else { 'partner_native_fire=0' }),
             'partner_native_aim=look', 'partner_input_triggers=1', 'partner_input_rstick=1', 'partner_native_rates=mirror',
             'partner_native_reload=event', 'partner_native_slot=write', 'partner_native_equip=substitute',
-            $(if (!$NoAimMirror) { 'partner_native_aimpt=look' } else { 'partner_native_aimpt=off' }))
+            $(if (!$NoAimMirror) { 'partner_native_aimpt=point' } else { 'partner_native_aimpt=off' }))
         Write-Note 'NATIVE PARTNER: the other player''s body runs the game''s own movement and aiming; dm=map clips are the automatic fallback (-NoNative turns this off).'
     }
     if ($experiment.Move -eq 'input') {

@@ -1,10 +1,13 @@
 # Native puppet
 
-Status (2026-10-08): implemented on `wp/native-puppet`, **fixture-tested only**.
-Nothing here has run in the game. Every new path is default OFF behind lab.ini
-keys and refuses cleanly on any byte or slot mismatch. The coordinator alone
-qualifies it with the hidden worker (stages below); defaults change only after
-that.
+Status (2026-10-09): the native partner ships in the 0.12.0 play profile.
+The user reported an actual two-PC session; hidden runs separately established
+locomotion and carried weapons, muzzle flash and native reload exit. The 0.12.1
+repairs passed the recorded hidden checks; fresh two-PC acceptance is still
+required. See [STATUS.md](STATUS.md) for exact
+runs and remaining gaps. Historical sections below retain their original
+fixture/live evidence boundaries. Byte, slot, ownership and lifecycle refusals
+remain mandatory; only the coordinator runs the private-desktop worker.
 
 The partner body (player instance 1) is driven by the remote player's real pad
 through the game's own locomotion, action and gun systems. The proven
@@ -358,12 +361,14 @@ fired again (period about 547 ms). On the host the origin lay 57..64 degrees
 off: no turn, but the gun twisted that far.
 
 **The fix.** The driver tick publishes a target (`partner_aim::Target`):
-`look` = the partner's eyes (instance 1's `T+0x20` + 1.6 m up) plus 100 m along
+`look` = instance 1's `T+0x20` plus the stance pivot height (0.6 m standing,
+0.2 m crouched, zero prone), then 100 m along
 the remote's live v3 look `(sin yaw cos pitch, -sin pitch, cos yaw cos pitch)`
 (the convention of `0xFFAC00` and `0x1042F80`); `point` uses the sender's own
-aim direction once a later input frame carries it (input frame v5 is the
-reload/switch gun group, without an aim point; until then it falls back to the
-look and says `src=look`). Inside block 1's drain window, right after the
+standing/crouched aim direction from a negotiated input v6 frame. Prone refuses
+the unqualified extra orientation (`prone_frame`). Without a fresh valid direction
+it falls back to look and says `src=look`. The gun profile still defaults to
+`look`; explicit `point` qualification remains separate. Inside block 1's drain window, right after the
 magazine mirror and before the job, `partner_aim_point::Step` writes it where
 the synchronizer would: `Q+0x10[1].xyz` (w kept) and record 1 of
 `*(Q+0x1F0)` (stride 0x30: current and previous sample = the target, timers
@@ -1174,10 +1179,14 @@ lab.ini (`native/lab_config.cpp`, LabCommon key table):
 | `partner_native_stall_ms` | 400 (100..1000) |
 | `partner_native_hold` | own, net (the sender's 12-frame words under the native drive) |
 | `partner_input_edge_repeats` | 2 (2..8; play default 5; receivers accept up to 8) |
-| `partner_native_aimpt` | off, look, point (the aim-target mirror: instance 1's network aim slot gets the remote's aim; gun stage and Play: look; the debug command `aimpt` with off, look, point, lab or status) |
+| `partner_native_aimpt` | off, look, point (the aim-target mirror: instance 1's network aim slot gets the remote's aim; gun stage and Play: point with qualified standing/crouched v6 direction and prone LOOK fallback; the debug command `aimpt` with off, look, point, lab or status) |
 | `partner_native_reload` | mirror, raw, event (the partner's own reload: see "Weapons"; the gun stage and Play-OfflineCoop run event) |
 | `partner_native_slot` | off, write, call (the slot follower; the gun stage and Play-OfflineCoop run write; play runs call as write) |
 | `partner_native_equip` | stock46, manifest, substitute (what body 1 carries: see "Generalized preload and writer"; the gun stage and Play-OfflineCoop run substitute) |
+| `partner_native_equip_shared` | off, on, prefer (gun profile: on; prefer is lab-only; fresh shape/bank/ref/ownership gates remain mandatory) |
+| `partner_native_standin` | off, on (gun profile: on; closest already-filled class when the remote slot is unavailable) |
+| `partner_native_equip_measured` | 0, 1 (lab-only optional-render experiment; always 0 outside lab) |
+| `partner_native_ride` | off, hide (driven native loco/gun stages default hide in lab/play; explicit off is preserved; mounted bodies are not rendered) |
 
 `partner_native_reload`, `partner_native_slot` and `partner_native_equip` not
 named in lab.ini follow the native gun profile: `event`, `write` and
@@ -1299,7 +1308,14 @@ stall hold are pure; the gun strip reads the already pinned gun record
 
 ## Wire
 
-- Input frame v5 (116 bytes, payload 88): v4 plus `[84]` gun flags
+- Input frame v6 (120 bytes, payload 92): v5 plus signed pitch/yaw centidegrees
+  at payload offsets 88..91 and gun_flags `AimDir` (0x20). These are the sender's
+  checked standing/crouched gun direction, with class-specific inverse conversion.
+  Camera-relative, sight and prone directions refuse; prone requires a separate
+  unqualified plugin rotation, so it uses the camera-look fallback. The sender negotiates v6 per link session
+  and sends a probe every two seconds; older input versions remain supported.
+  No valid aim direction means zero appended fields and the existing look fallback.
+- Input frame v5 (legacy 116 bytes, payload 88): v4 plus `[84]` gun flags
   (`GunFlag` valid 1, in hand 2, aiming 4, reloading 8, changing 0x10; without
   valid the next three bytes are 0), `[85]` the sender's gun mode `rec+0x2C0`,
   `[86]` `reload_seq`, `[87]` `switch_seq`; a v5 sender fills the v3 `inv_slot`

@@ -28,12 +28,14 @@ param(
     # existing Play-OfflineCoop lab saves (read only), the state earlier live
     # runs used. The real saves are backed up and re-checked either way.
     [ValidateSet('real','lab')][string]$SaveSeed='real',
+    # Optional quality preset, applied only to this run's fresh role save copies.
+    [ValidateSet('preserve','low')][string]$GraphicsQuality='preserve',
     # Extra lab.ini keys for this run: allow-listed lab experiments, the facing
     # A/B keys, the name tag keys, the Steam self-test, the online-play A/B
     # keys and the reload/switch/writer A/B keys (Invoke-WorkerScenario
     # "labsetting" lines); key=value for both copies, host:key=value /
     # guest:key=value for one.
-    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(mirror|raw|event)|partner_native_slot=(off|write|call)|partner_native_equip=(stock46|manifest|substitute)|partner_native_aimpt=(off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(compact|full|off)|partner_native_net=(lab|online)|partner_native_stall=(neutral|hold)|partner_native_hold=(own|net)|partner_input_edge_repeats=[2-8])$')][string[]]$LabSetting=@(),
+    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(mirror|raw|event)|partner_native_slot=(off|write|call)|partner_native_equip=(stock46|manifest|substitute)|partner_native_equip_shared=(off|on|prefer)|partner_native_equip_measured=[01]|partner_native_standin=(off|on)|partner_native_ride=(off|hide)|partner_native_aimpt=(off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(compact|full|off)|partner_native_net=(lab|online)|partner_native_stall=(neutral|hold)|partner_native_hold=(own|net)|partner_input_edge_repeats=[2-8])$')][string[]]$LabSetting=@(),
     # lab: the one-PC lab (OfflineLab). play: the play rehearsal: both copies
     # run mode=play exactly as Play-Coop writes it, moved onto 127.0.0.1 with
     # the worker-only play_rehearsal=1, the real identity and a fresh link
@@ -63,11 +65,14 @@ if($PartnerProfile -cne 'native' -and $NativeStage){throw '-NativeStage needs -P
 if($BuildProfile -ceq 'research' -and !($PartnerProfile -ceq 'native' -and $NativeStage -ceq 'gun')){throw '-BuildProfile research is only for -NativeStage gun.'}
 if($PartnerProfile -ceq 'native' -and $NativeStage -ceq 'gun' -and $BuildProfile -cne 'research'){throw '-NativeStage gun needs -BuildProfile research (a weapon on body 1).'}
 # Native polish lab settings: the facing governor only with the native profile, the look source A/B run only in the gun stage.
+if($Mode -ceq 'play' -and @($LabSetting|Where-Object{$_ -cmatch '(^|:)partner_native_equip_measured=1$'}).Count) {
+    throw 'Measured optional equipment acceptance is lab-only.'
+}
 $labKeys=@($LabSetting|ForEach-Object{$_ -creplace '^(host|guest):',''})
 if(@($labKeys|Where-Object{$_ -clike 'partner_native_*'}).Count -and $PartnerProfile -cne 'native'){throw '-LabSetting partner_native_* needs -PartnerProfile native.'}
 if($labKeys -ccontains 'partner_native_aim=looksrc' -and $NativeStage -cne 'gun'){throw '-LabSetting partner_native_aim=looksrc needs -NativeStage gun.'}
 if(@($labKeys|Where-Object{$_ -clike 'partner_native_aimpt=*'}).Count -and $NativeStage -cne 'gun'){throw '-LabSetting partner_native_aimpt needs -NativeStage gun.'}
-if(@($labKeys|Where-Object{$_ -cmatch '^partner_native_(reload|slot|equip)='}).Count -and $NativeStage -cne 'gun'){
+if(@($labKeys|Where-Object{$_ -cmatch '^partner_native_(reload|slot|equip|equip_shared|equip_measured|standin)='}).Count -and $NativeStage -cne 'gun'){
     throw '-LabSetting partner_native_reload / partner_native_slot / partner_native_equip need -NativeStage gun.'
 }
 if($AmmoExperiment -and $BuildProfile -cne 'research'){throw '-AmmoExperiment needs -BuildProfile research.'}
@@ -150,7 +155,7 @@ try {
     if(!$beforeSaves.Count){throw 'No real save manifest; refusing worker preparation.'}
     $session=[ordered]@{schema=1;run_id=$runId;run_dir=$runDirectory;repo=$repo;build_directory=$build;status='staging';
         started_utc=[DateTime]::UtcNow.ToString('o');failure=$null;supervisor=$null;owned_processes=@();
-        candidate_sha256=$loaderHash;baseline_sha256=$BaselineLoaderSha256;archive_sha256=$pins.Archive;lab_settings=@($LabSetting);mode=$Mode;wan_sim=$WanSim;
+        candidate_sha256=$loaderHash;baseline_sha256=$BaselineLoaderSha256;archive_sha256=$pins.Archive;lab_settings=@($LabSetting);mode=$Mode;wan_sim=$WanSim;graphics_quality=$GraphicsQuality.ToLowerInvariant();
         check_receipt=[IO.Path]::GetFullPath($CheckReceipt,$repo);check_receipt_sha256=Get-WorkerHash ([IO.Path]::GetFullPath($CheckReceipt,$repo));
         qualification=$qualification.QualificationPath;qualification_sha256=Get-WorkerHash $qualification.QualificationPath;
         prepare_started=$false;prepare_completed=$false;configuration=$null;real_saves=[ordered]@{root=$identity.UserData;before=$beforeSaves};
@@ -231,6 +236,10 @@ try {
         Assert-WorkerHash $p.Loader $loaderHash;Assert-WorkerHash $p.Archive $pins.Archive
         $ini=ConvertFrom-IniText (Read-WorkerBoundedText $p.LabIni)
         if($ini['role'] -cne $role -or $ini['enabled'] -cne '1' -or $ini['xinput'] -cne 'none'){throw 'Generated worker lab role/xinput gate differs.'}
+        # A world.trigger an aborted scenario left behind (Invoke-WorkerScenario
+        # "host worldtrigger") must never be applied by this session.
+        $row.world_trigger_removed=Remove-WorkerWorldTrigger $p.Game
+        if($row.world_trigger_removed){Write-Host "[$role] removed $($row.world_trigger_removed) leftover world.trigger file(s)."}
         $saveRoot=Join-Path $runDirectory ($role+'-saves')
         if(!(Test-WorkerDescendant $saveRoot $runDirectory) -or (Test-Path -LiteralPath $saveRoot)){throw 'Worker save copy must be a fresh owned run descendant.'}
         $null=Assert-WorkerPlainPath $saveRoot
@@ -264,11 +273,18 @@ try {
             Write-WorkerAtomicText $graphics $edited
             $info=Get-GraphicsConfigInfo $edited
         }
+        if($GraphicsQuality -eq 'low') {
+            # This graphics path is only the freshly seeded, owned role save copy.
+            $copiedText=Read-WorkerBoundedText $graphics
+            $edited=Set-WorkerGraphicsQualityText -Text $copiedText -Quality low
+            if($edited -cne $copiedText){Write-WorkerAtomicText $graphics $edited}
+            $info=Get-GraphicsConfigInfo $edited
+        }
         if(!$info.Valid -or $info.WindowMode -cne 'Windowed'){throw 'Copied graphics config must have a valid integrity tag and be windowed.'}
         $row.graphics_sha256=Get-WorkerHash $graphics;$row.lab_sha256=Get-WorkerHash $p.LabIni;$row.coop_sha256=Get-WorkerHash $p.CoopIni
         $row.marker_sha256=Get-WorkerHash $p.Marker;$row.record_sha256=Get-WorkerHash $p.Record
         foreach($snapshot in $row.configs){if(Test-Path -LiteralPath $snapshot.path -PathType Leaf){$snapshot.worker_sha256=Get-WorkerHash $snapshot.path}}
-        foreach($name in @('early.log','steam-observer.log')) {
+        foreach($name in @('early.log','steam-observer.log','script-observer.log')) {
             $path=Join-Path $p.Mod $name;$row.log_offsets[$name]=[ordered]@{path=$path;offset=0;before_sha256=$null}
             if(Test-Path -LiteralPath $path){$null=Assert-WorkerPlainPath $path -MustExist;$row.log_offsets[$name].offset=[long](Get-Item -LiteralPath $path).Length;$row.log_offsets[$name].before_sha256=Get-WorkerHash $path}
         }

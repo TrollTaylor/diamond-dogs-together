@@ -178,6 +178,7 @@ bool ConsumeInput(partner_input::Sample& out) noexcept;
 // reset (a new link session, ResetRemote): its build decodes v5. The native
 // sender sends v5 only then (plus probes); an older build refuses 116 bytes.
 bool PeerSendsInputV5() noexcept;
+bool PeerSendsInputV6() noexcept;
 // Clears the ring, the sequence state and the received look, and makes the
 // next SubmitLook send at once (mission boundaries). A new link session does
 // the receive half of this on the receive thread, in the same g_tx_lock
@@ -209,6 +210,11 @@ void PublishPartnerState(bool shown, bool look_loaded, std::uint32_t mission) no
 // ours, from the capability exchange), as partner_native_net::Drive values
 // and partner_native_net reason codes.
 void PublishNativeState(std::uint8_t drive, std::uint8_t reason, std::uint8_t remote_drive, std::uint8_t remote_reason) noexcept;
+// Game thread, atomics only: the partner mission whose pack list the player
+// package selection refused (0 none; docs/player-package-selection.md). While
+// it equals the published partner mission, link-status.json reports
+// partner_drive "off" and partner_reason "no_body_pack" (no partner body).
+void PublishPackState(std::uint32_t refused_mission) noexcept;
 // Reliable ordered channels 1..3 (1 = world, reserved; 2..3 = game). Session
 // scoped: a new handshake clears them on both sides (LinkInfo.session bumps)
 // and callers send their state again. On `full` the caller keeps its dirty

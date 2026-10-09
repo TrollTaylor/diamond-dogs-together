@@ -55,12 +55,24 @@ struct PlanIn {
     std::uint16_t remote_base[kSlots];  // the received manifest's base ids (0 unknown)
     std::uint8_t remote_type[kSlots];   // their type (the equip type table: packed & 0x3F)
     bool remote_type_ok[kSlots];
+    bool standin;                    // partner_native_standin=on (weapons4)
 };
+inline constexpr std::uint8_t kNoSlot = 0xFF;
 struct Plan {
     Tier tier[kSlots];
     std::uint16_t equip[kSlots];  // the body's equip the follower may switch to (0: refused)
     std::uint8_t ok_mask;         // bit s: the follower may switch to slot s
+    // Weapons4: the body slot the follower switches to while the remote holds
+    // its slot r: r itself for same/sub, else (standin) the stand-in s* the
+    // rule below picks, kNoSlot when none (the follower refuses: plan).
+    std::uint8_t map[kSlots];
 };
+// The stand-in for the remote's slot r (weapons4): among body 1's other
+// filled slots (s != r) holding a gun type, a bullet type (1..6) first, then
+// both r and s primary ({0, 1}), then the lower s; a projectile slot (7/8:
+// HOLD allowed, FIRE masked) only when no bullet slot is filled. kNoSlot
+// when none. The body's handles must have been read.
+std::uint8_t StandIn(const PlanIn& in, unsigned r) noexcept;
 Plan MakePlan(const PlanIn& in) noexcept;
 
 // The bullet weapon types (the RequestBullet owner filter suppresses their
@@ -73,7 +85,10 @@ bool BulletType(std::uint8_t type) noexcept;
 // its in-hand weapon is the remote's (raw equip or the manifest base of the
 // remote's alias) and it is not mid-switch; FIRE additionally needs a bullet
 // type. judged false: either side unread (the previous verdict stays).
-enum class Gate : std::uint8_t { match, mismatch, switching, projectile };
+// standin (weapons4): body 1 holds the plan's stand-in for the remote's
+// current slot (a bullet type: nothing stripped; a projectile stand-in is
+// projectile: FIRE stripped, HOLD allowed).
+enum class Gate : std::uint8_t { match, mismatch, switching, projectile, standin };
 const char* GateName(Gate gate) noexcept;
 struct GateIn {
     std::uint32_t remote_equip, remote_base, body_equip;
@@ -84,8 +99,13 @@ struct GateIn {
     // remote's current slot (its live v5 slot, else the manifest slot carrying
     // its in-hand equip): a substitute in that slot is a match.
     bool substitute;
+    // Weapons4: the body holds the plan's stand-in for that slot (its tier
+    // neither same nor sub, map[r] != r, the body's equip == the plan's equip
+    // of map[r]; partner_native_standin=on).
+    bool standin;
 };
 Gate Judge(const GateIn& in) noexcept;
-// FIRE | RELOAD for mismatch and switching, FIRE for projectile, 0 for match.
+// FIRE | RELOAD for mismatch and switching, FIRE for projectile, 0 for match
+// and standin.
 std::uint32_t StripBits(Gate gate) noexcept;
 } // namespace mgscoop::partner_slots

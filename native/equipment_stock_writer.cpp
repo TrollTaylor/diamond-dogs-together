@@ -1,8 +1,10 @@
 // Original, separately compiled copied-save stock46 experiment. No hooks,
-// worker routing, alias preparation, local-index edits, rollback or retries.
+// worker routing, alias preparation, local-index edits or rollback.
 // The generalized writer (ObserveGeneral) dispatches the same qualified
 // ChangeEquip request for other stock guns, one slot at a time, each behind the
-// stock46-shape preflight with that gun's own derived data.
+// stock46-shape preflight with that gun's own derived data. Weapons4: pure-read
+// planning and readiness may be retried after a transient refusal (never a
+// dispatch), and the body lease re-syncs the slots from body 1's live handles.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -112,17 +114,26 @@ void OptionalReceipt(void (*log)(const char*) noexcept,const contract::OptionalL
 // metadata row names t and its cache entry, the binder record of the slot has
 // it current or pending, local equipment and every initially occupied cache
 // entry are unchanged, and a bound handle maps an initially qualified resource.
+// A shared target (a1s/cs): the refs bracketing the call (refs_before, the
+// re-read directly before it) moved by exactly one (`bracket`: the
+// dispatch's own readback; while tracking, others may move them), the bank
+// may have reused the target's own (asset, mission entry) entry (`bank`).
 const char* Readback(std::uintptr_t base,std::size_t span,std::uintptr_t player,std::uintptr_t remote_block,
                      const contract::Target& t,std::uint32_t expected,const contract::Snapshot& lease,
-                     contract::Snapshot& after,bool& bound) noexcept {
+                     contract::Snapshot& after,bool& bound,bool bracket=false,std::uint32_t refs_before=0,
+                     Bank* bank=nullptr) noexcept {
     bound=false;
+    if(bank) *bank=Bank::none;
     auto reader=Read;
     if(const auto reason=contract::Capture(base,span,reader,player,remote_block,after,t)) return reason;
     if(const auto reason=contract::LocalUnchanged(lease,after)) return reason;
-    if(after.remote_handles[t.slot]!=expected || after.cache_refs!=lease.cache_refs+1) return "remote_handle_or_refs";
+    if(after.remote_handles[t.slot]!=expected) return "remote_handle_or_refs";
+    if(!t.shared && after.cache_refs!=lease.cache_refs+1) return "remote_handle_or_refs";
+    if(t.shared && bracket && after.cache_refs!=refs_before+1) return "shared_refs_moved";
+    if(t.shared && !after.cache_refs) return "remote_handle_or_refs";
     for(unsigned i=0;i<7;++i) if(i!=t.slot && after.remote_handles[i]!=lease.remote_handles[i]) return "other_remote_slot_changed";
     contract::View<decltype(reader)> view{reader,base,span};
-    if(const auto reason=contract::DelayedCachesPreserved(view,lease)) return reason;
+    if(const auto reason=contract::DelayedCachesPreserved(view,lease,t.shared)) return reason;
     contract::Bytes14 row{};std::uint32_t mapped=0;
     if(!view.At(after.meta_rows,lease.new_index*0xE,row) || contract::Word16(row.data())!=t.equip ||
        row[8]!=t.cache_index || !view.At(after.map_rows,lease.new_index*4,mapped)) return "new_handle_owner";
@@ -131,10 +142,12 @@ const char* Readback(std::uintptr_t base,std::size_t span,std::uintptr_t player,
     if(current!=expected && pending!=expected) return "model_handle_missing";
     if(current!=expected) return nullptr; // queued, not rendered evidence
     if(mapped>=60) return "bound_without_resource";
-    if(const auto reason=contract::QualifiedBoundResource(view,lease,mapped)) return reason;
+    bool bank_shared=false;
+    if(const auto reason=contract::QualifiedBoundResource(view,lease,mapped,t.shared,&bank_shared)) return reason;
+    if(bank) *bank=bank_shared ? Bank::shared : Bank::fresh;
     // Native DBF1F0 maps a bounded resource ID across group sizes. Follow the
     // same pure data chain; ADBE00's bank getter itself has no index check.
-    std::uintptr_t groups=0,group=0,bank=0,resources=0,pointer=0;std::uint32_t size=0,count=0;
+    std::uintptr_t groups=0,group=0,resource_bank=0,resources=0,pointer=0;std::uint32_t size=0,count=0;
     if(!view.At(after.engine,0x130,groups)) return "bound_resource_groups";
     bool found=false;
     for(unsigned i=0;i<32;++i) {
@@ -142,9 +155,9 @@ const char* Readback(std::uintptr_t base,std::size_t span,std::uintptr_t player,
         if(mapped<size) {found=true;break;}
         mapped-=size;
     }
-    if(!found || !view.At(group,0x10,bank) || !view.Method(bank,0x22E2970,0x240,0xADBE00) ||
-       !view.At(bank,0x50,count) || count!=size || mapped>=count ||
-       !view.At(bank,0x58,resources) || !view.At(resources,mapped*8,pointer) || !pointer) return "bound_resource_pointer";
+    if(!found || !view.At(group,0x10,resource_bank) || !view.Method(resource_bank,0x22E2970,0x240,0xADBE00) ||
+       !view.At(resource_bank,0x50,count) || count!=size || mapped>=count ||
+       !view.At(resource_bank,0x58,resources) || !view.At(resources,mapped*8,pointer) || !pointer) return "bound_resource_pointer";
     bound=true;
     return nullptr;
 }
@@ -188,19 +201,30 @@ bool ReadLocalVars(std::uintptr_t base,LocalVars& out) noexcept {
 }
 
 // --- The generalized writer state (one allocation) ---------------------------
+// Weapons4: the slots are scheduled round-robin (PickPosition: a waiting slot
+// yields, the remote's current slot last on the first pass), a refusal before
+// a dispatch backs off and plans again (RetryAfter), the body lease
+// (realize_gen + Capture's identity) re-syncs the slots from body 1's live
+// handles instead of the motion epoch ending the allocation.
 struct General {
-    bool active=false,ordered=false,epoch_set=false,tracking=false,readiness_logged=false,census_ok=false,census_logged=false;
+    bool active=false,ordered=false,lease_set=false,tracking=false;
     std::uint32_t mission=0,observed_epoch=0,expected=0;
     // The last logged wait reason (a static string; logged on change, at most kWaitLines per allocation).
     const char* wait_logged=nullptr;
     unsigned wait_lines=0;
     std::uint8_t order[kSlots]{0,2,1};
-    unsigned cursor=0,plan_waits=0,observations=0;
-    Readiness readiness;
-    contract::Target target{};
+    unsigned cursor=0,plan_waits=0,observations=0,tracking_slot=kSlots;
+    Readiness readiness[kSlots];
+    bool readiness_logged[kSlots]{},binder_logged[kSlots]{};
+    contract::Target targets[kSlots]{};
+    SlotSchedule sched[kSlots]{};
+    BodyLease lease{};
+    bool manifest_set=false;
+    ManifestKey manifest_key{};
     std::uint32_t dispatched_handles[kSlots]{};
     std::uint16_t dispatched_equips[kSlots]{};  // never a tier C candidate of another slot
-    unsigned candidate_lines=0;
+    unsigned candidate_lines=0,body_lines=0,retry_lines=0;
+    std::uint32_t census_logged_gen=UINT32_MAX;
     std::array<contract::CacheEntry,contract::kCacheEntries> census{};
 };
 General general;
@@ -210,39 +234,56 @@ Status status;
 // Observations (~100 ms each) a slot waits for the manifest before refusing.
 constexpr unsigned kPlanWaitLimit=300;
 constexpr unsigned kWaitLines=8;
+// equip_writer=body (re-sync) and equip_writer=backoff lines per allocation.
+constexpr unsigned kBodyLines=8;
+constexpr unsigned kRetryLines=24;
 void SetReason(SlotStatus& slot,const char* reason) noexcept {StringCchCopyA(slot.reason,sizeof(slot.reason),reason ? reason : "ok");}
 void GeneralReceipt(void (*log)(const char*) noexcept,const char* phase,unsigned slot,const char* reason,
                     std::int32_t result=INT32_MIN,std::uintptr_t mismatch=0) noexcept {
     if(!log || slot>=kSlots) return;
     const auto& s=status.slots[slot];
-    char line[640]{};
+    char line[768]{};
     StringCchPrintfA(line,sizeof(line),
-        "equip_writer=%s; reason=%s; mission=%u; slot=%u; want=%u; want_type=%u; equip=%u; tier=%s; family=%s; type=%u; cache=%u; candidates=%u; candidate=%u; epoch=%u; expected_handle=%x; result=%d; mismatch_rva=%llx; dispatches=%u; instance=1; retry=0; alias_call=0; rollback_calls=0; replace_filled=0; evict=0\r\n",
+        "equip_writer=%s; reason=%s; mission=%u; slot=%u; want=%u; want_type=%u; equip=%u; tier=%s; family=%s; type=%u; cache=%u; candidates=%u; candidate=%u; epoch=%u; gen=%u; expected_handle=%x; result=%d; mismatch_rva=%llx; dispatches=%u; refs_before=%u; refs_after=%u; bank=%s; shared=%s; instance=1; retry=%u; alias_call=0; rollback_calls=0; replace_filled=0; evict=0\r\n",
         phase,reason ? reason : "ok",general.mission,slot,unsigned(s.want),unsigned(s.want_type),unsigned(s.equip),TierName(s.tier),
         s.equip ? (s.optional ? "optional" : "plain") : "none",unsigned(s.type),unsigned(s.cache_index),s.candidates,unsigned(s.candidate),
-        general.observed_epoch,s.handle,result,static_cast<unsigned long long>(mismatch),status.dispatches);
+        general.observed_epoch,general.lease.gen,s.handle,result,static_cast<unsigned long long>(mismatch),status.dispatches,
+        s.refs_before,s.refs_after,BankName(s.bank),SharedModeName(status.shared),unsigned(s.retries));
     log(line);
 }
 void CensusReceipt(void (*log)(const char*) noexcept) noexcept {
     if(!log) return;
-    char line[2048]{};
-    StringCchPrintfA(line,sizeof(line),"equip_resident; mission=%u; used=%u; entries=",general.mission,unsigned(status.resident_count));
+    char line[2560]{};
+    StringCchPrintfA(line,sizeof(line),"equip_resident; mission=%u; gen=%u; used=%u; entries=",general.mission,general.lease.gen,
+        unsigned(status.resident_count));
     for(unsigned i=0;i<status.resident_count;++i) {
         const auto& e=status.resident[i];
-        char item[48]{};
-        StringCchPrintfA(item,sizeof(item),"%s%u:%u/t%u/r%u/f%u/n%u",i ? "," : "",unsigned(e.index),unsigned(e.equip),unsigned(e.type),
-                         unsigned(e.receiver),unsigned(e.flags),e.refs);
+        char item[56]{};
+        StringCchPrintfA(item,sizeof(item),"%s%u:%u/t%u/r%u/f%u/n%u/v%u",i ? "," : "",unsigned(e.index),unsigned(e.equip),unsigned(e.type),
+                         unsigned(e.receiver),unsigned(e.flags),e.refs,unsigned(e.viewer));
         StringCchCatA(line,sizeof(line),item);
     }
     StringCchCatA(line,sizeof(line),"; native_calls=0\r\n");
     log(line);
 }
-// The equipment engine through the player's equip iface (Capture re-reads and
-// pins the whole chain before any use; this only feeds the pure census).
-template<class View> bool EngineOf(View& v,std::uintptr_t player,std::uintptr_t& engine) noexcept {
-    std::uintptr_t iface=0,inventory=0;engine=0;
-    return v.At(player,0xC8,iface) && v.Method(iface,0x23C1720,0x198,0x11AC2E0) && v.At(iface,8,inventory) &&
-        v.Method(inventory,0x23895D0,8,0xEE9880) && v.At(inventory,0x58,engine) && v.Method(engine,0x234B840,0,0xDC3250);
+// The body lease (BodyLease): the player, body 1, its model and binder
+// records, the inventory and the engine, read through the same pinned
+// methods Capture checks (Capture re-reads and pins the whole chain before
+// any use; this only keys the re-sync and feeds the pure census).
+template<class View> bool LeaseOf(View& v,const GeneralContext& c,BodyLease& lease) noexcept {
+    std::uintptr_t iface=0;
+    lease=BodyLease{};lease.gen=c.realize_gen;lease.player=c.player;lease.body=c.remote_block;
+    return v.At(c.player,0xC8,iface) && v.Method(iface,0x23C1720,0x198,0x11AC2E0) && v.At(iface,8,lease.inventory) &&
+        v.Method(lease.inventory,0x23895D0,8,0xEE9880) && v.At(lease.inventory,0x58,lease.engine) &&
+        v.Method(lease.engine,0x234B840,0,0xDC3250) && v.At(c.remote_block,0x618,lease.model) &&
+        v.Method(lease.model,0x22EA550,0x20,0xB0C720) && v.At(lease.model,0x30,lease.binder) && lease.binder;
+}
+// Body 1's live handles of the three gun slots (inventory handles 7..9).
+template<class View> bool LiveHandles(View& v,std::uintptr_t inventory,std::uint32_t (&live)[kSlots]) noexcept {
+    std::uintptr_t handles=0;std::uint32_t stride=0;
+    if(!v.At(inventory,0xC,stride) || stride!=7 || !v.At(inventory,0x40,handles) || !handles) return false;
+    for(unsigned s=0;s<kSlots;++s) if(!v.At(handles,(7+s)*4,live[s])) return false;
+    return true;
 }
 // The other remote slots hold exactly what this allocation dispatched (or nothing).
 const char* OtherSlots(const contract::Snapshot& s,unsigned slot) noexcept {
@@ -253,38 +294,56 @@ const char* OtherSlots(const contract::Snapshot& s,unsigned slot) noexcept {
     }
     return nullptr;
 }
-void Advance(void (*log)(const char*) noexcept,unsigned slot,SlotState state,const char* phase,const char* reason,
-             std::int32_t result=INT32_MIN,std::uintptr_t mismatch=0) noexcept {
+// A slot's decision: its state, reason and receipt.
+void Finish(void (*log)(const char*) noexcept,unsigned slot,SlotState state,const char* phase,const char* reason,
+            std::int32_t result=INT32_MIN,std::uintptr_t mismatch=0) noexcept {
     auto& s=status.slots[slot];
     s.state=state;
+    if(state==SlotState::unverified) general.sched[slot].uncertain=true;
     SetReason(s,reason);
     if(state==SlotState::refused || state==SlotState::unverified) ++status.refused;
     if(state==SlotState::bound) ++status.bound;
     GeneralReceipt(log,phase,slot,reason,result,mismatch);
-    general.tracking=false;general.observations=0;general.readiness.Reset();general.readiness_logged=false;
-    general.plan_waits=0;++general.cursor;
+    general.readiness[slot].Reset();general.readiness_logged[slot]=false;
+    if(general.tracking && general.tracking_slot==slot) {general.tracking=false;general.tracking_slot=kSlots;general.observations=0;}
 }
-// Nothing spent: the not yet planned slot reports why the writer waits
-// (gates, body, engine_chain, census); a change is logged (capped).
-void Waiting(void (*log)(const char*) noexcept,unsigned slot,const char* reason) noexcept {
+// A refusal before the slot's dispatch: transient ones back off and plan
+// again (RetryAfter), permanent ones (or a spent budget) end the slot this gen.
+void Refuse(void (*log)(const char*) noexcept,unsigned slot,const char* reason,bool permanent,std::uint64_t now,
+            bool plan_time,std::uintptr_t mismatch=0) noexcept {
     auto& s=status.slots[slot];
-    if(s.state!=SlotState::idle && s.state!=SlotState::plan_wait) return;
+    auto& sc=general.sched[slot];
+    if(RetryAfter(sc,permanent,now)) {
+        s.retries=sc.retries;s.state=SlotState::backoff;SetReason(s,reason);
+        general.readiness[slot].Reset();general.readiness_logged[slot]=false;
+        if(general.retry_lines<kRetryLines) {++general.retry_lines;GeneralReceipt(log,"backoff",slot,reason,INT32_MIN,mismatch);}
+        return;
+    }
+    if(plan_time) {s.tier=Tier::d;s.equip=0;}
+    Finish(log,slot,SlotState::refused,"refused",reason,INT32_MIN,mismatch);
+}
+// Nothing spent: the pending slot reports why the writer waits (gates, body,
+// engine_chain, census, body_busy); a change is logged (capped).
+void Waiting(void (*log)(const char*) noexcept,unsigned slot,const char* reason) noexcept {
+    if(slot>=kSlots) return;
+    auto& s=status.slots[slot];
+    if(FinalState(s.state) || s.state==SlotState::tracking) return;
     SetReason(s,reason);
     if(general.wait_logged==reason || general.wait_lines>=kWaitLines || !log) return;
     general.wait_logged=reason;++general.wait_lines;
-    char line[160]{};
-    StringCchPrintfA(line,sizeof(line),"equip_writer=waiting; reason=%s; mission=%u; slot=%u; native_calls=0\r\n",
-        reason ? reason : "none",general.mission,slot);
+    char line[192]{};
+    StringCchPrintfA(line,sizeof(line),"equip_writer=waiting; reason=%s; mission=%u; slot=%u; gen=%u; native_calls=0\r\n",
+        reason ? reason : "none",general.mission,slot,general.lease.gen);
     log(line);
 }
 // One line per tier C candidate that passed the census filters (capped per
 // allocation): its pass, type, receiver, the reason (ok or the first failing
 // check of Derive/Capture) and the optional header shape words it showed.
 constexpr unsigned kCandidateLines=24;
-// Candidates (each a full Capture on the mission owner) per slot and allocation.
+// Candidates (each a full Capture on the mission owner) per slot and plan.
 constexpr unsigned kCandidatesPerSlot=16;
 void CandidateReceipt(void (*log)(const char*) noexcept,unsigned slot,std::uint16_t equip,contract::SubstitutePass pass,
-                      const contract::CacheEntry& e,const char* reason,const contract::Snapshot& candidate_scratch) noexcept {
+                      const contract::CacheEntry& e,const char* reason,const contract::Snapshot& candidate_scratch,bool shared) noexcept {
     if(!log || general.candidate_lines>=kCandidateLines) return;
     ++general.candidate_lines;
     char shape[48]="none";
@@ -292,29 +351,49 @@ void CandidateReceipt(void (*log)(const char*) noexcept,unsigned slot,std::uint1
     if(contract::Word32(h)==0x0C012B72)
         StringCchPrintfA(shape,sizeof(shape),"%u.%u.%u.%u.%u.%u",unsigned(contract::Word16(h+8)),unsigned(contract::Word16(h+10)),
             unsigned(contract::Word16(h+12)),unsigned(contract::Word16(h+14)),unsigned(contract::Word16(h+16)),unsigned(contract::Word16(h+18)));
-    char line[384]{};
+    char line[448]{};
     StringCchPrintfA(line,sizeof(line),
-        "equip_writer=candidate; mission=%u; slot=%u; want=%u; equip=%u; tier=c; pass=%s; type=%u; receiver=%u; flags=%u; refs=%u; reason=%s; shape=%s; native_calls=0\r\n",
-        general.mission,slot,unsigned(status.slots[slot].want),unsigned(equip),contract::SubstitutePassName(pass),unsigned(e.type),
-        unsigned(e.receiver),unsigned(e.flags),e.refs,reason ? reason : "ok",shape);
+        "equip_writer=candidate; mission=%u; slot=%u; want=%u; equip=%u; tier=%s; pass=%s; type=%u; receiver=%u; flags=%u; refs=%u; viewer=%u; reason=%s; shape=%s; native_calls=0\r\n",
+        general.mission,slot,unsigned(status.slots[slot].want),unsigned(equip),shared ? "cs" : "c",contract::SubstitutePassName(pass),
+        unsigned(e.type),unsigned(e.receiver),unsigned(e.flags),e.refs,unsigned(e.viewer),reason ? reason : "ok",shape);
     log(line);
 }
+// The census of the allocation's current gen (refreshed before every plan:
+// a retry sees the entries referenced or released since), the viewer's
+// references included; one equip_resident line per gen.
+template<class View> bool TakeCensus(View& v,void (*log)(const char*) noexcept) noexcept {
+    std::array<std::uint8_t,contract::kCacheEntries> viewer{};
+    if(!contract::Census(v,general.lease.engine,general.census) ||
+       !contract::ViewerReferences(v,general.lease.inventory,general.lease.engine,viewer)) {status.census_ok=false;return false;}
+    for(unsigned i=0;i<contract::kCacheEntries;++i) general.census[i].viewer=viewer[i];
+    status.census_ok=true;status.resident_count=0;
+    for(unsigned i=0;i<contract::kCacheEntries;++i) {
+        const auto& e=general.census[i];
+        if(!(e.flags&1)) continue;
+        auto& r=status.resident[status.resident_count++];
+        r.equip=e.equip;r.type=e.type;r.receiver=e.receiver;r.flags=e.flags;r.index=static_cast<std::uint8_t>(i);r.refs=e.refs;
+        r.viewer=e.viewer;
+    }
+    if(general.census_logged_gen!=general.lease.gen) {general.census_logged_gen=general.lease.gen;CensusReceipt(log);}
+    return true;
+}
 // Picks slot `slot`'s target: A1 the manifest's base id (of the manifest's
-// type), C after ANY A1 refusal (substitute only) a resident protected
-// unreferenced stock gun (the same type and receiver, the same type, then the
-// slot class), D refuse.
-template<class View> void Plan(const GeneralContext& c,View& v,std::uintptr_t engine,unsigned slot,
-                               void (*log)(const char*) noexcept) noexcept {
+// type; A1s when other actors reference its entry and shared tiers are on),
+// C after ANY A1 refusal (substitute only) a resident protected stock gun (the
+// same type and receiver, the same type, then the slot class; per pass the
+// unreferenced entries then the shared ones, `prefer` the reverse), D refuse.
+template<class View> void Plan(const GeneralContext& c,View& v,unsigned slot,void (*log)(const char*) noexcept) noexcept {
     auto& s=status.slots[slot];
     s.want=c.want[slot];
     s.want_type=c.type[slot];
     if(!c.manifest) {
         s.state=SlotState::plan_wait;SetReason(s,"no_manifest");
-        if(++general.plan_waits>=kPlanWaitLimit) {s.tier=Tier::d;Advance(log,slot,SlotState::refused,"refused","no_manifest");}
+        if(++general.plan_waits>=kPlanWaitLimit) Refuse(log,slot,"no_manifest",true,c.now_ms,true);
         return;
     }
     // The remote carries nothing in this slot (no alias, no base): nothing to follow.
-    if(!s.want && !c.alias[slot]) {s.tier=Tier::d;Advance(log,slot,SlotState::refused,"refused","no_base");return;}
+    if(!s.want && !c.alias[slot]) {Refuse(log,slot,"no_base",true,c.now_ms,true);return;}
+    const std::uintptr_t engine=general.lease.engine;
     // The viewer's own weapons (vars.weapons u16[6] at the start of the ammo block) are never a target of
     // either tier: never an entry the viewer's own player uses, whatever its census refs say.
     LocalVars viewer{};
@@ -329,18 +408,28 @@ template<class View> void Plan(const GeneralContext& c,View& v,std::uintptr_t en
         if(!why && t.slot!=slot) why="type_slot";
         // A1 needs the manifest's own type of the slot (version 2; 0 unknown).
         if(!why && c.type[slot] && t.type!=c.type[slot]) why="type_mismatch";
-        if(!why && !contract::ResidentProtected(general.census[t.cache_index]))
-            why=general.census[t.cache_index].refs ? "cache_shared" : "cache_unprotected";
+        if(!why) {
+            const auto& e=general.census[t.cache_index];
+            if(!contract::ResidentProtected(e)) {
+                // A1s: referenced by other actors only (never the viewer), shared tiers on.
+                if(e.refs && e.flags==3 && c.shared!=SharedMode::off) {
+                    why=contract::SharedRefusal(e);
+                    if(!why) t.shared=true;
+                } else why=e.refs ? "cache_shared" : "cache_unprotected";
+            }
+        }
         if(!why && general.census[t.cache_index].type!=t.type) why="cache_type";
         if(!why && !viewer_ok) why="local_vars_unread";
         if(!why) for(auto id:viewer_weapons) if(id && id==s.want) why="viewer_weapon";
+        t.measured=c.measured;
     }
-    Tier tier=why ? Tier::d : Tier::a1;
+    Tier tier=why ? Tier::d : t.shared ? Tier::a1s : Tier::a1;
+    bool permanent=PermanentReason(why);
     if(why && c.substitute) {
         if(log) {
-            char line[192]{};
-            StringCchPrintfA(line,sizeof(line),"equip_writer=a1_refused; mission=%u; slot=%u; want=%u; type=%u; reason=%s; next=c; native_calls=0\r\n",
-                general.mission,slot,unsigned(s.want),unsigned(c.type[slot]),why);
+            char line[224]{};
+            StringCchPrintfA(line,sizeof(line),"equip_writer=a1_refused; mission=%u; slot=%u; want=%u; type=%u; reason=%s; next=c; shared=%s; native_calls=0\r\n",
+                general.mission,slot,unsigned(s.want),unsigned(c.type[slot]),why,SharedModeName(c.shared));
             log(line);
         }
         // The want's table type and GunBasic receiver (the fallbacks of a version 1 manifest).
@@ -360,50 +449,128 @@ template<class View> void Plan(const GeneralContext& c,View& v,std::uintptr_t en
         for(unsigned i=0;i<kSlots;++i) if(i!=slot) q.dispatched[i]=general.dispatched_equips[i];
         q.viewer=viewer_weapons;
         const char* last_why=viewer_ok ? nullptr : "local_vars_unread";
-        bool picked=false;
+        bool picked=false,any_transient=!viewer_ok;
         std::array<bool,contract::kCacheEntries> tried{};
+        // Per pass the populations in order: off unreferenced only, on unreferenced then shared, prefer the reverse.
+        const unsigned populations=c.shared==SharedMode::off ? 1u : 2u;
+        unsigned tried_count=0;
         for(unsigned p=0;viewer_ok && !picked && p<3;++p) {
             const auto pass=static_cast<contract::SubstitutePass>(p);
-            for(;;) {
-                const unsigned i=contract::NextCandidate(general.census,q,pass,tried);
-                if(i>=contract::kCacheEntries) break;
-                if(s.candidates>=kCandidatesPerSlot) {last_why="candidate_limit";p=3;break;}
-                tried[i]=true;
-                const auto& e=general.census[i];
-                ++s.candidates;s.candidate=e.equip;
-                general_scratch={};
-                contract::Target candidate{};
-                const char* reason=contract::CandidateExcluded(e,q);
-                if(!reason) reason=contract::Derive(v,engine,e.equip,general.census,candidate);
-                if(!reason && (candidate.slot!=slot || candidate.cache_index!=i || candidate.type!=e.type)) reason="candidate_shape";
-                if(!reason) {
-                    // Its packages must be loaded in this mission (the whole Capture holds).
-                    auto reader=Read;
-                    reason=contract::Capture(c.base,c.image_span,reader,c.player,c.remote_block,general_scratch,candidate);
+            for(unsigned k=0;!picked && k<populations;++k) {
+                q.shared=c.shared==SharedMode::prefer ? k==0 : k==1;
+                for(;;) {
+                    const unsigned i=contract::NextCandidate(general.census,q,pass,tried);
+                    if(i>=contract::kCacheEntries) break;
+                    if(tried_count>=kCandidatesPerSlot) {last_why="candidate_limit";p=3;k=populations;break;}
+                    tried[i]=true;++tried_count;
+                    const auto& e=general.census[i];
+                    ++s.candidates;s.candidate=e.equip;
+                    general_scratch={};
+                    contract::Target candidate{};
+                    const char* reason=contract::CandidateExcluded(e,q);
+                    if(!reason) reason=contract::Derive(v,engine,e.equip,general.census,candidate);
+                    if(!reason && (candidate.slot!=slot || candidate.cache_index!=i || candidate.type!=e.type)) reason="candidate_shape";
+                    candidate.shared=q.shared;candidate.measured=c.measured;
+                    if(!reason) {
+                        // Its packages must be loaded in this mission (the whole Capture holds).
+                        auto reader=Read;
+                        reason=contract::Capture(c.base,c.image_span,reader,c.player,c.remote_block,general_scratch,candidate);
+                    }
+                    // The census is a snapshot: an unshared candidate referenced since (an earlier slot's
+                    // dispatch, the local player) is never picked; a shared one never names an entry the viewer
+                    // references now (the fresh Capture's body 0 rows) and stays bounded.
+                    if(!reason && !q.shared && general_scratch.cache_refs) reason="stock_cache_in_use";
+                    if(!reason && q.shared && general_scratch.cache_refs>=contract::kSharedRefsBound) reason="shared_refs_bound";
+                    if(!reason && q.shared) for(const auto entry:general_scratch.local_cache_index) if(entry==i) reason="viewer_shared";
+                    CandidateReceipt(log,slot,e.equip,pass,e,reason,general_scratch,q.shared);
+                    if(!reason) {picked=true;t=candidate;break;}
+                    last_why=reason;
+                    if(!PermanentReason(reason)) any_transient=true;
                 }
-                // The census is the allocation's first snapshot: an entry referenced since (an earlier
-                // slot's dispatch, the local player) is never picked (the fresh refs of the Capture;
-                // Preflight refuses the same, but only after the slot's tier was spent).
-                if(!reason && general_scratch.cache_refs) reason="stock_cache_in_use";
-                CandidateReceipt(log,slot,e.equip,pass,e,reason,general_scratch);
-                if(!reason) {picked=true;t=candidate;break;}
-                last_why=reason;
             }
         }
-        // A final refusal names the last candidate (s.candidate) and its reason.
-        if(picked) {why=nullptr;tier=Tier::c;}
-        else why=last_why ? last_why : "no_resident";
+        // A final refusal names the last candidate (s.candidate) and its reason; it is permanent only
+        // when every candidate's was (a candidate whose packages were not ready yet is retried).
+        if(picked) {why=nullptr;tier=t.shared ? Tier::cs : Tier::c;}
+        else {
+            why=last_why ? last_why : "no_resident";
+            permanent=!any_transient && PermanentReason(why);
+        }
     }
-    if(why) {
-        s.tier=Tier::d;s.equip=0;
-        Advance(log,slot,SlotState::refused,"refused",why);
-        return;
-    }
-    general.target=t;
+    if(why) {Refuse(log,slot,why,permanent,c.now_ms,true);return;}
+    general.targets[slot]=t;
     s.tier=tier;s.equip=t.equip;s.optional=t.optional;s.type=t.type;s.cache_index=static_cast<std::uint8_t>(t.cache_index);
+    s.refs_before=general.census[t.cache_index].refs;s.refs_after=0;s.bank=Bank::none;
     s.state=SlotState::readiness;SetReason(s,"planned");
-    general.readiness.Reset();general.readiness_logged=false;
+    general.readiness[slot].Reset();general.readiness_logged[slot]=false;
     GeneralReceipt(log,"plan",slot,"planned");
+}
+// The body lease changed (realize_gen or Capture's identity): every slot
+// re-syncs from body 1's live handle (ResyncSlot): the handle this allocation
+// dispatched is kept, an empty slot plans again, anything else is a foreign
+// handle (never replaced). The tracking dispatch ends with it; the gen's
+// retry and dispatch budgets start again (at most kDispatchesPerAllocation).
+void ResyncBody(void (*log)(const char*) noexcept,const BodyLease& lease,const std::uint32_t (&live)[kSlots],
+                std::uint32_t epoch) noexcept {
+    auto& g=general;
+    const char* why=lease.gen!=g.lease.gen ? "realize_gen" : "identity";
+    unsigned kept=0,empty=0,foreign=0;
+    g.tracking=false;g.tracking_slot=kSlots;g.observations=0;
+    for(unsigned slot=0;slot<kSlots;++slot) {
+        auto& s=status.slots[slot];
+        auto& sc=g.sched[slot];
+        sc.retries=0;sc.gen_dispatches=0;sc.visited=false;s.retries=0;
+        g.readiness[slot].Reset();g.readiness_logged[slot]=false;
+        // A failed dispatch remains latched even when a new body is empty or
+        // its handle happens to match. A handle alone cannot verify model binding.
+        if(sc.uncertain) {s.state=SlotState::unverified;continue;}
+        const Resync r=ResyncSlot(g.dispatched_handles[slot],live[slot]);
+        if(r==Resync::kept) {
+            ++kept;
+            s.state=RetainedSlotState(s.state);
+            if(s.state==SlotState::bound) SetReason(s,"kept");
+            else if(s.state==SlotState::queued) SetReason(s,"kept_unbound");
+            // Do not resume Readback with the prior body's snapshot, or
+            // count a retained queued handle as a verified model binding.
+        } else if(r==Resync::empty) {
+            ++empty;
+            g.dispatched_handles[slot]=0;g.dispatched_equips[slot]=0;
+            // A permanent refusal stays (nothing in the slot can change it; a foreign handle
+            // that left can); anything else plans again.
+            if(!(s.state==SlotState::refused && PermanentReason(s.reason) && std::strcmp(s.reason,"foreign_handle")!=0)) {
+                s.state=SlotState::idle;s.tier=Tier::none;s.equip=0;s.handle=0;s.bank=Bank::none;SetReason(s,"resync");
+            }
+        } else {
+            ++foreign;
+            // Keep only our earlier dispatched identity. This foreign handle
+            // must not become ours at the next realize generation.
+            s.state=SlotState::refused;SetReason(s,"foreign_handle");++status.refused;
+        }
+    }
+    ++status.resyncs;status.kept+=kept;
+    if(log && g.body_lines<kBodyLines) {
+        ++g.body_lines;
+        char line[320]{};
+        StringCchPrintfA(line,sizeof(line),
+            "equip_writer=body; reason=%s; mission=%u; gen=%u; previous_gen=%u; epoch=%u; kept=%u; empty=%u; foreign=%u; handles=%x,%x,%x; native_calls=0\r\n",
+            why,g.mission,lease.gen,g.lease.gen,epoch,kept,empty,foreign,live[0],live[1],live[2]);
+        log(line);
+    }
+    g.lease=lease;status.gen=lease.gen;
+}
+// The binder record words of the slot (once per slot and allocation):
+// equip_writer=binder; slot=..; words=current,pending,flags.
+void BinderReceipt(void (*log)(const char*) noexcept,unsigned slot,const contract::Snapshot& s) noexcept {
+    if(!s.binder_records[1]) return;
+    auto& out=status.slots[slot];
+    for(unsigned i=0;i<3;++i) out.binder[i]=contract::Word32(s.remote_binder.data()+slot*12+i*4);
+    if(general.binder_logged[slot] || !log) return;
+    general.binder_logged[slot]=true;
+    char line[224]{};
+    StringCchPrintfA(line,sizeof(line),"equip_writer=binder; mission=%u; slot=%u; gen=%u; words=%08x,%08x,%08x; empty=%u; native_calls=0\r\n",
+        general.mission,slot,general.lease.gen,out.binder[0],out.binder[1],out.binder[2],
+        contract::BinderEmpty(out.binder[0],out.binder[1],out.binder[2]) ? 1u : 0u);
+    log(line);
 }
 #endif
 }
@@ -505,127 +672,163 @@ void ObserveGeneral(const GeneralContext& c,void (*log)(const char*) noexcept) n
 #ifdef MGS_LOCAL_STOCK46_WRITER_TEST
     auto& g=general;
     if(!c.enabled || !g.active || c.mission!=g.mission) return;
-    status.substitute=c.substitute;
-    if(g.cursor>=kSlots) return;
+    status.substitute=c.substitute;status.shared=c.shared;
+    g.observed_epoch=c.body_epoch;
     auto reader=Read;
     contract::View<decltype(reader)> v{reader,c.base,c.image_span};
-    if(g.tracking) {
-        const unsigned slot=g.order[g.cursor];
-        if(!c.owner || !c.gates || !c.body_ready || c.body_epoch!=g.observed_epoch ||
-           c.player!=general_before.player || c.remote_block!=general_before.bodies[1]) {
-            Advance(log,slot,SlotState::unverified,"observation_stopped","owner_lease_changed");return;
-        }
-        bool bound=false;
-        const char* reason=Readback(c.base,c.image_span,c.player,c.remote_block,g.target,g.expected,general_before,general_scratch,bound);
-        if(reason) {Advance(log,slot,SlotState::unverified,"observation_stopped",reason);return;}
-        if(bound) {Advance(log,slot,SlotState::bound,"handle_bound",nullptr);return;}
-        if(++g.observations>=50) Advance(log,slot,SlotState::queued,"observation_stopped","model_wait_limit");
-        return;
-    }
+    // The pending slot (the round-robin cursor's) reports the waits.
+    const unsigned pending=g.tracking ? g.tracking_slot : g.order[g.cursor%kSlots];
     // Nothing is spent while an owner gate is down (not the owner thread: silent;
-    // any other gate: the pending slot reports it).
+    // any other gate: the pending slot reports it). A tracking dispatch waits too:
+    // a body that unrealizes comes back with a new lease (the re-sync below).
     if(!c.owner) return;
     if(!c.gates || !c.body_ready || !c.player || !c.remote_block || !c.base || !c.image_span) {
-        Waiting(log,g.order[g.cursor],!c.gates ? (c.gate_reason ? c.gate_reason : "gates") : "body");
+        Waiting(log,pending,!c.gates ? (c.gate_reason ? c.gate_reason : "gates") : "body");
         return;
     }
-    if(!g.epoch_set) {g.epoch_set=true;g.observed_epoch=c.body_epoch;}
+    BodyLease lease{};
+    if(!LeaseOf(v,c,lease)) {Waiting(log,pending,"engine_chain");return;}
+    if(!g.lease_set) {g.lease_set=true;g.lease=lease;status.gen=lease.gen;}
+    else if(lease!=g.lease) {
+        std::uint32_t live[kSlots]{};
+        if(!LiveHandles(v,lease.inventory,live)) {Waiting(log,pending,"body_handles");return;}
+        ResyncBody(log,lease,live,c.body_epoch);
+    }
+    if(g.tracking) {
+        const unsigned slot=g.tracking_slot;
+        if(slot>=kSlots) {g.tracking=false;return;}
+        bool bound=false;Bank bank=Bank::none;
+        const char* reason=Readback(c.base,c.image_span,c.player,c.remote_block,g.targets[slot],g.expected,general_before,
+                                    general_scratch,bound,false,0,&bank);
+        if(reason) {Finish(log,slot,SlotState::unverified,"observation_stopped",reason);return;}
+        if(bound) {
+            status.slots[slot].refs_after=general_scratch.cache_refs;status.slots[slot].bank=bank;
+            Finish(log,slot,SlotState::bound,"handle_bound",nullptr);return;
+        }
+        if(++g.observations>=50) Finish(log,slot,SlotState::queued,"observation_stopped","model_wait_limit");
+        return;
+    }
     // The remote's current slot goes last; the order is fixed once a manifest
     // is known, never after a slot was decided.
-    if(!g.ordered && (c.manifest || g.cursor>0)) {
-        if(g.cursor==0) {
+    bool decided=false;
+    for(const auto& s:status.slots) decided=decided || (s.state!=SlotState::idle && s.state!=SlotState::plan_wait);
+    if(!g.ordered && (c.manifest || decided)) {
+        if(!decided) {
             SlotOrder(c.remote_slot,g.order);
-            for(auto& pending:status.slots) if(pending.state==SlotState::plan_wait) {pending.state=SlotState::idle;SetReason(pending,"ordered");}
+            for(auto& s:status.slots) if(s.state==SlotState::plan_wait) {s.state=SlotState::idle;SetReason(s,"ordered");}
+            for(auto& sc:g.sched) sc.visited=false;
         }
         g.ordered=true;
     }
-    const unsigned slot=g.order[g.cursor];
+    // Cache residency can arrive after the bounded retries were exhausted.
+    // A new received manifest renews only this pre-dispatch readiness; all
+    // native-call and ownership state is preserved. Repeated identical data
+    // never restarts the timer or retry budget.
+    if(c.manifest) {
+        const auto key=ManifestOf(c);
+        if(g.manifest_set && key!=g.manifest_key) {
+            std::uint32_t live[kSlots]{};
+            if(!LiveHandles(v,g.lease.inventory,live)) {Waiting(log,pending,"body_handles");return;}
+            for(unsigned slot=0;slot<kSlots;++slot) {
+                if(!RenewCacheReadiness(status.slots[slot],g.sched[slot],g.dispatched_handles[slot],live[slot])) continue;
+                g.readiness[slot].Reset();g.readiness_logged[slot]=false;
+                SetReason(status.slots[slot],"cache_renewed");
+                if(g.retry_lines<kRetryLines) {++g.retry_lines;GeneralReceipt(log,"cache_renewed",slot,"manifest");}
+            }
+        }
+        g.manifest_key=key;g.manifest_set=true;
+    }
+    SlotState states[kSlots]{};
+    for(unsigned s=0;s<kSlots;++s) states[s]=status.slots[s].state;
+    const unsigned position=PickPosition(states,g.sched,g.order,g.cursor%kSlots,c.now_ms);
+    if(position>=kSlots) return;
+    const unsigned slot=g.order[position];
     auto& s=status.slots[slot];
-    if(c.body_epoch!=g.observed_epoch) {
-        // One attempt per slot per allocation: a re-realized body ends the rest.
-        while(g.cursor<kSlots) {
-            const unsigned rest=g.order[g.cursor];
-            status.slots[rest].tier=status.slots[rest].tier==Tier::none ? Tier::d : status.slots[rest].tier;
-            Advance(log,rest,SlotState::refused,"refused","body_epoch_changed");
-        }
-        return;
-    }
-    std::uintptr_t engine=0;
-    if(!EngineOf(v,c.player,engine)) {Waiting(log,slot,"engine_chain");return;}
-    if(!g.census_ok) {
-        g.census_ok=contract::Census(v,engine,g.census);
-        if(!g.census_ok) {Waiting(log,slot,"census");return;}
-        status.census_ok=true;status.resident_count=0;
-        for(unsigned i=0;i<contract::kCacheEntries;++i) {
-            const auto& e=g.census[i];
-            if(!(e.flags&1)) continue;
-            auto& r=status.resident[status.resident_count++];
-            r.equip=e.equip;r.type=e.type;r.receiver=e.receiver;r.flags=e.flags;r.index=static_cast<std::uint8_t>(i);r.refs=e.refs;
-        }
-        if(!g.census_logged) {g.census_logged=true;CensusReceipt(log);}
-    }
-    if(s.state==SlotState::idle || s.state==SlotState::plan_wait) {
-        Plan(c,v,engine,slot,log);
+    auto& sc=g.sched[slot];
+    if(s.state==SlotState::idle || s.state==SlotState::plan_wait || s.state==SlotState::backoff) {
+        sc.visited=true;g.cursor=(position+1)%kSlots;
+        if(!TakeCensus(v,log)) {Waiting(log,slot,"census");return;}
+        Plan(c,v,slot,log);
         return;
     }
     if(s.state!=SlotState::readiness) return;
-    // Readiness: the strict preflight of this target, at most 50 observations.
-    const char* reason=contract::Preflight(c.base,c.image_span,reader,c.player,c.remote_block,general_before,g.target);
+    // Body 1 switching or reloading (gun mode 8/11/12): nothing is dispatched
+    // and no readiness observation is spent (not a turn).
+    if(c.body_busy) {Waiting(log,slot,"body_busy");return;}
+    sc.visited=true;g.cursor=(position+1)%kSlots;
+    const auto& target=g.targets[slot];
+    // Readiness: the strict preflight of this target, at most 50 observations (a waiting slot yields its turn).
+    const char* reason=contract::Preflight(c.base,c.image_span,reader,c.player,c.remote_block,general_before,target);
+    BinderReceipt(log,slot,general_before);
     if(!reason) reason=OtherSlots(general_before,slot);
-    const char* waiting=g.readiness.Observe(reason==nullptr);
-    if(!g.readiness_logged) {
-        g.readiness_logged=true;
-        PackageReceipt(log,c.base,c.image_span,general_before.package_observation,g.target,"equip_writer",g.readiness.Count());
-        OptionalReceipt(log,general_before.optional,"equip_writer",g.target.optional);
+    const char* waiting=g.readiness[slot].Observe(reason==nullptr);
+    if(!g.readiness_logged[slot]) {
+        g.readiness_logged[slot]=true;
+        PackageReceipt(log,c.base,c.image_span,general_before.package_observation,target,"equip_writer",g.readiness[slot].Count());
+        OptionalReceipt(log,general_before.optional,"equip_writer",target.optional);
         if(reason) GeneralReceipt(log,"readiness_wait",slot,reason);
     }
     if(waiting) {
-        if(std::strcmp(waiting,"readiness_limit")==0) Advance(log,slot,SlotState::refused,"refused",reason ? reason : waiting);
+        if(std::strcmp(waiting,"readiness_limit")==0) {
+            const char* final_reason=reason ? reason : waiting;
+            Refuse(log,slot,final_reason,PermanentReason(final_reason),c.now_ms,false);
+        }
         return;
     }
-    // The slot's one attempt from here on.
-    g.expected=contract::ExpectedHandle(general_before.new_index,g.target);
+    if(!CanDispatch(sc)) {Refuse(log,slot,"dispatch_budget",true,c.now_ms,false);return;}
+    // The slot's one attempt this gen from here on.
+    g.expected=contract::ExpectedHandle(general_before.new_index,target);
     s.handle=g.expected;
     std::uintptr_t mismatch=0;
-    if(!BodyGate(c.base,c.image_span,mismatch)) {Advance(log,slot,SlotState::refused,"refused","full_body_gate",INT32_MIN,mismatch);return;}
+    if(!BodyGate(c.base,c.image_span,mismatch)) {Refuse(log,slot,"full_body_gate",true,c.now_ms,false,mismatch);return;}
     auto& refreshed=general_scratch;
-    reason=contract::Preflight(c.base,c.image_span,reader,c.player,c.remote_block,refreshed,g.target);
+    reason=contract::Preflight(c.base,c.image_span,reader,c.player,c.remote_block,refreshed,target);
     if(!reason) reason=OtherSlots(refreshed,slot);
     if(!reason) reason=contract::LocalUnchanged(general_before,refreshed);
     if(!reason) reason=LeaseChanged(general_before,refreshed);
-    if(reason) {Advance(log,slot,SlotState::refused,"refused",reason);return;}
+    if(reason) {Refuse(log,slot,reason,PermanentReason(reason),c.now_ms,false);return;}
     // The viewer's ammo/weapon vars and shoot count, directly around the call.
     LocalVars vars_before{};
-    if(!ReadLocalVars(c.base,vars_before)) {Advance(log,slot,SlotState::refused,"refused","local_vars_unread");return;}
-    Request request{};request.equip=g.target.equip;
+    if(!ReadLocalVars(c.base,vars_before)) {Refuse(log,slot,"local_vars_unread",false,c.now_ms,false);return;}
+    // A shared entry's references directly before the call (others may hold it).
+    const std::uint32_t refs_before=refreshed.cache_refs;
+    s.refs_before=refs_before;
+    Request request{};request.equip=target.equip;
     std::int32_t result=INT32_MIN;std::uintptr_t returned=0;
-    ++status.dispatches;
+    ++status.dispatches;++sc.gen_dispatches;++sc.dispatches;
     const bool called=Call(c.base+0x11AC2E0,general_before.iface,&request,&result,&returned);
     LocalVars vars_after{};
     const bool vars_read=ReadLocalVars(c.base,vars_after);
     const bool vars_changed=!vars_read || !SameVars(vars_after,vars_before);
-    bool bound=false;
+    bool bound=false;Bank bank=Bank::none;
     const char* readback=!vars_read ? "local_vars_unread" : vars_changed ? "local_ammo_changed" :
-        Readback(c.base,c.image_span,c.player,c.remote_block,g.target,g.expected,general_before,general_scratch,bound);
+        Readback(c.base,c.image_span,c.player,c.remote_block,target,g.expected,general_before,general_scratch,bound,true,refs_before,&bank);
     if(!called || returned!=reinterpret_cast<std::uintptr_t>(&result) || result!=0 || readback) {
-        // A confirmed handle still occupies the slot: later slots expect it.
-        if(called && readback==nullptr) {g.dispatched_handles[slot]=g.expected;g.dispatched_equips[slot]=g.target.equip;}
-        else if(called) g.dispatched_equips[slot]=g.target.equip;
-        Advance(log,slot,SlotState::unverified,"call_unverified",readback ? readback : !called ? "seh_fault" : "dispatch_result",result);
+        // Never retried; the live handle of the slot stays what this allocation
+        // dispatched (later slots expect it: no OtherSlots cascade).
+        if(called) {
+            std::uint32_t live[kSlots]{};
+            g.dispatched_handles[slot]=LiveHandles(v,g.lease.inventory,live) ? live[slot] : g.expected;
+            g.dispatched_equips[slot]=target.equip;
+        }
+        s.refs_after=general_scratch.cache_refs;
+        Finish(log,slot,SlotState::unverified,"call_unverified",readback ? readback : !called ? "seh_fault" : "dispatch_result",result);
         // The viewer's vars moved (or became unreadable) across our call: no further dispatch this allocation.
-        while(vars_changed && g.cursor<kSlots) {
-            const unsigned rest=g.order[g.cursor];
-            status.slots[rest].tier=status.slots[rest].tier==Tier::none ? Tier::d : status.slots[rest].tier;
-            Advance(log,rest,SlotState::refused,"refused","prior_local_change");
+        if(vars_changed) for(unsigned rest=0;rest<kSlots;++rest) {
+            auto& r=status.slots[rest];
+            if(FinalState(r.state)) continue;
+            if(r.tier==Tier::none) r.tier=Tier::d;
+            Finish(log,rest,SlotState::refused,"refused","prior_local_change");
         }
         return;
     }
     g.dispatched_handles[slot]=g.expected;
-    g.dispatched_equips[slot]=g.target.equip;
-    if(bound) {Advance(log,slot,SlotState::bound,"handle_bound",nullptr,result);return;}
+    g.dispatched_equips[slot]=target.equip;
+    s.refs_after=general_scratch.cache_refs;
+    if(bound) {s.bank=bank;Finish(log,slot,SlotState::bound,"handle_bound",nullptr,result);return;}
     s.state=SlotState::tracking;SetReason(s,"queued");
     GeneralReceipt(log,"handle_queued",slot,nullptr,result);
-    g.tracking=true;g.observations=0;
+    g.tracking=true;g.tracking_slot=slot;g.observations=0;
 #else
     (void)c;(void)log;
 #endif

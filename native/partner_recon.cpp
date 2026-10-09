@@ -223,18 +223,56 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
 
     // ---- Observations: the remote's velocity and teleports ------------------
     bool teleport = false;
+    std::uint32_t sender_span_ms = 0;
+    const bool source_time = in.target_time_valid && in.target_sender_ms >= 0;
+    const bool generation_known = in.target_ok && source_time && in.target_generation != 0;
+    const bool generation_reset = generation_known && st.target_generation != 0 &&
+        in.target_generation != st.target_generation;
+    if (generation_known) st.target_generation = in.target_generation;
+    const bool clock_reset = in.target_ok && st.have_target && (source_time != st.have_target_time ||
+        (source_time && in.target_sender_ms < st.prev_target_sender_ms));
+    if (generation_reset) {
+        // A new receive ring owns a new sender timeline, even if its first
+        // clock equals the old one. Old jump ids cannot suppress its jumps.
+        st.jump_seen = false;
+        st.last_jump_ms = 0;
+    }
+    if (clock_reset || generation_reset) {
+        st.have_target = false;
+        st.tp_count = 0;
+        // Alignment can move the sampled clock backwards; that must not
+        // replay an already reached jump. Only a true ring reset clears it.
+        st.v_remote[0] = st.v_remote[1] = 0.0;
+    }
     if (in.target_ok) {
-        if (st.have_target && dt > 0.0) {
+        const bool advancing = !st.have_target || !source_time || in.target_sender_ms > st.prev_target_sender_ms;
+        const double source_dt = source_time ? (st.have_target ?
+            static_cast<double>(in.target_sender_ms - st.prev_target_sender_ms) : 0.0) : dt;
+        if (source_time && source_dt > 0.0)
+            sender_span_ms = static_cast<std::uint32_t>(source_dt > 0xFFFFFFFFu ? 0xFFFFFFFFu : source_dt);
+        const bool known_jump = source_time && in.target_jump && st.jump_seen && in.target_jump_ms <= st.last_jump_ms;
+        // Mark even a first baseline as seen: first placement already owns it.
+        if (source_time && in.target_jump && in.target_jump_ms <= in.target_sender_ms &&
+            (!st.jump_seen || in.target_jump_ms > st.last_jump_ms)) {
+            teleport = st.have_target && in.target_live;
+            st.jump_seen = true;
+            st.last_jump_ms = in.target_jump_ms;
+        }
+        if (st.have_target && advancing && source_dt > 0.0) {
             const double jump = Len3(in.target, st.prev_target);
-            const double jump_speed = Len2(in.target[0] - st.prev_target[0], in.target[2] - st.prev_target[2]) * 1000.0 / dt;
-            if (in.target_snapped || jump > P.teleport_jump_mm) {
+            const double jump_speed = Len2(in.target[0] - st.prev_target[0], in.target[2] - st.prev_target[2]) * 1000.0 / source_dt;
+            if (teleport || (!source_time && (in.target_snapped || jump > P.teleport_jump_mm)) ||
+                (source_time && !known_jump && jump > P.teleport_jump_mm && jump_speed > P.max_speed_mmps)) {
                 teleport = true;
                 st.v_remote[0] = st.v_remote[1] = 0.0;
-            } else if (jump_speed > P.max_speed_mmps) {
-                // A snapshot correction step, not the remote's velocity.
+            } else if (jump_speed > P.max_speed_mmps || source_dt > 1000.0) {
+                // A correction or long missing interval: rebase, never invent
+                // instantaneous speed when the queued packets arrive together.
+                st.v_remote[0] = st.v_remote[1] = 0.0;
             } else {
-                const double a = Alpha(dt, P.ema_ms);
-                const double vx = (in.target[0] - st.prev_target[0]) * 1000.0 / dt, vz = (in.target[2] - st.prev_target[2]) * 1000.0 / dt;
+                const double a = Alpha(source_dt, P.ema_ms);
+                const double vx = (in.target[0] - st.prev_target[0]) * 1000.0 / source_dt,
+                             vz = (in.target[2] - st.prev_target[2]) * 1000.0 / source_dt;
                 st.v_remote[0] += a * (vx - st.v_remote[0]);
                 st.v_remote[1] += a * (vz - st.v_remote[1]);
             }
@@ -242,11 +280,15 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
         // Windowed teleport: the interpolated pose spreads a teleport over a
         // few ticks (each below teleport_jump_mm); no locomotion covers
         // teleport_window_mm horizontally within teleport_window_ms.
-        if (P.teleport_window_mm && !teleport) {
+        const auto target_ms = source_time ? static_cast<std::uint64_t>(in.target_sender_ms) : now;
+        if (P.teleport_window_mm && !teleport && advancing && !known_jump) {
             for (std::uint32_t i = 0; i < st.tp_count; ++i) {
                 const std::uint32_t at = (st.tp_head + 16 - i) % 16;
-                if (now < st.tp_ms[at] || now - st.tp_ms[at] > P.teleport_window_ms) break;
-                if (Len2(in.target[0] - st.tp_pos[at][0], in.target[2] - st.tp_pos[at][2]) > P.teleport_window_mm) {
+                if (target_ms < st.tp_ms[at] || target_ms - st.tp_ms[at] > P.teleport_window_ms) break;
+                const auto span = target_ms - st.tp_ms[at];
+                const double distance = Len2(in.target[0] - st.tp_pos[at][0], in.target[2] - st.tp_pos[at][2]);
+                if (distance > P.teleport_window_mm && (!source_time ||
+                    (span && distance * 1000.0 / static_cast<double>(span) > P.max_speed_mmps))) {
                     teleport = true;
                     st.v_remote[0] = st.v_remote[1] = 0.0;
                     break;
@@ -254,12 +296,23 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
             }
         }
         if (teleport) st.tp_count = 0;
-        st.tp_head = (st.tp_head + 1) % 16;
-        Copy3(st.tp_pos[st.tp_head], in.target);
-        st.tp_ms[st.tp_head] = now;
-        if (st.tp_count < 16) ++st.tp_count;
-        Copy3(st.prev_target, in.target);
-        st.have_target = true;
+        if (advancing) {
+            st.tp_head = (st.tp_head + 1) % 16;
+            Copy3(st.tp_pos[st.tp_head], in.target);
+            st.tp_ms[st.tp_head] = target_ms;
+            if (st.tp_count < 16) ++st.tp_count;
+            Copy3(st.prev_target, in.target);
+            st.prev_target_sender_ms = in.target_sender_ms;
+            st.have_target_time = source_time;
+            st.have_target = true;
+            st.target_progress_ms = now;
+        } else if (source_time && (!in.target_live || (now >= st.target_progress_ms && now - st.target_progress_ms > 100))) {
+            // Held past the sampler's prediction horizon: decay old motion.
+            // No unbounded prediction or correction continues through loss.
+            const double a = Alpha(dt, P.ema_ms);
+            st.v_remote[0] *= 1.0 - a;
+            st.v_remote[1] *= 1.0 - a;
+        }
     }
     // ---- The body's own motion (readback minus what we wrote) ---------------
     bool body_jump = false;
@@ -462,6 +515,9 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
         rp.nudge_mm = st.nudge_mm;
         rp.snaps_window = st.snap_count;
         rp.gap_snaps = st.gap_snaps;
+        rp.sender_span_ms = sender_span_ms;
+        rp.source_jump = teleport;
+        rp.body_jump = body_jump;
         rp.place_tries = st.tries;
         rp.idle_ms = Ms(st.idle_since, now);
         rp.stance_from = stance_from;
@@ -722,7 +778,9 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
                                               ? P.runaway_rel_pct * speed_remote / 100.0 : static_cast<double>(P.runaway_mmps))
                                        : static_cast<double>(P.runaway_mmps);
     if (P.runaway_split) {
-        const bool lag_now = in.body_ok && speed_remote >= P.moving_mmps && dv_along < -thr && d_f >= P.dead_moving_mm;
+        const bool aim_overrun = in.hold_stripped && dv_along > thr && dv_cross <= thr;
+        const bool lag_now = in.body_ok && speed_remote >= P.moving_mmps &&
+            (dv_along < -thr || aim_overrun) && d_f >= P.dead_moving_mm;
         if (lag_now) {
             if (!st.lag_since) st.lag_since = now ? now : 1;
             if (!st.lag && Held(st.lag_since, now, P.runaway_hold_ms)) {
@@ -740,7 +798,7 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
     if (!st.runaway_active) {
         const bool idle_case = remote_idle && speed_free > P.runaway_mmps && !grace;
         const bool moving_case = !idle_case && remote_moving &&
-                                 (P.runaway_split ? (dv_along > thr || dv_cross > thr) : dv > P.runaway_mmps);
+                                 (P.runaway_split ? ((!in.hold_stripped && dv_along > thr) || dv_cross > thr) : dv > P.runaway_mmps);
         if ((idle_case || moving_case) && in.body_ok) {
             if (!st.runaway_since) st.runaway_since = now ? now : 1;
             bool fire = Held(st.runaway_since, now, P.runaway_hold_ms);
@@ -765,6 +823,13 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
             st.runaway_latched = false;
         }
     } else {
+        // An admitted moving HOLD-strip overrun uses magnitude parity, not a
+        // pin. Sideways drift and idle runaway keep their existing policy.
+        if (P.runaway_split && in.hold_stripped && st.runaway_moving &&
+            remote_moving && dv_along > thr && dv_cross <= thr) {
+            st.runaway_active = false;
+            o.events |= Event::runaway_end;
+        }
         // Ends only when the body's own motion matches the remote's again (a
         // stuck body never "ends" because the remote starts moving).
         const double exit = remote_moving ? P.runaway_exit_moving_mmps : P.runaway_exit_mmps;
@@ -811,6 +876,9 @@ Out Step(State& st, const In& in, const Params& P) noexcept {
     if (P.recon == PartnerRecon::pin || st.runaway_active || diverge_pin || st.input_pin) {
         if (governor) face_stop("pin");
         if (st.runaway_active && P.runaway == PartnerRunaway::disarm) o.arm = false;
+        // A native idle runaway must stop receiving the stuck movement input
+        // while its body is pinned; only these neutral windows feed the arbiter.
+        o.neutral = P.neutral_place && st.runaway_active && remote_idle;
         if (in.target_ok) {
             write(Action::pin, in.target, in.target_yaw);
             ++st.pins;

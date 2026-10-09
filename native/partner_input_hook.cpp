@@ -158,8 +158,7 @@ volatile LONG g_shot_leaks = 0, g_shot_count = -1, g_reload_drains = 0;
 // An ammo leak under the magazine mirror turns the mirror off until
 // MissionStart (it is what lets instance 1 reload): g_m_leak.
 volatile LONG g_ammo_leaks = 0, g_ammo_digest = 0, g_m_leak = 0;
-bool g_m_seen = false;  // hook thread only: the last remote (mag, cap) acted on
-std::uint16_t g_m_seen_mag = 0, g_m_seen_cap = 0;
+partner_native::MagazineHistory g_mag_history{};  // hook thread only: checked, accepted samples
 // F2: the store row (atomics for the driver) and the last drain's injected magazine.
 volatile LONG g_s_writes = 0, g_s_refused = 0, g_s_last = 0, g_m_inj = 0xFFFF, g_m_inj_cap = 0xFFFF;
 // F1: the private sample rings of drain windows (hook thread only) and the
@@ -173,10 +172,8 @@ volatile LONG g_r_on = 0, g_r_windows = 0, g_r_refused = 0, g_r_changed = 0, g_r
 volatile LONG g_n_neutral = 0, g_n_strip = 0, g_n_strip_bits = 0, g_n_drain_disarmed = 0;
 // The partner's own reload (R1/R4): RELOAD edges seen, frozen drains,
 // reconciles and rec+0x3E8 writes (atomics for the driver); hook thread only:
-// a freeze is pending reconcile, and the last slot rec+0x3DA the mirror saw.
+// the pending reconcile and last accepted slot live in g_mag_history.
 volatile LONG g_m_reload_seen = 0, g_m_frozen = 0, g_m_reconciles = 0, g_m_3e8 = 0;
-bool g_m_freeze_pending = false, g_m_slot_seen = false;
-std::uint8_t g_m_slot = 0;
 // The post-phase-1 probe (R1).
 volatile LONG g_p1_b20 = 0, g_p1_b24 = 0, g_p1_shots = 0, g_p1_modes = 0, g_p1_mode = 0;
 // The slot follower (W4): statistics (atomics) and the episode it acts in
@@ -961,9 +958,7 @@ void __stdcall InputDispatchHook(void* root, std::uint32_t phase) noexcept {
     if (InterlockedExchange(&g_reset_hist, 0)) {
         g_hist = pi::HoldHistory{};
         g_inj_valid = false;
-        g_m_seen = false;
-        g_m_freeze_pending = false;
-        g_m_slot_seen = false;
+        g_mag_history = partner_native::MagazineHistory{};
         g_sl_ep_target = g_sl_ep_seq = 0xFFFFFFFFu;
         g_sl_ep_writes = 0;
         g_sl_ep_reason = -1;
@@ -1309,26 +1304,18 @@ void MirrorMag(const pi::Arm& a, const pi::Injection& j) noexcept {
     if (!body_read) { MagRefused(MagRefusal::fault, true); return; }
     const bool remote_reloading = j.gun_valid && (j.gun_flags & pi::GunFlag::Reloading) != 0;
     if (partner_reload::MirrorFrozen(a.reload, remote_reloading, body_mode, a.reload_hold, a.reload_reconcile, a.reload_release)) {
-        g_m_freeze_pending = true;
+        g_mag_history.freeze_pending = true;
         InterlockedIncrement(&g_m_frozen);
         MagRefused(MagRefusal::reload, false);
         return;
     }
-    const bool reconcile = g_m_freeze_pending;
-    g_m_freeze_pending = false;
-    // A new weapon in hand gets its magazine even if the remote's value did not change.
-    const bool slot_changed = g_m_slot_seen && body_slot != g_m_slot;
-    g_m_slot = body_slot;
-    g_m_slot_seen = true;
-    const bool changed = !g_m_seen || j.ammo != g_m_seen_mag || j.ammo_cap != g_m_seen_cap || reconcile || slot_changed;
     // raw|event: the freeze owns the reload; an R edge no longer re-asserts the remote's magazine.
     const bool reload_edge = reload && a.reload == PartnerNativeReload::mirror;
-    if (!fire && !reload_edge && !changed) return;
-    // A FIRE edge shows a round only if the remote had one (MirrorMagazine).
-    const bool was_loaded = g_m_seen && g_m_seen_mag > 0;
-    g_m_seen = true;
-    g_m_seen_mag = j.ammo;
-    g_m_seen_cap = j.ammo_cap;
+    const auto attempt = partner_native::PrepareMagazine(g_mag_history, j.ammo, j.ammo_cap, body_slot, fire, reload_edge);
+    if (!attempt.needed) return;
+    const bool reconcile = attempt.reconcile;
+    // A FIRE edge shows a round only if the last accepted remote sample had one.
+    const bool was_loaded = attempt.remote_was_loaded;
     InterlockedExchange(&g_m_remote, j.ammo);
     InterlockedExchange(&g_m_remote_cap, j.ammo_cap);
     MagRefusal why = MagRefusal::none;
@@ -1382,6 +1369,9 @@ void MirrorMag(const pi::Arm& a, const pi::Injection& j) noexcept {
         InterlockedExchange(&g_s_last, static_cast<LONG>(store));
     }
     if (why != MagRefusal::none) { MagRefused(why, true); return; }
+    // All chain, class, capacity, store and record checks accepted the sample.
+    // A validated no-write result also commits; refusals leave it pending.
+    partner_native::CommitMagazine(g_mag_history, j.ammo, j.ammo_cap, body_slot);
     InterlockedExchange(&g_m_last, static_cast<LONG>(MagRefusal::none));
     InterlockedExchange(&g_s_last, static_cast<LONG>(StoreRefusal::none));
     InterlockedExchange(&g_m_written, static_cast<LONG>(target));
@@ -1400,7 +1390,9 @@ void MirrorMag(const pi::Arm& a, const pi::Injection& j) noexcept {
 // SetCurrentSlot 0x11AFA80 writes it for a non-local id and slot types 0/1/2
 // (contract: Q+0x17C |= 1 << id, the low nibble of row+0x36, row+0 = (row+2 +
 // 2*slot) & 0x7FF, then the exit 0x11AFE4B before any call), only to a slot the
-// driver's plan admits whose handle holds the planned equip. Gun phase 0
+// driver's plan admits whose handle holds the planned equip: the body slot
+// the plan maps the remote's slot to (itself, or weapons4's stand-in when
+// body 1 cannot hold the remote's own weapon there). Gun phase 0
 // (0x103AED0) then sees the slot differ from rec+0x3D9 and switches natively:
 // an immediate activation (0x103E049 -> 0x105FDB0) or, while aiming, mode 8
 // (the weapon-change sequence 0x1074070). slot_follow=call runs 0x11AFA80
@@ -1439,6 +1431,9 @@ void SlotFollow(const pi::Arm& a, const pi::Injection& j) noexcept {
     }
     InterlockedExchange(&g_sl_target, static_cast<LONG>(target));
     if (target > 2) { SlotVerdict(SlotRefusal::other); return; }
+    // The body slot for the remote's slot: itself, or the plan's stand-in (weapons4).
+    const std::uint32_t body_target = (a.standin_mask & (1u << target)) ? a.standin_slot[target] : target;
+    if (body_target > 2) { SlotVerdict(SlotRefusal::plan); return; }
     SlotRefusal why = SlotRefusal::none;
     bool wrote = false;
     __try {
@@ -1456,7 +1451,7 @@ void SlotFollow(const pi::Arm& a, const pi::Injection& j) noexcept {
             const std::uintptr_t inv = ctl ? Load<std::uintptr_t>(ctl + c::ctl_inventory) : 0;
             const std::uintptr_t inv_vt = inv ? Load<std::uintptr_t>(inv) : 0;
             const std::uint32_t stride = inv ? Load<std::uint32_t>(inv + c::store_stride) : 0;
-            const std::uintptr_t idx = static_cast<std::uintptr_t>(stride) + target;  // id 1 (Validate: ids[1] == 1)
+            const std::uintptr_t idx = static_cast<std::uintptr_t>(stride) + body_target;  // id 1 (Validate: ids[1] == 1)
             if (!Q || Load<std::uintptr_t>(Q) != g_base + c::q_vtable_rva || !ctl || Load<std::uintptr_t>(ctl) != g_base + c::equip_ctl_vt_rva ||
                 Load<std::uintptr_t>(ctl + c::ctl_player) != P || (inv_vt != g_base + c::store_vt_rva && inv_vt != g_base + c::store_vt_derived_rva) ||
                 Load<std::uintptr_t>(inv_vt + c::store_vt_set) != g_base + c::store_set_rva || stride < 3 || stride > 16 ||
@@ -1468,7 +1463,7 @@ void SlotFollow(const pi::Arm& a, const pi::Injection& j) noexcept {
                 const std::uint8_t nibble = Load<std::uint8_t>(row + c::equip_row_nibble);
                 const std::uint32_t f = Load<std::uint32_t>(rec + c::gun_flags);
                 const std::uint8_t mode = Load<std::uint8_t>(rec + c::gun_mode_cur);
-                if ((nibble & 0xFu) == target) why = SlotRefusal::same;
+                if ((nibble & 0xFu) == body_target) why = SlotRefusal::same;
                 else if (Load<std::uint8_t>(rec + c::gun_slot_src) != c::gun_slot_follow) why = SlotRefusal::mode;
                 else if ((f & c::gun3c0_switch) || mode == c::gun_mode_change || g_sl_ep_writes >= kSlotEpisodeWrites) why = SlotRefusal::wait;
                 else {
@@ -1476,11 +1471,11 @@ void SlotFollow(const pi::Arm& a, const pi::Injection& j) noexcept {
                     // a slot body 1 never had holds 0) reports empty, then the plan, then the identity.
                     const std::uint32_t handle = Load<std::uint32_t>(Load<std::uintptr_t>(inv + c::inv_handles) + idx * 4);
                     const std::uint16_t row_equip =
-                        static_cast<std::uint16_t>(Load<std::uint16_t>(row + c::equip_row_slots + 2 * target) & c::equip_id_mask);
+                        static_cast<std::uint16_t>(Load<std::uint16_t>(row + c::equip_row_slots + 2 * body_target) & c::equip_id_mask);
                     if ((handle >> 16) == c::handle_empty_hi || ((handle >> c::handle_equip_shift) & c::equip_id_mask) == 0)
                         why = SlotRefusal::empty;
-                    else if (!(a.slot_ok & (1u << target))) why = SlotRefusal::plan;
-                    else if (((handle >> c::handle_equip_shift) & c::equip_id_mask) != row_equip || row_equip != a.slot_equip[target])
+                    else if (!(a.slot_ok & (1u << body_target))) why = SlotRefusal::plan;
+                    else if (((handle >> c::handle_equip_shift) & c::equip_id_mask) != row_equip || row_equip != a.slot_equip[body_target])
                         why = SlotRefusal::mismatch;
                     else {
                         if (a.slot_follow == PartnerNativeSlot::call) {
@@ -1492,17 +1487,17 @@ void SlotFollow(const pi::Arm& a, const pi::Injection& j) noexcept {
                             } else {
                                 ++g_sl_ep_writes;
                                 reinterpret_cast<SetSlotFn>(g_base + c::set_current_slot_rva)(reinterpret_cast<void*>(ctl), 1u,
-                                                                                             static_cast<std::int32_t>(target), 0, 0, 0, 0);
+                                                                                             static_cast<std::int32_t>(body_target), 0, 0, 0, 0);
                                 wrote = true;
                             }
                         } else {
                             ++g_sl_ep_writes;
                             Store<std::uint32_t>(Q + c::q_equip_dirty, Load<std::uint32_t>(Q + c::q_equip_dirty) | 2u);
-                            Store<std::uint8_t>(row + c::equip_row_nibble, static_cast<std::uint8_t>((nibble & 0xF0u) | target));
+                            Store<std::uint8_t>(row + c::equip_row_nibble, static_cast<std::uint8_t>((nibble & 0xF0u) | body_target));
                             Store<std::uint16_t>(row + c::equip_row_current, row_equip);
                             wrote = true;
                         }
-                        if (wrote && ((Load<std::uint8_t>(row + c::equip_row_nibble) & 0xFu) != target ||
+                        if (wrote && ((Load<std::uint8_t>(row + c::equip_row_nibble) & 0xFu) != body_target ||
                                       Load<std::uint16_t>(row + c::equip_row_current) != row_equip))
                             why = SlotRefusal::readback;
                     }

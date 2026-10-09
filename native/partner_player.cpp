@@ -1334,7 +1334,9 @@ bool ReadAim(const Addresses& a, const State& s, AimRead& out) noexcept {
         if (ReadGun(a, s, k, g) && g.rec) {
             float p[4]{};
             out.gun_ok[k] = ReadBlock(g.rec + c::gun_aim_point, p, sizeof(p)) && ReadValue(g.rec + c::gun_mode_cur, out.gun_state[k]) &&
-                            ReadValue(g.rec + c::gun_path_flags, out.path_flags[k]) && ReadValue(g.rec + c::gun_b3d5, out.b3d5[k]);
+                            ReadValue(g.rec + c::gun_path_flags, out.path_flags[k]) && ReadValue(g.rec + c::gun_b3d5, out.b3d5[k]) &&
+                            ReadValue(g.rec + c::gun_class, out.gun_class[k]) && ReadValue(g.rec + c::gun_stance, out.stance[k]);
+            out.gun_flags[k] = g.gun3c0;
             for (unsigned i = 0; out.gun_ok[k] && i < 3; ++i) out.aimpt[k][i] = p[i];
         }
         RateRead r{};
@@ -1344,6 +1346,10 @@ bool ReadAim(const Addresses& a, const State& s, AimRead& out) noexcept {
         if (Realized(s, k) && ReadBody(a, s, k, pos, quat)) {
             out.body_ok[k] = true;
             for (unsigned i = 0; i < 3; ++i) out.body[k][i] = pos[i];
+            const double x = quat[0], y = quat[1], z = quat[2], w = quat[3];
+            const double rx = 2.0 * (x * z + w * y), rz = 1.0 - 2.0 * (x * x + y * y);
+            out.body_ok[k] = std::isfinite(rx) && std::isfinite(rz);
+            out.body_yaw[k] = out.body_ok[k] ? static_cast<float>(std::atan2(rx, rz)) : 0.0f;
         }
     }
     return out.q_ok || out.gun_ok[0] || out.gun_ok[1] || out.rate_ok[0] || out.rate_ok[1];

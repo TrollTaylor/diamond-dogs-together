@@ -85,6 +85,15 @@ int main() {
     Tick rich{};
     Check(TickArgs("12 -1500 250 999 -17999 4500 2 3 3 11 65535", rich) &&
           rich.action_flags == 11 && rich.equip_id == 65535 && rich.move == 3, "complete bounded gun suffix");
+    for (unsigned ride = 0; ride <= 5; ++ride) {
+        const std::string source = "12 -1500 250 999 -17999 4500 2 3 3 11 65535 ride=" + std::to_string(ride);
+        Check(TickArgs(source.c_str(), rich) && rich.has_ride && rich.ride_kind == ride && rich.equip_id == 65535,
+              "optional bounded named ride suffix preserves gun metadata");
+    }
+    for (const char* invalidRide : {" ride=6", " ride=-1", " ride=00", " ride=1 ride=0", " ride=", " Ride=1", " ride=1 "})
+        Check(!TickOk((std::string("0 0 0 0 0 0 0 0 0 0 0") + invalidRide).c_str()), "strict ride suffix refuses malformed data");
+    Check(TickArgs("0 0 0 0 0 0 0 0 0", rich) && !rich.has_ride && rich.ride_kind == 0,
+          "legacy producer clears prior ride evidence");
     Check(!TickOk("0 0 0 0 0 0 0 0 0 1"), "partial gun suffix refused");
     Check(!TickOk("0 0 0 0 0 0 0 0 0 4 1"), "locomotion bit in gun suffix refused");
     Check(!TickOk("0 0 0 0 0 0 0 0 0 12 1") && !TickOk("0 0 0 0 0 0 0 0 0 64 1"), "unknown suffix flags refused");
@@ -545,9 +554,102 @@ int main() {
         Check(!LocomotionAct(0) && LocomotionAct(1) && LocomotionAct(6) && !LocomotionAct(7) && !LocomotionAct(0x79) &&
               !LocomotionAct(0xFFFF), "locomotion act domain 1..6");
     }
+    {
+        // Pack selection receipts (lua/coop/player_package_selection.lua): kind, mission and scene.
+        const auto pack = [](const std::string& text) { return ClassifyPack(text.data(), text.size()); };
+        const std::string selected = "return 'MGS_COOP_PACK_SELECTED_V1' -- mission=30050; single_controller=true; layout=f30050_ly003";
+        PackResult r = pack(selected);
+        Check(r.kind == PackReceipt::selected && r.mission == 30050 && r.scene == PackScene::none, "selected with a layout");
+        r = pack("return 'MGS_COOP_PACK_SELECTED_V1' -- mission=30010; single_controller=true");
+        Check(r.kind == PackReceipt::selected && r.mission == 30010, "selected (the 0.12.0 form)");
+        r = pack("return 'MGS_COOP_PACK_SELECTED_V1' -- mission=30020");
+        Check(r.kind == PackReceipt::selected && r.mission == 30020, "selected, nothing after the mission");
+        const char* scenes[] = {"demo_stage", "hangar", "story", "layout", "other"};
+        const PackScene scene_values[] = {PackScene::demo_stage, PackScene::hangar, PackScene::story, PackScene::layout, PackScene::other};
+        for (std::size_t i = 0; i < 5; ++i) {
+            r = pack(std::string("return 'MGS_COOP_PACK_REFUSED_V1' -- mission=30050; reason=foreign_or_variant; scene=") + scenes[i] +
+                     "; path=/Assets/tpp/pack/mission2/free/f30050/f30051.fpk");
+            Check(r.kind == PackReceipt::refused && r.mission == 30050 && r.scene == scene_values[i] &&
+                      std::strcmp(PackSceneName(r.scene), scenes[i]) == 0 && PackSceneFromName(scenes[i]) == scene_values[i],
+                  "refused with each scene");
+        }
+        // The diagnostic form of e868757 has no scene: other.
+        r = pack("return 'MGS_COOP_PACK_REFUSED_V1' -- mission=30050; reason=foreign_or_variant; "
+                 "path=/Assets/tpp/pack/mission2/free/f30050/f30050_ly003.fpk");
+        Check(r.kind == PackReceipt::refused && r.scene == PackScene::other, "refused without a scene");
+        r = pack("return 'MGS_COOP_PACK_REFUSED_V1' -- mission=30050; reason=x; scene=demo_stagex; path=");
+        Check(r.kind == PackReceipt::refused && r.scene == PackScene::other, "unknown scene is other");
+        r = pack("return 'MGS_COOP_PACK_REFUSED_V1' -- mission=30050; reason=x; scene=layout");
+        Check(r.kind == PackReceipt::refused && r.scene == PackScene::layout, "scene at the end");
+        Check(pack("return 'MGS_COOP_PACK_REFUSED_V1' -- mission=; reason=x").kind == PackReceipt::none &&
+                  pack("return 'MGS_COOP_PACK_REFUSED_V1' -- mission=030050; reason=x").kind == PackReceipt::none &&
+                  pack("return 'MGS_COOP_PACK_REFUSED_V1' -- mission=1234567; reason=x").kind == PackReceipt::none &&
+                  pack("return 'MGS_COOP_PACK_REFUSED_V1' -- mission=30050x").kind == PackReceipt::none &&
+                  pack("return 'MGS_COOP_PACK_REFUSED_V1' -- mission=30050;reason=x").kind == PackReceipt::none &&
+                  pack("return 'MGS_COOP_PACK_LIST_V1' -- mission=30050; i=1; path=x").kind == PackReceipt::none &&
+                  pack("return 'MGS_COOP_PACK_SELECTED_V2' -- mission=30050").kind == PackReceipt::none,
+              "malformed missions, lists and other versions are none");
+        std::string with_nul = selected;
+        with_nul[60] = 0;
+        Check(pack(with_nul).kind == PackReceipt::none && ClassifyPack(nullptr, 4).kind == PackReceipt::none &&
+                  ClassifyPack(selected.data(), 0).kind == PackReceipt::none,
+              "NUL, null and empty");
+        const std::string longest = "return 'MGS_COOP_PACK_REFUSED_V1' -- mission=30050; reason=" + std::string(32, 'r') +
+                                    "; scene=demo_stage; path=" + std::string(120, 'p');
+        Check(longest.size() < max_pack_receipt && pack(longest).scene == PackScene::demo_stage, "the longest Lua receipt fits");
+        Check(pack(longest + std::string(max_pack_receipt, 'p')).kind == PackReceipt::none, "over max_pack_receipt refused");
+        Check(PackSceneName(PackScene::none)[0] == 0 && PackSceneFromName("") == PackScene::none && PackSceneFromName(nullptr) == PackScene::none,
+              "none has no name");
+        const auto state = [](const std::string& text) { return ClassifyPackState(text.data(), text.size()); };
+        const auto compact = [](const char* result, const char* scene) {
+            return std::string("return 'MGS_COOP_PACK_STATE_V1' -- mission=30050; result=") + result + "; scene=" + scene;
+        };
+        r = state(compact("selected", "none"));
+        Check(r.kind == PackReceipt::selected && r.mission == 30050 && r.scene == PackScene::none, "compact selection");
+        r = state("return 'MGS_COOP_PACK_STATE_V1' -- mission=0; result=clear; scene=none");
+        Check(r.kind == PackReceipt::clear && r.mission == 0, "compact clear unknown request");
+        for (std::size_t i = 0; i < 5; ++i) {
+            r = state(compact("refused", scenes[i]));
+            Check(r.kind == PackReceipt::refused && r.mission == 30050 && r.scene == scene_values[i], "compact refusal scenes");
+        }
+        for (const char* badState : {
+                 "return 'MGS_COOP_PACK_STATE_V1' -- mission=030050; result=selected; scene=none",
+                 "return 'MGS_COOP_PACK_STATE_V1' -- mission=1000000; result=selected; scene=none",
+                 "return 'MGS_COOP_PACK_STATE_V1' -- mission=0; result=selected; scene=none",
+                 "return 'MGS_COOP_PACK_STATE_V1' -- mission=0; result=refused; scene=other",
+                 "return 'MGS_COOP_PACK_STATE_V1' -- mission=30050; result=selected; scene=layout",
+                 "return 'MGS_COOP_PACK_STATE_V1' -- mission=30050; result=clear; scene=other",
+                 "return 'MGS_COOP_PACK_STATE_V1' -- mission=30050; result=refused; scene=none",
+                 "return 'MGS_COOP_PACK_STATE_V1' -- mission=30050; result=refused; scene=demo_stagex",
+                 "return 'MGS_COOP_PACK_STATE_V1' -- mission=30050; result=refused; scene=layout; scene=other",
+                 "return 'MGS_COOP_PACK_STATE_V1' -- mission=30050; result=selected; result=refused; scene=none",
+                 "return 'MGS_COOP_PACK_STATE_V1' -- mission=30050; result=selected; scene=none\n"})
+            Check(state(badState).kind == PackReceipt::none, "malformed compact state ignored");
+        const std::string refused = compact("refused", "layout"), clear = compact("clear", "none"), selected_state = compact("selected", "none");
+        std::uint32_t pending = UpdatePackState(0, refused.data(), refused.size());
+        Check((pending >> 8) == 30050 && (pending & 255) == static_cast<std::uint32_t>(PackScene::layout), "compact refusal becomes pending state");
+        Check(UpdatePackState(pending, selected.data(), selected.size()) == pending, "capped diagnostic selection cannot clear state");
+        const std::string malformed = selected_state + "x";
+        Check(UpdatePackState(pending, malformed.data(), malformed.size()) == pending, "malformed state cannot clear refusal");
+        for (unsigned i = 0; i < 40; ++i) {
+            pending = UpdatePackState(pending, clear.data(), clear.size());
+            Check(pending == 0, "per-request clear past diagnostic limits");
+            pending = UpdatePackState(pending, refused.data(), refused.size());
+            Check(pending != 0, "per-request refusal past diagnostic limits");
+            pending = UpdatePackState(pending, selected_state.data(), selected_state.size());
+            Check(pending == 0, "per-request selection recovers past diagnostic limits");
+        }
+        std::string nul_state = refused;
+        nul_state[50] = 0;
+        Check(state(nul_state).kind == PackReceipt::none && ClassifyPackState(nullptr, 4).kind == PackReceipt::none &&
+                  ClassifyPackState(refused.data(), 0).kind == PackReceipt::none &&
+                  state(refused + std::string(max_pack_state_receipt, 'x')).kind == PackReceipt::none,
+              "compact null/NUL/empty/oversize ignored");
+    }
 
     std::printf("%u partner receipt checks passed: classify, strict ticks, replies (with look values), log payloads, triggers "
-                "(extended grammar), stage/driver policy, look normalization, facing quaternion, stance debounce, poses; no game calls\n",
+                "(extended grammar), stage/driver policy, look normalization, facing quaternion, stance debounce, poses, pack "
+                "receipts; no game calls\n",
                 checks);
     return 0;
 }

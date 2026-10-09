@@ -233,7 +233,15 @@ struct In {
     double target[3];
     double target_yaw;
     bool target_live;     // pose status live (newest snapshot <= 500 ms old)
-    bool target_snapped;  // the sampler held a >5 m jump (teleport)
+    bool target_snapped;  // legacy sampler: held a >5 m jump
+    // Source clock of the sampled position (not the latest packet), unwrapped.
+    // A repeated/held time never creates velocity or a new teleport. False
+    // preserves synthetic/legacy callers' owner-clock policy.
+    bool target_time_valid{};
+    std::int64_t target_sender_ms{};
+    bool target_jump{};
+    std::int64_t target_jump_ms{};  // destination identity, acted on once
+    std::uint32_t target_generation{};  // source ring Reset identity; zero = unknown
     bool relink;          // pose status lost -> live this tick
     // Input (net): validity, age and the stick magnitude 0..1 after rotation.
     bool input_net;
@@ -247,11 +255,14 @@ struct In {
     bool remote_anim_valid;
     std::uint16_t remote_act;
     std::uint8_t remote_stance;
+    bool hold_stripped{}; // raw remote HOLD, but this native pad refuses HOLD
 };
 
 struct Report {
     double err_mm, dy_mm, along_mm, cross_mm;
     double v_free_mmps, v_remote_mmps;
+    std::uint32_t sender_span_ms{};
+    bool source_jump{}, body_jump{};
     // The body's own velocity minus the remote's, along and across the
     // remote's direction of motion (cross = |dv| below moving_mmps).
     double dv_along_mmps, dv_cross_mmps;
@@ -328,6 +339,10 @@ struct State {
     bool have_target;
     double prev_target[3];
     double v_remote[2];
+    bool have_target_time{}, jump_seen{};
+    std::int64_t prev_target_sender_ms{}, last_jump_ms{};
+    std::uint32_t target_generation{};
+    std::uint64_t target_progress_ms{};
     // Body.
     bool have_body;
     double prev_body[3];

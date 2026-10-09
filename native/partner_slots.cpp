@@ -13,8 +13,27 @@ const char* TierName(Tier tier) noexcept {
     }
 }
 
+std::uint8_t StandIn(const PlanIn& in, unsigned r) noexcept {
+    if (!in.body_ok || r >= kSlots) return kNoSlot;
+    std::uint8_t best = kNoSlot;
+    unsigned best_rank = ~0u;
+    for (unsigned s = 0; s < kSlots; ++s) {
+        const Handle& h = in.body[s];
+        if (s == r || !h.filled || h.type < 1 || h.type > 8) continue;
+        // Lower is better: a projectile last, then a primary pair, then the slot.
+        const bool primary_pair = r <= 1 && s <= 1;
+        const unsigned rank = (BulletType(h.type) ? 0u : 8u) | (primary_pair ? 0u : 4u) | s;
+        if (rank < best_rank) {
+            best_rank = rank;
+            best = static_cast<std::uint8_t>(s);
+        }
+    }
+    return best;
+}
+
 Plan MakePlan(const PlanIn& in) noexcept {
     Plan p{};
+    for (unsigned s = 0; s < kSlots; ++s) p.map[s] = kNoSlot;
     for (unsigned s = 0; s < kSlots; ++s) {
         const Handle& h = in.body[s];
         Tier t = Tier::unknown;
@@ -30,6 +49,20 @@ Plan MakePlan(const PlanIn& in) noexcept {
         if (t == Tier::same || t == Tier::sub) {
             p.equip[s] = h.equip;
             p.ok_mask = static_cast<std::uint8_t>(p.ok_mask | (1u << s));
+            p.map[s] = static_cast<std::uint8_t>(s);
+        }
+    }
+    // Weapons4: a remote slot body 1 cannot follow (empty, other, unknown)
+    // maps to the stand-in; the follower may switch to it (ok_mask) with the
+    // body's own equip of that slot.
+    if (in.standin) {
+        for (unsigned r = 0; r < kSlots; ++r) {
+            if (p.map[r] != kNoSlot) continue;
+            const std::uint8_t s = StandIn(in, r);
+            if (s >= kSlots) continue;
+            p.map[r] = s;
+            p.ok_mask = static_cast<std::uint8_t>(p.ok_mask | (1u << s));
+            if (!p.equip[s]) p.equip[s] = in.body[s].equip;
         }
     }
     return p;
@@ -47,15 +80,17 @@ const char* GateName(Gate gate) noexcept {
     case Gate::mismatch: return "mismatch";
     case Gate::switching: return "switching";
     case Gate::projectile: return "projectile";
+    case Gate::standin: return "standin";
     default: return "match";
     }
 }
 
 Gate Judge(const GateIn& in) noexcept {
-    if (in.remote_equip != in.body_equip && in.remote_base != in.body_equip && !in.substitute) return Gate::mismatch;
+    const bool own = in.remote_equip == in.body_equip || in.remote_base == in.body_equip || in.substitute;
+    if (!own && !in.standin) return Gate::mismatch;
     if (in.switching) return Gate::switching;
     if (!in.type_ok || !BulletType(in.body_type)) return Gate::projectile;
-    return Gate::match;
+    return own ? Gate::match : Gate::standin;
 }
 
 std::uint32_t StripBits(Gate gate) noexcept {

@@ -18,6 +18,7 @@ namespace mgscoop::partner_driver {
 namespace {
 namespace pp = partner_player;
 namespace c = partner_player_contract;
+namespace pam = mgscoop::partner_aim;
 
 void Emit(const Hooks& h, const char* line) noexcept {
     if (h.log) h.log(h.context, line);
@@ -448,6 +449,43 @@ pin::V5Source SenderV5(const Driver& d, const Hooks& h, const pp::State& st, con
     return v;
 }
 
+pam::GunDirIn GunDirectionInput(const pp::AimRead& r, unsigned k) noexcept {
+    pam::GunDirIn i{};
+    i.gun_ok = r.gun_ok[k]; i.rate_ok = r.rate_ok[k]; i.body_ok = r.body_ok[k];
+    i.gun_class = r.gun_class[k]; i.stance = r.stance[k]; i.b3d5 = r.b3d5[k]; i.gun3c0 = r.gun_flags[k];
+    i.r5c = r.r5c[k]; i.r60 = r.r60[k]; i.body_yaw = r.body_yaw[k];
+    return i;
+}
+pin::V6Source SenderV6(Driver& d, const Hooks& h, const pp::State& st, const pin::V5Source& v5) noexcept {
+    pin::V6Source v{};
+    v.v5 = v5;
+    Mission& m = d.mission;
+    pam::DirReason why = pam::DirReason::idle;
+    if (v5.gun_valid && (v5.gun_flags & pin::GunFlag::Aiming)) {
+        pp::AimRead r{};
+        pam::GunDirIn gi{};
+        if (h.read_aim && h.read_aim(h.context, st, r)) gi = GunDirectionInput(r, 0);
+        const pam::GunDirOut dir = pam::GunDir(gi);
+        why = dir.reason;
+        if (dir.ok) {
+            pam::CheckStep(m.dir_check, dir, gi, r.body[0], r.aimpt[0]);
+            if (m.dir_check.latched) why = pam::DirReason::convention;
+            else {
+                v.aim_valid = true;
+                v.aim_pitch_cdeg = pam::PitchCdeg(dir.pitch);
+                v.aim_yaw_cdeg = pam::YawCdeg(dir.yaw);
+            }
+        }
+    }
+    if (!m.dir_reason_logged || why != m.dir_reason) {
+        m.dir_reason_logged = true; m.dir_reason = why;
+        EmitFormat(h, "aim_dir=%s; reason=%s; checks=%u; misses=%u\r\n",
+                   v.aim_valid ? "valid" : why == pam::DirReason::idle ? "idle" : "refused",
+                   pam::DirReasonName(why), m.dir_check.checks, m.dir_check.misses);
+    }
+    return v;
+}
+
 // One overlay tap (the input window injects `bits` for kTapFrames windows):
 // a new tap_seq, or, for a second tap in the same tick (a reload tap and a
 // stance fix), the bits ORed into this tick's tap.
@@ -535,6 +573,9 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
     // The weapon gate (F4/W5): FIRE and RELOAD stripped while the remote's gun
     // is not body 1's or body 1 is mid-switch, FIRE alone for an unqualified type.
     a.strip = set.native_active ? m.weapon_strip : 0u;
+    // Drop DASH only while a live raw HOLD was actually stripped. Admitted
+    // combat HOLD and the weapon gate remain unchanged.
+    if (set.native_active && m.hold_stripped) a.strip |= partner_pad::kDash;
     // The partner's own reload and weapon switch (docs/native-puppet.md
     // "Weapons"; not compared by SameArm): the mirror's freeze inputs, the
     // remote's raw RELOAD/CARRY stripped from its sample with reload=event and a
@@ -551,6 +592,15 @@ pin::Arm BuildArm(const Driver& d, const Settings& set, const pp::InputTargets& 
                                                                               : set.nslot;
     a.slot_ok = m.slot_plan_ok ? m.slot_plan.ok_mask : static_cast<std::uint8_t>(0);
     for (unsigned s = 0; s < 3; ++s) a.slot_equip[s] = m.slot_plan_ok ? m.slot_plan.equip[s] : static_cast<std::uint16_t>(0);
+    // Weapons4: a remote slot body 1 follows with the plan's stand-in.
+    a.standin_mask = 0;
+    for (unsigned r = 0; r < 3; ++r) {
+        a.standin_slot[r] = static_cast<std::uint8_t>(r);
+        if (m.slot_plan_ok && m.slot_plan.map[r] < 3 && m.slot_plan.map[r] != r) {
+            a.standin_mask = static_cast<std::uint8_t>(a.standin_mask | (1u << r));
+            a.standin_slot[r] = m.slot_plan.map[r];
+        }
+    }
     (void)st;
     return a;
 }
@@ -1071,6 +1121,10 @@ pr::Out StepRecon(Driver& d, const Hooks& h, const Settings& set, const Clock& c
     } else if (set.input == PartnerInput::stick) {
         in.in_r = static_cast<double>(set.stick_pct > 100 ? 100 : set.stick_pct) / 100.0;
     }
+    m.hold_stripped = set.native_active && latest_ok && latest.age_ms <= set.stale_ms &&
+        (latest.packet.held & partner_pad::kHold) != 0 &&
+        (!(set.input_mask & partner_pad::kHold) || (m.weapon_strip & partner_pad::kHold) != 0);
+    in.hold_stripped = m.hold_stripped;
     m.recon_in_valid = latest_ok;
     m.recon_in_age_ms = in.in_age_ms;
     m.recon_in_r = static_cast<std::int32_t>(std::lround(in.in_r * 1000.0));
@@ -1078,6 +1132,8 @@ pr::Out StepRecon(Driver& d, const Hooks& h, const Settings& set, const Clock& c
     // the synthetic pose (fixed/orbit).
     m.recon_delay_ms = 0;
     m.recon_pose_age_ms = 0;
+    std::uint8_t remote_speed = remote_anim.speed;
+    bool remote_sprinting = remote_speed == 3;
     if (set.source == PartnerSource::net) {
         const std::uint32_t delay = pr::AlignedDelayMs(in.input_net && latest_ok, in.in_age_ms, set.align_ms);
         const pose::Sample sample = h.sample_remote ? h.sample_remote(h.context, delay) : pose::Sample{};
@@ -1092,9 +1148,16 @@ pr::Out StepRecon(Driver& d, const Hooks& h, const Settings& set, const Clock& c
         }
         in.target_live = sample.status == pose::Status::live;
         in.target_snapped = sample.snapped;
+        in.target_time_valid = sample.valid && sample.time_valid;
+        in.target_sender_ms = sample.sender_ms;
+        in.target_jump = sample.jump;
+        in.target_jump_ms = sample.jump_ms;
+        in.target_generation = sample.generation;
         in.remote_anim_valid = sample.anim_valid;
         in.remote_act = sample.act;
         in.remote_stance = sample.anim_stance;
+        remote_speed = sample.anim_speed;
+        remote_sprinting = (sample.flags & sync::ActionFlag::Sprinting) != 0;
     } else {
         in.target_ok = pose_valid;
         in.target[0] = pose.x_mm; in.target[1] = pose.y_mm; in.target[2] = pose.z_mm;
@@ -1111,6 +1174,20 @@ pr::Out StepRecon(Driver& d, const Hooks& h, const Settings& set, const Clock& c
     in.body_act = anim_ok ? anim.act[1] : 0;
     in.body_stance = anim_ok ? anim.stance[1] : 0;
     const pr::Out out = pr::Step(m.recon, in, ReconParams(set));
+    pnat::DashIn di{};
+    di.now_ms = in.now_ms;
+    di.active = set.native_active && out.arm && !out.neutral && out.mode == pr::Mode::track;
+    di.input_live = latest_ok && latest.age_ms <= set.stale_ms && in.target_live;
+    di.mask_dash = (set.input_mask & partner_pad::kDash) != 0 && !(m.weapon_strip & partner_pad::kDash);
+    di.hold_stripped = m.hold_stripped;
+    di.body_ok = in.body_anim_ok; di.remote_ok = in.remote_anim_valid;
+    di.body_act = in.body_act; di.remote_act = in.remote_act;
+    di.body_stance = in.body_stance; di.remote_stance = in.remote_stance;
+    di.body_speed = anim_ok ? anim.speed[1] : 0;
+    di.remote_speed = remote_speed;
+    di.remote_sprinting = remote_sprinting;
+    di.in_r = in.in_r;
+    m.dash_fix = pnat::DashRelatch(m.dash, di);
     m.recon_out = out;
     m.recon_have_out = true;
     return out;
@@ -1130,9 +1207,10 @@ void LogReconEvents(Driver& d, const Hooks& h, const Settings& set, const pr::Ou
         else StringCchCopyA(body, sizeof(body), "na");
         EmitRecon(m, h, kRcPlace,
                   "partner_recon=place; reason=%s; via=warp; target_mm=%d,%d,%d; yaw_mrad=%d; body_mm=%s; err_mm=%d; delay_ms=%u; "
-                  "pose_age_ms=%u; in_age_ms=%s; tries=%u\r\n",
+                  "pose_age_ms=%u; in_age_ms=%s; tries=%u; source_jump=%u; body_jump=%u; sender_span_ms=%u\r\n",
                   pr::PlaceReasonName(o.place_reason), Mm(o.pos[0]), Mm(o.pos[1]), Mm(o.pos[2]), Mm(o.yaw * 1000.0), body,
-                  m.body_ok ? Mm(r.err_mm) : -1, m.recon_delay_ms, m.recon_pose_age_ms, age, m.recon.tries);
+                  m.body_ok ? Mm(r.err_mm) : -1, m.recon_delay_ms, m.recon_pose_age_ms, age, m.recon.tries,
+                  r.source_jump ? 1u : 0u, r.body_jump ? 1u : 0u, r.sender_span_ms);
     }
     if (ev & pr::Event::placed_ok) {
         m.place_yaw_err_mdeg = Mdeg(r.place_yaw_err_mrad);
@@ -1397,6 +1475,84 @@ void BodyLine(Driver& d, const Hooks& h, const pp::State& st, const Settings& se
         unsigned(psw), m.body_epoch, m.recon_snaps_total);
 }
 
+// Sending the viewer's own controls is independent of the remote body's
+// visibility. No target resolution, hook install, Arm or body effects here.
+void SendLocalInput(Driver& d, const Hooks& h, const pp::State& st, const Settings& set, const partner::Tick& tick,
+                    const Clock& clock, bool refresh_local) noexcept {
+    Mission& m = d.mission;
+    const std::uint64_t now = clock.now_ms;
+    // Sender: the local pad, every tick, independent of arming (stage >= 1).
+    // Input frame v2: every tick's snapshot feeds the edge sets (press/release
+    // edges, 12-frame taps and holds), sent or not.
+    if (set.isend && set.stage >= 1 && h.read_pad && h.submit_input) {
+        pin::PadRaw raw{};
+        if (h.read_pad(h.context, st, raw)) {
+            if (refresh_local) {
+                // Same checked local sources as TickNative/TickOnline; never
+                // touch instance1 while its visibility gate is holding it.
+                m.gun0 = pp::Gun1{};
+                m.gun0_ok = h.read_gun && h.read_gun(h.context, st, 0, m.gun0);
+                m.slots0 = pp::Slots{};
+                m.slots0_ok = h.read_slots && h.read_slots(h.context, st, 0, m.slots0);
+                partner_reload::SenderStep(m.sender_gun, m.gun0_ok && m.gun0.fields_ok, m.gun0.mode_cur,
+                                          m.slots0_ok ? m.slots0.nibble : static_cast<std::uint8_t>(0xFF));
+                if (d.settings.nrates == PartnerNativeRates::off || !h.read_rates) {
+                    m.rates_id0_ok = false; m.rates_id0 = pp::RateRead{};
+                } else if (!m.rates_read_ms || now-m.rates_read_ms >= kRatesReadMs) {
+                    m.rates_read_ms = now ? now : 1;
+                    m.rates_id0_ok = h.read_rates(h.context, st, 0, m.rates_id0);
+                }
+            }
+            const pin::PadSnapshot snap = pin::Effective(raw);
+            pin::SenderObserve(m.sender, snap);
+            m.sender.repeats = static_cast<std::uint8_t>(d.settings.edge_repeats > pin::kEdgeRepeatsMax ? pin::kEdgeRepeatsMax
+                                                                                                     : d.settings.edge_repeats);
+            pin::InputPacket pkt = pin::Quantize(snap, tick.cam_cdeg);
+            pin::SenderFill(m.sender, pkt);
+            // Native puppet: v4 (look, camera, heading, the sender's own movement
+            // rates, its magazine and gun) whatever this copy's own drive is: the
+            // peer's native drive needs it even when this copy shows clips
+            // (online play; all reads are pure, see TickNative's sender sources).
+            // v5 adds the gun group (reload and weapon switch); a peer build
+            // without v5 (0.11.1) refuses the whole 116-byte frame, so v5 goes
+            // out only once the peer sent v5 (plus a probe every kInputV5ProbeMs
+            // so a v5 peer can learn ours).
+            {
+                const pin::V5Source v5 = SenderV5(d, h, st, snap, raw.kb_flags);
+                const bool peer_v5 = !h.peer_input_v5 || h.peer_input_v5(h.context);
+                if (peer_v5 && h.peer_input_v5 && !m.v5_peer_logged) {
+                    m.v5_peer_logged = true;
+                    EmitFormat(h, "partner_input=v5_peer; probes=%u\r\n", m.v5_probes);
+                }
+                const bool probe = !peer_v5 && (!m.v5_probe_ms || now - m.v5_probe_ms >= kInputV5ProbeMs);
+                const bool peer_v6 = h.peer_input_v6 && h.peer_input_v6(h.context);
+                const bool probe6 = h.peer_input_v6 && !peer_v6 && (!m.v6_probe_ms || now - m.v6_probe_ms >= kInputV5ProbeMs);
+                if (peer_v6 || probe6) pin::Fill6(pkt, SenderV6(d, h, st, v5));
+                else if (peer_v5 || probe) pin::Fill5(pkt, v5);
+                else pin::Fill4(pkt, v5.v4);
+                if (peer_v6 && !m.v6_peer_logged) {
+                    m.v6_peer_logged = true;
+                    EmitFormat(h, "partner_input=v6_peer; probes=%u\r\n", m.v6_probes);
+                }
+                if (probe6) { m.v6_probe_ms = now ? now : 1; ++m.v6_probes; }
+                if (probe) {
+                    m.v5_probe_ms = now;
+                    ++m.v5_probes;
+                }
+            }
+            if (h.submit_input(h.context, pkt)) pin::SenderSent(m.sender);
+        }
+    }
+}
+
+void SendHiddenLocalInput(Driver& d, const Hooks& h, const pp::State& st, const Settings& set,
+                          const partner::Tick& tick, const Clock& clock, bool terminating) noexcept {
+    if (terminating || !d.mission.cfg_ready || d.mission.stopped || st.local != 0 ||
+        !pp::Realized(st, 0) || st.parts[0] != c::parts_loaded_state ||
+        !h.link_session || !h.link_session(h.context) || !h.link_live || !h.link_live(h.context)) return;
+    SendLocalInput(d, h, st, set, tick, clock, true);
+}
+
 void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State& st, const Settings& set, const partner::Tick& tick,
                const Clock& clock, bool terminating, bool parts_loaded, bool pose_valid, const partner::Pose& pose, bool relink,
                bool anim_ok, const pp::Anim& anim, const sync::AnimState& remote_anim, std::uint32_t& ops, InputTick& out) noexcept {
@@ -1451,44 +1607,7 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
         DisarmInput(d, h, "fault");
         if (m.dm_patched) RevertDm(d, h, "fault");
     }
-    // Sender: the local pad, every tick, independent of arming (stage >= 1).
-    // Input frame v2: every tick's snapshot feeds the edge sets (press/release
-    // edges, 12-frame taps and holds), sent or not.
-    if (set.isend && set.stage >= 1 && h.read_pad && h.submit_input) {
-        pin::PadRaw raw{};
-        if (h.read_pad(h.context, st, raw)) {
-            const pin::PadSnapshot snap = pin::Effective(raw);
-            pin::SenderObserve(m.sender, snap);
-            m.sender.repeats = static_cast<std::uint8_t>(d.settings.edge_repeats > pin::kEdgeRepeatsMax ? pin::kEdgeRepeatsMax
-                                                                                                     : d.settings.edge_repeats);
-            pin::InputPacket pkt = pin::Quantize(snap, tick.cam_cdeg);
-            pin::SenderFill(m.sender, pkt);
-            // Native puppet: v4 (look, camera, heading, the sender's own movement
-            // rates, its magazine and gun) whatever this copy's own drive is: the
-            // peer's native drive needs it even when this copy shows clips
-            // (online play; all reads are pure, see TickNative's sender sources).
-            // v5 adds the gun group (reload and weapon switch); a peer build
-            // without v5 (0.11.1) refuses the whole 116-byte frame, so v5 goes
-            // out only once the peer sent v5 (plus a probe every kInputV5ProbeMs
-            // so a v5 peer can learn ours).
-            {
-                const pin::V5Source v5 = SenderV5(d, h, st, snap, raw.kb_flags);
-                const bool peer_v5 = !h.peer_input_v5 || h.peer_input_v5(h.context);
-                if (peer_v5 && h.peer_input_v5 && !m.v5_peer_logged) {
-                    m.v5_peer_logged = true;
-                    EmitFormat(h, "partner_input=v5_peer; probes=%u\r\n", m.v5_probes);
-                }
-                const bool probe = !peer_v5 && (!m.v5_probe_ms || now - m.v5_probe_ms >= kInputV5ProbeMs);
-                if (peer_v5 || probe) pin::Fill5(pkt, v5);
-                else pin::Fill4(pkt, v5.v4);
-                if (probe) {
-                    m.v5_probe_ms = now;
-                    ++m.v5_probes;
-                }
-            }
-            if (h.submit_input(h.context, pkt)) pin::SenderSent(m.sender);
-        }
-    }
+    SendLocalInput(d, h, st, set, tick, clock, false);
     // Pad probe (read-only), change-only, at most 20 Hz.
     if (set.pad_probe && h.read_pad && now - m.pad_probe_ms >= kPadProbeMs && m.pad_probe_lines < kPadProbeCap) {
         pin::PadRaw raw{};
@@ -1627,6 +1746,12 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
                       unsigned(ro.report.fix_remote), unsigned(ro.report.fix_body), pr::StanceFixName(ro.stance_fix),
                       hold ? kStanceFixHoldMs : static_cast<std::uint32_t>(pin::kTapFrames), m.recon_fixes);
         }
+    }
+    if (m.dash_fix && arm_now && set.native_active && !m.hold_stripped &&
+        (set.input_mask & partner_pad::kDash) && !(m.weapon_strip & partner_pad::kDash)) {
+        BumpTap(d, m, partner_pad::kDash, now);
+        EmitRecon(m, h, kRcFix, "partner_recon=dashfix; act=%u; speed=%u; attempts=%u\r\n",
+                  anim_ok ? unsigned(anim.act[1]) : 0u, anim_ok ? unsigned(anim.speed[1]) : 0u, m.dash.attempts);
     }
     // One-shot acceptance (only while about to be armed and within the mask).
     if (d.tap_pending) {
@@ -1809,7 +1934,7 @@ void EmitNative(Mission& m, const Hooks& h, LogCap& cap, const char* head, const
 
 // Reliable channel 2 (equipment manifest): drained every tick in every drive
 // mode so the sender's window never stalls; the receiver only stores it.
-void DrainEquip(Driver& d, const Hooks& h) noexcept {
+void DrainEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
     if (!h.drain_reliable) return;
     Mission& m = d.mission;
     const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
@@ -1817,6 +1942,16 @@ void DrainEquip(Driver& d, const Hooks& h) noexcept {
         std::uint8_t message[128]{};
         std::size_t size = 0;
         if (!h.drain_reliable(h.context, partner_equip_wire::kChannel, message, sizeof(message), size)) break;
+        if (partner_ride_wire::IsRide(message, size)) {
+            if (partner_ride_wire::Accept(d.ride_rx, message, size, epoch, now)) {
+                EmitCapped(m.ride_cap, h, "partner_ride", "partner_ride=rx; kind=%u; rev=%u; epoch=%u\r\n",
+                           unsigned(d.ride_rx.packet.kind), unsigned(d.ride_rx.packet.revision), epoch);
+            } else if (!d.ride_invalid_logged && (d.ride_rx.invalid || d.ride_rx.stale)) {
+                d.ride_invalid_logged = true;
+                Emit(h, "partner_ride=refused; reason=packet_or_session\r\n");
+            }
+            continue;
+        }
         // Online play: the capability message shares channel 2 (first byte 0x43).
         if (partner_caps_wire::IsCaps(message, size)) {
             if (partner_caps_wire::Accept(d.caps_rx, message, size, epoch) &&
@@ -1859,6 +1994,27 @@ void DrainEquip(Driver& d, const Hooks& h) noexcept {
                        unsigned(e.slots[0].type), unsigned(e.slots[1].type), unsigned(e.slots[2].type), unsigned(e.version),
                        m.mission_code);
         }
+    }
+}
+
+void SendRide(Driver& d, const Hooks& h, const partner::Tick& tick, std::uint64_t now) noexcept {
+    namespace rw = partner_ride_wire;
+    if (!tick.has_ride || !h.send_reliable_append) return;
+    const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
+    if (!epoch || !(h.link_live && h.link_live(h.context))) return;
+    const auto kind = static_cast<rw::Kind>(tick.ride_kind);
+    if (!d.ride_tx_have || d.ride_tx.kind != kind) {
+        d.ride_tx.kind = kind;
+        d.ride_tx.revision = static_cast<std::uint16_t>(d.ride_tx.revision + 1);
+        if (!d.ride_tx.revision) d.ride_tx.revision = 1;
+        d.ride_tx_have = d.ride_tx_dirty = true;
+    }
+    if (!d.ride_tx_dirty && d.ride_tx_epoch == epoch && now >= d.ride_tx_ms && now-d.ride_tx_ms < rw::kHeartbeatMs) return;
+    auto packet = d.ride_tx;
+    packet.sender_ms = static_cast<std::uint32_t>(now);
+    std::uint8_t bytes[rw::kSize]{};
+    if (rw::Encode(packet, bytes) && h.send_reliable_append(h.context, rw::kChannel, bytes, sizeof(bytes))) {
+        d.ride_tx_epoch = epoch; d.ride_tx_ms = now; d.ride_tx_dirty = false;
     }
 }
 
@@ -1979,6 +2135,7 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
     // mask change bumps the Arm gen and resets instance 1's private pad
     // masks). The record is the last readable gun-class one; the hook
     // re-validates it and refuses a non-gun class at write time.
+    m.body_gun_mode = gun_ok && gun.fields_ok ? gun.mode_cur : static_cast<std::uint8_t>(0xFF);
     if (gun_ok && gun.fields_ok) {
         m.weapon_known = true;
         if (pnat::GunClass(gun.fields.flags27c) == pnat::kGunClassGun) {
@@ -2026,6 +2183,8 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
     // base 46), so the remote's equip is compared as the stock id of the
     // received manifest slot carrying it. Kept while either side is unread.
     bool weapon_judged = false;
+    m.weapon_standin = false;
+    m.standin_remote_slot = m.standin_body_slot = partner_slots::kNoSlot;
     m.remote_gun_base = m.remote_gun_equip == pnat::kNull
                             ? pnat::kNull : static_cast<std::int32_t>(RemoteGunBase(m, static_cast<std::uint32_t>(m.remote_gun_equip)));
     // W5: body 1 mid-switch (rec+0x3C0 bit 7 or mode 8) and its in-hand type
@@ -2046,6 +2205,11 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
         if (m.slot_plan_ok && m.equip.have) {
             const std::uint8_t r = RemoteCurrentSlot(m, static_cast<std::uint32_t>(m.remote_gun_equip));
             gi.substitute = r < 3 && m.slot_plan.tier[r] == partner_slots::Tier::sub && m.slot_plan.equip[r] == gun.fields.equip;
+            const auto s = r < 3 ? m.slot_plan.map[r] : partner_slots::kNoSlot;
+            gi.standin = set.nstandin == PartnerNativeStandin::on && r < 3 && s < 3 && s != r &&
+                m.slot_plan.tier[r] != partner_slots::Tier::same && m.slot_plan.tier[r] != partner_slots::Tier::sub &&
+                m.slot_plan.equip[s] == gun.fields.equip;
+            if(gi.standin) {m.weapon_standin=true;m.standin_remote_slot=r;m.standin_body_slot=s;}
         }
         gi.switching = m.body_switching;
         gi.type_ok = m.body_type != pnat::kNull;
@@ -2053,6 +2217,7 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
         m.weapon_gate = set.ngun ? partner_slots::Judge(gi) : partner_slots::Gate::match;
         weapon_judged = true;
     }
+    m.tele.weapon_gate_current = weapon_judged;
     if (!set.ngun) m.weapon_gate = partner_slots::Gate::match;
     m.weapon_mismatch = m.weapon_gate == partner_slots::Gate::mismatch;
     m.weapon_strip = partner_slots::StripBits(m.weapon_gate);
@@ -2079,6 +2244,27 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
                    ns.shot_leaks ? "shot_leak" : "ammo_leak", ns.shot_leaks, ns.ammo_leaks, d.leak_strip);
     }
     m.weapon_strip |= d.leak_strip;
+    if(m.weapon_ms_at && now>=m.weapon_ms_at && now-m.weapon_ms_at<=250u) {
+        const auto dt=Clamp32(now-m.weapon_ms_at);
+        if(m.weapon_standin) m.standin_ms=Clamp32(static_cast<std::uint64_t>(m.standin_ms)+dt);
+        if(m.weapon_absent) m.absent_ms=Clamp32(static_cast<std::uint64_t>(m.absent_ms)+dt);
+    }
+    m.weapon_ms_at=now;
+    const std::uint32_t standin_key=m.weapon_standin ?
+        1u | (std::uint32_t(m.standin_remote_slot)<<1) | (std::uint32_t(m.standin_body_slot)<<3) | (gun.fields.equip<<5) : 0u;
+    if(!m.weapon_standin_logged || m.standin_key!=standin_key) {
+        const bool previous=m.weapon_standin_logged && m.standin_key!=0;
+        m.weapon_standin_logged=true;m.standin_key=standin_key;
+        if(m.weapon_standin || previous) {
+            EmitNative(m,h,m.weapon_cap,"partner_weapon",
+                "partner_weapon=%s; remote_equip=%d; remote_slot=%u; body_slot=%u; body_equip=%u; body_type=%d; strip=0x%x\r\n",
+                m.weapon_standin ? "standin" : "standin_end",m.remote_gun_equip,unsigned(m.standin_remote_slot),
+                unsigned(m.standin_body_slot),gun.fields.equip,m.body_type,m.weapon_strip);
+            if(m.weapon_standin && set.nfire==PartnerNativeFire::visual)
+                EmitNative(m,h,m.weapon_cap,"partner_weapon","partner_fire=%s; reason=weapon_standin\r\n",
+                    set.fire_live && !m.weapon_strip ? "live" : "masked");
+        }
+    }
     // An unqualified weapon type (FIRE alone stripped): its own capped line on change.
     const bool type_masked = m.weapon_gate == partner_slots::Gate::projectile;
     if (set.ngun && weapon_judged && m.weapon_gate != partner_slots::Gate::switching &&
@@ -2266,6 +2452,7 @@ void TickSlots(Driver& d, const Hooks& h, const pp::State& st, bool realized, bo
     }
     partner_slots::PlanIn pin_{};
     pin_.body_ok = m.slots1_ok;
+    pin_.standin = set.nstandin == PartnerNativeStandin::on;
     for (unsigned s = 0; s < 3; ++s) {
         pin_.body[s] = m.slots1_ok ? partner_slots::Decode(m.slots1.handles[s]) : partner_slots::Handle{};
         pin_.remote_base[s] = m.equip.have ? m.equip.manifest.slots[s].base_id : static_cast<std::uint16_t>(0);
@@ -2281,18 +2468,21 @@ void TickSlots(Driver& d, const Hooks& h, const pp::State& st, bool realized, bo
             mix(static_cast<std::uint64_t>(m.slot_plan.tier[s]));
             mix(m.slots1.handles[s]);
             mix(pin_.remote_base[s]);
+            mix(m.slot_plan.map[s]);
         }
         mix(m.slots1.nibble);
         if (key != m.slot_plan_key) {
             m.slot_plan_key = key;
             const auto& p = m.slot_plan;
             EmitNative(m, h, m.slot_cap, "partner_slot",
-                       "partner_slot=plan; follow=%s; body_slot=%u; tiers=%s,%s,%s; body=%u:%u,%u:%u,%u:%u; remote_base=%u,%u,%u; ok=0x%x\r\n",
+                       "partner_slot=plan; follow=%s; body_slot=%u; tiers=%s,%s,%s; body=%u:%u,%u:%u,%u:%u; remote_base=%u,%u,%u; ok=0x%x; map=%d,%d,%d; standin=%s\r\n",
                        PartnerNativeSlotName(set.nslot), unsigned(m.slots1.nibble), partner_slots::TierName(p.tier[0]),
                        partner_slots::TierName(p.tier[1]), partner_slots::TierName(p.tier[2]), unsigned(pin_.body[0].equip),
                        unsigned(pin_.body[0].type), unsigned(pin_.body[1].equip), unsigned(pin_.body[1].type), unsigned(pin_.body[2].equip),
                        unsigned(pin_.body[2].type), unsigned(pin_.remote_base[0]), unsigned(pin_.remote_base[1]),
-                       unsigned(pin_.remote_base[2]), unsigned(p.ok_mask));
+                       unsigned(pin_.remote_base[2]), unsigned(p.ok_mask), p.map[0] < 3 ? int(p.map[0]) : -1,
+                       p.map[1] < 3 ? int(p.map[1]) : -1, p.map[2] < 3 ? int(p.map[2]) : -1,
+                       PartnerNativeStandinName(set.nstandin));
         }
     }
     // The follower's verdicts (process totals of the hook): a write or a new refusal.
@@ -2436,7 +2626,6 @@ void TickOnline(Driver& d, const Hooks& h, const pp::State& st, std::uint64_t no
 // The target 100 m along the remote's aim from the partner's eyes, published
 // every native tick for the drain window (partner_aim_point), and the
 // read-only aim telemetry of both instances.
-namespace pam = mgscoop::partner_aim;
 std::int32_t AimMm(float metres) noexcept {
     if (!std::isfinite(metres) || std::fabs(metres) > 2.0e6f) return pnat::kNull;
     return static_cast<std::int32_t>(std::llround(static_cast<double>(metres) * 1000.0));
@@ -2463,9 +2652,17 @@ void TickAim(Driver& d, const Hooks& h, const pp::State& st, bool configured, bo
     in.look_ok = latest_ok && latest.packet.version >= 3 && (latest.packet.xflags & pin::XFlag::Look) && latest.age_ms <= set.stale_ms;
     in.look_pitch = latest.packet.look_pitch;
     in.look_yaw = latest.packet.look_yaw;
-    // point: the sender's own aim point is not on the wire yet (input frame v5
-    // carries the gun group only): the look stands in (src says which).
-    in.point_ok = false;
+    in.point_ok = latest_ok && latest.age_ms <= set.stale_ms && latest.packet.version >= 6 &&
+                  (latest.packet.gun_flags & pin::GunFlag::AimDir);
+    in.point_pitch = static_cast<float>(latest.packet.aim_pitch_cdeg * pam::kCdegToRad);
+    in.point_yaw = static_cast<float>(latest.packet.aim_yaw_cdeg * pam::kCdegToRad);
+    // Read the receiver's current stance before constructing the target; no stale height.
+    if (configured && realized && h.read_aim) {
+        m.aim_read_ms = now ? now : 1;
+        m.aim_read = pp::AimRead{};
+        m.aim_read_ok = h.read_aim(h.context, st, m.aim_read);
+    }
+    in.stance = m.aim_read_ok && m.aim_read.gun_ok[1] ? m.aim_read.stance[1] : 0;
     const pam::TargetOut to = pam::Target(in);
     if (h.publish_aim) {
         partner_aim_point::Publication pub{};
@@ -2541,6 +2738,18 @@ void TickAim(Driver& d, const Hooks& h, const pp::State& st, bool configured, bo
         CopyText(t.aim_path[k], sizeof(t.aim_path[k]),
                  !gun ? "na" : ((r.path_flags[k] & c::gun3d0_bone_path) && r.b3d5[k] != c::gun_b3d5_sight) ? "bone" : "cam");
     }
+        for (unsigned k = 0; k < 2; ++k) {
+        const pam::GunDirOut dir = pam::GunDir(GunDirectionInput(r, k));
+        t.gun_pitch_cdeg[k] = rok && dir.ok ? pam::PitchCdeg(dir.pitch) : pnat::kNull;
+        t.gun_yaw_cdeg[k] = rok && dir.ok ? pam::YawCdeg(dir.yaw) : pnat::kNull;
+    }
+    t.remote_dir_cdeg[0] = in.point_ok ? latest.packet.aim_pitch_cdeg : pnat::kNull;
+    t.remote_dir_cdeg[1] = in.point_ok ? latest.packet.aim_yaw_cdeg : pnat::kNull;
+    t.dir_err_cdeg[0] = in.point_ok && t.gun_pitch_cdeg[1] != pnat::kNull ? t.gun_pitch_cdeg[1] - t.remote_dir_cdeg[0] : pnat::kNull;
+    t.dir_err_cdeg[1] = in.point_ok && t.gun_yaw_cdeg[1] != pnat::kNull
+                          ? pin::NormalizeCdeg(t.gun_yaw_cdeg[1] - t.remote_dir_cdeg[1]) : pnat::kNull;
+    CopyText(t.dir_refused, sizeof(t.dir_refused), pam::DirReasonName(m.dir_reason));
+    t.dir_checks = m.dir_check.checks; t.dir_misses = m.dir_check.misses;
     // The slot against the hook's last write (both read this tick, after the
     // last drain: the driver tick and the drain share the game's main thread).
     {
@@ -2694,7 +2903,10 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     in.installed_p1 = ni.p1;
     in.live_p1 = ni.live_p1;
     in.install_refusal = install_refusal;
-    in.thread_ok = ds.batch_threads_seen == 1 && ds.batch_thread != 0 && ds.batch_thread == ds.hook_thread && ds.batches >= 120;
+    in.thread_warmup = ds.batch_threads_seen == 1 && ds.batch_thread != 0 && ds.batch_thread == ds.hook_thread &&
+                       ds.batches < pnat::Params{}.min_batches;
+    in.thread_ok = ds.batch_threads_seen == 1 && ds.batch_thread != 0 && ds.batch_thread == ds.hook_thread &&
+                   ds.batches >= pnat::Params{}.min_batches;
     in.faulted = m.input_faulted || ds.faulted || is.window.fault_phase != 0;
     in.realized = realized;
     in.parts_loaded = parts_loaded;
@@ -2734,7 +2946,7 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     // Only a true runaway pin with an idle remote feeds the runaway timer (a
     // diverge or input pin has its own reason: diverging snaps, input_stale;
     // a moving overrun pin recovers on its own once the speeds match).
-    if (m.recon_active && m.recon_have_out && m.recon_out.report.runaway_idle) {
+    if (m.recon_active && m.recon_have_out && m.recon_out.report.runaway_idle && m.input_neutral) {
         if (!m.runaway_since_ms) m.runaway_since_ms = now ? now : 1;
         in.runaway_ms = Clamp32(now - m.runaway_since_ms);
     } else {
@@ -2782,10 +2994,24 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         si.v_z = m.recon.v_remote[1];
         si.in_r = static_cast<double>(m.recon_in_r) / 1000.0;
         si.frozen = m.recon_out.mode == pr::Mode::frozen || m.recon_out.mode == pr::Mode::pin;
-        const bool body_prone = anim_ok && anim.stance[1] == 2;
-        const bool remote_prone = (remote_anim.flags & sync::AnimFlag::Valid) && remote_anim.stance == 2;
+        const bool body_prone = anim_ok && anim.stance[1] == 3;
+        const bool remote_prone = (remote_anim.flags & sync::AnimFlag::Valid) && remote_anim.stance == 3;
         si.prone_transition = body_prone != remote_prone;
         si.walk_key = latest_ok && (latest.packet.held & (1u << 25)) != 0;
+        si.hold_stripped = m.hold_stripped && latest_ok && latest.age_ms <= set.stale_ms;
+        si.body_speed_mmps = m.recon_out.report.v_free_mmps;
+        // A stripped remote aim can freeze position correction while body 1
+        // is in ordinary locomotion. Magnitude parity is still safe only for
+        // matching stand/crouch stances and the existing stable aim acts.
+        // Fresh rmb+w/strafe captures (9c1cc321 / 87cd76f3) also qualify
+        // standing aim-walk act 13. Position corrections remain frozen.
+        const bool remote_aim = remote_anim.act == 11 || remote_anim.act == 12 ||
+            (remote_anim.act == 13 && remote_anim.stance == 1) ||
+            remote_anim.act == 14 || remote_anim.act == 15;
+        si.hold_parity_ready = si.hold_stripped && m.recon_out.mode == pr::Mode::frozen &&
+            m.recon_out.report.frozen == pr::Frozen::remote_act && remote_aim && anim_ok &&
+            anim.act[1] >= 1 && anim.act[1] <= 6 && anim.stance[1] >= 1 && anim.stance[1] <= 2 &&
+            (remote_anim.flags & sync::AnimFlag::Valid) && remote_anim.stance == anim.stance[1];
         pnat::SteerParams sp{};
         sp.max_deg = static_cast<double>(set.steer_deg);
         sp.trim_pct = static_cast<double>(set.trim_pct);
@@ -3041,6 +3267,7 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     t.dv_along_mmps = m.recon_have_out ? Mm(m.recon_out.report.dv_along_mmps) : pnat::kNull;
     t.dv_cross_mmps = m.recon_have_out ? Mm(m.recon_out.report.dv_cross_mmps) : pnat::kNull;
 
+    t.gun_tick_ms = clock.tick_ms;
     t.gun_enabled = set.ngun;
     t.gun_read_ok = gun_ok;
     t.node_active = gun_ok && gun.node_active;
@@ -3227,6 +3454,8 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
             CopyText(t.slot_tier[s], sizeof(t.slot_tier[s]), m.slot_plan_ok ? partner_slots::TierName(m.slot_plan.tier[s]) : "unknown");
         }
         t.slot_ok_mask = m.slot_plan_ok ? m.slot_plan.ok_mask : static_cast<std::uint8_t>(0);
+        for(unsigned s=0;s<3;++s) t.slot_map[s]=m.slot_plan_ok && m.slot_plan.map[s]<3 ? m.slot_plan.map[s] : partner_slots::kNoSlot;
+        t.weapon_standin=m.weapon_standin;t.weapon_standin_ms=m.standin_ms;t.weapon_absent_ms=m.absent_ms;
         t.slot_writes = n.slot_writes;
         t.slot_refused = n.slot_refused;
         t.slot_faulted = n.slot_faulted;
@@ -3246,6 +3475,8 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         const equipment_stock_writer::Status& ws = d.equip_status;
         CopyText(t.equip_setting, sizeof(t.equip_setting), PartnerNativeEquipName(set.nequip));
         t.writer_active = ws.active;
+        CopyText(t.writer_shared,sizeof(t.writer_shared),equipment_stock_writer::SharedModeName(ws.shared));
+        t.writer_gen=ws.gen;t.writer_resyncs=ws.resyncs;t.writer_kept=ws.kept;
         for (unsigned i = 0; i < 3; ++i) {
             const equipment_stock_writer::SlotStatus& ss = ws.slots[i];
             t.writer_want[i] = ss.want;
@@ -3258,6 +3489,9 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
             t.writer_want_type[i] = ss.want_type;
             t.writer_candidates[i] = ss.candidates;
             t.writer_candidate[i] = ss.candidate;
+            t.writer_retries[i]=ss.retries;t.writer_refs_before[i]=ss.refs_before;t.writer_refs_after[i]=ss.refs_after;
+            CopyText(t.writer_bank[i],sizeof(t.writer_bank[i]),equipment_stock_writer::BankName(ss.bank));
+            for(unsigned word=0;word<3;++word) t.writer_binder[i][word]=ss.binder[word];
         }
         t.writer_dispatches = ws.dispatches;
         t.writer_bound = ws.bound;
@@ -3266,7 +3500,7 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         t.resident_count = ws.resident_count <= 48 ? ws.resident_count : static_cast<std::uint8_t>(48);
         for (unsigned i = 0; i < t.resident_count; ++i) {
             const equipment_stock_writer::ResidentEntry& r = ws.resident[i];
-            t.resident[i] = {r.equip, r.type, r.receiver, r.flags, r.index, r.refs};
+            t.resident[i] = {r.equip, r.type, r.receiver, r.flags, r.index, r.refs, r.viewer};
         }
         t.preload_count = d.preload_count <= 3 ? d.preload_count : static_cast<std::uint8_t>(3);
         for (unsigned i = 0; i < 3; ++i) t.preload_ids[i] = d.preload_ids[i];
@@ -3455,11 +3689,11 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
 } // namespace
 
 void TickEquipLink(Driver& d, const Hooks& h, std::uint64_t now_ms) noexcept {
-    DrainEquip(d, h);
+    DrainEquip(d, h, now_ms);
     SendEquip(d, h, now_ms);
 }
 
-void DrainEquipLink(Driver& d, const Hooks& h) noexcept { DrainEquip(d, h); }
+void DrainEquipLink(Driver& d, const Hooks& h) noexcept { DrainEquip(d, h, 0); }
 
 void Configure(Driver& d, const LabConfig& lab) noexcept {
     partner_upper_probe::Clear("configure");
@@ -3516,6 +3750,8 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.nreload = lab.partner_native_reload;
     d.settings.nslot = lab.partner_native_slot;
     d.settings.nequip = lab.partner_native_equip;
+    d.settings.nride = lab.partner_native_ride;
+    d.settings.nstandin = lab.partner_native_standin;
 
     d.settings.play_mode = lab.mode == LabMode::play;
     d.settings.nprofile = lab.partner_native_profile;
@@ -3555,6 +3791,9 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
     PublishDisarmed(d, h);
     if (h.reset_input_fault) h.reset_input_fault(h.context);
     d.mission = Mission{};
+    // Weapons4: the writer's body lease starts a generation; body 1's gun mode is unread.
+    d.mission.realize_gen = 1;
+    d.mission.body_gun_mode = 0xFF;
     // The remote's manifest of this link session (received in any earlier
     // mission, the title or the ACC): the slot plan and the weapon gate start
     // with it; a new revision replaces it as before.
@@ -3570,7 +3809,12 @@ void MissionStart(Driver& d, const Hooks& h, std::uint32_t mission_code) noexcep
     d.mission.mag_scale = 1.0;
     d.mission.mission_code = mission_code;
     d.mission.range_hidden = mission_code == 30010 || mission_code == 30020;
-    d.mission.range_needs_place = d.mission.range_hidden;
+    d.mission.range_needs_place = d.mission.range_hidden ||
+        (d.settings.source == PartnerSource::net && d.settings.nride == PartnerNativeRide::hide);
+    if (d.settings.nride == PartnerNativeRide::hide && d.settings.source == PartnerSource::net) {
+        d.mission.visibility.hidden = true;
+        d.mission.visibility.reason = "ride_stale";
+    }
     d.mission.anim_source = -1;
     d.mission.last_status = pose::Status::none;
     partner_recon::Reset(d.mission.recon);
@@ -3838,7 +4082,8 @@ void ApplyTrigger(Driver& d, const Hooks& h, const partner::Trigger& trigger, bo
         RestorePolicy(d, h, terminating);
         // Back at stage 3, the bits again wait for a freshly applied pose.
         m.pose_applied = false;
-        if (d.settings.source == PartnerSource::net && (m.mission_code == 30010 || m.mission_code == 30020))
+        if (d.settings.source == PartnerSource::net && (m.mission_code == 30010 || m.mission_code == 30020 ||
+            d.settings.nride == PartnerNativeRide::hide))
             m.range_needs_place = true;
     }
 }
@@ -3860,6 +4105,11 @@ void PollTrigger(Driver& d, const Hooks& h, bool terminating) noexcept {
 bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, std::size_t size, const Clock& clock,
           bool terminating, partner::Reply& reply) noexcept {
     Mission& m = d.mission;
+    // A skipped/read-refused tick cannot reuse the previous gun view,
+    // including two receipts within the same millisecond.
+    m.tele.gun_tick_ms = 0;
+    m.tele.weapon_gate_current = false;
+    if (terminating) { partner_upper_probe::Clear("tick_terminating"); return false; }
     TickEquipLink(d, h, clock.now_ms);  // reliable channel 2 and the loadout sender, every tick in every drive mode
     if (!m.cfg_ready || m.stopped || terminating) { partner_upper_probe::Clear("tick_inactive"); return false; }
     partner::Tick tick{};
@@ -3932,6 +4182,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     // configured ones unless it is entering or active).
     const Settings set_effective = EffectiveSettings(d.settings, m.native_out.active);
     const Settings& set = set_effective;
+    SendRide(d, h, tick, now);
     // Local animation fields and looks (sender side; anim=mirror source).
     pp::Anim anim{};
     const bool anim_ok = h.read_anim && h.read_anim(h.context, st, anim);
@@ -3945,6 +4196,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     std::uint32_t age_ms = 0;
     sync::AnimState remote_anim{};
     pose::Status sample_status = pose::Status::none;
+    pose::Sample visibility_sample{};
     bool sample_snapped = false;  // a snap-sized remote jump held, never lerped
     std::uint32_t remote_flags = 0, remote_equip = 0;  // native gun telemetry
     // dm=map: the remote (net) or the local player (orbit/fixed) as observed.
@@ -3957,6 +4209,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             m.dmmap_source_frame = h.sample_remote_with_turns(h.context, delay, m.dmmap_source_turns.cursor);
             sample = m.dmmap_source_frame.visual;
         } else sample = h.sample_remote ? h.sample_remote(h.context, delay) : pose::Sample{};
+        visibility_sample = sample;
         sample_status = sample.status;
         sample_snapped = sample.snapped;
         status = sample.status == pose::Status::live ? partner::Status::live
@@ -4017,7 +4270,40 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     }
     const bool free_roam_net = set.source == PartnerSource::net &&
                                (m.mission_code == 30010 || m.mission_code == 30020);
-    if (free_roam_net) {
+    const bool ride_guard = set.source == PartnerSource::net && set.nride == PartnerNativeRide::hide;
+    if (ride_guard) {
+        namespace rw = partner_ride_wire;
+        if (m.recon_have_out && (m.recon_out.events & partner_recon::Event::placed_ok) &&
+            m.recon.place_ms > m.visibility.place_ms) rw::Placed(m.visibility, m.recon.place_ms);
+        float body_pos[4]{}, body_quat[4]{};
+        const bool body_read = h.read_body && h.read_body(h.context, st, body_pos, body_quat);
+        const std::uint32_t epoch = h.link_session ? h.link_session(h.context) : 0;
+        rw::In vi{};
+        vi.fresh = pose_valid && sample_status == pose::Status::live;
+        vi.time_valid = visibility_sample.time_valid;
+        vi.sender_ms = visibility_sample.sender_ms;
+        vi.generation = visibility_sample.generation;
+        vi.jump = visibility_sample.jump;
+        vi.anim_valid = visibility_sample.anim_valid;
+        vi.remote_act = visibility_sample.act;
+        vi.body_anim_valid = anim_ok; vi.body_act = anim.act[1];
+        vi.body_valid = body_read; vi.body_y = body_pos[1];
+        vi.x = visibility_sample.x; vi.y = visibility_sample.y; vi.z = visibility_sample.z;
+        vi.ride_have = d.ride_rx.have && d.ride_rx.epoch == epoch;
+        vi.ride_live = rw::Live(d.ride_rx, epoch, now);
+        vi.kind = d.ride_rx.packet.kind;
+        vi.lease_live = epoch && h.link_live && h.link_live(h.context);
+        vi.rearmed = m.bits_set;
+        vi.now_ms = now;
+        const bool hidden_before = m.visibility.hidden;
+        rw::Observe(m.visibility, vi);
+        if (m.visibility.hidden && !hidden_before) {
+            m.range_needs_place = true; m.pose_applied = m.have_cmd = m.hybrid_placed = false;
+            partner_dmmap::SpeedReset(m.dmmap_speed); partner_dmmap::CancelFiniteEvents(m.dmmap);
+            m.dmmap_turn = {}; m.dmmap_source_turns = {};
+        }
+    }
+    if (free_roam_net || ride_guard) {
         if (m.realized && !pp::Realized(st, partner::partner_index)) {
             partner_upper_probe::Clear("range_unrealized");
             m.range_needs_place = true;
@@ -4029,7 +4315,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         const std::uint32_t distance = pose_valid ? partner::DistanceMm(pose.x_mm, pose.y_mm, pose.z_mm,
                                                                          tick.x_mm, tick.y_mm, tick.z_mm) : UINT32_MAX;
         const bool fresh = pose_valid && sample_status == pose::Status::live;
-        if (!m.range_hidden && pose_valid && distance >= 200000) {
+        if (free_roam_net && !m.range_hidden && pose_valid && distance >= 200000) {
             partner_upper_probe::Clear("range_hidden");
             m.range_hidden = m.range_needs_place = true;
             m.pose_applied = m.have_cmd = m.hybrid_placed = false;
@@ -4038,6 +4324,44 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             m.dmmap_turn = {};
             m.dmmap_source_turns = {};
             EmitCapped(m.range_cap, h, "partner_range", "partner_range=hide; distance_mm=%u; reason=far\r\n", distance);
+        }
+        const bool visibility_restoring = ride_guard && m.visibility_logged && (m.bits_set || m.dm_patched);
+        if (ride_guard && (m.visibility.hidden || visibility_restoring)) {
+            const char* why = m.visibility.reason ? m.visibility.reason : "ride_stale";
+            partner_upper_probe::Clear(why);
+            // Native visibility leaves do not spend the hard fallback latch.
+            pnat::In blocked{}; blocked.configured = set.drive == PartnerDrive::native;
+            blocked.defer_on = true; blocked.now_ms = now; blocked.visibility_reason = why;
+            blocked.dm_revert_failed = m.dm_revert_failed;
+            m.native_out = pnat::Step(m.native, blocked, pnat::Params{});
+            if (m.native_out.req_epoch) ++m.body_epoch;
+            if (m.native_out.req_dmmap_rearm) d.dmmap_rearm = true;
+            if (h.set_defer) h.set_defer(h.context, false, EffectivePartnerDefer(set.drive, set.defer));
+            m.native_defer_armed = false;
+            WithdrawNativeTargets(m, h);
+            DisarmInput(d, h, why); PublishDisarmed(d, h);
+            if (m.dm_patched) RevertDm(d, h, why);
+            if (m.bits_set) ClearBits(d, h, why, terminating);
+            if (why != m.visibility_logged) {
+                m.visibility_logged = why;
+                EmitCapped(m.ride_cap, h, "partner_ride", "partner_ride=hide; reason=%s; act=%u; body_act=%u\r\n",
+                           why, unsigned(visibility_sample.act), anim_ok ? unsigned(anim.act[1]) : 0u);
+            }
+            m.tele.configured = set.drive == PartnerDrive::native;
+            m.tele.mode = m.native_out.mode;
+            CopyText(m.tele.reason, sizeof(m.tele.reason), why);
+            m.tele.latched = m.native_out.mode == pnat::Mode::latched;
+            m.tele.armed = m.tele.input_live = m.tele.body_valid = false;
+            m.tele.net.local_drive = set.drive == PartnerDrive::native ? partner_native_net::Drive::clips : partner_native_net::Drive::off;
+            CopyText(m.tele.net.local_reason, sizeof(m.tele.net.local_reason), why);
+            d.settings.fire_live = false;
+            if (!m.visibility.hidden && !m.bits_set && !m.dm_patched) {
+                m.visibility_logged = nullptr;
+                EmitCapped(m.ride_cap, h, "partner_ride", "partner_ride=foot_stable; next=place\r\n");
+            }
+        } else if (ride_guard && m.visibility_logged) {
+            m.visibility_logged = nullptr;
+            EmitCapped(m.ride_cap, h, "partner_ride", "partner_ride=foot_stable; next=place\r\n");
         }
         if (m.range_hidden) {
             DisarmInput(d, h, "range_hidden");
@@ -4058,6 +4382,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
             m.realized = m.parts_loaded = m.body_ok = false;
             // Keep the peer informed while our local partner is latched.
             if (h.submit_local) h.submit_local(h.context, sent, local_anim);
+            SendHiddenLocalInput(d, h, st, set, tick, clock, terminating);
             if (h.submit_look && looks_ok && st.local < 2 && st.parts[st.local] == c::parts_loaded_state)
                 h.submit_look(h.context, looks.look[st.local]);
             Probe(d, h, st, clock);
@@ -4065,9 +4390,12 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                                    status, age_ms, partner::Look{}, 0};
             return true;
         };
-        if (m.range_hidden) return deferred_reply();
+        if (m.range_hidden || (ride_guard && (m.visibility.hidden || ((m.bits_set || m.dm_patched) && m.visibility_logged))))
+            return deferred_reply();
         if (m.range_needs_place) {
-            if (fresh && set.stage >= 1 && !m.bits_set) {
+            if (fresh && set.stage >= 1 && !m.bits_set &&
+                (!ride_guard || !m.visibility_place_try_ms || now-m.visibility_place_try_ms >= 1000)) {
+                if (ride_guard) m.visibility_place_try_ms = now;
                 float xyzw[4] = {static_cast<float>(pose.x_mm / 1000.0), static_cast<float>(pose.y_mm / 1000.0),
                                  static_cast<float>(pose.z_mm / 1000.0), static_cast<float>(pose.yaw_mrad / 1000.0)};
                 const char* refused = h.write_slot ? h.write_slot(h.context, terminating, xyzw) : "unavailable";
@@ -4076,6 +4404,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
                     m.cmd = pose;
                     m.have_cmd = m.pose_applied = true;
                     m.range_needs_place = false;
+                    if (ride_guard) partner_ride_wire::Placed(m.visibility, now);
                     EmitCapped(m.range_cap, h, "partner_range", "partner_range=placed; next=realize\r\n");
                 }
             }
@@ -4556,6 +4885,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         // start or unrealize; this tick may already have used them.
         m.realized = true;
         m.realized_ms = now;
+        ++m.realize_gen;
         m.parts_loaded = false;
         m.parts_timeout_logged = false;
         if (SUCCEEDED(StringCchPrintfA(line, ARRAYSIZE(line), "partner_realized=1; R=1; id=%04x; pool=%02x; ms_after_bits=%u\r\n",
@@ -4564,6 +4894,7 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
         m.realized = false;
         m.hybrid_placed = false;
         ++m.body_epoch;
+        ++m.realize_gen;
         m.census_logged = false;
         m.dm_census_loaded = false;
         m.stance = partner::StanceDebounce{};

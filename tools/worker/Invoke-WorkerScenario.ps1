@@ -44,9 +44,13 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    drive the worker-drawn F9 overlay (worker builds only)
   <role> expect <regex>            the role's last run result must match; a mismatch is recorded in
                                    ExpectFailures and the scenario continues
+  waitmission <role> <mission> <timeoutSec> wait for a fresh loaded destination;
+                                   guarded120ms Space resumes both owned loading roles, at most
+                                   12 attempts per allocation, every5s; runtime/termination refuse
   wait <ms>                        sleep up to 60000 ms
   waitgameplay <role> <timeoutSec>   poll until the role is on foot in gameplay (debug guard passes);
-                                     every 6 s presses escape then enter to try skipping a cutscene
+                                     every 6 s presses E only for a verified helicopter state,
+                                     otherwise escape then enter to try skipping a cutscene
   placebehind <viewer> <target> <back_m> [side_m]
                                      teleport viewer behind (and to the right of) target, facing it,
                                      with a 3 m upward margin; require fresh position to settle within 3 s
@@ -86,8 +90,10 @@ param(
     [ValidateSet('normal','research')][string]$BuildProfile='normal',
     [switch]$AmmoExperiment,
     [ValidateSet('real','lab')][string]$SaveSeed='lab',
+    # Optional quality preset, applied only to this run's fresh role save copies.
+    [ValidateSet('preserve','low')][string]$GraphicsQuality='preserve',
     # key=value for both copies or host:key=value / guest:key=value for one (scenario "labsetting" lines).
-    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(mirror|raw|event)|partner_native_slot=(off|write|call)|partner_native_equip=(stock46|manifest|substitute)|partner_native_aimpt=(off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(compact|full|off)|partner_native_net=(lab|online)|partner_native_stall=(neutral|hold)|partner_native_hold=(own|net)|partner_input_edge_repeats=[2-8])$')][string[]]$LabSetting=@(),
+    [ValidatePattern('^((host|guest):)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(mirror|raw|event)|partner_native_slot=(off|write|call)|partner_native_equip=(stock46|manifest|substitute)|partner_native_equip_shared=(off|on|prefer)|partner_native_equip_measured=[01]|partner_native_standin=(off|on)|partner_native_ride=(off|hide)|partner_native_aimpt=(off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(compact|full|off)|partner_native_net=(lab|online)|partner_native_stall=(neutral|hold)|partner_native_hold=(own|net)|partner_input_edge_repeats=[2-8])$')][string[]]$LabSetting=@(),
     # lab (default) or play: the play rehearsal (docs/two-pc-play.md "Hidden play rehearsal"):
     # both copies in mode=play as Play-Coop writes it, on 127.0.0.1, real identity.
     [ValidateSet('lab','play')][string]$Mode='lab',
@@ -100,6 +106,7 @@ $repo=[IO.Path]::GetFullPath((Split-Path -Parent (Split-Path -Parent $PSScriptRo
 $worker=$PSScriptRoot
 $build=Join-Path $repo 'build\worker-checks\normal-worker-on-release'
 Import-Module (Join-Path $worker 'WorkerSessionCommon.psm1') -Force -DisableNameChecking
+Import-Module (Join-Path $repo 'tools\lab\WorldSync.psm1') -Force -DisableNameChecking
 if($PartnerProfile -cne 'native' -and $NativeStage){throw '-NativeStage needs -PartnerProfile native.'}
 if($BuildProfile -ceq 'research' -and !($PartnerProfile -ceq 'native' -and $NativeStage -ceq 'gun')){throw '-BuildProfile research is only for -NativeStage gun.'}
 if($PartnerProfile -ceq 'native' -and $NativeStage -ceq 'gun' -and $BuildProfile -cne 'research'){throw '-NativeStage gun needs -BuildProfile research.'}
@@ -115,7 +122,7 @@ $lines+=$Step
 $steps=@($lines|ForEach-Object{$_.Trim()}|Where-Object{$_ -and !$_.StartsWith('#')})
 # labsetting lines configure the session; they are not steps.
 foreach($line in @($steps|Where-Object{$_ -cmatch '^labsetting(\s|$)'})) {
-    if($line -cnotmatch '^labsetting\s+(?:(host|guest)\s+)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(?:aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(?:off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(?:mirror|raw|event)|partner_native_slot=(?:off|write|call)|partner_native_equip=(?:stock46|manifest|substitute)|partner_native_aimpt=(?:off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(?:compact|full|off)|partner_native_net=(?:lab|online)|partner_native_stall=(?:neutral|hold)|partner_native_hold=(?:own|net)|partner_input_edge_repeats=[2-8])$'){
+    if($line -cnotmatch '^labsetting\s+(?:(host|guest)\s+)?(debug_soldier_warp=[01]|nametag=[01]|nametag_crosshair=(?:aim|always|off)|nametag_name=[A-Za-z0-9_]{1,16}|partner_native_face=(?:off|idle|aim)|partner_native_aim=looksrc|partner_native_reload=(?:mirror|raw|event)|partner_native_slot=(?:off|write|call)|partner_native_equip=(?:stock46|manifest|substitute)|partner_native_equip_shared=(?:off|on|prefer)|partner_native_equip_measured=[01]|partner_native_standin=(?:off|on)|partner_native_ride=(?:off|hide)|partner_native_aimpt=(?:off|look|point)|steam_selftest=[012]|steam_selftest_fn=[01]|coop_hud=(?:compact|full|off)|partner_native_net=(?:lab|online)|partner_native_stall=(?:neutral|hold)|partner_native_hold=(?:own|net)|partner_input_edge_repeats=[2-8])$'){
         throw "Invalid scenario step: '$line'"
     }
     $LabSetting=@($LabSetting)+@($(if($Matches[1]){$Matches[1]+':'+$Matches[2]}else{$Matches[2]}))
@@ -125,8 +132,11 @@ if(@($LabSetting|Where-Object{$_ -clike 'partner_native_*'}).Count -and $Partner
 if($LabSetting -ccontains 'partner_native_aim=looksrc' -and $NativeStage -cne 'gun'){throw '-LabSetting partner_native_aim=looksrc needs -NativeStage gun.'}
 if(@($LabSetting|Where-Object{$_ -cmatch '^((host|guest):)?partner_native_aimpt='}).Count -and $NativeStage -cne 'gun'){throw '-LabSetting partner_native_aimpt needs -NativeStage gun.'}
 # The partner's own reload and weapon switch A/B keys (docs/native-puppet.md "Weapons"): gun stage only.
-if(@($LabSetting|Where-Object{($_ -creplace '^(host|guest):','') -cmatch '^partner_native_(reload|slot|equip)='}).Count -and $NativeStage -cne 'gun'){
+if(@($LabSetting|Where-Object{($_ -creplace '^(host|guest):','') -cmatch '^partner_native_(reload|slot|equip|equip_shared|equip_measured|standin)='}).Count -and $NativeStage -cne 'gun'){
     throw '-LabSetting partner_native_reload / partner_native_slot / partner_native_equip need -NativeStage gun.'
+}
+if($Mode -ceq 'play' -and @($LabSetting|Where-Object{$_ -cmatch '(^|:)partner_native_equip_measured=1$'}).Count) {
+    throw 'Measured optional equipment acceptance is lab-only.'
 }
 if(!$steps.Count){throw 'No scenario steps.'}
 # Validate every step before anything starts.
@@ -144,6 +154,7 @@ foreach($line in $steps){
         '^title$' {$t.Count -eq 1 -or ($t.Count -eq 2 -and [int]$t[1] -ge 5 -and [int]$t[1] -le 400)}
         '^wait$' {$t.Count -eq 2 -and [int]$t[1] -ge 0 -and [int]$t[1] -le 60000}
         '^state$' {$t.Count -eq 1}
+        '^waitmission$' {$t.Count -eq 4 -and $t[1] -cin 'host','guest' -and $t[2] -cin '30010','30020','30050','40010','40020','40050' -and [int]$t[3] -ge 5 -and [int]$t[3] -le 400}
         '^waitgameplay$' {$t.Count -eq 3 -and $t[1] -in 'host','guest' -and [int]$t[2] -ge 5 -and [int]$t[2] -le 400}
         '^placebehind$' {$t.Count -in 4,5 -and $t[1] -in 'host','guest' -and $t[2] -in 'host','guest' -and $t[1] -ne $t[2] -and [double]$t[3] -ge 1 -and [double]$t[3] -le 40}
         '^stance$' {$t.Count -eq 3 -and $t[1] -cin 'host','guest' -and $t[2] -cin 'stand','crouch','prone'}
@@ -158,6 +169,11 @@ foreach($line in $steps){
                 'hold'{($t.Count -eq 4 -or ($t.Count -eq 5 -and $t[4] -ceq 'nowait')) -and (Test-ScenarioKeys $t[2]) -and [int]$t[3] -ge 1 -and [int]$t[3] -le 1500}
                 'mouse'{$t.Count -eq 4 -and [int]$t[2] -ge -1500 -and [int]$t[2] -le 1500 -and [int]$t[3] -ge -1500 -and [int]$t[3] -le 1500 -and ([int]$t[2] -ne 0 -or [int]$t[3] -ne 0)}
                 'release'{$t.Count -eq 2}; 'capture'{$t.Count -eq 2 -or ($t.Count -eq 3 -and (Test-ScenarioLabel $t[2]))}; 'debug'{$t.Count -ge 3}
+                'worldtrigger'{$Mode -ceq 'lab' -and (
+                    ($t[0] -ceq 'host' -and $t.Count -in 3,4 -and $t[2] -cmatch '^goto=(30010|30020)$' -and
+                        ($t.Count -eq 3 -or $t[3] -cmatch '^goto_lz=[01]$')) -or
+                    ($t.Count -eq 3 -and (($t[0] -ceq 'host' -and $t[2] -cmatch '^world_probe=(shared_checkpoint|host_continue)$') -or
+                        ($t[0] -ceq 'guest' -and $t[2] -ceq 'world_probe=shared_death'))))}
                 'run'{$t.Count -ge 3 -and $t[0] -cne 'both'}
                 'expect'{$t.Count -ge 3 -and $t[0] -cne 'both' -and $(try{$null=[regex]::new((($t|Select-Object -Skip 2) -join ' '));$true}catch{$false})}
                 'burst'{$t.Count -eq 5 -and (Test-ScenarioLabel $t[2]) -and [int]$t[3] -ge 2 -and [int]$t[3] -le 30 -and [int]$t[4] -ge 100 -and [int]$t[4] -le 5000}; default{$false}})
@@ -179,7 +195,7 @@ if(!$CheckReceipt){
 $receipt=Get-Content -LiteralPath $CheckReceipt -Raw|ConvertFrom-Json
 if($receipt.status -cne 'passed'){throw "Worker checks did not pass: $($receipt.failure)"}
 
-$session=& (Join-Path $worker 'Start-WorkerSession.ps1') -BuildDirectory $build -CheckReceipt $CheckReceipt -BaselineLoaderSha256 $BaselineLoaderSha256 -TimeoutSec $TimeoutSec -ReadyTimeoutSec $ReadyTimeoutSec -PartnerProfile $PartnerProfile -NativeStage $NativeStage -BuildProfile $BuildProfile -AmmoExperiment:$AmmoExperiment -SaveSeed $SaveSeed -LabSetting $LabSetting -Mode $Mode -WanSim $WanSim
+$session=& (Join-Path $worker 'Start-WorkerSession.ps1') -BuildDirectory $build -CheckReceipt $CheckReceipt -BaselineLoaderSha256 $BaselineLoaderSha256 -TimeoutSec $TimeoutSec -ReadyTimeoutSec $ReadyTimeoutSec -PartnerProfile $PartnerProfile -NativeStage $NativeStage -BuildProfile $BuildProfile -AmmoExperiment:$AmmoExperiment -SaveSeed $SaveSeed -GraphicsQuality $GraphicsQuality -LabSetting $LabSetting -Mode $Mode -WanSim $WanSim
 $session=@($session|Where-Object{$_ -isnot [string]})[-1]
 $run=[string]$session.RunDirectory
 $runId=[string]$session.RunId
@@ -189,6 +205,52 @@ $lastFrameAt=@{host=[uint64]0;guest=[uint64]0}
 $lastResult=@{host='';guest=''}
 $expectations=[Collections.Generic.List[string]]::new();$expectFailures=[Collections.Generic.List[string]]::new()
 $poseAnchors=@{}
+$loadingAttempts=@{}
+$continueRequirements=@{}
+function Invoke-ScenarioWorldTravel([string]$Text,[string]$Role='host'){
+    if($Mode -cne 'lab'){throw 'Worker world travel is lab-only.'}
+    # Validate the live owned process/context lease and release virtual keys before transition.
+    $null=Send-Step $Role @{Operation='release'}
+    $canonical=ConvertTo-WorldTriggerText -Text $Text
+    $travel=$Role -ceq 'host' -and $canonical -cmatch '^goto=(30010|30020)( goto_lz=[01])?$'
+    $recovery=($Role -ceq 'host' -and $canonical -cmatch '^world_probe=(shared_checkpoint|host_continue)$') -or
+        ($Role -ceq 'guest' -and $canonical -ceq 'world_probe=shared_death')
+    if(!$travel -and !$recovery){throw 'Worker world travel accepts only free-roam destinations or role-bound recovery probes.'}
+    $owned=Read-WorkerSessionJson (Join-Path $run 'session.json')
+    if($owned['run_id'] -cne $runId -or $owned['status'] -cne 'ready'){throw 'Worker travel session ownership differs.'}
+    $mod=Join-Path $owned['roles'][$Role]['game'] 'mgs-coop'
+    $null=Assert-WorkerPlainPath $mod -MustExist
+    $log=Join-Path $mod 'script-observer.log'
+    $null=Assert-WorkerPlainPath $log -MustExist
+    $offset=(Get-Item -LiteralPath $log).Length
+    $trigger=Join-Path $mod 'world.trigger'
+    $null=Assert-WorkerPlainPath $trigger
+    if(Test-Path -LiteralPath $trigger){throw 'Another world trigger is pending.'}
+    # Capture both current allocations before submission; game-over need not
+    # report gameplay_ready. A later same-mission wait must observe a new one.
+    $captured=if($Role -ceq 'host' -and $canonical -ceq 'world_probe=host_continue'){
+        Read-ContinueGenerations
+    }else{$null}
+    Write-WorkerAtomicText $trigger $canonical
+    $limit=[Environment]::TickCount64+15000
+    while([Environment]::TickCount64 -lt $limit){
+        $stream=[IO.File]::Open($log,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+        try{
+            if($stream.Length -lt $offset){throw 'Worker travel log rotated before its receipt.'}
+            $null=$stream.Seek($offset,[IO.SeekOrigin]::Begin)
+            $reader=[IO.StreamReader]::new($stream,[Text.Encoding]::UTF8,$true,4096,$true)
+            try{$text=$reader.ReadToEnd()}finally{$reader.Dispose()}
+        }finally{$stream.Dispose()}
+        $result=Find-WorldTriggerResult -LogText $text -Canonical $canonical
+        if($result.State -ceq 'applied'){
+            if($captured){foreach($r in 'host','guest'){$continueRequirements[$r]=$captured[$r]}}
+            Write-Host "  $Role world travel: $canonical applied";return
+        }
+        if($result.State -cin 'rejected','different'){throw "Worker world travel refused: $($result.Reason)"}
+        Start-Sleep -Milliseconds 250
+    }
+    throw 'Worker world travel had no confirmed receipt.'
+}
 function Read-RoleState([string]$Role){
     # Early state files lack later fields; always return the three used here.
     $s=try{Get-Content -LiteralPath (Join-Path $run "$Role.state.json") -Raw|ConvertFrom-Json -AsHashtable}catch{$null}
@@ -201,6 +263,92 @@ function Send-Step([string]$Role,[hashtable]$Arguments){
 }
 function Read-RoleRaw([string]$Role){
     try{Get-Content -LiteralPath (Join-Path $run "$Role.state.json") -Raw|ConvertFrom-Json -AsHashtable}catch{$null}
+}
+function Read-RoleLoading([string]$Role){
+    try{
+        $path=Join-Path $run "$Role.loading.json"
+        $file=Get-Item -LiteralPath $path -Force
+        if($file.Length -gt 1024 -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)){return $null}
+        $s=Get-Content -LiteralPath $path -Raw|ConvertFrom-Json -AsHashtable
+        if($s['run_id'] -cne $runId -or $s['role'] -cne $Role -or $s['phase'] -cne 'initialized' -or
+           $s['mission'] -notin 30010,30020,30050,40010,40020,40050 -or ![uint32]$s['generation']){return $null}
+        return $s
+    }catch{return $null}
+}
+function Resume-TripLoading {
+    # Each role validates its fresh supervisor/process lease in Send-Step.
+    # This metadata is a candidate only: native input consumption must still
+    # be in the same allocation before it can issue its fixed120ms Space.
+    foreach($r in 'host','guest'){
+        $now=Get-ScenarioTick;$live=Read-RoleRaw $r
+        if($live -and $live['run_id'] -ceq $runId -and $live['role'] -ceq $r -and
+           $live['gameplay_ready'] -and !$live['terminating'] -and $live.ContainsKey('tick_ms') -and
+           [int64]$live['tick_ms'] -le $now -and $now-[int64]$live['tick_ms'] -le 1000){continue}
+        $loading=Read-RoleLoading $r
+        if(!$loading){continue}
+        $key=$r+':'+[string]$loading['generation'];$now=Get-ScenarioTick
+        if(!$loadingAttempts.ContainsKey($key)){$loadingAttempts[$key]=@{count=0;last=[int64]-5000}}
+        $attempt=$loadingAttempts[$key]
+        if($attempt.count -ge 12 -or $now-$attempt.last -lt 5000){continue}
+        $attempt.count++;$attempt.last=$now
+        try{
+            $queued=Send-Step $r @{Operation='resume_loading'}
+            Write-Host "  $r guarded loading resume queued sequence=$($queued.sequence) generation=$($loading['generation'])"
+        }catch{Write-Host "  $r guarded loading resume refused: $($_.Exception.Message)"}
+    }
+}
+function Get-ScenarioWaitAction([string]$Role,[string]$Result,[Collections.IDictionary]$State,[int64]$Now){
+    # E is the observed helicopter disembark prompt, never a generic skip.
+    # Exact debug guard plus fresh owned animation is required on each attempt.
+    $tick=[int64]0;$act=[uint32]0
+    if($Result -cne 'helicopter' -or !$State -or $Role -cnotin 'host','guest' -or
+       $State['run_id'] -cne $runId -or $State['role'] -cne $Role -or
+       !$State['gameplay_ready'] -or $State['terminating'] -or !$State['local_anim_valid'] -or
+       $State['mission'] -notin 30010,30020,30050 -or
+       !$State.Contains('local_act') -or [string]$State['local_act'] -cnotmatch '^[0-9]{1,3}$' -or
+       ![uint32]::TryParse([string]$State['local_act'],[ref]$act) -or $act -lt 98 -or $act -gt 108 -or
+       !$State.Contains('tick_ms') -or ![int64]::TryParse([string]$State['tick_ms'],[ref]$tick) -or
+       $tick -lt 0 -or $tick -gt $Now -or $Now-$tick -gt 1000){return 'skip'}
+    return 'e'
+}
+function Read-ContinueGenerations {
+    $captured=@{}
+    foreach($r in 'host','guest'){
+        $s=Read-RoleRaw $r;$now=Get-ScenarioTick
+        $generation=[uint32]0;$tick=[int64]0
+        if(!$s -or $s['run_id'] -cne $runId -or $s['role'] -cne $r -or $s['terminating'] -or
+           $s['mission'] -notin 30010,30020,30050,40010,40020,40050 -or
+           !$s.ContainsKey('generation') -or [string]$s['generation'] -cnotmatch '^[1-9][0-9]{0,9}$' -or
+           ![uint32]::TryParse([string]$s['generation'],[ref]$generation) -or
+           !$s.ContainsKey('tick_ms') -or ![int64]::TryParse([string]$s['tick_ms'],[ref]$tick) -or
+           $tick -lt 0 -or $tick -gt $now -or $now-$tick -gt 1000){
+            throw "[$r] Continue requires a fresh owned mission generation."
+        }
+        $captured[$r]=@{mission=[int]$s['mission'];generation=$generation}
+    }
+    return $captured
+}
+function Wait-ScenarioMission([string]$Role,[int]$Mission,[int]$TimeoutSec){
+    $limit=(Get-ScenarioTick)+1000*$TimeoutSec;$arrived=$false
+    do{
+        $s=Read-RoleRaw $Role;$now=Get-ScenarioTick;$generation=[uint32]0
+        $validGeneration=$s -and $s.ContainsKey('generation') -and
+            [string]$s['generation'] -cmatch '^[1-9][0-9]{0,9}$' -and
+            [uint32]::TryParse([string]$s['generation'],[ref]$generation)
+        $newAllocation=!$continueRequirements.ContainsKey($Role) -or
+            $continueRequirements[$Role].mission -ne $Mission -or
+            ($validGeneration -and $generation -gt $continueRequirements[$Role].generation)
+        if($s -and $s['run_id'] -ceq $runId -and $s['role'] -ceq $Role -and
+            [int]$s['mission'] -eq $Mission -and $s['gameplay_ready'] -and !$s['terminating'] -and
+            $validGeneration -and $newAllocation -and
+            $s.ContainsKey('tick_ms') -and [int64]$s['tick_ms'] -le $now -and $now-[int64]$s['tick_ms'] -le 1000){
+            $null=$continueRequirements.Remove($Role);$arrived=$true;break
+        }
+        Resume-TripLoading
+        Start-Sleep -Milliseconds 250
+    }while((Get-ScenarioTick) -lt $limit)
+    if(!$arrived){throw "[$Role] destination $Mission did not load."}
+    Write-Host "  $Role loaded mission $Mission"
 }
 function Read-FreshRole([string]$Role){
     $s=Read-RoleRaw $Role;$now=[Environment]::TickCount64
@@ -627,14 +775,21 @@ try {
             foreach($r in 'host','guest'){$s=Read-RoleState $r;Write-Host "  $r mission=$($s.mission) ready=$($s.gameplay_ready)"}
             continue
         }
+        if($t[0] -ceq 'waitmission'){
+            Wait-ScenarioMission $t[1] ([int]$t[2]) ([int]$t[3]);continue
+        }
         if($t[0] -ceq 'waitgameplay'){
             $limit=[Environment]::TickCount64+1000*[int]$t[2];$last=0;$result=''
             while([Environment]::TickCount64 -lt $limit){
                 try{$result=Invoke-DebugResult $t[1] 'position' 6000}catch{$result=$_.Exception.Message}
                 if($result -like 'position=*'){break}
                 if([Environment]::TickCount64-$last -ge 6000){$last=[Environment]::TickCount64
-                    $null=Send-Step $t[1] @{Operation='press';Keys='escape';DurationMs=120};Start-Sleep -Milliseconds 900
-                    $null=Send-Step $t[1] @{Operation='press';Keys='enter';DurationMs=120}}
+                    $action=Get-ScenarioWaitAction $t[1] $result (Read-RoleRaw $t[1]) ([Environment]::TickCount64)
+                    if($action -ceq 'e'){$null=Send-Step $t[1] @{Operation='press';Keys='e';DurationMs=120}}
+                    else{
+                        $null=Send-Step $t[1] @{Operation='press';Keys='escape';DurationMs=120};Start-Sleep -Milliseconds 900
+                        $null=Send-Step $t[1] @{Operation='press';Keys='enter';DurationMs=120}
+                    }}
                 Start-Sleep -Milliseconds 1500
             }
             if($result -notlike 'position=*'){throw "[$($t[1])] on-foot gameplay was not observed: $result"}
@@ -661,6 +816,7 @@ try {
         $targets=if($t[0] -ceq 'both'){@('host','guest')}else{@($t[0])}
         foreach($r in $targets){
             switch($t[1]){
+                'worldtrigger' {Invoke-ScenarioWorldTravel (($t|Select-Object -Skip 2) -join ' ') $r}
                 'press' {$null=Send-Step $r @{Operation='press';Keys=$t[2];DurationMs=$(if($t.Count -eq 4){[int]$t[3]}else{120})}}
                 'hold' {$null=Send-Step $r @{Operation='hold';Keys=$t[2];DurationMs=[int]$t[3]}}
                 'mouse' {$null=Send-Step $r @{Operation='mouse';Dx=[int]$t[2];Dy=[int]$t[3]}}
@@ -705,8 +861,11 @@ try {
     $stop=& (Join-Path $worker 'Stop-WorkerSession.ps1') -RunDirectory $run
     $stop=@($stop|Where-Object{$_ -isnot [string]})[-1]
 }
-[pscustomobject]@{
+$result=[ordered]@{
     RunDirectory=$run;Frames=$frames.ToArray();Failure=$failure;InputReleaseFailures=$releaseFailures.ToArray()
     Expectations=$expectations.ToArray();ExpectFailures=$expectFailures.ToArray()
     Closed=$stop.Closed;BaselineRestored=$stop.BaselineRestored;RealSavesUnchanged=$stop.RealSavesUnchanged;Forced=$stop.Forced
+    IsolationFailed=$stop.IsolationFailed;SupervisorReason=$stop.SupervisorReason;SupervisorError=$stop.SupervisorError
 }
+Write-WorkerSessionJson (Join-Path $run 'scenario.json') $result
+[pscustomobject]$result

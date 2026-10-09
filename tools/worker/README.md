@@ -63,7 +63,12 @@ probe may report `DXGI_STATUS_OCCLUDED`; that explicitly does not prove MGSV
 would keep simulating or rendering there.
 
 Probe outputs are `probe.json`, `probe.context`, `probe-backbuffer.bmp` and,
-only after successful child exit/admission, `qualification.txt`:
+only after successful child exit/admission, `qualification.txt`. The probe keeps
+its window and DX11 resources alive while publishing readiness. The supervisor
+strictly inspects the live process, threads, job and private windows, then writes
+`probe.ack` for that exact run/PID/creation time. Only that acknowledgment allows
+teardown. Both waits are bounded to ten seconds, message draining is capped,
+and qualification still requires exit 0 and the unchanged pinned bitmap:
 
 ```text
 MGSWORKERQUAL1 <probe_run> <supervisor_sha256> <probe_sha256> <bitmap_sha256> <tick64> qualified
@@ -247,3 +252,28 @@ external-broker UI could ever occur. They reject unknown ownership rather than
 claiming to contain an unowned process. Qualify actual Steam startup and bridge
 hook timing before admitting MGSV. If it cannot remain invisible and isolated,
 stop and use a separately qualified Windows worker/VM; never show this desktop.
+
+## Repair qualification receipts
+
+The coordinator records each role's exact pre-run log offsets, including
+`script-observer.log`, and writes the complete result to `scenario.json` after
+cleanup. Inspect `Failure`, `ExpectFailures`, `IsolationFailed` and `Forced`,
+plus the raw supervisor and cleanup receipts; a shell exit of zero alone is
+not scenario acceptance. `Forced` includes both a controller-killed supervisor
+and forced termination of its owned job. Resource failures such as Windows
+commit-limit error 1455 fail closed and do not qualify gameplay.
+
+`Invoke-WorkerScenario.ps1 -GraphicsQuality low` lowers only each freshly copied
+role's render settings (six Low, SSAO Off, filtering Medium) before the existing
+config hash pin. The default `preserve` keeps quality untouched. The pure helper
+rejects invalid integrity tags, unsupported schema, missing/non-string quality
+keys and duplicate JSON keys; unknown fields and other settings remain intact.
+Real and existing lab graphics are read-only sources. This option addresses
+resource pressure during two-copy tests, without changing other applications,
+page-file settings, or admission and private-desktop checks.
+
+`waitgameplay` uses the normal E disembark action only after an exact helicopter
+guard result and fresh owned animation in a supported field mission. It stops
+input when the on-foot position check succeeds. `host_continue` records both
+pre-submission allocation generations; same-mission waits require a newer one
+for each role. Submission and a previously ready scene cannot qualify restart.

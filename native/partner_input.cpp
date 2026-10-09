@@ -68,8 +68,8 @@ PadSnapshot Effective(const PadRaw& raw) noexcept {
     s.ry = Bit(sticks, 1) ? 0.0f : ((f & 2) ? raw.kb_f[3] : raw.src_f[3]);
     s.lt = Bit(triggers, 0) ? 0.0f : ((f & 4) ? raw.kb_f[4] : raw.src_f[4]);
     s.rt = Bit(triggers, 1) ? 0.0f : ((f & 8) ? raw.kb_f[5] : raw.src_f[5]);
-    s.mag = raw.pp_derived[0];
-    s.force = raw.pp_derived[1];
+    s.mag = Bit(sticks, 0) ? 0.0f : raw.pp_derived[0];
+    s.force = Bit(sticks, 0) ? 0.0f : raw.pp_derived[1];
     s.dir = raw.pp_derived[2];
     s.flags = Flag::Valid;
     if (buttons || sticks || triggers) s.flags |= Flag::SenderMasked;
@@ -128,12 +128,20 @@ bool NoRates(const InputPacket& p) noexcept {
 }
 bool NoMag(const InputPacket& p) noexcept { return p.mag == 0 && p.mag_cap == 0 && !(p.xflags & XFlag::Mag); }
 bool NoEquip(const InputPacket& p) noexcept { return p.gun_equip == 0 && !(p.xflags & (XFlag::Equip | XFlag::Gamepad)); }
-bool NoV5(const InputPacket& p) noexcept { return p.gun_flags == 0 && p.gun_mode == 0 && p.reload_seq == 0 && p.switch_seq == 0; }
+bool NoV6(const InputPacket& p) noexcept { return p.aim_pitch_cdeg == 0 && p.aim_yaw_cdeg == 0; }
+bool NoV5(const InputPacket& p) noexcept {
+    return p.gun_flags == 0 && p.gun_mode == 0 && p.reload_seq == 0 && p.switch_seq == 0 && NoV6(p);
+}
 bool NoV4(const InputPacket& p) noexcept { return NoRates(p) && NoMag(p) && NoEquip(p) && NoV5(p); }
 // The v5 gun group: known flags only; without GunFlag::Valid every byte is 0.
+// v6: the gun direction only with GunFlag::AimDir (which needs Valid and
+// Aiming) and inside the wire ranges; without it both angles are 0.
 bool ValidV5(const InputPacket& p) noexcept {
-    if (p.gun_flags & ~GunFlag::Known) return false;
-    return (p.gun_flags & GunFlag::Valid) != 0 || NoV5(p);
+    if (p.gun_flags & ~(p.version >= 6 ? GunFlag::KnownV6 : GunFlag::Known)) return false;
+    if (!(p.gun_flags & GunFlag::Valid)) return NoV5(p);
+    if (!(p.gun_flags & GunFlag::AimDir)) return NoV6(p);
+    return (p.gun_flags & GunFlag::Aiming) != 0 && p.aim_pitch_cdeg >= -kMaxAimPitchCdeg && p.aim_pitch_cdeg <= kMaxAimPitchCdeg &&
+           p.aim_yaw_cdeg >= kCamMin && p.aim_yaw_cdeg <= kCamMax;
 }
 bool NoV3(const InputPacket& p) noexcept {
     return p.look_pitch == 0.0f && p.look_yaw == 0.0f && p.cam270 == 0.0f && p.cam274 == 0.0f && p.heading_mrad == 0 &&
@@ -191,12 +199,14 @@ void Fill3(InputPacket& p, const V3Source& v) noexcept {
     p.mag = p.mag_cap = 0;
     p.gun_equip = 0;
     p.gun_flags = p.gun_mode = p.reload_seq = p.switch_seq = 0;
+    p.aim_pitch_cdeg = p.aim_yaw_cdeg = 0;
 }
 
 void Fill4(InputPacket& p, const V4Source& v) noexcept {
     Fill3(p, v.v3);
     p.version = 4;
     p.gun_flags = p.gun_mode = p.reload_seq = p.switch_seq = 0;
+    p.aim_pitch_cdeg = p.aim_yaw_cdeg = 0;
     if (v.rates_valid && RateIn(v.rate_dash) && RateIn(v.rate_crawl) && RateIn(v.rate_crawl_factor)) {
         p.xflags = static_cast<std::uint8_t>(p.xflags | XFlag::Rates);
         p.rate_dash = v.rate_dash;
@@ -226,12 +236,25 @@ void Fill5(InputPacket& p, const V5Source& v) noexcept {
     }
 }
 
+void Fill6(InputPacket& p, const V6Source& v) noexcept {
+    Fill5(p, v.v5);
+    p.version = 6;
+    p.aim_pitch_cdeg = p.aim_yaw_cdeg = 0;
+    if (v.aim_valid && (p.gun_flags & GunFlag::Valid) && (p.gun_flags & GunFlag::Aiming) && v.aim_pitch_cdeg >= -kMaxAimPitchCdeg &&
+        v.aim_pitch_cdeg <= kMaxAimPitchCdeg && v.aim_yaw_cdeg >= kCamMin && v.aim_yaw_cdeg <= kCamMax) {
+        p.gun_flags = static_cast<std::uint8_t>(p.gun_flags | GunFlag::AimDir);
+        p.aim_pitch_cdeg = v.aim_pitch_cdeg;
+        p.aim_yaw_cdeg = v.aim_yaw_cdeg;
+    }
+}
+
 bool ValidPacket(const InputPacket& p) noexcept {
     if ((p.flags & ~Flag::Known) != 0 || p.lx == -32768 || p.ly == -32768 || p.rx == -32768 || p.ry == -32768 ||
         p.ldir < -kMaxDir || p.ldir > kMaxDir || p.cam_cdeg < kCamMin || p.cam_cdeg > kCamMax) return false;
     if (p.version == 1) return p.edge_seq == 0 && p.edge_rep == 0 && p.long12 == 0 && p.tap12 == 0 && NoV3(p);
-    if ((p.version < 2 || p.version > 5) || p.edge_rep > kEdgeRepeatsMax) return false;
-    // v2: no v3/v4/v5 field; v3: no v4 field (ValidV3); v4: both groups checked (ValidV4); v5: the gun group too.
+    if ((p.version < 2 || p.version > 6) || p.edge_rep > kEdgeRepeatsMax) return false;
+    // v2: no v3/v4/v5 field; v3: no v4 field (ValidV3); v4: both groups checked (ValidV4); v5: the gun group too;
+    // v6: the gun direction with GunFlag::AimDir.
     if (p.version == 2 ? !NoV3(p) : !ValidV3(p)) return false;
     // No edge set: no edge words.
     if (p.edge_seq == 0) return p.edge_rep == 0 && p.w50 == 0 && p.w54 == 0 && p.tap12 == 0;
@@ -278,7 +301,10 @@ Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_c
         theta = NormalizeRadians(theta + c.yaw_sign * delta + (std::isfinite(steer_rad) ? steer_rad : 0.0));
         j.lx = static_cast<float>(r * std::sin(theta));
         j.ly = static_cast<float>(r * std::cos(theta));
-        j.mag = static_cast<float>(Clamp(p.lmag / 65535.0 * scale, 0.0, 1.0));
+        // Older senders can carry a pre-mask magnitude with both effective
+        // axes zero. Never turn that contradictory packet into native motion.
+        j.mag = (p.lx == 0 && p.ly == 0 && p.lmag > 16383) ? 0.0f :
+            static_cast<float>(Clamp(p.lmag / 65535.0 * scale, 0.0, 1.0));
         if (live) j.long12 = p.long12 & keep;
         if (c.rstick) {
             const double rx = p.rx / 32767.0, ry = p.ry / 32767.0;
@@ -355,7 +381,13 @@ Injection Compose(const Config& c, const Sample& sample, std::int32_t host_cam_c
         edge.prev_held = held;
         j.hist_reset = true;
     }
-    const std::uint32_t press = held & ~edge.prev_held;
+    // A requested overlay tap is an explicit press even when the remote still
+    // holds that bit (DASH relatch). Its repeated overlay frames do not repeat
+    // the press; the first window after a disarm still drops all stale edges.
+    const std::uint32_t overlay_held = overlay.bits & c.mask;
+    const std::uint32_t overlay_press = resync ? 0u : overlay_held & ~edge.prev_overlay;
+    edge.prev_overlay = overlay_held;
+    const std::uint32_t press = (held & ~edge.prev_held) | overlay_press;
     const std::uint32_t release = edge.prev_held & ~held;
     const bool fresh = live && !resync && sample.seq != edge.last_seq;
     const std::uint32_t net_words[3] = {fresh ? sample.packet.w4c & keep : 0u, fresh ? sample.packet.w50 & keep : 0u,

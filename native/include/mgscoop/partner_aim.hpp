@@ -22,9 +22,17 @@
 
 namespace mgscoop::partner_aim {
 
-// The target: the partner's eyes (body + 1.6 m up) plus 100 m along the aim.
+// The target: the partner's gun pivot (body + PivotHeight(stance) up) plus
+// 100 m along the aim. kEyeHeightM stays the origin of the eye-based telemetry
+// (native.aim aim_yaw/aim_pitch).
 inline constexpr double kEyeHeightM = 1.6;
 inline constexpr double kTargetDistM = 100.0;
+// The gun pivot heights of 0x10499D0 (weapon kind 0: stand 0.6 m and crouch
+// 0.2 m up, 0.17 m to the side) and prone 0x211C640 (0.5 m ahead, 0 up).
+inline constexpr double kPivotStandM = 0.6, kPivotCrouchM = 0.2, kPivotProneM = 0.0;
+// gunRec+0x3EB (rate record +0x64 + 1): 1 stand, 2 crouch, 3 prone; anything
+// else (unread) aims from the standing pivot.
+double PivotHeight(std::uint8_t stance) noexcept;
 // Hook-side refusals: a coordinate at or beyond 65536 m, a target outside
 // 20..200 m of the body, a publication older than 250 ms.
 inline constexpr double kMaxCoordM = 65536.0;
@@ -74,8 +82,9 @@ struct TargetIn {
     float body[3];               // instance 1's T+0x20 (metres)
     bool look_ok;                // a live v3 sample with xflags Look
     float look_pitch, look_yaw;  // the sender's *(PS0+0x290)[local]
-    bool point_ok;               // point: the sender's own aim direction (not on the wire yet; v5 is the gun group)
-    float point_dir[3];
+    bool point_ok;               // point: a live v6 sample with GunFlag::AimDir (the sender's own gun direction)
+    float point_pitch, point_yaw;  // radians, world (GunDir's convention: pitch > 0 looks down)
+    std::uint8_t stance;         // body 1's gunRec+0x3EB (the origin's pivot height; 0 unknown: stand)
 };
 struct TargetOut {
     bool want;    // the mirror should hold a target (false: restore the game's slot)
@@ -85,8 +94,9 @@ struct TargetOut {
     float p[3];
 };
 // want = setting != off && active. A wanted target without a body or a look
-// is not valid (the hook keeps its last write). point uses point_dir when
-// point_ok, else the look (src says which).
+// is not valid (the hook keeps its last write). point uses the sender's gun
+// direction when point_ok, else the look (src says which); both aim from the
+// body's pivot height (PivotHeight(stance)).
 TargetOut Target(const TargetIn& in) noexcept;
 // Finite and every |coordinate| below kMaxCoordM.
 bool CoordOk(const float (&p)[3]) noexcept;
@@ -96,6 +106,77 @@ bool CoordOk(const float (&p)[3]) noexcept;
 bool TurnPredicate(float r60) noexcept;
 // What it tests, in centidegrees: (0.5 - r60) * 18000 (INT32_MIN when non-finite).
 std::int32_t RelYawCdeg(float r60) noexcept;
+
+// --- The gun direction (input frame v6; docs/native-puppet.md "The gun direction")
+// The remote's gun does not aim along its camera look: it converges on the
+// camera ray's first hit (gunRec+0x150) from a pivot beside the camera ray, so
+// near hits (prone, crouched, a camera pointed at the ground) turned the look
+// mirror up to 16 degrees off. For stand/crouch the sender inverts its own
+// aim pose r5c/r60 with 0x108EC55 and adds its body yaw. Prone uses a separate
+// plugin orientation in 0x1043C80 before 0x1042F80, which is not a qualified
+// read: refuse that direction and use the existing camera-look fallback.
+// Constants: partner_player_contract.hpp (tools/partner_aim_sites.py).
+//   none        a direction
+//   idle        not aiming (GunFlag::Aiming clear): no group, not a refusal
+//   unread      the gun or rate record was not read
+//   camera      gunRec+0x3C0 bit 13 (camera-relative angles; class 5 resets r to 0.5)
+//   sight       b3d5 1: the local sight writer 0x108F740 maps r to the camera (+-30 deg)
+//   class       gunRec+0x3D4 == 3 (0x108ED30, another mapping)
+//   stance      gunRec+0x3EB not 1..3
+//   range       r5c or r60 not finite or outside 0..1
+//   body        no finite body yaw
+//   convention  the runtime self-check latched (CheckStep)
+//   prone_frame the separate prone orientation is not qualified
+enum class DirReason : std::uint8_t { none, idle, unread, camera, sight, gun_class, stance, range, body, convention, prone_frame };
+const char* DirReasonName(DirReason reason) noexcept;
+struct GunDirIn {
+    bool gun_ok;                 // the gun record (class, stance, flags) was read
+    std::uint8_t gun_class;      // gunRec+0x3D4
+    std::uint8_t stance;         // gunRec+0x3EB
+    std::uint8_t b3d5;           // gunRec+0x3D5
+    std::uint32_t gun3c0;        // gunRec+0x3C0
+    bool rate_ok;                // the rate record was read
+    float r5c, r60;              // its +0x5C / +0x60
+    bool body_ok;
+    float body_yaw;              // radians, the body quaternion's yaw (partner::QuatToYaw)
+};
+struct GunDirOut {
+    bool ok;
+    DirReason reason;
+    double rel_pitch, rel_yaw;   // radians, the game's inverse (gunRec+0x344/+0x348 for these r)
+    double pitch, yaw;           // radians, world (yaw wrapped to (-pi, pi])
+};
+GunDirOut GunDir(const GunDirIn& in) noexcept;
+// The wire's centidegrees: pitch clamped to [-kMaxPitchCdeg, kMaxPitchCdeg],
+// yaw normalized to [-18000, 17999] (0 for a non-finite angle).
+inline constexpr std::int16_t kMaxPitchCdeg = 9000;
+std::int16_t PitchCdeg(double radians) noexcept;
+std::int16_t YawCdeg(double radians) noexcept;
+inline constexpr double kCdegToRad = 3.14159265358979323846 / 18000.0;
+// The angle between two directions given as {pitch, yaw} (radians), in
+// centidegrees (INT32_MIN for a non-finite input).
+std::int32_t AngleCdeg(double pitch_a, double yaw_a, double pitch_b, double yaw_b) noexcept;
+// The sender's runtime self-check: a direction qualifies when the gun aim point
+// lies at least kCheckMinM from the body, both r values are inside
+// (kCheckEdge, 1 - kCheckEdge) (not clamped) and the reference direction (the
+// pivot to the aim point) moved less than kCheckSettleCdeg since the previous
+// sample (the pose smoothing lags a moving aim). A qualifying direction more
+// than kCheckTolCdeg off the reference is a miss; kCheckLatch consecutive
+// misses latch the refusal (convention) until the mission ends (a new DirCheck).
+inline constexpr double kCheckMinM = 40.0, kCheckEdge = 0.01;
+inline constexpr std::int32_t kCheckTolCdeg = 200, kCheckSettleCdeg = 100;
+inline constexpr std::uint32_t kCheckLatch = 20;
+struct DirCheck {
+    std::uint32_t checks, misses, streak;
+    bool latched;
+    bool have_prev;
+    double prev_pitch, prev_yaw;
+    std::int32_t last_err_cdeg;  // the last qualifying sample's error (0 before the first)
+};
+enum class CheckResult : std::uint8_t { skipped, hit, miss, latched };
+// `body` = the body position (T+0x20), `aimpt` = gunRec+0x150, both metres.
+// A latched check returns latched without counting.
+CheckResult CheckStep(DirCheck& check, const GunDirOut& dir, const GunDirIn& in, const float (&body)[3], const float (&aimpt)[3]) noexcept;
 
 // The debug command "aimpt off|look|point|lab|status" (a natively handled
 // worker/F9 command; "lab" clears the override back to lab.ini).

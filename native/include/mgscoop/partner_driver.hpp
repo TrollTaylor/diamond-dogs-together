@@ -37,9 +37,11 @@
 #include "mgscoop/partner_input.hpp"
 #include "mgscoop/partner_input_hook.hpp"
 #include "mgscoop/partner_aim_point.hpp"
+#include "mgscoop/partner_aim.hpp"
 #include "mgscoop/partner_defer.hpp"
 #include "mgscoop/partner_caps_wire.hpp"
 #include "mgscoop/partner_equip_wire.hpp"
+#include "mgscoop/partner_ride_wire.hpp"
 #include "mgscoop/equipment_stock_writer.hpp"
 #include "mgscoop/partner_fire_filter.hpp"
 #include "mgscoop/partner_reload.hpp"
@@ -310,6 +312,7 @@ struct Hooks {
     // v5 always, both copies one build): whether the peer was seen sending v5
     // (partner_net::PeerSendsInputV5).
     bool (*peer_input_v5)(void* context) noexcept = nullptr;
+    bool (*peer_input_v6)(void* context) noexcept = nullptr;
 };
 // A native sender whose peer never sent v5 sends v4 frames plus one v5 probe
 // this often (an older build drops only the probe; the edge sets repeat).
@@ -389,6 +392,9 @@ struct Settings {
     PartnerNativeSlot nslot;
     // What body 1 carries (lab.ini partner_native_equip; the observer runs the writers).
     PartnerNativeEquip nequip;
+    PartnerNativeRide nride;  // qualified visibility policy; off until live acceptance
+    // Weapons4: the stand-in follower and gate (lab.ini partner_native_standin).
+    PartnerNativeStandin nstandin;
     // Set only in the effective copy: the native settings apply this tick.
     bool native_active;
     // lab.ini mode=play (Configure): the trigger file enables the native drive
@@ -420,6 +426,10 @@ struct Mission {
     // realization; distant/unloaded partners never receive Warp fallbacks.
     bool range_hidden, range_needs_place;
     LogCap range_cap;
+    partner_ride_wire::Visibility visibility;
+    LogCap ride_cap;
+    const char* visibility_logged;
+    std::uint64_t visibility_place_try_ms;
     std::uint64_t start_ms, ticks;
     bool pose_applied, have_cmd;
     partner::Pose cmd;
@@ -527,6 +537,10 @@ struct Mission {
     BodySample body_ring[kBodyRing];
     unsigned body_head, body_count;
     std::uint32_t body_epoch;
+    // Weapons4: the body lease of the generalized writer: bumped at each
+    // realized transition (realize and unrealize), never by a warp or a
+    // placement (those bump the motion epoch body_epoch).
+    std::uint32_t realize_gen;
     std::uint64_t pad_probe_ms;
     unsigned pad_probe_lines;
     bool pad_probe_capped;
@@ -544,6 +558,9 @@ struct Mission {
     bool recon_have_out;
     std::uint32_t recon_delay_ms, recon_pose_age_ms;
     bool recon_in_valid;
+    bool hold_stripped; // live remote HOLD refused by the effective native mask/gate
+    bool dash_fix;
+    partner_native::DashState dash;
     std::uint32_t recon_in_age_ms;
     std::int32_t recon_in_r;       // x1000
     double recon_target[3];
@@ -738,6 +755,12 @@ struct Mission {
     std::uint64_t v5_probe_ms;
     std::uint32_t v5_probes;
     bool v5_peer_logged;
+    std::uint64_t v6_probe_ms;
+    std::uint32_t v6_probes;
+    bool v6_peer_logged;
+    partner_aim::DirCheck dir_check;
+    partner_aim::DirReason dir_reason;
+    bool dir_reason_logged;
     std::int32_t place_yaw_err_mdeg;
     // --- Online play (docs/native-puppet.md "Online").
     // The receiver's link quality (re-entry gate) and the online log lines.
@@ -793,6 +816,17 @@ struct Mission {
     bool body_switching;
     // The last logged type verdict (partner_weapon=projectile|type_ok lines).
     bool weapon_type_logged, weapon_type_logged_once;
+    // Weapons4: body 1 holds the plan's stand-in for the remote's current slot
+    // (Gate::standin, or a projectile stand-in), the slot it maps from/to and
+    // the last logged stand-in key; the time spent with a stand-in and with
+    // the gun absent (ms, this mission; bounded owner-tick accounting); body 1's
+    // gun mode (0xFF unread: the writer's body_busy).
+    bool weapon_standin, weapon_standin_logged;
+    std::uint8_t standin_remote_slot, standin_body_slot;
+    std::uint32_t standin_key;
+    std::uint64_t weapon_ms_at;
+    std::uint32_t standin_ms, absent_ms;
+    std::uint8_t body_gun_mode;
 };
 
 struct Driver {
@@ -862,6 +896,12 @@ struct Driver {
     // reset at MissionStart: the title or ACC after a long mission still logs
     // its sends (the mission's weapon_cap may be spent by then).
     LogCap equip_tx_cap;
+    partner_ride_wire::Store ride_rx;
+    partner_ride_wire::Packet ride_tx;
+    bool ride_tx_have, ride_tx_dirty;
+    std::uint32_t ride_tx_epoch;
+    std::uint64_t ride_tx_ms;
+    bool ride_invalid_logged;
     equipment_stock_writer::Status equip_status;
     std::uint16_t preload_ids[3];
     std::uint8_t preload_count;

@@ -18,7 +18,7 @@ namespace mgsworker {
 // (lookcam, local=all, a gun stage without fire, noise=keep) need an explicit
 // gate change. partner_native_face (the facing governor) is free; the
 // aim-target mirror partner_native_aimpt (off|look|point; the gun stage emits
-// look, -LabSetting selects the A/B) only in the gun stage (off elsewhere); the
+// point, -LabSetting selects the A/B) only in the gun stage (off elsewhere); the
 // partner's own reload (partner_native_reload), the slot follower
 // (partner_native_slot) and the generalized writer (partner_native_equip)
 // are free in the gun stage (their A/B variants) and stay at their defaults

@@ -40,8 +40,10 @@ player words):
    Steam (relay|direct) ... | partner=... native; you on the other PC: native`.
 5. **Partner body**: native by default on both PCs (the game's own
    movement, aim, reload, weapon switch and visual-only fire, driven by the
-   other player's input); the clips take over by themselves while the network
-   or the PC cannot keep up and the status line names why. `Play-Coop.bat
+   other player's input). Riding, unsafe airborne/dead state and stale ride
+   status hide the partner until fresh on-foot samples settle. Other native
+   failures can use the clips. The status line shows native/clips/loading and
+   the current gun state; diagnostic logs retain the fallback reason. `Play-Coop.bat
    -Partner clips` (from a Command Prompt in the package folder) always uses
    the clips on this PC; the other PC can still show this player natively.
 6. **Fallback transport**: `[L] LAN/VPN` with an MGS1 code (Host `[H]`, Join
@@ -316,7 +318,7 @@ xform clip partner as the automatic fallback.
   The loader expands the profile to exactly the gun stage the hidden worker
   qualified (`Get-WorkerPartnerSettings -NativeStage gun`: native drive,
   deferral on, mask 0x224005E, visual fire, look, rates mirror, the aim-target
-  mirror `partner_native_aimpt=look`, ...) and then resolves the weapons keys
+  mirror `partner_native_aimpt=point` (prone falls back to LOOK), ...) and then resolves the weapons keys
   (`partner_native_reload=event`, `partner_native_slot=write`,
   `partner_native_equip=substitute`); the raw native keys stay play refusals
   (0x20000, also lookcam, local=all, the P+0x218 window and noise=keep), and a
@@ -344,7 +346,10 @@ xform clip partner as the automatic fallback.
   channel 2 (how it shows the partner, its profile and policy, whether it
   sends input frames). link-status.json carries `partner_drive`,
   `partner_reason`, `remote_drive` and `remote_reason`; Play-Coop's status line
-  shows `partner=... native; you on the other PC: native`, or `clips (<sentence>)`.
+  shows the fresh cached native/clips/loading and gun state when supplied;
+  older status files retain `clips (<sentence>)`. Additive keys are `partner_view`,
+  `partner_gun`, `partner_gun_present` and `partner_view_fresh`. The cache expires
+  after one second and rejects another session or mission; it does not require F9.
 - **Gun pieces**: the release loader carries the gun pieces (offline
   equipment groups, the stock46 preload and writer and, compiled with them,
   the generalized preload and writer) and runs them only for a configured

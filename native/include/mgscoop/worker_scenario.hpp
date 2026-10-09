@@ -16,7 +16,11 @@ struct RunContext {
     std::uint32_t pid{};
     std::uint64_t process_start_filetime{};
 };
-enum class Operation : std::uint8_t { press, hold, release, mouse, capture };
+enum class Operation : std::uint8_t { press, hold, release, mouse, capture, resume_loading };
+// Accepted existing mission boundaries only; initialized is before runtime entry.
+enum class LoadingPhase : std::uint8_t { unavailable, initialized, running, terminating };
+struct LoadingContext { LoadingPhase phase{}; std::uint32_t mission{}, generation{}; };
+const char* LoadingPhaseName(LoadingPhase) noexcept;
 enum class Device : std::uint8_t { keyboard, mouse };
 enum class Key : std::uint8_t {
     w, a, s, d, enter, space, escape, e, r, shift, ctrl, one, two, f, c, q, x, z, tab, lmb, rmb, count
@@ -26,10 +30,12 @@ struct Command {
     Operation operation{};
     std::uint32_t duration{};
     std::int32_t dx{}, dy{};
+    std::uint32_t mission{}, generation{}; // Only resume_loading uses these tokens.
 };
 struct Event {
     std::uint32_t offset{}, value{}, timestamp{}, sequence{};
     std::uint64_t command{}, expires{};
+    std::uint32_t loading_mission{}, loading_generation{};
 };
 struct MouseState { std::int32_t x{}, y{}, z{}; std::uint8_t buttons[8]{}; };
 struct CaptureRequest { std::uint64_t sequence{}, expires{}; };
@@ -39,6 +45,11 @@ public:
     bool Accept(const Command&, std::uint64_t now) noexcept;
     void Tick(std::uint64_t now) noexcept;
     void Clear() noexcept;
+    void SetLoading(LoadingContext, std::uint64_t now) noexcept;
+    LoadingContext loading() const noexcept { return loading_; }
+    const char* ResumeRefusal(const Command&) const noexcept;
+    bool LoadingDeliveryAllowed(std::uint32_t mission, std::uint32_t generation,
+                                std::uint64_t expires, std::uint64_t now) const noexcept;
     void Keyboard(std::uint8_t (&bytes)[256]) const noexcept;
     MouseState Mouse(bool consume) noexcept;
     std::uint32_t Events(Device, Event*, std::uint32_t capacity, bool peek) noexcept;
@@ -57,6 +68,8 @@ private:
     std::int32_t dx_{}, dy_{};
     std::uint64_t last_sequence_{}, keyboard_command_{}, mouse_command_{}, capture_at_{}, move_expires_{};
     CaptureRequest capture_{};
+    LoadingContext loading_{};
+    std::uint64_t resume_sequence_{};
 };
 bool ParseCommand(const char* text, std::size_t size, const char* run_id,
                   const char* role, Command& output) noexcept;
@@ -77,6 +90,11 @@ RunContext GetContext() noexcept;
 void SetHooksReady(bool ready) noexcept;
 void Refuse(const char* reason) noexcept;
 void Poll(std::uint64_t now) noexcept;
+// Published from the existing accepted mission receipt under its owner lock.
+// This takes the same state lock as input consumption; runtime revokes pending Space.
+void SetLoadingContext(LoadingContext) noexcept;
+bool LoadingDeliveryAllowed(std::uint32_t mission, std::uint32_t generation,
+                            std::uint64_t expires, std::uint64_t now) noexcept;
 bool Keyboard(void* bytes, std::size_t size) noexcept;
 bool Mouse(void* bytes, std::size_t size) noexcept;
 std::uint32_t Buffered(Device, Event*, std::uint32_t capacity, bool peek) noexcept;

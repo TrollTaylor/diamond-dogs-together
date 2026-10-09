@@ -2,6 +2,72 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+function Set-WorkerGraphicsQualityText {
+    # Pure. Only low edits the eight existing quality strings and integrity tag.
+    # Per-key retail options: NVIDIA's MGSV graphics/performance guide confirms
+    # six Low, SSAO Off and filtering Medium; pinned retail serialization agrees.
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
+        [ValidateSet('preserve','low')][string]$Quality='preserve'
+    )
+    if($Quality -eq 'preserve'){return $Text}
+    if([Text.Encoding]::UTF8.GetByteCount($Text) -gt 65536){throw 'Worker graphics config exceeds its bound.'}
+    $document=$null
+    try {
+        $document=[System.Text.Json.JsonDocument]::Parse($Text,[System.Text.Json.JsonDocumentOptions]::new())
+        $nodes=[Collections.Generic.Stack[System.Text.Json.JsonElement]]::new();$nodes.Push($document.RootElement)
+        while($nodes.Count){
+            $node=$nodes.Pop()
+            if($node.ValueKind -eq [System.Text.Json.JsonValueKind]::Object){
+                $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+                foreach($property in $node.EnumerateObject()){
+                    if(!$seen.Add($property.Name)){throw 'Worker graphics config has a duplicate JSON key.'}
+                    $nodes.Push($property.Value)
+                }
+            } elseif($node.ValueKind -eq [System.Text.Json.JsonValueKind]::Array){
+                foreach($item in $node.EnumerateArray()){$nodes.Push($item)}
+            }
+        }
+        $root=$document.RootElement
+        if($root.ValueKind -ne [System.Text.Json.JsonValueKind]::Object){throw 'Worker graphics root must be an object.'}
+        $project=$root.GetProperty('project');$graphics=$root.GetProperty('graphics');$storedTag=$root.GetProperty('as')
+        if($project.ValueKind -ne [System.Text.Json.JsonValueKind]::String -or $project.GetString() -cne 'tpp' -or
+           $graphics.ValueKind -ne [System.Text.Json.JsonValueKind]::Object -or $storedTag.ValueKind -ne [System.Text.Json.JsonValueKind]::String){
+            throw 'Worker graphics config has an unsupported schema.'
+        }
+        $version=$graphics.GetProperty('version');$versionNumber=0
+        if($version.ValueKind -ne [System.Text.Json.JsonValueKind]::Number -or !$version.TryGetInt32([ref]$versionNumber) -or $versionNumber -ne 1){
+            throw 'Worker graphics config has an unsupported version.'
+        }
+        $settings=$graphics.GetProperty('quality_setting')
+        if($settings.ValueKind -ne [System.Text.Json.JsonValueKind]::Object){throw 'Worker graphics quality settings must be an object.'}
+        $values=[ordered]@{texture='Low';effect='Low';lighting='Low';model_detail='Low';postprocess='Low';shadow='Low';ssao='Off';texture_filtering='Medium'}
+        foreach($key in $values.Keys){
+            if($settings.GetProperty($key).ValueKind -ne [System.Text.Json.JsonValueKind]::String){throw "Worker graphics key must be an existing string: $key"}
+        }
+        $before=Get-GraphicsConfigInfo -Text $Text
+        if(!$before.Valid){throw 'Worker graphics config integrity tag does not verify.'}
+        $result=$Text
+        foreach($key in $values.Keys){
+            $pattern='("'+[regex]::Escape($key)+'"\s*:\s*")[^"\\]*(")'
+            if([regex]::Matches($result,$pattern).Count -ne 1){throw "Worker graphics key has an unexpected layout: $key"}
+            $value=$values[$key]
+            $result=[regex]::Replace($result,$pattern,{param($m)$m.Groups[1].Value+$value+$m.Groups[2].Value})
+        }
+        $tag=Get-GraphicsConfigTag -Object ($result|ConvertFrom-Json)
+        $pattern='("as"\s*:\s*")[A-Za-z0-9+/=]+(")'
+        if([regex]::Matches($result,$pattern).Count -ne 1){throw 'Worker graphics tag has an unexpected layout.'}
+        $result=[regex]::Replace($result,$pattern,{param($m)$m.Groups[1].Value+$tag+$m.Groups[2].Value})
+        $after=Get-GraphicsConfigInfo -Text $result
+        if(!$after.Valid -or $after.WindowMode -cne $before.WindowMode -or $after.Width -ne $before.Width -or $after.Height -ne $before.Height){
+            throw 'Edited worker graphics config failed validation.'
+        }
+        $readback=($result|ConvertFrom-Json).graphics.quality_setting
+        foreach($key in $values.Keys){if($readback.$key -cne $values[$key]){throw 'Edited worker quality value failed readback.'}}
+        return $result
+    } finally {if($null -ne $document){$document.Dispose()}}
+}
+
 function Get-WorkerRuntimePins {
     [ordered]@{
         Exe='085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45'
@@ -204,6 +270,25 @@ function Write-WorkerAtomicText([string]$Path,[string]$Text) {
         for($attempt=0;;$attempt++){try{[IO.File]::Move($temporary,$Path,$true);break}catch [UnauthorizedAccessException],[IO.IOException]{if($attempt -ge 49){throw};Start-Sleep -Milliseconds 10}}}
     finally{if(Test-Path -LiteralPath $temporary){Remove-Item -LiteralPath $temporary}}
 }
+# Deletes a leftover world.trigger and its atomic-write temporaries
+# (world.trigger.<32 hex>.tmp) in one game's mgs-coop folder, so a trigger an
+# aborted "host worldtrigger" step left behind is never applied by a later
+# session (Start-WorkerSession before launch, Stop-WorkerSession after the
+# games closed). Nothing else is touched; a linked entry refuses. Returns the
+# number of files removed.
+function Remove-WorkerWorldTrigger([string]$GameDirectory) {
+    $mod=Join-Path ([IO.Path]::GetFullPath($GameDirectory)) 'mgs-coop'
+    if(!(Test-Path -LiteralPath $mod -PathType Container)){return 0}
+    $null=Assert-WorkerPlainPath $mod -MustExist
+    $removed=0
+    foreach($item in @(Get-ChildItem -LiteralPath $mod -Force|Where-Object{$_.Name -ceq 'world.trigger' -or $_.Name -cmatch '\Aworld\.trigger\.[0-9a-f]{32}\.tmp\z'})) {
+        if($item.Attributes -band [IO.FileAttributes]::ReparsePoint){throw "Worker refuses a linked world trigger: $($item.FullName)"}
+        if($item.PSIsContainer){throw "Worker world trigger is not a file: $($item.FullName)"}
+        Remove-Item -LiteralPath $item.FullName -Force
+        $removed++
+    }
+    return $removed
+}
 function Get-WorkerConfigSnapshot([string]$Path,[string]$BackupDirectory,[string]$Name) {
     $null=Assert-WorkerPlainPath $Path
     $present=Test-Path -LiteralPath $Path -PathType Leaf
@@ -278,14 +363,14 @@ function Get-WorkerPartnerSettings([string]$PartnerProfile,[string]$NativeStage=
                 # Visual fire (docs/native-puppet.md "Weapons"): FIRE reaches body 1 only
                 # while the RequestBullet owner filter is live; its shots never hit.
                 # The aim-target mirror (docs/native-puppet.md "Facing"): the partner's gun aims where
-                # the remote aims (-LabSetting partner_native_aimpt=off|point for the A/B).
+                # the remote aims (-LabSetting partner_native_aimpt=off|look for the A/B).
                 # The partner's own reload (the event machine, docs/native-puppet.md "Weapons" R1..R6) and the
                 # weapon switch's slot follower (W4) and the generalized writer (W2/W3: the remote's three
                 # slots or same-type substitutes); -LabSetting partner_native_reload=mirror|raw|event /
                 # partner_native_slot=off|write|call / partner_native_equip=stock46|manifest|substitute select the A/B variants.
                 'gun' {@('partner_input_defer=on','partner_input_mask=0x224005E','partner_native_gun=1','partner_native_fire=visual',
                     'partner_native_aim=look','partner_input_triggers=1','partner_input_rstick=1','partner_native_rates=mirror',
-                    'partner_native_aimpt=look','partner_native_reload=event','partner_native_slot=write','partner_native_equip=substitute')}
+                    'partner_native_aimpt=point','partner_native_reload=event','partner_native_slot=write','partner_native_equip=substitute')}
                 default {throw "Unknown native stage: $stage"}
             }
             return @($native+$extra)

@@ -3,7 +3,7 @@
 -- phase vectors go out once a second while paired; 3 outcome mismatches ask
 -- for a RESYNC. W2 (eff >= 3): clock jumps and fast samples, a guest clock
 -- more than 60 game s off on 2 digests is corrected, and the host weather is
--- forced with TppWeather.ForceRequestWeather (30050: clock only; 30020: FOGGY
+-- forced with TppWeather.ForceRequestWeather (30050 included; 30020: FOGGY
 -- is never mirrored, 255 = release). Forces are released at stop, after W.fail too.
 do
   local W = e.MgsCoopWorld

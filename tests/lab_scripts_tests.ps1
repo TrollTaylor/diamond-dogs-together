@@ -625,6 +625,12 @@ try {
     Assert-Equal $pdState.Dm '' 'shared reader: stop clears the clip'
     Update-CoopPartnerDetails -Details $pdState -Line 'mission_termination=entered; x=1'
     Assert-True (!$pdState.Mission -and !$pdState.Ready -and !$pdState.Shown) 'shared reader: mission end resets the partner state'
+    # A refused partner pack (the observer's partner_pack=no_body line) names the scene; a later ready clears it.
+    Update-CoopPartnerDetails -Details $pdState -Line 'x allocation_enter; mission=30050'
+    Update-CoopPartnerDetails -Details $pdState -Line "partner_pack=no_body; mission=30050; scene=demo_stage`r"
+    Assert-True ((Format-CoopPartnerDetails -Details $pdState -Role guest).StartsWith('guest: partner refused (no partner body: demo_stage pack list),')) 'shared reader: no partner body in a refused pack list'
+    Update-CoopPartnerDetails -Details $pdState -Line 'partner_cfg=ready; count=2'
+    Assert-Equal $pdState.Refused '' 'shared reader: ready clears the pack refusal'
     Assert-True ($playText.Contains("'partner_input=net', 'partner_input_send=1'") -and $playText.Contains("'partner_recon=track'") -and
         $playText.Contains("'partner_input_correct_mm=3000'") -and $playText.Contains("'partner_recon_runaway=pin'")) 'Play-OfflineCoop prepares lab.ini for the input drive (correction explicit)'
     $ovInput = ConvertFrom-LabPartnerSettingArgs -Items @('partner_apply=input', 'partner_input=net', 'partner_input_send=1', 'partner_input_cam=sandbox',
@@ -665,12 +671,12 @@ try {
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_stall_ms -Value 99 } '100..1000' 'stall range'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_input_edge_repeats -Value 9 } '2..8' 'edge repeats range'
     Assert-Throws { ConvertTo-LabPartnerValue -Key play_rehearsal -Value 1 } 'Unknown partner lab.ini key' 'play_rehearsal is never a lab key (the worker writes it in play only)'
-    # The aim-target mirror (docs/native-puppet.md "Facing"): off|look|point; Play-OfflineCoop's native gun settings use look.
+    # The aim-target mirror (docs/native-puppet.md "Facing"): off|look|point; Play-OfflineCoop's native gun settings use point.
     Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_native_aimpt -Value look)/$(ConvertTo-LabPartnerValue -Key partner_native_aimpt -Value point)/$(ConvertTo-LabPartnerValue -Key partner_native_aimpt -Value off)" 'look/point/off' 'aim-target mirror values'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_aimpt -Value on } 'off|look|point' 'aimpt values'
     Assert-True ($playText.Contains("'partner_native_rates=mirror',") -and
-        $playText.Contains("`$(if (!`$NoAimMirror) { 'partner_native_aimpt=look' } else { 'partner_native_aimpt=off' }))") -and
-        $playText.Contains('[switch]$NoAimMirror')) 'Play-OfflineCoop: the native partner aims where the remote aims (partner_native_aimpt=look; -NoAimMirror off)'
+        $playText.Contains("`$(if (!`$NoAimMirror) { 'partner_native_aimpt=point' } else { 'partner_native_aimpt=off' }))") -and
+        $playText.Contains('[switch]$NoAimMirror')) 'Play-OfflineCoop: the native partner aims where the remote aims (partner_native_aimpt=point; -NoAimMirror off)'
     Assert-Equal "$(ConvertTo-LabPartnerValue -Key partner_native_reload -Value raw)/$(ConvertTo-LabPartnerValue -Key partner_native_slot -Value call)" 'raw/call' 'reload and slot enums'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_reload -Value tap } 'mirror|raw|event' 'reload values'
     Assert-Throws { ConvertTo-LabPartnerValue -Key partner_native_slot -Value on } 'off|write|call' 'slot values'
@@ -750,6 +756,10 @@ try {
     Assert-Throws { ConvertFrom-LabPartnerSettingArgs -Items 'other:partner_stage=1' -Role host } 'Invalid -PartnerSetting' '-PartnerSetting role prefix'
     Assert-Throws { ConvertFrom-LabPartnerSettingArgs -Items 'partner_stage=9' -Role host } 'allowed: 0..3' '-PartnerSetting values validated'
     Assert-Throws { Get-LabInstanceSettings -Role host -Config $config -GameDirectory $config.Paths.hostDir -HostSteamId64 $hostId -PartnerOverrides @{ partner_stage = '1' } } 'only to the offline' 'partner overrides need -Offline'
+    $repairOverrides=ConvertFrom-LabPartnerSettingArgs -Items @('partner_native_equip_shared=on','partner_native_equip_measured=0','partner_native_standin=on','partner_native_ride=hide') -Role host
+    Assert-Equal ($repairOverrides['partner_native_ride']) 'hide' 'private worker accepts bounded deployment visibility setting'
+    Assert-Equal ($repairOverrides['partner_native_equip_shared']) 'on' 'shared weapon setting reaches prepared lab.ini'
+    Assert-Throws { ConvertFrom-LabPartnerSettingArgs -Items 'partner_native_ride=drive' -Role host } 'allowed:' 'unknown deployment mode refused'
     $e7 = Get-LabInstanceSettings -Role guest -Config $config -GameDirectory $config.Paths.guestDir -HostSteamId64 $hostId -Offline -PartnerOverrides (ConvertFrom-LabPartnerSettingArgs -Items 'guest:net_latency_ms=100,guest:net_loss_permille=200' -Role guest)
     $e7i = ConvertFrom-IniText (New-LabIniFromSettings -Settings $e7)
     Assert-Equal "$($e7i['net_latency_ms'])/$($e7i['net_loss_permille'])/$($e7i['partner_stage'])" '100/200/0' 'E7 impairment written for the guest'

@@ -5,7 +5,9 @@
 // LinkView (state, route, round trip, reason, the partner's goodbye, the
 // Steam end reason) and posts events (connected, lost, reconnected, partner
 // left, refused, version mismatch, Steam unavailable); the Steam owner pass
-// posts invite_sent and the F9 panel code_copied (the HUD is hidden while the
+// posts invite_sent, the script observer no_body (a partner mission started
+// on a pack list the player package selection refused, docs/two-pc-play.md
+// "In game") and the F9 panel code_copied (the HUD is hidden while the
 // menu is open, so those toasts show for what is left of their 4 s after it
 // closes). The overlay's Present thread
 // owns one Model, turns events into 4 s toasts and draws the line top-right
@@ -45,9 +47,44 @@ struct LinkView {
     char remote_build[24];
     char own_build[24];
     std::uint64_t publish_ms;  // GetTickCount64 at publish
+    std::uint32_t session, mission; // refuse views from a previous link/mission
 };
 void PublishLink(const LinkView& view) noexcept;
 bool GetLink(LinkView& out) noexcept;
+
+// ---- Copied partner status: natural owner publishes even with F9 off.
+// Enum-only facts; no game reads, historical gun presence or writer receipts.
+enum class PartnerDrive : std::uint8_t { loading, clips, native };
+enum class PartnerGun : std::uint8_t { off, unavailable, present, match, substitute, standin, switching, mismatch, projectile };
+struct PartnerView {
+    bool valid;
+    PartnerDrive drive;
+    PartnerGun gun;
+    std::uint32_t session, mission;
+    std::uint64_t publish_ms;
+};
+struct PartnerFacts {
+    std::uint32_t session, mission;
+    std::uint64_t publish_ms;
+    bool body_ready, native_selected, native_active, gun_enabled;
+    bool fresh_gun, gun_fields_ok, remote_live, gate_current;
+    std::int32_t gun_class, body_equip;
+    bool switching, substitute, standin;
+    std::uint8_t gate; // partner_slots::Gate, only when fresh/current
+};
+inline constexpr std::uint64_t kPartnerFreshMs = 1000;
+PartnerView MakePartnerView(const PartnerFacts& facts) noexcept;
+void PublishPartner(const PartnerView& view) noexcept;
+bool GetPartner(PartnerView& out) noexcept;
+// Stale, future-clock, other session/mission: loading and unavailable.
+PartnerView CurrentPartner(const PartnerView& view, std::uint32_t session, std::uint32_t mission, std::uint64_t now_ms) noexcept;
+const char* PartnerDriveName(PartnerDrive drive) noexcept;
+const char* PartnerGunName(PartnerGun gun) noexcept;
+const char* PartnerGunText(PartnerGun gun) noexcept;
+bool GunPresent(PartnerGun gun) noexcept;
+// Additive link-status keys with trailing comma. False/empty on overflow.
+bool FormatPartnerJson(const PartnerView& view, std::uint32_t session, std::uint32_t mission, std::uint64_t now_ms,
+                       char* out, std::size_t capacity) noexcept;
 
 // ---- Events (any thread; a 16-entry ring, the oldest dropped when full).
 enum class EventKind : std::uint8_t {
@@ -62,7 +99,8 @@ enum class EventKind : std::uint8_t {
     invite_sent,   // text: the friend's name (or masked id)
     joining,       // text: the masked host, arg: 1 from an invite
     join_refused,  // text: the parser status
-    code_copied
+    code_copied,
+    no_body        // arg: the mission, text: the refused pack's scene (partner::PackSceneName)
 };
 struct Event {
     EventKind kind;
@@ -92,7 +130,8 @@ struct Line {
 };
 // The status line for `view` (`name`: the partner's display name, may be "").
 // False when nothing is shown (no view, link off).
-bool FormatLine(const LinkView& view, const char* name, Mode mode, std::uint64_t now_ms, Line& out) noexcept;
+bool FormatLine(const LinkView& view, const char* name, Mode mode, std::uint64_t now_ms, Line& out,
+                const PartnerView* partner = nullptr) noexcept;
 // The toast sentence for one event (false: no toast for it).
 bool FormatToast(const Event& event, const LinkView& view, const char* name, char* out, std::size_t capacity, Tone& tone) noexcept;
 class Model {

@@ -698,6 +698,42 @@ int main() {
               pi::ValidPacket(back), "Fill3 leaves no v4 field");
     }
 
+    {
+        namespace pi = mgscoop::partner_input;
+        pi::InputPacket pkt{};
+        pi::V6Source source{};
+        source.v5.gun_valid = true;
+        source.v5.gun_flags = pi::GunFlag::Aiming | pi::GunFlag::InHand;
+        source.v5.gun_mode = 7; source.aim_valid = true;
+        source.aim_pitch_cdeg = 1875; source.aim_yaw_cdeg = -18000;
+        pi::Fill6(pkt, source);
+        std::uint8_t frame[input_frame_size_max]{}, old[input_frame_size_v5]{};
+        std::uint64_t ss = 0; std::uint32_t ep = 0, seq = 0; pi::InputPacket got{};
+        Check(pi::ValidPacket(pkt) && encode_input_frame_any(77, 30020, 8, pkt, frame) == input_frame_size_v6 &&
+              decode_input_frame(frame, input_frame_size_v6, ss, ep, seq, got) && got.version == 6 &&
+              got.aim_pitch_cdeg == 1875 && got.aim_yaw_cdeg == -18000 && (got.gun_flags & pi::GunFlag::AimDir),
+              "v6 direction round trip at yaw boundary");
+        Check(encode_input_frame_any(77, 30020, 8, pkt, old) == 0 && old[0] == 0, "v6 refuses legacy output buffer");
+        auto bad = pkt; bad.aim_pitch_cdeg = 9001;
+        Check(!pi::ValidPacket(bad), "v6 out-of-range pitch refuses");
+        bad = pkt; bad.aim_yaw_cdeg = 18000;
+        Check(!pi::ValidPacket(bad), "v6 yaw18000 refuses");
+        bad = pkt; bad.gun_flags &= static_cast<std::uint8_t>(~pi::GunFlag::Aiming);
+        Check(!pi::ValidPacket(bad), "v6 direction requires aiming");
+        bad = pkt; bad.gun_flags &= static_cast<std::uint8_t>(~pi::GunFlag::AimDir);
+        Check(!pi::ValidPacket(bad), "v6 direction without flag refuses");
+        bad = pkt; bad.version = 5;
+        Check(!pi::ValidPacket(bad), "v5 cannot carry v6 flag or angles");
+        frame[wire::header_size+88] = 0x29; frame[wire::header_size+89] = 0x23;
+        Check(!decode_input_frame(frame,input_frame_size_v6,ss,ep,seq,got), "v6 invalid direction refuses on wire");
+        source.aim_valid = false; pi::Fill6(pkt, source);
+        Check(!(pkt.gun_flags & pi::GunFlag::AimDir) && !pkt.aim_pitch_cdeg && !pkt.aim_yaw_cdeg &&
+              pi::ValidPacket(pkt), "v6 unread direction uses look fallback");
+        pi::Fill5(pkt,source.v5);
+        Check(encode_input_frame_any(77,30020,9,pkt,frame) == input_frame_size_v5 &&
+              decode_input_frame(frame,input_frame_size_v5,ss,ep,seq,got) && got.version == 5,
+              "v5 remains compatible with max-size encoder");
+    }
     std::printf("%u checks passed; player_sync transform codec, fixed-buffer frames, v2 anim extension, look and input frames verified\n", checks);
     return 0;
 }

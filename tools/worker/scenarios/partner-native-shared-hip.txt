@@ -1,0 +1,71 @@
+# Coordinator-only hidden worker; use lab seed/native gun/research/low graphics.
+# The lab seed starts both local players in back slot1/alias873. Press1 selects hip slot0.
+# Reject this test if hip-selected receiver state is not remote_slot0/body_slot0/hand_slot0,
+# remote equip871, body equip39 class1/fields_ok, slot plan0=sub, map0=0, gate=match,
+# and HUD contains gun substitute. Verify receiver writer slot0 tiercs, refs3->4, bound/fresh,
+# with census39 flags3 refs>0 viewer0; never treat this header or a capture label as evidence.
+# Fire: renewed heldcapture receipts must remain inside the1500ms hold, v6live/HOLD+FIRE,
+# actual body39 in slot0, accepted probe1shots and fire.suppressed both increase, ownerdisarmed0,
+# shot/ammo leaks0, mag/slot faultsfalse. Record source magazine drop and viewer own ammo unchanged.
+# Reload: starts/entered/completed increase, native mode11/12 then exit; reconcile/store accepted,
+# no stuck/release, full/mapped magazine afterexit. Source/receiver capacities may differ.
+# Standing/crouch direction and prone LOOK fallback are checked in both directions. Reload speed remains stock.
+labsetting partner_native_equip_shared=prefer
+labsetting partner_native_aimpt=point
+labsetting partner_native_ride=hide
+labsetting coop_hud=full
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+host debug godmode 1
+guest debug godmode 1
+stance host stand
+stance guest stand
+wait 6000
+both capture hip-before-selection
+both press 1
+wait 1500
+both capture hip-selected
+# Host shoots hip; guest films the substituted remote hip gun.
+placebehind guest host 4 6
+wait 6000
+guest capture hip-host-baseline
+heldcapture host guest rmb hip-host-aim 3
+heldcapture host guest rmb+lmb hip-host-fire 3
+wait 600
+both capture hip-host-after-fire
+host hold rmb 1500 nowait
+wait 400
+host hold rmb+r 120 nowait
+guest burst hip-host-reload 18 200
+host release
+wait 1200
+both capture hip-host-after-reload
+# Guest retains hip slot0 and shoots; host films the opposite direction.
+placebehind host guest 4 6
+wait 6000
+host capture hip-guest-baseline
+heldcapture guest host rmb hip-guest-aim 3
+heldcapture guest host rmb+lmb hip-guest-fire 3
+wait 600
+both capture hip-guest-after-fire
+guest hold rmb 1500 nowait
+wait 400
+guest hold rmb+r 120 nowait
+host burst hip-guest-reload 18 200
+guest release
+wait 1200
+both capture hip-guest-after-reload
+stance host crouch
+heldcapture host guest rmb hip-crouch-aim 3
+stance host prone
+heldcapture host guest rmb hip-prone-look 3
+stance host stand
+stance guest crouch
+heldcapture guest host rmb hip-guest-crouch-aim 3
+stance guest prone
+heldcapture guest host rmb hip-guest-prone-look 3
+stance guest stand
+both capture hip-end
+state

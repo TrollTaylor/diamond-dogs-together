@@ -95,16 +95,38 @@ int main() {
     ring.Push(At(1000, 0.0f), 1000);
     ring.Push(At(1100, 3.5f), 1100);  // 3.5 m in x and z: 4.95 m < 5 m
     s = ring.SampleAt(1150, 100);
-    Check(s.interpolated && Near(s.x, 1.75f), "just under the snap distance interpolates");
+    Check(s.snapped && !s.interpolated && Near(s.x, 0.0f) && !s.jump && s.sender_ms == 1000,
+          "a sub-5m speed-qualified jump holds the old clock until destination");
+    s = ring.SampleAt(1200, 100);
+    Check(s.time_valid && s.jump && s.jump_ms == 1100 && s.sender_ms == 1100 && Near(s.x, 3.5f),
+          "sub-5m jump exposes destination identity only after landing");
+    s = ring.SampleAt(1250, 100);
+    Check(s.held && !s.extrapolated && s.jump && s.jump_ms == 1100 && s.sender_ms == 1100 && Near(s.x, 3.5f),
+          "sub-5m jump never creates extrapolated teleport velocity");
+    ring.Push(At(1200, 3.6f), 1200);
+    s = ring.SampleAt(1300, 100);
+    Check(s.jump && s.jump_ms == 1100 && s.sender_ms == 1200, "jump identity survives newer ordinary arrivals");
+    ring.Push(At(1300, 7.0f), 1300);
+    s = ring.SampleAt(1400, 100);
+    Check(s.jump && s.jump_ms == 1300, "a later jump carries a new destination identity");
+    ring.Reset();
+    Snapshot slow_a = At(1000, 0), slow_b = At(1300, 3.9f);
+    slow_a.z = slow_b.z = 0;
+    ring.Push(slow_a, 1200); ring.Push(slow_b, 1900);
+    s = ring.SampleAt(1450, 100);
+    Check(s.time_valid && s.sender_ms == 1150 && s.interpolated && !s.jump && Near(s.x, 1.95f),
+          "13m/s over a jittered 300ms span is locomotion, not a jump");
 
     // Extrapolation: at most 100 ms past the newest snapshot, then hold.
     ring.Reset();
     ring.Push(At(1000, 0.0f, 0.0f), 1000);
     ring.Push(At(1100, 1.0f, 0.1f), 1100);
     s = ring.SampleAt(1250, 100);  // render 1150 -> 50 ms ahead
-    Check(s.extrapolated && !s.held && Near(s.x, 1.5f) && Near(s.yaw, 0.15f), "extrapolate 50 ms");
+    Check(s.extrapolated && !s.held && Near(s.x, 1.5f) && Near(s.yaw, 0.15f) && s.time_valid && s.sender_ms == 1150,
+          "extrapolate 50 ms with the matching sender clock");
     s = ring.SampleAt(1400, 100);  // render 1300 -> capped at 100 ms
-    Check(s.extrapolated && s.held && Near(s.x, 2.0f) && Near(s.yaw, 0.2f), "extrapolation capped then held");
+    Check(s.extrapolated && s.held && Near(s.x, 2.0f) && Near(s.yaw, 0.2f) && s.sender_ms == 1200,
+          "extrapolation caps position and sender clock together");
     s = ring.SampleAt(5000, 100);
     Check(s.held && Near(s.x, 2.0f), "long silence holds the capped pose");
 
@@ -131,11 +153,29 @@ int main() {
     s = ring.SampleAt(1190, 155);  // render = 1035, before the kept oldest (1040)
     Check(s.held && Near(s.x, 0.4f), "dropped entries are gone");
 
+    // A source reset has its own identity, independent of clock alignment.
+    const auto old_generation = ring.SampleAt(1190, 100).generation;
+    Check(old_generation != 0 && ring.SampleAt(1190, 155).generation == old_generation &&
+          ring.SampleAt(9000, 0).generation == old_generation,
+          "holding, render-clock rewind and stale samples retain ring generation");
+    ring.Reset();
+    Check(!ring.SampleAt(1190, 0).valid && ring.SampleAt(1190, 0).generation == 0,
+          "empty reset ring does not publish a valid source generation");
+    ring.Push(At(100, 0.0f), 1200);
+    const auto new_generation = ring.SampleAt(1200, 0).generation;
+    Check(new_generation != 0 && new_generation != old_generation &&
+          ring.SampleAt(1200, 0).sender_ms == 100,
+          "reset starts a new generation even with a lower sender clock");
+    ring.Push(At(200, 0.1f), 1300);
+    Check(ring.SampleAt(1300, 0).generation == new_generation,
+          "ordinary packet arrival keeps the reset generation");
+
     // Sender clock wrap (u32 milliseconds).
     ring.Reset();
     Check(ring.Push(At(0xFFFFFFB0u, 0.0f), 5000) && ring.Push(At(0x00000014u, 1.0f), 5100), "push across wrap");
     s = ring.SampleAt(5150, 100);  // offset = 5000 - 0xFFFFFFB0 (unwrapped); render midpoint
-    Check(s.interpolated && Near(s.x, 0.5f), "interpolation across wrap");
+    Check(s.interpolated && Near(s.x, 0.5f) && s.time_valid && s.sender_ms == 0xFFFFFFE2ll,
+          "interpolation and sampled source clock unwrap together");
     Check(!ring.Push(At(0xFFFFFFF0u, 2.0f), 5200), "older across wrap refused");
 
     // Animation extension fields are discrete: a sample carries those of the

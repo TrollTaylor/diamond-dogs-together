@@ -108,6 +108,11 @@ struct InputPacket {
     // on each entry into a reload mode, switch_seq on each change of its
     // current slot. A v5 sender also fills the v3 inv_slot with its current slot.
     std::uint8_t gun_flags, gun_mode, reload_seq, switch_seq;
+    // v6 only (docs/native-puppet.md "The gun direction"; 0 otherwise): the
+    // sender's gun direction (partner_aim::GunDir: world pitch, > 0 looks down,
+    // and world yaw) in centidegrees, with GunFlag::AimDir (which needs Valid and
+    // Aiming): pitch within +-partner_aim::kMaxPitchCdeg, yaw [-18000, 17999].
+    std::int16_t aim_pitch_cdeg, aim_yaw_cdeg;
 };
 namespace GunFlag {
 inline constexpr std::uint8_t Valid = 1 << 0;      // the group is valid (the sender's gun record was read)
@@ -115,8 +120,12 @@ inline constexpr std::uint8_t InHand = 1 << 1;     // rec+0x3C0 bit 2
 inline constexpr std::uint8_t Aiming = 1 << 2;     // rec+0x3C0 bit 18
 inline constexpr std::uint8_t Reloading = 1 << 3;  // rec+0x2C0 is 11 or 12
 inline constexpr std::uint8_t Changing = 1 << 4;   // rec+0x2C0 is 8 or rec+0x3C0 bit 7 (a weapon change)
-inline constexpr std::uint8_t Known = 0x1F;
+inline constexpr std::uint8_t Known = 0x1F;        // v5
+inline constexpr std::uint8_t AimDir = 1 << 5;     // v6 only: aim_pitch_cdeg / aim_yaw_cdeg hold the gun direction
+inline constexpr std::uint8_t KnownV6 = 0x3F;
+static_assert((AimDir & Known) == 0 && KnownV6 == (Known | AimDir), "the v6 gun flag is outside the v5 set");
 }
+inline constexpr std::int16_t kMaxAimPitchCdeg = 9000;
 namespace XFlag {
 inline constexpr std::uint8_t Look = 1 << 0;
 inline constexpr std::uint8_t Cam = 1 << 1;
@@ -156,8 +165,9 @@ std::int32_t NormalizeCdeg(std::int64_t cdeg) noexcept;
 // The clamps above; non-finite values become 0.
 InputPacket Quantize(const PadSnapshot& snapshot, std::int32_t cam_cdeg) noexcept;
 // Whether every value is inside the wire ranges (player_sync checks the same).
-// Versions 1..4; a v1/v2 packet carries no v3 field, a v1..v3 packet no v4
-// field (xflags Rates and Mag are v4 only).
+// Versions 1..6; a v1/v2 packet carries no v3 field, a v1..v3 packet no v4
+// field (xflags Rates and Mag are v4 only), a v1..v4 packet no gun group and
+// a v1..v5 packet no gun direction (GunFlag::AimDir is v6 only).
 bool ValidPacket(const InputPacket& packet) noexcept;
 // The sender's v3 fields (read on the driver tick; invalid groups have their
 // valid flag clear). Fill3 sets version 3 and the v3 fields of a v2 packet.
@@ -197,6 +207,16 @@ struct V5Source {
     std::uint8_t gun_flags, gun_mode, reload_seq, switch_seq;
 };
 void Fill5(InputPacket& packet, const V5Source& source) noexcept;
+// Version 6 (the gun direction): Fill5's fields plus the sender's gun
+// direction (GunFlag::AimDir) when aim_valid, the gun group is valid with
+// GunFlag::Aiming and both angles are inside the wire ranges; else the group
+// stays clear and the fields 0 (the receiver then aims along the look).
+struct V6Source {
+    V5Source v5;
+    bool aim_valid;
+    std::int16_t aim_pitch_cdeg, aim_yaw_cdeg;
+};
+void Fill6(InputPacket& packet, const V6Source& source) noexcept;
 
 // Sources of the three edge words src+0x4C/+0x50/+0x54 inside the window.
 enum class Word : std::uint8_t { zero = kPartnerWordZero, press = kPartnerWordPress, release = kPartnerWordRelease,
@@ -255,6 +275,7 @@ struct EdgeState {
     std::uint32_t last_seq;
     std::uint32_t net_held;
     bool resync;
+    std::uint32_t prev_overlay; // explicit one-shots press even a remotely held bit
 };
 // How long a stall keeps the last live held level (age of the newest frame).
 inline constexpr std::uint32_t kStaleGraceMs = 1000;
@@ -502,6 +523,11 @@ struct Arm {
     PartnerNativeSlot slot_follow;
     std::uint8_t slot_ok;
     std::uint16_t slot_equip[3];
+    // Weapons4: bit r set: the remote's slot r is followed with the plan's
+    // stand-in standin_slot[r] (partner_slots Plan::map); clear: with slot r
+    // itself (the follower's own empty/plan/mismatch checks decide).
+    std::uint8_t standin_mask;
+    std::uint8_t standin_slot[3];
 };
 
 // Every field except gen, host_cam_cdeg, steer/mag, the rates and gun fields, neutral, strip and the one-shots.

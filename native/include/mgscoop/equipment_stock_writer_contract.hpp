@@ -39,19 +39,49 @@ struct Target {
     // targets need their own slot empty (the writer checks the others).
     bool require_remote_empty=true;
     std::uint32_t cache_index=4;
+    // Tiers a1s/cs (partner_native_equip_shared, weapons4): the stock cache
+    // entry is referenced by other actors (the soldiers, never the viewer).
+    // DC3700 returns a used non-alias entry unwritten with protect 0
+    // (DC37AA..DC37AD), DC3308..DC3324 only increments its refs, eviction
+    // (DC37D1..DC3800) never takes a referenced or protected entry and the
+    // banks share a (parts asset, mission entry) entry natively
+    // (ADE0BF..ADE131, ADEA30..ADEA65). The readback allows exactly that.
+    bool shared=false;
+    // Lab only (partner_native_equip_measured=1): an optional asset whose
+    // header shape cannot be qualified statically takes the render size a
+    // native main-bank target already shows for the same asset (MeasuredRender).
+    bool measured=false;
 };
 inline constexpr Target kStock46{};
 constexpr std::uint32_t ExpectedHandle(std::uint32_t new_index,const Target& t) noexcept {
     return (new_index<<16)|(std::uint32_t(t.equip)<<5)|t.type;
 }
+// A slot's binder record (binder30 + slot*12: current, pending, flags) in a
+// state B0C720 binds from (weapons4). The native empty record is current =
+// pending = FFFFFFE0 with flag bit 0 clear: the record constructor B0BCD0
+// (B0BAF0 -> B0BBE1), the actor reset B0CA40 and B0CF80's bind/unbind
+// (B0D18B..B0D1E2) all leave it. B0CF80's auto-queue (B0D043..B0D05C) moves
+// a zero inventory handle into an empty pending: {FFFFFFE0, 0, 0} (the lab).
+// B0C720 sets pending = handle (B0C7B4) and clears flag bit 0 (B0C7B8) from
+// either state. Anything else (a current or pending handle, other flags) waits.
+constexpr bool BinderEmpty(std::uint32_t current,std::uint32_t pending,std::uint32_t flags) noexcept {
+    return current==0xFFFFFFE0u && (pending==0 || pending==0xFFFFFFE0u) && flags==0;
+}
+// Shared tiers: an entry with this many references or more is refused
+// (shared_refs_bound): 48 is the cache size, far above any soldier census.
+inline constexpr std::uint32_t kSharedRefsBound=48;
 struct OptionalLease {
     std::uintptr_t asset=0,source=0,header=0;
     std::uint64_t bytes=0;
     std::uint32_t parameters=0,global=0,render_bytes=0;
     std::array<std::uint8_t,0x20> header_bytes{};
+    // Lab only: render_bytes measured from a native render of this asset
+    // (Target::measured; the header shape is not one of kOptionalShapes).
+    bool measured=false;
     bool operator==(const OptionalLease& o) const noexcept {
         return asset==o.asset && source==o.source && header==o.header && bytes==o.bytes &&
-            parameters==o.parameters && global==o.global && render_bytes==o.render_bytes && header_bytes==o.header_bytes;
+            parameters==o.parameters && global==o.global && render_bytes==o.render_bytes && header_bytes==o.header_bytes &&
+            measured==o.measured;
     }
 };
 struct BankCacheEntry {
@@ -106,6 +136,10 @@ struct Snapshot {
     Bytes14 new_metadata{};
     std::array<Bytes14,3> local_engine_metadata{};
     std::array<std::uint32_t,3> local_resource_ids{};
+    // The stock cache entry each of body 0's seven handles references (its
+    // engine metadata row +8, DC3374; gun types 1..8 only, 0xFF otherwise):
+    // a shared tier never targets an entry the viewer references.
+    std::array<std::uint8_t,7> local_cache_index{};
     std::uintptr_t mission_manager=0,mission_group=0,mission_entry=0;
     std::uintptr_t global_root=0,globals=0,services=0,owner_controller=0;
     std::array<std::uintptr_t,2> attachment_managers{},attachment_arrays{};
@@ -215,6 +249,22 @@ inline constexpr std::array<OptionalShape,8> kOptionalShapes{{{1,2,224},{2,4,400
 constexpr const OptionalShape* OptionalShapeOf(std::uint16_t n,std::uint16_t m) noexcept {
     return n>=1 && n<=kOptionalShapes.size() && kOptionalShapes[n-1].n==n && kOptionalShapes[n-1].m==m ? &kOptionalShapes[n-1] : nullptr;
 }
+// Why a header shape (words 0..5 at header+8) is not one of kOptionalShapes
+// (weapons4, precise): stock_optional_dict when word5 has the encoding bit
+// 0x1000 (1A753E9..1A753F3: the parameters then come from 1A758A0, not the
+// per-record 1A75A10 the size model covers; run 39845163's 51 shows
+// 7.10.0.0.0.20480), stock_optional_word for n outside 1..8 or any other
+// nonzero word, stock_optional_m when m is not m(n). nullptr: a qualified shape.
+constexpr const char* OptionalShapeRefusal(const std::array<std::uint16_t,6>& w) noexcept {
+    if(w[5]&0x1000) return "stock_optional_dict";
+    if(w[0]<1 || w[0]>kOptionalShapes.size() || w[2] || w[3] || w[4] || w[5]) return "stock_optional_word";
+    return kOptionalShapes[w[0]-1].m!=w[1] ? "stock_optional_m" : nullptr;
+}
+inline std::array<std::uint16_t,6> OptionalWords(const std::array<std::uint8_t,0x20>& header) noexcept {
+    std::array<std::uint16_t,6> w{};
+    for(unsigned i=0;i<6;++i) std::memcpy(&w[i],header.data()+8+i*2,2);
+    return w;
+}
 template<class Reader> const char* OptionalReady(View<Reader>& v,OptionalLease& o,const Target& t=kStock46) noexcept {
     std::uint8_t state=0;std::uint32_t result=0,flags=0;std::uint64_t hash=0;
     // The canonical loaded resource factory declares a 0xA0 object; loader
@@ -241,10 +291,18 @@ template<class Reader> const char* OptionalReady(View<Reader>& v,OptionalLease& 
     // flags208/count1/extra18NULL and skip AB0460. This
     // proves the ordinary arena read/write extents, not the protected binder's
     // absence of failures; that exact retail body remains pinned and SEH-bound.
-    // stock46 is n4/m6 (544 bytes, as measured).
+    // stock46 is n4/m6 (544 bytes, as measured). Any other shape refuses
+    // precisely (OptionalShapeRefusal); a lab-measured target (Target::measured)
+    // instead takes the render size of a native render of this very asset
+    // (MeasuredRender, after Capture has the engine).
+    if(const char* refusal=OptionalShapeRefusal(OptionalWords(o.header_bytes))) {
+        if(!t.measured) return refusal;
+        if(!v.At(v.base,0x2C71680,o.global) || o.global>153) return "stock_optional_global";
+        o.measured=true;o.render_bytes=0;
+        return nullptr;
+    }
     const auto* shape=OptionalShapeOf(Word16(o.header_bytes.data()+8),Word16(o.header_bytes.data()+10));
     if(!shape) return "stock_optional_shape";
-    for(unsigned i=2;i<6;++i) if(Word16(o.header_bytes.data()+8+i*2)) return "stock_optional_shape";
     if(!v.At(v.base,0x2C71680,o.global) || o.global>153) return "stock_optional_global";
     // 1A95470 mode0(n) = size(n) (kOptionalShapes; stock46 n4: 544).
     // 1AA49E0 contributes align16(8*g+88). All arithmetic is bounded here.
@@ -262,6 +320,43 @@ template<class Reader> const char* OptionalAbsent(View<Reader>& v,OptionalLease&
     if(!v.At(v.base,0x2C71680,o.global) || o.global>153) return "stock_optional_global";
     o.render_bytes=512+((8*o.global+88+15)&~15u);
     return o.render_bytes<=2048 ? nullptr : "stock_optional_render_size";
+}
+
+// Lab only (Target::measured, partner_native_equip_measured=1): the render
+// size a native main-bank target already shows for the optional asset.
+// ADE378..ADE37F passes the asset to 1AB7520 (request+8); 1AB7360 stores the
+// request size at render+0 (1AB7383) and the body offset 0x20 at render+0xC
+// (1AB740B..1AB740F); 1E18CF0 keeps the asset at body+0x80 (1E18D6D);
+// ADE3F0..ADE3F6 put the render at arena68 + target*stride70 and
+// ADE442..ADE446 publish it in aux60[target]. Every main bank of the 32
+// groups is searched and every native render of the asset must agree (at
+// most 2048 bytes, the stride). Pure reads; the asset itself is never followed.
+template<class Reader> const char* MeasuredRender(View<Reader>& v,Snapshot& s) noexcept {
+    std::uintptr_t groups=0;std::uint32_t group_count=0,bytes=0;unsigned found=0;
+    if(!s.optional.measured || !s.optional.asset || !v.At(s.engine,0x110,group_count) || group_count!=32 ||
+       !v.At(s.engine,0x130,groups) || !groups) return "stock_optional_measure_bounds";
+    for(unsigned i=0;i<32;++i) {
+        std::uintptr_t group=0,bank=0,arena=0,renders=0;std::uint32_t size=0,targets=0,stride=0;
+        if(!v.At(groups,i*8,group) || !v.At(group,0x30,size) || size!=(i<28?2u:1u) || !v.At(group,0x10,bank) ||
+           !v.Method(bank,0x22E2970,0x10,0xADDE80) || !v.At(bank,0x50,targets) || targets!=size ||
+           !v.At(bank,0x68,arena) || !v.At(bank,0x70,stride) || stride!=2048 || !v.At(bank,0x60,renders))
+            return "stock_optional_measure_bounds";
+        if(!arena || !renders) continue;
+        for(unsigned target=0;target<size;++target) {
+            std::uintptr_t render=0,asset=0;std::uint32_t render_bytes=0,body=0;
+            if(!v.At(renders,target*8,render)) return "stock_optional_measure_bounds";
+            if(!render) continue;
+            if(arena>UINTPTR_MAX-std::size_t(target)*stride || render!=arena+std::size_t(target)*stride || !v.At(render,0,render_bytes) || !v.At(render,0xC,body) ||
+               body!=0x20 || !v.At(render,0x20+0x80,asset)) return "stock_optional_measure_render";
+            if(asset!=s.optional.asset) continue;
+            if(!render_bytes || render_bytes>2048) return "stock_optional_measure_size";
+            if(found && render_bytes!=bytes) return "stock_optional_measure_mismatch";
+            bytes=render_bytes;++found;
+        }
+    }
+    if(!found) return "stock_optional_unmeasured";
+    s.optional.render_bytes=bytes;
+    return nullptr;
 }
 
 template<class Reader> const char* MissionReady(View<Reader>& v,Snapshot& s,const Target& t=kStock46) noexcept {
@@ -395,6 +490,7 @@ template<class Reader> const char* Capture(std::uintptr_t base,std::size_t span,
        !v.At(context,8,context_count) || context_count!=1 || !v.At(context,0xC,context_base) || context_base!=1 ||
        !v.At(context,0x10,context_rows) || !v.At(context_rows,0x70,current)) return "effect_clear_context";
     if(const char* reason=MissionReady(v,s,t)) return reason;
+    if(s.optional.measured) if(const char* reason=MeasuredRender(v,s)) return reason;
     if(!v.At(s.engine,0x1D8,s.info) || !v.At(s.engine,0x1E0,s.cache) || !v.At(s.engine,0x1E8,s.refs) ||
        !v.At(s.info,t.cache_index*0x90,s.cache_info) || !v.At(s.cache,t.cache_index*0x38,s.cache_record) ||
        !v.At(s.refs,t.cache_index*4,s.cache_refs)) return "stock_cache";
@@ -426,7 +522,31 @@ template<class Reader> const char* Capture(std::uintptr_t base,std::size_t span,
         if(!h || index>=regular || !v.At(s.meta_rows,index*0xE,s.local_engine_metadata[i]) ||
            !v.At(s.map_rows,index*4,s.local_resource_ids[i]) || s.local_resource_ids[i]>=regular) return "local_handle_resources";
     }
+    // DC3374: a gun-type handle's (types 1..8) engine metadata row +8 names its
+    // stock cache entry; all seven of body 0's handles count (viewer_shared).
+    for(unsigned i=0;i<7;++i) {
+        const auto h=s.local_handles[i],index=h>>16,type=h&0x1Fu;
+        s.local_cache_index[i]=0xFF;
+        if(!h || index==0xFFFFu || type<1 || type>8) continue;
+        if(index>=regular || !v.At(s.meta_rows,index*0xE+8,s.local_cache_index[i])) return "local_handle_resources";
+    }
     return nullptr;
+}
+// The census's viewer references (CacheEntry::viewer): how many of body 0's
+// seven handles name each stock cache entry (DC3374, as Capture reads them).
+template<class Reader> bool ViewerReferences(View<Reader>& v,std::uintptr_t inventory,std::uintptr_t engine,
+        std::array<std::uint8_t,48>& viewer) noexcept {
+    viewer={};std::uintptr_t handle_buffer=0,metadata_owner=0,metadata_rows=0;std::uint32_t stride=0,regular=0;
+    std::array<std::uint32_t,7> local{};
+    if(!v.At(inventory,0xC,stride) || stride!=7 || !v.At(inventory,0x40,handle_buffer) || !v.At(handle_buffer,0,local) ||
+       !v.At(engine,0x100,regular) || regular!=60 || !v.At(engine,0x120,metadata_owner) || !v.At(metadata_owner,0x28,metadata_rows)) return false;
+    for(const auto h:local) {
+        const auto index=h>>16,type=h&0x1Fu;std::uint8_t cache_entry=0;
+        if(!h || index==0xFFFFu || type<1 || type>8) continue;
+        if(index>=regular || !v.At(metadata_rows,index*0xE+8,cache_entry)) return false;
+        if(cache_entry<viewer.size()) ++viewer[cache_entry];
+    }
+    return true;
 }
 
 template<class Reader> PackageObservation ObservePackage(View<Reader>& v,const Target& t=kStock46) noexcept {
@@ -485,7 +605,7 @@ template<class Reader> bool RenderBankOwner(View<Reader>& v,const BankLease& b,b
 
 template<class Reader> const char* QualifyDelayedResources(View<Reader>& v,Snapshot& s,
         std::uintptr_t groups,std::uintptr_t resource_rows,std::uintptr_t map_flags,
-        std::uintptr_t free_queue,std::uint32_t free_cursor) noexcept {
+        std::uintptr_t free_queue,std::uint32_t free_cursor,bool shared=false) noexcept {
     s.free_cursor=free_cursor;
     if(resource_rows!=s.resource_owners || !v.At(s.map_rows,0,s.initial_maps) || !v.At(resource_rows,0,s.initial_owners) ||
        !v.At(map_flags,0,s.initial_load_flags) || !v.At(s.meta_rows,0,s.initial_engine_metadata) ||
@@ -571,7 +691,14 @@ template<class Reader> const char* QualifyDelayedResources(View<Reader>& v,Snaps
                     if(!Zero(e.reference) || e.key || e.refs || e.component) return "delayed_cache_null_dirty";
                     b.unused|=1ull<<i;++unused_count;
                 }
-                if(!optional && asset==s.stock_parts_asset && e.key==s.mission_entry) return "delayed_cache_stock_match";
+                // A shared tier (a1s/cs) accepts the native sharing (ADE0BF..ADE131:
+                // the bank reuses the (parts asset, mission entry) entry and
+                // increments its refs) outside the predicted group, which keeps
+                // today's rules (the free-queue head: wait).
+                if(!optional && asset==s.stock_parts_asset && e.key==s.mission_entry) {
+                    if(!shared) return "delayed_cache_stock_match";
+                    if(group_index==s.selected_group_index) return "selected_group_shared";
+                }
             }
             // One natural DB7590 pass can prepare at most N resources in a
             // group, with at most 2*N optional targets. Reserve nothing: merely
@@ -621,10 +748,14 @@ template<class Reader> const char* Preflight(std::uintptr_t base,std::size_t spa
     // B0C720: the binder record of slot s is binder30 + s*12 (current, pending, flags).
     for(unsigned i=0;i<3;++i) {
         if(!t.require_remote_empty && i!=t.slot) continue;
-        if(Word32(s.remote_binder.data()+i*12)!=0xFFFFFFE0u ||
-           Word32(s.remote_binder.data()+i*12+4) || Word32(s.remote_binder.data()+i*12+8)) return "remote_binder_not_empty";
+        if(!BinderEmpty(Word32(s.remote_binder.data()+i*12),Word32(s.remote_binder.data()+i*12+4),
+                        Word32(s.remote_binder.data()+i*12+8))) return "remote_binder_not_empty";
     }
-    if(s.cache_refs) return "stock_cache_in_use";
+    // Unshared tiers: nobody references the entry. Shared tiers (a1s/cs):
+    // others may (bounded), the viewer never (any of body 0's seven handles).
+    if(!t.shared && s.cache_refs) return "stock_cache_in_use";
+    if(t.shared && s.cache_refs>=kSharedRefsBound) return "shared_refs_bound";
+    for(const auto local_cache_entry:s.local_cache_index) if(local_cache_entry==t.cache_index) return "viewer_shared";
     View<Reader> v{reader,base,span};std::uint32_t regular=0,meta_count=0,handle_count=0,resource_count=0;
     std::uintptr_t meta_owner=0,map_flags=0,resource_rows=0;std::uint8_t load_flags=0;
     if(!v.At(s.engine,0x100,regular) || regular!=60 || !v.At(s.engine,0x48,s.ring) ||
@@ -761,7 +892,10 @@ template<class Reader> const char* Preflight(std::uintptr_t base,std::size_t spa
             if(optional) {if(!empty) return "selected_cache_not_empty";}
             else {
                 s.main_cache_entries[entry_index]=cache_entry;
-                if(asset==s.stock_parts_asset && cache_entry.key==s.mission_entry) return "selected_cache_stock_match";
+                // A shared tier keeps the predicted group's rules and waits for it
+                // (another resource of the group references the parts asset).
+                if(asset==s.stock_parts_asset && cache_entry.key==s.mission_entry)
+                    return t.shared ? "selected_group_shared" : "selected_cache_stock_match";
                 if(!asset && s.main_cache_candidate==UINT32_MAX) {
                     if(!empty) return "selected_cache_null_entry_dirty";
                     s.main_cache_candidate=entry_index;
@@ -798,10 +932,21 @@ template<class Reader> const char* Preflight(std::uintptr_t base,std::size_t spa
     s.package_parameters=s.package_observation.parameters;
     if(s.package_observation.reads!=PackageReads(t) || s.package_observation.checks!=PackageChecks(t))
         return "selected_package_bounds";
-    if(const auto reason=QualifyDelayedResources(v,s,groups,resource_rows,map_flags,free_queue,free_cursor)) return reason;
+    if(const auto reason=QualifyDelayedResources(v,s,groups,resource_rows,map_flags,free_queue,free_cursor,t.shared)) return reason;
     return nullptr;
 }
-template<class Reader> const char* DelayedCachesPreserved(View<Reader>& v,const Snapshot& before) noexcept {
+// The occupied bank entries a shared tier's natural binding may reuse: the
+// target's parts asset of this mission entry in a main bank (the pair
+// 1307F4C's request carries), its optional asset in an optional sub-bank
+// (1308537's request: the asset and the lookup's own key). ADE0BF..ADE0F0 /
+// ADEA30..ADEA40 match (asset, key), then only increment the refs (ADE131);
+// the reference, key and component stay (DelayedCachesPreserved checks them).
+inline bool SharedBankEntry(const Snapshot& before,const BankCacheEntry& e,bool optional_bank) noexcept {
+    std::uintptr_t asset=0;std::memcpy(&asset,e.reference.data(),sizeof(asset));
+    if(optional_bank) return before.optional.asset && asset==before.optional.asset;
+    return before.stock_parts_asset && asset==before.stock_parts_asset && e.key==before.mission_entry;
+}
+template<class Reader> const char* DelayedCachesPreserved(View<Reader>& v,const Snapshot& before,bool shared=false) noexcept {
     std::uintptr_t groups=0;
     if(!v.At(before.engine,0x130,groups)) return "delayed_bank_owner_changed";
     for(unsigned index=0;index<64;++index) {
@@ -826,13 +971,25 @@ template<class Reader> const char* DelayedCachesPreserved(View<Reader>& v,const 
             BankCacheEntry e{};
             if(!v.At(b.arrays[0],i*0x18,e.reference) || !v.At(b.arrays[1],i*8,e.key) ||
                !v.At(b.arrays[2],i*2,e.refs) || !v.At(b.arrays[3],i*8,e.component)) return "delayed_cache_unreadable";
+            // A shared tier: the target's own (asset, mission entry) entries keep
+            // their reference, key and component; only their refs may move.
+            if(shared && SharedBankEntry(before,b.entries[i],(index%2)!=0)) {
+                if(e.reference!=b.entries[i].reference || e.key!=b.entries[i].key || e.component!=b.entries[i].component)
+                    return "delayed_shared_cache_changed";
+                continue;
+            }
             if(!(e==b.entries[i])) return "delayed_occupied_cache_changed";
         }
     }
     return nullptr;
 }
+// The bank entry the bound resource uses: initially unused (bank_shared false:
+// "fresh", every tier) or, for a shared tier only, the initially occupied
+// (parts asset, mission entry) entry the bank reused (ADE0BF..ADE131;
+// bank_shared true: "shared") with its reference, key and component unchanged.
 template<class Reader> const char* QualifiedBoundResource(View<Reader>& v,const Snapshot& before,
-        std::uint32_t resource) noexcept {
+        std::uint32_t resource,bool shared=false,bool* bank_shared=nullptr) noexcept {
+    if(bank_shared) *bank_shared=false;
     if(resource>=60 || !(before.eligible_resources&(1ull<<resource))) return "bound_resource_unqualified";
     std::uintptr_t owners=0;std::uint32_t owner=0;
     if(!v.At(before.map,0x10,owners) || owners!=before.resource_owners ||
@@ -842,13 +999,19 @@ template<class Reader> const char* QualifiedBoundResource(View<Reader>& v,const 
     if(group>=32) return "bound_resource_unqualified";
     const auto& b=before.banks[group*2];std::uint8_t selected=0;
     std::uintptr_t model=0;BankCacheEntry e{};
-    if(!v.At(b.targets,local*8,model) || !model || !v.At(b.aux[0],local,selected) || selected>=b.count ||
-       !(b.unused&(1ull<<selected))) return "bound_cache_unqualified";
+    if(!v.At(b.targets,local*8,model) || !model || !v.At(b.aux[0],local,selected) || selected>=b.count)
+        return "bound_cache_unqualified";
+    const bool fresh=(b.unused&(1ull<<selected))!=0;
+    const bool reused=!fresh && shared && SharedBankEntry(before,b.entries[selected],false);
+    if(!fresh && !reused) return "bound_cache_unqualified";
     if(!v.At(b.arrays[0],selected*0x18,e.reference) || !v.At(b.arrays[1],selected*8,e.key) ||
        !v.At(b.arrays[2],selected*2,e.refs) || !v.At(b.arrays[3],selected*8,e.component)) return "bound_cache_unreadable";
     std::uintptr_t asset=0;std::memcpy(&asset,e.reference.data(),sizeof(asset));
     if(asset!=before.stock_parts_asset || e.key!=before.mission_entry || !e.refs || !e.component)
         return "bound_stock_cache_identity";
+    if(reused && (e.reference!=b.entries[selected].reference || e.component!=b.entries[selected].component))
+        return "bound_shared_cache_changed";
+    if(bank_shared) *bank_shared=reused;
     // ADE3E8..ADE3F6 chooses arena68+target*stride70; ADE40D constructs there,
     // then ADE446 publishes that same base in render60[target]. This is owned
     // allocation evidence, not visible rendering or animation completion.
@@ -897,7 +1060,8 @@ inline const char* LocalUnchanged(const Snapshot& before,const Snapshot& after) 
     if(before.local_handles!=after.local_handles || before.local_metadata!=after.local_metadata ||
        before.local_binder!=after.local_binder || before.local_base_ids!=after.local_base_ids ||
        before.local_recipes!=after.local_recipes || before.local_engine_metadata!=after.local_engine_metadata ||
-       before.local_resource_ids!=after.local_resource_ids) return "local_equipment_changed";
+       before.local_resource_ids!=after.local_resource_ids || before.local_cache_index!=after.local_cache_index)
+        return "local_equipment_changed";
     if(before.cache_info!=after.cache_info || before.cache_record!=after.cache_record) return "stock_cache_changed";
     if(before.stock_parts_asset!=after.stock_parts_asset || before.stock_parts_word30!=after.stock_parts_word30 ||
        before.stock_parts_entity!=after.stock_parts_entity)
@@ -936,6 +1100,7 @@ template<class Reader> bool DependencyIds(View<Reader>& v,const std::array<std::
 // protected), refs 1E8 u32.
 struct CacheEntry {
     std::uint16_t equip=0;std::uint8_t type=0,receiver=0,flags=0;std::uint32_t refs=0;
+    std::uint8_t viewer=0;  // body 0's handles naming this entry (ViewerReferences; part of refs)
 };
 inline constexpr unsigned kCacheEntries=48;
 template<class Reader> bool Census(View<Reader>& v,std::uintptr_t engine,std::array<CacheEntry,kCacheEntries>& out) noexcept {
@@ -958,6 +1123,22 @@ inline unsigned FirstEntry(const std::array<CacheEntry,kCacheEntries>& census,st
 // Tier A1/C admission of a resident entry: used and protected (flags 3, the
 // stock46 pattern), no reference (never shared with the local player).
 inline bool ResidentProtected(const CacheEntry& e) noexcept {return e.flags==3 && e.refs==0;}
+// Tier A1s/Cs admission (partner_native_equip_shared): used and protected,
+// referenced by other actors only (the soldiers: viewer 0), fewer than
+// kSharedRefsBound references.
+inline bool ResidentShared(const CacheEntry& e) noexcept {
+    return e.flags==3 && e.refs>0 && e.refs<kSharedRefsBound && e.viewer==0;
+}
+// Why a referenced entry is not admitted as shared (nullptr: it is).
+inline const char* SharedRefusal(const CacheEntry& e) noexcept {
+    if(e.flags!=3) return "cache_unprotected";
+    if(e.viewer) return "viewer_shared";
+    if(e.refs>=kSharedRefsBound) return "shared_refs_bound";
+    return e.refs ? nullptr : "cache_unshared";
+}
+// The bullet weapon types (partner_slots::BulletType): 1..6. A slot-class
+// substitute prefers them to the projectile types 7/8 (FIRE stays masked).
+constexpr bool BulletGunType(std::uint8_t type) noexcept {return type>=1 && type<=6;}
 // --- Tier C: the substitute search (docs/native-puppet.md "Generalized writer").
 // The type a slot's substitute must have: the manifest's own type of the slot
 // (version 2), else the want's table type, when it is a gun type of this slot;
@@ -978,23 +1159,31 @@ struct SubstituteQuery {
     std::uint16_t want=0;                     // the manifest's base id (never its own substitute)
     std::array<std::uint16_t,6> viewer{};     // the viewer's own vars.weapons (never shared with the local player)
     std::array<std::uint16_t,3> dispatched{}; // what this allocation already dispatched to other slots
+    // The population (weapons4): false the unreferenced entries (tier C),
+    // true the shared ones (tier Cs: ResidentShared).
+    bool shared=false;
 };
 // The next census entry of a pass, the lowest id first, not yet tried: used,
 // protected and unreferenced (flags 3, refs 0: an n3 entry such as the
-// soldiers' rifle never qualifies), the id's first used entry (DC3755), a stock
-// id below 0x230 (never an alias or blueprint, never the viewer's 871..876),
-// of the pass's type. kCacheEntries when none.
+// soldiers' rifle qualifies only as shared, q.shared), the id's first used
+// entry (DC3755), a stock id below 0x230 (never an alias or blueprint, never
+// the viewer's 871..876), of the pass's type; the slot class takes the bullet
+// types (1..6) before the projectiles (7/8). kCacheEntries when none.
 inline unsigned NextCandidate(const std::array<CacheEntry,kCacheEntries>& census,const SubstituteQuery& q,SubstitutePass pass,
                               const std::array<bool,kCacheEntries>& tried) noexcept {
     if(pass!=SubstitutePass::slot_class && !q.type) return kCacheEntries;
     if(pass==SubstitutePass::type_receiver && !q.receiver) return kCacheEntries;
     unsigned best=kCacheEntries;
+    const auto rank=[&](const CacheEntry& e) noexcept {
+        return (pass==SubstitutePass::slot_class && !BulletGunType(e.type) ? 0x10000u : 0u) | e.equip;
+    };
     for(unsigned i=0;i<kCacheEntries;++i) {
         const auto& e=census[i];
-        if(tried[i] || !ResidentProtected(e) || !e.equip || e.equip>=0x230 || FirstEntry(census,e.equip)!=i) continue;
+        if(tried[i] || !(q.shared ? ResidentShared(e) : ResidentProtected(e)) || !e.equip || e.equip>=0x230 ||
+           FirstEntry(census,e.equip)!=i) continue;
         const bool type_ok=pass==SubstitutePass::slot_class ? TypeSlot(e.type)==q.slot && e.type!=q.type : e.type==q.type;
         if(!type_ok || (pass==SubstitutePass::type_receiver && e.receiver!=q.receiver)) continue;
-        if(best==kCacheEntries || e.equip<census[best].equip) best=i;
+        if(best==kCacheEntries || rank(e)<rank(census[best])) best=i;
     }
     return best;
 }

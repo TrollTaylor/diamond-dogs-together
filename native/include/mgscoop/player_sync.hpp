@@ -198,22 +198,33 @@ constexpr std::size_t input_frame_size_v4 = wire::header_size + input_packet_siz
 // v3 inv_slot byte [67] (0..15, 0xFF unknown).
 constexpr std::size_t input_packet_size_v5 = 88;
 constexpr std::size_t input_frame_size_v5 = wire::header_size + input_packet_size_v5;  // 116
+// v6 (docs/native-puppet.md "The gun direction"): v5 plus [88..89] int16 the
+// sender's gun pitch and [90..91] int16 its gun yaw in centidegrees (world,
+// partner_aim::GunDir), with gun flag AimDir 0x20 (which needs valid and
+// aiming; pitch within +-9000, yaw -18000..17999), else both 0.
+constexpr std::size_t input_packet_size_v6 = 92;
+constexpr std::size_t input_frame_size_v6 = wire::header_size + input_packet_size_v6;  // 120
+constexpr std::size_t input_frame_size_max = input_frame_size_v6;
 constexpr std::uint8_t input_magic = 0x49;
 constexpr std::uint8_t input_version = 2;
 constexpr std::uint8_t input_version_v3 = 3;
 constexpr std::uint8_t input_version_v4 = 4;
 constexpr std::uint8_t input_version_v5 = 5;
+constexpr std::uint8_t input_version_v6 = 6;
 // Returns input_frame_size (a v2 frame), or 0 (out zeroed) for a zero
 // session/epoch/sequence or a packet outside the wire ranges
 // (partner_input::ValidPacket; packet.version must be 2).
 std::size_t encode_input_frame(std::uint64_t session, std::uint32_t epoch, std::uint32_t sequence,
                                const partner_input::InputPacket& packet, std::uint8_t (&out)[input_frame_size]) noexcept;
 // packet.version 2 -> a 76-byte v2 frame, 3 -> a 100-byte v3 frame, 4 -> a
-// 112-byte v4 frame, 5 -> a 116-byte v5 frame (returned size), 0 (out zeroed)
-// otherwise or for anything encode_input_frame refuses.
+// 112-byte v4 frame, 5 -> a 116-byte v5 frame, 6 -> a 120-byte v6 frame
+// (returned size), 0 (out zeroed) otherwise or for anything encode_input_frame refuses.
+std::size_t encode_input_frame_any(std::uint64_t session, std::uint32_t epoch, std::uint32_t sequence,
+                                   const partner_input::InputPacket& packet, std::uint8_t (&out)[input_frame_size_max]) noexcept;
+// Legacy fixed-buffer overload: versions 2..5 only; v6 refuses and zeros out.
 std::size_t encode_input_frame_any(std::uint64_t session, std::uint32_t epoch, std::uint32_t sequence,
                                    const partner_input::InputPacket& packet, std::uint8_t (&out)[input_frame_size_v5]) noexcept;
-// Strict: a 68-byte v1, a 76-byte v2, a 100-byte v3, a 112-byte v4 or a 116-byte v5 frame; magic/version matching the size,
+// Strict: a 68-byte v1, a 76-byte v2, a 100-byte v3, a 112-byte v4, a 116-byte v5 or a 120-byte v6 frame; magic/version matching the size,
 // kind event, the payload length, non-zero session/epoch/sequence, known flag
 // bits, reserved bytes zero, the ranges above. out.version tells which.
 bool decode_input_frame(const std::uint8_t* data, std::size_t size, std::uint64_t& session, std::uint32_t& epoch,

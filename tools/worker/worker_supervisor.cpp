@@ -429,8 +429,9 @@ void WaitAdmission(Worker& worker, Child& child) {
         if (TryText(path, 1024, text)) {
             const auto magic = child.role == "probe" ? "MGSWORKERPROBE1" : "MGSWORKERCTX1";
             Require(Admission(text, magic, worker.manifest.run, child.role, child.pid, child.creation, worker.manifest.desktop), "child_admission_ownership_mismatch");
-            // A successful probe may already have exited after publishing its result.
-            if (child.role != "probe") worker.Lease(child);
+            // Probe readiness retains its live window/resources until our ACK.
+            // Require the exact live process/job lease for EVERY admitted child.
+            worker.Lease(child);
             child.admitted = true; Inspect(worker);
             worker.reason = child.role + "_actual_context_admitted"; worker.Publish(); return;
         }
@@ -451,7 +452,7 @@ void PrepareRun(Worker& worker, const std::string& manifest_path) {
     worker.run_lock.Reset(CreateFileW(worker.At("supervisor.lock").c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr));
     Require(worker.run_lock.Valid(), "run_directory_already_owned"); worker.creation = CreationTime(GetCurrentProcess());
     WriteAll(worker.run_lock.value, "MGSWORKEROWNER1 " + worker.manifest.run + " " + std::to_string(worker.pid) + " " + std::to_string(worker.creation) + "\n");
-    for (const char* name : {"supervisor.json", "probe.context", "probe.json", "qualification.txt", "host.context", "guest.context", "probe-backbuffer.bmp"})
+    for (const char* name : {"supervisor.json", "probe.context", "probe.json", "qualification.txt", "host.context", "guest.context", "probe-backbuffer.bmp", "probe.ack"})
         Require(GetFileAttributesW(worker.At(name).c_str()) == INVALID_FILE_ATTRIBUTES && GetLastError() == ERROR_FILE_NOT_FOUND, "run_directory_stale_receipt");
     auto self = OpenRead(OwnExe()); worker.own_sha = Hash(self.value);
     Pin own; own.path = OwnExe(); own.file = std::move(self); own.digest = worker.own_sha; worker.pins.push_back(std::move(own));
@@ -480,10 +481,33 @@ void Execute(Worker& worker) {
         worker.stage = "starting"; worker.reason = "private_desktop_job_qualified"; worker.Publish();
         if (worker.manifest.mode == "probe") {
             Launch(worker, "probe", worker.manifest.At("probe_exe"), worker.manifest.At("probe_sha256")); WaitAdmission(worker, worker.children.back());
-            while (!AllExited(worker) && GetTickCount64() < worker.deadline) { Inspect(worker); if (ControlRequested(worker)) throw Failure("probe_shutdown_requested", ERROR_CANCELLED); Sleep(50); }
-            Require(AllExited(worker), "probe_exit_timeout"); Require(GetExitCodeProcess(worker.children[0].process.value, &worker.children[0].exit) != FALSE && worker.children[0].exit == 0, "probe_exit_not_success");
+            auto& probe = worker.children.back();
+            // Strict window/thread/job checks still run while the probe keeps
+            // its HWND and all resources alive, before exit is authorized.
+            Inspect(worker); worker.Lease(probe);
+            if (ControlRequested(worker)) throw Failure("probe_shutdown_requested", ERROR_CANCELLED);
             const auto bitmap = worker.At("probe-backbuffer.bmp"); auto image = OpenRead(bitmap); Require(Size(image.value, 16438) == 16438, "probe_bitmap_size");
-            const auto bmp_sha = Hash(image.value); const auto tick = GetTickCount64();
+            const auto expected_bmp_sha = Hash(image.value); // Immutable read lease through exit.
+            worker.stage = "probe_releasing"; worker.reason = "live_probe_ownership_verified"; worker.Publish();
+            Atomic(worker.At("probe.ack"), "MGSWORKERPROBEACK1 " + worker.manifest.run + " probe " + std::to_string(probe.pid) + " " +
+                std::to_string(probe.creation) + " release\n", false);
+            const auto release_deadline = std::min<std::uint64_t>(worker.deadline, GetTickCount64() + 10000);
+            for (;;) {
+                // Exit now intentionally destroys windows. The exact leased
+                // process HANDLE remains authoritative; no live admission
+                // decisions occur during this deliberate teardown phase.
+                PrivateThread(worker.manifest.desktop); VerifySentinel(worker); worker.last_input = InputDesktop();
+                Require(worker.last_input == worker.initial_input && worker.last_input != worker.manifest.desktop,
+                        "visible_input_desktop_changed");
+                if (ControlRequested(worker)) throw Failure("probe_shutdown_requested", ERROR_CANCELLED);
+                const auto now = GetTickCount64(); if (now >= release_deadline) throw Failure("probe_exit_timeout", WAIT_TIMEOUT);
+                const DWORD waited = WaitForSingleObject(probe.process.value, static_cast<DWORD>(std::min<std::uint64_t>(50, release_deadline - now)));
+                Require(waited == WAIT_OBJECT_0 || waited == WAIT_TIMEOUT, "probe_exit_wait");
+                if (waited == WAIT_OBJECT_0) break;
+            }
+            Require(AllExited(worker), "probe_exit_timeout"); Require(GetExitCodeProcess(probe.process.value, &probe.exit) != FALSE && probe.exit == 0, "probe_exit_not_success");
+            const auto bmp_sha = Hash(image.value); Require(bmp_sha == expected_bmp_sha, "probe_bitmap_changed_after_release");
+            const auto tick = GetTickCount64();
             Atomic(worker.At("qualification.txt"), "MGSWORKERQUAL1 " + worker.manifest.run + " " + worker.own_sha + " " + worker.manifest.At("probe_sha256") + " " + bmp_sha + " " + std::to_string(tick) + " qualified\n", false);
             worker.probe_ready = true; worker.stage = "completed"; worker.reason = "private_hardware_probe_qualified";
         } else {

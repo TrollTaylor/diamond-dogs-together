@@ -114,6 +114,7 @@ set(_mgs_world_chunks "${_mgs_coop}/world_sync.lua" "${_mgs_coop}/world_enemy.lu
   "${_mgs_coop}/world_phase.lua" "${_mgs_coop}/world_env.lua" "${_mgs_coop}/world_probe.lua" "${_mgs_coop}/world_goto.lua")
 mgs_add_lua_check(world_sync_lua_check ${_mgs_world_chunks})
 mgs_add_lua_check(world_follow_lua_check "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_follow_seed.lua")
+mgs_add_lua_check(world_goto_lua_check "${_mgs_coop}/world_goto.lua")
 mgs_add_lua_check(world_align_lua_check "${_mgs_coop}/world_align.lua" "${_mgs_coop}/world_enemy.lua"
   "${_mgs_coop}/world_outcome.lua" "${_mgs_coop}/world_phase.lua" "${_mgs_coop}/world_recovery.lua" "${_mgs_coop}/world_probe.lua"
   "${_mgs_coop}/world_place.lua" "${_mgs_coop}/world_place_guest.lua")
@@ -274,6 +275,17 @@ mgs_add_game_lua_check(death_policy_composed_lua_check death_policy_lua_check "$
 mgs_add_patch_check(player_package_patch_check "${_mgs_pack_list}" "${_mgs_out}/TppPackList.lua")
 mgs_add_game_lua_check(player_package_lua_check player_package_lua_check "${_mgs_pack_list}" player_package_patch_check
   "${_mgs_pack_list}" "${_mgs_out}/TppPackList.lua")
+# The same checks plus the real TppMissionList.GetMissionPackagePath (30050
+# layouts 1..3, DemoStage, BattleHanger 0..5, 30010 and its Volgin demo, 30020)
+# through the composed TppPackList.lua; registered only when that source is found.
+mgs_find_game_input(_mgs_mission_list "mission-list-inspection-20260909/package-00.lua"
+  3c250e19fc5ba0ccc14b192daef2860555e6cadf0f44039876fc3e8687f60e1d)
+if(_mgs_mission_list)
+  mgs_add_game_lua_check(player_package_mission_list_lua_check player_package_lua_check "${_mgs_pack_list}" player_package_patch_check
+    "${_mgs_pack_list}" "${_mgs_out}/TppPackList.lua" "${_mgs_mission_list}")
+else()
+  list(APPEND _mgs_skipped player_package_mission_list_lua_check)
+endif()
 # Optional parity reference: Dynamite c90f252 standalone/DamageParameterTables.lua
 # from an upstream checkout (work/upstream-dynamite, gitignored).
 set(_mgs_dynamite_candidates "${CMAKE_CURRENT_SOURCE_DIR}/work/upstream-dynamite")

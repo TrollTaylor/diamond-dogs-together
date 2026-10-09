@@ -15,6 +15,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
+Import-Module (Join-Path $projectRoot 'tools\worker\WorkerSource.psm1') -Force -DisableNameChecking
 Import-Module (Join-Path $projectRoot 'tools/lab/LabCommon.psm1') -Force -DisableNameChecking
 Import-Module (Join-Path $projectRoot 'tools/friend/FriendCommon.psm1') -Force -DisableNameChecking
 $buildRoot = [IO.Path]::GetFullPath((Join-Path $projectRoot 'build'))
@@ -544,6 +545,25 @@ try {
         Assert-True ([bool]$sentence -and $sentence -cnotmatch '[^\x20-\x7E]') "partner reason sentence for $reason"
     }
     Assert-Equal (Get-CoopPartnerReasonText -Reason 'legacy') 'clip partner chosen (Play-Coop -Partner clips)' 'clips by choice'
+    # A refused partner pack (Mother Base demo stage, hangar, story variant): no body, said plainly.
+    $noBodyStatus = ConvertFrom-CoopStatusText -Text ($statusText.Replace('"saves":"redirected"', '"saves":"redirected","partner_drive":"off","partner_reason":"no_body_pack","remote_drive":"native","remote_reason":"ok"'))
+    $noBodyLine = Format-CoopStatusLine -Status $noBodyStatus -Role host -NowUtc $now
+    Assert-True ($noBodyLine.Contains(' - no partner body in this scene (a Mother Base demo, the battle-gear hangar or a story variant;') -and
+        !$noBodyLine.Contains('clips (') -and $noBodyLine.Contains('; you on the other PC: native |')) 'status line: no partner body in this scene instead of clips'
+    Assert-True ((Get-CoopPartnerReasonText -Reason 'no_body_pack') -cnotmatch '[^\x20-\x7E]') 'no_body_pack sentence is ASCII'
+    # Fresh cached owner status wins over the historical drive/gun snapshots.
+    foreach ($entry in @(@('match', 'matched'), @('substitute', 'substitute'), @('standin', 'stand-in'), @('switching', 'switching'),
+                         @('unavailable', 'unavailable'))) {
+        $cached = ConvertFrom-CoopStatusText -Text ($statusText.Replace('"saves":"redirected"',
+            ('"saves":"redirected","partner_drive":"clips","partner_view":"native","partner_gun":"{0}","partner_gun_present":1,"partner_view_fresh":1' -f $entry[0])))
+        Assert-True ((Format-CoopStatusLine -Status $cached -Role host -NowUtc $now).Contains(('look native; gun {0} |' -f $entry[1]))) 'launcher uses the current copied HUD gun status'
+    }
+    $staleCached = ConvertFrom-CoopStatusText -Text ($statusText.Replace('"saves":"redirected"',
+        '"saves":"redirected","partner_drive":"native","partner_view":"native","partner_gun":"match","partner_gun_present":1,"partner_view_fresh":0'))
+    Assert-True ((Format-CoopStatusLine -Status $staleCached -Role host -NowUtc $now).Contains('look loading; gun unavailable |')) 'stale cached owner status cannot advertise native/matched gun'
+    $sparseCached = ConvertFrom-CoopStatusText -Text '{"v":1,"state":"connected","partner_view":"clips","partner_view_fresh":1}'
+    Assert-True ((Format-CoopStatusLine -Status $sparseCached -Role guest -NowUtc $now).Contains('partner=none clips; gun unavailable |')) 'sparse cached view is StrictMode-safe'
+    Assert-True ((Format-CoopStatusLine -Status $staleCached -Role host -NowUtc $now.AddSeconds(30)).StartsWith('[HOST] game not responding')) 'cache fields preserve file staleness error'
     # The reader shares ReadWrite|Delete, so the game's MoveFileExW(REPLACE_EXISTING) never fails because of it.
     $statusFile = Join-Path $fixture 'link-status.json'
     [IO.File]::WriteAllText($statusFile, $statusText)
@@ -643,12 +663,72 @@ try {
     # ------------------------------------------------------------ package contents
     $fakeLoader = Join-Path $fixture 'fake-loader.dll'
     [IO.File]::WriteAllText($fakeLoader, 'INERT loader stand-in for the package test')
+    # Actual shared snapshot policy on small inert source trees: no check runner,
+    # build, installer, native fixture or game process is invoked.
+    $sourceFx = Join-Path $fixture 'source-snapshot'
+    $null = New-Item -ItemType Directory -Path (Join-Path $sourceFx 'native'), (Join-Path $sourceFx 'third_party\minhook') -Force
+    [IO.File]::WriteAllText((Join-Path $sourceFx 'CMakeLists.txt'), '# inert source fixture')
+    $sourceFile = Join-Path $sourceFx 'native\fixture.cpp'
+    [IO.File]::WriteAllText($sourceFile, '// checked source')
+    [IO.File]::WriteAllText((Join-Path $sourceFx 'third_party\minhook\CMakeLists.txt'), '# inert dependency fixture')
+    $sourceSnap = Get-WorkerSourceHashes $sourceFx
+    $sourceReceipt = [ordered]@{ source_hashes=$sourceSnap.hashes; source_dependencies=$sourceSnap.dependencies }
+    Assert-WorkerReceiptSource ($sourceReceipt | ConvertTo-Json -Depth 8 | ConvertFrom-Json -AsHashtable) (Get-WorkerSourceHashes $sourceFx)
+    Assert-True $true 'serialized matching receipt source snapshot admitted'
+    Assert-Throws { Assert-WorkerReceiptSource @{} $sourceSnap } 'no complete source snapshot' 'missing source snapshot refused'
+    Assert-Throws { Assert-WorkerReceiptSource @{source_hashes=@{};source_dependencies=$sourceSnap.dependencies} $sourceSnap } 'no complete source snapshot' 'empty source snapshot refused'
+    Assert-Throws { Assert-WorkerReceiptSource @{source_hashes=$sourceSnap.hashes} $sourceSnap } 'no complete source snapshot' 'missing dependency snapshot refused'
+    Assert-Throws { Assert-WorkerReceiptSource @{source_hashes=@{'CMakeLists.txt'='not-a-hash'};source_dependencies=$sourceSnap.dependencies} $sourceSnap } 'invalid source snapshot' 'malformed source hash refused'
+    [IO.File]::WriteAllText($sourceFile, '// untested source')
+    Assert-Throws { Assert-WorkerReceiptSource $sourceReceipt (Get-WorkerSourceHashes $sourceFx) } 'Source changed' 'changed source content refused'
+    [IO.File]::WriteAllText($sourceFile, '// checked source')
+    $addedSource = Join-Path $sourceFx 'native\added.cpp'
+    [IO.File]::WriteAllText($addedSource, '// new untested source')
+    Assert-Throws { Assert-WorkerReceiptSource $sourceReceipt (Get-WorkerSourceHashes $sourceFx) } 'Source file set changed' 'added source refused'
+    Remove-Item -LiteralPath $addedSource
+    Remove-Item -LiteralPath $sourceFile
+    Assert-Throws { Assert-WorkerReceiptSource $sourceReceipt (Get-WorkerSourceHashes $sourceFx) } 'Source file set changed' 'removed source refused'
+    [IO.File]::WriteAllText($sourceFile, '// checked source')
+    $changedDependency = $sourceReceipt | ConvertTo-Json -Depth 8 | ConvertFrom-Json -AsHashtable
+    $changedDependency.source_dependencies['third_party\minhook'].resolved_path += '-other'
+    Assert-Throws { Assert-WorkerReceiptSource $changedDependency (Get-WorkerSourceHashes $sourceFx) } 'dependency target changed' 'changed dependency target refused with same source hashes'
+
+    # The contents test supplies inert DLL bytes with a synthetic passing receipt.
+    # Even the override route must match that receipt and today's exact source scope.
+    $packageScript = Join-Path $projectRoot 'tools\package.ps1'
     $distFx = Join-Path $fixture 'dist'
-    $null = & (Join-Path $projectRoot 'tools/package.ps1') -Friend -LoaderPath $fakeLoader -OutputRoot $distFx
+    Assert-Throws { & $packageScript -Friend -LoaderPath $fakeLoader -OutputRoot $distFx } 'requires a passing Release check receipt' 'friend override cannot bypass receipt'
+    Assert-True (-not (Test-Path -LiteralPath $distFx)) 'missing receipt refuses before staging'
+    $receiptFx = Join-Path $fixture 'release-receipt'
+    $null = New-Item -ItemType Directory -Path $receiptFx
+    [IO.File]::Copy($fakeLoader, (Join-Path $receiptFx 'dinput8.dll'))
+    $releaseFlags = [ordered]@{}
+    foreach ($name in @('MGS_LOCAL_GUN_PRELOAD_TEST','MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST',
+            'MGS_LOCAL_STOCK46_AMMO_TEST','MGS_LOCAL_ACTION_EVENTS','MGS_LOCAL_UPPER_END_OBSERVE','MGS_LOCAL_UPPER_PHASE_OBSERVE',
+            'MGS_LOCAL_UPPER_MANUAL_IDLE','MGS_LOCAL_UPPER_PROBE','MGS_LOCAL_UPPER_CHANNEL2','MGS_LOCAL_UPPER_FIRE_ZERO_BLEND')) {
+        $releaseFlags[$name] = if ($name -in @('MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST')) { 'ON' } else { 'OFF' }
+    }
+    $releaseFlags['MGS_BACKGROUND_WORKER'] = 'OFF'
+    $currentSource = Get-WorkerSourceHashes $projectRoot
+    $releaseReceipt = [ordered]@{schema=1;status='passed';plan=[ordered]@{profile='Release';flags=$releaseFlags;tests=@('inert-fixture-only')};
+        artifacts=[ordered]@{loader_sha256=(Get-Sha256 $fakeLoader)};source_hashes=$currentSource.hashes;source_dependencies=$currentSource.dependencies}
+    $receiptPath = Join-Path $receiptFx 'receipt.json'
+    [IO.File]::WriteAllText($receiptPath, ($releaseReceipt | ConvertTo-Json -Depth 12), $utf8)
+    $wrongLoader = Join-Path $fixture 'wrong-loader.dll'
+    [IO.File]::WriteAllText($wrongLoader, 'OTHER inert loader')
+    Assert-Throws { & $packageScript -Friend -LoaderPath $wrongLoader -CheckReceipt $receiptPath -OutputRoot $distFx } 'does not match the Release receipt loader' 'friend override hash mismatch refused'
+    Assert-True (-not (Test-Path -LiteralPath $distFx)) 'mismatched override refuses before staging'
+    $staleReceipt = $releaseReceipt | ConvertTo-Json -Depth 12 | ConvertFrom-Json -AsHashtable
+    $staleReceipt.source_hashes['CMakeLists.txt'] = '0' * 64
+    $stalePath = Join-Path $receiptFx 'stale.json'
+    [IO.File]::WriteAllText($stalePath, ($staleReceipt | ConvertTo-Json -Depth 12), $utf8)
+    Assert-Throws { & $packageScript -Friend -CheckReceipt $stalePath -OutputRoot $distFx } 'Release source does not match check receipt' 'real package admission rejects stale source receipt'
+    Assert-True (-not (Test-Path -LiteralPath $distFx)) 'stale source refuses before staging'
+    $null = & $packageScript -Friend -LoaderPath $fakeLoader -CheckReceipt $receiptPath -OutputRoot $distFx
     $packages = @(Get-ChildItem -LiteralPath $distFx -Directory)
     Assert-Equal $packages.Count 1 'one friend package staged'
     $pkg = $packages[0].FullName
-    Assert-True ($packages[0].Name -cmatch '^mgs-coop-friend-0\.12\.0-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$') 'package folder name'
+    Assert-True ($packages[0].Name -cmatch '^mgs-coop-friend-0\.12\.1-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$') 'package folder name'
     Assert-True (Test-Path -LiteralPath ($pkg + '.zip') -PathType Leaf) 'package zip written'
     $required = @('Install-Coop.bat', 'Play-Coop.bat', 'Uninstall-Coop.bat', 'Collect-Logs.bat', 'Share-Save.bat', 'scripts/Share-Save.ps1', 'FRIEND-GUIDE.txt', 'RUNTIME-ARCHIVE.txt', 'package.json', 'source-files.json',
         'payload/dinput8.dll', 'payload/DYNAMITE-LICENSE', 'payload/MinHook-LICENSE.txt', 'payload/ImGui-LICENSE.txt', 'payload/tpp-mod-LICENSE', 'payload/THIRD_PARTY_NOTICES.md',
@@ -660,9 +740,11 @@ try {
     Assert-Equal ((@(Get-ChildItem -LiteralPath (Join-Path $pkg 'scripts') -File | ForEach-Object { $_.Name } | Sort-Object)) -join ',') ($wantScripts -join ',') 'scripts: exactly the play package pieces (no LabCommon.psm1, no set-session-mode.ps1)'
     Assert-Equal ((@(Get-ChildItem -LiteralPath $pkg -File -Filter '*.bat' | ForEach-Object { $_.Name } | Sort-Object)) -join ',') 'Collect-Logs.bat,Install-Coop.bat,Play-Coop.bat,Share-Save.bat,Uninstall-Coop.bat' 'the five double-click entry points'
     $manifest = Get-Content -LiteralPath (Join-Path $pkg 'package.json') -Raw | ConvertFrom-Json
-    Assert-Equal "$($manifest.product)|$($manifest.version)|$($manifest.flavor)" 'mgs-coop-local-package|0.12.0|friend-play' 'package manifest identity'
-    # Provenance (docs/two-pc-play.md "Release build"): a supplied loader is reported as such, never as checked.
-    Assert-Equal "$($manifest.build.source)|$($manifest.build.profile)|$($manifest.build.receipt)" 'supplied|unknown|' 'package.json build: a supplied loader'
+    Assert-Equal "$($manifest.product)|$($manifest.version)|$($manifest.flavor)" 'mgs-coop-local-package|0.12.1|friend-play' 'package manifest identity'
+    # A matching override still packages the receipt's immutable checked copy.
+    Assert-Equal "$($manifest.build.source)|$($manifest.build.profile)" 'release_receipt|Release' 'friend build always records the Release receipt'
+    Assert-Equal $manifest.build.receipt ([IO.Path]::GetRelativePath($projectRoot, $receiptPath)) 'package.json records the supplied matching receipt'
+    Assert-Equal $manifest.build.receipt_sha256 (Get-Sha256 $receiptPath) 'package.json records the receipt hash'
     Assert-Equal $manifest.build.loader_sha256 (Get-Sha256 $fakeLoader) 'package.json build: the packaged loader hash'
     Assert-Equal @($manifest.files).Count 6 'six payload files (loader + licenses)'
     Assert-Equal ($manifest.files | Where-Object target -eq 'mgs-coop/ImGui-LICENSE.txt').sha256 (Get-Sha256 (Join-Path $projectRoot 'third_party/imgui/LICENSE.txt')) 'overlay MIT license packaged intact'
@@ -700,7 +782,7 @@ try {
         Assert-True ($text.Contains("powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%~dp0scripts\$b.ps1`" %*") -and $text.Contains("`r`n") -and $text.Contains('pause') -and $text.Contains('set "PSModulePath="')) "$b.bat runs its script with Windows PowerShell (own module path)"
     }
     $guide = [IO.File]::ReadAllText((Join-Path $pkg 'FRIEND-GUIDE.txt'))
-    foreach ($needle in 'Play-Coop.bat', 'UDP 47830', 'Tailscale', 'Mother Base', 'Install-Coop.bat', 'Uninstall-Coop.bat', 'Collect-Logs.bat', 'RUNTIME-ARCHIVE.txt', 'Version 0.12.0', 'Failed to log in', 'Public networks', 'Block rules win over Allow rules', 'REAL saves') {
+    foreach ($needle in 'Play-Coop.bat', 'UDP 47830', 'Tailscale', 'Mother Base', 'Install-Coop.bat', 'Uninstall-Coop.bat', 'Collect-Logs.bat', 'RUNTIME-ARCHIVE.txt', 'Version 0.12.1', 'Failed to log in', 'Public networks', 'Block rules win over Allow rules', 'REAL saves') {
         Assert-True $guide.Contains($needle) "guide mentions $needle"
     }
     foreach ($needle in 'Ctrl+F8', 'Ctrl+F9', '7656119', 'SteamID64', 'normal online service', 'Account details') { Assert-True (!$guide.Contains($needle)) "guide no longer mentions $needle" }

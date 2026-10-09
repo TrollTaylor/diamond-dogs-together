@@ -2,6 +2,7 @@
 // steering, HOLD latch rule and mask (docs/native-puppet.md).
 #include "mgscoop/partner_native.hpp"
 #include <cmath>
+#include <algorithm>
 #include <cstring>
 
 namespace mgscoop::partner_native {
@@ -26,11 +27,12 @@ const char* InstallReason(const char* why) noexcept {
 // Every fallback -> entering precondition; the first failing one names the reason.
 const char* EnterBlocker(const State& s, const In& in, const Params& p) noexcept {
     if (s.dm_latch) return "dm_revert_failed";
+    if (in.visibility_reason) return in.visibility_reason;
     if (!in.defer_on) return "defer_census";
     if (in.install_refusal) return InstallReason(in.install_refusal);
     if (!in.installed_h0 || !in.installed_wrap || !in.installed_h2 || !in.installed_h1 || !in.installed_p1) return "not_installed";
     if (!in.live_h0 || !in.live_h1 || !in.live_h2 || !in.live_p1) return "hook_lost";
-    if (!in.thread_ok) return "thread";
+    if (!in.thread_ok) return in.thread_warmup ? "warmup" : "thread";
     if (in.faulted) return "faulted";
     if (in.dm_revert_failed) return "dm_revert_failed";
     if (in.terminating) return "terminating";
@@ -52,6 +54,7 @@ const char* HardLeave(const In& in) noexcept {
     if (!in.configured) return "configured";
     if (!in.defer_on) return "defer_off";
     if (in.terminating) return "terminating";
+    if (in.visibility_reason) return in.visibility_reason;
     if (in.faulted) return "faulted";
     if (!in.live_h0 || !in.live_h1 || !in.live_h2 || !in.live_p1) return "hook_lost";
     if (!in.thread_ok) return "thread";
@@ -102,7 +105,7 @@ Params OnlineParams() noexcept {
 
 bool NetReason(const char* reason) noexcept {
     if (!reason) return false;
-    static const char* const kNet[] = {"net_input", "net_link", "net_quiet", "range_hidden", "unrealized"};
+    static const char* const kNet[] = {"net_input", "net_link", "net_quiet", "range_hidden", "unrealized", "ride", "ride_stale", "air", "dead"};
     for (const char* n : kNet)
         if (std::strcmp(reason, n) == 0) return true;
     return false;
@@ -153,7 +156,7 @@ Out Step(State& s, const In& in, const Params& p) noexcept {
         s.left_reason = why;
         s.quiet = false;
         // Online: a network reason never counts toward the mission latch.
-        s.left_net = p.online && NetReason(why);
+        s.left_net = (p.online || in.visibility_reason != nullptr) && NetReason(why);
         if (s.left_net) {
             ++s.net_leaves;
             s.last_net_reason = why;
@@ -397,6 +400,27 @@ std::uint32_t MirrorMagazine(const MagIn& in) noexcept {
     return out;
 }
 
+bool DashRelatch(DashState& st, const DashIn& in) noexcept {
+    const auto now = in.now_ms;
+    if (st.last_ms && now < st.last_ms) { st = DashState{}; return false; }
+    const bool eligible = in.active && in.input_live && in.mask_dash && !in.hold_stripped &&
+        in.body_ok && in.remote_ok && in.body_act >= 1 && in.body_act <= 6 &&
+        in.remote_act >= 1 && in.remote_act <= 6 && in.body_stance == 1 && in.remote_stance == 1 &&
+        in.body_speed != 3 && (in.remote_speed == 3 || in.remote_sprinting) &&
+        std::isfinite(in.in_r) && in.in_r >= 0.6;
+    if (!eligible) { st.since_ms = 0; return false; }
+    if (!st.since_ms) st.since_ms = now ? now : 1;
+    if (!st.window_ms || (now >= st.window_ms && now - st.window_ms >= 10000)) {
+        st.window_ms = now ? now : 1;
+        st.attempts = 0;
+    }
+    if (now < st.since_ms || now - st.since_ms < 300 ||
+        (st.last_ms && now - st.last_ms < 1500) || st.attempts >= 4) return false;
+    st.last_ms = now;
+    ++st.attempts;
+    return true;
+}
+
 SteerOut Steer(SteerState& st, const SteerIn& in, const SteerParams& p) noexcept {
     SteerOut o{};
     o.mag_scale = 1.0;
@@ -418,6 +442,7 @@ SteerOut Steer(SteerState& st, const SteerIn& in, const SteerParams& p) noexcept
         const double look = speed * 0.5 > p.lookahead_min_mm ? speed * 0.5 : p.lookahead_min_mm;
         target = Clamp(std::atan2(o.cross_mm, look), -max_rad, max_rad);
     }
+    if (!st.valid) st.hold_scale = 1.0;
     double dt = 0.0;
     if (st.valid && in.now_ms >= st.last_ms) dt = Clamp(static_cast<double>(in.now_ms - st.last_ms) / 1000.0, 0.0, 0.25);
     const double rate = (o.active ? p.rate_dps : p.return_dps) * kPi / 180.0 * dt;
@@ -433,6 +458,21 @@ SteerOut Steer(SteerState& st, const SteerIn& in, const SteerParams& p) noexcept
         const double floor = kTrimFloor / in_r;
         if (scale < floor) scale = floor;
         o.mag_scale = Clamp(scale, 0.0, 1.0);
+    }
+    // HOLD stripped by the existing gate means the body uses free locomotion
+    // where the remote has aim-limited speed. Admit only measured along-track
+    // overrun, change by 10 scale points/100 ms, recover by 20/100 ms, and
+    // keep the injected magnitude above the proven native start threshold.
+    const bool parity = in.hold_stripped && (!in.frozen || in.hold_parity_ready) && !in.prone_transition &&
+        !in.walk_key && in_r >= 0.6 && speed >= p.min_speed_mmps;
+    if (parity) {
+        const double floor = Clamp(kTrimFloor / in_r, 0.0, 1.0);
+        const bool ahead = std::isfinite(in.body_speed_mmps) &&
+            in.body_speed_mmps > 1.25 * speed && o.along_mm < -300.0;
+        st.hold_scale = Clamp(st.hold_scale + (ahead ? -dt : 2.0 * dt), floor, 1.0);
+        o.mag_scale = std::min(o.mag_scale, st.hold_scale);
+    } else {
+        st.hold_scale = 1.0;
     }
     return o;
 }

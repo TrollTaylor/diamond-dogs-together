@@ -34,6 +34,29 @@ local result=packed(env.e.OnPlayerDead(1,'Dead',nil,'extra'))
 check(#calls==1 and calls[1].n==4 and calls[1][1]==1 and calls[1][2]=='Dead' and calls[1][3]==nil and calls[1][4]=='extra',
     'original receives all arguments without a controller')
 check(result.n==2 and result[1]=='original' and result[2]==4,'original results returned')
+-- A paired, qualified offline body cannot kill the local player. Outside
+-- that exact context, local and vanilla deaths retain their original path.
+env,calls=run()
+local logs={}
+env.vars={missionCode=30020}
+env.Tpp={MgsCoop={playerPackageSelected=true}}
+env.PlayerInfo={GetLocalPlayerIndex=function() return 0 end}
+env.e.MgsCoopWorld={active=true,paired=true,eff=3,mission=30020,log=function(s) logs[#logs+1]=s end}
+env.e.OnPlayerDead(1,'FallDeath')
+check(#calls==0 and #logs==1 and logs[1]:find('partner_death=ignored',1,true),'paired puppet death suppressed')
+env.e.OnPlayerDead(0,'Dead')
+check(#calls==1 and calls[1][1]==0,'local death preserved')
+env.e.MgsCoopWorld.paired=false
+env.e.OnPlayerDead(1,'Dead')
+check(#calls==2,'unpaired death preserved')
+env.e.MgsCoopWorld.paired=true
+env.Tpp.MgsCoop.playerPackageSelected=false
+env.e.OnPlayerDead(1,'Dead')
+check(#calls==3,'no qualified body preserves vanilla death')
+env.Tpp.MgsCoop.playerPackageSelected=true
+env.PlayerInfo.GetLocalPlayerIndex=function() error('unread') end
+env.e.OnPlayerDead(1,'Dead')
+check(#calls==4,'unread local identity fails open to vanilla')
 -- Malformed controllers fall back to the original handler.
 for _,controller in ipairs({1,'x',{},{Handle=1},{Handle={}}}) do
     env,calls=run()

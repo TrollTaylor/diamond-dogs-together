@@ -98,7 +98,8 @@ int main() {
     constexpr char run[]="0123456789abcdef0123456789abcdef";
     const std::string prefix=std::string("MGSWORKERDEBUG1 ")+run+" host ";
     Request request{};unsigned checks=0;
-    auto check=[&](bool value){++checks;if(!value){std::printf("failed %u\n",checks);return false;}return true;};
+    auto check_impl=[&](bool value,int line){++checks;if(!value){std::printf("failed %u at line %d\n",checks,line);return false;}return true;};
+#define check(value) check_impl((value), __LINE__)
     const auto valid=prefix+"1 1001 30010 2 weather rain\n";
     if(!check(Parse(valid.data(),valid.size(),run,"host",request) && request.sequence==1 && !std::strcmp(request.text,"weather rain")))return 1;
     if(!check(Timely(request,1000,0)) || !check(!Timely(request,1001,0)) || !check(!Timely(request,1000,1)))return 1;
@@ -159,7 +160,7 @@ int main() {
         }
         std::size_t n=0;
         const auto doc=NativeDocument(t,&n);
-        if(!check(n>0 && n<12288 && ValidJson(doc)))return 1;
+        if(!check(n>0 && n<12288 && ValidJson(doc))){std::fprintf(stderr,"native bytes=%zu valid=%d\n",n,ValidJson(doc)?1:0);return 1;}
         if(!check(doc.find("\"reason\":\"q\\\"b\\\\c\\u0001\"")!=std::string::npos && doc.find("\"age_ms\":null")!=std::string::npos &&
                   doc.find("\"nested\":1,\"foreign\":2,\"unwound\":3,\"drain_block\":4,\"drain_in_batch\":5,\"unwindowed_native\":0}")!=std::string::npos &&
                   doc.find("\"err_mm\":null")!=std::string::npos && doc.find(",\"off\",")!=std::string::npos))return 1;
@@ -179,20 +180,20 @@ int main() {
                   doc.find("\"slots\":{\"setting\":\"\",\"remote_slot\":0,")!=std::string::npos &&
                   doc.find("\"read_ok\":false,\"handles\":[null,null,null],\"plan\":[\"\",\"\",\"\"],\"ok_mask\":0,")!=std::string::npos &&
                   doc.find("\"hand_slot\":0,\"slot_src\":0}")!=std::string::npos &&
-                  doc.find("\"writer\":{\"active\":false,\"dispatches\":0,\"bound\":0,\"refused\":0,\"slots\":[{\"want\":0,\"equip\":0,"
+                  doc.find("\"writer\":{\"active\":false,\"dispatches\":0,\"bound\":0,\"refused\":0,\"shared\":\"\",\"gen\":0,\"resyncs\":0,\"kept\":0,\"slots\":[{\"want\":0,\"equip\":0,"
                            "\"tier\":\"\",\"family\":\"\",\"state\":\"\",\"reason\":\"\",\"handle\":0,\"want_type\":0,\"candidates\":0,"
-                           "\"candidate\":0},")!=std::string::npos &&
+                           "\"candidate\":0,\"retries\":0,\"refs_before\":0,\"refs_after\":0,\"bank\":\"\",\"binder\":[0,0,0]},")!=std::string::npos &&
                   doc.find("\"completed_late\":0,\"queued_taps\":0,\"reconcile\":false,\"len_ms\":0,\"len_max_ms\":0,\"remote_len_ms\":0,"
                            "\"refill_ms\":0,\"release\":false,\"releases\":0,\"probe1\":")!=std::string::npos &&
                   doc.find("\"tx_type\":[0,0,0],\"rx_type\":[0,0,0],\"rx_version\":0,\"apply\":")!=std::string::npos &&
-                  doc.find("\"setting\":\"\",\"resident_fields\":[\"index\",\"id\",\"type\",\"receiver\",\"flags\",\"refs\"],"
+                  doc.find("\"setting\":\"\",\"resident_fields\":[\"index\",\"id\",\"type\",\"receiver\",\"flags\",\"refs\",\"viewer\"],"
                            "\"resident\":null,\"preload\":{\"ids\":[],\"verdict\":\"\",\"reason\":\"\",\"new_hashes\":0}}")!=std::string::npos))return 1;
         // Native polish members (docs/native-puppet.md "Facing", "Weapons"): present in every shape.
         if(!check(doc.find("\"steer_err_mrad\":0,\"cam_diff_cdeg\":0")!=std::string::npos &&
                   doc.find("\"rings\":{\"on\":false,\"windows\":0,\"refused\":0,\"changed\":0,\"last\":\"\"}")!=std::string::npos &&
                   doc.find("\"noise\":{\"mode\":\"\",\"installed\":false,\"live\":false,\"dropped\":0,\"passed\":0}")!=std::string::npos &&
                   doc.find("\"weapon\":{\"kb_remote\":false,\"remote_gun_equip\":0,\"remote_gun_base\":0,\"mismatch\":false,\"strip\":0,\"absent\":false,\"leak_strip\":0,"
-                           "\"gate\":\"\",\"body_type\":0,\"switching\":false}")!=std::string::npos &&
+                           "\"gate\":\"\",\"body_type\":0,\"switching\":false,\"standin\":false,\"standin_ms\":0,\"absent_ms\":0}")!=std::string::npos &&
                   doc.find("\"trigger\":{\"requested\":0,\"shot_drains\":0,\"fire_modes\":0}")!=std::string::npos &&
                   doc.find("\"store\":{\"writes\":0,\"refused\":0,\"last\":\"\"},\"reload_seen\":0,\"frozen\":0,\"reconciles\":0,"
                            "\"m3e8_writes\":0}")!=std::string::npos &&
@@ -221,7 +222,8 @@ int main() {
         strcpy_s(t.aim_slot,"na");
         for(unsigned k=0;k<2;++k){
             t.aim_yaw_cdeg[k]=t.aim_pitch_cdeg[k]=t.aim_rel_yaw_cdeg[k]=t.aim_r5c[k]=t.aim_r60[k]=t.aim_pred[k]=pn::kNull;
-            t.aim_gun_state[k]=t.aim_b3d5[k]=pn::kNull;strcpy_s(t.aim_path[k],"na");
+            t.aim_gun_state[k]=t.aim_b3d5[k]=pn::kNull;
+            t.gun_pitch_cdeg[k]=t.gun_yaw_cdeg[k]=t.remote_dir_cdeg[k]=t.dir_err_cdeg[k]=pn::kNull;strcpy_s(t.aim_path[k],"na");
         }
         strcpy_s(t.aim_setting,"look");strcpy_s(t.aim_state,"refused");strcpy_s(t.aim_reason,"q_\"vt");strcpy_s(t.aim_src,"none");
         t.aim_writes=0xFFFFFFFFu;t.aim_overwritten=2;
@@ -231,7 +233,9 @@ int main() {
         if(!check(aim.find("\"aim\":{\"setting\":\"look\",\"override\":true,\"state\":\"refused\",\"reason\":\"q_\\\"vt\",\"src\":\"none\",\"writes\":4294967295,")!=std::string::npos &&
                   aim.find("\"overwritten\":2,")!=std::string::npos &&
                   aim.find("\"target_mm\":[null,null,null],\"written_mm\":[null,null,null],\"slot\":\"na\",\"q10_1_mm\":[null,null,null],")!=std::string::npos &&
-                  aim.find("\"aimpt_err_mm\":null,\"aim_yaw1_cdeg\":null,\"aim_pitch1_cdeg\":null,")!=std::string::npos &&
+                  aim.find("\"aimpt_err_mm\":null,")!=std::string::npos &&
+                  aim.find("\"aim_yaw1_cdeg\":null,\"aim_pitch1_cdeg\":null,")!=std::string::npos &&
+                  aim.find("\"gun_pitch_cdeg\":[null,null],\"gun_yaw_cdeg\":[null,null],\"remote_dir_cdeg\":[null,null],\"dir_err_cdeg\":[null,null],")!=std::string::npos &&
                   aim.find("\"r60_1\":null,")!=std::string::npos && aim.find("\"pred1\":null,\"pred0\":null,\"gun_state\":[null,null],")!=std::string::npos &&
                   aim.find("\"path1\":\"na\",\"path0\":\"na\"}")!=std::string::npos &&
                   aim.find(",953,1,0,0,0]")!=std::string::npos && aim.find(",null,null,0,0,0]")!=std::string::npos))return 1;
@@ -241,7 +245,8 @@ int main() {
         strcpy_s(t.aim_path[1],"cam");t.aim_gun_state[1]=7;
         const auto aim2=NativeDocument(t,&n);
         if(!check(ValidJson(aim2) && aim2.find("\"target_mm\":[-12500,null,null],\"written_mm\":[-12499,null,null],\"slot\":\"ours\",")!=std::string::npos &&
-                  aim2.find("\"aimpt_err_mm\":31,\"aim_yaw1_cdeg\":-15400,")!=std::string::npos &&
+                  aim2.find("\"aimpt_err_mm\":31,")!=std::string::npos &&
+                  aim2.find("\"aim_yaw1_cdeg\":-15400,")!=std::string::npos &&
                   aim2.find("\"rel_yaw1_cdeg\":-8154,")!=std::string::npos && aim2.find("\"r60_1\":953,")!=std::string::npos &&
                   aim2.find("\"pred1\":1,")!=std::string::npos && aim2.find("\"gun_state\":[null,7],")!=std::string::npos &&
                   aim2.find("\"path1\":\"cam\"")!=std::string::npos))return 1;
@@ -280,6 +285,7 @@ int main() {
         t.slot_remote=2;t.slot_remote_seq=pn::kNull;t.slot_body=1;t.slot_target=pn::kNull;t.slots_ok=true;t.slot_filled[1]=true;
         t.slot_equip[1]=46;t.slot_type[1]=4;strcpy_s(t.slot_tier[0],"empty");strcpy_s(t.slot_tier[1],"same");strcpy_s(t.slot_tier[2],"empty");
         t.slot_ok_mask=2;t.slot_refused=1;t.body_type=pn::kNull;t.body_switching=true;
+        t.slot_map[0]=1;t.slot_map[1]=1;t.slot_map[2]=0xFF;
         for(unsigned i=0;i<pn::kRing;++i){pn::RingEntry e{};e.gmode=(i%2)?0xFF:11;e.rmode=12;e.hslot=0xFF;pn::Push(t.ring,e);}
         const auto rs=NativeDocument(t,&n);
         if(!check(n>0 && n<16384 && ValidJson(rs)))return 1;
@@ -292,11 +298,13 @@ int main() {
                   rs.find("\"reload_seen\":4,\"frozen\":90,\"reconciles\":2,\"m3e8_writes\":1}")!=std::string::npos &&
                   rs.find("\"slots\":{\"setting\":\"write\",\"remote_slot\":2,\"remote_seq\":null,\"body_slot\":1,\"hand_slot\":1,\"target\":null,"
                           "\"read_ok\":true,\"handles\":[null,{\"equip\":46,\"type\":4},null],\"plan\":[\"empty\",\"same\",\"empty\"],\"ok_mask\":2,"
-                          "\"writes\":0,\"refused\":1,\"last\":\"empty\",\"faulted\":false,\"switching\":true,\"writer\":{")!=std::string::npos &&
-                  rs.find("\"gate\":\"switching\",\"body_type\":null,\"switching\":true}")!=std::string::npos &&
+                          "\"writes\":0,\"refused\":1,\"last\":\"empty\",\"faulted\":false,\"switching\":true,\"map\":[1,1,null],\"writer\":{")!=std::string::npos &&
+                  rs.find("\"gate\":\"switching\",\"body_type\":null,\"switching\":true,\"standin\":false,\"standin_ms\":0,\"absent_ms\":0}")!=std::string::npos &&
                   rs.find(",11,12,null]")!=std::string::npos && rs.find(",null,12,null]")!=std::string::npos))return 1;
         // The generalized writer, the census (all 48 entries) and the preload, with hostile text.
         strcpy_s(t.equip_setting,"substitute");t.writer_active=true;t.writer_dispatches=3;t.writer_bound=2;t.writer_refused=1;
+        strcpy_s(t.writer_shared,"on");t.writer_gen=4;t.writer_resyncs=2;t.writer_kept=1;
+        t.weapon_standin=true;t.weapon_standin_ms=123;t.weapon_absent_ms=456;
         for(unsigned i=0;i<3;++i){
             t.writer_want[i]=static_cast<std::uint16_t>(i==1?46:343);t.writer_equip[i]=static_cast<std::uint16_t>(i==1?46:27);
             strcpy_s(t.writer_tier[i],i==1?"a1":"c");strcpy_s(t.writer_family[i],i==1?"optional":"plain");
@@ -304,20 +312,23 @@ int main() {
             t.writer_handle[i]=0x60000u|(i==1?(46u<<5)|4u:(27u<<5)|1u);
             t.writer_want_type[i]=static_cast<std::uint8_t>(i==1?4:1);t.writer_candidates[i]=i==1?0u:3u;
             t.writer_candidate[i]=static_cast<std::uint16_t>(i==1?0:27);
+            t.writer_retries[i]=6;t.writer_refs_before[i]=2;t.writer_refs_after[i]=3;strcpy_s(t.writer_bank[i],"shared");
+            t.writer_binder[i][0]=t.writer_handle[i];t.writer_binder[i][1]=0xFFFFFFE0u;t.writer_binder[i][2]=1;
         }
         t.resident_ok=true;t.resident_count=48;
-        for(unsigned i=0;i<48;++i) t.resident[i]={static_cast<std::uint16_t>(500+i),4,157,3,static_cast<std::uint8_t>(i),0xFFFFFFFFu};
+        for(unsigned i=0;i<48;++i) t.resident[i]={static_cast<std::uint16_t>(500+i),4,157,3,static_cast<std::uint8_t>(i),0xFFFFFFFFu,1};
         t.preload_count=2;t.preload_ids[0]=343;t.preload_ids[1]=9;strcpy_s(t.preload_verdict,"queued_verified");strcpy_s(t.preload_reason,"o\"k");
         t.preload_new_hashes=5;
         const auto ws=NativeDocument(t,&n);
         if(!check(n>0 && n<16384 && ValidJson(ws)))return 1;
-        if(!check(ws.find("\"writer\":{\"active\":true,\"dispatches\":3,\"bound\":2,\"refused\":1,\"slots\":[{\"want\":343,\"equip\":27,"
+        if(!check(ws.find("\"writer\":{\"active\":true,\"dispatches\":3,\"bound\":2,\"refused\":1,\"shared\":\"on\",\"gen\":4,\"resyncs\":2,\"kept\":1,\"slots\":[{\"want\":343,\"equip\":27,"
                           "\"tier\":\"c\",\"family\":\"plain\",\"state\":\"bound\",\"reason\":\"ok\",\"handle\":394081,\"want_type\":1,"
-                          "\"candidates\":3,\"candidate\":27},")!=std::string::npos &&
+                          "\"candidates\":3,\"candidate\":27,\"retries\":6,\"refs_before\":2,\"refs_after\":3,\"bank\":\"shared\",\"binder\":[394081,4294967264,1]},")!=std::string::npos &&
                   ws.find("\"reason\":\"remote_slot_not\\\"empty\"")!=std::string::npos &&
+                  ws.find("\"standin\":true,\"standin_ms\":123,\"absent_ms\":456}")!=std::string::npos &&
                   ws.find("\"setting\":\"substitute\",\"resident_fields\":")!=std::string::npos &&
-                  ws.find("\"resident\":[[0,500,4,157,3,4294967295],[1,501,")!=std::string::npos &&
-                  ws.find(",[47,547,4,157,3,4294967295]],\"preload\":{\"ids\":[343,9],\"verdict\":\"queued_verified\",\"reason\":\"o\\\"k\","
+                  ws.find("\"resident\":[[0,500,4,157,3,4294967295,1],[1,501,")!=std::string::npos &&
+                  ws.find(",[47,547,4,157,3,4294967295,1]],\"preload\":{\"ids\":[343,9],\"verdict\":\"queued_verified\",\"reason\":\"o\\\"k\","
                           "\"new_hashes\":5}}")!=std::string::npos))return 1;
         // Too small a buffer: nothing (never a truncated member).
         char small[64];

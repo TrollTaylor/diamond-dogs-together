@@ -22,7 +22,9 @@
 #  pause:   paused (host films, the guest in its pause menu): native.mode active with native.reason "remote_quiet",
 #           native.net.remote_quiet true, native.net.quiet_episodes +1, the host log partner_native_net=quiet; resumed:
 #           native.reason "ok" again, partner_native_net=resume, net_leaves unchanged, hard_leaves 0.
-#  long:    quiet-left (12 s pause): native.mode fallback, native.left_reason "net_quiet", native.fallbacks 0,
+#  long:    quiet-left: known ride heartbeat expiry may hide earlier with ride_stale; no hard latch.
+#           hidden snapshots may retain earlier net counters; assess leaves/reentries after resumed fresh foot proof.
+#           older ride-off policy used native.left_reason "net_quiet", native.fallbacks 0,
 #           native.net.net_leaves +1; reentered (8 s after the resume): native.mode active, net.net_reentries +1, latched false.
 #  WanSim:  native.mode active at native-on and walk captures; native.net.hard_leaves 0, native.latched false;
 #           net.gaps_250 and net.gap_snaps recorded; partner_native_net lines show the leaves and re-entries.
@@ -75,11 +77,17 @@ guest press escape
 waitgameplay guest 30
 wait 6000
 host capture resumed
-# --- A long pause: a network leave after 10 s, never counted, then re-entry -------
+# --- A long pause: bracket the known ride lease expiry and fresh on-foot reentry ---
+both capture lease-before-pause
 guest press escape
-wait 12000
+wait 4000
+host capture lease-early
+wait 3000
+host capture lease-expired
+wait 5000
 host capture quiet-left
 guest press escape
+host burst foot-return 6 250
 waitgameplay guest 30
 wait 8000
 host capture reentered

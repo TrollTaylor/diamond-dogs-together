@@ -281,7 +281,7 @@ if type(F.originalDeploy) == "function" then
         if on() and W.host then
             local target, emergency = W.get(gvars, "mis_nextMissionCodeForMissionClear"), W.get(gvars, "mis_nextMissionCodeForEmergency")
             if (target and not SUPPORTED[target]) or (emergency and emergency ~= 0) then
-                log("step=refused;reason=unsupported_mission"); return
+                log(fmt("step=refused;reason=unsupported_mission;target=%s;emergency=%s;fn=OnEndMissionPreparation", tostring(target), tostring(emergency))); return
             end
             if not W.paired or W.eff < 3 then
                 F.hostDeploy = {...}; F.hostDeploy.n = select("#", ...)

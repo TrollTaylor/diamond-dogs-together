@@ -1083,7 +1083,68 @@ do
     F.clear(c3)
     env3.vars.weather = 2
     F.tick(env3, c3, 40)
-    check(#F.tx(c3, OP.WEATHER) == 0 and F.tx(c3, OP.DIGEST)[1].v[4] == 255, '30050: clock only, no weather')
+    local mbWeather = F.tx(c3, OP.WEATHER)
+    check(#mbWeather == 1 and mbWeather[1].v[1] == 2 and F.tx(c3, OP.DIGEST)[1].v[4] == 2 and not c3.W.w1,
+        '30050: actual host rain is sent once and in digests; enemy authority stays off')
+    local mbEnv, mbGuest = fixture({role = 2, mission = 30050})
+    F.start(mbEnv, mbGuest)
+    F.pair(mbEnv, mbGuest, 3)
+    check(F.callCount(mbGuest, 'Pause:true') == 1, '30050: guest random weather paused only while paired at level 3')
+    F.clear(mbGuest)
+    mbGuest.demo = true
+    F.push(mbGuest, 1, OP.WEATHER, unpack(mbWeather[1].v))
+    F.tick(mbEnv, mbGuest, 1)
+    check(F.callCount(mbGuest, 'Force:2:20') == 0 and mbEnv.vars.weather == 0,
+        '30050: host weather waits during a guest demo')
+    mbGuest.demo = false
+    F.tick(mbEnv, mbGuest, 1)
+    check(F.callCount(mbGuest, 'Force:2:20') == 1 and mbEnv.vars.weather == 2 and
+        has(mbGuest.logs, 'event=weather;type=2;cause=1;applied=1') and
+        has(mbGuest.logs, 'event=weather_readback;type=2;matches=1'),
+        '30050: resumed guest applies the transmitted host weather and reports actual readback')
+    -- Vanilla MB scenes can force SUNNY then cancel locally after the
+    -- initial resync. Unchanged host rain must recover from digests alone.
+    mbGuest.demo = true
+    mbEnv.TppWeather.ForceRequestWeather(0, 0)
+    mbEnv.TppWeather.CancelForceRequestWeather()
+    F.clear(mbGuest)
+    local function mbDigest()
+        F.push(mbGuest, 1, OP.DIGEST, mbGuest.time, mbEnv.vars.clock, 0, 2, 0, 0, 0, 3, 1, 0)
+        F.tick(mbEnv, mbGuest, 1)
+    end
+    for _ = 1, 3 do mbDigest() end
+    check(mbEnv.vars.weather == 0 and F.callCount(mbGuest, 'Force:2:20') == 0,
+        '30050: drift recovery does not override weather during a demo')
+    mbGuest.demo = false
+    mbGuest.time = mbGuest.time + 30000 -- past the previous interpolation plus grace
+    mbDigest(); mbDigest()
+    check(F.callCount(mbGuest, 'Force:2:20') == 0, '30050: two mismatches do not re-force weather')
+    mbDigest()
+    check(F.callCount(mbGuest, 'Force:2:20') == 1 and mbEnv.vars.weather == 2 and #F.tx(c3, OP.WEATHER) == 1 and
+        has(mbGuest.logs, 'event=weather;type=2;cause=3;applied=1'),
+        '30050: three digests restore unchanged host rain after a local SUNNY force and cancellation')
+    F.clear(mbGuest)
+    F.push(mbGuest, 0, OP.LEVEL, 0)
+    F.tick(mbEnv, mbGuest, 1)
+    check(F.callCount(mbGuest, 'CancelForce') == 1 and F.callCount(mbGuest, 'Pause:false') == 1 and not mbGuest.W.active,
+        '30050: level 0 releases our weather force and random pause')
+    F.clear(mbGuest)
+    F.push(mbGuest, 1, OP.WEATHER, 1, 20, 65535, 255, 1)
+    F.tick(mbEnv, mbGuest, 5)
+    check(#mbGuest.calls == 0, '30050: disabled world cannot apply later weather')
+    for _, options in ipairs({{role = 2, mission = 30050, level = 2}, {role = 2, mission = 30050, level = 0},
+                              {role = 2, mission = 10010}, {role = 2, mission = 40050},
+                              {role = 2, mission = 30050, missing = {'TppWeather.ForceRequestWeather'}}}) do
+        local refusedEnv, refused = fixture(options)
+        F.start(refusedEnv, refused)
+        F.pair(refusedEnv, refused, options.level or 3)
+        F.clear(refused)
+        F.push(refused, 1, OP.WEATHER, 2, 20, 65535, 255, 1)
+        F.tick(refusedEnv, refused, 5)
+        check(#F.tx(refused, OP.WEATHER) == 0 and F.callCount(refused, 'Force:2:20') == 0 and
+            F.callCount(refused, 'Pause:true') == 0 and refusedEnv.vars.weather == 0,
+            'weather remains inert for lower levels, story/ACC missions and missing public bindings')
+    end
     -- Guest: force, release, pause re-asserted, re-force after 3 mismatches, cleanup.
     local eg, g = fixture({role = 2})
     F.start(eg, g)

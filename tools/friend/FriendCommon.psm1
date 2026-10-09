@@ -1,5 +1,5 @@
 # Helpers for the two-PC friend package (tools/friend/*.ps1): install,
-# Play-Coop (Host/Join over our own UDP link, docs/two-pc-play.md), uninstall
+# Play-Coop (Host/Join over our own Steam or UDP link, docs/two-pc-play.md), uninstall
 # and log collection.
 #
 # Runs under Windows PowerShell 5.1 (the friend's PC; the .bat files start

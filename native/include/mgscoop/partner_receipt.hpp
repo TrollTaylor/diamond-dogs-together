@@ -83,11 +83,13 @@ struct Tick {
     // assertion that the engine accepted the input), and current gun ID.
     std::uint8_t action_flags;
     std::uint16_t equip_id;
+    bool has_ride;
+    std::uint8_t ride_kind;  // optional named suffix ride=0..5
 };
 inline constexpr std::int32_t max_frame = 999999;
 inline constexpr std::int32_t max_pos_mm = 1000000000;   // matches sync::max_coord_component (1e6 m)
 inline constexpr std::int32_t max_angle_cdeg = 3600000;  // +-36000 degrees, normalized later
-// Strict: the tick prefix, then exactly 9 or 11 signed decimal integers separated by
+// Strict: the tick prefix, then exactly 9 or 11 signed decimal integers (11 may end in ride=0..5) separated by
 // single spaces; no '+', no leading zeros, no "-0", nothing trailing, every
 // value within its bound. `out` is written only on success.
 bool ParseTick(const char* source, std::size_t size, Tick& out) noexcept;
@@ -368,5 +370,37 @@ std::uint32_t DistanceMm(std::int32_t ax, std::int32_t ay, std::int32_t az,
 // The local pose as a sync transform (metres, radians in [-pi, pi], stance,
 // gun flags/equipment plus the exact reported locomotion class).
 sync::PlayerTransformPacket MakeTransform(const Tick& tick, std::uint32_t sequence, std::uint32_t tick_ms) noexcept;
+
+// Partner pack selection receipts (lua/coop/player_package_selection.lua,
+// docs/player-package-selection.md), logged by the script observer as
+// allocation receipts:
+//   return 'MGS_COOP_PACK_SELECTED_V1' -- mission=<code>; single_controller=true; layout=<name>|none
+//   return 'MGS_COOP_PACK_REFUSED_V1' -- mission=<code>; reason=<token>; scene=<scene>; path=<path>
+// ClassifyPack reads capped diagnostic kind/mission/scene for inspection.
+// Native mission feedback uses ClassifyPackState below. Anything malformed is
+// none; an absent or unknown diagnostic scene is other.
+enum class PackReceipt : std::uint8_t { none, selected, refused, clear };
+enum class PackScene : std::uint8_t { none, demo_stage, hangar, story, layout, other };
+inline constexpr std::size_t max_pack_receipt = 255;
+struct PackResult {
+    PackReceipt kind;
+    std::uint32_t mission;  // 1..999999, or 0 for compact clear
+    PackScene scene;        // refused only (none otherwise)
+};
+// Legacy capped diagnostic parser; it is not mission state.
+PackResult ClassifyPack(const char* source, std::size_t size) noexcept;
+// Uncapped per-request state (no paths or free text):
+//   return 'MGS_COOP_PACK_STATE_V1' -- mission=<code>; result=clear|selected|refused; scene=none|<scene>
+// Clear accepts mission 0 for an invalid/unknown request; other results need
+// 1..999999. Unknown fields, scenes, duplicate fields and trailing text refuse.
+inline constexpr std::size_t max_pack_state_receipt = 96;
+PackResult ClassifyPackState(const char* source, std::size_t size) noexcept;
+// Applies only compact state to the pending refusal. Diagnostic receipts and
+// malformed state cannot change it. A new clear/selection resets it.
+std::uint32_t UpdatePackState(std::uint32_t previous, const char* source, std::size_t size) noexcept;
+// "demo_stage", "hangar", "story", "layout", "other" ("" for none).
+const char* PackSceneName(PackScene scene) noexcept;
+// Inverse of PackSceneName for the five scene names (none otherwise).
+PackScene PackSceneFromName(const char* name) noexcept;
 
 } // namespace mgscoop::partner

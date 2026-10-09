@@ -57,6 +57,7 @@ partner_input::InputEdges g_edges{};
 volatile LONG g_in_tx = 0, g_in_rx = 0, g_in_drop = 0;
 // An accepted input frame v5 arrived since the last receive reset (PeerSendsInputV5).
 volatile LONG g_input_v5_peer = 0;
+volatile LONG g_input_v6_peer = 0;
 // Look send side (game thread only).
 partner::Look g_look_sent{};
 bool g_look_sent_valid = false;
@@ -103,6 +104,8 @@ volatile LONG g_applied_interp = 100;
 volatile LONG g_partner_shown = 0, g_partner_look = 0, g_partner_mission = 0;
 // Online play: drive | reason << 8 | remote drive << 16 | remote reason << 24 (PublishNativeState).
 volatile LONG g_native_state = 0;
+// The partner mission whose pack list was refused (PublishPackState; 0 none).
+volatile LONG g_pack_refused_mission = 0;
 // LinkInfo seqlock (single writer: the receive thread, or Start before it runs).
 volatile LONG g_info_seq = 0;
 volatile LONG g_info_state = 0, g_info_session = 0, g_info_rtt = 0, g_info_jitter = 0, g_info_interp = 0, g_info_loss = 0;
@@ -112,7 +115,7 @@ std::uint64_t g_interp_update_ms = 0;
 const char* g_disabled_reason = nullptr;  // link=disabled reason (state disabled)
 wchar_t g_status_path[lab::kMaxAtomicPath]{};
 std::uint64_t g_status_check_ms = 0, g_status_write_ms = 0;
-char g_status_last[768]{};
+char g_status_last[1024]{}; // bounded additive cached partner/gun status
 std::uint32_t g_status_fail = 0, g_status_write_ms_max = 0;
 std::uint64_t g_drop_logged[link::kDropReasons]{};
 std::uint64_t g_drop_logged_ms = 0;
@@ -365,6 +368,7 @@ void OnFrame(const std::uint8_t* data, std::size_t size, std::uint64_t trusted_a
             g_input_seq = in_seq;
             g_input_rx_ms = now;
             if (in.version >= 5) InterlockedExchange(&g_input_v5_peer, 1);
+            if (in.version >= 6) InterlockedExchange(&g_input_v6_peer, 1);
             if (!g_input_first_logged) { g_input_first_logged = true; first = true; }
         }
         ReleaseSRWLockExclusive(&g_lock);
@@ -433,6 +437,7 @@ void ResetReceiveLocked() noexcept {
     g_input_first_logged = false;
     g_edges = partner_input::InputEdges{};
     InterlockedExchange(&g_input_v5_peer, 0);
+    InterlockedExchange(&g_input_v6_peer, 0);
 }
 
 // ---- Link v2 logging (receive thread, outside both locks).
@@ -541,6 +546,8 @@ void PublishHud(const LinkSnapshot& s, link::LinkState state, std::uint64_t now)
     g_hud_publish_ms = now;
     coop_hud::LinkView v{};
     v.state = static_cast<std::uint8_t>(state);
+    v.session = s.session;
+    v.mission = static_cast<std::uint32_t>(g_partner_mission);
     v.host = g_config.host;
     v.steam = g_use_steam;
     v.play = g_config.play;
@@ -656,32 +663,41 @@ bool FormatStatus(const LinkSnapshot& s, link::LinkState state, char* out, std::
         transport[0] = 0;
     // Online play (docs/native-puppet.md "Online"): how each PC shows the partner body.
     const std::uint32_t native = static_cast<std::uint32_t>(g_native_state);
+    // A refused partner pack (docs/player-package-selection.md): no body to show in this mission.
+    const std::uint32_t pack_refused = static_cast<std::uint32_t>(g_pack_refused_mission);
+    const bool no_body = pack_refused != 0 && pack_refused == static_cast<std::uint32_t>(g_partner_mission);
+    coop_hud::PartnerView partner{};
+    coop_hud::GetPartner(partner);
+    char partner_status[192]{};
+    if (!coop_hud::FormatPartnerJson(partner, s.session,
+        no_body || state != link::LinkState::connected ? 0u : static_cast<std::uint32_t>(g_partner_mission),
+        GetTickCount64(), partner_status, sizeof(partner_status))) return false;
     return SUCCEEDED(StringCchPrintfA(out, capacity,
         "{\"v\":1,\"pid\":%lu,\"mode\":\"%s\",\"role\":\"%s\",\"state\":\"%s\",\"reason\":\"%s\",\"verified\":%u,\"session\":%u,"
         "\"peer\":\"%s\",\"local_port\":%u,\"rtt_ms\":%u,\"jitter_ms\":%u,\"loss_permille\":%u,\"resend\":%u,"
         "\"tx_Bps\":%u,\"rx_Bps\":%u,\"interp_ms\":%u,\"remote_build\":%s,\"partner\":\"%s\",\"partner_shown\":%u,"
         "\"look\":%u,\"mission\":%u,\"saves\":\"%s\",\"partner_drive\":\"%s\",\"partner_reason\":\"%s\",\"remote_drive\":\"%s\","
-        "\"remote_reason\":\"%s\",%s\"time_utc\":%s}\n",
+        "\"remote_reason\":\"%s\",%s%s\"time_utc\":%s}\n",
         GetCurrentProcessId(), g_config.play ? "play" : "lab", g_config.host ? "host" : "guest", link::LinkStateName(state), reason,
         verified ? 1u : 0u, s.session, peer, static_cast<unsigned>(g_ops->local_port()), s.rtt_ms, s.jitter_ms,
         s.loss_permille, s.resend, g_tx_bps, g_rx_bps, static_cast<unsigned>(EffectiveInterpMs(g_config.interp_ms)), build, PartnerStatusName(),
         g_partner_shown ? 1u : 0u, g_partner_look ? 1u : 0u, static_cast<unsigned>(g_partner_mission),
         g_config.saves_redirected ? "redirected" : "unchanged",
-        partner_native_net::DriveName(static_cast<partner_native_net::Drive>(native & 0xFFu)),
-        partner_native_net::ReasonName(static_cast<std::uint8_t>(native >> 8)),
+        no_body ? "off" : partner_native_net::DriveName(static_cast<partner_native_net::Drive>(native & 0xFFu)),
+        no_body ? "no_body_pack" : partner_native_net::ReasonName(static_cast<std::uint8_t>(native >> 8)),
         partner_native_net::DriveName(static_cast<partner_native_net::Drive>((native >> 16) & 0xFFu)),
-        partner_native_net::ReasonName(static_cast<std::uint8_t>(native >> 24)), transport, time_utc));
+        partner_native_net::ReasonName(static_cast<std::uint8_t>(native >> 24)), partner_status, transport, time_utc));
 }
 
 void WriteStatus(const LinkSnapshot& s, link::LinkState state, std::uint64_t now_ms) noexcept {
     if (!g_status_path[0]) return;
     if (now_ms - g_status_check_ms < kStatusCheckMs) return;
     g_status_check_ms = now_ms;
-    char content[768]{};
+    char content[1024]{};
     if (!FormatStatus(s, state, content, sizeof(content), false)) return;
     const bool changed = lstrcmpA(content, g_status_last) != 0;
     if (!changed && now_ms - g_status_write_ms < kStatusRefreshMs) return;
-    char document[768]{};
+    char document[1024]{};
     if (!FormatStatus(s, state, document, sizeof(document), true)) return;
     std::size_t length = 0;
     while (document[length]) ++length;
@@ -1495,7 +1511,7 @@ bool SubmitInput(const partner_input::InputPacket& packet) noexcept {
     const std::uint32_t seq = g_input_tx_seq + 1;
     // v2..v5: v4 whatever the sender's own drive (rates, magazine, gun), v5 (the
     // gun group) once the peer sent v5, plus the driver's v5 probe every 2 s.
-    std::uint8_t frame[sync::input_frame_size_v5];
+    std::uint8_t frame[sync::input_frame_size_max];
     bool sent = false;
     if (const std::size_t n = sync::encode_input_frame_any(kSession, static_cast<std::uint32_t>(epoch), seq, packet, frame))
         sent = Transmit(frame, n);
@@ -1523,6 +1539,7 @@ bool ConsumeInput(partner_input::Sample& out) noexcept {
 }
 
 bool PeerSendsInputV5() noexcept { return g_input_v5_peer != 0; }
+bool PeerSendsInputV6() noexcept { return g_input_v6_peer != 0; }
 
 bool LatestInput(partner_input::Sample& out) noexcept {
     out = partner_input::Sample{};
@@ -1614,6 +1631,10 @@ void PublishNativeState(std::uint8_t drive, std::uint8_t reason, std::uint8_t re
     const std::uint32_t packed = static_cast<std::uint32_t>(drive) | (static_cast<std::uint32_t>(reason) << 8) |
                                  (static_cast<std::uint32_t>(remote_drive) << 16) | (static_cast<std::uint32_t>(remote_reason) << 24);
     InterlockedExchange(&g_native_state, static_cast<LONG>(packed));
+}
+
+void PublishPackState(std::uint32_t refused_mission) noexcept {
+    InterlockedExchange(&g_pack_refused_mission, static_cast<LONG>(refused_mission));
 }
 
 link::ReliableResult SendReliable(std::uint8_t channel, const void* bytes, std::size_t size, link::ReliableMode mode) noexcept {

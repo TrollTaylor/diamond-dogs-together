@@ -82,7 +82,7 @@ function Invoke-WorkerRestoreOwnedSession($Session,[string]$Run,[string]$Repo,$P
 if($session.archive_sha256 -ine $pins.Archive -or $session.baseline_sha256 -cnotmatch '^[0-9A-Fa-f]{64}$' -or $session.candidate_sha256 -cnotmatch '^[0-9A-Fa-f]{64}$'){throw 'Worker session package pins differ.'}
 $mutex=[Threading.Mutex]::new($false,'Local\MGSCoopBackgroundSession');$lockOwned=$false;$leased=$null
 $report=[ordered]@{schema=1;run_id=$runId;run_dir=$run;started_utc=[DateTime]::UtcNow.ToString('o');status='closing';
-    supervisor_closed=$false;forced_supervisor_termination=$false;owned_children_closed=$false;roles=[ordered]@{};real_saves_unchanged=$false;
+    supervisor_closed=$false;forced_supervisor_termination=$false;forced_job_termination=$false;supervisor_reason=$null;supervisor_error=0;owned_children_closed=$false;world_trigger_removed=0;roles=[ordered]@{};real_saves_unchanged=$false;
     failure=$null;worker_isolation_failed=$false;system_input_called=$false;focus_called=$false;desktop_switched=$false;gameplay_validated=$false}
 try {
     try{$lockOwned=$mutex.WaitOne([TimeSpan]::FromSeconds(30))}catch [Threading.AbandonedMutexException]{$mutex.ReleaseMutex();throw 'Background coordinator lock was abandoned; refusing unreviewed cleanup.'}
@@ -115,6 +115,9 @@ try {
             $status=Read-WorkerSessionJson $statusPath
             if(!(Test-WorkerSupervisorIdentity $status $session)){throw 'Final supervisor ownership receipt differs.'}
             if(!(Test-WorkerSupervisorReceipt $status $session)){$report.worker_isolation_failed=$true}
+            $report.forced_job_termination=[bool]$status.forced_job_termination
+            $report.supervisor_reason=[string]$status.reason
+            $report.supervisor_error=[int]$status.win32_error
             $session.owned_processes=@($status.owned_processes)
         }
     }
@@ -131,6 +134,8 @@ try {
         if(@(Get-GameProcessInDirectory -Directory $directory).Count){throw 'An MGSV process remains or cannot be attributed; restoration is blocked.'}
     }
     $report.owned_children_closed=$true
+    # An unconsumed scenario world.trigger never outlives its session.
+    foreach($role in $session.roles.Keys){$report.world_trigger_removed+=Remove-WorkerWorldTrigger $session.roles[$role].game}
     Invoke-WorkerRestoreOwnedSession $session $run $repo $pins $report
     $comparison=Get-WorkerRealSaveComparison $session.real_saves
     $report.real_saves_unchanged=$comparison.Same;$report.real_save_comparison=$comparison
@@ -138,7 +143,9 @@ try {
     $report.status='closed';$session.status='closed';$session.closed_utc=[DateTime]::UtcNow.ToString('o')
     Write-WorkerSessionJson $statePath $session
     Write-Host "Owned private worker closed; normal baseline and real-save hashes verified: $run"
-    [pscustomobject]@{RunDirectory=$run;Closed=$true;BaselineRestored=$true;RealSavesUnchanged=$true;Forced=$report.forced_supervisor_termination}
+    [pscustomobject]@{RunDirectory=$run;Closed=$true;BaselineRestored=$true;RealSavesUnchanged=$true;
+        Forced=($report.forced_supervisor_termination -or $report.forced_job_termination);
+        IsolationFailed=$report.worker_isolation_failed;SupervisorReason=$report.supervisor_reason;SupervisorError=$report.supervisor_error}
 } catch {
     $report.status='cleanup_refused';$report.failure=$_.Exception.Message
     $session.status='cleanup_refused';$session.cleanup_failure=$report.failure

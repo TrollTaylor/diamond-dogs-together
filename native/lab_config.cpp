@@ -335,7 +335,10 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
         else if (Equals(key, "partner_native_fire")) ok = ParsePartnerNativeFire(value.data, value.size, result.partner_native_fire);
         else if (Equals(key, "partner_native_face")) ok = ParsePartnerNativeFace(value.data, value.size, result.partner_native_face);
         else if (Equals(key, "partner_native_noise")) ok = ParsePartnerNativeNoise(value.data, value.size, result.partner_native_noise);
-        else if (Equals(key, "partner_native_aimpt")) ok = ParsePartnerNativeAimPt(value.data, value.size, result.partner_native_aimpt);
+        else if (Equals(key, "partner_native_aimpt")) {
+            ok = ParsePartnerNativeAimPt(value.data, value.size, result.partner_native_aimpt);
+            if (ok) result.partner_native_aimpt_given = true;
+        }
         else if (Equals(key, "partner_native_reload")) {
             ok = ParsePartnerNativeReload(value.data, value.size, result.partner_native_reload);
             if (ok) result.partner_native_reload_given = true;
@@ -345,6 +348,17 @@ bool ParseLabConfig(const char* text, std::size_t length, LabConfig& out, const 
         } else if (Equals(key, "partner_native_equip")) {
             ok = ParsePartnerNativeEquip(value.data, value.size, result.partner_native_equip);
             if (ok) result.partner_native_equip_given = true;
+        } else if (Equals(key, "partner_native_equip_shared")) {
+            ok = ParsePartnerNativeEquipShared(value.data, value.size, result.partner_native_equip_shared);
+            if (ok) result.partner_native_equip_shared_given = true;
+        } else if (Equals(key, "partner_native_standin")) {
+            ok = ParsePartnerNativeStandin(value.data, value.size, result.partner_native_standin);
+            if (ok) result.partner_native_standin_given = true;
+        }
+        else if (Equals(key, "partner_native_equip_measured")) ok = ParseBool(value, result.partner_native_equip_measured);
+        else if (Equals(key, "partner_native_ride")) {
+            ok = ParsePartnerNativeRide(value.data, value.size, result.partner_native_ride);
+            if (ok) result.partner_native_ride_given = true;
         }
         else if (Equals(key, "partner_native_steer_deg"))
             ok = ParseRange(value, 0, kPartnerNativeSteerMaxDeg, result.partner_native_steer_deg);
@@ -1169,7 +1183,7 @@ void ApplyNativeProfile(LabConfig& c, PartnerNativeProfile profile, std::uint32_
     if (set(kProfileKeyFire)) c.partner_native_fire = gun ? PartnerNativeFire::visual : PartnerNativeFire::off;
     if (set(kProfileKeyTriggers)) c.partner_input_triggers = gun;
     if (set(kProfileKeyRstick)) c.partner_input_rstick = gun;
-    if (set(kProfileKeyAimPt)) c.partner_native_aimpt = gun ? PartnerNativeAimPt::look : PartnerNativeAimPt::off;
+    if (set(kProfileKeyAimPt)) c.partner_native_aimpt = gun ? PartnerNativeAimPt::point : PartnerNativeAimPt::off;
 }
 
 const char* PartnerNativeReloadName(PartnerNativeReload value) noexcept {
@@ -1231,9 +1245,71 @@ void ResolveWeaponDefaults(LabConfig& c) noexcept {
     // partner_native_profile=gun) runs the partner's own reload, the slot
     // follower and the generalized writer; anything else keeps the old defaults.
     const bool gun = c.partner_drive == PartnerDrive::native && c.partner_native_gun;
+    // Raw offline/worker gun settings and profile expansion resolve identically.
+    // Census/undriven and legacy configs remain off unless a key was named.
+    if (!c.partner_native_aimpt_given)
+        c.partner_native_aimpt = gun && c.partner_input_defer == PartnerDefer::on ? PartnerNativeAimPt::point : PartnerNativeAimPt::off;
     if (!c.partner_native_reload_given) c.partner_native_reload = gun ? PartnerNativeReload::event : PartnerNativeReload::mirror;
     if (!c.partner_native_slot_given) c.partner_native_slot = gun ? PartnerNativeSlot::write : PartnerNativeSlot::off;
     if (!c.partner_native_equip_given) c.partner_native_equip = gun ? PartnerNativeEquip::substitute : PartnerNativeEquip::stock46;
+    // Weapons4: the shared tiers and the stand-in follow the gun profile; the
+    // lab-only variants never run in play (prefer runs as on, measured as 0).
+    if (!c.partner_native_equip_shared_given)
+        c.partner_native_equip_shared = gun ? PartnerNativeEquipShared::on : PartnerNativeEquipShared::off;
+    if (!c.partner_native_standin_given) c.partner_native_standin = gun ? PartnerNativeStandin::on : PartnerNativeStandin::off;
+    // Only a driven native stage gets the default. Census/off never owns the
+    // body; explicit off/hide remains authoritative in either lab or play.
+    if (!c.partner_native_ride_given)
+        c.partner_native_ride = c.partner_drive == PartnerDrive::native && c.partner_input_defer == PartnerDefer::on
+                                    ? PartnerNativeRide::hide : PartnerNativeRide::off;
+    if (c.mode == LabMode::play) {
+        if (c.partner_native_equip_shared == PartnerNativeEquipShared::prefer) c.partner_native_equip_shared = PartnerNativeEquipShared::on;
+        c.partner_native_equip_measured = false;
+    }
+}
+
+const char* PartnerNativeEquipSharedName(PartnerNativeEquipShared value) noexcept {
+    switch (value) {
+    case PartnerNativeEquipShared::on: return "on";
+    case PartnerNativeEquipShared::prefer: return "prefer";
+    default: return "off";
+    }
+}
+
+bool ParsePartnerNativeEquipShared(const char* text, std::size_t size, PartnerNativeEquipShared& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "off")) out = PartnerNativeEquipShared::off;
+    else if (Equals(s, "on")) out = PartnerNativeEquipShared::on;
+    else if (Equals(s, "prefer")) out = PartnerNativeEquipShared::prefer;
+    else return false;
+    return true;
+}
+
+const char* PartnerNativeStandinName(PartnerNativeStandin value) noexcept {
+    return value == PartnerNativeStandin::on ? "on" : "off";
+}
+
+bool ParsePartnerNativeStandin(const char* text, std::size_t size, PartnerNativeStandin& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "off")) out = PartnerNativeStandin::off;
+    else if (Equals(s, "on")) out = PartnerNativeStandin::on;
+    else return false;
+    return true;
+}
+
+const char* PartnerNativeRideName(PartnerNativeRide value) noexcept {
+    return value == PartnerNativeRide::hide ? "hide" : "off";
+}
+
+bool ParsePartnerNativeRide(const char* text, std::size_t size, PartnerNativeRide& out) noexcept {
+    if (!text && size) return false;
+    const Slice s{text, size};
+    if (Equals(s, "off")) out = PartnerNativeRide::off;
+    else if (Equals(s, "hide")) out = PartnerNativeRide::hide;
+    else return false;
+    return true;
 }
 
 const char* PartnerNativeRatesName(PartnerNativeRates value) noexcept {

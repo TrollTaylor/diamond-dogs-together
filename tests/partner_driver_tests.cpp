@@ -40,7 +40,7 @@ struct Fake {
     mgscoop::pose::Sample sample{};
     mgscoop::pose::SnapshotRing raw_ring;
     std::uint64_t raw_now{};
-    unsigned submits = 0, samples = 0;
+    unsigned submits = 0, samples = 0, slot_attempts = 0;
     std::string trigger;
     bool trigger_present = false, trigger_unreadable = false;
     unsigned trigger_takes = 0;
@@ -76,6 +76,7 @@ struct Fake {
     pp::InputTargets input_targets{};
     mgscoop::partner_input::PadRaw pad{};
     bool pad_ok = true;
+    unsigned pad_reads = 0, gun_reads[2]{}, slots_reads[2]{}, rates_reads[2]{};
     std::vector<mgscoop::partner_input::InputPacket> inputs;
     bool net_running = true;
     const char* install_result = nullptr;
@@ -173,6 +174,7 @@ struct Fake {
     std::uint8_t equip_types[700]{};
     // Input frame v5 negotiation: the peer was seen sending v5 (partner_net::PeerSendsInputV5).
     bool peer_v5 = true;
+    bool peer_v6 = false;
 
     Fake() {
         Ready();
@@ -252,7 +254,7 @@ const char* HookClear(void* context, bool terminating, std::uint32_t& q194, std:
     return nullptr;
 }
 const char* HookSlot(void* context, bool terminating, const float (&xyzw)[4]) noexcept {
-    Fake& f = F(context);
+    Fake& f = F(context); ++f.slot_attempts;
     if (const char* refused = WriteResult(f, "slot", terminating, true)) return refused;
     std::memcpy(f.state.slot[1], xyzw, sizeof(xyzw));
     return nullptr;
@@ -304,6 +306,7 @@ std::size_t HookFormatInputCensus(void* context, const pp::InputTargets& t, char
     return n > 0 ? static_cast<std::size_t>(n) : 0;
 }
 bool HookReadPad(void* context, const pp::State&, mgscoop::partner_input::PadRaw& out) noexcept {
+    ++F(context).pad_reads;
     out = F(context).pad;
     return F(context).pad_ok;
 }
@@ -496,6 +499,7 @@ bool HookReadLookSource(void* context, const pp::State&, pp::LookSource& out) no
 }
 std::uint32_t HookWindowSeq(void* context) noexcept { return F(context).window_seq; }
 bool HookReadRates(void* context, const pp::State&, std::uint32_t index, pp::RateRead& out) noexcept {
+    if (index < 2) ++F(context).rates_reads[index];
     out = index < 2 ? F(context).rates[index] : pp::RateRead{};
     return index < 2 && F(context).rates_ok[index];
 }
@@ -542,7 +546,7 @@ const char* HookInstallLookSource(void* context) noexcept {
 }
 void HookFireCensus(void* context, mgscoop::partner_fire_filter::Census& out) noexcept { out = F(context).fire_census; }
 bool HookReadGun(void* context, const pp::State&, std::uint32_t k, pp::Gun1& out) noexcept {
-    Fake& f = F(context);
+    Fake& f = F(context); if (k < 2) ++f.gun_reads[k];
     out = k ? f.gun : f.gun0;
     return k ? f.gun_ok : f.gun0_ok;
 }
@@ -566,7 +570,7 @@ bool HookReadAim(void* context, const pp::State&, pp::AimRead& out) noexcept {
     return F(context).aim_read_ok;
 }
 bool HookReadSlots(void* context, const pp::State&, std::uint32_t k, pp::Slots& out) noexcept {
-    Fake& f = F(context);
+    Fake& f = F(context); if (k < 2) ++f.slots_reads[k];
     out = k < 2 ? f.slots[k] : pp::Slots{};
     return k < 2 && f.slots_ok[k];
 }
@@ -576,6 +580,7 @@ bool HookEquipType(void* context, std::uint32_t equip, std::uint8_t& type) noexc
     return type != 0;
 }
 bool HookPeerInputV5(void* context) noexcept { return F(context).peer_v5; }
+bool HookPeerInputV6(void* context) noexcept { return F(context).peer_v6; }
 void AddWeaponHooks(pd::Hooks& h) {
     h.read_slots = HookReadSlots;
     h.equip_type = HookEquipType;
@@ -969,6 +974,181 @@ void TestForceExistsAndPolicy() {
     p.fake.write_result = "policy_vtable";
     for (int i = 0; i < 5; ++i) Check(p.Tick(1), "policy tick");
     Check(p.fake.Count("partner_policy=refused; reason=policy_vtable") == 1 && !p.driver.mission.policy_relaxed, "relax refused once");
+}
+
+void TestHiddenLocalSender() {
+    namespace pi = mgscoop::partner_input;
+    Session s(3,mgscoop::PartnerApply::xform,mgscoop::PartnerSource::net,30050);
+    AddNativeHooks(s.hooks); AddWeaponHooks(s.hooks);
+    s.hooks.peer_input_v6=HookPeerInputV6; s.fake.peer_v6=true;
+    s.driver.settings.nride=mgscoop::PartnerNativeRide::hide;
+    s.driver.settings.isend=true; s.driver.settings.nrates=mgscoop::PartnerNativeRates::mirror;
+    auto& target=s.fake.sample;
+    target.valid=target.time_valid=target.anim_valid=true; target.status=mgscoop::pose::Status::live;
+    target.act=99; target.x=1; target.y=20; target.z=3; target.sender_ms=1000; target.generation=1;
+    s.fake.gun0_ok=true; s.fake.gun0.fields_ok=true; s.fake.gun0.fields.flags27c=1u<<6; s.fake.gun0.fields.cap=30;
+    s.fake.slots_ok[0]=true; s.fake.rates_ok[0]=true;
+    for(float& value : s.fake.rates[0].f) value=1.0f;
+    for(unsigned i=0;i<6;++i) {
+        s.fake.pad.src_w[0]=(i%2) ? 0x02000000u : 8u;
+        s.fake.gun0.fields.equip=static_cast<std::uint16_t>(46+i); s.fake.gun0.fields.mag=static_cast<std::uint16_t>(5+i);
+        s.fake.gun0.gun3c0=c::gun_flag_in_hand | ((i%2) ? 0u : c::gun_flag_hold);
+        s.fake.gun0.mode_cur=static_cast<std::uint8_t>(i<3 ? 7 : 11);
+        s.fake.slots[0].nibble=static_cast<std::uint8_t>(i%3);
+        target.sender_ms+=100;
+        Check(s.Tick(1,100) && s.reply.op==0 && s.fake.inputs.size()==i+1 && s.fake.pad_reads==i+1,
+              "local on-foot pad continues once per owner tick while remote heli stays hidden");
+        const auto& sent=s.fake.inputs.back();
+        Check(sent.version==6 && sent.held==s.fake.pad.src_w[0] && sent.gun_equip==46+i && sent.mag==5+i &&
+              sent.inv_slot==i%3 && (sent.gun_flags & pi::GunFlag::Valid) && (sent.xflags & pi::XFlag::Rates) && sent.rate_dash==1000,
+              "hidden sender preserves v6 and refreshes current local held/equipment/magazine/slot/rates");
+        Check(((sent.gun_flags & pi::GunFlag::Reloading)!=0)==(i>=3), "hidden sender updates executed local reload mode");
+    }
+    Check(s.fake.inputs.back().reload_seq==1 && s.fake.gun_reads[0]==6 && s.fake.slots_reads[0]==6 &&
+          s.fake.rates_reads[0]==6 && s.fake.gun_reads[1]==0 && s.fake.slots_reads[1]==0 && s.fake.rates_reads[1]==0,
+          "hidden sender refreshes only local instance0; reload counter advances once");
+    Check(s.fake.Writes("slot")==0 && s.fake.Writes("or")==0 && s.fake.calls.empty() && s.fake.installs==0 &&
+          s.fake.defer_installs==0 && s.fake.wrap_installs==0 && s.fake.fire_installs==0 && s.fake.look_src_installs==0 &&
+          !s.driver.mission.input_armed && !s.driver.mission.realized,
+          "hidden sender has no remote transforms, realization, native hook installs or enabled Arm");
+    const auto packets=s.fake.inputs.size(); const auto pads=s.fake.pad_reads;
+    s.fake.link_live=false; Check(s.Tick(1) && s.fake.inputs.size()==packets && s.fake.pad_reads==pads,"hidden sender requires live link lease");
+    s.fake.link_live=true; s.fake.link_session=0;
+    Check(s.Tick(1) && s.fake.inputs.size()==packets && s.fake.pad_reads==pads,"hidden sender requires current nonzero session");
+    s.fake.link_session=7; s.fake.state.ids[0]=0xFFFF;
+    Check(s.Tick(1) && s.fake.inputs.size()==packets && s.fake.pad_reads==pads,"unrealized local0 sends no guessed pad");
+    s.fake.state.ids[0]=0; s.fake.state.parts[0]=0;
+    Check(s.Tick(1) && s.fake.inputs.size()==packets && s.fake.pad_reads==pads,"unloaded local0 sends no pad");
+    s.fake.state.parts[0]=3; s.fake.state.local=1;
+    Check(s.Tick(1) && s.fake.inputs.size()==packets && s.fake.pad_reads==pads,"unexpected local index sends no pad");
+    s.fake.state.local=0; s.fake.pad_ok=false;
+    const auto localReads=s.fake.gun_reads[0];
+    Check(s.Tick(1) && s.fake.inputs.size()==packets && s.fake.pad_reads==pads+1 && s.fake.gun_reads[0]==localReads,
+          "refused fresh pad read sends no packet and does not reuse cached gun sources");
+    s.fake.pad_ok=true; s.fake.gun0_ok=s.fake.slots_ok[0]=s.fake.rates_ok[0]=false;
+    Check(s.Tick(1,100) && s.fake.inputs.size()==packets+1,"fresh local pad still sends with unknown optional sources");
+    const auto& unreadable=s.fake.inputs.back();
+    Check(!(unreadable.gun_flags & pi::GunFlag::Valid) && !(unreadable.xflags & (pi::XFlag::Mag | pi::XFlag::Equip | pi::XFlag::Rates)) &&
+          unreadable.inv_slot==pi::kInvSlotUnknown,"unreadable local gear/rates never repeat old valid metadata");
+    const auto after=s.fake.inputs.size(); const auto readAfter=s.fake.pad_reads;
+    Check(!s.Tick(1,33,true) && s.fake.inputs.size()==after && s.fake.pad_reads==readAfter,"terminating hidden sender does nothing");
+    s.driver.mission.stopped=true;
+    Check(!s.Tick(1) && s.fake.inputs.size()==after && s.fake.pad_reads==readAfter,"stopped owner has no hidden sender");
+    // Normal sender remains at the original TickInput location, one packet
+    // per owner tick, with the exact integrated v6 negotiation retained.
+    Session normal(1);
+    normal.driver.settings.isend=true; normal.hooks.peer_input_v6=HookPeerInputV6; normal.fake.peer_v6=true;
+    for(unsigned i=0;i<4;++i) Check(normal.Tick(0) && normal.fake.inputs.size()==i+1 && normal.fake.pad_reads==i+1 &&
+                                 normal.fake.inputs.back().version==6,"normal path send cadence and v6 unchanged");
+}
+
+void TestRideVisibility() {
+    namespace rw = mgscoop::partner_ride_wire;
+    for (std::uint32_t mission : {30010u, 30020u, 30050u}) {
+        Session s(3, mgscoop::PartnerApply::xform, mgscoop::PartnerSource::net, mission);
+        s.lab.partner_native_ride = mgscoop::PartnerNativeRide::hide;
+        s.driver.settings.nride = mgscoop::PartnerNativeRide::hide;
+        AddNativeHooks(s.hooks); s.hooks.send_reliable_append = HookSendReliable;
+        pd::MissionStart(s.driver,s.hooks,mission); Check(pd::Cfg(s.driver,s.hooks,nullptr,s.now), "ride CFG after mission reset");
+        auto& sample=s.fake.sample;
+        sample.valid=sample.time_valid=sample.anim_valid=true; sample.status=mgscoop::pose::Status::live;
+        sample.x=1; sample.y=20; sample.z=3; sample.act=99; sample.sender_ms=1000;
+        rw::Packet ride{rw::Kind::heli,1,1000}; std::uint8_t bytes[rw::kSize]{};
+        rw::Encode(ride,bytes); s.fake.channel2.emplace_back(bytes,bytes+sizeof(bytes));
+        const auto submits=s.fake.submits;
+        Check(s.Tick(1) && s.reply.op==0 && s.fake.Writes("slot")==0 && s.fake.Writes("or")==0 &&
+              s.driver.mission.visibility.hidden && s.fake.submits==submits+1 && !s.driver.mission.realized,
+              "all partner-body missions hide helicopter without movement/realization and still transmit");
+        ride.kind=rw::Kind::foot; ride.revision=2; ride.sender_ms=2000;
+        rw::Encode(ride,bytes); s.fake.channel2.emplace_back(bytes,bytes+sizeof(bytes));
+        sample.act=1; sample.y=2; sample.sender_ms=2000;
+        Check(s.Tick(1,100) && s.reply.op==0, "foot state begins landing stability proof");
+        for(unsigned i=0;i<8;++i) Check(s.Tick(1,100) && s.fake.Writes("slot")==0, "repeated sender time cannot re-show");
+        for(unsigned i=1;i<5;++i) { sample.sender_ms=2000+i*100; Check(s.Tick(1,100) && s.fake.Writes("slot")==0,"stable landing waits500ms"); }
+        sample.sender_ms=2500;
+        Check(s.Tick(1,100) && s.reply.op==0 && s.fake.Writes("slot")==1 && s.fake.Writes("or")==0,
+              "landing first writes checked slot; no realize or Lua effects on same tick");
+        sample.sender_ms=2600;
+        Check(s.Tick(1,100) && s.fake.Writes("or")==1, "landing realizes on next fresh tick");
+        s.fake.Realize(true); s.fake.state.parts[1]=3; s.fake.anim_ok=true; s.fake.anim.act[1]=1;
+        sample.sender_ms=2700; Check(s.Tick(1,100), "ride body observed ready");
+        s.driver.mission.input_armed=true; s.driver.mission.native_defer_armed=true;
+        s.driver.mission.native_identity=s.driver.mission.native_roots=true;
+        s.driver.mission.dm_patched=s.fake.dm_patched=true;
+        const auto slotBefore=s.fake.Writes("slot"), clearBefore=s.fake.Writes("clear");
+        ride.kind=rw::Kind::heli; ride.revision=3; ride.sender_ms=3000;
+        rw::Encode(ride,bytes); s.fake.channel2.emplace_back(bytes,bytes+sizeof(bytes)); sample.act=99; sample.y=20; sample.sender_ms=3000;
+        Check(s.Tick(1) && s.reply.op==0 && s.fake.Writes("slot")==slotBefore && s.fake.Writes("clear")==clearBefore+1 &&
+              !s.driver.mission.input_armed && !s.driver.mission.native_defer_armed && !s.driver.mission.native_identity &&
+              !s.driver.mission.native_roots && !s.driver.mission.dm_patched && !s.driver.mission.realized && !s.driver.mission.parts_loaded,
+              "ride hide withdraws owner identity, roots, deferral, Arm and DM, and reports readiness conservatively");
+        sample.act=1; sample.y=2; sample.sender_ms=3500;
+        Check(s.Tick(1,6000) && s.reply.op==0 && s.fake.Writes("or")==1 && s.driver.mission.visibility.hidden,
+              "expired heli lease stays hidden even if subsequent pose looks on foot");
+        const auto sends=s.fake.reliable_sent.size();
+        const auto drains=s.fake.channel2_drains;
+        const auto writes=s.fake.writes.size();
+        const auto stateReads=s.fake.state_reads;
+        Check(!s.Tick(1,33,true) && s.fake.reliable_sent.size()==sends && s.fake.channel2_drains==drains && s.fake.writes.size()==writes && s.fake.state_reads==stateReads,
+              "terminating driver does not drain, send, read state or write");
+    }
+    // Checked restore refusal and refused placement cannot grant a show.
+    Session refused(3,mgscoop::PartnerApply::xform,mgscoop::PartnerSource::net,30050);
+    AddNativeHooks(refused.hooks); refused.driver.settings.nride=mgscoop::PartnerNativeRide::hide;
+    auto& target=refused.fake.sample;
+    target.valid=target.time_valid=target.anim_valid=true; target.status=mgscoop::pose::Status::live;
+    target.act=99; target.x=1; target.y=2; target.z=3; target.sender_ms=1000;
+    refused.driver.mission.bits_set=true; refused.driver.mission.pose_applied=true;
+    refused.fake.write_result="guard";
+    Check(refused.Tick(1) && refused.driver.mission.visibility.hidden && refused.driver.mission.bits_set,
+          "checked clear refusal remains hidden and records ownership for retry");
+    target.act=1; target.sender_ms=2000; Check(refused.Tick(1,100),"restore refusal first foot observation");
+    for(unsigned i=1;i<=5;++i) { target.sender_ms=2000+i*100; Check(refused.Tick(1,100),"restore refusal foot proof"); }
+    Check(refused.reply.op==0 && refused.fake.Writes("slot")==0 && refused.driver.mission.bits_set,
+          "stable foot cannot bypass refused clear before placement");
+    refused.fake.write_result=nullptr; target.sender_ms=2600;
+    Check(refused.Tick(1,100) && !refused.driver.mission.bits_set && refused.fake.Writes("slot")==1,
+          "accepted restoration permits one checked placement");
+    refused.fake.Realize(false); refused.driver.mission.range_needs_place=true; refused.driver.mission.pose_applied=false;
+    refused.driver.mission.visibility_place_try_ms=0; refused.fake.write_result="guard"; target.sender_ms=2700;
+    Check(refused.Tick(1,100) && refused.driver.mission.range_needs_place && !refused.driver.mission.pose_applied,
+          "checked placement refusal retains unshown state");
+    const auto attemptCount=refused.fake.slot_attempts;
+    target.sender_ms=2800; Check(refused.Tick(1,100) && refused.fake.slot_attempts==attemptCount,
+          "placement retry is bounded to1s rather than every frame");
+    refused.fake.write_result=nullptr; target.sender_ms=3800;
+    Check(refused.Tick(1,1000) && !refused.driver.mission.range_needs_place && refused.fake.Writes("slot")==2,
+          "placement retries after1s through same checked API");
+    // Legacy sender (no ride message): the verified helicopter act interval still blocks.
+    Session legacy(3,mgscoop::PartnerApply::warp,mgscoop::PartnerSource::net,30050);
+    AddNativeHooks(legacy.hooks); legacy.driver.settings.nride=mgscoop::PartnerNativeRide::hide;
+    legacy.fake.sample.valid=legacy.fake.sample.time_valid=legacy.fake.sample.anim_valid=true;
+    legacy.fake.sample.status=mgscoop::pose::Status::live; legacy.fake.sample.act=102;
+    Check(legacy.Tick(1) && legacy.reply.op==0 && legacy.fake.Writes("slot")==0, "legacy helicopter act hides without ride transport");
+    legacy.driver.settings.nride=mgscoop::PartnerNativeRide::off;
+    Check(legacy.Tick(1) && (legacy.reply.op & op::warp), "ride guard off preserves baseline Mother Base behavior");
+    // Producer uses append-mode; retries queued refusal and carries the latest kind.
+    Session sender(0);
+    AddNativeHooks(sender.hooks); sender.hooks.send_reliable_append=HookSendReliable;
+    const auto rideSends=[&]() {
+        unsigned n=0;
+        for (const auto& item : sender.fake.reliable_sent) if (rw::IsRide(item.data(),item.size())) ++n;
+        return n;
+    };
+    auto send=[&](unsigned kind,std::uint64_t step) {
+        sender.now+=step;
+        const auto source=TickSource(++sender.frame,0)+" 0 0 ride="+std::to_string(kind);
+        return pd::Tick(sender.driver,sender.hooks,sender.lab,source.data(),source.size(),pd::Clock{sender.now,sender.now},false,sender.reply);
+    };
+    sender.fake.reliable_ok=false;
+    Check(send(1,1) && sender.fake.reliable_sent.empty() && sender.driver.ride_tx_dirty,"refused ride send retains newest pending state");
+    sender.fake.reliable_ok=true; Check(send(1,1) && rideSends()==1,"ride retry queues once via append mode");
+    Check(send(1,1000) && rideSends()==1,"unchanged ride bounded below2s heartbeat");
+    Check(send(1,1000) && rideSends()==2,"ride heartbeat at2s");
+    Check(send(0,1) && rideSends()==3,"foot transition sends immediately");
+    rw::Packet out{};
+    for (const auto& item : sender.fake.reliable_sent) if (rw::IsRide(item.data(),item.size())) rw::Decode(item.data(),item.size(),out);
+    Check(out.kind==rw::Kind::foot && out.revision==2,"foot packet has next nonzero revision");
 }
 
 void TestFreeRoamRange() {
@@ -3609,6 +3789,56 @@ void TestNativeRates() {
 // partner's eyes while the native drive is active with a gun; nothing wanted
 // while off or inactive; wanted but invalid without a look; the debug
 // override wins over lab.ini; the telemetry and the 1 Hz line.
+void TestNativeGunDirectionWire() {
+    namespace pi = mgscoop::partner_input;
+    NativeSession s;
+    s.hooks.peer_input_v6 = HookPeerInputV6;
+    AddWeaponHooks(s.hooks);
+    s.hooks.read_aim = HookReadAim;
+    s.driver.settings.ngun = true;
+    Check(s.Until(mgscoop::partner_native::Mode::active,9000), "v6 sender: native active");
+    s.fake.inputs.clear();
+    const auto probes = s.driver.mission.v6_probes;
+    for (unsigned n=0;n<30;++n) s.N();
+    unsigned v5=0, v6=0;
+    for (const auto& in:s.fake.inputs) { if(in.version==5)++v5; if(in.version==6)++v6; }
+    Check(v5>0 && v6<=1 && s.driver.mission.v6_probes <= probes+1, "v6 unknown peer: legacy frames with bounded probes");
+    s.fake.peer_v6=true; s.fake.inputs.clear();
+    auto& r=s.fake.aim_read;
+    r.gun_ok[0]=r.rate_ok[0]=r.body_ok[0]=true; r.stance[0]=2; r.gun_class[0]=0;
+    r.r5c[0]=.625f; r.r60[0]=.517f; r.body_yaw[0]=static_cast<float>(4.8*3.14159265358979323846/180.0);
+    s.fake.aim_read_ok = true; s.fake.gun0_ok = true;
+    s.fake.gun0.fields_ok = true; s.fake.gun0.fields.flags27c = 1u<<6; s.fake.gun0.fields.equip = 46;
+    s.fake.gun0.gun3c0 = (1u<<18)|4u; s.fake.gun0.mode_cur = 7;
+    s.N();
+    Check(!s.fake.inputs.empty() && s.fake.inputs.back().version==6 && s.driver.mission.v6_peer_logged,
+          "v6 negotiated peer sends v6 and records capability once");
+    const auto& sent=s.fake.inputs.back();
+    Check((sent.gun_flags & pi::GunFlag::AimDir) && std::abs(sent.aim_pitch_cdeg-1875)<=1 && std::abs(sent.aim_yaw_cdeg-174)<=1,
+          "v6 sender puts current gun pose direction on the wire");
+    r.stance[0]=3; r.r5c[0]=.770f; r.r60[0]=.541f; s.N();
+    Check(!(s.fake.inputs.back().gun_flags & pi::GunFlag::AimDir) &&
+              s.driver.mission.dir_reason == mgscoop::partner_aim::DirReason::prone_frame,
+          "v6 sender: prone clears the previous direction and reports the missing frame");
+    r.stance[0]=2;
+    r.gun_flags[0]=0x2000; s.N();
+    Check(!(s.fake.inputs.back().gun_flags & pi::GunFlag::AimDir), "v6 sender refuses camera-relative mapping and clears old direction");
+    // Receiver point direction chooses the received group, stale input cannot retain it.
+    s.driver.settings.naimpt=mgscoop::PartnerNativeAimPt::point;
+    s.hooks.publish_aim=HookPublishAim; s.hooks.aim_stats=HookAimStats;
+    s.fake.latest.packet.version=6; s.fake.latest.packet.gun_flags=pi::GunFlag::Valid|pi::GunFlag::Aiming|pi::GunFlag::AimDir;
+    s.fake.latest.packet.aim_pitch_cdeg=0; s.fake.latest.packet.aim_yaw_cdeg=9000;
+    s.N();
+    Check(!s.fake.aim_pubs.empty() && s.fake.aim_pubs.back().src==static_cast<std::uint8_t>(mgscoop::partner_aim::Source::point),
+          "v6 receiver: received gun direction replaces look");
+    s.fake.latest.packet.gun_flags &= ~pi::GunFlag::AimDir;
+    s.fake.latest.packet.xflags = pi::XFlag::Look;
+    s.fake.latest.packet.look_pitch = s.fake.latest.packet.look_yaw = 0;
+    s.N();
+    Check(s.fake.aim_pubs.back().valid &&
+              s.fake.aim_pubs.back().src == static_cast<std::uint8_t>(mgscoop::partner_aim::Source::look),
+          "v6 receiver: direction refusal clears the prior point target and uses look");
+}
 void TestNativeAim() {
     namespace pn = mgscoop::partner_native;
     namespace pi = mgscoop::partner_input;
@@ -3630,9 +3860,9 @@ void TestNativeAim() {
     s.N();
     const mgscoop::partner_aim_point::Publication& pub = s.fake.aim_pubs.back();
     Check(pub.want && pub.valid && pub.src == static_cast<std::uint8_t>(pam::Source::look) && pub.epoch == s.driver.rates_epoch &&
-              std::fabs(pub.p[0] - 1.0f) < 1e-3f && std::fabs(pub.p[1] - 3.6f) < 1e-3f && std::fabs(pub.p[2] - 103.0f) < 1e-3f &&
+              std::fabs(pub.p[0] - 1.0f) < 1e-3f && std::fabs(pub.p[1] - 2.6f) < 1e-3f && std::fabs(pub.p[2] - 103.0f) < 1e-3f &&
               pub.ms == s.now,
-          "aim: active with a gun: the target 100 m along the remote's look (yaw 0 = +z) from the body's eyes");
+          "aim: active with a gun: the target 100 m along the remote's look (yaw 0 = +z) from the body's gun pivot");
     // No live look: wanted, invalid (the hook keeps its last write).
     s.fake.latest.packet.xflags = 0;
     s.N();
@@ -3661,14 +3891,14 @@ void TestNativeAim() {
     s.fake.aim_stats.overwritten = 1;
     pp::AimRead& r = s.fake.aim_read;
     r.q_ok = true;
-    r.q10[1][0] = 1.0f; r.q10[1][1] = 3.6f; r.q10[1][2] = 103.0f;
+    r.q10[1][0] = 1.0f; r.q10[1][1] = 2.6f; r.q10[1][2] = 103.0f;
     for (unsigned k = 0; k < 2; ++k) {
         r.gun_ok[k] = r.rate_ok[k] = r.body_ok[k] = true;
         r.body[k][0] = 1.0f; r.body[k][1] = 2.0f; r.body[k][2] = 3.0f;
         r.gun_state[k] = 7;
     }
-    r.aimpt[1][0] = 1.0f; r.aimpt[1][1] = 3.6f; r.aimpt[1][2] = 103.2f;   // straight ahead (+z), 0.2 m beyond the target
-    r.aimpt[0][0] = 101.0f; r.aimpt[0][1] = 3.6f; r.aimpt[0][2] = 3.0f;   // instance 0 aims along +x
+    r.aimpt[1][0] = 1.0f; r.aimpt[1][1] = 2.6f; r.aimpt[1][2] = 103.2f;   // straight ahead (+z), 0.2 m beyond the target
+    r.aimpt[0][0] = 101.0f; r.aimpt[0][1] = 2.6f; r.aimpt[0][2] = 3.0f;   // instance 0 aims along +x
     r.r60[1] = 0.95f; r.r5c[1] = 0.5f; r.r60[0] = 0.5f;
     r.path_flags[1] = c::gun3d0_bone_path; r.b3d5[1] = 0;  // the bone path
     s.fake.aim_read_ok = true;
@@ -3677,7 +3907,7 @@ void TestNativeAim() {
     Check(std::strcmp(t.aim_state, "ok") == 0 && t.aim_writes == 42 && t.aim_overwritten == 1 && std::strcmp(t.aim_src, "look") == 0 &&
               t.aim_target_mm[2] == 103000 && t.aim_q10_mm[1][2] == 103000 && t.aim_point_mm[1][2] == 103200 && t.aim_point_err_mm == 200,
           "aim telemetry: state, counters, target, slot, aim point and its error");
-    Check(t.aim_yaw_cdeg[1] == 0 && t.aim_pitch_cdeg[1] == 0 && t.aim_yaw_cdeg[0] == 9000 && t.aim_rel_yaw_cdeg[1] == -8100 &&
+    Check(t.aim_yaw_cdeg[1] == 0 && t.aim_pitch_cdeg[1] == 57 && t.aim_yaw_cdeg[0] == 9000 && t.aim_rel_yaw_cdeg[1] == -8100 &&
               t.aim_r60[1] == 950 && t.aim_pred[1] == 1 && t.aim_pred[0] == 0 && t.aim_gun_state[1] == 7 &&
               std::strcmp(t.aim_path[1], "bone") == 0 && std::strcmp(t.aim_path[0], "cam") == 0,
           "aim telemetry: world aim directions, the predicate's yaw, r60, the predicate, the gun state and the path");
@@ -3691,7 +3921,7 @@ void TestNativeAim() {
     // The hook's last write: the slot holds it (ours) and the aim point error is
     // measured against it (the target leads the write by a tick while moving).
     s.fake.aim_stats.written_ok = true;
-    s.fake.aim_stats.written[0] = 1.0f; s.fake.aim_stats.written[1] = 3.6f; s.fake.aim_stats.written[2] = 102.9f;
+    s.fake.aim_stats.written[0] = 1.0f; s.fake.aim_stats.written[1] = 2.6f; s.fake.aim_stats.written[2] = 102.9f;
     r.q10[1][2] = 102.9f;
     for (int i = 0; i < 35; ++i) s.N();
     Check(std::strcmp(t.aim_slot, "ours") == 0 && t.aim_written_mm[2] == 102900 && t.aim_target_mm[2] == 103000 &&
@@ -3722,6 +3952,88 @@ void SetVisualFire(NativeSession& s) {
     s.fake.gun.rec = 0x9100;
 }
 // Native polish (docs/native-puppet.md "Facing", "Weapons").
+void TestMovementRecovery() {
+    namespace pn = mgscoop::partner_native;
+    namespace pad = mgscoop::partner_pad;
+    NativeSession s;
+    s.fake.anim_ok = true; s.fake.anim.act[1] = 2; s.fake.anim.stance[1] = 1; s.fake.anim.speed[1] = 2;
+    s.fake.sample.anim_valid = true; s.fake.sample.act = 2; s.fake.sample.anim_stance = 1; s.fake.sample.anim_speed = 2;
+    s.fake.latest.packet.ly = 32767; s.fake.latest.packet.lmag = 65535;
+    Check(s.Until(pn::Mode::active, 9000), "movement recovery fixture active");
+    for (int n = 0; n < 50; ++n) s.N();
+    s.fake.sample.anim_speed = 3;
+    for (int n = 0; n < 13; ++n) s.N();
+    Check(s.fake.Containing("partner_recon=dashfix;") == 1 && s.driver.mission.dash.attempts == 1 &&
+          (s.fake.arms.back().tap_bits & pad::kDash), "driver wires stable sprint mismatch into one existing DASH overlay");
+    s.fake.anim.speed[1] = 3;
+    for (int n = 0; n < 60; ++n) s.N();
+    Check(s.fake.Containing("partner_recon=dashfix;") == 1, "matching native sprint cancels further relatch attempts");
+    s.fake.latest.packet.held = pad::kHold | pad::kDash;
+    s.N();
+    Check(s.driver.mission.hold_stripped && (s.fake.arms.back().strip & pad::kDash) &&
+          !(s.fake.arms.back().config.mask & pad::kHold), "actual stripped HOLD adds DASH to the existing all-word strip");
+    s.driver.settings.ngun = true; s.driver.settings.input_mask |= pad::kHold;
+    s.fake.gun_ok = s.fake.gun.fields_ok = true; s.fake.gun.fields.flags27c = 1u << 6;
+    s.fake.gun.prim = 0x9000; s.fake.gun.rec = 0x9100;
+    s.N(); s.N();
+    Check(!s.driver.mission.hold_stripped && (s.fake.arms.back().config.mask & pad::kHold) &&
+          !(s.fake.arms.back().strip & (pad::kHold | pad::kDash)), "admitted combat HOLD/DASH are untouched by parity policy");
+    s.driver.mission.recon_out.report.runaway_idle = true;
+    s.driver.mission.input_neutral = false;
+    s.driver.mission.runaway_since_ms = s.now - 2000;
+    s.N();
+    Check(s.driver.mission.runaway_since_ms == 0, "arbiter runaway timer requires an actually neutral runaway window");
+
+    // Actual source standing aim-walk is act 13, not idle aim 11/12. In the
+    // loco profile HOLD is stripped, so the body stays act 2 while recon
+    // freezes remote_act corrections. Only measured magnitude parity may run.
+    NativeSession aimed;
+    aimed.fake.anim_ok = true;
+    aimed.fake.anim.act[1] = 2; aimed.fake.anim.stance[1] = 1; aimed.fake.anim.speed[1] = 2;
+    aimed.fake.sample.anim_valid = true;
+    aimed.fake.sample.act = 2; aimed.fake.sample.anim_stance = 1; aimed.fake.sample.anim_speed = 2;
+    aimed.fake.latest.packet.ly = 32767; aimed.fake.latest.packet.lmag = 65535;
+    aimed.driver.settings.trim_pct = 0;  // isolate HOLD parity from generic drift trim
+    Check(aimed.Until(pn::Mode::active, 9000), "stripped aim-walk fixture enters native drive");
+    for (int n = 0; n < 50; ++n) aimed.N();
+    aimed.fake.sample.act = 13;
+    aimed.fake.sample.flags = mgscoop::sync::ActionFlag::Aiming | mgscoop::sync::ActionFlag::Running;
+    aimed.fake.sample.time_valid = true; aimed.fake.sample.sender_ms = 10000;
+    aimed.fake.sample.generation = 1;
+    aimed.fake.latest.packet.held = pad::kHold;
+    const auto advance = [&]() {
+        aimed.fake.sample.sender_ms += 100;
+        aimed.fake.sample.z += 0.2f;       // source: 2 m/s in sender time
+        aimed.fake.body_pos[2] += 0.4f;   // body's free locomotion: 4 m/s
+        aimed.N(100);
+    };
+    for (int n = 0; n < 9; ++n) advance();
+    const auto& aim_report = aimed.driver.mission.recon_out.report;
+    Check(aimed.driver.mission.recon_out.mode == mgscoop::partner_recon::Mode::frozen &&
+              aim_report.frozen == mgscoop::partner_recon::Frozen::remote_act &&
+              aimed.driver.mission.hold_stripped && aim_report.v_remote_mmps > 1900 &&
+              aim_report.v_free_mmps > 1.25 * aim_report.v_remote_mmps && aim_report.along_mm < -300,
+          "source act13 with stripped raw HOLD remains frozen despite measured standing overrun");
+    Check(aimed.driver.mission.mag_scale < 0.9 && aimed.driver.mission.mag_scale >= pn::kTrimFloor &&
+              aimed.fake.arms.back().mag_scale == aimed.driver.mission.mag_scale &&
+              (aimed.fake.arms.back().strip & pad::kDash) &&
+              aimed.fake.Containing("partner_recon=dashfix;") == 0,
+          "driver publishes bounded parity for frozen standing aim-walk without a DASH relatch");
+    aimed.fake.latest.packet.held = 0;
+    advance(); advance();  // TickNative consumes the previous recon observation
+    Check(!aimed.driver.mission.hold_stripped && aimed.driver.mission.mag_scale == 1.0,
+          "the same aim-walk overrun without raw HOLD cannot request parity trimming");
+    aimed.fake.latest.packet.held = pad::kHold;
+    for (int n = 0; n < 3; ++n) advance();
+    Check(aimed.driver.mission.hold_stripped && aimed.driver.mission.mag_scale < 1.0,
+          "live stripped HOLD re-admits measured standing aim-walk parity");
+    aimed.fake.sample.anim_stance = 2;
+    advance();
+    Check(aimed.driver.mission.hold_stripped && aimed.driver.mission.mag_scale == 1.0 &&
+              aimed.fake.anim.stance[1] == 1 && aimed.fake.sample.anim_stance == 2,
+          "mismatched source/body stance refuses the aim-walk parity exception");
+}
+
 void TestNativePolish() {
     namespace pn = mgscoop::partner_native;
     {
@@ -4418,6 +4730,22 @@ void TestNativeReloadSwitch() {
     s.fake.gun.fields.equip = 46;
     s.fake.latest.packet.gun_equip = 46;
     s.N();
+    // Weapons4: an empty hip slot follows the admitted back-slot stand-in;
+    // exact slot loading is independent, and the magazine mirror stays live.
+    s.driver.settings.nstandin=mgscoop::PartnerNativeStandin::on;
+    s.fake.latest.packet.gun_equip=871;s.fake.latest.packet.inv_slot=0;
+    s.N();s.N();
+    Check(s.driver.mission.slot_plan.map[0]==1 && s.driver.mission.tele.weapon_standin &&
+              std::strcmp(s.driver.mission.tele.weapon_gate,"standin")==0 && (s.fake.arms.back().strip&0x50u)==0 &&
+              (s.fake.arms.back().standin_mask&1u) && s.fake.arms.back().standin_slot[0]==1 && s.fake.arms.back().mag_mirror,
+          "stand-in maps remote hip to body back, admits combat and mirrors the body's magazine");
+    Check(s.driver.mission.tele.slot_map[0]==1 && s.driver.mission.tele.weapon_standin_ms>0,
+          "stand-in mapping and measured duration reach telemetry");
+    s.driver.settings.nstandin=mgscoop::PartnerNativeStandin::off;
+    s.N();s.N();
+    Check(!s.driver.mission.tele.weapon_standin && !(s.fake.arms.back().standin_mask&1u) &&
+              (s.fake.arms.back().strip&0x50u)==0x50u,"stand-in off restores mismatch protection");
+    s.fake.latest.packet.gun_equip=46;s.fake.latest.packet.inv_slot=1;s.N();
     // Play runs call as write; mirror never holds and never strips the sample.
     s.driver.settings.nslot = mgscoop::PartnerNativeSlot::call;
     s.driver.settings.play_mode = true;
@@ -4632,6 +4960,8 @@ int main() {
     TestMirrorAndOneShots();
     TestForceExistsAndPolicy();
     TestFreeRoamRange();
+    TestRideVisibility();
+    TestHiddenLocalSender();
     TestNetSourceAndCadence();
     TestInterpHookAndLost();
     TestLuaLogAndQuiet();
@@ -4666,10 +4996,12 @@ int main() {
     TestEquipEarlyManifest();
     TestNativeRates();
     TestNativeAim();
+    TestNativeGunDirectionWire();
     TestNativePlayAndWithdraw();
     TestNativeWeapons();
     TestNativeActionsWithWeapons();
     TestNativePolish();
+    TestMovementRecovery();
     TestNativeReloadSwitch();
     std::printf("%u partner driver checks passed: CFG/boundaries, stage-3 timeline, trigger stop/stage, STOP while terminating, "
                 "teardown keep, refusal caps, realize thrash cap, all-active re-assert, flags, mirror lifecycle, one-shots, "

@@ -28,6 +28,7 @@ SHORT WorkerKeyStateForTest(int) noexcept;
 UINT WorkerRawBufferForTest(RAWINPUT*,UINT*,UINT) noexcept;
 UINT WorkerRawInputForTest(HRAWINPUT,UINT,void*,UINT*,UINT) noexcept;
 HRAWINPUT WorkerSyntheticKeyboardForTest(unsigned,bool) noexcept;
+HRAWINPUT WorkerSyntheticLoadingForTest(std::uint32_t,std::uint32_t,std::uint64_t) noexcept;
 DWORD WorkerPadForTest(DWORD,XINPUT_STATE*) noexcept;
 }
 namespace w=mgscoop::worker_scenario;namespace ui=mgscoop::debug_overlay;
@@ -164,8 +165,33 @@ int main(){
               packet.data.keyboard.Message==static_cast<UINT>(key.down?WM_KEYDOWN:WM_KEYUP),"rawmodifiergenericVKeywithsideandreleasepreserved");
         Check(raw_data_calls==calls,"syntheticmodifierneverqueriesoriginalrawinput");
     }
+    const auto before_loading_raw=ui::GetWorkerInputStats();
+    w::SetLoadingContext({w::LoadingPhase::initialized,30020,8});
+    const auto loading_token=ui::WorkerSyntheticLoadingForTest(30020,8,GetTickCount64()+2000);
+    RAWINPUT loading_packet{};UINT loading_size=sizeof(loading_packet);
+    Check(ui::WorkerRawInputForTest(loading_token,RID_INPUT,&loading_packet,&loading_size,sizeof(RAWINPUTHEADER))==sizeof(RAWINPUTHEADER)+sizeof(RAWKEYBOARD)&&
+          loading_packet.data.keyboard.VKey==VK_SPACE&&loading_packet.data.keyboard.Flags==RI_KEY_MAKE,
+          "loadingrawcurrentacceptedallocationdeliversSpace");
+    w::SetLoadingContext({w::LoadingPhase::running,30020,8});loading_size=sizeof(loading_packet);
+    Check(ui::WorkerRawInputForTest(loading_token,RID_INPUT,&loading_packet,&loading_size,sizeof(RAWINPUTHEADER))==sizeof(RAWINPUTHEADER)+sizeof(RAWKEYBOARD)&&
+          loading_packet.data.keyboard.VKey==VK_SPACE&&loading_packet.data.keyboard.Flags==RI_KEY_BREAK&&loading_packet.data.keyboard.Message==WM_KEYUP,
+          "postedloadingtokencannotjumpafterruntimeentry");
+    w::SetLoadingContext({w::LoadingPhase::initialized,30020,9});loading_size=sizeof(loading_packet);
+    ui::WorkerRawInputForTest(loading_token,RID_INPUT,&loading_packet,&loading_size,sizeof(RAWINPUTHEADER));
+    Check(loading_packet.data.keyboard.Flags==RI_KEY_BREAK,"oldrawtokenrefusedafterallocationchange");
+    const auto expired_loading_token=ui::WorkerSyntheticLoadingForTest(30020,9,GetTickCount64());loading_size=sizeof(loading_packet);
+    ui::WorkerRawInputForTest(expired_loading_token,RID_INPUT,&loading_packet,&loading_size,sizeof(RAWINPUTHEADER));
+    Check(loading_packet.data.keyboard.Flags==RI_KEY_BREAK,"raw120msloadingdeadlineenforcedatdelivery");
+    w::SetLoadingContext({w::LoadingPhase::terminating,30020,9});
+    const auto terminating_token=ui::WorkerSyntheticLoadingForTest(30020,9,GetTickCount64()+2000);loading_size=sizeof(loading_packet);
+    ui::WorkerRawInputForTest(terminating_token,RID_INPUT,&loading_packet,&loading_size,sizeof(RAWINPUTHEADER));
+    Check(loading_packet.data.keyboard.Flags==RI_KEY_BREAK,"terminatingrawloadingdeliveryfailsclosed");
+    const auto after_loading_raw=ui::GetWorkerInputStats();
+    Check(after_loading_raw.raw_keyboard_reads==before_loading_raw.raw_keyboard_reads+5&&
+          after_loading_raw.raw_keyboard_packets_read==before_loading_raw.raw_keyboard_packets_read+3,
+          "loadingrawreadsdistinctfromuniquepostedtokens");
     const auto packet_stats=ui::GetWorkerInputStats();
-    Check(packet_stats.raw_keyboard_reads==6&&packet_stats.raw_keyboard_packets_read==6,"syntheticRIDINPUTreadcountersexcludephysicaldata");
+    Check(packet_stats.raw_keyboard_reads==11&&packet_stats.raw_keyboard_packets_read==9,"syntheticRIDINPUTreadcountersexcludephysicaldata");
     const auto repeated_token=ui::WorkerSyntheticKeyboardForTest(0x11,true);
     RAWINPUT repeated{};UINT repeated_size=sizeof(repeated);
     ui::WorkerRawInputForTest(repeated_token,RID_INPUT,&repeated,&repeated_size,sizeof(RAWINPUTHEADER));
@@ -173,7 +199,7 @@ int main(){
     repeated_size=sizeof(repeated);ui::WorkerRawInputForTest(repeated_token,RID_HEADER,&repeated,&repeated_size,sizeof(RAWINPUTHEADER));
     repeated_size=0;ui::WorkerRawInputForTest(repeated_token,RID_INPUT,nullptr,&repeated_size,sizeof(RAWINPUTHEADER));
     const auto duplicate_stats=ui::GetWorkerInputStats();
-    Check(duplicate_stats.raw_keyboard_reads==8&&duplicate_stats.raw_keyboard_packets_read==7,
+    Check(duplicate_stats.raw_keyboard_reads==13&&duplicate_stats.raw_keyboard_packets_read==10,
           "multipleAPIreadsareseparatefromuniqueinputtokensheaderandsizequeriesexcluded");
     Check(ui::WorkerPadForTest(0,&pad)==ERROR_DEVICE_NOT_CONNECTED&&!pad.Gamepad.wButtons,"physicalpadneverforwarded");
     RAWINPUT raw{};UINT raw_bytes=sizeof(raw);

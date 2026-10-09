@@ -58,6 +58,7 @@
 #include "mgscoop/debug_menu.hpp"
 #include "mgscoop/soldier_warp.hpp"
 #include "mgscoop/worker_debug.hpp"
+#include "mgscoop/worker_scenario.hpp"
 #include "mgscoop/nametag.hpp"
 #include "mgscoop/nametag_game.hpp"
 #include "mgscoop/steam_observer.hpp"
@@ -97,6 +98,8 @@ SRWLOCK receipt_lock = SRWLOCK_INIT;
 bool host_source_selected = false;
 enum class MissionPhase { idle, allocating, allocated, running };
 MissionPhase mission_phase = MissionPhase::idle;
+std::uint32_t worker_loading_generation = 0; // No wrap: exhaustion disables resume.
+bool worker_loading_exhausted = false;
 DWORD allocation_thread = 0, mission_thread = 0;
 DWORD cleanup_thread = 0;
 mgscoop::MissionTermination termination_scope;
@@ -647,6 +650,7 @@ bool PartnerLinkLive(void*) noexcept {
 }
 std::uint32_t PartnerLinkSession(void*) noexcept { return mgscoop::partner_net::GetLinkInfo().session; }
 bool PartnerPeerInputV5(void*) noexcept { return mgscoop::partner_net::PeerSendsInputV5(); }
+bool PartnerPeerInputV6(void*) noexcept { return mgscoop::partner_net::PeerSendsInputV6(); }
 bool PartnerDrainReliable(void*, std::uint8_t channel, std::uint8_t* out, std::size_t capacity, std::size_t& size) noexcept {
     return mgscoop::partner_net::DrainReliable(channel, out, capacity, size);
 }
@@ -781,7 +785,7 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerWindowSeq, PartnerLinkLive, PartnerLinkSession, PartnerDrainReliable, PartnerReadRates, PartnerForgetRates, kAmmoExperiment,
     PartnerInstallFire, PartnerFireStats, PartnerFireCensus, PartnerReadGun, PartnerReadLoadout, PartnerSendReliable, PartnerInBatch,
     PartnerInstallLookSource, PartnerInstallNoise, PartnerSendReliableAppend, PartnerPublishAim, PartnerAimStats, PartnerReadAim,
-    PartnerReadSlots, PartnerEquipType, PartnerPeerInputV5};
+    PartnerReadSlots, PartnerEquipType, PartnerPeerInputV5, PartnerPeerInputV6};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
@@ -988,15 +992,36 @@ void PublishUpperEndOwner(const char* buffer, std::size_t size, const pd::Clock&
     DrainUpperEndObservations(); DrainUpperPhaseObservations();
 }
 
+// The newest compact pack-state receipt (lua/coop/player_package_selection.lua):
+// mission << 8 | scene for a refusal, 0 after clear/selection. Capped diagnostics
+// cannot set state. The newest request wins, including a callback that throws.
+// PartnerMissionStart consumes it once (docs/player-package-selection.md).
+std::atomic<std::uint32_t> partner_pack_refused{0};
+void NotePackReceipt(const char* buffer, std::size_t size) noexcept {
+    if (partner::ClassifyPackState(buffer, size).kind != partner::PackReceipt::none)
+        partner_pack_refused.store(partner::UpdatePackState(0, buffer, size));
+}
+
 void PartnerMissionStart(std::uint32_t mission) noexcept {
     ClearUpperEndOwner();
+    const std::uint32_t pack = partner_pack_refused.exchange(0);
     if (!partner_on) return;
     mgscoop::debug_menu::BeginMission(mission);
     pd::MissionStart(partner_driver, partner_hooks, mission);
     mgscoop::partner_net::ResetRemote();
     mgscoop::partner_net::SetEpoch(mission);
     partner_mission = mission;
+    // A partner mission built on a refused pack list has one player slot: say
+    // so (toast, link-status partner_reason no_body_pack) instead of partner=none.
+    const bool no_body = pack != 0 && (pack >> 8) == mission && mgscoop::SupportsPartnerBody(mission);
+    mgscoop::partner_net::PublishPackState(no_body ? mission : 0);
+    mgscoop::coop_hud::PublishPartner(mgscoop::coop_hud::PartnerView{});
     mgscoop::partner_net::PublishPartnerState(false, false, mission);
+    if (no_body) {
+        const char* scene = partner::PackSceneName(static_cast<partner::PackScene>(pack & 0xFFu));
+        LogFormat("partner_pack=no_body; mission=%u; scene=%s\r\n", mission, scene[0] ? scene : "other");
+        mgscoop::coop_hud::Post(mgscoop::coop_hud::EventKind::no_body, static_cast<std::int32_t>(mission), scene);
+    }
     mgscoop::crash_probe::SetContext(partner_driver.settings.stage, 0, PartnerCtxFlags());
     mgscoop::nametag_game::MissionStart(mission);
 }
@@ -1009,6 +1034,8 @@ void PartnerMissionEnd() noexcept {
     mgscoop::partner_net::ResetRemote();
     mgscoop::partner_net::SetEpoch(0);
     partner_mission = 0;
+    mgscoop::partner_net::PublishPackState(0);
+    mgscoop::coop_hud::PublishPartner(mgscoop::coop_hud::PartnerView{});
     mgscoop::partner_net::PublishPartnerState(false, false, 0);
     mgscoop::crash_probe::SetContext(partner_driver.settings.stage, 0, PartnerCtxFlags());
 }
@@ -1148,6 +1175,8 @@ void NametagTick(const char* buffer, std::size_t size) noexcept {
 // runs unchanged, without calling the selector (thread_local selecting;
 // tests/script_load_bridge_tests.cpp selector_reentry), so the
 // non-recursive lock is never requested twice on one thread.
+void ObserveEquipmentTick() noexcept;
+
 const char* HandlePartnerTick(const char* buffer, std::size_t size) noexcept {
     if (!OnRuntimeThread()) return nullptr;
     const std::uint64_t started_us = QpcMicros();
@@ -1155,12 +1184,16 @@ const char* HandlePartnerTick(const char* buffer, std::size_t size) noexcept {
     partner::Reply reply{};
     const pd::Clock clock{mgscoop::partner_net::NowMs(), GetTickCount64()};
     if (!pd::Tick(partner_driver, partner_hooks, mgscoop::GetLabConfig(), buffer, size, clock, mission_terminating, reply)) {
-        ClearUpperEndOwner(); return nullptr;
+        ClearUpperEndOwner(); mgscoop::coop_hud::PublishPartner(mgscoop::coop_hud::PartnerView{}); return nullptr;
     }
     ObserveRemoteActionEvents();
     NametagTick(buffer, size);
+    // Service equipment on the natural partner Lua owner tick, independently
+    // of the menu module and its snapshot/poll receipts.
+    ObserveEquipmentTick();
     if (!partner::FormatReply(reply, partner_reply, sizeof(partner_reply))) {
-        ClearUpperEndOwner(); mgscoop::partner_upper_probe::Clear("reply_format"); return nullptr;
+        ClearUpperEndOwner(); mgscoop::partner_upper_probe::Clear("reply_format");
+        mgscoop::coop_hud::PublishPartner(mgscoop::coop_hud::PartnerView{}); return nullptr;
     }
     const auto manual_invalid_ops = partner::op::dm_play | partner::op::dm_stop | partner::op::warp |
         partner::op::set_parts_explicit | partner::op::set_all_active;
@@ -1193,6 +1226,46 @@ const char* HandlePartnerTick(const char* buffer, std::size_t size) noexcept {
                 mgscoop::partner_upper_probe::RewriteCompiled() &&
                 upper_mission.dmmap.phase == mgscoop::partner_dmmap::Phase::idle && !upper_mission.dmmap.owned);
         else mgscoop::partner_upper_probe::Clear("generation_exhausted");
+    }
+    // Small copied status publication from the natural owner, independent of
+    // F9/debug snapshots. Never reads game state on Present or network threads.
+    {
+        namespace hud = mgscoop::coop_hud;
+        namespace slots = mgscoop::partner_slots;
+        const auto& m = partner_driver.mission;
+        const auto& t = m.tele;
+        const auto link = mgscoop::partner_net::GetLinkInfo();
+        hud::PartnerFacts facts{};
+        facts.session = link.session; facts.mission = partner_mission; facts.publish_ms = clock.tick_ms;
+        facts.body_ready = !mission_terminating && m.cfg_ready && !m.stopped && m.realized && m.parts_loaded &&
+            !m.range_hidden && !m.range_needs_place && !m.lost_hidden;
+        facts.native_selected = partner_driver.settings.drive == mgscoop::PartnerDrive::native;
+        facts.native_active = m.native_out.mode == mgscoop::partner_native::Mode::active ||
+            m.native_out.mode == mgscoop::partner_native::Mode::entering;
+        facts.gun_enabled = facts.native_selected && partner_driver.settings.ngun;
+        facts.fresh_gun = clock.tick_ms != 0 && t.gun_tick_ms == clock.tick_ms;
+        facts.gun_fields_ok = t.gun_read_ok && t.gun_fields_ok;
+        facts.gun_class = t.gun_class; facts.body_equip = t.body_equip;
+        facts.switching = t.body_switching;
+        facts.remote_live = t.input_live && m.remote_gun_equip != mgscoop::partner_native::kNull && m.remote_gun_equip > 0;
+        facts.gate_current = t.weapon_gate_current && facts.remote_live;
+        facts.gate = static_cast<std::uint8_t>(m.weapon_gate);
+        // TickWeapons judges before TickSlots: recheck the current copied plan
+        // and handle so a slot transition cannot report an old match/substitute.
+        std::uint8_t r = m.remote_v5 && m.remote_slot < 3 ? m.remote_slot : slots::kNoSlot;
+        if (r >= 3 && m.equip.have && facts.remote_live)
+            for (std::uint8_t i = 0; i < 3; ++i)
+                if (m.equip.manifest.slots[i].alias == static_cast<std::uint32_t>(m.remote_gun_equip) ||
+                    m.equip.manifest.slots[i].base_id == static_cast<std::uint32_t>(m.remote_gun_equip)) { r = i; break; }
+        const std::uint8_t s = r < 3 && m.slot_plan_ok ? m.slot_plan.map[r] : slots::kNoSlot;
+        const auto handle = s < 3 && m.slots1_ok ? slots::Decode(m.slots1.handles[s]) : slots::Handle{};
+        const bool current_slot = s < 3 && m.slots1_ok && m.slots1.nibble == s && handle.filled &&
+            handle.equip == t.body_equip && m.slot_plan.equip[s] == t.body_equip;
+        facts.substitute = current_slot && r == s && m.slot_plan.tier[r] == slots::Tier::sub && m.slot_plan.equip[r] == t.body_equip;
+        facts.standin = current_slot && r != s && m.weapon_standin &&
+            m.slot_plan.tier[r] != slots::Tier::same && m.slot_plan.tier[r] != slots::Tier::sub;
+        if ((m.weapon_gate == slots::Gate::match || m.weapon_gate == slots::Gate::standin) && !current_slot) facts.gate_current = false;
+        hud::PublishPartner(hud::MakePartnerView(facts));
     }
     mgscoop::crash_probe::SetContext(partner_driver.settings.stage, partner_driver.mission.realized ? 1u : 0u, PartnerCtxFlags());
     mgscoop::partner_net::PublishPartnerState(partner_driver.mission.realized, partner_driver.mission.parts_loaded, partner_mission);
@@ -1277,9 +1350,10 @@ void ObserveEquipLink() noexcept {
 
 void ObserveEquipmentVtables() noexcept {
 #ifdef MGS_LOCAL_OFFLINE_EQUIPMENT_TEST
-    static std::uint32_t observed_epoch=UINT32_MAX;
+    static std::uint32_t observed_gen=UINT32_MAX;
+    static std::uintptr_t observed_player=0,observed_buffer=0;
     const auto& mission=partner_driver.mission;
-    if(observed_epoch==mission.body_epoch || !offline_enabled || !lab_active || !lab::SavesRedirected() ||
+    if(!offline_enabled || !lab_active || !lab::SavesRedirected() ||
        !partner_gate_ok || !OnRuntimeThread() || mission_terminating || gameplay_restore_pending ||
        HasDynamiteSessionOwnership() || !mgscoop::SupportsPartnerBody(partner_mission) ||
        !mission.parts_loaded || !mission.realized) return;
@@ -1308,7 +1382,8 @@ void ObserveEquipmentVtables() noexcept {
     if(!resource_vt || !resource_fn) return;
     // Exact ChangeEquip reads table[pool] (11AC35E). ResolveDm independently
     // validates remote block identity. Only log local/remote methods; no call.
-    observed_epoch=mission.body_epoch;
+    if(observed_gen==mission.realize_gen && observed_player==state.P && observed_buffer==block_buffer) return;
+    observed_gen=mission.realize_gen;observed_player=state.P;observed_buffer=block_buffer;
     for(unsigned i=0;i<2;++i) {
         if(!pp::Realized(state,i) || state.pool[i]>=2 || state.ids[i]!=i || state.parts[i]!=3) return;
         std::uintptr_t block=0;
@@ -1359,8 +1434,9 @@ void ObserveStock46Writer() noexcept {
 #endif
 }
 
-// The generalized writer (W3): per remote slot one dispatch per allocation
-// of a tier A1/C target, on the natural mission owner, behind the same gates
+// The generalized writer (W3/W4): per remote slot one dispatch per body
+// generation, at most two per allocation; A1/C and qualified shared targets
+// run on the natural mission owner, behind the same gates
 // as stock46 except the mission (any partner-body mission of this
 // allocation) and the admission (lab or paired play; EquipPiecesAdmitted).
 void ObserveEquipWriter() noexcept {
@@ -1373,6 +1449,15 @@ void ObserveEquipWriter() noexcept {
     context.substitute=mode==mgscoop::PartnerNativeEquip::substitute;
     context.owner=OnRuntimeThread();
     context.mission=partner_mission;context.body_epoch=mission.body_epoch;
+    context.realize_gen=mission.realize_gen;
+    context.now_ms=mgscoop::partner_net::NowMs();
+    const auto& config=mgscoop::GetLabConfig();
+    context.shared=config.partner_native_equip_shared==mgscoop::PartnerNativeEquipShared::prefer ? w::SharedMode::prefer
+        : config.partner_native_equip_shared==mgscoop::PartnerNativeEquipShared::on ? w::SharedMode::on : w::SharedMode::off;
+    context.measured=config.mode==mgscoop::LabMode::lab && config.partner_native_equip_measured;
+    // An unread gun mode waits too: never equip through an unknown switch/reload.
+    context.body_busy=mission.body_gun_mode==0xFF || mission.body_gun_mode==8 ||
+        mission.body_gun_mode==11 || mission.body_gun_mode==12 || mission.body_switching;
     context.base=reinterpret_cast<std::uintptr_t>(game_base);context.image_span=game_span;
     unsigned short current_mission=0;
     // The first failing gate is reported (equip_writer=waiting; reason=..), nothing is spent.
@@ -1397,6 +1482,8 @@ void ObserveEquipWriter() noexcept {
     }
     mgscoop::partner_equip_wire::Manifest manifest{};
     context.manifest=EquipManifest(manifest);
+    context.manifest_revision=context.manifest ? manifest.revision : std::uint16_t(0);
+    context.manifest_epoch=context.manifest ? manifest.epoch : std::uint32_t(0);
     for(unsigned s=0;s<w::kSlots;++s) {
         context.want[s]=context.manifest ? manifest.slots[s].base_id : std::uint16_t(0);
         context.alias[s]=context.manifest ? manifest.slots[s].alias : std::uint16_t(0);
@@ -1411,17 +1498,31 @@ void ObserveEquipWriter() noexcept {
 #endif
 }
 
+// The existing Lua OnUpdate polls in every mission, including title/ACC.
+// This path remains on the natural runtime owner under receipt_lock, independent
+// of the menu. Closing, termination and batch execution stop it before any reads.
+void ObserveEquipmentTick() noexcept {
+    if(!OnRuntimeThread() || mission_terminating || termination_scope.Active() ||
+       InterlockedCompareExchange(&partner_window_closing,0,0) || mgscoop::partner_defer::ShuttingDown() ||
+       mgscoop::partner_defer::InBatch()) return;
+    const auto now=mgscoop::partner_net::NowMs();
+    static std::uint64_t observed_ms=0;
+    if(now>=observed_ms && now-observed_ms<100) return;
+    observed_ms=now;
+    ObserveEquipLink();
+    ObserveEquipmentVtables();
+    ObserveStock46Writer();
+    ObserveEquipWriter();
+}
+
 void PublishDebugSnapshot() noexcept {
+    ObserveEquipmentTick();
     namespace debug = mgscoop::debug_menu;
     if (!debug::Enabled()) return;
     const auto now = mgscoop::partner_net::NowMs();
     static std::uint64_t published_ms = 0;
     if (now >= published_ms && now - published_ms < 100) return;
     published_ms = now;
-    ObserveEquipLink();
-    ObserveEquipmentVtables();
-    ObserveStock46Writer();
-    ObserveEquipWriter();
     debug::Snapshot snapshot{};
     const auto& settings = partner_driver.settings;
     const auto& mission = partner_driver.mission;
@@ -2251,6 +2352,9 @@ bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
             cleanup_thread=0;
             initialization_scope.Reset();
             mission_phase=MissionPhase::allocating; accepted=true;
+            if(!worker_loading_exhausted&&worker_loading_generation!=UINT32_MAX)++worker_loading_generation;
+            else {worker_loading_exhausted=true;worker_loading_generation=0;}
+            mgscoop::worker_scenario::SetLoadingContext({mgscoop::worker_scenario::LoadingPhase::unavailable,mission,worker_loading_generation});
             equipment_allocation_authorization.Begin(mission);
             stock46_authorization.Begin(mission); stock46_before={};
             equip_preload_authorization.Begin(mission); equip_preload_before={};
@@ -2269,8 +2373,12 @@ bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
     } else if(equals(initialized)) {
         boundary="initialization_returned";
         accepted=mission_phase==MissionPhase::allocated && initialization_scope.Returned(GetCurrentThreadId());
+        if(accepted&&initialization_scope.Complete()&&!termination_scope.Active())
+            mgscoop::worker_scenario::SetLoadingContext({mgscoop::worker_scenario::LoadingPhase::initialized,allocation_mission,worker_loading_generation});
     } else if(equals(start)) {
         boundary="runtime_enter";
+        // Revoke before the original runtime callback even if later admission fails.
+        mgscoop::worker_scenario::SetLoadingContext({mgscoop::worker_scenario::LoadingPhase::running,allocation_mission,worker_loading_generation});
         unsigned short mission=0;
         // OnInitialize is a loading job, not proof of the gameplay thread.
         // Both loading callbacks must return before this natural game-start
@@ -2292,6 +2400,7 @@ bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
         }
     } else if(equals(terminate)) {
         boundary="termination_returned";
+        mgscoop::worker_scenario::SetLoadingContext({mgscoop::worker_scenario::LoadingPhase::unavailable,allocation_mission,worker_loading_generation});
         if(OnTerminationThread()) {
             const bool owned_before=HasDynamiteSessionOwnership();
             ReconcileDynamiteSessionRelease(game_base,game_span,Log);
@@ -2686,6 +2795,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
        std::memcmp(buffer,terminate_boundary,size)==0 && std::strcmp(name,terminate_boundary)==0) {
         // Operational lifecycle signal: independent of the bounded diagnostic
         // trace, Lua co-op flags and whether a peer has joined yet.
+        mgscoop::worker_scenario::SetLoadingContext({mgscoop::worker_scenario::LoadingPhase::terminating,allocation_mission,worker_loading_generation});
         const bool accepted=termination_scope.Enter(mission_phase==MissionPhase::running,mission_thread,
             GetCurrentThreadId(),HasDynamiteSessionOwnership(),TransferRuleThread);
         bool restored=false;
@@ -2919,6 +3029,8 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     const bool archive_source = archive_mounted && name && std::strcmp(name, "@/Assets/tpp/script/lib/MgsCoopArchiveProbe.lua") == 0;
     const bool allocation_receipt = allocation_enabled && buffer && name && size < 256 &&
         size > 20 && std::memcmp(buffer, "return 'MGS_COOP_PACK_", 21) == 0;
+    // A refused partner pack is shown when its mission starts (PartnerMissionStart).
+    if (allocation_receipt) NotePackReceipt(buffer, size);
     constexpr char phase_prefix[] = "return 'MGS_COOP_PHASE_V1' -- ";
     const bool phase_receipt = allocation_enabled && buffer && size < 256 &&
         size >= sizeof(phase_prefix)-1 && std::memcmp(buffer,phase_prefix,sizeof(phase_prefix)-1)==0;
@@ -3043,7 +3155,7 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                 lab_status.local_index=-1;
                 SyncLabStatus();
             }
-            Log("\r\nMGS Co-op script adapter 0.12.0; executable_fingerprint=accepted; install_after_DirectInput=true; earlier_loads_may_be_missed=true\r\n");
+            Log("\r\nMGS Co-op script adapter 0.12.1; executable_fingerprint=accepted; install_after_DirectInput=true; earlier_loads_may_be_missed=true\r\n");
             if(client_check_enabled) Log("mode=client_check_v1; online_player_setup=1 native_join_calls=0 host_identity=none\r\n");
             if(client_enabled && !client_check_enabled) {
                 wchar_t host_path[32768]{};

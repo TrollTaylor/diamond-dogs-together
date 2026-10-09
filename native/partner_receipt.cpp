@@ -155,7 +155,12 @@ bool ParseTick(const char* source, std::size_t size, Tick& out) noexcept {
         constexpr std::uint8_t gun_flags = sync::ActionFlag::Aiming | sync::ActionFlag::Firing | sync::ActionFlag::Reloading;
         if (action_flags & ~gun_flags) return false;
     }
-    if (p != end) return false;
+    bool has_ride = false;
+    std::uint8_t ride_kind = 0;
+    if (p != end) {
+        if (end-p != 7 || std::memcmp(p, " ride=", 6) != 0 || p[6] < '0' || p[6] > '5') return false;
+        has_ride = true; ride_kind = static_cast<std::uint8_t>(p[6]-'0'); p = end;
+    }
     Tick parsed{};
     parsed.frame = values[0];
     parsed.x_mm = values[1]; parsed.y_mm = values[2]; parsed.z_mm = values[3];
@@ -165,6 +170,7 @@ bool ParseTick(const char* source, std::size_t size, Tick& out) noexcept {
     parsed.luaflags = static_cast<std::uint8_t>(values[8]);
     parsed.action_flags = static_cast<std::uint8_t>(action_flags);
     parsed.equip_id = static_cast<std::uint16_t>(equip_id);
+    parsed.has_ride = has_ride; parsed.ride_kind = ride_kind;
     out = parsed;
     return true;
 }
@@ -542,6 +548,103 @@ std::uint32_t DistanceMm(std::int32_t ax, std::int32_t ay, std::int32_t az,
     const double distance = std::sqrt(dx * dx + dy * dy + dz * dz);
     if (!(distance < 4294967295.0)) return 0xFFFFFFFFu;
     return static_cast<std::uint32_t>(std::llround(distance));
+}
+
+namespace {
+constexpr char pack_selected_prefix[] = "return 'MGS_COOP_PACK_SELECTED_V1' -- mission=";
+constexpr char pack_refused_prefix[] = "return 'MGS_COOP_PACK_REFUSED_V1' -- mission=";
+constexpr const char* kPackScenes[] = {"", "demo_stage", "hangar", "story", "layout", "other"};
+} // namespace
+
+PackResult ClassifyPack(const char* source, std::size_t size) noexcept {
+    PackResult result{PackReceipt::none, 0, PackScene::none};
+    if (!source || size == 0 || size > max_pack_receipt || std::memchr(source, 0, size)) return result;
+    std::size_t at = 0;
+    PackReceipt kind = PackReceipt::none;
+    if (Prefixed(source, size, pack_selected_prefix)) {
+        kind = PackReceipt::selected;
+        at = sizeof(pack_selected_prefix) - 1;
+    } else if (Prefixed(source, size, pack_refused_prefix)) {
+        kind = PackReceipt::refused;
+        at = sizeof(pack_refused_prefix) - 1;
+    } else {
+        return result;
+    }
+    std::size_t digits = 0;
+    while (at + digits < size && Digit(source[at + digits])) ++digits;
+    std::uint32_t mission = 0;
+    if (!ParseDec(source + at, digits, 1, 999999, mission)) return result;
+    at += digits;
+    // The mission ends the receipt or is followed by "; ".
+    if (at != size && (size - at < 2 || source[at] != ';' || source[at + 1] != ' ')) return result;
+    result.kind = kind;
+    result.mission = mission;
+    if (kind != PackReceipt::refused) return result;
+    result.scene = PackScene::other;
+    constexpr char scene_key[] = "; scene=";
+    for (std::size_t i = at; i + sizeof(scene_key) - 1 <= size; ++i) {
+        if (std::memcmp(source + i, scene_key, sizeof(scene_key) - 1) != 0) continue;
+        const std::size_t from = i + sizeof(scene_key) - 1;
+        std::size_t length = 0;
+        while (from + length < size && source[from + length] != ';' && length < 16) ++length;
+        char name[17]{};
+        std::memcpy(name, source + from, length);
+        const PackScene scene = from + length == size || source[from + length] == ';' ? PackSceneFromName(name) : PackScene::none;
+        if (scene != PackScene::none) result.scene = scene;
+        break;
+    }
+    return result;
+}
+
+PackResult ClassifyPackState(const char* source, std::size_t size) noexcept {
+    PackResult none{PackReceipt::none, 0, PackScene::none};
+    constexpr char prefix[] = "return 'MGS_COOP_PACK_STATE_V1' -- mission=";
+    if (!source || size > max_pack_state_receipt || std::memchr(source, 0, size) || !Prefixed(source, size, prefix)) return none;
+    std::size_t at = sizeof(prefix) - 1, digits = 0;
+    while (at + digits < size && Digit(source[at + digits])) ++digits;
+    std::uint32_t mission = 0;
+    if (!ParseDec(source + at, digits, 0, 999999, mission)) return none;
+    at += digits;
+    constexpr char result_key[] = "; result=";
+    if (size - at < sizeof(result_key) - 1 || std::memcmp(source + at, result_key, sizeof(result_key) - 1)) return none;
+    at += sizeof(result_key) - 1;
+    std::size_t n = 0;
+    while (at + n < size && source[at + n] != ';') ++n;
+    PackReceipt kind = Exact(source + at, n, "clear") ? PackReceipt::clear
+        : Exact(source + at, n, "selected") ? PackReceipt::selected
+        : Exact(source + at, n, "refused") ? PackReceipt::refused : PackReceipt::none;
+    if (kind == PackReceipt::none || (kind != PackReceipt::clear && mission == 0)) return none;
+    at += n;
+    constexpr char scene_key[] = "; scene=";
+    if (size - at < sizeof(scene_key) - 1 || std::memcmp(source + at, scene_key, sizeof(scene_key) - 1)) return none;
+    at += sizeof(scene_key) - 1;
+    if (kind != PackReceipt::refused)
+        return Exact(source + at, size - at, "none") ? PackResult{kind, mission, PackScene::none} : none;
+    for (std::size_t i = 1; i < sizeof(kPackScenes) / sizeof(kPackScenes[0]); ++i) {
+        const std::size_t length = std::strlen(kPackScenes[i]);
+        if (size - at == length && std::memcmp(source + at, kPackScenes[i], length) == 0)
+            return {kind, mission, static_cast<PackScene>(i)};
+    }
+    return none;
+}
+
+std::uint32_t UpdatePackState(std::uint32_t previous, const char* source, std::size_t size) noexcept {
+    const PackResult pack = ClassifyPackState(source, size);
+    if (pack.kind == PackReceipt::selected || pack.kind == PackReceipt::clear) return 0;
+    if (pack.kind == PackReceipt::refused) return (pack.mission << 8) | static_cast<std::uint32_t>(pack.scene);
+    return previous;
+}
+
+const char* PackSceneName(PackScene scene) noexcept {
+    const auto index = static_cast<std::size_t>(scene);
+    return index < sizeof(kPackScenes) / sizeof(kPackScenes[0]) ? kPackScenes[index] : "";
+}
+
+PackScene PackSceneFromName(const char* name) noexcept {
+    if (!name || !name[0]) return PackScene::none;
+    for (std::size_t i = 1; i < sizeof(kPackScenes) / sizeof(kPackScenes[0]); ++i)
+        if (std::strcmp(name, kPackScenes[i]) == 0) return static_cast<PackScene>(i);
+    return PackScene::none;
 }
 
 sync::PlayerTransformPacket MakeTransform(const Tick& tick, std::uint32_t sequence, std::uint32_t tick_ms) noexcept {

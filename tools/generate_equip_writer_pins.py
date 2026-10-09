@@ -212,6 +212,13 @@ GENERAL_RANGES = [
     ("dependency_lut_lane2", 0xDB6A20, 0xDB6A2E, 0xDB6A2E),
     ("dependency_lut_lane3", 0xDB6CC0, 0xDB6CCE, 0xDB6CCE),
     ("dependency_lut_lane10", 0xDB6CD0, 0xDB6CDE, 0xDB6CDE),
+    # Complete exclusive ends, including RET/REP RET and the final release JMP.
+    ("model_binder_record_constructor", 0xB0BCD0, 0xB0BD55, 0xB0BD55),
+    ("model_binder_records_allocate", 0xB0BAF0, 0xB0BC05, 0xB0BC05),
+    ("model_binder_records_reset", 0xB0CA40, 0xB0CABD, 0xB0CABD),
+    ("bank_shared_key_selection", 0xADEA10, 0xADEA70, 0xADEA70),
+    ("engine_first_used_stock_entry", 0xDBD5C0, 0xDBD607, 0xDBD607),
+    ("inventory_actor_release", 0xEE9E60, 0xEE9EF0, 0xEE9EF0),
 ]
 GENERAL_NAMES = {
     "recipe_dependency_selection", "dependency_hash_getter", "public_mission_preload",
@@ -319,6 +326,21 @@ def emulate_slot(analysis, begin, end, type_reg, slot_reg, entry_r8):
 
 def assert_static(analysis):
     facts = []
+    # The retail unwind table splits these functions; include every span and tail.
+    expected_ranges = {
+        0xB0BAF0: [(0xB0BAF0,0xB0BC05)],
+        0xB0CA40: [(0xB0CA40,0xB0CA4A),(0xB0CA4A,0xB0CABB),(0xB0CABB,0xB0CABD)],
+        0xEE9E60: [(0xEE9E60,0xEE9E76),(0xEE9E76,0xEE9ED5),(0xEE9ED5,0xEE9EF0)],
+        0xADEA10: [(0xADEA10,0xADEA70)],
+    }
+    for start, wanted in expected_ranges.items():
+        stop = wanted[-1][1]
+        got = [(s,e) for s,e,_ in analysis.ranges if start <= s < stop]
+        if got != wanted:
+            raise SystemExit(f"Weapons4 unwind spans changed at {start:X}: {got}")
+    expect(analysis,0xB0BD54,"c3","binder constructor return")
+    expect(analysis,0xDBD605,"f3 c3","first-used getter complete REP RET")
+    expect(analysis,0xEE9EEB,"e9 a0 c0 b1 00","actor release final memset tail")
     # ChangeEquip: with request flags 4 (the qualified request) the new
     # weapon's type picks the slot passed to SetCurrentSlot (vt+0x10).
     expect(analysis, 0x11AC4A0, "f6 46 13 04 0f 84 31 02 00 00", "ChangeEquip flags-4 test")
@@ -427,6 +449,49 @@ def assert_static(analysis):
     expect(analysis, 0xDC37E0, "83 38 00 75 05 f6 02 02 74 16", "DC3700 eviction scan")
     expect(analysis, 0xDC3840, "48 83 c1 e0 41 b0 01 e9 b4 fe ff ff", "DC3840 protect thunk")
     facts.append("DC3700 selection/protect/build/evict paths")
+    # Weapons4: no alias construction or protect mutation on a first-used
+    # entry; native ref-counted release, bank sharing, and empty binder words.
+    expect(analysis, 0xDC32E0, "45 33 c0 41 8b d7 e8 15 04 00 00",
+           "engine allocate requests protect=0")
+    expect(analysis, 0xDC3308, "e8 43 bd e3 ff 40 0f b6 de 48 8b 48 18 49 8b 84 24 e8 01 00 00 4c 8b 01 48 8d 14 98 41 ff 50 20",
+           "engine atomic stock reference increment")
+    expect(analysis, 0xDC3374, "41 88 70 08",
+           "metadata records first-used stock cache index")
+    expect(analysis, 0xDC63B5, "83 e0 1f 0f 84 b9 00 00 00",
+           "empty handle returns without release")
+    expect(analysis, 0xDC63EB, "48 8d 4f e0 e8 cc 71 ff ff 8b d8 e8 55 8c e3 ff 0f b6 d3 48 8b 48 18 48 8b 87 e8 01 00 00 4c 8b 01 48 8d 14 90 41 ff 50 30",
+           "release first-used stock entry and atomic refs decrement")
+    expect(analysis, 0xEE9E1E, "ff 50 08 8b 4f 0c 48 8b 47 40 0f af cd 03 ce 33 d2 c7 04 88 00 00 00 00",
+           "slot releases once then zeroes handle")
+    expect(analysis, 0xEE9EA0, "4c 8b 01 8b 14 30 41 ff 50 08 48 8b 47 40 81 e3 00 00 ff ff 8d 6d 01 0f b7 db 89 1c 06",
+           "actor releases once then zeroes handle")
+    expect(analysis, 0xADE0D7, "49 39 34 c1 75 0d 48 8b 83 90 00 00 00 4c 39 04 c8 74 08 ff c7 3b fa 72 e1 8b fa 45 32 e4 3b fa 75 2b",
+           "bank shares only matching asset and mission entry")
+    expect(analysis, 0xADE126, "4c 8d 34 12 48 8b 8b 98 00 00 00 66 41 ff 04 0e",
+           "shared bank reference increment")
+    expect(analysis, 0xADEA30, "49 39 12 75 0d 48 8b 81 90 00 00 00 4d 39 04 03 74 13 41 ff c1 49 83 c2 18 49 83 c3 08 44 3b cb 72 de 44 8b cb 44 3b cb 72 10 45 33 c9 c7 44 24 20 00 00 00 00 e8 66 e2 ff ff",
+           "bank lookup compares both keys before cache allocation")
+    expect(analysis, 0xB0BB59, "48 6b ff 34 48 03 cf 49 89 4e 10",
+           "binder allocation stride 0x34")
+    expect(analysis, 0xB0BBA3, "48 c7 43 18 34 00 00 00 48 89 7b 20",
+           "binder allocated array stride and count")
+    expect(analysis, 0xB0BBD0, "48 8b cb 48 6b c9 34 48 03 ce 48 89 4c 24 28 74 06 e8 ea 00 00 00",
+           "binder constructor on each bounded array record")
+    expect(analysis, 0xB0BCE0, "c7 40 fc e0 ff ff ff c7 00 e0 ff ff ff 80 60 04 fe",
+           "binder constructor both handles FFFFFFE0")
+    expect(analysis, 0xB0CA6F, "80 60 08 fe c7 00 e0 ff ff ff c7 40 0c e0 ff ff ff c7 40 04 e0 ff ff ff c7 40 10 e0 ff ff ff",
+           "binder reset both handles FFFFFFE0")
+    expect(analysis, 0xB0C7B4, "89 44 8a 04 80 64 8a 08 fe",
+           "binder pending handle queued with flags clear")
+    expect(analysis, 0xB0D043, "66 39 72 fc 75 16 66 39 32 75 11 8b c8 c1 e9 10 66 3b ce 74 07 80 62 02 fe 89 42 fe",
+           "binder empty handle update predicate")
+    expect(analysis, 0xB0D18B, "41 8b 06 be ff ff 00 00 41 89 46 fc",
+           "binder binding current from pending")
+    expect(analysis, 0xB0D1CD, "41 80 66 04 fe 41 c7 46 fc e0 ff ff ff 48 8b bc 24 f0 00 00 00 41 c7 06 e0 ff ff ff",
+           "binder unbind and clear pending FFFFFFE0")
+    expect(analysis, 0x1A753E9, "b8 00 10 00 00 66 41 85 47 12 74 55",
+           "optional header dictionary bit 0x1000")
+    facts.append("first-used stock sharing/release, bank key sharing, and native empty binder lifecycle")
     # The NULL optional: ADE358 renders with no asset on a bank with a policy
     # (the main bank); the size is 0x20 + 0x150 + 1E19200(NULL) where 1E1921F
     # returns 0x90 + align16(1A7DA20(1,1) = 8g+88) for count 1.

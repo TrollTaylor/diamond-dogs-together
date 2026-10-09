@@ -1031,7 +1031,8 @@ function Get-CoopPartnerReasonText {
     switch -Regex ([string]$Reason) {
         '^$' { return 'no reason reported' }
         '^legacy$' { return 'clip partner chosen (Play-Coop -Partner clips)' }
-        '^(mission_start|configured|unlatched|cooldown|settling|ok|not_installed)$' { return 'starting the native partner' }
+        '^no_body_pack$' { return 'no partner body in this scene (a Mother Base demo, the battle-gear hangar or a story variant; it returns when the scene reloads normally, otherwise send Collect-Logs)' }
+        '^(mission_start|configured|unlatched|cooldown|settling|ok|not_installed|warmup)$' { return 'starting the native partner' }
         '^thread$' { return 'this PC runs the game''s update threads differently than the native partner needs; please send Collect-Logs' }
         '^cost$' { return 'the native partner was too slow on this PC; please send Collect-Logs' }
         '^install_' { return 'the game code differs from the verified build, so the native partner stays off; please send Collect-Logs' }
@@ -1125,7 +1126,29 @@ function Format-CoopStatusLine {
     # partner body (native or the clip fallback with its reason) and how the
     # other PC shows yours (the capability exchange).
     $drive = [string](Get-CoopValue $Status 'partner_drive' '')
-    if ($drive -eq 'native') { $partner += ' native' }
+    $partnerReason = [string](Get-CoopValue $Status 'partner_reason' '')
+    # A refused partner pack (docs/player-package-selection.md): this scene has no partner body.
+    if ($partnerReason -eq 'no_body_pack') { $partner += ' - ' + (Get-CoopPartnerReasonText -Reason $partnerReason) }
+    elseif ($state -eq 'connected' -and [string](Get-CoopValue $Status 'partner_view' '') -in @('native', 'clips', 'loading')) {
+        # Same cached owner view as the HUD; old status documents keep their wording.
+        $view = [string](Get-CoopValue $Status 'partner_view' 'loading')
+        $gun = [string](Get-CoopValue $Status 'partner_gun' 'unavailable')
+        if ([int](Get-CoopValue $Status 'partner_view_fresh' 0) -ne 1) { $view = 'loading'; $gun = 'unavailable' }
+        $partner += ' ' + $view
+        $gunText = switch ($gun) {
+            'off' { 'off' }
+            'present' { 'present' }
+            'match' { 'matched' }
+            'substitute' { 'substitute' }
+            'standin' { 'stand-in' }
+            'switching' { 'switching' }
+            'mismatch' { 'mismatch' }
+            'projectile' { 'projectile' }
+            default { 'unavailable' }
+        }
+        $partner += '; gun ' + $gunText
+    }
+    elseif ($drive -eq 'native') { $partner += ' native' }
     elseif ($drive -eq 'clips' -or $drive -eq 'off') {
         $partner += ' clips (' + (Get-CoopPartnerReasonText -Reason ([string](Get-CoopValue $Status 'partner_reason' ''))) + ')'
     }
@@ -1167,6 +1190,7 @@ function Update-CoopPartnerDetails {
     if ($line -match 'allocation_enter.*mission=(30010|30020|30050)(\D|$)') { $s.Mission = $true }
     elseif ($line -match '^partner_cfg=ready') { $s.Ready = $true; $s.Refused = '' }
     elseif ($line -match '^partner_cfg=refused; reason=([^;\s]+)') { $s.Refused = $Matches[1] }
+    elseif ($line -match '^partner_pack=no_body; mission=\d+; scene=([a-z_]+)') { $s.Refused = "no partner body: $($Matches[1]) pack list" }
     elseif ($line -match '^partner_realized=1') { $s.Shown = $true }
     elseif ($line -match '^partner_realized=0') { $s.Shown = $false; $s.Loaded = $false }
     elseif ($line -match '^partner_parts=loaded') { $s.Loaded = $true }

@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "mgscoop/coop_hud.hpp"
+#include "mgscoop/partner_slots.hpp"
 #include "mgscoop/coop_reason_text.hpp"
 #include "mgscoop/link_crypto.hpp"
 #include "mgscoop/link_session.hpp"
@@ -2121,6 +2122,84 @@ void TestHud() {
     Check(hud::FormatLine(v, "Snake_Fan", hud::Mode::compact, 0, line) && std::strcmp(line.text, "CO-OP [connected] Snake_Fan - Steam relay 61 ms") == 0 &&
               line.tone == hud::Tone::good && line.detail[0] == 0,
           "connected line");
+    {
+        hud::PartnerFacts f{};
+        f.session = 7; f.mission = 30050; f.publish_ms = 1000;
+        f.body_ready = f.native_selected = f.native_active = f.gun_enabled = true;
+        f.fresh_gun = f.gun_fields_ok = f.remote_live = f.gate_current = true;
+        f.gun_class = 1; f.body_equip = 46;
+        f.gate = static_cast<std::uint8_t>(mgscoop::partner_slots::Gate::match);
+        auto p = hud::MakePartnerView(f);
+        Check(p.drive == hud::PartnerDrive::native && p.gun == hud::PartnerGun::match && hud::GunPresent(p.gun),
+              "current verified fields and current gate: native matched gun");
+        hud::Configure(hud::Mode::off, false); // F9/HUD disabled does not stop owner publication
+        hud::PublishPartner(p);
+        f.body_equip = 0;
+        hud::PartnerView copied{};
+        Check(hud::GetPartner(copied) && copied.gun == hud::PartnerGun::match && copied.mission == 30050,
+              "partner publication is copied and available while HUD/menu are off");
+        hud::Configure(hud::Mode::compact, true);
+        f.body_equip = 46;
+        v.session = 7; v.mission = 30050;
+        Check(hud::FormatLine(v, "Snake_Fan", hud::Mode::compact, 1200, line, &p) &&
+              std::strcmp(line.text, "CO-OP [connected] Snake_Fan - Steam relay 61 ms | native; gun matched") == 0,
+              "connected line consumes the fresh copied partner view");
+        f.substitute = true; p = hud::MakePartnerView(f);
+        Check(p.gun == hud::PartnerGun::substitute, "verified current slot substitute is distinct from an exact match");
+        f.substitute = false; f.standin = true; f.gate = static_cast<std::uint8_t>(mgscoop::partner_slots::Gate::standin);
+        Check(hud::MakePartnerView(f).gun == hud::PartnerGun::standin, "qualified current alternate slot is a stand-in");
+        f.standin = false;
+        Check(hud::MakePartnerView(f).gun == hud::PartnerGun::present, "historical stand-in verdict without current plan proof is only gun present");
+        f.gate = static_cast<std::uint8_t>(mgscoop::partner_slots::Gate::match); f.gate_current = false;
+        Check(hud::MakePartnerView(f).gun == hud::PartnerGun::present, "old gate at a current slot transition cannot claim matching");
+        f.gate_current = true; f.remote_live = false;
+        Check(hud::MakePartnerView(f).gun == hud::PartnerGun::present, "stale remote equip cannot claim matching");
+        f.remote_live = true; f.switching = true;
+        Check(hud::MakePartnerView(f).gun == hud::PartnerGun::switching, "current gun switch is reported before matching");
+        f.switching = false; f.gate = static_cast<std::uint8_t>(mgscoop::partner_slots::Gate::mismatch);
+        Check(hud::MakePartnerView(f).gun == hud::PartnerGun::mismatch, "current mismatched gun is distinct from unavailable");
+        f.gate = static_cast<std::uint8_t>(mgscoop::partner_slots::Gate::projectile);
+        Check(hud::MakePartnerView(f).gun == hud::PartnerGun::projectile, "projectile gun does not claim bullet match");
+        f.gun_fields_ok = false;
+        Check(hud::MakePartnerView(f).gun == hud::PartnerGun::unavailable, "unread current gun fields ignore historical presence");
+        f.gun_fields_ok = true; f.fresh_gun = false;
+        Check(hud::MakePartnerView(f).gun == hud::PartnerGun::unavailable, "retained gun fields from a skipped owner tick are unavailable");
+        f.fresh_gun = true; f.gun_class = 0;
+        Check(hud::MakePartnerView(f).gun == hud::PartnerGun::unavailable, "non-gun class does not establish current gun presence");
+        f.gun_class = 1; f.body_equip = 0;
+        Check(hud::MakePartnerView(f).gun == hud::PartnerGun::unavailable, "equip zero does not establish current gun presence");
+        f.body_equip = 46; f.native_active = false;
+        Check(hud::MakePartnerView(f).drive == hud::PartnerDrive::clips, "native fallback reports clips");
+        f.body_ready = false;
+        Check(hud::MakePartnerView(f).drive == hud::PartnerDrive::loading && hud::MakePartnerView(f).gun == hud::PartnerGun::unavailable,
+              "hidden/loading body cannot advertise a present gun");
+        f.gun_enabled = false;
+        Check(hud::MakePartnerView(f).gun == hud::PartnerGun::off, "clip/loco gun profile reports off");
+        for (const auto stale : {hud::CurrentPartner(p, 7, 30050, 2001), hud::CurrentPartner(p, 8, 30050, 1200),
+                                 hud::CurrentPartner(p, 7, 30020, 1200), hud::CurrentPartner(p, 7, 30050, 999),
+                                 hud::CurrentPartner(hud::PartnerView{}, 7, 30050, 1200)})
+            Check(!stale.valid && stale.drive == hud::PartnerDrive::loading && stale.gun == hud::PartnerGun::unavailable,
+                  "stale/future/mismatched session/mission cache refuses historical native/gun status");
+        Check(hud::CurrentPartner(p, 7, 30050, 2000).valid, "one-second freshness boundary is inclusive");
+        Check(hud::FormatLine(v, "Snake_Fan", hud::Mode::compact, 2001, line, &p) &&
+              std::strstr(line.text, "| loading; gun unavailable"), "HUD refuses a stale cached partner view");
+        char status[192]{}, tiny[8]{};
+        Check(hud::FormatPartnerJson(p, 7, 30050, 1200, status, sizeof(status)) &&
+              std::strcmp(status, "\"partner_view\":\"native\",\"partner_gun\":\"substitute\",\"partner_gun_present\":1,\"partner_view_fresh\":1,") == 0,
+              "link status consumes the same current copied substitute view");
+        Check(hud::FormatPartnerJson(p, 7, 30050, 2001, status, sizeof(status)) &&
+              std::strstr(status, "\"partner_gun_present\":0,\"partner_view_fresh\":0"), "stale link status cannot claim gun presence");
+        Check(!hud::FormatPartnerJson(p, 7, 30050, 1200, tiny, sizeof(tiny)) && tiny[0] == 0 &&
+              !hud::FormatPartnerJson(p, 7, 30050, 1200, nullptr, 0), "partner JSON is bounded and empty on refusal");
+        v.rtt_ms = 0xFFFFFFFFu;
+        Check(hud::FormatLine(v, "A_partner_name_that_is_much_longer_than_the_compact_line", hud::Mode::compact, 1200, line, &p) &&
+              std::strlen(line.text) < sizeof(line.text) && std::strstr(line.text, "; gun substitute"), "long names keep the bounded current status suffix");
+        v.rtt_ms = 61;
+        v.state = static_cast<std::uint8_t>(link::LinkState::rejected); std::snprintf(v.reason, sizeof(v.reason), "bad_code");
+        Check(hud::FormatLine(v, "Snake_Fan", hud::Mode::compact, 1200, line, &p) &&
+              std::strcmp(line.text, "CO-OP [refused] wrong code?") == 0, "cached partner never replaces a connection error");
+        v.session = v.mission = 0; v.reason[0] = 0;
+    }
     v.state = static_cast<std::uint8_t>(link::LinkState::listening);
     v.accepting = true;
     v.code_ready = true;
@@ -2175,6 +2254,32 @@ void TestHud() {
     model.Add("Connected to Snake_Fan (Steam relay).", hud::Tone::good, 12000);
     Check(model.Active(12000, toasts, hud::kMaxToasts) == 3 && toasts[0]->until_ms == 12000 + hud::kToastMs, "an identical toast is extended");
     Check(model.Active(10000 + hud::kToastMs, toasts, hud::kMaxToasts) == 1, "toasts expire after 4 s");
+    // no_body: a partner mission on a refused pack list (docs/player-package-selection.md).
+    {
+        char text[hud::kToastChars]{};
+        hud::Tone tone = hud::Tone::info;
+        hud::Event e{};
+        e.kind = hud::EventKind::no_body;
+        e.arg = 30050;
+        const struct {
+            const char* scene;
+            const char* sentence;
+        } cases[] = {
+            {"demo_stage", "No partner body in this scene (Mother Base demo stage). It returns when the scene reloads normally."},
+            {"hangar", "No partner body in this scene (battle-gear hangar). It returns when the scene reloads normally."},
+            {"story", "No partner body in this scene (story variant). It returns when the scene reloads normally."},
+            {"layout", "No partner body in this scene (unknown Mother Base layout). Please send Collect-Logs."},
+            {"other", "No partner body in this scene (unexpected pack list). Please send Collect-Logs."},
+            {"", "No partner body in this scene (unexpected pack list). Please send Collect-Logs."},
+        };
+        for (const auto& c : cases) {
+            std::snprintf(e.text, sizeof(e.text), "%s", c.scene);
+            Check(hud::FormatToast(e, v, "Snake_Fan", text, sizeof(text), tone) && std::strcmp(text, c.sentence) == 0 && tone == hud::Tone::warn,
+                  "no_body toast sentence per scene");
+        }
+        char small[16]{};
+        Check(!mgscoop::coop_text::FormatNoBody("hangar", small, sizeof(small)) && small[0] == 0, "no_body: a short buffer stays empty");
+    }
     // Telemetry for state.json and hud_status.
     hud::NoteFrame(&line, "Connected", false, 3, 3, 500);
     char json[512]{}, status[161]{};

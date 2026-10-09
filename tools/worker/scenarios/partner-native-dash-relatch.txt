@@ -1,0 +1,111 @@
+# Native sprint relatch regression: add Shift to an existing W run, then keep
+# Shift and W held through left/right changes before releasing and filming stop.
+# Run only through the hidden worker coordinator, -PartnerProfile native
+# -NativeStage loco -SaveSeed lab (or the qualified gun/research profile).
+# Use both directions; the viewer films body 1 driven by the source role.
+# All holds are bounded <=1500 ms. Renew W/Shift before each capture; A/D are
+# separate 600 ms holds so the previous direction expires before the next.
+# Worker holds are additive: replacing WA with WD would leave A down until its
+# own expiry, so this sequence preserves Shift/W and explicitly lets A/D expire.
+# Acceptance uses fresh source+viewer capture telemetry, not labels alone:
+# - run-before-shift: source and partner standing run, native active;
+# - shift-added / shift-steady: source actually sprints; body sprint class/rate
+#   catches up, steady speed ratio 0.95..1.05, no unexpected place/snap/runaway;
+# - left/right/forward: source Shift remains held; partner does not get stuck
+#   in ordinary run after a turn; no native fallback or mission latch;
+# - stop-settled: body follows the idle source, error <500 mm and no idle runaway.
+# Inspect command_accepted times and source frames for expiry or stalled capture
+# I/O. A late or expired input section is inconclusive and must be repeated.
+# Relatch is bounded (300 ms debounce and 1500 ms retry gap, four/10 s); it may correctly remain unused if
+# the native graph accepted the original dash press. No ACTION is passed here.
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+stance host stand
+stance guest stand
+host debug time 43200
+host debug weather sunny
+wait 3000
+both capture start
+
+# --- host drives; guest films --------------------------------------------
+resetpose host
+stance host stand
+placebehind guest host 6 4
+wait 4000
+guest capture h-dash-idle
+# Establish a run before adding the dash key; renew W without releasing it.
+host hold w 1500 nowait
+wait 400
+guest capture h-dash-run-before-shift
+host hold w 1500 nowait
+wait 300
+host hold shift+w 1500 nowait
+wait 250
+guest capture h-dash-shift-added
+host hold shift+w 1500 nowait
+wait 250
+guest capture h-dash-shift-steady
+# Keep W/Shift alive independently while a short A hold turns left.
+host hold shift+w 1500 nowait
+host hold a 600 nowait
+wait 150
+guest capture h-dash-left
+host hold shift+w 1500 nowait
+wait 600
+# A has expired; add D while W/Shift are still held, then let D expire.
+host hold d 600 nowait
+wait 150
+guest capture h-dash-right
+host hold shift+w 1500 nowait
+wait 600
+guest capture h-dash-forward-after-turn
+host release
+wait 300
+guest capture h-dash-stop-early
+wait 900
+guest burst h-dash-stop-settled 3 300
+
+# --- guest drives; host films --------------------------------------------
+resetpose guest
+stance guest stand
+placebehind host guest 6 4
+wait 4000
+host capture g-dash-idle
+# Establish a run before adding the dash key; renew W without releasing it.
+guest hold w 1500 nowait
+wait 400
+host capture g-dash-run-before-shift
+guest hold w 1500 nowait
+wait 300
+guest hold shift+w 1500 nowait
+wait 250
+host capture g-dash-shift-added
+guest hold shift+w 1500 nowait
+wait 250
+host capture g-dash-shift-steady
+# Keep W/Shift alive independently while a short A hold turns left.
+guest hold shift+w 1500 nowait
+guest hold a 600 nowait
+wait 150
+host capture g-dash-left
+guest hold shift+w 1500 nowait
+wait 600
+# A has expired; add D while W/Shift are still held, then let D expire.
+guest hold d 600 nowait
+wait 150
+host capture g-dash-right
+guest hold shift+w 1500 nowait
+wait 600
+host capture g-dash-forward-after-turn
+guest release
+wait 300
+host capture g-dash-stop-early
+wait 900
+host burst g-dash-stop-settled 3 300
+
+both release
+wait 500
+both capture end
+state

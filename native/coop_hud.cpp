@@ -8,6 +8,7 @@
 
 #include "mgscoop/coop_reason_text.hpp"
 #include "mgscoop/link_session.hpp"
+#include "mgscoop/partner_slots.hpp"
 #include "mgscoop/steam_net_abi.hpp"
 
 namespace mgscoop::coop_hud {
@@ -43,6 +44,8 @@ std::atomic<bool> g_enabled{false};
 
 SpinLock g_view_lock;
 LinkView g_view{};
+SpinLock g_partner_lock;
+PartnerView g_partner{};
 
 constexpr unsigned kEvents = 16;
 SpinLock g_event_lock;
@@ -126,6 +129,69 @@ bool GetLink(LinkView& out) noexcept {
     return out.valid;
 }
 
+PartnerView MakePartnerView(const PartnerFacts& f) noexcept {
+    PartnerView v{};
+    v.valid = true; v.session = f.session; v.mission = f.mission; v.publish_ms = f.publish_ms;
+    v.drive = !f.body_ready ? PartnerDrive::loading : f.native_selected && f.native_active ? PartnerDrive::native : PartnerDrive::clips;
+    v.gun = !f.gun_enabled ? PartnerGun::off : PartnerGun::unavailable;
+    if (!f.body_ready || !f.gun_enabled || !f.fresh_gun || !f.gun_fields_ok || f.gun_class != 1 || f.body_equip <= 0) return v;
+    v.gun = PartnerGun::present;
+    if (f.switching) v.gun = PartnerGun::switching;
+    else if (f.remote_live && f.gate_current) {
+        switch (static_cast<partner_slots::Gate>(f.gate)) {
+        case partner_slots::Gate::match: v.gun = f.substitute ? PartnerGun::substitute : PartnerGun::match; break;
+        case partner_slots::Gate::standin: v.gun = f.standin ? PartnerGun::standin : PartnerGun::present; break;
+        case partner_slots::Gate::switching: v.gun = PartnerGun::switching; break;
+        case partner_slots::Gate::mismatch: v.gun = PartnerGun::mismatch; break;
+        case partner_slots::Gate::projectile: v.gun = PartnerGun::projectile; break;
+        }
+    }
+    return v;
+}
+void PublishPartner(const PartnerView& view) noexcept { Guard guard(g_partner_lock); g_partner = view; }
+bool GetPartner(PartnerView& out) noexcept { Guard guard(g_partner_lock); out = g_partner; return out.valid; }
+PartnerView CurrentPartner(const PartnerView& v, std::uint32_t session, std::uint32_t mission, std::uint64_t now_ms) noexcept {
+    if (v.valid && session == v.session && mission == v.mission && now_ms >= v.publish_ms && now_ms - v.publish_ms <= kPartnerFreshMs) return v;
+    PartnerView stale{}; stale.drive = PartnerDrive::loading; stale.gun = PartnerGun::unavailable; return stale;
+}
+const char* PartnerDriveName(PartnerDrive d) noexcept {
+    return d == PartnerDrive::native ? "native" : d == PartnerDrive::clips ? "clips" : "loading";
+}
+const char* PartnerGunName(PartnerGun g) noexcept {
+    switch (g) {
+    case PartnerGun::off: return "off";
+    case PartnerGun::present: return "present";
+    case PartnerGun::match: return "match";
+    case PartnerGun::substitute: return "substitute";
+    case PartnerGun::standin: return "standin";
+    case PartnerGun::switching: return "switching";
+    case PartnerGun::mismatch: return "mismatch";
+    case PartnerGun::projectile: return "projectile";
+    default: return "unavailable";
+    }
+}
+const char* PartnerGunText(PartnerGun g) noexcept {
+    if (g == PartnerGun::match) return "matched";
+    if (g == PartnerGun::standin) return "stand-in";
+    return PartnerGunName(g);
+}
+bool GunPresent(PartnerGun g) noexcept {
+    switch (g) {
+    case PartnerGun::present: case PartnerGun::match: case PartnerGun::substitute: case PartnerGun::standin:
+    case PartnerGun::switching: case PartnerGun::mismatch: case PartnerGun::projectile: return true;
+    default: return false;
+    }
+}
+bool FormatPartnerJson(const PartnerView& v, std::uint32_t session, std::uint32_t mission, std::uint64_t now_ms,
+                       char* out, std::size_t capacity) noexcept {
+    if (!out || !capacity) return false;
+    const auto current = CurrentPartner(v, session, mission, now_ms);
+    const int n = std::snprintf(out, capacity, "\"partner_view\":\"%s\",\"partner_gun\":\"%s\",\"partner_gun_present\":%u,\"partner_view_fresh\":%u,",
+        PartnerDriveName(current.drive), PartnerGunName(current.gun), GunPresent(current.gun) ? 1u : 0u, current.valid ? 1u : 0u);
+    if (n < 0 || static_cast<std::size_t>(n) >= capacity) { out[0] = 0; return false; }
+    return true;
+}
+
 void Post(EventKind kind, std::int32_t arg, const char* text) noexcept {
     Event e{};
     e.kind = kind;
@@ -152,7 +218,8 @@ unsigned Take(Event* out, unsigned max, std::uint32_t& cursor) noexcept {
     return n;
 }
 
-bool FormatLine(const LinkView& v, const char* name, Mode mode, std::uint64_t now_ms, Line& out) noexcept {
+bool FormatLine(const LinkView& v, const char* name, Mode mode, std::uint64_t now_ms, Line& out,
+                const PartnerView* partner) noexcept {
     out = Line{};
     if (!v.valid || mode == Mode::off) return false;
     const auto state = static_cast<LinkState>(v.state);
@@ -163,7 +230,11 @@ bool FormatLine(const LinkView& v, const char* name, Mode mode, std::uint64_t no
     const std::size_t n = sizeof(out.text);
     switch (state) {
     case LinkState::connected:
-        Print(t, n, "CO-OP [connected] %s - %s %u ms", who, RouteText(v), v.rtt_ms);
+        if (partner) {
+            const auto current = CurrentPartner(*partner, v.session, v.mission, now_ms);
+            Print(t, n, "CO-OP [connected] %.24s - %s %u ms | %s; gun %s", who, RouteText(v), v.rtt_ms,
+                  PartnerDriveName(current.drive), PartnerGunText(current.gun));
+        } else Print(t, n, "CO-OP [connected] %s - %s %u ms", who, RouteText(v), v.rtt_ms);
         out.tone = Tone::good;
         break;
     case LinkState::listening:
@@ -269,6 +340,9 @@ bool FormatToast(const Event& e, const LinkView& v, const char* name, char* out,
     case EventKind::code_copied:
         Print(out, capacity, "Join code copied: paste it to your friend (it is a key, keep it private).");
         return true;
+    case EventKind::no_body:
+        tone = Tone::warn;
+        return coop_text::FormatNoBody(e.text, out, capacity) && out[0];
     }
     return false;
 }
@@ -384,6 +458,7 @@ void ResetForTest() noexcept {
         Guard guard(g_view_lock);
         g_view = LinkView{};
     }
+    { Guard guard(g_partner_lock); g_partner = PartnerView{}; }
     {
         Guard guard(g_event_lock);
         for (auto& e : g_events) e = Event{};

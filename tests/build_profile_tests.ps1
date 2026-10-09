@@ -151,7 +151,8 @@ try {
     $parameterNames = @($buildCalls[0].CommandElements | Where-Object { $_ -is [Management.Automation.Language.CommandParameterAst] } | ForEach-Object { $_.ParameterName })
     Assert-True ($parameterNames -contains 'DisableLocalExperiments' -and $parameterNames -contains 'BuildOnly') 'normal packaging requests the explicit OFF loader build'
     $branch = $buildCalls[0].Parent.Parent.Parent
-    Assert-True ($branch -is [Management.Automation.Language.IfStatementAst] -and $branch.Clauses[0].Item1.Extent.Text -eq '$LoaderPath') 'a supplied loader continues to bypass the build branch'
+    Assert-True ($branch -is [Management.Automation.Language.IfStatementAst] -and $branch.Clauses.Count -eq 2 -and
+        $branch.Clauses[0].Item1.Extent.Text -ceq '$Friend' -and $branch.Clauses[1].Item1.Extent.Text -ceq '$LoaderPath') 'friend receipt admission precedes the generic supplied-loader bypass'
     # Run only that exact branch with a typed inert build stub, never the
     # package script's enumeration, archive, installation or cleanup flow.
     $buildReceipt = Join-Path $fixture 'tools\build-invocation.json'

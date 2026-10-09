@@ -199,9 +199,11 @@ do
         end
         -- The reply carries 5 look values after the 8 pose values when op has
         -- SET_PARTS (16): type, partsType, camoType, handType, faceId.
+        local ride = get(e, "MgsCoopPartnerRide")
+        local rideSuffix = type(ride) == "function" and (" ride=" .. tostring(ride())) or ""
         local op, R, px, py, pz, pry, _, _, lt, lp, lc, lh, lf, dg = receipt(fmt("return 'MGS_COOP_PARTNER_V1' -- %d %d %d %d %d %d %d %d %d %d %d",
             frame % 1000000, floor(x * 1000 + 0.5), floor(y * 1000 + 0.5), floor(z * 1000 + 0.5),
-            floor(ry * 100 + 0.5), floor(cam * 100 + 0.5), stance, move, (allActive and 1 or 0) + (partsCopied and 2 or 0), actions, gun))
+            floor(ry * 100 + 0.5), floor(cam * 100 + 0.5), stance, move, (allActive and 1 or 0) + (partsCopied and 2 or 0), actions, gun) .. rideSuffix)
         if type(op) ~= "number" or op <= 0 then return end
         if R ~= 1 or (api.localIndex ~= nil and R == api.localIndex()) then
             failed = true; note("event=refused;reason=bad_index;R=" .. tostring(R)); return

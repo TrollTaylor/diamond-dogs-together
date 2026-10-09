@@ -40,8 +40,15 @@ void TestEffective() {
     // Stick mask zeroes the left stick; trigger mask zeroes triggers.
     raw = pi::PadRaw{};
     raw.src_f[0] = 0.4f; raw.src_f[4] = 0.9f; raw.pp_mask[1] = 0x1; raw.pp_mask[2] = 0x1;
+    raw.pp_derived[0] = 1.0f; raw.pp_derived[1] = 0.8f;
     s = pi::Effective(raw);
-    Check(s.lx == 0.0f && s.lt == 0.0f && (s.flags & pi::Flag::SenderMasked), "stick/trigger masks zero axes");
+    Check(s.lx == 0.0f && s.lt == 0.0f && s.mag == 0.0f && s.force == 0.0f && (s.flags & pi::Flag::SenderMasked),
+          "left stick mask also zeroes stale derived magnitude and force");
+    const auto masked = pi::Quantize(s, 0);
+    Check(masked.lx == 0 && masked.ly == 0 && masked.lmag == 0 && masked.lforce == 0, "masked sender quantizes a neutral stick");
+    raw.pp_mask[1] = 2;
+    s = pi::Effective(raw);
+    Check(s.mag == 1.0f && Near(s.force, 0.8), "right stick/trigger masks preserve unmasked left derived values");
 }
 
 void TestDirCheck() {
@@ -92,6 +99,50 @@ pi::Config Cfg(pi::Word w0 = pi::Word::zero, pi::Word w1 = pi::Word::zero, pi::W
     c.yaw_sign = 1;
     c.stale_ms = 250;
     return c;
+}
+
+void TestContradictoryMagnitude() {
+    pi::Config c = Cfg();
+    pi::Sample sample{};
+    sample.valid = true; sample.packet.flags = pi::Flag::Valid; sample.packet.lmag = 65535;
+    sample.packet.held = 0x8; sample.packet.ldir = 20000;
+    pi::EdgeState edge{};
+    auto j = pi::Compose(c, sample, 9000, pi::Overlay{}, edge);
+    Check(j.live && j.lx == 0 && j.ly == 0 && j.mag == 0 && j.held == 0x8,
+          "legacy zero axes/high magnitude are neutral without losing admitted HOLD");
+    sample.packet.ly = 32767; ++sample.seq;
+    j = pi::Compose(c, sample, 9000, pi::Overlay{}, edge);
+    Check(j.mag == 1 && (j.lx != 0 || j.ly != 0), "ordinary moving packet retains magnitude");
+    sample.packet.ly = 0; sample.packet.lmag = 16384; ++sample.seq;
+    Check(pi::Compose(c, sample, 0, pi::Overlay{}, edge).mag == 0, "contradictory guard starts above one quarter");
+    sample.packet.lmag = 16383; ++sample.seq;
+    Check(pi::Compose(c, sample, 0, pi::Overlay{}, edge).mag > 0, "small derived resting noise keeps legacy behavior");
+    c.words[0] = pi::Word::press; sample.packet.held = 4; sample.packet.ly = 32767; sample.packet.lmag = 65535;
+    edge = pi::EdgeState{};
+    pi::Compose(c, sample, 0, pi::Overlay{}, edge);
+    j = pi::Compose(c, sample, 0, pi::Overlay{4}, edge);
+    Check(j.held == 4 && j.edge_press == 4 && j.w[0] == 4, "explicit DASH relatch presses an already remotely held bit");
+    j = pi::Compose(c, sample, 0, pi::Overlay{4}, edge);
+    Check(j.edge_press == 0 && j.w[0] == 0, "four overlay frames create only the first press");
+    pi::Compose(c, sample, 0, pi::Overlay{}, edge);
+    j = pi::Compose(c, sample, 0, pi::Overlay{4}, edge);
+    Check(j.edge_press == 4, "later explicit retry creates a new press");
+    edge.resync = true; edge.prev_overlay = 0;
+    j = pi::Compose(c, sample, 0, pi::Overlay{4}, edge);
+    Check(j.edge_press == 0 && j.w[0] == 0, "resync suppresses an old overlay press too");
+    j = pi::Compose(c, sample, 0, pi::Overlay{4}, edge);
+    Check(j.edge_press == 0, "following unchanged overlay frame stays quiet after generation resync");
+    c.mask = 0; edge = pi::EdgeState{};
+    j = pi::Compose(c, sample, 0, pi::Overlay{4}, edge);
+    Check(j.held == 0 && j.edge_press == 0 && j.w[0] == 0, "masked overlay never manufactures a press");
+    c.mask = 0xFFFFFFFFu; edge = pi::EdgeState{};
+    pi::Compose(c, sample, 0, pi::Overlay{}, edge);
+    j = pi::Compose(c, sample, 0, pi::Overlay{4}, edge);
+    std::uint32_t consumer = 0; pi::ConsumerView view{};
+    const auto full = pi::ForConsumer(j, 42, consumer, 0, c, &view);
+    const auto repeat = pi::ForConsumer(j, 42, consumer, 0, c, &view);
+    Check(full.edge_press == 4 && repeat.edge_press == 0 && repeat.held == 4,
+          "a native consumer sees one explicit press then only the held level");
 }
 
 void TestCompose() {
@@ -502,6 +553,8 @@ void TestAccumulate() {
     bad.version = 5;
     Check(pi::ValidPacket(bad), "version 5 (reload and weapon switch) with no v3/v4/v5 fields is valid");
     bad.version = 6;
+    Check(pi::ValidPacket(bad), "version 6 without optional aim direction is valid");
+    bad.version = 7;
     Check(!pi::ValidPacket(bad), "unknown version refused");
     bad.version = 5;
     // v5 gun group: known flags only; without GunFlag::Valid every byte is 0.
@@ -760,6 +813,7 @@ int main() {
     TestDirCheck();
     TestQuantize();
     TestCompose();
+    TestContradictoryMagnitude();
     TestOverlay();
     TestHeading();
     TestEdgesAndTaps();

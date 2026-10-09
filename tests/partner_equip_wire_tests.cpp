@@ -1,3 +1,4 @@
+#include <initializer_list>
 // Native puppet equipment manifest codec (docs/native-puppet.md 6.2): bounds,
 // revision 0 refused, epoch check, receiver store, version 2 (the slots' own
 // gun types) next to version 1, and the sender's base-id scan. Pure; no game,
@@ -7,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include "mgscoop/partner_equip_wire.hpp"
+#include "mgscoop/partner_ride_wire.hpp"
 
 namespace {
 namespace ew = mgscoop::partner_equip_wire;
@@ -32,6 +34,106 @@ ew::Manifest Sample() {
 } // namespace
 
 int main() {
+    {
+        namespace rw = mgscoop::partner_ride_wire;
+        rw::Packet packet{rw::Kind::heli, 1, 1234}, decoded{};
+        std::uint8_t ride[rw::kSize]{};
+        Check(rw::Encode(packet, ride) && rw::Decode(ride, sizeof(ride), decoded) && decoded.kind==rw::Kind::heli &&
+              decoded.revision==1 && decoded.sender_ms==1234, "ride 12-byte little-endian round trip");
+        ew::Store legacy{};
+        Check(!ew::Accept(legacy, ride, sizeof(ride), 7) && legacy.invalid==1 && !legacy.have,
+              "old equipment receiver refuses ride without mutating its manifest");
+        for (unsigned at : {0u,1u,2u,3u,4u,6u,7u}) {
+            const auto prior=ride[at]; ride[at]=at==4 ? 0 : 255;
+            Check(!rw::Decode(ride,sizeof(ride),decoded), "ride magic/version/kind/flags/revision/reserved refusals"); ride[at]=prior;
+        }
+        Check(!rw::Decode(ride,11,decoded) && !rw::Decode(nullptr,12,decoded), "ride size and null refusals");
+        rw::Store store{};
+        Check(!rw::Accept(store,ride,sizeof(ride),0,1000), "ride requires authenticated active link session");
+        Check(rw::Accept(store,ride,sizeof(ride),7,1000) && rw::Live(store,7,6000) && !rw::Live(store,7,6001) && !rw::Live(store,8,1000),
+              "ride heartbeat lease and session-scoped read");
+        Check(!rw::Accept(store,ride,sizeof(ride),7,5900) && !rw::Live(store,7,6001), "duplicate cannot renew lease");
+        packet.sender_ms=3234; rw::Encode(packet,ride);
+        Check(rw::Accept(store,ride,sizeof(ride),7,6100) && rw::Live(store,7,6100), "same revision heartbeat renews lease");
+        packet.kind=rw::Kind::foot; rw::Encode(packet,ride);
+        Check(!rw::Accept(store,ride,sizeof(ride),7,6200), "same revision different state refused");
+        packet.revision=2; packet.sender_ms=4000; rw::Encode(packet,ride);
+        Check(rw::Accept(store,ride,sizeof(ride),7,6200), "fresh foot transition accepted");
+        packet.revision=1; packet.sender_ms=4100; rw::Encode(packet,ride);
+        Check(!rw::Accept(store,ride,sizeof(ride),7,6300), "stale revision refused");
+        Check(rw::Accept(store,ride,sizeof(ride),8,6400), "new authenticated session starts its own revision sequence");
+        rw::Visibility vis{}; rw::In in{};
+        in.fresh=in.time_valid=in.anim_valid=in.body_anim_valid=in.lease_live=true;
+        in.ride_have=in.ride_live=true; in.kind=rw::Kind::heli; in.remote_act=99; in.now_ms=1000;
+        rw::Observe(vis,in); Check(vis.hidden && std::strcmp(vis.reason,"ride")==0, "heli ride hides without placement");
+        in.kind=rw::Kind::foot; in.remote_act=1; in.sender_ms=1000;
+        rw::Observe(vis,in);
+        for(unsigned i=0;i<20;++i) { in.now_ms+=50; rw::Observe(vis,in); }
+        Check(vis.hidden, "held sender sample cannot fabricate 500ms landing proof");
+        for(unsigned i=1;i<=5;++i) { in.sender_ms=1000+i*100; rw::Observe(vis,in); }
+        Check(!vis.hidden, "fresh foot pose stable for 500ms releases hide");
+        // A true ring reset can preserve sender time and position exactly.
+        vis={}; vis.hidden=true; in.generation=1; in.sender_ms=1000;
+        rw::Observe(vis,in);
+        for(unsigned i=1;i<=4;++i) { in.sender_ms=1000+i*100; rw::Observe(vis,in); }
+        Check(vis.hidden && vis.stable, "landing has400ms proof before ring reset");
+        in.generation=2; rw::Observe(vis,in);
+        Check(vis.hidden && !vis.stable && vis.generation==2, "known ring identity change clears equal-clock equal-position proof");
+        in.sender_ms=1500; rw::Observe(vis,in);
+        Check(vis.hidden, "ring reset prevents old400ms joining new100ms to fake landing");
+        for(unsigned i=1;i<=4;++i) { in.sender_ms=1500+i*100; rw::Observe(vis,in); }
+        Check(!vis.hidden, "new ring supplies its own500ms landing proof");
+        vis={}; vis.hidden=true; in.generation=0; in.sender_ms=3000;
+        rw::Observe(vis,in);
+        for(unsigned i=1;i<=5;++i) { in.sender_ms=3000+i*100; rw::Observe(vis,in); }
+        Check(!vis.hidden && vis.generation==0, "legacy zero generation retains existing sender-time proof behavior");
+        in.generation=0;
+        in.kind=rw::Kind::heli; rw::Observe(vis,in); in.kind=rw::Kind::foot; in.sender_ms=2000; rw::Observe(vis,in);
+        in.sender_ms=2100; in.y=1; rw::Observe(vis,in);
+        Check(vis.hidden && !vis.stable, "vertical landing speed does not release");
+        in.ride_live=false; rw::Observe(vis,in); Check(vis.hidden && std::strcmp(vis.reason,"ride_stale")==0, "expired ride lease stays hidden");
+        in.ride_live=true; in.lease_live=false; rw::Observe(vis,in); Check(vis.hidden && !vis.have_sample, "lost link clears landing proof");
+        in.lease_live=true; in.jump=true; rw::Observe(vis,in); Check(!vis.have_sample, "teleport discontinuity clears proof"); in.jump=false;
+        vis={}; in.kind=rw::Kind::foot; in.body_act=25; in.remote_act=1; in.body_valid=true; in.y=5; in.body_y=1;
+        in.now_ms=4000; rw::Placed(vis,3900); rw::Observe(vis,in);
+        Check(vis.hidden && vis.air && std::strcmp(vis.reason,"air")==0, "post-placement fall mismatch over2m hides");
+        in.body_act=25; in.now_ms=8000; rw::Observe(vis,in); Check(vis.air && vis.hidden, "air act stays unplaceable after window");
+        in.body_act=1; rw::Observe(vis,in); Check(!vis.air && vis.hidden, "changed body act still waits fresh stability");
+        vis={}; in.body_act=40; in.sender_ms=9000; in.now_ms=9000; in.rearmed=false;
+        rw::Observe(vis,in); Check(vis.hidden && std::strcmp(vis.reason,"dead")==0, "dead mirror body hides");
+        for(unsigned i=1;i<=5;++i) { in.sender_ms=9000+i*100; rw::Observe(vis,in); }
+        Check(!vis.hidden && vis.dead_retry, "dead mirror permits one stable-foot re-show attempt");
+        rw::Placed(vis,9500); in.sender_ms=9600; rw::Observe(vis,in);
+        Check(!vis.hidden, "dead re-show allows placement then next-tick realization");
+        in.rearmed=true; in.sender_ms=9700; rw::Observe(vis,in);
+        Check(vis.hidden && vis.dead_locked, "persistent dead act after rearm locks rest of mission");
+    }
+    {
+        namespace rw = mgscoop::partner_ride_wire;
+        // No ride heartbeat ever received in this epoch is deliberately distinct
+        // from an expired known heartbeat; neither state bypasses the link lease.
+        rw::Visibility v{}; v.hidden = true;
+        rw::In sample{};
+        sample.fresh = sample.time_valid = sample.anim_valid = sample.lease_live = true;
+        sample.remote_act = 1; sample.generation = 1;
+        for (unsigned i = 0; i <= 5; ++i) { sample.sender_ms = 1000 + i * 100; sample.now_ms = sample.sender_ms; rw::Observe(v, sample); }
+        Check(!v.hidden, "never-received ride heartbeat permits stable foot poses on a live link");
+        sample.ride_have = true; sample.ride_live = false;
+        for (unsigned i = 0; i <= 6; ++i) { sample.sender_ms = 2000 + i * 100; sample.now_ms = sample.sender_ms; rw::Observe(v, sample); }
+        Check(v.hidden && !v.have_sample && std::strcmp(v.reason, "ride_stale") == 0,
+              "expired known heartbeat cannot reuse foot poses to prove landing");
+        sample.ride_live = true; sample.kind = rw::Kind::foot;
+        for (unsigned i = 0; i <= 4; ++i) { sample.sender_ms = 3000 + i * 100; sample.now_ms = sample.sender_ms; rw::Observe(v, sample); }
+        Check(v.hidden, "renewed foot heartbeat still needs its own 500ms stability");
+        sample.sender_ms = sample.now_ms = 3500; rw::Observe(v, sample);
+        Check(!v.hidden, "renewed foot heartbeat plus fresh 500ms proof releases hiding");
+        v = {}; sample.ride_have = sample.ride_live = false; sample.remote_act = 100;
+        rw::Observe(v, sample);
+        Check(v.hidden && std::strcmp(v.reason, "ride") == 0, "fresh heli act hides even without a heartbeat");
+        v = {}; sample.remote_act = 1; sample.lease_live = false;
+        for (unsigned i = 0; i <= 6; ++i) { sample.sender_ms = 4000 + i * 100; sample.now_ms = sample.sender_ms; rw::Observe(v, sample); }
+        Check(v.hidden && !v.have_sample, "never-received heartbeat cannot make a disconnected link valid");
+    }
     std::uint8_t buf[ew::kSize]{};
     const ew::Manifest m = Sample();
     Check(ew::kSizeV1 == 60 && ew::kSize == 64 && ew::Encode(m, buf) == 64, "encode 64 bytes (version 2)");

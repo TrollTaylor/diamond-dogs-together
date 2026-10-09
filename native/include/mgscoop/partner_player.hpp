@@ -373,12 +373,13 @@ struct AimRead {
     float q10[2][3];
     bool gun_ok[2];
     float aimpt[2][3];
-    std::uint8_t gun_state[2], b3d5[2];
+    std::uint8_t gun_state[2], b3d5[2], gun_class[2], stance[2];
+    std::uint32_t gun_flags[2];
     std::uint32_t path_flags[2];
     bool rate_ok[2];
     float r5c[2], r60[2];
     bool body_ok[2];
-    float body[2][3];
+    float body[2][3], body_yaw[2];
 };
 bool ReadAim(const Addresses& addresses, const State& state, AimRead& out) noexcept;
 

@@ -137,11 +137,11 @@ enum class PartnerNativeNoise : std::uint8_t { filter, keep };
 // The aim-target mirror (docs/native-puppet.md "Facing", aim parity): instance
 // 1's network aim target Q+0x10[1] (never fed offline: its gun aimed at the
 // world origin and the aim-turn predicate 0x10A0AB0 cycled act 12/15) gets a
-// point along the remote's aim inside block 1's drain window. off (default),
-// look (100 m along the remote's v3 look from the partner's eyes; no wire
-// change) or point (the sender's own gun aim point; not on the wire yet: input
-// frame v5 carries the reload/switch gun group only; falls back to look). Inert unless the native drive is active
-// with partner_native_gun=1. The worker gun stage and Play-OfflineCoop set look.
+// point along the remote's aim inside block 1's drain window. off outside a
+// driven native gun stage, look (camera direction), or point (the sender's
+// qualified gun direction in input frame v6; falls back to look when refused,
+// stale or unavailable). Driven native gun profiles default to point; explicit
+// off/look/point remains authoritative. No target writes outside native gun ownership.
 enum class PartnerNativeAimPt : std::uint8_t { off, look, point };
 // The partner's own reload (docs/native-puppet.md "Weapons", R1..R6): mirror
 // (the magazine mirror writes the remote's magazine whenever it changes, also
@@ -167,6 +167,21 @@ enum class PartnerNativeSlot : std::uint8_t { off, write, call };
 // a cache eviction. Inert unless the native gun profile runs and the build
 // carries the stock46 gun pieces (MGS_LOCAL_STOCK46_PRELOAD_TEST/_WRITER_TEST).
 enum class PartnerNativeEquip : std::uint8_t { stock46, manifest, substitute };
+// Weapons4 (docs/native-puppet.md "Generalized writer"): the generalized
+// writer's shared tiers A1s/Cs, a stock cache entry the soldiers already
+// reference (never the viewer): off, on (after the unreferenced candidates of
+// each pass; the gun profile's default) or prefer (lab only: shared first;
+// play runs it as on).
+enum class PartnerNativeEquipShared : std::uint8_t { off, on, prefer };
+// Weapons4: when the remote's current slot is empty or another class on body
+// 1, the slot follower switches to a filled bullet slot (the stand-in) and the
+// gate lets HOLD, FIRE and RELOAD through for it (partner_slots MakePlan,
+// Gate::standin): off or on (the gun profile's default).
+enum class PartnerNativeStandin : std::uint8_t { off, on };
+// Remote riding/deployment body visibility: driven native loco/gun stages
+// default to hide in lab and play. Explicit off restores the prior visibility;
+// hiding and stable on-foot recovery do not render a mounted partner body.
+enum class PartnerNativeRide : std::uint8_t { off, hide };
 // Instance 1's per-id movement rates (base action record of *(PS1+0x260):
 // dash +0x48/+0x50, crawl +0x3C/+0x40/+0x44; docs/native-puppet.md "Rates"):
 // off (not read), log (read both instances and the remote's, telemetry only)
@@ -410,9 +425,21 @@ struct LabConfig {
     // xinput=none and the impairment keys.
     bool play_rehearsal = false;
     PartnerNativeAimPt partner_native_aimpt = PartnerNativeAimPt::off;
+    bool partner_native_aimpt_given = false;
     PartnerNativeReload partner_native_reload = PartnerNativeReload::mirror;
     PartnerNativeSlot partner_native_slot = PartnerNativeSlot::off;
     PartnerNativeEquip partner_native_equip = PartnerNativeEquip::stock46;
+    // Weapons4: the shared tiers, the lab-only measured optional render size
+    // (partner_native_equip_measured=1: an optional header shape the size model
+    // cannot qualify takes a native render's size; play forces 0) and the
+    // stand-in follower. Not named in lab.ini: on / 0 / on with the native gun
+    // profile, else off / 0 / off (ResolveWeaponDefaults).
+    PartnerNativeEquipShared partner_native_equip_shared = PartnerNativeEquipShared::off;
+    bool partner_native_equip_measured = false;
+    PartnerNativeStandin partner_native_standin = PartnerNativeStandin::off;
+    PartnerNativeRide partner_native_ride = PartnerNativeRide::off;
+    bool partner_native_ride_given = false;
+    bool partner_native_equip_shared_given = false, partner_native_standin_given = false;
     // partner_native_reload / _slot / _equip not named in lab.ini follow the
     // native gun profile (ResolveWeaponDefaults): event / write / substitute
     // with partner_drive=native and partner_native_gun=1, else mirror / off /
@@ -502,6 +529,9 @@ const char* PartnerNativeAimPtName(PartnerNativeAimPt value) noexcept;
 const char* PartnerNativeReloadName(PartnerNativeReload value) noexcept;
 const char* PartnerNativeSlotName(PartnerNativeSlot value) noexcept;
 const char* PartnerNativeEquipName(PartnerNativeEquip value) noexcept;
+const char* PartnerNativeEquipSharedName(PartnerNativeEquipShared value) noexcept;
+const char* PartnerNativeStandinName(PartnerNativeStandin value) noexcept;
+const char* PartnerNativeRideName(PartnerNativeRide value) noexcept;
 const char* LabModeName(LabMode value) noexcept;
 // aim|always|off ("" for unset); parse refuses "unset".
 const char* NametagCrosshairName(NametagCrosshair value) noexcept;
@@ -555,6 +585,9 @@ bool ParsePartnerNativeAimPt(const char* text, std::size_t size, PartnerNativeAi
 bool ParsePartnerNativeReload(const char* text, std::size_t size, PartnerNativeReload& out) noexcept;
 bool ParsePartnerNativeSlot(const char* text, std::size_t size, PartnerNativeSlot& out) noexcept;
 bool ParsePartnerNativeEquip(const char* text, std::size_t size, PartnerNativeEquip& out) noexcept;
+bool ParsePartnerNativeEquipShared(const char* text, std::size_t size, PartnerNativeEquipShared& out) noexcept;
+bool ParsePartnerNativeStandin(const char* text, std::size_t size, PartnerNativeStandin& out) noexcept;
+bool ParsePartnerNativeRide(const char* text, std::size_t size, PartnerNativeRide& out) noexcept;
 // The weapons keys' profile defaults (see partner_native_equip): runs at the
 // end of ParseLabConfig, after every key and any profile expansion.
 void ResolveWeaponDefaults(LabConfig& config) noexcept;

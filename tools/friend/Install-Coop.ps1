@@ -92,7 +92,7 @@ $version = [string]$package.version
 $archiveSha256 = ([string]$package.runtime_archive.sha256).ToUpperInvariant()
 
 Write-Host "MGS Co-op $version - installer (two-PC play)" -ForegroundColor Cyan
-Write-Host 'Development build: you see your partner in Mother Base; enemies, items and missions are not shared yet.'
+Write-Host 'Development build: two players in Mother Base and Afghanistan/Africa free roam; shared enemies are experimental. Story missions and items are not supported.'
 
 # ---------------------------------------------------------------- game folder
 Section 'Step 1: game folder'
@@ -504,7 +504,7 @@ Write-Host "Co-op games play from the save copy in: $saveDir"
 Write-Host 'Normal starts from Steam play as usual on your REAL saves (the mod stays inactive); progress'
 Write-Host 'does not carry over between the two. Run Uninstall-Coop.bat when you stop playing co-op.'
 Write-Host ''
-Write-Host 'Next: both players double-click Play-Coop.bat. The host chooses [H] and sends the join code'
-Write-Host 'over chat; the other chooses [J] and pastes it. Then both go to Mother Base.'
-Write-Host 'See FRIEND-GUIDE.txt for the details (VPN or port forwarding, firewall).'
+Write-Host 'Next: both players double-click Play-Coop.bat. The host chooses [O] for Steam online and sends the join code'
+Write-Host 'over chat; the other chooses [J] and pastes it. Then both load the same supported free-roam scene.'
+Write-Host 'See FRIEND-GUIDE.txt for Steam online and the optional LAN/VPN setup.'
 exit 0

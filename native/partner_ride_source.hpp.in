@@ -1,0 +1,4 @@
+#pragma once
+constexpr char partner_ride_source[] = R"MGS_RIDE(
+@MGS_PARTNER_RIDE_SOURCE@
+)MGS_RIDE";

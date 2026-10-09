@@ -83,6 +83,7 @@ struct In {
     // The phase-1 local detour (partner_local_detour; installed with defer=on).
     bool installed_p1, live_p1;
     const char* install_refusal;  // nullptr, or the static reason the lazy install gave
+    bool thread_warmup;    // the expected game thread is still gathering min_batches
     bool thread_ok;         // batch_threads_seen == 1 && batch_thread == hook_thread && batches >= min_batches
     bool faulted;           // window, defer (lost/torn/scope/gate) or look fault
     bool realized, parts_loaded, range_hidden;
@@ -110,6 +111,7 @@ struct In {
     bool remote_quiet;
     std::uint32_t quality_good_ms;
     bool remote_caps_refused;
+    const char* visibility_reason;  // qualified ride/air/dead guard; null normally
 };
 
 struct Out {
@@ -215,11 +217,15 @@ struct SteerIn {
     double v_x, v_z;     // remote velocity (mm/s)
     double in_r;         // injected stick magnitude 0..1
     bool frozen, prone_transition, walk_key;
+    bool hold_stripped{}; // live raw HOLD was actually refused by the pad gate
+    double body_speed_mmps{};
+    bool hold_parity_ready{}; // caller qualified remote aim-only frozen state
 };
 struct SteerState {
     double bias_rad;
     std::uint64_t last_ms;
     bool valid;
+    double hold_scale; // bounded HOLD-strip parity scale, initialized to 1
 };
 struct SteerOut {
     double bias_rad;     // steer_rad for Compose (positive = left = heading up)
@@ -229,6 +235,22 @@ struct SteerOut {
 };
 SteerOut Steer(SteerState& state, const SteerIn& in, const SteerParams& params) noexcept;
 inline constexpr double kTrimFloor = 0.42;  // start threshold 0.4 (0x2104860) plus margin
+
+// A bounded repeat of the already admitted DASH tap repairs a press consumed
+// during a turn/start transition. No ACTION or native call is introduced.
+struct DashIn {
+    std::uint64_t now_ms;
+    bool active, input_live, mask_dash, hold_stripped;
+    bool body_ok, remote_ok, remote_sprinting;
+    std::uint16_t body_act, remote_act;
+    std::uint8_t body_stance, remote_stance, body_speed, remote_speed;
+    double in_r;
+};
+struct DashState {
+    std::uint64_t since_ms, last_ms, window_ms;
+    std::uint32_t attempts;
+};
+bool DashRelatch(DashState& state, const DashIn& in) noexcept;
 
 // --- Weapons (docs/native-puppet.md "Weapons"), pure --------------------------
 // The gun record fields (rec = *(prim+0x58) + (id - node base)*0x610) the
@@ -278,6 +300,31 @@ struct MagIn {
 };
 inline constexpr std::uint16_t kMaxMagCap = 999;
 std::uint32_t MirrorMagazine(const MagIn& in) noexcept;
+
+// Hook-thread history of the last magazine sample accepted by every checked
+// store/record gate. Preparing an attempt never consumes a changed sample,
+// slot change or reload reconcile; a transient refusal can retry unchanged
+// input. Commit only after successful writes or a validated no-write result.
+struct MagazineHistory {
+    bool seen=false, freeze_pending=false, slot_seen=false;
+    std::uint16_t remote_mag=0, remote_cap=0;
+    std::uint8_t body_slot=0;
+};
+struct MagazineAttempt {
+    bool needed, reconcile, remote_was_loaded;
+};
+constexpr MagazineAttempt PrepareMagazine(const MagazineHistory& h, std::uint16_t remote_mag,
+                                         std::uint16_t remote_cap, std::uint8_t body_slot,
+                                         bool fire_edge, bool reload_edge) noexcept {
+    const bool changed=!h.seen || remote_mag!=h.remote_mag || remote_cap!=h.remote_cap ||
+                       h.freeze_pending || (h.slot_seen && body_slot!=h.body_slot);
+    return {fire_edge || reload_edge || changed, h.freeze_pending, h.seen && h.remote_mag>0};
+}
+inline void CommitMagazine(MagazineHistory& h, std::uint16_t remote_mag,
+                           std::uint16_t remote_cap, std::uint8_t body_slot) noexcept {
+    h.seen=true;h.remote_mag=remote_mag;h.remote_cap=remote_cap;
+    h.slot_seen=true;h.body_slot=body_slot;h.freeze_pending=false;
+}
 
 // --- Telemetry ring (one entry per owner tick, oldest first) -------------------
 struct RingEntry {
@@ -394,7 +441,9 @@ struct Telemetry {
     bool runaway, runaway_idle, lag, stop_grace;
     std::int32_t dv_along_mmps, dv_cross_mmps;
 
-    // Gun.
+    // Gun: timestamp of current fields copied by the natural owner, independent of F9.
+    std::uint64_t gun_tick_ms;
+    bool weapon_gate_current; // false when the gate retained its previous verdict
     bool gun_enabled, gun_read_ok, node_active, aim_match, ammo_experiment;
     std::uint32_t gun3c0, mode2c1, remote_flags, remote_equip, manifest_rev;
     std::int32_t body_equip, aim_err_mdeg;
@@ -470,6 +519,8 @@ struct Telemetry {
     // class this mission under the gun profile (HOLD, RELOAD, FIRE stripped),
     // and the process-wide play leak strip (FIRE | RELOAD after a shot or ammo leak; 0 none).
     bool weapon_absent;
+    bool weapon_standin;
+    std::uint32_t weapon_standin_ms, weapon_absent_ms;
     std::uint32_t leak_strip;
     // The partner's trigger after each windowed drain (process totals):
     // shots it requested (rec+0x3C0 bit 24, summed over rec+0x3DF), drains
@@ -526,6 +577,7 @@ struct Telemetry {
     std::uint8_t slot_type[3];
     char slot_tier[3][8];
     std::uint8_t slot_ok_mask;
+    std::uint8_t slot_map[3];  // remote slot -> admitted body slot, 0xFF none
     std::uint32_t slot_writes, slot_refused;
     bool slot_faulted, body_switching;
     // Loadout: what this copy sends (manifest revision, base ids, aliases,
@@ -547,6 +599,8 @@ struct Telemetry {
     // (native.equip.resident: the used entries of 48) and the preload verdict.
     char equip_setting[12];
     bool writer_active;
+    char writer_shared[8];
+    std::uint32_t writer_gen, writer_resyncs, writer_kept;
     std::uint16_t writer_want[3], writer_equip[3];
     char writer_tier[3][6], writer_family[3][10], writer_state[3][12], writer_reason[3][32];
     std::uint32_t writer_handle[3];
@@ -555,6 +609,9 @@ struct Telemetry {
     std::uint8_t writer_want_type[3];
     std::uint32_t writer_candidates[3];
     std::uint16_t writer_candidate[3];
+    std::uint8_t writer_retries[3];
+    std::uint32_t writer_refs_before[3], writer_refs_after[3], writer_binder[3][3];
+    char writer_bank[3][8];
     std::uint32_t writer_dispatches, writer_bound, writer_refused;
     bool resident_ok;
     std::uint8_t resident_count;
@@ -562,6 +619,7 @@ struct Telemetry {
         std::uint16_t equip;
         std::uint8_t type, receiver, flags, index;
         std::uint32_t refs;
+        std::uint8_t viewer;
     } resident[48];
     std::uint16_t preload_ids[3];
     std::uint8_t preload_count;
@@ -611,6 +669,9 @@ struct Telemetry {
     std::int32_t aim_r5c[2], aim_r60[2], aim_pred[2];
     std::int32_t aim_gun_state[2], aim_b3d5[2];
     char aim_path[2][8];
+    std::int32_t gun_pitch_cdeg[2], gun_yaw_cdeg[2], remote_dir_cdeg[2], dir_err_cdeg[2];
+    char dir_refused[16];
+    std::uint32_t dir_checks, dir_misses;
     Ring ring;
 };
 

@@ -235,7 +235,8 @@ bool InputMessage(UINT id) noexcept {
 // window; GetRawInputData answers their tokens from this store. Tokens carry a
 // tag that no real HRAWINPUT has, and only tagged messages reach the game.
 constexpr std::uintptr_t kRawTag = 0x7EA0000000000000ull, kRawTagMask = 0xFFFF000000000000ull;
-struct SyntheticRaw { std::uintptr_t token{}; RAWINPUT raw{}; bool counted_read{}; };
+struct SyntheticRaw { std::uintptr_t token{}; RAWINPUT raw{}; bool counted_read{};
+    std::uint32_t loading_mission{},loading_generation{};std::uint64_t loading_expires{}; };
 SRWLOCK synthetic_lock = SRWLOCK_INIT;
 SyntheticRaw synthetic_ring[128]{};
 std::uint32_t synthetic_next = 0;
@@ -244,14 +245,24 @@ bool SyntheticLookup(std::uintptr_t token, RAWINPUT& out) noexcept {
     AcquireSRWLockShared(&synthetic_lock);
     const auto& slot = synthetic_ring[token & 127];
     const bool found = slot.token == token;
+    const auto mission=slot.loading_mission,generation=slot.loading_generation;
+    const auto expires=slot.loading_expires;
     if (found) out = slot.raw;
-    ReleaseSRWLockShared(&synthetic_lock); return found;
+    ReleaseSRWLockShared(&synthetic_lock);
+    // A WM_INPUT token may already be posted when runtime entry revokes it.
+    // Replace only this guarded loading down with a Space release; normal
+    // scenario input and its original raw packet shape remain unchanged.
+    if(found&&generation&&!worker_scenario::LoadingDeliveryAllowed(mission,generation,expires,GetTickCount64())) {
+        out.data.keyboard.Flags|=RI_KEY_BREAK;out.data.keyboard.Message=WM_KEYUP;
+    }
+    return found;
 }
-std::uintptr_t SyntheticStore(const RAWINPUT& raw) noexcept {
+std::uintptr_t SyntheticStore(const RAWINPUT& raw,const worker_scenario::Event* event=nullptr) noexcept {
     AcquireSRWLockExclusive(&synthetic_lock);
     const std::uint32_t n = ++synthetic_next;
     const std::uintptr_t token = kRawTag | n;
-    synthetic_ring[n & 127] = {token, raw, false};
+    synthetic_ring[n & 127] = {token, raw, false,event?event->loading_mission:0u,
+        event?event->loading_generation:0u,event?event->expires:0ull};
     ReleaseSRWLockExclusive(&synthetic_lock); return token;
 }
 bool SyntheticFirstRead(std::uintptr_t token) noexcept {
@@ -281,8 +292,8 @@ void CountSyntheticRead(std::uintptr_t token, const RAWINPUT& raw) noexcept {
     }
     SetLastError(error);
 }
-void PostSynthetic(HWND game, const RAWINPUT& raw) noexcept {
-    const BOOL posted = PostMessageW(game, WM_INPUT, RIM_INPUT, static_cast<LPARAM>(SyntheticStore(raw)));
+void PostSynthetic(HWND game, const RAWINPUT& raw,const worker_scenario::Event* event=nullptr) noexcept {
+    const BOOL posted = PostMessageW(game, WM_INPUT, RIM_INPUT, static_cast<LPARAM>(SyntheticStore(raw,event)));
     if (!posted) { CountWorker(WorkerCounter::raw_post_failed); return; }
     if (raw.header.dwType == RIM_TYPEKEYBOARD) CountWorker(WorkerCounter::raw_keyboard_posted);
     else {
@@ -315,7 +326,7 @@ void PumpSyntheticInput(HWND game) noexcept {
     std::uint32_t count = worker_scenario::Buffered(worker_scenario::Device::keyboard, events, 64, false);
     for (std::uint32_t i = 0; i < count; ++i) {
         const RAWINPUT raw = SyntheticKeyboard(events[i]);
-        PostSynthetic(game, raw);
+        PostSynthetic(game, raw,&events[i]);
     }
     count = worker_scenario::Buffered(worker_scenario::Device::mouse, events, 64, false);
     for (std::uint32_t i = 0; i < count; ++i) {
@@ -1146,7 +1157,9 @@ bool HudPrepare(HudFrame& f, bool menu_open) noexcept {
         coop_hud::NoteFrame(nullptr, nullptr, true, taken, new_toasts, now);
         return false;
     }
-    f.show_line = coop_hud::FormatLine(view, name, coop_hud::GetMode(), now, f.line);
+    coop_hud::PartnerView partner{};
+    coop_hud::GetPartner(partner); // copied owner publication only
+    f.show_line = coop_hud::FormatLine(view, name, coop_hud::GetMode(), now, f.line, &partner);
     f.toast_count = hud_model.Active(now, f.toasts, coop_hud::kMaxToasts);
     coop_hud::NoteFrame(f.show_line ? &f.line : nullptr, f.toast_count ? f.toasts[0]->text : nullptr, false, taken, new_toasts, now);
     return f.show_line || f.toast_count;
@@ -1657,6 +1670,11 @@ SHORT WorkerAsyncForTest(int key) noexcept { return WorkerAsync(key); }
 SHORT WorkerKeyStateForTest(int key) noexcept { return WorkerKeyState(key); }
 UINT WorkerRawBufferForTest(RAWINPUT* output, UINT* size, UINT header) noexcept { return WorkerRawBuffer(output,size,header); }
 UINT WorkerRawInputForTest(HRAWINPUT input,UINT command,void* output,UINT* size,UINT header) noexcept { return WorkerRawInput(input,command,output,size,header); }
+HRAWINPUT WorkerSyntheticLoadingForTest(std::uint32_t mission,std::uint32_t generation,std::uint64_t expires) noexcept {
+    worker_scenario::Event event{};event.offset=0x39;event.value=0x80;
+    event.loading_mission=mission;event.loading_generation=generation;event.expires=expires;
+    return reinterpret_cast<HRAWINPUT>(SyntheticStore(SyntheticKeyboard(event),&event));
+}
 HRAWINPUT WorkerSyntheticKeyboardForTest(unsigned scan,bool down) noexcept {
     worker_scenario::Event event{};event.offset=scan;event.value=down?0x80u:0u;
     return reinterpret_cast<HRAWINPUT>(SyntheticStore(SyntheticKeyboard(event)));

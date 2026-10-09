@@ -26,17 +26,20 @@ What works today:
   where the other player aims. It carries the other player's three weapons
   (or a gun of the same kind that your game already has loaded). Its shots
   are visual only (muzzle flash and sound, never bullets: each PC counts its
-  own player's hits). When the network or a PC cannot keep up it switches to
-  animation clips by itself and back again (section 3, "PARTNER BODY").
+  own player's hits). Riding, unsafe airborne/dead state and stale ride status
+  hide the partner until fresh on-foot samples settle; other native failures
+  can use the animation-clip fallback (section 3, "PARTNER BODY").
 What is NOT fully shared yet:
 - Aiming, reloading and weapon switching on the partner body are new in this
-  version. If your game cannot put one of your partner's weapons on the
-  partner body, the partner keeps the weapon it holds and does not fire or
-  reload until your partner switches back. Grenade and rocket launchers are
+  version. If the exact gun is unavailable, the partner can use a loaded
+  substitute; the status line identifies it. If no safe gun is available,
+  firing and reloading stay off. Prone aim still uses a camera-based
+  approximation. Grenade and rocket launchers are
   never shown firing. Debug pickups are local.
 - Story missions, items and full campaign progression. This is a development
-  build; live verification used two game instances on one PC. Actual two-PC
-  play has not been validated yet.
+  build. The user reported partial successful two-PC play on 0.12.0. These
+  0.12.1 repairs are checked on two hidden local copies and still need a fresh
+  two-PC session; complete campaign progression remains unsupported.
 
 One player HOSTS, the other JOINS. Both use this same package (the same
 version on both PCs). Konami's servers are never contacted: the game plays
@@ -45,8 +48,8 @@ offline, and the message "Failed to log in" at the start is expected.
 Two ways to connect:
 - ONLINE through Steam (recommended): no port forwarding, no VPN and no extra
   program. Steam connects the two games directly or through Valve's relay
-  servers. Send a code, or invite a Steam friend from the game. New in this
-  version and not yet tested between two real PCs.
+  servers. Send a code, or invite a Steam friend from the game. Partial
+  two-PC play worked on 0.12.0; both players need this version for the repairs.
 - LAN/VPN: the two games talk over UDP on the same network or through a VPN
   such as Tailscale (sections 4 and 5).
 
@@ -183,6 +186,8 @@ BOTH:
 PARTNER BODY (native by default):
  - Both PCs use the native partner unless a player chooses the clips. It
    follows the other player's movement, aim, reloads and weapon switches.
+   Riding, unsafe airborne/dead state and stale ride status hide the partner
+   until fresh on-foot movement settles.
  - The status line shows how YOUR game shows your partner and how the other
    game shows you, for example
         partner=live shown look native; you on the other PC: native
@@ -281,8 +286,9 @@ The Play-Coop status line explains most problems:
 - A RED banner "Co-op did NOT start and save protection is NOT active" means
   that this game is normal offline play on your REAL saves. Quit MGSV if you
   do not want that, and send the logs (section 8).
-- The partner stands still: the link was lost; it moves again when the link
-  is back. A paused partner (pause menu, loading) also stands still.
+- The partner stands still or disappears: check the link and partner status.
+  Riding, unsafe airborne/dead state or stale status can hide it until the
+  other player is back on foot and fresh movement settles.
 - "partner=... clips (...)": see section 3, PARTNER BODY.
 - Something else, a crash or a freeze: note the time and what you did, and
   send the logs.
@@ -333,11 +339,10 @@ stay in <game folder>\mgs-coop; you can delete that folder yourself later.
 - Development build. Partner bodies support Mother Base and Afghanistan/
   Africa free roam. World 3 is experimental and enabled by default;
   story missions, items and full campaign progression are not supported.
-  Actual two-PC play has not been validated; recorded live tests used two
-  game instances on one PC.
+  Partial two-PC Steam play was reported on 0.12.0. This 0.12.1 repair needs
+  a fresh two-PC test; its recorded qualification uses two hidden instances.
 - Online play uses Steam's networking and Valve's relays: it needs both PCs
-  online in Steam, and it has not been tested between two real PCs yet. If
-  it does not connect, use LAN/VPN.
+  online in Steam. If it does not connect, use LAN/VPN.
 - LAN/VPN play talks directly over UDP without a relay: if neither a VPN nor
   port forwarding works for you, use online play.
 - A Steam invite carries the join code; Steam keeps it in your chat history.

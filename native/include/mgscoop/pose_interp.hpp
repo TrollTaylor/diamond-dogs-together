@@ -12,7 +12,7 @@
 //   the newer one. A jump of more than snap_distance_m is never interpolated:
 //   the older pose holds until render time reaches the newer one (snap).
 // - Past the newest snapshot: extrapolate with the last velocity for at most
-//   extrapolate_cap_ms, then hold. Never across a snap-sized jump.
+//   extrapolate_cap_ms, then hold. Never across a snap-sized or speed-qualified jump.
 // - Before the oldest: hold the oldest.
 // - delay 0 means the latest snapshot only.
 // - Status by age of the newest receive: live <= stale_ms < stale <= lost_ms < lost.
@@ -26,6 +26,11 @@ inline constexpr std::uint32_t stale_ms = 500;
 inline constexpr std::uint32_t lost_ms = 3000;
 inline constexpr std::uint32_t extrapolate_cap_ms = 100;
 inline constexpr float snap_distance_m = 5.0f;
+// A bracketing snapshot pair that moved more than jump_distance_m faster than
+// jump_speed_mps in sender time is a jump (a teleport, never locomotion);
+// partner_recon places on it (docs/native-puppet.md "Movement").
+inline constexpr float jump_distance_m = 1.5f;
+inline constexpr float jump_speed_mps = 20.0f;
 
 struct Snapshot {
     std::uint32_t sender_ms;  // sender clock (PlayerTransformPacket::tick_ms)
@@ -62,6 +67,20 @@ struct Sample {
     bool extrapolated;     // moved past the newest snapshot
     bool held;             // clamped: extrapolation cap, oldest hold, or no velocity
     std::uint16_t equip_id;  // same snapshot as stance/flags; never blended
+    // The unwrapped sender time this position belongs to (the render time
+    // while interpolating, the held snapshot's time while holding, the newest
+    // plus the capped extrapolation): speeds over two samples use sender time,
+    // so arrival jitter never looks like a teleport. Valid with `time_valid`.
+    std::int64_t sender_ms;
+    // Most recent speed-qualified jump whose destination the sampled pose
+    // reached. Identity persists through newer arrivals while the pair remains
+    // in the ring; consumers act once per jump_ms, never on the pre-jump hold.
+    bool jump;
+    std::int64_t jump_ms;
+    bool time_valid;      // false for legacy/synthetic sample providers
+    // Nonzero receive-ring identity. Only Reset changes it; interpolation and
+    // alignment rewinds keep it, so consumers can distinguish a new peer timeline.
+    std::uint32_t generation{};
 };
 
 // A source-history cursor is private receive state, never a game/action token.

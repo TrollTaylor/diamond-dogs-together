@@ -23,7 +23,8 @@ param(
     # -Friend packages the loader of a passing Invoke-WorkerChecks -Profile
     # Release receipt (the stock46 gun pieces, worker OFF; docs/two-pc-play.md
     # "Release build"). A supplied loader is packaged as-is; its experiment
-    # settings are not inferred.
+    # settings are not inferred. With -Friend, -CheckReceipt is required and
+    # the supplied loader must have exactly the receipt loader's hash.
     [string]$LoaderPath,
     # -Friend: an existing passing Release receipt (build\worker-runs\<run>\receipt.json);
     # default: run the Release checks now.
@@ -33,7 +34,7 @@ param(
 )
 $ErrorActionPreference='Stop'
 $projectRoot=Split-Path -Parent $PSScriptRoot
-$version='0.12.0'
+$version='0.12.1'
 $archiveSha256='87BBE82BB1E907CF405200155DA2794BF7E1F5A3D45BF66426A38CDD31A91F96'
 $dll=Join-Path $projectRoot 'build/package-loader/dinput8.dll'
 # Provenance (package.json "build"): how the loader was made.
@@ -51,12 +52,11 @@ if($RuntimeArchive) {
     if((Get-FileHash -LiteralPath $archive).Hash -ne $archiveSha256) { throw 'Expected two-player runtime archive hash does not match.' }
     Write-Output 'Local runtime archive hash verified. It is not included in the package.'
 }
-if($LoaderPath) {
-    $dll=(Resolve-Path -LiteralPath $LoaderPath).Path
-    Write-Output "Packaging the existing loader $dll (no build)."
-    $loaderSource='supplied'
-} elseif($Friend) {
-    # The friend loader: a passing Release receipt for exactly this loader hash.
+$packageSourceSnapshot=$null
+if($Friend) {
+    Import-Module (Join-Path $PSScriptRoot 'worker\WorkerSource.psm1') -Force -DisableNameChecking
+    # An override is not an escape from the friend loader's audited receipt.
+    if($LoaderPath -and !$CheckReceipt) { throw 'Friend LoaderPath requires a passing Release check receipt.' }
     if(!$CheckReceipt) {
         $checkOutput=@(& (Join-Path $PSScriptRoot 'worker\Invoke-WorkerChecks.ps1') -Profile Release 2>&1 | ForEach-Object { [string]$_ })
         $CheckReceipt=@($checkOutput | Select-String -Pattern 'Worker check receipt: (.+receipt\.json)' | ForEach-Object { $_.Matches[0].Groups[1].Value })[-1]
@@ -69,11 +69,22 @@ if($LoaderPath) {
         if([string]$receipt.plan.flags[$name] -cne $releaseFlags[$name]) { throw "The Release receipt's $name is not $($releaseFlags[$name])." }
     }
     if($receipt.plan.flags.Count -ne $releaseFlags.Count) { throw 'The Release receipt names other build options.' }
-    # The receipt's immutable copy of the checked loader.
     $dll=Join-Path (Split-Path -Parent $receiptPath) 'dinput8.dll'
     if((Get-FileHash -LiteralPath $dll -Algorithm SHA256).Hash -ine [string]$receipt.artifacts.loader_sha256) { throw 'The receipt loader changed since its checks.' }
+    if($LoaderPath) {
+        $override=(Resolve-Path -LiteralPath $LoaderPath).Path
+        if((Get-FileHash -LiteralPath $override -Algorithm SHA256).Hash -ine [string]$receipt.artifacts.loader_sha256) {
+            throw 'Friend LoaderPath does not match the Release receipt loader.'
+        }
+    }
+    $packageSourceSnapshot=Get-WorkerSourceHashes $projectRoot
+    Assert-WorkerReceiptSource $receipt $packageSourceSnapshot
     $loaderSource='release_receipt'
     Write-Output "Packaging the Release loader of $receiptPath."
+} elseif($LoaderPath) {
+    $dll=(Resolve-Path -LiteralPath $LoaderPath).Path
+    Write-Output "Packaging the existing loader $dll (no build)."
+    $loaderSource='supplied'
 } else {
     & (Join-Path $PSScriptRoot 'build.ps1') -Configuration Release -BuildOnly -DisableLocalExperiments -BuildDirectory 'build\package-loader'
     $loaderSource='package_build'
@@ -218,6 +229,12 @@ An installed archive with the expected hash is reused when -RuntimeArchive is
 omitted (upgrades). The installer refuses an archive with any other hash.
 "@
     [IO.File]::WriteAllText((Join-Path $packageRoot 'RUNTIME-ARCHIVE.txt'),$archiveNote.Replace("`r`n","`n").Replace("`n","`r`n"),[Text.Encoding]::ASCII)
+}
+if($Friend) {
+    # Refuse changes while staging as well as a stale receipt at admission.
+    Assert-WorkerSourceUnchanged $packageSourceSnapshot (Get-WorkerSourceHashes $projectRoot)
+    if((Get-FileHash -LiteralPath (Join-Path $packageRoot 'payload\dinput8.dll') -Algorithm SHA256).Hash -ine
+        [string]$receipt.artifacts.loader_sha256) { throw 'The staged loader does not match the Release receipt.' }
 }
 Compress-Archive -LiteralPath $packageRoot -DestinationPath ($packageRoot+'.zip') -CompressionLevel Optimal
 Write-Output "Prepared: $packageRoot.zip"

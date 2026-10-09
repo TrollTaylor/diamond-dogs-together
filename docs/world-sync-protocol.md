@@ -55,7 +55,7 @@ pushed in PAIRED, used for native TX gating and by Lua. A remote HELLO with
 
 Per mission (Lua `W.MISSIONS`): 30010 `{enemies, clock, weather=all,
 areaEnemy=f30010_enemy}`, 30020 `{enemies, clock, weather=nofog,
-areaEnemy=f30020_enemy}`, 30050 `{clock}`; every other mission (the ACC 40050
+areaEnemy=f30020_enemy}`, 30050 `{clock, weather=all}`; every other mission (the ACC 40050
 included) runs the level-1 plumbing only for enemy/environment sync. W3/W4
 travel and shared game over also support 40010/40020/40050.
 
@@ -418,7 +418,7 @@ CLOCK/WEATHER commands received during a demo or unavailable gameplay keep
 the latest value until gameplay resumes; fresh digests replace stale held
 values. Link loss and level 0 discard held controls and release our forces.
 
-Weather (eff >= 3; 30010, 30020): the host sends `vars.weather` on change
+Weather (eff >= 3; 30010, 30020, 30050): the host sends `vars.weather` on change
 (30020: FOGGY becomes 255 = release; the mist is local to an area); the guest
 calls `TppWeather.ForceRequestWeather(type, interp)` (nothing during demos), a 255
 cancels its force and unpauses random weather, and it re-forces after three

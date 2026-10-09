@@ -57,7 +57,7 @@ $stages=@{
     census=@('partner_input_defer=census','partner_input_mask=0x2240006','partner_native_aim=off')
     loco=@('partner_input_defer=on','partner_input_mask=0x2240006','partner_native_aim=off','partner_native_rates=mirror')
     gun=@('partner_input_defer=on','partner_input_mask=0x224005E','partner_native_gun=1','partner_native_fire=visual','partner_native_aim=look',
-        'partner_input_triggers=1','partner_input_rstick=1','partner_native_rates=mirror','partner_native_aimpt=look','partner_native_reload=event',
+        'partner_input_triggers=1','partner_input_rstick=1','partner_native_rates=mirror','partner_native_aimpt=point','partner_native_reload=event',
         'partner_native_slot=write','partner_native_equip=substitute')
 }
 # The -LabSetting allow-lists (Invoke-WorkerScenario -LabSetting and its scenario "labsetting" lines,
@@ -309,6 +309,7 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
         $node.Condition.Extent.Text -ceq '$steps' -and $node.Body.Extent.Text.Contains('switch -Regex')},$false))
     Assert-True ($loop.Count -eq 1) 'one scenario validation loop'
     $validator=[scriptblock]::Create(($parts -join "`n")+"`n"+$loop[0].Extent.Text)
+    $Mode='lab'
     $scenarioFiles=@(Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'tools\worker\scenarios') -Filter '*.txt' -File)
     Assert-True ($scenarioFiles.Count -ge 6 -and @($scenarioFiles|Where-Object{$_.Name -ceq 'partner-native-actions.txt'}).Count -eq 1) 'the scenarios include partner-native-actions.txt'
     foreach($file in $scenarioFiles) {
@@ -318,6 +319,31 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
         try { & $validator } catch { $failure=$_.Exception.Message }
         Assert-True (!$failure) ('scenario steps valid: '+$file.Name+' '+$failure)
     }
+    foreach($step in @('host worldtrigger goto=30020','host worldtrigger goto=30010 goto_lz=1','waitmission guest 30020 120',
+        'host worldtrigger world_probe=shared_checkpoint','guest worldtrigger world_probe=shared_death','host worldtrigger world_probe=host_continue')){
+        $steps=@($step); & $validator; Assert-True $true ('qualified hidden travel admits '+$step)
+    }
+    foreach($step in @('both worldtrigger goto=30020','guest worldtrigger goto=30020','host worldtrigger world=0',
+        'host worldtrigger goto=30050','guest worldtrigger world_probe=host_continue','host worldtrigger world_probe=shared_death',
+        'both worldtrigger world_probe=shared_checkpoint','host worldtrigger world_probe=kill_near','waitmission both 30020 120','waitmission host 30060 120','waitmission host 30020 401')){
+        $steps=@($step);$failed=$false;try{& $validator}catch{$failed=$true}
+        Assert-True $failed ('hidden travel refuses '+$step)
+    }
+    # Execute the actual dispatch clause with a recording helper: grammar alone cannot catch a wrong role variable.
+    $dispatch=@($scenarioAst.FindAll({param($node)$node -is [Management.Automation.Language.SwitchStatementAst]},$true) |
+        ForEach-Object {$_.Clauses} | Where-Object {$_.Item2.Extent.Text.Contains('Invoke-ScenarioWorldTravel')})
+    Assert-True ($dispatch.Count -eq 1) 'one actual owned world-trigger dispatch clause'
+    $dispatchText=$dispatch[0].Item2.Extent.Text
+    $dispatchBlock=[scriptblock]::Create($dispatchText.Substring(1,$dispatchText.Length-2))
+    function Invoke-ScenarioWorldTravel([string]$Text,[string]$Role){$script:triggerDispatchRecord=$Role+'|'+$Text}
+    $role='wrong-role'
+    foreach($r in @('host','guest')){
+        $t=@($r,'worldtrigger',$(if($r -ceq 'host'){'goto=30020'}else{'world_probe=shared_death'}))
+        & $dispatchBlock
+        Assert-True ($script:triggerDispatchRecord -ceq ($r+'|'+$t[2])) ('world trigger passes actual target '+$r)
+    }
+    $Mode='play';$steps=@('host worldtrigger goto=30020');$failed=$false;try{& $validator}catch{$failed=$true}
+    Assert-True $failed 'hidden travel refuses play mode';$Mode='lab'
     $steps=@('host hold shift+w+space 200 nowait','guest burst dive 8 120','host hold w+jump 200')
     $failure=$null
     try { & $validator } catch { $failure=$_.Exception.Message }
@@ -665,6 +691,18 @@ function New-WorkerCleanupFixture([string]$Name) {
 try {
     $null=New-Item -ItemType Directory -Path $fixture
     [IO.File]::WriteAllText($marker,$nonce)
+    $triggerGame=Join-Path $fixture 'trigger-game'
+    $triggerMod=Join-Path $triggerGame 'mgs-coop'
+    $null=New-Item -ItemType Directory -Path $triggerMod
+    [IO.File]::WriteAllText((Join-Path $triggerMod 'world.trigger'),'goto=30020')
+    [IO.File]::WriteAllText((Join-Path $triggerMod ('world.trigger.'+('a'*32)+'.tmp')),'partial')
+    [IO.File]::WriteAllText((Join-Path $triggerMod 'world.trigger.user.tmp'),'keep')
+    Assert-True ((Remove-WorkerWorldTrigger $triggerGame) -eq 2) 'only exact stale trigger names removed'
+    Assert-True ((Test-Path -LiteralPath (Join-Path $triggerMod 'world.trigger.user.tmp'))) 'unrelated trigger file retained'
+    Assert-True ((Remove-WorkerWorldTrigger $triggerGame) -eq 0) 'trigger cleanup is idempotent'
+    $null=New-Item -ItemType Directory -Path (Join-Path $triggerMod 'world.trigger')
+    Assert-Throws {Remove-WorkerWorldTrigger $triggerGame} 'directory pretending to be trigger refuses'
+    Remove-Item -LiteralPath (Join-Path $triggerMod 'world.trigger')
     # Native receipts use a persistent append writer that shares READ only.
     # The real failed run wrote this frame, but ReadAllLines could not open its
     # log while that writer was alive. Reproduce the OS sharing contract using
@@ -805,4 +843,107 @@ try {
         Remove-Item -LiteralPath $resolved -Recurse -Force
     }
 }
+# Worker-only graphics preset: pure retail text and recorded actual controller blocks.
+& {
+ function Graphics-Tag([string]$text){
+  $tag=Get-GraphicsConfigTag ($text|ConvertFrom-Json)
+  return [regex]::Replace($text,'("as"\s*:\s*")[A-Za-z0-9+/=]+(")',{param($m)$m.Groups[1].Value+$tag+$m.Groups[2].Value})
+ }
+ $tokens=$null;$errors=$null
+ $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'tests\lab_scripts_tests.ps1'),[ref]$tokens,[ref]$errors)
+ $literal=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -ceq '$realConfig'},$true))
+ Assert-True ($errors.Count -eq 0 -and $literal.Count -eq 1) 'graphics: exact existing retail config fixture'
+ $inputText=& ([scriptblock]::Create($literal[0].Right.Extent.Text));$sourceText=$inputText
+ Assert-True (Get-GraphicsConfigInfo $inputText).Valid 'graphics: actual retail tag'
+ Assert-True ((Set-WorkerGraphicsQualityText -Text $inputText) -ceq $inputText) 'graphics: default preserve byte-identical'
+ $map=[ordered]@{texture='Low';effect='Low';lighting='Low';model_detail='Low';postprocess='Low';shadow='Low';ssao='Off';texture_filtering='Medium'}
+ $low=Set-WorkerGraphicsQualityText -Text $inputText -Quality low
+ Assert-True ($inputText -ceq $sourceText -and (Get-GraphicsConfigInfo $low).Valid) 'graphics: source immutable and generated tag valid'
+ $object=$low|ConvertFrom-Json
+ foreach($key in $map.Keys){Assert-True ($object.graphics.quality_setting.$key -ceq $map[$key]) ('graphics: exact value '+$key)}
+ Assert-True ((Set-WorkerGraphicsQualityText -Text $low -Quality low) -ceq $low) 'graphics: idempotent low'
+ Assert-True ((Set-WorkerGraphicsQualityText -Text $inputText -Quality LOW) -ceq $low) 'graphics: case accepted consistently'
+ function Graphics-Mask([string]$text){
+  foreach($key in $map.Keys){$text=[regex]::Replace($text,'("'+[regex]::Escape($key)+'"\s*:\s*")[^"\\]*(")','$1QUALITY$2')}
+  return [regex]::Replace($text,'("as"\s*:\s*")[A-Za-z0-9+/=]+(")','$1TAG$2')
+ }
+ Assert-True ((Graphics-Mask $low) -ceq (Graphics-Mask $inputText)) 'graphics: only quality/tag bytes change'
+ $unknown=Graphics-Tag ($inputText.Replace('"project" : "tpp"','"future":{"array":[true,false,null,42],"escaped":"keep\"quoted","unknown":"ExtraHigh"}, "project" : "tpp"').Replace('"depth_of_field" : "Enable"','"future_quality" : "KeepExactly", "depth_of_field" : "Enable"'))
+ $unknownLow=Set-WorkerGraphicsQualityText -Text $unknown -Quality low
+ Assert-True ((Graphics-Mask $unknownLow) -ceq (Graphics-Mask $unknown) -and (Get-GraphicsConfigInfo $unknownLow).Valid) 'graphics: unknown settings preserved and retagged'
+ $crlf=$unknown.Replace("`n","`r`n")
+ Assert-True ((Graphics-Mask (Set-WorkerGraphicsQualityText -Text $crlf -Quality low)) -ceq (Graphics-Mask $crlf)) 'graphics: CRLF retained'
+ Assert-Throws {Set-WorkerGraphicsQualityText -Text ($inputText.Replace('ExtraHigh','High')) -Quality low} 'graphics: corrupt tag refused'
+ Assert-Throws {Set-WorkerGraphicsQualityText -Text '' -Quality low} 'graphics: empty refused'
+ Assert-Throws {Set-WorkerGraphicsQualityText -Text (' '*65537) -Quality low} 'graphics: bounded'
+ Assert-Throws {Set-WorkerGraphicsQualityText -Text $inputText -Quality medium} 'graphics: unsupported mode refused'
+ foreach($schema in @($inputText.Replace('"project" : "tpp"','"project" : "other"'),$inputText.Replace('"version" : 1','"version" : 2'),
+  $inputText.Replace('"version" : 1','"version" : "1"'),$inputText.Replace('"quality_setting"','"quality_future"'))){
+  $bad=Graphics-Tag $schema;Assert-Throws {Set-WorkerGraphicsQualityText -Text $bad -Quality low} 'graphics: tag-valid wrong schema refused'
+ }
+ foreach($key in $map.Keys){
+  $missing=Graphics-Tag ([regex]::Replace($inputText,'"'+[regex]::Escape($key)+'"\s*:\s*"ExtraHigh",?',''))
+  Assert-Throws {Set-WorkerGraphicsQualityText -Text $missing -Quality low} ('graphics: missing '+$key)
+  foreach($value in '1','false','null','[]','{"unexpected":1}'){
+   $bad=Graphics-Tag ([regex]::Replace($inputText,'("'+[regex]::Escape($key)+'"\s*:\s*)"ExtraHigh"',{param($m)$m.Groups[1].Value+$value}))
+   Assert-Throws {Set-WorkerGraphicsQualityText -Text $bad -Quality low} ('graphics: non-string '+$key+' '+$value)
+  }
+  $duplicate=Graphics-Tag ($inputText.Replace('"'+$key+'" : "ExtraHigh"','"'+$key+'" : "ExtraHigh", "'+$key+'" : "ExtraHigh"'))
+  Assert-Throws {Set-WorkerGraphicsQualityText -Text $duplicate -Quality low} ('graphics: duplicate '+$key)
+ }
+ $duplicateAs=$inputText.Replace('"as" : "UzF+nvqVP+4="','"as" : "UzF+nvqVP+4=", "as" : "UzF+nvqVP+4="')
+ Assert-Throws {Set-WorkerGraphicsQualityText -Text $duplicateAs -Quality low} 'graphics: duplicate tag'
+ $duplicateUnknown=Graphics-Tag ($unknown.Replace('"unknown":"ExtraHigh"','"unknown":"ExtraHigh","unknown":"ExtraHigh"'))
+ Assert-Throws {Set-WorkerGraphicsQualityText -Text $duplicateUnknown -Quality low} 'graphics: duplicate unknown'
+ $escaped=Graphics-Tag ($inputText.Replace('"texture" : "ExtraHigh"','"texture" : "ExtraHigh", "\u0074exture" : "ExtraHigh"'))
+ Assert-Throws {Set-WorkerGraphicsQualityText -Text $escaped -Quality low} 'graphics: decoded duplicate'
+ $misplaced=Graphics-Tag ($inputText.Replace('"texture" : "ExtraHigh",','').Replace('"project" : "tpp"','"texture" : "ExtraHigh", "project" : "tpp"'))
+ Assert-Throws {Set-WorkerGraphicsQualityText -Text $misplaced -Quality low} 'graphics: key must belong to quality object'
+ $asts=@{}
+ foreach($name in 'Start-WorkerSession.ps1','Invoke-WorkerScenario.ps1'){
+  $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $SourceDirectory $name),[ref]$tokens,[ref]$errors)
+  Assert-True ($errors.Count -eq 0) ('graphics: parses '+$name);$asts[$name]=$ast
+  $p=@($ast.ParamBlock.Parameters|Where-Object{$_.Name.VariablePath.UserPath -ceq 'GraphicsQuality'})
+  Assert-True ($p.Count -eq 1 -and $p[0].DefaultValue.Value -ceq 'preserve') ('graphics: default '+$name)
+  $body=[scriptblock]::Create($ast.ParamBlock.Extent.Text+'; return $GraphicsQuality');$fixtureArgs=@{}
+  if($name -ceq 'Start-WorkerSession.ps1'){$fixtureArgs=@{BuildDirectory='C:\fixture';CheckReceipt='C:\fixture';BaselineLoaderSha256=('A'*64)}}
+  Assert-True ((& $body @fixtureArgs) -ceq 'preserve') ('graphics: bound default '+$name)
+  Assert-True ((& $body @fixtureArgs -GraphicsQuality low) -ceq 'low') ('graphics: bound low '+$name)
+  Assert-Throws {& $body @fixtureArgs -GraphicsQuality medium} ('graphics: rejected bound preset '+$name)
+ }
+ $start=$asts['Start-WorkerSession.ps1']
+ $gate=@($start.FindAll({param($n)$n -is [Management.Automation.Language.IfStatementAst] -and $n.Clauses[0].Item1.Extent.Text -ceq '$GraphicsQuality -eq ''low'''},$true))
+ Assert-True ($gate.Count -eq 1) 'graphics: exact low-copy block'
+ $assign=@($start.FindAll({param($n)$n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -ceq '$graphics'},$true))
+ Assert-True ($assign.Count -eq 1 -and $assign[0].Right.Extent.Text -ceq "Join-Path `$saveRoot '287700\local\TPP_GRAPHICS_CONFIG'") 'graphics: only fresh role copy path'
+ & {
+  $record=[pscustomobject]@{source=$inputText;text=$inputText;writes=[Collections.Generic.List[hashtable]]::new()}
+  $graphics='C:\fixture\run\host-saves\287700\local\TPP_GRAPHICS_CONFIG'
+  function Read-WorkerBoundedText([string]$Path){Assert-True ($Path -ceq $graphics) 'graphics: copied read only';return $record.text}
+  function Write-WorkerAtomicText([string]$Path,[string]$Text){$record.writes.Add(@{path=$Path;text=$Text});$record.text=$Text}
+  $GraphicsQuality='preserve';$info=Get-GraphicsConfigInfo $record.text;. ([scriptblock]::Create($gate[0].Extent.Text))
+  Assert-True ($record.writes.Count -eq 0 -and $record.text -ceq $inputText) 'graphics: preserve does not edit/write'
+  $GraphicsQuality='low';. ([scriptblock]::Create($gate[0].Extent.Text))
+  Assert-True ($record.writes.Count -eq 1 -and $record.writes[0].path -ceq $graphics -and $record.source -ceq $inputText -and $info.Valid) 'graphics: only copy written and verified'
+  . ([scriptblock]::Create($gate[0].Extent.Text));Assert-True ($record.writes.Count -eq 1) 'graphics: no redundant write'
+  $record.text=$inputText.Replace('ExtraHigh','High');Assert-Throws {. ([scriptblock]::Create($gate[0].Extent.Text))} 'graphics: bad copy refuses before write'
+  Assert-True ($record.writes.Count -eq 1) 'graphics: bad copy never written'
+ }
+ $call=@($asts['Invoke-WorkerScenario.ps1'].FindAll({param($n)$n -is [Management.Automation.Language.CommandAst] -and $n.Extent.Text.StartsWith("& (Join-Path `$worker 'Start-WorkerSession.ps1')",[StringComparison]::Ordinal)},$true))
+ Assert-True ($call.Count -eq 1) 'graphics: one real Start invocation'
+ & {
+  $worker='C:\fixture';$build='C:\fixture';$CheckReceipt='C:\fixture';$BaselineLoaderSha256='A'*64
+  $TimeoutSec=600;$ReadyTimeoutSec=180;$PartnerProfile='animated';$NativeStage='';$BuildProfile='normal';$AmmoExperiment=$false
+  $SaveSeed='lab';$LabSetting=@();$Mode='lab';$WanSim='off'
+  function Join-Path([string]$Path,[string]$ChildPath){Assert-True ($ChildPath -ceq 'Start-WorkerSession.ps1') 'graphics: recorded Start only';return 'Graphics-RecordStart'}
+  function Graphics-RecordStart {
+   param($BuildDirectory,$CheckReceipt,$BaselineLoaderSha256,$TimeoutSec,$ReadyTimeoutSec,$PartnerProfile,$NativeStage,$BuildProfile,
+    [switch]$AmmoExperiment,$SaveSeed,$GraphicsQuality,$LabSetting,$Mode,$WanSim)
+   return $GraphicsQuality
+  }
+  $GraphicsQuality='preserve';Assert-True ((& ([scriptblock]::Create($call[0].Extent.Text))) -ceq 'preserve') 'graphics: real invocation forwards default'
+  $GraphicsQuality='low';Assert-True ((& ([scriptblock]::Create($call[0].Extent.Text))) -ceq 'low') 'graphics: real invocation forwards low'
+ }
+}
+
 Write-Output ("worker_session_tests: $script:checks detached checks passed; no worker/game/process/window operations")

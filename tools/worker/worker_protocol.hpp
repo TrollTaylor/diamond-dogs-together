@@ -182,6 +182,14 @@ inline bool Admission(const std::string& text, const std::string& magic, const s
         Decimal(words[3], UINT32_MAX, id) && id == pid && Decimal(words[4], UINT64_MAX, time) && time == creation &&
         words[5] == desktop && words[6] == "admitted";
 }
+// A release authorizes teardown of this one already-admitted probe only.
+inline bool ProbeRelease(const std::string& text, const std::string& run, std::uint32_t pid, std::uint64_t creation) {
+    std::vector<std::string> words; std::uint64_t id = 0, time = 0;
+    return text.size() <= 256 && RunId(run) && pid != 0 && creation != 0 && Tokens(text, 6, words) &&
+        words[0] == "MGSWORKERPROBEACK1" && words[1] == run && words[2] == "probe" &&
+        Decimal(words[3], UINT32_MAX, id) && id == pid && Decimal(words[4], UINT64_MAX, time) && time == creation &&
+        words[5] == "release";
+}
 struct Qualification { std::string run, supervisor_sha, probe_sha, bmp_sha; std::uint64_t tick = 0; };
 inline bool ParseQualification(const std::string& text, const std::string& supervisor_sha, std::uint64_t now, Qualification& out) {
     std::vector<std::string> w; std::uint64_t tick = 0;

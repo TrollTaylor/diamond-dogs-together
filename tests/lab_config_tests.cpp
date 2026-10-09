@@ -664,6 +664,33 @@ int main() {
                   std::strcmp(mgscoop::PartnerNativeAimPtName(mgscoop::PartnerNativeAimPt::point), "point") == 0 &&
                   std::strcmp(mgscoop::PartnerNativeAimPtName(mgscoop::PartnerNativeAimPt::off), "off") == 0,
               "partner_native_aimpt parses off|look|point");
+        // Defaults agree for emitted raw gun settings and native profiles; named
+        // values retain their meaning irrespective of the profile key's order.
+        const auto rawPoint = Lab("enabled=1\nrole=host\npartner_drive=native\npartner_native_gun=1\npartner_input_defer=on\n");
+        const auto censusPoint = Lab("enabled=1\nrole=host\npartner_drive=native\npartner_native_gun=1\npartner_input_defer=census\n");
+        const auto undrivenPoint = Lab("enabled=1\nrole=host\npartner_drive=native\npartner_native_gun=1\n");
+        Check(rawPoint.partner_native_aimpt == PartnerNativeAimPt::point && !rawPoint.partner_native_aimpt_given &&
+              censusPoint.partner_native_aimpt == PartnerNativeAimPt::off && undrivenPoint.partner_native_aimpt == PartnerNativeAimPt::off,
+              "raw driven gun defaults point; census and undriven gun stay off");
+        for (const char* mode : {"lab", "play"}) {
+            const std::string prefix = std::string("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=") + mode + "\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\n";
+            Check(Lab(prefix + "partner_native_profile=gun\n").partner_native_aimpt == PartnerNativeAimPt::point &&
+                  Lab(prefix + "partner_native_profile=loco\n").partner_native_aimpt == PartnerNativeAimPt::off &&
+                  Lab(prefix).partner_native_aimpt == PartnerNativeAimPt::off, "lab/play default point is confined to the gun stage");
+            for (const char* named : {"off", "look", "point"}) {
+                const std::string key = std::string("partner_native_aimpt=") + named + "\n";
+                for (const bool keyFirst : {false, true}) {
+                    const auto explicitPoint = Lab(prefix + (keyFirst ? key + "partner_native_profile=gun\n" : "partner_native_profile=gun\n" + key));
+                    Check(std::strcmp(PartnerNativeAimPtName(explicitPoint.partner_native_aimpt), named) == 0 &&
+                          explicitPoint.partner_native_aimpt_given, "explicit aimpt off/look/point wins before/after gun profile in lab/play");
+                }
+            }
+        }
+        const auto badPoint = Lab("enabled=1\nrole=host\npartner_native_profile=gun\npartner_native_aimpt=on\n");
+        const auto namedBadPoint = Lab("enabled=1\nrole=host\npartner_native_profile=gun\npartner_native_aimpt=off\npartner_native_aimpt=on\n");
+        Check(badPoint.invalid_values == 1 && !badPoint.partner_native_aimpt_given && badPoint.partner_native_aimpt == PartnerNativeAimPt::point &&
+              namedBadPoint.invalid_values == 1 && namedBadPoint.partner_native_aimpt_given && namedBadPoint.partner_native_aimpt == PartnerNativeAimPt::off,
+              "invalid aimpt inherits gun default but cannot erase a valid explicit off");
         Check(polishOff.partner_native_face == mgscoop::PartnerNativeFace::off && polishOff.invalid_values == 0 &&
               polishBad.invalid_values == 3 && polishBad.partner_native_face == mgscoop::PartnerNativeFace::idle &&
               polishBad.partner_native_noise == mgscoop::PartnerNativeNoise::filter && polishBad.partner_native_aim == PartnerNativeAim::off,
@@ -705,6 +732,54 @@ int main() {
                   gunProfile.partner_native_slot == mgscoop::PartnerNativeSlot::write &&
                   gunProfile.partner_native_equip == mgscoop::PartnerNativeEquip::substitute && gunProfile.invalid_values == 0,
               "the native gun profile defaults: event / write / substitute");
+        Check(gunProfile.partner_native_equip_shared==mgscoop::PartnerNativeEquipShared::on &&
+              gunProfile.partner_native_standin==mgscoop::PartnerNativeStandin::on && !gunProfile.partner_native_equip_measured &&
+              gunProfile.partner_native_ride==mgscoop::PartnerNativeRide::off,"weapons4 defaults; undriven gun config keeps ride off and measured opt-in");
+        const auto weaponsOff=Lab("enabled=1\nrole=host\npartner_drive=native\npartner_native_gun=1\n"
+                                  "partner_native_equip_shared=off\npartner_native_standin=off\n");
+        Check(weaponsOff.partner_native_equip_shared==mgscoop::PartnerNativeEquipShared::off &&
+              weaponsOff.partner_native_standin==mgscoop::PartnerNativeStandin::off,"named weapons4 off keys are preserved");
+        const auto weaponsLab=Lab("enabled=1\nrole=host\npartner_native_equip_shared=prefer\npartner_native_standin=on\n"
+                                  "partner_native_equip_measured=1\npartner_native_ride=hide\n");
+        Check(weaponsLab.invalid_values==0 && weaponsLab.partner_native_equip_shared==mgscoop::PartnerNativeEquipShared::prefer &&
+              weaponsLab.partner_native_equip_measured && weaponsLab.partner_native_ride==mgscoop::PartnerNativeRide::hide,
+              "lab-only measured and shared preference; explicit ride hide parses");
+        const auto weapons4Bad=Lab("enabled=1\nrole=host\npartner_native_equip_shared=all\npartner_native_standin=yes\n"
+                                  "partner_native_equip_measured=all\npartner_native_ride=on\n");
+        Check(weapons4Bad.invalid_values==4,"invalid weapons4 and ride values refuse");
+        // A visibility default follows actual native driving, not just a gun
+        // toggle. The parser's final resolver preserves explicit keys in any order.
+        Check(def.partner_native_ride == PartnerNativeRide::off && !def.partner_native_ride_given,
+              "legacy/default config does not enable ride hiding");
+        for (const char* mode : {"lab", "play"}) {
+            const std::string prefix = std::string("enabled=1\nrole=host\nsave_dir=C:\\coop\\saves\nmode=") + mode + "\nnet=1\nnet_bind=any\npartner=1\npartner_source=net\npartner_apply=xform\npartner_anim=off\npartner_dm=map\n";
+            for (const char* profile : {"loco", "gun"}) {
+                const std::string profileKey = std::string("partner_native_profile=") + profile + "\n";
+                const auto autoRide = Lab(prefix + profileKey);
+                Check(autoRide.partner_native_ride == PartnerNativeRide::hide && !autoRide.partner_native_ride_given &&
+                      autoRide.partner_input_defer == PartnerDefer::on, "driven native profile defaults ride hide in lab/play");
+                for (const bool keyFirst : {false, true}) {
+                    const auto off = Lab(prefix + (keyFirst ? "partner_native_ride=off\n" + profileKey : profileKey + "partner_native_ride=off\n"));
+                    Check(off.partner_native_ride == PartnerNativeRide::off && off.partner_native_ride_given,
+                          "explicit ride off wins before/after either native profile in lab/play");
+                    const auto hide = Lab(prefix + (keyFirst ? "partner_native_ride=hide\n" + profileKey : profileKey + "partner_native_ride=hide\n"));
+                    Check(hide.partner_native_ride == PartnerNativeRide::hide && hide.partner_native_ride_given,
+                          "explicit ride hide is admitted before/after either native profile in lab/play");
+                }
+            }
+        }
+        const auto rawRide = Lab("enabled=1\nrole=host\npartner_drive=native\npartner_input_defer=on\n");
+        const auto censusRide = Lab("enabled=1\nrole=host\npartner_drive=native\npartner_input_defer=census\npartner_native_gun=1\n");
+        Check(rawRide.partner_native_ride == PartnerNativeRide::hide && censusRide.partner_native_ride == PartnerNativeRide::off &&
+              !censusRide.partner_native_ride_given, "raw driven offline/loco stage hides; census never inherits hide");
+        const auto badRide = Lab("enabled=1\nrole=host\npartner_native_profile=gun\npartner_native_ride=on\n");
+        const auto namedBadRide = Lab("enabled=1\nrole=host\npartner_native_profile=gun\npartner_native_ride=off\npartner_native_ride=on\n");
+        Check(badRide.invalid_values == 1 && !badRide.partner_native_ride_given && badRide.partner_native_ride == PartnerNativeRide::hide &&
+              namedBadRide.invalid_values == 1 && namedBadRide.partner_native_ride_given && namedBadRide.partner_native_ride == PartnerNativeRide::off,
+              "invalid ride value inherits default but cannot erase a valid explicit off");
+        Check(std::strcmp(mgscoop::PartnerNativeRideName(mgscoop::PartnerNativeRide::hide),"hide")==0 &&
+              std::strcmp(mgscoop::PartnerNativeEquipSharedName(mgscoop::PartnerNativeEquipShared::prefer),"prefer")==0,
+              "weapons4 and ride names");
         const auto gunNamed = Lab("enabled=1\nrole=host\npartner_drive=native\npartner_native_gun=1\npartner_native_reload=mirror\n"
                                   "partner_native_slot=off\npartner_native_equip=stock46\n");
         Check(gunNamed.partner_native_reload == mgscoop::PartnerNativeReload::mirror &&
@@ -797,7 +872,8 @@ int main() {
                    a.partner_native_gun == b.partner_native_gun && a.partner_native_fire == b.partner_native_fire &&
                    a.partner_native_aim == b.partner_native_aim && a.partner_input_triggers == b.partner_input_triggers &&
                    a.partner_input_rstick == b.partner_input_rstick && a.partner_native_rates == b.partner_native_rates &&
-                   a.partner_native_noise == b.partner_native_noise && a.partner_input_p218_allow == b.partner_input_p218_allow;
+                   a.partner_native_noise == b.partner_native_noise && a.partner_input_p218_allow == b.partner_input_p218_allow &&
+                   a.partner_native_aimpt == b.partner_native_aimpt && a.partner_native_ride == b.partner_native_ride;
         };
         // The profile is exactly the stage the worker qualified (lab and play).
         const auto labGunRaw = Lab("enabled=1\nrole=host\n" + clips + gun_raw);
@@ -826,8 +902,13 @@ int main() {
               playGun.partner_native_hold == PartnerNativeHold::own, "play defaults: online, stall hold 400 ms, 5 edge repeats, hold own");
         // The weapons keys resolve after the profile expansion (ResolveWeaponDefaults, last).
         Check(playGun.partner_native_reload == PartnerNativeReload::event && playGun.partner_native_slot == PartnerNativeSlot::write &&
-              playGun.partner_native_equip == PartnerNativeEquip::substitute && playGun.partner_native_aimpt == PartnerNativeAimPt::look,
+              playGun.partner_native_equip == PartnerNativeEquip::substitute && playGun.partner_native_aimpt == PartnerNativeAimPt::point,
               "play: profile=gun runs the partner's own reload, the slot follower, the generalized writer and the aim mirror");
+        const auto weaponsPlay=Lab(play+"partner_native_profile=gun\npartner_native_equip_shared=prefer\n"
+                                   "partner_native_equip_measured=1\npartner_native_ride=hide\n");
+        Check(weaponsPlay.partner_native_equip_shared==PartnerNativeEquipShared::on && !weaponsPlay.partner_native_equip_measured &&
+              weaponsPlay.partner_native_ride==PartnerNativeRide::hide && weaponsPlay.partner_native_standin==PartnerNativeStandin::on,
+              "play uses shared on and explicit ride hide; measured remains lab-only");
         const auto playNamed = Lab(play + "partner_native_profile=gun\npartner_native_slot=call\npartner_native_equip=stock46\n");
         Check(playNamed.play_refused == 0 && playNamed.partner_native_slot == PartnerNativeSlot::call &&
               playNamed.partner_native_equip == PartnerNativeEquip::stock46 && playNamed.partner_native_reload == PartnerNativeReload::event,

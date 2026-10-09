@@ -309,6 +309,10 @@ $script:LabPartnerKeys = @(
     @{ Key = 'partner_native_slot'; Json = 'native_slot'; Kind = 'enum'; Values = @('off', 'write', 'call') },
     # What body 1 carries (the generalized writer, W2/W3): stock46 by default; the gun stage and Play-OfflineCoop run substitute.
     @{ Key = 'partner_native_equip'; Json = 'native_equip'; Kind = 'enum'; Values = @('stock46', 'manifest', 'substitute') },
+    @{ Key = 'partner_native_equip_shared'; Json = 'native_equip_shared'; Kind = 'enum'; Values = @('off', 'on', 'prefer') },
+    @{ Key = 'partner_native_equip_measured'; Json = 'native_equip_measured'; Kind = 'bool' },
+    @{ Key = 'partner_native_standin'; Json = 'native_standin'; Kind = 'enum'; Values = @('off', 'on') },
+    @{ Key = 'partner_native_ride'; Json = 'native_ride'; Kind = 'enum'; Values = @('off', 'hide') },
     @{ Key = 'crash_probe'; Json = 'crash_probe'; Kind = 'bool' },
     # Debug "Spawn enemy here" native placement (docs/debug-menu.md): lab only,
     # default off and written only when set.

@@ -27,4 +27,11 @@ bool FormatSteamEnd(std::int32_t end_reason, char* out, std::size_t capacity) no
 const char* ShortReason(const char* reason) noexcept;
 const char* ShortSteamEnd(std::int32_t end_reason) noexcept;
 
+// The no_body toast: a partner mission started on a pack list the player
+// package selection refused (docs/player-package-selection.md). `scene` is a
+// partner::PackSceneName (demo_stage, hangar, story, layout, other); the demo
+// stage, the hangar and a story variant end with a normal reload, a refused
+// layout or another list asks for Collect-Logs. False only when `out` is too small.
+bool FormatNoBody(const char* scene, char* out, std::size_t capacity) noexcept;
+
 }  // namespace mgscoop::coop_text

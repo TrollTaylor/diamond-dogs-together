@@ -67,11 +67,44 @@ bool ParseCommand(const char* text,std::size_t size,const char* run_id,const cha
     } else if(!std::strcmp(tokens[5],"mouse")) {
         c.operation=Operation::mouse;
         if(!Signed(tokens[6],c.dx)||!Signed(tokens[7],c.dy)||(!c.dx&&!c.dy)||std::strcmp(tokens[8],"0")) return false;
+    } else if(!std::strcmp(tokens[5],"resume_loading")) {
+        c.operation=Operation::resume_loading;
+        std::uint64_t mission=0,generation=0;
+        if(!Number(tokens[6],mission)||!mission||mission>65535||!Number(tokens[7],generation)||
+           !generation||generation>UINT32_MAX||std::strcmp(tokens[8],"0"))return false;
+        c.mission=static_cast<std::uint32_t>(mission);c.generation=static_cast<std::uint32_t>(generation);
+        c.keys=std::uint64_t{1}<<static_cast<unsigned>(Key::space);c.duration=120;
     } else if(!std::strcmp(tokens[5],"release")||!std::strcmp(tokens[5],"capture")) {
         c.operation=!std::strcmp(tokens[5],"release")?Operation::release:Operation::capture;
         if(std::strcmp(tokens[6],"0")||std::strcmp(tokens[7],"0")||std::strcmp(tokens[8],"0")) return false;
     } else return false;
     output=c; return true;
+}
+const char* LoadingPhaseName(LoadingPhase phase) noexcept {
+    switch(phase) { case LoadingPhase::initialized:return "initialized";case LoadingPhase::running:return "running";
+        case LoadingPhase::terminating:return "terminating";default:return "unavailable"; }
+}
+const char* Scenario::ResumeRefusal(const Command& c) const noexcept {
+    if(loading_.phase!=LoadingPhase::initialized)return LoadingPhaseName(loading_.phase);
+    if(!loading_.generation||c.generation!=loading_.generation||c.mission!=loading_.mission)return "loading_token_changed";
+    switch(loading_.mission){case 30010:case 30020:case 30050:case 40010:case 40020:case 40050:break;
+        default:return "unsupported_loading_mission";}
+    if(resume_sequence_||held_[static_cast<unsigned>(Key::space)])return "loading_resume_busy";
+    return nullptr;
+}
+bool Scenario::LoadingDeliveryAllowed(std::uint32_t mission,std::uint32_t generation,
+                                    std::uint64_t expires,std::uint64_t now) const noexcept {
+    return generation&&loading_.phase==LoadingPhase::initialized&&loading_.mission==mission&&
+        loading_.generation==generation&&now<expires;
+}
+void Scenario::SetLoading(LoadingContext c,std::uint64_t now) noexcept {
+    const bool revoked=c.phase!=LoadingPhase::initialized||c.mission!=loading_.mission||c.generation!=loading_.generation;
+    if(revoked&&resume_sequence_) {
+        const auto i=static_cast<unsigned>(Key::space);
+        if(held_commands_[i]==resume_sequence_) {Set(Key::space,false,now,resume_sequence_);releases_[i]=held_commands_[i]=0;}
+        resume_sequence_=0;
+    }
+    loading_=c;
 }
 void Scenario::Set(Key key,bool down,std::uint64_t now,std::uint64_t command,std::uint64_t expires) noexcept {
     const auto index=static_cast<unsigned>(key);const bool mouse=index>=static_cast<unsigned>(Key::lmb);
@@ -89,11 +122,13 @@ void Scenario::Set(Key key,bool down,std::uint64_t now,std::uint64_t command,std
             if(events[i].offset!=offset||events[i].value!=0x80)events[keep++]=events[i];count=keep;
     }
     if(count==64) {for(unsigned i=1;i<64;++i) events[i-1]=events[i];--count;}
-    events[count++]={offset,down?0x80u:0u,static_cast<std::uint32_t>(now),++event_sequence_,command,down?expires:0};
+    events[count++]={offset,down?0x80u:0u,static_cast<std::uint32_t>(now),++event_sequence_,command,down?expires:0,
+        down&&command==resume_sequence_?loading_.mission:0u,down&&command==resume_sequence_?loading_.generation:0u};
     if(mouse) mouse_command_=command; else keyboard_command_=command;
 }
 void Scenario::Tick(std::uint64_t now) noexcept {
     for(unsigned i=0;i<static_cast<unsigned>(Key::count);++i) if(held_[i]&&now>=releases_[i]) {
+        if(held_commands_[i]==resume_sequence_)resume_sequence_=0;
         Set(static_cast<Key>(i),false,now,held_commands_[i]);releases_[i]=0;held_commands_[i]=0;
     }
     if(move_expires_&&now>=move_expires_) {dx_=dy_=0;move_expires_=0;}
@@ -107,10 +142,15 @@ void Scenario::Tick(std::uint64_t now) noexcept {
 }
 void Scenario::Clear() noexcept {
     for(unsigned i=0;i<static_cast<unsigned>(Key::count);++i) {held_[i]=false;releases_[i]=held_commands_[i]=0;}
-    keyboard_count_=mouse_count_=0;dx_=dy_=0;move_expires_=0;capture_={};keyboard_command_=mouse_command_=0;
+    keyboard_count_=mouse_count_=0;dx_=dy_=0;move_expires_=0;capture_={};keyboard_command_=mouse_command_=0;resume_sequence_=0;
 }
-bool Scenario::Accept(const Command& c,std::uint64_t now) noexcept {
+bool Scenario::Accept(const Command& request,std::uint64_t now) noexcept {
     Tick(now);
+    Command c=request;
+    if(c.operation==Operation::resume_loading) {
+        if(ResumeRefusal(c))return false;
+        c.operation=Operation::press;c.keys=std::uint64_t{1}<<static_cast<unsigned>(Key::space);c.duration=120;
+    }
     if(!c.sequence||c.sequence>4096||c.sequence<=last_sequence_||c.expires<=now||c.expires-now>2000||last_sequence_>=4096||
        static_cast<unsigned>(c.operation)>static_cast<unsigned>(Operation::capture)) return false;
     if(c.operation==Operation::press||c.operation==Operation::hold) {
@@ -119,6 +159,7 @@ bool Scenario::Accept(const Command& c,std::uint64_t now) noexcept {
         if(c.dx < -1500||c.dx>1500||c.dy < -1500||c.dy>1500||(!c.dx&&!c.dy)) return false;
     } else if(c.operation==Operation::capture && (capture_.sequence||(capture_at_&&now-capture_at_<250))) return false;
     last_sequence_=c.sequence;
+    if(request.operation==Operation::resume_loading)resume_sequence_=c.sequence;
     if(c.operation==Operation::press||c.operation==Operation::hold) {
         for(unsigned i=0;i<static_cast<unsigned>(Key::count);++i) if(c.keys&(std::uint64_t{1}<<i)) {
             Set(static_cast<Key>(i),true,now,c.sequence,now+c.duration);releases_[i]=now+c.duration;held_commands_[i]=c.sequence;
@@ -126,7 +167,7 @@ bool Scenario::Accept(const Command& c,std::uint64_t now) noexcept {
         }
     } else if(c.operation==Operation::release) {
         for(unsigned i=0;i<static_cast<unsigned>(Key::count);++i) {Set(static_cast<Key>(i),false,now,c.sequence);releases_[i]=held_commands_[i]=0;}
-        dx_=dy_=0;move_expires_=0;keyboard_command_=mouse_command_=c.sequence;
+        dx_=dy_=0;move_expires_=0;keyboard_command_=mouse_command_=c.sequence;resume_sequence_=0;
         unsigned keep=0;for(unsigned i=0;i<mouse_count_;++i)if(mouse_events_[i].offset>=12)mouse_events_[keep++]=mouse_events_[i];mouse_count_=keep;
     } else if(c.operation==Operation::mouse) {
         // One pending bounded move; no accumulation or accidental repeat.
@@ -323,6 +364,36 @@ void SetHooksReady(bool ready) noexcept {
     Receipt(ok?"admitted":"refused",ok?"hooks_ready_private_context":"context_receipt",0);
     ReleaseSRWLockExclusive(&state_lock);SetLastError(error);
 }
+bool LoadingDeliveryAllowed(std::uint32_t mission,std::uint32_t generation,std::uint64_t expires,std::uint64_t now) noexcept {
+    if(!ThreadAdmitted())return false;
+    const DWORD error=GetLastError();AcquireSRWLockShared(&state_lock);
+    const bool ok=scenario.LoadingDeliveryAllowed(mission,generation,expires,now);
+    ReleaseSRWLockShared(&state_lock);SetLastError(error);return ok;
+}
+void SetLoadingContext(LoadingContext c) noexcept {
+    if(!Active())return;
+    const DWORD error=GetLastError();AcquireSRWLockExclusive(&state_lock);
+    scenario.SetLoading(c,GetTickCount64());
+    // Atomic owned metadata survives a loading-tip pause with no Lua Update tick.
+    // Controller validates the supervisor/process lease; native consumption validates this token again.
+#ifdef MGS_WORKER_TESTING
+    if(mock_lease){ReleaseSRWLockExclusive(&state_lock);SetLastError(error);return;}
+#endif
+    wchar_t name[64]{},path[32768]{},temporary[32768]{};
+    StringCchPrintfW(name,ARRAYSIZE(name),L"%S.loading.json",role);
+    bool ok=Path(path,name)&&SUCCEEDED(StringCchPrintfW(temporary,ARRAYSIZE(temporary),L"%s.%u.%u.tmp",path,c.generation,unsigned(c.phase)));
+    HANDLE file=ok?CreateFileW(temporary,GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_OPEN_REPARSE_POINT,nullptr):INVALID_HANDLE_VALUE;
+    char text[512]{};DWORD written=0;
+    const bool formatted=SUCCEEDED(StringCchPrintfA(text,ARRAYSIZE(text),
+        "{\"run_id\":\"%s\",\"role\":\"%s\",\"pid\":%lu,\"process_start_filetime\":%llu,\"tick_ms\":%llu,\"phase\":\"%s\",\"mission\":%u,\"generation\":%u}\n",
+        run_id,role,process_id,process_start,GetTickCount64(),LoadingPhaseName(c.phase),c.mission,c.generation));
+    ok=file!=INVALID_HANDLE_VALUE&&formatted&&WriteFile(file,text,static_cast<DWORD>(std::strlen(text)),&written,nullptr)&&
+        written==std::strlen(text)&&FlushFileBuffers(file);
+    if(file!=INVALID_HANDLE_VALUE)CloseHandle(file);
+    if(ok)ok=MoveFileExW(temporary,path,MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)!=FALSE;
+    Receipt(ok?"loading_context":"loading_context_refused",ok?LoadingPhaseName(c.phase):"metadata_write",0);
+    ReleaseSRWLockExclusive(&state_lock);SetLastError(error);
+}
 void Poll(std::uint64_t now) noexcept {
     if(!ThreadAdmitted())return;
     const DWORD error=GetLastError();AcquireSRWLockExclusive(&state_lock);scenario.Tick(now);
@@ -339,8 +410,12 @@ void Poll(std::uint64_t now) noexcept {
                 GetFileSizeEx(file,&size)&&size.QuadPart>0&&size.QuadPart<=512&&ReadFile(file,text,512,&read,nullptr)&&static_cast<LONGLONG>(read)==size.QuadPart;
             CloseHandle(file);Command command{};
             if(read_ok&&ParseCommand(text,read,run_id,role,command)&&command.sequence>last_file_sequence) {
-                last_file_sequence=command.sequence;const bool accepted=scenario.Accept(command,now);
-                Receipt(accepted?"command_accepted":"command_refused",accepted?"typed_bounded":"sequence_expiry_or_busy",command.sequence);
+                last_file_sequence=command.sequence;
+                const char* refusal=command.operation==Operation::resume_loading?scenario.ResumeRefusal(command):nullptr;
+                const bool accepted=scenario.Accept(command,now);
+                Receipt(accepted?"command_accepted":"command_refused",accepted?
+                    (command.operation==Operation::resume_loading?"loading_space_120ms":"typed_bounded"):
+                    refusal?refusal:"sequence_expiry_or_busy",command.sequence);
             }
         }
     }
@@ -408,6 +483,8 @@ RunContext GetContext() noexcept{return {};}
 void SetHooksReady(bool) noexcept{}
 void Refuse(const char*) noexcept{}
 void Poll(std::uint64_t) noexcept{}
+void SetLoadingContext(LoadingContext) noexcept{}
+bool LoadingDeliveryAllowed(std::uint32_t,std::uint32_t,std::uint64_t,std::uint64_t) noexcept{return false;}
 bool Keyboard(void*,std::size_t) noexcept{return false;}
 bool Mouse(void*,std::size_t) noexcept{return false;}
 std::uint32_t Buffered(Device,Event*,std::uint32_t,bool) noexcept{return 0;}

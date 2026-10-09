@@ -128,7 +128,7 @@ try {
     $bundlesArchive=@($package.files | ForEach-Object { $_.target }) -contains $archiveTarget
     $packageAllowed=if(@($package.files.target) -ccontains 'mgs-coop/ImGui-LICENSE.txt') { $allowed } else { $legacyAllowed }
     $packageFileCount=if($bundlesArchive) { $packageAllowed.Count-1 } else { $packageAllowed.Count-2 }
-    if($package.product -ne 'mgs-coop-local-package' -or $package.version -ne '0.12.0' -or
+    if($package.product -ne 'mgs-coop-local-package' -or $package.version -notin @('0.12.0','0.12.1') -or
         @($package.files).Count -ne $packageFileCount -or @($package.files.target | Select-Object -Unique).Count -ne $packageFileCount -or
         @($package.files.target | Where-Object { $_ -cnotin $packageAllowed -or $_ -ceq 'mgs-coop/probe-install.json' }).Count) { throw 'Unexpected package manifest.' }
     $archiveHash=$null

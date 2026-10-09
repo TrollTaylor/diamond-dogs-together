@@ -10,7 +10,7 @@ local function fixture(o)
     o = o or {}
     local c = {now = 100, demo = false, inGame = true, requests = {}, cancelled = {}, paused = {}, tx = {}, logs = {}, accept = true}
     local env = setmetatable({}, {__index = _G})
-    env.e, env.vars = {}, {clock = 43200, weather = 0}
+    env.e, env.vars = {}, {missionCode = o.mission or 30010, clock = 43200, weather = 0}
     env.Tpp = {IsTypeTable = function(t) return type(t) == 'table' end,
         SplitString = function(s, d) local a = {}; for v in s:gmatch('[^' .. d .. ']+') do a[#a + 1] = v end; return a end}
     env.Fox = {StrCode32 = function() return 1 end}
@@ -89,6 +89,44 @@ check(env.TppClock.SetTime == h.originalClock and env.TppWeather.ForceRequestWea
     env.TppWeather.CancelForceRequestWeather == h.originalCancel, 'teardown restores exact owned originals')
 env.TppClock.SetTime('13:00:00')
 check(not h.V.s.clockDirty, 'persistent disabled owner cannot capture later vanilla calls')
+
+-- Mother Base uses the same retail public weather contract. Its vanilla
+-- outdoor weather table explicitly includes rain and fog; requests are still
+-- asynchronous, and only the actual guest variable confirms the result.
+do
+    local mbHostEnv, mbHost = fixture({mission = 30050})
+    mbHostEnv.TppMission = {IsHelicopterSpace = function(mission) return math.floor(mission / 10000) == 4 end}
+    mbHostEnv.TppLocation = {IsAfghan = function() return false end, IsMiddleAfrica = function() return false end,
+        IsMotherBase = function() return true end}
+    local baseWeather, extraWeather
+    mbHostEnv.WeatherManager.SetNewWeatherProbabilities = function(name, values) baseWeather = {name, values} end
+    mbHostEnv.WeatherManager.SetExtraWeatherProbabilities = function(values) extraWeather = values end
+    mbHostEnv.TppWeather.SetDefaultWeatherProbabilities()
+    check(baseWeather[1] == 'default' and extraWeather[1][1] == mbHostEnv.TppDefine.WEATHER.RAINY and
+        extraWeather[2][1] == mbHostEnv.TppDefine.WEATHER.FOGGY,
+        'pinned retail outdoor Mother Base weather includes rain and fog')
+    mbHostEnv.TppWeather.ForceRequestWeather(mbHostEnv.TppDefine.WEATHER.RAINY, 1)
+    mbHost.tick()
+    local sent = mbHost.last(OP.WEATHER)
+    check(sent and sent.v[1] == 2 and sent.v[2] == 1 and mbHost.requests[1].priority == 7 and
+        mbHost.requests[1].userId == 'Script' and mbHostEnv.vars.weather == 0,
+        'Mother Base retail force submits rain with its original priority and interpolation before readback')
+    local mbGuestEnv, mbGuest = fixture({host = false, mission = 30050})
+    mbGuest.W.handlers[OP.WEATHER](sent.v, mbGuest.now)
+    mbGuest.tick()
+    local applied = mbGuest.requests[1]
+    check(applied and applied.weatherType == 2 and applied.interpTime == 1 and applied.priority == 7 and
+        applied.userId == 'Script' and mbGuestEnv.vars.weather == 0 and mbGuest.V.s.readback == 2,
+        'Mother Base guest invokes the pinned retail setter without fabricating asynchronous completion')
+    mbGuestEnv.vars.weather = 2
+    mbGuest.tick()
+    check(mbGuest.V.s.readback == nil and mbGuest.logs[#mbGuest.logs] == 'event=weather_readback;type=2;matches=1',
+        'Mother Base guest confirms only the actual weather variable')
+    mbGuest.stop()
+    check(#mbGuest.cancelled == 1 and mbGuest.cancelled[1].priority == 7 and mbGuest.cancelled[1].userId == 'Script',
+        'Mother Base teardown cancels only the original owned force contract')
+    mbHost.stop()
+end
 
 -- Wrapper identity, all returns, original errors and yields are preserved.
 local er, r = fixture({original = function(e) e.TppClock.SetTime = function() e.vars.clock = 20; return 1, nil, 3 end end})

@@ -27,6 +27,7 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'WorkerSource.psm1') -Force -DisableNameChecking
 
 function Get-WorkerExperiments {
     return @(
@@ -68,18 +69,18 @@ function Get-WorkerTests {
         'debug_menu_tests', 'debug_overlay_tests', 'soldier_warp_tests', 'win_import_patch_tests', 'probe_forwarding',
         'master_server_patch_tests', 'master_server_patch_retarget_tests', 'master_server_patch_retarget_loopback_tests',
         'worker_scenario_off_tests', 'worker_scenario_on_tests', 'worker_protocol_tests', 'worker_debug_tests', 'worker_input_fixture_tests',
-        'build_profile_tests', 'worker_session_tests',
+        'build_profile_tests', 'worker_session_tests', 'worker_loading_tests',
         'host_admission_lua_check', 'equipment_allocation_lua_check', 'equipment_stock_preload_lua_check',
         'equipment_observation_lua_check', 'session_lifecycle_lua_check', 'client_join_lua_check',
         'session_feedback_lua_check', 'damage_parameters_lua_check', 'damage_lifecycle_lua_check',
         'partner_sync_lua_check', 'partner_actions_lua_check', 'debug_menu_lua_check',
-        'world_sync_lua_check', 'world_follow_lua_check', 'world_align_lua_check',
+        'world_sync_lua_check', 'world_follow_lua_check', 'world_goto_lua_check', 'world_align_lua_check',
         'world_follow_game_lua_check', 'world_env_game_lua_check', 'debug_menu_game_lua_check',
         'bootstrap_patch_check', 'bootstrap_lua_check', 'host_trial_patch_check', 'host_trial_lua_check',
         'partner_sync_composed_lua_check', 'world_sync_composed_lua_check',
         'mission_trace_patch_check', 'mission_trace_lua_check', 'death_policy_lua_check',
         'death_policy_patch_check', 'death_policy_composed_lua_check',
-        'player_package_patch_check', 'player_package_lua_check', 'damage_parameters_patch_check',
+        'player_package_patch_check', 'player_package_lua_check', 'player_package_mission_list_lua_check', 'damage_parameters_patch_check',
         'damage_parameters_composed_lua_check', 'character_receipt_tests', 'player_type_patch_tests',
         'character_lua_check', 'character_game_lua_check', 'character_composed_lua_check'
     )
@@ -196,6 +197,7 @@ function Assert-WorkerInventory {
         partner_sync_composed_lua_check='partner_sync_lua_check'; world_sync_composed_lua_check='world_sync_lua_check'
         death_policy_composed_lua_check='death_policy_lua_check'; damage_parameters_composed_lua_check='damage_parameters_lua_check'
         character_composed_lua_check='character_lua_check'; character_game_lua_check='character_lua_check'
+        player_package_mission_list_lua_check='player_package_lua_check'
     }
     $exeAliases = @{ four_player_lab='coop_lab'; probe_forwarding='probe_smoke';
         master_server_patch_retarget_tests='master_server_patch_tests'; master_server_patch_retarget_loopback_tests='master_server_patch_tests' }
@@ -204,7 +206,7 @@ function Assert-WorkerInventory {
         $test = $byName[$name]
         $command = @($test.command)
         if (!$command.Count) { throw "Missing audited command: $name" }
-        if ($name -cin @('build_profile_tests', 'worker_session_tests')) {
+        if ($name -cin @('build_profile_tests', 'worker_session_tests', 'worker_loading_tests')) {
             if ([IO.Path]::GetFileName($command[0]) -cne 'pwsh.exe' -or $command.Count -ne 6 -or
                 ($command[1..4] -join '|') -cne '-NoProfile|-ExecutionPolicy|Bypass|-File' -or
                 [IO.Path]::GetFullPath($command[5]) -ine (Join-Path $Root ('tests\' + $name + '.ps1'))) {
@@ -276,73 +278,10 @@ function Assert-WorkerInventory {
         }
     }
 }
-function Get-WorkerSourceHashes([string]$Root) {
-    $paths = [ordered]@{}
-    $paths['CMakeLists.txt'] = Join-Path $Root 'CMakeLists.txt'
-    $minhookPath = Join-Path $Root 'third_party\minhook'
-    $provenance = [ordered]@{}
-    foreach ($folder in @('cmake', 'native', 'lua', 'tests', 'tools', 'third_party', 'work\lua-5.1.5\src')) {
-        $path = Join-Path $Root $folder
-        if (!(Test-Path -LiteralPath $path -PathType Container)) { continue }
-        if ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
-            throw "Source snapshot refuses an unreviewed directory link: $path"
-        }
-        foreach ($directory in Get-ChildItem -LiteralPath $path -Recurse -Directory -Force) {
-            if (($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) -and $directory.FullName -ine $minhookPath) {
-                throw "Source snapshot refuses an unreviewed directory link: $($directory.FullName)"
-            }
-        }
-        foreach ($file in Get-ChildItem -LiteralPath $path -Recurse -File) {
-            if ($file.Extension -in @('.cpp','.hpp','.h','.c','.lua','.ps1','.psm1','.cmake','.in','.def','.rc') -or $file.Name -eq 'CMakeLists.txt') {
-                if ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Source snapshot refuses links: $($file.FullName)" }
-                $paths[[IO.Path]::GetRelativePath($Root, $file.FullName)] = $file.FullName
-            }
-        }
-    }
-    # A known MinHook directory link may be skipped by ordinary recursion.
-    # Resolve it explicitly, preserve it, and hash exactly the dependency tree
-    # that add_subdirectory(third_party/minhook) compiles. Unknown links refuse.
-    if (!(Test-Path -LiteralPath $minhookPath -PathType Container)) { throw 'MinHook source dependency is missing' }
-    $minhook = Get-Item -LiteralPath $minhookPath -Force
-    $linked = [bool]($minhook.Attributes -band [IO.FileAttributes]::ReparsePoint)
-    $target = if ($linked) { $minhook.ResolveLinkTarget($true) } else { $minhook }
-    if (!$target -or !($target.Attributes -band [IO.FileAttributes]::Directory) -or
-        ($target.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'MinHook directory link did not resolve to an ordinary source directory' }
-    $provenance['third_party\minhook'] = [ordered]@{
-        logical_path=$minhookPath; resolved_path=$target.FullName; linked=$linked
-        link_type=$(if ($linked) { [string]$minhook.LinkType } else { 'ordinary_directory' })
-        link_target=$(if ($linked) { @($minhook.Target) } else { @() })
-    }
-    foreach ($directory in Get-ChildItem -LiteralPath $target.FullName -Recurse -Directory -Force) {
-        if ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Nested MinHook directory link is unreviewed: $($directory.FullName)" }
-    }
-    foreach ($file in Get-ChildItem -LiteralPath $target.FullName -Recurse -File) {
-        if ($file.Extension -in @('.cpp','.hpp','.h','.c','.cmake','.in','.def','.rc') -or $file.Name -eq 'CMakeLists.txt' -or $file.Name -like 'LICENSE*') {
-            if ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Nested MinHook file link is unreviewed: $($file.FullName)" }
-            $paths['third_party\minhook\' + [IO.Path]::GetRelativePath($target.FullName, $file.FullName)] = $file.FullName
-        }
-    }
-    $hashes = [ordered]@{}
-    foreach ($relative in $paths.Keys | Sort-Object) {
-        $hashes[$relative] = (Get-FileHash -LiteralPath $paths[$relative] -Algorithm SHA256).Hash
-    }
-    return [pscustomobject]@{ hashes=$hashes; dependencies=$provenance }
-}
 function Write-WorkerJson([string]$Path, $Value) {
     $tmp = $Path + '.tmp'
     [IO.File]::WriteAllText($tmp, ($Value | ConvertTo-Json -Depth 16) + "`n", [Text.UTF8Encoding]::new($false))
     [IO.File]::Move($tmp, $Path, $true)
-}
-function Assert-WorkerSourceUnchanged($Before, $After) {
-    if (($After.dependencies | ConvertTo-Json -Depth 8 -Compress) -cne ($Before.dependencies | ConvertTo-Json -Depth 8 -Compress)) {
-        throw 'Source dependency target changed during worker checks'
-    }
-    if ($After.hashes.Count -ne $Before.hashes.Count) { throw 'Source file set changed during worker checks' }
-    foreach ($relative in @($Before.hashes.Keys)) {
-        if (!$After.hashes.Contains($relative) -or $After.hashes[$relative] -cne $Before.hashes[$relative]) {
-            throw "Source changed during worker checks: $relative"
-        }
-    }
 }
 function Invoke-WorkerCommand {
     param($Context, [string]$Executable, [string[]]$Arguments, [string]$Tag, [int]$Timeout)

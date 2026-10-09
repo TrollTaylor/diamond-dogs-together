@@ -17,13 +17,21 @@ do
         -- Landing zones as "lz|rt" (route hash = Fox.StrCode32 of the whole string).
         local LZ = {[30010] = {"lz_drp_field_N0000|rt_drp_field_N_0000", "lz_drp_enemyBase_S0000|rt_drp_enemyBase_S_0000"},
             [30020] = {"lz_drp_savannahEast_N0000|rt_drp_savannahEast_N_0000", "lz_drp_pfCampNorth_S0000|rt_drp_pfCampNorth_S_0000"}}
+        -- CFG is metadata only. Legacy harnesses have no session field;
+        -- known sessions refuse delayed work after a reconnect/link loss.
+        local function session()
+            if type(W.cfg) ~= "function" then return nil end
+            local c = W.cfg(vars.missionCode, 0)
+            if type(c) ~= "table" or c[8] == nil then return nil end
+            return c[4] == 1 and type(c[8]) == "number" and c[8] > 0 and c[8] or 0
+        end
         H[OP.GOTO] = function(v, now)
             if W.mode ~= 1 then
                 W.tx(OP.GOTO_ACK, v[1], 0)
                 W.log(fmt("event=goto;step=%d;result=refused;reason=mode", v[1]))
                 return
             end
-            W.gt = {step = v[1], target = v[2], lz = v[3], since = now}
+            W.gt = {step = v[1], target = v[2], lz = v[3], since = now, session = session()}
             W.log(fmt("event=goto;step=%d;target=%d;lz=%d;result=armed", v[1], v[2], v[3]))
         end
         local function ack(g, result, why)
@@ -32,6 +40,18 @@ do
         end
         function G.tick(now)
             local g = W.gt
+            if not g then return end
+            local age = now - g.since
+            local live = session()
+            local why = age < 0 and "clock_reset" or age >= (g.step == 1 and 30000 or 60000) and "timeout"
+                or g.session ~= nil and (g.session == 0 or live ~= g.session) and "session"
+            if why then
+                -- ACK has no request ID. A late refusal ACK could cancel a
+                -- newer native request; native owns its own timeout receipt.
+                if W.gt == g then W.gt = nil end
+                W.log(fmt("event=goto;step=%d;result=cancelled;reason=%s", g.step, why))
+                return
+            end
             if g.check then
                 W.gt = nil
                 local ok = W.get(svars, "mis_isDefiniteMissionClear") == true
@@ -53,9 +73,6 @@ do
                     end
                     g.check = true
                     W.log("event=goto;step=1;call=" .. (vars.missionCode ~= 30050 and "ride_heli" or type(f) == "function" and "f30050_sequence" or "fallback"))
-                elseif now - g.since > 30000 then
-                    W.gt = nil
-                    ack(g, 0, "refused;reason=not_in_game")
                 elseif not g.waiting then
                     g.waiting = true
                     ack(g, 2, "waiting")

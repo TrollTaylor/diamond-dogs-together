@@ -157,4 +157,16 @@ const char* ShortSteamEnd(std::int32_t end) noexcept {
     return "Steam failed";
 }
 
+bool FormatNoBody(const char* scene, char* out, std::size_t capacity) noexcept {
+    const char* s = scene ? scene : "";
+    const char* what = Is(s, "demo_stage") ? "Mother Base demo stage"
+                     : Is(s, "hangar")     ? "battle-gear hangar"
+                     : Is(s, "story")      ? "story variant"
+                     : Is(s, "layout")     ? "unknown Mother Base layout"
+                                           : "unexpected pack list";
+    const bool reloads = Is(s, "demo_stage") || Is(s, "hangar") || Is(s, "story");
+    return PutF(out, capacity, "No partner body in this scene (%s). %s", what,
+                reloads ? "It returns when the scene reloads normally." : "Please send Collect-Logs.");
+}
+
 }  // namespace mgscoop::coop_text

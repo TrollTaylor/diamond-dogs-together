@@ -1,0 +1,76 @@
+# Bounded shared-cache, side-view fire, posture aim and checkpoint follow-up; lab copies only.
+labsetting partner_native_equip_shared=prefer
+labsetting partner_native_ride=hide
+labsetting coop_hud=full
+title 200
+wait 4000
+waitgameplay host 120
+waitgameplay guest 240
+host debug godmode 1
+guest debug godmode 1
+stance host stand
+stance guest stand
+host debug time 43200
+host debug weather sunny
+wait 6000
+placebehind guest host 4 6
+wait 6000
+both capture shared-ready
+heldcapture host guest rmb shared-aim 3
+host hold rmb 1500 nowait
+wait 400
+host hold rmb+lmb 120 nowait
+guest burst shared-fire 6 100
+host hold rmb 1500 nowait
+wait 250
+host hold rmb+r 120 nowait
+guest burst shared-reload 18 200
+host release
+wait 1200
+placebehind host guest 4 6
+wait 6000
+heldcapture guest host rmb shared-guest-aim 3
+guest hold rmb 1500 nowait
+wait 400
+guest hold rmb+lmb 120 nowait
+host burst shared-guest-fire 6 100
+guest hold rmb 1500 nowait
+wait 250
+guest hold rmb+r 120 nowait
+host burst shared-guest-reload 18 200
+guest release
+wait 1200
+placebehind guest host 4 6
+wait 6000
+stance host crouch
+heldcapture host guest rmb crouch-aim 3
+stance host prone
+heldcapture host guest rmb prone-aim 3
+stance host stand
+wait 3000
+both capture checkpoint-before
+host worldtrigger world_probe=shared_checkpoint
+wait 5000
+both capture checkpoint-saved
+guest worldtrigger world_probe=shared_death
+wait 5000
+both capture shared-gameover
+host worldtrigger world_probe=host_continue
+waitmission host 30010 120
+waitmission guest 30010 120
+waitgameplay host 120
+waitgameplay guest 120
+wait 10000
+both capture checkpoint-return
+placebehind guest host 4 6
+wait 6000
+heldcapture host guest w checkpoint-walk 3
+wait 2500
+heldcapture host guest rmb checkpoint-aim 3
+host hold rmb 1500 nowait
+wait 400
+host hold rmb+lmb 120 nowait
+guest burst checkpoint-fire 6 100
+host release
+both capture end
+state

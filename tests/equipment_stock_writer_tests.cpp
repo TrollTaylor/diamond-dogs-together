@@ -9,6 +9,12 @@ namespace c=mgscoop::equipment_stock_writer_contract;
 namespace p=mgscoop::equipment_stock_writer;
 unsigned checks=0;
 void Check(bool v) {++checks;if(!v){std::fprintf(stderr,"stock writer check %u failed\n",checks);std::exit(1);}}
+// A refusal test must report an unexpected success, not dereference nullptr.
+bool IsReason(const char* actual,const char* expected) {
+    if(actual && std::strcmp(actual,expected)==0) return true;
+    std::fprintf(stderr,"stock writer expected refusal %s, got %s\n",expected,actual?actual:"success");
+    return false;
+}
 constexpr std::uintptr_t base=0x140000000ull,P=0x10000000,iface=0x10001000,inv=0x10002000;
 constexpr std::uintptr_t handles=0x10003000,metadata=0x10004000,vars=0x10005000,engine=0x10006000;
 constexpr std::uintptr_t fixture_blocks=0x10007000,fixture_buffer=0x10008000,fixture_ids=0x10009000,fixture_pools=0x1000A000,fixture_parts=0x1000B000;
@@ -211,6 +217,130 @@ template<class Edit> void Refuse(Edit edit,const char* reason) {
 }
 }
 int main() {
+    // Weapons4 scheduling uses a real clock, bounded retry/dispatch budgets,
+    // and a latch for an uncertain native call across body generations.
+    {
+        p::SlotSchedule sc{};
+        for(unsigned i=0;i<p::kRetryBudget;++i) Check(p::RetryAfter(sc,false,100+i*2000));
+        Check(sc.retries==6 && sc.retry_at==12100 && !p::RetryAfter(sc,false,14000));
+        sc={};Check(!p::RetryAfter(sc,true,0) && sc.retries==0);
+        sc={};Check(p::CanDispatch(sc));++sc.gen_dispatches;++sc.dispatches;
+        Check(!p::CanDispatch(sc) && !p::RetryAfter(sc,false,0));
+        sc.gen_dispatches=0;Check(p::CanDispatch(sc));++sc.dispatches;Check(!p::CanDispatch(sc));
+        sc={};sc.uncertain=true;Check(!p::CanDispatch(sc) && !p::RetryAfter(sc,false,0));
+        sc={};Check(p::RetryAfter(sc,false,UINT64_MAX-1) && sc.retry_at==UINT64_MAX);
+        Check(p::PermanentReason("viewer_shared") && p::PermanentReason("stock_optional_dict") &&
+              !p::PermanentReason("stock_cache_in_use") && !p::PermanentReason("remote_binder_not_empty") &&
+              !p::PermanentReason("no_resident") && !p::PermanentReason("no_cache_entry"));
+        p::SlotState states[3]{p::SlotState::readiness,p::SlotState::idle,p::SlotState::idle};
+        p::SlotSchedule sched[3]{};std::uint8_t order[3]{0,2,1};
+        Check(p::PickPosition(states,sched,order,2,0)==0);
+        sched[0].visited=true;Check(p::PickPosition(states,sched,order,1,0)==1);
+        sched[2].visited=true;Check(p::PickPosition(states,sched,order,2,0)==2);
+        states[0]=p::SlotState::backoff;sched[0].retry_at=2000;
+        states[1]=states[2]=p::SlotState::refused;
+        Check(p::PickPosition(states,sched,order,0,1999)==3 && p::PickPosition(states,sched,order,0,2000)==0);
+        p::BodyLease lease{1,P,fixture_buffer+0x6A8,0x11001300,0x11001400,inv,engine};
+        auto moved=lease;Check(moved==lease);++moved.gen;Check(moved!=lease);
+        moved=lease;++moved.binder;Check(moved!=lease);moved=lease;++moved.inventory;Check(moved!=lease);
+        Check(p::ResyncSlot(0x42,0x42)==p::Resync::kept && p::ResyncSlot(0x42,0)==p::Resync::empty &&
+              p::ResyncSlot(0x42,0x99)==p::Resync::foreign && p::ResyncSlot(0,0x99)==p::Resync::foreign);
+        Check(c::BinderEmpty(0xFFFFFFE0u,0xFFFFFFE0u,0) && c::BinderEmpty(0xFFFFFFE0u,0,0));
+        Check(!c::BinderEmpty(0xFFFFFFE0u,0xFFFFFFE0u,1) && !c::BinderEmpty(42,0xFFFFFFE0u,0));
+    }
+    // A checkpoint may retain our queued handle before its model is ready.
+    // Ownership equality never turns the queued observation into bound or
+    // clears a refusal/uncertain dispatch. No new call is authorized by it.
+    {
+        constexpr std::uint32_t owned_handle=0x42;
+        p::SlotStatus retained_slot{};p::SlotSchedule retained_sched{};
+        retained_slot.handle=owned_handle;retained_slot.state=p::SlotState::tracking;
+        retained_sched.dispatches=1;retained_sched.gen_dispatches=1;
+        Check(p::ResyncSlot(owned_handle,owned_handle)==p::Resync::kept);
+        retained_slot.state=p::RetainedSlotState(retained_slot.state);
+        Check(retained_slot.state==p::SlotState::queued && retained_slot.handle==owned_handle &&
+              retained_sched.dispatches==1 && retained_sched.gen_dispatches==1);
+        for(unsigned generation=0;generation<3;++generation) {
+            retained_slot.state=p::RetainedSlotState(retained_slot.state);
+            Check(retained_slot.state==p::SlotState::queued && p::FinalState(retained_slot.state));
+        }
+        retained_slot.state=p::SlotState::bound;
+        Check(p::RetainedSlotState(retained_slot.state)==p::SlotState::bound);
+        retained_slot.state=p::SlotState::refused;retained_sched.uncertain=true;
+        Check(p::RetainedSlotState(retained_slot.state)==p::SlotState::refused &&
+              retained_sched.uncertain && !p::CanDispatch(retained_sched));
+        Check(p::RetainedSlotState(p::SlotState::unverified)==p::SlotState::unverified);
+        Check(p::ResyncSlot(owned_handle,0x99)==p::Resync::foreign &&
+              p::ResyncSlot(owned_handle,0xFFFFFFE0u)==p::Resync::empty);
+    }
+    // Missing stock caches are bounded pre-dispatch readiness. A fake cache
+    // absent at the first turn becomes ready after the same two-second backoff;
+    // no native call is made or authorized by the unavailable observation.
+    {
+        auto memory=Ready();Plain300(memory);c::View<Memory> view{memory,base,0xA01D000};
+        memory.Set(info+5*0x90,std::array<std::uint8_t,0x90>{});
+        std::array<c::CacheEntry,48> census{};c::Target target{};
+        Check(c::Census(view,engine,census));
+        const char* why=c::Derive(view,engine,300,census,target);
+        Check(IsReason(why,"no_cache_entry") && p::CacheReadinessReason(why));
+        p::SlotSchedule schedule{};p::SlotStatus slot{};
+        Check(p::RetryAfter(schedule,p::PermanentReason(why),100));
+        slot.state=p::SlotState::backoff;std::memcpy(slot.reason,why,std::strlen(why)+1);
+        p::SlotState states[3]{slot.state,p::SlotState::refused,p::SlotState::refused};
+        p::SlotSchedule schedules[3]{};schedules[0]=schedule;std::uint8_t order[3]{0,2,1};
+        Check(p::PickPosition(states,schedules,order,0,2099)==3 && p::PickPosition(states,schedules,order,0,2100)==0);
+        // Tier C's empty resident census is transient too; once a matching
+        // native entry appears the same pure candidate search can choose it.
+        std::array<c::CacheEntry,48> absent{};std::array<bool,48> tried{};
+        c::SubstituteQuery query{};query.slot=0;query.type=1;query.receiver=157;
+        Check(c::NextCandidate(absent,query,c::SubstitutePass::type_receiver,tried)==48);
+        p::SlotSchedule resident_wait{};
+        Check(p::RetryAfter(resident_wait,p::PermanentReason("no_resident"),100) && resident_wait.retry_at==2100);
+        Plain300(memory);
+        Check(c::Census(view,engine,census) && c::Derive(view,engine,300,census,target)==nullptr);
+        Check(c::NextCandidate(census,query,c::SubstitutePass::type_receiver,tried)==5);
+        static c::Snapshot ready{};
+        Check(c::Preflight(base,0xA01D000,memory,P,fixture_buffer+0x6A8,ready,target)==nullptr);
+        Check(schedule.retries==1 && schedule.dispatches==0 && !schedule.uncertain);
+    }
+    // An unchanged manifest cannot renew exhausted retries. A new revision,
+    // epoch or same-revision target tuple can renew only missing readiness.
+    {
+        p::GeneralContext context{};context.manifest=true;context.manifest_revision=1;context.manifest_epoch=7;
+        context.want[0]=300;context.alias[0]=871;context.type[0]=1;context.receiver[0]=157;
+        const auto initial=p::ManifestOf(context);Check(initial==p::ManifestOf(context));
+        ++context.manifest_revision;Check(initial!=p::ManifestOf(context));
+        context.manifest_revision=1;++context.want[0];Check(initial!=p::ManifestOf(context));
+        context.want[0]=300;++context.manifest_epoch;Check(initial!=p::ManifestOf(context));
+        for(const char* missing:{"no_resident","no_cache_entry"}) {
+            p::SlotSchedule schedule{};p::SlotStatus slot{};slot.state=p::SlotState::refused;
+            std::memcpy(slot.reason,missing,std::strlen(missing)+1);
+            for(unsigned i=0;i<p::kRetryBudget;++i) Check(p::RetryAfter(schedule,p::PermanentReason(missing),100+2000*i));
+            Check(!p::RetryAfter(schedule,false,14100) && schedule.retries==p::kRetryBudget && schedule.dispatches==0);
+            // The body-generation path also classifies the exhausted reason
+            // as nonpermanent; an empty body slot can plan again on its new lease.
+            Check(!p::PermanentReason(slot.reason) && p::ResyncSlot(0,0xFFFFFFE0u)==p::Resync::empty);
+            Check(p::RenewCacheReadiness(slot,schedule,0,0xFFFFFFE0u) && slot.state==p::SlotState::idle &&
+                  schedule.retries==0 && schedule.retry_at==0 && schedule.dispatches==0);
+            Check(p::RetryAfter(schedule,false,15000) && schedule.retries==1 && schedule.retry_at==17000);
+        }
+        for(const char* latched:{"call_unverified","foreign_handle","viewer_shared","prior_local_change",
+                                 "delayed_occupied_cache_changed","bound_shared_cache_changed"}) {
+            p::SlotSchedule schedule{};schedule.retries=p::kRetryBudget;
+            p::SlotStatus slot{};slot.state=p::SlotState::refused;std::memcpy(slot.reason,latched,std::strlen(latched)+1);
+            Check(!p::RenewCacheReadiness(slot,schedule,0,0) && slot.state==p::SlotState::refused &&
+                  schedule.retries==p::kRetryBudget && std::strcmp(slot.reason,latched)==0);
+        }
+        p::SlotStatus slot{};slot.state=p::SlotState::refused;std::memcpy(slot.reason,"no_resident",12);
+        p::SlotSchedule schedule{};schedule.uncertain=true;
+        Check(!p::RenewCacheReadiness(slot,schedule,0,0) && schedule.uncertain && !p::CanDispatch(schedule));
+        schedule={};schedule.gen_dispatches=1;
+        Check(!p::RenewCacheReadiness(slot,schedule,0,0) && schedule.gen_dispatches==1);
+        schedule={};schedule.dispatches=1;
+        Check(!p::RenewCacheReadiness(slot,schedule,0,0) && schedule.dispatches==1);
+        schedule={};Check(!p::RenewCacheReadiness(slot,schedule,42,42) && !p::RenewCacheReadiness(slot,schedule,0,99));
+        slot.handle=42;Check(!p::RenewCacheReadiness(slot,schedule,0,0) && slot.handle==42);
+    }
     // The request amounts: the qualified writer asks 0/0; only the research
     // ammo experiment (MGS_LOCAL_STOCK46_AMMO_TEST, default OFF) asks 30 rounds / 210 stock.
     Check(p::kQualifiedAmounts.stock==0 && p::kQualifiedAmounts.ammo==0 && p::kAmmoTestAmounts.stock==210 && p::kAmmoTestAmounts.ammo==30);
@@ -445,14 +575,14 @@ int main() {
     Refuse([](Memory& q){q.Set(0x16200000,std::uint32_t(0));},"stock_optional_header");
     Refuse([](Memory& q){q.Set(0x16100084,std::uint32_t(2));},"stock_optional_header");
     Refuse([](Memory& q){q.Set(0x16100068,std::uint64_t(79));},"stock_optional_header");
-    Refuse([](Memory& q){q.Set(0x16200012,std::uint16_t(0x1000));},"stock_optional_shape");
-    Refuse([](Memory& q){q.Set(0x1620000C,std::uint16_t(1));},"stock_optional_shape");
-    Refuse([](Memory& q){q.Set(0x16200010,std::uint16_t(1));},"stock_optional_shape");
+    Refuse([](Memory& q){q.Set(0x16200012,std::uint16_t(0x1000));},"stock_optional_dict");
+    Refuse([](Memory& q){q.Set(0x1620000C,std::uint16_t(1));},"stock_optional_word");
+    Refuse([](Memory& q){q.Set(0x16200010,std::uint16_t(1));},"stock_optional_word");
     // The generalized shape: word0 = n in 1..8, word1 = m(n) of the exe's per-parameter table (1A95470 mode 0).
-    Refuse([](Memory& q){q.Set(0x1620000A,std::uint16_t(5));},"stock_optional_shape");
-    Refuse([](Memory& q){q.Set(0x16200008,std::uint16_t(0));q.Set(0x1620000A,std::uint16_t(0));},"stock_optional_shape");
-    Refuse([](Memory& q){q.Set(0x16200008,std::uint16_t(9));q.Set(0x1620000A,std::uint16_t(11));},"stock_optional_shape");
-    Refuse([](Memory& q){q.Set(0x16200008,std::uint16_t(3));q.Set(0x1620000A,std::uint16_t(6));},"stock_optional_shape");
+    Refuse([](Memory& q){q.Set(0x1620000A,std::uint16_t(5));},"stock_optional_m");
+    Refuse([](Memory& q){q.Set(0x16200008,std::uint16_t(0));q.Set(0x1620000A,std::uint16_t(0));},"stock_optional_word");
+    Refuse([](Memory& q){q.Set(0x16200008,std::uint16_t(9));q.Set(0x1620000A,std::uint16_t(11));},"stock_optional_word");
+    Refuse([](Memory& q){q.Set(0x16200008,std::uint16_t(3));q.Set(0x1620000A,std::uint16_t(6));},"stock_optional_m");
     Check(c::kOptionalShapes[3].n==4 && c::kOptionalShapes[3].m==6 && c::kOptionalShapes[3].size==544 &&
           c::OptionalShapeOf(4,6)==&c::kOptionalShapes[3] && !c::OptionalShapeOf(4,7) && !c::OptionalShapeOf(0,2) && !c::OptionalShapeOf(9,11));
     for(std::uint16_t n=1;n<=8;++n) {
@@ -654,6 +784,75 @@ int main() {
         shared[0]={27,1,69,3,1};shared[1]={36,1,70,1,0};shared[2]={36,1,70,3,0};
         std::array<bool,48> fresh{};
         Check(c::NextCandidate(shared,q,c::SubstitutePass::type_receiver,fresh)==48 && c::NextCandidate(shared,q,c::SubstitutePass::type,fresh)==48);
+    }
+    // Weapons4: referenced stock cache entries are admitted only when they
+    // are protected, first-used, bounded, and never referenced by the viewer.
+    {
+        c::CacheEntry shared{300,1,69,3,2,0};
+        Check(c::ResidentShared(shared) && c::SharedRefusal(shared)==nullptr);
+        shared.viewer=1;Check(!c::ResidentShared(shared) && IsReason(c::SharedRefusal(shared),"viewer_shared"));
+        shared.viewer=0;shared.refs=48;Check(IsReason(c::SharedRefusal(shared),"shared_refs_bound"));
+        shared.refs=2;shared.flags=1;Check(IsReason(c::SharedRefusal(shared),"cache_unprotected"));
+        std::array<c::CacheEntry,48> census{};census[3]={300,1,69,3,2,0};census[4]=census[3];
+        c::SubstituteQuery q{};q.slot=0;q.type=1;q.receiver=69;q.shared=true;
+        std::array<bool,48> tried{};
+        Check(c::NextCandidate(census,q,c::SubstitutePass::type_receiver,tried)==3);
+        tried[3]=true;Check(c::NextCandidate(census,q,c::SubstitutePass::type_receiver,tried)==48);
+        tried={};census[3].viewer=1;Check(c::NextCandidate(census,q,c::SubstitutePass::type_receiver,tried)==48);
+        auto memory=Ready();Plain300(memory,3,2);c::View<Memory> view{memory,base,0xA01D000};
+        c::Target target{};Check(c::Census(view,engine,census) && c::Derive(view,engine,300,census,target)==nullptr);
+        target.shared=true;static c::Snapshot snap{};
+        Check(c::Preflight(base,0xA01D000,memory,P,fixture_buffer+0x6A8,snap,target)==nullptr && snap.cache_refs==2);
+        memory.Set(refs+5*4,std::uint32_t(48));
+        Check(IsReason(c::Preflight(base,0xA01D000,memory,P,fixture_buffer+0x6A8,snap,target),"shared_refs_bound"));
+        memory.Set(refs+5*4,std::uint32_t(2));memory.Set(rows+8,std::uint8_t(5));
+        std::array<std::uint8_t,48> viewer{};Check(c::ViewerReferences(view,inv,engine,viewer) && viewer[5]==1 && viewer[0]==2);
+        Check(IsReason(c::Preflight(base,0xA01D000,memory,P,fixture_buffer+0x6A8,snap,target),"viewer_shared"));
+        // The native constructor initializes both binder handles to E0.
+        memory=Ready();Plain300(memory);target.shared=false;
+        for(unsigned slot=0;slot<3;++slot) memory.Set(0x11001400+slot*12,std::array<std::uint32_t,3>{0xFFFFFFE0u,0xFFFFFFE0u,0});
+        Check(c::Preflight(base,0xA01D000,memory,P,fixture_buffer+0x6A8,snap,target)==nullptr);
+    }
+    // A shared bank may change only the target entry's reference count.
+    // Bound acceptance identifies the actual resource/group and owned render.
+    {
+        auto memory=Ready();Plain300(memory);c::View<Memory> view{memory,base,0xA01D000};
+        std::array<c::CacheEntry,48> census{};c::Target target{};static c::Snapshot snap{};
+        Check(c::Census(view,engine,census) && c::Derive(view,engine,300,census,target)==nullptr &&
+              c::Preflight(base,0xA01D000,memory,P,fixture_buffer+0x6A8,snap,target)==nullptr);
+        auto& bank=snap.banks[14];auto& bank_entry=bank.entries[2];
+        std::memcpy(bank_entry.reference.data(),&snap.stock_parts_asset,sizeof(snap.stock_parts_asset));
+        bank_entry.key=snap.mission_entry;bank_entry.refs=2;bank_entry.component=0x18777777;bank.unused&=~(1ull<<2);
+        memory.Set(0x12070730,bank_entry.reference);memory.Set(0x12070830,bank_entry.key);
+        memory.Set(0x12070884,std::uint16_t(3));memory.Set(0x120708A8,bank_entry.component);
+        Check(c::SharedBankEntry(snap,bank_entry,false) && c::DelayedCachesPreserved(view,snap,true)==nullptr);
+        Check(IsReason(c::DelayedCachesPreserved(view,snap,false),"delayed_occupied_cache_changed"));
+        memory.Set(0x12070500,std::uintptr_t(0x18888888));memory.Set(0x12070900,std::uint8_t(2));
+        memory.Set(0x12070920,std::uintptr_t(0x12070A00));memory.Set(0x12070A00,std::uint32_t(640));memory.Set(0x12070A0C,std::uint32_t(0x20));
+        memory.Set(fixture_resource_rows+14*4,std::uint32_t(snap.new_index));
+        bool reused=false;Check(c::QualifiedBoundResource(view,snap,14,true,&reused)==nullptr && reused);
+        Check(IsReason(c::QualifiedBoundResource(view,snap,14,false),"bound_cache_unqualified"));
+        memory.Set(0x120708A8,std::uintptr_t(0x18888888));
+        Check(IsReason(c::QualifiedBoundResource(view,snap,14,true),"bound_shared_cache_changed"));
+        memory.Set(0x120708A8,bank_entry.component);memory.Set(0x12070830,std::uint64_t(bank_entry.key+1));
+        Check(IsReason(c::DelayedCachesPreserved(view,snap,true),"delayed_shared_cache_changed"));
+    }
+    // Lab-measured acceptance is read-only, bounded, requires the same asset,
+    // and refuses conflicting native render sizes or a missing measurement.
+    {
+        auto memory=Ready();c::View<Memory> view{memory,base,0xA01D000};static c::Snapshot snap{};
+        snap.engine=engine;snap.optional.asset=0x16100000;snap.optional.measured=true;
+        Check(IsReason(c::MeasuredRender(view,snap),"stock_optional_unmeasured"));
+        const std::uintptr_t render=0x12070A00;
+        memory.Set(0x12070920,render);memory.Set(render,std::uint32_t(2048));memory.Set(render+0xC,std::uint32_t(0x20));
+        memory.Set(render+0xA0,snap.optional.asset);
+        Check(c::MeasuredRender(view,snap)==nullptr && snap.optional.render_bytes==2048);
+        memory.Set(render,std::uint32_t(2049));Check(IsReason(c::MeasuredRender(view,snap),"stock_optional_measure_size"));
+        memory.Set(render,std::uint32_t(2048));memory.Set(render+0xA0,std::uintptr_t(0x16100001));
+        Check(IsReason(c::MeasuredRender(view,snap),"stock_optional_unmeasured"));
+        memory.Set(render+0xA0,snap.optional.asset);memory.Set(0x12080920,std::uintptr_t(0x12080A00));
+        memory.Set(0x12080A00,std::uint32_t(1824));memory.Set(0x12080A0C,std::uint32_t(0x20));memory.Set(0x12080AA0,snap.optional.asset);
+        Check(IsReason(c::MeasuredRender(view,snap),"stock_optional_measure_mismatch"));
     }
     std::printf("equipment_stock_writer_tests: %u checks passed; native_calls=0 game_reads=0\n",checks);
 }

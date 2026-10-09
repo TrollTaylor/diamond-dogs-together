@@ -15,7 +15,7 @@ local ACTION_CLEAR = "return 'MGS_COOP_ACTION_EVENTS_CLEAR_V1'"
 local ACTION_TICK = "return 'MGS_COOP_PARTNER_ACTIONS_V1' -- "
 local sentinel = {}
 local STATUS = {STAND = 4, SQUAT = 5, CRAWL = 6, WALK = 13, RUN = 14, DASH = 15,
-    GUN_FIRE = 7, GUN_FIRE_SUPPRESSOR = 8, ON_HELICOPTER = 16, BINOCLE = 17, SUBJECT = 18, DEAD = 19}
+    GUN_FIRE = 7, GUN_FIRE_SUPPRESSOR = 8, ON_HELICOPTER = 16, BINOCLE = 17, SUBJECT = 18, DEAD = 19, ON_VEHICLE = 26, ON_HORSE = 25}
 local bootstrapPath = (arg[0]:match('^(.*[/\\])') or '') .. '../lua/coop/bootstrap.lua'
 local function newCoop(mission, selected)
     local bootstrapEnv = {e = {}, loadstring = function() return function() end end}
@@ -161,6 +161,8 @@ local function fixture(options)
         local actionPath = (arg[0]:match('^(.*[/\\])') or '') .. '../lua/coop/partner_actions.lua'
         local actions = assert(loadfile(actionPath)); setfenv(actions, env); actions()
     end
+    local ridePath = (arg[0]:match('^(.*[/\\])') or '') .. '../lua/coop/partner_ride.lua'
+    local rideChunk = assert(loadfile(ridePath)); setfenv(rideChunk, env); rideChunk()
     local chunk = assert(loadfile(arg[1])); setfenv(chunk, env); chunk()
     return env, c
 end
@@ -245,17 +247,17 @@ local env, c = fixture()
 call(env, 'OnMissionGameStart')
 check(hasLog(c, 'event=started') and #c.logs == 1, 'started noted, nothing missing')
 update(env)
-check(#c.ticks == 1 and lastTick(c) == '1 1500 250 -3000 4550 9000 0 0 0 0 0', 'tick fields: ' .. tostring(lastTick(c)))
+check(#c.ticks == 1 and lastTick(c) == '1 1500 250 -3000 4550 9000 0 0 0 0 0 ride=0', 'tick fields: ' .. tostring(lastTick(c)))
 c.status[STATUS.CRAWL], c.status[STATUS.DASH] = true, true
 update(env)
-check(lastTick(c) == '2 1500 250 -3000 4550 9000 2 3 0 0 0', 'crawl + dash')
+check(lastTick(c) == '2 1500 250 -3000 4550 9000 2 3 0 0 0 ride=0', 'crawl + dash')
 c.status = {[STATUS.SQUAT] = true, [STATUS.RUN] = true}
 update(env)
 check(fields(lastTick(c))[7] == '1' and fields(lastTick(c))[8] == '2', 'squat + run')
 c.status = {[STATUS.WALK] = true}
 env.vars.playerPosX, env.vars.playerRotY = -0.0004, -179.994
 update(env)
-check(lastTick(c) == '4 0 250 -3000 -17999 9000 0 1 0 0 0', 'walk, rounding, negative yaw: ' .. lastTick(c))
+check(lastTick(c) == '4 0 250 -3000 -17999 9000 0 1 0 0 0 ride=0', 'walk, rounding, negative yaw: ' .. lastTick(c))
 env.vars.playerCameraRotation = nil
 update(env)
 check(fields(lastTick(c))[6] == '0', 'missing camera rotation reads 0')
@@ -727,6 +729,25 @@ do
     env,c,A=armed(false); update(env,3600)
     check(c.actionQueries==120 and A.enabled==false and #c.actions==0, 'not-ready queries stop at120 attempts without capture')
 end
+-- The ride helper is sampled only from the admitted partner owner tick.
+do
+    local env, c = fixture(); call(env, 'OnMissionGameStart'); update(env)
+    check(fields(lastTick(c))[12] == 'ride=0', 'three readable false ride statuses confirm foot')
+    for _, pair in ipairs({{STATUS.ON_HELICOPTER, 1}, {STATUS.ON_VEHICLE, 2}, {STATUS.ON_HORSE, 3}}) do
+        c.status = {[pair[1]] = true}; update(env)
+        check(fields(lastTick(c))[12] == 'ride=' .. pair[2], 'source-proven ride enum maps to strict receipt kind')
+    end
+    c.status = {[STATUS.ON_HELICOPTER] = true, [STATUS.ON_HORSE] = true}; update(env)
+    check(fields(lastTick(c))[12] == 'ride=1', 'helicopter status has conservative priority')
+    env.PlayerStatus.ON_HORSE = nil; update(env)
+    check(fields(lastTick(c))[12] == 'ride=5', 'missing enum is unknown rather than foot')
+    env.PlayerStatus.ON_HORSE = STATUS.ON_HORSE
+    env.PlayerInfo.OrCheckStatus = function() return nil end
+    check(env.e.MgsCoopPartnerRide() == 5, 'nil status result is unknown')
+    env.PlayerInfo.OrCheckStatus = function() error('unreadable') end
+    check(env.e.MgsCoopPartnerRide() == 5, 'query refusal cannot confirm foot')
+    env.PlayerInfo = nil; check(env.e.MgsCoopPartnerRide() == 5, 'missing public query remains unknown')
+end
 -- A module without the callbacks installs nothing.
 do
     local bare = {e = {}}
@@ -756,6 +777,11 @@ if arg[2] then
     local spliced = '\n' .. standalone .. '\n'
     local at = composed:find(spliced, 1, true)
     check(at ~= nil and composed:find(spliced, at + 1, true) == nil, 'partner chunk spliced once, byte-identical')
+    local ridePath = (arg[0]:match('^(.*[/\\])') or '') .. '../lua/coop/partner_ride.lua'
+    local rideText = slurp(ridePath)
+    local rideAt = composed:find(rideText, 1, true)
+    check(rideAt ~= nil and rideAt < at and composed:find(rideText, rideAt + #rideText, true) == nil,
+          'ride helper spliced exactly once before its admitted tick consumer')
     -- World sync (lua/coop/world_*.lua) is spliced between the partner chunk
     -- and the marker lifecycle chunk (world_sync_lua_check checks its layout).
     check(composed:find('-- Project-authored session feedback.', 1, true) < at and
@@ -794,7 +820,8 @@ if arg[2] then
                 SetOtherInstanceIsForMirrorMode = function(on) record('mirror:' .. tostring(on)) end,
             },
             PlayerInfo = {GetLocalPlayerIndex = function() return 0 end, OrCheckStatus = function() return false end},
-            PlayerStatus = {STAND = 4, SQUAT = 5, CRAWL = 6, WALK = 13, RUN = 14, DASH = 15},
+            PlayerStatus = {STAND = 4, SQUAT = 5, CRAWL = 6, WALK = 13, RUN = 14, DASH = 15,
+                            ON_HELICOPTER = 37, ON_VEHICLE = 26, ON_HORSE = 25},
             GameObject = {SendCommand = function(id, command)
                 record(string.format('warp:%s:%s:%s', tostring(id.type), tostring(id.index), tostring(command.id)))
             end},
@@ -871,7 +898,7 @@ if arg[2] then
     end
     -- Active.
     r = run({cfg = true, reply = {3, 1, 2000, 0, -1000, 1571, 1, 0}, updates = 3})
-    check(#r.ticks == 3 and r.ticks[1] == '1 1500 250 -3000 4550 9000 0 0 0 0 0' and r.ticks[2] == '2 1500 250 -3000 4550 9000 0 0 1 0 0',
+    check(#r.ticks == 3 and r.ticks[1] == '1 1500 250 -3000 4550 9000 0 0 0 0 0 ride=0' and r.ticks[2] == '2 1500 250 -3000 4550 9000 0 0 1 0 0 ride=0',
         'composed ticks: ' .. tostring(r.ticks[1]) .. ' / ' .. tostring(r.ticks[2]))
     check(r.notes[1] == 'event=started' and index(r.notes, 'event=allactive_set') ~= nil, 'composed notes')
     check(count(r.calls, 'allactive:true') == 3 and count(r.calls, 'warp:TppPlayer2:1:Warp') == 3, 'composed ops: set + warp per tick')

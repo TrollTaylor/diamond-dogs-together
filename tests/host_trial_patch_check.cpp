@@ -11,6 +11,7 @@
 #include "session_feedback_source.hpp"
 #include "partner_actions_source.hpp"
 #include "partner_sync_source.hpp"
+#include "partner_ride_source.hpp"
 #include "world_sync_source.hpp"
 #include "debug_menu_source.hpp"
 #include "debug_equipment_source.hpp"
@@ -85,10 +86,13 @@ int main(int argc, char** argv) {
         const std::size_t feedback_size=sizeof(session_feedback_source)-1;
         const std::size_t action_size=sizeof(partner_actions_source)-1;
         const std::size_t partner_size=sizeof(partner_sync_source)-1;
+        const std::size_t ride_size=sizeof(partner_ride_source)-1;
         const std::size_t marker_size=sizeof(marker_loading_source)-1;
-        check(partner_at>=feedback_size+action_size && output.compare(partner_at-feedback_size-action_size,feedback_size,session_feedback_source)==0);
-        check(output.compare(partner_at-action_size,action_size,partner_actions_source)==0);
-        check(output.find(partner_actions_source)==partner_at-action_size && output.find(partner_actions_source,partner_at-action_size+1)==std::string::npos);
+        check(partner_at>=feedback_size+action_size+ride_size && output.compare(partner_at-feedback_size-action_size-ride_size,feedback_size,session_feedback_source)==0);
+        check(output.compare(partner_at-action_size-ride_size,action_size,partner_actions_source)==0);
+        check(output.find(partner_actions_source)==partner_at-action_size-ride_size && output.find(partner_actions_source,partner_at-action_size-ride_size+1)==std::string::npos);
+        check(output.compare(partner_at-ride_size,ride_size,partner_ride_source)==0);
+        check(output.find(partner_ride_source)==partner_at-ride_size && output.find(partner_ride_source,partner_at-ride_size+1)==std::string::npos);
         check(output.compare(partner_at,partner_size,partner_sync_source)==0);
         const std::string world_chunks[]={world_sync_source,world_enemy_source,world_outcome_source,world_phase_source,world_env_source,
                                           world_probe_source,world_goto_source,world_follow_seed_source,world_follow_source,world_align_source,world_recovery_source,

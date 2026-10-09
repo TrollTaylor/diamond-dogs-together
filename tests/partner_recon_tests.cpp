@@ -50,6 +50,7 @@ struct World {
     bool armable = true;
     bool live = true;
     bool in_valid = true;
+    bool hold_stripped = false;
     std::uint32_t in_age = 5;
     bool relink = false;
     bool snapped = false;
@@ -128,6 +129,7 @@ struct World {
         in.remote_anim_valid = true;
         in.remote_act = remote_act;
         in.remote_stance = remote_stance;
+        in.hold_stripped = hold_stripped;
         out = pr::Step(st, in, params);
         events |= out.events;
         if (out.events & pr::Event::runaway) ++runaways;
@@ -880,6 +882,102 @@ void TestNativeActions() {
 // settle snap, aim turns (FaceMode::aim only), the placement yaw check and
 // the windowed teleport.
 double Deg(double rad) { return rad * 180.0 / kPi; }
+void TestSenderClockAndParity() {
+    pr::State st{};
+    pr::Reset(st);
+    st.started = st.placed_once = st.armable_prev = true;
+    st.need_place = false; st.place_reason = pr::PlaceReason::none;
+    st.mode = pr::Mode::track; st.prev_ms = 10000; st.stance_applied = 1;
+    pr::Params p = pr::NativeParams(pr::Params{}, pr::FaceMode::off);
+    p.runaway = mgscoop::PartnerRunaway::off;
+    pr::In in{};
+    in.now_ms = 10000; in.armable = in.body_ok = in.target_ok = in.target_live = true;
+    in.last_ok = true; in.input_net = in.in_valid = true; in.in_r = 1;
+    in.body_anim_ok = in.remote_anim_valid = true;
+    in.body_act = in.remote_act = 2; in.body_stance = in.remote_stance = 1;
+    in.target_time_valid = true; in.target_sender_ms = 1000; in.target_generation = 1;
+    auto o = pr::Step(st, in, p);
+    const std::uint32_t owner_gaps[] = {16, 1, 250, 2116, 1, 33};
+    for (int n = 0; n < 30; ++n) {
+        in.now_ms += owner_gaps[n % 6]; in.target_sender_ms += 100;
+        in.target[2] += 1300; in.body[2] = in.target[2];
+        o = pr::Step(st, in, p);
+        Check(!o.report.source_jump && o.action != pr::Action::place && o.report.sender_span_ms == 100,
+              "13m/s sender locomotion remains non-teleport through compressed and long arrival jitter");
+    }
+    Check(o.report.v_remote_mmps > 12990 && o.report.v_remote_mmps < 13001,
+          "remote velocity follows source time rather than receipt cadence");
+    const double moving = o.report.v_remote_mmps;
+    in.now_ms += 1000;
+    o = pr::Step(st, in, p);
+    Check(o.report.v_remote_mmps < moving && !o.report.source_jump && o.report.sender_span_ms == 0,
+          "held source clock decays motion instead of extrapolating through loss");
+    in.now_ms += 16; in.target_sender_ms += 100; in.target[2] += 2500; in.body[2] = in.target[2];
+    in.target_jump = true; in.target_jump_ms = in.target_sender_ms;
+    o = pr::Step(st, in, p);
+    Check(o.action == pr::Action::place && o.place_reason == pr::PlaceReason::teleport && o.report.source_jump,
+          "speed-qualified sub-5m jump produces one placement");
+    const auto identity = in.target_jump_ms;
+    in.now_ms += 16; o = pr::Step(st, in, p);
+    Check(o.events & pr::Event::placed_ok, "jump placement verifies at destination");
+    for (int n = 0; n < 8; ++n) {
+        in.now_ms += 250; in.target_sender_ms += 100;
+        o = pr::Step(st, in, p);
+        Check(o.action != pr::Action::place && !o.report.source_jump && in.target_jump_ms == identity,
+              "same jump identity survives normal later packets without repeated Warp");
+    }
+    in.target_sender_ms -= 100; in.now_ms += 16; o = pr::Step(st, in, p);
+    in.target_sender_ms += 100; in.now_ms += 16; o = pr::Step(st, in, p);
+    Check(!o.report.source_jump && o.action != pr::Action::place, "alignment clock rewind never replays a consumed jump");
+    in.target_sender_ms += 100; in.target_jump_ms = in.target_sender_ms;
+    in.target[2] += 2500; in.body[2] = in.target[2]; in.now_ms += 100;
+    o = pr::Step(st, in, p);
+    Check(o.action == pr::Action::place && o.report.source_jump, "later distinct jump is corrected once too");
+    in.now_ms += 16; o = pr::Step(st, in, p);
+    Check(o.events & pr::Event::placed_ok, "later jump verifies before ring-reset recovery");
+
+    // Resetting the receive ring starts a new identity, unlike an alignment
+    // rewind above. Its lower sender time must not inherit the old jump id.
+    in.target_generation = 2; in.target_sender_ms = 100; in.target_jump = false;
+    in.now_ms += 16; o = pr::Step(st, in, p);
+    Check(!st.jump_seen && st.last_jump_ms == 0 && st.target_generation == 2 &&
+          !o.report.source_jump && o.report.sender_span_ms == 0 && o.action != pr::Action::place,
+          "new ring with a lower clock rebases source motion and clears old jump identity");
+    in.target_sender_ms = in.target_jump_ms = 200; in.target_jump = true;
+    in.target[2] += 2500; in.body[2] = in.target[2]; in.now_ms += 100;
+    o = pr::Step(st, in, p);
+    Check(o.action == pr::Action::place && o.report.source_jump && st.last_jump_ms == 200,
+          "a lower-time jump in a new generation is corrected exactly once");
+    in.now_ms += 16; o = pr::Step(st, in, p);
+    Check((o.events & pr::Event::placed_ok) && !o.report.source_jump,
+          "new-generation jump verifies without repeating its source event");
+    in.target_generation = 3; in.target_jump = false;
+    in.now_ms += 16; o = pr::Step(st, in, p);
+    Check(!st.jump_seen && st.last_jump_ms == 0 && st.target_generation == 3 &&
+          o.report.sender_span_ms == 0 && !o.report.source_jump,
+          "ring generation rebases even when the sender clock did not rewind");
+
+    World w;
+    w.params = pr::NativeParams(pr::Params{}, pr::FaceMode::off);
+    w.Place(); w.remote_v[2] = 3200; w.body_v[2] = 6400; w.follow = false; w.r = 1; w.hold_stripped = true;
+    w.Run(1500);
+    // This pure World keeps the faster body speed fixed (it does not run the
+    // driver's stick reduction). An ordinary drift snap may reset current lag;
+    // the cumulative event proves classification without requiring it to latch.
+    Check(w.runaways == 0 && w.pins == 0 && (w.events & pr::Event::lag),
+          "HOLD-stripped along overrun raises parity lag, never a runaway pin");
+    World lateral;
+    lateral.params = w.params; lateral.Place(); lateral.remote_v[2] = 3200;
+    lateral.body_v[2] = 3200; lateral.body_v[0] = 5000; lateral.follow = false; lateral.r = 1; lateral.hold_stripped = true;
+    lateral.Run(1800);
+    Check(lateral.runaways == 1 && lateral.pins > 0, "HOLD-strip exemption never hides sideways drift");
+    World idle;
+    idle.params = w.params; idle.params.stop_grace_ms = 0; idle.Place(); idle.follow = false; idle.body_v[2] = 3000;
+    idle.Run(1200);
+    Check(idle.out.report.runaway_idle && idle.out.mode == pr::Mode::pin && idle.out.arm && idle.out.neutral,
+          "native idle runaway pins with an enabled neutral pad");
+}
+
 void TestFacingGovernor() {
     const pr::Params native = pr::NativeParams(pr::Params{});
     Check(native.face == pr::FaceMode::idle && native.neutral_place && native.place_yaw_cdeg == 1000 &&
@@ -1136,6 +1234,7 @@ int main() {
     TestModes();
     TestStopCheck();
     TestNativeActions();
+    TestSenderClockAndParity();
     TestFacingGovernor();
     std::printf("%u partner recon checks passed: placement/verify/retry, I6 runaway replay (pin, no sawtooth), moving runaway, "
                 "lag model (walk/run/turn/sprint/stops), non-sticking nudges, input pin, stance fix, aligned run and turn, "

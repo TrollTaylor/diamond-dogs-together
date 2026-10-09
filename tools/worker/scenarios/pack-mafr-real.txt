@@ -1,0 +1,28 @@
+# Copies of the real saves; Mother Base -> ACC -> Africa, with fresh owned receipts.
+title 200
+wait 4000
+waitgameplay host 150
+waitgameplay guest 240
+wait 4000
+host worldtrigger goto=30020
+waitmission host 30020 300
+waitmission guest 30020 120
+waitgameplay host 120
+waitgameplay guest 120
+wait 4000
+host run status
+host expect ^status;mission=30020;guard=ok;host=1
+guest run status
+guest expect ^status;mission=30020;guard=ok;.*host=0
+placebehind host guest 6
+wait 3000
+both capture mafr-partner
+host run weather rainy
+host expect ^submitted_weather_rainy;sync=world$
+wait 25000
+both capture mafr-weather-rain
+heldcapture guest host w mafr-guest-walk 3
+placebehind guest host 6
+wait 3000
+heldcapture host guest w mafr-host-walk 3
+state

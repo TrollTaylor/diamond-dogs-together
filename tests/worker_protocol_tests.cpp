@@ -88,6 +88,20 @@ int main() {
     Check(!Admission(context, "MGSWORKERCTX1", run, "host", 123, 456, "Default"), "context_desktop_splice");
     Check(!Admission(Replace(context, " admitted", " declared"), "MGSWORKERCTX1", run, "host", 123, 456, "MGSWorker_" + run), "env_declaration_not_admission");
     Qualification q;
+    const auto probe_context = "MGSWORKERPROBE1 " + run + " probe 123 456 MGSWorker_" + run + " admitted\n";
+    Check(Admission(probe_context, "MGSWORKERPROBE1", run, "probe", 123, 456, "MGSWorker_" + run), "live_probe_admission");
+    const auto probe_ack = "MGSWORKERPROBEACK1 " + run + " probe 123 456 release\n";
+    Check(ProbeRelease(probe_ack, run, 123, 456), "admitted_probe_release");
+    Check(!ProbeRelease(probe_ack, other, 123, 456), "probe_release_run_splice");
+    Check(!ProbeRelease(probe_ack, run, 124, 456), "probe_release_pid_reuse");
+    Check(!ProbeRelease(probe_ack, run, 123, 457), "probe_release_creation_reuse");
+    Check(!ProbeRelease(Replace(probe_ack, " probe ", " guest "), run, 123, 456), "probe_release_role_splice");
+    Check(!ProbeRelease(Replace(probe_ack, " release", " admitted"), run, 123, 456), "probe_admission_not_release");
+    Check(!ProbeRelease(Replace(probe_ack, " 123 ", " 0123 "), run, 123, 456), "probe_release_pid_alias");
+    Check(!ProbeRelease(Replace(probe_ack, " 123 ", "  123 "), run, 123, 456), "probe_release_extra_spacing");
+    Check(!ProbeRelease(probe_ack + "extra\n", run, 123, 456), "probe_release_trailing_content");
+    Check(!ProbeRelease(std::string(257, 'x'), run, 123, 456), "probe_release_size_bound");
+    Check(!ProbeRelease("MGSWORKERPROBEACK1 " + run + " probe 0 0 release\n", run, 0, 0), "probe_release_missing_lease");
     const auto seal = "MGSWORKERQUAL1 " + other + " " + hash + " " + hash + " " + hash + " 1000 qualified\n";
     Check(ParseQualification(seal, hash, 1000, q), "matching_probe_qualification");
     Check(ParseQualification(seal, hash, 1000 + kQualificationAgeMs, q), "qualification_age_boundary");
@@ -135,7 +149,7 @@ int main() {
     // The stage settings of Get-WorkerPartnerSettings (WorkerSessionCommon.psm1), in its order.
     const std::string gun_text = native_lab + "partner_input_defer=on\npartner_input_mask=0x224005E\npartner_native_gun=1\n"
         "partner_native_fire=visual\npartner_native_aim=look\npartner_input_triggers=1\npartner_input_rstick=1\npartner_native_rates=mirror\n"
-        "partner_native_aimpt=look\npartner_native_reload=event\npartner_native_slot=write\npartner_native_equip=substitute\n";
+        "partner_native_aimpt=point\npartner_native_reload=event\npartner_native_slot=write\npartner_native_equip=substitute\n";
     Check(mgscoop::ParseLabConfig(census_text.data(), census_text.size(), census) && OfflineLab(census, "host", save) && NativeProfile(census),
           "native_census_stage");
     Check(mgscoop::ParseLabConfig(loco_text.data(), loco_text.size(), loco) && OfflineLab(loco, "host", save) && NativeProfile(loco),
@@ -143,6 +157,13 @@ int main() {
     Check(mgscoop::ParseLabConfig(gun_text.data(), gun_text.size(), gun) && OfflineLab(gun, "host", save) && NativeProfile(gun) &&
           gun.partner_native_fire == mgscoop::PartnerNativeFire::visual && gun.partner_input_mask == 0x224005Eu,
           "native_gun_stage (visual fire, EVADE and FIRE in the mask)");
+    Check(census.partner_native_ride == mgscoop::PartnerNativeRide::off &&
+          loco.partner_native_ride == mgscoop::PartnerNativeRide::hide && gun.partner_native_ride == mgscoop::PartnerNativeRide::hide,
+          "worker native visibility defaults: census off; driven loco/gun hide");
+    mgscoop::LabConfig rideOff{}; const std::string rideOffText = gun_text + "partner_native_ride=off\n";
+    Check(mgscoop::ParseLabConfig(rideOffText.data(), rideOffText.size(), rideOff) && NativeProfile(rideOff) &&
+          rideOff.partner_native_ride == mgscoop::PartnerNativeRide::off && rideOff.partner_native_ride_given,
+          "worker explicit ride off is preserved without changing stage admission");
     Check(!InputProfile(loco) && !AnimatedProfile(loco), "native is not a legacy profile");
     changed = loco; changed.partner_input_defer = mgscoop::PartnerDefer::off; Check(!OfflineLab(changed, "host", save), "native_needs_defer");
     changed = loco; changed.partner_input_p218_allow = true; Check(!OfflineLab(changed, "host", save), "native_refuses_p218");
@@ -172,8 +193,8 @@ int main() {
     changed = gun; changed.partner_native_face = mgscoop::PartnerNativeFace::aim; Check(OfflineLab(changed, "host", save), "native_face_is_free");
     changed = loco; changed.partner_native_face = mgscoop::PartnerNativeFace::off; Check(OfflineLab(changed, "host", save), "native_face_off_admitted");
     changed = census; changed.partner_native_aim = mgscoop::PartnerNativeAim::look; Check(!OfflineLab(changed, "host", save), "native_census_without_aim");
-    // The aim-target mirror: the gun stage emits look; off and point are its A/B (-LabSetting); never outside the gun stage.
-    Check(gun.partner_native_aimpt == mgscoop::PartnerNativeAimPt::look, "native_gun_stage_aimpt_look");
+    // The aim-target mirror: the gun stage emits point; off and look are its A/B (-LabSetting); never outside the gun stage.
+    Check(gun.partner_native_aimpt == mgscoop::PartnerNativeAimPt::point, "native_gun_stage_aimpt_point");
     changed = gun; changed.partner_native_aimpt = mgscoop::PartnerNativeAimPt::off; Check(OfflineLab(changed, "host", save), "native_gun_aimpt_off_admitted");
     changed = gun; changed.partner_native_aimpt = mgscoop::PartnerNativeAimPt::point; Check(OfflineLab(changed, "host", save), "native_gun_aimpt_point_admitted");
     changed = loco; changed.partner_native_aimpt = mgscoop::PartnerNativeAimPt::look; Check(!OfflineLab(changed, "host", save), "native_loco_without_aimpt");
