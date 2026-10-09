@@ -21,15 +21,18 @@
 namespace mgscoop::partner_slots {
 inline constexpr unsigned kSlots = 3;  // 0 hip primary, 1 back primary, 2 secondary (the remote's inv_slot 0..2)
 
-// An inventory handle u32 [Y+0x40][id*stride + slot]: empty when handle >> 16
-// is 0xFFFF; equip (handle >> 5) & 0x7FF; type handle & 0x1F (0x103AF7B).
+// An inventory handle u32 [Y+0x40][id*stride + slot]: equip (handle >> 5) &
+// 0x7FF, type handle & 0x1F; phase 0 (0x103AF7B) reads a handle with
+// handle >> 16 == 0xFFFF as equip 0. A slot body 1 never had holds 0 (the
+// stock46 writer's preflight requires all seven zero, and it bound at runtime),
+// which decodes to equip 0 too: both are empty (equip 0 is no weapon).
 struct Handle {
     bool filled;
     std::uint16_t equip;
     std::uint8_t type;
 };
 inline constexpr Handle Decode(std::uint32_t handle) noexcept {
-    return (handle >> 16) == 0xFFFFu ? Handle{false, 0, 0}
+    return ((handle >> 16) == 0xFFFFu || ((handle >> 5) & 0x7FFu) == 0) ? Handle{false, 0, 0}
                                      : Handle{true, static_cast<std::uint16_t>((handle >> 5) & 0x7FFu), static_cast<std::uint8_t>(handle & 0x1Fu)};
 }
 

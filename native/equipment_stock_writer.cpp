@@ -11,6 +11,7 @@
 #include "mgscoop/equipment_stock_writer.hpp"
 #include "mgscoop/equipment_stock_writer_contract.hpp"
 #include "equipment_stock_writer_pins.hpp"
+#include "partner_player_contract.hpp"
 
 namespace mgscoop::equipment_stock_writer {
 namespace {
@@ -170,10 +171,29 @@ const char* LeaseChanged(const contract::Snapshot& lease,const contract::Snapsho
     return nullptr;
 }
 
+// The viewer's weapon/ammo vars block and shoot count (partner_player_contract,
+// generator-checked: vars = *(base+0x2C16920), +0x548..+0x670 and +0x144).
+// leak.ammo_leaks digests them only around block 1's job; a dispatch runs on the
+// mission owner, so the writer reads them directly before and after its call.
+namespace ppc=partner_player_contract;
+struct LocalVars {
+    std::array<std::uint8_t,ppc::vars_ammo_end-ppc::vars_ammo_begin> ammo{};
+    std::uint32_t shots=0;
+};
+bool SameVars(const LocalVars& a,const LocalVars& b) noexcept {return a.ammo==b.ammo && a.shots==b.shots;}
+bool ReadLocalVars(std::uintptr_t base,LocalVars& out) noexcept {
+    std::uintptr_t vars=0;
+    return Read(base+ppc::vars_slot_rva,&vars,sizeof(vars)) && vars &&
+        Read(vars+ppc::vars_ammo_begin,out.ammo.data(),out.ammo.size()) && Read(vars+ppc::vars_shoot_count,&out.shots,sizeof(out.shots));
+}
+
 // --- The generalized writer state (one allocation) ---------------------------
 struct General {
-    bool active=false,ordered=false,tracking=false,readiness_logged=false,census_ok=false,census_logged=false;
+    bool active=false,ordered=false,epoch_set=false,tracking=false,readiness_logged=false,census_ok=false,census_logged=false;
     std::uint32_t mission=0,observed_epoch=0,expected=0;
+    // The last logged wait reason (a static string; logged on change, at most kWaitLines per allocation).
+    const char* wait_logged=nullptr;
+    unsigned wait_lines=0;
     std::uint8_t order[kSlots]{0,2,1};
     unsigned cursor=0,plan_waits=0,observations=0;
     Readiness readiness;
@@ -187,6 +207,7 @@ contract::Snapshot general_scratch;
 Status status;
 // Observations (~100 ms each) a slot waits for the manifest before refusing.
 constexpr unsigned kPlanWaitLimit=300;
+constexpr unsigned kWaitLines=8;
 void SetReason(SlotStatus& slot,const char* reason) noexcept {StringCchCopyA(slot.reason,sizeof(slot.reason),reason ? reason : "ok");}
 void GeneralReceipt(void (*log)(const char*) noexcept,const char* phase,unsigned slot,const char* reason,
                     std::int32_t result=INT32_MIN,std::uintptr_t mismatch=0) noexcept {
@@ -240,6 +261,19 @@ void Advance(void (*log)(const char*) noexcept,unsigned slot,SlotState state,con
     GeneralReceipt(log,phase,slot,reason,result,mismatch);
     general.tracking=false;general.observations=0;general.readiness.Reset();general.readiness_logged=false;
     general.plan_waits=0;++general.cursor;
+}
+// Nothing spent: the not yet planned slot reports why the writer waits
+// (gates, body, engine_chain, census); a change is logged (capped).
+void Waiting(void (*log)(const char*) noexcept,unsigned slot,const char* reason) noexcept {
+    auto& s=status.slots[slot];
+    if(s.state!=SlotState::idle && s.state!=SlotState::plan_wait) return;
+    SetReason(s,reason);
+    if(general.wait_logged==reason || general.wait_lines>=kWaitLines || !log) return;
+    general.wait_logged=reason;++general.wait_lines;
+    char line[160]{};
+    StringCchPrintfA(line,sizeof(line),"equip_writer=waiting; reason=%s; mission=%u; slot=%u; native_calls=0\r\n",
+        reason ? reason : "none",general.mission,slot);
+    log(line);
 }
 // Picks slot `slot`'s target: A1 the manifest's base id, C a resident
 // protected stock gun of the same type (substitute only), D refuse.
@@ -421,9 +455,8 @@ void ObserveGeneral(const GeneralContext& c,void (*log)(const char*) noexcept) n
     if(g.cursor>=kSlots) return;
     auto reader=Read;
     contract::View<decltype(reader)> v{reader,c.base,c.image_span};
-    const unsigned slot=g.order[g.cursor];
-    auto& s=status.slots[slot];
     if(g.tracking) {
+        const unsigned slot=g.order[g.cursor];
         if(!c.owner || !c.gates || !c.body_ready || c.body_epoch!=g.observed_epoch ||
            c.player!=general_before.player || c.remote_block!=general_before.bodies[1]) {
             Advance(log,slot,SlotState::unverified,"observation_stopped","owner_lease_changed");return;
@@ -435,9 +468,25 @@ void ObserveGeneral(const GeneralContext& c,void (*log)(const char*) noexcept) n
         if(++g.observations>=50) Advance(log,slot,SlotState::queued,"observation_stopped","model_wait_limit");
         return;
     }
-    // Nothing is spent while an owner gate is down.
-    if(!c.owner || !c.gates || !c.body_ready || !c.player || !c.remote_block || !c.base || !c.image_span) return;
-    if(!g.ordered) {SlotOrder(c.remote_slot,g.order);g.ordered=true;g.observed_epoch=c.body_epoch;}
+    // Nothing is spent while an owner gate is down (not the owner thread: silent;
+    // any other gate: the pending slot reports it).
+    if(!c.owner) return;
+    if(!c.gates || !c.body_ready || !c.player || !c.remote_block || !c.base || !c.image_span) {
+        Waiting(log,g.order[g.cursor],!c.gates ? (c.gate_reason ? c.gate_reason : "gates") : "body");
+        return;
+    }
+    if(!g.epoch_set) {g.epoch_set=true;g.observed_epoch=c.body_epoch;}
+    // The remote's current slot goes last; the order is fixed once a manifest
+    // is known, never after a slot was decided.
+    if(!g.ordered && (c.manifest || g.cursor>0)) {
+        if(g.cursor==0) {
+            SlotOrder(c.remote_slot,g.order);
+            for(auto& pending:status.slots) if(pending.state==SlotState::plan_wait) {pending.state=SlotState::idle;SetReason(pending,"ordered");}
+        }
+        g.ordered=true;
+    }
+    const unsigned slot=g.order[g.cursor];
+    auto& s=status.slots[slot];
     if(c.body_epoch!=g.observed_epoch) {
         // One attempt per slot per allocation: a re-realized body ends the rest.
         while(g.cursor<kSlots) {
@@ -448,10 +497,10 @@ void ObserveGeneral(const GeneralContext& c,void (*log)(const char*) noexcept) n
         return;
     }
     std::uintptr_t engine=0;
-    if(!EngineOf(v,c.player,engine)) return;
+    if(!EngineOf(v,c.player,engine)) {Waiting(log,slot,"engine_chain");return;}
     if(!g.census_ok) {
         g.census_ok=contract::Census(v,engine,g.census);
-        if(!g.census_ok) return;
+        if(!g.census_ok) {Waiting(log,slot,"census");return;}
         status.census_ok=true;status.resident_count=0;
         for(unsigned i=0;i<contract::kCacheEntries;++i) {
             const auto& e=g.census[i];
@@ -491,16 +540,29 @@ void ObserveGeneral(const GeneralContext& c,void (*log)(const char*) noexcept) n
     if(!reason) reason=contract::LocalUnchanged(general_before,refreshed);
     if(!reason) reason=LeaseChanged(general_before,refreshed);
     if(reason) {Advance(log,slot,SlotState::refused,"refused",reason);return;}
+    // The viewer's ammo/weapon vars and shoot count, directly around the call.
+    LocalVars vars_before{};
+    if(!ReadLocalVars(c.base,vars_before)) {Advance(log,slot,SlotState::refused,"refused","local_vars_unread");return;}
     Request request{};request.equip=g.target.equip;
     std::int32_t result=INT32_MIN;std::uintptr_t returned=0;
     ++status.dispatches;
     const bool called=Call(c.base+0x11AC2E0,general_before.iface,&request,&result,&returned);
+    LocalVars vars_after{};
+    const bool vars_read=ReadLocalVars(c.base,vars_after);
+    const bool vars_changed=!vars_read || !SameVars(vars_after,vars_before);
     bool bound=false;
-    const char* readback=Readback(c.base,c.image_span,c.player,c.remote_block,g.target,g.expected,general_before,general_scratch,bound);
+    const char* readback=!vars_read ? "local_vars_unread" : vars_changed ? "local_ammo_changed" :
+        Readback(c.base,c.image_span,c.player,c.remote_block,g.target,g.expected,general_before,general_scratch,bound);
     if(!called || returned!=reinterpret_cast<std::uintptr_t>(&result) || result!=0 || readback) {
         // A confirmed handle still occupies the slot: later slots expect it.
         if(called && readback==nullptr) g.dispatched_handles[slot]=g.expected;
         Advance(log,slot,SlotState::unverified,"call_unverified",readback ? readback : !called ? "seh_fault" : "dispatch_result",result);
+        // The viewer's vars moved (or became unreadable) across our call: no further dispatch this allocation.
+        while(vars_changed && g.cursor<kSlots) {
+            const unsigned rest=g.order[g.cursor];
+            status.slots[rest].tier=status.slots[rest].tier==Tier::none ? Tier::d : status.slots[rest].tier;
+            Advance(log,rest,SlotState::refused,"refused","prior_local_change");
+        }
         return;
     }
     g.dispatched_handles[slot]=g.expected;

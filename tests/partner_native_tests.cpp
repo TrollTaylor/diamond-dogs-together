@@ -870,11 +870,16 @@ void TestReload() {
 namespace ps = mgscoop::partner_slots;
 void TestSlots() {
     Check(!ps::Decode(0xFFFF0000u).filled, "handle >> 16 == 0xFFFF: empty");
+    // Body 1's never-filled slots hold 0 at runtime (the stock46 preflight's Zero(remote_handles)): empty, as is
+    // any equip 0 handle (phase 0 reads both as equip 0).
+    Check(!ps::Decode(0u).filled && !ps::Decode(3u << 16).filled && !ps::Decode((3u << 16) | 4u).filled, "handle 0 / equip 0: empty");
     const ps::Handle h46 = ps::Decode((3u << 16) | (46u << 5) | 4u);
     Check(h46.filled && h46.equip == 46 && h46.type == 4, "decode (idx << 16) | (46 << 5) | 4");
     ps::PlanIn in{};
     in.body_ok = true;
+    in.body[0] = ps::Decode(0u);  // the runtime shape of a slot body 1 never had
     in.body[1] = h46;  // stock46 in the back slot, nothing else
+    in.body[2] = ps::Decode(0u);
     in.remote_base[0] = 343; in.remote_base[1] = 46; in.remote_base[2] = 9;
     in.remote_type[0] = 1; in.remote_type[1] = 4; in.remote_type[2] = 2;
     in.remote_type_ok[0] = in.remote_type_ok[1] = in.remote_type_ok[2] = true;

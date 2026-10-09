@@ -1467,12 +1467,15 @@ void SlotFollow(const pi::Arm& a, const pi::Injection& j) noexcept {
                 if ((nibble & 0xFu) == target) why = SlotRefusal::same;
                 else if (Load<std::uint8_t>(rec + c::gun_slot_src) != c::gun_slot_follow) why = SlotRefusal::mode;
                 else if ((f & c::gun3c0_switch) || mode == c::gun_mode_change || g_sl_ep_writes >= kSlotEpisodeWrites) why = SlotRefusal::wait;
-                else if (!(a.slot_ok & (1u << target))) why = SlotRefusal::plan;
                 else {
+                    // The live handle first (read-only): an empty slot (handle >> 16 == 0xFFFF, or equip 0:
+                    // a slot body 1 never had holds 0) reports empty, then the plan, then the identity.
                     const std::uint32_t handle = Load<std::uint32_t>(Load<std::uintptr_t>(inv + c::inv_handles) + idx * 4);
                     const std::uint16_t row_equip =
                         static_cast<std::uint16_t>(Load<std::uint16_t>(row + c::equip_row_slots + 2 * target) & c::equip_id_mask);
-                    if ((handle >> 16) == c::handle_empty_hi) why = SlotRefusal::empty;
+                    if ((handle >> 16) == c::handle_empty_hi || ((handle >> c::handle_equip_shift) & c::equip_id_mask) == 0)
+                        why = SlotRefusal::empty;
+                    else if (!(a.slot_ok & (1u << target))) why = SlotRefusal::plan;
                     else if (((handle >> c::handle_equip_shift) & c::equip_id_mask) != row_equip || row_equip != a.slot_equip[target])
                         why = SlotRefusal::mismatch;
                     else {

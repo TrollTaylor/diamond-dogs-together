@@ -162,6 +162,8 @@ struct Fake {
     pp::Slots slots[2]{};
     bool slots_ok[2] = {false, false};
     std::uint8_t equip_types[700]{};
+    // Input frame v5 negotiation: the peer was seen sending v5 (partner_net::PeerSendsInputV5).
+    bool peer_v5 = true;
 
     Fake() {
         Ready();
@@ -554,9 +556,11 @@ bool HookEquipType(void* context, std::uint32_t equip, std::uint8_t& type) noexc
     type = equip < 700 ? f.equip_types[equip] : 0;
     return type != 0;
 }
+bool HookPeerInputV5(void* context) noexcept { return F(context).peer_v5; }
 void AddWeaponHooks(pd::Hooks& h) {
     h.read_slots = HookReadSlots;
     h.equip_type = HookEquipType;
+    h.peer_input_v5 = HookPeerInputV5;
     h.install_fire = HookInstallFire;
     h.fire_stats = HookFireStats;
     h.fire_census = HookFireCensus;
@@ -3827,7 +3831,7 @@ void TestNativeReloadSwitch() {
     s.fake.slots[1].nibble = 1;
     s.fake.slots[1].handles[0] = 0xFFFF0000u;
     s.fake.slots[1].handles[1] = (4u << 16) | (46u << 5) | 4u;
-    s.fake.slots[1].handles[2] = 0xFFFF0000u;
+    s.fake.slots[1].handles[2] = 0u;  // the runtime shape of a slot body 1 never had (empty, like 0xFFFF0000)
     s.fake.latest.packet.version = 5;
     s.fake.latest.packet.xflags = pi::XFlag::Equip;
     s.fake.latest.packet.gun_equip = 46;
@@ -3954,6 +3958,21 @@ void TestNativeReloadSwitch() {
     // The ring carries body 1's gun mode and hand slot.
     const auto& e = pn::At(s.driver.mission.tele.ring, s.driver.mission.tele.ring.count - 1);
     Check(e.gmode == 7 && e.hslot == 1 && e.rmode == 0xFF, "ring: gmode, rmode (no v5: unread), hslot");
+    // Input frame v5 negotiation: a peer build that never sent v5 (it would refuse every 116-byte frame) gets v4
+    // frames and one v5 probe per kInputV5ProbeMs; once its v5 arrives, every frame is v5 again.
+    s.fake.peer_v5 = false;
+    s.fake.inputs.clear();
+    for (int i = 0; i < 61; ++i) s.N();  // ~2 s
+    unsigned v4 = 0, v5 = 0, other = 0;
+    for (const auto& p : s.fake.inputs) (p.version == 4 ? v4 : p.version == 5 ? v5 : other)++;
+    Check(other == 0 && v4 > 50 && v5 >= 1 && v5 <= 2 && s.driver.mission.v5_probes >= 1,
+          "an older peer: v4 frames plus a v5 probe every 2 s");
+    s.fake.peer_v5 = true;
+    s.fake.inputs.clear();
+    for (int i = 0; i < 5; ++i) s.N();
+    bool all5 = !s.fake.inputs.empty();
+    for (const auto& p : s.fake.inputs) all5 = all5 && p.version == 5;
+    Check(all5 && s.fake.Containing("partner_input=v5_peer; probes=") == 1, "the peer's v5 seen: v5 frames, logged once");
 }
 
 void TestNativePlayAndWithdraw() {
@@ -3962,11 +3981,14 @@ void TestNativePlayAndWithdraw() {
         pd::Driver d{};
         mgscoop::LabConfig lab{};
         lab.mode = mgscoop::LabMode::play;
+        lab.partner_native_slot = mgscoop::PartnerNativeSlot::call;
         pd::Configure(d, lab);
         Check(d.settings.play_mode, "Configure: mode=play is remembered");
+        Check(d.settings.nslot == mgscoop::PartnerNativeSlot::write, "Configure: play runs partner_native_slot=call as write");
         lab.mode = mgscoop::LabMode::lab;
         pd::Configure(d, lab);
         Check(!d.settings.play_mode, "Configure: lab mode");
+        Check(d.settings.nslot == mgscoop::PartnerNativeSlot::call, "Configure: the lab keeps the call variant");
     }
     {
         MapSession s;

@@ -1669,12 +1669,25 @@ void TestJobWindow() {
                   "W4: the secondary: the nibble, row+0 and Q+0x17C bit 1 written like SetCurrentSlot (non-local)");
             Check(slot_run(2, 2) && hs.native.slot_writes == 1 && hs.native.slot_last == hk::SlotRefusal::same, "W4: then the same slot");
             const std::uint32_t refused0 = hs.native.slot_refused;
-            Check(slot_run(0, 3) && hs.native.slot_last == hk::SlotRefusal::plan && hs.native.slot_refused == refused0 + 1 &&
-                      (Get<std::uint8_t>(row1 + c::equip_row_nibble) & 0xFu) == 2, "W4: a slot the plan does not admit: refused");
+            // The empty hip slot reports empty before the plan (the live handle is read first).
+            Check(slot_run(0, 3) && hs.native.slot_last == hk::SlotRefusal::empty && hs.native.slot_refused == refused0 + 1 &&
+                      (Get<std::uint8_t>(row1 + c::equip_row_nibble) & 0xFu) == 2, "W4: an empty slot the plan does not admit: empty");
             Check(slot_run(0, 3) && hs.native.slot_refused == refused0 + 1, "W4: a refusal counts once per episode");
+            // A filled hip slot the plan does not admit: plan.
+            w->inv_handles[7 + 0] = (6u << 16) | (343u << 5) | 1u;
+            Put<std::uint16_t>(row1 + c::equip_row_slots, 343);
+            Check(slot_run(0, 31) && hs.native.slot_last == hk::SlotRefusal::plan && hs.native.slot_writes == 1 &&
+                      (Get<std::uint8_t>(row1 + c::equip_row_nibble) & 0xFu) == 2, "W4: a filled slot the plan does not admit: refused");
+            // Handle 0 (a slot body 1 never had, the runtime shape) is empty even when the plan admits the slot.
+            w->inv_handles[7 + 0] = 0u;
+            Put<std::uint16_t>(row1 + c::equip_row_slots, 0);
             a.slot_ok = 0x7;
             hk::PublishArm(a);
-            Check(slot_run(0, 4) && hs.native.slot_last == hk::SlotRefusal::empty && hs.native.slot_writes == 1, "W4: an empty slot: refused");
+            Check(slot_run(0, 4) && hs.native.slot_last == hk::SlotRefusal::empty && hs.native.slot_writes == 1 &&
+                      (Get<std::uint8_t>(row1 + c::equip_row_nibble) & 0xFu) == 2, "W4: an empty slot (handle 0): refused");
+            w->inv_handles[7 + 0] = 0xFFFF0000u;
+            Check(slot_run(0, 41) && hs.native.slot_last == hk::SlotRefusal::empty && hs.native.slot_writes == 1,
+                  "W4: an empty slot (0xFFFF0000): refused");
             Put<std::uint32_t>(Addr(gun_rec) + c::gun_flags, c::gun3c0_switch);
             Check(slot_run(1, 5) && hs.native.slot_last == hk::SlotRefusal::wait && hs.native.slot_writes == 1, "W4: mid-switch: waits");
             Put<std::uint32_t>(Addr(gun_rec) + c::gun_flags, 0);

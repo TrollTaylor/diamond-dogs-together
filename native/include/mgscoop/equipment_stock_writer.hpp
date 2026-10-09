@@ -140,7 +140,9 @@ struct GeneralContext {
     std::uintptr_t base=0,player=0,remote_block=0;
     std::size_t image_span=0;
     std::uint16_t want[kSlots]{};   // the received manifest's base ids
-    std::uint8_t remote_slot=0xFF;  // the manifest's inv_slot (dispatched last), 0xFF unknown
+    std::uint8_t remote_slot=0xFF;  // the remote's current slot (dispatched last), 0xFF unknown
+    // Why `gates` is false (a static string: the first failing admission or owner gate).
+    const char* gate_reason=nullptr;
 };
 // Order of the slots this allocation dispatches: the remote's current slot
 // last (ChangeEquip's flags 4 leaves body 1 on the last dispatched slot).

@@ -287,7 +287,14 @@ struct Hooks {
     // and the equip type of a stock id (partner_player::EquipType).
     bool (*read_slots)(void* context, const partner_player::State& state, std::uint32_t k, partner_player::Slots& out) noexcept = nullptr;
     bool (*equip_type)(void* context, std::uint32_t equip, std::uint8_t& type) noexcept = nullptr;
+    // Input frame v5 negotiation (docs/native-puppet.md "Wire"; may be null:
+    // v5 always, both copies one build): whether the peer was seen sending v5
+    // (partner_net::PeerSendsInputV5).
+    bool (*peer_input_v5)(void* context) noexcept = nullptr;
 };
+// A native sender whose peer never sent v5 sends v4 frames plus one v5 probe
+// this often (an older build drops only the probe; the edge sets repeat).
+inline constexpr std::uint64_t kInputV5ProbeMs = 2000;
 // Native weapons cadences and caps.
 inline constexpr std::uint64_t kEquipReadMs = 1000;    // loadout read / manifest send at most this often
 inline constexpr unsigned kWeaponEventCap = 64;        // fire gate transitions, manifests sent, apply verdicts
@@ -699,6 +706,11 @@ struct Mission {
     bool look_src_tried;
     // The 1 Hz partner_native_face line and the last placement's yaw verdict.
     unsigned face_lines;
+    // Input frame v5 negotiation: the last v5 probe, the probes sent and
+    // whether the peer's v5 was logged this mission.
+    std::uint64_t v5_probe_ms;
+    std::uint32_t v5_probes;
+    bool v5_peer_logged;
     std::int32_t place_yaw_err_mdeg;
     // --- The partner's own reload and weapon switch (docs/native-puppet.md "Weapons").
     // The overlay tap bumped this tick (a second tap in the same tick ORs its bits).

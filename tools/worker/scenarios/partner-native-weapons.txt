@@ -20,7 +20,8 @@
 #  static:  both generators' --check pass (above); both logs: partner_code_gate=ok, then
 #           partner_fire=installed; slots=0x2337de8,0x2337d18; target=0xd32c60, partner_noise=installed; slot=0x21876a8;
 #           target=0x515270 and partner_fire=live; reason=ok; owner=1 (once body 1 shows a gun class; before that
-#           partner_fire=masked; reason=weapon or gun_read; a noise refusal masks FIRE: reason=noise_<why>).
+#           partner_fire=masked; reason=weapon or gun_read; a noise refusal masks FIRE: reason=noise_<why>);
+#           partner_input=v5_peer; probes=.. once per mission in both logs (both copies send v5 after the peer's v5).
 #  aim:     gun.bit18 1 and node_active within 300 ms, aim_match; fire.live/armed/effective true, fire.refused "none";
 #           noise.installed/live true; rings.on true and rings.windows growing (the drains isolate the sample rings);
 #           weapon.kb_remote true for a keyboard shooter, weapon.remote_gun_base == gun.body_equip (46; remote_gun_equip is the
@@ -40,9 +41,14 @@
 #           slot stays empty; report the reason). native.slots.writer.slots[s] {want, equip, tier, family, state
 #           bound|queued, handle}; native.slots.handles[s] == {equip, type} of each bound target; native.slots.plan[s]
 #           "same" (a1) or "sub" (c). Never: replace_filled=1, evict=1, two plan lines for one slot in one allocation,
-#           equip_writer=call_unverified (the dispatch ran and the readback refused: report it), a refused stock46_writer
-#           line (the stock46 writer stays off with substitute). leak.ammo_leaks 0, the receiver's own slots unchanged.
-#  always (fire captures): fire.owner_disarmed 0; leak.shot_leaks 0 and leak.shot_count unchanged; mag.local (the
+#           equip_writer=call_unverified (the dispatch ran and the readback refused, local_ammo_changed included:
+#           report it), a refused stock46_writer line (the stock46 writer stays off with substitute). Before the
+#           first plan, equip_writer=waiting; reason=<the first failing gate> lines may appear (at most 8 per
+#           allocation; slots.writer.slots[s].reason shows it). leak.ammo_leaks 0, the receiver's own slots unchanged.
+#  always (fire captures): every reload.probe1.shots increase is matched by a fire.suppressed increase within the
+#           capture (probe1.shots growing with fire.suppressed flat is a shot that never reached RequestBullet: a
+#           projectile or another unfiltered path; stop and report it with gun.body_equip and weapon.body_type);
+#           fire.owner_disarmed 0; leak.shot_leaks 0 and leak.shot_count unchanged; mag.local (the
 #           receiver's own magazine) unchanged; input.cam_cdeg_host steady (no camera kick); noise.dropped grows only with
 #           body 1's shots (every other noise record passes); frames show no impacts; the 1 Hz partner_fire lines in the receiver's log.
 #  mirror:  mag.inj follows mag.remote (the drain's injected magazine is the shooter's); mag.store.writes grows with

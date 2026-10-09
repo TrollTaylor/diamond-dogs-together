@@ -633,6 +633,7 @@ bool PartnerLinkLive(void*) noexcept {
            (info.state == mgscoop::link::LinkState::off && mgscoop::partner_net::Running());
 }
 std::uint32_t PartnerLinkSession(void*) noexcept { return mgscoop::partner_net::GetLinkInfo().session; }
+bool PartnerPeerInputV5(void*) noexcept { return mgscoop::partner_net::PeerSendsInputV5(); }
 bool PartnerDrainReliable(void*, std::uint8_t channel, std::uint8_t* out, std::size_t capacity, std::size_t& size) noexcept {
     return mgscoop::partner_net::DrainReliable(channel, out, capacity, size);
 }
@@ -751,7 +752,7 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerSetDefer, PartnerPublishIdentity, PartnerPublishWrapRoots, PartnerNativeTargets, PartnerReadGun1, PartnerReadLookSource,
     PartnerWindowSeq, PartnerLinkLive, PartnerLinkSession, PartnerDrainReliable, PartnerReadRates, PartnerForgetRates, kAmmoExperiment,
     PartnerInstallFire, PartnerFireStats, PartnerFireCensus, PartnerReadGun, PartnerReadLoadout, PartnerSendReliable, PartnerInBatch,
-    PartnerInstallLookSource, PartnerInstallNoise, PartnerReadSlots, PartnerEquipType};
+    PartnerInstallLookSource, PartnerInstallNoise, PartnerReadSlots, PartnerEquipType, PartnerPeerInputV5};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
@@ -1184,14 +1185,23 @@ mgscoop::PartnerNativeEquip EquipMode() noexcept { return mgscoop::GetLabConfig(
 // refuses to run without them), and either the one-PC lab (mode=lab) or
 // two-PC play (mode=play) with a paired link v2. The exact-build pins, the
 // owner threads, the allocation receipts and every native preflight follow.
-bool EquipPiecesAdmitted() noexcept {
+// nullptr when admitted, else the first failing admission (a static reason the
+// writer and preload report). The window closing (PartnerShutdown) ends it too.
+const char* EquipAdmissionReason() noexcept {
     const auto& labc = mgscoop::GetLabConfig();
-    if (!GunProfile() || labc.partner_native_equip == mgscoop::PartnerNativeEquip::stock46) return false;
-    if (!offline_enabled || !lab_active || !lab::SavesRedirected() || !partner_on || !partner_gate_ok) return false;
+    if (!GunProfile()) return "gun_profile";
+    if (labc.partner_native_equip == mgscoop::PartnerNativeEquip::stock46) return "setting_stock46";
+    if (!offline_enabled) return "offline_branch";
+    if (!lab_active) return "lab_inactive";
+    if (!lab::SavesRedirected()) return "saves_not_redirected";
+    if (!partner_on) return "partner_off";
+    if (!partner_gate_ok) return "code_gate";
+    if (mgscoop::partner_defer::ShuttingDown()) return "shutting_down";
     if (labc.mode == mgscoop::LabMode::play)
-        return mgscoop::partner_net::GetLinkInfo().state == mgscoop::link::LinkState::connected;
-    return labc.mode == mgscoop::LabMode::lab;
+        return mgscoop::partner_net::GetLinkInfo().state == mgscoop::link::LinkState::connected ? nullptr : "link_not_connected";
+    return labc.mode == mgscoop::LabMode::lab ? nullptr : "mode";
 }
+bool EquipPiecesAdmitted() noexcept { return EquipAdmissionReason() == nullptr; }
 // The manifest the generalized pieces plan from: this mission's (each copy
 // resends its own at every mission start) or, until it arrives, the last one
 // accepted in the same link session (the preload runs before the mission).
@@ -1275,7 +1285,7 @@ void ObserveStock46Writer() noexcept {
     context.offline_gates=offline_enabled && lab_active && lab::SavesRedirected() &&
         allocation_enabled && archive_mounted && host_source_selected && partner_on && partner_gate_ok &&
         !mission_terminating && !termination_scope.Active() && !gameplay_restore_pending &&
-        !HasDynamiteSessionOwnership() && ReadMission(current_mission) &&
+        !HasDynamiteSessionOwnership() && !mgscoop::partner_defer::ShuttingDown() && ReadMission(current_mission) &&
         current_mission==30010 && current_mission==partner_mission && current_mission==allocation_mission;
     pp::State state{};pp::DmTargets targets{};
     if(context.owner && context.offline_gates && mission.parts_loaded && mission.realized &&
@@ -1306,11 +1316,17 @@ void ObserveEquipWriter() noexcept {
     context.mission=partner_mission;context.body_epoch=mission.body_epoch;
     context.base=reinterpret_cast<std::uintptr_t>(game_base);context.image_span=game_span;
     unsigned short current_mission=0;
-    context.gates=EquipPiecesAdmitted() && allocation_enabled && archive_mounted && host_source_selected &&
-        stock46_groups_authorized && stock46_groups_returned &&
-        !mission_terminating && !termination_scope.Active() && !gameplay_restore_pending &&
-        !HasDynamiteSessionOwnership() && ReadMission(current_mission) && mgscoop::SupportsPartnerBody(current_mission) &&
-        current_mission==partner_mission && current_mission==allocation_mission;
+    // The first failing gate is reported (equip_writer=waiting; reason=..), nothing is spent.
+    const char* admission=EquipAdmissionReason();
+    const bool mission_ok=ReadMission(current_mission);
+    context.gate_reason=admission ? admission
+        : !allocation_enabled || !archive_mounted || !host_source_selected ? "allocation_source"
+        : !stock46_groups_authorized || !stock46_groups_returned ? "ghost_groups"
+        : mission_terminating || termination_scope.Active() || gameplay_restore_pending ? "terminating"
+        : HasDynamiteSessionOwnership() ? "dynamite_session"
+        : !mission_ok || !mgscoop::SupportsPartnerBody(current_mission) ? "mission"
+        : current_mission!=partner_mission || current_mission!=allocation_mission ? "mission_owner" : nullptr;
+    context.gates=context.gate_reason==nullptr;
     pp::State state{};pp::DmTargets targets{};
     if(context.owner && context.gates && mission.parts_loaded && mission.realized &&
        pp::ReadState(partner_addresses,state)==pp::Refusal::none && state.vars_ok && state.arrays_ok &&
@@ -1323,8 +1339,9 @@ void ObserveEquipWriter() noexcept {
     mgscoop::partner_equip_wire::Manifest manifest{};
     context.manifest=EquipManifest(manifest);
     for(unsigned s=0;s<w::kSlots;++s) context.want[s]=context.manifest ? manifest.slots[s].base_id : std::uint16_t(0);
-    context.remote_slot=manifest.inv_slot<w::kSlots ? manifest.inv_slot
-        : mission.remote_v5 && mission.remote_slot<w::kSlots ? mission.remote_slot : std::uint8_t(0xFF);
+    // The remote's current slot: the live v5 slot, else the manifest's (never a zeroed manifest's 0).
+    context.remote_slot=mission.remote_v5 && mission.remote_slot<w::kSlots ? mission.remote_slot
+        : context.manifest && manifest.inv_slot<w::kSlots ? manifest.inv_slot : std::uint8_t(0xFF);
     w::ObserveGeneral(context,Log);
     w::ReadStatus(partner_driver.equip_status);
 #endif
@@ -1811,7 +1828,7 @@ bool Stock46AllocationOwner(unsigned short& mission) noexcept {
     return offline_enabled && lab_active && allocation_enabled && archive_mounted &&
         host_source_selected && partner_on && partner_gate_ok && lab::SavesRedirected() &&
         OnAllocationThread() && !termination_scope.Active() && !gameplay_restore_pending &&
-        !HasDynamiteSessionOwnership() && ReadMission(mission) &&
+        !HasDynamiteSessionOwnership() && !mgscoop::partner_defer::ShuttingDown() && ReadMission(mission) &&
         mission==30010 && mission==allocation_mission;
 }
 bool SelectStock46PreloadReceipt(const char* buffer,std::size_t size,const char* name,
@@ -1898,7 +1915,8 @@ bool SelectEquipPreloadReceipt(const char* buffer,std::size_t size,const char* n
 #ifdef MGS_LOCAL_STOCK46_PRELOAD_TEST
     enabled=true;
 #endif
-    enabled=enabled && EquipPiecesAdmitted();
+    const char* admission=enabled ? EquipAdmissionReason() : "not_compiled";
+    enabled=enabled && admission==nullptr;
     unsigned short mission=0;
     const bool mission_read=ReadMission(mission);
     const bool owner=enabled && allocation_enabled && archive_mounted && host_source_selected &&
@@ -1992,8 +2010,8 @@ bool SelectEquipPreloadReceipt(const char* buffer,std::size_t size,const char* n
                 pc::ActionName(candidate.items[i].action),unsigned(candidate.items[i].entry));
             StringCchCatA(actions,sizeof(actions),one);
         }
-        LogFormat("equip_preload=%s; reason=%s; preflight=%s; mission=%u; owner=%u; manifest=%u; want=%u,%u,%u; ids=%s; dropped=%s; actions=%s; new_hashes=%u; queue=%u/%u; attempt_consumed=%u; public_calls=lua_only; evict=0\r\n",
-            reason ? "refused" : "authorized",reason ? reason : "ok",sample_reason ? sample_reason : "ok",unsigned(mission),unsigned(owner),
+        LogFormat("equip_preload=%s; reason=%s; admission=%s; preflight=%s; mission=%u; owner=%u; manifest=%u; want=%u,%u,%u; ids=%s; dropped=%s; actions=%s; new_hashes=%u; queue=%u/%u; attempt_consumed=%u; public_calls=lua_only; evict=0\r\n",
+            reason ? "refused" : "authorized",reason ? reason : "ok",admission ? admission : "ok",sample_reason ? sample_reason : "ok",unsigned(mission),unsigned(owner),
             unsigned(context.manifest),unsigned(manifest.slots[0].base_id),unsigned(manifest.slots[1].base_id),unsigned(manifest.slots[2].base_id),
             list[0] ? list : "none",dropped[0] ? dropped : "none",actions[0] ? actions : "none",candidate.new_hashes,
             candidate.queue_count,candidate.queue_capacity,unsigned(equip_preload_authorization.Attempted()));

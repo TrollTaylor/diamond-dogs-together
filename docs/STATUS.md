@@ -1,5 +1,22 @@
 # Development status
 
+## October 9, 2026: weapons2 review fixes (fixture-tested, hidden runs pending)
+
+`wp/weapons2` review. Input frame v5 is negotiated (v4 plus a v5 probe every
+2 s until the peer's own v5 arrives), so a peer build without v5 keeps its
+whole native input stream instead of refusing every 116-byte frame. Body 1's
+never-filled slots hold handle 0: the plan, the follower (`reason=empty`) and
+`slots.handles` now treat equip 0 as empty. The generalized writer digests the
+viewer's ammo/weapon vars and shoot count around each dispatch
+(`call_unverified; reason=local_ammo_changed` stops the allocation), reports
+why it waits (`equip_writer=waiting; reason=..`), orders the slots only once a
+manifest is known, and, like the preload and both stock46 pieces, stops when
+the game window closes (`shutting_down`). Play runs `partner_native_slot=call`
+as `write` from Configure. The preload line names the failing admission.
+Residual (documented): the bullet allow-list rests on the weapon categories;
+the scenario now checks every `probe1.shots` increase against
+`fire.suppressed`.
+
 ## October 9, 2026: the generalized preload and writer (fixture-tested, hidden runs pending)
 
 `wp/weapons2` ([details](native-puppet.md#generalized-preload-and-writer-w2w3-partner_native_equip)).

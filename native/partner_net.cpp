@@ -52,6 +52,8 @@ std::uint32_t g_input_tx_seq = 0;
 std::uint64_t g_input_tx_ms = 0;
 partner_input::InputEdges g_edges{};
 volatile LONG g_in_tx = 0, g_in_rx = 0, g_in_drop = 0;
+// An accepted input frame v5 arrived since the last receive reset (PeerSendsInputV5).
+volatile LONG g_input_v5_peer = 0;
 // Look send side (game thread only).
 partner::Look g_look_sent{};
 bool g_look_sent_valid = false;
@@ -349,6 +351,7 @@ void OnFrame(const std::uint8_t* data, std::size_t size, std::uint64_t trusted_a
             g_input_valid = true;
             g_input_seq = in_seq;
             g_input_rx_ms = now;
+            if (in.version >= 5) InterlockedExchange(&g_input_v5_peer, 1);
             if (!g_input_first_logged) { g_input_first_logged = true; first = true; }
         }
         ReleaseSRWLockExclusive(&g_lock);
@@ -416,6 +419,7 @@ void ResetReceiveLocked() noexcept {
     g_input_rx_ms = 0;
     g_input_first_logged = false;
     g_edges = partner_input::InputEdges{};
+    InterlockedExchange(&g_input_v5_peer, 0);
 }
 
 // ---- Link v2 logging (receive thread, outside both locks).
@@ -1383,6 +1387,8 @@ bool ConsumeInput(partner_input::Sample& out) noexcept {
     ReleaseSRWLockExclusive(&g_lock);
     return true;
 }
+
+bool PeerSendsInputV5() noexcept { return g_input_v5_peer != 0; }
 
 bool LatestInput(partner_input::Sample& out) noexcept {
     out = partner_input::Sample{};

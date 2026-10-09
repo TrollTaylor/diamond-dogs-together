@@ -537,8 +537,9 @@ slots) and in the runtime code gate.
   (valid, in hand, aiming, reloading, changing), `[85]` the sender's
   `rec+0x2C0`, `[86]` `reload_seq` (+1 per entry into 11/12 its tick sees),
   `[87]` `switch_seq` (+1 per change of its current slot); the v3 `inv_slot`
-  byte carries the sender's current slot. v1..v4 still decode; both copies
-  must run this build (a v4 receiver refuses 116-byte frames).
+  byte carries the sender's current slot. v1..v4 still decode; a v4-only
+  build refuses 116-byte frames, so v5 goes out only after the peer's own v5
+  (or as a probe every 2 s; "Wire").
 - **R3 event machine** (`native/partner_reload.cpp`, pure, driver tick): a
   remote reload start (counter moved, mode 11/12) with the native gun window
   armed, the weapon gate passing, a gun class, the reload gate and CanReload
@@ -690,7 +691,21 @@ runtime before acting (`full_body_gate`).
     or pending; local equipment and every occupied cache entry unchanged; a
     bound handle maps an initially qualified resource with the target's
     render size. One attempt per slot per allocation; a re-realized body
-    (epoch) ends the remaining slots.
+    (epoch) ends the remaining slots. The viewer's weapon/ammo vars block
+    (`vars+0x548..+0x670`) and shoot count (`vars+0x144`) are read directly
+    before and after the call (`leak.ammo_leaks` only covers block 1's job):
+    any change (or an unreadable read) is `call_unverified;
+    reason=local_ammo_changed|local_vars_unread` and every remaining slot of
+    the allocation refuses (`prior_local_change`);
+  - nothing is spent while a gate is down: the pending slot's `reason` names
+    the first failing gate (`gun_profile|setting_stock46|offline_branch|
+    lab_inactive|saves_not_redirected|partner_off|code_gate|shutting_down|
+    link_not_connected|mode|allocation_source|ghost_groups|terminating|
+    dynamite_session|mission|mission_owner|body|engine_chain|census`), logged
+    on change as `equip_writer=waiting; reason=..` (at most 8 lines per
+    allocation). The dispatch order is fixed once a manifest is known (the
+    remote's live v5 slot, else the manifest's `inv_slot`), never from a
+    zeroed manifest.
 
 ### Release gating and play mode
 
@@ -711,7 +726,15 @@ runtime before acting (`full_body_gate`).
   generalized pieces answer; with `stock46` it is the reverse.
 - The follower and the mirror refuse with S_IS_ONLINE or `P+0x204` bit 18
   set, instance 1 as the local id, or any identity check failing; they never
-  touch the viewer's own inventory (`leak.ammo_leaks` watches it).
+  touch the viewer's own inventory (`leak.ammo_leaks` watches it). The
+  follower reads the slot's live handle before the plan: a slot body 1 never
+  had holds 0 (the stock46 preflight requires all seven zero), which, like
+  `>> 16 == 0xFFFF`, is equip 0 and refuses `empty` (also the plan's tier).
+- The game window closing (`PartnerShutdown`, `partner_defer::ShuttingDown`)
+  ends the generalized preload and writer and the stock46 preload and writer
+  (admission `shutting_down`), like the deferral and the drain windows.
+- Play runs `partner_native_slot=call` as `write` from `Configure` and the
+  trigger on (the telemetry shows what runs; `BuildArm` downgrades again).
 - The generalized pieces' admission (`EquipPiecesAdmitted`): the native gun
   profile with `manifest|substitute`, the offline-v1 branch on the redirected
   saves (`lab::SavesRedirected()`; play refuses to run without them), the
@@ -722,7 +745,8 @@ runtime before acting (`full_body_gate`).
   receipt (authorized and returned), no termination or restore pending, no
   Dynamite session, the exact-build pins and every native preflight. The
   stock46 pieces keep their own gates (lab or play on the copied saves,
-  30010 only).
+  30010 only). The preload's log line names the first failing admission
+  (`equip_preload=refused; reason=disabled; admission=..`).
 
 ### Loadout mirroring
 
@@ -899,8 +923,15 @@ partner by default (`-NoNative` turns the native drive off).
   (`GunFlag` valid 1, in hand 2, aiming 4, reloading 8, changing 0x10; without
   valid the next three bytes are 0), `[85]` the sender's gun mode `rec+0x2C0`,
   `[86]` `reload_seq`, `[87]` `switch_seq`; a v5 sender fills the v3 `inv_slot`
-  byte with its current slot. Every native sender sends v5; a v4 receiver
-  refuses it (both copies run one build).
+  byte with its current slot. A build without v5 refuses every 116-byte
+  frame (all its input, not just the gun group), so the native sender
+  negotiates: v4 frames until the peer was seen sending v5 in this link
+  session (`partner_net::PeerSendsInputV5`, sticky until the receive reset of
+  a new session or `ResetRemote`), plus one v5 probe every
+  `kInputV5ProbeMs` (2 s) that lets a v5 peer learn ours (an older peer drops
+  only the probe; the edge sets repeat in the next frames). Log
+  `partner_input=v5_peer; probes=N` once per mission when the peer's v5
+  arrived.
 - Input frame v4 (112 bytes, payload 84; one version for both native work
   packages): v3 plus `[72..77]` the sender's dash, crawl and crawl factor
   rates (milli 500..2000 each, xflags `Rates` 0x10; zero without, always with

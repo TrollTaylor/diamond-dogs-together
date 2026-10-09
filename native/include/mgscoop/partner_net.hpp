@@ -165,6 +165,10 @@ bool LatestInput(partner_input::Sample& out) noexcept;
 // clears (the input window's sample; false when the lock is busy, and then
 // nothing is consumed).
 bool ConsumeInput(partner_input::Sample& out) noexcept;
+// True once the peer sent an accepted input frame v5 since the last receive
+// reset (a new link session, ResetRemote): its build decodes v5. The native
+// sender sends v5 only then (plus probes); an older build refuses 116 bytes.
+bool PeerSendsInputV5() noexcept;
 // Clears the ring, the sequence state and the received look, and makes the
 // next SubmitLook send at once (mission boundaries). A new link session does
 // the receive half of this on the receive thread, in the same g_tx_lock

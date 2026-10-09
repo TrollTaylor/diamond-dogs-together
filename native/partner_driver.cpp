@@ -1459,7 +1459,24 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
             // Native puppet: v4 (look, camera, heading, the sender's own movement
             // rates and its magazine) only when this copy runs the native drive;
             // the peer refuses aim with no_v3 otherwise.
-            if (d.settings.drive == PartnerDrive::native) pin::Fill5(pkt, SenderV5(d, h, st, snap, raw.kb_flags));
+            // v5 adds the gun group; a peer build without v5 refuses the whole
+            // 116-byte frame, so v5 goes out only once the peer sent v5 (plus a
+            // probe every kInputV5ProbeMs so a v5 peer can learn ours).
+            if (d.settings.drive == PartnerDrive::native) {
+                const pin::V5Source v5 = SenderV5(d, h, st, snap, raw.kb_flags);
+                const bool peer_v5 = !h.peer_input_v5 || h.peer_input_v5(h.context);
+                if (peer_v5 && h.peer_input_v5 && !m.v5_peer_logged) {
+                    m.v5_peer_logged = true;
+                    EmitFormat(h, "partner_input=v5_peer; probes=%u\r\n", m.v5_probes);
+                }
+                const bool probe = !peer_v5 && (!m.v5_probe_ms || now - m.v5_probe_ms >= kInputV5ProbeMs);
+                if (peer_v5 || probe) pin::Fill5(pkt, v5);
+                else pin::Fill4(pkt, v5.v4);
+                if (probe) {
+                    m.v5_probe_ms = now;
+                    ++m.v5_probes;
+                }
+            }
             if (h.submit_input(h.context, pkt)) pin::SenderSent(m.sender);
         }
     }
@@ -3043,6 +3060,9 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.nequip = lab.partner_native_equip;
 
     d.settings.play_mode = lab.mode == LabMode::play;
+    // Play never calls SetCurrentSlot itself (docs/native-puppet.md "Release gating"): the
+    // setting the telemetry reports is the one that runs (BuildArm downgrades it again).
+    if (d.settings.play_mode && d.settings.nslot == PartnerNativeSlot::call) d.settings.nslot = PartnerNativeSlot::write;
     d.look_forced_rev = 1;
     partner_recon::Reset(d.mission.recon);
     partner_dmmap::Reset(d.mission.dmmap);
@@ -3263,7 +3283,8 @@ void ApplyTrigger(Driver& d, const Hooks& h, const partner::Trigger& trigger, bo
     if (trigger.has_nfire) d.settings.nfire = trigger.nfire;
     if (trigger.has_steer) d.settings.steer_deg = trigger.steer_deg;
     if (trigger.has_nreload) d.settings.nreload = trigger.nreload;
-    if (trigger.has_nslot) d.settings.nslot = trigger.nslot;
+    if (trigger.has_nslot)
+        d.settings.nslot = d.settings.play_mode && trigger.nslot == PartnerNativeSlot::call ? PartnerNativeSlot::write : trigger.nslot;
     if (trigger.has_nreload || trigger.has_nslot)
         EmitFormat(h, "partner_native=trigger_weapons; nreload=%s; nslot=%s\r\n", PartnerNativeReloadName(d.settings.nreload),
                    PartnerNativeSlotName(d.settings.nslot));
