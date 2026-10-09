@@ -1,5 +1,8 @@
 // Original, separately compiled copied-save stock46 experiment. No hooks,
 // worker routing, alias preparation, local-index edits, rollback or retries.
+// The generalized writer (ObserveGeneral) dispatches the same qualified
+// ChangeEquip request for other stock guns, one slot at a time, each behind the
+// stock46-shape preflight with that gun's own derived data.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -11,24 +14,6 @@
 
 namespace mgscoop::equipment_stock_writer {
 namespace {
-#ifdef MGS_LOCAL_STOCK46_WRITER_TEST
-namespace contract=equipment_stock_writer_contract;
-Authorization authorization;
-Readiness readiness;
-contract::Snapshot before;
-contract::Snapshot scratch;
-std::uint32_t observed_epoch=0,expected_handle=0;
-unsigned observations=0;
-bool tracking=false;
-bool readiness_logged=false;
-#pragma pack(push,1)
-struct Request {
-    std::uint64_t type=0x326C48DA30C0ull;
-    std::uint16_t equip=46,stock=RequestAmountsFor(kAmmoTest).stock,stock_sub=0,ammo=RequestAmountsFor(kAmmoTest).ammo,ammo_sub=0;
-    std::uint8_t suppression_life=0,flags=4;
-};
-#pragma pack(pop)
-static_assert(sizeof(Request)==20 && offsetof(Request,equip)==8 && offsetof(Request,flags)==19);
 bool Read(std::uintptr_t address,void* out,std::size_t size) noexcept {
     if(!address || address>UINTPTR_MAX-size) return false;
     SIZE_T copied=0;
@@ -57,6 +42,24 @@ bool BodyGate(std::uintptr_t base,std::size_t span,std::uintptr_t& mismatch) noe
     BCryptCloseAlgorithmProvider(algorithm,0);
     return ok;
 }
+#ifdef MGS_LOCAL_STOCK46_WRITER_TEST
+namespace contract=equipment_stock_writer_contract;
+Authorization authorization;
+Readiness readiness;
+contract::Snapshot before;
+contract::Snapshot scratch;
+std::uint32_t observed_epoch=0,expected_handle=0;
+unsigned observations=0;
+bool tracking=false;
+bool readiness_logged=false;
+#pragma pack(push,1)
+struct Request {
+    std::uint64_t type=0x326C48DA30C0ull;
+    std::uint16_t equip=46,stock=RequestAmountsFor(kAmmoTest).stock,stock_sub=0,ammo=RequestAmountsFor(kAmmoTest).ammo,ammo_sub=0;
+    std::uint8_t suppression_life=0,flags=4;
+};
+#pragma pack(pop)
+static_assert(sizeof(Request)==20 && offsetof(Request,equip)==8 && offsetof(Request,flags)==19);
 // A trivial SEH boundary contains the single outer dispatcher call. It uses
 // exactly the public wrapper's output-pointer ABI and constant instance1.
 bool Call(std::uintptr_t function,std::uintptr_t iface,const Request* request,
@@ -79,47 +82,55 @@ void Receipt(void (*log)(const char*) noexcept,const char* phase,const char* rea
         unsigned(RequestAmountsFor(kAmmoTest).ammo),kAmmoTest ? 1u : 0u);
     log(line);
 }
-void PackageReceipt(void (*log)(const char*) noexcept,const Context& c,const contract::PackageObservation& sample) noexcept {
+void PackageReceipt(void (*log)(const char*) noexcept,std::uintptr_t base,std::size_t span,const contract::PackageObservation& sample,
+                    const contract::Target& t,const char* label,unsigned count) noexcept {
     if(!log) return;
-    auto reader=Read;contract::View<decltype(reader)> v{reader,c.base,c.image_span};
-    const auto p=sample.reads ? sample : contract::ObservePackage(v);char line[1024]{};
+    auto reader=Read;contract::View<decltype(reader)> v{reader,base,span};
+    const auto p=sample.reads ? sample : contract::ObservePackage(v,t);char line[1024]{};
     StringCchPrintfA(line,sizeof(line),
-        "stock46_writer_package=read_only; reads=%x checks=%x service=%llx backing=%llx allocation=%llx capacity=%llx size=%llx parameters=%llx variant=%u table=%llx method8=%llx method28=%llx method38=%llx descriptor46=%llx observations=%u native_calls=0\r\n",
-        p.reads,p.checks,static_cast<unsigned long long>(p.service),static_cast<unsigned long long>(p.backing),
+        "%s_package=read_only; reads=%x checks=%x service=%llx backing=%llx allocation=%llx capacity=%llx size=%llx parameters=%llx variant=%u table=%llx method8=%llx method28=%llx method38=%llx descriptor%u=%llx observations=%u native_calls=0\r\n",
+        label,p.reads,p.checks,static_cast<unsigned long long>(p.service),static_cast<unsigned long long>(p.backing),
         static_cast<unsigned long long>(p.allocation),static_cast<unsigned long long>(p.capacity),
         static_cast<unsigned long long>(p.size),static_cast<unsigned long long>(p.parameters),p.variant,
         static_cast<unsigned long long>(p.table),static_cast<unsigned long long>(p.methods[0]),
         static_cast<unsigned long long>(p.methods[1]),static_cast<unsigned long long>(p.methods[2]),
-        static_cast<unsigned long long>(p.descriptor),readiness.Count());
+        unsigned(t.equip),static_cast<unsigned long long>(p.descriptor),count);
     log(line);
 }
-void OptionalReceipt(void (*log)(const char*) noexcept,const contract::OptionalLease& o) noexcept {
+void OptionalReceipt(void (*log)(const char*) noexcept,const contract::OptionalLease& o,const char* label,bool present) noexcept {
     if(!log) return;
     char line[640]{};
     StringCchPrintfA(line,sizeof(line),
-        "stock46_writer_optional=read_only; asset=%llx source=%llx header=%llx source_bytes=%llu parameters=%u render_global=%u render_bytes=%u arena_stride=2048 native_calls=0\r\n",
-        static_cast<unsigned long long>(o.asset),static_cast<unsigned long long>(o.source),
+        "%s_optional=read_only; present=%u asset=%llx source=%llx header=%llx source_bytes=%llu parameters=%u render_global=%u render_bytes=%u arena_stride=2048 native_calls=0\r\n",
+        label,present ? 1u : 0u,static_cast<unsigned long long>(o.asset),static_cast<unsigned long long>(o.source),
         static_cast<unsigned long long>(o.header),static_cast<unsigned long long>(o.bytes),o.parameters,o.global,o.render_bytes);
     log(line);
 }
-const char* Readback(const Context& c,contract::Snapshot& after,bool& bound) noexcept {
+// Accepted readback after one dispatch of target t: exactly the target slot's
+// handle (expected) changed, its cache entry gained one reference, its new
+// metadata row names t and its cache entry, the binder record of the slot has
+// it current or pending, local equipment and every initially occupied cache
+// entry are unchanged, and a bound handle maps an initially qualified resource.
+const char* Readback(std::uintptr_t base,std::size_t span,std::uintptr_t player,std::uintptr_t remote_block,
+                     const contract::Target& t,std::uint32_t expected,const contract::Snapshot& lease,
+                     contract::Snapshot& after,bool& bound) noexcept {
     bound=false;
     auto reader=Read;
-    if(const auto reason=contract::Capture(c.base,c.image_span,reader,c.player,c.remote_block,after)) return reason;
-    if(const auto reason=contract::LocalUnchanged(before,after)) return reason;
-    if(after.remote_handles[1]!=expected_handle || after.cache_refs!=before.cache_refs+1) return "remote_handle_or_refs";
-    for(unsigned i=0;i<7;++i) if(i!=1 && after.remote_handles[i]!=before.remote_handles[i]) return "other_remote_slot_changed";
-    contract::View<decltype(reader)> view{reader,c.base,c.image_span};
-    if(const auto reason=contract::DelayedCachesPreserved(view,before)) return reason;
+    if(const auto reason=contract::Capture(base,span,reader,player,remote_block,after,t)) return reason;
+    if(const auto reason=contract::LocalUnchanged(lease,after)) return reason;
+    if(after.remote_handles[t.slot]!=expected || after.cache_refs!=lease.cache_refs+1) return "remote_handle_or_refs";
+    for(unsigned i=0;i<7;++i) if(i!=t.slot && after.remote_handles[i]!=lease.remote_handles[i]) return "other_remote_slot_changed";
+    contract::View<decltype(reader)> view{reader,base,span};
+    if(const auto reason=contract::DelayedCachesPreserved(view,lease)) return reason;
     contract::Bytes14 row{};std::uint32_t mapped=0;
-    if(!view.At(after.meta_rows,before.new_index*0xE,row) || contract::Word16(row.data())!=46 ||
-       row[8]!=4 || !view.At(after.map_rows,before.new_index*4,mapped)) return "new_handle_owner";
-    const auto current=contract::Word32(after.remote_binder.data()+12);
-    const auto pending=contract::Word32(after.remote_binder.data()+16);
-    if(current!=expected_handle && pending!=expected_handle) return "model_handle_missing";
-    if(current!=expected_handle) return nullptr; // queued, not rendered evidence
+    if(!view.At(after.meta_rows,lease.new_index*0xE,row) || contract::Word16(row.data())!=t.equip ||
+       row[8]!=t.cache_index || !view.At(after.map_rows,lease.new_index*4,mapped)) return "new_handle_owner";
+    const auto current=contract::Word32(after.remote_binder.data()+t.slot*12);
+    const auto pending=contract::Word32(after.remote_binder.data()+t.slot*12+4);
+    if(current!=expected && pending!=expected) return "model_handle_missing";
+    if(current!=expected) return nullptr; // queued, not rendered evidence
     if(mapped>=60) return "bound_without_resource";
-    if(const auto reason=contract::QualifiedBoundResource(view,before,mapped)) return reason;
+    if(const auto reason=contract::QualifiedBoundResource(view,lease,mapped)) return reason;
     // Native DBF1F0 maps a bounded resource ID across group sizes. Follow the
     // same pure data chain; ADBE00's bank getter itself has no index check.
     std::uintptr_t groups=0,group=0,bank=0,resources=0,pointer=0;std::uint32_t size=0,count=0;
@@ -136,12 +147,188 @@ const char* Readback(const Context& c,contract::Snapshot& after,bool& bound) noe
     bound=true;
     return nullptr;
 }
+// The selected resource lease of a preflight re-read directly before the call.
+const char* LeaseChanged(const contract::Snapshot& lease,const contract::Snapshot& refreshed) noexcept {
+    if(refreshed.ring!=lease.ring || refreshed.ring_cursor!=lease.ring_cursor ||
+       refreshed.new_index!=lease.new_index || refreshed.meta_rows!=lease.meta_rows || refreshed.map_rows!=lease.map_rows)
+        return "allocation_lease_changed";
+    if(refreshed.next_resource!=lease.next_resource || refreshed.selected_group!=lease.selected_group ||
+       refreshed.selected_resource_index!=lease.selected_resource_index ||
+       refreshed.package_service!=lease.package_service || refreshed.package_parameters!=lease.package_parameters ||
+       refreshed.selected_banks!=lease.selected_banks || refreshed.selected_bank_arrays!=lease.selected_bank_arrays ||
+       refreshed.selected_cache_counts!=lease.selected_cache_counts || refreshed.selected_cache_arrays!=lease.selected_cache_arrays ||
+       refreshed.selected_bank_aux!=lease.selected_bank_aux ||
+       refreshed.selected_bank_allocations!=lease.selected_bank_allocations ||
+       refreshed.selected_bank_allocation_bytes!=lease.selected_bank_allocation_bytes ||
+       refreshed.selected_bank_used_bytes!=lease.selected_bank_used_bytes ||
+       refreshed.main_cache_candidate!=lease.main_cache_candidate || refreshed.main_cache_entries!=lease.main_cache_entries ||
+       refreshed.banks!=lease.banks || refreshed.eligible_resources!=lease.eligible_resources ||
+       refreshed.initial_maps!=lease.initial_maps || refreshed.initial_owners!=lease.initial_owners ||
+       refreshed.initial_load_flags!=lease.initial_load_flags || refreshed.initial_engine_metadata!=lease.initial_engine_metadata ||
+       refreshed.free_queue!=lease.free_queue || refreshed.free_cursor!=lease.free_cursor)
+        return "selected_resource_lease_changed";
+    return nullptr;
+}
+
+// --- The generalized writer state (one allocation) ---------------------------
+struct General {
+    bool active=false,ordered=false,tracking=false,readiness_logged=false,census_ok=false,census_logged=false;
+    std::uint32_t mission=0,observed_epoch=0,expected=0;
+    std::uint8_t order[kSlots]{0,2,1};
+    unsigned cursor=0,plan_waits=0,observations=0;
+    Readiness readiness;
+    contract::Target target{};
+    std::uint32_t dispatched_handles[kSlots]{};
+    std::array<contract::CacheEntry,contract::kCacheEntries> census{};
+};
+General general;
+contract::Snapshot general_before;
+contract::Snapshot general_scratch;
+Status status;
+// Observations (~100 ms each) a slot waits for the manifest before refusing.
+constexpr unsigned kPlanWaitLimit=300;
+void SetReason(SlotStatus& slot,const char* reason) noexcept {StringCchCopyA(slot.reason,sizeof(slot.reason),reason ? reason : "ok");}
+void GeneralReceipt(void (*log)(const char*) noexcept,const char* phase,unsigned slot,const char* reason,
+                    std::int32_t result=INT32_MIN,std::uintptr_t mismatch=0) noexcept {
+    if(!log || slot>=kSlots) return;
+    const auto& s=status.slots[slot];
+    char line[640]{};
+    StringCchPrintfA(line,sizeof(line),
+        "equip_writer=%s; reason=%s; mission=%u; slot=%u; want=%u; equip=%u; tier=%s; family=%s; type=%u; cache=%u; epoch=%u; expected_handle=%x; result=%d; mismatch_rva=%llx; dispatches=%u; instance=1; retry=0; alias_call=0; rollback_calls=0; replace_filled=0; evict=0\r\n",
+        phase,reason ? reason : "ok",general.mission,slot,unsigned(s.want),unsigned(s.equip),TierName(s.tier),
+        s.equip ? (s.optional ? "optional" : "plain") : "none",unsigned(s.type),unsigned(s.cache_index),general.observed_epoch,s.handle,result,
+        static_cast<unsigned long long>(mismatch),status.dispatches);
+    log(line);
+}
+void CensusReceipt(void (*log)(const char*) noexcept) noexcept {
+    if(!log) return;
+    char line[2048]{};
+    StringCchPrintfA(line,sizeof(line),"equip_resident; mission=%u; used=%u; entries=",general.mission,unsigned(status.resident_count));
+    for(unsigned i=0;i<status.resident_count;++i) {
+        const auto& e=status.resident[i];
+        char item[48]{};
+        StringCchPrintfA(item,sizeof(item),"%s%u:%u/t%u/r%u/f%u/n%u",i ? "," : "",unsigned(e.index),unsigned(e.equip),unsigned(e.type),
+                         unsigned(e.receiver),unsigned(e.flags),e.refs);
+        StringCchCatA(line,sizeof(line),item);
+    }
+    StringCchCatA(line,sizeof(line),"; native_calls=0\r\n");
+    log(line);
+}
+// The equipment engine through the player's equip iface (Capture re-reads and
+// pins the whole chain before any use; this only feeds the pure census).
+template<class View> bool EngineOf(View& v,std::uintptr_t player,std::uintptr_t& engine) noexcept {
+    std::uintptr_t iface=0,inventory=0;engine=0;
+    return v.At(player,0xC8,iface) && v.Method(iface,0x23C1720,0x198,0x11AC2E0) && v.At(iface,8,inventory) &&
+        v.Method(inventory,0x23895D0,8,0xEE9880) && v.At(inventory,0x58,engine) && v.Method(engine,0x234B840,0,0xDC3250);
+}
+// The other remote slots hold exactly what this allocation dispatched (or nothing).
+const char* OtherSlots(const contract::Snapshot& s,unsigned slot) noexcept {
+    for(unsigned i=0;i<7;++i) {
+        if(i==slot) continue;
+        const std::uint32_t want=i<kSlots ? general.dispatched_handles[i] : 0u;
+        if(s.remote_handles[i]!=want) return "other_slot_unexpected";
+    }
+    return nullptr;
+}
+void Advance(void (*log)(const char*) noexcept,unsigned slot,SlotState state,const char* phase,const char* reason,
+             std::int32_t result=INT32_MIN,std::uintptr_t mismatch=0) noexcept {
+    auto& s=status.slots[slot];
+    s.state=state;
+    SetReason(s,reason);
+    if(state==SlotState::refused || state==SlotState::unverified) ++status.refused;
+    if(state==SlotState::bound) ++status.bound;
+    GeneralReceipt(log,phase,slot,reason,result,mismatch);
+    general.tracking=false;general.observations=0;general.readiness.Reset();general.readiness_logged=false;
+    general.plan_waits=0;++general.cursor;
+}
+// Picks slot `slot`'s target: A1 the manifest's base id, C a resident
+// protected stock gun of the same type (substitute only), D refuse.
+template<class View> void Plan(const GeneralContext& c,View& v,std::uintptr_t engine,unsigned slot,
+                               void (*log)(const char*) noexcept) noexcept {
+    auto& s=status.slots[slot];
+    s.want=c.want[slot];
+    if(!c.manifest) {
+        s.state=SlotState::plan_wait;SetReason(s,"no_manifest");
+        if(++general.plan_waits>=kPlanWaitLimit) {s.tier=Tier::d;Advance(log,slot,SlotState::refused,"refused","no_manifest");}
+        return;
+    }
+    // The remote carries nothing in this slot: nothing to follow.
+    if(!s.want) {s.tier=Tier::d;Advance(log,slot,SlotState::refused,"refused","no_base");return;}
+    contract::Target t{};
+    const char* why=contract::Derive(v,engine,s.want,general.census,t);
+    if(!why && t.slot!=slot) why="type_slot";
+    if(!why && !contract::ResidentProtected(general.census[t.cache_index]))
+        why=general.census[t.cache_index].refs ? "cache_shared" : "cache_unprotected";
+    if(!why && general.census[t.cache_index].type!=t.type) why="cache_type";
+    Tier tier=why ? Tier::d : Tier::a1;
+    if(why && c.substitute) {
+        // The remote base's type (and receiver) from the same tables Derive reads.
+        std::uintptr_t types=0,resource=0,basic=0;std::uint16_t packed=0;std::array<std::uint8_t,12> recipe{};
+        std::uint8_t type=0,receiver=0;
+        if(s.want<0x230 && v.At(engine,8,types) && types==v.base+0x2A70920 && v.Method(types,0x22AD180,0,0xA2A3E0) &&
+           v.At(types,8+std::size_t(s.want)*2,packed)) {
+            type=static_cast<std::uint8_t>(packed&0x3F);
+            const std::size_t row=packed>>6;
+            if(row && row<=0x1818/12 && v.At(engine,0x10,resource) && resource==v.base+0x2A711F0 && v.At(resource,8,basic) &&
+               basic==v.base+0x2C25C50 && v.At(basic,(row-1)*12,recipe)) receiver=recipe[0];
+        }
+        if(!type || contract::TypeSlot(type)!=slot) why=type ? "type_slot" : "no_type";
+        else {
+            // Candidates: resident protected first entries of the same type,
+            // the same receiver first, then the lowest id.
+            unsigned picked=contract::kCacheEntries;const char* first_why=nullptr;
+            for(unsigned pass=0;pass<2 && picked==contract::kCacheEntries;++pass) {
+                std::array<bool,contract::kCacheEntries> tried{};
+                for(;;) {
+                    unsigned best=contract::kCacheEntries;
+                    for(unsigned i=0;i<contract::kCacheEntries;++i) {
+                        const auto& e=general.census[i];
+                        if(tried[i] || !contract::ResidentProtected(e) || !e.equip || e.equip>=0x230 || e.equip==s.want ||
+                           e.type!=type || contract::FirstEntry(general.census,e.equip)!=i) continue;
+                        if((pass==0)!=(receiver!=0 && e.receiver==receiver)) continue;
+                        if(best==contract::kCacheEntries || e.equip<general.census[best].equip) best=i;
+                    }
+                    if(best==contract::kCacheEntries) break;
+                    tried[best]=true;
+                    contract::Target candidate{};
+                    const char* reason=contract::Derive(v,engine,general.census[best].equip,general.census,candidate);
+                    if(!reason && (candidate.slot!=slot || candidate.cache_index!=best || candidate.type!=type)) reason="candidate_shape";
+                    if(!reason) {
+                        // Its packages must be loaded in this mission (the whole Capture holds).
+                        auto reader=Read;
+                        reason=contract::Capture(c.base,c.image_span,reader,c.player,c.remote_block,general_scratch,candidate);
+                    }
+                    if(!reason) {picked=best;t=candidate;break;}
+                    if(!first_why) first_why=reason;
+                }
+            }
+            if(picked!=contract::kCacheEntries) {why=nullptr;tier=Tier::c;}
+            else why=first_why ? first_why : "no_resident";
+        }
+    }
+    if(why) {
+        s.tier=Tier::d;s.equip=0;
+        Advance(log,slot,SlotState::refused,"refused",why);
+        return;
+    }
+    general.target=t;
+    s.tier=tier;s.equip=t.equip;s.optional=t.optional;s.type=t.type;s.cache_index=static_cast<std::uint8_t>(t.cache_index);
+    s.state=SlotState::readiness;SetReason(s,"planned");
+    general.readiness.Reset();general.readiness_logged=false;
+    GeneralReceipt(log,"plan",slot,"planned");
+}
 #endif
+}
+
+bool PinsIntact(std::uintptr_t base,std::size_t span,std::uintptr_t& mismatch) noexcept {
+    return BodyGate(base,span,mismatch);
 }
 void BeginAllocation(std::uint32_t mission) noexcept {
 #ifdef MGS_LOCAL_STOCK46_WRITER_TEST
     authorization.Begin(mission);readiness.Reset();before={};scratch={};observed_epoch=expected_handle=observations=0;
     tracking=readiness_logged=false;
+    general=General{};general.active=true;general.mission=mission;general_before={};general_scratch={};
+    status=Status{};status.active=true;status.mission=mission;
 #else
     (void)mission;
 #endif
@@ -149,6 +336,14 @@ void BeginAllocation(std::uint32_t mission) noexcept {
 void End() noexcept {
 #ifdef MGS_LOCAL_STOCK46_WRITER_TEST
     authorization.End();readiness.Reset();before={};scratch={};tracking=readiness_logged=false;observations=0;
+    general=General{};general_before={};general_scratch={};status.active=false;
+#endif
+}
+void ReadStatus(Status& out) noexcept {
+#ifdef MGS_LOCAL_STOCK46_WRITER_TEST
+    out=status;
+#else
+    out=Status{};
 #endif
 }
 void Observe(const Context& c,void (*log)(const char*) noexcept) noexcept {
@@ -158,7 +353,7 @@ void Observe(const Context& c,void (*log)(const char*) noexcept) noexcept {
         if(!c.owner || !c.offline_gates || !c.body_ready || c.mission!=30010 || c.body_epoch!=observed_epoch ||
            c.player!=before.player || c.remote_block!=before.bodies[1]) {tracking=false;Receipt(log,"observation_stopped","owner_lease_changed");return;}
         bool bound=false;
-        const char* reason=Readback(c,scratch,bound);
+        const char* reason=Readback(c.base,c.image_span,c.player,c.remote_block,contract::kStock46,expected_handle,before,scratch,bound);
         if(reason || bound || ++observations>=50) {
             tracking=false;Receipt(log,bound ? "handle_bound" : "observation_stopped",
                 reason ? reason : bound ? "ok" : "model_wait_limit");
@@ -176,7 +371,8 @@ void Observe(const Context& c,void (*log)(const char*) noexcept) noexcept {
         reason=contract::Preflight(c.base,c.image_span,reader,c.player,c.remote_block,before);
         const char* waiting=readiness.Observe(reason==nullptr);
         if(!readiness_logged) {
-            readiness_logged=true;PackageReceipt(log,c,before.package_observation);OptionalReceipt(log,before.optional);
+            readiness_logged=true;PackageReceipt(log,c.base,c.image_span,before.package_observation,contract::kStock46,"stock46_writer",readiness.Count());
+            OptionalReceipt(log,before.optional,"stock46_writer",true);
             if(reason) Receipt(log,"readiness_wait",reason);
         }
         if(waiting) {
@@ -194,7 +390,7 @@ void Observe(const Context& c,void (*log)(const char*) noexcept) noexcept {
     observed_epoch=c.body_epoch;
     reason=contract::Preflight(c.base,c.image_span,reader,c.player,c.remote_block,before);
     if(reason) {Receipt(log,"refused",reason);return;}
-    expected_handle=(before.new_index<<16)|(46u<<5)|4u;
+    expected_handle=contract::ExpectedHandle(before.new_index,contract::kStock46);
     std::uintptr_t mismatch=0;
     if(!BodyGate(c.base,c.image_span,mismatch)) {Receipt(log,"refused","full_body_gate",INT32_MIN,mismatch);return;}
     // Re-read after hashing, directly before mutation. Even a successful
@@ -202,35 +398,116 @@ void Observe(const Context& c,void (*log)(const char*) noexcept) noexcept {
     auto& refreshed=scratch;
     reason=contract::Preflight(c.base,c.image_span,reader,c.player,c.remote_block,refreshed);
     if(!reason) reason=contract::LocalUnchanged(before,refreshed);
-    if(reason || refreshed.ring!=before.ring || refreshed.ring_cursor!=before.ring_cursor ||
-       refreshed.new_index!=before.new_index || refreshed.meta_rows!=before.meta_rows || refreshed.map_rows!=before.map_rows) {
-        Receipt(log,"refused",reason ? reason : "allocation_lease_changed");return;
-    }
-    if(refreshed.next_resource!=before.next_resource || refreshed.selected_group!=before.selected_group ||
-       refreshed.selected_resource_index!=before.selected_resource_index ||
-       refreshed.package_service!=before.package_service || refreshed.package_parameters!=before.package_parameters ||
-       refreshed.selected_banks!=before.selected_banks || refreshed.selected_bank_arrays!=before.selected_bank_arrays ||
-       refreshed.selected_cache_counts!=before.selected_cache_counts || refreshed.selected_cache_arrays!=before.selected_cache_arrays ||
-       refreshed.selected_bank_aux!=before.selected_bank_aux ||
-       refreshed.selected_bank_allocations!=before.selected_bank_allocations ||
-       refreshed.selected_bank_allocation_bytes!=before.selected_bank_allocation_bytes ||
-       refreshed.selected_bank_used_bytes!=before.selected_bank_used_bytes ||
-       refreshed.main_cache_candidate!=before.main_cache_candidate || refreshed.main_cache_entries!=before.main_cache_entries ||
-       refreshed.banks!=before.banks || refreshed.eligible_resources!=before.eligible_resources ||
-       refreshed.initial_maps!=before.initial_maps || refreshed.initial_owners!=before.initial_owners ||
-       refreshed.initial_load_flags!=before.initial_load_flags || refreshed.initial_engine_metadata!=before.initial_engine_metadata ||
-       refreshed.free_queue!=before.free_queue || refreshed.free_cursor!=before.free_cursor) {
-        Receipt(log,"refused","selected_resource_lease_changed");return;
-    }
+    if(!reason) reason=LeaseChanged(before,refreshed);
+    if(reason) {Receipt(log,"refused",reason);return;}
     const Request request{};std::int32_t result=INT32_MIN;std::uintptr_t returned=0;
     const bool called=Call(c.base+0x11AC2E0,before.iface,&request,&result,&returned);
     bool bound=false;
-    const char* readback=Readback(c,scratch,bound);
+    const char* readback=Readback(c.base,c.image_span,c.player,c.remote_block,contract::kStock46,expected_handle,before,scratch,bound);
     if(!called || returned!=reinterpret_cast<std::uintptr_t>(&result) || result!=0 || readback) {
         Receipt(log,"call_unverified",readback ? readback : !called ? "seh_fault" : "dispatch_result",result);return;
     }
     Receipt(log,bound ? "handle_bound" : "handle_queued",nullptr,result);
     if(!bound) {tracking=true;observations=0;}
+#else
+    (void)c;(void)log;
+#endif
+}
+void ObserveGeneral(const GeneralContext& c,void (*log)(const char*) noexcept) noexcept {
+#ifdef MGS_LOCAL_STOCK46_WRITER_TEST
+    auto& g=general;
+    if(!c.enabled || !g.active || c.mission!=g.mission) return;
+    status.substitute=c.substitute;
+    if(g.cursor>=kSlots) return;
+    auto reader=Read;
+    contract::View<decltype(reader)> v{reader,c.base,c.image_span};
+    const unsigned slot=g.order[g.cursor];
+    auto& s=status.slots[slot];
+    if(g.tracking) {
+        if(!c.owner || !c.gates || !c.body_ready || c.body_epoch!=g.observed_epoch ||
+           c.player!=general_before.player || c.remote_block!=general_before.bodies[1]) {
+            Advance(log,slot,SlotState::unverified,"observation_stopped","owner_lease_changed");return;
+        }
+        bool bound=false;
+        const char* reason=Readback(c.base,c.image_span,c.player,c.remote_block,g.target,g.expected,general_before,general_scratch,bound);
+        if(reason) {Advance(log,slot,SlotState::unverified,"observation_stopped",reason);return;}
+        if(bound) {Advance(log,slot,SlotState::bound,"handle_bound",nullptr);return;}
+        if(++g.observations>=50) Advance(log,slot,SlotState::queued,"observation_stopped","model_wait_limit");
+        return;
+    }
+    // Nothing is spent while an owner gate is down.
+    if(!c.owner || !c.gates || !c.body_ready || !c.player || !c.remote_block || !c.base || !c.image_span) return;
+    if(!g.ordered) {SlotOrder(c.remote_slot,g.order);g.ordered=true;g.observed_epoch=c.body_epoch;}
+    if(c.body_epoch!=g.observed_epoch) {
+        // One attempt per slot per allocation: a re-realized body ends the rest.
+        while(g.cursor<kSlots) {
+            const unsigned rest=g.order[g.cursor];
+            status.slots[rest].tier=status.slots[rest].tier==Tier::none ? Tier::d : status.slots[rest].tier;
+            Advance(log,rest,SlotState::refused,"refused","body_epoch_changed");
+        }
+        return;
+    }
+    std::uintptr_t engine=0;
+    if(!EngineOf(v,c.player,engine)) return;
+    if(!g.census_ok) {
+        g.census_ok=contract::Census(v,engine,g.census);
+        if(!g.census_ok) return;
+        status.census_ok=true;status.resident_count=0;
+        for(unsigned i=0;i<contract::kCacheEntries;++i) {
+            const auto& e=g.census[i];
+            if(!(e.flags&1)) continue;
+            auto& r=status.resident[status.resident_count++];
+            r.equip=e.equip;r.type=e.type;r.receiver=e.receiver;r.flags=e.flags;r.index=static_cast<std::uint8_t>(i);r.refs=e.refs;
+        }
+        if(!g.census_logged) {g.census_logged=true;CensusReceipt(log);}
+    }
+    if(s.state==SlotState::idle || s.state==SlotState::plan_wait) {
+        Plan(c,v,engine,slot,log);
+        return;
+    }
+    if(s.state!=SlotState::readiness) return;
+    // Readiness: the strict preflight of this target, at most 50 observations.
+    const char* reason=contract::Preflight(c.base,c.image_span,reader,c.player,c.remote_block,general_before,g.target);
+    if(!reason) reason=OtherSlots(general_before,slot);
+    const char* waiting=g.readiness.Observe(reason==nullptr);
+    if(!g.readiness_logged) {
+        g.readiness_logged=true;
+        PackageReceipt(log,c.base,c.image_span,general_before.package_observation,g.target,"equip_writer",g.readiness.Count());
+        OptionalReceipt(log,general_before.optional,"equip_writer",g.target.optional);
+        if(reason) GeneralReceipt(log,"readiness_wait",slot,reason);
+    }
+    if(waiting) {
+        if(std::strcmp(waiting,"readiness_limit")==0) Advance(log,slot,SlotState::refused,"refused",reason ? reason : waiting);
+        return;
+    }
+    // The slot's one attempt from here on.
+    g.expected=contract::ExpectedHandle(general_before.new_index,g.target);
+    s.handle=g.expected;
+    std::uintptr_t mismatch=0;
+    if(!BodyGate(c.base,c.image_span,mismatch)) {Advance(log,slot,SlotState::refused,"refused","full_body_gate",INT32_MIN,mismatch);return;}
+    auto& refreshed=general_scratch;
+    reason=contract::Preflight(c.base,c.image_span,reader,c.player,c.remote_block,refreshed,g.target);
+    if(!reason) reason=OtherSlots(refreshed,slot);
+    if(!reason) reason=contract::LocalUnchanged(general_before,refreshed);
+    if(!reason) reason=LeaseChanged(general_before,refreshed);
+    if(reason) {Advance(log,slot,SlotState::refused,"refused",reason);return;}
+    Request request{};request.equip=g.target.equip;
+    std::int32_t result=INT32_MIN;std::uintptr_t returned=0;
+    ++status.dispatches;
+    const bool called=Call(c.base+0x11AC2E0,general_before.iface,&request,&result,&returned);
+    bool bound=false;
+    const char* readback=Readback(c.base,c.image_span,c.player,c.remote_block,g.target,g.expected,general_before,general_scratch,bound);
+    if(!called || returned!=reinterpret_cast<std::uintptr_t>(&result) || result!=0 || readback) {
+        // A confirmed handle still occupies the slot: later slots expect it.
+        if(called && readback==nullptr) g.dispatched_handles[slot]=g.expected;
+        Advance(log,slot,SlotState::unverified,"call_unverified",readback ? readback : !called ? "seh_fault" : "dispatch_result",result);
+        return;
+    }
+    g.dispatched_handles[slot]=g.expected;
+    if(bound) {Advance(log,slot,SlotState::bound,"handle_bound",nullptr,result);return;}
+    s.state=SlotState::tracking;SetReason(s,"queued");
+    GeneralReceipt(log,"handle_queued",slot,nullptr,result);
+    g.tracking=true;g.observations=0;
 #else
     (void)c;(void)log;
 #endif

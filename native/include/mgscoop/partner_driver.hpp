@@ -38,6 +38,7 @@
 #include "mgscoop/partner_input_hook.hpp"
 #include "mgscoop/partner_defer.hpp"
 #include "mgscoop/partner_equip_wire.hpp"
+#include "mgscoop/equipment_stock_writer.hpp"
 #include "mgscoop/partner_fire_filter.hpp"
 #include "mgscoop/partner_reload.hpp"
 #include "mgscoop/partner_slots.hpp"
@@ -358,6 +359,8 @@ struct Settings {
     // nslot= triggers; play runs nslot=call as write).
     PartnerNativeReload nreload;
     PartnerNativeSlot nslot;
+    // What body 1 carries (lab.ini partner_native_equip; the observer runs the writers).
+    PartnerNativeEquip nequip;
     // Set only in the effective copy: the native settings apply this tick.
     bool native_active;
     // lab.ini mode=play (Configure): the trigger file never enables the native
@@ -768,6 +771,19 @@ struct Driver {
     // Native rates: the mirror's epoch (bumped at every MissionStart, never 0
     // once a mission ran), published with the Arm.
     std::uint32_t rates_epoch;
+    // The generalized preload and writer (docs/native-puppet.md "Generalized
+    // writer"), process-lifetime: the last accepted manifest of any mission
+    // and its link session (the preload at the next allocation, before that
+    // mission's own manifest arrives), and what the observer (the natural
+    // allocation and mission owner) last reported; telemetry copies it.
+    partner_equip_wire::Manifest equip_cache;
+    bool equip_cache_have;
+    std::uint32_t equip_cache_epoch;
+    equipment_stock_writer::Status equip_status;
+    std::uint16_t preload_ids[3];
+    std::uint8_t preload_count;
+    char preload_verdict[24], preload_reason[32];
+    std::uint32_t preload_mission, preload_new_hashes;
     Mission mission;
 };
 

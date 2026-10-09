@@ -296,6 +296,8 @@ $script:LabPartnerKeys = @(
     # the native gun stage and Play-OfflineCoop run event / write.
     @{ Key = 'partner_native_reload'; Json = 'native_reload'; Kind = 'enum'; Values = @('mirror', 'raw', 'event') },
     @{ Key = 'partner_native_slot'; Json = 'native_slot'; Kind = 'enum'; Values = @('off', 'write', 'call') },
+    # What body 1 carries (the generalized writer, W2/W3): stock46 by default; the gun stage and Play-OfflineCoop run substitute.
+    @{ Key = 'partner_native_equip'; Json = 'native_equip'; Kind = 'enum'; Values = @('stock46', 'manifest', 'substitute') },
     @{ Key = 'crash_probe'; Json = 'crash_probe'; Kind = 'bool' },
     # Debug "Spawn enemy here" native placement (docs/debug-menu.md): lab only,
     # default off and written only when set.

@@ -471,6 +471,29 @@ struct Telemetry {
     bool equip_tables_ok;
     std::uint32_t equip_rx_base[3], equip_rx_alias[3];
     char equip_apply[12];
+    // The generalized writer and preload (W2/W3/W6; docs/native-puppet.md
+    // "Generalized writer"): the setting (stock46|manifest|substitute), per
+    // slot the manifest's base id, the planned equip, the tier (a1|c|d|none),
+    // the family (optional|plain|none), the state, its reason and the
+    // dispatched handle; the counters; the stock cache census
+    // (native.equip.resident: the used entries of 48) and the preload verdict.
+    char equip_setting[12];
+    bool writer_active;
+    std::uint16_t writer_want[3], writer_equip[3];
+    char writer_tier[3][6], writer_family[3][10], writer_state[3][12], writer_reason[3][32];
+    std::uint32_t writer_handle[3];
+    std::uint32_t writer_dispatches, writer_bound, writer_refused;
+    bool resident_ok;
+    std::uint8_t resident_count;
+    struct Resident {
+        std::uint16_t equip;
+        std::uint8_t type, receiver, flags, index;
+        std::uint32_t refs;
+    } resident[48];
+    std::uint16_t preload_ids[3];
+    std::uint8_t preload_count;
+    char preload_verdict[24], preload_reason[32];
+    std::uint32_t preload_new_hashes;
     // Facing governor (partner_recon; docs/native-puppet.md "Facing"): its
     // mode off|idle|settle|aim|contested, the error, target and body yaw
     // (centidegrees, kNull unread), the body's own yaw rate (deg/s), the

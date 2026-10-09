@@ -1,5 +1,26 @@
 # Development status
 
+## October 9, 2026: the generalized preload and writer (fixture-tested, hidden runs pending)
+
+`wp/weapons2` ([details](native-puppet.md#generalized-preload-and-writer-w2w3-partner_native_equip)).
+Body 1 can now carry the other player's three loadout slots or same-type
+substitutes in every partner-body mission (30010, 30020, 30050), so the slot
+follower switches natively and the gate keeps FIRE/RELOAD live after a switch.
+The stock46 writer contract is parameterized (`kStock46` unchanged); `Derive`
+builds any stock gun's target from the executable tables and runtime banks
+(type -> slot, package row, `DB6AC0` dependency packages, optional or NULL
+optional, cache entry). W2: one public `RequestLoadToEquipMissionBlock` of the
+manifest's base ids per allocation, refused before the call unless nothing is
+evicted, the queue has room and no viewer-referenced entry is touched; exact
+readback. W3: per slot one dispatch per allocation (tier A1 the base id, tier C
+a resident protected stock gun of the same type, tier D refuse), never a filled
+slot, full preflight and readback per slot. FIRE: the bullet categories 1..6;
+grenade launchers and missiles stay masked. `partner_native_equip=stock46|manifest|substitute`;
+the weapons keys follow the native gun profile when not named (play gets
+event/write/substitute). No new CMake option (`-ReleaseGun` ships it).
+`tools/generate_equip_writer_pins.py --check`: 106 gates (stock46's 92
+unchanged) and the static facts. Fixture evidence only.
+
 ## October 9, 2026: the partner's own reload and weapon switch (fixture-tested, hidden runs pending)
 
 `wp/weapons2` ([details](native-puppet.md#the-partners-own-reload-r1r6-partner_native_reload)).

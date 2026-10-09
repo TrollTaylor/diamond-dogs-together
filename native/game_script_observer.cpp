@@ -28,6 +28,7 @@
 #include "mgscoop/equipment_stock_probe.hpp"
 #include "mgscoop/equipment_stock_contract.hpp"
 #include "mgscoop/equipment_stock_writer.hpp"
+#include "mgscoop/equipment_preload_contract.hpp"
 #include "equipment_observation_source.hpp"
 #include "mgscoop/lab_config.hpp"
 #include "mgscoop/lab_status.hpp"
@@ -102,6 +103,10 @@ mgscoop::equipment_allocation_probe::Authorization equipment_allocation_authoriz
 mgscoop::equipment_stock_probe::Authorization stock46_authorization;
 mgscoop::equipment_stock_contract::Snapshot stock46_before;
 bool stock46_groups_authorized=false,stock46_groups_returned=false;
+// The generalized preload (W2; docs/native-puppet.md "Generalized preload").
+mgscoop::equipment_stock_probe::GeneralAuthorization equip_preload_authorization;
+mgscoop::equipment_preload_contract::Snapshot equip_preload_before;
+mgscoop::equipment_preload_contract::Snapshot equip_preload_after;
 std::uint64_t equipment_observation_requested_ms = 0;
 unsigned short equipment_observation_mission = 0;
 unsigned short allocation_mission = 0;
@@ -1164,6 +1169,43 @@ const char* HandlePartnerTick(const char* buffer, std::size_t size) noexcept {
     return partner_reply;
 }
 
+// --- The generalized equipment pieces (docs/native-puppet.md "Generalized
+// writer", "Release gating and play mode") ---------------------------------
+// The native gun profile: lab.ini partner_drive=native with
+// partner_native_gun=1 (the worker gun stage, Play-OfflineCoop, play's
+// partner_native_profile=gun after its expansion).
+bool GunProfile() noexcept {
+    const auto& labc = mgscoop::GetLabConfig();
+    return labc.partner_drive == mgscoop::PartnerDrive::native && labc.partner_native_gun;
+}
+mgscoop::PartnerNativeEquip EquipMode() noexcept { return mgscoop::GetLabConfig().partner_native_equip; }
+// Admission of the generalized preload and writer: the gun profile with the
+// generalized setting, the offline-v1 branch on the redirected saves (play
+// refuses to run without them), and either the one-PC lab (mode=lab) or
+// two-PC play (mode=play) with a paired link v2. The exact-build pins, the
+// owner threads, the allocation receipts and every native preflight follow.
+bool EquipPiecesAdmitted() noexcept {
+    const auto& labc = mgscoop::GetLabConfig();
+    if (!GunProfile() || labc.partner_native_equip == mgscoop::PartnerNativeEquip::stock46) return false;
+    if (!offline_enabled || !lab_active || !lab::SavesRedirected() || !partner_on || !partner_gate_ok) return false;
+    if (labc.mode == mgscoop::LabMode::play)
+        return mgscoop::partner_net::GetLinkInfo().state == mgscoop::link::LinkState::connected;
+    return labc.mode == mgscoop::LabMode::lab;
+}
+// The manifest the generalized pieces plan from: this mission's (each copy
+// resends its own at every mission start) or, until it arrives, the last one
+// accepted in the same link session (the preload runs before the mission).
+bool EquipManifest(mgscoop::partner_equip_wire::Manifest& out) noexcept {
+    const auto& m = partner_driver.mission;
+    if (m.equip.have) { out = m.equip.manifest; return true; }
+    const auto session = mgscoop::partner_net::GetLinkInfo().session;
+    if (partner_driver.equip_cache_have && session && partner_driver.equip_cache_epoch == session) {
+        out = partner_driver.equip_cache;
+        return true;
+    }
+    return false;
+}
+
 void ObserveEquipmentVtables() noexcept {
 #ifdef MGS_LOCAL_OFFLINE_EQUIPMENT_TEST
     static std::uint32_t observed_epoch=UINT32_MAX;
@@ -1224,6 +1266,8 @@ void ObserveStock46Writer() noexcept {
     mgscoop::equipment_stock_writer::Context context{};
     const auto& mission=partner_driver.mission;
     context.enabled=true;context.owner=OnRuntimeThread();
+    // partner_native_equip=manifest|substitute: the generalized writer owns body 1's slots.
+    if(EquipMode()!=mgscoop::PartnerNativeEquip::stock46) context.enabled=false;
     context.mission=partner_mission;context.body_epoch=mission.body_epoch;
     context.base=reinterpret_cast<std::uintptr_t>(game_base);context.image_span=game_span;
     context.preload_queued=stock46_authorization.QueuedFor(partner_mission);
@@ -1246,6 +1290,46 @@ void ObserveStock46Writer() noexcept {
 #endif
 }
 
+// The generalized writer (W3): per remote slot one dispatch per allocation
+// of a tier A1/C target, on the natural mission owner, behind the same gates
+// as stock46 except the mission (any partner-body mission of this
+// allocation) and the admission (lab or paired play; EquipPiecesAdmitted).
+void ObserveEquipWriter() noexcept {
+#ifdef MGS_LOCAL_STOCK46_WRITER_TEST
+    namespace w=mgscoop::equipment_stock_writer;
+    w::GeneralContext context{};
+    const auto& mission=partner_driver.mission;
+    const auto mode=EquipMode();
+    context.enabled=GunProfile() && mode!=mgscoop::PartnerNativeEquip::stock46;
+    context.substitute=mode==mgscoop::PartnerNativeEquip::substitute;
+    context.owner=OnRuntimeThread();
+    context.mission=partner_mission;context.body_epoch=mission.body_epoch;
+    context.base=reinterpret_cast<std::uintptr_t>(game_base);context.image_span=game_span;
+    unsigned short current_mission=0;
+    context.gates=EquipPiecesAdmitted() && allocation_enabled && archive_mounted && host_source_selected &&
+        stock46_groups_authorized && stock46_groups_returned &&
+        !mission_terminating && !termination_scope.Active() && !gameplay_restore_pending &&
+        !HasDynamiteSessionOwnership() && ReadMission(current_mission) && mgscoop::SupportsPartnerBody(current_mission) &&
+        current_mission==partner_mission && current_mission==allocation_mission;
+    pp::State state{};pp::DmTargets targets{};
+    if(context.owner && context.gates && mission.parts_loaded && mission.realized &&
+       pp::ReadState(partner_addresses,state)==pp::Refusal::none && state.vars_ok && state.arrays_ok &&
+       state.count==2 && state.local==0 && (state.flags&1u) && !(state.flags&0x100u) && !state.sync &&
+       state.ids[0]==0 && state.ids[1]==1 && state.pool[0]==0 && state.pool[1]==1 &&
+       state.parts[0]==3 && state.parts[1]==3 && pp::Realized(state,0) && pp::Realized(state,1) &&
+       !pp::ResolveDm(partner_addresses,state,targets)) {
+        context.body_ready=true;context.player=state.P;context.remote_block=targets.blk1;
+    }
+    mgscoop::partner_equip_wire::Manifest manifest{};
+    context.manifest=EquipManifest(manifest);
+    for(unsigned s=0;s<w::kSlots;++s) context.want[s]=context.manifest ? manifest.slots[s].base_id : std::uint16_t(0);
+    context.remote_slot=manifest.inv_slot<w::kSlots ? manifest.inv_slot
+        : mission.remote_v5 && mission.remote_slot<w::kSlots ? mission.remote_slot : std::uint8_t(0xFF);
+    w::ObserveGeneral(context,Log);
+    w::ReadStatus(partner_driver.equip_status);
+#endif
+}
+
 void PublishDebugSnapshot() noexcept {
     namespace debug = mgscoop::debug_menu;
     if (!debug::Enabled()) return;
@@ -1255,6 +1339,7 @@ void PublishDebugSnapshot() noexcept {
     published_ms = now;
     ObserveEquipmentVtables();
     ObserveStock46Writer();
+    ObserveEquipWriter();
     debug::Snapshot snapshot{};
     const auto& settings = partner_driver.settings;
     const auto& mission = partner_driver.mission;
@@ -1743,6 +1828,8 @@ bool SelectStock46PreloadReceipt(const char* buffer,std::size_t size,const char*
 #ifdef MGS_LOCAL_STOCK46_PRELOAD_TEST
     enabled=true;
 #endif
+    // partner_native_equip=manifest|substitute: the generalized preload answers instead.
+    if(EquipMode()!=mgscoop::PartnerNativeEquip::stock46) enabled=false;
     unsigned short mission=0;
     const bool owner=enabled && Stock46AllocationOwner(mission);
     const auto reader=[](std::uintptr_t address,void* destination,std::size_t bytes) noexcept {
@@ -1785,6 +1872,145 @@ bool SelectStock46PreloadReceipt(const char* buffer,std::size_t size,const char*
         LogFormat("stock46_preload=%s; readback=%s mission=%u public_returned=%u queue_before=%u queue_after=%u hash_mask=%u cache_unchanged=%u public_calls=lua_only equip=46 packages_loaded=unverified remote_gear_loaded=unverified\r\n",
             accepted ? "queued_verified" : "receipt_refused",sample_reason ? sample_reason : "ok",unsigned(mission),
             unsigned(is_returned),stock46_before.queue_count,after.queue_count,after.seen_hashes,unsigned(sample_reason==nullptr));
+    }
+    return true;
+}
+
+// The generalized preload (W2; docs/native-puppet.md "Generalized preload"):
+// ONE public RequestLoadToEquipMissionBlock of the received manifest's base
+// ids at the natural allocation owner, any partner-body mission. The query
+// answers the qualified id list as a Lua table (or false); native performs
+// only the read-only preflight (no eviction, queue room, no referenced entry)
+// and the readback. MGS_LOCAL_STOCK46_PRELOAD_TEST compiles it in; the
+// setting partner_native_equip=manifest|substitute and EquipPiecesAdmitted run it.
+bool SelectEquipPreloadReceipt(const char* buffer,std::size_t size,const char* name,
+                               mgscoop::script_bridge::Replacement& replacement) noexcept {
+    constexpr char query[]="return 'MGS_COOP_REMOTE_EQUIP_PRELOAD_QUERY_V2'";
+    constexpr char returned[]="return 'MGS_COOP_REMOTE_EQUIP_PRELOAD_RETURNED_V2'";
+    constexpr char failed[]="return 'MGS_COOP_REMOTE_EQUIP_PRELOAD_FAILED_V2'";
+    const auto equals=[&](const char* value,std::size_t bytes) noexcept {
+        return buffer && name && size==bytes && std::memcmp(buffer,value,bytes)==0 && std::strcmp(name,value)==0;
+    };
+    const bool is_query=equals(query,sizeof(query)-1),is_returned=equals(returned,sizeof(returned)-1);
+    if(!is_query && !is_returned && !equals(failed,sizeof(failed)-1)) return false;
+    namespace pc=mgscoop::equipment_preload_contract;
+    bool enabled=false;
+#ifdef MGS_LOCAL_STOCK46_PRELOAD_TEST
+    enabled=true;
+#endif
+    enabled=enabled && EquipPiecesAdmitted();
+    unsigned short mission=0;
+    const bool mission_read=ReadMission(mission);
+    const bool owner=enabled && allocation_enabled && archive_mounted && host_source_selected &&
+        OnAllocationThread() && !termination_scope.Active() && !gameplay_restore_pending &&
+        !HasDynamiteSessionOwnership() && mission_read && mgscoop::SupportsPartnerBody(mission) && mission==allocation_mission;
+    const auto reader=[](std::uintptr_t address,void* destination,std::size_t bytes) noexcept {
+        if(!address || address>UINTPTR_MAX-bytes) return false;
+        SIZE_T copied=0;
+        return ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(address),
+            destination,bytes,&copied)!=0 && copied==bytes;
+    };
+    auto read=reader;
+    const auto base=reinterpret_cast<std::uintptr_t>(game_base);
+    static constexpr char yes[]="return true",no[]="return false";
+    static char reply[64]{};
+    if(is_query) {
+        mgscoop::equipment_stock_probe::GeneralContext context{};
+        context.enabled=enabled; context.allocation_owner=OnAllocationThread();
+        context.mission_read=mission_read; context.mission=mission; context.supported=mgscoop::SupportsPartnerBody(mission);
+        context.owner_gates=owner;
+        context.groups_authorized=stock46_groups_authorized; context.groups_returned=stock46_groups_returned;
+        mgscoop::partner_equip_wire::Manifest manifest{};
+        context.manifest=enabled && EquipManifest(manifest);
+        // Candidates: each slot's base id that is a stock gun of that slot's type.
+        std::uint16_t ids[pc::kIds]{};unsigned count=0;
+        char dropped[96]{};
+        const char* sample_reason="not_sampled";
+        pc::Snapshot& candidate=equip_preload_before;
+        candidate={};
+        if(context.manifest) {
+            mgscoop::equipment_stock_writer_contract::View<decltype(read)> v{read,base,game_span};
+            std::uintptr_t container=0,globals=0,services=0,engine=0;
+            const bool engine_ok=v.Image(0x2C3A8A0) && v.At(base,0x2C3A8A0,container) && v.At(container,8,globals) &&
+                v.At(globals,0x98,services) && v.At(services,0x1E8,engine) && v.Method(engine,0x234B840,0x280,0xDC3840);
+            for(unsigned slot=0;slot<pc::kIds;++slot) {
+                const std::uint16_t id=manifest.slots[slot].base_id;
+                if(!id) continue;
+                bool duplicate=false;
+                for(unsigned j=0;j<count;++j) duplicate=duplicate || ids[j]==id;
+                if(duplicate) continue;
+                const char* why=engine_ok ? nullptr : "engine";
+                pc::Item item{};
+                if(!why) why=pc::Hashes(v,engine,id,item);
+                if(!why && mgscoop::equipment_stock_writer_contract::TypeSlot(item.type)!=slot) why="type_slot";
+                // Alone it must not evict or touch a referenced entry.
+                if(!why && owner) {const std::uint16_t one[1]{id};why=pc::Capture(base,game_span,read,one,1,candidate);}
+                if(why) {
+                    char item_text[40]{};
+                    StringCchPrintfA(item_text,sizeof(item_text),"%s%u:%s",dropped[0] ? "," : "",unsigned(id),why);
+                    StringCchCatA(dropped,sizeof(dropped),item_text);
+                    continue;
+                }
+                ids[count++]=id;
+            }
+        }
+        // Together (each build takes the next unused entry): drop from the end until it fits.
+        while(owner && count) {
+            sample_reason=pc::Capture(base,game_span,read,ids,count,candidate);
+            if(!sample_reason || std::strcmp(sample_reason,"cache_evict")!=0) break;
+            --count;
+        }
+        if(!owner || !count) candidate={};
+        context.ids=count;
+        // The exact code and tables the prediction rests on (A03C40, A02290, DC3700, DB6AC0, ...).
+        std::uintptr_t mismatch=0;
+        if(owner && count && !sample_reason && !mgscoop::equipment_stock_writer::PinsIntact(base,game_span,mismatch)) sample_reason="full_body_gate";
+        context.preflight_ok=owner && count && sample_reason==nullptr;
+        const char* reason=equip_preload_authorization.Try(context);
+        partner_driver.preload_mission=mission;
+        partner_driver.preload_count=0;partner_driver.preload_new_hashes=0;
+        char list[48]{};
+        if(!reason) {
+            for(unsigned i=0;i<count;++i) {
+                char one[12]{};StringCchPrintfA(one,sizeof(one),"%s%u",i ? "," : "",unsigned(ids[i]));
+                StringCchCatA(list,sizeof(list),one);
+                partner_driver.preload_ids[i]=ids[i];
+            }
+            partner_driver.preload_count=static_cast<std::uint8_t>(count);
+            partner_driver.preload_new_hashes=candidate.new_hashes;
+            StringCchPrintfA(reply,sizeof(reply),"return {%s}",list);
+            replacement={reply,std::strlen(reply)};
+        } else {
+            replacement={no,sizeof(no)-1};
+        }
+        StringCchCopyA(partner_driver.preload_verdict,sizeof(partner_driver.preload_verdict),reason ? "refused" : "authorized");
+        StringCchCopyA(partner_driver.preload_reason,sizeof(partner_driver.preload_reason),reason ? reason : "ok");
+        char actions[96]{};
+        for(unsigned i=0;i<candidate.item_count && !reason;++i) {
+            char one[32]{};
+            StringCchPrintfA(one,sizeof(one),"%s%u:%s@%u",i ? "," : "",unsigned(candidate.items[i].equip),
+                pc::ActionName(candidate.items[i].action),unsigned(candidate.items[i].entry));
+            StringCchCatA(actions,sizeof(actions),one);
+        }
+        LogFormat("equip_preload=%s; reason=%s; preflight=%s; mission=%u; owner=%u; manifest=%u; want=%u,%u,%u; ids=%s; dropped=%s; actions=%s; new_hashes=%u; queue=%u/%u; attempt_consumed=%u; public_calls=lua_only; evict=0\r\n",
+            reason ? "refused" : "authorized",reason ? reason : "ok",sample_reason ? sample_reason : "ok",unsigned(mission),unsigned(owner),
+            unsigned(context.manifest),unsigned(manifest.slots[0].base_id),unsigned(manifest.slots[1].base_id),unsigned(manifest.slots[2].base_id),
+            list[0] ? list : "none",dropped[0] ? dropped : "none",actions[0] ? actions : "none",candidate.new_hashes,
+            candidate.queue_count,candidate.queue_capacity,unsigned(equip_preload_authorization.Attempted()));
+    } else {
+        pc::Snapshot& after=equip_preload_after;
+        after={};
+        const char* sample_reason="not_sampled";
+        if(owner && is_returned && stock46_groups_authorized && stock46_groups_returned && equip_preload_before.item_count)
+            sample_reason=pc::Verify(base,game_span,read,equip_preload_before,after);
+        const bool accepted=equip_preload_authorization.Receipt(owner,mission,is_returned,sample_reason==nullptr);
+        replacement=accepted ? mgscoop::script_bridge::Replacement{yes,sizeof(yes)-1}
+                             : mgscoop::script_bridge::Replacement{no,sizeof(no)-1};
+        StringCchCopyA(partner_driver.preload_verdict,sizeof(partner_driver.preload_verdict),accepted ? "queued_verified" : "receipt_refused");
+        StringCchCopyA(partner_driver.preload_reason,sizeof(partner_driver.preload_reason),sample_reason ? sample_reason : "ok");
+        LogFormat("equip_preload=%s; readback=%s; mission=%u; public_returned=%u; queue_before=%u; queue_after=%u; new_hashes=%u; packages_loaded=unverified\r\n",
+            accepted ? "queued_verified" : "receipt_refused",sample_reason ? sample_reason : "ok",unsigned(mission),
+            unsigned(is_returned),equip_preload_before.queue_count,after.queue_count,equip_preload_before.new_hashes);
     }
     return true;
 }
@@ -1925,13 +2151,14 @@ bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
             mission_phase=MissionPhase::allocating; accepted=true;
             equipment_allocation_authorization.Begin(mission);
             stock46_authorization.Begin(mission); stock46_before={};
+            equip_preload_authorization.Begin(mission); equip_preload_before={};
             mgscoop::equipment_stock_writer::BeginAllocation(mission);
             stock46_groups_authorized=stock46_groups_returned=false;
             equipment_observation_requested_ms=0; equipment_observation_mission=0;
         }
     } else if(equals(end)) {
         boundary="allocation_returned";
-        if(OnAllocationThread()) { equipment_allocation_authorization.End(); stock46_authorization.SealAllocation(); mission_phase=MissionPhase::allocated; accepted=true; }
+        if(OnAllocationThread()) { equipment_allocation_authorization.End(); stock46_authorization.SealAllocation(); equip_preload_authorization.SealAllocation(); mission_phase=MissionPhase::allocated; accepted=true; }
     } else if(equals(initialize)) {
         boundary="initialization_enter";
         unsigned short mission=0;
@@ -1971,6 +2198,7 @@ bool SelectMissionBoundary(const char* buffer,std::size_t size,const char* name,
             accepted=termination_scope.Returned(cleanup_thread);
             equipment_allocation_authorization.End();
             stock46_authorization.End(); stock46_before={};
+            equip_preload_authorization.End(); equip_preload_before={};
             mgscoop::equipment_stock_writer::End();
             stock46_groups_authorized=stock46_groups_returned=false;
             mission_phase=MissionPhase::idle; allocation_thread=0;
@@ -2214,6 +2442,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     const auto count = InterlockedIncrement64(&entries);
     if(SelectOfflineEquipmentAllocationReceipt(buffer,size,name,replacement)) return true;
     if(SelectStock46PreloadReceipt(buffer,size,name,replacement)) return true;
+    if(SelectEquipPreloadReceipt(buffer,size,name,replacement)) return true;
     if(SelectEquipmentObservationReceipt(buffer,size,name,replacement)) return true;
     if(SelectActionEventsReceipt(buffer,size,name,replacement)) return true;
     if (SelectDebugReceipt(buffer, size, name, replacement)) return true;
@@ -2362,6 +2591,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
             ClearUpperEndOwner(); mgscoop::partner_upper_probe::Clear("mission_terminating");
             equipment_allocation_authorization.End();
             stock46_authorization.End(); stock46_before={};
+            equip_preload_authorization.End(); equip_preload_before={};
             mgscoop::equipment_stock_writer::End();
             stock46_groups_authorized=stock46_groups_returned=false;
             mission_terminating=true;

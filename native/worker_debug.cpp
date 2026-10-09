@@ -190,7 +190,19 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
     for(unsigned s=0;s<3;++s){if(s)j.Add(",");j.String(n.slot_tier[s],sizeof(n.slot_tier[s]));}
     j.Add("],\"ok_mask\":%u,\"writes\":%u,\"refused\":%u,\"last\":",unsigned(n.slot_ok_mask),n.slot_writes,n.slot_refused);
     j.String(n.slot_last,sizeof(n.slot_last));
-    j.Add(",\"faulted\":%s,\"switching\":%s}",Bool(n.slot_faulted),Bool(n.body_switching));
+    j.Add(",\"faulted\":%s,\"switching\":%s",Bool(n.slot_faulted),Bool(n.body_switching));
+    // The generalized writer (W3): per slot what it planned and did.
+    j.Add(",\"writer\":{\"active\":%s,\"dispatches\":%u,\"bound\":%u,\"refused\":%u,\"slots\":[",Bool(n.writer_active),
+        n.writer_dispatches,n.writer_bound,n.writer_refused);
+    for(unsigned s=0;s<3;++s){
+        if(s)j.Add(",");
+        j.Add("{\"want\":%u,\"equip\":%u,\"tier\":",unsigned(n.writer_want[s]),unsigned(n.writer_equip[s]));
+        j.String(n.writer_tier[s],sizeof(n.writer_tier[s]));j.Add(",\"family\":");j.String(n.writer_family[s],sizeof(n.writer_family[s]));
+        j.Add(",\"state\":");j.String(n.writer_state[s],sizeof(n.writer_state[s]));
+        j.Add(",\"reason\":");j.String(n.writer_reason[s],sizeof(n.writer_reason[s]));
+        j.Add(",\"handle\":%u}",n.writer_handle[s]);
+    }
+    j.Add("]}}");
     // Facing (partner_recon governor) and the look (D3).
     j.Add(",\"facing\":{\"setting\":");j.String(n.face_setting,sizeof(n.face_setting));
     j.Add(",\"mode\":");j.String(n.face_mode,sizeof(n.face_mode));
@@ -212,7 +224,26 @@ void NativeJson(Json& j,const partner_native::Telemetry& n) noexcept {
         Bool(n.equip_tables_ok));
     j.Add("\"rx_base\":[%u,%u,%u],\"rx_alias\":[%u,%u,%u],\"apply\":",n.equip_rx_base[0],n.equip_rx_base[1],n.equip_rx_base[2],
         n.equip_rx_alias[0],n.equip_rx_alias[1],n.equip_rx_alias[2]);
-    j.String(n.equip_apply,sizeof(n.equip_apply));j.Add("}");
+    j.String(n.equip_apply,sizeof(n.equip_apply));
+    // The generalized writer's setting, the stock cache census and the preload (W2).
+    j.Add(",\"setting\":");j.String(n.equip_setting,sizeof(n.equip_setting));
+    // The used stock cache entries, compact: [index, id, type, receiver, flags, refs].
+    j.Add(",\"resident_fields\":[\"index\",\"id\",\"type\",\"receiver\",\"flags\",\"refs\"],\"resident\":");
+    if(!n.resident_ok) j.Add("null");
+    else {
+        j.Add("[");
+        for(unsigned i=0;i<n.resident_count && i<48;++i){
+            const auto& r=n.resident[i];
+            j.Add("%s[%u,%u,%u,%u,%u,%u]",i?",":"",unsigned(r.index),unsigned(r.equip),unsigned(r.type),unsigned(r.receiver),
+                unsigned(r.flags),r.refs);
+        }
+        j.Add("]");
+    }
+    j.Add(",\"preload\":{\"ids\":[");
+    for(unsigned i=0;i<n.preload_count && i<3;++i) j.Add("%s%u",i?",":"",unsigned(n.preload_ids[i]));
+    j.Add("],\"verdict\":");j.String(n.preload_verdict,sizeof(n.preload_verdict));
+    j.Add(",\"reason\":");j.String(n.preload_reason,sizeof(n.preload_reason));
+    j.Add(",\"new_hashes\":%u}}",n.preload_new_hashes);
     // Native rates (docs/native-puppet.md "Rates"): x1000, records in rec+0x3C..+0x50 order.
     const auto record=[&](bool ok,const std::int32_t (&f)[6]) noexcept {
         if(!ok){j.Add("null");return;}

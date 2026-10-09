@@ -665,6 +665,35 @@ int main() {
                   std::strcmp(mgscoop::PartnerNativeSlotName(mgscoop::PartnerNativeSlot::write), "write") == 0 &&
                   std::strcmp(mgscoop::PartnerNativeSlotName(mgscoop::PartnerNativeSlot::call), "call") == 0,
               "weapons names");
+        // What body 1 carries (W2/W3): stock46 by default; the native gun profile defaults the three
+        // weapons keys to event / write / substitute unless lab.ini names them.
+        Check(def.partner_native_equip == mgscoop::PartnerNativeEquip::stock46 && !def.partner_native_equip_given,
+              "equip default: stock46");
+        const auto gunProfile = Lab("enabled=1\nrole=host\npartner_drive=native\npartner_native_gun=1\n");
+        Check(gunProfile.partner_native_reload == mgscoop::PartnerNativeReload::event &&
+                  gunProfile.partner_native_slot == mgscoop::PartnerNativeSlot::write &&
+                  gunProfile.partner_native_equip == mgscoop::PartnerNativeEquip::substitute && gunProfile.invalid_values == 0,
+              "the native gun profile defaults: event / write / substitute");
+        const auto gunNamed = Lab("enabled=1\nrole=host\npartner_drive=native\npartner_native_gun=1\npartner_native_reload=mirror\n"
+                                  "partner_native_slot=off\npartner_native_equip=stock46\n");
+        Check(gunNamed.partner_native_reload == mgscoop::PartnerNativeReload::mirror &&
+                  gunNamed.partner_native_slot == mgscoop::PartnerNativeSlot::off &&
+                  gunNamed.partner_native_equip == mgscoop::PartnerNativeEquip::stock46 && gunNamed.partner_native_equip_given,
+              "named weapons keys keep their values under the gun profile");
+        const auto locoProfile = Lab("enabled=1\nrole=host\npartner_drive=native\npartner_native_gun=0\n");
+        Check(locoProfile.partner_native_reload == mgscoop::PartnerNativeReload::mirror &&
+                  locoProfile.partner_native_slot == mgscoop::PartnerNativeSlot::off &&
+                  locoProfile.partner_native_equip == mgscoop::PartnerNativeEquip::stock46,
+              "without the gun the weapons keys stay off");
+        const auto equipManifest = Lab("enabled=1\nrole=host\npartner_native_equip=manifest\n");
+        const auto equipBad = Lab("enabled=1\nrole=host\npartner_native_equip=all\n");
+        Check(equipManifest.partner_native_equip == mgscoop::PartnerNativeEquip::manifest && equipManifest.invalid_values == 0 &&
+                  equipBad.invalid_values == 1 && equipBad.partner_native_equip == mgscoop::PartnerNativeEquip::stock46,
+              "equip manifest parses; an unknown value refuses and keeps stock46");
+        Check(std::strcmp(mgscoop::PartnerNativeEquipName(mgscoop::PartnerNativeEquip::stock46), "stock46") == 0 &&
+                  std::strcmp(mgscoop::PartnerNativeEquipName(mgscoop::PartnerNativeEquip::manifest), "manifest") == 0 &&
+                  std::strcmp(mgscoop::PartnerNativeEquipName(mgscoop::PartnerNativeEquip::substitute), "substitute") == 0,
+              "equip names");
         // defer takes effect only with drive=native.
         const auto deferOnly = Lab("enabled=1\nrole=host\npartner_input_defer=on\n");
         Check(deferOnly.partner_input_defer == PartnerDefer::on &&

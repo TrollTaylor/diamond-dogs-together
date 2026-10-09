@@ -12,9 +12,10 @@
 // The slot follower (partner_input_hook) writes instance 1's nibble the way
 // SetCurrentSlot 0x11AFA80 does for a non-local id, only to a slot this plan
 // admits: the body's slot must hold the remote's weapon of that slot (same) or
-// a weapon of the same type (sub, the tier C substitute). Body 1 only carries
-// what the qualified writer gave it (stock46 in the back slot), so today every
-// other slot is empty and the follower refuses it (slot_empty).
+// a weapon of the same type (sub, the tier C substitute). Body 1 carries what
+// the writers gave it: the stock46 writer only the back slot, the generalized
+// writer (partner_native_equip=manifest|substitute) each slot a tier A1 or C
+// target; an empty slot refuses (slot_empty).
 #include <cstdint>
 
 namespace mgscoop::partner_slots {
@@ -52,10 +53,10 @@ struct Plan {
 };
 Plan MakePlan(const PlanIn& in) noexcept;
 
-// The types whose shot class was qualified as a bullet weapon (the RequestBullet
-// owner filter suppresses it). Projectiles (shot class 3, gm+0x210) are not
-// filtered, so FIRE stays masked for every other type until its class read is
-// qualified. Today: type 4 (stock46, the only weapon body 1 can carry).
+// The bullet weapon types (the RequestBullet owner filter suppresses their
+// shots): 1 Assault, 2 Handgun, 3 Submachinegun, 4 Sniper, 5 Shotgun,
+// 6 Machinegun. Projectiles (7 GrenadeLauncher, 8 Missile: shot class 3,
+// gm+0x210) are not filtered, so FIRE stays masked for them and anything else.
 bool BulletType(std::uint8_t type) noexcept;
 
 // The generalized weapon gate (W5): FIRE and RELOAD reach body 1 only while
@@ -69,6 +70,9 @@ struct GateIn {
     bool switching;    // body 1: rec+0x3C0 bit 7 or rec+0x2C0 == 8
     bool type_ok;      // body_type was read
     std::uint8_t body_type;
+    // The body holds the tier C substitute the plan admitted for the slot
+    // whose manifest base is the remote's in-hand weapon (same type).
+    bool substitute;
 };
 Gate Judge(const GateIn& in) noexcept;
 // FIRE | RELOAD for mismatch and switching, FIRE for projectile, 0 for match.

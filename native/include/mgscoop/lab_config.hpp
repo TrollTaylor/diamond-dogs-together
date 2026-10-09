@@ -149,6 +149,15 @@ enum class PartnerNativeReload : std::uint8_t { mirror, raw, event };
 // call (calls 0x11AFA80 itself, lab only: play uses write). Only to a filled
 // slot whose weapon matches the plan; inert unless the native gun stage runs.
 enum class PartnerNativeSlot : std::uint8_t { off, write, call };
+// What body 1 carries (W2/W3; docs/native-puppet.md "Generalized writer"):
+// stock46 (the qualified stock46 preload and writer: Afghanistan free roam
+// only, the back slot), manifest (the generalized preload and writer with
+// the received manifest's own base ids only: tier A1) or substitute (also a
+// resident protected stock gun of the same type when the base id is not
+// resident: tier C). Every partner-body mission; never a filled slot, never
+// a cache eviction. Inert unless the native gun profile runs and the build
+// carries the stock46 gun pieces (MGS_LOCAL_STOCK46_PRELOAD_TEST/_WRITER_TEST).
+enum class PartnerNativeEquip : std::uint8_t { stock46, manifest, substitute };
 // Instance 1's per-id movement rates (base action record of *(PS1+0x260):
 // dash +0x48/+0x50, crawl +0x3C/+0x40/+0x44; docs/native-puppet.md "Rates"):
 // off (not read), log (read both instances and the remote's, telemetry only)
@@ -337,6 +346,12 @@ struct LabConfig {
     PartnerNativeNoise partner_native_noise = PartnerNativeNoise::filter;
     PartnerNativeReload partner_native_reload = PartnerNativeReload::mirror;
     PartnerNativeSlot partner_native_slot = PartnerNativeSlot::off;
+    PartnerNativeEquip partner_native_equip = PartnerNativeEquip::stock46;
+    // partner_native_reload / _slot / _equip not named in lab.ini follow the
+    // native gun profile (ResolveWeaponDefaults): event / write / substitute
+    // with partner_drive=native and partner_native_gun=1, else mirror / off /
+    // stock46. These record which of the three were named explicitly.
+    bool partner_native_reload_given = false, partner_native_slot_given = false, partner_native_equip_given = false;
     bool crash_probe = true;
     // Two-PC link (docs/link-protocol.md). `mode` is parsed independently of
     // `present`; the play save gate is lab::SavesRedirected() in the observer.
@@ -413,6 +428,7 @@ const char* PartnerNativeFaceName(PartnerNativeFace value) noexcept;
 const char* PartnerNativeNoiseName(PartnerNativeNoise value) noexcept;
 const char* PartnerNativeReloadName(PartnerNativeReload value) noexcept;
 const char* PartnerNativeSlotName(PartnerNativeSlot value) noexcept;
+const char* PartnerNativeEquipName(PartnerNativeEquip value) noexcept;
 const char* LabModeName(LabMode value) noexcept;
 // aim|always|off ("" for unset); parse refuses "unset".
 const char* NametagCrosshairName(NametagCrosshair value) noexcept;
@@ -443,6 +459,10 @@ bool ParsePartnerNativeFace(const char* text, std::size_t size, PartnerNativeFac
 bool ParsePartnerNativeNoise(const char* text, std::size_t size, PartnerNativeNoise& out) noexcept;
 bool ParsePartnerNativeReload(const char* text, std::size_t size, PartnerNativeReload& out) noexcept;
 bool ParsePartnerNativeSlot(const char* text, std::size_t size, PartnerNativeSlot& out) noexcept;
+bool ParsePartnerNativeEquip(const char* text, std::size_t size, PartnerNativeEquip& out) noexcept;
+// The weapons keys' profile defaults (see partner_native_equip): runs at the
+// end of ParseLabConfig, after every key and any profile expansion.
+void ResolveWeaponDefaults(LabConfig& config) noexcept;
 // partner_input_defer as it takes effect: off unless partner_drive=native.
 inline PartnerDefer EffectivePartnerDefer(PartnerDrive drive, PartnerDefer defer) noexcept {
     return drive == PartnerDrive::native ? defer : PartnerDefer::off;

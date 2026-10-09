@@ -5,6 +5,45 @@
 namespace mgscoop::equipment_stock_writer_contract {
 using Bytes14=std::array<std::uint8_t,0xE>;
 inline constexpr std::uint64_t optional46=0x6700BE21BBCD5DB5ull;
+// The equip one dispatch targets (docs/native-puppet.md "Generalized
+// writer"). kStock46 is the qualified stock46 contract, constant for constant;
+// Derive (below) builds the same shape for any stock gun id from the exact
+// executable tables (tools/generate_equip_writer_pins.py --check) and the
+// runtime parameter banks. Every field is re-read and compared before use.
+inline constexpr unsigned kMaxPackages=8;  // the main FPK + DB6AC0's at most 7 dependency ids
+// ChangeEquip 11AC4DE..11AC50B and the lower writer 120A5D2..120A611: the
+// slot an equip type goes to (0 hip primary, 1 back primary, 2 secondary;
+// 0xFF: not a gun type this writer serves).
+constexpr std::uint8_t TypeSlot(std::uint8_t type) noexcept {
+    return (type==1 || type==5 || type==7) ? 0u : (type==4 || type==6 || type==8) ? 1u : (type==2 || type==3) ? 2u : 0xFFu;
+}
+// A03C40: the runtime package row (parts, main FPK, flags) of a stock id below 0x400.
+constexpr std::size_t PackageRowRva(std::uint16_t equip) noexcept {return 0x2C20FD0+std::size_t(equip)*24;}
+struct Target {
+    std::uint16_t equip=46,packed=equipment_stock_contract::descriptor,row=393;
+    std::uint8_t type=4,slot=1;
+    std::array<std::uint8_t,12> recipe=equipment_stock_contract::recipe;
+    std::uint64_t parts=equipment_stock_contract::parts,package=equipment_stock_contract::package,package_flags=2;
+    // The main FPK first, then the dependency packages in A02290's append order.
+    std::array<std::uint64_t,kMaxPackages> hashes{equipment_stock_contract::hashes[0],equipment_stock_contract::hashes[1],
+        equipment_stock_contract::hashes[2],equipment_stock_contract::hashes[3]};
+    std::uint32_t hash_count=4;
+    // 1307EF2..1307F19: ids up to 0x7C read their optional descriptor at
+    // [2A6B400+8+id*8]; a zero descriptor or a larger id prepares the NULL
+    // optional (ADE358: the main bank's render request with no asset).
+    bool optional=true;
+    std::uint64_t optional_hash=optional46;
+    // stock46: the H3 parsed counts [2,1,1,1]; derived targets: 1..named count.
+    bool exact_parsed=true;
+    // stock46's first and only dispatch: every remote slot empty. Derived
+    // targets need their own slot empty (the writer checks the others).
+    bool require_remote_empty=true;
+    std::uint32_t cache_index=4;
+};
+inline constexpr Target kStock46{};
+constexpr std::uint32_t ExpectedHandle(std::uint32_t new_index,const Target& t) noexcept {
+    return (new_index<<16)|(std::uint32_t(t.equip)<<5)|t.type;
+}
 struct OptionalLease {
     std::uintptr_t asset=0,source=0,header=0;
     std::uint64_t bytes=0;
@@ -57,7 +96,9 @@ struct Snapshot {
     std::array<std::uint32_t,7> remote_handles{};
     std::array<std::uint8_t,42> remote_metadata{};
     std::array<std::uint8_t,36> remote_binder{};
-    std::array<std::uint8_t,0x50> remote_back_effect{};
+    // The target slot's effect record (body628 + slot*0x50, 9C5A39) and its
+    // 13 attachment items (B0CF80: 13 per slot record, 40 per body).
+    std::array<std::uint8_t,0x50> remote_slot_effect{};
     std::uintptr_t info=0,cache=0,refs=0,ring=0,meta_service=0,meta_rows=0,map=0,map_rows=0,resource_owners=0;
     std::uint32_t ring_capacity=0,ring_cursor=0,new_index=0,cache_refs=0,resource_id=0;
     std::array<std::uint8_t,0x90> cache_info{};
@@ -69,7 +110,7 @@ struct Snapshot {
     std::uintptr_t global_root=0,globals=0,services=0,owner_controller=0;
     std::array<std::uintptr_t,2> attachment_managers{},attachment_arrays{};
     std::array<std::array<std::uintptr_t,40>,2> attachment_items{};
-    std::array<std::array<std::uint8_t,0x20>,13> remote_back_attachments{};
+    std::array<std::array<std::uint8_t,0x20>,13> remote_slot_attachments{};
     std::uintptr_t selected_group=0,package_service=0,package_parameters=0;
     std::array<std::uintptr_t,2> selected_banks{},selected_bank_arrays{};
     std::array<std::uint32_t,2> selected_cache_counts{};
@@ -98,7 +139,7 @@ struct Snapshot {
 
 template<class Reader> struct View;
 template<class Reader> const char* AssetTree(View<Reader>& v,std::uintptr_t record,
-        std::uint32_t expected_count,bool stock,Snapshot& s) noexcept {
+        std::uint32_t expected_count,bool stock,Snapshot& s,const Target& t=kStock46) noexcept {
     // DDA00's tree getter is unbounded. Require the same owned header and
     // independently bounded named-asset count, with no asset-pointer read.
     // DDF60 DE381..DE4B3 filters these map values by activation class before
@@ -107,6 +148,8 @@ template<class Reader> const char* AssetTree(View<Reader>& v,std::uintptr_t reco
     if(!expected_count || !v.At(record,0x28,header) || !header || !v.At(record,0x30,count) ||
        !count || count>256 || !v.At(header,0x19,marker) || marker!=1 ||
        !v.At(header,8,root) || !root || root==header) return "asset_tree_bounds";
+    // A derived target has no measured parsed count: at most the named count.
+    if(!t.exact_parsed && expected_count>count) return "package_parsed_count";
     struct Node {std::uintptr_t pointer,parent;std::uint64_t low,high;bool has_low,has_high;};
     std::array<Node,256> stack{};unsigned pending=1,seen_count=0,parts_count=0,optional_count=0;
     std::array<std::uintptr_t,256> seen{};
@@ -122,8 +165,8 @@ template<class Reader> const char* AssetTree(View<Reader>& v,std::uintptr_t reco
            !v.At(node.pointer,0x20,hash) || !v.At(node.pointer,0x28,asset) || !asset ||
            (node.has_low && hash<=node.low) || (node.has_high && hash>=node.high)) return "asset_tree_owner";
         seen[seen_count]=node.pointer;hashes[seen_count++]=hash;
-        if(stock && hash==equipment_stock_contract::parts) {s.stock_parts_asset=asset;++parts_count;}
-        if(stock && hash==optional46) {s.optional.asset=asset;++optional_count;}
+        if(stock && hash==t.parts) {s.stock_parts_asset=asset;++parts_count;}
+        if(stock && t.optional && hash==t.optional_hash) {s.optional.asset=asset;++optional_count;}
         if(right!=header) {if(pending>=stack.size()) return "asset_tree_cycle";
             stack[pending++]={right,node.pointer,hash,node.high,true,node.has_high};}
         if(left!=header) {if(pending>=stack.size()) return "asset_tree_cycle";
@@ -134,7 +177,7 @@ template<class Reader> const char* AssetTree(View<Reader>& v,std::uintptr_t reco
     for(unsigned j=1;j<count;++j) {if(hashes[j]<hashes[lo]) lo=j;if(hashes[j]>hashes[hi]) hi=j;}
     if(!v.At(header,0,edge) || edge!=seen[lo] || !v.At(header,0x10,edge) || edge!=seen[hi]) return "asset_tree_extrema";
     if(stock && parts_count!=1) return "stock_parts_asset_missing";
-    return stock && optional_count!=1 ? "stock_optional_asset_missing" : nullptr;
+    return stock && t.optional && optional_count!=1 ? "stock_optional_asset_missing" : nullptr;
 }
 inline std::uint32_t Word32(const std::uint8_t* p) noexcept {std::uint32_t v=0;std::memcpy(&v,p,4);return v;}
 inline std::uint16_t Word16(const std::uint8_t* p) noexcept {std::uint16_t v=0;std::memcpy(&v,p,2);return v;}
@@ -160,13 +203,13 @@ template<class Reader> struct View {
     }
 };
 
-template<class Reader> const char* OptionalReady(View<Reader>& v,OptionalLease& o) noexcept {
+template<class Reader> const char* OptionalReady(View<Reader>& v,OptionalLease& o,const Target& t=kStock46) noexcept {
     std::uint8_t state=0;std::uint32_t result=0,flags=0;std::uint64_t hash=0;
     // The canonical loaded resource factory declares a 0xA0 object; loader
     // 1A75340 binds header98 to its owned source60 and converts count*0x10
     // relative parameter records into count*0x30 descriptors. No descriptors,
     // source-relative children, dictionary, or native method are followed here.
-    if(!v.Method(o.asset,0x24C2890,0x48,0x1A75340) || !v.At(o.asset,0x30,hash) || hash!=optional46 ||
+    if(!v.Method(o.asset,0x24C2890,0x48,0x1A75340) || !v.At(o.asset,0x30,hash) || hash!=t.optional_hash ||
        !v.At(o.asset,0x40,state) || state!=2 || !v.At(o.asset,0x44,result) || result ||
        !v.At(o.asset,0x80,flags) || (flags&0x1000000)) return "stock_optional_state";
     if(!v.At(o.asset,0x60,o.source) || !v.At(o.asset,0x68,o.bytes) ||
@@ -193,8 +236,20 @@ template<class Reader> const char* OptionalReady(View<Reader>& v,OptionalLease& 
     o.render_bytes=512+544+((8*o.global+88+15)&~15u);
     return o.render_bytes<=2048 ? nullptr : "stock_optional_render_size";
 }
+// The NULL optional (an id above 0x7C or a zero descriptor): 1307F31 passes
+// the zeroed caller descriptor, ADE358 sees asset NULL and (main bank, policy
+// nonzero) still renders: 1AB7520 req asset NULL, flags 208, count 1;
+// 1AB7940 = 0x20 + 0x150 (flags 8) + 1E19200(NULL) where 1E1921F skips every
+// asset branch: 0x90 + align16(1A7DA20(1,1) = 1AA49E0(1,1)+0x30 = 8g+88).
+// 1E18CF0 skips its asset branch at 1E18D82 the same way.
+template<class Reader> const char* OptionalAbsent(View<Reader>& v,OptionalLease& o) noexcept {
+    o={};
+    if(!v.At(v.base,0x2C71680,o.global) || o.global>153) return "stock_optional_global";
+    o.render_bytes=512+((8*o.global+88+15)&~15u);
+    return o.render_bytes<=2048 ? nullptr : "stock_optional_render_size";
+}
 
-template<class Reader> const char* MissionReady(View<Reader>& v,Snapshot& s) noexcept {
+template<class Reader> const char* MissionReady(View<Reader>& v,Snapshot& s,const Target& t=kStock46) noexcept {
     if(!v.At(v.base,0x2C1E3B0,s.mission_manager) || !v.At(s.mission_manager,0x40,s.mission_group)) return "mission_group";
     std::uint32_t count=0,state=0,phase=0;std::uintptr_t owner=0,pointers=0,records=0;
     if(!v.At(s.mission_group,0x1C,count) || count!=1 || !v.At(s.mission_group,0x48,s.mission_entry) ||
@@ -210,36 +265,39 @@ template<class Reader> const char* MissionReady(View<Reader>& v,Snapshot& s) noe
            !v.At(record,0x10,owner) || owner!=s.mission_entry || !v.At(record,8,hash) ||
            !v.Method(record,0x20C1CE0,0x38,0xDDA00)) return "noncanonical_file";
         unsigned index=0;
-        for(;index<equipment_stock_contract::hashes.size();++index) if(hash==equipment_stock_contract::hashes[index]) break;
-        if(index==equipment_stock_contract::hashes.size()) continue;
+        for(;index<t.hash_count && index<kMaxPackages;++index) if(hash==t.hashes[index]) break;
+        if(index>=t.hash_count || index>=kMaxPackages) continue;
         std::uint32_t result=0,load_phase=0,parsed_count=0;std::uint8_t ready=0;std::uintptr_t parsed=0;
         if(mask&(1u<<index) || !v.Method(record,0x20C1CE0,0x90,0xDDF60) ||
            !v.Method(record,0x20C1CE0,0x80,0xDD830) || !v.Method(record,0x20C1CE0,0x88,0xDD810) ||
            !v.At(record,0x18,result) || result || !v.At(record,0x1C,ready) || ready!=2 ||
            !v.At(record,0x20,load_phase) || load_phase!=7 || !v.At(record,0x110,parsed) || !parsed ||
-           !v.At(record,0x118,parsed_count) || parsed_count!=(index ? 1u : 2u)) return "package_not_ready";
-        if(const char* why=AssetTree(v,record,parsed_count,index==0,s)) return why;
+           !v.At(record,0x118,parsed_count) || (t.exact_parsed ? parsed_count!=(index ? 1u : 2u) : parsed_count==0))
+            return "package_not_ready";
+        if(const char* why=AssetTree(v,record,parsed_count,index==0,s,t)) return why;
         mask|=1u<<index;
     }
-    if(mask!=15) return "missing_package";
+    if(!t.hash_count || t.hash_count>kMaxPackages || mask!=(1u<<t.hash_count)-1u) return "missing_package";
     // ADDED9..ADDEEB derives its branch class from this exact native field.
     // H3 canonical stock46 asset has its full parts hash here (class7189),
     // taking the ordinary branch instead of specialized class0x1094.
     if(!v.At(s.stock_parts_asset,0x30,s.stock_parts_word30) ||
-       s.stock_parts_word30!=equipment_stock_contract::parts) return "stock_parts_identity";
+       s.stock_parts_word30!=t.parts) return "stock_parts_identity";
     static_assert(((equipment_stock_contract::parts>>0x33)&0x1FFF)==7189);
+    if(((t.parts>>0x33)&0x1FFF)==0x1094) return "stock_parts_class";
     // ADC9F7 obtains the native component owner here. Do not call the
     // ordinary path with an absent owner, even if the hash/tree was ready.
     if(!v.At(s.stock_parts_asset,0x70,s.stock_parts_entity) || !s.stock_parts_entity) return "stock_parts_entity";
-    return OptionalReady(v,s.optional);
+    return t.optional ? OptionalReady(v,s.optional,t) : OptionalAbsent(v,s.optional);
 }
 
 // Common readback deliberately does not call methods or dereference a parsed
 // package array. The adapter provides fresh pp::ReadState/ResolveDm separately.
 template<class Reader> const char* Capture(std::uintptr_t base,std::size_t span,Reader& reader,
-        std::uintptr_t player,std::uintptr_t remote_block,Snapshot& s) noexcept {
+        std::uintptr_t player,std::uintptr_t remote_block,Snapshot& s,const Target& t=kStock46) noexcept {
     s={};View<Reader> v{reader,base,span};s.player=player;
-    if(!v.Image(0x2C25C50,0x1818) || !v.Image(0x2C21420,24) || !v.Image(0x2BD3FD4,4)) return "image_bounds";
+    if(!v.Image(0x2C25C50,0x1818) || !v.Image(PackageRowRva(t.equip),24) || !v.Image(0x2BD3FD4,4)) return "image_bounds";
+    if(t.slot>2 || TypeSlot(t.type)!=t.slot || t.cache_index>=48) return "target_shape";
     std::uintptr_t current=0,ids=0,pools=0,parts=0,blocks=0,buffer=0;std::uint32_t count=0,local=0,flags=0,local_id=0,owner_id=0;
     std::array<std::uint16_t,2> id{};std::array<std::uint8_t,2> pool{},part{};
     if(!v.At(base,0x2A82C30,current) || current!=player || !v.Method(player,0x2295490,0x28,0x9CCB40) ||
@@ -314,30 +372,32 @@ template<class Reader> const char* Capture(std::uintptr_t base,std::size_t span,
     }
     if(s.attachment_managers[0]==s.attachment_managers[1] || s.attachment_arrays[0]==s.attachment_arrays[1])
         return "attachment_owner_alias";
-    for(unsigned j=0;j<13;++j) if(!v.At(s.attachment_items[1][13+j],0,s.remote_back_attachments[j]))
+    for(unsigned j=0;j<13;++j) if(!v.At(s.attachment_items[1][13*t.slot+j],0,s.remote_slot_attachments[j]))
         return "attachment_back_records";
     std::uintptr_t effects=0,context=0,context_rows=0;std::uint32_t context_count=0,context_base=0;
-    if(!v.At(s.bodies[1],0x628,effects) || !v.At(effects,0x50,s.remote_back_effect) ||
+    if(!v.At(s.bodies[1],0x628,effects) || !v.At(effects,0x50*std::size_t(t.slot),s.remote_slot_effect) ||
        !v.At(s.bodies[1],0x10,context) || !v.Method(context,0x22E6070,0x400,0xAF0A00) ||
        !v.At(context,8,context_count) || context_count!=1 || !v.At(context,0xC,context_base) || context_base!=1 ||
        !v.At(context,0x10,context_rows) || !v.At(context_rows,0x70,current)) return "effect_clear_context";
-    if(const char* reason=MissionReady(v,s)) return reason;
+    if(const char* reason=MissionReady(v,s,t)) return reason;
     if(!v.At(s.engine,0x1D8,s.info) || !v.At(s.engine,0x1E0,s.cache) || !v.At(s.engine,0x1E8,s.refs) ||
-       !v.At(s.info,4*0x90,s.cache_info) || !v.At(s.cache,4*0x38,s.cache_record) ||
-       !v.At(s.refs,4*4,s.cache_refs)) return "stock_cache";
-    if(Word16(s.cache_info.data()+0x5E)!=46 || (s.cache_info[0x78]&0x1F)!=4 || s.cache_info[0x7A]!=157 ||
+       !v.At(s.info,t.cache_index*0x90,s.cache_info) || !v.At(s.cache,t.cache_index*0x38,s.cache_record) ||
+       !v.At(s.refs,t.cache_index*4,s.cache_refs)) return "stock_cache";
+    if(Word16(s.cache_info.data()+0x5E)!=t.equip || (s.cache_info[0x78]&0x1F)!=t.type || s.cache_info[0x7A]!=t.recipe[0] ||
        s.cache_record[0x34]!=3) return "stock_cache_identity";
-    for(unsigned i=0;i<4;++i) {
+    // DC3755..DC376A selects the FIRST used entry of the id: none earlier.
+    for(unsigned i=0;i<t.cache_index;++i) {
         std::uint8_t cf=0;std::uint16_t ci=0;
-        if(!v.At(s.cache,i*0x38+0x34,cf) || !v.At(s.info,i*0x90+0x5E,ci) || (cf && ci==46)) return "earlier_stock_match";
+        if(!v.At(s.cache,i*0x38+0x34,cf) || !v.At(s.info,i*0x90+0x5E,ci) || (cf && ci==t.equip)) return "earlier_stock_match";
     }
     std::uintptr_t types=0,resource=0,basic=0;std::uint16_t packed=0;
     std::array<std::uint8_t,12> stock_recipe{};std::array<std::uint64_t,3> package_row{};
-    if(!v.At(s.engine,8,types) || types!=base+0x2A70920 || !v.Method(types,0x22AD180,0,0xA2A3E0) ||
-       !v.At(types,8+46*2,packed) || packed!=equipment_stock_contract::descriptor ||
+    if(!t.row || t.row>0x1818/12 ||
+       !v.At(s.engine,8,types) || types!=base+0x2A70920 || !v.Method(types,0x22AD180,0,0xA2A3E0) ||
+       !v.At(types,8+std::size_t(t.equip)*2,packed) || packed!=t.packed ||
        !v.At(s.engine,0x10,resource) || resource!=base+0x2A711F0 || !v.At(resource,8,basic) || basic!=base+0x2C25C50 ||
-       !v.At(basic,(393-1)*12,stock_recipe) || stock_recipe!=equipment_stock_contract::recipe ||
-       !v.At(base,0x2C21420,package_row) || package_row!=std::array<std::uint64_t,3>{equipment_stock_contract::parts,equipment_stock_contract::package,2})
+       !v.At(basic,(std::size_t(t.row)-1)*12,stock_recipe) || stock_recipe!=t.recipe ||
+       !v.At(base,PackageRowRva(t.equip),package_row) || package_row!=std::array<std::uint64_t,3>{t.parts,t.package,t.package_flags})
         return "stock_parameter_bank";
     std::uint32_t regular=0,meta_count=0,map_count=0;std::uintptr_t meta_owner=0;
     if(!v.At(s.engine,0x100,regular) || regular!=60 ||
@@ -354,7 +414,7 @@ template<class Reader> const char* Capture(std::uintptr_t base,std::size_t span,
     return nullptr;
 }
 
-template<class Reader> PackageObservation ObservePackage(View<Reader>& v) noexcept {
+template<class Reader> PackageObservation ObservePackage(View<Reader>& v,const Target& t=kStock46) noexcept {
     PackageObservation p{};p.service=v.base+0x2A6D040;
     auto read=[&](unsigned bit,std::size_t offset,auto& value) {
         if(v.At(p.service,offset,value)) p.reads|=1u<<bit;
@@ -367,7 +427,8 @@ template<class Reader> PackageObservation ObservePackage(View<Reader>& v) noexce
     // Never follow a foreign vtable even for a diagnostic receipt.
     if(p.table==v.base+0x22A2660) for(unsigned i=0;i<3;++i)
         if(v.At(p.table,slots[i],p.methods[i])) p.reads|=1u<<(7+i);
-    if(v.At(v.base+0x2A6B400,8+46*8,p.descriptor)) p.reads|=1u<<10;
+    // 1307EF2..1307F19: only an optional-carrying target reads its descriptor.
+    if(t.optional && t.equip<=0x7C && v.At(v.base+0x2A6B400,8+std::size_t(t.equip)*8,p.descriptor)) p.reads|=1u<<10;
     if((p.reads&3)==3 && p.backing && p.backing==p.allocation) p.checks|=1;
     if((p.reads&4) && p.capacity==0x90) p.checks|=2;
     if((p.reads&8) && p.size==p.capacity) p.checks|=4;
@@ -377,9 +438,12 @@ template<class Reader> PackageObservation ObservePackage(View<Reader>& v) noexce
     for(unsigned i=0;i<3;++i) if((p.reads&(1u<<(7+i))) && p.methods[i]==v.base+rvas[i]) p.checks|=1u<<(6+i);
     // 1307F19: mov rdx,[rax+rdx*8+8]. The bank has a vtable prefix.
     // Logical45 at +46*8 is 67011DD7778F7009, not native equip46.
-    if((p.reads&1024) && p.descriptor==optional46) p.checks|=512;
+    if((p.reads&1024) && p.descriptor==t.optional_hash) p.checks|=512;
     return p;
 }
+// The masks a ready package service shows for this target (no descriptor read without the optional).
+constexpr std::uint32_t PackageReads(const Target& t) noexcept {return t.optional ? 0x7FFu : 0x3FFu;}
+constexpr std::uint32_t PackageChecks(const Target& t) noexcept {return t.optional ? 0x3FFu : 0x1FFu;}
 
 template<class Reader> bool RenderBankOwner(View<Reader>& v,const BankLease& b,bool optional) noexcept {
     std::uintptr_t arena=0,policy=0,callback=0,context=0,extra=0;
@@ -523,15 +587,28 @@ template<class Reader> const char* QualifyDelayedResources(View<Reader>& v,Snaps
 }
 
 template<class Reader> const char* Preflight(std::uintptr_t base,std::size_t span,Reader& reader,
-        std::uintptr_t player,std::uintptr_t remote_block,Snapshot& s) noexcept {
-    if(const char* reason=Capture(base,span,reader,player,remote_block,s)) return reason;
-    if(!Zero(s.remote_handles) || !Zero(s.remote_metadata) || !Zero(s.remote_back_effect)) return "remote_not_empty";
-    for(const auto& attachment:s.remote_back_attachments) {
+        std::uintptr_t player,std::uintptr_t remote_block,Snapshot& s,const Target& t=kStock46) noexcept {
+    if(const char* reason=Capture(base,span,reader,player,remote_block,s,t)) return reason;
+    if(t.require_remote_empty) {
+        if(!Zero(s.remote_handles) || !Zero(s.remote_metadata) || !Zero(s.remote_slot_effect)) return "remote_not_empty";
+    } else {
+        // Never replace a filled slot: the target slot's handle, its six
+        // metadata bytes and its effect record are untouched (other slots may
+        // hold this allocation's earlier dispatches; the writer checks those).
+        bool metadata_zero=true;
+        for(unsigned i=0;i<6;++i) metadata_zero=metadata_zero && s.remote_metadata[t.slot*6+i]==0;
+        if(s.remote_handles[t.slot] || !metadata_zero || !Zero(s.remote_slot_effect)) return "remote_slot_not_empty";
+    }
+    for(const auto& attachment:s.remote_slot_attachments) {
         std::uintptr_t resource=0;std::memcpy(&resource,attachment.data(),sizeof(resource));
         if(resource) return "remote_attachment_not_empty";
     }
-    for(unsigned i=0;i<3;++i) if(Word32(s.remote_binder.data()+i*12)!=0xFFFFFFE0u ||
-       Word32(s.remote_binder.data()+i*12+4) || Word32(s.remote_binder.data()+i*12+8)) return "remote_binder_not_empty";
+    // B0C720: the binder record of slot s is binder30 + s*12 (current, pending, flags).
+    for(unsigned i=0;i<3;++i) {
+        if(!t.require_remote_empty && i!=t.slot) continue;
+        if(Word32(s.remote_binder.data()+i*12)!=0xFFFFFFE0u ||
+           Word32(s.remote_binder.data()+i*12+4) || Word32(s.remote_binder.data()+i*12+8)) return "remote_binder_not_empty";
+    }
     if(s.cache_refs) return "stock_cache_in_use";
     View<Reader> v{reader,base,span};std::uint32_t regular=0,meta_count=0,handle_count=0,resource_count=0;
     std::uintptr_t meta_owner=0,map_flags=0,resource_rows=0;std::uint8_t load_flags=0;
@@ -702,9 +779,9 @@ template<class Reader> const char* Preflight(std::uintptr_t base,std::size_t spa
     }
     // A06260 configures six 16-byte records. The sole stock request's
     // descriptor[0] >> 11 is zero, so only parameter record0 is eligible.
-    s.package_observation=ObservePackage(v);
+    s.package_observation=ObservePackage(v,t);
     s.package_parameters=s.package_observation.parameters;
-    if(s.package_observation.reads!=0x7FF || s.package_observation.checks!=0x3FF)
+    if(s.package_observation.reads!=PackageReads(t) || s.package_observation.checks!=PackageChecks(t))
         return "selected_package_bounds";
     if(const auto reason=QualifyDelayedResources(v,s,groups,resource_rows,map_flags,free_queue,free_cursor)) return reason;
     return nullptr;
@@ -811,6 +888,106 @@ inline const char* LocalUnchanged(const Snapshot& before,const Snapshot& after) 
        before.stock_parts_entity!=after.stock_parts_entity)
         return "stock_parts_asset_changed";
     if(!(before.optional==after.optional)) return "stock_optional_changed";
+    return nullptr;
+}
+
+// --- Generalized targets (docs/native-puppet.md "Generalized writer") --------
+// DB6AC0 for a non-alias gun (types 1..8): the recipe lanes 0/1/2/3/10 through
+// the LUT getters DB6CB0/DB69D0/DB6A20/DB6CC0/DB6CD0 (one byte each), then the
+// id tables 2349980 (two bytes per class, at most two while nonzero),
+// 23499E0, 2349A10 (two, its own count), 2349A08 and 2349A68 (one each).
+// Every table is read-only executable data pinned by the generated gates.
+template<class Reader> bool DependencyIds(View<Reader>& v,const std::array<std::uint8_t,12>& recipe,
+        std::array<std::uint8_t,7>& ids,unsigned& count) noexcept {
+    constexpr std::array<std::size_t,5> luts{0x2349A90,0x2349B80,0x2349C00,0x2349CC0,0x2349A78};
+    constexpr std::array<unsigned,5> lanes{0,1,2,3,10};
+    std::array<std::uint8_t,5> k{};
+    ids={};count=0;
+    const auto byte=[&](std::size_t rva,std::uint8_t& out) noexcept {return v.Image(rva,1) && v.At(v.base,rva,out);};
+    for(unsigned i=0;i<5;++i) if(!byte(luts[i]+recipe[lanes[i]],k[i])) return false;
+    std::uint8_t id=0;
+    for(unsigned j=0;j<2;++j) {if(!byte(0x2349980+std::size_t(k[0])*2+j,id)) return false;if(!id) break;ids[count++]=id;}
+    if(!byte(0x23499E0+std::size_t(k[1]),id)) return false;
+    if(id) ids[count++]=id;
+    for(unsigned j=0;j<2;++j) {if(!byte(0x2349A10+std::size_t(k[2])*2+j,id)) return false;if(!id) break;ids[count++]=id;}
+    if(!byte(0x2349A08+std::size_t(k[3]),id)) return false;
+    if(id) ids[count++]=id;
+    if(!byte(0x2349A68+std::size_t(k[4]),id)) return false;
+    if(id) ids[count++]=id;
+    return true;
+}
+// The stock cache (DC3700's 48 entries): info 1D8 stride 90 (+5E id, +78 type
+// low 5 bits, +7A receiver), records 1E0 stride 38 (+34 flags: 1 used, 2
+// protected), refs 1E8 u32.
+struct CacheEntry {
+    std::uint16_t equip=0;std::uint8_t type=0,receiver=0,flags=0;std::uint32_t refs=0;
+};
+inline constexpr unsigned kCacheEntries=48;
+template<class Reader> bool Census(View<Reader>& v,std::uintptr_t engine,std::array<CacheEntry,kCacheEntries>& out) noexcept {
+    out={};std::uintptr_t info_rows=0,cache_rows=0,ref_rows=0;
+    if(!v.At(engine,0x1D8,info_rows) || !info_rows || !v.At(engine,0x1E0,cache_rows) || !cache_rows ||
+       !v.At(engine,0x1E8,ref_rows) || !ref_rows) return false;
+    for(unsigned i=0;i<kCacheEntries;++i) {
+        auto& e=out[i];std::uint8_t type=0;
+        if(!v.At(info_rows,i*0x90+0x5E,e.equip) || !v.At(info_rows,i*0x90+0x78,type) || !v.At(info_rows,i*0x90+0x7A,e.receiver) ||
+           !v.At(cache_rows,i*0x38+0x34,e.flags) || !v.At(ref_rows,i*4,e.refs)) return false;
+        e.type=type&0x1F;
+    }
+    return true;
+}
+// DC3755..DC376A: the first used entry of the id (48 when none).
+inline unsigned FirstEntry(const std::array<CacheEntry,kCacheEntries>& census,std::uint16_t equip) noexcept {
+    for(unsigned i=0;i<kCacheEntries;++i) if((census[i].flags&1) && census[i].equip==equip) return i;
+    return kCacheEntries;
+}
+// Tier A1/C admission of a resident entry: used and protected (flags 3, the
+// stock46 pattern), no reference (never shared with the local player).
+inline bool ResidentProtected(const CacheEntry& e) noexcept {return e.flags==3 && e.refs==0;}
+// A stock gun's target from the type table (A2A3E0/A2A520: packed & 0x3F /
+// packed >> 6 for ids below 0x230), GunBasic, the package row, the dependency
+// LUTs, the optional descriptor and the cache census. Pure reads; refuses
+// blueprints/aliases (ids 0x230 and up), non-gun types and anything unread.
+template<class Reader> const char* Derive(View<Reader>& v,std::uintptr_t engine,std::uint16_t equip,
+        const std::array<CacheEntry,kCacheEntries>& census,Target& t) noexcept {
+    t=Target{};t.exact_parsed=false;t.require_remote_empty=false;t.equip=equip;
+    if(!equip || equip>=0x230) return "equip_range";
+    std::uintptr_t types=0,resource=0,basic=0;
+    if(!v.At(engine,8,types) || types!=v.base+0x2A70920 || !v.Method(types,0x22AD180,0,0xA2A3E0) ||
+       !v.At(types,8+std::size_t(equip)*2,t.packed)) return "type_table";
+    t.type=static_cast<std::uint8_t>(t.packed&0x3F);t.row=static_cast<std::uint16_t>(t.packed>>6);
+    if(t.type<1 || t.type>8) return "type";
+    t.slot=TypeSlot(t.type);
+    if(!t.row || t.row>0x1818/12) return "row";
+    if(!v.At(engine,0x10,resource) || resource!=v.base+0x2A711F0 || !v.At(resource,8,basic) || basic!=v.base+0x2C25C50 ||
+       !v.At(basic,(std::size_t(t.row)-1)*12,t.recipe)) return "recipe";
+    std::array<std::uint64_t,3> row{};
+    if(!v.Image(PackageRowRva(equip),24) || !v.At(v.base,PackageRowRva(equip),row)) return "package_row";
+    t.parts=row[0];t.package=row[1];t.package_flags=row[2];
+    if(!t.parts || !t.package || t.package_flags!=2) return "package_row";
+    if(((t.parts>>0x33)&0x1FFF)==0x1094) return "parts_class";
+    std::array<std::uint8_t,7> ids{};unsigned count=0;
+    if(!DependencyIds(v,t.recipe,ids,count)) return "dependency_tables";
+    t.hashes={};t.hashes[0]=t.package;t.hash_count=1;
+    for(unsigned i=0;i<count;++i) {
+        std::uint64_t hash=0;
+        if(!v.Image(0x2349348+std::size_t(ids[i])*16,8) || !v.At(v.base,0x2349348+std::size_t(ids[i])*16,hash) || !hash)
+            return "dependency_hash";
+        bool seen=false;
+        for(unsigned j=0;j<t.hash_count;++j) seen=seen || t.hashes[j]==hash;
+        if(!seen) {if(t.hash_count>=kMaxPackages) return "dependency_count";t.hashes[t.hash_count++]=hash;}
+    }
+    t.optional=false;t.optional_hash=0;
+    if(equip<=0x7C) {
+        if(!v.At(v.base+0x2A6B400,8+std::size_t(equip)*8,t.optional_hash)) return "optional_descriptor";
+        t.optional=t.optional_hash!=0;
+    }
+    const unsigned first=FirstEntry(census,equip);
+    if(first>=kCacheEntries) return "no_cache_entry";
+    t.cache_index=first;
+    // stock46 keeps its measured parsed counts.
+    t.exact_parsed=equip==kStock46.equip && t.packed==kStock46.packed && t.recipe==kStock46.recipe &&
+        t.parts==kStock46.parts && t.package==kStock46.package && t.hashes==kStock46.hashes &&
+        t.hash_count==kStock46.hash_count && t.optional && t.optional_hash==kStock46.optional_hash;
     return nullptr;
 }
 }

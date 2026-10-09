@@ -905,7 +905,16 @@ void TestSlots() {
     Check(ps::Judge(g) == ps::Gate::projectile && ps::StripBits(ps::Gate::projectile) == 0x10u, "unqualified type: FIRE only stripped");
     g.type_ok = false; g.body_type = 4;
     Check(ps::Judge(g) == ps::Gate::projectile, "an unread type is not qualified");
-    Check(ps::BulletType(4) && !ps::BulletType(3), "the bullet allow-list");
+    Check(ps::BulletType(1) && ps::BulletType(2) && ps::BulletType(3) && ps::BulletType(4) && ps::BulletType(5) &&
+              ps::BulletType(6) && !ps::BulletType(0) && !ps::BulletType(7) && !ps::BulletType(8) && !ps::BulletType(9),
+          "the bullet allow-list: assault, handgun, SMG, sniper, shotgun, MG; never grenade launcher or missile");
+    // W5: the tier C substitute of the remote's in-hand slot counts as the remote's weapon.
+    ps::GateIn sub{875, 9, 2, false, true, 2, true};
+    Check(ps::Judge(sub) == ps::Gate::match, "a same-type substitute (body 2 for the remote's base 9): match");
+    sub.substitute = false;
+    Check(ps::Judge(sub) == ps::Gate::mismatch, "without the plan's substitute: mismatch");
+    sub.substitute = true; sub.body_type = 7;
+    Check(ps::Judge(sub) == ps::Gate::projectile && ps::StripBits(ps::Judge(sub)) == 0x10u, "a projectile substitute: FIRE stripped");
     Check(Is(ps::GateName(ps::Gate::switching), "switching"), "gate names");
 }
 

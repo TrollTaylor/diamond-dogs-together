@@ -17,9 +17,10 @@ namespace mgsworker {
 // facing A/B run: -LabSetting partner_native_aim=looksrc). Later stages
 // (lookcam, local=all, a gun stage without fire, noise=keep) need an explicit
 // gate change. partner_native_face (the facing governor) is free; the
-// partner's own reload (partner_native_reload) and the slot follower
-// (partner_native_slot) are free in the gun stage (their A/B variants) and
-// stay at their defaults (mirror, off) in census and loco.
+// partner's own reload (partner_native_reload), the slot follower
+// (partner_native_slot) and the generalized writer (partner_native_equip)
+// are free in the gun stage (their A/B variants) and stay at their defaults
+// (mirror, off, stock46) in census and loco.
 inline bool LegacyDrive(const mgscoop::LabConfig& lab) {
     return lab.partner_drive == mgscoop::PartnerDrive::legacy && lab.partner_input_defer == mgscoop::PartnerDefer::off;
 }
@@ -46,7 +47,8 @@ inline bool NativeProfile(const mgscoop::LabConfig& lab) {
     // rates into instance 1.
     const bool no_fire = lab.partner_native_fire == mgscoop::PartnerNativeFire::off;
     const bool weapons_default = lab.partner_native_reload == mgscoop::PartnerNativeReload::mirror &&
-        lab.partner_native_slot == mgscoop::PartnerNativeSlot::off;
+        lab.partner_native_slot == mgscoop::PartnerNativeSlot::off &&
+        lab.partner_native_equip == mgscoop::PartnerNativeEquip::stock46;
     const bool census = lab.partner_input_defer == mgscoop::PartnerDefer::census && lab.partner_input_mask == 0x2240006u &&
         !lab.partner_native_gun && no_fire && lab.partner_native_aim == mgscoop::PartnerNativeAim::off &&
         lab.partner_native_rates != mgscoop::PartnerNativeRates::mirror && weapons_default;

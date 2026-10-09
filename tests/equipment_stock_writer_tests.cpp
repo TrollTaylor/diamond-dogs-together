@@ -176,6 +176,35 @@ Memory Ready() {
     m.Method(base+0x2A71328,0x22B89D8,0x28,0xACCC10);
     return m;
 }
+// The generalized writer (docs/native-puppet.md "Generalized writer"): the
+// whole census readable, the dependency tables and hashes stock46's recipe
+// [157,85,110,36,..,lane10 0] reaches (LUT [35,38,9,0,0] -> ids [36,55,64]).
+void General(Memory& m) {
+    for(unsigned i=0;i<48;++i) {
+        if(i>=5) {m.Set(info+i*0x90,std::array<std::uint8_t,0x90>{});m.Set(cache+i*0x38,std::array<std::uint8_t,0x38>{});}
+        if(i<4) {m.Set(info+i*0x90+0x78,std::uint8_t(2));m.Set(info+i*0x90+0x7A,std::uint8_t(69));}
+        if(i!=4) m.Set(refs+i*4,std::uint32_t(i<4 ? 1 : 0));
+    }
+    m.Set(base+0x2349A90+157,std::uint8_t(35));m.Set(base+0x2349B80+85,std::uint8_t(38));m.Set(base+0x2349C00+110,std::uint8_t(9));
+    m.Set(base+0x2349CC0+36,std::uint8_t(0));m.Set(base+0x2349A78+0,std::uint8_t(0));
+    m.Set(base+0x2349980+35*2,std::array<std::uint8_t,2>{36,0});m.Set(base+0x23499E0+38,std::uint8_t(55));
+    m.Set(base+0x2349A10+9*2,std::array<std::uint8_t,2>{64,0});m.Set(base+0x2349A08+0,std::uint8_t(0));m.Set(base+0x2349A68+0,std::uint8_t(0));
+    m.Set(base+0x2349348+36*16,mgscoop::equipment_stock_contract::hashes[1]);
+    m.Set(base+0x2349348+55*16,mgscoop::equipment_stock_contract::hashes[2]);
+    m.Set(base+0x2349348+64*16,mgscoop::equipment_stock_contract::hashes[3]);
+    // The slot-0 and slot-2 effect records of body 1 (zero, like slot 1's).
+    m.Set(0x11001000+0xA00,std::array<std::uint8_t,0x50>{});m.Set(0x11001000+0xAA0,std::array<std::uint8_t,0x50>{});
+}
+// A plain (no optional asset) hip gun sharing stock46's packages: id 300,
+// type 1 (slot 0), GunBasic row 393, its own protected cache entry 5.
+void Plain300(Memory& m,std::uint8_t flags=3,std::uint32_t refs_value=0) {
+    General(m);
+    m.Set(base+0x2A70920+8+300*2,std::uint16_t((393<<6)|1));
+    m.Set(base+c::PackageRowRva(300),std::array<std::uint64_t,3>{mgscoop::equipment_stock_contract::parts,
+        mgscoop::equipment_stock_contract::package,2});
+    std::array<std::uint8_t,0x90> ib{};const std::uint16_t id=300;std::memcpy(ib.data()+0x5E,&id,2);ib[0x78]=1;ib[0x7A]=157;
+    m.Set(info+5*0x90,ib);std::array<std::uint8_t,0x38> cb{};cb[0x34]=flags;m.Set(cache+5*0x38,cb);m.Set(refs+5*4,refs_value);
+}
 template<class Edit> void Refuse(Edit edit,const char* reason) {
     auto m=Ready();edit(m);c::Snapshot s;auto why=c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,s);Check(why && std::strcmp(why,reason)==0);
 }
@@ -458,5 +487,104 @@ int main() {
     m.Set(0x16100040,std::uint8_t(2));
     Check(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before)==nullptr);
     Check(wait.Observe(true)==nullptr && early.Try(x)==nullptr && early.Attempted());
+    // --- The generalized writer contract (W3) ----------------------------------
+    Check(c::TypeSlot(1)==0 && c::TypeSlot(5)==0 && c::TypeSlot(7)==0 && c::TypeSlot(4)==1 && c::TypeSlot(6)==1 &&
+          c::TypeSlot(8)==1 && c::TypeSlot(2)==2 && c::TypeSlot(3)==2 && c::TypeSlot(9)==0xFF && c::TypeSlot(0)==0xFF);
+    Check(c::PackageRowRva(46)==0x2C21420 && c::ExpectedHandle(6,c::kStock46)==((6u<<16)|(46u<<5)|4u));
+    {
+        m=Ready();General(m);c::View<Memory> gv{m,base,0xA01D000};
+        std::array<c::CacheEntry,48> census{};
+        Check(c::Census(gv,engine,census) && census[4].equip==46 && census[4].flags==3 && census[4].type==4 &&
+              census[4].receiver==157 && census[4].refs==0 && census[0].refs==1 && !census[5].flags);
+        Check(c::FirstEntry(census,46)==4 && c::FirstEntry(census,47)==48 && c::ResidentProtected(census[4]) &&
+              !c::ResidentProtected(census[0]));
+        // stock46 through Derive: the same contract, measured parsed counts kept.
+        c::Target t{};
+        Check(c::Derive(gv,engine,46,census,t)==nullptr && t.slot==1 && t.type==4 && t.row==393 && t.cache_index==4 &&
+              t.optional && t.optional_hash==c::optional46 && t.exact_parsed && !t.require_remote_empty &&
+              t.hash_count==4 && t.hashes==c::kStock46.hashes && t.recipe==c::kStock46.recipe);
+        Check(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t)==nullptr && before.cache_refs==0);
+        // Another slot's weapon does not block slot 1; the target slot never gets replaced.
+        m.Set(handles+7*4,std::uint32_t(0x7002E1));
+        Check(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t)==nullptr);
+        Check(std::strcmp(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before),"remote_not_empty")==0);
+        m.Set(handles+8*4,std::uint32_t(0x8005C4));
+        Check(std::strcmp(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t),"remote_slot_not_empty")==0);
+        m=Ready();General(m);m.Set(metadata+8*6+2,std::uint8_t(1));
+        Check(std::strcmp(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t),"remote_slot_not_empty")==0);
+        m=Ready();General(m);m.Set(0x11001000+0x404+12,std::uint32_t(7));
+        Check(std::strcmp(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t),"remote_binder_not_empty")==0);
+        m=Ready();General(m);m.Set(0x11001000+0x400,std::uint32_t(7)); // slot 0's binder record: not slot 1's business
+        Check(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t)==nullptr);
+        // A malformed target refuses before any read.
+        auto bad=t;bad.slot=0;Check(std::strcmp(c::Capture(base,0xA01D000,m,P,fixture_buffer+0x6A8,after,bad),"target_shape")==0);
+        bad=t;bad.cache_index=48;Check(std::strcmp(c::Capture(base,0xA01D000,m,P,fixture_buffer+0x6A8,after,bad),"target_shape")==0);
+    }
+    {
+        // A plain hip gun (family N): no optional descriptor (id above 0x7C), NULL-optional render size.
+        m=Ready();Plain300(m);c::View<Memory> gv{m,base,0xA01D000};
+        std::array<c::CacheEntry,48> census{};Check(c::Census(gv,engine,census));
+        c::Target t{};
+        Check(c::Derive(gv,engine,300,census,t)==nullptr && t.slot==0 && t.type==1 && t.cache_index==5 && !t.optional &&
+              !t.exact_parsed && t.hash_count==4 && t.hashes==c::kStock46.hashes);
+        Check(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t)==nullptr);
+        Check(before.optional.render_bytes==640 && before.optional.global==5 && !before.optional.asset &&
+              before.package_observation.reads==0x3FF && before.package_observation.checks==0x1FF);
+        Check(c::ObservePackage(gv,t).reads==0x3FF && c::PackageReads(t)==0x3FF && c::PackageChecks(t)==0x1FF);
+        // Slot 0's attachments 0..12 and effect record must be empty.
+        m.Set(0x13012000+2*0x20,std::uintptr_t(0x55));
+        Check(std::strcmp(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t),"remote_attachment_not_empty")==0);
+        m=Ready();Plain300(m);m.Set(0x11001000+0xA08,std::uint8_t(1));
+        Check(std::strcmp(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t),"remote_slot_not_empty")==0);
+        // A bound plain target's render object is 512 + align16(8g+88) = 640 at g 5.
+        m=Ready();Plain300(m);Check(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t)==nullptr);
+        c::View<Memory> bv{m,base,0xA01D000};
+        m.Set(0x12070500,std::uintptr_t(0x18888888));m.Set(0x12070900,std::uint8_t(2));
+        m.Set(0x12070730,std::uintptr_t(before.stock_parts_asset));m.Set(0x12070830,std::uint64_t(before.mission_entry));
+        m.Set(0x12070884,std::uint16_t(1));m.Set(0x120708A8,std::uintptr_t(0x18777777));
+        m.Set(0x12070920,std::uintptr_t(0x12070A00));m.Set(0x12070A00,std::uint32_t(640));m.Set(0x12070A0C,std::uint32_t(0x20));
+        m.Set(fixture_resource_rows+14*4,std::uint32_t(before.new_index));
+        Check(c::QualifiedBoundResource(bv,before,14)==nullptr);
+        m.Set(0x12070A00,std::uint32_t(1184));
+        Check(std::strcmp(c::QualifiedBoundResource(bv,before,14),"bound_render_unqualified")==0);
+        // A wrong cache identity, a shared or unprotected entry.
+        m=Ready();Plain300(m);m.Set(info+5*0x90+0x78,std::uint8_t(4));
+        Check(std::strcmp(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t),"stock_cache_identity")==0);
+        m=Ready();Plain300(m,3,1);
+        Check(std::strcmp(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t),"stock_cache_in_use")==0);
+        m=Ready();Plain300(m,1,0);
+        Check(std::strcmp(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t),"stock_cache_identity")==0);
+        Check(c::Census(gv,engine,census) && !c::ResidentProtected(census[5]));
+        // The package row and the type table are re-read against the target.
+        m=Ready();Plain300(m);m.Set(base+c::PackageRowRva(300)+16,std::uint64_t(3));
+        Check(std::strcmp(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t),"stock_parameter_bank")==0);
+        m=Ready();Plain300(m);m.Set(base+0x2A70920+8+300*2,std::uint16_t((393<<6)|5));
+        Check(std::strcmp(c::Preflight(base,0xA01D000,m,P,fixture_buffer+0x6A8,before,t),"stock_parameter_bank")==0);
+    }
+    {
+        // Derive refusals.
+        m=Ready();Plain300(m);c::View<Memory> gv{m,base,0xA01D000};
+        std::array<c::CacheEntry,48> census{};Check(c::Census(gv,engine,census));
+        c::Target t{};
+        Check(std::strcmp(c::Derive(gv,engine,0,census,t),"equip_range")==0);
+        Check(std::strcmp(c::Derive(gv,engine,0x230,census,t),"equip_range")==0);
+        m.Set(base+0x2A70920+8+301*2,std::uint16_t((393<<6)|9));
+        Check(std::strcmp(c::Derive(gv,engine,301,census,t),"type")==0);
+        m.Set(base+0x2A70920+8+301*2,std::uint16_t(1));
+        Check(std::strcmp(c::Derive(gv,engine,301,census,t),"row")==0);
+        m.Set(base+0x2A70920+8+301*2,std::uint16_t((515<<6)|1));
+        Check(std::strcmp(c::Derive(gv,engine,301,census,t),"row")==0);
+        m.Set(base+0x2A70920+8+301*2,std::uint16_t((393<<6)|1));
+        Check(std::strcmp(c::Derive(gv,engine,301,census,t),"package_row")==0);
+        m.Set(base+c::PackageRowRva(301),std::array<std::uint64_t,3>{mgscoop::equipment_stock_contract::parts,
+            mgscoop::equipment_stock_contract::package,2});
+        Check(std::strcmp(c::Derive(gv,engine,301,census,t),"no_cache_entry")==0);
+        m.Set(base+c::PackageRowRva(301),std::array<std::uint64_t,3>{0x1094ull<<0x33,mgscoop::equipment_stock_contract::package,2});
+        Check(std::strcmp(c::Derive(gv,engine,301,census,t),"parts_class")==0);
+        m.Set(base+0x2349348+55*16,std::uint64_t(0));
+        Check(std::strcmp(c::Derive(gv,engine,300,census,t),"dependency_hash")==0);
+        m=Ready();Plain300(m);m.Set(engine+8,std::uintptr_t(0x1234));
+        Check(std::strcmp(c::Derive(gv,engine,300,census,t),"type_table")==0);
+    }
     std::printf("equipment_stock_writer_tests: %u checks passed; native_calls=0 game_reads=0\n",checks);
 }

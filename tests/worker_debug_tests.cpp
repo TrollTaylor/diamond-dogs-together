@@ -173,7 +173,11 @@ int main() {
                   doc.find("\"probe1\":{\"b20\":0,\"b24\":0,\"shots\":0,\"mode_changes\":0,\"mode\":0}}")!=std::string::npos &&
                   doc.find("\"slots\":{\"setting\":\"\",\"remote_slot\":0,")!=std::string::npos &&
                   doc.find("\"read_ok\":false,\"handles\":[null,null,null],\"plan\":[\"\",\"\",\"\"],\"ok_mask\":0,")!=std::string::npos &&
-                  doc.find("\"hand_slot\":0,\"slot_src\":0}")!=std::string::npos))return 1;
+                  doc.find("\"hand_slot\":0,\"slot_src\":0}")!=std::string::npos &&
+                  doc.find("\"writer\":{\"active\":false,\"dispatches\":0,\"bound\":0,\"refused\":0,\"slots\":[{\"want\":0,\"equip\":0,"
+                           "\"tier\":\"\",\"family\":\"\",\"state\":\"\",\"reason\":\"\",\"handle\":0},")!=std::string::npos &&
+                  doc.find("\"setting\":\"\",\"resident_fields\":[\"index\",\"id\",\"type\",\"receiver\",\"flags\",\"refs\"],"
+                           "\"resident\":null,\"preload\":{\"ids\":[],\"verdict\":\"\",\"reason\":\"\",\"new_hashes\":0}}")!=std::string::npos))return 1;
         // Native polish members (docs/native-puppet.md "Facing", "Weapons"): present in every shape.
         if(!check(doc.find("\"steer_err_mrad\":0,\"cam_diff_cdeg\":0")!=std::string::npos &&
                   doc.find("\"rings\":{\"on\":false,\"windows\":0,\"refused\":0,\"changed\":0,\"last\":\"\"}")!=std::string::npos &&
@@ -240,9 +244,30 @@ int main() {
                   rs.find("\"reload_seen\":4,\"frozen\":90,\"reconciles\":2,\"m3e8_writes\":1}")!=std::string::npos &&
                   rs.find("\"slots\":{\"setting\":\"write\",\"remote_slot\":2,\"remote_seq\":null,\"body_slot\":1,\"hand_slot\":1,\"target\":null,"
                           "\"read_ok\":true,\"handles\":[null,{\"equip\":46,\"type\":4},null],\"plan\":[\"empty\",\"same\",\"empty\"],\"ok_mask\":2,"
-                          "\"writes\":0,\"refused\":1,\"last\":\"empty\",\"faulted\":false,\"switching\":true}")!=std::string::npos &&
+                          "\"writes\":0,\"refused\":1,\"last\":\"empty\",\"faulted\":false,\"switching\":true,\"writer\":{")!=std::string::npos &&
                   rs.find("\"gate\":\"switching\",\"body_type\":null,\"switching\":true}")!=std::string::npos &&
                   rs.find(",11,12,null]")!=std::string::npos && rs.find(",null,12,null]")!=std::string::npos))return 1;
+        // The generalized writer, the census (all 48 entries) and the preload, with hostile text.
+        strcpy_s(t.equip_setting,"substitute");t.writer_active=true;t.writer_dispatches=3;t.writer_bound=2;t.writer_refused=1;
+        for(unsigned i=0;i<3;++i){
+            t.writer_want[i]=static_cast<std::uint16_t>(i==1?46:343);t.writer_equip[i]=static_cast<std::uint16_t>(i==1?46:27);
+            strcpy_s(t.writer_tier[i],i==1?"a1":"c");strcpy_s(t.writer_family[i],i==1?"optional":"plain");
+            strcpy_s(t.writer_state[i],i==2?"refused":"bound");strcpy_s(t.writer_reason[i],i==2?"remote_slot_not\"empty":"ok");
+            t.writer_handle[i]=0x60000u|(i==1?(46u<<5)|4u:(27u<<5)|1u);
+        }
+        t.resident_ok=true;t.resident_count=48;
+        for(unsigned i=0;i<48;++i) t.resident[i]={static_cast<std::uint16_t>(500+i),4,157,3,static_cast<std::uint8_t>(i),0xFFFFFFFFu};
+        t.preload_count=2;t.preload_ids[0]=343;t.preload_ids[1]=9;strcpy_s(t.preload_verdict,"queued_verified");strcpy_s(t.preload_reason,"o\"k");
+        t.preload_new_hashes=5;
+        const auto ws=NativeDocument(t,&n);
+        if(!check(n>0 && n<16384 && ValidJson(ws)))return 1;
+        if(!check(ws.find("\"writer\":{\"active\":true,\"dispatches\":3,\"bound\":2,\"refused\":1,\"slots\":[{\"want\":343,\"equip\":27,"
+                          "\"tier\":\"c\",\"family\":\"plain\",\"state\":\"bound\",\"reason\":\"ok\",\"handle\":394081},")!=std::string::npos &&
+                  ws.find("\"reason\":\"remote_slot_not\\\"empty\"")!=std::string::npos &&
+                  ws.find("\"setting\":\"substitute\",\"resident_fields\":")!=std::string::npos &&
+                  ws.find("\"resident\":[[0,500,4,157,3,4294967295],[1,501,")!=std::string::npos &&
+                  ws.find(",[47,547,4,157,3,4294967295]],\"preload\":{\"ids\":[343,9],\"verdict\":\"queued_verified\",\"reason\":\"o\\\"k\","
+                          "\"new_hashes\":5}}")!=std::string::npos))return 1;
         // Too small a buffer: nothing (never a truncated member).
         char small[64];
         if(!check(mgscoop::worker_debug::FormatNativeJson(t,small,sizeof(small))==0 && small[0]==0))return 1;

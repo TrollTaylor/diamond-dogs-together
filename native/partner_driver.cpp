@@ -1791,7 +1791,13 @@ void DrainEquip(Driver& d, const Hooks& h) noexcept {
         std::uint8_t message[128]{};
         std::size_t size = 0;
         if (!h.drain_reliable(h.context, partner_equip_wire::kChannel, message, sizeof(message), size)) break;
-        if (partner_equip_wire::Accept(m.equip, message, size, epoch) && m.equip.manifest.revision != m.equip_logged_rev) {
+        const bool accepted = partner_equip_wire::Accept(m.equip, message, size, epoch);
+        if (accepted) {
+            d.equip_cache = m.equip.manifest;
+            d.equip_cache_have = true;
+            d.equip_cache_epoch = epoch;
+        }
+        if (accepted && m.equip.manifest.revision != m.equip_logged_rev) {
             m.equip_logged_rev = m.equip.manifest.revision;
             const auto& e = m.equip.manifest;
             EmitNative(m, h, m.native_equip_cap, "partner_equip",
@@ -1908,6 +1914,12 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
         gi.remote_equip = static_cast<std::uint32_t>(m.remote_gun_equip);
         gi.remote_base = static_cast<std::uint32_t>(m.remote_gun_base);
         gi.body_equip = gun.fields.equip;
+        // W5: the tier C substitute of the slot carrying the remote's in-hand base counts as its weapon.
+        if (m.slot_plan_ok && m.equip.have)
+            for (unsigned s = 0; s < 3; ++s)
+                gi.substitute = gi.substitute || (m.slot_plan.tier[s] == partner_slots::Tier::sub &&
+                                                  m.slot_plan.equip[s] == gun.fields.equip && m.equip.manifest.slots[s].base_id != 0 &&
+                                                  m.equip.manifest.slots[s].base_id == static_cast<std::uint32_t>(m.remote_gun_base));
         gi.switching = m.body_switching;
         gi.type_ok = m.body_type != pnat::kNull;
         gi.body_type = gi.type_ok ? static_cast<std::uint8_t>(m.body_type) : static_cast<std::uint8_t>(0);
@@ -2041,8 +2053,8 @@ void TickWeapons(Driver& d, const Hooks& h, const pp::State& st, bool ready, boo
         const char* result = want == 0 ? "unknown" : loaded == want ? "already" : loaded == 0 ? "no_weapon" : "unsupported";
         CopyText(m.equip_apply, sizeof(m.equip_apply), result);
         EmitNative(m, h, m.equip_apply_cap, "partner_equip_apply",
-                   "partner_equip=apply; rev=%u; slot=1; want=%u; loaded=%u; result=%s; writer=stock46\r\n",
-                   unsigned(m.equip.manifest.revision), unsigned(want), loaded, result);
+                   "partner_equip=apply; rev=%u; slot=1; want=%u; loaded=%u; result=%s; writer=%s\r\n",
+                   unsigned(m.equip.manifest.revision), unsigned(want), loaded, result, PartnerNativeEquipName(set.nequip));
     }
 }
 
@@ -2768,6 +2780,34 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
         }
         t.equip_tables_ok = m.equip_tables_ok;
         CopyText(t.equip_apply, sizeof(t.equip_apply), m.equip_apply[0] ? m.equip_apply : "none");
+        // The generalized writer and preload (the observer's last report).
+        const equipment_stock_writer::Status& ws = d.equip_status;
+        CopyText(t.equip_setting, sizeof(t.equip_setting), PartnerNativeEquipName(set.nequip));
+        t.writer_active = ws.active;
+        for (unsigned i = 0; i < 3; ++i) {
+            const equipment_stock_writer::SlotStatus& ss = ws.slots[i];
+            t.writer_want[i] = ss.want;
+            t.writer_equip[i] = ss.equip;
+            CopyText(t.writer_tier[i], sizeof(t.writer_tier[i]), equipment_stock_writer::TierName(ss.tier));
+            CopyText(t.writer_family[i], sizeof(t.writer_family[i]), ss.equip ? (ss.optional ? "optional" : "plain") : "none");
+            CopyText(t.writer_state[i], sizeof(t.writer_state[i]), equipment_stock_writer::SlotStateName(ss.state));
+            CopyText(t.writer_reason[i], sizeof(t.writer_reason[i]), ss.reason[0] ? ss.reason : "none");
+            t.writer_handle[i] = ss.handle;
+        }
+        t.writer_dispatches = ws.dispatches;
+        t.writer_bound = ws.bound;
+        t.writer_refused = ws.refused;
+        t.resident_ok = ws.census_ok;
+        t.resident_count = ws.resident_count <= 48 ? ws.resident_count : static_cast<std::uint8_t>(48);
+        for (unsigned i = 0; i < t.resident_count; ++i) {
+            const equipment_stock_writer::ResidentEntry& r = ws.resident[i];
+            t.resident[i] = {r.equip, r.type, r.receiver, r.flags, r.index, r.refs};
+        }
+        t.preload_count = d.preload_count <= 3 ? d.preload_count : static_cast<std::uint8_t>(3);
+        for (unsigned i = 0; i < 3; ++i) t.preload_ids[i] = d.preload_ids[i];
+        CopyText(t.preload_verdict, sizeof(t.preload_verdict), d.preload_verdict[0] ? d.preload_verdict : "none");
+        CopyText(t.preload_reason, sizeof(t.preload_reason), d.preload_reason[0] ? d.preload_reason : "none");
+        t.preload_new_hashes = d.preload_new_hashes;
     }
     // The facing governor (partner_recon) and the placement verdicts.
     {
@@ -3000,6 +3040,7 @@ void Configure(Driver& d, const LabConfig& lab) noexcept {
     d.settings.nnoise = lab.partner_native_noise;
     d.settings.nreload = lab.partner_native_reload;
     d.settings.nslot = lab.partner_native_slot;
+    d.settings.nequip = lab.partner_native_equip;
 
     d.settings.play_mode = lab.mode == LabMode::play;
     d.look_forced_rev = 1;

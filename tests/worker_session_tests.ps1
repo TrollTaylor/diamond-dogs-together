@@ -57,7 +57,8 @@ $stages=@{
     census=@('partner_input_defer=census','partner_input_mask=0x2240006','partner_native_aim=off')
     loco=@('partner_input_defer=on','partner_input_mask=0x2240006','partner_native_aim=off','partner_native_rates=mirror')
     gun=@('partner_input_defer=on','partner_input_mask=0x224005E','partner_native_gun=1','partner_native_fire=visual','partner_native_aim=look',
-        'partner_input_triggers=1','partner_input_rstick=1','partner_native_rates=mirror','partner_native_reload=event','partner_native_slot=write')
+        'partner_input_triggers=1','partner_input_rstick=1','partner_native_rates=mirror','partner_native_reload=event','partner_native_slot=write',
+        'partner_native_equip=substitute')
 }
 # The -LabSetting allow-lists (Invoke-WorkerScenario -LabSetting and its scenario "labsetting" lines,
 # Start-WorkerSession -LabSetting) are identical and take the reload/switch A/B keys.
@@ -69,20 +70,22 @@ $sessionPattern=& $patternOf $sessionText
 Assert-True ($scenarioPattern -and $scenarioPattern -ceq $sessionPattern) 'the two -LabSetting allow-lists are identical'
 foreach($ok in @('partner_native_reload=mirror','partner_native_reload=raw','partner_native_reload=event','partner_native_slot=off',
     'partner_native_slot=write','partner_native_slot=call','guest:partner_native_reload=event','host:partner_native_slot=write',
+    'partner_native_equip=stock46','partner_native_equip=manifest','partner_native_equip=substitute','guest:partner_native_equip=manifest',
     'partner_native_face=aim','partner_native_aim=looksrc')){
     Assert-True ($ok -cmatch $scenarioPattern) ('-LabSetting admits '+$ok)
 }
-foreach($bad in @('partner_native_reload=tap','partner_native_slot=on','partner_native_reload=','partner_native_equip=substitute','partner_native_gun=0')){
+foreach($bad in @('partner_native_reload=tap','partner_native_slot=on','partner_native_reload=','partner_native_equip=any','partner_native_equip=','partner_native_gun=0')){
     Assert-True ($bad -cnotmatch $scenarioPattern) ('-LabSetting refuses '+$bad)
 }
 $lineMatch=[regex]::Match($scenarioText,"if\(\`$line -cnotmatch '(\^labsetting[^']+)'\)")
 Assert-True ($lineMatch.Success) 'the scenario labsetting regex'
-foreach($ok in @('labsetting partner_native_reload=raw','labsetting guest partner_native_slot=call')){
+foreach($ok in @('labsetting partner_native_reload=raw','labsetting guest partner_native_slot=call','labsetting partner_native_equip=manifest')){
     Assert-True ($ok -cmatch $lineMatch.Groups[1].Value) ('scenario labsetting admits '+$ok)
 }
 Assert-True ('labsetting partner_native_slot=on' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses partner_native_slot=on'
-Assert-True ($scenarioText.Contains("throw '-LabSetting partner_native_reload / partner_native_slot need -NativeStage gun.'") -and
-    $sessionText.Contains("throw '-LabSetting partner_native_reload / partner_native_slot need -NativeStage gun.'")) 'the reload/slot keys need the gun stage'
+Assert-True ('labsetting partner_native_equip=all' -cnotmatch $lineMatch.Groups[1].Value) 'scenario labsetting refuses partner_native_equip=all'
+Assert-True ($scenarioText.Contains("throw '-LabSetting partner_native_reload / partner_native_slot / partner_native_equip need -NativeStage gun.'") -and
+    $sessionText.Contains("throw '-LabSetting partner_native_reload / partner_native_slot / partner_native_equip need -NativeStage gun.'")) 'the reload/slot/equip keys need the gun stage'
 # EVADE 0x40000 (dive/evade/roll) is in every native mask; ACTION 0x20 (ride, knife kill, pickup) never; FIRE 0x10
 # only in the gun stage and only together with partner_native_fire=visual (the RequestBullet owner filter).
 foreach($stage in @('census','loco','gun')){

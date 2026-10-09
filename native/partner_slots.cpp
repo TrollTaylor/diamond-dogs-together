@@ -34,7 +34,12 @@ Plan MakePlan(const PlanIn& in) noexcept {
     return p;
 }
 
-bool BulletType(std::uint8_t type) noexcept { return type == 4; }
+// The bullet categories (EquipIdTable EQP_TYPE_* joined with the runtime type
+// table of the H2 capture: 1 Assault, 2 Handgun, 3 Submachinegun, 4 Sniper,
+// 5 Shotgun, 6 Machinegun); 7 GrenadeLauncher and 8 Missile fire projectiles
+// (shot class 3, gm+0x210, not filtered) and stay masked, as does any type
+// above 8. Their shots go through RequestBullet, which the owner filter drops.
+bool BulletType(std::uint8_t type) noexcept { return type >= 1 && type <= 6; }
 
 const char* GateName(Gate gate) noexcept {
     switch (gate) {
@@ -46,7 +51,7 @@ const char* GateName(Gate gate) noexcept {
 }
 
 Gate Judge(const GateIn& in) noexcept {
-    if (in.remote_equip != in.body_equip && in.remote_base != in.body_equip) return Gate::mismatch;
+    if (in.remote_equip != in.body_equip && in.remote_base != in.body_equip && !in.substitute) return Gate::mismatch;
     if (in.switching) return Gate::switching;
     if (!in.type_ok || !BulletType(in.body_type)) return Gate::projectile;
     return Gate::match;
