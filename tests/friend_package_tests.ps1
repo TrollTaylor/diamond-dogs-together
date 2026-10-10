@@ -736,6 +736,12 @@ try {
         'scripts/install.ps1', 'source/tools/friend/Play-Coop.ps1', 'source/tools/CoopPlay.psm1', 'source/lua/coop/session_feedback.lua',
         'source/cmake/lua_checks.cmake', 'source/native/debug_overlay.cpp', 'source/lua/coop/debug_menu.lua', 'source/third_party/imgui/imgui.cpp')
     foreach ($r in $required) { Assert-True (Test-Path -LiteralPath (Join-Path $pkg $r) -PathType Leaf) "package contains $r" }
+    # The build dependency is source, not just its payload license. Verify the
+    # actual checked files and one manifest row even when rg skips a junction.
+    foreach ($relative in @('third_party\minhook\CMakeLists.txt', 'third_party\minhook\include\MinHook.h', 'third_party\minhook\src\hook.c')) {
+        Assert-True (Test-Path -LiteralPath (Join-Path $pkg ('source\' + $relative)) -PathType Leaf) "package includes checked dependency $relative"
+        Assert-Equal (Get-Sha256 (Join-Path $pkg ('source\' + $relative))) $currentSource.hashes[$relative] "package dependency matches Release snapshot $relative"
+    }
     $wantScripts = @('Install-Coop.ps1', 'Play-Coop.ps1', 'Uninstall-Coop.ps1', 'Collect-Logs.ps1', 'Share-Save.ps1', 'FriendCommon.psm1', 'CoopPlay.psm1', 'install.ps1') | Sort-Object
     Assert-Equal ((@(Get-ChildItem -LiteralPath (Join-Path $pkg 'scripts') -File | ForEach-Object { $_.Name } | Sort-Object)) -join ',') ($wantScripts -join ',') 'scripts: exactly the play package pieces (no LabCommon.psm1, no set-session-mode.ps1)'
     Assert-Equal ((@(Get-ChildItem -LiteralPath $pkg -File -Filter '*.bat' | ForEach-Object { $_.Name } | Sort-Object)) -join ',') 'Collect-Logs.bat,Install-Coop.bat,Play-Coop.bat,Share-Save.bat,Uninstall-Coop.bat' 'the five double-click entry points'
@@ -765,6 +771,89 @@ try {
     foreach ($r in $required) { Assert-True ($zipEntries -contains ($prefix + $r)) "zip contains $r" }
     Assert-Equal @($zipEntries | Where-Object { $_ -like '*/scripts/LabCommon.psm1' -or $_ -like '*/scripts/set-session-mode.ps1' -or $_ -match '(^|/)link-secret' -or $_ -like '*mgs-coop-player-runtime*' }).Count 0 'zip: no lab module or role command among the scripts, no link secret, no runtime archive'
     Assert-Equal @($zipEntries | Where-Object { $gameExtensions -contains [IO.Path]::GetExtension($_).ToLowerInvariant() }).Count 0 'zip has no game file types'
+    # Regression: an owned, ordinary dependency lives outside the staged source
+    # root, reached only by the exact supported third_party/minhook junction.
+    # No source is compiled, no game is installed and no external target is used.
+    & {
+        $linkedRoot = Join-Path $fixture 'junction-package-source'
+        $dependency = Join-Path $fixture 'junction-package-dependency'
+        $junction = Join-Path $linkedRoot 'third_party\minhook'
+        foreach ($path in @($linkedRoot, $dependency, $junction)) { Assert-InFixture $path }
+        foreach ($dir in @('native','lua','tests','tools\friend','tools\worker','third_party','data','cmake','docs')) {
+            $null = New-Item -ItemType Directory -Path (Join-Path $linkedRoot $dir) -Force
+        }
+        $null = New-Item -ItemType Directory -Path (Join-Path $dependency 'src'), (Join-Path $dependency 'include') -Force
+        foreach ($file in @('CMakeLists.txt','README.md','THIRD_PARTY_NOTICES.md','tools\package.ps1','tools\package-install.ps1',
+            'tools\CoopPlay.psm1','tools\worker\WorkerSource.psm1','tools\friend\Install-Coop.ps1','tools\friend\Play-Coop.ps1',
+            'tools\friend\Uninstall-Coop.ps1','tools\friend\Collect-Logs.ps1','tools\friend\Share-Save.ps1',
+            'tools\friend\FriendCommon.psm1','tools\friend\FRIEND-GUIDE.txt','tools\friend\RUNTIME-ARCHIVE.txt')) {
+            [IO.File]::Copy((Join-Path $projectRoot $file), (Join-Path $linkedRoot $file), $false)
+        }
+        [IO.File]::WriteAllText((Join-Path $linkedRoot 'docs\fixture.md'), '# Owned source-only package fixture', $utf8)
+        foreach ($file in @('third_party\dynamite\LICENSE','third_party\imgui\LICENSE.txt','third_party\tpp-mod\LICENSE')) {
+            $destination = Join-Path $linkedRoot $file
+            $null = New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force
+            [IO.File]::Copy((Join-Path $projectRoot $file), $destination, $false)
+        }
+        $minhookFiles = [ordered]@{
+            'CMakeLists.txt' = '# Owned MinHook CMake fixture'
+            'include\MinHook.h' = '// Owned MinHook header fixture'
+            'src\hook.c' = '/* Owned MinHook C source fixture */'
+            'LICENSE.txt' = 'Owned fixture license; not a compiled dependency'
+        }
+        foreach ($relative in $minhookFiles.Keys) {
+            [IO.File]::WriteAllText((Join-Path $dependency $relative), $minhookFiles[$relative], $utf8)
+        }
+        try {
+            $null = New-Item -ItemType Junction -Path $junction -Target $dependency
+            $link = Get-Item -LiteralPath $junction -Force
+            Assert-True (($link.Attributes -band [IO.FileAttributes]::ReparsePoint) -and $link.LinkType -ceq 'Junction') 'package regression uses a real junction'
+            Assert-Equal $link.ResolveLinkTarget($true).FullName $dependency 'junction target is the separately owned dependency'
+            $snapshot = Get-WorkerSourceHashes $linkedRoot
+            Assert-True $snapshot.dependencies['third_party\minhook'].linked 'Release snapshot records the linked dependency'
+            $linkedReceipt = [ordered]@{schema=1;status='passed';plan=[ordered]@{profile='Release';flags=$releaseFlags;tests=@('owned-junction-fixture-only')};
+                artifacts=[ordered]@{loader_sha256=(Get-Sha256 $fakeLoader)};source_hashes=$snapshot.hashes;source_dependencies=$snapshot.dependencies}
+            $receipt = Join-Path $receiptFx 'junction.json'
+            [IO.File]::WriteAllText($receipt, ($linkedReceipt | ConvertTo-Json -Depth 12), $utf8)
+            $dist = Join-Path $fixture 'junction-package-dist'
+            $null = & (Join-Path $linkedRoot 'tools\package.ps1') -Friend -LoaderPath $fakeLoader -CheckReceipt $receipt -OutputRoot $dist
+            $packages = @(Get-ChildItem -LiteralPath $dist -Directory)
+            Assert-Equal $packages.Count 1 'junction fixture stages exactly one package'
+            $package = $packages[0].FullName
+            $sourceRows = @(Get-Content -LiteralPath (Join-Path $package 'source-files.json') -Raw | ConvertFrom-Json)
+            $zip = [IO.Compression.ZipFile]::OpenRead($package + '.zip')
+            try {
+                foreach ($relative in $minhookFiles.Keys) {
+                    $logical = 'third_party\minhook\' + $relative
+                    $expected = Get-Sha256 (Join-Path $dependency $relative)
+                    Assert-Equal $snapshot.hashes[$logical] $expected "Release checks linked dependency $relative"
+                    Assert-Equal (Get-Sha256 (Join-Path $package ('source\' + $logical))) $expected "staged linked dependency is intact $relative"
+                    $rows = @($sourceRows | Where-Object { $_.path.Replace('\','/') -ceq $logical.Replace('\','/') })
+                    Assert-Equal $rows.Count 1 "source manifest includes linked dependency once $relative"
+                    Assert-Equal $rows[0].sha256 $expected "source manifest hash matches linked dependency $relative"
+                    $name = $packages[0].Name + '/source/' + $logical.Replace('\','/')
+                    $entries = @($zip.Entries | Where-Object { $_.FullName.Replace('\','/') -ceq $name })
+                    Assert-Equal $entries.Count 1 "ZIP includes linked dependency once $relative"
+                    $stream = $entries[0].Open()
+                    $sha = [Security.Cryptography.SHA256]::Create()
+                    try { $hash = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '') }
+                    finally { $sha.Dispose(); $stream.Dispose() }
+                    Assert-Equal $hash $expected "ZIP source bytes match linked dependency $relative"
+                }
+            } finally { $zip.Dispose() }
+        } finally {
+            # Remove only the owned junction entry before the outer fixture's
+            # no-links recursive cleanup; never recurse into its target.
+            if (Test-Path -LiteralPath $junction) {
+                $link = Get-Item -LiteralPath $junction -Force
+                if (!($link.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $link.LinkType -cne 'Junction' -or
+                    $link.ResolveLinkTarget($true).FullName -cne $dependency) { throw 'Junction fixture cleanup ownership changed' }
+                Assert-InFixture $junction
+                [IO.Directory]::Delete($junction)
+            }
+        }
+        Assert-True (Test-Path -LiteralPath (Join-Path $dependency 'src\hook.c') -PathType Leaf) 'junction removal preserves owned dependency files'
+    }
     foreach ($f in @(Get-ChildItem -LiteralPath (Join-Path $pkg 'scripts') -File) + @(Get-Item -LiteralPath (Join-Path $pkg 'FRIEND-GUIDE.txt'), (Join-Path $pkg 'RUNTIME-ARCHIVE.txt'))) {
         $bytes = [IO.File]::ReadAllBytes($f.FullName)
         Assert-Equal @($bytes | Where-Object { $_ -gt 127 }).Count 0 "$($f.Name) is ASCII (Windows PowerShell 5.1 / Notepad)"

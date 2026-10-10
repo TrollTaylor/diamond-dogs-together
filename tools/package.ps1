@@ -199,6 +199,15 @@ try {
     if($LASTEXITCODE -ne 0) { throw 'Could not enumerate source documentation.' }
 } finally { Pop-Location }
 $sourceFiles+=@('CMakeLists.txt','README.md','THIRD_PARTY_NOTICES.md')
+if($Friend) {
+    # rg skips the worktree's known MinHook junction. These paths were already
+    # fingerprinted through the resolved dependency by the Release receipt;
+    # include that checked source rather than leaving an unbuildable bundle.
+    $sourceFiles+=@($packageSourceSnapshot.hashes.Keys | Where-Object {
+        $_.StartsWith('third_party\minhook\', [StringComparison]::Ordinal)
+    })
+}
+$sourceFiles=@($sourceFiles | Sort-Object -Unique)
 $sourceHashes=@()
 foreach($relative in $sourceFiles) {
     $source=Join-Path $projectRoot $relative
