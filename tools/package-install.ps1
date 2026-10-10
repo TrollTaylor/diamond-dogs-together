@@ -48,6 +48,9 @@ function RunningFromGame {
     return $false
 }
 function RequireStopped {
+    if(Test-Path -LiteralPath (Join-Path $modRoot 'local-test-session.json')) {
+        throw 'A local two-window session owns this folder. Quit both games and let its launcher finish cleanup before changing the mod.'
+    }
     if(RunningFromGame) { throw 'Close MGSV running from this folder normally before changing the mod.' }
 }
 function SafePath([string]$Root,[string]$Relative) {

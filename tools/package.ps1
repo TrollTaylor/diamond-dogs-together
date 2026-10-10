@@ -150,12 +150,15 @@ function Write-CrlfAscii([string]$Path,[string]$Text) {
     [IO.File]::WriteAllText($Path,$Text.Replace("`r`n","`n").Replace("`n","`r`n"),[Text.Encoding]::ASCII)
 }
 if($Friend) {
-    # Friend layout: five double-click entry points at the top, the scripts in scripts\.
+    # Friend layout: six double-click entry points at the top, the scripts in scripts\.
     $scripts=Join-Path $packageRoot 'scripts'
     $null=New-Item -ItemType Directory -Path $scripts
     $pieces=[ordered]@{
         'Install-Coop.ps1'=(Join-Path $PSScriptRoot 'friend/Install-Coop.ps1')
         'Play-Coop.ps1'=(Join-Path $PSScriptRoot 'friend/Play-Coop.ps1')
+        'Play-LocalCoop.ps1'=(Join-Path $PSScriptRoot 'friend/Play-LocalCoop.ps1')
+        'LocalCoopSession.psm1'=(Join-Path $PSScriptRoot 'friend/LocalCoopSession.psm1')
+        'LocalCoopWindows.psm1'=(Join-Path $PSScriptRoot 'friend/LocalCoopWindows.psm1')
         'Uninstall-Coop.ps1'=(Join-Path $PSScriptRoot 'friend/Uninstall-Coop.ps1')
         'Collect-Logs.ps1'=(Join-Path $PSScriptRoot 'friend/Collect-Logs.ps1')
         'Share-Save.ps1'=(Join-Path $PSScriptRoot 'friend/Share-Save.ps1')
@@ -174,6 +177,13 @@ if($Friend) {
             "pause`r`nexit /b %result%`r`n"
         [IO.File]::WriteAllText((Join-Path $packageRoot ($entry+'.bat')),$batch,[Text.Encoding]::ASCII)
     }
+    # Compatibility entry point: the unified launcher owns the local-test flow.
+    $batch="@echo off`r`nsetlocal`r`nrem MGS Co-op local two-window test through the Play-Coop menu.`r`nset `"PSModulePath=`"`r`n"+
+        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%~dp0scripts\Play-Coop.ps1`" -LocalTest %*`r`n"+
+        "set `"result=%errorlevel%`"`r`necho.`r`n"+
+        "if not `"%result%`"==`"0`" echo Finished with code %result%. Please read the messages above.`r`n"+
+        "pause`r`nexit /b %result%`r`n"
+    [IO.File]::WriteAllText((Join-Path $packageRoot 'Play-Offline-Coop.bat'),$batch,[Text.Encoding]::ASCII)
     foreach($doc in @('FRIEND-GUIDE.txt','RUNTIME-ARCHIVE.txt')) {
         $text=[IO.File]::ReadAllText((Join-Path $PSScriptRoot "friend/$doc")).Replace('@VERSION@',$version).Replace('@ARCHIVE_SHA256@',$archiveSha256)
         Write-CrlfAscii (Join-Path $packageRoot $doc) $text

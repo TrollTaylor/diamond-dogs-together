@@ -141,14 +141,14 @@ try {
 
     # Detached controller fixtures share the exact six-argument PowerShell
     # contract. Names, script paths, interpreter flags and arity stay explicit.
-    $psNames=@('build_profile_tests','worker_session_tests')
+    $psNames=@('build_profile_tests','worker_session_tests','local_coop_windows_tests')
     $psInventory=[pscustomobject]@{tests=@($psNames|ForEach-Object {
         [pscustomobject]@{name=$_;command=@('C:\fixture\pwsh.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $fixture ('tests\'+$_+'.ps1')));properties=@()}
     })}
     function Copy-PsInventory { return ($psInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json) }
     Assert-WorkerInventory $psInventory $fixture $directory $psNames
-    Check $true 'both audited PowerShell fixtures accept exact registered six-argument command'
-    foreach($index in @(0,1)) {
+    Check $true 'all audited PowerShell fixtures accept exact registered six-argument command'
+    foreach($index in @(0..($psNames.Count-1))) {
         $bad=Copy-PsInventory;$bad.tests[$index].command[0]='C:\fixture\powershell.exe'
         Refuses {Assert-WorkerInventory $bad $fixture $directory $psNames} 'Unaudited PowerShell command'
         $bad=Copy-PsInventory;$bad.tests[$index].command[5]=Join-Path $fixture 'tests\unreviewed-controller.ps1'
@@ -163,6 +163,41 @@ try {
     Check $true 'controller fixture ordered dependencies remain audited'
     $bad.tests[1].properties[0].value=@('unaudited_launch')
     Refuses {Assert-WorkerInventory $bad $fixture $directory $psNames} 'Unaudited ordered dependency'
+
+    # Local session fixtures additionally require the one parser in this exact
+    # owned build directory. No fixture can introduce runtime flags or a foreign tool.
+    Check ($release.tests -ccontains 'local_coop_windows_tests') 'release inventory admits the inert window geometry fixture'
+    Check ($release.tests -ccontains 'local_coop_session_tests') 'release inventory admits the inert activation journal fixture'
+    $localNames=@('local_coop_windows_tests','local_coop_session_tests')
+    $localInventory=[pscustomobject]@{tests=@(
+        [pscustomobject]@{name='local_coop_windows_tests';command=@('C:\fixture\pwsh.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $fixture 'tests\local_coop_windows_tests.ps1'));properties=@()},
+        [pscustomobject]@{name='local_coop_session_tests';command=@('C:\fixture\pwsh.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $fixture 'tests\local_coop_session_tests.ps1'),'-IniCheck',(Join-Path $directory 'lab_ini_check.exe'));properties=@()}
+    )}
+    function Copy-LocalInventory { return ($localInventory|ConvertTo-Json -Depth 8|ConvertFrom-Json) }
+    Assert-WorkerInventory $localInventory $fixture $directory $localNames
+    Check $true 'local fixtures admit exactly six window arguments and eight journal arguments'
+    $bad=Copy-LocalInventory;$bad.tests[1].command[0]='C:\fixture\powershell.exe'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $localNames} 'Unaudited local-session fixture command'
+    $bad=Copy-LocalInventory;$bad.tests[1].command[5]=Join-Path $fixture 'tests\worker_session_tests.ps1'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $localNames} 'Unaudited local-session fixture command'
+    $bad=Copy-LocalInventory;$bad.tests[1].command+=@('-RunDirectory','C:\real-game')
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $localNames} 'Unaudited local-session fixture command'
+    $bad=Copy-LocalInventory;$bad.tests[1].command[7]=Join-Path $fixture 'foreign\lab_ini_check.exe'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $localNames} 'Unaudited local-session fixture command'
+    $bad=Copy-LocalInventory;$bad.tests[1].command[7]=Join-Path $directory 'unreviewed_parser.exe'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $localNames} 'Unaudited local-session fixture command'
+    $bad=Copy-LocalInventory;$bad.tests[1].command[6]='-RunDirectory'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $localNames} 'Unaudited local-session fixture command'
+    $bad=Copy-LocalInventory;$bad.tests[1].command[6]='-inicheck'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $localNames} 'Unaudited local-session fixture command'
+    $bad=Copy-LocalInventory;$bad.tests[1].command[1]='-NonInteractive'
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $localNames} 'Unaudited local-session fixture command'
+    $bad=Copy-LocalInventory;$bad.tests[1].command=@($bad.tests[1].command[0..6])
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $localNames} 'Unaudited local-session fixture command'
+    $bad=Copy-LocalInventory;$bad.tests[1].command=@($bad.tests[1].command[0..5])
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $localNames} 'Unaudited local-session fixture command'
+    $bad=Copy-LocalInventory;$bad.tests[0].command+=@('-IniCheck',(Join-Path $directory 'lab_ini_check.exe'))
+    Refuses {Assert-WorkerInventory $bad $fixture $directory $localNames} 'Unaudited PowerShell command'
 
     $receipt = Join-Path $fixture 'receipt.json'
     Write-WorkerJson $receipt ([ordered]@{arguments=@('space value',('line1'+"`n"+'line2'));status='first'})

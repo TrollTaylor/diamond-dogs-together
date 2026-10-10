@@ -6,7 +6,9 @@ An in-development campaign co-op mod for **Metal Gear Solid V: The Phantom Pain*
 
 The debug-menu build was tested with both players on foot in Afghanistan after host-only title Continue. Live checks cover F9 input capture and restored movement, teleports and bookmark return, a visible equipped-weapon pickup, inventory refill feedback, daylight and rain. The earlier world-sync build also verified Africa, checkpoint copying, injected shared death, host-only Continue recovery and Africa–ACC–Afghanistan travel. Each build's receipts and limitations are recorded separately. [Build-specific live evidence](docs/testing-2026-10-05-world-sync.md), [current status](docs/STATUS.md).
 
-For the configured single-PC lab, launch both copies with world sync enabled:
+Every friend release includes a local two-window test in **Play-Coop.bat**: choose **T**. The source checkout's **Play-Coop.bat** opens the newest extracted friend package in dist; its **Play-Offline-Coop.bat** selects the same local option. **Play-Offline-Coop.bat** in the package is a shortcut to the same option. It detects the existing sibling `MGS_TPP_guest` game folder, or asks for the second game folder. Both copies use the package's owned loader and separate `local-test-saves` copied initially from the main co-op save. The launcher fits both windows to the current monitor, handles initial window resets and provides **R** to arrange again. Click through startup and Continue in both games yourself; choose travel normally on the host. Keyboard/mouse controls the clicked window; controller 0 controls the guest. Both folders' previous activation files are restored when both games close, including after closing the launcher. This local loopback rehearsal does not test Steam invites or relay connections.
+
+The developer harness remains available separately. For the configured single-PC lab, launch both copies with world sync enabled:
 
 ```powershell
 pwsh -File tools/lab/Play-OfflineCoop.ps1 -World 3

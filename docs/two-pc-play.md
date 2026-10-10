@@ -51,6 +51,40 @@ player words):
 7. **Done**: quit MGSV normally; co-op switches itself off at game exit, even
    with the Play-Coop window closed.
 
+## Local two-window test (one PC)
+
+Every friend package also includes `[T] Local two-window test` in
+`Play-Coop.bat`. `Play-Offline-Coop.bat` delegates to that same launcher with
+`-LocalTest`; it does not require the development checkout or lab scripts.
+
+1. Install the package in the host copy. The existing second game copy also
+   needs this package's owned loader and checked runtime archive. No second
+   retail installation is created by the launcher. It detects the sibling
+   `<host folder>_guest`, or prompts for the guest directory. An explicit path
+   works with `Play-Coop.bat -LocalTest -GuestDirectory "D:\MGSV_guest"`.
+2. Choose `[T]`. The launcher opens the host on the left and guest on the
+   right. It does not press buttons, Continue, loading-tip keys or travel
+   controls. Complete the normal start screens and Continue independently
+   in both games, then enter the same supported scene.
+3. Click either window to control it with keyboard and mouse. Controller
+   slot 0 drives the guest; the host ignores controllers so it cannot drive
+   both games. Keyboard and mouse remain available in the focused guest.
+4. `[R]` in the launcher retiles the two owned game windows. Window movement
+   does not make a game current, and no desktop focus or global input is
+   injected. Travel uses the normal game menus; complete both loading screens
+   yourself. The launcher reports both games' status.
+5. Quit both games normally and leave the launcher open for cleanup. It
+   restores each copy's own previous configuration once both games close.
+
+Each copy uses `mgs-coop\local-test-saves`. On first use both are copied from
+host `mgs-coop\coop-saves`; later runs retain local-test progress independently.
+Real saves and ordinary co-op saves are preserved. Windowed graphics are
+written only into the local-test copies. This runs local UDP with two
+processes on one PC; online Steam joining still requires a two-PC test.
+
+This is a player-facing visible test. Development agents still use only the
+qualified hidden worker under the repository's background-testing rules.
+
 F9 opens the in-game debug menu during an offline copied-save session. The
 new source Enemy controls select an authored camp and patrol route, teleport
 to a readable guard or validated player checkpoint, and let the host reuse
@@ -67,10 +101,11 @@ and its ZIP (`package.json` flavor `friend-play`):
 | file | purpose |
 |---|---|
 | `Install-Coop.bat` | install once: loader, save backup, save copy; leaves the game in pass-through |
-| `Play-Coop.bat` | every game: Host online / Join online (Steam) or LAN/VPN Host/Join, then MGSV starts through Steam with co-op on |
+| `Play-Coop.bat` | Host online / Join online, LAN/VPN Host/Join, or `[T]` local two-window test |
+| `Play-Offline-Coop.bat` | shortcut to `Play-Coop.ps1 -LocalTest`, preserving caller arguments |
 | `Uninstall-Coop.bat` | switch a leftover session off, restore the previous loader, check the real saves |
 | `Collect-Logs.bat` | logs ZIP on the Desktop (redacted) |
-| `scripts/` | the `.ps1` scripts, `FriendCommon.psm1`, `CoopPlay.psm1`, `install.ps1` |
+| `scripts/` | player scripts, `FriendCommon.psm1`, `CoopPlay.psm1`, `LocalCoopSession.psm1`, `LocalCoopWindows.psm1`, `install.ps1` |
 | `FRIEND-GUIDE.txt`, `RUNTIME-ARCHIVE.txt` | player documentation |
 
 The ZIP never contains the runtime archive (`mgs-coop-player-runtime.dat`, see

@@ -48,6 +48,9 @@ without a "y". The online flow has none of these steps.
 [CmdletBinding()]
 param(
     [string]$GameDirectory,
+    # Local two-window rehearsal; both games start at their normal title screens.
+    [switch]$LocalTest,
+    [string]$GuestDirectory,
     # Skip the menu. -Role without -Transport keeps the LAN/VPN (UDP) flow.
     [ValidateSet('Host', 'Join')][string]$Role,
     # steam: Steam online (docs/steam-online.md); udp: the LAN/VPN code.
@@ -149,6 +152,16 @@ if ($Watch) {
     exit 0
 }
 
+function Start-LocalTest {
+    $local = Resolve-Piece 'Play-LocalCoop.ps1' 'Play-LocalCoop.ps1'
+    $settings = @{GameDirectory=$gameRoot;PackageDirectory=$PackageDirectory;World=$World;Partner=$Partner;Hud=$Hud;NonInteractive=$NonInteractive}
+    if ($GuestDirectory) { $settings['GuestDirectory'] = $GuestDirectory }
+    & $local @settings
+    exit $LASTEXITCODE
+}
+if ($LocalTest) { Start-LocalTest }
+Import-Module (Resolve-Piece 'LocalCoopSession.psm1' 'LocalCoopSession.psm1') -Force -DisableNameChecking
+if (Test-Path -LiteralPath $paths.Mod -PathType Container) { $null = Invoke-LocalCoopRecovery -HostRoot $gameRoot }
 $interactive = Test-FriendInteractive -NonInteractive:$NonInteractive
 function Ask([string]$Prompt) {
     if (!$interactive) { throw "Missing input: $Prompt (run Play-Coop.bat in a window)." }
@@ -166,7 +179,7 @@ function Write-CleanupResult($Result) {
     Write-Lines -Lines @($Result.Messages) -Color Yellow
 }
 
-Write-Host 'MGS Co-op - two-PC play' -ForegroundColor Cyan
+Write-Host 'MGS Co-op - online or local play' -ForegroundColor Cyan
 Write-Host "Game folder: $gameRoot"
 
 if ($Cleanup) {
@@ -214,6 +227,33 @@ $saveDir = $paths.CoopSaves
 if (!(Test-Path -LiteralPath $saveDir -PathType Container)) { throw 'The co-op save copy (mgs-coop\coop-saves) is missing. Run Install-Coop.bat again.' }
 $saveProblem = Get-FriendSaveDirProblem $saveDir
 if ($saveProblem) { throw $saveProblem }
+# ---------------------------------------------------------------- 2: menu
+if (!$Role) {
+    Section 'How do you want to play?'
+    Write-Host '  [O] Host online (Steam, recommended) - no port forwarding, VPN or extra program'
+    Write-Host "  [J] Join online - paste the host's code, or wait for their Steam invite"
+    Write-Host '  [L] LAN/VPN (UDP code) - the same network, or a VPN such as Tailscale'
+    Write-Host '  [T] Local two-window test - both players on this PC, manual startup'
+    Write-Host '  [Q] Quit'
+    switch -Regex (Ask 'Choose O, J, L, T or Q') {
+        '^[Tt]' { Start-LocalTest }
+        '^[Oo]' { $Role = 'Host'; $Transport = 'steam' }
+        '^[Jj]' { $Role = 'Join'; $Transport = 'steam' }
+        '^[Ll]' {
+            $Transport = 'udp'
+            Section 'Host or Join?'
+            Write-Host '  [H] Host - your friend joins you (you send them a code)'
+            Write-Host '  [J] Join - you join your friend (you need their code)'
+            Write-Host '  [Q] Quit'
+            switch -Regex (Ask 'Choose H, J or Q') {
+                '^[Hh]' { $Role = 'Host' }
+                '^[Jj]' { $Role = 'Join' }
+                default { Write-Host 'Nothing was changed.'; exit 0 }
+            }
+        }
+        default { Write-Host 'Nothing was changed.'; exit 0 }
+    }
+}
 # Files Play-Coop would write must not belong to anything else.
 foreach ($pair in @(@($paths.LabIni, 'lab.ini'), @($paths.CoopIni, 'coop.ini'))) {
     if (!(Test-Path -LiteralPath $pair[0])) { continue }
@@ -234,31 +274,6 @@ $character = [string](Get-FriendProperty $state 'character' '')
 if (!(Test-FriendCharacter $character)) { $character = 'default' }
 Write-Host "Install OK. Your character: $character (Install-Coop.bat changes it)."
 
-# ---------------------------------------------------------------- 2: menu
-if (!$Role) {
-    Section 'How do you want to play?'
-    Write-Host '  [O] Host online (Steam, recommended) - no port forwarding, VPN or extra program'
-    Write-Host "  [J] Join online - paste the host's code, or wait for their Steam invite"
-    Write-Host '  [L] LAN/VPN (UDP code) - the same network, or a VPN such as Tailscale'
-    Write-Host '  [Q] Quit'
-    switch -Regex (Ask 'Choose O, J, L or Q') {
-        '^[Oo]' { $Role = 'Host'; $Transport = 'steam' }
-        '^[Jj]' { $Role = 'Join'; $Transport = 'steam' }
-        '^[Ll]' {
-            $Transport = 'udp'
-            Section 'Host or Join?'
-            Write-Host '  [H] Host - your friend joins you (you send them a code)'
-            Write-Host '  [J] Join - you join your friend (you need their code)'
-            Write-Host '  [Q] Quit'
-            switch -Regex (Ask 'Choose H, J or Q') {
-                '^[Hh]' { $Role = 'Host' }
-                '^[Jj]' { $Role = 'Join' }
-                default { Write-Host 'Nothing was changed.'; exit 0 }
-            }
-        }
-        default { Write-Host 'Nothing was changed.'; exit 0 }
-    }
-}
 if (!$Transport) { $Transport = 'udp' }
 $labRole = 'guest'
 if ($Role -eq 'Host') { $labRole = 'host' }

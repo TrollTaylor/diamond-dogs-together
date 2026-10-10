@@ -102,6 +102,8 @@ $exitCode = 0
 
 # ---------------------------------------------------------------- 0: play session
 # A session whose launcher window or helper still runs is in use, not a leftover.
+Import-Module (Join-Path $PSScriptRoot 'LocalCoopSession.psm1') -DisableNameChecking
+if (Test-Path -LiteralPath $paths.Mod -PathType Container) { $null = Invoke-LocalCoopRecovery -HostRoot $gameRoot }
 if (Test-CoopPlaySessionLive -GameRoot $gameRoot) { throw 'Another Play-Coop window is active for this folder; close it first (or quit MGSV). Nothing was changed.' }
 $leftover = Invoke-CoopPlayCleanup -GameRoot $gameRoot
 if ($leftover.Ran) {

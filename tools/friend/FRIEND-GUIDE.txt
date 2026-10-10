@@ -1,4 +1,4 @@
-MGS CO-OP - TWO-PC PLAY GUIDE
+MGS CO-OP - PLAY GUIDE
 Version @VERSION@ (development build)
 ==============================================================================
 
@@ -117,7 +117,40 @@ Play-Coop.bat asks how you want to play:
     [O] Host online (Steam, recommended)
     [J] Join online
     [L] LAN/VPN (UDP code)
+    [T] Local two-window test
     [Q] Quit
+
+LOCAL TWO-WINDOW TEST (one PC):
+ 1. Double-click Play-Coop.bat and press T. Play-Offline-Coop.bat is a
+    shortcut to the same option and is included in every friend package.
+ 2. Use your installed host game and an existing second copy of MGSV. The
+    launcher first checks the sibling folder named <host folder>_guest; if
+    it cannot find one, paste the guest game folder when asked. You can also
+    pass it explicitly: Play-Coop.bat -LocalTest -GuestDirectory "D:\MGSV_guest"
+    Both copies must have this package's owned loader and runtime archive.
+    The launcher does not download or create a second game installation.
+ 3. The host opens on the left and the guest on the right. Nothing presses
+    startup buttons, Continue, loading-tip keys or travel controls for you.
+    Click through each game's screens yourself, choose Continue in BOTH and
+    enter the same supported scene, as two players would on separate PCs.
+ 4. Keyboard and mouse control the game window you click. A controller in
+    slot 0 controls the guest. The host ignores controllers so the same
+    controller does not move both players. You can still click the guest
+    and use keyboard/mouse for its menus and movement.
+ 5. In the launcher, [R] re-arranges the game windows side by side if the
+    game or a display change moves them. Use normal game menus for travel;
+    finish each game's loading screen yourself. The launcher shows the
+    status of both games and never picks missions or teleports you.
+ 6. Quit both games normally when finished. The launcher restores each
+    copy's previous settings after both games close. Do not close the
+    launcher until cleanup finishes.
+
+Local testing uses mgs-coop\local-test-saves in each game folder. On the
+first run both are seeded from the host's existing co-op save copy; later
+runs keep their own local-test progress. Your REAL saves and ordinary
+mgs-coop\coop-saves are unchanged. Windowed graphics apply only to these
+local-test save copies. This tests gameplay over local UDP; an online Steam
+connection with your friend still needs two PCs.
 
 HOST ONLINE:
  1. Double-click Play-Coop.bat and press O. Steam must be running and logged

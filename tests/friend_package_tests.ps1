@@ -730,10 +730,10 @@ try {
     $pkg = $packages[0].FullName
     Assert-True ($packages[0].Name -cmatch '^mgs-coop-friend-0\.12\.1-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$') 'package folder name'
     Assert-True (Test-Path -LiteralPath ($pkg + '.zip') -PathType Leaf) 'package zip written'
-    $required = @('Install-Coop.bat', 'Play-Coop.bat', 'Uninstall-Coop.bat', 'Collect-Logs.bat', 'Share-Save.bat', 'scripts/Share-Save.ps1', 'FRIEND-GUIDE.txt', 'RUNTIME-ARCHIVE.txt', 'package.json', 'source-files.json',
+    $required = @('Install-Coop.bat', 'Play-Coop.bat', 'Play-Offline-Coop.bat', 'Uninstall-Coop.bat', 'Collect-Logs.bat', 'Share-Save.bat', 'scripts/Share-Save.ps1', 'FRIEND-GUIDE.txt', 'RUNTIME-ARCHIVE.txt', 'package.json', 'source-files.json',
         'payload/dinput8.dll', 'payload/DYNAMITE-LICENSE', 'payload/MinHook-LICENSE.txt', 'payload/ImGui-LICENSE.txt', 'payload/tpp-mod-LICENSE', 'payload/THIRD_PARTY_NOTICES.md',
-        'scripts/Install-Coop.ps1', 'scripts/Play-Coop.ps1', 'scripts/Uninstall-Coop.ps1', 'scripts/Collect-Logs.ps1', 'scripts/FriendCommon.psm1', 'scripts/CoopPlay.psm1',
-        'scripts/install.ps1', 'source/tools/friend/Play-Coop.ps1', 'source/tools/CoopPlay.psm1', 'source/lua/coop/session_feedback.lua',
+        'scripts/Install-Coop.ps1', 'scripts/Play-Coop.ps1', 'scripts/Play-LocalCoop.ps1', 'scripts/LocalCoopSession.psm1', 'scripts/LocalCoopWindows.psm1', 'scripts/Uninstall-Coop.ps1', 'scripts/Collect-Logs.ps1', 'scripts/FriendCommon.psm1', 'scripts/CoopPlay.psm1',
+        'scripts/install.ps1', 'source/tools/friend/Play-Coop.ps1', 'source/tools/friend/Play-LocalCoop.ps1', 'source/tools/friend/LocalCoopSession.psm1', 'source/tools/friend/LocalCoopWindows.psm1', 'source/tools/CoopPlay.psm1', 'source/lua/coop/session_feedback.lua',
         'source/cmake/lua_checks.cmake', 'source/native/debug_overlay.cpp', 'source/lua/coop/debug_menu.lua', 'source/third_party/imgui/imgui.cpp')
     foreach ($r in $required) { Assert-True (Test-Path -LiteralPath (Join-Path $pkg $r) -PathType Leaf) "package contains $r" }
     # The build dependency is source, not just its payload license. Verify the
@@ -742,9 +742,9 @@ try {
         Assert-True (Test-Path -LiteralPath (Join-Path $pkg ('source\' + $relative)) -PathType Leaf) "package includes checked dependency $relative"
         Assert-Equal (Get-Sha256 (Join-Path $pkg ('source\' + $relative))) $currentSource.hashes[$relative] "package dependency matches Release snapshot $relative"
     }
-    $wantScripts = @('Install-Coop.ps1', 'Play-Coop.ps1', 'Uninstall-Coop.ps1', 'Collect-Logs.ps1', 'Share-Save.ps1', 'FriendCommon.psm1', 'CoopPlay.psm1', 'install.ps1') | Sort-Object
+    $wantScripts = @('Install-Coop.ps1', 'Play-Coop.ps1', 'Play-LocalCoop.ps1', 'LocalCoopSession.psm1', 'LocalCoopWindows.psm1', 'Uninstall-Coop.ps1', 'Collect-Logs.ps1', 'Share-Save.ps1', 'FriendCommon.psm1', 'CoopPlay.psm1', 'install.ps1') | Sort-Object
     Assert-Equal ((@(Get-ChildItem -LiteralPath (Join-Path $pkg 'scripts') -File | ForEach-Object { $_.Name } | Sort-Object)) -join ',') ($wantScripts -join ',') 'scripts: exactly the play package pieces (no LabCommon.psm1, no set-session-mode.ps1)'
-    Assert-Equal ((@(Get-ChildItem -LiteralPath $pkg -File -Filter '*.bat' | ForEach-Object { $_.Name } | Sort-Object)) -join ',') 'Collect-Logs.bat,Install-Coop.bat,Play-Coop.bat,Share-Save.bat,Uninstall-Coop.bat' 'the five double-click entry points'
+    Assert-Equal ((@(Get-ChildItem -LiteralPath $pkg -File -Filter '*.bat' | ForEach-Object { $_.Name } | Sort-Object)) -join ',') 'Collect-Logs.bat,Install-Coop.bat,Play-Coop.bat,Play-Offline-Coop.bat,Share-Save.bat,Uninstall-Coop.bat' 'the six double-click entry points'
     $manifest = Get-Content -LiteralPath (Join-Path $pkg 'package.json') -Raw | ConvertFrom-Json
     Assert-Equal "$($manifest.product)|$($manifest.version)|$($manifest.flavor)" 'mgs-coop-local-package|0.12.1|friend-play' 'package manifest identity'
     # A matching override still packages the receipt's immutable checked copy.
@@ -786,7 +786,7 @@ try {
         foreach ($file in @('CMakeLists.txt','README.md','THIRD_PARTY_NOTICES.md','tools\package.ps1','tools\package-install.ps1',
             'tools\CoopPlay.psm1','tools\worker\WorkerSource.psm1','tools\friend\Install-Coop.ps1','tools\friend\Play-Coop.ps1',
             'tools\friend\Uninstall-Coop.ps1','tools\friend\Collect-Logs.ps1','tools\friend\Share-Save.ps1',
-            'tools\friend\FriendCommon.psm1','tools\friend\FRIEND-GUIDE.txt','tools\friend\RUNTIME-ARCHIVE.txt')) {
+            'tools\friend\FriendCommon.psm1','tools\friend\Play-LocalCoop.ps1','tools\friend\LocalCoopSession.psm1','tools\friend\LocalCoopWindows.psm1','tools\friend\FRIEND-GUIDE.txt','tools\friend\RUNTIME-ARCHIVE.txt')) {
             [IO.File]::Copy((Join-Path $projectRoot $file), (Join-Path $linkedRoot $file), $false)
         }
         [IO.File]::WriteAllText((Join-Path $linkedRoot 'docs\fixture.md'), '# Owned source-only package fixture', $utf8)
@@ -870,6 +870,32 @@ try {
         $text = [IO.File]::ReadAllText((Join-Path $pkg "$b.bat"))
         Assert-True ($text.Contains("powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"%~dp0scripts\$b.ps1`" %*") -and $text.Contains("`r`n") -and $text.Contains('pause') -and $text.Contains('set "PSModulePath="')) "$b.bat runs its script with Windows PowerShell (own module path)"
     }
+    $offlineBat = [IO.File]::ReadAllText((Join-Path $pkg 'Play-Offline-Coop.bat'))
+    Assert-True ($offlineBat.Contains('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\Play-Coop.ps1" -LocalTest %*') -and
+        $offlineBat.Contains("`r`n") -and $offlineBat.Contains('pause') -and $offlineBat.Contains('set "PSModulePath="')) 'offline BAT delegates to the unified launcher with Windows PowerShell and all caller arguments'
+    $localSourceRows = @(Get-Content -LiteralPath (Join-Path $pkg 'source-files.json') -Raw | ConvertFrom-Json)
+    $localZip = [IO.Compression.ZipFile]::OpenRead($pkg + '.zip')
+    try {
+        foreach ($localPiece in 'Play-LocalCoop.ps1', 'LocalCoopSession.psm1', 'LocalCoopWindows.psm1') {
+            $relative = 'tools\friend\' + $localPiece
+            $expected = Get-Sha256 (Join-Path $projectRoot $relative)
+            Assert-Equal $currentSource.hashes[$relative] $expected "Release source snapshot covers local test $localPiece"
+            Assert-Equal (Get-Sha256 (Join-Path $pkg ('source\' + $relative))) $expected "local test source bytes preserved $localPiece"
+            $rows = @($localSourceRows | Where-Object { $_.path.Replace('\','/') -ceq $relative.Replace('\','/') })
+            Assert-Equal $rows.Count 1 "local test source listed exactly once $localPiece"
+            Assert-Equal $rows[0].sha256 $expected "local test source manifest hash $localPiece"
+            foreach ($path in @(('scripts/' + $localPiece), ('source/' + $relative.Replace('\','/')))) {
+                $entries = @($localZip.Entries | Where-Object { $_.FullName.Replace('\','/') -ceq ($prefix + $path) })
+                Assert-Equal $entries.Count 1 "local test ZIP includes exactly once $path"
+                $stream = $entries[0].Open()
+                $sha = [Security.Cryptography.SHA256]::Create()
+                try { $hash = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '') }
+                finally { $sha.Dispose(); $stream.Dispose() }
+                $expectedEntry = Get-Sha256 (Join-Path $pkg $path)
+                Assert-Equal $hash $expectedEntry "local test ZIP bytes match staged piece $path"
+            }
+        }
+    } finally { $localZip.Dispose() }
     $guide = [IO.File]::ReadAllText((Join-Path $pkg 'FRIEND-GUIDE.txt'))
     foreach ($needle in 'Play-Coop.bat', 'UDP 47830', 'Tailscale', 'Mother Base', 'Install-Coop.bat', 'Uninstall-Coop.bat', 'Collect-Logs.bat', 'RUNTIME-ARCHIVE.txt', 'Version 0.12.1', 'Failed to log in', 'Public networks', 'Block rules win over Allow rules', 'REAL saves') {
         Assert-True $guide.Contains($needle) "guide mentions $needle"
@@ -885,7 +911,7 @@ try {
     $onlineSt = ConvertFrom-CoopStatusText -Text $onlineText
     Assert-True ([bool]$onlineExample) 'the guide shows an online status line'
     Assert-Equal $onlineExample (Format-CoopStatusLine -Status $onlineSt -Role guest -NowUtc $now) 'the guide quotes the online status line exactly'
-    foreach ($needle in 'Host online', 'Join online', 'Invite a friend', 'start Play-Coop.bat FIRST', 'Play-Coop.bat -Partner clips', 'native partner') {
+    foreach ($needle in 'Host online', 'Join online', 'Invite a friend', 'start Play-Coop.bat FIRST', 'Play-Coop.bat -Partner clips', 'native partner', '[T] Local two-window test', 'Play-Offline-Coop.bat', 'local-test-saves', '-GuestDirectory', '[R]', 'Continue') {
         Assert-True $guide.Contains($needle) "guide describes the online flow: $needle"
     }
     $archiveNote = [IO.File]::ReadAllText((Join-Path $pkg 'RUNTIME-ARCHIVE.txt'))
@@ -914,7 +940,7 @@ try {
     $stage = Join-Path $fixture 'stage'
     $null = New-LabPackage -RepoRoot $projectRoot -Destination $stage -LoaderPath $loader1 -Version '0.12.0' -ExecutableSha256 $exeHash -SteamDllSha256 $steamHash -ArchiveSha256 (Get-Sha256 $archiveFx)
     Copy-Item -LiteralPath (Join-Path $pkg 'scripts') -Destination (Join-Path $stage 'scripts') -Recurse
-    foreach ($b in 'Install-Coop.bat', 'Play-Coop.bat', 'Uninstall-Coop.bat', 'Collect-Logs.bat') { Copy-Item -LiteralPath (Join-Path $pkg $b) -Destination $stage }
+    foreach ($b in 'Install-Coop.bat', 'Play-Coop.bat', 'Play-Offline-Coop.bat', 'Uninstall-Coop.bat', 'Collect-Logs.bat') { Copy-Item -LiteralPath (Join-Path $pkg $b) -Destination $stage }
     $install = Join-Path $stage 'scripts/Install-Coop.ps1'
     $play = Join-Path $stage 'scripts/Play-Coop.ps1'
     $uninstall = Join-Path $stage 'scripts/Uninstall-Coop.ps1'
@@ -999,6 +1025,140 @@ try {
     $js = Get-Content -LiteralPath (Join-Path $jp.Mod 'friend-install.json') -Raw | ConvertFrom-Json
     Assert-Equal "$($js.role_hint)|$($js.character)" 'Join|quiet' 'joiner defaults to Quiet'
     Assert-PassThrough $jp 'join install'
+
+    # ------------------------------------------------------------ packaged local two-window flow
+    # Dedicated inert copies: only the host uses the friend installer; the
+    # guest has the owned core installation and its earlier offline baseline.
+    $localHost = New-GameFixture 'local-host'
+    $localGuest = New-GameFixture 'local-host_guest'
+    $lhp = Get-InstancePaths -GameDirectory $localHost
+    $lgp = Get-InstancePaths -GameDirectory $localGuest
+    $r = Invoke-Friend $install (@('-GameDirectory', $localHost, '-Role', 'Host', '-RuntimeArchive', $archiveFx) + $common)
+    Assert-Equal $r.Exit 0 "local host fixture installs: $($r.Raw)"
+    $r = Invoke-Friend (Join-Path $stage 'scripts/install.ps1') @('-GameDirectory', $localGuest, '-PackageDirectory', $stage, '-RuntimeArchive', $archiveFx, '-NoPrompt', '-NoInitialMode')
+    Assert-Equal $r.Exit 0 "local guest core fixture installs: $($r.Raw)"
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $lgp.Mod 'friend-install.json'))) 'local guest needs the owned core install, not a second friend-account install'
+    # Reuse the existing validated retail graphics fixture, never a real save.
+    $graphicsTokens = $null; $graphicsErrors = $null
+    $graphicsAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $projectRoot 'tests/lab_scripts_tests.ps1'), [ref]$graphicsTokens, [ref]$graphicsErrors)
+    $graphicsLiterals = @($graphicsAst.FindAll({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -ceq '$realConfig'}, $true))
+    Assert-True (@($graphicsErrors).Count -eq 0 -and $graphicsLiterals.Count -eq 1) 'local test reuses the one checked graphics fixture'
+    $localGraphics = & ([scriptblock]::Create($graphicsLiterals[0].Right.Extent.Text))
+    Assert-True (Get-GraphicsConfigInfo $localGraphics).Valid 'local source graphics fixture has the retail tag'
+    [IO.File]::WriteAllText((Join-Path $lhp.CoopSaves '287700/local/TPP_GRAPHICS_CONFIG'), $localGraphics, $utf8)
+    $localBaseline = [ordered]@{
+        'lab.ini' = "# Generated by tools/lab/Prepare-LabInstance.ps1 - single-PC lab harness only.`nenabled=1`nmode=lab`nrole=guest`nloopback=1`n"
+        'coop.ini' = "character=quiet`nmaster_url=http://127.0.0.1:47899/tppstm/gate`n"
+        'link-secret.txt' = "$s7`r`n"
+        'script-observe.enabled' = "offline-v1`n"
+        'client-host.txt' = "76561198012345678`n"
+    }
+    foreach ($name in $localBaseline.Keys) { [IO.File]::WriteAllText((Join-Path $lgp.Mod $name), $localBaseline[$name], $utf8) }
+    $localNormalSaves = Get-TreeHashes $lhp.CoopSaves
+    $localRealSaves = Get-TreeHashes $userdata
+    $localFixedHashes = [ordered]@{}
+    foreach ($p in @($lhp, $lgp)) { foreach ($file in @($p.Exe, $p.SteamApi, $p.Loader, $p.Archive, $p.Record)) { $localFixedHashes[$file] = Get-Sha256 $file } }
+    $env:MGS_COOP_TEST_NO_LAUNCH = '1'
+    $env:MGS_COOP_TEST_NO_WATCHDOG = '1'
+    try {
+        # Invalid selection refuses before any local save or activation mutation.
+        $beforeHost = Get-TreeHashes $localHost; $beforeGuest = Get-TreeHashes $localGuest
+        $r = Invoke-Friend $play @('-GameDirectory', $localHost, '-LocalTest', '-GuestDirectory', $localHost, '-NonInteractive')
+        Assert-Refused $r 'Choose two separate game folders' 'local test rejects using the same game twice'
+        Assert-Equal (Get-TreeHashes $localHost) $beforeHost 'same-folder refusal preserves the host'
+        Assert-Equal (Get-TreeHashes $localGuest) $beforeGuest 'same-folder refusal preserves the guest'
+        [IO.File]::WriteAllText((Join-Path $lgp.Mod 'worker.enabled'), 'INERT foreign developer marker', $utf8)
+        $beforeHost = Get-TreeHashes $localHost; $beforeGuest = Get-TreeHashes $localGuest
+        $r = Invoke-Friend $play @('-GameDirectory', $localHost, '-LocalTest', '-GuestDirectory', $localGuest, '-NonInteractive')
+        Assert-Refused $r 'belongs to a developer test' 'local play leaves an active developer fixture alone'
+        Assert-Equal (Get-TreeHashes $localHost) $beforeHost 'developer refusal preserves host configuration and saves'
+        Assert-Equal (Get-TreeHashes $localGuest) $beforeGuest 'developer refusal preserves guest configuration and saves'
+        Remove-Item -LiteralPath (Join-Path $lgp.Mod 'worker.enabled')
+        $originalGuestLoader = [IO.File]::ReadAllBytes($lgp.Loader)
+        [IO.File]::WriteAllText($lgp.Loader, 'INERT unrelated loader', $utf8)
+        $beforeHost = Get-TreeHashes $localHost; $beforeGuest = Get-TreeHashes $localGuest
+        $r = Invoke-Friend $play @('-GameDirectory', $localHost, '-LocalTest', '-GuestDirectory', $localGuest, '-NonInteractive')
+        Assert-Refused $r 'no matching owned co-op loader' 'local play refuses a guest loader that no longer matches ownership'
+        Assert-Equal (Get-TreeHashes $localHost) $beforeHost 'loader refusal preserves the other game before activation'
+        Assert-Equal (Get-TreeHashes $localGuest) $beforeGuest 'loader refusal never replaces an unrelated guest loader'
+        [IO.File]::WriteAllBytes($lgp.Loader, $originalGuestLoader)
+
+        $r = Invoke-Friend $play @('-GameDirectory', $localHost, '-LocalTest', '-GuestDirectory', $localGuest, '-World', '3', '-Partner', 'native', '-NonInteractive')
+        Assert-True ($r.Exit -eq 0 -and (Has $r 'TEST: local two-window activation checked; no games launched.')) "packaged explicit LocalTest flow: $($r.Raw)"
+        Assert-True (Has $r 'Both game folders returned to their previous setup') 'fixture launch path restores both baselines before returning'
+        Assert-PassThrough $lhp 'local explicit flow host returned to pass-through'
+        foreach ($name in $localBaseline.Keys) { Assert-Equal ([IO.File]::ReadAllText((Join-Path $lgp.Mod $name), [Text.Encoding]::UTF8)) $localBaseline[$name] "local guest restores its earlier offline bytes $name" }
+        $localHostSaves = Join-Path $lhp.Mod 'local-test-saves'
+        $localGuestSaves = Join-Path $lgp.Mod 'local-test-saves'
+        foreach ($save in @($localHostSaves, $localGuestSaves)) {
+            Assert-Equal (Get-Sha256 (Join-Path $save '287700/local/TPP_GAME_DATA0')) (Get-Sha256 (Join-Path $lhp.CoopSaves '287700/local/TPP_GAME_DATA0')) 'local tests clone the host ordinary co-op save independently'
+            $info = Get-GraphicsConfigInfo ([IO.File]::ReadAllText((Join-Path $save '287700/local/TPP_GRAPHICS_CONFIG')))
+            Assert-True ($info.Valid -and $info.WindowMode -ceq 'Windowed' -and $info.Width -ge 640 -and $info.Height -ge 480) 'only the local test saves get tagged windowed graphics'
+        }
+        $localJournals = @(Get-ChildItem -LiteralPath (Join-Path $lhp.Mod 'local-test-runs') -Directory)
+        Assert-Equal $localJournals.Count 1 'one explicit local test journal'
+        $localJournal = Get-Content -LiteralPath (Join-Path $localJournals[0].FullName 'session.json') -Raw | ConvertFrom-Json
+        Assert-Equal $localJournal.state 'off' 'explicit local activation journal is off after fixture cleanup'
+        Assert-Equal @($localJournal.files).Count 8 'local activation records four files separately for each role'
+        Assert-Equal @($localJournal.files | Where-Object { $_.role -ceq 'guest' -and $_.original_exists }).Count 4 'guest journal preserves all four earlier offline activation files'
+        Assert-Equal @($localJournal.files | Where-Object { $_.phase -cne 'restored' }).Count 0 'all local activation entries are restored'
+        Assert-True (![IO.File]::ReadAllText((Join-Path $localJournals[0].FullName 'session.json')).Contains($s7)) 'guest original secret is not printed as plain text in the local journal'
+        [IO.File]::WriteAllText((Join-Path $localGuestSaves '287700/local/LOCAL_PROGRESS'), 'guest local test progress', $utf8)
+        $savedLocalHost = Get-TreeHashes $localHostSaves; $savedLocalGuest = Get-TreeHashes $localGuestSaves
+        # A real menu choice, followed by sibling _guest autodetection.
+        $r = Invoke-FriendAnswers $play @('-GameDirectory', $localHost) @('T')
+        Assert-True ($r.Exit -eq 0 -and (Has $r '[T] Local two-window test') -and (Has $r 'TEST: local two-window activation checked; no games launched.')) "packaged T menu flow finds the sibling guest: $($r.Raw)"
+        Assert-Equal (Get-TreeHashes $localHostSaves) $savedLocalHost 'repeat local test retains the host local progress'
+        Assert-Equal (Get-TreeHashes $localGuestSaves) $savedLocalGuest 'repeat local test retains the guest local progress'
+        # The old BAT name is an alias, not another independent launcher.
+        $batOut = '' | & cmd.exe /c (Join-Path $stage 'Play-Offline-Coop.bat') -GameDirectory $localHost -GuestDirectory $localGuest -NonInteractive 2>&1 | Out-String
+        Assert-True ($LASTEXITCODE -eq 0 -and $batOut.Contains('TEST: local two-window activation checked; no games launched.')) "offline BAT uses the unified inert local flow: $batOut"
+        $localJournals = @(Get-ChildItem -LiteralPath (Join-Path $lhp.Mod 'local-test-runs') -Directory)
+        Assert-Equal $localJournals.Count 3 'explicit, menu and offline alias each journal their own local run'
+        foreach ($journal in $localJournals) { Assert-Equal (Get-Content -LiteralPath (Join-Path $journal.FullName 'session.json') -Raw | ConvertFrom-Json).state 'off' 'each packaged local path cleans up its session' }
+        Assert-PassThrough $lhp 'all local fixture paths leave host pass-through'
+        foreach ($name in $localBaseline.Keys) { Assert-Equal ([IO.File]::ReadAllText((Join-Path $lgp.Mod $name), [Text.Encoding]::UTF8)) $localBaseline[$name] "all local fixture paths preserve guest baseline $name" }
+        Assert-Equal (Get-TreeHashes $lhp.CoopSaves) $localNormalSaves 'local flow never changes ordinary online/LAN co-op progress or graphics'
+        Assert-Equal (Get-TreeHashes $userdata) $localRealSaves 'local flow never reads or changes fixture real save data'
+        foreach ($file in $localFixedHashes.Keys) { Assert-Equal (Get-Sha256 $file) $localFixedHashes[$file] "local flow preserves exact game, archive and owned install bytes $([IO.Path]::GetFileName($file))" }
+        # A launcher owns both folders before either game starts. Install,
+        # Uninstall, online Play and the core installer must leave that live
+        # local journal, configuration and copied saves alone during this gap.
+        & {
+            Import-Module (Join-Path $stage 'scripts/LocalCoopSession.psm1') -Force -DisableNameChecking
+            $activeRun = Join-Path $lhp.Mod ('local-test-runs\' + [Guid]::NewGuid().ToString('N'))
+            $liveLocal = New-LocalCoopSession -HostRoot $localHost -GuestRoot $localGuest -RunDirectory $activeRun
+            try {
+                $activeText = "# Owned inert local launcher fixture`nenabled=1`nmode=lab`n"
+                foreach ($role in 'host', 'guest') {
+                    Set-LocalCoopSessionFile -Session $liveLocal -Role $role -Name 'lab.ini' -Bytes $utf8.GetBytes($activeText)
+                    Set-LocalCoopSessionFile -Session $liveLocal -Role $role -Name 'script-observe.enabled' -Bytes ([Text.Encoding]::ASCII.GetBytes("offline-v1`n"))
+                }
+                Assert-True (Test-LocalCoopSessionOwnerLive -Session $liveLocal) 'local activation fixture has an exact live launcher process identity'
+                $activeHostHashes = Get-TreeHashes $localHost; $activeGuestHashes = Get-TreeHashes $localGuest
+                foreach ($operation in @(
+                    @{Name='friend install';Script=$install;Arguments=(@('-GameDirectory', $localHost, '-Role', 'Host') + $common);Needle='Another local two-window launcher'},
+                    @{Name='friend uninstall';Script=$uninstall;Arguments=@('-GameDirectory', $localHost, '-NonInteractive', '-Yes');Needle='Another local two-window launcher'},
+                    @{Name='online play';Script=$play;Arguments=@('-GameDirectory', $localHost, '-Role', 'Host', '-Transport', 'steam', '-NonInteractive');Needle='Another local two-window launcher'},
+                    @{Name='core guest install';Script=(Join-Path $stage 'scripts/install.ps1');Arguments=@('-GameDirectory', $localGuest, '-PackageDirectory', $stage, '-NoPrompt', '-NoInitialMode');Needle='local two-window session owns this folder'}
+                )) {
+                    $result = Invoke-Friend $operation.Script $operation.Arguments
+                    Assert-Refused $result $operation.Needle ("$($operation.Name) refuses a live local launcher before mutation")
+                    Assert-Equal (Get-TreeHashes $localHost) $activeHostHashes "$($operation.Name) leaves the entire host fixture unchanged"
+                    Assert-Equal (Get-TreeHashes $localGuest) $activeGuestHashes "$($operation.Name) leaves the entire guest fixture unchanged"
+                    Assert-Equal (Get-TreeHashes $userdata) $localRealSaves "$($operation.Name) leaves fixture real saves unchanged"
+                }
+            } finally {
+                $restored = Restore-LocalCoopSession -Session (Read-LocalCoopSession -RunDirectory $activeRun)
+                Assert-Equal $restored.State 'off' 'the exact owner can clean up its own live local fixture after both games remain stopped'
+            }
+            Assert-PassThrough $lhp 'active local launcher regression restored host pass-through'
+            foreach ($name in $localBaseline.Keys) { Assert-Equal ([IO.File]::ReadAllText((Join-Path $lgp.Mod $name), [Text.Encoding]::UTF8)) $localBaseline[$name] "active local launcher regression restores guest baseline $name" }
+        }
+    } finally {
+        Remove-Item Env:MGS_COOP_TEST_NO_LAUNCH -ErrorAction SilentlyContinue
+        Remove-Item Env:MGS_COOP_TEST_NO_WATCHDOG -ErrorAction SilentlyContinue
+    }
 
     # The read-only network report (no -SkipNetworkReport): reported, nothing changed.
     $reportGame = New-GameFixture 'report'

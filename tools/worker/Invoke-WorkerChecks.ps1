@@ -69,7 +69,7 @@ function Get-WorkerTests {
         'debug_menu_tests', 'debug_overlay_tests', 'soldier_warp_tests', 'win_import_patch_tests', 'probe_forwarding',
         'master_server_patch_tests', 'master_server_patch_retarget_tests', 'master_server_patch_retarget_loopback_tests',
         'worker_scenario_off_tests', 'worker_scenario_on_tests', 'worker_protocol_tests', 'worker_debug_tests', 'worker_input_fixture_tests',
-        'build_profile_tests', 'worker_session_tests', 'worker_loading_tests',
+        'build_profile_tests', 'worker_session_tests', 'worker_loading_tests', 'local_coop_windows_tests', 'local_coop_session_tests',
         'host_admission_lua_check', 'equipment_allocation_lua_check', 'equipment_stock_preload_lua_check',
         'equipment_observation_lua_check', 'session_lifecycle_lua_check', 'client_join_lua_check',
         'session_feedback_lua_check', 'damage_parameters_lua_check', 'damage_lifecycle_lua_check',
@@ -206,11 +206,18 @@ function Assert-WorkerInventory {
         $test = $byName[$name]
         $command = @($test.command)
         if (!$command.Count) { throw "Missing audited command: $name" }
-        if ($name -cin @('build_profile_tests', 'worker_session_tests', 'worker_loading_tests')) {
+        if ($name -cin @('build_profile_tests', 'worker_session_tests', 'worker_loading_tests', 'local_coop_windows_tests')) {
             if ([IO.Path]::GetFileName($command[0]) -cne 'pwsh.exe' -or $command.Count -ne 6 -or
                 ($command[1..4] -join '|') -cne '-NoProfile|-ExecutionPolicy|Bypass|-File' -or
                 [IO.Path]::GetFullPath($command[5]) -ine (Join-Path $Root ('tests\' + $name + '.ps1'))) {
                 throw "Unaudited PowerShell command: $name"
+            }
+        } elseif ($name -ceq 'local_coop_session_tests') {
+            if ([IO.Path]::GetFileName($command[0]) -cne 'pwsh.exe' -or $command.Count -ne 8 -or
+                ($command[1..4] -join '|') -cne '-NoProfile|-ExecutionPolicy|Bypass|-File' -or
+                [IO.Path]::GetFullPath($command[5]) -ine (Join-Path $Root 'tests\local_coop_session_tests.ps1') -or
+                $command[6] -cne '-IniCheck' -or [IO.Path]::GetFullPath($command[7]) -ine (Join-Path $Directory 'lab_ini_check.exe')) {
+                throw "Unaudited local-session fixture command: $name"
             }
         } elseif ($name -like '*_lua_check') {
             $scriptName = if ($luaAliases.ContainsKey($name)) { $luaAliases[$name] } else { $name }
