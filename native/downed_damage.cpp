@@ -226,7 +226,7 @@ float Calculate(void* object,std::uint32_t id,void* packet,void* record,std::uin
             GetCurrentThreadId(),static_cast<unsigned long long>(GetTickCount64()));
         logger(line);
     }
-    // Even when revival is temporarily unavailable, an exact offline teammate
+    // Even when revival is temporarily unavailable, an exact offline direct
     // dart must not enter the verified null-synchronizer notification path.
     if(!downed && !unsafe_notification) return amount;
     if(!Neutralize(packet,mode,stun,rawLife,rawStun,special)) {

@@ -28,7 +28,7 @@ int main(int argc,char** argv){const auto s=S();auto m=GraphFixture();graph::Rep
  Check(graph::CodeGate(gate,s.image,0xa01d000,mismatch),"complete graph contract and slots accepted");
  for(const auto& site:mgscoop::sleep_graph_contract::sites){gate.bytes[s.image+site.rva]^=1;Check(!graph::CodeGate(gate,s.image,0xa01d000,mismatch),"any exact complete graph function byte change refused");gate.bytes[s.image+site.rva]^=1;}
  for(const auto& slot:mgscoop::sleep_graph_contract::slots){gate.Put<std::uintptr_t>(s.image+slot.vtable_rva+slot.offset,s.image+slot.target_rva+1);Check(!graph::CodeGate(gate,s.image,0xa01d000,mismatch),"any graph getter/owner slot change refused");gate.Put<std::uintptr_t>(s.image+slot.vtable_rva+slot.offset,s.image+slot.target_rva);}
- 
+
  if(argc>1){std::ifstream input(argv[1],std::ios::binary);std::vector<unsigned char> asset((std::istreambuf_iterator<char>(input)),std::istreambuf_iterator<char>());Check(asset.size()==732872,"frozen resident MOG asset size");
   struct AssetMemory {
    Memory control;const std::vector<unsigned char>* asset=nullptr;

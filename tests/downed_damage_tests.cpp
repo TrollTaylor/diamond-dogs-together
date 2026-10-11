@@ -72,8 +72,30 @@ int main() {
         check(!UnsafeOfflineSleep(true,target,other,2,2,857));
         check(!UnsafeOfflineSleep(true,target,other,2,0,0));
         check(!UnsafeOfflineSleep(true,target,other,2,0,inf));
-        check(!UnsafeOfflineSleep(true,target,static_cast<std::uint16_t>(target),2,0,857));
-        check(!UnsafeOfflineSleep(true,target,0x1000,2,0,857));
+        check(UnsafeOfflineSleep(true,target,static_cast<std::uint16_t>(target),2,0,857));
+        check(UnsafeOfflineSleep(true,target,0x1000,2,0,857));
+    }
+    // Attacker is notification payload, not a native branch predicate. Exhaust
+    // all U16 IDs, including both players, NPC ranges and invalid/sentinel IDs.
+    for(unsigned attacker=0;attacker<=65535;++attacker)for(unsigned target=0;target<2;++target){
+        const auto who=static_cast<std::uint16_t>(attacker);
+        check(UnsafeOfflineSleep(true,target,who,0x4402,0,857));
+        check(!UnsafeOfflineSleep(false,target,who,0x4402,0,857));
+        check(!UnsafeOfflineSleep(true,target,who,0x4400,0,857));
+        check(!UnsafeOfflineSleep(true,target,who,0x4402,1,857));
+    }
+    for(auto who:{std::uint16_t(2),std::uint16_t(0x1000),std::uint16_t(0xfffe),std::uint16_t(0xffff)}){
+        for(unsigned target=0;target<2;++target){
+            check(UnsafeOfflineSleep(true,target,who,2,0,857));
+            // The independent crash shield is useful after owner refusal, but
+            // cannot authenticate a logical downed event or replica forwarding.
+            check(!Evaluate(false,target,0,who,2,0,100,0,857,2,false).bypass);
+            check(!Evaluate(true,target,0,who,2,0,100,0,857,2,false).bypass);
+            check(!FriendlyReplicaHit(true,target,0,who,3,0,0,2,857));
+            for(float bad:{0.f,-1.f,nan,inf})check(!UnsafeOfflineSleep(true,target,who,2,0,bad));
+            check(!UnsafeOfflineSleep(true,target,who,1,0,857));
+            check(!UnsafeOfflineSleep(true,target,who,2,255,857));
+        }
     }
     check(!UnsafeOfflineSleep(true,2,0,2,0,857));
     check(!Evaluate(true,2,0,1,2,2,100,100,857,2,true).bypass);

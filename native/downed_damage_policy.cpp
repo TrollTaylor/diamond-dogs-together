@@ -6,10 +6,13 @@ bool SleepDamage(std::uint8_t mode, float stun) noexcept {
     return mode == 2 && std::isfinite(stun) && stun > 0;
 }
 bool UnsafeOfflineSleep(bool exactOfflinePair, std::uint32_t target,
-    std::uint16_t attacker, std::uint16_t flags, std::uint8_t body_part, float stun) noexcept {
-    // The null-synchronizer notification has its own part-zero/direct-hit gate.
-    // It can be unsafe even when the active downed owner scope is unavailable.
-    return exactOfflinePair && target <= 1 && attacker <= 1 && attacker != target &&
+    std::uint16_t /*attacker*/, std::uint16_t flags, std::uint8_t body_part, float stun) noexcept {
+    // Exact updater11F8F7D..904B has no attacker-id admission check: it copies
+    // the raw attacker word into the notification. NPC, self and sentinel IDs
+    // can reach the same offline-null synchronizer as a teammate. This guard
+    // retains the exact paired-player/direct/part-zero/positive-stun subset,
+    // independently of the active downed lease; it never grants a sleep state.
+    return exactOfflinePair && target <= 1 &&
         (flags & 2u) && body_part == 0 && std::isfinite(stun) && stun > 0;
 }
 bool FriendlyReplicaHit(bool scoped, std::uint32_t target, std::uint32_t local,

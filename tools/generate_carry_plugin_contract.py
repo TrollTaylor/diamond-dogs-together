@@ -4,7 +4,7 @@ P=Path(__file__).resolve().parent
 parser=argparse.ArgumentParser(description='Verify the exact read-only carry-query contract; never executes game code.')
 parser.add_argument('--exe',type=Path,default=Path(r'D:\Games\steamapps\common\MGS_TPP\mgsvtpp.exe'))
 parser.add_argument('--sites',type=Path,default=P/'carry_plugin_sites.json')
-parser.add_argument('--output',type=Path,default=P/'carry_plugin_contract.hpp')
+parser.add_argument('--output',type=Path,default=P.parent/'native/carry_plugin_contract.hpp')
 parser.add_argument('--check',action='store_true')
 args=parser.parse_args()
 data=json.loads(args.sites.read_text());raw=args.exe.read_bytes()

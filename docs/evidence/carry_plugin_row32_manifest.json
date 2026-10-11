@@ -1,0 +1,27 @@
+{
+  "frozen": true,
+  "native_calls_added": false,
+  "fixtures": {
+    "compiler": "MSVC 14.50.35717",
+    "flags": "/std:c++17 /EHsc /W4 /WX",
+    "passed": 44,
+    "failed": 0
+  },
+  "files": [
+    {
+      "name": "carry_plugin_row32_read.hpp",
+      "sha256": "9ac8f48f84cbfcb211f0dc478d9c50e2a0a1403144bbcf6d47c6ce5ba0b92ebe",
+      "size": 10558
+    },
+    {
+      "name": "carry_plugin_row32_tests.cpp",
+      "sha256": "c44482dca5200ce8621cffe221f19a3d1ecf6e49c33c4b2577d5023ee18b9d18",
+      "size": 8162
+    },
+    {
+      "name": "carry_plugin_row32_evidence.json",
+      "sha256": "c758f59b9e1a4f30d2ba566754c3e2c4aab9145b511dbee40a94649dfe472049",
+      "size": 15064
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "scope": "Independent pure crash-shield policy widening to raw attackerU16 plus meaningful fixtures and exact offline evidence. Native sleep stays disabled; body0 plan is candidate proof only.",
+  "files": [
+    {
+      "path": "downed_damage_policy.cpp",
+      "size": 2358,
+      "sha256": "4EB5DE3EBAC680E82CEBCCCCDF7D0EE243FB55CDAD07167E5945536A98047727"
+    },
+    {
+      "path": "downed_damage_tests.cpp",
+      "size": 6760,
+      "sha256": "19BED796A90760AB3891F40764EB3380BB2CD013B4E850AF706F98D04640DE62"
+    },
+    {
+      "path": "offline_notify_predicate_proof.json",
+      "size": 8290,
+      "sha256": "DD66720445CF28AF8EF54C85531E4C69F61BB139E89F3E6DEEE8F6907CC44ACF"
+    },
+    {
+      "path": "body0_natural_sleep_candidate.json",
+      "size": 64888,
+      "sha256": "744FB272D446451F18F8C30EB1DB7E4965A5F33357DBBAF482602B78BCE63C8B"
+    }
+  ],
+  "integration": "Main replace native/downed_damage_policy.cpp and tests/downed_damage_tests.cpp only after coordinator review. Existing Calculate caller already invokes this helper without activeowner andneutralizes direct queuedpacket. Correct teammate-only callercomment separately; no nativecall/offset/sourcegate change.",
+  "validation": {
+    "compiler": "MSVC14.50.35717 x64 /std:c++17 /EHsc /W4 /WX /O2",
+    "result": "downed_damage_tests:527542 passed",
+    "scope": "All 65536 attacker IDs x both exact targets across positive/refused offline/direct flag/part cases; NPC/sentinel vs logical state/replica forwarding invariants; finite/NaN/infinity checks. Existing 3174 policy cases retained; 524368 additional checks."
+  },
+  "status": "Staged only; exactretailSHA verified; no main/game/Git writes. Root owns native audit/runtime."
+}
