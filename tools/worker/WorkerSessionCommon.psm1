@@ -75,6 +75,34 @@ function Get-WorkerRuntimePins {
         Archive='87BBE82BB1E907CF405200155DA2794BF7E1F5A3D45BF66426A38CDD31A91F96'
     }
 }
+function Get-WorkerBuddyCapacityPins {
+    # Local research catalog only. Production pins above are immutable.
+    [ordered]@{Profile='buddy_capacity_two_v1';Archive='4B290CDDC14F1146DCE5A64A1008365D572B424B319874EF77E9496634D75EC9';Bytes=17501184;
+        Catalog='4A7E7EA890ADF8F261368CD546CCFD3DBFDC4407EF6AF44AFF308B98E53D0989';Motions=21;Capacity=2}
+}
+function Get-WorkerSessionRuntimeCatalog($Session,$Pins) {
+    # Pure. Older baseline sessions omit every experiment field. Partial or
+    # unknown declarations never expand the archive restoration allowance.
+    $keys=@('runtime_profile','runtime_archive_sha256','runtime_archive_bytes','runtime_motion_count','runtime_buddy_capacity','runtime_catalog_sha256')
+    $present=@($keys|Where-Object{$Session.Contains($_)})
+    if(!$present.Count){return [ordered]@{Profile='';Archive=$Pins.Archive;Bytes=16333824;Motions=21;Capacity=0;Experimental=$false}}
+    $candidate=Get-WorkerBuddyCapacityPins
+    if($present.Count -ne $keys.Count -or $Session.runtime_profile -cne $candidate.Profile -or
+       $Session.runtime_archive_sha256 -ine $candidate.Archive -or [long]$Session.runtime_archive_bytes -ne $candidate.Bytes -or
+       [int]$Session.runtime_motion_count -ne $candidate.Motions -or [int]$Session.runtime_buddy_capacity -ne $candidate.Capacity -or
+       $Session.runtime_catalog_sha256 -ine $candidate.Catalog -or $Session.mode -cne 'lab'){
+        throw 'Worker refuses an incomplete or changed experimental runtime catalog.'
+    }
+    return [ordered]@{Profile=$candidate.Profile;Archive=$candidate.Archive;Bytes=$candidate.Bytes;Motions=$candidate.Motions;Capacity=$candidate.Capacity;Experimental=$true}
+}
+function Get-WorkerRestorePair($Session,$Pins,[string]$BaselineLoader,[string]$CurrentLoader,[string]$CurrentArchive) {
+    # Pure ownership policy. Coherent original or this run's installed pair,
+    # including partial preparation where only one role has been upgraded.
+    $catalog=Get-WorkerSessionRuntimeCatalog $Session $Pins
+    if($CurrentLoader -ieq $BaselineLoader -and $CurrentArchive -ieq $Pins.Archive){return 'baseline'}
+    if($CurrentLoader -ieq $Session.candidate_sha256 -and $CurrentArchive -ieq $catalog.Archive){return 'worker'}
+    throw 'Installed loader/archive are not a coherent owned worker or baseline pair.'
+}
 function Test-WorkerRunId([string]$Value) { return $Value -cmatch '\A[0-9a-f]{32}\z' }
 function Test-WorkerDescendant([string]$Path,[string]$Root) {
     if(!$Path -or !$Root){return $false}
@@ -241,7 +269,7 @@ function Test-WorkerCheckReceipt($Receipt,[string]$BuildDirectory,[string]$RepoR
     if($Receipt.schema -ne 1 -or $Receipt.status -cne 'passed' -or $Receipt.plan.profile -cne 'Normal' -or
        $Receipt.plan.project -ine $RepoRoot -or $Receipt.plan.build_directory -ine $BuildDirectory -or
        $Receipt.plan.flags.MGS_BACKGROUND_WORKER -cne 'ON' -or $Receipt.artifacts.loader_sha256 -ine $LoaderSha256){return $false}
-    $experiments=@('MGS_LOCAL_GUN_PRELOAD_TEST','MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST',
+    $experiments=@('MGS_LOCAL_BUDDY_CAPACITY_TEST','MGS_LOCAL_GUN_PRELOAD_TEST','MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST',
         'MGS_LOCAL_STOCK46_WRITER_TEST','MGS_LOCAL_STOCK46_AMMO_TEST','MGS_LOCAL_ACTION_EVENTS','MGS_LOCAL_UPPER_END_OBSERVE','MGS_LOCAL_UPPER_PHASE_OBSERVE',
         'MGS_LOCAL_UPPER_MANUAL_IDLE','MGS_LOCAL_UPPER_PROBE','MGS_LOCAL_UPPER_CHANNEL2','MGS_LOCAL_UPPER_FIRE_ZERO_BLEND')
     if($Receipt.plan.flags.Count -ne $experiments.Count+1){return $false}

@@ -34,13 +34,13 @@ param(
 )
 $ErrorActionPreference='Stop'
 $projectRoot=Split-Path -Parent $PSScriptRoot
-$version='0.12.1'
+$version='0.12.3'
 $archiveSha256='87BBE82BB1E907CF405200155DA2794BF7E1F5A3D45BF66426A38CDD31A91F96'
 $dll=Join-Path $projectRoot 'build/package-loader/dinput8.dll'
 # Provenance (package.json "build"): how the loader was made.
 $buildInfo=[ordered]@{source='package_build';profile='Normal';flags=$null;receipt=$null;receipt_sha256=$null;audited_tests=$null}
 $releaseFlags=[ordered]@{}
-foreach($name in @('MGS_LOCAL_GUN_PRELOAD_TEST','MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST',
+foreach($name in @('MGS_LOCAL_BUDDY_CAPACITY_TEST','MGS_LOCAL_GUN_PRELOAD_TEST','MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST',
         'MGS_LOCAL_STOCK46_AMMO_TEST','MGS_LOCAL_ACTION_EVENTS','MGS_LOCAL_UPPER_END_OBSERVE','MGS_LOCAL_UPPER_PHASE_OBSERVE',
         'MGS_LOCAL_UPPER_MANUAL_IDLE','MGS_LOCAL_UPPER_PROBE','MGS_LOCAL_UPPER_CHANNEL2','MGS_LOCAL_UPPER_FIRE_ZERO_BLEND')) {
     $releaseFlags[$name]=if($name -in @('MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST')){'ON'}else{'OFF'}

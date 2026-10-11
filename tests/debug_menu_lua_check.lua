@@ -17,10 +17,14 @@ local function fixture(options)
         playerVehicleGameObjectId = 65535, clock = 0, currentInventorySlot = 1, weapons = {[0] = 301, [1] = 8, [2] = 101},
         ammoInWeapons = {[0] = 1, [1] = 2, [2] = 3}, ammoSubInWeapons = {[0] = 0, [1] = 0, [2] = 0}}
     env.mvars = {ene_soldierDefine = {cp_z = {'sol_b'}, cp_a = {'sol_a', 'sol_u'}, cp_meta = {lrrpVehicle = 'vehicle'}}}
-    env.PlayerStatus = {STAND = 17, SQUAT = 31, CRAWL = 45}
+    env.PlayerStatus = {STAND = 17, SQUAT = 31, CRAWL = 45, ON_HORSE = 8, ON_VEHICLE = 9}
     env.PlayerInfo = {OrCheckStatus = function(a)
+        if #a == 2 then
+            check(a[1] == 8 and a[2] == 9, 'horse and walker mount statuses only')
+            return c.mounted == 'horse' or c.mounted == 'vehicle'
+        end
         check(#a == 3 and a[1] == 17 and a[2] == 31 and a[3] == 45, 'actual posture constants')
-        return not c.sitting
+        return not c.sitting and not c.mounted
     end}
     env.Player = {IsInstanceValid = function() return not c.invalid end, SetInfiniteAmmoFromScript = function(v)
         record('infinite', v); if c.ammoError then error('game fault') end; if c.ammoRefuse then return false end
@@ -253,6 +257,22 @@ local function gated(field, value, reason)
 end
 gated('loading', true, 'gameplay'); gated('demo', true, 'demo')
 gated('invalid', true, 'player'); gated('heli', true, 'helicopter'); gated('sitting', true, 'on_foot')
+local function censusOf(result)
+    return {buddyRide = {census = function() return result end}}
+end
+local horse = fixture(); horse.mounted = 'horse'
+horse.env.e.MgsCoopWorld = censusOf('k1 a2 r2 id6656 rider1 occupied1 id6657 rider2 pending65535 occupied1 mounted1')
+local horseLine = horse:send('buddy_census')
+check(horseLine[2] == 1 and horseLine[3]:find('id6656', 1, true) and horseLine[3]:find('id6657', 1, true), 'mounted horse posture is censused')
+check(horse:send('infinite_ammo 1')[3] == 'on_foot' and horse:count('infinite') == 0, 'a mounted posture does not open other commands')
+local walker = fixture(); walker.mounted = 'vehicle'
+walker.env.e.MgsCoopWorld = censusOf('select_ride_first')
+check(walker:send('buddy_census')[3] == 'select_ride_first', 'mounted walker posture returns the census refusal')
+walker.env.e.MgsCoopWorld = censusOf('ride_pack')
+check(walker:send('buddy_census')[3] == 'ride_pack', 'mounted census keeps a missing-pack refusal')
+local unread = fixture(); unread.sitting = true
+unread.env.e.MgsCoopWorld = censusOf('k1 a2 r2 occupied1')
+check(unread:send('buddy_census')[3] == 'on_foot', 'an unread posture still refuses census')
 local restored = fixture(); restored.ended = true
 check(restored:send('bookmark 0')[2] == 1, 'Continue/fresh-start flag is not a gameplay readiness gate')
 for _, m in ipairs({30011, 40010, 40020, 40050, 10010, 0}) do local f = fixture({mission = m}); check(f:send('position')[3] == 'mission', 'unsupported mission ' .. m) end
@@ -821,4 +841,12 @@ for _, host in ipairs({true, false}) do
     check(f:send('spawn_sync')[3] == 'remote_spawn;seq=1' and seen[1] == 'spawn_sync', 'spawn_sync report')
     check(f:send('spawn_sync now')[3] == 'command_args' and f:send('world_status 1')[3] == 'command_args', 'no arguments')
 end
+f = fixture(); f.D.buddy = {handles = {horse_status = true, horse_spawn = true}, run = function(a) return true, a[1] .. '_routed' end}
+check(f:send('horse_status')[3] == 'horse_status_routed' and f:send('horse_spawn')[3] == 'horse_spawn_routed', 'release helper dispatches both commands')
+f.mounted = 'horse'
+check(f:send('horse_status')[3] == 'horse_status_routed', 'horse status remains readable while mounted')
+check(f:send('horse_spawn')[3] == 'on_foot', 'summon cannot replace an occupied local horse')
+check(f:send('horse_status extra')[3] == 'on_foot', 'mounted status exception only accepts the exact read-only command')
+f.D.buddy.stop = function() f.buddyStopped = true end
+f.D.stop(); check(f.buddyStopped, 'mission cleanup reaches new helper')
 print('debug_menu_lua_check: PASS ' .. checks .. ' checks')

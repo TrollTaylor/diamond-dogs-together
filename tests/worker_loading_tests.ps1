@@ -128,6 +128,51 @@ Check ($threw -and $writes.Count -eq 0) 'missing guest baseline refuses before a
 $c.states=@{};$c.reads.Clear()
 $threw=$false;try{Invoke-ScenarioWorldTravel 'goto=30010' 'host'}catch{$threw=$_.Exception.Message -ceq 'recorded trigger stop'}
 Check ($threw -and $writes.Count -eq 1 -and $c.reads.Count -eq 0) 'ordinary goto does not acquire Continue baseline'
+# Exact world=0 cleanup uses the same admitted role release and private writer.
+# These execute the real helper until its recorded atomic-write boundary only.
+$c.states=@{};$c.reads.Clear();$continueRequirements=@{}
+foreach($role in 'host','guest'){
+ $writes.Clear();$beforeCommands=$c.commands.Count
+ $threw=$false;try{Invoke-ScenarioWorldTravel 'world=0' $role}catch{$threw=$_.Exception.Message -ceq 'recorded trigger stop'}
+ Check ($threw -and $writes.Count -eq 1 -and $writes[0].text -ceq 'world=0') ('exact world disable reaches owned writer '+$role)
+ Check ($writes[0].path -ceq ('C:\fixture\'+$role+'\mgs-coop\world.trigger')) ('world disable stays in exact owned role '+$role)
+ Check ($c.commands.Count -eq $beforeCommands+1 -and $c.commands[-1].role -ceq $role -and $c.commands[-1].operation -ceq 'release') ('world disable obtains role admission through release '+$role)
+ Check ($c.reads.Count -eq 0 -and $continueRequirements.Count -eq 0) ('world disable cannot fabricate Continue baselines '+$role)
+}
+foreach($bad in 'world=1','world=2','world=3','world=0 world_probe=shared_death','world=0 goto=30020','world=00','WORLD=0','world=0 extra'){
+ $writes.Clear();$threw=$false;try{Invoke-ScenarioWorldTravel $bad 'host'}catch{$threw=$true}
+ Check ($threw -and $writes.Count -eq 0) ('world-disable helper rejects broader payload '+$bad)
+}
+foreach($role in 'both','other','HOST'){
+ $writes.Clear();$threw=$false;try{Invoke-ScenarioWorldTravel 'world=0' $role}catch{$threw=$true}
+ Check ($threw -and $writes.Count -eq 0) ('world-disable helper rejects role '+$role)
+}
+$Mode='play';$writes.Clear();$beforeCommands=$c.commands.Count
+$threw=$false;try{Invoke-ScenarioWorldTravel 'world=0' 'host'}catch{$threw=$true}
+Check ($threw -and $writes.Count -eq 0 -and $c.commands.Count -eq $beforeCommands) 'play refuses before role dispatch or write'
+$Mode='lab';$c.case='refused';$writes.Clear()
+$threw=$false;try{Invoke-ScenarioWorldTravel 'world=0' 'guest'}catch{$threw=$true}
+Check ($threw -and $writes.Count -eq 0) 'native role admission refusal cannot write cleanup trigger'
+$c.case='pass'
+# Execute the entire real prelaunch scenario-validation loop, not a copied regex.
+$validation=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.ForEachStatementAst] -and
+ $n.Variable.VariablePath.UserPath -ceq 'line' -and $n.Condition.Extent.Text -ceq '$steps' -and
+ $n.Body.Extent.Text.Contains('Invalid scenario step:')},$true))
+Check ($validation.Count -eq 1) 'one real prelaunch scenario validation loop'
+$validate=[scriptblock]::Create($validation[0].Extent.Text);$roleNames=@('host','guest','both')
+foreach($role in 'host','guest'){
+ $steps=@($role+' worldtrigger world=0');$threw=$false;try{. $validate}catch{$threw=$true}
+ Check (!$threw) ('prelaunch admits exact world disable '+$role)
+}
+foreach($line in 'both worldtrigger world=0','other worldtrigger world=0','host worldtrigger world=00',
+ 'host worldtrigger world=1','guest worldtrigger world=3','host worldtrigger world=0 goto=30020',
+ 'guest worldtrigger world=0 world_probe=shared_death','host worldtrigger WORLD=0'){
+ $steps=@($line);$threw=$false;try{. $validate}catch{$threw=$true}
+ Check $threw ('prelaunch refuses broader cleanup scenario '+$line)
+}
+$Mode='play';$steps=@('host worldtrigger world=0');$threw=$false;try{. $validate}catch{$threw=$true}
+Check $threw 'prelaunch play refuses world-disable test'
+$Mode='lab'
 # Execute the actual applied-receipt branch: pending state is installed only
 # after acceptance, and logs name the real role rather than a literal host.
 $applied=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.IfStatementAst] -and

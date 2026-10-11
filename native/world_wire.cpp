@@ -86,6 +86,25 @@ constexpr OpSpec kOps[] = {
     // seq, ent, result (0 applied, 1 refused), reason (world_place.lua WHY), error cm, frames.
     {op::enemy_debug_ack, "ENEMY_DEBUG_ACK", 1, Dir::guest_to_host, Wire::reliable, 2, false, false, 6, 0, 0, 12,
      {U16(1, kU16), U32(), U8(0, 1), U8(0, 31), U16(), U16()}},
+    // DOWNED_STATUS: seq, generation, down, cause, xyz mm, revive hold, target generation, ready.
+    {op::downed_status, "DOWNED_STATUS", 0, Dir::both, Wire::reliable, 3, false, false, 10, 0, 0, 26,
+     {U16(1), U32(), U8(0, 1), U8(0, 2), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
+      I32(-1000000000, 1000000000), U8(0, 1), U32(), U8(0, 1)}},
+    // DOWNED_COMMIT: version, each role's generation/down/cause, progress ms, target role.
+    {op::downed_commit, "DOWNED_COMMIT", 0, Dir::host_to_guest, Wire::reliable, 3, false, false, 9, 0, 0, 17,
+     {U16(1), U32(), U8(0, 1), U8(0, 2), U32(), U8(0, 1), U8(0, 2), U16(0, 3000), U8(0, 2)}},
+    {op::revive_grant, "REVIVE_GRANT", 0, Dir::host_to_guest, Wire::reliable, 3, false, false, 3, 0, 0, 9,
+     {U8(1, 2), U32(1), U32(1)}},
+    // BUDDY_STATE: seq, kind (none/dog/horse/walker/Quiet), present, xyz mm, yaw mrad, sender tick.
+    {op::buddy_state, "BUDDY_STATE", 1, Dir::host_to_guest, Wire::reliable, 3, false, false, 8, 0, 1, 24,
+     {U16(1), U8(0, 4), U8(0, 1), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
+      I32(-1000000000, 1000000000), I32(-3142, 3142), U32(), U16()}},
+    // Guest readback: seq, kind, result (following/loading/refused/expired/released), error cm.
+    {op::buddy_ack, "BUDDY_ACK", 1, Dir::guest_to_host, Wire::reliable, 3, false, false, 4, 0, 0, 6,
+     {U16(1), U8(0, 4), U8(0, 4), U16()}},
+    // Authenticated local-shooter hit: shot sequence, owner generation/status sequence, damage milli, cause(normal/sleep).
+    {op::friendly_hit, "FRIENDLY_HIT", 0, Dir::both, Wire::reliable, 3, false, false, 5, 0, 0, 15,
+     {U32(1), U32(), U16(1), U32(0, 1000000000), U8(0, 0, 2)}},
     {op::link, "LINK", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 2, 0, 0, {U8(0, 1), U32()}},
     {op::paired, "PAIRED", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 6, 0, 0,
      {U16(), Mission(), U32(), U16(), U8(0, 1), U8(0, 3)}},

@@ -57,6 +57,29 @@ env.Tpp.MgsCoop.playerPackageSelected=true
 env.PlayerInfo.GetLocalPlayerIndex=function() error('unread') end
 env.e.OnPlayerDead(1,'Dead')
 check(#calls==4,'unread local identity fails open to vanilla')
+-- Retail world bootstrap lives in TppMain, while this wrapper belongs to
+-- TppMission. Select the actual main-module world before the fixture fallback.
+env,calls=run()
+local protected, handles, crossLogs = true, 0, {}
+env.vars={missionCode=30010}
+env.Tpp={MgsCoop={playerPackageSelected=true}}
+env.PlayerInfo={GetLocalPlayerIndex=function() return 0 end}
+env.e.MgsCoopWorld={active=false,downed={handleDeath=function() error('wrong module world selected') end}}
+env.TppMain={MgsCoopWorld={active=true,paired=true,eff=3,mission=30010,
+    log=function(s) crossLogs[#crossLogs+1]=s end,
+    downed={handleDeath=function(index) handles=handles+1; return index==0 and protected end}}}
+env.e.OnPlayerDead(0,'Dead')
+check(#calls==0 and handles==1,'protected local death delegates to actual TppMain downed world')
+env.e.OnPlayerDead(1,'FallDeath')
+check(#calls==0 and handles==1 and #crossLogs==1,'real main-module world suppresses only the replica death')
+protected=false
+local crossResult=packed(env.e.OnPlayerDead(0,'FallDeath',nil,'retail-extra'))
+check(#calls==1 and calls[1].n==4 and calls[1][4]=='retail-extra' and crossResult[1]=='original',
+    'unprotected actual local death keeps original arguments and results')
+env.TppMain.MgsCoopWorld='unavailable'
+env.e.MgsCoopWorld={downed={handleDeath=function() return true end}}
+env.e.OnPlayerDead(0,'Dead')
+check(#calls==1,'malformed main-module world retains the explicit fixture-compatible fallback')
 -- Malformed controllers fall back to the original handler.
 for _,controller in ipairs({1,'x',{},{Handle=1},{Handle={}}}) do
     env,calls=run()

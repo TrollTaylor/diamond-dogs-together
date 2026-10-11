@@ -1,5 +1,6 @@
 #pragma once
 // Original foregroundless worker wire protocol. Pure parsers: no OS/game calls.
+#include "mgscoop/buddy_capacity_catalog.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -87,7 +88,8 @@ struct Manifest {
     std::string mode, run, directory, desktop;
     // mgsv only: lab (the one-PC lab, OfflineLab; the default when absent) or
     // play (the play rehearsal, PlayRehearsal; manifest key lab_mode).
-    std::string lab_mode = "lab";
+    std::string lab_mode = "lab", runtime_profile;
+    unsigned runtime_buddy_capacity = 0;
     std::uint32_t timeout_ms = 0, ready_timeout_ms = 0, offline_port = 0;
     const std::string& At(const char* key) const { return values.at(key); }
 };
@@ -126,8 +128,18 @@ inline bool ParseManifest(const std::string& text, Manifest& out, std::string& r
     } else {
         if (!hash("exe_sha256") || !EqualFold(get("exe_sha256"), kRetailExeSha) ||
             !hash("steam_sha256") || !EqualFold(get("steam_sha256"), kRetailSteamSha) || !hash("loader_sha256")) return fail("manifest_retail_pin");
-        if (!hash("runtime_archive_sha256") || !EqualFold(get("runtime_archive_sha256"), kBaselineArchiveSha) || get("runtime_motion_count") != "21") return fail("manifest_baseline_catalog_pin");
+        if (!hash("runtime_archive_sha256") || get("runtime_motion_count") != "21") return fail("manifest_baseline_catalog_pin");
         keys.emplace_back("runtime_motion_count");
+        const bool has_profile = m.values.count("runtime_profile") != 0;
+        const bool has_capacity = m.values.count("runtime_buddy_capacity") != 0;
+        if (has_profile || has_capacity) {
+            if (!mgscoop::buddy_capacity::compiled || !has_profile || !has_capacity ||
+                get("runtime_profile") != mgscoop::buddy_capacity::profile || get("runtime_buddy_capacity") != "2" ||
+                !EqualFold(get("runtime_archive_sha256"), mgscoop::buddy_capacity::archive_sha) || get("lab_mode") == "play")
+                return fail("manifest_buddy_capacity_catalog_pin");
+            m.runtime_profile = get("runtime_profile"); m.runtime_buddy_capacity = 2;
+            keys.emplace_back("runtime_profile"); keys.emplace_back("runtime_buddy_capacity");
+        } else if (!EqualFold(get("runtime_archive_sha256"), kBaselineArchiveSha)) return fail("manifest_baseline_catalog_pin");
         if (!path("probe_receipt") || !hash("probe_receipt_sha256")) return fail("manifest_qualification_pin");
         if (!Inside(get("probe_receipt"), Parent(m.directory)) || Inside(get("probe_receipt"), m.directory)) return fail("manifest_qualification_location");
         if (!Decimal(get("offline_master_port"), 65535, number) || number < 1024) return fail("manifest_offline_port");

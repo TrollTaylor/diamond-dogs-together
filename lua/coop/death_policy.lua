@@ -7,7 +7,8 @@ do
             -- The offline puppet is not a second local player. Its fall/death
             -- must not invoke vanilla's shared game over; the real remote death
             -- still arrives through the paired world's REQ_GAME_OVER path.
-            local W = e.MgsCoopWorld
+            local W = type(TppMain) == "table" and TppMain.MgsCoopWorld
+            if type(W) ~= "table" then W = e.MgsCoopWorld end
             local coop = Tpp and Tpp.MgsCoop
             local mission = vars and vars.missionCode
             if type(W) == "table" and W.active == true and W.paired == true and
@@ -20,6 +21,10 @@ do
                     if type(W.log) == "function" then pcall(W.log, "event=recovery;partner_death=ignored;index=" .. index) end
                     return
                 end
+            end
+            if type(W) == "table" and type(W.downed) == "table" and type(W.downed.handleDeath) == "function" then
+                local ok, handled = pcall(W.downed.handleDeath, index)
+                if ok and handled then return end
             end
             local controller = MgsCoopRespawn
             if type(controller) == "table" and type(controller.Handle) == "function" then

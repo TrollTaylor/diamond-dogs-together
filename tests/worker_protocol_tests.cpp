@@ -39,6 +39,25 @@ int main() {
     Check(!Parsed(Replace(Probe(), "timeout_ms=30000", "timeout_ms=600001")), "timeout_bounded");
     Check(!Parsed(Replace(Probe(), "ready_timeout_ms=10000", "ready_timeout_ms=30001")), "readiness_cannot_exceed_lifetime");
     Check(!Parsed(Replace(Probe(), "probe_sha256=" + hash, "probe_sha256=bad")), "probe_pin_required");
+    const auto capacity = Replace(Game(), kBaselineArchiveSha, mgscoop::buddy_capacity::archive_sha) +
+        "runtime_profile=buddy_capacity_two_v1\nruntime_buddy_capacity=2\n";
+    Manifest capacity_manifest; std::string capacity_reason;
+    Check(ParseManifest(capacity, capacity_manifest, capacity_reason) == mgscoop::buddy_capacity::compiled,
+          "capacity_two_needs_both_compile_gates");
+    if (mgscoop::buddy_capacity::compiled)
+        Check(capacity_manifest.runtime_profile == mgscoop::buddy_capacity::profile && capacity_manifest.runtime_buddy_capacity == 2,
+              "capacity_catalog_metadata_readback");
+    Check(!Parsed(Replace(Game(), kBaselineArchiveSha, mgscoop::buddy_capacity::archive_sha)), "capacity_hash_alone_refused");
+    Check(!Parsed(Game() + "runtime_profile=buddy_capacity_two_v1\n"), "capacity_missing_count");
+    Check(!Parsed(Game() + "runtime_buddy_capacity=2\n"), "capacity_missing_profile");
+    Check(!Parsed(Game() + "runtime_profile=buddy_capacity_two_v1\nruntime_buddy_capacity=2\n"), "capacity_needs_exact_archive");
+    for (const auto* count : {"0", "1", "3", "02", "-2"})
+        Check(!Parsed(Replace(capacity, "runtime_buddy_capacity=2", "runtime_buddy_capacity=" + std::string(count))), "capacity_count_exact");
+    Check(!Parsed(Replace(capacity, "buddy_capacity_two_v1", "buddy_capacity_two_v2")), "capacity_profile_exact");
+    Check(!Parsed(Replace(capacity, mgscoop::buddy_capacity::archive_sha, hash)), "capacity_hash_exact");
+    Check(!Parsed(Replace(capacity, "runtime_motion_count=21", "runtime_motion_count=31")), "capacity_keeps_motion21");
+    Check(!Parsed(capacity + "lab_mode=play\n"), "capacity_lab_only");
+    Check(!Parsed(Probe() + "runtime_profile=buddy_capacity_two_v1\nruntime_buddy_capacity=2\n"), "probe_no_capacity_fields");
     Check(!Parsed(Replace(Game(), kRetailExeSha, hash)), "wrong_retail_exe");
     Check(!Parsed(Replace(Game(), kRetailSteamSha, hash)), "wrong_retail_steam");
     Check(!Parsed(Replace(Game(), kBaselineArchiveSha, hash)), "wrong_runtime_archive");

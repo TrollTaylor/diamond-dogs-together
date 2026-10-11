@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <cstddef>
 
 // Original offline debug UI. Graphics/input only; game actions use debug_menu.
 namespace mgscoop::debug_overlay {
@@ -12,6 +13,9 @@ using ShutdownFn = void (*)() noexcept;
 void SetShutdownHandler(ShutdownFn fn) noexcept;
 // Also available to game-owned input wrappers. False on normal launches.
 bool CapturingInput() noexcept;
+// Process-local virtual controller provider, shared by the early IAT wrapper
+// and XInput export hook. Private admission, exact ABI and F9 capture repeated.
+bool WorkerVirtualPadState(unsigned index,void* output,std::size_t bytes) noexcept;
 
 // Copy-only worker diagnostics: independent cumulative counters saturate at
 // UINT32_MAX. Reads count successful synthetic RID_INPUT payload copies;

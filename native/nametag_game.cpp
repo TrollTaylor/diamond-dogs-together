@@ -14,6 +14,10 @@
 #include "mgscoop/partner_net.hpp"
 #include "nametag_contract.hpp"
 #include "partner_player_contract.hpp"
+#include "native_ui_contract.hpp"
+#include "mgscoop/native_ui_core.hpp"
+#include "mgscoop/partner_input_hook.hpp"
+#include "mgscoop/teammate_targeting.hpp"
 
 namespace mgscoop::nametag_game {
 namespace {
@@ -47,10 +51,17 @@ nt::Refusal logged_refusal = nt::Refusal::none;
 std::uint64_t seq = 0;
 nt::Frame last_frame{};
 constexpr unsigned kLogCap = 256;
+bool ui_ready = false;
+unsigned ui_logs = 0;
+volatile LONG hud_job_logs = 0;
+std::uint64_t ui_next = 0;
+native_ui::CensusStamp ui_last{};
+std::uint32_t ui_last_shared_selected=UINT32_MAX,ui_last_shared_flags=UINT32_MAX;
+std::int32_t ui_last_rgb[6]{INT32_MIN,INT32_MIN,INT32_MIN,INT32_MIN,INT32_MIN,INT32_MIN};
 
 void Log(const char* line) noexcept { if (log_fn) log_fn(line); }
 void LogFormat(const char* format, ...) noexcept {
-    char line[512]{};
+    char line[640]{};
     va_list args; va_start(args, format);
     const HRESULT hr = StringCchVPrintfA(line, ARRAYSIZE(line), format, args);
     va_end(args);
@@ -201,6 +212,92 @@ void Census(nt::Refusal refusal, const nt::CameraRaw& raw, const nt::Camera& cam
         LogInt(raw.far_m), LogInt(camera.vp_err * 1.0e6f), raw.cam_flags, GetCurrentThreadId());
 }
 
+// Read the same UI owner/camera used by the native FEA420 reticle update.
+// No virtual call, mutation, inferred projection hit or color meaning.
+bool SharedHud(std::uintptr_t ui,std::uintptr_t& shared,std::uint32_t& selected,std::uint32_t& flags) noexcept {
+    namespace u=native_ui_contract;
+    std::uintptr_t provider=0,vt=0,get=0,again=0;
+    if(!ReadValue(ui+u::ui_provider,provider) || !ReadValue(provider,vt) || vt!=image+u::provider_vtable_rva ||
+        !ReadValue(vt,get) || get!=image+u::provider_get_rva) return false;
+    shared=provider+u::provider_data;
+    return ReadValue(shared+u::shared_selected,selected) && ReadValue(shared+u::shared_flags,flags) &&
+        ReadValue(ui+u::ui_provider,again) && again==provider;
+}
+struct ReticleRgb {
+    bool valid{};
+    std::uint32_t state{};
+    std::uintptr_t node[2]{},vtable[2]{};
+    std::int32_t rgb[6]{INT32_MIN,INT32_MIN,INT32_MIN,INT32_MIN,INT32_MIN,INT32_MIN};
+};
+ReticleRgb ReadReticleRgb() noexcept {
+    namespace u=native_ui_contract;
+    ReticleRgb out{};
+    std::uintptr_t common=0,vt=0,again=0;
+    if(!ReadValue(image+u::common_global_rva,common) || !ReadValue(common,vt) || vt!=image+u::common_vtable_rva ||
+        !ReadValue(common+u::reticle+u::reticle_state,out.state)) return out;
+    for(unsigned n=0;n<2;++n) {
+        float color[4]{};
+        if(!ReadValue(common+u::reticle+u::reticle_nodes[n],out.node[n]) || !out.node[n] ||
+            !ReadValue(out.node[n],out.vtable[n]) || !Read(out.node[n]+u::node_color,color,sizeof(color)) || !Finite3(color)) return out;
+        for(unsigned k=0;k<3;++k) out.rgb[n*3+k]=Mm(color[k]);
+        if(!ReadValue(common+u::reticle+u::reticle_nodes[n],again) || again!=out.node[n]) return out;
+    }
+    if(!ReadValue(image+u::common_global_rva,again) || again!=common) return out;
+    out.valid=true;return out;
+}
+void NativeUiCensus(const pp::State& state, std::uint64_t now) noexcept {
+    if (!ui_ready || ui_logs >= 160 || now < ui_next) return;
+    ui_next = now + 200;
+    namespace u = native_ui_contract;
+    namespace pc = partner_player_contract;
+    native_ui::Raw r{};
+    r.p = state.P; r.count = state.count; r.local = state.local;
+    r.ids[0] = state.ids[0]; r.ids[1] = state.ids[1];
+    if (!ReadValue(r.p + u::p_ui, r.ui) || r.ui < 0x20 ||
+        !ReadValue(r.ui, r.ui_vtable) || !ReadValue(r.ui - 0x20, r.primary_vtable) ||
+        r.ui_vtable != image + u::ui_vtable_rva || r.primary_vtable != image + u::ui_primary_vtable_rva ||
+        !ReadValue(r.ui + u::ui_owner, r.owner) || r.owner != r.p ||
+        !ReadValue(r.ui + u::ui_hit, r.hit) || !ReadValue(r.ui + u::ui_category, r.category) ||
+        !ReadValue(r.ui + u::ui_hud, r.hud) || !ReadValue(r.hud, r.hud_vtable) ||
+        !ReadValue(r.hud_vtable + u::hud_set_category, r.setter) ||
+        !ReadValue(r.p + pc::p_cam, r.cam) || !ReadValue(r.cam, r.cam_vtable) ||
+        !ReadValue(r.cam + u::cam_flags, r.cam_flags) ||
+        !ReadValue(r.cam + u::cam_hit_a, r.ray[0]) || !ReadValue(r.cam + u::cam_hit_b, r.ray[1])) return;
+    if (!native_ui::Valid(r, {image + u::ui_vtable_rva, image + u::ui_primary_vtable_rva,
+            image + pc::cam_vtable_rva, image + pc::code_begin_rva, image + pc::code_end_rva})) return;
+    std::uintptr_t provider=0, provider_vt=0, provider_get=0;
+    // FE71B0, final secondary UI vt+190, naturally obtains this provider.
+    ReadValue(r.ui + 0x48, provider); ReadValue(provider, provider_vt); ReadValue(provider_vt, provider_get);
+    // Complete camera update 111D4B0 in teammate_targeting_contract proves
+    // these read-only fields precede the natural assist-acquisition caller.
+    std::uint32_t assist_flags=0;float assist_gain=0;
+    const bool assist_read=ReadValue(r.cam+0x204,assist_flags) && ReadValue(r.cam+0x2c8,assist_gain);
+    const auto gain_milli=Mm(assist_gain);
+    const bool assist_gate=assist_read && std::isfinite(assist_gain) && assist_gain>0 &&
+        (assist_flags&0x60000)==0x60000 && !(assist_flags&0x400000);
+    const auto ray_hit = native_ui::RayHit(r);
+    native_ui::CensusStamp stamp{r.hit,ray_hit,r.category,r.cam_flags,assist_flags,gain_milli};
+    const bool hint_read=ReadValue(r.ui+0x370,stamp.hint) && ReadValue(r.ui+0x374,stamp.hint_flags) &&
+        ReadValue(r.ui+0x3a0,stamp.hint_active) && ReadValue(r.ui+0x3a3,stamp.hint_priority);
+    std::uintptr_t shared=0;
+    std::uint32_t shared_selected=UINT32_MAX,shared_flags=UINT32_MAX;
+    const bool shared_read=SharedHud(r.ui,shared,shared_selected,shared_flags);
+    const auto color=ReadReticleRgb();
+    if(ui_logs && native_ui::SameCensus(stamp,ui_last) && shared_selected==ui_last_shared_selected &&
+        shared_flags==ui_last_shared_flags && std::memcmp(color.rgb,ui_last_rgb,sizeof(ui_last_rgb))==0) return;
+    ui_last=stamp;ui_last_shared_selected=shared_selected;ui_last_shared_flags=shared_flags;
+    std::memcpy(ui_last_rgb,color.rgb,sizeof(ui_last_rgb));
+    ++ui_logs;
+    LogFormat("native_ui_census;mission=%u;hit=%u;ray_hit=%u;category=%u;partner_id=%u;local_id=%u;ui_vt=0x%llx;hud_vt=0x%llx;category_setter=0x%llx;provider_vt=0x%llx;provider_get=0x%llx;cam_flags=0x%x;assist_read=%u;assist_flags=0x%x;assist_gain_milli=%d;assist_gate=%u;scope=read_only_actual_ray;visual_mapping=unverified\r\n",
+        mission, r.hit, ray_hit, r.category, r.ids[1], r.ids[0], static_cast<unsigned long long>(Rva(r.ui_vtable)),
+        static_cast<unsigned long long>(Rva(r.hud_vtable)), static_cast<unsigned long long>(Rva(r.setter)), static_cast<unsigned long long>(Rva(provider_vt)),
+        static_cast<unsigned long long>(Rva(provider_get)), r.cam_flags,assist_read?1u:0u,assist_flags,gain_milli,assist_gate?1u:0u);
+    LogFormat("native_reticle_rgb_census;mission=%u;hit=%u;category=%u;color_read=%u;state=0x%x;node_vt=0x%llx,0x%llx;rgb_milli=%d,%d,%d;%d,%d,%d;shared_read=%u;selected=%u;shared_flags=0x%x;hint_read=%u;hint=%u;hint_flags=0x%x;hint_active=%u;hint_priority=%u;scope=original_nodes_read_only\r\n",
+        mission,r.hit,r.category,color.valid?1u:0u,color.state,static_cast<unsigned long long>(Rva(color.vtable[0])),
+        static_cast<unsigned long long>(Rva(color.vtable[1])),color.rgb[0],color.rgb[1],color.rgb[2],color.rgb[3],color.rgb[4],color.rgb[5],
+        shared_read?1u:0u,shared_selected,shared_flags,hint_read?1u:0u,stamp.hint,stamp.hint_flags,unsigned(stamp.hint_active),unsigned(stamp.hint_priority));
+}
+
 void PublishFrame(const nt::Frame& frame) noexcept {
     last_frame = frame;
     nt::Publish(frame);
@@ -213,7 +310,7 @@ void Install(const InstallConfig& config) noexcept {
     image_span = config.span;
     log_fn = config.log;
     viewer_host = config.host;
-    ready = false;
+    ready = false; ui_ready = false;
     nt::Settings settings{};
     const LabConfig* lab = config.lab;
     const CoopConfig* coop = config.coop;
@@ -238,6 +335,17 @@ void Install(const InstallConfig& config) noexcept {
         SetLastError(error);
         return;
     }
+    ui_ready = true;
+    for (const auto& site : native_ui_contract::sites) {
+        unsigned char bytes[0xa00]{};
+        if (site.size > sizeof(bytes) || site.rva > image_span || site.size > image_span - site.rva ||
+            !Read(image + site.rva, bytes, site.size) || std::memcmp(bytes, site.bytes, site.size) != 0) {
+            ui_ready = false;
+            LogFormat("native_ui_census=refused;reason=contract;rva=0x%llx\r\n", static_cast<unsigned long long>(site.rva));
+            break;
+        }
+    }
+    partner_input_hook::RegisterHudProbe(&BeginPartnerHud, &EndPartnerHud);
     ResolveLocalName(config);
     ready = true;
     nt::Configure(true, config.host, settings);
@@ -249,8 +357,64 @@ void Install(const InstallConfig& config) noexcept {
 
 bool Ready() noexcept { return ready && nt::Enabled(); }
 
+static HudJobProbe ReadPartnerHud(std::uintptr_t p) noexcept {
+    HudJobProbe out{};
+    if (!ui_ready || !p) return out;
+    namespace u = native_ui_contract;
+    namespace pc = partner_player_contract;
+    std::uintptr_t vt=0, owner=0, q=0, actions=0, ids=0;
+    std::uint32_t count=0, local=0;
+    std::uint16_t remote=0xffff;
+    out.p = p;
+    if (!ReadValue(p,vt) || vt != image + pc::p_vtable_rva ||
+        !ReadValue(p + pc::p_count,count) || count != 2 ||
+        !ReadValue(p + pc::p_local,local) || local != 0 ||
+        !ReadValue(p + u::p_ui,out.ui) || out.ui < 0x20 ||
+        !ReadValue(out.ui,vt) || vt != image + u::ui_vtable_rva ||
+        !ReadValue(out.ui + u::ui_owner,owner) || owner != p ||
+        !ReadValue(out.ui + 0x740,out.flags) || !ReadValue(out.ui + 0x744,out.action) ||
+        !ReadValue(out.ui+0x370,out.hint) || !ReadValue(out.ui+0x374,out.hint_flags) ||
+        !ReadValue(out.ui+0x3a0,out.hint_active) || !ReadValue(out.ui+0x3a3,out.hint_priority) ||
+        !ReadValue(p + pc::p_ids,ids) || !ReadValue(ids + 2,remote) || remote != 1 ||
+        !ReadValue(p + pc::p_q,q) || !ReadValue(q + 0x20,actions) ||
+        !ReadValue(actions + remote,out.remote_action)) return {};
+    out.shared_valid=SharedHud(out.ui,out.shared,out.shared_selected,out.shared_flags);
+    out.valid = true;
+    return out;
+}
+HudJobProbe BeginPartnerHud(std::uintptr_t p) noexcept {
+    teammate_targeting::EndQuietJob();
+    const auto out=ReadPartnerHud(p);
+    if(out.valid) teammate_targeting::BeginQuietJob(p,out.ui,partner_input_hook::HookThread());
+    return out;
+}
+void EndPartnerHud(const HudJobProbe& before) noexcept {
+    // Always disarm, including a refused before-probe or exhausted log budget.
+    teammate_targeting::EndQuietJob();
+    if (!before.valid || hud_job_logs>=96) return;
+    const auto after = ReadPartnerHud(before.p);
+    if (!after.valid || after.ui != before.ui) return;
+    if(before.flags==after.flags && before.action==after.action && before.remote_action==after.remote_action &&
+        before.shared_valid==after.shared_valid && before.shared_selected==after.shared_selected && before.shared_flags==after.shared_flags &&
+        before.hint==after.hint && before.hint_flags==after.hint_flags &&
+        before.hint_active==after.hint_active && before.hint_priority==after.hint_priority && hud_job_logs>=4) return;
+    if (InterlockedIncrement(&hud_job_logs) > 96) return;
+    LogFormat("partner_hud_job_census;mission=%u;remote_action=0x%x;ui_flags_before=0x%x;ui_flags_after=0x%x;action_before=%u;action_after=%u;shared_before=%u;shared_after=%u;selected_before=%u;selected_after=%u;shared_flags_before=0x%x;shared_flags_after=0x%x;scope=read_only_remote_job;quiet_mapping=unverified\r\n",
+        mission,after.remote_action,before.flags,after.flags,before.action,after.action,before.shared_valid?1u:0u,after.shared_valid?1u:0u,
+        before.shared_selected,after.shared_selected,before.shared_flags,after.shared_flags);
+    LogFormat("partner_hint_job_census;mission=%u;remote_action=0x%x;hint_before=%u;hint_after=%u;flags_before=0x%x;flags_after=0x%x;active_before=%u;active_after=%u;priority_before=%u;priority_after=%u;scope=read_only_remote_job;quiet_hint78_mapping=candidate\r\n",
+        mission,after.remote_action,before.hint,after.hint,before.hint_flags,after.hint_flags,unsigned(before.hint_active),unsigned(after.hint_active),unsigned(before.hint_priority),unsigned(after.hint_priority));
+}
+
+void ResetNativeUiCensus() noexcept {
+    ui_logs=0;InterlockedExchange(&hud_job_logs,0);ui_next=0;ui_last={};
+    ui_last_shared_selected=UINT32_MAX;ui_last_shared_flags=UINT32_MAX;
+    for(auto& v:ui_last_rgb) v=INT32_MIN;
+}
+
 void MissionStart(std::uint32_t value) noexcept {
     mission = value; census = nt::CensusState::none; height = {};
+    ResetNativeUiCensus();
     camera_history.last_ok = false; camera_history.torn_streak = 0;
     logged_any = false;
 }
@@ -312,6 +476,7 @@ void Tick(const TickInput& in) noexcept {
     // Partner body, stance and the local aim.
     pp::State state{};
     const bool state_ok = reads && pp::ReadState(*in.addresses, state) == pp::Refusal::none;
+    if (state_ok && in.owner_thread) NativeUiCensus(state, now);
     Body body{};
     if (state_ok) body = ReadBody(*in.addresses, state);
     std::uint32_t stance = 0;
@@ -357,7 +522,7 @@ void Tick(const TickInput& in) noexcept {
     }
     const bool shown_context = reads && ct.ok && body.ok;
     if (!shown_context) t.hover = false;
-    t.crosshair_on = t.hover && settings.crosshair != nt::Crosshair::off && (settings.crosshair == nt::Crosshair::always || t.aim);
+    t.crosshair_on = false;  // native reticle owns crosshair drawing
     t.visible = reason == nt::Reason::ok;
     t.reason = reason;
     t.seq = frame.seq; t.tick_ms = now;

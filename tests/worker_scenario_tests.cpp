@@ -12,6 +12,23 @@ w::Command Parse(const char* operation){char text[512]{};std::snprintf(text,size
     w::Command c{};Check(w::ParseCommand(text,std::strlen(text),id,"host",c),operation);return c;}
 }
 int main(){
+    w::VirtualPadRequest p{};
+    Check(w::ParseVirtualPad("255 0 -16000 16000 1500",p)&&p.enabled&&p.left==255&&p.rx==-16000&&p.ry==16000&&p.duration==1500,"padcanonicalbounds");
+    for(const char* bad:{"","off "," 0 0 0 0 1","0  0 0 0 1","00 0 0 0 1","0 0 -0 0 1","0 0 +1 0 1","256 0 0 0 1","0 256 0 0 1","0 0 16001 0 1","0 0 0 -16001 1","0 0 0 0 0","0 0 0 0 1501","0 0 0 0 1 0","0\t0 0 0 1"})
+        Check(!w::ParseVirtualPad(bad,p),"padrejectsnoncanonicalandunbounded");
+    w::VirtualPad pad;w::VirtualPadState ps{};
+    Check(!pad.Read(ps)&&ps.packet==0,"virtualpaddisconnectedbeforeexplicitcommand");
+    Check(w::ParseVirtualPad("255 0 12000 0 500",p)&&pad.Apply(p,1000)&&pad.Read(ps)&&ps.left==255&&ps.rx==12000&&ps.packet==1,"virtualpadboundedaimprofile");
+    pad.Tick(1499);Check(pad.Read(ps)&&ps.left==255,"virtualpadholdsuntilexactdeadline");
+    pad.Tick(1500);Check(pad.Read(ps)&&ps.left==0&&ps.rx==0&&ps.packet==2,"virtualpadexpiryemitsconnectedneutralrelease");
+    pad.Tick(1600);Check(pad.Read(ps)&&ps.packet==2,"identicalneutralpollhasstablepacket");
+    Check(pad.Apply(p,1700)&&pad.Read(ps)&&ps.packet==3,"newvirtualholdafterexpiry");
+    Check(pad.Apply(p,1800)&&pad.Read(ps)&&ps.packet==3,"renewalupdatesleasewithoutfabricatingpacketchange");
+    pad.Tick(2299);Check(pad.Read(ps)&&ps.left==255,"reneweddeadlineheld");
+    pad.Tick(2300);Check(pad.Read(ps)&&ps.left==0&&ps.packet==4,"reneweddeadlineemitsrelease");
+    auto invalid=p;invalid.duration=1501;Check(!pad.Apply(invalid,2301)&&pad.Read(ps)&&ps.left==0,"invaliddurationdoesnotactivate");
+    Check(!pad.Apply(p,std::numeric_limits<std::uint64_t>::max()),"leaseadditioncannotoverflow");
+    Check(w::ParseVirtualPad("off",p)&&pad.Apply(p,2400)&&!pad.Read(ps)&&ps.packet==0&&ps.left==0,"explicitoffdisconnectsandclearsalloutput");
     Check(w::ValidRunId(id),"exact32lowerhexid");Check(!w::ValidRunId("a"),"shortid");Check(!w::ValidRunId("0123456789abcdef0123456789abcdeG"),"uppercaseid");
     for(unsigned bits=0;bits<16;++bits)Check(w::ValidAuthorization({(bits&1)!=0,(bits&2)!=0,(bits&4)!=0,(bits&8)!=0})==(bits==15),"allactualgatesrequired");
     w::Command rejected{};

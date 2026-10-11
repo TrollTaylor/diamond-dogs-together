@@ -215,7 +215,14 @@ inline std::vector<wchar_t> Environment(const Manifest& manifest, const std::str
     }
     entries[L"MGS_WORKER_RUN_DIR"] = Wide(manifest.directory); entries[L"MGS_WORKER_RUN_ID"] = Wide(manifest.run);
     entries[L"MGS_WORKER_ROLE"] = Wide(role); entries[L"MGS_WORKER_DESKTOP"] = Wide(manifest.desktop); entries[L"MGS_WORKER_GAME_DIR"] = Wide(game_dir);
-    if (manifest.mode == "mgsv") { entries[L"MGS_WORKER_MOTION_COUNT"] = Wide(manifest.At("runtime_motion_count")); entries[L"MGS_WORKER_ARCHIVE_SHA256"] = Wide(manifest.At("runtime_archive_sha256")); }
+    if (manifest.mode == "mgsv") {
+        entries[L"MGS_WORKER_MOTION_COUNT"] = Wide(manifest.At("runtime_motion_count"));
+        entries[L"MGS_WORKER_ARCHIVE_SHA256"] = Wide(manifest.At("runtime_archive_sha256"));
+        if (!manifest.runtime_profile.empty()) {
+            entries[L"MGS_WORKER_RUNTIME_PROFILE"] = Wide(manifest.runtime_profile);
+            entries[L"MGS_WORKER_BUDDY_CAPACITY"] = L"2";
+        }
+    }
     std::vector<wchar_t> out;
     for (const auto& e : entries) { out.insert(out.end(), e.first.begin(), e.first.end()); out.push_back(L'='); out.insert(out.end(), e.second.begin(), e.second.end()); out.push_back(0); }
     out.push_back(0); Require(out.size() < 32767, "environment_size"); return out;

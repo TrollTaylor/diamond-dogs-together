@@ -877,7 +877,12 @@ bool PadsReleased() noexcept {
     return released;
 }
 DWORD WINAPI Pad(DWORD index, XINPUT_STATE* state) noexcept {
-    if (worker_scenario::Requested()) { if (state) *state = {}; return ERROR_DEVICE_NOT_CONNECTED; }
+    if (worker_scenario::Requested()) {
+        const DWORD error=GetLastError();
+        if(state) *state={};
+        const bool supplied=WorkerVirtualPadState(index,state,sizeof(XINPUT_STATE));
+        SetLastError(error);return supplied?ERROR_SUCCESS:ERROR_DEVICE_NOT_CONNECTED;
+    }
     const DWORD result = PadOriginal()(index, state);
     const DWORD error = GetLastError();
     if (result == ERROR_SUCCESS && state && CapturingInput()) std::memset(&state->Gamepad, 0, sizeof(state->Gamepad));
@@ -1059,7 +1064,7 @@ bool NametagFrame(nametag::Frame& frame, nametag::RenderNote& note, UINT bb_w, U
     const ULONGLONG age = now >= frame.tick_ms ? now - frame.tick_ms : 0;
     note.age_ms = age > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<std::uint32_t>(age);
     if (age > nametag::kStaleMs) { note.kind = nametag::Drawn::stale; nametag::NoteRender(note); return false; }
-    if (!frame.visible && !frame.crosshair) { note.kind = nametag::Drawn::hidden; nametag::NoteRender(note); return false; }
+    if (!frame.visible) { note.kind = nametag::Drawn::hidden; nametag::NoteRender(note); return false; }
     return true;
 }
 void DrawNametagLayer(const nametag::Frame& frame, nametag::RenderNote& note, const ImVec2& display) noexcept {
@@ -1100,20 +1105,8 @@ void DrawNametagLayer(const nametag::Frame& frame, nametag::RenderNote& note, co
         note.label_box[0] = bx; note.label_box[1] = by; note.label_box[2] = bx + ts.x; note.label_box[3] = by + ts.y;
         note.alpha = alpha;
     }
-    if (frame.crosshair) {
-        // Friendly crosshair: a green ring with four ticks at the viewport centre.
-        const float cx = display.x * (frame.rect[0] + frame.rect[2] * 0.5f), cy = display.y * (frame.rect[1] + frame.rect[3] * 0.5f);
-        const float r = 10.0f * std::fmax(1.0f, scale);
-        const ImU32 green = IM_COL32(40, 255, 90, 255);
-        list->AddCircle(ImVec2(cx, cy), r, green, 40, 2.0f);
-        const float in = r + 3.0f, out = r + 8.0f;
-        list->AddLine(ImVec2(cx - out, cy), ImVec2(cx - in, cy), green, 2.0f);
-        list->AddLine(ImVec2(cx + in, cy), ImVec2(cx + out, cy), green, 2.0f);
-        list->AddLine(ImVec2(cx, cy - out), ImVec2(cx, cy - in), green, 2.0f);
-        list->AddLine(ImVec2(cx, cy + in), ImVec2(cx, cy + out), green, 2.0f);
-        note.crosshair = true;
-        note.ring[0] = cx; note.ring[1] = cy; note.ring[2] = r;
-    }
+    // Preserve the game reticle. Capsule hover is not an occlusion-tested native
+    // target, so it cannot authorize drawing or recoloring a crosshair.
     nametag::NoteRender(note);
 }
 // The in-game co-op status line and toasts (coop_hud; docs/two-pc-play.md
@@ -1124,6 +1117,9 @@ coop_hud::Model hud_model;
 struct HudFrame {
     coop_hud::Line line;
     bool show_line;
+    coop_hud::Line downed_line;
+    bool show_downed, downed_progress;
+    float revive_progress;
     const coop_hud::Toast* toasts[coop_hud::kMaxToasts];
     unsigned toast_count;
 };
@@ -1160,9 +1156,13 @@ bool HudPrepare(HudFrame& f, bool menu_open) noexcept {
     coop_hud::PartnerView partner{};
     coop_hud::GetPartner(partner); // copied owner publication only
     f.show_line = coop_hud::FormatLine(view, name, coop_hud::GetMode(), now, f.line, &partner);
+    coop_hud::DownedView downed{};
+    coop_hud::GetDowned(downed); // copied receipt facts; never local game reads
+    f.show_downed = coop_hud::FormatDowned(downed, view.mission, now, f.downed_line, f.revive_progress);
+    f.downed_progress = f.show_downed && downed.teammateDown && downed.inRange && !downed.localDown;
     f.toast_count = hud_model.Active(now, f.toasts, coop_hud::kMaxToasts);
     coop_hud::NoteFrame(f.show_line ? &f.line : nullptr, f.toast_count ? f.toasts[0]->text : nullptr, false, taken, new_toasts, now);
-    return f.show_line || f.toast_count;
+    return f.show_line || f.show_downed || f.toast_count;
 }
 ImU32 HudColor(coop_hud::Tone tone, int alpha) noexcept {
     switch (tone) {
@@ -1191,6 +1191,18 @@ void DrawHudLayer(const HudFrame& f, const ImVec2& display) noexcept {
     if (f.show_line) {
         right_text(f.line.text, HudColor(f.line.tone, 235), 0.0f);
         if (f.line.detail[0]) right_text(f.line.detail, IM_COL32(200, 200, 200, 220), 0.0f);
+    }
+    if (f.show_downed) {
+        right_text(f.downed_line.text, HudColor(f.downed_line.tone, 245), 0.0f);
+        if (f.downed_progress) {
+            const float width = 200.0f * scale, height = 5.0f * scale;
+            const float x = display.x - margin - width;
+            list->AddRectFilled(ImVec2(x - pad, y - pad * 0.5f), ImVec2(x + width + pad, y + height + pad * 0.5f), IM_COL32(0, 0, 0, 140), 3.0f * scale);
+            list->AddRectFilled(ImVec2(x, y), ImVec2(x + width, y + height), IM_COL32(90, 90, 90, 220), 2.0f * scale);
+            if (f.revive_progress > 0.0f)
+                list->AddRectFilled(ImVec2(x, y), ImVec2(x + width * f.revive_progress, y + height), HudColor(coop_hud::Tone::good, 245), 2.0f * scale);
+            y += height + pad * 2.0f;
+        }
     }
     const float wrap = std::fmin(display.x * 0.4f, 620.0f * scale);
     for (unsigned i = 0; i < f.toast_count; ++i) right_text(f.toasts[i]->text, HudColor(f.toasts[i]->tone, 245), wrap);
@@ -1541,6 +1553,20 @@ BOOL CALLBACK InstallOnce(PINIT_ONCE, PVOID, PVOID*) noexcept {
 }
 } // namespace
 
+static_assert(sizeof(XINPUT_STATE)==sizeof(worker_scenario::VirtualPadState) &&
+    offsetof(XINPUT_STATE,Gamepad)==4 && offsetof(XINPUT_GAMEPAD,sThumbRX)==8,"virtual pad Windows ABI");
+bool WorkerVirtualPadState(unsigned index,void* output,std::size_t bytes) noexcept {
+    if(!output || bytes!=sizeof(XINPUT_STATE))return false;
+    const DWORD error=GetLastError();std::memset(output,0,bytes);
+    bool supplied=false;
+    if(worker_scenario::Requested()) {
+        // Hidden menu input follows a separate path from CapturingInput().
+        // Disarm, so closing F9 cannot revive an earlier analog hold.
+        if(open.load(std::memory_order_acquire)) worker_scenario::ClearVirtualPad();
+        else supplied=worker_scenario::ReadVirtualPad(index,output,bytes);
+    }
+    SetLastError(error);return supplied;
+}
 void SetShutdownHandler(ShutdownFn fn) noexcept { shutdown_handler.store(fn, std::memory_order_release); }
 
 bool CapturingInput() noexcept {

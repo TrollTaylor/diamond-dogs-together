@@ -21,6 +21,9 @@ if type(e) == "table" then
         if values.ON_HELICOPTER then return 1 end
         if values.ON_HORSE then return 3 end
         if values.ON_VEHICLE then return 2 end
+        -- Normal release uses only these established public statuses.
+        -- The private capacity receipt separately reads qualified native ride
+        -- storage; its eight code pins and owner gates do not cover a call here.
         return 0
     end
 end

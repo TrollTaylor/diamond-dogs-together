@@ -2231,6 +2231,55 @@ void TestHud() {
     Check(!hud::FormatLine(v, "", hud::Mode::compact, 0, line), "link off: nothing");
     v.state = static_cast<std::uint8_t>(link::LinkState::connected);
     Check(!hud::FormatLine(v, "", hud::Mode::off, 0, line), "mode off: nothing");
+    // Downed facts are a bounded copied publication, never a historical pose.
+    {
+        hud::DownedView d{}, copied{};
+        hud::Line prompt{}; float progress = -1;
+        Check(!hud::GetDowned(copied), "no downed view before a natural owner publication");
+        d.valid = true; d.mission = 30050; d.epoch = 7; d.publish_ms = 1000; d.localDown = true;
+        hud::Configure(hud::Mode::off, false);
+        hud::PublishDowned(d); d.localDown = false;
+        Check(hud::GetDowned(copied) && copied.localDown && copied.epoch == 7,
+              "downed publication is copied and remains available while HUD/menu are off");
+        hud::Configure(hud::Mode::compact, true);
+        Check(hud::FormatDowned(copied,30050,1200,prompt,progress) && prompt.tone == hud::Tone::bad &&
+              std::strstr(prompt.text,"waiting") && !std::strstr(prompt.text,"Hold") && progress == 0,
+              "downed local player sees waiting rather than an impossible revive instruction");
+        d.teammateDown = true;
+        Check(hud::FormatDowned(d,30050,1200,prompt,progress) && std::strstr(prompt.text,"get closer") && progress == 0,
+              "out-of-range teammate needs approach without revive progress");
+        d.inRange = true; d.progressMs = 1500;
+        Check(hud::FormatDowned(d,30050,1500,prompt,progress) && std::strstr(prompt.text,"Action (E)") &&
+              std::strstr(prompt.text,"50%") && progress == .5f, "actual continuous hold is shown with its progress at inclusive freshness boundary");
+        d.progressMs = 3000;
+        Check(hud::FormatDowned(d,30050,1200,prompt,progress) && progress == 1.f && std::strstr(prompt.text,"100%"),
+              "completed grant pending is bounded at 100 percent");
+        for (const auto now : {999u,1501u}) {
+            Check(!hud::FormatDowned(d,30050,now,prompt,progress) && !prompt.text[0] && progress == 0,
+                  "future clock and expired facts cannot show a revive command or old progress");
+        }
+        Check(!hud::FormatDowned(d,30020,1200,prompt,progress) && !prompt.text[0],
+              "recent old-scene downed facts cannot show in a different mission");
+        d.mission = 10010;
+        Check(!hud::FormatDowned(d,10010,1200,prompt,progress), "unsupported mission cannot show downed gameplay");
+        d.mission = 30050; d.epoch = 0;
+        Check(!hud::FormatDowned(d,30050,1200,prompt,progress), "unpaired epoch cannot show revive");
+        d.epoch = 7; d.progressMs = 3001;
+        Check(!hud::FormatDowned(d,30050,1200,prompt,progress), "oversized hold progress is refused rather than overflowing a bar");
+        d.progressMs = 1000; d.inRange = false;
+        Check(!hud::FormatDowned(d,30050,1200,prompt,progress), "a released or distant hold cannot retain previous progress");
+        d.inRange = true; d.teammateDown = false;
+        Check(!hud::FormatDowned(d,30050,1200,prompt,progress), "progress requires a downed teammate");
+        d.teammateDown = true; d.localDown = true;
+        Check(!hud::FormatDowned(d,30050,1200,prompt,progress), "both-down facts cannot present local revive progress");
+        d.inRange = false; d.progressMs = 0;
+        Check(hud::FormatDowned(d,30050,1200,prompt,progress) && std::strstr(prompt.text,"waiting"),
+              "both-down recovery transition retains a safe wait instruction");
+        d.localDown = d.teammateDown = false;
+        Check(!hud::FormatDowned(d,30050,1200,prompt,progress) && !prompt.text[0], "healthy pair clears the gameplay instruction");
+        hud::PublishDowned({});
+        Check(!hud::GetDowned(copied), "world teardown immediately clears copied downed HUD facts");
+    }
     // Events -> toasts.
     hud::Post(hud::EventKind::connected, 1, "steam:...1234");
     hud::Post(hud::EventKind::steam_end, 5003, "");

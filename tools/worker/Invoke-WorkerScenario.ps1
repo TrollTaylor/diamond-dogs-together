@@ -44,6 +44,9 @@ blank lines and lines starting with # are ignored. Roles: host, guest, both.
                                    drive the worker-drawn F9 overlay (worker builds only)
   <role> expect <regex>            the role's last run result must match; a mismatch is recorded in
                                    ExpectFailures and the scenario continues
+  <role> require <regex>           same check, but a mismatch stops all following steps and cleans up
+  <role> worldtrigger world=0      lab-only scoped world-disable cleanup test (host or guest);
+                                   same owned private-run/plain-path/applied-log checks as travel
   waitmission <role> <mission> <timeoutSec> wait for a fresh loaded destination;
                                    guarded120ms Space resumes both owned loading roles, at most
                                    12 attempts per allocation, every5s; runtime/termination refuse
@@ -87,7 +90,8 @@ param(
     # Native puppet (docs/native-puppet.md 13): census|loco|gun (default loco).
     [ValidateSet('','census','loco','gun')][string]$NativeStage='',
     # research: the stock46 Research worker build (gun stage only).
-    [ValidateSet('normal','research')][string]$BuildProfile='normal',
+    [ValidateSet('normal','research','buddy-capacity')][string]$BuildProfile='normal',
+    [string]$BuddyCapacityArchive,
     [switch]$AmmoExperiment,
     [ValidateSet('real','lab')][string]$SaveSeed='lab',
     # Optional quality preset, applied only to this run's fresh role save copies.
@@ -114,7 +118,13 @@ $researchExperiments=@()
 if($BuildProfile -ceq 'research'){
     $researchExperiments=@(Get-WorkerResearchExperiments -Ammo:$AmmoExperiment)
     $build=Get-WorkerResearchBuildDirectory $repo $researchExperiments
-}
+} elseif($BuildProfile -ceq 'buddy-capacity'){
+    if($Mode -cne 'lab' -or $AmmoExperiment -or !($PartnerProfile -ceq 'native' -and $NativeStage -cin @('census','loco')) -or !$BuddyCapacityArchive){
+        throw 'Buddy capacity needs explicit archive, copied-save lab mode and native census/loco; no ammo/gun experiment.'
+    }
+    $researchExperiments=@('MGS_LOCAL_BUDDY_CAPACITY_TEST')
+    $build=Get-WorkerResearchBuildDirectory $repo $researchExperiments
+} elseif($BuddyCapacityArchive){throw '-BuddyCapacityArchive needs -BuildProfile buddy-capacity.'}
 
 $lines=@()
 if($ScenarioPath){$lines+=[IO.File]::ReadAllLines([IO.Path]::GetFullPath($ScenarioPath))}
@@ -170,12 +180,14 @@ foreach($line in $steps){
                 'mouse'{$t.Count -eq 4 -and [int]$t[2] -ge -1500 -and [int]$t[2] -le 1500 -and [int]$t[3] -ge -1500 -and [int]$t[3] -le 1500 -and ([int]$t[2] -ne 0 -or [int]$t[3] -ne 0)}
                 'release'{$t.Count -eq 2}; 'capture'{$t.Count -eq 2 -or ($t.Count -eq 3 -and (Test-ScenarioLabel $t[2]))}; 'debug'{$t.Count -ge 3}
                 'worldtrigger'{$Mode -ceq 'lab' -and (
+                    ($t[0] -cin 'host','guest' -and $t.Count -eq 3 -and $t[2] -ceq 'world=0') -or
                     ($t[0] -ceq 'host' -and $t.Count -in 3,4 -and $t[2] -cmatch '^goto=(30010|30020)$' -and
                         ($t.Count -eq 3 -or $t[3] -cmatch '^goto_lz=[01]$')) -or
                     ($t.Count -eq 3 -and (($t[0] -ceq 'host' -and $t[2] -cmatch '^world_probe=(shared_checkpoint|host_continue)$') -or
                         ($t[0] -ceq 'guest' -and $t[2] -ceq 'world_probe=shared_death'))))}
                 'run'{$t.Count -ge 3 -and $t[0] -cne 'both'}
                 'expect'{$t.Count -ge 3 -and $t[0] -cne 'both' -and $(try{$null=[regex]::new((($t|Select-Object -Skip 2) -join ' '));$true}catch{$false})}
+                'require'{$t.Count -ge 3 -and $t[0] -cne 'both' -and $(try{$null=[regex]::new((($t|Select-Object -Skip 2) -join ' '));$true}catch{$false})}
                 'burst'{$t.Count -eq 5 -and (Test-ScenarioLabel $t[2]) -and [int]$t[3] -ge 2 -and [int]$t[3] -le 30 -and [int]$t[4] -ge 100 -and [int]$t[4] -le 5000}; default{$false}})
         }
     }
@@ -187,7 +199,7 @@ if(!$BaselineLoaderSha256){
     $BaselineLoaderSha256=[string]$record.dll_sha256
 }
 if(!$CheckReceipt){
-    $out=if($BuildProfile -ceq 'research'){@(& (Join-Path $worker 'Invoke-WorkerChecks.ps1') -Profile Research -EnableExperiment $researchExperiments -EnableBackgroundWorker 2>&1)}
+    $out=if($BuildProfile -cin @('research','buddy-capacity')){@(& (Join-Path $worker 'Invoke-WorkerChecks.ps1') -Profile Research -EnableExperiment $researchExperiments -EnableBackgroundWorker 2>&1)}
         else{@(& (Join-Path $worker 'Invoke-WorkerChecks.ps1') -EnableBackgroundWorker 2>&1)}
     $CheckReceipt=@($out|ForEach-Object{[string]$_}|Select-String -Pattern 'Worker check receipt: (.+receipt\.json)'|ForEach-Object{$_.Matches[0].Groups[1].Value})[-1]
     if(!$CheckReceipt){throw "Worker checks produced no receipt:`n$($out -join "`n")"}
@@ -195,7 +207,7 @@ if(!$CheckReceipt){
 $receipt=Get-Content -LiteralPath $CheckReceipt -Raw|ConvertFrom-Json
 if($receipt.status -cne 'passed'){throw "Worker checks did not pass: $($receipt.failure)"}
 
-$session=& (Join-Path $worker 'Start-WorkerSession.ps1') -BuildDirectory $build -CheckReceipt $CheckReceipt -BaselineLoaderSha256 $BaselineLoaderSha256 -TimeoutSec $TimeoutSec -ReadyTimeoutSec $ReadyTimeoutSec -PartnerProfile $PartnerProfile -NativeStage $NativeStage -BuildProfile $BuildProfile -AmmoExperiment:$AmmoExperiment -SaveSeed $SaveSeed -GraphicsQuality $GraphicsQuality -LabSetting $LabSetting -Mode $Mode -WanSim $WanSim
+$session=& (Join-Path $worker 'Start-WorkerSession.ps1') -BuildDirectory $build -CheckReceipt $CheckReceipt -BaselineLoaderSha256 $BaselineLoaderSha256 -TimeoutSec $TimeoutSec -ReadyTimeoutSec $ReadyTimeoutSec -PartnerProfile $PartnerProfile -NativeStage $NativeStage -BuildProfile $BuildProfile -BuddyCapacityArchive $BuddyCapacityArchive -AmmoExperiment:$AmmoExperiment -SaveSeed $SaveSeed -GraphicsQuality $GraphicsQuality -LabSetting $LabSetting -Mode $Mode -WanSim $WanSim
 $session=@($session|Where-Object{$_ -isnot [string]})[-1]
 $run=[string]$session.RunDirectory
 $runId=[string]$session.RunId
@@ -215,7 +227,8 @@ function Invoke-ScenarioWorldTravel([string]$Text,[string]$Role='host'){
     $travel=$Role -ceq 'host' -and $canonical -cmatch '^goto=(30010|30020)( goto_lz=[01])?$'
     $recovery=($Role -ceq 'host' -and $canonical -cmatch '^world_probe=(shared_checkpoint|host_continue)$') -or
         ($Role -ceq 'guest' -and $canonical -ceq 'world_probe=shared_death')
-    if(!$travel -and !$recovery){throw 'Worker world travel accepts only free-roam destinations or role-bound recovery probes.'}
+    $disable=$Role -cin 'host','guest' -and $canonical -ceq 'world=0'
+    if(!$travel -and !$recovery -and !$disable){throw 'Worker world travel accepts only free-roam destinations, role-bound recovery probes or exact world=0.'}
     $owned=Read-WorkerSessionJson (Join-Path $run 'session.json')
     if($owned['run_id'] -cne $runId -or $owned['status'] -cne 'ready'){throw 'Worker travel session ownership differs.'}
     $mod=Join-Path $owned['roles'][$Role]['game'] 'mgs-coop'
@@ -250,6 +263,16 @@ function Invoke-ScenarioWorldTravel([string]$Text,[string]$Role='host'){
         Start-Sleep -Milliseconds 250
     }
     throw 'Worker world travel had no confirmed receipt.'
+}
+function Assert-ScenarioResult([string]$Role,[string]$Pattern,[string]$Actual,[bool]$Required){
+    $verb=if($Required){'require'}else{'expect'}
+    $line="$Role $verb $Pattern <- $Actual"
+    $expectations.Add($line)
+    if($Actual -cnotmatch $Pattern){
+        $expectFailures.Add($line)
+        if($Required){throw "Required scenario check failed: $line"}
+        Write-Warning "  expectation failed: $line"
+    }else{Write-Host "  expectation met: $Pattern"}
 }
 function Read-RoleState([string]$Role){
     # Early state files lack later fields; always return the three used here.
@@ -836,11 +859,10 @@ try {
                     Write-Host "  $r $text -> $result"
                 }
                 'expect' {
-                    $pattern=(($t|Select-Object -Skip 2) -join ' ')
-                    $line="$r expect $pattern <- $($lastResult[$r])"
-                    $expectations.Add($line)
-                    if($lastResult[$r] -cnotmatch $pattern){$expectFailures.Add($line);Write-Warning "  expectation failed: $line"}
-                    else{Write-Host "  expectation met: $pattern"}
+                    Assert-ScenarioResult $r (($t|Select-Object -Skip 2) -join ' ') $lastResult[$r] $false
+                }
+                'require' {
+                    Assert-ScenarioResult $r (($t|Select-Object -Skip 2) -join ' ') $lastResult[$r] $true
                 }
                 'debug' {
                     # The game's debug inbox holds one command: wait for each result.

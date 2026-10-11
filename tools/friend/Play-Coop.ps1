@@ -96,7 +96,7 @@ trap {
 }
 # The loader versions whose native side implements the play mode. The
 # integrator keeps this list matched to the packaged loader version.
-$script:SupportedLoaderVersions = @('0.12.0','0.12.1')
+$script:SupportedLoaderVersions = @('0.12.0','0.12.1','0.12.2','0.12.3')
 
 function Resolve-Piece([string]$PackagedName, [string]$RepoRelative) {
     # Packaged layout: scripts\<name>. Repository layout: tools\friend\..\<path>.
@@ -173,6 +173,38 @@ function Section([string]$Text) { Write-Host ''; Write-Host $Text -ForegroundCol
 function Write-Lines([string[]]$Lines, [string]$Color = '') {
     foreach ($l in @($Lines)) { if ($Color) { Write-Host $l -ForegroundColor $Color } else { Write-Host $l } }
 }
+function Assert-CoopReleaseLoader([string]$ExpectedManifestSha256) {
+    # The installed ownership record alone identifies an owned loader; this
+    # package's exact manifest and payload identify the release being started.
+    $manifestPath = Join-Path $PackageDirectory 'package.json'
+    Assert-NoReparsePoint -Path $manifestPath -StopAt $PackageDirectory
+    $manifestHash = Get-Sha256 $manifestPath
+    if ($manifestHash -cne $ExpectedManifestSha256) { throw 'The release package changed while Play-Coop was preparing. Extract the ZIP again.' }
+    $current = Read-FriendJson $manifestPath
+    if (!$current -or [string](Get-FriendProperty $current 'product' '') -cne 'mgs-coop-local-package' -or
+        $script:SupportedLoaderVersions -notcontains [string](Get-FriendProperty $current 'version' '')) {
+        throw 'The release package manifest is invalid. Extract the whole ZIP again.'
+    }
+    $payload = @(Get-FriendProperty $current 'files' @() | Where-Object { [string](Get-FriendProperty $_ 'target' '') -ceq 'dinput8.dll' })
+    if ($payload.Count -ne 1 -or [string](Get-FriendProperty $payload[0] 'source' '') -cne 'payload/dinput8.dll' -or
+        [string](Get-FriendProperty $payload[0] 'sha256' '') -cnotmatch '^[A-Fa-f0-9]{64}$') {
+        throw 'The release package has no unique checked loader entry. Extract the whole ZIP again.'
+    }
+    $expected = ([string]$payload[0].sha256).ToUpperInvariant()
+    $source = Join-Path $PackageDirectory 'payload\dinput8.dll'
+    Assert-NoReparsePoint -Path $source -StopAt $PackageDirectory
+    if (!(Test-FileHash -Path $source -Expected $expected)) { throw 'The release package loader has changed. Extract the ZIP again.' }
+    $owned = Read-FriendJson $paths.Record
+    if (!$owned -or [string](Get-FriendProperty $owned 'product' '') -cne 'mgs-coop-original-loader-probe' -or
+        [string](Get-FriendProperty $owned 'game_directory' '') -cne $gameRoot -or
+        [string](Get-FriendProperty $owned 'version' '') -cne [string]$current.version -or
+        ([string](Get-FriendProperty $owned 'dll_sha256' '')).ToUpperInvariant() -cne $expected -or
+        !(Test-FileHash -Path $paths.Loader -Expected $expected)) {
+        throw 'The installed loader is not this exact release. Run Install-Coop.bat from this package before playing.'
+    }
+    if ((Get-Sha256 $manifestPath) -cne $manifestHash) { throw 'The release package changed while Play-Coop was preparing. Extract the ZIP again.' }
+}
+
 function Write-CleanupResult($Result) {
     if (!$Result.Ran) { return }
     if (@($Result.Removed).Count) { Write-Host ('Co-op files removed: ' + (@($Result.Removed) -join ', ') + '. Normal launches play as usual (real saves).') }
@@ -195,6 +227,7 @@ $state = Read-FriendJson (Join-Path $paths.Mod 'friend-install.json')
 if (!$state -or (Get-FriendProperty $state 'product') -ne 'mgs-coop-friend-install' -or [string](Get-FriendProperty $state 'status' '') -ne 'installed') {
     throw 'MGS Co-op is not installed in this folder (or its install did not finish). Run Install-Coop.bat first.'
 }
+$packageManifestSha256 = Get-Sha256 (Join-Path $PackageDirectory 'package.json')
 $package = Read-FriendJson (Join-Path $PackageDirectory 'package.json')
 if (!$package -or (Get-FriendProperty $package 'product') -ne 'mgs-coop-local-package') { throw "package.json not found in $PackageDirectory. Run Play-Coop.bat from the extracted package folder." }
 $ownBuild = [string]$package.version
@@ -218,6 +251,7 @@ if ($script:SupportedLoaderVersions -notcontains [string](Get-FriendProperty $re
 if (!(Test-Path -LiteralPath $paths.Loader -PathType Leaf) -or (Get-Sha256 $paths.Loader) -ne ([string](Get-FriendProperty $record 'dll_sha256' '')).ToUpperInvariant()) {
     throw 'dinput8.dll differs from the one Install-Coop installed. Run Install-Coop.bat again.'
 }
+Assert-CoopReleaseLoader -ExpectedManifestSha256 $packageManifestSha256
 Write-Host 'Checking the game files (a few seconds)...'
 if (!(Test-FileHash -Path $paths.Exe -Expected ([string]$package.executable_sha256))) { throw 'mgsvtpp.exe is not the expected Steam version 1.0.15.4. Verify the game files in Steam, then run Install-Coop.bat again.' }
 if (!(Test-FileHash -Path $paths.SteamApi -Expected ([string]$package.steam_dll_sha256))) { throw 'steam_api64.dll is not the original file. Verify the game files in Steam, then run Install-Coop.bat again.' }
@@ -536,6 +570,7 @@ try {
                 if (!$rec -or (Get-FriendProperty $rec 'product') -ne 'mgs-coop-original-loader-probe' -or [string](Get-FriendProperty $rec 'game_directory' '') -ne $gameRoot) { throw 'Installation record does not match this mod and directory.' }
                 if ($script:SupportedLoaderVersions -notcontains [string](Get-FriendProperty $rec 'version' '')) { throw 'The installed loader does not support two-PC play.' }
                 if ((Get-Sha256 $paths.Loader) -ne ([string](Get-FriendProperty $rec 'dll_sha256' '')).ToUpperInvariant()) { throw 'Installed loader differs from its ownership record.' }
+                Assert-CoopReleaseLoader -ExpectedManifestSha256 $packageManifestSha256
                 if (!(Test-FileHash -Path $paths.Archive -Expected $archiveSha256)) { throw 'Expected two-player archive is missing or changed.' }
             }
             # Recorded first: a crash right after the write still leaves an owned file.

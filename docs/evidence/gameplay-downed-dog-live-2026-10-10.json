@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "date_utc": "2026-10-10",
+  "run_id": "7169753d2478483e9ec5b1ab93ad58c4",
+  "executable_sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+  "environment": "qualified private Windows desktop, two actual retail game processes, offline link, persistent lab save copies; no visible window or system-wide input",
+  "check_receipt": "build\\worker-runs\\20261010-040245-219b0a41369949a883298582c94611ac\\receipt.json",
+  "check_receipt_sha256": "3101729212831b876cb208f7f0171948c5b8d13044f3ba738302fed1facb59ec",
+  "expectations": [
+    "guest expect down=1.*cause=1.*lock=1 <- downed;ready=1;armed=1;down=1;gen=4;cause=1;lock=1;hp=330,6600;epoch=3;reason=downed",
+    "guest expect down=1.*cause=1.*lock=1 <- downed;ready=1;armed=1;down=1;gen=4;cause=1;lock=1;hp=330,6600;epoch=3;reason=downed",
+    "host expect observed=1.*present=1.*applied=1.*held=0 <- revive;ready=1;observed=1;present=1;applied=1;held=0;gen=3;reason=revive_action",
+    "guest expect down=0.*cause=0.*lock=0 <- downed;ready=1;armed=1;down=0;gen=4;cause=0;lock=0;hp=4163,6600;epoch=3;reason=alive",
+    "guest expect down=1.*cause=2.*lock=1 <- downed;ready=1;armed=1;down=1;gen=5;cause=2;lock=1;hp=330,6600;epoch=3;reason=downed",
+    "guest expect down=1.*cause=2.*lock=1 <- downed;ready=1;armed=1;down=1;gen=5;cause=2;lock=1;hp=330,6600;epoch=3;reason=downed",
+    "host expect observed=1.*present=1.*applied=1.*held=0 <- revive;ready=1;observed=1;present=1;applied=1;held=0;gen=3;reason=revive_action",
+    "guest expect down=0.*cause=0.*lock=0 <- downed;ready=1;armed=1;down=0;gen=5;cause=0;lock=0;hp=4288,6600;epoch=3;reason=alive",
+    "host expect down=1.*cause=2.*lock=1 <- downed;ready=1;armed=1;down=1;gen=4;cause=2;lock=1;hp=390,7800;epoch=3;reason=downed",
+    "guest expect observed=1.*present=1.*applied=1.*held=0 <- revive;ready=1;observed=1;present=1;applied=1;held=0;gen=5;reason=revive_action",
+    "host expect down=0.*cause=0.*lock=0 <- downed;ready=1;armed=1;down=0;gen=4;cause=0;lock=0;hp=4914,7800;epoch=3;reason=alive"
+  ],
+  "expectation_failures": [],
+  "accepted": {
+    "actual_primary_gunfire": "17 exact/scoped natural CalcDamage calls and17 Defense calls; authenticated active hit sequences1..8 each942 HP; eighth put actual guest owner down cause1 at330/6600HP",
+    "actual_crawl_lock": "guest actual W1200ms changed position; actual C did not stand; down cause1/cause2 and native prone/input lock remained",
+    "actual_revive": "before E, exact owned revive mask observed/present/applied; four continuously renewed1500ms E leases over3.4sec; each restored actual owner to alive, lock0, native stand later confirmed",
+    "actual_bilateral_sleep": "host actual WU body dart\u2192guest cause2; guest actual WU body dart\u2192host cause2; both revived; neither crashed",
+    "dog_current_pose": "independently closed moving native Dog position read, id9728",
+    "dog_host_follow": "host Dog moved801.79,338.40,1638.93\u2192784.67,338.70,1643.40; guest785.96,338.80,1642.68 about1.48m away4sec after hoststop and unchanged another4sec; earlier RequestMove candidate drifted7.45m"
+  },
+  "visuals_inspected": [
+    "guest-lethal-down.bmp",
+    "guest-dog-follow-settled.bmp"
+  ],
+  "restore": {
+    "Closed": true,
+    "BaselineRestored": true,
+    "RealSavesUnchanged": true,
+    "Forced": false,
+    "IsolationFailed": false,
+    "SupervisorReason": "owned_shutdown_requested",
+    "SupervisorError": 0
+  },
+  "baseline": "51 original EXE/Steam/runtime/save hashes checked,0changes,0remaining game processes",
+  "limits": [
+    "local loopback does not establish fresh two-PC/Steam relay acceptance",
+    "actual enemy lethal damage and both-downed checkpoint recovery not exercised by this run",
+    "Dog attack/spotting/health/animation events remain local; tested position follow only",
+    "Horse/Walker extra actor and mount routing not exercised",
+    "delayed revived HP exceeds50percent because retail natural regeneration resumes; acceptance asserts alive/lock rather than exact delayed HP"
+  ]
+}

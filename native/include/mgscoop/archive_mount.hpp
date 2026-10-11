@@ -5,6 +5,8 @@
 // This is not the archive's QAR entry count.
 // This process-lifetime bound does not establish actor/package readiness.
 unsigned MountedPlayerMotionCount() noexcept;
+// True only after the exact private capacity catalogue was actually mounted.
+bool MountedBuddyCapacity() noexcept;
 
 // Development startup call only, after the accepted executable's DirectInput
 // creation. Owns one immutable archive for process lifetime; no hot unmount.

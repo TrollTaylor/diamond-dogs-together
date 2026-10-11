@@ -164,7 +164,7 @@ inline constexpr std::uint32_t kHudDemo = 1, kHudIdroid = 2;
 struct Frame {
     std::uint64_t seq, tick_ms;   // GetTickCount64 at publish
     bool visible;                 // draw the tag
-    bool crosshair;               // draw the friendly ring
+    bool crosshair;               // legacy intent; never draws over the game reticle
     bool hover;
     float ndc[2];
     float rect[4];

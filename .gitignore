@@ -8,3 +8,31 @@ __pycache__/
 /backups/
 /dist/
 
+# Agent settings and local secrets (never source dependencies).
+/.claude/
+/.env
+/.env.*
+
+# Local game installs, activation, saves and transient runtime logs.
+# These rules are root-only; intentional tests/fixtures and docs/evidence remain tracked.
+/mgs-coop/
+/saves/
+/saves_host/
+/saves_guest/
+/coop-saves/
+/local-test-saves/
+/steam_settings/
+/lab.ini
+/client-host.txt
+/offline-link.ini
+/probe-install.json
+/probe.log
+/script-observer.log
+/dinput8.dll
+/mgsvtpp.exe
+/steam_api64.dll
+/mgs-coop-player-runtime.dat
+/mgs-coop-buddy-capacity*.dat
+
+# Local IDE state.
+/.vs/

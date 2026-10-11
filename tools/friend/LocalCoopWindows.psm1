@@ -68,20 +68,159 @@ function Get-LocalCoopLayout {
     return [pscustomobject]@{Host=$host;Guest=$guest;Dpi=$Dpi;Gap=$scaledGap;Orientation=$orientation
         WorkingArea=[pscustomobject]@{X=[int]$x;Y=[int]$y;Width=[int]$width;Height=[int]$height}}
 }
+function Initialize-LocalCoopProcessImage {
+    # Image-path and file-identity reads only. No process creation, window, or input.
+    if ('MgsCoopLocal.ProcessImage' -as [type]) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
+namespace MgsCoopLocal {
+public static class ProcessImage {
+    [StructLayout(LayoutKind.Sequential)]
+    struct Info {
+        public uint FileAttributes;
+        public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime;
+        public System.Runtime.InteropServices.ComTypes.FILETIME LastAccessTime;
+        public System.Runtime.InteropServices.ComTypes.FILETIME LastWriteTime;
+        public uint VolumeSerialNumber;
+        public uint FileSizeHigh;
+        public uint FileSizeLow;
+        public uint NumberOfLinks;
+        public uint FileIndexHigh;
+        public uint FileIndexLow;
+    }
+    [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
+    static extern bool QueryFullProcessImageName(IntPtr process, int flags, StringBuilder name, ref int size);
+    [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
+    static extern int GetLongPathName(string shortPath, StringBuilder longPath, int size);
+    [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
+    static extern int GetShortPathName(string longPath, StringBuilder shortPath, int size);
+    [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
+    static extern SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError=true)]
+    static extern bool GetFileInformationByHandle(SafeFileHandle file, out Info info);
+    public static string Query(IntPtr process) {
+        if (process == IntPtr.Zero) return "";
+        StringBuilder name = new StringBuilder(32768);
+        int size = name.Capacity;
+        if (!QueryFullProcessImageName(process, 0, name, ref size) || size <= 0) return "";
+        return name.ToString();
+    }
+    public static string ToLongPath(string path) {
+        if (string.IsNullOrEmpty(path)) return "";
+        StringBuilder name = new StringBuilder(32768);
+        int n = GetLongPathName(path, name, name.Capacity);
+        if (n <= 0 || n >= name.Capacity) return "";
+        return name.ToString();
+    }
+    public static string ToShortPath(string path) {
+        if (string.IsNullOrEmpty(path)) return "";
+        StringBuilder name = new StringBuilder(32768);
+        int n = GetShortPathName(path, name, name.Capacity);
+        if (n <= 0 || n >= name.Capacity) return "";
+        return name.ToString();
+    }
+    public static string FileId(string path) {
+        SafeFileHandle handle = CreateFileW(path, 0x80000000u, 7u, IntPtr.Zero, 3u, 0x02000000u, IntPtr.Zero);
+        if (handle.IsInvalid) return "";
+        try {
+            Info info;
+            if (!GetFileInformationByHandle(handle, out info)) return "";
+            return info.VolumeSerialNumber.ToString("X8") + ":" + info.FileIndexHigh.ToString("X8") + ":" + info.FileIndexLow.ToString("X8") + ":" + info.NumberOfLinks.ToString();
+        } finally { handle.Dispose(); }
+    }
+}
+}
+'@
+}
+function ConvertTo-LocalCoopComparablePath([AllowNull()][AllowEmptyString()][string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) { return '' }
+    $p = $Path.Trim().Replace('/', '\')
+    if ($p.StartsWith('\\?\UNC\', [StringComparison]::OrdinalIgnoreCase)) { $p = '\\' + $p.Substring(8) }
+    elseif ($p.StartsWith('\\?\', [StringComparison]::OrdinalIgnoreCase)) { $p = $p.Substring(4) }
+    try { return [IO.Path]::GetFullPath($p).TrimEnd('\') } catch { return '' }
+}
+function Test-LocalCoopImageBelongsToGame {
+    # True only for this copy's mgsvtpp.exe. A hardlink in another directory
+    # is the same file and still does not belong to this copy.
+    [CmdletBinding()]
+    param([AllowNull()][AllowEmptyString()][string]$ImagePath, [AllowNull()][AllowEmptyString()][string]$GameRoot)
+    try {
+        if ([string]::IsNullOrWhiteSpace($ImagePath) -or [string]::IsNullOrWhiteSpace($GameRoot)) { return $false }
+        $root = ConvertTo-LocalCoopComparablePath $GameRoot
+        if (!$root -or ![IO.Path]::IsPathRooted($root)) { return $false }
+        $expected = ConvertTo-LocalCoopComparablePath (Join-Path $root 'mgsvtpp.exe')
+        if (!$expected) { return $false }
+        $actual = ConvertTo-LocalCoopComparablePath $ImagePath
+        if ($actual -and $expected.Equals($actual, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+        Initialize-LocalCoopProcessImage
+        $long = ConvertTo-LocalCoopComparablePath ([MgsCoopLocal.ProcessImage]::ToLongPath($ImagePath))
+        return [bool]($long -and $expected.Equals($long, [StringComparison]::OrdinalIgnoreCase))
+    } catch { return $false }
+}
+function Select-LocalCoopOwnedImagePath {
+    # First candidate that is this copy's executable. Empty and other copies lose.
+    [CmdletBinding()]
+    param([string[]]$Candidates = @(), [Parameter(Mandatory)][string]$GameRoot)
+    foreach ($candidate in @($Candidates)) {
+        if (Test-LocalCoopImageBelongsToGame -ImagePath $candidate -GameRoot $GameRoot) {
+            return (ConvertTo-LocalCoopComparablePath $candidate)
+        }
+    }
+    return $null
+}
+function Get-LocalCoopOwnedImagePath {
+    # Process.Path (MainModule.FileName) is often empty immediately after
+    # UseShellExecute on Windows PowerShell 5.1. QueryFullProcessImageName
+    # already names the image of the process the caller started.
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Process, [Parameter(Mandatory)][string]$GameRoot, [ValidateRange(1,40)][int]$Attempts = 1)
+    Initialize-LocalCoopProcessImage
+    for ($attempt = 0; $attempt -lt $Attempts; $attempt++) {
+        try { if ($Process.HasExited) { return $null } } catch { return $null }
+        $candidates = @()
+        try {
+            $handle = [IntPtr]$Process.Handle
+            $queried = [MgsCoopLocal.ProcessImage]::Query($handle)
+            if ($queried) { $candidates += $queried }
+        } catch {}
+        try {
+            $main = $Process.MainModule
+            if ($main -and $main.FileName) { $candidates += [string]$main.FileName }
+        } catch {}
+        try {
+            $path = [string]$Process.Path
+            if ($path) { $candidates += $path }
+        } catch {}
+        $selected = Select-LocalCoopOwnedImagePath -Candidates $candidates -GameRoot $GameRoot
+        if ($selected) { return $selected }
+        try {
+            $cim = Get-CimInstance -ClassName Win32_Process -Filter ("ProcessId=" + [int]$Process.Id) -ErrorAction Stop
+            if ($cim -and $cim.ExecutablePath) {
+                $selected = Select-LocalCoopOwnedImagePath -Candidates @([string]$cim.ExecutablePath) -GameRoot $GameRoot
+                if ($selected) { return $selected }
+            }
+        } catch {}
+        if (($attempt + 1) -lt $Attempts) { Start-Sleep -Milliseconds 50 }
+    }
+    return $null
+}
 function Test-LocalCoopOwnerSnapshot {
     # Pure validation also used immediately before each window mutation.
+    # PID and creation time must be the process the launcher started, and both
+    # image paths must be this copy's mgsvtpp.exe (long path or Win32 \\?\ form).
     [CmdletBinding()]
     param([Parameter(Mandatory)]$Owner,[Parameter(Mandatory)][string]$GameRoot,
           [Parameter(Mandatory)]$Snapshot)
     try {
         $ownerId=[int](Get-LocalCoopProperty $Owner 'ProcessId' 0)
         if($ownerId -le 0 -or $ownerId -ne [int](Get-LocalCoopProperty $Snapshot 'ProcessId' 0)) {return $false}
-        if(![IO.Path]::IsPathRooted($GameRoot)) {return $false}
-        $expected=[IO.Path]::GetFullPath((Join-Path $GameRoot 'mgsvtpp.exe'))
-        $owned=[IO.Path]::GetFullPath([string](Get-LocalCoopProperty $Owner 'ExecutablePath' ''))
-        $actual=[IO.Path]::GetFullPath([string](Get-LocalCoopProperty $Snapshot 'ExecutablePath' ''))
-        if(!$expected.Equals($owned,[StringComparison]::OrdinalIgnoreCase) -or
-           !$expected.Equals($actual,[StringComparison]::OrdinalIgnoreCase)) {return $false}
+        $ownedPath=[string](Get-LocalCoopProperty $Owner 'ExecutablePath' '')
+        $actualPath=[string](Get-LocalCoopProperty $Snapshot 'ExecutablePath' '')
+        if(!(Test-LocalCoopImageBelongsToGame -ImagePath $ownedPath -GameRoot $GameRoot)) {return $false}
+        if(!(Test-LocalCoopImageBelongsToGame -ImagePath $actualPath -GameRoot $GameRoot)) {return $false}
         $ownedTime=[DateTime]::Parse([string](Get-LocalCoopProperty $Owner 'StartUtc' ''),[Globalization.CultureInfo]::InvariantCulture,
             [Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
         $actualTime=[DateTime]::Parse([string](Get-LocalCoopProperty $Snapshot 'StartUtc' ''),[Globalization.CultureInfo]::InvariantCulture,
@@ -92,7 +231,8 @@ function Test-LocalCoopOwnerSnapshot {
 function Get-LocalCoopOwnedProcess($Owner,[string]$GameRoot) {
     try {
         $process=Get-Process -Id ([int](Get-LocalCoopProperty $Owner 'ProcessId' 0)) -ErrorAction Stop
-        $snapshot=[pscustomobject]@{ProcessId=$process.Id;StartUtc=$process.StartTime.ToUniversalTime().ToString('o');ExecutablePath=$process.Path}
+        $image=Get-LocalCoopOwnedImagePath -Process $process -GameRoot $GameRoot -Attempts 3
+        $snapshot=[pscustomobject]@{ProcessId=$process.Id;StartUtc=$process.StartTime.ToUniversalTime().ToString('o');ExecutablePath=$(if($image){$image}else{''})}
         if(!(Test-LocalCoopOwnerSnapshot -Owner $Owner -GameRoot $GameRoot -Snapshot $snapshot)) {return $null}
         return $process
     } catch {return $null}
@@ -387,4 +527,4 @@ function Set-LocalCoopGraphicsWindowedText {
 }
 
 # ---------------------------------------------------------------------------
-Export-ModuleMember -Function Get-LocalCoopLayout,Get-LocalCoopWorkingArea,New-LocalCoopWindowLayoutState,Set-LocalCoopWindowLayout,Get-LocalCoopPlacementDecision,Test-LocalCoopOwnerSnapshot,ConvertTo-LocalCoopJsonCppText,Get-LocalCoopGraphicsTag,Get-LocalCoopGraphicsInfo,Set-LocalCoopGraphicsWindowedText
+Export-ModuleMember -Function Get-LocalCoopLayout,Get-LocalCoopWorkingArea,New-LocalCoopWindowLayoutState,Set-LocalCoopWindowLayout,Get-LocalCoopPlacementDecision,Initialize-LocalCoopProcessImage,ConvertTo-LocalCoopComparablePath,Test-LocalCoopImageBelongsToGame,Select-LocalCoopOwnedImagePath,Get-LocalCoopOwnedImagePath,Test-LocalCoopOwnerSnapshot,ConvertTo-LocalCoopJsonCppText,Get-LocalCoopGraphicsTag,Get-LocalCoopGraphicsInfo,Set-LocalCoopGraphicsWindowedText

@@ -703,7 +703,7 @@ try {
     $null = New-Item -ItemType Directory -Path $receiptFx
     [IO.File]::Copy($fakeLoader, (Join-Path $receiptFx 'dinput8.dll'))
     $releaseFlags = [ordered]@{}
-    foreach ($name in @('MGS_LOCAL_GUN_PRELOAD_TEST','MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST',
+    foreach ($name in @('MGS_LOCAL_BUDDY_CAPACITY_TEST','MGS_LOCAL_GUN_PRELOAD_TEST','MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST',
             'MGS_LOCAL_STOCK46_AMMO_TEST','MGS_LOCAL_ACTION_EVENTS','MGS_LOCAL_UPPER_END_OBSERVE','MGS_LOCAL_UPPER_PHASE_OBSERVE',
             'MGS_LOCAL_UPPER_MANUAL_IDLE','MGS_LOCAL_UPPER_PROBE','MGS_LOCAL_UPPER_CHANNEL2','MGS_LOCAL_UPPER_FIRE_ZERO_BLEND')) {
         $releaseFlags[$name] = if ($name -in @('MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST')) { 'ON' } else { 'OFF' }
@@ -728,7 +728,7 @@ try {
     $packages = @(Get-ChildItem -LiteralPath $distFx -Directory)
     Assert-Equal $packages.Count 1 'one friend package staged'
     $pkg = $packages[0].FullName
-    Assert-True ($packages[0].Name -cmatch '^mgs-coop-friend-0\.12\.1-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$') 'package folder name'
+    Assert-True ($packages[0].Name -cmatch '^mgs-coop-friend-0\.12\.2-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$') 'package folder name'
     Assert-True (Test-Path -LiteralPath ($pkg + '.zip') -PathType Leaf) 'package zip written'
     $required = @('Install-Coop.bat', 'Play-Coop.bat', 'Play-Offline-Coop.bat', 'Uninstall-Coop.bat', 'Collect-Logs.bat', 'Share-Save.bat', 'scripts/Share-Save.ps1', 'FRIEND-GUIDE.txt', 'RUNTIME-ARCHIVE.txt', 'package.json', 'source-files.json',
         'payload/dinput8.dll', 'payload/DYNAMITE-LICENSE', 'payload/MinHook-LICENSE.txt', 'payload/ImGui-LICENSE.txt', 'payload/tpp-mod-LICENSE', 'payload/THIRD_PARTY_NOTICES.md',
@@ -746,7 +746,7 @@ try {
     Assert-Equal ((@(Get-ChildItem -LiteralPath (Join-Path $pkg 'scripts') -File | ForEach-Object { $_.Name } | Sort-Object)) -join ',') ($wantScripts -join ',') 'scripts: exactly the play package pieces (no LabCommon.psm1, no set-session-mode.ps1)'
     Assert-Equal ((@(Get-ChildItem -LiteralPath $pkg -File -Filter '*.bat' | ForEach-Object { $_.Name } | Sort-Object)) -join ',') 'Collect-Logs.bat,Install-Coop.bat,Play-Coop.bat,Play-Offline-Coop.bat,Share-Save.bat,Uninstall-Coop.bat' 'the six double-click entry points'
     $manifest = Get-Content -LiteralPath (Join-Path $pkg 'package.json') -Raw | ConvertFrom-Json
-    Assert-Equal "$($manifest.product)|$($manifest.version)|$($manifest.flavor)" 'mgs-coop-local-package|0.12.1|friend-play' 'package manifest identity'
+    Assert-Equal "$($manifest.product)|$($manifest.version)|$($manifest.flavor)" 'mgs-coop-local-package|0.12.3|friend-play' 'package manifest identity'
     # A matching override still packages the receipt's immutable checked copy.
     Assert-Equal "$($manifest.build.source)|$($manifest.build.profile)" 'release_receipt|Release' 'friend build always records the Release receipt'
     Assert-Equal $manifest.build.receipt ([IO.Path]::GetRelativePath($projectRoot, $receiptPath)) 'package.json records the supplied matching receipt'
@@ -897,7 +897,7 @@ try {
         }
     } finally { $localZip.Dispose() }
     $guide = [IO.File]::ReadAllText((Join-Path $pkg 'FRIEND-GUIDE.txt'))
-    foreach ($needle in 'Play-Coop.bat', 'UDP 47830', 'Tailscale', 'Mother Base', 'Install-Coop.bat', 'Uninstall-Coop.bat', 'Collect-Logs.bat', 'RUNTIME-ARCHIVE.txt', 'Version 0.12.1', 'Failed to log in', 'Public networks', 'Block rules win over Allow rules', 'REAL saves') {
+    foreach ($needle in 'Play-Coop.bat', 'UDP 47830', 'Tailscale', 'Mother Base', 'Install-Coop.bat', 'Uninstall-Coop.bat', 'Collect-Logs.bat', 'RUNTIME-ARCHIVE.txt', 'Version 0.12.3', 'Failed to log in', 'Public networks', 'Block rules win over Allow rules', 'REAL saves') {
         Assert-True $guide.Contains($needle) "guide mentions $needle"
     }
     foreach ($needle in 'Ctrl+F8', 'Ctrl+F9', '7656119', 'SteamID64', 'normal online service', 'Account details') { Assert-True (!$guide.Contains($needle)) "guide no longer mentions $needle" }
@@ -1265,6 +1265,71 @@ try {
     $r = Invoke-Play $play @('-GameDirectory', $bare, '-Role', 'Host', '-HostAddress', '192.0.2.10')
     Assert-Refused $r 'not installed in this folder' 'Play-Coop refuses a folder without an install'
     Assert-Equal @(Get-ChildItem -LiteralPath $bare -Force).Count 2 'Play-Coop refusal wrote nothing'
+    # The online launcher must start this package's exact loader, including
+    # different builds with the same version; ownership alone is insufficient.
+    $ownedRecordBytes = [IO.File]::ReadAllBytes($hp.Record)
+    $ownedLoaderBytes = [IO.File]::ReadAllBytes($hp.Loader)
+    $releaseManifestPath = Join-Path $stage 'package.json'
+    $releaseManifestBytes = [IO.File]::ReadAllBytes($releaseManifestPath)
+    $releaseLoaderPath = Join-Path $stage 'payload\dinput8.dll'
+    $releaseLoaderBytes = [IO.File]::ReadAllBytes($releaseLoaderPath)
+    $ownedBefore = Get-TreeHashes $hostGame
+    try {
+        $newRelease = Read-FriendJson $releaseManifestPath
+        $newRelease.version = '0.12.2'
+        [IO.File]::WriteAllText($releaseManifestPath, ($newRelease | ConvertTo-Json -Depth 8), $utf8)
+        $oldBefore = Get-TreeHashes $hostGame
+        $r = Invoke-Play $play @('-GameDirectory', $hostGame, '-Role', 'Host', '-HostAddress', '192.0.2.10') -NoWatchdog
+        Assert-Refused $r 'not this exact release' '0.12.2 package refuses an older owned 0.12.0 loader'
+        Assert-Equal (Get-TreeHashes $hostGame) $oldBefore 'different version refusal changes no game or save files'
+        [IO.File]::WriteAllBytes($releaseManifestPath, $releaseManifestBytes)
+
+        [IO.File]::Copy($loaderPrev, $hp.Loader, $true)
+        $otherRecord = Read-FriendJson $hp.Record
+        $otherRecord.dll_sha256 = Get-Sha256 $hp.Loader
+        [IO.File]::WriteAllText($hp.Record, ($otherRecord | ConvertTo-Json -Depth 8), $utf8)
+        $otherBefore = Get-TreeHashes $hostGame
+        $r = Invoke-Play $play @('-GameDirectory', $hostGame, '-Role', 'Host', '-HostAddress', '192.0.2.10') -NoWatchdog
+        Assert-Refused $r 'not this exact release' 'same version with a different owned loader refuses'
+        Assert-Equal (Get-TreeHashes $hostGame) $otherBefore 'different build refusal changes no game or save files'
+        [IO.File]::WriteAllBytes($hp.Record, $ownedRecordBytes)
+        [IO.File]::WriteAllBytes($hp.Loader, $ownedLoaderBytes)
+
+        [IO.File]::AppendAllText($releaseLoaderPath, 'changed')
+        $r = Invoke-Play $play @('-GameDirectory', $hostGame, '-Role', 'Host', '-HostAddress', '192.0.2.10') -NoWatchdog
+        Assert-Refused $r 'release package loader has changed' 'tampered package payload refuses before activation'
+        Assert-Equal (Get-TreeHashes $hostGame) $ownedBefore 'tampered package refusal changes no game or save files'
+        [IO.File]::WriteAllBytes($releaseLoaderPath, $releaseLoaderBytes)
+
+        $duplicateManifest = Read-FriendJson $releaseManifestPath
+        $duplicateManifest.files = @($duplicateManifest.files) + @($duplicateManifest.files | Where-Object target -ceq 'dinput8.dll')
+        [IO.File]::WriteAllText($releaseManifestPath, ($duplicateManifest | ConvertTo-Json -Depth 8), $utf8)
+        $r = Invoke-Play $play @('-GameDirectory', $hostGame, '-Role', 'Host', '-HostAddress', '192.0.2.10') -NoWatchdog
+        Assert-Refused $r 'no unique checked loader entry' 'ambiguous loader payload refuses before activation'
+        Assert-Equal (Get-TreeHashes $hostGame) $ownedBefore 'ambiguous package refusal changes no game or save files'
+    } finally {
+        [IO.File]::WriteAllBytes($hp.Record, $ownedRecordBytes)
+        [IO.File]::WriteAllBytes($hp.Loader, $ownedLoaderBytes)
+        [IO.File]::WriteAllBytes($releaseManifestPath, $releaseManifestBytes)
+        [IO.File]::WriteAllBytes($releaseLoaderPath, $releaseLoaderBytes)
+    }
+    # Change the actual manifest only after preflight and the first activation
+    # files, immediately before the marker. The fresh check refuses and the
+    # launcher's ordinary finally removes its partial activation.
+    $stagePlayRace = Join-Path $fixture 'stage-play-release-race'
+    Copy-Item -LiteralPath $stage -Destination $stagePlayRace -Recurse
+    $playRace = Join-Path $stagePlayRace 'scripts\Play-Coop.ps1'
+    $playRaceText = [IO.File]::ReadAllText($playRace)
+    $playRacePoint = '            if ($w.Name -eq ''script-observe.enabled'') {'
+    Assert-Equal ([regex]::Matches($playRaceText, [regex]::Escape($playRacePoint)).Count) 1 'Play-Coop has one pre-marker fixture injection point'
+    $playRaceCode = $playRacePoint + "`r`n" + '                [IO.File]::AppendAllText((Join-Path $PackageDirectory ''package.json''), '' '')'
+    [IO.File]::WriteAllText($playRace, $playRaceText.Replace($playRacePoint, $playRaceCode), $utf8)
+    $r = Invoke-Play $playRace @('-GameDirectory', $hostGame, '-Role', 'Host', '-HostAddress', '192.0.2.10') -NoWatchdog
+    Assert-Refused $r 'release package changed while Play-Coop was preparing' 'manifest race refuses immediately before the activation marker'
+    Assert-PassThrough $hp 'release race removes partial activation'
+    Assert-Equal (Get-Sha256 $hp.Loader) (Get-Sha256 $loader1) 'release race preserves the installed owned loader'
+    Assert-Equal (Get-TreeHashes $userdata) $userdataBefore 'release identity refusals preserve real saves'
+
     # Host activation (the window "closes" right after it; the watchdog cleans up).
     $r = Invoke-Play $play @('-GameDirectory', $hostGame, '-Role', 'Host', '-HostAddress', '192.0.2.10', '-Port', '47835')
     Assert-True ($r.Exit -eq 0 -and (Has $r 'TEST: leaving after the activation.')) "Play-Coop host activates: $($r.Raw)"

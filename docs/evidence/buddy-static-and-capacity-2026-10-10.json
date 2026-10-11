@@ -1,0 +1,474 @@
+{
+  "schema": 1,
+  "analysis": "host_led_dog_and_experimental_duplicate_rides",
+  "evidence": "installed executable static decode plus recording/format fixtures; not live allocation or ride proof",
+  "executable_sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+  "dog": {
+    "authority": "host native AI untouched; guest native dog follows host actual dog position targets",
+    "intervals_ms": {
+      "publish": 250,
+      "move": 250,
+      "lease": 1000,
+      "allocation_wait": 5000
+    },
+    "correction": {
+      "deadband_m": 0.75,
+      "warp_error_above_m": 15
+    },
+    "facing": "host player heading navigation hint, not actual dog facing",
+    "unimplemented": [
+      "attacks",
+      "spotting",
+      "health",
+      "animation replication",
+      "shared native actor"
+    ],
+    "native_registration_rva": "0xa45be0",
+    "bindings": {
+      "CallBuddy": "0xa44560",
+      "GetActiveBuddyType": "0xa46030",
+      "IsBlockActive": "0xa47060",
+      "RequestMoveToPosition": "0xa48c80",
+      "Load": "0xa47cf0"
+    },
+    "request_arguments": [
+      "BuddyType numeric",
+      "Vector3",
+      "heading radians"
+    ],
+    "singleton": {
+      "selector": "0xa44740",
+      "requested_type_offset": "0x174",
+      "active_type_offset": "0x175",
+      "pending_offset": "0x17f"
+    },
+    "stock_warp": {
+      "script": "s10020_sequence.lua",
+      "sha256": "1c373ada07ef5970440681e5fcfea3b40deda8de01a0117825bbcc22f61b8adf",
+      "lines": [
+        1331,
+        1336
+      ],
+      "command": "SetWarpPosition",
+      "position_field": "pos",
+      "dispatcher_match_rva": "0xc7d287",
+      "argument_parse_rva": "0xc7d2fc"
+    },
+    "retail_callable_vector_fix": "callable table/userdata via protected constructor and vector readback; actual first hidden run had dog present but module inactive before fix",
+    "inactive_cleanup": "B.cleanupPending retries prior owned release only; mission changes discard old metadata"
+  },
+  "ride_types": {
+    "horse": {
+      "name": "TppHorse2",
+      "hash": "0xd64344905378",
+      "type_check_rva": "0xe4c450",
+      "lua_dispatcher_rva": "0xe4d250",
+      "get_ride_player_branch_rva": "0xe4d510",
+      "array_pointer_offset": "0x68",
+      "array_count_offset": "0x10",
+      "instance_stride": "0x2f0",
+      "occupied_byte": "0x2dd",
+      "result": "occupied0or1 not player identity",
+      "warning": "Out-of-range path may dereference null; internal array count must be proven2 before index1 probe",
+      "array_offset_base": "Lua command secondary-interface receiver; manager primary+0x88 corresponds to secondary+0x68",
+      "natural_capacity_allocation": {
+        "initializer": "0xe4c5f0",
+        "total_count_read": "0xe4c639",
+        "requested_component_count": "0xe4ce60",
+        "component_hash": "0xdad9fc9574d3",
+        "component_store_primary_offset": "0x88",
+        "component_store_rva": "0xe4ceb0",
+        "component_type_check": "0xe7c720",
+        "component_initializer": "0xe7c750",
+        "count_primary_offset": "0x30",
+        "data_primary_offset": "0x28",
+        "allocator": "0xe7c4c0",
+        "per_record_constructor": "0xe7c5e0",
+        "allocation_stride": "0x2f0",
+        "record_loop": "0xe7c5a0..0xe7c5c7",
+        "live_confirmed": false
+      },
+      "receiver_capacity_guard": "Capture actual naturally invoked Lua dispatcher receiver before resolving component+0x68, then read actual component+0x10 count. Do not assume generic registry pointer ABI.",
+      "natural_rider_event": {
+        "handler": "0xe59c20..0xe59e19",
+        "event_hash": "0x5167c60042b5",
+        "event_rider_word": "+0x8",
+        "mode_dword": "+0xc",
+        "controller_stride": "0x440",
+        "ride_record_rider_word": "+0xe",
+        "occupied_byte": "+0x2dd",
+        "safe_synthetic_attachment": false
+      },
+      "set_call_horse": {
+        "command": "SetCallHorse",
+        "fields": [
+          "startPosition Vector3",
+          "goalPosition Vector3"
+        ],
+        "branch": "0xe4d805",
+        "per_instance_start": "+0x20",
+        "per_instance_goal": "+0x30",
+        "flag": "+0x2e3",
+        "constraint": "actual count must cover index; normal movement request, not player attach"
+      }
+    },
+    "horse_vr": {
+      "name": "TppHorse2forVr",
+      "hash": "0xd44f3d36b18a",
+      "type_check_rva": "0x1806d50",
+      "lua_dispatcher_rva": "0x1807830",
+      "excluded_as_walker": true
+    },
+    "walker": {
+      "name": "TppWalkerGear2",
+      "hash": "0xb4c3ac6cbe57",
+      "type_check_rva": "0x1704670",
+      "type_check_vtable_slot": "0x2442678",
+      "secondary_vtable": "0x24426a0",
+      "lua_dispatcher_rva": "0x1706190",
+      "lua_dispatcher_end_rva_exclusive": "0x1706cda",
+      "bounds": "index >= [this+0x0c] refused before command dispatch",
+      "get_position": {
+        "hash": "0x25b81241ca2d",
+        "branch": "0x170633a",
+        "source": "[this+0x18]->position array+0x20, stride16"
+      },
+      "is_player_riding": {
+        "hash": "0x44367c424e38",
+        "branch": "0x1706420",
+        "rider_id_offset": "0x2c8",
+        "mode_offset": "0x55c",
+        "result": "boolean, no owner identity"
+      },
+      "get_ride_player_supported": false,
+      "per_instance_getter": {
+        "rva": "0x1704250",
+        "slot": "secondary+0xf8",
+        "data": "[this+0xb8]+index*0x580"
+      },
+      "get_max_instance_count": {
+        "class_command": "GameObject.SendCommand({type=\"TppWalkerGear2\"},{id=\"GetMaxInstanceCount\"})",
+        "branch": "0x17061fd",
+        "result": "actual receiver+0xc count",
+        "scope": "class index0x1ff"
+      },
+      "set_position": {
+        "hash": "0xb3d854925648",
+        "branch": "0x170670b..0x1706938",
+        "helper": "0x170d410..0x170d726",
+        "fields": [
+          "pos Vector3/3-number table",
+          "rotY radians"
+        ],
+        "stock_script": "s10050_sequence.lua",
+        "stock_sha256": "ff9717a3be54fa6fc95ad8bc8b02a769e078263c6ad3a76f2607bd34cd158d49",
+        "stock_lines": [
+          1191,
+          1194
+        ],
+        "live_qualified": false
+      }
+    }
+  },
+  "local_ride_read": {
+    "lua": "Player.GetGameObjectIdIsRiddenToLocal()",
+    "wrapper_rva": "0x9d2510",
+    "read_rva": "0x1e02920",
+    "player_ride_id_offset": "0xb6",
+    "player_info_current": "0x53c9d0",
+    "player_info_indexed": "0x53ca40",
+    "indexed_bounds": [
+      0,
+      15
+    ],
+    "indexed_stride": "0xe0",
+    "qualified_for": "read only, not force attach"
+  },
+  "native_spans": [
+    {
+      "label": "buddy registered Lua table",
+      "begin_rva": "0xa45be0",
+      "end_rva_exclusive": "0xa45f27",
+      "sha256": "a5052216ef561a55e68c3ed4c68bc47496478195050975fc2764ce064a3bb439"
+    },
+    {
+      "label": "complete CallBuddy wrapper including cold body",
+      "begin_rva": "0xa44560",
+      "end_rva_exclusive": "0xa44697",
+      "sha256": "2730a8e95ebf6cfcc9eccf97db2d39967ce99bc281a302d0c021584a1886d6c6"
+    },
+    {
+      "label": "singleton buddy selector",
+      "begin_rva": "0xa44740",
+      "end_rva_exclusive": "0xa44890",
+      "sha256": "63f12cfcb7e90355a62705e9606f00f3a9a4eaabee61e2c0b79bcc234592c827"
+    },
+    {
+      "label": "native Load saved selection and degree-to-radian conversion",
+      "begin_rva": "0xa485f0",
+      "end_rva_exclusive": "0xa4871b",
+      "sha256": "cb20e3b28dd28aadaaa23c7a6c8dfca921d339496780db1f0d5ddb0d89252aab"
+    },
+    {
+      "label": "Horse type cast",
+      "begin_rva": "0xe4c450",
+      "end_rva_exclusive": "0xe4c475",
+      "sha256": "efbd95908ff2eaedd5254095f15c93dc5e89e04507ae5ddb2ea6eef2552957f0"
+    },
+    {
+      "label": "Horse2forVr type cast",
+      "begin_rva": "0x1806d50",
+      "end_rva_exclusive": "0x1806d75",
+      "sha256": "b8229914f8f458b9af33d171896784e5aa2d24c21f4db331690627eb799d8a66"
+    },
+    {
+      "label": "Walker type cast",
+      "begin_rva": "0x1704670",
+      "end_rva_exclusive": "0x1704695",
+      "sha256": "26ba6faf759023e8cce04573d4a345ff26a7ceafb00349146a1fe5fb2ccb5dd4"
+    },
+    {
+      "label": "Walker full Lua dispatcher including cold body",
+      "begin_rva": "0x1706190",
+      "end_rva_exclusive": "0x1706cda",
+      "sha256": "e79ce6e32235a3d7c69c37534666423f2080a5ed94688b4843ebbcc45040bafa"
+    },
+    {
+      "label": "Horse Lua dispatcher",
+      "begin_rva": "0xe4d250",
+      "end_rva_exclusive": "0xe4d95e",
+      "sha256": "ebc78c5b7f8feeda50123b42aaa141b5817261da598cc06ba0f19f2968bc5b84"
+    },
+    {
+      "label": "horse total count passed into exact ride component",
+      "begin_rva": "0xe4ce60",
+      "end_rva_exclusive": "0xe4ceb7",
+      "sha256": "7fef69f3d9d8d0467dedfe1099e079ccc7709a9ef77815cb1dc1039bbed8250d"
+    },
+    {
+      "label": "horse ride component typed cast",
+      "begin_rva": "0xe7c720",
+      "end_rva_exclusive": "0xe7c745",
+      "sha256": "9586fe3239ca0adcf23183f6e7ade1dae35b53ccf030589454398a86b620a4fe"
+    },
+    {
+      "label": "horse ride component initializer",
+      "begin_rva": "0xe7c750",
+      "end_rva_exclusive": "0xe7c7cb",
+      "sha256": "b41dabc7c3ceb54236ad13db68cc9abd16539cb6758143d012bae4a0a2fed262"
+    },
+    {
+      "label": "horse count-times-stride allocation and per-record construction",
+      "begin_rva": "0xe7c4c0",
+      "end_rva_exclusive": "0xe7c5d8",
+      "sha256": "a969c15834f4244b3dad50162f16bf47d9f772257f4fcdffde61b7bf46766a7f"
+    },
+    {
+      "label": "walker secondary vtable initialization",
+      "begin_rva": "0x1701ca1",
+      "end_rva_exclusive": "0x1701cb6",
+      "sha256": "b58ea7b2d4bc95970020ae850c1d31d7db35d5bc9ac59196956a1ba3490f2cea"
+    },
+    {
+      "label": "walker per-instance getter",
+      "begin_rva": "0x1704250",
+      "end_rva_exclusive": "0x1704262",
+      "sha256": "1a52e6723f65c73ab7e6fc5c3c43b775c04984bc5dd79547d4e61cd7d557d72a"
+    },
+    {
+      "label": "walker safe class count branch",
+      "begin_rva": "0x17061fd",
+      "end_rva_exclusive": "0x1706222",
+      "sha256": "2e590df6f771edc4646faf7dff85070460af882dde89295b3d312de70e3524fc"
+    },
+    {
+      "label": "walker SetPosition dispatcher",
+      "begin_rva": "0x170670b",
+      "end_rva_exclusive": "0x1706938",
+      "sha256": "1dd11549095527354ffc57b28662f4c6782c899e2d0ee4929e221fde0c7e0a26"
+    },
+    {
+      "label": "walker SetPosition transform helper",
+      "begin_rva": "0x170d410",
+      "end_rva_exclusive": "0x170d726",
+      "sha256": "9d83c98473852f55b63d3ed94f18aa842d5f0ce811b7dad0e802b92654640a03"
+    },
+    {
+      "label": "horse natural per-instance rider ownership event",
+      "begin_rva": "0xe59c20",
+      "end_rva_exclusive": "0xe59e19",
+      "sha256": "9e35a6fc455a55bb3ffb7f393eca1822842978c7e713f8b1b2739bc83074bce1"
+    },
+    {
+      "label": "indexed player ride ID read only",
+      "begin_rva": "0x1e028c0",
+      "end_rva_exclusive": "0x1e028e4",
+      "sha256": "8a9d7412e3f882d1f30a34a6983e1b5c2eaaf7255c45c9788d0050478612cfa1"
+    }
+  ],
+  "fixtures": {
+    "lua_checks": 183,
+    "synthetic_graph_tests": 8,
+    "native_wire_tests": "root audit owns execution",
+    "live_game": false,
+    "worker_session_checks": 703
+  },
+  "archive": {
+    "schema": 1,
+    "experiment": "buddy_capacity_two",
+    "profile": "buddy_capacity_two_v1",
+    "baseline_sha256": "87bbe82bb1e907cf405200155da2794bf7e1f5a3d45bf66426a38cdd31a91f96",
+    "converter_sha256": "a1ec95c8adab11339b7a16ec2ebe7bd92a521bab428f9238feaa20da3bc64c1e",
+    "archive": {
+      "path": "mgs-coop-buddy-capacity-two.dat",
+      "sha256": "d328031c2478dea51439c95eb783248e01b9b8875e870ce9d4d9cd256593f3f8",
+      "bytes": 16659456,
+      "version": 1,
+      "flags": 3150304,
+      "entries": 15
+    },
+    "catalog": {
+      "player_motion_count": 21,
+      "buddy_total_count": 2,
+      "buddy_kinds": [
+        "horse",
+        "walker"
+      ],
+      "buddy_variants": [
+        0
+      ]
+    },
+    "entries": [
+      {
+        "path": "/Assets/tpp/pack/player/game_object/mgs_coop_four_players_game_obj.fpk",
+        "sha256": "60b461fdf13b32b6e35fe67191d3b55e22d6c589468178b7446340a197816293",
+        "origin": "baseline",
+        "qar_roundtrip_equal": true
+      },
+      {
+        "path": "/Assets/tpp/pack/player/game_object/mgs_coop_four_players_game_obj.fpkd",
+        "sha256": "e15273de59af59c2317ac828a20788e5fd7a85007718ce1083baba3503c4ff7c",
+        "origin": "baseline",
+        "qar_roundtrip_equal": true
+      },
+      {
+        "path": "/Assets/tpp/pack/player/game_object/mgs_coop_four_player_controller.fpk",
+        "sha256": "f2092c931361235826346509dd82b1a188c7d18787fb432e7a064a60dc96d279",
+        "origin": "baseline",
+        "qar_roundtrip_equal": true
+      },
+      {
+        "path": "/Assets/tpp/pack/player/game_object/mgs_coop_four_player_controller.fpkd",
+        "sha256": "1dd1874ae6c45434b67f377ae1605d98e4c1de7b6be61c8b211287e88b39a01d",
+        "origin": "baseline",
+        "qar_roundtrip_equal": true
+      },
+      {
+        "path": "/Assets/tpp/script/lib/MgsCoopArchiveProbe.lua",
+        "sha256": "4b3e9234b07238da0b3c45e65234e259701d174a4dc343ef15567ceb9e0b70bd",
+        "origin": "baseline",
+        "qar_roundtrip_equal": true
+      },
+      {
+        "path": "/Assets/tpp/pack/mission2/free/f30050/mgs_coop_f30050.fpk",
+        "sha256": "05f6e682cfc4670269cbc5b29a923dc98de3b0ca7266d8ee010daabce974ed36",
+        "origin": "baseline",
+        "qar_roundtrip_equal": true
+      },
+      {
+        "path": "/Assets/tpp/pack/mission2/free/f30050/mgs_coop_f30050.fpkd",
+        "sha256": "ed8a84bba3253ecfff6637ba029d7f5ee91907196c0e4ad82d0d99d84e54600f",
+        "origin": "baseline",
+        "qar_roundtrip_equal": true
+      },
+      {
+        "path": "/Assets/tpp/pack/player/game_object/mgs_coop_two_player_scarf_controller.fpk",
+        "sha256": "f2092c931361235826346509dd82b1a188c7d18787fb432e7a064a60dc96d279",
+        "origin": "baseline",
+        "qar_roundtrip_equal": true
+      },
+      {
+        "path": "/Assets/tpp/pack/player/game_object/mgs_coop_two_player_scarf_controller.fpkd",
+        "sha256": "92385107e7b1c32dcc0f9d07a6a149018538252a40c23e4a46cfcf45e0562342",
+        "origin": "baseline",
+        "qar_roundtrip_equal": true
+      },
+      {
+        "path": "/Assets/tpp/pack/mission2/free/f30010/mgs_coop_f30010.fpk",
+        "sha256": "97c50bee8885f581b54d86f6b42585509a1393436d6225f1f26e5eb5cd402414",
+        "origin": "baseline",
+        "qar_roundtrip_equal": true
+      },
+      {
+        "path": "/Assets/tpp/pack/mission2/free/f30010/mgs_coop_f30010.fpkd",
+        "sha256": "718b0e33875ff668144f70eac93771fac1b4df047f859d6fc81ecc9a4fda8483",
+        "origin": "baseline",
+        "qar_roundtrip_equal": true
+      },
+      {
+        "path": "/Assets/tpp/pack/mission2/free/f30020/mgs_coop_f30020.fpk",
+        "sha256": "c250778c09f56fcf960476fdeed9520e399b8ecb55b8437712dee5774e0a8f5c",
+        "origin": "baseline",
+        "qar_roundtrip_equal": true
+      },
+      {
+        "path": "/Assets/tpp/pack/mission2/free/f30020/mgs_coop_f30020.fpkd",
+        "sha256": "db61ba492ffbffd7c89ef3817aa1e97f3719b66b60fbd604fa8b5643f176d55c",
+        "origin": "baseline",
+        "qar_roundtrip_equal": true
+      },
+      {
+        "path": "/Assets/tpp/pack/buddy/horse/buddy_horse2_00.fpkd",
+        "sha256": "a6e55eb4db2a67e10a9b03a9ef956894e89280bc917f3fb237ef876db15d1699",
+        "origin": "buddy_capacity_two",
+        "kind": "horse",
+        "total_count": 2,
+        "realized_count": 2,
+        "locators": 2,
+        "variant": 0,
+        "qar_roundtrip_equal": true
+      },
+      {
+        "path": "/Assets/tpp/pack/buddy/walkergear/buddy_wg2_00.fpkd",
+        "sha256": "40c73721b719b9f15790325ed5f37e83ded0c8f9c11d352805158a1e68b01652",
+        "origin": "buddy_capacity_two",
+        "kind": "walker",
+        "total_count": 2,
+        "realized_count": 2,
+        "locators": 2,
+        "variant": 0,
+        "qar_roundtrip_equal": true
+      }
+    ],
+    "baseline_entries_preserved": 13,
+    "installed": false,
+    "live_mount_verified": false,
+    "runtime_index_mapping_verified": false,
+    "ride_attachment_verified": false,
+    "production_pins_changed": false,
+    "limits": [
+      "Exact variant-00 overrides only; other variants unchanged.",
+      "No native controller or force-mount operation added.",
+      "Archive precedence and actual two-controller realization need private-worker proof.",
+      "Requires separate default-off background-only worker admission; normal worker refuses.",
+      "All game-derived bytes stay local; not a distribution payload."
+    ]
+  },
+  "limits": [
+    "No safe forced ride attachment is qualified.",
+    "Normal/release native mount and worker admission reject candidate; explicit exact research lab profile staged but not live qualified.",
+    "Independent rides need per-player controller binding, actual natural mount input and ride replication.",
+    "Horse GetPosition handler remains unqualified; do not treat a declared ID as realized native ride controller.",
+    "Variant00 and memory budget need separate qualification."
+  ],
+  "worker_capacity_admission": {
+    "flag": "MGS_LOCAL_BUDDY_CAPACITY_TEST",
+    "default": "OFF",
+    "requires": "MGS_BACKGROUND_WORKER ON plus actual private desktop",
+    "profile": "buddy_capacity_two_v1",
+    "sidecar_catalog_sha256": "3a5dd79f121b627300ca37f5a946a487412e714de620ba217eeb1b74bc9e87d9",
+    "baseline_pins_changed": false,
+    "live_installation_qualified": false,
+    "rollback": "All role pairs preflight, existing package transaction restores archive+loader together; no pre-copy of candidate archive"
+  }
+}

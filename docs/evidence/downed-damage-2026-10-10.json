@@ -1,0 +1,306 @@
+{
+  "exe_sha256": "085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45",
+  "pins": [
+    {
+      "rva": "0x11f5350",
+      "size": 1893,
+      "sha256": "E92902CAD545C9315AC919010823F085ED01DF5C7321233BD3075681C23BB8EB",
+      "meaning": "Complete damage calculation including declared jump table, nine-argument ABI"
+    },
+    {
+      "rva": "0x11f6190",
+      "size": 274,
+      "sha256": "96630DA300EEC50DBD5D6D3902451B6786820724C158BE3C4E11183D197BA3AE",
+      "meaning": "Health max/current initialization and 0x4c stride"
+    },
+    {
+      "rva": "0x11f5fb0",
+      "size": 64,
+      "sha256": "C9F113D185D2F02A98F4303CA695B800C0ABAC7A27BB381C1991D31DF5DE0CB7",
+      "meaning": "SetLife native clamped integer setter"
+    },
+    {
+      "rva": "0x11f81f8",
+      "size": 67,
+      "sha256": "46F26A7835592245BBC499C5D457467C9078415B8CC425D97B03F20097CD7BEF",
+      "meaning": "Natural calculation caller including all nine actual arguments"
+    },
+    {
+      "rva": "0x11f8fdb",
+      "size": 112,
+      "sha256": "FFFFE35E7B754EFC2DA0F80B9B0D046A490362C2089AEA972EB8126544C4FE0A",
+      "meaning": "Friendly sleep null-synchronizer notification path"
+    },
+    {
+      "rva": "0x9df360",
+      "size": 451,
+      "sha256": "70663140CC5A13B37C214D3E06BE0E101D73B79041203405FE0224BAA7778E12",
+      "meaning": "Player.SetPadMask Lua binding"
+    },
+    {
+      "rva": "0x9dc510",
+      "size": 224,
+      "sha256": "92A97856740D22E05F25FDD0B4FC88881834D83F14A33E920A406463535D6C7E",
+      "meaning": "Player.ResetPadMask Lua binding"
+    },
+    {
+      "rva": "0x11f76c0",
+      "size": 212,
+      "sha256": "3477BEFAA55135DD95BCE592FBBC53155120E4138064F63F886EFD1315612EF4",
+      "meaning": "Natural damage update player/local/record ownership"
+    },
+    {
+      "rva": "0x11f7899",
+      "size": 216,
+      "sha256": "F9DBD6863FB65E2347ABEA57C307FCD7157F777B73166F9C296EABA65EBDC145",
+      "meaning": "Natural current-life and script-vars U16 mirror agreement"
+    },
+    {
+      "rva": "0x998a34",
+      "size": 107,
+      "sha256": "A3B0C1AB07034604422FCC6CA1BBFF604C97EFAE7E435E292E2B94DA2E935D68",
+      "meaning": "playerLife registration to script-vars word +0x11c"
+    },
+    {
+      "rva": "0x9aaa90",
+      "size": 112,
+      "sha256": "86A86790DFFF31CF25C53AE69847D902286C93C2EC3801E789304C12C8D8CC37",
+      "meaning": "playerLife Lua word getter/setter ABI"
+    },
+    {
+      "rva": "0xbfefa0",
+      "size": 157,
+      "sha256": "57D11CB00096A60C9C3FF1AC5E3C8DB95DBE5A96C768AC4F942BD5EB82F6D9F2",
+      "meaning": "Registry root locator and fixed variables bank lifecycle"
+    },
+    {
+      "rva": "0xff9d30",
+      "size": 3168,
+      "sha256": "F8A66227243616558E74A324343E42B21C13FCFABAE76C93DE2B40FB2F32E4BB",
+      "meaning": "Complete five-argument DefenseCallback and declared jump tables"
+    },
+    {
+      "rva": "0xffab40",
+      "size": 78,
+      "sha256": "B6D40C0479F000E1032DA42A89A2DD80137B6CFA68D69A9D7475E9DD81A06091",
+      "meaning": "Complete five-argument DefenseCallback CanExec admission"
+    },
+    {
+      "rva": "0xff5bb0",
+      "size": 549,
+      "sha256": "4979D189E5DE1F4F743B5B4E0C46DCF83199147A3415F217E4FA95250966811C",
+      "meaning": "Natural five-argument Defense callback registration and player ownership"
+    },
+    {
+      "rva": "0x2023e70",
+      "size": 43,
+      "sha256": "1263BFB3B7F44CAA5B7FD7122612D605F2711DD5D4EE607DFA156E428A4DE086",
+      "meaning": "Static Defense callback construction"
+    },
+    {
+      "rva": "0x20811a0",
+      "size": 45,
+      "sha256": "3A168594773112E11EBE1EC0340A06DEE35DE319F065DDC3B677742FE731B347",
+      "meaning": "Static Defense callback alternative construction"
+    },
+    {
+      "rva": "0x1be2b60",
+      "size": 145,
+      "sha256": "ABA3845699704FEBF8A9218CFCF3FC179DEED5C8B976D85693FF858C258C7D30",
+      "meaning": "Observed natural five-argument Defense invocation return 1BE2BD6"
+    },
+    {
+      "rva": "0x1be2dbd",
+      "size": 96,
+      "sha256": "2E031A2093E3EA669778D3E4C4C2E8A6EE32E6AFAF8E0424721C9DB03E6D55CC",
+      "meaning": "Natural five-argument CanExec invocation routes"
+    },
+    {
+      "rva": "0xff3480",
+      "size": 261,
+      "sha256": "BD5CDE544471BEABAB464756BFC9E1763F4C8820A88C9BE1EE2107529DEC8397",
+      "meaning": "Complete body collision-part classifier domain 0 through 11"
+    },
+    {
+      "rva": "0x5c9fc0",
+      "size": 2927,
+      "sha256": "AA280298399C4C84945CF2E097E01F63936D13A22D3C615CCB1362F8F60A4CA9",
+      "meaning": "Complete Lua damage serializer: field16 sleep -> native flags bit8"
+    },
+    {
+      "rva": "0x23abaa8",
+      "size": 8,
+      "sha256": "FC57E20E0F4B24AF2C72CDD8D1652A641C478704BFCBB087E8096DAC9091AF68",
+      "meaning": "Exact Lua serializer field16 double constant"
+    },
+    {
+      "rva": "0x21557a0",
+      "size": 8,
+      "sha256": "EDF70214D121BD8D6093C4E07F821F6B0D978C44E51D95D30D514EB27D3EE1E0",
+      "meaning": "Exact Lua serializer field17 faint double constant"
+    },
+    {
+      "rva": "0x178910",
+      "size": 103,
+      "sha256": "D45605B5BDBE11735B92EBA3215C11D511735EF5C7CF759EDFB19117ED38CAC5",
+      "meaning": "Complete public Fox.StrCode32 Lua wrapper returning unsigned low32"
+    },
+    {
+      "rva": "0xf1680",
+      "size": 11,
+      "sha256": "408C0EF5827B072BE19CA63F29EE6549C3678918182EB5735AC2093DBF92ACBC",
+      "meaning": "String hash accessor to retail hash producer"
+    },
+    {
+      "rva": "0x234e0",
+      "size": 5,
+      "sha256": "CB51AE7081E8CEDACCD66980F60F9C38F8C1976B16F10179CB315FA8D19285B4",
+      "meaning": "Exact retail string hash thunk"
+    },
+    {
+      "rva": "0x1a098d0",
+      "size": 5,
+      "sha256": "B70AE58E6CCCF3E8062F298D68273C1495912668B2DD8C960CABBE12D999E9EB",
+      "meaning": "Exact retail hash producer thunk"
+    },
+    {
+      "rva": "0x1a09ac0",
+      "size": 149,
+      "sha256": "6FB800CCBDFA0C8569DCF8E29BBFA0E576E01E76A7C9B1071B276847ED629933",
+      "meaning": "Complete hash producer adds NUL and signed-first-byte/length seed"
+    },
+    {
+      "rva": "0x1a09770",
+      "size": 110,
+      "sha256": "C35293CF1E0DEE6CC5EEEBDA9DE02F458BA0F7F69BE8F81253A1965E053892C2",
+      "meaning": "Complete seeded hash mixing and low48 result"
+    },
+    {
+      "rva": "0x1a091f0",
+      "size": 450,
+      "sha256": "143B5D47B246A8D63EC139040F33708B0B1503DADD40729EC3A8F449AE0B5508",
+      "meaning": "Complete aligned short hash function, exact len14 branch"
+    },
+    {
+      "rva": "0x1a08cb0",
+      "size": 456,
+      "sha256": "75DFAEBFBA0357DD0939CADC973544ED3D67843C624761C6D81E7B94B5B77724",
+      "meaning": "Complete unaligned short hash function, same exact len14 result"
+    },
+    {
+      "rva": "0x1d630",
+      "size": 14,
+      "sha256": "64078BFF6301C518553CE940001E24FBF03016546E4B0A0376430200699A646C",
+      "meaning": "Complete cached named-setting hash accessor"
+    },
+    {
+      "rva": "0x1206550",
+      "size": 120,
+      "sha256": "82F23AAAE92E7233099643D9501BB50F69DEEC1A0E64CD9C80BFF42B55C361E9",
+      "meaning": "Complete SetButtonMask eight unique name/value entries and OR aggregate"
+    },
+    {
+      "rva": "0x1206410",
+      "size": 84,
+      "sha256": "DB2D00E6AA9A71C6ADF55A1E4B0B9EB7DBADA2DF90DD00CB82ABC6256AEF9415",
+      "meaning": "Complete ResetButtonMask removes matching name only and recomputes OR"
+    },
+    {
+      "rva": "0xf1b20",
+      "size": 113,
+      "sha256": "63F6C4D1A59E24E4E91C770DE2C636CB00EED739A2218D503178713A80E29693",
+      "meaning": "Complete public Lua string conversion for Fox.StrCode32"
+    },
+    {
+      "rva": "0x1a67ec0",
+      "size": 105,
+      "sha256": "B9B26F46B51B56A5748DBF942884F02B4ABAC8BA1829086B6486356FBE2362FA",
+      "meaning": "Complete named-setting Lua string field conversion"
+    },
+    {
+      "rva": "0x61b60",
+      "size": 23,
+      "sha256": "6D0288EAFC3DF4BABAD69FEEB24501D636BED610093409C895E509D91C93095A",
+      "meaning": "Complete setting-name string construction wrapper"
+    },
+    {
+      "rva": "0x283e0",
+      "size": 84,
+      "sha256": "D052D68C3D6B4AF2908966958B894A16B80D40FA9104C6B4AB255F98435B1A9F",
+      "meaning": "Complete setting-name strlen and hash construction route"
+    },
+    {
+      "rva": "0x1d640",
+      "size": 103,
+      "sha256": "1B9505F134EA32EF329ECD8DC634E5B7AC2DBF3079D289CDEDA4763F0F1B2A8A",
+      "meaning": "Complete constructed cached string assignment route"
+    },
+    {
+      "rva": "0x1db30",
+      "size": 141,
+      "sha256": "41A3E9D7D6EAA5DCEEB762E3ED15EEC470AB045F79A22466A7C05F1CBCB7AC5E",
+      "meaning": "Complete cached string allocation wrapper"
+    },
+    {
+      "rva": "0x1d980",
+      "size": 286,
+      "sha256": "9B96FC83A7A00200C6D39EAF114CC900FD8C6610B16B9C3DB699465856AAB271",
+      "meaning": "Complete cached string allocation dispatch"
+    },
+    {
+      "rva": "0x1d830",
+      "size": 151,
+      "sha256": "DBAE07B5B4B6BC04D49ECA0D8118539B533C0AB407314ED260C847D684F0ECB4",
+      "meaning": "Complete cached string record creation: producer hash stored at record+10"
+    },
+    {
+      "rva": "0x1d6b0",
+      "size": 209,
+      "sha256": "47BE5E88A80AE6D6590D1572DFC6B4D23F9E0C5DC4732F832EC7CB1787CCB3E9",
+      "meaning": "Complete cached string reference assignment preserving hash record"
+    },
+    {
+      "rva": "0x11f4f80",
+      "size": 163,
+      "sha256": "9EDFC41308DC6B8B2EC8C47CF3B8BD61BE6DD50CEE0AA27DEB179C43C4487CBA",
+      "meaning": "Complete natural enqueue scans sixteen 0x40-byte slots and sets active flag bit0"
+    },
+    {
+      "rva": "0x11f81e0",
+      "size": 24,
+      "sha256": "18DB6930B1C24306528A1A0F9DB6B3CCA9153812E0961C4934AB07C43F0361B5",
+      "meaning": "Natural damage update admits queued Calc only when active bit0 is set"
+    },
+    {
+      "rva": "0x11f9051",
+      "size": 94,
+      "sha256": "2FBF77D39CFB271FF2AF186DAAB3BF264E54E7D6469D645BD21F0BC0CC2BDA07",
+      "meaning": "Actual positive hurt raises per-player C0 recovery timer to retail4 seconds"
+    },
+    {
+      "rva": "0x20e00e0",
+      "size": 4,
+      "sha256": "4F4B9B7D8B86633E2824E2F439819357B0CD010AB410EA1A691B12C5F94E91E0",
+      "meaning": "Exact ordinary positive-hurt recovery timer float4.0"
+    },
+    {
+      "rva": "0x11f92d0",
+      "size": 1075,
+      "sha256": "DEDBBA30CF37B924027A99D08713747F6BE6DEC4AE6A7C1935051999B712C7D5",
+      "meaning": "Complete per-player C0 timer countdown and zero regen multiplier while timer positive"
+    }
+  ],
+  "body_part": "queued packet+26 is collision-part classification 0..11; FF3480 unknown hash defaults1; part0 has native head-style special path",
+  "sleep_mode": "Lua field16 serialized to native param+14 bit8; original Calc mode2 identifies sleep; mode1 general stun is distinct",
+  "friendly_rule": "fresh exact independent offline pair; local shooter0 targets replica1; active queued flags bit0; valid body part; finite positive life damage or mode2 with finite positive stun",
+  "crash_rule": "exact offline other-player direct part0 positive stun alone protects null synchronizer path; no owner lease required",
+  "friendly_dedup": "Defense hit+24 UID is rejected by retail four-entry per-target cache; enqueue11F4F80 sets bit0 only on a vacant slot; natural Calc update requires bit0; forwarding Neutralize clears bit0, so inactive re-entry such as live0x4000 is excluded",
+  "friendly_recovery": "retail positive hurt raises C0 timer+0 to at least4f and disables regen multiplier while positive; accepted owner damage uses a bounded4s wall-clock HP ceiling via existing dual owned StoreLife instead of any new native call or timer pointer; lower native HP retained and lease reset on context/death/down/revive",
+  "live_ordinary_observation": "ab69b918bb394f548eb91bea5c0ed2b7: actual positive942 flags0x4401 reduced clone HP while oldbit2 forwarding refused; positiveinactive0x4000 Calc is excluded; only oldflag4403 forwardedseq1..3 and owner healed immediately",
+  "revive_action": "MgsCoopRevive exact Fox.StrCode32 low32 0x71FE74BF; cmd4 reads coherent stable named mask, excludes only its own 0x20 entry from receipt while other named restrictions remain authoritative; native input unchanged",
+  "last_error": "incoming error restored before every original callback; original result error retained after inspection and logging",
+  "calc_abi": "float Calculate(interface,uint32 id,packet,lifeRecord,byte* mode,float* stun,float* rawLife,float* rawStun,byte* special)",
+  "runtime_verified": false,
+  "crash_source": "guest script-observer.log RVA11F9040 null read",
+  "contract": "interface+8=P; P+60=Q; Q+8+id*4C=lifeRecord; vtable+48 natural calculation; owned health dual store to Q current and exact registered vars.playerLife U16"
+}

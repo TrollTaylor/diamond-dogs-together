@@ -1,5 +1,6 @@
-# Pure local-coop layout, owner and graphics regressions. No game/window launch.
-# Run under Windows PowerShell 5.1 and PowerShell 7.
+# Local-coop layout, owner and graphics regressions. No MGSV launch and no window.
+# The hardlink case starts a hidden copy of powershell.exe. Run under Windows
+# PowerShell 5.1 and PowerShell 7.
 [CmdletBinding()]
 param()
 Set-StrictMode -Version Latest
@@ -70,6 +71,72 @@ foreach($bad in @(
 Check (!(Test-LocalCoopOwnerSnapshot -Owner $owner -GameRoot 'D:\Other Game' -Snapshot $snapshot)) 'separate root refused'
 $foreign=@{ProcessId=1234;StartUtc=$owner.StartUtc;ExecutablePath='D:\Other Game\mgsvtpp.exe'}
 Check (!(Test-LocalCoopOwnerSnapshot -Owner $foreign -GameRoot 'D:\Owned Game' -Snapshot $snapshot)) 'claimed owner path must equal root'
+$extended=@{ProcessId=1234;StartUtc=$owner.StartUtc;ExecutablePath='\\?\D:\Owned Game\mgsvtpp.exe'}
+Check (Test-LocalCoopOwnerSnapshot -Owner $owner -GameRoot 'D:\Owned Game' -Snapshot $extended) 'extended path of this copy belongs'
+$emptyImage=@{ProcessId=1234;StartUtc=$owner.StartUtc;ExecutablePath=''}
+Check (!(Test-LocalCoopOwnerSnapshot -Owner $owner -GameRoot 'D:\Owned Game' -Snapshot $emptyImage)) 'empty image path refused'
+
+# Guest exe hardlinked to the host exe. Windows PowerShell's Process.Path can
+# be empty on the first read; the image query still names the launched copy.
+# The other directory's path is the same file and must not pass.
+$linkRoot=Join-Path ([IO.Path]::GetTempPath()) ('mgs-coop-owner-' + [Guid]::NewGuid().ToString('N'))
+$linkHost=Join-Path $linkRoot 'host'
+$linkGuest=Join-Path $linkRoot 'guest'
+try {
+    $null=New-Item -ItemType Directory -Path $linkHost,$linkGuest
+    $hostExe=Join-Path $linkHost 'mgsvtpp.exe'
+    $guestExe=Join-Path $linkGuest 'mgsvtpp.exe'
+    $sourceExe=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    Copy-Item -LiteralPath $sourceExe -Destination $hostExe
+    & cmd.exe /c "mklink /H `"$guestExe`" `"$hostExe`"" | Out-Null
+    if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $guestExe)) { throw 'hardlink fixture was not created' }
+    Initialize-LocalCoopProcessImage
+    $hostId=[MgsCoopLocal.ProcessImage]::FileId($hostExe)
+    $guestId=[MgsCoopLocal.ProcessImage]::FileId($guestExe)
+    Check ($hostId -and $hostId -eq $guestId -and $hostId.EndsWith(':2')) 'guest fixture is a hardlink of the host file'
+    Check (!(Test-LocalCoopImageBelongsToGame -ImagePath $hostExe -GameRoot $linkGuest)) 'same-file host path is not the guest copy'
+    Check (Test-LocalCoopImageBelongsToGame -ImagePath $guestExe -GameRoot $linkGuest) 'guest path belongs to the guest copy'
+    Check (!(Select-LocalCoopOwnedImagePath -Candidates @($hostExe) -GameRoot $linkGuest)) 'host hardlink cannot stand in for the guest'
+    Check (!(Select-LocalCoopOwnedImagePath -Candidates @('', (Join-Path $linkGuest 'steam_api64.dll')) -GameRoot $linkGuest)) 'empty path and another guest file are refused'
+    $guestFull=ConvertTo-LocalCoopComparablePath $guestExe
+    $selected=Select-LocalCoopOwnedImagePath -Candidates @('', $hostExe, (Join-Path $linkGuest 'steam_api64.dll'), ('\\?\' + $guestFull)) -GameRoot $linkGuest
+    Check ($selected -and $selected.Equals($guestFull, [StringComparison]::OrdinalIgnoreCase)) 'empty Process.Path still accepts the launched guest image'
+    $linkOwner=@{ProcessId=50;StartUtc=$owner.StartUtc;ExecutablePath=$guestExe}
+    $linkSnapshot=@{ProcessId=50;StartUtc=$owner.StartUtc;ExecutablePath=$selected}
+    Check (Test-LocalCoopOwnerSnapshot -Owner $linkOwner -GameRoot $linkGuest -Snapshot $linkSnapshot) 'launched guest identity matches this copy'
+    $otherProcess=@{ProcessId=51;StartUtc=$owner.StartUtc;ExecutablePath=$selected}
+    Check (!(Test-LocalCoopOwnerSnapshot -Owner $linkOwner -GameRoot $linkGuest -Snapshot $otherProcess)) 'different process id refused for the guest copy'
+    $otherCopy=@{ProcessId=50;StartUtc=$owner.StartUtc;ExecutablePath=$hostExe}
+    Check (!(Test-LocalCoopOwnerSnapshot -Owner $linkOwner -GameRoot $linkGuest -Snapshot $otherCopy)) 'same pid still refuses the other hardlink path'
+    $shortName=[MgsCoopLocal.ProcessImage]::ToShortPath($guestExe)
+    if ($shortName -and -not $shortName.Equals($guestFull, [StringComparison]::OrdinalIgnoreCase)) {
+        Check (Test-LocalCoopImageBelongsToGame -ImagePath $shortName -GameRoot $linkGuest) 'short guest path belongs to this copy'
+        $shortHost=[MgsCoopLocal.ProcessImage]::ToShortPath($hostExe)
+        Check ($shortHost -and !(Test-LocalCoopImageBelongsToGame -ImagePath $shortHost -GameRoot $linkGuest)) 'short host path is not the guest copy'
+    }
+    # No window: this is powershell.exe copied under the guest name, not MGSV.
+    $psi=New-Object Diagnostics.ProcessStartInfo
+    $psi.FileName=$guestExe
+    $psi.Arguments='-NoProfile -Command Start-Sleep -Seconds 20'
+    $psi.WorkingDirectory=$linkGuest
+    $psi.UseShellExecute=$false
+    $psi.CreateNoWindow=$true
+    $proc=[Diagnostics.Process]::Start($psi)
+    try {
+        $read=Get-LocalCoopOwnedImagePath -Process $proc -GameRoot $linkGuest -Attempts 20
+        Check ($read -and $read.Equals($guestFull, [StringComparison]::OrdinalIgnoreCase)) 'started hardlink image is the guest copy'
+        $started=@{ProcessId=$proc.Id;StartUtc=$proc.StartTime.ToUniversalTime().ToString('o');ExecutablePath=$guestExe}
+        $live=@{ProcessId=$proc.Id;StartUtc=$started.StartUtc;ExecutablePath=$read}
+        Check (Test-LocalCoopOwnerSnapshot -Owner $started -GameRoot $linkGuest -Snapshot $live) 'started guest process matches this copy'
+        $hostLive=@{ProcessId=$proc.Id;StartUtc=$started.StartUtc;ExecutablePath=$hostExe}
+        Check (!(Test-LocalCoopOwnerSnapshot -Owner $started -GameRoot $linkGuest -Snapshot $hostLive)) 'started process still refuses the host path'
+    } finally {
+        if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+        if ($proc) { $null=$proc.WaitForExit(5000) }
+    }
+} finally {
+    if (Test-Path -LiteralPath $linkRoot) { Remove-Item -LiteralPath $linkRoot -Recurse -Force }
+}
 
 $now=[DateTime]::Parse('2026-10-10T00:00:00Z').ToUniversalTime()
 $target=(Get-LocalCoopLayout -WorkingArea $areas[0]).Host
@@ -171,4 +238,4 @@ $text=[IO.File]::ReadAllText($modulePath)
 Check ($text -notmatch 'SetForegroundWindow|SendInput|SendMessage|PostMessage|SwitchDesktop|ShowWindow') 'module has no focus/input/desktop APIs'
 Check ($text.Contains('$target.Height,0x14)')) 'placement explicitly NOZORDER and NOACTIVATE'
 Check (@([IO.File]::ReadAllBytes($modulePath) | Where-Object {$_ -gt 127}).Count -eq 0) 'friend module ASCII'
-Write-Output ("PASS: {0} local co-op window checks; pure fixtures only, no game/window launch." -f $script:checks)
+Write-Output ("PASS: {0} local co-op window checks; no MGSV launch and no window." -f $script:checks)

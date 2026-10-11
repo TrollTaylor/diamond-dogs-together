@@ -14,6 +14,18 @@
 #include "mgscoop/client_session_request.hpp"
 #include "mgscoop/player_team_patch.hpp"
 #include "mgscoop/damage_patch.hpp"
+#include "mgscoop/downed_player.hpp"
+#include "mgscoop/downed_damage.hpp"
+#include "mgscoop/buddy_pose.hpp"
+#include "mgscoop/buddy_dog_command_pins.hpp"
+#include "mgscoop/buddy_capacity_census.hpp"
+#include "mgscoop/buddy_capacity_walker.hpp"
+#include "mgscoop/buddy_capacity_pins.hpp"
+#include "mgscoop/buddy_ride_read.hpp"
+#include "mgscoop/ride_player_observer.hpp"
+#include "mgscoop/ride_player_contract.hpp"
+#include "mgscoop/link_crypto.hpp"
+#include "mgscoop/teammate_targeting.hpp"
 #include "mgscoop/enemy_targeting.hpp"
 #include "mgscoop/respawn_patch.hpp"
 #include "mgscoop/result_patch.hpp"
@@ -85,6 +97,13 @@ bool client_check_enabled = false;
 // offline-v1: host-v1 preparation (allocation, archive, TppMain splice,
 // mission boundary, runtime pinning, two-slot package) with no session at all.
 bool offline_enabled = false;
+bool downed_hook_ok = false;
+bool buddy_pose_pins_ok = false;
+bool buddy_capacity_pins_ok = false;
+bool ride_player_pins_ok = false;
+bool buddy_ride_pins_ok = false;
+void ClearBuddyCapacityIdentity() noexcept;
+mgscoop::buddy_pose::Scope buddy_pose_owner{};
 bool client_join_armed = false; // serialized mission receipts only
 bool client_key_released = false;
 bool client_join_consumed = false; // process lifetime: no automatic retries
@@ -164,6 +183,7 @@ void LogFormat(const char* format, ...) noexcept {
 // --- Lab observability helpers (all no-ops unless lab_active) -----------------
 
 bool ReadMission(unsigned short& mission) noexcept;  // defined below
+bool DownedAdmitted(std::uint32_t mission,std::uint16_t epoch) noexcept;
 
 // Builds <directory>\mgs-coop\<name> so that "<path>.tmp" still fits the atomic
 // writer's bound. Install time only.
@@ -1003,6 +1023,10 @@ void NotePackReceipt(const char* buffer, std::size_t size) noexcept {
 }
 
 void PartnerMissionStart(std::uint32_t mission) noexcept {
+    buddy_pose_owner = {}; ClearBuddyCapacityIdentity();
+    mgscoop::coop_hud::PublishDowned(mgscoop::coop_hud::DownedView{});
+    mgscoop::downed_player::Configure(partner_addresses, downed_hook_ok);
+    mgscoop::teammate_targeting::SetEnabled(partner_on && partner_gate_ok);
     ClearUpperEndOwner();
     const std::uint32_t pack = partner_pack_refused.exchange(0);
     if (!partner_on) return;
@@ -1026,6 +1050,10 @@ void PartnerMissionStart(std::uint32_t mission) noexcept {
     mgscoop::nametag_game::MissionStart(mission);
 }
 void PartnerMissionEnd() noexcept {
+    buddy_pose_owner = {}; ClearBuddyCapacityIdentity();
+    mgscoop::coop_hud::PublishDowned(mgscoop::coop_hud::DownedView{});
+    mgscoop::downed_player::Shutdown();
+    mgscoop::teammate_targeting::SetEnabled(false);
     ClearUpperEndOwner();
     if (!partner_on) return;
     mgscoop::debug_menu::EndMission();
@@ -1840,6 +1868,118 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             mgscoop::steam_online::StatusLine(status, sizeof(status));
             debug::Result(pending.id, 1, status);
             LogFormat("debug_menu=dispatch; id=%u; text=steam_status; generation=%u; native=1\r\n", pending.id, pending.generation);
+        } else if (pending.id && std::strncmp(pending.text, "worker_pad ", 11) == 0) {
+            // Only the natural owner of a current copied-save private scenario
+            // may lease an in-process controller; real desktop input stays blocked.
+            const auto snapshot = debug::GetSnapshot();
+            const bool admitted = mgscoop::worker_scenario::Compiled() &&
+                mgscoop::worker_scenario::ThreadAdmitted() && offline_enabled &&
+                lab::SavesRedirected() && partner_on && partner_gate_ok &&
+                snapshot.gameplay_ready && !snapshot.terminating &&
+                snapshot.mission == partner_mission && pending.generation == snapshot.generation;
+            const bool accepted = admitted && mgscoop::worker_scenario::SetVirtualPad(pending.text+11,pending.id);
+            debug::Result(pending.id,accepted?1u:0u,accepted ?
+                "worker_pad=accepted;source=owned_private_lease;gameplay=unverified" :
+                "worker_pad=refused;reason=private_owner_or_canonical_bounds");
+        } else if (pending.id && std::strncmp(pending.text, "teammate_quiet ", 15) == 0) {
+            const char* value=pending.text+15;
+            const bool worker=mgscoop::worker_scenario::Compiled() && mgscoop::worker_scenario::Active() &&
+                offline_enabled && lab::SavesRedirected() && partner_on && partner_gate_ok;
+            const bool observe=std::strcmp(value,"observe")==0, filter=std::strcmp(value,"filter")==0;
+            const bool status=std::strcmp(value,"status")==0;
+            if(worker && (observe || filter)) {
+                mgscoop::nametag_game::ResetNativeUiCensus();
+                mgscoop::teammate_targeting::SetQuietMode(filter ?
+                    mgscoop::teammate_targeting::Mode::filter : mgscoop::teammate_targeting::Mode::observe);
+            }
+            char line[161]{};
+            if(!worker || (!observe && !filter && !status))
+                StringCchCopyA(line,ARRAYSIZE(line),"quiet=refused;reason=owned_worker_required");
+            else mgscoop::teammate_targeting::QuietStatusLine(line,sizeof(line));
+            debug::Result(pending.id,worker && (observe || filter || status)?1u:0u,line);
+        } else if (pending.id && std::strncmp(pending.text, "teammate_reticle ", 17) == 0) {
+            const char* value=pending.text+17;
+            const bool worker=mgscoop::worker_scenario::Compiled() && mgscoop::worker_scenario::Active() &&
+                offline_enabled && lab::SavesRedirected() && partner_on && partner_gate_ok;
+            const bool observe=std::strcmp(value,"observe")==0, friendly=std::strcmp(value,"friendly")==0;
+            const bool status=std::strcmp(value,"status")==0;
+            if(worker && (observe || friendly)) {
+                mgscoop::nametag_game::ResetNativeUiCensus();
+                mgscoop::teammate_targeting::SetReticleMode(friendly ?
+                    mgscoop::teammate_targeting::Mode::filter : mgscoop::teammate_targeting::Mode::observe);
+            }
+            char line[161]{};
+            if(!worker || (!observe && !friendly && !status))
+                StringCchCopyA(line,ARRAYSIZE(line),"reticle=refused;reason=owned_worker_required");
+            else mgscoop::teammate_targeting::ReticleStatusLine(line,sizeof(line));
+            debug::Result(pending.id,worker && (observe || friendly || status)?1u:0u,line);
+        } else if (pending.id && std::strncmp(pending.text, "teammate_aim ", 13) == 0) {
+            // Live A/B control is admitted only inside an owned private worker.
+            const char* mode=pending.text+13;
+            const bool worker=mgscoop::worker_scenario::Compiled() && mgscoop::worker_scenario::Active() &&
+                offline_enabled && lab::SavesRedirected() && partner_on && partner_gate_ok;
+            const bool observe=std::strcmp(mode,"observe")==0, filter=std::strcmp(mode,"filter")==0;
+            const bool status=std::strcmp(mode,"status")==0;
+            if(worker && (observe || filter)) {
+                mgscoop::nametag_game::ResetNativeUiCensus();
+                mgscoop::teammate_targeting::SetMode(filter ?
+                    mgscoop::teammate_targeting::Mode::filter : mgscoop::teammate_targeting::Mode::observe);
+            }
+            char line[161]{};
+            if(!worker || (!observe && !filter && !status))
+                StringCchCopyA(line,ARRAYSIZE(line),"teammate_aim=refused;reason=owned_worker_required");
+            else mgscoop::teammate_targeting::StatusLine(line,sizeof(line));
+            debug::Result(pending.id,worker && (observe || filter || status) ? 1u:0u,line);
+        } else if (pending.id && std::strcmp(pending.text, "damage_status") == 0) {
+            char line[161]{};
+            mgscoop::downed_damage::StatusLine(line,sizeof(line));
+            debug::Result(pending.id,1,line);
+        } else if (pending.id && (std::strcmp(pending.text, "ride_player_status") == 0 ||
+                   std::strcmp(pending.text, "ride_partner_status") == 0)) {
+            namespace r=mgscoop::ride_player_observer;
+            const unsigned id=std::strcmp(pending.text,"ride_partner_status")==0?1u:0u;
+            r::Sample sample{};const char* reason="admission";pp::State owner{};unsigned short mission{};
+            const auto world=mgscoop::world_link::GetStatus();
+            const bool allowed=mgscoop::buddy_capacity_census::Compiled() && MountedBuddyCapacity() && ride_player_pins_ok &&
+                mgscoop::worker_scenario::ThreadAdmitted() && offline_enabled && lab::SavesRedirected() && partner_on && partner_gate_ok &&
+                OnRuntimeThread() && !mission_terminating && !gameplay_restore_pending && !(mgscoop::debug_menu::LuaHud()&1u) &&
+                world.configured && world.paired && world.link_up && world.effective>=3 && world.epoch &&
+                ReadMission(mission) && mission==partner_mission && mgscoop::SupportsPartnerBody(mission) &&
+                pp::ReadState(partner_addresses,owner)==pp::Refusal::none && owner.local==0 && !owner.sync &&
+                owner.ids[0]==0 && owner.ids[1]==1 && pp::Realized(owner,0) && owner.parts[0]==3;
+            if(allowed){
+                r::Scope scope{reinterpret_cast<std::uintptr_t>(game_base),owner.P,mission,world.epoch,true,true,true};
+                reason=r::ReadHorseAtInstance({nullptr,UpperPhaseRead},scope,id,sample);
+                pp::State after{};unsigned short afterMission{};const auto afterWorld=mgscoop::world_link::GetStatus();
+                if(!OnRuntimeThread() || mission_terminating || !ReadMission(afterMission) || afterMission!=mission ||
+                    pp::ReadState(partner_addresses,after)!=pp::Refusal::none || after.P!=owner.P || after.Q!=owner.Q ||
+                    after.ids[0]!=0 || after.ids[1]!=1 || !afterWorld.paired || !afterWorld.link_up || afterWorld.epoch!=world.epoch){
+                    sample={};reason="scope_changed";
+                }
+            }
+            char status[161]{};StringCchPrintfA(status,ARRAYSIZE(status),
+                "rideplayer;id=%u;ready=%u;reason=%s;state=%u,%u;target=%u;unit=0x%llx;own=%u;rider=%u;rep=%u:%u;action=0",
+                id,allowed?1u:0u,reason?reason:"ok",unsigned(sample.state),unsigned(sample.next_state),unsigned(sample.selected_target),
+                static_cast<unsigned long long>(sample.unit),sample.unit_matches_player?1u:0u,unsigned(sample.unit_rider),
+                unsigned(sample.replication_kind),unsigned(sample.replication_target));
+            debug::Result(pending.id,reason?0u:1u,status);
+        } else if (pending.id && std::strcmp(pending.text, "downed_status") == 0) {
+            const auto s=mgscoop::downed_player::GetSnapshot();
+            char status[161]{};
+            StringCchPrintfA(status,ARRAYSIZE(status),"downed;ready=%u;armed=%u;down=%u;gen=%lu;cause=%u;lock=%u;hp=%.0f,%.0f;epoch=%u;reason=%s",
+                s.ready?1u:0u,s.armed?1u:0u,s.down?1u:0u,static_cast<unsigned long>(s.generation),unsigned(s.cause),
+                s.controlsApplied?1u:0u,double(s.life),double(s.maximum),unsigned(s.epoch),s.reason?s.reason:"unknown");
+            debug::Result(pending.id,1,status);
+        } else if (pending.id && std::strcmp(pending.text, "revive_status") == 0) {
+            const auto owner=mgscoop::downed_player::GetSnapshot();
+            mgscoop::downed_player::Reply r{};
+            mgscoop::downed_player::Control(owner.mission,owner.epoch,DownedAdmitted(owner.mission,owner.epoch),
+                4,mgscoop::downed_player::kReviveActionHash,r);
+            char status[161]{};
+            StringCchPrintfA(status,ARRAYSIZE(status),"revive;ready=%u;observed=%u;present=%u;applied=%u;held=%u;gen=%lu;reason=%s",
+                r.ready?1u:0u,r.reviveMaskObserved?1u:0u,r.reviveMaskPresent?1u:0u,r.applied?1u:0u,r.held?1u:0u,
+                static_cast<unsigned long>(r.generation),r.reason?r.reason:"unknown");
+            debug::Result(pending.id,1,status);
         } else if (pending.id && std::strcmp(pending.text, "hud_status") == 0) {
             // Read-only: the in-game status line as the overlay last drew it.
             char status[161]{};
@@ -2646,6 +2786,304 @@ bool SelectWorldReceipt(mgscoop::world::Receipt kind, const char* buffer, std::s
         count,GetCurrentThreadId(),GetTickCount64(),static_cast<unsigned long long>(size),copied,reply ? 1 : 0,0))) Log(line);
     return reply!=nullptr;
 }
+// Read-only Dog pose. The fixed receipt derives every owner fact here; Lua
+// supplies no pointer, thread, generation or native admission flag.
+template<class Pin,std::size_t N> bool BuddyPinsMatch(void* base,std::size_t span,const Pin (&pins)[N]) noexcept {
+    unsigned char bytes[16384]{};
+    for(const auto& pin:pins) {
+        if(!pin.bytes || pin.bytes>sizeof(bytes) || pin.rva>span || pin.bytes>span-pin.rva ||
+           !UpperPhaseRead(nullptr,reinterpret_cast<std::uintptr_t>(base)+pin.rva,bytes,pin.bytes)) return false;
+        std::uint8_t digest[32]{};mgscoop::link::Sha256Digest(bytes,pin.bytes,digest);
+        constexpr char hex[]="0123456789abcdef";
+        for(unsigned i=0;i<32;++i)
+            if(hex[digest[i]>>4]!=pin.sha256[i*2] || hex[digest[i]&15]!=pin.sha256[i*2+1]) return false;
+    }
+    return true;
+}
+bool BuddyPoseCodeGate(void* base,std::size_t span) noexcept {
+    return BuddyPinsMatch(base,span,mgscoop::buddy_pose::kPins) && BuddyPinsMatch(base,span,mgscoop::buddy_dog_commands::kPins);
+}
+bool SelectBuddyPoseReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
+    namespace b=mgscoop::buddy_pose;
+    constexpr char prefix[]="return 'MGS_COOP_BUDDY_POSE_V1' -- ";
+    if(!world_on || !buffer || size<=sizeof(prefix)-1 || size>160 || std::memcmp(buffer,prefix,sizeof(prefix)-1)!=0) return false;
+    const char* cursor=buffer+sizeof(prefix)-1;const char* end=buffer+size;
+    std::uint32_t v[4]{};
+    for(unsigned i=0;i<4;++i) {
+        const auto parsed=std::from_chars(cursor,end,v[i]);
+        if(parsed.ec!=std::errc() || parsed.ptr==cursor) return false;
+        cursor=parsed.ptr;if(i!=3) {if(cursor==end || *cursor!=' ') return false;++cursor;}
+    }
+    if(cursor!=end || (v[0]!=30010 && v[0]!=30020 && v[0]!=30050) || !v[1] || v[1]>65535 || v[2]!=9728 || v[3]>1) return false;
+    const auto status=mgscoop::world_link::GetStatus();
+    unsigned short mission{};pp::State player{};
+    const bool player_read=pp::ReadState(partner_addresses,player)==pp::Refusal::none;
+    if(buddy_pose_owner.P && (!player_read || player.P!=buddy_pose_owner.P)) buddy_pose_owner={};
+    b::Scope scope{};scope.P=player_read?player.P:0;scope.mission=v[0];scope.epoch=static_cast<std::uint16_t>(v[1]);
+    scope.thread=GetCurrentThreadId();scope.generation=worker_loading_generation;scope.refreshed_ms=GetTickCount64();
+    scope.paired=status.configured && status.paired && status.link_up && status.effective>=3 && status.epoch==scope.epoch;
+    scope.field_ready=player_read && OnRuntimeThread() && !mission_terminating && ReadMission(mission) && mission==v[0] &&
+        partner_mission==v[0] && pp::Realized(player,0) && pp::Realized(player,1) && player.ids[0]==0 && player.ids[1]==1 &&
+        player.parts[0]==3 && player.parts[1]==3;
+    // B.guard calls the registered DemoDaemon predicate on this same owner
+    // before emitting a receipt. The existing native HUD bit adds a veto.
+    scope.demo_playing=(mgscoop::debug_menu::LuaHud()&1u)!=0;
+    scope.terminating=mission_terminating;scope.exact_executable=offline_enabled && partner_on && partner_gate_ok && lab::SavesRedirected();
+    scope.exact_code_pins=buddy_pose_pins_ok;scope.cleanup_only=v[3]==1;
+    const char* reason=nullptr;
+    if(scope.cleanup_only && (!buddy_pose_owner.P || buddy_pose_owner.P!=scope.P || buddy_pose_owner.mission!=scope.mission ||
+       buddy_pose_owner.epoch!=scope.epoch || buddy_pose_owner.generation!=scope.generation || buddy_pose_owner.thread!=scope.thread)) reason="scope";
+    b::Pose pose{};
+    if(!reason) reason=b::ReadPose({nullptr,UpperPhaseRead},reinterpret_cast<std::uintptr_t>(game_base),scope,
+        GetCurrentThreadId(),GetTickCount64(),static_cast<std::uint16_t>(v[2]),pose);
+    // Re-check transport and actor owner after the bounded read. A cleanup
+    // receipt is permitted only for the cached, retired same-mission lease.
+    const auto after=mgscoop::world_link::GetStatus();
+    pp::State current{};
+    if(!reason && (!OnRuntimeThread() || mission_terminating || !ReadMission(mission) || mission!=scope.mission ||
+        pp::ReadState(partner_addresses,current)!=pp::Refusal::none || current.P!=scope.P ||
+        worker_loading_generation!=scope.generation || (!scope.cleanup_only &&
+        (!after.configured || !after.paired || !after.link_up || after.effective<3 || after.epoch!=scope.epoch)))) reason="scope";
+    static char reply[256]{};
+    HRESULT formatted{};
+    if(reason) formatted=StringCchPrintfA(reply,ARRAYSIZE(reply),"return {ready=false,reason='%s'}",reason);
+    else {
+        if(!scope.cleanup_only) buddy_pose_owner=scope;
+        formatted=StringCchPrintfA(reply,ARRAYSIZE(reply),"return {ready=true,mission=%lu,epoch=%u,id=9728,pos={%ld,%ld,%ld}}",
+            static_cast<unsigned long>(scope.mission),unsigned(scope.epoch),
+            static_cast<long>(std::floor(double(pose.position[0])*1000.0+0.5)),
+            static_cast<long>(std::floor(double(pose.position[1])*1000.0+0.5)),
+            static_cast<long>(std::floor(double(pose.position[2])*1000.0+0.5)));
+    }
+    if(FAILED(formatted)) return false;
+    replacement={reply,std::strlen(reply)};world_quiet=true;return true;
+}
+
+// Private capacity receipt: all authority comes from this native owner, never
+// a worker's requested pointer or Lua-supplied generation/count.
+struct BuddyCapacityIdentity {
+    std::uintptr_t P{},controller{},receiver{},records{};
+    std::uint32_t mission{},generation{},cycle{};std::uint8_t active{};
+};
+BuddyCapacityIdentity buddy_capacity_identity{};
+std::uint32_t buddy_capacity_serial=0;
+void ClearBuddyCapacityIdentity() noexcept { buddy_capacity_identity={}; }
+bool BuddySelection(std::uintptr_t& controller,std::uint8_t& active) noexcept {
+    std::uintptr_t selector{};std::uint8_t pending{};
+    const auto base=reinterpret_cast<std::uintptr_t>(game_base);
+    return base && UpperPhaseRead(nullptr,base+0x2c28930,&selector,sizeof(selector)) && selector && selector<=UINTPTR_MAX-0x10 &&
+        UpperPhaseRead(nullptr,selector+0x10,&controller,sizeof(controller)) && controller && controller<=UINTPTR_MAX-0x17f &&
+        UpperPhaseRead(nullptr,controller+0x175,&active,sizeof(active)) && active<=4 &&
+        UpperPhaseRead(nullptr,controller+0x17f,&pending,sizeof(pending)) && pending==0;
+}
+template<class Snap>
+bool ObservedRideMounted(unsigned count,unsigned realized,unsigned mask,const char* pack,
+    const mgscoop::buddy_ride_read::Snapshot& ride,const Snap& snap) noexcept {
+    if(count!=2||realized!=2||mask!=3||!pack||!*pack||!std::strcmp(pack,"unknown")||!ride.current||ride.ride_id==0xffff) return false;
+    int hit=-1;
+    for(unsigned i=0;i<2;++i){
+        const auto& actor=snap.actors[i];
+        if(actor.game_id==ride.ride_id&&actor.occupied&&actor.rider!=0xffff) hit=static_cast<int>(i);
+    }
+    if(hit<0) return false;
+    const auto& other=snap.actors[static_cast<unsigned>(1-hit)];
+    return !(other.occupied&&other.rider==snap.actors[static_cast<unsigned>(hit)].rider);
+}
+bool SelectBuddyCapacityReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
+    namespace b=mgscoop::buddy_capacity_census;namespace w=mgscoop::buddy_capacity_walker;
+    constexpr char prefix[]="return 'MGS_COOP_BUDDY_CAPACITY_V1' -- ";
+    if(!world_on || !buffer || size<=sizeof(prefix)-1 || size>160 || std::memcmp(buffer,prefix,sizeof(prefix)-1)!=0) return false;
+    const char* cursor=buffer+sizeof(prefix)-1;const char* end=buffer+size;std::uint32_t v[3]{};
+    for(unsigned i=0;i<3;++i) {
+        const auto parsed=std::from_chars(cursor,end,v[i]);
+        if(parsed.ec!=std::errc() || parsed.ptr==cursor) return false;
+        cursor=parsed.ptr;if(i!=2){if(cursor==end || *cursor!=' ')return false;++cursor;}
+    }
+    if(cursor!=end || (v[0]!=30010 && v[0]!=30020 && v[0]!=30050) || !v[1] || v[1]>65535 || v[2]>2) return false;
+    static constexpr char no[]="return {ready=false,admitted=false,reason='admission'}";
+    replacement={no,sizeof(no)-1};world_quiet=true;
+    // Default-off must return before any player/selection/registry read.
+    if(!b::Compiled() || !w::Compiled() || !mgscoop::worker_scenario::ThreadAdmitted() ||
+        !MountedBuddyCapacity() || !buddy_capacity_pins_ok || !offline_enabled || !lab::SavesRedirected() ||
+        !partner_on || !partner_gate_ok || !archive_mounted) return true;
+    const auto status=mgscoop::world_link::GetStatus();unsigned short mission{};pp::State player{};
+    std::uintptr_t controller{};std::uint8_t active{};
+    const bool field=OnRuntimeThread() && !mission_terminating && !gameplay_restore_pending &&
+        (mgscoop::debug_menu::LuaHud()&1u)==0 && ReadMission(mission) && mission==v[0] && partner_mission==v[0] &&
+        worker_loading_generation && status.configured && status.paired && status.link_up && status.effective>=3 && status.epoch==v[1] &&
+        pp::ReadState(partner_addresses,player)==pp::Refusal::none && player.local==0 && !player.sync &&
+        pp::Realized(player,0) && pp::Realized(player,1) && player.ids[0]==0 && player.ids[1]==1 && player.parts[0]==3 && player.parts[1]==3 &&
+        BuddySelection(controller,active);
+    if(!field){
+        static unsigned fieldRefusals=0;
+        if(fieldRefusals++<32)LogFormat("buddy_capacity_refused=field; kind=%lu mission=%u expected=%lu active=%u generation=%lu epoch=%u paired=%u\r\n",
+            static_cast<unsigned long>(v[2]),unsigned(mission),static_cast<unsigned long>(v[0]),unsigned(active),
+            static_cast<unsigned long>(worker_loading_generation),unsigned(status.epoch),unsigned(status.paired));
+        buddy_capacity_identity={};return true;
+    }
+    auto& identity=buddy_capacity_identity;
+    if(identity.P!=player.P || identity.mission!=mission || identity.generation!=worker_loading_generation ||
+        identity.controller!=controller || identity.active!=active) {
+        if(buddy_capacity_serial==UINT32_MAX)return true;
+        identity={player.P,controller,0,0,mission,worker_loading_generation,++buddy_capacity_serial,active};
+    }
+    b::Authorization authorization{true,true,true,true,true,true};
+    const auto now=GetTickCount64();const auto thread=GetCurrentThreadId();
+    const char* reason=nullptr;b::Census horse{};w::Census walker{};
+    if(v[2]==1) {
+        b::Owner owner{player.P,mission,worker_loading_generation,thread,identity.cycle,status.epoch,now,true,active==1,false,false};
+        reason=b::ReadCurrentCensus({nullptr,UpperPhaseRead},reinterpret_cast<std::uintptr_t>(game_base),authorization,owner,thread,GetTickCount64(),horse);
+    }else if(v[2]==2) {
+        w::Owner owner{player.P,mission,worker_loading_generation,thread,identity.cycle,status.epoch,now,true,active==4,false,false};
+        reason=w::ReadCurrentCensus({nullptr,UpperPhaseRead},reinterpret_cast<std::uintptr_t>(game_base),authorization,owner,thread,GetTickCount64(),walker);
+    }
+    if(!reason && v[2]) {
+        const auto receiver=v[2]==1?horse.receiver:walker.receiver;const auto records=v[2]==1?horse.records:walker.records;
+        if(identity.receiver!=receiver || identity.records!=records) {
+            if(buddy_capacity_serial==UINT32_MAX)return true;
+            identity.receiver=receiver;identity.records=records;identity.cycle=++buddy_capacity_serial;
+        }
+    }
+    mgscoop::buddy_ride_read::Snapshot ride{};const char* rideReason="disabled";
+    if(!reason && v[2] && buddy_ride_pins_ok){
+        mgscoop::buddy_ride_read::Owner rideOwner{player.P,mission,worker_loading_generation,thread,identity.cycle,status.epoch,GetTickCount64(),active,true,false,false};
+        rideReason=mgscoop::buddy_ride_read::ReadCurrent({nullptr,UpperPhaseRead},reinterpret_cast<std::uintptr_t>(game_base),authorization,rideOwner,thread,GetTickCount64(),ride);
+    }
+    const auto after=mgscoop::world_link::GetStatus();pp::State current{};std::uintptr_t againController{};std::uint8_t againActive{};
+    if(!reason && (!mgscoop::worker_scenario::ThreadAdmitted() || !MountedBuddyCapacity() || !OnRuntimeThread() || mission_terminating ||
+        gameplay_restore_pending || (mgscoop::debug_menu::LuaHud()&1u) || !ReadMission(mission) || mission!=v[0] || partner_mission!=mission ||
+        worker_loading_generation!=identity.generation || pp::ReadState(partner_addresses,current)!=pp::Refusal::none || current.P!=identity.P || current.Q!=player.Q || current.ids[0]!=0 || current.ids[1]!=1 ||
+        current.local!=0 || current.sync || !pp::Realized(current,0) || !pp::Realized(current,1) || current.parts[0]!=3 || current.parts[1]!=3 ||
+        !after.configured || !after.paired || !after.link_up || after.effective<3 || after.epoch!=v[1] ||
+        !BuddySelection(againController,againActive) || againController!=controller || againActive!=active)) reason="scope_changed";
+    static char reply[768]{};HRESULT formatted{};
+    if(reason){
+        static unsigned censusRefusals=0;
+        std::uint64_t packHash{};
+        const bool packReason=std::strcmp(reason,"pack_unknown")==0||std::strcmp(reason,"pack_changed")==0;
+        if(packReason) UpperPhaseRead(nullptr,controller+0x38,&packHash,sizeof(packHash));
+        if(censusRefusals++<64){
+            if(packReason) LogFormat("buddy_capacity_refused=census;kind=%lu reason=%s;hash=0x%llx\r\n",static_cast<unsigned long>(v[2]),reason,static_cast<unsigned long long>(packHash));
+            else LogFormat("buddy_capacity_refused=census;kind=%lu reason=%s\r\n",static_cast<unsigned long>(v[2]),reason);
+        }
+        formatted=StringCchPrintfA(reply,ARRAYSIZE(reply),"return {ready=false,admitted=false,reason='%s'}",reason);
+    }
+    else {
+        char actors[384]{};unsigned count=0,realized=0,mask=0;
+        if(v[2]==1){count=horse.count;realized=horse.realized_count;mask=horse.realized_mask;}
+        if(v[2]==2){count=walker.count;realized=walker.realized_count;mask=walker.realized_mask;}
+        for(unsigned i=0;i<count;++i){char one[192]{};
+            if(v[2]==1){const auto& a=horse.actors[i];StringCchPrintfA(one,ARRAYSIZE(one),
+                "%s{id=%u,rider=%u,pending=%u,occupied=%s,realized=%s}",i?",":"",unsigned(a.game_id),unsigned(a.rider),unsigned(a.pending_rider),a.occupied?"true":"false",a.realized?"true":"false");}
+            else{const auto& a=walker.actors[i];StringCchPrintfA(one,ARRAYSIZE(one),
+                "%s{id=%u,rider=%u,state=%u,occupied=%s,realized=%s}",i?",":"",unsigned(a.game_id),unsigned(a.rider),unsigned(a.ride_state),a.occupied?"true":"false",a.realized?"true":"false");}
+            if(FAILED(StringCchCatA(actors,ARRAYSIZE(actors),one)))return true;
+        }
+        const char* packToken=v[2]==1?horse.pack_token:v[2]==2?walker.pack_token:"";
+        if(!packToken) packToken="";
+        const bool rideMounted=v[2]==1?ObservedRideMounted(count,realized,mask,packToken,ride,horse):
+            v[2]==2&&ObservedRideMounted(count,realized,mask,packToken,ride,walker);
+        unsigned remoteRide=255;
+        const auto rideNow=mgscoop::partner_net::NowMs();
+        const auto rideEpoch=partner_hooks.link_session?partner_hooks.link_session(partner_hooks.context):0;
+        if(mgscoop::partner_ride_wire::Live(partner_driver.ride_rx,rideEpoch,rideNow)) remoteRide=static_cast<unsigned>(partner_driver.ride_rx.packet.kind);
+        formatted=StringCchPrintfA(reply,ARRAYSIZE(reply),
+            "return {ready=true,admitted=true,profile='buddy_capacity_two_v1',commands=true,mission=%lu,epoch=%u,kind=%lu,generation=%lu,cycle=%lu,allocated=%u,realized=%u,mask=%u,actors={%s},pack='%s',rideReady=%s,rideId=%u,rideReason='%s',rideMounted=%s,remoteRide=%u}",
+            static_cast<unsigned long>(mission),unsigned(v[1]),static_cast<unsigned long>(v[2]),static_cast<unsigned long>(identity.generation),
+            static_cast<unsigned long>(identity.cycle),count,realized,mask,actors,packToken,ride.current?"true":"false",unsigned(ride.ride_id),rideReason?rideReason:"ok",rideMounted?"true":"false",remoteRide);
+    }
+    if(SUCCEEDED(formatted)){replacement={reply,std::strlen(reply)};}
+    return true;
+}
+
+bool DownedAdmitted(std::uint32_t mission, std::uint16_t epoch) noexcept {
+    unsigned short current=0;
+    const auto status=mgscoop::world_link::GetStatus();
+    return ReadMission(current) && OnRuntimeThread() && !mission_terminating && offline_enabled &&
+        partner_on && partner_gate_ok && lab::SavesRedirected() && partner_mission==mission && current==mission &&
+        status.configured && status.paired && status.link_up && status.effective>=3 && status.epoch==epoch;
+}
+bool DownedReply(const mgscoop::downed_player::Reply& r, mgscoop::script_bridge::Replacement& replacement) noexcept {
+    static char reply[512]{};
+    if(FAILED(StringCchPrintfA(reply,ARRAYSIZE(reply),
+        "return {ready=%s,down=%s,held=%s,applied=%s,generation=%lu,cause=%u,pos={%ld,%ld,%ld},hitSequence=%lu,hitDamageMilli=%lu,hitCause=%u,reviveMaskObserved=%s,reviveMaskPresent=%s}",
+        r.ready?"true":"false",r.down?"true":"false",r.held?"true":"false",r.applied?"true":"false",
+        static_cast<unsigned long>(r.generation),unsigned(r.cause),
+        static_cast<long>(r.pos[0]),static_cast<long>(r.pos[1]),static_cast<long>(r.pos[2]),
+        static_cast<unsigned long>(r.hitSequence),static_cast<unsigned long>(r.hitDamageMilli),unsigned(r.hitCause),
+        r.reviveMaskObserved?"true":"false",r.reviveMaskPresent?"true":"false"))) return false;
+    replacement={reply,std::strlen(reply)};world_quiet=true;return true;
+}
+bool SelectFriendlyHitReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
+    constexpr char prefix[]="return 'MGS_COOP_FRIENDLY_HIT_V1' -- ";
+    if(!world_on || !buffer || size<=sizeof(prefix)-1 || size>192 || std::memcmp(buffer,prefix,sizeof(prefix)-1)!=0) return false;
+    const char* cursor=buffer+sizeof(prefix)-1;const char* end=buffer+size;
+    std::uint32_t v[7]{};
+    for(unsigned i=0;i<7;++i) {
+        auto parsed=std::from_chars(cursor,end,v[i]);
+        if(parsed.ec!=std::errc() || parsed.ptr==cursor) return false;
+        cursor=parsed.ptr;if(i!=6) {if(cursor==end || *cursor!=' ') return false;++cursor;}
+    }
+    if(cursor!=end || v[0]>99999 || !v[1] || v[1]>65535 || v[2]>1 || !v[3] || v[5]>1000000000u ||
+        (v[6]!=0 && v[6]!=2) || !OnRuntimeThread()) return false;
+    mgscoop::downed_player::Reply r{};
+    const bool admitted=DownedAdmitted(v[0],static_cast<std::uint16_t>(v[1]));
+    mgscoop::downed_player::FriendlyControl(v[0],static_cast<std::uint16_t>(v[1]),admitted,
+        static_cast<std::uint8_t>(v[2]),v[3],v[4],v[5],static_cast<std::uint8_t>(v[6]),r);
+    if(v[2]) LogFormat("friendly_hit=owner;seq=%lu;damage_milli=%lu;cause=%u;applied=%u;down=%u;generation=%lu;reason=%s\r\n",
+        static_cast<unsigned long>(v[3]),static_cast<unsigned long>(v[5]),unsigned(v[6]),r.applied?1u:0u,r.down?1u:0u,
+        static_cast<unsigned long>(r.generation),r.reason?r.reason:"unknown");
+    return DownedReply(r,replacement);
+}
+bool SelectDownedReceipt(const char* buffer, std::size_t size, mgscoop::script_bridge::Replacement& replacement) noexcept {
+    constexpr char prefix[]="return 'MGS_COOP_DOWNED_V1' -- ";
+    if(!world_on || size<=sizeof(prefix)-1 || size>160 || std::memcmp(buffer,prefix,sizeof(prefix)-1)!=0) return false;
+    const char* cursor=buffer+sizeof(prefix)-1;
+    const char* end=buffer+size;
+    std::uint32_t v[4]{};
+    for(unsigned i=0;i<4;++i) {
+        auto parsed=std::from_chars(cursor,end,v[i]);
+        if(parsed.ec!=std::errc() || parsed.ptr==cursor) return false;
+        cursor=parsed.ptr;
+        if(i!=3) {if(cursor==end || *cursor!=' ') return false; ++cursor;}
+    }
+    if(cursor!=end || v[0]>99999 || !v[1] || v[1]>65535 || v[2]>4 ||
+       !(OnRuntimeThread() || (v[2]==3 && OnTerminationThread()))) return false;
+    const bool admitted=DownedAdmitted(v[0],static_cast<std::uint16_t>(v[1]));
+    mgscoop::downed_player::Reply r{};
+    mgscoop::downed_player::Control(v[0],static_cast<std::uint16_t>(v[1]),admitted,
+        static_cast<std::uint8_t>(v[2]),v[3],r);
+    if(!DownedReply(r,replacement)) return false;
+    static std::uint64_t downed_log_at=0;
+    if((!r.ready || (v[2]==1 && !r.applied) || (r.reason && std::strncmp(r.reason,"alive_rebound_",14)==0)) && GetTickCount64()>=downed_log_at) {
+        downed_log_at=GetTickCount64()+1000;
+        LogFormat("downed_control=%s;command=%u;reason=%s\r\n",r.ready?"observed":"refused",unsigned(v[2]),r.reason?r.reason:"unknown");
+    }
+    world_quiet=true;
+    return true;
+}
+bool SelectDownedHudReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
+    constexpr char prefix[]="return 'MGS_COOP_DOWNED_HUD_V1' -- ";
+    if(!world_on || !buffer || size<=sizeof(prefix)-1 || size>160 || std::memcmp(buffer,prefix,sizeof(prefix)-1)!=0) return false;
+    const char* cursor=buffer+sizeof(prefix)-1;const char* end=buffer+size;
+    std::uint32_t v[6]{};
+    for(unsigned i=0;i<6;++i) {
+        const auto parsed=std::from_chars(cursor,end,v[i]);
+        if(parsed.ec!=std::errc() || parsed.ptr==cursor) return false;
+        cursor=parsed.ptr;if(i!=5) {if(cursor==end || *cursor!=' ') return false;++cursor;}
+    }
+    if(cursor!=end || v[0]>99999 || v[1]>65535 || v[2]>1 || v[3]>1 || v[4]>1 || v[5]>3000 ||
+       !(OnRuntimeThread() || OnTerminationThread())) return false;
+    mgscoop::coop_hud::DownedView view{};
+    if(v[0] && v[1] && DownedAdmitted(v[0],static_cast<std::uint16_t>(v[1]))) {
+        view.valid=true;view.mission=v[0];view.epoch=static_cast<std::uint16_t>(v[1]);view.publish_ms=GetTickCount64();
+        view.localDown=v[2]!=0;view.teammateDown=v[3]!=0;view.inRange=v[4]!=0;view.progressMs=v[5];
+    }
+    mgscoop::coop_hud::PublishDowned(view);
+    constexpr char reply[]="return true";
+    replacement={reply,sizeof(reply)-1};world_quiet=true;return true;
+}
+
 bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
                   mgscoop::script_bridge::Replacement& replacement) noexcept {
     AcquireSRWLockExclusive(&receipt_lock);
@@ -2657,6 +3095,11 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if(SelectEquipmentObservationReceipt(buffer,size,name,replacement)) return true;
     if(SelectActionEventsReceipt(buffer,size,name,replacement)) return true;
     if (SelectDebugReceipt(buffer, size, name, replacement)) return true;
+    if (SelectBuddyCapacityReceipt(buffer, size, replacement)) return true;
+    if (SelectBuddyPoseReceipt(buffer, size, replacement)) return true;
+    if (SelectDownedReceipt(buffer, size, replacement)) return true;
+    if (SelectDownedHudReceipt(buffer, size, replacement)) return true;
+    if (SelectFriendlyHitReceipt(buffer, size, replacement)) return true;
     if(partner_on) {
         const auto partner_kind=partner::Classify(buffer,size,name);
         if(partner_kind!=partner::Receipt::none) return SelectPartnerReceipt(partner_kind,buffer,size,name,count,replacement);
@@ -2669,7 +3112,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if(!selected)
         selected=mgscoop::SelectDamageParameterPatch(buffer,size,name,replacement,host_create_enabled || client_enabled);
     if(!selected)
-        selected=mgscoop::SelectDeathPolicyPatch(buffer,size,name,replacement,host_create_enabled || client_enabled);
+        selected=mgscoop::SelectDeathPolicyPatch(buffer,size,name,replacement,host_create_enabled || client_enabled || offline_enabled);
     if (!selected)
         selected = mgscoop::SelectPlayerPackagePatch(buffer, size, name, replacement, allocation_enabled && archive_mounted);
     if (!selected && allocation_enabled && !host_enabled && archive_mounted)
@@ -2806,7 +3249,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
             equip_preload_authorization.End(); equip_preload_before={};
             mgscoop::equipment_stock_writer::End();
             stock46_groups_authorized=stock46_groups_returned=false;
-            mission_terminating=true;
+            mission_terminating=true; buddy_pose_owner = {}; ClearBuddyCapacityIdentity();
             restored=RestoreGameplayRules();
             // The partner tick stops while terminating, so the input window and
             // DM patch must be torn down here (before the Lua STOP receipt),
@@ -3155,7 +3598,7 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                 lab_status.local_index=-1;
                 SyncLabStatus();
             }
-            Log("\r\nMGS Co-op script adapter 0.12.1; executable_fingerprint=accepted; install_after_DirectInput=true; earlier_loads_may_be_missed=true\r\n");
+            Log("\r\nMGS Co-op script adapter 0.12.2; executable_fingerprint=accepted; install_after_DirectInput=true; earlier_loads_may_be_missed=true\r\n");
             if(client_check_enabled) Log("mode=client_check_v1; online_player_setup=1 native_join_calls=0 host_identity=none\r\n");
             if(client_enabled && !client_check_enabled) {
                 wchar_t host_path[32768]{};
@@ -3201,6 +3644,20 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                     partner_addresses = pp::AddressesFor(base);
                     std::uintptr_t mismatch = 0;
                     partner_gate_ok = pp::CodeGate(base, span, mismatch);
+                    buddy_pose_pins_ok = partner_gate_ok && BuddyPoseCodeGate(base,span);
+                    buddy_capacity_pins_ok = mgscoop::buddy_capacity_census::Compiled() && partner_gate_ok &&
+                        BuddyPinsMatch(base,span,mgscoop::buddy_capacity_routes::kPins);
+                    buddy_ride_pins_ok = mgscoop::buddy_ride_read::Compiled() && partner_gate_ok &&
+                        BuddyPinsMatch(base,span,mgscoop::buddy_ride_read::kPins);
+                    ride_player_pins_ok = mgscoop::buddy_capacity_census::Compiled() && partner_gate_ok &&
+                        BuddyPinsMatch(base,span,mgscoop::ride_player_contract::kPins);
+                    if(mgscoop::buddy_capacity_census::Compiled()) Log(ride_player_pins_ok ? "ride_player_code_gate=ok;scope=observe_only\r\n" : "ride_player_code_gate=refused\r\n");
+                    if(mgscoop::buddy_capacity_census::Compiled()) Log(buddy_capacity_pins_ok ? "buddy_capacity_code_gate=ok;scope=private_candidate\r\n" : "buddy_capacity_code_gate=refused\r\n");
+                    Log(buddy_pose_pins_ok ? "buddy_pose_code_gate=ok;scope=read_only_current_dog\r\n" : "buddy_pose_code_gate=refused\r\n");
+                    const bool downed_gate = partner_gate_ok && mgscoop::downed_damage::CodeGate(base, span);
+                    downed_hook_ok = downed_gate && mgscoop::downed_damage::Install(base, span, Log);
+                    mgscoop::downed_player::Configure(partner_addresses, downed_hook_ok);
+                    Log(downed_hook_ok ? "downed_code_gate=ok;scope=paired_free_roam\r\n" : "downed_code_gate=refused\r\n");
                     if (partner_gate_ok) Log("partner_code_gate=ok; scope=contract_sites_and_vtable_slots\r\n");
                     else LogFormat("partner_code_gate=mismatch; rva=0x%llx\r\n", static_cast<unsigned long long>(mismatch));
                     if (partner_gate_ok && (mgscoop::partner_upper_probe::Compiled() || upper_end::Compiled()))
@@ -3311,6 +3768,7 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                 // configures the overlay layer before the overlay installs (nametag=ready|refused).
                 mgscoop::nametag_game::Install({base, span, Log, partner_on && partner_gate_ok, labc.role != mgscoop::LabRole::guest, &labc,
                     &mgscoop::GetCoopConfig(), SteamLocalPersonaName});
+                mgscoop::teammate_targeting::Install(game_base,game_span,Log);
             }
             if (mgscoop::character::ReceiptsActive(host_create_enabled, client_enabled, offline_enabled)) {
                 // coop.ini is read once here (kernel32 file I/O), outside the Lua compile path.

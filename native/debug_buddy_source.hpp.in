@@ -1,0 +1,4 @@
+#pragma once
+constexpr char debug_buddy_source[] = R"MGS_DEBUG_BUDDY(
+@MGS_DEBUG_BUDDY_SOURCE@
+)MGS_DEBUG_BUDDY";

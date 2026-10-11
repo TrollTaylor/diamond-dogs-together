@@ -28,6 +28,16 @@ do
         R.game = {kind, radio, cause}
         log(fmt("step=shared_game_over;type=%d;cause=%d", kind, cause))
     end
+    function R.failBothDowned()
+        if not W.host or not on() or R.dead or type(R.originalReserve) ~= "function" then return false end
+        local t = W.get(TppDefine, "GAME_OVER_TYPE")
+        local r = W.get(TppDefine, "GAME_OVER_RADIO")
+        local kind, radio = W.get(t, "PLAYER_DEAD"), W.get(r, "PLAYER_DEAD")
+        if not valid(kind, 0, 255) or not valid(radio, 0, 255) then return false end
+        local ok, result = W.follow.run(R.originalReserve, kind, radio)
+        if ok and result == true then markDead(kind, radio, 3); return true end
+        return false
+    end
     local function mm(value, limit)
         if type(value) ~= "number" or value ~= value then return nil end
         local n = floor(value * 1000 + 0.5)

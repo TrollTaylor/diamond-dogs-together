@@ -86,6 +86,22 @@ bool GunPresent(PartnerGun gun) noexcept;
 bool FormatPartnerJson(const PartnerView& view, std::uint32_t session, std::uint32_t mission, std::uint64_t now_ms,
                        char* out, std::size_t capacity) noexcept;
 
+// ---- Copied local incapacitation/revive facts from the natural Lua owner.
+// Publishing is independent of the HUD/menu toggle. A stopped or unpaired
+// world publishes an invalid empty view; the draw thread reads no game data.
+struct DownedView {
+    bool valid;
+    std::uint32_t mission;
+    std::uint16_t epoch;
+    std::uint64_t publish_ms;
+    bool localDown, teammateDown, inRange;
+    std::uint32_t progressMs;
+};
+inline constexpr std::uint64_t kDownedFreshMs = 500;
+inline constexpr std::uint32_t kReviveHoldMs = 3000;
+void PublishDowned(const DownedView& view) noexcept;
+bool GetDowned(DownedView& out) noexcept;
+
 // ---- Events (any thread; a 16-entry ring, the oldest dropped when full).
 enum class EventKind : std::uint8_t {
     connected,     // arg: session
@@ -128,6 +144,11 @@ struct Line {
     char detail[kLineChars];  // full mode only ("" otherwise)
     Tone tone;
 };
+// False and empty for stale/future/other-mission/unsupported/invalid facts,
+// healthy players, or progress that cannot belong to an in-range live reviver.
+// progress is 0..1; only teammateDown && inRange && !localDown draws a bar.
+bool FormatDowned(const DownedView& view, std::uint32_t current_mission,
+                  std::uint64_t now_ms, Line& out, float& progress) noexcept;
 // The status line for `view` (`name`: the partner's display name, may be "").
 // False when nothing is shown (no view, link off).
 bool FormatLine(const LinkView& view, const char* name, Mode mode, std::uint64_t now_ms, Line& out,

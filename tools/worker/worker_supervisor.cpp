@@ -174,7 +174,8 @@ void GateGames(Worker& worker) {
         worker.AddPin(m.At((prefix + "_exe").c_str()), m.At("exe_sha256"));
         worker.AddPin(root + "\\steam_api64.dll", m.At("steam_sha256")); worker.AddPin(root + "\\dinput8.dll", m.At("loader_sha256"));
         const auto archive = worker.AddPin(root + "\\mgs-coop\\mgs-coop-player-runtime.dat", m.At("runtime_archive_sha256"));
-        Require(Size(worker.pins[archive].file.value, 16333824) == 16333824, "baseline_archive_size");
+        const auto archive_bytes = m.runtime_profile.empty() ? std::size_t{16333824} : mgscoop::buddy_capacity::archive_bytes;
+        Require(Size(worker.pins[archive].file.value, archive_bytes) == archive_bytes, "runtime_catalog_archive_size");
         const auto lab = worker.AddPin(root + "\\mgs-coop\\lab.ini", m.At((prefix + "_lab_sha256").c_str()));
         const auto coop = worker.AddPin(root + "\\mgs-coop\\coop.ini", m.At((prefix + "_coop_sha256").c_str()));
         const auto graphics_path = m.At((prefix + "_save_dir").c_str()) + "\\287700\\local\\TPP_GRAPHICS_CONFIG";

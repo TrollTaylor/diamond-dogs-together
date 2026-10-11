@@ -739,6 +739,28 @@ do
     end
     c.status = {[STATUS.ON_HELICOPTER] = true, [STATUS.ON_HORSE] = true}; update(env)
     check(fields(lastTick(c))[12] == 'ride=1', 'helicopter status has conservative priority')
+    c.status = {}
+    local unqualifiedRideReads = 0
+    env.Player.GetGameObjectIdIsRiddenToLocal = function()
+        unqualifiedRideReads = unqualifiedRideReads + 1
+        error('unqualified native ride call must not run in the normal producer')
+    end
+    update(env)
+    check(fields(lastTick(c))[12] == 'ride=0' and unqualifiedRideReads == 0, 'normal producer confirms foot from public status without a native ride call')
+    c.status = {[STATUS.ON_VEHICLE] = true}; update(env)
+    check(fields(lastTick(c))[12] == 'ride=2' and unqualifiedRideReads == 0, 'normal producer preserves established vehicle status without inventing walker kind')
+    c.status = {[STATUS.ON_HORSE] = true}; update(env)
+    check(fields(lastTick(c))[12] == 'ride=3' and unqualifiedRideReads == 0, 'normal producer preserves horse status without a native ride call')
+    env.Player.GetGameObjectIdIsRiddenToLocal = nil
+    setmetatable(env.Player, {__index=function(_,key)
+        if key == 'GetGameObjectIdIsRiddenToLocal' then
+            unqualifiedRideReads = unqualifiedRideReads + 1
+            error('unqualified native ride binding lookup')
+        end
+    end})
+    c.status = {}; update(env)
+    check(fields(lastTick(c))[12] == 'ride=0' and unqualifiedRideReads == 0, 'normal producer does not look up the private capacity native ride binding')
+    c.status = {}
     env.PlayerStatus.ON_HORSE = nil; update(env)
     check(fields(lastTick(c))[12] == 'ride=5', 'missing enum is unknown rather than foot')
     env.PlayerStatus.ON_HORSE = STATUS.ON_HORSE
@@ -785,7 +807,7 @@ if arg[2] then
     -- World sync (lua/coop/world_*.lua) is spliced between the partner chunk
     -- and the marker lifecycle chunk (world_sync_lua_check checks its layout).
     check(composed:find('-- Project-authored session feedback.', 1, true) < at and
-        composed:find('\n-- MGS co-op world sync W0-W2', at, true) == at + #spliced and
+        composed:find('\n' .. slurp((arg[1]:match('^(.*[/\\])') or '') .. 'world_sync.lua') .. '\n', at, true) == at + #spliced and
         composed:find('-- Adapted from Dynamite TppMain marker-loading lifecycle', at, true) > at + #spliced,
         'partner chunk directly precedes the world sync chunks, then the marker lifecycle chunk')
 

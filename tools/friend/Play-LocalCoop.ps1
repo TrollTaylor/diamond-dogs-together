@@ -83,7 +83,7 @@ foreach ($role in $roots.Keys) {
     if (!(Test-FileHash -Path $p.Archive -Expected ([string]$package.runtime_archive.sha256))) { throw "[$role] The checked two-player runtime archive is missing. Install co-op in this game copy first." }
     $record = Read-FriendJson $p.Record
     if (!$record -or [string]$record.product -cne 'mgs-coop-original-loader-probe' -or [string]$record.game_directory -cne $p.Game -or !(Test-FileHash -Path $p.Loader -Expected ([string]$record.dll_sha256))) { throw "[$role] This game copy has no matching owned co-op loader. Install co-op in it first; unrelated loaders are never replaced." }
-    if (@($record.PSObject.Properties.Name) -notcontains 'version' -or [string]$record.version -notin @('0.12.0','0.12.1')) { throw "[$role] Install this release in the game copy first." }
+    if (@($record.PSObject.Properties.Name) -notcontains 'version' -or [string]$record.version -notin @('0.12.0','0.12.1','0.12.2','0.12.3')) { throw "[$role] Install this release in the game copy first." }
     foreach ($name in @('partner.trigger','world.trigger','join.trigger','reset.trigger','worker.ini','worker.enabled')) {
         if (Test-Path -LiteralPath (Join-Path $p.Mod $name)) { throw "[$role] $name belongs to a developer test. Finish that test before local play." }
     }
@@ -159,12 +159,14 @@ function Stop-LocalOwnedGames {
         $owner = $instances[$role]
         try {
             $p = Get-Process -Id ([int]$owner.ProcessId) -ErrorAction Stop
-            $snapshot = @{ProcessId=$p.Id;StartUtc=$p.StartTime.ToUniversalTime().ToString('o');ExecutablePath=$p.Path}
+            $image = Get-LocalCoopOwnedImagePath -Process $p -GameRoot $roots[$role] -Attempts 3
+            $snapshot = @{ProcessId=$p.Id;StartUtc=$p.StartTime.ToUniversalTime().ToString('o');ExecutablePath=$(if ($image) { $image } else { '' })}
             if (!(Test-LocalCoopOwnerSnapshot -Owner $owner -GameRoot $roots[$role] -Snapshot $snapshot)) { continue }
             $null = $p.CloseMainWindow()
             if (!$p.WaitForExit(2000)) {
                 $p = Get-Process -Id ([int]$owner.ProcessId) -ErrorAction Stop
-                $snapshot = @{ProcessId=$p.Id;StartUtc=$p.StartTime.ToUniversalTime().ToString('o');ExecutablePath=$p.Path}
+                $image = Get-LocalCoopOwnedImagePath -Process $p -GameRoot $roots[$role] -Attempts 3
+                $snapshot = @{ProcessId=$p.Id;StartUtc=$p.StartTime.ToUniversalTime().ToString('o');ExecutablePath=$(if ($image) { $image } else { '' })}
                 if (Test-LocalCoopOwnerSnapshot -Owner $owner -GameRoot $roots[$role] -Snapshot $snapshot) { Stop-Process -Id $p.Id -Force }
             }
         } catch { Write-Verbose $_ }
@@ -236,9 +238,22 @@ try {
             $psi.WorkingDirectory = $roots[$role]
             $psi.UseShellExecute = $true
             $p = [Diagnostics.Process]::Start($psi)
-            if (!$p -or $p.HasExited) { throw "[$role] The game exited before its startup could be verified." }
-            $owner = @{ProcessId=$p.Id;StartUtc=$p.StartTime.ToUniversalTime().ToString('o');ExecutablePath=$paths[$role].Exe}
-            $snapshot = @{ProcessId=$p.Id;StartUtc=$p.StartTime.ToUniversalTime().ToString('o');ExecutablePath=$p.Path}
+            if (!$p) { throw "[$role] The game exited before its startup could be verified." }
+            # Process.Path is often empty on the first read after UseShellExecute,
+            # including when this executable is a hardlink of the other copy.
+            # The image query names the process just started. It must be this copy.
+            $image = $null
+            for ($attempt = 0; $attempt -lt 20; $attempt++) {
+                try { if ($p.HasExited) { break } } catch { break }
+                $image = Get-LocalCoopOwnedImagePath -Process $p -GameRoot $roots[$role] -Attempts 1
+                if ($image) { break }
+                Start-Sleep -Milliseconds 50
+            }
+            try { $exited = [bool]$p.HasExited } catch { $exited = $true }
+            if ($exited) { throw "[$role] The game exited before its startup could be verified." }
+            try { $start = $p.StartTime.ToUniversalTime().ToString('o') } catch { throw "[$role] The launched process did not match this game copy." }
+            $owner = @{ProcessId=$p.Id;StartUtc=$start;ExecutablePath=$paths[$role].Exe}
+            $snapshot = @{ProcessId=$p.Id;StartUtc=$start;ExecutablePath=$(if ($image) { $image } else { '' })}
             if (!(Test-LocalCoopOwnerSnapshot -Owner $owner -GameRoot $roots[$role] -Snapshot $snapshot)) { throw "[$role] The launched process did not match this game copy." }
             $instances[$role] = $owner
         }
@@ -258,7 +273,8 @@ try {
                 $live = Get-Process -Id $runningGame.Id -ErrorAction SilentlyContinue
                 if (!$live) { continue }
                 try {
-                    $snapshot = @{ProcessId=$live.Id;StartUtc=$live.StartTime.ToUniversalTime().ToString('o');ExecutablePath=$live.Path}
+                    $image = Get-LocalCoopOwnedImagePath -Process $live -GameRoot $roots[$role] -Attempts 3
+                    $snapshot = @{ProcessId=$live.Id;StartUtc=$live.StartTime.ToUniversalTime().ToString('o');ExecutablePath=$(if ($image) { $image } else { '' })}
                 } catch {
                     if (!(Get-Process -Id $runningGame.Id -ErrorAction SilentlyContinue)) { continue }
                     Stop-LocalOwnedGames

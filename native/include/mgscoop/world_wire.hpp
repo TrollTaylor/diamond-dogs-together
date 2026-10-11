@@ -57,6 +57,9 @@ inline constexpr std::uint8_t enemy_outcome = 0x10, req_outcome = 0x11, phase = 
 // Debug enemy placement and per-soldier debug actions (docs/debug-menu.md
 // "Spawn sync"): the host announces, the guest applies and answers.
 inline constexpr std::uint8_t enemy_debug = 0x22, enemy_debug_ack = 0x23;
+// Player rescue controls and host-led companion samples.
+inline constexpr std::uint8_t downed_status = 0x24, downed_commit = 0x25, revive_grant = 0x26,
+                              buddy_state = 0x27, buddy_ack = 0x28, friendly_hit = 0x29;
 // Local (never on the wire).
 inline constexpr std::uint8_t link = 0x70, paired = 0x71, unpaired = 0x72, go_to = 0x73, probe = 0x74, probe_fire = 0x75,
                               resync_needed = 0x76, level = 0x77, goto_ack = 0x78;

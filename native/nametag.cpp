@@ -69,7 +69,7 @@ bool Take(Frame& out) noexcept {
 }
 bool RenderPending(std::uint64_t now_ms) noexcept {
     Frame f{};
-    return Take(f) && (f.visible || f.crosshair) && now_ms >= f.tick_ms && now_ms - f.tick_ms <= kStaleMs;
+    return Take(f) && f.visible && now_ms >= f.tick_ms && now_ms - f.tick_ms <= kStaleMs;
 }
 void Shutdown() noexcept {
     shutting_down.store(true, std::memory_order_release);

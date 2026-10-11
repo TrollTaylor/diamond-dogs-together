@@ -1167,11 +1167,15 @@ do
     check(F.callCount(g, 'Pause:true') == 3, 'pause re-asserted every digest')
     check(F.callCount(g, 'Force:3:20') == 1 and has(g.logs, 'event=weather;type=3;cause=3;applied=1'), 're-forced after 3 mismatches')
     check(has(g.logs, 'event=weather_check;local='), 'weather_check line')
+    F.clear(g)
     g.W.fail('test failure')
     check(not g.W.active and count(g.logs, 'event=error;msg=test_failure') == 1, 'W.fail logs once')
+    check(F.callCount(g, 'CancelForce') == 1 and F.callCount(g, 'Pause:false') == 1, 'W.fail immediately releases weather and random pause')
+    g.W.fail('duplicate failure')
+    check(F.callCount(g, 'CancelForce') == 1 and F.callCount(g, 'Pause:false') == 1, 'duplicate failure cannot repeat owned weather cleanup')
     F.clear(g)
     F.call(eg, 'OnTerminate')
-    check(F.callCount(g, 'CancelForce') == 1 and F.callCount(g, 'Pause:false') == 1, 'cleanup at stop after W.fail')
+    check(F.callCount(g, 'CancelForce') == 0 and F.callCount(g, 'Pause:false') == 0, 'termination after W.fail leaves released weather alone')
     local el, l = fixture({role = 2})
     F.start(el, l)
     F.pair(el, l, 3)
@@ -1356,6 +1360,83 @@ do
     check(not c7.W.active and has(c7.logs, 'event=inactive;reason=missing_required;names=Fox.StrCode32'), 'a missing required binding')
 end
 
+-- The real world wrapper must retry owned downed cleanup after it becomes
+-- inactive, while leaving RX, simulation and other stop hooks alone.
+do
+    local coopDir = assert(FILES[1]:match('^(.*[/\\])'), 'world chunk directory')
+    for _, reason in ipairs({'error', 'level0'}) do
+        local env, c = fixture({role = 2})
+        local n = {down = false, generation = 0, cause = 0}
+        local stops, resets, hooks, polls = 0, 0, 0, 0
+        local refusingReset = true
+        local previousLoad = env.loadstring
+        env.loadstring = function(source)
+            if starts(source, "return 'MGS_COOP_DOWNED_HUD_V1'") then
+                c.receipts[#c.receipts + 1] = source
+                return function() return true end
+            end
+            if starts(source, "return 'MGS_COOP_DOWNED_V1'") then
+                c.receipts[#c.receipts + 1] = source
+                local m, ep, command = source:match('%-%- (%d+) (%d+) (%d+)')
+                check(m == '30010' and ep == '5', 'cleanup retains its actual mission and epoch')
+                return function()
+                    command = tonumber(command)
+                    if command == 3 then stops = stops + 1; n.down, n.cause = false, 0
+                    else polls = polls + 1 end
+                    return {ready = true, down = n.down, held = false, applied = true,
+                        generation = n.generation, cause = n.cause, pos = {0, 0, 0}}
+                end
+            end
+            return previousLoad(source)
+        end
+        env.Tpp.MgsCoop = {playerPackageSelected = true}
+        env.PlayerInfo = {GetLocalPlayerIndex = function() return 0 end}
+        env.Player = {
+            IsInstanceValid = function() return true end,
+            SetPadMask = function() c.mask = true end,
+            ResetPadMask = function()
+                resets = resets + 1
+                if refusingReset then error('temporary reset refusal') end
+                c.mask = false
+            end,
+        }
+        local downedChunk = assert(loadfile(coopDir .. 'world_downed.lua'))
+        setfenv(downedChunk, env); downedChunk()
+        F.start(env, c); F.pair(env, c, 3)
+        n.down, n.generation, n.cause = true, 1, 2
+        F.tick(env, c, 1)
+        check(c.mask and c.W.downed.maskOwned and c.W.downed.active, 'composed downed policy owns a confirmed crawling lock')
+        c.W.stopHooks[#c.W.stopHooks + 1] = function() hooks = hooks + 1 end
+        F.clear(c)
+        if reason == 'error' then
+            c.W.enemy.tick = function() error('downed world failure') end
+            F.tick(env, c, 1)
+            check(c.W.failed and count(c.logs, 'event=error;msg=') == 1, 'failed natural update invokes immediate owner cleanup')
+        else
+            F.push(c, 0, OP.LEVEL, 0); F.tick(env, c, 1)
+        end
+        check(not c.W.active and not c.W.downed.active and c.mask and c.W.downed.maskOwned and
+            stops == 1 and hooks == 1, reason .. ': failed reset retains only owned pending cleanup')
+        check(F.callCount(c, 'Pause:false') == 1, reason .. ': environmental cleanup runs immediately')
+        local beforePolls, beforeRx = polls, #c.rx
+        F.push(c, 0, OP.LINK, 1)
+        F.clear(c)
+        local beforeUpdates = #c.order
+        F.tick(env, c, 2)
+        check(c.mask and c.W.downed.maskOwned and resets >= 3 and stops == 1 and hooks == 1,
+            reason .. ': inactive updates retry only pending named-mask release')
+        check(polls == beforePolls and #c.rx == beforeRx + 1 and #c.tx == 0 and #c.calls == 0 and
+            #c.order == beforeUpdates + 2, reason .. ': cleanup preserves originals without RX, simulation or repeated stop hooks')
+        refusingReset = false
+        F.tick(env, c, 1)
+        check(not c.mask and not c.W.downed.maskOwned and stops == 1 and hooks == 1,
+            reason .. ': next owner update finishes a previously refused mask release')
+        local beforeReceipts, beforeResets = #c.receipts, resets
+        F.tick(env, c, 3)
+        check(#c.receipts == beforeReceipts and resets == beforeResets and #c.rx == beforeRx + 1,
+            reason .. ': completed inactive cleanup is inert')
+    end
+end
 -- The world and debug chunks inside the composed TppMain (exact splice;
 -- inert with literal native receipts).
 local composedRuns = 0
@@ -1384,7 +1465,7 @@ if arg[8] then
         at = at + #spliced
     end
     local coopDir = assert(FILES[1]:match('^(.*[/\\])'), 'world chunk directory')
-    for _, name in ipairs({'debug_menu.lua', 'debug_equipment.lua', 'debug_enemy.lua', 'debug_player.lua', 'debug_spawn.lua'}) do
+    for _, name in ipairs({'debug_menu.lua', 'debug_equipment.lua', 'debug_enemy.lua', 'debug_player.lua', 'debug_spawn.lua', 'debug_buddy.lua'}) do
         local spliced = '\n' .. slurp(coopDir .. name) .. '\n'
         check(composed:find(spliced, at, true) == at and not composed:find(spliced, at + 1, true),
             name .. ' spliced once, byte-identical, directly after the previous chunk')

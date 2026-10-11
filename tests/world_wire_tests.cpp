@@ -113,7 +113,7 @@ void Pair(std::uint32_t mission, std::uint64_t now, std::uint32_t host_roster = 
 void Table() {
     std::size_t count = 0;
     const world::OpSpec* ops = world::OpTable(count);
-    Check(count == 41, "41 ops (W0-W4 wire ops, spawn sync and the local ops)");
+    Check(count == 47, "47 ops (world, rescue, companion and local ops)");
     for (std::size_t i = 0; i < count; ++i) {
         for (std::size_t j = i + 1; j < count; ++j) Check(ops[i].code != ops[j].code, "codes unique");
         const unsigned fields = ops[i].lua + ops[i].native + ops[i].rx;
@@ -140,7 +140,7 @@ void Table() {
                           {op::enemy_debug, 30}, {op::enemy_debug_ack, 12}};
     for (const auto& s : sizes) Check(world::FindOp(s.code) && world::FindOp(s.code)->body == s.body, "documented body size");
     for (unsigned code = 0x1D; code <= 0x1F; ++code) Check(!world::FindOp(static_cast<std::uint8_t>(code)), "reserved world codes");
-    Check(!world::FindOp(0) && !world::FindOp(0x24) && !world::FindOp(0x79) && !world::FindOp(0xFF), "unknown codes");
+    Check(!world::FindOp(0) && !world::FindOp(0x2A) && !world::FindOp(0x79) && !world::FindOp(0xFF), "unknown codes");
     Check(world::FindOp(op::phase_vec)->lua == 15 && world::FindOp(op::digest)->rx == 1 && world::FindOp(op::clock)->rx == 1,
           "PHASE_VEC 15 fields, DIGEST/CLOCK receiver latency");
     Check(world::FindOp(op::req_outcome)->request && world::FindOp(op::req_phase)->request && world::FindOp(op::resync)->request &&
@@ -1183,6 +1183,63 @@ void SpawnSync() {
     Pair(30010, 500);
     Check(Tx(g_host, op::enemy_debug, {1, ent, 1, 0, 0, 0, 0, 0, 0, 0}, 501) == world::TxStatus::disabled, "level 1 carries no spawn sync");
 }
+void RescueAndBuddies() {
+    const std::uint8_t codes[] = {op::downed_status, op::downed_commit, op::revive_grant, op::buddy_state, op::buddy_ack, op::friendly_hit};
+    const std::int64_t values[][10] = {{1, 1, 1, 2, -100, 50, 20, 0, 0, 1}, {1, 1, 1, 2, 1, 0, 0, 3000, 1},
+                                      {2, 1, 1}, {1, 1, 1, -100, 50, 20, -3142, 123}, {1, 1, 0, 2}, {1, 0, 1, 1000000000, 2}};
+    for (unsigned i = 0; i < sizeof(codes) / sizeof(codes[0]); ++i) {
+        Setup(3, 3, true); Pair(30010, 100); Drain(g_host, 3, 100); Drain(g_guest, 3, 100);
+        const auto* spec = world::FindOp(codes[i]);
+        world::Datagram datagram{};
+        Check(spec && spec->wire == world::Wire::reliable && spec->level == 3 && !spec->lab_only && !spec->request,
+              "rescue and buddy specs are reliable play controls");
+        auto& sender = spec->dir == world::Dir::guest_to_host ? g_guest : g_host;
+        auto& receiver = spec->dir == world::Dir::guest_to_host ? g_host : g_guest;
+        Check(sender.Tx(codes[i], values[i], spec->lua, 101, &datagram) == world::TxStatus::ok, "new op TX admitted");
+        Exchange(102);
+        const auto rx = Drain(receiver, 3, 103); const auto* got = Find(rx, codes[i]);
+        Check(got && got->count == spec->lua + spec->rx && got->v[0] == values[i][0], "new op delivered on current epoch");
+        if (spec->dir != world::Dir::both)
+            Check(receiver.Tx(codes[i], values[i], spec->lua, 104, &datagram) == world::TxStatus::wrong_role, "new op wrong sender refused");
+        else {
+            Check(g_guest.Tx(codes[i], values[i], spec->lua, 104, &datagram) == world::TxStatus::ok, "status is bidirectional");
+            Exchange(105); Check(Find(Drain(g_host, 3, 106), codes[i]) != nullptr, "guest status reaches host");
+        }
+        world::Op old{}; old.code = codes[i]; old.epoch = 9; old.count = spec->lua;
+        for (unsigned j = 0; j < spec->lua; ++j) old.v[j] = values[i][j];
+        std::uint8_t packet[128]{}; world::WriteBundleHeader(packet, 1);
+        const auto size = world::EncodeOp(old, packet + world::kBundleHeaderSize, sizeof(packet) - world::kBundleHeaderSize);
+        Check(size != 0, "stale op codec builds");
+        receiver.OnReliable(packet, size + world::kBundleHeaderSize, 107);
+        Check(!Find(Drain(receiver, 3, 108), codes[i]), "new op of stale epoch discarded");
+        receiver.OnReliable(packet, size + world::kBundleHeaderSize, 109);
+        Check(!Find(Drain(receiver, 3, 110), codes[i]), "stale duplicate never reaches Lua");
+        sender.LocalMissionEnd(111);
+        Check(sender.Tx(codes[i], values[i], spec->lua, 112, &datagram) == world::TxStatus::not_paired, "new op after mission end refused");
+        Setup(2, 2, true); Pair(30010, 200);
+        auto& low = spec->dir == world::Dir::guest_to_host ? g_guest : g_host;
+        Check(low.Tx(codes[i], values[i], spec->lua, 201, &datagram) == world::TxStatus::disabled, "new ops require world level 3");
+    }
+    Setup(); Pair(30010, 300);
+    Check(Tx(g_host, op::buddy_state, {1,1,1,1000000001,0,0,0,0},301)==world::TxStatus::bad_args, "buddy excessive position refused");
+    Check(Tx(g_host, op::buddy_state, {1,1,1,0,0,0,3143,0},301)==world::TxStatus::bad_args, "buddy non-normalized heading refused");
+    Check(Tx(g_host, op::revive_grant, {2,0,1},301)==world::TxStatus::bad_args, "revive zero target generation refused");
+    Check(Tx(g_host, op::downed_commit, {1,1,1,1,1,0,0,3001,1},301)==world::TxStatus::bad_args, "revive excessive progress refused");
+    Check(Tx(g_host, op::friendly_hit, {0,0,1,10,0},301)==world::TxStatus::bad_args, "hit zero shot sequence refused");
+    Check(Tx(g_host, op::friendly_hit, {1,0,0,10,0},301)==world::TxStatus::bad_args, "hit zero target status sequence refused");
+    Check(Tx(g_host, op::friendly_hit, {1,0,1,1000000001,0},301)==world::TxStatus::bad_args, "hit excessive damage refused");
+    Check(Tx(g_host, op::friendly_hit, {1,0,1,10,1},301)==world::TxStatus::bad_args, "hit cause one cannot enter wire");
+    Check(Tx(g_host, op::friendly_hit, {1,0,1,10,0},301)==world::TxStatus::ok, "normal hit cause admitted");
+    world::Op hit{}; hit.code = op::friendly_hit; hit.epoch = g_host.epoch(); hit.count = 5;
+    hit.v[0]=1; hit.v[1]=0; hit.v[2]=1; hit.v[3]=10; hit.v[4]=2;
+    std::uint8_t bundle[64]{}; world::WriteBundleHeader(bundle,1);
+    const auto hitSize=world::EncodeOp(hit,bundle+world::kBundleHeaderSize,sizeof(bundle)-world::kBundleHeaderSize);
+    Check(hitSize==world::kOpHeaderSize+15,"sleep hit alt enum encodes exact body");
+    bundle[world::kBundleHeaderSize+hitSize-1]=1;
+    world::BundleReader reader; world::Op decoded{}; world::OpStatus status{};
+    Check(reader.Open(bundle,world::kBundleHeaderSize+hitSize),"invalid cause bundle opens structurally");
+    Check(reader.Next(decoded,status) && status==world::OpStatus::bad_op,"received cause one rejected by codec");
+}
 } // namespace
 
 int main() {
@@ -1199,6 +1256,7 @@ int main() {
     WorldDisable();
     Alignment();
     SpawnSync();
+    RescueAndBuddies();
     std::printf("world_wire_tests: %u checks passed\n", checks);
     return 0;
 }

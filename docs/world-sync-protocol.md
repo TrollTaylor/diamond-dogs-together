@@ -864,7 +864,173 @@ pressure, session replacement and mixed levels, not physical game input.
 ## 14. Remaining extension points
 
 W5 full campaign/progression and W6 AI transforms remain design work.
-World op codes 0x1D-0x1F and 0x24 onward are available; control codes
+World op codes 0x1D-0x1F and 0x2A onward are available; control codes
 0x09-0x0F are now used. HOLDUP, hostages/vehicles and dynamic quest roster
 changes still require separate handling and live acceptance. Partner body
 rendering and input drive are independent of these world modules.
+
+
+## 15. Host-led companion positions and allocation research
+
+`world_buddy.lua` adds an optional level-3 companion channel. The host keeps
+its normal native buddy AI. For D-Dog, it publishes the actual instance-0
+position at most four times per second; the guest directs its own native
+D-Dog toward that position through `RequestMoveToPosition`. This synchronizes
+a host-led dog position target, not dog combat, spotting, animations, health
+or a globally shared native actor. Live two-copy acceptance is still required.
+
+| World op | Name | Direction | Fields | Queue | Body bytes |
+|---:|---|---|---|---|---:|
+| 0x27 | BUDDY_STATE | H->G | sequence, kind, present, x/y/z mm, heading mrad, sender tick (+ native age ms) | world | 24 |
+| 0x28 | BUDDY_ACK | G->H | sequence, kind, result, measured position error cm | world | 6 |
+
+Both packets are reliable, level 3, non-request, and use the existing mission,
+epoch, session and role guards. Kind values are NONE=0, DOG=1, HORSE=2,
+WALKER=3, QUIET=4; these differ from native `BuddyType`. The sequence is a
+nonzero 16-bit counter with half-range ordering. The native layer appends
+packet age, so the guest does not compare clocks across PCs. Position range
+is +/-1,000,000 metres, represented in millimetres; heading is -3142..3142
+milliradians. Heading currently follows the host player's heading as a
+navigation hint, not an observed dog facing angle.
+
+The guest expires a dog target after one second. It issues native move
+requests no faster than every 250 ms, stops correcting within 0.75 metres,
+and uses the stock dog `SetWarpPosition` only for errors over 15 metres.
+Acknowledgements carry a measured pre-command error; they do not assert that
+the dog has reached its target. `buddy_status` reports actual local readback,
+last host position, sample ages, kind/version/result and module error state.
+Unobserved positions are reported as unread, never substituted with player
+positions or the requested destination. Its bounded debug result has the form
+`buddy:G a1 p1 kdog v1 rfollowing e50 H=4.00,2.00,3.00@0 L=3.50,2.00,3.00@0 d0`.
+H/G identifies the current role; a/p are active-context/paired flags; k/v/r/e
+are kind, sequence, result and error in centimetres; H/L are actual last
+host/local xyz in metres followed by age in milliseconds; d is module-disabled.
+`?@-1` means unread and `99999+` means at least that old. Both positions survive
+the native 160-byte note bound; the worst permitted result is 154 bytes.
+
+Only known active field missions, ordinary in-game state, no running demo,
+and an active native buddy block permit mutation. A guest already using
+D-Dog borrows that actor; a guest with no buddy requests a dog once and waits
+up to five seconds for actual allocation/readback. A horse, walker or Quiet
+on the guest is left alone and reports `guest_buddy_busy`. A request returning
+true means accepted, not spawned. The module does not change saved buddy
+selection or force `Load`. Missing optional bindings or a companion API error
+disable this module without disabling enemy/time/weather sync.
+
+Unpairing, stale data, host buddy changes and stop release borrowed control.
+An originally absent dog is dismissed; an original dog receives a stock
+CallBuddy request at its actual current position. Native refusal retains
+ownership for bounded retry. Cleanup waits through menus/demos/inactive
+blocks, and a user-selected replacement or changed actor ID is never modified.
+Epoch changes clear received targets; mission changes clear old allocation
+ownership. Restoring native follow after release requires live verification.
+
+**Qualified API evidence.** The installed executable SHA-256 is
+`085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45`.
+The registered `TppBuddy2BlockController` table at RVA 0xA45BE0..0xA45F27
+identifies GetActiveBuddyType (0xA46030), IsBlockActive (0xA47060),
+CallBuddy (0xA44560), RequestMoveToPosition (0xA48C80), and Load
+(0xA47CF0). Complete wrappers, including their split cold code, validate
+CallBuddy's numeric buddy type, Vector3 position and numeric heading. The
+stock Load implementation multiplies saved rotation by pi/180 before the
+same controller heading slot, establishing radians. Extracted retail
+`s10020_sequence.lua` lines 1331-1336 calls dog instance 0 with
+`{id="SetWarpPosition", pos=Vector3(...)}`; the native dog dispatcher matches
+that command and reads `pos` at 0xC7D2FC. No guessed native address is called.
+
+**Separate rides remain experimental.** The actual variant-00 D-Dog, D-Horse
+and D-Walker FPKD assets each declare one GameObject, totalCount=1,
+realizedCount=1, and one group-0 locator. Native CallBuddy selects one global
+buddy type/request slot; repeating it does not establish a second ride.
+The bounded staging tool `tools/stage_buddy_capacity.py` creates scratch-only
+variant-00 horse/walker candidates with count 2 and a second closed locator
+graph offset four metres. It keeps the original locator, parts and parameters,
+round-trips FOX2/FPKD through the pinned existing local converter, and checks
+all 17 horse / 38 walker other entries remain byte-identical. It never
+installs an archive. Candidate hashes are recorded in its verification JSON.
+
+Structural success does not prove game allocation, index-1 realization,
+controller initialization, memory budget, per-player attachment or replicated
+ride input. Only variant 00 is staged. The horse GetRidePlayer dispatcher
+(0xE4D250, branch 0xE4D510) uses a count-bounded per-instance array of stride
+0x2F0 and returns an occupied flag, not a player identity. Its out-of-range
+path is unsafe; index-1 SendCommand probes require proof that this internal
+array actually has two entries. The horse initializer passes declared
+totalCount into the exact ride component (hash 0xDAD9FC9574D3) at 0xE4CE60,
+then retains that component at primary manager+0x88. Its initializer
+0xE7C750 and allocator 0xE7C4C0 reserve count times 0x2F0 bytes and construct
+each record. This establishes a natural static capacity-two path; memory
+budget, actual allocation and normal mounting still need live proof. The second analogous
+dispatcher at 0x1807830 belongs to TppHorse2forVr, established through its
+vtable type check at 0x1806D50; it must not be used for D-Walker. The actual
+TppWalkerGear2 type check is 0x1704670 (hash 0xB4C3AC6CBE57), with Lua
+command dispatch at 0x1706190..0x1706CDA. That handler refuses indices beyond
+its instance count before dispatch. GetPosition reads the actual position
+array at 0x170633A; IsPlayerRiding (hash 0x44367C424E38, branch 0x1706420)
+returns a boolean from the rider slot and ride mode, not rider identity. The
+registered no-argument Player.GetGameObjectIdIsRiddenToLocal wrapper
+(0x9D2510) reads the selected local player's ride object ID; the related
+indexed storage getter supports player indices 0..15 but establishes only
+read storage, not a safe attach operation. These ride dispatchers are not called by the production module. Horse/walker host samples explicitly report
+`second_ride_unavailable`; two independently usable rides are not claimed.
+
+**Validation.** The isolated Lua fixture currently passes 183 checks for
+actual-position publication, navigation cadence, stale/old data, native
+refusal, user buddy replacement, allocation timeout, cleanup and status
+readback. Eight synthetic XML tests cover the staging graph and rejection
+paths. These are fixture/format results, not live game, network or ride proof.
+Run host/guest lab saves with D-Dog selected in a supported field scene,
+observe status/readback while the host walks and sprints, then check dog
+release on unpair/buddy replacement and travel. Root-controlled private
+worker testing owns any candidate archive installation and restoration.
+
+`tools/stage_buddy_runtime.py` additionally builds a new scratch-only QAR
+containing all 13 baseline21 entries byte-identical plus the two capacity-two
+variant-00 FPKD overrides. The first verified candidate is 16,659,456 bytes,
+SHA-256 `d328031c2478dea51439c95eb783248e01b9b8875e870ce9d4d9cd256593f3f8`.
+Its `catalog.json` records all 15 paths/hashes, motion allowance 21, buddy
+capacity 2, and the exact horse/walker/variant-00 allowlist. The default-off `MGS_LOCAL_BUDDY_CAPACITY_TEST` admits only this exact archive
+with `MGS_BACKGROUND_WORKER=ON`, an actual never-displayed worker desktop,
+and matching run/role/profile/hash/motion/capacity environment. The manifest
+requires `runtime_profile=buddy_capacity_two_v1`, `runtime_buddy_capacity=2`
+and the exact hash. This is lab-only and cannot combine the gun-preload archive.
+The explicit worker `-BuildProfile buddy-capacity -BuddyCapacityArchive <path>`
+requires native census/loco and a matching Research receipt with only the buddy
+flag enabled. Its sidecar catalog is independently pinned. Both installed
+baselines are verified first; only the owned run config selects the candidate.
+Stop preflights every coherent baseline or worker loader/archive pair before
+mutation, then lets the existing installation transaction restore archive,
+loader and ownership records together. Never replace the candidate archive
+before that transaction checks its installed hash. Production and release
+pins remain unchanged; 703 detached worker checks cover policy and recorded
+partial restoration, not live installation or allocation.
+
+
+`Vector3` may be a callable table or userdata in retail, so the companion
+module binds it through a protected constructor call plus actual GetX/Y/Z
+readback instead of requiring Lua type `function`. Inactive `buddy_status`
+reports the precise missing binding/context reason. `B.cleanupPending()` is
+safe to invoke after world stop: it retries only previously owned release,
+never follows, allocates, publishes or receives, and discards old mission
+ownership without calling the old actor. The first hidden run showed the
+host dog beside the player while both modules reported `a0 kunknown`; that
+pre-fix observation is not evidence of mirrored positions. The binding fix
+and inactive cleanup still need live acceptance.
+
+Additional qualified allocation probes are read-only class
+`GameObject.SendCommand({type="TppWalkerGear2"},{id="GetMaxInstanceCount"})`
+(dispatcher 0x17061FD, class index 0x1FF) and the existing actual instance
+`GetPosition`/`IsPlayerRiding`. Once an actual count of two is read, the stock
+walker `SetPosition` accepts `pos` and numeric `rotY` and forwards radians
+through helper 0x170D410; stock mission s10050_sequence uses this command.
+The walker secondary vtable is 0x24426A0, whose +0xF8 getter 0x1704250 reads
+`[this+0xB8]+index*0x580`; it is not the unrelated getter at 0x17046A0.
+For horse, capture the naturally invoked 0xE4D250 receiver and read its
+component count before any index-1 query. Stock `SetCallHorse` takes
+`startPosition`/`goalPosition` and per-instance call state; neither repeated
+CallBuddy nor that navigation request establishes player attachment.
+The horse natural mount-event handler 0xE59C20 stores the actual rider ID
+in that horse's record+0xE and occupied state+0x2DD, but its event caller
+ownership/ABI is not qualified for synthetic force-mount calls. Normal local
+mount input and actual Player.GetGameObjectIdIsRiddenToLocal readback are
+required. Remote player attachment and ride replication remain unfinished.

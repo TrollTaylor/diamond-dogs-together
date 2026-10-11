@@ -12,6 +12,32 @@ Import-Module (Join-Path $SourceDirectory 'WorkerSessionCommon.psm1') -Force -Di
 $script:checks=0
 function Assert-True([bool]$Value,[string]$Name){++$script:checks;if(!$Value){throw "Fixture failed: $Name"}}
 function Assert-Throws([scriptblock]$Action,[string]$Name){$threw=$false;try{& $Action|Out-Null}catch{$threw=$true};Assert-True $threw $Name}
+# Exact candidate policy is exercised separately from file rollback mocks.
+$pinned=Get-WorkerRuntimePins;$capacityPins=Get-WorkerBuddyCapacityPins
+Assert-True ($pinned.Archive -ceq '87BBE82BB1E907CF405200155DA2794BF7E1F5A3D45BF66426A38CDD31A91F96') 'production runtime pin unchanged'
+$normalSession=@{candidate_sha256='B'*64}
+$normalCatalog=Get-WorkerSessionRuntimeCatalog $normalSession $pinned
+Assert-True (!$normalCatalog.Experimental -and $normalCatalog.Archive -ceq $pinned.Archive -and $normalCatalog.Bytes -eq 16333824) 'old baseline session unchanged'
+$capacitySession=@{mode='lab';candidate_sha256='B'*64;runtime_profile=$capacityPins.Profile;runtime_archive_sha256=$capacityPins.Archive;
+    runtime_archive_bytes=$capacityPins.Bytes;runtime_motion_count=21;runtime_buddy_capacity=2;runtime_catalog_sha256=$capacityPins.Catalog}
+$capacityCatalog=Get-WorkerSessionRuntimeCatalog $capacitySession $pinned
+Assert-True ($capacityPins.Archive -ceq '4B290CDDC14F1146DCE5A64A1008365D572B424B319874EF77E9496634D75EC9' -and $capacityPins.Bytes -eq 17501184 -and $capacityPins.Catalog -ceq '4A7E7EA890ADF8F261368CD546CCFD3DBFDC4407EF6AF44AFF308B98E53D0989') 'pinned seven-horse capacity archive'
+Assert-True ($capacityCatalog.Experimental -and $capacityCatalog.Archive -ceq $capacityPins.Archive -and $capacityCatalog.Bytes -eq 17501184 -and $capacityCatalog.Capacity -eq 2) 'exact capacity catalog readback'
+foreach($key in @('runtime_profile','runtime_archive_sha256','runtime_archive_bytes','runtime_motion_count','runtime_buddy_capacity','runtime_catalog_sha256')){
+    $changed=$capacitySession.Clone();$changed.Remove($key)
+    Assert-Throws {Get-WorkerSessionRuntimeCatalog $changed $pinned} ('missing candidate field '+$key)
+}
+foreach($case in @(@('runtime_profile','buddy_capacity_two_v2'),@('runtime_archive_sha256',('A'*64)),@('runtime_archive_bytes',16333824),@('runtime_archive_bytes',16659456),
+    @('runtime_motion_count',31),@('runtime_buddy_capacity',1),@('runtime_catalog_sha256',('A'*64)),@('mode','play'))){
+    $changed=$capacitySession.Clone();$changed[$case[0]]=$case[1]
+    Assert-Throws {Get-WorkerSessionRuntimeCatalog $changed $pinned} ('changed candidate field '+$case[0])
+}
+Assert-True ((Get-WorkerRestorePair $capacitySession $pinned ('A'*64) ('A'*64) $pinned.Archive) -ceq 'baseline') 'candidate session unprepared role admits original pair'
+Assert-True ((Get-WorkerRestorePair $capacitySession $pinned ('A'*64) ('B'*64) $capacityPins.Archive) -ceq 'worker') 'candidate session prepared role admits exact candidate pair'
+Assert-True ((Get-WorkerRestorePair $normalSession $pinned ('A'*64) ('B'*64) $pinned.Archive) -ceq 'worker') 'normal worker pair unchanged'
+foreach($case in @(@(('A'*64),$capacityPins.Archive),@(('B'*64),$pinned.Archive),@(('C'*64),$capacityPins.Archive),@(('B'*64),('C'*64)))){
+    Assert-Throws {Get-WorkerRestorePair $capacitySession $pinned ('A'*64) $case[0] $case[1]} 'candidate rejects mixed/foreign pair'
+}
 $id='0123456789abcdef0123456789abcdef'
 Assert-True (Test-WorkerRunId $id) 'run32'
 foreach($bad in @('','0123',$id.ToUpperInvariant(),($id+'0'),($id+"`n"))){Assert-True (!(Test-WorkerRunId $bad)) 'invalid run id'}
@@ -37,12 +63,18 @@ $context="MGSWORKERCTX1 $id host 41 12345 MGSWorker_$id admitted`n"
 Assert-True (Test-WorkerContextText $context $id 'host' $lease) 'native context exact owner'
 foreach($changed in @($context.Replace('host','guest'),$context.Replace('41','42'),$context.Replace('12345','99999'),$context.Replace('admitted','pending'),$context.TrimEnd([char]10),$context.Replace("`n","`r`n"),($context+"`n"))){Assert-True (!(Test-WorkerContextText $changed $id 'host' $lease)) 'context mismatch'}
 $flags=[ordered]@{}
-foreach($name in @('MGS_LOCAL_GUN_PRELOAD_TEST','MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST','MGS_LOCAL_STOCK46_AMMO_TEST','MGS_LOCAL_ACTION_EVENTS','MGS_LOCAL_UPPER_END_OBSERVE','MGS_LOCAL_UPPER_PHASE_OBSERVE','MGS_LOCAL_UPPER_MANUAL_IDLE','MGS_LOCAL_UPPER_PROBE','MGS_LOCAL_UPPER_CHANNEL2','MGS_LOCAL_UPPER_FIRE_ZERO_BLEND')){$flags[$name]='OFF'}
+foreach($name in @('MGS_LOCAL_BUDDY_CAPACITY_TEST','MGS_LOCAL_GUN_PRELOAD_TEST','MGS_LOCAL_OFFLINE_EQUIPMENT_TEST','MGS_LOCAL_STOCK46_PRELOAD_TEST','MGS_LOCAL_STOCK46_WRITER_TEST','MGS_LOCAL_STOCK46_AMMO_TEST','MGS_LOCAL_ACTION_EVENTS','MGS_LOCAL_UPPER_END_OBSERVE','MGS_LOCAL_UPPER_PHASE_OBSERVE','MGS_LOCAL_UPPER_MANUAL_IDLE','MGS_LOCAL_UPPER_PROBE','MGS_LOCAL_UPPER_CHANNEL2','MGS_LOCAL_UPPER_FIRE_ZERO_BLEND')){$flags[$name]='OFF'}
 $flags.MGS_BACKGROUND_WORKER='ON'
 $receipt=@{schema=1;status='passed';plan=@{profile='Normal';project='C:\repo';build_directory='C:\repo\build\worker';flags=$flags};artifacts=@{loader_sha256=$hash}}
 Assert-True (Test-WorkerCheckReceipt $receipt 'C:\repo\build\worker' 'C:\repo' $hash) 'normal21 worker build checks'
 $receipt.plan.profile='Research';Assert-True (!(Test-WorkerCheckReceipt $receipt 'C:\repo\build\worker' 'C:\repo' $hash)) 'reject research profile';$receipt.plan.profile='Normal'
 foreach($name in @($flags.Keys|Where-Object {$_ -cne 'MGS_BACKGROUND_WORKER'})){$flags[$name]='ON';Assert-True (!(Test-WorkerCheckReceipt $receipt 'C:\repo\build\worker' 'C:\repo' $hash)) 'reject every experiment';$flags[$name]='OFF'}
+$capacityFlags=@{};foreach($flag in $flags.Keys){$capacityFlags[$flag]=$flags[$flag]};$capacityFlags.MGS_LOCAL_BUDDY_CAPACITY_TEST='ON'
+$capacityReceipt=@{schema=1;status='passed';plan=@{profile='Research';project='C:\repo';build_directory='C:\repo\build\buddy-capacity';flags=$capacityFlags};artifacts=@{loader_sha256=$hash}}
+Assert-True (Test-WorkerResearchReceipt $capacityReceipt 'C:\repo\build\buddy-capacity' 'C:\repo' $hash @('MGS_LOCAL_BUDDY_CAPACITY_TEST')) 'capacity receipt enables only exact flag'
+Assert-True (!(Test-WorkerCheckReceipt $capacityReceipt 'C:\repo\build\buddy-capacity' 'C:\repo' $hash)) 'capacity never admits normal receipt'
+$capacityFlags.MGS_LOCAL_STOCK46_WRITER_TEST='ON'
+Assert-True (!(Test-WorkerResearchReceipt $capacityReceipt 'C:\repo\build\buddy-capacity' 'C:\repo' $hash @('MGS_LOCAL_BUDDY_CAPACITY_TEST'))) 'capacity start refuses unaudited extra weapon flag'
 $flags.MGS_BACKGROUND_WORKER='OFF';Assert-True (!(Test-WorkerCheckReceipt $receipt 'C:\repo\build\worker' 'C:\repo' $hash)) 'worker disabled';$flags.MGS_BACKGROUND_WORKER='ON'
 Assert-True (!(Test-WorkerCheckReceipt $receipt 'C:\repo\build\other' 'C:\repo' $hash)) 'different build'
 Assert-True (!(Test-WorkerCheckReceipt $receipt 'C:\repo\build\worker' 'C:\repo' ('B'*64))) 'different loader'
@@ -290,6 +322,23 @@ foreach($name in @('Assert-WorkerConfigSnapshotPreflight','Invoke-WorkerRestoreO
 $tokens=$null;$errors=$null
 $scenarioAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'tools\worker\Invoke-WorkerScenario.ps1'),[ref]$tokens,[ref]$errors)
 Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
+# Execute the actual required-result helper; a failed prerequisite must prevent
+# the next simulated input while preserving failure evidence. No games are run.
+& {
+    $definition=@($scenarioAst.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Assert-ScenarioResult'},$true))
+    Assert-True ($definition.Count -eq 1) 'one fail-fast scenario result helper'
+    . ([scriptblock]::Create($definition[0].Extent.Text))
+    $expectations=[Collections.Generic.List[string]]::new()
+    $expectFailures=[Collections.Generic.List[string]]::new()
+    $script:nextScenarioInput=0;$failed=$false
+    try {Assert-ScenarioResult 'host' '^k1 a2 r2$' 'k1 a1 r1' $true;$script:nextScenarioInput++}catch{$failed=$true}
+    Assert-True ($failed -and $script:nextScenarioInput -eq 0) 'failed prerequisite stops following input'
+    Assert-True ($expectations.Count -eq 1 -and $expectFailures.Count -eq 1 -and $expectFailures[0].Contains('k1 a1 r1')) 'required failure retains actual evidence'
+    Assert-ScenarioResult 'host' '^k1 a2 r2$' 'k1 a2 r2' $true;$script:nextScenarioInput++
+    Assert-True ($script:nextScenarioInput -eq 1 -and $expectFailures.Count -eq 1) 'passing required check continues'
+    Assert-ScenarioResult 'guest' '^READY$' 'ready' $false -WarningAction SilentlyContinue;$script:nextScenarioInput++
+    Assert-True ($script:nextScenarioInput -eq 2 -and $expectFailures.Count -eq 2) 'expect preserves case-sensitive nonfatal behavior'
+}
 # Every shipped scenario passes the runner's own step validation (its helper
 # functions, key/role lists and validation loop, extracted; nothing runs).
 & {
@@ -320,10 +369,11 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
         Assert-True (!$failure) ('scenario steps valid: '+$file.Name+' '+$failure)
     }
     foreach($step in @('host worldtrigger goto=30020','host worldtrigger goto=30010 goto_lz=1','waitmission guest 30020 120',
-        'host worldtrigger world_probe=shared_checkpoint','guest worldtrigger world_probe=shared_death','host worldtrigger world_probe=host_continue')){
+        'host worldtrigger world_probe=shared_checkpoint','guest worldtrigger world_probe=shared_death','host worldtrigger world_probe=host_continue',
+        'host worldtrigger world=0','guest worldtrigger world=0')){
         $steps=@($step); & $validator; Assert-True $true ('qualified hidden travel admits '+$step)
     }
-    foreach($step in @('both worldtrigger goto=30020','guest worldtrigger goto=30020','host worldtrigger world=0',
+    foreach($step in @('both worldtrigger goto=30020','guest worldtrigger goto=30020','both worldtrigger world=0','host worldtrigger world=1','host worldtrigger world=0 extra',
         'host worldtrigger goto=30050','guest worldtrigger world_probe=host_continue','host worldtrigger world_probe=shared_death',
         'both worldtrigger world_probe=shared_checkpoint','host worldtrigger world_probe=kill_near','waitmission both 30020 120','waitmission host 30060 120','waitmission host 30020 401')){
         $steps=@($step);$failed=$false;try{& $validator}catch{$failed=$true}
@@ -343,7 +393,14 @@ Assert-True (@($errors).Count -eq 0) 'scenario reader source syntax'
         Assert-True ($script:triggerDispatchRecord -ceq ($r+'|'+$t[2])) ('world trigger passes actual target '+$r)
     }
     $Mode='play';$steps=@('host worldtrigger goto=30020');$failed=$false;try{& $validator}catch{$failed=$true}
-    Assert-True $failed 'hidden travel refuses play mode';$Mode='lab'
+    Assert-True $failed 'hidden travel refuses play mode'
+    $steps=@('host worldtrigger world=0');$failed=$false;try{& $validator}catch{$failed=$true}
+    Assert-True $failed 'hidden travel refuses play-mode world disable';$Mode='lab'
+    foreach($r in @('host','guest')){
+        $t=@($r,'worldtrigger','world=0')
+        & $dispatchBlock
+        Assert-True ($script:triggerDispatchRecord -ceq ($r+'|world=0')) ('world disable passes actual target '+$r)
+    }
     $steps=@('host hold shift+w+space 200 nowait','guest burst dive 8 120','host hold w+jump 200')
     $failure=$null
     try { & $validator } catch { $failure=$_.Exception.Message }
@@ -826,6 +883,50 @@ try {
     Assert-Throws {Invoke-WorkerRestoreOwnedSession $case.session $case.run $RepoRoot $case.pins $case.report} 'bad config backup refuses before installer mutation'
     Assert-True ($script:packageCalls -eq 0) 'all snapshot backup hashes preflight even if current target is baseline'
 
+    # A foreign archive/loader in the SECOND role blocks every mutation,
+    # even while the first role remains a coherent owned worker.
+    foreach($tamper in @('Archive','Loader')){
+        $case=New-WorkerCleanupFixture ('changed-pair-'+$tamper)
+        $script:fixtureSession=$case.session;$script:packageCalls=0
+        $hostPair=Get-InstancePaths -GameDirectory $case.session.roles.host.game
+        $guestPair=Get-InstancePaths -GameDirectory $case.session.roles.guest.game
+        [IO.File]::WriteAllText($guestPair.$tamper,"foreign pair bytes must survive`n")
+        $beforeLoader=Get-WorkerHash $hostPair.Loader
+        Assert-Throws {Invoke-WorkerRestoreOwnedSession $case.session $case.run $RepoRoot $case.pins $case.report} ('changed second role pair '+$tamper)
+        Assert-True ($script:packageCalls -eq 0 -and (Get-WorkerHash $hostPair.Loader) -ceq $beforeLoader) 'all-role loader/archive preflight before first rollback'
+    }
+    # Actual Stop function with a recording catalog/parser boundary, on tiny
+    # synthetic archive bytes. Exact real hash admission was checked above.
+    & {
+        $case=New-WorkerCleanupFixture 'candidate-archive-rollback'
+        $script:fixtureSession=$case.session;$script:packageCalls=0
+        $hostPair=Get-InstancePaths -GameDirectory $case.session.roles.host.game
+        $guestPair=Get-InstancePaths -GameDirectory $case.session.roles.guest.game
+        $archiveBackup=Join-Path $case.run 'baseline-archive.dat'
+        [IO.File]::Copy($hostPair.Archive,$archiveBackup,$false)
+        [IO.File]::WriteAllText($hostPair.Archive,"fixture capacity-two archive`n")
+        $mockHash=Get-WorkerHash $hostPair.Archive;$mockLength=(Get-Item -LiteralPath $hostPair.Archive).Length
+        function Get-WorkerSessionRuntimeCatalog($Session,$Pins){
+            [ordered]@{Profile='fixture-only-recording-catalog';Archive=$mockHash;Bytes=$mockLength;Motions=21;Capacity=2;Experimental=$true}
+        }
+        # The policy itself executes with this recording catalog, not a fake
+        # acceptance boolean. No installer, game or process boundary is called.
+        $pairDefinition=[scriptblock]::Create((Get-Command Get-WorkerRestorePair).ScriptBlock.ToString())
+        function Get-WorkerRestorePair($Session,$Pins,[string]$BaselineLoader,[string]$CurrentLoader,[string]$CurrentArchive){
+            & $pairDefinition $Session $Pins $BaselineLoader $CurrentLoader $CurrentArchive
+        }
+        function Invoke-WorkerPackageRestore([string]$Repo,[string]$Game,[string]$Package,[string]$Role){
+            ++$script:packageCalls
+            Assert-True ($Role -ceq 'host' -and (Get-WorkerHash (Get-InstancePaths $Game).Archive) -ceq $mockHash) 'candidate archive remains installed until transaction validates after hash'
+            $p=Get-InstancePaths $Game
+            [IO.File]::Copy((Join-Path $Package 'payload\dinput8.dll'),$p.Loader,$true)
+            [IO.File]::Copy($script:fixtureSession.roles[$Role].baseline_record,$p.Record,$true)
+            [IO.File]::Copy($archiveBackup,$p.Archive,$true)
+        }
+        Invoke-WorkerRestoreOwnedSession $case.session $case.run $RepoRoot $case.pins $case.report
+        Assert-True ($script:packageCalls -eq 1 -and (Get-WorkerHash $hostPair.Archive) -ceq $case.pins.Archive -and
+            (Get-WorkerHash $guestPair.Archive) -ceq $case.pins.Archive) 'partial candidate preparation restores host archive transaction and keeps guest baseline'
+    }
     $case=New-WorkerCleanupFixture 'live-game'
     $script:fixtureSession=$case.session;$script:packageCalls=0;$script:fakeActiveGame=$case.session.roles.host.game
     Assert-Throws {Invoke-WorkerRestoreOwnedSession $case.session $case.run $RepoRoot $case.pins $case.report} 'fake live owned game blocks restoration'
@@ -933,12 +1034,12 @@ try {
  Assert-True ($call.Count -eq 1) 'graphics: one real Start invocation'
  & {
   $worker='C:\fixture';$build='C:\fixture';$CheckReceipt='C:\fixture';$BaselineLoaderSha256='A'*64
-  $TimeoutSec=600;$ReadyTimeoutSec=180;$PartnerProfile='animated';$NativeStage='';$BuildProfile='normal';$AmmoExperiment=$false
+  $TimeoutSec=600;$ReadyTimeoutSec=180;$PartnerProfile='animated';$NativeStage='';$BuildProfile='normal';$BuddyCapacityArchive='';$AmmoExperiment=$false
   $SaveSeed='lab';$LabSetting=@();$Mode='lab';$WanSim='off'
   function Join-Path([string]$Path,[string]$ChildPath){Assert-True ($ChildPath -ceq 'Start-WorkerSession.ps1') 'graphics: recorded Start only';return 'Graphics-RecordStart'}
   function Graphics-RecordStart {
    param($BuildDirectory,$CheckReceipt,$BaselineLoaderSha256,$TimeoutSec,$ReadyTimeoutSec,$PartnerProfile,$NativeStage,$BuildProfile,
-    [switch]$AmmoExperiment,$SaveSeed,$GraphicsQuality,$LabSetting,$Mode,$WanSim)
+    [switch]$AmmoExperiment,$SaveSeed,$GraphicsQuality,$LabSetting,$Mode,$WanSim,$BuddyCapacityArchive)
    return $GraphicsQuality
   }
   $GraphicsQuality='preserve';Assert-True ((& ([scriptblock]::Create($call[0].Extent.Text))) -ceq 'preserve') 'graphics: real invocation forwards default'

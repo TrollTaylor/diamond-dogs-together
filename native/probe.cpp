@@ -18,7 +18,7 @@
 #endif
 
 #ifndef MGS_COOP_PROBE_VERSION
-#define MGS_COOP_PROBE_VERSION "0.12.1"
+#define MGS_COOP_PROBE_VERSION "0.12.2"
 #endif
 
 namespace {
@@ -205,9 +205,15 @@ extern "C" HRESULT WINAPI DirectInput8Create(HINSTANCE instance, DWORD version, 
         // The scenario bridge runs in the one-PC lab and in the hidden worker's
         // play rehearsal (play_rehearsal survives the parser only in worker
         // builds, LabParseOptions; docs/two-pc-play.md "Hidden play rehearsal").
-        mgscoop::worker_scenario::Initialize({verified_offline,
+        const bool private_worker = mgscoop::worker_scenario::Initialize({verified_offline,
             config.present && (config.mode == mgscoop::LabMode::lab || config.play_rehearsal),
             mgscoop::lab::SavesRedirected(), verified_offline && MountedPlayerMotionCount() == 21});
+#if MGS_BACKGROUND_WORKER
+        if (private_worker)
+            mgscoop::lab::SetWorkerXInputProvider(&mgscoop::debug_overlay::WorkerVirtualPadState);
+#else
+        (void)private_worker;
+#endif
         mgscoop::debug_overlay::Install();
     }
     SetLastError(forwarded_error);

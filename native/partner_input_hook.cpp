@@ -36,6 +36,8 @@
 #include <windows.h>
 #include <strsafe.h>
 #include <cstring>
+#include "mgscoop/nametag_game.hpp"
+#include "mgscoop/teammate_targeting.hpp"
 #include "mgscoop/partner_input_hook.hpp"
 #include "mgscoop/near_code.hpp"
 #include "mgscoop/partner_aim_point.hpp"
@@ -68,6 +70,8 @@ bool g_ready = false;
 std::uintptr_t g_base = 0;
 LogFn g_log = nullptr;
 SampleFn g_sample = nullptr;
+HudBeforeFn g_hud_before = nullptr;
+HudAfterFn g_hud_after = nullptr;
 DispatchFn g_original = nullptr;
 HoldFn g_hold_orig = nullptr;
 void* g_stub = nullptr;
@@ -671,6 +675,8 @@ void GuardedCall(const pi::Arm& a, const Save& save, const Call& k, bool detour 
         __try { CallOriginal(k); }
         __finally {
             if (detour) {
+                // The UI scope must end even when the native job unwinds.
+                teammate_targeting::EndQuietJob();
                 partner_local_detour::Release();
                 partner_look_source::Withdraw();
             }
@@ -1928,6 +1934,8 @@ const char* LookRefusalName(LookRefusal refusal) noexcept {
     }
 }
 
+void RegisterHudProbe(HudBeforeFn before, HudAfterFn after) noexcept { g_hud_before = before; g_hud_after = after; }
+
 bool RunJobWindow(void* go, const void* param, std::uint32_t block, JobCallFn job, pi::Consumer consumer) noexcept {
     g_job_fn = job;
     pi::Arm a{};
@@ -2031,7 +2039,9 @@ bool RunJobWindow(void* go, const void* param, std::uint32_t block, JobCallFn jo
     if (a.naim == PartnerNativeAim::looksrc && j.look_valid && a.ps1 && partner_look_source::Installed())
         partner_look_source::Publish(a.ps1, 1, a.ps1_idx, j.look_pitch, j.look_yaw);
     // Always released (the detour and the published look) on every exit.
+    const auto hud_probe = g_hud_before ? g_hud_before(a.P) : nametag_game::HudJobProbe{};
     GuardedCall(a, save, Call{kJobEntry, go, const_cast<void*>(param), 0, 0}, true);
+    if (g_hud_after) g_hud_after(hud_probe);
     g_in_drain = false;
     if (save.rings_saved) g_ring_prev[static_cast<std::size_t>(consumer)] = j.held;
     ProbeRecord(a.rec1);

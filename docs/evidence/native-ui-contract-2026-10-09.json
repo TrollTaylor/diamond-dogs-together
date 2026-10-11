@@ -1,0 +1,230 @@
+{
+  "executable": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgsvtpp.exe",
+  "sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+  "scope": "Static natural lifecycle, native RGB setters and classifier; private run 6eef887cb2e04cd785bee9eb6f968119 observed actual ID1 category1 red original WU reticle. Friendly color mapping remains measured by RGB census.",
+  "abi": "Windows x64: FE7270 int(UI primary*, uint16 ID); caller FEA731. FE8690 void(UI secondary*,uint16 hint,uint32 priority,uint8 flag,uint8 enable,uint8 arg6,uint8 arg7); helper return10A498E. Helper10A4950 bool(movement*,uint8 enable), natural callers10B5640/10B767B.",
+  "sites": [
+    {
+      "rva": "0xfe6fda",
+      "size": 21,
+      "sha256": "e623df229d327e356a956f123af12316f6fb956d8d7aa9673ff4a4d4bb77f746",
+      "purpose": "UI factory final primary and secondary vtables"
+    },
+    {
+      "rva": "0x9bdcc5",
+      "size": 79,
+      "sha256": "15732f706bfe278a5ed0c6e3e574de9eab7ac9f086d71dce79519ae0933ee775",
+      "purpose": "GO+F8 = secondary UI, P=GO+20 therefore P+D8"
+    },
+    {
+      "rva": "0xfe7956",
+      "size": 15,
+      "sha256": "34e2ea1d2ad3d31964ae6a8b25fa459be48344475cb7877a457f026b8a0982f0",
+      "purpose": "UI init owner primary+48=P"
+    },
+    {
+      "rva": "0xfe6690",
+      "size": 47,
+      "sha256": "5e1340d2e24bf8e0e469035472338647232e8f4290525ae365678c8074893366",
+      "purpose": "UI ctor owns HudSystem primary+60 and shared HUD provider primary+68"
+    },
+    {
+      "rva": "0xfe7af0",
+      "size": 9,
+      "sha256": "50ffa3f2514e62a049c9caf62d8aff8a2a10e7b48c675269f970b90c035c261c",
+      "purpose": "secondary UI vt+8 native reticle update thunk"
+    },
+    {
+      "rva": "0xfea684",
+      "size": 157,
+      "sha256": "194eb5f4a59a70d6d5223a73cde1de0f6e9b1c249bc45ca74cc69e108cd96c32",
+      "purpose": "native camera ray handle selection and validity checks"
+    },
+    {
+      "rva": "0xfea721",
+      "size": 53,
+      "sha256": "62d4d4d63b055f9c89714f16c3d8620db3953a053f28182e16b9b5cd7b759988",
+      "purpose": "actual native hit ID -> classifier -> HudSystem vt+140; cache primary+76C"
+    },
+    {
+      "rva": "0xfe7270",
+      "size": 319,
+      "sha256": "8421ec5376278cdd063874a11bddd6f57962b4e35285e00b1f6be3482bbef155",
+      "purpose": "int classification(UI primary*,u16 gameObjectId), results 0/1/2; category1 red observed on owned ID1; category2 native friendly case"
+    },
+    {
+      "rva": "0xfe71b0",
+      "size": 10,
+      "sha256": "94640161768939a074c91dbfe8b5232e740c8d77b1799210611972a213e4b597",
+      "purpose": "UI vt+190 returns shared HUD data from U+48 provider vt+0"
+    },
+    {
+      "rva": "0xfe8b30",
+      "size": 97,
+      "sha256": "7942a5d5d1a037e956a4017d483ca7960da75bae039e28612d53cde25f4a0faa",
+      "purpose": "native UI vt+60 action setter writes U+744 cache; no visual meaning inferred"
+    },
+    {
+      "rva": "0x124a67e",
+      "size": 43,
+      "sha256": "7866de7f9530b17e132e07225f24b6c004a29b13e5c1610a9200f1ce6b675ea1",
+      "purpose": "HUD producer uses Q+20 action byte by gameObject ID; action0x12 not proven Quiet"
+    },
+    {
+      "rva": "0x124a6d5",
+      "size": 26,
+      "sha256": "582f7cebac491d6d14b58313fce5b906d5ccadfee9fb3f978b6d26f51cb5f70e",
+      "purpose": "action0x12 producer updates UI action and shared HUD+328 bit3"
+    },
+    {
+      "rva": "0x94af70",
+      "size": 39,
+      "sha256": "09dcab7aac3fcb85da0e751586493135758fc385c6f6905e995eb15516956f0a",
+      "purpose": "actual HudSystem category wrapper obtains CommonDataManager"
+    },
+    {
+      "rva": "0x866910",
+      "size": 8,
+      "sha256": "80bab8fdcfdaf904963d0664e0ca0cd01ba0d009ac6417aab94a298ebecbfb82",
+      "purpose": "CommonDataManager singleton pointer global2BF1940"
+    },
+    {
+      "rva": "0x868610",
+      "size": 41,
+      "sha256": "0306901e8f7f0aa84c123f44e131e88e769c4b661fcabcb37e260cfa791e9006",
+      "purpose": "categories2/1/0 dispatch to original reticle style setters"
+    },
+    {
+      "rva": "0x9420c0",
+      "size": 29,
+      "sha256": "4f868095efd130b377c69bc5f7723517661c5b0d3d01c59e589b684cd5365bac",
+      "purpose": "category0 releases existing target color toward white"
+    },
+    {
+      "rva": "0x9420e0",
+      "size": 103,
+      "sha256": "a4719da63942a2a857cdba361cc0adf6e0a006c201774818681fb9f8a237e327",
+      "purpose": "category2 applies native friendly style to existing reticle nodes148/150"
+    },
+    {
+      "rva": "0x9421c0",
+      "size": 142,
+      "sha256": "28ef003df47fc37988059e2b64a4cf0772520db310e0161fa0bf5b35958576e9",
+      "purpose": "category1 native target style; live owned ID1/category1 red WU reticle observed"
+    },
+    {
+      "rva": "0x941ed0",
+      "size": 493,
+      "sha256": "b14de9a3e31f3df5ff5586f1898521a625fa3af088faf1ba8be5133dcece6fbe",
+      "purpose": "complete original RGB update across three declared pdata fragments"
+    },
+    {
+      "rva": "0x1dbe160",
+      "size": 67,
+      "sha256": "c0dccf90c20118037f57b9e8e699eddfec6dcb167b2ecf93c319f38b30bb1dc9",
+      "purpose": "RGB scalar setter calls three vector lane writers"
+    },
+    {
+      "rva": "0x1dad560",
+      "size": 77,
+      "sha256": "c7b701bcf106fbc24e6ac59b922df6d2a18367042e8cd851947ff564777b3229",
+      "purpose": "reticle node color vector50 X writer"
+    },
+    {
+      "rva": "0x1dad510",
+      "size": 77,
+      "sha256": "28cd7f43d938266ab24edb38604eb2ce96cbe52c49e6ccf56454bb16b274451a",
+      "purpose": "reticle node color vector50 Y writer"
+    },
+    {
+      "rva": "0x1dad4c0",
+      "size": 77,
+      "sha256": "19b2cbb1e51abbe45bf63c58cdefe28ff2c3241c43c6265888d001f36e1522ad",
+      "purpose": "reticle node color vector50 Z writer"
+    },
+    {
+      "rva": "0x862b60",
+      "size": 1577,
+      "sha256": "4325fbcb8b25633936dc4c8f04b5200ea77ff2a7e02ef85931dc94fcc5fee74b",
+      "purpose": "complete CommonDataManager ctor final vt22447E8 embedded reticle30"
+    },
+    {
+      "rva": "0x941c20",
+      "size": 587,
+      "sha256": "f3cecd81652c5ca9771f7ad1cc72127cc491360fa5ecb1c40ab4e0efd1454886",
+      "purpose": "complete embedded original reticle initialization"
+    },
+    {
+      "rva": "0x20f90",
+      "size": 5,
+      "sha256": "be0d05965dc835782e7cf3836e77591b0f4f6274c898b6209ff60fea334dead2",
+      "purpose": "actual shared HUD provider leaf getter returns provider10 without call"
+    },
+    {
+      "rva": "0x1ffe200",
+      "size": 56,
+      "sha256": "8d8015fec1388393743b13006d9f51d486bdcc68be28b9238474e8c6ae68aa17",
+      "purpose": "complete shared HUD provider singleton initialization final vt2278EA0"
+    },
+    {
+      "rva": "0x864d70",
+      "size": 76,
+      "sha256": "22345e427f5d5d792c63c39e0aa58920e3a29033a98523c12a792a1f0f2929d8",
+      "purpose": "complete CommonDataManager singleton construction publication"
+    },
+    {
+      "rva": "0x10a4950",
+      "size": 71,
+      "sha256": "8ea4342c160ad7fc702ac4f2a736ca49168d9c7514faa2e4c63666be56a00704",
+      "purpose": "complete Quiet-camo callers helper queues native hint78 priority2 through owned UI"
+    },
+    {
+      "rva": "0xfe8690",
+      "size": 112,
+      "sha256": "5ccc53981f3e9ddfb72b7d45aeebe3c6ed58f71ecf74fa787f202390af59a733",
+      "purpose": "complete UI hint queue leaf; enable argument5 produces flag bit9, no owner gate"
+    },
+    {
+      "rva": "0x109e130",
+      "size": 689,
+      "sha256": "0d0ff86f2ee3f4770c42b58d0540c7fd941271db9745d84b8e89d5ee8a785c89",
+      "purpose": "complete phase1 natural locality event4/event5 and Quiet state33 selection; installed before existing local detour"
+    },
+    {
+      "rva": "0x10b52f0",
+      "size": 2067,
+      "sha256": "72ce79f02b56d88987e7eda0e877d38cc628e99c2ffba415981b504f6120e61f",
+      "purpose": "complete state32/36 callback; only local event4 Quiet camo calls helper"
+    },
+    {
+      "rva": "0x10b72a0",
+      "size": 1738,
+      "sha256": "43d3e3a35649006c3faa11a3b83fa126fce875b609cb951d59ae4937e5f551f7",
+      "purpose": "complete state33 callback including cold tail and request clearing"
+    },
+    {
+      "rva": "0x109efa0",
+      "size": 265,
+      "sha256": "5397c1fe09f798a9ecdbc025d187f4ec8806d0513ec220b0796ad7c443996519",
+      "purpose": "complete per-instance callback selection from state table2C55AE0"
+    },
+    {
+      "rva": "0x20262a0",
+      "size": 1772,
+      "sha256": "7df725e5d2dcb76c94981cbe7a4758392303749eaeb0f6982d7c0b44bd42abbf",
+      "purpose": "complete state callback table constructor states32/36=10B52F0 state33=10B72A0 with zero this-adjust"
+    },
+    {
+      "rva": "0x10b5b04",
+      "size": 56,
+      "sha256": "5dc510cef58fadcf7dae9d23474e78dea078ade9f86a33a0ec8226e9dbc1ce2c",
+      "purpose": "exact 14-entry event table data, event4 local helper / event5 remote bypass"
+    },
+    {
+      "rva": "0x10b796c",
+      "size": 56,
+      "sha256": "f1eca48364edec0944c79bfe37c20a25b9ce3240a612129108c5bbb678e644f0",
+      "purpose": "exact 14-entry event table data, event4 local helper / event5 remote bypass"
+    }
+  ]
+}

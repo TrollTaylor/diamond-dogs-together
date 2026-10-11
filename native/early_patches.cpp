@@ -179,6 +179,7 @@ bool is_local_master_url(const char* url) noexcept {
 #include <windows.h>
 #include <psapi.h>
 #include <xinput.h>
+#include <atomic>
 #include <strsafe.h>
 
 #include "mgscoop/import_table.hpp"
@@ -192,7 +193,7 @@ bool is_local_master_url(const char* url) noexcept {
 #include "steam_shim_contract.hpp"
 
 #ifndef MGS_COOP_PROBE_VERSION
-#define MGS_COOP_PROBE_VERSION "0.12.1"
+#define MGS_COOP_PROBE_VERSION "0.12.2"
 #endif
 
 namespace mgscoop::lab {
@@ -217,6 +218,7 @@ SteamGetterFn g_real_user = nullptr;
 SteamGetterFn g_real_friends = nullptr;
 SteamGetterFn g_real_storage = nullptr;
 int g_xinput_setting = kXInputPassthrough;
+std::atomic<WorkerXInputProvider> g_worker_xinput{nullptr};
 char g_mutex_suffix[32]{};
 
 // Every IAT slot written here, for the post-entry verification.
@@ -334,6 +336,9 @@ HANDLE WINAPI Mutex_Wrapper(LPSECURITY_ATTRIBUTES sa, BOOL initial, LPCWSTR name
 DWORD WINAPI XInput_Wrapper(DWORD index, XINPUT_STATE* state) noexcept {
     const DWORD incoming = GetLastError();
     const XInputRoute route = route_xinput(g_xinput_setting, index);
+    if (TryWorkerXInput(g_xinput_setting,index,state,sizeof(XINPUT_STATE),g_worker_xinput.load(std::memory_order_acquire))) {
+        SetLastError(incoming);return ERROR_SUCCESS;
+    }
     if (route.action == XInputAction::Passthrough) return g_real_xinput(index, state);
     if (route.action == XInputAction::Remap) return g_real_xinput(route.index, state);
     if (state) {
@@ -663,6 +668,8 @@ void InstallEarlyLabPatches() noexcept {
         }
     }
 }
+
+void SetWorkerXInputProvider(WorkerXInputProvider provider) noexcept {g_worker_xinput.store(provider,std::memory_order_release);}
 
 bool networking_gate_installed() noexcept { return g_gate_installed; }
 

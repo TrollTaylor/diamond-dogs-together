@@ -675,16 +675,29 @@ void Partner(const Snapshot& s) noexcept {
     } else ImGui::TextColored(kGrey, "No partner pose received yet%s.", up ? "" : " (link down)");
     ImGui::Text("Act %u   gun %u   flags 0x%02x   mapped clip %u", s.remote_act, s.remote_equip, s.remote_action_flags, s.mapped_clip);
     Row("partner_goto", s, {nullptr, 0, 0, true});
-    Heading("Name tag & friendly crosshair");
+    Heading("Downed and revive tests");
+    Rows({"coop_downed_status", "coop_revive_status"}, s);
+    Wrapped("Downed players crawl slowly and cannot aim or fire. Close F9 and hold ACTION (E by default) within 3 m for 3 seconds to revive your teammate.");
+    Heading("Companion tests");
+    Row("buddy_horse_spawn", s, {nullptr, 260.0f, ImGui::GetFrameHeight() * 1.5f, true});
+    Rows({"buddy_horse_status", "buddy_follow_status"}, s);
+    Wrapped("Summon selects your local D-Horse beside you. Close F9, wait for it, then use the normal ACTION button to mount. "
+        "This release uses the stock single-buddy pack; two independently synchronized mounts are still being developed. "
+        "Horse status reports actual local posture and availability, never an invented remote rider.");
+    for (const auto& r : s.receipts) {
+        if (!std::strcmp(r.command, "horse_status") || !std::strcmp(r.command, "horse_spawn")) {
+            ImGui::TextWrapped("Last horse test: %s", r.result); break;
+        }
+    }
+    Heading("Name tag");
     {
         namespace tag = mgscoop::nametag;
         const auto settings = tag::GetSettings();
         const auto t = tag::GetTelemetry();
         if (!tag::Enabled()) ImGui::TextColored(kGrey, "Unavailable here (no partner session, or the camera contract refused).");
-        else ImGui::Text("Name tag %s   crosshair %s   %s (%s)   \"%s\"   %.1f m%s", settings.on ? "on" : "off", tag::CrosshairName(settings.crosshair),
+        else ImGui::Text("Name tag %s   %s (%s)   \"%s\"   %.1f m%s", settings.on ? "on" : "off",
             t.visible ? "shown" : "hidden", tag::ReasonName(t.reason), t.name, t.dist_m, t.hover ? "   on target" : "");
         Rows({"partner_nametag_on", "partner_nametag_off", "partner_nametag_status"}, s);
-        Rows({"partner_crosshair_aim", "partner_crosshair_always", "partner_crosshair_off"}, s);
     }
     Heading("Presets");
     Rows({"partner_show", "partner_hide", "partner_default_net", "partner_warp_mode"}, s);

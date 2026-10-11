@@ -53,8 +53,20 @@ void TestMutexName() {
     Check(!renamed && out == nullptr, "null name unchanged");
 }
 
+unsigned provider_calls=0;
+bool FakeWorkerProvider(unsigned i,void* output,std::size_t bytes) noexcept {
+    ++provider_calls;if(i!=0||bytes!=16)return false;
+    std::memset(output,0,bytes);static_cast<unsigned char*>(output)[6]=255;return true;
+}
 void TestXInputRoute() {
     using namespace mgscoop::lab;
+    unsigned char virtual_state[16]{};
+    Check(TryWorkerXInput(-1,0,virtual_state,sizeof(virtual_state),FakeWorkerProvider)&&virtual_state[6]==255&&provider_calls==1,"nonecanserveexplicitvirtualproviderwithoutphysicalpoll");
+    for(int setting:{-2,0,1,2,3}) Check(!TryWorkerXInput(setting,0,virtual_state,sizeof(virtual_state),FakeWorkerProvider),"providercannotchangephysicalroutes");
+    Check(!TryWorkerXInput(-1,1,virtual_state,sizeof(virtual_state),FakeWorkerProvider)&&
+          !TryWorkerXInput(-1,0,nullptr,sizeof(virtual_state),FakeWorkerProvider)&&
+          !TryWorkerXInput(-1,0,virtual_state,15,FakeWorkerProvider)&&
+          !TryWorkerXInput(-1,0,virtual_state,sizeof(virtual_state),nullptr)&&provider_calls==1,"foreignindexnullwrongsizeandmissingprovidernevercallcallback");
     // Passthrough forwards every index unchanged.
     for (unsigned i = 0; i < 4; ++i) {
         auto r = route_xinput(mgscoop::kXInputPassthrough, i);

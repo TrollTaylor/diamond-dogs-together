@@ -47,6 +47,47 @@ bool ValidRunId(const char* id) noexcept {
     return true;
 }
 bool ValidAuthorization(const Authorization& a) noexcept { return a.offline_v1&&a.lab&&a.copied_saves&&a.exact_executable; }
+bool ParseVirtualPad(const char* text,VirtualPadRequest& out) noexcept {
+    if(!text)return false;
+    if(!std::strcmp(text,"off")){out={};return true;}
+    const auto length=std::strlen(text);if(!length || length>64)return false;
+    char b[65]{};std::memcpy(b,text,length);char* token[5]{};unsigned count=1;token[0]=b;
+    for(std::size_t i=0;i<length;++i) {
+        if(b[i]==' ') {if(i==0 || i+1==length || b[i+1]==' ' || count==5)return false;b[i]=0;token[count++]=b+i+1;}
+        else if((b[i]<'0'||b[i]>'9') && b[i]!='-')return false;
+    }
+    if(count!=5)return false;
+    auto integer=[](const char* t,std::int32_t& n,bool signed_value,std::uint64_t maximum) noexcept {
+        const bool negative=*t=='-';if(negative){if(!signed_value)return false;++t;}
+        if(!*t || (t[0]=='0'&&t[1]) || (negative && t[0]=='0'))return false;
+        std::uint64_t v=0;if(!Number(t,v)||v>maximum)return false;
+        n=negative?-static_cast<std::int32_t>(v):static_cast<std::int32_t>(v);return true;
+    };
+    std::int32_t v[5]{};
+    if(!integer(token[0],v[0],false,255)||!integer(token[1],v[1],false,255)||
+        !integer(token[2],v[2],true,16000)||!integer(token[3],v[3],true,16000)||
+        !integer(token[4],v[4],false,1500)||!v[4])return false;
+    out={true,static_cast<std::uint32_t>(v[4]),static_cast<std::uint8_t>(v[0]),static_cast<std::uint8_t>(v[1]),
+        static_cast<std::int16_t>(v[2]),static_cast<std::int16_t>(v[3])};return true;
+}
+void VirtualPad::Neutral() noexcept {
+    if(state_.buttons||state_.left||state_.right||state_.lx||state_.ly||state_.rx||state_.ry) {
+        const auto packet=state_.packet+1;state_={};state_.packet=packet;
+    }
+    expires_=0;
+}
+void VirtualPad::Clear() noexcept {Neutral();enabled_=false;}
+void VirtualPad::Tick(std::uint64_t now) noexcept {if(expires_&&now>=expires_)Neutral();}
+bool VirtualPad::Apply(const VirtualPadRequest& r,std::uint64_t now) noexcept {
+    Tick(now);
+    if(!r.enabled){Clear();return true;}
+    if(!r.duration || r.duration>1500 || r.rx < -16000 || r.rx>16000 || r.ry < -16000 || r.ry>16000 ||
+        now>std::numeric_limits<std::uint64_t>::max()-r.duration)return false;
+    if(!enabled_||state_.left!=r.left||state_.right!=r.right||state_.rx!=r.rx||state_.ry!=r.ry) {
+        const auto packet=state_.packet+1;state_={};state_.packet=packet;state_.left=r.left;state_.right=r.right;state_.rx=r.rx;state_.ry=r.ry;
+    }
+    enabled_=true;expires_=now+r.duration;return true;
+}
 bool ParseCommand(const char* text,std::size_t size,const char* run_id,const char* role,Command& output) noexcept {
     if(!text||!size||size>512||!ValidRunId(run_id)||!role||
        (std::strcmp(role,"host")&&std::strcmp(role,"guest"))) return false;
@@ -214,6 +255,7 @@ SRWLOCK state_lock=SRWLOCK_INIT;
 std::atomic<bool> requested{false},configured{false},hooks_ready{false},refused{false};
 wchar_t run_dir[32768]{}, desktop[80]{};char run_id[33]{},role[6]{};
 DWORD process_id=0;std::uint64_t process_start=0;
+VirtualPad virtual_pad{};std::uint64_t virtual_pad_sequence=0,consumed_pad=0;
 Scenario scenario{};std::uint64_t last_poll=0,last_file_sequence=0,consumed_keyboard=0,consumed_mouse=0;
 HANDLE receipt=INVALID_HANDLE_VALUE;unsigned diagnostic_count=0;
 #ifdef MGS_WORKER_TESTING
@@ -342,7 +384,7 @@ bool Active() noexcept { return configured.load()&&hooks_ready.load()&&!refused.
 bool ThreadAdmitted() noexcept {const DWORD error=GetLastError();const bool ok=Active()&&PrivateThread();SetLastError(error);return ok;}
 RunContext GetContext() noexcept {return configured.load()?RunContext{run_id,role,run_dir,desktop,process_id,process_start}:RunContext{};}
 void Refuse(const char* reason) noexcept {
-    const DWORD error=GetLastError();AcquireSRWLockExclusive(&state_lock);scenario.Clear();refused.store(true);
+    const DWORD error=GetLastError();AcquireSRWLockExclusive(&state_lock);scenario.Clear();virtual_pad.Clear();refused.store(true);
     Receipt("refused",reason,scenario.sequence());ReleaseSRWLockExclusive(&state_lock);SetLastError(error);
 }
 void SetHooksReady(bool ready) noexcept {
@@ -373,6 +415,9 @@ bool LoadingDeliveryAllowed(std::uint32_t mission,std::uint32_t generation,std::
 void SetLoadingContext(LoadingContext c) noexcept {
     if(!Active())return;
     const DWORD error=GetLastError();AcquireSRWLockExclusive(&state_lock);
+    const auto previous=scenario.loading();
+    if(previous.phase!=c.phase || previous.mission!=c.mission || previous.generation!=c.generation)
+        virtual_pad.Clear();
     scenario.SetLoading(c,GetTickCount64());
     // Atomic owned metadata survives a loading-tip pause with no Lua Update tick.
     // Controller validates the supervisor/process lease; native consumption validates this token again.
@@ -421,6 +466,28 @@ void Poll(std::uint64_t now) noexcept {
     }
     ReleaseSRWLockExclusive(&state_lock);SetLastError(error);
 }
+bool SetVirtualPad(const char* canonical,std::uint64_t sequence) noexcept {
+    VirtualPadRequest request{};
+    if(!sequence||sequence>4096||!ParseVirtualPad(canonical,request)||!ThreadAdmitted())return false;
+    const DWORD error=GetLastError();AcquireSRWLockExclusive(&state_lock);
+    const bool ok=sequence>virtual_pad_sequence && virtual_pad.Apply(request,GetTickCount64());
+    if(ok) {virtual_pad_sequence=sequence;Receipt("virtual_pad_command",request.enabled?"bounded_1500ms_max":"off_neutral",sequence);}
+    ReleaseSRWLockExclusive(&state_lock);SetLastError(error);return ok;
+}
+void ClearVirtualPad() noexcept {
+    const DWORD error=GetLastError();AcquireSRWLockExclusive(&state_lock);virtual_pad.Clear();
+    ReleaseSRWLockExclusive(&state_lock);SetLastError(error);
+}
+bool ReadVirtualPad(unsigned index,void* output,std::size_t bytes) noexcept {
+    if(!output||bytes!=sizeof(VirtualPadState))return false;
+    std::memset(output,0,bytes);
+    if(index!=0||!ThreadAdmitted())return false;
+    const DWORD error=GetLastError();AcquireSRWLockExclusive(&state_lock);
+    virtual_pad.Tick(GetTickCount64());VirtualPadState state{};const bool ok=virtual_pad.Read(state);
+    if(ok) {std::memcpy(output,&state,sizeof(state));
+        if(consumed_pad!=virtual_pad_sequence) {consumed_pad=virtual_pad_sequence;Receipt("input_consumed","virtual_gamepad_api",virtual_pad_sequence);}}
+    ReleaseSRWLockExclusive(&state_lock);SetLastError(error);return ok;
+}
 bool Keyboard(void* bytes,std::size_t size) noexcept {
     if(!bytes||size!=256||!ThreadAdmitted())return false;
     const DWORD error=GetLastError();Poll(GetTickCount64());AcquireSRWLockExclusive(&state_lock);
@@ -462,7 +529,7 @@ void DeviceConfiguration(const char* api,std::int32_t result,bool typed,std::uin
 void ConfigureForTest(const Authorization& authorization,bool private_thread,bool ready) noexcept {
     AcquireSRWLockExclusive(&state_lock);mock_lease=true;mock_private=private_thread;
     std::memcpy(run_id,"0123456789abcdef0123456789abcdef",33);std::memcpy(role,"host",5);
-    desktop[0]=0;run_dir[0]=0;process_id=GetCurrentProcessId();scenario={};last_poll=last_file_sequence=0;
+    desktop[0]=0;run_dir[0]=0;process_id=GetCurrentProcessId();scenario={};virtual_pad={};virtual_pad_sequence=consumed_pad=0;last_poll=last_file_sequence=0;
     consumed_keyboard=consumed_mouse=0;diagnostic_count=0;refused.store(false);requested.store(true);
     configured.store(ValidAuthorization(authorization)&&private_thread);hooks_ready.store(ready&&configured.load());
     ReleaseSRWLockExclusive(&state_lock);
@@ -485,6 +552,9 @@ void Refuse(const char*) noexcept{}
 void Poll(std::uint64_t) noexcept{}
 void SetLoadingContext(LoadingContext) noexcept{}
 bool LoadingDeliveryAllowed(std::uint32_t,std::uint32_t,std::uint64_t,std::uint64_t) noexcept{return false;}
+bool SetVirtualPad(const char*,std::uint64_t) noexcept{return false;}
+void ClearVirtualPad() noexcept{}
+bool ReadVirtualPad(unsigned,void* out,std::size_t bytes) noexcept{if(out&&bytes==sizeof(VirtualPadState))std::memset(out,0,bytes);return false;}
 bool Keyboard(void*,std::size_t) noexcept{return false;}
 bool Mouse(void*,std::size_t) noexcept{return false;}
 std::uint32_t Buffered(Device,Event*,std::uint32_t,bool) noexcept{return 0;}

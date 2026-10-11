@@ -31,7 +31,7 @@ Import-Module (Join-Path $PSScriptRoot 'WorkerSource.psm1') -Force -DisableNameC
 
 function Get-WorkerExperiments {
     return @(
-        'MGS_LOCAL_GUN_PRELOAD_TEST', 'MGS_LOCAL_OFFLINE_EQUIPMENT_TEST',
+        'MGS_LOCAL_BUDDY_CAPACITY_TEST', 'MGS_LOCAL_GUN_PRELOAD_TEST', 'MGS_LOCAL_OFFLINE_EQUIPMENT_TEST',
         'MGS_LOCAL_STOCK46_PRELOAD_TEST', 'MGS_LOCAL_STOCK46_WRITER_TEST', 'MGS_LOCAL_STOCK46_AMMO_TEST',
         'MGS_LOCAL_ACTION_EVENTS', 'MGS_LOCAL_UPPER_END_OBSERVE',
         'MGS_LOCAL_UPPER_PHASE_OBSERVE', 'MGS_LOCAL_UPPER_MANUAL_IDLE',
@@ -51,7 +51,7 @@ function Get-WorkerTests {
         'equipment_stock_contract_tests', 'equipment_stock_writer_tests',
         'client_session_request_tests', 'heap_trial_tests', 'lab_config_tests', 'lab_status_tests',
         'link_protocol_tests', 'link_session_tests', 'link_crypto_tests', 'world_wire_tests', 'world_receipt_tests',
-        'partner_receipt_tests', 'partner_input_tests', 'partner_recon_tests', 'partner_dmmap_tests',
+        'buddy_pose_tests', 'buddy_ride_read_off_tests', 'buddy_ride_read_on_tests', 'ride_player_observer_tests', 'buddy_capacity_census_off_tests', 'buddy_capacity_census_on_tests', 'buddy_capacity_walker_off_tests', 'buddy_capacity_walker_on_tests', 'partner_receipt_tests', 'partner_input_tests', 'partner_recon_tests', 'partner_dmmap_tests',
         'pose_interp_tests', 'partner_source_turns_tests', 'partner_action_events_tests',
         'partner_action_link_tests', 'partner_upper_pipeline_tests', 'client_reset_tests',
         'session_tests', 'import_table_tests', 'steam_runtime_tests', 'steam_lifecycle_tests',
@@ -64,17 +64,17 @@ function Get-WorkerTests {
         'partner_upper_manual_idle_off_tests', 'partner_upper_manual_idle_on_tests',
         'partner_upper_probe_tests', 'partner_upper_probe_forwarding_tests',
         'partner_upper_channel2_tests', 'partner_upper_fire_zero_blend_tests',
-        'partner_player_tests', 'partner_driver_tests', 'partner_input_hook_tests',
+        'partner_player_tests', 'teammate_targeting_tests', 'downed_damage_tests', 'downed_player_tests', 'partner_driver_tests', 'partner_input_hook_tests',
         'partner_native_tests', 'partner_equip_wire_tests', 'partner_defer_tests',
         'debug_menu_tests', 'debug_overlay_tests', 'soldier_warp_tests', 'win_import_patch_tests', 'probe_forwarding',
         'master_server_patch_tests', 'master_server_patch_retarget_tests', 'master_server_patch_retarget_loopback_tests',
-        'worker_scenario_off_tests', 'worker_scenario_on_tests', 'worker_protocol_tests', 'worker_debug_tests', 'worker_input_fixture_tests',
+        'worker_scenario_off_tests', 'worker_scenario_on_tests', 'worker_protocol_tests', 'worker_protocol_capacity_off_tests', 'worker_protocol_capacity_on_tests', 'worker_debug_tests', 'worker_input_fixture_tests',
         'build_profile_tests', 'worker_session_tests', 'worker_loading_tests', 'local_coop_windows_tests', 'local_coop_session_tests',
         'host_admission_lua_check', 'equipment_allocation_lua_check', 'equipment_stock_preload_lua_check',
         'equipment_observation_lua_check', 'session_lifecycle_lua_check', 'client_join_lua_check',
         'session_feedback_lua_check', 'damage_parameters_lua_check', 'damage_lifecycle_lua_check',
-        'partner_sync_lua_check', 'partner_actions_lua_check', 'debug_menu_lua_check',
-        'world_sync_lua_check', 'world_follow_lua_check', 'world_goto_lua_check', 'world_align_lua_check',
+        'partner_sync_lua_check', 'partner_actions_lua_check', 'debug_menu_lua_check', 'debug_buddy_lua_check',
+        'world_sync_lua_check', 'world_downed_lua_check', 'world_revive_input_lua_check', 'world_buddy_lua_check', 'world_buddy_ride_lua_check', 'world_follow_lua_check', 'world_goto_lua_check', 'world_align_lua_check',
         'world_follow_game_lua_check', 'world_env_game_lua_check', 'debug_menu_game_lua_check',
         'bootstrap_patch_check', 'bootstrap_lua_check', 'host_trial_patch_check', 'host_trial_lua_check',
         'partner_sync_composed_lua_check', 'world_sync_composed_lua_check',
@@ -123,6 +123,12 @@ function Get-WorkerPlan {
     }
     if ($SelectedProfile -eq 'Normal' -and $enabled.Count) { throw 'Normal profile cannot enable research experiments' }
     if ($SelectedProfile -eq 'Research' -and !$enabled.Count) { throw 'Research profile requires explicit experiments' }
+    if ($enabled.Contains('MGS_LOCAL_BUDDY_CAPACITY_TEST') -and (!$Background -or $SelectedProfile -cne 'Research')) {
+        throw 'Buddy capacity requires an explicit Research/background ON build'
+    }
+    if ($enabled.Contains('MGS_LOCAL_BUDDY_CAPACITY_TEST') -and $enabled.Contains('MGS_LOCAL_GUN_PRELOAD_TEST')) {
+        throw 'Buddy capacity cannot combine alternate archive catalogs'
+    }
     $sorted = @($enabled | Sort-Object)
     $profileKey = $SelectedProfile.ToLowerInvariant()
     if ($enabled.Count -and $SelectedProfile -ne 'Release') { $profileKey += '-' + (Get-WorkerHash ($sorted -join "`n")).Substring(0, 12) }

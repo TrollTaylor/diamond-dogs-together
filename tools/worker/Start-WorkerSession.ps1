@@ -3,7 +3,7 @@
 .SYNOPSIS
 Starts two owned MGSV workers only after a fresh private-desktop DX11 probe.
 .DESCRIPTION
-Normal baseline21 only. No visible fallback, desktop switching, foreground
+Baseline21 by default; explicit pinned buddy capacity research is lab-only. No visible fallback, desktop switching, foreground
 input, Steam launch or Computer Use. A returned ready receipt proves worker
 context and actual save/master/identity redirection; it does not prove gameplay.
 #>
@@ -21,7 +21,8 @@ param(
     [ValidateSet('','census','loco','gun')][string]$NativeStage='',
     # research: the Research worker build (stock46 preload+writer, optionally
     # ammo; no upper_* experiment), only with -NativeStage gun.
-    [ValidateSet('normal','research')][string]$BuildProfile='normal',
+    [ValidateSet('normal','research','buddy-capacity')][string]$BuildProfile='normal',
+    [string]$BuddyCapacityArchive,
     [switch]$AmmoExperiment,
     # real: fresh copies of the real saves (a pending story demo can block the
     # partner's two-player pack in Mother Base). lab: copies of each folder's
@@ -76,12 +77,27 @@ if(@($labKeys|Where-Object{$_ -cmatch '^partner_native_(reload|slot|equip|equip_
     throw '-LabSetting partner_native_reload / partner_native_slot / partner_native_equip need -NativeStage gun.'
 }
 if($AmmoExperiment -and $BuildProfile -cne 'research'){throw '-AmmoExperiment needs -BuildProfile research.'}
+$capacityPins=$null;$capacitySource=$null;$capacityCatalogSource=$null
+if($BuildProfile -ceq 'buddy-capacity'){
+    if($Mode -cne 'lab' -or $AmmoExperiment -or !($PartnerProfile -ceq 'native' -and $NativeStage -cin @('census','loco')) -or !$BuddyCapacityArchive){
+        throw 'Buddy capacity needs explicit archive, copied-save lab mode and native census/loco; no ammo/gun experiment.'
+    }
+    $capacityPins=Get-WorkerBuddyCapacityPins
+    $capacitySource=Assert-WorkerPlainPath ([IO.Path]::GetFullPath($BuddyCapacityArchive,$repo)) -MustExist
+    $capacityCatalogSource=Assert-WorkerPlainPath (Join-Path ([IO.Path]::GetDirectoryName($capacitySource)) 'catalog.json') -MustExist
+    Assert-WorkerHash $capacitySource $capacityPins.Archive;Assert-WorkerHash $capacityCatalogSource $capacityPins.Catalog
+    if((Get-Item -LiteralPath $capacitySource).Length -ne $capacityPins.Bytes){throw 'Buddy capacity archive length differs.'}
+} elseif($BuddyCapacityArchive){throw '-BuddyCapacityArchive needs -BuildProfile buddy-capacity.'}
 # The play rehearsal runs what Play-Coop can write: the clip partner or the native loco/gun profile.
 if($Mode -ceq 'play'){$null=Get-WorkerPlayPartnerSettings $PartnerProfile $NativeStage}
 $checks=Read-WorkerSessionJson ([IO.Path]::GetFullPath($CheckReceipt,$repo))
 if($BuildProfile -ceq 'research'){
     if(!(Test-WorkerResearchReceipt $checks $build $repo $loaderHash (Get-WorkerResearchExperiments -Ammo:$AmmoExperiment))){
         throw 'Require passed Research/background ON checks with exactly the stock46 experiments (no upper_*) for this exact build and loader.'
+    }
+} elseif($BuildProfile -ceq 'buddy-capacity'){
+    if(!(Test-WorkerResearchReceipt $checks $build $repo $loaderHash @('MGS_LOCAL_BUDDY_CAPACITY_TEST'))){
+        throw 'Buddy capacity requires passed Research/background ON checks with exactly MGS_LOCAL_BUDDY_CAPACITY_TEST for this build.'
     }
 } elseif(!(Test-WorkerCheckReceipt $checks $build $repo $loaderHash)){throw 'Require passed Normal/background ON/all experiments OFF checks for this exact build and loader.'}
 foreach($name in @('Start-WorkerSession.ps1','Stop-WorkerSession.ps1','WorkerSessionCommon.psm1')) {
@@ -163,6 +179,20 @@ try {
     Write-WorkerSessionJson $statePath $session
     $archive=Join-Path $runDirectory 'baseline21-runtime.dat'
     [IO.File]::Copy($instances.host.Archive,$archive,$false);Assert-WorkerHash $archive $pins.Archive
+    if($capacityPins){
+        $session.runtime_profile=$capacityPins.Profile;$session.runtime_archive_sha256=$capacityPins.Archive
+        $session.runtime_archive_bytes=$capacityPins.Bytes;$session.runtime_motion_count=$capacityPins.Motions
+        $session.runtime_buddy_capacity=$capacityPins.Capacity;$session.runtime_catalog_sha256=$capacityPins.Catalog
+        $archive=Join-Path $runDirectory 'buddy-capacity-two-runtime.dat'
+        [IO.File]::Copy($capacitySource,$archive,$false);Assert-WorkerHash $archive $capacityPins.Archive
+        if((Get-Item -LiteralPath $archive).Length -ne $capacityPins.Bytes){throw 'Staged candidate archive length differs.'}
+        $session.runtime_archive_path=$archive
+        $session.runtime_catalog_path=Join-Path $runDirectory 'buddy-capacity-catalog.json'
+        [IO.File]::Copy($capacityCatalogSource,$session.runtime_catalog_path,$false)
+        Assert-WorkerHash $session.runtime_catalog_path $capacityPins.Catalog
+        Write-WorkerSessionJson $statePath $session
+    }
+    $runtime=Get-WorkerSessionRuntimeCatalog $session $pins
     $licenseFiles=[ordered]@{dynamite='DYNAMITE-LICENSE';minhook='MinHook-LICENSE.txt';imgui='ImGui-LICENSE.txt';tppmod='tpp-mod-LICENSE';notices='THIRD_PARTY_NOTICES.md'}
     foreach($role in @('host','guest')) {
         $p=$instances[$role];$backup=Join-Path $runDirectory ($role+'-baseline')
@@ -192,6 +222,7 @@ try {
     Write-WorkerSessionJson $statePath $session
     $raw=Read-WorkerSessionJson $configFile
     $raw.paths.runDir=Join-Path $runDirectory 'prepare';$raw.paths.loader=$loader;$raw.paths.runtimeArchive=$archive
+    if($runtime.Experimental){$raw.hashes.runtimeArchive=$runtime.Archive}
     $raw.xinput.host='none';$raw.xinput.guest='none';$raw.offline.marker='offline-v1'
     $raw.graphics.windowMode='Windowed';$raw.saves.localSubdir='287700\local';$raw.saves.remoteSubdir='remote'
     $copyConfig=Join-Path $runDirectory 'worker-lab.json';Write-WorkerSessionJson $copyConfig $raw
@@ -233,7 +264,7 @@ try {
     $session.prepare_completed=$true
     foreach($role in @('host','guest')) {
         $p=$instances[$role];$row=$session.roles[$role]
-        Assert-WorkerHash $p.Loader $loaderHash;Assert-WorkerHash $p.Archive $pins.Archive
+        Assert-WorkerHash $p.Loader $loaderHash;Assert-WorkerHash $p.Archive $runtime.Archive
         $ini=ConvertFrom-IniText (Read-WorkerBoundedText $p.LabIni)
         if($ini['role'] -cne $role -or $ini['enabled'] -cne '1' -or $ini['xinput'] -cne 'none'){throw 'Generated worker lab role/xinput gate differs.'}
         # A world.trigger an aborted scenario left behind (Invoke-WorkerScenario
@@ -293,10 +324,11 @@ try {
     if(!(Compare-HashManifest -Expected $beforeSaves -Actual $afterSaves).Same){throw 'Real saves changed during preparation; refusing launch.'}
     $manifest=[ordered]@{schema='1';mode='mgsv';run_id=$runId;run_dir=$runDirectory;desktop='MGSWorker_'+$runId;
         timeout_ms=[string]($TimeoutSec*1000);ready_timeout_ms=[string]($ReadyTimeoutSec*1000);
-        exe_sha256=$pins.Exe;steam_sha256=$pins.Steam;loader_sha256=$loaderHash;runtime_archive_sha256=$pins.Archive;runtime_motion_count='21';
+        exe_sha256=$pins.Exe;steam_sha256=$pins.Steam;loader_sha256=$loaderHash;runtime_archive_sha256=$runtime.Archive;runtime_motion_count='21';
         probe_receipt=$qualification.QualificationPath;probe_receipt_sha256=$session.qualification_sha256;offline_master_port=[string]$raw.offline.masterPort}
     # The supervisor's gate: OfflineLab, or PlayRehearsal for the play rehearsal.
     if($Mode -ceq 'play'){$manifest['lab_mode']='play'}
+    if($runtime.Experimental){$manifest['runtime_profile']=$runtime.Profile;$manifest['runtime_buddy_capacity']='2'}
     foreach($role in @('host','guest')){
         $manifest[$role+'_exe']=$instances[$role].Exe;$manifest[$role+'_save_dir']=$session.roles[$role].worker_save_dir
         foreach($kind in @('lab','coop','graphics')){$manifest[$role+'_'+$kind+'_sha256']=$session.roles[$role][$kind+'_sha256']}

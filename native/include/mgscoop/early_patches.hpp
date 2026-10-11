@@ -27,6 +27,12 @@ inline constexpr wchar_t kMutexTitle[] = L"METAL GEAR SOLID V: THE PHANTOM PAIN"
 const wchar_t* mutex_effective_name(const wchar_t* requested, const char* suffix,
                                     wchar_t* buf, std::size_t buf_chars, bool& renamed) noexcept;
 
+// Optional process-local provider. Only the existing xinput=none route can
+// consult it; no physical device is polled. The provider owns worker admission.
+using WorkerXInputProvider=bool (*)(unsigned,void*,std::size_t) noexcept;
+inline bool TryWorkerXInput(int setting,unsigned index,void* state,std::size_t size,WorkerXInputProvider provider) noexcept {
+    return setting==-1 && index==0 && state && size==16 && provider && provider(index,state,size);
+}
 enum class XInputAction { Passthrough, Remap, Disconnected };
 struct XInputRoute {
     XInputAction action;
@@ -119,6 +125,8 @@ InitWrapperState InitWrapperResult() noexcept;
 // mismatch. A no-op when lab is absent, so default behaviour with no lab.ini is
 // byte-for-byte unchanged.
 void InstallEarlyLabPatches() noexcept;
+// Registered only by an admitted worker after its initialization.
+void SetWorkerXInputProvider(WorkerXInputProvider provider) noexcept;
 
 // True when the SteamNetworking IAT slot (0x208E138) holds the lab gate.
 bool networking_gate_installed() noexcept;

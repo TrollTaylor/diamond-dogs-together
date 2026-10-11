@@ -30,6 +30,19 @@ struct InstallConfig {
 // and settings and configures nametag:: (logs nametag=ready|off|refused).
 void Install(const InstallConfig& config) noexcept;
 bool Ready() noexcept;
+// Read-only snapshots around the already validated instance-1 job. No native
+// call or HUD mutation; the captured cache is the one FE8B30 writes.
+struct HudJobProbe {
+    std::uintptr_t p{}, ui{}, shared{};
+    std::uint32_t flags{}, action{}, shared_selected{}, shared_flags{};
+    std::uint32_t hint{}, hint_flags{};
+    std::uint8_t remote_action{}, hint_active{}, hint_priority{};
+    bool valid{}, shared_valid{};
+};
+HudJobProbe BeginPartnerHud(std::uintptr_t p) noexcept;
+void EndPartnerHud(const HudJobProbe& before) noexcept;
+// Called only on the existing Lua owner thread for a fresh diagnostic A/B.
+void ResetNativeUiCensus() noexcept;
 void MissionStart(std::uint32_t mission) noexcept;
 void MissionEnd() noexcept;
 struct TickInput {

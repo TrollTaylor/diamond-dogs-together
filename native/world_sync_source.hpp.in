@@ -35,6 +35,21 @@ constexpr char world_align_source[] = R"MGS_WORLD(
 constexpr char world_recovery_source[] = R"MGS_WORLD(
 @MGS_WORLD_RECOVERY_SOURCE@
 )MGS_WORLD";
+constexpr char world_downed_source[] = R"MGS_WORLD(
+@MGS_WORLD_DOWNED_SOURCE@
+)MGS_WORLD";
+constexpr char world_friendly_source[] = R"MGS_WORLD(
+@MGS_WORLD_FRIENDLY_SOURCE@
+)MGS_WORLD";
+constexpr char world_revive_input_source[] = R"MGS_WORLD(
+@MGS_WORLD_REVIVE_INPUT_SOURCE@
+)MGS_WORLD";
+constexpr char world_buddy_source[] = R"MGS_WORLD(
+@MGS_WORLD_BUDDY_SOURCE@
+)MGS_WORLD";
+constexpr char world_buddy_ride_source[] = R"MGS_WORLD(
+@MGS_WORLD_BUDDY_RIDE_SOURCE@
+)MGS_WORLD";
 constexpr char world_place_source[] = R"MGS_WORLD(
 @MGS_WORLD_PLACE_SOURCE@
 )MGS_WORLD";

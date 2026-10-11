@@ -294,11 +294,10 @@ int main() {
         Check(ui::StatsForTest().frames == menu_frames, "the tag layer does not count as a menu frame");
         frame.crosshair = frame.hover = true; frame.seq = 2; frame.tick_ms = GetTickCount64();
         tag::Publish(frame);
-        Check(shot(), "frame with the friendly crosshair");
+        Check(shot(), "frame with legacy crosshair intent");
         stats = tag::GetRenderStats();
-        Check(stats.crosshair && stats.crosshair_frames == 1 && std::fabs(stats.ring[0] - width * 0.5f) < 0.5f && stats.ring[2] >= 10.0f,
-              "ring recorded at the viewport centre");
-        Check(ring_pixels(stats.ring[0], stats.ring[1]) >= 20, "a green ring of radius ~10 px in the backbuffer");
+        Check(!stats.crosshair && stats.crosshair_frames == 0, "legacy intent does not record an added crosshair");
+        Check(ring_pixels(width * 0.5f, height * 0.5f) == 0, "hover does not add a green ring over the native reticle");
         const float box[4] = {stats.label_box[0], stats.label_box[1], stats.label_box[2], stats.label_box[3]};
         frame.tick_ms = GetTickCount64() - 1000; frame.seq = 3;
         tag::Publish(frame);

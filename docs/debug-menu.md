@@ -1,5 +1,7 @@
 # F9 debug menu
 
+
+October 11 candidate: Partner / Co-op adds **Downed status**, **Revive input status**, **Summon D-Horse nearby**, **Horse status** and **D-Dog follow status**. Horse summon uses the stock local loader four metres beside the player, with bounded loading, context checks and cooldown. It does not create a second horse or attach a remote rider. Close F9 before holding ACTION near a downed teammate for three seconds. Native mount census never substitutes a network riding bit for actual occupancy.
 The debug menu exists only in offline copied-save co-op sessions. Every action is a
 short text command that waits for the game's own Lua update; nothing calls the game
 from the menu thread.
@@ -124,10 +126,9 @@ Link, pose and animation readout (remote pose only once the partner has sent one
 | Play clip / Stop clip | `partner dm=on dmplay=n`, `partner dmstop=1` |
 | Slow motion (U) / off | `slowmo rate seconds` (0.05..1, 0.1..30 s), `slowmo off` |
 | Name tag on / off, Name tag status | `nametag on`, `nametag off`, `nametag status` |
-| Crosshair: when aiming / always / off | `nametag crosshair aim`, `nametag crosshair always`, `nametag crosshair off` |
 
-**Name tag & friendly crosshair** ([partner-nametag.md](partner-nametag.md)): a
-readout line (on/off, crosshair mode, shown or the hidden reason, the partner's
+**Name tag** ([partner-nametag.md](partner-nametag.md)): a
+readout line (on/off, shown or the hidden reason, the partner's
 name, distance, "on target") and the rows above. The `nametag ...` commands are
 handled by the loader itself, never by Lua or the game, and are local to this PC
 and kept in memory only. Their result is the status line

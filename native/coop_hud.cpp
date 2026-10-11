@@ -46,6 +46,8 @@ SpinLock g_view_lock;
 LinkView g_view{};
 SpinLock g_partner_lock;
 PartnerView g_partner{};
+SpinLock g_downed_lock;
+DownedView g_downed{};
 
 constexpr unsigned kEvents = 16;
 SpinLock g_event_lock;
@@ -189,6 +191,30 @@ bool FormatPartnerJson(const PartnerView& v, std::uint32_t session, std::uint32_
     const int n = std::snprintf(out, capacity, "\"partner_view\":\"%s\",\"partner_gun\":\"%s\",\"partner_gun_present\":%u,\"partner_view_fresh\":%u,",
         PartnerDriveName(current.drive), PartnerGunName(current.gun), GunPresent(current.gun) ? 1u : 0u, current.valid ? 1u : 0u);
     if (n < 0 || static_cast<std::size_t>(n) >= capacity) { out[0] = 0; return false; }
+    return true;
+}
+
+void PublishDowned(const DownedView& view) noexcept { Guard guard(g_downed_lock); g_downed = view; }
+bool GetDowned(DownedView& out) noexcept { Guard guard(g_downed_lock); out = g_downed; return out.valid; }
+bool FormatDowned(const DownedView& v, std::uint32_t current_mission,
+                  std::uint64_t now_ms, Line& out, float& progress) noexcept {
+    out = {}; progress = 0;
+    if (!v.valid || !v.epoch || v.mission != current_mission ||
+        (v.mission != 30010 && v.mission != 30020 && v.mission != 30050) ||
+        now_ms < v.publish_ms || now_ms - v.publish_ms > kDownedFreshMs || v.progressMs > kReviveHoldMs ||
+        (v.inRange && (!v.teammateDown || v.localDown)) ||
+        (v.progressMs && (!v.inRange || !v.teammateDown || v.localDown))) return false;
+    if (v.localDown) {
+        Print(out.text, sizeof(out.text), "Downed - waiting for your teammate to revive you");
+        out.tone = Tone::bad; return true;
+    }
+    if (!v.teammateDown) return false;
+    out.tone = Tone::warn;
+    if (!v.inRange) Print(out.text, sizeof(out.text), "Teammate down - get closer to revive");
+    else {
+        progress = static_cast<float>(v.progressMs) / static_cast<float>(kReviveHoldMs);
+        Print(out.text, sizeof(out.text), "Hold Action (E) to revive teammate - %u%%", v.progressMs * 100u / kReviveHoldMs);
+    }
     return true;
 }
 
@@ -459,6 +485,7 @@ void ResetForTest() noexcept {
         g_view = LinkView{};
     }
     { Guard guard(g_partner_lock); g_partner = PartnerView{}; }
+    { Guard guard(g_downed_lock); g_downed = DownedView{}; }
     {
         Guard guard(g_event_lock);
         for (auto& e : g_events) e = Event{};

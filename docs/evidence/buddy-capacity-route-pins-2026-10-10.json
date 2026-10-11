@@ -1,0 +1,250 @@
+{
+  "schema": 1,
+  "executable_sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+  "gate": "MGS_BACKGROUND_WORKER && MGS_LOCAL_BUDDY_CAPACITY_TEST; exact per-run private candidate catalog; no release admission",
+  "full_commands": [
+    "CallBuddy + selector",
+    "Horse Lua dispatcher covers SetCallHorse parse and per-instance target fields",
+    "Walker full Lua dispatcher covers GetMaxInstanceCount/GetPosition/IsPlayerRiding/SetPosition",
+    "Walker exact full SetPosition helper",
+    "Exact BuddyType enum natural registration incl value/name correlation"
+  ],
+  "spans": [
+    {
+      "label": "pure-horse-census-v2 exact census body",
+      "begin_rva": "0xbf99e0",
+      "end_rva_exclusive": "0xbf9a02",
+      "bytes": 34,
+      "sha256": "76eadda6f658a477094e637c28f73db48a3b809cac9bd09e310af883f76c0a13"
+    },
+    {
+      "label": "pure-horse-census-v2 exact census body",
+      "begin_rva": "0xbf9a10",
+      "end_rva_exclusive": "0xbf9a18",
+      "bytes": 8,
+      "sha256": "0eb5b43389c356e1e8636cc907f5864472bb505c38fe604a3c8681722dfadf2f"
+    },
+    {
+      "label": "pure-horse-census-v2 exact census body",
+      "begin_rva": "0xbf8a20",
+      "end_rva_exclusive": "0xbf8a86",
+      "bytes": 102,
+      "sha256": "01f5e3dcecc8b7351c2e1958b2f28a5aa3839f59dceb86bcf6a43a0b97a0f5e7"
+    },
+    {
+      "label": "pure-horse-census-v2 exact census body",
+      "begin_rva": "0x9e4b90",
+      "end_rva_exclusive": "0x9e4c4c",
+      "bytes": 188,
+      "sha256": "b57816d5dd3f337dc231a12d59ab22ac0dde1ab7d09a26360a209fe7a81bb150"
+    },
+    {
+      "label": "pure-horse-census-v2 exact census body",
+      "begin_rva": "0x9e5470",
+      "end_rva_exclusive": "0x9e5587",
+      "bytes": 279,
+      "sha256": "28190465380f73f484b50fdaa8a1258c5367dbcdb6aee72d7862ba1829c81cfa"
+    },
+    {
+      "label": "pure-horse-census-v2 exact census body",
+      "begin_rva": "0x9e6060",
+      "end_rva_exclusive": "0x9e60cb",
+      "bytes": 107,
+      "sha256": "c62ef3483d7ecea21b938bf5d2e3293da6c79a31901d7b483179fc054687f3ec"
+    },
+    {
+      "label": "pure-horse-census-v2 exact census body",
+      "begin_rva": "0xe4c450",
+      "end_rva_exclusive": "0xe4c475",
+      "bytes": 37,
+      "sha256": "efbd95908ff2eaedd5254095f15c93dc5e89e04507ae5ddb2ea6eef2552957f0"
+    },
+    {
+      "label": "pure-horse-census-v2 exact census body",
+      "begin_rva": "0xe7c680",
+      "end_rva_exclusive": "0xe7c71c",
+      "bytes": 156,
+      "sha256": "7c7332c1f782af774725b2c8d52bf9b68b66542c53a42a34399a813a7b951ca8"
+    },
+    {
+      "label": "pure-horse-census-v2 exact census body",
+      "begin_rva": "0xe7c720",
+      "end_rva_exclusive": "0xe7c745",
+      "bytes": 37,
+      "sha256": "9586fe3239ca0adcf23183f6e7ade1dae35b53ccf030589454398a86b620a4fe"
+    },
+    {
+      "label": "pure-horse-census-v2 exact census body",
+      "begin_rva": "0xe7c750",
+      "end_rva_exclusive": "0xe7c7cb",
+      "bytes": 123,
+      "sha256": "b41dabc7c3ceb54236ad13db68cc9abd16539cb6758143d012bae4a0a2fed262"
+    },
+    {
+      "label": "pure-horse-census-v2 exact census body",
+      "begin_rva": "0xe4b1d0",
+      "end_rva_exclusive": "0xe4b3df",
+      "bytes": 527,
+      "sha256": "c370b2d03484d1379e8680b91e638effdaf4681b2f668d3bd1f0748e9aec25b4"
+    },
+    {
+      "label": "pure-horse-census-v2 exact census body",
+      "begin_rva": "0xe4b9b0",
+      "end_rva_exclusive": "0xe4ba0c",
+      "bytes": 92,
+      "sha256": "e5bfd385931ac93351ad631ddc6b771369935c939a0787fd50e380172fb0c39c"
+    },
+    {
+      "label": "pure-horse-census-v2 exact census body",
+      "begin_rva": "0xa46030",
+      "end_rva_exclusive": "0xa46087",
+      "bytes": 87,
+      "sha256": "a34b19b8aed39371ac1e5565bde9275af0bdab9d21fb9beb89dfab25489eb025"
+    },
+    {
+      "label": "pure-walker-census-v1 exact census body",
+      "begin_rva": "0xa81980",
+      "end_rva_exclusive": "0xa81a98",
+      "bytes": 280,
+      "sha256": "225b1b0cef0e8d7d11be8dcaab2e7b40a21648f0e52a98ec3a5670a128b0d1eb"
+    },
+    {
+      "label": "pure-walker-census-v1 exact census body",
+      "begin_rva": "0xa82350",
+      "end_rva_exclusive": "0xa82803",
+      "bytes": 1203,
+      "sha256": "f2ac07e4a914f05917154f488f594ee9f5c40fb9d87b25c64c90772a6234b0aa"
+    },
+    {
+      "label": "pure-walker-census-v1 exact census body",
+      "begin_rva": "0xa83670",
+      "end_rva_exclusive": "0xa836de",
+      "bytes": 110,
+      "sha256": "987cc412fdf25787606825540449723293003ae825c05522b36412f2ce0fc1a4"
+    },
+    {
+      "label": "pure-walker-census-v1 exact census body",
+      "begin_rva": "0x1701a60",
+      "end_rva_exclusive": "0x1701c73",
+      "bytes": 531,
+      "sha256": "423bd6b083dc0c6826d1b3d6173bd0096e14d683e5590378095313e26c7c8d7e"
+    },
+    {
+      "label": "pure-walker-census-v1 exact census body",
+      "begin_rva": "0x1704670",
+      "end_rva_exclusive": "0x1704695",
+      "bytes": 37,
+      "sha256": "26ba6faf759023e8cce04573d4a345ff26a7ceafb00349146a1fe5fb2ccb5dd4"
+    },
+    {
+      "label": "pure-walker-census-v1 exact census body",
+      "begin_rva": "0x1704900",
+      "end_rva_exclusive": "0x1704996",
+      "bytes": 150,
+      "sha256": "2c688934864303c3e2e9519d02cfca1b31b75e411eec93ec6182a1161feb75b0"
+    },
+    {
+      "label": "pure-walker-census-v1 exact census body",
+      "begin_rva": "0x1704d53",
+      "end_rva_exclusive": "0x1704d6c",
+      "bytes": 25,
+      "sha256": "5a63214577a282e825775659579eec63d8724e46e5d1121491cbacece8cbcf0f"
+    },
+    {
+      "label": "pure-walker-census-v1 exact census body",
+      "begin_rva": "0x1705014",
+      "end_rva_exclusive": "0x1705066",
+      "bytes": 82,
+      "sha256": "4bcd8414ba1e76c43c874571ee033c891e7d2b81ec914a1178aa0a8e4cb7ed02"
+    },
+    {
+      "label": "pure-walker-census-v1 exact census body",
+      "begin_rva": "0x1704250",
+      "end_rva_exclusive": "0x1704262",
+      "bytes": 18,
+      "sha256": "1a52e6723f65c73ab7e6fc5c3c43b775c04984bc5dd79547d4e61cd7d557d72a"
+    },
+    {
+      "label": "pure-walker-census-v1 exact census body",
+      "begin_rva": "0x17016b0",
+      "end_rva_exclusive": "0x1701a39",
+      "bytes": 905,
+      "sha256": "4e890cb4cf9db14ec1eb35de77072ad6f2c62aae694b7b87210529185bf5b366"
+    },
+    {
+      "label": "pure-walker-census-v1 exact census body",
+      "begin_rva": "0x1706190",
+      "end_rva_exclusive": "0x17063e8",
+      "bytes": 600,
+      "sha256": "8bcb246e91034dcc507593187f345ab7688908587746dee202b3692fc66dfbf5"
+    },
+    {
+      "label": "buddy registered Lua table",
+      "begin_rva": "0xa45be0",
+      "end_rva_exclusive": "0xa45f27",
+      "bytes": 839,
+      "sha256": "a5052216ef561a55e68c3ed4c68bc47496478195050975fc2764ce064a3bb439"
+    },
+    {
+      "label": "complete CallBuddy wrapper including cold body",
+      "begin_rva": "0xa44560",
+      "end_rva_exclusive": "0xa44697",
+      "bytes": 311,
+      "sha256": "2730a8e95ebf6cfcc9eccf97db2d39967ce99bc281a302d0c021584a1886d6c6"
+    },
+    {
+      "label": "singleton buddy selector",
+      "begin_rva": "0xa44740",
+      "end_rva_exclusive": "0xa44890",
+      "bytes": 336,
+      "sha256": "63f12cfcb7e90355a62705e9606f00f3a9a4eaabee61e2c0b79bcc234592c827"
+    },
+    {
+      "label": "Walker full Lua dispatcher including cold body",
+      "begin_rva": "0x1706190",
+      "end_rva_exclusive": "0x1706cda",
+      "bytes": 2890,
+      "sha256": "e79ce6e32235a3d7c69c37534666423f2080a5ed94688b4843ebbcc45040bafa"
+    },
+    {
+      "label": "Horse Lua dispatcher",
+      "begin_rva": "0xe4d250",
+      "end_rva_exclusive": "0xe4d95e",
+      "bytes": 1806,
+      "sha256": "ebc78c5b7f8feeda50123b42aaa141b5817261da598cc06ba0f19f2968bc5b84"
+    },
+    {
+      "label": "walker SetPosition transform helper",
+      "begin_rva": "0x170d410",
+      "end_rva_exclusive": "0x170d726",
+      "bytes": 790,
+      "sha256": "9d83c98473852f55b63d3ed94f18aa842d5f0ce811b7dad0e802b92654640a03"
+    },
+    {
+      "label": "full generic SendCommand natural caller",
+      "begin_rva": "0xbfa477",
+      "end_rva_exclusive": "0xbfa500",
+      "bytes": 137,
+      "sha256": "180d7f4974a058dfc49636db1a9eff760b8aa3ad00a8a1e68b4f292b3a983ea1"
+    },
+    {
+      "label": "full IsBlockActive wrapper",
+      "begin_rva": "0xa47060",
+      "end_rva_exclusive": "0xa470ba",
+      "bytes": 90,
+      "sha256": "2e4779eeae72b10092f644c49af74357ddc837be87c6ed1271b3ba1e89b3a6a4"
+    },
+    {
+      "begin_rva": "0xa46dc0",
+      "end_rva_exclusive": "0xa46fdc",
+      "bytes": 540,
+      "sha256": "5b5fb620192a34acc9eb2ad4a297952c50b00cf2f5fd1f09b7f024145f70eed5",
+      "label": "complete native BuddyType registration NONE0 HORSE1 DOG2 QUIET3 WALKER_GEAR4"
+    }
+  ],
+  "limits": [
+    "Horse raw position is diagnostic until moving writer proof",
+    "Counts prove allocation; realized mask proves natural realization list, frames prove rendering",
+    "Native mount forcing is absent"
+  ]
+}

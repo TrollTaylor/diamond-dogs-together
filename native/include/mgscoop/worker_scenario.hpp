@@ -38,6 +38,25 @@ struct Event {
     std::uint32_t loading_mission{}, loading_generation{};
 };
 struct MouseState { std::int32_t x{}, y{}, z{}; std::uint8_t buttons[8]{}; };
+// Matches the 16-byte XINPUT_STATE ABI without exposing platform types to
+// pure policy fixtures. Only triggers/right stick are admitted by this profile.
+struct VirtualPadState {
+    std::uint32_t packet{};std::uint16_t buttons{};std::uint8_t left{},right{};
+    std::int16_t lx{},ly{},rx{},ry{};
+};
+static_assert(sizeof(VirtualPadState)==16 && offsetof(VirtualPadState,buttons)==4 && offsetof(VirtualPadState,rx)==12);
+struct VirtualPadRequest {bool enabled{};std::uint32_t duration{};std::uint8_t left{},right{};std::int16_t rx{},ry{};};
+bool ParseVirtualPad(const char* canonical,VirtualPadRequest&) noexcept;
+class VirtualPad {
+public:
+    bool Apply(const VirtualPadRequest&,std::uint64_t now) noexcept;
+    void Tick(std::uint64_t now) noexcept;
+    void Clear() noexcept;
+    bool Read(VirtualPadState& out) const noexcept {out=enabled_?state_:VirtualPadState{};return enabled_;}
+private:
+    void Neutral() noexcept;
+    bool enabled_{};std::uint64_t expires_{};VirtualPadState state_{};
+};
 struct CaptureRequest { std::uint64_t sequence{}, expires{}; };
 // Pure policy used by detached fixtures. API receipt is distinct from gameplay.
 class Scenario {
@@ -95,6 +114,12 @@ void Poll(std::uint64_t now) noexcept;
 void SetLoadingContext(LoadingContext) noexcept;
 bool LoadingDeliveryAllowed(std::uint32_t mission, std::uint32_t generation,
                             std::uint64_t expires, std::uint64_t now) noexcept;
+// Existing worker debug dispatcher validates its owned command/scene receipt;
+// this API repeats current private-thread admission and the bounded parser.
+bool SetVirtualPad(const char* canonical,std::uint64_t command_sequence) noexcept;
+bool ReadVirtualPad(unsigned index,void* output,std::size_t bytes) noexcept;
+// Clears synthetic holds, independent of the menu/window/receipt thread.
+void ClearVirtualPad() noexcept;
 bool Keyboard(void* bytes, std::size_t size) noexcept;
 bool Mouse(void* bytes, std::size_t size) noexcept;
 std::uint32_t Buffered(Device, Event*, std::uint32_t capacity, bool peek) noexcept;

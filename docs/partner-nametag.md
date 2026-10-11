@@ -1,9 +1,9 @@
-# Partner name tag and friendly crosshair
+# Partner name tag
 
-A small name tag floats above the co-op partner's head, and a green ring appears at
-the screen centre while you aim at the partner (so you do not shoot him). Both are
-drawn by the mod's own DX11 overlay on this PC only. The game is never asked to draw
-anything, and nothing is written to game memory.
+A small name tag floats above the co-op partner's head. The old green ring overlay
+has been removed to preserve the original game reticle. Native reticle recoloring
+and teammate aim-assist filtering still require a verified native target contract;
+removing the ring does not implement those features.
 
 Status: fixture-tested (unit tests, a hidden DX11 fixture with pixel readback, the
 contract generator). Not yet run in the game. The hidden-worker scenario
@@ -16,10 +16,6 @@ contract generator). Not yet run in the game. The hidden-worker scenario
   crouching, prone; the height eases over 150 ms). It fades from full opacity at 40 m
   to 40% at 150 m and is hidden beyond `nametag_max_m` (300 m by default). Long names
   are cut with `...`. While the screen centre is on him, the label turns light green.
-- **Friendly crosshair**: a green ring (radius 10 px, 2 px line, four ticks) at the
-  centre of the game's viewport while the screen centre is on the partner. By default
-  it shows only while you aim (`aim`); `always` shows it whenever the centre is on
-  him, `off` never.
 - **Hidden** during cutscenes and demos, with the iDroid open, in the pause menu,
   while loading and on the title screen, at mission end, while the partner body is
   hidden (out of range, link lost, not realized), when he is behind the camera or off
@@ -71,10 +67,10 @@ feature, no `play_refused` bit). The lab scripts write them only when set
 the partner (`offline-v1`, `partner=1`) and only when its camera contract verifies
 (below).
 
-**F9 menu, Partner page, "Name tag & friendly crosshair"**: a readout line and the
-buttons **Name tag on / off**, **Name tag status**, **Crosshair: when aiming / always
-/ off**. They send text commands that the loader handles itself (never Lua or the
-game); the change lasts until the game closes.
+**F9 menu, Partner page, "Name tag"**: a readout line and the buttons
+**Name tag on / off** and **Name tag status**. Legacy crosshair configuration
+and commands remain parseable for compatibility, but never draw a replacement
+reticle or change its native color.
 
 | Command | Result |
 |---|---|
@@ -153,7 +149,7 @@ the tick reads neither the camera nor the body nor the gun; only the names flow.
   below the position) falls back to position - 0.9 m.
 - Head: foot + 1.80 / 1.25 / 0.55 m (stand / squat / prone) + 0.25 m. The stance is
   the partner's network stance (fresh within 1 s), else the body's own stance.
-- Friendly crosshair: the ray from the camera through NDC (0,0) (lens shift included)
+- Legacy hover telemetry (does not draw or recolor the reticle): the ray from the camera through NDC (0,0) (lens shift included)
   against a capsule of radius 0.30 m (stand/squat: vertical from foot+0.15 to the top
   -0.15; prone: horizontal, +-0.85 m along the body yaw at foot+0.25), 0.1..150 m.
   Local aim is the pinned gun record of the local instance (`ReadGun(k=0)`: node active
@@ -236,3 +232,51 @@ game-thread source), `native/nametag_contract.hpp` (generated), the overlay laye
   stop there; the `TppUiCommand` table has no pause query). Screens during which the
   Lua tick keeps running without a demo or the iDroid (the game-over screen, script
   fades to black) still show the tag.
+
+## Native targeting investigation, October 9
+
+The extra green ring and its F9 controls have been removed. The original game
+reticle is preserved; native green recoloring and teammate aim-assist exclusion
+are not yet implemented. Legacy config/commands remain parseable, with drawing
+disabled. The geometry hover telemetry is not an occlusion-tested game target.
+
+`tools/generate_native_ui_contract.py --check` verifies the exact retail EXE SHA
+and 12 native lifecycle, real ray-hit and UI producer sites. This establishes:
+Player secondary P+D8 owns final UI secondary U (vtable 23AF700), U+28 is P;
+reticle update FEA420 reads the native camera handle, stores its ID at U+24,
+classifies it at FE7270, and forwards category 0/1/2 to HudSystem vt+140. The
+classification meanings/colors still require observed evidence.
+
+Read-only `native_ui_census` logs actual hit/ray IDs, cached category and HUD
+setter/provider vtables. `partner_hud_job_census` compares UI flags and action
+cache around only the already validated remote deferred job, with the remote
+Q+20 action byte. Native producer 124A5C0 calls UI vt+60 and sets shared HUD+328
+bit3 for action 0x12; whether this is Quiet sprint remains unverified. No census
+calls game functions, changes UI memory or patches these native targets.
+
+### Native reticle diagnostics, 2026-10-09
+
+Private paired run `6eef887cb2e04cd785bee9eb6f968119` captured native UI hit ID 1, category 1 and the original red WU pistol reticle. The exact retail executable has been traced from the UI classifier to the game's two existing reticle nodes and their RGB setters. Category 2 is the game's friendly classification, including hostages, D-Horse and D-Dog; its actual RGB is now measured through `native_reticle_rgb_census`. No alternate crosshair geometry is drawn.
+
+The classifier defaults to the scoped teammate filter. It changes only category 1 to native friendly category 2 for ID 1 in the current qualified offline two-player UI. It verifies the sole native caller, both final UI vtables, current player ownership, the current player's UI pointer and roster IDs 0/1. Soldiers, local targets, unknown categories, other UI owners and native online sessions preserve the original result. Reticle coloring and camera aim filtering have independent modes; enabling one does not enable the other.
+
+The name-tag installation must fingerprint the original native UI bytes before teammate targeting installs its classifier hook. `SetReticleMode` and `ReticleStatusLine` support worker-only A/B testing. On the Lua owner thread, `ResetNativeUiCensus` restarts the capped per-mission observations. These are private-worker A/B controls. Production defaults enable the qualified aim, reticle and Quiet filters after their exact code and owned-pair gates pass.
+
+The remote-job census now includes the exact shared HUD provider's selected action and flag word before/after the validated partner job. It reads only. The scoped Quiet hint producer is filtered after its natural partner-job ownership was captured. The current build also reports ray-only hit changes that an earlier census could suppress.
+
+The Quiet investigation also identified hint 0x78/priority 2 queued by the movement code only for camo 0x74. The native queue lives at UI secondary +370 (ID), +374 (flags, enable is bit 9), +3A0 (pending) and +3A3 (priority). These four fields are now observed around the partner job and in the periodic census. This path is independent of the unchanged action cache; private run 65c7971abb4643e5a25e619cfc36e7da captured 48 exact remote hint calls and suppressed all 48, with no refusals. That run did not visibly reproduce the prompt, so the evidence qualifies the scoped producer rather than a screenshot comparison.
+
+Quiet dash HUD isolation (qualified filter by default): the exact native
+Quiet-camo producer calls hint queue `FE8690` with ID `0x78`, priority 2 and
+return address `10A498E`. The existing validated instance-1 job callbacks arm a
+thread-local scope; it ends before after-job reads, independently of log caps.
+An explicit filter suppresses only that helper call on the owner thread with
+the current player/UI chain, offline two-player flags and roster 0/1. It skips
+the original queue entirely, preserving its four hint fields; host Quiet calls
+outside this scope and every other hint retain all original arguments. Full
+phase1, state callbacks, constructor, selector and event-table bytes are pinned
+in `native_ui_contract.hpp`. Live pre/post queue and visible prompt comparison
+remain required before enabling this by default. Native reticle and aim modes
+are independent from the Quiet hint mode.
+
+Private run `9c7ab0d615f84558b4facccdd1877ecf` used real in-process controller aim input against a teammate: observation matched 58 candidates, and filtering removed all 57 candidates in its independent phase, with zero refusals. Run `65c7971abb4643e5a25e619cfc36e7da` captured the actual native WU pistol reticle in green with its original geometry. These hidden local tests do not establish a fresh two-PC session.

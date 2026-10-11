@@ -38,7 +38,7 @@ What is NOT fully shared yet:
   never shown firing. Debug pickups are local.
 - Story missions, items and full campaign progression. This is a development
   build. The user reported partial successful two-PC play on 0.12.0. These
-  0.12.1 repairs are checked on two hidden local copies and still need a fresh
+  0.12.3 repairs are checked on two hidden local copies and still need a fresh
   two-PC session; complete campaign progression remains unsupported.
 
 One player HOSTS, the other JOINS. Both use this same package (the same
@@ -372,7 +372,15 @@ stay in <game folder>\mgs-coop; you can delete that folder yourself later.
 - Development build. Partner bodies support Mother Base and Afghanistan/
   Africa free roam. World 3 is experimental and enabled by default;
   story missions, items and full campaign progression are not supported.
-  Partial two-PC Steam play was reported on 0.12.0. This 0.12.1 repair needs
+  Downed: crawl slowly; aiming and shooting are blocked. A teammate revives
+  you by holding ACTION (E by default) within 3 m for 3 seconds. Close F9
+  while holding ACTION. F9 > Partner / Co-op has Downed status and Revive
+  input status, plus Summon D-Horse nearby and Horse status. Wait for the
+  summoned local horse, close F9, then mount with normal game controls.
+  Two shared rideable horses and Walkers remain unfinished. The crawl uses
+  the normal prone animation at reduced speed, not the exact hospital clip.
+
+  Partial two-PC Steam play was reported on 0.12.0. This 0.12.3 repair needs
   a fresh two-PC test; its recorded qualification uses two hidden instances.
 - Online play uses Steam's networking and Valve's relays: it needs both PCs
   online in Steam. If it does not connect, use LAN/VPN.

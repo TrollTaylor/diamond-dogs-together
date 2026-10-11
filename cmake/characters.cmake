@@ -6,7 +6,7 @@
 # package is merged, its lua51 interpreter. Keeping these lines out of the
 # shared target lists avoids merge conflicts with other packages.
 
-set(MGS_MAIN_CHECKOUT_FALLBACK "C:/Users/taylo/OneDrive/Documents/ChatGPT/mgs-coop" CACHE PATH
+set(MGS_MAIN_CHECKOUT_FALLBACK "" CACHE PATH
   "Main checkout whose work/lua-5.1.5 and build/ inputs are used when the configured folders lack them (empty disables)")
 # Pinned Lua 5.1.5 source for the fixture interpreter. Languages cannot be
 # enabled during deferred execution, so C is enabled here when a source exists.

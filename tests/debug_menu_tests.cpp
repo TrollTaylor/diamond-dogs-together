@@ -1,6 +1,7 @@
 #include "mgscoop/debug_menu.hpp"
 #include "mgscoop/debug_actions.hpp"
 #include "mgscoop/nametag.hpp"
+#include "mgscoop/native_ui_core.hpp"
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -286,7 +287,7 @@ void NametagTests() {
     Check(tag::IsCommand("nametag") && tag::IsCommand("nametag bogus") && !tag::IsCommand("nametags") && !tag::IsCommand("name tag") && !tag::IsCommand(nullptr),
           "native command routing");
     Check(debug::ValidText("nametag crosshair always") && debug::ValidText("nametag status"), "commands pass the queue charset");
-    for (const char* id : {"partner_nametag_on", "partner_nametag_off", "partner_nametag_status", "partner_crosshair_aim", "partner_crosshair_always", "partner_crosshair_off"}) {
+    for (const char* id : {"partner_nametag_on", "partner_nametag_off", "partner_nametag_status"}) {
         const auto* a = mgscoop::debug_actions::FindAction(id);
         Check(a && a->category == mgscoop::debug_actions::Category::partner && a->command && tag::ParseCommand(a->command, command), "F9 Partner rows send valid commands");
     }
@@ -326,7 +327,7 @@ void NametagTests() {
     frame.visible = false; tag::Publish(frame);
     Check(!tag::RenderPending(5100), "a hidden frame draws nothing");
     frame.crosshair = true; tag::Publish(frame);
-    Check(tag::RenderPending(5100), "the ring alone draws");
+    Check(!tag::RenderPending(5100), "legacy crosshair intent alone never draws over the native reticle");
     tag::SetOn(false); tag::SetCrosshair(tag::Crosshair::off);
     Check(!tag::GetSettings().on && tag::GetSettings().crosshair == tag::Crosshair::off, "runtime toggles");
     tag::RenderNote note{};
@@ -670,7 +671,11 @@ int main() {
           std::strcmp(act::FindAction("world_time_noon")->command, "time 43200") == 0, "registry command texts");
     const act::ActionDef* found[32]{};
     auto has = [&](std::size_t n, const char* id) { for (std::size_t i = 0; i < n && i < 32; ++i) if (!std::strcmp(found[i]->id, id)) return true; return false; };
-    auto n = act::SearchActions("spawn", found, 32);
+    Check(std::strcmp(act::FindAction("buddy_horse_spawn")->command, "horse_spawn") == 0 &&
+          std::strcmp(act::FindAction("buddy_horse_status")->command, "horse_status") == 0, "normal-release horse commands in F9 registry");
+    auto n = act::SearchActions("horse", found, 32);
+    Check(n == 2 && has(n, "buddy_horse_spawn") && has(n, "buddy_horse_status"), "horse search discovers summon and state");
+    n = act::SearchActions("spawn", found, 32);
     Check(n >= 3 && has(n, "spawn_enemy_here") && has(n, "spawn_enemy_closest") && has(n, "spawn_enemy_route"), "search spawn lists the three spawn rows");
     n = act::SearchActions("NOON", found, 32); Check(n == 1 && has(n, "world_time_noon"), "search is case-insensitive");
     n = act::SearchActions("kill near", found, 32); Check(n == 1 && has(n, "enemy_kill_nearest"), "every word must match");
@@ -759,6 +764,32 @@ int main() {
     debug::Configure(false, false, true);
     Check(!debug::Enabled() && Snap().queue_depth == 0, "disable clears all actions");
     NametagTests();
+    {
+        namespace ui = mgscoop::native_ui;
+        const ui::Expected expected{0x700,0x6d0,0x8250,0x1000,0x20000};
+        ui::Raw raw{};
+        raw.p=0x50000; raw.ui=0x60020; raw.owner=raw.p; raw.cam=0x70000; raw.hud=0x80000;
+        raw.ui_vtable=expected.ui_vtable; raw.primary_vtable=expected.primary_vtable;
+        raw.cam_vtable=expected.cam_vtable; raw.hud_vtable=0x90000; raw.setter=0x12340;
+        raw.count=2; raw.local=0; raw.ids[0]=0; raw.ids[1]=1; raw.category=1;
+        Check(ui::Valid(raw, expected), "native UI census accepts exact live owned chain");
+        auto bad=raw; bad.owner+=8; Check(!ui::Valid(bad,expected), "UI owner mismatch refused");
+        bad=raw; bad.ui_vtable=0x390; Check(!ui::Valid(bad,expected), "UI base construction vtable refused");
+        bad=raw; bad.local=1; Check(!ui::Valid(bad,expected), "partner UI does not own local HUD");
+        bad=raw; bad.count=1; Check(!ui::Valid(bad,expected), "single-player chain refused");
+        bad=raw; bad.setter=expected.code_end; Check(!ui::Valid(bad,expected), "non-code HUD setter refused");
+        bad=raw; bad.category=3; Check(!ui::Valid(bad,expected), "unknown reticle category refused");
+        raw.cam_flags=(1u<<29)|(1u<<28); raw.ray[0]=0x8800000000000001ull;
+        Check(ui::RayHit(raw)==1,"native camera hit uses selected ray A with valid game-object type");
+        raw.cam_flags=1u<<29; raw.ray[1]=0x8800000000000007ull;
+        Check(ui::RayHit(raw)==7,"native camera alternate ray B selected");
+        raw.ray[1]=0x8000000000000007ull;
+        Check(ui::RayHit(raw)==0xffff,"non-game-object ray handle refused");
+        raw.ray[1]=0x0800000000000007ull;
+        Check(ui::RayHit(raw)==0xffff,"unsigned ray handle refused");
+        raw.cam_flags=0;
+        Check(ui::RayHit(raw)==0xffff,"camera ray valid flag required");
+    }
     std::printf("debug menu: %u checks, %u failures\n", checks, failures);
     return failures ? 1 : 0;
 }

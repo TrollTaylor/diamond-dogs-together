@@ -25,8 +25,14 @@
 #include <cstdint>
 #include "mgscoop/partner_input.hpp"
 
+namespace mgscoop::nametag_game { struct HudJobProbe; }
 namespace mgscoop::partner_input_hook {
 
+// Optional read-only HUD census owned by the probe DLL. Callbacks avoid a
+// static partner library dependency on name-tag/game observer code.
+using HudBeforeFn = nametag_game::HudJobProbe (*)(std::uintptr_t p) noexcept;
+using HudAfterFn = void (*)(const nametag_game::HudJobProbe& before) noexcept;
+void RegisterHudProbe(HudBeforeFn before, HudAfterFn after) noexcept;
 using LogFn = void (*)(const char* line) noexcept;
 // partner_net::ConsumeInput: false when the lock is busy (reuse the previous
 // level fields, no edges).
