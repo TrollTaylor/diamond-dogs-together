@@ -51,7 +51,7 @@ function Get-WorkerTests {
         'equipment_stock_contract_tests', 'equipment_stock_writer_tests',
         'client_session_request_tests', 'heap_trial_tests', 'lab_config_tests', 'lab_status_tests',
         'link_protocol_tests', 'link_session_tests', 'link_crypto_tests', 'world_wire_tests', 'world_receipt_tests',
-        'buddy_pose_tests', 'buddy_ride_read_off_tests', 'buddy_ride_read_on_tests', 'ride_player_observer_tests', 'carry_info_tests', 'carry_plugin_tests', 'carry_provider_tests', 'sleep_plugin_tests', 'sleep_graph_tests', 'vehicle_controller_read_tests', 'camera_mode_window_tests', 'buddy_capacity_census_off_tests', 'buddy_capacity_census_on_tests', 'buddy_capacity_walker_off_tests', 'buddy_capacity_walker_on_tests', 'partner_receipt_tests', 'partner_input_tests', 'partner_recon_tests', 'partner_dmmap_tests',
+        'buddy_pose_tests', 'buddy_ride_read_off_tests', 'buddy_ride_read_on_tests', 'ride_player_observer_tests', 'carry_info_tests', 'carry_plugin_tests', 'carry_provider_tests', 'sleep_plugin_tests', 'sleep_graph_tests', 'vehicle_controller_read_tests', 'camera_mode_window_tests', 'carry_request_payload_tests', 'buddy_capacity_census_off_tests', 'buddy_capacity_census_on_tests', 'buddy_capacity_walker_off_tests', 'buddy_capacity_walker_on_tests', 'partner_receipt_tests', 'partner_input_tests', 'partner_recon_tests', 'partner_dmmap_tests',
         'pose_interp_tests', 'partner_source_turns_tests', 'partner_action_events_tests',
         'partner_action_link_tests', 'partner_upper_pipeline_tests', 'client_reset_tests',
         'session_tests', 'import_table_tests', 'steam_runtime_tests', 'steam_lifecycle_tests',
