@@ -104,6 +104,6 @@ c=F();c.B.s.owned=true;c.B.yieldForRide=function()return true end;ok,msg=c:run("
 check(not ok and msg=="dog_borrowed"and c.calls==0,"still-owned dog cannot be clobbered")
 c=F();ok,msg=c.S.run({"horse_spawn","2"},1);check(not ok and msg=="horse_args"and c.calls==0,"no count or arbitrary parameters accepted")
 local raw=slurp(menu)
-check(raw:find('{D.player, D.spawn, D.buddy}',1,true)and raw:find('a[1] == "horse_status"',1,true),"normal debug route and read-only mounted exception composed")
-check(raw:find('{"enemy", "player", "spawn", "buddy"}',1,true),"stop clears new helper metadata")
+check(raw:find('{"player", "spawn", "buddy", "vehicle"}',1,true)and raw:find('a[1] == "horse_status"',1,true),"normal debug route and read-only mounted exception composed")
+check(raw:find('{"enemy", "player", "spawn", "buddy", "vehicle"}',1,true),"stop clears new helper metadata")
 print("debug_buddy_lua_check: "..checks.." checks PASS")
