@@ -96,9 +96,13 @@ struct DownedView {
     std::uint64_t publish_ms;
     bool localDown, teammateDown, inRange;
     std::uint32_t progressMs;
+    std::uint8_t localCause, teammateCause; // 0 healthy/legacy unknown, 1 wounded, 2 asleep
 };
 inline constexpr std::uint64_t kDownedFreshMs = 500;
 inline constexpr std::uint32_t kReviveHoldMs = 3000;
+// Parse only a bounded V1/V2 copied receipt. No game reads or publication.
+// V1 down flags infer wounded; V2 requires a matching explicit cause.
+bool ParseDownedHud(const char* text, std::size_t size, DownedView& out) noexcept;
 void PublishDowned(const DownedView& view) noexcept;
 bool GetDowned(DownedView& out) noexcept;
 

@@ -2277,6 +2277,41 @@ void TestHud() {
               "both-down recovery transition retains a safe wait instruction");
         d.localDown = d.teammateDown = false;
         Check(!hud::FormatDowned(d,30050,1200,prompt,progress) && !prompt.text[0], "healthy pair clears the gameplay instruction");
+        // Parse the natural owner's copied V2 cause, never infer sleep from pose.
+        auto parseHud = [&](const char* text) { return hud::ParseDownedHud(text, std::strlen(text), copied); };
+        Check(parseHud("return 'MGS_COOP_DOWNED_HUD_V1' -- 30050 7 1 0 0 0") && copied.localCause == 1,
+              "legacy down receipt infers wounded and keeps its existing prompt");
+        Check(parseHud("return 'MGS_COOP_DOWNED_HUD_V2' -- 30050 7 1 0 0 0 2 0") && copied.localCause == 2,
+              "explicit protected sleep is separate from wounded incapacitation");
+        copied.publish_ms = 1000;
+        Check(hud::FormatDowned(copied,30050,1200,prompt,progress) && std::strstr(prompt.text,"Asleep") &&
+              !std::strstr(prompt.text,"revive") && prompt.tone == hud::Tone::warn && progress == 0,
+              "sleeping player gets a wake instruction without a lethal down label");
+        Check(parseHud("return 'MGS_COOP_DOWNED_HUD_V2' -- 30050 7 0 1 1 1500 0 2"), "teammate sleep progress parsed");
+        copied.publish_ms = 1000;
+        Check(hud::FormatDowned(copied,30050,1200,prompt,progress) && std::strstr(prompt.text,"wake teammate") && progress == .5f,
+              "held Action wakes a sleeping teammate with real copied hold progress");
+        Check(parseHud("return 'MGS_COOP_DOWNED_HUD_V2' -- 0 0 0 0 0 0 0 0") && !copied.valid,
+              "world stop zeroes every explicit incapacity field");
+        for (const char* bad : {
+                "return 'MGS_COOP_DOWNED_HUD_V2' -- 30050 7 1 0 0 0 0 0",
+                "return 'MGS_COOP_DOWNED_HUD_V2' -- 30050 7 0 0 0 0 2 0",
+                "return 'MGS_COOP_DOWNED_HUD_V2' -- 30050 7 1 0 0 0 3 0",
+                "return 'MGS_COOP_DOWNED_HUD_V2' -- 30050 7 0 1 1 3001 0 2",
+                "return 'MGS_COOP_DOWNED_HUD_V2' -- 30050 7 1 1 1 100 2 1",
+                "return 'MGS_COOP_DOWNED_HUD_V2' -- 0 7 0 0 0 0 0 0",
+                "return 'MGS_COOP_DOWNED_HUD_V2' -- 10010 7 1 0 0 0 2 0",
+                "return 'MGS_COOP_DOWNED_HUD_V2' -- 30050 0 1 0 0 0 2 0",
+                "return 'MGS_COOP_DOWNED_HUD_V2' -- 30050 7 1 0 0 0 2 0 ",
+                "return 'MGS_COOP_DOWNED_HUD_V2' -- 30050 7 1 0 0 0 2",
+                "return 'MGS_COOP_DOWNED_HUD_V3' -- 30050 7 1 0 0 0 2 0",
+                "return 'MGS_COOP_DOWNED_HUD_V2' -- 30050 7 1 0 0 0 2 0 1",
+                "return 'MGS_COOP_DOWNED_HUD_V1' -- 30050 7 1 0 0 0 2 0"}) {
+            Check(!parseHud(bad) && !copied.valid && copied.localCause == 0 && copied.teammateCause == 0,
+                  "malformed/stale/contradictory cause receipt cannot advertise a wake or revive action");
+        }
+        Check(!hud::ParseDownedHud(nullptr,100,copied), "null receipt refused without dereference");
+        Check(!hud::ParseDownedHud("",193,copied), "oversized receipt refused before reading");
         hud::PublishDowned({});
         Check(!hud::GetDowned(copied), "world teardown immediately clears copied downed HUD facts");
     }

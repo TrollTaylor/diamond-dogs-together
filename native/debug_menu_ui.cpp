@@ -675,12 +675,12 @@ void Partner(const Snapshot& s) noexcept {
     } else ImGui::TextColored(kGrey, "No partner pose received yet%s.", up ? "" : " (link down)");
     ImGui::Text("Act %u   gun %u   flags 0x%02x   mapped clip %u", s.remote_act, s.remote_equip, s.remote_action_flags, s.mapped_clip);
     Row("partner_goto", s, {nullptr, 0, 0, true});
-    Heading("Downed and revive tests");
-    Rows({"coop_downed_status", "coop_revive_status", "coop_downed_pad_status"}, s);
-    Wrapped("Downed players crawl slowly and cannot aim or fire. Close F9 and hold ACTION (E by default) within 3 m for 3 seconds to revive your teammate.");
+    Heading("Wounded and sleeping teammates");
+    Rows({"coop_downed_status", "coop_revive_status", "coop_downed_pad_status", "coop_carry_status"}, s);
+    Wrapped("Wounded players crawl slowly. Sleep darts immobilize without losing health; sleepers wake after 30 seconds of paired gameplay. Close F9 and hold ACTION (E by default) within 3 m for 3 seconds to revive or wake your teammate.");
     Heading("Companion tests");
     Row("buddy_horse_spawn", s, {nullptr, 260.0f, ImGui::GetFrameHeight() * 1.5f, true});
-    Rows({"buddy_horse_status", "buddy_follow_status"}, s);
+    Rows({"buddy_horse_status", "buddy_follow_status", "vehicle_seats_status"}, s);
     Wrapped("Summon selects your local D-Horse beside you. Close F9, wait for it, then use the normal ACTION button to mount. "
         "This release uses the stock single-buddy pack; two independently synchronized mounts are still being developed. "
         "Horse status reports actual local posture and availability, never an invented remote rider.");

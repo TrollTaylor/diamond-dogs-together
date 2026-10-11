@@ -2,6 +2,7 @@
 #include "mgscoop/coop_hud.hpp"
 
 #include <atomic>
+#include <charconv>
 #include <cstdio>
 #include <cstring>
 #include <thread>
@@ -194,6 +195,39 @@ bool FormatPartnerJson(const PartnerView& v, std::uint32_t session, std::uint32_
     return true;
 }
 
+bool ParseDownedHud(const char* text, std::size_t size, DownedView& out) noexcept {
+    out = {};
+    constexpr char v1[] = "return 'MGS_COOP_DOWNED_HUD_V1' -- ";
+    constexpr char v2[] = "return 'MGS_COOP_DOWNED_HUD_V2' -- ";
+    constexpr auto length = sizeof(v1) - 1;
+    if (!text || size <= length || size > 192) return false;
+    const bool explicitCause = std::memcmp(text, v2, length) == 0;
+    if (!explicitCause && std::memcmp(text, v1, length) != 0) return false;
+    const auto count = explicitCause ? 8u : 6u;
+    const char* cursor = text + length; const char* end = text + size;
+    std::uint32_t v[8]{};
+    for (unsigned i = 0; i < count; ++i) {
+        const auto parsed = std::from_chars(cursor, end, v[i]);
+        if (parsed.ec != std::errc() || parsed.ptr == cursor) return false;
+        cursor = parsed.ptr;
+        if (i + 1 != count) { if (cursor == end || *cursor != ' ') return false; ++cursor; }
+    }
+    if (cursor != end || v[0] > 99999 || v[1] > 65535 || v[2] > 1 || v[3] > 1 ||
+        v[4] > 1 || v[5] > kReviveHoldMs || v[6] > 2 || v[7] > 2) return false;
+    if (!explicitCause) { v[6] = v[2]; v[7] = v[3]; }
+    if ((v[2] != 0) != (v[6] != 0) || (v[3] != 0) != (v[7] != 0) ||
+        (v[4] && (!v[3] || v[2])) || (v[5] && (!v[4] || !v[3] || v[2]))) return false;
+    if (!v[0]) {
+        for (unsigned i = 1; i < count; ++i) if (v[i]) return false;
+        return true;
+    }
+    if (!v[1] || (v[0] != 30010 && v[0] != 30020 && v[0] != 30050)) return false;
+    out.valid = true; out.mission = v[0]; out.epoch = static_cast<std::uint16_t>(v[1]);
+    out.localDown = v[2] != 0; out.teammateDown = v[3] != 0; out.inRange = v[4] != 0;
+    out.progressMs = v[5]; out.localCause = static_cast<std::uint8_t>(v[6]); out.teammateCause = static_cast<std::uint8_t>(v[7]);
+    return true;
+}
+
 void PublishDowned(const DownedView& view) noexcept { Guard guard(g_downed_lock); g_downed = view; }
 bool GetDowned(DownedView& out) noexcept { Guard guard(g_downed_lock); out = g_downed; return out.valid; }
 bool FormatDowned(const DownedView& v, std::uint32_t current_mission,
@@ -202,18 +236,22 @@ bool FormatDowned(const DownedView& v, std::uint32_t current_mission,
     if (!v.valid || !v.epoch || v.mission != current_mission ||
         (v.mission != 30010 && v.mission != 30020 && v.mission != 30050) ||
         now_ms < v.publish_ms || now_ms - v.publish_ms > kDownedFreshMs || v.progressMs > kReviveHoldMs ||
+        v.localCause > 2 || v.teammateCause > 2 || (!v.localDown && v.localCause) || (!v.teammateDown && v.teammateCause) ||
         (v.inRange && (!v.teammateDown || v.localDown)) ||
         (v.progressMs && (!v.inRange || !v.teammateDown || v.localDown))) return false;
     if (v.localDown) {
-        Print(out.text, sizeof(out.text), "Downed - waiting for your teammate to revive you");
-        out.tone = Tone::bad; return true;
+        Print(out.text, sizeof(out.text), v.localCause == 2 ?
+              "Asleep - waiting to wake or for your teammate" : "Downed - waiting for your teammate to revive you");
+        out.tone = v.localCause == 2 ? Tone::warn : Tone::bad; return true;
     }
     if (!v.teammateDown) return false;
     out.tone = Tone::warn;
-    if (!v.inRange) Print(out.text, sizeof(out.text), "Teammate down - get closer to revive");
+    if (!v.inRange) Print(out.text, sizeof(out.text), v.teammateCause == 2 ?
+        "Teammate asleep - get closer to wake them" : "Teammate down - get closer to revive");
     else {
         progress = static_cast<float>(v.progressMs) / static_cast<float>(kReviveHoldMs);
-        Print(out.text, sizeof(out.text), "Hold Action (E) to revive teammate - %u%%", v.progressMs * 100u / kReviveHoldMs);
+        Print(out.text, sizeof(out.text), v.teammateCause == 2 ? "Hold Action (E) to wake teammate - %u%%" :
+              "Hold Action (E) to revive teammate - %u%%", v.progressMs * 100u / kReviveHoldMs);
     }
     return true;
 }

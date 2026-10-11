@@ -15,6 +15,7 @@
 #include "mgscoop/player_team_patch.hpp"
 #include "mgscoop/damage_patch.hpp"
 #include "mgscoop/downed_player.hpp"
+#include "mgscoop/carry_info.hpp"
 #include "mgscoop/downed_damage.hpp"
 #include "mgscoop/buddy_pose.hpp"
 #include "mgscoop/buddy_dog_command_pins.hpp"
@@ -1076,6 +1077,7 @@ void PartnerMissionEnd() noexcept {
 // had the native drive still armed.
 void PartnerShutdown() noexcept {
     InterlockedExchange(&partner_window_closing, 1);  // the early manifest stops in any mission
+    mgscoop::carry_info::Shutdown();
     mgscoop::nametag::Shutdown();  // thread-safe flag: the overlay stops drawing the tag
     // Steam online exit hygiene (docs/steam-online.md C11): flags only. The
     // transport thread sends one CLOSE, closes the peer session and parks;
@@ -1967,12 +1969,21 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             char status[161]{};
             const bool complete=mgscoop::downed_damage::PadStatusLine(status,sizeof(status));
             debug::Result(pending.id,complete?1u:0u,status);
+        } else if (pending.id && std::strcmp(pending.text, "carry_status") == 0) {
+            const auto owner=mgscoop::downed_player::GetSnapshot();
+            mgscoop::carry_info::Reply r{};
+            const bool ok=mgscoop::carry_info::Observe(owner.mission,owner.epoch,DownedAdmitted(owner.mission,owner.epoch),mission_thread,r);
+            const auto& a=r.bodies[0];const auto& b=r.bodies[1];char line[161]{};
+            StringCchPrintfA(line,ARRAYSIZE(line),"carry;ready=%u;gen=%lu;b0=%u,%u,%u,%u;b1=%u,%u,%u,%u;attached=unverified;reason=%s",
+                ok?1u:0u,static_cast<unsigned long>(r.generation),a.eligible?1u:0u,a.nativeCarryBit?1u:0u,unsigned(a.carryTarget),a.targetsPartner?1u:0u,
+                b.eligible?1u:0u,b.nativeCarryBit?1u:0u,unsigned(b.carryTarget),b.targetsPartner?1u:0u,r.reason?r.reason:"unknown");
+            debug::Result(pending.id,ok?1u:0u,line);
         } else if (pending.id && std::strcmp(pending.text, "downed_status") == 0) {
             const auto s=mgscoop::downed_player::GetSnapshot();
             char status[161]{};
-            StringCchPrintfA(status,ARRAYSIZE(status),"downed;ready=%u;armed=%u;down=%u;gen=%lu;cause=%u;lock=%u;hp=%.0f,%.0f;epoch=%u;reason=%s",
+            StringCchPrintfA(status,ARRAYSIZE(status),"downed;ready=%u;armed=%u;down=%u;gen=%lu;cause=%u;lock=%u;hp=%.0f,%.0f;epoch=%u;state=%s;reason=%s",
                 s.ready?1u:0u,s.armed?1u:0u,s.down?1u:0u,static_cast<unsigned long>(s.generation),unsigned(s.cause),
-                s.controlsApplied?1u:0u,double(s.life),double(s.maximum),unsigned(s.epoch),s.reason?s.reason:"unknown");
+                s.controlsApplied?1u:0u,double(s.life),double(s.maximum),unsigned(s.epoch),s.down?(s.cause==2?"asleep":"wounded"):"healthy",s.reason?s.reason:"unknown");
             debug::Result(pending.id,1,status);
         } else if (pending.id && std::strcmp(pending.text, "revive_status") == 0) {
             const auto owner=mgscoop::downed_player::GetSnapshot();
@@ -3067,22 +3078,11 @@ bool SelectDownedReceipt(const char* buffer, std::size_t size, mgscoop::script_b
     return true;
 }
 bool SelectDownedHudReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
-    constexpr char prefix[]="return 'MGS_COOP_DOWNED_HUD_V1' -- ";
-    if(!world_on || !buffer || size<=sizeof(prefix)-1 || size>160 || std::memcmp(buffer,prefix,sizeof(prefix)-1)!=0) return false;
-    const char* cursor=buffer+sizeof(prefix)-1;const char* end=buffer+size;
-    std::uint32_t v[6]{};
-    for(unsigned i=0;i<6;++i) {
-        const auto parsed=std::from_chars(cursor,end,v[i]);
-        if(parsed.ec!=std::errc() || parsed.ptr==cursor) return false;
-        cursor=parsed.ptr;if(i!=5) {if(cursor==end || *cursor!=' ') return false;++cursor;}
-    }
-    if(cursor!=end || v[0]>99999 || v[1]>65535 || v[2]>1 || v[3]>1 || v[4]>1 || v[5]>3000 ||
-       !(OnRuntimeThread() || OnTerminationThread())) return false;
     mgscoop::coop_hud::DownedView view{};
-    if(v[0] && v[1] && DownedAdmitted(v[0],static_cast<std::uint16_t>(v[1]))) {
-        view.valid=true;view.mission=v[0];view.epoch=static_cast<std::uint16_t>(v[1]);view.publish_ms=GetTickCount64();
-        view.localDown=v[2]!=0;view.teammateDown=v[3]!=0;view.inRange=v[4]!=0;view.progressMs=v[5];
-    }
+    if(!world_on || !mgscoop::coop_hud::ParseDownedHud(buffer,size,view) ||
+       !(OnRuntimeThread() || OnTerminationThread())) return false;
+    if(view.valid && DownedAdmitted(view.mission,view.epoch)) view.publish_ms=GetTickCount64();
+    else view={};
     mgscoop::coop_hud::PublishDowned(view);
     constexpr char reply[]="return true";
     replacement={reply,sizeof(reply)-1};world_quiet=true;return true;
@@ -3659,6 +3659,10 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                     if(mgscoop::buddy_capacity_census::Compiled()) Log(buddy_capacity_pins_ok ? "buddy_capacity_code_gate=ok;scope=private_candidate\r\n" : "buddy_capacity_code_gate=refused\r\n");
                     Log(buddy_pose_pins_ok ? "buddy_pose_code_gate=ok;scope=read_only_current_dog\r\n" : "buddy_pose_code_gate=refused\r\n");
                     const bool downed_gate = partner_gate_ok && mgscoop::downed_damage::CodeGate(base, span);
+                    std::uintptr_t carryMismatch=0;
+                    const bool carryGate=downed_gate && mgscoop::carry_info::CodeGate(base,span,carryMismatch);
+                    mgscoop::carry_info::Configure(partner_addresses,carryGate);
+                    LogFormat("carry_info_code_gate=%s;rva=0x%llx;scope=read_only_query\r\n",carryGate?"ok":"refused",static_cast<unsigned long long>(carryMismatch));
                     downed_hook_ok = downed_gate && mgscoop::downed_damage::Install(base, span, Log);
                     mgscoop::downed_player::Configure(partner_addresses, downed_hook_ok);
                     Log(downed_hook_ok ? "downed_code_gate=ok;scope=paired_free_roam\r\n" : "downed_code_gate=refused\r\n");

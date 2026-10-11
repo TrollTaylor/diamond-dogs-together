@@ -118,6 +118,7 @@ mgs_add_lua_check(world_revive_input_lua_check "${_mgs_coop}/world_downed.lua" "
 mgs_add_lua_check(world_buddy_lua_check "${_mgs_coop}/world_buddy.lua" "${_mgs_coop}/debug_buddy.lua")
 mgs_add_lua_check(world_buddy_ride_lua_check "${_mgs_coop}/world_buddy_ride.lua")
 mgs_add_lua_check(debug_buddy_lua_check "${_mgs_coop}/debug_buddy.lua" "${_mgs_coop}/debug_menu.lua")
+mgs_add_lua_check(debug_vehicle_lua_check "${_mgs_coop}/debug_vehicle.lua")
 mgs_add_lua_check(world_follow_lua_check "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_follow_seed.lua")
 mgs_add_lua_check(world_goto_lua_check "${_mgs_coop}/world_goto.lua")
 mgs_add_lua_check(world_align_lua_check "${_mgs_coop}/world_align.lua" "${_mgs_coop}/world_enemy.lua"

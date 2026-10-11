@@ -211,10 +211,11 @@ bool SlowCrawl(bool restore) noexcept {
     return true;
 }
 bool Controls(const partner_input::PadRaw& raw) noexcept {
-    return (raw.pp_mask[0] & kBlockedButtons) == kBlockedButtons && (raw.pp_mask[2] & kBlockedTriggers) == kBlockedTriggers;
+    const auto buttons = detail::ButtonsForCause(cycle.cause);
+    return buttons && (raw.pp_mask[0] & buttons) == buttons && (raw.pp_mask[2] & kBlockedTriggers) == kBlockedTriggers;
 }
 bool Released(const partner_input::PadRaw& raw) noexcept {
-    return (raw.pp_mask[0] & kBlockedButtons & ~baselineButtons) == 0 &&
+    return (raw.pp_mask[0] & detail::ButtonsForCause(cycle.cause) & ~baselineButtons) == 0 &&
         (raw.pp_mask[2] & kBlockedTriggers & ~baselineTriggers) == 0;
 }
 struct LocalPadRead {
@@ -381,7 +382,7 @@ bool Control(std::uint32_t m, std::uint16_t ep, bool admitted, std::uint8_t comm
         if (!Released(raw)) return finish(true, "restore_pending");
         if (!SlowCrawl(true)) return finish(true, "crawl_restore_pending");
         partner_player::State again{}; std::uintptr_t againRec = 0; float againCur = 0, againMax = 0;
-        if (!Owned(again, againRec, againCur, againMax) || !StoreLife(againRec, detail::RevivedHealth(againMax))) return finish(false, "health");
+        if (!Owned(again, againRec, againCur, againMax) || !StoreLife(againRec, detail::RecoveredHealth(cycle.cause, originalHealth, againMax))) return finish(false, "health");
         friendlyRecovery = {}; detail::Revive(cycle, generation); controlsApplied = false; downAt = lastControls = 0;
         out.down = false; out.cause = 0; out.applied = true;
         // Baseline now belongs to the live game's normal restrictions.
@@ -392,9 +393,11 @@ bool Control(std::uint32_t m, std::uint16_t ep, bool admitted, std::uint8_t comm
         // Check this frame first: a paused but still locked body stays down.
         // Failed requests and a later lost lock still have a bounded deadline.
         bool prone = false;
-        const bool protection = Prone(s, prone) && StoreLife(record, detail::ProtectedHealth(max));
+        const bool protection = Prone(s, prone) && StoreLife(record, detail::IncapacitatedHealth(cycle.cause, originalHealth, max));
         const bool masked = Controls(raw);
-        const bool crawlReady = protection && prone && masked && SlowCrawl(false);
+        // The fallback sleep body is prone but fully immobile. Do not create a
+        // crawl-rate lease for sleep; the fresh native input cap below is zero.
+        const bool crawlReady = protection && prone && masked && SlowCrawl(cycle.cause == 2);
         const bool applied = protection && prone && masked && crawlReady;
         const auto pendingReason = detail::ControlsPendingReason(prone, masked, crawlReady);
         if (applied) { controlsApplied = true; lastControls = lastPoll; }
@@ -406,7 +409,7 @@ bool Control(std::uint32_t m, std::uint16_t ep, bool admitted, std::uint8_t comm
         }
         if (!protection) return finish(false, "prone_health");
         out.applied = applied;
-        return finish(true, applied ? "downed" : pendingReason);
+        return finish(true, applied ? cycle.cause == 2 ? "sleeping_prone_fallback" : "downed" : pendingReason);
     }
     out.applied = command == 0;
     return finish(true, detail::RebindReason(rebound));
@@ -434,7 +437,7 @@ PadObservation AfterPadUpdate(std::uintptr_t pad, bool outerUpdate, bool exactCa
     // Observe healthy input for a demonstrable next-update reset; only the exact
     // protected downed/prone body with both named restrictions may be changed.
     if (cycle.down && controlsApplied && (first.stance != 3 || !Controls(first.raw))) return finish("controls");
-    const auto plan = detail::PlanPadMagnitude(first.raw.pp_derived[0], cycle.down, controlsApplied);
+    const auto plan = detail::PlanPadMagnitude(first.raw.pp_derived[0], cycle.down, controlsApplied, cycle.cause);
     if (!plan.valid) return finish("magnitude");
     if (plan.write) {
         const auto before = CrawlBits(first.raw.pp_derived[0]), after = CrawlBits(plan.magnitude);
@@ -447,7 +450,7 @@ PadObservation AfterPadUpdate(std::uintptr_t pad, bool outerUpdate, bool exactCa
     out.before = first.raw.pp_derived[0]; out.after = plan.magnitude;
     // This is an ephemeral per-frame output, not an owned input lease. Never
     // restore a cached held magnitude after release, revive, stop or timeout.
-    return finish(cycle.down ? controlsApplied ? "downed" : "controls_pending" : "healthy");
+    return finish(cycle.down ? controlsApplied ? cycle.cause == 2 ? "sleeping" : "downed" : "controls_pending" : "healthy");
 }
 bool Scope(std::uintptr_t P, std::uint32_t& local) noexcept {
     local = 0xFFFFFFFFu;
@@ -537,7 +540,7 @@ bool FriendlyControl(std::uint32_t m, std::uint16_t ep, bool admitted,
     if (!RecoverLife(record, cur, now)) return finish(false, "hit_recovery_health");
     const float amount = static_cast<float>(damageMilli) / 1000.f;
     if (cause == 2 || amount >= cur) {
-        if (!StoreLife(record, detail::ProtectedHealth(max))) return finish(false, "hit_health");
+        if (!StoreLife(record, detail::IncapacitatedHealth(cause == 2 ? 2 : 1, cur, max))) return finish(false, "hit_health");
         originalHealth = cur; downAt = GetTickCount64(); lastControls = 0; controlsApplied = false;
         friendlyRecovery = {}; detail::Enter(cycle, cause == 2 ? 2 : 1);
         out.down = true; out.generation = cycle.generation; out.cause = cycle.cause;

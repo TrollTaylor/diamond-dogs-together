@@ -1371,7 +1371,7 @@ do
         local refusingReset = true
         local previousLoad = env.loadstring
         env.loadstring = function(source)
-            if starts(source, "return 'MGS_COOP_DOWNED_HUD_V1'") then
+            if starts(source, "return 'MGS_COOP_DOWNED_HUD_V1'") or starts(source, "return 'MGS_COOP_DOWNED_HUD_V2'") then
                 c.receipts[#c.receipts + 1] = source
                 return function() return true end
             end

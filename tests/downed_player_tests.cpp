@@ -331,11 +331,60 @@ int main() {
     d::detail::Cycle pc{};
     for(unsigned round=0;round<3;++round) {
         Check(d::detail::Enter(pc,round==1?2:1),"new input-cap cycle enters exact damage/sleep generation");
-        Check(d::detail::PlanPadMagnitude(1.f,pc.down,true).magnitude==cap,"active down cycle caps new held movement");
+        Check(d::detail::PlanPadMagnitude(1.f,pc.down,true,pc.cause).magnitude==(pc.cause==2?0.f:cap),"each cause applies its distinct fresh input limit");
         Check(d::detail::Revive(pc,pc.generation),"matching teammate grant ends input-cap cycle");
         const auto released=d::detail::PlanPadMagnitude(0.f,pc.down,false);
         Check(released.valid && !released.write && released.magnitude==0.f,"revive with released real input cannot resurrect cached held movement");
         Check(d::detail::PlanPadMagnitude(1.f,pc.down,false).magnitude==1.f,"next healthy held input demonstrates full native magnitude restored");
     }
+    // Sleep differs from lethal injury: no voluntary keyboard/analog movement,
+    // no artificial health loss, and no healing when awakened.
+    Check(d::detail::ButtonsForCause(1)==d::kBlockedButtons &&
+          d::detail::ButtonsForCause(2)==0xFFFFFFFFu && d::detail::ButtonsForCause(0)==0 &&
+          d::detail::ButtonsForCause(3)==0, "only the two admitted causes have owned native masks");
+    Check((d::detail::ButtonsForCause(2)&p::kMovementOnlyBits)==p::kMovementOnlyBits,
+          "sleep blocks every keyboard movement alias as well as stance and world actions");
+    for(float input : {0.f,.01f,.1f,.25f,.8f,1.f}) {
+        const auto sleep=d::detail::PlanPadMagnitude(input,true,true,2);
+        const auto wounded=d::detail::PlanPadMagnitude(input,true,true,1);
+        Check(sleep.valid && sleep.magnitude==0.f && sleep.write==(input>0.f),
+              "every freshly computed sleeping analog magnitude becomes zero without cached input");
+        Check(wounded.valid && wounded.magnitude==(input>cap?cap:input),
+              "lethal crawl retains exactly the previous cap and small-stick behavior");
+        const auto awake=d::detail::PlanPadMagnitude(input,false,false,0);
+        Check(awake.valid && awake.magnitude==input && !awake.write,
+              "waking preserves next retail update rather than restoring held asleep input");
+        const auto pending=d::detail::PlanPadMagnitude(input,true,false,2);
+        Check(pending.valid && pending.magnitude==input && !pending.write,
+              "unconfirmed sleep identity and controls cannot authorize a movement write");
+    }
+    for(std::uint8_t invalid : {std::uint8_t{0},std::uint8_t{3},std::uint8_t{255}})
+        Check(!d::detail::PlanPadMagnitude(1.f,true,true,invalid).valid,
+              "invalid incapacity cannot become a crawl or immobilizing native write");
+    for(float max : {1.f,19.f,1000.f,65535.f}) {
+        for(float original : {.001f,max*.1f,max}) {
+            Check(d::detail::IncapacitatedHealth(2,original,max)==original &&
+                  d::detail::RecoveredHealth(2,original,max)==original,
+                  "sleep and wake retain each exact pre-dart health including wounded fractions");
+            Check(d::detail::IncapacitatedHealth(1,original,max)==d::detail::ProtectedHealth(max) &&
+                  d::detail::RecoveredHealth(1,original,max)==d::detail::RevivedHealth(max),
+                  "lethal protection and revival fractions remain unchanged");
+        }
+    }
+    for(float invalid : {0.f,-1.f,65536.f,std::numeric_limits<float>::infinity(),std::numeric_limits<float>::quiet_NaN()}) {
+        Check(d::detail::IncapacitatedHealth(2,invalid,65535.f)==0 &&
+              d::detail::RecoveredHealth(2,invalid,65535.f)==0,
+              "invalid captured life cannot authorize sleep health or wake healing");
+        Check(d::detail::IncapacitatedHealth(2,1.f,invalid)==0 &&
+              d::detail::RecoveredHealth(2,1.f,invalid)==0,
+              "invalid maximum cannot authorize an unowned health store");
+    }
+    Check(d::detail::IncapacitatedHealth(2,1001.f,1000.f)==0 &&
+          d::detail::RecoveredHealth(2,1001.f,1000.f)==0,
+          "above-max capture cannot be silently clamped into native authority");
+    for(std::uint8_t invalid : {std::uint8_t{0},std::uint8_t{3},std::uint8_t{255}})
+        Check(d::detail::IncapacitatedHealth(invalid,500.f,1000.f)==0 &&
+              d::detail::RecoveredHealth(invalid,500.f,1000.f)==0,
+              "unrecognized cause cannot request a healing or injury amount");
     std::printf("%u native downed cycle, input and health checks; no game calls\n",checks);
 }

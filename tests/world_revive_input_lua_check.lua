@@ -21,7 +21,7 @@ local function fixture()
     W.inGame = function() return not c.outOfGame end
     W.tx = function(op, ...) c.tx[#c.tx + 1] = {op, {...}}; return true end
     W.receipt = function(text)
-        if text:match("^return 'MGS_COOP_DOWNED_HUD_V1'") then return true end
+        if text:match("^return 'MGS_COOP_DOWNED_HUD_V[12]'") then return true end
         local m, ep, cmd, gen = text:match("^return 'MGS_COOP_DOWNED_V1' %-%- (%d+) (%d+) (%d+) (%d+)$")
         check(m == '30010' and ep == '7', 'all control receipts retain exact mission and epoch')
         cmd, gen = tonumber(cmd), tonumber(gen)

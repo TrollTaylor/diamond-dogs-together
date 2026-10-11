@@ -6,6 +6,7 @@
 namespace mgscoop::downed_player {
 inline constexpr std::uint32_t kBlockedButtons = 0xFDDFFFFFu; // preserve keyboard W / walk; sticks and look untouched
 inline constexpr std::uint32_t kBlockedTriggers = 3u;
+inline constexpr std::uint32_t kSleepingButtons = 0xFFFFFFFFu; // immobilized fallback; camera remains retail-owned
 inline constexpr std::uint32_t kReviveActionHash = 0x71FE74BFu; // exact Fox.StrCode32("MgsCoopRevive")
 struct Reply {
     bool ready, down, held, applied;
@@ -83,7 +84,11 @@ struct PadScope {
 };
 const char* PadRefusal(const PadScope& scope) noexcept;
 struct PadPlan { bool valid, write; float magnitude; };
-PadPlan PlanPadMagnitude(float current, bool down, bool controlsApplied) noexcept;
+PadPlan PlanPadMagnitude(float current, bool down, bool controlsApplied, std::uint8_t cause = 1) noexcept;
+std::uint32_t ButtonsForCause(std::uint8_t cause) noexcept;
+// Sleep retains the exact pre-dart life; it does not apply lethal injury or grant healing.
+float IncapacitatedHealth(std::uint8_t cause, float original, float maximum) noexcept;
+float RecoveredHealth(std::uint8_t cause, float original, float maximum) noexcept;
 // Expired or reversed owner polls cannot authorize damage protection.
 bool FreshScope(std::uint64_t now, std::uint64_t poll) noexcept;
 inline constexpr std::uint64_t kFriendlyRecoveryMs = 4000; // exact retail ordinary hurt timer

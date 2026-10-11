@@ -1,0 +1,4 @@
+#pragma once
+constexpr char debug_vehicle_source[] = R"MGS_VEHICLE(
+@MGS_DEBUG_VEHICLE_SOURCE@
+)MGS_VEHICLE";

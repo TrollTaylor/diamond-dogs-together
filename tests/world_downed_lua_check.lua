@@ -27,16 +27,17 @@ local function fixture(host)
         return true
     end
     W.receipt = function(text)
-        if text:match("^return 'MGS_COOP_DOWNED_HUD_V1'") then
-            local m, ep, ld, td, near, progress = text:match("%-%- (%d+) (%d+) (%d+) (%d+) (%d+) (%d+)$")
-            check(m ~= nil, 'downed HUD receipt uses six bounded unsigned fields')
+        if text:match("^return 'MGS_COOP_DOWNED_HUD_V2'") then
+            local m, ep, ld, td, near, progress, cause, teammateCause = text:match("%-%- (%d+) (%d+) (%d+) (%d+) (%d+) (%d+) (%d+) (%d+)$")
+            check(m ~= nil, 'downed HUD V2 receipt uses eight bounded unsigned fields')
             local h = {mission = tonumber(m), epoch = tonumber(ep), down = tonumber(ld), teammateDown = tonumber(td),
-                inRange = tonumber(near), progress = tonumber(progress)}
-            check(h.down <= 1 and h.teammateDown <= 1 and h.inRange <= 1 and h.progress <= 3000,
-                'HUD booleans and elapsed hold are bounded')
+                inRange = tonumber(near), progress = tonumber(progress), cause = tonumber(cause), teammateCause = tonumber(teammateCause)}
+            check(h.down <= 1 and h.teammateDown <= 1 and h.inRange <= 1 and h.progress <= 3000 and
+                h.cause <= 2 and h.teammateCause <= 2 and (h.down == 0) == (h.cause == 0) and
+                (h.teammateDown == 0) == (h.teammateCause == 0), 'HUD incapacity causes agree with bounded down flags')
             check(h.progress == 0 or h.down == 0 and h.teammateDown == 1 and h.inRange == 1,
                 'HUD cannot show progress for a downed, distant or absent reviver')
-            if h.mission == 0 then check(h.epoch + h.down + h.teammateDown + h.inRange + h.progress == 0, 'cleanup HUD is entirely zero')
+            if h.mission == 0 then check(h.epoch + h.down + h.teammateDown + h.inRange + h.progress + h.cause + h.teammateCause == 0, 'cleanup HUD is entirely zero')
             else check(h.mission == W.mission and h.epoch == W.epoch, 'HUD stays in its live mission and epoch') end
             c.hud[#c.hud + 1] = h; return true
         end
@@ -58,7 +59,8 @@ local function fixture(host)
             c.appliedHits = (c.appliedHits or 0) + 1
             n.life = n.life or 1000
             if cause == 2 or dmg / 1000 >= n.life then
-                n.down, n.cause, n.generation, n.life = true, cause == 2 and 2 or 1, n.generation + 1, 50
+                n.sleepLife = cause == 2 and n.life or nil
+                n.down, n.cause, n.generation, n.life = true, cause == 2 and 2 or 1, n.generation + 1, cause == 2 and n.life or 50
             else n.life = n.life - dmg / 1000 end
             r = copy(n); r.applied = true; return r
         end
@@ -84,7 +86,8 @@ local function fixture(host)
             if c.failRevive or not n.down or generation ~= n.generation then return nil end
             if c.mask then return copy(n) end
             c.revived = (c.revived or 0) + 1
-            n.down, n.cause = false, 0
+            if n.cause == 2 and n.sleepLife then n.life = n.sleepLife end
+            n.sleepLife, n.down, n.cause = nil, false, 0
             local r = copy(n); r.applied = true; return r
         end
         local r = copy(n)
@@ -99,8 +102,9 @@ local function fixture(host)
     end
     env.Player.IsInstanceValid = function() return c.invalidPlayer ~= true end
     env.Player.SetPadMask = function(options)
-        check(options.settingName == 'MgsCoopDowned' and options.except == false and options.buttons == 0xFDDFFFFF and
-            options.sticks == 0 and options.triggers == 3, 'only owned named mask, crawl/look preserved, gun triggers blocked')
+        check(options.settingName == 'MgsCoopDowned' and options.except == false and
+            options.buttons == (c.native.cause == 2 and 0xFFFFFFFF or 0xFDDFFFFF) and
+            options.sticks == 0 and options.triggers == 3, 'cause-specific own mask: wounded crawl or immobile sleep, look preserved, gun triggers blocked')
         c.mask, c.maskSets, c.maskReleaseAt = true, (c.maskSets or 0) + 1, nil
     end
     env.Player.ResetPadMask = function(options)
@@ -544,5 +548,129 @@ if arg[2] then
     a,b=pair(); b.W.paired=false
     b.W.handlers[OP.FRIENDLY_HIT]({1,0,1,100000,2},b.now)
     check(not b.appliedHits, 'unpaired friendly packet cannot change native state')
+end
+-- Actual composed sleep authority: host owns one thirty-second deadline per
+-- accepted generation, while the ordinary E grant can still wake early.
+do
+    local function beforeDeadline(host, guest, role)
+        step(host, guest, 100); step(host, guest, 100)
+        local timer = host.D.sleepTimers[role]
+        check(timer and timer.generation == (role == 1 and host or guest).native.generation,
+            'fresh accepted sleep gets only its exact host-owned generation deadline')
+        while host.now < timer.at + 29900 do step(host, guest, 100) end
+        return timer.at
+    end
+    for _, targetHost in ipairs({true, false}) do
+        local host, guest = pair()
+        local target, role = targetHost and host or guest, targetHost and 1 or 2
+        target.native.life, target.native.sleepLife = 731, 731
+        down(target, 2)
+        local at = beforeDeadline(host, guest, role)
+        check(not target.revived and target.native.down and target.native.life == 731,
+            'sleep does not inflict lethal injury or wake before its fresh thirty-second deadline')
+        check(target.D.hud(target.now).cause == 2 and (targetHost and guest or host).D.hud(host.now).teammateCause == 2,
+            'both local HUD views distinguish asleep from wounded in either direction')
+        for _ = 1, 4 do step(host, guest, 100) end
+        check(host.now >= at + 30000 and target.revived == 1 and not target.native.down and target.native.life == 731,
+            'host auto-wake uses exact native grant once and retains pre-dart health without E')
+        for _ = 1, 5 do step(host, guest, 100) end
+        check(target.revived == 1 and not next(host.D.sleepTimers),
+            'healthy acknowledgements retire deadline and duplicate status cannot heal twice')
+    end
+    local host, guest = pair(); down(host, 2); down(guest, 2)
+    beforeDeadline(host, guest, 1)
+    check(not host.sharedFailure and not host.revived and not guest.revived,
+        'two sleepers never enter shared lethal failure')
+    for _ = 1, 6 do step(host, guest, 100) end
+    check(host.revived == 1 and guest.revived == 1 and not host.native.down and not guest.native.down and not host.sharedFailure,
+        'two sleepers each wake through their own host grant and generation')
+    for _, woundedHost in ipairs({true, false}) do
+        host, guest = pair()
+        local wounded, sleeping, sleepRole = woundedHost and host or guest, woundedHost and guest or host, woundedHost and 2 or 1
+        down(wounded, 1); down(sleeping, 2)
+        beforeDeadline(host, guest, sleepRole)
+        check(not host.sharedFailure and not wounded.revived,
+            'mixed wounded and asleep waits for sleeper without releasing lethal lock or shared death')
+        for _ = 1, 6 do step(host, guest, 100) end
+        check(sleeping.revived == 1 and not sleeping.native.down and wounded.native.down,
+            'only sleeper auto-wakes in mixed incapacity')
+        sleeping.native.held = true
+        for _ = 1, 34 do step(host, guest, 100) end
+        check(wounded.revived == 1 and not wounded.native.down and not host.sharedFailure,
+            'awake teammate can revive wounded survivor with the existing uninterrupted E grant')
+    end
+    for _, reset in ipairs({'stale', 'pause', 'reverse', 'new-generation'}) do
+        host, guest = pair(); down(guest, 2)
+        step(host, guest, 100); step(host, guest, 100)
+        local first = host.D.sleepTimers[2].at
+        for _ = 1, 280 do step(host, guest, 100) end
+        check(not guest.revived, 'partial sleep duration before ' .. reset)
+        if reset == 'stale' then
+            host.now = host.now + 600; host.D.tick(host.now); host.tx = {}; guest.now = host.now
+        elseif reset == 'pause' then
+            host.inGame = false; step(host, guest, 100); host.inGame = true
+        elseif reset == 'reverse' then
+            host.now, guest.now = host.now - 200, guest.now - 200; step(host, guest, 0)
+        else
+            guest.native.generation = guest.native.generation + 1
+            step(host, guest, 100); step(host, guest, 100)
+        end
+        step(host, guest, 100); step(host, guest, 100)
+        local restarted = host.D.sleepTimers[2]
+        check(restarted and restarted.at > first and not guest.revived,
+            'stale context and changed generation cannot inherit old sleep elapsed time: ' .. reset)
+        for _ = 1, 30 do step(host, guest, 100) end
+        check(not guest.revived and guest.native.down,
+            'old elapsed interval cannot auto-wake after timer restart: ' .. reset)
+    end
+    host, guest = pair(); down(guest, 2)
+    local firstAt = beforeDeadline(host, guest, 2)
+    guest.maskDelay = 300; host.failTx = OP.REVIVE_GRANT
+    for _ = 1, 7 do step(host, guest, 100) end
+    check(not guest.revived and host.D.pendingGrant and not host.D.granted[2],
+        'failed wake grant transport retains protection and cannot self-authorize a healthy status')
+    host.failTx = nil
+    for _ = 1, 9 do step(host, guest, 100) end
+    check(guest.revived == 1 and not guest.mask and not host.D.pendingGrant,
+        'delayed reliable wake retries one exact grant until queued mask release acknowledges')
+    local oldGeneration = guest.native.generation
+    down(guest, 2); step(host, guest, 100); step(host, guest, 100)
+    guest.W.handlers[OP.REVIVE_GRANT]({2, oldGeneration, 999})
+    check(guest.native.down and guest.native.generation ~= oldGeneration and guest.revived == 1,
+        'late old sleep wake cannot awaken a newer incapacitation generation')
+    local old = copy(host.D.records[2])
+    check(not host.D.acceptStatus(status(old.sequence, old.generation, true, 2), 2, host.now + 1000) and
+        host.D.records[2].at == old.at, 'duplicate sleeper status cannot renew liveness or timer authority')
+    host, guest = pair(); down(guest, 2); host.native.held = true
+    for _ = 1, 35 do step(host, guest, 100) end
+    check(guest.revived == 1 and host.now < 30000 and not guest.native.down,
+        'normal three-second E interaction wakes sleep early without waiting for timer')
+    host, guest = pair(); down(guest, 2); step(host, guest, 100); step(host, guest, 100)
+    check(host.D.sleepTimers[2] ~= nil, 'sleep deadline exists before disconnect')
+    host.W.unpairedHooks[1](); host.W.paired = false
+    check(not next(host.D.sleepTimers) and not host.D.pendingGrant,
+        'disconnect clears host sleep deadlines and pending wake grants')
+end
+-- A temporarily unreadable native owner is not continuous sleep authority.
+-- Retain completed grants, but restart an uncommitted duration after re-read.
+for _, refusal in ipairs({'healthy_poll', 'sleeping_poll', 'sleeping_lock'}) do
+    local host, guest = pair()
+    local target = refusal == 'healthy_poll' and guest or host
+    down(target, 2); step(host, guest, 100); step(host, guest, 100)
+    local role = target.W.role
+    local originalAt = host.D.sleepTimers[role].at
+    while host.now - originalAt < 29000 do step(host, guest, 100) end
+    check(not target.revived, 'sleep still protected immediately before temporary ' .. refusal)
+    if refusal == 'sleeping_lock' then host.failLock = true else host.refuseControl = true end
+    step(host, guest, 100)
+    check(not next(host.D.sleepTimers) and not target.revived and not host.D.pendingGrant,
+        'every native poll/lock refusal retires uncommitted sleep elapsed time: ' .. refusal)
+    host.failLock, host.refuseControl = false, false
+    step(host, guest, 100); step(host, guest, 100)
+    check(host.D.sleepTimers[role] and host.D.sleepTimers[role].at > originalAt,
+        'fresh native recovery begins a new sleep duration for the same protected generation: ' .. refusal)
+    for _ = 1, 30 do step(host, guest, 100) end
+    check(not target.revived and target.native.down,
+        'pre-refusal duration cannot trigger an early wake after recovery: ' .. refusal)
 end
 print(checks .. ' downed policy checks: native gating, 3D range, continuous holds, generations, ordered status, grants, shared failure and cleanup; no game calls')
