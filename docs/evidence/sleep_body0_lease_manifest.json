@@ -1,0 +1,33 @@
+{
+  "scope": "frozen V7 pure body0 experimental planner; no main/runtime edits or native calls/writes",
+  "supersedes_v6": "F63AFFB5A57FDD1A44EB48D5D547DE23BF74FB57B9812E7D5A493F3B4CA6FB02",
+  "tests": "127 strict MSVC /std:c++17 /EHsc /W4 /WX /O2 pure checks passed; 31 new late-grant/reentry fixtures",
+  "correction": "Every retired receipt freshly validates native retirement. Same-owner mode/action/life/graph drift retains the lease and locks and requires worker abort. V6 immutable files remain unchanged.",
+  "files": [
+    {
+      "path": "sleep_body0_lease.hpp",
+      "bytes": 10479,
+      "sha256": "3A88E890AAD4C6422D6B596C68539AA0B78E1A96ABAB20A27294D5787305652D"
+    },
+    {
+      "path": "sleep_loaded_requests.hpp",
+      "bytes": 1907,
+      "sha256": "4D8DEC20EC6446011CD3A922C03043AAD5F2A9555C234DE940C2762C5EFF4192"
+    },
+    {
+      "path": "sleep_seed_contract.hpp",
+      "bytes": 46650,
+      "sha256": "474D6B4BC83DCF25AE1E074FA5BA8490A11C282F2E3E6577944C34AA9466008F"
+    },
+    {
+      "path": "sleep_body0_lease_tests.cpp",
+      "bytes": 10821,
+      "sha256": "6483DA276D34DA89CB28A2B23AE38143DB4351396C51035C3EDCCD471BD38CBA"
+    },
+    {
+      "path": "sleep_body0_seed_proof.json",
+      "bytes": 10142,
+      "sha256": "4D21EC76517AAB1ADA6B82E07B3655FAC4C64ED208CBCED5E406AC8B35084D35"
+    }
+  ]
+}
