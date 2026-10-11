@@ -57,10 +57,89 @@
   },
   "native_sequence_constraint": {
     "registration": "Full9D6AE0 registers RequestChangeSequenceWork at9D71A6 with C callback9D8AD0, ReadSequenceWork at9D71C2 with9D7DB0, WriteSequenceWork at9D71DE with9E1950.",
-    "request": "9D8AD0 extracts table numeric first element and calls complete27-byte leaf9D1090 with RCX fixed global321BF20/R8Drequestedmode; leaf writes manager158. There is no player actualID argument in this leaf.",
-    "read_write": "9D7DB0/9E1950 use the same fixed global321BF20 with global321C078 selector through provider slot40; then provider slots0/8 give byte buffer and size. Per-body ownership of that global provider is unproved.",
+    "request": "9D8AD0 extracts table numeric first element and calls complete27-byte leaf9D1090 with RCX fixed global2C1BF20/R8Drequestedmode; leaf writes manager158. There is no player actualID argument in this leaf.",
+    "read_write": "9D7DB0/9E1950 use the same fixed global2C1BF20 with global2C1C078 selector through provider slot40; then provider slots0/8 give byte buffer and size. Per-body ownership of that global provider is unproved.",
     "consequence": "Calling the Lua SequenceWork2 entry directly cannot be claimed to confine the prologue role to body0 orbody1. Qualification must trace actual provider/controllers and their serialization/retirement before any co-op activation.",
-    "gun_receiver": "Complete1807830..1807F06 command dispatcher recognizes RequestHandsGunToPlayer hash1B8EF7BE6455. Bounded record index14 uses provider58 count10/base8/stride2F0; branch1807AC7..1807AF9 sets controller18E only if record0 controller pointer is nonnull. It is not the normal Horse Lua dispatcher or a Player2 free-roam passenger request."
+    "gun_receiver": "Complete1807830..1807F06 command dispatcher recognizes RequestHandsGunToPlayer hash1B8EF7BE6455. Bounded record index14 uses provider58 count10/base8/stride2F0; branch1807AC7..1807AF9 sets controller18E only if record0 controller pointer is nonnull. It is not the normal Horse Lua dispatcher or a Player2 free-roam passenger request.",
+    "rip_relative_global_proof": [
+      {
+        "instruction_rva": "0x9d8b31",
+        "instruction_size": 7,
+        "instruction_bytes_hex": "488d0de8332402",
+        "instruction": "lea rcx, [rip + 0x22433e8]",
+        "signed_rip_displacement": 35927016,
+        "rip_displacement_hex": "0x22433e8",
+        "computed_target_rva": "0x2c1bf20",
+        "arithmetic": "0x9d8b31 + 7 + 0x22433e8 = 0x2c1bf20",
+        "meaning": "Request manager RCX"
+      },
+      {
+        "instruction_rva": "0x9d7dba",
+        "instruction_size": 7,
+        "instruction_bytes_hex": "488b055f412402",
+        "instruction": "mov rax, qword ptr [rip + 0x224415f]",
+        "signed_rip_displacement": 35930463,
+        "rip_displacement_hex": "0x224415f",
+        "computed_target_rva": "0x2c1bf20",
+        "arithmetic": "0x9d7dba + 7 + 0x224415f = 0x2c1bf20",
+        "meaning": "Read manager virtual table"
+      },
+      {
+        "instruction_rva": "0x9d7dc1",
+        "instruction_size": 6,
+        "instruction_bytes_hex": "8b15b1422402",
+        "instruction": "mov edx, dword ptr [rip + 0x22442b1]",
+        "signed_rip_displacement": 35930801,
+        "rip_displacement_hex": "0x22442b1",
+        "computed_target_rva": "0x2c1c078",
+        "arithmetic": "0x9d7dc1 + 6 + 0x22442b1 = 0x2c1c078",
+        "meaning": "Read global provider selector EDX"
+      },
+      {
+        "instruction_rva": "0x9d7dca",
+        "instruction_size": 7,
+        "instruction_bytes_hex": "488d0d4f412402",
+        "instruction": "lea rcx, [rip + 0x224414f]",
+        "signed_rip_displacement": 35930447,
+        "rip_displacement_hex": "0x224414f",
+        "computed_target_rva": "0x2c1bf20",
+        "arithmetic": "0x9d7dca + 7 + 0x224414f = 0x2c1bf20",
+        "meaning": "Read manager RCX"
+      },
+      {
+        "instruction_rva": "0x9e195a",
+        "instruction_size": 7,
+        "instruction_bytes_hex": "488b05bfa52302",
+        "instruction": "mov rax, qword ptr [rip + 0x223a5bf]",
+        "signed_rip_displacement": 35890623,
+        "rip_displacement_hex": "0x223a5bf",
+        "computed_target_rva": "0x2c1bf20",
+        "arithmetic": "0x9e195a + 7 + 0x223a5bf = 0x2c1bf20",
+        "meaning": "Write manager virtual table"
+      },
+      {
+        "instruction_rva": "0x9e1961",
+        "instruction_size": 6,
+        "instruction_bytes_hex": "8b1511a72302",
+        "instruction": "mov edx, dword ptr [rip + 0x223a711]",
+        "signed_rip_displacement": 35890961,
+        "rip_displacement_hex": "0x223a711",
+        "computed_target_rva": "0x2c1c078",
+        "arithmetic": "0x9e1961 + 6 + 0x223a711 = 0x2c1c078",
+        "meaning": "Write global provider selector EDX"
+      },
+      {
+        "instruction_rva": "0x9e196a",
+        "instruction_size": 7,
+        "instruction_bytes_hex": "488d0dafa52302",
+        "instruction": "lea rcx, [rip + 0x223a5af]",
+        "signed_rip_displacement": 35890607,
+        "rip_displacement_hex": "0x223a5af",
+        "computed_target_rva": "0x2c1bf20",
+        "arithmetic": "0x9e196a + 7 + 0x223a5af = 0x2c1bf20",
+        "meaning": "Write manager RCX"
+      }
+    ]
   },
   "reusable_candidates": [
     {
@@ -1153,5 +1232,11 @@
       "sha256": "f96dc278c323a88eecc4be06e81e7ad49c17b7e111a40f1ac8dc54c5a4760ea1",
       "bytes": 30251
     }
-  ]
+  ],
+  "revision": 2,
+  "supersedes_metadata": {
+    "filename": "prologue-normal-horse-comparison-v1.json",
+    "sha256": "1141fd85a413ef57dbc41b782f9060e32ca16f743d814f37c1e2220d75029b37",
+    "correction": "Correct global manager/selector RVAs using decoded RIP-relative arithmetic. Exact code site bytes, all archive/resource hashes and scope conclusions unchanged. Prior textual321 values were arithmetic transcription errors; no runtime code uses this proof."
+  }
 }

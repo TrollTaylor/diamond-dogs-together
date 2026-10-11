@@ -1,0 +1,17 @@
+{
+  "executable_sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+  "activation": false,
+  "exact_sites": 69,
+  "slots": 8,
+  "max_site_bytes": 2344,
+  "files": [
+    {
+      "path": "D:\\mgs-coop-scratch\\codex-oct11\\carry-passenger\\carry\\carry_active_end_ownership_evidence.json",
+      "sha256": "664137680f716c0b4903aeda63709c5f174399d3293a85aa6529734870153982"
+    },
+    {
+      "path": "D:\\mgs-coop-scratch\\codex-oct11\\carry-passenger\\carry\\freeze_active_end_ownership.py",
+      "sha256": "d7dab59e095a7682d4b5565af5747a4ebaf2f77d887a614ab23969372a6174c0"
+    }
+  ]
+}
