@@ -1969,7 +1969,7 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             char status[161]{};
             const bool complete=mgscoop::downed_damage::PadStatusLine(status,sizeof(status));
             debug::Result(pending.id,complete?1u:0u,status);
-        } else if (pending.id && std::strcmp(pending.text, "carry_status") == 0) {
+        } else if (pending.id && (std::strcmp(pending.text, "carry_status") == 0 || std::strcmp(pending.text, "carry_plugin_status") == 0)) {
             const auto owner=mgscoop::downed_player::GetSnapshot();
             mgscoop::carry_info::Reply r{};
             const bool ok=mgscoop::carry_info::Observe(owner.mission,owner.epoch,DownedAdmitted(owner.mission,owner.epoch),mission_thread,r);
@@ -1977,6 +1977,17 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             StringCchPrintfA(line,ARRAYSIZE(line),"carry;ready=%u;gen=%lu;b0=%u,%u,%u,%u;b1=%u,%u,%u,%u;attached=unverified;reason=%s",
                 ok?1u:0u,static_cast<unsigned long>(r.generation),a.eligible?1u:0u,a.nativeCarryBit?1u:0u,unsigned(a.gunTarget),a.gunTargetsPartner?1u:0u,
                 b.eligible?1u:0u,b.nativeCarryBit?1u:0u,unsigned(b.gunTarget),b.gunTargetsPartner?1u:0u,r.reason?r.reason:"unknown");
+            if(std::strcmp(pending.text,"carry_plugin_status")==0){
+                StringCchPrintfA(line,ARRAYSIZE(line),"carryplugin;ready=%u;enable=%u;sel=%u,%u,%u;b0=%u,%u,%u;b1=%u,%u,%u;reason=%s",
+                    ok&&r.pluginReady?1u:0u,r.playerCarryEnabled?1u:0u,r.selectorOwnerMatches?1u:0u,r.selectorAccepts?1u:0u,unsigned(r.selectorTarget),
+                    unsigned(a.carryTarget),a.carryNodeActive?1u:0u,unsigned(a.carryState[0]),
+                    unsigned(b.carryTarget),b.carryNodeActive?1u:0u,unsigned(b.carryState[0]),r.pluginReason);
+            }
+            if(ok&&r.pluginReady)LogFormat("carry_plugin;generation=%lu;enable=%u;selector=%u,%u,%u;kind=%lu,%lu;flags=0x%lx,0x%lx;body0=%u,%u,%u,%u,%u,%u,%u,%u;body1=%u,%u,%u,%u,%u,%u,%u,%u;attachment=unverified\r\n",
+                static_cast<unsigned long>(r.generation),r.playerCarryEnabled?1u:0u,r.selectorOwnerMatches?1u:0u,r.selectorAccepts?1u:0u,unsigned(r.selectorTarget),
+                static_cast<unsigned long>(r.cachedKind),static_cast<unsigned long>(r.currentKind),static_cast<unsigned long>(r.cachedFlags),static_cast<unsigned long>(r.currentFlags),
+                unsigned(a.carryTarget),unsigned(a.carryPrevious),unsigned(a.carrier),a.carryNodeActive?1u:0u,unsigned(a.carryState[0]),unsigned(a.carryState[1]),unsigned(a.carryState[2]),unsigned(a.pluginFlags[0]),
+                unsigned(b.carryTarget),unsigned(b.carryPrevious),unsigned(b.carrier),b.carryNodeActive?1u:0u,unsigned(b.carryState[0]),unsigned(b.carryState[1]),unsigned(b.carryState[2]),unsigned(b.pluginFlags[0]));
             debug::Result(pending.id,ok?1u:0u,line);
         } else if (pending.id && std::strcmp(pending.text, "downed_status") == 0) {
             const auto s=mgscoop::downed_player::GetSnapshot();

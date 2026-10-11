@@ -11,6 +11,7 @@
 #include "partner_player_contract.hpp"
 #include "carry_info_contract.hpp"
 #include "carry_info_policy.hpp"
+#include "carry_plugin_read.hpp"
 namespace mgscoop::carry_info {
 namespace c=carry_info_contract;
 namespace {
@@ -103,7 +104,8 @@ bool CodeGate(const void* image,std::size_t span,std::uintptr_t& mismatch) noexc
         const auto at=slot.vtable_rva+slot.offset;std::uintptr_t target=0;
         if(at>span||sizeof(target)>span-at||!Read(base+at,target)||target!=base+slot.target_rva){mismatch=slot.vtable_rva;return false;}
     }
-    return true;
+    auto reader=ReadBytes;
+    return carry_plugin_read::CodeGate(reader,base,span,mismatch);
 }
 void Configure(const partner_player::Addresses& source,bool passed) noexcept {
     const Preserve preserve;AcquireSRWLockExclusive(&lock);
@@ -124,6 +126,19 @@ bool Observe(std::uint32_t mission,std::uint16_t epoch,bool admitted,std::uint32
     if(!ReadIdentity(first)||!ReadIdentity(second))return finish("target_chain");
     if(!detail::SameIdentity(first,second))return finish("state_changed");
     if(const char* why=detail::ScopeRefusal(Scope(mission,epoch,admitted,ownerThread,seq,own)))return finish(why);
+    namespace plugin=carry_plugin_read;
+    auto reader=ReadBytes;
+    plugin::Scope ps{};
+    ps.exactGate=verified;ps.admitted=admitted;ps.ready=own.ready;ps.armed=own.armed;
+    ps.image=addresses.image_base;ps.player=second.player;ps.data=second.data;ps.state=second.bitset;
+    ps.mission=mission;ps.ownedMission=own.mission;ps.epoch=epoch;ps.ownedEpoch=own.epoch;
+    ps.generation=own.generation;ps.ownedGeneration=own.generation;
+    ps.thread=GetCurrentThreadId();ps.ownerThread=ownerThread;
+    ps.now=now;ps.poll=own.lastPoll;ps.sequenceBefore=seq;ps.sequenceAfter=partner_input_hook::WindowSeq();ps.batch=partner_defer::InBatch();
+    plugin::Observation pluginFirst{},pluginSecond{},pluginAfter{};
+    const bool pluginRead=plugin::ReadOnce(reader,ps,pluginFirst)&&plugin::ReadOnce(reader,ps,pluginSecond);
+    const bool pluginCoherent=pluginRead&&plugin::Same(pluginFirst,pluginSecond);
+    out.pluginReason=pluginRead?(pluginCoherent?"ready":"plugin_changed"):"plugin_chain";
     BodyReply result[2]{};
     for(unsigned k=0;k<2;++k){
         detail::Message message{};std::int32_t nativeResult=0;
@@ -140,6 +155,26 @@ bool Observe(std::uint32_t mission,std::uint16_t epoch,bool admitted,std::uint32
     if(ownAfter.mission!=own.mission||ownAfter.epoch!=own.epoch||ownAfter.generation!=own.generation||ownAfter.down!=own.down||ownAfter.cause!=own.cause)return finish("scope_changed");
     if(const char* why=detail::ScopeRefusal(Scope(mission,epoch,admitted,ownerThread,seq,ownAfter)))return finish(why);
     if(!ReadIdentity(after)||!detail::SameIdentity(second,after))return finish("state_changed");
+    ps.now=GetTickCount64();ps.poll=ownAfter.lastPoll;ps.sequenceAfter=partner_input_hook::WindowSeq();ps.batch=partner_defer::InBatch();
+    if(pluginCoherent&&!plugin::ScopeRefusal(ps)){
+        if(plugin::ReadOnce(reader,ps,pluginAfter)&&plugin::Same(pluginSecond,pluginAfter)){
+            out.pluginReady=true;out.pluginReason="ready";
+            out.selectorOwnerMatches=pluginAfter.selectorOwner==pluginAfter.body[0].primary;
+            out.selectorAccepts=plugin::SelectorAccepts(pluginAfter);out.selectorTarget=pluginAfter.selectorTarget;
+            out.playerCarryEnabled=(pluginAfter.playerFlags&0x400u)!=0;
+            out.cachedKind=pluginAfter.cachedKind;out.currentKind=pluginAfter.currentKind;
+            out.cachedFlags=pluginAfter.cachedFlags;out.currentFlags=pluginAfter.currentFlags;
+            for(unsigned k=0;k<2;++k){const auto& x=pluginAfter.body[k];auto& y=result[k];
+                y.carryTarget=x.target;y.carryPrevious=x.previous;y.carrier=x.carrier;y.carryNodeActive=x.nodeActive;
+                std::memcpy(y.carryState,x.state,sizeof(y.carryState));std::memcpy(y.pluginFlags,x.flags,sizeof(y.pluginFlags));
+            }
+        }else out.pluginReason="plugin_changed";
+    }
+    // Query receiver writes our stack only. Re-sample the owner and input
+    // window after the final telemetry read too; no plugin value unlocks input.
+    const auto finalOwn=downed_player::GetSnapshot();
+    if(finalOwn.mission!=own.mission||finalOwn.epoch!=own.epoch||finalOwn.generation!=own.generation||finalOwn.down!=own.down||finalOwn.cause!=own.cause)return finish("scope_changed");
+    if(const char* why=detail::ScopeRefusal(Scope(mission,epoch,admitted,ownerThread,seq,finalOwn)))return finish(why);
     boundThread=ownerThread;lastQuery=now;out.bodies[0]=result[0];out.bodies[1]=result[1];
     return finish("query_observed",true);
 }
