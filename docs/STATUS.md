@@ -1,3 +1,11 @@
+## Current release: 0.12.3 — October 11, 2026
+
+Source and preserved development history are on the private [GitHub repository](https://github.com/TrollTaylor/diamond-dogs-together). The [0.12.3 prerelease](https://github.com/TrollTaylor/diamond-dogs-together/releases/tag/v0.12.3) includes the friend ZIP, with Play-Coop **T** for the manual two-window test and F9 downed/horse controls.
+
+Package `dist/mgs-coop-friend-0.12.3-20261011T144511Z-bb927c13`, ZIP SHA-256 `dc72deae5c9a5e8fcb800121190bf756ce9d01df8acf01c62ed9b9310699c2ac`; Release loader `FA726C892B8E93C2CF728AE4748C858D897DC90508DCE77FA0A2DFAAD2A5F55B`. The package uses clean source commit `a924552724e07125e3453b485a40c2f0ed6f6f85`. Later documentation-only commits do not change those build inputs. Release receipt `build\worker-runs\20261011-144248-eaafafaf9e4e45848cccc7332e4b40dd\receipt.json` passed 138/138 audited checks; worker and experimental buddy capacity are OFF. The full friend launcher/installer fixture previously passed 1207 checks under PowerShell 5.1 and 7; its scripts are unchanged since that run. A separate GitHub checkout built the current loader with pinned dependencies and passed nine selected source-only fixtures without retail inputs.
+
+Installed that loader in both owned game copies. Of 63 protected file hashes/absences, only the planned two loaders and two ownership records changed; retail executables, Steam DLLs, runtime archives, activation settings and real/co-op/lab/local-test saves stayed identical. The ZIP has no retail executable, Steam DLL, runtime archive or save. [Release and installation record](evidence/release-0.12.3-2026-10-11.json).
+
 ## October 11 revive, crawl and testing controls
 
 The repair version is 0.12.3; fresh two-PC acceptance remains pending. The newest user-session logs showed the healthy teammate repeatedly refusing a changed native identity, so no held-revive packet reached the host. A healthy poll now coherently retires the stale lease and creates a fresh generation without restoring health through the old pointers. Active downed ownership and stale-grant rejection remain strict. Both actual Lua roles pass the generation-change/held-revive regression.

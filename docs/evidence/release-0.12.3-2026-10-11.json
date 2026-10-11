@@ -1,0 +1,86 @@
+{
+  "schema": 1,
+  "version": "0.12.3",
+  "source_commit": "a924552724e07125e3453b485a40c2f0ed6f6f85",
+  "source_dirty": false,
+  "package_folder": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\dist\\mgs-coop-friend-0.12.3-20261011T144511Z-bb927c13",
+  "zip_file": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\dist\\mgs-coop-friend-0.12.3-20261011T144511Z-bb927c13.zip",
+  "zip_sha256": "dc72deae5c9a5e8fcb800121190bf756ce9d01df8acf01c62ed9b9310699c2ac",
+  "loader_sha256": "FA726C892B8E93C2CF728AE4748C858D897DC90508DCE77FA0A2DFAAD2A5F55B",
+  "release_receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261011-144248-eaafafaf9e4e45848cccc7332e4b40dd\\receipt.json",
+  "release_receipt_sha256": "069b76f64ab517e9829ed4b5ce5ccc4af6b9994b89b656a02a3d217211781151",
+  "release_profile": "Release",
+  "release_audited_tests": 138,
+  "flags": {
+    "MGS_LOCAL_BUDDY_CAPACITY_TEST": "OFF",
+    "MGS_LOCAL_GUN_PRELOAD_TEST": "OFF",
+    "MGS_LOCAL_OFFLINE_EQUIPMENT_TEST": "ON",
+    "MGS_LOCAL_STOCK46_PRELOAD_TEST": "ON",
+    "MGS_LOCAL_STOCK46_WRITER_TEST": "ON",
+    "MGS_LOCAL_STOCK46_AMMO_TEST": "OFF",
+    "MGS_LOCAL_ACTION_EVENTS": "OFF",
+    "MGS_LOCAL_UPPER_END_OBSERVE": "OFF",
+    "MGS_LOCAL_UPPER_PHASE_OBSERVE": "OFF",
+    "MGS_LOCAL_UPPER_MANUAL_IDLE": "OFF",
+    "MGS_LOCAL_UPPER_PROBE": "OFF",
+    "MGS_LOCAL_UPPER_CHANNEL2": "OFF",
+    "MGS_LOCAL_UPPER_FIRE_ZERO_BLEND": "OFF",
+    "MGS_BACKGROUND_WORKER": "OFF"
+  },
+  "package_entries": 829,
+  "retail_assets_bundled": false,
+  "private_repo": "https://github.com/TrollTaylor/diamond-dogs-together",
+  "independent_github_checkout": {
+    "commit": "a924552724e07125e3453b485a40c2f0ed6f6f85",
+    "source_only": true,
+    "loader_built": true,
+    "selected_fixtures_passed": 9,
+    "game_inputs_present": false,
+    "retail_game_run": false
+  },
+  "installation_verification": {
+    "protected_files_and_absences_checked": 63,
+    "unchanged": 59,
+    "expected_changes": [
+      {
+        "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\dinput8.dll",
+        "old_sha256": "391aaf521c2950ad6bec9fce4672cc3361cf744c4a563a18e99c377b178e352c",
+        "new_sha256": "fa726c892b8e93c2cf728ae4748c858d897dc90508dce77fa0a2dfaad2a5f55b"
+      },
+      {
+        "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\probe-install.json",
+        "old_sha256": "c94cd2b72345d30ad730966e0a4787375ab3e0cc81463f976dc015d8669607ff",
+        "new_sha256": "d9d78132f51ed520b280a90d5630e5d6111d29e0b146828c0968f11d81cd563f"
+      },
+      {
+        "path": "D:\\Games\\steamapps\\common\\MGS_TPP_guest\\dinput8.dll",
+        "old_sha256": "391aaf521c2950ad6bec9fce4672cc3361cf744c4a563a18e99c377b178e352c",
+        "new_sha256": "fa726c892b8e93c2cf728ae4748c858d897dc90508dce77fa0a2dfaad2a5f55b"
+      },
+      {
+        "path": "D:\\Games\\steamapps\\common\\MGS_TPP_guest\\mgs-coop\\probe-install.json",
+        "old_sha256": "5a051832f33e3fb343330714e57f6710c87f8e1797d287ad24789d4fe95bf2f5",
+        "new_sha256": "0996400dcb0de2a9e65581c9e96dc117a6e3374f5ea5c75c0151a0a032cd33d0"
+      }
+    ],
+    "retail_executables_unchanged": true,
+    "steam_dlls_unchanged": true,
+    "runtime_archives_unchanged": true,
+    "activation_unchanged": true,
+    "real_and_copied_saves_unchanged": true
+  },
+  "gameplay_evidence": [
+    "revive-repair-live-2026-10-11.json",
+    "downed-input-actual-39f6-2026-10-11.json",
+    "horse-recall-actual-87a-2026-10-11.json",
+    "enemy-downed-revive-actual-71cb-2026-10-11.json"
+  ],
+  "limits": [
+    "Fresh two-PC Steam acceptance pending",
+    "Hospital exact crawl animation unavailable",
+    "Remote Quiet downed crawl drifts faster before corrections",
+    "Two independent shared horses and Walker rider attachment unfinished",
+    "Both-down checkpoint acceptance pending"
+  ],
+  "release_url": "https://github.com/TrollTaylor/diamond-dogs-together/releases/tag/v0.12.3"
+}
