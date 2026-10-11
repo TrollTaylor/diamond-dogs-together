@@ -81,6 +81,8 @@ constexpr ActionDef kActions[] = {
     {"partner_nametag_status", C::partner, "Name tag status", "nametag status", "name tag label readout camera",
      "Reports the name tag state, the partner's name, distance, hover and camera.", 0},
     {"coop_downed_status", C::partner, "Incapacitation status", "downed_status", "down crawl hurt health revive sleep wake asleep", "Reads wounded versus asleep state, native health and control lock.", 0},
+    {"coop_sleep_info_status", C::partner, "Native sleep controller", "sleep_info_status", "sleep asleep animation mode native controller stun",
+     "Reads native sleep mode, requested mode, player action, motion action, life state and activity. Values do not prove a playing animation.", 0},
     {"coop_carry_status", C::partner, "Carry eligibility", "carry_status", "carry pickup sleeping wounded teammate body target",
      "Reads both native player carry queries. Each body shows eligible, carrier flag, gun target ID and gun target match. Attachment remains unverified.", 0},
     {"coop_carry_plugin_status", C::partner, "Carry target selection", "carry_plugin_status", "carry pickup selector target body shoulder native",

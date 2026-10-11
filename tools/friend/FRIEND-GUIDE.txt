@@ -20,12 +20,14 @@ What works today:
   and partner movement diagnostics. F9 closes it and restores game controls.
   Actions require supported on-foot gameplay. Guard actions use authored
   mission soldiers; arbitrary new soldiers and unloaded guns are unsupported.
-- A downed player stays in prone crawl and cannot aim or fire. Friendly sleep
-  darts use this state. To revive, close F9, stand within 3 m of your teammate
-  and HOLD the normal ACTION button (E by default) for 3 seconds. The teammate
-  being revived must be downed; the reviving player must be healthy. Both
-  games must be paired in World 3.
-- F9 > Partner / Co-op includes Downed status, Revive input status and Downed movement input to help
+- Gun injuries: a downed player crawls slowly, cannot aim or fire, and needs
+  a teammate to revive them. Sleep darts: a separate asleep state preserves
+  health, blocks movement and combat, and wakes automatically after 30 seconds
+  of fresh paired gameplay. The current sleep pose is prone; the stock standing
+  sleep animation is unfinished. A healthy teammate can also wake or revive:
+  close F9, stand within 3 m and HOLD ACTION (E by default) for 3 seconds.
+  Both games must be paired in World 3. Sleep does not count as a fatal injury.
+- F9 > Partner / Co-op includes Incapacitation status, Revive input status and Downed movement input to help
   check pairing, distance and held ACTION input. Close the menu before trying
   the revive. Hidden tests measured about half-speed local crawl and normal
   movement after revival. The hospital opening's exact animation is unavailable.
@@ -53,7 +55,7 @@ What is NOT fully shared yet:
   never shown firing. Debug pickups are local.
 - Story missions, items and full campaign progression. This is a development
   build. The user reported partial successful two-PC play on 0.12.0. These
-  0.12.3 repairs are checked on two hidden local copies and still need a fresh
+  0.12.4 changes are checked on two hidden local copies and still need a fresh
   two-PC session; complete campaign progression remains unsupported.
 
 One player HOSTS, the other JOINS. Both use this same package (the same
@@ -390,12 +392,15 @@ stay in <game folder>\mgs-coop; you can delete that folder yourself later.
   Downed: crawl slowly; aiming and shooting are blocked. A teammate revives
   you by holding ACTION (E by default) within 3 m for 3 seconds. Close F9
   while holding ACTION. F9 > Partner / Co-op has Downed status and Revive
-  input status, plus Summon / recall D-Horse and Horse status. Wait for the
+  input status, plus read-only carry/sleep diagnostics and horse controls. Wait for the
   summoned local horse, close F9, then mount with normal game controls.
-  Two shared rideable horses and Walkers remain unfinished. The crawl uses
+  Teammate carrying, loading a teammate onto a horse, shared horse/vehicle
+  passengers and two shared rideable horses/Walkers remain unfinished. Sleep
+  is immobile, keeps health, and wakes after 30 seconds or a teammate E hold.
+  The crawl uses
   the normal prone animation at reduced speed, not the exact hospital clip.
 
-  Partial two-PC Steam play was reported on 0.12.0. This 0.12.3 repair needs
+  Partial two-PC Steam play was reported on 0.12.0. This 0.12.4 build needs
   a fresh two-PC test; its recorded qualification uses two hidden instances.
 - Online play uses Steam's networking and Valve's relays: it needs both PCs
   online in Steam. If it does not connect, use LAN/VPN.

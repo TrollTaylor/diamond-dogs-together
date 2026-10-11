@@ -25,7 +25,8 @@ struct Reply {
 // Requires the coordinator's exact PE image gate and existing player contract.
 // Adds its own complete carry-query code/slot gate. No gameplay writes.
 bool CodeGate(const void* base,std::size_t span,std::uintptr_t& mismatch) noexcept;
-void Configure(const partner_player::Addresses& addresses,bool verified) noexcept;
+void Configure(const partner_player::Addresses& addresses,bool verified,
+    void (*log)(const char*) noexcept=nullptr) noexcept;
 // Only the coordinator's natural script-owner route may supply ownerThread.
 // Never expose that value, native pointers, or arbitrary query hashes to Lua.
 // Both bodies must be realized offline and both observations coherent; native

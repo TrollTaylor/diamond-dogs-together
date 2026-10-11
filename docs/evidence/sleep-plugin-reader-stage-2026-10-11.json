@@ -1,0 +1,58 @@
+{
+  "schema": 2,
+  "scope": "Separate Windows pure-read wrapper plus constant-label first-failure diagnostics. Frozen base sleep-plugin-reader manifest and files verified unchanged. No main edits, native calls, memory writes, launch, install or Git.",
+  "base_manifest_sha256": "0A622340BB6F9B16BF39B83803F41DF8BA2E2455869CFE018BC2FCD93EAFEB22",
+  "executable_sha256": "085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45",
+  "files": {
+    "sleep_info.cpp": {
+      "size": 9013,
+      "sha256": "C831A1C54F51C4A50B1CCFFFB3C2A5E2957E2CC1F86E99ED0CC7B1AD4CB2FD75"
+    },
+    "include/mgscoop/sleep_info.hpp": {
+      "size": 1389,
+      "sha256": "949C68871084DE8816C5E84D4770CAAB4D4508D7E65974B531BCAE94E300C5BF"
+    },
+    "sleep_plugin_read.hpp": {
+      "size": 11419,
+      "sha256": "5F5DB4C7E656F3B49313AA598D5A81C77C115FABA37AF5AF93676A9957FF4125"
+    },
+    "sleep_plugin_contract.hpp": {
+      "size": 82481,
+      "sha256": "04657738006B0F318153AF2FD51BF6ADF031B7B435950820BC880DEDEBDAA0E5"
+    },
+    "sleep_plugin_sites.json": {
+      "size": 41141,
+      "sha256": "F2D572C945B5AF46F8FDB7A778DB56A4AD28F086CCB2632F222DF77821AA3051"
+    },
+    "generate_sleep_plugin_contract.py": {
+      "size": 3220,
+      "sha256": "51BD37627E45553FFA16AE8EE31E07E893E9933E02047E1F30EEAEAA19DD8F6E"
+    },
+    "sleep_plugin_tests.cpp": {
+      "size": 9556,
+      "sha256": "CBAD1CFF3031BC70640CD7E3E193825364376540048BBC607EF29E84221CF94B"
+    }
+  },
+  "verification": {
+    "exact_generator_check": true,
+    "bounded_complete_code_constant_sites": 31,
+    "exact_typed_slots": 33,
+    "portable_checks": 138,
+    "failed": 0,
+    "strict_adapter_object_compile": "MSVC x64 C++17 /EHsc /W4 /WX using current main native/include headers",
+    "live": false,
+    "adapter_runtime": false
+  },
+  "integration": {
+    "namespace": "mgscoop::sleep_info",
+    "public_header": "include/mgscoop/sleep_info.hpp -> native/include/mgscoop/sleep_info.hpp",
+    "wrapper": "sleep_info.cpp -> native/sleep_info.cpp",
+    "contracts": "sleep_plugin_read.hpp and sleep_plugin_contract.hpp -> native",
+    "API": "CodeGate / Configure once / Observe(mission,epoch,admitted,naturalOwnerThread,Reply&) / Shutdown",
+    "gate": "Run CodeGate in existing complete retail PE/SHA gate and Configure with Addresses + gate result. Natural script observer supplies ownerThread and native admitted status. Never Lua arguments.",
+    "coherence": "Two paired pp::ReadState snapshots, pure plugin snapshots a/b, fresh own scope after, pp::ReadState after, pure plugin snapshot c, final own cache and final pp::ReadState identity and WindowSeq/InBatch/owner recheck. Only publish after all match.",
+    "refusals": "All stage/reason values static constants. First 32 chain failures log constant component label, relative offset, read length/success, nullable image RVA only, and successful-zero marker. No raw addresses exposed. Pure reader optional const char** refusal receives first grouped stage.",
+    "outputs": "Reply ready/generation/reason and bodies[2] diagnostic mode/requested/action/qAction/lifeState/nodeState/nodeKind/flags/subtype/recordFlags/counter/nodeActive/callbackInitialized. No pointers, graph claims or mutations.",
+    "limits": "No natural stock sleep activation, native health/stun wake, horse/carry attach or control changes. Graph loaded/current state and full transitive null-sync census remain separate blockers."
+  }
+}

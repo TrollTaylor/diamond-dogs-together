@@ -1,0 +1,217 @@
+{
+  "schema": 1,
+  "task": "shared_riding_research_and_read_only_vehicle_seat_debug",
+  "source_commit": "a923e10",
+  "scope": "exact offline retail PE plus previously extracted retail Lua and detached synthetic reader tests",
+  "native_calls": 0,
+  "game_launches": 0,
+  "runtime_verified": false,
+  "targets": {
+    "tpp_executable_sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+    "mgo_executable_sha256": "f9a1c1902c0415e89e678eeb331c11887cdb8e9290f74195ce4f83d5128947d4"
+  },
+  "source_files": [
+    {
+      "name": "s10010_sequence.lua",
+      "local_path": "C:\\Users\\taylo\\AppData\\Local\\Temp\\claude\\D--Games-steamapps-common-MGS-TPP\\e7a6e70e-f530-4f59-b4a3-60e868204a66\\scratchpad\\gamelua\\tpp\\fpkd-combined-lua\\Assets\\tpp\\level\\mission2\\story\\s10010\\s10010_sequence.lua",
+      "sha256": "5a8d988b4bd2eb0d4fe9d5de2f20dda7bb4832d49cb578a162329a3e07c86211",
+      "size": 551576,
+      "lines": [
+        [
+          2027,
+          2027
+        ],
+        [
+          2692,
+          2731
+        ],
+        [
+          16220,
+          16228
+        ]
+      ]
+    },
+    {
+      "name": "cypr_player_volgin_ride.lua",
+      "local_path": "C:\\Users\\taylo\\AppData\\Local\\Temp\\claude\\D--Games-steamapps-common-MGS-TPP\\e7a6e70e-f530-4f59-b4a3-60e868204a66\\scratchpad\\gamelua\\tpp\\fpkd-combined-lua\\Assets\\tpp\\script\\location\\cypr\\cypr_player_volgin_ride.lua",
+      "sha256": "e1c888d4cbcb990290f23c5bac95b613b1677090557677ab0c7897fa79d271c3",
+      "size": 1355,
+      "lines": [
+        [
+          31,
+          43
+        ],
+        [
+          49,
+          63
+        ],
+        [
+          71,
+          91
+        ]
+      ]
+    },
+    {
+      "name": "TppPlayer2InitializeScript.lua",
+      "local_path": "C:\\Users\\taylo\\AppData\\Local\\Temp\\claude\\D--Games-steamapps-common-MGS-TPP\\e7a6e70e-f530-4f59-b4a3-60e868204a66\\scratchpad\\gamelua\\tpp\\data1_dat-lua\\Assets\\tpp\\level_asset\\chara\\player\\game_object\\TppPlayer2InitializeScript.lua",
+      "sha256": "f96dc278c323a88eecc4be06e81e7ad49c17b7e111a40f1ac8dc54c5a4760ea1",
+      "size": 30251,
+      "lines": [
+        [
+          89,
+          90
+        ],
+        [
+          97,
+          98
+        ],
+        [
+          109,
+          110
+        ]
+      ]
+    },
+    {
+      "name": "s10070_sequence.lua",
+      "local_path": "C:\\Users\\taylo\\AppData\\Local\\Temp\\claude\\D--Games-steamapps-common-MGS-TPP\\e7a6e70e-f530-4f59-b4a3-60e868204a66\\scratchpad\\gamelua\\tpp\\fpkd-combined-lua\\Assets\\tpp\\level\\mission2\\story\\s10070\\s10070_sequence.lua",
+      "sha256": "9a5a1280fc32f9decd3fb0a79f6bfeb30ba796ed595ebe76395ff442282c4d81",
+      "size": 124986,
+      "lines": [
+        [
+          1309,
+          1318
+        ],
+        [
+          1473,
+          1504
+        ]
+      ]
+    },
+    {
+      "name": "f30010_enemy.lua",
+      "local_path": "C:\\Users\\taylo\\AppData\\Local\\Temp\\claude\\D--Games-steamapps-common-MGS-TPP\\e7a6e70e-f530-4f59-b4a3-60e868204a66\\scratchpad\\gamelua\\tpp\\fpkd-combined-lua\\Assets\\tpp\\level\\mission2\\free\\f30010\\f30010_enemy.lua",
+      "sha256": "573b7807d2393fcfb3154610c9be75abb239a9aba4c40369da8f9067295ce42e",
+      "size": 33257,
+      "lines": [
+        [
+          35,
+          116
+        ]
+      ]
+    }
+  ],
+  "prologue": {
+    "source_control": "cypr_player_volgin_ride requests Player.RequestChangeSequenceWork{2}; checks work version byte0 and sets active bit1 in short flag offset4; ForceEnd clears that bit.",
+    "rider": "StartVolginRide separately calls the Ocelot NPC SetDemoToRideHorse with authored ocelot_horse. Event also routes ocelot_horse along authored rts_ocelotHorce.",
+    "gun": "A sequence timer sends RequestHandsGunToPlayer to the Lua selector TppPlayerHorse2forVr; static command dispatch is in the distinct TppHorse2forVr interface, not normal TppHorse2.",
+    "static_dispatch": {
+      "rva_range": [
+        "0x1807830",
+        "0x1807f06"
+      ],
+      "length": 1750,
+      "complete_decode": true,
+      "sha256": "ef934751a8e338d4203277a53e6bcb03c516e615779fc4257d0283ba1980a71a",
+      "command_hash_low32": "0xf7be6455",
+      "match_rva": "0x1807ac0",
+      "branch_rva": "0x1807ac7",
+      "observed_effect": "selects bounded-index VR horse record then sets byte+0x18e on its non-null controller pointer; zero controller returns without action. Out-of-range record follows null record path, so count proof is required before any call."
+    },
+    "portable_to_D_Horse": false,
+    "requirements": [
+      "Realize the mission-specific VR horse/Ocelot controller and required prologue parts/motion resources on the appropriate pack lifecycle.",
+      "Qualify player sequence-work2 initialization, input, weapon, camera, completion and cleanup before reuse.",
+      "Replace the fixed authored route/driver with a separately qualified current driver attachment and driven-horse transform; scripted route semantics are insufficient.",
+      "Ordinary D-Horse cargo body placement is a separate contract, not a proven second armed rider seat."
+    ]
+  },
+  "horse_bearer": {
+    "evidence": "Normal player camera initializer contains PlaceBearersHorseLeft and PlaceBearersHorseRight, with gcam_adsn_ene_l_st_01/02.cani and gcam_adsn_ene_r_st_01/02.cani.",
+    "boundary": "Camera availability is not the bearer animation graph, Player2 carryability, arbitrary mount attachment, or second-player gun control. No horse placement or carry command was called."
+  },
+  "vehicles": {
+    "authored_targets": "mvars.ene_vehicleSettings[type] and supported mission enemy.VEHICLE_SPAWN_LIST[locator,type]; current local vars.playerVehicleGameObjectId only with actual ON_VEHICLE and Tpp.IsVehicle.",
+    "seat_api": "GameObject.SendCommand(typedVehicleId,{id=\"GetRiderId\"}) returns array of native rider words; retail s10070 treats array seat1 as driver and player ID0 as local player.",
+    "npc_restore_api": "Dedicated TppHuey2 GetRideVehicleState returns type,vehicleId,seatIndex. Dedicated Huey RideVehicle consumes vehicleId,type,seatIndex,fastRide=true. No TppPlayer2 RideVehicle API established.",
+    "static_get_rider": {
+      "hash_low32": "0x1596a3f5",
+      "compare_rva": "0xb2b80e",
+      "branch_rva": "0xb2b885",
+      "complete_declared_range": [
+        "0xb2b79d",
+        "0xb2c183"
+      ],
+      "length": 2534,
+      "sha256": "a571c52b1c06fe1130cc715e6fc0f27757d82c7938fc3021f2c50f5075d7e3c4",
+      "reads": "dynamic seat count from per-vehicle record via0xa27cc0; seat rider uint16 values at per-record+0x30, vehicle record stride128; Lua table keys1..count."
+    },
+    "static_count_helper": {
+      "range": [
+        "0xa27cc0",
+        "0xa27d44"
+      ],
+      "length": 132,
+      "complete_decode": true,
+      "sha256": "10dc45408d288dc025cad58c5b7cd25f32ea84e8878fe3a6bac12293c22aa44a",
+      "reads": "vehicle type/subtype resource metadata, base byte+0x1b7 plus optional subtype byte+0xb5; metadata absence can return zero seats."
+    },
+    "shared_road_vehicle_support": false,
+    "strongest_next_slice": [
+      "Qualify read-only actual selected vehicle seat census under copied-save private worker.",
+      "Implement one host-authoritative authored vehicle pose with model/health/lifecycle and stable named identity synchronization.",
+      "Qualify stock local passenger action and remote Player2 seat entry/exit/occupied-rider contract separately; no synthetic riders from wire status.",
+      "Negotiate explicit seat IDs/role/lease and reject vehicle despawn, world transition, occupancy conflict, disconnect and stale grants."
+    ]
+  },
+  "mgo": {
+    "semantic_candidates": [
+      "STAT_STUNNED",
+      "SleepStart",
+      "SleepEnd",
+      "OnPlayerStunned",
+      "MGM_PAD_CARRY",
+      "STAMINA_DAMAGE_SLEEP",
+      "STAMINA_DAMAGE_FAINT",
+      "NewChara System PassengerInfo"
+    ],
+    "source_evidence": "Exact file string/RIP-reference inventory only; player Lua registration also exposes sequence-work functions, with different offsets from TPP.",
+    "on_player_stunned_name_thunk": {
+      "range": [
+        "0x16a4770",
+        "0x16a4791"
+      ],
+      "sha256": "def40537c196003583babe0d44abcf2e2ea4168a9078ef0a83f08636f88896e7"
+    },
+    "limits": [
+      "These strings and shared registration structure do not establish animation IDs, player sleep mechanics, timers, carryability, vehicle seats, or native ABI compatibility with TPP.",
+      "The official MGO site redirected to a country/birthdate gate; no authoritative MGO-specific manual content was obtained. No MGO launch, server interaction, or MGO asset extraction was performed.",
+      "Native MGO addresses must not be called from TPP. Separate exact fingerprints, ownership, lifecycle and behavior qualification would be needed for any adapted feature."
+    ]
+  },
+  "debug_helper": {
+    "commands": [
+      "vehicle_seats",
+      "vehicle_seats <authored_locator>"
+    ],
+    "action_id_suggestion": "vehicle_seats_status",
+    "action_label": "Current vehicle seats",
+    "scope": "read-only; actual supported paired world level3; currently riding vehicle or explicitly authored typed named locator; no integer target inputs, capacity scans, spawns, native writes, mount or passenger requests",
+    "census": "two coherent returned native seat tables; raw IDs including65535; exact actual local player ID only; shared=unverified always",
+    "fixtures": {
+      "checks": 529,
+      "result": "PASS",
+      "interpreter": "existing pinned Lua5.1.5 fixture binary",
+      "live_game": false,
+      "cases": [
+        "unreadable/empty/invalid/sparse/overflow/duplicate rider table",
+        "occupied driver versus passenger versus absent local rider",
+        "world/mission/epoch/role/ABI table/vehicle identity/authoring descriptor changes",
+        "seat count/occupancy changes between reads",
+        "wrong object type/null vehicle/invalid current player index/ID",
+        "unpaired/world-level/loading/demo/posture lifecycle refusal",
+        "Lua command/typed lookup errors",
+        "authored names only, no guessed IDs or index enumeration"
+      ]
+    }
+  }
+}

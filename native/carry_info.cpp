@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <strsafe.h>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -20,6 +21,8 @@ partner_player::Addresses addresses{};
 bool verified=false,stopped=false,failed=false,configured=false;
 std::uint32_t boundThread=0;
 std::uint64_t lastQuery=0;
+void (*logger)(const char*) noexcept=nullptr;
+unsigned readRefusals=0;
 struct Preserve { DWORD value=GetLastError(); ~Preserve(){SetLastError(value);} };
 bool ReadBytes(std::uintptr_t p,void* out,std::size_t size) noexcept {
     SIZE_T count=0;
@@ -107,10 +110,10 @@ bool CodeGate(const void* image,std::size_t span,std::uintptr_t& mismatch) noexc
     auto reader=ReadBytes;
     return carry_plugin_read::CodeGate(reader,base,span,mismatch);
 }
-void Configure(const partner_player::Addresses& source,bool passed) noexcept {
+void Configure(const partner_player::Addresses& source,bool passed,void (*log)(const char*) noexcept) noexcept {
     const Preserve preserve;AcquireSRWLockExclusive(&lock);
     // A repeated configure cannot clear a fault or reopen a stopped module.
-    if(!configured){addresses=source;verified=passed;configured=true;}
+    if(!configured){addresses=source;verified=passed;logger=log;configured=true;}
     ReleaseSRWLockExclusive(&lock);
 }
 bool Observe(std::uint32_t mission,std::uint16_t epoch,bool admitted,std::uint32_t ownerThread,Reply& out) noexcept {
@@ -127,7 +130,12 @@ bool Observe(std::uint32_t mission,std::uint16_t epoch,bool admitted,std::uint32
     if(!detail::SameIdentity(first,second))return finish("state_changed");
     if(const char* why=detail::ScopeRefusal(Scope(mission,epoch,admitted,ownerThread,seq,own)))return finish(why);
     namespace plugin=carry_plugin_read;
-    auto reader=ReadBytes;
+    std::uintptr_t lastAt=0,lastValue=0;std::size_t lastSize=0;bool lastRead=false;
+    auto reader=[&](std::uintptr_t at,void* target,std::size_t size) noexcept {
+        lastAt=at;lastValue=0;lastSize=size;lastRead=ReadBytes(at,target,size);
+        if(lastRead&&size<=sizeof(lastValue))std::memcpy(&lastValue,target,size);
+        return lastRead;
+    };
     plugin::Scope ps{};
     ps.exactGate=verified;ps.admitted=admitted;ps.ready=own.ready;ps.armed=own.armed;
     ps.image=addresses.image_base;ps.player=second.player;ps.data=second.data;ps.state=second.bitset;
@@ -136,9 +144,30 @@ bool Observe(std::uint32_t mission,std::uint16_t epoch,bool admitted,std::uint32
     ps.thread=GetCurrentThreadId();ps.ownerThread=ownerThread;
     ps.now=now;ps.poll=own.lastPoll;ps.sequenceBefore=seq;ps.sequenceAfter=partner_input_hook::WindowSeq();ps.batch=partner_defer::InBatch();
     plugin::Observation pluginFirst{},pluginSecond{},pluginAfter{};
-    const bool pluginRead=plugin::ReadOnce(reader,ps,pluginFirst)&&plugin::ReadOnce(reader,ps,pluginSecond);
+    const char* pluginRefusal="plugin_chain";
+    const bool pluginRead=plugin::ReadOnce(reader,ps,pluginFirst,&pluginRefusal)&&plugin::ReadOnce(reader,ps,pluginSecond,&pluginRefusal);
     const bool pluginCoherent=pluginRead&&plugin::Same(pluginFirst,pluginSecond);
-    out.pluginReason=pluginRead?(pluginCoherent?"ready":"plugin_changed"):"plugin_chain";
+    out.pluginReason=pluginRead?(pluginCoherent?"ready":"plugin_changed"):pluginRefusal;
+    if(!pluginRead&&logger&&readRefusals++<32){
+        // Bounded first-failure telemetry: component-relative offset and an
+        // image RVA only. Heap pointers never leave this native reader.
+        const auto& seen=pluginSecond.player?pluginSecond:pluginFirst;
+        const char* object="other";std::uintptr_t offset=0;
+        const auto locate=[&](std::uintptr_t start,std::size_t length,const char* name) noexcept {
+            if(start&&lastAt>=start&&lastAt-start<length){object=name;offset=lastAt-start;return true;}return false;
+        };
+        bool located=locate(seen.player,0x388,"player")||locate(seen.data,0x1f0,"data")||locate(seen.state,0x48,"state");
+        for(unsigned k=0;k<2&&!located;++k){const auto& b=seen.body[k];
+            located=locate(b.block,0x6a8,k?"block1":"block0")||locate(b.ps,0x410,k?"ps1":"ps0")||
+                locate(b.node,0x40,k?"node1":"node0")||locate(b.primary,0x78,k?"primary1":"primary0")||
+                locate(b.record,0x6c0,k?"record1":"record0");
+        }
+        if(!located)locate(seen.selector,0x3f30,"selector");
+        const auto imageValue=lastValue>=addresses.image_begin&&lastValue<addresses.image_end?lastValue-addresses.image_base:0;
+        char line[256]{};StringCchPrintfA(line,ARRAYSIZE(line),"carry_plugin_read_refused;stage=%s;object=%s;offset=0x%llx;size=%u;read=%u;image_value=0x%llx;zero=%u\r\n",
+            pluginRefusal,object,static_cast<unsigned long long>(offset),unsigned(lastSize),lastRead?1u:0u,static_cast<unsigned long long>(imageValue),lastValue==0?1u:0u);
+        logger(line);
+    }
     BodyReply result[2]{};
     for(unsigned k=0;k<2;++k){
         detail::Message message{};std::int32_t nativeResult=0;

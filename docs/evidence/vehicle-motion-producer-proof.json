@@ -1,0 +1,193 @@
+{
+  "schema": 1,
+  "scope": "offline exact retail file only",
+  "runtime_verified": false,
+  "native_calls": 0,
+  "game_launches": 0,
+  "binary_sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+  "publisher": {
+    "rva": "1246EF0",
+    "stock_network_requirement": "P+204 bit8=0x100 is flag_online; publisher skips kind9 copy offline. Do not set this flag.",
+    "local_requirement": "P+218 selected actual body except stock network mode2",
+    "derived_vtable_rva": "23AA770",
+    "size": 24,
+    "fields": {
+      "8": "kind9",
+      "10": "native vehicle ID from controller84",
+      "12": "phase from controller54",
+      "13": "controller56",
+      "14": "controller57 low nibble"
+    },
+    "destination": "Q+1D8 + actualBodyID*40 via Q vslot40 FE00D0",
+    "offline_observation": "Still updates Q+E0[bodyID] with vehicleID and local UI at P+D8."
+  },
+  "encoding": {
+    "serializer_rva": "FD4590",
+    "decoder_rva": "FD2A10",
+    "wire_size": 6,
+    "wire_fields": {
+      "0": "kind9",
+      "1": "phase",
+      "2": "low seat nibble",
+      "4": "native vehicle ID byte-swapped"
+    },
+    "missing_field": "message13/controller56 is not serialized; rest of wire record must not be inferred"
+  },
+  "normal_local_producer": {
+    "initial_selection": "124B360 and1245820 restrict 124B3A0 search to0..min(dynamicSeatCount-1,1).",
+    "entry_phase": "1251200 writes chosen low nibble into record57, then selection0/1 both normalize to occupancyseat0.",
+    "passenger": "1250CF0 handles phase2; existing event6 consumes native kind9 but has no established offline request producer for choosing>=2."
+  },
+  "attachment": {
+    "per_frame": "1259B80 takes logical seat low nibble to B7AF90 vehicle-seat transform; computes pose and copies four float4 rows to PS+270[index-base] transform+10..40 and controller190..1C0.",
+    "local_ui_caveat": "1250CF0 event5 calls124C760 which calls shared P+D8 vslot240 without actual body index. Cannot run body1 local path blindly.",
+    "reader_distinction": "GetRiderId seat occupancy alone is not these body transforms, camera, controls or network ownership."
+  },
+  "mgo_boundary": {
+    "sha256": "f9a1c1902c0415e89e678eeb331c11887cdb8e9290f74195ce4f83d5128947d4",
+    "exact_literal_search_absent": [
+      "55624028B112 registered Player2Vehicle hash",
+      "FDB677E449F9 vehicle primary QI",
+      "8A991A913969 passenger pose",
+      "FE95B58C6BB0 passenger pose",
+      "2B9BC4EE90AA passenger pose"
+    ],
+    "interpretation": "No matched ordinary road vehicle controller established in MGO. Literal absence is not proof of absence of equivalent code and no MGO offsets may be used in TPP."
+  },
+  "next_qualification": {
+    "smallest_step": "Read-only typed per-body Vehicle controller observer during natural solo driver mount/exit; correlate with current vehicle Lua seat census, P+120 typed unit and Q+E0 word.",
+    "needed_for_shared_slice": [
+      "authored named vehicle with capacity>=3, lifecycle and host-authoritative vehicle pose sync",
+      "typed natural local passenger admission route including driver-occupied eligibility and seat>=2 selection",
+      "per-body remote event6 adapter without setting flag_online",
+      "replicate logical descriptor+seat and remap actual native body0/1 each peer; no process-local IDs on wire",
+      "native seat occupancy plus body attach/pose plus own camera/control receipt, with exit/despawn/disconnect/scene cleanup on both peers"
+    ]
+  },
+  "bodies": [
+    {
+      "rva": "0x1246ef0",
+      "end": "0x1247075",
+      "length": 389,
+      "sha256": "de53d2cb7dad2f5d83f97f439f15ce2ad44d12a72f2b1b2d7f7a2ab6fc9154cc",
+      "complete_linear_decode": true
+    },
+    {
+      "rva": "0xfe00d0",
+      "end": "0xfe0116",
+      "length": 70,
+      "sha256": "a7f0e1282f7fd105abfd3d4a5337a51cf388eb1403ed27a671344daa35252021",
+      "complete_linear_decode": true
+    },
+    {
+      "rva": "0xfdef40",
+      "end": "0xfdef4e",
+      "length": 14,
+      "sha256": "259651c8f6eab1d3f93ff709038143aa78fe5d9cdd7ffe74995790177be8424a",
+      "complete_linear_decode": true
+    },
+    {
+      "rva": "0xfd4910",
+      "end": "0xfd4916",
+      "length": 6,
+      "sha256": "0e16a5f4f32347b761b9ac66a92a90037631e1eda4d9cb38b43bc0b44d90d764",
+      "complete_linear_decode": true
+    },
+    {
+      "rva": "0xfd4590",
+      "end": "0xfd45c6",
+      "length": 54,
+      "sha256": "696b5f85a993a5dc60367fab7a56a3d16331115105030f2b5d23d90dcd5bc490",
+      "complete_linear_decode": true
+    },
+    {
+      "rva": "0xfd2a10",
+      "end": "0xfd2a49",
+      "length": 57,
+      "sha256": "eaa553006aa1dc0362b4b4791116d1d88228c72ebdb85c2139a582dd5e1a93b9",
+      "complete_linear_decode": true
+    },
+    {
+      "rva": "0x124b360",
+      "end": "0x124b3a0",
+      "length": 64,
+      "sha256": "172c32b9deb54b269a04ae80911edf30c9d4a21f3ef66cfb52e966ba5372c944",
+      "complete_linear_decode": true
+    },
+    {
+      "rva": "0x1259b80",
+      "end": "0x125acf7",
+      "length": 4471,
+      "sha256": "a78e70eae335a21428e8e71960a2a843558a1e142ed979cf24894b69b98cb888",
+      "complete_linear_decode": true
+    },
+    {
+      "rva": "0x124c760",
+      "end": "0x124c827",
+      "length": 199,
+      "sha256": "1dd7f2e417d04c7181a6044c017645feed52d7ae0ba67f544074123e7b0dc90b",
+      "complete_linear_decode": true
+    },
+    {
+      "rva": "0x1244e50",
+      "end": "0x1244f3c",
+      "length": 236,
+      "sha256": "79b9ac8e038f8c02d40cda9ec015ea35de6a640660ef0c0b5e1deb2ae0ffa385",
+      "complete_linear_decode": true
+    },
+    {
+      "rva": "0x1247d00",
+      "end": "0x1247d0e",
+      "length": 14,
+      "sha256": "3a51ad8f2829f522dba3ed96506a2504b91582aa82493af134152008d184adbd",
+      "complete_linear_decode": true
+    }
+  ],
+  "slots": [
+    {
+      "vtable_rva": "0x23ad970",
+      "offset": "0x38",
+      "target": "0xfdef40"
+    },
+    {
+      "vtable_rva": "0x23ad970",
+      "offset": "0x40",
+      "target": "0xfe00d0"
+    },
+    {
+      "vtable_rva": "0x23aa770",
+      "offset": "0x0",
+      "target": "0xfd4910"
+    },
+    {
+      "vtable_rva": "0x23aa770",
+      "offset": "0x18",
+      "target": "0xfd4590"
+    },
+    {
+      "vtable_rva": "0x23aa770",
+      "offset": "0x20",
+      "target": "0xfd2a10"
+    },
+    {
+      "vtable_rva": "0x23cbea8",
+      "offset": "0x8",
+      "target": "0x1246650"
+    },
+    {
+      "vtable_rva": "0x23cbea8",
+      "offset": "0x10",
+      "target": "0x1244e50"
+    }
+  ],
+  "deferred_entry_gate": {
+    "primary_vtable_rva": "23CBEA8",
+    "slot": "10",
+    "target_rva": "1244E50",
+    "input": "actual native body index; NO passenger seat argument",
+    "selected_target": "shared player P+140 field112; vehicle prefix6400 required unless service override",
+    "writes": "indexed controller1D0 bit28; candidate86; timer220=0",
+    "result": "false while waiting; true after gate conditions; not a direct attach call",
+    "boundary": "This shared selected-target read must not be used as body1-specific ownership without separate qualification."
+  }
+}

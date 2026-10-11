@@ -16,6 +16,7 @@
 #include "mgscoop/damage_patch.hpp"
 #include "mgscoop/downed_player.hpp"
 #include "mgscoop/carry_info.hpp"
+#include "mgscoop/sleep_info.hpp"
 #include "mgscoop/downed_damage.hpp"
 #include "mgscoop/buddy_pose.hpp"
 #include "mgscoop/buddy_dog_command_pins.hpp"
@@ -1078,6 +1079,7 @@ void PartnerMissionEnd() noexcept {
 void PartnerShutdown() noexcept {
     InterlockedExchange(&partner_window_closing, 1);  // the early manifest stops in any mission
     mgscoop::carry_info::Shutdown();
+    mgscoop::sleep_info::Shutdown();
     mgscoop::nametag::Shutdown();  // thread-safe flag: the overlay stops drawing the tag
     // Steam online exit hygiene (docs/steam-online.md C11): flags only. The
     // transport thread sends one CLOSE, closes the peer session and parks;
@@ -1988,6 +1990,14 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                 static_cast<unsigned long>(r.cachedKind),static_cast<unsigned long>(r.currentKind),static_cast<unsigned long>(r.cachedFlags),static_cast<unsigned long>(r.currentFlags),
                 unsigned(a.carryTarget),unsigned(a.carryPrevious),unsigned(a.carrier),a.carryNodeActive?1u:0u,unsigned(a.carryState[0]),unsigned(a.carryState[1]),unsigned(a.carryState[2]),unsigned(a.pluginFlags[0]),
                 unsigned(b.carryTarget),unsigned(b.carryPrevious),unsigned(b.carrier),b.carryNodeActive?1u:0u,unsigned(b.carryState[0]),unsigned(b.carryState[1]),unsigned(b.carryState[2]),unsigned(b.pluginFlags[0]));
+            debug::Result(pending.id,ok?1u:0u,line);
+        } else if (pending.id && std::strcmp(pending.text,"sleep_info_status")==0) {
+            const auto owner=mgscoop::downed_player::GetSnapshot();mgscoop::sleep_info::Reply r{};
+            const bool ok=mgscoop::sleep_info::Observe(owner.mission,owner.epoch,DownedAdmitted(owner.mission,owner.epoch),mission_thread,r);
+            const auto& a=r.bodies[0];const auto& b=r.bodies[1];char line[161]{};
+            StringCchPrintfA(line,ARRAYSIZE(line),"sleepnative;ready=%u;gen=%lu;b0=%u,%u,%u,%u,%lu,%u;b1=%u,%u,%u,%u,%lu,%u;reason=%s",
+                ok?1u:0u,static_cast<unsigned long>(r.generation),unsigned(a.mode),unsigned(a.requested),unsigned(a.action),unsigned(a.qAction),static_cast<unsigned long>(a.lifeState),a.nodeActive?1u:0u,
+                unsigned(b.mode),unsigned(b.requested),unsigned(b.action),unsigned(b.qAction),static_cast<unsigned long>(b.lifeState),b.nodeActive?1u:0u,r.reason);
             debug::Result(pending.id,ok?1u:0u,line);
         } else if (pending.id && std::strcmp(pending.text, "downed_status") == 0) {
             const auto s=mgscoop::downed_player::GetSnapshot();
@@ -3672,7 +3682,11 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                     const bool downed_gate = partner_gate_ok && mgscoop::downed_damage::CodeGate(base, span);
                     std::uintptr_t carryMismatch=0;
                     const bool carryGate=downed_gate && mgscoop::carry_info::CodeGate(base,span,carryMismatch);
-                    mgscoop::carry_info::Configure(partner_addresses,carryGate);
+                    mgscoop::carry_info::Configure(partner_addresses,carryGate,Log);
+                    std::uintptr_t sleepMismatch=0;
+                    const bool sleepGate=downed_gate&&mgscoop::sleep_info::CodeGate(base,span,sleepMismatch);
+                    mgscoop::sleep_info::Configure(partner_addresses,sleepGate,Log);
+                    LogFormat("sleep_info_code_gate=%s;rva=0x%llx;scope=read_only_controller\r\n",sleepGate?"ok":"refused",static_cast<unsigned long long>(sleepMismatch));
                     LogFormat("carry_info_code_gate=%s;rva=0x%llx;scope=read_only_query\r\n",carryGate?"ok":"refused",static_cast<unsigned long long>(carryMismatch));
                     downed_hook_ok = downed_gate && mgscoop::downed_damage::Install(base, span, Log);
                     mgscoop::downed_player::Configure(partner_addresses, downed_hook_ok);

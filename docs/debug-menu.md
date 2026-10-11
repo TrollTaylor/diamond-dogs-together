@@ -1,7 +1,11 @@
 # F9 debug menu
 
 
-October 11 candidate: Partner / Co-op adds **Downed status**, **Revive input status**, **Downed movement input**, **Summon / recall D-Horse**, **Horse status** and **D-Dog follow status**. Horse summon uses the stock local loader four metres beside the player, with bounded request checks, context checks and cooldown. Selection and class availability do not prove nearby arrival; close F9, wait for loading, and repeat Summon / recall if the horse is missing. It does not create a second horse or attach a remote rider. Close F9 before holding ACTION near a downed teammate for three seconds. Native mount census never substitutes a network riding bit for actual occupancy.
+October 11 carry/sleep candidate: **Wounded and sleeping teammates** provides **Incapacitation status**, **Revive input status**, **Downed movement input**, **Native sleep controller**, **Carry eligibility** and **Carry target selection**. Injury stays downed until a teammate revives; sleep preserves health, blocks movement/combat and uses a 30-second paired-gameplay wake fallback. Both can be recovered by a healthy teammate holding ACTION within three metres for three seconds with F9 closed. The stock standing sleep pose, actual player pickup/carry/put-down, horse loading and shared passengers remain unfinished.
+
+The carry eligibility query checks native geometry/health; its gun candidate is explicitly distinct from the shoulder-carry controller's target. The target-selection and sleep rows are read-only diagnostics: a ready receipt never starts a carry, attaches a body, unlocks input or proves a playing animation. Chain refusals identify the first typed component stage. **Current vehicle seats** reads two matching stock rider arrays on the actual current vehicle; on foot it reports `vehicle_not_riding`. It never creates a vehicle, guesses seat capacity or inserts a rider.
+
+Horse summon uses the stock local loader four metres beside the player, with bounded context checks and cooldown. Selection/class availability do not prove arrival; close F9, wait, and repeat Summon / recall if missing. It does not create a second horse or attach a remote rider. Native mount census never substitutes a network riding bit for occupancy.
 The debug menu exists only in offline copied-save co-op sessions. Every action is a
 short text command that waits for the game's own Lua update; nothing calls the game
 from the menu thread.

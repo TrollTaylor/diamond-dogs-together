@@ -1,0 +1,849 @@
+{
+  "scope": "Offline static retail sleep chain; no game, native call/write, install, build, main edits or shared REA. No new native helper qualified.",
+  "executable": {
+    "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgsvtpp.exe",
+    "size": 166517760,
+    "sha256": "085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45",
+    "image_base": "0x140000000"
+  },
+  "full_body_pins": [
+    {
+      "name": "natural damage updater; includes declared dispatch tables",
+      "rva": "0x11f76c0",
+      "end": "0x11f92c5",
+      "size": 7173,
+      "sha256": "A748737EF1619DEDEC90A427168951147A3CAF5329E21B4FEA3319F84052E0D6",
+      "unwind_ranges": [
+        {
+          "begin": "0x11f76c0",
+          "end": "0x11f76ee",
+          "unwind": "0x28493e0",
+          "flags": 3
+        },
+        {
+          "begin": "0x11f76ee",
+          "end": "0x11f7fc4",
+          "unwind": "0x28493fc",
+          "flags": 4
+        },
+        {
+          "begin": "0x11f7fc4",
+          "end": "0x11f9163",
+          "unwind": "0x2849430",
+          "flags": 4
+        },
+        {
+          "begin": "0x11f9163",
+          "end": "0x11f91b9",
+          "unwind": "0x284944c",
+          "flags": 4
+        },
+        {
+          "begin": "0x11f91b9",
+          "end": "0x11f9248",
+          "unwind": "0x284945c",
+          "flags": 4
+        },
+        {
+          "begin": "0x11f9248",
+          "end": "0x11f92c5",
+          "unwind": "0x284946c",
+          "flags": 4
+        }
+      ]
+    },
+    {
+      "name": "Q+58 enqueue leaf; not an offline pose setter",
+      "rva": "0xfdec60",
+      "end": "0xfdeca9",
+      "size": 73,
+      "sha256": "3B931629A1132AB3A0DCFF282AAA9DFA1D06BDE4F6B0B55631392487CA492E4C",
+      "unwind_ranges": []
+    },
+    {
+      "name": "sleep consumer final constructor; object size0x80",
+      "rva": "0x12c7b60",
+      "end": "0x12c7c2b",
+      "size": 203,
+      "sha256": "2769BC3CEF8B320BE2F14BC5F63B9B714F87F19313E7C1E2056225BE9514A4BB",
+      "unwind_ranges": [
+        {
+          "begin": "0x12c7b60",
+          "end": "0x12c7c2b",
+          "unwind": "0x2856570",
+          "flags": 2
+        }
+      ]
+    },
+    {
+      "name": "sleep consumer destructor",
+      "rva": "0x12c7c30",
+      "end": "0x12c7cac",
+      "size": 124,
+      "sha256": "72155181EFDBBD4934376AFEAEBDFB5CA03378143C3491C99B172761820E5406",
+      "unwind_ranges": [
+        {
+          "begin": "0x12c7c30",
+          "end": "0x12c7cac",
+          "unwind": "0x2856174",
+          "flags": 2
+        }
+      ]
+    },
+    {
+      "name": "allocation factory returns complete+0x10",
+      "rva": "0x12c7eb0",
+      "end": "0x12c7ef1",
+      "size": 65,
+      "sha256": "FA8C9A3C3A8F7CB169589216AFADC57F91A3879CE2026D8989D9AD6EAED29485",
+      "unwind_ranges": [
+        {
+          "begin": "0x12c7eb0",
+          "end": "0x12c7ef1",
+          "unwind": "0x2856548",
+          "flags": 2
+        }
+      ]
+    },
+    {
+      "name": "realization and record allocation",
+      "rva": "0x12c7d70",
+      "end": "0x12c7df7",
+      "size": 135,
+      "sha256": "76E29B8A6939736895BFC9ADB998D9014A7FCCE5FD2EF52312479BFC96FBEC69",
+      "unwind_ranges": [
+        {
+          "begin": "0x12c7d70",
+          "end": "0x12c7df7",
+          "unwind": "0x27be61c",
+          "flags": 0
+        }
+      ]
+    },
+    {
+      "name": "owner assignment realization thunk",
+      "rva": "0x12c86d0",
+      "end": "0x12c86e0",
+      "size": 16,
+      "sha256": "0C3A134AF96F1A8173B0BC9EEECC766DDF5B8BD80794C68CB81AE1E35D4D74AF",
+      "unwind_ranges": []
+    },
+    {
+      "name": "sleep admission thunk complete=interface-0x30",
+      "rva": "0x12c8750",
+      "end": "0x12c8759",
+      "size": 9,
+      "sha256": "06944AB58E3B358E8DEC0D0D50AB146235BDA7661EDEF7EC9FE60598538AA328",
+      "unwind_ranges": []
+    },
+    {
+      "name": "eligibility leaf",
+      "rva": "0x12c7e00",
+      "end": "0x12c7ea4",
+      "size": 164,
+      "sha256": "4BF7AA6BFE6A4FE5799BBD861C80921775A9C20065C813848F47E572BA1AAC62",
+      "unwind_ranges": []
+    },
+    {
+      "name": "life-state admission",
+      "rva": "0x12c87a0",
+      "end": "0x12c8a96",
+      "size": 758,
+      "sha256": "010F07F960421834A7B6691DCC9C0235287FC22EFD6BC9740550644F279A482A",
+      "unwind_ranges": [
+        {
+          "begin": "0x12c87a0",
+          "end": "0x12c8925",
+          "unwind": "0x2856378",
+          "flags": 0
+        },
+        {
+          "begin": "0x12c8925",
+          "end": "0x12c894d",
+          "unwind": "0x2856388",
+          "flags": 4
+        },
+        {
+          "begin": "0x12c894d",
+          "end": "0x12c89f2",
+          "unwind": "0x285639c",
+          "flags": 4
+        },
+        {
+          "begin": "0x12c89f2",
+          "end": "0x12c8a2d",
+          "unwind": "0x28563b0",
+          "flags": 4
+        },
+        {
+          "begin": "0x12c8a2d",
+          "end": "0x12c8a57",
+          "unwind": "0x28563d8",
+          "flags": 4
+        },
+        {
+          "begin": "0x12c8a57",
+          "end": "0x12c8a69",
+          "unwind": "0x28563c4",
+          "flags": 4
+        },
+        {
+          "begin": "0x12c8a69",
+          "end": "0x12c8a83",
+          "unwind": "0x28563d8",
+          "flags": 4
+        },
+        {
+          "begin": "0x12c8a83",
+          "end": "0x12c8a96",
+          "unwind": "0x28563e8",
+          "flags": 4
+        }
+      ]
+    },
+    {
+      "name": "phase dispatch and mode adoption",
+      "rva": "0x12c81c0",
+      "end": "0x12c831b",
+      "size": 347,
+      "sha256": "8E9E494A9E6DAE316233506CBFC7BA78CB44CD5C38FFD004ACB2533E2ED35CBA",
+      "unwind_ranges": [
+        {
+          "begin": "0x12c81c0",
+          "end": "0x12c831b",
+          "unwind": "0x28e2124",
+          "flags": 0
+        }
+      ]
+    },
+    {
+      "name": "transition retires old and enters new callback",
+      "rva": "0x12c83c0",
+      "end": "0x12c846d",
+      "size": 173,
+      "sha256": "282036CD86C01C2897316BFE488E5CCBC8C246E4311EA60BB19C986D73E94CA2",
+      "unwind_ranges": [
+        {
+          "begin": "0x12c83c0",
+          "end": "0x12c846d",
+          "unwind": "0x27f0f3c",
+          "flags": 0
+        }
+      ]
+    },
+    {
+      "name": "callback factory includes seven-entry table",
+      "rva": "0x12c8610",
+      "end": "0x12c86d0",
+      "size": 192,
+      "sha256": "F93F056A9A173931810EF959D7035DFE92D1CC5F216FDAD3706E9FE56144F468",
+      "unwind_ranges": [
+        {
+          "begin": "0x12c8610",
+          "end": "0x12c86d0",
+          "unwind": "0x28cd81c",
+          "flags": 0
+        }
+      ]
+    },
+    {
+      "name": "phase dispatch leaf includes seven-entry table",
+      "rva": "0x12c8470",
+      "end": "0x12c84f4",
+      "size": 132,
+      "sha256": "8590A4C567A9B1A2FBD21BF1C748A9D4291E7577A66A980B9D350C4CCC721F4D",
+      "unwind_ranges": []
+    },
+    {
+      "name": "event forwarding",
+      "rva": "0x12c8500",
+      "end": "0x12c8593",
+      "size": 147,
+      "sha256": "2F916661526CF8802A7B727CAF2194D391FF93C8ADB6B26FF67CBE1701EE5220",
+      "unwind_ranges": [
+        {
+          "begin": "0x12c8500",
+          "end": "0x12c8513",
+          "unwind": "0x282b164",
+          "flags": 0
+        },
+        {
+          "begin": "0x12c8513",
+          "end": "0x12c8545",
+          "unwind": "0x2856434",
+          "flags": 4
+        },
+        {
+          "begin": "0x12c8545",
+          "end": "0x12c8593",
+          "unwind": "0x2856448",
+          "flags": 4
+        }
+      ]
+    },
+    {
+      "name": "general actor sleep enter",
+      "rva": "0x12cb990",
+      "end": "0x12cbe57",
+      "size": 1223,
+      "sha256": "3EFB1F3C8C47BBE98245699EFF68F23CDE0D81EAFC5AF48C1AC4D326967F7498",
+      "unwind_ranges": [
+        {
+          "begin": "0x12cb990",
+          "end": "0x12cbe57",
+          "unwind": "0x285523c",
+          "flags": 0
+        }
+      ]
+    },
+    {
+      "name": "mode4 sleep onset includes twelve-entry table",
+      "rva": "0x12cb2b0",
+      "end": "0x12cb824",
+      "size": 1396,
+      "sha256": "45063B2C3CB4E08CE0EF459B9F985661B7677CBA3D424506A16E7324709A2663",
+      "unwind_ranges": [
+        {
+          "begin": "0x12cb2b0",
+          "end": "0x12cb71e",
+          "unwind": "0x28561b4",
+          "flags": 0
+        },
+        {
+          "begin": "0x12cb71e",
+          "end": "0x12cb7de",
+          "unwind": "0x2856284",
+          "flags": 4
+        },
+        {
+          "begin": "0x12cb7de",
+          "end": "0x12cb824",
+          "unwind": "0x2856298",
+          "flags": 4
+        }
+      ]
+    },
+    {
+      "name": "mode5 resting sleep includes eleven-entry table",
+      "rva": "0x12caa10",
+      "end": "0x12caf44",
+      "size": 1332,
+      "sha256": "F5A2213EC74DF874BDC110EF06EFD589C95212905CABC4A5424A2E256541093E",
+      "unwind_ranges": [
+        {
+          "begin": "0x12caa10",
+          "end": "0x12caa56",
+          "unwind": "0x284ccb4",
+          "flags": 0
+        },
+        {
+          "begin": "0x12caa56",
+          "end": "0x12cac55",
+          "unwind": "0x28562a8",
+          "flags": 4
+        },
+        {
+          "begin": "0x12cac55",
+          "end": "0x12cacf4",
+          "unwind": "0x28562bc",
+          "flags": 4
+        },
+        {
+          "begin": "0x12cacf4",
+          "end": "0x12cacf9",
+          "unwind": "0x28562d0",
+          "flags": 4
+        },
+        {
+          "begin": "0x12cacf9",
+          "end": "0x12cad0f",
+          "unwind": "0x28562e0",
+          "flags": 4
+        },
+        {
+          "begin": "0x12cad0f",
+          "end": "0x12cadb6",
+          "unwind": "0x28562f0",
+          "flags": 4
+        },
+        {
+          "begin": "0x12cadb6",
+          "end": "0x12caf44",
+          "unwind": "0x2856308",
+          "flags": 4
+        }
+      ]
+    },
+    {
+      "name": "teardown and recovery",
+      "rva": "0x12c96a0",
+      "end": "0x12c9a74",
+      "size": 980,
+      "sha256": "D545121CA561E75142A971E10E5B93C148822ABDF482FF918BABD58DF5050727",
+      "unwind_ranges": [
+        {
+          "begin": "0x12c96a0",
+          "end": "0x12c9a74",
+          "unwind": "0x27e6558",
+          "flags": 0
+        }
+      ]
+    },
+    {
+      "name": "final type descriptor leaf",
+      "rva": "0x12c8ef0",
+      "end": "0x12c8ef8",
+      "size": 8,
+      "sha256": "362351DC15976D58240BA5859EBFB6444DA1EE6D27949B732E0D60C2B7E81F17",
+      "unwind_ranges": []
+    },
+    {
+      "name": "dynamic descriptor registration",
+      "rva": "0x2031fe0",
+      "end": "0x2032034",
+      "size": 84,
+      "sha256": "3F0EB7C4AEE31A59A334C10555D6A0EFFA5004B2C9644E00486FCE8EC7D34DDE",
+      "unwind_ranges": [
+        {
+          "begin": "0x2031fe0",
+          "end": "0x2032034",
+          "unwind": "0x2856604",
+          "flags": 2
+        }
+      ]
+    },
+    {
+      "name": "network-remote classifier; offline returns false",
+      "rva": "0x114db20",
+      "end": "0x114db8c",
+      "size": 108,
+      "sha256": "A9963F532DCDF6B44F7F8E811C012496A0868838372150DC77E6262AAD40E789",
+      "unwind_ranges": [
+        {
+          "begin": "0x114db20",
+          "end": "0x114db8c",
+          "unwind": "0x27bd630",
+          "flags": 0
+        }
+      ]
+    }
+  ],
+  "final_plugin_vtables": [
+    {
+      "name": "final interface vtable 0x0",
+      "rva": "0x23d5c18",
+      "end": "0x23d5c40",
+      "size": 40,
+      "sha256": "A67CC9126261C29D65A6579F234B88EDB3F06079C0821DC9D4DC9E9AEEEB7B8E",
+      "complete_offset": "0x0",
+      "slots": [
+        {
+          "offset": "0x0",
+          "target": "0x101b720"
+        },
+        {
+          "offset": "0x8",
+          "target": "0x101b720"
+        },
+        {
+          "offset": "0x10",
+          "target": "0x84b020"
+        },
+        {
+          "offset": "0x18",
+          "target": "0x645940"
+        },
+        {
+          "offset": "0x20",
+          "target": "0x12c7d00"
+        }
+      ]
+    },
+    {
+      "name": "final interface vtable 0x10",
+      "rva": "0x23d5c40",
+      "end": "0x23d5c70",
+      "size": 48,
+      "sha256": "BC54B2BA21EFAE911C7D70CA7249365D0E50ECAB3B8BE4E1371991BD3C6FC5C7",
+      "complete_offset": "0x10",
+      "slots": [
+        {
+          "offset": "0x0",
+          "target": "0x12c7cac"
+        },
+        {
+          "offset": "0x8",
+          "target": "0x12c86d0"
+        },
+        {
+          "offset": "0x10",
+          "target": "0x645940"
+        },
+        {
+          "offset": "0x18",
+          "target": "0x1125ca0"
+        },
+        {
+          "offset": "0x20",
+          "target": "0xfe390"
+        },
+        {
+          "offset": "0x28",
+          "target": "0x12c8ef0"
+        }
+      ]
+    },
+    {
+      "name": "final interface vtable 0x30",
+      "rva": "0x23d5c70",
+      "end": "0x23d5cb0",
+      "size": 64,
+      "sha256": "9373C71879E0852BA8D882FD34137CCB60D7F18741131EAD9BDA37230B3615A5",
+      "complete_offset": "0x30",
+      "slots": [
+        {
+          "offset": "0x0",
+          "target": "0x12c8750"
+        },
+        {
+          "offset": "0x8",
+          "target": "0x12cb990"
+        },
+        {
+          "offset": "0x10",
+          "target": "0x12c96a0"
+        },
+        {
+          "offset": "0x18",
+          "target": "0x12c8470"
+        },
+        {
+          "offset": "0x20",
+          "target": "0x12c8500"
+        },
+        {
+          "offset": "0x28",
+          "target": "0x645940"
+        },
+        {
+          "offset": "0x30",
+          "target": "0x645940"
+        },
+        {
+          "offset": "0x38",
+          "target": "0x12c7cb8"
+        }
+      ]
+    },
+    {
+      "name": "final interface vtable 0x48",
+      "rva": "0x23d5cb0",
+      "end": "0x23d5d00",
+      "size": 80,
+      "sha256": "5B7A9143C4FBD3F41D63CF16C338DD21BB6D22CC1BD62E06606B0BA5C6122FBE",
+      "complete_offset": "0x48",
+      "slots": [
+        {
+          "offset": "0x0",
+          "target": "0x12c8760"
+        },
+        {
+          "offset": "0x8",
+          "target": "0x645940"
+        },
+        {
+          "offset": "0x10",
+          "target": "0x645940"
+        },
+        {
+          "offset": "0x18",
+          "target": "0x645940"
+        },
+        {
+          "offset": "0x20",
+          "target": "0x645940"
+        },
+        {
+          "offset": "0x28",
+          "target": "0x12c8aa0"
+        },
+        {
+          "offset": "0x30",
+          "target": "0x101b720"
+        },
+        {
+          "offset": "0x38",
+          "target": "0x12c8fc0"
+        },
+        {
+          "offset": "0x40",
+          "target": "0x101b720"
+        },
+        {
+          "offset": "0x48",
+          "target": "0x101b720"
+        }
+      ]
+    }
+  ],
+  "registration": {
+    "descriptor": "0x2ae2198",
+    "descriptor_vtable": "0x23d5c00",
+    "class_hash": "0x1ae6a2b6439",
+    "factory_slot": "0x23d5c08",
+    "factory": "0x12c7eb0",
+    "complete_size": "0x80",
+    "factory_result": "complete+0x10",
+    "class_name": "Unresolved; do not label guard-only or fabricate class name"
+  },
+  "offline_path": {
+    "q58": "11F8C7B skips Q enqueue11F8E57 offline. Q+58 queues online replication events, not offline pose.",
+    "life": "11F8B11..11F8B1C: Calc mode2 sets lifeRecord+34=2 when stun depleted. LifeRecord=*Q+8 +id*4C; +2C currentstun/+30 max. Existing nonzero cause normally persists.",
+    "damage_flag": "11F8EE8 OR extra+B4,0x80 occurs offline too; extra=*primaryDamageManager+48 +idRelative*C0. Direct animation-consumer role of bit80 not proved.",
+    "eligibility": "12C7E00 gates PS flags/action state. 12C87A0 life34==2 and no Q+168 per-id bit9 forced-faint chooses pending mode4; Q action7A/2C chooses mode5 and flags14 bit1. General stun is different modes1/2.",
+    "lifecycle": "12C81C0 phase2 -> callback event5 offline/event1 -> adopt pending mode via12C83C0 -> event7.12C83C0 retires old event3, installs16-byte function+signed32 adjustment, enters event2. Factory adjustment0.",
+    "onset": "Mode4 12CB2B0 event2 requests stance-dependent graph state hashes via PS+238 animation vt+170. Event1 queries completion via vt+228/+208 and may stage further collapse hashes via vt+190; completion eventually requests mode5 at12CB699.",
+    "resting": "Mode5 12CAA10 event2 sets Q action84 and requests graph loop D7654FB0A3F2 (stance==3) orC31867300B57 via PS+238/vt+190. Events4/5 recover from native pad input and may clear life34/request mode6; mod-authoritative wake/carry order still unqualified."
+  },
+  "callback_map": {
+    "0": "0x645940",
+    "1": "0x12ca3b0",
+    "2": "0x12c9a80",
+    "3": "0x12ca040",
+    "4": "0x12cb2b0",
+    "5": "0x12caa10",
+    "6": "0x12caf50"
+  },
+  "synchronizer_call_census": [
+    {
+      "call_rva": "0x11f87fb",
+      "gate": "S_IS_ONLINE at11F8756..11F875C; offline jumps11F8AB2",
+      "call_bytes": "ff9008010000"
+    },
+    {
+      "call_rva": "0x11f8883",
+      "gate": "S_IS_ONLINE at11F8756..11F875C; offline jumps11F8AB2",
+      "call_bytes": "ff9008010000"
+    },
+    {
+      "call_rva": "0x11f88dc",
+      "gate": "S_IS_ONLINE at11F8756..11F875C; offline jumps11F8AB2",
+      "call_bytes": "ff9008010000"
+    },
+    {
+      "call_rva": "0x11f8935",
+      "gate": "S_IS_ONLINE at11F8756..11F875C; offline jumps11F8AB2",
+      "call_bytes": "ff9008010000"
+    },
+    {
+      "call_rva": "0x11f89ef",
+      "gate": "S_IS_ONLINE at11F8756..11F875C; offline jumps11F8AB2",
+      "call_bytes": "ff9008010000"
+    },
+    {
+      "call_rva": "0x11f8d06",
+      "gate": "S_IS_ONLINE at11F8C76..11F8C7B; offline jumps11F8EE4",
+      "call_bytes": "ff9008010000"
+    },
+    {
+      "call_rva": "0x11f8d77",
+      "gate": "S_IS_ONLINE at11F8C76..11F8C7B; offline jumps11F8EE4",
+      "call_bytes": "ff9008010000"
+    },
+    {
+      "call_rva": "0x11f8dbb",
+      "gate": "S_IS_ONLINE at11F8C76..11F8C7B; offline jumps11F8EE4",
+      "call_bytes": "ff9008010000"
+    },
+    {
+      "call_rva": "0x11f8e11",
+      "gate": "S_IS_ONLINE at11F8C76..11F8C7B; offline jumps11F8EE4",
+      "call_bytes": "ff9008010000"
+    },
+    {
+      "call_rva": "0x11f9045",
+      "gate": "No online guard; offline null read11F9040 then virtual call11F9045",
+      "call_bytes": "ff9008010000"
+    }
+  ],
+  "offline_null": {
+    "read": "0x11f9040",
+    "call": "0x11f9045",
+    "owner": "R9=*(P secondary+A8); P secondary=*(damageManagerPrimary+28)",
+    "conditions": [
+      "life34 nonzero",
+      "current life positive",
+      "r15b==0",
+      "damage data word+E positive",
+      "packet part+26==0",
+      "packet flags+22 bit1 set"
+    ],
+    "abi": "RCX synchronizer, EDX actorid, R8 ptr to stack16-byte event block D41C38EC/attacker/attack/flags; virtual108. Not a pose request.",
+    "pin": {
+      "name": "known offline notification preparation/call",
+      "rva": "0x11f8fdb",
+      "end": "0x11f904b",
+      "size": 112,
+      "sha256": "FFFFE35E7B754EFC2DA0F80B9B0D046A490362C2089AEA972EB8126544C4FE0A"
+    },
+    "new_guard_qualified": false
+  },
+  "resident_graph": {
+    "path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\partner-turn-resident-audit-20261007\\package-00_fpk\\Assets\\tpp\\motion\\motion_graph\\player2\\TppPlayer2_layers.mog",
+    "size": 732872,
+    "sha256": "5353CEC1A4D8A472CE39AF075C2E9AC2B3F453052BDC09666A113FD2C6936B31",
+    "nodes": [
+      {
+        "graph": 0,
+        "index": 517,
+        "record_offset": "0x9288",
+        "state_hash": "0x531872a59848",
+        "hash_pool_offset": "0xac620",
+        "record_sha256": "B1EFD9E129B9A10011188F963392A2AC7B18D5262A6C1F161A71957574617596"
+      },
+      {
+        "graph": 0,
+        "index": 536,
+        "record_offset": "0x97e0",
+        "state_hash": "0x565a6ead28c6",
+        "hash_pool_offset": "0xac648",
+        "record_sha256": "01C661F493D031EEB77CCB3984AD567F1177862FCDBE9A0E75785034B03E12A6"
+      },
+      {
+        "graph": 0,
+        "index": 864,
+        "record_offset": "0xf420",
+        "state_hash": "0x89349f0ff8a2",
+        "hash_pool_offset": "0xac618",
+        "record_sha256": "4965B32482077CC943AE9D373887DCB7B30CAEC4513CB55C2F2684A288556032"
+      },
+      {
+        "graph": 0,
+        "index": 993,
+        "record_offset": "0x11868",
+        "state_hash": "0x9e3bd6cce5f5",
+        "hash_pool_offset": "0xac610",
+        "record_sha256": "E2EE350CD3824D8E2FFC2DD113DAFF304B181E6ED4FF95C55911D25B955DAFE4"
+      },
+      {
+        "graph": 0,
+        "index": 1123,
+        "record_offset": "0x13cf8",
+        "state_hash": "0xb1c6aee936a4",
+        "hash_pool_offset": "0xac658",
+        "record_sha256": "E174EADC27D70521E4EB93CB75CDBF158404167DB2821146AD0856D0E8F1CE33"
+      },
+      {
+        "graph": 0,
+        "index": 1148,
+        "record_offset": "0x14400",
+        "state_hash": "0xb62a05a085a4",
+        "hash_pool_offset": "0xac668",
+        "record_sha256": "93958DFD488BA025C546C0D89C84938B940008C4D7ABBEB907B8F174BE17E64C"
+      },
+      {
+        "graph": 0,
+        "index": 1151,
+        "record_offset": "0x144d8",
+        "state_hash": "0xb6c742e88a85",
+        "hash_pool_offset": "0xac660",
+        "record_sha256": "DA3FBAC0522DBBF59DDB88F15867DBD04A7D4826D7BCD87B76C7787AE14AF4AF"
+      },
+      {
+        "graph": 0,
+        "index": 1187,
+        "record_offset": "0x14ef8",
+        "state_hash": "0xbd5546f99202",
+        "hash_pool_offset": "0xac628",
+        "record_sha256": "DA106FE8D13546A7ADCAA12A09FDBBFC1F2FA6DB9EDA23BC97A6A41D251A02BD"
+      },
+      {
+        "graph": 0,
+        "index": 1227,
+        "record_offset": "0x15a38",
+        "state_hash": "0xc31867300b57",
+        "hash_pool_offset": "0xac588",
+        "record_sha256": "82E7E99FFAEA5FC97F4FA521E3B576AC2B35048CA28FA12B5226F3998106443D"
+      },
+      {
+        "graph": 0,
+        "index": 1230,
+        "record_offset": "0x15b10",
+        "state_hash": "0xc37aca2100e9",
+        "hash_pool_offset": "0xac640",
+        "record_sha256": "65E4A1CB54B017CAE847B3C6E2557BE2AC4F47F95B929B09107D99C540B99974"
+      },
+      {
+        "graph": 0,
+        "index": 1344,
+        "record_offset": "0x17b20",
+        "state_hash": "0xd7654fb0a3f2",
+        "hash_pool_offset": "0xac578",
+        "record_sha256": "F04ABBA253FA930C3352E690D2FD450FC691DD7B51635AAD18EA2DBDADD45302"
+      },
+      {
+        "graph": 0,
+        "index": 1443,
+        "record_offset": "0x196f8",
+        "state_hash": "0xe66c3c2d192a",
+        "hash_pool_offset": "0xac590",
+        "record_sha256": "2C09D962FEC7D91E0E982BB82307460A493E32C92B658A532D75E438764BB841"
+      },
+      {
+        "graph": 0,
+        "index": 1447,
+        "record_offset": "0x19818",
+        "state_hash": "0xe6d3ed730317",
+        "hash_pool_offset": "0xac598",
+        "record_sha256": "F21AF58853F1B9E54078C88FE3BD525D09F8166F258D5DBF82FBD69256B3948C"
+      },
+      {
+        "graph": 0,
+        "index": 1448,
+        "record_offset": "0x19860",
+        "state_hash": "0xe6d6abd46423",
+        "hash_pool_offset": "0xac650",
+        "record_sha256": "51554A3401B0EA832FB4C47DAD5EA650D4EF70F7A2AD38F172B0DF53DC4B7562"
+      },
+      {
+        "graph": 0,
+        "index": 1497,
+        "record_offset": "0x1a628",
+        "state_hash": "0xeceee0f51e77",
+        "hash_pool_offset": "0xac630",
+        "record_sha256": "C6C00611117A175E976473DD3AFD73E5B6653824C5F387161EBD077F81181E9C"
+      },
+      {
+        "graph": 0,
+        "index": 1535,
+        "record_offset": "0x1b0d8",
+        "state_hash": "0xf2364261c9d4",
+        "hash_pool_offset": "0xac638",
+        "record_sha256": "1B48C79BA11DF5D20A8CFDDC2F998C141E39B14A59AC9AA52E2705211E7BA3FB"
+      }
+    ],
+    "interpretation": "All16 requested mode4/5 hashes are actual named graph0 nodes in copied resident MOG. This is asset file evidence; live loaded graph/clip identity and exact guard/player pose parity unverified.",
+    "runtime_verified": false
+  },
+  "next_read_only_path": [
+    "Use existing exact paired block/root census and bounded native-node traversal; find node object+10 with final vtable23D5C40. Descriptor factory must never be called merely to discover an object.",
+    "For found object: complete=obj-10; verify vtables complete+0/10/30/48=23D5C18/40/70/B0, complete+8==body block, complete+38==scheduler node. Node+24 base/node+20 count must admit exact body id. Record=*(complete+78)+(id-base)*40. Refuse all pointer/owner/range/mission-generation mismatches. This is an admission checklist, not an already qualified pointer resolver.",
+    "Read record+10 mode/+11 pending/+14 flags and Q action/life during natural updates only. No mode writes or callback invocation.",
+    "Existing qualified block+78 PS -> PS+238 animation controller and graph census can compare graph0 identity/state node indexes above. Copied MOG alone does not prove live graph loaded for both bodies."
+  ],
+  "blockers": [
+    "Sleeping plugin owned live pointer/node not captured on either independent offline body.",
+    "Live graph0/clip readiness not recorded; all16 state nodes exist in copied resident file.",
+    "Native pad wake/recovery must be reconciled with mod30second wake, HP preservation, carrying, generation teardown and sleeping vs lethal authority.",
+    "Standing guard onset/resting body visuals not compared to a player; no parity claim from hashes.",
+    "No native guard/call/write staged; safe separate cause2 immobile prone fallback retained."
+  ],
+  "verification": {
+    "full_exe_sha": true,
+    "complete_body_spans": true,
+    "ten_notification_sites": true,
+    "dispatch_tables_checked": true,
+    "all16_graph0_state_nodes": true,
+    "live_or_behavior_tests": false
+  }
+}
