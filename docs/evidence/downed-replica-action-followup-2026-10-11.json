@@ -1,0 +1,460 @@
+{
+  "schema": 1,
+  "executable_sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+  "source_commit": "f26c75a",
+  "source_commit_provenance": "coordinator-reported frozen build",
+  "run_id": "39f6a904dc704ce799a1a1fb038788bb",
+  "captures_sha256": "0759961af535309dd0039c81aa3961eff14f22cc8e275b9570648521933df0b1",
+  "static_only": true,
+  "runtime_modification": false,
+  "initializer": {
+    "begin_rva": "0x20262a0",
+    "end_rva_exclusive": "0x202698c",
+    "size": 1772,
+    "sha256": "7df725e5d2dcb76c94981cbe7a4758392303749eaeb0f6982d7c0b44bd42abbf",
+    "segments": [
+      {
+        "begin_rva": "0x20262a0",
+        "end_rva_exclusive": "0x202698c",
+        "unwind_rva": "0x28cd81c"
+      }
+    ]
+  },
+  "transition": {
+    "begin_rva": "0x109efa0",
+    "end_rva_exclusive": "0x109f0a9",
+    "size": 265,
+    "sha256": "5397c1fe09f798a9ecdbc025d187f4ec8806d0513ec220b0796ad7c443996519",
+    "segments": [
+      {
+        "begin_rva": "0x109efa0",
+        "end_rva_exclusive": "0x109f0a9",
+        "unwind_rva": "0x28e2124"
+      }
+    ]
+  },
+  "handler_table_rva": "0x2c55ae0",
+  "handlers": [
+    {
+      "state": 42,
+      "handler_rva": "0x10a7910",
+      "body": {
+        "begin_rva": "0x10a7910",
+        "end_rva_exclusive": "0x10a7eb4",
+        "size": 1444,
+        "sha256": "12c032fb7795cd6808e702da7646d6829d80944f6939f81930e00d4a15162ba7",
+        "segments": [
+          {
+            "begin_rva": "0x10a7910",
+            "end_rva_exclusive": "0x10a7eb4",
+            "unwind_rva": "0x28e2124"
+          }
+        ]
+      },
+      "event4_rva": "0x10a7bb3",
+      "event4_direct_call_order": [
+        "0x10bcd90",
+        "0x10be280",
+        "0x10bd1f0",
+        "0x10bbff0",
+        "0x10bd5b0"
+      ],
+      "event_table": {
+        "rva": "0x10a7e7c",
+        "size": 56,
+        "sha256": "eeac2504bf925c0878b5982a4453faf48137eb06e72b45cb917c708bdf73255f",
+        "targets_rva": [
+          "0x10a7c93",
+          "0x10a7963",
+          "0x10a7b22",
+          "0x10a7e66",
+          "0x10a7bb3",
+          "0x10a7bf9",
+          "0x10a7c25",
+          "0x10a7e66",
+          "0x10a7e66",
+          "0x10a7e66",
+          "0x10a7c76",
+          "0x10a7e66",
+          "0x10a7e66",
+          "0x10a7c44"
+        ]
+      },
+      "completion": null
+    },
+    {
+      "state": 43,
+      "handler_rva": "0x10a7ec0",
+      "body": {
+        "begin_rva": "0x10a7ec0",
+        "end_rva_exclusive": "0x10a8434",
+        "size": 1396,
+        "sha256": "e9c1324c6f7e8ee1894b7f3c1096c6679edced0af03d6937417d04243db65a9b",
+        "segments": [
+          {
+            "begin_rva": "0x10a7ec0",
+            "end_rva_exclusive": "0x10a8434",
+            "unwind_rva": "0x28e2124"
+          }
+        ]
+      },
+      "event4_rva": "0x10a80fd",
+      "event4_direct_call_order": [
+        "0x10bcd90",
+        "0x10be280",
+        "0x10bd1f0",
+        "0x10bbff0",
+        "0x10bd5b0"
+      ],
+      "event_table": {
+        "rva": "0x10a83fc",
+        "size": 56,
+        "sha256": "8a653365639c4fe6902d2cb1ad2164d27631af2ceda70ec18320258fab0d02fa",
+        "targets_rva": [
+          "0x10a8234",
+          "0x10a7f13",
+          "0x10a806c",
+          "0x10a83e4",
+          "0x10a80fd",
+          "0x10a8143",
+          "0x10a816f",
+          "0x10a81a7",
+          "0x10a83e4",
+          "0x10a83e4",
+          "0x10a8217",
+          "0x10a83e4",
+          "0x10a83e4",
+          "0x10a81e5"
+        ]
+      },
+      "completion": null
+    },
+    {
+      "state": 46,
+      "handler_rva": "0x10a5d60",
+      "body": {
+        "begin_rva": "0x10a5d60",
+        "end_rva_exclusive": "0x10a6304",
+        "size": 1444,
+        "sha256": "cc9eeb0287c886313fef1e2521628a096416b15de08841ac42da8abe8316f55d",
+        "segments": [
+          {
+            "begin_rva": "0x10a5d60",
+            "end_rva_exclusive": "0x10a5da8",
+            "unwind_rva": "0x287759c"
+          },
+          {
+            "begin_rva": "0x10a5da8",
+            "end_rva_exclusive": "0x10a62b3",
+            "unwind_rva": "0x2836cdc"
+          },
+          {
+            "begin_rva": "0x10a62b3",
+            "end_rva_exclusive": "0x10a62cc",
+            "unwind_rva": "0x2836cf0"
+          },
+          {
+            "begin_rva": "0x10a62cc",
+            "end_rva_exclusive": "0x10a6304",
+            "unwind_rva": "0x2836d00"
+          }
+        ]
+      },
+      "event4_rva": "0x10a5f90",
+      "event4_direct_call_order": [
+        "0x10bcd90",
+        "0x10be280",
+        "0x10bd1f0",
+        "0x10bbff0",
+        "0x10bd5b0"
+      ],
+      "event_table": {
+        "rva": "0x10a62cc",
+        "size": 56,
+        "sha256": "2fcd3dc78a74a37bc6e0845210575957ead90cb7f302576962b8574e9b5a9521",
+        "targets_rva": [
+          "0x10a6175",
+          "0x10a5db9",
+          "0x10a5ee7",
+          "0x10a6002",
+          "0x10a5f90",
+          "0x10a5fd6",
+          "0x10a6065",
+          "0x10a62ae",
+          "0x10a62ae",
+          "0x10a62ae",
+          "0x10a6150",
+          "0x10a62ae",
+          "0x10a609d",
+          "0x10a60e4"
+        ]
+      },
+      "completion": {
+        "call_rva": "0x10a6280",
+        "slot": "PS+0x238 interface virtual+0x228",
+        "success_next_state": 43,
+        "note": "This completion result is not captured by run39f6."
+      }
+    }
+  ],
+  "observations": [
+    {
+      "label": "healthy-crawl-01",
+      "source": "guest",
+      "receiver": "host",
+      "damage_method": "none",
+      "source_speed_class": 2,
+      "source_stance": 3,
+      "source_yaw_deg": -64.47913,
+      "body_action": 6,
+      "body_speed_class": 2,
+      "body_stance": 3,
+      "body_yaw_deg": -64.69229,
+      "receiver_base_action": 42,
+      "sampled_mag_milli": 1000,
+      "received_mag_milli": 1000,
+      "source_speed_mmps": 435,
+      "body_speed_mmps": 361,
+      "error_m": 0.0565,
+      "nudges": 0
+    },
+    {
+      "label": "healthy-crawl-02",
+      "source": "guest",
+      "receiver": "host",
+      "damage_method": "none",
+      "source_speed_class": 2,
+      "source_stance": 3,
+      "source_yaw_deg": -70.95326,
+      "body_action": 6,
+      "body_speed_class": 2,
+      "body_stance": 3,
+      "body_yaw_deg": -70.9989,
+      "receiver_base_action": 42,
+      "sampled_mag_milli": 1000,
+      "received_mag_milli": 1000,
+      "source_speed_mmps": 1230,
+      "body_speed_mmps": 1117,
+      "error_m": 0.12363,
+      "nudges": 0
+    },
+    {
+      "label": "healthy-crawl-03",
+      "source": "guest",
+      "receiver": "host",
+      "damage_method": "none",
+      "source_speed_class": 2,
+      "source_stance": 3,
+      "source_yaw_deg": -78.22358,
+      "body_action": 6,
+      "body_speed_class": 2,
+      "body_stance": 3,
+      "body_yaw_deg": -77.50804,
+      "receiver_base_action": 43,
+      "sampled_mag_milli": 1000,
+      "received_mag_milli": 1000,
+      "source_speed_mmps": 1604,
+      "body_speed_mmps": 1617,
+      "error_m": 0.14499,
+      "nudges": 0
+    },
+    {
+      "label": "healthy-crawl-04",
+      "source": "guest",
+      "receiver": "host",
+      "damage_method": "none",
+      "source_speed_class": 2,
+      "source_stance": 3,
+      "source_yaw_deg": -79.45666,
+      "body_action": 6,
+      "body_speed_class": 2,
+      "body_stance": 3,
+      "body_yaw_deg": -79.43444,
+      "receiver_base_action": 43,
+      "sampled_mag_milli": 1000,
+      "received_mag_milli": 1000,
+      "source_speed_mmps": 1652,
+      "body_speed_mmps": 1634,
+      "error_m": 0.13725,
+      "nudges": 0
+    },
+    {
+      "label": "downed-crawl-01",
+      "source": "guest",
+      "receiver": "host",
+      "damage_method": "real gun",
+      "source_speed_class": 1,
+      "source_stance": 3,
+      "source_yaw_deg": -80.0184,
+      "body_action": 6,
+      "body_speed_class": 1,
+      "body_stance": 3,
+      "body_yaw_deg": -80.00044,
+      "receiver_base_action": 46,
+      "sampled_mag_milli": 250,
+      "received_mag_milli": 250,
+      "source_speed_mmps": 268,
+      "body_speed_mmps": 349,
+      "error_m": 0.12977,
+      "nudges": 0
+    },
+    {
+      "label": "downed-crawl-02",
+      "source": "guest",
+      "receiver": "host",
+      "damage_method": "real gun",
+      "source_speed_class": 1,
+      "source_stance": 3,
+      "source_yaw_deg": -80.009,
+      "body_action": 6,
+      "body_speed_class": 1,
+      "body_stance": 3,
+      "body_yaw_deg": -80.00044,
+      "receiver_base_action": 46,
+      "sampled_mag_milli": 250,
+      "received_mag_milli": 250,
+      "source_speed_mmps": 670,
+      "body_speed_mmps": 1147,
+      "error_m": 0.22218,
+      "nudges": 0
+    },
+    {
+      "label": "downed-crawl-03",
+      "source": "guest",
+      "receiver": "host",
+      "damage_method": "real gun",
+      "source_speed_class": 1,
+      "source_stance": 3,
+      "source_yaw_deg": -80.00713,
+      "body_action": 6,
+      "body_speed_class": 1,
+      "body_stance": 3,
+      "body_yaw_deg": -80.00044,
+      "receiver_base_action": 46,
+      "sampled_mag_milli": 250,
+      "received_mag_milli": 250,
+      "source_speed_mmps": 839,
+      "body_speed_mmps": 1552,
+      "error_m": 0.5748,
+      "nudges": 0
+    },
+    {
+      "label": "downed-crawl-04",
+      "source": "guest",
+      "receiver": "host",
+      "damage_method": "real gun",
+      "source_speed_class": 1,
+      "source_stance": 3,
+      "source_yaw_deg": -80.00665,
+      "body_action": 6,
+      "body_speed_class": 1,
+      "body_stance": 3,
+      "body_yaw_deg": -80.00044,
+      "receiver_base_action": 46,
+      "sampled_mag_milli": 250,
+      "received_mag_milli": 250,
+      "source_speed_mmps": 968,
+      "body_speed_mmps": 690,
+      "error_m": 0.52026,
+      "nudges": 8
+    },
+    {
+      "label": "downed-snake-01",
+      "source": "host",
+      "receiver": "guest",
+      "damage_method": "WU sleep",
+      "source_speed_class": 1,
+      "source_stance": 3,
+      "source_yaw_deg": -80.02542,
+      "body_action": 6,
+      "body_speed_class": 1,
+      "body_stance": 3,
+      "body_yaw_deg": -80.00044,
+      "receiver_base_action": 42,
+      "sampled_mag_milli": 250,
+      "received_mag_milli": 250,
+      "source_speed_mmps": 267,
+      "body_speed_mmps": 249,
+      "error_m": 0.03363,
+      "nudges": 0
+    },
+    {
+      "label": "downed-snake-02",
+      "source": "host",
+      "receiver": "guest",
+      "damage_method": "WU sleep",
+      "source_speed_class": 1,
+      "source_stance": 3,
+      "source_yaw_deg": -80.01768,
+      "body_action": 6,
+      "body_speed_class": 1,
+      "body_stance": 3,
+      "body_yaw_deg": -80.00044,
+      "receiver_base_action": 42,
+      "sampled_mag_milli": 250,
+      "received_mag_milli": 250,
+      "source_speed_mmps": 672,
+      "body_speed_mmps": 669,
+      "error_m": 0.05897,
+      "nudges": 0
+    },
+    {
+      "label": "downed-snake-03",
+      "source": "host",
+      "receiver": "guest",
+      "damage_method": "WU sleep",
+      "source_speed_class": 1,
+      "source_stance": 3,
+      "source_yaw_deg": -80.01759,
+      "body_action": 6,
+      "body_speed_class": 1,
+      "body_stance": 3,
+      "body_yaw_deg": -80.00044,
+      "receiver_base_action": 43,
+      "sampled_mag_milli": 250,
+      "received_mag_milli": 250,
+      "source_speed_mmps": 892,
+      "body_speed_mmps": 867,
+      "error_m": 0.0807,
+      "nudges": 0
+    },
+    {
+      "label": "downed-snake-04",
+      "source": "host",
+      "receiver": "guest",
+      "damage_method": "WU sleep",
+      "source_speed_class": 1,
+      "source_stance": 3,
+      "source_yaw_deg": -80.013,
+      "body_action": 6,
+      "body_speed_class": 1,
+      "body_stance": 3,
+      "body_yaw_deg": -80.00044,
+      "receiver_base_action": 43,
+      "sampled_mag_milli": 250,
+      "received_mag_milli": 250,
+      "source_speed_mmps": 965,
+      "body_speed_mmps": 964,
+      "error_m": 0.08011,
+      "nudges": 0
+    }
+  ],
+  "established": [
+    "Quiet gun-downed replica sampled250 and remained state46 throughout the four frames; speed exceeds source before correction.",
+    "Snake WU-downed replica sampled250 and used42 then43, with closely matched physical speeds.",
+    "Every inspected event4 handler calls the same qualified PP sampler; captured rec_mag250 rules out a missing sampler cap at these drain observations."
+  ],
+  "hypotheses": [
+    "State46 motion completion may stall or choose a different motion consumer; this is not proven.",
+    "The difference may depend on damage method rather than character because the two samples used different damage causes."
+  ],
+  "not_qualified": [
+    "No state46-to43 setter or call is approved by this evidence.",
+    "No proof that changing rawaxes or globally scaling received magnitude preserves healthy motion.",
+    "Motion-completion+0x228 and sender local base-action state were not captured."
+  ],
+  "recommended_followup": [
+    "Place both bodies neutral/prone and repeat the same character with swapped real gun versus WU versus debug down causes.",
+    "Add narrowly owned read-only local base-action and exact motion-controller completion telemetry, then compare state42/43/46 before considering a correction."
+  ]
+}

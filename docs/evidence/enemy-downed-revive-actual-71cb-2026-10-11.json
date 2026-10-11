@@ -1,0 +1,593 @@
+{
+  "schema": 1,
+  "run_id": "71cb477b8f394b8c8c4540d0dadfea4b",
+  "created_utc": "2026-10-11T14:41:47.784449+00:00",
+  "scope": "Actual native enemy damage and teammate E revival in the private-desktop two-copy lab; no fatal-damage spoof.",
+  "revision_context": {
+    "frozen_commit_parent_report": "c607a54",
+    "candidate_sha256": "9E340F53610AA36687E017DB43B36D425FE3992E7828001312E42A53052960D2",
+    "archive_sha256": "87BBE82BB1E907CF405200155DA2794BF7E1F5A3D45BF66426A38CDD31A91F96",
+    "check_receipt": {
+      "path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261011-141817-a40285b59bf94c1d9396b66709f89c24\\receipt.json",
+      "bytes": 95034,
+      "sha256": "77be9dd66b944abf9b674dff192ebe2c1e6149df8c0d2c8b1a9c7cd3e9cb9460"
+    },
+    "receipt_source_hashes": {
+      "native\\include\\mgscoop\\downed_player.hpp": "5755F41618E8963AFB8F51B9A03B1CA4AC8E4818D490543BCC93D3860EBAE6DC",
+      "native\\downed_player_policy.cpp": "947E0376D1BDAB5DEC8FD2B4D34A0D33733C2BF1DDBEC28E0E5734835EF47DFB",
+      "native\\downed_player.cpp": "612BF698428D158CAE75967AD0C2C55A25BDE04241C56F4F87D6FC489E7D49F0",
+      "native\\downed_damage.cpp": "9B9A6CEC372A4AE80888AF50D3B3E7B9F01F235AF67B74FC9BC843A61983CD44",
+      "tests\\downed_player_tests.cpp": "58A6FC77EB7A7B5052A11C64500E803E4E7145E200E921A7AFE5D6D381D526CB"
+    }
+  },
+  "run_artifacts": {
+    "session.json": {
+      "path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runtime\\71cb477b8f394b8c8c4540d0dadfea4b\\session.json",
+      "bytes": 17798,
+      "sha256": "ae88396c9fed165fabad346b530ba7293b51976bf9dfce86a7849dd3d4fd6c20"
+    },
+    "scenario.json": {
+      "path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runtime\\71cb477b8f394b8c8c4540d0dadfea4b\\scenario.json",
+      "bytes": 18651,
+      "sha256": "98c84b104f3d1f5452a27533107cbe095f600e77ce8f0a61138383a398e61481"
+    },
+    "stop.json": {
+      "path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runtime\\71cb477b8f394b8c8c4540d0dadfea4b\\stop.json",
+      "bytes": 1291,
+      "sha256": "51add61c289ad2b4cb53c7a46e62f26d1478593ed97b7845ba8bddc28afdce49"
+    },
+    "captures.jsonl": {
+      "path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runtime\\71cb477b8f394b8c8c4540d0dadfea4b\\captures.jsonl",
+      "bytes": 3335860,
+      "sha256": "c63d36edfed21753143d05500bf017011f8d140448b11236b9a936787015d9a9"
+    },
+    "host.worker.jsonl": {
+      "path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runtime\\71cb477b8f394b8c8c4540d0dadfea4b\\host.worker.jsonl",
+      "bytes": 35495,
+      "sha256": "43a10a213aad24957a2456d65b6077c31cc621a350fd82f43dfed2e3ca6a0fd3"
+    },
+    "guest.worker.jsonl": {
+      "path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runtime\\71cb477b8f394b8c8c4540d0dadfea4b\\guest.worker.jsonl",
+      "bytes": 33708,
+      "sha256": "20e5ce525705c37647b6a0cec31a0d13a1ebf15a7ba6b5f1e8caa386142745a4"
+    }
+  },
+  "bounded_observers": {
+    "host": {
+      "path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runtime\\71cb477b8f394b8c8c4540d0dadfea4b\\host-observer-new.log",
+      "bytes": 470812,
+      "sha256": "fb72aeb3df76253ead936dab6aed9c8be73c59511c44d685625393d6bed53635",
+      "source_offset": 72828538,
+      "events": [
+        {
+          "line": 1321,
+          "text": "downed_damage=lethal_capture;id=0;attacker=1206;life=234.000;damage=582.000;scoped=1;flags=0x4401;part=2;thread=45028;tick_ms=103147781"
+        },
+        {
+          "line": 1322,
+          "text": "downed_damage=intercept;cause=lethal"
+        },
+        {
+          "line": 1323,
+          "text": "downed_control=observed;command=1;reason=controls_pending_prone"
+        },
+        {
+          "line": 1325,
+          "text": "world_lua=event=downed; step=entered; role=1; generation=4; cause=1; t_ms=103152113"
+        },
+        {
+          "line": 2603,
+          "text": "world_lua=event=downed; step=revived; role=1; generation=4; t_ms=103234548"
+        }
+      ]
+    },
+    "guest": {
+      "path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runtime\\71cb477b8f394b8c8c4540d0dadfea4b\\guest-observer-new.log",
+      "bytes": 510782,
+      "sha256": "6dc9d898a3aacf02768e9e78842b1947a29949f0ce3b0a27790583744e50365e",
+      "source_offset": 81885181,
+      "events": []
+    }
+  },
+  "scenario_result": {
+    "failure": null,
+    "expectation_count": 24,
+    "expect_failures": [],
+    "input_release_failures": [],
+    "closed": true,
+    "passed_expectations": [
+      "host require ^horse_selected;horse;selected=horse; <- horse_selected;horse;selected=horse;available=1;actor0=6656;localMounted=0;nativeCount=unverified;remoteRider=unverified;arrival=unverified;retry=Recall",
+      "host require ^godmode_0$ <- godmode_0",
+      "guest require ^godmode_1;autoheal;lethal_unprotected;unverified$ <- godmode_1;autoheal;lethal_unprotected;unverified",
+      "host require ^world;paired=1;eff=3;w1=1;roster=match; <- world;paired=1;eff=3;w1=1;roster=match;level=3;area=inferred1;sent=0;acked=0;corrected=0;refused=0;applied=0;failed=0",
+      "guest require ^world;paired=1;eff=3;w1=1;roster=match; <- world;paired=1;eff=3;w1=1;roster=match;level=3;area=none;sent=0;acked=0;corrected=0;refused=0;applied=0;failed=0",
+      "host require ^downed;ready=1;armed=1;down=0;.*cause=0;lock=0; <- downed;ready=1;armed=1;down=0;gen=3;cause=0;lock=0;hp=7800,7800;epoch=3;reason=alive",
+      "guest require ^downed;ready=1;armed=1;down=0;.*cause=0;lock=0; <- downed;ready=1;armed=1;down=0;gen=3;cause=0;lock=0;hp=6600,6600;epoch=3;reason=alive",
+      "host require ^camps=[1-9][0-9]*; <- camps=32;more=6;local_pool=1",
+      "host require ^routes=[1-9][0-9]*;point=0$ <- routes=12;point=0",
+      "host require ^warp_position_readback;error_m= <- warp_position_readback;error_m=0.300",
+      "host require ^nearby=[1-9][0-9]*;radius=150$ <- nearby=3;radius=150",
+      "guest require ^warp_position_readback <- warp_position_readback;error_m=0.665",
+      "host require ^enemy_info;ent=[0-9]+;name=.*;cp=.*;state=0;distance_m=(?:[0-9]|1[0-4])\\.[0-9] <- enemy_info;ent=4121274369;name=sol_fieldEast_0000;cp=afgh_fieldEast_ob;state=0;distance_m=3.4",
+      "host require ^enemy_notice;ent=[0-9]+;sync=world;seq=[0-9]+ <- enemy_notice;ent=4121274369;sync=world;seq=1",
+      "host require ^enemy_come;ent=[0-9]+;hostile;unverified;sync=world;seq=[0-9]+ <- enemy_come;ent=4121274369;hostile;unverified;sync=world;seq=2",
+      "host require ^submitted_phase;cp=.*;phase=alert; <- submitted_phase;cp=afgh_fieldEast_ob;phase=alert;sync=world",
+      "host require ^damage;installed=1;calls=[1-9][0-9]*;exact=[1-9][0-9]*;scoped=[1-9][0-9]*; <- damage;installed=1;calls=68;exact=68;scoped=68;defense=108;can=1005;declines=0",
+      "host require ^downed;ready=1;armed=1;down=1;.*cause=1;lock=1; <- downed;ready=1;armed=1;down=1;gen=4;cause=1;lock=1;hp=390,7800;epoch=3;reason=downed",
+      "guest require ^downed;ready=1;armed=1;down=0;.*cause=0;lock=0; <- downed;ready=1;armed=1;down=0;gen=3;cause=0;lock=0;hp=6600,6600;epoch=3;reason=alive",
+      "host require ^submitted=[1-9][0-9]*;dead_readback=[0-9]+; <- submitted=3;dead_readback=0;sync=world;max=16",
+      "guest require ^godmode_0$ <- godmode_0",
+      "host require ^downed;ready=1;armed=1;down=1;.*cause=1;lock=1; <- downed;ready=1;armed=1;down=1;gen=4;cause=1;lock=1;hp=390,7800;epoch=3;reason=downed",
+      "guest require ^revive;ready=1;observed=1;present=1;applied=1;held=0; <- revive;ready=1;observed=1;present=1;applied=1;held=0;gen=3;reason=revive_action",
+      "host require ^downed;ready=1;armed=1;down=0;.*cause=0;lock=0; <- downed;ready=1;armed=1;down=0;gen=4;cause=0;lock=0;hp=4914,7800;epoch=3;reason=alive"
+    ]
+  },
+  "native_lethal_sample": {
+    "attacker": 1206,
+    "local_player_id": 0,
+    "positive_life": 234.0,
+    "damage": 582.0,
+    "scoped_capture": true,
+    "flags": "0x4401",
+    "body_part": 2,
+    "native_thread": 45028,
+    "tick64_ms": 103147781,
+    "observer_line": 1321
+  },
+  "transition": {
+    "pending_phase": "controls_pending_prone",
+    "host_generation": 4,
+    "host_cause_before_revive": 1,
+    "host_lock_before_revive": 1,
+    "guest_healthy_and_not_downed": true,
+    "guest_autoheal_disabled_before_real_E": true,
+    "host_stand_attempt_remained_downed": true,
+    "host_alive_unlocked_after_E": true,
+    "host_controls_timeout_events": 0,
+    "entered_qpc_ms": 103152113,
+    "revived_qpc_ms": 103234548,
+    "fully_downed_to_revived_same_clock_ms": 82435
+  },
+  "input_evidence": {
+    "scenario_file": {
+      "path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\oct11-enemy-only-final.txt",
+      "bytes": 2845,
+      "sha256": "1a9cc55ed1baa5b627c26cc59fb12a23c5603b50e269006f378c54fd87e7e232"
+    },
+    "actual_worker_inputs": "Guest four overlapping E holds of 1500ms, 850ms apart, then release; Host C stance input after successful revive.",
+    "guest_revive_receipt": "revive;ready=1;observed=1;present=1;applied=1;held=0;gen=3;reason=revive_action",
+    "host_revived_receipt": "downed;ready=1;armed=1;down=0;gen=4;cause=0;lock=0;hp=4914,7800;epoch=3;reason=alive"
+  },
+  "frames": [
+    {
+      "role": "host",
+      "label": "enemy-host-down",
+      "file": {
+        "path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runtime\\71cb477b8f394b8c8c4540d0dadfea4b\\host-enemy-host-down.bmp",
+        "bytes": 3686454,
+        "sha256": "0848ef5e6bccae8e1116b1ac11823ff8acced7fab44a39dc7e9ea93f60df446e"
+      },
+      "capture": {
+        "sequence": 69,
+        "tick_ms": 103219000,
+        "capture_requested_tick_ms": 103219000,
+        "frame_written_tick_ms": 103219031,
+        "frame_written": true,
+        "frame_result": "dx11_backbuffer_bmp",
+        "frame_state_delta_ms": 31.0,
+        "frame_state_stale": false,
+        "frame_late": false,
+        "body_valid": true,
+        "pose_valid": true,
+        "remote_act": 1,
+        "remote_anim_stance": 1,
+        "position_error_m": 0.00044,
+        "heading_error_deg": 1e-05
+      },
+      "paired_states": {
+        "host": {
+          "tick_ms": 103219000,
+          "player_life": 391,
+          "player_life_max": 7801,
+          "local_act": 5,
+          "local_anim_stance": 3,
+          "player_pos": [
+            1097.60876,
+            318.12698,
+            1837.55151
+          ],
+          "receipts": [
+            {
+              "id": 18,
+              "status": 0,
+              "command": "downed_status",
+              "result": "downed;ready=1;armed=1;down=1;gen=4;cause=1;lock=1;hp=390,7800;epoch=3;reason=downed"
+            },
+            {
+              "id": 7,
+              "status": 0,
+              "command": "downed_status",
+              "result": "downed;ready=1;armed=1;down=0;gen=3;cause=0;lock=0;hp=7800,7800;epoch=3;reason=alive"
+            },
+            {
+              "id": 5,
+              "status": 0,
+              "command": "godmode 0",
+              "result": "godmode_0"
+            }
+          ]
+        },
+        "guest": {
+          "tick_ms": 103219062,
+          "player_life": 6600,
+          "player_life_max": 6600,
+          "local_act": 1,
+          "local_anim_stance": 1,
+          "player_pos": [
+            1152.07141,
+            322.66547,
+            1852.29907
+          ],
+          "receipts": [
+            {
+              "id": 6,
+              "status": 0,
+              "command": "downed_status",
+              "result": "downed;ready=1;armed=1;down=0;gen=3;cause=0;lock=0;hp=6600,6600;epoch=3;reason=alive"
+            },
+            {
+              "id": 4,
+              "status": 0,
+              "command": "downed_status",
+              "result": "downed;ready=1;armed=1;down=0;gen=3;cause=0;lock=0;hp=6600,6600;epoch=3;reason=alive"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "role": "guest",
+      "label": "enemy-host-down",
+      "file": {
+        "path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runtime\\71cb477b8f394b8c8c4540d0dadfea4b\\guest-enemy-host-down.bmp",
+        "bytes": 3686454,
+        "sha256": "5ce7f3d98d513f558a019010d0cb25184287e2d3a25cc57b4351d135e3ac4a01"
+      },
+      "capture": {
+        "sequence": 54,
+        "tick_ms": 103219171,
+        "capture_requested_tick_ms": 103219125,
+        "frame_written_tick_ms": 103219171,
+        "frame_written": true,
+        "frame_result": "dx11_backbuffer_bmp",
+        "frame_state_delta_ms": 0.0,
+        "frame_state_stale": false,
+        "frame_late": false,
+        "body_valid": true,
+        "pose_valid": true,
+        "remote_act": 5,
+        "remote_anim_stance": 3,
+        "position_error_m": 0.02013,
+        "heading_error_deg": 0.0
+      },
+      "paired_states": {
+        "host": {
+          "tick_ms": 103219093,
+          "player_life": 391,
+          "player_life_max": 7801,
+          "local_act": 5,
+          "local_anim_stance": 3,
+          "player_pos": [
+            1097.60876,
+            318.12698,
+            1837.55151
+          ],
+          "receipts": [
+            {
+              "id": 18,
+              "status": 0,
+              "command": "downed_status",
+              "result": "downed;ready=1;armed=1;down=1;gen=4;cause=1;lock=1;hp=390,7800;epoch=3;reason=downed"
+            },
+            {
+              "id": 7,
+              "status": 0,
+              "command": "downed_status",
+              "result": "downed;ready=1;armed=1;down=0;gen=3;cause=0;lock=0;hp=7800,7800;epoch=3;reason=alive"
+            },
+            {
+              "id": 5,
+              "status": 0,
+              "command": "godmode 0",
+              "result": "godmode_0"
+            }
+          ]
+        },
+        "guest": {
+          "tick_ms": 103219171,
+          "player_life": 6600,
+          "player_life_max": 6600,
+          "local_act": 1,
+          "local_anim_stance": 1,
+          "player_pos": [
+            1152.07141,
+            322.66547,
+            1852.29907
+          ],
+          "receipts": [
+            {
+              "id": 6,
+              "status": 0,
+              "command": "downed_status",
+              "result": "downed;ready=1;armed=1;down=0;gen=3;cause=0;lock=0;hp=6600,6600;epoch=3;reason=alive"
+            },
+            {
+              "id": 4,
+              "status": 0,
+              "command": "downed_status",
+              "result": "downed;ready=1;armed=1;down=0;gen=3;cause=0;lock=0;hp=6600,6600;epoch=3;reason=alive"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "role": "host",
+      "label": "enemy-host-revived",
+      "file": {
+        "path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runtime\\71cb477b8f394b8c8c4540d0dadfea4b\\host-enemy-host-revived.bmp",
+        "bytes": 3686454,
+        "sha256": "bda731ac4019d3711b386b8fe807de846ab4f7e708a79b18ee913c3ab78cecc3"
+      },
+      "capture": {
+        "sequence": 82,
+        "tick_ms": 103232640,
+        "capture_requested_tick_ms": 103232625,
+        "frame_written_tick_ms": 103232671,
+        "frame_written": true,
+        "frame_result": "dx11_backbuffer_bmp",
+        "frame_state_delta_ms": 31.0,
+        "frame_state_stale": false,
+        "frame_late": false,
+        "body_valid": true,
+        "pose_valid": true,
+        "remote_act": 1,
+        "remote_anim_stance": 1,
+        "position_error_m": 0.00156,
+        "heading_error_deg": 0.0
+      },
+      "paired_states": {
+        "host": {
+          "tick_ms": 103232640,
+          "player_life": 5640,
+          "player_life_max": 7801,
+          "local_act": 1,
+          "local_anim_stance": 1,
+          "player_pos": [
+            1096.90088,
+            318.57697,
+            1837.76917
+          ],
+          "receipts": [
+            {
+              "id": 22,
+              "status": 0,
+              "command": "downed_status",
+              "result": "downed;ready=1;armed=1;down=0;gen=4;cause=0;lock=0;hp=4914,7800;epoch=3;reason=alive"
+            },
+            {
+              "id": 20,
+              "status": 0,
+              "command": "downed_status",
+              "result": "downed;ready=1;armed=1;down=1;gen=4;cause=1;lock=1;hp=390,7800;epoch=3;reason=downed"
+            },
+            {
+              "id": 19,
+              "status": 0,
+              "command": "clear_enemies 100",
+              "result": "submitted=3;dead_readback=0;sync=world;max=16"
+            },
+            {
+              "id": 18,
+              "status": 0,
+              "command": "downed_status",
+              "result": "downed;ready=1;armed=1;down=1;gen=4;cause=1;lock=1;hp=390,7800;epoch=3;reason=downed"
+            }
+          ]
+        },
+        "guest": {
+          "tick_ms": 103232656,
+          "player_life": 6600,
+          "player_life_max": 6600,
+          "local_act": 1,
+          "local_anim_stance": 1,
+          "player_pos": [
+            1097.48853,
+            318.57697,
+            1837.43079
+          ],
+          "receipts": [
+            {
+              "id": 9,
+              "status": 0,
+              "command": "revive_status",
+              "result": "revive;ready=1;observed=1;present=1;applied=1;held=0;gen=3;reason=revive_action"
+            },
+            {
+              "id": 7,
+              "status": 0,
+              "command": "godmode 0",
+              "result": "godmode_0"
+            },
+            {
+              "id": 6,
+              "status": 0,
+              "command": "downed_status",
+              "result": "downed;ready=1;armed=1;down=0;gen=3;cause=0;lock=0;hp=6600,6600;epoch=3;reason=alive"
+            },
+            {
+              "id": 4,
+              "status": 0,
+              "command": "downed_status",
+              "result": "downed;ready=1;armed=1;down=0;gen=3;cause=0;lock=0;hp=6600,6600;epoch=3;reason=alive"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "role": "guest",
+      "label": "enemy-host-revived",
+      "file": {
+        "path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runtime\\71cb477b8f394b8c8c4540d0dadfea4b\\guest-enemy-host-revived.bmp",
+        "bytes": 3686454,
+        "sha256": "f16a4c263a83fb2d24df489735dc20ecea3881357df1ce86057cfe6a32f50900"
+      },
+      "capture": {
+        "sequence": 64,
+        "tick_ms": 103232765,
+        "capture_requested_tick_ms": 103232734,
+        "frame_written_tick_ms": 103232765,
+        "frame_written": true,
+        "frame_result": "dx11_backbuffer_bmp",
+        "frame_state_delta_ms": 0.0,
+        "frame_state_stale": false,
+        "frame_late": false,
+        "body_valid": true,
+        "pose_valid": true,
+        "remote_act": 1,
+        "remote_anim_stance": 1,
+        "position_error_m": 0.44762,
+        "heading_error_deg": 59.41148
+      },
+      "paired_states": {
+        "host": {
+          "tick_ms": 103232734,
+          "player_life": 5702,
+          "player_life_max": 7801,
+          "local_act": 1,
+          "local_anim_stance": 1,
+          "player_pos": [
+            1096.90088,
+            318.57697,
+            1837.76917
+          ],
+          "receipts": [
+            {
+              "id": 22,
+              "status": 0,
+              "command": "downed_status",
+              "result": "downed;ready=1;armed=1;down=0;gen=4;cause=0;lock=0;hp=4914,7800;epoch=3;reason=alive"
+            },
+            {
+              "id": 20,
+              "status": 0,
+              "command": "downed_status",
+              "result": "downed;ready=1;armed=1;down=1;gen=4;cause=1;lock=1;hp=390,7800;epoch=3;reason=downed"
+            },
+            {
+              "id": 19,
+              "status": 0,
+              "command": "clear_enemies 100",
+              "result": "submitted=3;dead_readback=0;sync=world;max=16"
+            },
+            {
+              "id": 18,
+              "status": 0,
+              "command": "downed_status",
+              "result": "downed;ready=1;armed=1;down=1;gen=4;cause=1;lock=1;hp=390,7800;epoch=3;reason=downed"
+            }
+          ]
+        },
+        "guest": {
+          "tick_ms": 103232765,
+          "player_life": 6600,
+          "player_life_max": 6600,
+          "local_act": 1,
+          "local_anim_stance": 1,
+          "player_pos": [
+            1097.48853,
+            318.57697,
+            1837.43079
+          ],
+          "receipts": [
+            {
+              "id": 9,
+              "status": 0,
+              "command": "revive_status",
+              "result": "revive;ready=1;observed=1;present=1;applied=1;held=0;gen=3;reason=revive_action"
+            },
+            {
+              "id": 7,
+              "status": 0,
+              "command": "godmode 0",
+              "result": "godmode_0"
+            },
+            {
+              "id": 6,
+              "status": 0,
+              "command": "downed_status",
+              "result": "downed;ready=1;armed=1;down=0;gen=3;cause=0;lock=0;hp=6600,6600;epoch=3;reason=alive"
+            },
+            {
+              "id": 4,
+              "status": 0,
+              "command": "downed_status",
+              "result": "downed;ready=1;armed=1;down=0;gen=3;cause=0;lock=0;hp=6600,6600;epoch=3;reason=alive"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "visual_inspection": {
+    "host_down": "Prone player and Downed waiting for your teammate to revive you overlay.",
+    "host_revived": "Player standing with teammate alongside; downed overlay absent."
+  },
+  "cleanup": {
+    "status": "closed",
+    "owned_children_closed": true,
+    "real_saves_unchanged": true,
+    "real_save_comparison": {
+      "Same": true,
+      "Changed": [],
+      "Missing": [],
+      "Added": []
+    },
+    "worker_isolation_failed": false,
+    "system_input_called": false,
+    "focus_called": false,
+    "desktop_switched": false,
+    "forced_job_termination": true,
+    "gameplay_validated": false
+  },
+  "cleanup_roles": {
+    "host": {
+      "loader_restored": true,
+      "configuration_restored": true,
+      "baseline_sha256": "391AAF521C2950AD6BEC9FCE4672CC3361CF744C4A563A18E99C377B178E352C"
+    },
+    "guest": {
+      "loader_restored": true,
+      "configuration_restored": true,
+      "baseline_sha256": "391AAF521C2950AD6BEC9FCE4672CC3361CF744C4A563A18E99C377B178E352C"
+    }
+  },
+  "clock_limitations": [
+    "Native lethal tick_ms and capture/state timestamps use GetTickCount64; world_lua t_ms uses partner_net NowMs QPC. No cross-clock differences were used.",
+    "The successful run does not measure whether initial acquisition exceeded the old 1500ms timeout; no grace-duration causal claim follows from the timestamps."
+  ],
+  "remaining_limits": [
+    "Hidden two-copy local lab evidence does not establish a two-PC Steam session.",
+    "Horse selection receipt is not proof of independent native horse ownership, mounting, or remote rider presentation.",
+    "The immediate clear_enemies reply submitted=3;dead_readback=0 is asynchronous submission evidence, not immediate death readback.",
+    "supervisor gameplay_validated remains false; the recorded scenario proves only the selected enemy down/revive checks."
+  ],
+  "stale_stdout_discrepancy": {
+    "current_run_result_file": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runtime\\71cb477b8f394b8c8c4540d0dadfea4b\\scenario.json",
+    "current_failure": null,
+    "prior_run_id": "2e1368e1f9cf47c7bb064223d8ff455a",
+    "prior_failure": "Required scenario check failed: host require ^submitted=[1-9][0-9]*;dead_readback=[1-9][0-9]*; <- submitted=3;dead_readback=0;sync=world;max=16",
+    "explanation": "A stdout object identifying the earlier RunDirectory 2e is a prior-run result; the current authoritative 71cb scenario artifact is successful. The combined parent PTY stream was not available to this read-only monitor."
+  }
+}
