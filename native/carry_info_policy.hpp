@@ -42,7 +42,7 @@ struct Identity {
     struct Body {
         std::uintptr_t block=0,phase=0,cs=0,transform=0,psRecord=0,life=0,flags=0;
         std::uintptr_t model=0,joints=0,gun=0;
-        std::uint16_t carryTarget=0xffff;
+        std::uint16_t gunTarget=0xffff;
         std::uint32_t actionBits[8]{};
         std::uint32_t carryFlags=0,gunFlags=0,qFlags=0; float lifeValue=0,maximum=0;
     } body[2];
@@ -52,7 +52,7 @@ inline bool SameIdentity(const Identity& a,const Identity& b) noexcept {
     for(unsigned k=0;k<2;++k){
         if(a.ids[k]!=b.ids[k]||a.pool[k]!=b.pool[k]||a.parts[k]!=b.parts[k])return false;
         const auto& x=a.body[k];const auto& y=b.body[k];
-        if(x.block!=y.block||x.phase!=y.phase||x.cs!=y.cs||x.transform!=y.transform||x.psRecord!=y.psRecord||x.life!=y.life||x.flags!=y.flags||x.model!=y.model||x.joints!=y.joints||x.gun!=y.gun||x.qFlags!=y.qFlags||x.lifeValue!=y.lifeValue||x.maximum!=y.maximum||x.carryTarget!=y.carryTarget||x.gunFlags!=y.gunFlags)return false; for(unsigned j=0;j<8;++j)if(x.actionBits[j]!=y.actionBits[j])return false;
+        if(x.block!=y.block||x.phase!=y.phase||x.cs!=y.cs||x.transform!=y.transform||x.psRecord!=y.psRecord||x.life!=y.life||x.flags!=y.flags||x.model!=y.model||x.joints!=y.joints||x.gun!=y.gun||x.qFlags!=y.qFlags||x.lifeValue!=y.lifeValue||x.maximum!=y.maximum||x.gunTarget!=y.gunTarget||x.gunFlags!=y.gunFlags)return false; for(unsigned j=0;j<8;++j)if(x.actionBits[j]!=y.actionBits[j])return false;
     }
     return a.player&&a.count==2&&a.local==0&&a.ids[0]==0&&a.ids[1]==1;
 }
@@ -76,8 +76,9 @@ inline QueryResult ValidateReply(const Message& m,std::int32_t result) noexcept 
     return QueryResult::eligible;
 }
 inline bool NativeCarryBit(std::uint32_t flags) noexcept { return (flags&(1u<<22))!=0; }
-// Distinguish the stock carrier flag from an actually proven target attachment.
-inline bool CarrierTargetsPartner(std::uint32_t flags,std::uint16_t target,std::uint16_t partner) noexcept {
+// Stock carrier flag plus gun candidate. This is NOT the carry-plugin target
+// or proof of a native attachment; that target lives in a different record.
+inline bool CarrierGunTargetsPartner(std::uint32_t flags,std::uint16_t target,std::uint16_t partner) noexcept {
     return NativeCarryBit(flags)&&target==partner&&partner!=0xffff;
 }
 } // namespace mgscoop::carry_info::detail

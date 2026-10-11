@@ -4,9 +4,9 @@
 #include "mgscoop/partner_player.hpp"
 namespace mgscoop::carry_info {
 struct BodyReply {
-    bool eligible=false,rejected=false,attachmentPresent=false,nativeCarryBit=false,targetsPartner=false;
+    bool eligible=false,rejected=false,attachmentPresent=false,nativeCarryBit=false,gunTargetsPartner=false;
     float origin[4]{},radius=0,height=0;
-    std::uint16_t carryTarget=0xffff;
+    std::uint16_t gunTarget=0xffff;
     std::uint32_t carryFlags=0,gunFlags=0;
 };
 struct Reply {

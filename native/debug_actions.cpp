@@ -82,7 +82,7 @@ constexpr ActionDef kActions[] = {
      "Reports the name tag state, the partner's name, distance, hover and camera.", 0},
     {"coop_downed_status", C::partner, "Incapacitation status", "downed_status", "down crawl hurt health revive sleep wake asleep", "Reads wounded versus asleep state, native health and control lock.", 0},
     {"coop_carry_status", C::partner, "Carry eligibility", "carry_status", "carry pickup sleeping wounded teammate body target",
-     "Reads both native player carry queries. Each body shows eligible, carrier flag, target ID and teammate target. Attachment remains unverified.", 0},
+     "Reads both native player carry queries. Each body shows eligible, carrier flag, gun target ID and gun target match. Attachment remains unverified.", 0},
     {"coop_revive_status", C::partner, "Revive input status", "revive_status", "revive action key e held input", "Reads whether the game observed your revive input. Close F9 and hold ACTION near your downed teammate for 3 seconds.", 0},
     {"coop_downed_pad_status", C::partner, "Downed movement input", "downed_pad_status", "down crawl slow movement input speed magnitude", "Reads the latest native movement input before and after the downed cap. Close F9 to test movement.", 0},
     // Normal-release companion controls; no research capacity or force mount.

@@ -42,12 +42,12 @@ int main(){
  b=a;b.body[1].lifeValue=90;Check(!SameIdentity(a,b),"changed query HP refused");
  b=a;b.body[1].qFlags=1u<<9;Check(!SameIdentity(a,b),"changed query flag refused");
  b=a;b.body[1].actionBits[5]=1u<<14;Check(!SameIdentity(a,b),"changed blocked action refused");
- b=a;b.body[0].carryTarget=1;Check(!SameIdentity(a,b),"changing native target not published");
+ b=a;b.body[0].gunTarget=1;Check(!SameIdentity(a,b),"changing native target not published");
  b=a;b.body[1].joints++;Check(!SameIdentity(a,b),"replaced query model refused");
- Check(!CarrierTargetsPartner(0,1,1),"target alone never proves carrying");
- Check(!CarrierTargetsPartner(1u<<22,0xffff,1),"carry flag without target not partner carry");
- Check(!CarrierTargetsPartner(1u<<22,12,1),"carry flag on ordinary soldier not teammate");
- Check(CarrierTargetsPartner(1u<<22,1,1),"stock flag plus target observed only");
+ Check(!CarrierGunTargetsPartner(0,1,1),"target alone never proves carrying");
+ Check(!CarrierGunTargetsPartner(1u<<22,0xffff,1),"carry flag without target not partner carry");
+ Check(!CarrierGunTargetsPartner(1u<<22,12,1),"carry flag on ordinary soldier not teammate");
+ Check(CarrierGunTargetsPartner(1u<<22,1,1),"stock flag plus target observed only");
  const auto original=accepted;
  for(unsigned k=0;k<15;++k){auto m=original;m.padding[k]=1;Check(ValidateReply(m,0)==QueryResult::anomaly,"unexpected native reply overwrite latches");}
  for(unsigned k=0;k<4;++k){auto m=original;m.origin[k]=std::numeric_limits<float>::quiet_NaN();Check(ValidateReply(m,0)==QueryResult::anomaly,"nonfinite geometry refused");}

@@ -1975,8 +1975,8 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             const bool ok=mgscoop::carry_info::Observe(owner.mission,owner.epoch,DownedAdmitted(owner.mission,owner.epoch),mission_thread,r);
             const auto& a=r.bodies[0];const auto& b=r.bodies[1];char line[161]{};
             StringCchPrintfA(line,ARRAYSIZE(line),"carry;ready=%u;gen=%lu;b0=%u,%u,%u,%u;b1=%u,%u,%u,%u;attached=unverified;reason=%s",
-                ok?1u:0u,static_cast<unsigned long>(r.generation),a.eligible?1u:0u,a.nativeCarryBit?1u:0u,unsigned(a.carryTarget),a.targetsPartner?1u:0u,
-                b.eligible?1u:0u,b.nativeCarryBit?1u:0u,unsigned(b.carryTarget),b.targetsPartner?1u:0u,r.reason?r.reason:"unknown");
+                ok?1u:0u,static_cast<unsigned long>(r.generation),a.eligible?1u:0u,a.nativeCarryBit?1u:0u,unsigned(a.gunTarget),a.gunTargetsPartner?1u:0u,
+                b.eligible?1u:0u,b.nativeCarryBit?1u:0u,unsigned(b.gunTarget),b.gunTargetsPartner?1u:0u,r.reason?r.reason:"unknown");
             debug::Result(pending.id,ok?1u:0u,line);
         } else if (pending.id && std::strcmp(pending.text, "downed_status") == 0) {
             const auto s=mgscoop::downed_player::GetSnapshot();

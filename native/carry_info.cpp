@@ -72,7 +72,7 @@ bool ReadIdentity(detail::Identity& out) noexcept {
         partner_player::Gun1 gun{};
         if(!partner_player::ReadGun(addresses,s,k,gun)||!gun.rec)return false;
         body.gun=gun.rec;
-        if(!Read(gun.rec+0x59e,body.carryTarget)||!Read(gun.rec+0x3d0,body.gunFlags))return false;
+        if(!Read(gun.rec+0x59e,body.gunTarget)||!Read(gun.rec+0x3d0,body.gunFlags))return false;
     }
     return blocks[0].t_vt==blocks[1].t_vt;
 }
@@ -133,8 +133,8 @@ bool Observe(std::uint32_t mission,std::uint16_t epoch,bool admitted,std::uint32
         if(status==detail::QueryResult::anomaly){failed=true;return finish("reply_anomaly");}
         auto& r=result[k];r.eligible=status==detail::QueryResult::eligible;r.rejected=status==detail::QueryResult::rejected;r.attachmentPresent=message.attachment!=0;
         r.radius=message.radius;r.height=message.height;std::memcpy(r.origin,message.origin,sizeof(r.origin));
-        r.carryFlags=second.body[k].carryFlags;r.gunFlags=second.body[k].gunFlags;r.carryTarget=second.body[k].carryTarget;
-        r.nativeCarryBit=detail::NativeCarryBit(r.carryFlags);r.targetsPartner=detail::CarrierTargetsPartner(r.carryFlags,r.carryTarget,second.ids[1-k]);
+        r.carryFlags=second.body[k].carryFlags;r.gunFlags=second.body[k].gunFlags;r.gunTarget=second.body[k].gunTarget;
+        r.nativeCarryBit=detail::NativeCarryBit(r.carryFlags);r.gunTargetsPartner=detail::CarrierGunTargetsPartner(r.carryFlags,r.gunTarget,second.ids[1-k]);
     }
     const auto ownAfter=downed_player::GetSnapshot();
     if(ownAfter.mission!=own.mission||ownAfter.epoch!=own.epoch||ownAfter.generation!=own.generation||ownAfter.down!=own.down||ownAfter.cause!=own.cause)return finish("scope_changed");
