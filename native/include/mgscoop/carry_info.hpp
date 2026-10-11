@@ -19,6 +19,9 @@ struct Reply {
     bool pluginReady=false,selectorOwnerMatches=false,selectorAccepts=false,playerCarryEnabled=false;
     std::uint16_t selectorTarget=0xffff;
     std::uint32_t cachedKind=0,currentKind=0,cachedFlags=0,currentFlags=0;
+    bool providerReady=false,providerPresent=false;
+    std::uint32_t providerVtableRva=0;
+    const char* providerReason="disabled";
     const char* pluginReason="disabled";
     const char* reason="disabled";
 };

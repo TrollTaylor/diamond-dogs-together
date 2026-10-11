@@ -9,6 +9,7 @@
 #include "mgscoop/partner_input_hook.hpp"
 #include "mgscoop/partner_defer.hpp"
 #include "sleep_plugin_read.hpp"
+#include "sleep_graph_read.hpp"
 namespace mgscoop::sleep_info {
 namespace plugin=sleep_plugin_read;
 namespace {
@@ -69,7 +70,8 @@ void LogRefusal(const char* stage,const plugin::Observation& seen,std::uintptr_t
 }
 }
 bool CodeGate(const void* image,std::size_t span,std::uintptr_t& mismatch) noexcept {
- const Preserve preserve;auto reader=ReadBytes;return plugin::CodeGate(reader,reinterpret_cast<std::uintptr_t>(image),span,mismatch);
+ const Preserve preserve;auto reader=ReadBytes;const auto base=reinterpret_cast<std::uintptr_t>(image);
+ return plugin::CodeGate(reader,base,span,mismatch)&&sleep_graph_read::CodeGate(reader,base,span,mismatch);
 }
 void Configure(const partner_player::Addresses& source,bool passed,void (*log)(const char*) noexcept) noexcept {
  const Preserve preserve;AcquireSRWLockExclusive(&lock);
@@ -80,7 +82,7 @@ void Configure(const partner_player::Addresses& source,bool passed,void (*log)(c
 }
 bool Observe(std::uint32_t mission,std::uint16_t epoch,bool admitted,std::uint32_t ownerThread,Reply& out) noexcept {
  const Preserve preserve;out={};if(!TryAcquireSRWLockExclusive(&lock)){out.reason="busy";return false;}
- const auto finish=[&](const char* reason,bool ok=false) noexcept {out.reason=reason;out.ready=ok;ReleaseSRWLockExclusive(&lock);return ok;};
+ const auto finish=[&](const char* reason,bool ok=false) noexcept {if(!ok)out={};out.reason=reason;out.ready=ok;ReleaseSRWLockExclusive(&lock);return ok;};
  const auto sequence=partner_input_hook::WindowSeq();const auto own=downed_player::GetSnapshot();partner_player::State first{},second{},after{},finalState{};
  if(const char* why=Refusal(Scope(mission,epoch,admitted,ownerThread,sequence,own,first)))return finish(why);
  const auto now=GetTickCount64();if(lastQuery&&now>=lastQuery&&now-lastQuery<100)return finish("throttled");
@@ -98,6 +100,10 @@ bool Observe(std::uint32_t mission,std::uint16_t epoch,bool admitted,std::uint32
   LogRefusal(why,b.player?b:a,lastAt,lastValue,lastSize,lastRead);return finish(why);
  }
  if(!plugin::Same(a,b))return finish("sleep_changed");
+ sleep_graph_read::Observation ga{},gb{},gc{};const char* graphWhy="graph_chain";
+ const bool graphRead=sleep_graph_read::ReadOnce(reader,scope,ga,&graphWhy)&&sleep_graph_read::ReadOnce(reader,scope,gb,&graphWhy);
+ const bool graphStable=graphRead&&sleep_graph_read::Same(ga,gb);
+ out.graphReason=graphRead?(graphStable?"graph_observed":"graph_changed"):graphWhy;
  const auto ownAfter=downed_player::GetSnapshot();if(!SameCycle(own,ownAfter))return finish("scope_changed");
  scope=Scope(mission,epoch,admitted,ownerThread,sequence,ownAfter,second);
  if(const char* reason=plugin::ScopeRefusal(scope))return finish(reason);
@@ -106,8 +112,12 @@ bool Observe(std::uint32_t mission,std::uint16_t epoch,bool admitted,std::uint32
   LogRefusal(why,c,lastAt,lastValue,lastSize,lastRead);return finish(why);
  }
  if(!plugin::Same(b,c))return finish("sleep_changed");
- const auto finalOwn=downed_player::GetSnapshot();if(!SameCycle(own,finalOwn))return finish("scope_changed");
+ if(graphStable&&sleep_graph_read::ReadOnce(reader,scope,gc,&graphWhy)&&sleep_graph_read::Same(gb,gc)){
+  out.graphReady=true;out.graphReason="graph_observed";
+  for(unsigned k=0;k<2;++k){const auto& g=gc.graph[k];out.graphCount[k]=g.count;out.graphIndex[k]=g.index;out.graphHash[k]=g.stateHash;out.graphCurrent[k]=g.currentNode;out.graphSleepCandidate[k]=g.sleepHashCandidate;}
+ }else if(graphStable)out.graphReason=graphWhy;
  if(!ReadIdentity(finalState)||!SameState(after,finalState))return finish("body_changed");
+ const auto finalOwn=downed_player::GetSnapshot();if(!SameCycle(own,finalOwn))return finish("scope_changed");
  scope=Scope(mission,epoch,admitted,ownerThread,sequence,finalOwn,finalState);
  if(const char* reason=plugin::ScopeRefusal(scope))return finish(reason);
  for(unsigned k=0;k<2;++k){const auto& x=c.body[k];auto& y=out.bodies[k];

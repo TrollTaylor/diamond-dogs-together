@@ -29,7 +29,10 @@ inline const char* ScopeRefusal(const Scope& s) noexcept {
 
 struct Body {
  std::uintptr_t block=0,ps=0,node=0,primary=0,interface=0,records=0,bitmap=0,actionBytes=0,lifeRecord=0;
- std::uintptr_t callback=0,adjustment=0;
+ std::uintptr_t callback=0;
+ // Complete allocator/factory copy 16 bytes, but only the signed low32
+ // adjustment is initialized and consumed. +C is unspecified padding.
+ std::int32_t adjustment=0;
  std::uint32_t id=0,nodeState=0,nodeKind=0,recordFlags=0,subtype=0,lifeState=0;
  std::uint16_t flags=0,qAction=0;
  std::uint8_t mode=0,requested=0,counter=0,action=0;

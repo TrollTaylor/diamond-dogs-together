@@ -1,0 +1,135 @@
+{
+  "scope": "Supplemental exact offline graph/read/cleanup evidence. Pure reads only; no source/main game edits, runtime calls or writes. Not a stock sleep activation contract.",
+  "executable_sha256": "085C2F82D1C963C40B3D2D55786661DFEE2B18CBBF388A710C00FA76C5E9BB45",
+  "complete_extra_sleep_body_pins": [
+    {
+      "name": "complete mode6 recovery callback",
+      "rva": "0x12caf50",
+      "end": "0x12cb2ae",
+      "size": 862,
+      "sha256": "0CE8929D4AE6D46A729C63C0409311FFD9807020BF5A3B63171E0C6A32BD3F45",
+      "unwind_ranges": [
+        {
+          "begin": "0x12caf50",
+          "end": "0x12cb00a",
+          "unwind": "0x285631c",
+          "flags": 0
+        },
+        {
+          "begin": "0x12cb00a",
+          "end": "0x12cb075",
+          "unwind": "0x2856334",
+          "flags": 4
+        },
+        {
+          "begin": "0x12cb075",
+          "end": "0x12cb2ae",
+          "unwind": "0x2856348",
+          "flags": 4
+        }
+      ]
+    },
+    {
+      "name": "complete animation notify leaf; no calls",
+      "rva": "0x12cb830",
+      "end": "0x12cb984",
+      "size": 340,
+      "sha256": "64D004BA075D863413E7D554196F08973F301246F1080EC2D04E20C18EC8E6C7",
+      "unwind_ranges": []
+    },
+    {
+      "name": "complete mode0 retirement and scheduler stop-bit request",
+      "rva": "0x12c85a0",
+      "end": "0x12c8606",
+      "size": 102,
+      "sha256": "B3FD9350C722F38BA766033524DF417B4398614B01697C4010D3A50C6A5A0484",
+      "unwind_ranges": [
+        {
+          "begin": "0x12c85a0",
+          "end": "0x12c8606",
+          "unwind": "0x27bd630",
+          "flags": 0
+        }
+      ]
+    },
+    {
+      "name": "complete animation observer forwarding callback",
+      "rva": "0x12c86e0",
+      "end": "0x12c874e",
+      "size": 110,
+      "sha256": "264206FBBC9A32E10750098B8D3CE7F0008277D633168DE14CA625E141C1146E",
+      "unwind_ranges": [
+        {
+          "begin": "0x12c86e0",
+          "end": "0x12c874e",
+          "unwind": "0x27bd630",
+          "flags": 0
+        }
+      ]
+    },
+    {
+      "name": "complete onset pose configuration helper",
+      "rva": "0x12c9450",
+      "end": "0x12c9698",
+      "size": 584,
+      "sha256": "BD169790FAA461D1F71C9878C6149F1EF1FF9D9B1B6F9B4F19DCD8AAB3F8D658",
+      "unwind_ranges": [
+        {
+          "begin": "0x12c9450",
+          "end": "0x12c9698",
+          "unwind": "0x2856358",
+          "flags": 3
+        }
+      ]
+    },
+    {
+      "name": "complete stance/rate mirror helper",
+      "rva": "0x12c8f00",
+      "end": "0x12c8fb5",
+      "size": 181,
+      "sha256": "5DF228E961E0246F6E69788751F4467DFD076E6976E21E3BE97D5B7746930D18",
+      "unwind_ranges": [
+        {
+          "begin": "0x12c8f00",
+          "end": "0x12c8fb5",
+          "unwind": "0x27be61c",
+          "flags": 0
+        }
+      ]
+    }
+  ],
+  "direct_synchronizer_slot108_census": {
+    "scope_start": "0x12c7a10",
+    "scope_end": "0x12cbe57",
+    "unwind_ranges_scanned": 62,
+    "explicit_nonunwind_notify_leaf": [
+      "0x12cb830",
+      "0x12cb984"
+    ],
+    "sites": [],
+    "interpretation": "No direct virtual+108 call in the exact sleep plugin function range, including onset/rest/recovery, teardown and animation notify leaf. This excludes only direct calls. CS/model/pad/P-controller/general-exit virtual targets have not all been followed, so no complete transitive null-sync claim is made."
+  },
+  "graph_read_path": {
+    "PS_owner": "Fresh exact paired P/body block/PS and sleep plugin reader own scope required.",
+    "CS": "*(PS+238), final22E6070; block+10 must equal same CS; CS+8 count1/CS+C baseid must match body; *(CS+10) per-id entry strideC0.",
+    "graph0": "*(entry+90)[0] graph final250BA50 / +10 final250BC00, layerD4==0. Factory1C682E0 alloc240; constructor1C6D340 and CS realizationB6D980 install the controller. Both bodies graph controllers distinct, shared immutable MOG allowed.",
+    "liveMOG": "graph+1B8 caches the loaded MOG in complete init1C73570 only after resource+40==2 and resource+60 nonnull. graph+185==0 required; init clears graph+1A0 current node at start, then makes185zero on successful realization. graph+F0 holds the resource lifetime reference obtained from resource+8 (67900), not the original resource handle; only nonzero/stable identity observed by helper.",
+    "currentState": "Full getter1C6F7A0..1C6F7C3 atgraphvt+98 reads graph+1A0 and node relative+18 hash. The helper makes no getter call, checks live MOG magic/version/graph0 table and node bounds/stride48, reads low48 hash and demands matching snapshots.",
+    "displacementCeiling": "4 MiB maximum from live MOG base; only bounded selected fields read. This is a refusal ceiling and is not a resource-size or asset-identity assertion.",
+    "publicReply": "No pointers. count/index/stateHash/currentNode/sleepHashCandidate. sleepHashCandidate only compares the16 frozen stock state requests, never claims a clip is playing."
+  },
+  "recovery_order": {
+    "nativeRest": "Mode5 event5 uses pad-assisted recovery to replenish LifeRecord+2C; when max stun restored it clears+34 and requests mode6. Mode6 event2 sets Q action85 and queues stance-specific wake graph states.",
+    "nativeExit": "Mode6 event11 waits for CS animation completion or threshold then12C85A0 sets record+30 bit1, transitions through12C83C0 to mode0 and sets scheduler node+10 retirement bit. This is not equivalent to just clearing life34.",
+    "teardown": "General teardown12C96A0 first invokes old callback event3, nulls callback; clears PS/body/CS flags and recovery accumulators and conditionally heals stun/clears life34. No order may be bypassed by a mod-owned wake or carry request without an owned native plan.",
+    "carryInteraction": "Mode6 checks existingPS+2F8 target/carry conditions and can call11306A0; native wake and carry are therefore not independent. A carried/waking player must not be unlocked merely because life34 became healthy.",
+    "callbacks": "12C86E0 obtains plugin via animation context vt90 then dispatches eventC;12CB830 only adjusts body/model animation flags for three notify hashes, but callback context and all transitive virtual methods remain unqualified."
+  },
+  "remaining_activation_gates": [
+    "Actual live typed graph/controller/current node state samples on both offline bodies.",
+    "Resource holder and graph reload/unrealization lifecycle qualification through final current owner scope.",
+    "All transitive CS/model/pad/P-controller/general-exit virtual call targets and their offline null synchronization behavior.",
+    "Owned plan reconciling native stun/recovery, host auto-wake grants, sleep teardown and carrier/target detach ordering.",
+    "Actual standing onset/rest/wake and gameplay control observations; a candidate hash and resident asset node do not satisfy this."
+  ]
+}

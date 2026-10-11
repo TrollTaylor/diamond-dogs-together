@@ -10,6 +10,11 @@ struct BodyReply {
  bool nodeActive=false,callbackInitialized=false;
 };
 struct Reply {
+ bool graphReady=false;
+ std::uint32_t graphCount[2]{},graphIndex[2]{};
+ std::uint64_t graphHash[2]{};
+ bool graphCurrent[2]{},graphSleepCandidate[2]{};
+ const char* graphReason="disabled";
  bool ready=false;
  std::uint32_t generation=0;
  BodyReply bodies[2];

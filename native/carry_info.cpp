@@ -13,6 +13,7 @@
 #include "carry_info_contract.hpp"
 #include "carry_info_policy.hpp"
 #include "carry_plugin_read.hpp"
+#include "carry_provider_read.hpp"
 namespace mgscoop::carry_info {
 namespace c=carry_info_contract;
 namespace {
@@ -108,7 +109,7 @@ bool CodeGate(const void* image,std::size_t span,std::uintptr_t& mismatch) noexc
         if(at>span||sizeof(target)>span-at||!Read(base+at,target)||target!=base+slot.target_rva){mismatch=slot.vtable_rva;return false;}
     }
     auto reader=ReadBytes;
-    return carry_plugin_read::CodeGate(reader,base,span,mismatch);
+    return carry_plugin_read::CodeGate(reader,base,span,mismatch)&&carry_provider_read::CodeGate(reader,base,span,mismatch);
 }
 void Configure(const partner_player::Addresses& source,bool passed,void (*log)(const char*) noexcept) noexcept {
     const Preserve preserve;AcquireSRWLockExclusive(&lock);
@@ -119,7 +120,7 @@ void Configure(const partner_player::Addresses& source,bool passed,void (*log)(c
 bool Observe(std::uint32_t mission,std::uint16_t epoch,bool admitted,std::uint32_t ownerThread,Reply& out) noexcept {
     const Preserve preserve;out={};
     if(!TryAcquireSRWLockExclusive(&lock)){out.reason="busy";return false;}
-    const auto finish=[&](const char* why,bool ok=false) noexcept {out.reason=why;out.ready=ok;ReleaseSRWLockExclusive(&lock);return ok;};
+    const auto finish=[&](const char* why,bool ok=false) noexcept {if(!ok)out={};out.reason=why;out.ready=ok;ReleaseSRWLockExclusive(&lock);return ok;};
     const auto seq=partner_input_hook::WindowSeq();const auto own=downed_player::GetSnapshot();
     out.generation=own.generation;
     if(const char* why=detail::ScopeRefusal(Scope(mission,epoch,admitted,ownerThread,seq,own)))return finish(why);
@@ -143,6 +144,10 @@ bool Observe(std::uint32_t mission,std::uint16_t epoch,bool admitted,std::uint32
     ps.generation=own.generation;ps.ownedGeneration=own.generation;
     ps.thread=GetCurrentThreadId();ps.ownerThread=ownerThread;
     ps.now=now;ps.poll=own.lastPoll;ps.sequenceBefore=seq;ps.sequenceAfter=partner_input_hook::WindowSeq();ps.batch=partner_defer::InBatch();
+    carry_provider_read::Reply providerBefore{},providerAfter{};
+    const auto imageSpan=addresses.image_end-addresses.image_base;
+    const bool providerRead=carry_provider_read::ReadPair(reader,ps,imageSpan,providerBefore);
+    out.providerReason=providerBefore.reason;
     plugin::Observation pluginFirst{},pluginSecond{},pluginAfter{};
     const char* pluginRefusal="plugin_chain";
     const bool pluginRead=plugin::ReadOnce(reader,ps,pluginFirst,&pluginRefusal)&&plugin::ReadOnce(reader,ps,pluginSecond,&pluginRefusal);
@@ -167,6 +172,20 @@ bool Observe(std::uint32_t mission,std::uint16_t epoch,bool admitted,std::uint32
         char line[256]{};StringCchPrintfA(line,ARRAYSIZE(line),"carry_plugin_read_refused;stage=%s;object=%s;offset=0x%llx;size=%u;read=%u;image_value=0x%llx;zero=%u\r\n",
             pluginRefusal,object,static_cast<unsigned long long>(offset),unsigned(lastSize),lastRead?1u:0u,static_cast<unsigned long long>(imageValue),lastValue==0?1u:0u);
         logger(line);
+        // Refusal-only type telemetry. An alternate scheduler link does not
+        // weaken the reader or publish a controller as valid.
+        if((std::strcmp(pluginRefusal,"carry_primary0")==0||std::strcmp(pluginRefusal,"carry_primary1")==0)&&lastRead&&lastSize==8){
+            std::uintptr_t nodeVT=0,phase=0,afterVT=0;std::uint32_t count=0,base=0,row=0;
+            const auto node=lastValue;
+            if(plugin::Aligned(node,8)&&plugin::Range(node,0x40)&&Read(node,nodeVT)&&nodeVT==addresses.image_base+0x2306628&&
+                Read(node+0x20,count)&&Read(node+0x24,base)&&Read(node+0x2c,row)&&Read(node+0x38,phase)&&Read(node,afterVT)&&afterVT==nodeVT){
+                const unsigned k=std::strcmp(pluginRefusal,"carry_primary1")==0?1u:0u;
+                const auto expected=seen.body[k].primary+0x30;
+                const bool rowPhase=Read(seen.body[k].node+0x38,afterVT)&&afterVT==expected;
+                StringCchPrintfA(line,ARRAYSIZE(line),"carry_bound_node_refused;body=%u;node_vt=0x2306628;count=%lu;base=%lu;row=0x%lx;phase_matches=%u;row33_phase_matches=%u\r\n",
+                    k,static_cast<unsigned long>(count),static_cast<unsigned long>(base),static_cast<unsigned long>(row),phase==expected?1u:0u,rowPhase?1u:0u);logger(line);
+            }
+        }
     }
     BodyReply result[2]{};
     for(unsigned k=0;k<2;++k){
@@ -199,6 +218,11 @@ bool Observe(std::uint32_t mission,std::uint16_t epoch,bool admitted,std::uint32
             }
         }else out.pluginReason="plugin_changed";
     }
+    if(providerRead&&!plugin::ScopeRefusal(ps)&&carry_provider_read::ReadPair(reader,ps,imageSpan,providerAfter)){
+        if(providerBefore.ready==providerAfter.ready&&providerBefore.present==providerAfter.present&&providerBefore.vtableRva==providerAfter.vtableRva){
+            out.providerReady=true;out.providerPresent=providerAfter.present;out.providerVtableRva=providerAfter.vtableRva;out.providerReason=providerAfter.reason;
+        }else out.providerReason="provider_changed";
+    }else if(providerRead)out.providerReason=providerAfter.reason;
     // Query receiver writes our stack only. Re-sample the owner and input
     // window after the final telemetry read too; no plugin value unlocks input.
     const auto finalOwn=downed_player::GetSnapshot();

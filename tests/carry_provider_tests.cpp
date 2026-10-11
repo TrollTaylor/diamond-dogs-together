@@ -1,0 +1,23 @@
+#include "carry_provider_read.hpp"
+#include <map>
+#include <cstring>
+#include <cstdio>
+using namespace mgscoop::carry_plugin_read;
+unsigned good=0,bad=0;void Check(bool b,const char* l){if(b)++good;else{++bad;std::printf("FAIL %s\n",l);}}
+struct Memory {
+ std::map<std::uintptr_t,unsigned char> bytes;
+ bool flip=false;unsigned scans=0;
+ template<class T>void Put(std::uintptr_t p,T x){unsigned char v[sizeof(T)]{};std::memcpy(v,&x,sizeof(x));for(unsigned i=0;i<sizeof(T);++i)bytes[p+i]=v[i];}
+ void Zero(std::uintptr_t p,unsigned n){for(unsigned i=0;i<n;++i)bytes[p+i]=0;}
+ bool operator()(std::uintptr_t p,void* out,std::size_t n) noexcept {
+  if(p==0x10000&&++scans==2&&flip)Put<std::uintptr_t>(0x100500+0xf8,0);
+  auto* v=static_cast<unsigned char*>(out);for(std::size_t i=0;i<n;++i){auto j=bytes.find(p+i);if(j==bytes.end())return false;v[i]=j->second;}return true;
+ }
+};
+Scope S(){Scope s{};s.exactGate=s.admitted=s.ready=s.armed=true;s.image=0x140000000;s.player=0x10000;s.data=0x20000;s.state=0x30000;s.thread=s.ownerThread=9;s.mission=s.ownedMission=30050;s.epoch=s.ownedEpoch=2;s.generation=s.ownedGeneration=3;s.now=1000;s.poll=900;s.sequenceBefore=s.sequenceAfter=8;return s;}
+Memory Fixture(){Memory m;auto s=S();m.Put(s.player,s.image+0x2295490);m.Put(s.player+0x60,s.data);m.Put(s.data,s.image+0x23ad970);m.Put(s.data+0x1e8,s.state);m.Put<std::uint32_t>(s.state+0x40,2);m.Put<std::uint32_t>(s.player+0x204,0x401);m.Put<std::uintptr_t>(s.player+0xa8,0);m.Put<std::uint32_t>(s.player+0x208,2);m.Put<std::uint32_t>(s.player+0x20c,2);m.Put<std::uint32_t>(s.player+0x214,0);m.Put<std::uintptr_t>(s.image+0x2c3a8a0,0x100000);m.Put<std::uintptr_t>(0x100000,s.image+0x2308648);m.Put<std::uintptr_t>(0x100008,0x100200);m.Put<std::uintptr_t>(0x100298,0x100500);m.Put<std::uintptr_t>(0x100500,s.image+0x2294c30);m.Put<std::uintptr_t>(0x1005f8,0x100800);m.Put<std::uintptr_t>(0x100800,s.image+0x22f0000);return m;}
+int main(){namespace p=mgscoop::carry_provider_read;auto s=S();auto m=Fixture();p::Reply out{};constexpr std::size_t span=0xa01d000;Check(p::ReadPair(m,s,span,out)&&out.ready&&out.present&&out.vtableRva==0x22f0000,"exact initialized provider read");auto n=Fixture();n.Put<std::uintptr_t>(0x1005f8,0);Check(p::ReadPair(n,s,span,out)&&out.ready&&!out.present&&!std::strcmp(out.reason,"missing_provider"),"missing provider distinct from failed chain");
+struct Mutation{std::uintptr_t p,v;unsigned width;};for(auto x:{Mutation{0x100000,s.image+0x2295490,8},{0x100008,0,8},{0x100298,0,8},{0x100500,s.image+0x2308648,8},{0x100800,s.image+span,8},{0x100800,s.image-8,8},{0x100800,s.image+1,8},{0x1005f8,0x100801,8},{0x10204,0x101,4},{0x100a8,0x1234,8},{0x10214,1,4},{0x10208,4,4},{0x1020c,1,4},{0x30040,1,4}}){auto v=Fixture();if(x.width==8)v.Put<std::uintptr_t>(x.p,x.v);else v.Put<std::uint32_t>(x.p,static_cast<std::uint32_t>(x.v));Check(!p::ReadPair(v,s,span,out),"altered chain refuses");}
+auto race=Fixture();race.flip=true;Check(!p::ReadPair(race,s,span,out)&&!std::strcmp(out.reason,"provider_changed"),"two-sample pointer race refuses");
+for(unsigned i=0;i<10;++i){auto t=s;switch(i){case 0:t.exactGate=false;break;case 1:t.thread++;break;case 2:t.ownedGeneration++;break;case 3:t.batch=true;break;case 4:t.sequenceAfter+=2;break;case 5:t.sequenceBefore++;break;case 6:t.mission=t.ownedMission=10010;break;case 7:t.poll=1;break;case 8:t.ownedEpoch++;break;case 9:t.player=~std::uintptr_t(0)-8;break;}Check(!p::ReadPair(m,t,span,out),"scope refuses");}Check(!p::ReadPair(m,s,0x2c3a8a0,out),"short image refuses");Check(!p::ReadPair(m,s,0x40000001,out),"unbounded image refuses");
+Memory gated;std::uintptr_t mismatch=0;for(const auto& site:mgscoop::carry_provider_contract::sites)for(std::size_t j=0;j<site.size;++j)gated.bytes[s.image+site.rva+j]=site.bytes[j];for(const auto& slot:mgscoop::carry_provider_contract::slots)gated.Put<std::uintptr_t>(s.image+slot.vtable_rva+slot.offset,s.image+slot.target_rva);Check(p::CodeGate(gated,s.image,span,mismatch),"full exact bytes gate");const auto first=mgscoop::carry_provider_contract::sites[0].rva;gated.bytes[s.image+first]^=1;Check(!p::CodeGate(gated,s.image,span,mismatch)&&mismatch==first,"changed code refuses");gated.bytes[s.image+first]^=1;gated.Put<std::uintptr_t>(s.image+0x2308648,s.image+0x645940);Check(!p::CodeGate(gated,s.image,span,mismatch),"changed root vtable slot refuses");std::printf("%u passed, %u failed\n",good,bad);return bad?1:0;}

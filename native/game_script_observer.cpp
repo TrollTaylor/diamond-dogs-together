@@ -17,6 +17,7 @@
 #include "mgscoop/downed_player.hpp"
 #include "mgscoop/carry_info.hpp"
 #include "mgscoop/sleep_info.hpp"
+#include "mgscoop/vehicle_info.hpp"
 #include "mgscoop/downed_damage.hpp"
 #include "mgscoop/buddy_pose.hpp"
 #include "mgscoop/buddy_dog_command_pins.hpp"
@@ -1080,6 +1081,7 @@ void PartnerShutdown() noexcept {
     InterlockedExchange(&partner_window_closing, 1);  // the early manifest stops in any mission
     mgscoop::carry_info::Shutdown();
     mgscoop::sleep_info::Shutdown();
+    mgscoop::vehicle_info::Shutdown();
     mgscoop::nametag::Shutdown();  // thread-safe flag: the overlay stops drawing the tag
     // Steam online exit hygiene (docs/steam-online.md C11): flags only. The
     // transport thread sends one CLOSE, closes the peer session and parks;
@@ -1971,7 +1973,7 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             char status[161]{};
             const bool complete=mgscoop::downed_damage::PadStatusLine(status,sizeof(status));
             debug::Result(pending.id,complete?1u:0u,status);
-        } else if (pending.id && (std::strcmp(pending.text, "carry_status") == 0 || std::strcmp(pending.text, "carry_plugin_status") == 0)) {
+        } else if (pending.id && (std::strcmp(pending.text, "carry_status") == 0 || std::strcmp(pending.text, "carry_plugin_status") == 0 || std::strcmp(pending.text, "carry_policy_status") == 0)) {
             const auto owner=mgscoop::downed_player::GetSnapshot();
             mgscoop::carry_info::Reply r{};
             const bool ok=mgscoop::carry_info::Observe(owner.mission,owner.epoch,DownedAdmitted(owner.mission,owner.epoch),mission_thread,r);
@@ -1985,19 +1987,32 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                     unsigned(a.carryTarget),a.carryNodeActive?1u:0u,unsigned(a.carryState[0]),
                     unsigned(b.carryTarget),b.carryNodeActive?1u:0u,unsigned(b.carryState[0]),r.pluginReason);
             }
+            if(std::strcmp(pending.text,"carry_policy_status")==0)StringCchPrintfA(line,ARRAYSIZE(line),"carrypolicy;ready=%u;present=%u;provider_vt=0x%lx;reason=%s",
+                ok&&r.providerReady?1u:0u,r.providerPresent?1u:0u,static_cast<unsigned long>(r.providerVtableRva),r.providerReason);
             if(ok&&r.pluginReady)LogFormat("carry_plugin;generation=%lu;enable=%u;selector=%u,%u,%u;kind=%lu,%lu;flags=0x%lx,0x%lx;body0=%u,%u,%u,%u,%u,%u,%u,%u;body1=%u,%u,%u,%u,%u,%u,%u,%u;attachment=unverified\r\n",
                 static_cast<unsigned long>(r.generation),r.playerCarryEnabled?1u:0u,r.selectorOwnerMatches?1u:0u,r.selectorAccepts?1u:0u,unsigned(r.selectorTarget),
                 static_cast<unsigned long>(r.cachedKind),static_cast<unsigned long>(r.currentKind),static_cast<unsigned long>(r.cachedFlags),static_cast<unsigned long>(r.currentFlags),
                 unsigned(a.carryTarget),unsigned(a.carryPrevious),unsigned(a.carrier),a.carryNodeActive?1u:0u,unsigned(a.carryState[0]),unsigned(a.carryState[1]),unsigned(a.carryState[2]),unsigned(a.pluginFlags[0]),
                 unsigned(b.carryTarget),unsigned(b.carryPrevious),unsigned(b.carrier),b.carryNodeActive?1u:0u,unsigned(b.carryState[0]),unsigned(b.carryState[1]),unsigned(b.carryState[2]),unsigned(b.pluginFlags[0]));
             debug::Result(pending.id,ok?1u:0u,line);
-        } else if (pending.id && std::strcmp(pending.text,"sleep_info_status")==0) {
+        } else if (pending.id && std::strcmp(pending.text,"vehicle_info_status")==0) {
+            const auto owner=mgscoop::downed_player::GetSnapshot();mgscoop::vehicle_info::Reply r{};
+            const bool ok=mgscoop::vehicle_info::Observe(owner.mission,owner.epoch,DownedAdmitted(owner.mission,owner.epoch),mission_thread,r);
+            const auto& a=r.bodies[0];const auto& b=r.bodies[1];char line[161]{};
+            StringCchPrintfA(line,ARRAYSIZE(line),"vehiclectl;ready=%u;gen=%lu;b0=%u,%u,%u,%u,%u,%u;b1=%u,%u,%u,%u,%u,%u;reason=%s",
+                ok?1u:0u,static_cast<unsigned long>(r.generation),unsigned(a.actualId),unsigned(a.vehicle),unsigned(a.candidate),unsigned(a.phase),unsigned(a.nextPhase),unsigned(a.entryOrSeat),
+                unsigned(b.actualId),unsigned(b.vehicle),unsigned(b.candidate),unsigned(b.phase),unsigned(b.nextPhase),unsigned(b.entryOrSeat),r.reason);
+            debug::Result(pending.id,ok?1u:0u,line);
+        } else if (pending.id && (std::strcmp(pending.text,"sleep_info_status")==0||std::strcmp(pending.text,"sleep_graph_status")==0)) {
             const auto owner=mgscoop::downed_player::GetSnapshot();mgscoop::sleep_info::Reply r{};
             const bool ok=mgscoop::sleep_info::Observe(owner.mission,owner.epoch,DownedAdmitted(owner.mission,owner.epoch),mission_thread,r);
             const auto& a=r.bodies[0];const auto& b=r.bodies[1];char line[161]{};
             StringCchPrintfA(line,ARRAYSIZE(line),"sleepnative;ready=%u;gen=%lu;b0=%u,%u,%u,%u,%lu,%u;b1=%u,%u,%u,%u,%lu,%u;reason=%s",
                 ok?1u:0u,static_cast<unsigned long>(r.generation),unsigned(a.mode),unsigned(a.requested),unsigned(a.action),unsigned(a.qAction),static_cast<unsigned long>(a.lifeState),a.nodeActive?1u:0u,
                 unsigned(b.mode),unsigned(b.requested),unsigned(b.action),unsigned(b.qAction),static_cast<unsigned long>(b.lifeState),b.nodeActive?1u:0u,r.reason);
+            if(std::strcmp(pending.text,"sleep_graph_status")==0)StringCchPrintfA(line,ARRAYSIZE(line),"sleepgraph;ready=%u;b0=%lu,%lu,0x%llx,%u;b1=%lu,%lu,0x%llx,%u;reason=%s",
+                ok&&r.graphReady?1u:0u,static_cast<unsigned long>(r.graphCount[0]),static_cast<unsigned long>(r.graphIndex[0]),static_cast<unsigned long long>(r.graphHash[0]),r.graphSleepCandidate[0]?1u:0u,
+                static_cast<unsigned long>(r.graphCount[1]),static_cast<unsigned long>(r.graphIndex[1]),static_cast<unsigned long long>(r.graphHash[1]),r.graphSleepCandidate[1]?1u:0u,ok?r.graphReason:r.reason);
             debug::Result(pending.id,ok?1u:0u,line);
         } else if (pending.id && std::strcmp(pending.text, "downed_status") == 0) {
             const auto s=mgscoop::downed_player::GetSnapshot();
@@ -3683,6 +3698,10 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                     std::uintptr_t carryMismatch=0;
                     const bool carryGate=downed_gate && mgscoop::carry_info::CodeGate(base,span,carryMismatch);
                     mgscoop::carry_info::Configure(partner_addresses,carryGate,Log);
+                    std::uintptr_t vehicleMismatch=0;
+                    const bool vehicleGate=downed_gate&&mgscoop::vehicle_info::CodeGate(base,span,vehicleMismatch);
+                    mgscoop::vehicle_info::Configure(partner_addresses,vehicleGate,Log);
+                    LogFormat("vehicle_info_code_gate=%s;rva=0x%llx;scope=read_only_controller\r\n",vehicleGate?"ok":"refused",static_cast<unsigned long long>(vehicleMismatch));
                     std::uintptr_t sleepMismatch=0;
                     const bool sleepGate=downed_gate&&mgscoop::sleep_info::CodeGate(base,span,sleepMismatch);
                     mgscoop::sleep_info::Configure(partner_addresses,sleepGate,Log);
