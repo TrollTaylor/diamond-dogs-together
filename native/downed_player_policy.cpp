@@ -6,6 +6,22 @@ namespace detail {
 namespace {
 bool SameCrawl(float a, float b) noexcept { return std::memcmp(&a, &b, sizeof(float)) == 0; }
 }
+const char* PadRefusal(const PadScope& s) noexcept {
+    if (!s.freshUpdate) return "not_fresh";
+    if (!s.outerUpdate) return "nested";
+    if (!s.exactCaller) return "caller";
+    if (!s.verified || s.stopped || s.failed || !s.armed) return "context";
+    if (!s.ownerThread || s.ownerThread != s.thread) return "thread";
+    if (!FreshScope(s.now, s.poll)) return "expired";
+    if ((s.sequenceBefore & 1u) || s.sequenceBefore != s.sequenceAfter) return "window";
+    if (s.batchBefore || s.batchAfter) return "batch";
+    return nullptr;
+}
+PadPlan PlanPadMagnitude(float current, bool down, bool controlsApplied) noexcept {
+    if (!std::isfinite(current) || current < 0 || current > 1) return {};
+    const float target = down && controlsApplied && current > kDownedInputMagnitude ? kDownedInputMagnitude : current;
+    return {true, !SameCrawl(target, current), target};
+}
 CrawlOwner CheckCrawlOwner(const CrawlIdentity& bound, bool firstValid, const CrawlIdentity& first,
     bool secondValid, const CrawlIdentity& second) noexcept {
     if (!firstValid || !secondValid || !bound.player || !bound.state || !bound.service || !bound.record ||

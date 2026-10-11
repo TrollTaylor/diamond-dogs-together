@@ -18,5 +18,7 @@ bool FriendlyReplicaHit(bool scoped, std::uint32_t target, std::uint32_t local,
 bool CodeGate(const void* image, std::size_t span) noexcept;
 bool Install(void* image, std::size_t span, void (*log)(const char*) noexcept) noexcept;
 bool StatusLine(char* out, std::size_t capacity) noexcept;
+// Cached last natural update observation only; no retail reads/calls.
+bool PadStatusLine(char* out, std::size_t capacity) noexcept;
 void Shutdown() noexcept;
 }

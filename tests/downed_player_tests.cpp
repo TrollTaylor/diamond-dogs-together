@@ -249,5 +249,60 @@ int main() {
     Check(d::detail::RegenTarget(recovery,1700,6600,true)==6 && 942>=burstLife,"eighth ordinary hit is lethal against actual6600 owner rather than only its6000 replica");
     recovery={};
     Check(d::detail::RegenTarget(recovery,100,6600,true)==6600 && !recovery.active,"cleared context does not suppress new-scene health");
-    std::printf("%u native downed cycle and health checks; no game calls\n",checks);
+    d::detail::PadScope ps{true,true,true,true,false,false,true,71,71,1000,1000,10,10,false,false};
+    Check(!d::detail::PadRefusal(ps),"fresh outer exact-caller owner callback admits observation outside all input windows");
+    for(unsigned gate=0;gate<14;++gate) {
+        auto bad=ps;
+        switch(gate) {
+        case 0:bad.freshUpdate=false;break;
+        case 1:bad.outerUpdate=false;break;
+        case 2:bad.exactCaller=false;break;
+        case 3:bad.verified=false;break;
+        case 4:bad.stopped=true;break;
+        case 5:bad.failed=true;break;
+        case 6:bad.armed=false;break;
+        case 7:bad.ownerThread=0;break;
+        case 8:bad.thread=72;break;
+        case 9:bad.now=bad.poll+d::detail::kScopeLeaseMs+1;break;
+        case 10:bad.now=bad.poll-1;break;
+        case 11:bad.sequenceBefore=bad.sequenceAfter=11;break;
+        case 12:bad.sequenceAfter=12;break;
+        default:bad.batchBefore=true;break;
+        }
+        Check(d::detail::PadRefusal(bad)!=nullptr,"every missing natural owner/phase qualification independently refuses movement write");
+    }
+    ps.batchAfter=true;
+    Check(d::detail::PadRefusal(ps)!=nullptr,"batch starting during coherent owner reads refuses cap"); ps.batchAfter=false;
+    const float cap=d::detail::kDownedInputMagnitude;
+    Check(cap>.1f && cap<1.f,"deliberate cap remains above exact natural sampler deadzone");
+    for(unsigned frame=0;frame<100;++frame) {
+        auto plan=d::detail::PlanPadMagnitude(1.f,true,true);
+        Check(plan.valid && plan.write && plan.magnitude==cap,"each new full input frame receives one fixed cap without compounding");
+    }
+    for(float current : {0.f,.01f,.099f,.1f,cap*.5f,cap}) {
+        const auto plan=d::detail::PlanPadMagnitude(current,true,true);
+        Check(plan.valid && !plan.write && plan.magnitude==current,"released stick, deadzone and smaller analog magnitude preserve retail result");
+    }
+    for(float current : {0.f,.1f,cap,1.f}) {
+        const auto alive=d::detail::PlanPadMagnitude(current,false,false);
+        const auto pending=d::detail::PlanPadMagnitude(current,true,false);
+        Check(alive.valid && !alive.write && alive.magnitude==current,"fresh healthy/revived update keeps unrestricted current input");
+        Check(pending.valid && !pending.write && pending.magnitude==current,"controls pending cannot cap movement before prone/mask confirmation");
+    }
+    for(float invalid : {-1.f,1.001f,std::numeric_limits<float>::infinity(),std::numeric_limits<float>::quiet_NaN()}) {
+        const auto plan=d::detail::PlanPadMagnitude(invalid,true,true);
+        Check(!plan.valid && !plan.write,"invalid fresh derived magnitude refuses rather than guessing or clamping");
+    }
+    // Model three real cycles with held input -> down -> revived current release.
+    // A cached old1.0 is never a restore source; the next natural update owns it.
+    d::detail::Cycle pc{};
+    for(unsigned round=0;round<3;++round) {
+        Check(d::detail::Enter(pc,round==1?2:1),"new input-cap cycle enters exact damage/sleep generation");
+        Check(d::detail::PlanPadMagnitude(1.f,pc.down,true).magnitude==cap,"active down cycle caps new held movement");
+        Check(d::detail::Revive(pc,pc.generation),"matching teammate grant ends input-cap cycle");
+        const auto released=d::detail::PlanPadMagnitude(0.f,pc.down,false);
+        Check(released.valid && !released.write && released.magnitude==0.f,"revive with released real input cannot resurrect cached held movement");
+        Check(d::detail::PlanPadMagnitude(1.f,pc.down,false).magnitude==1.f,"next healthy held input demonstrates full native magnitude restored");
+    }
+    std::printf("%u native downed cycle, input and health checks; no game calls\n",checks);
 }

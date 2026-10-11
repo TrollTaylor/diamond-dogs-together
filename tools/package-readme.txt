@@ -1,8 +1,11 @@
-MGS Co-op 0.12.3 - local development build
+MGS Co-op 0.12.3 - native-session diagnostic development package
 
-Playable two-player co-op is not verified. This package contains the current
-loader, a locally generated two-slot runtime archive, source and license notices.
-The game executable, shipped Steam DLL and saves are not included or replaced.
+This package retains the older native-session diagnostic workflow below. Use
+the friend package and Play-Coop.bat for the current two-player play workflow.
+It contains the current loader, corresponding source and license notices. The
+runtime archive must already be installed with the expected hash or supplied
+locally from your own licensed game. See RUNTIME-ARCHIVE.txt. The archive,
+retail executable, shipped Steam DLL and saves are not included in this ZIP.
 
 1. Close MGSV normally. Extract this ZIP to a folder.
 2. Run install.bat and enter the MGSV folder containing mgsvtpp.exe.

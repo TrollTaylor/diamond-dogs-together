@@ -675,6 +675,8 @@ int main() {
           std::strcmp(act::FindAction("buddy_horse_status")->command, "horse_status") == 0, "normal-release horse commands in F9 registry");
     auto n = act::SearchActions("horse", found, 32);
     Check(n == 2 && has(n, "buddy_horse_spawn") && has(n, "buddy_horse_status"), "horse search discovers summon and state");
+    n = act::SearchActions("recall", found, 32);
+    Check(n == 1 && has(n, "buddy_horse_spawn"), "missing-horse recall is discoverable through the existing stock action");
     n = act::SearchActions("spawn", found, 32);
     Check(n >= 3 && has(n, "spawn_enemy_here") && has(n, "spawn_enemy_closest") && has(n, "spawn_enemy_route"), "search spawn lists the three spawn rows");
     n = act::SearchActions("NOON", found, 32); Check(n == 1 && has(n, "world_time_noon"), "search is case-insensitive");

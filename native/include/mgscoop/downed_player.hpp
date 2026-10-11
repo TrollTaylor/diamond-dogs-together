@@ -52,9 +52,30 @@ bool QueueFriendlyHit(std::uintptr_t P, float damage, std::uint8_t cause) noexce
 bool FriendlyControl(std::uint32_t mission, std::uint16_t epoch, bool admitted,
     std::uint8_t command, std::uint32_t sequence, std::uint32_t targetGeneration,
     std::uint32_t damageMilli, std::uint8_t cause, Reply& out) noexcept;
+// Only the exact natural PP update completion calls this adapter. Original
+// retail input has already run once outside our lock; no Lua pointer is admitted.
+struct PadObservation {
+    bool observed, capped;
+    float before, after;
+    std::uint32_t local, thread, generation;
+    const char* reason;
+};
+PadObservation AfterPadUpdate(std::uintptr_t pad, bool outerUpdate, bool exactCaller) noexcept;
 void Shutdown() noexcept;
 namespace detail {
 inline constexpr std::uint64_t kScopeLeaseMs = 750;
+// Cap freshly computed movement magnitude only. Heading, look, source axes and
+// deadzone remain retail-owned. Next natural update restores current real input.
+inline constexpr float kDownedInputMagnitude = .25f;
+struct PadScope {
+    bool freshUpdate, outerUpdate, exactCaller, verified, stopped, failed, armed;
+    std::uint32_t ownerThread, thread;
+    std::uint64_t now, poll, sequenceBefore, sequenceAfter;
+    bool batchBefore, batchAfter;
+};
+const char* PadRefusal(const PadScope& scope) noexcept;
+struct PadPlan { bool valid, write; float magnitude; };
+PadPlan PlanPadMagnitude(float current, bool down, bool controlsApplied) noexcept;
 // Expired or reversed owner polls cannot authorize damage protection.
 bool FreshScope(std::uint64_t now, std::uint64_t poll) noexcept;
 inline constexpr std::uint64_t kFriendlyRecoveryMs = 4000; // exact retail ordinary hurt timer

@@ -36,7 +36,8 @@ do
   return {kind=t,name=name,mounted=mounted,exists=exists,actor=actor}
  end
  local function report(r)
-  return fmt("horse;selected=%s;available=%d;actor0=%d;localMounted=%d;nativeCount=unverified;remoteRider=unverified",r.name,r.exists and 1 or 0,r.actor,r.mounted and 1 or 0)
+  return fmt("horse;selected=%s;available=%d;actor0=%d;localMounted=%d;nativeCount=unverified;remoteRider=unverified;arrival=%s;retry=%s",r.name,r.exists and 1 or 0,r.actor,r.mounted and 1 or 0,
+   r.kind==1 and r.exists and r.mounted and "mounted" or "unverified",r.mounted and "none" or "Recall")
  end
  function S.run(a,id)
   local cmd=a[1]
@@ -55,6 +56,8 @@ do
   if type(api.buddyCall)~="function" or type(api.buddyVector)~="function" then return false,"horse_binding" end
   local p=A.pose();local rad=((p[4]+180)%360-180)*math.pi/180
   -- Four metres to the right of the player; retain the exact ground height.
+  -- Repeating this stock request on the selected horse asks it to recall;
+  -- native pending requests refuse the call before changing selection.
   local x,y,z=p[1]+4*math.cos(rad),p[2],p[3]-4*math.sin(rad)
   if not A.finite(x) or not A.finite(y) or not A.finite(z) or math.abs(x)>999996 or math.abs(y)>999996 or math.abs(z)>999996 then return false,"horse_position" end
   local made,v=pcall(api.buddyVector,x,y,z)
@@ -74,7 +77,7 @@ do
   end
   S.nextCall=now+2000
   local ok,result=pcall(api.buddyCall,1,v,rad)
-  if not ok or result==false then
+  if not ok or result~=true then
    if yielded and type(B.resumeFollow)=="function" then pcall(B.resumeFollow) end
    return false,"horse_call_refused"
   end
@@ -86,11 +89,13 @@ do
    if current~=W or owner~=B then D.pending=nil;A.note(id,false,why or "buddy_context_changed");return end
    local current,why=sample(W)
    if not current then D.pending=nil;A.note(id,false,why);return end
+   -- Active type is set before the engine finishes its pack wait. This
+   -- result confirms selected type only; it never declares nearby arrival.
    if current.kind==1 and current.exists then
-    D.pending=nil;A.note(id,true,"horse_selected;"..report(current)..";render_unverified")
+    D.pending=nil;A.note(id,true,"horse_selected;"..report(current))
    elseif q.frames>=600 then D.pending=nil;A.note(id,false,"horse_load_timeout;"..report(current)) end
   end
   D.pending=q
-  return true,"submitted_horse;scope=local;stock_loader;mount=normal_action"
+  return true,r.kind==1 and "submitted_horse_recall;arrival=unverified;close_F9;mount=normal_action" or "submitted_horse;scope=local;stock_loader;arrival=unverified;close_F9;mount=normal_action"
  end
 end

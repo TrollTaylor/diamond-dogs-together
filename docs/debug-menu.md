@@ -1,7 +1,7 @@
 # F9 debug menu
 
 
-October 11 candidate: Partner / Co-op adds **Downed status**, **Revive input status**, **Summon D-Horse nearby**, **Horse status** and **D-Dog follow status**. Horse summon uses the stock local loader four metres beside the player, with bounded loading, context checks and cooldown. It does not create a second horse or attach a remote rider. Close F9 before holding ACTION near a downed teammate for three seconds. Native mount census never substitutes a network riding bit for actual occupancy.
+October 11 candidate: Partner / Co-op adds **Downed status**, **Revive input status**, **Downed movement input**, **Summon / recall D-Horse**, **Horse status** and **D-Dog follow status**. Horse summon uses the stock local loader four metres beside the player, with bounded request checks, context checks and cooldown. Selection and class availability do not prove nearby arrival; close F9, wait for loading, and repeat Summon / recall if the horse is missing. It does not create a second horse or attach a remote rider. Close F9 before holding ACTION near a downed teammate for three seconds. Native mount census never substitutes a network riding bit for actual occupancy.
 The debug menu exists only in offline copied-save co-op sessions. Every action is a
 short text command that waits for the game's own Lua update; nothing calls the game
 from the menu thread.

@@ -27,6 +27,8 @@ local function F()
   if c.callError then error("fixture")end
   if c.callResult==false then return false end
   if c.immediate then c.kind,c.exists=1,true end
+  if c.forceNil then return end
+  return c.callResult==nil and true or c.callResult
  end
  local D={mission=30010}
  D.api={get=function(t,k)return t and t[k]end,call=function(t,k,...)return assert(t[k])(...)end,
@@ -44,19 +46,19 @@ local function F()
  return c
 end
 local c=F();local ok,msg=c:run("horse_status")
-check(ok and msg=="horse;selected=dog;available=0;actor0=65535;localMounted=0;nativeCount=unverified;remoteRider=unverified" and c.calls==0,"stock status is read-only and counts are not invented")
+check(ok and msg=="horse;selected=dog;available=0;actor0=65535;localMounted=0;nativeCount=unverified;remoteRider=unverified;arrival=unverified;retry=Recall" and c.calls==0,"stock status is read-only and counts are not invented")
 c=F();c.kind,c.exists,c.mounted=1,true,true
-ok,msg=c:run("horse_status");check(ok and msg:find("localMounted=1",1,true)and msg:find("actor0=6656",1,true)and c.calls==0,"mounted posture status requires actual horse-zero ID and is read-only")
+ok,msg=c:run("horse_status");check(ok and msg:find("localMounted=1",1,true)and msg:find("actor0=6656",1,true)and msg:find("arrival=mounted;retry=none",1,true)and #msg<=160 and c.calls==0,"mounted posture status requires actual horse-zero ID and is read-only")
 ok,msg=c:run("horse_spawn");check(not ok and msg=="horse_already_mounted"and c.calls==0,"current ridden horse is never replaced")
 c=F();ok,msg=c:run("horse_spawn")
-check(ok and msg=="submitted_horse;scope=local;stock_loader;mount=normal_action"and c.calls==1 and c.D.pending and c.D.pending.kind=="spawn","one stock selection request; existing pending enum; no force mounting")
+check(ok and msg=="submitted_horse;scope=local;stock_loader;arrival=unverified;close_F9;mount=normal_action"and c.calls==1 and c.D.pending and c.D.pending.kind=="spawn","one stock selection request; existing pending enum; no force mounting")
 local p,yaw=c.args[2],c.args[3]
 check(math.abs(p:GetX()-12)<1e-8 and p:GetY()==20 and math.abs(p:GetZ()-(30+2*math.sqrt(3)))<1e-8 and math.abs(yaw+math.pi/3)<1e-8,"four metres to right, actual Vector3 and radians")
 c:poll(10);check(c.D.pending and c.calls==1,"loading wait never repeats selector")
 c.kind,c.exists=1,true;c:poll()
-check(not c.D.pending and c.logs[#c.logs][2]and c.logs[#c.logs][3]:find("horse_selected;",1,true)and c.logs[#c.logs][3]:find("render_unverified",1,true),"selection and type existence complete, visibility separate")
+check(not c.D.pending and c.logs[#c.logs][2]and c.logs[#c.logs][3]:find("horse_selected;",1,true)and c.logs[#c.logs][3]:find("arrival=unverified;retry=Recall",1,true) and #c.logs[#c.logs][3]<=160,"selected type is not nearby arrival; retry remains visible within receipt limit")
 ok,msg=c:run("horse_spawn");check(not ok and msg=="horse_cooldown"and c.calls==1,"repeated click bounded")
-c.time=3000;ok,msg=c:run("horse_spawn");check(ok and c.calls==2,"cooldown inclusive boundary")
+c.time=3000;ok,msg=c:run("horse_spawn");check(ok and c.calls==2 and msg:find("submitted_horse_recall;",1,true),"cooldown boundary recalls the selected horse through the same stock loader")
 c=F();c:run("horse_spawn");c:poll(600)
 check(not c.D.pending and not c.logs[#c.logs][2]and c.logs[#c.logs][3]:find("horse_load_timeout",1,true)and c.calls==1,"bounded native-loading timeout")
 c=F();c:run("horse_spawn");c.refuse="buddy_block_inactive";c:poll(50)
@@ -90,6 +92,12 @@ for _,accepted in ipairs({true,false})do
  check(c.yields==1 and c.calls==1,"borrowed host dog yields selector once")
  check(accepted and ok and c.keeps==1 and not c.resumes or not accepted and not ok and c.resumes==1 and c.B.s.owned,"selector success keeps yield; refusal restores borrow")
 end
+for _,bad in ipairs({0,"true",{}})do
+ c=F();c.callResult=bad;ok,msg=c:run("horse_spawn")
+ check(not ok and msg=="horse_call_refused" and c.calls==1 and not c.D.pending,"non-boolean loader results never establish acceptance")
+end
+c=F();c.forceNil=true;ok,msg=c:run("horse_spawn")
+check(not ok and msg=="horse_call_refused" and c.calls==1 and not c.D.pending,"nil is not the retail bool receipt")
 c=F();c.B.s.owned=true;ok,msg=c:run("horse_spawn")
 check(not ok and msg=="dog_borrowed"and c.calls==0,"old companion build without yield safely refuses")
 c=F();c.B.s.owned=true;c.B.yieldForRide=function()return true end;ok,msg=c:run("horse_spawn")

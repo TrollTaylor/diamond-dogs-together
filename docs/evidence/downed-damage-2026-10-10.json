@@ -288,6 +288,60 @@
       "size": 1075,
       "sha256": "DEDBBA30CF37B924027A99D08713747F6BE6DEC4AE6A7C1935051999B712C7D5",
       "meaning": "Complete per-player C0 timer countdown and zero regen multiplier while timer positive"
+    },
+    {
+      "rva": "0x9cb200",
+      "size": 2210,
+      "sha256": "C8D9CB67BE1E085310EF4045AF04862A108550D97429FB07C68A76E632A9D40F",
+      "meaning": "Complete instance rate initialization: owned crawl base and retail product"
+    },
+    {
+      "rva": "0x109f690",
+      "size": 89,
+      "sha256": "AE9CC48D566DE90FF6F837E8084C8B56C4AAE6BFA7860B6027F860B33E1E6B83",
+      "meaning": "Complete movement rate getter: crawl uses record+44 only"
+    },
+    {
+      "rva": "0x114030d",
+      "size": 304,
+      "sha256": "66C597C34FEE28D3D4AFEEA52EA49153D84EDD8A1EB2721444F298FE4C4E157A",
+      "meaning": "Complete retail crawl-factor writer preserving base and recomputing product"
+    },
+    {
+      "rva": "0x11312be",
+      "size": 567,
+      "sha256": "6FAB4C64D1D6395876AD75049034EA52602190D2E3C7C76838A7C428307E6450",
+      "meaning": "Complete retail crawl-factor reset preserving base and recomputing product"
+    },
+    {
+      "rva": "0x10b9b8e",
+      "size": 1408,
+      "sha256": "E333B2AA327BC33ED0A73796EB1203C13BF474ECA124CDCC1D7823638B3FB841",
+      "meaning": "Complete normal locomotion movement consumer multiplying native base by crawl rate"
+    },
+    {
+      "rva": "0x10ba10e",
+      "size": 4152,
+      "sha256": "75B6D29DCC677DDC1EC786A5136155364DEC1A1E5D15A648BE5F95E0BC315320",
+      "meaning": "Complete alternate locomotion movement consumer multiplying native base by crawl rate"
+    },
+    {
+      "rva": "0x1206a00",
+      "size": 2331,
+      "sha256": "CA7DFE673F4CA88352B2C46F4B07BA40EDC1429FC5417170BBD3E26CB8F33976",
+      "meaning": "Complete PlayerPad update: twelve contiguous chained unwind segments; RCX-only natural ABI"
+    },
+    {
+      "rva": "0x10bcd90",
+      "size": 634,
+      "sha256": "C57BF54D891222B22349D3282F6995C80DEC00249DB686BE77627A1B2E4FE4F7",
+      "meaning": "Complete movement sampler: eight contiguous chained unwind segments; PP+10 -> action+2C0"
+    },
+    {
+      "rva": "0x9c2a8e",
+      "size": 12,
+      "sha256": "16E32FCC431C1C8386339DB314CDCB9101138EE72E3ABDF6BA5F7F2AA106ECCD",
+      "meaning": "Exact natural primary GO+D0 PlayerPad virtual update caller; return9C2A9A ignores result"
     }
   ],
   "body_part": "queued packet+26 is collision-part classification 0..11; FF3480 unknown hash defaults1; part0 has native head-style special path",

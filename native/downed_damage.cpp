@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cstdio>
 #include <intrin.h>
+#include "MinHook.h"
 #include "mgscoop/downed_damage.hpp"
 #include "mgscoop/downed_player.hpp"
 #include "mgscoop/near_code.hpp"
@@ -21,6 +22,16 @@ std::uintptr_t base{};
 Calc original{};
 bool installed[2]{};
 bool defenseInstalled{},canInstalled{};
+using PadUpdate = void (*)(void*); // exact natural9C2A98 RCX-only caller; return ignored
+PadUpdate originalPad{};
+std::uintptr_t padTarget{}, padImage{};
+bool padCreated{}, padInstalled{};
+thread_local unsigned padDepth{};
+struct PadDepth { bool outer{padDepth++ == 0}; ~PadDepth() noexcept { --padDepth; } };
+std::atomic<unsigned> padCalls{}, padObserved{}, padCaps{}, padSamples{};
+SRWLOCK padCacheLock = SRWLOCK_INIT;
+struct PadCache { downed_player::PadObservation latest{}; std::uint64_t at{}; };
+PadCache padCache{};
 using Defense=std::uint32_t (*)(void*,void*,void*,void*,void*);
 using Can=bool (*)(void*,void*,void*,void*,void*);
 Defense originalDefense{};Can originalCan{};
@@ -37,6 +48,31 @@ struct LastErrorState {
 };
 template<class T> bool Read(std::uintptr_t p,T& out) noexcept {
     SIZE_T n=0; return p && ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(p),&out,sizeof(out),&n) && n==sizeof(out);
+}
+// Always forward once BEFORE any eligibility/ownership check and without the
+// downed lock. Nested/foreign/remote callbacks are never allowed to cap input.
+__declspec(noinline) void UpdatePad(void* self) noexcept {
+    LastErrorState error;
+    const auto caller=reinterpret_cast<std::uintptr_t>(_ReturnAddress());
+    PadDepth depth;
+    error.Restore();
+    originalPad(self);
+    error.Capture();
+    padCalls.fetch_add(1,std::memory_order_relaxed);
+    const auto observation=downed_player::AfterPadUpdate(reinterpret_cast<std::uintptr_t>(self),
+        depth.outer, caller==padImage+c::pad_update_return);
+    if(observation.observed) padObserved.fetch_add(1,std::memory_order_relaxed);
+    if(observation.capped) padCaps.fetch_add(1,std::memory_order_relaxed);
+    AcquireSRWLockExclusive(&padCacheLock);
+    padCache={observation,GetTickCount64()};
+    ReleaseSRWLockExclusive(&padCacheLock);
+    if(observation.capped && logger && padSamples.fetch_add(1,std::memory_order_relaxed)<8) {
+        char line[192]{};
+        std::snprintf(line,sizeof(line),"downed_pad=cap;before=%.3f;after=%.3f;local=%u;thread=%u;gen=%u;caller=0x%llx;fresh=1;look_write=0\r\n",
+            double(observation.before),double(observation.after),observation.local,observation.thread,observation.generation,
+            static_cast<unsigned long long>(caller-padImage));
+        logger(line);
+    }
 }
 struct Hit {
     std::uintptr_t player{};
@@ -220,11 +256,13 @@ bool CodeGate(const void* image,std::size_t span) noexcept {
         if(slot>span || sizeof(target)>span-slot || !Read(address+slot,target) ||
             target!=address+c::calculate) return false;
     }
-    std::uintptr_t d{},a{};
-    return Read(address+c::defense_slot,d) && d==address+c::defense && Read(address+c::can_slot,a) && a==address+c::can;
+    std::uintptr_t d{},a{},p{};
+    return Read(address+c::defense_slot,d) && d==address+c::defense && Read(address+c::can_slot,a) && a==address+c::can &&
+        c::pad_update_slot<=span && sizeof(p)<=span-c::pad_update_slot &&
+        Read(address+c::pad_update_slot,p) && p==address+c::pad_update;
 }
 bool Install(void* image,std::size_t span,void (*log)(const char*) noexcept) noexcept {
-    if(base) return base==reinterpret_cast<std::uintptr_t>(image) && installed[0] && installed[1] && defenseInstalled && canInstalled;
+    if(base) return base==reinterpret_cast<std::uintptr_t>(image) && installed[0] && installed[1] && defenseInstalled && canInstalled && padInstalled;
     if(!log || !CodeGate(image,span)) return false;
     base=reinterpret_cast<std::uintptr_t>(image);
     original=reinterpret_cast<Calc>(base+c::calculate);
@@ -248,7 +286,26 @@ bool Install(void* image,std::size_t span,void (*log)(const char*) noexcept) noe
     why=near_code::PatchQword(reinterpret_cast<void*>(base+c::can_slot),base+c::can,reinterpret_cast<std::uintptr_t>(&CanDefend));
     canInstalled=Read(base+c::can_slot,now) && now==reinterpret_cast<std::uintptr_t>(&CanDefend);
     if(why || !canInstalled) {Shutdown();return false;}
-    logger("downed_damage=installed;scope=paired_owner_only;disk_writes=0\r\n");
+    // Full body/caller hashes above precede our own entry patch. Preserve the
+    // PlayerPad vtable itself for the independent existing partner gates.
+    const auto target=base+c::pad_update;
+    const MH_STATUS initialized=MH_Initialize();
+    if(initialized!=MH_OK && initialized!=MH_ERROR_ALREADY_INITIALIZED) {
+        logger("downed_pad=refused;reason=hook_initialize\r\n"); Shutdown();return false;
+    }
+    if(padCreated && padTarget!=target) { Shutdown();return false; }
+    if(!padCreated) {
+        if(MH_CreateHook(reinterpret_cast<void*>(target),reinterpret_cast<void*>(&UpdatePad),
+            reinterpret_cast<void**>(&originalPad))!=MH_OK) {
+            logger("downed_pad=refused;reason=hook_create\r\n"); Shutdown();return false;
+        }
+        padTarget=target;padImage=base;padCreated=true;
+    }
+    if(MH_EnableHook(reinterpret_cast<void*>(padTarget))!=MH_OK) {
+        logger("downed_pad=refused;reason=hook_enable\r\n"); Shutdown();return false;
+    }
+    padInstalled=true;
+    logger("downed_damage=installed;scope=paired_owner_only;pad_fresh_cap=1;disk_writes=0\r\n");
     return true;
 }
 bool StatusLine(char* out,std::size_t capacity) noexcept {
@@ -259,9 +316,29 @@ bool StatusLine(char* out,std::size_t capacity) noexcept {
         canCalls.load(std::memory_order_relaxed),canDeclines.load(std::memory_order_relaxed));
     return n>=0 && static_cast<std::size_t>(n)<capacity;
 }
+bool PadStatusLine(char* out,std::size_t capacity) noexcept {
+    if(!out || !capacity) return false;
+    AcquireSRWLockShared(&padCacheLock); const auto cache=padCache; ReleaseSRWLockShared(&padCacheLock);
+    const auto bounded=[](unsigned value) noexcept {return value>999999u?999999u:value;};
+    const auto now=GetTickCount64();
+    const unsigned age=cache.at && now>=cache.at ? static_cast<unsigned>(now-cache.at>999999?999999:now-cache.at) : 999999u;
+    const auto& o=cache.latest;
+    const int n=std::snprintf(out,capacity,"downpad;on=%u;n=%u;ok=%u;caps=%u;mag=%d,%d;id=%u;thr=%u;gen=%u;age=%u;reason=%s",
+        padInstalled?1u:0u,bounded(padCalls.load(std::memory_order_relaxed)),bounded(padObserved.load(std::memory_order_relaxed)),
+        bounded(padCaps.load(std::memory_order_relaxed)),int(o.before*1000),int(o.after*1000),o.local,o.thread,o.generation,age,
+        o.reason?o.reason:"unobserved");
+    return n>=0 && static_cast<std::size_t>(n)<capacity;
+}
 void Shutdown() noexcept {
     if(!base) return;
     bool clean=true;
+    if(padInstalled) {
+        const auto status=MH_DisableHook(reinterpret_cast<void*>(padTarget));
+        if(status==MH_OK || status==MH_ERROR_DISABLED) padInstalled=false;
+        else clean=false;
+    }
+    // Never remove a trampoline or uninitialize shared MinHook: an already
+    // entered original update must complete even during a failed installation.
     for(unsigned i=0;i<2;++i) if(installed[i]) {
         const auto site=base+c::slots[i];
         const char* why=near_code::PatchQword(reinterpret_cast<void*>(site),reinterpret_cast<std::uintptr_t>(&Calculate),base+c::calculate);

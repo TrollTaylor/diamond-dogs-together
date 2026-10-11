@@ -20,6 +20,21 @@ What works today:
   and partner movement diagnostics. F9 closes it and restores game controls.
   Actions require supported on-foot gameplay. Guard actions use authored
   mission soldiers; arbitrary new soldiers and unloaded guns are unsupported.
+- A downed player stays in prone crawl and cannot aim or fire. Friendly sleep
+  darts use this state. To revive, close F9, stand within 3 m of your teammate
+  and HOLD the normal ACTION button (E by default) for 3 seconds. The teammate
+  being revived must be downed; the reviving player must be healthy. Both
+  games must be paired in World 3.
+- F9 > Partner / Co-op includes Downed status and Revive input status to help
+  check pairing, distance and held ACTION input. Close the menu before trying
+  the revive. Reduced crawl speed is still being tested; the hospital
+  opening's exact crawling animation is unavailable.
+- F9 > Partner / Co-op > Summon D-Horse nearby requests the local stock horse.
+  Wait for loading and check Horse status. Close F9 and use normal controls
+  to mount when the horse is present. This does not spawn a second horse or
+  attach the remote player; two-player horse and Walker rides are unfinished.
+- D-Dog follow status reports the shared dog position. The guest dog follows
+  the host dog's position; dog attacks, spotting and health are not shared.
 - The NATIVE PARTNER (default): your partner's body is moved by the game's
   own movement, aiming, reloading, weapon switching and turning, driven by
   the other player's controls, so it moves like a player and its gun points

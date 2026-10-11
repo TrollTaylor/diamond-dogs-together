@@ -82,11 +82,12 @@ constexpr ActionDef kActions[] = {
      "Reports the name tag state, the partner's name, distance, hover and camera.", 0},
     {"coop_downed_status", C::partner, "Downed status", "downed_status", "down crawl hurt health revive sleep", "Reads your current downed state, native health and control lock.", 0},
     {"coop_revive_status", C::partner, "Revive input status", "revive_status", "revive action key e held input", "Reads whether the game observed your revive input. Close F9 and hold ACTION near your downed teammate for 3 seconds.", 0},
+    {"coop_downed_pad_status", C::partner, "Downed movement input", "downed_pad_status", "down crawl slow movement input speed magnitude", "Reads the latest native movement input before and after the downed cap. Close F9 to test movement.", 0},
     // Normal-release companion controls; no research capacity or force mount.
-    {"buddy_horse_spawn", C::partner, "Summon D-Horse nearby", "horse_spawn", "horse buddy spawn summon ride mount near me",
-     "Selects D-Horse through the stock buddy loader, 4 m beside you. Reuses the local horse; does not make a second horse or force mounting. Use the normal ACTION button after it arrives.", 0},
+    {"buddy_horse_spawn", C::partner, "Summon / recall D-Horse", "horse_spawn", "horse buddy spawn summon recall retry ride mount near me",
+     "Requests the local D-Horse 4 m beside you. Close F9 and wait. If it is selected but missing, repeat this action to recall it. Use ACTION after it arrives. A selected horse is not a confirmed arrival or a second horse.", 0},
     {"buddy_horse_status", C::partner, "Horse status", "horse_status", "horse buddy count capacity riding mount loading debug",
-     "Reads selected buddy, horse availability and your native horse posture. Actor count and remote mounted riders are not inferred.", 0},
+     "Reads selected buddy, horse availability and your mounted posture. Arrival stays unverified until mounting; if missing, use Summon / recall again. Horse count and remote riders are not inferred.", 0},
     {"buddy_follow_status", C::partner, "D-Dog follow status", "buddy_status", "dog buddy follow sync companion",
      "Reads the host dog follow state and guest position error.", 0},
     // World

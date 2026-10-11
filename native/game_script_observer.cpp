@@ -1963,6 +1963,10 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                 static_cast<unsigned long long>(sample.unit),sample.unit_matches_player?1u:0u,unsigned(sample.unit_rider),
                 unsigned(sample.replication_kind),unsigned(sample.replication_target));
             debug::Result(pending.id,reason?0u:1u,status);
+        } else if (pending.id && std::strcmp(pending.text, "downed_pad_status") == 0) {
+            char status[161]{};
+            const bool complete=mgscoop::downed_damage::PadStatusLine(status,sizeof(status));
+            debug::Result(pending.id,complete?1u:0u,status);
         } else if (pending.id && std::strcmp(pending.text, "downed_status") == 0) {
             const auto s=mgscoop::downed_player::GetSnapshot();
             char status[161]{};

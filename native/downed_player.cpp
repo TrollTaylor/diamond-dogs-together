@@ -218,6 +218,30 @@ bool Released(const partner_input::PadRaw& raw) noexcept {
     return (raw.pp_mask[0] & kBlockedButtons & ~baselineButtons) == 0 &&
         (raw.pp_mask[2] & kBlockedTriggers & ~baselineTriggers) == 0;
 }
+struct LocalPadRead {
+    partner_player::State state{};
+    std::uintptr_t life{}, pad{}, source{}, stanceArray{};
+    float current{}, maximum{};
+    std::uint8_t stance{};
+    partner_input::PadRaw raw{};
+};
+bool ReadLocalPad(std::uintptr_t incoming, LocalPadRead& out) noexcept {
+    std::uintptr_t vt = 0, owner = 0, sourceVt = 0;
+    return Owned(out.state, out.life, out.current, out.maximum) && out.state.local == 0 &&
+        Read(out.state.P + c::p_pad, out.pad) && out.pad == incoming && out.pad && !(out.pad & 3u) &&
+        Read(out.pad, vt) && vt == addresses.pp_vtable &&
+        Read(out.pad + c::pp_owner, owner) && owner == out.state.P &&
+        Read(out.pad + c::pp_src, out.source) && out.source &&
+        Read(out.source, sourceVt) && sourceVt == addresses.image_base + c::src_vtable_rva &&
+        Read(out.state.Q + c::q_anim_30, out.stanceArray) && out.stanceArray &&
+        Read(out.stanceArray, out.stance) && partner_player::ReadPad(addresses, out.state, out.raw);
+}
+bool SameLocalPad(const LocalPadRead& a, const LocalPadRead& b) noexcept {
+    return a.state.P == b.state.P && a.state.Q == b.state.Q && a.life == b.life &&
+        a.pad == b.pad && a.source == b.source && a.stanceArray == b.stanceArray && a.stance == b.stance &&
+        CrawlBits(a.current) == CrawlBits(b.current) && CrawlBits(a.maximum) == CrawlBits(b.maximum) &&
+        std::memcmp(&a.raw, &b.raw, sizeof(a.raw)) == 0;
+}
 bool Clear(bool restore) noexcept {
     if (restore && !SlowCrawl(true)) return false;
     if (!restore && crawl.applied) return false;
@@ -384,6 +408,44 @@ bool Control(std::uint32_t m, std::uint16_t ep, bool admitted, std::uint8_t comm
     }
     out.applied = command == 0;
     return finish(true, detail::RebindReason(rebound));
+}
+PadObservation AfterPadUpdate(std::uintptr_t pad, bool outerUpdate, bool exactCaller) noexcept {
+    PadObservation out{false, false, -1.f, -1.f, 0xffffffffu, GetCurrentThreadId(), 0, "context"};
+    // Control may be inside an exact native stance/component call. Never wait
+    // or recursively acquire its lock from a natural input callback; retry only
+    // after the next freshly completed original update, never with old input.
+    if (!TryAcquireSRWLockExclusive(&lock)) { out.reason = "busy"; return out; }
+    const auto finish = [&](const char* reason) noexcept {
+        out.reason = reason; ReleaseSRWLockExclusive(&lock); return out;
+    };
+    // Fresh means this is only reached after one complete original update.
+    const auto seq = partner_input_hook::WindowSeq();
+    detail::PadScope scope{true, outerUpdate, exactCaller, verified, stopped, failed, armed,
+        ownerThread, out.thread, GetTickCount64(), lastPoll, seq, seq,
+        partner_defer::InBatch(), partner_defer::InBatch()};
+    out.generation = cycle.generation;
+    if (const auto reason = detail::PadRefusal(scope)) return finish(reason);
+    LocalPadRead first{}, second{};
+    if (!ReadLocalPad(pad, first) || !ReadLocalPad(pad, second) || !SameLocalPad(first, second)) return finish("identity");
+    scope.now = GetTickCount64(); scope.sequenceAfter = partner_input_hook::WindowSeq(); scope.batchAfter = partner_defer::InBatch();
+    if (const auto reason = detail::PadRefusal(scope)) return finish(reason);
+    // Observe healthy input for a demonstrable next-update reset; only the exact
+    // protected downed/prone body with both named restrictions may be changed.
+    if (cycle.down && controlsApplied && (first.stance != 3 || !Controls(first.raw))) return finish("controls");
+    const auto plan = detail::PlanPadMagnitude(first.raw.pp_derived[0], cycle.down, controlsApplied);
+    if (!plan.valid) return finish("magnitude");
+    if (plan.write) {
+        const auto before = CrawlBits(first.raw.pp_derived[0]), after = CrawlBits(plan.magnitude);
+        __try {
+            if (_InterlockedCompareExchange(reinterpret_cast<volatile long*>(first.pad + c::pp_derived),
+                static_cast<long>(after), static_cast<long>(before)) != static_cast<long>(before)) return finish("changed");
+        } __except(EXCEPTION_EXECUTE_HANDLER) { return finish("write"); }
+    }
+    out.observed = true; out.capped = plan.write; out.local = 0;
+    out.before = first.raw.pp_derived[0]; out.after = plan.magnitude;
+    // This is an ephemeral per-frame output, not an owned input lease. Never
+    // restore a cached held magnitude after release, revive, stop or timeout.
+    return finish(cycle.down ? controlsApplied ? "downed" : "controls_pending" : "healthy");
 }
 bool Scope(std::uintptr_t P, std::uint32_t& local) noexcept {
     local = 0xFFFFFFFFu;
