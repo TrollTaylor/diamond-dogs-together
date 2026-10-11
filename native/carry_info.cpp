@@ -23,7 +23,7 @@ bool verified=false,stopped=false,failed=false,configured=false;
 std::uint32_t boundThread=0;
 std::uint64_t lastQuery=0;
 void (*logger)(const char*) noexcept=nullptr;
-unsigned readRefusals=0;
+unsigned readRefusals=0,providerRefusals=0;
 struct Preserve { DWORD value=GetLastError(); ~Preserve(){SetLastError(value);} };
 bool ReadBytes(std::uintptr_t p,void* out,std::size_t size) noexcept {
     SIZE_T count=0;
@@ -148,6 +148,13 @@ bool Observe(std::uint32_t mission,std::uint16_t epoch,bool admitted,std::uint32
     const auto imageSpan=addresses.image_end-addresses.image_base;
     const bool providerRead=carry_provider_read::ReadPair(reader,ps,imageSpan,providerBefore);
     out.providerReason=providerBefore.reason;
+    if(!providerRead&&logger&&std::strcmp(providerBefore.reason,"provider_services")==0&&providerRefusals++<16){
+        // Refusal telemetry only. Preserve the typed gate; never export a
+        // heap pointer or accept the final type from this diagnostic value.
+        const auto rva=lastRead&&lastSize==sizeof(std::uintptr_t)&&lastValue>=addresses.image_begin&&lastValue<addresses.image_end?lastValue-addresses.image_base:0;
+        char line[192]{};StringCchPrintfA(line,ARRAYSIZE(line),"carry_provider_read_refused;stage=provider_services;vtable_rva=0x%llx;services_is_player=%u;read=%u\r\n",
+            static_cast<unsigned long long>(rva),lastAt==second.player?1u:0u,lastRead?1u:0u);logger(line);
+    }
     plugin::Observation pluginFirst{},pluginSecond{},pluginAfter{};
     const char* pluginRefusal="plugin_chain";
     const bool pluginRead=plugin::ReadOnce(reader,ps,pluginFirst,&pluginRefusal)&&plugin::ReadOnce(reader,ps,pluginSecond,&pluginRefusal);
