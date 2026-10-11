@@ -14,6 +14,8 @@
 #include "carry_info_policy.hpp"
 #include "carry_plugin_read.hpp"
 #include "carry_provider_read.hpp"
+#include "carry_recipient_read.hpp"
+#include "carry_request_retirement_read.hpp"
 namespace mgscoop::carry_info {
 namespace c=carry_info_contract;
 namespace {
@@ -109,7 +111,7 @@ bool CodeGate(const void* image,std::size_t span,std::uintptr_t& mismatch) noexc
         if(at>span||sizeof(target)>span-at||!Read(base+at,target)||target!=base+slot.target_rva){mismatch=slot.vtable_rva;return false;}
     }
     auto reader=ReadBytes;
-    return carry_plugin_read::CodeGate(reader,base,span,mismatch)&&carry_provider_read::CodeGate(reader,base,span,mismatch);
+    return carry_plugin_read::CodeGate(reader,base,span,mismatch)&&carry_provider_read::CodeGate(reader,base,span,mismatch)&&carry_recipient_read::CodeGate(reader,base,span,mismatch)&&carry_request_retirement_read::CodeGate(reader,base,span,mismatch);
 }
 void Configure(const partner_player::Addresses& source,bool passed,void (*log)(const char*) noexcept) noexcept {
     const Preserve preserve;AcquireSRWLockExclusive(&lock);
@@ -144,6 +146,12 @@ bool Observe(std::uint32_t mission,std::uint16_t epoch,bool admitted,std::uint32
     ps.generation=own.generation;ps.ownedGeneration=own.generation;
     ps.thread=GetCurrentThreadId();ps.ownerThread=ownerThread;
     ps.now=now;ps.poll=own.lastPoll;ps.sequenceBefore=seq;ps.sequenceAfter=partner_input_hook::WindowSeq();ps.batch=partner_defer::InBatch();
+    carry_request_retirement_read::Observation requestBefore{},requestAfter{};
+    const bool requestRead=carry_request_retirement_read::ReadPair(reader,ps,requestBefore);
+    out.requestReason=requestRead?"request_observed":"request_chain";
+    carry_recipient_read::Observation recipientBefore{},recipientAfter{};
+    const bool recipientRead=carry_recipient_read::ReadPair(reader,ps,recipientBefore);
+    out.recipientReason=recipientRead?"recipient_observed":"recipient_chain";
     carry_provider_read::Reply providerBefore{},providerAfter{};
     const auto imageSpan=addresses.image_end-addresses.image_base;
     const bool providerRead=carry_provider_read::ReadPair(reader,ps,imageSpan,providerBefore);
@@ -230,6 +238,23 @@ bool Observe(std::uint32_t mission,std::uint16_t epoch,bool admitted,std::uint32
             out.providerReady=true;out.providerPresent=providerAfter.present;out.providerVtableRva=providerAfter.vtableRva;out.providerReason=providerAfter.reason;
         }else out.providerReason="provider_changed";
     }else if(providerRead)out.providerReason=providerAfter.reason;
+    if(recipientRead&&!plugin::ScopeRefusal(ps)&&carry_recipient_read::ReadPair(reader,ps,recipientAfter)){
+        bool same=plugin::Same(recipientBefore.carrier,recipientAfter.carrier);
+        for(unsigned k=0;k<2;++k)same=same&&carry_recipient_read::SameRecipient(recipientBefore.recipient[k],recipientAfter.recipient[k]);
+        if(same){out.recipientReady=true;out.recipientReason="recipient_observed";
+            for(unsigned k=0;k<2;++k){const auto& x=recipientAfter.recipient[k];auto& y=result[k];
+                y.recipientActive=x.active;y.recipientEndPending=x.endPending;y.recipientCarrier=x.carrier;
+                y.recipientCurrent=x.current;y.recipientNext=x.next;y.reciprocalBinding=carry_recipient_read::CoherentBinding(recipientAfter,k,1-k);
+            }
+        }else out.recipientReason="recipient_changed";
+    }else if(recipientRead)out.recipientReason="recipient_changed";
+    if(requestRead&&!plugin::ScopeRefusal(ps)&&carry_request_retirement_read::ReadPair(reader,ps,requestAfter)) {
+        if(carry_request_retirement_read::Same(requestBefore,requestAfter)) {
+            out.requestReady=true;out.requestReason="request_observed";
+            for(unsigned k=0;k<2;++k){result[k].requestKind=requestAfter.packet[k].kind;
+                result[k].requestSequence=requestAfter.packet[k].sequence;result[k].requestForce=requestAfter.packet[k].force;}
+        } else out.requestReason="request_changed";
+    } else if(requestRead)out.requestReason="request_changed";
     // Query receiver writes our stack only. Re-sample the owner and input
     // window after the final telemetry read too; no plugin value unlocks input.
     const auto finalOwn=downed_player::GetSnapshot();

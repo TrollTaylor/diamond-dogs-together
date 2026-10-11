@@ -1,0 +1,176 @@
+{
+  "scope": "Offline exact retail C0/UI evidence and mandatory window proposal. No main edits, native writes/calls, builds or runtime. Does not grant body1 sleep/carry activation.",
+  "retail": {
+    "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgsvtpp.exe",
+    "bytes": 166517760,
+    "sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45"
+  },
+  "sources": [
+    {
+      "path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\native\\partner_input_hook.cpp",
+      "bytes": 126035,
+      "sha256": "37e7bb86d4354c90247b96b57921b21e24193481a11c5c8040d5b1af0e6355e0"
+    },
+    {
+      "path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\native\\partner_defer.cpp",
+      "bytes": 31528,
+      "sha256": "2f9645c9766f49dec15a4747b9e5acc6c6f4bf4c8f15ff3ca12589d845ae56c4"
+    },
+    {
+      "path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\native\\camera_mode_window.hpp",
+      "bytes": 8820,
+      "sha256": "64a348a9f14b10e9a9f0a5f0b623e58c116fe554c4f8ff99885bd69f8cd4b768"
+    },
+    {
+      "path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\native\\camera_mode_window_contract.hpp",
+      "bytes": 42134,
+      "sha256": "318417ac8cd87d8029e45bf5ada5e76608b8909a225c229b42b696e7a1b1b8f1"
+    }
+  ],
+  "pins": [
+    {
+      "label": "sleep handler including eleven-entry dispatch table",
+      "rva": "0x12caa10",
+      "end_exclusive": "0x12caf44",
+      "bytes": 1332,
+      "sha256": "f5a2213ec74df874bdc110ef06efd589c95212905cabc4a5424a2e256541093e",
+      "boundary": "complete pdata function; code through12CAF18, resident dispatch table12CAF18..12CAF44"
+    },
+    {
+      "label": "sleep offline/online context classifier",
+      "rva": "0x114db20",
+      "end_exclusive": "0x114db8c",
+      "bytes": 108,
+      "sha256": "a9963f532dcdf6b44f7f8e811c012496a0868838372150dc77e6262aad40e789",
+      "boundary": "complete pdata function"
+    },
+    {
+      "label": "P+D8 recovery hint enqueue",
+      "rva": "0xfe8770",
+      "end_exclusive": "0xfe87e0",
+      "bytes": 112,
+      "sha256": "07ddd8bc3ab07e3b992a3280ea318bad4146e252cb28fdd72c5f1bfa40d5165d",
+      "boundary": "explicit leaf from entry through REP RET; no pdata entry"
+    },
+    {
+      "label": "C0 requested-mode setter",
+      "rva": "0x11f6520",
+      "end_exclusive": "0x11f6524",
+      "bytes": 4,
+      "sha256": "a45c57bee5e738c6f1d399d1b52751e075b1e100e72874947b4a7a5ebb691e29",
+      "boundary": "explicit leaf from entry through RET; no pdata entry"
+    },
+    {
+      "label": "C0 shared requested promotion and notifications",
+      "rva": "0x11f7210",
+      "end_exclusive": "0x11f76b5",
+      "bytes": 1189,
+      "sha256": "63d762a28842a45a289f0459c4f1ebceb32b5ba9fc5099428ee1061374f5f24f",
+      "boundary": "complete function"
+    },
+    {
+      "label": "natural GO global component updater",
+      "rva": "0x9c1f00",
+      "end_exclusive": "0x9c2e8b",
+      "bytes": 3979,
+      "sha256": "291802c5626cd7ac7fa978bb5de121a0826963a9f52a1eb3c48d869113aee854",
+      "boundary": "complete chained-pdata function"
+    },
+    {
+      "label": "P+D8 vt0 natural updater",
+      "rva": "0xfe8e10",
+      "end_exclusive": "0xfe9423",
+      "bytes": 1555,
+      "sha256": "4ca93fff98d9a8483af71ee973d50a3f83e5d78453b54525b39130d6433d2680",
+      "boundary": "complete six contiguous chained-pdata ranges; does not prove all recovery-hint consumers"
+    }
+  ],
+  "slots": [
+    {
+      "vtable": "0x23c7500",
+      "offset": "0xf8",
+      "target": "0x11f6520"
+    },
+    {
+      "vtable": "0x23c7500",
+      "offset": "0x8",
+      "target": "0x11f6760"
+    },
+    {
+      "vtable": "0x23af700",
+      "offset": "0x268",
+      "target": "0xfe8770"
+    },
+    {
+      "vtable": "0x23af700",
+      "offset": "0x0",
+      "target": "0xfe8e10"
+    }
+  ],
+  "sleep_hint": {
+    "typed": "U=P+D8 secondaryVT23AF700, U-20 primaryVT23AF6D0, U+28=P; existing V8 reader qualifies identity",
+    "offline_path": [
+      "114DB3A..114DB46 checksP204bit8; clear paired-offline returnsfalse114DB7F",
+      "12CAC75 helper false falls into life update; life34nonzero reaches12CAD0F",
+      "12CAD2B loadsU;12CAD3F U.vt268(5D,2,0,true,false,false)",
+      "No offline body0 local-id predicate guards the queue; ESI indexes actor life record but is not passed to hint leaf"
+    ],
+    "writes": [
+      {
+        "offset": "U+3C0",
+        "width": 4,
+        "meaning": "uint16 hint converted to dword",
+        "site": "FE8794"
+      },
+      {
+        "offset": "U+3C4",
+        "width": 4,
+        "meaning": "flags AND FFFFF9ED then OR derived argument flags",
+        "sites": [
+          "FE877F",
+          "FE87D7"
+        ]
+      },
+      {
+        "offset": "U+3F0",
+        "width": 1,
+        "meaning": "pending=1",
+        "site": "FE87A4"
+      },
+      {
+        "offset": "U+3F3",
+        "width": 1,
+        "meaning": "priority=r8b",
+        "site": "FE87AD"
+      }
+    ],
+    "predicate": "Leaf mutates only if old U3F3 unsigned priority is greater than incoming signed int priority2; no body-id/synchronizer/call",
+    "correction": "11306A0 does not enqueue this UI hint; it may OR CAM+32C 100 before PP20 masked input exits. This helper is distinct from12CAA10 event-case5.",
+    "natural_update": "GO+F8 (P+D8),9C2ADC..9C2AE6 vt0->FE8E10. This is not a complete hint-consumer census."
+  },
+  "c0": {
+    "typed": "I=P+C0; primary=I-20VT23C74C8; I.VT23C7500; I+8=P",
+    "requested": "I+6D only; activeI+6C is never saved or written",
+    "natural": "GO+E0(P+C0)9C2AAA/9C2AB4 vt8->11F6760; chained full update directlycalls11F7210 at11F6B59",
+    "promotion": "11F7210 requestedroot8D is promoted into active root8C at11F722A, with global notifications. Restoring only requested cannot undo already-promoted effects.",
+    "caller_census": "Executable direct E8 and E9 scans, qword VA and RIP-LEA materialization scans found only E8 entry11F6B59. Does not exclude arbitrary computed/indirect calls.",
+    "entry_sleep": "12CAB36..12CAB50 calls requestedmode4 offline on event-case2; 114DB20 false means this branch is not skipped for body1."
+  },
+  "mandatory_protocol": [
+    "Publish nativePoseRequired before any persistent body1 pose admission. Read it from immutable private copied-save role/generation/epoch lease, not current Arm success. Every body1 refusal in RunJobWindow and DrainCall suppresses instead of forwarding original. Tri-state executed_windowed/executed_legacy/suppressed prevents caller fallback.",
+    "One actual atomic reader/writer exclusion domain covers every original WrapBatch from BEFORE original execution until its finally return, all global C0 updater execution, and the qualified global UI consumer/update entries. Existing counters remain telemetry only.",
+    "The outermost WrapBatch releases its shared exclusion ticket after the original join and before deferred drain. RunJobWindow uses a nonwaiting exclusive CAS from zero; writer busy, nested callback, batch busy, gate/type/epoch/capture refusal means no pose job. Never upgrade a retained shared ticket.",
+    "Exclusive ownership starts before BeginWindow and before SafePre, RatesStep, MirrorMag, SlotFollow, Quiet/UI hooks or any callback. It remains through job, probes, SafePost, typed C0/UI restoration and EndWindow; only afterward may writer release.",
+    "Global updater called reentrantly by the writer owner cannot wait or promote; refuse/suppress and record a private-lab failure. Foreign entrants cannot check a counter then fall through original. They wait for actual reader admission under a bounded private-lab timeout; timeout initiates owned supervisor cleanup and never executes the original while exclusive remains. A synchronous native join can make this a liveness failure, so normal activation remains disabled pending proof.",
+    "Keep token cleanup in outer POD-compatible SEH finally, independently fault-bounding SafePost and C0/UI restores so one fault cannot bypass another. Reconcile existing GuardedCall abnormal EndWindow to close exactly once. Failed SafePre prefix cleanup remains accounted for.",
+    "C0 cleanup uses the existing single-byte CAS once. UI capture/cleanup uses exact unchanged U/primary/VTable/P ownership and four qualified scalar fields, snapshot before callbacks, restore after SafePost while all qualified consumers are excluded. No active C0 byte or native setter calls. A failed/conflicting/partial restoration latches private-lab fault and retains exclusive ownership until supervised process termination; it must never release a corrupted shared presentation.",
+    "Stop admitting new writers on shutdown/scene-change but retain active cleanup authority and actor lifetime. Scene teardown/native actor replacement must participate in the same gate before destruction. Mod Configure/ReadArm flags do not prove native teardown exclusion.",
+    "All other wrappers that can execute swapped pad/local-id/camera/pose callbacks must participate in this domain; same-owner nested callback refusal cannot run original on the swapped shared fields. Native body1 pose callbacks outside the mandatory window remain prohibited."
+  ],
+  "blockers": [
+    "Complete native body1 sleep/carry callback and null-synchronizer census is still incomplete. The C0 setter/hint leaf being safe does not qualify their caller transitives.",
+    "Native body1 original job and transitive callbacks are not proven free of synchronous foreign joins. Reader waiting may deadlock; bounded copied-process cleanup is mandatory for an experimental candidate, not production liveness proof.",
+    "All recovery-hint consumers, independent shared presentation entry paths, nested input windows and native scene-teardown paths are not yet qualified/covered. Known natural entries can be gated, but incomplete coverage must keep activation disabled.",
+    "Typed four-field UI restoration is a proposed separate owned scalar contract. Exact leaf writes establish field widths, not the exclusion/lifecycle of every consumer."
+  ]
+}

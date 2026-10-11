@@ -30,7 +30,8 @@ struct Scope {
  std::uint32_t thread=0,sequenceBefore=0,sequenceAfter=0;
  std::uint64_t now=0,poll=0;
 };
-inline const char* Refusal(const Scope& s,const Sample& a,bool newSeed) noexcept {
+inline bool ValidStun(const Sample& a) noexcept {return std::isfinite(a.stun)&&std::isfinite(a.maximumStun)&&a.maximumStun>=1.f&&a.maximumStun<=65535.f&&a.stun>=0.f&&a.stun<=a.maximumStun;}
+inline const char* ContextRefusal(const Scope& s,const Sample& a) noexcept {
  if(!s.exactRetailGate||!s.sleepCodeGate||!s.seedCodeGate)return "sleep_seed_gate";
  if(!s.workerActive||!s.threadAdmitted||!s.copiedSave)return "sleep_seed_lab_only";
  if(!s.coherent||!s.thread||s.thread!=a.owner.ownerThread)return "sleep_seed_owner";
@@ -39,8 +40,14 @@ inline const char* Refusal(const Scope& s,const Sample& a,bool newSeed) noexcept
  if(!a.owner.epoch||!a.owner.generation||(a.owner.mission!=30010&&a.owner.mission!=30020&&a.owner.mission!=30050))return "sleep_seed_scene";
  if(!a.owner.player||!a.owner.data||!a.owner.life||(a.owner.life&3u)||!a.owner.block||!a.owner.ps||!a.owner.plugin||!a.owner.node||!a.owner.records||!a.owner.bitmap||!a.owner.cs||!a.owner.graph)return "sleep_seed_identity";
  if(!std::isfinite(a.health)||!std::isfinite(a.maximumHealth)||a.health<=0||a.health>a.maximumHealth||a.maximumHealth<1||a.maximumHealth>65535)return "sleep_seed_health";
- if(!std::isfinite(a.stun)||!std::isfinite(a.maximumStun)||a.maximumStun!=3000.f||a.stun<0||a.stun>a.maximumStun||a.lifeState>2)return "sleep_seed_stun";
- if(!s.namedButtonsLocked||!s.namedTriggersLocked||!s.analogCapQualified||a.cause!=2)return "sleep_seed_controls";
+ if(!ValidStun(a)||a.lifeState>2)return "sleep_seed_stun";
+ if(!s.namedButtonsLocked||!s.namedTriggersLocked||a.cause!=2)return "sleep_seed_controls";
+ return nullptr;
+}
+// Mutation admission always requires the original exact-sequence natural cap.
+inline const char* Refusal(const Scope& s,const Sample& a,bool newSeed) noexcept {
+ if(const auto why=ContextRefusal(s,a))return why;
+ if(!s.analogCapQualified)return "sleep_seed_controls";
  if(newSeed&&(!s.admitted||!s.pairedOffline))return "sleep_seed_admission";
  return nullptr;
 }
@@ -50,9 +57,10 @@ struct Plan {bool valid=false;unsigned count=0;Exchange changes[2]{};const char*
 enum class Phase:std::uint8_t {empty,seeded,active,wakePending,retired,quarantined};
 struct Lease {
  Identity owner{};Phase phase=Phase::empty;
- std::uint32_t originalStunBits=0;std::uint64_t seededAt=0,wakeAt=0,lastSeen=0,retiredSeenAt=0;
+ std::uint32_t originalStunBits=0,maximumStunBits=0;std::uint64_t seededAt=0,wakeAt=0,lastSeen=0,retiredSeenAt=0;
  unsigned retiredSamples=0;bool nativeEntered=false,wakeAuthorized=false;
 };
+inline bool SameMaximum(const Lease& l,const Sample& a) noexcept {return Bits(a.maximumStun)==l.maximumStunBits;}
 inline bool Held(const Lease& l) noexcept {return l.phase!=Phase::empty&&l.phase!=Phase::retired;}
 // Every onset/rest/wake hash must exist in the same live typed graph cache.
 // Node presence is an experiment prerequisite, never proof of loaded clips.
@@ -66,11 +74,12 @@ inline Plan Seed(const Scope& s,const Sample& a,const Lease& l,bool requestsPres
 // Commit only after the adapter reports the two exact CAS results. A partial
 // write keeps ownership and restrictions; never silently discard repair duty.
 inline Lease Commit(const Sample& a,std::uint64_t now,bool stunCas,bool stateCas) noexcept {
- Lease l{};if(!stunCas)return l;l.owner=a.owner;l.originalStunBits=Bits(a.stun);l.seededAt=now;l.lastSeen=now;l.phase=stateCas?Phase::seeded:Phase::quarantined;return l;
+ Lease l{};if(!stunCas)return l;l.owner=a.owner;l.originalStunBits=Bits(a.stun);l.maximumStunBits=Bits(a.maximumStun);l.seededAt=now;l.lastSeen=now;l.phase=stateCas?Phase::seeded:Phase::quarantined;return l;
 }
 inline Plan Repair(const Scope& s,const Sample& a,const Lease& l) noexcept {
  Plan p{};if(const auto why=Refusal(s,a,false)){p.reason=why;return p;}
  if(l.phase!=Phase::quarantined||!Same(l.owner,a.owner)){p.reason="sleep_seed_repair_owner";return p;}
+ if(!SameMaximum(l,a)){p.reason="sleep_seed_repair_maximum_changed";return p;}
  // Native regrowth, another state, or admitted mode prevents restoring an old
  // scalar. Only our untouched zero in the same idle owner can be repaired.
  if(a.mode||a.requested||a.nodeActive||a.lifeState||Bits(a.stun)!=Bits(0.f)||a.action!=0x44||(a.qAction!=1&&a.qAction!=5)||a.stance!=1||!a.graphCurrent||a.graphSleepCandidate){p.reason="sleep_seed_repair_changed";return p;}
@@ -86,6 +95,7 @@ inline bool RequestWake(Lease& l,std::uint32_t generation,std::uint64_t now) noe
 inline Plan Wake(const Scope& s,const Sample& a,const Lease& l) noexcept {
  Plan p{};if(const auto why=Refusal(s,a,false)){p.reason=why;return p;}
  if(l.phase!=Phase::wakePending||!Same(l.owner,a.owner)){p.reason="sleep_wake_owner";return p;}
+ if(!SameMaximum(l,a)){p.reason="sleep_wake_maximum_changed";return p;}
  if(a.lifeState==0){p.valid=true;p.reason="sleep_wake_natural_pending";return p;}
  if(a.mode!=5||!a.nodeActive||a.action!=0x19||a.qAction!=0x84||a.lifeState!=2||(a.requested!=0&&a.requested!=6)){p.reason="sleep_wake_wait_rest";return p;}
  p.valid=true;p.count=1;p.changes[0]={0x34,2,0};p.reason="sleep_wake_state_cas";return p;
@@ -94,15 +104,34 @@ struct Receipt {bool holdControls=false,suppressProne=false,retired=false,labAbo
 inline bool RetiredSample(const Sample& a) noexcept {
  return a.mode==0&&a.requested==0&&!a.nodeActive&&a.lifeState==0&&a.action!=0x19&&a.qAction!=0x83&&a.qAction!=0x84&&a.qAction!=0x85&&a.stance>=1&&a.stance<=3&&a.graphCurrent&&!a.graphSleepCandidate;
 }
-inline Receipt Observe(Lease& l,const Scope& s,const Sample& a) noexcept {
+// An accepted early wake may retire an unseeded preparation. The adapter must
+// independently prove the same typed owner/scope; capture maximum bits here too.
+inline Lease RetireEmpty(const Sample& a,std::uint64_t now) noexcept {
+ Lease l{};if(!now||!ValidStun(a)||!RetiredSample(a))return l;
+ l.owner=a.owner;l.maximumStunBits=Bits(a.maximumStun);l.phase=Phase::retired;l.wakeAuthorized=true;l.lastSeen=now;return l;
+}
+// Only Observe accepts this read-only proof. It cannot be passed to mutation
+// planners, CasWindow, or final release. The adapter supplies actual paired pad
+// magnitude zero/full named masks with a recent same-owner natural receipt.
+struct ObservationProof {
+ bool retainedNaturalZero=false;const char* reason="sleep_observe_zero_absent";
+ std::uintptr_t player=0,data=0,life=0;
+ std::uint32_t generation=0,thread=0,sequence=0;std::uint64_t at=0;
+};
+inline bool BoundObservation(const ObservationProof& p,const Scope& s,const Sample& a) noexcept {
+ return p.retainedNaturalZero&&p.player==a.owner.player&&p.data==a.owner.data&&p.life==a.owner.life&&p.generation==a.owner.generation&&p.thread==a.owner.ownerThread&&p.thread==s.thread&&p.sequence==s.sequenceBefore&&p.sequence==s.sequenceAfter&&p.at==s.now;
+}
+inline Receipt Observe(Lease& l,const Scope& s,const Sample& a,const ObservationProof& proof={}) noexcept {
  Receipt r{};if(l.phase==Phase::empty)return r;r.holdControls=true;r.suppressProne=l.phase!=Phase::quarantined;
- const auto why=Refusal(s,a,false);
- if(why||!Same(l.owner,a.owner)||s.now<l.lastSeen){l.retiredSamples=0;l.retiredSeenAt=0;r.labAbortRequired=(s.now>=l.lastSeen&&s.now-l.lastSeen>kRetireMs)||(l.wakeAt&&s.now>=l.wakeAt&&s.now-l.wakeAt>kRetireMs)||(!l.nativeEntered&&s.now>=l.seededAt&&s.now-l.seededAt>kAcquireMs);r.reason=why?why:"sleep_lease_changed";return r;}
+ const bool retainedOnly=!s.analogCapQualified&&BoundObservation(proof,s,a)&&l.seededAt&&l.phase!=Phase::quarantined;
+ const auto why=retainedOnly?ContextRefusal(s,a):Refusal(s,a,false);
+ const bool maximumChanged=!SameMaximum(l,a);
+ if(why||!Same(l.owner,a.owner)||maximumChanged||s.now<l.lastSeen){l.retiredSamples=0;l.retiredSeenAt=0;r.labAbortRequired=maximumChanged||(s.now>=l.lastSeen&&s.now-l.lastSeen>kRetireMs)||(l.wakeAt&&s.now>=l.wakeAt&&s.now-l.wakeAt>kRetireMs)||(!l.nativeEntered&&s.now>=l.seededAt&&s.now-l.seededAt>kAcquireMs);r.reason=why?why:maximumChanged?"sleep_lease_maximum_changed":"sleep_lease_changed";return r;}
  if(l.phase==Phase::retired){
   // A previous retirement receipt is not permission to unlock a later native
   // state. Re-entry or action/life/graph drift retains the lease and lock.
   if(!RetiredSample(a)){r.holdControls=true;r.suppressProne=true;r.labAbortRequired=true;r.reason="sleep_native_retired_drift";return r;}
-  l.lastSeen=s.now;r.retired=true;r.holdControls=!l.wakeAuthorized;r.suppressProne=false;r.reason=l.wakeAuthorized?"sleep_native_retired":"sleep_native_retired_grant_pending";return r;
+  l.lastSeen=s.now;r.retired=true;r.holdControls=!l.wakeAuthorized||retainedOnly;r.suppressProne=false;r.reason=retainedOnly?"sleep_native_retired_readonly_pending":l.wakeAuthorized?"sleep_native_retired":"sleep_native_retired_grant_pending";return r;
  }
  if(l.phase==Phase::quarantined){r.reason="sleep_seed_partial_repair_pending";r.labAbortRequired=true;return r;}
  l.lastSeen=s.now;
@@ -114,7 +143,7 @@ inline Receipt Observe(Lease& l,const Scope& s,const Sample& a) noexcept {
  }
  if(l.nativeEntered&&RetiredSample(a)){
   if(!l.retiredSamples||s.now!=l.retiredSeenAt){++l.retiredSamples;l.retiredSeenAt=s.now;}
-  if(l.retiredSamples>=2){l.phase=Phase::retired;r.holdControls=!l.wakeAuthorized;r.suppressProne=false;r.retired=true;r.reason="sleep_native_retired";return r;}
+  if(l.retiredSamples>=2){l.phase=Phase::retired;r.holdControls=!l.wakeAuthorized||retainedOnly;r.suppressProne=false;r.retired=true;r.reason=retainedOnly?"sleep_native_retired_readonly_pending":"sleep_native_retired";return r;}
   r.reason="sleep_native_retire_second_sample";return r;
  }
  l.retiredSamples=0;l.retiredSeenAt=0;
@@ -126,7 +155,7 @@ inline Receipt Observe(Lease& l,const Scope& s,const Sample& a) noexcept {
 // actor0 replacements, not merely a failed old read, changed HP or admission.
 inline bool RetireReplacement(Lease& l,bool firstTyped,const Sample& a,bool secondTyped,const Sample& b) noexcept {
  if(!Held(l)||!firstTyped||!secondTyped||!Same(a.owner,b.owner)||!RetiredSample(a)||!RetiredSample(b)||!a.owner.player||!a.owner.data||!a.owner.life||!a.owner.block||!a.owner.ps)return false;
- if(!std::isfinite(a.health)||!std::isfinite(b.health)||a.health<=0||b.health<=0)return false;
+ if(!std::isfinite(a.health)||!std::isfinite(b.health)||a.health<=0||b.health<=0||!ValidStun(a)||!ValidStun(b)||Bits(a.maximumStun)!=Bits(b.maximumStun))return false;
  if(a.owner.player==l.owner.player&&a.owner.data==l.owner.data&&a.owner.life==l.owner.life&&a.owner.block==l.owner.block&&a.owner.ps==l.owner.ps)return false;
  l.phase=Phase::retired;return true;
 }

@@ -17,6 +17,7 @@
 #include <mutex>
 #include <thread>
 #include <vector>
+#include "mgscoop/nametag_game.hpp"
 #include "mgscoop/partner_aim.hpp"
 #include "mgscoop/partner_aim_point.hpp"
 #include "mgscoop/partner_defer.hpp"
@@ -1170,6 +1171,53 @@ void TestJobWindow() {
         Check(!hk::RunJobWindow(w->go, &param, 1, &ProbeJob, pi::Consumer::drain0) && g_probe_ran == 3, "pool0 == block: refused");
         w->pool[0] = 0;
         Check(hk::RunJobWindow(w->go, &param, 1, &ProbeJob, pi::Consumer::drain0) && g_probe_ran == 4, "instance 1's block: windowed");
+    }
+    // A refused nested job from the pre-dispatch HUD probe keeps its own
+    // callback; it must not replace the outer drain's pending original.
+    {
+        static void* s_go = nullptr;
+        static const void* s_outer_param = nullptr;
+        static unsigned s_before = 0, s_outer = 0, s_nested = 0, s_order = 0;
+        static bool s_nested_windowed = true, s_outer_args = false, s_nested_args = false;
+        static std::uint32_t s_outer_held = 0;
+        s_go = w->go; s_before = s_outer = s_nested = s_order = 0;
+        s_nested_windowed = true; s_outer_args = s_nested_args = false; s_outer_held = 0;
+        struct CallbackOwnership {
+            static void Nested(void* go, const void* raw) noexcept {
+                ++s_nested;
+                const auto* p = static_cast<const pd::JobParam*>(raw);
+                s_nested_args = go == s_go && p && p->block == 0;
+                if (s_order == 1) s_order = 2;
+            }
+            static mgscoop::nametag_game::HudJobProbe Before(std::uintptr_t) noexcept {
+                ++s_before; s_order = 1;
+                pd::JobParam nested{0, 0, 0, 8, g_world.bits};
+                s_nested_windowed = hk::RunJobWindow(s_go, &nested, 0, &Nested, pi::Consumer::drain0);
+                return {};
+            }
+            static void Outer(void* go, const void* raw) noexcept {
+                ++s_outer;
+                s_outer_args = go == s_go && raw == s_outer_param;
+                s_outer_held = Get<std::uint32_t>(g_watch_src + 0x48);
+                if (s_order == 2) s_order = 3;
+            }
+        };
+        dispatch(w->root1, 8);  // refresh the qualified outer injection
+        pd::JobParam param{1, 0, 0, 8, g_world.bits};
+        s_outer_param = &param;
+        hk::RegisterHudProbe(&CallbackOwnership::Before, nullptr);
+        const bool windowed = hk::RunJobWindow(w->go, &param, 1, &CallbackOwnership::Outer, pi::Consumer::drain0);
+        hk::RegisterHudProbe(nullptr, nullptr);
+        Check(windowed && s_before == 1 && !s_nested_windowed && s_nested == 1 && s_nested_args,
+              "callback ownership: refused nested block0 executes only its own callback once");
+        Check(s_outer == 1 && s_outer_args && s_order == 3 && s_outer_held == kRemoteHeld,
+              "callback ownership: outer dispatch retains its callback, arguments and remote input");
+        Check(Get<std::uint32_t>(Addr(w->src) + 0x48) == kHostHeld &&
+                  Get<std::uintptr_t>(Addr(w->pp)) == pp_vt &&
+                  Get<std::uint32_t>(rec1 + c::rec_local) == 0x4u &&
+                  p1::detail::ReadForceForTest().id == -1,
+              "callback ownership: nested refusal does not prevent outer cleanup");
+        s_go = nullptr; s_outer_param = nullptr;
     }
     // Never a window (main or drain) while any batch is in flight.
     {

@@ -125,7 +125,6 @@ std::uint32_t g_consumer_last[pi::kConsumers]{};
 bool g_in_drain = false;
 pi::Injection g_drain_inj{};
 pi::Arm g_drain_arm{};
-JobCallFn g_job_fn = nullptr;
 volatile LONG g_wrap_floor = 0;   // PartnerWrap counting without an enabled Arm (census)
 volatile LONG g_wrap_native = 0;  // the enabled Arm is native
 volatile LONG g_n_frames = 0, g_n_views[3] = {0, 0, 0}, g_n_drain_windows = 0, g_n_drain_refused = 0, g_n_walk_windows = 0;
@@ -651,12 +650,13 @@ struct Call {
     void* ctx;
     void* root;
     std::uint32_t a, b;
+    JobCallFn job = nullptr;
 };
 inline constexpr std::uint8_t kMainEntry = 255;
-inline constexpr std::uint8_t kJobEntry = 5;  // partner_defer's drain: g_job_fn(go = ctx, param = root)
+inline constexpr std::uint8_t kJobEntry = 5;  // partner_defer's drain: this call's job(go = ctx, param = root)
 void CallOriginal(const Call& k) noexcept {
     switch (k.entry) {
-    case kJobEntry: g_job_fn(k.ctx, k.root); break;
+    case kJobEntry: k.job(k.ctx, k.root); break;
     case 0: g_svc_active(k.ctx, k.root, k.a); break;
     case 1: g_svc_all(k.ctx, k.root, k.a); break;
     case 2: g_svc_id(k.ctx, k.root, k.a, k.b); break;
@@ -1937,7 +1937,6 @@ const char* LookRefusalName(LookRefusal refusal) noexcept {
 void RegisterHudProbe(HudBeforeFn before, HudAfterFn after) noexcept { g_hud_before = before; g_hud_after = after; }
 
 bool RunJobWindow(void* go, const void* param, std::uint32_t block, JobCallFn job, pi::Consumer consumer) noexcept {
-    g_job_fn = job;
     pi::Arm a{};
     const bool have = g_ready && !g_faulted && ReadArm(a);
     const bool armed = have && g_inj_valid && a.enabled && a.native && a.config.mode == PartnerInput::net && a.gen == g_gen;
@@ -2040,7 +2039,7 @@ bool RunJobWindow(void* go, const void* param, std::uint32_t block, JobCallFn jo
         partner_look_source::Publish(a.ps1, 1, a.ps1_idx, j.look_pitch, j.look_yaw);
     // Always released (the detour and the published look) on every exit.
     const auto hud_probe = g_hud_before ? g_hud_before(a.P) : nametag_game::HudJobProbe{};
-    GuardedCall(a, save, Call{kJobEntry, go, const_cast<void*>(param), 0, 0}, true);
+    GuardedCall(a, save, Call{kJobEntry, go, const_cast<void*>(param), 0, 0, job}, true);
     if (g_hud_after) g_hud_after(hud_probe);
     g_in_drain = false;
     if (save.rings_saved) g_ring_prev[static_cast<std::size_t>(consumer)] = j.held;

@@ -1,0 +1,36 @@
+{
+  "executable_sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+  "activation": false,
+  "source_only": true,
+  "tests": "fixture source staged; not compiled/executed per coordinator",
+  "full_sites": 46,
+  "slots": 4,
+  "max_site_bytes": 1648,
+  "required_prior_manifest_sha256": "d451da207088d1705b2af9392810e38bd313bb82acbe7d005547d64f131b42d3",
+  "files": [
+    {
+      "path": "D:\\mgs-coop-scratch\\codex-oct11\\carry-passenger\\carry\\carry_queued_abort.hpp",
+      "sha256": "5194d850b30519a7fbbbe6a0aa6d34189b2b5d12d0764a21d132ff9038133f92"
+    },
+    {
+      "path": "D:\\mgs-coop-scratch\\codex-oct11\\carry-passenger\\carry\\carry_queued_abort_tests.cpp",
+      "sha256": "736465a10c6d01882e0625ba8bca2c61b2c06ca47d36747f54d23d0a26efd1e8"
+    },
+    {
+      "path": "D:\\mgs-coop-scratch\\codex-oct11\\carry-passenger\\carry\\carry_queued_abort_contract.hpp",
+      "sha256": "64f070dd2a439feb5db115f5aa2506c6805a7e9d220d1628a495d138da409cf4"
+    },
+    {
+      "path": "D:\\mgs-coop-scratch\\codex-oct11\\carry-passenger\\carry\\carry_queued_abort_code_gate.hpp",
+      "sha256": "ad4f05b734d603cbff860ab6c00eeb8b9566bf62ad29e1f08b30406408863554"
+    },
+    {
+      "path": "D:\\mgs-coop-scratch\\codex-oct11\\carry-passenger\\carry\\carry_queued_abort_exact_evidence.json",
+      "sha256": "c02a0298dfb89c4f405021e88a058ab5c11563ed3cd7bd06f1cf210dc9f9f687"
+    },
+    {
+      "path": "D:\\mgs-coop-scratch\\codex-oct11\\carry-passenger\\carry\\freeze_queued_abort.py",
+      "sha256": "a006f7e58ce83b356016f51f423ce1e456d726a5c67ed6bc38f510129749ab4b"
+    }
+  ]
+}

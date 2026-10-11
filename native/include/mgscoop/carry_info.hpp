@@ -11,6 +11,10 @@ struct BodyReply {
     std::uint16_t carryTarget=0xffff,carryPrevious=0xffff,carrier=0xffff,pluginFlags[4]{};
     std::uint8_t carryState[5]{};
     bool carryNodeActive=false;
+    bool recipientActive=false,recipientEndPending=false,reciprocalBinding=false;
+    std::uint8_t requestKind=0,requestSequence=0,requestForce=0;
+    std::uint16_t recipientCarrier=0xffff;
+    std::uint8_t recipientCurrent=0,recipientNext=0;
 };
 struct Reply {
     bool ready=false;
@@ -19,6 +23,9 @@ struct Reply {
     bool pluginReady=false,selectorOwnerMatches=false,selectorAccepts=false,playerCarryEnabled=false;
     std::uint16_t selectorTarget=0xffff;
     std::uint32_t cachedKind=0,currentKind=0,cachedFlags=0,currentFlags=0;
+    bool requestReady=false;const char* requestReason="disabled";
+    bool recipientReady=false;
+    const char* recipientReason="disabled";
     bool providerReady=false,providerPresent=false;
     std::uint32_t providerVtableRva=0;
     const char* providerReason="disabled";

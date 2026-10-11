@@ -81,9 +81,14 @@ function D.reset()
   resetHold(); publishHud(); if D.hitReset then D.hitReset() end
 end
 function D.stop()
-  if D.maskOwned then mask(false) end
+  -- Retain controls until native sleep retires.
+  if not D.nativeSleepActive and D.maskOwned then mask(false) end
   D.nativePending = D.nativePending or D.active or nil
   if D.nativePending and native(3, 0) then D.nativePending = nil end
+  if D.nativeSleepActive and not D.nativePending then
+    if D.maskOwned then mask(false) end
+    D.nativeSleepActive = nil
+  end
   D.active = false; D.reset()
 end
 function D.handleDeath(index)
@@ -136,6 +141,11 @@ H[OP.DOWNED_COMMIT] = function(v, now)
   D.commitSeen, D.remoteCommit, D.remoteCommitAt = v[1], v, now or W.now()
 end
 local function reviveLocal(generation)
+  if D.nativeSleepActive then
+    local wake = native(5, generation)
+    if not wake or wake.applied ~= true or wake.nativeSleepReleaseReady ~= true or
+      wake.generation ~= generation then return false end
+  end
   if D.unlockGeneration ~= generation then
     if not mask(false) then return false end
     D.unlockGeneration, D.unlockAt = generation, W.now()
@@ -176,6 +186,7 @@ local function poll(now)
   end
   if D.revivePoll then r.held = D.revivePoll(r, now) end
   D.refusalAt = nil
+  D.nativeSleepActive = r.nativeSleepActive == true or nil
   D.active, D.boundMission, D.boundEpoch = true, W.mission, W.epoch
   if D.unlockGeneration and D.unlockGeneration ~= r.generation then D.unlockGeneration, D.unlockAt = nil, nil end
   if r.down and D.unlockGeneration ~= r.generation then

@@ -17,14 +17,20 @@ struct Reply {
     std::uint32_t hitSequence, hitDamageMilli;
     std::uint8_t hitCause;
     const char* reason;
+    bool nativeSleepActive=false, nativeSleepReleaseReady=false;
 };
 // Process-owned addresses, after BOTH exact-image gates. Never enable from a
 // Lua claim. False leaves all gameplay and damage unchanged.
 void Configure(const partner_player::Addresses& addresses, bool verified) noexcept;
+// Separate immutable exact transition/seed gate, supplied by the coordinator.
+// Toggle is worker/copy-save/local-body0 only and refuses a live downed lease.
+void ConfigureNativeSleepTest(bool passed) noexcept;
+bool SetNativeSleepTest(bool enabled) noexcept;
 // Called by the natural Lua owner. `admitted` is supplied by the native paired
 // world/mission/save gate. Commands: 0 poll/arm, 1 confirm lock, 2 exact-generation
 // revive, 3 disarm an owned old mission/epoch, 4 read the observed named revive
-// ACTION mask (generation argument must equal kReviveActionHash). No Lua pointers are accepted.
+// ACTION mask (generation argument must equal kReviveActionHash), 5 worker-only
+// authorized native sleep wake/preflight while named masks remain. No Lua pointers.
 bool Control(std::uint32_t mission, std::uint16_t epoch, bool admitted,
              std::uint8_t command, std::uint32_t generation, Reply& out) noexcept;
 // Read-only admission used by the coordinator's exact damage hook for both the
@@ -43,6 +49,9 @@ struct Snapshot {
     std::uint64_t lastPoll, lastControls;
     float life, maximum;
     const char* reason;
+    bool nativeSleepEnabled=false, nativeSleepActive=false;
+    float nativeStun=0, nativeMaximumStun=0;
+    std::uint8_t nativePhase=0;std::uint32_t nativeSampleSequence=0;std::uint64_t nativeSampleAt=0;
 };
 Snapshot GetSnapshot() noexcept; // cache only; no game reads/calls
 bool PassiveOfflineContext(std::uintptr_t P, std::uint32_t& local) noexcept;

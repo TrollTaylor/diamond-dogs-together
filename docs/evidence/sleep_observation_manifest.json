@@ -1,0 +1,39 @@
+{
+  "scope": "frozen V10 read-only native-sleep observation distinction; no main/runtime access or games",
+  "base_v9_manifest_sha256": "1DE6C341D344595D543BD68DB281775E5E9C6818041BF44FCFCCE3A29909DE06",
+  "tests": "198 lease+286 controls strict MSVC /std:c++17 /EHsc /W4 /WX /O2 fixture checks passed",
+  "integration_files": [
+    "sleep_body0_lease.hpp",
+    "sleep_worker_controls.hpp",
+    "sleep_worker_controls_tests.cpp"
+  ],
+  "unchanged_lease_fixture": "copied for isolatedcomposedvalidation; all198pass",
+  "changes": "Distinct ObservationProof binds exactcurrentowner/time/window; mutationScope unchanged andstrongcap enforcedinCasWindow; actualmagnitudezero/fullmasks retainpostseedreadonlylease acrosscompletedwindows, neverreleaseReady",
+  "files": [
+    {
+      "path": "sleep_body0_lease.hpp",
+      "bytes": 12763,
+      "sha256": "7594A5AFD90A9196AE48BE1A5933500DFF107FE3C92C3B269FC9FFAD7F5CBBF9"
+    },
+    {
+      "path": "sleep_worker_controls.hpp",
+      "bytes": 5256,
+      "sha256": "903695207BDB99DF8BFA55F5ED836F0345C4F65B0B4F986080411ED1D2158594"
+    },
+    {
+      "path": "sleep_worker_controls_tests.cpp",
+      "bytes": 17550,
+      "sha256": "22DC1C6F3092604E91BCB6071C071477557E8D347BF6C818FBA082C639880C4C"
+    },
+    {
+      "path": "sleep_body0_lease_tests.cpp",
+      "bytes": 13592,
+      "sha256": "A5A4E08EBC0B1DA2C2C00D8A4159037A5E743FE642CFE8A9B94183AF662CDA35"
+    },
+    {
+      "path": "sleep_observation_proof.json",
+      "bytes": 3851,
+      "sha256": "1E3D91836961D8D1A53BEADF32461D6C6E59E676A8D4F85C461127CAF6A88851"
+    }
+  ]
+}

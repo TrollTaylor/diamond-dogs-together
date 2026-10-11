@@ -81,6 +81,13 @@ local function fixture(host)
             n.down, n.cause = false, 0
             local r = copy(n); r.ready, r.applied = false, true; return r
         end
+        if command == 5 then
+            c.wakeAttempts = (c.wakeAttempts or 0) + 1
+            check(c.mask == true, 'native sleep wake request retains named full input lock')
+            local r = copy(n)
+            r.applied, r.nativeSleepReleaseReady = c.nativeRetired == true, c.nativeRetired == true
+            return r
+        end
         if command == 2 then
             c.reviveAttempts = (c.reviveAttempts or 0) + 1
             if c.failRevive or not n.down or generation ~= n.generation then return nil end
@@ -672,5 +679,29 @@ for _, refusal in ipairs({'healthy_poll', 'sleeping_poll', 'sleeping_lock'}) do
     for _ = 1, 30 do step(host, guest, 100) end
     check(not target.revived and target.native.down,
         'pre-refusal duration cannot trigger an early wake after recovery: ' .. refusal)
+end
+-- Native pose retirement precedes releasing the named mask and health cycle.
+do
+    local host, guest = pair()
+    guest.native.nativeSleepActive = true
+    down(guest, 2); step(host, guest, 100)
+    host.native.held = true
+    for _ = 1, 40 do step(host, guest, 100) end
+    check(guest.wakeAttempts and guest.wakeAttempts > 0 and guest.mask and not guest.maskResets and not guest.revived,
+        'host grant waits for actual native sleep retirement while all controls stay masked')
+    guest.nativeRetired = true
+    for _ = 1, 5 do step(host, guest, 100) end
+    check(guest.revived == 1 and not guest.mask and guest.maskResets == 1,
+        'only the exact ready native retirement receipt permits final mask release and revive')
+    local c = fixture(true); c.native.nativeSleepActive = true; down(c, 2); c.D.tick(0)
+    c.refuseCleanup = true; c.W.paired = false; c.W.unpairedHooks[1]()
+    check(c.mask and c.D.maskOwned and c.D.nativeSleepActive and c.D.nativePending and not c.maskResets,
+        'unpair cannot discard masks or native pose lease while retirement is pending')
+    c.W.startHooks[1](); c.D.tick(100)
+    check(c.mask and c.D.nativeSleepActive and c.D.nativePending,
+        'new scene cannot erase old native sleep cleanup ownership')
+    c.refuseCleanup = false; c.D.tick(200)
+    check(not c.mask and not c.D.maskOwned and not c.D.nativePending and not c.D.nativeSleepActive,
+        'confirmed old native sleep cleanup releases only its own masks once')
 end
 print(checks .. ' downed policy checks: native gating, 3D range, continuous holds, generations, ordered status, grants, shared failure and cleanup; no game calls')

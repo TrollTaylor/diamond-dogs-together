@@ -1,0 +1,59 @@
+{
+  "status": "frozen, no native activation",
+  "executable_sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+  "strict_fixture_result": "MSVC /std:c++17 /EHsc /W4 /WX:76 passed,0 failed",
+  "runtime_tested": false,
+  "native_calls_added": false,
+  "game_memory_writes_added": false,
+  "full_sites": 71,
+  "typed_slots": 8,
+  "maximum_site_bytes": 6624,
+  "integration": "Reader defaults include carry_plugin_read.hpp, matching main corrected row32 header. Scratch tests choose the frozen row32 header with MGS_CARRY_PARENT_READER_HEADER. New CodeGate must pass in addition to existing carry_plugin CodeGate before Scope.exactGate is set; two coherent reads plus fresh coordinator WindowSeq/ownership before and after required. Reader outputs internal native identities only; public query must never export pointers or claim attachment. Pure policy fullyQualified remains false until actual activation/cancellation/window contracts qualify. No main files changed.",
+  "dependencies": [
+    {
+      "name": "carry_plugin_row32_read.hpp",
+      "sha256": "9ac8f48f84cbfcb211f0dc478d9c50e2a0a1403144bbcf6d47c6ce5ba0b92ebe"
+    },
+    {
+      "name": "carry_request_payload.hpp",
+      "sha256": "7c24ed60a611a2dc0f880f60c93912a5d5ba46ca7da8ce66fc60fe8a4b717f5f"
+    }
+  ],
+  "files": [
+    {
+      "name": "carry_recipient_read.hpp",
+      "size": 5447,
+      "sha256": "6dda7ed90f629a126b11613565fb220c256463a401934acd574269c042394f07"
+    },
+    {
+      "name": "carry_owned_handshake.hpp",
+      "size": 4426,
+      "sha256": "f92f3e5f0e850f253410a0392093c0e171123d6b77df04a3fde4a7f6c366283a"
+    },
+    {
+      "name": "carry_owned_handshake_contract.hpp",
+      "size": 147227,
+      "sha256": "6d5a2faa9e39859121ed4bbe9df7a4980c1f95177aa35b3f9153cdc63729b034"
+    },
+    {
+      "name": "carry_owned_handshake_evidence.json",
+      "size": 86403,
+      "sha256": "59581effff74cd3040599c6581e24de6e8e5550350190c52292c4b13c13dab61"
+    },
+    {
+      "name": "carry_owned_handshake_tests.cpp",
+      "size": 13044,
+      "sha256": "63928e0fffa6f35a1ff06cb5c3695f72ffa906fa4a29b8c5ef5bcdf85bb09c11"
+    },
+    {
+      "name": "freeze_carry_owned_handshake.py",
+      "size": 9083,
+      "sha256": "04357bbf44e0d9d3574590174a88f8a036c17fdf58942af939ce60fd5e44ebca"
+    },
+    {
+      "name": "write_carry_owned_tests.py",
+      "size": 10080,
+      "sha256": "061a7172cb91ce9fc521376cdea9e8edc6b7877ff5c0e73878bb8f760ec848d6"
+    }
+  ]
+}

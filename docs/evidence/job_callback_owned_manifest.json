@@ -1,0 +1,28 @@
+{
+  "scope": "Narrow source callback ownership fix and nested refused-block0 HUD-before regression. Ordinary refusal forwarding unchanged; no new native pose activation. Main untouched; no compilation/runtime.",
+  "files": [
+    {
+      "source": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\native\\partner_input_hook.cpp",
+      "source_bytes": 126035,
+      "source_sha256": "37e7bb86d4354c90247b96b57921b21e24193481a11c5c8040d5b1af0e6355e0",
+      "destination": "D:\\mgs-coop-scratch\\codex-oct11\\carry-passenger\\sleep\\job-callback-owned-v1\\native\\partner_input_hook.cpp",
+      "bytes": 126022,
+      "sha256": "4a5910c1786fbe4f05f4d22a77a2d4d63f41a90dc556ccac500df29cb1df872f"
+    },
+    {
+      "source": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\tests\\partner_defer_tests.cpp",
+      "source_bytes": 137283,
+      "source_sha256": "ea88fa77c12f2f530827fa085028e4b9cf651bc8324f3c84b3b68417325acdf3",
+      "destination": "D:\\mgs-coop-scratch\\codex-oct11\\carry-passenger\\sleep\\job-callback-owned-v1\\tests\\partner_defer_tests.cpp",
+      "bytes": 140128,
+      "sha256": "19077ef6fa7bfb3bd22f0d2f8627377183f965760b43b81cf2a539ac716878cd"
+    }
+  ],
+  "diff": {
+    "path": "D:\\mgs-coop-scratch\\codex-oct11\\carry-passenger\\sleep\\job-callback-owned-v1\\changes.diff",
+    "bytes": 5905,
+    "sha256": "2ff12ddbfde2ccae7afc7b5974f8d8d68479789f968525022bb694ddd1f0ab88"
+  },
+  "validation": "Read-only exact source edit counts/assertions passed. Regression staged, not compiled or run; coordinator owns main build/integration.",
+  "regression": "HUD-before invokes different callback through deliberately refused block0 RunJobWindow before outer dispatch. Old global pointer makes nested callback run twice and outer callback zero times. New per-Call pointer preserves each callback, arguments, remote input and cleanup."
+}
