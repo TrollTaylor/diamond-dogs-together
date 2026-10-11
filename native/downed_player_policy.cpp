@@ -6,6 +6,21 @@ namespace detail {
 namespace {
 bool SameCrawl(float a, float b) noexcept { return std::memcmp(&a, &b, sizeof(float)) == 0; }
 }
+bool ControlsExpired(std::uint64_t now, std::uint64_t downAt, std::uint64_t lastControls,
+    bool previouslyApplied, bool currentlyApplied) noexcept {
+    // Confirm this frame before considering age; a paused still-locked body
+    // never fails merely because its first hit timestamp is old.
+    if (currentlyApplied) return false;
+    const auto at = previouslyApplied ? lastControls : downAt;
+    const auto limit = previouslyApplied ? kControlsLostMs : kControlsAcquireMs;
+    return now < at || now - at > limit;
+}
+const char* ControlsPendingReason(bool prone, bool masked, bool crawl) noexcept {
+    if (!prone) return "controls_pending_prone";
+    if (!masked) return "controls_pending_mask";
+    if (!crawl) return "controls_pending_crawl";
+    return "downed";
+}
 const char* PadRefusal(const PadScope& s) noexcept {
     if (!s.freshUpdate) return "not_fresh";
     if (!s.outerUpdate) return "nested";

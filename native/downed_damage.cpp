@@ -217,6 +217,15 @@ float Calculate(void* object,std::uint32_t id,void* packet,void* record,std::uin
     const auto decision=Evaluate(scoped,id,hit.local,hit.attacker,hit.flags,hit.bodyPart,hit.life,amount,stun_amount,mode_read?output_mode:0,false);
     bool downed=decision.bypass;
     if(decision.cause) downed=downed_player::CaptureHit(hit.player,id,decision.cause);
+    // Record the actual first native lethal packet even after the general
+    // sample budget was consumed by earlier friendly or nonlethal hits.
+    if(downed && decision.cause==1 && logger) {
+        char line[256]{};
+        std::snprintf(line,sizeof(line),"downed_damage=lethal_capture;id=%u;attacker=%u;life=%.3f;damage=%.3f;scoped=%u;flags=0x%x;part=%u;thread=%u;tick_ms=%llu\r\n",
+            id,unsigned(hit.attacker),double(hit.life),double(amount),scoped?1u:0u,unsigned(hit.flags),unsigned(hit.bodyPart),
+            GetCurrentThreadId(),static_cast<unsigned long long>(GetTickCount64()));
+        logger(line);
+    }
     // Even when revival is temporarily unavailable, an exact offline teammate
     // dart must not enter the verified null-synchronizer notification path.
     if(!downed && !unsafe_notification) return amount;

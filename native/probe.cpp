@@ -18,7 +18,7 @@
 #endif
 
 #ifndef MGS_COOP_PROBE_VERSION
-#define MGS_COOP_PROBE_VERSION "0.12.2"
+#define MGS_COOP_PROBE_VERSION "0.12.3"
 #endif
 
 namespace {

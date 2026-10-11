@@ -64,6 +64,14 @@ PadObservation AfterPadUpdate(std::uintptr_t pad, bool outerUpdate, bool exactCa
 void Shutdown() noexcept;
 namespace detail {
 inline constexpr std::uint64_t kScopeLeaseMs = 750;
+// Initial hit reactions can postpone a natural stance request. Protect only the
+// current fresh owned positive-health cycle for a bounded acquisition interval;
+// a confirmed lock that later disappears retains the shorter failure deadline.
+inline constexpr std::uint64_t kControlsAcquireMs = 6000;
+inline constexpr std::uint64_t kControlsLostMs = 1500;
+bool ControlsExpired(std::uint64_t now, std::uint64_t downAt, std::uint64_t lastControls,
+    bool previouslyApplied, bool currentlyApplied) noexcept;
+const char* ControlsPendingReason(bool prone, bool masked, bool crawl) noexcept;
 // Cap freshly computed movement magnitude only. Heading, look, source axes and
 // deadzone remain retail-owned. Next natural update restores current real input.
 inline constexpr float kDownedInputMagnitude = .25f;

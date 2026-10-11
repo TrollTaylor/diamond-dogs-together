@@ -115,7 +115,7 @@ set(_mgs_world_chunks "${_mgs_coop}/world_sync.lua" "${_mgs_coop}/world_enemy.lu
 mgs_add_lua_check(world_sync_lua_check ${_mgs_world_chunks})
 mgs_add_lua_check(world_downed_lua_check "${_mgs_coop}/world_downed.lua" "${_mgs_coop}/world_friendly.lua")
 mgs_add_lua_check(world_revive_input_lua_check "${_mgs_coop}/world_downed.lua" "${_mgs_coop}/world_revive_input.lua" "${_mgs_coop}/world_sync.lua")
-mgs_add_lua_check(world_buddy_lua_check "${_mgs_coop}/world_buddy.lua")
+mgs_add_lua_check(world_buddy_lua_check "${_mgs_coop}/world_buddy.lua" "${_mgs_coop}/debug_buddy.lua")
 mgs_add_lua_check(world_buddy_ride_lua_check "${_mgs_coop}/world_buddy_ride.lua")
 mgs_add_lua_check(debug_buddy_lua_check "${_mgs_coop}/debug_buddy.lua" "${_mgs_coop}/debug_menu.lua")
 mgs_add_lua_check(world_follow_lua_check "${_mgs_coop}/world_follow.lua" "${_mgs_coop}/world_follow_seed.lua")

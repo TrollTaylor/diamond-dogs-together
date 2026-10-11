@@ -1,5 +1,7 @@
 -- Host/guest recording fixture for world_buddy.lua. No game, network, or saves.
 local file = assert(arg[1], "world_buddy.lua required")
+local limit=assert(io.open(file,"rb"));local bytes=limit:read("*a");limit:close()
+assert(#bytes:gsub("\r\n","\n")<=16000 and #bytes:gsub("\r?\n","\r\n")<=16000,"world buddy literal fits LF/CRLF ceiling")
 local checks = 0
 local function check(v, why) checks = checks + 1; if not v then error(checks .. ": " .. why, 2) end end
 local function vec(x,y,z) return {GetX=function()return x end,GetY=function()return y end,GetZ=function()return z end} end
@@ -266,18 +268,19 @@ g=F(false);g:sample();g.aiError=true;g:tick()
 check(g.B.disabled and g.B.s.owned and g.B.s.aiHeld and g.B.s.releaseOnly,"command exception preserves only owned cleanup while disabling follow")
 local packets=#g.tx;g.aiError=false;g:tick(1250)
 check(g.B.disabled and not g.B.s.owned and g:count("CallBuddy")==1 and #g.tx==packets,"disabled follower retries exact cleanup without follow or packets")
--- A ride may take the singleton selector. Follow keeps commanding the current
--- dog until that call lands, and never dismisses or recalls it.
+-- A ride clears the native held target before giving up Dog cleanup ownership.
+-- It never calls the selector itself or re-arms follow during the handoff.
 g=F(false);g:sample();g:tick()
 local before=g:count("CallBuddy")
-check(g.B.yieldForRide()==true and g.B.s.rideYield and not g.B.s.owned and g.B.s.yieldedOwned and not g.B.disabled and g:count("CallBuddy")==before,"ride yield drops cleanup ownership without calling the selector or disabling follow")
+check(g.B.yieldForRide()==true and g.B.s.rideYield and not g.B.s.owned and g.B.s.yieldedOwned and not g.B.disabled and g:count("CallBuddy")==before,"ride yield clears the target then drops ownership without a selector call")
+check(g.calls[#g.calls].name=="LuaAiStayAndSnarl" and g.calls[#g.calls].cmd.position==nil and g.B.s.yieldedOwned.aiHeld==nil,"exact omitted-position clear precedes the ownership snapshot")
 g:sample(2);g:tick(1250)
-check(g:count("CallBuddy")==before and not g.B.s.owned and g:count("LuaAiStayAndSnarl")==2,"yielded dog follow keeps the host target without reclaiming the selector")
+check(g:count("CallBuddy")==before and not g.B.s.owned and g:count("LuaAiStayAndSnarl")==2 and not g.B.s.aiHeld,"yielded Dog does not re-arm native follow while horse loading begins")
 g.buddy=1;g:sample(3);g:tick(1500)
 check(g:count("CallBuddy")==before and not g.B.s.owned and not g.B.disabled and g.B.s.rideYield and g.tx[#g.tx][4]==0,"horse selector stays yielded and the host dog is still acknowledged")
 g.B.keepRideYield();check(not g.B.s.yieldedOwned and g.B.s.rideYield,"accepted ride forgets the cleanup snapshot")
 g.buddy=2;g:sample(4);g:tick(1750)
-check(not g.B.s.owned and g:count("CallBuddy")==before,"accepted ride does not borrow the dog back if the type flickers")
+check(not g.B.s.owned and not g.B.s.aiHeld and g:count("CallBuddy")==before and g:count("LuaAiStayAndSnarl")==2,"accepted ride never re-arms an unowned Dog when native type flickers")
 g=F(false);g:sample();g:tick();g.B.yieldForRide();local calls=g:count("CallBuddy");g:unpair()
 check(g:count("CallBuddy")==calls and not g.B.s.owned,"yielding the selector does not dismiss the dog")
 g=F(false);g.buddy=0;g:sample();g:tick()
@@ -290,6 +293,63 @@ check(g.B.resumeFollow()==true and g.B.s.owned and g.B.s.original==0 and not g.B
 g:unpair();check(g.calls[#g.calls].name=="CallBuddy" and g.calls[#g.calls].kind==0,"restored borrow still dismisses only that dog")
 g=F(false);g:sample();g:tick();g.B.yieldForRide();g.buddy=1
 check(g.B.resumeFollow()==true and not g.B.s.owned and g:count("CallBuddy")==0,"resume after the ride lands does not despawn or recall the dog")
+-- A failed handoff keeps cleanup ownership, and a refused Horse request can
+-- resume native Dog following from the genuinely cleared target state.
+for _,fault in ipairs({"pose","id","clearFalse","clearError","demo","epoch","mission"})do
+ g=F(false);g:sample();g:tick();local ai=g:count("LuaAiStayAndSnarl")
+ if fault=="pose"then g.nativeReply={ready=false,reason="dog_changed"}
+ elseif fault=="id"then g.id=65535 elseif fault=="clearFalse"then g.aiResult=false
+ elseif fault=="clearError"then g.aiError=true elseif fault=="demo"then g.demo=true
+ elseif fault=="epoch"then g.W.epoch=43 else g.W.mission=30020 end
+ check(g.B.yieldForRide()==false and g.B.s.owned and g.B.s.aiHeld and not g.B.s.rideYield and not g.B.s.yieldedOwned,"unqualified/failed clear retains borrowed ownership: "..fault)
+ check(g:count("CallBuddy")==0,"refused yield never invokes the selector: "..fault)
+ check(g:count("LuaAiStayAndSnarl")==ai+((fault=="clearFalse"or fault=="clearError")and 1 or 0),"only a qualified Dog clear can be submitted: "..fault)
+end
+g=F(false);g:sample();g:tick();g.B.yieldForRide();g.B.resumeFollow()
+check(g.B.s.owned and not g.B.s.aiHeld and not g.B.s.rideYield,"refused Horse call restores actual cleared Dog ownership")
+g:sample(2);g:tick(1250)
+check(g.B.s.aiHeld and g:count("LuaAiStayAndSnarl")==3 and g.calls[#g.calls].cmd.position~=nil,"next fresh host sample re-arms the native Dog target")
 h=F(true);h.B.s.rideYield=true;h:tick()
 check(h.tx[1][3]==1 and h.tx[1][4]==1 and h:count("CallBuddy")==0 and not h.B.disabled,"host dog follow still publishes while a guest ride holds its own selector")
+-- Optional composition exercises the real debug helper against the real
+-- follower, while only native engine boundaries remain recorded fixtures.
+if arg[2]then
+ local function debugGuest()
+  local c=F(false);c:sample();c:tick()
+  local env,W,D=c.env,c.W,{mission=30010}
+  c.debugLogs={}
+  env.PlayerStatus={ON_HORSE=8};env.PlayerInfo={OrCheckStatus=function(a)return false end}
+  local dogId=W.api.buddyId
+  W.api.buddyId=function(t,i)if t=="TppHorse2"then check(i==0,"composed horse lookup is zero only");return 6656 end;return dogId(t,i)end
+  env.GameObject.DoesGameObjectExistWithTypeName=function(t)check(t=="TppHorse2","composed exact Horse class query");return c.buddy==1 end
+  W.api.buddyCall=function(k,p,y)
+   check(k==1 and not c.B.s.owned and not c.B.s.aiHeld and c.B.s.rideYield,"stock Horse request follows the native Dog clear and selector yield")
+   check(c.calls[#c.calls].name=="LuaAiStayAndSnarl" and c.calls[#c.calls].cmd.position==nil,"native held-target clear is the last mutation before horse selection")
+   c.calls[#c.calls+1]={name="CallBuddy",kind=k,pos=p,yaw=y}
+   return c.callResult~=false
+  end
+  D.api={get=function(t,k)return t and t[k]end,call=function(t,k,...)return t[k](...)end,
+   integer=function(n,l,h)return type(n)=="number"and n==math.floor(n)and n>=l and n<=h end,
+   finite=function(n)return type(n)=="number"and n==n and math.abs(n)<1e15 end,
+   pose=function()return{100,340,200,45}end,
+   note=function(id,ok,msg)c.debugLogs[#c.debugLogs+1]={id,ok,msg}end}
+  env.e.MgsCoopDebug=D;setfenv(assert(loadfile(arg[2])),env)()
+  c.D=D;return c
+ end
+ g=debugGuest();local ok,msg=g.D.buddy.run({"horse_spawn"},17)
+ check(ok and msg:find("submitted_horse;",1,true) and g:count("CallBuddy")==1 and g:count("LuaAiStayAndSnarl")==2,"F9 clears the held Dog then requests Horse once")
+ g:sample(2);g:tick(1250)
+ check(g:count("LuaAiStayAndSnarl")==2 and not g.B.s.aiHeld,"still-selected Dog cannot re-arm while the actual debug request loads")
+ g.buddy=1;g.D.pending.frames=1;g.D.pending.poll()
+ check(not g.D.pending and g.debugLogs[1][2] and g.debugLogs[1][3]:find("arrival=unverified",1,true),"composed selected type still does not assert horse arrival")
+ g=debugGuest();g.callResult=false;ok,msg=g.D.buddy.run({"horse_spawn"},18)
+ check(not ok and msg=="horse_call_refused" and g.B.s.owned and not g.B.s.aiHeld and not g.B.s.rideYield,"real helper refusal restores the cleared borrow")
+ g:sample(2);g:tick(1250)
+ check(g.B.s.aiHeld and g:count("LuaAiStayAndSnarl")==3,"helper refusal re-arms normal follow on the next fresh sample")
+ for _,fault in ipairs({"pose","clearFalse","clearError"})do
+  g=debugGuest();if fault=="pose"then g.nativeReply={ready=false,reason="dog_changed"}elseif fault=="clearFalse"then g.aiResult=false else g.aiError=true end
+  ok,msg=g.D.buddy.run({"horse_spawn"},19)
+  check(not ok and msg=="dog_borrowed" and g:count("CallBuddy")==0 and g.B.s.owned and g.B.s.aiHeld and not g.D.pending,"real helper never calls Horse when native Dog cleanup refuses: "..fault)
+ end
+end
 print("world_buddy_lua_check: " .. checks .. " checks passed")

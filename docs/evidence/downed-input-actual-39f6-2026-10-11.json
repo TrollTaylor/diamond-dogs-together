@@ -1,0 +1,1339 @@
+{
+  "run_id": "39f6a904dc704ce799a1a1fb038788bb",
+  "source_commit": "f26c75a",
+  "source_commit_provenance": "coordinator-reported frozen build",
+  "captures_sha256": "0759961af535309dd0039c81aa3961eff14f22cc8e275b9570648521933df0b1",
+  "run_directory": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runtime\\39f6a904dc704ce799a1a1fb038788bb",
+  "method": "Euclidean3D position difference divided by each role own tick delta; frames1->4 includes acceleration, frames2->4 is shorter established motion; replica uses receiver body_pos, decodedremote uses receiver remote_pos. These are physical positions, not the rate or input readout.",
+  "phases": [
+    {
+      "label": "healthy-crawl",
+      "source": "guest",
+      "receiver": "host",
+      "timing_ok": true,
+      "intervals": {
+        "1->4": {
+          "local": {
+            "dt_s": 1.437,
+            "distance_m": 2.209492714584069,
+            "speed_mps": 1.5375732182213422,
+            "speed_xz_mps": 1.535193146677897,
+            "from": [
+              800.77802,
+              338.81812,
+              1639.35889
+            ],
+            "to": [
+              798.64551,
+              338.94101,
+              1639.92383
+            ]
+          },
+          "replica": {
+            "dt_s": 1.422,
+            "distance_m": 2.1500396944009603,
+            "speed_mps": 1.511982907454965,
+            "speed_xz_mps": 1.5095949368175863,
+            "from": [
+              800.7569,
+              338.8201,
+              1639.33044
+            ],
+            "to": [
+              798.66687,
+              338.94089,
+              1639.82019
+            ]
+          },
+          "decodedremote": {
+            "dt_s": 1.422,
+            "distance_m": 2.114407814140862,
+            "speed_mps": 1.4869253264000437,
+            "speed_xz_mps": 1.484527534026863,
+            "from": [
+              800.81305,
+              338.815,
+              1639.33411
+            ],
+            "to": [
+              798.77905,
+              338.93503,
+              1639.89905
+            ]
+          }
+        },
+        "2->4": {
+          "local": {
+            "dt_s": 0.984,
+            "distance_m": 1.6851269972616405,
+            "speed_mps": 1.7125274362415046,
+            "speed_xz_mps": 1.7103335552409447,
+            "from": [
+              800.29535,
+              338.85574,
+              1639.59155
+            ],
+            "to": [
+              798.64551,
+              338.94101,
+              1639.92383
+            ]
+          },
+          "replica": {
+            "dt_s": 0.984,
+            "distance_m": 1.6938888125553127,
+            "speed_mps": 1.7214317200765372,
+            "speed_xz_mps": 1.7191862610092625,
+            "from": [
+              800.32361,
+              338.8544,
+              1639.47815
+            ],
+            "to": [
+              798.66687,
+              338.94089,
+              1639.82019
+            ]
+          },
+          "decodedremote": {
+            "dt_s": 0.984,
+            "distance_m": 1.6790201727495702,
+            "speed_mps": 1.7063213137698885,
+            "speed_xz_mps": 1.7039213775719488,
+            "from": [
+              800.42004,
+              338.84601,
+              1639.55505
+            ],
+            "to": [
+              798.77905,
+              338.93503,
+              1639.89905
+            ]
+          }
+        }
+      },
+      "frames": [
+        {
+          "label": "healthy-crawl-01",
+          "source_tick": 101163656,
+          "receiver_tick": 101163687,
+          "frame_tick": 101163625,
+          "state_delta_ms": 31.0,
+          "source_stance": 3,
+          "source_speed_class": 2,
+          "replica_stance": 3,
+          "replica_speed_class": 2,
+          "held": 2097152,
+          "received_mag": 1000,
+          "sampled_action_mag": 1000,
+          "source_crawl_rate": 1500,
+          "replica_crawl_rate": 1500,
+          "position_error_m": 0.0565,
+          "recon": {
+            "along_mm": 18,
+            "cross_mm": 35,
+            "nudges": 0,
+            "snaps": 0,
+            "dv_along_mmps": 0
+          },
+          "native_body_velocity_mmps": 361,
+          "native_sender_velocity_mmps": 435
+        },
+        {
+          "label": "healthy-crawl-02",
+          "source_tick": 101164109,
+          "receiver_tick": 101164125,
+          "frame_tick": 101164171,
+          "state_delta_ms": 62.0,
+          "source_stance": 3,
+          "source_speed_class": 2,
+          "replica_stance": 3,
+          "replica_speed_class": 2,
+          "held": 2097152,
+          "received_mag": 1000,
+          "sampled_action_mag": 1000,
+          "source_crawl_rate": 1500,
+          "replica_crawl_rate": 1500,
+          "position_error_m": 0.12363,
+          "recon": {
+            "along_mm": 64,
+            "cross_mm": 99,
+            "nudges": 0,
+            "snaps": 0,
+            "dv_along_mmps": -113
+          },
+          "native_body_velocity_mmps": 1117,
+          "native_sender_velocity_mmps": 1230
+        },
+        {
+          "label": "healthy-crawl-03",
+          "source_tick": 101164656,
+          "receiver_tick": 101164562,
+          "frame_tick": 101164625,
+          "state_delta_ms": 31.0,
+          "source_stance": 3,
+          "source_speed_class": 2,
+          "replica_stance": 3,
+          "replica_speed_class": 2,
+          "held": 2097152,
+          "received_mag": 1000,
+          "sampled_action_mag": 1000,
+          "source_crawl_rate": 1500,
+          "replica_crawl_rate": 1500,
+          "position_error_m": 0.14499,
+          "recon": {
+            "along_mm": 64,
+            "cross_mm": 102,
+            "nudges": 0,
+            "snaps": 0,
+            "dv_along_mmps": 13
+          },
+          "native_body_velocity_mmps": 1617,
+          "native_sender_velocity_mmps": 1604
+        },
+        {
+          "label": "healthy-crawl-04",
+          "source_tick": 101165093,
+          "receiver_tick": 101165109,
+          "frame_tick": 101165093,
+          "state_delta_ms": 0.0,
+          "source_stance": 3,
+          "source_speed_class": 2,
+          "replica_stance": 3,
+          "replica_speed_class": 2,
+          "held": 2097152,
+          "received_mag": 1000,
+          "sampled_action_mag": 1000,
+          "source_crawl_rate": 1500,
+          "replica_crawl_rate": 1500,
+          "position_error_m": 0.13725,
+          "recon": {
+            "along_mm": 67,
+            "cross_mm": 98,
+            "nudges": 0,
+            "snaps": 0,
+            "dv_along_mmps": -18
+          },
+          "native_body_velocity_mmps": 1634,
+          "native_sender_velocity_mmps": 1652
+        }
+      ]
+    },
+    {
+      "label": "downed-crawl",
+      "source": "guest",
+      "receiver": "host",
+      "timing_ok": true,
+      "intervals": {
+        "1->4": {
+          "local": {
+            "dt_s": 1.531,
+            "distance_m": 1.2041982815964014,
+            "speed_mps": 0.7865436195926855,
+            "speed_xz_mps": 0.7860012992458203,
+            "from": [
+              797.35138,
+              338.99582,
+              1640.15991
+            ],
+            "to": [
+              796.16425,
+              339.04053,
+              1640.35693
+            ]
+          },
+          "replica": {
+            "dt_s": 1.469,
+            "distance_m": 1.6783112902557396,
+            "speed_mps": 1.142485561780626,
+            "speed_xz_mps": 1.1420115609691763,
+            "from": [
+              797.34204,
+              339.00128,
+              1640.03162
+            ],
+            "to": [
+              795.72437,
+              339.04962,
+              1640.47607
+            ]
+          },
+          "decodedremote": {
+            "dt_s": 1.469,
+            "distance_m": 1.1664674896455904,
+            "speed_mps": 0.7940554728697007,
+            "speed_xz_mps": 0.7934648965838729,
+            "from": [
+              797.37805,
+              338.99503,
+              1640.15613
+            ],
+            "to": [
+              796.22803,
+              339.04001,
+              1640.34607
+            ]
+          }
+        },
+        "2->4": {
+          "local": {
+            "dt_s": 0.984,
+            "distance_m": 0.8591518174339032,
+            "speed_mps": 0.873121765684861,
+            "speed_xz_mps": 0.8725728554515672,
+            "from": [
+              797.01038,
+              339.01007,
+              1640.21106
+            ],
+            "to": [
+              796.16425,
+              339.04053,
+              1640.35693
+            ]
+          },
+          "replica": {
+            "dt_s": 0.906,
+            "distance_m": 1.1575343677834833,
+            "speed_mps": 1.2776317525204008,
+            "speed_xz_mps": 1.2772198664596475,
+            "from": [
+              796.83771,
+              339.02023,
+              1640.16064
+            ],
+            "to": [
+              795.72437,
+              339.04962,
+              1640.47607
+            ]
+          },
+          "decodedremote": {
+            "dt_s": 0.906,
+            "distance_m": 0.8395611835358568,
+            "speed_mps": 0.9266679729976345,
+            "speed_xz_mps": 0.9259954548703249,
+            "from": [
+              797.05505,
+              339.00803,
+              1640.20508
+            ],
+            "to": [
+              796.22803,
+              339.04001,
+              1640.34607
+            ]
+          }
+        }
+      },
+      "frames": [
+        {
+          "label": "downed-crawl-01",
+          "source_tick": 101174515,
+          "receiver_tick": 101174562,
+          "frame_tick": 101174578,
+          "state_delta_ms": 63.0,
+          "source_stance": 3,
+          "source_speed_class": 1,
+          "replica_stance": 3,
+          "replica_speed_class": 1,
+          "held": 2097154,
+          "received_mag": 250,
+          "sampled_action_mag": 250,
+          "source_crawl_rate": 500,
+          "replica_crawl_rate": 500,
+          "position_error_m": 0.12977,
+          "recon": {
+            "along_mm": 25,
+            "cross_mm": 128,
+            "nudges": 0,
+            "snaps": 0,
+            "dv_along_mmps": 0
+          },
+          "native_body_velocity_mmps": 349,
+          "native_sender_velocity_mmps": 268
+        },
+        {
+          "label": "downed-crawl-02",
+          "source_tick": 101175062,
+          "receiver_tick": 101175125,
+          "frame_tick": 101175093,
+          "state_delta_ms": 31.0,
+          "source_stance": 3,
+          "source_speed_class": 1,
+          "replica_stance": 3,
+          "replica_speed_class": 1,
+          "held": 2097152,
+          "received_mag": 250,
+          "sampled_action_mag": 250,
+          "source_crawl_rate": 500,
+          "replica_crawl_rate": 500,
+          "position_error_m": 0.22218,
+          "recon": {
+            "along_mm": -126,
+            "cross_mm": 79,
+            "nudges": 0,
+            "snaps": 0,
+            "dv_along_mmps": 471
+          },
+          "native_body_velocity_mmps": 1147,
+          "native_sender_velocity_mmps": 670
+        },
+        {
+          "label": "downed-crawl-03",
+          "source_tick": 101175609,
+          "receiver_tick": 101175562,
+          "frame_tick": 101175609,
+          "state_delta_ms": 0.0,
+          "source_stance": 3,
+          "source_speed_class": 1,
+          "replica_stance": 3,
+          "replica_speed_class": 1,
+          "held": 2097152,
+          "received_mag": 250,
+          "sampled_action_mag": 250,
+          "source_crawl_rate": 500,
+          "replica_crawl_rate": 500,
+          "position_error_m": 0.5748,
+          "recon": {
+            "along_mm": -472,
+            "cross_mm": 14,
+            "nudges": 0,
+            "snaps": 0,
+            "dv_along_mmps": 705
+          },
+          "native_body_velocity_mmps": 1552,
+          "native_sender_velocity_mmps": 839
+        },
+        {
+          "label": "downed-crawl-04",
+          "source_tick": 101176046,
+          "receiver_tick": 101176031,
+          "frame_tick": 101176046,
+          "state_delta_ms": 0.0,
+          "source_stance": 3,
+          "source_speed_class": 1,
+          "replica_stance": 3,
+          "replica_speed_class": 1,
+          "held": 2097152,
+          "received_mag": 250,
+          "sampled_action_mag": 250,
+          "source_crawl_rate": 500,
+          "replica_crawl_rate": 500,
+          "position_error_m": 0.52026,
+          "recon": {
+            "along_mm": -430,
+            "cross_mm": -39,
+            "nudges": 8,
+            "snaps": 0,
+            "dv_along_mmps": -283
+          },
+          "native_body_velocity_mmps": 690,
+          "native_sender_velocity_mmps": 968
+        }
+      ]
+    },
+    {
+      "label": "restored-crawl",
+      "source": "guest",
+      "receiver": "host",
+      "timing_ok": true,
+      "intervals": {
+        "1->4": {
+          "local": {
+            "dt_s": 1.453,
+            "distance_m": 2.1999947246300073,
+            "speed_mps": 1.5141051098623588,
+            "speed_xz_mps": 1.5133115119457419,
+            "from": [
+              795.43512,
+              339.06107,
+              1640.49365
+            ],
+            "to": [
+              793.26782,
+              339.13229,
+              1640.86475
+            ]
+          },
+          "replica": {
+            "dt_s": 1.422,
+            "distance_m": 2.0845485364701815,
+            "speed_mps": 1.4659272408369772,
+            "speed_xz_mps": 1.4651741403809138,
+            "from": [
+              795.15692,
+              339.06918,
+              1640.55798
+            ],
+            "to": [
+              793.1051,
+              339.13599,
+              1640.9198
+            ]
+          },
+          "decodedremote": {
+            "dt_s": 1.422,
+            "distance_m": 1.8988812080011699,
+            "speed_mps": 1.335359499297588,
+            "speed_xz_mps": 1.3346479721506956,
+            "from": [
+              795.49207,
+              339.05902,
+              1640.48511
+            ],
+            "to": [
+              793.62103,
+              339.121,
+              1640.8031
+            ]
+          }
+        },
+        "2->4": {
+          "local": {
+            "dt_s": 1.015,
+            "distance_m": 1.7292795270573726,
+            "speed_mps": 1.7037236719777071,
+            "speed_xz_mps": 1.7028475722600604,
+            "from": [
+              794.97003,
+              339.07684,
+              1640.56506
+            ],
+            "to": [
+              793.26782,
+              339.13229,
+              1640.86475
+            ]
+          },
+          "replica": {
+            "dt_s": 0.985,
+            "distance_m": 1.554274129167707,
+            "speed_mps": 1.5779432783428498,
+            "speed_xz_mps": 1.577132782504856,
+            "from": [
+              794.63495,
+              339.08618,
+              1640.6499
+            ],
+            "to": [
+              793.1051,
+              339.13599,
+              1640.9198
+            ]
+          },
+          "decodedremote": {
+            "dt_s": 0.985,
+            "distance_m": 1.4922657553196987,
+            "speed_mps": 1.5149906145377652,
+            "speed_xz_mps": 1.514207655077611,
+            "from": [
+              795.09003,
+              339.07303,
+              1640.54504
+            ],
+            "to": [
+              793.62103,
+              339.121,
+              1640.8031
+            ]
+          }
+        }
+      },
+      "frames": [
+        {
+          "label": "restored-crawl-01",
+          "source_tick": 101188062,
+          "receiver_tick": 101188031,
+          "frame_tick": 101188031,
+          "state_delta_ms": 31.0,
+          "source_stance": 3,
+          "source_speed_class": 2,
+          "replica_stance": 3,
+          "replica_speed_class": 2,
+          "held": 2097152,
+          "received_mag": 1000,
+          "sampled_action_mag": 1000,
+          "source_crawl_rate": 1500,
+          "replica_crawl_rate": 1500,
+          "position_error_m": 0.34313,
+          "recon": {
+            "along_mm": -297,
+            "cross_mm": -14,
+            "nudges": 53,
+            "snaps": 0,
+            "dv_along_mmps": 0
+          },
+          "native_body_velocity_mmps": 0,
+          "native_sender_velocity_mmps": 358
+        },
+        {
+          "label": "restored-crawl-02",
+          "source_tick": 101188500,
+          "receiver_tick": 101188468,
+          "frame_tick": 101188515,
+          "state_delta_ms": 15.0,
+          "source_stance": 3,
+          "source_speed_class": 2,
+          "replica_stance": 3,
+          "replica_speed_class": 2,
+          "held": 2097152,
+          "received_mag": 1000,
+          "sampled_action_mag": 1000,
+          "source_crawl_rate": 1500,
+          "replica_crawl_rate": 1500,
+          "position_error_m": 0.46719,
+          "recon": {
+            "along_mm": -340,
+            "cross_mm": -34,
+            "nudges": 53,
+            "snaps": 0,
+            "dv_along_mmps": 230
+          },
+          "native_body_velocity_mmps": 1342,
+          "native_sender_velocity_mmps": 1111
+        },
+        {
+          "label": "restored-crawl-03",
+          "source_tick": 101188968,
+          "receiver_tick": 101189015,
+          "frame_tick": 101188984,
+          "state_delta_ms": 16.0,
+          "source_stance": 3,
+          "source_speed_class": 2,
+          "replica_stance": 3,
+          "replica_speed_class": 2,
+          "held": 2097152,
+          "received_mag": 1000,
+          "sampled_action_mag": 1000,
+          "source_crawl_rate": 1500,
+          "replica_crawl_rate": 1500,
+          "position_error_m": 0.52537,
+          "recon": {
+            "along_mm": -364,
+            "cross_mm": -26,
+            "nudges": 53,
+            "snaps": 0,
+            "dv_along_mmps": 7
+          },
+          "native_body_velocity_mmps": 1613,
+          "native_sender_velocity_mmps": 1606
+        },
+        {
+          "label": "restored-crawl-04",
+          "source_tick": 101189515,
+          "receiver_tick": 101189453,
+          "frame_tick": 101189468,
+          "state_delta_ms": 47.0,
+          "source_stance": 3,
+          "source_speed_class": 2,
+          "replica_stance": 3,
+          "replica_speed_class": 2,
+          "held": 2097152,
+          "received_mag": 1000,
+          "sampled_action_mag": 1000,
+          "source_crawl_rate": 1500,
+          "replica_crawl_rate": 1500,
+          "position_error_m": 0.52918,
+          "recon": {
+            "along_mm": -363,
+            "cross_mm": -25,
+            "nudges": 53,
+            "snaps": 0,
+            "dv_along_mmps": 0
+          },
+          "native_body_velocity_mmps": 1641,
+          "native_sender_velocity_mmps": 1642
+        }
+      ]
+    },
+    {
+      "label": "healthy-snake",
+      "source": "host",
+      "receiver": "guest",
+      "timing_ok": true,
+      "intervals": {
+        "1->4": {
+          "local": {
+            "dt_s": 1.437,
+            "distance_m": 2.0509945542101127,
+            "speed_mps": 1.4272752638901272,
+            "speed_xz_mps": 1.4271423486597856,
+            "from": [
+              791.60138,
+              339.15457,
+              1641.14551
+            ],
+            "to": [
+              789.58356,
+              339.18256,
+              1641.51184
+            ]
+          },
+          "replica": {
+            "dt_s": 1.437,
+            "distance_m": 2.001037501322811,
+            "speed_mps": 1.3925104393338976,
+            "speed_xz_mps": 1.3923804597033242,
+            "from": [
+              791.57965,
+              339.15491,
+              1641.15015
+            ],
+            "to": [
+              789.61096,
+              339.18225,
+              1641.50745
+            ]
+          },
+          "decodedremote": {
+            "dt_s": 1.437,
+            "distance_m": 1.9112279457197145,
+            "speed_mps": 1.3300124883226963,
+            "speed_xz_mps": 1.3298796658369625,
+            "from": [
+              791.62506,
+              339.15402,
+              1641.14111
+            ],
+            "to": [
+              789.74506,
+              339.18103,
+              1641.48413
+            ]
+          }
+        },
+        "2->4": {
+          "local": {
+            "dt_s": 0.984,
+            "distance_m": 1.5092185415637676,
+            "speed_mps": 1.5337586804509833,
+            "speed_xz_mps": 1.5336326131191362,
+            "from": [
+              791.0697,
+              339.16321,
+              1641.24963
+            ],
+            "to": [
+              789.58356,
+              339.18256,
+              1641.51184
+            ]
+          },
+          "replica": {
+            "dt_s": 0.984,
+            "distance_m": 1.5215892972152743,
+            "speed_mps": 1.5463305866008885,
+            "speed_xz_mps": 1.5462020302547181,
+            "from": [
+              791.10925,
+              339.16263,
+              1641.24292
+            ],
+            "to": [
+              789.61096,
+              339.18225,
+              1641.50745
+            ]
+          },
+          "decodedremote": {
+            "dt_s": 0.984,
+            "distance_m": 1.482895998679624,
+            "speed_mps": 1.5070081287394552,
+            "speed_xz_mps": 1.5068707839621378,
+            "from": [
+              791.20502,
+              339.16101,
+              1641.2251
+            ],
+            "to": [
+              789.74506,
+              339.18103,
+              1641.48413
+            ]
+          }
+        }
+      },
+      "frames": [
+        {
+          "label": "healthy-snake-01",
+          "source_tick": 101219375,
+          "receiver_tick": 101219375,
+          "frame_tick": 101219375,
+          "state_delta_ms": 0.0,
+          "source_stance": 3,
+          "source_speed_class": 2,
+          "replica_stance": 3,
+          "replica_speed_class": 2,
+          "held": 2097152,
+          "received_mag": 1000,
+          "sampled_action_mag": 1000,
+          "source_crawl_rate": 1200,
+          "replica_crawl_rate": 1200,
+          "position_error_m": 0.04631,
+          "recon": {
+            "along_mm": 9,
+            "cross_mm": 0,
+            "nudges": 0,
+            "snaps": 0,
+            "dv_along_mmps": 0
+          },
+          "native_body_velocity_mmps": 333,
+          "native_sender_velocity_mmps": 364
+        },
+        {
+          "label": "healthy-snake-02",
+          "source_tick": 101219828,
+          "receiver_tick": 101219828,
+          "frame_tick": 101219828,
+          "state_delta_ms": 0.0,
+          "source_stance": 3,
+          "source_speed_class": 2,
+          "replica_stance": 3,
+          "replica_speed_class": 2,
+          "held": 2097152,
+          "received_mag": 1000,
+          "sampled_action_mag": 1000,
+          "source_crawl_rate": 1200,
+          "replica_crawl_rate": 1200,
+          "position_error_m": 0.09742,
+          "recon": {
+            "along_mm": 15,
+            "cross_mm": -1,
+            "nudges": 0,
+            "snaps": 0,
+            "dv_along_mmps": 13
+          },
+          "native_body_velocity_mmps": 1126,
+          "native_sender_velocity_mmps": 1113
+        },
+        {
+          "label": "healthy-snake-03",
+          "source_tick": 101220265,
+          "receiver_tick": 101220265,
+          "frame_tick": 101220296,
+          "state_delta_ms": 31.0,
+          "source_stance": 3,
+          "source_speed_class": 2,
+          "replica_stance": 3,
+          "replica_speed_class": 2,
+          "held": 2097152,
+          "received_mag": 1000,
+          "sampled_action_mag": 1000,
+          "source_crawl_rate": 1200,
+          "replica_crawl_rate": 1200,
+          "position_error_m": 0.13699,
+          "recon": {
+            "along_mm": 29,
+            "cross_mm": 0,
+            "nudges": 0,
+            "snaps": 0,
+            "dv_along_mmps": -27
+          },
+          "native_body_velocity_mmps": 1583,
+          "native_sender_velocity_mmps": 1610
+        },
+        {
+          "label": "healthy-snake-04",
+          "source_tick": 101220812,
+          "receiver_tick": 101220812,
+          "frame_tick": 101220781,
+          "state_delta_ms": 31.0,
+          "source_stance": 3,
+          "source_speed_class": 2,
+          "replica_stance": 3,
+          "replica_speed_class": 2,
+          "held": 2097152,
+          "received_mag": 1000,
+          "sampled_action_mag": 1000,
+          "source_crawl_rate": 1200,
+          "replica_crawl_rate": 1200,
+          "position_error_m": 0.13611,
+          "recon": {
+            "along_mm": 26,
+            "cross_mm": 0,
+            "nudges": 0,
+            "snaps": 0,
+            "dv_along_mmps": 3
+          },
+          "native_body_velocity_mmps": 1640,
+          "native_sender_velocity_mmps": 1638
+        }
+      ]
+    },
+    {
+      "label": "downed-snake",
+      "source": "host",
+      "receiver": "guest",
+      "timing_ok": true,
+      "intervals": {
+        "1->4": {
+          "local": {
+            "dt_s": 1.468,
+            "distance_m": 1.2145444962619019,
+            "speed_mps": 0.8273463870993882,
+            "speed_xz_mps": 0.8273379962220311,
+            "from": [
+              788.28314,
+              339.21005,
+              1641.71533
+            ],
+            "to": [
+              787.08917,
+              339.21552,
+              1641.93787
+            ]
+          },
+          "replica": {
+            "dt_s": 1.437,
+            "distance_m": 1.1475481883564078,
+            "speed_mps": 0.7985721561283283,
+            "speed_xz_mps": 0.7985639888145482,
+            "from": [
+              788.29718,
+              339.20975,
+              1641.71326
+            ],
+            "to": [
+              787.16931,
+              339.21494,
+              1641.9248
+            ]
+          },
+          "decodedremote": {
+            "dt_s": 1.437,
+            "distance_m": 1.1010463939816093,
+            "speed_mps": 0.766211826013646,
+            "speed_xz_mps": 0.7662003734201603,
+            "from": [
+              788.33002,
+              339.20901,
+              1641.70605
+            ],
+            "to": [
+              787.24805,
+              339.21503,
+              1641.91003
+            ]
+          }
+        },
+        "2->4": {
+          "local": {
+            "dt_s": 1.015,
+            "distance_m": 0.925392563510199,
+            "speed_mps": 0.9117168113400976,
+            "speed_xz_mps": 0.9117166322654989,
+            "from": [
+              787.99988,
+              339.21494,
+              1641.77368
+            ],
+            "to": [
+              787.08917,
+              339.21552,
+              1641.93787
+            ]
+          },
+          "replica": {
+            "dt_s": 0.984,
+            "distance_m": 0.8865923077153781,
+            "speed_mps": 0.901008442800181,
+            "speed_xz_mps": 0.9010081538867618,
+            "from": [
+              788.04163,
+              339.21423,
+              1641.76636
+            ],
+            "to": [
+              787.16931,
+              339.21494,
+              1641.9248
+            ]
+          },
+          "decodedremote": {
+            "dt_s": 0.984,
+            "distance_m": 0.8653697596403216,
+            "speed_mps": 0.8794408126426032,
+            "speed_xz_mps": 0.8794384166993836,
+            "from": [
+              788.09906,
+              339.21301,
+              1641.75305
+            ],
+            "to": [
+              787.24805,
+              339.21503,
+              1641.91003
+            ]
+          }
+        }
+      },
+      "frames": [
+        {
+          "label": "downed-snake-01",
+          "source_tick": 101232375,
+          "receiver_tick": 101232375,
+          "frame_tick": 101232390,
+          "state_delta_ms": 15.0,
+          "source_stance": 3,
+          "source_speed_class": 1,
+          "replica_stance": 3,
+          "replica_speed_class": 1,
+          "held": 2097152,
+          "received_mag": 250,
+          "sampled_action_mag": 250,
+          "source_crawl_rate": 500,
+          "replica_crawl_rate": 500,
+          "position_error_m": 0.03363,
+          "recon": {
+            "along_mm": 7,
+            "cross_mm": -1,
+            "nudges": 0,
+            "snaps": 0,
+            "dv_along_mmps": 0
+          },
+          "native_body_velocity_mmps": 249,
+          "native_sender_velocity_mmps": 267
+        },
+        {
+          "label": "downed-snake-02",
+          "source_tick": 101232828,
+          "receiver_tick": 101232828,
+          "frame_tick": 101232875,
+          "state_delta_ms": 47.0,
+          "source_stance": 3,
+          "source_speed_class": 1,
+          "replica_stance": 3,
+          "replica_speed_class": 1,
+          "held": 2097152,
+          "received_mag": 250,
+          "sampled_action_mag": 250,
+          "source_crawl_rate": 500,
+          "replica_crawl_rate": 500,
+          "position_error_m": 0.05897,
+          "recon": {
+            "along_mm": 11,
+            "cross_mm": -1,
+            "nudges": 0,
+            "snaps": 0,
+            "dv_along_mmps": -3
+          },
+          "native_body_velocity_mmps": 669,
+          "native_sender_velocity_mmps": 672
+        },
+        {
+          "label": "downed-snake-03",
+          "source_tick": 101233296,
+          "receiver_tick": 101233375,
+          "frame_tick": 101233343,
+          "state_delta_ms": 47.0,
+          "source_stance": 3,
+          "source_speed_class": 1,
+          "replica_stance": 3,
+          "replica_speed_class": 1,
+          "held": 2097152,
+          "received_mag": 250,
+          "sampled_action_mag": 250,
+          "source_crawl_rate": 500,
+          "replica_crawl_rate": 500,
+          "position_error_m": 0.0807,
+          "recon": {
+            "along_mm": 17,
+            "cross_mm": -2,
+            "nudges": 0,
+            "snaps": 0,
+            "dv_along_mmps": -25
+          },
+          "native_body_velocity_mmps": 867,
+          "native_sender_velocity_mmps": 892
+        },
+        {
+          "label": "downed-snake-04",
+          "source_tick": 101233843,
+          "receiver_tick": 101233812,
+          "frame_tick": 101233843,
+          "state_delta_ms": 0.0,
+          "source_stance": 3,
+          "source_speed_class": 1,
+          "replica_stance": 3,
+          "replica_speed_class": 1,
+          "held": 2097152,
+          "received_mag": 250,
+          "sampled_action_mag": 250,
+          "source_crawl_rate": 500,
+          "replica_crawl_rate": 500,
+          "position_error_m": 0.08011,
+          "recon": {
+            "along_mm": 15,
+            "cross_mm": -1,
+            "nudges": 0,
+            "snaps": 0,
+            "dv_along_mmps": 0
+          },
+          "native_body_velocity_mmps": 964,
+          "native_sender_velocity_mmps": 965
+        }
+      ]
+    },
+    {
+      "label": "restored-snake",
+      "source": "host",
+      "receiver": "guest",
+      "timing_ok": true,
+      "intervals": {
+        "1->4": {
+          "local": {
+            "dt_s": 1.453,
+            "distance_m": 2.1993797977156526,
+            "speed_mps": 1.5136818979460789,
+            "speed_xz_mps": 1.5130043295232616,
+            "from": [
+              786.03046,
+              339.21521,
+              1642.12842
+            ],
+            "to": [
+              783.86707,
+              339.14941,
+              1642.51917
+            ]
+          },
+          "replica": {
+            "dt_s": 1.484,
+            "distance_m": 2.1425629894591762,
+            "speed_mps": 1.4437755993660217,
+            "speed_xz_mps": 1.4430444156947833,
+            "from": [
+              785.78308,
+              339.20862,
+              1642.16687
+            ],
+            "to": [
+              783.67413,
+              339.14044,
+              1642.5387
+            ]
+          },
+          "decodedremote": {
+            "dt_s": 1.484,
+            "distance_m": 1.965768538841731,
+            "speed_mps": 1.3246418725348592,
+            "speed_xz_mps": 1.3240846904382633,
+            "from": [
+              786.12305,
+              339.21701,
+              1642.10913
+            ],
+            "to": [
+              784.19006,
+              339.16,
+              1642.46204
+            ]
+          }
+        },
+        "2->4": {
+          "local": {
+            "dt_s": 1.0,
+            "distance_m": 1.7005607567505208,
+            "speed_mps": 1.7005607567505208,
+            "speed_xz_mps": 1.699833759224678,
+            "from": [
+              785.54108,
+              339.19913,
+              1642.224
+            ],
+            "to": [
+              783.86707,
+              339.14941,
+              1642.51917
+            ]
+          },
+          "replica": {
+            "dt_s": 0.922,
+            "distance_m": 1.4230038831288996,
+            "speed_mps": 1.543388159575813,
+            "speed_xz_mps": 1.542586106076331,
+            "from": [
+              785.07477,
+              339.18631,
+              1642.29163
+            ],
+            "to": [
+              783.67413,
+              339.14044,
+              1642.5387
+            ]
+          },
+          "decodedremote": {
+            "dt_s": 0.922,
+            "distance_m": 1.4068521823560365,
+            "speed_mps": 1.525870045939302,
+            "speed_xz_mps": 1.5252528606611124,
+            "from": [
+              785.57501,
+              339.20001,
+              1642.21802
+            ],
+            "to": [
+              784.19006,
+              339.16,
+              1642.46204
+            ]
+          }
+        }
+      },
+      "frames": [
+        {
+          "label": "restored-snake-01",
+          "source_tick": 101242750,
+          "receiver_tick": 101242656,
+          "frame_tick": 101242703,
+          "state_delta_ms": 47.0,
+          "source_stance": 3,
+          "source_speed_class": 2,
+          "replica_stance": 3,
+          "replica_speed_class": 2,
+          "held": 2097152,
+          "received_mag": 1000,
+          "sampled_action_mag": 1000,
+          "source_crawl_rate": 1200,
+          "replica_crawl_rate": 1200,
+          "position_error_m": 0.34494,
+          "recon": {
+            "along_mm": -306,
+            "cross_mm": 3,
+            "nudges": 8,
+            "snaps": 0,
+            "dv_along_mmps": 0
+          },
+          "native_body_velocity_mmps": 0,
+          "native_sender_velocity_mmps": 322
+        },
+        {
+          "label": "restored-snake-02",
+          "source_tick": 101243203,
+          "receiver_tick": 101243218,
+          "frame_tick": 101243218,
+          "state_delta_ms": 15.0,
+          "source_stance": 3,
+          "source_speed_class": 2,
+          "replica_stance": 3,
+          "replica_speed_class": 2,
+          "held": 2097152,
+          "received_mag": 1000,
+          "sampled_action_mag": 1000,
+          "source_crawl_rate": 1200,
+          "replica_crawl_rate": 1200,
+          "position_error_m": 0.50582,
+          "recon": {
+            "along_mm": -361,
+            "cross_mm": 20,
+            "nudges": 8,
+            "snaps": 0,
+            "dv_along_mmps": 197
+          },
+          "native_body_velocity_mmps": 1484,
+          "native_sender_velocity_mmps": 1286
+        },
+        {
+          "label": "restored-snake-03",
+          "source_tick": 101243656,
+          "receiver_tick": 101243671,
+          "frame_tick": 101243703,
+          "state_delta_ms": 47.0,
+          "source_stance": 3,
+          "source_speed_class": 2,
+          "replica_stance": 3,
+          "replica_speed_class": 2,
+          "held": 2097152,
+          "received_mag": 1000,
+          "sampled_action_mag": 1000,
+          "source_crawl_rate": 1200,
+          "replica_crawl_rate": 1200,
+          "position_error_m": 0.52784,
+          "recon": {
+            "along_mm": -361,
+            "cross_mm": 12,
+            "nudges": 8,
+            "snaps": 0,
+            "dv_along_mmps": 13
+          },
+          "native_body_velocity_mmps": 1652,
+          "native_sender_velocity_mmps": 1639
+        },
+        {
+          "label": "restored-snake-04",
+          "source_tick": 101244203,
+          "receiver_tick": 101244140,
+          "frame_tick": 101244187,
+          "state_delta_ms": 16.0,
+          "source_stance": 3,
+          "source_speed_class": 2,
+          "replica_stance": 3,
+          "replica_speed_class": 2,
+          "held": 2097152,
+          "received_mag": 1000,
+          "sampled_action_mag": 1000,
+          "source_crawl_rate": 1200,
+          "replica_crawl_rate": 1200,
+          "position_error_m": 0.52196,
+          "recon": {
+            "along_mm": -360,
+            "cross_mm": 13,
+            "nudges": 8,
+            "snaps": 0,
+            "dv_along_mmps": 13
+          },
+          "native_body_velocity_mmps": 1664,
+          "native_sender_velocity_mmps": 1651
+        }
+      ]
+    }
+  ],
+  "cap_status": {
+    "host": [
+      {
+        "command_id": 5,
+        "result": "downpad;on=1;n=1440;ok=230;caps=0;mag=0,0;id=0;thr=83532;gen=3;age=31;reason=healthy"
+      },
+      {
+        "command_id": 21,
+        "result": "downpad;on=1;n=5930;ok=4720;caps=139;mag=1000,250;id=0;thr=83532;gen=4;age=15;reason=downed"
+      },
+      {
+        "command_id": 24,
+        "result": "downpad;on=1;n=6550;ok=5340;caps=160;mag=1000,1000;id=0;thr=83532;gen=4;age=16;reason=healthy"
+      }
+    ],
+    "guest": [
+      {
+        "command_id": 3,
+        "result": "downpad;on=1;n=1280;ok=165;caps=0;mag=0,0;id=0;thr=31868;gen=3;age=16;reason=healthy"
+      },
+      {
+        "command_id": 9,
+        "result": "downpad;on=1;n=2309;ok=1194;caps=141;mag=1000,250;id=0;thr=31868;gen=4;age=31;reason=downed"
+      },
+      {
+        "command_id": 13,
+        "result": "downpad;on=1;n=3097;ok=1982;caps=160;mag=1000,1000;id=0;thr=31868;gen=4;age=16;reason=healthy"
+      }
+    ]
+  },
+  "limitations": [
+    "Short four-frame windows include startup acceleration and uneven terrain.",
+    "The complete scenario result must not be inferred from these completed crawl phases.",
+    "Quiet replica develops ahead drift despite correct250 input; no exact hospital animation is established."
+  ],
+  "scenario_result": {
+    "Failure": "Required scenario check failed: host require ^downed;ready=1;armed=1;down=1;.*cause=1;lock=1; <- downed;ready=1;armed=0;down=0;gen=5;cause=0;lock=0;hp=0,0;epoch=0;reason=cleanup_absent",
+    "ExpectFailures": [
+      "host require ^downed;ready=1;armed=1;down=1;.*cause=1;lock=1; <- downed;ready=1;armed=0;down=0;gen=5;cause=0;lock=0;hp=0,0;epoch=0;reason=cleanup_absent"
+    ]
+  },
+  "cleanup_summary": {
+    "status": "closed",
+    "real_saves_unchanged": true
+  }
+}

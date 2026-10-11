@@ -26,6 +26,39 @@ int main() {
     Check(!d::detail::FreshScope(UINT64_MAX,1000),"arbitrarily old lease cannot wrap into fresh admission");
     Check(d::detail::FreshScope(UINT64_MAX,UINT64_MAX-750),"near-limit time subtraction preserves exact admitted bound");
     Check(!d::detail::FreshScope(UINT64_MAX,UINT64_MAX-751),"near-limit expired lease remains refused");
+    // A real native hit may leave a transient hurt reaction before the stance
+    // request can settle. It gets a bounded first acquisition grace, while a
+    // previously observed lock loss must still fail after the shorter bound.
+    for (std::uint64_t age : {std::uint64_t{0}, std::uint64_t{1500}, std::uint64_t{1501}, std::uint64_t{5999}, std::uint64_t{6000}}) {
+        Check(!d::detail::ControlsExpired(10000 + age, 10000, 0, false, false),
+              "initial hurt reaction retains only its bounded six-second acquisition grace");
+    }
+    Check(d::detail::ControlsExpired(16001, 10000, 0, false, false),
+          "first millisecond after acquisition grace refuses prolonged unconfirmed controls");
+    Check(!d::detail::ControlsExpired(21500, 10000, 20000, true, false),
+          "confirmed lock uses last confirmation and preserves exact shorter boundary");
+    Check(d::detail::ControlsExpired(21501, 10000, 20000, true, false),
+          "lost confirmed lock fails after 1500ms rather than receiving new six-second immunity");
+    Check(d::detail::ControlsExpired(9999, 10000, 0, false, false) &&
+          d::detail::ControlsExpired(19999, 10000, 20000, true, false),
+          "reversed acquisition or confirmed clock cannot authorize a stale pending transition");
+    Check(d::detail::ControlsExpired(UINT64_MAX, 10000, 0, false, false),
+          "arbitrarily old acquisition cannot wrap into a fresh grace");
+    Check(!d::detail::ControlsExpired(UINT64_MAX, UINT64_MAX - 6000, 0, false, false) &&
+          d::detail::ControlsExpired(UINT64_MAX, UINT64_MAX - 6001, 0, false, false),
+          "near-limit acquisition subtraction preserves the exact bounded interval");
+    for (bool previouslyApplied : {false, true}) {
+        Check(!d::detail::ControlsExpired(999999, 10000, 20000, previouslyApplied, true),
+              "current prone mask and crawl confirmation takes priority over an old timestamp");
+    }
+    Check(std::strcmp(d::detail::ControlsPendingReason(false, true, true), "controls_pending_prone") == 0,
+          "pending native stance is distinct from mask or crawl refusal");
+    Check(std::strcmp(d::detail::ControlsPendingReason(true, false, true), "controls_pending_mask") == 0,
+          "missing named restrictions have a separate refusal diagnostic");
+    Check(std::strcmp(d::detail::ControlsPendingReason(true, true, false), "controls_pending_crawl") == 0,
+          "rate ownership refusal remains separate from a prone readback delay");
+    Check(std::strcmp(d::detail::ControlsPendingReason(true, true, true), "downed") == 0,
+          "fully confirmed controls have no pending phase");
     d::detail::CrawlLease slow{};
     auto cp = d::detail::PlanCrawl(slow, 1.2f, 1.f, 1.2f, false);
     Check(cp.valid && cp.write && cp.base == .5f && cp.product == .5f && cp.next.original == 1.2f,

@@ -33,7 +33,6 @@ detail::RegenCeiling friendlyRecovery{};
 detail::CrawlLease crawl{};
 std::uintptr_t crawlSp = 0, crawlRec = 0;
 const char* lastReason = "disabled";
-constexpr std::uint64_t kControlsMs = 1500;
 template<class T> bool Read(std::uintptr_t ptr, T& out) noexcept {
     SIZE_T count = 0;
     return ptr && ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(ptr), &out, sizeof(out), &count) && count == sizeof(out);
@@ -394,17 +393,20 @@ bool Control(std::uint32_t m, std::uint16_t ep, bool admitted, std::uint8_t comm
         // Failed requests and a later lost lock still have a bounded deadline.
         bool prone = false;
         const bool protection = Prone(s, prone) && StoreLife(record, detail::ProtectedHealth(max));
-        const bool applied = protection && prone && Controls(raw) && SlowCrawl(false);
-        const auto controlAt = controlsApplied ? lastControls : downAt;
+        const bool masked = Controls(raw);
+        const bool crawlReady = protection && prone && masked && SlowCrawl(false);
+        const bool applied = protection && prone && masked && crawlReady;
+        const auto pendingReason = detail::ControlsPendingReason(prone, masked, crawlReady);
         if (applied) { controlsApplied = true; lastControls = lastPoll; }
-        else if (lastPoll >= controlAt && lastPoll - controlAt > kControlsMs) {
+        else if (detail::ControlsExpired(lastPoll, downAt, lastControls, controlsApplied, applied)) {
             if (!SlowCrawl(true)) return finish(false, "crawl_restore_pending");
             Clear(true); failed = true; out.ready = false; out.down = false; out.cause = 0;
-            return finish(false, "controls_timeout");
+            return finish(false, !protection ? "controls_timeout_health" : !prone ? "controls_timeout_prone" :
+                !masked ? "controls_timeout_mask" : "controls_timeout_crawl");
         }
         if (!protection) return finish(false, "prone_health");
         out.applied = applied;
-        return finish(true, applied ? "downed" : "controls_pending");
+        return finish(true, applied ? "downed" : pendingReason);
     }
     out.applied = command == 0;
     return finish(true, detail::RebindReason(rebound));
