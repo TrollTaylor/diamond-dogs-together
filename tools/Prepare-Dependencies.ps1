@@ -18,6 +18,18 @@ $taskLuaUri = 'https://www.lua.org/ftp/lua-5.1.5.tar.gz'
 $taskLuaSha256 = '2640FC56A795F29D28EF15E13C34A47E223960B0240E8CB0A82D9B0738695333'
 $taskMinHookRevision = 'c3fcafdc10146beb5919319d0683e44e3c30d537'
 
+function Resolve-DependencyApplication {
+    [CmdletBinding()]
+    param([Parameter(Mandatory=$true)][ValidateNotNullOrEmpty()][string]$Name)
+    # Get-Command can return the same executable name from multiple PATH entries.
+    # Keep PATH precedence and return one literal executable path for the call operator.
+    $command = Get-Command -Name $Name -CommandType Application -ErrorAction Stop | Select-Object -First 1
+    if (-not $command -or -not $command.PSObject.Properties['Source'] -or [string]::IsNullOrWhiteSpace([string]$command.Source)) {
+        throw "No executable application was found for dependency tool: $Name"
+    }
+    return [string]$command.Source
+}
+
 function Assert-DescendantPath {
     param([string]$Root, [string]$Path)
     $rootFull = [IO.Path]::GetFullPath($Root).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
@@ -95,8 +107,8 @@ foreach ($relative in @('CMakeLists.txt','.gitmodules','third_party\lua-fixture\
         throw "Run this from a complete project source checkout; missing $relative"
     }
 }
-$git = (Get-Command git -CommandType Application -ErrorAction Stop).Source
-$tar = (Get-Command tar -CommandType Application -ErrorAction Stop).Source
+$git = Resolve-DependencyApplication -Name 'git'
+$tar = Resolve-DependencyApplication -Name 'tar'
 $topLevel = @(& $git -C $ProjectRoot rev-parse --show-toplevel 2>$null)
 if ($LASTEXITCODE -ne 0 -or $topLevel.Count -ne 1 -or [IO.Path]::GetFullPath($topLevel[0]) -ne $ProjectRoot) {
     throw 'MinHook setup requires the project Git checkout, not an exported source folder.'

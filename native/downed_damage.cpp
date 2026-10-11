@@ -198,7 +198,15 @@ float Calculate(void* object,std::uint32_t id,void* packet,void* record,std::uin
 bool CodeGate(const void* image,std::size_t span) noexcept {
     if(!image) return false;
     const auto address=reinterpret_cast<std::uintptr_t>(image);
-    unsigned char snapshot[4096]{};
+    // Full retail bodies can exceed 4 KiB (alternate locomotion is 4152 bytes).
+    // Retain every complete hash; size the bounded stack snapshot from the contract.
+    constexpr std::size_t snapshotSize = []() constexpr {
+        std::size_t maximum = 0;
+        for (const auto& pin : c::pins) if (pin.size > maximum) maximum = pin.size;
+        return maximum;
+    }();
+    static_assert(snapshotSize > 0 && snapshotSize <= 8192, "Review larger native body contracts before increasing the snapshot bound");
+    unsigned char snapshot[snapshotSize]{};
     for(const auto& pin:c::pins) {
         if(pin.size>sizeof(snapshot) || pin.rva>span || pin.size>span-pin.rva) return false;
         SIZE_T n=0;
