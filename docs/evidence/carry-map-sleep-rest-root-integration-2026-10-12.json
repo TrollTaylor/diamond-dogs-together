@@ -1,0 +1,24 @@
+{
+  "manifest_sha256": [
+    "5105d7a6a74125a0d0be3adcf674997d81e6319e5c1987a6bb1928929d21bc5f",
+    "aaffdd4634e320fc6aa7480fe55705a759685e51e72ba6c542fb6aaca6b05477"
+  ],
+  "root_native_map_spans_verified": 6,
+  "root_native_rest_spans_verified": 9,
+  "rest_gain_bytes": 7173,
+  "rest_initializer_bytes": 274,
+  "normalized_lf_only_base_matches": [
+    "native/sleep_partner_test.cpp"
+  ],
+  "peer_reviewed": true,
+  "map_exact_native_callers": [
+    "85c6b2",
+    "85c6c6"
+  ],
+  "map_forwarding_unchanged_stock_leaf_only": true,
+  "maintenance_cas": "actual Before owned Stun2C sampled-bits to zero, rest5 only",
+  "no_life_mode_action_hp_writes": true,
+  "no_carry_activation": true,
+  "compiled": false,
+  "runtime": false
+}

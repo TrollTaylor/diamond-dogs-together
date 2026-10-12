@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstring>
 #include <cstdio>
+#include <climits>
 #include "mgscoop/sleep_partner_test.hpp"
 #include "mgscoop/partner_input_hook.hpp"
 #include "mgscoop/partner_defer.hpp"
@@ -18,6 +19,9 @@
 #include "sleep_parts_read.hpp"
 #include "sleep_parts_diagnostic.hpp"
 #include "sleep_recovery_contract.hpp"
+#include "sleep_rest_maintenance.hpp"
+#include "sleep_partner_carry_proof.hpp"
+#include "sleep_carry_context_proof.hpp"
 #include "sleep_loaded_requests.hpp"
 #include "sleep_seed_contract.hpp"
 #include "sleep_body0_transition_contract.hpp"
@@ -25,10 +29,11 @@
 namespace mgscoop::sleep_partner_test {
 namespace {
 namespace hk=partner_input_hook;namespace ro=sleep_partner_owned_read;
-namespace graph=sleep_partner_owned_graph;namespace lease=sleep_partner_lease;namespace policy=sleep_partner_controls;namespace transition=sleep_partner_transition_read;
+namespace graph=sleep_partner_owned_graph;namespace lease=sleep_partner_lease;namespace policy=sleep_partner_controls;namespace transition=sleep_partner_transition_read;namespace rest=sleep_rest_maintenance;
 SRWLOCK lock=SRWLOCK_INIT;
 std::uintptr_t imageBase=0;
 hk::NativePoseWorkerBindings worker{};LogFn logger=nullptr;
+CarrierSliceQuery carrierSliceQuery=nullptr;DualPartsQuery dualPartsQuery=nullptr;std::uint64_t nextLeaseNonce=0,leaseNonce=0;Target seedTarget{};
 bool(*wholeLifetime)() noexcept=nullptr;bool(*carryHeld)() noexcept=nullptr;
 bool configured=false,enabled=false,preparing=false,wakeRequested=false,clearPending=false,fault=false;
 Target target{},ownedTarget{},completedTarget{};bool completedCycle=false;
@@ -36,6 +41,7 @@ lease::Lease heldLease{};lease::Sample preparedOwner{};
 std::uintptr_t graphMog=0,graphLifetime=0;transition::Observation ownedTransition{};
 std::uint64_t preparedAt=0,pausedAt=0;
 unsigned emptyRetiredSamples=0;std::uint32_t emptyRetiredWindow=0;
+unsigned restWrites=0;std::uint64_t restFirstAt=0;
 Status cached{};
 struct Preserve {DWORD error=GetLastError();~Preserve(){SetLastError(error);}};
 bool Worker() noexcept {
@@ -88,22 +94,29 @@ ro::Scope Scope(const hk::NativePoseJobContext& c) noexcept {
 struct Native {
  ro::Scope scope{};graph::Observation observed{};transition::Observation supplement{};lease::Sample sample{};lease::Scope proof{};
  bool requestsPresent=false,zero=false;std::uint32_t pool=0;
+ rest::Descriptor restDescriptor{};bool restDescriptorReady=false;
 };
-bool ReadNative(const hk::NativePoseJobContext& c,bool requests,Native& out,const char*& why) noexcept {
- out={};cached.stanceObserved=false;const auto s=Scope(c);why="partner_sleep_owned_scope";
+bool ReadNative(const hk::NativePoseJobContext& c,bool requests,Native& out,const char*& why,bool updateCache=true) noexcept {
+ out={};if(updateCache)cached.stanceObserved=false;const auto s=Scope(c);why="partner_sleep_owned_scope";
  if(const auto refused=ro::ScopeRefusal(s)){why=refused;return false;}
  graph::Observation a{},b{},after{};transition::Observation ta{},tb{},tc{};
+ rest::Descriptor da{},db{},dc{};bool dra=false,drb=false,drc=false;
  if(!graph::ReadOnce(Read,s,a,&why)||!transition::ReadOnce(Read,s,ta,&why))return false;
+ if(a.owner.body[1].mode==5)dra=rest::ReadDescriptor(Read,s,a.owner.body[1],da);
  const auto middle=Scope(c);if(!ro::SameScope(s,middle)){why="partner_sleep_scope_changed";return false;}
  if(!graph::ReadOnce(Read,middle,b,&why)||!transition::ReadOnce(Read,middle,tb,&why))return false;
+ if(b.owner.body[1].mode==5)drb=rest::ReadDescriptor(Read,middle,b.owner.body[1],db);
  if(!graph::Same(a,b)||!transition::Same(ta,tb)){why="partner_sleep_pair_changed";return false;}
  sleep_loaded_requests::Reply names{};
  if(requests&&!sleep_loaded_requests::Read(Read,b.graph[1],names)){why=names.reason;return false;}
  const auto finalScope=Scope(c);if(!ro::SameScope(s,finalScope)){why="partner_sleep_scope_changed";return false;}
  if(!graph::ReadOnce(Read,finalScope,after,&why)||!transition::ReadOnce(Read,finalScope,tc,&why))return false;
+ if(after.owner.body[1].mode==5)drc=rest::ReadDescriptor(Read,finalScope,after.owner.body[1],dc);
  if(!graph::Same(b,after)||!transition::Same(tb,tc)){why="partner_sleep_final_changed";return false;}
  const auto completed=Scope(c);if(!ro::SameScope(s,completed)){why="partner_sleep_scope_changed";return false;}
  out.scope=completed;out.observed=after;out.supplement=tc;out.pool=after.owner.poolIndex[1];out.requestsPresent=requests&&names.ready&&names.found==0xffff;
+ out.restDescriptorReady=dra&&drb&&drc&&rest::Same(da,db)&&rest::Same(db,dc);
+ out.restDescriptor=out.restDescriptorReady?dc:rest::Descriptor{};
  const auto& body=after.owner.body[1];const auto& g=after.graph[1];const auto& value=after.owner.values[1];
  out.sample.owner={completed.player,completed.data,body.lifeRecord,body.block,body.ps,body.primary,body.node,
  body.records,body.bitmap,g.cs,g.controller,completed.mission,completed.generation,completed.thread,
@@ -120,10 +133,12 @@ bool ReadNative(const hk::NativePoseJobContext& c,bool requests,Native& out,cons
  out.proof.participantsLive=completed.participantsLive;out.proof.controlsZero=out.zero;
  out.proof.thread=completed.thread;out.proof.sequenceBefore=completed.sequenceBefore;out.proof.sequenceAfter=completed.sequenceAfter;
  out.proof.batchBefore=out.proof.batchAfter=false;out.proof.now=completed.now;out.proof.poll=completed.poll;
+ if(updateCache){
  cached.mode=body.mode;cached.lifeState=body.lifeState;cached.qAction=body.qAction;cached.stance=value.psStance;
  cached.psPacked=value.psPacked;cached.qStance=value.qStance;cached.psAction=body.action;cached.stanceObserved=true;cached.stanceAt=completed.now;
  cached.computedButtons=after.owner.pad.computedButtons;cached.zero=out.zero?1u:0u;cached.window=c.sequence;
  cached.birthSerial=c.birthSerial;cached.peerGeneration=completed.generation;cached.requests=names.found;
+ }
  if(!ro::CoherentTargetStance(after.owner)){why="partner_sleep_stance_pair";return false;}
  if(Active()&&(heldLease.phase!=lease::Phase::empty||preparedOwner.owner.player)&&
     (!lease::Same(heldLease.phase==lease::Phase::empty?preparedOwner.owner:heldLease.owner,out.sample.owner)||
@@ -140,7 +155,7 @@ bool Cas(const hk::NativePoseJobContext& c,const Native& n,const lease::Exchange
  __except(EXCEPTION_EXECUTE_HANDLER){return false;}
 }
 void CapturePreparation(const Native& n) noexcept {
- preparedOwner=n.sample;ownedTarget=target;graphMog=n.observed.graph[1].mog;graphLifetime=n.observed.graph[1].lifetime;
+ restWrites=0;restFirstAt=0;leaseNonce=0;seedTarget={};preparedOwner=n.sample;ownedTarget=target;graphMog=n.observed.graph[1].mog;graphLifetime=n.observed.graph[1].lifetime;
  ownedTransition=n.supplement;preparedAt=n.scope.now;preparing=true;emptyRetiredSamples=0;emptyRetiredWindow=0;
 }
 bool RetirePreparation(const hk::NativePoseJobContext& c,const Native& n) noexcept {
@@ -151,6 +166,44 @@ bool RetirePreparation(const hk::NativePoseJobContext& c,const Native& n) noexce
  if(!ReadNative(c,false,proof,why)||lease::ContextRefusal(proof.proof,proof.sample)||!lease::RetiredSample(proof.sample)||!proof.zero){Reason(why?why:"partner_sleep_empty_release");return true;}
  if(!hk::RequestNativePoseLeaseClear()){Abort("partner_sleep_clear_refused");return false;}
  clearPending=true;Reason("partner_sleep_empty_cleanup_pending");return true;
+}
+bool MaintainNativeRest(const hk::NativePoseJobContext& c,Native& n,bool before) noexcept {
+ // Onset/recovery and a genuine grant keep the original lifecycle. Maintenance
+ // is never performed from After, a shared poll or a Carry-paused checkpoint.
+ if(!before||!enabled||wakeRequested||!target.asleep||heldLease.phase!=lease::Phase::active||
+    !heldLease.nativeEntered||n.sample.mode!=5)return true;
+ if(!n.restDescriptorReady){Abort("partner_sleep_rest_descriptor");return false;}
+ const auto plan=rest::MaintainRest(n.proof,n.sample,heldLease,target,seedTarget,n.restDescriptor,before,enabled,wakeRequested,Carry());
+ if(!plan.valid){Abort(plan.reason);return false;}
+ if(!plan.count)return true;
+ Native fresh{};const char* why=nullptr;
+ if(!ReadNative(c,false,fresh,why)){Abort(why?why:"partner_sleep_rest_before_read");return false;}
+ if(!fresh.restDescriptorReady||!ro::SameScope(n.scope,fresh.scope)||!graph::Same(n.observed,fresh.observed)||
+    !transition::Same(n.supplement,fresh.supplement)||!rest::Same(n.restDescriptor,fresh.restDescriptor)||
+    !rest::SameRestSample(n.sample,fresh.sample,false)){Abort("partner_sleep_rest_before_changed");return false;}
+ const auto current=rest::MaintainRest(fresh.proof,fresh.sample,heldLease,target,seedTarget,fresh.restDescriptor,
+                                      before,enabled,wakeRequested,Carry());
+ if(!current.valid||current.count!=1||current.changes[0].offset!=0x2c||current.changes[0].desired!=lease::Bits(0.f)||
+    current.changes[0].expected!=plan.changes[0].expected){Abort("partner_sleep_rest_plan_changed");return false;}
+ // Cas performs the original immediate actual owner/window/zero-pad proof;
+ // expected bits refuse any intervening native regeneration or threshold.
+ if(!Cas(c,fresh,current.changes[0])){Abort("partner_sleep_rest_cas_refused");return false;}
+ Native after{};why=nullptr;
+ if(!ReadNative(c,false,after,why)){Abort(why?why:"partner_sleep_rest_after_read");return false;}
+ if(!after.restDescriptorReady||!ro::SameScope(fresh.scope,after.scope)||!transition::Same(fresh.supplement,after.supplement)||
+    !rest::Same(fresh.restDescriptor,after.restDescriptor)||!rest::SameRestSample(fresh.sample,after.sample,true)){
+  Abort("partner_sleep_rest_after_changed");return false;
+ }
+ const auto verified=rest::MaintainRest(after.proof,after.sample,heldLease,target,seedTarget,after.restDescriptor,
+                                       before,enabled,wakeRequested,Carry());
+ if(!verified.valid||verified.count){Abort("partner_sleep_rest_zero_unproved");return false;}
+ // Observe receives the new actual sample, never the invalidated pre-CAS one.
+ n=after;if(restWrites!=UINT_MAX)++restWrites;
+ if(!restFirstAt){restFirstAt=n.scope.now;if(logger){char line[320]{};
+  std::snprintf(line,sizeof(line),"[sleep_partner_rest] writes=%u;window=%u;gen=%u;mode=%u;life=%u;hash=%llx;stun=%x;maximum=%x;descriptor=%x",
+   restWrites,c.sequence,target.peerGeneration,n.sample.mode,n.sample.lifeState,static_cast<unsigned long long>(n.sample.graphHash),
+   current.changes[0].expected,lease::Bits(n.sample.maximumStun),n.restDescriptor.flags);logger(line);}}
+ return true;
 }
 bool Step(const hk::NativePoseJobContext& c,bool before) noexcept {
  if(fault)return false;
@@ -188,7 +241,9 @@ bool Step(const hk::NativePoseJobContext& c,bool before) noexcept {
  if(!target.asleep||!enabled)wakeRequested=true;
  if(heldLease.phase==lease::Phase::empty){
   if(wakeRequested)return RetirePreparation(c,n);
-  if(now<preparedAt||now-preparedAt>lease::kAcquireMs){Abort("partner_sleep_prepare_timeout");return false;}
+  // CapturePreparation records the completed native-read time. The Step
+  // timestamp predates that read; compare the deadline with a fresh clock.
+  if(const auto expired=policy::Watchdog(preparing,preparedAt,heldLease,GetTickCount64())){Abort(expired);return false;}
   if(!before)return true;
   if(!n.zero){Reason("partner_sleep_pad_not_zero");return true;}
   if(n.sample.mode||n.sample.requested||n.sample.lifeState||n.sample.nodeActive){Abort("partner_sleep_prepare_native_active");return false;}
@@ -200,7 +255,10 @@ bool Step(const hk::NativePoseJobContext& c,bool before) noexcept {
   }
   const auto plan=lease::Seed(n.proof,n.sample,heldLease,n.requestsPresent);
   if(!plan.valid){Reason(plan.reason);return true;}
+  std::uint64_t candidateNonce=0;
+  if(!sleep_partner_carry_proof::AdvanceNonce(nextLeaseNonce,candidateNonce)){Abort("partner_sleep_nonce_exhausted");return false;}
   const bool first=Cas(c,n,plan.changes[0]);heldLease=lease::Commit(n.sample,n.scope.now,first,false);
+  if(first){leaseNonce=candidateNonce;seedTarget=target;}
   if(!first){Reason("partner_sleep_first_cas_refused");return true;}
   Native next{};const char* stage=nullptr;
   bool second=false;
@@ -222,6 +280,7 @@ bool Step(const hk::NativePoseJobContext& c,bool before) noexcept {
   // Mutation invalidates the sample; leave natural mode5->6 scheduler intact.
   if(plan.valid&&plan.count){Reason("partner_sleep_wake_requested");return true;}
  }
+ if(!MaintainNativeRest(c,n,before))return false;
  const auto receipt=lease::Observe(heldLease,n.proof,n.sample,c.sequence);Reason(receipt.reason);
  if(receipt.labAbortRequired){Abort(receipt.reason);return false;}
  if(!before&&receipt.retired&&heldLease.wakeAuthorized&&!clearPending){
@@ -233,6 +292,11 @@ bool Step(const hk::NativePoseJobContext& c,bool before) noexcept {
   clearPending=true;Reason("partner_sleep_cleanup_pending");
  }
  return true;
+}
+sleep_partner_carry_proof::Retained CarryRetained() noexcept {
+ sleep_partner_carry_proof::Retained r{};r.configured=configured;r.enabled=enabled;r.preparing=preparing;r.wakePending=wakeRequested;
+ r.clearPending=clearPending;r.faulted=fault;r.worker=Worker();r.lifetime=Lifetime();r.image=imageBase;r.modelEntry=ownedTransition.entry;r.nonce=leaseNonce;
+ r.owned=seedTarget;r.current=target;r.lease=heldLease;return r;
 }
 } // namespace
 bool CodeGate(const void* image,std::size_t span,std::uintptr_t& mismatch) noexcept {
@@ -278,7 +342,10 @@ void Closed(const hk::NativePoseJobContext& c,bool cleanup) noexcept {
   if(!policy::ClosedOwner(c,owner,cleanup)){
    Abort("partner_sleep_closed_cleanup_refused");
   }else{
-   completedTarget=ownedTarget;completedCycle=true;preparing=false;heldLease={};preparedOwner={};clearPending=false;wakeRequested=false;preparedAt=0;
+   if(restWrites&&logger){char line[192]{};const auto now=GetTickCount64();
+    std::snprintf(line,sizeof(line),"[sleep_partner_rest] closed=1;writes=%u;elapsed_ms=%llu",restWrites,
+     static_cast<unsigned long long>(now>=restFirstAt?now-restFirstAt:0));logger(line);}
+   completedTarget=ownedTarget;completedCycle=true;preparing=false;heldLease={};preparedOwner={};clearPending=false;wakeRequested=false;preparedAt=0;leaseNonce=0;seedTarget={};
    graphMog=graphLifetime=0;ownedTransition={};emptyRetiredSamples=0;emptyRetiredWindow=0;Reason("partner_sleep_retired");
   }
  }else if(Active()&&!cleanup)Abort("partner_sleep_window_cleanup_failed");
@@ -373,6 +440,99 @@ bool AllowPartsPoll() noexcept {
 bool SuppressForcedStance() noexcept {
  const Preserve preserve;if(!TryAcquireSRWLockShared(&lock))return true;
  const bool suppress=Active();ReleaseSRWLockShared(&lock);return suppress;
+}
+bool BindCarrierSliceQuery(CarrierSliceQuery query) noexcept {
+ const Preserve preserve;AcquireSRWLockExclusive(&lock);
+ const bool ok=query&&configured&&!enabled&&!Active()&&!fault&&(!carrierSliceQuery||carrierSliceQuery==query);
+ if(ok)carrierSliceQuery=query;ReleaseSRWLockExclusive(&lock);return ok;
+}
+bool ReadCarryLeaseProof(CarryLeaseProof& out) noexcept {
+ const Preserve preserve;out={};if(!TryAcquireSRWLockShared(&lock))return false;
+ CarrierSliceSnapshot first{},second{},last{};CarryLeaseProof candidate{},after{};
+ bool ok=false;
+ if(carrierSliceQuery&&configured&&Worker()&&Lifetime()&&carrierSliceQuery(first)&&first.thread==GetCurrentThreadId()){
+  sleep_partner_carry_proof::Retained retained{};
+  retained.configured=configured;retained.enabled=enabled;retained.preparing=preparing;retained.wakePending=wakeRequested;
+  retained.clearPending=clearPending;retained.faulted=fault;retained.worker=Worker();retained.lifetime=Lifetime();
+  retained.image=imageBase;retained.modelEntry=ownedTransition.entry;retained.nonce=leaseNonce;
+  retained.owned=seedTarget;retained.current=target;retained.lease=heldLease;
+  ok=sleep_partner_carry_proof::Build(retained,first,GetTickCount64(),candidate)&&carrierSliceQuery(second)&&
+     sleep_partner_carry_proof::SameSlice(first,second)&&
+     sleep_partner_carry_proof::Build(retained,second,GetTickCount64(),after)&&sleep_partner_carry_proof::SameProof(candidate,after)&&
+     carrierSliceQuery(last)&&sleep_partner_carry_proof::SameSlice(second,last);
+  if(ok){candidate.issuedAt=GetTickCount64();ok=sleep_partner_carry_proof::Build(retained,last,candidate.issuedAt,after);if(ok)out=after;}
+ }
+ ReleaseSRWLockShared(&lock);return ok;
+}
+bool CarryLeaseProofCurrent(const CarryLeaseProof& proof) noexcept {
+ const Preserve preserve;const auto now=GetTickCount64();
+ if(!proof.leaseNonce||!proof.issuedAt||now<proof.issuedAt||now-proof.issuedAt>250)return false;
+ CarryLeaseProof current{};
+ return ReadCarryLeaseProof(current)&&sleep_partner_carry_proof::SameProof(proof,current);
+}
+bool ReadCarryPreparationProof(CarryPreparationProof& out) noexcept {
+ const Preserve preserve;out={};if(!TryAcquireSRWLockShared(&lock))return false;
+ hk::NativePoseJobContext c[3]{};Native a{},b{};CarryPreparationProof first{},last{};const char* why=nullptr;
+ const auto retained=CarryRetained();bool ok=false;
+ if(!pausedAt&&sleep_carry_context_proof::Ready(retained,GetTickCount64(),false)&&!Carry()&&
+    hk::ReadNativePoseOwnedJobContext(c[0])&&c[0].thread==GetCurrentThreadId()&&ReadNative(c[0],false,a,why,false)&&
+    hk::RequireNativePoseOwnedJob(reinterpret_cast<void*>(c[0].go),a.pool)&&
+    sleep_carry_context_proof::Preparation(retained,c[0],a.proof,a.sample,first)&&
+    hk::ReadNativePoseOwnedJobContext(c[1])&&sleep_carry_context_proof::SameJob(c[0],c[1])&&ReadNative(c[1],false,b,why,false)&&
+    graph::Same(a.observed,b.observed)&&transition::Same(a.supplement,b.supplement)&&
+    sleep_carry_context_proof::Preparation(retained,c[1],b.proof,b.sample,last)&&sleep_carry_context_proof::SamePreparation(first,last)&&
+    hk::ReadNativePoseOwnedJobContext(c[2])&&sleep_carry_context_proof::SameJob(c[1],c[2])&&
+    hk::RequireNativePoseOwnedJob(reinterpret_cast<void*>(c[2].go),b.pool)&&
+    sleep_carry_context_proof::Ready(retained,GetTickCount64(),false)){out=last;ok=true;}
+ ReleaseSRWLockShared(&lock);return ok;
+}
+bool CarryPreparationProofCurrent(const CarryPreparationProof& proof) noexcept {
+ const Preserve preserve;const auto now=GetTickCount64();
+ if(!proof.leaseNonce||!proof.issuedAt||now<proof.issuedAt||now-proof.issuedAt>250)return false;
+ CarryPreparationProof current{};return ReadCarryPreparationProof(current)&&sleep_carry_context_proof::SamePreparation(proof,current);
+}
+bool BindDualPartsQuery(DualPartsQuery query) noexcept {
+ const Preserve preserve;AcquireSRWLockExclusive(&lock);
+ const bool ok=query&&configured&&!enabled&&!Active()&&!fault&&(!dualPartsQuery||dualPartsQuery==query);
+ if(ok)dualPartsQuery=query;ReleaseSRWLockExclusive(&lock);return ok;
+}
+bool ReadDualPartsSleepCycle(DualPartsSleepCycleProof& out) noexcept {
+ const Preserve preserve;out={};if(!TryAcquireSRWLockShared(&lock))return false;
+ const auto retained=CarryRetained();hk::NativePoseDualPartsContext c[3]{};sleep_parts_graph::Sample a{},b{},last{};
+ const auto read=[&](unsigned index,sleep_parts_graph::Sample& value)noexcept {
+  if(!dualPartsQuery||!dualPartsQuery(c[index])||c[index].thread!=GetCurrentThreadId()||
+     !sleep_carry_context_proof::SharedContext(retained,c[index],GetTickCount64()))return false;
+  // Genuine current shared/even receipt supplies execution owner and sequence;
+  // no old job, local0 named mask or odd writer is projected into this scope.
+  sleep_parts_plugin::Scope scope{};scope.exactGate=configured;scope.admitted=target.pairedReady;scope.ready=scope.armed=true;
+  scope.image=c[index].image;scope.player=c[index].player;scope.data=c[index].data;scope.state=c[index].state;
+  scope.mission=target.mission;scope.ownedMission=seedTarget.mission;scope.epoch=target.worldEpoch;scope.ownedEpoch=seedTarget.worldEpoch;
+  scope.generation=target.peerGeneration;scope.ownedGeneration=seedTarget.peerGeneration;
+  scope.thread=c[index].thread;scope.ownerThread=GetCurrentThreadId();scope.sequenceBefore=c[index].sequence;scope.sequenceAfter=hk::WindowSeq();
+  scope.now=GetTickCount64();scope.poll=target.poll;scope.batch=partner_defer::InBatch();
+  if(!sleep_parts_graph::Read(Read,scope,value))return false;
+  const auto& body=value.observed.owner.body[1];const auto& g=value.observed.graph[1];const auto& owner=heldLease.owner;
+  // The seed owner thread is immutable bookkeeping, not execution admission.
+  return body.block==owner.block&&body.ps==owner.ps&&body.lifeRecord==owner.life&&body.primary==owner.plugin&&body.node==owner.node&&
+   body.records==owner.records&&body.bitmap==owner.bitmap&&g.cs==owner.cs&&g.controller==owner.graph&&g.entry==ownedTransition.entry&&
+   g.mog==graphMog&&g.lifetime==graphLifetime&&body.lifeState==2&&
+   std::isfinite(value.health)&&std::isfinite(value.maximumHealth)&&value.health>0&&value.health<=value.maximumHealth&&value.maximumHealth>=1&&value.maximumHealth<=65535&&
+   std::isfinite(value.stun)&&value.stun>=0&&value.stun<=value.maximumStun&&lease::Bits(value.maximumStun)==heldLease.maximumStunBits;
+ };
+ bool ok=read(0,a)&&read(1,b)&&hk::SameNativePoseDualPartsPoll(c[0],c[1])&&sleep_parts_graph::Same(a,b)&&
+   read(2,last)&&hk::SameNativePoseDualPartsPoll(c[1],c[2])&&sleep_parts_graph::Same(b,last);
+ hk::NativePoseDualPartsContext final{};
+ if(ok)ok=dualPartsQuery(final)&&final.thread==GetCurrentThreadId()&&hk::SameNativePoseDualPartsPoll(c[2],final)&&
+   sleep_carry_context_proof::SharedContext(retained,final,GetTickCount64());
+ if(ok){const auto& o=heldLease.owner;const auto& current=c[2];
+  out.image=imageBase;out.player=o.player;out.go=current.go;out.data=o.data;out.life=o.life;out.block1=o.block;out.state1=o.ps;out.plugin=o.plugin;out.node=o.node;
+  out.records=o.records;out.bitmap=o.bitmap;out.modelCS1=o.cs;out.modelEntry1=ownedTransition.entry;out.graph=o.graph;
+  out.mission=o.mission;out.peerGeneration=o.generation;out.peerSequence=target.peerSequence;out.seedPeerSequence=seedTarget.peerSequence;out.localRole=target.localRole;out.peerCause=2;
+  out.armGeneration=o.armGeneration;out.armEpoch=o.armEpoch;out.thread=current.thread;out.sequence=current.sequence;out.worldEpoch=o.epoch;out.leaseNonce=leaseNonce;
+  out.birth1=o.birthSerial;out.carrierBirth0=current.birthSerial[0];out.sharedSerial=current.sharedSerial;out.carrySerial=current.carrySerial;
+  out.acceptedAt=target.poll;out.lastNativeAt=heldLease.lastSeen;out.seededAt=heldLease.seededAt;out.observedAt=GetTickCount64();out.paused=pausedAt!=0;
+ }
+ ReleaseSRWLockShared(&lock);return ok;
 }
 Status GetStatus() noexcept {
  const Preserve preserve;Status out{};if(!TryAcquireSRWLockShared(&lock)){out.reason="busy";return out;}

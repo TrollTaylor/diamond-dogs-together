@@ -53,6 +53,8 @@ inline Plan Accept(const Ledger& old,const Record& r,const Context& c,const ArmO
   }
  }
  if(!at||c.now-at>250){p.clear=true;p.next={};p.reason="peer_sleep_expired";return p;}
- p.next={true,r,at};p.target={true,true,false,false,r.down&&r.cause==2,r.mission,r.generation,arm.generation,arm.epoch,r.epoch,at};p.ready=true;p.reason="peer_sleep_accepted";return p;
+ p.next={true,r,at};p.target={true,true,false,false,r.down&&r.cause==2,r.mission,r.generation,arm.generation,arm.epoch,r.epoch,at};
+ p.target.peerSequence=r.sequence;p.target.localRole=r.role;p.target.peerCause=r.cause;p.target.peerDown=r.down!=0;p.target.peerReady=r.ready==1;
+ p.ready=true;p.reason="peer_sleep_accepted";return p;
 }
 }

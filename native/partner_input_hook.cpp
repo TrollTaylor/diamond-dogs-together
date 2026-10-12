@@ -62,16 +62,31 @@
 #include "whole_player_lifetime_checks.hpp"
 #include "native_pose_selected_export.hpp"
 #include "native_pose_camera_reader.hpp"
+#include "carry_vars_pair_word_window.hpp"
+#include "owned_flag_map.hpp"
+#include "native_pose_message_lifetime.hpp"
+#include "mgscoop/native_pose_local_carry_slice.hpp"
+#include "native_pose_vars_bulk_reset_contract.hpp"
+#include <new>
 #include "native_pose_reject_diagnostic.hpp"
 #include "native_pose_teardown_diagnostic.hpp"
 #include "native_pose_parts_diagnostic.hpp"
 #include "mgscoop/native_pose_sleep_parts.hpp"
 #include "sleep_parts_policy.hpp"
 #include "sleep_parts_contract.hpp"
+#include "mgscoop/native_pose_dual_parts.hpp"
+#include "dual_parts_core_policy.hpp"
+#include "dual_parts_local_profile.hpp"
+#include "dual_parts_cold_profile.hpp"
+#include "dual_parts_local_profile_contract.hpp"
 #include "native_pose_hold_owners.hpp"
 #include "native_pose_carry_participants.hpp"
 #include "carry_plugin_contract.hpp"
 #include "carry_owned_handshake_contract.hpp"
+#include "carry_dispatch_lifetime.hpp"
+#include "native_pose_hook_groups.hpp"
+#include "mgscoop/native_pose_carry_cold.hpp"
+#include "mgscoop/native_pose_dispatch_lifetime.hpp"
 #include "carry_request_retirement_contract.hpp"
 
 namespace mgscoop::partner_input_hook {
@@ -2014,6 +2029,7 @@ bool RegisterNativePosePartsPollValidator(NativePosePartsPollValidator callback)
  if(g_pose_parts_validator&&g_pose_parts_validator!=callback)return false;g_pose_parts_validator=callback;return true;
 }
 bool ReadNativePoseSleepPartsPoll(NativePoseSleepPartsContext& out) noexcept {return PosePartsContext(out);}
+bool ReadNativePoseDualPartsPoll(NativePoseDualPartsContext& out) noexcept {return PoseDualPartsContext(out);}
 bool BindNativePoseWorker(const NativePoseWorkerBindings& bindings) noexcept {
  if(g_pose_installed||PoseRequired()||PoseOwned())return false;
  if(!bindings.admitted||!bindings.refuse)return false;
@@ -2058,6 +2074,24 @@ bool NativePoseLocalCacheIsolationLive() noexcept {
  return PosePatchOwned(g_pose_patches[11]);
 }
 
+bool ReadNativePoseOwnedJobContext(NativePoseJobContext& out) noexcept {
+ out={};const auto& c0=t_pose.context;
+ if(g_pose_bindings.enabled||!PoseOwned()||!t_pose.job||g_pose_fault||g_shutdown||!g_pose_test||!PoseWorker()||
+  partner_defer::InBatch()||GetCurrentThreadId()!=g_pose_thread||!PoseParticipantsLive()||!NativePoseWholePlayerLifetimeLive()||
+  !c0.modelReady||!c0.selectedBodyOwned||c0.selectedBody!=1||c0.generation!=g_pose_generation||c0.sceneEpoch!=g_pose_epoch||
+  c0.thread!=g_pose_thread||c0.sequence!=static_cast<std::uint32_t>(g_window_seq)||(c0.sequence&1u)==0||!PoseContextBirthCurrent(c0))return false;
+ pi::Arm a{},after{};NativePoseJobContext model=c0;std::uintptr_t pp=0,source=0,vt=0;std::uint32_t real=0,selected=0;
+ if(!ReadArm(a)||a.P!=c0.player||a.go!=c0.go||a.blk1!=c0.block||a.ps1!=c0.state||a.gen!=c0.generation||a.rates_epoch!=c0.sceneEpoch||
+  !a.enabled||!a.native||a.cam!=PartnerInputCam::sandbox||a.pp!=c0.pp||a.src!=c0.source||
+  !PoseRead(a.P+0x214,real)||real||!PoseRead(a.P+0x218,selected)||selected!=1||
+  !PoseRead(a.P+c::p_pad,pp)||pp!=c0.pp||!PoseRead(pp+c::pp_src,source)||source!=c0.source||
+  !PoseRead(pp,vt)||vt!=c0.windowPPVT||vt!=WindowVtable(a.hold)||!PoseModel(a,model)||!model.modelReady||
+  model.modelCS!=c0.modelCS||model.modelEntry!=c0.modelEntry||!PoseContextBirthCurrent(c0)||!PoseCarryPairCurrent()||
+  !ReadArm(after)||after.P!=a.P||after.go!=a.go||after.blk1!=a.blk1||after.ps1!=a.ps1||after.gen!=a.gen||after.rates_epoch!=a.rates_epoch||
+  after.pp!=a.pp||after.src!=a.src||after.hold!=a.hold||!after.enabled||!after.native||!PoseOwned()||g_pose_fault||
+  c0.sequence!=static_cast<std::uint32_t>(g_window_seq))return false;
+ out=c0;return true;
+}
 bool RequireNativePoseOwnedJob(void* go,std::uint32_t block) noexcept {
  if(!PoseOwned())return false;
  if(g_pose_fault||reinterpret_cast<std::uintptr_t>(go)!=g_pose_go||block!=g_pose_pool){
@@ -2078,28 +2112,111 @@ bool RequestNativePoseLeaseClear() noexcept {
  if(!PoseOwned()||!t_pose.job||!g_pose_held||g_pose_fault)return false;
  if(!holds::ClearSleep(g_pose_owners))return false;InterlockedExchange(&g_pose_clear,1);return true;
 }
+bool NativePoseVarsPairWordOwnedWindow() noexcept {
+ // Faulted cleanup keeps the exact writer and the admission established by
+ // private opt-in. It cannot promote a native callback or a replacement owner.
+ return PoseOwned()&&g_pose_test&&PoseRequired()&&GetCurrentThreadId()==g_pose_thread&&PoseVarsPatchesLive();
+}
+bool NativePoseVarsPairWordCleanupWindow(const NativePoseJobContext& c0) noexcept {
+ return NativePoseVarsPairWordOwnedWindow()&&t_pose.job&&c0.player==t_pose.context.player&&c0.go==t_pose.context.go&&
+  c0.block==t_pose.context.block&&c0.state==t_pose.context.state&&c0.modelCS==t_pose.context.modelCS&&c0.modelEntry==t_pose.context.modelEntry&&
+  c0.generation==g_pose_generation&&c0.sceneEpoch==g_pose_epoch&&c0.thread==g_pose_thread&&c0.sequence==t_pose.context.sequence&&
+  c0.birthSerial==t_pose.context.birthSerial&&PoseContextBirthCurrent(c0);
+}
+bool ReadNativePoseLocalCarrySlice(NativePoseLocalCarryContext& out) noexcept {return PoseLocalCarryQuery(out);}
+bool RunNativePoseLocalCarrySlice(const NativePoseCarryLease& lease,NativePoseLocalCarryFn fn,void* argument) noexcept {
+ if(g_pose_bindings.enabled||!fn||!lease.serial||g_pose_fault||g_shutdown||!g_pose_test||!PoseRequired()||!PoseWorker()||
+  GetCurrentThreadId()!=g_pose_thread||partner_defer::InBatch()||t_pose.opened||t_local_carry.opened||!t_pose.job||!t_pose.cleanup||
+  (g_window_seq&1)||static_cast<std::uint32_t>(g_window_seq)!=t_pose.context.sequence+1u||t_pose_pair_word_token.active()||
+  lease.serial!=g_pose_owners.carrySerial||lease.generation!=g_pose_generation||lease.sceneEpoch!=g_pose_epoch||
+  !(g_pose_owners.held&holds::carry)||(g_pose_owners.pending&holds::carry)||!g_pose_held||
+  !NativePoseWholePlayerLifetimeLive()||!NativePoseLocalCacheIsolationLive()||!PoseMessagePatchesLive()||!PoseVarsPatchesLive()||!PoseParticipantsLive())return false;
+ px::Admission admission{true,true,true,true,true,true,g_pose_generation,g_pose_epoch,g_pose_thread};
+ if(g_pose_gate.TryWrite(admission,t_local_carry.ticket)!=px::Status::entered)return false;
+ InterlockedIncrement(&g_window_seq);t_local_carry.opened=true;t_local_carry.context={};
+ ++g_local_carry_nonce;if(!g_local_carry_nonce)++g_local_carry_nonce;
+ t_local_carry.context.carryLease=lease;t_local_carry.context.sliceNonce=g_local_carry_nonce;
+ t_local_carry.context.sequence=static_cast<std::uint32_t>(g_window_seq);
+ NativePoseLocalCarryContext context{};bool normal=false,accepted=false,checked=false,released=false;
+ __try {
+  checked=PoseLocalCarryQuery(context);if(checked)accepted=fn(context,argument);normal=true;
+ } __finally {
+  NativePoseLocalCarryContext after{};const bool current=checked&&PoseLocalCarryQuery(after)&&SameNativePoseLocalCarrySlice(context,after);
+  const bool clean=normal&&accepted&&current&&!g_pose_fault;
+  if(!clean)PoseFail("pose_local_carry_slice_changed");
+  InterlockedIncrement(&g_window_seq);
+  released=g_pose_gate.EndWrite(g_pose_thread,g_pose_generation,g_pose_epoch,clean,true,t_local_carry.ticket);
+  if(released)t_local_carry.opened=false;else PoseFail("pose_local_carry_slice_cleanup");
+ }
+ return normal&&accepted&&released&&!g_pose_fault;
+}
 bool NativePoseCarryRecipientHeld() noexcept {return PoseOwned()&&(g_pose_owners.held&holds::carry)!=0;}
 bool NativePoseCarryRecipientLeaseCurrent(const NativePoseCarryLease& lease) noexcept {
  if(!PoseOwned()||!t_pose.job)return false;
  if(!lease.serial||lease.serial!=g_pose_owners.carrySerial||lease.generation!=g_pose_generation||lease.sceneEpoch!=g_pose_epoch||
     !t_pose.context.selectedBodyOwned||t_pose.context.selectedBody!=1||
-    !(g_pose_owners.held&holds::carry)||!NativePoseWholePlayerLifetimeLive()||!NativePoseLocalCacheIsolationLive()||!PoseParticipantsLive())return false;
- return PoseCarryPairCurrent();
+    !(g_pose_owners.held&holds::carry)||!NativePoseWholePlayerLifetimeLive()||!NativePoseLocalCacheIsolationLive()||!NativePoseVarsPairWordOwnedWindow()||!PoseParticipantsLive()||!PoseMessageCurrent())return false;
+ return PoseCarryPairCurrent()&&PoseRouteCurrent();
 }
+bool ReadNativePoseCarryColdStatus(NativePoseCarryColdStatus& out) noexcept {
+ out={};const DWORD incoming=GetLastError();
+ if(g_pose_bindings.enabled||!g_pose_test||!PoseRequired()||!PoseWorker()||g_pose_fault||g_shutdown||
+  GetCurrentThreadId()!=g_pose_thread||t_pose.opened||t_local_carry.opened||partner_defer::InBatch()||
+  (g_window_seq&1)||g_pose_held||g_pose_clear||g_pose_owners.held||g_pose_owners.pending||
+  !PoseParticipantsLive()||!NativePoseWholePlayerLifetimeLive()){SetLastError(incoming);return false;}
+ PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return false;}bool accepted=false;
+ __try {
+  const bool owned=read.tracked&&read.thread==GetCurrentThreadId()&&read.slot<32&&t_readers.serial[read.slot]==read.serial&&
+   g_pose_gate.OwnsRead(read.thread,t_readers.tickets[read.slot]);
+  std::uint64_t epoch=0;AcquireSRWLockShared(&g_pose_birth_lock);epoch=g_pose_birth_epoch;ReleaseSRWLockShared(&g_pose_birth_lock);
+  pi::Arm a{},after{};route::Observation routeBefore{},routeAfter{};msg::Observation messageBefore{},messageAfter{};
+  std::uintptr_t vars=0,q=0;std::uint16_t word=0xffff,wordAfter=0xffff;std::uint32_t local=0,selected=0;
+  dual_parts_cold_profile::Stamp profileBefore{},profileAfter{};std::uint32_t profileReasonAfter=0;
+  NativePoseCarryColdStatus value{};value.sequence=static_cast<std::uint32_t>(g_window_seq);
+  const bool root=owned&&ReadArm(a)&&a.P==g_pose_player&&a.go==g_pose_go&&a.blk1==g_pose_block&&a.gen==g_pose_generation&&a.rates_epoch==g_pose_epoch&&
+   a.enabled&&a.native&&PoseRead(a.P+0x214,local)&&!local&&PoseRead(a.P+0x218,selected)&&!selected;
+  if(root){
+   value.local=local;value.selected=selected;value.routeReady=route::ReadPair(PoseReader,g_base,a.P,routeBefore);
+   value.routeNoWork=value.routeReady&&route::NoClassWork(routeBefore);
+   if(value.routeReady){value.routeType=0x23063f8;value.registryType=0x23073c0;value.routeMode=routeBefore.mode;value.routeFlags=routeBefore.metadataFlags;value.routeCount=routeBefore.count;value.routePending=routeBefore.pendingCount;}
+   value.messageReady=msg::ReadPair(PoseReader,g_base,a.P,messageBefore);
+   if(value.messageReady){value.messageType=0x20e9b60;value.messageKey=messageBefore.key;value.messageEnabled=messageBefore.enabled;}
+   value.varsReady=PoseRead(a.P+0x140,vars)&&vars==g_base+0x2c01360&&PoseRead(a.P+0x60,q)&&q&&PoseRead(vars+0x10e,word);
+   value.word=word;value.varsDomain=PoseVarsPatchesLive();value.messageDomain=PoseMessagePatchesLive();value.routeDomain=PoseRoutePatchesLive();
+   value.localSliceActive=false; // cold shared query is NEVER an exclusive slice
+   value.profileReady=dual_parts_cold_profile::Read(PoseReader,g_base,a.P,profileBefore,value.profileReason);
+   value.profileCurrent=value.profileReady&&value.profileReason==0;
+   if(value.profileReady){const auto& p=profileBefore.profile;value.profileType=p.type;value.profileParts=p.parts;value.profileCamo=p.camo;
+    value.profileAux=p.auxiliary;value.profileFace=p.face;value.profileRefresh=p.refresh;value.currentType=p.currentType;value.currentParts=p.currentParts;
+    value.currentCamo=p.currentCamo;value.currentEncoded=p.currentEncoded;value.currentAux=p.currentAux;value.currentFace=p.currentFace;value.profileSelector=p.selector;}
+   const bool profileSame=!value.profileReady||(dual_parts_cold_profile::Read(PoseReader,g_base,a.P,profileAfter,profileReasonAfter)&&
+    profileReasonAfter==value.profileReason&&dual_parts_cold_profile::Same(profileBefore,profileAfter));
+   const bool routeSame=!value.routeReady||(route::ReadPair(PoseReader,g_base,a.P,routeAfter)&&route::Same(routeBefore,routeAfter));
+   const bool messageSame=!value.messageReady||(msg::ReadPair(PoseReader,g_base,a.P,messageAfter)&&msg::SameLease(messageBefore,messageAfter));
+   const bool varsSame=!value.varsReady||(PoseRead(vars+0x10e,wordAfter)&&word==wordAfter);
+   AcquireSRWLockShared(&g_pose_birth_lock);const bool birthSame=epoch==g_pose_birth_epoch;ReleaseSRWLockShared(&g_pose_birth_lock);
+   if(routeSame&&messageSame&&varsSame&&profileSame&&birthSame&&ReadArm(after)&&after.P==a.P&&after.go==a.go&&after.blk1==a.blk1&&
+    after.gen==a.gen&&after.rates_epoch==a.rates_epoch&&value.sequence==static_cast<std::uint32_t>(g_window_seq)&&
+    g_pose_gate.OwnsRead(read.thread,t_readers.tickets[read.slot])&&!g_pose_fault){out=value;accepted=true;}
+  }
+ } __finally {PoseExitShared(read);SetLastError(incoming);}
+ return accepted&&!g_pose_fault;
+}
+bool NativePoseDispatchInterfaceLifetimeLive() noexcept {return PoseRoutePatchesLive()&&PoseParticipantsLive()&&NativePoseWholePlayerLifetimeLive();}
 bool AcquireNativePoseCarryRecipientLease(NativePoseCarryLease& out) noexcept {
  out={};if(g_pose_bindings.enabled||!PoseOwned()||!t_pose.job||g_pose_fault||!PoseWorker()||
    !t_pose.context.modelReady||!t_pose.context.selectedBodyOwned||t_pose.context.selectedBody!=1||
-   !NativePoseWholePlayerLifetimeLive()||!NativePoseLocalCacheIsolationLive()||!PoseParticipantsLive()||!PoseContextBirthCurrent(t_pose.context))return false;
+   !NativePoseWholePlayerLifetimeLive()||!NativePoseLocalCacheIsolationLive()||!NativePoseVarsPairWordOwnedWindow()||!PoseParticipantsLive()||!PoseContextBirthCurrent(t_pose.context))return false;
  if(g_pose_owners.held&holds::carry){
   out={g_pose_owners.carrySerial,g_pose_generation,g_pose_epoch};if(NativePoseCarryRecipientLeaseCurrent(out))return true;out={};return false;
  }
- cp::Pair pair{};auto read=PoseReader;
+ cp::Pair pair{};route::Observation dispatch{};auto read=PoseReader;
  if(!cp::ReadPair(read,g_base,g_pose_player,pair)||pair.go!=g_pose_go||pair.body[1].block!=t_pose.context.block||
     pair.body[1].state!=t_pose.context.state||pair.body[1].cs!=t_pose.context.modelCS||pair.body[1].entry!=t_pose.context.modelEntry||
-    !PoseCarryBirth0Current(pair,true)||pair.body[0].freeCallbacks<2)return false;
+    !PoseCarryBirth0Current(pair,true)||pair.body[0].freeCallbacks<2||!PoseRouteCapture(pair,dispatch)||!PoseMessageCapture(pair))return false;
  ++g_pose_carry_serial;if(!g_pose_carry_serial)++g_pose_carry_serial;
  if(!holds::AddCarry(g_pose_owners,g_pose_carry_serial))return false;
- g_pose_carry_pair=pair;g_pose_cs=t_pose.context.modelCS;g_pose_entry=t_pose.context.modelEntry;
+ g_pose_carry_pair=pair;g_pose_route_hold=dispatch;g_pose_route_bound=true;g_pose_cs=t_pose.context.modelCS;g_pose_entry=t_pose.context.modelEntry;
  InterlockedExchange(&g_pose_held,1);out={g_pose_carry_serial,g_pose_generation,g_pose_epoch};return true;
 }
 bool RequestNativePoseCarryRecipientLeaseClear(const NativePoseCarryLease& lease) noexcept {

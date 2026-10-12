@@ -1,0 +1,17 @@
+{
+  "root_verified_manifests": [
+    "b2c3714323c6442b0502b5165daa49efd49fb973be1f10c7d9d4e749753a664e",
+    "7552de1234a458be2ab4b77a001f38ab78fd7a5a5a2b6025ce9663ff53daa28b"
+  ],
+  "bf9620_full_bytes_verified": 680,
+  "profile_selector_native_subtraction": -515,
+  "profile_actual_516_encodes": 3,
+  "jump_table_targets_verified": 7,
+  "timing_fix": "post-read current clock used against captured preparation time; original watchdog and real reversal/deadline rejection retained",
+  "first_actual_timing_refusal": "a098e69ca33045a4a8beb3350fa74d00",
+  "no_native_flag_writes": true,
+  "original_native_class_update_preserved": true,
+  "native_carry_calls": false,
+  "compiled": false,
+  "runtime": false
+}

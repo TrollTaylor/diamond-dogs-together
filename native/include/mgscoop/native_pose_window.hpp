@@ -36,12 +36,19 @@ bool SetNativePoseWindowTest(bool enabled) noexcept;
 bool ReadNativePoseOriginalCode(std::uintptr_t at,void* out,std::size_t size) noexcept;
 bool NativePoseRequiredForJob(void* go,std::uint32_t block) noexcept;
 bool NativePoseOwnedWindow() noexcept;
+// Fresh actual selected1 job receipt. Derived from the installed core writer,
+// current Arm/model/birth/owned PP; no caller-manufactured context is accepted.
+bool ReadNativePoseOwnedJobContext(NativePoseJobContext&) noexcept;
 // Actual whole-GO deleting/reset hooks installed and owned patches still valid.
 // False in synthetic fixtures; it cannot be enabled by a configuration bool.
 bool NativePoseWholePlayerLifetimeLive() noexcept;
 // Actual FF5510 export-filter entry/trampoline and owned current patch.
 // This does not claim the hidden S0/S1/Warp isolation scenario has passed.
 bool NativePoseLocalCacheIsolationLive() noexcept;
+// Real current seven-writer hook ownership; cleanup retains faulted writer
+// authority solely for exact unchanged pair-word restoration.
+bool NativePoseVarsPairWordOwnedWindow() noexcept;
+bool NativePoseVarsPairWordCleanupWindow(const NativePoseJobContext&) noexcept;
 // Exact retained go/pool; refuses and faults a nested foreign job while owned.
 // Never substitute the broader fault-inclusive Required predicate.
 bool RequireNativePoseOwnedJob(void* go,std::uint32_t block) noexcept;

@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "mgscoop/native_pose_window.hpp"
+#include "mgscoop/native_pose_dual_parts.hpp"
 namespace mgscoop::sleep_partner_test {
 // Private/copied-save experiment only. This interface makes no production
 // downed/network promise. Target must be accepted fresh native/Lua peer state.
@@ -9,6 +10,8 @@ struct Target {
  bool pairedReady=false,fieldReady=false,demo=false,stopping=false,asleep=false;
  std::uint32_t mission=0,peerGeneration=0,armGeneration=0,armEpoch=0;
  std::uint16_t worldEpoch=0;std::uint64_t poll=0;
+ std::uint32_t peerSequence=0,localRole=0,peerCause=0;
+ bool peerDown=false,peerReady=false;
 };
 using LogFn=void(*)(const char*) noexcept;
 bool CodeGate(const void* image,std::size_t span,std::uintptr_t& mismatch) noexcept;
@@ -32,4 +35,49 @@ struct Status {
  bool stanceObserved=false;std::uint32_t psPacked=0,qStance=0,psAction=0;std::uint64_t stanceAt=0;
 };
 Status GetStatus() noexcept; // bounded cache, never raw pointers
-}
+// Internal native-only query, bound immutably before enable. The provider must
+// invoke the installed actual carrier0 slice query; never fill it from status,
+// a job context, a fabricated Scope or caller-controlled booleans. It must not
+// re-enter this consumer. Distinct exclusive slice has real odd WindowSeq,
+// P214/P218==0, clean preceding Closed and both participant lifetimes held.
+struct CarrierSliceSnapshot {
+ std::uintptr_t image=0,player=0,go=0,data=0,block1=0,state1=0,modelCS1=0,modelEntry1=0;
+ std::uint32_t armGeneration=0,armEpoch=0,thread=0,sequence=0,realLocal=0,selected=0;
+ std::uint64_t birth1=0,carrierBirth0=0,sliceNonce=0,carrySerial=0;
+ bool sleepHeld=false;
+};
+using CarrierSliceQuery=bool(*)(CarrierSliceSnapshot&) noexcept;
+bool BindCarrierSliceQuery(CarrierSliceQuery) noexcept;
+// Ownership/authority snapshot only: native mode5/Q84/life2 and all returned
+// native identities must independently match the carrier's selected0 reader.
+// No cached active flag, native calls, selection override or mode permission.
+struct CarryLeaseProof {
+ std::uintptr_t image=0,player=0,go=0,data=0,life=0,block1=0,state1=0,plugin=0,node=0,records=0,bitmap=0,modelCS1=0,modelEntry1=0,graph=0;
+ std::uint32_t mission=0,peerGeneration=0,peerSequence=0,seedPeerSequence=0,localRole=0,peerCause=0;
+ std::uint32_t armGeneration=0,armEpoch=0,thread=0,sequence=0;
+ std::uint16_t worldEpoch=0;
+ std::uint64_t leaseNonce=0,birth1=0,carrierBirth0=0,sliceNonce=0,carrySerial=0;
+ std::uint64_t acceptedAt=0,lastNativeAt=0,seededAt=0,issuedAt=0;
+};
+bool ReadCarryLeaseProof(CarryLeaseProof&) noexcept; // default-null provider refuses
+bool CarryLeaseProofCurrent(const CarryLeaseProof&) noexcept; // query again in SAME slice before Start
+// Separate genuine selected1 job receipt before dual Carry acquisition.
+struct CarryPreparationProof {
+ std::uintptr_t image=0,player=0,go=0,data=0,life=0,block1=0,state1=0,plugin=0,node=0,records=0,bitmap=0,modelCS1=0,modelEntry1=0,graph=0;
+ std::uint32_t mission=0,peerGeneration=0,peerSequence=0,seedPeerSequence=0,localRole=0,peerCause=0,armGeneration=0,armEpoch=0,thread=0,sequence=0;
+ std::uint16_t worldEpoch=0;std::uint64_t leaseNonce=0,birth1=0,acceptedAt=0,lastNativeAt=0,seededAt=0,issuedAt=0,graphHash=0;
+};
+bool ReadCarryPreparationProof(CarryPreparationProof&) noexcept;
+bool CarryPreparationProofCurrent(const CarryPreparationProof&) noexcept;
+// Separate real shared/even dual-parts query. This seals current accepted cause2
+// authority, not a resting/carried label, native command or old writer Scope.
+using DualPartsQuery=bool(*)(partner_input_hook::NativePoseDualPartsContext&) noexcept;
+bool BindDualPartsQuery(DualPartsQuery) noexcept;
+struct DualPartsSleepCycleProof {
+ std::uintptr_t image=0,player=0,go=0,data=0,life=0,block1=0,state1=0,plugin=0,node=0,records=0,bitmap=0,modelCS1=0,modelEntry1=0,graph=0;
+ std::uint32_t mission=0,peerGeneration=0,peerSequence=0,seedPeerSequence=0,localRole=0,peerCause=0,armGeneration=0,armEpoch=0,thread=0,sequence=0;
+ std::uint16_t worldEpoch=0;std::uint64_t leaseNonce=0,birth1=0,carrierBirth0=0,sharedSerial=0,carrySerial=0,acceptedAt=0,lastNativeAt=0,seededAt=0,observedAt=0;
+ bool paused=false;
+};
+bool ReadDualPartsSleepCycle(DualPartsSleepCycleProof&) noexcept;
+} // namespace mgscoop::sleep_partner_test

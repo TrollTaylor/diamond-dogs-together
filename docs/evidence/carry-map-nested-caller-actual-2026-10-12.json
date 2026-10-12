@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "run": "208939d5cb6041fc992c5a25e03b86fb",
+  "kind": "hidden-actual-partial",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261012-072655-1b1e4e7fd3a44abfb2ddb18f12df4d3f\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 0,
+  "failure": "Required scenario check failed: host require posewindow;enabled=1 <- NO_RESULT: [host] 'pose_window_test 1' produced no final result.",
+  "closed": true,
+  "forced": true,
+  "isolation_failed": true,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 80275564,
+      "end": 80388953,
+      "sha256": "130c9c90d8d834dd64f42eec6820c2e17df7dde919b6d4f8c7289935f185f12c"
+    },
+    {
+      "role": "guest",
+      "start": 89116728,
+      "end": 89232038,
+      "sha256": "06169335dc5e3d9b0e314e4d6ee107590d0492d67f641af911c5b8f0619511e7"
+    }
+  ],
+  "indexed_readings": {
+    "host": [],
+    "guest": []
+  },
+  "limitations": "Actual first nested global wrapper is generic180A20 map delete, called from85C6B2 duringowned body1 drain consumer2. PP+8 admitted and camera filter ran. No native sleep/cold/carry acceptance. 181 audited source checks passed; all63 protected files/saves restored. Secondary2DD868 AV occurred after refusal; cause not independently attributed."
+}

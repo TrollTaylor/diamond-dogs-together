@@ -5,8 +5,12 @@ namespace cw=camera_mode_window;
 namespace birth=native_pose_birth;
 namespace sx=native_pose_selected_export;
 namespace pcam=native_pose_camera_reader;
+namespace vw=carry_vars_pair_word_window;
+namespace msg=native_pose_message_lifetime;
 namespace holds=native_pose_hold_owners;
 namespace cp=native_pose_carry_participants;
+namespace route=carry_dispatch_lifetime;
+namespace groups=native_pose_hook_groups;
 SRWLOCK g_pose_birth_lock=SRWLOCK_INIT;
 birth::Receipt g_pose_birth{},g_pose_birth0{};std::uint64_t g_pose_birth_serial=0,g_pose_birth_epoch=1,g_pose_bound_birth=0;
 px::Gate g_pose_gate;
@@ -25,6 +29,16 @@ detail::NativePoseTestBindings g_pose_bindings{};
 NativePoseWorkerBindings g_pose_worker{};
 holds::Owners g_pose_owners{};cp::Pair g_pose_carry_pair{};
 std::uint64_t g_pose_carry_serial=0,g_pose_carry_birth0=0;
+route::Observation g_pose_route_hold{};bool g_pose_route_bound=false;
+bool PoseRoutePatchesLive() noexcept;
+msg::Observation g_pose_message_hold{};bool g_pose_message_bound=false;
+struct LocalCarrySlice {px::WriteTicket ticket;NativePoseLocalCarryContext context{};bool opened=false;};
+thread_local LocalCarrySlice t_local_carry;std::uint64_t g_local_carry_nonce=0;
+bool PoseMessagePatchesLive() noexcept;
+bool PoseLocalCarryQuery(NativePoseLocalCarryContext&) noexcept;
+vw::Shadow g_pose_pair_word_shadow{};
+NativePoseJobContext g_pose_pair_word_closed{};bool g_pose_pair_word_closed_clean=false;
+thread_local vw::Token t_pose_pair_word_token;
 NativePosePartsPollValidator g_pose_parts_validator=nullptr;
 struct PosePartsPoll {const PoseSharedLease* read=nullptr;std::uintptr_t go=0,caller=0;};
 thread_local PosePartsPoll t_parts;
@@ -40,18 +54,39 @@ struct PoseReaders {
 thread_local PoseReaders t_readers;
 using PoseUpdateFn=void(*)(void*);
 using PoseSelectedExportFn=void(*)(void*,std::uint32_t);
+using PoseMessageUnregisterFn=void(*)(void*,void*);
+using PoseMessageSetterFn=void(*)(void*,void*);
+using PoseMessageDeleteMapFn=std::uint32_t(*)(void*,std::uint32_t);
+using PoseMessageInsertMapFn=std::uint32_t(*)(void*,std::uint32_t,std::uint64_t);
+using PoseVarsInitFn=void(*)();
+using PoseVarsLuaFn=int(*)(void*);
+using PoseVarsPairFn=bool(*)(void*,std::uint32_t);
+using PoseVarsMessageFn=void(*)(void*,std::uint32_t,void*,const void*);
 using PoseConstructFn=void*(*)(void*,void*,void*);
 using PoseDeleteFn=void*(*)(void*,unsigned);
 using PoseRebindFn=void(*)(void*,std::uint32_t);
 using PoseRetireFn=void(*)(void*,std::uint32_t,std::uint8_t);
 using PoseHintFn=void(*)(void*,std::uint16_t,std::uint32_t,std::uint8_t,std::uint8_t,std::uint8_t,std::uint8_t);
 PoseSelectedExportFn g_pose_selected_export=nullptr;PoseUpdateFn g_pose_cam_frame=nullptr;
+PoseVarsInitFn g_pose_vars_init=nullptr;PoseVarsLuaFn g_pose_vars_lua=nullptr,g_pose_vars_reset=nullptr,g_pose_vars_bulk_reset=nullptr;
+PoseUpdateFn g_pose_vars_export=nullptr;PoseVarsPairFn g_pose_vars_pair=nullptr;PoseVarsMessageFn g_pose_vars_message=nullptr;
+bool PoseVarsPatchesLive() noexcept;
 std::uintptr_t g_pose_camera_stub=0;
 PoseUpdateFn g_pose_update=nullptr,g_pose_destroy_block=nullptr,g_pose_destroy_entry=nullptr;
 PoseDeleteFn g_pose_destroy_cs=nullptr;PoseHintFn g_pose_hint=nullptr;
+using PoseMessageCtorFn=void*(*)(void*);
+PoseMessageCtorFn g_pose_message_ctor=nullptr;PoseDeleteFn g_pose_message_dtor=nullptr;
+PoseMessageUnregisterFn g_pose_message_unregister=nullptr;PoseMessageSetterFn g_pose_message_setter=nullptr;
+PoseUpdateFn g_pose_message_dispatch=nullptr;PoseMessageDeleteMapFn g_pose_message_delete_map=nullptr;
+PoseMessageInsertMapFn g_pose_message_insert_map=nullptr;PoseUpdateFn g_pose_message_arena_reset=nullptr;
 PoseDeleteFn g_pose_delete_player=nullptr;PoseUpdateFn g_pose_reset_player=nullptr;
 PoseRetireFn g_pose_retire_body=nullptr;
 PoseConstructFn g_pose_construct=nullptr;
+using PoseRouteCtorFn=void*(*)(void*,void*);
+using PoseRouteRegistryCtorFn=void*(*)(void*);using PoseRouteReplaceFn=void(*)();
+PoseRouteCtorFn g_pose_route_ctor=nullptr;PoseDeleteFn g_pose_route_delete=nullptr,g_pose_registry_delete=nullptr;
+PoseRouteRegistryCtorFn g_pose_registry_ctor=nullptr;PoseUpdateFn g_pose_registry_destroy=nullptr;
+PoseRouteReplaceFn g_pose_registry_replace=nullptr;PoseUpdateFn g_pose_route_class_update=nullptr,g_pose_route_class_register=nullptr;
 PoseRebindFn g_pose_rebind=nullptr;PoseUpdateFn g_pose_parts=nullptr;
 bool PoseRequired() noexcept {return InterlockedCompareExchange(&g_pose_required,0,0)!=0;}
 void PoseFail(const char* why) noexcept {
@@ -84,6 +119,17 @@ bool PoseReader(std::uintptr_t p,void* out,std::size_t n) noexcept {
 }
 bool PoseOwned() noexcept {
  return t_pose.opened&&g_pose_gate.Owns(GetCurrentThreadId(),g_pose_generation,g_pose_epoch,t_pose.writer);
+}
+volatile LONG g_pose_nested_trace_logged=0;
+void PoseTraceNestedGlobal(const char* entry,std::uintptr_t caller) noexcept {
+ const DWORD incoming=GetLastError();
+ if(PoseOwned()&&InterlockedCompareExchange(&g_pose_nested_trace_logged,1,0)==0&&g_log){
+  char line[256]{};const auto rva=caller>=g_base&&caller-g_base<0xa01d000?caller-g_base:0;
+  if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
+   "pose_nested_global_trace;entry=%s;caller_rva=%llx;seq=%u;consumer=%u;selected=%u;job=%u;held=%u;fault=%u\r\n",
+   entry,static_cast<unsigned long long>(rva),static_cast<unsigned>(g_window_seq),t_pose.context.consumer,
+   t_pose.context.selectedBody,t_pose.job?1u:0u,g_pose_held?1u:0u,g_pose_fault?1u:0u)))g_log(line);
+ }SetLastError(incoming);
 }
 bool PoseEnterShared(PoseSharedLease& out) noexcept {
  out={};if(!g_pose_installed)return true;const auto tid=GetCurrentThreadId();
@@ -205,6 +251,80 @@ bool PosePartsContext(NativePoseSleepPartsContext& out) noexcept {
  g_pose_bound_birth,ticket->serial,w.flags,(w.mask180|w.mask184)&2u,w.parts[1],w.pool[1]};
  return parts_policy::ContextValid(out);
 }
+// Composition requires the installed metadata/provider lifetime stages; these
+// current private routines verify actual owned patches and typed held routes.
+bool PoseRouteCurrent() noexcept;
+bool PoseMessageCurrent() noexcept;
+namespace dual_parts=dual_parts_core_policy;
+namespace local_profile=dual_parts_local_profile;
+thread_local const char* t_dual_parts_reason="unavailable";
+volatile LONG g_dual_parts_refused=0;
+bool PoseDualPartsContext(NativePoseDualPartsContext& out) noexcept {
+ out={};t_dual_parts_reason="dual_shared_scope";const auto* ticket=t_parts.read;const auto tid=GetCurrentThreadId();const auto seq=static_cast<std::uint32_t>(g_window_seq);
+ if(g_pose_bindings.enabled||!ticket||!ticket->tracked||ticket->thread!=tid||ticket->slot>=32||!ticket->serial||
+ t_readers.serial[ticket->slot]!=ticket->serial||!g_pose_gate.OwnsRead(tid,t_readers.tickets[ticket->slot])||
+ !PoseWorker()||!PoseRequired()||!g_pose_installed||!g_pose_original_view.load(std::memory_order_acquire)||
+ g_pose_fault||g_shutdown||g_pose_clear||g_pose_owners.pending||g_pose_owners.held!=(holds::sleep|holds::carry)||!g_pose_held||
+ !g_pose_owners.carrySerial||!g_pose_carry_birth0||!g_pose_bound_birth||
+ !dual_parts::SharedDomains(t_pose.opened,PoseOwned(),t_local_carry.opened)||(seq&1u)||!seq||
+ partner_defer::InBatch()||tid!=g_pose_thread||t_parts.go!=g_pose_go||t_parts.caller!=g_base+0x9c2a2a||
+ !PoseParticipantsLive()||!NativePoseWholePlayerLifetimeLive()||!NativePoseLocalCacheIsolationLive()||
+ !NativePoseDispatchInterfaceLifetimeLive()||!PoseRouteCurrent()||!PoseMessageCurrent())return false;
+ t_dual_parts_reason="dual_current_arm";
+ const auto serial=g_pose_owners.carrySerial;const auto born0=g_pose_carry_birth0,born1=g_pose_bound_birth;
+ pi::Arm arm{};if(!ReadArm(arm)||!arm.enabled||!arm.native||arm.holdlog||arm.cam!=PartnerInputCam::sandbox||
+ arm.gen!=g_pose_generation||arm.rates_epoch!=g_pose_epoch||arm.P!=g_pose_player||arm.go!=g_pose_go||
+ arm.root1!=g_pose_root||arm.blk1!=g_pose_block)return false;
+ t_dual_parts_reason="dual_both_models";auto reader=PoseReader;cp::Pair pair{},afterPair{};
+ if(!cp::ReadPair(reader,g_base,arm.P,pair)||!cp::Same(pair,g_pose_carry_pair)||pair.go!=g_pose_go||
+ pair.body[1].block!=arm.blk1||pair.body[1].state!=arm.ps1||pair.body[1].cs!=g_pose_cs||pair.body[1].entry!=g_pose_entry)return false;
+ birth::Receipt birth0{},birth1{};
+ AcquireSRWLockShared(&g_pose_birth_lock);birth0=g_pose_birth0;birth1=g_pose_birth;ReleaseSRWLockShared(&g_pose_birth_lock);
+ const auto birthsMatch=[&](const cp::Pair& value) noexcept {return dual_parts::BirthsCurrent(value,birth0,birth1,born0,born1);};
+ t_dual_parts_reason="dual_both_births";if(!birthsMatch(pair))return false;
+ native_pose_teardown_diagnostic::Model expected[2]{};
+ for(unsigned k=0;k<2;++k)expected[k]={pair.player,pair.body[k].block,pair.body[k].state,pair.body[k].cs,pair.body[k].entry,k};
+ native_pose_parts_diagnostic::Witness w{},late{};
+ local_profile::Profile profile{},afterProfile{};
+ t_dual_parts_reason="dual_current_parts";
+ if(!native_pose_parts_diagnostic::Pair(reader,g_base,g_pose_go,expected,w)||!dual_parts::NoWork(w)||w.q!=pair.data)return false;
+ t_dual_parts_reason="dual_local_profile";if(!local_profile::ReadPair(reader,g_base,pair,profile,&t_dual_parts_reason))return false;
+ // Reacquire actual current identities; never reuse the exclusive body1 or
+ // selected0 carrier writer Scope as a fabricated shared receipt.
+ t_dual_parts_reason="dual_late_pair";pi::Arm fresh{};birth::Receipt fresh0{},fresh1{};
+ if(!ReadArm(fresh)||!fresh.enabled||!fresh.native||fresh.holdlog||fresh.cam!=PartnerInputCam::sandbox||
+ fresh.gen!=arm.gen||fresh.rates_epoch!=arm.rates_epoch||fresh.P!=arm.P||fresh.go!=arm.go||fresh.root1!=arm.root1||fresh.blk1!=arm.blk1||fresh.ps1!=arm.ps1||
+ !cp::ReadPair(reader,g_base,fresh.P,afterPair)||!cp::Same(pair,afterPair)||
+ !cp::CoherentCallbacks(pair.body[0],afterPair.body[0])||!cp::CoherentCallbacks(pair.body[1],afterPair.body[1])||
+ !local_profile::ReadPair(reader,g_base,afterPair,afterProfile)||!local_profile::Same(profile,afterProfile)||
+ !native_pose_parts_diagnostic::Pair(reader,g_base,g_pose_go,expected,late)||!dual_parts::NoWork(late)||!native_pose_parts_diagnostic::Same(w,late))return false;
+ t_dual_parts_reason="dual_late_scope";AcquireSRWLockShared(&g_pose_birth_lock);fresh0=g_pose_birth0;fresh1=g_pose_birth;ReleaseSRWLockShared(&g_pose_birth_lock);
+ if(fresh0.serial!=born0||fresh1.serial!=born1||!birth::Current(fresh0,birth0.identity)||!birth::Current(fresh1,birth1.identity)||
+ !dual_parts::BirthsCurrent(afterPair,fresh0,fresh1,born0,born1)||static_cast<std::uint32_t>(g_window_seq)!=seq||partner_defer::InBatch()||
+ !g_pose_gate.OwnsRead(tid,t_readers.tickets[ticket->slot])||t_readers.serial[ticket->slot]!=ticket->serial||
+ g_pose_fault||g_shutdown||g_pose_clear||g_pose_owners.pending||g_pose_owners.held!=(holds::sleep|holds::carry)||
+ g_pose_owners.carrySerial!=serial||g_pose_carry_birth0!=born0||g_pose_bound_birth!=born1||
+ !PoseParticipantsLive()||!NativePoseDispatchInterfaceLifetimeLive()||!PoseRouteCurrent()||!PoseMessageCurrent())return false;
+ NativePoseDualPartsContext current{};current.image=g_base;current.player=pair.player;current.go=pair.go;current.data=pair.data;
+ current.state=pair.scriptState;current.vars=pair.vars;current.generation=arm.gen;current.sceneEpoch=arm.rates_epoch;current.thread=tid;
+ current.sequence=seq;current.callerRva=0x9c2a2a;current.purposes=g_pose_owners.held;current.pending=g_pose_owners.pending;
+ current.birthSerial[0]=born0;current.birthSerial[1]=born1;current.sharedSerial=ticket->serial;current.carrySerial=serial;
+ current.flags=w.flags;current.dirty=(w.mask180|w.mask184)&3u;current.local0ProfileCurrent=true;
+ current.profileType=profile.type;current.profileParts=profile.parts;current.profileCamo=profile.camo;current.profileEncoded=profile.currentEncoded;
+ current.profileAux=profile.currentAux;current.profileFace=profile.currentFace;current.profileSelector=profile.selector;current.profileRefresh=profile.refresh;
+ for(unsigned k=0;k<2;++k){current.block[k]=pair.body[k].block;current.ps[k]=pair.body[k].state;current.modelCS[k]=pair.body[k].cs;
+  current.modelEntry[k]=pair.body[k].entry;current.pool[k]=w.pool[k];current.status[k]=w.parts[k];}
+ t_dual_parts_reason="dual_reply_shape";if(!dual_parts::ContextValid(current))return false;out=current;t_dual_parts_reason="dual_ready";return true;
+}
+void PoseDualPartsRefusalLog() noexcept {
+ const DWORD incoming=GetLastError();
+ if(InterlockedCompareExchange(&g_dual_parts_refused,1,0)==0&&g_log){char line[256]{};
+  if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
+   "pose_dual_parts=refused;stage=%s;purposes=%u;pending=%u;sequence=%u;held=%u;fault=%u;thread=%u\r\n",
+   t_dual_parts_reason,static_cast<unsigned>(g_pose_owners.held),static_cast<unsigned>(g_pose_owners.pending),
+   static_cast<unsigned>(g_window_seq),g_pose_held?1u:0u,g_pose_fault?1u:0u,GetCurrentThreadId())))g_log(line);
+ }SetLastError(incoming);
+}
 namespace reject=native_pose_reject_diagnostic;
 volatile LONG g_pose_reject_logged=0;
 void PoseRejectDiagnostic(reject::Stage stage,const char* detail,const pi::Arm* arm,
@@ -285,8 +405,40 @@ bool PoseBegin(const pi::Arm* a) noexcept {
  }
  t_pose.captured=true;g_pose_reason="pose_window_captured";return true;
 }
+bool PosePairWordCas(std::uintptr_t at,std::uint16_t expected,std::uint16_t desired,std::uint16_t& observed) noexcept {
+ observed=0;if(!PoseOwned()||!t_pose.job||at!=(g_base+0x2c01360+0x10e)||(at&1u))return false;
+ __try {observed=static_cast<std::uint16_t>(_InterlockedCompareExchange16(reinterpret_cast<volatile short*>(at),static_cast<short>(desired),static_cast<short>(expected)));return observed==expected;}
+ __except(EXCEPTION_EXECUTE_HANDLER){return false;}
+}
+bool PosePairWordRestore() noexcept {
+ if(g_pose_bindings.enabled||!t_pose_pair_word_token.active())return true;
+ auto read=PoseReader;auto cas=PosePairWordCas;
+ return vw::After(read,cas,t_pose.context,g_base,g_pose_pair_word_shadow,t_pose_pair_word_token);
+}
+bool PosePairWordBefore() noexcept {
+ if(g_pose_bindings.enabled)return true;
+ if(t_pose_pair_word_token.active()){PoseFail("pose_pair_word_old_token");return false;}
+ // Input-generation adoption has already been proved by PoseBegin under the
+ // same actor/model birth and actual writer. Preserve the remote word while
+ // updating only mod bookkeeping after the preceding successful Closed.
+ if(g_pose_pair_word_shadow.bound&&g_pose_pair_word_shadow.owner.generation!=t_pose.context.generation){
+  auto old=g_pose_pair_word_shadow.owner;old.generation=t_pose.context.generation;
+  vw::Owner current{};auto read=PoseReader;
+  const bool adopt=!g_pose_held&&g_pose_pair_word_closed_clean&&
+   g_pose_pair_word_closed.birthSerial==t_pose.context.birthSerial&&
+   g_pose_pair_word_closed.sequence==g_pose_pair_word_shadow.owner.sequence+1u&&
+   vw::ReadOwner(read,t_pose.context,g_base,current)&&vw::SameLease(old,current);
+  if(!adopt){PoseFail("pose_pair_word_generation");return false;}
+  g_pose_pair_word_shadow.owner.generation=t_pose.context.generation;
+ }
+ if(!vw::Renew(t_pose_pair_word_token)){PoseFail("pose_pair_word_renew");return false;}
+ auto read=PoseReader;auto cas=PosePairWordCas;
+ if(!vw::Before(read,cas,t_pose.context,g_base,g_pose_pair_word_shadow,t_pose_pair_word_token)){PoseFail("pose_pair_word_capture");return false;}
+ return true;
+}
 void PoseEnd(bool postComplete) noexcept {
  if(!t_pose.opened){InterlockedIncrement(&g_window_seq);return;}
+ const bool pairRestored=PosePairWordRestore();if(!pairRestored)PoseFail("pose_pair_word_cleanup");
  bool restored=false;cw::Reply receipt{};
  auto read=PoseReader;auto sample=[]() noexcept {return PoseScope();};
  auto write=[](std::uintptr_t at,std::uint8_t before,std::uint8_t after) noexcept {
@@ -296,17 +448,18 @@ void PoseEnd(bool postComplete) noexcept {
   __except(EXCEPTION_EXECUTE_HANDLER){return cw::WriteStatus::fault;}
  };
  if(t_pose.captured)restored=cw::Restore(read,write,sample,t_pose.c0,receipt);
- const bool clean=postComplete&&restored&&!g_pose_fault;
+ const bool clean=postComplete&&restored&&pairRestored&&!g_pose_fault;
  InterlockedIncrement(&g_window_seq);const auto context=t_pose.context;t_pose.opened=false;
  const bool released=g_pose_gate.EndWritePublish(g_pose_thread,g_pose_generation,g_pose_epoch,clean,true,t_pose.writer,[]()noexcept{
   if(g_pose_clear){
    const bool carryClosed=holds::Closed(g_pose_owners,true);
    InterlockedExchange(&g_pose_held,g_pose_owners.held?1:0);InterlockedExchange(&g_pose_clear,0);
    if(!g_pose_owners.held)g_pose_cs=g_pose_entry=0;
-   if(carryClosed){g_pose_carry_pair={};g_pose_carry_birth0=0;}
+   if(carryClosed){g_pose_carry_pair={};g_pose_carry_birth0=0;g_pose_message_hold={};g_pose_message_bound=false;g_pose_route_hold={};g_pose_route_bound=false;}
   }
  });
  t_pose.cleanup=clean&&released;
+ g_pose_pair_word_closed=context;g_pose_pair_word_closed.sequence=static_cast<std::uint32_t>(g_window_seq);g_pose_pair_word_closed_clean=t_pose.cleanup;
  if(!t_pose.cleanup)PoseFail(restored?"pose_post_cleanup_failed":receipt.reason);
  if(t_pose.cleanup)InterlockedIncrement(&g_pose_windows);
  if(t_pose.job&&g_pose_closed){auto closed=context;closed.sequence=static_cast<std::uint32_t>(g_window_seq);g_pose_closed(closed,t_pose.cleanup);}
@@ -352,6 +505,7 @@ bool PoseBefore(const pi::Arm& a,const Save& save,const pi::Injection& j,pi::Con
  if(!PoseCarryPairCurrent()){PoseFail("pose_carry_pair_changed");return false;}
  t_pose.context.consumer=consumer;t_pose.context.held=j.held;t_pose.context.press=j.edge_press;
  t_pose.context.release=j.edge_release;t_pose.context.magnitude=static_cast<float>(j.mag);t_pose.job=true;
+ if(!PosePairWordBefore())return false;
  const bool accepted=!g_pose_before||g_pose_before(t_pose.context);
  return accepted&&!g_pose_fault;
 }
@@ -367,7 +521,220 @@ bool PoseCarryPairCurrent() noexcept {
     cp::Same(current,g_pose_carry_pair)&&PoseCarryBirth0Current(current)&&PoseContextBirthCurrent(t_pose.context);
 }
 bool PoseAfter() noexcept {
- if(g_pose_fault)return false;if(PoseOwned()&&!PoseCarryPairCurrent()){PoseFail("pose_carry_pair_changed");return false;}if(!PoseOwned()||!g_pose_after)return true;return g_pose_after(t_pose.context)&&!g_pose_fault;
+ if(!PoseOwned())return !g_pose_fault;
+ bool accepted=!g_pose_fault;
+ if(accepted&&!PoseCarryPairCurrent()){PoseFail("pose_carry_pair_changed");accepted=false;}
+ if(accepted&&g_pose_after)accepted=g_pose_after(t_pose.context)&&!g_pose_fault;
+ if(!PosePairWordRestore()){PoseFail("pose_pair_word_restore");accepted=false;}
+ return accepted&&!g_pose_fault;
+}
+bool PoseVarsNativeOwner(void* object,std::uint32_t id,bool phase) noexcept {
+ if(!PoseOwned()||!t_pose.job||g_pose_fault||!t_pose_pair_word_token.active()||id!=1||!PoseVarsPatchesLive())return false;
+ // A local0 sender must run in its own qualified unshadowed operation.
+ // Writing its result into body1 shadow would lose local0 gameplay state.
+ cp::Pair current{};auto read=PoseReader;if(!cp::ReadPair(read,g_base,g_pose_player,current))return false;
+ if(!PoseCarryPairCurrent())return false;
+ return reinterpret_cast<std::uintptr_t>(object)==current.body[id].carrier+(phase?0x30u:0u);
+}
+void PoseVarsMessage(void* object,std::uint32_t id,void* result,const void* message) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;
+ if(PoseOwned()){
+  if(!PoseVarsNativeOwner(object,id,true)){PoseFail("pose_pair_word_message_owner");SetLastError(incoming);return;}
+  SetLastError(incoming);g_pose_vars_message(object,id,result,message);return;
+ }
+ PoseTraceNestedGlobal("PoseVarsMessage",reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+ PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return;}
+ __try {SetLastError(incoming);g_pose_vars_message(object,id,result,message);outgoing=GetLastError();}
+ __finally {PoseExitShared(read);SetLastError(outgoing);}
+}
+bool PoseVarsPair(void* object,std::uint32_t id) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;bool result=false;
+ if(PoseOwned()){
+  if(!PoseVarsNativeOwner(object,id,false)){PoseFail("pose_pair_word_predicate_owner");SetLastError(incoming);return false;}
+  SetLastError(incoming);return g_pose_vars_pair(object,id);
+ }
+ PoseTraceNestedGlobal("PoseVarsPair",reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+ PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return false;}
+ __try {SetLastError(incoming);result=g_pose_vars_pair(object,id);outgoing=GetLastError();}
+ __finally {PoseExitShared(read);SetLastError(outgoing);}return result;
+}
+void PoseVarsExport(void* object) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;
+ PoseTraceNestedGlobal("PoseVarsExport",reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+ PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return;}
+ __try {SetLastError(incoming);g_pose_vars_export(object);outgoing=GetLastError();}
+ __finally {PoseExitShared(read);SetLastError(outgoing);}
+}
+int PoseVarsLua(void* lua) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;int result=0;
+ PoseTraceNestedGlobal("PoseVarsLua",reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+ PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return 0;}
+ __try {SetLastError(incoming);result=g_pose_vars_lua(lua);outgoing=GetLastError();}
+ __finally {PoseExitShared(read);SetLastError(outgoing);}return result;
+}
+int PoseVarsReset(void* lua) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;int result=0;
+ PoseTraceNestedGlobal("PoseVarsReset",reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+ PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return 0;}
+ __try {SetLastError(incoming);if(PoseRequired()&&g_pose_held)PoseFail("pose_live_vars_reset");else result=g_pose_vars_reset(lua);outgoing=GetLastError();}
+ __finally {PoseExitShared(read);SetLastError(outgoing);}return result;
+}
+int PoseVarsBulkReset(void* lua) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;int result=0;
+ PoseTraceNestedGlobal("PoseVarsBulkReset",reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+ PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return 0;}
+ __try {SetLastError(incoming);if(PoseRequired()&&g_pose_held)PoseFail("pose_live_vars_bulk_reset");else result=g_pose_vars_bulk_reset(lua);outgoing=GetLastError();}
+ __finally {PoseExitShared(read);SetLastError(outgoing);}return result;
+}
+void PoseVarsInit() noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;
+ PoseTraceNestedGlobal("PoseVarsInit",reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+ PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return;}
+ __try {SetLastError(incoming);if(PoseRequired()&&g_pose_held)PoseFail("pose_live_vars_init");else g_pose_vars_init();outgoing=GetLastError();}
+ __finally {PoseExitShared(read);SetLastError(outgoing);}
+}
+bool PoseMessageHeld() noexcept {return g_pose_message_bound&&(g_pose_owners.held&holds::carry)!=0;}
+bool PoseMessageCurrent() noexcept {
+ if(!PoseMessageHeld()||!PoseMessagePatchesLive())return false;
+ msg::Observation current{};auto read=PoseReader;
+ return msg::ReadPair(read,g_base,g_pose_player,current)&&msg::SameLease(current,g_pose_message_hold);
+}
+bool PoseMessageCapture(const cp::Pair& pair) noexcept {
+ if(!PoseOwned()||!t_pose.job||!PoseMessagePatchesLive())return false;
+ msg::Observation current{};auto read=PoseReader;
+ if(!msg::ReadPair(read,g_base,pair.player,current))return false;
+ g_pose_message_hold=current;g_pose_message_bound=true;return true;
+}
+void* PoseMessageCtor(void* object) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;void* result=object;
+ PoseTraceNestedGlobal("PoseMessageCtor",reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+ PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return result;}
+ __try {SetLastError(incoming);if(PoseMessageHeld()&&reinterpret_cast<std::uintptr_t>(object)==g_pose_message_hold.provider)PoseFail("pose_held_message_ctor");else result=g_pose_message_ctor(object);outgoing=GetLastError();}
+ __finally {PoseExitShared(read);SetLastError(outgoing);}return result;
+}
+void* PoseMessageDtor(void* object,unsigned flags) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;void* result=object;
+ PoseTraceNestedGlobal("PoseMessageDtor",reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+ PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return result;}
+ __try {SetLastError(incoming);if(PoseMessageHeld()&&reinterpret_cast<std::uintptr_t>(object)==g_pose_message_hold.provider)PoseFail("pose_held_message_dtor");else result=g_pose_message_dtor(object,flags);outgoing=GetLastError();}
+ __finally {PoseExitShared(read);SetLastError(outgoing);}return result;
+}
+void PoseMessageUnregister(void* provider,void* interface) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;
+ PoseTraceNestedGlobal("PoseMessageUnregister",reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+ PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return;}
+ __try {SetLastError(incoming);if(PoseMessageHeld()&&msg::ProtectsInterface(g_pose_message_hold,reinterpret_cast<std::uintptr_t>(interface)))PoseFail("pose_held_message_unregister");else g_pose_message_unregister(provider,interface);outgoing=GetLastError();}
+ __finally {PoseExitShared(read);SetLastError(outgoing);}
+}
+void PoseMessageSetter(void* object,void* listener) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;
+ // The complete leaf writes only [object+10,object+18). A distinct native
+ // object cannot alter this retained provider/slab. It may remain stock inside
+ // a current body1 job; overlapping fields always refuse before the store.
+ if(PoseOwned()){
+  if(PoseMessageHeld()&&msg::ProtectsSetter(g_pose_message_hold,reinterpret_cast<std::uintptr_t>(object))){PoseFail("pose_held_message_listener");SetLastError(incoming);return;}
+  SetLastError(incoming);g_pose_message_setter(object,listener);return;
+ }
+ PoseTraceNestedGlobal("PoseMessageSetter",reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+ PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return;}
+ __try {SetLastError(incoming);if(PoseMessageHeld()&&msg::ProtectsSetter(g_pose_message_hold,reinterpret_cast<std::uintptr_t>(object)))PoseFail("pose_held_message_listener");else g_pose_message_setter(object,listener);outgoing=GetLastError();}
+ __finally {PoseExitShared(read);SetLastError(outgoing);}
+}
+void PoseMessageDispatch(void* provider) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;
+ PoseTraceNestedGlobal("PoseMessageDispatch",reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+ PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return;}
+ __try {SetLastError(incoming);g_pose_message_dispatch(provider);outgoing=GetLastError();}
+ __finally {PoseExitShared(read);SetLastError(outgoing);}
+}
+bool PoseLocalFlagMapWritable(std::uintptr_t at,std::size_t n) noexcept {
+ if(!at||!n||at>UINTPTR_MAX-n)return false;const auto end=at+n;
+ while(at<end){MEMORY_BASIC_INFORMATION m{};if(!VirtualQuery(reinterpret_cast<const void*>(at),&m,sizeof(m))||m.State!=MEM_COMMIT||(m.Protect&(PAGE_GUARD|PAGE_NOACCESS)))return false;
+  const auto access=m.Protect&0xffu;if(access!=PAGE_READWRITE&&access!=PAGE_WRITECOPY&&access!=PAGE_EXECUTE_READWRITE&&access!=PAGE_EXECUTE_WRITECOPY)return false;
+  const auto base=reinterpret_cast<std::uintptr_t>(m.BaseAddress);if(base>UINTPTR_MAX-m.RegionSize||base+m.RegionSize<=at)return false;at=base+m.RegionSize<end?base+m.RegionSize:end;
+ }return true;
+}
+bool PoseOriginalCode(std::uintptr_t at,void* out,std::size_t size) noexcept;
+volatile LONG g_pose_flag_map_refusal_logged=0;
+struct PoseFlagMapSetContinuation {bool active=false;NativePoseJobContext context{};std::uintptr_t map=0,storage=0;std::uint32_t key=0;std::uint16_t capacity=0,previous=0xffff;};
+thread_local PoseFlagMapSetContinuation t_flag_map_set;
+bool PoseFlagMapSetScope(const PoseFlagMapSetContinuation& token,const NativePoseJobContext& now,std::uintptr_t map,const owned_flag_map::Observation& observation,std::uint32_t key)noexcept{
+ const auto& before=token.context;return token.active&&token.map==map&&token.storage==observation.storage&&token.capacity==observation.capacity&&token.key==key&&
+ before.player==now.player&&before.go==now.go&&before.block==now.block&&before.state==now.state&&before.modelCS==now.modelCS&&before.modelEntry==now.modelEntry&&
+ before.generation==now.generation&&before.sceneEpoch==now.sceneEpoch&&before.thread==now.thread&&before.sequence==now.sequence&&before.birthSerial==now.birthSerial&&
+ before.pp==now.pp&&before.source==now.source&&before.windowPPVT==now.windowPPVT&&before.consumer==now.consumer;
+}
+
+bool PoseOwnedFlagMap(void* object,std::uint32_t key,std::uint64_t value,bool insert,owned_flag_map::Origin origin,std::uint32_t& result,DWORD incoming,DWORD& outgoing) noexcept {
+ namespace fm=owned_flag_map;NativePoseJobContext before{},after{};msg::Observation protectedBefore{},protectedAfter{};
+ fm::Observation original{},expected{},observed{};auto reader=PoseReader;std::uintptr_t mismatch=0;
+ const auto refuse=[&](const char* stage) noexcept {
+  const DWORD saved=GetLastError();
+  if(InterlockedCompareExchange(&g_pose_flag_map_refusal_logged,1,0)==0&&g_log){char line[256]{};
+   if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),"pose_flag_map=refused;stage=%s;insert=%u;key=%u;capacity=%u;used=%u;free=%u;seq=%u;consumer=%u\r\n",
+    stage,insert?1u:0u,key,unsigned(original.capacity),unsigned(original.used),unsigned(original.free),unsigned(g_window_seq),t_pose.context.consumer)))g_log(line);
+  }SetLastError(saved);return false;
+ };
+ if(!ReadNativePoseOwnedJobContext(before)||!t_pose_pair_word_token.active())return refuse("owned_context");
+ if(!fm::CodeGate(PoseOriginalCode,g_base,0xa01d000,mismatch))return refuse("native_code");
+ if(!msg::ReadPair(reader,g_base,before.player,protectedBefore))return refuse("current_provider");
+ if(PoseMessageHeld()&&!msg::SameLease(protectedBefore,g_pose_message_hold))return refuse("held_provider");
+ const fm::Protected protect{protectedBefore.provider,protectedBefore.slab,vw::Access::owner(t_pose_pair_word_token).vars+0x10e};
+ const auto address=reinterpret_cast<std::uintptr_t>(object);
+ if(!fm::ReadPair(reader,address,protect,original))return refuse("map_pair_or_topology");
+ // Every native write is within these qualified ranges; no allocation/free.
+ if(!PoseLocalFlagMapWritable(address+0x0a,4)||!PoseLocalFlagMapWritable(original.storage,std::size_t(original.capacity)*10))return refuse("writable_footprint");
+ std::uint32_t expectedResult=0xffff;
+ if(origin==fm::Origin::set){
+  if(t_flag_map_set.active&&(!insert||!PoseFlagMapSetScope(t_flag_map_set,before,address,original,key)))return refuse("set_continuation_scope");
+  if(!fm::PredictSet(original,key,value,insert,t_flag_map_set.active,t_flag_map_set.previous,expected,expectedResult))return refuse("set_or_prediction");
+ }else if(origin!=fm::Origin::clear||!fm::PredictOrigin(original,key,value,insert,expected,expectedResult))return refuse("origin_prediction");
+ SetLastError(incoming);result=insert?g_pose_message_insert_map(object,key,value):g_pose_message_delete_map(object,key);outgoing=GetLastError();
+ const bool current=fm::ReadPair(reader,address,protect,observed)&&fm::Same(expected,observed)&&result==expectedResult&&
+  msg::ReadPair(reader,g_base,before.player,protectedAfter)&&msg::Same(protectedBefore,protectedAfter)&&
+  ReadNativePoseOwnedJobContext(after)&&after.player==before.player&&after.go==before.go&&after.block==before.block&&after.state==before.state&&
+  after.modelCS==before.modelCS&&after.modelEntry==before.modelEntry&&after.generation==before.generation&&after.sceneEpoch==before.sceneEpoch&&
+  after.thread==before.thread&&after.sequence==before.sequence&&after.birthSerial==before.birthSerial;
+ if(current&&origin==fm::Origin::set){
+  if(insert)t_flag_map_set={};
+  else t_flag_map_set={true,after,address,original.storage,key,original.capacity,static_cast<std::uint16_t>(expectedResult)};
+ }
+ if(!current)refuse("native_postcondition");SetLastError(outgoing);return current;
+}
+std::uint32_t PoseMessageDeleteMap(void* map,std::uint32_t key) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;std::uint32_t result=0xffff;
+ const auto caller=reinterpret_cast<std::uintptr_t>(_ReturnAddress());
+ const auto origin=owned_flag_map::Source(g_base,caller,false);
+ if(PoseOwned()&&origin!=owned_flag_map::Origin::none){
+  SetLastError(incoming);const bool passed=PoseOwnedFlagMap(map,key,0,false,origin,result,incoming,outgoing);
+  if(!passed)PoseFail("pose_owned_flag_map_delete");SetLastError(outgoing);return result;
+ }
+ PoseTraceNestedGlobal("PoseMessageDeleteMap",caller);
+ PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return result;}
+ __try {SetLastError(incoming);if(PoseMessageHeld()&&reinterpret_cast<std::uintptr_t>(map)==g_pose_message_hold.provider+0x2340&&key==g_pose_message_hold.key)PoseFail("pose_held_message_key_delete");else result=g_pose_message_delete_map(map,key);outgoing=GetLastError();}
+ __finally {PoseExitShared(read);SetLastError(outgoing);}return result;
+}
+std::uint32_t PoseMessageInsertMap(void* map,std::uint32_t key,std::uint64_t value) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;std::uint32_t result=0xffff;
+ const auto caller=reinterpret_cast<std::uintptr_t>(_ReturnAddress());
+ const auto origin=owned_flag_map::Source(g_base,caller,true);
+ if(PoseOwned()&&origin!=owned_flag_map::Origin::none){
+  SetLastError(incoming);const bool passed=PoseOwnedFlagMap(map,key,value,true,origin,result,incoming,outgoing);
+  if(!passed)PoseFail("pose_owned_flag_map_insert");SetLastError(outgoing);return result;
+ }
+ PoseTraceNestedGlobal("PoseMessageInsertMap",caller);
+ PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return result;}
+ __try {SetLastError(incoming);result=g_pose_message_insert_map(map,key,value);outgoing=GetLastError();}
+ __finally {PoseExitShared(read);SetLastError(outgoing);}return result;
+}
+void PoseMessageArenaReset(void* arena) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;
+ PoseTraceNestedGlobal("PoseMessageArenaReset",reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+ PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return;}
+ __try {SetLastError(incoming);
+  if(PoseMessageHeld()&&msg::ProtectsArena(g_pose_message_hold,reinterpret_cast<std::uintptr_t>(arena)))PoseFail("pose_held_message_arena_reset");
+  else g_pose_message_arena_reset(arena);outgoing=GetLastError();}
+ __finally {PoseExitShared(read);SetLastError(outgoing);}
 }
 __declspec(noinline) void PoseSelectedExport(void* state,std::uint32_t actualId) noexcept {
  const DWORD incoming=GetLastError();const auto caller=reinterpret_cast<std::uintptr_t>(_ReturnAddress());
@@ -460,6 +827,97 @@ bool PoseCreateCameraStub() noexcept {
  // Never free an admitted or potentially executing entry. The tiny allocation
  // remains owned by this private process until its recorded cleanup terminates it.
 }
+
+bool PoseRouteHeld() noexcept {return g_pose_route_bound&&(g_pose_owners.held&holds::carry)!=0;}
+bool PoseRouteCurrent() noexcept {
+ if(!PoseRouteHeld()||!PoseRoutePatchesLive())return false;route::Observation now{};auto read=PoseReader;
+ return route::ReadPair(read,g_base,g_pose_player,now)&&route::Identity(now,g_pose_route_hold)&&route::NoClassWork(now);
+}
+bool PoseRouteCapture(const cp::Pair& pair,route::Observation& out) noexcept {
+ out={};if(!PoseOwned()||!t_pose.job||!PoseRoutePatchesLive())return false;auto read=PoseReader;
+ return route::ReadPair(read,g_base,pair.player,out)&&out.go==pair.go&&route::NoClassWork(out);
+}
+__declspec(noinline) void* PoseRouteCtor(void* object,void* owner) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;void* result=object;
+ PoseTraceNestedGlobal("PoseRouteCtor",reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+ PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return result;}
+ __try {SetLastError(incoming);
+  if(PoseRouteHeld()&&route::Refuse(g_pose_route_hold,route::Entry::interface_ctor,reinterpret_cast<std::uintptr_t>(object),reinterpret_cast<std::uintptr_t>(owner)))PoseFail("pose_retained_dispatch_interface_ctor");
+  else result=g_pose_route_ctor(object,owner);outgoing=GetLastError();
+ } __finally {PoseExitShared(read);SetLastError(outgoing);}
+ return result;
+}
+__declspec(noinline) void* PoseRouteDelete(void* object,unsigned flags) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;void* result=object;
+ PoseTraceNestedGlobal("PoseRouteDelete",reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+ PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return result;}
+ __try {SetLastError(incoming);
+  if(PoseRouteHeld()&&route::Refuse(g_pose_route_hold,route::Entry::interface_delete,reinterpret_cast<std::uintptr_t>(object)))PoseFail("pose_retained_dispatch_interface_delete");
+  else result=g_pose_route_delete(object,flags);outgoing=GetLastError();
+ } __finally {PoseExitShared(read);SetLastError(outgoing);}
+ return result;
+}
+__declspec(noinline) void* PoseRegistryCtor(void* object) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;void* result=object;
+ PoseTraceNestedGlobal("PoseRegistryCtor",reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+ PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return result;}
+ __try {SetLastError(incoming);
+  if(PoseRouteHeld()&&route::Refuse(g_pose_route_hold,route::Entry::registry_ctor,reinterpret_cast<std::uintptr_t>(object)))PoseFail("pose_retained_dispatch_registry_ctor");
+  else result=g_pose_registry_ctor(object);outgoing=GetLastError();
+ } __finally {PoseExitShared(read);SetLastError(outgoing);}
+ return result;
+}
+__declspec(noinline) void PoseRegistryDestroy(void* object) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;
+ PoseTraceNestedGlobal("PoseRegistryDestroy",reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+ PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return;}
+ __try {SetLastError(incoming);
+  if(PoseRouteHeld()&&route::Refuse(g_pose_route_hold,route::Entry::registry_destruct,reinterpret_cast<std::uintptr_t>(object)))PoseFail("pose_retained_dispatch_registry_destruct");
+  else g_pose_registry_destroy(object);outgoing=GetLastError();
+ } __finally {PoseExitShared(read);SetLastError(outgoing);}
+}
+__declspec(noinline) void* PoseRegistryDelete(void* object,unsigned flags) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;void* result=object;
+ PoseTraceNestedGlobal("PoseRegistryDelete",reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+ PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return result;}
+ __try {SetLastError(incoming);
+  if(PoseRouteHeld()&&route::Refuse(g_pose_route_hold,route::Entry::registry_delete,reinterpret_cast<std::uintptr_t>(object)))PoseFail("pose_retained_dispatch_registry_delete");
+  else result=g_pose_registry_delete(object,flags);outgoing=GetLastError();
+ } __finally {PoseExitShared(read);SetLastError(outgoing);}
+ return result;
+}
+__declspec(noinline) void PoseRegistryReplace() noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;
+ PoseTraceNestedGlobal("PoseRegistryReplace",reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+ PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return;}
+ __try {SetLastError(incoming);
+  if(PoseRouteHeld()&&route::Refuse(g_pose_route_hold,route::Entry::registry_replace,0))PoseFail("pose_retained_dispatch_registry_replace");
+  else g_pose_registry_replace();outgoing=GetLastError();
+ } __finally {PoseExitShared(read);SetLastError(outgoing);}
+}
+__declspec(noinline) void PoseRouteClassRegister(void* object) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;
+ PoseTraceNestedGlobal("PoseRouteClassRegister",reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+ PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return;}
+ __try {SetLastError(incoming);
+  if(PoseRouteHeld()&&route::Refuse(g_pose_route_hold,route::Entry::class_register,reinterpret_cast<std::uintptr_t>(object)))PoseFail("pose_retained_dispatch_class_register");
+  else g_pose_route_class_register(object);outgoing=GetLastError();
+ } __finally {PoseExitShared(read);SetLastError(outgoing);}
+}
+__declspec(noinline) void PoseRouteClassUpdate(void* object) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;PoseTraceNestedGlobal("PoseRouteClassUpdate",reinterpret_cast<std::uintptr_t>(_ReturnAddress()));
+ PoseSharedLease read{};
+ if(!PoseEnterShared(read)){SetLastError(incoming);return;}
+ __try {
+  const bool held=PoseRouteHeld()&&route::Refuse(g_pose_route_hold,route::Entry::class_update,reinterpret_cast<std::uintptr_t>(object));
+  if(held&&!PoseRouteCurrent())PoseFail("pose_retained_dispatch_class_work");
+  else {
+   SetLastError(incoming);g_pose_route_class_update(object);outgoing=GetLastError();
+   if(held&&!PoseRouteCurrent())PoseFail("pose_dispatch_class_changed");
+  }
+ } __finally {PoseExitShared(read);SetLastError(outgoing);}
+}
+
 void PoseUpdate(void* object) noexcept {
  const DWORD incoming=GetLastError();DWORD outgoing=incoming;
  PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return;}
@@ -587,6 +1045,30 @@ __declspec(noinline) void PoseApplyParts(void* object) noexcept {
      SetLastError(outgoing); // preserve the native original through proof reads
     }else PoseDestroyRefused(reinterpret_cast<std::uintptr_t>(object),3,0x9cd030,caller,UINT32_MAX);
    }
+  }else if(retained&&g_pose_owners.held==(holds::sleep|holds::carry)){
+   if(t_parts.read)PoseFail("pose_dual_parts_reentrant");
+   else{
+    t_parts={&read,reinterpret_cast<std::uintptr_t>(object),caller};
+    NativePoseDualPartsContext before{},pre{},after{};
+    bool admitted=false;
+    if(PoseDualPartsContext(before)){
+     t_dual_parts_reason="dual_module_admission";
+     if(g_pose_parts_validator&&g_pose_parts_validator()&&PoseDualPartsContext(pre)){
+      t_dual_parts_reason="dual_before_changed";admitted=SameNativePoseDualPartsPoll(before,pre);
+     }
+    }
+    if(admitted){
+     SetLastError(incoming);g_pose_parts(object);outgoing=GetLastError();
+     const bool current=PoseDualPartsContext(after);
+     const bool same=current&&SameNativePoseDualPartsPoll(pre,after);
+     const bool module=same&&g_pose_parts_validator();
+     if(!current||!same||!module){
+      if(current)t_dual_parts_reason=same?"dual_module_late_refused":"dual_after_changed";
+      PoseDualPartsRefusalLog();PoseFail("pose_dual_parts_late_changed");
+     }
+     SetLastError(outgoing);
+    }else {PoseDualPartsRefusalLog();PoseDestroyRefused(reinterpret_cast<std::uintptr_t>(object),3,0x9cd030,caller,UINT32_MAX);}
+   }
   }else if(!PoseDestroyRefused(reinterpret_cast<std::uintptr_t>(object),3,0x9cd030,caller,UINT32_MAX))g_pose_parts(object);
   outgoing=GetLastError();
  }
@@ -612,7 +1094,7 @@ __declspec(noinline) void PoseSleepHint(void* ui,std::uint16_t hint,std::uint32_
 struct PosePatch {
  std::uintptr_t rva=0,wrapper=0,relay=0;unsigned char original[5]{},patch[5]{};
 };
-PosePatch g_pose_patches[13]{};
+PosePatch g_pose_patches[groups::total]{};
 bool PosePatchOwned(const PosePatch& p) noexcept {
  unsigned char current[5]{};if(!PoseReader(g_base+p.rva,current,5)||std::memcmp(current,p.patch,5)||current[0]!=0xe9)return false;
  std::int32_t relative=0;std::memcpy(&relative,current+1,4);
@@ -622,6 +1104,29 @@ bool PosePatchOwned(const PosePatch& p) noexcept {
  if(!PoseReader(relay,jump,sizeof(jump))||jump[0]!=0xff||jump[1]!=0x25||jump[2]||jump[3]||jump[4]||jump[5])return false;
  std::memcpy(&target,jump+6,8);if(target!=p.wrapper)return false;
  return pcam::OwnedEntry(p.rva,p.wrapper,g_pose_camera_stub,p.rva==0x111cba0&&PoseCameraStubLive());
+}
+bool PoseRoutePatchesLive() noexcept {
+ if(g_pose_bindings.enabled||!g_pose_installed||!g_pose_original_view.load(std::memory_order_acquire)||
+ !g_pose_route_ctor||!g_pose_route_delete||!g_pose_registry_ctor||!g_pose_registry_destroy||!g_pose_registry_delete||!g_pose_registry_replace||!g_pose_route_class_update||!g_pose_route_class_register)return false;
+ for(unsigned i=0;i<carry_dispatch_lifetime_contract::hookCount;++i)if(g_pose_patches[groups::routeFirst+i].rva!=carry_dispatch_lifetime_contract::hookRvas[i]||!PosePatchOwned(g_pose_patches[groups::routeFirst+i]))return false;
+ for(const auto& slot:carry_dispatch_lifetime_contract::slots){std::uintptr_t value=0;if(!PoseRead(g_base+slot.rva,value)||value!=g_base+slot.target)return false;}
+ return true;
+}
+
+bool PoseVarsPatchesLive() noexcept {
+ if(g_pose_bindings.enabled||!g_pose_installed||!g_pose_original_view.load(std::memory_order_acquire)||
+    !g_pose_vars_init||!g_pose_vars_lua||!g_pose_vars_reset||!g_pose_vars_bulk_reset||!g_pose_vars_export||!g_pose_vars_pair||!g_pose_vars_message)return false;
+ constexpr std::uintptr_t expected[]={0x11301b0,0x1129d70,0x12ce870,0x9dc5f0,0x9aaa90,0x996b70,0x9ab9d0};
+ for(unsigned n=0;n<7;++n)if(g_pose_patches[groups::varsFirst+n].rva!=expected[n]||!PosePatchOwned(g_pose_patches[groups::varsFirst+n]))return false;return true;
+}
+bool PoseMessagePatchesLive() noexcept {
+ if(g_pose_bindings.enabled||!g_pose_installed||!g_pose_original_view.load(std::memory_order_acquire)||
+  !g_pose_message_ctor||!g_pose_message_dtor||!g_pose_message_unregister||!g_pose_message_setter||!g_pose_message_dispatch||!g_pose_message_delete_map||!g_pose_message_insert_map||!g_pose_message_arena_reset)return false;
+ const auto& expected=native_pose_message_lifetime_contract::hookRvas;
+ for(unsigned i=0;i<native_pose_message_lifetime_contract::hookCount;++i)if(g_pose_patches[groups::providerFirst+i].rva!=expected[i]||!PosePatchOwned(g_pose_patches[groups::providerFirst+i]))return false;
+ for(const auto& slot:native_pose_message_lifetime_contract::slots){std::uintptr_t v=0;if(!PoseRead(g_base+slot.rva,v)||v!=g_base+slot.target)return false;}
+ for(const auto& slot:carry_message_provider_contract::slots){std::uintptr_t v=0;if(!PoseRead(g_base+slot.rva,v)||v!=g_base+slot.target)return false;}
+ return true;
 }
 bool PoseOriginalCode(std::uintptr_t at,void* out,std::size_t size) noexcept {
  if(!at||!size||at>UINTPTR_MAX-size||!PoseReader(at,out,size))return false;
@@ -706,11 +1211,15 @@ __declspec(noinline) void* PoseConstructBlock(void* object,void* descriptor,void
  }return result;
 }
 bool PosePinnedPrefix(std::uintptr_t rva,unsigned char (&out)[5]) noexcept {
+ for(const auto& s:carry_dispatch_lifetime_contract::sites)if(s.rva==rva&&s.size>=5){std::memcpy(out,s.bytes,5);return true;}
  for(const auto& s:native_pose_birth_contract::sites)if(s.rva==rva&&s.size>=5){std::memcpy(out,s.bytes,5);return true;}
  for(const auto& s:camera_mode_window_contract::sites)if(s.rva==rva&&s.size>=5){std::memcpy(out,s.bytes,5);return true;}
  for(const auto& s:native_pose_window_contract::sites)if(s.rva==rva&&s.size>=5){std::memcpy(out,s.bytes,5);return true;}
  for(const auto& s:carry_model_lifetime_contract::sites)if(s.rva==rva&&s.size>=5){std::memcpy(out,s.bytes,5);return true;}
  for(const auto& s:carry_model_retirement_contract::sites)if(s.rva==rva&&s.size>=5){std::memcpy(out,s.bytes,5);return true;}
+ for(const auto& s:native_pose_message_lifetime_contract::sites)if(s.rva==rva&&s.size>=5){std::memcpy(out,s.bytes,5);return true;}
+ for(const auto& s:carry_vars_pair_word_contract::sites)if(s.rva==rva&&s.size>=5){std::memcpy(out,s.bytes,5);return true;}
+ for(const auto& s:native_pose_vars_bulk_reset_contract::sites)if(s.rva==rva&&s.size>=5){std::memcpy(out,s.bytes,5);return true;}
  for(const auto& s:native_pose_selected_export_contract::sites)if(s.rva==rva&&s.size>=5){std::memcpy(out,s.bytes,5);return true;}
  for(const auto& s:native_pose_camera_reader_contract::sites)if(s.rva==rva&&s.size>=5){std::memcpy(out,s.bytes,5);return true;}
  for(const auto& s:whole_player_lifetime_contract::sites)if(s.rva==rva&&s.size>=5){std::memcpy(out,s.bytes,5);return true;}
@@ -722,8 +1231,10 @@ bool PoseInstall(const void* image,std::size_t span,bool fingerprint) noexcept {
  std::uintptr_t currentPlayer=0;
  if(!PoseRead(g_base+c::player_slot_rva,currentPlayer)||currentPlayer){g_pose_reason="pose_install_requires_player_absent";return false;}
  auto reader=PoseOriginalCode;std::uintptr_t mismatch=0;
+ if(!dual_parts_local_profile_contract::CodeGate(reader,g_base,span,mismatch)){g_pose_reason="pose_dual_profile_full_code";return false;}
  if(!sleep_parts_contract::CodeGate(reader,g_base,span,mismatch)){g_pose_reason="pose_parts_full_code";return false;}
  if(!cw::CodeGate(reader,g_base,span,mismatch)){g_pose_reason="pose_code_c0";return false;}
+ if(!route::CodeGate(reader,g_base,span,mismatch)){g_pose_reason="pose_dispatch_lifetime_code";return false;}
  unsigned char bytes[8192]{};
  for(const auto& s:native_pose_window_contract::sites){
   if(s.rva>span||s.size>span-s.rva||s.size>sizeof(bytes)||!reader(g_base+s.rva,bytes,s.size)||std::memcmp(bytes,s.bytes,s.size)){g_pose_reason="pose_full_code";return false;}
@@ -737,6 +1248,8 @@ bool PoseInstall(const void* image,std::size_t span,bool fingerprint) noexcept {
  for(const auto& s:native_pose_birth_contract::sites){
   if(s.rva>span||s.size>span-s.rva||s.size>sizeof(bytes)||!reader(g_base+s.rva,bytes,s.size)||std::memcmp(bytes,s.bytes,s.size)){g_pose_reason="pose_birth_code";return false;}
  }
+ if(!msg::CodeGate(reader,g_base,span,mismatch)){g_pose_reason="pose_message_lifetime_full_code";return false;}
+ if(!vw::CodeGate(reader,g_base,span,mismatch)){g_pose_reason="pose_vars_word_full_code";return false;}
  if(!sx::CodeGate(reader,g_base,span,mismatch)){g_pose_reason="pose_selected_export_code_or_slot";return false;}
  if(!pcam::CodeGate(reader,g_base,span,mismatch)){g_pose_reason="pose_camera_reader_code_or_slot";return false;}
  const auto checkSites=[&](const auto& sites)noexcept {
@@ -745,6 +1258,7 @@ bool PoseInstall(const void* image,std::size_t span,bool fingerprint) noexcept {
     if(!reader(g_base+s.rva+off,bytes,n)||std::memcmp(bytes,s.bytes+off,n))return false;off+=n;}
   }return true;
  };
+ if(!checkSites(native_pose_vars_bulk_reset_contract::sites)){g_pose_reason="pose_vars_bulk_reset_code";return false;}
  if(!checkSites(carry_owned_handshake_contract::sites)||!checkSites(carry_request_retirement_contract::sites)){g_pose_reason="pose_carry_full_code";return false;}
  for(const auto& s:carry_plugin_contract::sites){if(s.rva>span||s.size>span-s.rva||s.size>sizeof(bytes)||!reader(g_base+s.rva,bytes,s.size)||std::memcmp(bytes,s.bytes,s.size)){g_pose_reason="pose_carry_type_code";return false;}}
  for(const auto& s:carry_plugin_contract::slots){std::uintptr_t got=0;const auto at=s.vtable_rva+s.offset;if(at>span||8>span-at||!PoseRead(g_base+at,got)||got!=g_base+s.target_rva){g_pose_reason="pose_carry_slots";return false;}}
@@ -775,17 +1289,41 @@ bool PoseInstall(const void* image,std::size_t span,bool fingerprint) noexcept {
   {0x9bb7a0,reinterpret_cast<void*>(&PoseDeletePlayer),reinterpret_cast<void**>(&g_pose_delete_player)},
   {0x9c2f70,reinterpret_cast<void*>(&PoseResetPlayer),reinterpret_cast<void**>(&g_pose_reset_player)},
   {0xff5510,reinterpret_cast<void*>(&PoseSelectedExport),reinterpret_cast<void**>(&g_pose_selected_export)},
-  {0x111cba0,reinterpret_cast<void*>(g_pose_camera_stub),reinterpret_cast<void**>(&g_pose_cam_frame)}};
- for(unsigned i=0;i<13;++i){
-  auto& p=g_pose_patches[i];p.rva=hooks[i].rva;p.wrapper=reinterpret_cast<std::uintptr_t>(hooks[i].wrapper);
-  unsigned char current[5]{};
-  if(!PosePinnedPrefix(p.rva,p.original)||!PoseReader(g_base+p.rva,current,5)||std::memcmp(current,p.original,5)){
-   g_pose_reason="pose_hook_prefix_changed";return false;
-  }
- }
- unsigned created=0;for(;created<13;++created)
+  {0x111cba0,reinterpret_cast<void*>(g_pose_camera_stub),reinterpret_cast<void**>(&g_pose_cam_frame)},
+  {0x11301b0,reinterpret_cast<void*>(&PoseVarsMessage),reinterpret_cast<void**>(&g_pose_vars_message)},
+  {0x1129d70,reinterpret_cast<void*>(&PoseVarsPair),reinterpret_cast<void**>(&g_pose_vars_pair)},
+  {0x12ce870,reinterpret_cast<void*>(&PoseVarsExport),reinterpret_cast<void**>(&g_pose_vars_export)},
+  {0x9dc5f0,reinterpret_cast<void*>(&PoseVarsReset),reinterpret_cast<void**>(&g_pose_vars_reset)},
+  {0x9aaa90,reinterpret_cast<void*>(&PoseVarsLua),reinterpret_cast<void**>(&g_pose_vars_lua)},
+  {0x996b70,reinterpret_cast<void*>(&PoseVarsInit),reinterpret_cast<void**>(&g_pose_vars_init)},
+  {0x9ab9d0,reinterpret_cast<void*>(&PoseVarsBulkReset),reinterpret_cast<void**>(&g_pose_vars_bulk_reset)},
+  {0x17fea0,reinterpret_cast<void*>(&PoseMessageCtor),reinterpret_cast<void**>(&g_pose_message_ctor)},
+  {0x1802a0,reinterpret_cast<void*>(&PoseMessageDtor),reinterpret_cast<void**>(&g_pose_message_dtor)},
+  {0x180640,reinterpret_cast<void*>(&PoseMessageUnregister),reinterpret_cast<void**>(&g_pose_message_unregister)},
+  {0x2dd300,reinterpret_cast<void*>(&PoseMessageSetter),reinterpret_cast<void**>(&g_pose_message_setter)},
+  {0x180760,reinterpret_cast<void*>(&PoseMessageDispatch),reinterpret_cast<void**>(&g_pose_message_dispatch)},
+  {0x180a20,reinterpret_cast<void*>(&PoseMessageDeleteMap),reinterpret_cast<void**>(&g_pose_message_delete_map)},
+  {0x180c10,reinterpret_cast<void*>(&PoseMessageInsertMap),reinterpret_cast<void**>(&g_pose_message_insert_map)},
+  {0x3a1db30,reinterpret_cast<void*>(&PoseMessageArenaReset),reinterpret_cast<void**>(&g_pose_message_arena_reset)},
+  {0xbf4690,reinterpret_cast<void*>(&PoseRouteCtor),reinterpret_cast<void**>(&g_pose_route_ctor)},
+  {0xbf4a80,reinterpret_cast<void*>(&PoseRouteDelete),reinterpret_cast<void**>(&g_pose_route_delete)},
+  {0xbf8a20,reinterpret_cast<void*>(&PoseRegistryCtor),reinterpret_cast<void**>(&g_pose_registry_ctor)},
+  {0xbf8c10,reinterpret_cast<void*>(&PoseRegistryDestroy),reinterpret_cast<void**>(&g_pose_registry_destroy)},
+  {0xbf8f20,reinterpret_cast<void*>(&PoseRegistryDelete),reinterpret_cast<void**>(&g_pose_registry_delete)},
+  {0xbf9060,reinterpret_cast<void*>(&PoseRegistryReplace),reinterpret_cast<void**>(&g_pose_registry_replace)},
+  {0xbf9620,reinterpret_cast<void*>(&PoseRouteClassUpdate),reinterpret_cast<void**>(&g_pose_route_class_update)},
+  {0xbf91b0,reinterpret_cast<void*>(&PoseRouteClassRegister),reinterpret_cast<void**>(&g_pose_route_class_register)}};
+
+ constexpr auto hookCount=sizeof(hooks)/sizeof(hooks[0]);
+ static_assert(hookCount==sizeof(g_pose_patches)/sizeof(g_pose_patches[0]),"every actual hook needs a prefix ownership receipt");
+ static_assert(hookCount==groups::total,"preserve13core+7vars+8provider+8route");
+ if(!groups::ValidateOrder([&](std::size_t n) noexcept {return hooks[n].rva;}))return false;
+ if(!route::InitializeHookReceipts(hooks,g_pose_patches,
+  [](std::uintptr_t rva,unsigned char (&bytes)[5]) noexcept {return PosePinnedPrefix(rva,bytes);},
+  [](std::uintptr_t rva,void* bytes,std::size_t n) noexcept {return PoseReader(g_base+rva,bytes,n);})){g_pose_reason="pose_hook_prefix_changed";return false;}
+ unsigned created=0;for(;created<hookCount;++created)
   if(MH_CreateHook(reinterpret_cast<void*>(g_base+hooks[created].rva),hooks[created].wrapper,hooks[created].original)!=MH_OK)break;
- if(created!=13){for(unsigned i=0;i<created;++i)MH_RemoveHook(reinterpret_cast<void*>(g_base+hooks[i].rva));return false;}
+ if(created!=hookCount){for(unsigned i=0;i<created;++i)MH_RemoveHook(reinterpret_cast<void*>(g_base+hooks[i].rva));return false;}
  bool queued=true;for(const auto& hook:hooks)if(MH_QueueEnableHook(reinterpret_cast<void*>(g_base+hook.rva))!=MH_OK)queued=false;
  if(!queued||MH_ApplyQueued()!=MH_OK){
   for(const auto& hook:hooks){MH_DisableHook(reinterpret_cast<void*>(g_base+hook.rva));MH_RemoveHook(reinterpret_cast<void*>(g_base+hook.rva));}
@@ -806,6 +1344,29 @@ bool PoseInstall(const void* image,std::size_t span,bool fingerprint) noexcept {
  g_pose_installed.store(true,std::memory_order_release);g_pose_reason="pose_window_installed";return true;
 }
 
+bool PoseLocalCarryOwned() noexcept {
+ return t_local_carry.opened&&g_pose_gate.Owns(GetCurrentThreadId(),g_pose_generation,g_pose_epoch,t_local_carry.ticket);
+}
+bool PoseLocalCarryQuery(NativePoseLocalCarryContext& out) noexcept {
+ out={};if(g_pose_bindings.enabled||!PoseLocalCarryOwned()||g_pose_fault||g_shutdown||!g_pose_test||!PoseRequired()||!PoseWorker()||
+  GetCurrentThreadId()!=g_pose_thread||partner_defer::InBatch()||!(g_window_seq&1)||!g_pose_held||
+  !(g_pose_owners.held&holds::carry)||(g_pose_owners.pending&holds::carry)||
+  !PoseMessageCurrent()||!PoseVarsPatchesLive()||!NativePoseWholePlayerLifetimeLive()||!NativePoseLocalCacheIsolationLive()||!PoseParticipantsLive())return false;
+ const auto& expected=t_local_carry.context;
+ if(expected.carryLease.serial!=g_pose_owners.carrySerial||expected.carryLease.generation!=g_pose_generation||
+  expected.carryLease.sceneEpoch!=g_pose_epoch||expected.sequence!=static_cast<std::uint32_t>(g_window_seq)||!expected.sliceNonce)return false;
+ cp::Pair current{};auto read=PoseReader;std::uint32_t real=0,selected=0;
+ if(!cp::ReadPair(read,g_base,g_pose_player,current)||!cp::Same(current,g_pose_carry_pair)||!PoseCarryBirth0Current(current)||
+  !PoseContextBirthCurrent(t_pose.context)||!PoseRead(current.player+0x214,real)||real||!PoseRead(current.player+0x218,selected)||selected||
+  current.body[1].block!=t_pose.context.block||current.body[1].state!=t_pose.context.state||
+  current.body[1].cs!=t_pose.context.modelCS||current.body[1].entry!=t_pose.context.modelEntry)return false;
+ out=expected;out.image=g_base;out.player=current.player;out.go=current.go;out.data=current.data;
+ out.block1=current.body[1].block;out.state1=current.body[1].state;out.modelCS1=current.body[1].cs;out.modelEntry1=current.body[1].entry;
+ out.armGeneration=g_pose_generation;out.armEpoch=g_pose_epoch;out.thread=g_pose_thread;
+ out.birth1=g_pose_bound_birth;out.carrierBirth0=g_pose_carry_birth0;out.carrySerial=g_pose_owners.carrySerial;
+ out.realLocal=real;out.selected=selected;out.sleepHeld=(g_pose_owners.held&holds::sleep)!=0&&(g_pose_owners.pending&holds::sleep)==0;
+ return true;
+}
 bool PoseParticipantsLive() noexcept {
  if(g_pose_bindings.enabled)return g_pose_installed;
  if(!g_pose_installed||!g_pose_original_view.load(std::memory_order_acquire)||!g_wrap_ready||

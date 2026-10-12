@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "run": "30e50571a37f41e9a84528591b18af77",
+  "kind": "hidden-actual-partial",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261012-080838-53d87d2195fe48e4a02628eff931446a\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 2,
+  "failure": "Required scenario check failed: host require carrycold;ready=1;route=1;idle=1;message=1;vars=1;domains=1,1,1;word=[0-9]+;local=0;selected=0;slice=0 <- carrycold;ready=1;route=1;idle=0;message=1;vars=1;domains=1,1,1;word=65535;local=0;selected=0;slice=0",
+  "closed": true,
+  "forced": false,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 80388953,
+      "end": 80512220,
+      "sha256": "e417ff0f45da0aa839bc1998a11c84176b74ddc2aec95058faa2efd27b6cadc6"
+    },
+    {
+      "role": "guest",
+      "start": 89232038,
+      "end": 89355665,
+      "sha256": "234c65592ed1149e8930cf337675b03cac152195bce8776b733938ee39dc1c7e"
+    }
+  ],
+  "indexed_readings": {
+    "host": [
+      "cachedpose;ready=1;local=1;s0=804.6,339.1,1636.5;s1=800.9,339.3,1639.3;vars=804.6,339.1,1636.5;gap=0.000;seq=1896",
+      "posewindow;enabled=1;sleep_cfg=1;scope=private_worker;refused=0"
+    ],
+    "guest": []
+  },
+  "limitations": "185 sourcechecks passed; actualnativeoptin/cachedpose and all36 hooked domains +route/message/vars coldread accepted. Carry readiness remains false: registryflags3E and local0 encoded3 vs predicted1. No sleep, pickup, duration or postwakeinput acceptance inthisrun. Scenario stoppedon overstrict diagnostic idle1 assertion; post-owned-stop export/modelqueries faulted during shutdown, separatefrom livecoldreads. Unforcedclosure/all63 protected andreal savesrestored."
+}

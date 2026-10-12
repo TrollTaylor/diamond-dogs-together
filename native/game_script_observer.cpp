@@ -18,7 +18,9 @@
 #include "mgscoop/carry_info.hpp"
 #include "mgscoop/sleep_info.hpp"
 #include "mgscoop/sleep_partner_test.hpp"
+#include "mgscoop/native_pose_local_carry_slice.hpp"
 #include "mgscoop/native_pose_sleep_parts.hpp"
+#include "mgscoop/native_pose_carry_cold.hpp"
 #include "sleep_partner_bridge.hpp"
 #include "sleep_seed_contract.hpp"
 #include "sleep_body0_transition_contract.hpp"
@@ -488,6 +490,15 @@ void PartnerSleepResetBridge() noexcept {
 bool PartnerSleepBefore(const mgscoop::partner_input_hook::NativePoseJobContext& c) noexcept {return psleep::Before(c);}
 bool PartnerSleepAfter(const mgscoop::partner_input_hook::NativePoseJobContext& c) noexcept {return psleep::After(c);}
 void PartnerSleepClosed(const mgscoop::partner_input_hook::NativePoseJobContext& c,bool clean) noexcept {psleep::Closed(c,clean);}
+bool PartnerSleepCarrierSlice(psleep::CarrierSliceSnapshot& out) noexcept {
+ out={};mgscoop::partner_input_hook::NativePoseLocalCarryContext current{};
+ if(!mgscoop::partner_input_hook::ReadNativePoseLocalCarrySlice(current)||!current.carrySerial||current.carrySerial!=current.carryLease.serial||
+ current.armGeneration!=current.carryLease.generation||current.armEpoch!=current.carryLease.sceneEpoch)return false;
+ out.image=current.image;out.player=current.player;out.go=current.go;out.data=current.data;out.block1=current.block1;out.state1=current.state1;
+ out.modelCS1=current.modelCS1;out.modelEntry1=current.modelEntry1;out.armGeneration=current.armGeneration;out.armEpoch=current.armEpoch;
+ out.thread=current.thread;out.sequence=current.sequence;out.birth1=current.birth1;out.carrierBirth0=current.carrierBirth0;
+ out.sliceNonce=current.sliceNonce;out.carrySerial=current.carrySerial;out.realLocal=current.realLocal;out.selected=current.selected;out.sleepHeld=current.sleepHeld;return true;
+}
 bool EnsurePartnerSleepConfigured() noexcept {
  if(partner_sleep_configured)return true;
  namespace ih=mgscoop::partner_input_hook;const auto status=ih::NativePoseWindowStatus();
@@ -497,6 +508,8 @@ bool EnsurePartnerSleepConfigured() noexcept {
  if(!psleep::Configure(game_base,game_span,true,{PartnerSleepPrivate,refused},Log))return false;
  psleep::BindLifetimeQuery(&ih::NativePoseWholePlayerLifetimeLive);
  psleep::BindCarryHeldQuery(&ih::NativePoseCarryRecipientHeld);
+ if(!psleep::BindCarrierSliceQuery(&PartnerSleepCarrierSlice)||
+    !psleep::BindDualPartsQuery(&ih::ReadNativePoseDualPartsPoll))return false;
  // Central composite listener. Root appends Carry/Road here, rather than
  // registering another listener after this one or while any purpose is held.
  if(!ih::RegisterNativePosePartsPollValidator(&psleep::AllowPartsPoll))return false;
@@ -2105,6 +2118,29 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                 (unsigned long)r.birthEntered,(unsigned long)r.birthReady,(unsigned long)r.birthExactCaller,(unsigned long)r.birthBody1,(unsigned long)r.birthModel,
                 (unsigned long)r.birthCompleted,(unsigned long)r.birthOverlap,(unsigned long)r.birthCount,(unsigned long)r.birthBase,(unsigned long)r.birthCallerRva,r.birthStage);
             debug::Result(pending.id,r.installed?1u:0u,status);
+        } else if (pending.id && (std::strcmp(pending.text,"carry_cold_status")==0 ||
+            std::strcmp(pending.text,"carry_cold_route_status")==0 || std::strcmp(pending.text,"carry_cold_message_status")==0 ||
+            std::strcmp(pending.text,"carry_cold_profile_status")==0 || std::strcmp(pending.text,"carry_cold_profile_current_status")==0)) {
+            mgscoop::partner_input_hook::NativePoseCarryColdStatus r{};
+            const bool ready=mgscoop::partner_input_hook::ReadNativePoseCarryColdStatus(r);
+            char status[161]{};HRESULT formatted;
+            if(std::strcmp(pending.text,"carry_cold_route_status")==0)
+                formatted=StringCchPrintfA(status,ARRAYSIZE(status),"carryroute;ready=%u;route=%u;idle=%u;registry=%x;iface=%x;mode=%u;flags=%x;count=%u;pending=%llu",
+                    ready?1u:0u,r.routeReady?1u:0u,r.routeNoWork?1u:0u,r.registryType,r.routeType,r.routeMode,r.routeFlags,r.routeCount,
+                    static_cast<unsigned long long>(r.routePending));
+            else if(std::strcmp(pending.text,"carry_cold_message_status")==0)
+                formatted=StringCchPrintfA(status,ARRAYSIZE(status),"carrymessage;ready=%u;message=%u;type=%x;key=%u;enabled=%u",
+                    ready?1u:0u,r.messageReady?1u:0u,r.messageType,r.messageKey,r.messageEnabled);
+            else if(std::strcmp(pending.text,"carry_cold_profile_status")==0)
+                formatted=StringCchPrintfA(status,ARRAYSIZE(status),"carryprofile;ready=%u;read=%u;current=%u;reason=%u;type=%u;parts=%u;camo=%u;aux=%u;face=%u;refresh=%u",
+                    ready?1u:0u,r.profileReady?1u:0u,r.profileCurrent?1u:0u,r.profileReason,r.profileType,r.profileParts,r.profileCamo,r.profileAux,r.profileFace,r.profileRefresh);
+            else if(std::strcmp(pending.text,"carry_cold_profile_current_status")==0)
+                formatted=StringCchPrintfA(status,ARRAYSIZE(status),"carrycurrent;ready=%u;read=%u;type=%u;parts=%u;camo=%u;encoded=%u;aux=%u;face=%u;selector=%u",
+                    ready?1u:0u,r.profileReady?1u:0u,r.currentType,r.currentParts,r.currentCamo,r.currentEncoded,r.currentAux,r.currentFace,r.profileSelector);
+            else formatted=StringCchPrintfA(status,ARRAYSIZE(status),"carrycold;ready=%u;route=%u;idle=%u;message=%u;vars=%u;domains=%u,%u,%u;word=%u;local=%u;selected=%u;slice=%u",
+                ready?1u:0u,r.routeReady?1u:0u,r.routeNoWork?1u:0u,r.messageReady?1u:0u,r.varsReady?1u:0u,
+                r.varsDomain?1u:0u,r.messageDomain?1u:0u,r.routeDomain?1u:0u,r.word,r.local,r.selected,r.localSliceActive?1u:0u);
+            debug::Result(pending.id,ready&&SUCCEEDED(formatted)?1u:0u,status);
         } else if (pending.id && std::strcmp(pending.text,"pose_window_status")==0) {
             const auto r=mgscoop::partner_input_hook::NativePoseWindowStatus();char status[161]{};
             StringCchPrintfA(status,ARRAYSIZE(status),"posewindow;installed=%u;required=%u;held=%u;fault=%u;born=%u;windows=%lu;skip=%lu;hints=%lu;reason=%s",

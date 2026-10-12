@@ -1,0 +1,25 @@
+{
+  "stage_manifest_sha256": "421bc445a9d37db7f26db4726a93d5f3e4ed9ba5fcd5aa3d63649a93c1d8f57d",
+  "root_verified_files": 25,
+  "full_pinned_components_verified": {
+    "spans": 99,
+    "slots": 17
+  },
+  "source_diff_applied": true,
+  "cold_commands": [
+    "carry_cold_status",
+    "carry_cold_route_status",
+    "carry_cold_message_status"
+  ],
+  "cold_commands_numeric_only_no_holds": true,
+  "new_test_targets": [
+    "carry_vars_pair_word_tests",
+    "native_pose_message_lifetime_tests",
+    "native_pose_local_carry_slice_tests",
+    "carry_dispatch_lifetime_tests",
+    "native_pose_hook_groups_tests"
+  ],
+  "native_carry_feature_calls": false,
+  "compiled": false,
+  "runtime": false
+}
