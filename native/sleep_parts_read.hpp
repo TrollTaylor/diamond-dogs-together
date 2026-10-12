@@ -74,7 +74,7 @@ inline bool Same(const Observation& a,const Observation& b) noexcept {
 struct Sample {Observation observed{};float health=0,maximumHealth=0,stun=0,maximumStun=0;std::uint32_t psPacked=0;std::uint8_t qStance=0;};
 template<class R>bool Read(R& r,const Scope& scope,Sample& out,const char** why=nullptr)noexcept {
  out={};if(!ReadOnce(r,scope,out.observed,why))return false;const auto& b=out.observed.owner.body[1];std::uintptr_t ps=0,q=0;
- return plugin::Get(r,b.lifeRecord+0x24,out.health)&&plugin::Get(r,b.lifeRecord+0x28,out.maximumHealth)&&
+ if(why)*why="scalars";return plugin::Get(r,b.lifeRecord+0x24,out.health)&&plugin::Get(r,b.lifeRecord+0x28,out.maximumHealth)&&
  plugin::Get(r,b.lifeRecord+0x2c,out.stun)&&plugin::Get(r,b.lifeRecord+0x30,out.maximumStun)&&
  plugin::Get(r,b.ps+sleep_partner_stance_contract::packedOffset,ps)&&plugin::Aligned(ps,8)&&
  plugin::Range(ps,8)&&plugin::Get(r,ps,out.psPacked)&&plugin::Get(r,scope.data+0x30,q)&&q&&plugin::Get(r,q+1,out.qStance)&&

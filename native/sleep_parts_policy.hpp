@@ -39,7 +39,7 @@ inline bool CurrentSample(bool preparing,std::uint64_t preparedAt,const sl::Samp
   if(a.lifeState==2)return !l.nativeEntered&&l.phase==sl::Phase::seeded&&!a.nodeActive&&!a.graphSleepCandidate&&
    a.action==0x44&&(a.qAction==1||a.qAction==5)&&a.stance==1&&(a.requested==0||a.requested==4);
   // Retained idle is still held; this permission never clears/unlocks the lease.
-  return l.nativeEntered&&sl::RetiredSample(a);
+  return l.nativeEntered&&(sl::RetiredSample(a)||sl::RecoveryHolder(l,a,now));
  }
  if(!a.nodeActive||a.action!=0x19||a.qAction!=std::uint16_t(0x7f+a.mode))return false;
  if(a.mode==4)return a.lifeState==2&&(a.requested==0||a.requested==5);

@@ -21,6 +21,7 @@ struct Sample {
  std::uint8_t mode=0,requested=0,action=0,stance=0,cause=0;
  std::uint16_t qAction=0;
  bool nodeActive=false,graphCurrent=false,graphSleepCandidate=false;
+ std::uint64_t graphHash=0; // Current typed loaded graph node, not a resident name scan.
 };
 struct Scope {
  bool exactRetailGate=false,sleepCodeGate=false,seedCodeGate=false;
@@ -58,6 +59,7 @@ struct Lease {
  Identity owner{};Phase phase=Phase::empty;
  std::uint32_t originalStunBits=0,maximumStunBits=0;std::uint64_t seededAt=0,wakeAt=0,lastSeen=0,retiredSeenAt=0;
  unsigned retiredSamples=0;std::uint32_t retiredWindow=0;bool nativeEntered=false,wakeAuthorized=false;
+ std::uint64_t recoveryAt=0; // Started only by a strict actual owned Observe; never renewed by a poll.
 };
 inline bool SameMaximum(const Lease& l,const Sample& a) noexcept {return Bits(a.maximumStun)==l.maximumStunBits;}
 inline bool Held(const Lease& l) noexcept {return l.phase!=Phase::empty&&l.phase!=Phase::retired;}
@@ -103,6 +105,32 @@ struct Receipt {bool holdControls=false,suppressProne=false,retired=false,labAbo
 inline bool RetiredSample(const Sample& a) noexcept {
  return a.mode==0&&a.requested==0&&!a.nodeActive&&a.lifeState==0&&a.action!=0x19&&a.qAction!=0x83&&a.qAction!=0x84&&a.qAction!=0x85&&a.stance>=1&&a.stance<=3&&a.graphCurrent&&!a.graphSleepCandidate;
 }
+// Complete native mode6 graph-request literals. The adapter pins their full
+// producer/transition/exit bodies separately; a current typed graph node is
+// required. This holder cannot authorize a scalar exchange or retirement.
+inline bool RecoveryHash(std::uint64_t hash) noexcept {
+ return hash==0x40d8fda5ca06ull||hash==0x1edb72845e25ull||hash==0xa3d5c9d31392ull||hash==0x9df96634ca50ull;
+}
+inline bool RecoveryTuple(const Sample& a) noexcept {
+ return a.mode==0&&a.requested==0&&a.lifeState==0&&!a.nodeActive&&a.action==0x19&&a.qAction==0x85&&
+ a.stance>=1&&a.stance<=3&&a.graphCurrent&&!a.graphSleepCandidate&&RecoveryHash(a.graphHash);
+}
+// The genuine owned mode6 read can precede its mode0 shared poll; capture
+// the same immutable deadline there. This grants no new mode6 permission.
+inline bool RecoveryStartTuple(const Sample& a) noexcept {
+ return RecoveryTuple(a)||(a.mode==6&&a.requested==0&&a.lifeState==0&&a.nodeActive&&a.action==0x19&&a.qAction==0x85&&
+ a.stance>=1&&a.stance<=3&&a.graphCurrent&&!a.graphSleepCandidate&&RecoveryHash(a.graphHash));
+}
+inline const char* RecoveryDeadline(const Lease& l,std::uint64_t now) noexcept {
+ if(!l.recoveryAt)return nullptr;
+ if(!now||now<l.recoveryAt)return "partner_sleep_recovery_clock";
+ if(l.phase!=Phase::retired&&now-l.recoveryAt>kRetireMs)return "partner_sleep_recovery_timeout";
+ return nullptr;
+}
+inline bool RecoveryHolder(const Lease& l,const Sample& a,std::uint64_t now) noexcept {
+ return (l.phase==Phase::active||l.phase==Phase::wakePending)&&l.nativeEntered&&l.recoveryAt&&
+ now>=l.recoveryAt&&now-l.recoveryAt<=kRetireMs&&Same(l.owner,a.owner)&&SameMaximum(l,a)&&RecoveryTuple(a);
+}
 // An accepted early wake may retire an unseeded preparation. The adapter must
 // independently prove the same typed owner/scope; capture maximum bits here too.
 inline Lease RetireEmpty(const Sample& a,std::uint64_t now) noexcept {
@@ -116,6 +144,7 @@ inline Receipt Observe(Lease& l,const Scope& s,const Sample& a,std::uint32_t cur
  const auto why=Refusal(s,a,false);
  const bool maximumChanged=!SameMaximum(l,a);
  if(why||currentWindow!=s.sequenceBefore||!Same(l.owner,a.owner)||maximumChanged||s.now<l.lastSeen){l.retiredSamples=0;l.retiredSeenAt=0;r.labAbortRequired=maximumChanged||(s.now>=l.lastSeen&&s.now-l.lastSeen>kRetireMs)||(l.wakeAt&&s.now>=l.wakeAt&&s.now-l.wakeAt>kRetireMs)||(!l.nativeEntered&&s.now>=l.seededAt&&s.now-l.seededAt>kAcquireMs);r.reason=why?why:maximumChanged?"sleep_lease_maximum_changed":"sleep_lease_changed";return r;}
+ if(const auto expired=RecoveryDeadline(l,s.now)){r.labAbortRequired=true;r.reason=expired;return r;}
  if(l.phase==Phase::retired){
   // A previous retirement receipt is not permission to unlock a later native
   // state. Re-entry or action/life/graph drift retains the lease and lock.
@@ -130,6 +159,7 @@ inline Receipt Observe(Lease& l,const Scope& s,const Sample& a,std::uint32_t cur
  if((a.mode==4||a.mode==5||a.mode==6)&&a.nodeActive&&a.action==0x19&&(a.qAction==0x83||a.qAction==0x84||a.qAction==0x85)){
   l.nativeEntered=true;if(l.phase==Phase::seeded)l.phase=Phase::active;
  }
+ if(l.nativeEntered&&(l.phase==Phase::active||l.phase==Phase::wakePending)&&RecoveryStartTuple(a)&&!l.recoveryAt)l.recoveryAt=s.now;
  if(l.nativeEntered&&RetiredSample(a)){
   if(!l.retiredSamples||currentWindow!=l.retiredWindow){++l.retiredSamples;l.retiredSeenAt=s.now;l.retiredWindow=currentWindow;}
   if(l.retiredSamples>=2){l.phase=Phase::retired;r.holdControls=!l.wakeAuthorized;r.suppressProne=false;r.retired=true;r.reason="sleep_native_retired";return r;}

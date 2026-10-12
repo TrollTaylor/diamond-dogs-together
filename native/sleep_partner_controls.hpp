@@ -30,6 +30,7 @@ inline bool CasWindow(const partner_input_hook::NativePoseJobContext& c,const ro
 // Successful first reads must not starve wake/release deadlines by refreshing
 // lastSeen while a second read or exchange keeps refusing.
 inline const char* Watchdog(bool preparing,std::uint64_t preparedAt,const sl::Lease& l,std::uint64_t now) noexcept {
+ if(const auto recovery=sl::RecoveryDeadline(l,now))return recovery;
  if(!preparing&&l.phase==sl::Phase::empty)return nullptr;
  if(!now||(preparing&&(!preparedAt||now<preparedAt))||
     (l.phase!=sl::Phase::empty&&(!l.seededAt||!l.lastSeen||now<l.seededAt||now<l.lastSeen))||

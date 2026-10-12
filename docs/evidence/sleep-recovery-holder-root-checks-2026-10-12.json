@@ -1,0 +1,16 @@
+{
+  "stage": "recovery-holder-v1",
+  "manifest_sha256": "5a0b50d589dba6ac25a7cc7821651692245b7fdb024cee4e0fde6727654b1f2b",
+  "native_spans": 23,
+  "slots": 5,
+  "root_verified_strict_retirement_release_unchanged": true,
+  "audited_tests": 175,
+  "passed_receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261012-061031-f642ce76d02b4cbabd2f180ef09619dc\\receipt.json",
+  "actual_run": "274ce091c4e640d39d079559bcb3ecd0",
+  "native_replica_short_cycle_accepted": true,
+  "normal_activation": false,
+  "standing_guard_pose": false,
+  "carrying": false,
+  "shared_passengers": false,
+  "two_pc_steam": false
+}

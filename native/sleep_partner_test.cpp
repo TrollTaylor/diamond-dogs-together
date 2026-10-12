@@ -16,6 +16,8 @@
 #include "mgscoop/native_pose_sleep_parts.hpp"
 #include "sleep_parts_policy.hpp"
 #include "sleep_parts_read.hpp"
+#include "sleep_parts_diagnostic.hpp"
+#include "sleep_recovery_contract.hpp"
 #include "sleep_loaded_requests.hpp"
 #include "sleep_seed_contract.hpp"
 #include "sleep_body0_transition_contract.hpp"
@@ -109,7 +111,7 @@ bool ReadNative(const hk::NativePoseJobContext& c,bool requests,Native& out,cons
  out.sample.health=value.health;out.sample.maximumHealth=value.maximumHealth;out.sample.stun=value.stun;out.sample.maximumStun=value.maximumStun;
  out.sample.lifeState=body.lifeState;out.sample.mode=body.mode;out.sample.requested=body.requested;out.sample.action=body.action;
  out.sample.qAction=body.qAction;out.sample.stance=value.psStance;out.sample.cause=2;out.sample.nodeActive=body.nodeActive;
- out.sample.graphCurrent=g.currentNode;out.sample.graphSleepCandidate=g.sleepHashCandidate;
+ out.sample.graphCurrent=g.currentNode;out.sample.graphSleepCandidate=g.sleepHashCandidate;out.sample.graphHash=g.stateHash;
  out.zero=ro::Zero(after.owner.pad);
  out.proof.exactRetailGate=out.proof.sleepCodeGate=out.proof.seedCodeGate=configured;
  out.proof.workerActive=out.proof.threadAdmitted=out.proof.copiedSave=Worker();out.proof.coherent=true;
@@ -154,6 +156,7 @@ bool Step(const hk::NativePoseJobContext& c,bool before) noexcept {
  if(fault)return false;
  if(!Active()&&(!enabled||!target.asleep||(completedCycle&&policy::SamePeerCycle(target,completedTarget))))return true;
  if(!Worker()||!Lifetime()){if(Active())Abort("partner_sleep_lifetime_or_worker");else Reason("partner_sleep_lifetime_or_worker");return !Active();}
+ if(const auto recovery=lease::RecoveryDeadline(heldLease,GetTickCount64())){Abort(recovery);return false;}
  if(Carry()){
   if(Active()&&!pausedAt)pausedAt=GetTickCount64();Reason("partner_sleep_carry_suspended");return true;
  }
@@ -237,7 +240,7 @@ bool CodeGate(const void* image,std::size_t span,std::uintptr_t& mismatch) noexc
  auto reader=hk::ReadNativePoseOriginalCode;
  return sleep_plugin_read::CodeGate(reader,base,span,mismatch)&&sleep_graph_read::CodeGate(reader,base,span,mismatch)&&
         sleep_seed_contract::CodeGate(reader,base,span,mismatch)&&sleep_body0_transition_contract::CodeGate(reader,base,span,mismatch)&&
-        sleep_partner_stance_contract::CodeGate(reader,base,span,mismatch);
+        sleep_partner_stance_contract::CodeGate(reader,base,span,mismatch)&&sleep_recovery_contract::CodeGate(reader,base,span,mismatch);
 }
 bool Configure(const void* image,std::size_t span,bool exact,const hk::NativePoseWorkerBindings& bindings,LogFn log) noexcept {
  const Preserve preserve;AcquireSRWLockExclusive(&lock);
@@ -281,42 +284,89 @@ void Closed(const hk::NativePoseJobContext& c,bool cleanup) noexcept {
  }else if(Active()&&!cleanup)Abort("partner_sleep_window_cleanup_failed");
  ReleaseSRWLockExclusive(&lock);
 }
+namespace {
+volatile LONG partsRefusalLogged=0;
+void PartsRefusal(const char* stage,const char* detail,unsigned index,const hk::NativePoseSleepPartsContext* c,
+ const sleep_parts_graph::Sample* raw,const lease::Sample* sample,bool locked)noexcept {
+ const Preserve preserve;if(InterlockedCompareExchange(&partsRefusalLogged,1,0)!=0||!logger)return;
+ const auto now=GetTickCount64();const auto age=[&](std::uint64_t at)noexcept{return sleep_parts_diagnostic::Age(now,at);};
+ const auto phase=locked?static_cast<unsigned>(heldLease.phase):UINT32_MAX;
+ const auto* b=raw?&raw->observed.owner.body[1]:nullptr;const auto* g=raw?&raw->observed.graph[1]:nullptr;
+ char line[1536]{};
+ std::snprintf(line,sizeof(line),
+ "[sleep_parts_refusal] stage=%s;detail=%s;read=%u;typed=%u;phase=%u;preparing=%u;clear=%u;paused=%u;wake_req=%u;wake_auth=%u;entered=%u;active=%u;fault=%u;last_ms=%u;seed_ms=%u;wake_ms=%u;recovery_ms=%u;poll_ms=%u;paired=%u;field=%u;demo=%u;stop=%u;asleep=%u;mission=%u,%u;gen=%u,%u;epoch=%u,%u;arm=%u,%u;win=%u;birth=%llu;shared=%llu;mode=%u;request=%u;life=%u;ps_action=%u;q_action=%u;stance=%u;packed=%x;q_stance=%u;node=%u;graph=%u;candidate=%u;index=%u;hash=%llx;hp=%x,%x;stun=%x,%x;owner=%u;maximum=%u\r\n",
+ stage,detail?detail:"none",index,sample?1u:0u,phase,locked&&preparing?1u:0u,locked&&clearPending?1u:0u,locked&&pausedAt?1u:0u,
+ locked&&wakeRequested?1u:0u,locked&&heldLease.wakeAuthorized?1u:0u,locked&&heldLease.nativeEntered?1u:0u,locked&&Active()?1u:0u,locked&&fault?1u:0u,
+ locked?age(heldLease.lastSeen):UINT32_MAX,locked?age(heldLease.seededAt):UINT32_MAX,locked?age(heldLease.wakeAt):UINT32_MAX,locked?age(heldLease.recoveryAt):UINT32_MAX,locked?age(target.poll):UINT32_MAX,
+ locked&&target.pairedReady?1u:0u,locked&&target.fieldReady?1u:0u,locked&&target.demo?1u:0u,locked&&target.stopping?1u:0u,locked&&target.asleep?1u:0u,
+ locked?target.mission:0u,locked?ownedTarget.mission:0u,locked?target.peerGeneration:0u,locked?ownedTarget.peerGeneration:0u,
+ locked?static_cast<unsigned>(target.worldEpoch):0u,locked?static_cast<unsigned>(ownedTarget.worldEpoch):0u,
+ locked?target.armGeneration:0u,locked?ownedTarget.armGeneration:0u,c?c->sequence:0u,
+ static_cast<unsigned long long>(c?c->birthSerial:0),static_cast<unsigned long long>(c?c->sharedSerial:0),
+ b?static_cast<unsigned>(b->mode):0u,b?static_cast<unsigned>(b->requested):0u,b?b->lifeState:0u,b?static_cast<unsigned>(b->action):0u,b?static_cast<unsigned>(b->qAction):0u,
+ raw?(raw->psPacked&15u):0u,raw?raw->psPacked:0u,raw?static_cast<unsigned>(raw->qStance):0u,b&&b->nodeActive?1u:0u,g&&g->currentNode?1u:0u,g&&g->sleepHashCandidate?1u:0u,
+ g?g->index:0u,static_cast<unsigned long long>(g?g->stateHash:0),
+ raw?lease::Bits(raw->health):0u,raw?lease::Bits(raw->maximumHealth):0u,raw?lease::Bits(raw->stun):0u,raw?lease::Bits(raw->maximumStun):0u,
+ locked&&sample&&lease::Same(heldLease.phase==lease::Phase::empty?preparedOwner.owner:heldLease.owner,sample->owner)?1u:0u,
+ locked&&sample&&(heldLease.phase==lease::Phase::empty?lease::Bits(preparedOwner.maximumStun)==lease::Bits(sample->maximumStun):lease::SameMaximum(heldLease,*sample))?1u:0u);
+ logger(line);
+}
+}
 bool AllowPartsPoll() noexcept {
- const Preserve preserve;if(!TryAcquireSRWLockShared(&lock))return false;
+ const Preserve preserve;if(!TryAcquireSRWLockShared(&lock)){PartsRefusal("lock_busy",nullptr,0,nullptr,nullptr,nullptr,false);return false;}
  const auto run=[]()noexcept {
   const auto now=GetTickCount64();
-  if(!configured||!Worker()||!Lifetime()||fault||clearPending||pausedAt||!Active()||
-   !policy::FreshTarget(target,now)||!policy::SameTargetScene(target,ownedTarget)||
-   policy::Watchdog(preparing,preparedAt,heldLease,now))return false;
+  const auto reject=[](const char* stage,const char* detail,unsigned i,const hk::NativePoseSleepPartsContext* c=nullptr,
+   const sleep_parts_graph::Sample* raw=nullptr,const lease::Sample* sample=nullptr)noexcept{
+    PartsRefusal(stage,detail,i,c,raw,sample,true);return false;
+  };
+  if(!configured)return reject("configured",nullptr,0);
+  if(!Worker())return reject("worker",nullptr,0);
+  if(!Lifetime())return reject("lifetime",nullptr,0);
+  if(fault)return reject("fault",nullptr,0);
+  if(clearPending)return reject("clear_pending",nullptr,0);
+  if(pausedAt)return reject("paused",nullptr,0);
+  if(!Active())return reject("inactive",nullptr,0);
+  if(!policy::FreshTarget(target,now))return reject("target_fresh",nullptr,0);
+  if(!policy::SameTargetScene(target,ownedTarget))return reject("target_scene",nullptr,0);
+  if(const auto why=policy::Watchdog(preparing,preparedAt,heldLease,now))return reject("watchdog",why,0);
   hk::NativePoseSleepPartsContext c[3]{};
   sleep_parts_graph::Sample a{},b{},last{};
   const auto read=[&](unsigned index,sleep_parts_graph::Sample& out)noexcept {
-   if(!hk::ReadNativePoseSleepPartsPoll(c[index])||!sleep_parts_policy::ContextValid(c[index])||
-    c[index].image!=imageBase||c[index].thread!=GetCurrentThreadId()||
-    c[index].generation!=ownedTarget.armGeneration||c[index].sceneEpoch!=ownedTarget.armEpoch)return false;
-   // All flags below are established by the actual real shared getter, not a
-   // passed Scope or an invented local0 control-mask/owned odd-job receipt.
+   if(!hk::ReadNativePoseSleepPartsPoll(c[index]))return reject("context_get",nullptr,index,&c[index]);
+   if(!sleep_parts_policy::ContextValid(c[index]))return reject("context_valid",nullptr,index,&c[index]);
+   if(c[index].image!=imageBase||c[index].thread!=GetCurrentThreadId()||
+    c[index].generation!=ownedTarget.armGeneration||c[index].sceneEpoch!=ownedTarget.armEpoch)return reject("context_owner",nullptr,index,&c[index]);
    sleep_parts_plugin::Scope s{};s.exactGate=configured;s.admitted=target.pairedReady;s.ready=s.armed=true;
    s.image=imageBase;s.player=c[index].player;s.data=c[index].data;s.state=c[index].state;
    s.mission=target.mission;s.ownedMission=ownedTarget.mission;s.generation=target.peerGeneration;s.ownedGeneration=ownedTarget.peerGeneration;
    s.epoch=target.worldEpoch;s.ownedEpoch=ownedTarget.worldEpoch;s.thread=c[index].thread;s.ownerThread=GetCurrentThreadId();
    s.sequenceBefore=c[index].sequence;s.sequenceAfter=hk::WindowSeq();s.now=now;s.poll=target.poll;s.batch=partner_defer::InBatch();
-   if(!sleep_parts_graph::Read(Read,s,out))return false;
+   const char* why=nullptr;if(!sleep_parts_graph::Read(Read,s,out,&why))return reject("typed_read",why,index,&c[index],&out);
    const auto& body=out.observed.owner.body[1];const auto& graph=out.observed.graph[1];
    if(body.block!=c[index].block||body.ps!=c[index].ps||graph.cs!=c[index].modelCS||graph.entry!=c[index].modelEntry||
-    graph.mog!=graphMog||graph.lifetime!=graphLifetime)return false;
+    graph.mog!=graphMog||graph.lifetime!=graphLifetime)return reject("native_owner",nullptr,index,&c[index],&out);
    lease::Sample sample{};sample.owner={c[index].player,c[index].data,body.lifeRecord,body.block,body.ps,body.primary,body.node,
     body.records,body.bitmap,graph.cs,graph.controller,target.mission,target.peerGeneration,c[index].thread,
     c[index].generation,c[index].sceneEpoch,target.worldEpoch,c[index].birthSerial};
    sample.health=out.health;sample.maximumHealth=out.maximumHealth;sample.stun=out.stun;sample.maximumStun=out.maximumStun;
    sample.lifeState=body.lifeState;sample.mode=body.mode;sample.requested=body.requested;sample.action=body.action;sample.qAction=body.qAction;
    sample.stance=static_cast<std::uint8_t>(out.psPacked&15u);sample.cause=2;sample.nodeActive=body.nodeActive;
-   sample.graphCurrent=graph.currentNode;sample.graphSleepCandidate=graph.sleepHashCandidate;
-   return sleep_parts_policy::CurrentSample(preparing,preparedAt,preparedOwner,heldLease,sample,now);
+   sample.graphCurrent=graph.currentNode;sample.graphSleepCandidate=graph.sleepHashCandidate;sample.graphHash=graph.stateHash;
+   if(!sleep_parts_policy::CurrentSample(preparing,preparedAt,preparedOwner,heldLease,sample,now))
+    return reject("current_sample",sleep_parts_diagnostic::Explain(preparing,preparedAt,preparedOwner,heldLease,sample,now),index,&c[index],&out,&sample);
+   return true;
   };
-  if(!read(0,a)||!read(1,b)||!sleep_parts_policy::Same(c[0],c[1])||!sleep_parts_graph::Same(a,b)||
-    !read(2,last)||!sleep_parts_policy::Same(c[1],c[2])||!sleep_parts_graph::Same(b,last))return false;
-  hk::NativePoseSleepPartsContext final{};return hk::ReadNativePoseSleepPartsPoll(final)&&sleep_parts_policy::Same(c[2],final);
+  if(!read(0,a)||!read(1,b))return false;
+  if(!sleep_parts_policy::Same(c[0],c[1]))return reject("context_pair",nullptr,1,&c[1],&b);
+  if(!sleep_parts_graph::Same(a,b))return reject("native_pair",nullptr,1,&c[1],&b);
+  if(!read(2,last))return false;
+  if(!sleep_parts_policy::Same(c[1],c[2]))return reject("context_final_pair",nullptr,2,&c[2],&last);
+  if(!sleep_parts_graph::Same(b,last))return reject("native_final_pair",nullptr,2,&c[2],&last);
+  hk::NativePoseSleepPartsContext final{};
+  if(!hk::ReadNativePoseSleepPartsPoll(final))return reject("context_final",nullptr,3);
+  if(!sleep_parts_policy::Same(c[2],final))return reject("context_final_scope",nullptr,3,&final,&last);
+  return true;
  };
  const bool ok=run();ReleaseSRWLockShared(&lock);return ok;
 }

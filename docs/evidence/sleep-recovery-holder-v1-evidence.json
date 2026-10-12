@@ -1,0 +1,38 @@
+{
+  "classification": "Narrow worker-only retained native mode0 recovery holder after actual refusal; no native write/new call/unlock/retirement waiver",
+  "main_modified": false,
+  "compiled": false,
+  "runtime": false,
+  "source_base": {
+    "native/sleep_partner_lease.hpp": "f3d25f7e6fd0de07602e6e383302663db7bd9f3c2bc2c5a0a0554e04ccd3c7b3",
+    "native/sleep_partner_controls.hpp": "128224abdf89c652846e59b37192412f477acfd9a8a72fed8da84cba5675efd5",
+    "native/sleep_parts_policy.hpp": "328e4b119d93ea01a230b9d97bb84ad664cdc77da268a8cea760a7581dedcf51",
+    "native/sleep_parts_diagnostic.hpp": "bc8f7e885c46eee33d9d9c9d6af48216efd4eeced21f625df371e6e1146a4b89",
+    "native/sleep_partner_test.cpp": "835e5e937bf27c51436243a4e970f8833bc4e096a1c9e457e325ac2c6a471031",
+    "CMakeLists.txt": "bd4229c3994c0178f92a06441a6d847b263b5b4313ff171b0cff77d93c7d41fa"
+  },
+  "native_proof": {
+    "path": "D:\\mgs-coop-scratch\\codex-oct11\\carry-passenger\\riding\\sleep-wake-ordering-proof-v2.json",
+    "sha256": "7eb14d3e683ef58d6c6e28ba1dd3518a476e4478073999a54b8f387b092f6442",
+    "sites": 23,
+    "slots": 5,
+    "max_bytes": 980
+  },
+  "actual_root_run": "afcd52bc9d1a49408d82664844a96450",
+  "observed_tuple": "mode0 request0 life0 inactive node PS19 Q85 stance1 graphcurrent recovery40D8FDA5CA06; no mod wake grant; same owner/max, lastSeen16ms",
+  "invariants": [
+    "Only strict actual odd Observe after complete ContextRefusal/same owner/max may initialize recoveryAt on the exact mode6 loaded recovery tuple or observed mode0 tuple; passive polls cannot alter it.",
+    "Fresh shared reader still checks actual ticket/current body/graph/model/birth/gen/epoch/maximum/health/parts no-op and three coherent samples.",
+    "RecoveryAt never renews; absolute6000ms retained gap, clock reversal refusal, deadline before Carry early return.",
+    "No mutation plan changes. Exact RetiredSample function and ReleaseSample function remain byte-identical; two real retirement windows and authorized fresh release/Closed still required.",
+    "Current typed loaded graph node belongs to current graph table and carries one of four exact native mode6 hashes; no claim of visual clip readiness.",
+    "RecoveryAt is not shifted by Carry ResumeTimers. No production opt-in; normal feature remains OFF."
+  ],
+  "fixtures": "74 source-only assertions: actual Observe vs shared clock, all4 hashes, natural-before-grant, invalid scopes/state/owner/max/lifetime, absolute expiry despite fresh timestamps/polls, Carry pause cannot reset, two real idle windows and independent canonical release, typed current graph pair, all23/5 native pins. No compile/runtime by this agent.",
+  "integration": "Apply source.diff, copy native/sleep_recovery_contract.hpp and tests/sleep_recovery_tests.cpp; root adds audit target and owns compile/runtime. No normal activation.",
+  "actual_root_log": {
+    "path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runtime\\afcd52bc9d1a49408d82664844a96450\\host-script-bounded.log",
+    "sha256": "28b3b0d71d72daac5b47c813cfdcdfbd4a988353620b9ce0c5be6cfac317695d",
+    "claim": "Root executed hidden run; agent read sealed artifact only."
+  }
+}
