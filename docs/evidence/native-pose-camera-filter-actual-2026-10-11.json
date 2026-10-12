@@ -1,0 +1,116 @@
+{
+  "schema": 1,
+  "run": "cc38409742b049a2929466e7f7bb8719",
+  "kind": "hidden-actual-scenario",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261012-032732-eee30642e23549b0b0a8486f95d77855\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 10,
+  "failure": null,
+  "closed": true,
+  "forced": false,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 78646251,
+      "end": 78774212,
+      "sha256": "d0ac905497085a94c7ff53f94c0a75de8c07833ec084e0828e1813f76f1541bc"
+    },
+    {
+      "role": "guest",
+      "start": 87526144,
+      "end": 87658588,
+      "sha256": "ded6bbcc97d54088e0e5e7941f3ea2a9c081801dee930c1ffc046f6b3e5ab98e"
+    }
+  ],
+  "indexed_readings": {
+    "host": [
+      "posewindow;installed=1;required=1;held=0;fault=0;born=1;windows=1332;skip=0;hints=0;reason=pose_window_captured",
+      "camerareader;installed=1;shared=1816;owned=294;caller=115655b;typed=1;body=1;sender=1;filtered=294;fault=0;exports=294",
+      "posecamera;ready=1;c0=0,0;mode=0;flags=10;target=0,0;model=1;subvt=2157e60;get=44ddd0;seq=3592",
+      "cachedpose;ready=1;local=1;s0=800.9,339.3,1639.3;s1=800.9,339.3,1639.3;vars=800.9,339.3,1639.3;gap=0.000;seq=3064",
+      "cameraexport;ready=1;cam=-0.000,-0.503,-0.000,0.864;global=805.148,339.961,1636.522,1.000;seq=2752",
+      "posecamera;ready=1;c0=0,0;mode=0;flags=10;target=0,0;model=1;subvt=2157e60;get=44ddd0;seq=2528",
+      "camerareader;installed=1;shared=1609;owned=87;caller=115655b;typed=1;body=1;sender=1;filtered=87;fault=0;exports=87",
+      "posewindow;enabled=1;sleep_cfg=1;scope=private_worker;refused=0",
+      "cachedpose;ready=1;local=1;s0=800.9,339.3,1639.3;s1=800.9,339.3,1639.3;vars=800.9,339.3,1639.3;gap=0.000;seq=1352",
+      "camerareader;installed=1;shared=1468;owned=0;caller=0;typed=0;body=4294967295;sender=0;filtered=0;fault=0;exports=0",
+      "posecamera;ready=1;c0=0,0;mode=0;flags=10;target=0,0;model=1;subvt=2157e60;get=44ddd0;seq=928"
+    ],
+    "guest": [
+      "posewindow;installed=1;required=1;held=0;fault=0;born=1;windows=1380;skip=0;hints=0;reason=pose_window_captured",
+      "camerareader;installed=1;shared=1654;owned=304;caller=115655b;typed=1;body=1;sender=1;filtered=304;fault=0;exports=304",
+      "posecamera;ready=1;c0=0,0;mode=0;flags=10;target=0,0;model=1;subvt=2157e60;get=44ddd0;seq=3712",
+      "cachedpose;ready=1;local=1;s0=800.9,339.3,1639.3;s1=800.9,339.3,1639.3;vars=800.9,339.3,1639.3;gap=0.000;seq=3128",
+      "cameraexport;ready=1;cam=-0.000,-0.643,-0.000,0.766;global=805.830,339.962,1638.118,1.000;seq=2864",
+      "posecamera;ready=1;c0=0,0;mode=0;flags=10;target=0,0;model=1;subvt=2157e60;get=44ddd0;seq=2600",
+      "camerareader;installed=1;shared=1443;owned=93;caller=115655b;typed=1;body=1;sender=1;filtered=93;fault=0;exports=93",
+      "posewindow;enabled=1;sleep_cfg=1;scope=private_worker;refused=0",
+      "cachedpose;ready=1;local=1;s0=800.9,339.3,1639.3;s1=800.9,339.3,1639.3;vars=800.9,339.3,1639.3;gap=0.000;seq=1440",
+      "camerareader;installed=1;shared=1297;owned=0;caller=0;typed=0;body=4294967295;sender=0;filtered=0;fault=0;exports=0",
+      "posecamera;ready=1;c0=0,0;mode=0;flags=10;target=0,0;model=1;subvt=2157e60;get=44ddd0;seq=1016"
+    ]
+  },
+  "limitations": "169 audited checks passed. Exact current sender/body1 phase callback filtered on both copies, fault0 and local0 native/cache/Lua position gap0 before/after. Captured before/after host views retain the same normal third-person camera and visible local body. This short camera/walk test does not establish longer movement/combat, native body1 sleep, carry or online acceptance. Unforced cleanup restored63 protected files and real saves.",
+  "native_events": {
+    "host": [
+      "pose_camera=selected_replica_filtered; caller_rva=0x0115655b; typed=1; real=0; selected=1; target380=0; selected384=0; mode20c=0; sequence=1573; odd=1; consumer=2; body_known=1; incoming_body=1; sender=1; stage=camera_selected_replica"
+    ],
+    "guest": [
+      "pose_camera=selected_replica_filtered; caller_rva=0x0115655b; typed=1; real=0; selected=1; target380=0; selected384=0; mode20c=0; sequence=1605; odd=1; consumer=2; body_known=1; incoming_body=1; sender=1; stage=camera_selected_replica"
+    ]
+  },
+  "frames": [
+    {
+      "name": "guest-camera-after-window.bmp",
+      "bytes": 3686454,
+      "sha256": "307c76538cea3893d1d62aff84c51f275efd0ae8b2680c43693dfe73c54e41f8"
+    },
+    {
+      "name": "guest-camera-before-window.bmp",
+      "bytes": 3686454,
+      "sha256": "e5beed0dee1ff7d5b9df4b13367388004e17d7219a75b9879457657ebc6a9dbc"
+    },
+    {
+      "name": "guest-camera-final.bmp",
+      "bytes": 3686454,
+      "sha256": "940f689b21792e7e02b219c816948229267c5a74b22f81180f145f9a88309647"
+    },
+    {
+      "name": "guest-camera-host-walk-01.bmp",
+      "bytes": 3686454,
+      "sha256": "236bacd49dfe9af6a8e4fdd95820ba0d87761e78641c209be017c55f4906f6e3"
+    },
+    {
+      "name": "host-camera-after-window.bmp",
+      "bytes": 3686454,
+      "sha256": "aef909ba1b280b6e474362e0f7851fc7fb8b8a6dc67df318fc667319af2aa997"
+    },
+    {
+      "name": "host-camera-before-window.bmp",
+      "bytes": 3686454,
+      "sha256": "2881393772010f821f9561991447561a442f441e3b7ad9f5378052ad745a8386"
+    },
+    {
+      "name": "host-camera-final.bmp",
+      "bytes": 3686454,
+      "sha256": "dd8e5db453f072cf0936621de0005dfec872bf8de0b9f3127079742b6db40a84"
+    }
+  ],
+  "viewed_observations": [
+    "Host before/after preserve normal third-person view and visible local character.",
+    "Guest before/after preserve normal third-person view and visible local character.",
+    "Guest camera-host-walk-01 retains the local character and normal camera while the remote character walks."
+  ],
+  "consumer_enum": {
+    "observed": 2,
+    "name": "drain1",
+    "walk11": 4
+  }
+}

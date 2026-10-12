@@ -215,6 +215,7 @@ extern "C" HRESULT WINAPI DirectInput8Create(HINSTANCE instance, DWORD version, 
         (void)private_worker;
 #endif
         mgscoop::debug_overlay::Install();
+        InstallNativePoseWorkerEarly();
     }
     SetLastError(forwarded_error);
     return result;

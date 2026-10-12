@@ -714,6 +714,7 @@ unsigned DmMotionCount(const Hooks& h) noexcept {
 void TickDmMap(Driver& d, const Hooks& h, const Settings& set, const Clock& clock, bool terminating, const partner::Tick& tick,
                const pdm::Observation& obs, std::uint32_t tick_ops, bool dm_ok, const pp::DmState& dm, bool parts_loaded,
                std::uint32_t& ops, std::uint8_t& gani) noexcept {
+    if (h.native_pose_suppressed && h.native_pose_suppressed(h.context)) return;
     Mission& m = d.mission;
     const std::uint64_t now = clock.now_ms;
     const bool map = set.dm == PartnerDm::map;
@@ -883,6 +884,7 @@ void TickDmMap(Driver& d, const Hooks& h, const Settings& set, const Clock& cloc
 void TickDm(Driver& d, const Hooks& h, const pp::State& st, const Settings& set, const Clock& clock, bool terminating,
             const partner::Tick& tick, const pdm::Observation& obs, std::uint32_t tick_ops, std::uint32_t& ops,
             std::uint8_t& gani) noexcept {
+    if(h.native_pose_suppressed && h.native_pose_suppressed(h.context)) return;
     Mission& m = d.mission;
     const std::uint64_t now = clock.now_ms;
     const bool map = set.dm == PartnerDm::map;
@@ -3688,6 +3690,15 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
 }
 } // namespace
 
+bool NativeSleepPresentationReady(const Driver& d) noexcept {
+    const auto& m = d.mission;
+    const auto effective = EffectiveSettings(d.settings, m.native_out.active);
+    return m.native_out.active && effective.native_active && effective.dm == PartnerDm::off &&
+           !m.dm_patched && !m.dm_revert_failed && !m.dm_play_pending &&
+           !d.dmplay_pending && !d.dmstop_pending && !m.dmmap.owned &&
+           m.dmmap.phase == partner_dmmap::Phase::idle;
+}
+
 void TickEquipLink(Driver& d, const Hooks& h, std::uint64_t now_ms) noexcept {
     DrainEquip(d, h, now_ms);
     SendEquip(d, h, now_ms);
@@ -4613,7 +4624,8 @@ bool Tick(Driver& d, const Hooks& h, const LabConfig& lab, const char* source, s
     } else if (!anim_dm) {
         m.anim_dm_logged = false;
     }
-    const bool anim_needed = set.anim != PartnerAnim::off && set.stage >= 3 && !m.dmmap.owned;
+    const bool native_pose_held = h.native_pose_suppressed && h.native_pose_suppressed(h.context);
+    const bool anim_needed = !native_pose_held && set.anim != PartnerAnim::off && set.stage >= 3 && !m.dmmap.owned;
     if (anim_needed) {
         const sync::AnimState src = set.anim == PartnerAnim::mirror ? local_anim : remote_anim;
         const bool src_valid = (src.flags & sync::AnimFlag::Valid) != 0;

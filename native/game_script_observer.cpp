@@ -17,6 +17,8 @@
 #include "mgscoop/downed_player.hpp"
 #include "mgscoop/carry_info.hpp"
 #include "mgscoop/sleep_info.hpp"
+#include "mgscoop/sleep_partner_test.hpp"
+#include "sleep_partner_bridge.hpp"
 #include "sleep_seed_contract.hpp"
 #include "sleep_body0_transition_contract.hpp"
 #include "mgscoop/vehicle_info.hpp"
@@ -57,6 +59,7 @@
 #include "mgscoop/partner_action_events.hpp"
 #include "mgscoop/partner_driver.hpp"
 #include "mgscoop/partner_input_hook.hpp"
+#include "mgscoop/native_pose_window.hpp"
 #include "mgscoop/partner_defer.hpp"
 #include "mgscoop/partner_local_detour.hpp"
 #include "mgscoop/partner_look_source.hpp"
@@ -466,6 +469,38 @@ std::uint64_t QpcMicros() noexcept {
 std::uint32_t Clamp32(std::uint64_t value) noexcept { return value > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<std::uint32_t>(value); }
 
 // Real effects for partner_driver (the context is unused: process-level state).
+namespace psleep=mgscoop::sleep_partner_test;
+namespace psbridge=mgscoop::sleep_partner_bridge;
+psbridge::ArmOwner partner_sleep_arm{};
+psbridge::Ledger partner_sleep_records{};
+bool partner_sleep_configured=false;
+bool PartnerSleepPrivate() noexcept {
+ return mgscoop::worker_scenario::Compiled()&&mgscoop::worker_scenario::ThreadAdmitted()&&lab::SavesRedirected();
+}
+bool PartnerSleepEnableAllowed() noexcept;
+bool PartnerSleepSuppressed(void*) noexcept {return psleep::SuppressForcedStance();}
+void PartnerSleepResetBridge() noexcept {
+ partner_sleep_arm={};partner_sleep_records={};
+ psleep::Enable(false); // queues retained wake; never discards native lease
+ psleep::PublishTarget({});
+}
+bool PartnerSleepBefore(const mgscoop::partner_input_hook::NativePoseJobContext& c) noexcept {return psleep::Before(c);}
+bool PartnerSleepAfter(const mgscoop::partner_input_hook::NativePoseJobContext& c) noexcept {return psleep::After(c);}
+void PartnerSleepClosed(const mgscoop::partner_input_hook::NativePoseJobContext& c,bool clean) noexcept {psleep::Closed(c,clean);}
+bool EnsurePartnerSleepConfigured() noexcept {
+ if(partner_sleep_configured)return true;
+ namespace ih=mgscoop::partner_input_hook;const auto status=ih::NativePoseWindowStatus();
+ if(!PartnerSleepPrivate()||!offline_enabled||!partner_on||!partner_gate_ok||!downed_hook_ok||!game_base||!game_span||
+    !status.installed||status.required||status.held||status.faulted||!ih::NativePoseWholePlayerLifetimeLive()||!ih::NativePoseLocalCacheIsolationLive())return false;
+ const auto refused=[](const char* why) noexcept {mgscoop::worker_scenario::Refuse(why);};
+ if(!psleep::Configure(game_base,game_span,true,{PartnerSleepPrivate,refused},Log))return false;
+ psleep::BindLifetimeQuery(&ih::NativePoseWholePlayerLifetimeLive);
+ psleep::BindCarryHeldQuery(&ih::NativePoseCarryRecipientHeld);
+ // Central composite listener. Root appends Carry/Road here, rather than
+ // registering another listener after this one or while any purpose is held.
+ ih::RegisterNativePoseJobHooks(PartnerSleepBefore,PartnerSleepAfter,PartnerSleepClosed);
+ partner_sleep_configured=true;Log("partner_sleep=private_configured;enabled=0;production=0\r\n");return true;
+}
 void PartnerLog(void*, const char* line) noexcept { Log(line); }
 pp::Refusal PartnerReadState(void*, pp::State& out) noexcept { return pp::ReadState(partner_addresses, out); }
 const char* PartnerOrBits(void*, bool terminating, std::uint32_t& q194, std::uint32_t& q198) noexcept {
@@ -501,15 +536,18 @@ pd::RemoteLook PartnerSampleLook(void*) noexcept {
     return pd::RemoteLook{remote.valid, remote.look, remote.revision};
 }
 const char* PartnerWriteAnim(void*, bool terminating, std::uint16_t act, std::uint8_t stance, std::uint8_t speed) noexcept {
+    if(PartnerSleepSuppressed(nullptr))return "native_sleep_held";
     return pp::WriteAnim(partner_addresses, partner::partner_index, terminating, act, stance, speed);
 }
 const char* PartnerWriteFaceEquip(void*, bool terminating, std::uint8_t value) noexcept {
     return pp::WriteFaceEquip(partner_addresses, partner::partner_index, terminating, value);
 }
 const char* PartnerSetStance(void*, bool terminating, std::uint8_t stance, std::uint8_t& psw, std::uint8_t& q30) noexcept {
+    if(PartnerSleepSuppressed(nullptr))return "native_sleep_held";
     return pp::SetStance(partner_addresses, partner::partner_index, terminating, stance, psw, q30);
 }
 const char* PartnerRequestStance(void*, bool terminating, std::uint8_t stance) noexcept {
+    if(PartnerSleepSuppressed(nullptr))return "native_sleep_held";
     return pp::RequestStance(partner_addresses, partner::partner_index, terminating, stance);
 }
 const char* PartnerApplyTransform(void*, bool terminating, const float (&pos)[4], const float (&quat)[4],
@@ -596,7 +634,11 @@ void PartnerResetInputFault(void*) noexcept {
     // (never the pending records or the batch flags).
     mgscoop::partner_defer::MissionStart();
 }
-void PartnerPublishArm(void*, const mgscoop::partner_input::Arm& arm) noexcept { mgscoop::partner_input_hook::PublishArm(arm); }
+void PartnerPublishArm(void*, const mgscoop::partner_input::Arm& arm) noexcept {
+    mgscoop::partner_input_hook::PublishArm(arm);
+    partner_sleep_arm=psbridge::CaptureArm(arm,OnRuntimeThread()&&!mission_terminating,
+        GetCurrentThreadId(),GetTickCount64());
+}
 void PartnerDrainInputStats(void*, pd::InputStats& out) noexcept {
     mgscoop::partner_input_hook::Stats s{};
     mgscoop::partner_input_hook::DrainStats(s);
@@ -810,7 +852,7 @@ constexpr pd::Hooks partner_hooks{nullptr, PartnerLog, PartnerReadState, Partner
     PartnerWindowSeq, PartnerLinkLive, PartnerLinkSession, PartnerDrainReliable, PartnerReadRates, PartnerForgetRates, kAmmoExperiment,
     PartnerInstallFire, PartnerFireStats, PartnerFireCensus, PartnerReadGun, PartnerReadLoadout, PartnerSendReliable, PartnerInBatch,
     PartnerInstallLookSource, PartnerInstallNoise, PartnerSendReliableAppend, PartnerPublishAim, PartnerAimStats, PartnerReadAim,
-    PartnerReadSlots, PartnerEquipType, PartnerPeerInputV5, PartnerPeerInputV6};
+    PartnerReadSlots, PartnerEquipType, PartnerPeerInputV5, PartnerPeerInputV6, PartnerSleepSuppressed};
 // The mission of the current partner epoch (link-status.json "mission").
 std::uint32_t partner_mission = 0;
 // World sync (docs/world-sync-protocol.md): configured at install only with
@@ -1028,6 +1070,7 @@ void NotePackReceipt(const char* buffer, std::size_t size) noexcept {
 }
 
 void PartnerMissionStart(std::uint32_t mission) noexcept {
+    PartnerSleepResetBridge();
     buddy_pose_owner = {}; ClearBuddyCapacityIdentity();
     mgscoop::coop_hud::PublishDowned(mgscoop::coop_hud::DownedView{});
     mgscoop::downed_player::Configure(partner_addresses, downed_hook_ok);
@@ -1055,6 +1098,7 @@ void PartnerMissionStart(std::uint32_t mission) noexcept {
     mgscoop::nametag_game::MissionStart(mission);
 }
 void PartnerMissionEnd() noexcept {
+    PartnerSleepResetBridge();
     buddy_pose_owner = {}; ClearBuddyCapacityIdentity();
     mgscoop::coop_hud::PublishDowned(mgscoop::coop_hud::DownedView{});
     mgscoop::downed_player::Shutdown();
@@ -1222,6 +1266,7 @@ const char* HandlePartnerTick(const char* buffer, std::size_t size) noexcept {
     if (!pd::Tick(partner_driver, partner_hooks, mgscoop::GetLabConfig(), buffer, size, clock, mission_terminating, reply)) {
         ClearUpperEndOwner(); mgscoop::coop_hud::PublishPartner(mgscoop::coop_hud::PartnerView{}); return nullptr;
     }
+    if(PartnerSleepSuppressed(nullptr))reply.op&=~(partner::op::dm_play|partner::op::dm_stop);
     ObserveRemoteActionEvents();
     NametagTick(buffer, size);
     // Service equipment on the natural partner Lua owner tick, independently
@@ -1971,6 +2016,117 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                 static_cast<unsigned long long>(sample.unit),sample.unit_matches_player?1u:0u,unsigned(sample.unit_rider),
                 unsigned(sample.replication_kind),unsigned(sample.replication_target));
             debug::Result(pending.id,reason?0u:1u,status);
+        } else if (pending.id && (std::strcmp(pending.text,"pose_window_test 1")==0 || std::strcmp(pending.text,"pose_window_test 0")==0)) {
+            const bool on=pending.text[17]=='1';
+            // Register the passive listener while the window is still unrequired.
+            // A refused sleep setup must not prevent a camera-only worker test.
+            if(on) EnsurePartnerSleepConfigured();
+            const bool ok=mgscoop::partner_input_hook::SetNativePoseWindowTest(on);
+            char status[161]{};StringCchPrintfA(status,ARRAYSIZE(status),
+                "posewindow;enabled=%u;sleep_cfg=%u;scope=private_worker;refused=%u",
+                ok&&on?1u:0u,partner_sleep_configured?1u:0u,ok?0u:1u);
+            debug::Result(pending.id,ok?1u:0u,status);
+        } else if (pending.id && std::strcmp(pending.text,"pose_indexed_status")==0) {
+            const auto seq=mgscoop::partner_input_hook::WindowSeq();pp::State a{},b{};float p0[4]{},q0[4]{},p1[4]{},q1[4]{};
+            const bool ok=partner_gate_ok&&!(seq&1u)&&!mgscoop::partner_defer::InBatch()&&
+                pp::ReadState(partner_addresses,a)==pp::Refusal::none&&a.count==2&&a.local==0&&
+                pp::ReadBody(partner_addresses,a,0,p0,q0)&&pp::ReadBody(partner_addresses,a,1,p1,q1)&&
+                pp::ReadState(partner_addresses,b)==pp::Refusal::none&&a.P==b.P&&a.Q==b.Q&&a.S==b.S&&
+                mgscoop::partner_input_hook::WindowSeq()==seq&&!mgscoop::partner_defer::InBatch();
+            const auto v=debug::GetSnapshot();char status[161]{};
+            const auto formatted=StringCchPrintfA(status,ARRAYSIZE(status),"indexedpose;ready=%u;v=%.1f,%.1f,%.1f;b0=%.1f,%.1f,%.1f;b1=%.1f,%.1f,%.1f;seq=%lu",
+                ok?1u:0u,double(v.player_pos[0]),double(v.player_pos[1]),double(v.player_pos[2]),double(p0[0]),double(p0[1]),double(p0[2]),
+                double(p1[0]),double(p1[1]),double(p1[2]),(unsigned long)seq);
+            debug::Result(pending.id,ok&&SUCCEEDED(formatted)?1u:0u,status);
+        } else if (pending.id && std::strcmp(pending.text,"pose_cached_status")==0) {
+            const auto seq=mgscoop::partner_input_hook::WindowSeq();pp::State a{},b{};float p0[4]{},q0[4]{};
+            const bool ready=partner_gate_ok&&!(seq&1u)&&!mgscoop::partner_defer::InBatch()&&
+                pp::ReadState(partner_addresses,a)==pp::Refusal::none&&a.slots_ok&&a.vars_ok&&a.count==2&&a.local==0&&
+                pp::ReadBody(partner_addresses,a,0,p0,q0)&&pp::ReadState(partner_addresses,b)==pp::Refusal::none&&
+                a.P==b.P&&a.Q==b.Q&&a.S==b.S&&a.slots==b.slots&&
+                mgscoop::partner_input_hook::WindowSeq()==seq&&!mgscoop::partner_defer::InBatch();
+            const float dx=a.slot[0][0]-p0[0],dy=a.slot[0][1]-p0[1],dz=a.slot[0][2]-p0[2];
+            const float gap=std::sqrt(dx*dx+dy*dy+dz*dz);char status[161]{};
+            const auto formatted=StringCchPrintfA(status,ARRAYSIZE(status),"cachedpose;ready=%u;local=%u;s0=%.1f,%.1f,%.1f;s1=%.1f,%.1f,%.1f;vars=%.1f,%.1f,%.1f;gap=%.3f;seq=%lu",
+                ready?1u:0u,ready&&std::isfinite(gap)&&gap<0.5f?1u:0u,
+                double(a.slot[0][0]),double(a.slot[0][1]),double(a.slot[0][2]),double(a.slot[1][0]),double(a.slot[1][1]),double(a.slot[1][2]),
+                double(a.vars_pos[0]),double(a.vars_pos[1]),double(a.vars_pos[2]),double(gap),(unsigned long)seq);
+            debug::Result(pending.id,ready&&SUCCEEDED(formatted)?1u:0u,status);
+        } else if (pending.id && (std::strcmp(pending.text,"pose_camera_status")==0 || std::strcmp(pending.text,"pose_camera_export_status")==0)) {
+            struct CameraSample {std::uintptr_t cam=0,c0=0,sub=0;std::uint8_t active=0,requested=0;
+                std::uint32_t mode=0,flags=0,target=0,previous=0;std::uintptr_t subVt=0,subGet=0,model=0;float camera[4]{},global[4]{};};
+            const auto read=[&](const pp::State& owner,CameraSample& out) noexcept {
+                out={};std::uintptr_t vt=0,parent=0;const auto base=reinterpret_cast<std::uintptr_t>(game_base);
+                return UpperPhaseRead(nullptr,owner.P+0xb8,&out.cam,8)&&out.cam>=0x20&&
+                    UpperPhaseRead(nullptr,out.cam,&vt,8)&&vt==base+0x23b8250&&
+                    UpperPhaseRead(nullptr,out.cam-0x20,&vt,8)&&vt==base+0x23b8218&&
+                    UpperPhaseRead(nullptr,out.cam+0x348,&parent,8)&&parent==owner.P&&
+                    UpperPhaseRead(nullptr,owner.P+0xc0,&out.c0,8)&&out.c0>=0x20&&
+                    UpperPhaseRead(nullptr,out.c0,&vt,8)&&vt==base+0x23c7500&&
+                    UpperPhaseRead(nullptr,out.c0-0x20,&vt,8)&&vt==base+0x23c74c8&&
+                    UpperPhaseRead(nullptr,out.c0+8,&parent,8)&&parent==owner.P&&
+                    UpperPhaseRead(nullptr,out.c0+0x6c,&out.active,1)&&UpperPhaseRead(nullptr,out.c0+0x6d,&out.requested,1)&&
+                    UpperPhaseRead(nullptr,out.cam+0x20c,&out.mode,4)&&UpperPhaseRead(nullptr,out.cam+0x32c,&out.flags,4)&&
+                    UpperPhaseRead(nullptr,out.cam+0x380,&out.target,4)&&UpperPhaseRead(nullptr,out.cam+0x384,&out.previous,4)&&
+                    UpperPhaseRead(nullptr,out.cam+0x350,&out.model,8)&&UpperPhaseRead(nullptr,out.cam+0x360,&out.sub,8)&&
+                    (!out.sub||(UpperPhaseRead(nullptr,out.sub,&out.subVt,8)&&out.subVt>=base&&out.subVt-base<game_span-8&&UpperPhaseRead(nullptr,out.subVt,&out.subGet,8)))&&
+                    UpperPhaseRead(nullptr,out.cam+0x90,out.camera,sizeof(out.camera))&&
+                    UpperPhaseRead(nullptr,base+0x2c552e0,out.global,sizeof(out.global));
+            };
+            const auto seq=mgscoop::partner_input_hook::WindowSeq();pp::State a{},b{};CameraSample x{},y{};
+            const bool ready=partner_gate_ok&&!(seq&1u)&&!mgscoop::partner_defer::InBatch()&&
+                pp::ReadState(partner_addresses,a)==pp::Refusal::none&&read(a,x)&&read(a,y)&&
+                x.cam==y.cam&&x.c0==y.c0&&x.sub==y.sub&&x.active==y.active&&x.requested==y.requested&&x.mode==y.mode&&
+                x.flags==y.flags&&x.target==y.target&&x.previous==y.previous&&x.subVt==y.subVt&&x.subGet==y.subGet&&x.model==y.model&&
+                std::memcmp(x.camera,y.camera,sizeof(x.camera))==0&&std::memcmp(x.global,y.global,sizeof(x.global))==0&&pp::ReadState(partner_addresses,b)==pp::Refusal::none&&a.P==b.P&&a.Q==b.Q&&a.S==b.S&&
+                mgscoop::partner_input_hook::WindowSeq()==seq&&!mgscoop::partner_defer::InBatch();
+            char status[161]{};HRESULT formatted;
+            if(std::strcmp(pending.text,"pose_camera_export_status")==0)
+                formatted=StringCchPrintfA(status,ARRAYSIZE(status),"cameraexport;ready=%u;cam=%.3f,%.3f,%.3f,%.3f;global=%.3f,%.3f,%.3f,%.3f;seq=%lu",
+                    ready?1u:0u,double(x.camera[0]),double(x.camera[1]),double(x.camera[2]),double(x.camera[3]),
+                    double(x.global[0]),double(x.global[1]),double(x.global[2]),double(x.global[3]),(unsigned long)seq);
+            else formatted=StringCchPrintfA(status,ARRAYSIZE(status),"posecamera;ready=%u;c0=%u,%u;mode=%x;flags=%x;target=%x,%x;model=%u;subvt=%llx;get=%llx;seq=%lu",
+                ready?1u:0u,unsigned(x.active),unsigned(x.requested),unsigned(x.mode),unsigned(x.flags),unsigned(x.target),unsigned(x.previous),x.model?1u:0u,
+                static_cast<unsigned long long>(x.subVt>=reinterpret_cast<std::uintptr_t>(game_base)?x.subVt-reinterpret_cast<std::uintptr_t>(game_base):0),
+                static_cast<unsigned long long>(x.subGet>=reinterpret_cast<std::uintptr_t>(game_base)?x.subGet-reinterpret_cast<std::uintptr_t>(game_base):0),(unsigned long)seq);
+            debug::Result(pending.id,ready&&SUCCEEDED(formatted)?1u:0u,status);
+        } else if (pending.id && std::strcmp(pending.text,"pose_camera_reader_status")==0) {
+            const auto r=mgscoop::partner_input_hook::NativePoseWindowStatus();char status[161]{};
+            StringCchPrintfA(status,ARRAYSIZE(status),"camerareader;installed=%u;shared=%lu;owned=%lu;caller=%lx;typed=%lu;body=%lu;sender=%lu;filtered=%lu;fault=%u;exports=%lu",
+                r.installed?1u:0u,(unsigned long)r.cameraSharedCalls,(unsigned long)r.cameraOwnedCalls,(unsigned long)r.cameraOwnedCallerRva,
+                (unsigned long)r.cameraOwnedOwnerMatched,(unsigned long)r.cameraOwnedBody,(unsigned long)r.cameraOwnedSenderMatched,
+                (unsigned long)r.cameraOwnedFiltered,r.faulted?1u:0u,(unsigned long)r.localExportsSuppressed);
+            debug::Result(pending.id,r.installed?1u:0u,status);
+        } else if (pending.id && std::strcmp(pending.text,"pose_birth_status")==0) {
+            const auto r=mgscoop::partner_input_hook::NativePoseWindowStatus();char status[161]{};
+            StringCchPrintfA(status,ARRAYSIZE(status),"posebirth;in=%lu;ready=%lu;caller=%lu;b1=%lu;model=%lu;done=%lu;race=%lu;count=%lu;id=%lu;from=0x%lx;stage=%s",
+                (unsigned long)r.birthEntered,(unsigned long)r.birthReady,(unsigned long)r.birthExactCaller,(unsigned long)r.birthBody1,(unsigned long)r.birthModel,
+                (unsigned long)r.birthCompleted,(unsigned long)r.birthOverlap,(unsigned long)r.birthCount,(unsigned long)r.birthBase,(unsigned long)r.birthCallerRva,r.birthStage);
+            debug::Result(pending.id,r.installed?1u:0u,status);
+        } else if (pending.id && std::strcmp(pending.text,"pose_window_status")==0) {
+            const auto r=mgscoop::partner_input_hook::NativePoseWindowStatus();char status[161]{};
+            StringCchPrintfA(status,ARRAYSIZE(status),"posewindow;installed=%u;required=%u;held=%u;fault=%u;born=%u;windows=%lu;skip=%lu;hints=%lu;reason=%s",
+                r.installed?1u:0u,r.required?1u:0u,r.held?1u:0u,r.faulted?1u:0u,r.born1?1u:0u,(unsigned long)r.windows,(unsigned long)r.suppressed,(unsigned long)r.hintsSuppressed,r.reason);
+            debug::Result(pending.id,r.installed&&!r.faulted?1u:0u,status);
+        } else if (pending.id && (std::strcmp(pending.text,"partner_sleep_test 1")==0||std::strcmp(pending.text,"partner_sleep_test 0")==0)) {
+            const bool on=std::strcmp(pending.text,"partner_sleep_test 1")==0;
+            const bool ok=!on?psleep::Enable(false):EnsurePartnerSleepConfigured()&&PartnerSleepEnableAllowed()&&psleep::Enable(true);
+            debug::Result(pending.id,ok?1u:0u,ok?(on?"partnersleep;enabled=1;scope=private_worker":"partnersleep;enabled=0;wake_queued=1"):
+                "partnersleep;refused=1;reason=private_gate_or_local_cache_or_dm");
+        } else if(pending.id&&std::strcmp(pending.text,"partner_sleep_wake")==0){
+            const bool ok=PartnerSleepPrivate()&&psleep::RequestWake();debug::Result(pending.id,ok?1u:0u,ok?"partnersleep;wake_queued=1":"partnersleep;wake_refused=1");
+        } else if(pending.id&&std::strcmp(pending.text,"partner_sleep_stance_status")==0){
+            const auto r=psleep::GetStatus();const auto now=GetTickCount64();char status[161]{};
+            const auto age=r.stanceAt&&now>=r.stanceAt?Clamp32(now-r.stanceAt):0xffffffffu;
+            const auto result=StringCchPrintfA(status,ARRAYSIZE(status),
+                "sleepstance;read=%u;packed=%x;ps=%u;q=%u;psact=%u;act=%u;win=%u;age=%u;reason=%s",
+                r.stanceObserved?1u:0u,r.psPacked,r.stance,r.qStance,r.psAction,r.qAction,r.window,age,r.reason?r.reason:"unknown");
+            debug::Result(pending.id,r.configured&&SUCCEEDED(result)?1u:0u,status);
+        } else if(pending.id&&std::strcmp(pending.text,"partner_sleep_status")==0){
+            const auto r=psleep::GetStatus();char status[161]{};const auto result=StringCchPrintfA(status,ARRAYSIZE(status),
+                "partnersleep;cfg=%u;on=%u;active=%u;phase=%u;mode=%u;life=%u;act=%u;zero=%u;gen=%u;reason=%s",
+                r.configured?1u:0u,r.enabled?1u:0u,r.active?1u:0u,r.phase,r.mode,r.lifeState,r.qAction,r.zero,r.peerGeneration,r.reason?r.reason:"unknown");
+            debug::Result(pending.id,r.configured&&SUCCEEDED(result)?1u:0u,status);
         } else if (pending.id && (std::strcmp(pending.text, "sleep_native_test 1") == 0 || std::strcmp(pending.text, "sleep_native_test 0") == 0)) {
             const bool enabled=pending.text[18]=='1';
             const bool ok=mgscoop::downed_player::SetNativeSleepTest(enabled);
@@ -1980,7 +2136,7 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             char status[161]{};
             const bool complete=mgscoop::downed_damage::PadStatusLine(status,sizeof(status));
             debug::Result(pending.id,complete?1u:0u,status);
-        } else if (pending.id && (std::strcmp(pending.text, "carry_status") == 0 || std::strcmp(pending.text, "carry_plugin_status") == 0 || std::strcmp(pending.text, "carry_policy_status") == 0 || std::strcmp(pending.text, "carry_recipient_status") == 0 || std::strcmp(pending.text, "carry_request_status") == 0)) {
+        } else if (pending.id && (std::strcmp(pending.text, "carry_status") == 0 || std::strcmp(pending.text, "carry_plugin_status") == 0 || std::strcmp(pending.text, "carry_policy_status") == 0 || std::strcmp(pending.text, "carry_recipient_status") == 0 || std::strcmp(pending.text, "carry_request_status") == 0 || std::strcmp(pending.text, "carry_model_status") == 0 || std::strcmp(pending.text, "carry_message_status") == 0 || std::strcmp(pending.text, "carry_listener_status") == 0)) {
             const auto owner=mgscoop::downed_player::GetSnapshot();
             mgscoop::carry_info::Reply r{};
             const bool ok=mgscoop::carry_info::Observe(owner.mission,owner.epoch,DownedAdmitted(owner.mission,owner.epoch),mission_thread,r);
@@ -2002,6 +2158,17 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             if(std::strcmp(pending.text,"carry_request_status")==0)StringCchPrintfA(line,ARRAYSIZE(line),"carryqueue;ready=%u;b0=%u,%u,%u;b1=%u,%u,%u;gameplay=unverified;reason=%s",
                 ok&&r.requestReady?1u:0u,unsigned(a.requestKind),unsigned(a.requestSequence),unsigned(a.requestForce),
                 unsigned(b.requestKind),unsigned(b.requestSequence),unsigned(b.requestForce),r.requestReason);
+            if(std::strcmp(pending.text,"carry_listener_status")==0)StringCchPrintfA(line,ARRAYSIZE(line),
+                "carrytypes;msg=%u;listener=%u;vt=0x%lx;shared=%u;vars=%u;word=%u;script=0x%lx;call=unverified",
+                ok&&r.messageTypeReady?1u:0u,r.messageListenerPresent?1u:0u,(unsigned long)r.messageListenerVtableRva,ok&&r.sharedCarryTypesReady?1u:0u,
+                r.sharedCarryVarsMatch?1u:0u,unsigned(r.sharedControllerWord),(unsigned long)r.scriptSingletonVtableRva);
+            if(std::strcmp(pending.text,"carry_model_status")==0)StringCchPrintfA(line,ARRAYSIZE(line),"carrymodel;ready=%u;b0=%u,%u,%u;b1=%u,%u,%u;msg_ready=%u;msg_vt=0x%lx;lifetime=unverified;reason=%s",
+                ok&&r.modelReady?1u:0u,a.modelOwnedCallbacks,a.modelFreeCallbacks,a.modelRegistration?1u:0u,
+                b.modelOwnedCallbacks,b.modelFreeCallbacks,b.modelRegistration?1u:0u,r.messageTypeReady?1u:0u,
+                static_cast<unsigned long>(r.messageVtableRva),r.modelReason);
+            if(std::strcmp(pending.text,"carry_message_status")==0)StringCchPrintfA(line,ARRAYSIZE(line),"carrymsg;ready=%u;vt=0x%lx;owner_vt=0x%lx;global=%u;key=%lu;enabled=%u;call=unverified",
+                ok&&r.messageTypeReady?1u:0u,static_cast<unsigned long>(r.messageVtableRva),static_cast<unsigned long>(r.messageOwnerVtableRva),
+                r.messageOwnerIsGlobal?1u:0u,static_cast<unsigned long>(r.messageKey),unsigned(r.messageEnabled));
             if(ok&&r.pluginReady)LogFormat("carry_plugin;generation=%lu;enable=%u;selector=%u,%u,%u;kind=%lu,%lu;flags=0x%lx,0x%lx;body0=%u,%u,%u,%u,%u,%u,%u,%u;body1=%u,%u,%u,%u,%u,%u,%u,%u;attachment=unverified\r\n",
                 static_cast<unsigned long>(r.generation),r.playerCarryEnabled?1u:0u,r.selectorOwnerMatches?1u:0u,r.selectorAccepts?1u:0u,unsigned(r.selectorTarget),
                 static_cast<unsigned long>(r.cachedKind),static_cast<unsigned long>(r.currentKind),static_cast<unsigned long>(r.cachedFlags),static_cast<unsigned long>(r.currentFlags),
@@ -2068,7 +2235,11 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {id=%u,text=\"%s\",host=%s,paired=%s,mission=%u%s}", pending.id, pending.text,
                 snapshot.host ? "true" : "false", snapshot.world_paired ? "true" : "false", partner_mission, pose);
             reply = debug_reply;
-            LogFormat("debug_menu=dispatch; id=%u; text=%s; generation=%u\r\n", pending.id, pending.text, pending.generation);
+            std::uintptr_t selectedPlayer=0;std::uint32_t selected=0xffffffffu;SIZE_T read=0;
+            if(ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(partner_addresses.player_slot),&selectedPlayer,sizeof(selectedPlayer),&read)&&read==sizeof(selectedPlayer)&&selectedPlayer)
+                ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(selectedPlayer+0x218),&selected,sizeof(selected),&read);
+            LogFormat("debug_menu=dispatch; id=%u; text=%s; generation=%u;window=%lu;selected=%lu\r\n", pending.id, pending.text, pending.generation,
+                (unsigned long)mgscoop::partner_input_hook::WindowSeq(),(unsigned long)selected);
         }
     } else if (is_warp) {
         // Lua owner thread only (checked above); every other gate is in the handler.
@@ -3132,6 +3303,52 @@ bool SelectDownedReceipt(const char* buffer, std::size_t size, mgscoop::script_b
     world_quiet=true;
     return true;
 }
+bool PartnerSleepEnableAllowed() noexcept {
+ namespace ih=mgscoop::partner_input_hook;
+ const auto pose=ih::NativePoseWindowStatus();const auto world=mgscoop::world_link::GetStatus();
+ const auto now=GetTickCount64();const auto owner=mgscoop::downed_player::GetSnapshot();
+ if(!PartnerSleepPrivate()||!partner_sleep_configured||!pose.installed||!pose.required||pose.held||pose.faulted||
+    pose.windows<2||!ih::NativePoseWholePlayerLifetimeLive()||!ih::NativePoseLocalCacheIsolationLive()||
+    !DownedAdmitted(partner_mission,world.epoch)||!owner.ready||!owner.armed||owner.mission!=partner_mission||owner.epoch!=world.epoch||
+    !owner.lastPoll||now<owner.lastPoll||now-owner.lastPoll>750||!partner_sleep_arm.ready||now<partner_sleep_arm.at||now-partner_sleep_arm.at>250||
+    partner_sleep_arm.thread!=GetCurrentThreadId()||mission_terminating||gameplay_restore_pending||
+    !pd::NativeSleepPresentationReady(partner_driver))return false;
+ // Actual current physical body0 and cached Q0 must agree after healthy
+ // required windows. This is a fresh typed read, not a debug status flag.
+ const auto seq=ih::WindowSeq();pp::State a{},b{};float p0[4]{},q0[4]{};
+ if((seq&1u)||mgscoop::partner_defer::InBatch()||pp::ReadState(partner_addresses,a)!=pp::Refusal::none||!a.slots_ok||
+    !a.vars_ok||a.count!=2||a.local!=0||a.P!=partner_sleep_arm.player||!pp::ReadBody(partner_addresses,a,0,p0,q0)||
+    pp::ReadState(partner_addresses,b)!=pp::Refusal::none||a.P!=b.P||a.Q!=b.Q||a.S!=b.S||a.slots!=b.slots||
+    ih::WindowSeq()!=seq||mgscoop::partner_defer::InBatch())return false;
+ for(unsigned k=0;k<3;++k){if(!std::isfinite(p0[k])||!std::isfinite(a.slot[0][k])||!std::isfinite(a.vars_pos[k])||
+     std::fabs(p0[k]-a.slot[0][k])>=0.5f||std::fabs(p0[k]-a.vars_pos[k])>=0.5f||a.slot[0][k]!=b.slot[0][k])return false;}
+ return true;
+}
+bool SelectPartnerSleepReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
+ if(!world_on||!buffer||!(OnRuntimeThread()||OnTerminationThread()))return false;
+ static constexpr char yes[]="return true",no[]="return false";
+ const auto reply=[&](bool ok) noexcept {replacement={ok?yes:no,ok?sizeof(yes)-1:sizeof(no)-1};world_quiet=true;return true;};
+ if(size==sizeof(psbridge::kCapability)-1&&!std::memcmp(buffer,psbridge::kCapability,size)){
+  // A first natural downed poll may recover a missed passive early setup.
+  // Ensure itself refuses required/held windows; this never opts in or holds.
+  if(OnRuntimeThread()&&!mission_terminating&&!gameplay_restore_pending)EnsurePartnerSleepConfigured();
+  return reply(partner_sleep_configured&&PartnerSleepPrivate());
+ }
+ psbridge::Record record{};if(!psbridge::Parse(buffer,size,record))return false;
+ if(record.clear){partner_sleep_records={};psleep::Enable(false);psleep::PublishTarget({});return reply(true);}
+ const auto owner=mgscoop::downed_player::GetSnapshot();const auto now=GetTickCount64();
+ const auto role=psbridge::ConfiguredRole(mgscoop::GetLabConfig().role);
+ psbridge::Context context{};context.worker=partner_sleep_configured&&PartnerSleepPrivate();context.naturalOwner=OnRuntimeThread();
+ context.admitted=DownedAdmitted(record.mission,record.epoch);
+ context.fieldReady=owner.ready&&owner.armed&&owner.mission==record.mission&&owner.epoch==record.epoch&&owner.lastPoll&&now>=owner.lastPoll&&now-owner.lastPoll<=750;
+ context.demo=(mgscoop::debug_menu::LuaHud()&1u)!=0;context.stopping=mission_terminating||gameplay_restore_pending;
+ context.mission=partner_mission;context.epoch=mgscoop::world_link::GetStatus().epoch;context.role=role;context.thread=GetCurrentThreadId();context.now=now;
+ const auto plan=psbridge::Accept(partner_sleep_records,record,context,partner_sleep_arm);
+ if(plan.clear){partner_sleep_records=plan.next;psleep::PublishTarget({});return reply(false);}
+ if(!plan.ready)return reply(false);
+ if(!psleep::PublishTarget(plan.target))return reply(false);
+ partner_sleep_records=plan.next;return reply(true);
+}
 bool SelectDownedHudReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
     mgscoop::coop_hud::DownedView view{};
     if(!world_on || !mgscoop::coop_hud::ParseDownedHud(buffer,size,view) ||
@@ -3158,6 +3375,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if (SelectBuddyPoseReceipt(buffer, size, replacement)) return true;
     if (SelectDownedReceipt(buffer, size, replacement)) return true;
     if (SelectDownedHudReceipt(buffer, size, replacement)) return true;
+    if (SelectPartnerSleepReceipt(buffer, size, replacement)) return true;
     if (SelectFriendlyHitReceipt(buffer, size, replacement)) return true;
     if(partner_on) {
         const auto partner_kind=partner::Classify(buffer,size,name);
@@ -3881,4 +4099,28 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
         }
     }
     SetLastError(incoming_error);
+}
+
+void InstallNativePoseWorkerEarly() noexcept {
+#if MGS_BACKGROUND_WORKER
+    const DWORD error=GetLastError();
+    if(mgscoop::partner_input_hook::NativePoseWindowStatus().installed){EnsurePartnerSleepConfigured();SetLastError(error);return;}
+    if (mgscoop::worker_scenario::Compiled() && mgscoop::worker_scenario::ThreadAdmitted() &&
+        offline_enabled && partner_on && partner_gate_ok && game_base && game_span &&
+        lab::SavesRedirected() && MountedPlayerMotionCount()==21) {
+        namespace ih=mgscoop::partner_input_hook;
+        const auto admitted=[]() noexcept {return mgscoop::worker_scenario::Compiled() &&
+            mgscoop::worker_scenario::ThreadAdmitted() && mgscoop::lab::SavesRedirected();};
+        const auto refused=[](const char* why) noexcept {mgscoop::worker_scenario::Refuse(why);};
+        const char* why="pose_worker_bind";
+        if (ih::BindNativePoseWorker({admitted,refused})) {
+            why=ih::Install(game_base,Log,&PartnerSampleInput);
+            if (!why) why=ih::InstallNativePoseWindow(game_base,game_span,true);
+        }
+        LogFormat("native_pose_early=%s;reason=%s;scope=private_passive_hooks\r\n",why?"refused":"installed",why?why:"ok");
+        if(why) mgscoop::worker_scenario::Refuse(why);
+        else EnsurePartnerSleepConfigured();
+    }
+    SetLastError(error);
+#endif
 }

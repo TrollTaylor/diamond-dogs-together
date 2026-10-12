@@ -38,6 +38,9 @@ constexpr char world_recovery_source[] = R"MGS_WORLD(
 constexpr char world_downed_source[] = R"MGS_WORLD(
 @MGS_WORLD_DOWNED_SOURCE@
 )MGS_WORLD";
+constexpr char world_partner_sleep_source[] = R"MGS_WORLD(
+@MGS_WORLD_PARTNER_SLEEP_SOURCE@
+)MGS_WORLD";
 constexpr char world_friendly_source[] = R"MGS_WORLD(
 @MGS_WORLD_FRIENDLY_SOURCE@
 )MGS_WORLD";

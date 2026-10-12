@@ -7,6 +7,7 @@
 #include "mgscoop/vehicle_info.hpp"
 #include "mgscoop/downed_player.hpp"
 #include "mgscoop/partner_input_hook.hpp"
+#include "mgscoop/native_pose_window.hpp"
 #include "mgscoop/partner_defer.hpp"
 #include "vehicle_controller_read.hpp"
 namespace mgscoop::vehicle_info {
@@ -69,7 +70,7 @@ void LogRefusal(const char* stage,const plugin::Observation& seen,std::uintptr_t
 }
 }
 bool CodeGate(const void* image,std::size_t span,std::uintptr_t& mismatch) noexcept {
- const Preserve preserve;auto reader=ReadBytes;return plugin::CodeGate(reader,reinterpret_cast<std::uintptr_t>(image),span,mismatch);
+ const Preserve preserve;auto reader=partner_input_hook::ReadNativePoseOriginalCode;return plugin::CodeGate(reader,reinterpret_cast<std::uintptr_t>(image),span,mismatch);
 }
 void Configure(const partner_player::Addresses& source,bool passed,void (*log)(const char*) noexcept) noexcept {
  const Preserve preserve;AcquireSRWLockExclusive(&lock);

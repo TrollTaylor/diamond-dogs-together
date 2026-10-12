@@ -8,6 +8,7 @@
 #include "mgscoop/carry_info.hpp"
 #include "mgscoop/downed_player.hpp"
 #include "mgscoop/partner_input_hook.hpp"
+#include "mgscoop/native_pose_window.hpp"
 #include "mgscoop/partner_defer.hpp"
 #include "partner_player_contract.hpp"
 #include "carry_info_contract.hpp"
@@ -16,6 +17,7 @@
 #include "carry_provider_read.hpp"
 #include "carry_recipient_read.hpp"
 #include "carry_request_retirement_read.hpp"
+#include "carry_model_preflight_read.hpp"
 namespace mgscoop::carry_info {
 namespace c=carry_info_contract;
 namespace {
@@ -104,14 +106,14 @@ bool CodeGate(const void* image,std::size_t span,std::uintptr_t& mismatch) noexc
     if(!base||!span||base>std::numeric_limits<std::uintptr_t>::max()-span)return false;
     unsigned char buffer[8192]{};
     for(const auto& site:c::sites){
-        if(site.size>sizeof(buffer)||site.rva>span||site.size>span-site.rva||!ReadBytes(base+site.rva,buffer,site.size)||std::memcmp(buffer,site.bytes,site.size)){mismatch=site.rva;return false;}
+        if(site.size>sizeof(buffer)||site.rva>span||site.size>span-site.rva||!partner_input_hook::ReadNativePoseOriginalCode(base+site.rva,buffer,site.size)||std::memcmp(buffer,site.bytes,site.size)){mismatch=site.rva;return false;}
     }
     for(const auto& slot:c::slots){
         const auto at=slot.vtable_rva+slot.offset;std::uintptr_t target=0;
         if(at>span||sizeof(target)>span-at||!Read(base+at,target)||target!=base+slot.target_rva){mismatch=slot.vtable_rva;return false;}
     }
-    auto reader=ReadBytes;
-    return carry_plugin_read::CodeGate(reader,base,span,mismatch)&&carry_provider_read::CodeGate(reader,base,span,mismatch)&&carry_recipient_read::CodeGate(reader,base,span,mismatch)&&carry_request_retirement_read::CodeGate(reader,base,span,mismatch);
+    auto reader=partner_input_hook::ReadNativePoseOriginalCode;
+    return carry_plugin_read::CodeGate(reader,base,span,mismatch)&&carry_provider_read::CodeGate(reader,base,span,mismatch)&&carry_recipient_read::CodeGate(reader,base,span,mismatch)&&carry_request_retirement_read::CodeGate(reader,base,span,mismatch)&&carry_model_preflight_read::CodeGate(reader,base,span,mismatch);
 }
 void Configure(const partner_player::Addresses& source,bool passed,void (*log)(const char*) noexcept) noexcept {
     const Preserve preserve;AcquireSRWLockExclusive(&lock);
@@ -202,6 +204,26 @@ bool Observe(std::uint32_t mission,std::uint16_t epoch,bool admitted,std::uint32
             }
         }
     }
+    namespace model=carry_model_preflight_read;
+    model::Model modelBefore[2]{},modelAfter[2]{};const char* modelWhy="model_chain";
+    const bool modelRead=pluginCoherent&&model::ReadModelPair(reader,ps.image,pluginSecond.body[0],modelBefore[0],&modelWhy)&&
+        model::ReadModelPair(reader,ps.image,pluginSecond.body[1],modelBefore[1],&modelWhy)&&modelBefore[0].cs!=modelBefore[1].cs&&
+        modelBefore[0].allocation!=modelBefore[1].allocation&&modelBefore[0].slab!=modelBefore[1].slab;
+    out.modelReason=modelRead?"model_observed":modelWhy;
+    std::uintptr_t messageBefore=0,messageVTBefore=0,messageOwnerBefore=0,messageOwnerVTBefore=0,messageGlobalBefore=0;
+    std::uint32_t messageKeyBefore=0;std::uint8_t messageEnabledBefore=0;
+    std::uintptr_t listenerBefore=0,listenerVTBefore=0,sharedBefore=0,varsBefore=0,scriptBefore=0,scriptVTBefore=0;std::uint16_t sharedWordBefore=0;
+    const bool messageRead=Read(second.player+0x148,messageBefore)&&Aligned(messageBefore,8)&&Read(messageBefore,messageVTBefore)&&
+        messageVTBefore>=addresses.image_begin&&messageVTBefore<addresses.image_end&&Aligned(messageVTBefore,8)&&
+        Read(messageBefore+8,messageOwnerBefore)&&Aligned(messageOwnerBefore,8)&&Read(messageOwnerBefore,messageOwnerVTBefore)&&
+        messageOwnerVTBefore>=addresses.image_begin&&messageOwnerVTBefore<addresses.image_end&&Aligned(messageOwnerVTBefore,8)&&
+        Read(messageBefore+0x18,messageKeyBefore)&&Read(addresses.image_base+0x2b72c00,messageGlobalBefore)&&
+        Read(addresses.image_base+0x2b72c08,messageEnabledBefore);
+    const bool listenerRead=messageRead&&Read(messageBefore+0x10,listenerBefore)&&(!listenerBefore||
+        (Aligned(listenerBefore,8)&&Read(listenerBefore,listenerVTBefore)&&listenerVTBefore>=addresses.image_begin&&listenerVTBefore<addresses.image_end&&Aligned(listenerVTBefore,8)));
+    const bool sharedRead=Read(second.player+0x140,sharedBefore)&&Read(addresses.image_base+0x2c16920,varsBefore)&&
+        sharedBefore==varsBefore&&sharedBefore==addresses.image_base+0x2c01360&&Read(sharedBefore+0x10e,sharedWordBefore)&&
+        Read(second.player+0x48,scriptBefore)&&Aligned(scriptBefore,8)&&Read(scriptBefore,scriptVTBefore)&&scriptVTBefore>=addresses.image_begin&&scriptVTBefore<addresses.image_end&&Aligned(scriptVTBefore,8);
     BodyReply result[2]{};
     for(unsigned k=0;k<2;++k){
         detail::Message message{};std::int32_t nativeResult=0;
@@ -255,6 +277,35 @@ bool Observe(std::uint32_t mission,std::uint16_t epoch,bool admitted,std::uint32
                 result[k].requestSequence=requestAfter.packet[k].sequence;result[k].requestForce=requestAfter.packet[k].force;}
         } else out.requestReason="request_changed";
     } else if(requestRead)out.requestReason="request_changed";
+    if(modelRead&&out.pluginReady&&!plugin::ScopeRefusal(ps)&&
+        model::ReadModelPair(reader,ps.image,pluginAfter.body[0],modelAfter[0],&modelWhy)&&
+        model::ReadModelPair(reader,ps.image,pluginAfter.body[1],modelAfter[1],&modelWhy)&&
+        model::Same(modelBefore[0],modelAfter[0])&&model::Same(modelBefore[1],modelAfter[1])){
+        out.modelReady=true;out.modelReason="model_observed";
+        for(unsigned k=0;k<2;++k){result[k].modelOwnedCallbacks=modelAfter[k].ownedCallbacks;
+            result[k].modelFreeCallbacks=modelAfter[k].freeCallbacks;result[k].modelRegistration=modelAfter[k].registrationPresent;}
+    }else if(modelRead)out.modelReason="model_changed";
+    std::uintptr_t messageAfter=0,messageVTAfter=0,messageOwnerAfter=0,messageOwnerVTAfter=0,messageGlobalAfter=0;
+    std::uint32_t messageKeyAfter=0;std::uint8_t messageEnabledAfter=0;
+    if(messageRead&&Read(second.player+0x148,messageAfter)&&messageAfter==messageBefore&&Read(messageAfter,messageVTAfter)&&
+        messageVTAfter==messageVTBefore&&Read(messageAfter+8,messageOwnerAfter)&&messageOwnerAfter==messageOwnerBefore&&
+        Read(messageOwnerAfter,messageOwnerVTAfter)&&messageOwnerVTAfter==messageOwnerVTBefore&&
+        Read(messageAfter+0x18,messageKeyAfter)&&messageKeyAfter==messageKeyBefore&&
+        Read(addresses.image_base+0x2b72c00,messageGlobalAfter)&&messageGlobalAfter==messageGlobalBefore&&
+        Read(addresses.image_base+0x2b72c08,messageEnabledAfter)&&messageEnabledAfter==messageEnabledBefore){
+        out.messageTypeReady=true;out.messageVtableRva=std::uint32_t(messageVTAfter-addresses.image_base);
+        out.messageOwnerVtableRva=std::uint32_t(messageOwnerVTAfter-addresses.image_base);out.messageKey=messageKeyAfter;
+        out.messageOwnerIsGlobal=messageOwnerAfter==messageGlobalAfter;out.messageEnabled=messageEnabledAfter;
+        std::uintptr_t listenerAfter=0,listenerVTAfter=0;
+        if(listenerRead&&Read(messageAfter+0x10,listenerAfter)&&listenerAfter==listenerBefore&&(!listenerAfter||
+            (Read(listenerAfter,listenerVTAfter)&&listenerVTAfter==listenerVTBefore))){
+            out.messageListenerPresent=listenerAfter!=0;out.messageListenerVtableRva=listenerAfter?std::uint32_t(listenerVTAfter-addresses.image_base):0;}
+    }
+    std::uintptr_t sharedAfter=0,varsAfter=0,scriptAfter=0,scriptVTAfter=0;std::uint16_t sharedWordAfter=0;
+    if(sharedRead&&Read(second.player+0x140,sharedAfter)&&sharedAfter==sharedBefore&&Read(addresses.image_base+0x2c16920,varsAfter)&&varsAfter==varsBefore&&
+        Read(sharedAfter+0x10e,sharedWordAfter)&&sharedWordAfter==sharedWordBefore&&Read(second.player+0x48,scriptAfter)&&scriptAfter==scriptBefore&&
+        Read(scriptAfter,scriptVTAfter)&&scriptVTAfter==scriptVTBefore){out.sharedCarryTypesReady=true;out.sharedCarryVarsMatch=true;out.sharedControllerVtableRva=0;
+        out.scriptSingletonVtableRva=std::uint32_t(scriptVTAfter-addresses.image_base);out.sharedControllerWord=sharedWordAfter;}
     // Query receiver writes our stack only. Re-sample the owner and input
     // window after the final telemetry read too; no plugin value unlocks input.
     const auto finalOwn=downed_player::GetSnapshot();

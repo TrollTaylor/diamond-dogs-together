@@ -1,0 +1,284 @@
+{
+  "schema": 1,
+  "run": "c8a2a03a1780478db2c76c77be409ef8",
+  "kind": "hidden-read-only-actual",
+  "receipt": "build/worker-runs/20261011-233112-aacc0862a7d4424c9f4be6b061e9bf91/receipt.json",
+  "model": "Both bodies observed, zero owned registrations, five baseline-held free slots",
+  "message_interface_rva": "20E9B60",
+  "activation": false,
+  "closed": true,
+  "forced": false,
+  "expectations": 4,
+  "protected_unchanged": 63,
+  "protected_files": [
+    {
+      "path": "C:\\Program Files (x86)\\Steam\\userdata\\97930372\\287700\\708210970",
+      "unchanged": true
+    },
+    {
+      "path": "C:\\Program Files (x86)\\Steam\\userdata\\97930372\\287700\\9309711154",
+      "unchanged": true
+    },
+    {
+      "path": "C:\\Program Files (x86)\\Steam\\userdata\\97930372\\287700\\local\\PERSONAL_DATA0",
+      "unchanged": true
+    },
+    {
+      "path": "C:\\Program Files (x86)\\Steam\\userdata\\97930372\\287700\\local\\PERSONAL_DATA1",
+      "unchanged": true
+    },
+    {
+      "path": "C:\\Program Files (x86)\\Steam\\userdata\\97930372\\287700\\local\\TPP_CONFIG_DATA0",
+      "unchanged": true
+    },
+    {
+      "path": "C:\\Program Files (x86)\\Steam\\userdata\\97930372\\287700\\local\\TPP_CONFIG_DATA1",
+      "unchanged": true
+    },
+    {
+      "path": "C:\\Program Files (x86)\\Steam\\userdata\\97930372\\287700\\local\\TPP_GAME_DATA0",
+      "unchanged": true
+    },
+    {
+      "path": "C:\\Program Files (x86)\\Steam\\userdata\\97930372\\287700\\local\\TPP_GAME_DATA1",
+      "unchanged": true
+    },
+    {
+      "path": "C:\\Program Files (x86)\\Steam\\userdata\\97930372\\287700\\local\\TPP_GRAPHICS_CONFIG",
+      "unchanged": true
+    },
+    {
+      "path": "C:\\Program Files (x86)\\Steam\\userdata\\97930372\\287700\\remotecache.vdf",
+      "unchanged": true
+    },
+    {
+      "path": "C:\\Program Files (x86)\\Steam\\userdata\\97930372\\311340\\remote\\PERSONAL_DATA",
+      "unchanged": true
+    },
+    {
+      "path": "C:\\Program Files (x86)\\Steam\\userdata\\97930372\\311340\\remote\\TPP_CONFIG_DATA",
+      "unchanged": true
+    },
+    {
+      "path": "C:\\Program Files (x86)\\Steam\\userdata\\97930372\\311340\\remote\\TPP_GAME_DATA",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\dinput8.dll",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\coop-saves\\287700\\local\\PERSONAL_DATA0",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\coop-saves\\287700\\local\\PERSONAL_DATA1",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\coop-saves\\287700\\local\\TPP_CONFIG_DATA0",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\coop-saves\\287700\\local\\TPP_CONFIG_DATA1",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\coop-saves\\287700\\local\\TPP_GAME_DATA0",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\coop-saves\\287700\\local\\TPP_GAME_DATA1",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\coop-saves\\287700\\local\\TPP_GRAPHICS_CONFIG",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\coop-saves\\remote\\PERSONAL_DATA",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\coop-saves\\remote\\TPP_CONFIG_DATA",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\coop-saves\\remote\\TPP_GAME_DATA",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\coop.ini",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\friend-install.json",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\lab.ini",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\local-test-saves\\287700\\local\\PERSONAL_DATA0",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\local-test-saves\\287700\\local\\PERSONAL_DATA1",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\local-test-saves\\287700\\local\\TPP_CONFIG_DATA0",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\local-test-saves\\287700\\local\\TPP_CONFIG_DATA1",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\local-test-saves\\287700\\local\\TPP_GAME_DATA0",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\local-test-saves\\287700\\local\\TPP_GAME_DATA1",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\local-test-saves\\287700\\local\\TPP_GRAPHICS_CONFIG",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\local-test-saves\\remote\\PERSONAL_DATA",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\local-test-saves\\remote\\TPP_CONFIG_DATA",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\local-test-saves\\remote\\TPP_GAME_DATA",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\mgs-coop-player-runtime.dat",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\play-session.json",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\probe-install.json",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgs-coop\\script-observe.enabled",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgsvtpp.exe",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\steam_api64.dll",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP_guest\\dinput8.dll",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP_guest\\mgs-coop\\coop.ini",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP_guest\\mgs-coop\\friend-install.json",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP_guest\\mgs-coop\\lab.ini",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP_guest\\mgs-coop\\local-test-saves\\287700\\local\\PERSONAL_DATA0",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP_guest\\mgs-coop\\local-test-saves\\287700\\local\\PERSONAL_DATA1",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP_guest\\mgs-coop\\local-test-saves\\287700\\local\\TPP_CONFIG_DATA0",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP_guest\\mgs-coop\\local-test-saves\\287700\\local\\TPP_CONFIG_DATA1",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP_guest\\mgs-coop\\local-test-saves\\287700\\local\\TPP_GAME_DATA0",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP_guest\\mgs-coop\\local-test-saves\\287700\\local\\TPP_GAME_DATA1",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP_guest\\mgs-coop\\local-test-saves\\287700\\local\\TPP_GRAPHICS_CONFIG",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP_guest\\mgs-coop\\local-test-saves\\remote\\PERSONAL_DATA",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP_guest\\mgs-coop\\local-test-saves\\remote\\TPP_CONFIG_DATA",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP_guest\\mgs-coop\\local-test-saves\\remote\\TPP_GAME_DATA",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP_guest\\mgs-coop\\mgs-coop-player-runtime.dat",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP_guest\\mgs-coop\\play-session.json",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP_guest\\mgs-coop\\probe-install.json",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP_guest\\mgs-coop\\script-observe.enabled",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP_guest\\mgsvtpp.exe",
+      "unchanged": true
+    },
+    {
+      "path": "D:\\Games\\steamapps\\common\\MGS_TPP_guest\\steam_api64.dll",
+      "unchanged": true
+    }
+  ],
+  "bounded_logs": [
+    {
+      "end": 76923316,
+      "role": "host",
+      "start": 76816762,
+      "path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runtime\\c8a2a03a1780478db2c76c77be409ef8\\host-script-bounded.log",
+      "sha256": "26C9C228241C6160FE426CE91DBD7DCD7F8EFA632090831C889549D01D90372D"
+    },
+    {
+      "end": 85939673,
+      "role": "guest",
+      "start": 85829867,
+      "path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runtime\\c8a2a03a1780478db2c76c77be409ef8\\guest-script-bounded.log",
+      "sha256": "B5BB8B102806F615CEBEA430D87B269624FFAB8FA12EF75C04B1731679E75002"
+    }
+  ],
+  "limitations": "No pickup, put-down, sleep body1 or rider was activated."
+}

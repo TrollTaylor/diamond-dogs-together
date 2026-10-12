@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "run": "529807540843436c82c6d9c5d3441089",
+  "kind": "hidden-actual-partial",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261012-032732-eee30642e23549b0b0a8486f95d77855\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 2,
+  "failure": "Required scenario check failed: host require posewindow;enabled=1 <- posewindow;enabled=0;sleep_cfg=1;scope=private_worker;refused=1",
+  "closed": true,
+  "forced": false,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 78527060,
+      "end": 78646251,
+      "sha256": "4445e6d15d7b216ea677a51fc7d9536020e3a3fc1be537e4487620e2fb4097da"
+    },
+    {
+      "role": "guest",
+      "start": 87387535,
+      "end": 87526144,
+      "sha256": "04ecdaa3b967a3a9bf72e9891cf5f4da814da8f23fef55cc5d156136939b837f"
+    }
+  ],
+  "indexed_readings": {
+    "host": [
+      "posewindow;enabled=0;sleep_cfg=1;scope=private_worker;refused=1",
+      "cachedpose;ready=1;local=1;s0=800.9,339.3,1639.3;s1=804.8,339.0,1637.0;vars=800.9,339.3,1639.3;gap=0.000;seq=1000",
+      "camerareader;installed=1;shared=1750;owned=0;caller=0;typed=0;body=4294967295;sender=0;filtered=0;fault=0;exports=0",
+      "posecamera;ready=1;c0=0,0;mode=0;flags=10;target=0,0;model=1;subvt=2157e60;get=44ddd0;seq=1000"
+    ],
+    "guest": [
+      "cachedpose;ready=1;local=1;s0=804.8,339.0,1637.0;s1=800.9,339.3,1639.3;vars=804.8,339.0,1637.0;gap=0.000;seq=3676",
+      "camerareader;installed=1;shared=1579;owned=0;caller=0;typed=0;body=4294967295;sender=0;filtered=0;fault=0;exports=0",
+      "posecamera;ready=1;c0=0,0;mode=0;flags=30000010;target=0,0;model=1;subvt=2157e60;get=44ddd0;seq=3252"
+    ]
+  },
+  "limitations": "169 checks passed for corrected v5. Both before cameras and local caches were healthy after separate guest placement, but host opt-in returned an explicit refusal before any required camera window. No filtered frame, sleep or carry success is claimed. Normal unforced cleanup restored all63 protected files and real saves."
+}

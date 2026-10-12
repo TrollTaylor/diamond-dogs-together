@@ -1,0 +1,119 @@
+{
+  "frozen": true,
+  "base_manifest_sha256": "4d18a5554900803e592fd55ef66476f6c164b22c39ff0cb2bed10b5998f22001",
+  "executable_sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+  "source_only": true,
+  "main_modified": false,
+  "compiled": false,
+  "runtime_used": false,
+  "code_sites": 12,
+  "slots": 2,
+  "max_site": 1100,
+  "actual_hooks": [
+    {
+      "rva": "0x9bb7a0",
+      "abi": "void*(GO,unsignedflags)",
+      "scope": "actual sharedgate acquired first, heldtypedGO refusal beforedestructor"
+    },
+    {
+      "rva": "0x9c2f70",
+      "abi": "void(GO)",
+      "scope": "actual sharedgate acquired first, heldtypedGO refusal beforewholeowner reset"
+    }
+  ],
+  "capability": "NativePoseWholePlayerLifetimeLive derivesinstalledoriginaltrampolines/fullbytegate+bothcurrentownedentrypatches; falsein syntheticfixture",
+  "files": [
+    {
+      "path": "native\\camera_mode_window.hpp",
+      "size": 8820,
+      "sha256": "64a348a9f14b10e9a9f0a5f0b623e58c116fe554c4f8ff99885bd69f8cd4b768"
+    },
+    {
+      "path": "native\\camera_mode_window_contract.hpp",
+      "size": 42134,
+      "sha256": "318417ac8cd87d8029e45bf5ada5e76608b8909a225c229b42b696e7a1b1b8f1"
+    },
+    {
+      "path": "native\\carry_model_lifetime_contract.hpp",
+      "size": 35887,
+      "sha256": "1141bb448e2f32bd9f2ea7d365363e6bd69b50a24d50f0879d2a7739ea1cfe5e"
+    },
+    {
+      "path": "native\\carry_model_retirement_contract.hpp",
+      "size": 42263,
+      "sha256": "7a0204ea626603892e9ab9b59ae45ed30aa43ff31ab59a68965189fedbab3cb6"
+    },
+    {
+      "path": "native\\include\\mgscoop\\native_pose_window.hpp",
+      "size": 4096,
+      "sha256": "edc811965df7ef7410ecfaee0fff45b373592510c8e59a7922e7adf2ec840252"
+    },
+    {
+      "path": "native\\include\\mgscoop\\partner_input_hook.hpp",
+      "size": 20548,
+      "sha256": "db908886e0fa7e7713229c8f4c39c563d6af7c1721409f32bde6bc4106284b18"
+    },
+    {
+      "path": "native\\native_pose_birth.hpp",
+      "size": 1551,
+      "sha256": "0d88195105ba705d2556e9faec1bef512fb7c3f8b746b434d42d4c5cb99e1cc3"
+    },
+    {
+      "path": "native\\native_pose_birth_contract.hpp",
+      "size": 26497,
+      "sha256": "52dd4c5318225e5a0fe0ea7e1b3265fa8f53c21863acdbd32d2d535c1a7e71b1"
+    },
+    {
+      "path": "native\\native_pose_exclusion.hpp",
+      "size": 6265,
+      "sha256": "5561f45570e9bdd2fb8f603c4e439c949460512679c40495a2d01ce0dc563510"
+    },
+    {
+      "path": "native\\native_pose_window_contract.hpp",
+      "size": 26076,
+      "sha256": "714d6e391e06768003070029524fbbbf83d395d068380a06c0b7526f6f3dbd26"
+    },
+    {
+      "path": "native\\native_pose_window_impl.inc",
+      "size": 38487,
+      "sha256": "8bc77eef44bc35d420b015531109a7ce12d22bcdbcede3610d9c297c08312905"
+    },
+    {
+      "path": "native\\partner_defer.cpp",
+      "size": 32401,
+      "sha256": "02466511e31d2582c4c655d7de4a4409a4021ad55955a4cf9c40dc020d8f55ca"
+    },
+    {
+      "path": "native\\partner_input_hook.cpp",
+      "size": 135580,
+      "sha256": "90c8d4c1ad0b996331149a651cb270ed8bcacdeafefb282fb3a39a758b18ff80"
+    },
+    {
+      "path": "native\\whole_player_lifetime_checks.hpp",
+      "size": 1295,
+      "sha256": "f189859ce616a1c3f9cb0ae66f3a7db3d07bd78b6ef7278298f3abf85a9c32fd"
+    },
+    {
+      "path": "native\\whole_player_lifetime_contract.hpp",
+      "size": 12006,
+      "sha256": "28fb9f8883a89071a2c089988f1552ff208be5dd9ebdf77c9cac87401bdd29b8"
+    },
+    {
+      "path": "source.diff",
+      "size": 9394,
+      "sha256": "1ca04c2f0eb7b8fa9085443d7ab3cf8e965518fbc293d3b35fb0d6786de5f0dd"
+    },
+    {
+      "path": "tests\\whole_player_lifetime_tests.cpp",
+      "size": 3653,
+      "sha256": "3785b922b7240dc48e92d287e7669b3cea5620518490164a2354876b8d138f61"
+    },
+    {
+      "path": "whole_player_lifetime_evidence.json",
+      "size": 57001,
+      "sha256": "6c49b4454659c49618452c0f6a69dc575e0d907e6bb3262573fb464e74b5dc29"
+    }
+  ],
+  "replaces_manifest_sha256": "398234e32efb2c8456953efe523d92576d220de43fbdbbd5a1ddacc601067ffb",
+  "publication_nonce_fix": "unconditional epoch advance under actual publication lock; pure helper used by actual hook and meaningful inflight fixtures"
+}

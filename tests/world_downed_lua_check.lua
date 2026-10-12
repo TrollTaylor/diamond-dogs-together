@@ -27,6 +27,14 @@ local function fixture(host)
         return true
     end
     W.receipt = function(text)
+        if text == "return 'MGS_COOP_PARTNER_SLEEP_CAP_V1'" then return c.bridgeCap == true end
+        if text:match("^return 'MGS_COOP_PARTNER_SLEEP_V1'") then
+            local tail = assert(text:match("%-%- (.*)$")); local v = {}
+            for n in tail:gmatch("%d+") do v[#v + 1] = tonumber(n) end
+            check(#v == 9, 'partner sleep bridge uses nine finite integer fields')
+            c.bridgePackets = c.bridgePackets or {}; c.bridgePackets[#c.bridgePackets + 1] = v
+            return true
+        end
         if text:match("^return 'MGS_COOP_DOWNED_HUD_V2'") then
             local m, ep, ld, td, near, progress, cause, teammateCause = text:match("%-%- (%d+) (%d+) (%d+) (%d+) (%d+) (%d+) (%d+) (%d+)$")
             check(m ~= nil, 'downed HUD V2 receipt uses eight bounded unsigned fields')
@@ -123,6 +131,11 @@ local function fixture(host)
     env.TppUiCommand = {AnnounceLogView = function(text) c.announces[#c.announces + 1] = text end}
     env.e.MgsCoopWorld = W
     local chunk = assert(loadfile(arg[1])); setfenv(chunk, env); chunk()
+    chunk = assert(loadfile(assert(arg[3], 'partner sleep adapter argument required'))); setfenv(chunk, env); chunk()
+    check(type(W.downed.partnerSleepPublish) == 'function' and type(W.downed.partnerSleepClear) == 'function',
+        'actual separate partner sleep adapter composes after downed owner')
+    check(not c.bridgePackets and W.downed.partnerSleepBridge == nil,
+        'adapter loading is passive and sends no capability, target or enable receipt')
     if arg[2] then chunk = assert(loadfile(arg[2])); setfenv(chunk, env); chunk() end
     c.W, c.D, c.env = W, W.downed, env
     return c
@@ -703,5 +716,26 @@ do
     c.refuseCleanup = false; c.D.tick(200)
     check(not c.mask and not c.D.maskOwned and not c.D.nativePending and not c.D.nativeSleepActive,
         'confirmed old native sleep cleanup releases only its own masks once')
+end
+do
+    local c = fixture(true); c.D.tick(0)
+    check(c.D.partnerSleepBridge == false and not c.bridgePackets, 'normal capability false adds no per-tick bridge traffic')
+    c = fixture(true); c.bridgeCap = true; c.now = 100
+    check(c.D.acceptStatus(status(1, 5, true, 2), 2, 100), 'native bridge fixture first accepts genuine peer sleep status')
+    c.D.tick(100); local v = c.bridgePackets[#c.bridgePackets]
+    check(v[1] == 30010 and v[2] == 7 and v[3] == 1 and v[4] == 1 and v[5] == 5 and v[6] == 1 and v[7] == 2 and v[8] == 1 and v[9] == 0,
+        'only accepted peer generation/cause/sequence and receive age reach native bridge')
+    check(not c.D.acceptStatus(status(2, 4, true, 2), 2, 200), 'older peer generation is rejected before bridge')
+    c.now = 200; c.D.tick(200); v = c.bridgePackets[#c.bridgePackets]
+    check(v[4] == 1 and v[5] == 5 and v[9] == 100, 'duplicate presentation poll preserves original peer receive age')
+    c.now = 601; c.D.tick(601); v = c.bridgePackets[#c.bridgePackets]
+    check(v[1] + v[2] + v[3] + v[4] + v[5] + v[6] + v[7] + v[8] + v[9] == 0, 'stale peer emits explicit native presentation clear')
+    c.now = 700; c.D.acceptStatus(status(3, 5, true, 2), 2, 700); c.refuseControl = true; c.D.tick(700)
+    check(c.bridgePackets[#c.bridgePackets][1] == 0, 'native local poll failure withdraws partner presentation admission')
+    c.refuseControl = nil; c.inGame = false; c.D.tick(800)
+    check(c.bridgePackets[#c.bridgePackets][1] == 0, 'not-in-game state cannot retain native partner target')
+    c.inGame = true; c.now = 900; c.D.acceptStatus(status(4, 5, true, 2), 2, 900); c.D.tick(900)
+    c.W.paired = false; c.W.unpairedHooks[1]()
+    check(c.bridgePackets[#c.bridgePackets][1] == 0 and c.D.partnerSleepBridge == nil, 'unpair/reset withdraws bridge without faking healthy peer')
 end
 print(checks .. ' downed policy checks: native gating, 3D range, continuous holds, generations, ordered status, grants, shared failure and cleanup; no game calls')

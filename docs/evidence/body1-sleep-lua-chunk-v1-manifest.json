@@ -1,0 +1,99 @@
+{
+  "schema": "mgscoop-body1-sleep-lua-chunk-v1",
+  "compiled": false,
+  "fixtures_executed": false,
+  "main_modified": false,
+  "runtime_activation": false,
+  "files": [
+    {
+      "path": "cmake/lua_checks.cmake",
+      "bytes": 19845,
+      "sha256": "883a739f2088f2a2ca05ef8095e811f8b6da28027a368dec9f18e3197ceb888c"
+    },
+    {
+      "path": "CMakeLists.txt",
+      "bytes": 61192,
+      "sha256": "85b61c482fdfc1bcad18d442890aa8deca501cf82e3164ffb7542827a6cee2c5"
+    },
+    {
+      "path": "diffs/cmake__lua_checks.cmake.diff",
+      "bytes": 1904,
+      "sha256": "0a4d4536035d2a42fff894b30b4560809a295fedad406cff83c5beb4eafb5579"
+    },
+    {
+      "path": "diffs/CMakeLists.txt.diff",
+      "bytes": 895,
+      "sha256": "c13ce95a8c90d90ca3d0cb164d7a47f07fb3d52d3df14104246deb38a8d53b3d"
+    },
+    {
+      "path": "diffs/lua__coop__world_downed.lua.diff",
+      "bytes": 2905,
+      "sha256": "99f48dec85cae23a0f1b1d0947eb7fe711d2c54e99601d5c8f4ba0b5123b38f9"
+    },
+    {
+      "path": "diffs/native__bootstrap_patch.cpp.diff",
+      "bytes": 3004,
+      "sha256": "5a746b04296b53c71ed9c9f121ab23619418cc73f57ed25774ea47e29d45dd38"
+    },
+    {
+      "path": "diffs/native__world_sync_source.hpp.in.diff",
+      "bytes": 394,
+      "sha256": "30402ac808ea88e91740f90c521b3db2a38f6e4af7fa820e39e0a94845f821b5"
+    },
+    {
+      "path": "diffs/tests__host_trial_patch_check.cpp.diff",
+      "bytes": 923,
+      "sha256": "e7fca8e79e972b2bc183051e0004b8926257c977ade96b75b805f987d23f26de"
+    },
+    {
+      "path": "diffs/tests__world_downed_lua_check.lua.diff",
+      "bytes": 911,
+      "sha256": "be848a40f3fd7e95566ab0f34410bf34a23cbcdc5a63fdc28206d2cb420f7d38"
+    },
+    {
+      "path": "diffs/tests__world_sync_lua_check.lua.diff",
+      "bytes": 1198,
+      "sha256": "d138d5959678a7faee99340eaa641a0d6538506e39de4d5653da700656c979b0"
+    },
+    {
+      "path": "integration.json",
+      "bytes": 3258,
+      "sha256": "20194b0f6bd5e91ece3bb71b254fddbd35c4bd70d20b8d74e8db7cbb9c05ebd7"
+    },
+    {
+      "path": "lua/coop/world_downed.lua",
+      "bytes": 16317,
+      "sha256": "3705aa505abae8f06d874fae7372720a3b6fab8fc02ec99f42a40bf4b8cf0f26"
+    },
+    {
+      "path": "lua/coop/world_partner_sleep.lua",
+      "bytes": 1741,
+      "sha256": "0dc9735fe4131e491fd876c0f7b105bd7aefece5f49faac3aee3d5c874014819"
+    },
+    {
+      "path": "native/bootstrap_patch.cpp",
+      "bytes": 23299,
+      "sha256": "1620e54d482ed93d96356e68c494152cc012fffe964c0184a77b1cc0c42a8ac2"
+    },
+    {
+      "path": "native/world_sync_source.hpp.in",
+      "bytes": 2074,
+      "sha256": "a17eddaf9fa5160bd6d6c80e87906d94734cc6b0d75fdfbdde72c82dff267a16"
+    },
+    {
+      "path": "tests/host_trial_patch_check.cpp",
+      "bytes": 10365,
+      "sha256": "7363e353cf9a86dfe2a8da70d3c6848dcf80861207f10d170d0325c4ca7d4be5"
+    },
+    {
+      "path": "tests/world_downed_lua_check.lua",
+      "bytes": 48517,
+      "sha256": "b48e311d5c81ddcff612270ee2c36dfe4afc2f52bd5fa2f4216668bc5a7d3866"
+    },
+    {
+      "path": "tests/world_sync_lua_check.lua",
+      "bytes": 82428,
+      "sha256": "0ffb9d3e156b995702b7799875d2bdd0dd6a535155f69c3230ded81b0a13c1bf"
+    }
+  ]
+}

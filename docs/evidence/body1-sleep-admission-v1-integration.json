@@ -1,0 +1,9 @@
+{
+  "stage": "D:\\mgs-coop-scratch\\codex-oct11\\carry-passenger\\sleep\\body1-sleep-admission-v1",
+  "manifest_sha256": "734b00e32b3c1a4e91a1c8ad192007c163c840accf6867521fdda326e376ae78",
+  "integrated_narrow_diff": true,
+  "check_receipt": "build/worker-runs/20261012-040307-9abe2a9807de4cf0ba26a00b9772e807/receipt.json",
+  "audited_checks": 169,
+  "root_correction": "Test const auto patches/clears declarations separated because source counter types differ.",
+  "activation": "Private worker explicit opt-in only; excluded from installed normal0.12.4 package."
+}

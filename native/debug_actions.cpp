@@ -95,6 +95,8 @@ constexpr ActionDef kActions[] = {
      "Reads both players' carry binding and pending exit. A matching binding still requires attachment confirmation.", 0},
     {"coop_carry_request_status", C::partner, "Pickup request state", "carry_request_status", "carry pickup request queued retry cleanup",
      "Reads the currently queued pickup requests. This does not start, cancel or complete a pickup.", 0},
+    {"coop_carry_model_status", C::partner, "Carry animation ownership", "carry_model_status", "carry model animation ownership callbacks cleanup",
+     "Reads current carry animation ownership and registered callbacks. Pickup and attachment remain unfinished.", 0},
     {"coop_revive_status", C::partner, "Revive input status", "revive_status", "revive action key e held input", "Reads whether the game observed your revive input. Close F9 and hold ACTION near your downed teammate for 3 seconds.", 0},
     {"coop_downed_pad_status", C::partner, "Downed movement input", "downed_pad_status", "down crawl slow movement input speed magnitude", "Reads the latest native movement input before and after the downed cap. Close F9 to test movement.", 0},
     // Normal-release companion controls; no research capacity or force mount.

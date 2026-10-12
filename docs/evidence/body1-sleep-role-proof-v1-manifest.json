@@ -1,0 +1,44 @@
+{
+  "schema": "mgscoop-body1-sleep-role-proof-v1",
+  "compiled": false,
+  "fixtures_executed": false,
+  "main_modified": false,
+  "runtime_activation": false,
+  "files": [
+    {
+      "path": "diffs/native__game_script_observer.cpp.diff",
+      "bytes": 989,
+      "sha256": "ec1af6a9b6258d669c433b8611a0ec51ca7fa3865397ee3b2996b7ce17d4ccc3"
+    },
+    {
+      "path": "diffs/native__sleep_partner_bridge.hpp.diff",
+      "bytes": 792,
+      "sha256": "26e0b6ce7ffa195c4e336c8380fafb336cbef082901844cac7e64be8178b0545"
+    },
+    {
+      "path": "diffs/tests__sleep_partner_bridge_tests.cpp.diff",
+      "bytes": 3676,
+      "sha256": "9e5ca1505d9fdda4ed698767e296532be5ff6f654799da1a364b8c2586972ba2"
+    },
+    {
+      "path": "integration.json",
+      "bytes": 1628,
+      "sha256": "396a4ae6520ce3cba4cf7d0caa36a6311c828c3fb7e06babe67701a3560c24e5"
+    },
+    {
+      "path": "native/game_script_observer.cpp",
+      "bytes": 286308,
+      "sha256": "124d0c948f23809cf66cf3bb93f6d3b8cf6d716ffd4267a21e915ab022816103"
+    },
+    {
+      "path": "native/sleep_partner_bridge.hpp",
+      "bytes": 4627,
+      "sha256": "b24ef7aba7f3a09dbb8d70e54db921c9f2d0b440074a3365c2d55e0a25f22eb7"
+    },
+    {
+      "path": "tests/sleep_partner_bridge_tests.cpp",
+      "bytes": 9237,
+      "sha256": "a4de0d8bcce3546f1d2433518d7bb431f055c4e51388159d7d8db9a5241589c7"
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-#Requires -Version 7
+﻿#Requires -Version 7
 <#
 .SYNOPSIS
 Builds and checks the mod without launching MGSV or using desktop input.
@@ -51,7 +51,7 @@ function Get-WorkerTests {
         'equipment_stock_contract_tests', 'equipment_stock_writer_tests',
         'client_session_request_tests', 'heap_trial_tests', 'lab_config_tests', 'lab_status_tests',
         'link_protocol_tests', 'link_session_tests', 'link_crypto_tests', 'world_wire_tests', 'world_receipt_tests',
-        'buddy_pose_tests', 'buddy_ride_read_off_tests', 'buddy_ride_read_on_tests', 'ride_player_observer_tests', 'carry_info_tests', 'carry_plugin_tests', 'carry_provider_tests', 'sleep_plugin_tests', 'sleep_graph_tests', 'vehicle_controller_read_tests', 'camera_mode_window_tests', 'carry_request_payload_tests', 'sleep_body0_lease_tests', 'carry_owned_handshake_tests', 'sleep_body0_transition_tests', 'sleep_worker_controls_tests', 'carry_request_retirement_tests', 'carry_request_retirement_read_tests', 'carry_queued_abort_tests', 'carry_cold_rollback_tests', 'native_pose_exclusion_tests', 'buddy_capacity_census_off_tests', 'buddy_capacity_census_on_tests', 'buddy_capacity_walker_off_tests', 'buddy_capacity_walker_on_tests', 'partner_receipt_tests', 'partner_input_tests', 'partner_recon_tests', 'partner_dmmap_tests',
+        'buddy_pose_tests', 'buddy_ride_read_off_tests', 'buddy_ride_read_on_tests', 'ride_player_observer_tests', 'carry_info_tests', 'carry_plugin_tests', 'carry_provider_tests', 'sleep_plugin_tests', 'sleep_graph_tests', 'vehicle_controller_read_tests', 'camera_mode_window_tests', 'carry_request_payload_tests', 'sleep_body0_lease_tests', 'carry_owned_handshake_tests', 'sleep_body0_transition_tests', 'sleep_worker_controls_tests', 'carry_request_retirement_tests', 'carry_request_retirement_read_tests', 'carry_queued_abort_tests', 'carry_cold_rollback_tests', 'native_pose_exclusion_tests', 'native_pose_birth_tests', 'whole_player_lifetime_tests', 'carry_model_preflight_tests', 'native_pose_selected_export_tests', 'native_pose_hold_owners_tests', 'native_pose_carry_participants_tests', 'native_pose_carry_retirement_tests', 'native_pose_camera_reader_tests', 'sleep_partner_bridge_tests', 'sleep_partner_lease_tests', 'sleep_partner_owned_tests', 'buddy_capacity_census_off_tests', 'buddy_capacity_census_on_tests', 'buddy_capacity_walker_off_tests', 'buddy_capacity_walker_on_tests', 'partner_receipt_tests', 'partner_input_tests', 'partner_recon_tests', 'partner_dmmap_tests',
         'pose_interp_tests', 'partner_source_turns_tests', 'partner_action_events_tests',
         'partner_action_link_tests', 'partner_upper_pipeline_tests', 'client_reset_tests',
         'session_tests', 'import_table_tests', 'steam_runtime_tests', 'steam_lifecycle_tests',
@@ -65,7 +65,7 @@ function Get-WorkerTests {
         'partner_upper_probe_tests', 'partner_upper_probe_forwarding_tests',
         'partner_upper_channel2_tests', 'partner_upper_fire_zero_blend_tests',
         'partner_player_tests', 'teammate_targeting_tests', 'downed_damage_tests', 'downed_player_tests', 'partner_driver_tests', 'partner_input_hook_tests',
-        'partner_native_tests', 'partner_equip_wire_tests', 'partner_defer_tests',
+        'partner_native_tests', 'partner_equip_wire_tests', 'partner_defer_tests', 'partner_defer_pose_nested_foreign_tests', 'partner_defer_pose_held_generation_tests',
         'debug_menu_tests', 'debug_overlay_tests', 'soldier_warp_tests', 'win_import_patch_tests', 'probe_forwarding',
         'master_server_patch_tests', 'master_server_patch_retarget_tests', 'master_server_patch_retarget_loopback_tests',
         'worker_scenario_off_tests', 'worker_scenario_on_tests', 'worker_protocol_tests', 'worker_protocol_capacity_off_tests', 'worker_protocol_capacity_on_tests', 'worker_debug_tests', 'worker_input_fixture_tests',
@@ -205,7 +205,7 @@ function Assert-WorkerInventory {
         character_composed_lua_check='character_lua_check'; character_game_lua_check='character_lua_check'
         player_package_mission_list_lua_check='player_package_lua_check'
     }
-    $exeAliases = @{ four_player_lab='coop_lab'; probe_forwarding='probe_smoke';
+    $exeAliases = @{ four_player_lab='coop_lab'; probe_forwarding='probe_smoke'; partner_defer_pose_nested_foreign_tests='partner_defer_tests'; partner_defer_pose_held_generation_tests='partner_defer_tests';
         master_server_patch_retarget_tests='master_server_patch_tests'; master_server_patch_retarget_loopback_tests='master_server_patch_tests' }
     foreach ($name in $Allowed) {
         if (!$byName.ContainsKey($name)) { throw "Required audited test is missing: $name" }
@@ -258,6 +258,10 @@ function Assert-WorkerInventory {
             } elseif ($exeAliases.ContainsKey($name) -and $name -like 'master_server_patch_retarget*') {
                 $mode = if ($name -eq 'master_server_patch_retarget_tests') { 'retarget' } else { 'retarget_loopback' }
                 if ($command.Count -ne 2 -or $command[1] -cne $mode) { throw "Unaudited patch fixture mode: $name" }
+            } elseif ($name -eq 'partner_defer_pose_nested_foreign_tests') {
+                if ($command.Count -ne 2 -or $command[1] -cne '--pose-nested-foreign') { throw 'Unexpected pose-window fixture mode' }
+            } elseif ($name -eq 'partner_defer_pose_held_generation_tests') {
+                if ($command.Count -ne 2 -or $command[1] -cne '--pose-held-gen-drift') { throw 'Unexpected held-generation fixture mode' }
             } elseif ($command.Count -ne 1) { throw "Unexpected fixture arguments: $name" }
         }
         foreach ($property in @($test.properties)) {

@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "run": "b91c4c9a77154d89badd2980ce0dd89e",
+  "kind": "hidden-actual-partial",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261012-041338-00bbf5b284ff47cf8a9e673f8a60f37e\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 4,
+  "failure": "[host] frame 33 was not written: missing_frame_receipt",
+  "closed": true,
+  "forced": false,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 78947744,
+      "end": 79098088,
+      "sha256": "2540cabb2db0f84759e83184c042d71e3a80d7ac69983058e0fe6283fb918ab2"
+    },
+    {
+      "role": "guest",
+      "start": 87810335,
+      "end": 87963082,
+      "sha256": "74328035cbb1c5cbe4fd4a803a07ea5f7886d1370ff3264538d2a06790a499a2"
+    }
+  ],
+  "indexed_readings": {
+    "host": [
+      "partnersleep;enabled=1;scope=private_worker",
+      "cachedpose;ready=1;local=1;s0=804.6,339.1,1636.5;s1=800.9,339.3,1639.3;vars=804.6,339.1,1636.5;gap=0.000;seq=1960",
+      "posewindow;enabled=1;sleep_cfg=1;scope=private_worker;refused=0"
+    ],
+    "guest": []
+  },
+  "limitations": "169 audited checks passed after exact PS298 correction. Window/sleep enable and actual guestWU cause2HP6600 passed. Native sleep activation lost fresh worker receipts before onset capture; no successful sleep pose or cycle is claimed. Scoped cleanup restored63 protected files and saves; inspect bounded native logs for first stop cause."
+}

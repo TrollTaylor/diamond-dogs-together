@@ -1,4 +1,3 @@
--- Downed owner policy.
 do
 local W = e.MgsCoopWorld
 local D = {records = {}, sequence = 0, commitSequence = 0, grantSerial = 0, receivedGrant = 0,
@@ -41,6 +40,9 @@ end
 local function fresh(r, now)
   return r and r.ready and now >= r.at and now - r.at <= FRESH
 end
+local function partnerSleepClear()
+  if D.partnerSleepClear then D.partnerSleepClear() end
+end
 local function distance(a, b)
   local sum = 0
   for i = 1, 3 do sum = sum + (a.pos[i] - b.pos[i]) ^ 2 end
@@ -72,6 +74,7 @@ local function resetHold()
   D.holdAt, D.holdGeneration, D.holdActor, D.target, D.progress = nil, nil, nil, 0, 0
 end
 function D.reset()
+  partnerSleepClear(); D.partnerSleepBridge = nil
   if D.active then D.nativePending = true end
   D.records, D.sequence, D.commitSequence, D.grantSerial, D.receivedGrant = {}, 0, 0, 0, 0
   D.remoteCommit, D.commitSeen, D.txAt, D.commitAt, D.remoteCommitAt, D.pendingGrant = nil, 0, 0, 0, nil, nil
@@ -81,7 +84,6 @@ function D.reset()
   resetHold(); publishHud(); if D.hitReset then D.hitReset() end
 end
 function D.stop()
-  -- Retain controls until native sleep retires.
   if not D.nativeSleepActive and D.maskOwned then mask(false) end
   D.nativePending = D.nativePending or D.active or nil
   if D.nativePending and native(3, 0) then D.nativePending = nil end
@@ -242,8 +244,6 @@ end
 local function hostTick(now)
   local a, b = D.records[1], D.records[2]
   if not fresh(a, now) or not fresh(b, now) then D.sleepTimers = {}; resetHold(); return end
-  -- Mod-owned fallback duration, not the stock MGO sleep timer. Only fresh
-  -- accepted records and one exact generation can retain this host deadline.
   for role = 1, 2 do
     local r, timer = D.records[role], D.sleepTimers[role]
     if r.down and r.cause == 2 then
@@ -319,17 +319,18 @@ function D.tick(now)
   if D.nativePending or D.maskOwned and not D.active then
     D.stop(); if D.nativePending or D.maskOwned then return end
   end
-  if not on() then if D.active then D.stop() end; return end
+  if not on() then partnerSleepClear(); if D.active then D.stop() end; return end
   if D.lastNow and (now < D.lastNow or now - D.lastNow > FRESH) then D.sleepTimers = {}; resetHold() end
   D.lastNow = now
-  if not W.inGame() then D.sleepTimers = {}; resetHold(); publishHud(); return end
-  if not poll(now) then D.sleepTimers = {}; publishHud(); return end
+  if not W.inGame() then partnerSleepClear(); D.sleepTimers = {}; resetHold(); publishHud(); return end
+  if not poll(now) then partnerSleepClear(); D.sleepTimers = {}; publishHud(); return end
   if not W.host and D.pendingGrant then
     local p, r = D.pendingGrant, D.records[W.role]
     if not r.down or r.generation ~= p.generation then D.pendingGrant = nil
     elseif reviveLocal(p.generation) then D.receivedGrant, D.pendingGrant = p.serial, nil end
   end
   if W.host then hostTick(now); commit(now) end
+  if D.partnerSleepPublish then D.partnerSleepPublish(now) end
   publishHud(on() and D.hud(now) or nil)
 end
 D.reset()

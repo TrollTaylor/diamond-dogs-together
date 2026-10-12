@@ -1,0 +1,99 @@
+{
+  "base_manifest_sha256": "8527d3cfe4452bb38b308371c211ca4340bafead0e55e79ac6b4fd7e5f085d54",
+  "stage": "completed-birth lifecycle/generation safeguards v3",
+  "main_modified": false,
+  "compiled": false,
+  "runtime_used": false,
+  "files": [
+    {
+      "path": "integration_addendum.json",
+      "size": 967,
+      "sha256": "f91865f0046881f582456df386cdd5daa475d82a0625c6d60630f0533172fd24"
+    },
+    {
+      "path": "native/camera_mode_window.hpp",
+      "size": 8820,
+      "sha256": "64a348a9f14b10e9a9f0a5f0b623e58c116fe554c4f8ff99885bd69f8cd4b768"
+    },
+    {
+      "path": "native/camera_mode_window_contract.hpp",
+      "size": 42134,
+      "sha256": "318417ac8cd87d8029e45bf5ada5e76608b8909a225c229b42b696e7a1b1b8f1"
+    },
+    {
+      "path": "native/carry_model_lifetime_contract.hpp",
+      "size": 35887,
+      "sha256": "1141bb448e2f32bd9f2ea7d365363e6bd69b50a24d50f0879d2a7739ea1cfe5e"
+    },
+    {
+      "path": "native/carry_model_retirement_contract.hpp",
+      "size": 42263,
+      "sha256": "7a0204ea626603892e9ab9b59ae45ed30aa43ff31ab59a68965189fedbab3cb6"
+    },
+    {
+      "path": "native/include/mgscoop/native_pose_window.hpp",
+      "size": 3671,
+      "sha256": "90de9bec93d3e8f246ebf8e38000532543ed1179435d85e58a6253957cdc8b71"
+    },
+    {
+      "path": "native/include/mgscoop/partner_input_hook.hpp",
+      "size": 20548,
+      "sha256": "db908886e0fa7e7713229c8f4c39c563d6af7c1721409f32bde6bc4106284b18"
+    },
+    {
+      "path": "native/native_pose_birth.hpp",
+      "size": 1551,
+      "sha256": "0d88195105ba705d2556e9faec1bef512fb7c3f8b746b434d42d4c5cb99e1cc3"
+    },
+    {
+      "path": "native/native_pose_birth_contract.hpp",
+      "size": 26497,
+      "sha256": "52dd4c5318225e5a0fe0ea7e1b3265fa8f53c21863acdbd32d2d535c1a7e71b1"
+    },
+    {
+      "path": "native/native_pose_exclusion.hpp",
+      "size": 6265,
+      "sha256": "5561f45570e9bdd2fb8f603c4e439c949460512679c40495a2d01ce0dc563510"
+    },
+    {
+      "path": "native/native_pose_window_contract.hpp",
+      "size": 26076,
+      "sha256": "714d6e391e06768003070029524fbbbf83d395d068380a06c0b7526f6f3dbd26"
+    },
+    {
+      "path": "native/native_pose_window_impl.inc",
+      "size": 34470,
+      "sha256": "b25e8ec03cfc1aa35dae482320d0930d84bf2b17ccf2a3c2dece81602ca66bfa"
+    },
+    {
+      "path": "native/partner_defer.cpp",
+      "size": 32401,
+      "sha256": "02466511e31d2582c4c655d7de4a4409a4021ad55955a4cf9c40dc020d8f55ca"
+    },
+    {
+      "path": "native/partner_input_hook.cpp",
+      "size": 134419,
+      "sha256": "b64074bf182db151b98a1814d52df1c86ef1fb69c5b9bd6bbe3b5e9bbdc3fbe7"
+    },
+    {
+      "path": "tests/native_pose_birth_tests.cpp",
+      "size": 2154,
+      "sha256": "7e181f71894c9a4f1a4b0a43f68a48fbe2843c2b5c6043952722fefa9bfc57dd"
+    },
+    {
+      "path": "tests/partner_defer_tests.cpp",
+      "size": 152812,
+      "sha256": "986fcccb239f0bf292103de5a54f66ac01fbe76e1cddb9fac2357f4e3a7f989b"
+    },
+    {
+      "path": "v3_evidence.json",
+      "size": 2303,
+      "sha256": "67fde4a0c878a24a0f6277c853167c6c05646887a26a9cc6b97e8b9207f0602c"
+    },
+    {
+      "path": "v3_source.diff",
+      "size": 20188,
+      "sha256": "b6013f89cf6772350683db7551782c83b52b18120113c6a7b2137287fcc262f2"
+    }
+  ]
+}

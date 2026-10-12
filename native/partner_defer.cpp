@@ -19,6 +19,7 @@
 #include "mgscoop/partner_defer.hpp"
 #include "mgscoop/near_code.hpp"
 #include "mgscoop/partner_input_hook.hpp"
+#include "mgscoop/native_pose_window.hpp"
 #include "partner_player_contract.hpp"
 
 #pragma intrinsic(_ReturnAddress)
@@ -243,11 +244,13 @@ void DrainCall(std::uintptr_t entry, const Rec& rec, std::uint32_t mode) noexcep
     else InterlockedAnd(&g_id1_pass, static_cast<LONG>(~(1u << mode)));
     const bool windowable = static_cast<std::uint32_t>(GetCurrentThreadId()) == HookThread() && g_armed && !g_shutdown && hk::Installed();
     const auto consumer = mode == 0 ? partner_input::Consumer::drain0 : partner_input::Consumer::drain1;
-    if (windowable && hk::RunJobWindow(go, &param, param.block, &HookJob, consumer)) InterlockedIncrement(&g_windowed);
-    else {
-        if (!windowable) GuardedJob(go, &param);
-        InterlockedIncrement(&g_unwindowed);
-    }
+    const bool required=hk::NativePoseRequiredForJob(go,param.block);
+    if(windowable||required){
+        const auto result=hk::RunJobWindowOutcome(go,&param,param.block,&HookJob,consumer);
+        if(result==hk::JobWindowOutcome::windowed)InterlockedIncrement(&g_windowed);
+        else if(result==hk::JobWindowOutcome::legacy)InterlockedIncrement(&g_unwindowed);
+        // suppressed is never forwarded or counted as executed.
+    } else {GuardedJob(go,&param);InterlockedIncrement(&g_unwindowed);}
 }
 
 // Read lock and scope around DrainCall, released/popped in that order even on
@@ -307,6 +310,7 @@ void DropPending(std::uint32_t mode) noexcept {
 
 // --- H2: the batch wrapper ------------------------------------------------------
 void WrapBatch(void* group, std::uint32_t mode) noexcept {
+    hk::PoseSharedLease shared{};if(!hk::EnterNativePoseShared(shared))return;
     const auto tid = static_cast<std::uint32_t>(GetCurrentThreadId());
     InterlockedIncrement(&g_batches);
     InterlockedCompareExchange(&g_batch_thread, static_cast<LONG>(tid), 0);
@@ -322,6 +326,7 @@ void WrapBatch(void* group, std::uint32_t mode) noexcept {
             g_batch_orig(group, mode);
         } __finally {
             InterlockedDecrement(&g_foreign);
+            hk::ExitNativePoseShared(shared);
         }
         return;
     }
@@ -338,6 +343,7 @@ void WrapBatch(void* group, std::uint32_t mode) noexcept {
             DropPending(0);
             DropPending(1);
         }
+        hk::ExitNativePoseShared(shared); // after native join, before any drain/exclusive window
     }
     // A nested batch never drains: the outermost one does after its own join.
     if (left != 0) return;
@@ -403,7 +409,10 @@ void W50(void* go, const JobParam* p) noexcept {
         if (why == detail::Pass::ret_other) InterlockedIncrement(&g_ret_other);
         InterlockedIncrement(&g_pass[static_cast<unsigned>(why) & 15u]);
     }
-    g_job_orig(go, p);
+    if(hk::NativePoseRequiredForJob(go,p->block)&&!hk::NativePoseOwnedWindow())return;
+    if(hk::NativePoseOwnedWindow()){if(hk::RequireNativePoseOwnedJob(go,p->block))g_job_orig(go,p);return;}
+    hk::PoseSharedLease shared{};if(!hk::EnterNativePoseShared(shared))return;
+    __try {g_job_orig(go,p);}__finally {hk::ExitNativePoseShared(shared);}
 }
 
 const char* InstallH2() noexcept {

@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "run": "dcce939e2ccf41c4a79124fcccd6cf17",
+  "kind": "hidden-actual-partial",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261012-012659-028209a3fb2c4a688cc0f39581f8a6ef\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 13,
+  "failure": "Required scenario check failed: guest require cachedpose;ready=1;local=1 <- SEND_REFUSED: Debug actions require a fresh owned gameplay mission generation.",
+  "closed": true,
+  "forced": false,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 77572609,
+      "end": 77769237,
+      "sha256": "6d9d11e9f8ed8f9074f25acfa1c0773453e1fdb84c62538ee0cf760b97aef6ff"
+    },
+    {
+      "role": "guest",
+      "start": 86638544,
+      "end": 86841299,
+      "sha256": "6b97d03d5ed978f0534d2df1e75faacb4a48fc013809d77f1bd9d2aa7a46f77e"
+    }
+  ],
+  "indexed_readings": {
+    "host": [
+      "cachedpose;ready=1;local=1;s0=804.7,339.0,1637.8;s1=804.7,338.7,1643.3;vars=804.7,339.0,1637.8;gap=0.000;seq=11380",
+      "indexedpose;ready=1;v=799.9,338.0,1646.6;b0=799.9,338.0,1646.6;b1=804.7,338.7,1643.3;seq=7496",
+      "cachedpose;ready=1;local=1;s0=799.9,338.0,1646.6;s1=804.7,338.8,1643.3;vars=799.9,338.0,1646.6;gap=0.000;seq=7232",
+      "cachedpose;ready=1;local=1;s0=799.9,338.0,1646.6;s1=804.8,339.0,1637.0;vars=799.9,338.0,1646.6;gap=0.000;seq=5784",
+      "indexedpose;ready=1;v=800.0,338.9,1643.5;b0=800.0,338.9,1643.5;b1=804.8,339.0,1637.0;seq=4312",
+      "cachedpose;ready=1;local=1;s0=800.0,338.9,1643.5;s1=804.8,339.0,1637.0;vars=800.0,338.9,1643.5;gap=0.000;seq=4048",
+      "cachedpose;ready=1;local=1;s0=800.9,339.3,1639.3;s1=804.8,339.0,1637.0;vars=800.9,339.3,1639.3;gap=0.000;seq=2704",
+      "posewindow;enabled=1;scope=private_worker",
+      "posebirth;in=4;ready=4;caller=4;b1=2;model=2;done=2;race=0;count=1;id=1;from=0x9beaac;stage=birth_completed",
+      "cachedpose;ready=1;local=1;s0=800.9,339.3,1639.3;s1=804.8,339.0,1637.0;vars=800.9,339.3,1639.3;gap=0.000;seq=1608"
+    ],
+    "guest": [
+      "indexedpose;ready=1;v=804.7,338.7,1643.3;b0=804.7,338.7,1643.3;b1=799.3,338.2,1646.2;seq=10932",
+      "cachedpose;ready=1;local=1;s0=804.7,338.8,1643.3;s1=799.2,338.3,1646.1;vars=804.7,338.8,1643.3;gap=0.000;seq=10668",
+      "cachedpose;ready=1;local=1;s0=804.8,339.0,1637.0;s1=798.6,338.5,1645.6;vars=804.8,339.0,1637.0;gap=0.000;seq=9188",
+      "indexedpose;ready=1;v=804.8,339.0,1637.0;b0=804.8,339.0,1637.0;b1=800.0,338.9,1643.5;seq=7764",
+      "cachedpose;ready=1;local=1;s0=804.8,339.0,1637.0;s1=800.0,338.9,1643.5;vars=804.8,339.0,1637.0;gap=0.000;seq=7500",
+      "cachedpose;ready=1;local=1;s0=804.8,339.0,1637.0;s1=800.9,339.3,1639.3;vars=804.8,339.0,1637.0;gap=0.000;seq=6124",
+      "posewindow;enabled=1;scope=private_worker",
+      "posebirth;in=4;ready=4;caller=4;b1=2;model=2;done=2;race=0;count=1;id=1;from=0x9beaac;stage=birth_completed",
+      "cachedpose;ready=1;local=1;s0=804.8,339.0,1637.0;s1=800.9,339.3,1639.3;vars=804.8,339.0,1637.0;gap=0.000;seq=4692"
+    ]
+  },
+  "limitations": "Thirteen checks passed: typed S0 and vars match actual body0 in both copies while S1 updates, walking/crouching/sprinting and postactivation host warp succeed. Final guest command refused stale reference before final fault statuses. Rendered local camera/body appearance requires before/after comparison. No sleep/carry activated."
+}

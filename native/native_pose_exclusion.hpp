@@ -89,16 +89,42 @@ public:
  }
  // These booleans must be actual complete typed Post/C0/UI cleanup and the
  // exact-once EndWindow receipt, never assumed true because a job returned.
- bool EndWrite(std::uint32_t thread,std::uint32_t generation,std::uint32_t sceneEpoch,
-               bool cleanupComplete,bool windowClosed,WriteTicket& ticket) noexcept {
+ // Publish mod-only retirement bookkeeping after validated cleanup while
+ // readers remain excluded. The callback must not call native code or mutate
+ // this gate; its writes happen-before the release admitting lifecycle readers.
+private:
+ template<class Publish> bool EndWritePublishImpl(std::uint32_t thread,std::uint32_t generation,std::uint32_t sceneEpoch,
+               bool cleanupComplete,bool windowClosed,WriteTicket& ticket,Publish&& publish,bool refuseReservation) noexcept {
+  static_assert(noexcept(publish()),"retirement publication must be noexcept");
   if(!Owns(thread,generation,sceneEpoch,ticket))return false;
   if(!cleanupComplete||!windowClosed||poisoned_.load(std::memory_order_acquire)){
    closing_.store(true,std::memory_order_release);poisoned_.store(true,std::memory_order_release);
    return false; // retain writer/ticket until owned private process cleanup
   }
-  auto seen=Writer(thread);
-  if(!word_.compare_exchange_strong(seen,0,std::memory_order_acq_rel,std::memory_order_acquire))return false;
+  // Reserve retirement atomically before publication. No reader can enter
+  // this high32 writer state; Owns is false so reentrant release cannot run.
+  auto seen=Writer(thread);const auto committed=seen|0x80000000ull;
+  if(refuseReservation||!word_.compare_exchange_strong(seen,committed,std::memory_order_acq_rel,std::memory_order_acquire))return false;
+  publish(); // strictly mod bookkeeping, no gate/native calls
+  word_.store(0,std::memory_order_release); // infallible after reservation
   ticket.armed_=false;return true;
+ }
+public:
+ template<class Publish> bool EndWritePublish(std::uint32_t thread,std::uint32_t generation,std::uint32_t sceneEpoch,
+               bool cleanupComplete,bool windowClosed,WriteTicket& ticket,Publish&& publish) noexcept {
+  return EndWritePublishImpl(thread,generation,sceneEpoch,cleanupComplete,windowClosed,ticket,
+    static_cast<Publish&&>(publish),false);
+ }
+ // Refusal-only synthetic seam: inject failure at the reservation boundary.
+ // This never grants a writer, suppresses checks or admits native code.
+ template<class Publish> bool EndWritePublishRefusedForTest(std::uint32_t thread,std::uint32_t generation,std::uint32_t sceneEpoch,
+               bool cleanupComplete,bool windowClosed,WriteTicket& ticket,Publish&& publish) noexcept {
+  return EndWritePublishImpl(thread,generation,sceneEpoch,cleanupComplete,windowClosed,ticket,
+    static_cast<Publish&&>(publish),true);
+ }
+ bool EndWrite(std::uint32_t thread,std::uint32_t generation,std::uint32_t sceneEpoch,
+               bool cleanupComplete,bool windowClosed,WriteTicket& ticket) noexcept {
+  return EndWritePublish(thread,generation,sceneEpoch,cleanupComplete,windowClosed,ticket,[]()noexcept{});
  }
  // Stop new writers, retaining active cleanup authority. Normal readers may
  // still enter after a healthy writer finishes. Native teardown must use its

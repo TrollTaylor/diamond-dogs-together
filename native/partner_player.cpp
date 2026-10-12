@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstring>
 #include "mgscoop/partner_player.hpp"
+#include "mgscoop/native_pose_window.hpp"
 #include "mgscoop/partner_equip_wire.hpp"
 #include "partner_player_contract.hpp"
 
@@ -213,7 +214,7 @@ bool CodeGateWith(const void* base, std::size_t span, const GateSite* sites, std
         const GateSite& site = sites[i];
         unsigned char copy[96]{};
         if (site.size == 0 || site.size > sizeof(copy) || site.rva > span || site.size > span - site.rva ||
-            !ReadBlock(b + site.rva, copy, site.size) || std::memcmp(copy, site.bytes, site.size) != 0) {
+            !partner_input_hook::ReadNativePoseOriginalCode(b + site.rva, copy, site.size) || std::memcmp(copy, site.bytes, site.size) != 0) {
             mismatch_rva = site.rva;
             return false;
         }

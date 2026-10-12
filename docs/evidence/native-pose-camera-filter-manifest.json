@@ -1,0 +1,57 @@
+{
+  "frozen": true,
+  "classification": "worker-only exact observed phase2/body1 global-camera frame callback filter with typed sender entry",
+  "compiled": false,
+  "runtime_used": false,
+  "main_modified": false,
+  "activation": false,
+  "root_integration": "Apply source.diff only. Full snapshots are for review, never overwrite newer main sources. Existing native_pose_camera_reader_tests target covers new fixtures.",
+  "log_policy": "First successful filter and first refusal are independently bounded; a later unexpected owned call is logged before Refuse.",
+  "files": [
+    {
+      "path": "evidence.json",
+      "size": 36232,
+      "sha256": "4b7b017d62084989afceafb66f36870bd5c03707760bc56678e381135a778084"
+    },
+    {
+      "path": "native\\game_script_observer.cpp",
+      "size": 286471,
+      "sha256": "a7b6ecd7f0f2ede7419a036833fa3d27af09ab723b00964e3c0043e570c73701"
+    },
+    {
+      "path": "native\\include\\mgscoop\\native_pose_window.hpp",
+      "size": 5059,
+      "sha256": "6609a8d5522adc338081832ff9072442c2a594c2b2774864483b8cb27bcefacb"
+    },
+    {
+      "path": "native\\native_pose_camera_reader.hpp",
+      "size": 8025,
+      "sha256": "b033fb5a635723cdf5223d8601f7679adf2b80f3a3b8a6b8a5a35c1e1c6c35ab"
+    },
+    {
+      "path": "native\\native_pose_camera_reader_contract.hpp",
+      "size": 22504,
+      "sha256": "b3a8b26f9bbd860337ada9ff126c901d4077356825861298748f9d6d8ae40550"
+    },
+    {
+      "path": "native\\native_pose_window_impl.inc",
+      "size": 50544,
+      "sha256": "d04e0e1b75f30b8702ab896d18a6a50e494989905a3b0ed45ac3dd59de3fee33"
+    },
+    {
+      "path": "native\\partner_input_hook.cpp",
+      "size": 139157,
+      "sha256": "c00226e98e1e73fef245224464b65ee1f323b003140f832b1c48f0d7542c4f18"
+    },
+    {
+      "path": "source.diff",
+      "size": 35544,
+      "sha256": "6e52ed9d0c9538d778aa7e09a9f812677031b16e3127a1da2dd6bc0ce16d5744"
+    },
+    {
+      "path": "tests\\native_pose_camera_reader_tests.cpp",
+      "size": 12056,
+      "sha256": "da2ba0798022f53c367758b052140c2aef855b1783feca758085cd9efb11b25b"
+    }
+  ]
+}

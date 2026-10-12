@@ -1,0 +1,49 @@
+{
+  "scope": "Actual native/Lua integration for frozen body1-sleep-worker-v1 plus its fixture-v2 correction. Worker-only experiment remains OFF. No main edits, builds or runtime by subagent.",
+  "consumer_dependency": {
+    "manifest": "5a007acacd91e87983202dba673c366a27f304f540127bd0f1404091a99258a7",
+    "root_include_fix": "Preserve root-added #include mgscoop/partner_input_hook.hpp in native/sleep_partner_test.cpp for WindowSeq declaration.",
+    "fixture_correction": "5a0fec19db2ded0b2d2565e5a402115eb37770227ad78e463b559194591ddb34"
+  },
+  "domain_dependencies": [
+    "Actual WholePlayerLifetimeLive from carry whole-player-lifetime-v2.",
+    "Actual NativePoseLocalCacheIsolationLive from pose-local-export-v3, exact owned FF5510 caller filter.",
+    "NativePoseCarryRecipientHeld and purpose-scoped Sleep clear/reserved atomic EndWritePublish from pose-carry-hold-v1."
+  ],
+  "files": "Apply narrow .diff source changes against base.json hashes. Source copies include root current camera diagnostic commands and must not replace newer unrelated root edits.",
+  "build": [
+    "Add tests/sleep_partner_bridge_tests.cpp target with include native + native/include, /W4 /WX, CTest entry.",
+    "Rebuild existing partner_driver_tests and run world_downed_lua_check with edited Lua source. No new native source needs CMake: observer/driver already built; header is pure."
+  ],
+  "authoritative_path": [
+    "D.tick first obtains genuine local native poll/lock and accepted role record. The optional native capability is false in normal builds.",
+    "Only D.records[3-W.role], previously validated by acceptStatus sequence/generation/grant rules, supplies peer sequence/generation/down/cause/receive age. No debug flag supplies Target data.",
+    "Native receipt validates exact nine bounded unsigned fields. Native DownedAdmitted/world epoch/actual lab role/natural thread/local snapshot/real recently published Arm gates are required. Duplicate receipts cannot refresh one old received record.",
+    "Supported healthy same-generation accepted status sets asleep=false and permits owned native recovery; cause1 is never native sleep. Stale/poll failure/not-in-game/unpair/termination emits explicit withdrawal and retains native cleanup ownership."
+  ],
+  "actual_setup": [
+    "EnsurePartnerSleepConfigured runs only after private passive hooks are installed, before any required-window opt-in. It Configures, binds actual lifetime/carry queries and registers composed Before/After/Closed; it never enables or requires the window.",
+    "Future Carry/Road consumers must be appended to this central composite listener, not registered independently or while any purpose is held. Current source base had no existing registered callback to overwrite.",
+    "Actual PartnerPublishArm caches only validated natural enabled native Arm identity/generation/rates_epoch; PS-relative index0 is supported and not confused with actual bodyid1."
+  ],
+  "commands": [
+    "pose_window_test 1 remains separate explicit opt-in. Healthy native windows and accepted scene must precede partner_sleep_test 1.",
+    "partner_sleep_test 1 verifies worker/copies/current hooks, healthy window count, real fresh local scope/Arm, dm=off/no owned DM and actual current Q0 + vars pose against physical CS0.",
+    "partner_sleep_test 0 and partner_sleep_wake only queue existing-owned recovery; no lease is discarded. partner_sleep_status is bounded161 cache with formatting failure checked."
+  ],
+  "driver": "Trailing default-null Hooks.native_pose_suppressed skips actual TickDm and normal animation block; observer Q/stance wrappers also refuse; outgoing Lua DM ops are removed before reply formatting. Normal operation stays unchanged while no held native sleep exists.",
+  "live_blockers": [
+    "Root screenshots e3a6009b show required-window camera/local-body disappearance and orientation change despite Q0 export fix. Camera presentation isolation is NOT accepted. Enable must stay false until root qualifies/fixes/tests this independently.",
+    "The private Enable predicate proves cache agreement, not visual camera isolation. The coordinator must not activate merely because this predicate returns true.",
+    "Held body1 zero input still requires actual PP derived/source/accumulated computation; no fake masks/even sequence/cap receipt.",
+    "Visible standing guard-style sleep and carry/shared riding are still unverified/disabled. Production stays0.12.4 prone sleep fallback."
+  ],
+  "tests": "New parser/ledger cases: malformed/range/NaN/infinity, sequence+generation wrapping/reorder, duplicate age cannot refresh, cause1 vs2, healthy same-cycle wake, stale scene/thread/Arm. Existing driver cases exercise actual Q/stance/DM suppression and resume; Lua cases exercise accepted row, stale/native refusal, non-game/unpair and normal capability false.",
+  "validation": {
+    "compiled": false,
+    "fixtures_executed": false,
+    "games_launched": false,
+    "main_modified": false,
+    "independent_review": "Carry agent reviewed bounded private bridge; no actionable defect found, camera prerequisite remains separate."
+  }
+}

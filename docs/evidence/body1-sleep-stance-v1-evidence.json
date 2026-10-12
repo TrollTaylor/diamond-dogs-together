@@ -1,0 +1,45 @@
+{
+  "retail_sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+  "full_native_stance": {
+    "rva": "0xff5b10",
+    "end": "0xff5b95",
+    "size": 133,
+    "sha256": "ac9c915d1db5374fbc2c91f10ac44459cf7be34105b972a29995c5c0f303fcd3",
+    "hex": "40534883ec20488b8198020000448bca4c8bd9442b4908428324c8f0bb030000004e8d14c8458bc8418b024183e10f410bc141c1e104250fffffff410bc1418902488b8108040000488b8838010000488b41608bca488b403044880401498b8b60020000b801000000443bc0410f4fc03bc30f4cd8488b01ffcbff108958644883c4205bc3",
+    "slots": [
+      "0x23b09f0",
+      "0x23b0c70"
+    ],
+    "abi": "RCX typed PS,EDX actual bodyID,R8D stance",
+    "effects": "PS298+(EDX-PS8)*8 D32 low4 and bits4..7=R8&F; typed PS408->block138->P60->Q30[EDX]=R8B; PS260 vt0 -> result+64=clamp(stance,1,3)-1"
+  },
+  "corrected_read": "Each typed PS base was already required to equal actualbodyID, so entryoffset0; fullD32 at*(PS298), low4 compared with actual Q30[bodyID]. PS2D0 ignored.",
+  "coherence": "Strict PS/Q equality unchanged; full packedD32 pair equality newly retained. No scalar/stance admission relaxed. No new native call; existing qualified SetStance preparation stays same.",
+  "diagnostics": "partner_sleep_stance_status is read-only pointer-free cached full packedPS/Q/action/window/age witness; stanceObserved false on failed read, true onlyafter3currenttypedobservations; mismatch still refuses beforehold.",
+  "fixture_added": 13,
+  "base_files": [
+    {
+      "path": "native/sleep_partner_owned_read.hpp",
+      "sha256": "95972efdc8e4c0b2dd7f7d6304b5cc6102d7c6f94fbbd2291e36f8269ff772b2"
+    },
+    {
+      "path": "native/sleep_partner_test.cpp",
+      "sha256": "2109486951f1e5ebcc6ff3a4dff91201b24ca49634ab9e710f08d95c771c52bc"
+    },
+    {
+      "path": "native/include/mgscoop/sleep_partner_test.hpp",
+      "sha256": "83a08576266716884aadbce5e0642ea5bb40c010533ddcc41a98f0692ea3abc2"
+    },
+    {
+      "path": "native/game_script_observer.cpp",
+      "sha256": "95a1518e08e04d6150a8ee99a5643455968b2f147e0a67aebe2a98c40e556020"
+    },
+    {
+      "path": "tests/sleep_partner_owned_tests.cpp",
+      "sha256": "fb3216e6900fac6b44d0e80d216370c75bf801d2e1d058a9b5cf8ef601a996ca"
+    }
+  ],
+  "compiled": false,
+  "runtime_used": false,
+  "main_modified": false
+}

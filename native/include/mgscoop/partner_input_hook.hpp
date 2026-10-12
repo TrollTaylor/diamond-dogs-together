@@ -24,6 +24,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "mgscoop/partner_input.hpp"
+#include "mgscoop/native_pose_window.hpp"
 
 namespace mgscoop::nametag_game { struct HudJobProbe; }
 namespace mgscoop::partner_input_hook {

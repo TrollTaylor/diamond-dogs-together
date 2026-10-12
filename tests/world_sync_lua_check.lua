@@ -1402,6 +1402,8 @@ do
         }
         local downedChunk = assert(loadfile(coopDir .. 'world_downed.lua'))
         setfenv(downedChunk, env); downedChunk()
+        local sleepChunk = assert(loadfile(coopDir .. 'world_partner_sleep.lua'))
+        setfenv(sleepChunk, env); sleepChunk()
         F.start(env, c); F.pair(env, c, 3)
         n.down, n.generation, n.cause = true, 1, 2
         F.tick(env, c, 1)
@@ -1506,6 +1508,10 @@ if arg[8] then
         setfenv(chunk, env)
         local mod = chunk()
         check(type(mod) == 'table' and type(mod.MgsCoopWorld) == 'table', 'composed module publishes e.MgsCoopWorld')
+        check(type(mod.MgsCoopWorld.downed) == 'table' and
+            type(mod.MgsCoopWorld.downed.partnerSleepPublish) == 'function' and
+            type(mod.MgsCoopWorld.downed.partnerSleepClear) == 'function',
+            'actual composed TppMain includes passive accepted-peer sleep adapter after downed')
         check(type(mod.MgsCoopDebug) == 'table' and type(mod.MgsCoopDebug.equipment) == 'table',
             'composed module publishes debug core and equipment')
         if disableDebug then

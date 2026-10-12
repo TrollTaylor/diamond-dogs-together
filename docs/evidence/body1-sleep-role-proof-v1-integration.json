@@ -1,0 +1,30 @@
+{
+  "schema": "mgscoop-body1-sleep-role-proof-v1",
+  "fix": "Optional follow-up fixture after current root build: directly used pure ConfiguredRole extracts exact accepted offline world role from LabConfig; session diagnostic Role remains separate.",
+  "scope": "Preserves the parent-corrected semantic mapping; no behavior change for valid host/guest. Only narrow three-file diffs.",
+  "cases": "Eight added checks: actual host and guest receipt acceptance while diagnostic none, diagnostic-none refusal, opposite role refusal, absent/unknown config refusal. Existing CTest target only.",
+  "transaction_review": "Current bridge parses/cross-checks native world/role/owner first; publishes accepted Target before committing next ledger, keeps original accepted timestamp on duplicates, and withdraws rather than forging healthy state on expiry. Reordered/changed records do not publish. Clears disable/queue wake and retain lease.",
+  "validation": {
+    "compiled": false,
+    "fixtures_executed": false,
+    "main_modified": false,
+    "games_launched": false
+  },
+  "base_sources": [
+    {
+      "path": "native/sleep_partner_bridge.hpp",
+      "sha256": "6c8663dc8f053d7a453401706b332868e3e6b896c5515bdf9ff2465ad7a737fe",
+      "bytes": 4368
+    },
+    {
+      "path": "native/game_script_observer.cpp",
+      "sha256": "bf477de93b704f735828c5d90f2fd069df2e1dbc87ec94ed00379a8bc28b5ade",
+      "bytes": 282282
+    },
+    {
+      "path": "tests/sleep_partner_bridge_tests.cpp",
+      "sha256": "f65c4ded0811b2a3b130e6a37dc3390ddc847af62bdc3729532606fc2a09f5ec",
+      "bytes": 7621
+    }
+  ]
+}

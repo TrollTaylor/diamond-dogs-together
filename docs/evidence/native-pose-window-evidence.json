@@ -1,0 +1,535 @@
+{
+  "executable": {
+    "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgsvtpp.exe",
+    "size": 166517760,
+    "sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45"
+  },
+  "static_pe_verification": "passed exact all declared bytes and slots; no native calls/runtime/build",
+  "sites": [
+    {
+      "contract": "camera_mode_window_contract.hpp",
+      "rva": "0x9bd7e0",
+      "end": "0x9bec45",
+      "size": 5221,
+      "sha256": "c3428b71a3183b5704c0de58953bb6b30204e6df45a0113eb349b8a26e1747f9"
+    },
+    {
+      "contract": "camera_mode_window_contract.hpp",
+      "rva": "0x202d180",
+      "end": "0x202d1d4",
+      "size": 84,
+      "sha256": "3ba3ee60b4de287dee08a53b957b41869d123dd1789aaa38b6913d49af284b4e"
+    },
+    {
+      "contract": "camera_mode_window_contract.hpp",
+      "rva": "0x11f5ef0",
+      "end": "0x11f5f4c",
+      "size": 92,
+      "sha256": "76abc74df4dc90953971afc96da8f848a80a325aca8962bbacde7e76d48a78a5"
+    },
+    {
+      "contract": "camera_mode_window_contract.hpp",
+      "rva": "0x11f4d50",
+      "end": "0x11f4e13",
+      "size": 195,
+      "sha256": "7b0f2a590472a0fb756afc8e398fd51f38ac6304e83f66be0cb8b6d6982b1424"
+    },
+    {
+      "contract": "camera_mode_window_contract.hpp",
+      "rva": "0x11f62b0",
+      "end": "0x11f631f",
+      "size": 111,
+      "sha256": "2d2132217f20f407716eaabdcac56b87658e7aec90e4fb075aabeb98193cb69c"
+    },
+    {
+      "contract": "camera_mode_window_contract.hpp",
+      "rva": "0x11f6760",
+      "end": "0x11f68cd",
+      "size": 365,
+      "sha256": "cd77719f5d136fe9db711e4e4f1e8a31930cfe75168277f8f1c43dfc9b2e7f29"
+    },
+    {
+      "contract": "camera_mode_window_contract.hpp",
+      "rva": "0x11f68cd",
+      "end": "0x11f6903",
+      "size": 54,
+      "sha256": "a35e657c5d17bdbaa11250a6616bb54583e57fbce02047c0773fc5f2c56e4da5"
+    },
+    {
+      "contract": "camera_mode_window_contract.hpp",
+      "rva": "0x11f6903",
+      "end": "0x11f6a92",
+      "size": 399,
+      "sha256": "a4913cf4ced1592a14846263d39ee6450893c9bf5e4bd5c53d3f48db18ac68a0"
+    },
+    {
+      "contract": "camera_mode_window_contract.hpp",
+      "rva": "0x11f6a92",
+      "end": "0x11f6b84",
+      "size": 242,
+      "sha256": "6e4104af995431683125179bee1543efbe5232f8b6329213235af430e3a71ca2"
+    },
+    {
+      "contract": "camera_mode_window_contract.hpp",
+      "rva": "0x11f6b84",
+      "end": "0x11f6bef",
+      "size": 107,
+      "sha256": "5c9b8950c139af6c0f6abcb4f7af530ffe018e8aa0437813e4ec64a0b975f342"
+    },
+    {
+      "contract": "camera_mode_window_contract.hpp",
+      "rva": "0x11f7210",
+      "end": "0x11f76b5",
+      "size": 1189,
+      "sha256": "63d762a28842a45a289f0459c4f1ebceb32b5ba9fc5099428ee1061374f5f24f"
+    },
+    {
+      "contract": "camera_mode_window_contract.hpp",
+      "rva": "0x11f6090",
+      "end": "0x11f60b5",
+      "size": 37,
+      "sha256": "9035f1c13f25fa94e308968844fd6e38b8cb691469e4c3996334f45a44ad151a"
+    },
+    {
+      "contract": "camera_mode_window_contract.hpp",
+      "rva": "0x11f6520",
+      "end": "0x11f6524",
+      "size": 4,
+      "sha256": "a45c57bee5e738c6f1d399d1b52751e075b1e100e72874947b4a7a5ebb691e29"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0x16090",
+      "end": "0x160e3",
+      "size": 83,
+      "sha256": "635f68135b0e613447298206340b36f2e8e634507925ecbb65fb225826ce02fb"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0x21ea0",
+      "end": "0x21ea8",
+      "size": 8,
+      "sha256": "fa3e0e4648c55a46089420bf570124a1df867047ddff17409f038b21de8a003e"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0x21eb0",
+      "end": "0x21eba",
+      "size": 10,
+      "sha256": "a55b5bd026cc68d06c854a4ab6fb5647f9eff5cb1342056c5536bc16cf53f32e"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0x21f00",
+      "end": "0x21f07",
+      "size": 7,
+      "sha256": "e8f1acaaefbf5d10db52a899485ab2598a0a68cd002ecfe0e3ed1c61aa00da31"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0x96ead0",
+      "end": "0x96eae2",
+      "size": 18,
+      "sha256": "5e817cb84bb264aa43f8af64230d46dcf0c5de7b999cf42dc524d310dc310a86"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0x9bb260",
+      "end": "0x9bb467",
+      "size": 519,
+      "sha256": "a0f57941473c67881a98be074f6b60754150341fbaec6cfdc11e5d33cc443fca"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0x9bfc90",
+      "end": "0x9bffff",
+      "size": 879,
+      "sha256": "0b449b93de605ff2fcb50547a4a22eb8eb154a16939f5bd774d348cd24a70b35"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0xaeffa0",
+      "end": "0xaf010a",
+      "size": 362,
+      "sha256": "b53db2ccb6186de5902fe517eeaac5472e133f5cc344bbf861f69b957462b360"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0xaf0140",
+      "end": "0xaf016f",
+      "size": 47,
+      "sha256": "8c6cf34baa61705a0a353418a00049d40ab32a8d1a96ede87c7a32fcd3effd61"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0xaf0790",
+      "end": "0xaf084c",
+      "size": 188,
+      "sha256": "50d90d85ea0fec2dcddcadc351de86caf0768649b748d50e0ec2b2af37da0d18"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0xaf0910",
+      "end": "0xaf0926",
+      "size": 22,
+      "sha256": "edf11d04b15192ec49a67a9604f698c3e6d8b49f3a5f7fe38e3582fd9ee80d2d"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0xaf1ae0",
+      "end": "0xaf1b81",
+      "size": 161,
+      "sha256": "cdef93327a62a8e35e6ecffebddae841cca42c56d2cdf25413fb487686f0a1f8"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0xaf23f0",
+      "end": "0xaf2412",
+      "size": 34,
+      "sha256": "ee3233429b31db5f4cab2a92d507a1ca794f9c152e58dbe0ab91a4f7925d7a6d"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0xaf37b0",
+      "end": "0xaf37d9",
+      "size": 41,
+      "sha256": "ca6793c8309288e34ab213a4a1e9bf65a55f4eced46bd1ec0387781fc4c43723"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0xb6bf80",
+      "end": "0xb6c01e",
+      "size": 158,
+      "sha256": "66e415b72caf062c8de9375f6b153351f92e94546fddc2733343d73fdb5047ae"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0xb6c0f0",
+      "end": "0xb6c2e2",
+      "size": 498,
+      "sha256": "76a39dbd9faf070afcaf010b22ca35ee2281b684196ead2e12fffa49c3559738"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0xb6c2f0",
+      "end": "0xb6c32d",
+      "size": 61,
+      "sha256": "b998f119769bc6c8cd311340cbc2110119c7972a67368202cc45f5e013ab0961"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0xb6cca0",
+      "end": "0xb6cd0e",
+      "size": 110,
+      "sha256": "7a542d6f3f038576c27b9332c84a9aaf0ed3471988c5955a8729ae71ff62fda4"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0xb6cd10",
+      "end": "0xb6cd5b",
+      "size": 75,
+      "sha256": "bb75daec278ed6c7c6c5dd4108babd11525e7f4ba16ce92ebf7776ecfd03daeb"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0xb6cd60",
+      "end": "0xb6cd65",
+      "size": 5,
+      "sha256": "8c4f59065b985c64844b59f08ae6d798ae3c2b71c10031839ab4fd163d2dcddf"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0xb6d980",
+      "end": "0xb6e2a8",
+      "size": 2344,
+      "sha256": "f23e0346adf5b58db22d18457b6bbf79b8f1579c976c6959659fc12cd7754909"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0xb6e550",
+      "end": "0xb6e61b",
+      "size": 203,
+      "sha256": "cca8c639bf8e63d33cfc7663791bab94f9e6d340f7f5019beb0375afc6965278"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0xb6fb80",
+      "end": "0xb6fc33",
+      "size": 179,
+      "sha256": "0e5efbdd06521e95c7c877fa6cd48d753842a07076cd905043ecf6d40fa1e0e3"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0xb9aba0",
+      "end": "0xb9abe8",
+      "size": 72,
+      "sha256": "ad5de6e94f6ede2c2ea53c69d9ebc8b1cccb46e0ddd9beac121fdbe49e037ebf"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0x1a6dfe0",
+      "end": "0x1a6dfef",
+      "size": 15,
+      "sha256": "c41ef0ae69ece7ab43fb9670648cd40f7dcd416c3b28998a0dedf868903b2de0"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0x1a7c610",
+      "end": "0x1a7c666",
+      "size": 86,
+      "sha256": "9c4d2551d708cdf2a475f178315d5b0cf95877635964137bc2a37aad919a3a4b"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0x1a7de80",
+      "end": "0x1a7de89",
+      "size": 9,
+      "sha256": "7f6a694fdb5df65e154321133b83c25e1ac777a8f6cb3e0da5061e4cd0b113b1"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0x1aa4810",
+      "end": "0x1aa4845",
+      "size": 53,
+      "sha256": "9108ae3fdaffc5b485446c1b1165eb1615c71bfcd04e325c46b38acd89d2d311"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0x1aa4845",
+      "end": "0x1aa486f",
+      "size": 42,
+      "sha256": "226da5421d9c384064115c069a2fc663854e5d7e48edb20fd3c84808d1b348b7"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0x1aa486f",
+      "end": "0x1aa4992",
+      "size": 291,
+      "sha256": "d16e22559771bcf71e9cc82378dceb806f00217a2c52c64097115188e161377f"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0x1aa4992",
+      "end": "0x1aa499b",
+      "size": 9,
+      "sha256": "bfb69eba4b23308a314557d222d6b7166880b87ca0a38de2ce7b1f8b3659b6d8"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0x1aa499b",
+      "end": "0x1aa49d4",
+      "size": 57,
+      "sha256": "7eca20a985926e62162e4d809abeaf598ebc1602a29486159d42a2e83d3c06f3"
+    },
+    {
+      "contract": "carry_model_retirement_contract.hpp",
+      "rva": "0x9bb260",
+      "end": "0x9bb467",
+      "size": 519,
+      "sha256": "a0f57941473c67881a98be074f6b60754150341fbaec6cfdc11e5d33cc443fca"
+    },
+    {
+      "contract": "carry_model_retirement_contract.hpp",
+      "rva": "0x9bef30",
+      "end": "0x9bef6f",
+      "size": 63,
+      "sha256": "e447fc1ef1b83a11438797b1abddcb986b93836ddbcf807a4a4834c4ab219fd8"
+    },
+    {
+      "contract": "carry_model_retirement_contract.hpp",
+      "rva": "0x9bef6f",
+      "end": "0x9beffb",
+      "size": 140,
+      "sha256": "13495013394555bda940f0522978949c336a36b900412493aca81fe8d7f51df3"
+    },
+    {
+      "contract": "carry_model_retirement_contract.hpp",
+      "rva": "0x9beffb",
+      "end": "0x9bf003",
+      "size": 8,
+      "sha256": "6435a19114dfc244b10bdda60d5544963e33ac4d68db275df414de306a73fef3"
+    },
+    {
+      "contract": "carry_model_retirement_contract.hpp",
+      "rva": "0x9bfc90",
+      "end": "0x9bffff",
+      "size": 879,
+      "sha256": "0b449b93de605ff2fcb50547a4a22eb8eb154a16939f5bd774d348cd24a70b35"
+    },
+    {
+      "contract": "carry_model_retirement_contract.hpp",
+      "rva": "0x9cc850",
+      "end": "0x9cc948",
+      "size": 248,
+      "sha256": "6877616a1e8d59df48298fe7f3ec068bdec62c3c7c723e9684bee52d4b4954f6"
+    },
+    {
+      "contract": "carry_model_retirement_contract.hpp",
+      "rva": "0x9cd030",
+      "end": "0x9cd0a4",
+      "size": 116,
+      "sha256": "6645dd970bafd154b6367de46c8fe9c9fb88a6a6e71922efb7c84243aba1bbb4"
+    },
+    {
+      "contract": "carry_model_retirement_contract.hpp",
+      "rva": "0x9cd0a4",
+      "end": "0x9cd0cd",
+      "size": 41,
+      "sha256": "7bccdde685d3e0dddacaf53126a2af67cb6c16104e0ef72077ab922db051d9c2"
+    },
+    {
+      "contract": "carry_model_retirement_contract.hpp",
+      "rva": "0x9cd0cd",
+      "end": "0x9ce8bb",
+      "size": 6126,
+      "sha256": "0b4543cffcd8b02364f8239afebe3b2a115dfebc609781fdc05a250c23b2cae8"
+    },
+    {
+      "contract": "carry_model_retirement_contract.hpp",
+      "rva": "0x9ce8bb",
+      "end": "0x9ce8c3",
+      "size": 8,
+      "sha256": "fef837ba9ca30103486317d89e6b6758ed2d83052c36591dc59b0297bbf5165d"
+    },
+    {
+      "contract": "carry_model_retirement_contract.hpp",
+      "rva": "0x9ce8c3",
+      "end": "0x9ce8e4",
+      "size": 33,
+      "sha256": "98a9f1d9111f060297bee1ce7d5e4db58f11684672bca9389bed8adb975dd841"
+    },
+    {
+      "contract": "carry_model_retirement_contract.hpp",
+      "rva": "0x9ce8e4",
+      "end": "0x9ce924",
+      "size": 64,
+      "sha256": "e7aac066ad973b9d27c3ecdad87ca55a5993633980dde191fd48df025da0bfd2"
+    },
+    {
+      "contract": "native_pose_window_contract.hpp",
+      "rva": "0x12caa10",
+      "end": "0x12caf44",
+      "size": 1332,
+      "sha256": "f5a2213ec74df874bdc110ef06efd589c95212905cabc4a5424a2e256541093e"
+    },
+    {
+      "contract": "native_pose_window_contract.hpp",
+      "rva": "0xfe8770",
+      "end": "0xfe87e0",
+      "size": 112,
+      "sha256": "07ddd8bc3ab07e3b992a3280ea318bad4146e252cb28fdd72c5f1bfa40d5165d"
+    },
+    {
+      "contract": "native_pose_window_contract.hpp",
+      "rva": "0x9c1f00",
+      "end": "0x9c2e8b",
+      "size": 3979,
+      "sha256": "291802c5626cd7ac7fa978bb5de121a0826963a9f52a1eb3c48d869113aee854"
+    }
+  ],
+  "slots": [
+    {
+      "contract": "camera_mode_window_contract.hpp",
+      "rva": "0x23c74b8",
+      "target": "0x11f5ef0"
+    },
+    {
+      "contract": "camera_mode_window_contract.hpp",
+      "rva": "0x23c74d0",
+      "target": "0x11f62b0"
+    },
+    {
+      "contract": "camera_mode_window_contract.hpp",
+      "rva": "0x23c74e0",
+      "target": "0x11f6090"
+    },
+    {
+      "contract": "camera_mode_window_contract.hpp",
+      "rva": "0x23c7508",
+      "target": "0x11f6760"
+    },
+    {
+      "contract": "camera_mode_window_contract.hpp",
+      "rva": "0x23c75f8",
+      "target": "0x11f6520"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0x22e65b8",
+      "target": "0xaf0140"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0x22e62b8",
+      "target": "0xaf23f0"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0x22e62c0",
+      "target": "0xaf37b0"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0x22f6380",
+      "target": "0xb6c2f0"
+    },
+    {
+      "contract": "carry_model_lifetime_contract.hpp",
+      "rva": "0x22f6388",
+      "target": "0x96ead0"
+    },
+    {
+      "contract": "native_pose_window_contract.hpp",
+      "rva": "0x2295308",
+      "target": "0x9cc850"
+    },
+    {
+      "contract": "explicit typed UI admission",
+      "rva": "0x23af968",
+      "target": "0xfe8770"
+    }
+  ],
+  "block_slot_correction": "final blockVT2295210+F8 (RVA2295308)->9CC850; +160->9C9440. No +160 rebind claim.",
+  "runtime_hook_targets": [
+    {
+      "rva": "0x11f6760",
+      "abi": "void(C0interface)"
+    },
+    {
+      "rva": "0xfe8770",
+      "abi": "void(UIinterface,u16hint,u32priority,u8flag,u8enable,u8extra6,u8extra7)"
+    },
+    {
+      "rva": "0x9bb260",
+      "abi": "void(block)"
+    },
+    {
+      "rva": "0xaf0140",
+      "abi": "void*(CS,u32deletingFlags)"
+    },
+    {
+      "rva": "0xb6cd60",
+      "abi": "void(CSentry)"
+    },
+    {
+      "rva": "0x9bfc90",
+      "abi": "void(block,u32actualBodyId,u8callerControl)"
+    },
+    {
+      "rva": "0x9cc850",
+      "abi": "void(block,u32actualBodyId)"
+    },
+    {
+      "rva": "0x9cd030",
+      "abi": "void(GO=P-20)"
+    }
+  ],
+  "boundaries": [
+    "Full declared chained PE ranges/leaves; outer rebuild chained range contains switch data, so pins cover it but linear disassembly does not establish every switch target.",
+    "11F6760 full gate contains direct promotion11F7210 path; no singleton update may run while writer owned.",
+    "FE8770 suppression is ONLY return12CAD45 +5D,2,0,1,0,0 +paired owned UI identity. All other hint producers forward.",
+    "Any nested global/lifecycle/foreign job refuses privately; no silent fallback while native pose required.",
+    "Held lifetime currently body1 block/CS/entry only; carry needs BOTH participants and raw primary callback lifetime.",
+    "Healthy required window + actual remote sleep are not run by this stage. Native sleep/carry/vehicle activation remains disabled."
+  ]
+}

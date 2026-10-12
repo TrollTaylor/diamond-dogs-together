@@ -1,0 +1,19 @@
+{
+  "base_manifest_sha256": "6f96e9d01936e8723f34a784c1822a55a171efdd5294e518eb5fafb1ffb2c824",
+  "retail_sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+  "actual_refused_run": "67c1611251334960b1c9269a4b95f4a6 reported by coordinator; installed1,born0,fault0, no optin/native seed",
+  "correct_owner_chain": {
+    "rva": "0xff5b51",
+    "size": 18,
+    "bytes": "488b8108040000488b8838010000488b4160",
+    "sha256": "88fe7690781f20adea5444f2766f6aa7eb6256ce4a3573b797311747e28871cc",
+    "source": "Existing exact partner_player_contract site and ResolveCore",
+    "meaning": "PS+408->block; block+138->P; P+60->Q"
+  },
+  "removed_assumption": "PS+138==P was not qualified. This stage never reads PS+138; typed paired block138/PS408 chain retained.",
+  "fixtures": "Synthetic PS138 deliberately unrelated0DECAFBAD; block138 explicitly P. New fixture would refuse old erroneous reader. Fixtures unrun by subagent.",
+  "diagnostics": "bounded birth entered/entryReady/exactCaller/body1/model/completed/overlap counters; lastcount/base clamped16; callerRVA only insideimage; constant first-failure model/birth stage. No rawpointers exported.",
+  "native_calls_or_writes_added": false,
+  "runtime_used": false,
+  "main_modified": false
+}

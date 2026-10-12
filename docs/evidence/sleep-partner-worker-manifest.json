@@ -1,0 +1,113 @@
+{
+  "schema": "mgscoop-body1-sleep-worker-v1",
+  "retail_sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+  "default_activation": false,
+  "native_calls_executed": false,
+  "compiled": false,
+  "fixtures_executed": false,
+  "review": "Independent shared_riding_research review: watchdog/partial-CAS/typed-pair/retirement corrections; no remaining actionable defect found in reviewed correction. Runtime local0 isolation remains blocked.",
+  "files": [
+    {
+      "path": "integration.json",
+      "bytes": 5471,
+      "sha256": "29ffa4d285c1c93d39caa4410fced8bed1e1d6cc28e5aa86641589d6ee0e854c"
+    },
+    {
+      "path": "native/include/mgscoop/sleep_partner_test.hpp",
+      "bytes": 1967,
+      "sha256": "83a08576266716884aadbce5e0642ea5bb40c010533ddcc41a98f0692ea3abc2"
+    },
+    {
+      "path": "native/sleep_partner_controls.hpp",
+      "bytes": 4231,
+      "sha256": "128224abdf89c652846e59b37192412f477acfd9a8a72fed8da84cba5675efd5"
+    },
+    {
+      "path": "native/sleep_partner_lease.hpp",
+      "bytes": 11444,
+      "sha256": "f3d25f7e6fd0de07602e6e383302663db7bd9f3c2bc2c5a0a0554e04ccd3c7b3"
+    },
+    {
+      "path": "native/sleep_partner_owned_graph.hpp",
+      "bytes": 7480,
+      "sha256": "85f248f31ac7c7c153d676e85fac35dfc235164087e679d2cb8c2b9470b162e5"
+    },
+    {
+      "path": "native/sleep_partner_owned_read.hpp",
+      "bytes": 10929,
+      "sha256": "95972efdc8e4c0b2dd7f7d6304b5cc6102d7c6f94fbbd2291e36f8269ff772b2"
+    },
+    {
+      "path": "native/sleep_partner_test.cpp",
+      "bytes": 19621,
+      "sha256": "46753844206b900e92dc95ba5aba8eb4a46e78860965f9a936caf5c7f8697330"
+    },
+    {
+      "path": "native/sleep_partner_transition_read.hpp",
+      "bytes": 4020,
+      "sha256": "028e2f7da8bbcc485a1bbc9e09231966d574a6468abdc2692d8d1b8c2851cffe"
+    },
+    {
+      "path": "tests/sleep_partner_lease_tests.cpp",
+      "bytes": 12805,
+      "sha256": "3af787a76760c8bcf4b95a1e7eabe1f1a32fb5bfd03912d0dd0ce2b5176e047a"
+    },
+    {
+      "path": "tests/sleep_partner_owned_tests.cpp",
+      "bytes": 11637,
+      "sha256": "e43892174d6ab62a7be87b69577e5d8610bfb5db569bbfa06c9f11a7a7609867"
+    }
+  ],
+  "reference_dependencies": [
+    {
+      "path": "native/sleep_plugin_read.hpp",
+      "bytes": 11444,
+      "sha256": "85b770d132f2cd0b39712cdf030bc65b0ff8c4ed9f4804ea6711a25b431410c3"
+    },
+    {
+      "path": "native/sleep_plugin_contract.hpp",
+      "bytes": 82481,
+      "sha256": "04657738006b0f318153af2fd51bf6adf031b7b435950820bc880dedebdaa0e5"
+    },
+    {
+      "path": "native/sleep_graph_read.hpp",
+      "bytes": 7536,
+      "sha256": "3100459457b5a5e3f080063ad6e7a3735fd6292c1f158edde19378b141e5da0c"
+    },
+    {
+      "path": "native/sleep_graph_contract.hpp",
+      "bytes": 28909,
+      "sha256": "d8e302f4a8c66a5c22246f6cb6bae68a2be38a243beef55133fcac06d52e2ed7"
+    },
+    {
+      "path": "native/sleep_loaded_requests.hpp",
+      "bytes": 1907,
+      "sha256": "4d8dec20ec6446011cd3a922c03043aad5f2a9555c234de940c2762c5eff4192"
+    },
+    {
+      "path": "native/sleep_seed_contract.hpp",
+      "bytes": 51040,
+      "sha256": "a94dfdd225b836c7db6301790c1397d6c2c670201b178c82430588b0a6ce362b"
+    },
+    {
+      "path": "native/sleep_body0_transition_contract.hpp",
+      "bytes": 38287,
+      "sha256": "a6d03e35aec76c923d7245ce70df52c3fa290a9e130e83af65b0cb258b6a5a61"
+    },
+    {
+      "path": "native/include/mgscoop/native_pose_window.hpp",
+      "bytes": 4096,
+      "sha256": "edc811965df7ef7410ecfaee0fff45b373592510c8e59a7922e7adf2ec840252"
+    },
+    {
+      "path": "native/include/mgscoop/partner_player.hpp",
+      "bytes": 29477,
+      "sha256": "71a3137b43779e08626ef2f726b961bb8b257948e0423a0b340b0aa2d63be82a"
+    },
+    {
+      "path": "tests/sleep_plugin_tests.cpp",
+      "bytes": 11042,
+      "sha256": "241a7db38cb692d5ed1c87776e6ec0c442a8349fb8a7aa2b42a4d72f0fc0dd16"
+    }
+  ]
+}

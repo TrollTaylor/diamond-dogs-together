@@ -313,6 +313,8 @@ struct Hooks {
     // (partner_net::PeerSendsInputV5).
     bool (*peer_input_v5)(void* context) noexcept = nullptr;
     bool (*peer_input_v6)(void* context) noexcept = nullptr;
+    // Private native-pose lease: no normal stance/animation/DM command may override it.
+    bool (*native_pose_suppressed)(void* context) noexcept = nullptr;
 };
 // A native sender whose peer never sent v5 sends v4 frames plus one v5 probe
 // this often (an older build drops only the probe; the edge sets repeat).
@@ -910,6 +912,11 @@ struct Driver {
     Mission mission;
 };
 
+
+// Read-only admission from the same effective settings as Tick. The caller
+// must serialize with driver ticks; no caller-supplied active flag is accepted.
+// Base dm=map remains the ordinary fallback after the native drive leaves.
+bool NativeSleepPresentationReady(const Driver& driver) noexcept;
 
 // Install: settings from lab.ini, everything else cleared.
 void Configure(Driver& driver, const LabConfig& lab) noexcept;
