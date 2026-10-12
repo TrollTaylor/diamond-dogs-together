@@ -18,6 +18,7 @@
 #include "mgscoop/carry_info.hpp"
 #include "mgscoop/sleep_info.hpp"
 #include "mgscoop/sleep_partner_test.hpp"
+#include "mgscoop/native_pose_sleep_parts.hpp"
 #include "sleep_partner_bridge.hpp"
 #include "sleep_seed_contract.hpp"
 #include "sleep_body0_transition_contract.hpp"
@@ -498,6 +499,7 @@ bool EnsurePartnerSleepConfigured() noexcept {
  psleep::BindCarryHeldQuery(&ih::NativePoseCarryRecipientHeld);
  // Central composite listener. Root appends Carry/Road here, rather than
  // registering another listener after this one or while any purpose is held.
+ if(!ih::RegisterNativePosePartsPollValidator(&psleep::AllowPartsPoll))return false;
  ih::RegisterNativePoseJobHooks(PartnerSleepBefore,PartnerSleepAfter,PartnerSleepClosed);
  partner_sleep_configured=true;Log("partner_sleep=private_configured;enabled=0;production=0\r\n");return true;
 }

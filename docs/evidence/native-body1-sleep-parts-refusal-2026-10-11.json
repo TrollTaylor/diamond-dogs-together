@@ -1,0 +1,67 @@
+{
+  "schema": 1,
+  "run": "8933dd7f75444e019e88ebe418740620",
+  "kind": "hidden-actual-partial",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261012-045121-038c159edb6c47f195868c4345b2546b\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 4,
+  "failure": "[host] frame 33 was not written: missing_frame_receipt",
+  "closed": true,
+  "forced": true,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 79248607,
+      "end": 79402469,
+      "sha256": "e63b7f11acccb4e0360cb148f472b5238de54dc5c8e789fc2e6395b8ba52348c"
+    },
+    {
+      "role": "guest",
+      "start": 88115682,
+      "end": 88268015,
+      "sha256": "9208d79e26ea91c1ace713371a56673f1acae5cbfcf76a48abcf55a579231ce3"
+    }
+  ],
+  "indexed_readings": {
+    "host": [
+      "partnersleep;enabled=1;scope=private_worker",
+      "cachedpose;ready=1;local=1;s0=804.6,339.1,1636.5;s1=800.9,339.3,1639.3;vars=804.6,339.1,1636.5;gap=0.000;seq=2396",
+      "posewindow;enabled=1;sleep_cfg=1;scope=private_worker;refused=0"
+    ],
+    "guest": []
+  },
+  "limitations": "172 audited checks passed; actualWUguest6600HP/cause2andSleepseed/onset followedbyheldmodelrefusal beforeonsetcapture. Exactcleanupcallerandpartsstate nowrecorded; no successfulsleepcycle. Scopedforcedcleanup restored63 protectedfilesandsaves; nofocus/systeminput/desktopswitch.",
+  "native_events": [
+    "pose_parts;paired=1;q180=0;q184=0;flags=1a487;count=2;realized=2;local=0;selected=0;id0=0;id1=1;pool0=0;pool1=1;status0=3;status1=3;block0=1;block1=1;caller_rva=9c2a2a",
+    "pose_teardown;hook=9cd030;kind=3;caller_rva=9c2a2a;argument=4294967295;auxiliary=4294967295;range=0;count=4294967295;base=4294967295;paired=1;typed0=1;typed1=1;same0=1;same1=1;roles0=16;roles1=16;retained0=16;retained1=16;type_rva=22953d0;slot=4294967295;slot_fn=0;slot_match=0;seq=3980;thread=80140;owned=0;opened=0;job=0;consumer=1;held=1;purposes=1",
+    "pose_fail;reason=pose_live_model_teardown;thread=80140;seq=3980;held=1;clear=0;opened=0;job=0;consumer=1;generation=1;epoch=3;owned=0"
+  ],
+  "first_worker_refusal": {
+    "run_id": "8933dd7f75444e019e88ebe418740620",
+    "role": "host",
+    "pid": 77740,
+    "event": "refused",
+    "reason": "pose_live_model_teardown",
+    "sequence": 31,
+    "tick_ms": 26846125,
+    "thread": 80140,
+    "api_result": 0,
+    "width": 0,
+    "height": 0,
+    "requested_flags": 0,
+    "forwarded_flags": 0,
+    "gameplay_accepted": null
+  },
+  "native_sleep_opt_in": true,
+  "native_sleep_seeded": true,
+  "native_sleep_cycle_accepted": false,
+  "feature_activation_scope": "normal installed release; private native sleep opt-in was executed",
+  "diagnosis": "Actual9CD030 appearance poll from9C2A2A was classified as held-model teardown despite paired body1 status3, pending masks0 and unchanged current models. A narrow shared-scope no-op forwarding correction is under qualification; real resource teardown guards remain required."
+}

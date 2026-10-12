@@ -13,6 +13,9 @@
 #include "sleep_partner_lease.hpp"
 #include "sleep_partner_controls.hpp"
 #include "sleep_partner_transition_read.hpp"
+#include "mgscoop/native_pose_sleep_parts.hpp"
+#include "sleep_parts_policy.hpp"
+#include "sleep_parts_read.hpp"
 #include "sleep_loaded_requests.hpp"
 #include "sleep_seed_contract.hpp"
 #include "sleep_body0_transition_contract.hpp"
@@ -277,6 +280,45 @@ void Closed(const hk::NativePoseJobContext& c,bool cleanup) noexcept {
   }
  }else if(Active()&&!cleanup)Abort("partner_sleep_window_cleanup_failed");
  ReleaseSRWLockExclusive(&lock);
+}
+bool AllowPartsPoll() noexcept {
+ const Preserve preserve;if(!TryAcquireSRWLockShared(&lock))return false;
+ const auto run=[]()noexcept {
+  const auto now=GetTickCount64();
+  if(!configured||!Worker()||!Lifetime()||fault||clearPending||pausedAt||!Active()||
+   !policy::FreshTarget(target,now)||!policy::SameTargetScene(target,ownedTarget)||
+   policy::Watchdog(preparing,preparedAt,heldLease,now))return false;
+  hk::NativePoseSleepPartsContext c[3]{};
+  sleep_parts_graph::Sample a{},b{},last{};
+  const auto read=[&](unsigned index,sleep_parts_graph::Sample& out)noexcept {
+   if(!hk::ReadNativePoseSleepPartsPoll(c[index])||!sleep_parts_policy::ContextValid(c[index])||
+    c[index].image!=imageBase||c[index].thread!=GetCurrentThreadId()||
+    c[index].generation!=ownedTarget.armGeneration||c[index].sceneEpoch!=ownedTarget.armEpoch)return false;
+   // All flags below are established by the actual real shared getter, not a
+   // passed Scope or an invented local0 control-mask/owned odd-job receipt.
+   sleep_parts_plugin::Scope s{};s.exactGate=configured;s.admitted=target.pairedReady;s.ready=s.armed=true;
+   s.image=imageBase;s.player=c[index].player;s.data=c[index].data;s.state=c[index].state;
+   s.mission=target.mission;s.ownedMission=ownedTarget.mission;s.generation=target.peerGeneration;s.ownedGeneration=ownedTarget.peerGeneration;
+   s.epoch=target.worldEpoch;s.ownedEpoch=ownedTarget.worldEpoch;s.thread=c[index].thread;s.ownerThread=GetCurrentThreadId();
+   s.sequenceBefore=c[index].sequence;s.sequenceAfter=hk::WindowSeq();s.now=now;s.poll=target.poll;s.batch=partner_defer::InBatch();
+   if(!sleep_parts_graph::Read(Read,s,out))return false;
+   const auto& body=out.observed.owner.body[1];const auto& graph=out.observed.graph[1];
+   if(body.block!=c[index].block||body.ps!=c[index].ps||graph.cs!=c[index].modelCS||graph.entry!=c[index].modelEntry||
+    graph.mog!=graphMog||graph.lifetime!=graphLifetime)return false;
+   lease::Sample sample{};sample.owner={c[index].player,c[index].data,body.lifeRecord,body.block,body.ps,body.primary,body.node,
+    body.records,body.bitmap,graph.cs,graph.controller,target.mission,target.peerGeneration,c[index].thread,
+    c[index].generation,c[index].sceneEpoch,target.worldEpoch,c[index].birthSerial};
+   sample.health=out.health;sample.maximumHealth=out.maximumHealth;sample.stun=out.stun;sample.maximumStun=out.maximumStun;
+   sample.lifeState=body.lifeState;sample.mode=body.mode;sample.requested=body.requested;sample.action=body.action;sample.qAction=body.qAction;
+   sample.stance=static_cast<std::uint8_t>(out.psPacked&15u);sample.cause=2;sample.nodeActive=body.nodeActive;
+   sample.graphCurrent=graph.currentNode;sample.graphSleepCandidate=graph.sleepHashCandidate;
+   return sleep_parts_policy::CurrentSample(preparing,preparedAt,preparedOwner,heldLease,sample,now);
+  };
+  if(!read(0,a)||!read(1,b)||!sleep_parts_policy::Same(c[0],c[1])||!sleep_parts_graph::Same(a,b)||
+    !read(2,last)||!sleep_parts_policy::Same(c[1],c[2])||!sleep_parts_graph::Same(b,last))return false;
+  hk::NativePoseSleepPartsContext final{};return hk::ReadNativePoseSleepPartsPoll(final)&&sleep_parts_policy::Same(c[2],final);
+ };
+ const bool ok=run();ReleaseSRWLockShared(&lock);return ok;
 }
 bool SuppressForcedStance() noexcept {
  const Preserve preserve;if(!TryAcquireSRWLockShared(&lock))return true;

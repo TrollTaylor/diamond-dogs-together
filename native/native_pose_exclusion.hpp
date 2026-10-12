@@ -56,6 +56,11 @@ public:
    }
   }
  }
+ // Actual private noncopyable read ticket, not a sampled reader count.
+ bool OwnsRead(std::uint32_t thread,const ReadTicket& ticket) const noexcept {
+  if(!thread||!ticket.armed_||ticket.gate_!=this||ticket.thread_!=thread||poisoned_.load(std::memory_order_acquire))return false;
+  const auto word=word_.load(std::memory_order_acquire);return word&&!(word>>32);
+ }
  bool EndRead(std::uint32_t thread,ReadTicket& ticket) noexcept {
   if(!ticket.armed_||ticket.gate_!=this||ticket.thread_!=thread)return false;
   auto seen=word_.load(std::memory_order_acquire);

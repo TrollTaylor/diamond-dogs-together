@@ -22,6 +22,7 @@ bool RequestWake() noexcept; // queues; strict current odd-window CAS only
 bool Before(const partner_input_hook::NativePoseJobContext&) noexcept;
 bool After(const partner_input_hook::NativePoseJobContext&) noexcept;
 void Closed(const partner_input_hook::NativePoseJobContext&,bool cleanupComplete) noexcept;
+bool AllowPartsPoll() noexcept; // actual shared/even getter + fresh retained body1 read; no mutation/lease refresh
 bool SuppressForcedStance() noexcept; // root/driver uses while preparing/leased; existing normal source behavior otherwise
 struct Status {
  bool configured=false,enabled=false,active=false,held=false,wakePending=false,clearPending=false;

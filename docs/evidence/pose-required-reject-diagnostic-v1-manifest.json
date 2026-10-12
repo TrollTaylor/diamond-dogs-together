@@ -1,0 +1,41 @@
+{
+  "frozen": true,
+  "classification": "required-window first refusal diagnostics, paired typed Pflags/C0 data, no gate changes",
+  "compiled": false,
+  "runtime_used": false,
+  "main_modified": false,
+  "activation": false,
+  "root_integration": "Apply source.diff only; copy native/native_pose_reject_diagnostic.hpp and add native_pose_reject_diagnostic_tests to reader targets. Full snapshots are review copies. Existing refusal returns, validations, C0 masks, health and counters remain unchanged.",
+  "files": [
+    {
+      "path": "evidence.json",
+      "size": 1135,
+      "sha256": "d82538c4f604dbc4db97dc8a4f69076052287144dd8ccf7dee40842742e1a6eb"
+    },
+    {
+      "path": "native\\native_pose_reject_diagnostic.hpp",
+      "size": 2583,
+      "sha256": "09788ebdc92d81f832d6749f90db5fa39209eeefcc5c298414c8bf1d4b0d929e"
+    },
+    {
+      "path": "native\\native_pose_window_impl.inc",
+      "size": 52587,
+      "sha256": "ca8aa509c5079f3ed95c6c0b4d8b1bb263a77dd7fcbdfc969b946a252fcb4de6"
+    },
+    {
+      "path": "native\\partner_input_hook.cpp",
+      "size": 139870,
+      "sha256": "54e19c65028fca843060e444bc3127faeb0535125266d7d0eeeac15a676f3f70"
+    },
+    {
+      "path": "source.diff",
+      "size": 8291,
+      "sha256": "336c2211e08cdd3833d7c6db08481234e321e8c1ca35b35ab7626864ec96633d"
+    },
+    {
+      "path": "tests\\native_pose_reject_diagnostic_tests.cpp",
+      "size": 3493,
+      "sha256": "ba9378dc1b486ea285927982dae359d129fe65643caf6fb94d268e327444b99c"
+    }
+  ]
+}

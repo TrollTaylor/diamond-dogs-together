@@ -25,6 +25,9 @@ detail::NativePoseTestBindings g_pose_bindings{};
 NativePoseWorkerBindings g_pose_worker{};
 holds::Owners g_pose_owners{};cp::Pair g_pose_carry_pair{};
 std::uint64_t g_pose_carry_serial=0,g_pose_carry_birth0=0;
+NativePosePartsPollValidator g_pose_parts_validator=nullptr;
+struct PosePartsPoll {const PoseSharedLease* read=nullptr;std::uintptr_t go=0,caller=0;};
+thread_local PosePartsPoll t_parts;
 NativePoseBeforeFn g_pose_before=nullptr;NativePoseAfterFn g_pose_after=nullptr;NativePoseClosedFn g_pose_closed=nullptr;
 struct PoseWindow {
  px::WriteTicket writer;cw::Token c0;NativePoseJobContext context{};
@@ -54,6 +57,14 @@ bool PoseRequired() noexcept {return InterlockedCompareExchange(&g_pose_required
 void PoseFail(const char* why) noexcept {
  const bool first=InterlockedCompareExchange(&g_pose_fault,1,0)==0;
  if(first)g_pose_reason=why;g_pose_gate.StopNewWriters();if(!first)return;
+ const DWORD incoming=GetLastError();
+ if(g_log){char line[384]{};const auto thread=GetCurrentThreadId();
+  if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
+   "pose_fail;reason=%s;thread=%u;seq=%u;held=%u;clear=%u;opened=%u;job=%u;consumer=%u;generation=%u;epoch=%u;owned=%u\r\n",
+   why,thread,static_cast<unsigned>(g_window_seq),g_pose_held?1u:0u,g_pose_clear?1u:0u,t_pose.opened?1u:0u,t_pose.job?1u:0u,
+   static_cast<unsigned>(t_pose.context.consumer),g_pose_generation,g_pose_epoch,
+   t_pose.opened&&g_pose_gate.Owns(thread,g_pose_generation,g_pose_epoch,t_pose.writer)?1u:0u)))g_log(line);
+ }SetLastError(incoming);
  if(g_pose_bindings.enabled){if(g_pose_bindings.refuse)g_pose_bindings.refuse(why);}
  else if(g_pose_worker.refuse)g_pose_worker.refuse(why);
 }
@@ -165,18 +176,70 @@ bool PoseBirthCurrent(const pi::Arm& a,const NativePoseJobContext& c0,bool bind=
 bool PoseContextBirthCurrent(const NativePoseJobContext& c0) noexcept {
  pi::Arm a{};a.P=c0.player;a.blk1=c0.block;a.ps1=c0.state;return PoseBirthCurrent(a,c0);
 }
+namespace parts_policy=sleep_parts_policy;
+bool PosePartsContext(NativePoseSleepPartsContext& out) noexcept {
+ out={};const auto* ticket=t_parts.read;const auto tid=GetCurrentThreadId();const auto seq=static_cast<std::uint32_t>(g_window_seq);
+ if(g_pose_bindings.enabled||!ticket||!ticket->tracked||ticket->thread!=tid||ticket->slot>=32||!ticket->serial||
+ t_readers.serial[ticket->slot]!=ticket->serial||!g_pose_gate.OwnsRead(tid,t_readers.tickets[ticket->slot])||
+ !PoseWorker()||!PoseRequired()||!g_pose_installed||!g_pose_original_view.load(std::memory_order_acquire)||
+ g_pose_fault||g_shutdown||g_pose_clear||g_pose_owners.pending||g_pose_owners.held!=holds::sleep||!g_pose_held||
+ t_pose.opened||t_pose.job||(seq&1u)||!seq||partner_defer::InBatch()||tid!=g_pose_thread||
+ t_parts.go!=g_pose_go||t_parts.caller!=g_base+0x9c2a2a||!PoseParticipantsLive()||
+ !NativePoseWholePlayerLifetimeLive()||!NativePoseLocalCacheIsolationLive())return false;
+ pi::Arm arm{};if(!ReadArm(arm)||!arm.enabled||!arm.native||arm.holdlog||arm.cam!=PartnerInputCam::sandbox||
+ arm.gen!=g_pose_generation||arm.rates_epoch!=g_pose_epoch||arm.P!=g_pose_player||arm.go!=g_pose_go||
+ arm.root1!=g_pose_root||arm.blk1!=g_pose_block)return false;
+ NativePoseJobContext a{},b{};if(!PoseModel(arm,a)||!PoseModel(arm,b)||a.modelCS!=b.modelCS||a.modelEntry!=b.modelEntry||
+ a.modelCS!=g_pose_cs||a.modelEntry!=g_pose_entry||!PoseBirthCurrent(arm,b))return false;
+ native_pose_teardown_diagnostic::Model expected[2]{};expected[1]={arm.P,arm.blk1,arm.ps1,b.modelCS,b.modelEntry,1};
+ native_pose_parts_diagnostic::Witness w{};auto reader=PoseReader;
+ if(!native_pose_parts_diagnostic::Pair(reader,g_base,g_pose_go,expected,w)||!parts_policy::NoRemoteWork(w))return false;
+ std::uintptr_t q=0,state=0,sync=1;
+ if(!PoseRead(arm.P+0x60,q)||q!=w.q||!PoseRead(q+0x1e8,state)||!state||!PoseRead(arm.P+0xa8,sync)||sync)return false;
+ pi::Arm after{};if(!ReadArm(after)||after.gen!=arm.gen||after.rates_epoch!=arm.rates_epoch||after.P!=arm.P||
+ after.go!=arm.go||after.blk1!=arm.blk1||after.ps1!=arm.ps1||!after.enabled||!after.native||
+ !PoseBirthCurrent(after,b)||static_cast<std::uint32_t>(g_window_seq)!=seq||partner_defer::InBatch()||
+ !g_pose_gate.OwnsRead(tid,t_readers.tickets[ticket->slot])||g_pose_fault||g_pose_clear||g_pose_owners.pending||
+ g_pose_owners.held!=holds::sleep)return false;
+ out={g_base,arm.P,arm.go,q,state,arm.blk1,arm.ps1,b.modelCS,b.modelEntry,arm.gen,arm.rates_epoch,tid,seq,0x9c2a2a,
+ g_pose_bound_birth,ticket->serial,w.flags,(w.mask180|w.mask184)&2u,w.parts[1],w.pool[1]};
+ return parts_policy::ContextValid(out);
+}
+namespace reject=native_pose_reject_diagnostic;
+volatile LONG g_pose_reject_logged=0;
+void PoseRejectDiagnostic(reject::Stage stage,const char* detail,const pi::Arm* arm,
+ std::uint32_t consumer=UINT32_MAX,std::uint32_t skip=UINT32_MAX) noexcept {
+ const DWORD incoming=GetLastError();
+ if(!PoseRequired()||!g_log){SetLastError(incoming);return;}
+ const auto old=static_cast<std::uint32_t>(InterlockedOr(&g_pose_reject_logged,static_cast<LONG>(reject::Bit(stage))));
+ if(!reject::First(old,stage)){SetLastError(incoming);return;}
+ reject::Snapshot snapshot{};auto reader=PoseReader;
+ const bool paired=reject::Pair(reader,g_base,g_pose_player,snapshot);
+ const bool owner=arm&&arm->P==g_pose_player&&arm->go==g_pose_go&&arm->root1==g_pose_root&&arm->blk1==g_pose_block;
+ char line[512]{};
+ if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
+  "pose_reject;stage=%s;detail=%s;consumer=%u;skip=%u;paired=%u;c0=%u;flags=%x;count=%u;realized=%u;real=%u;selected=%u;active=%u;request=%u;seq=%u;held=%u;fault=%u;armowner=%u;armgen=%u;posegen=%u;enabled=%u;native=%u;ready=%u;inputfault=%u;inj=%u;batch=%u\r\n",
+  reject::Name(stage),detail?detail:"unknown",consumer,skip,paired?1u:0u,snapshot.c0?1u:0u,
+  snapshot.flags,snapshot.count,snapshot.realized,snapshot.real,snapshot.selected,snapshot.active,snapshot.requested,
+  static_cast<unsigned>(g_window_seq),g_pose_held?1u:0u,g_pose_fault?1u:0u,owner?1u:0u,
+  arm?arm->gen:0u,g_pose_generation,arm&&arm->enabled?1u:0u,arm&&arm->native?1u:0u,
+  g_ready?1u:0u,g_faulted?1u:0u,g_inj_valid?1u:0u,partner_defer::InBatch()?1u:0u)))g_log(line);
+ SetLastError(incoming);
+}
 bool PoseBegin(const pi::Arm* a) noexcept {
  if(!PoseRequired()){InterlockedIncrement(&g_window_seq);return true;}
  if(!a||t_pose.opened||g_pose_fault||g_shutdown||!PoseWorker()||GetCurrentThreadId()!=g_pose_thread||
     a->P!=g_pose_player||a->go!=g_pose_go||a->root1!=g_pose_root||a->blk1!=g_pose_block||
     !a->gen||a->rates_epoch!=g_pose_epoch||!a->enabled||!a->native||
     a->cam!=PartnerInputCam::sandbox||a->holdlog||partner_defer::InBatch()||(g_window_seq&1)){
+  PoseRejectDiagnostic(reject::Stage::admission,"pose_window_admission",a);
   InterlockedIncrement(&g_pose_suppressed);g_pose_reason="pose_window_admission";return false;
  }
  if(!PoseParticipantsLive()){PoseFail("pose_participant_patch_drift");return false;}
  if(!g_pose_bindings.enabled&&!NativePoseWholePlayerLifetimeLive()){PoseFail("pose_whole_player_lifetime_missing");return false;}
  px::Admission admission{true,true,true,true,true,true,g_pose_generation,g_pose_epoch,g_pose_thread};
  if(g_pose_gate.TryWrite(admission,t_pose.writer)!=px::Status::entered){
+  PoseRejectDiagnostic(reject::Stage::busy,"pose_window_busy",a);
   InterlockedIncrement(&g_pose_suppressed);g_pose_reason="pose_window_busy";return false;
  }
  if(a->gen!=g_pose_generation){
@@ -214,6 +277,7 @@ bool PoseBegin(const pi::Arm* a) noexcept {
  }
  auto read=PoseReader;auto sample=[]() noexcept {return PoseScope();};cw::Reply result{};
  if(!cw::Capture(read,sample,t_pose.c0,result)){
+  PoseRejectDiagnostic(reject::Stage::capture,result.reason,a);
   g_pose_reason=result.reason;InterlockedIncrement(&g_pose_suppressed);
   InterlockedIncrement(&g_window_seq);t_pose.opened=false;
   if(!g_pose_gate.EndWrite(g_pose_thread,g_pose_generation,g_pose_epoch,true,true,t_pose.writer))PoseFail("pose_capture_cleanup");
@@ -402,12 +466,44 @@ void PoseUpdate(void* object) noexcept {
  __try {SetLastError(incoming);g_pose_update(object);outgoing=GetLastError();}
  __finally {PoseExitShared(read);SetLastError(outgoing);}
 }
-bool PoseDestroyRefused(std::uintptr_t object,unsigned kind) noexcept {
+namespace td=native_pose_teardown_diagnostic;
+volatile LONG g_pose_teardown_logged=0;
+void PoseTeardownDiagnostic(std::uintptr_t object,unsigned kind,std::uint32_t hook,std::uintptr_t caller,std::uint32_t argument,std::uint32_t auxiliary,
+ const birth::Receipt& localBirth,const birth::Receipt& partnerBirth) noexcept {
+ const DWORD incoming=GetLastError();
+ if(!g_log||InterlockedCompareExchange(&g_pose_teardown_logged,1,0)!=0){SetLastError(incoming);return;}
+ td::Model expected[2]{};
+ if(localBirth.ready)expected[0]={localBirth.identity.player,localBirth.identity.block,localBirth.identity.state,localBirth.identity.cs,localBirth.identity.entry,0};
+ expected[1]={g_pose_player,g_pose_block,0,g_pose_cs,g_pose_entry,1};
+ if(partnerBirth.ready&&partnerBirth.identity.block==g_pose_block)expected[1].state=partnerBirth.identity.state;
+ if(g_pose_owners.held&holds::carry){for(unsigned id=0;id<2;++id){const auto& b=g_pose_carry_pair.body[id];expected[id]={g_pose_carry_pair.player,b.block,b.state,b.cs,b.entry,id};}}
+ td::Snapshot snapshot{};auto reader=PoseReader;const bool paired=td::Pair(reader,g_base,object,hook,expected,snapshot);
+ if(hook==0x9cd030){native_pose_parts_diagnostic::Witness parts{};
+  const bool partsPair=native_pose_parts_diagnostic::Pair(reader,g_base,object,expected,parts);char partsLine[512]{};
+  if(SUCCEEDED(StringCchPrintfA(partsLine,ARRAYSIZE(partsLine),
+   "pose_parts;paired=%u;q180=%x;q184=%x;flags=%x;count=%u;realized=%u;local=%u;selected=%u;id0=%u;id1=%u;pool0=%u;pool1=%u;status0=%u;status1=%u;block0=%u;block1=%u;caller_rva=%x\r\n",
+   partsPair?1u:0u,parts.mask180,parts.mask184,parts.flags,parts.count,parts.realized,parts.local,parts.selected,
+   static_cast<unsigned>(parts.actualId[0]),static_cast<unsigned>(parts.actualId[1]),static_cast<unsigned>(parts.pool[0]),static_cast<unsigned>(parts.pool[1]),
+   static_cast<unsigned>(parts.parts[0]),static_cast<unsigned>(parts.parts[1]),parts.blockMatched[0]?1u:0u,parts.blockMatched[1]?1u:0u,td::Rva(g_base,caller))))g_log(partsLine);
+ }
+ char line[768]{};
+ if(SUCCEEDED(StringCchPrintfA(line,ARRAYSIZE(line),
+  "pose_teardown;hook=%x;kind=%u;caller_rva=%x;argument=%u;auxiliary=%u;range=%u;count=%u;base=%u;paired=%u;typed0=%u;typed1=%u;same0=%u;same1=%u;roles0=%u;roles1=%u;retained0=%u;retained1=%u;type_rva=%x;slot=%u;slot_fn=%x;slot_match=%u;seq=%u;thread=%u;owned=%u;opened=%u;job=%u;consumer=%u;held=%u;purposes=%u\r\n",
+  hook,kind,td::Rva(g_base,caller),argument,auxiliary,snapshot.rangeKnown?1u:0u,snapshot.count,snapshot.base,paired?1u:0u,snapshot.typed[0]?1u:0u,snapshot.typed[1]?1u:0u,
+  snapshot.same[0]?1u:0u,snapshot.same[1]?1u:0u,snapshot.roles[0],snapshot.roles[1],td::Roles(object,expected[0]),td::Roles(object,expected[1]),
+  snapshot.objectTypeRva,snapshot.slot,snapshot.slotFunctionRva,snapshot.slotMatched?1u:0u,
+  static_cast<unsigned>(g_window_seq),GetCurrentThreadId(),PoseOwned()?1u:0u,t_pose.opened?1u:0u,t_pose.job?1u:0u,
+  static_cast<unsigned>(t_pose.context.consumer),g_pose_held?1u:0u,static_cast<unsigned>(g_pose_owners.held))))g_log(line);
+ SetLastError(incoming);
+}
+bool PoseDestroyRefused(std::uintptr_t object,unsigned kind,std::uint32_t hook,std::uintptr_t caller,std::uint32_t argument=UINT32_MAX,std::uint32_t auxiliary=UINT32_MAX) noexcept {
+ birth::Receipt localBirth{},partnerBirth{};
+ if(PoseRequired()&&g_pose_held){AcquireSRWLockShared(&g_pose_birth_lock);localBirth=g_pose_birth0;partnerBirth=g_pose_birth;ReleaseSRWLockShared(&g_pose_birth_lock);}
  PoseInvalidateBirth(object,kind);
  if(!PoseRequired()||!g_pose_held)return false;
  const bool own=(kind==0?object==g_pose_block:kind==1?object==g_pose_cs:kind==2?object==g_pose_entry:object==g_pose_go)||
      ((g_pose_owners.held&holds::carry)&&cp::MatchesTeardown(g_pose_carry_pair,object,kind));
- if(own){PoseFail("pose_live_model_teardown");return true;}return false;
+ if(own){PoseTeardownDiagnostic(object,kind,hook,caller,argument,auxiliary,localBirth,partnerBirth);PoseFail("pose_live_model_teardown");return true;}return false;
 }
 // These entries execute before native whole-owner release. Child block guards
 // alone cannot retain Q/message/controllers or the enclosing GO allocation.
@@ -417,62 +513,84 @@ void PoseInvalidateWholeBirth(std::uintptr_t go) noexcept {
  if(g_pose_birth0.ready&&g_pose_birth0.identity.player>=0x20&&g_pose_birth0.identity.player-0x20==go)g_pose_birth0={};
  ReleaseSRWLockExclusive(&g_pose_birth_lock);
 }
-bool PoseWholePlayerRefused(std::uintptr_t go) noexcept {
+bool PoseWholePlayerRefused(std::uintptr_t go,std::uint32_t hook,std::uintptr_t caller,std::uint32_t argument) noexcept {
  // The shared reader must already be held: otherwise a writer could publish a
  // held lease between an early test and the original's first mutation.
  const bool retained=PoseRequired()&&g_pose_held&&go==g_pose_go;
+ birth::Receipt localBirth{},partnerBirth{};if(retained){AcquireSRWLockShared(&g_pose_birth_lock);localBirth=g_pose_birth0;partnerBirth=g_pose_birth;ReleaseSRWLockShared(&g_pose_birth_lock);}
  PoseInvalidateWholeBirth(go);
- if(retained){PoseFail("pose_live_whole_player_teardown");return true;}
+ if(retained){PoseTeardownDiagnostic(go,3,hook,caller,argument,UINT32_MAX,localBirth,partnerBirth);PoseFail("pose_live_whole_player_teardown");return true;}
  return false;
 }
-void* PoseDeletePlayer(void* object,unsigned flags) noexcept {
- const DWORD incoming=GetLastError();DWORD outgoing=incoming;
+__declspec(noinline) void* PoseDeletePlayer(void* object,unsigned flags) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;const auto caller=reinterpret_cast<std::uintptr_t>(_ReturnAddress());
  PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return object;}
  void* result=object;
- __try {SetLastError(incoming);if(!PoseWholePlayerRefused(reinterpret_cast<std::uintptr_t>(object)))result=g_pose_delete_player(object,flags);outgoing=GetLastError();}
+ __try {SetLastError(incoming);if(!PoseWholePlayerRefused(reinterpret_cast<std::uintptr_t>(object),0x9bb7a0,caller,flags))result=g_pose_delete_player(object,flags);outgoing=GetLastError();}
  __finally {PoseExitShared(read);SetLastError(outgoing);}return result;
 }
-void PoseResetPlayer(void* object) noexcept {
- const DWORD incoming=GetLastError();DWORD outgoing=incoming;
+__declspec(noinline) void PoseResetPlayer(void* object) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;const auto caller=reinterpret_cast<std::uintptr_t>(_ReturnAddress());
  PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return;}
- __try {SetLastError(incoming);if(!PoseWholePlayerRefused(reinterpret_cast<std::uintptr_t>(object)))g_pose_reset_player(object);outgoing=GetLastError();}
+ __try {SetLastError(incoming);if(!PoseWholePlayerRefused(reinterpret_cast<std::uintptr_t>(object),0x9c2f70,caller,UINT32_MAX))g_pose_reset_player(object);outgoing=GetLastError();}
  __finally {PoseExitShared(read);SetLastError(outgoing);}
 }
-void PoseDestroyBlock(void* object) noexcept {
- const DWORD incoming=GetLastError();DWORD outgoing=incoming;
+__declspec(noinline) void PoseDestroyBlock(void* object) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;const auto caller=reinterpret_cast<std::uintptr_t>(_ReturnAddress());
  PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return;}
- __try {SetLastError(incoming);if(!PoseDestroyRefused(reinterpret_cast<std::uintptr_t>(object),0))g_pose_destroy_block(object);outgoing=GetLastError();}
+ __try {SetLastError(incoming);if(!PoseDestroyRefused(reinterpret_cast<std::uintptr_t>(object),0,0x9bb260,caller,UINT32_MAX))g_pose_destroy_block(object);outgoing=GetLastError();}
  __finally {PoseExitShared(read);SetLastError(outgoing);}
 }
-void* PoseDestroyCs(void* object,unsigned flags) noexcept {
- const DWORD incoming=GetLastError();DWORD outgoing=incoming;
+__declspec(noinline) void* PoseDestroyCs(void* object,unsigned flags) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;const auto caller=reinterpret_cast<std::uintptr_t>(_ReturnAddress());
  PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return object;}void* result=object;
- __try {SetLastError(incoming);if(!PoseDestroyRefused(reinterpret_cast<std::uintptr_t>(object),1))result=g_pose_destroy_cs(object,flags);outgoing=GetLastError();}
+ __try {SetLastError(incoming);if(!PoseDestroyRefused(reinterpret_cast<std::uintptr_t>(object),1,0xaf0140,caller,flags))result=g_pose_destroy_cs(object,flags);outgoing=GetLastError();}
  __finally {PoseExitShared(read);SetLastError(outgoing);}return result;
 }
-void PoseRetireBody(void* object,std::uint32_t id,std::uint8_t callerControl) noexcept {
- const DWORD incoming=GetLastError();DWORD outgoing=incoming;
+__declspec(noinline) void PoseRetireBody(void* object,std::uint32_t id,std::uint8_t callerControl) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;const auto caller=reinterpret_cast<std::uintptr_t>(_ReturnAddress());
  PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return;}
- __try {SetLastError(incoming);if(!PoseDestroyRefused(reinterpret_cast<std::uintptr_t>(object),0))g_pose_retire_body(object,id,callerControl);outgoing=GetLastError();}
+ __try {SetLastError(incoming);if(!PoseDestroyRefused(reinterpret_cast<std::uintptr_t>(object),0,0x9bfc90,caller,id,callerControl))g_pose_retire_body(object,id,callerControl);outgoing=GetLastError();}
  __finally {PoseExitShared(read);SetLastError(outgoing);}
 }
-void PoseDestroyEntry(void* object) noexcept {
- const DWORD incoming=GetLastError();DWORD outgoing=incoming;
+__declspec(noinline) void PoseDestroyEntry(void* object) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;const auto caller=reinterpret_cast<std::uintptr_t>(_ReturnAddress());
  PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return;}
- __try {SetLastError(incoming);if(!PoseDestroyRefused(reinterpret_cast<std::uintptr_t>(object),2))g_pose_destroy_entry(object);outgoing=GetLastError();}
+ __try {SetLastError(incoming);if(!PoseDestroyRefused(reinterpret_cast<std::uintptr_t>(object),2,0xb6cd60,caller,UINT32_MAX))g_pose_destroy_entry(object);outgoing=GetLastError();}
  __finally {PoseExitShared(read);SetLastError(outgoing);}
 }
-void PoseRebindBody(void* object,std::uint32_t id) noexcept {
- const DWORD incoming=GetLastError();DWORD outgoing=incoming;
+__declspec(noinline) void PoseRebindBody(void* object,std::uint32_t id) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;const auto caller=reinterpret_cast<std::uintptr_t>(_ReturnAddress());
  PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return;}
- __try {SetLastError(incoming);if(!PoseDestroyRefused(reinterpret_cast<std::uintptr_t>(object),0))g_pose_rebind(object,id);outgoing=GetLastError();}
+ __try {SetLastError(incoming);if(!PoseDestroyRefused(reinterpret_cast<std::uintptr_t>(object),0,0x9cc850,caller,id))g_pose_rebind(object,id);outgoing=GetLastError();}
  __finally {PoseExitShared(read);SetLastError(outgoing);}
 }
-void PoseApplyParts(void* object) noexcept {
- const DWORD incoming=GetLastError();DWORD outgoing=incoming;
+__declspec(noinline) void PoseApplyParts(void* object) noexcept {
+ const DWORD incoming=GetLastError();DWORD outgoing=incoming;const auto caller=reinterpret_cast<std::uintptr_t>(_ReturnAddress());
  PoseSharedLease read{};if(!PoseEnterShared(read)){SetLastError(incoming);return;}
- __try {SetLastError(incoming);if(!PoseDestroyRefused(reinterpret_cast<std::uintptr_t>(object),3))g_pose_parts(object);outgoing=GetLastError();}
- __finally {PoseExitShared(read);SetLastError(outgoing);}
+ __try {
+  SetLastError(incoming);
+  const bool retained=PoseRequired()&&g_pose_held&&reinterpret_cast<std::uintptr_t>(object)==g_pose_go;
+  if(retained&&g_pose_owners.held==holds::sleep){
+   if(t_parts.read){PoseFail("pose_parts_reentrant");}
+   else{
+    t_parts={&read,reinterpret_cast<std::uintptr_t>(object),caller};
+    NativePoseSleepPartsContext before{},pre{},after{};
+    const bool admitted=PosePartsContext(before)&&g_pose_parts_validator&&g_pose_parts_validator()&&
+     PosePartsContext(pre)&&parts_policy::Same(before,pre);
+    if(admitted){
+     // No native dirty-bit clearing/shadow or birth invalidation. Exact current
+     // target branch does no work; original preserves all local0 processing.
+     SetLastError(incoming);g_pose_parts(object);outgoing=GetLastError();
+     if(!PosePartsContext(after)||!parts_policy::Same(pre,after)||!g_pose_parts_validator())
+      PoseFail("pose_parts_late_target_changed");
+     SetLastError(outgoing); // preserve the native original through proof reads
+    }else PoseDestroyRefused(reinterpret_cast<std::uintptr_t>(object),3,0x9cd030,caller,UINT32_MAX);
+   }
+  }else if(!PoseDestroyRefused(reinterpret_cast<std::uintptr_t>(object),3,0x9cd030,caller,UINT32_MAX))g_pose_parts(object);
+  outgoing=GetLastError();
+ }
+ __finally {t_parts={};PoseExitShared(read);SetLastError(outgoing);}
 }
 __declspec(noinline) void PoseSleepHint(void* ui,std::uint16_t hint,std::uint32_t priority,std::uint8_t flag,
  std::uint8_t enable,std::uint8_t extra6,std::uint8_t extra7) noexcept {
@@ -604,6 +722,7 @@ bool PoseInstall(const void* image,std::size_t span,bool fingerprint) noexcept {
  std::uintptr_t currentPlayer=0;
  if(!PoseRead(g_base+c::player_slot_rva,currentPlayer)||currentPlayer){g_pose_reason="pose_install_requires_player_absent";return false;}
  auto reader=PoseOriginalCode;std::uintptr_t mismatch=0;
+ if(!sleep_parts_contract::CodeGate(reader,g_base,span,mismatch)){g_pose_reason="pose_parts_full_code";return false;}
  if(!cw::CodeGate(reader,g_base,span,mismatch)){g_pose_reason="pose_code_c0";return false;}
  unsigned char bytes[8192]{};
  for(const auto& s:native_pose_window_contract::sites){

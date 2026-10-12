@@ -62,6 +62,12 @@
 #include "whole_player_lifetime_checks.hpp"
 #include "native_pose_selected_export.hpp"
 #include "native_pose_camera_reader.hpp"
+#include "native_pose_reject_diagnostic.hpp"
+#include "native_pose_teardown_diagnostic.hpp"
+#include "native_pose_parts_diagnostic.hpp"
+#include "mgscoop/native_pose_sleep_parts.hpp"
+#include "sleep_parts_policy.hpp"
+#include "sleep_parts_contract.hpp"
 #include "native_pose_hold_owners.hpp"
 #include "native_pose_carry_participants.hpp"
 #include "carry_plugin_contract.hpp"
@@ -2003,6 +2009,11 @@ void RegisterHudProbe(HudBeforeFn before, HudAfterFn after) noexcept { g_hud_bef
 void RegisterNativePoseJobHooks(NativePoseBeforeFn before,NativePoseAfterFn after,NativePoseClosedFn closed) noexcept {
  if(PoseRequired()||PoseOwned())return;g_pose_before=before;g_pose_after=after;g_pose_closed=closed;
 }
+bool RegisterNativePosePartsPollValidator(NativePosePartsPollValidator callback) noexcept {
+ if(!callback||PoseRequired()||PoseOwned()||g_pose_held||g_pose_fault)return false;
+ if(g_pose_parts_validator&&g_pose_parts_validator!=callback)return false;g_pose_parts_validator=callback;return true;
+}
+bool ReadNativePoseSleepPartsPoll(NativePoseSleepPartsContext& out) noexcept {return PosePartsContext(out);}
 bool BindNativePoseWorker(const NativePoseWorkerBindings& bindings) noexcept {
  if(g_pose_installed||PoseRequired()||PoseOwned())return false;
  if(!bindings.admitted||!bindings.refuse)return false;
@@ -2132,11 +2143,11 @@ bool ResetNativePoseForTest() noexcept {
 }
 JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t block, JobCallFn job, pi::Consumer consumer) noexcept {
     const bool required=PoseJobRequired(go,block);
-    const auto refusal=[&]() noexcept {
-        if(required){InterlockedIncrement(&g_pose_suppressed);return JobWindowOutcome::suppressed;}
+    pi::Arm a{};
+    const auto refusal=[&](reject::Stage stage,const char* detail,std::uint32_t skip=UINT32_MAX) noexcept {
+        if(required){PoseRejectDiagnostic(stage,detail,&a,static_cast<std::uint32_t>(consumer),skip);InterlockedIncrement(&g_pose_suppressed);return JobWindowOutcome::suppressed;}
         return GuardedJobCall(job,go,param)?JobWindowOutcome::legacy:JobWindowOutcome::suppressed;
     };
-    pi::Arm a{};
     const bool have = g_ready && !g_faulted && ReadArm(a);
     const bool armed = have && g_inj_valid && a.enabled && a.native && a.config.mode == PartnerInput::net && a.gen == g_gen;
     if (!armed) {
@@ -2144,7 +2155,7 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
         // (the arbiter leaves active on this; a gen change in flight is not it).
         if (have && (!a.enabled || !a.native)) InterlockedIncrement(&g_n_drain_disarmed);
         InterlockedIncrement(&g_n_drain_refused);
-        return refusal();
+        return refusal(reject::Stage::arm,"not_armed");
     }
     // A batch in flight anywhere (nested on this thread or on another thread):
     // block 0's job may be running on a worker, the shared pad must not be
@@ -2153,7 +2164,7 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
         InterlockedIncrement(&g_n_drain_in_batch);
         InterlockedIncrement(&g_w_in_batch);
         InterlockedIncrement(&g_n_drain_refused);
-        return refusal();
+        return refusal(reject::Stage::batch,"batch_live");
     }
     pi::Skip skip = pi::Skip::player;
     bool validated = false, block_ok = false;
@@ -2176,12 +2187,12 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
             InterlockedExchange(&g_last_skip, static_cast<LONG>(skip));
         }
         InterlockedIncrement(&g_n_drain_refused);
-        return refusal();
+        return refusal(reject::Stage::validate,validated?pi::SkipName(skip):"validation_fault",static_cast<std::uint32_t>(skip));
     }
     if (!block_ok) {
         InterlockedIncrement(&g_n_drain_block);
         InterlockedIncrement(&g_n_drain_refused);
-        return refusal();
+        return refusal(reject::Stage::pool,"wrong_job_pool");
     }
     pi::ConsumerView view{};
     const pi::Injection j = NativeView(a, pi::ForConsumer(g_last_inj, g_frame_id, g_consumer_last[static_cast<std::size_t>(consumer)],
@@ -2189,7 +2200,10 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
     InterlockedIncrement(&g_n_views[static_cast<std::size_t>(view)]);
     const std::uint64_t t0 = NowUs();
     Save save{};
-    if (!BeginWindow(&a)) return required?JobWindowOutcome::suppressed:refusal();
+    if (!BeginWindow(&a)) {
+        if(required){PoseRejectDiagnostic(reject::Stage::begin,g_pose_reason,&a,static_cast<std::uint32_t>(consumer));return JobWindowOutcome::suppressed;}
+        return refusal(reject::Stage::begin,g_pose_reason);
+    }
     __try {
     // isLocal always: block 1's whole update runs here (phases 0/5/6 read the
     // pad only for a local record; local=all only adds the walk windows).
@@ -2201,7 +2215,7 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
     if (!SafePre(a, j, save, WindowOpts{true, true, a.src != 0, static_cast<std::uint8_t>(consumer)})) {
         EndWindow();
         InterlockedIncrement(&g_n_drain_refused);
-        return refusal();
+        return refusal(reject::Stage::pre,"safe_pre_refused");
     }
     SetCurrent(j, a.hold);
     g_drain_arm = a;
@@ -2235,6 +2249,7 @@ JobWindowOutcome RunJobWindowOutcome(void* go, const void* param, std::uint32_t 
     // Always released (the detour and the published look) on every exit.
     const auto hud_probe = g_hud_before ? g_hud_before(a.P) : nametag_game::HudJobProbe{};
     if (!PoseBefore(a,save,j,consumer)) {
+        PoseRejectDiagnostic(reject::Stage::before,g_pose_reason,&a,static_cast<std::uint32_t>(consumer));
         InterlockedIncrement(&g_pose_suppressed);g_pose_reason="pose_before_refused";return JobWindowOutcome::suppressed;
     }
     GuardedCall(a, save, Call{kJobEntry, go, const_cast<void*>(param), 0, 0, job}, true);
