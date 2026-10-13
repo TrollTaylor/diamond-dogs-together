@@ -4,6 +4,8 @@
 #include <windows.h>
 #include <strsafe.h>
 #include <cstring>
+#include <cstdlib>
+#include <cmath>
 #include <atomic>
 #include "mgscoop/game_script_observer.hpp"
 #include "mgscoop/script_load_bridge.hpp"
@@ -15,6 +17,8 @@
 #include "mgscoop/player_team_patch.hpp"
 #include "mgscoop/damage_patch.hpp"
 #include "mgscoop/downed_player.hpp"
+#include "mgscoop/coop_carry.hpp"
+#include "mgscoop/coop_sleep.hpp"
 #include "mgscoop/carry_info.hpp"
 #include "mgscoop/sleep_info.hpp"
 #include "mgscoop/sleep_partner_test.hpp"
@@ -22,6 +26,8 @@
 #include "mgscoop/native_pose_sleep_parts.hpp"
 #include "mgscoop/native_pose_carry_cold.hpp"
 #include "sleep_partner_bridge.hpp"
+#include "sleep_deferred_carry_proof.hpp"
+#include "sleep_queued_carry_proof.hpp"
 #include "sleep_seed_contract.hpp"
 #include "sleep_body0_transition_contract.hpp"
 #include "mgscoop/vehicle_info.hpp"
@@ -499,8 +505,32 @@ bool PartnerSleepCarrierSlice(psleep::CarrierSliceSnapshot& out) noexcept {
  out.thread=current.thread;out.sequence=current.sequence;out.birth1=current.birth1;out.carrierBirth0=current.carrierBirth0;
  out.sliceNonce=current.sliceNonce;out.carrySerial=current.carrySerial;out.realLocal=current.realLocal;out.selected=current.selected;out.sleepHeld=current.sleepHeld;return true;
 }
+bool partner_sleep_deferred_configured=false;
+bool PartnerSleepDeferredCurrent(const psleep::CarryLeaseProof& expected) noexcept {
+ return mgscoop::sleep_deferred_carry_proof::Validate(expected,&psleep::ReadDeferredCarrySleepProof,&psleep::DeferredCarrySleepProofCurrent);
+}
+bool EnsurePartnerDeferredCarryConfigured() noexcept {
+ namespace ih=mgscoop::partner_input_hook;
+ if(partner_sleep_deferred_configured)return true;const auto status=ih::NativePoseWindowStatus();
+ if(!partner_sleep_configured||!PartnerSleepPrivate()||!status.installed||status.required||status.held||status.faulted||!ih::NativePoseDeferredCarryHooksLive())return false;
+ if(!psleep::BindDeferredCarryQuery(&ih::ReadNativePoseDeferredCarryRequest)||!ih::BindNativePoseDeferredCarryValidator(&PartnerSleepDeferredCurrent))return false;
+ partner_sleep_deferred_configured=true;return true;
+}
+bool partner_sleep_queued_configured=false;
+bool PartnerSleepQueuedCurrent(const psleep::CarryLeaseProof& expected) noexcept {
+ return mgscoop::sleep_queued_carry_proof::Validate(expected,&psleep::ReadQueuedCarrySleepProof,&psleep::QueuedCarrySleepProofCurrent);
+}
+bool EnsurePartnerQueuedCarryConfigured() noexcept {
+ namespace ih=mgscoop::partner_input_hook;
+ if(partner_sleep_queued_configured)return true;const auto status=ih::NativePoseWindowStatus();
+ if(!partner_sleep_configured||!PartnerSleepPrivate()||!status.installed||status.required||status.held||status.faulted||!ih::NativePoseDeferredCarryHooksLive())return false;
+ if(!psleep::BindQueuedCarryQuery(&ih::ReadNativePoseQueuedCarryHandshake)||!ih::BindNativePoseQueuedCarryValidator(&PartnerSleepQueuedCurrent))return false;
+ // Native tree validation is a separate exact provider owned by the coordinator.
+ // Missing tree/source capability still refuses every queued query.
+ partner_sleep_queued_configured=true;return true;
+}
 bool EnsurePartnerSleepConfigured() noexcept {
- if(partner_sleep_configured)return true;
+ if(partner_sleep_configured){EnsurePartnerDeferredCarryConfigured();EnsurePartnerQueuedCarryConfigured();return true;}
  namespace ih=mgscoop::partner_input_hook;const auto status=ih::NativePoseWindowStatus();
  if(!PartnerSleepPrivate()||!offline_enabled||!partner_on||!partner_gate_ok||!downed_hook_ok||!game_base||!game_span||
     !status.installed||status.required||status.held||status.faulted||!ih::NativePoseWholePlayerLifetimeLive()||!ih::NativePoseLocalCacheIsolationLive())return false;
@@ -514,7 +544,7 @@ bool EnsurePartnerSleepConfigured() noexcept {
  // registering another listener after this one or while any purpose is held.
  if(!ih::RegisterNativePosePartsPollValidator(&psleep::AllowPartsPoll))return false;
  ih::RegisterNativePoseJobHooks(PartnerSleepBefore,PartnerSleepAfter,PartnerSleepClosed);
- partner_sleep_configured=true;Log("partner_sleep=private_configured;enabled=0;production=0\r\n");return true;
+ partner_sleep_configured=true;EnsurePartnerDeferredCarryConfigured();EnsurePartnerQueuedCarryConfigured();Log("partner_sleep=private_configured;enabled=0;production=0\r\n");return true;
 }
 void PartnerLog(void*, const char* line) noexcept { Log(line); }
 pp::Refusal PartnerReadState(void*, pp::State& out) noexcept { return pp::ReadState(partner_addresses, out); }
@@ -772,6 +802,11 @@ bool PartnerSendReliable(void*, std::uint8_t channel, const std::uint8_t* bytes,
 }
 bool PartnerSendReliableAppend(void* context, std::uint8_t channel, const std::uint8_t* bytes, std::size_t size) noexcept {
     return PartnerSendReliable(context, channel, bytes, size);
+}
+// Teammate carry events (coop_carry) on reliable channel 2, appended like the
+// manifest and capability messages.
+bool CoopCarrySend(const std::uint8_t* bytes, std::size_t size) noexcept {
+    return PartnerSendReliable(nullptr, 2, bytes, size);
 }
 // --- Native polish (docs/native-puppet.md "Facing", "Weapons"): lazily from
 // the driver tick after the code gate passed, like the deferral.
@@ -1271,6 +1306,7 @@ void NametagTick(const char* buffer, std::size_t size) noexcept {
 // tests/script_load_bridge_tests.cpp selector_reentry), so the
 // non-recursive lock is never requested twice on one thread.
 void ObserveEquipmentTick() noexcept;
+void CoopRescueTick() noexcept;
 
 const char* HandlePartnerTick(const char* buffer, std::size_t size) noexcept {
     if (!OnRuntimeThread()) return nullptr;
@@ -1282,6 +1318,9 @@ const char* HandlePartnerTick(const char* buffer, std::size_t size) noexcept {
         ClearUpperEndOwner(); mgscoop::coop_hud::PublishPartner(mgscoop::coop_hud::PartnerView{}); return nullptr;
     }
     if(PartnerSleepSuppressed(nullptr))reply.op&=~(partner::op::dm_play|partner::op::dm_stop);
+    CoopRescueTick();
+    mgscoop::coop_carry::Tick();
+    mgscoop::coop_sleep::Tick();
     ObserveRemoteActionEvents();
     NametagTick(buffer, size);
     // Service equipment on the natural partner Lua owner tick, independently
@@ -2120,7 +2159,7 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             debug::Result(pending.id,r.installed?1u:0u,status);
         } else if (pending.id && (std::strcmp(pending.text,"carry_cold_status")==0 ||
             std::strcmp(pending.text,"carry_cold_route_status")==0 || std::strcmp(pending.text,"carry_cold_message_status")==0 ||
-            std::strcmp(pending.text,"carry_cold_profile_status")==0 || std::strcmp(pending.text,"carry_cold_profile_current_status")==0)) {
+            std::strcmp(pending.text,"carry_cold_profile_status")==0 || std::strcmp(pending.text,"carry_cold_profile_current_status")==0 || std::strcmp(pending.text,"carry_cold_p238_status")==0)) {
             mgscoop::partner_input_hook::NativePoseCarryColdStatus r{};
             const bool ready=mgscoop::partner_input_hook::ReadNativePoseCarryColdStatus(r);
             char status[161]{};HRESULT formatted;
@@ -2128,6 +2167,9 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                 formatted=StringCchPrintfA(status,ARRAYSIZE(status),"carryroute;ready=%u;route=%u;idle=%u;registry=%x;iface=%x;mode=%u;flags=%x;count=%u;pending=%llu",
                     ready?1u:0u,r.routeReady?1u:0u,r.routeNoWork?1u:0u,r.registryType,r.routeType,r.routeMode,r.routeFlags,r.routeCount,
                     static_cast<unsigned long long>(r.routePending));
+            else if(std::strcmp(pending.text,"carry_cold_p238_status")==0)
+                formatted=StringCchPrintfA(status,ARRAYSIZE(status),"carryp238;ready=%u;read=%u;typed=%u;vt=%x;count=%u;base=%u;b0=%u;b1=%u;reason=%u",
+                    ready?1u:0u,r.p238Observed?1u:0u,r.p238Typed?1u:0u,r.p238Vt,r.p238Count,r.p238Base,r.p238Body0?1u:0u,r.p238Body1?1u:0u,r.p238Reason);
             else if(std::strcmp(pending.text,"carry_cold_message_status")==0)
                 formatted=StringCchPrintfA(status,ARRAYSIZE(status),"carrymessage;ready=%u;message=%u;type=%x;key=%u;enabled=%u",
                     ready?1u:0u,r.messageReady?1u:0u,r.messageType,r.messageKey,r.messageEnabled);
@@ -2151,6 +2193,42 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             const bool ok=!on?psleep::Enable(false):EnsurePartnerSleepConfigured()&&PartnerSleepEnableAllowed()&&psleep::Enable(true);
             debug::Result(pending.id,ok?1u:0u,ok?(on?"partnersleep;enabled=1;scope=private_worker":"partnersleep;enabled=0;wake_queued=1"):
                 "partnersleep;refused=1;reason=private_gate_or_local_cache_or_dm");
+        } else if (pending.id && (std::strcmp(pending.text,"coop_carry 0")==0||std::strcmp(pending.text,"coop_carry 1")==0||std::strcmp(pending.text,"coop_carry 2")==0)) {
+            const unsigned mode=static_cast<unsigned>(pending.text[11]-'0');
+            const bool ok=partner_on&&partner_gate_ok&&game_base&&game_span&&
+                (mgscoop::coop_carry::Installed()||mgscoop::coop_carry::Install(game_base,game_span,Log));
+            if(ok){mgscoop::coop_carry::SetSender(&CoopCarrySend);mgscoop::coop_carry::SetMode(mode);}
+            char status[161]{};mgscoop::coop_carry::StatusLine(status,sizeof(status));
+            debug::Result(pending.id,ok?1u:0u,ok?status:"coopcarry;refused=1;reason=gate_or_install");
+        } else if (pending.id && std::strncmp(pending.text,"coop_carry_grant ",17)==0) {
+            const unsigned mask=static_cast<unsigned>(std::strtoul(pending.text+17,nullptr,10))&3u;
+            mgscoop::coop_carry::SetCarryable(mask);
+            char status[161]{};mgscoop::coop_carry::StatusLine(status,sizeof(status));
+            debug::Result(pending.id,1u,status);
+        } else if (pending.id && std::strcmp(pending.text,"coop_carry_status")==0) {
+            char status[161]{};const bool ok=mgscoop::coop_carry::StatusLine(status,sizeof(status));
+            debug::Result(pending.id,ok?1u:0u,status);
+        } else if (pending.id && std::strncmp(pending.text,"coop_sleep ",11)==0 && pending.text[11]>='0' && pending.text[11]<='1' && pending.text[12]==' ') {
+            const unsigned id=static_cast<unsigned>(pending.text[11]-'0');const bool on=pending.text[13]=='1';
+            const bool ok=partner_on&&partner_gate_ok&&game_base&&(mgscoop::coop_sleep::Configured()||mgscoop::coop_sleep::Configure(game_base,game_span))&&
+                mgscoop::coop_sleep::Hold(id,on);
+            char status[161]{};mgscoop::coop_sleep::StatusLine(status,sizeof(status));
+            debug::Result(pending.id,ok?1u:0u,status);
+        } else if (pending.id && std::strcmp(pending.text,"coop_sleep_status")==0) {
+            char status[161]{};const bool ok=mgscoop::coop_sleep::StatusLine(status,sizeof(status));
+            debug::Result(pending.id,ok?1u:0u,status);
+        } else if (pending.id && std::strcmp(pending.text,"coop_carry_mirror")==0) {
+            char status[161]{};const bool ok=mgscoop::coop_carry::MirrorLine(status,sizeof(status));
+            debug::Result(pending.id,ok?1u:0u,status);
+        } else if (pending.id && std::strcmp(pending.text,"coop_carry_sel")==0) {
+            char status[161]{};const bool ok=mgscoop::coop_carry::SelectorLine(status,sizeof(status));
+            debug::Result(pending.id,ok?1u:0u,status);
+        } else if (pending.id && std::strcmp(pending.text,"coop_carry_trace")==0) {
+            char status[161]{};const bool ok=mgscoop::coop_carry::TraceLine(status,sizeof(status));
+            debug::Result(pending.id,ok?1u:0u,status);
+        } else if (pending.id && std::strcmp(pending.text,"coop_carry_bodies")==0) {
+            char status[161]{};const bool ok=mgscoop::coop_carry::BodyLine(status,sizeof(status));
+            debug::Result(pending.id,ok?1u:0u,status);
         } else if(pending.id&&std::strcmp(pending.text,"partner_sleep_wake")==0){
             const bool ok=PartnerSleepPrivate()&&psleep::RequestWake();debug::Result(pending.id,ok?1u:0u,ok?"partnersleep;wake_queued=1":"partnersleep;wake_refused=1");
         } else if(pending.id&&std::strcmp(pending.text,"partner_sleep_stance_status")==0){
@@ -2170,6 +2248,18 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
             const bool ok=mgscoop::downed_player::SetNativeSleepTest(enabled);
             debug::Result(pending.id,ok?1u:0u,ok?(enabled?"sleep_native_test;enabled=1;scope=owned_hidden_worker":"sleep_native_test;enabled=0"):
                 "sleep_native_test;refused=1;reason=gate_or_owned_cycle");
+        } else if(pending.id&&(std::strcmp(pending.text,"sleep_native_rest_state")==0||std::strcmp(pending.text,"sleep_native_rest_receipt")==0||std::strcmp(pending.text,"sleep_native_rest_reason")==0)){
+            const auto r=mgscoop::downed_player::GetNativeRestDiagnostics();const auto now=GetTickCount64();char status[161]{};
+            const auto age=[&](std::uint64_t at)noexcept{return at&&now>=at?Clamp32(now-at):UINT32_MAX;};HRESULT formatted=E_FAIL;
+            if(std::strcmp(pending.text,"sleep_native_rest_state")==0)formatted=StringCchPrintfA(status,ARRAYSIZE(status),
+                "localrest;on=%u;active=%u;abort=%u;cas=%llu;checks=%llu;wait=%u;stun=%.0f;max=%.0f",
+                r.enabled?1u:0u,r.active?1u:0u,r.aborted?1u:0u,(unsigned long long)r.successfulCas,(unsigned long long)r.checks,
+                age(r.pendingAt),double(r.stun),double(r.maximumStun));
+            else if(std::strcmp(pending.text,"sleep_native_rest_receipt")==0)formatted=StringCchPrintfA(status,ARRAYSIZE(status),
+                "restreceipt;stage=%u;seq=%u;cap=%u;now=%u;gen=%u;capms=%u;readms=%u;desc=%u;flags=%x",
+                r.stage,r.sampleSequence,r.capSequence,r.currentSequence,r.generation,age(r.capAt),age(r.sampledAt),r.descriptorObserved?1u:0u,r.descriptorFlags);
+            else formatted=StringCchPrintfA(status,ARRAYSIZE(status),"restreason;stage=%u;reason=%s",r.stage,r.reason?r.reason:"none");
+            debug::Result(pending.id,SUCCEEDED(formatted)?1u:0u,status);
         } else if (pending.id && std::strcmp(pending.text, "downed_pad_status") == 0) {
             char status[161]{};
             const bool complete=mgscoop::downed_damage::PadStatusLine(status,sizeof(status));
@@ -2270,8 +2360,12 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                 std::strcmp(snapshot.link_state, "connected") == 0 && snapshot.remote_age_ms <= 1000)
                 StringCchPrintfA(pose, ARRAYSIZE(pose), ",pp={%ld,%ld,%ld,%u}", std::lround(snapshot.remote_pos[0] * 1000.0f),
                     std::lround(snapshot.remote_pos[1] * 1000.0f), std::lround(snapshot.remote_pos[2] * 1000.0f), snapshot.remote_age_ms);
-            StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {id=%u,text=\"%s\",host=%s,paired=%s,mission=%u%s}", pending.id, pending.text,
-                snapshot.host ? "true" : "false", snapshot.world_paired ? "true" : "false", partner_mission, pose);
+            // goto_carry (worker test helper) gets the teammate's stock carry point.
+            char carry[64]{};float point[3]{};
+            if(std::strcmp(pending.text,"goto_carry")==0&&mgscoop::coop_carry::CarryPoint(1,point))
+                StringCchPrintfA(carry,ARRAYSIZE(carry),",cp={%ld,%ld,%ld}",std::lround(point[0]*1000.0f),std::lround(point[1]*1000.0f),std::lround(point[2]*1000.0f));
+            StringCchPrintfA(debug_reply, ARRAYSIZE(debug_reply), "return {id=%u,text=\"%s\",host=%s,paired=%s,mission=%u%s%s}", pending.id, pending.text,
+                snapshot.host ? "true" : "false", snapshot.world_paired ? "true" : "false", partner_mission, pose, carry);
             reply = debug_reply;
             std::uintptr_t selectedPlayer=0;std::uint32_t selected=0xffffffffu;SIZE_T read=0;
             if(ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(partner_addresses.player_slot),&selectedPlayer,sizeof(selectedPlayer),&read)&&read==sizeof(selectedPlayer)&&selectedPlayer)
@@ -3168,6 +3262,85 @@ bool ObservedRideMounted(unsigned count,unsigned realized,unsigned mask,const ch
     const auto& other=snap.actors[static_cast<unsigned>(1-hit)];
     return !(other.occupied&&other.rider==snap.actors[static_cast<unsigned>(hit)].rider);
 }
+long RideMilli(float value) noexcept {
+    if(!std::isfinite(value)) return 0;
+    const auto scaled=std::llround(static_cast<double>(value)*1000.0);
+    if(scaled>2147483647LL || scaled<-2147483647LL) return 0;
+    return static_cast<long>(scaled);
+}
+long RideHeading(float value) noexcept {
+    const auto milli=RideMilli(value);
+    return milli<-31416 || milli>31416 ? 0 : milli;
+}
+bool SelectRidePoseReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
+    namespace b=mgscoop::buddy_capacity_census;namespace w=mgscoop::buddy_capacity_walker;
+    constexpr char prefix[]="return 'MGS_COOP_RIDE_POSE_V1' -- ";
+    if(!buffer || size<=sizeof(prefix)-1 || size>160 || std::memcmp(buffer,prefix,sizeof(prefix)-1)!=0) return false;
+    world_quiet=true;
+    static char reply[768]{};
+    const auto finish=[&](const char* text) noexcept {
+        replacement={text,std::strlen(text)};return true;
+    };
+    const char* cursor=buffer+sizeof(prefix)-1;const char* end=buffer+size;std::uint32_t v[3]{};
+    bool parsedOk=true;
+    for(unsigned i=0;i<3 && parsedOk;++i){
+        const auto parsed=std::from_chars(cursor,end,v[i]);
+        if(parsed.ec!=std::errc() || parsed.ptr==cursor) parsedOk=false;
+        else {cursor=parsed.ptr;if(i!=2){if(cursor==end || *cursor!=' ') parsedOk=false; else ++cursor;}}
+    }
+    if(!parsedOk) return finish("return {ready=false,reason='request'}");
+    if(cursor!=end || (v[0]!=30010 && v[0]!=30020 && v[0]!=30050) || !v[1] || v[1]>65535 || (v[2]!=1 && v[2]!=2))
+        return finish("return {ready=false,reason='request'}");
+    const auto base=game_base;const auto span=game_span;
+    const bool pins=base && span && partner_gate_ok && (v[2]==1
+        ? BuddyPinsMatch(base,span,b::kPins) : BuddyPinsMatch(base,span,w::kPins));
+    if(!pins) return finish("return {ready=false,reason='pins'}");
+    const auto status=mgscoop::world_link::GetStatus();unsigned short mission{};pp::State player{};
+    std::uintptr_t controller{};std::uint8_t active{};
+    const bool field=OnRuntimeThread() && !mission_terminating &&
+        ReadMission(mission) && mission==v[0] && partner_mission==v[0] &&
+        status.configured && status.paired && status.link_up && status.effective>=3 && status.epoch==v[1] &&
+        pp::ReadState(partner_addresses,player)==pp::Refusal::none && player.local==0 && !player.sync &&
+        pp::Realized(player,0) && pp::Realized(player,1) && player.ids[0]==0 && player.ids[1]==1 &&
+        player.parts[0]==3 && player.parts[1]==3 && BuddySelection(controller,active);
+    if(!field || (v[2]==1 && active!=1) || (v[2]==2 && active!=4))
+        return finish("return {ready=false,reason='scope'}");
+    const auto now=GetTickCount64();const auto thread=GetCurrentThreadId();
+    const auto generation=worker_loading_generation?worker_loading_generation:1u;
+    const b::Authorization auth{true,true,true,true,true,true};
+    b::Census horse{};w::Census walker{};const char* reason=nullptr;
+    if(v[2]==1){
+        b::Owner owner{player.P,mission,generation,thread,1,status.epoch,now,true,true,false,false};
+        reason=b::ReadPlayPose({nullptr,UpperPhaseRead},reinterpret_cast<std::uintptr_t>(base),auth,owner,thread,now,horse);
+    }else{
+        w::Owner owner{player.P,mission,generation,thread,1,status.epoch,now,true,true,false,false};
+        reason=w::ReadPlayPose({nullptr,UpperPhaseRead},reinterpret_cast<std::uintptr_t>(base),auth,owner,thread,now,walker);
+    }
+    if(reason){
+        if(SUCCEEDED(StringCchPrintfA(reply,ARRAYSIZE(reply),"return {ready=false,reason='%s'}",reason)))
+            replacement={reply,std::strlen(reply)};
+        else replacement={"return {ready=false,reason='read'}",sizeof("return {ready=false,reason='read'}")-1};
+        return true;
+    }
+    char actors[512]{};const unsigned count=v[2]==1?horse.count:walker.count;
+    for(unsigned i=0;i<count && i<2;++i){
+        char one[240]{};
+        if(v[2]==1){const auto& a=horse.actors[i];StringCchPrintfA(one,ARRAYSIZE(one),
+            "%s{id=%u,rider=%u,occupied=%s,realized=%s,x=%ld,y=%ld,z=%ld,yaw=%ld}",i?",":"",
+            unsigned(a.game_id),unsigned(a.rider),a.occupied?"true":"false",a.realized?"true":"false",
+            RideMilli(a.position[0]),RideMilli(a.position[1]),RideMilli(a.position[2]),RideHeading(a.position[3]));}
+        else{const auto& a=walker.actors[i];StringCchPrintfA(one,ARRAYSIZE(one),
+            "%s{id=%u,rider=%u,occupied=%s,realized=%s,x=%ld,y=%ld,z=%ld,yaw=%ld}",i?",":"",
+            unsigned(a.game_id),unsigned(a.rider),a.occupied?"true":"false",a.realized?"true":"false",
+            RideMilli(a.position[0]),RideMilli(a.position[1]),RideMilli(a.position[2]),RideHeading(a.position[3]));}
+        if(FAILED(StringCchCatA(actors,ARRAYSIZE(actors),one))) return finish("return {ready=false,reason='read'}");
+    }
+    if(FAILED(StringCchPrintfA(reply,ARRAYSIZE(reply),
+        "return {ready=true,kind=%lu,actors={%s}}",static_cast<unsigned long>(v[2]),actors)))
+        return finish("return {ready=false,reason='read'}");
+    replacement={reply,std::strlen(reply)};
+    return true;
+}
 bool SelectBuddyCapacityReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
     namespace b=mgscoop::buddy_capacity_census;namespace w=mgscoop::buddy_capacity_walker;
     constexpr char prefix[]="return 'MGS_COOP_BUDDY_CAPACITY_V1' -- ";
@@ -3293,6 +3466,69 @@ bool DownedReply(const mgscoop::downed_player::Reply& r, mgscoop::script_bridge:
         r.reviveMaskObserved?"true":"false",r.reviveMaskPresent?"true":"false",r.nativeSleepActive?"true":"false",r.nativeSleepReleaseReady?"true":"false"))) return false;
     replacement={reply,std::strlen(reply)};world_quiet=true;return true;
 }
+// --- Teammate rescue state (docs/coop-carry.md) -----------------------------
+// lua/coop/world_downed.lua publishes both players' accepted downed rows every
+// tick: "return 'MGS_COOP_TEAM_V1' -- mission epoch localDown localCause
+// peerDown peerCause peerFresh". The per-frame policy below keeps the
+// teammate's body on this machine in the stock player sleep while they are
+// darted and tells the carry adapter which bodies may be picked up.
+struct TeamState {
+    bool valid=false;
+    unsigned mission=0, epoch=0;
+    bool localDown=false, peerDown=false, peerFresh=false;
+    unsigned localCause=0, peerCause=0;
+    std::uint64_t at=0;
+};
+TeamState team_state{};
+bool coop_rescue_configured=false;
+bool coop_rescue_pending=false;
+bool coop_partner_sleep_held=false;
+bool SelectTeamReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
+    static constexpr char prefix[]="return 'MGS_COOP_TEAM_V1' -- ";
+    constexpr std::size_t n=sizeof(prefix)-1;
+    if(!world_on||!buffer||size<=n||size>n+96||std::memcmp(buffer,prefix,n)!=0||!(OnRuntimeThread()||OnTerminationThread())) return false;
+    char text[128]{};std::memcpy(text,buffer+n,size-n);
+    long v[7]{};char* p=text;
+    for(unsigned i=0;i<7;++i){char* end=nullptr;v[i]=std::strtol(p,&end,10);if(end==p){v[0]=-1;break;}p=end;}
+    constexpr char yes[]="return true",no[]="return false";
+    const bool ok=v[0]>=0&&v[0]<=99999&&v[1]>=0&&v[1]<=65535&&(v[2]==0||v[2]==1)&&v[3]>=0&&v[3]<=2&&
+        (v[4]==0||v[4]==1)&&v[5]>=0&&v[5]<=2&&(v[6]==0||v[6]==1);
+    if(ok){
+        team_state.valid=true;team_state.mission=static_cast<unsigned>(v[0]);team_state.epoch=static_cast<unsigned>(v[1]);
+        team_state.localDown=v[2]==1;team_state.localCause=static_cast<unsigned>(v[3]);team_state.peerDown=v[4]==1;
+        team_state.peerCause=static_cast<unsigned>(v[5]);team_state.peerFresh=v[6]==1;team_state.at=GetTickCount64();
+    }
+    replacement={ok?yes:no,ok?sizeof(yes)-1:sizeof(no)-1};world_quiet=true;return true;
+}
+// Runtime thread, every partner tick.
+void CoopRescueTick() noexcept {
+    if(!coop_rescue_configured&&coop_rescue_pending&&game_base&&game_span&&!mission_terminating){
+        coop_rescue_pending=false;
+        if(mgscoop::coop_carry::Installed()||mgscoop::coop_carry::Install(game_base,game_span,Log)){
+            mgscoop::coop_carry::SetSender(&CoopCarrySend);
+            mgscoop::coop_carry::SetMode(mgscoop::coop_carry::kAnyDowned);
+            coop_rescue_configured=true;
+        }
+        Log(coop_rescue_configured?"coop_rescue=installed; sleep=native; carry=player\r\n":"coop_rescue=install_refused\r\n");
+    }
+    if(!coop_rescue_configured) return;
+    const auto now=GetTickCount64();
+    const bool fresh=team_state.valid&&team_state.mission==partner_mission&&now>=team_state.at&&now-team_state.at<=1500&&
+        team_state.peerFresh&&!mission_terminating;
+    const bool peerDown=fresh&&team_state.peerDown&&(team_state.peerCause==1||team_state.peerCause==2);
+    const bool peerAsleep=peerDown&&team_state.peerCause==2;
+    const auto local=mgscoop::downed_player::GetSnapshot();
+    const bool localDown=local.down&&(local.cause==1||local.cause==2);
+    // The teammate's body sleeps natively while they are darted (both machines
+    // show the stock sleep, and the stock carried state keeps a sleeping body).
+    if(peerAsleep!=coop_partner_sleep_held){
+        if(mgscoop::coop_sleep::Hold(1,peerAsleep)||!peerAsleep){
+            coop_partner_sleep_held=peerAsleep;
+            LogFormat("coop_rescue=partner_sleep; held=%u\r\n",peerAsleep?1u:0u);
+        }
+    }
+    mgscoop::coop_carry::SetCarryable((peerDown?2u:0u)|(localDown?1u:0u));
+}
 bool SelectFriendlyHitReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
     constexpr char prefix[]="return 'MGS_COOP_FRIENDLY_HIT_V1' -- ";
     if(!world_on || !buffer || size<=sizeof(prefix)-1 || size>192 || std::memcmp(buffer,prefix,sizeof(prefix)-1)!=0) return false;
@@ -3409,11 +3645,13 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if(SelectEquipmentObservationReceipt(buffer,size,name,replacement)) return true;
     if(SelectActionEventsReceipt(buffer,size,name,replacement)) return true;
     if (SelectDebugReceipt(buffer, size, name, replacement)) return true;
+    if (SelectRidePoseReceipt(buffer, size, replacement)) return true;
     if (SelectBuddyCapacityReceipt(buffer, size, replacement)) return true;
     if (SelectBuddyPoseReceipt(buffer, size, replacement)) return true;
     if (SelectDownedReceipt(buffer, size, replacement)) return true;
     if (SelectDownedHudReceipt(buffer, size, replacement)) return true;
     if (SelectPartnerSleepReceipt(buffer, size, replacement)) return true;
+    if (SelectTeamReceipt(buffer, size, replacement)) return true;
     if (SelectFriendlyHitReceipt(buffer, size, replacement)) return true;
     if(partner_on) {
         const auto partner_kind=partner::Classify(buffer,size,name);
@@ -3984,6 +4222,12 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                     LogFormat("carry_info_code_gate=%s;rva=0x%llx;scope=read_only_query\r\n",carryGate?"ok":"refused",static_cast<unsigned long long>(carryMismatch));
                     downed_hook_ok = downed_gate && mgscoop::downed_damage::Install(base, span, Log);
                     mgscoop::downed_player::Configure(partner_addresses, downed_hook_ok);
+                    // Teammate rescue: stock player sleep and player-carries-player
+                    // (docs/coop-carry.md). The adapters stay inert until a teammate is down.
+                    // The carry adapter's vtable slots install lazily on the first
+                    // partner tick of a mission, after every startup code gate ran.
+                    coop_rescue_pending = downed_hook_ok && mgscoop::coop_sleep::Configure(base, span);
+                    Log(coop_rescue_pending ? "coop_rescue=configured; sleep=native; carry=pending_install\r\n" : "coop_rescue=refused\r\n");
                     std::uintptr_t sleepSeedMismatch=0;
                     auto sleepSeedRead=[](std::uintptr_t at,void* target,std::size_t size) noexcept {
                         SIZE_T count=0;return at&&ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(at),target,size,&count)&&count==size;

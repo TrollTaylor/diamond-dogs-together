@@ -95,6 +95,11 @@ struct DownedView {
     std::uint16_t epoch;
     std::uint64_t publish_ms;
     bool localDown, teammateDown, inRange;
+    // Geometric 3 m approach. V2 receipts copy this from inRange. V3 can be
+    // close while the Action hold is not yet observed, so the prompt does not
+    // say "get closer" for a teammate who is already beside you.
+    // Not named near: windows.h defines that as a macro.
+    bool closeEnough;
     std::uint32_t progressMs;
     std::uint8_t localCause, teammateCause; // 0 healthy/legacy unknown, 1 wounded, 2 asleep
 };
@@ -151,6 +156,8 @@ struct Line {
 // False and empty for stale/future/other-mission/unsupported/invalid facts,
 // healthy players, or progress that cannot belong to an in-range live reviver.
 // progress is 0..1; only teammateDown && inRange && !localDown draws a bar.
+// A standing player beside a downed teammate also gets "Pickup unavailable":
+// no verified pickup call exists, so the prompt must not imply that one does.
 bool FormatDowned(const DownedView& view, std::uint32_t current_mission,
                   std::uint64_t now_ms, Line& out, float& progress) noexcept;
 // The status line for `view` (`name`: the partner's display name, may be "").

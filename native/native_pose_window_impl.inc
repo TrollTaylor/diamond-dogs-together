@@ -35,6 +35,14 @@ msg::Observation g_pose_message_hold{};bool g_pose_message_bound=false;
 struct LocalCarrySlice {px::WriteTicket ticket;NativePoseLocalCarryContext context{};bool opened=false;};
 thread_local LocalCarrySlice t_local_carry;std::uint64_t g_local_carry_nonce=0;
 bool PoseMessagePatchesLive() noexcept;
+void PoseQueuePublishClear() noexcept;
+void PoseDeferredPublishClear() noexcept;
+std::int32_t* PoseCarryOwnedOp1(void*,std::int32_t*,std::uint32_t,void*,std::uintptr_t)noexcept;
+bool PoseCarryOwnedOp1Reply(void*,std::uint32_t,void*,const void*,std::uintptr_t)noexcept;
+bool PoseCarryOwnedRecipientNoop(void*,std::uint32_t,std::int32_t*,void*)noexcept;
+bool PoseCarryOp2Active()noexcept;
+std::int32_t* PoseCarrySharedOp2(void*,std::int32_t*,std::uint32_t,void*,std::uintptr_t,const PoseSharedLease&)noexcept;
+bool PoseCarrySharedOp2Recipient(void*,std::uint32_t,std::int32_t*,void*,const PoseSharedLease&)noexcept;
 bool PoseLocalCarryQuery(NativePoseLocalCarryContext&) noexcept;
 vw::Shadow g_pose_pair_word_shadow{};
 NativePoseJobContext g_pose_pair_word_closed{};bool g_pose_pair_word_closed_clean=false;
@@ -455,7 +463,7 @@ void PoseEnd(bool postComplete) noexcept {
    const bool carryClosed=holds::Closed(g_pose_owners,true);
    InterlockedExchange(&g_pose_held,g_pose_owners.held?1:0);InterlockedExchange(&g_pose_clear,0);
    if(!g_pose_owners.held)g_pose_cs=g_pose_entry=0;
-   if(carryClosed){g_pose_carry_pair={};g_pose_carry_birth0=0;g_pose_message_hold={};g_pose_message_bound=false;g_pose_route_hold={};g_pose_route_bound=false;}
+   if(carryClosed){PoseQueuePublishClear();g_pose_carry_pair={};g_pose_carry_birth0=0;g_pose_message_hold={};g_pose_message_bound=false;g_pose_route_hold={};g_pose_route_bound=false;}
   }
  });
  t_pose.cleanup=clean&&released;
@@ -539,6 +547,7 @@ bool PoseVarsNativeOwner(void* object,std::uint32_t id,bool phase) noexcept {
 void PoseVarsMessage(void* object,std::uint32_t id,void* result,const void* message) noexcept {
  const DWORD incoming=GetLastError();DWORD outgoing=incoming;
  if(PoseOwned()){
+  if((g_pose_owners.held&holds::carry)&&id==0){PoseCarryOwnedOp1Reply(object,id,result,message,reinterpret_cast<std::uintptr_t>(_ReturnAddress()));return;}
   if(!PoseVarsNativeOwner(object,id,true)){PoseFail("pose_pair_word_message_owner");SetLastError(incoming);return;}
   SetLastError(incoming);g_pose_vars_message(object,id,result,message);return;
  }
@@ -1153,6 +1162,12 @@ bool PoseOriginalCode(std::uintptr_t at,void* out,std::size_t size) noexcept {
   std::memcpy(static_cast<unsigned char*>(out)+(first-at),p.original+(first-start),last-first);
  }return true;
 }
+// Actual origin wrappers share the existing exclusion and lifetime domain.
+#include "carry_op0_origin_impl.inc"
+#include "carry_queue_lifetime_impl.inc"
+#include "carry_deferred_copy_impl.inc"
+#include "carry_op1_owned_impl.inc"
+#include "carry_op2_shared_impl.inc"
 __declspec(noinline) void* PoseConstructBlock(void* object,void* descriptor,void* payload) noexcept {
  const DWORD incoming=GetLastError();DWORD outgoing=incoming;const auto thread=GetCurrentThreadId();
  const auto caller=reinterpret_cast<std::uintptr_t>(_ReturnAddress());
@@ -1211,6 +1226,9 @@ __declspec(noinline) void* PoseConstructBlock(void* object,void* descriptor,void
  }return result;
 }
 bool PosePinnedPrefix(std::uintptr_t rva,unsigned char (&out)[5]) noexcept {
+ for(const auto& site:carry_native_queue_contract::sites)if(site.rva==rva&&site.size>=5){std::memcpy(out,site.bytes,5);return true;}
+ for(const auto& site:carry_queue_lifetime_contract::sites)if(site.rva==rva&&site.size>=5){std::memcpy(out,site.bytes,5);return true;}
+ for(const auto& site:carry_op0_origin_contract::sites)if(site.rva==rva&&site.size>=5){std::memcpy(out,site.bytes,5);return true;}
  for(const auto& s:carry_dispatch_lifetime_contract::sites)if(s.rva==rva&&s.size>=5){std::memcpy(out,s.bytes,5);return true;}
  for(const auto& s:native_pose_birth_contract::sites)if(s.rva==rva&&s.size>=5){std::memcpy(out,s.bytes,5);return true;}
  for(const auto& s:camera_mode_window_contract::sites)if(s.rva==rva&&s.size>=5){std::memcpy(out,s.bytes,5);return true;}
@@ -1231,6 +1249,10 @@ bool PoseInstall(const void* image,std::size_t span,bool fingerprint) noexcept {
  std::uintptr_t currentPlayer=0;
  if(!PoseRead(g_base+c::player_slot_rva,currentPlayer)||currentPlayer){g_pose_reason="pose_install_requires_player_absent";return false;}
  auto reader=PoseOriginalCode;std::uintptr_t mismatch=0;
+ if(span<0xa01d000||!PoseCarryOriginCode(mismatch)){g_pose_reason="pose_carry_origin_full_code";return false;}
+ if(!PoseQueueCode(mismatch)){g_pose_reason="pose_carry_q_lifetime_code";return false;}
+ if(!PoseQueuedCode(mismatch)){g_pose_reason="pose_carry_op1_full_code";return false;}
+ if(!PoseDeferredCode(mismatch)||!PoseDeferredPinImport()){g_pose_reason="pose_carry_deferred_setter_or_import";return false;}
  if(!dual_parts_local_profile_contract::CodeGate(reader,g_base,span,mismatch)){g_pose_reason="pose_dual_profile_full_code";return false;}
  if(!sleep_parts_contract::CodeGate(reader,g_base,span,mismatch)){g_pose_reason="pose_parts_full_code";return false;}
  if(!cw::CodeGate(reader,g_base,span,mismatch)){g_pose_reason="pose_code_c0";return false;}
@@ -1312,11 +1334,22 @@ bool PoseInstall(const void* image,std::size_t span,bool fingerprint) noexcept {
   {0xbf8f20,reinterpret_cast<void*>(&PoseRegistryDelete),reinterpret_cast<void**>(&g_pose_registry_delete)},
   {0xbf9060,reinterpret_cast<void*>(&PoseRegistryReplace),reinterpret_cast<void**>(&g_pose_registry_replace)},
   {0xbf9620,reinterpret_cast<void*>(&PoseRouteClassUpdate),reinterpret_cast<void**>(&g_pose_route_class_update)},
-  {0xbf91b0,reinterpret_cast<void*>(&PoseRouteClassRegister),reinterpret_cast<void**>(&g_pose_route_class_register)}};
+  {0xbf91b0,reinterpret_cast<void*>(&PoseRouteClassRegister),reinterpret_cast<void**>(&g_pose_route_class_register)},
+  {0xbf3a80,reinterpret_cast<void*>(&PoseCarryDispatch),reinterpret_cast<void**>(&g_pose_carry_dispatch)},
+  {0x11268b0,reinterpret_cast<void*>(&PoseCarryRecipientMessage),reinterpret_cast<void**>(&g_pose_carry_recipient_message)},
+  {0xfdea70,reinterpret_cast<void*>(&PoseQueueCtor),reinterpret_cast<void**>(&g_pose_queue_ctor)},
+  {0xfdeb40,reinterpret_cast<void*>(&PoseQueueDestruct),reinterpret_cast<void**>(&g_pose_queue_destruct)},
+  {0xfdeba0,reinterpret_cast<void*>(&PoseQueueDelete),reinterpret_cast<void**>(&g_pose_queue_delete)},
+  {0xfdef60,reinterpret_cast<void*>(&PoseQueueInit),reinterpret_cast<void**>(&g_pose_queue_init)},
+  {0xfdf010,reinterpret_cast<void*>(&PoseQueueAllocate),reinterpret_cast<void**>(&g_pose_queue_allocate)},
+  {0xfe0260,reinterpret_cast<void*>(&PoseQueueRelease),reinterpret_cast<void**>(&g_pose_queue_release)},
+  {0xfdffc0,reinterpret_cast<void*>(&PoseQueueFree),reinterpret_cast<void**>(&g_pose_queue_free)},
+  {0x5c4910,reinterpret_cast<void*>(&PoseQueueAllocatorFree),reinterpret_cast<void**>(&g_pose_queue_allocator_free)},
+  {0xfe00d0,reinterpret_cast<void*>(&PoseQueueSetter),reinterpret_cast<void**>(&g_pose_queue_setter)}};
 
  constexpr auto hookCount=sizeof(hooks)/sizeof(hooks[0]);
  static_assert(hookCount==sizeof(g_pose_patches)/sizeof(g_pose_patches[0]),"every actual hook needs a prefix ownership receipt");
- static_assert(hookCount==groups::total,"preserve13core+7vars+8provider+8route");
+ static_assert(hookCount==groups::total,"preserve13core+7vars+8provider+8route+2origin+8queue+1setter");
  if(!groups::ValidateOrder([&](std::size_t n) noexcept {return hooks[n].rva;}))return false;
  if(!route::InitializeHookReceipts(hooks,g_pose_patches,
   [](std::uintptr_t rva,unsigned char (&bytes)[5]) noexcept {return PosePinnedPrefix(rva,bytes);},

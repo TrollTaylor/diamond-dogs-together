@@ -22,6 +22,8 @@
 #include "sleep_rest_maintenance.hpp"
 #include "sleep_partner_carry_proof.hpp"
 #include "sleep_carry_context_proof.hpp"
+#include "sleep_deferred_carry_proof.hpp"
+#include "sleep_queued_carry_proof.hpp"
 #include "sleep_loaded_requests.hpp"
 #include "sleep_seed_contract.hpp"
 #include "sleep_body0_transition_contract.hpp"
@@ -33,7 +35,8 @@ namespace graph=sleep_partner_owned_graph;namespace lease=sleep_partner_lease;na
 SRWLOCK lock=SRWLOCK_INIT;
 std::uintptr_t imageBase=0;
 hk::NativePoseWorkerBindings worker{};LogFn logger=nullptr;
-CarrierSliceQuery carrierSliceQuery=nullptr;DualPartsQuery dualPartsQuery=nullptr;std::uint64_t nextLeaseNonce=0,leaseNonce=0;Target seedTarget{};
+CarrierSliceQuery carrierSliceQuery=nullptr;DualPartsQuery dualPartsQuery=nullptr;
+DeferredCarryQuery deferredCarryQuery=nullptr;QueuedCarryQuery queuedCarryQuery=nullptr;std::uint64_t nextLeaseNonce=0,leaseNonce=0;Target seedTarget{};
 bool(*wholeLifetime)() noexcept=nullptr;bool(*carryHeld)() noexcept=nullptr;
 bool configured=false,enabled=false,preparing=false,wakeRequested=false,clearPending=false,fault=false;
 Target target{},ownedTarget{},completedTarget{};bool completedCycle=false;
@@ -533,6 +536,66 @@ bool ReadDualPartsSleepCycle(DualPartsSleepCycleProof& out) noexcept {
   out.acceptedAt=target.poll;out.lastNativeAt=heldLease.lastSeen;out.seededAt=heldLease.seededAt;out.observedAt=GetTickCount64();out.paused=pausedAt!=0;
  }
  ReleaseSRWLockShared(&lock);return ok;
+}
+bool BindDeferredCarryQuery(DeferredCarryQuery query) noexcept {
+ const Preserve preserve;AcquireSRWLockExclusive(&lock);
+ const bool ok=query&&configured&&!enabled&&!Active()&&!fault&&(!deferredCarryQuery||deferredCarryQuery==query);
+ if(ok)deferredCarryQuery=query;ReleaseSRWLockExclusive(&lock);return ok;
+}
+bool ReadDeferredCarrySleepProof(DeferredCarrySleepProof& out) noexcept {
+ const Preserve preserve;out={};if(!TryAcquireSRWLockShared(&lock))return false;
+ const auto retained=CarryRetained();hk::NativePoseDeferredCarryContext context[3]{},final{};Native a{},b{};const char* why=nullptr;bool ok=false;
+ if(deferredCarryQuery&&Carry()&&sleep_carry_context_proof::Ready(retained,GetTickCount64(),true)&&
+    deferredCarryQuery(context[0])&&context[0].job.thread==GetCurrentThreadId()&&sleep_deferred_carry_proof::ContextCurrent(retained,context[0],GetTickCount64())&&
+    ReadNative(context[0].job,false,a,why,false)&&hk::RequireNativePoseOwnedJob(reinterpret_cast<void*>(context[0].job.go),a.pool)&&
+    sleep_deferred_carry_proof::Physical(retained,context[0].job,a.proof,a.sample)&&
+    deferredCarryQuery(context[1])&&sleep_deferred_carry_proof::SameContext(context[0],context[1])&&sleep_deferred_carry_proof::ContextCurrent(retained,context[1],GetTickCount64())&&
+    ReadNative(context[1].job,false,b,why,false)&&ro::SameScope(a.scope,b.scope)&&graph::Same(a.observed,b.observed)&&transition::Same(a.supplement,b.supplement)&&
+    rest::SameRestSample(a.sample,b.sample,false)&&
+    sleep_deferred_carry_proof::Physical(retained,context[1].job,b.proof,b.sample)&&
+    deferredCarryQuery(context[2])&&sleep_deferred_carry_proof::SameContext(context[1],context[2])&&sleep_deferred_carry_proof::ContextCurrent(retained,context[2],GetTickCount64())&&
+    hk::RequireNativePoseOwnedJob(reinterpret_cast<void*>(context[2].job.go),b.pool)&&
+    deferredCarryQuery(final)&&sleep_deferred_carry_proof::SameContext(context[2],final)&&sleep_deferred_carry_proof::ContextCurrent(retained,final,GetTickCount64())){
+  out.submitted=final.submission.submittedSleep;out.job=final.job;out.queue=final.queue;out.carrierRecord=final.carrierRecord;out.recipientRecord=final.recipientRecord;
+  out.currentPeerSequence=target.peerSequence;out.submitNonce=final.submission.submitNonce;out.submittedAt=final.submission.submittedAt;
+  out.intentNonce=final.intentNonce;out.intentAt=final.intentAt;out.birth0=final.birth0;out.birth1=final.birth1;out.currentAcceptedAt=target.poll;out.observedAt=GetTickCount64();
+  out.priorSequence=final.priorSequence;out.copyReserved=final.copyReserved;ok=true;
+ }
+ ReleaseSRWLockShared(&lock);return ok;
+}
+bool DeferredCarrySleepProofCurrent(const DeferredCarrySleepProof& proof) noexcept {
+ const Preserve preserve;const auto now=GetTickCount64();if(!proof.observedAt||now<proof.observedAt||now-proof.observedAt>250)return false;
+ DeferredCarrySleepProof current{};return ReadDeferredCarrySleepProof(current)&&sleep_deferred_carry_proof::SameProof(proof,current);
+}
+bool BindQueuedCarryQuery(QueuedCarryQuery query) noexcept {
+ const Preserve preserve;AcquireSRWLockExclusive(&lock);
+ const bool ok=query&&configured&&!enabled&&!Active()&&!fault&&(!queuedCarryQuery||queuedCarryQuery==query);
+ if(ok)queuedCarryQuery=query;ReleaseSRWLockExclusive(&lock);return ok;
+}
+bool ReadQueuedCarrySleepProof(QueuedCarrySleepProof& out) noexcept {
+ const Preserve preserve;out={};if(!TryAcquireSRWLockShared(&lock))return false;
+ const auto retained=CarryRetained();hk::NativePoseQueuedCarryContext context[3]{},final{};Native a{},b{};const char* why=nullptr;bool ok=false;
+ if(queuedCarryQuery&&Carry()&&sleep_carry_context_proof::Ready(retained,GetTickCount64(),true)&&
+    queuedCarryQuery(context[0])&&context[0].job.thread==GetCurrentThreadId()&&sleep_queued_carry_proof::ContextCurrent(retained,context[0],GetTickCount64())&&
+    ReadNative(context[0].job,false,a,why,false)&&hk::RequireNativePoseOwnedJob(reinterpret_cast<void*>(context[0].job.go),a.pool)&&
+    sleep_queued_carry_proof::Physical(retained,context[0],a.proof,a.sample)&&
+    queuedCarryQuery(context[1])&&sleep_queued_carry_proof::SameContext(context[0],context[1])&&sleep_queued_carry_proof::ContextCurrent(retained,context[1],GetTickCount64())&&
+    ReadNative(context[1].job,false,b,why,false)&&ro::SameScope(a.scope,b.scope)&&graph::Same(a.observed,b.observed)&&transition::Same(a.supplement,b.supplement)&&
+    rest::SameRestSample(a.sample,b.sample,false)&&sleep_queued_carry_proof::Physical(retained,context[1],b.proof,b.sample)&&
+    queuedCarryQuery(context[2])&&sleep_queued_carry_proof::SameContext(context[1],context[2])&&sleep_queued_carry_proof::ContextCurrent(retained,context[2],GetTickCount64())&&
+    hk::RequireNativePoseOwnedJob(reinterpret_cast<void*>(context[2].job.go),b.pool)&&
+    queuedCarryQuery(final)&&sleep_queued_carry_proof::SameContext(context[2],final)&&sleep_queued_carry_proof::ContextCurrent(retained,final,GetTickCount64())){
+  out.submitted=final.submission.submittedSleep;out.job=final.job;out.queue=final.queue;out.carrierRecord=final.carrierRecord;out.recipientRecord=final.recipientRecord;
+  out.message=final.message;out.result=final.result;out.service=final.service;out.currentPeerSequence=target.peerSequence;
+  out.submitNonce=final.submission.submitNonce;out.submittedAt=final.submission.submittedAt;out.intentNonce=final.intentNonce;out.intentAt=final.intentAt;
+  out.birth0=final.birth0;out.birth1=final.birth1;out.currentAcceptedAt=target.poll;out.observedAt=GetTickCount64();out.priorSequence=final.priorSequence;
+  out.current=final.current;out.next=final.next;out.nativeAction=final.nativeAction;out.acknowledged=final.acknowledged;ok=true;
+ }
+ ReleaseSRWLockShared(&lock);return ok;
+}
+bool QueuedCarrySleepProofCurrent(const QueuedCarrySleepProof& proof) noexcept {
+ const Preserve preserve;const auto now=GetTickCount64();if(!proof.observedAt||now<proof.observedAt||now-proof.observedAt>250)return false;
+ QueuedCarrySleepProof current{};return ReadQueuedCarrySleepProof(current)&&sleep_queued_carry_proof::SameProof(proof,current);
 }
 Status GetStatus() noexcept {
  const Preserve preserve;Status out{};if(!TryAcquireSRWLockShared(&lock)){out.reason="busy";return out;}

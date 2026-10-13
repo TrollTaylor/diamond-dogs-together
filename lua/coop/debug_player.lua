@@ -4,7 +4,7 @@ do
   local D, A = e.MgsCoopDebug, e.MgsCoopDebug.api
   local get, call, number, fmt, floor = A.get, A.call, A.number, string.format, math.floor
   local P = {handles = {heal = true, godmode = true, fulton_infinite = true, forward = true, goto_partner = true,
-    slowmo = true, time_add = true}}
+    goto_carry = true, slowmo = true, time_add = true}}
   D.player = P
   local function fill()
     local l, m = A.life()
@@ -92,6 +92,23 @@ do
       if math.abs(x) > 100000 or math.abs(t[2]) > 99999 or math.abs(z) > 100000 then return false, "partner_pose_bounds" end
       local ok, msg = A.warp({x, t[2] + 0.3, z, math.deg(math.atan2(t[1] - x, t[3] - z))}, id)
       return ok, fmt("%s;via=partner;age_ms=%d", msg, age)
+    elseif cmd == "goto_carry" and #a == 1 then
+      -- 0.9 m in front of the teammate's stock carry point (native "cp"), facing it.
+      local cp = D.carryPoint
+      if type(cp) ~= "table" then return false, "carry_point_unavailable" end
+      local t = {}
+      for i = 1, 3 do
+        local v = get(cp, i)
+        if not A.integer(v, -100000000, 100000000) then return false, "carry_point_bounds" end
+        t[i] = v / 1000
+      end
+      local me = A.pose()
+      local dx, dz = me[1] - t[1], me[3] - t[3]
+      local len = math.sqrt(dx * dx + dz * dz)
+      if len < 0.1 then dx, dz, len = 1, 0, 1 end
+      local x, z = t[1] + 0.9 * dx / len, t[3] + 0.9 * dz / len
+      local ok, msg = A.warp({x, t[2] + 0.4, z, math.deg(math.atan2(t[1] - x, t[3] - z))}, id)
+      return ok, fmt("%s;via=carry_point", msg)
     elseif cmd == "time_add" and #a == 2 then
       if not A.hostOnly() then return false, "host_only" end
       local s = number(a[2], -86400, 86400, true)

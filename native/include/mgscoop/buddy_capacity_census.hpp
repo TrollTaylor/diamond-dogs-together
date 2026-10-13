@@ -31,4 +31,8 @@ bool Compiled() noexcept;
 // Root supplies exact current native owner/admission; none come from worker
 // request text. nullptr succeeds; failures never change output. No cache.
 const char* ReadCurrentCensus(Reader,std::uintptr_t image,Authorization,const Owner&,std::uint32_t actual_thread,std::uint64_t now,Census&) noexcept;
+// Same verified horse pose read for a normal session. Still requires the code
+// pins and the live horse record. It does not require the private worker,
+// the capacity archive, or a copied-save gate. Failures leave output unchanged.
+const char* ReadPlayPose(Reader,std::uintptr_t image,Authorization,const Owner&,std::uint32_t actual_thread,std::uint64_t now,Census&) noexcept;
 }

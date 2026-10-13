@@ -113,7 +113,7 @@ void Pair(std::uint32_t mission, std::uint64_t now, std::uint32_t host_roster = 
 void Table() {
     std::size_t count = 0;
     const world::OpSpec* ops = world::OpTable(count);
-    Check(count == 47, "47 ops (world, rescue, companion and local ops)");
+    Check(count == 48, "48 ops (world, rescue, companion, ride body and local ops)");
     for (std::size_t i = 0; i < count; ++i) {
         for (std::size_t j = i + 1; j < count; ++j) Check(ops[i].code != ops[j].code, "codes unique");
         const unsigned fields = ops[i].lua + ops[i].native + ops[i].rx;
@@ -140,7 +140,7 @@ void Table() {
                           {op::enemy_debug, 30}, {op::enemy_debug_ack, 12}};
     for (const auto& s : sizes) Check(world::FindOp(s.code) && world::FindOp(s.code)->body == s.body, "documented body size");
     for (unsigned code = 0x1D; code <= 0x1F; ++code) Check(!world::FindOp(static_cast<std::uint8_t>(code)), "reserved world codes");
-    Check(!world::FindOp(0) && !world::FindOp(0x2A) && !world::FindOp(0x79) && !world::FindOp(0xFF), "unknown codes");
+    Check(!world::FindOp(0) && !world::FindOp(0x2B) && !world::FindOp(0x79) && !world::FindOp(0xFF), "unknown codes");
     Check(world::FindOp(op::phase_vec)->lua == 15 && world::FindOp(op::digest)->rx == 1 && world::FindOp(op::clock)->rx == 1,
           "PHASE_VEC 15 fields, DIGEST/CLOCK receiver latency");
     Check(world::FindOp(op::req_outcome)->request && world::FindOp(op::req_phase)->request && world::FindOp(op::resync)->request &&
@@ -1184,9 +1184,10 @@ void SpawnSync() {
     Check(Tx(g_host, op::enemy_debug, {1, ent, 1, 0, 0, 0, 0, 0, 0, 0}, 501) == world::TxStatus::disabled, "level 1 carries no spawn sync");
 }
 void RescueAndBuddies() {
-    const std::uint8_t codes[] = {op::downed_status, op::downed_commit, op::revive_grant, op::buddy_state, op::buddy_ack, op::friendly_hit};
+    const std::uint8_t codes[] = {op::downed_status, op::downed_commit, op::revive_grant, op::buddy_state, op::buddy_ack, op::friendly_hit, op::ride_body};
     const std::int64_t values[][10] = {{1, 1, 1, 2, -100, 50, 20, 0, 0, 1}, {1, 1, 1, 2, 1, 0, 0, 3000, 1},
-                                      {2, 1, 1}, {1, 1, 1, -100, 50, 20, -3142, 123}, {1, 1, 0, 2}, {1, 0, 1, 1000000000, 2}};
+                                      {2, 1, 1}, {1, 1, 1, -100, 50, 20, -3142, 123}, {1, 1, 0, 2}, {1, 0, 1, 1000000000, 2},
+                                      {1, 1, 6656, 802100, 338300, 1642000, -500, 1, 3}};
     for (unsigned i = 0; i < sizeof(codes) / sizeof(codes[0]); ++i) {
         Setup(3, 3, true); Pair(30010, 100); Drain(g_host, 3, 100); Drain(g_guest, 3, 100);
         const auto* spec = world::FindOp(codes[i]);
@@ -1221,6 +1222,8 @@ void RescueAndBuddies() {
         Check(low.Tx(codes[i], values[i], spec->lua, 201, &datagram) == world::TxStatus::disabled, "new ops require world level 3");
     }
     Setup(); Pair(30010, 300);
+    Check(Tx(g_host, op::ride_body, {1,3,4000,802100,338300,1642000,1571,1,0},301)==world::TxStatus::ok, "vehicle pose kind admitted");
+    Check(Tx(g_host, op::ride_body, {1,4,4000,802100,338300,1642000,1571,1,0},301)==world::TxStatus::bad_args, "unknown ride kind refused");
     Check(Tx(g_host, op::buddy_state, {1,1,1,1000000001,0,0,0,0},301)==world::TxStatus::bad_args, "buddy excessive position refused");
     Check(Tx(g_host, op::buddy_state, {1,1,1,0,0,0,3143,0},301)==world::TxStatus::bad_args, "buddy non-normalized heading refused");
     Check(Tx(g_host, op::revive_grant, {2,0,1},301)==world::TxStatus::bad_args, "revive zero target generation refused");

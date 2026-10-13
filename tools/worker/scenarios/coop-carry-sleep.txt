@@ -1,0 +1,87 @@
+# Teammate sleep, pickup, carry and wake through the normal co-op flow
+# (docs/coop-carry.md). No debug enable commands: a friendly dart puts the
+# teammate in the stock player sleep on both copies, the host holds R (CARRY)
+# next to them, walks, holds R again to put them down, then holds E to wake.
+labsetting nametag=1
+labsetting coop_hud=compact
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 0
+host debug time 43200
+host debug weather sunny
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 6000
+both capture rescue-before
+host press 2 120
+wait 2000
+host hold rmb+lmb 1500
+host release
+wait 400
+guest run downed_status
+guest require down=1.*cause=2.*lock=1.*state=asleep
+wait 3000
+host run coop_sleep_status
+host require coopsleep;.*b1=1,h1,l2
+guest run coop_sleep_status
+guest require coopsleep;b0=1,h1,l2
+guest run downed_status
+both capture rescue-asleep
+host debug goto_carry
+wait 1500
+host run position
+guest run position
+host run coop_carry_status
+both capture rescue-near
+host hold r 900
+host release
+wait 3500
+host run coop_carry_bodies
+guest run coop_carry_bodies
+host run coop_carry_mirror
+guest run coop_carry_mirror
+both capture rescue-carried
+host hold w 1500
+host hold w 1500
+host release
+wait 300
+host run position
+guest run position
+host run coop_carry_bodies
+guest run coop_carry_bodies
+both capture rescue-walk
+host hold r 900
+host release
+wait 3500
+host run coop_carry_bodies
+guest run coop_carry_bodies
+host run coop_carry_mirror
+guest run coop_carry_mirror
+both capture rescue-down
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host hold e 1500 nowait
+wait 850
+host release
+wait 4500
+guest run downed_status
+guest require down=0.*cause=0.*lock=0.*state=healthy
+host run coop_sleep_status
+guest run coop_sleep_status
+host run coop_carry_bodies
+guest run coop_carry_bodies
+both capture rescue-woken
+guest hold w 1000 nowait
+wait 300
+guest run downed_pad_status
+guest release
+both capture rescue-moving
+state

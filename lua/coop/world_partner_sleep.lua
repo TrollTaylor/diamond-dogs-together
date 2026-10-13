@@ -16,7 +16,18 @@ function D.partnerSleepClear()
     pcall(W.receipt, "return 'MGS_COOP_PARTNER_SLEEP_V1' -- 0 0 0 0 0 0 0 0 0")
   end
 end
+-- Teammate rescue (docs/coop-carry.md): both accepted downed rows, every tick.
+-- Native keeps the teammate's body in the stock sleep while they are darted
+-- and lets a healthy player pick up a sleeping or wounded teammate.
+local function publishTeam(now)
+  local l, r = D.records[W.role], D.records[3 - W.role]
+  local lf, rf = fresh(l, now), fresh(r, now)
+  pcall(W.receipt, fmt("return 'MGS_COOP_TEAM_V1' -- %d %d %d %d %d %d %d", W.mission, W.epoch,
+    lf and l.down and 1 or 0, lf and l.down and l.cause or 0,
+    rf and r.down and 1 or 0, rf and r.down and r.cause or 0, rf and 1 or 0))
+end
 function D.partnerSleepPublish(now)
+  publishTeam(now)
   if D.partnerSleepBridge == nil then
     local ok, capable = pcall(W.receipt, "return 'MGS_COOP_PARTNER_SLEEP_CAP_V1'")
     D.partnerSleepBridge = ok and capable == true or false

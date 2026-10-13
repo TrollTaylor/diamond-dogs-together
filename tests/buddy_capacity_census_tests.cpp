@@ -32,6 +32,8 @@ const char* Get(Memory& m,b::Census& out,b::Authorization a=auth,b::Owner o=owne
 void Refuse(Memory m,const char* why,b::Authorization a=auth,b::Owner o=owner,unsigned thread=71,std::uint64_t now=1000){b::Census out{};out.count=777;auto reason=Get(m,out,a,o,thread,now);Check(reason&&std::strcmp(reason,why)==0,"exact refusal reason");Check(out.count==777,"failure preserves actual output");Check(m.writes==0,"no engine memory writes");}
 }
 int main(){auto m=Good();b::Census out{};
+ {auto poseMemory=Good();b::Census play{};Check(!b::ReadPlayPose({&poseMemory,Memory::Read},base,auth,owner,71,1000,play)&&play.actors[0].game_id==6656&&play.actors[1].game_id==6657&&play.actors[1].realized&&play.actors[1].position[0]==5.f&&play.actors[1].position[1]==348.25f&&play.actors[1].position[2]==-7.75f&&play.actors[1].position[3]==-0.5f&&poseMemory.writes==0,"play pose uses the verified horse census without the worker gate");
+  auto denied=auth;denied.exact_code_pins=false;b::Census keep{};keep.count=777;Check(b::ReadPlayPose({&poseMemory,Memory::Read},base,denied,owner,71,1000,keep)&&keep.count==777,"play pose refuses without the code pins");}
  if(!b::Compiled()){Check(Get(m,out)&&m.reads==0,"capacity OFF refuses without memory reads");Check(m.writes==0,"capacity OFF has no writes");std::printf("buddy capacity pure OFF %u checks PASS\n",checks);return 0;}
  Check(!Get(m,out),"qualified typed current two-horse census");Check(out.count==2&&out.realized_count==2&&out.realized_mask==3,"allocation and realization proved separately");
  Check(out.pack_hash==mgscoop::buddy_capacity::kHorseMainPacks[0].hash&&out.pack_token&&std::strcmp(out.pack_token,"00")==0,"retained main pack is variant 00");

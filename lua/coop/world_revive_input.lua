@@ -74,11 +74,30 @@ do
         R.eligible = true
         return seen.held
     end
+    local prompt = 0
+    local function announce(h)
+        local state = 0
+        if h and h.teammateDown and not h.down then
+            state = h.near and (h.inRange and 3 or 2) or 1
+        end
+        if state == prompt then return end
+        prompt = state
+        if state == 0 or type(TppUiCommand) ~= "table" or type(TppUiCommand.AnnounceLogView) ~= "function" then return end
+        local wake = h.teammateCause == 2
+        local text = state == 3 and (wake and "Hold Action (E) to wake your teammate. Pickup is unavailable."
+            or "Hold Action (E) to revive your teammate. Pickup is unavailable.")
+            or state == 2 and (wake and "Close enough to wake your teammate. Action (E) is not ready. Pickup is unavailable."
+            or "Close enough to revive your teammate. Action (E) is not ready. Pickup is unavailable.")
+            or (wake and "Teammate asleep. Get closer to wake them. Pickup is unavailable."
+            or "Teammate down. Get closer to revive. Pickup is unavailable.")
+        pcall(TppUiCommand.AnnounceLogView, text)
+    end
     local stop, tick, hud = D.stop, D.tick, D.hud
     function D.stop() release(W.now()); return stop() end
     function D.tick(now)
         R.polled, R.eligible = false, nil
         tick(now)
+        announce(D.hud(now))
         if not R.polled then release(now) end
     end
     if type(W.tickHooks) == "table" then
@@ -89,7 +108,7 @@ do
         if not R.eligible then h.inRange, h.progress = false, 0 end
         return h
     end
-    local function cleanup() release(W.now()) end
+    local function cleanup() prompt = 0; release(W.now()) end
     W.startHooks[#W.startHooks + 1] = cleanup
     W.unpairedHooks[#W.unpairedHooks + 1] = cleanup
     W.stopHooks[#W.stopHooks + 1] = function(final) if final then cleanup() end end

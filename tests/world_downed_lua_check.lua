@@ -28,6 +28,15 @@ local function fixture(host)
     end
     W.receipt = function(text)
         if text == "return 'MGS_COOP_PARTNER_SLEEP_CAP_V1'" then return c.bridgeCap == true end
+        if text:match("^return 'MGS_COOP_TEAM_V1'") then
+            local tail = assert(text:match("%-%- (.*)$")); local v = {}
+            for n in tail:gmatch("%d+") do v[#v + 1] = tonumber(n) end
+            check(#v == 7 and v[1] == W.mission and v[2] == W.epoch, 'team receipt carries mission, epoch and five flags')
+            check(v[3] <= 1 and v[4] <= 2 and v[5] <= 1 and v[6] <= 2 and v[7] <= 1 and
+                (v[3] == 0) == (v[4] == 0) and (v[5] == 0) == (v[6] == 0), 'team receipt down flags agree with causes')
+            c.team = v
+            return true
+        end
         if text:match("^return 'MGS_COOP_PARTNER_SLEEP_V1'") then
             local tail = assert(text:match("%-%- (.*)$")); local v = {}
             for n in tail:gmatch("%d+") do v[#v + 1] = tonumber(n) end
@@ -35,17 +44,19 @@ local function fixture(host)
             c.bridgePackets = c.bridgePackets or {}; c.bridgePackets[#c.bridgePackets + 1] = v
             return true
         end
-        if text:match("^return 'MGS_COOP_DOWNED_HUD_V2'") then
-            local m, ep, ld, td, near, progress, cause, teammateCause = text:match("%-%- (%d+) (%d+) (%d+) (%d+) (%d+) (%d+) (%d+) (%d+)$")
-            check(m ~= nil, 'downed HUD V2 receipt uses eight bounded unsigned fields')
+        if text:match("^return 'MGS_COOP_DOWNED_HUD_V3'") then
+            local m, ep, ld, td, inRange, progress, cause, teammateCause, near = text:match("%-%- (%d+) (%d+) (%d+) (%d+) (%d+) (%d+) (%d+) (%d+) (%d+)$")
+            check(m ~= nil, 'downed HUD V3 receipt uses nine bounded unsigned fields')
             local h = {mission = tonumber(m), epoch = tonumber(ep), down = tonumber(ld), teammateDown = tonumber(td),
-                inRange = tonumber(near), progress = tonumber(progress), cause = tonumber(cause), teammateCause = tonumber(teammateCause)}
-            check(h.down <= 1 and h.teammateDown <= 1 and h.inRange <= 1 and h.progress <= 3000 and
+                inRange = tonumber(inRange), progress = tonumber(progress), cause = tonumber(cause),
+                teammateCause = tonumber(teammateCause), near = tonumber(near)}
+            check(h.down <= 1 and h.teammateDown <= 1 and h.inRange <= 1 and h.near <= 1 and h.progress <= 3000 and
                 h.cause <= 2 and h.teammateCause <= 2 and (h.down == 0) == (h.cause == 0) and
                 (h.teammateDown == 0) == (h.teammateCause == 0), 'HUD incapacity causes agree with bounded down flags')
-            check(h.progress == 0 or h.down == 0 and h.teammateDown == 1 and h.inRange == 1,
+            check(h.near == h.inRange, 'unwrapped downed policy keeps the 3m approach equal to the hold range')
+            check(h.progress == 0 or h.down == 0 and h.teammateDown == 1 and h.inRange == 1 and h.near == 1,
                 'HUD cannot show progress for a downed, distant or absent reviver')
-            if h.mission == 0 then check(h.epoch + h.down + h.teammateDown + h.inRange + h.progress + h.cause + h.teammateCause == 0, 'cleanup HUD is entirely zero')
+            if h.mission == 0 then check(h.epoch + h.down + h.teammateDown + h.inRange + h.near + h.progress + h.cause + h.teammateCause == 0, 'cleanup HUD is entirely zero')
             else check(h.mission == W.mission and h.epoch == W.epoch, 'HUD stays in its live mission and epoch') end
             c.hud[#c.hud + 1] = h; return true
         end
@@ -114,6 +125,12 @@ local function fixture(host)
         if c.failShared then return false end
         c.sharedFailure, W.recovery.dead = (c.sharedFailure or 0) + 1, true
         return true
+    end
+    env.PlayerStance = {STAND = 'STAND'}
+    env.Player.RequestToSetTargetStance = function(stance)
+        check(stance == 'STAND', 'revive requests the stock stand transition')
+        c.stance = stance
+        c.stanceRequests = (c.stanceRequests or 0) + 1
     end
     env.Player.IsInstanceValid = function() return c.invalidPlayer ~= true end
     env.Player.SetPadMask = function(options)
@@ -241,6 +258,7 @@ end
 local a, b = pair(); down(b); b.native.pos = {3000, 0, 0}; a.native.held = true
 for _ = 1, 33 do step(a, b, 100) end
 check(b.revived == 1 and not b.native.down and not a.sharedFailure, 'exactly 3 m, continuous action hold revives guest')
+check(b.stance == 'STAND' and b.stanceRequests == 1, 'the revived player requests the stock stand transition once')
 check(a.D.granted[2] == 1 and b.D.receivedGrant > 0, 'host grant records exact downed generation')
 step(a, b, 100)
 check(not a.D.records[2].down and not b.D.records[2].down, 'normal status accepted only following matching grant')

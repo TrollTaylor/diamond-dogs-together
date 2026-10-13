@@ -105,6 +105,12 @@ constexpr OpSpec kOps[] = {
     // Authenticated local-shooter hit: shot sequence, owner generation/status sequence, damage milli, cause(normal/sleep).
     {op::friendly_hit, "FRIENDLY_HIT", 0, Dir::both, Wire::reliable, 3, false, false, 5, 0, 0, 15,
      {U32(1), U32(), U16(1), U32(0, 1000000000), U8(0, 0, 2)}},
+    // RIDE_BODY: seq, kind (1 horse, 2 walker, 3 vehicle), body id, xyz mm, heading mrad, occupied, rider.
+    // Horse and walker heading is the fourth float of the verified 16-byte census pose.
+    // Vehicle heading is the second return of TppVehicle2 GetPosition.
+    {op::ride_body, "RIDE_BODY", 1, Dir::both, Wire::reliable, 3, false, false, 9, 0, 0, 24,
+     {U16(1), U8(1, 3), U16(), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
+      I32(-1000000000, 1000000000), I32(-31416, 31416), U8(0, 1), U16()}},
     {op::link, "LINK", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 2, 0, 0, {U8(0, 1), U32()}},
     {op::paired, "PAIRED", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 6, 0, 0,
      {U16(), Mission(), U32(), U16(), U8(0, 1), U8(0, 3)}},

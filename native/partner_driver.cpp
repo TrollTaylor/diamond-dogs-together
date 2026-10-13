@@ -12,6 +12,7 @@
 #include "mgscoop/partner_aim.hpp"
 #include "mgscoop/partner_rates.hpp"
 #include "mgscoop/partner_upper_probe.hpp"
+#include "mgscoop/coop_carry.hpp"
 #include "partner_player_contract.hpp"
 
 namespace mgscoop::partner_driver {
@@ -1710,7 +1711,19 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
         m.recon_have_out = false;
     }
     m.recon_last_ok = false;
-    if (recon_used) {
+    // A teammate carried by the local player (stock player carry, coop_carry):
+    // the native attachment owns instance 1's transform and stance. No
+    // placement, correction, stance fix or fallback Warp until it is put down.
+    const bool carry_hold = recon_used && mgscoop::coop_carry::PartnerCarryHold();
+    if (carry_hold) {
+        out.suppress_fallback = true;
+        if (!m.carry_hold) EmitRecon(m, h, kRcFrozen, "partner_recon=carry_hold; on=1\r\n");
+        m.carry_hold = true;
+    } else if (m.carry_hold) {
+        m.carry_hold = false;
+        EmitRecon(m, h, kRcFrozen, "partner_recon=carry_hold; on=0\r\n");
+    }
+    if (recon_used && !carry_hold) {
         if (ro.action == pr::Action::place) {
             ops |= partner::op::warp;
             out.pose_override = true;
@@ -1731,7 +1744,7 @@ void TickInput(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State&
     const bool arm_now = will_arm && (!recon_used || ro.arm);
     // The reconciliation's corrective stance input (stance level): one tap
     // toward the remote's stance, or a hold for prone, through the overlay.
-    if (recon_used && ro.stance_fix != pr::StanceFix::none && arm_now) {
+    if (recon_used && !carry_hold && ro.stance_fix != pr::StanceFix::none && arm_now) {
         const bool hold = ro.stance_fix == pr::StanceFix::hold;
         if (!(set.input_mask & kStanceBit)) {
             EmitRecon(m, h, kRcFix, "partner_recon=stance_fix; refused=mask; remote=%u; body=%u\r\n", unsigned(ro.report.fix_remote),
@@ -1944,6 +1957,11 @@ void DrainEquip(Driver& d, const Hooks& h, std::uint64_t now) noexcept {
         std::uint8_t message[128]{};
         std::size_t size = 0;
         if (!h.drain_reliable(h.context, partner_equip_wire::kChannel, message, sizeof(message), size)) break;
+        // Teammate carry events (coop_carry, first byte 0x4B) share channel 2.
+        if (coop_carry::IsCarryMessage(message, size)) {
+            coop_carry::Receive(message, size);
+            continue;
+        }
         if (partner_ride_wire::IsRide(message, size)) {
             if (partner_ride_wire::Accept(d.ride_rx, message, size, epoch, now)) {
                 EmitCapped(m.ride_cap, h, "partner_ride", "partner_ride=rx; kind=%u; rev=%u; epoch=%u\r\n",
@@ -2944,11 +2962,14 @@ void TickNative(Driver& d, const Hooks& h, const LabConfig& lab, const pp::State
     // A neutral window (placement) is armed but not yet placed.
     in.window_armed = m.input_armed && !m.input_neutral;
     in.recon_placed = m.input_armed && !m.input_neutral && m.recon_active;
-    in.snaps_10s = m.recon_active && m.recon_have_out ? m.recon_out.report.snaps_window : 0;
+    in.snaps_10s = m.recon_active && m.recon_have_out && !m.carry_hold ? m.recon_out.report.snaps_window : 0;
     // Only a true runaway pin with an idle remote feeds the runaway timer (a
     // diverge or input pin has its own reason: diverging snaps, input_stale;
     // a moving overrun pin recovers on its own once the speeds match).
-    if (m.recon_active && m.recon_have_out && m.recon_out.report.runaway_idle && m.input_neutral) {
+    // A carried body (coop_carry) is moved by its carrier, never a runaway.
+    if (m.carry_hold) {
+        m.runaway_since_ms = 0;
+    } else if (m.recon_active && m.recon_have_out && m.recon_out.report.runaway_idle && m.input_neutral) {
         if (!m.runaway_since_ms) m.runaway_since_ms = now ? now : 1;
         in.runaway_ms = Clamp32(now - m.runaway_since_ms);
     } else {

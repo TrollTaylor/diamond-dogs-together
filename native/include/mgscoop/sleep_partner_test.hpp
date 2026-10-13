@@ -3,6 +3,8 @@
 #include <cstdint>
 #include "mgscoop/native_pose_window.hpp"
 #include "mgscoop/native_pose_dual_parts.hpp"
+#include "mgscoop/native_pose_carry_queue.hpp"
+namespace mgscoop::partner_input_hook {struct NativePoseDeferredCarryContext;struct NativePoseQueuedCarryContext;}
 namespace mgscoop::sleep_partner_test {
 // Private/copied-save experiment only. This interface makes no production
 // downed/network promise. Target must be accepted fresh native/Lua peer state.
@@ -80,4 +82,35 @@ struct DualPartsSleepCycleProof {
  bool paused=false;
 };
 bool ReadDualPartsSleepCycle(DualPartsSleepCycleProof&) noexcept;
+// Distinct current selected1 writer + immutable completed op0 metadata.
+// Neither selected0 nor submitted/shared snapshots supply this execution scope.
+using DeferredCarryQuery=bool(*)(partner_input_hook::NativePoseDeferredCarryContext&) noexcept;
+bool BindDeferredCarryQuery(DeferredCarryQuery) noexcept;
+struct DeferredCarrySleepProof {
+ CarryLeaseProof submitted{};
+ partner_input_hook::NativePoseJobContext job{};
+ partner_input_hook::NativePoseCarryQueueContext queue{};
+ std::uintptr_t carrierRecord=0,recipientRecord=0;
+ std::uint32_t currentPeerSequence=0;
+ std::uint64_t submitNonce=0,submittedAt=0,intentNonce=0,intentAt=0,birth0=0,birth1=0,currentAcceptedAt=0,observedAt=0;
+ std::uint8_t priorSequence=0;bool copyReserved=false;
+};
+bool ReadDeferredCarrySleepProof(DeferredCarrySleepProof&) noexcept;
+bool DeferredCarrySleepProofCurrent(const DeferredCarrySleepProof&) noexcept;
+// Distinct actual natural op1 selected1 handshake. Graph/action are re-read
+// in the current queued phase; original submission remains immutable metadata.
+using QueuedCarryQuery=bool(*)(partner_input_hook::NativePoseQueuedCarryContext&) noexcept;
+bool BindQueuedCarryQuery(QueuedCarryQuery) noexcept;
+struct QueuedCarrySleepProof {
+ CarryLeaseProof submitted{};
+ partner_input_hook::NativePoseJobContext job{};
+ partner_input_hook::NativePoseCarryQueueContext queue{};
+ std::uintptr_t carrierRecord=0,recipientRecord=0,message=0,result=0,service=0;
+ std::uint32_t currentPeerSequence=0;
+ std::uint64_t submitNonce=0,submittedAt=0,intentNonce=0,intentAt=0,birth0=0,birth1=0,currentAcceptedAt=0,observedAt=0;
+ std::uint8_t priorSequence=0,current=0,next=0;std::uint16_t nativeAction=0;
+ bool acknowledged=false; // completed reply, never physical attachment
+};
+bool ReadQueuedCarrySleepProof(QueuedCarrySleepProof&) noexcept;
+bool QueuedCarrySleepProofCurrent(const QueuedCarrySleepProof&) noexcept;
 } // namespace mgscoop::sleep_partner_test

@@ -18,6 +18,9 @@
 #include "sleep_graph_read.hpp"
 #include "sleep_worker_controls.hpp"
 #include "sleep_body0_transition_read.hpp"
+#include "sleep_body0_rest.hpp"
+#include "mgscoop/native_pose_window.hpp"
+#include "mgscoop/coop_sleep.hpp"
 namespace mgscoop::downed_player {
 namespace c = partner_player_contract;
 namespace {
@@ -253,13 +256,15 @@ bool SameLocalPad(const LocalPadRead& a, const LocalPadRead& b) noexcept {
 namespace sl=sleep_body0_lease;
 namespace sg=sleep_graph_read;
 namespace sc=sleep_worker_controls;
-namespace st=sleep_body0_transition_read;
+namespace st=sleep_body0_transition_read;namespace sr=sleep_body0_rest;
 bool nativeConfigured=false,nativeGatePassed=false,nativeEnabled=false,nativePrepared=false,nativeAbort=false;
 sl::Lease nativeLease{};
 sc::Receipt nativePad{};
 std::uint64_t nativePadSerial=0;
 std::uintptr_t nativeGraphLifetime=0,nativeGraphMog=0;
 st::Observation nativeTransition{};
+std::uint64_t nativeRestPendingAt=0;
+NativeRestDiagnostics nativeRestDiagnostics{};
 const char* nativeReadReason="sleep_native_read_context";
 sl::Sample nativeLastSample{};std::uint32_t nativeLastSequence=0;std::uint64_t nativeLastSampleAt=0;
 bool NativeActive() noexcept {return nativePrepared||nativeLease.phase!=sl::Phase::empty;}
@@ -290,6 +295,7 @@ sc::Receipt PadIdentity(const LocalPadRead& p,std::uint32_t seq) noexcept {
 struct NativeRead {
  sl::Scope scope{};sl::Sample sample{};sg::Observation graph{};LocalPadRead pad{};
  bool requestsPresent=false,zeroCap=false;st::Observation transition{};sl::ObservationProof observation{};
+ sr::Descriptor restDescriptor{};bool restDescriptorReady=false;
 };
 bool ReadNative(bool admitted,bool scanRequests,bool requireMasks,NativeRead& out,bool cleanupRefresh=false) noexcept {
  out={};const auto seq=partner_input_hook::WindowSeq();const auto now=GetTickCount64();nativeReadReason="sleep_native_read_context";
@@ -305,7 +311,11 @@ bool ReadNative(bool admitted,bool scanRequests,bool requireMasks,NativeRead& ou
  gs.mission=gs.ownedMission=mission;gs.epoch=gs.ownedEpoch=epoch;gs.generation=gs.ownedGeneration=cycle.generation;gs.thread=gs.ownerThread=ownerThread;gs.now=now;gs.poll=cleanupRefresh?now:lastPoll;gs.sequenceBefore=gs.sequenceAfter=seq;
  auto reader=[](std::uintptr_t at,void* target,std::size_t size) noexcept {SIZE_T n=0;return sleep_plugin_read::Range(at,size)&&ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(at),target,size,&n)&&n==size;};
  sg::Observation ga{},gb{},gc{};st::Observation ta{},tb{};
- if(!sg::ReadOnce(reader,gs,ga,&nativeReadReason)||!sg::ReadOnce(reader,gs,gb,&nativeReadReason))return false;
+ sr::Descriptor da{},db{},dc{};bool ra=false,rb=false,rc=false;
+ if(!sg::ReadOnce(reader,gs,ga,&nativeReadReason))return false;
+ if(ga.owner.body[0].mode==5)ra=sr::ReadDescriptor(reader,gs,ga.owner.body[0],da);
+ if(!sg::ReadOnce(reader,gs,gb,&nativeReadReason))return false;
+ if(gb.owner.body[0].mode==5)rb=sr::ReadDescriptor(reader,gs,gb.owner.body[0],db);
  nativeReadReason="sleep_native_read_graph_pair";if(!sg::Same(ga,gb))return false;
  if(!st::ReadLocalOwnedOnce(reader,gs.image,gs.player,gb.graph[0].entry,ta,&nativeReadReason,requireMasks))return false;
  nativeReadReason="sleep_native_read_requests";
@@ -315,6 +325,7 @@ bool ReadNative(bool admitted,bool scanRequests,bool requireMasks,NativeRead& ou
  if(!st::ReadLocalOwnedOnce(reader,gs.image,gs.player,gb.graph[0].entry,tb,&nativeReadReason,requireMasks))return false;
  nativeReadReason="sleep_native_read_transition_pair";if(!st::Same(ta,tb))return false;
  if(!sg::ReadOnce(reader,gs,gc,&nativeReadReason))return false;
+ if(gc.owner.body[0].mode==5)rc=sr::ReadDescriptor(reader,gs,gc.owner.body[0],dc);
  nativeReadReason="sleep_native_read_graph_after";if(!sg::Same(gb,gc))return false;
  nativeReadReason="sleep_native_read_stun_after";
  if(!Read(rec+0x2c,stunAgain)||!Read(rec+0x30,stunMaxAgain)||sl::Bits(stun)!=sl::Bits(stunAgain)||sl::Bits(stunMax)!=sl::Bits(stunMaxAgain))return false;
@@ -337,6 +348,7 @@ bool ReadNative(bool admitted,bool scanRequests,bool requireMasks,NativeRead& ou
  const auto finalSeq=partner_input_hook::WindowSeq();const bool finalBatch=partner_defer::InBatch();
  if(requireMasks)out.observation=sc::RetainedObservation(nativePad,PadIdentity(padAfter,seq),sc::RetentionInputs{out.pad.raw.pp_derived[0],padAfter.raw.pp_derived[0],named,namedAfter,seq,finalSeq,false,finalBatch,completed});
  out.graph=gc;out.pad=padAfter;out.transition=tb;out.zeroCap=sc::FreshZero(nativePad,PadIdentity(padAfter,seq),completed);
+ out.restDescriptorReady=ra&&rb&&rc&&sr::Same(da,db)&&sr::Same(db,dc);out.restDescriptor=out.restDescriptorReady?dc:sr::Descriptor{};
  out.scope.exactRetailGate=verified;out.scope.sleepCodeGate=out.scope.seedCodeGate=nativeGatePassed;out.scope.workerActive=worker_scenario::Active();out.scope.threadAdmitted=worker_scenario::ThreadAdmitted();out.scope.copiedSave=lab::SavesRedirected();out.scope.coherent=true;out.scope.admitted=admitted;out.scope.pairedOffline=admitted;
  out.scope.namedButtonsLocked=out.scope.namedTriggersLocked=named&&namedAfter;out.scope.analogCapQualified=out.zeroCap;out.scope.thread=ownerThread;out.scope.sequenceBefore=seq;out.scope.sequenceAfter=finalSeq;out.scope.batchBefore=false;out.scope.batchAfter=finalBatch;out.scope.now=completed;out.scope.poll=cleanupRefresh?completed:lastPoll;
  if(cleanupRefresh)lastPoll=completed; // only after the complete current-owner typed proof
@@ -371,6 +383,62 @@ bool NativeReleaseProof(bool cleanupRefresh=false) noexcept {
  if(sl::Same(nativeLease.owner,b.sample.owner)&&!sl::RetiredSample(b.sample)){NativeLabAbort("sleep_native_retired_drift");return false;}
  if(!sc::ReleaseSample(nativeLease,a.scope,a.sample)||!sc::ReleaseSample(nativeLease,b.scope,b.sample)){nativeReadReason="sleep_native_release_guard";return false;}
  nativeLease.lastSeen=b.scope.now;return true;
+}
+bool NativeMaintainRest(bool admitted,bool wake,bool cleanupRefresh,NativeRead& current) noexcept {
+ if(wake||cleanupRefresh||!nativeEnabled||nativeLease.phase!=sl::Phase::active||!nativeLease.nativeEntered||current.sample.mode!=5)return true;
+ if(nativeRestDiagnostics.checks!=UINT64_MAX)++nativeRestDiagnostics.checks;
+ nativeRestDiagnostics.sampledAt=current.scope.now;nativeRestDiagnostics.sampleSequence=current.scope.sequenceAfter;
+ nativeRestDiagnostics.generation=cycle.generation;nativeRestDiagnostics.stun=current.sample.stun;nativeRestDiagnostics.maximumStun=current.sample.maximumStun;
+ nativeRestDiagnostics.descriptorObserved=current.restDescriptorReady;nativeRestDiagnostics.descriptorFlags=current.restDescriptor.flags;
+ const auto pose=partner_input_hook::NativePoseWindowStatus();
+ // The existing CarryHeld getter is writer-only. Outside that writer, refuse
+ // any actual peer hold instead of interpreting its false value as no Carry.
+ const bool blocked=pose.held||pose.owned||pose.faulted;
+ const auto canonical=armed&&!stopped&&cycle.down&&cycle.cause==2&&cycle.generation==nativeLease.owner.generation;
+ if(!current.restDescriptorReady){nativeRestDiagnostics.reason="sleep_rest_body0_descriptor_unreadable";nativeRestDiagnostics.stage=1;NativeLabAbort("sleep_rest_body0_descriptor_unreadable");return false;}
+ const auto hash=current.graph.graph[0].stateHash;
+ const auto plan=sr::Maintain(current.scope,current.sample,nativeLease,hash,current.restDescriptor,true,canonical,wake,blocked);
+ nativeRestDiagnostics.reason=plan.reason;
+ if(!plan.valid){
+  if(std::strcmp(plan.reason,"sleep_rest_body0_zero_pending")==0&&current.observation.retainedNaturalZero){
+   nativeRestDiagnostics.stage=2;
+   if(!nativeRestPendingAt)nativeRestPendingAt=current.scope.now;
+   if(const auto expired=sr::PendingDeadline(nativeRestPendingAt,current.scope.now)){nativeRestDiagnostics.reason=expired;nativeRestDiagnostics.stage=4;NativeLabAbort(expired);return false;}
+   nativeReadReason=plan.reason;return true; // readonly retention only; no write or clock refresh
+  }
+  nativeRestDiagnostics.stage=3;NativeLabAbort(plan.reason);return false;
+ }
+ if(const auto expired=sr::PendingDeadline(nativeRestPendingAt,current.scope.now)){nativeRestDiagnostics.reason=expired;nativeRestDiagnostics.stage=4;NativeLabAbort(expired);return false;}
+ if(!plan.count){
+  const auto zero=sr::ObserveZero(current.zeroCap,current.observation.retainedNaturalZero);
+  if(!zero.valid){nativeRestDiagnostics.reason="sleep_rest_body0_zero_receipt";nativeRestDiagnostics.stage=5;NativeLabAbort("sleep_rest_body0_zero_receipt");return false;}
+  if(zero.clearPending)nativeRestPendingAt=0;
+  nativeRestDiagnostics.stage=10;return true; // weak readonly zero never creates or renews a pending deadline
+ }
+ NativeRead fresh{};
+ if(!ReadNative(admitted,false,true,fresh)||!fresh.restDescriptorReady||!SameNativeSample(current.sample,fresh.sample)||
+ !sg::Same(current.graph,fresh.graph)||!st::Same(current.transition,fresh.transition)||!sr::Same(current.restDescriptor,fresh.restDescriptor)){
+  nativeRestDiagnostics.reason="sleep_rest_body0_before_changed";nativeRestDiagnostics.stage=6;NativeLabAbort("sleep_rest_body0_before_changed");return false;
+ }
+ const auto again=partner_input_hook::NativePoseWindowStatus();
+ const auto next=sr::Maintain(fresh.scope,fresh.sample,nativeLease,fresh.graph.graph[0].stateHash,fresh.restDescriptor,true,
+ canonical,wake,again.held||again.owned||again.faulted);
+ if(!next.valid||next.count!=1||next.changes[0].offset!=0x2c||next.changes[0].desired!=sl::Bits(0.f)||next.changes[0].expected!=plan.changes[0].expected||
+ !NativeCas(fresh.sample.owner.life+0x2c,next.changes[0].expected,next.changes[0].desired,fresh.scope)){
+  nativeRestDiagnostics.reason="sleep_rest_body0_cas_refused";nativeRestDiagnostics.stage=7;NativeLabAbort("sleep_rest_body0_cas_refused");return false;
+ }
+ // Count the actual successful write immediately, even if its post-read refuses.
+ if(nativeRestDiagnostics.successfulCas!=UINT64_MAX)++nativeRestDiagnostics.successfulCas;
+ NativeRead after{};
+ if(!ReadNative(admitted,false,true,after)||!after.restDescriptorReady||!sr::SameSample(fresh.sample,after.sample,true)||
+ !st::Same(fresh.transition,after.transition)||!sr::Same(fresh.restDescriptor,after.restDescriptor)||fresh.graph.graph[0].stateHash!=after.graph.graph[0].stateHash){
+  nativeRestDiagnostics.reason="sleep_rest_body0_after_changed";nativeRestDiagnostics.stage=8;NativeLabAbort("sleep_rest_body0_after_changed");return false;
+ }
+ const auto completed=partner_input_hook::NativePoseWindowStatus();
+ const auto restPost=sr::Maintain(after.scope,after.sample,nativeLease,after.graph.graph[0].stateHash,after.restDescriptor,true,
+ canonical,wake,completed.held||completed.owned||completed.faulted);
+ if(!restPost.valid||restPost.count){nativeRestDiagnostics.reason="sleep_rest_body0_zero_unproved";nativeRestDiagnostics.stage=9;NativeLabAbort("sleep_rest_body0_zero_unproved");return false;}
+ current=after;nativeRestPendingAt=0;nativeRestDiagnostics.reason="sleep_rest_body0_maintained";nativeRestDiagnostics.stage=11;return true;
 }
 bool NativeAdvance(bool admitted,bool wake,Reply& out,bool cleanupRefresh=false) noexcept {
  NativeFlags(out);if(!NativeActive())return false;
@@ -421,7 +489,8 @@ bool NativeAdvance(bool admitted,bool wake,Reply& out,bool cleanupRefresh=false)
    if(plan.valid&&plan.count==1&&!NativeCas(latest.sample.owner.life+plan.changes[0].offset,plan.changes[0].expected,plan.changes[0].desired,latest.scope)){NativeWatchdog();out.reason=nativeAbort?"sleep_native_lab_abort_required":"sleep_wake_cas_changed";return true;}
   }
  }
- NativeRead latest{};if(!ReadNative(false,false,true,latest,cleanupRefresh)){NativeWatchdog();out.reason=nativeAbort?"sleep_native_lab_abort_required":nativeReadReason;return true;}
+ NativeRead latest{};if(!ReadNative(admitted&&!wake&&!cleanupRefresh,false,true,latest,cleanupRefresh)){NativeWatchdog();out.reason=nativeAbort?"sleep_native_lab_abort_required":nativeReadReason;return true;}
+ if(!NativeMaintainRest(admitted,wake,cleanupRefresh,latest)){out.reason="sleep_native_lab_abort_required";return true;}
  const auto receipt=sl::Observe(nativeLease,latest.scope,latest.sample,latest.observation);if(receipt.labAbortRequired)NativeLabAbort(receipt.reason);
  out.nativeSleepActive=true;
  // Retirement is never an unlock receipt without an independent typed pair.
@@ -436,7 +505,7 @@ bool NativeRetireForClear() noexcept {
  Reply out{};NativeAdvance(false,true,out,true);return out.nativeSleepReleaseReady&&NativeReleaseProof(true);
 }
 void ForgetNativeRetired() noexcept {
- nativeLease={};nativePrepared=nativeAbort=false;nativePad={};nativeGraphLifetime=nativeGraphMog=0;nativeTransition={};
+ nativeLease={};nativeRestPendingAt=0;nativePrepared=nativeAbort=false;nativePad={};nativeGraphLifetime=nativeGraphMog=0;nativeTransition={};
 }
 
 bool Clear(bool restore) noexcept {
@@ -452,6 +521,7 @@ bool Clear(bool restore) noexcept {
             if (!Owned(s, record, cur, max) || originalHealth <= 0 || originalHealth > max || !StoreLife(record, originalHealth)) return false;
         } else if (Owned(s, record, cur, max) && originalHealth > 0 && originalHealth <= max) StoreLife(record, originalHealth);
     }
+    if (coop_sleep::Held(0)) coop_sleep::Hold(0, false);
     armed = false; controlsApplied = false; cycle.down = false; cycle.cause = 0; friendlyRecovery = {};
     hitHead = hitCount = 0; incomingSerial = 0; observedLife = maximumHealth = 0;
     ownedP = ownedQ = ownedLife = ownedVars = 0; mission = ownerThread = 0; epoch = 0; lastPoll = downAt = lastControls = 0;
@@ -502,7 +572,7 @@ bool SetNativeSleepTest(bool enabled) noexcept {
     if (enabled) ok = ok && worker_scenario::Compiled() && nativeConfigured && nativeGatePassed &&
         verified && !stopped && !failed && armed && ownerThread==GetCurrentThreadId() && NativeWorker() &&
         !(partner_input_hook::WindowSeq()&1u) && !partner_defer::InBatch() && Owned(s,rec,life,max);
-    if (ok) { nativeEnabled=enabled; nativePad={}; lastReason=enabled?"sleep_native_test_enabled":"sleep_native_test_disabled"; }
+    if (ok) { nativeEnabled=enabled; nativePad={}; nativeRestDiagnostics={}; lastReason=enabled?"sleep_native_test_enabled":"sleep_native_test_disabled"; }
     ReleaseSRWLockExclusive(&lock); return ok;
 }
 bool Control(std::uint32_t m, std::uint16_t ep, bool admitted, std::uint8_t command, std::uint32_t generation, Reply& out) noexcept {
@@ -630,6 +700,8 @@ bool Control(std::uint32_t m, std::uint16_t ep, bool admitted, std::uint8_t comm
             out.nativeSleepReleaseReady=true;
         }
         if (!Released(raw)) return finish(true, "restore_pending");
+        // Wake the stock player sleep (life state 2 -> 0: stock wake-up animation).
+        if (coop_sleep::Held(0)) coop_sleep::Hold(0, false);
         if (!SlowCrawl(true)) return finish(true, "crawl_restore_pending");
         partner_player::State again{}; std::uintptr_t againRec = 0; float againCur = 0, againMax = 0;
         if (!Owned(again, againRec, againCur, againMax) || !StoreLife(againRec, detail::RecoveredHealth(cycle.cause, originalHealth, againMax))) return finish(false, "health");
@@ -662,8 +734,12 @@ bool Control(std::uint32_t m, std::uint16_t ep, bool admitted, std::uint8_t comm
         }
         // Check this frame first: a paused but still locked body stays down.
         // Failed requests and a later lost lock still have a bounded deadline.
+        // A friendly dart puts the body in the stock player sleep (coop_sleep:
+        // life state 2, the MGO/FOB sleep graph) instead of the prone fallback.
         bool prone = false;
-        const bool protection = Prone(s, prone) && StoreLife(record, detail::IncapacitatedHealth(cycle.cause, originalHealth, max));
+        const bool nativeSleep = cycle.cause == 2 && coop_sleep::Configured() && coop_sleep::Hold(0, true);
+        if (nativeSleep) prone = true;
+        const bool protection = (nativeSleep || Prone(s, prone)) && StoreLife(record, detail::IncapacitatedHealth(cycle.cause, originalHealth, max));
         const bool masked = Controls(raw);
         // The fallback sleep body is prone but fully immobile. Do not create a
         // crawl-rate lease for sleep; the fresh native input cap below is zero.
@@ -679,7 +755,7 @@ bool Control(std::uint32_t m, std::uint16_t ep, bool admitted, std::uint8_t comm
         }
         if (!protection) return finish(false, "prone_health");
         out.applied = applied;
-        return finish(true, applied ? cycle.cause == 2 ? "sleeping_prone_fallback" : "downed" : pendingReason);
+        return finish(true, applied ? cycle.cause == 2 ? (nativeSleep ? "sleeping_native" : "sleeping_prone_fallback") : "downed" : pendingReason);
     }
     out.applied = command == 0;
     return finish(true, detail::RebindReason(rebound));
@@ -769,6 +845,13 @@ bool IsProtected(std::uintptr_t P, std::uint32_t id) noexcept {
     const bool ok = cycle.down && !failed && detail::FreshScope(GetTickCount64(), lastPoll) &&
         id == 0 && P == ownedP && Owned(s, record, cur, max);
     ReleaseSRWLockShared(&lock); return ok;
+}
+NativeRestDiagnostics GetNativeRestDiagnostics() noexcept {
+ const DWORD incoming=GetLastError();AcquireSRWLockShared(&lock);auto out=nativeRestDiagnostics;
+ out.enabled=nativeEnabled;out.active=NativeActive();out.aborted=nativeAbort;
+ out.capSequence=nativePad.sequence;out.capAt=nativePad.at;out.pendingAt=nativeRestPendingAt;
+ out.currentSequence=partner_input_hook::WindowSeq();
+ ReleaseSRWLockShared(&lock);SetLastError(incoming);return out;
 }
 Snapshot GetSnapshot() noexcept {
     AcquireSRWLockShared(&lock);

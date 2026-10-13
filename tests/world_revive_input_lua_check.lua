@@ -7,7 +7,7 @@ local function copy(t)
     return result
 end
 local function fixture()
-    local c = {now = 1000, sets = 0, resets = 0, native4 = 0, tx = {}, masks = {},
+    local c = {now = 1000, sets = 0, resets = 0, native4 = 0, tx = {}, masks = {}, announces = {},
         n = {ready = true, down = false, held = false, generation = 0, cause = 0, pos = {0, 0, 0}}}
     local env = setmetatable({e = {}, vars = {missionCode = 30010}, Player = {},
         Tpp = {MgsCoop = {playerPackageSelected = true}}}, {__index = _G})
@@ -21,7 +21,7 @@ local function fixture()
     W.inGame = function() return not c.outOfGame end
     W.tx = function(op, ...) c.tx[#c.tx + 1] = {op, {...}}; return true end
     W.receipt = function(text)
-        if text:match("^return 'MGS_COOP_DOWNED_HUD_V[12]'") then return true end
+        if text:match("^return 'MGS_COOP_DOWNED_HUD_V[123]'") then return true end
         local m, ep, cmd, gen = text:match("^return 'MGS_COOP_DOWNED_V1' %-%- (%d+) (%d+) (%d+) (%d+)$")
         check(m == '30010' and ep == '7', 'all control receipts retain exact mission and epoch')
         cmd, gen = tonumber(cmd), tonumber(gen)
@@ -53,6 +53,7 @@ local function fixture()
         if c.queueSet then c.pendingSet = true
         elseif not c.fullTable then c.masks.MgsCoopRevive = options.buttons end
     end
+    env.TppUiCommand = {AnnounceLogView = function(text) c.announces[#c.announces + 1] = text end}
     env.Player.ResetPadMask = function(options)
         if options.settingName == 'MgsCoopDowned' then c.masks.MgsCoopDowned = nil; return end
         check(options.settingName == 'MgsCoopRevive' and options.buttons == nil, 'cleanup resets only its own name')
@@ -84,13 +85,17 @@ end
 
 local c = fixture(); c.useHeld = true
 check(c.step() and c.sets == 1 and c.masks.MgsCoopRevive == 0x20, 'exact3m live teammate admits observed use hold')
-check(c.D.hud(c.now).inRange, 'revive hint appears only after native E mask is observed')
+check(c.D.hud(c.now).inRange and c.D.hud(c.now).near, 'revive hint appears only after native E mask is observed, and the 3m approach remains')
+check(#c.announces == 1 and c.announces[1]:find('Hold Action (E)', 1, true) and c.announces[1]:find('Pickup is unavailable', 1, true),
+    'game log says to hold Action and that pickup is unavailable')
 check(c.D.progress == 0, 'first qualified hold begins at zero elapsed')
-check(c.step(100) and c.D.progress == 100 and c.sets == 1, 'observed mask maintains hold without duplicate setters')
+check(c.step(100) and c.D.progress == 100 and c.sets == 1 and #c.announces == 1, 'observed mask maintains hold without duplicate setters or repeated prompts')
 c.useHeld = false; check(not c.step(100) and c.D.progress == 0, 'release immediately clears revive progress')
 check(c.masks.MgsCoopRevive == 0x20, 'use pickup stays suppressed throughout nearby revive eligibility')
 c.D.records[2].pos[1] = 3001
-check(not c.step() and c.masks.MgsCoopRevive == nil and not c.D.reviveMaskOwned, 'leaving3m resets and confirms absence')
+check(not c.step() and c.masks.MgsCoopRevive == nil and not c.D.reviveMaskOwned and not c.D.hud(c.now).near, 'leaving3m resets and confirms absence')
+check(c.announces[#c.announces]:find('Get closer', 1, true) and c.announces[#c.announces]:find('Pickup is unavailable', 1, true) and not c.announces[#c.announces]:find('Hold', 1, true),
+    'leaving 3m tells the player to get closer and that pickup is still unavailable')
 check(c.masks.MgsCoopDowned == nil, 'revive interaction never creates downed mask')
 
 for _, change in ipairs({
@@ -124,7 +129,9 @@ check(not c.step(50) and c.sets == 1, 'failed observation does not spam setters'
 c.fullTable = false; check(c.step(50) and c.sets == 2, 'available slot can retry and qualify')
 c = fixture(); c.useHeld = true; c.queueSet = true
 check(not c.step() and c.D.progress == 0, 'queued mask does not advance hold before observed')
-check(not c.D.hud(c.now).inRange and c.D.hud(c.now).teammateDown, 'queued mask preserves teammate guidance without advertising unsafe use hold')
+check(not c.D.hud(c.now).inRange and c.D.hud(c.now).near and c.D.hud(c.now).teammateDown, 'queued mask preserves teammate guidance without advertising unsafe use hold')
+check(#c.announces == 1 and c.announces[1]:find('not ready', 1, true) and not c.announces[1]:find('Hold', 1, true) and c.announces[1]:find('Pickup is unavailable', 1, true),
+    'close enough names Action as not ready and pickup as unavailable')
 c.flush(); check(not c.step(50), 'queued installation waits bounded retry')
 c.queueSet = false; check(c.step(50), 'observed queued install qualifies after retry')
 c = fixture(); c.useHeld = true; c.masks.Cutscene = 0x20

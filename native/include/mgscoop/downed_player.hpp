@@ -54,6 +54,14 @@ struct Snapshot {
     std::uint8_t nativePhase=0;std::uint32_t nativeSampleSequence=0;std::uint64_t nativeSampleAt=0;
 };
 Snapshot GetSnapshot() noexcept; // cache only; no game reads/calls
+// Numeric diagnostic cache only; this cannot confer input/write/retirement authority.
+struct NativeRestDiagnostics {
+ bool enabled=false,active=false,aborted=false,descriptorObserved=false;
+ std::uint32_t stage=0,generation=0,sampleSequence=0,capSequence=0,currentSequence=0,descriptorFlags=0;
+ std::uint64_t checks=0,successfulCas=0,sampledAt=0,capAt=0,pendingAt=0;
+ float stun=0,maximumStun=0;const char* reason="none";
+};
+NativeRestDiagnostics GetNativeRestDiagnostics() noexcept; // cache only; no game reads/calls
 bool PassiveOfflineContext(std::uintptr_t P, std::uint32_t& local) noexcept;
 // Natural local-attacker0 -> replica1 only, admitted by the exact damage hook.
 bool QueueFriendlyHit(std::uintptr_t P, float damage, std::uint8_t cause) noexcept;

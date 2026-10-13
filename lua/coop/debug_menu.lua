@@ -290,6 +290,7 @@ do
   D.lastId = id
   D.host = get(command, "host") == true
   D.partnerPose = get(command, "pp")
+  D.carryPoint = get(command, "cp")
   local a = tokens(get(command, "text"))
   if not a then note(id, false, "command_text"); return end
   if get(command, "mission") ~= nil and get(command, "mission") ~= mission then

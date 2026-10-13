@@ -36,6 +36,7 @@
 #include <windows.h>
 #include <strsafe.h>
 #include <cstring>
+#include <cmath>
 #include "mgscoop/nametag_game.hpp"
 #include "mgscoop/teammate_targeting.hpp"
 #include "mgscoop/partner_input_hook.hpp"
@@ -85,7 +86,22 @@
 #include "carry_owned_handshake_contract.hpp"
 #include "carry_dispatch_lifetime.hpp"
 #include "native_pose_hook_groups.hpp"
+#include "carry_op0_origin.hpp"
+#include "carry_op0_origin_contract.hpp"
+#include "mgscoop/native_pose_carry_handshake.hpp"
+#include "carry_queue_lifetime.hpp"
+#include "carry_queue_lifetime_contract.hpp"
+#include "mgscoop/native_pose_carry_queue.hpp"
+#include "mgscoop/native_pose_carry_deferred.hpp"
+#include "mgscoop/native_pose_carry_queued.hpp"
+#include "mgscoop/native_pose_carry_op2.hpp"
+#include "carry_op2_shared.hpp"
+#include "carry_op1_owned.hpp"
+#include "carry_op1_owned_contract.hpp"
+#include "carry_deferred_copy.hpp"
+#include "carry_native_queue_contract.hpp"
 #include "mgscoop/native_pose_carry_cold.hpp"
+#include "carry_p238_cold_read.hpp"
 #include "mgscoop/native_pose_dispatch_lifetime.hpp"
 #include "carry_request_retirement_contract.hpp"
 
@@ -2123,6 +2139,11 @@ bool NativePoseVarsPairWordCleanupWindow(const NativePoseJobContext& c0) noexcep
   c0.generation==g_pose_generation&&c0.sceneEpoch==g_pose_epoch&&c0.thread==g_pose_thread&&c0.sequence==t_pose.context.sequence&&
   c0.birthSerial==t_pose.context.birthSerial&&PoseContextBirthCurrent(c0);
 }
+#include "carry_op0_origin_exports.inc"
+#include "carry_queue_lifetime_exports.inc"
+#include "carry_deferred_copy_exports.inc"
+#include "carry_op1_owned_exports.inc"
+#include "carry_op2_shared_exports.inc"
 bool ReadNativePoseLocalCarrySlice(NativePoseLocalCarryContext& out) noexcept {return PoseLocalCarryQuery(out);}
 bool RunNativePoseLocalCarrySlice(const NativePoseCarryLease& lease,NativePoseLocalCarryFn fn,void* argument) noexcept {
  if(g_pose_bindings.enabled||!fn||!lease.serial||g_pose_fault||g_shutdown||!g_pose_test||!PoseRequired()||!PoseWorker()||
@@ -2172,6 +2193,7 @@ bool ReadNativePoseCarryColdStatus(NativePoseCarryColdStatus& out) noexcept {
   pi::Arm a{},after{};route::Observation routeBefore{},routeAfter{};msg::Observation messageBefore{},messageAfter{};
   std::uintptr_t vars=0,q=0;std::uint16_t word=0xffff,wordAfter=0xffff;std::uint32_t local=0,selected=0;
   dual_parts_cold_profile::Stamp profileBefore{},profileAfter{};std::uint32_t profileReasonAfter=0;
+  cp::Pair modelsBefore{},modelsAfter{};carry_p238_cold_read::Observation p238Before{},p238After{};
   NativePoseCarryColdStatus value{};value.sequence=static_cast<std::uint32_t>(g_window_seq);
   const bool root=owned&&ReadArm(a)&&a.P==g_pose_player&&a.go==g_pose_go&&a.blk1==g_pose_block&&a.gen==g_pose_generation&&a.rates_epoch==g_pose_epoch&&
    a.enabled&&a.native&&PoseRead(a.P+0x214,local)&&!local&&PoseRead(a.P+0x218,selected)&&!selected;
@@ -2184,18 +2206,25 @@ bool ReadNativePoseCarryColdStatus(NativePoseCarryColdStatus& out) noexcept {
    value.varsReady=PoseRead(a.P+0x140,vars)&&vars==g_base+0x2c01360&&PoseRead(a.P+0x60,q)&&q&&PoseRead(vars+0x10e,word);
    value.word=word;value.varsDomain=PoseVarsPatchesLive();value.messageDomain=PoseMessagePatchesLive();value.routeDomain=PoseRoutePatchesLive();
    value.localSliceActive=false; // cold shared query is NEVER an exclusive slice
+   const bool p238Observed=cp::ReadPair(PoseReader,g_base,a.P,modelsBefore)&&carry_p238_cold_read::Observe(PoseReader,g_base,a.P,modelsBefore.body[0].cs,modelsBefore.body[1].cs,p238Before);
+   value.p238Observed=p238Observed&&p238Before.read;value.p238Typed=p238Observed&&p238Before.typed;
+   value.p238Body0=p238Observed&&p238Before.body0;value.p238Body1=p238Observed&&p238Before.body1;
+   value.p238Vt=p238Before.vtRva;value.p238Count=p238Before.count;value.p238Base=p238Before.base;value.p238Reason=p238Before.reason;
+
    value.profileReady=dual_parts_cold_profile::Read(PoseReader,g_base,a.P,profileBefore,value.profileReason);
    value.profileCurrent=value.profileReady&&value.profileReason==0;
    if(value.profileReady){const auto& p=profileBefore.profile;value.profileType=p.type;value.profileParts=p.parts;value.profileCamo=p.camo;
     value.profileAux=p.auxiliary;value.profileFace=p.face;value.profileRefresh=p.refresh;value.currentType=p.currentType;value.currentParts=p.currentParts;
     value.currentCamo=p.currentCamo;value.currentEncoded=p.currentEncoded;value.currentAux=p.currentAux;value.currentFace=p.currentFace;value.profileSelector=p.selector;}
+   const bool p238Same=!p238Observed||(cp::ReadPair(PoseReader,g_base,a.P,modelsAfter)&&cp::Same(modelsBefore,modelsAfter)&&
+    carry_p238_cold_read::Observe(PoseReader,g_base,a.P,modelsAfter.body[0].cs,modelsAfter.body[1].cs,p238After)&&carry_p238_cold_read::Same(p238Before,p238After));
    const bool profileSame=!value.profileReady||(dual_parts_cold_profile::Read(PoseReader,g_base,a.P,profileAfter,profileReasonAfter)&&
     profileReasonAfter==value.profileReason&&dual_parts_cold_profile::Same(profileBefore,profileAfter));
    const bool routeSame=!value.routeReady||(route::ReadPair(PoseReader,g_base,a.P,routeAfter)&&route::Same(routeBefore,routeAfter));
    const bool messageSame=!value.messageReady||(msg::ReadPair(PoseReader,g_base,a.P,messageAfter)&&msg::SameLease(messageBefore,messageAfter));
    const bool varsSame=!value.varsReady||(PoseRead(vars+0x10e,wordAfter)&&word==wordAfter);
    AcquireSRWLockShared(&g_pose_birth_lock);const bool birthSame=epoch==g_pose_birth_epoch;ReleaseSRWLockShared(&g_pose_birth_lock);
-   if(routeSame&&messageSame&&varsSame&&profileSame&&birthSame&&ReadArm(after)&&after.P==a.P&&after.go==a.go&&after.blk1==a.blk1&&
+   if(routeSame&&messageSame&&varsSame&&profileSame&&p238Same&&birthSame&&ReadArm(after)&&after.P==a.P&&after.go==a.go&&after.blk1==a.blk1&&
     after.gen==a.gen&&after.rates_epoch==a.rates_epoch&&value.sequence==static_cast<std::uint32_t>(g_window_seq)&&
     g_pose_gate.OwnsRead(read.thread,t_readers.tickets[read.slot])&&!g_pose_fault){out=value;accepted=true;}
   }
@@ -2210,13 +2239,13 @@ bool AcquireNativePoseCarryRecipientLease(NativePoseCarryLease& out) noexcept {
  if(g_pose_owners.held&holds::carry){
   out={g_pose_owners.carrySerial,g_pose_generation,g_pose_epoch};if(NativePoseCarryRecipientLeaseCurrent(out))return true;out={};return false;
  }
- cp::Pair pair{};route::Observation dispatch{};auto read=PoseReader;
+ cp::Pair pair{};route::Observation dispatch{};ql::Owner queued{};auto read=PoseReader;
  if(!cp::ReadPair(read,g_base,g_pose_player,pair)||pair.go!=g_pose_go||pair.body[1].block!=t_pose.context.block||
     pair.body[1].state!=t_pose.context.state||pair.body[1].cs!=t_pose.context.modelCS||pair.body[1].entry!=t_pose.context.modelEntry||
-    !PoseCarryBirth0Current(pair,true)||pair.body[0].freeCallbacks<2||!PoseRouteCapture(pair,dispatch)||!PoseMessageCapture(pair))return false;
+    !PoseCarryBirth0Current(pair,true)||pair.body[0].freeCallbacks<2||!PoseRouteCapture(pair,dispatch)||!PoseMessageCapture(pair)||!PoseQueueCapture(pair,queued))return false;
  ++g_pose_carry_serial;if(!g_pose_carry_serial)++g_pose_carry_serial;
  if(!holds::AddCarry(g_pose_owners,g_pose_carry_serial))return false;
- g_pose_carry_pair=pair;g_pose_route_hold=dispatch;g_pose_route_bound=true;g_pose_cs=t_pose.context.modelCS;g_pose_entry=t_pose.context.modelEntry;
+ g_pose_carry_pair=pair;g_pose_queue_owner=queued;g_pose_queue_bound=true;g_pose_route_hold=dispatch;g_pose_route_bound=true;g_pose_cs=t_pose.context.modelCS;g_pose_entry=t_pose.context.modelEntry;
  InterlockedExchange(&g_pose_held,1);out={g_pose_carry_serial,g_pose_generation,g_pose_epoch};return true;
 }
 bool RequestNativePoseCarryRecipientLeaseClear(const NativePoseCarryLease& lease) noexcept {
@@ -2468,6 +2497,7 @@ void VtableCopies(std::uintptr_t out[kVtableCopies]) noexcept {
 }
 
 std::uint32_t WindowSeq() noexcept { return static_cast<std::uint32_t>(g_window_seq); }
+bool InDrainJob() noexcept { return g_in_drain; }
 
 void ResetFault() noexcept {
     InterlockedExchange(&g_fault_phase, 0);

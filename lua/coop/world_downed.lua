@@ -65,10 +65,10 @@ local function mask(enabled, cause)
   return ok
 end
 local function publishHud(h)
-  pcall(W.receipt, fmt("return 'MGS_COOP_DOWNED_HUD_V2' -- %d %d %d %d %d %d %d %d",
-    h and W.mission or 0, h and W.epoch or 0, h and h.down and 1 or 0,
-    h and h.teammateDown and 1 or 0, h and h.inRange and 1 or 0, h and h.progress or 0,
-    h and h.cause or 0, h and h.teammateCause or 0))
+  pcall(W.receipt,fmt("return 'MGS_COOP_DOWNED_HUD_V3' -- %d %d %d %d %d %d %d %d %d",
+    h and W.mission or 0,h and W.epoch or 0,h and h.down and 1 or 0,
+    h and h.teammateDown and 1 or 0,h and h.inRange and 1 or 0,h and h.progress or 0,
+    h and h.cause or 0,h and h.teammateCause or 0,h and h.near and 1 or 0))
 end
 local function resetHold()
   D.holdAt, D.holdGeneration, D.holdActor, D.target, D.progress = nil, nil, nil, 0, 0
@@ -162,7 +162,7 @@ local function reviveLocal(generation)
   end
   D.unlockGeneration, D.unlockAt = nil, nil
   D.granted[W.role] = generation
-  log(fmt("step=revived;role=%d;generation=%.0f", W.role, generation))
+  if PlayerStance then pcall(Player.RequestToSetTargetStance,PlayerStance.STAND)end
   return true
 end
 H[OP.REVIVE_GRANT] = function(v)
@@ -182,7 +182,7 @@ local function poll(now)
     resetHold()
     D.refusalAt = D.refusalAt or now
     if D.maskOwned and now - D.refusalAt > 2000 then
-      D.stop(); log("step=refused;reason=native_controls_timeout")
+      D.stop(); log("step=refused;reason=controls_timeout")
     end
     return false
   end
@@ -236,7 +236,7 @@ end
 local function bothDown()
   local R = W.recovery
   if not R or type(R.failBothDowned) ~= "function" then
-    if not D.failed then log("step=refused;reason=shared_recovery_unavailable"); D.failed = true end
+    if not D.failed then log("step=refused;reason=shared_recovery"); D.failed = true end
     return
   end
   if R.failBothDowned() == true then D.failed = true; log("step=both_downed;shared_failure=1") end
@@ -312,7 +312,7 @@ function D.hud(now)
       D.remoteCommit[W.role == 1 and 2 or 5] == l.generation then progress = D.remoteCommit[8] end
   end
   return {down = lf and l.down == true or false, teammateDown = rf and r.down == true or false,
-    inRange = inRange, progress = progress, holdMs = HOLD,
+  inRange=inRange,near=inRange,progress=progress,holdMs=HOLD,
     cause = lf and l.down and l.cause or 0, teammateCause = rf and r.down and r.cause or 0}
 end
 function D.tick(now)

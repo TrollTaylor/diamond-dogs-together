@@ -1,0 +1,96 @@
+# Teammate pickup probe (docs/coop-carry.md): the host darts the guest, both
+# copies put the sleeper in the stock player sleep, the host holds R (CARRY)
+# next to the teammate, walks, holds R again to put them down, then wakes them.
+# Evidence: coop_carry_status / coop_carry_bodies / coop_sleep_status and captures.
+labsetting nametag=1
+labsetting coop_hud=compact
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 0
+host debug time 43200
+host debug weather sunny
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 6000
+host run coop_carry 2
+host require coopcarry;inst=1;mode=2
+host run coop_carry_grant 2
+guest run coop_carry 2
+guest require coopcarry;inst=1;mode=2
+guest run coop_carry_grant 1
+both capture carry-before
+host press 2 120
+wait 2000
+host hold rmb+lmb 1500
+host release
+wait 400
+guest run downed_status
+guest require down=1.*cause=2.*lock=1.*state=asleep
+host run coop_sleep 1 1
+guest run coop_sleep 0 1
+wait 3000
+host run coop_sleep_status
+guest run coop_sleep_status
+host run coop_carry_bodies
+guest run coop_carry_bodies
+both capture carry-asleep
+host debug goto_partner
+wait 1500
+host hold w 550
+host release
+wait 800
+host run position
+guest run position
+host run coop_carry_status
+host run coop_carry_trace
+host run coop_carry_sel
+both capture carry-near
+host hold r 900
+host release
+wait 600
+host run coop_carry_status
+host run coop_carry_bodies
+host run coop_carry_trace
+host run coop_carry_sel
+guest run coop_carry_bodies
+both capture carry-pick-0
+wait 2500
+host run coop_carry_status
+host run coop_carry_bodies
+host run coop_sleep_status
+guest run coop_carry_bodies
+host run coop_carry_mirror
+guest run coop_carry_mirror
+both capture carry-held
+host hold w 1500
+host hold w 1500
+host release
+wait 300
+host run coop_carry_bodies
+guest run coop_carry_bodies
+host run position
+guest run position
+both capture carry-walk
+host hold r 900
+host release
+wait 3000
+host run coop_carry_status
+host run coop_carry_bodies
+host run coop_sleep_status
+guest run coop_carry_bodies
+host run coop_carry_mirror
+guest run coop_carry_mirror
+both capture carry-dropped
+host run coop_sleep 1 0
+guest run coop_sleep 0 0
+wait 4000
+host run coop_sleep_status
+guest run coop_sleep_status
+host run coop_carry_bodies
+guest run coop_carry_bodies
+both capture carry-woken
+state

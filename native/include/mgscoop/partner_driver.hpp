@@ -562,6 +562,7 @@ struct Mission {
     bool recon_in_valid;
     bool hold_stripped; // live remote HOLD refused by the effective native mask/gate
     bool dash_fix;
+    bool carry_hold; // instance 1 is in the stock carried state (coop_carry): recon holds
     partner_native::DashState dash;
     std::uint32_t recon_in_age_ms;
     std::int32_t recon_in_r;       // x1000

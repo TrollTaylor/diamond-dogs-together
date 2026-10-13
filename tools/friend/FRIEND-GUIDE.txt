@@ -24,17 +24,28 @@ What works today:
   a teammate to revive them. Sleep darts: a separate asleep state preserves
   health, blocks movement and combat, and wakes automatically after 30 seconds
   of fresh paired gameplay. The current sleep pose is prone; the stock standing
-  sleep animation is unfinished. A healthy teammate can also wake or revive:
-  close F9, stand within 3 m and HOLD ACTION (E by default) for 3 seconds.
-  Both games must be paired in World 3. Sleep does not count as a fatal injury.
+  sleep animation and a separate help-up animation are unfinished. A healthy
+  teammate can wake or revive: close F9, stand within 3 m and HOLD ACTION
+  (E by default) for 3 seconds. A lower-center prompt says when you are close
+  enough, when Action is ready, and that picking the teammate up is unavailable.
+  The game log shows the same sentence once when that state changes. Both games
+  must be paired in World 3. Sleep does not count as a fatal injury. You cannot
+  carry a downed player.
 - F9 > Partner / Co-op includes Incapacitation status, Revive input status and Downed movement input to help
   check pairing, distance and held ACTION input. Close the menu before trying
   the revive. Hidden tests measured about half-speed local crawl and normal
   movement after revival. The hospital opening's exact animation is unavailable.
 - F9 > Partner / Co-op > Summon / recall D-Horse requests the local stock horse.
   Wait for loading and check Horse status. Close F9 and use normal controls
-  to mount when the horse is present. This does not spawn a second horse or
-  attach the remote player; two-player horse and Walker rides are unfinished.
+  to mount when the horse is present. This does not spawn a second horse,
+  attach the remote player, or arm a Walker. When the census realizes a horse
+  or Walker body, that body's position and heading are sent to the other
+  game. A Walker is moved with SetPosition. A horse is moved with SetCallHorse;
+  its goal is one metre along the census heading, which is how that command
+  writes facing. The vehicle you are driving is moved with its own SetPosition.
+  Parked vehicles stay put. The remote rider is still only the existing
+  ride-kind display. A completed revive asks the downed player to stand with
+  the game's own stance request. Picking a teammate up is still unavailable.
 - D-Dog follow status reports the shared dog position. The guest dog follows
   the host dog's position; dog attacks, spotting and health are not shared.
 - The NATIVE PARTNER (default): your partner's body is moved by the game's

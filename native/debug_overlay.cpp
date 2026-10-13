@@ -1158,7 +1158,10 @@ bool HudPrepare(HudFrame& f, bool menu_open) noexcept {
     f.show_line = coop_hud::FormatLine(view, name, coop_hud::GetMode(), now, f.line, &partner);
     coop_hud::DownedView downed{};
     coop_hud::GetDowned(downed); // copied receipt facts; never local game reads
-    f.show_downed = coop_hud::FormatDowned(downed, view.mission, now, f.downed_line, f.revive_progress);
+    // A fresh downed receipt can arrive before the link line has a mission.
+    // A published link mission still has to match; another scene stays hidden.
+    const auto downedMission = view.mission ? view.mission : downed.mission;
+    f.show_downed = coop_hud::FormatDowned(downed, downedMission, now, f.downed_line, f.revive_progress);
     f.downed_progress = f.show_downed && downed.teammateDown && downed.inRange && !downed.localDown;
     f.toast_count = hud_model.Active(now, f.toasts, coop_hud::kMaxToasts);
     coop_hud::NoteFrame(f.show_line ? &f.line : nullptr, f.toast_count ? f.toasts[0]->text : nullptr, false, taken, new_toasts, now);
@@ -1192,16 +1195,28 @@ void DrawHudLayer(const HudFrame& f, const ImVec2& display) noexcept {
         right_text(f.line.text, HudColor(f.line.tone, 235), 0.0f);
         if (f.line.detail[0]) right_text(f.line.detail, IM_COL32(200, 200, 200, 220), 0.0f);
     }
-    if (f.show_downed) {
-        right_text(f.downed_line.text, HudColor(f.downed_line.tone, 245), 0.0f);
+    // Revive and pickup stay on the lower center, where an action prompt is
+    // read. The connection line remains top-right. This is the same HUD, not
+    // a second overlay. The native hint queue is a Quiet-camo site and was
+    // not a verified visible action prompt, so it is not driven from here.
+    if (f.show_downed && f.downed_line.text[0]) {
+        const float promptSize = size * 1.45f;
+        const float wrap = std::fmin(display.x * 0.72f, 980.0f * scale);
+        const ImVec2 ts = font->CalcTextSizeA(promptSize, FLT_MAX, wrap, f.downed_line.text);
+        const float boxW = std::fmin(ts.x, wrap);
+        const float x = std::floor((display.x - boxW) * 0.5f);
+        float py = std::floor(display.y * 0.72f);
+        list->AddRectFilled(ImVec2(x - pad * 1.4f, py - pad), ImVec2(x + boxW + pad * 1.4f, py + ts.y + pad), IM_COL32(0, 0, 0, 170), 4.0f * scale);
+        list->AddText(font, promptSize, ImVec2(x + 1.0f, py + 1.0f), IM_COL32(0, 0, 0, 220), f.downed_line.text, nullptr, wrap);
+        list->AddText(font, promptSize, ImVec2(x, py), HudColor(f.downed_line.tone, 250), f.downed_line.text, nullptr, wrap);
+        py += ts.y + pad * 2.2f;
         if (f.downed_progress) {
-            const float width = 200.0f * scale, height = 5.0f * scale;
-            const float x = display.x - margin - width;
-            list->AddRectFilled(ImVec2(x - pad, y - pad * 0.5f), ImVec2(x + width + pad, y + height + pad * 0.5f), IM_COL32(0, 0, 0, 140), 3.0f * scale);
-            list->AddRectFilled(ImVec2(x, y), ImVec2(x + width, y + height), IM_COL32(90, 90, 90, 220), 2.0f * scale);
+            const float width = std::fmin(420.0f * scale, display.x * 0.36f), height = 8.0f * scale;
+            const float bx = std::floor((display.x - width) * 0.5f);
+            list->AddRectFilled(ImVec2(bx - pad, py - pad * 0.4f), ImVec2(bx + width + pad, py + height + pad * 0.4f), IM_COL32(0, 0, 0, 170), 3.0f * scale);
+            list->AddRectFilled(ImVec2(bx, py), ImVec2(bx + width, py + height), IM_COL32(90, 90, 90, 230), 2.0f * scale);
             if (f.revive_progress > 0.0f)
-                list->AddRectFilled(ImVec2(x, y), ImVec2(x + width * f.revive_progress, y + height), HudColor(coop_hud::Tone::good, 245), 2.0f * scale);
-            y += height + pad * 2.0f;
+                list->AddRectFilled(ImVec2(bx, py), ImVec2(bx + width * f.revive_progress, py + height), HudColor(coop_hud::Tone::good, 245), 2.0f * scale);
         }
     }
     const float wrap = std::fmin(display.x * 0.4f, 620.0f * scale);

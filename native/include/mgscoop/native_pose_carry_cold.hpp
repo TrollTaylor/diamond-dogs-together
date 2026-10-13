@@ -11,6 +11,8 @@ struct NativePoseCarryColdStatus {
  bool varsDomain=false,messageDomain=false,routeDomain=false,localSliceActive=false;
  bool profileReady=false,profileCurrent=false;
  std::uint32_t profileReason=0,profileType=0,profileParts=0,profileCamo=0,profileAux=0,profileFace=0,profileRefresh=0;
+ bool p238Observed=false,p238Typed=false,p238Body0=false,p238Body1=false;
+ std::uint32_t p238Vt=0,p238Count=0,p238Base=0,p238Reason=0;
  std::uint32_t currentType=0,currentParts=0,currentCamo=0,currentEncoded=0,currentAux=0,currentFace=0,profileSelector=0;
 };
 // Requires actual copied-save worker/current thread/mandatory healthy scope,

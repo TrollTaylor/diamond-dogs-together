@@ -1,3 +1,59 @@
+## October 12, 2026: horse and walker body poses
+
+A realized horse or walker body sends its position, the fourth float of the verified 16-byte census pose as heading, and whether it is occupied and by whom. The other game moves that body only when its own census realized that id. A walker uses `SetPosition`, including heading. A horse uses `SetCallHorse`. The horse dispatcher `0xE4D250`–`0xE4D95E` has no heading argument. Its call consumer at `0xE6AB89` takes the goal minus the start, calls `atan2f(direction.x, direction.z)` through thunk `0x1A0600A`, and stores that angle in the pose slot at `0xE6AC4E`. The goal is therefore the start plus one metre of `(sin yaw, 0, cos yaw)`. The vehicle the local player is driving is read with `TppVehicle2` `GetPosition` (`0xB2B7F8`, body `0xB2BA47`) and moved with `SetPosition` (`0xB2BA9F`, fields `position` and `rotY`). Parked vehicles have no verified id list, so they are left where they are. A remote occupied horse is still shown as a rider only by the existing ride-kind display. None of these calls mount, dismount, or arm a body.
+
+A pose with no body id is dropped. A pose for a horse or walker this machine's census did not realize is refused. A vehicle pose is applied only when `Tpp.IsVehicle` accepts that same id. The local occupied body is left alone. The release loader reads horse and walker poses without the private-worker gate, and only after the same code pins match.
+
+## October 12, 2026: what this build does in a mission
+
+Two players still move, shoot, crawl when wounded, and revive with a three-second Action (E) hold. Friendly sleep darts still put a teammate to sleep; the same hold wakes them, or the host timer wakes them after 30 seconds. While you are the one down, the lower-center prompt says you are waiting. While a teammate is down:
+
+- Far away: get closer. Pickup is unavailable.
+- Inside about 3 metres, before the Action hold is observed: you are close enough, but Action (E) is not ready yet. Pickup is unavailable.
+- Once that hold is observed: hold Action (E). A bar shows the three-second progress. Pickup is unavailable.
+
+The same sentences are sent once through the game's own `TppUiCommand.AnnounceLogView` log when the state changes. The lower-center line is the existing co-op HUD, moved to where an action prompt is read. It is not a second overlay. The pinned native hint queue is a Quiet-camo site; a previous hidden run did not show that hint as a visible prompt, so this build does not call it.
+
+You still cannot pick up a downed player. The pinned executable has no pickup command. `TppPlayer2` controller `0x11566A0`–`0x1156A4E` contains `RequestCarryOff` only, and stock `s10070_sequence.lua` uses that command to end a carry. The player manager command set at `0x9C5F80` is `Warp`, `WarpAndWaitBlock`, and `WarpToStation`. The executable contains no `RequestToCarry`, `CarryPlayer`, `SetCarry`, or `StartCarry` string. `EndCarryAction` at `0x11322F7` and `StartCarryIdle` at `0x1132986` are internal action-node hashes, not a Lua pickup. The scratch `SubmitNativePoseLocalSleepingCarry` writes a force-A target and its header says that submission is not attachment. The carry-target, deferred-copy, owned-op1, shared-op2, queued-provider, and player-tree files remain contracts and fixtures.
+
+A completed revive still restores health and the crawl cap. It then calls the stock local-player `Player.RequestToSetTargetStance(PlayerStance.STAND)`. That wrapper is `0x9DB191`: it takes the stance component and calls `vt+0x10` with the local player index. The hospital script uses the same call to leave a crawl. The downed pose stays the prone crawl until that revive request.
+
+The other player's on-foot body still follows the partner transform stream. Horse, walker, and occupied-vehicle bodies use the pose sync above. There is still no mounted-animation write and no verified walker arm command.
+
+The game was not launched for this change, and the installed game folders were not modified.
+
+## October 12, 2026: carry-target service landed
+
+`carry-target-service-v1` is in the main tree from `carry\carry-target-service-v1`. It has no earlier source base: the stage is the pinned contract only, copied byte-for-byte. Research Release `/W4 /WX` passed `carry_target_service_tests` (31 checks). Activation stays off. It does not install a hook, write a target, or start pickup, horse loading, or shared passengers. The named carry-passenger scratch stages through this service are merged. The guest pose-window refusal and the guest `0xC0000005` remain unverified. The game was not launched.
+
+## October 12, 2026: player-tree closure landed
+
+`player-tree-closure-v1` is in the main tree from `riding\player-tree-closure-v1`. The bundled op2-null, op2-tree, and row4 readers match their scratch dependencies, and the row4 header already in the tree was left unchanged. The fixture also publishes the existing row4 node at `block+0x210`. Research Release `/W4 /WX` passed `player_tree_closure_tests` (228 checks). It is a read-only path and effect reader. It does not bind a callback or activate carry, drop, or passengers. The carry-target service is recorded above. Pickup, horse loading, shared passengers, the guest pose-window refusal, and the guest `0xC0000005` remain unverified. The game was not launched.
+
+## October 12, 2026: queued carry provider landed
+
+`queued-carry-provider-v1` is in the main tree. Its scratch base is `deferred-carry-provider-v1`, and that base matched the current sleep-partner sources, so both stages were copied byte-for-byte. Two fixture fields were aligned with the current lease: `batch` is `batchBefore`, and the stale-poll case uses the current 750 ms window. Research Release `/W4 /WX` passed `sleep_deferred_carry_tests` (80 checks) and `sleep_queued_carry_tests` (103 checks). `mgs_partner_player` and the probe compiled. The queued proof reads a bound selected1 handshake and does not copy a queue or activate carrying. The carry-target service is recorded above. Player-tree closure is recorded above. Pickup, horse loading, shared passengers, the guest pose-window refusal, and the guest `0xC0000005` remain unverified. The game was not launched.
+
+## October 12, 2026: shared op2 landed
+
+`carry-op2-shared-v2` is now in the main tree on the owned-op1 base, byte-for-byte. It recognizes one natural shared op2 source and keeps the distinct sleep validator and current player-tree validator null. No new hook is installed and no carry message is generated. Research Release `/W4 /WX` passed `carry_op2_shared_tests` (15 checks), and `mgs_partner_player` compiled. The carry-target service is recorded above. Pickup, horse loading, shared passengers, the guest pose-window refusal, and the guest `0xC0000005` remain unverified. The game was not launched.
+
+## October 12, 2026: owned op1 landed
+
+`carry-op1-owned-v2` is now in the main tree on the deferred-copy base, byte-for-byte. It admits one natural owned op1 reply through the existing dispatch and keeps the queued sleep validator and player-tree handler null. Research Release `/W4 /WX` passed `carry_op1_owned_tests` (27 checks), and `mgs_partner_player` compiled. Activation stays off. The carry-target service is recorded above. Shared op2, the queued provider, and player-tree closure are recorded above. Pickup, horse loading, shared passengers, the guest pose-window refusal, and the guest `0xC0000005` remain unverified. The game was not launched.
+
+## October 12, 2026: deferred carry copy merged
+
+Scratch and the main tree contain the guest pose-window refusal and the guest `0xC0000005` from runs `35fdf39046304635b1b9432c8dc76163` and `b7baad6b1ff14cf792115954e160f1cb`. No diagnosis or partial fix for either failure was started. Owned op1 was authored against the deferred-copy output, so that earlier stage is the one that applies to the current tree.
+
+`carry-deferred-copy-core47-v1` is now in the main tree: one default-null `0xfe00d0` setter hook, a single reserved queued-80 copy, and the authored fixture. Research Release `/W4 /WX` passed `carry_deferred_copy_tests` (31 checks) and `native_pose_hook_groups_tests` (6 checks), and `mgs_partner_player` compiled. Activation stays off. It does not bind a sleep provider, emit a carry request, or claim pickup, drop, horse loading, or shared passengers. The game was not launched.
+
+## October 12, 2026: row4 storage fixture closed; native disposal still off
+
+Codex had already landed the uncommitted carry-origin and queue-lifetime hooks, the cold P238 reader, and body0 rest maintenance. Research receipt `20261012-115408-443f7f3ef459439c847e165133a44f6c` passed 189/189 audited checks after the P238 optimized-reader correction. The same loader's hidden run `35fdf39046304635b1b9432c8dc76163` refused the guest pose window before cold P238 or sleep. The follow-up `b7baad6b1ff14cf792115954e160f1cb` enabled both pose windows, then the guest process exited `0xC0000005` before the asleep check; host and guest loaders were restored and real saves matched. Those two runtime results stay unaccepted.
+
+The newest unfinished scratch stage was `row4-storage-lifetime-v2`: a read-only pair for the already qualified generic `0x5c4910` footprint, with 38 assertions and `fixtures_run` still false. Those assertions now pass under `/W4 /WX` both unoptimized and `/O2`. The reader, contract pins, and fixture are in the main tree and on the worker check list. They do not install a hook, call native disposal, or authorize carrying. The carry-target service is recorded above. Deferred copy, owned op1, shared op2, the queued provider, and player-tree closure are the exceptions. Native row4 capability, pickup/drop, horse loading, shared passengers, and a repeat hidden run of the crashed guest path remain unverified. No game was launched for this fixture close.
+
 ## October 11, 2026: carry, distinct sleep and shared-passenger development (0.12.4 installed)
 
 Current result: the 0.12.4 source separates wounds from friendly dart sleep. Wounds allow slow crawling, block combat and require teammate revival; sleep preserves pre-dart health, immobilizes the player and allows early teammate wake or a fresh host-owned 30-second timer. Default sleep still uses the immobile prone fallback. Teammate pickup, putting down, horse loading, shared horse/vehicle passengers and visible guard-style remote sleep are not implemented. Native carry/riding activation and remote body1 sleep stay disabled.

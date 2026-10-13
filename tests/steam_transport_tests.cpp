@@ -2246,8 +2246,14 @@ void TestHud() {
               std::strstr(prompt.text,"waiting") && !std::strstr(prompt.text,"Hold") && progress == 0,
               "downed local player sees waiting rather than an impossible revive instruction");
         d.teammateDown = true;
-        Check(hud::FormatDowned(d,30050,1200,prompt,progress) && std::strstr(prompt.text,"get closer") && progress == 0,
-              "out-of-range teammate needs approach without revive progress");
+        Check(hud::FormatDowned(d,30050,1200,prompt,progress) && std::strstr(prompt.text,"get closer") &&
+              std::strstr(prompt.text,"Pickup unavailable") && !std::strstr(prompt.text,"Hold") && progress == 0,
+              "out-of-range teammate needs approach without revive progress, and pickup stays unavailable");
+        d.closeEnough = true;
+        Check(hud::FormatDowned(d,30050,1200,prompt,progress) && std::strstr(prompt.text,"not ready") &&
+              std::strstr(prompt.text,"Pickup unavailable") && !std::strstr(prompt.text,"Hold") && progress == 0,
+              "a teammate already inside 3m is not told to get closer before the Action hold is observed");
+        d.closeEnough = false;
         d.inRange = true; d.progressMs = 1500;
         Check(hud::FormatDowned(d,30050,1500,prompt,progress) && std::strstr(prompt.text,"Action (E)") &&
               std::strstr(prompt.text,"50%") && progress == .5f, "actual continuous hold is shown with its progress at inclusive freshness boundary");
@@ -2289,8 +2295,19 @@ void TestHud() {
               "sleeping player gets a wake instruction without a lethal down label");
         Check(parseHud("return 'MGS_COOP_DOWNED_HUD_V2' -- 30050 7 0 1 1 1500 0 2"), "teammate sleep progress parsed");
         copied.publish_ms = 1000;
-        Check(hud::FormatDowned(copied,30050,1200,prompt,progress) && std::strstr(prompt.text,"wake teammate") && progress == .5f,
-              "held Action wakes a sleeping teammate with real copied hold progress");
+        Check(hud::FormatDowned(copied,30050,1200,prompt,progress) && std::strstr(prompt.text,"wake teammate") &&
+              std::strstr(prompt.text,"Pickup unavailable") && progress == .5f,
+              "held Action wakes a sleeping teammate with real copied hold progress, and pickup stays unavailable");
+        Check(parseHud("return 'MGS_COOP_DOWNED_HUD_V3' -- 30050 7 0 1 0 0 0 1 1") && copied.closeEnough && !copied.inRange &&
+              copied.teammateCause == 1, "V3 can be close enough without an observed Action hold");
+        copied.publish_ms = 1000;
+        Check(hud::FormatDowned(copied,30050,1200,prompt,progress) && std::strstr(prompt.text,"not ready") &&
+              std::strstr(prompt.text,"Pickup unavailable") && !std::strstr(prompt.text,"Hold"),
+              "parsed close-enough receipt does not advertise a hold that has not started");
+        Check(!parseHud("return 'MGS_COOP_DOWNED_HUD_V3' -- 30050 7 0 1 1 0 0 1 0"),
+              "a hold range without the 3m approach is refused");
+        Check(parseHud("return 'MGS_COOP_DOWNED_HUD_V2' -- 30050 7 0 1 1 1500 0 2") && copied.closeEnough && copied.inRange,
+              "V2 still treats the hold range as the approach");
         Check(parseHud("return 'MGS_COOP_DOWNED_HUD_V2' -- 0 0 0 0 0 0 0 0") && !copied.valid,
               "world stop zeroes every explicit incapacity field");
         for (const char* bad : {
