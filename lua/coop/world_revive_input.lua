@@ -36,6 +36,8 @@ do
         -- Successful submission can be queued. Keep retrying our own name until observed absent.
     end
     local function eligible(r, now)
+        -- While carrying the teammate, E stays native (load on a horse or vehicle).
+        if r.carry == 1 then return false end
         if not moment(now) or not D.hitEnabled() or not W.inGame() or r.down or r.ready ~= true then return false end
         local other = D.records[3 - W.role]
         if not other or other.ready ~= true or other.down ~= true or not moment(other.at) or

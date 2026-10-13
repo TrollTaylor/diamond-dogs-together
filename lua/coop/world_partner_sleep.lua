@@ -22,9 +22,13 @@ end
 local function publishTeam(now)
   local l, r = D.records[W.role], D.records[3 - W.role]
   local lf, rf = fresh(l, now), fresh(r, now)
-  pcall(W.receipt, fmt("return 'MGS_COOP_TEAM_V1' -- %d %d %d %d %d %d %d", W.mission, W.epoch,
+  local ok, carry = pcall(W.receipt, fmt("return 'MGS_COOP_TEAM_V1' -- %d %d %d %d %d %d %d", W.mission, W.epoch,
     lf and l.down and 1 or 0, lf and l.down and l.cause or 0,
     rf and r.down and 1 or 0, rf and r.down and r.cause or 0, rf and 1 or 0))
+  -- A carried sleeper is not woken by the 30 s timer (the carrier decides).
+  if ok and (carry == 1 or carry == 2) and type(D.sleepTimers) == "table" then
+    for _, timer in pairs(D.sleepTimers) do if type(timer) == "table" and not timer.granted then timer.at = now end end
+  end
 end
 function D.partnerSleepPublish(now)
   publishTeam(now)

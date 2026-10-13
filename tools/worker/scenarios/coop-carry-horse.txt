@@ -1,0 +1,64 @@
+# Horse loading probe (docs/coop-carry.md): the host carries the sleeping
+# guest to D-Horse and uses the game's own action next to the horse.
+labsetting nametag=1
+labsetting coop_hud=compact
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+both debug godmode 0
+host debug time 43200
+host debug weather sunny
+guest debug teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 6000
+host debug horse_spawn
+wait 3000
+host debug horse_spawn
+wait 9000
+host debug horse_status
+both capture horse-called
+host press 2 120
+wait 2000
+host hold rmb+lmb 1500
+host release
+wait 400
+guest run downed_status
+guest require down=1.*cause=2.*lock=1.*state=asleep
+wait 3000
+host debug goto_carry
+wait 1500
+host hold r 900
+host release
+wait 3500
+host run coop_carry_bodies
+host require carrybodies;b0=1,a1,ps140000c.*b1=1,a2b
+host debug goto_horse
+wait 2500
+host run position
+host run coop_carry_bodies
+both capture horse-near
+host press e 150
+wait 2500
+host run coop_carry_status
+host run coop_carry_bodies
+guest run coop_carry_bodies
+host run coop_carry_mirror
+both capture horse-e-press
+host hold e 1200
+host release
+wait 3000
+host run coop_carry_status
+host run coop_carry_bodies
+guest run coop_carry_bodies
+host run coop_carry_mirror
+guest run coop_carry_mirror
+both capture horse-e-hold
+wait 3000
+host run coop_carry_bodies
+guest run coop_carry_bodies
+host debug horse_status
+both capture horse-after
+state

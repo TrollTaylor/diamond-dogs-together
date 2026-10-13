@@ -35,7 +35,7 @@ local function fixture(host)
             check(v[3] <= 1 and v[4] <= 2 and v[5] <= 1 and v[6] <= 2 and v[7] <= 1 and
                 (v[3] == 0) == (v[4] == 0) and (v[5] == 0) == (v[6] == 0), 'team receipt down flags agree with causes')
             c.team = v
-            return true
+            return c.carryRole or 0
         end
         if text:match("^return 'MGS_COOP_PARTNER_SLEEP_V1'") then
             local tail = assert(text:match("%-%- (.*)$")); local v = {}

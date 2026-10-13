@@ -4,7 +4,7 @@ do
   local D, A = e.MgsCoopDebug, e.MgsCoopDebug.api
   local get, call, number, fmt, floor = A.get, A.call, A.number, string.format, math.floor
   local P = {handles = {heal = true, godmode = true, fulton_infinite = true, forward = true, goto_partner = true,
-    goto_carry = true, slowmo = true, time_add = true}}
+    goto_carry = true, goto_horse = true, slowmo = true, time_add = true}}
   D.player = P
   local function fill()
     local l, m = A.life()
@@ -109,6 +109,26 @@ do
       local x, z = t[1] + 0.9 * dx / len, t[3] + 0.9 * dz / len
       local ok, msg = A.warp({x, t[2] + 0.4, z, math.deg(math.atan2(t[1] - x, t[3] - z))}, id)
       return ok, fmt("%s;via=carry_point", msg)
+    elseif cmd == "goto_horse" and #a == 1 then
+      -- 1.6 m beside the realized local D-Horse (ride pose census), facing it.
+      local W = e.MgsCoopWorld
+      if type(W) ~= "table" or type(W.receipt) ~= "function" then return false, "world_unavailable" end
+      local ok, r = pcall(W.receipt, fmt("return 'MGS_COOP_RIDE_POSE_V1' -- %d %d 1", W.mission or 0, W.epoch or 0))
+      if not ok or type(r) ~= "table" or r.ready ~= true or type(r.actors) ~= "table" then return false, "horse_census" end
+      local t
+      for i = 1, #r.actors do
+        local h = r.actors[i]
+        if type(h) == "table" and h.realized == true and h.id == 6656 and A.integer(h.x, -1000000000, 1000000000) and
+          A.integer(h.y, -1000000000, 1000000000) and A.integer(h.z, -1000000000, 1000000000) then t = {h.x / 1000, h.y / 1000, h.z / 1000} end
+      end
+      if not t then return false, "horse_not_realized" end
+      local me = A.pose()
+      local dx, dz = me[1] - t[1], me[3] - t[3]
+      local len = math.sqrt(dx * dx + dz * dz)
+      if len < 0.1 then dx, dz, len = 1, 0, 1 end
+      local x, z = t[1] + 1.6 * dx / len, t[3] + 1.6 * dz / len
+      local ok2, msg = A.warp({x, t[2] + 0.4, z, math.deg(math.atan2(t[1] - x, t[3] - z))}, id)
+      return ok2, fmt("%s;via=horse", msg)
     elseif cmd == "time_add" and #a == 2 then
       if not A.hostOnly() then return false, "host_only" end
       local s = number(a[2], -86400, 86400, true)

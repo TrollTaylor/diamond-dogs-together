@@ -3458,12 +3458,13 @@ bool DownedAdmitted(std::uint32_t mission, std::uint16_t epoch) noexcept {
 bool DownedReply(const mgscoop::downed_player::Reply& r, mgscoop::script_bridge::Replacement& replacement) noexcept {
     static char reply[512]{};
     if(FAILED(StringCchPrintfA(reply,ARRAYSIZE(reply),
-        "return {ready=%s,down=%s,held=%s,applied=%s,generation=%lu,cause=%u,pos={%ld,%ld,%ld},hitSequence=%lu,hitDamageMilli=%lu,hitCause=%u,reviveMaskObserved=%s,reviveMaskPresent=%s,nativeSleepActive=%s,nativeSleepReleaseReady=%s}",
+        "return {ready=%s,down=%s,held=%s,applied=%s,generation=%lu,cause=%u,pos={%ld,%ld,%ld},hitSequence=%lu,hitDamageMilli=%lu,hitCause=%u,reviveMaskObserved=%s,reviveMaskPresent=%s,nativeSleepActive=%s,nativeSleepReleaseReady=%s,carry=%u}",
         r.ready?"true":"false",r.down?"true":"false",r.held?"true":"false",r.applied?"true":"false",
         static_cast<unsigned long>(r.generation),unsigned(r.cause),
         static_cast<long>(r.pos[0]),static_cast<long>(r.pos[1]),static_cast<long>(r.pos[2]),
         static_cast<unsigned long>(r.hitSequence),static_cast<unsigned long>(r.hitDamageMilli),unsigned(r.hitCause),
-        r.reviveMaskObserved?"true":"false",r.reviveMaskPresent?"true":"false",r.nativeSleepActive?"true":"false",r.nativeSleepReleaseReady?"true":"false"))) return false;
+        r.reviveMaskObserved?"true":"false",r.reviveMaskPresent?"true":"false",r.nativeSleepActive?"true":"false",r.nativeSleepReleaseReady?"true":"false",
+        mgscoop::coop_carry::CarryRole()))) return false;
     replacement={reply,std::strlen(reply)};world_quiet=true;return true;
 }
 // --- Teammate rescue state (docs/coop-carry.md) -----------------------------
@@ -3490,15 +3491,17 @@ bool SelectTeamReceipt(const char* buffer,std::size_t size,mgscoop::script_bridg
     char text[128]{};std::memcpy(text,buffer+n,size-n);
     long v[7]{};char* p=text;
     for(unsigned i=0;i<7;++i){char* end=nullptr;v[i]=std::strtol(p,&end,10);if(end==p){v[0]=-1;break;}p=end;}
-    constexpr char yes[]="return true",no[]="return false";
+    // The reply is this machine's carry role (0 none, 1 carrying, 2 carried).
+    static constexpr char roles[3][9]={"return 0","return 1","return 2"};constexpr char no[]="return false";
     const bool ok=v[0]>=0&&v[0]<=99999&&v[1]>=0&&v[1]<=65535&&(v[2]==0||v[2]==1)&&v[3]>=0&&v[3]<=2&&
         (v[4]==0||v[4]==1)&&v[5]>=0&&v[5]<=2&&(v[6]==0||v[6]==1);
+    const unsigned role=mgscoop::coop_carry::CarryRole()<3?mgscoop::coop_carry::CarryRole():0u;
     if(ok){
         team_state.valid=true;team_state.mission=static_cast<unsigned>(v[0]);team_state.epoch=static_cast<unsigned>(v[1]);
         team_state.localDown=v[2]==1;team_state.localCause=static_cast<unsigned>(v[3]);team_state.peerDown=v[4]==1;
         team_state.peerCause=static_cast<unsigned>(v[5]);team_state.peerFresh=v[6]==1;team_state.at=GetTickCount64();
     }
-    replacement={ok?yes:no,ok?sizeof(yes)-1:sizeof(no)-1};world_quiet=true;return true;
+    replacement={ok?roles[role]:no,ok?std::strlen(roles[role]):sizeof(no)-1};world_quiet=true;return true;
 }
 // Runtime thread, every partner tick.
 void CoopRescueTick() noexcept {

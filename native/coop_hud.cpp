@@ -261,13 +261,9 @@ bool FormatDowned(const DownedView& v, std::uint32_t current_mission,
     out.tone = Tone::warn;
     const char* act = sleeping ? "Wake up" : "Revive";
     if (v.carry == 1) {
+        // E stays the game's own action here (load onto D-Horse or a vehicle).
         Print(out.text, sizeof(out.text), sleeping ? "Carrying your sleeping teammate" : "Carrying your wounded teammate");
-        Print(out.keys, sizeof(out.keys), "R\tHold: Put down\nE\tHold: %s", act);
-        if (v.inRange && v.progressMs) {
-            progress = static_cast<float>(v.progressMs) / static_cast<float>(kReviveHoldMs);
-            Print(out.text, sizeof(out.text), sleeping ? "Waking your teammate - %u%%" : "Reviving your teammate - %u%%",
-                  v.progressMs * 100u / kReviveHoldMs);
-        }
+        Print(out.keys, sizeof(out.keys), "R\tHold: Put down\nE\tLoad on horse");
         return true;
     }
     if (!approach) {
