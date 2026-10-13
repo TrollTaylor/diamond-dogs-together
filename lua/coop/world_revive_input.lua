@@ -84,12 +84,12 @@ do
         prompt = state
         if state == 0 or type(TppUiCommand) ~= "table" or type(TppUiCommand.AnnounceLogView) ~= "function" then return end
         local wake = h.teammateCause == 2
-        local text = state == 3 and (wake and "Hold Action (E) to wake your teammate. Pickup is unavailable."
-            or "Hold Action (E) to revive your teammate. Pickup is unavailable.")
-            or state == 2 and (wake and "Close enough to wake your teammate. Action (E) is not ready. Pickup is unavailable."
-            or "Close enough to revive your teammate. Action (E) is not ready. Pickup is unavailable.")
-            or (wake and "Teammate asleep. Get closer to wake them. Pickup is unavailable."
-            or "Teammate down. Get closer to revive. Pickup is unavailable.")
+        local text = state == 3 and (wake and "Hold E to wake your teammate, or hold R to carry them."
+            or "Hold E to revive your teammate, or hold R to carry them.")
+            or state == 2 and (wake and "You are next to your teammate: hold E to wake them, or hold R to carry them."
+            or "You are next to your teammate: hold E to revive them, or hold R to carry them.")
+            or (wake and "Your teammate is asleep. Go to them: hold E to wake them, or hold R to carry them."
+            or "Your teammate is wounded. Go to them: hold E to revive them, or hold R to carry them.")
         pcall(TppUiCommand.AnnounceLogView, text)
     end
     local stop, tick, hud = D.stop, D.tick, D.hud

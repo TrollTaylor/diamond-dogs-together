@@ -76,6 +76,12 @@ bool SelectorLine(char* out, std::size_t capacity) noexcept;
 // player or being picked up/put down: its transform belongs to the native
 // attachment. Cheap reads; false when unknown or the adapter is off.
 bool PartnerCarryHold() noexcept;
+// 0 none, 1 the local player carries the teammate, 2 the local player is carried.
+unsigned CarryRole() noexcept;
+// The local player is down but awake (wounded): keep the normal view while carried.
+void SetLocalAwakeDown(bool awake) noexcept;
+// The stock put-down request for the local carrier (RequestCarryOff's write).
+bool RequestLocalPutDown() noexcept;
 // The stock carry point (0x112E7D0, the position the pickup predicate measures)
 // of body id. Test helper; false when unavailable.
 bool CarryPoint(unsigned id, float (&out)[3]) noexcept;

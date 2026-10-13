@@ -102,6 +102,9 @@ struct DownedView {
     bool closeEnough;
     std::uint32_t progressMs;
     std::uint8_t localCause, teammateCause; // 0 healthy/legacy unknown, 1 wounded, 2 asleep
+    // Stock player carry (coop_carry): 0 none, 1 the local player carries the
+    // teammate, 2 the local player is being carried. Set natively, not by Lua.
+    std::uint8_t carry;
 };
 inline constexpr std::uint64_t kDownedFreshMs = 500;
 inline constexpr std::uint32_t kReviveHoldMs = 3000;
@@ -152,12 +155,14 @@ struct Line {
     char text[kLineChars];
     char detail[kLineChars];  // full mode only ("" otherwise)
     Tone tone;
+    // Rescue prompt only: key hints "K\tlabel" separated by '\n' (drawn as key caps).
+    char keys[kLineChars];
 };
 // False and empty for stale/future/other-mission/unsupported/invalid facts,
 // healthy players, or progress that cannot belong to an in-range live reviver.
 // progress is 0..1; only teammateDown && inRange && !localDown draws a bar.
-// A standing player beside a downed teammate also gets "Pickup unavailable":
-// no verified pickup call exists, so the prompt must not imply that one does.
+// A healthy player near a downed teammate gets the two stock actions as key
+// hints: hold E (wake/revive, the co-op hold) and hold R (the stock carry).
 bool FormatDowned(const DownedView& view, std::uint32_t current_mission,
                   std::uint64_t now_ms, Line& out, float& progress) noexcept;
 // The status line for `view` (`name`: the partner's display name, may be "").

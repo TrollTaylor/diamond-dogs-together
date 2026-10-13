@@ -3528,6 +3528,12 @@ void CoopRescueTick() noexcept {
         }
     }
     mgscoop::coop_carry::SetCarryable((peerDown?2u:0u)|(localDown?1u:0u));
+    mgscoop::coop_carry::SetLocalAwakeDown(localDown&&local.cause==1);
+    // A carried teammate who was woken or revived is put down (stock put-down).
+    if(fresh&&!team_state.peerDown&&mgscoop::coop_carry::CarryRole()==1&&mgscoop::coop_carry::RequestLocalPutDown()){
+        static std::uint64_t logged=0;
+        if(now-logged>2000){logged=now;Log("coop_rescue=put_down; reason=teammate_recovered\r\n");}
+    }
 }
 bool SelectFriendlyHitReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
     constexpr char prefix[]="return 'MGS_COOP_FRIENDLY_HIT_V1' -- ";
@@ -3627,7 +3633,7 @@ bool SelectDownedHudReceipt(const char* buffer,std::size_t size,mgscoop::script_
     mgscoop::coop_hud::DownedView view{};
     if(!world_on || !mgscoop::coop_hud::ParseDownedHud(buffer,size,view) ||
        !(OnRuntimeThread() || OnTerminationThread())) return false;
-    if(view.valid && DownedAdmitted(view.mission,view.epoch)) view.publish_ms=GetTickCount64();
+    if(view.valid && DownedAdmitted(view.mission,view.epoch)){view.publish_ms=GetTickCount64();view.carry=static_cast<std::uint8_t>(mgscoop::coop_carry::CarryRole());}
     else view={};
     mgscoop::coop_hud::PublishDowned(view);
     constexpr char reply[]="return true";

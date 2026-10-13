@@ -12,6 +12,7 @@
 #include "mgscoop/coop_carry.hpp"
 #include "mgscoop/near_code.hpp"
 #include "mgscoop/partner_input_hook.hpp"
+#include "mgscoop/worker_scenario.hpp"
 #include "MinHook.h"
 
 namespace mgscoop::coop_carry {
@@ -482,7 +483,10 @@ __declspec(noinline) std::uintptr_t HookSearch(void* self, void* results, void* 
     error.Capture();
     // Offline, player bodies are absent from the scan-0 player category. Add the
     // granted co-op teammate (stock predicate 0x112AAA0 still decides).
-    if (ret == g_base + kScanReturns[0] && t_producerCarrier < 2u && g_mode.load(std::memory_order_relaxed) != kOff) {
+    // Only the local player picks up: this machine's replica of the teammate
+    // (carrier 1) never takes the local body naturally; the remote carrier's
+    // own machine announces its pickup and the mirror below starts it here.
+    if (ret == g_base + kScanReturns[0] && t_producerCarrier == 0u && g_mode.load(std::memory_order_relaxed) != kOff) {
         const unsigned target = 1u - t_producerCarrier;
         const auto res = reinterpret_cast<std::uintptr_t>(results);
         std::uintptr_t ids = 0, positions = 0; std::uint32_t capacity = 0, count = 0;
@@ -534,22 +538,25 @@ bool InstallSearchTrace() noexcept {
     EmitF("coop_carry=search_trace_installed; vt=0x%llx; fn=0x%llx\r\n", static_cast<unsigned long long>(vt - g_base), static_cast<unsigned long long>(fn - g_base));
     return true;
 }
+// The candidate producer and carrier-init hooks are required (search
+// injection, replica pickup); predicate/carry point/raycast/dispatch
+// detours are hidden-worker diagnostics only.
 bool InstallTrace() noexcept {
-    std::uintptr_t dispatchSlot = 0;
-    if (!Read(g_base + kDispatchSlot, dispatchSlot) || dispatchSlot != g_base + kDispatch) { Emit("coop_carry=trace_refused; reason=dispatch_slot\r\n"); return false; }
     const MH_STATUS init = MH_Initialize();
     if (init != MH_OK && init != MH_ERROR_ALREADY_INITIALIZED) { Emit("coop_carry=trace_refused; reason=minhook\r\n"); return false; }
     if (MH_CreateHook(reinterpret_cast<void*>(g_base + kProducer), reinterpret_cast<void*>(&HookProducer), reinterpret_cast<void**>(&g_producer)) != MH_OK ||
         MH_EnableHook(reinterpret_cast<void*>(g_base + kProducer)) != MH_OK) { Emit("coop_carry=trace_refused; reason=producer_hook\r\n"); return false; }
-    if (MH_CreateHook(reinterpret_cast<void*>(g_base + kCarryPoint), reinterpret_cast<void*>(&HookCarryPoint), reinterpret_cast<void**>(&g_carryPoint)) == MH_OK)
-        MH_EnableHook(reinterpret_cast<void*>(g_base + kCarryPoint));
-    if (MH_CreateHook(reinterpret_cast<void*>(g_base + kRaycast), reinterpret_cast<void*>(&HookRaycast), reinterpret_cast<void**>(&g_raycast)) == MH_OK)
-        MH_EnableHook(reinterpret_cast<void*>(g_base + kRaycast));
-    if (MH_CreateHook(reinterpret_cast<void*>(g_base + kPredicate), reinterpret_cast<void*>(&HookPredicate), reinterpret_cast<void**>(&g_predicate)) != MH_OK ||
-        MH_EnableHook(reinterpret_cast<void*>(g_base + kPredicate)) != MH_OK) { Emit("coop_carry=trace_refused; reason=predicate_hook\r\n"); return false; }
-    g_dispatch = reinterpret_cast<DispatchFn>(g_base + kDispatch);
-    if (const char* why = near_code::PatchQword(reinterpret_cast<void*>(g_base + kDispatchSlot), g_base + kDispatch, reinterpret_cast<std::uintptr_t>(&HookDispatch))) {
-        EmitF("coop_carry=trace_refused; reason=dispatch_%s\r\n", why); return false;
+    if (worker_scenario::Compiled()) {
+        if (MH_CreateHook(reinterpret_cast<void*>(g_base + kCarryPoint), reinterpret_cast<void*>(&HookCarryPoint), reinterpret_cast<void**>(&g_carryPoint)) == MH_OK)
+            MH_EnableHook(reinterpret_cast<void*>(g_base + kCarryPoint));
+        if (MH_CreateHook(reinterpret_cast<void*>(g_base + kRaycast), reinterpret_cast<void*>(&HookRaycast), reinterpret_cast<void**>(&g_raycast)) == MH_OK)
+            MH_EnableHook(reinterpret_cast<void*>(g_base + kRaycast));
+        if (MH_CreateHook(reinterpret_cast<void*>(g_base + kPredicate), reinterpret_cast<void*>(&HookPredicate), reinterpret_cast<void**>(&g_predicate)) == MH_OK)
+            MH_EnableHook(reinterpret_cast<void*>(g_base + kPredicate));
+        std::uintptr_t dispatchSlot = 0;
+        g_dispatch = reinterpret_cast<DispatchFn>(g_base + kDispatch);
+        if (Read(g_base + kDispatchSlot, dispatchSlot) && dispatchSlot == g_base + kDispatch)
+            near_code::PatchQword(reinterpret_cast<void*>(g_base + kDispatchSlot), g_base + kDispatch, reinterpret_cast<std::uintptr_t>(&HookDispatch));
     }
     g_init = reinterpret_cast<InitFn>(g_base + kInitThunk);
     for (const auto slot : kInitSlots) {
@@ -576,8 +583,17 @@ constexpr unsigned char kSetModeBytes[] = {0x88, 0x51, 0x6d, 0xc3};
 using SetModeFn = void (*)(void*, std::uint8_t);
 SetModeFn g_setMode = nullptr;
 std::atomic<std::uint32_t> g_modeBlocked{0}, g_modePassed{0}, g_lastBlockedMode{0};
+std::atomic<bool> g_localAwakeDown{false};
+bool LocalBodyCarried() noexcept;
 __declspec(noinline) void HookSetMode(void* iface, std::uint8_t mode) noexcept {
     if (g_installed && partner_input_hook::InDrainJob()) {
+        g_modeBlocked.fetch_add(1, std::memory_order_relaxed);
+        g_lastBlockedMode.store(mode, std::memory_order_relaxed);
+        return;
+    }
+    // A wounded (awake) local player keeps the normal view while carried; the
+    // stock carried presentation (mode 4) is the unconscious player's blackout.
+    if (g_installed && mode && g_localAwakeDown.load(std::memory_order_relaxed) && LocalBodyCarried()) {
         g_modeBlocked.fetch_add(1, std::memory_order_relaxed);
         g_lastBlockedMode.store(mode, std::memory_order_relaxed);
         return;
@@ -638,6 +654,11 @@ bool PatchAutoWake() noexcept {
     VirtualProtect(site, sizeof(kAutoWakeAfter), previous, &ignored);
     FlushInstructionCache(GetCurrentProcess(), site, sizeof(kAutoWakeAfter));
     return true;
+}
+
+bool LocalBodyCarried() noexcept {
+    std::uintptr_t P = 0, Q = 0; bool online = true; std::uint16_t action = 0;
+    return PlayerSystem(P, Q, online) && ReadAction(Q, 0, action) && IsCarriedAction(action);
 }
 
 bool GateBytes(std::uintptr_t rva, const unsigned char* bytes, std::size_t size) noexcept {
@@ -915,6 +936,20 @@ bool CarryPoint(unsigned id, float (&out)[3]) noexcept {
     if (!ok) return false;
     out[0] = point[0]; out[1] = point[1]; out[2] = point[2];
     return true;
+}
+void SetLocalAwakeDown(bool awake) noexcept { g_localAwakeDown.store(awake, std::memory_order_relaxed); }
+bool RequestLocalPutDown() noexcept {
+    if (!g_installed || !g_localCarrying) return false;
+    std::uintptr_t P = 0, Q = 0, rec = 0; bool online = true; std::uint32_t flags0 = 0, flags1 = 0;
+    if (!PlayerSystem(P, Q, online) || !PsRecord(P, 0, rec) || !Read(rec, flags0) || !(flags0 & 0x400000u) || !Read(rec + 4, flags1)) return false;
+    if (flags1 & 0x4000u) return true;
+    return Write<std::uint32_t>(rec + 4, flags1 | 0x4000u);
+}
+unsigned CarryRole() noexcept {
+    if (!g_installed || g_mode.load(std::memory_order_relaxed) == kOff) return 0;
+    if (g_localCarrying) return 1;
+    if (g_mirrorActive) return 2;
+    return 0;
 }
 bool PartnerCarryHold() noexcept {
     return g_installed && g_mode.load(std::memory_order_relaxed) != kOff && BodyCarried(1);

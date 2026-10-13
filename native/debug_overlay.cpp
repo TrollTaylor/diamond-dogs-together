@@ -1162,7 +1162,7 @@ bool HudPrepare(HudFrame& f, bool menu_open) noexcept {
     // A published link mission still has to match; another scene stays hidden.
     const auto downedMission = view.mission ? view.mission : downed.mission;
     f.show_downed = coop_hud::FormatDowned(downed, downedMission, now, f.downed_line, f.revive_progress);
-    f.downed_progress = f.show_downed && downed.teammateDown && downed.inRange && !downed.localDown;
+    f.downed_progress = f.show_downed && downed.teammateDown && downed.inRange && !downed.localDown && f.revive_progress > 0.0f;
     f.toast_count = hud_model.Active(now, f.toasts, coop_hud::kMaxToasts);
     coop_hud::NoteFrame(f.show_line ? &f.line : nullptr, f.toast_count ? f.toasts[0]->text : nullptr, false, taken, new_toasts, now);
     return f.show_line || f.show_downed || f.toast_count;
@@ -1195,21 +1195,61 @@ void DrawHudLayer(const HudFrame& f, const ImVec2& display) noexcept {
         right_text(f.line.text, HudColor(f.line.tone, 235), 0.0f);
         if (f.line.detail[0]) right_text(f.line.detail, IM_COL32(200, 200, 200, 220), 0.0f);
     }
-    // Revive and pickup stay on the lower center, where an action prompt is
-    // read. The connection line remains top-right. This is the same HUD, not
-    // a second overlay. The native hint queue is a Quiet-camo site and was
-    // not a verified visible action prompt, so it is not driven from here.
+    // The rescue prompt sits in the upper center: the stock world-space action
+    // prompts (the R carry icon over a sleeping body, the put-down hints)
+    // appear around the lower center and must stay readable. Title, then the
+    // two co-op actions as key caps, then the hold progress.
     if (f.show_downed && f.downed_line.text[0]) {
-        const float promptSize = size * 1.45f;
+        const float promptSize = size * 1.35f;
         const float wrap = std::fmin(display.x * 0.72f, 980.0f * scale);
         const ImVec2 ts = font->CalcTextSizeA(promptSize, FLT_MAX, wrap, f.downed_line.text);
         const float boxW = std::fmin(ts.x, wrap);
         const float x = std::floor((display.x - boxW) * 0.5f);
-        float py = std::floor(display.y * 0.72f);
+        float py = std::floor(display.y * 0.13f);
         list->AddRectFilled(ImVec2(x - pad * 1.4f, py - pad), ImVec2(x + boxW + pad * 1.4f, py + ts.y + pad), IM_COL32(0, 0, 0, 170), 4.0f * scale);
         list->AddText(font, promptSize, ImVec2(x + 1.0f, py + 1.0f), IM_COL32(0, 0, 0, 220), f.downed_line.text, nullptr, wrap);
         list->AddText(font, promptSize, ImVec2(x, py), HudColor(f.downed_line.tone, 250), f.downed_line.text, nullptr, wrap);
         py += ts.y + pad * 2.2f;
+        if (f.downed_line.keys[0]) {
+            // "K\tlabel\nK\tlabel": one row of key caps with their labels.
+            struct Hint { char key[8]; char label[48]; };
+            Hint hints[3]{}; unsigned count = 0;
+            const char* p = f.downed_line.keys;
+            while (*p && count < 3) {
+                const char* tab = std::strchr(p, '\t');
+                if (!tab) break;
+                const char* end = std::strchr(tab + 1, '\n');
+                const std::size_t kn = static_cast<std::size_t>(tab - p), ln = end ? static_cast<std::size_t>(end - tab - 1) : std::strlen(tab + 1);
+                if (kn && kn < sizeof(hints[0].key) && ln < sizeof(hints[0].label)) {
+                    std::memcpy(hints[count].key, p, kn); std::memcpy(hints[count].label, tab + 1, ln); ++count;
+                }
+                if (!end) break;
+                p = end + 1;
+            }
+            const float keySize = size * 1.15f, gap = 22.0f * scale, capPad = 6.0f * scale;
+            float total = 0.0f;
+            ImVec2 keyTs[3]{}, labelTs[3]{};
+            for (unsigned i = 0; i < count; ++i) {
+                keyTs[i] = font->CalcTextSizeA(keySize, FLT_MAX, 0.0f, hints[i].key);
+                labelTs[i] = font->CalcTextSizeA(keySize, FLT_MAX, 0.0f, hints[i].label);
+                total += keyTs[i].x + capPad * 2.0f + 8.0f * scale + labelTs[i].x + (i ? gap : 0.0f);
+            }
+            float kx = std::floor((display.x - total) * 0.5f);
+            const float rowH = keyTs[0].y + capPad;
+            list->AddRectFilled(ImVec2(kx - pad * 1.6f, py - pad * 0.8f), ImVec2(kx + total + pad * 1.6f, py + rowH + pad * 0.8f), IM_COL32(0, 0, 0, 150), 4.0f * scale);
+            for (unsigned i = 0; i < count; ++i) {
+                if (i) kx += gap;
+                const ImVec2 a(kx, py), b(kx + keyTs[i].x + capPad * 2.0f, py + rowH);
+                list->AddRectFilled(a, b, IM_COL32(235, 235, 235, 235), 3.0f * scale);
+                list->AddRect(a, b, IM_COL32(40, 40, 40, 255), 3.0f * scale, 0, 1.5f * scale);
+                list->AddText(font, keySize, ImVec2(kx + capPad, py + capPad * 0.5f), IM_COL32(20, 20, 20, 255), hints[i].key);
+                kx = b.x + 8.0f * scale;
+                list->AddText(font, keySize, ImVec2(kx + 1.0f, py + capPad * 0.5f + 1.0f), IM_COL32(0, 0, 0, 220), hints[i].label);
+                list->AddText(font, keySize, ImVec2(kx, py + capPad * 0.5f), IM_COL32(240, 240, 240, 250), hints[i].label);
+                kx += labelTs[i].x;
+            }
+            py += rowH + pad * 2.2f;
+        }
         if (f.downed_progress) {
             const float width = std::fmin(420.0f * scale, display.x * 0.36f), height = 8.0f * scale;
             const float bx = std::floor((display.x - width) * 0.5f);

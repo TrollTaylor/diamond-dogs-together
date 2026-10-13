@@ -86,16 +86,16 @@ end
 local c = fixture(); c.useHeld = true
 check(c.step() and c.sets == 1 and c.masks.MgsCoopRevive == 0x20, 'exact3m live teammate admits observed use hold')
 check(c.D.hud(c.now).inRange and c.D.hud(c.now).near, 'revive hint appears only after native E mask is observed, and the 3m approach remains')
-check(#c.announces == 1 and c.announces[1]:find('Hold Action (E)', 1, true) and c.announces[1]:find('Pickup is unavailable', 1, true),
-    'game log says to hold Action and that pickup is unavailable')
+check(#c.announces == 1 and c.announces[1]:find('Hold E', 1, true) and c.announces[1]:find('hold R to carry', 1, true),
+    'game log says to hold E, or hold R to carry the teammate')
 check(c.D.progress == 0, 'first qualified hold begins at zero elapsed')
 check(c.step(100) and c.D.progress == 100 and c.sets == 1 and #c.announces == 1, 'observed mask maintains hold without duplicate setters or repeated prompts')
 c.useHeld = false; check(not c.step(100) and c.D.progress == 0, 'release immediately clears revive progress')
 check(c.masks.MgsCoopRevive == 0x20, 'use pickup stays suppressed throughout nearby revive eligibility')
 c.D.records[2].pos[1] = 3001
 check(not c.step() and c.masks.MgsCoopRevive == nil and not c.D.reviveMaskOwned and not c.D.hud(c.now).near, 'leaving3m resets and confirms absence')
-check(c.announces[#c.announces]:find('Get closer', 1, true) and c.announces[#c.announces]:find('Pickup is unavailable', 1, true) and not c.announces[#c.announces]:find('Hold', 1, true),
-    'leaving 3m tells the player to get closer and that pickup is still unavailable')
+check(c.announces[#c.announces]:find('Go to them', 1, true) and c.announces[#c.announces]:find('carry', 1, true) and not c.announces[#c.announces]:find('Hold', 1, true),
+    'leaving 3m tells the player to go to the teammate, naming both actions')
 check(c.masks.MgsCoopDowned == nil, 'revive interaction never creates downed mask')
 
 for _, change in ipairs({
@@ -130,8 +130,8 @@ c.fullTable = false; check(c.step(50) and c.sets == 2, 'available slot can retry
 c = fixture(); c.useHeld = true; c.queueSet = true
 check(not c.step() and c.D.progress == 0, 'queued mask does not advance hold before observed')
 check(not c.D.hud(c.now).inRange and c.D.hud(c.now).near and c.D.hud(c.now).teammateDown, 'queued mask preserves teammate guidance without advertising unsafe use hold')
-check(#c.announces == 1 and c.announces[1]:find('not ready', 1, true) and not c.announces[1]:find('Hold', 1, true) and c.announces[1]:find('Pickup is unavailable', 1, true),
-    'close enough names Action as not ready and pickup as unavailable')
+check(#c.announces == 1 and c.announces[1]:find('next to your teammate', 1, true) and not c.announces[1]:find('Hold', 1, true) and c.announces[1]:find('carry', 1, true),
+    'close enough names both actions without advertising an unobserved hold')
 c.flush(); check(not c.step(50), 'queued installation waits bounded retry')
 c.queueSet = false; check(c.step(50), 'observed queued install qualifies after retry')
 c = fixture(); c.useHeld = true; c.masks.Cutscene = 0x20

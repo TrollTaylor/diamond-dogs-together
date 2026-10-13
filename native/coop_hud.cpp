@@ -247,26 +247,40 @@ bool FormatDowned(const DownedView& v, std::uint32_t current_mission,
         (v.inRange && (!v.teammateDown || v.localDown)) ||
         (v.progressMs && (!v.inRange || !v.teammateDown || v.localDown))) return false;
     const bool approach = v.closeEnough || v.inRange;
+    const bool sleeping = v.teammateCause == 2;
     if (v.localDown) {
-        Print(out.text, sizeof(out.text), v.localCause == 2 ?
-              "Asleep - waiting to wake or for your teammate" : "Downed - waiting for your teammate to revive you");
+        // The sleeper sees the stock sleep screen; the wounded player crawls.
+        if (v.carry == 2) Print(out.text, sizeof(out.text), v.localCause == 2 ?
+            "Asleep - your teammate is carrying you" : "Wounded - your teammate is carrying you");
+        else Print(out.text, sizeof(out.text), v.localCause == 2 ?
+            "Asleep - waiting for your teammate to wake or carry you" :
+            "Wounded - waiting for your teammate; crawl to cover");
         out.tone = v.localCause == 2 ? Tone::warn : Tone::bad; return true;
     }
     if (!v.teammateDown) return false;
     out.tone = Tone::warn;
-    if (!approach) Print(out.text, sizeof(out.text), v.teammateCause == 2 ?
-        "Teammate asleep - get closer to wake them" : "Teammate down - get closer to revive");
-    else if (!v.inRange) Print(out.text, sizeof(out.text), v.teammateCause == 2 ?
-        "Teammate asleep - close enough to wake; Action (E) is not ready" :
-        "Teammate down - close enough to revive; Action (E) is not ready");
-    else {
-        progress = static_cast<float>(v.progressMs) / static_cast<float>(kReviveHoldMs);
-        Print(out.text, sizeof(out.text), v.teammateCause == 2 ? "Hold Action (E) to wake teammate - %u%%" :
-              "Hold Action (E) to revive teammate - %u%%", v.progressMs * 100u / kReviveHoldMs);
+    const char* act = sleeping ? "Wake up" : "Revive";
+    if (v.carry == 1) {
+        Print(out.text, sizeof(out.text), sleeping ? "Carrying your sleeping teammate" : "Carrying your wounded teammate");
+        Print(out.keys, sizeof(out.keys), "R\tHold: Put down\nE\tHold: %s", act);
+        if (v.inRange && v.progressMs) {
+            progress = static_cast<float>(v.progressMs) / static_cast<float>(kReviveHoldMs);
+            Print(out.text, sizeof(out.text), sleeping ? "Waking your teammate - %u%%" : "Reviving your teammate - %u%%",
+                  v.progressMs * 100u / kReviveHoldMs);
+        }
+        return true;
     }
-    const auto used = std::strlen(out.text);
-    if (used + 1 < sizeof(out.text))
-        std::snprintf(out.text + used, sizeof(out.text) - used, " | Pickup unavailable");
+    if (!approach) {
+        Print(out.text, sizeof(out.text), sleeping ? "Teammate asleep - go to them" : "Teammate wounded - go to them");
+        Print(out.keys, sizeof(out.keys), "E\tHold: %s\nR\tHold: Carry", act);
+    } else if (!v.inRange || !v.progressMs) {
+        Print(out.text, sizeof(out.text), sleeping ? "Teammate asleep" : "Teammate wounded");
+        Print(out.keys, sizeof(out.keys), "E\tHold: %s\nR\tHold: Carry", act);
+    } else {
+        progress = static_cast<float>(v.progressMs) / static_cast<float>(kReviveHoldMs);
+        Print(out.text, sizeof(out.text), sleeping ? "Waking your teammate - %u%%" : "Reviving your teammate - %u%%",
+              v.progressMs * 100u / kReviveHoldMs);
+    }
     return true;
 }
 
