@@ -1,4 +1,4 @@
-# Wounded teammate pickup (docs/coop-carry.md): the host's rifle downs the
+# Wounded teammate native pickup acceptance: the host's rifle downs the
 # guest (cause 1, slow crawl), the host holds R next to them, carries them,
 # puts them down and revives them with the E hold.
 labsetting nametag=1
@@ -49,6 +49,10 @@ host run coop_carry_bodies
 guest run coop_carry_bodies
 host run coop_carry_mirror
 guest run coop_carry_mirror
+host run coop_carry_bodies
+host require carrybodies;b0=1,a1,ps140000c.*b1=1,a2b
+guest run coop_carry_bodies
+guest require carrybodies;b0=1,a2b.*b1=1,a1,ps140000c
 both capture wound-carried
 host hold w 1500
 host hold w 1500
@@ -67,6 +71,7 @@ guest run coop_carry_bodies
 host run coop_carry_mirror
 guest run coop_carry_mirror
 guest run downed_status
+guest require down=1.*cause=1.*lock=1
 both capture wound-putdown
 host hold e 1500 nowait
 wait 850
@@ -83,4 +88,8 @@ guest require down=0.*cause=0.*lock=0.*state=healthy
 host run coop_carry_bodies
 guest run coop_carry_bodies
 both capture wound-revived
+heldcapture guest guest w rescue-restored-own 2
+heldcapture guest host w rescue-restored-peer 1
+guest run downed_status
+guest require down=0.*cause=0.*lock=0.*state=healthy
 state

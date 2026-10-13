@@ -36,8 +36,8 @@ do
         -- Successful submission can be queued. Keep retrying our own name until observed absent.
     end
     local function eligible(r, now)
-        -- While carrying the teammate, E stays native (load on a horse or vehicle).
-        if r.carry == 1 then return false end
+        -- Carrying or loaded on the horse: E stays native (mount the horse).
+        if r.carry == 1 or r.carry == 3 then return false end
         if not moment(now) or not D.hitEnabled() or not W.inGame() or r.down or r.ready ~= true then return false end
         local other = D.records[3 - W.role]
         if not other or other.ready ~= true or other.down ~= true or not moment(other.at) or
@@ -53,6 +53,13 @@ do
     end
     function D.revivePoll(r, now)
         R.polled, R.eligible = true, nil
+        -- Copied current native role for prompt selection; never a carry grant.
+        R.ready = r.ready == true
+        R.carry = R.ready and valid(r.carry, 0, 4) and r.carry or 0
+        R.carryAt, R.carryMission, R.carryEpoch = now, W.mission, W.epoch
+        -- Raw Action (E) state for other E uses (horse cargo while carrying).
+        D.rawHeld, D.rawHeldAt = r.held == true, now
+        D.rawCarryHeld, D.rawCarryHeldAt = r.carryHeld == true, now
         if not eligible(r, now) then
             release(now)
             if D.reviveMaskOwned and D.hitEnabled() and W.inGame() then absent(observe()) end
@@ -76,28 +83,30 @@ do
         R.eligible = true
         return seen.held
     end
-    local prompt = 0
+    local prompt = ""
     local function announce(h)
         local state = 0
-        if h and h.teammateDown and not h.down then
-            state = h.near and (h.inRange and 3 or 2) or 1
+        if h and h.teammateDown and not h.down and R.polled and R.ready and D.hitEnabled() and W.inGame() then
+            state = h.carry == 1 and 4 or h.carry == 3 and 5 or h.near and (h.inRange and 3 or 2) or 1
         end
-        if state == prompt then return end
-        prompt = state
+        local wake = h and h.teammateCause == 2
+        -- Readiness and distance are already explained by the rescue HUD.
+        -- Coalesce those transitions so the log never duplicates its action row.
+        local key = state == 4 and "carrying" or state == 5 and "transfer" or
+            state == 0 and "off" or (wake and "sleep" or "wound")
+        if key == prompt then return end
+        prompt = key
         if state == 0 or type(TppUiCommand) ~= "table" or type(TppUiCommand.AnnounceLogView) ~= "function" then return end
-        local wake = h.teammateCause == 2
-        local text = state == 3 and (wake and "Hold E to wake your teammate, or hold R to carry them."
-            or "Hold E to revive your teammate, or hold R to carry them.")
-            or state == 2 and (wake and "You are next to your teammate: hold E to wake them, or hold R to carry them."
-            or "You are next to your teammate: hold E to revive them, or hold R to carry them.")
-            or (wake and "Your teammate is asleep. Go to them: hold E to wake them, or hold R to carry them."
-            or "Your teammate is wounded. Go to them: hold E to revive them, or hold R to carry them.")
+        -- AnnounceLogView spans the scene. Keep it to one short status;
+        -- rescue controls belong to the HUD and the stock carry icon.
+        local text = state == 4 and "Carrying teammate." or state == 5 and
+            "Teammate transfer in progress." or (wake and "Teammate asleep." or "Teammate wounded.")
         pcall(TppUiCommand.AnnounceLogView, text)
     end
     local stop, tick, hud = D.stop, D.tick, D.hud
     function D.stop() release(W.now()); return stop() end
     function D.tick(now)
-        R.polled, R.eligible = false, nil
+        R.polled, R.eligible, R.ready = false, nil, false
         tick(now)
         announce(D.hud(now))
         if not R.polled then release(now) end
@@ -107,10 +116,13 @@ do
     end
     function D.hud(now)
         local h = hud(now)
-        if not R.eligible then h.inRange, h.progress = false, 0 end
+        local current = R.ready and R.carryMission == W.mission and R.carryEpoch == W.epoch and
+            moment(R.carryAt) and moment(now) and now >= R.carryAt and now - R.carryAt < 500
+        h.carry = current and R.carry or 0
+        if not R.eligible or h.carry ~= 0 then h.inRange, h.progress = false, 0 end
         return h
     end
-    local function cleanup() prompt = 0; release(W.now()) end
+    local function cleanup() prompt = ""; R.ready, R.carry = false, 0; release(W.now()) end
     W.startHooks[#W.startHooks + 1] = cleanup
     W.unpairedHooks[#W.unpairedHooks + 1] = cleanup
     W.stopHooks[#W.stopHooks + 1] = function(final) if final then cleanup() end end

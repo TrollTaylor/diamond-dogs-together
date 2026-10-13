@@ -18,6 +18,7 @@ struct Reply {
     std::uint8_t hitCause;
     const char* reason;
     bool nativeSleepActive=false, nativeSleepReleaseReady=false;
+    bool carryHeld=false; // raw RELOAD/CARRY (R), for horse cargo unloading
 };
 // Process-owned addresses, after BOTH exact-image gates. Never enable from a
 // Lua claim. False leaves all gameplay and damage unchanged.

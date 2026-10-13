@@ -98,7 +98,7 @@ int main(int argc, char** argv) {
         check(output.compare(partner_at,partner_size,partner_sync_source)==0);
         const std::string world_chunks[]={world_sync_source,world_enemy_source,world_outcome_source,world_phase_source,world_env_source,
                                           world_probe_source,world_goto_source,world_follow_seed_source,world_follow_source,world_align_source,world_recovery_source,
-                                          world_downed_source,world_partner_sleep_source,world_revive_input_source,world_friendly_source,world_buddy_source,world_ride_pose_source,
+                                          world_downed_source,world_sleep_clock_source,world_partner_sleep_source,world_revive_input_source,world_friendly_source,world_buddy_source,world_ride_pose_source,world_horse_cargo_source,
 #if defined(MGS_LOCAL_BUDDY_CAPACITY_TEST) && MGS_LOCAL_BUDDY_CAPACITY_TEST
                                           world_buddy_ride_source,
 #endif

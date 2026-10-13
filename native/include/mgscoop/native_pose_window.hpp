@@ -77,6 +77,19 @@ struct NativePoseStatus {
  std::uint32_t cameraOwnedBody=UINT32_MAX; // census only; unknown caller sentinel
  std::uint32_t cameraOwnedSenderMatched=0,cameraOwnedFiltered=0;
 };
+// Read-only current model/birth census. A cold read grants no shared ticket,
+// selected-body writer, native-call permission or pose-purpose ownership.
+struct NativePoseBirthCensus {
+ std::uintptr_t image=0,player=0,data=0,state=0,block[2]{},ps[2]{},cs[2]{},entry[2]{};
+ std::uint64_t birth[2]{},lifecycle=0;
+ std::uint32_t generation=0,sceneEpoch=0,thread=0,sequence=0;
+};
+bool ReadNativePoseBirthCensus(NativePoseBirthCensus&) noexcept;
+struct NativePoseDualPartsContext;
+// Passive private-worker observer after the real current dual-parts closure.
+// This callback grants no writer, native-call, or lease-release authority.
+using NativePoseDualReadObserver=void(*)(const NativePoseDualPartsContext&) noexcept;
+bool RegisterNativePoseDualReadObserver(NativePoseDualReadObserver) noexcept;
 NativePoseStatus NativePoseWindowStatus() noexcept;
 namespace detail {
 struct NativePoseTestBindings {bool enabled=false;void(*refuse)(const char*) noexcept=nullptr;};

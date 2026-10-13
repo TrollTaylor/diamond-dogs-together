@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "run": "c6f27552d29041d8baede28043a9282e",
+  "kind": "hidden-actual-partial",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261013-182113-ddfa534eff094a158a5a7130b4efa438\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 1,
+  "failure": "Required scenario check failed: guest require down=0.*cause=0.*lock=0.*state=healthy <- downed;ready=1;armed=1;down=1;gen=4;cause=2;lock=1;hp=6600,6600;epoch=3;state=asleep;reason=sleep_stock_wake_pending",
+  "closed": true,
+  "forced": false,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 98978747,
+      "end": 99345688,
+      "sha256": "db9417555d96b727b47ac87dc49ed3f53afc9244b8a00a9450ec8fb5c5502581"
+    },
+    {
+      "role": "guest",
+      "start": 107681856,
+      "end": 108063698,
+      "sha256": "b96fd5b8447cc1f274d7969ba2461bbd7d0ee414c97fdcf54501de83911ab18f"
+    }
+  ],
+  "indexed_readings": {
+    "host": [],
+    "guest": []
+  },
+  "limitations": "Authenticated mirrored wake now retires host shoulder carry and peer sleep hold. Local recipient sleep still alternates native onset/recovery and never unlocks; automatic wake success not accepted. Corrected physical census bothready, profilescount9/modesFFFFFFFF and3; actual1AD8250 callbackcaller1A6C17A runs anotherthread so strict owner sampler rejectsall andno writes are authorized. Vehicle registry steps were neverreached."
+}

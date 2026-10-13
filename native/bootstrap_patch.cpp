@@ -164,7 +164,7 @@ bool SelectHostTrialPatch(const char* source, std::size_t size, const char* name
     constexpr std::size_t buddy_ride_size=0;
 #endif
     constexpr std::size_t world_size=sizeof(world_sync_source)-1+sizeof(world_enemy_source)-1+sizeof(world_outcome_source)-1+
-        sizeof(world_phase_source)-1+sizeof(world_env_source)-1+sizeof(world_probe_source)-1+sizeof(world_goto_source)-1+sizeof(world_follow_seed_source)-1+sizeof(world_follow_source)-1+sizeof(world_align_source)-1+sizeof(world_recovery_source)-1+sizeof(world_downed_source)-1+sizeof(world_partner_sleep_source)-1+sizeof(world_friendly_source)-1+sizeof(world_revive_input_source)-1+sizeof(world_buddy_source)-1+sizeof(world_ride_pose_source)-1+buddy_ride_size+sizeof(world_place_source)-1+sizeof(world_place_guest_source)-1;
+        sizeof(world_phase_source)-1+sizeof(world_env_source)-1+sizeof(world_probe_source)-1+sizeof(world_goto_source)-1+sizeof(world_follow_seed_source)-1+sizeof(world_follow_source)-1+sizeof(world_align_source)-1+sizeof(world_recovery_source)-1+sizeof(world_downed_source)-1+sizeof(world_sleep_clock_source)-1+sizeof(world_partner_sleep_source)-1+sizeof(world_friendly_source)-1+sizeof(world_revive_input_source)-1+sizeof(world_buddy_source)-1+sizeof(world_ride_pose_source)-1+sizeof(world_horse_cargo_source)-1+buddy_ride_size+sizeof(world_place_source)-1+sizeof(world_place_guest_source)-1;
     constexpr std::size_t result_size=original_size+sizeof(host_trial_source)-1+sizeof(equipment_loading_source)-1+marker_extra+character_extra+sizeof(host_admission_source)-1+sizeof(client_join_source)-1+sizeof(damage_lifecycle_source)-1+sizeof(enemy_targeting_source)-1+sizeof(respawn_source)-1+sizeof(session_lifecycle_source)-1+sizeof(session_feedback_source)-1+sizeof(partner_actions_source)-1+sizeof(partner_ride_source)-1+sizeof(partner_sync_source)-1+world_size+sizeof(debug_menu_source)-1+sizeof(debug_equipment_source)-1+sizeof(debug_enemy_source)-1+sizeof(debug_player_source)-1+sizeof(debug_spawn_source)-1+sizeof(debug_buddy_source)-1+sizeof(debug_vehicle_source)-1+sizeof(marker_loading_source)-1+sizeof(character_readback_source)-1+sizeof(mission_trace_source)-1;
     static_assert(result_size<=script_bridge::max_replacement_bytes);
     static char result[result_size]{};
@@ -241,11 +241,13 @@ bool SelectHostTrialPatch(const char* source, std::size_t size, const char* name
                                  std::pair<const char*,std::size_t>{world_align_source,sizeof(world_align_source)-1},
                                  std::pair<const char*,std::size_t>{world_recovery_source,sizeof(world_recovery_source)-1},
                                  std::pair<const char*,std::size_t>{world_downed_source,sizeof(world_downed_source)-1},
+                                 std::pair<const char*,std::size_t>{world_sleep_clock_source,sizeof(world_sleep_clock_source)-1},
                                  std::pair<const char*,std::size_t>{world_partner_sleep_source,sizeof(world_partner_sleep_source)-1},
                                  std::pair<const char*,std::size_t>{world_revive_input_source,sizeof(world_revive_input_source)-1},
                                  std::pair<const char*,std::size_t>{world_friendly_source,sizeof(world_friendly_source)-1},
                                  std::pair<const char*,std::size_t>{world_buddy_source,sizeof(world_buddy_source)-1},
                                  std::pair<const char*,std::size_t>{world_ride_pose_source,sizeof(world_ride_pose_source)-1},
+                                 std::pair<const char*,std::size_t>{world_horse_cargo_source,sizeof(world_horse_cargo_source)-1},
 #if defined(MGS_LOCAL_BUDDY_CAPACITY_TEST) && MGS_LOCAL_BUDDY_CAPACITY_TEST
                                  std::pair<const char*,std::size_t>{world_buddy_ride_source,sizeof(world_buddy_ride_source)-1},
 #endif

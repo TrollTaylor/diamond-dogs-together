@@ -4,7 +4,7 @@
 do
  local D,A=e.MgsCoopDebug,e.MgsCoopDebug.api
  local get,call,fmt=A.get,A.call,string.format
- local S={handles={horse_spawn=true,horse_status=true},nextCall=0};D.buddy=S
+ local S={handles={horse_spawn=true,horse_status=true,cargo_status=true,cargo_test=true,sleep_clock=true},nextCall=0};D.buddy=S
  function S.stop()S.nextCall=0 end
  local function context()
   local W=get(e,"MgsCoopWorld");local B=get(W,"buddy")
@@ -41,6 +41,24 @@ do
  end
  function S.run(a,id)
   local cmd=a[1]
+  if cmd=="cargo_test" and #a==2 and (a[2]=="0" or a[2]=="1") then
+   local C=get(get(e,"MgsCoopWorld"),"horseCargo")
+   if type(get(C,"setTesting"))~="function" then return false,"cargo_unavailable" end
+   local ok,yes=pcall(C.setTesting,a[2]=="1")
+   return ok and yes==true,ok and "cargo;testing="..a[2]..";attachment=offset" or "cargo_test_refused"
+  end
+  if cmd=="sleep_clock" and #a==1 then
+   local d=get(get(e,"MgsCoopWorld"),"downed")
+   if type(get(d,"sleepClockStatus"))~="function" then return false,"sleep_clock_unavailable" end
+   local ok,line=pcall(d.sleepClockStatus)
+   return ok and type(line)=="string" and #line<=160,ok and line or "sleep_clock_refused"
+  end
+  if cmd=="cargo_status" and #a==1 then
+   local C=get(get(e,"MgsCoopWorld"),"horseCargo")
+   if type(get(C,"status"))~="function" then return false,"cargo_unavailable" end
+   local ok,line=pcall(C.status)
+   return ok and type(line)=="string" and #line<=160,ok and line or "cargo_status_refused"
+  end
   if #a~=1 or (cmd~="horse_spawn" and cmd~="horse_status") then return false,"horse_args" end
   local W,B,why=context();if not W then return false,why end
   local r,why=sample(W);if not r then return false,why end
@@ -76,6 +94,7 @@ do
    yielded=true
   end
   S.nextCall=now+2000
+  S.lastGoal={x,y,z}
   local ok,result=pcall(api.buddyCall,1,v,rad)
   if not ok or result~=true then
    if yielded and type(B.resumeFollow)=="function" then pcall(B.resumeFollow) end

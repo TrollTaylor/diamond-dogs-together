@@ -58,6 +58,7 @@
 #include "carry_model_retirement_contract.hpp"
 #include "native_pose_window_contract.hpp"
 #include "native_pose_birth.hpp"
+#include "native_pose_birth_census.hpp"
 #include "native_pose_birth_contract.hpp"
 #include "whole_player_lifetime_contract.hpp"
 #include "whole_player_lifetime_checks.hpp"
@@ -2043,6 +2044,37 @@ void RegisterNativePoseJobHooks(NativePoseBeforeFn before,NativePoseAfterFn afte
 bool RegisterNativePosePartsPollValidator(NativePosePartsPollValidator callback) noexcept {
  if(!callback||PoseRequired()||PoseOwned()||g_pose_held||g_pose_fault)return false;
  if(g_pose_parts_validator&&g_pose_parts_validator!=callback)return false;g_pose_parts_validator=callback;return true;
+}
+bool ReadNativePoseBirthCensus(NativePoseBirthCensus& out) noexcept {
+ out={};const DWORD incoming=GetLastError();
+ const auto finish=[&](bool ok) noexcept {SetLastError(incoming);return ok;};
+ const auto sequence=static_cast<std::uint32_t>(g_window_seq);const auto thread=GetCurrentThreadId();
+ if(g_pose_bindings.enabled||!PoseWorker()||!g_pose_installed||!g_pose_original_view.load(std::memory_order_acquire)||
+    !g_ready||g_faulted||g_shutdown||PoseOwned()||InDrainJob()||(sequence&1u)||partner_defer::InBatch()||
+    !NativePoseWholePlayerLifetimeLive()||!PoseParticipantsLive())return finish(false);
+ pi::Arm arm{},again{};cp::Pair pair{},late{};auto reader=PoseReader;
+ if(!ReadArm(arm)||!arm.enabled||!arm.native||arm.holdlog||!arm.gen||!arm.rates_epoch||
+    !cp::ReadPair(reader,g_base,arm.P,pair)||pair.go!=arm.go||pair.body[1].block!=arm.blk1||pair.body[1].state!=arm.ps1)return finish(false);
+ birth::Receipt first[2]{},last[2]{};std::uint64_t epoch=0,lateEpoch=0;
+ AcquireSRWLockShared(&g_pose_birth_lock);first[0]=g_pose_birth0;first[1]=g_pose_birth;epoch=g_pose_birth_epoch;ReleaseSRWLockShared(&g_pose_birth_lock);
+ if(!native_pose_birth_census::Current(pair,first[0],first[1])||!ReadArm(again)||again.enabled!=arm.enabled||again.native!=arm.native||
+    again.holdlog!=arm.holdlog||again.gen!=arm.gen||again.rates_epoch!=arm.rates_epoch||again.P!=arm.P||again.go!=arm.go||
+    again.blk1!=arm.blk1||again.ps1!=arm.ps1||!cp::ReadPair(reader,g_base,again.P,late)||!cp::Same(pair,late)||
+    !cp::CoherentCallbacks(pair.body[0],late.body[0])||!cp::CoherentCallbacks(pair.body[1],late.body[1]))return finish(false);
+ AcquireSRWLockShared(&g_pose_birth_lock);last[0]=g_pose_birth0;last[1]=g_pose_birth;lateEpoch=g_pose_birth_epoch;ReleaseSRWLockShared(&g_pose_birth_lock);
+ if(!epoch||lateEpoch!=epoch||first[0].serial!=last[0].serial||first[1].serial!=last[1].serial||
+    !native_pose_birth_census::Current(late,last[0],last[1])||sequence!=static_cast<std::uint32_t>(g_window_seq)||
+    partner_defer::InBatch()||g_faulted||g_shutdown||!PoseWorker()||!g_pose_original_view.load(std::memory_order_acquire))return finish(false);
+ out.image=g_base;out.player=pair.player;out.data=pair.data;out.state=pair.scriptState;out.lifecycle=epoch;
+ out.generation=arm.gen;out.sceneEpoch=arm.rates_epoch;out.thread=thread;out.sequence=sequence;
+ for(unsigned k=0;k<2;++k){out.block[k]=pair.body[k].block;out.ps[k]=pair.body[k].state;out.cs[k]=pair.body[k].cs;
+    out.entry[k]=pair.body[k].entry;out.birth[k]=last[k].serial;}
+ return finish(true);
+}
+bool RegisterNativePoseDualReadObserver(NativePoseDualReadObserver callback) noexcept {
+ if(!callback||!PoseWorker()||g_shutdown||g_pose_fault)return false;
+ auto expected=static_cast<NativePoseDualReadObserver>(nullptr);
+ return g_pose_dual_read_observer.compare_exchange_strong(expected,callback,std::memory_order_acq_rel)||expected==callback;
 }
 bool ReadNativePoseSleepPartsPoll(NativePoseSleepPartsContext& out) noexcept {return PosePartsContext(out);}
 bool ReadNativePoseDualPartsPoll(NativePoseDualPartsContext& out) noexcept {return PoseDualPartsContext(out);}

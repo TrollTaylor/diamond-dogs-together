@@ -1,0 +1,53 @@
+# Authored road-vehicle transport/seat comparison. Offset cargo success is
+# recorded separately from the real GetRiderId table; no synthetic seat count.
+labsetting nametag=1
+labsetting coop_hud=compact
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+host run cargo_test 1
+guest run cargo_test 1
+host run godmode 1
+guest run godmode 1
+host run time 43200
+host run weather sunny
+host run goto_vehicle
+wait 2000
+both capture vehicle-near
+host press e 150
+wait 3000
+host run vehicle_seats
+host require vehicle;.*localSeat=1;shared=unverified
+placebehind guest host 2.5 2.0
+wait 1000
+guest hold r 1200
+guest release
+wait 1500
+host run cargo_status
+host require cargo;state=carrier;awake=1;mask=0;mount=vehicle
+guest run cargo_status
+guest require cargo;state=cargo;awake=1;mask=1;mount=none
+host run vehicle_seats
+both capture vehicle-transport-on-native-seats-separate
+host hold w 1500
+host hold w 1500
+host release
+wait 1000
+both capture vehicle-moving
+guest hold rmb+lmb 800
+guest release
+both capture vehicle-aim-fire
+guest hold r 1200
+guest release
+wait 1500
+host run cargo_status
+guest run cargo_status
+host require cargo;state=off;awake=0;mask=0
+guest require cargo;state=off;awake=0;mask=0
+guest hold w 1000
+guest release
+both capture vehicle-off-controls-restored
+host run vehicle_seats
+host press e 150
+wait 2000
+state

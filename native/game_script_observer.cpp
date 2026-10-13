@@ -18,7 +18,15 @@
 #include "mgscoop/damage_patch.hpp"
 #include "mgscoop/downed_player.hpp"
 #include "mgscoop/coop_carry.hpp"
+#include "coop_passenger.hpp"
+#include "horse_player_physical_read.hpp"
+#include "horse_cargo_native_read.hpp"
+#include "prologue_provider_read.hpp"
+#include "mgscoop/native_pose_dual_parts.hpp"
+#include "horse_physical_profile_read.hpp"
+#include "horse_physical_probe_glue.hpp"
 #include "mgscoop/coop_sleep.hpp"
+#include "coop_team_wake.hpp"
 #include "mgscoop/carry_info.hpp"
 #include "mgscoop/sleep_info.hpp"
 #include "mgscoop/sleep_partner_test.hpp"
@@ -26,6 +34,8 @@
 #include "mgscoop/native_pose_sleep_parts.hpp"
 #include "mgscoop/native_pose_carry_cold.hpp"
 #include "sleep_partner_bridge.hpp"
+#include "sleep_motion_asset_read.hpp"
+#include <bcrypt.h>
 #include "sleep_deferred_carry_proof.hpp"
 #include "sleep_queued_carry_proof.hpp"
 #include "sleep_seed_contract.hpp"
@@ -1307,6 +1317,16 @@ void NametagTick(const char* buffer, std::size_t size) noexcept {
 // non-recursive lock is never requested twice on one thread.
 void ObserveEquipmentTick() noexcept;
 void CoopRescueTick() noexcept;
+bool PhysicalScope(mgscoop::carry_plugin_read::Scope&) noexcept;
+bool PhysicalCallbackSample(void*,const mgscoop::horse_physical_callback_probe::RawWindow&,mgscoop::horse_physical_callback_probe::Sample&) noexcept;
+void RefreshPhysicalProbe() noexcept;
+bool physical_probe_prepared=false;
+bool SleepAssetLine(char*,std::size_t) noexcept;
+void PublishPhysicalDual(const mgscoop::partner_input_hook::NativePoseDualPartsContext&) noexcept;
+bool HorseCargoNativeDiagnostic(std::uint16_t,unsigned,char*,std::size_t) noexcept;
+bool PrologueProviderLine(char*,std::size_t) noexcept;
+bool PhysicalTransformLine(char*,std::size_t) noexcept;
+
 
 const char* HandlePartnerTick(const char* buffer, std::size_t size) noexcept {
     if (!OnRuntimeThread()) return nullptr;
@@ -2220,6 +2240,94 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
         } else if (pending.id && std::strcmp(pending.text,"coop_carry_mirror")==0) {
             char status[161]{};const bool ok=mgscoop::coop_carry::MirrorLine(status,sizeof(status));
             debug::Result(pending.id,ok?1u:0u,status);
+        } else if (pending.id && std::strcmp(pending.text,"passenger_prepare")==0) {
+            const bool admitted=mgscoop::worker_scenario::Compiled()&&mgscoop::worker_scenario::ThreadAdmitted()&&
+                offline_enabled&&lab::SavesRedirected()&&partner_on&&partner_gate_ok&&game_base&&game_span;
+            const bool ok=admitted&&mgscoop::coop_passenger::Install(game_base,game_span,admitted,Log);
+            char line[161]{};mgscoop::coop_passenger::StatusLine(line,sizeof(line));
+            debug::Result(pending.id,ok?1u:0u,ok?line:"passenger;prepare_refused=1");
+        } else if (pending.id && (std::strcmp(pending.text,"passenger_test 1")==0||std::strcmp(pending.text,"passenger_test 0")==0)) {
+            const bool ok=mgscoop::worker_scenario::Compiled()&&mgscoop::worker_scenario::ThreadAdmitted()&&
+                mgscoop::coop_passenger::SetEnabled(pending.text[15]=='1');
+            char line[161]{};mgscoop::coop_passenger::StatusLine(line,sizeof(line));
+            debug::Result(pending.id,ok?1u:0u,ok?line:"passenger;enable_refused=1");
+        } else if (pending.id && std::strcmp(pending.text,"passenger_status")==0) {
+            char line[161]{};const bool ok=mgscoop::coop_passenger::StatusLine(line,sizeof(line));
+            debug::Result(pending.id,ok?1u:0u,ok?line:"passenger;status_refused=1");
+        } else if (pending.id && (std::strcmp(pending.text,"coop_sleep_detail0")==0||std::strcmp(pending.text,"coop_sleep_detail1")==0)) {
+            char line[161]{};const auto n=std::strlen(pending.text);const bool ok=mgscoop::coop_sleep::DetailLine(pending.text[n-1]=='1'?1u:0u,line,sizeof(line));
+            debug::Result(pending.id,ok?1u:0u,ok?line:"sleepDetail;status_refused=1");
+        } else if (pending.id && std::strcmp(pending.text,"passenger_lookup")==0) {
+            char line[161]{};const bool ok=mgscoop::worker_scenario::Compiled()&&mgscoop::worker_scenario::ThreadAdmitted()&&mgscoop::coop_passenger::LookupCensusLine(line,sizeof(line));
+            debug::Result(pending.id,ok?1u:0u,ok?line:"plookup;read=0;why=private_admission");
+         } else if (pending.id && (std::strcmp(pending.text,"passenger_lifetime")==0||std::strcmp(pending.text,"passenger_resource")==0)) {
+            char line[161]{};const bool privateWorker=mgscoop::worker_scenario::Compiled()&&mgscoop::worker_scenario::ThreadAdmitted();
+            const bool ok=privateWorker&&(std::strcmp(pending.text,"passenger_lifetime")==0?
+                mgscoop::coop_passenger::LifetimeCensusLine(line,sizeof(line)):mgscoop::coop_passenger::ResourceCensusLine(line,sizeof(line)));
+            debug::Result(pending.id,ok?1u:0u,ok?line:"vehicleCensus;read=0;why=private_admission");
+         } else if (pending.id && std::strcmp(pending.text,"passenger_camera")==0) {
+            char line[161]{};const bool ok=mgscoop::worker_scenario::Compiled()&&mgscoop::worker_scenario::ThreadAdmitted()&&mgscoop::coop_passenger::CameraCensusLine(line,sizeof(line));
+            debug::Result(pending.id,ok?1u:0u,ok?line:"pcamera;read=0;why=private_admission");
+        } else if (pending.id && std::strcmp(pending.text,"seq_provider")==0) {
+            char line[161]{};const bool ok=PrologueProviderLine(line,sizeof(line));debug::Result(pending.id,ok?1u:0u,ok?line:"seqProv;ok=0;why=private_admission");
+        } else if (pending.id && (std::strcmp(pending.text,"horse_service_native")==0||std::strcmp(pending.text,"horse_service_rows")==0)) {
+            char line[161]{};const bool ok=HorseCargoNativeDiagnostic(6656,std::strcmp(pending.text,"horse_service_rows")==0?2u:1u,line,sizeof(line));
+            debug::Result(pending.id,ok?1u:0u,ok?line:"horseSvc;ready=0;why=status_refused");
+        } else if (pending.id && std::strcmp(pending.text,"horse_cargo_native")==0) {
+            char line[161]{};const bool ok=HorseCargoNativeDiagnostic(6656,0,line,sizeof(line));debug::Result(pending.id,ok?1u:0u,ok?line:"horseCargo;ready=0;why=status_refused");
+        } else if (pending.id && std::strcmp(pending.text,"phys_birth")==0) {
+            mgscoop::partner_input_hook::NativePoseBirthCensus pair{};const bool ready=mgscoop::partner_input_hook::ReadNativePoseBirthCensus(pair);
+            char line[161]{};std::snprintf(line,sizeof(line),"physBirth;ready=%u;birth=%llu,%llu;gen=%u;epoch=%u;life=%llu;win=%u",ready?1u:0u,
+                static_cast<unsigned long long>(pair.birth[0]),static_cast<unsigned long long>(pair.birth[1]),pair.generation,pair.sceneEpoch,
+                static_cast<unsigned long long>(pair.lifecycle),pair.sequence);debug::Result(pending.id,1u,line);
+        } else if (pending.id && std::strcmp(pending.text,"phys_transform")==0) {
+            char line[161]{};const bool ok=PhysicalTransformLine(line,sizeof(line));debug::Result(pending.id,ok?1u:0u,ok?line:"physTransform;ready=0");
+        } else if (pending.id && (std::strcmp(pending.text,"phys_native0")==0||std::strcmp(pending.text,"phys_native1")==0||std::strcmp(pending.text,"phys_life0")==0||std::strcmp(pending.text,"phys_life1")==0)) {
+            char line[161]{};const std::size_t n=std::strlen(pending.text);const bool ok=mgscoop::horse_physical_probe_glue::NaturalLine(pending.text[n-1]=='1'?1u:0u,std::strncmp(pending.text,"phys_life",9)==0,line,sizeof(line));
+            debug::Result(pending.id,ok?1u:0u,ok?line:"physNative;r=0;why=status_refused");
+        } else if (pending.id && std::strcmp(pending.text,"passenger_engine")==0) {
+            char line[161]{};const bool ok=mgscoop::worker_scenario::Compiled()&&mgscoop::worker_scenario::ThreadAdmitted()&&mgscoop::coop_passenger::EngineCensusLine(line,sizeof(line));
+            debug::Result(pending.id,ok?1u:0u,ok?line:"pengine;read=0;why=private_admission");
+        } else if (pending.id && std::strcmp(pending.text,"passenger_seats")==0) {
+            char line[161]{};const bool ok=mgscoop::coop_passenger::SeatCensusLine(line,sizeof(line));
+            debug::Result(pending.id,ok?1u:0u,ok?line:"pseats;status_refused=1");
+        } else if (pending.id && std::strcmp(pending.text,"horse_player_physical")==0) {
+            namespace hr=mgscoop::horse_player_physical_read;
+            mgscoop::carry_plugin_read::Scope scope{};PhysicalScope(scope);
+            const auto reader=[](std::uintptr_t at,void* out,std::size_t size) noexcept {SIZE_T done=0;return at&&size&&
+                ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(at),out,size,&done)&&done==size;};
+            auto read=reader;hr::Observation observed{};const char* reason="scope";const bool ready=hr::Observe(read,scope,observed,&reason);
+            char line[161]{};const bool ok=hr::Line(observed,ready,reason,line,sizeof(line));
+            debug::Result(pending.id,ok?1u:0u,ok?line:"charPhysical;status_refused=1");
+        } else if (pending.id && std::strcmp(pending.text,"phys_prepare")==0) {
+            mgscoop::carry_plugin_read::Scope scope{};const bool admitted=PhysicalScope(scope);
+            const bool ok=admitted&&mgscoop::horse_physical_probe_glue::Install(game_base,game_span,admitted,&PhysicalCallbackSample,nullptr);
+            if(ok){physical_probe_prepared=mgscoop::partner_input_hook::RegisterNativePoseDualReadObserver(&PublishPhysicalDual);RefreshPhysicalProbe();}
+            char line[161]{};mgscoop::horse_physical_probe_glue::Line(line,sizeof(line));
+            debug::Result(pending.id,ok?1u:0u,ok?line:"physCb;prepare_refused=1");
+        } else if (pending.id && (std::strcmp(pending.text,"phys_callback")==0||std::strcmp(pending.text,"phys_raw")==0)) {
+            char line[161]{};const bool ok=std::strcmp(pending.text,"phys_raw")==0?
+                mgscoop::horse_physical_probe_glue::RawLine(line,sizeof(line)):mgscoop::horse_physical_probe_glue::Line(line,sizeof(line));
+            debug::Result(pending.id,ok?1u:0u,ok?line:"physCb;status_refused=1");
+        } else if (pending.id && std::strcmp(pending.text,"horse_player_profile")==0) {
+            namespace hp=mgscoop::horse_player_physical_read;namespace pr=mgscoop::horse_physical_profile_read;
+            mgscoop::carry_plugin_read::Scope scope{};const bool admitted=PhysicalScope(scope);
+            auto code=mgscoop::partner_input_hook::ReadNativePoseOriginalCode;std::uintptr_t mismatch=0;
+            const bool gate=physical_probe_prepared||pr::CodeGate(code,scope.image,game_span,mismatch);
+            auto reader=[](std::uintptr_t at,void* out,std::size_t size) noexcept {SIZE_T done=0;return at&&size&&
+                ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(at),out,size,&done)&&done==size;};
+            hp::Observation observed{};pr::Profile a{},b{};
+            const bool ready=admitted&&gate&&hp::Observe(reader,scope,observed)&&pr::Observe(reader,scope.image,observed.body[0],a)&&pr::Observe(reader,scope.image,observed.body[1],b);
+            char line[161]{};const bool ok=pr::Line(a,b,ready,line,sizeof(line));debug::Result(pending.id,ok?1u:0u,ok?line:"charProfile;status_refused=1");
+        } else if (pending.id && std::strcmp(pending.text,"coop_carry_horse_gate")==0) {
+            char line[161]{};const bool ok=mgscoop::coop_carry::HorseGateLine(line,sizeof(line));
+            debug::Result(pending.id,ok?1u:0u,ok?line:"horseGate;status_refused=1");
+        } else if (pending.id && std::strcmp(pending.text,"coop_carry_horse_load")==0) {
+            char line[161]{};const bool ok=mgscoop::coop_carry::HorseLoadLine(line,sizeof(line));
+            debug::Result(pending.id,ok?1u:0u,ok?line:"horseLoad;status_refused=1");
+        } else if (pending.id && std::strcmp(pending.text,"coop_carry_load")==0) {
+            char status[161]{};const bool ok=mgscoop::coop_carry::LoadLine(status,sizeof(status));
+            debug::Result(pending.id,ok?1u:0u,status);
         } else if (pending.id && std::strcmp(pending.text,"coop_carry_sel")==0) {
             char status[161]{};const bool ok=mgscoop::coop_carry::SelectorLine(status,sizeof(status));
             debug::Result(pending.id,ok?1u:0u,status);
@@ -2311,6 +2419,8 @@ bool SelectDebugReceipt(const char* buffer, std::size_t size, const char* name,
                 ok?1u:0u,static_cast<unsigned long>(r.generation),unsigned(a.actualId),unsigned(a.vehicle),unsigned(a.candidate),unsigned(a.phase),unsigned(a.nextPhase),unsigned(a.entryOrSeat),
                 unsigned(b.actualId),unsigned(b.vehicle),unsigned(b.candidate),unsigned(b.phase),unsigned(b.nextPhase),unsigned(b.entryOrSeat),r.reason);
             debug::Result(pending.id,ok?1u:0u,line);
+        } else if (pending.id && std::strcmp(pending.text,"sleep_asset_status")==0) {
+            char line[161]{};const bool ok=SleepAssetLine(line,sizeof(line));debug::Result(pending.id,ok?1u:0u,ok?line:"sleepAsset;ready=0;why=status_refused");
         } else if (pending.id && (std::strcmp(pending.text,"sleep_info_status")==0||std::strcmp(pending.text,"sleep_graph_status")==0)) {
             const auto owner=mgscoop::downed_player::GetSnapshot();mgscoop::sleep_info::Reply r{};
             const bool ok=mgscoop::sleep_info::Observe(owner.mission,owner.epoch,DownedAdmitted(owner.mission,owner.epoch),mission_thread,r);
@@ -3166,6 +3276,11 @@ template<class Pin,std::size_t N> bool BuddyPinsMatch(void* base,std::size_t spa
     for(const auto& pin:pins) {
         if(!pin.bytes || pin.bytes>sizeof(bytes) || pin.rva>span || pin.bytes>span-pin.rva ||
            !UpperPhaseRead(nullptr,reinterpret_cast<std::uintptr_t>(base)+pin.rva,bytes,pin.bytes)) return false;
+        // The research pose window detours 0xBF8A20 (registry constructor) with
+        // a 5-byte E9 over its exact 5-byte first instruction; the rest of the
+        // pinned body is untouched, so the original head is compared instead.
+        static constexpr unsigned char kRegistryHead[5]={0x48,0x89,0x4c,0x24,0x08};
+        if(pin.rva==0xbf8a20 && pin.bytes>5 && bytes[0]==0xe9) std::memcpy(bytes,kRegistryHead,sizeof(kRegistryHead));
         std::uint8_t digest[32]{};mgscoop::link::Sha256Digest(bytes,pin.bytes,digest);
         constexpr char hex[]="0123456789abcdef";
         for(unsigned i=0;i<32;++i)
@@ -3458,16 +3573,16 @@ bool DownedAdmitted(std::uint32_t mission, std::uint16_t epoch) noexcept {
 bool DownedReply(const mgscoop::downed_player::Reply& r, mgscoop::script_bridge::Replacement& replacement) noexcept {
     static char reply[512]{};
     if(FAILED(StringCchPrintfA(reply,ARRAYSIZE(reply),
-        "return {ready=%s,down=%s,held=%s,applied=%s,generation=%lu,cause=%u,pos={%ld,%ld,%ld},hitSequence=%lu,hitDamageMilli=%lu,hitCause=%u,reviveMaskObserved=%s,reviveMaskPresent=%s,nativeSleepActive=%s,nativeSleepReleaseReady=%s,carry=%u}",
+        "return {ready=%s,down=%s,held=%s,applied=%s,generation=%lu,cause=%u,pos={%ld,%ld,%ld},hitSequence=%lu,hitDamageMilli=%lu,hitCause=%u,reviveMaskObserved=%s,reviveMaskPresent=%s,nativeSleepActive=%s,nativeSleepReleaseReady=%s,carry=%u,carryHeld=%s}",
         r.ready?"true":"false",r.down?"true":"false",r.held?"true":"false",r.applied?"true":"false",
         static_cast<unsigned long>(r.generation),unsigned(r.cause),
         static_cast<long>(r.pos[0]),static_cast<long>(r.pos[1]),static_cast<long>(r.pos[2]),
         static_cast<unsigned long>(r.hitSequence),static_cast<unsigned long>(r.hitDamageMilli),unsigned(r.hitCause),
         r.reviveMaskObserved?"true":"false",r.reviveMaskPresent?"true":"false",r.nativeSleepActive?"true":"false",r.nativeSleepReleaseReady?"true":"false",
-        mgscoop::coop_carry::CarryRole()))) return false;
+        mgscoop::coop_carry::HudRole(),r.carryHeld?"true":"false"))) return false;
     replacement={reply,std::strlen(reply)};world_quiet=true;return true;
 }
-// --- Teammate rescue state (docs/coop-carry.md) -----------------------------
+// --- Teammate rescue state (docs/STATUS.md) -----------------------------
 // lua/coop/world_downed.lua publishes both players' accepted downed rows every
 // tick: "return 'MGS_COOP_TEAM_V1' -- mission epoch localDown localCause
 // peerDown peerCause peerFresh". The per-frame policy below keeps the
@@ -3475,36 +3590,246 @@ bool DownedReply(const mgscoop::downed_player::Reply& r, mgscoop::script_bridge:
 // darted and tells the carry adapter which bodies may be picked up.
 struct TeamState {
     bool valid=false;
-    unsigned mission=0, epoch=0;
-    bool localDown=false, peerDown=false, peerFresh=false;
-    unsigned localCause=0, peerCause=0;
+    mgscoop::team_wake::Receipt receipt{};
     std::uint64_t at=0;
 };
 TeamState team_state{};
 bool coop_rescue_configured=false;
 bool coop_rescue_pending=false;
 bool coop_partner_sleep_held=false;
-bool SelectTeamReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
-    static constexpr char prefix[]="return 'MGS_COOP_TEAM_V1' -- ";
+// Horse cargo (lua/coop/world_horse_cargo.lua): "<hold> <putdown>". hold=1
+// keeps the partner driver off instance 1 (Lua places it on the horse);
+// putdown=1 asks the stock put-down of the local carry. Reply: carry role.
+bool SelectCargoReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
+    static constexpr char prefix[]="return 'MGS_COOP_CARGO_V1' -- ";
+    static constexpr char prefix2[]="return 'MGS_COOP_CARGO_V2' -- ";
     constexpr std::size_t n=sizeof(prefix)-1;
-    if(!world_on||!buffer||size<=n||size>n+96||std::memcmp(buffer,prefix,n)!=0||!(OnRuntimeThread()||OnTerminationThread())) return false;
-    char text[128]{};std::memcpy(text,buffer+n,size-n);
-    long v[7]{};char* p=text;
-    for(unsigned i=0;i<7;++i){char* end=nullptr;v[i]=std::strtol(p,&end,10);if(end==p){v[0]=-1;break;}p=end;}
-    // The reply is this machine's carry role (0 none, 1 carrying, 2 carried).
+    const bool v2=buffer&&size==n+5&&std::memcmp(buffer,prefix2,n)==0;
+    if(!world_on||!buffer||size!=n+5||(!v2&&std::memcmp(buffer,prefix,n)!=0)||!(OnRuntimeThread()||OnTerminationThread())) return false;
+    const char h=buffer[n],sp=buffer[n+1],d=buffer[n+2],l=buffer[n+4];
     static constexpr char roles[3][9]={"return 0","return 1","return 2"};constexpr char no[]="return false";
-    const bool ok=v[0]>=0&&v[0]<=99999&&v[1]>=0&&v[1]<=65535&&(v[2]==0||v[2]==1)&&v[3]>=0&&v[3]<=2&&
-        (v[4]==0||v[4]==1)&&v[5]>=0&&v[5]<=2&&(v[6]==0||v[6]==1);
+    if((h!='0'&&h!='1')||sp!=' '||(d!='0'&&d!='1')||buffer[n+3]!=' '||(l!='0'&&l!='1')){replacement={no,sizeof(no)-1};world_quiet=true;return true;}
+    mgscoop::coop_carry::SetCargoHold(h=='1');mgscoop::coop_carry::SetCargoLocal(l=='1');
+    if(d=='1') mgscoop::coop_carry::RequestLocalPutDown();
     const unsigned role=mgscoop::coop_carry::CarryRole()<3?mgscoop::coop_carry::CarryRole():0u;
-    if(ok){
-        team_state.valid=true;team_state.mission=static_cast<unsigned>(v[0]);team_state.epoch=static_cast<unsigned>(v[1]);
-        team_state.localDown=v[2]==1;team_state.localCause=static_cast<unsigned>(v[3]);team_state.peerDown=v[4]==1;
-        team_state.peerCause=static_cast<unsigned>(v[5]);team_state.peerFresh=v[6]==1;team_state.at=GetTickCount64();
-    }
+    if(v2){
+        const auto state=mgscoop::coop_carry::ReadAttachmentState();static char reply[192]{};
+        if(FAILED(StringCchPrintfA(reply,ARRAYSIZE(reply),
+            "return {ready=%s,role=%u,carrying=%s,carried=%s,localCarried=%s,peerCarrying=%s}",
+            state.ready?"true":"false",role,state.carrying[0]?"true":"false",state.carried[1]?"true":"false",
+            state.carried[0]?"true":"false",state.carrying[1]?"true":"false")))return false;
+        replacement={reply,std::strlen(reply)};
+    }else replacement={roles[role],std::strlen(roles[role])};
+    world_quiet=true;return true;
+}
+bool SelectTeamReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
+    if(!world_on||!mgscoop::team_wake::Recognized(buffer,size)||!(OnRuntimeThread()||OnTerminationThread())) return false;
+    mgscoop::team_wake::Receipt receipt{};
+    const bool ok=mgscoop::team_wake::Parse(buffer,size,receipt);
+    static constexpr char roles[3][9]={"return 0","return 1","return 2"};constexpr char no[]="return false";
+    const unsigned role=mgscoop::coop_carry::CarryRole()<3?mgscoop::coop_carry::CarryRole():0u;
+    // A malformed owned receipt cannot leave prior wake authorization live.
+    team_state.valid=ok;
+    if(ok){team_state.receipt=receipt;team_state.at=GetTickCount64();}
     replacement={ok?roles[role]:no,ok?std::strlen(roles[role]):sizeof(no)-1};world_quiet=true;return true;
+}
+// Equality of actual completed birth receipts; no purpose or writer is acquired.
+bool SameColdBirthCensus(const mgscoop::partner_input_hook::NativePoseBirthCensus& a,const mgscoop::partner_input_hook::NativePoseBirthCensus& b) noexcept {
+    if(a.image!=b.image||a.player!=b.player||a.data!=b.data||a.state!=b.state||a.lifecycle!=b.lifecycle||
+       a.generation!=b.generation||a.sceneEpoch!=b.sceneEpoch||a.thread!=b.thread||a.sequence!=b.sequence)return false;
+    for(unsigned k=0;k<2;++k)if(!a.birth[k]||a.birth[k]!=b.birth[k]||a.block[k]!=b.block[k]||a.ps[k]!=b.ps[k]||a.cs[k]!=b.cs[k]||a.entry[k]!=b.entry[k])return false;
+    return true;
+}
+bool HorseCargoNativeDiagnostic(std::uint16_t id,unsigned lineKind,char* line,std::size_t capacity) noexcept {
+    namespace horse=mgscoop::buddy_capacity_census;
+    namespace cargo=mgscoop::horse_cargo_native_read;
+    namespace bridge=mgscoop::horse_native_service_bridge;
+    cargo::Observation observed{};const char* reason="admission";observed.gameId=id;
+    const auto finish=[&](bool ready) noexcept {
+        if(lineKind==2)return bridge::CandidatesLine(observed.bridge,line,capacity);
+        return lineKind==1?bridge::Line(observed.bridge,ready,reason,line,capacity):cargo::Line(observed,ready,reason,line,capacity);
+    };
+    if(!mgscoop::worker_scenario::Compiled()||!mgscoop::worker_scenario::ThreadAdmitted()||
+       !offline_enabled||!lab::SavesRedirected()||!partner_on||!partner_gate_ok||!game_base||!game_span)return finish(false);
+    auto code=mgscoop::partner_input_hook::ReadNativePoseOriginalCode;std::uintptr_t mismatch=0;
+    if(!BuddyPinsMatch(game_base,game_span,horse::kPins)||
+       !cargo::CodeGate(code,reinterpret_cast<std::uintptr_t>(game_base),game_span,mismatch)){reason="pins";return finish(false);}
+    const auto before=mgscoop::world_link::GetStatus();pp::State state{};unsigned short mission=0;
+    std::uintptr_t controller=0;std::uint8_t active=0;reason="scope";
+    if(!OnRuntimeThread()||mission_terminating||gameplay_restore_pending||!ReadMission(mission)||mission!=partner_mission||
+       !before.configured||!before.paired||!before.link_up||before.effective<3||!before.epoch||
+       pp::ReadState(partner_addresses,state)!=pp::Refusal::none||state.local||state.sync||state.ids[0]!=0||state.ids[1]!=1||
+       !pp::Realized(state,0)||!pp::Realized(state,1)||state.parts[0]!=3||state.parts[1]!=3||
+       !BuddySelection(controller,active)||active!=1)return finish(false);
+    mgscoop::partner_input_hook::NativePoseBirthCensus births{};
+    if(!mgscoop::partner_input_hook::ReadNativePoseBirthCensus(births)||births.player!=state.P||births.data!=state.Q||births.state!=state.S){reason="birth_scope";return finish(false);}
+    const auto thread=GetCurrentThreadId();const auto now=GetTickCount64();
+    const auto generation=worker_loading_generation?worker_loading_generation:1u;
+    const horse::Authorization authorization{true,true,true,true,true,true};
+    const horse::Owner owner{state.P,mission,generation,thread,1,before.epoch,now,true,true,false,false};
+    const auto source=[&](horse::Census& current,const char*& why) noexcept {
+        const auto currentWorld=mgscoop::world_link::GetStatus();pp::State currentPair{};unsigned short currentMission=0;
+        std::uintptr_t currentController=0;std::uint8_t currentActive=0;
+        if(!OnRuntimeThread()||mission_terminating||gameplay_restore_pending||!ReadMission(currentMission)||currentMission!=mission||
+           !currentWorld.configured||!currentWorld.paired||!currentWorld.link_up||currentWorld.effective<3||currentWorld.epoch!=before.epoch||
+           (worker_loading_generation?worker_loading_generation:1u)!=generation||
+           pp::ReadState(partner_addresses,currentPair)!=pp::Refusal::none||currentPair.P!=state.P||currentPair.Q!=state.Q||
+           currentPair.local||currentPair.sync||!pp::Realized(currentPair,0)||!pp::Realized(currentPair,1)||
+           currentPair.parts[0]!=3||currentPair.parts[1]!=3||
+           !BuddySelection(currentController,currentActive)||currentController!=controller||currentActive!=active){why="scope_changed";return false;}
+        why=horse::ReadPlayPose({nullptr,UpperPhaseRead},reinterpret_cast<std::uintptr_t>(game_base),authorization,owner,thread,GetTickCount64(),current);
+        return !why;
+    };
+    const auto read=[](std::uintptr_t at,void* out,std::size_t size) noexcept {return UpperPhaseRead(nullptr,at,out,size);};
+    auto reader=read;
+    const bool ready=cargo::ObserveCurrent(reader,reinterpret_cast<std::uintptr_t>(game_base),source,id,observed,reason);
+    // Root should retain its already-implemented post-observation live world/
+    // current pair/birth/selection closure too. ObserveCurrent closes the
+    // native service/topology/actor/unit source itself; it grants no writer.
+    mgscoop::partner_input_hook::NativePoseBirthCensus late{};
+    if(!mgscoop::partner_input_hook::ReadNativePoseBirthCensus(late)||!SameColdBirthCensus(births,late)){reason="birth_changed";return finish(false);}
+    return finish(ready);
+}
+
+// Read-only private physical diagnostics. Never supplies writer authority.
+bool PhysicalScope(mgscoop::carry_plugin_read::Scope& scope) noexcept {
+    namespace hp=mgscoop::horse_player_physical_read;scope={};
+    const auto own=mgscoop::downed_player::GetSnapshot();const auto now=GetTickCount64();
+    pp::State st{};const bool native=partner_on&&partner_gate_ok&&pp::ReadState(partner_addresses,st)==pp::Refusal::none;
+    const auto world=mgscoop::world_link::GetStatus();
+    const bool admitted=mgscoop::worker_scenario::Compiled()&&mgscoop::worker_scenario::ThreadAdmitted()&&
+        OnRuntimeThread()&&!mission_terminating&&offline_enabled&&lab::SavesRedirected()&&native&&
+        world.paired&&world.link_up&&world.effective>=3&&world.epoch==own.epoch;
+    auto code=mgscoop::partner_input_hook::ReadNativePoseOriginalCode;std::uintptr_t mismatch=0;
+    scope.exactGate=admitted&&hp::CodeGate(code,reinterpret_cast<std::uintptr_t>(game_base),game_span,mismatch);
+    scope.admitted=admitted;scope.ready=own.ready;scope.armed=own.armed;scope.batch=mgscoop::partner_defer::InBatch();
+    scope.image=reinterpret_cast<std::uintptr_t>(game_base);scope.player=st.P;scope.data=st.Q;scope.state=st.S;
+    scope.mission=partner_mission;scope.ownedMission=own.mission;scope.epoch=world.epoch;scope.ownedEpoch=own.epoch;
+    scope.generation=scope.ownedGeneration=own.generation;scope.thread=GetCurrentThreadId();scope.ownerThread=mission_thread;
+    scope.now=now;scope.poll=own.lastPoll;scope.sequenceBefore=scope.sequenceAfter=mgscoop::partner_input_hook::WindowSeq();
+    return mgscoop::carry_plugin_read::ScopeRefusal(scope)==nullptr;
+}
+bool PhysicalCallbackSample(void*,const mgscoop::horse_physical_callback_probe::RawWindow& raw,mgscoop::horse_physical_callback_probe::Sample& out) noexcept {
+    mgscoop::carry_plugin_read::Scope scope{};if(!PhysicalScope(scope))return false;
+    auto reader=[](std::uintptr_t at,void* bytes,std::size_t size) noexcept {SIZE_T done=0;return at&&size&&
+        ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(at),bytes,size,&done)&&done==size;};
+    return mgscoop::horse_physical_callback_probe::SampleCurrent(reader,scope,raw,out);
+}
+void RefreshPhysicalProbe() noexcept {
+    if(!physical_probe_prepared)return;
+    static std::uint64_t next=0;const auto now=GetTickCount64();if(now<next)return;next=now+200;
+    mgscoop::carry_plugin_read::Scope scope{};mgscoop::horse_player_physical_read::Observation observed{};
+    auto reader=[](std::uintptr_t at,void* bytes,std::size_t size) noexcept {SIZE_T done=0;return at&&size&&
+        ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(at),bytes,size,&done)&&done==size;};
+    const bool ready=PhysicalScope(scope)&&mgscoop::horse_player_physical_read::Observe(reader,scope,observed);
+    mgscoop::horse_physical_probe_glue::RefreshCandidates(observed,mission_thread,ready);
+    namespace hk=mgscoop::partner_input_hook;namespace nr=mgscoop::horse_physical_natural_read;
+    hk::NativePoseBirthCensus births{},late{};bool current=ready&&hk::ReadNativePoseBirthCensus(births)&&
+        births.player==scope.player&&births.data==scope.data&&births.state==scope.state&&births.thread==scope.ownerThread;
+    for(unsigned k=0;k<2&&current;++k)current=births.block[k]==observed.carry.body[k].block&&births.ps[k]==observed.carry.body[k].ps&&
+        births.cs[k]==observed.body[k].cs&&births.entry[k]==observed.body[k].entry;
+    current=current&&hk::ReadNativePoseBirthCensus(late)&&late.player==births.player&&late.data==births.data&&
+        late.state==births.state&&late.lifecycle==births.lifecycle&&late.generation==births.generation&&late.sceneEpoch==births.sceneEpoch;
+    for(unsigned k=0;k<2&&current;++k)current=late.block[k]==births.block[k]&&late.ps[k]==births.ps[k]&&late.cs[k]==births.cs[k]&&
+        late.entry[k]==births.entry[k]&&late.birth[k]==births.birth[k];
+    if(current){static std::uint64_t serial=0;if(serial==UINT64_MAX){mgscoop::horse_physical_probe_glue::ClearNatural();return;}
+        nr::Published p{};p.image=scope.image;p.player=scope.player;p.data=scope.data;p.state=scope.state;
+        p.mission=scope.mission;p.generation=scope.generation;p.luaOwnerThread=scope.ownerThread;p.epoch=scope.epoch;
+        p.at=GetTickCount64();p.serial=++serial;p.admitted=true;p.exactPins=true;
+        for(unsigned k=0;k<2;++k){p.blocks[k]=births.block[k];p.ps[k]=births.ps[k];p.birth[k]=births.birth[k];p.binding[k]=observed.body[k];}
+        mgscoop::horse_physical_probe_glue::PublishNatural(p);
+    }else mgscoop::horse_physical_probe_glue::ClearNatural();
+}
+// Cold sequence-manager census retains actual body births and current scene twice.
+// It never invokes provider slots, changes the global selector or grants a purpose.
+bool PrologueProviderLine(char* out,std::size_t capacity) noexcept {
+    namespace pr=mgscoop::prologue_provider_read;namespace hk=mgscoop::partner_input_hook;
+    mgscoop::carry_plugin_read::Scope scope{};hk::NativePoseBirthCensus births{},late{};pr::Observation observation{};
+    const char* reason="seq_scope";bool ready=PhysicalScope(scope)&&hk::ReadNativePoseBirthCensus(births)&&
+        births.player==scope.player&&births.data==scope.data&&births.state==scope.state&&births.sequence==scope.sequenceBefore;
+    auto code=hk::ReadNativePoseOriginalCode;std::uintptr_t mismatch=0;
+    const bool exact=ready&&pr::CodeGate(code,scope.image,game_span,mismatch);
+    if(ready&&!exact)reason="seq_pins";
+    auto read=[](std::uintptr_t at,void* bytes,std::size_t size) noexcept {return UpperPhaseRead(nullptr,at,bytes,size);};
+    pr::Scope current{scope.image,game_span,exact,ready,ready};
+    ready=exact&&pr::Observe(read,current,observation,reason);
+    mgscoop::carry_plugin_read::Scope after{};
+    if(ready&&(!PhysicalScope(after)||after.player!=scope.player||after.data!=scope.data||after.state!=scope.state||
+       after.mission!=scope.mission||after.epoch!=scope.epoch||after.generation!=scope.generation||
+       !hk::ReadNativePoseBirthCensus(late)||!SameColdBirthCensus(births,late))){ready=false;reason="seq_owner_changed";}
+    return pr::Line(observation,ready,reason,out,capacity);
+}
+// Publication comes from a real shared dual-parts callback with current births.
+// It is read-only context for another engine thread, never a replaced Lua scope.
+void PublishPhysicalDual(const mgscoop::partner_input_hook::NativePoseDualPartsContext& context) noexcept {
+    namespace hk=mgscoop::partner_input_hook;namespace hp=mgscoop::horse_player_physical_read;
+    namespace nr=mgscoop::horse_physical_natural_read;
+    if(!physical_probe_prepared)return;
+    mgscoop::carry_plugin_read::Scope scope{};hp::Observation physical{};hk::NativePoseDualPartsContext again{};
+    auto reader=[](std::uintptr_t at,void* out,std::size_t size) noexcept {SIZE_T done=0;return at&&size&&
+        ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(at),out,size,&done)&&done==size;};
+    bool ok=PhysicalScope(scope)&&hp::Observe(reader,scope,physical)&&context.thread==scope.ownerThread&&
+        context.player==scope.player&&context.data==scope.data&&context.state==scope.state&&
+        hk::ReadNativePoseDualPartsPoll(again)&&hk::SameNativePoseDualPartsPoll(context,again);
+    for(unsigned k=0;k<2&&ok;++k)ok=context.birthSerial[k]&&context.block[k]==physical.carry.body[k].block&&
+        context.ps[k]==physical.carry.body[k].ps&&context.modelCS[k]==physical.body[k].cs&&context.modelEntry[k]==physical.body[k].entry;
+    const auto seq=hk::WindowSeq();ok=ok&&scope.sequenceBefore==seq&&!(seq&1u)&&!mgscoop::partner_defer::InBatch();
+    if(!ok){mgscoop::horse_physical_probe_glue::ClearNatural();return;}
+    static std::uint64_t serial=0;if(serial==UINT64_MAX){mgscoop::horse_physical_probe_glue::ClearNatural();return;}
+    nr::Published p{};p.image=scope.image;p.player=scope.player;p.data=scope.data;p.state=scope.state;
+    p.mission=scope.mission;p.generation=scope.generation;p.luaOwnerThread=scope.ownerThread;p.epoch=scope.epoch;
+    p.at=GetTickCount64();p.serial=++serial;p.admitted=true;p.exactPins=true;
+    for(unsigned k=0;k<2;++k){p.blocks[k]=context.block[k];p.ps[k]=context.ps[k];p.birth[k]=context.birthSerial[k];p.binding[k]=physical.body[k];}
+    mgscoop::horse_physical_probe_glue::PublishNatural(p);
+}
+bool PhysicalTransformLine(char* out,std::size_t capacity) noexcept {
+    mgscoop::carry_plugin_read::Scope scope{};mgscoop::horse_player_physical_read::Observation observed{};
+    auto reader=[](std::uintptr_t at,void* bytes,std::size_t size) noexcept {SIZE_T done=0;return at&&size&&
+        ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(at),bytes,size,&done)&&done==size;};
+    std::uintptr_t rows[2][3]{};bool ready=PhysicalScope(scope)&&mgscoop::horse_player_physical_read::Observe(reader,scope,observed);
+    for(unsigned k=0;k<2&&ready;++k){std::uintptr_t late[3]{};const auto p=observed.body[k].transform;
+        ready=reader(p,&rows[k][0],8)&&reader(p+0x10,&rows[k][1],8)&&reader(rows[k][1]+0x50,&rows[k][2],8)&&
+            reader(p,&late[0],8)&&reader(p+0x10,&late[1],8)&&reader(late[1]+0x50,&late[2],8)&&std::memcmp(rows[k],late,sizeof(late))==0;
+        for(auto& value:rows[k]){if(value<scope.image||value-scope.image>=game_span)ready=false;value=ready?value-scope.image:0;}}
+    ready=ready&&scope.sequenceBefore==mgscoop::partner_input_hook::WindowSeq()&&!mgscoop::partner_defer::InBatch();
+    const int n=std::snprintf(out,capacity,"physTransform;ready=%u;b0=%llx,%llx,%llx;b1=%llx,%llx,%llx",ready?1u:0u,
+        static_cast<unsigned long long>(rows[0][0]),static_cast<unsigned long long>(rows[0][1]),static_cast<unsigned long long>(rows[0][2]),
+        static_cast<unsigned long long>(rows[1][0]),static_cast<unsigned long long>(rows[1][1]),static_cast<unsigned long long>(rows[1][2]));
+    return n>=0&&static_cast<std::size_t>(n)<capacity;
+}
+// Cryptographic fingerprint of a bounded copied source, never raw asset output.
+bool SleepAssetHash(const unsigned char* bytes,std::size_t size,char* out) noexcept {
+    if(!bytes||!size||size>8192||!out)return false;
+    BCRYPT_ALG_HANDLE algorithm=nullptr;BCRYPT_HASH_HANDLE digest=nullptr;unsigned char result[32]{};
+    bool ok=BCryptOpenAlgorithmProvider(&algorithm,BCRYPT_SHA256_ALGORITHM,nullptr,0)>=0;
+    if(ok)ok=BCryptCreateHash(algorithm,&digest,nullptr,0,nullptr,0,0)>=0;
+    if(ok)ok=BCryptHashData(digest,const_cast<unsigned char*>(bytes),static_cast<ULONG>(size),0)>=0;
+    if(ok)ok=BCryptFinishHash(digest,result,sizeof(result),0)>=0;
+    if(digest)BCryptDestroyHash(digest);if(algorithm)BCryptCloseAlgorithmProvider(algorithm,0);
+    if(!ok)return false;constexpr char alphabet[]="0123456789abcdef";
+    for(unsigned i=0;i<32;++i){out[2*i]=alphabet[result[i]>>4];out[2*i+1]=alphabet[result[i]&15];}out[64]=0;return true;
+}
+bool SleepAssetLine(char* out,std::size_t capacity) noexcept {
+    namespace ar=mgscoop::sleep_motion_asset_read;namespace sp=mgscoop::sleep_plugin_read;namespace sg=mgscoop::sleep_graph_read;
+    if(!out||!capacity)return false;mgscoop::carry_plugin_read::Scope current{};
+    const bool admitted=PhysicalScope(current);ar::Scope scope{};scope.privateCopiedSaveLab=admitted;
+    scope.owner={current.exactGate,current.admitted,current.ready,current.armed,current.batch,current.image,current.player,current.data,current.state,
+        current.mission,current.ownedMission,current.generation,current.ownedGeneration,current.thread,current.ownerThread,
+        current.epoch,current.ownedEpoch,current.sequenceBefore,current.sequenceAfter,current.now,current.poll};
+    auto code=mgscoop::partner_input_hook::ReadNativePoseOriginalCode;std::uintptr_t mismatch=0;
+    scope.owner.exactGate=admitted&&sp::CodeGate(code,current.image,game_span,mismatch)&&sg::CodeGate(code,current.image,game_span,mismatch);
+    scope.codeGate=scope.owner.exactGate&&ar::CodeGate(code,current.image,game_span,mismatch);
+    auto reader=[](std::uintptr_t at,void* bytes,std::size_t size) noexcept {SIZE_T done=0;return at&&size&&
+        ReadProcessMemory(GetCurrentProcess(),reinterpret_cast<const void*>(at),bytes,size,&done)&&done==size;};
+    auto hasher=SleepAssetHash;ar::Reply reply{};ar::ReadPair(reader,hasher,scope,reply);
+    const int n=std::snprintf(out,capacity,"sleepAsset;ready=%u;sel=%u;b0=%u,%u,%llx;b1=%u,%u,%llx;why=%s",reply.ready?1u:0u,reply.selected?1u:0u,
+        unsigned(reply.body[0].origin),reply.body[0].index,static_cast<unsigned long long>(reply.body[0].motion),
+        unsigned(reply.body[1].origin),reply.body[1].index,static_cast<unsigned long long>(reply.body[1].motion),reply.reason);
+    return n>=0&&static_cast<std::size_t>(n)<capacity;
 }
 // Runtime thread, every partner tick.
 void CoopRescueTick() noexcept {
+    RefreshPhysicalProbe();
     if(!coop_rescue_configured&&coop_rescue_pending&&game_base&&game_span&&!mission_terminating){
         coop_rescue_pending=false;
         if(mgscoop::coop_carry::Installed()||mgscoop::coop_carry::Install(game_base,game_span,Log)){
@@ -3516,26 +3841,34 @@ void CoopRescueTick() noexcept {
     }
     if(!coop_rescue_configured) return;
     const auto now=GetTickCount64();
-    const bool fresh=team_state.valid&&team_state.mission==partner_mission&&now>=team_state.at&&now-team_state.at<=1500&&
-        team_state.peerFresh&&!mission_terminating;
-    const bool peerDown=fresh&&team_state.peerDown&&(team_state.peerCause==1||team_state.peerCause==2);
-    const bool peerAsleep=peerDown&&team_state.peerCause==2;
     const auto local=mgscoop::downed_player::GetSnapshot();
+    const mgscoop::team_wake::Context context{local.mission,local.epoch,now,team_state.at,
+        team_state.valid&&local.mission==partner_mission&&DownedAdmitted(local.mission,local.epoch),
+        local.ready&&local.armed&&now>=local.lastPoll&&now-local.lastPoll<=500,mission_terminating};
+    const auto state=mgscoop::team_wake::Evaluate(team_state.receipt,context);
+    mgscoop::coop_passenger::Tick(local.mission,local.epoch,state.known);
     const bool localDown=local.down&&(local.cause==1||local.cause==2);
     // The teammate's body sleeps natively while they are darted (both machines
     // show the stock sleep, and the stock carried state keeps a sleeping body).
-    if(peerAsleep!=coop_partner_sleep_held){
-        if(mgscoop::coop_sleep::Hold(1,peerAsleep)||!peerAsleep){
-            coop_partner_sleep_held=peerAsleep;
-            LogFormat("coop_rescue=partner_sleep; held=%u\r\n",peerAsleep?1u:0u);
+    // Unknown/stale/unowned input preserves existing sleep duty. Only a fresh
+    // exact-generation grant or actual healthy peer readback may release it.
+    if(state.known&&state.peerAsleep!=coop_partner_sleep_held){
+        if(mgscoop::coop_sleep::Hold(1,state.peerAsleep)){
+            coop_partner_sleep_held=state.peerAsleep;
+            LogFormat("coop_rescue=partner_sleep; held=%u; wake_grant=%u\r\n",state.peerAsleep?1u:0u,state.peerWake?1u:0u);
         }
     }
-    mgscoop::coop_carry::SetCarryable((peerDown?2u:0u)|(localDown?1u:0u));
+    // Wait for BOTH original falling-asleep graphs to complete before pickup.
+    const bool localReady=localDown&&(local.cause==1||mgscoop::coop_sleep::CarryReady(0));
+    const bool peerReady=state.peerCarryable&&(team_state.receipt.peerCause==1||mgscoop::coop_sleep::CarryReady(1));
+    mgscoop::coop_carry::SetReadinessFrame(local.mission,local.epoch,local.generation,team_state.receipt.peerGeneration,
+        localReady,state.known&&team_state.receipt.version2);
+    mgscoop::coop_carry::SetCarryable((peerReady&&mgscoop::coop_carry::PeerCarryReady()?2u:0u)|(localReady?1u:0u));
     mgscoop::coop_carry::SetLocalAwakeDown(localDown&&local.cause==1);
     // A carried teammate who was woken or revived is put down (stock put-down).
-    if(fresh&&!team_state.peerDown&&mgscoop::coop_carry::CarryRole()==1&&mgscoop::coop_carry::RequestLocalPutDown()){
+    if(state.known&&state.putDown&&mgscoop::coop_carry::CarryRole()==1&&mgscoop::coop_carry::RequestLocalPutDown()){
         static std::uint64_t logged=0;
-        if(now-logged>2000){logged=now;Log("coop_rescue=put_down; reason=teammate_recovered\r\n");}
+        if(now-logged>2000){logged=now;Log(state.peerWake?"coop_rescue=put_down; reason=teammate_wake_granted\r\n":"coop_rescue=put_down; reason=teammate_recovered\r\n");}
     }
 }
 bool SelectFriendlyHitReceipt(const char* buffer,std::size_t size,mgscoop::script_bridge::Replacement& replacement) noexcept {
@@ -3636,7 +3969,7 @@ bool SelectDownedHudReceipt(const char* buffer,std::size_t size,mgscoop::script_
     mgscoop::coop_hud::DownedView view{};
     if(!world_on || !mgscoop::coop_hud::ParseDownedHud(buffer,size,view) ||
        !(OnRuntimeThread() || OnTerminationThread())) return false;
-    if(view.valid && DownedAdmitted(view.mission,view.epoch)){view.publish_ms=GetTickCount64();view.carry=static_cast<std::uint8_t>(mgscoop::coop_carry::CarryRole());}
+    if(view.valid && DownedAdmitted(view.mission,view.epoch)){view.publish_ms=GetTickCount64();view.carry=static_cast<std::uint8_t>(mgscoop::coop_carry::HudRole());}
     else view={};
     mgscoop::coop_hud::PublishDowned(view);
     constexpr char reply[]="return true";
@@ -3661,6 +3994,7 @@ bool ObserveEntry(void*, const char* buffer, std::size_t size, const char* name,
     if (SelectDownedHudReceipt(buffer, size, replacement)) return true;
     if (SelectPartnerSleepReceipt(buffer, size, replacement)) return true;
     if (SelectTeamReceipt(buffer, size, replacement)) return true;
+    if (SelectCargoReceipt(buffer, size, replacement)) return true;
     if (SelectFriendlyHitReceipt(buffer, size, replacement)) return true;
     if(partner_on) {
         const auto partner_kind=partner::Classify(buffer,size,name);
@@ -4232,7 +4566,7 @@ void InstallGameScriptObserver(void* base, std::size_t span, const wchar_t* dire
                     downed_hook_ok = downed_gate && mgscoop::downed_damage::Install(base, span, Log);
                     mgscoop::downed_player::Configure(partner_addresses, downed_hook_ok);
                     // Teammate rescue: stock player sleep and player-carries-player
-                    // (docs/coop-carry.md). The adapters stay inert until a teammate is down.
+                    // (docs/STATUS.md). The adapters stay inert until a teammate is down.
                     // The carry adapter's vtable slots install lazily on the first
                     // partner tick of a mission, after every startup code gate ran.
                     coop_rescue_pending = downed_hook_ok && mgscoop::coop_sleep::Configure(base, span);

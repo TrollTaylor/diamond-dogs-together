@@ -1,0 +1,62 @@
+# Awake shared-horse transport and hop-off lifecycle.
+# The run result names offset attachment; native passenger acceptance needs
+# a separate seat proof and cannot be inferred from these captures.
+labsetting nametag=1
+labsetting coop_hud=compact
+title 200
+waitgameplay host 120
+waitgameplay guest 120
+host run cargo_test 1
+guest run cargo_test 1
+host run godmode 1
+guest run godmode 1
+host run time 43200
+host run weather sunny
+guest run teleport 805.0 342.1 1636.5 -60
+wait 2000
+stance host stand
+stance guest stand
+placebehind host guest 6 -0.7
+wait 4000
+host run horse_spawn
+wait 10000
+host run horse_status
+host require horse;selected=horse;available=1;actor0=6656
+host run goto_horse
+wait 2000
+placebehind guest host 1.5 -1.2
+wait 1000
+both capture ride-near
+host press e 150
+wait 2500
+host run horse_status
+host require horse;selected=horse;available=1;actor0=6656;localMounted=1
+guest hold r 1200
+guest release
+wait 1500
+host run cargo_status
+host require cargo;state=carrier;awake=1;mask=0;mount=horse
+guest run cargo_status
+guest require cargo;state=cargo;awake=1;mask=1;mount=none
+both capture ride-on
+host hold w 1500
+host hold w 1500
+host release
+wait 1000
+both capture ride-moving
+guest hold rmb+lmb 800
+guest release
+both capture ride-aim-fire
+guest hold r 1200
+guest release
+wait 1500
+host run cargo_status
+guest run cargo_status
+host require cargo;state=off;awake=0;mask=0
+guest require cargo;state=off;awake=0;mask=0
+guest hold w 1000
+guest release
+both capture ride-off-controls-restored
+host press e 150
+wait 1500
+state

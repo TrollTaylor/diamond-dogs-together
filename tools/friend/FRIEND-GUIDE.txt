@@ -20,17 +20,21 @@ What works today:
   and partner movement diagnostics. F9 closes it and restores game controls.
   Actions require supported on-foot gameplay. Guard actions use authored
   mission soldiers; arbitrary new soldiers and unloaded guns are unsupported.
-- Gun injuries: a downed player crawls slowly, cannot aim or fire, and needs
-  a teammate to revive them. Sleep darts: a separate asleep state preserves
-  health, blocks movement and combat, and wakes automatically after 30 seconds
-  of fresh paired gameplay. The current sleep pose is prone; the stock standing
-  sleep animation and a separate help-up animation are unfinished. A healthy
-  teammate can wake or revive: close F9, stand within 3 m and HOLD ACTION
-  (E by default) for 3 seconds. A lower-center prompt says when you are close
-  enough, when Action is ready, and that picking the teammate up is unavailable.
-  The game log shows the same sentence once when that state changes. Both games
-  must be paired in World 3. Sleep does not count as a fatal injury. You cannot
-  carry a downed player.
+- Gun injuries: a wounded player crawls slowly and cannot aim or fire.
+  Friendly sleep darts instead preserve health and use the game's own player
+  sleep, lying rest and recovery animations. A healthy teammate can wake or
+  revive: close F9, stand within 3 m and HOLD ACTION (E by default) for 3 seconds.
+  Both games must be paired in World 3. Allow the native recovery to finish.
+  A short co-op prompt shows readiness and actual hold progress.
+- Pick up a wounded or sleeping teammate with the normal CARRY hold
+  (R by default) beside them; the game's pickup icon remains visible.
+  Walk normally while carrying, and hold CARRY again to put them down.
+  Native pickup, walking, put-down and manual rescue passed hidden two-copy
+  checks. Horse loading, actual shared riding and guard-style upright sleep
+  remain unfinished. The offset-position debug mount prototype is off.
+  After 30 seconds of fresh gameplay, a sleeping teammate wakes. If carried,
+  both games put them down first, finish native recovery and restore controls.
+  This passed hidden two-copy checks; fresh two-PC Steam testing is pending.
 - F9 > Partner / Co-op includes Incapacitation status, Revive input status and Downed movement input to help
   check pairing, distance and held ACTION input. Close the menu before trying
   the revive. Hidden tests measured about half-speed local crawl and normal
@@ -45,7 +49,7 @@ What works today:
   writes facing. The vehicle you are driving is moved with its own SetPosition.
   Parked vehicles stay put. The remote rider is still only the existing
   ride-kind display. A completed revive asks the downed player to stand with
-  the game's own stance request. Picking a teammate up is still unavailable.
+  the game's own stance request. Teammate pickup uses the normal CARRY hold.
 - D-Dog follow status reports the shared dog position. The guest dog follows
   the host dog's position; dog attacks, spotting and health are not shared.
 - The NATIVE PARTNER (default): your partner's body is moved by the game's
@@ -66,7 +70,7 @@ What is NOT fully shared yet:
   never shown firing. Debug pickups are local.
 - Story missions, items and full campaign progression. This is a development
   build. The user reported partial successful two-PC play on 0.12.0. These
-  0.12.4 changes are checked on two hidden local copies and still need a fresh
+  0.12.5 changes are checked on two hidden local copies and still need a fresh
   two-PC session; complete campaign progression remains unsupported.
 
 One player HOSTS, the other JOINS. Both use this same package (the same
@@ -405,13 +409,13 @@ stay in <game folder>\mgs-coop; you can delete that folder yourself later.
   while holding ACTION. F9 > Partner / Co-op has Downed status and Revive
   input status, plus read-only carry/sleep diagnostics and horse controls. Wait for the
   summoned local horse, close F9, then mount with normal game controls.
-  Teammate carrying, loading a teammate onto a horse, shared horse/vehicle
+  Loading a teammate onto a horse, shared horse/vehicle
   passengers and two shared rideable horses/Walkers remain unfinished. Sleep
   is immobile, keeps health, and wakes after 30 seconds or a teammate E hold.
   The crawl uses
   the normal prone animation at reduced speed, not the exact hospital clip.
 
-  Partial two-PC Steam play was reported on 0.12.0. This 0.12.4 build needs
+  Partial two-PC Steam play was reported on 0.12.0. This 0.12.5 build needs
   a fresh two-PC test; its recorded qualification uses two hidden instances.
 - Online play uses Steam's networking and Valve's relays: it needs both PCs
   online in Steam. If it does not connect, use LAN/VPN.

@@ -1,0 +1,997 @@
+{
+  "schema": 1,
+  "task": "Actual MGO/TPP native sleep homolog and bounded carry transport comparison",
+  "method": "Local PE sections and complete x64 unwind chain decoding with Capstone; REA native provider unavailable. Full binary SHA pinned before all reads. No target state changes.",
+  "game_launches": 0,
+  "native_calls": 0,
+  "source_edits": 0,
+  "runtime_observed": false,
+  "tpp": {
+    "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgsvtpp.exe",
+    "size": 166517760,
+    "sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45"
+  },
+  "mgo": {
+    "path": "D:\\Games\\steamapps\\common\\MGS_TPP\\mgsvmgo.exe",
+    "size": 155560448,
+    "sha256": "f9a1c1902c0415e89e678eeb331c11887cdb8e9290f74195ce4f83d5128947d4"
+  },
+  "sleep_identity": {
+    "class_hash": "0x1ae6a2b6439",
+    "tpp_registration": "0x2031fe0",
+    "mgo_registration": "0x16c8b80",
+    "tpp_descriptor_init_vtable": "0x23d5c00",
+    "mgo_descriptor_init_vtable": "0x1a0e980",
+    "tpp_factory_vt8": "0x12c7eb0",
+    "mgo_factory_vt8": "0x1223050",
+    "matching_ctor": "Full203 byte instruction sequence matches exactly when only RIP-relative locations are normalized. Final vtable slot correspondences and matching factory/message/mode graph corroborate identity. Two unrelated constructor candidates must not be conflated; 11DA240 has different specialized overrides."
+  },
+  "functions": [
+    {
+      "role": "ctor",
+      "tpp": {
+        "rva": "0x12c7b60",
+        "end": "0x12c7c2b",
+        "size": 203,
+        "sha256": "2769bc3cef8b320be2f14bc5f63b9b714f87f19313e7c1e2056225be9514a4bb",
+        "unwind_spans": [
+          {
+            "rva": "0x12c7b60",
+            "end": "0x12c7c2b",
+            "unwind_rva": "0x2856570",
+            "sha256": "2769bc3cef8b320be2f14bc5f63b9b714f87f19313e7c1e2056225be9514a4bb"
+          }
+        ],
+        "native_request_immediates": []
+      },
+      "mgo": {
+        "rva": "0x1222cf0",
+        "end": "0x1222dbb",
+        "size": 203,
+        "sha256": "43f09e235db4ec24fa152f6f84ac718a4a40349ee2138c77872aeeab3a0f75a4",
+        "unwind_spans": [
+          {
+            "rva": "0x1222cf0",
+            "end": "0x1222dbb",
+            "unwind_rva": "0x1dce548",
+            "sha256": "43f09e235db4ec24fa152f6f84ac718a4a40349ee2138c77872aeeab3a0f75a4"
+          }
+        ],
+        "native_request_immediates": []
+      }
+    },
+    {
+      "role": "registration",
+      "tpp": {
+        "rva": "0x2031fe0",
+        "end": "0x2032034",
+        "size": 84,
+        "sha256": "3f0eb7c4aee31a59a334c10555d6a0effa5004b2c9644e00486fce8ec7d34dde",
+        "unwind_spans": [
+          {
+            "rva": "0x2031fe0",
+            "end": "0x2032034",
+            "unwind_rva": "0x2856604",
+            "sha256": "3f0eb7c4aee31a59a334c10555d6a0effa5004b2c9644e00486fce8ec7d34dde"
+          }
+        ],
+        "native_request_immediates": [
+          {
+            "rva": "0x2031ffb",
+            "register": "rax",
+            "value": "0x1ae6a2b6439"
+          }
+        ]
+      },
+      "mgo": {
+        "rva": "0x16c8b80",
+        "end": "0x16c8bd4",
+        "size": 84,
+        "sha256": "0a0429124af7c360d0306eeb573212da10dd21c206d6f9a9a88068bd40fb1d1c",
+        "unwind_spans": [
+          {
+            "rva": "0x16c8b80",
+            "end": "0x16c8bd4",
+            "unwind_rva": "0x1dce5dc",
+            "sha256": "0a0429124af7c360d0306eeb573212da10dd21c206d6f9a9a88068bd40fb1d1c"
+          }
+        ],
+        "native_request_immediates": [
+          {
+            "rva": "0x16c8b9b",
+            "register": "rax",
+            "value": "0x1ae6a2b6439"
+          }
+        ]
+      }
+    },
+    {
+      "role": "factory",
+      "tpp": {
+        "rva": "0x12c7eb0",
+        "end": "0x12c7ef1",
+        "size": 65,
+        "sha256": "fa8c9a3c3a8f7cb169589216afadc57f91a3879ce2026d8989d9ad6eaed29485",
+        "unwind_spans": [
+          {
+            "rva": "0x12c7eb0",
+            "end": "0x12c7ef1",
+            "unwind_rva": "0x2856548",
+            "sha256": "fa8c9a3c3a8f7cb169589216afadc57f91a3879ce2026d8989d9ad6eaed29485"
+          }
+        ],
+        "native_request_immediates": []
+      },
+      "mgo": {
+        "rva": "0x1223050",
+        "end": "0x1223091",
+        "size": 65,
+        "sha256": "be3612457801cabf0e0c745e2e2ef692edceaab158aa6cdc6c0537253737a9a7",
+        "unwind_spans": [
+          {
+            "rva": "0x1223050",
+            "end": "0x1223091",
+            "unwind_rva": "0x1dce520",
+            "sha256": "be3612457801cabf0e0c745e2e2ef692edceaab158aa6cdc6c0537253737a9a7"
+          }
+        ],
+        "native_request_immediates": []
+      }
+    },
+    {
+      "role": "mode callback factory",
+      "tpp": {
+        "rva": "0x12c8610",
+        "end": "0x12c86d0",
+        "size": 192,
+        "sha256": "f93f056a9a173931810ef959d7035dfe92d1cc5f216fdad3706e9fe56144f468",
+        "unwind_spans": [
+          {
+            "rva": "0x12c8610",
+            "end": "0x12c86d0",
+            "unwind_rva": "0x28cd81c",
+            "sha256": "f93f056a9a173931810ef959d7035dfe92d1cc5f216fdad3706e9fe56144f468"
+          }
+        ],
+        "native_request_immediates": []
+      },
+      "mgo": {
+        "rva": "0x12237b0",
+        "end": "0x1223870",
+        "size": 192,
+        "sha256": "b3b5299b5bd844c9eeeef876798550e92164ae1b24f96dfb6842144aa5240384",
+        "unwind_spans": [
+          {
+            "rva": "0x12237b0",
+            "end": "0x1223870",
+            "unwind_rva": "0x1dc4090",
+            "sha256": "b3b5299b5bd844c9eeeef876798550e92164ae1b24f96dfb6842144aa5240384"
+          }
+        ],
+        "native_request_immediates": []
+      }
+    },
+    {
+      "role": "natural admission",
+      "tpp": {
+        "rva": "0x12c87a0",
+        "end": "0x12c8a96",
+        "size": 758,
+        "sha256": "010f07f960421834a7b6691dcc9c0235287fc22efd6bc9740550644f279a482a",
+        "unwind_spans": [
+          {
+            "rva": "0x12c87a0",
+            "end": "0x12c8925",
+            "unwind_rva": "0x2856378",
+            "sha256": "378fbd4edff18b29b936edece79ac8103c8e4133fe3a9934f39c5d1dc67aa400"
+          },
+          {
+            "rva": "0x12c8925",
+            "end": "0x12c894d",
+            "unwind_rva": "0x2856388",
+            "sha256": "8659e49488dcd8b58cddff89e3606ccc3aca54890ef9d0a2b634cc40f1edf729"
+          },
+          {
+            "rva": "0x12c894d",
+            "end": "0x12c89f2",
+            "unwind_rva": "0x285639c",
+            "sha256": "59a008f4c32f33ff37b8a96cbe893b61609e8bcc26ab2c7c408e1b14c2feec3e"
+          },
+          {
+            "rva": "0x12c89f2",
+            "end": "0x12c8a2d",
+            "unwind_rva": "0x28563b0",
+            "sha256": "307b518148082ad02ea10b7d605acdf251ed7b63491bba5ade15ff855e9f5c49"
+          },
+          {
+            "rva": "0x12c8a2d",
+            "end": "0x12c8a57",
+            "unwind_rva": "0x28563d8",
+            "sha256": "b4691df0daa19f45336b26e3207b5da27ff597b129125f53b4482811e2bd9425"
+          },
+          {
+            "rva": "0x12c8a57",
+            "end": "0x12c8a69",
+            "unwind_rva": "0x28563c4",
+            "sha256": "612e37fb67a18ee98214434013151a241cb12afa0ce8d893ea26cedd931361eb"
+          },
+          {
+            "rva": "0x12c8a69",
+            "end": "0x12c8a83",
+            "unwind_rva": "0x28563d8",
+            "sha256": "6ec2cb3579e4c6368d85dc5c0d923854e35e90a9d819e389033ee6760dea3b3a"
+          },
+          {
+            "rva": "0x12c8a83",
+            "end": "0x12c8a96",
+            "unwind_rva": "0x28563e8",
+            "sha256": "7144e748f62957416f717bd2c82128c99f47202ea164c017da42033b8a7eb7f1"
+          }
+        ],
+        "native_request_immediates": []
+      },
+      "mgo": {
+        "rva": "0x1223930",
+        "end": "0x1223b92",
+        "size": 610,
+        "sha256": "d6b9275b49c28402dbbd206c87b21375eccaddb99d734cd598aec852bfbb5bbb",
+        "unwind_spans": [
+          {
+            "rva": "0x1223930",
+            "end": "0x122397a",
+            "unwind_rva": "0x1dc2a20",
+            "sha256": "9bb2f478b3b69cd38ac5d49fa1e9f82f081372db29c39071b16ddc87c4eeec23"
+          },
+          {
+            "rva": "0x122397a",
+            "end": "0x12239d2",
+            "unwind_rva": "0x1dce36c",
+            "sha256": "d6f8a6173cbcafd0e2ac685601d809f6aa0abab29bd1bd0925d4a4e8666f8f2d"
+          },
+          {
+            "rva": "0x12239d2",
+            "end": "0x1223a47",
+            "unwind_rva": "0x1dce380",
+            "sha256": "98a1d6ab31dd8b91a61720b649dab3444dabcdda146fdf4143058a129909c3da"
+          },
+          {
+            "rva": "0x1223a47",
+            "end": "0x1223a89",
+            "unwind_rva": "0x1dce394",
+            "sha256": "b945e348976ab3c8068d0b4c862954503bb8a7544180b0217162fe21d31b3b91"
+          },
+          {
+            "rva": "0x1223a89",
+            "end": "0x1223ab2",
+            "unwind_rva": "0x1dce3a8",
+            "sha256": "63bafd560e59831cf5a17498219e3af09e17436df3190f91bec16adcffa04738"
+          },
+          {
+            "rva": "0x1223ab2",
+            "end": "0x1223ac4",
+            "unwind_rva": "0x1dce3b8",
+            "sha256": "043e35e35a2538e9d7a6debca312053b9c3466de7da98601ef4dfcf6607ea657"
+          },
+          {
+            "rva": "0x1223ac4",
+            "end": "0x1223b92",
+            "unwind_rva": "0x1dce3cc",
+            "sha256": "fc3c7abf5594d43e6e0fac496af69e388970755a94892567483a8dc2beb5e1bf"
+          }
+        ],
+        "native_request_immediates": []
+      }
+    },
+    {
+      "role": "natural phase update",
+      "tpp": {
+        "rva": "0x12c81c0",
+        "end": "0x12c831b",
+        "size": 347,
+        "sha256": "8e9e494a9e6dae316233506cbfc7ba78cb44cd5c38ffd004acb2533e2ed35cba",
+        "unwind_spans": [
+          {
+            "rva": "0x12c81c0",
+            "end": "0x12c831b",
+            "unwind_rva": "0x28e2124",
+            "sha256": "8e9e494a9e6dae316233506cbfc7ba78cb44cd5c38ffd004acb2533e2ed35cba"
+          }
+        ],
+        "native_request_immediates": []
+      },
+      "mgo": {
+        "rva": "0x1223350",
+        "end": "0x1223492",
+        "size": 322,
+        "sha256": "18332fa4cdb9594ad4d845a6a3b002bf5090e5503b80e2cea24d3080e97d37f4",
+        "unwind_spans": [
+          {
+            "rva": "0x1223350",
+            "end": "0x1223492",
+            "unwind_rva": "0x1c15758",
+            "sha256": "18332fa4cdb9594ad4d845a6a3b002bf5090e5503b80e2cea24d3080e97d37f4"
+          }
+        ],
+        "native_request_immediates": []
+      }
+    },
+    {
+      "role": "mode transition",
+      "tpp": {
+        "rva": "0x12c83c0",
+        "end": "0x12c846d",
+        "size": 173,
+        "sha256": "282036cd86c01c2897316bfe488e5ccbc8c246e4311ea60bb19c986d73e94ca2",
+        "unwind_spans": [
+          {
+            "rva": "0x12c83c0",
+            "end": "0x12c846d",
+            "unwind_rva": "0x27f0f3c",
+            "sha256": "282036cd86c01c2897316bfe488e5ccbc8c246e4311ea60bb19c986d73e94ca2"
+          }
+        ],
+        "native_request_immediates": []
+      },
+      "mgo": {
+        "rva": "0x1223540",
+        "end": "0x12235ed",
+        "size": 173,
+        "sha256": "2ef15a14e2692f2e45c02a95e0d19cda0b991edb52431eaa9359ac79329fdb29",
+        "unwind_spans": [
+          {
+            "rva": "0x1223540",
+            "end": "0x12235ed",
+            "unwind_rva": "0x1df18a8",
+            "sha256": "2ef15a14e2692f2e45c02a95e0d19cda0b991edb52431eaa9359ac79329fdb29"
+          }
+        ],
+        "native_request_immediates": []
+      }
+    },
+    {
+      "role": "mode4 sleep onset",
+      "tpp": {
+        "rva": "0x12cb2b0",
+        "end": "0x12cb824",
+        "size": 1396,
+        "sha256": "45063b2c3cb4e08ce0ef459b9f985661b7677cba3d424506a16e7324709a2663",
+        "unwind_spans": [
+          {
+            "rva": "0x12cb2b0",
+            "end": "0x12cb71e",
+            "unwind_rva": "0x28561b4",
+            "sha256": "30bd2b580d99180bf1daba4a7f70d8dbc7f49bacdee7b1fe31e0ead9eb2c265a"
+          },
+          {
+            "rva": "0x12cb71e",
+            "end": "0x12cb7de",
+            "unwind_rva": "0x2856284",
+            "sha256": "a55645b4c781b309f1d3c51ea78fc6134bd42a9ea75b8aede2de0ce8d090537a"
+          },
+          {
+            "rva": "0x12cb7de",
+            "end": "0x12cb824",
+            "unwind_rva": "0x2856298",
+            "sha256": "dd813a1bda67f45d52ab184df033fa4780fbcae68247208702b7eba78ef7de1d"
+          }
+        ],
+        "native_request_immediates": [
+          {
+            "rva": "0x12cb328",
+            "register": "rdi",
+            "value": "0xeceee0f51e77"
+          },
+          {
+            "rva": "0x12cb36b",
+            "register": "rdi",
+            "value": "0xc37aca2100e9"
+          },
+          {
+            "rva": "0x12cb3bb",
+            "register": "rdi",
+            "value": "0x89349f0ff8a2"
+          },
+          {
+            "rva": "0x12cb3c5",
+            "register": "r8",
+            "value": "0x9e3bd6cce5f5"
+          },
+          {
+            "rva": "0x12cb3fd",
+            "register": "rdi",
+            "value": "0xbd5546f99202"
+          },
+          {
+            "rva": "0x12cb407",
+            "register": "r8",
+            "value": "0x531872a59848"
+          },
+          {
+            "rva": "0x12cb43f",
+            "register": "r8",
+            "value": "0xf2364261c9d4"
+          },
+          {
+            "rva": "0x12cb5a9",
+            "register": "rdi",
+            "value": "0xbd5546f99202"
+          },
+          {
+            "rva": "0x12cb5c1",
+            "register": "r8",
+            "value": "0x531872a59848"
+          },
+          {
+            "rva": "0x12cb5d0",
+            "register": "rax",
+            "value": "0x81b604f90437"
+          },
+          {
+            "rva": "0x12cb5e3",
+            "register": "rdi",
+            "value": "0x89349f0ff8a2"
+          },
+          {
+            "rva": "0x12cb5f2",
+            "register": "r8",
+            "value": "0x9e3bd6cce5f5"
+          },
+          {
+            "rva": "0x12cb60b",
+            "register": "r9",
+            "value": "0xe6d3ed730317"
+          },
+          {
+            "rva": "0x12cb623",
+            "register": "rcx",
+            "value": "0xe66c3c2d192a"
+          },
+          {
+            "rva": "0x12cb640",
+            "register": "r9",
+            "value": "0xe6d6abd46423"
+          },
+          {
+            "rva": "0x12cb658",
+            "register": "rcx",
+            "value": "0x565a6ead28c6"
+          },
+          {
+            "rva": "0x12cb66c",
+            "register": "rdi",
+            "value": "0xc37aca2100e9"
+          },
+          {
+            "rva": "0x12cb67b",
+            "register": "rdi",
+            "value": "0xeceee0f51e77"
+          },
+          {
+            "rva": "0x12cb68a",
+            "register": "r8",
+            "value": "0xf2364261c9d4"
+          },
+          {
+            "rva": "0x12cb6a8",
+            "register": "r9",
+            "value": "0xb6c742e88a85"
+          },
+          {
+            "rva": "0x12cb6c0",
+            "register": "rcx",
+            "value": "0xb1c6aee936a4"
+          },
+          {
+            "rva": "0x12cb6d4",
+            "register": "r9",
+            "value": "0xb62a05a085a4"
+          }
+        ]
+      },
+      "mgo": {
+        "rva": "0x1226770",
+        "end": "0x1226b34",
+        "size": 964,
+        "sha256": "35a18f63742e4071ddf7f5daec203f06f5f8d50e4bf7a246e4a7eb126292874f",
+        "unwind_spans": [
+          {
+            "rva": "0x1226770",
+            "end": "0x12267da",
+            "unwind_rva": "0x1dce1a4",
+            "sha256": "33bf59bf7d676c49391609d8df80febecbc60cde909c12e120df962e820ceb6d"
+          },
+          {
+            "rva": "0x12267da",
+            "end": "0x12268f9",
+            "unwind_rva": "0x1dce1b8",
+            "sha256": "f89b0b12c39d4634b62ea6244ff328c105e982fb1d55f0cc1bbd671d4389cd23"
+          },
+          {
+            "rva": "0x12268f9",
+            "end": "0x1226a2e",
+            "unwind_rva": "0x1dce1cc",
+            "sha256": "15b62f17cbe4a9e6fc13b1ff3dca90215e6a22ed37aa3e082f73836f6996ba76"
+          },
+          {
+            "rva": "0x1226a2e",
+            "end": "0x1226aee",
+            "unwind_rva": "0x1dce1dc",
+            "sha256": "1b172088c98075dceee34b839e37b67d6864ffa4f5f8860e07cc14ee6938ee6b"
+          },
+          {
+            "rva": "0x1226aee",
+            "end": "0x1226b34",
+            "unwind_rva": "0x1dce1f0",
+            "sha256": "eaa5eee18170fa522675f573ca95b35507a00fd633f0d197a86572c475b76de5"
+          }
+        ],
+        "native_request_immediates": [
+          {
+            "rva": "0x12267f4",
+            "register": "rbp",
+            "value": "0xeceee0f51e77"
+          },
+          {
+            "rva": "0x1226833",
+            "register": "rbp",
+            "value": "0xc37aca2100e9"
+          },
+          {
+            "rva": "0x1226876",
+            "register": "rbp",
+            "value": "0x9e3bd6cce5f5"
+          },
+          {
+            "rva": "0x1226892",
+            "register": "rbp",
+            "value": "0x531872a59848"
+          }
+        ]
+      }
+    },
+    {
+      "role": "mode5 sleep rest",
+      "tpp": {
+        "rva": "0x12caa10",
+        "end": "0x12caf44",
+        "size": 1332,
+        "sha256": "f5a2213ec74df874bdc110ef06efd589c95212905cabc4a5424a2e256541093e",
+        "unwind_spans": [
+          {
+            "rva": "0x12caa10",
+            "end": "0x12caa56",
+            "unwind_rva": "0x284ccb4",
+            "sha256": "52e94beb2f4ed5e1e7df52da0bffaa01fd36c289c2a9b6a7479d68ea12e5c390"
+          },
+          {
+            "rva": "0x12caa56",
+            "end": "0x12cac55",
+            "unwind_rva": "0x28562a8",
+            "sha256": "a4c33f5dd6ad890729278148be57187a8d0c69846b702f973a3c84275543de1e"
+          },
+          {
+            "rva": "0x12cac55",
+            "end": "0x12cacf4",
+            "unwind_rva": "0x28562bc",
+            "sha256": "fc65fe4821884c1526d4a9f101ea2d887853e7c74146ec52bb0bdc1b38d6e1b7"
+          },
+          {
+            "rva": "0x12cacf4",
+            "end": "0x12cacf9",
+            "unwind_rva": "0x28562d0",
+            "sha256": "bc180f560bd99b0ee421b0bfb6747ccc534fadd9f29151d309bfd343d06b4cc1"
+          },
+          {
+            "rva": "0x12cacf9",
+            "end": "0x12cad0f",
+            "unwind_rva": "0x28562e0",
+            "sha256": "8426d0545fcd0078f2ea4780e81c6365d4c36b5563f5cc2ab382f239f540353b"
+          },
+          {
+            "rva": "0x12cad0f",
+            "end": "0x12cadb6",
+            "unwind_rva": "0x28562f0",
+            "sha256": "ea4c65a43188eacbf0ee7010a49f2816938e7d84de9134ed09e82f52a6e6a15b"
+          },
+          {
+            "rva": "0x12cadb6",
+            "end": "0x12caf44",
+            "unwind_rva": "0x2856308",
+            "sha256": "08202d4b1cf70a900882bbc929b091c1f91450d8b12fad9dfca303a5d201f416"
+          }
+        ],
+        "native_request_immediates": [
+          {
+            "rva": "0x12cab0c",
+            "register": "r9",
+            "value": "0xd7654fb0a3f2"
+          },
+          {
+            "rva": "0x12cab18",
+            "register": "r9",
+            "value": "0xc31867300b57"
+          }
+        ]
+      },
+      "mgo": {
+        "rva": "0x1225c10",
+        "end": "0x1226394",
+        "size": 1924,
+        "sha256": "43aeab29ab3bc4d9b249c721a78344da2811de013bbba89437f41ebeb03dbd8a",
+        "unwind_spans": [
+          {
+            "rva": "0x1225c10",
+            "end": "0x1225c4b",
+            "unwind_rva": "0x1dce200",
+            "sha256": "68d316da95ccc46cb1ccf832d82571a687491c625db1bc2bc6aeaffb3cd2c724"
+          },
+          {
+            "rva": "0x1225c4b",
+            "end": "0x1225dc5",
+            "unwind_rva": "0x1dce210",
+            "sha256": "1451f47756c72b95ed301388e29903494f077fe745488c1e49cbabade81328e6"
+          },
+          {
+            "rva": "0x1225dc5",
+            "end": "0x1225dd8",
+            "unwind_rva": "0x1dce2a4",
+            "sha256": "cdb7f0912702d39df0aeb08a7aebaa1c67e0d4499b09a78500a00681e67276c5"
+          },
+          {
+            "rva": "0x1225dd8",
+            "end": "0x1225ec9",
+            "unwind_rva": "0x1dce2a4",
+            "sha256": "5ce115155b74d9842a9562f408c689d3f98b4ab33fe2f2cb6c250616a15bb7a0"
+          },
+          {
+            "rva": "0x1225ec9",
+            "end": "0x1225ecd",
+            "unwind_rva": "0x1dce2a4",
+            "sha256": "cdce4e52402a7ee2717902dcba81ea4d0c7e863f11bf53894a0f3704bed87041"
+          },
+          {
+            "rva": "0x1225ecd",
+            "end": "0x1225f9d",
+            "unwind_rva": "0x1dce224",
+            "sha256": "90cf41ffbf6a87c77cc6c2a58db115882e703e4ae89c7111701019806016c5d9"
+          },
+          {
+            "rva": "0x1225f9d",
+            "end": "0x12260b7",
+            "unwind_rva": "0x1dce240",
+            "sha256": "9540baae6548b3b707db881d9f58faa04724f5258605c62b1ed6def313ceeacd"
+          },
+          {
+            "rva": "0x12260b7",
+            "end": "0x12261ad",
+            "unwind_rva": "0x1dce254",
+            "sha256": "d53ae0daabb887223d089fadaa666b63c2c7bd3552715723237313b8607baf75"
+          },
+          {
+            "rva": "0x12261ad",
+            "end": "0x12261b2",
+            "unwind_rva": "0x1dce264",
+            "sha256": "ba0d722b3a4b63ff1b2d822da8e45b59a293d0551a6e56a7c4f9a86e6ebc1696"
+          },
+          {
+            "rva": "0x12261b2",
+            "end": "0x12261bc",
+            "unwind_rva": "0x1dce274",
+            "sha256": "22891fe4bbf76f9f3be4348748492c32ba4bf756a9e74be5e42b6b280749864e"
+          },
+          {
+            "rva": "0x12261bc",
+            "end": "0x12261c2",
+            "unwind_rva": "0x1dce284",
+            "sha256": "c795b8a74086d122b952513fa4ee470a0be8028622547daf0a6bb9ffd7aa66ee"
+          },
+          {
+            "rva": "0x12261c2",
+            "end": "0x122622c",
+            "unwind_rva": "0x1dce2a4",
+            "sha256": "0006fc70eef09c7f56f33227ac1b7b106d9ad48f53cd1d9c758463e1e5908f1f"
+          },
+          {
+            "rva": "0x122622c",
+            "end": "0x12262ac",
+            "unwind_rva": "0x1dce2a4",
+            "sha256": "3210ec560ee98786217f9920f8daa6b11431635cb80fa1c1164fc57a1b25d5ae"
+          },
+          {
+            "rva": "0x12262ac",
+            "end": "0x12262dc",
+            "unwind_rva": "0x1dce2a4",
+            "sha256": "56be5642ecc2cf521ba4e6056645cad1842df9b78b036cbbe8b7a12849e83fa2"
+          },
+          {
+            "rva": "0x12262dc",
+            "end": "0x122632e",
+            "unwind_rva": "0x1dce2a4",
+            "sha256": "7c52078f3fa1495d9bb4d0a675bf8431ac964af9a1b8ad66aef88d77cbf2f881"
+          },
+          {
+            "rva": "0x122632e",
+            "end": "0x1226368",
+            "unwind_rva": "0x1dce2a4",
+            "sha256": "e12c0336c40733bf79a4ed271599ffa43f10bc21336dc5b8b4c95679fddfa7cb"
+          },
+          {
+            "rva": "0x1226368",
+            "end": "0x1226394",
+            "unwind_rva": "0x1dce2a4",
+            "sha256": "e537e1a49b8abdf21ceafcb146b209a58501ddc5ae63a42ba8cd2796baf2e66e"
+          }
+        ],
+        "native_request_immediates": [
+          {
+            "rva": "0x1225d46",
+            "register": "r9",
+            "value": "0xd7654fb0a3f2"
+          },
+          {
+            "rva": "0x1225d52",
+            "register": "r9",
+            "value": "0xc31867300b57"
+          }
+        ]
+      }
+    },
+    {
+      "role": "mode6 sleep wake",
+      "tpp": {
+        "rva": "0x12caf50",
+        "end": "0x12cb2ae",
+        "size": 862,
+        "sha256": "0ce8929d4ae6d46a729c63c0409311ffd9807020bf5a3b63171e0c6a32bd3f45",
+        "unwind_spans": [
+          {
+            "rva": "0x12caf50",
+            "end": "0x12cb00a",
+            "unwind_rva": "0x285631c",
+            "sha256": "d2187eaddd2207969294bc95a74c6b3b1d586e7eaa325a778416f427aa50a060"
+          },
+          {
+            "rva": "0x12cb00a",
+            "end": "0x12cb075",
+            "unwind_rva": "0x2856334",
+            "sha256": "81f8e122a2e6a06477b28a921d10f38df7ab4a3b9ae094de27828f544bdc9dc8"
+          },
+          {
+            "rva": "0x12cb075",
+            "end": "0x12cb2ae",
+            "unwind_rva": "0x2856348",
+            "sha256": "5e84bc21ff574ae7fd659e4d4be4f1cc58c6e7b01ae1fd244122fe0a16fbc737"
+          }
+        ],
+        "native_request_immediates": [
+          {
+            "rva": "0x12cb158",
+            "register": "r9",
+            "value": "0x40d8fda5ca06"
+          },
+          {
+            "rva": "0x12cb1a2",
+            "register": "r9",
+            "value": "0x9df96634ca50"
+          },
+          {
+            "rva": "0x12cb1b4",
+            "register": "r9",
+            "value": "0xa3d5c9d31392"
+          },
+          {
+            "rva": "0x12cb1d2",
+            "register": "r9",
+            "value": "0x1edb72845e25"
+          }
+        ]
+      },
+      "mgo": {
+        "rva": "0x12263a0",
+        "end": "0x1226769",
+        "size": 969,
+        "sha256": "f71c0f790962e1417e202a072a464e19de7d32cb85c2e60643e7fcebd0d39e8a",
+        "unwind_spans": [
+          {
+            "rva": "0x12263a0",
+            "end": "0x1226456",
+            "unwind_rva": "0x1dce148",
+            "sha256": "9ae2f0bd2605f8b2a76630e18143e418680fd24b522d7ff3357df3cf77762c70"
+          },
+          {
+            "rva": "0x1226456",
+            "end": "0x12264c1",
+            "unwind_rva": "0x1dce2b8",
+            "sha256": "fa31b5143b26005fe2dd1bd1666fc70338d06164c8c65b7fd86e174918e6e675"
+          },
+          {
+            "rva": "0x12264c1",
+            "end": "0x12265a7",
+            "unwind_rva": "0x1dce2cc",
+            "sha256": "22ab7a8c0f7c7349a23309bfa88a1c98dcba522904e9077d6d0efa7ba49e5b46"
+          },
+          {
+            "rva": "0x12265a7",
+            "end": "0x122672b",
+            "unwind_rva": "0x1dce2dc",
+            "sha256": "7c842190d74c6723d5699cc43dcd7826d955a32f50e729fc2ac22eaa31bddac2"
+          },
+          {
+            "rva": "0x122672b",
+            "end": "0x1226769",
+            "unwind_rva": "0x1dce2f0",
+            "sha256": "8de3b2db4bad702bc9484f626343d46b88f0647b69c36d9be6fa99540be4cee7"
+          }
+        ],
+        "native_request_immediates": [
+          {
+            "rva": "0x12265ac",
+            "register": "rbp",
+            "value": "0x40d8fda5ca06"
+          },
+          {
+            "rva": "0x122662a",
+            "register": "rbp",
+            "value": "0x9df96634ca50"
+          },
+          {
+            "rva": "0x122664b",
+            "register": "rbp",
+            "value": "0xa3d5c9d31392"
+          },
+          {
+            "rva": "0x1226665",
+            "register": "rbp",
+            "value": "0x1edb72845e25"
+          }
+        ]
+      }
+    }
+  ],
+  "callback_maps": {
+    "tpp": [
+      {
+        "mode": 0,
+        "branch_rva": "0x12c8636",
+        "callback_rva": "0x645940"
+      },
+      {
+        "mode": 1,
+        "branch_rva": "0x12c8644",
+        "callback_rva": "0x12ca3b0"
+      },
+      {
+        "mode": 2,
+        "branch_rva": "0x12c8652",
+        "callback_rva": "0x12c9a80"
+      },
+      {
+        "mode": 3,
+        "branch_rva": "0x12c8660",
+        "callback_rva": "0x12ca040"
+      },
+      {
+        "mode": 4,
+        "branch_rva": "0x12c866e",
+        "callback_rva": "0x12cb2b0"
+      },
+      {
+        "mode": 5,
+        "branch_rva": "0x12c867c",
+        "callback_rva": "0x12caa10"
+      },
+      {
+        "mode": 6,
+        "branch_rva": "0x12c868a",
+        "callback_rva": "0x12caf50"
+      }
+    ],
+    "mgo": [
+      {
+        "mode": 0,
+        "branch_rva": "0x12237d6",
+        "callback_rva": "0x381eb0"
+      },
+      {
+        "mode": 1,
+        "branch_rva": "0x12237e4",
+        "callback_rva": "0x1225880"
+      },
+      {
+        "mode": 2,
+        "branch_rva": "0x12237f2",
+        "callback_rva": "0x1224d70"
+      },
+      {
+        "mode": 3,
+        "branch_rva": "0x1223800",
+        "callback_rva": "0x12254b0"
+      },
+      {
+        "mode": 4,
+        "branch_rva": "0x122380e",
+        "callback_rva": "0x1226770"
+      },
+      {
+        "mode": 5,
+        "branch_rva": "0x122381c",
+        "callback_rva": "0x1225c10"
+      },
+      {
+        "mode": 6,
+        "branch_rva": "0x122382a",
+        "callback_rva": "0x12263a0"
+      }
+    ]
+  },
+  "findings": [
+    {
+      "kind": "observed static native instruction graph",
+      "fact": "Mode4 MGO requests real stance-dependent onset states ECEEE0F51E77,C37ACA2100E9,9E3BD6CCE5F5,531872A59848 through animation vtable170; these operands match TPP sleep graph states, and factory mode4 is confirmed. MGO enters restmode5 at1226A0D after native animation completion. TPP also stages extra collapse successors. Mode4 is onset, not a permanent standing sleep loop."
+    },
+    {
+      "kind": "observed static native instruction graph",
+      "fact": "MGO mode5 at1225C10 requests actual rest D7654FB0A3F2 orC31867300B57 via animation vtable190 at1225D5C. The same state hashes are real named nodes in the TPP resident player graph, which previous hidden tests loaded and observed. This establishes common requested states, not binary-identical motion clips."
+    },
+    {
+      "kind": "observed static native instruction graph",
+      "fact": "MGO mode6 at12263A0 uses actual recovery40D8FDA5CA06,9DF96634CA50,A3D5C9D31392,1EDB72845E25; the TPP wake function requests the same set."
+    },
+    {
+      "kind": "observed structural differences",
+      "fact": "MGO PS is at body+80, coordinator at body+128, action mapped via coordinator+68 to life stride6C/currentstun5C/max60/cause64; TPP has PS+78/coordinator+138, direct life stride4C/currentstun2C/max30/cause34. Native and online services differ. No raw MGO pointer, RVA, object offset or descriptor can be transplanted into TPP."
+    },
+    {
+      "kind": "observed bounded carry transport",
+      "fact": "MGO1154760 contains message72BC35BCDBD and1307B760507B handlers with actual kind15 and kind7 native payload setters. These are reused message transport families. A unique class/physical carrier match toTPP11268B0 or112C680 is unresolved; hash equality does not prove it. The TPP carry component type7CBFA72BAC67 has no exact8byte occurrence in the exact MGO image; this bounded fact does not establish that MGO lacks carry gameplay."
+    }
+  ],
+  "limits": [
+    "Static comparison does not observe rendered standing sleep, clip timing, pickup, attachment or cleanup.",
+    "No independent MGO motion graph or MTAR clip was extracted in this bounded pass; same state hashes are strong reuse evidence but not complete asset parity.",
+    "No guard-only class label has been proved. Shared player sleep identity is established by registered type/factory/whole constructor/mode graph.",
+    "TPP112C680 natural candidate and exact MGO physical carrier homolog remain unresolved in this comparison. Root carry qualification owns that start path.",
+    "No MGO-only code or asset is copied into distribution by this evidence."
+  ],
+  "carry_transport_candidate": {
+    "rva": "0x1154760",
+    "end": "0x1154a04",
+    "size": 676,
+    "sha256": "b276f4c21d5a536cf67878fafe6770ab9bfbc8e42e1a35a11cb1e4acd282b638",
+    "unwind_spans": [
+      {
+        "rva": "0x1154760",
+        "end": "0x1154a04",
+        "unwind_rva": "0x1dbf548",
+        "sha256": "b276f4c21d5a536cf67878fafe6770ab9bfbc8e42e1a35a11cb1e4acd282b638"
+      }
+    ],
+    "native_request_immediates": [
+      {
+        "rva": "0x1154791",
+        "register": "rcx",
+        "value": "0x72bc35bcdbd"
+      },
+      {
+        "rva": "0x11547a4",
+        "register": "rcx",
+        "value": "0x1307b760507b"
+      }
+    ]
+  },
+  "tpp_existing_graph": {
+    "path": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\partner-turn-resident-audit-20261007\\package-00_fpk\\Assets\\tpp\\motion\\motion_graph\\player2\\TppPlayer2_layers.mog",
+    "size": 732872,
+    "sha256": "5353cec1a4d8a472ce39af075c2e9ac2b3f453052bdc09666a113fd2c6936b31",
+    "existing_parser_evidence": "docs/evidence/offline-native-sleep-chain.json",
+    "actual_rest_hash_offsets": {
+      "0xd7654fb0a3f2": [
+        "0xac578"
+      ],
+      "0xc31867300b57": [
+        "0xac588"
+      ]
+    }
+  },
+  "full_local_evidence_sha256": "baeb148a37bcb33a09ac0ef8b2d2c68bc48063085e12a45b73e0adfe3296d279"
+}

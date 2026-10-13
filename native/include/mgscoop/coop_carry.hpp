@@ -12,7 +12,7 @@
 // an accepted offline op0 handshake whose target is a co-op player body,
 // submits the same kind-15 request the online branch would. Everything after
 // that (attachment, carrying locomotion, put-down, cleanup) is stock code.
-// See docs/coop-carry.md.
+// See docs/STATUS.md.
 #include <cstddef>
 #include <cstdint>
 
@@ -43,6 +43,11 @@ unsigned Mode() noexcept;
 // Mode 2 requires the grant before the stock action guard is skipped.
 void SetCarryable(unsigned mask) noexcept;
 unsigned Carryable() noexcept;
+// Authenticated current scene/generation binds native readiness on BOTH copies.
+void SetReadinessFrame(std::uint32_t mission,std::uint16_t epoch,std::uint32_t localGeneration,
+ std::uint32_t peerGeneration,bool localReady,bool admitted) noexcept;
+bool PeerCarryReady() noexcept;
+
 
 struct BodyCarry {
     bool read = false;
@@ -71,17 +76,34 @@ bool StatusLine(char* out, std::size_t capacity) noexcept;
 bool BodyLine(char* out, std::size_t capacity) noexcept;
 bool TraceLine(char* out, std::size_t capacity) noexcept;
 bool SelectorLine(char* out, std::size_t capacity) noexcept;
+// Carrier 0 load-onto-horse/vehicle fields (+0x538 target vehicle, +0x6AC prompt).
+bool LoadLine(char* out, std::size_t capacity) noexcept;
+bool HorseLoadLine(char* out, std::size_t capacity) noexcept;
+bool HorseGateLine(char* out, std::size_t capacity) noexcept;
 
 // Instance 1 (the teammate's body on this machine) is carried by the local
 // player or being picked up/put down: its transform belongs to the native
 // attachment. Cheap reads; false when unknown or the adapter is off.
 bool PartnerCarryHold() noexcept;
+// Horse cargo: Lua places instance 1 on the local D-Horse; the partner driver
+// stays off it (PartnerCarryHold() is true while set).
+void SetCargoHold(bool on) noexcept;
+// The local player rides as cargo on the teammate's horse (HUD only).
+void SetCargoLocal(bool on) noexcept;
+// CarryRole, else 3 (teammate is cargo on the local horse) or 4 (local cargo).
+unsigned HudRole() noexcept;
 // 0 none, 1 the local player carries the teammate, 2 the local player is carried.
 unsigned CarryRole() noexcept;
 // The local player is down but awake (wounded): keep the normal view while carried.
 void SetLocalAwakeDown(bool awake) noexcept;
 // The stock put-down request for the local carrier (RequestCarryOff's write).
 bool RequestLocalPutDown() noexcept;
+// Current native flags/actions, paired twice; unknown is never detached.
+struct AttachmentState { bool ready=false; bool carrying[2]{},carried[2]{}; };
+AttachmentState ReadAttachmentState() noexcept;
+// Accepted wake first asks the matching native carrier to put down this body.
+// The caller waits for actual detachment before releasing sleep/controls.
+bool RequestPutDownForBody(unsigned victim) noexcept;
 // The stock carry point (0x112E7D0, the position the pickup predicate measures)
 // of body id. Test helper; false when unavailable.
 bool CarryPoint(unsigned id, float (&out)[3]) noexcept;

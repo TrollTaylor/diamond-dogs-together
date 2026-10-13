@@ -48,6 +48,7 @@ vw::Shadow g_pose_pair_word_shadow{};
 NativePoseJobContext g_pose_pair_word_closed{};bool g_pose_pair_word_closed_clean=false;
 thread_local vw::Token t_pose_pair_word_token;
 NativePosePartsPollValidator g_pose_parts_validator=nullptr;
+std::atomic<NativePoseDualReadObserver> g_pose_dual_read_observer{nullptr};
 struct PosePartsPoll {const PoseSharedLease* read=nullptr;std::uintptr_t go=0,caller=0;};
 thread_local PosePartsPoll t_parts;
 NativePoseBeforeFn g_pose_before=nullptr;NativePoseAfterFn g_pose_after=nullptr;NativePoseClosedFn g_pose_closed=nullptr;
@@ -1075,6 +1076,7 @@ __declspec(noinline) void PoseApplyParts(void* object) noexcept {
       if(current)t_dual_parts_reason=same?"dual_module_late_refused":"dual_after_changed";
       PoseDualPartsRefusalLog();PoseFail("pose_dual_parts_late_changed");
      }
+     if(current&&same&&module){const auto observe=g_pose_dual_read_observer.load(std::memory_order_acquire);if(observe)observe(after);}
      SetLastError(outgoing);
     }else {PoseDualPartsRefusalLog();PoseDestroyRefused(reinterpret_cast<std::uintptr_t>(object),3,0x9cd030,caller,UINT32_MAX);}
    }

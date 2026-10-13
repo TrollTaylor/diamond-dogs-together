@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "run": "0d7366727db34110a35febda615dba58",
+  "kind": "hidden-actual-scenario",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261013-205134-b84ec45ef2804d669e7ed73dcf9dd531\\receipt.json",
+  "feature_activation": true,
+  "protected_unchanged": 63,
+  "passed_checks": 8,
+  "failure": null,
+  "closed": true,
+  "forced": true,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 102618365,
+      "end": 102947707,
+      "sha256": "2c3006ae789bf3170cb782e3b93885ddbda98d7431b1f60a113ea2bb7c5c8637"
+    },
+    {
+      "role": "guest",
+      "start": 111557648,
+      "end": 111888419,
+      "sha256": "47418800e20e4a4575499aa68e0a1af5acf01a30c1a81bd8c54a5571aa3cc252"
+    }
+  ],
+  "indexed_readings": {
+    "host": [],
+    "guest": []
+  },
+  "limitations": "Current216build actualrifleinjury cause1 HP330/6600; nativepickup carrywalk/drop andErevive to6600 healthyunlock passed allrequirements plus3 timelynativeaccepted movementcaptures. Polishedreviveprompt captured. Ownedworker neededforcedshutdown butclosed/restored63/realSavesunchanged andnoisolationfailure; retainforced cleanup limitation. Nohorse/sharedride/standingMGO/twoPC acceptance."
+}

@@ -113,7 +113,7 @@ void Pair(std::uint32_t mission, std::uint64_t now, std::uint32_t host_roster = 
 void Table() {
     std::size_t count = 0;
     const world::OpSpec* ops = world::OpTable(count);
-    Check(count == 48, "48 ops (world, rescue, companion, ride body and local ops)");
+    Check(count == 49, "49 ops (world, rescue, companion, ride body, horse cargo and local ops)");
     for (std::size_t i = 0; i < count; ++i) {
         for (std::size_t j = i + 1; j < count; ++j) Check(ops[i].code != ops[j].code, "codes unique");
         const unsigned fields = ops[i].lua + ops[i].native + ops[i].rx;
@@ -140,7 +140,7 @@ void Table() {
                           {op::enemy_debug, 30}, {op::enemy_debug_ack, 12}};
     for (const auto& s : sizes) Check(world::FindOp(s.code) && world::FindOp(s.code)->body == s.body, "documented body size");
     for (unsigned code = 0x1D; code <= 0x1F; ++code) Check(!world::FindOp(static_cast<std::uint8_t>(code)), "reserved world codes");
-    Check(!world::FindOp(0) && !world::FindOp(0x2B) && !world::FindOp(0x79) && !world::FindOp(0xFF), "unknown codes");
+    Check(!world::FindOp(0) && !world::FindOp(0x2C) && !world::FindOp(0x79) && !world::FindOp(0xFF), "unknown codes");
     Check(world::FindOp(op::phase_vec)->lua == 15 && world::FindOp(op::digest)->rx == 1 && world::FindOp(op::clock)->rx == 1,
           "PHASE_VEC 15 fields, DIGEST/CLOCK receiver latency");
     Check(world::FindOp(op::req_outcome)->request && world::FindOp(op::req_phase)->request && world::FindOp(op::resync)->request &&
@@ -1222,6 +1222,10 @@ void RescueAndBuddies() {
         Check(low.Tx(codes[i], values[i], spec->lua, 201, &datagram) == world::TxStatus::disabled, "new ops require world level 3");
     }
     Setup(); Pair(30010, 300);
+    Check(Tx(g_host, op::cargo, {1,2,802100,338300,1642000,1571},301)==world::TxStatus::ok,"cargo offer accepted by reliable codec");
+    Check(Tx(g_guest, op::cargo, {2,3,802100,338300,1642000,1571},301)==world::TxStatus::ok,"cargo request accepted by reliable codec");
+    Check(Tx(g_host, op::cargo, {3,4,802100,338300,1642000,1571},301)==world::TxStatus::bad_args,"unknown cargo state refused");
+    Check(Tx(g_host, op::cargo, {0,0,0,0,0,0},301)==world::TxStatus::bad_args,"cargo zero revision refused");
     Check(Tx(g_host, op::ride_body, {1,3,4000,802100,338300,1642000,1571,1,0},301)==world::TxStatus::ok, "vehicle pose kind admitted");
     Check(Tx(g_host, op::ride_body, {1,4,4000,802100,338300,1642000,1571,1,0},301)==world::TxStatus::bad_args, "unknown ride kind refused");
     Check(Tx(g_host, op::buddy_state, {1,1,1,1000000001,0,0,0,0},301)==world::TxStatus::bad_args, "buddy excessive position refused");

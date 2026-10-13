@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "run": "d26be38536db49cabd20bb1525a95083",
+  "kind": "hidden-actual-scenario",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261013-192225-f45a5acd5a174b9f80572486f3db0173\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 1,
+  "failure": null,
+  "closed": true,
+  "forced": false,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 100157713,
+      "end": 100343684,
+      "sha256": "7c7bd019d6297d365de30988e208e61e5102044ff38a29d15c5f86882e2d988c"
+    },
+    {
+      "role": "guest",
+      "start": 108885460,
+      "end": 109075711,
+      "sha256": "c68aa695a5da2e14d02463ee8bb8fcc433dc10d3cfcd2aa0c2692fadad545e1f"
+    }
+  ],
+  "indexed_readings": {
+    "host": [],
+    "guest": []
+  },
+  "limitations": "Actual stock jeep driver/exit and read-only registry query interface only; no remote rider, binder query or shared passenger invocation."
+}

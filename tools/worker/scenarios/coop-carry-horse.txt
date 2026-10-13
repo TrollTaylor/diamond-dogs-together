@@ -1,64 +1,80 @@
-# Horse loading probe (docs/coop-carry.md): the host carries the sleeping
-# guest to D-Horse and uses the game's own action next to the horse.
+# Sleeping cargo transport acceptance. Native carry is required first;
+# offset placement is reported explicitly and is not a stock horse seat.
+# The original host sleep deadline must continue while cargo is active.
 labsetting nametag=1
 labsetting coop_hud=compact
 title 200
 waitgameplay host 120
 waitgameplay guest 120
-both debug godmode 0
-host debug time 43200
-host debug weather sunny
-guest debug teleport 805.0 342.1 1636.5 -60
+host run cargo_test 1
+guest run cargo_test 1
+host run godmode 0
+guest run godmode 0
+host run time 43200
+host run weather sunny
+guest run teleport 805.0 342.1 1636.5 -60
 wait 2000
 stance host stand
 stance guest stand
 placebehind host guest 6 -0.7
-wait 6000
-host debug horse_spawn
-wait 3000
-host debug horse_spawn
-wait 9000
-host debug horse_status
+wait 4000
+host run horse_spawn
+wait 10000
+host run horse_status
+host require horse;selected=horse;available=1;actor0=6656
+host run goto_horse
 both capture horse-called
-host press 2 120
+placebehind host guest 6 -0.7
 wait 2000
+host press 2 120
+wait 1500
 host hold rmb+lmb 1500
 host release
 wait 400
 guest run downed_status
 guest require down=1.*cause=2.*lock=1.*state=asleep
-wait 3000
-host debug goto_carry
 wait 1500
-host hold r 900
+host run goto_carry
+wait 500
+host hold r 1200
 host release
-wait 3500
+wait 1500
 host run coop_carry_bodies
 host require carrybodies;b0=1,a1,ps140000c.*b1=1,a2b
-host debug goto_horse
-wait 2500
-host run position
-host run coop_carry_bodies
-both capture horse-near
-host press e 150
-wait 2500
-host run coop_carry_status
-host run coop_carry_bodies
-guest run coop_carry_bodies
-host run coop_carry_mirror
-both capture horse-e-press
-host hold e 1200
+host run coop_carry_load
+both capture cargo-native-carry
+host run goto_horse
+wait 500
+host run cargo_status
+host require cargo;state=off
+host run coop_carry_load
+host hold e 900
 host release
-wait 3000
-host run coop_carry_status
+wait 2000
+host run coop_carry_load
 host run coop_carry_bodies
 guest run coop_carry_bodies
-host run coop_carry_mirror
-guest run coop_carry_mirror
-both capture horse-e-hold
-wait 3000
-host run coop_carry_bodies
-guest run coop_carry_bodies
-host debug horse_status
-both capture horse-after
+host run cargo_status
+host require cargo;state=carrier;awake=0;mask=0;mount=horse;role=0;physical=clear;attachment=offset
+guest run cargo_status
+guest require cargo;state=cargo;awake=0;mask=0;mount=none;role=0;physical=clear;attachment=offset
+both capture cargo-loaded
+host press e 150
+wait 2000
+host run horse_status
+host require horse;selected=horse;available=1;actor0=6656;localMounted=1
+host hold w 1500
+host release
+both capture cargo-riding
+# At least 30 seconds have elapsed since the dart. Loading never restarts it.
+wait 16000
+guest run downed_status
+guest require down=0.*cause=0.*lock=0.*state=healthy
+host run cargo_status
+guest run cargo_status
+host require cargo;state=off;awake=0;mask=0
+guest require cargo;state=off;awake=0;mask=0
+both capture cargo-auto-woken
+host press e 150
+wait 2000
 state

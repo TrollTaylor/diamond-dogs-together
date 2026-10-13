@@ -21,6 +21,7 @@
 #include "sleep_body0_rest.hpp"
 #include "mgscoop/native_pose_window.hpp"
 #include "mgscoop/coop_sleep.hpp"
+#include "stock_sleep_release_policy.hpp"
 namespace mgscoop::downed_player {
 namespace c = partner_player_contract;
 namespace {
@@ -268,6 +269,11 @@ NativeRestDiagnostics nativeRestDiagnostics{};
 const char* nativeReadReason="sleep_native_read_context";
 sl::Sample nativeLastSample{};std::uint32_t nativeLastSequence=0;std::uint64_t nativeLastSampleAt=0;
 bool NativeActive() noexcept {return nativePrepared||nativeLease.phase!=sl::Phase::empty;}
+namespace ssr=stock_sleep_release_policy;
+ssr::Release stockRelease{};
+ssr::Episode StockEpisode() noexcept{return {mission,cycle.generation,epoch};}
+bool StockReleasePending() noexcept{return stockRelease.Pending(StockEpisode(),cycle.down,cycle.cause);}
+bool SleepActive() noexcept {return NativeActive()||coop_sleep::Active(0)||StockReleasePending();}
 void NativeFlags(Reply& r) noexcept {r.nativeSleepActive=NativeActive();r.nativeSleepReleaseReady=false;}
 bool NativeWorker() noexcept {return worker_scenario::Compiled()&&worker_scenario::Active()&&worker_scenario::ThreadAdmitted()&&lab::SavesRedirected();}
 bool NativeCas(std::uintptr_t at,std::uint32_t expected,std::uint32_t desired,const sl::Scope& sampled) noexcept {
@@ -512,6 +518,9 @@ bool Clear(bool restore) noexcept {
     const bool nativeWasActive = NativeActive();
     // Never erase a live/partial native seed, or restore HP while it is asleep.
     if (nativeWasActive && (!restore || !NativeRetireForClear())) return false;
+    // The normal stock sleep owns its wake until the native graph is idle.
+    // Configure/stop must not discard that duty or restore HP into a sleeper.
+    if (coop_sleep::Active(0) && (!restore || !coop_sleep::Hold(0, false))) return false;
     if (restore && !SlowCrawl(true)) return false;
     if (!restore && crawl.applied) return false;
     crawl = {}; crawlSp = crawlRec = 0;
@@ -521,8 +530,8 @@ bool Clear(bool restore) noexcept {
             if (!Owned(s, record, cur, max) || originalHealth <= 0 || originalHealth > max || !StoreLife(record, originalHealth)) return false;
         } else if (Owned(s, record, cur, max) && originalHealth > 0 && originalHealth <= max) StoreLife(record, originalHealth);
     }
-    if (coop_sleep::Held(0)) coop_sleep::Hold(0, false);
     armed = false; controlsApplied = false; cycle.down = false; cycle.cause = 0; friendlyRecovery = {};
+    stockRelease.LogicalExit(true);
     hitHead = hitCount = 0; incomingSerial = 0; observedLife = maximumHealth = 0;
     ownedP = ownedQ = ownedLife = ownedVars = 0; mission = ownerThread = 0; epoch = 0; lastPoll = downAt = lastControls = 0;
     ForgetNativeRetired();
@@ -552,7 +561,7 @@ void Configure(const partner_player::Addresses& a, bool passed) noexcept {
         pendingAddresses = a; pendingPassed = passed; configurePending = true;
         // A held native sleep must keep fresh natural cap callbacks alive.
         // Only the old exact owner may complete retirement and configuration.
-        stopped = !NativeActive(); lastReason = NativeActive() ? "sleep_native_retirement_pending" : "crawl_restore_pending";
+        stopped = !SleepActive(); lastReason = SleepActive() ? "sleep_native_retirement_pending" : "crawl_restore_pending";
         ReleaseSRWLockExclusive(&lock); return;
     }
     FinishConfigure(a, passed);
@@ -583,14 +592,12 @@ bool Control(std::uint32_t m, std::uint16_t ep, bool admitted, std::uint8_t comm
         // lease watchdog by returning before NativeAdvance is reached.
         if(NativeActive()&&armed&&m==mission&&ep==epoch&&ownerThread==GetCurrentThreadId())NativeWatchdog();
         if(nativeAbort){reason="sleep_native_lab_abort_required";out.applied=false;out.nativeSleepReleaseReady=false;}
-        out.nativeSleepActive = NativeActive();
+        out.nativeSleepActive = SleepActive();
         if (out.nativeSleepActive) {
             out.down=cycle.down; out.cause=cycle.cause; out.generation=cycle.generation;
-            // Preserve the pending lease flag on a current natural owner poll;
-            // failed reads never imply applied controls or retirement.
-            if ((command==0 || command==1) && armed && m==mission && ep==epoch && ownerThread==GetCurrentThreadId()) {
-                out.ready=verified&&!stopped; result=true;
-            }
+            // Cleanup duty survives failed current-owner reads, but does not
+            // authorize Lua to mask a replacement body. Only the successful
+            // ordinary identity/health/input path may publish readiness.
         }
         lastReason = reason; out.reason = reason; ReleaseSRWLockExclusive(&lock); return result;
     };
@@ -682,14 +689,25 @@ bool Control(std::uint32_t m, std::uint16_t ep, bool admitted, std::uint8_t comm
     observedLife = cur;
     out.ready = true; out.generation = cycle.generation; out.cause = cycle.cause; out.down = cycle.down;
     out.held = (partner_input::Effective(raw).held & partner_pad::kAction) != 0;
+    out.carryHeld = (partner_input::Effective(raw).held & partner_pad::kReload) != 0;
     while (hitCount && lastPoll >= hits[hitHead].at && lastPoll - hits[hitHead].at > 1500) {
         hitHead = (hitHead + 1) % 8; --hitCount;
     }
     if (hitCount) { out.hitSequence = hits[hitHead].sequence; out.hitDamageMilli = hits[hitHead].damage; out.hitCause = hits[hitHead].cause; }
     if (command == 5) {
-        if (!NativeActive()) { out.applied=true; return finish(true,"sleep_native_absent"); }
         if (!cycle.down || generation!=cycle.generation || cycle.cause!=2) return finish(false,"generation");
-        NativeAdvance(admitted,true,out); return finish(true,out.reason);
+        if (NativeActive()) { NativeAdvance(admitted,true,out); return finish(true,out.reason); }
+        // Once an authorized wake begins, native idle must survive the later
+        // actual input-mask update and logical revive. Polling cannot reseed.
+        if(coop_sleep::Configured()&&!stockRelease.Request(StockEpisode(),cycle.down,cycle.cause))return finish(false,"sleep_stock_release_owner");
+        if (coop_sleep::Active(0)) {
+            out.nativeSleepReleaseReady=coop_sleep::Hold(0,false);
+            stockRelease.ObservePhysicalRetirement(StockEpisode(),out.nativeSleepReleaseReady);
+            out.applied=out.nativeSleepReleaseReady;
+            return finish(true,out.applied?"sleep_stock_retired":"sleep_stock_wake_pending");
+        }
+        stockRelease.ObservePhysicalRetirement(StockEpisode(),true);
+        out.applied=true;out.nativeSleepReleaseReady=true;return finish(true,"sleep_native_absent");
     }
     if (command == 2) {
         if (!cycle.down || generation != cycle.generation) return finish(false, "generation");
@@ -699,13 +717,13 @@ bool Control(std::uint32_t m, std::uint16_t ep, bool admitted, std::uint8_t comm
             if (!NativeReleaseProof()) return finish(true,nativeAbort?"sleep_native_lab_abort_required":nativeReadReason);
             out.nativeSleepReleaseReady=true;
         }
+        if (coop_sleep::Active(0) && !coop_sleep::Hold(0,false)) return finish(true,"sleep_stock_wake_pending");
         if (!Released(raw)) return finish(true, "restore_pending");
-        // Wake the stock player sleep (life state 2 -> 0: stock wake-up animation).
-        if (coop_sleep::Held(0)) coop_sleep::Hold(0, false);
         if (!SlowCrawl(true)) return finish(true, "crawl_restore_pending");
         partner_player::State again{}; std::uintptr_t againRec = 0; float againCur = 0, againMax = 0;
         if (!Owned(again, againRec, againCur, againMax) || !StoreLife(againRec, detail::RecoveredHealth(cycle.cause, originalHealth, againMax))) return finish(false, "health");
         friendlyRecovery = {}; detail::Revive(cycle, generation); controlsApplied = false; downAt = lastControls = 0;
+        stockRelease.LogicalExit(!cycle.down);
         ForgetNativeRetired();
         out.down = false; out.cause = 0; out.applied = true;
         // Baseline now belongs to the live game's normal restrictions.
@@ -737,7 +755,26 @@ bool Control(std::uint32_t m, std::uint16_t ep, bool admitted, std::uint8_t comm
         // A friendly dart puts the body in the stock player sleep (coop_sleep:
         // life state 2, the MGO/FOB sleep graph) instead of the prone fallback.
         bool prone = false;
-        const bool nativeSleep = cycle.cause == 2 && coop_sleep::Configured() && coop_sleep::Hold(0, true);
+        const bool stockSleep = cycle.cause == 2 && coop_sleep::Configured();
+        if(stockSleep&&StockReleasePending()) {
+            if(!stockRelease.physicalRetired)stockRelease.ObservePhysicalRetirement(StockEpisode(),coop_sleep::Hold(0,false));
+            // Native retirement is complete but actual raw mask removal may
+            // take another pad update. Do not re-mask or request prone here.
+            if(stockRelease.physicalRetired){out.applied=true;out.nativeSleepReleaseReady=true;return finish(true,"sleep_stock_controls_retiring");}
+            const bool protectedHealth=StoreLife(record,detail::IncapacitatedHealth(2,originalHealth,max));
+            const bool masked=Controls(raw);if(protectedHealth&&masked){controlsApplied=true;lastControls=lastPoll;}
+            out.applied=protectedHealth&&masked;return finish(true,"sleep_stock_wake_pending");
+        }
+        const bool nativeSleep = stockSleep && stockRelease.MaySeed(StockEpisode(),cycle.down,cycle.cause) && coop_sleep::Hold(0, true);
+        // A partial or waking native cycle still owns the posture. Never issue
+        // a prone request over its graph or silently replace it with fallback.
+        if (stockSleep && !nativeSleep && coop_sleep::Active(0)) {
+            const bool protectedHealth=StoreLife(record,detail::IncapacitatedHealth(2,originalHealth,max));
+            const bool masked=Controls(raw);
+            if(protectedHealth&&masked){controlsApplied=true;lastControls=lastPoll;}
+            out.applied=protectedHealth&&masked;
+            return finish(true,"sleep_stock_owner_pending");
+        }
         if (nativeSleep) prone = true;
         const bool protection = (nativeSleep || Prone(s, prone)) && StoreLife(record, detail::IncapacitatedHealth(cycle.cause, originalHealth, max));
         const bool masked = Controls(raw);
@@ -782,7 +819,7 @@ PadObservation AfterPadUpdate(std::uintptr_t pad, bool outerUpdate, bool exactCa
     if (const auto reason = detail::PadRefusal(scope)) return finish(reason);
     // Observe healthy input for a demonstrable next-update reset; only the exact
     // protected downed/prone body with both named restrictions may be changed.
-    const bool nativeCycle=cycle.down && cycle.cause==2 && (nativeEnabled || NativeActive());
+    const bool nativeCycle=cycle.down && cycle.cause==2 && (nativeEnabled || SleepActive());
     if (nativeCycle) {
         if (!SameNativeState(first.state,second.state) || !NamedMasks(first) || !NamedMasks(second)) return finish("sleep_named_controls");
     } else if (cycle.down && controlsApplied && (first.stance != 3 || !Controls(first.raw))) return finish("controls");
@@ -925,8 +962,8 @@ bool FriendlyControl(std::uint32_t m, std::uint16_t ep, bool admitted,
 void Shutdown() noexcept {
     AcquireSRWLockExclusive(&lock);
     if (!Clear(true)) {
-        shutdownPending=true; stopped=!NativeActive();
-        lastReason=NativeActive()?"sleep_native_retirement_pending":"crawl_restore_pending";
+        shutdownPending=true; stopped=!SleepActive();
+        lastReason=SleepActive()?"sleep_native_retirement_pending":"crawl_restore_pending";
     } else { shutdownPending=false; stopped=true; nativeEnabled=false; }
     ReleaseSRWLockExclusive(&lock);
 }

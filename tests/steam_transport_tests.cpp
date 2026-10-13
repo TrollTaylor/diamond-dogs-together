@@ -2246,28 +2246,46 @@ void TestHud() {
               std::strstr(prompt.text,"waiting") && !std::strstr(prompt.text,"Hold") && progress == 0,
               "downed local player sees waiting rather than an impossible revive instruction");
         d.teammateDown = true;
-        Check(hud::FormatDowned(d,30050,1200,prompt,progress) && std::strstr(prompt.text,"go to them") &&
-              std::strstr(prompt.keys,"E\tHold: Revive") && std::strstr(prompt.keys,"R\tHold: Carry") && progress == 0,
-              "out-of-range teammate needs approach without revive progress; both stock actions are hinted");
+        Check(hud::FormatDowned(d,30050,1200,prompt,progress) && std::strstr(prompt.text,"get within 3 m") &&
+              !prompt.keys[0] && progress == 0,
+              "out-of-range teammate gets approach guidance without unavailable action keycaps");
         d.teammateCause = 2;
         Check(hud::FormatDowned(d,30050,1200,prompt,progress) && std::strstr(prompt.text,"asleep") &&
-              std::strstr(prompt.keys,"E\tHold: Wake up"), "a sleeping teammate is woken, not revived");
+              !prompt.keys[0] && !std::strstr(prompt.text,"revive"), "a distant sleeping teammate keeps approach guidance, not a revive hint");
         d.teammateCause = 0;
         d.closeEnough = true;
-        Check(hud::FormatDowned(d,30050,1200,prompt,progress) && !std::strstr(prompt.text,"go to them") &&
-              std::strstr(prompt.keys,"R\tHold: Carry") && progress == 0,
-              "a teammate already inside 3m is not told to get closer before the Action hold is observed");
+        Check(hud::FormatDowned(d,30050,1200,prompt,progress) && std::strstr(prompt.text,"please wait") &&
+              !prompt.keys[0] && progress == 0,
+              "inside3m unobserved Action prepares; pickup is left solely to the stock carry icon");
         d.closeEnough = false;
         d.carry = 1;
         Check(hud::FormatDowned(d,30050,1200,prompt,progress) && std::strstr(prompt.text,"Carrying") &&
-              std::strstr(prompt.keys,"R\tHold: Put down"), "a carrier is told how to put the teammate down");
+              std::strstr(prompt.keys,"Carry\tHold to put down") && !std::strstr(prompt.keys,"Load"),
+              "a carrier sees Put down without unqualified horse loading");
+        d.carry = 3;
+        Check(hud::FormatDowned(d,30050,1200,prompt,progress) && !prompt.keys[0] &&
+              !std::strstr(prompt.text,"riding"), "provisional cargo does not advertise native seats or unloading");
+        d.carry = 5;
+        Check(!hud::FormatDowned(d,30050,1200,prompt,progress), "unknown carry roles cannot become action prompts");
+        d.carry = 2; d.inRange = true;
+        Check(hud::FormatDowned(d,30050,1200,prompt,progress) && !prompt.keys[0] && progress == 0,
+              "a healthy readback still being carried cannot advertise a rescue action");
+        d.carry = 4;
+        Check(hud::FormatDowned(d,30050,1200,prompt,progress) && !prompt.keys[0],
+              "a provisional carried/cargo role cannot advertise Wake or Revive");
         d.carry = 0;
-        d.inRange = true; d.progressMs = 1500;
+        d.inRange = true;
+        Check(hud::FormatDowned(d,30050,1200,prompt,progress) &&
+              std::strcmp(prompt.keys,"Action\tHold to revive") == 0 && !std::strstr(prompt.keys,"Pick up"),
+              "ready rescue is concise semantic Action with no keyboard-default prose or duplicate pickup");
+        d.progressMs = 1500;
         Check(hud::FormatDowned(d,30050,1500,prompt,progress) && std::strstr(prompt.text,"Reviving") &&
-              std::strstr(prompt.text,"50%") && progress == .5f, "actual continuous hold is shown with its progress at inclusive freshness boundary");
+              std::strstr(prompt.text,"50%") && std::strcmp(prompt.keys,"Action\tKeep holding") == 0 &&
+              !std::strstr(prompt.keys,"Pick up") && progress == .5f,
+              "actual hold keeps its keycap and progress while hiding the competing pickup hint");
         d.progressMs = 3000;
-        Check(hud::FormatDowned(d,30050,1200,prompt,progress) && progress == 1.f && std::strstr(prompt.text,"100%"),
-              "completed grant pending is bounded at 100 percent");
+        Check(hud::FormatDowned(d,30050,1200,prompt,progress) && progress == 1.f && std::strstr(prompt.text,"100%") && !prompt.keys[0],
+              "completed hold remains100percent but does not request more input during pending native/network recovery");
         for (const auto now : {999u,1501u}) {
             Check(!hud::FormatDowned(d,30050,now,prompt,progress) && !prompt.text[0] && progress == 0,
                   "future clock and expired facts cannot show a revive command or old progress");
@@ -2303,14 +2321,19 @@ void TestHud() {
               "sleeping player gets a wake instruction without a lethal down label");
         Check(parseHud("return 'MGS_COOP_DOWNED_HUD_V2' -- 30050 7 0 1 1 1500 0 2"), "teammate sleep progress parsed");
         copied.publish_ms = 1000;
-        Check(hud::FormatDowned(copied,30050,1200,prompt,progress) && std::strstr(prompt.text,"Waking your teammate") &&
-              progress == .5f, "held Action wakes a sleeping teammate with real copied hold progress");
+        Check(hud::FormatDowned(copied,30050,1200,prompt,progress) && std::strstr(prompt.text,"Waking teammate") &&
+              std::strcmp(prompt.keys,"Action\tKeep holding") == 0 && progress == .5f,
+              "held Action wakes a sleeping teammate with real copied hold progress and persistent keycap");
         Check(parseHud("return 'MGS_COOP_DOWNED_HUD_V3' -- 30050 7 0 1 0 0 0 1 1") && copied.closeEnough && !copied.inRange &&
               copied.teammateCause == 1, "V3 can be close enough without an observed Action hold");
         copied.publish_ms = 1000;
         Check(hud::FormatDowned(copied,30050,1200,prompt,progress) && !std::strstr(prompt.text,"%") &&
-              std::strstr(prompt.keys,"E\tHold: Revive") && std::strstr(prompt.keys,"R\tHold: Carry") && progress == 0,
-              "parsed close-enough receipt shows the actions without a hold that has not started");
+              !prompt.keys[0] && progress == 0,
+              "close-enough receipt cannot advertise Action before its native mask is observed");
+        Check(parseHud("return 'MGS_COOP_DOWNED_HUD_V3' -- 30050 7 0 1 1 0 0 2 1"), "ready sleep state parsed");
+        copied.publish_ms = 1000;
+        Check(hud::FormatDowned(copied,30050,1200,prompt,progress) && std::strcmp(prompt.keys,"Action\tHold to wake") == 0,
+              "ready sleeper gets the concise Wake action");
         Check(!parseHud("return 'MGS_COOP_DOWNED_HUD_V3' -- 30050 7 0 1 1 0 0 1 0"),
               "a hold range without the 3m approach is refused");
         Check(parseHud("return 'MGS_COOP_DOWNED_HUD_V2' -- 30050 7 0 1 1 1500 0 2") && copied.closeEnough && copied.inRange,

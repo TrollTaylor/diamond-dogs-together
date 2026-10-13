@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "run": "5a2f6b2c4df44544994efff164c2380b",
+  "kind": "hidden-actual-partial",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261013-173412-a25261c08a8d4ac08a593ab684d4ad16\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 1,
+  "failure": "Required scenario check failed: guest require down=0.*cause=0.*lock=0.*state=healthy <- downed;ready=1;armed=1;down=1;gen=4;cause=2;lock=1;hp=6600,6600;epoch=3;state=asleep;reason=sleep_stock_wake_pending",
+  "closed": true,
+  "forced": true,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 98134344,
+      "end": 98494994,
+      "sha256": "4c68a09735276902e552536148d478682b26f583dfe80c485161e410a463d702"
+    },
+    {
+      "role": "guest",
+      "start": 106790400,
+      "end": 107165105,
+      "sha256": "49d43140ea0fb97dfa2f2adfc34e2370377dbcfd316b064228584a4f31e9db14"
+    }
+  ],
+  "indexed_readings": {
+    "host": [],
+    "guest": []
+  },
+  "limitations": "Sleep clock reached 30000 without reset while carried. Native wake stayed pending because the host carried/slept body until the guest published healthy; no automatic wake success and no physical attachment acceptance. Current component class observation is 24c97f8 and strict predicate refused the earlier erroneous 24c9800 address."
+}

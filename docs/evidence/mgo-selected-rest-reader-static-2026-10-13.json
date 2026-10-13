@@ -1,0 +1,204 @@
+{
+  "schema": "mgscoop.selected-rest-reader-static-evidence.v1",
+  "exe_sha256": "085c2f82d1c963c40b3d2d55786661dfee2b18cbbf388a710c00fa76c5e9bb45",
+  "runtime_observed": false,
+  "built": false,
+  "no_heap_scan": true,
+  "no_native_calls": true,
+  "no_game_writes": true,
+  "runtime_gate_required": "Root coordinator must verify actual private worker/copy-save lab context, full retail PE/hash, new CodeGate plus existing graph/plugin gates, owned thread/epoch/window, and use a cryptographic Hasher.",
+  "selection_limit": "Only the two exact rest graph hashes and retained TPP motion IDs are classifiable. QAR presence is not selection proof; record/child/header/hash refusal reports no qualified selection.",
+  "known_limits": [
+    "Engine/data/slot and current motion ownership path statically qualified; actual runtime structure still needs root qualification.",
+    "Bound64 is a refusal ceiling, not a claim that any scene contains64 layers/children.",
+    "ReadPair hashes at most8192 bytes per source; replies contain hashes and addresses, never proprietary bytes.",
+    "Native MGO rest clips decode lying. This diagnostic cannot establish upright sleep."
+  ],
+  "vtable_load_slot": {
+    "vtable": "0x24c2890",
+    "slot": "0x48",
+    "target": "0x1a75340"
+  },
+  "generated": {
+    "sleep_motion_asset_contract.hpp": {
+      "sha256": "5e4f56012767530c17dbc5091584d759550f824b717a55b5a938ed5749764dd6",
+      "bytes": 24404
+    },
+    "sleep_motion_asset_read.hpp": {
+      "sha256": "d0f5ee169f73e13af0f49ff1fcf957714a54c89c0b6a30ed9962b012faf00dd1",
+      "bytes": 9360
+    },
+    "sleep_motion_asset_read_tests.cpp": {
+      "sha256": "874ae083ee5b90f2ec107418e54e8da2d3beb6a70dbcb2ad8ef6f461b2085b0a",
+      "bytes": 6388
+    }
+  },
+  "fixture_test_compiled": false,
+  "sites": [
+    {
+      "start": "0x1c60d40",
+      "end": "0x1c60d49",
+      "unwind_ranges": [],
+      "leaf_candidate": true,
+      "size": 9,
+      "sha256": "08836653fe2bbe2c69146601b02fc7975192d428d543e8886894f63e3193d9f0"
+    },
+    {
+      "start": "0x1c73be0",
+      "end": "0x1c73db5",
+      "unwind_ranges": [
+        [
+          "0x1c73be0",
+          "0x1c73db5",
+          "0x2973b0c"
+        ]
+      ],
+      "size": 469,
+      "sha256": "3b11b3442add104957799217ee1b148411eb282158a24ae88c7884a039b34a58"
+    },
+    {
+      "start": "0x1c74810",
+      "end": "0x1c74b9a",
+      "unwind_ranges": [
+        [
+          "0x1c74810",
+          "0x1c7482b",
+          "0x2973464"
+        ],
+        [
+          "0x1c7482b",
+          "0x1c74873",
+          "0x2973470"
+        ],
+        [
+          "0x1c74873",
+          "0x1c74b9a",
+          "0x2973488"
+        ]
+      ],
+      "size": 906,
+      "sha256": "76980b552837bd21bb5b4593da86d9f8b2fe0a2601a9598db9275bb3b377fe5b"
+    },
+    {
+      "start": "0x1a75bf0",
+      "end": "0x1a75c7a",
+      "unwind_ranges": [],
+      "leaf_candidate": true,
+      "size": 138,
+      "sha256": "7bb694a66f34fe89a8725d3695dd59a8202a572d682f7733d46e83fb5015bff6"
+    },
+    {
+      "start": "0x1a76090",
+      "end": "0x1a7637a",
+      "unwind_ranges": [
+        [
+          "0x1a76090",
+          "0x1a7637a",
+          "0x27be61c"
+        ]
+      ],
+      "size": 746,
+      "sha256": "0b329f993003705a907b84c36e3653d0be227c709149a9c6319fe5a3878084ea"
+    },
+    {
+      "start": "0x1a755e0",
+      "end": "0x1a7579f",
+      "unwind_ranges": [
+        [
+          "0x1a755e0",
+          "0x1a7579f",
+          "0x2906d94"
+        ]
+      ],
+      "size": 447,
+      "sha256": "ad6e9159a64ad73d049f25a06e3640e691ebf3eb73b31b38ff9553fa4bef158d"
+    },
+    {
+      "start": "0x1a75340",
+      "end": "0x1a754bc",
+      "unwind_ranges": [
+        [
+          "0x1a75340",
+          "0x1a75378",
+          "0x27be088"
+        ],
+        [
+          "0x1a75378",
+          "0x1a7544a",
+          "0x2906f2c"
+        ],
+        [
+          "0x1a7544a",
+          "0x1a75496",
+          "0x2906f44"
+        ],
+        [
+          "0x1a75496",
+          "0x1a7549b",
+          "0x2906f5c"
+        ],
+        [
+          "0x1a7549b",
+          "0x1a754bc",
+          "0x2906f74"
+        ]
+      ],
+      "size": 380,
+      "sha256": "19bf9c98b643f8c23dc53962af6ea16a3d61fc39d9677047a75199b7a8448c7e"
+    },
+    {
+      "start": "0x1a758a0",
+      "end": "0x1a75a0f",
+      "unwind_ranges": [
+        [
+          "0x1a758a0",
+          "0x1a75a0f",
+          "0x2906e94"
+        ]
+      ],
+      "size": 367,
+      "sha256": "d258b75df2baced997f68f626177058d66f27e209c5d0e8721e9f69cee01b0e2"
+    },
+    {
+      "start": "0x1a80040",
+      "end": "0x1a801fc",
+      "unwind_ranges": [
+        [
+          "0x1a80040",
+          "0x1a801fc",
+          "0x2827ba8"
+        ]
+      ],
+      "size": 444,
+      "sha256": "454124401fe2f352a3e57fb4db2cdddc6752635c1aba7705d8bac188bd077717"
+    },
+    {
+      "start": "0x1a81370",
+      "end": "0x1a814d7",
+      "unwind_ranges": [
+        [
+          "0x1a81370",
+          "0x1a814d7",
+          "0x2908644"
+        ]
+      ],
+      "size": 359,
+      "sha256": "43c2912f7f02b949acf394a5167f828a43bd8f32cfca17f21d12fac685e012c5"
+    },
+    {
+      "start": "0x1a7f770",
+      "end": "0x1a7f7ae",
+      "size": 62,
+      "sha256": "97d90f7f3598d0df957dc3ba5d9aee4b352007698520fe752ec169cd8b6f178c",
+      "cfg_complete_leaf": true
+    },
+    {
+      "start": "0xaf0a20",
+      "end": "0xaf0a66",
+      "size": 70,
+      "sha256": "1d18f15b80511a3ab3580b3c39f0970f1935f089ed2830119e09f0fa0fa48921",
+      "cfg_complete_leaf": true
+    }
+  ],
+  "root_exact_pe_pins_verified": true
+}

@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "kind": "static-readonly-qualification",
+  "manifests": {
+    "horse_cargo_native_manifest.json": "37cb97535c61bdaa88133265e6613b4d7303700c4a09a86a2fa09d4256e09f64",
+    "horse_physical_natural_manifest.json": "ad15df9ffea45a9bce4dd0099f73c06ba199e41b90e3bfcaaa684c8e5a9e1e41"
+  },
+  "vehicle_manifest_sha256": "c233ad5c1173a823bf36537dec86739320d3ff4435d23d17caf8bcdbfd849f8f",
+  "native_calls_added": 0,
+  "game_memory_writes_added": 0,
+  "runtime_observed": false,
+  "scope": "true dual-parts callback publishes 64-bit actual births for distinct native Entity read-only callback; unchanged Lua Scope; no writer admission",
+  "limitations": "Horse attachment and shared seats remain OFF and require native lifecycle qualification."
+}

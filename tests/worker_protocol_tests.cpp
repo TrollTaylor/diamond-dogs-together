@@ -58,6 +58,63 @@ int main() {
     Check(!Parsed(Replace(capacity, "runtime_motion_count=21", "runtime_motion_count=31")), "capacity_keeps_motion21");
     Check(!Parsed(capacity + "lab_mode=play\n"), "capacity_lab_only");
     Check(!Parsed(Probe() + "runtime_profile=buddy_capacity_two_v1\nruntime_buddy_capacity=2\n"), "probe_no_capacity_fields");
+    const auto rest = Replace(Game(), kBaselineArchiveSha, mgscoop::mgo_sleep_rest::archive_sha) +
+        "runtime_profile=mgo_sleep_rest_v1\nruntime_buddy_capacity=0\nruntime_archive_bytes=26949632\n" +
+        "runtime_catalog_sha256=" + mgscoop::mgo_sleep_rest::catalog_sha + "\nruntime_build_profile=research\nruntime_native_stage=gun\nlab_mode=lab\n";
+    Manifest rest_manifest; std::string rest_reason;
+    Check(ParseManifest(rest, rest_manifest, rest_reason) == mgscoop::mgo_sleep_rest::compiled, "mgo_rest_worker_compile_gate");
+    if (mgscoop::mgo_sleep_rest::Compiled())
+        Check(rest_manifest.runtime_profile == mgscoop::mgo_sleep_rest::profile && rest_manifest.runtime_buddy_capacity == 0 &&
+              rest_manifest.runtime_archive_bytes == 26949632, "mgo_rest_metadata_readback");
+    for (const auto* key : {"runtime_profile=mgo_sleep_rest_v1\n", "runtime_buddy_capacity=0\n", "runtime_archive_bytes=26949632\n",
+         "runtime_build_profile=research\n", "runtime_native_stage=gun\n", "lab_mode=lab\n"})
+        Check(!Parsed(Replace(rest, key, "")), "mgo_rest_partial_catalog_refused");
+    Check(!Parsed(Replace(rest, std::string("runtime_catalog_sha256=") + mgscoop::mgo_sleep_rest::catalog_sha + "\n", "")), "mgo_rest_catalog_required");
+    Check(!Parsed(Replace(rest, mgscoop::mgo_sleep_rest::archive_sha, hash)), "mgo_rest_exact_archive_hash");
+    Check(!Parsed(Replace(rest, mgscoop::mgo_sleep_rest::catalog_sha, hash)), "mgo_rest_exact_catalog_hash");
+    Check(!Parsed(Replace(rest, "mgo_sleep_rest_v1", "mgo_sleep_rest_v2")), "mgo_rest_exact_profile");
+    Check(!Parsed(Replace(rest, "runtime_archive_bytes=26949632", "runtime_archive_bytes=16333824")), "mgo_rest_exact_bytes");
+    Check(!Parsed(Replace(rest, "runtime_motion_count=21", "runtime_motion_count=31")), "mgo_rest_motion21_only");
+    Check(!Parsed(Replace(rest, "runtime_buddy_capacity=0", "runtime_buddy_capacity=2")), "mgo_rest_no_capacity_mix");
+    Check(!Parsed(Replace(rest, "runtime_buddy_capacity=0", "runtime_buddy_capacity=00")), "mgo_rest_canonical_capacity");
+    Check(!Parsed(Replace(rest, "runtime_build_profile=research", "runtime_build_profile=normal")), "mgo_rest_no_normal_build");
+    Check(!Parsed(Replace(rest, "runtime_native_stage=gun", "runtime_native_stage=loco")), "mgo_rest_gun_only");
+    Check(!Parsed(Replace(rest, "lab_mode=lab", "lab_mode=play")), "mgo_rest_no_play");
+    Check(!Parsed(Replace(rest, "desktop=MGSWorker_" + run, "desktop=Default")), "mgo_rest_no_visible_desktop");
+    Check(!Parsed(Game() + "runtime_build_profile=research\n"), "mgo_rest_orphan_scope_refused");
+    Check(!Parsed(Probe() + "runtime_profile=mgo_sleep_rest_v1\nruntime_buddy_capacity=0\n"), "mgo_rest_no_probe_catalog");
+    Check(!Parsed(Replace(rest, mgscoop::mgo_sleep_rest::archive_sha, kBaselineArchiveSha)), "mgo_rest_no_baseline_hash_splice");
+    const std::wstring rest_run(run.begin(), run.end()), rest_desktop = L"MGSWorker_" + rest_run;
+    const std::wstring rest_digest(mgscoop::mgo_sleep_rest::archive_sha, mgscoop::mgo_sleep_rest::archive_sha + 64);
+    const std::wstring rest_catalog(mgscoop::mgo_sleep_rest::catalog_sha, mgscoop::mgo_sleep_rest::catalog_sha + 64);
+    mgscoop::mgo_sleep_rest::ContextPins rest_context{rest_run, L"host", rest_desktop, L"D:\\copies\\host", L"D:\\copies\\host",
+        L"mgo_sleep_rest_v1", rest_digest, rest_catalog, L"26949632", L"21", L"0", L"lab", L"research", L"gun"};
+    Check(mgscoop::mgo_sleep_rest::ContextMatches(rest_context) == mgscoop::mgo_sleep_rest::compiled, "mgo_rest_context_worker_gate");
+    auto bad_rest_context = rest_context;
+    for (const auto* role : {L"probe", L"HOST", L"guest2", L"", L"play"}) {
+        bad_rest_context = rest_context; bad_rest_context.role = role;
+        Check(!mgscoop::mgo_sleep_rest::ContextMatches(bad_rest_context), "mgo_rest_context_role_exact");
+    }
+    bad_rest_context = rest_context; bad_rest_context.expected_game = L"D:\\copies\\guest";
+    Check(!mgscoop::mgo_sleep_rest::ContextMatches(bad_rest_context), "mgo_rest_context_game_directory_exact");
+    bad_rest_context = rest_context; bad_rest_context.desktop = L"Default";
+    Check(!mgscoop::mgo_sleep_rest::ContextMatches(bad_rest_context), "mgo_rest_context_private_desktop_exact");
+    bad_rest_context = rest_context; bad_rest_context.run = L"0123";
+    Check(!mgscoop::mgo_sleep_rest::ContextMatches(bad_rest_context), "mgo_rest_context_run_exact");
+    bad_rest_context = rest_context; bad_rest_context.digest = L"bad";
+    Check(!mgscoop::mgo_sleep_rest::ContextMatches(bad_rest_context), "mgo_rest_context_digest_exact");
+    bad_rest_context = rest_context; bad_rest_context.catalog = L"bad";
+    Check(!mgscoop::mgo_sleep_rest::ContextMatches(bad_rest_context), "mgo_rest_context_catalog_exact");
+    bad_rest_context = rest_context; bad_rest_context.motions = L"31";
+    Check(!mgscoop::mgo_sleep_rest::ContextMatches(bad_rest_context), "mgo_rest_context_motion21_only");
+    bad_rest_context = rest_context; bad_rest_context.capacity = L"2";
+    Check(!mgscoop::mgo_sleep_rest::ContextMatches(bad_rest_context), "mgo_rest_context_capacity0_only");
+    bad_rest_context = rest_context; bad_rest_context.lab_mode = L"play";
+    Check(!mgscoop::mgo_sleep_rest::ContextMatches(bad_rest_context), "mgo_rest_context_no_play");
+    bad_rest_context = rest_context; bad_rest_context.native_stage = L"loco";
+    Check(!mgscoop::mgo_sleep_rest::ContextMatches(bad_rest_context), "mgo_rest_context_gun_only");
+    bad_rest_context = rest_context; bad_rest_context.build_profile = L"normal";
+    Check(!mgscoop::mgo_sleep_rest::ContextMatches(bad_rest_context), "mgo_rest_context_research_only");
     Check(!Parsed(Replace(Game(), kRetailExeSha, hash)), "wrong_retail_exe");
     Check(!Parsed(Replace(Game(), kRetailSteamSha, hash)), "wrong_retail_steam");
     Check(!Parsed(Replace(Game(), kBaselineArchiveSha, hash)), "wrong_runtime_archive");

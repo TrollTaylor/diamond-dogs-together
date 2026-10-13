@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "run": "a39d407bc4c341eda71c81b16ba34a62",
+  "kind": "hidden-actual-scenario",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261013-173412-a25261c08a8d4ac08a593ab684d4ad16\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 1,
+  "failure": null,
+  "closed": true,
+  "forced": false,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 98494994,
+      "end": 98685175,
+      "sha256": "a86ab9570d52ce8971e81def57faef79ac2633a4f6f2a7f526cd5e62b6e625ac"
+    },
+    {
+      "role": "guest",
+      "start": 107165105,
+      "end": 107355294,
+      "sha256": "31fb405bb3913ace72d47a6e5167f2b4f759023fd90a2298dacc5851ee2954ac"
+    }
+  ],
+  "indexed_readings": {
+    "host": [],
+    "guest": []
+  },
+  "limitations": "Actual stock local jeep entry/exit qualifies current vehicle B0 vtable22ed9f0 count b2dd30, four seats, phase3 driver0 and unused passenger seats. Passenger prototype remained disabled; no remote body mount, shared passenger, attachment, wire or exit-mirror accepted."
+}

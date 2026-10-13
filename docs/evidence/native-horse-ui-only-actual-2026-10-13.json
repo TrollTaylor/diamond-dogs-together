@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "run": "cda340da5ea947a58087d5a0ec3b22c5",
+  "kind": "hidden-actual-partial",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261013-164840-cf46f5c545c44b0c8b01e46082f1af06\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 5,
+  "failure": "Required scenario check failed: guest require down=0.*cause=0.*lock=0.*state=healthy <- downed;ready=1;armed=1;down=1;gen=4;cause=2;lock=1;hp=6600,6600;epoch=3;state=asleep;reason=sleeping_native",
+  "closed": true,
+  "forced": false,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 97668907,
+      "end": 98022334,
+      "sha256": "a880b9f35f8e8e9bd4d04c71e5678f97947f5a21e4a842ed5d069edf896d1e80"
+    },
+    {
+      "role": "guest",
+      "start": 106316112,
+      "end": 106677418,
+      "sha256": "34c100cf11aed44d01c451ad283bd9094d104843e616f3e02129364c7d0043fc"
+    }
+  ],
+  "indexed_readings": {
+    "host": [],
+    "guest": []
+  },
+  "limitations": "Stock horse candidate1A00 found and every geometry check passed, but native finder stayed UI-only and never accepted E/R. No horse attachment. Native passenger module installed disabled; vehicle census was not reached because automatic sleep timeout did not release by final check."
+}

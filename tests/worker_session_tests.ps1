@@ -38,6 +38,39 @@ Assert-True ((Get-WorkerRestorePair $normalSession $pinned ('A'*64) ('B'*64) $pi
 foreach($case in @(@(('A'*64),$capacityPins.Archive),@(('B'*64),$pinned.Archive),@(('C'*64),$capacityPins.Archive),@(('B'*64),('C'*64)))){
     Assert-Throws {Get-WorkerRestorePair $capacitySession $pinned ('A'*64) $case[0] $case[1]} 'candidate rejects mixed/foreign pair'
 }
+$restPins=Get-WorkerMgoSleepRestPins
+$restSession=@{mode='lab';candidate_sha256='B'*64;runtime_profile=$restPins.Profile;runtime_archive_sha256=$restPins.Archive;
+    runtime_archive_bytes=$restPins.Bytes;runtime_motion_count=21;runtime_buddy_capacity=0;runtime_catalog_sha256=$restPins.Catalog;
+    runtime_build_profile='research';runtime_native_stage='gun'}
+$restCatalog=Get-WorkerSessionRuntimeCatalog $restSession $pinned
+Assert-True ($restCatalog.Experimental -and $restCatalog.Bytes -eq 26949632 -and $restCatalog.Capacity -eq 0 -and $restCatalog.Motions -eq 21) 'MGO rest original21 catalog readback'
+foreach($key in @('runtime_profile','runtime_archive_sha256','runtime_archive_bytes','runtime_motion_count','runtime_buddy_capacity','runtime_catalog_sha256','runtime_build_profile','runtime_native_stage')){
+    $changed=$restSession.Clone();$changed.Remove($key)
+    Assert-Throws {Get-WorkerSessionRuntimeCatalog $changed $pinned} ('MGO rest missing field '+$key)
+}
+foreach($case in @(@('runtime_profile','mgo_sleep_rest_v2'),@('runtime_archive_sha256',$pinned.Archive),@('runtime_archive_bytes',16333824),
+    @('runtime_motion_count',31),@('runtime_motion_count','021'),@('runtime_motion_count',21.4),@('runtime_archive_bytes',26949632.4),
+    @('runtime_buddy_capacity',2),@('runtime_buddy_capacity',0.4),@('runtime_buddy_capacity','00'),
+    @('runtime_catalog_sha256',('A'*64)),@('runtime_build_profile','normal'),@('runtime_native_stage','loco'),@('mode','play'))){
+    $changed=$restSession.Clone();$changed[$case[0]]=$case[1]
+    Assert-Throws {Get-WorkerSessionRuntimeCatalog $changed $pinned} ('MGO rest changed field '+$case[0])
+}
+Assert-True ((Get-WorkerRestorePair $restSession $pinned ('A'*64) ('A'*64) $pinned.Archive) -ceq 'baseline') 'MGO rest unprepared role restores original pair'
+Assert-True ((Get-WorkerRestorePair $restSession $pinned ('A'*64) ('B'*64) $restPins.Archive) -ceq 'worker') 'MGO rest prepared role restores exact candidate pair'
+foreach($case in @(@(('A'*64),$restPins.Archive),@(('B'*64),$pinned.Archive),@(('C'*64),$restPins.Archive),@(('B'*64),$capacityPins.Archive))){
+    Assert-Throws {Get-WorkerRestorePair $restSession $pinned ('A'*64) $case[0] $case[1]} 'MGO rest rejects mixed/foreign pair'
+}
+Assert-Throws {Get-WorkerRestorePair $capacitySession $pinned ('A'*64) ('B'*64) $restPins.Archive} 'capacity session cannot restore MGO pair'
+Assert-Throws {Get-WorkerRestorePair $normalSession $pinned ('A'*64) ('B'*64) $restPins.Archive} 'normal session cannot restore MGO pair'
+$orphan=$normalSession.Clone();$orphan.runtime_build_profile='research';Assert-Throws {Get-WorkerSessionRuntimeCatalog $orphan $pinned} 'MGO scope without profile refused'
+Assert-WorkerMgoSleepRestScope 'mgo-sleep-rest' 'lab' 'native' 'gun' $false 'D:\fixture\rest.dat' ''
+Assert-True $true 'MGO rest explicit lab gun scope admitted'
+foreach($case in @(@('normal','lab','native','gun',$false,'D:\rest.dat',''),@('research','lab','native','gun',$false,'D:\rest.dat',''),
+    @('mgo-sleep-rest','play','native','gun',$false,'D:\rest.dat',''),@('mgo-sleep-rest','lab','animated','gun',$false,'D:\rest.dat',''),
+    @('mgo-sleep-rest','lab','native','loco',$false,'D:\rest.dat',''),@('mgo-sleep-rest','lab','native','gun',$true,'D:\rest.dat',''),
+    @('mgo-sleep-rest','lab','native','gun',$false,'',''),@('mgo-sleep-rest','lab','native','gun',$false,'D:\rest.dat','D:\buddy.dat'))){
+    Assert-Throws {Assert-WorkerMgoSleepRestScope $case[0] $case[1] $case[2] $case[3] $case[4] $case[5] $case[6]} 'MGO rest scope refuses unsupported mode/profile/stage/source'
+}
 $id='0123456789abcdef0123456789abcdef'
 Assert-True (Test-WorkerRunId $id) 'run32'
 foreach($bad in @('','0123',$id.ToUpperInvariant(),($id+'0'),($id+"`n"))){Assert-True (!(Test-WorkerRunId $bad)) 'invalid run id'}
@@ -1034,12 +1067,12 @@ try {
  Assert-True ($call.Count -eq 1) 'graphics: one real Start invocation'
  & {
   $worker='C:\fixture';$build='C:\fixture';$CheckReceipt='C:\fixture';$BaselineLoaderSha256='A'*64
-  $TimeoutSec=600;$ReadyTimeoutSec=180;$PartnerProfile='animated';$NativeStage='';$BuildProfile='normal';$BuddyCapacityArchive='';$AmmoExperiment=$false
+  $TimeoutSec=600;$ReadyTimeoutSec=180;$PartnerProfile='animated';$NativeStage='';$BuildProfile='normal';$BuddyCapacityArchive='';$MgoSleepRestArchive='';$AmmoExperiment=$false
   $SaveSeed='lab';$LabSetting=@();$Mode='lab';$WanSim='off'
   function Join-Path([string]$Path,[string]$ChildPath){Assert-True ($ChildPath -ceq 'Start-WorkerSession.ps1') 'graphics: recorded Start only';return 'Graphics-RecordStart'}
   function Graphics-RecordStart {
    param($BuildDirectory,$CheckReceipt,$BaselineLoaderSha256,$TimeoutSec,$ReadyTimeoutSec,$PartnerProfile,$NativeStage,$BuildProfile,
-    [switch]$AmmoExperiment,$SaveSeed,$GraphicsQuality,$LabSetting,$Mode,$WanSim,$BuddyCapacityArchive)
+    [switch]$AmmoExperiment,$SaveSeed,$GraphicsQuality,$LabSetting,$Mode,$WanSim,$BuddyCapacityArchive,$MgoSleepRestArchive)
    return $GraphicsQuality
   }
   $GraphicsQuality='preserve';Assert-True ((& ([scriptblock]::Create($call[0].Extent.Text))) -ceq 'preserve') 'graphics: real invocation forwards default'

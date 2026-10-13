@@ -111,6 +111,11 @@ constexpr OpSpec kOps[] = {
     {op::ride_body, "RIDE_BODY", 1, Dir::both, Wire::reliable, 3, false, false, 9, 0, 0, 24,
      {U16(1), U8(1, 3), U16(), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
       I32(-1000000000, 1000000000), I32(-31416, 31416), U8(0, 1), U16()}},
+    // CARGO: seq, state (0 stop,1 transport,2 offer,3 request), xyz mm, heading mrad.
+    // Lua validates current mission/epoch, fresh offer, role and proximity.
+    {op::cargo, "CARGO", 0, Dir::both, Wire::reliable, 3, false, false, 6, 0, 0, 19,
+     {U16(1), U8(0, 3), I32(-1000000000, 1000000000), I32(-1000000000, 1000000000),
+      I32(-1000000000, 1000000000), I32(-31416, 31416)}},
     {op::link, "LINK", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 2, 0, 0, {U8(0, 1), U32()}},
     {op::paired, "PAIRED", 0, Dir::native_to_lua, Wire::local, 1, false, false, 0, 6, 0, 0,
      {U16(), Mission(), U32(), U16(), U8(0, 1), U8(0, 3)}},

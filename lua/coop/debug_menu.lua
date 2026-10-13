@@ -300,7 +300,7 @@ do
   ok, failure = pcall(function()
    if a[1] == "status" and #a == 1 then good, why = status(); return end
    good, why = guard()
-   if not good and why == "on_foot" and (a[1] == "buddy_census" or a[1] == "horse_status" or a[1] == "vehicle_seats") and #a == 1 then good, why = mountCensus() end
+   if not good and why == "on_foot" and (a[1] == "buddy_census" or a[1] == "horse_status" or a[1] == "vehicle_seats" or a[1] == "cargo_status" or a[1] == "sleep_clock") and #a == 1 then good, why = mountCensus() end
    if good then good, why = run(a, id) end
   end)
   if not ok then

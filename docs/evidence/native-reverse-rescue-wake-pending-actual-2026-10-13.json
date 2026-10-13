@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "run": "dc4a2561767745c29d8b0629c7b4d32b",
+  "kind": "hidden-actual-partial",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261013-173412-a25261c08a8d4ac08a593ab684d4ad16\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 3,
+  "failure": "Required scenario check failed: host require down=0.*cause=0.*lock=0.*state=healthy <- downed;ready=1;armed=1;down=1;gen=4;cause=2;lock=1;hp=7800,7800;epoch=3;state=asleep;reason=sleep_stock_wake_pending",
+  "closed": true,
+  "forced": false,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 98685175,
+      "end": 98978747,
+      "sha256": "d1a7a3a8e62c92accccffd77589e61f3dc348b40b3852fcf8473c0167ec5c6c5"
+    },
+    {
+      "role": "guest",
+      "start": 107355294,
+      "end": 107681856,
+      "sha256": "2fc2732db99edcd592612e30ca92db52f7cfa952b21aba205bcbbf7dc06f4fbb"
+    }
+  ],
+  "indexed_readings": {
+    "host": [],
+    "guest": []
+  },
+  "limitations": "Reverse guest dart/normal pickup/walking/put-down passed actual body readbacks. Host remained native recovery mode6 Q85 at the 9-second wake observation; completed host wake not accepted. Longer recovery and mirrored grant qualification are required. No shared mount or upright sleep acceptance."
+}

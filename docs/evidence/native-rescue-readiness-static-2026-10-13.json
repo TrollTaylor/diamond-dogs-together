@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "cause": "pickup during native mode4 onset interrupts the graph completion that mode4 waits for; scalar-only wake cannot repair that graph",
+  "repair": "native rest-ready permission on both current authenticated copies, bound scene/full native generations and wrapped monotonic sequence; readiness expires; original predicates run unchanged before scoped co-op eligibility rejection",
+  "existing_carry": "retained current carried state remains permitted, duplicate/replayed controls have no effect",
+  "scope": "no mode/graph writes, no onset bypass; private readonly diagnostics throttled to5Hz while original game functions run every native call",
+  "runtime_observed": false,
+  "version_boundary": "both peers need this0.12.5 packet version2; old unscoped8-byte carry packets are refused"
+}

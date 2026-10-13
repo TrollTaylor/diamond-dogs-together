@@ -1,5 +1,5 @@
 // Co-op teammate carrying through the stock player-carries-player code.
-// See include/mgscoop/coop_carry.hpp and docs/coop-carry.md.
+// See include/mgscoop/coop_carry.hpp and docs/STATUS.md.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -10,6 +10,8 @@
 #include <cstdio>
 #include <cstring>
 #include "mgscoop/coop_carry.hpp"
+#include "coop_carry_wire.hpp"
+#include "horse_load_probe_contract.hpp"
 #include "mgscoop/near_code.hpp"
 #include "mgscoop/partner_input_hook.hpp"
 #include "mgscoop/worker_scenario.hpp"
@@ -17,6 +19,7 @@
 
 namespace mgscoop::coop_carry {
 namespace {
+std::atomic<bool> g_cargoHold{false}, g_cargoLocal{false};
 
 // ---- Pinned retail sites (mgsvtpp.exe 1.0.15.4, SHA-256 085c2f82...bb45) ----
 constexpr std::uintptr_t kImageSpan = 0xa01d000;
@@ -105,6 +108,12 @@ bool ReadBytes(std::uintptr_t p, void* out, std::size_t size) noexcept {
 }
 template <class T> bool Write(std::uintptr_t p, T value) noexcept {
     __try { *reinterpret_cast<volatile T*>(p) = value; return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+bool CompareFlags(std::uintptr_t address,std::uint32_t expected,std::uint32_t desired) noexcept {
+    if(!address||(address&3u))return false;
+    __try {return static_cast<std::uint32_t>(InterlockedCompareExchange(
+        reinterpret_cast<volatile LONG*>(address),static_cast<LONG>(desired),static_cast<LONG>(expected)))==expected;}
+    __except(EXCEPTION_EXECUTE_HANDLER){return false;}
 }
 void Emit(const char* text) noexcept {
     if (!g_log || !text) return;
@@ -323,7 +332,8 @@ __declspec(noinline) bool HookPredicate(void* plugin, std::uint32_t carrier, con
     const bool player = (id & 0x1ffu) < 2u && (id & 0xfe00u) == 0;
     t_inPlayerPredicate = player;
     error.Restore();
-    const bool ok = g_predicate(plugin, carrier, pos, id, out);
+    bool ok = g_predicate(plugin, carrier, pos, id, out);
+    if(player&&g_mode.load(std::memory_order_relaxed)==kAnyDowned&&!(g_carryable.load(std::memory_order_relaxed)&(1u<<id)))ok=false;
     t_inPlayerPredicate = false;
     error.Capture();
     if ((id & 0x1ffu) < 2u && (id & 0xfe00u) == 0) {
@@ -410,7 +420,7 @@ __declspec(noinline) bool HookInit(void* iface, std::uint32_t id) noexcept {
     if (id < 2) g_initIface[id].store(reinterpret_cast<std::uintptr_t>(iface), std::memory_order_relaxed);
     // A pending mirrored pickup: the replica carrier (instance 1) takes the
     // local sleeping body as its forced target right before its own init.
-    if (id == 1 && g_forcePendingStart.load(std::memory_order_relaxed)) {
+    if (id == 1 && g_forcePendingStart.load(std::memory_order_relaxed) && (g_carryable.load(std::memory_order_relaxed)&1u)) {
         g_forcePendingStart.store(false, std::memory_order_relaxed);
         if (SendForced(iface, id, 0)) g_forcedSent.fetch_add(1, std::memory_order_relaxed);
     }
@@ -446,7 +456,97 @@ __declspec(noinline) bool HookInit(void* iface, std::uint32_t id) noexcept {
     }
     return ok;
 }
+// Load-target finder 0x112BD70 (carrier, id, out{u16 vehicle,...}, flag): the
+// stock search for a horse/vehicle that can take the carried body; true only
+// with the action input. Diagnostic counters only.
+constexpr std::uintptr_t kLoadFind = 0x112bd70;
+using LoadFindFn = bool (*)(void*, std::uint32_t, void*, std::uint8_t);
+LoadFindFn g_loadFind = nullptr;
+std::atomic<std::uint32_t> g_findCalls{0}, g_findHits{0}, g_findLast{0xffff};
+__declspec(noinline) bool HookLoadFind(void* self, std::uint32_t id, void* out, std::uint8_t flag) noexcept {
+    const bool ok = g_loadFind(self, id, out, flag);
+    g_findCalls.fetch_add(1, std::memory_order_relaxed);
+    if (ok && out) {
+        std::uint16_t v = 0xffff; Read(reinterpret_cast<std::uintptr_t>(out), v);
+        g_findHits.fetch_add(1, std::memory_order_relaxed); g_findLast.store(v, std::memory_order_relaxed);
+        EmitF("coop_carry=load_find; carrier=%u; vehicle=%x; flag=%u\r\n", id, unsigned(v), unsigned(flag));
+    }
+    return ok;
+}
+// Per-candidate load predicate 0x112A420 (self, carrier, pos, candidate, out).
+constexpr std::uintptr_t kLoadPred = 0x112a420;
+using LoadPredFn = bool (*)(void*, std::uint32_t, void*, std::uint16_t, void*);
+LoadPredFn g_loadPred = nullptr;
+std::atomic<std::uint32_t> g_loadPredCalls{0}, g_loadPredOk{0}, g_loadPredLast{0xffff};
+__declspec(noinline) bool HookLoadPred(void* self, std::uint32_t id, void* pos, std::uint16_t candidate, void* out) noexcept {
+    const bool ok = g_loadPred(self, id, pos, candidate, out);
+    g_loadPredCalls.fetch_add(1, std::memory_order_relaxed);
+    if (ok) g_loadPredOk.fetch_add(1, std::memory_order_relaxed);
+    g_loadPredLast.store(candidate | (ok ? 0x10000u : 0u), std::memory_order_relaxed);
+    return ok;
+}
 // The candidate producer itself (direct tail jump from the plugin dispatcher).
+// Private diagnostics: natural horse finder and its existing geometry predicate.
+// These wrappers always run originals and never substitute candidates/results.
+constexpr std::uintptr_t kHorseLoadFind=0x112b660,kHorseLoadGeometry=0x112a230;
+constexpr std::uintptr_t kHorseLoadSearchReturn=0x112b79b;
+using HorseLoadFindFn=bool (*)(void*,std::uint32_t,void*,std::uint8_t);
+using HorseLoadGeometryFn=bool (*)(void*,std::uint32_t,void*);
+HorseLoadFindFn g_horseLoadFind=nullptr;
+HorseLoadGeometryFn g_horseLoadGeometry=nullptr;
+thread_local bool t_horseLoadFindActive=false;
+thread_local std::uint32_t t_horseLoadFindCarrier=0xffffffffu;
+std::atomic<std::uint32_t> g_horseFindCalls{0},g_horseFindOk{0},g_horseFindLast{0xffff};
+std::atomic<std::uint32_t> g_horseGeomCalls{0},g_horseGeomOk{0};
+std::atomic<std::uint32_t> g_horseFindFlag{0xff};
+std::atomic<std::uint32_t> g_horseSearchCalls{0},g_horseSearchCount{0},g_horseSearchIds{0xffffffffu};
+bool g_horseLoadProbeInstalled=false;
+__declspec(noinline) bool HookHorseLoadFind(void* self,std::uint32_t id,void* out,std::uint8_t flag) noexcept {
+    const DWORD incoming=GetLastError();DWORD outgoing=incoming;
+    const bool previous=t_horseLoadFindActive;const auto previousCarrier=t_horseLoadFindCarrier;
+    t_horseLoadFindActive=true;t_horseLoadFindCarrier=id;
+    bool ok=false;
+    __try {SetLastError(incoming);ok=g_horseLoadFind(self,id,out,flag);outgoing=GetLastError();}
+    __finally {const DWORD error=GetLastError();t_horseLoadFindActive=previous;t_horseLoadFindCarrier=previousCarrier;SetLastError(error);}
+    if(id==0){
+        g_horseFindFlag.store(flag,std::memory_order_relaxed);
+        g_horseFindCalls.fetch_add(1,std::memory_order_relaxed);
+        if(ok){std::uint16_t target=0xffff;if(out)Read(reinterpret_cast<std::uintptr_t>(out),target);
+            g_horseFindOk.fetch_add(1,std::memory_order_relaxed);g_horseFindLast.store(target,std::memory_order_relaxed);
+            EmitF("coop_carry=horse_find; id=%u; target=%x; flag=%u\r\n",id,unsigned(target),unsigned(flag));}
+    }
+    SetLastError(outgoing);return ok;
+}
+__declspec(noinline) bool HookHorseLoadGeometry(void* self,std::uint32_t id,void* position) noexcept {
+    LastErrorState error;error.Restore();const bool ok=g_horseLoadGeometry(self,id,position);error.Capture();
+    if(t_horseLoadFindActive&&id==t_horseLoadFindCarrier&&id==0){
+        g_horseGeomCalls.fetch_add(1,std::memory_order_relaxed);
+        if(ok)g_horseGeomOk.fetch_add(1,std::memory_order_relaxed);
+    }
+    return ok;
+}
+bool PinHorseLoadProbe() noexcept {
+    unsigned char current[512]{};
+    for(const auto& site:horse_load_probe_contract::sites){
+        if(site.size>sizeof(current)||!ReadBytes(g_base+site.rva,current,site.size)||std::memcmp(current,site.data,site.size)!=0)return false;
+    }
+    return true;
+}
+bool InstallHorseLoadProbe() noexcept {
+    if(!worker_scenario::Compiled()||!PinHorseLoadProbe())return false;
+    if(MH_CreateHook(reinterpret_cast<void*>(g_base+kHorseLoadFind),reinterpret_cast<void*>(&HookHorseLoadFind),reinterpret_cast<void**>(&g_horseLoadFind))!=MH_OK)return false;
+    if(MH_CreateHook(reinterpret_cast<void*>(g_base+kHorseLoadGeometry),reinterpret_cast<void*>(&HookHorseLoadGeometry),reinterpret_cast<void**>(&g_horseLoadGeometry))!=MH_OK){
+        MH_RemoveHook(reinterpret_cast<void*>(g_base+kHorseLoadFind));return false;
+    }
+    if(MH_EnableHook(reinterpret_cast<void*>(g_base+kHorseLoadFind))!=MH_OK){
+        MH_RemoveHook(reinterpret_cast<void*>(g_base+kHorseLoadGeometry));MH_RemoveHook(reinterpret_cast<void*>(g_base+kHorseLoadFind));return false;
+    }
+    if(MH_EnableHook(reinterpret_cast<void*>(g_base+kHorseLoadGeometry))!=MH_OK){
+        MH_DisableHook(reinterpret_cast<void*>(g_base+kHorseLoadFind));MH_RemoveHook(reinterpret_cast<void*>(g_base+kHorseLoadGeometry));MH_RemoveHook(reinterpret_cast<void*>(g_base+kHorseLoadFind));return false;
+    }
+    g_horseLoadProbeInstalled=true;return true;
+}
+
 constexpr std::uintptr_t kProducer = 0x112c680;
 using ProducerFn = bool (*)(void*, std::uint32_t, void*, void*);
 ProducerFn g_producer = nullptr;
@@ -470,6 +570,8 @@ bool BodyPosition(unsigned id, float (&pos)[4]) noexcept {
 // The spatial search service of the producer's three scans (S = *(*(image+0x2C3A8A0)+8); *(*(S+0xA8)+0x10)).
 constexpr std::uintptr_t kServicesRoot = 0x2c3a8a0;
 constexpr std::uintptr_t kScanReturns[] = {0x112c93b, 0x112ca55, 0x112cb78};
+constexpr std::uintptr_t kLoadSearchReturn = 0x112bee2; // 0x112BD70's horse/vehicle search
+std::atomic<std::uint32_t> g_loadSearchCalls{0}, g_loadSearchCount{0}, g_loadSearchIds{0xffffffffu};
 using SearchFn = std::uintptr_t (*)(void*, void*, void*);
 SearchFn g_search = nullptr;
 std::uintptr_t g_searchSlot = 0, g_searchFn = 0;
@@ -502,6 +604,30 @@ __declspec(noinline) std::uintptr_t HookSearch(void* self, void* results, void* 
                 Write<std::uint32_t>(res + 0x14, count + 1);
                 g_injected.fetch_add(1, std::memory_order_relaxed);
             }
+        }
+    }
+    if(ret==g_base+kHorseLoadSearchReturn&&t_horseLoadFindActive&&t_horseLoadFindCarrier==0){
+        const auto res=reinterpret_cast<std::uintptr_t>(results);
+        std::uintptr_t ids=0;std::uint32_t count=0,capacity=0;
+        g_horseSearchCalls.fetch_add(1,std::memory_order_relaxed);
+        if(Read(res,ids)&&Read(res+0x10,capacity)&&Read(res+0x14,count)&&count<=capacity&&capacity<=4){
+            std::uint16_t first=0xffff,second=0xffff;
+            if((!count||Read(ids,first))&&(count<2||Read(ids+2,second))){
+                g_horseSearchCount.store(count,std::memory_order_relaxed);
+                g_horseSearchIds.store((std::uint32_t(second)<<16)|first,std::memory_order_relaxed);
+            }
+        }
+    }
+    if (ret == g_base + kLoadSearchReturn) {
+        const auto res = reinterpret_cast<std::uintptr_t>(results);
+        std::uintptr_t ids = 0; std::uint32_t count = 0;
+        g_loadSearchCalls.fetch_add(1, std::memory_order_relaxed);
+        if (Read(res, ids) && Read(res + 0x14, count)) {
+            g_loadSearchCount.store(count, std::memory_order_relaxed);
+            std::uint16_t first = 0xffff, second = 0xffff;
+            if (count) Read(ids, first);
+            if (count > 1) Read(ids + 2, second);
+            g_loadSearchIds.store((std::uint32_t(second) << 16) | first, std::memory_order_relaxed);
         }
     }
     for (unsigned k = 0; k < 3; ++k) {
@@ -547,12 +673,17 @@ bool InstallTrace() noexcept {
     if (MH_CreateHook(reinterpret_cast<void*>(g_base + kProducer), reinterpret_cast<void*>(&HookProducer), reinterpret_cast<void**>(&g_producer)) != MH_OK ||
         MH_EnableHook(reinterpret_cast<void*>(g_base + kProducer)) != MH_OK) { Emit("coop_carry=trace_refused; reason=producer_hook\r\n"); return false; }
     if (worker_scenario::Compiled()) {
+        Emit(InstallHorseLoadProbe()?"coop_carry=horse_probe_installed\r\n":"coop_carry=horse_probe_refused\r\n");
         if (MH_CreateHook(reinterpret_cast<void*>(g_base + kCarryPoint), reinterpret_cast<void*>(&HookCarryPoint), reinterpret_cast<void**>(&g_carryPoint)) == MH_OK)
             MH_EnableHook(reinterpret_cast<void*>(g_base + kCarryPoint));
         if (MH_CreateHook(reinterpret_cast<void*>(g_base + kRaycast), reinterpret_cast<void*>(&HookRaycast), reinterpret_cast<void**>(&g_raycast)) == MH_OK)
             MH_EnableHook(reinterpret_cast<void*>(g_base + kRaycast));
         if (MH_CreateHook(reinterpret_cast<void*>(g_base + kPredicate), reinterpret_cast<void*>(&HookPredicate), reinterpret_cast<void**>(&g_predicate)) == MH_OK)
             MH_EnableHook(reinterpret_cast<void*>(g_base + kPredicate));
+        if (MH_CreateHook(reinterpret_cast<void*>(g_base + kLoadPred), reinterpret_cast<void*>(&HookLoadPred), reinterpret_cast<void**>(&g_loadPred)) == MH_OK)
+            MH_EnableHook(reinterpret_cast<void*>(g_base + kLoadPred));
+        if (MH_CreateHook(reinterpret_cast<void*>(g_base + kLoadFind), reinterpret_cast<void*>(&HookLoadFind), reinterpret_cast<void**>(&g_loadFind)) == MH_OK)
+            MH_EnableHook(reinterpret_cast<void*>(g_base + kLoadFind));
         std::uintptr_t dispatchSlot = 0;
         g_dispatch = reinterpret_cast<DispatchFn>(g_base + kDispatch);
         if (Read(g_base + kDispatchSlot, dispatchSlot) && dispatchSlot == g_base + kDispatch)
@@ -627,6 +758,9 @@ struct Watch {
     std::uint8_t rCur = 0, rNext = 0;
     std::uint16_t rCarrier = 0xffff;
     std::uintptr_t rPtr = 0;
+    std::uint32_t lVehicle = 0xffffffffu, lPrompt = 0;
+    std::uint16_t lFlags = 0, lSeatId = 0xffff;
+    std::uint8_t lProgress = 0, lClosure = 0, lNext = 0;
 };
 Watch g_watch{};
 std::atomic<std::uint32_t> g_watchBudget{400};
@@ -716,22 +850,19 @@ bool Install(const void* image, std::size_t span, Log log) noexcept {
     return true;
 }
 namespace {
-// Wire: u8 'K' | u8 version 1 | u8 event | u8 flags | u16 sequence | u16 reserved.
-constexpr std::uint8_t kWireMagic = 0x4b, kWireVersion = 1;
-constexpr std::uint8_t kEventStart = 1, kEventDrop = 2;
-std::uint16_t g_txSeq = 0, g_rxSeq = 0xffff;
-bool g_localCarrying = false;
-std::uint64_t g_localCarryAt = 0;
-bool g_mirrorActive = false;
-std::uint64_t g_mirrorAt = 0;
+// Version2 binds readiness/START/DROP to current native generations and scene.
+namespace cw=coop_carry_wire;
+constexpr std::uint8_t kEventStart=cw::start,kEventDrop=cw::drop;
+SRWLOCK g_wireLock=SRWLOCK_INIT;cw::State g_wireState{};
+std::uint16_t g_txSeq=0;
+bool g_localCarrying=false;std::uint64_t g_localCarryAt=0,g_readySentAt=0;
+bool g_mirrorActive=false;std::uint64_t g_mirrorAt=0;
 bool SendEvent(std::uint8_t event) noexcept {
-    if (!g_send) return false;
-    ++g_txSeq;
-    const std::uint8_t bytes[8] = {kWireMagic, kWireVersion, event, 0, static_cast<std::uint8_t>(g_txSeq & 0xff),
-                                   static_cast<std::uint8_t>(g_txSeq >> 8), 0, 0};
-    const bool ok = g_send(bytes, sizeof(bytes));
-    if (ok) g_wireTx.fetch_add(1, std::memory_order_relaxed);
-    EmitF("coop_carry=tx; event=%u; seq=%u; queued=%u\r\n", unsigned(event), unsigned(g_txSeq), ok ? 1u : 0u);
+    if(!g_send)return false;std::uint8_t bytes[cw::size]{};
+    AcquireSRWLockExclusive(&g_wireLock);const auto seq=++g_txSeq;
+    const bool encoded=cw::Encode(g_wireState.frame,GetTickCount64(),event,seq,bytes);ReleaseSRWLockExclusive(&g_wireLock);
+    if(!encoded)return false;const bool ok=g_send(bytes,sizeof(bytes));if(ok)g_wireTx.fetch_add(1,std::memory_order_relaxed);
+    if(event!=cw::readiness)EmitF("coop_carry=tx; event=%u; seq=%u; queued=%u\r\n",unsigned(event),unsigned(seq),ok?1u:0u);
     return ok;
 }
 // The replica (instance 1) carrying the local body on this machine.
@@ -743,37 +874,36 @@ bool ReplicaCarryingLocal() noexcept {
 bool RequestReplicaDrop() noexcept {
     std::uintptr_t P = 0, Q = 0, rec = 0; bool online = true; std::uint32_t flags0 = 0, flags1 = 0;
     if (!PlayerSystem(P, Q, online) || !PsRecord(P, 1, rec) || !Read(rec, flags0) || !(flags0 & 0x400000u) || !Read(rec + 4, flags1)) return false;
-    return Write<std::uint32_t>(rec + 4, flags1 | 0x4000u);
+    return (flags1 & 0x4000u) != 0 || CompareFlags(rec + 4, flags1, flags1 | 0x4000u);
 }
 } // namespace
 
 void SetSender(bool (*send)(const std::uint8_t*, std::size_t) noexcept) noexcept { g_send = send; }
-bool IsCarryMessage(const std::uint8_t* bytes, std::size_t size) noexcept {
-    return bytes && size == 8 && bytes[0] == kWireMagic;
+bool IsCarryMessage(const std::uint8_t* bytes,std::size_t size) noexcept {
+    cw::Message message{};return cw::Parse(bytes,size,message);
 }
-bool Receive(const std::uint8_t* bytes, std::size_t size) noexcept {
-    if (!IsCarryMessage(bytes, size) || bytes[1] != kWireVersion) return false;
-    const std::uint16_t seq = static_cast<std::uint16_t>(bytes[4] | (bytes[5] << 8));
-    if (seq == g_rxSeq) return true;
-    g_rxSeq = seq;
-    g_wireRx.fetch_add(1, std::memory_order_relaxed);
-    const std::uint8_t event = bytes[2];
-    EmitF("coop_carry=rx; event=%u; seq=%u\r\n", unsigned(event), unsigned(seq));
-    if (!g_installed || g_mode.load(std::memory_order_relaxed) == kOff) return true;
-    if (event == kEventStart) {
-        g_forcePendingStart.store(true, std::memory_order_relaxed);
-        g_forcePendingAt.store(GetTickCount64(), std::memory_order_relaxed);
-        g_mirrorStarts.fetch_add(1, std::memory_order_relaxed);
-    } else if (event == kEventDrop) {
-        g_forcePendingStart.store(false, std::memory_order_relaxed);
-        g_dropPending.store(true, std::memory_order_relaxed);
-        g_mirrorDrops.fetch_add(1, std::memory_order_relaxed);
-    }
+void SetReadinessFrame(std::uint32_t mission,std::uint16_t epoch,std::uint32_t localGeneration,
+ std::uint32_t peerGeneration,bool localReady,bool admitted) noexcept {
+    AcquireSRWLockExclusive(&g_wireLock);g_wireState.Update({mission,localGeneration,peerGeneration,epoch,GetTickCount64(),admitted,localReady});ReleaseSRWLockExclusive(&g_wireLock);
+}
+bool PeerCarryReady() noexcept {
+    AcquireSRWLockShared(&g_wireLock);const bool ready=g_wireState.PeerReady(GetTickCount64());ReleaseSRWLockShared(&g_wireLock);return ready;
+}
+bool Receive(const std::uint8_t* bytes,std::size_t size) noexcept {
+    cw::Message message{};if(!cw::Parse(bytes,size,message))return false;bool fresh=false;
+    AcquireSRWLockExclusive(&g_wireLock);const bool accepted=g_wireState.Receive(message,GetTickCount64(),fresh);ReleaseSRWLockExclusive(&g_wireLock);
+    if(!accepted)return false;if(!fresh)return true;g_wireRx.fetch_add(1,std::memory_order_relaxed);
+    if(message.event==cw::readiness)return true;
+    EmitF("coop_carry=rx; event=%u; seq=%u\r\n",unsigned(message.event),unsigned(message.sequence));
+    if(!g_installed||g_mode.load(std::memory_order_relaxed)==kOff)return true;
+    if(message.event==kEventStart){g_forcePendingStart.store(true,std::memory_order_relaxed);g_forcePendingAt.store(GetTickCount64(),std::memory_order_relaxed);g_mirrorStarts.fetch_add(1,std::memory_order_relaxed);}
+    else {g_forcePendingStart.store(false,std::memory_order_relaxed);g_dropPending.store(true,std::memory_order_relaxed);g_mirrorDrops.fetch_add(1,std::memory_order_relaxed);}
     return true;
 }
 
 void Tick() noexcept {
     if (!g_installed || g_mode.load(std::memory_order_relaxed) == kOff) return;
+    const auto readyNow=GetTickCount64();if(readyNow-g_readySentAt>=250&&SendEvent(cw::readiness))g_readySentAt=readyNow;
     {
         // The local player carrying the teammate: announce start and put-down.
         const auto r = CarrierRecord(0);
@@ -827,7 +957,16 @@ void Tick() noexcept {
             }
         }
     }
+    if (const auto c0 = CarrierRecord(0)) {
+        Read(c0 + 0x538, w.lVehicle); Read(c0 + 0x6ac, w.lPrompt); Read(c0 + 0x6a2, w.lFlags); Read(c0 + 0x236, w.lSeatId);
+        Read(c0 + 0x81, w.lProgress); Read(c0 + 0x380, w.lClosure); Read(c0 + 0x381, w.lNext);
+    }
     if (std::memcmp(&w, &g_watch, sizeof(w)) == 0) return;
+    if (g_watch.lVehicle != w.lVehicle || g_watch.lPrompt != w.lPrompt || g_watch.lFlags != w.lFlags || g_watch.lSeatId != w.lSeatId ||
+        g_watch.lProgress != w.lProgress || g_watch.lClosure != w.lClosure || g_watch.lNext != w.lNext)
+        EmitF("coop_carry=load_watch; t=%llu; veh=%x; prompt=%u; flags=%x; seat=%x; p=%u; cl=%u>%u\r\n",
+              static_cast<unsigned long long>(GetTickCount64() % 100000000ull), w.lVehicle, w.lPrompt, unsigned(w.lFlags), unsigned(w.lSeatId),
+              unsigned(w.lProgress), unsigned(w.lClosure), unsigned(w.lNext));
     g_watch = w;
     if (!g_watchBudget.load(std::memory_order_relaxed)) return;
     g_watchBudget.fetch_sub(1, std::memory_order_relaxed);
@@ -915,6 +1054,41 @@ bool MirrorLine(char* out, std::size_t capacity) noexcept {
         g_mirrorActive ? 1u : 0u, unsigned(t0), unsigned(p0), unsigned(c0), unsigned(t1), unsigned(p1), unsigned(c1));
     return n >= 0 && static_cast<std::size_t>(n) < capacity;
 }
+bool LoadLine(char* out, std::size_t capacity) noexcept {
+    if (!out || !capacity) return false;
+    const auto c0 = CarrierRecord(0);
+    std::uint32_t vehicle = 0xffffffffu, prompt = 0; std::uint16_t flags = 0, seatId = 0xffff, target = 0xffff; std::uint8_t p = 0, cl = 0, nx = 0;
+    std::uintptr_t seat = 0;
+    if (c0) { Read(c0 + 0x538, vehicle); Read(c0 + 0x6ac, prompt); Read(c0 + 0x6a2, flags); Read(c0 + 0x236, seatId); Read(c0 + 0x258, seat);
+        Read(c0 + 0x78, target); Read(c0 + 0x81, p); Read(c0 + 0x380, cl); Read(c0 + 0x381, nx); }
+    const int n = std::snprintf(out, capacity, "carryload;rec=%u;t=%u;p=%u;cl=%u>%u;veh=%x;prompt=%u;flags=%x;seat=%x,%u;find=%u,%u,%x;srch=%u,%u,%x;pred=%u,%u,%x",
+        c0 ? 1u : 0u, unsigned(target), unsigned(p), unsigned(cl), unsigned(nx), vehicle, prompt, unsigned(flags), unsigned(seatId), seat ? 1u : 0u,
+        g_findCalls.load(), g_findHits.load(), g_findLast.load(), g_loadSearchCalls.load(), g_loadSearchCount.load(), g_loadSearchIds.load(),
+        g_loadPredCalls.load(), g_loadPredOk.load(), g_loadPredLast.load());
+    return n >= 0 && static_cast<std::size_t>(n) < capacity;
+}
+bool HorseLoadLine(char* out,std::size_t capacity) noexcept {
+    if(!out||!capacity)return false;
+    const auto c=CarrierRecord(0);
+    std::uint16_t target=0xffff,horse=0xffff,nearTarget=0xffff,flags=0;std::uint8_t current=0,next=0,progress=0;std::uint32_t prompt=0;
+    const bool read=c&&Read(c+0x78,target)&&Read(c+0x538,horse)&&Read(c+0x6a0,nearTarget)&&Read(c+0x6a2,flags)&&
+        Read(c+0x380,current)&&Read(c+0x381,next)&&Read(c+0x81,progress)&&Read(c+0x6ac,prompt);
+    const int n=std::snprintf(out,capacity,"horseLoad;on=%u;rec=%u;t=%u;mount=%x;near=%x;phase=%u>%u;p=%u;flags=%x;ui=%u;find=%u,%u,%x;scan=%u,%u,%x;geom=%u,%u",
+        g_horseLoadProbeInstalled?1u:0u,read?1u:0u,unsigned(target),unsigned(horse),unsigned(nearTarget),unsigned(current),unsigned(next),unsigned(progress),unsigned(flags),prompt,
+        g_horseFindCalls.load(),g_horseFindOk.load(),g_horseFindLast.load(),g_horseSearchCalls.load(),g_horseSearchCount.load(),g_horseSearchIds.load(),g_horseGeomCalls.load(),g_horseGeomOk.load());
+    return n>=0&&static_cast<std::size_t>(n)<capacity;
+}
+// Outside-window observation only; this is not a native mutation gate.
+bool HorseGateLine(char* out,std::size_t capacity) noexcept {
+    if(!out||!capacity)return false;
+    const auto c=CarrierRecord(0);
+    std::uint16_t target=0xffff,f4=0,f6=0,f8=0;
+    const bool read=c&&Read(c+0x78,target)&&Read(c+0x6a4,f4)&&Read(c+0x6a6,f6)&&Read(c+0x6a8,f8);
+    const int n=std::snprintf(out,capacity,"horseGate;rec=%u;t=%x;cat=%u;in=%u;f4=%x;f6=%x;f8=%x;init=%u",
+        read?1u:0u,unsigned(target),unsigned(target>>9),g_horseFindFlag.load(std::memory_order_relaxed),
+        unsigned(f4),unsigned(f6),unsigned(f8),unsigned((f4>>13)&1u));
+    return n>=0&&static_cast<std::size_t>(n)<capacity;
+}
 bool SelectorLine(char* out, std::size_t capacity) noexcept {
     if (!out || !capacity) return false;
     const int n = std::snprintf(out, capacity, "carrysel;pflags=%x;owner=%u;kind=%x;cur=%x;valid=%x;vor=%x;dis=%x;target=%u;cp=%u,%u,%d,%d,%d;ray=%u,%u",
@@ -939,11 +1113,11 @@ bool CarryPoint(unsigned id, float (&out)[3]) noexcept {
 }
 void SetLocalAwakeDown(bool awake) noexcept { g_localAwakeDown.store(awake, std::memory_order_relaxed); }
 bool RequestLocalPutDown() noexcept {
-    if (!g_installed || !g_localCarrying) return false;
+    if (!g_installed || !BodyCarrying(0)) return false;
     std::uintptr_t P = 0, Q = 0, rec = 0; bool online = true; std::uint32_t flags0 = 0, flags1 = 0;
     if (!PlayerSystem(P, Q, online) || !PsRecord(P, 0, rec) || !Read(rec, flags0) || !(flags0 & 0x400000u) || !Read(rec + 4, flags1)) return false;
     if (flags1 & 0x4000u) return true;
-    return Write<std::uint32_t>(rec + 4, flags1 | 0x4000u);
+    return (flags1 & 0x4000u) != 0 || CompareFlags(rec + 4, flags1, flags1 | 0x4000u);
 }
 unsigned CarryRole() noexcept {
     if (!g_installed || g_mode.load(std::memory_order_relaxed) == kOff) return 0;
@@ -951,8 +1125,40 @@ unsigned CarryRole() noexcept {
     if (g_mirrorActive) return 2;
     return 0;
 }
+unsigned HudRole() noexcept {
+    const unsigned role = CarryRole();
+    if (role) return role;
+    if (!g_installed || g_mode.load(std::memory_order_relaxed) == kOff) return 0;
+    if (g_cargoHold.load(std::memory_order_relaxed)) return 3;
+    if (g_cargoLocal.load(std::memory_order_relaxed)) return 4;
+    return 0;
+}
+void SetCargoLocal(bool on) noexcept { g_cargoLocal.store(on, std::memory_order_relaxed); }
+void SetCargoHold(bool on) noexcept {
+    if (g_cargoHold.exchange(on) != on) EmitF("coop_carry=cargo_hold; on=%u\r\n", on ? 1u : 0u);
+}
 bool PartnerCarryHold() noexcept {
-    return g_installed && g_mode.load(std::memory_order_relaxed) != kOff && BodyCarried(1);
+    return g_installed && g_mode.load(std::memory_order_relaxed) != kOff && (BodyCarried(1) || g_cargoHold.load(std::memory_order_relaxed));
+}
+AttachmentState ReadAttachmentState() noexcept {
+    AttachmentState result{};
+    if(!g_installed||g_mode.load(std::memory_order_relaxed)==kOff)return result;
+    std::uintptr_t p=0,q=0,pa=0,qa=0;bool online=true,onlineAfter=true;
+    std::uint16_t action[2]{},afterAction[2]{};std::uint32_t flags[2]{},afterFlags[2]{};
+    if(!PlayerSystem(p,q,online)||online)return result;
+    for(unsigned id=0;id<2;++id){std::uintptr_t record=0;
+        if(!ReadAction(q,id,action[id])||!PsRecord(p,id,record)||!Read(record,flags[id]))return result;}
+    for(unsigned id=0;id<2;++id){std::uintptr_t record=0;
+        if(!ReadAction(q,id,afterAction[id])||!PsRecord(p,id,record)||!Read(record,afterFlags[id])||
+           action[id]!=afterAction[id]||flags[id]!=afterFlags[id])return result;}
+    if(!PlayerSystem(pa,qa,onlineAfter)||onlineAfter||pa!=p||qa!=q)return result;
+    for(unsigned id=0;id<2;++id){result.carrying[id]=(flags[id]&0x400000u)!=0;result.carried[id]=IsCarriedAction(action[id]);}
+    result.ready=true;return result;
+}
+bool RequestPutDownForBody(unsigned victim) noexcept {
+    if(victim>=2)return false;const auto state=ReadAttachmentState();
+    if(!state.ready||!state.carried[victim]||!state.carrying[1u-victim])return false;
+    return victim==1?RequestLocalPutDown():RequestReplicaDrop();
 }
 bool BodyCarrying(unsigned id) noexcept {
     std::uintptr_t P = 0, Q = 0, rec = 0; bool online = true; std::uint32_t flags = 0;

@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "run": "224489887f9544e19d3419ae6927a93a",
+  "kind": "hidden-actual-partial",
+  "receipt": "C:\\Users\\taylo\\OneDrive\\Documents\\ChatGPT\\mgs-coop\\build\\worker-runs\\20261013-183934-35941fff01f44b94acd4404d4833abe7\\receipt.json",
+  "feature_activation": false,
+  "protected_unchanged": 63,
+  "passed_checks": 1,
+  "failure": "Required scenario check failed: host require sleepAsset;ready=1;sel=1;.*b1=2,1273,fc53f6ab0bc9caaf <- sleepAsset;ready=1;sel=1;b0=0,0,0;b1=1,1273,fc53f6ab0bc9caaf;why=asset_selected_payload_verified",
+  "closed": true,
+  "forced": false,
+  "isolation_failed": false,
+  "real_saves_unchanged": true,
+  "baseline_restored": true,
+  "system_input_called": false,
+  "focus_called": false,
+  "desktop_switched": false,
+  "bounded_logs": [
+    {
+      "role": "host",
+      "start": 99926404,
+      "end": 100113633,
+      "sha256": "773a82b0e851dea97047246537fed91e289554fb3457189267d1c75f64972fd5"
+    },
+    {
+      "role": "guest",
+      "start": 108655436,
+      "end": 108835571,
+      "sha256": "6abb8bb6f26f919053e01265287a924575ba27727f292003d744d20217590efa"
+    }
+  ],
+  "indexed_readings": {
+    "host": [],
+    "guest": []
+  },
+  "limitations": "PrivateMGOQAR admitted/loaded, butactualselectedrest readercryptographicallyverified originalTPPpayloadOrigin1 onhostpeer, notMGOOrigin2. Restbankoverride didnotchange alreadyresidentselection. Teststoppedbeforecarry/wake; noMGOposeactivationaccepted. BaselineNativeWake accepted separately. Exactprivateprofile/restoreownership worked."
+}

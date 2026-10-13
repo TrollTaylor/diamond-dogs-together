@@ -242,7 +242,7 @@ bool FormatDowned(const DownedView& v, std::uint32_t current_mission,
     if (!v.valid || !v.epoch || v.mission != current_mission ||
         (v.mission != 30010 && v.mission != 30020 && v.mission != 30050) ||
         now_ms < v.publish_ms || now_ms - v.publish_ms > kDownedFreshMs || v.progressMs > kReviveHoldMs ||
-        v.localCause > 2 || v.teammateCause > 2 || (!v.localDown && v.localCause) || (!v.teammateDown && v.teammateCause) ||
+        v.carry > 4 || v.localCause > 2 || v.teammateCause > 2 || (!v.localDown && v.localCause) || (!v.teammateDown && v.teammateCause) ||
         (v.closeEnough && (!v.teammateDown || v.localDown)) ||
         (v.inRange && (!v.teammateDown || v.localDown)) ||
         (v.progressMs && (!v.inRange || !v.teammateDown || v.localDown))) return false;
@@ -257,25 +257,42 @@ bool FormatDowned(const DownedView& v, std::uint32_t current_mission,
             "Wounded - waiting for your teammate; crawl to cover");
         out.tone = v.localCause == 2 ? Tone::warn : Tone::bad; return true;
     }
-    if (!v.teammateDown) return false;
     out.tone = Tone::warn;
-    const char* act = sleeping ? "Wake up" : "Revive";
-    if (v.carry == 1) {
-        // E stays the game's own action here (load onto D-Horse or a vehicle).
-        Print(out.text, sizeof(out.text), sleeping ? "Carrying your sleeping teammate" : "Carrying your wounded teammate");
-        Print(out.keys, sizeof(out.keys), "R\tHold: Put down\nE\tLoad on horse");
+    const char* act = sleeping ? "wake" : "revive";
+    if (v.carry == 2) {
+        Print(out.text, sizeof(out.text), "Your teammate is carrying you");
         return true;
     }
+    if (v.carry == 3 || v.carry == 4) {
+        // The provisional cargo role does not prove a native horse/vehicle seat.
+        // Do not advertise mounting or unloading as an accepted game action.
+        Print(out.text, sizeof(out.text), "Teammate transfer in progress");
+        return true;
+    }
+    if (v.carry == 1) {
+        Print(out.text, sizeof(out.text), "Carrying teammate");
+        // Semantic control names; the game's bindings remain authoritative.
+        Print(out.keys, sizeof(out.keys), "Carry\tHold to put down");
+        return true;
+    }
+    if (!v.teammateDown) return false;
     if (!approach) {
-        Print(out.text, sizeof(out.text), sleeping ? "Teammate asleep - go to them" : "Teammate wounded - go to them");
-        Print(out.keys, sizeof(out.keys), "E\tHold: %s\nR\tHold: Carry", act);
-    } else if (!v.inRange || !v.progressMs) {
+        Print(out.text, sizeof(out.text), sleeping ? "Teammate asleep - get within 3 m" : "Teammate wounded - get within 3 m");
+    } else if (!v.inRange) {
+        Print(out.text, sizeof(out.text), sleeping ? "Teammate asleep - please wait" : "Teammate wounded - please wait");
+        // The stock world-space carry icon alone supplies the pickup action.
+        // Its reach is independent of this copied 3 m revive approach.
+    } else if (!v.progressMs) {
         Print(out.text, sizeof(out.text), sleeping ? "Teammate asleep" : "Teammate wounded");
-        Print(out.keys, sizeof(out.keys), "E\tHold: %s\nR\tHold: Carry", act);
+        // Semantic action only: no guessed keyboard/controller button glyph.
+        Print(out.keys, sizeof(out.keys), "Action\tHold to %s", act);
     } else {
         progress = static_cast<float>(v.progressMs) / static_cast<float>(kReviveHoldMs);
-        Print(out.text, sizeof(out.text), sleeping ? "Waking your teammate - %u%%" : "Reviving your teammate - %u%%",
+        Print(out.text, sizeof(out.text), sleeping ? "Waking teammate - %u%%" : "Reviving teammate - %u%%",
               v.progressMs * 100u / kReviveHoldMs);
+        // A completed hold is already pending; do not ask the player to keep
+        // holding through network delivery or native recovery.
+        if (v.progressMs < kReviveHoldMs) Print(out.keys, sizeof(out.keys), "Action\tKeep holding");
     }
     return true;
 }
